@@ -1,7 +1,7 @@
 {
   "name": "day-05",
   "private": true,
-  "description": "Sow moss on a boulder and watch it creep. Shell-textured strands",
+  "description": "Paint five real mosses and lichens onto a rock or a letter",
   "type": "module",
   "scripts": {
     "dev": "vite",

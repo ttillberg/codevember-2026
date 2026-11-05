@@ -2,8 +2,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { buildRock, type Surface } from './rock';
-import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
-import { buildWord } from './objects';
+import { buildWord, fixGlyphs } from './objects';
 import { FontLoader, type Font } from 'three/addons/loaders/FontLoader.js';
 import { buildFronds, type Fronds } from './fronds';
 import { fbm3 } from './noise';
@@ -15,6 +14,7 @@ import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { renderSwatches, renderEraser } from './swatches';
 import { setupCarousel, type Carousel } from './carousel';
 import { renderGlyphThumbs } from './glyphthumbs';
+import { renderToDataURL } from './render';
 
 const coarse = matchMedia('(pointer: coarse)').matches;
 const SHELLS = coarse ? 10 : 16;
@@ -27,56 +27,35 @@ renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 renderer.setClearColor(BG);
 
 const scene = new THREE.Scene();
-// a studio environment for the metal rock's reflections; the moss has its own shading
-const pmrem = new THREE.PMREMGenerator(renderer);
-scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
-pmrem.dispose();
-const key = new THREE.DirectionalLight(0xffffff, 0.9);
-key.position.set(1.2, 2.0, 1.0).multiplyScalar(5);
-scene.add(key);
 const camera = new THREE.PerspectiveCamera(38, 1, 0.1, 50);
 camera.position.set(3.6, 1.1, 6.6);
 
-// the object sits on a turntable that turns around the vertical axis; only yaw, so up stays up for the moss
-// an outer group tilts the object towards or away from the camera on a vertical drag, up to ~30 degrees,
-// and stays tilted on release so the underside can be painted. Both pivot on the object's centre.
-const tiltGroup = new THREE.Group();
-const turntable = new THREE.Group();
-tiltGroup.add(turntable);
-scene.add(tiltGroup);
-let tilt = 0; // rad, around the camera's horizontal axis
-let tiltRaw = 0; // where the drag would put it before the soft limit
-let tiltVel = 0;
-const TILT_MAX = THREE.MathUtils.degToRad(30);
-let turnLastY = 0;
-let yaw = 0;
-let yawVel = 0; // rad/s, coasts and slows down after a flick
-let turning = false;
-let turnLastX = 0;
-let turnLastT = 0;
-const TURN_SPEED = 0.008; // rad per pixel
+const content = new THREE.Group(); // the object's meshes
+scene.add(content);
 
 const controls = new OrbitControls(camera, canvas);
 controls.target.set(0, 0.45, 0);
 controls.enableDamping = true;
 controls.enableZoom = coarse; // desktop: orbit only. Touch: pinch to zoom in a bit (limits set in frameWord)
 controls.enablePan = false;
-// the camera never orbits: a drag turns the object itself on a turntable (see below). The controls only
-// keep the touch pinch zoom; two fingers also turn the turntable.
-controls.enableRotate = false;
-controls.touches = { ONE: null as unknown as THREE.TOUCH, TWO: THREE.TOUCH.DOLLY_PAN };
+// touch: one finger paints, two fingers orbit and pinch zooms
+controls.touches = { ONE: null as unknown as THREE.TOUCH, TWO: THREE.TOUCH.DOLLY_ROTATE };
 const touchIds = new Set<number>();
 const touchHint = document.querySelector<HTMLElement>('.touch-hint')!;
 // the hint fades once the first two-finger turn is done
 let touchTurned = false;
+controls.addEventListener('change', () => { if (touchIds.size >= 2) touchTurned = true; });
+controls.addEventListener('end', () => { if (touchTurned) touchHint.classList.add('done'); });
 controls.maxPolarAngle = Math.PI * 0.55;
 
-// the key light: front right, above. The camera never moves and the object turns under it, so every side
-// is lit the same way as it comes round.
+// the key light follows the camera around the vertical axis: same elevation, always from front right,
+// so every side of the object looks lit the same way. Swatches and thumbnails keep the fixed base.
 const LIGHT_BASE = new THREE.Vector3(1.2, 2.0, 1.0).normalize();
-const lightDir = LIGHT_BASE.clone();
-let shadowYaw = NaN; // turntable angle the shadow map was last rendered for
-let shadowTilt = NaN;
+const lightDir = LIGHT_BASE.clone(); // turned in place each frame; the uniform holds this object
+const UP = new THREE.Vector3(0, 1, 0);
+let shadowAz = NaN; // camera azimuth the shadow map was last rendered for
+let lastShadowMs = 0;
+let mossShadowStale = false;
 const shellMat = new THREE.ShaderMaterial({
   vertexShader: shellVertex,
   fragmentShader: shellFragment,
@@ -84,13 +63,12 @@ const shellMat = new THREE.ShaderMaterial({
   uniforms: {
     uHeight: { value: 0.012 },
     uBulge: { value: 0.035 },
-    uTime: { value: 0 },
     uLightDir: { value: lightDir },
     uRimDir: { value: new THREE.Vector3(0, 1, 0) },
     uRim: { value: 1 },
     uHemi: { value: 1 },
-    uTone: { value: 3 }, // Neutral by default
-    uExposure: { value: 1.15 },
+    uTone: { value: 2 }, // ACES by default
+    uExposure: { value: 1.1 },
     toneMappingExposure: { value: 1 },
     uHideRock: { value: 0 },
     uScale: { value: 1 },
@@ -99,6 +77,8 @@ const shellMat = new THREE.ShaderMaterial({
     uShadowOn: { value: 0 },
   },
 });
+
+const SHARED_UNIFORMS = ['uLightDir', 'uRimDir', 'uRim', 'uHemi', 'uTone', 'uExposure', 'toneMappingExposure', 'uShadowMap', 'uShadowMatrix', 'uShadowOn'];
 
 // ---- shadow map: the scene from the light's point of view, rendered when the word changes.
 // Letters shadow each other and the moss under overhangs; that is most of the contrast.
@@ -110,19 +90,21 @@ const lightCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 30);
 const shadowMatrix = new THREE.Matrix4();
 function renderShadow() {
   const bb = W.surface.geometry.boundingBox!;
-  const center = new THREE.Vector3((bb.min.x + bb.max.x) / 2, (bb.min.y + bb.max.y) / 2, (bb.min.z + bb.max.z) / 2);
+  const center = bb.getCenter(new THREE.Vector3());
   const radius = bb.min.distanceTo(bb.max) / 2 + 0.3;
   lightCam.left = -radius; lightCam.right = radius; lightCam.top = radius; lightCam.bottom = -radius;
-  lightCam.near = 0.1; lightCam.far = radius * 4;
+  lightCam.far = radius * 4;
   lightCam.position.copy(center).addScaledVector(lightDir, radius * 2);
   lightCam.lookAt(center);
   lightCam.updateProjectionMatrix();
   lightCam.updateMatrixWorld();
   shadowMatrix.multiplyMatrices(lightCam.projectionMatrix, lightCam.matrixWorldInverse);
 
-  // unbind the shadow map while rendering into it, or the GPU complains about a feedback loop
-  const mats = [shellMat, W.fronds.mesh.material as THREE.ShaderMaterial];
-  for (const mat of mats) { mat.uniforms.uShadowOn.value = 0; mat.uniforms.uShadowMap.value = null; }
+  // unbind the shadow map while rendering into it, or the GPU complains about a feedback loop.
+  // The fronds share these uniform objects with the shells, so setting them once covers both.
+  const u = shellMat.uniforms;
+  u.uShadowOn.value = 0;
+  u.uShadowMap.value = null;
   ground.visible = false;
   renderer.setRenderTarget(shadowRT);
   renderer.clear();
@@ -130,11 +112,9 @@ function renderShadow() {
   renderer.setRenderTarget(null);
   ground.visible = true;
 
-  for (const mat of mats) {
-    mat.uniforms.uShadowMap.value = shadowRT.depthTexture;
-    mat.uniforms.uShadowMatrix.value.copy(shadowMatrix);
-    mat.uniforms.uShadowOn.value = 1;
-  }
+  u.uShadowMap.value = shadowRT.depthTexture;
+  u.uShadowMatrix.value.copy(shadowMatrix);
+  u.uShadowOn.value = 1;
 }
 
 // ground with a fake contact shadow
@@ -149,45 +129,6 @@ const ground = new THREE.Mesh(
 ground.rotation.x = -Math.PI / 2;
 ground.position.y = -0.72; // moved under each object in frameWord
 scene.add(ground);
-
-const METAL = false; // true: brushed black metal body on the rock; false: plain white like the letters
-
-// ---- the metal: physically based, brushed. Roughness varies with a small noise texture so the
-// reflections break up instead of reading like chrome, plus a thin clearcoat for the sharp highlight.
-function noiseTexture(size: number, scale: number, lo: number, hi: number) {
-  const c = document.createElement('canvas');
-  c.width = c.height = size;
-  const ctx = c.getContext('2d')!;
-  const img = ctx.createImageData(size, size);
-  for (let y = 0; y < size; y++) {
-    for (let x = 0; x < size; x++) {
-      const v = fbm3(x * scale, y * scale * 0.25, 0.5, 4, 3) * 0.5 + 0.5; // stretched: a brushed grain
-      const g = Math.round(255 * (lo + (hi - lo) * v));
-      const i = (y * size + x) * 4;
-      img.data[i] = img.data[i + 1] = img.data[i + 2] = g;
-      img.data[i + 3] = 255;
-    }
-  }
-  ctx.putImageData(img, 0, 0);
-  const tex = new THREE.CanvasTexture(c);
-  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
-  tex.repeat.set(3, 3);
-  return tex;
-}
-let roughnessTex: THREE.Texture | null = null;
-function metalMaterial() {
-  roughnessTex ??= noiseTexture(256, 0.12, 0.2, 0.55);
-  return new THREE.MeshPhysicalMaterial({
-    color: 0x1c1c1e,
-    metalness: 1,
-    roughness: 1,
-    roughnessMap: roughnessTex,
-    envMapIntensity: 1.0,
-    clearcoat: 0.5,
-    clearcoatRoughness: 0.18,
-    polygonOffset: true, polygonOffsetFactor: 2, polygonOffsetUnits: 4,
-  });
-}
 
 // ---- the thing being painted, and its moss state. Swappable.
 interface World {
@@ -213,7 +154,6 @@ interface World {
   kind: 'word' | 'rock';
   reach: Float32Array; // area of each vertex that counts towards the moss meter (0 where you cannot paint)
   reachTotal: number;
-  metal: THREE.Mesh | null; // the silver rock body, drawn where there is no moss
 }
 
 function createWorld(text: string, kind: 'word' | 'rock' = 'word'): World {
@@ -248,40 +188,20 @@ function createWorld(text: string, kind: 'word' | 'rock' = 'word'): World {
   const shells = new THREE.InstancedMesh(geo, shellMat, SHELLS);
   shells.frustumCulled = false;
   const fronds = buildFronds(geo, surface.fertility, coarse ? 40000 : 140000);
+  // the fronds share the lighting uniform objects with the shells: the debug panel, the shadow pass and the
+  // back light drive both, nothing has to be copied across
+  const fu = (fronds.mesh.material as THREE.ShaderMaterial).uniforms;
+  for (const k of SHARED_UNIFORMS) fu[k] = shellMat.uniforms[k];
   // letters: grass only in the straw-rich patches, not along every top edge
   if (kind === 'word') (fronds.mesh.material as THREE.ShaderMaterial).uniforms.uStrawBase.value = 0;
   const picker = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ visible: false }));
-  // the turntable's axis runs through the object's centre: the group sits there, the meshes are offset back
-  const tb = geo.boundingBox!;
-  const cx = (tb.min.x + tb.max.x) / 2, cz = (tb.min.z + tb.max.z) / 2;
-  const cy = (tb.min.y + tb.max.y) / 2;
-  tiltGroup.position.set(cx, cy, cz);
-  for (const m of [shells, fronds.mesh, picker]) m.position.set(-cx, -cy, -cz);
-  yaw = 0;
-  yawVel = 0;
-  tilt = tiltRaw = tiltVel = 0;
-  turntable.add(shells, fronds.mesh, picker);
-  let metal: THREE.Mesh | null = null;
-  if (kind === 'rock' && METAL) {
-    // the hull has no uvs; a planar projection is plenty for a noise roughness map
-    if (!geo.attributes.uv) {
-      const pos = geo.attributes.position as THREE.BufferAttribute;
-      const uv = new Float32Array(n * 2);
-      for (let i = 0; i < n; i++) { uv[i * 2] = pos.getX(i) + pos.getZ(i) * 0.5; uv[i * 2 + 1] = pos.getY(i) + pos.getZ(i) * 0.3; }
-      geo.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
-    }
-    metal = new THREE.Mesh(geo, metalMaterial());
-    metal.position.set(-cx, -cy, -cz);
-    turntable.add(metal);
-  }
-  // with a metal body the shell base only draws under moss
-  shellMat.uniforms.uHideRock.value = metal ? 1 : 0;
+  content.add(shells, fronds.mesh, picker);
 
   return {
     surface, n,
     positions: geo.attributes.position as THREE.BufferAttribute,
     normals: geo.attributes.normal as THREE.BufferAttribute,
-    moss, cap, species, puff, puffVel, puffTarget, puffAttr, pillow, pillowAttr, settle, mossAttr, speciesAttr, shells, fronds, picker, kind, metal,
+    moss, cap, species, puff, puffVel, puffTarget, puffAttr, pillow, pillowAttr, settle, mossAttr, speciesAttr, shells, fronds, picker, kind,
     ...reachOf(surface, geo.attributes.normal as THREE.BufferAttribute),
   };
 }
@@ -306,8 +226,7 @@ function coverage() {
 }
 
 function destroyWorld(w: World) {
-  turntable.remove(w.shells, w.fronds.mesh, w.picker);
-  if (w.metal) { turntable.remove(w.metal); (w.metal.material as THREE.Material).dispose(); }
+  content.remove(w.shells, w.fronds.mesh, w.picker);
   w.surface.geometry.dispose();
   w.fronds.mesh.geometry.dispose();
   (w.fronds.mesh.material as THREE.Material).dispose();
@@ -319,16 +238,7 @@ function destroyWorld(w: World) {
 // the font is tiny and local, load it before anything else. Regular, not bold: the rounding and the moss
 // thicken every stroke, and bold counters (A, e, 4) close up
 const font: Font = await new FontLoader().loadAsync(`${import.meta.env.BASE_URL}fonts/helvetiker_regular.typeface.json`);
-// Helvetica's M runs its middle vertex all the way to the baseline, which turns into a heavy V once
-// the letter is rounded. Lift the flat bottom of the V and the notch above it by the same amount.
-{
-  const lift = 300;
-  const M = (font.data as { glyphs: Record<string, { o: string }> }).glyphs['M'];
-  M.o = M.o
-    .replace('l 537 0', `l 537 ${lift}`)
-    .replace('l 405 0', `l 405 ${lift}`)
-    .replace('l 472 160', `l 472 ${160 + lift}`);
-}
+fixGlyphs(font);
 let pillowDirty = true;
 let W = createWorld('M', 'rock');
 let dirty = true;
@@ -407,7 +317,7 @@ function pick(e: { clientX: number; clientY: number }) {
 const brushLocal = new THREE.Vector3();
 function brush(worldPoint: THREE.Vector3, scrape: boolean) {
   const { moss, cap, positions, surface } = W;
-  // the hit is in world space, the vertices are in the mesh's own space on the turntable
+  // the hit is in world space, the vertices in the mesh's own
   const point = W.picker.worldToLocal(brushLocal.copy(worldPoint));
   const r = scrape ? brushRadius * 1.35 : brushRadius;
   const r2 = r * r;
@@ -479,7 +389,7 @@ function fillAll() {
     shellMat.uniforms.uExposure.value = TONE_EXPOSURE[k];
   });
   const ssaoBox = panel.querySelector<HTMLInputElement>('input[data-toggle="ssao"]')!;
-  ssaoBox.addEventListener('change', () => { setSsao(ssaoBox.checked); });
+  ssaoBox.addEventListener('change', () => { ssaoOn = ssaoBox.checked; });
 }
 
 // ---- cursor (mouse only): a cross over the object where a drag paints, an open hand beside it where
@@ -508,7 +418,7 @@ canvas.addEventListener('pointermove', (e) => {
 canvas.addEventListener('pointerleave', () => { hover.pending = false; });
 addEventListener('keydown', (e) => { if (e.key === 'Meta' || e.key === 'Control') { hover.mod = true; setCursor(); } });
 addEventListener('keyup', (e) => { if (e.key === 'Meta' || e.key === 'Control') { hover.mod = false; setCursor(); } });
-// space held: a drag turns and tilts the object wherever it starts, even on top of it (like a hand tool)
+// space held: a drag orbits wherever it starts, even on top of the object (like a hand tool)
 const typing = (t: EventTarget | null) => t instanceof HTMLInputElement || t instanceof HTMLSelectElement || t instanceof HTMLTextAreaElement;
 addEventListener('keydown', (e) => {
   if (e.code !== 'Space' || typing(e.target)) return;
@@ -539,58 +449,21 @@ function showRing(point: THREE.Vector3, r: number, x: number, y: number) {
   sizeRing.style.top = `${y}px`;
 }
 
-// ---- turntable drag: horizontal movement turns the object, a flick coasts to a stop
-const touchXY = new Map<number, [number, number]>();
-function mid(): [number, number] {
-  let x = 0, y = 0;
-  for (const v of touchXY.values()) { x += v[0]; y += v[1]; }
-  const n = Math.max(1, touchXY.size);
-  return [x / n, y / n];
-}
-function startTurn(x: number, y: number, t: number) {
-  turning = true;
-  turnLastX = x;
-  turnLastY = y;
-  turnLastT = t;
-  yawVel = 0;
-  // pick up where it is: undo the soft limit so the next drag continues without a jump
-  tiltRaw = TILT_MAX * Math.atanh(THREE.MathUtils.clamp(tilt / TILT_MAX, -0.999, 0.999));
-  tiltVel = 0;
-}
-function moveTurn(x: number, y: number, t: number) {
-  if (!turning) startTurn(x, y, t);
-  const d = (x - turnLastX) * TURN_SPEED;
-  const dt = Math.max(1, t - turnLastT) / 1000;
-  yaw += d;
-  yawVel = THREE.MathUtils.lerp(yawVel, d / dt, 0.5);
-  // vertical: drag up and the front comes up. A soft limit, so it gets heavier towards 30 degrees.
-  tiltRaw += (y - turnLastY) * TURN_SPEED;
-  const prev = tilt;
-  tilt = TILT_MAX * Math.tanh(tiltRaw / TILT_MAX);
-  tiltVel = THREE.MathUtils.lerp(tiltVel, (tilt - prev) / dt, 0.5);
-  turnLastX = x;
-  turnLastY = y;
-  turnLastT = t;
-}
-
 canvas.addEventListener('pointerdown', (e) => {
   if (e.pointerType === 'touch') {
     touchIds.add(e.pointerId);
-    touchXY.set(e.pointerId, [e.clientX, e.clientY]);
     if (touchIds.size >= 2) {
-      // a second finger: stop painting, the two fingers turn the turntable (and pinch zooms)
+      // a second finger: stop painting and let the controls orbit
       painting = false;
       sizing = false;
       sizeRing.style.display = 'none';
-      startTurn(...mid(), e.timeStamp);
       return;
     }
   }
   if (spaceHeld && e.pointerType === 'mouse') {
+    // the controls are already orbiting: just do not paint
     orbiting = true;
-    startTurn(e.clientX, e.clientY, e.timeStamp);
     setCursor();
-    try { canvas.setPointerCapture(e.pointerId); } catch { /* synthetic events */ }
     return;
   }
   const p = pick(e);
@@ -608,13 +481,8 @@ canvas.addEventListener('pointerdown', (e) => {
     return;
   }
   if (!p) {
-    // off the object: turn the turntable
-    if (e.pointerType === 'mouse') {
-      orbiting = true;
-      startTurn(e.clientX, e.clientY, e.timeStamp);
-      setCursor();
-      try { canvas.setPointerCapture(e.pointerId); } catch { /* synthetic events */ }
-    }
+    // off the object: let OrbitControls have it
+    if (e.pointerType === 'mouse') { orbiting = true; setCursor(); }
     return;
   }
   painting = true;
@@ -629,9 +497,7 @@ canvas.addEventListener('pointerdown', (e) => {
   try { canvas.setPointerCapture(e.pointerId); } catch { /* synthetic events */ }
 });
 canvas.addEventListener('pointermove', (e) => {
-  if (e.pointerType === 'touch' && touchXY.has(e.pointerId)) touchXY.set(e.pointerId, [e.clientX, e.clientY]);
-  if (touchIds.size >= 2) { moveTurn(...mid(), e.timeStamp); touchTurned = true; return; }
-  if (orbiting) { moveTurn(e.clientX, e.clientY, e.timeStamp); return; }
+  if (touchIds.size >= 2 || orbiting) return;
   if (sizing && sizeAnchor) {
     const k = Math.exp((e.clientX - sizeStartX) / 160); // exponential: same feel small and big
     brushRadius = THREE.MathUtils.clamp(sizeStartR * k, BRUSH_MIN, BRUSH_MAX);
@@ -654,10 +520,7 @@ const stop = () => {
   controls.enabled = true;
 };
 const release = (e: PointerEvent) => {
-  if (touchIds.size >= 2 && touchTurned) touchHint.classList.add('done');
   touchIds.delete(e.pointerId);
-  touchXY.delete(e.pointerId);
-  turning = false;
   if (painting) requestThumb(45); // after the stroke has grown in a bit
   stop();
   orbiting = false;
@@ -704,13 +567,11 @@ addEventListener('keydown', (e) => {
   if (e.key === '6' || e.key === 'a') setBrush(-1);
   if (e.key === 'x') setBrush(null, !scrapeTool);
   if (e.key === 'h') {
-    const hidden = shellMat.uniforms.uHideRock.value === 1 && !W.metal ? 0 : 1;
-    shellMat.uniforms.uHideRock.value = hidden;
-    if (W.metal) W.metal.visible = hidden === 1 && W.metal.visible ? false : true;
+    shellMat.uniforms.uHideRock.value = 1 - shellMat.uniforms.uHideRock.value;
   }
 });
 setBrush(0);
-renderSwatches(renderer, SHELLS, LIGHT_BASE.clone());
+renderSwatches(renderer, SHELLS, LIGHT_BASE);
 renderEraser(renderer);
 
 // ---- framing
@@ -720,7 +581,7 @@ function frameWord() {
   const width = bb.max.x - bb.min.x;
   const height = bb.max.y - bb.min.y;
   const depth = bb.max.z - bb.min.z;
-  const center = new THREE.Vector3((bb.min.x + bb.max.x) / 2, (bb.min.y + bb.max.y) / 2, (bb.min.z + bb.max.z) / 2);
+  const center = bb.getCenter(new THREE.Vector3());
   // everything floats: the ground sits a gap below the object's lowest point, more for the rock so the moss
   // around its belly never touches. The eye height below follows the ground.
   ground.position.y = bb.min.y - (W.kind === 'rock' ? 0.4 : 0.25);
@@ -762,9 +623,9 @@ function rebuild(text: string, kind: 'word' | 'rock') {
   dirty = true;
   shadowDirty = true;
 }
-// ---- moss size slider: scales fronds, straws, fuzz and bulge together
+// ---- moss size: scales fronds, straws, fuzz and bulge together
 const BASE = { height: 0.012, bulge: 0.035, len: 0.032, star: 0.038, lichen: 0.07, width: 0.0042 };
-let mossScale = 1.75;
+const mossScale = 1.75; // moss size relative to the base numbers above
 function applyScale() {
   shellMat.uniforms.uHeight.value = BASE.height * mossScale;
   shellMat.uniforms.uBulge.value = BASE.bulge * mossScale;
@@ -776,15 +637,7 @@ function applyScale() {
   fu.uWidth.value = BASE.width * mossScale;
   fu.uBulge.value = BASE.bulge * mossScale;
 }
-const scaleInput = document.querySelector<HTMLInputElement>('.scale input')!;
-const scaleLabel = document.querySelector<HTMLElement>('.scale span')!;
-scaleInput.addEventListener('input', () => {
-  mossScale = Number(scaleInput.value) / 100;
-  scaleLabel.textContent = `moss ${scaleInput.value}%`;
-  applyScale();
-});
-scaleInput.addEventListener('keydown', (e) => e.stopPropagation());
-applyScale(); // start at the default size
+applyScale();
 
 // ---- thumbnail of the current object, with its moss, from the framed view
 const framedPos = new THREE.Vector3();
@@ -792,29 +645,14 @@ const framedTarget = new THREE.Vector3();
 const THUMB = 128;
 const thumbRT = new THREE.WebGLRenderTarget(THUMB, THUMB, { colorSpace: THREE.SRGBColorSpace, samples: 4 });
 const thumbCam = new THREE.PerspectiveCamera(camera.fov, 1, 0.1, 50);
-const thumbPixels = new Uint8Array(THUMB * THUMB * 4);
-const thumbCanvas = document.createElement('canvas');
-thumbCanvas.width = thumbCanvas.height = THUMB;
-const thumbCtx = thumbCanvas.getContext('2d')!;
-const thumbImg = thumbCtx.createImageData(THUMB, THUMB);
 function snapshot(): string {
   // square frame: pull back a little so the widest side fits
   thumbCam.position.copy(framedTarget).add(framedPos.clone().sub(framedTarget).multiplyScalar(0.8));
   thumbCam.lookAt(framedTarget);
-  const prevClear = renderer.getClearAlpha();
   ground.visible = false;
-  renderer.setClearAlpha(0);
-  renderer.setRenderTarget(thumbRT);
-  renderer.clear();
-  renderer.render(scene, thumbCam);
-  renderer.readRenderTargetPixels(thumbRT, 0, 0, THUMB, THUMB, thumbPixels);
-  renderer.setRenderTarget(null);
-  renderer.setClearAlpha(prevClear);
+  const url = renderToDataURL(renderer, scene, thumbCam, thumbRT);
   ground.visible = true;
-  const row = THUMB * 4;
-  for (let y = 0; y < THUMB; y++) thumbImg.data.set(thumbPixels.subarray((THUMB - 1 - y) * row, (THUMB - y) * row), y * row);
-  thumbCtx.putImageData(thumbImg, 0, 0);
-  return thumbCanvas.toDataURL('image/png');
+  return url;
 }
 let thumbDirty = 0; // frames to wait before the next snapshot, 0 = nothing pending
 function requestThumb(delayFrames = 2) { thumbDirty = Math.max(thumbDirty, delayFrames); }
@@ -861,7 +699,7 @@ function setLocked() {
   if (unlocked && !glyphThumbsStarted) {
     glyphThumbsStarted = true;
     // mossy miniatures of every glyph, one per frame; the green text stands in until each one lands
-    renderGlyphThumbs(renderer, font, CHARS, LIGHT_BASE.clone(), (c, url) => {
+    renderGlyphThumbs(renderer, font, CHARS, LIGHT_BASE, (c, url) => {
       const b = letterPop.querySelector<HTMLButtonElement>(`button[data-choice="${c}"]`);
       if (!b) return;
       b.style.backgroundImage = `url(${url})`;
@@ -950,15 +788,6 @@ addEventListener('pointerdown', (e) => {
 });
 addEventListener('keydown', (e) => { if (e.key === 'Escape') setPop(false); });
 
-// ---- object toggle: letters or the silver rock
-const objectButtons = Array.from(document.querySelectorAll<HTMLButtonElement>('.objects button'));
-objectButtons.forEach((b) =>
-  b.addEventListener('click', () => {
-    const kind = b.dataset.object as 'word' | 'rock';
-    objectButtons.forEach((o) => o.classList.toggle('active', o === b));
-    rebuild('M', kind);
-  }),
-);
 let shadowDirty = true;
 
 // ---- growth: painted moss ages up in place, it does not spread
@@ -1065,9 +894,6 @@ aoPass.blendIntensity = 0.9;
 composer.addPass(aoPass);
 composer.addPass(new OutputPass());
 let ssaoOn = true;
-function setSsao(on: boolean) {
-  ssaoOn = on;
-}
 
 function resize() {
   renderer.setSize(innerWidth, innerHeight);
@@ -1088,17 +914,10 @@ const rimDir = new THREE.Vector3();
 shellMat.uniforms.uRimDir.value = rimDir;
 renderer.setAnimationLoop(() => {
   const dt = Math.min(clock.getDelta(), 0.05);
-  shellMat.uniforms.uTime.value = clock.elapsedTime;
   // the back light hangs behind the object and a bit above it, wherever the camera goes
   camera.getWorldDirection(rimDir);
   rimDir.y += 0.7;
   rimDir.normalize();
-  const fu = (W.fronds.mesh.material as THREE.ShaderMaterial).uniforms;
-  fu.uRimDir.value = rimDir;
-  fu.uRim.value = shellMat.uniforms.uRim.value;
-  fu.uHemi.value = shellMat.uniforms.uHemi.value;
-  fu.uTone.value = shellMat.uniforms.uTone.value;
-  fu.uExposure.value = shellMat.uniforms.uExposure.value;
   grow(dt);
   blendSpecies(dt);
   springPuff(dt);
@@ -1120,38 +939,22 @@ renderer.setAnimationLoop(() => {
     for (let i = 0; i < W.n; i++) ptex[i * 4 + 2] = species[i * SPECIES + 3];
     fronds.puffTexture.needsUpdate = true;
     dirty = false;
+    mossShadowStale = true; // the moss grew or changed: its own shadows are out of date
   }
   if (++meterTick % 12 === 0) updateMeter();
   updateHover();
   controls.update();
-  if (!turning && Math.abs(yawVel) > 1e-3) {
-    yaw += yawVel * dt;
-    yawVel *= Math.exp(-dt * 5);
-  }
-  if (!turning && (tiltVel !== 0 || Math.abs(tilt) > TILT_MAX)) {
-    // the tilt stays where it is let go, so the underside can be painted. A flick coasts on and slows down;
-    // past 30 degrees an underdamped spring pulls it back, so it bounces off the limit. Substepped, so a slow
-    // frame cannot blow the spring up.
-    let left = dt;
-    while (left > 1e-6) {
-      const h = Math.min(left, 1 / 240);
-      const over = tilt - THREE.MathUtils.clamp(tilt, -TILT_MAX, TILT_MAX);
-      tiltVel += (over !== 0 ? -160 * over - 6 * tiltVel : -4 * tiltVel) * h;
-      tilt += tiltVel * h;
-      left -= h;
-    }
-    if (Math.abs(tiltVel) < 1e-3 && Math.abs(tilt) <= TILT_MAX) tiltVel = 0;
-  }
-  turntable.rotation.y = yaw;
-  tiltGroup.rotation.x = tilt;
-  tiltGroup.updateMatrixWorld();
-  fu.uLightDir.value = lightDir;
-  // the object turns under a fixed light: re-render the shadow map every couple of degrees, not every frame
-  if (shadowDirty || !(Math.abs(yaw - shadowYaw) < 0.035) || !(Math.abs(tilt - shadowTilt) < 0.035)) {
+  const az = controls.getAzimuthalAngle();
+  lightDir.copy(LIGHT_BASE).applyAxisAngle(UP, az);
+  // re-render the shadow map every couple of degrees while orbiting, and a few times a second while the
+  // moss grows, so freshly painted moss casts its shadow without having to turn the view first
+  const now = performance.now();
+  if (shadowDirty || !(Math.abs(az - shadowAz) < 0.035) || (mossShadowStale && now - lastShadowMs > 150)) {
     renderShadow();
-    shadowYaw = yaw;
-    shadowTilt = tilt;
+    shadowAz = az;
+    lastShadowMs = now;
     shadowDirty = false;
+    mossShadowStale = false;
   }
   if (ssaoOn) {
     renderer.setRenderTarget(beautyRT);

@@ -4,6 +4,7 @@ import * as THREE from 'three';
 import type { Font } from 'three/addons/loaders/FontLoader.js';
 import { buildWord } from './objects';
 import { shellVertex, shellFragment } from './shaders';
+import { renderToDataURL } from './render';
 
 const SIZE = 96;
 const SHELLS = 10;
@@ -22,7 +23,6 @@ export function renderGlyphThumbs(
     uniforms: {
       uHeight: { value: 0.05 },
       uBulge: { value: 0.09 },
-      uTime: { value: 0 },
       uLightDir: { value: lightDir },
       uHideRock: { value: 0 },
       uScale: { value: 2.2 },
@@ -34,11 +34,6 @@ export function renderGlyphThumbs(
   const scene = new THREE.Scene();
   const camera = new THREE.PerspectiveCamera(30, 1, 0.1, 40);
   const rt = new THREE.WebGLRenderTarget(SIZE * 2, SIZE * 2, { colorSpace: THREE.SRGBColorSpace, samples: 4 });
-  const pixels = new Uint8Array(SIZE * 2 * SIZE * 2 * 4);
-  const canvas = document.createElement('canvas');
-  canvas.width = canvas.height = SIZE * 2;
-  const ctx = canvas.getContext('2d')!;
-  const img = ctx.createImageData(SIZE * 2, SIZE * 2);
 
   let k = 0;
   const step = () => {
@@ -52,7 +47,7 @@ export function renderGlyphThumbs(
     const geo = surface.geometry;
     const n = geo.attributes.position.count;
     geo.setAttribute('moss', new THREE.BufferAttribute(new Float32Array(n), 1)); // bare: the letter itself, no moss
-    // all cushion moss: weights 0,0,0,1,0 interleaved like the main scene
+    // the shell shader still wants species weights, any will do with no moss: one-hot cushion
     const w = new Float32Array(n * 5);
     for (let i = 0; i < n; i++) w[i * 5 + 3] = 1;
     const wb = new THREE.InterleavedBuffer(w, 5);
@@ -61,7 +56,8 @@ export function renderGlyphThumbs(
     geo.setAttribute('dead', new THREE.BufferAttribute(new Float32Array(n), 1));
     geo.setAttribute('pillow', new THREE.BufferAttribute(surface.pillow, 1));
     geo.setAttribute('puff', new THREE.BufferAttribute(new Float32Array(n), 1));
-    const mesh = new THREE.InstancedMesh(geo, material, SHELLS);
+    // bare letters only need the base pass: one instance, the fuzz shells above it would all discard
+    const mesh = new THREE.InstancedMesh(geo, material, 1);
     mesh.frustumCulled = false;
     scene.add(mesh);
 
@@ -73,19 +69,7 @@ export function renderGlyphThumbs(
     camera.position.set(center.x + dist * 0.18, center.y + dist * 0.22, center.z + dist);
     camera.lookAt(center);
 
-    const prevTarget = renderer.getRenderTarget();
-    const prevClear = renderer.getClearAlpha();
-    renderer.setClearAlpha(0);
-    renderer.setRenderTarget(rt);
-    renderer.clear();
-    renderer.render(scene, camera);
-    renderer.readRenderTargetPixels(rt, 0, 0, SIZE * 2, SIZE * 2, pixels);
-    renderer.setRenderTarget(prevTarget);
-    renderer.setClearAlpha(prevClear);
-    const row = SIZE * 2 * 4;
-    for (let y = 0; y < SIZE * 2; y++) img.data.set(pixels.subarray((SIZE * 2 - 1 - y) * row, (SIZE * 2 - y) * row), y * row);
-    ctx.putImageData(img, 0, 0);
-    onThumb(c, canvas.toDataURL('image/png'));
+    onThumb(c, renderToDataURL(renderer, scene, camera, rt));
 
     scene.remove(mesh);
     geo.dispose();

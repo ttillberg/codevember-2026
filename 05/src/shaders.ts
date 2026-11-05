@@ -11,7 +11,6 @@ attribute float cavity; // baked occlusion: 1 deep in a hole or an inner corner
 
 uniform float uHeight;
 uniform float uBulge;
-uniform float uTime;
 uniform float uScale;
 
 varying float vShell;
@@ -66,25 +65,19 @@ void main() {
 }
 `;
 
-export const shellFragment = /* glsl */ `
-precision highp float;
-
-uniform vec3 uLightDir;
-uniform float uTime;
-uniform float uHideRock;
-uniform float uScale; // moss size, 0.5 .. 2
-
+// Shared by the shell and the frond fragment shaders, so the fuzz and the fronds are lit the same way.
+export const mossLighting = /* glsl */ `
 uniform sampler2D uShadowMap;
 uniform mat4 uShadowMatrix;
 uniform float uShadowOn;
 
-// 3x3 PCF against a depth texture rendered from the light. 1 = lit, 0.3 = fully shadowed.
+// soft shadow from a depth map rendered from the light: 16 Poisson taps. 1 = lit, 0.45 = fully shadowed.
 float shadowAt(vec3 worldPos, vec3 n) {
   if (uShadowOn < 0.5) return 1.0;
   vec4 sc = uShadowMatrix * vec4(worldPos + n * 0.03, 1.0);
   vec3 p = sc.xyz / sc.w * 0.5 + 0.5;
   if (p.x < 0.0 || p.x > 1.0 || p.y < 0.0 || p.y > 1.0 || p.z > 1.0) return 1.0;
-  // wide, soft penumbra: 16 Poisson taps spread over ~3 texels
+  // wide, soft penumbra: taps spread over ~5 texels of the 2048 map
   float texel = 5.0 / 2048.0;
   vec2 taps[16];
   taps[0] = vec2(-0.94, 0.0); taps[1] = vec2(0.94, -0.4); taps[2] = vec2(-0.09, -0.93); taps[3] = vec2(0.34, 0.29);
@@ -99,6 +92,60 @@ float shadowAt(vec3 worldPos, vec3 n) {
   }
   return mix(0.45, 1.0, lit / 16.0);
 }
+
+// coloured ambient: where the key light does not reach, the moss takes a cool sky fill from above and a
+// warm, greenish bounce from below instead of flat grey
+uniform float uHemi; // 0 = off (swatches, thumbnails)
+vec3 skyTint(vec3 N, float shade) {
+  vec3 sky = vec3(0.60, 0.84, 1.32);
+  vec3 bounce = vec3(1.28, 1.10, 0.45);
+  vec3 t = mix(bounce, sky, smoothstep(-0.6, 0.8, N.y));
+  return mix(vec3(1.0), t, uHemi * clamp(shade, 0.0, 1.0));
+}
+
+// back light: sits behind the object as seen from the camera, so it follows the view. It only reaches the
+// silhouette, where fuzz and frond tips catch it and glow against the background.
+uniform vec3 uRimDir;
+uniform float uRim; // 0 = off (swatches, thumbnails)
+vec3 rimLight(vec3 N, vec3 V) {
+  if (uRim <= 0.0) return vec3(0.0);
+  vec3 R = normalize(uRimDir);
+  float fres = pow(1.0 - max(dot(N, V), 0.0), 3.0); // tight: just the outline
+  float facing = smoothstep(-0.1, 0.7, dot(N, R));
+  return vec3(1.0, 0.93, 0.70) * fres * facing * uRim;
+}
+
+// tone mapping, on the moss only: the white rock, the ground and the page background stay exactly as they are.
+// 0 = none (just the grade), 1 = AgX, 2 = ACES, 3 = Neutral; switchable in the debug panel
+#include <tonemapping_pars_fragment>
+uniform float uTone;
+uniform float uExposure;
+vec3 tonemap(vec3 c) {
+  if (uTone < 0.5) return c;
+  c *= uExposure;
+  if (uTone < 1.5) return AgXToneMapping(c);
+  if (uTone < 2.5) return ACESFilmicToneMapping(c);
+  return NeutralToneMapping(c);
+}
+
+// colour grade for the moss only: a touch of exposure, saturation and contrast, in linear light
+vec3 grade(vec3 c) {
+  c *= 1.3;
+  float l = dot(c, vec3(0.299, 0.587, 0.114));
+  c = mix(vec3(l), c, 1.35);
+  c = (c - 0.18) * 1.1 + 0.18;
+  return max(c, 0.0);
+}
+`;
+
+export const shellFragment = /* glsl */ `
+precision highp float;
+
+uniform vec3 uLightDir;
+uniform float uHideRock;
+uniform float uScale; // moss size, 0.5 .. 2
+
+${mossLighting}
 
 varying float vShell;
 varying float vMoss;
@@ -159,50 +206,6 @@ float techGrid(vec3 p, vec3 n, float cell, float width) {
   return gridLine(p.yz, cell, width) * a.x + gridLine(p.xz, cell, width) * a.y + gridLine(p.xy, cell, width) * a.z;
 }
 
-// coloured ambient: where the key light does not reach, the moss takes a cool sky fill from above and a
-// warm, greenish bounce from below instead of flat grey
-uniform float uHemi; // 0 = off (swatches, thumbnails)
-vec3 skyTint(vec3 N, float shade) {
-  vec3 sky = vec3(0.60, 0.84, 1.32);
-  vec3 bounce = vec3(1.28, 1.10, 0.45);
-  vec3 t = mix(bounce, sky, smoothstep(-0.6, 0.8, N.y));
-  return mix(vec3(1.0), t, uHemi * clamp(shade, 0.0, 1.0));
-}
-
-// back light: sits behind the object as seen from the camera, so it follows the view. It only reaches the
-// silhouette, where fuzz and frond tips catch it and glow against the background.
-uniform vec3 uRimDir;
-uniform float uRim; // 0 = off (swatches, thumbnails)
-vec3 rimLight(vec3 N, vec3 V) {
-  if (uRim <= 0.0) return vec3(0.0);
-  vec3 R = normalize(uRimDir);
-  float fres = pow(1.0 - max(dot(N, V), 0.0), 3.0); // tight: just the outline
-  float facing = smoothstep(-0.1, 0.7, dot(N, R));
-  return vec3(1.0, 0.93, 0.70) * fres * facing * uRim;
-}
-
-// tone mapping, on the moss only: the white rock, the ground and the page background stay exactly as they are.
-// 0 = none (just the grade), 1 = AgX, 2 = ACES, 3 = Neutral; switchable in the debug panel
-#include <tonemapping_pars_fragment>
-uniform float uTone;
-uniform float uExposure;
-vec3 tonemap(vec3 c) {
-  if (uTone < 0.5) return c;
-  c *= uExposure;
-  if (uTone < 1.5) return AgXToneMapping(c);
-  if (uTone < 2.5) return ACESFilmicToneMapping(c);
-  return NeutralToneMapping(c);
-}
-
-// colour grade for the moss only: a touch of exposure, saturation and contrast, in linear light
-vec3 grade(vec3 c) {
-  c *= 1.3;
-  float l = dot(c, vec3(0.299, 0.587, 0.114));
-  c = mix(vec3(l), c, 1.35);
-  c = (c - 0.18) * 1.1 + 0.18;
-  return max(c, 0.0);
-}
-
 
 void main() {
   vec3 L = normalize(uLightDir);
@@ -216,6 +219,43 @@ void main() {
   vec3 N = normalize(mix(normalize(vMossNormal), gN, 0.7)); // moss is lit along its own smooth field
 
   float ndv = max(dot(N, V), 0.0);
+  // ---- fuzz shells decide first whether this fragment exists at all: the density test needs no light,
+  // so discarded fragments never pay for the shadow taps below
+  float pillow = vPillow;
+  float top = 0.0, uu = 0.0;
+  if (vShell >= 0.001) {
+    float lump = noise3(vLocal * 9.0 + 5.0) * 0.5 + 0.5;
+    float ageH = pow(age, dot(w, kAgePow) + w5 * kAgePow5);
+    top = ageH * mix(mix(0.5, 0.94, w.w), 1.0, lump) * mix(mix(0.35, 0.95, w.w), 1.0, pillow) * (dot(w, kHeight) + w5 * kHeight5);
+    top *= mix(1.0, mix(0.7, 1.0, vDome), w.w); // short in the crevices between cushion clumps
+    // seen edge-on the stacked layers read as streaks too: short fuzz at grazing angles, the velvet base carries it
+    float facing = smoothstep(0.15, 0.6, abs(dot(normalize(vMossNormal), V)));
+    top *= mix(1.0, mix(0.2, 1.0, facing), w.w);
+    if (vShell > top) discard;
+    uu = vShell / max(top, 0.001);
+
+    // lean the sample point as we go up so strands curve instead of standing in straight columns,
+    // which at grazing angles would show the shell layers as streaks
+    vec3 lean = (vec3(noise3(vLocal * 60.0 / uScale), noise3(vLocal * 60.0 / uScale + 17.0), noise3(vLocal * 60.0 / uScale + 31.0)) - 0.5) * 2.0;
+    lean -= vLocalNormal * dot(lean, vLocalNormal);
+    vec3 q = vLocal + lean * uu * uu * 0.006;
+    // cushion moss: more fine grain than the others, so it reads as dense short strands
+    float fineW = mix(0.2, 0.45, w.w);
+    float midW = mix(0.3, 0.4, w.w);
+    // the voxel hash reads as a grid on cushion's smooth domes: there it fades to smooth noise
+    // sampled in a rotated frame, so no lattice lines up with the surface
+    const mat3 rot = mat3(0.80, 0.36, -0.48, -0.60, 0.48, -0.64, 0.0, 0.80, 0.60);
+    float grain = mix(hash31(floor(q * 420.0 / uScale)), noise3(rot * q * 520.0 / uScale + 7.0), w.w);
+    // same for the mid and coarse terms: each in its own rotated frame so no two lattices line up
+    const mat3 rot2 = mat3(0.36, 0.48, 0.80, 0.80, -0.60, 0.0, 0.48, 0.64, -0.60);
+    vec3 qm = mix(q, rot2 * q + 3.0, w.w);
+    vec3 qc = mix(q, rot * rot2 * q + 11.0, w.w);
+    float dens = noise3(qc * 140.0 / uScale) * (1.0 - fineW - midW) + noise3(qm * 380.0 / uScale) * midW + grain * fineW;
+    // thin out more at grazing angles: the silhouette stays fuzzy but layers cannot line up
+    float graze = 1.0 - ndv;
+    if (dens < (dot(w, kDensity) + w5 * kDensity5) + 0.6 * uu + 0.35 * uu * graze) discard;
+  }
+
   float shadow = shadowAt(vWorldPos, N);
   float sheen = pow(1.0 - ndv, 2.5) * (dot(w, kSheen) + w5 * kSheen5) * mix(0.4, 1.0, shadow);
   // directional, not wrapped: sides facing away from the light go properly dark
@@ -245,16 +285,13 @@ void main() {
 
   // shared fields
   float bump = noise3(vLocal * 70.0 / uScale) * 0.6 + noise3(vLocal * 180.0 / uScale) * 0.4;      // micro height
-  float pillow = vPillow;
-  float lump = noise3(vLocal * 9.0 + 5.0) * 0.5 + 0.5;
 
   if (vShell < 0.001) {
     // ---- ground: white surface, taking on the species' velvet shade as the moss matures
-    if (uHideRock > 1.5) discard;              // 2 = no base at all, fuzz and fronds only
     if (uHideRock > 0.5 && age < 0.3) discard; // 1 = rock hidden, no pale rim
     // bare surface: smooth vertex normal, no faceting. The geometric normal is only for the mounds.
     vec3 sN = normalize(vWorldNormal);
-    float diff = max(dot(sN, L), 0.0) * mix(0.75, 1.0, shadowAt(vWorldPos, sN)); // gentle on the white
+    float diff = max(dot(sN, L), 0.0) * mix(0.75, 1.0, shadow); // gentle on the white
     vec3 rock = vec3(0.82) * (0.38 + 0.22 * (0.5 + 0.5 * sN.y) + 0.5 * diff);
     // techie: a fine grid etched into the white, a heavier line every fifth, fading under the moss
     // the grid lives on the object, in its own space, so it turns with it on the turntable
@@ -282,37 +319,7 @@ void main() {
     return;
   }
 
-  // ---- fuzz: a noise density field, dense at the root and thinning upward.
-  float ageH = pow(age, dot(w, kAgePow) + w5 * kAgePow5);
-  float top = ageH * mix(mix(0.5, 0.94, w.w), 1.0, lump) * mix(mix(0.35, 0.95, w.w), 1.0, pillow) * (dot(w, kHeight) + w5 * kHeight5);
-  top *= mix(1.0, mix(0.7, 1.0, vDome), w.w); // short in the crevices between cushion clumps
-  // seen edge-on the stacked layers read as streaks too: short fuzz at grazing angles, the velvet base carries it
-  float facing = smoothstep(0.15, 0.6, abs(dot(normalize(vMossNormal), V)));
-  top *= mix(1.0, mix(0.2, 1.0, facing), w.w);
-  if (vShell > top) discard;
-  float uu = vShell / max(top, 0.001);
-
-  // lean the sample point as we go up so strands curve instead of standing in straight columns,
-  // which at grazing angles would show the shell layers as streaks
-  vec3 lean = (vec3(noise3(vLocal * 60.0 / uScale), noise3(vLocal * 60.0 / uScale + 17.0), noise3(vLocal * 60.0 / uScale + 31.0)) - 0.5) * 2.0;
-  lean -= vLocalNormal * dot(lean, vLocalNormal);
-  vec3 q = vLocal + lean * uu * uu * 0.006;
-  // cushion moss: more fine grain than the others, so it reads as dense short strands
-  float fineW = mix(0.2, 0.45, w.w);
-  float midW = mix(0.3, 0.4, w.w);
-  // the voxel hash reads as a grid on cushion's smooth domes: there it fades to smooth noise
-  // sampled in a rotated frame, so no lattice lines up with the surface
-  const mat3 rot = mat3(0.80, 0.36, -0.48, -0.60, 0.48, -0.64, 0.0, 0.80, 0.60);
-  float grain = mix(hash31(floor(q * 420.0 / uScale)), noise3(rot * q * 520.0 / uScale + 7.0), w.w);
-  // same for the mid and coarse terms: each in its own rotated frame so no two lattices line up
-  const mat3 rot2 = mat3(0.36, 0.48, 0.80, 0.80, -0.60, 0.0, 0.48, 0.64, -0.60);
-  vec3 qm = mix(q, rot2 * q + 3.0, w.w);
-  vec3 qc = mix(q, rot * rot2 * q + 11.0, w.w);
-  float dens = noise3(qc * 140.0 / uScale) * (1.0 - fineW - midW) + noise3(qm * 380.0 / uScale) * midW + grain * fineW;
-  // thin out more at grazing angles: the silhouette stays fuzzy but layers cannot line up
-  float graze = 1.0 - ndv;
-  if (dens < (dot(w, kDensity) + w5 * kDensity5) + 0.6 * uu + 0.35 * uu * graze) discard;
-
+  // ---- fuzz: coloured strands, dense at the root and thinning upward
   vec3 col = mix(deep, lime, pow(uu, 1.2) * (0.25 + 0.75 * wrap)) + lime * sheen * uu;
   // young sparse moss at a patch edge reads as light specks, not dirt
   col = mix(col, lime * 0.8, (1.0 - smoothstep(0.1, 0.5, age)) * 0.7);

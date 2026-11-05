@@ -39,6 +39,8 @@ Lives in each day's `package.json`:
 
 Each day also has a short `README.md`: what it is, what was tried, what was learned. The build does not read it.
 
+Optional `NN/screengrab.png`: a square shot of the experiment, no UI, 1200 × 1200. The build copies it to `dist/NN/screengrab.png`, the index shows it in the day's square, and the day's `index.html` can point `og:image` at `https://ttillberg.github.io/codevember-2026/NN/screengrab.png`.
+
 ## Build and deploy
 
 ```sh
@@ -48,7 +50,7 @@ pnpm build
 Runs, in order:
 
 1. `vite build` in each `NN/` with `CODEVEMBER_BASE=/codevember-2026/NN/`, copied to `dist/NN/`
-2. generates `dist/index.html` listing every day
+2. generates `dist/index.html`: a white page with a square per day of the month, linked once built, showing its screengrab
 3. rewrites the table in the root `README.md` between `<!-- days:start -->` and `<!-- days:end -->`
 
 Commit the README change. CI runs the same command on push to `main` and deploys `dist/` to GitHub Pages via Actions. One day failing to build fails the whole deploy, on purpose.

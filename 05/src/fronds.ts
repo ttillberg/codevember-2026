@@ -3,7 +3,8 @@
 // mirrors the per-vertex moss attribute.
 import * as THREE from 'three';
 import { fbm3, mulberry32 } from './noise';
-import { deadAt, domeAt, pillowAt } from './rock';
+import { deadAt, domeAt } from './rock';
+import { mossLighting } from './shaders';
 
 export interface Fronds {
   mesh: THREE.Mesh;
@@ -60,7 +61,6 @@ export function buildFronds(rock: THREE.BufferGeometry, fertility: Float32Array,
   const iTan = new Float32Array(count * 3);
   const iSeed = new Float32Array(count * 4);
   const iVert = new Float32Array(count);
-  const iClump = new Float32Array(count);
   const iDead = new Float32Array(count);
   const iStraw = new Float32Array(count); // straw-rich areas: about a tenth of the surface
   const iPick = new Float32Array(count);
@@ -107,7 +107,6 @@ export function buildFronds(rock: THREE.BufferGeometry, fertility: Float32Array,
     iCavity[i] = cav ? cav.getX(ia) * w + cav.getX(ib) * u + cav.getX(ic) * v : 0;
     iStraw[i] = THREE.MathUtils.smoothstep(fbm3(p.x * 1.7, p.y * 1.7, p.z * 1.7, 3, 61), 0.22, 0.38);
     iPick[i] = THREE.MathUtils.clamp(fbm3(p.x * 4.5, p.y * 4.5, p.z * 4.5, 3, 83) * 0.9 + 0.5 + (rand() - 0.5) * 0.12, 0, 1);
-    iClump[i] = pillowAt(p.x, p.y, p.z);
   }
 
   const tpl = ribbonTemplate(4, 2, 1, 6);
@@ -119,7 +118,6 @@ export function buildFronds(rock: THREE.BufferGeometry, fertility: Float32Array,
   geo.setAttribute('iTan', new THREE.InstancedBufferAttribute(iTan, 3));
   geo.setAttribute('iSeed', new THREE.InstancedBufferAttribute(iSeed, 4));
   geo.setAttribute('iVert', new THREE.InstancedBufferAttribute(iVert, 1));
-  geo.setAttribute('iClump', new THREE.InstancedBufferAttribute(iClump, 1));
   geo.setAttribute('iDead', new THREE.InstancedBufferAttribute(iDead, 1));
   geo.setAttribute('iStraw', new THREE.InstancedBufferAttribute(iStraw, 1));
   geo.setAttribute('iPick', new THREE.InstancedBufferAttribute(iPick, 1));
@@ -177,7 +175,6 @@ attribute vec3 iNor;
 attribute vec3 iTan;
 attribute vec4 iSeed;
 attribute float iVert;
-attribute float iClump;
 attribute float iDead;
 attribute float iStraw;
 attribute float iPick;
@@ -395,31 +392,7 @@ void main() {
 const frondFragment = /* glsl */ `
 precision highp float;
 uniform vec3 uLightDir;
-uniform sampler2D uShadowMap;
-uniform mat4 uShadowMatrix;
-uniform float uShadowOn;
-
-// 3x3 PCF against a depth texture rendered from the light. 1 = lit, 0.3 = fully shadowed.
-float shadowAt(vec3 worldPos, vec3 n) {
-  if (uShadowOn < 0.5) return 1.0;
-  vec4 sc = uShadowMatrix * vec4(worldPos + n * 0.03, 1.0);
-  vec3 p = sc.xyz / sc.w * 0.5 + 0.5;
-  if (p.x < 0.0 || p.x > 1.0 || p.y < 0.0 || p.y > 1.0 || p.z > 1.0) return 1.0;
-  // wide, soft penumbra: 16 Poisson taps spread over ~3 texels
-  float texel = 5.0 / 2048.0;
-  vec2 taps[16];
-  taps[0] = vec2(-0.94, 0.0); taps[1] = vec2(0.94, -0.4); taps[2] = vec2(-0.09, -0.93); taps[3] = vec2(0.34, 0.29);
-  taps[4] = vec2(-0.91, 0.46); taps[5] = vec2(-0.82, -0.59); taps[6] = vec2(-0.38, 0.28); taps[7] = vec2(0.97, 0.19);
-  taps[8] = vec2(0.44, -0.97); taps[9] = vec2(0.54, 0.77); taps[10] = vec2(-0.26, -0.42); taps[11] = vec2(-0.49, 0.9);
-  taps[12] = vec2(0.14, 0.69); taps[13] = vec2(0.73, -0.19); taps[14] = vec2(-0.6, -0.12); taps[15] = vec2(0.1, -0.33);
-  float lit = 0.0;
-  for (int i = 0; i < 16; i++) {
-    float d = texture2D(uShadowMap, p.xy + taps[i] * texel).r;
-    // soft compare instead of a hard step: no jagged edge where the map is coarse
-    lit += smoothstep(-0.004, 0.004, d - (p.z - 0.002));
-  }
-  return mix(0.45, 1.0, lit / 16.0);
-}
+${mossLighting}
 
 varying vec3 vNormal;
 varying vec3 vWorldPos;
@@ -436,48 +409,6 @@ varying vec3 vSurfN; // the surface's normal under the frond: the back light rea
 varying float vStraw;
 
 
-// colour grade for the moss only: a touch of exposure, saturation and contrast, in linear light
-// tone mapping, on the moss only: the white rock, the ground and the page background stay exactly as they are.
-// 0 = none (just the grade), 1 = AgX, 2 = ACES, 3 = Neutral; switchable in the debug panel
-#include <tonemapping_pars_fragment>
-uniform float uTone;
-uniform float uExposure;
-vec3 tonemap(vec3 c) {
-  if (uTone < 0.5) return c;
-  c *= uExposure;
-  if (uTone < 1.5) return AgXToneMapping(c);
-  if (uTone < 2.5) return ACESFilmicToneMapping(c);
-  return NeutralToneMapping(c);
-}
-vec3 grade(vec3 c) {
-  c *= 1.3;
-  float l = dot(c, vec3(0.299, 0.587, 0.114));
-  c = mix(vec3(l), c, 1.35);
-  c = (c - 0.18) * 1.1 + 0.18;
-  return max(c, 0.0);
-}
-
-// coloured ambient: where the key light does not reach, the moss takes a cool sky fill from above and a
-// warm, greenish bounce from below instead of flat grey
-uniform float uHemi; // 0 = off (swatches, thumbnails)
-vec3 skyTint(vec3 N, float shade) {
-  vec3 sky = vec3(0.60, 0.84, 1.32);
-  vec3 bounce = vec3(1.28, 1.10, 0.45);
-  vec3 t = mix(bounce, sky, smoothstep(-0.6, 0.8, N.y));
-  return mix(vec3(1.0), t, uHemi * clamp(shade, 0.0, 1.0));
-}
-
-// back light: sits behind the object as seen from the camera, so it follows the view. It only reaches the
-// silhouette, where fuzz and frond tips catch it and glow against the background.
-uniform vec3 uRimDir;
-uniform float uRim; // 0 = off (swatches, thumbnails)
-vec3 rimLight(vec3 N, vec3 V) {
-  if (uRim <= 0.0) return vec3(0.0);
-  vec3 R = normalize(uRimDir);
-  float fres = pow(1.0 - max(dot(N, V), 0.0), 3.0); // tight: just the outline
-  float facing = smoothstep(-0.1, 0.7, dot(N, R));
-  return vec3(1.0, 0.93, 0.70) * fres * facing * uRim;
-}
 
 void main() {
   vec3 N = normalize(vNormal);

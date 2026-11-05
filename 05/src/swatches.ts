@@ -7,6 +7,7 @@ import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.j
 import { domeAt, pillowAt } from './rock';
 import { fbm3 } from './noise';
 import { shellVertex, shellFragment } from './shaders';
+import { renderToDataURL } from './render';
 
 export function renderSwatches(renderer: THREE.WebGLRenderer, shells: number, lightDir: THREE.Vector3) {
   const size = 128;
@@ -49,7 +50,6 @@ export function renderSwatches(renderer: THREE.WebGLRenderer, shells: number, li
     uniforms: {
       uHeight: { value: 0.3 },
       uBulge: { value: 0.1 },
-      uTime: { value: 0 },
       uLightDir: { value: lightDir },
       uHideRock: { value: 0 },
       uScale: { value: 3 }, // the ball's moss is scaled up a lot, so are its fuzz features
@@ -72,11 +72,6 @@ export function renderSwatches(renderer: THREE.WebGLRenderer, shells: number, li
   camera.lookAt(0, 0, 0);
 
   const rt = new THREE.WebGLRenderTarget(size * 2, size * 2, { colorSpace: THREE.SRGBColorSpace, samples: 4 });
-  const pixels = new Uint8Array(size * 2 * size * 2 * 4);
-  const canvas = document.createElement('canvas');
-  canvas.width = canvas.height = size * 2;
-  const ctx = canvas.getContext('2d')!;
-  const img = ctx.createImageData(size * 2, size * 2);
 
   // the frond shader reads its pillow field from the puff texture's G channel
   {
@@ -103,23 +98,11 @@ export function renderSwatches(renderer: THREE.WebGLRenderer, shells: number, li
     fronds.puffTexture.needsUpdate = true;
   };
 
-  const prevTarget = renderer.getRenderTarget();
-  const prevClear = renderer.getClearAlpha();
-  renderer.setClearAlpha(0);
-
   // cushion has no fronds, so its ball is only the core plus a short fuzz: get closer so it reads as big as the rest
   const eye = camera.position.clone();
   const shoot = (zoom = 1): string => {
     camera.position.copy(eye).multiplyScalar(1 / zoom);
-    renderer.setRenderTarget(rt);
-    renderer.clear();
-    renderer.render(scene, camera);
-    renderer.readRenderTargetPixels(rt, 0, 0, size * 2, size * 2, pixels);
-    // flip rows: GL is bottom-up
-    const w = size * 2 * 4;
-    for (let y = 0; y < size * 2; y++) img.data.set(pixels.subarray((size * 2 - 1 - y) * w, (size * 2 - y) * w), y * w);
-    ctx.putImageData(img, 0, 0);
-    return canvas.toDataURL('image/png');
+    return renderToDataURL(renderer, scene, camera, rt);
   };
 
   const apply = (selector: string, url: string) => {
@@ -143,8 +126,6 @@ export function renderSwatches(renderer: THREE.WebGLRenderer, shells: number, li
   });
   apply('.sw i.auto', shoot());
 
-  renderer.setRenderTarget(prevTarget);
-  renderer.setClearAlpha(prevClear);
   rt.dispose();
   geo.dispose();
   mat.dispose();
@@ -182,26 +163,9 @@ export function renderEraser(renderer: THREE.WebGLRenderer) {
   camera.lookAt(0, 0, 0);
 
   const rt = new THREE.WebGLRenderTarget(size * 2, size * 2, { colorSpace: THREE.SRGBColorSpace, samples: 4 });
-  const prevTarget = renderer.getRenderTarget();
-  const prevClear = renderer.getClearAlpha();
-  renderer.setClearAlpha(0);
-  renderer.setRenderTarget(rt);
-  renderer.clear();
-  renderer.render(scene, camera);
-  const pixels = new Uint8Array(size * 2 * size * 2 * 4);
-  renderer.readRenderTargetPixels(rt, 0, 0, size * 2, size * 2, pixels);
-  renderer.setRenderTarget(prevTarget);
-  renderer.setClearAlpha(prevClear);
-
-  const canvas = document.createElement('canvas');
-  canvas.width = canvas.height = size * 2;
-  const ctx = canvas.getContext('2d')!;
-  const img = ctx.createImageData(size * 2, size * 2);
-  const w = size * 2 * 4;
-  for (let y = 0; y < size * 2; y++) img.data.set(pixels.subarray((size * 2 - 1 - y) * w, (size * 2 - y) * w), y * w);
-  ctx.putImageData(img, 0, 0);
+  const url = renderToDataURL(renderer, scene, camera, rt);
   const el = document.querySelector<HTMLElement>('.scrape-btn i');
-  if (el) el.style.backgroundImage = `url(${canvas.toDataURL('image/png')})`;
+  if (el) el.style.backgroundImage = `url(${url})`;
 
   rt.dispose();
   [redPart, bluePart, band].forEach((m) => { m.geometry.dispose(); (m.material as THREE.Material).dispose(); });
