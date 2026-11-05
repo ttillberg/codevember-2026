@@ -38,8 +38,17 @@ const camera = new THREE.PerspectiveCamera(38, 1, 0.1, 50);
 camera.position.set(3.6, 1.1, 6.6);
 
 // the object sits on a turntable that turns around the vertical axis; only yaw, so up stays up for the moss
+// an outer group tilts the object towards or away from the camera on a vertical drag, up to ~30 degrees,
+// and stays tilted on release so the underside can be painted. Both pivot on the object's centre.
+const tiltGroup = new THREE.Group();
 const turntable = new THREE.Group();
-scene.add(turntable);
+tiltGroup.add(turntable);
+scene.add(tiltGroup);
+let tilt = 0; // rad, around the camera's horizontal axis
+let tiltRaw = 0; // where the drag would put it before the soft limit
+let tiltVel = 0;
+const TILT_MAX = THREE.MathUtils.degToRad(30);
+let turnLastY = 0;
 let yaw = 0;
 let yawVel = 0; // rad/s, coasts and slows down after a flick
 let turning = false;
@@ -67,6 +76,7 @@ controls.maxPolarAngle = Math.PI * 0.55;
 const LIGHT_BASE = new THREE.Vector3(1.2, 2.0, 1.0).normalize();
 const lightDir = LIGHT_BASE.clone();
 let shadowYaw = NaN; // turntable angle the shadow map was last rendered for
+let shadowTilt = NaN;
 const shellMat = new THREE.ShaderMaterial({
   vertexShader: shellVertex,
   fragmentShader: shellFragment,
@@ -244,10 +254,12 @@ function createWorld(text: string, kind: 'word' | 'rock' = 'word'): World {
   // the turntable's axis runs through the object's centre: the group sits there, the meshes are offset back
   const tb = geo.boundingBox!;
   const cx = (tb.min.x + tb.max.x) / 2, cz = (tb.min.z + tb.max.z) / 2;
-  turntable.position.set(cx, 0, cz);
-  for (const m of [shells, fronds.mesh, picker]) m.position.set(-cx, 0, -cz);
+  const cy = (tb.min.y + tb.max.y) / 2;
+  tiltGroup.position.set(cx, cy, cz);
+  for (const m of [shells, fronds.mesh, picker]) m.position.set(-cx, -cy, -cz);
   yaw = 0;
   yawVel = 0;
+  tilt = tiltRaw = tiltVel = 0;
   turntable.add(shells, fronds.mesh, picker);
   let metal: THREE.Mesh | null = null;
   if (kind === 'rock' && METAL) {
@@ -259,7 +271,7 @@ function createWorld(text: string, kind: 'word' | 'rock' = 'word'): World {
       geo.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
     }
     metal = new THREE.Mesh(geo, metalMaterial());
-    metal.position.set(-cx, 0, -cz);
+    metal.position.set(-cx, -cy, -cz);
     turntable.add(metal);
   }
   // with a metal body the shell base only draws under moss
@@ -514,38 +526,49 @@ function showRing(point: THREE.Vector3, r: number, x: number, y: number) {
 }
 
 // ---- turntable drag: horizontal movement turns the object, a flick coasts to a stop
-const touchX = new Map<number, number>();
-function midX() {
-  let x = 0;
-  for (const v of touchX.values()) x += v;
-  return x / Math.max(1, touchX.size);
+const touchXY = new Map<number, [number, number]>();
+function mid(): [number, number] {
+  let x = 0, y = 0;
+  for (const v of touchXY.values()) { x += v[0]; y += v[1]; }
+  const n = Math.max(1, touchXY.size);
+  return [x / n, y / n];
 }
-function startTurn(x: number, t: number) {
+function startTurn(x: number, y: number, t: number) {
   turning = true;
   turnLastX = x;
+  turnLastY = y;
   turnLastT = t;
   yawVel = 0;
+  // pick up where it is: undo the soft limit so the next drag continues without a jump
+  tiltRaw = TILT_MAX * Math.atanh(THREE.MathUtils.clamp(tilt / TILT_MAX, -0.999, 0.999));
+  tiltVel = 0;
 }
-function moveTurn(x: number, t: number) {
-  if (!turning) startTurn(x, t);
+function moveTurn(x: number, y: number, t: number) {
+  if (!turning) startTurn(x, y, t);
   const d = (x - turnLastX) * TURN_SPEED;
   const dt = Math.max(1, t - turnLastT) / 1000;
   yaw += d;
   yawVel = THREE.MathUtils.lerp(yawVel, d / dt, 0.5);
+  // vertical: drag up and the front comes up. A soft limit, so it gets heavier towards 30 degrees.
+  tiltRaw += (y - turnLastY) * TURN_SPEED;
+  const prev = tilt;
+  tilt = TILT_MAX * Math.tanh(tiltRaw / TILT_MAX);
+  tiltVel = THREE.MathUtils.lerp(tiltVel, (tilt - prev) / dt, 0.5);
   turnLastX = x;
+  turnLastY = y;
   turnLastT = t;
 }
 
 canvas.addEventListener('pointerdown', (e) => {
   if (e.pointerType === 'touch') {
     touchIds.add(e.pointerId);
-    touchX.set(e.pointerId, e.clientX);
+    touchXY.set(e.pointerId, [e.clientX, e.clientY]);
     if (touchIds.size >= 2) {
       // a second finger: stop painting, the two fingers turn the turntable (and pinch zooms)
       painting = false;
       sizing = false;
       sizeRing.style.display = 'none';
-      startTurn(midX(), e.timeStamp);
+      startTurn(...mid(), e.timeStamp);
       return;
     }
   }
@@ -567,7 +590,7 @@ canvas.addEventListener('pointerdown', (e) => {
     // off the object: turn the turntable
     if (e.pointerType === 'mouse') {
       orbiting = true;
-      startTurn(e.clientX, e.timeStamp);
+      startTurn(e.clientX, e.clientY, e.timeStamp);
       setCursor();
       try { canvas.setPointerCapture(e.pointerId); } catch { /* synthetic events */ }
     }
@@ -585,9 +608,9 @@ canvas.addEventListener('pointerdown', (e) => {
   try { canvas.setPointerCapture(e.pointerId); } catch { /* synthetic events */ }
 });
 canvas.addEventListener('pointermove', (e) => {
-  if (e.pointerType === 'touch' && touchX.has(e.pointerId)) touchX.set(e.pointerId, e.clientX);
-  if (touchIds.size >= 2) { moveTurn(midX(), e.timeStamp); touchTurned = true; return; }
-  if (orbiting) { moveTurn(e.clientX, e.timeStamp); return; }
+  if (e.pointerType === 'touch' && touchXY.has(e.pointerId)) touchXY.set(e.pointerId, [e.clientX, e.clientY]);
+  if (touchIds.size >= 2) { moveTurn(...mid(), e.timeStamp); touchTurned = true; return; }
+  if (orbiting) { moveTurn(e.clientX, e.clientY, e.timeStamp); return; }
   if (sizing && sizeAnchor) {
     const k = Math.exp((e.clientX - sizeStartX) / 160); // exponential: same feel small and big
     brushRadius = THREE.MathUtils.clamp(sizeStartR * k, BRUSH_MIN, BRUSH_MAX);
@@ -612,7 +635,7 @@ const stop = () => {
 const release = (e: PointerEvent) => {
   if (touchIds.size >= 2 && touchTurned) touchHint.classList.add('done');
   touchIds.delete(e.pointerId);
-  touchX.delete(e.pointerId);
+  touchXY.delete(e.pointerId);
   turning = false;
   if (painting) requestThumb(45); // after the stroke has grown in a bit
   stop();
@@ -1084,13 +1107,29 @@ renderer.setAnimationLoop(() => {
     yaw += yawVel * dt;
     yawVel *= Math.exp(-dt * 5);
   }
+  if (!turning && (tiltVel !== 0 || Math.abs(tilt) > TILT_MAX)) {
+    // the tilt stays where it is let go, so the underside can be painted. A flick coasts on and slows down;
+    // past 30 degrees an underdamped spring pulls it back, so it bounces off the limit. Substepped, so a slow
+    // frame cannot blow the spring up.
+    let left = dt;
+    while (left > 1e-6) {
+      const h = Math.min(left, 1 / 240);
+      const over = tilt - THREE.MathUtils.clamp(tilt, -TILT_MAX, TILT_MAX);
+      tiltVel += (over !== 0 ? -160 * over - 6 * tiltVel : -4 * tiltVel) * h;
+      tilt += tiltVel * h;
+      left -= h;
+    }
+    if (Math.abs(tiltVel) < 1e-3 && Math.abs(tilt) <= TILT_MAX) tiltVel = 0;
+  }
   turntable.rotation.y = yaw;
-  turntable.updateMatrixWorld();
+  tiltGroup.rotation.x = tilt;
+  tiltGroup.updateMatrixWorld();
   fu.uLightDir.value = lightDir;
   // the object turns under a fixed light: re-render the shadow map every couple of degrees, not every frame
-  if (shadowDirty || !(Math.abs(yaw - shadowYaw) < 0.035)) {
+  if (shadowDirty || !(Math.abs(yaw - shadowYaw) < 0.035) || !(Math.abs(tilt - shadowTilt) < 0.035)) {
     renderShadow();
     shadowYaw = yaw;
+    shadowTilt = tilt;
     shadowDirty = false;
   }
   if (ssaoOn) {
