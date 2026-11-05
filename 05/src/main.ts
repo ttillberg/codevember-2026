@@ -594,7 +594,6 @@ function rebuild(text: string, kind: 'word' | 'rock') {
   W = createWorld(text, kind);
   applyScale();
   pillowDirty = true;
-  if (kind === 'rock') seedRock(); else seedWord();
   frameWord();
   dirty = true;
   shadowDirty = true;
@@ -881,56 +880,7 @@ function blendSpecies(dt: number) {
   }
 }
 
-// pre-grown patches so the word is not bare on load.
-// Seeded from the surface vertex nearest a direction, limited to vertices facing roughly the same way,
-// so a patch never wraps around an edge onto another face.
-const tmpN = new THREE.Vector3();
-const cN = new THREE.Vector3();
-function seedPatch(dir: THREE.Vector3, r: number, kind: number) {
-  const { positions, normals, moss, cap, surface } = W;
-  dir.normalize();
-  let c = 0, best = -Infinity;
-  for (let i = 0; i < W.n; i++) {
-    tmp.fromBufferAttribute(positions, i);
-    const d = tmp.normalize().dot(dir);
-    if (d > best) { best = d; c = i; }
-  }
-  const center = new THREE.Vector3().fromBufferAttribute(positions, c);
-  cN.fromBufferAttribute(normals, c);
-  const r2 = r * r;
-  for (let i = 0; i < W.n; i++) {
-    tmp.fromBufferAttribute(positions, i);
-    const d2 = tmp.distanceToSquared(center);
-    if (d2 > r2 || surface.fertility[i] < 0.15) continue;
-    tmpN.fromBufferAttribute(normals, i);
-    if (tmpN.dot(cN) < 0.25) continue;
-    const ragged = fbm3(tmp.x * 6, tmp.y * 6, tmp.z * 6, 3, 99) * 0.5;
-    const edge = 1 - Math.sqrt(d2 / r2) + ragged;
-    if (edge <= 0.12) continue;
-    const profile = Math.min(1, edge * 2.2) * (0.8 + 0.2 * surface.fertility[i]);
-    moss[i] = Math.max(moss[i], profile);
-    cap[i] = Math.max(cap[i], profile);
-    setOneHot(i, kind);
-  }
-}
-function seedRock() {
-  seedPatch(new THREE.Vector3(0.3, 1.0, 0.5), 0.45, 0);
-  seedPatch(new THREE.Vector3(-0.6, 0.8, 0.3), 0.32, 1);
-  seedPatch(new THREE.Vector3(0.9, 0.5, -0.3), 0.3, 2);
-  seedPatch(new THREE.Vector3(0.2, 0.5, 1.0), 0.3, 3);
-}
-function seedWord() {
-  // a few patches along the top of the word and one on the front
-  const bb = W.surface.geometry.boundingBox!;
-  const w = bb.max.x - bb.min.x;
-  const kinds = [0, 3, 0, 2, 3];
-  for (let i = 0; i < Math.min(5, Math.ceil(w / 1.2)); i++) {
-    const x = bb.min.x + (i + 0.5) * (w / Math.min(5, Math.ceil(w / 1.2)));
-    seedPatch(new THREE.Vector3(x, 2.5, 0.3), 0.4, kinds[i % kinds.length]);
-  }
-  seedPatch(new THREE.Vector3(bb.min.x + w * 0.35, 0.2, 2.0), 0.35, 1);
-}
-seedRock();
+// every object starts bare: all the moss is yours
 
 // ---- loop
 function resize() {
