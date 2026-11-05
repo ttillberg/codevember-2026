@@ -37,6 +37,9 @@ controls.target.set(0, 0.45, 0);
 controls.enableDamping = true;
 controls.enableZoom = false; // orbit only, the framing is the framing
 controls.enablePan = false;
+// touch: one finger paints, two fingers turn the object (zoom is off, so dolly-rotate is just rotate)
+controls.touches = { ONE: null as unknown as THREE.TOUCH, TWO: THREE.TOUCH.DOLLY_ROTATE };
+const touchIds = new Set<number>();
 controls.maxPolarAngle = Math.PI * 0.55;
 
 const lightDir = new THREE.Vector3(1.2, 2.0, 1.0).normalize();
@@ -375,6 +378,16 @@ function showRing(point: THREE.Vector3, r: number, x: number, y: number) {
 }
 
 canvas.addEventListener('pointerdown', (e) => {
+  if (e.pointerType === 'touch') {
+    touchIds.add(e.pointerId);
+    if (touchIds.size >= 2) {
+      // a second finger: stop painting and let the controls rotate
+      painting = false;
+      sizing = false;
+      sizeRing.style.display = 'none';
+      return;
+    }
+  }
   const p = pick(e);
   if (e.metaKey || e.ctrlKey) {
     // brush size works anywhere; off the object the ring is sized at the orbit target's depth
@@ -391,7 +404,8 @@ canvas.addEventListener('pointerdown', (e) => {
   if (!p) return; // off the object: let OrbitControls have it
   painting = true;
   scraping = scrapeTool || e.shiftKey || e.button === 2;
-  controls.enabled = false;
+  // mouse: keep the controls out of a paint drag. Touch: leave them on so a second finger can rotate.
+  if (e.pointerType !== 'touch') controls.enabled = false;
   for (let c = 0; c < SPECIES; c++) strokeBias[c] = 0.6 + 0.4 * Math.random(); // mild, so strokes do not stripe
   strokeShift.set(Math.random() * 100, Math.random() * 100, Math.random() * 100);
   speed = 0;
@@ -400,6 +414,7 @@ canvas.addEventListener('pointerdown', (e) => {
   try { canvas.setPointerCapture(e.pointerId); } catch { /* synthetic events */ }
 });
 canvas.addEventListener('pointermove', (e) => {
+  if (touchIds.size >= 2) return;
   if (sizing && sizeAnchor) {
     const k = Math.exp((e.clientX - sizeStartX) / 160); // exponential: same feel small and big
     brushRadius = THREE.MathUtils.clamp(sizeStartR * k, BRUSH_MIN, BRUSH_MAX);
@@ -421,8 +436,12 @@ const stop = () => {
   sizeRing.style.display = 'none';
   controls.enabled = true;
 };
-canvas.addEventListener('pointerup', stop);
-canvas.addEventListener('pointercancel', stop);
+const release = (e: PointerEvent) => {
+  touchIds.delete(e.pointerId);
+  stop();
+};
+canvas.addEventListener('pointerup', release);
+canvas.addEventListener('pointercancel', release);
 canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 
 // ---- brush swatches
