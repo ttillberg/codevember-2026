@@ -48,7 +48,12 @@ controls.addEventListener('change', () => { if (touchIds.size >= 2) touchTurned 
 controls.addEventListener('end', () => { if (touchTurned) touchHint.classList.add('done'); });
 controls.maxPolarAngle = Math.PI * 0.55;
 
-const lightDir = new THREE.Vector3(1.2, 2.0, 1.0).normalize();
+// the key light follows the camera around the vertical axis: same elevation, always from front right,
+// so every side of the object looks lit the same way. Swatches and thumbnails keep the fixed base.
+const LIGHT_BASE = new THREE.Vector3(1.2, 2.0, 1.0).normalize();
+const lightDir = LIGHT_BASE.clone();
+const UP = new THREE.Vector3(0, 1, 0);
+let shadowAz = NaN; // camera azimuth the shadow map was last rendered for
 const shellMat = new THREE.ShaderMaterial({
   vertexShader: shellVertex,
   fragmentShader: shellFragment,
@@ -586,7 +591,7 @@ addEventListener('keydown', (e) => {
   }
 });
 setBrush(4);
-renderSwatches(renderer, SHELLS, lightDir);
+renderSwatches(renderer, SHELLS, LIGHT_BASE.clone());
 renderEraser(renderer);
 
 // ---- framing
@@ -734,7 +739,7 @@ function setLocked() {
   if (unlocked && !glyphThumbsStarted) {
     glyphThumbsStarted = true;
     // mossy miniatures of every glyph, one per frame; the green text stands in until each one lands
-    renderGlyphThumbs(renderer, font, CHARS, lightDir, (c, url) => {
+    renderGlyphThumbs(renderer, font, CHARS, LIGHT_BASE.clone(), (c, url) => {
       const b = letterPop.querySelector<HTMLButtonElement>(`button[data-choice="${c}"]`);
       if (!b) return;
       b.style.backgroundImage = `url(${url})`;
@@ -966,14 +971,19 @@ renderer.setAnimationLoop(() => {
     for (let i = 0; i < W.n; i++) ptex[i * 4 + 2] = species[i * SPECIES + 3];
     fronds.puffTexture.needsUpdate = true;
     dirty = false;
-    if (shadowDirty) {
-      renderShadow();
-      shadowDirty = false;
-    }
   }
   if (++meterTick % 12 === 0) updateMeter();
   updateHover();
   controls.update();
+  const az = controls.getAzimuthalAngle();
+  lightDir.copy(LIGHT_BASE).applyAxisAngle(UP, az);
+  fu.uLightDir.value = lightDir;
+  // re-render the shadow map every couple of degrees while turning, not every frame
+  if (shadowDirty || !(Math.abs(az - shadowAz) < 0.035)) {
+    renderShadow();
+    shadowAz = az;
+    shadowDirty = false;
+  }
   renderer.render(scene, camera);
   if (thumbDirty > 0 && --thumbDirty === 0) updateThumb();
 });
