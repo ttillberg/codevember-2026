@@ -440,6 +440,7 @@ const stop = () => {
 };
 const release = (e: PointerEvent) => {
   touchIds.delete(e.pointerId);
+  if (painting) requestThumb(45); // after the stroke has grown in a bit
   stop();
 };
 canvas.addEventListener('pointerup', release);
@@ -510,6 +511,8 @@ function frameWord() {
   camera.position.set(center.x + dist * 0.22, center.y + dist * 0.12, center.z + dist);
   // touch zoom: in to about half the framed distance, never further out than the framing.
   // The brush radius is in world units, so it keeps its size on the surface while zooming.
+  framedPos.copy(camera.position);
+  framedTarget.copy(center);
   const framed = camera.position.distanceTo(center);
   controls.minDistance = framed * 0.5;
   controls.maxDistance = framed;
@@ -551,6 +554,89 @@ scaleInput.addEventListener('input', () => {
 });
 scaleInput.addEventListener('keydown', (e) => e.stopPropagation());
 applyScale(); // start at the default size
+
+// ---- thumbnail of the current object, with its moss, from the framed view
+const framedPos = new THREE.Vector3();
+const framedTarget = new THREE.Vector3();
+const THUMB = 128;
+const thumbRT = new THREE.WebGLRenderTarget(THUMB, THUMB, { colorSpace: THREE.SRGBColorSpace, samples: 4 });
+const thumbCam = new THREE.PerspectiveCamera(camera.fov, 1, 0.1, 50);
+const thumbPixels = new Uint8Array(THUMB * THUMB * 4);
+const thumbCanvas = document.createElement('canvas');
+thumbCanvas.width = thumbCanvas.height = THUMB;
+const thumbCtx = thumbCanvas.getContext('2d')!;
+const thumbImg = thumbCtx.createImageData(THUMB, THUMB);
+function snapshot(): string {
+  // square frame: pull back a little so the widest side fits
+  thumbCam.position.copy(framedTarget).add(framedPos.clone().sub(framedTarget).multiplyScalar(0.8));
+  thumbCam.lookAt(framedTarget);
+  const prevClear = renderer.getClearAlpha();
+  ground.visible = false;
+  renderer.setClearAlpha(0);
+  renderer.setRenderTarget(thumbRT);
+  renderer.clear();
+  renderer.render(scene, thumbCam);
+  renderer.readRenderTargetPixels(thumbRT, 0, 0, THUMB, THUMB, thumbPixels);
+  renderer.setRenderTarget(null);
+  renderer.setClearAlpha(prevClear);
+  ground.visible = true;
+  const row = THUMB * 4;
+  for (let y = 0; y < THUMB; y++) thumbImg.data.set(thumbPixels.subarray((THUMB - 1 - y) * row, (THUMB - y) * row), y * row);
+  thumbCtx.putImageData(thumbImg, 0, 0);
+  return thumbCanvas.toDataURL('image/png');
+}
+let thumbDirty = 0; // frames to wait before the next snapshot, 0 = nothing pending
+function requestThumb(delayFrames = 2) { thumbDirty = Math.max(thumbDirty, delayFrames); }
+function updateThumb() {
+  const url = snapshot();
+  (letterBtn.querySelector('i') as HTMLElement).style.backgroundImage = `url(${url})`;
+  if (W.kind === 'rock') {
+    const rockItem = letterPop.querySelector<HTMLElement>('button.rock i');
+    if (rockItem) rockItem.style.backgroundImage = `url(${url})`;
+  }
+}
+
+// ---- letter picker: one glyph at a time, from the three.js typeface, or the rock
+const letterBtn = document.querySelector<HTMLButtonElement>('.letter-btn')!;
+const letterPop = document.querySelector<HTMLElement>('.letter-pop')!;
+const glyphs = (font.data as { glyphs: Record<string, unknown> }).glyphs;
+const CHARS = [...'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'].filter((c) => c in glyphs);
+function pickObject(choice: string) {
+  letterPop.querySelectorAll('button').forEach((b) => b.classList.toggle('active', b.dataset.choice === choice));
+  if (choice === 'rock') rebuild('rock', 'rock');
+  else rebuild(choice, 'word');
+  requestThumb(4); // let the moss settle a frame or two first
+}
+function setPop(open: boolean) {
+  letterPop.hidden = !open;
+  letterBtn.setAttribute('aria-expanded', String(open));
+}
+{
+  const rockBtn = document.createElement('button');
+  rockBtn.className = 'rock active';
+  rockBtn.dataset.choice = 'rock';
+  rockBtn.setAttribute('aria-label', 'rock');
+  rockBtn.innerHTML = '<i></i>';
+  letterPop.appendChild(rockBtn);
+  for (const c of CHARS) {
+    const b = document.createElement('button');
+    b.dataset.choice = c;
+    b.textContent = c;
+    letterPop.appendChild(b);
+  }
+}
+letterBtn.addEventListener('click', (e) => { e.stopPropagation(); setPop(letterPop.hidden); });
+letterPop.addEventListener('click', (e) => {
+  const b = (e.target as HTMLElement).closest('button') as HTMLButtonElement | null;
+  if (!b?.dataset.choice) return;
+  e.stopPropagation();
+  setPop(false);
+  pickObject(b.dataset.choice);
+});
+addEventListener('pointerdown', (e) => {
+  if (!letterPop.hidden && !letterPop.contains(e.target as Node) && e.target !== letterBtn) setPop(false);
+});
+addEventListener('keydown', (e) => { if (e.key === 'Escape') setPop(false); });
 
 // ---- object toggle: letters or the silver rock
 const objectButtons = Array.from(document.querySelectorAll<HTMLButtonElement>('.objects button'));
@@ -726,4 +812,6 @@ renderer.setAnimationLoop(() => {
   }
   controls.update();
   renderer.render(scene, camera);
+  if (thumbDirty > 0 && --thumbDirty === 0) updateThumb();
 });
+requestThumb(6);
