@@ -7,7 +7,7 @@ attribute float pillow;
 attribute float puff; // plumped up by repeated brushing, animated as a spring
 attribute float dome; // cushion clumps
 attribute vec3 mossNormal; // smoothed normal: the moss grows along this, the rock is lit with its own
-attribute vec2 cavity; // baked: x = 1 deep in a hole or inner corner (moss), y = broader occlusion (bare surface)
+attribute float cavity; // baked occlusion: 1 deep in a hole or an inner corner
 
 uniform float uHeight;
 uniform float uBulge;
@@ -22,7 +22,6 @@ varying float vDead;
 varying float vPillow;
 varying float vDome;
 varying float vCavity;
-varying float vOcclusion;
 varying vec3 vLocal;
 varying vec3 vLocalNormal;
 varying vec3 vWorldPos;
@@ -44,8 +43,8 @@ void main() {
   bulge *= mix(1.0, mix(0.5, 1.0, dome), cush); // separate round clumps, low crevices between them
   bulge += puff * uBulge * 1.4 * smoothstep(0.0, 0.3, moss);
   // hollows stay hollow: thin, short moss in holes and inner corners so they do not fill up
-  bulge *= 1.0 - 0.85 * cavity.x;
-  vec3 p = position + mossNormal * (bulge + uHeight * t * (1.0 - 0.6 * cavity.x));
+  bulge *= 1.0 - 0.85 * cavity;
+  vec3 p = position + mossNormal * (bulge + uHeight * t * (1.0 - 0.6 * cavity));
 
 
   vShell = t;
@@ -55,8 +54,7 @@ void main() {
   vDead = dead;
   vPillow = pillow;
   vDome = dome;
-  vCavity = cavity.x;
-  vOcclusion = cavity.y;
+  vCavity = cavity;
   vLocal = position;
   vLocalNormal = mossNormal;
   vec4 wp = modelMatrix * vec4(p, 1.0);
@@ -74,7 +72,6 @@ precision highp float;
 uniform vec3 uLightDir;
 uniform float uTime;
 uniform float uHideRock;
-uniform float uRockAO; // bare surface darkens in hollows; 0 = off
 uniform float uScale; // moss size, 0.5 .. 2
 
 uniform sampler2D uShadowMap;
@@ -111,7 +108,6 @@ varying float vDead;
 varying float vPillow;
 varying float vDome;
 varying float vCavity;
-varying float vOcclusion;
 varying vec3 vLocal;
 varying vec3 vLocalNormal;
 varying vec3 vWorldPos;
@@ -161,16 +157,6 @@ float techGrid(vec3 p, vec3 n, float cell, float width) {
   a = pow(a, vec3(6.0));
   a /= a.x + a.y + a.z;
   return gridLine(p.yz, cell, width) * a.x + gridLine(p.xz, cell, width) * a.y + gridLine(p.xy, cell, width) * a.z;
-}
-
-// translucency: thin moss lets the key light through. Strongest looking towards the light, a little on the
-// side facing away from it; thin = how much of the strand is there (tips 1, roots 0)
-uniform float uTrans; // 0 = off (swatches, thumbnails)
-vec3 transLight(vec3 N, vec3 V, vec3 L, float thin) {
-  if (uTrans <= 0.0) return vec3(0.0);
-  float through = pow(max(dot(-V, L), 0.0), 1.5);
-  float behind = smoothstep(-0.1, 0.6, dot(-N, L));
-  return vec3(1.0, 1.0, 0.6) * (through * 0.6 + behind * 0.55) * thin * uTrans;
 }
 
 // coloured ambient: where the key light does not reach, the moss takes a cool sky fill from above and a
@@ -264,7 +250,6 @@ void main() {
     float major = techGrid(vLocal, oN, 0.25, 0.004);
     float grid = max(fine * 0.35, major * 0.6) * (1.0 - smoothstep(0.0, 0.3, age));
     rock *= 1.0 - grid * 0.42;
-    rock *= mix(1.0, 0.55, vOcclusion * uRockAO); // holes and inner corners go dark, even before any moss
     rock *= mix(0.75, 1.0, smoothstep(0.0, 0.1, 1.0 - age)); // slight contact shadow right under the moss
 
     // the ground takes the moss colour early, so neither white rock nor the mound's slope shows through the fuzz
@@ -323,7 +308,6 @@ void main() {
   // cushion hair has pale yellow-green tips
   col = mix(col, vec3(0.55, 0.76, 0.18), smoothstep(0.75, 1.0, uu) * 0.15 * w.w * vDome);
   col *= skyTint(N, 1.0 - 0.6 * wrap);
-  col += transLight(N, V, L, uu * uu) * lime * 3.2;
   col += rimLight(N, V) * lime * 3.0 * uu;
   col *= mix(1.0, 0.45, vCavity);
   gl_FragColor = vec4(grade(col), 1.0);

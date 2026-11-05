@@ -79,8 +79,6 @@ const shellMat = new THREE.ShaderMaterial({
     uRimDir: { value: new THREE.Vector3(0, 1, 0) },
     uRim: { value: 1 },
     uHemi: { value: 1 },
-    uTrans: { value: 1 },
-    uRockAO: { value: 1 },
     uHideRock: { value: 0 },
     uScale: { value: 1 },
     uShadowMap: { value: null },
@@ -1044,7 +1042,6 @@ renderer.setAnimationLoop(() => {
   fu.uRimDir.value = rimDir;
   fu.uRim.value = shellMat.uniforms.uRim.value;
   fu.uHemi.value = shellMat.uniforms.uHemi.value;
-  fu.uTrans.value = shellMat.uniforms.uTrans.value;
   grow(dt);
   blendSpecies(dt);
   springPuff(dt);
