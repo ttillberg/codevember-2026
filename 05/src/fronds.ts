@@ -452,13 +452,14 @@ void main() {
   tip = mix(tip, deadCol, vDead);
   // bright towards the top and on upward faces, darker down the sides; dark patches only low down
   float top = smoothstep(-0.4, 0.9, N.y) * 0.55 + smoothstep(-0.7, 1.9, vWorldPos.y) * 0.45;
-  col *= mix(0.78, 1.22, top);
-  tip *= mix(0.78, 1.22, top);
+  float bottomDark = mix(0.72, 1.0, smoothstep(-0.75, 0.5, vWorldPos.y));
+  col *= mix(0.78, 1.22, top) * bottomDark;
+  tip *= mix(0.78, 1.22, top) * bottomDark;
   float shade = vShade * (1.0 - 0.75 * top) * 0.8;
   col *= mix(1.0, 0.55, shade);
   tip *= mix(1.0, 0.6, shade);
 
-  float ao = mix(0.3, 1.0, vT) * mix(0.5, 1.0, vClump);
+  float ao = mix(0.3, 1.0, vT) * mix(0.85, 1.0, vClump);
   float shadow = shadowAt(vWorldPos, N);
   float wrap = pow(max(dot(N, L) * 0.65 + 0.35, 0.0), 1.4) * shadow;
   float back = max(dot(-N, L), 0.0) * 0.35; // leaves glow a bit when lit from behind

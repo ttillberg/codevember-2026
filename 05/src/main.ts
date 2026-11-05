@@ -286,7 +286,7 @@ function brush(point: THREE.Vector3, scrape: boolean) {
       // (a per-stroke noise offset shifts the pillow field) and the surface gives a small bounce
       if (moss[i] > 0.2) {
         const shift = fbm3(tmp.x * 9 + strokeShift.x, tmp.y * 9 + strokeShift.y, tmp.z * 9 + strokeShift.z, 2, 5);
-        W.pillow[i] = THREE.MathUtils.clamp(W.pillow[i] + shift * falloff * 0.35, 0, 1);
+        W.pillow[i] = THREE.MathUtils.clamp(W.pillow[i] + shift * falloff * 0.12, 0, 1);
         W.puffTarget[i] = Math.min(0.3, W.puffTarget[i] + falloff * 0.02);
         W.puffVel[i] += falloff * 0.5;
         pillowDirty = true;

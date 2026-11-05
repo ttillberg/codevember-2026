@@ -151,6 +151,10 @@ void main() {
   // bright green towards the top and on upward faces, darker down the sides; the dark patch field only bites low down
   float upTop = smoothstep(-0.4, 0.9, N.y) * 0.55 + smoothstep(-0.7, 1.9, vWorldPos.y) * 0.45;
   lime = mix(lime * 0.78, lime * 1.22, upTop);
+  // a slight gradient: darker towards the bottom
+  float bottomDark = mix(0.72, 1.0, smoothstep(-0.75, 0.5, vWorldPos.y));
+  lime *= bottomDark;
+  deep *= bottomDark;
   float shade = vDead * (1.0 - 0.75 * upTop) * 0.8;
   lime = mix(lime, lime * vec3(0.5, 0.6, 0.45), shade);
   deep *= mix(1.0, 0.7, shade);
@@ -175,7 +179,7 @@ void main() {
     float mature = smoothstep(0.08 + edgeNoise, 0.6, age);
     float humus = mature;
     vec3 velvet = mix(deep, lime, (0.1 + 0.75 * bump) * wrap) + lime * sheen;
-    velvet *= mix(0.5, 1.0, pillow);   // valleys stay dark
+    velvet *= mix(0.85, 1.0, pillow);  // valleys a touch darker, the mounds carry the shape not the colour
     vec3 ground = mix(vec3(0.03, 0.025, 0.012), velvet, dot(w, kBase));
     vec3 lit = mix(rock, grade(ground), max(humus * 0.92, mature * dot(w, kBase)));
     gl_FragColor = vec4(lit, 1.0);
@@ -202,7 +206,7 @@ void main() {
   vec3 col = mix(deep, lime, pow(uu, 1.2) * (0.25 + 0.75 * wrap)) + lime * sheen * uu;
   // young sparse moss at a patch edge reads as light specks, not dirt
   col = mix(col, lime * 0.8, (1.0 - smoothstep(0.1, 0.5, age)) * 0.7);
-  col *= mix(0.55, 1.0, pillow) * (0.8 + 0.2 * hemi) * mix(0.6, 1.0, shadow);
+  col *= mix(0.85, 1.0, pillow) * (0.8 + 0.2 * hemi) * mix(0.6, 1.0, shadow);
   gl_FragColor = vec4(grade(col), 1.0);
   #include <colorspace_fragment>
 }
