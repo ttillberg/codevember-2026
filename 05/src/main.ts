@@ -103,6 +103,8 @@ ground.rotation.x = -Math.PI / 2;
 ground.position.y = -0.72;
 scene.add(ground);
 
+const METAL = false; // true: brushed black metal body on the rock; false: plain white like the letters
+
 // ---- the metal: physically based, brushed. Roughness varies with a small noise texture so the
 // reflections break up instead of reading like chrome, plus a thin clearcoat for the sharp highlight.
 function noiseTexture(size: number, scale: number, lo: number, hi: number) {
@@ -196,7 +198,7 @@ function createWorld(text: string, kind: 'word' | 'rock' = 'word'): World {
   const picker = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ visible: false }));
   scene.add(shells, fronds.mesh, picker);
   let metal: THREE.Mesh | null = null;
-  if (kind === 'rock') {
+  if (kind === 'rock' && METAL) {
     // the hull has no uvs; a planar projection is plenty for a noise roughness map
     if (!geo.attributes.uv) {
       const pos = geo.attributes.position as THREE.BufferAttribute;
