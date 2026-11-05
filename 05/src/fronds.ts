@@ -157,6 +157,7 @@ export function buildFronds(rock: THREE.BufferGeometry, fertility: Float32Array,
       uRimDir: { value: new THREE.Vector3(0, 1, 0) },
       uRim: { value: 0 },
       uHemi: { value: 0 },
+      uTrans: { value: 0 },
       uShadowMap: { value: null },
       uShadowMatrix: { value: new THREE.Matrix4() },
       uShadowOn: { value: 0 },
@@ -442,6 +443,16 @@ vec3 grade(vec3 c) {
   return max(c, 0.0);
 }
 
+// translucency: thin moss lets the key light through. Strongest looking towards the light, a little on the
+// side facing away from it; thin = how much of the strand is there (tips 1, roots 0)
+uniform float uTrans; // 0 = off (swatches, thumbnails)
+vec3 transLight(vec3 N, vec3 V, vec3 L, float thin) {
+  if (uTrans <= 0.0) return vec3(0.0);
+  float through = pow(max(dot(-V, L), 0.0), 1.5);
+  float behind = smoothstep(-0.1, 0.6, dot(-N, L));
+  return vec3(1.0, 1.0, 0.6) * (through * 0.6 + behind * 0.55) * thin * uTrans;
+}
+
 // coloured ambient: where the key light does not reach, the moss takes a cool sky fill from above and a
 // warm, greenish bounce from below instead of flat grey
 uniform float uHemi; // 0 = off (swatches, thumbnails)
@@ -533,6 +544,7 @@ void main() {
   ao *= mix(1.0, 0.45, vCavity);
   vec3 lit = col * ao * (ambient * mix(0.7, 1.0, shadow) + wrapK * wrap + back * shadow) * gain + tip * rim * shadow;
   lit *= skyTint(normalize(vSurfN), 1.0 - 0.6 * wrap);
+  lit += transLight(normalize(vSurfN), V, L, 0.15 + 0.85 * vT) * (col * 3.2 + tip * 0.7) * mix(0.4, 1.0, shadow) * mix(1.0, 0.3, vCavity);
   lit += rimLight(normalize(vSurfN), V) * (col * 2.6 + tip * 0.6) * (0.2 + 0.8 * vT) * mix(1.0, 0.3, vCavity);
   gl_FragColor = vec4(grade(lit), 1.0);
   #include <colorspace_fragment>
