@@ -169,3 +169,20 @@ canvas { display: block; width: 100vw; height: 100vh; touch-action: none; }
   .swatches:not(.carousel) .sw:hover::before,
   .swatches:not(.carousel) .sw:hover::after { opacity: 1; transform: translate(-50%, 0); }
 }
+
+/* moss meter around the miniature */
+.letter-btn .ring { position: absolute; inset: 0; width: 100%; height: 100%; transform: rotate(-90deg); pointer-events: none; }
+.letter-btn .ring circle { fill: none; stroke-width: 2.5; }
+.letter-btn .ring .track { stroke: rgba(0, 0, 0, .08); }
+.letter-btn .ring .fill { stroke: #5c9a2a; stroke-linecap: round; transition: stroke-dashoffset .4s ease, stroke .4s ease; }
+.letter-btn.full .ring .fill, .letter-btn.unlocked .ring .fill { stroke: #3f7d18; }
+.letter-btn.just-unlocked { animation: unlock 2.4s ease; }
+@keyframes unlock {
+  0% { transform: scale(1); } 12% { transform: scale(1.22); } 30% { transform: scale(.96); } 45% { transform: scale(1.06); } 100% { transform: scale(1); }
+}
+.letter-pop .lock-note {
+  grid-column: 1 / -1; padding: 4px 2px 6px; text-align: center;
+  font: 10px ui-monospace, Menlo, monospace; color: #666;
+}
+.letter-pop.locked button:not(.rock) { opacity: .22; cursor: not-allowed; }
+.letter-pop.locked button:not(.rock):hover { background: transparent; }

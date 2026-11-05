@@ -11,6 +11,7 @@ export interface Surface {
   fertility: Float32Array; // 0..1, how willing moss is to spread here
   dead: Float32Array; // 0..1, bleached yellow-brown patches
   pillow: Float32Array; // 0..1, where the moss mounds up
+  area: Float32Array; // surface area each vertex stands for (a third of its triangles)
 }
 
 // Mound field, shared by rock vertices and frond instances so both layers bulge together.
@@ -168,5 +169,17 @@ export function finishSurface(geo: THREE.BufferGeometry, seed = 7): Surface {
   }
   geo.setAttribute('mossNormal', new THREE.BufferAttribute(mn, 3));
 
-  return { geometry: geo, adjacency, fertility, dead, pillow };
+  const area = new Float32Array(n);
+  {
+    const a = new THREE.Vector3(), b = new THREE.Vector3(), c = new THREE.Vector3();
+    for (let t = 0; t < index.length; t += 3) {
+      a.fromBufferAttribute(posAttr, index[t]);
+      b.fromBufferAttribute(posAttr, index[t + 1]);
+      c.fromBufferAttribute(posAttr, index[t + 2]);
+      const tri = b.sub(a).cross(c.sub(a)).length() / 6; // a third of the triangle's area, per corner
+      area[index[t]] += tri; area[index[t + 1]] += tri; area[index[t + 2]] += tri;
+    }
+  }
+
+  return { geometry: geo, adjacency, fertility, dead, pillow, area };
 }

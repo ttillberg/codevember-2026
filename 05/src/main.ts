@@ -168,6 +168,8 @@ interface World {
   fronds: Fronds;
   picker: THREE.Mesh;
   kind: 'word' | 'rock';
+  reach: Float32Array; // area of each vertex that counts towards the moss meter (0 where you cannot paint)
+  reachTotal: number;
   metal: THREE.Mesh | null; // the silver rock body, drawn where there is no moss
 }
 
@@ -225,7 +227,26 @@ function createWorld(text: string, kind: 'word' | 'rock' = 'word'): World {
     positions: geo.attributes.position as THREE.BufferAttribute,
     normals: geo.attributes.normal as THREE.BufferAttribute,
     moss, cap, species, puff, puffVel, puffTarget, puffAttr, pillow, pillowAttr, settle, mossAttr, speciesAttr, shells, fronds, picker, kind, metal,
+    ...reachOf(surface, geo.attributes.normal as THREE.BufferAttribute),
   };
+}
+
+// the moss meter counts what you can actually cover: fertile surface, not the underside facing the ground
+function reachOf(surface: Surface, normals: THREE.BufferAttribute) {
+  const n = normals.count;
+  const reach = new Float32Array(n);
+  let reachTotal = 0;
+  for (let i = 0; i < n; i++) {
+    if (surface.fertility[i] <= 0.05 || normals.getY(i) < -0.6) continue;
+    reach[i] = surface.area[i];
+    reachTotal += reach[i];
+  }
+  return { reach, reachTotal };
+}
+function coverage() {
+  let covered = 0;
+  for (let i = 0; i < W.n; i++) if (W.reach[i] > 0 && W.moss[i] > 0.25) covered += W.reach[i];
+  return W.reachTotal > 0 ? covered / W.reachTotal : 0;
 }
 
 function destroyWorld(w: World) {
@@ -654,6 +675,37 @@ function setPop(open: boolean) {
   letterPop.hidden = !open;
   letterBtn.setAttribute('aria-expanded', String(open));
 }
+
+// ---- moss meter: a ring around the miniature fills as you cover the object; a full rock unlocks the alphabet
+const UNLOCK_AT = 0.85;
+const UNLOCK_KEY = 'codevember-05-alphabet';
+let unlocked = false;
+try { unlocked = localStorage.getItem(UNLOCK_KEY) === '1'; } catch { /* private mode: start locked */ }
+const ringFill = letterBtn.querySelector<SVGCircleElement>('.ring .fill')!;
+const RING_C = 2 * Math.PI * 30;
+ringFill.style.strokeDasharray = `${RING_C}`;
+const lockNote = document.createElement('div');
+lockNote.className = 'lock-note';
+function setLocked() {
+  letterPop.querySelectorAll<HTMLButtonElement>('button:not(.rock)').forEach((b) => { b.disabled = !unlocked; });
+  letterPop.classList.toggle('locked', !unlocked);
+  letterBtn.classList.toggle('unlocked', unlocked);
+}
+function updateMeter() {
+  const c = coverage();
+  ringFill.style.strokeDashoffset = `${RING_C * (1 - Math.min(1, c / UNLOCK_AT))}`;
+  letterBtn.classList.toggle('full', c >= UNLOCK_AT);
+  lockNote.textContent = unlocked
+    ? `${Math.round(c * 100)}% covered`
+    : `cover the rock to unlock the alphabet · ${Math.round(Math.min(1, c / UNLOCK_AT) * 100)}%`;
+  if (!unlocked && W.kind === 'rock' && c >= UNLOCK_AT) {
+    unlocked = true;
+    try { localStorage.setItem(UNLOCK_KEY, '1'); } catch { /* fine, it just will not be remembered */ }
+    setLocked();
+    letterBtn.classList.add('just-unlocked');
+    setTimeout(() => letterBtn.classList.remove('just-unlocked'), 2400);
+  }
+}
 {
   const rockBtn = document.createElement('button');
   rockBtn.className = 'rock active';
@@ -661,17 +713,19 @@ function setPop(open: boolean) {
   rockBtn.setAttribute('aria-label', 'rock');
   rockBtn.innerHTML = '<i></i>';
   letterPop.appendChild(rockBtn);
+  letterPop.appendChild(lockNote);
   for (const c of CHARS) {
     const b = document.createElement('button');
     b.dataset.choice = c;
     b.textContent = c;
     letterPop.appendChild(b);
   }
+  setLocked();
 }
 letterBtn.addEventListener('click', (e) => { e.stopPropagation(); setPop(letterPop.hidden); });
 letterPop.addEventListener('click', (e) => {
   const b = (e.target as HTMLElement).closest('button') as HTMLButtonElement | null;
-  if (!b?.dataset.choice) return;
+  if (!b?.dataset.choice || b.disabled) return;
   e.stopPropagation();
   setPop(false);
   pickObject(b.dataset.choice);
@@ -836,6 +890,7 @@ function resize() {
 addEventListener('resize', resize);
 resize();
 
+let meterTick = 0;
 const clock = new THREE.Clock();
 renderer.setAnimationLoop(() => {
   const dt = Math.min(clock.getDelta(), 0.05);
@@ -866,6 +921,7 @@ renderer.setAnimationLoop(() => {
       shadowDirty = false;
     }
   }
+  if (++meterTick % 12 === 0) updateMeter();
   updateHover();
   controls.update();
   renderer.render(scene, camera);
