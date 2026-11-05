@@ -35,7 +35,7 @@ export function renderSwatches(renderer: THREE.WebGLRenderer, shells: number, li
   geo.setAttribute('dead', new THREE.BufferAttribute(dead, 1));
   geo.setAttribute('pillow', new THREE.BufferAttribute(pillow, 1));
   geo.setAttribute('mossNormal', geo.attributes.normal.clone());
-  geo.setAttribute('cavity', new THREE.BufferAttribute(new Float32Array(n), 1)); // a ball has no hollows
+  geo.setAttribute('cavity', new THREE.BufferAttribute(new Float32Array(n * 2), 2)); // a ball has no hollows
   {
     const d = new Float32Array(n);
     for (let i = 0; i < n; i++) { p.fromBufferAttribute(pos, i); d[i] = domeAt(p.x * 0.5, p.y * 0.5, p.z * 0.5); }

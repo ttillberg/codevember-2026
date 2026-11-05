@@ -146,7 +146,8 @@ export function buildRock(seed = 7, linearLevels = 3, smoothLevels = 2): Surface
 
 /** Turn any indexed geometry (positions + index) into a paintable surface: normals, adjacency and the per-vertex fields. */
 const CAVITY_CELL = 0.03; // voxel size, world units
-const CAVITY_REACH = 0.35; // a hit closer than this occludes
+const CAVITY_REACH = 0.35; // a hit closer than this occludes the moss: it would fill the hollow
+const AO_REACH = 1.0; // broader occlusion for the bare surface: whole counters and inner corners
 // fixed ray set: a Fibonacci sphere, flipped into each vertex's hemisphere
 const CAVITY_DIRS = (() => {
   const out: number[] = [];
@@ -159,7 +160,7 @@ const CAVITY_DIRS = (() => {
 })();
 function bakeCavity(pos: THREE.BufferAttribute, nrm: Float32Array, bb: THREE.Box3) {
   const n = pos.count;
-  const c = CAVITY_CELL, pad = CAVITY_REACH + c;
+  const c = CAVITY_CELL, pad = AO_REACH + c;
   const ox = bb.min.x - pad, oy = bb.min.y - pad, oz = bb.min.z - pad;
   const nx = Math.ceil((bb.max.x - bb.min.x + 2 * pad) / c), ny = Math.ceil((bb.max.y - bb.min.y + 2 * pad) / c), nz = Math.ceil((bb.max.z - bb.min.z + 2 * pad) / c);
   const grid = new Uint8Array(nx * ny * nz);
@@ -167,30 +168,34 @@ function bakeCavity(pos: THREE.BufferAttribute, nrm: Float32Array, bb: THREE.Box
     const gx = Math.floor((pos.getX(i) - ox) / c), gy = Math.floor((pos.getY(i) - oy) / c), gz = Math.floor((pos.getZ(i) - oz) / c);
     grid[gx + nx * (gy + ny * gz)] = 1;
   }
-  const out = new Float32Array(n);
-  const steps = Math.ceil(CAVITY_REACH / c);
+  const cavity = new Float32Array(n);
+  const occlusion = new Float32Array(n);
   for (let i = 0; i < n; i++) {
     const px = pos.getX(i), py = pos.getY(i), pz = pos.getZ(i);
     const qx = nrm[i * 3], qy = nrm[i * 3 + 1], qz = nrm[i * 3 + 2];
-    let hit = 0, total = 0;
+    let near = 0, far = 0, total = 0;
     for (let d = 0; d < CAVITY_DIRS.length; d += 3) {
       let dx = CAVITY_DIRS[d], dy = CAVITY_DIRS[d + 1], dz = CAVITY_DIRS[d + 2];
       let cos = dx * qx + dy * qy + dz * qz;
       if (cos < 0) { dx = -dx; dy = -dy; dz = -dz; cos = -cos; }
       if (cos < 0.2) continue; // grazing rays just skim the surface they start on
       total += cos;
-      // start a couple of cells out so the ray leaves its own voxel
-      for (let s = 2; s <= steps; s++) {
-        const t = s * c;
+      // start a couple of cells out so the ray leaves its own voxel; fine steps within moss reach, coarser beyond
+      for (let t = 2 * c; t <= AO_REACH; t += t < CAVITY_REACH ? c : 2 * c) {
         const gx = Math.floor((px + dx * t - ox) / c), gy = Math.floor((py + dy * t - oy) / c), gz = Math.floor((pz + dz * t - oz) / c);
         if (gx < 0 || gy < 0 || gz < 0 || gx >= nx || gy >= ny || gz >= nz) break;
-        if (grid[gx + nx * (gy + ny * gz)]) { hit += cos * (1 - t / CAVITY_REACH * 0.5); break; }
+        if (grid[gx + nx * (gy + ny * gz)]) {
+          if (t <= CAVITY_REACH) near += cos * (1 - t / CAVITY_REACH * 0.5);
+          far += cos * (1 - t / AO_REACH);
+          break;
+        }
       }
     }
     // flat and convex spots still clip a few voxels of their own surface: up to ~0.15 is open ground
-    out[i] = THREE.MathUtils.smoothstep(total > 0 ? hit / total : 0, 0.15, 0.7);
+    cavity[i] = THREE.MathUtils.smoothstep(total > 0 ? near / total : 0, 0.15, 0.7);
+    occlusion[i] = THREE.MathUtils.smoothstep(total > 0 ? far / total : 0, 0.1, 0.55);
   }
-  return out;
+  return { cavity, occlusion };
 }
 
 export function finishSurface(geo: THREE.BufferGeometry, seed = 7): Surface {
@@ -252,8 +257,11 @@ export function finishSurface(geo: THREE.BufferGeometry, seed = 7): Surface {
   // vertex marches a dozen rays over its hemisphere and counts how many hit the surface again within a reach
   // of a few moss thicknesses. World units on purpose: what matters is whether the moss would fill the hollow,
   // not how dense the mesh is. One pass at build time, free at runtime.
-  const cavity = bakeCavity(posAttr, mn, geo.boundingBox!);
-  geo.setAttribute('cavity', new THREE.BufferAttribute(cavity, 1));
+  const { cavity, occlusion } = bakeCavity(posAttr, mn, geo.boundingBox!);
+  // one vec2 attribute, x = cavity (moss), y = occlusion (bare surface): the shell shader is at the attribute limit
+  const cav2 = new Float32Array(n * 2);
+  for (let i = 0; i < n; i++) { cav2[i * 2] = cavity[i]; cav2[i * 2 + 1] = occlusion[i]; }
+  geo.setAttribute('cavity', new THREE.BufferAttribute(cav2, 2));
 
   const area = new Float32Array(n);
   {

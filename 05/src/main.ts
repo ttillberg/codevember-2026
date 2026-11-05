@@ -67,6 +67,7 @@ const shellMat = new THREE.ShaderMaterial({
     uRim: { value: 1 },
     uHemi: { value: 1 },
     uTrans: { value: 1 },
+    uRockAO: { value: 1 },
     uHideRock: { value: 0 },
     uScale: { value: 1 },
     uShadowMap: { value: null },

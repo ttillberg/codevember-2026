@@ -25,6 +25,7 @@ export function renderGlyphThumbs(
       uTime: { value: 0 },
       uLightDir: { value: lightDir },
       uHideRock: { value: 0 },
+      uRockAO: { value: 1 },
       uScale: { value: 2.2 },
       uShadowMap: { value: null },
       uShadowMatrix: { value: new THREE.Matrix4() },
