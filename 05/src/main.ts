@@ -281,7 +281,7 @@ function addWeights(i: number, wgt: Float32Array, amount: number) {
 }
 
 // ---- auto brush: picks species by normal, speed, time and a bit of luck
-let currentSpecies = 0; // feather by default; -1 = auto mix
+let currentSpecies = 4; // coral by default; -1 = auto mix
 const strokeBias = new Float32Array(SPECIES); // rolled per stroke
 const strokeShift = new THREE.Vector3(); // noise offset for rearranging mounds, rolled per stroke
 let speed = 0; // smoothed pointer speed, px per second
@@ -509,7 +509,7 @@ scrapeBtn.addEventListener('click', () => (scrapeTool ? setBrush(null, false) : 
 // phones: infinite swipe, centred item is the brush. Desktop: a plain row.
 const useCarousel = coarse || innerWidth < 640;
 if (useCarousel) {
-  carousel = setupCarousel(swatchBar, swatches, 104, (i) => selectSwatch(swatches[i], true), 0);
+  carousel = setupCarousel(swatchBar, swatches, 104, (i) => selectSwatch(swatches[i], true), swatchIndex());
 } else {
   swatches.forEach((b) => b.addEventListener('click', () => selectSwatch(b)));
 }
@@ -528,7 +528,7 @@ addEventListener('keydown', (e) => {
     if (W.metal) W.metal.visible = hidden === 1 && W.metal.visible ? false : true;
   }
 });
-setBrush(0);
+setBrush(4);
 renderSwatches(renderer, SHELLS, lightDir);
 renderEraser(renderer);
 
