@@ -1,6 +1,7 @@
 export const shellVertex = /* glsl */ `
 attribute float moss;
 attribute vec4 speciesW;
+attribute float speciesW2; // fifth species weight: green reindeer moss (coral)
 attribute float dead;
 attribute float pillow;
 attribute float puff; // plumped up by repeated brushing, animated as a spring
@@ -12,6 +13,7 @@ uniform float uTime;
 varying float vShell;
 varying float vMoss;
 varying vec4 vSpecies;
+varying float vSpecies2;
 varying float vDead;
 varying float vPillow;
 varying vec3 vLocal;
@@ -22,8 +24,10 @@ varying vec3 vWorldNormal;
 void main() {
   float t = float(gl_InstanceID) / float(SHELLS - 1);
   // mound up where the moss is mature: real geometry, so the light makes real shadows between pillows
-  vec4 w = speciesW / max(speciesW.x + speciesW.y + speciesW.z + speciesW.w, 1e-4);
-  float bulge = moss * moss * mix(0.3, 1.0, pillow) * uBulge * dot(w, vec4(1.0, 0.6, 0.5, 1.3));
+  float wsum = max(speciesW.x + speciesW.y + speciesW.z + speciesW.w + speciesW2, 1e-4);
+  vec4 w = speciesW / wsum;
+  float w5 = speciesW2 / wsum;
+  float bulge = moss * moss * mix(0.3, 1.0, pillow) * uBulge * (dot(w, vec4(1.0, 0.6, 0.5, 1.3)) + w5 * 0.9);
   bulge += puff * uBulge * 1.4 * smoothstep(0.0, 0.3, moss);
   vec3 p = position + normal * (bulge + uHeight * t);
 
@@ -31,6 +35,7 @@ void main() {
   vShell = t;
   vMoss = moss;
   vSpecies = w;
+  vSpecies2 = w5;
   vDead = dead;
   vPillow = pillow;
   vLocal = position;
@@ -79,6 +84,7 @@ float shadowAt(vec3 worldPos, vec3 n) {
 varying float vShell;
 varying float vMoss;
 varying vec4 vSpecies;
+varying float vSpecies2;
 varying float vDead;
 varying float vPillow;
 varying vec3 vLocal;
@@ -109,8 +115,11 @@ const vec4 kAgePow   = vec4(   1.0,     1.0,    1.0,    2.0  );   // height vs a
 const vec4 kDensity  = vec4(   0.35,    0.4,    0.5,    0.14 );   // fuzz threshold at the root (higher = sparser)
 const vec4 kSheen    = vec4(   0.35,    0.2,    0.15,   0.7  );   // velvet rim strength
 const vec4 kBase     = vec4(   0.7,     0.8,    0.5,    1.0  );   // how much the ground takes the species shade
+// the fifth species, green reindeer moss (coral): height, age curve, density, sheen, base
+const float kHeight5 = 1.0, kAgePow5 = 1.0, kDensity5 = 0.42, kSheen5 = 0.2, kBase5 = 0.8;
 
 vec3 blend4(vec3 a, vec3 b, vec3 c, vec3 d, vec4 w) { return a * w.x + b * w.y + c * w.z + d * w.w; }
+vec3 blend5(vec3 a, vec3 b, vec3 c, vec3 d, vec3 e, vec4 w, float w5) { return blend4(a, b, c, d, w) + e * w5; }
 
 // anti-aliased grid lines along one axis pair, world space
 float gridLine(vec2 p, float cell, float width) {
@@ -141,6 +150,7 @@ void main() {
   vec3 L = normalize(uLightDir);
   vec3 V = normalize(cameraPosition - vWorldPos);
   vec4 w = vSpecies;
+  float w5 = vSpecies2;
   float age = vMoss;
 
   // the mounds are real geometry now: light them with the geometric normal, softened a little
@@ -149,17 +159,17 @@ void main() {
 
   float ndv = max(dot(N, V), 0.0);
   float shadow = shadowAt(vWorldPos, N);
-  float sheen = pow(1.0 - ndv, 2.5) * dot(w, kSheen) * mix(0.4, 1.0, shadow);
+  float sheen = pow(1.0 - ndv, 2.5) * (dot(w, kSheen) + w5 * kSheen5) * mix(0.4, 1.0, shadow);
   // directional, not wrapped: sides facing away from the light go properly dark
   float wrap = pow(max(dot(N, L) * 0.65 + 0.35, 0.0), 1.6) * shadow;
   float hemi = 0.5 + 0.5 * N.y;
 
   // species palettes (linear)
-  vec3 deep = blend4(vec3(0.02, 0.045, 0.008), vec3(0.012, 0.05, 0.008), vec3(0.18, 0.18, 0.11), vec3(0.008, 0.04, 0.005), w);
-  vec3 lime = blend4(vec3(0.20, 0.56, 0.04),   vec3(0.05, 0.20, 0.015), vec3(0.34, 0.38, 0.24), vec3(0.30, 0.72, 0.05),  w);
-  vec3 young = blend4(vec3(0.33, 0.31, 0.07),  vec3(0.13, 0.19, 0.03),   vec3(0.30, 0.30, 0.18), vec3(0.28, 0.40, 0.06),  w);
+  vec3 deep = blend5(vec3(0.02, 0.045, 0.008), vec3(0.012, 0.05, 0.008), vec3(0.18, 0.18, 0.11), vec3(0.008, 0.04, 0.005), vec3(0.006, 0.03, 0.006), w, w5);
+  vec3 lime = blend5(vec3(0.20, 0.56, 0.04),   vec3(0.05, 0.20, 0.015), vec3(0.34, 0.38, 0.24), vec3(0.30, 0.72, 0.05), vec3(0.05, 0.14, 0.03), w, w5);
+  vec3 young = blend5(vec3(0.33, 0.31, 0.07),  vec3(0.13, 0.19, 0.03),   vec3(0.30, 0.30, 0.18), vec3(0.28, 0.40, 0.06), vec3(0.06, 0.13, 0.03), w, w5);
   lime = mix(young, lime, smoothstep(0.2, 0.9, age));
-  vec3 deadCol = blend4(vec3(0.50, 0.38, 0.11), vec3(0.40, 0.30, 0.09), vec3(0.30, 0.24, 0.14), vec3(0.50, 0.38, 0.11), w);
+  vec3 deadCol = blend5(vec3(0.50, 0.38, 0.11), vec3(0.40, 0.30, 0.09), vec3(0.30, 0.24, 0.14), vec3(0.50, 0.38, 0.11), vec3(0.30, 0.26, 0.12), w, w5);
   // yellow only as a per-strand sprinkle; the area field makes patches of darker, deeper moss instead
   float deadMix = step(0.92, hash31(floor(vLocal * 260.0 / uScale) + 3.0)) * 0.8 * (1.0 - w.w) * (1.0 - 0.6 * w.y); // cushion even, star mostly even
   deep = mix(deep, vec3(0.12, 0.08, 0.02), deadMix);
@@ -201,16 +211,16 @@ void main() {
     float humus = mature;
     vec3 velvet = mix(deep, lime, (0.1 + 0.75 * bump) * wrap) + lime * sheen;
     velvet *= mix(0.85, 1.0, pillow);  // valleys a touch darker, the mounds carry the shape not the colour
-    vec3 ground = mix(vec3(0.03, 0.025, 0.012), velvet, dot(w, kBase));
-    vec3 lit = mix(rock, grade(ground), max(humus * 0.92, mature * dot(w, kBase)));
+    vec3 ground = mix(vec3(0.03, 0.025, 0.012), velvet, (dot(w, kBase) + w5 * kBase5));
+    vec3 lit = mix(rock, grade(ground), max(humus * 0.92, mature * (dot(w, kBase) + w5 * kBase5)));
     gl_FragColor = vec4(lit, 1.0);
     #include <colorspace_fragment>
     return;
   }
 
   // ---- fuzz: a noise density field, dense at the root and thinning upward.
-  float ageH = pow(age, dot(w, kAgePow));
-  float top = ageH * mix(0.5, 1.0, lump) * mix(0.35, 1.0, pillow) * dot(w, kHeight);
+  float ageH = pow(age, dot(w, kAgePow) + w5 * kAgePow5);
+  float top = ageH * mix(0.5, 1.0, lump) * mix(0.35, 1.0, pillow) * (dot(w, kHeight) + w5 * kHeight5);
   if (vShell > top) discard;
   float uu = vShell / max(top, 0.001);
 
@@ -225,7 +235,7 @@ void main() {
   float dens = noise3(q * 140.0 / uScale) * (1.0 - fineW - midW) + noise3(q * 420.0 / uScale) * midW + hash31(floor(q * 420.0 / uScale)) * fineW;
   // thin out more at grazing angles: the silhouette stays fuzzy but layers cannot line up
   float graze = 1.0 - ndv;
-  if (dens < dot(w, kDensity) + 0.6 * uu + 0.35 * uu * graze) discard;
+  if (dens < (dot(w, kDensity) + w5 * kDensity5) + 0.6 * uu + 0.35 * uu * graze) discard;
 
   vec3 col = mix(deep, lime, pow(uu, 1.2) * (0.25 + 0.75 * wrap)) + lime * sheen * uu;
   // young sparse moss at a patch edge reads as light specks, not dirt

@@ -10,7 +10,7 @@ import { shellVertex, shellFragment } from './shaders';
 
 export function renderSwatches(renderer: THREE.WebGLRenderer, shells: number, lightDir: THREE.Vector3) {
   const size = 128;
-  const SPECIES = 4;
+  const SPECIES = 5;
 
   // a small sphere stands in for the rock; we look at a patch of its top
   // small core, big moss: the ball is mostly fuzz and fronds
@@ -29,8 +29,9 @@ export function renderSwatches(renderer: THREE.WebGLRenderer, shells: number, li
     pillow[i] = pillowAt(p.x / 0.6, p.y / 0.6, p.z / 0.6);
   }
   geo.setAttribute('moss', new THREE.BufferAttribute(moss, 1));
-  const weightsAttr = new THREE.BufferAttribute(weights, SPECIES);
-  geo.setAttribute('speciesW', weightsAttr);
+  const weightsAttr = new THREE.InterleavedBuffer(weights, SPECIES);
+  geo.setAttribute('speciesW', new THREE.InterleavedBufferAttribute(weightsAttr, 4, 0));
+  geo.setAttribute('speciesW2', new THREE.InterleavedBufferAttribute(weightsAttr, 1, 4));
   geo.setAttribute('dead', new THREE.BufferAttribute(dead, 1));
   geo.setAttribute('pillow', new THREE.BufferAttribute(pillow, 1));
 
@@ -72,7 +73,7 @@ export function renderSwatches(renderer: THREE.WebGLRenderer, shells: number, li
   // the frond shader reads its pillow field from the puff texture's G channel
   {
     const pt = fronds.puffTexture.image.data as Float32Array;
-    for (let i = 0; i < n; i++) pt[i * 2 + 1] = pillow[i];
+    for (let i = 0; i < n; i++) pt[i * 4 + 1] = pillow[i];
     fronds.puffTexture.needsUpdate = true;
   }
   const setWeights = (pick: (i: number) => number) => {
@@ -89,6 +90,9 @@ export function renderSwatches(renderer: THREE.WebGLRenderer, shells: number, li
       tex[i * 4 + 3] = weights[i * SPECIES + 2];
     }
     fronds.ageTexture.needsUpdate = true;
+    const pt = fronds.puffTexture.image.data as Float32Array;
+    for (let i = 0; i < n; i++) pt[i * 4 + 2] = weights[i * SPECIES + 3];
+    fronds.puffTexture.needsUpdate = true;
   };
 
   const prevTarget = renderer.getRenderTarget();
@@ -115,7 +119,7 @@ export function renderSwatches(renderer: THREE.WebGLRenderer, shells: number, li
     }
   };
 
-  const names = ['feather', 'star', 'lichen', 'cushion'];
+  const names = ['feather', 'star', 'lichen', 'cushion', 'coral'];
   for (let k = 0; k < SPECIES; k++) {
     setWeights(() => k);
     apply(`.sw i.${names[k]}`, shoot());
@@ -124,7 +128,7 @@ export function renderSwatches(renderer: THREE.WebGLRenderer, shells: number, li
   setWeights((i) => {
     p.fromBufferAttribute(pos, i);
     const v = fbm3(p.x * 2.5, p.y * 2.5, p.z * 2.5, 2, 3);
-    return v < -0.15 ? 1 : v < 0.05 ? 0 : v < 0.2 ? 3 : 2;
+    return v < -0.2 ? 1 : v < -0.02 ? 0 : v < 0.12 ? 4 : v < 0.25 ? 3 : 2;
   });
   apply('.sw i.auto', shoot());
 

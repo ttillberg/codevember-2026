@@ -39,7 +39,7 @@ canvas { display: block; width: 100vw; height: 100vh; touch-action: none; }
 .sw i.lichen { background: radial-gradient(circle at 35% 30%, #cbd3b6, #8f9a78 75%); }
 .sw i.cushion { background: radial-gradient(circle at 35% 30%, #a2e04a, #2d6b14 75%); }
 .scrape-btn {
-  position: fixed; bottom: 14px; left: calc(50% + 268px);
+  position: fixed; bottom: 14px; left: calc(50% + 320px);
   display: flex; flex-direction: column; align-items: center; gap: 7px;
   width: 88px; padding: 0; border: 0; background: transparent; cursor: pointer;
   font: 11px ui-monospace, Menlo, monospace; color: #444; opacity: .75;

@@ -126,8 +126,8 @@ export function buildFronds(rock: THREE.BufferGeometry, fertility: Float32Array,
   const ageTexture = new THREE.DataTexture(new Float32Array(texW * texH * 4), texW, texH, THREE.RGBAFormat, THREE.FloatType);
   ageTexture.magFilter = ageTexture.minFilter = THREE.NearestFilter;
   ageTexture.needsUpdate = true;
-  // R = puff, G = the (dynamic) pillow field at the nearest vertex
-  const puffTexture = new THREE.DataTexture(new Float32Array(texW * texH * 2), texW, texH, THREE.RGFormat, THREE.FloatType);
+  // R = puff, G = the (dynamic) pillow field, B = the cushion weight (the fifth, coral, is the remainder)
+  const puffTexture = new THREE.DataTexture(new Float32Array(texW * texH * 4), texW, texH, THREE.RGBAFormat, THREE.FloatType);
   puffTexture.magFilter = puffTexture.minFilter = THREE.NearestFilter;
   puffTexture.needsUpdate = true;
 
@@ -204,14 +204,16 @@ void main() {
   float iy = floor(iVert / uAgeSize.x);
   vec4 cell = texture2D(uAge, (vec2(ix, iy) + 0.5) / uAgeSize);
   float age = cell.r;
-  vec2 pp = texture2D(uPuff, (vec2(ix, iy) + 0.5) / uAgeSize).rg;
+  vec4 pp = texture2D(uPuff, (vec2(ix, iy) + 0.5) / uAgeSize);
   float puff = pp.r;
   float clumpV = pp.g; // live pillow field, the brush can rearrange it
   // draw this instance's species from the vertex's weights: mixed zones interleave
-  // weights are normalised on the CPU; the fourth (cushion moss) is the remainder and has no fronds
-  vec3 wgt = cell.gba;
+  // weights are normalised on the CPU: feather, star, lichen in the age texture, cushion in the puff texture,
+  // coral is the remainder. Cushion has no fronds.
+  vec4 wgt = vec4(cell.gba, pp.b);
   float pick = iPick; // smooth field: neighbours pick alike, so weights turn into patches
-  float species = pick < wgt.x ? 0.0 : (pick < wgt.x + wgt.y ? 1.0 : (pick < wgt.x + wgt.y + wgt.z ? 2.0 : 3.0));
+  float c1 = wgt.x, c2 = c1 + wgt.y, c3 = c2 + wgt.z, c4 = c3 + wgt.w;
+  float species = pick < c1 ? 0.0 : (pick < c2 ? 1.0 : (pick < c3 ? 2.0 : (pick < c4 ? 3.0 : 4.0)));
   float strip = position.z;
   float t = position.y;
   // a few percent of instances are a single thin grass straw instead, whatever the species
@@ -225,7 +227,8 @@ void main() {
   else if (species < 0.5) unused = strip >= 2.0;                  // feather: stem + branch
   else if (species < 1.5) unused = strip == 1.0 || iSeed.w < 0.25; // star: lightly thinned rosettes
   else if (species < 2.5) unused = false;                           // lichen: every instance, all strips
-  else unused = true;                                               // cushion: shells only
+  else if (species < 3.5) unused = true;                            // cushion: shells only
+  else unused = false;                                              // coral: every instance, all strips
   if (age < 0.03 || unused) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); return; }
 
   // local frame, spun by a random yaw
@@ -254,29 +257,31 @@ void main() {
     across = normalize(cross(D, B));
     w = uWidth * 0.16 * (1.0 - 0.7 * t);
   } else if (species >= 1.5) {
-    // ---- reindeer lichen: a curving stem with twigs forking off along its length
+    // ---- reindeer lichen: a curving stem with twigs forking off along its length.
+    // Coral (green reindeer moss) is the same build: shorter, thicker, twigs spread wider into round clumps.
+    float coral = step(3.5, species);
     // wide spread of heights, skewed short with a few tall ones poking out
-    float L = uLichenLen * (0.5 + 1.1 * pow(iSeed.y, 1.4)) * (0.3 + 0.7 * grown) * mix(0.7, 1.0, clumpV);
+    float L = uLichenLen * (0.5 + 1.1 * pow(iSeed.y, 1.4)) * (0.3 + 0.7 * grown) * mix(0.7, 1.0, clumpV) * mix(1.0, 0.7, coral);
     vec3 leanDir = T * (iSeed.z - 0.5) * 0.8;
     vec3 wob = B * 0.12 * L;
     if (strip < 0.5) {
       C = N * t * L + leanDir * t * t * L + wob * sin(t * 5.0 + iSeed.w * 6.0);
       D = normalize(N * L + leanDir * 2.0 * t * L + wob * 5.0 * cos(t * 5.0 + iSeed.w * 6.0));
       across = normalize(cross(D, B));
-      w = uWidth * 0.5 * (1.0 - 0.5 * t);
+      w = uWidth * 0.5 * (1.0 - 0.5 * t) * mix(1.0, 1.25, coral);
     } else {
       float k = strip - 1.0;                                     // 0..6
       float h0 = 0.25 + 0.1 * k + 0.08 * hash(iSeed.z * 9.0 + k);
       vec3 root = N * h0 * L + leanDir * h0 * h0 * L + wob * sin(h0 * 5.0 + iSeed.w * 6.0);
       float ang = k * 2.4 + (hash(iSeed.w * 7.0 + k) - 0.5) * 1.2;
       vec3 side = T * cos(ang) + B * sin(ang);
-      float elev = 0.55 + 0.5 * hash(iSeed.x * 3.0 + k);
-      float Lb = L * (0.45 + 0.3 * hash(iSeed.y * 5.0 + k)) * (1.15 - h0);
+      float elev = mix(0.55 + 0.5 * hash(iSeed.x * 3.0 + k), 0.25 + 0.55 * hash(iSeed.x * 3.0 + k), coral);
+      float Lb = L * (0.45 + 0.3 * hash(iSeed.y * 5.0 + k)) * (1.15 - h0) * mix(1.0, 1.35, coral);
       vec3 d0 = normalize(side * cos(elev) + N * sin(elev));
       C = root + d0 * t * Lb + N * t * t * Lb * 0.25;
       D = normalize(d0 + N * t * 0.5);
       across = normalize(cross(D, side));
-      w = uWidth * 0.36 * (1.0 - 0.75 * t);
+      w = uWidth * 0.36 * (1.0 - 0.75 * t) * mix(1.0, 1.2, coral);
     }
   } else if (species >= 0.5) {
     // ---- star moss: straight stem, rosette of stiff pointed leaves at the top
@@ -340,8 +345,8 @@ void main() {
   vec3 local = C + across * position.x * w;
 
   // ride the mound: same displacement the rock shells use
-  vec4 w4 = vec4(cell.gba, max(0.0, 1.0 - cell.g - cell.b - cell.a));
-  float bulge = age * age * mix(0.3, 1.0, clumpV) * uBulge * dot(w4, vec4(1.0, 0.6, 0.5, 1.3)) + puff * uBulge * 1.4 * smoothstep(0.0, 0.3, age);
+  float wCoral = max(0.0, 1.0 - c4);
+  float bulge = age * age * mix(0.3, 1.0, clumpV) * uBulge * (dot(wgt, vec4(1.0, 0.6, 0.5, 1.3)) + wCoral * 0.9) + puff * uBulge * 1.4 * smoothstep(0.0, 0.3, age);
   vec3 p = iPos + N * bulge + local;
   vec4 wp = modelMatrix * vec4(p, 1.0);
   vWorldPos = wp.xyz;
@@ -424,6 +429,11 @@ void main() {
     root = vec3(0.10, 0.11, 0.03);
     tip = mix(vec3(0.34, 0.40, 0.12), vec3(0.42, 0.44, 0.18), vHue);
     col = mix(root, tip, pow(vT, 0.7));
+  } else if (vSpecies >= 3.5) {
+    // green reindeer moss: dark green in the clump, mid green twig tips
+    root = vec3(0.004, 0.018, 0.004);
+    tip = mix(vec3(0.07, 0.17, 0.035), vec3(0.11, 0.22, 0.05), vHue);
+    col = mix(root, tip, smoothstep(0.1, 0.9, vT));
   } else if (vSpecies >= 1.5) {
     // reindeer lichen: pale sage, matte, brown at the very base
     root = vec3(0.14, 0.09, 0.04);
@@ -457,8 +467,9 @@ void main() {
   // bright towards the top and on upward faces, darker down the sides; dark patches only low down
   float top = smoothstep(-0.4, 0.9, N.y) * 0.55 + smoothstep(-0.7, 1.9, vWorldPos.y) * 0.45;
   float bottomDark = mix(0.72, 1.0, smoothstep(-0.75, 0.5, vWorldPos.y));
-  col *= mix(0.78, 1.22, top) * bottomDark;
-  tip *= mix(0.78, 1.22, top) * bottomDark;
+  float lift = vSpecies >= 3.5 ? 0.5 : 1.0; // coral stays deep green even on top
+  col *= mix(1.0 - 0.22 * lift, 1.0 + 0.22 * lift, top) * bottomDark;
+  tip *= mix(1.0 - 0.22 * lift, 1.0 + 0.22 * lift, top) * bottomDark;
   float shade = vShade * (1.0 - 0.75 * top) * 0.8;
   col *= mix(1.0, 0.55, shade);
   tip *= mix(1.0, 0.6, shade);
@@ -468,9 +479,10 @@ void main() {
   float wrap = pow(max(dot(N, L) * 0.65 + 0.35, 0.0), 1.4) * shadow;
   float back = max(dot(-N, L), 0.0) * 0.35; // leaves glow a bit when lit from behind
   float rim = pow(1.0 - max(dot(N, V), 0.0), 3.0) * 0.2;
-  float gain = vSpecies >= 1.5 ? 0.9 : (vSpecies >= 0.5 ? 0.75 : 1.0);
-  float ambient = vSpecies >= 1.5 ? 0.55 : 0.32;  // lichen is matte, mostly ambient
-  float wrapK = vSpecies >= 1.5 ? 0.45 : 0.8;
+  bool lichen = vSpecies >= 1.5 && vSpecies < 3.5;
+  float gain = lichen ? 0.9 : (vSpecies >= 3.5 ? 0.8 : (vSpecies >= 0.5 ? 0.75 : 1.0));
+  float ambient = lichen ? 0.55 : 0.34;  // lichen is matte, mostly ambient
+  float wrapK = lichen ? 0.45 : 0.75;
   vec3 lit = col * ao * (ambient * mix(0.7, 1.0, shadow) + wrapK * wrap + back * shadow) * gain + tip * rim * shadow;
   gl_FragColor = vec4(grade(lit), 1.0);
   #include <colorspace_fragment>

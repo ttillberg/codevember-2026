@@ -13,7 +13,7 @@ import { setupCarousel, type Carousel } from './carousel';
 
 const coarse = matchMedia('(pointer: coarse)').matches;
 const SHELLS = coarse ? 10 : 16;
-const SPECIES = 4;
+const SPECIES = 5; // feather, star, lichen, cushion, coral
 const BG = new THREE.Color(0xe6e6e3);
 
 const canvas = document.querySelector<HTMLCanvasElement>('#c')!;
@@ -163,7 +163,7 @@ interface World {
   settle: Float32Array; // seconds left of species blending after a brush touch
   pillowAttr: THREE.BufferAttribute;
   mossAttr: THREE.BufferAttribute;
-  speciesAttr: THREE.BufferAttribute;
+  speciesAttr: THREE.InterleavedBuffer;
   shells: THREE.InstancedMesh;
   fronds: Fronds;
   picker: THREE.Mesh;
@@ -181,7 +181,8 @@ function createWorld(text: string, kind: 'word' | 'rock' = 'word'): World {
   const species = new Float32Array(n * SPECIES);
   const mossAttr = new THREE.BufferAttribute(moss, 1);
   mossAttr.setUsage(THREE.DynamicDrawUsage);
-  const speciesAttr = new THREE.BufferAttribute(species, SPECIES);
+  // five weights per vertex, read by the shells as a vec4 plus a float off one interleaved buffer
+  const speciesAttr = new THREE.InterleavedBuffer(species, SPECIES);
   speciesAttr.setUsage(THREE.DynamicDrawUsage);
   const puff = new Float32Array(n);
   const puffVel = new Float32Array(n);
@@ -190,7 +191,8 @@ function createWorld(text: string, kind: 'word' | 'rock' = 'word'): World {
   puffAttr.setUsage(THREE.DynamicDrawUsage);
   geo.setAttribute('puff', puffAttr);
   geo.setAttribute('moss', mossAttr);
-  geo.setAttribute('speciesW', speciesAttr);
+  geo.setAttribute('speciesW', new THREE.InterleavedBufferAttribute(speciesAttr, 4, 0));
+  geo.setAttribute('speciesW2', new THREE.InterleavedBufferAttribute(speciesAttr, 1, 4));
   geo.setAttribute('dead', new THREE.BufferAttribute(surface.dead, 1));
   const settle = new Float32Array(n);
   const pillow = Float32Array.from(surface.pillow);
@@ -303,6 +305,9 @@ function autoWeights(i: number, out: Float32Array) {
   out[2] = (0.3 + 0.7 * strokeBias[2]) * lichenField * (0.4 + 0.6 * (1 - slow)) * THREE.MathUtils.smoothstep(up, -0.2, 0.5);
   // cushion: tops, slow lingering strokes, and the time drift
   out[3] = (0.4 + 0.6 * strokeBias[3]) * THREE.MathUtils.smoothstep(up, 0.1, 0.8) * (0.3 + 0.7 * slow) * (0.5 + 0.5 * drift);
+  // coral: round clumps in its own field, sides and tops
+  const coralField = THREE.MathUtils.smoothstep(fbm3(tmp.x * 2.2, tmp.y * 2.2, tmp.z * 2.2, 3, 91), 0.0, 0.3);
+  out[4] = (0.3 + 0.7 * strokeBias[4]) * coralField * THREE.MathUtils.smoothstep(up, -0.4, 0.4);
 }
 
 // ---- painting
@@ -509,12 +514,13 @@ if (useCarousel) {
   swatches.forEach((b) => b.addEventListener('click', () => selectSwatch(b)));
 }
 addEventListener('keydown', (e) => {
-  // keys follow the swatch order: feather, cushion, star, lichen, mix
+  // keys follow the swatch order: feather, cushion, star, lichen, coral, mix
   if (e.key === '1') setBrush(0);
   if (e.key === '2') setBrush(3);
   if (e.key === '3') setBrush(1);
   if (e.key === '4') setBrush(2);
-  if (e.key === '5' || e.key === 'a') setBrush(-1);
+  if (e.key === '5') setBrush(4);
+  if (e.key === '6' || e.key === 'a') setBrush(-1);
   if (e.key === 'x') setBrush(null, !scrapeTool);
   if (e.key === 'h') {
     const hidden = shellMat.uniforms.uHideRock.value === 1 && !W.metal ? 0 : 1;
@@ -733,8 +739,8 @@ function springPuff(dt: number) {
     const tex = W.fronds.puffTexture.image.data as Float32Array;
     const pil = W.pillow;
     for (let i = 0; i < W.n; i++) {
-      tex[i * 2] = puff[i];
-      tex[i * 2 + 1] = pil[i];
+      tex[i * 4] = puff[i];
+      tex[i * 4 + 1] = pil[i];
     }
     W.fronds.puffTexture.needsUpdate = true;
     pillowDirty = false;
@@ -842,12 +848,16 @@ renderer.setAnimationLoop(() => {
     const tex = fronds.ageTexture.image.data as Float32Array;
     for (let i = 0; i < W.n; i++) {
       tex[i * 4] = moss[i];
-      // fourth weight is implied: 1 - (g + b + a)
+      // feather, star, lichen here; cushion in the puff texture; coral is implied
       tex[i * 4 + 1] = species[i * SPECIES];
       tex[i * 4 + 2] = species[i * SPECIES + 1];
       tex[i * 4 + 3] = species[i * SPECIES + 2];
     }
     fronds.ageTexture.needsUpdate = true;
+    // cushion weight rides in the puff texture's B channel; coral is whatever is left
+    const ptex = fronds.puffTexture.image.data as Float32Array;
+    for (let i = 0; i < W.n; i++) ptex[i * 4 + 2] = species[i * SPECIES + 3];
+    fronds.puffTexture.needsUpdate = true;
     dirty = false;
     if (shadowDirty) {
       renderShadow();
