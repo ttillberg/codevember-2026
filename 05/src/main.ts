@@ -42,6 +42,10 @@ controls.enablePan = false;
 controls.touches = { ONE: null as unknown as THREE.TOUCH, TWO: THREE.TOUCH.DOLLY_ROTATE };
 const touchIds = new Set<number>();
 const touchHint = document.querySelector<HTMLElement>('.touch-hint')!;
+// the hint fades once the first two-finger turn is done
+let touchTurned = false;
+controls.addEventListener('change', () => { if (touchIds.size >= 2) touchTurned = true; });
+controls.addEventListener('end', () => { if (touchTurned) touchHint.classList.add('done'); });
 controls.maxPolarAngle = Math.PI * 0.55;
 
 const lightDir = new THREE.Vector3(1.2, 2.0, 1.0).normalize();
@@ -439,8 +443,7 @@ canvas.addEventListener('pointerdown', (e) => {
   if (e.pointerType === 'touch') {
     touchIds.add(e.pointerId);
     if (touchIds.size >= 2) {
-      // a second finger: stop painting and let the controls rotate; the hint has done its job
-      touchHint.classList.add('done');
+      // a second finger: stop painting and let the controls rotate
       painting = false;
       sizing = false;
       sizeRing.style.display = 'none';
@@ -588,6 +591,11 @@ function frameWord() {
   // the contact shadow follows the word's footprint
   ground.scale.set(Math.max(1, width / 1.6), Math.max(1, depth / 1.2), 1);
   ground.position.x = center.x;
+  // the touch hint sits just under the object, on the screen point of its bottom front edge
+  camera.lookAt(center);
+  camera.updateMatrixWorld();
+  const under = new THREE.Vector3(center.x, bb.min.y, bb.max.z).project(camera);
+  touchHint.style.top = `${Math.round((1 - under.y) * 0.5 * innerHeight + 34)}px`; // below the contact shadow
 }
 function rebuild(text: string, kind: 'word' | 'rock') {
   destroyWorld(W);

@@ -113,7 +113,7 @@ canvas { display: block; width: 100vw; height: 100vh; touch-action: none; }
 
 /* touch only: how to turn the object, fades out after the first two-finger gesture */
 .touch-hint {
-  display: none; position: fixed; left: 50%; top: 18px; transform: translateX(-50%);
+  display: none; position: fixed; left: 50%; top: 70%; transform: translateX(-50%); /* top is set under the object in frameWord */
   font: 11px ui-monospace, Menlo, monospace; color: #444; opacity: .7; pointer-events: none;
   transition: opacity .6s ease;
 }
