@@ -501,7 +501,7 @@ function rebuild(text: string, kind: 'word' | 'rock') {
 }
 // ---- moss size slider: scales fronds, straws, fuzz and bulge together
 const BASE = { height: 0.012, bulge: 0.035, len: 0.032, star: 0.038, lichen: 0.07, width: 0.0042 };
-let mossScale = 1;
+let mossScale = 1.75;
 function applyScale() {
   shellMat.uniforms.uHeight.value = BASE.height * mossScale;
   shellMat.uniforms.uBulge.value = BASE.bulge * mossScale;
@@ -521,6 +521,7 @@ scaleInput.addEventListener('input', () => {
   applyScale();
 });
 scaleInput.addEventListener('keydown', (e) => e.stopPropagation());
+applyScale(); // start at the default size
 
 // ---- object toggle: letters or the silver rock
 const objectButtons = Array.from(document.querySelectorAll<HTMLButtonElement>('.objects button'));
