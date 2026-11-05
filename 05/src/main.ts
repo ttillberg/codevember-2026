@@ -399,11 +399,11 @@ function fillAll() {
     shellMat.uniforms.uTone.value = k;
     shellMat.uniforms.uExposure.value = TONE_EXPOSURE[k];
   });
-  // disable AO: no SSAO pass and no baked darkening of moss in hollows. Remembered across visits.
-  const aoBox = panel.querySelector<HTMLInputElement>('input[data-toggle="noAO"]')!;
-  aoBox.checked = aoOff;
+  // AO: the SSAO pass and the baked darkening of moss in hollows, on when checked. Remembered across visits.
+  const aoBox = panel.querySelector<HTMLInputElement>('input[data-toggle="ao"]')!;
+  aoBox.checked = !aoOff;
   aoBox.addEventListener('change', () => {
-    setAO(!aoBox.checked);
+    setAO(aoBox.checked);
     try { localStorage.setItem(AO_KEY, aoOff ? '1' : '0'); } catch { /* private mode: just not remembered */ }
   });
 }
