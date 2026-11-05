@@ -245,7 +245,8 @@ function reachOf(surface: Surface, normals: THREE.BufferAttribute) {
 }
 function coverage() {
   let covered = 0;
-  for (let i = 0; i < W.n; i++) if (W.reach[i] > 0 && W.moss[i] > 0.25) covered += W.reach[i];
+  // only mature, visible moss counts: the thin young rim of a stroke should not fill the meter
+  for (let i = 0; i < W.n; i++) if (W.reach[i] > 0 && W.moss[i] > 0.55) covered += W.reach[i];
   return W.reachTotal > 0 ? covered / W.reachTotal : 0;
 }
 
