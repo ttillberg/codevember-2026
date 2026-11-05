@@ -154,6 +154,8 @@ export function buildFronds(rock: THREE.BufferGeometry, fertility: Float32Array,
       uBulge: { value: 0.035 },
       uWidth: { value: 0.0042 },
       uLightDir: { value: new THREE.Vector3(1.2, 2.0, 1.0).normalize() },
+      uRimDir: { value: new THREE.Vector3(0, 1, 0) },
+      uRim: { value: 0 },
       uShadowMap: { value: null },
       uShadowMatrix: { value: new THREE.Matrix4() },
       uShadowOn: { value: 0 },
@@ -199,6 +201,7 @@ varying float vSpecies;
 varying float vDead;
 varying float vShade;
 varying float vCavity;
+varying vec3 vSurfN; // the surface's normal under the frond: the back light reads the silhouette from it
 varying float vStraw;
 
 float hash(float x) { return fract(sin(x * 127.1) * 43758.5453); }
@@ -366,6 +369,7 @@ void main() {
   // hollows stay hollow: fronds in holes and inner corners sit low and short
   vec3 p = iPos + N * bulge * (1.0 - 0.85 * iCavity) + local * mix(1.0, 0.45, iCavity);
   vCavity = iCavity;
+  vSurfN = normalize(mat3(modelMatrix) * N);
   vec4 wp = modelMatrix * vec4(p, 1.0);
   vWorldPos = wp.xyz;
   vNormal = normalize(mat3(modelMatrix) * cross(D, across));
@@ -424,6 +428,7 @@ varying float vSpecies;
 varying float vDead;
 varying float vShade;
 varying float vCavity;
+varying vec3 vSurfN; // the surface's normal under the frond: the back light reads the silhouette from it
 varying float vStraw;
 
 
@@ -434,6 +439,18 @@ vec3 grade(vec3 c) {
   c = mix(vec3(l), c, 1.35);
   c = (c - 0.18) * 1.1 + 0.18;
   return max(c, 0.0);
+}
+
+// back light: sits behind the object as seen from the camera, so it follows the view. It only reaches the
+// silhouette, where fuzz and frond tips catch it and glow against the background.
+uniform vec3 uRimDir;
+uniform float uRim; // 0 = off (swatches, thumbnails)
+vec3 rimLight(vec3 N, vec3 V) {
+  if (uRim <= 0.0) return vec3(0.0);
+  vec3 R = normalize(uRimDir);
+  float fres = pow(1.0 - max(dot(N, V), 0.0), 3.0); // tight: just the outline
+  float facing = smoothstep(-0.1, 0.7, dot(N, R));
+  return vec3(1.0, 0.93, 0.70) * fres * facing * uRim;
 }
 
 void main() {
@@ -504,6 +521,7 @@ void main() {
   float wrapK = lichen ? 0.45 : 0.75;
   ao *= mix(1.0, 0.45, vCavity);
   vec3 lit = col * ao * (ambient * mix(0.7, 1.0, shadow) + wrapK * wrap + back * shadow) * gain + tip * rim * shadow;
+  lit += rimLight(normalize(vSurfN), V) * (col * 2.6 + tip * 0.6) * (0.2 + 0.8 * vT) * mix(1.0, 0.3, vCavity);
   gl_FragColor = vec4(grade(lit), 1.0);
   #include <colorspace_fragment>
 }

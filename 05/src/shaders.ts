@@ -156,6 +156,18 @@ float techGrid(vec3 p, vec3 n, float cell, float width) {
   return gridLine(p.yz, cell, width) * a.x + gridLine(p.xz, cell, width) * a.y + gridLine(p.xy, cell, width) * a.z;
 }
 
+// back light: sits behind the object as seen from the camera, so it follows the view. It only reaches the
+// silhouette, where fuzz and frond tips catch it and glow against the background.
+uniform vec3 uRimDir;
+uniform float uRim; // 0 = off (swatches, thumbnails)
+vec3 rimLight(vec3 N, vec3 V) {
+  if (uRim <= 0.0) return vec3(0.0);
+  vec3 R = normalize(uRimDir);
+  float fres = pow(1.0 - max(dot(N, V), 0.0), 3.0); // tight: just the outline
+  float facing = smoothstep(-0.1, 0.7, dot(N, R));
+  return vec3(1.0, 0.93, 0.70) * fres * facing * uRim;
+}
+
 // colour grade for the moss only: a touch of exposure, saturation and contrast, in linear light
 vec3 grade(vec3 c) {
   c *= 1.3;
@@ -232,6 +244,7 @@ void main() {
     vec3 velvet = mix(deep, lime, (0.1 + 0.75 * bump) * wrap) + lime * sheen;
     velvet *= mix(mix(0.85, 0.96, w.w), 1.0, pillow);
     velvet *= mix(1.0, mix(0.65, 1.0, vDome), w.w); // dark crevice between cushion clumps  // valleys a touch darker, the mounds carry the shape not the colour
+    velvet += rimLight(N, V) * lime * 2.2;
     vec3 ground = mix(vec3(0.03, 0.025, 0.012), velvet, (dot(w, kBase) + w5 * kBase5));
     vec3 lit = mix(rock, grade(ground), max(humus * 0.92, mature * (dot(w, kBase) + w5 * kBase5)));
     lit *= mix(1.0, 0.45, vCavity * mature); // moss in a hollow sits in the dark
@@ -278,6 +291,7 @@ void main() {
   col *= mix(1.0, mix(0.75, 1.0, vDome), w.w);
   // cushion hair has pale yellow-green tips
   col = mix(col, vec3(0.55, 0.76, 0.18), smoothstep(0.75, 1.0, uu) * 0.15 * w.w * vDome);
+  col += rimLight(N, V) * lime * 3.0 * uu;
   col *= mix(1.0, 0.45, vCavity);
   gl_FragColor = vec4(grade(col), 1.0);
   #include <colorspace_fragment>
