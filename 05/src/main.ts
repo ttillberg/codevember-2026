@@ -8,6 +8,10 @@ import { FontLoader, type Font } from 'three/addons/loaders/FontLoader.js';
 import { buildFronds, type Fronds } from './fronds';
 import { fbm3 } from './noise';
 import { shellVertex, shellFragment, groundVertex, groundFragment } from './shaders';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { TexturePass } from 'three/addons/postprocessing/TexturePass.js';
+import { GTAOPass } from 'three/addons/postprocessing/GTAOPass.js';
+import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { renderSwatches, renderEraser } from './swatches';
 import { setupCarousel, type Carousel } from './carousel';
 import { renderGlyphThumbs } from './glyphthumbs';
@@ -444,6 +448,8 @@ function fillAll() {
     box.addEventListener('change', () => { mat.uniforms[box.dataset.uniform!].value = box.checked ? 1 : 0; });
   });
   panel.querySelector('[data-action="fill"]')!.addEventListener('click', fillAll);
+  const ssaoBox = panel.querySelector<HTMLInputElement>('input[data-toggle="ssao"]')!;
+  ssaoBox.addEventListener('change', () => { ssaoOn = ssaoBox.checked; });
 }
 
 // ---- cursor (mouse only): a cross over the object where a drag paints, an open hand beside it where
@@ -941,8 +947,31 @@ function blendSpecies(dt: number) {
 // every object starts bare: all the moss is yours
 
 // ---- loop
+// ---- SSAO: three's own GTAO, so it always matches the three version. It does not re-render the scene with
+// its own normal material (that would drop the shells' and fronds' vertex shaders): it gets our depth and
+// rebuilds normals from it. The scene renders into a multisampled target first, so MSAA stays.
+// Switchable in the debug panel; off, the canvas renders directly.
+const beautyRT = new THREE.WebGLRenderTarget(1, 1, {
+  type: THREE.HalfFloatType,
+  samples: 4,
+  depthTexture: new THREE.DepthTexture(1, 1),
+});
+const composer = new EffectComposer(renderer);
+composer.addPass(new TexturePass(beautyRT.texture));
+const aoPass = new GTAOPass(scene, camera, 1, 1, { depthTexture: beautyRT.depthTexture! });
+aoPass.updateGtaoMaterial({ radius: 0.6, distanceExponent: 1, thickness: 1, scale: 1, samples: 16 });
+aoPass.updatePdMaterial({ lumaPhi: 10, depthPhi: 2, normalPhi: 3, radius: 8, samples: 16 });
+aoPass.blendIntensity = 0.9;
+composer.addPass(aoPass);
+composer.addPass(new OutputPass());
+let ssaoOn = true;
+
 function resize() {
   renderer.setSize(innerWidth, innerHeight);
+  composer.setPixelRatio(renderer.getPixelRatio());
+  composer.setSize(innerWidth, innerHeight);
+  const px = renderer.getDrawingBufferSize(new THREE.Vector2());
+  beautyRT.setSize(px.x, px.y);
   camera.aspect = innerWidth / innerHeight;
   camera.updateProjectionMatrix();
   frameWord();
@@ -1000,7 +1029,12 @@ renderer.setAnimationLoop(() => {
     shadowAz = az;
     shadowDirty = false;
   }
-  renderer.render(scene, camera);
+  if (ssaoOn) {
+    renderer.setRenderTarget(beautyRT);
+    renderer.render(scene, camera);
+    renderer.setRenderTarget(null);
+    composer.render();
+  } else renderer.render(scene, camera);
   if (thumbDirty > 0 && --thumbDirty === 0) updateThumb();
 });
 requestThumb(6);
