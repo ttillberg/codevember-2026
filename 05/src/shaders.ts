@@ -213,8 +213,8 @@ void main() {
     float diff = max(dot(sN, L), 0.0) * mix(0.75, 1.0, shadowAt(vWorldPos, sN)); // gentle on the white
     vec3 rock = vec3(0.82) * (0.38 + 0.22 * (0.5 + 0.5 * sN.y) + 0.5 * diff);
     // techie: a fine grid etched into the white, a heavier line every fifth, fading under the moss
-    float fine = techGrid(vWorldPos, sN, 0.1, 0.003);
-    float major = techGrid(vWorldPos, sN, 0.5, 0.006);
+    float fine = techGrid(vWorldPos, sN, 0.05, 0.002);
+    float major = techGrid(vWorldPos, sN, 0.25, 0.004);
     float grid = max(fine * 0.35, major * 0.6) * (1.0 - smoothstep(0.0, 0.3, age));
     rock *= 1.0 - grid * 0.42;
     rock *= mix(0.75, 1.0, smoothstep(0.0, 0.1, 1.0 - age)); // slight contact shadow right under the moss
