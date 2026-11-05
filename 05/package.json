@@ -1,0 +1,24 @@
+{
+  "name": "day-05",
+  "private": true,
+  "description": "Sow moss on a boulder and watch it creep. Shell-textured strands",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "devDependencies": {
+    "@types/three": "^0.187.0",
+    "typescript": "^5.9.3",
+    "vite": "^7.3.1"
+  },
+  "codevember": {
+    "day": 5,
+    "word": "Moss",
+    "date": "2026-11-05"
+  },
+  "dependencies": {
+    "three": "^0.187.0"
+  }
+}
