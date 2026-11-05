@@ -156,6 +156,7 @@ interface World {
   puffTarget: Float32Array;
   puffAttr: THREE.BufferAttribute;
   pillow: Float32Array; // live copy of the surface's pillow field, rearranged by the brush
+  settle: Float32Array; // seconds left of species blending after a brush touch
   pillowAttr: THREE.BufferAttribute;
   mossAttr: THREE.BufferAttribute;
   speciesAttr: THREE.BufferAttribute;
@@ -187,6 +188,7 @@ function createWorld(text: string, kind: 'word' | 'rock' = 'word'): World {
   geo.setAttribute('moss', mossAttr);
   geo.setAttribute('speciesW', speciesAttr);
   geo.setAttribute('dead', new THREE.BufferAttribute(surface.dead, 1));
+  const settle = new Float32Array(n);
   const pillow = Float32Array.from(surface.pillow);
   const pillowAttr = new THREE.BufferAttribute(pillow, 1);
   pillowAttr.setUsage(THREE.DynamicDrawUsage);
@@ -216,7 +218,7 @@ function createWorld(text: string, kind: 'word' | 'rock' = 'word'): World {
     surface, n,
     positions: geo.attributes.position as THREE.BufferAttribute,
     normals: geo.attributes.normal as THREE.BufferAttribute,
-    moss, cap, species, puff, puffVel, puffTarget, puffAttr, pillow, pillowAttr, mossAttr, speciesAttr, shells, fronds, picker, kind, metal,
+    moss, cap, species, puff, puffVel, puffTarget, puffAttr, pillow, pillowAttr, settle, mossAttr, speciesAttr, shells, fronds, picker, kind, metal,
   };
 }
 
@@ -350,6 +352,7 @@ function brush(point: THREE.Vector3, scrape: boolean) {
       } else {
         addWeight(i, currentSpecies, falloff * 0.5);
       }
+      W.settle[i] = 2.0; // blend with the neighbours for a couple of seconds, then hold still
     }
   }
   dirty = true;
@@ -533,12 +536,14 @@ let shadowDirty = true;
 const GROW = 0.12; // age per second
 function grow(dt: number) {
   const { moss, cap, surface } = W;
+  let changed = false;
   for (let i = 0; i < W.n; i++) {
     const a = moss[i];
     if (a <= 0 || a >= cap[i]) continue;
     moss[i] = Math.min(cap[i], a + GROW * dt * (0.3 + 0.7 * surface.fertility[i]));
+    changed = true;
   }
-  dirty = true;
+  if (changed) dirty = true;
 }
 
 // the puff spring: stiff and critically damped, a firm push that settles without wobbling
@@ -580,10 +585,11 @@ function springPuff(dt: number) {
 const BLEND = 0.15;
 const acc = new Float32Array(SPECIES);
 function blendSpecies(dt: number) {
-  const { moss, species, surface } = W;
+  const { moss, species, surface, settle } = W;
   const k = Math.min(1, BLEND * dt);
   for (let i = 0; i < W.n; i++) {
-    if (moss[i] <= 0) continue;
+    if (moss[i] <= 0 || settle[i] <= 0) continue;
+    settle[i] -= dt;
     const nb = surface.adjacency[i];
     acc.fill(0);
     let cnt = 0;
@@ -596,6 +602,7 @@ function blendSpecies(dt: number) {
     if (cnt === 0) continue;
     const o = i * SPECIES;
     for (let c = 0; c < SPECIES; c++) species[o + c] += (acc[c] / cnt - species[o + c]) * k;
+    dirty = true;
   }
 }
 

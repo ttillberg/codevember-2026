@@ -62,6 +62,7 @@ export function buildFronds(rock: THREE.BufferGeometry, fertility: Float32Array,
   const iClump = new Float32Array(count);
   const iDead = new Float32Array(count);
   const iStraw = new Float32Array(count); // straw-rich areas: about a tenth of the surface
+  const iPick = new Float32Array(count); // species pick threshold: a smooth field, so mixed zones form patches not noise
 
   const n = new THREE.Vector3(), t = new THREE.Vector3(), p = new THREE.Vector3();
   const na = new THREE.Vector3(), nb = new THREE.Vector3(), nc = new THREE.Vector3();
@@ -99,6 +100,7 @@ export function buildFronds(rock: THREE.BufferGeometry, fertility: Float32Array,
     // same pillow field as the shell shader, so undercoat and fronds agree
     iDead[i] = deadAt(p.x, p.y, p.z);
     iStraw[i] = THREE.MathUtils.smoothstep(fbm3(p.x * 1.7, p.y * 1.7, p.z * 1.7, 3, 61), 0.22, 0.38);
+    iPick[i] = THREE.MathUtils.clamp(fbm3(p.x * 4.5, p.y * 4.5, p.z * 4.5, 3, 83) * 0.9 + 0.5 + (rand() - 0.5) * 0.12, 0, 1);
     iClump[i] = pillowAt(p.x, p.y, p.z);
   }
 
@@ -114,6 +116,7 @@ export function buildFronds(rock: THREE.BufferGeometry, fertility: Float32Array,
   geo.setAttribute('iClump', new THREE.InstancedBufferAttribute(iClump, 1));
   geo.setAttribute('iDead', new THREE.InstancedBufferAttribute(iDead, 1));
   geo.setAttribute('iStraw', new THREE.InstancedBufferAttribute(iStraw, 1));
+  geo.setAttribute('iPick', new THREE.InstancedBufferAttribute(iPick, 1));
   geo.instanceCount = count;
 
   // age texture: one float per rock vertex
@@ -162,6 +165,7 @@ attribute float iVert;
 attribute float iClump;
 attribute float iDead;
 attribute float iStraw;
+attribute float iPick;
 
 uniform sampler2D uAge;
 uniform sampler2D uPuff;
@@ -206,7 +210,7 @@ void main() {
   // draw this instance's species from the vertex's weights: mixed zones interleave
   // weights are normalised on the CPU; the fourth (cushion moss) is the remainder and has no fronds
   vec3 wgt = cell.gba;
-  float pick = hash(iSeed.x * 13.7 + iSeed.y * 5.1);
+  float pick = iPick; // smooth field: neighbours pick alike, so weights turn into patches
   float species = pick < wgt.x ? 0.0 : (pick < wgt.x + wgt.y ? 1.0 : (pick < wgt.x + wgt.y + wgt.z ? 2.0 : 3.0));
   float strip = position.z;
   float t = position.y;
