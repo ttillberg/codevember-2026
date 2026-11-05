@@ -27,6 +27,7 @@ varying vec3 vLocal;
 varying vec3 vLocalNormal;
 varying vec3 vWorldPos;
 varying vec3 vWorldNormal;
+varying vec3 vObjNormal;
 varying vec3 vMossNormal;
 
 void main() {
@@ -61,6 +62,7 @@ void main() {
   vec4 wp = modelMatrix * vec4(p, 1.0);
   vWorldPos = wp.xyz;
   vWorldNormal = normalize(mat3(modelMatrix) * normal);
+  vObjNormal = normal;
   vMossNormal = normalize(mat3(modelMatrix) * mossNormal);
   gl_Position = projectionMatrix * viewMatrix * wp;
 }
@@ -114,6 +116,7 @@ varying vec3 vLocal;
 varying vec3 vLocalNormal;
 varying vec3 vWorldPos;
 varying vec3 vWorldNormal;
+varying vec3 vObjNormal;
 varying vec3 vMossNormal;
 
 float hash31(vec3 p) {
@@ -255,8 +258,10 @@ void main() {
     float diff = max(dot(sN, L), 0.0) * mix(0.75, 1.0, shadowAt(vWorldPos, sN)); // gentle on the white
     vec3 rock = vec3(0.82) * (0.38 + 0.22 * (0.5 + 0.5 * sN.y) + 0.5 * diff);
     // techie: a fine grid etched into the white, a heavier line every fifth, fading under the moss
-    float fine = techGrid(vWorldPos, sN, 0.05, 0.002);
-    float major = techGrid(vWorldPos, sN, 0.25, 0.004);
+    // the grid lives on the object, in its own space, so it turns with it on the turntable
+    vec3 oN = normalize(vObjNormal);
+    float fine = techGrid(vLocal, oN, 0.05, 0.002);
+    float major = techGrid(vLocal, oN, 0.25, 0.004);
     float grid = max(fine * 0.35, major * 0.6) * (1.0 - smoothstep(0.0, 0.3, age));
     rock *= 1.0 - grid * 0.42;
     rock *= mix(1.0, 0.55, vOcclusion * uRockAO); // holes and inner corners go dark, even before any moss
