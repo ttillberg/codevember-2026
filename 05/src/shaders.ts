@@ -255,7 +255,11 @@ void main() {
   // sampled in a rotated frame, so no lattice lines up with the surface
   const mat3 rot = mat3(0.80, 0.36, -0.48, -0.60, 0.48, -0.64, 0.0, 0.80, 0.60);
   float grain = mix(hash31(floor(q * 420.0 / uScale)), noise3(rot * q * 520.0 / uScale + 7.0), w.w);
-  float dens = noise3(q * 140.0 / uScale) * (1.0 - fineW - midW) + noise3(q * 420.0 / uScale) * midW + grain * fineW;
+  // same for the mid and coarse terms: each in its own rotated frame so no two lattices line up
+  const mat3 rot2 = mat3(0.36, 0.48, 0.80, 0.80, -0.60, 0.0, 0.48, 0.64, -0.60);
+  vec3 qm = mix(q, rot2 * q + 3.0, w.w);
+  vec3 qc = mix(q, rot * rot2 * q + 11.0, w.w);
+  float dens = noise3(qc * 140.0 / uScale) * (1.0 - fineW - midW) + noise3(qm * 380.0 / uScale) * midW + grain * fineW;
   // thin out more at grazing angles: the silhouette stays fuzzy but layers cannot line up
   float graze = 1.0 - ndv;
   if (dens < (dot(w, kDensity) + w5 * kDensity5) + 0.6 * uu + 0.35 * uu * graze) discard;

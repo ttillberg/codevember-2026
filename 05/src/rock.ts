@@ -43,7 +43,9 @@ export function domeAt(x: number, y: number, z: number) {
   }
   const edge = Math.sqrt(f2) - Math.sqrt(f1); // 0 on the border between two cells
   const t = Math.min(1, edge / 0.85);
-  return Math.sqrt(1 - (1 - t) * (1 - t)); // circular profile: steep at the crevice, round on top
+  // smooth both ends: a sharp V at the crevice gets linearly interpolated across the triangles
+  // and shows the mesh as straight ridges, a rounded valley does not
+  return t * t * (3 - 2 * t);
 }
 
 // Shared by rock vertices and frond instances so both layers agree on where the moss is dying.
