@@ -30,47 +30,30 @@ const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(38, 1, 0.1, 50);
 camera.position.set(3.6, 1.1, 6.6);
 
-// the object sits on a turntable that turns around the vertical axis; only yaw, so up stays up for the moss
-// an outer group tilts the object towards or away from the camera on a vertical drag, up to ~30 degrees,
-// and stays tilted on release so the underside can be painted. Both pivot on the object's centre.
-const tiltGroup = new THREE.Group();
-const turntable = new THREE.Group();
-const content = new THREE.Group(); // the object's meshes, offset so its centre sits on the pivot
-tiltGroup.add(turntable);
-turntable.add(content);
-scene.add(tiltGroup);
-let tilt = 0; // rad, around the camera's horizontal axis
-let tiltRaw = 0; // where the drag would put it before the soft limit
-let tiltVel = 0;
-const TILT_MAX = THREE.MathUtils.degToRad(30);
-let turnLastY = 0;
-let yaw = 0;
-let yawVel = 0; // rad/s, coasts and slows down after a flick
-let turning = false;
-let turnLastX = 0;
-let turnLastT = 0;
-const TURN_SPEED = 0.008; // rad per pixel
+const content = new THREE.Group(); // the object's meshes
+scene.add(content);
 
 const controls = new OrbitControls(camera, canvas);
 controls.target.set(0, 0.45, 0);
 controls.enableDamping = true;
 controls.enableZoom = coarse; // desktop: orbit only. Touch: pinch to zoom in a bit (limits set in frameWord)
 controls.enablePan = false;
-// the camera never orbits: a drag turns the object itself on a turntable (see below). The controls only
-// keep the touch pinch zoom; two fingers also turn the turntable.
-controls.enableRotate = false;
-controls.touches = { ONE: null as unknown as THREE.TOUCH, TWO: THREE.TOUCH.DOLLY_PAN };
+// touch: one finger paints, two fingers orbit and pinch zooms
+controls.touches = { ONE: null as unknown as THREE.TOUCH, TWO: THREE.TOUCH.DOLLY_ROTATE };
 const touchIds = new Set<number>();
 const touchHint = document.querySelector<HTMLElement>('.touch-hint')!;
 // the hint fades once the first two-finger turn is done
 let touchTurned = false;
+controls.addEventListener('change', () => { if (touchIds.size >= 2) touchTurned = true; });
+controls.addEventListener('end', () => { if (touchTurned) touchHint.classList.add('done'); });
 controls.maxPolarAngle = Math.PI * 0.55;
 
-// the key light: front right, above. The camera never moves and the object turns under it, so every side
-// is lit the same way as it comes round.
-const LIGHT_DIR = new THREE.Vector3(1.2, 2.0, 1.0).normalize();
-let shadowYaw = NaN; // turntable angle the shadow map was last rendered for
-let shadowTilt = NaN;
+// the key light follows the camera around the vertical axis: same elevation, always from front right,
+// so every side of the object looks lit the same way. Swatches and thumbnails keep the fixed base.
+const LIGHT_BASE = new THREE.Vector3(1.2, 2.0, 1.0).normalize();
+const lightDir = LIGHT_BASE.clone(); // turned in place each frame; the uniform holds this object
+const UP = new THREE.Vector3(0, 1, 0);
+let shadowAz = NaN; // camera azimuth the shadow map was last rendered for
 const shellMat = new THREE.ShaderMaterial({
   vertexShader: shellVertex,
   fragmentShader: shellFragment,
@@ -78,7 +61,7 @@ const shellMat = new THREE.ShaderMaterial({
   uniforms: {
     uHeight: { value: 0.012 },
     uBulge: { value: 0.035 },
-    uLightDir: { value: LIGHT_DIR },
+    uLightDir: { value: lightDir },
     uRimDir: { value: new THREE.Vector3(0, 1, 0) },
     uRim: { value: 1 },
     uHemi: { value: 1 },
@@ -109,7 +92,7 @@ function renderShadow() {
   const radius = bb.min.distanceTo(bb.max) / 2 + 0.3;
   lightCam.left = -radius; lightCam.right = radius; lightCam.top = radius; lightCam.bottom = -radius;
   lightCam.far = radius * 4;
-  lightCam.position.copy(center).addScaledVector(LIGHT_DIR, radius * 2);
+  lightCam.position.copy(center).addScaledVector(lightDir, radius * 2);
   lightCam.lookAt(center);
   lightCam.updateProjectionMatrix();
   lightCam.updateMatrixWorld();
@@ -210,12 +193,6 @@ function createWorld(text: string, kind: 'word' | 'rock' = 'word'): World {
   // letters: grass only in the straw-rich patches, not along every top edge
   if (kind === 'word') (fronds.mesh.material as THREE.ShaderMaterial).uniforms.uStrawBase.value = 0;
   const picker = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ visible: false }));
-  // tilt and turn pivot on the object's centre: the tilt group sits there, the content group offsets back
-  geo.boundingBox!.getCenter(tiltGroup.position);
-  content.position.copy(tiltGroup.position).negate();
-  yaw = 0;
-  yawVel = 0;
-  tilt = tiltRaw = tiltVel = 0;
   content.add(shells, fronds.mesh, picker);
 
   return {
@@ -338,7 +315,7 @@ function pick(e: { clientX: number; clientY: number }) {
 const brushLocal = new THREE.Vector3();
 function brush(worldPoint: THREE.Vector3, scrape: boolean) {
   const { moss, cap, positions, surface } = W;
-  // the hit is in world space, the vertices are in the mesh's own space on the turntable
+  // the hit is in world space, the vertices in the mesh's own
   const point = W.picker.worldToLocal(brushLocal.copy(worldPoint));
   const r = scrape ? brushRadius * 1.35 : brushRadius;
   const r2 = r * r;
@@ -439,7 +416,7 @@ canvas.addEventListener('pointermove', (e) => {
 canvas.addEventListener('pointerleave', () => { hover.pending = false; });
 addEventListener('keydown', (e) => { if (e.key === 'Meta' || e.key === 'Control') { hover.mod = true; setCursor(); } });
 addEventListener('keyup', (e) => { if (e.key === 'Meta' || e.key === 'Control') { hover.mod = false; setCursor(); } });
-// space held: a drag turns and tilts the object wherever it starts, even on top of it (like a hand tool)
+// space held: a drag orbits wherever it starts, even on top of the object (like a hand tool)
 const typing = (t: EventTarget | null) => t instanceof HTMLInputElement || t instanceof HTMLSelectElement || t instanceof HTMLTextAreaElement;
 addEventListener('keydown', (e) => {
   if (e.code !== 'Space' || typing(e.target)) return;
@@ -470,58 +447,21 @@ function showRing(point: THREE.Vector3, r: number, x: number, y: number) {
   sizeRing.style.top = `${y}px`;
 }
 
-// ---- turntable drag: horizontal movement turns the object, a flick coasts to a stop
-const touchXY = new Map<number, [number, number]>();
-function mid(): [number, number] {
-  let x = 0, y = 0;
-  for (const v of touchXY.values()) { x += v[0]; y += v[1]; }
-  const n = Math.max(1, touchXY.size);
-  return [x / n, y / n];
-}
-function startTurn(x: number, y: number, t: number) {
-  turning = true;
-  turnLastX = x;
-  turnLastY = y;
-  turnLastT = t;
-  yawVel = 0;
-  // pick up where it is: undo the soft limit so the next drag continues without a jump
-  tiltRaw = TILT_MAX * Math.atanh(THREE.MathUtils.clamp(tilt / TILT_MAX, -0.999, 0.999));
-  tiltVel = 0;
-}
-function moveTurn(x: number, y: number, t: number) {
-  if (!turning) startTurn(x, y, t);
-  const d = (x - turnLastX) * TURN_SPEED;
-  const dt = Math.max(1, t - turnLastT) / 1000;
-  yaw += d;
-  yawVel = THREE.MathUtils.lerp(yawVel, d / dt, 0.5);
-  // vertical: drag up and the front comes up. A soft limit, so it gets heavier towards 30 degrees.
-  tiltRaw += (y - turnLastY) * TURN_SPEED;
-  const prev = tilt;
-  tilt = TILT_MAX * Math.tanh(tiltRaw / TILT_MAX);
-  tiltVel = THREE.MathUtils.lerp(tiltVel, (tilt - prev) / dt, 0.5);
-  turnLastX = x;
-  turnLastY = y;
-  turnLastT = t;
-}
-
 canvas.addEventListener('pointerdown', (e) => {
   if (e.pointerType === 'touch') {
     touchIds.add(e.pointerId);
-    touchXY.set(e.pointerId, [e.clientX, e.clientY]);
     if (touchIds.size >= 2) {
-      // a second finger: stop painting, the two fingers turn the turntable (and pinch zooms)
+      // a second finger: stop painting and let the controls orbit
       painting = false;
       sizing = false;
       sizeRing.style.display = 'none';
-      startTurn(...mid(), e.timeStamp);
       return;
     }
   }
   if (spaceHeld && e.pointerType === 'mouse') {
+    // the controls are already orbiting: just do not paint
     orbiting = true;
-    startTurn(e.clientX, e.clientY, e.timeStamp);
     setCursor();
-    try { canvas.setPointerCapture(e.pointerId); } catch { /* synthetic events */ }
     return;
   }
   const p = pick(e);
@@ -539,13 +479,8 @@ canvas.addEventListener('pointerdown', (e) => {
     return;
   }
   if (!p) {
-    // off the object: turn the turntable
-    if (e.pointerType === 'mouse') {
-      orbiting = true;
-      startTurn(e.clientX, e.clientY, e.timeStamp);
-      setCursor();
-      try { canvas.setPointerCapture(e.pointerId); } catch { /* synthetic events */ }
-    }
+    // off the object: let OrbitControls have it
+    if (e.pointerType === 'mouse') { orbiting = true; setCursor(); }
     return;
   }
   painting = true;
@@ -560,9 +495,7 @@ canvas.addEventListener('pointerdown', (e) => {
   try { canvas.setPointerCapture(e.pointerId); } catch { /* synthetic events */ }
 });
 canvas.addEventListener('pointermove', (e) => {
-  if (e.pointerType === 'touch' && touchXY.has(e.pointerId)) touchXY.set(e.pointerId, [e.clientX, e.clientY]);
-  if (touchIds.size >= 2) { moveTurn(...mid(), e.timeStamp); touchTurned = true; return; }
-  if (orbiting) { moveTurn(e.clientX, e.clientY, e.timeStamp); return; }
+  if (touchIds.size >= 2 || orbiting) return;
   if (sizing && sizeAnchor) {
     const k = Math.exp((e.clientX - sizeStartX) / 160); // exponential: same feel small and big
     brushRadius = THREE.MathUtils.clamp(sizeStartR * k, BRUSH_MIN, BRUSH_MAX);
@@ -585,10 +518,7 @@ const stop = () => {
   controls.enabled = true;
 };
 const release = (e: PointerEvent) => {
-  if (touchIds.size >= 2 && touchTurned) touchHint.classList.add('done');
   touchIds.delete(e.pointerId);
-  touchXY.delete(e.pointerId);
-  turning = false;
   if (painting) requestThumb(45); // after the stroke has grown in a bit
   stop();
   orbiting = false;
@@ -639,7 +569,7 @@ addEventListener('keydown', (e) => {
   }
 });
 setBrush(0);
-renderSwatches(renderer, SHELLS, LIGHT_DIR);
+renderSwatches(renderer, SHELLS, LIGHT_BASE);
 renderEraser(renderer);
 
 // ---- framing
@@ -767,7 +697,7 @@ function setLocked() {
   if (unlocked && !glyphThumbsStarted) {
     glyphThumbsStarted = true;
     // mossy miniatures of every glyph, one per frame; the green text stands in until each one lands
-    renderGlyphThumbs(renderer, font, CHARS, LIGHT_DIR, (c, url) => {
+    renderGlyphThumbs(renderer, font, CHARS, LIGHT_BASE, (c, url) => {
       const b = letterPop.querySelector<HTMLButtonElement>(`button[data-choice="${c}"]`);
       if (!b) return;
       b.style.backgroundImage = `url(${url})`;
@@ -1011,32 +941,12 @@ renderer.setAnimationLoop(() => {
   if (++meterTick % 12 === 0) updateMeter();
   updateHover();
   controls.update();
-  if (!turning && Math.abs(yawVel) > 1e-3) {
-    yaw += yawVel * dt;
-    yawVel *= Math.exp(-dt * 5);
-  }
-  if (!turning && (tiltVel !== 0 || Math.abs(tilt) > TILT_MAX)) {
-    // the tilt stays where it is let go, so the underside can be painted. A flick coasts on and slows down;
-    // past 30 degrees an underdamped spring pulls it back, so it bounces off the limit. Substepped, so a slow
-    // frame cannot blow the spring up.
-    let left = dt;
-    while (left > 1e-6) {
-      const h = Math.min(left, 1 / 240);
-      const over = tilt - THREE.MathUtils.clamp(tilt, -TILT_MAX, TILT_MAX);
-      tiltVel += (over !== 0 ? -160 * over - 6 * tiltVel : -4 * tiltVel) * h;
-      tilt += tiltVel * h;
-      left -= h;
-    }
-    if (Math.abs(tiltVel) < 1e-3 && Math.abs(tilt) <= TILT_MAX) tiltVel = 0;
-  }
-  turntable.rotation.y = yaw;
-  tiltGroup.rotation.x = tilt;
-  tiltGroup.updateMatrixWorld();
-  // the object turns under a fixed light: re-render the shadow map every couple of degrees, not every frame
-  if (shadowDirty || !(Math.abs(yaw - shadowYaw) < 0.035) || !(Math.abs(tilt - shadowTilt) < 0.035)) {
+  const az = controls.getAzimuthalAngle();
+  lightDir.copy(LIGHT_BASE).applyAxisAngle(UP, az);
+  // re-render the shadow map every couple of degrees while orbiting, not every frame
+  if (shadowDirty || !(Math.abs(az - shadowAz) < 0.035)) {
     renderShadow();
-    shadowYaw = yaw;
-    shadowTilt = tilt;
+    shadowAz = az;
     shadowDirty = false;
   }
   if (ssaoOn) {
