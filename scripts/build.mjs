@@ -1,5 +1,5 @@
 import { execSync } from 'node:child_process';
-import { cpSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { ROOT, REPO, HOMEPAGE, GITHUB, listDays } from './lib.mjs';
 import { WORDS } from './words.mjs';
@@ -19,18 +19,23 @@ for (const d of days) {
     env: { ...process.env, CODEVEMBER_BASE: base },
   });
   cpSync(join(ROOT, d.dir, 'dist'), join(dist, d.dir), { recursive: true });
+  // optional NN/screengrab.png: the day's share image and its square on the index
+  d.screengrab = existsSync(join(ROOT, d.dir, 'screengrab.png'));
+  if (d.screengrab) cpSync(join(ROOT, d.dir, 'screengrab.png'), join(dist, d.dir, 'screengrab.png'));
 }
 
-// 2. Root index.html
-const cards = days
-  .map(
-    (d) => `      <a class="card" href="./${d.dir}/">
-        <span class="day">${d.dir}</span>
-        <span class="word">${d.word}</span>
-        ${d.description && d.description !== d.word ? `<span class="desc">${escapeHtml(d.description)}</span>` : ''}
-      </a>`,
-  )
-  .join('\n');
+// 2. Root index.html: a square per day of the month, the built ones linked, with their screengrab if any
+const built = new Map(days.map((d) => [d.day, d]));
+const squares = WORDS.map((word, i) => {
+  const day = i + 1;
+  const dir = String(day).padStart(2, '0');
+  const d = built.get(day);
+  const label = `<span class="label"><span class="day">${dir}</span> ${escapeHtml(d?.word || word)}</span>`;
+  if (!d) return `      <div class="sq empty">${label}</div>`;
+  const img = d.screengrab ? `<img src="./${dir}/screengrab.png" alt="" loading="lazy" />` : '';
+  const title = d.description && d.description !== d.word ? ` title="${escapeHtml(d.description)}"` : '';
+  return `      <a class="sq${d.screengrab ? ' has-img' : ''}" href="./${dir}/"${title}>${img}${label}</a>`;
+}).join('\n');
 
 writeFileSync(
   join(dist, 'index.html'),
@@ -41,20 +46,22 @@ writeFileSync(
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Codevember 2026</title>
   <style>
-    :root { color-scheme: dark; --bg: #0b0b0d; --fg: #e8e8ea; --muted: #7a7a82; --card: #15151a; --accent: #ffb547; }
     * { box-sizing: border-box; }
-    body { margin: 0; padding: 48px 24px; background: var(--bg); color: var(--fg); font: 15px/1.5 ui-monospace, Menlo, monospace; }
-    main { max-width: 960px; margin: 0 auto; }
-    h1 { font-size: 20px; font-weight: 600; margin: 0 0 4px; }
-    p { margin: 0 0 32px; color: var(--muted); }
+    body { margin: 0; padding: 40px 16px; background: #fff; color: #111; font: 13px/1.4 ui-monospace, Menlo, monospace; }
+    main { max-width: 1080px; margin: 0 auto; }
+    h1 { font-size: 13px; font-weight: 400; margin: 0 0 4px; }
+    p { margin: 0 0 24px; color: #888; }
     a { color: inherit; }
-    .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 12px; }
-    .card { display: flex; flex-direction: column; gap: 2px; padding: 16px; background: var(--card); border-radius: 8px; text-decoration: none; transition: transform .12s ease, background .12s ease; }
-    .card:hover { transform: translateY(-2px); background: #1c1c23; }
-    .day { color: var(--accent); font-size: 12px; }
-    .word { font-size: 17px; font-weight: 600; }
-    .desc { color: var(--muted); font-size: 12px; }
-    footer { margin-top: 48px; color: var(--muted); font-size: 12px; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }
+    .sq { position: relative; aspect-ratio: 1; display: block; overflow: hidden; border: 1px solid #e4e4e4; text-decoration: none; }
+    .sq img { width: 100%; height: 100%; object-fit: cover; display: block; transition: transform .2s ease; }
+    .sq:hover img { transform: scale(1.04); }
+    a.sq:hover { border-color: #111; }
+    .label { position: absolute; left: 8px; bottom: 6px; font-size: 11px; }
+    .sq.has-img .label { color: #111; background: rgba(255, 255, 255, .8); padding: 1px 4px; }
+    .day { color: #888; }
+    .sq.empty { color: #bbb; border-style: dashed; }
+    footer { margin-top: 40px; color: #888; }
   </style>
 </head>
 <body>
@@ -62,7 +69,7 @@ writeFileSync(
     <h1>Codevember 2026</h1>
     <p>${days.length} of 30 days. <a href="${GITHUB}">Source</a>.</p>
     <div class="grid">
-${cards}
+${squares}
     </div>
     <footer>Prompt list by <a href="https://x.com/thespite">@thespite</a>.</footer>
   </main>
