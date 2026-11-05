@@ -58,6 +58,7 @@ const LIGHT_BASE = new THREE.Vector3(1.2, 2.0, 1.0).normalize();
 const lightDir = LIGHT_BASE.clone();
 const UP = new THREE.Vector3(0, 1, 0);
 let shadowAz = NaN; // camera azimuth the shadow map was last rendered for
+let lightFollow = true; // debug panel: off pins the light to the world
 const shellMat = new THREE.ShaderMaterial({
   vertexShader: shellVertex,
   fragmentShader: shellFragment,
@@ -439,6 +440,8 @@ function fillAll() {
   panel.querySelector('[data-action="fill"]')!.addEventListener('click', fillAll);
   const ssaoBox = panel.querySelector<HTMLInputElement>('input[data-toggle="ssao"]')!;
   ssaoBox.addEventListener('change', () => { setSsao(ssaoBox.checked); });
+  const followBox = panel.querySelector<HTMLInputElement>('input[data-toggle="lightFollow"]')!;
+  followBox.addEventListener('change', () => { lightFollow = followBox.checked; });
 }
 
 // ---- cursor (mouse only): a cross over the object where a drag paints, an open hand beside it where
@@ -1015,7 +1018,7 @@ renderer.setAnimationLoop(() => {
   if (++meterTick % 12 === 0) updateMeter();
   updateHover();
   controls.update();
-  const az = controls.getAzimuthalAngle();
+  const az = lightFollow ? controls.getAzimuthalAngle() : 0;
   lightDir.copy(LIGHT_BASE).applyAxisAngle(UP, az);
   fu.uLightDir.value = lightDir;
   // re-render the shadow map every couple of degrees while turning, not every frame
