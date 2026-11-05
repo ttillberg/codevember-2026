@@ -12,7 +12,6 @@ export interface Surface {
   dead: Float32Array; // 0..1, bleached yellow-brown patches
   pillow: Float32Array; // 0..1, where the moss mounds up
   area: Float32Array; // surface area each vertex stands for (a third of its triangles)
-  dome: Float32Array; // 0..1, cushion clumps: round domes per cell, 0 in the crevices between them
 }
 
 // Mound field, shared by rock vertices and frond instances so both layers bulge together.
@@ -42,10 +41,9 @@ export function domeAt(x: number, y: number, z: number) {
     if (d < f1) { f2 = f1; f1 = d; } else if (d < f2) f2 = d;
   }
   const edge = Math.sqrt(f2) - Math.sqrt(f1); // 0 on the border between two cells
-  const t = Math.min(1, edge / 0.85);
   // smooth both ends: a sharp V at the crevice gets linearly interpolated across the triangles
   // and shows the mesh as straight ridges, a rounded valley does not
-  return t * t * (3 - 2 * t);
+  return THREE.MathUtils.smoothstep(edge, 0, 0.85);
 }
 
 // Shared by rock vertices and frond instances so both layers agree on where the moss is dying.
@@ -265,5 +263,5 @@ export function finishSurface(geo: THREE.BufferGeometry, seed = 7): Surface {
     }
   }
 
-  return { geometry: geo, adjacency, fertility, dead, pillow, area, dome };
+  return { geometry: geo, adjacency, fertility, dead, pillow, area };
 }

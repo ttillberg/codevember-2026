@@ -1,4 +1,4 @@
-// The thing to grow moss on: a big rounded M standing on the ground plane at y = -0.72.
+// The letters to grow moss on: one rounded glyph standing on the ground plane at y = -0.72.
 import * as THREE from 'three';
 import { mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
 import { TextGeometry } from 'three/addons/geometries/TextGeometry.js';
@@ -23,34 +23,7 @@ function densify(geo: THREE.BufferGeometry, linear: number, smooth: number) {
   return out;
 }
 
-export function buildLetterM(detail = 2): Surface {
-  // a chunky M, bevelled so every edge is rounded
-  const h = 2.4, half = 1.55, stem = 0.66;
-  const shape = new THREE.Shape();
-  const pts: [number, number][] = [
-    [-half, 0], [-half, h], [-half + stem, h], [0, h * 0.42], [half - stem, h], [half, h],
-    [half, 0], [half - stem, 0], [half - stem, h * 0.62], [0, h * 0.1 + 0.03], [-half + stem, h * 0.62], [-half + stem, 0],
-  ];
-  shape.moveTo(pts[0][0], pts[0][1]);
-  for (let i = 1; i < pts.length; i++) shape.lineTo(pts[i][0], pts[i][1]);
-  shape.closePath();
-
-  const depth = 0.7;
-  const extruded = new THREE.ExtrudeGeometry(shape, {
-    depth,
-    bevelEnabled: true,
-    bevelThickness: 0.22,
-    bevelSize: 0.22,
-    bevelSegments: 2,
-    steps: 1,
-  });
-  extruded.translate(0, GROUND + 0.22, -depth / 2);
-  // three Loop passes: soft, pillowy edges. Smooth-normal lighting hides what little faceting is left.
-  const geo = densify(extruded, Math.max(0, detail - 1), 3);
-  return finishSurface(geo, 17);
-}
-
-/** A word in a bold sans, extruded, bevelled and Loop-rounded into soft pillowy letters, standing on the ground. */
+/** A word in a sans, extruded, bevelled and Loop-rounded into soft pillowy letters, standing on the ground. */
 export function buildWord(text: string, font: Font, detail = 2, loopsOverride?: number): Surface {
   const size = 2.0;
   const depth = 0.6;
@@ -73,4 +46,22 @@ export function buildWord(text: string, font: Font, detail = 2, loopsOverride?: 
   const loops = loopsOverride ?? (text.length <= 2 ? 3 : 2);
   const geo = densify(geo0, Math.max(0, detail - 1), loops);
   return finishSurface(geo, 17 + text.length);
+}
+
+/**
+ * Helvetica's M runs its middle vertex all the way to the baseline, which turns into a heavy V once the
+ * letter is rounded. Lift the flat bottom of the V and the notch above it by the same amount. Matched on
+ * the outline text of helvetiker_regular, so it warns if the font ever changes under it.
+ */
+export function fixGlyphs(font: Font) {
+  const lift = 300;
+  const M = (font.data as { glyphs: Record<string, { o: string }> }).glyphs['M'];
+  for (const [from, to] of [
+    ['l 537 0', `l 537 ${lift}`],
+    ['l 405 0', `l 405 ${lift}`],
+    ['l 472 160', `l 472 ${160 + lift}`],
+  ]) {
+    if (!M.o.includes(from)) console.warn(`fixGlyphs: M outline has no "${from}", font changed?`);
+    M.o = M.o.replace(from, to);
+  }
 }

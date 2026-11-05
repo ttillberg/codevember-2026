@@ -1,17 +1,5 @@
 html, body { margin: 0; height: 100%; background: #e6e6e3; overflow: hidden; }
 canvas { display: block; width: 100vw; height: 100vh; touch-action: none; }
-.back, .hint {
-  position: fixed; bottom: 12px;
-  font: 12px ui-monospace, Menlo, monospace; color: #333; opacity: .55;
-  text-decoration: none;
-}
-.back { left: 12px; }
-.back:hover { opacity: 1; }
-.hint { right: 12px; text-align: right; }
-@media (pointer: coarse) { .hint .desktop { display: none; } }
-
-.hint { bottom: auto; top: 14px; }
-
 /* brush swatches: thumb row at the bottom, works on phones */
 .swatches {
   position: fixed; left: 50%; bottom: 14px; transform: translateX(-50%);
@@ -54,12 +42,6 @@ canvas { display: block; width: 100vw; height: 100vh; touch-action: none; }
   .scrape-btn { left: auto; right: 10px; top: 10px; bottom: auto; transform: none; width: 64px; }
   .scrape-btn i { width: 52px; height: 52px; }
 }
-.hint { left: 250px; right: 90px; text-align: right; pointer-events: none; }
-@media (max-width: 480px) {
-  .back { bottom: auto; top: 14px; }
-  .hint { display: none; }
-}
-
 /* carousel mode: items stacked at the centre, placed by transform */
 .swatches.carousel {
   left: 0; right: 0; transform: none; width: 100%; height: 120px; gap: 0;
@@ -77,39 +59,6 @@ canvas { display: block; width: 100vw; height: 100vh; touch-action: none; }
   border: 1.5px solid rgba(0, 0, 0, .6); border-radius: 50%;
   box-shadow: 0 0 0 1px rgba(255, 255, 255, .6);
 }
-
-.word {
-  position: fixed; top: 12px; left: 12px; width: 120px;
-  font: 14px ui-monospace, Menlo, monospace; color: #333; background: transparent;
-  border: 0; border-bottom: 1px solid #333; padding: 5px 2px; outline: none; opacity: .7;
-  text-transform: uppercase; letter-spacing: .1em;
-}
-.word:focus { opacity: 1; }
-@media (max-width: 480px) {
-  .word { top: 44px; }
-}
-
-.objects { position: fixed; top: 12px; left: 12px; display: flex; gap: 6px; }
-.objects button {
-  font: 11px ui-monospace, Menlo, monospace; color: #333; background: transparent;
-  border: 1px solid #333; border-radius: 4px; padding: 3px 8px; opacity: .5; cursor: pointer;
-  -webkit-tap-highlight-color: transparent;
-}
-.objects button:hover, .objects button.active { opacity: 1; }
-.objects button.active { background: #333; color: #e6e6e3; }
-@media (max-width: 480px) { .objects { top: 44px; } }
-
-.scale { display: none; } /* hidden: fixed at 175%, the control stays in the markup for tinkering */
-.scale.show {
-  position: fixed; top: 48px; right: 12px; display: flex; flex-direction: column; align-items: flex-end; gap: 4px;
-  font: 11px ui-monospace, Menlo, monospace; color: #444; opacity: .7;
-}
-.scale:hover { opacity: 1; }
-.scale input { width: 140px; accent-color: #333; }
-@media (max-width: 480px) { .scale { top: 44px; right: 12px; } .scale input { width: 110px; } }
-
-/* top navigation hidden for now: object toggle and hint */
-.objects, .hint { display: none; }
 
 /* touch only: how to turn the object, fades out after the first two-finger gesture */
 .touch-hint {
