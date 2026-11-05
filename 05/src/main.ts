@@ -206,6 +206,8 @@ function createWorld(text: string, kind: 'word' | 'rock' = 'word'): World {
   const shells = new THREE.InstancedMesh(geo, shellMat, SHELLS);
   shells.frustumCulled = false;
   const fronds = buildFronds(geo, surface.fertility, coarse ? 40000 : 140000);
+  // letters: grass only in the straw-rich patches, not along every top edge
+  if (kind === 'word') (fronds.mesh.material as THREE.ShaderMaterial).uniforms.uStrawBase.value = 0;
   const picker = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ visible: false }));
   scene.add(shells, fronds.mesh, picker);
   let metal: THREE.Mesh | null = null;

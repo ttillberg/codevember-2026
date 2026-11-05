@@ -144,6 +144,7 @@ export function buildFronds(rock: THREE.BufferGeometry, fertility: Float32Array,
       uPuff: { value: puffTexture },
       uAgeSize: { value: new THREE.Vector2(texW, texH) },
       uLen: { value: 0.032 },
+      uStrawBase: { value: 0.01 }, // straws outside the straw-rich areas; letters set 0
       uStarLen: { value: 0.038 },
       uLichenLen: { value: 0.07 },
       uBulge: { value: 0.035 },
@@ -176,6 +177,7 @@ uniform sampler2D uAge;
 uniform sampler2D uPuff;
 uniform vec2 uAgeSize;
 uniform float uLen;
+uniform float uStrawBase;
 uniform float uStarLen;
 uniform float uLichenLen;
 uniform float uBulge;
@@ -224,7 +226,7 @@ void main() {
   // a few percent of instances are a single thin grass straw instead, whatever the species
   // 1% of instances are straws, up to 9% in straw-rich areas, and tops get more than sides
   float upness = smoothstep(-0.1, 0.9, iNor.y);
-  float strawP = mix(0.01, 0.09, iStraw) * mix(0.3, 1.6, upness);
+  float strawP = mix(uStrawBase, 0.09, iStraw) * mix(0.3, 1.6, upness);
   float straw = step(1.0 - strawP, hash(iSeed.y * 31.7 + iSeed.z * 7.3));
   // cull: no moss, or strips this species does not use
   bool unused;
