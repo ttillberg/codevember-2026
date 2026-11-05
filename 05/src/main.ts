@@ -79,6 +79,9 @@ const shellMat = new THREE.ShaderMaterial({
     uRimDir: { value: new THREE.Vector3(0, 1, 0) },
     uRim: { value: 1 },
     uHemi: { value: 1 },
+    uTone: { value: 2 }, // ACES by default
+    uExposure: { value: 1.1 },
+    toneMappingExposure: { value: 1 },
     uHideRock: { value: 0 },
     uScale: { value: 1 },
     uShadowMap: { value: null },
@@ -455,6 +458,14 @@ function fillAll() {
     box.addEventListener('change', () => { shellMat.uniforms[box.dataset.uniform!].value = box.checked ? 1 : 0; });
   });
   panel.querySelector('[data-action="fill"]')!.addEventListener('click', fillAll);
+  // tone mapping: each mode gets its own exposure, AgX and ACES darken differently
+  const TONE_EXPOSURE = [1, 1.5, 1.1, 1.15];
+  const toneSel = panel.querySelector<HTMLSelectElement>('select[data-tone]')!;
+  toneSel.addEventListener('change', () => {
+    const k = Number(toneSel.value);
+    shellMat.uniforms.uTone.value = k;
+    shellMat.uniforms.uExposure.value = TONE_EXPOSURE[k];
+  });
   const ssaoBox = panel.querySelector<HTMLInputElement>('input[data-toggle="ssao"]')!;
   ssaoBox.addEventListener('change', () => { setSsao(ssaoBox.checked); });
 }
@@ -1042,6 +1053,8 @@ renderer.setAnimationLoop(() => {
   fu.uRimDir.value = rimDir;
   fu.uRim.value = shellMat.uniforms.uRim.value;
   fu.uHemi.value = shellMat.uniforms.uHemi.value;
+  fu.uTone.value = shellMat.uniforms.uTone.value;
+  fu.uExposure.value = shellMat.uniforms.uExposure.value;
   grow(dt);
   blendSpecies(dt);
   springPuff(dt);

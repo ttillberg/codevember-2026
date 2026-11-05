@@ -205,5 +205,6 @@ canvas { display: block; width: 100vw; height: 100vh; touch-action: none; }
 }
 .debug[hidden] { display: none; }
 .debug label { display: flex; align-items: center; gap: 6px; cursor: pointer; user-select: none; }
+.debug select { font: inherit; padding: 1px 2px; }
 .debug button { font: inherit; padding: 2px 8px; border: 1px solid #bbb; border-radius: 4px; background: #fff; cursor: pointer; }
 @media (pointer: coarse), (max-width: 640px) { .debug { top: 84px; } } /* below the eraser */

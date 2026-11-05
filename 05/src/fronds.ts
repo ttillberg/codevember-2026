@@ -157,6 +157,9 @@ export function buildFronds(rock: THREE.BufferGeometry, fertility: Float32Array,
       uRimDir: { value: new THREE.Vector3(0, 1, 0) },
       uRim: { value: 0 },
       uHemi: { value: 0 },
+      uTone: { value: 0 },
+      uExposure: { value: 1 },
+      toneMappingExposure: { value: 1 },
       uShadowMap: { value: null },
       uShadowMatrix: { value: new THREE.Matrix4() },
       uShadowOn: { value: 0 },
@@ -434,6 +437,18 @@ varying float vStraw;
 
 
 // colour grade for the moss only: a touch of exposure, saturation and contrast, in linear light
+// tone mapping, on the moss only: the white rock, the ground and the page background stay exactly as they are.
+// 0 = none (just the grade), 1 = AgX, 2 = ACES, 3 = Neutral; switchable in the debug panel
+#include <tonemapping_pars_fragment>
+uniform float uTone;
+uniform float uExposure;
+vec3 tonemap(vec3 c) {
+  if (uTone < 0.5) return c;
+  c *= uExposure;
+  if (uTone < 1.5) return AgXToneMapping(c);
+  if (uTone < 2.5) return ACESFilmicToneMapping(c);
+  return NeutralToneMapping(c);
+}
 vec3 grade(vec3 c) {
   c *= 1.3;
   float l = dot(c, vec3(0.299, 0.587, 0.114));
@@ -534,7 +549,7 @@ void main() {
   vec3 lit = col * ao * (ambient * mix(0.7, 1.0, shadow) + wrapK * wrap + back * shadow) * gain + tip * rim * shadow;
   lit *= skyTint(normalize(vSurfN), 1.0 - 0.6 * wrap);
   lit += rimLight(normalize(vSurfN), V) * (col * 2.6 + tip * 0.6) * (0.2 + 0.8 * vT) * mix(1.0, 0.3, vCavity);
-  gl_FragColor = vec4(grade(lit), 1.0);
+  gl_FragColor = vec4(tonemap(grade(lit)), 1.0);
   #include <colorspace_fragment>
 }
 `;

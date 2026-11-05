@@ -181,6 +181,19 @@ vec3 rimLight(vec3 N, vec3 V) {
   return vec3(1.0, 0.93, 0.70) * fres * facing * uRim;
 }
 
+// tone mapping, on the moss only: the white rock, the ground and the page background stay exactly as they are.
+// 0 = none (just the grade), 1 = AgX, 2 = ACES, 3 = Neutral; switchable in the debug panel
+#include <tonemapping_pars_fragment>
+uniform float uTone;
+uniform float uExposure;
+vec3 tonemap(vec3 c) {
+  if (uTone < 0.5) return c;
+  c *= uExposure;
+  if (uTone < 1.5) return AgXToneMapping(c);
+  if (uTone < 2.5) return ACESFilmicToneMapping(c);
+  return NeutralToneMapping(c);
+}
+
 // colour grade for the moss only: a touch of exposure, saturation and contrast, in linear light
 vec3 grade(vec3 c) {
   c *= 1.3;
@@ -262,7 +275,7 @@ void main() {
     velvet *= skyTint(N, 1.0 - 0.6 * wrap);
     velvet += rimLight(N, V) * lime * 2.2;
     vec3 ground = mix(vec3(0.03, 0.025, 0.012), velvet, (dot(w, kBase) + w5 * kBase5));
-    vec3 lit = mix(rock, grade(ground), max(humus * 0.92, mature * (dot(w, kBase) + w5 * kBase5)));
+    vec3 lit = mix(rock, tonemap(grade(ground)), max(humus * 0.92, mature * (dot(w, kBase) + w5 * kBase5)));
     lit *= mix(1.0, 0.45, vCavity * mature); // moss in a hollow sits in the dark
     gl_FragColor = vec4(lit, 1.0);
     #include <colorspace_fragment>
@@ -310,7 +323,7 @@ void main() {
   col *= skyTint(N, 1.0 - 0.6 * wrap);
   col += rimLight(N, V) * lime * 3.0 * uu;
   col *= mix(1.0, 0.45, vCavity);
-  gl_FragColor = vec4(grade(col), 1.0);
+  gl_FragColor = vec4(tonemap(grade(col)), 1.0);
   #include <colorspace_fragment>
 }
 `;
