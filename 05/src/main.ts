@@ -537,10 +537,10 @@ if (useCarousel) {
   swatches.forEach((b) => b.addEventListener('click', () => selectSwatch(b)));
 }
 addEventListener('keydown', (e) => {
-  // keys follow the swatch order: feather, cushion, star, lichen, coral, mix
+  // keys follow the swatch order: feather, star, cushion, lichen, coral, mix
   if (e.key === '1') setBrush(0);
-  if (e.key === '2') setBrush(3);
-  if (e.key === '3') setBrush(1);
+  if (e.key === '2') setBrush(1);
+  if (e.key === '3') setBrush(3);
   if (e.key === '4') setBrush(2);
   if (e.key === '5') setBrush(4);
   if (e.key === '6' || e.key === 'a') setBrush(-1);

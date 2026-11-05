@@ -106,7 +106,10 @@ export function renderSwatches(renderer: THREE.WebGLRenderer, shells: number, li
   const prevClear = renderer.getClearAlpha();
   renderer.setClearAlpha(0);
 
-  const shoot = (): string => {
+  // cushion has no fronds, so its ball is only the core plus a short fuzz: get closer so it reads as big as the rest
+  const eye = camera.position.clone();
+  const shoot = (zoom = 1): string => {
+    camera.position.copy(eye).multiplyScalar(1 / zoom);
     renderer.setRenderTarget(rt);
     renderer.clear();
     renderer.render(scene, camera);
@@ -129,7 +132,7 @@ export function renderSwatches(renderer: THREE.WebGLRenderer, shells: number, li
   const names = ['feather', 'star', 'lichen', 'cushion', 'coral'];
   for (let k = 0; k < SPECIES; k++) {
     setWeights(() => k);
-    apply(`.sw i.${names[k]}`, shoot());
+    apply(`.sw i.${names[k]}`, shoot(k === 3 ? 1.7 : 1));
   }
   // mix: patches of each species from a noise field
   setWeights((i) => {
