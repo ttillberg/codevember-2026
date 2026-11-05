@@ -549,7 +549,11 @@ function frameWord() {
   const span = W.kind === 'rock' ? Math.max(width, depth) : width;
   const dW = span / (0.95 * 2 * tanHalf * aspect);
   const dist = W.kind === 'rock' ? Math.max(dH + depth, dW + depth * 0.5) : dH + depth; // the near face is closer than the centre
-  camera.position.set(center.x + dist * 0.22, center.y + dist * 0.12, center.z + dist);
+  // the ground sits right under the object: seen this low, any gap shows
+  ground.position.y = bb.min.y - 0.004;
+  // default view: from the front, the eye almost down on the ground, looking slightly up at the object
+  const eye = new THREE.Vector3(center.x + dist * 0.08, ground.position.y + 0.18, center.z + dist).sub(center).setLength(dist);
+  camera.position.copy(center).add(eye);
   // touch zoom: in to about half the framed distance, never further out than the framing.
   // The brush radius is in world units, so it keeps its size on the surface while zooming.
   framedPos.copy(camera.position);
