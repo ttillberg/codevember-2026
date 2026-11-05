@@ -4,7 +4,7 @@ import * as THREE from 'three';
 import { mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
 import { buildFronds } from './fronds';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
-import { pillowAt } from './rock';
+import { domeAt, pillowAt } from './rock';
 import { fbm3 } from './noise';
 import { shellVertex, shellFragment } from './shaders';
 
@@ -35,6 +35,11 @@ export function renderSwatches(renderer: THREE.WebGLRenderer, shells: number, li
   geo.setAttribute('dead', new THREE.BufferAttribute(dead, 1));
   geo.setAttribute('pillow', new THREE.BufferAttribute(pillow, 1));
   geo.setAttribute('mossNormal', geo.attributes.normal.clone());
+  {
+    const d = new Float32Array(n);
+    for (let i = 0; i < n; i++) { p.fromBufferAttribute(pos, i); d[i] = domeAt(p.x * 0.5, p.y * 0.5, p.z * 0.5); }
+    geo.setAttribute('dome', new THREE.BufferAttribute(d, 1));
+  }
 
   const mat = new THREE.ShaderMaterial({
     vertexShader: shellVertex,

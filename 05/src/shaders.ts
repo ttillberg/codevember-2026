@@ -5,6 +5,7 @@ attribute float speciesW2; // fifth species weight: green reindeer moss (coral)
 attribute float dead;
 attribute float pillow;
 attribute float puff; // plumped up by repeated brushing, animated as a spring
+attribute float dome; // cushion clumps
 attribute vec3 mossNormal; // smoothed normal: the moss grows along this, the rock is lit with its own
 
 uniform float uHeight;
@@ -18,6 +19,7 @@ varying vec4 vSpecies;
 varying float vSpecies2;
 varying float vDead;
 varying float vPillow;
+varying float vDome;
 varying vec3 vLocal;
 varying vec3 vLocalNormal;
 varying vec3 vWorldPos;
@@ -35,6 +37,7 @@ void main() {
   float profile = mix(moss * moss, 1.0 - (1.0 - moss) * (1.0 - moss), cush);
   float pil = mix(pillow, mix(0.9, 1.0, pillow), cush);
   float bulge = profile * mix(0.3, 1.0, pil) * uBulge * (dot(w, vec4(1.0, 0.6, 0.5, 1.7)) + w5 * 0.9);
+  bulge *= mix(1.0, mix(0.5, 1.0, dome), cush); // separate round clumps, low crevices between them
   bulge += puff * uBulge * 1.4 * smoothstep(0.0, 0.3, moss);
   vec3 p = position + mossNormal * (bulge + uHeight * t);
 
@@ -45,6 +48,7 @@ void main() {
   vSpecies2 = w5;
   vDead = dead;
   vPillow = pillow;
+  vDome = dome;
   vLocal = position;
   vLocalNormal = mossNormal;
   vec4 wp = modelMatrix * vec4(p, 1.0);
@@ -95,6 +99,7 @@ varying vec4 vSpecies;
 varying float vSpecies2;
 varying float vDead;
 varying float vPillow;
+varying float vDome;
 varying vec3 vLocal;
 varying vec3 vLocalNormal;
 varying vec3 vWorldPos;
@@ -219,7 +224,8 @@ void main() {
     float mature = smoothstep(0.08 + edgeNoise, 0.6, age);
     float humus = mature;
     vec3 velvet = mix(deep, lime, (0.1 + 0.75 * bump) * wrap) + lime * sheen;
-    velvet *= mix(mix(0.85, 0.96, w.w), 1.0, pillow);  // valleys a touch darker, the mounds carry the shape not the colour
+    velvet *= mix(mix(0.85, 0.96, w.w), 1.0, pillow);
+    velvet *= mix(1.0, mix(0.65, 1.0, vDome), w.w); // dark crevice between cushion clumps  // valleys a touch darker, the mounds carry the shape not the colour
     vec3 ground = mix(vec3(0.03, 0.025, 0.012), velvet, (dot(w, kBase) + w5 * kBase5));
     vec3 lit = mix(rock, grade(ground), max(humus * 0.92, mature * (dot(w, kBase) + w5 * kBase5)));
     gl_FragColor = vec4(lit, 1.0);
@@ -230,6 +236,7 @@ void main() {
   // ---- fuzz: a noise density field, dense at the root and thinning upward.
   float ageH = pow(age, dot(w, kAgePow) + w5 * kAgePow5);
   float top = ageH * mix(mix(0.5, 0.94, w.w), 1.0, lump) * mix(mix(0.35, 0.95, w.w), 1.0, pillow) * (dot(w, kHeight) + w5 * kHeight5);
+  top *= mix(1.0, mix(0.7, 1.0, vDome), w.w); // short in the crevices between cushion clumps
   // seen edge-on the stacked layers read as streaks too: short fuzz at grazing angles, the velvet base carries it
   float facing = smoothstep(0.15, 0.6, abs(dot(normalize(vMossNormal), V)));
   top *= mix(1.0, mix(0.2, 1.0, facing), w.w);
@@ -253,6 +260,9 @@ void main() {
   // young sparse moss at a patch edge reads as light specks, not dirt
   col = mix(col, lime * 0.8, (1.0 - smoothstep(0.1, 0.5, age)) * 0.7);
   col *= mix(mix(0.85, 0.96, w.w), 1.0, pillow) * (0.8 + 0.2 * hemi) * mix(0.6, 1.0, shadow);
+  col *= mix(1.0, mix(0.75, 1.0, vDome), w.w);
+  // cushion hair has pale yellow-green tips
+  col = mix(col, vec3(0.55, 0.76, 0.18), smoothstep(0.75, 1.0, uu) * 0.15 * w.w * vDome);
   gl_FragColor = vec4(grade(col), 1.0);
   #include <colorspace_fragment>
 }

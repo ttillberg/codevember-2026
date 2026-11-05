@@ -12,12 +12,38 @@ export interface Surface {
   dead: Float32Array; // 0..1, bleached yellow-brown patches
   pillow: Float32Array; // 0..1, where the moss mounds up
   area: Float32Array; // surface area each vertex stands for (a third of its triangles)
+  dome: Float32Array; // 0..1, cushion clumps: round domes per cell, 0 in the crevices between them
 }
 
 // Mound field, shared by rock vertices and frond instances so both layers bulge together.
 export function pillowAt(x: number, y: number, z: number) {
   const v = fbm3(x * 9, y * 9, z * 9, 2, 5) * 0.65 + fbm3(x * 22, y * 22, z * 22, 2, 6) * 0.35;
   return THREE.MathUtils.smoothstep(v, -0.35, 0.35);
+}
+
+// Cushion clumps: a 3D cell field (Worley), each cell a round dome that drops to 0 at the crevice
+// between cells. Shared by rock vertices and frond instances so straws sit on the same domes.
+const DOME_CELL = 0.3;
+function cellHash(x: number, y: number, z: number, k: number) {
+  let h = (x * 374761393 + y * 668265263 + z * 1442695041 + k * 1274126177) | 0;
+  h = Math.imul(h ^ (h >>> 13), 1274126177);
+  return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
+}
+export function domeAt(x: number, y: number, z: number) {
+  const px = x / DOME_CELL, py = y / DOME_CELL, pz = z / DOME_CELL;
+  const ix = Math.floor(px), iy = Math.floor(py), iz = Math.floor(pz);
+  let f1 = 1e9, f2 = 1e9;
+  for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) for (let dz = -1; dz <= 1; dz++) {
+    const cx = ix + dx, cy = iy + dy, cz = iz + dz;
+    const ox = cx + 0.15 + 0.7 * cellHash(cx, cy, cz, 1) - px;
+    const oy = cy + 0.15 + 0.7 * cellHash(cx, cy, cz, 2) - py;
+    const oz = cz + 0.15 + 0.7 * cellHash(cx, cy, cz, 3) - pz;
+    const d = ox * ox + oy * oy + oz * oz;
+    if (d < f1) { f2 = f1; f1 = d; } else if (d < f2) f2 = d;
+  }
+  const edge = Math.sqrt(f2) - Math.sqrt(f1); // 0 on the border between two cells
+  const t = Math.min(1, edge / 0.85);
+  return Math.sqrt(1 - (1 - t) * (1 - t)); // circular profile: steep at the crevice, round on top
 }
 
 // Shared by rock vertices and frond instances so both layers agree on where the moss is dying.
@@ -148,11 +174,14 @@ export function finishSurface(geo: THREE.BufferGeometry, seed = 7): Surface {
 
   const dead = new Float32Array(n);
   const pillow = new Float32Array(n);
+  const dome = new Float32Array(n);
   for (let i = 0; i < n; i++) {
     p.fromBufferAttribute(posAttr, i);
     dead[i] = deadAt(p.x, p.y, p.z);
     pillow[i] = pillowAt(p.x, p.y, p.z);
+    dome[i] = domeAt(p.x, p.y, p.z);
   }
+  geo.setAttribute('dome', new THREE.BufferAttribute(dome, 1));
 
   // a smoothed normal field for the moss to grow along. The rock keeps its crisp facets, but shells and fronds
   // extrude along normals that turn gradually across an edge, so the layers never fan apart into streaks.
@@ -181,5 +210,5 @@ export function finishSurface(geo: THREE.BufferGeometry, seed = 7): Surface {
     }
   }
 
-  return { geometry: geo, adjacency, fertility, dead, pillow, area };
+  return { geometry: geo, adjacency, fertility, dead, pillow, area, dome };
 }
