@@ -347,7 +347,7 @@ function addWeights(i: number, wgt: Float32Array, amount: number) {
 }
 
 // ---- auto brush: picks species by normal, speed, time and a bit of luck
-let currentSpecies = 4; // coral by default; -1 = auto mix
+let currentSpecies = 0; // feather, the leftmost swatch, by default; -1 = auto mix
 const strokeBias = new Float32Array(SPECIES); // rolled per stroke
 const strokeShift = new THREE.Vector3(); // noise offset for rearranging mounds, rolled per stroke
 let speed = 0; // smoothed pointer speed, px per second
@@ -665,7 +665,7 @@ addEventListener('keydown', (e) => {
     if (W.metal) W.metal.visible = hidden === 1 && W.metal.visible ? false : true;
   }
 });
-setBrush(4);
+setBrush(0);
 renderSwatches(renderer, SHELLS, LIGHT_BASE.clone());
 renderEraser(renderer);
 
