@@ -7,6 +7,7 @@ attribute float pillow;
 attribute float puff; // plumped up by repeated brushing, animated as a spring
 attribute float dome; // cushion clumps
 attribute vec3 mossNormal; // smoothed normal: the moss grows along this, the rock is lit with its own
+attribute float cavity; // baked occlusion: 1 deep in a hole or an inner corner
 
 uniform float uHeight;
 uniform float uBulge;
@@ -20,6 +21,7 @@ varying float vSpecies2;
 varying float vDead;
 varying float vPillow;
 varying float vDome;
+varying float vCavity;
 varying vec3 vLocal;
 varying vec3 vLocalNormal;
 varying vec3 vWorldPos;
@@ -39,7 +41,9 @@ void main() {
   float bulge = profile * mix(0.3, 1.0, pil) * uBulge * (dot(w, vec4(1.0, 0.6, 0.5, 1.7)) + w5 * 0.9);
   bulge *= mix(1.0, mix(0.5, 1.0, dome), cush); // separate round clumps, low crevices between them
   bulge += puff * uBulge * 1.4 * smoothstep(0.0, 0.3, moss);
-  vec3 p = position + mossNormal * (bulge + uHeight * t);
+  // hollows stay hollow: thin, short moss in holes and inner corners so they do not fill up
+  bulge *= 1.0 - 0.85 * cavity;
+  vec3 p = position + mossNormal * (bulge + uHeight * t * (1.0 - 0.6 * cavity));
 
 
   vShell = t;
@@ -49,6 +53,7 @@ void main() {
   vDead = dead;
   vPillow = pillow;
   vDome = dome;
+  vCavity = cavity;
   vLocal = position;
   vLocalNormal = mossNormal;
   vec4 wp = modelMatrix * vec4(p, 1.0);
@@ -100,6 +105,7 @@ varying float vSpecies2;
 varying float vDead;
 varying float vPillow;
 varying float vDome;
+varying float vCavity;
 varying vec3 vLocal;
 varying vec3 vLocalNormal;
 varying vec3 vWorldPos;
@@ -228,6 +234,7 @@ void main() {
     velvet *= mix(1.0, mix(0.65, 1.0, vDome), w.w); // dark crevice between cushion clumps  // valleys a touch darker, the mounds carry the shape not the colour
     vec3 ground = mix(vec3(0.03, 0.025, 0.012), velvet, (dot(w, kBase) + w5 * kBase5));
     vec3 lit = mix(rock, grade(ground), max(humus * 0.92, mature * (dot(w, kBase) + w5 * kBase5)));
+    lit *= mix(1.0, 0.45, vCavity * mature); // moss in a hollow sits in the dark
     gl_FragColor = vec4(lit, 1.0);
     #include <colorspace_fragment>
     return;
@@ -271,6 +278,7 @@ void main() {
   col *= mix(1.0, mix(0.75, 1.0, vDome), w.w);
   // cushion hair has pale yellow-green tips
   col = mix(col, vec3(0.55, 0.76, 0.18), smoothstep(0.75, 1.0, uu) * 0.15 * w.w * vDome);
+  col *= mix(1.0, 0.45, vCavity);
   gl_FragColor = vec4(grade(col), 1.0);
   #include <colorspace_fragment>
 }

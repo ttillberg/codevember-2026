@@ -64,6 +64,8 @@ export function buildFronds(rock: THREE.BufferGeometry, fertility: Float32Array,
   const iDead = new Float32Array(count);
   const iStraw = new Float32Array(count); // straw-rich areas: about a tenth of the surface
   const iPick = new Float32Array(count);
+  const cav = rock.attributes.cavity as THREE.BufferAttribute | undefined;
+  const iCavity = new Float32Array(count); // baked occlusion, from the surface
   const iDome = new Float32Array(count); // species pick threshold: a smooth field, so mixed zones form patches not noise
 
   const n = new THREE.Vector3(), t = new THREE.Vector3(), p = new THREE.Vector3();
@@ -102,6 +104,7 @@ export function buildFronds(rock: THREE.BufferGeometry, fertility: Float32Array,
     // same pillow field as the shell shader, so undercoat and fronds agree
     iDead[i] = deadAt(p.x, p.y, p.z);
     iDome[i] = domeAt(p.x, p.y, p.z);
+    iCavity[i] = cav ? cav.getX(ia) * w + cav.getX(ib) * u + cav.getX(ic) * v : 0;
     iStraw[i] = THREE.MathUtils.smoothstep(fbm3(p.x * 1.7, p.y * 1.7, p.z * 1.7, 3, 61), 0.22, 0.38);
     iPick[i] = THREE.MathUtils.clamp(fbm3(p.x * 4.5, p.y * 4.5, p.z * 4.5, 3, 83) * 0.9 + 0.5 + (rand() - 0.5) * 0.12, 0, 1);
     iClump[i] = pillowAt(p.x, p.y, p.z);
@@ -121,6 +124,7 @@ export function buildFronds(rock: THREE.BufferGeometry, fertility: Float32Array,
   geo.setAttribute('iStraw', new THREE.InstancedBufferAttribute(iStraw, 1));
   geo.setAttribute('iPick', new THREE.InstancedBufferAttribute(iPick, 1));
   geo.setAttribute('iDome', new THREE.InstancedBufferAttribute(iDome, 1));
+  geo.setAttribute('iCavity', new THREE.InstancedBufferAttribute(iCavity, 1));
   geo.instanceCount = count;
 
   // age texture: one float per rock vertex
@@ -172,6 +176,7 @@ attribute float iDead;
 attribute float iStraw;
 attribute float iPick;
 attribute float iDome;
+attribute float iCavity;
 
 uniform sampler2D uAge;
 uniform sampler2D uPuff;
@@ -193,6 +198,7 @@ varying float vClump;
 varying float vSpecies;
 varying float vDead;
 varying float vShade;
+varying float vCavity;
 varying float vStraw;
 
 float hash(float x) { return fract(sin(x * 127.1) * 43758.5453); }
@@ -357,7 +363,9 @@ void main() {
   float profileF = mix(age * age, 1.0 - (1.0 - age) * (1.0 - age), cushW);
   float pilF = mix(clumpV, mix(0.8, 1.0, clumpV), cushW);
   float bulge = profileF * mix(0.3, 1.0, pilF) * uBulge * (dot(wgt, vec4(1.0, 0.6, 0.5, 1.7)) + wCoral * 0.9) * mix(1.0, mix(0.5, 1.0, iDome), cushW) + puff * uBulge * 1.4 * smoothstep(0.0, 0.3, age);
-  vec3 p = iPos + N * bulge + local;
+  // hollows stay hollow: fronds in holes and inner corners sit low and short
+  vec3 p = iPos + N * bulge * (1.0 - 0.85 * iCavity) + local * mix(1.0, 0.45, iCavity);
+  vCavity = iCavity;
   vec4 wp = modelMatrix * vec4(p, 1.0);
   vWorldPos = wp.xyz;
   vNormal = normalize(mat3(modelMatrix) * cross(D, across));
@@ -415,6 +423,7 @@ varying float vClump;
 varying float vSpecies;
 varying float vDead;
 varying float vShade;
+varying float vCavity;
 varying float vStraw;
 
 
@@ -493,6 +502,7 @@ void main() {
   float gain = lichen ? 0.9 : (vSpecies >= 3.5 ? 0.8 : (vSpecies >= 0.5 ? 0.75 : 1.0));
   float ambient = lichen ? 0.55 : 0.34;  // lichen is matte, mostly ambient
   float wrapK = lichen ? 0.45 : 0.75;
+  ao *= mix(1.0, 0.45, vCavity);
   vec3 lit = col * ao * (ambient * mix(0.7, 1.0, shadow) + wrapK * wrap + back * shadow) * gain + tip * rim * shadow;
   gl_FragColor = vec4(grade(lit), 1.0);
   #include <colorspace_fragment>

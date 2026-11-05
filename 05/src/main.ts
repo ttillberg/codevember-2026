@@ -268,17 +268,18 @@ function destroyWorld(w: World) {
   (w.picker.material as THREE.Material).dispose();
 }
 
-// the font is tiny and local, load it before anything else
-const font: Font = await new FontLoader().loadAsync(`${import.meta.env.BASE_URL}fonts/helvetiker_bold.typeface.json`);
+// the font is tiny and local, load it before anything else. Regular, not bold: the rounding and the moss
+// thicken every stroke, and bold counters (A, e, 4) close up
+const font: Font = await new FontLoader().loadAsync(`${import.meta.env.BASE_URL}fonts/helvetiker_regular.typeface.json`);
 // Helvetica's M runs its middle vertex all the way to the baseline, which turns into a heavy V once
 // the letter is rounded. Lift the flat bottom of the V and the notch above it by the same amount.
 {
   const lift = 300;
   const M = (font.data as { glyphs: Record<string, { o: string }> }).glyphs['M'];
   M.o = M.o
-    .replace('l 618 0', `l 618 ${lift}`)
-    .replace('l 402 0', `l 402 ${lift}`)
-    .replace('l 510 241', `l 510 ${241 + lift}`);
+    .replace('l 537 0', `l 537 ${lift}`)
+    .replace('l 405 0', `l 405 ${lift}`)
+    .replace('l 472 160', `l 472 ${160 + lift}`);
 }
 let pillowDirty = true;
 let W = createWorld('M', 'rock');
