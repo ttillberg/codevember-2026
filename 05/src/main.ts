@@ -314,7 +314,7 @@ let brushRadius = 0.24; // medium by default
 const BRUSH_MIN = 0.06;
 const BRUSH_MAX = 0.5;
 
-function pick(e: PointerEvent) {
+function pick(e: { clientX: number; clientY: number }) {
   pointer.set((e.clientX / innerWidth) * 2 - 1, -(e.clientY / innerHeight) * 2 + 1);
   raycaster.setFromCamera(pointer, camera);
   const hit = raycaster.intersectObject(W.picker, false)[0];
@@ -362,6 +362,32 @@ function brush(point: THREE.Vector3, scrape: boolean) {
   dirty = true;
 }
 
+// ---- cursor (mouse only): a cross over the object where a drag paints, an open hand beside it where
+// a drag rotates, a closed hand while rotating, a resize arrow with cmd/ctrl held.
+const hover = { clientX: 0, clientY: 0, pending: false, over: false, mod: false };
+let orbiting = false;
+function setCursor() {
+  canvas.style.cursor =
+    orbiting ? 'grabbing' :
+    sizing || hover.mod ? 'ew-resize' :
+    hover.over ? 'crosshair' : 'grab';
+}
+function updateHover() {
+  if (!hover.pending || painting || sizing || orbiting) return;
+  hover.pending = false;
+  hover.over = pick(hover) !== null;
+  setCursor();
+}
+canvas.addEventListener('pointermove', (e) => {
+  if (e.pointerType !== 'mouse') return;
+  hover.clientX = e.clientX; hover.clientY = e.clientY;
+  hover.mod = e.metaKey || e.ctrlKey;
+  hover.pending = true;
+});
+canvas.addEventListener('pointerleave', () => { hover.pending = false; });
+addEventListener('keydown', (e) => { if (e.key === 'Meta' || e.key === 'Control') { hover.mod = true; setCursor(); } });
+addEventListener('keyup', (e) => { if (e.key === 'Meta' || e.key === 'Control') { hover.mod = false; setCursor(); } });
+
 // ---- brush size: cmd/ctrl + drag sideways, with a ring showing the size
 const sizeRing = document.querySelector<HTMLElement>('.size-ring')!;
 let sizing = false;
@@ -369,6 +395,7 @@ let sizeStartX = 0;
 let sizeStartY = 0;
 let sizeStartR = 0;
 let sizeAnchor: THREE.Vector3 | null = null;
+setCursor();
 function showRing(point: THREE.Vector3, r: number, x: number, y: number) {
   const d = camera.position.distanceTo(point);
   const px = (r / (d * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)))) * (innerHeight / 2);
@@ -400,10 +427,15 @@ canvas.addEventListener('pointerdown', (e) => {
     sizeAnchor = p ? p.clone() : controls.target.clone();
     controls.enabled = false;
     showRing(sizeAnchor, brushRadius, e.clientX, e.clientY);
+    setCursor();
     try { canvas.setPointerCapture(e.pointerId); } catch { /* synthetic events */ }
     return;
   }
-  if (!p) return; // off the object: let OrbitControls have it
+  if (!p) {
+    // off the object: let OrbitControls have it
+    if (e.pointerType === 'mouse') { orbiting = true; setCursor(); }
+    return;
+  }
   painting = true;
   scraping = scrapeTool || e.shiftKey || e.button === 2;
   // mouse: keep the controls out of a paint drag. Touch: leave them on so a second finger can rotate.
@@ -442,6 +474,9 @@ const release = (e: PointerEvent) => {
   touchIds.delete(e.pointerId);
   if (painting) requestThumb(45); // after the stroke has grown in a bit
   stop();
+  orbiting = false;
+  hover.pending = true;
+  setCursor();
 };
 canvas.addEventListener('pointerup', release);
 canvas.addEventListener('pointercancel', release);
@@ -819,6 +854,7 @@ renderer.setAnimationLoop(() => {
       shadowDirty = false;
     }
   }
+  updateHover();
   controls.update();
   renderer.render(scene, camera);
   if (thumbDirty > 0 && --thumbDirty === 0) updateThumb();

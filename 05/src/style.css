@@ -145,3 +145,6 @@ canvas { display: block; width: 100vw; height: 100vh; touch-action: none; }
 .letter-pop button.rock { grid-column: 1 / -1; width: auto; height: 56px; }
 .letter-pop button.rock.active { background: rgba(0, 0, 0, .1); }
 .letter-pop button.rock i { display: block; width: 56px; height: 56px; margin: 0 auto; background: center / contain no-repeat; }
+
+/* no labels under the swatches: the balls speak for themselves, the active one keeps its little bar */
+.sw span, .scrape-btn span { font-size: 0; line-height: 0; width: 18px; padding-bottom: 0; }
