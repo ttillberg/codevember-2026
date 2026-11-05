@@ -51,7 +51,8 @@ canvas { display: block; width: 100vw; height: 100vh; touch-action: none; }
 .scrape-btn.active i { transform: translateY(-4px) rotate(-8deg); }
 .scrape-btn.active span { border-bottom-color: #111; }
 @media (max-width: 640px), (pointer: coarse) {
-  .scrape-btn { left: 50%; transform: translateX(-50%); bottom: 150px; }
+  .scrape-btn { left: auto; right: 10px; top: 10px; bottom: auto; transform: none; width: 64px; }
+  .scrape-btn i { width: 52px; height: 52px; }
 }
 .hint { left: 250px; right: 90px; text-align: right; pointer-events: none; }
 @media (max-width: 480px) {
@@ -106,3 +107,6 @@ canvas { display: block; width: 100vw; height: 100vh; touch-action: none; }
 .scale:hover { opacity: 1; }
 .scale input { width: 140px; accent-color: #333; }
 @media (max-width: 480px) { .scale { top: 44px; right: 12px; } .scale input { width: 110px; } }
+
+/* top navigation hidden for now: object toggle and hint */
+.objects, .hint { display: none; }
