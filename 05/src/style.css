@@ -98,7 +98,8 @@ canvas { display: block; width: 100vw; height: 100vh; touch-action: none; }
 .objects button.active { background: #333; color: #e6e6e3; }
 @media (max-width: 480px) { .objects { top: 44px; } }
 
-.scale {
+.scale { display: none; } /* hidden: fixed at 175%, the control stays in the markup for tinkering */
+.scale.show {
   position: fixed; top: 48px; right: 12px; display: flex; flex-direction: column; align-items: flex-end; gap: 4px;
   font: 11px ui-monospace, Menlo, monospace; color: #444; opacity: .7;
 }
