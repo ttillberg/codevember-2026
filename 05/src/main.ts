@@ -10,6 +10,7 @@ import { fbm3 } from './noise';
 import { shellVertex, shellFragment, groundVertex, groundFragment } from './shaders';
 import { renderSwatches, renderEraser } from './swatches';
 import { setupCarousel, type Carousel } from './carousel';
+import { createPost } from './post';
 
 const coarse = matchMedia('(pointer: coarse)').matches;
 const SHELLS = coarse ? 10 : 16;
@@ -829,8 +830,29 @@ function seedWord() {
 seedRock();
 
 // ---- loop
+// AO and grade on desktop; phones render straight to screen to save the GPU
+const post = coarse ? null : createPost(renderer);
+// compare toggles: O for ambient occlusion, G for the colour grade
+const fxBar = document.querySelector<HTMLElement>('.fx')!;
+const fpsEl = fxBar.querySelector<HTMLElement>('.fps')!;
+let fpsFrames = 0, fpsT0 = performance.now();
+if (!post) fxBar.style.display = 'none';
+function toggleFx(name: 'uAO' | 'uGrade') {
+  if (!post) return;
+  const u = post.material.uniforms[name];
+  u.value = u.value ? 0 : 1;
+  fxBar.querySelector(`[data-fx="${name}"]`)!.classList.toggle('active', !!u.value);
+}
+fxBar.querySelectorAll<HTMLButtonElement>('button[data-fx]').forEach((b) =>
+  b.addEventListener('click', () => toggleFx(b.dataset.fx as 'uAO' | 'uGrade')),
+);
+addEventListener('keydown', (e) => {
+  if (e.key === 'o') toggleFx('uAO');
+  if (e.key === 'g') toggleFx('uGrade');
+});
 function resize() {
   renderer.setSize(innerWidth, innerHeight);
+  post?.setSize(innerWidth, innerHeight, renderer.getPixelRatio());
   camera.aspect = innerWidth / innerHeight;
   camera.updateProjectionMatrix();
   frameWord();
@@ -870,7 +892,13 @@ renderer.setAnimationLoop(() => {
   }
   updateHover();
   controls.update();
-  renderer.render(scene, camera);
+  // post only when one of its effects is on: with both off we render straight to screen, for a fair fps compare
+  const usePost = post && (post.material.uniforms.uAO.value || post.material.uniforms.uGrade.value);
+  if (usePost) post!.render(scene, camera);
+  else renderer.render(scene, camera);
+  fpsFrames++;
+  const nowT = performance.now();
+  if (nowT - fpsT0 > 500) { fpsEl.textContent = `${Math.round((fpsFrames * 1000) / (nowT - fpsT0))} fps`; fpsFrames = 0; fpsT0 = nowT; }
   if (thumbDirty > 0 && --thumbDirty === 0) updateThumb();
 });
 requestThumb(6);

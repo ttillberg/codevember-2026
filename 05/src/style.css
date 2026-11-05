@@ -169,3 +169,12 @@ canvas { display: block; width: 100vw; height: 100vh; touch-action: none; }
   .swatches:not(.carousel) .sw:hover::before,
   .swatches:not(.carousel) .sw:hover::after { opacity: 1; transform: translate(-50%, 0); }
 }
+
+/* compare toggles for the post effects */
+.fx { position: fixed; left: 12px; bottom: 14px; display: flex; gap: 6px; align-items: center; }
+.fx button {
+  font: 11px ui-monospace, Menlo, monospace; color: #333; background: transparent;
+  border: 1px solid #333; border-radius: 4px; padding: 3px 8px; opacity: .5; cursor: pointer;
+}
+.fx button.active { background: #333; color: #e6e6e3; opacity: .85; }
+.fx .fps { font: 11px ui-monospace, Menlo, monospace; color: #666; margin-left: 4px; }
