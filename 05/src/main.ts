@@ -127,15 +127,15 @@ function noiseTexture(size: number, scale: number, lo: number, hi: number) {
 }
 let roughnessTex: THREE.Texture | null = null;
 function metalMaterial() {
-  roughnessTex ??= noiseTexture(256, 0.12, 0.28, 0.65);
+  roughnessTex ??= noiseTexture(256, 0.12, 0.2, 0.55);
   return new THREE.MeshPhysicalMaterial({
-    color: 0xb9b9b5,
+    color: 0x1c1c1e,
     metalness: 1,
     roughness: 1,
     roughnessMap: roughnessTex,
-    envMapIntensity: 0.8,
-    clearcoat: 0.35,
-    clearcoatRoughness: 0.2,
+    envMapIntensity: 1.0,
+    clearcoat: 0.5,
+    clearcoatRoughness: 0.18,
     polygonOffset: true, polygonOffsetFactor: 2, polygonOffsetUnits: 4,
   });
 }
@@ -165,7 +165,8 @@ interface World {
 }
 
 function createWorld(text: string, kind: 'word' | 'rock' = 'word'): World {
-  const surface = kind === 'rock' ? buildRock(7, 3, coarse ? 2 : 3) : buildWord(text, font, coarse ? 1 : 2);
+  // rock: mostly midpoint passes and a single Loop pass, so the facets keep some sharp edges
+  const surface = kind === 'rock' ? buildRock(7, coarse ? 3 : 4, 1) : buildWord(text, font, coarse ? 1 : 2);
   const geo = surface.geometry;
   const n = geo.attributes.position.count;
   const moss = new Float32Array(n);
