@@ -62,7 +62,7 @@ export function buildWord(text: string, font: Font, detail = 2, loopsOverride?: 
     curveSegments: 3,
     bevelEnabled: true,
     bevelThickness: bevel,
-    bevelSize: bevel * 0.65, // grows the outline less, so small counters (A, e, 4) stay open
+    bevelSize: bevel,
     bevelSegments: 2,
   });
   geo0.computeBoundingBox();

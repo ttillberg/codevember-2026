@@ -199,11 +199,17 @@ canvas { display: block; width: 100vw; height: 100vh; touch-action: none; }
 /* debug panel: lighting toggles while tuning. Dev server, or ?debug */
 .debug {
   position: fixed; top: 12px; right: 12px; z-index: 5;
-  display: flex; flex-direction: column; gap: 4px; padding: 8px 10px;
+  padding: 6px 10px;
   font: 11px ui-monospace, Menlo, monospace; color: #333;
   background: rgba(240, 240, 236, .9); border-radius: 8px; box-shadow: 0 2px 10px rgba(0, 0, 0, .08);
 }
 .debug[hidden] { display: none; }
+/* collapsed by default: just a small "debug" tab until opened */
+.debug summary { cursor: pointer; user-select: none; list-style: none; color: #666; }
+.debug summary::-webkit-details-marker { display: none; }
+.debug summary::before { content: '▸ '; }
+.debug[open] summary::before { content: '▾ '; }
+.debug-body { display: flex; flex-direction: column; gap: 4px; margin-top: 6px; }
 .debug label { display: flex; align-items: center; gap: 6px; cursor: pointer; user-select: none; }
 .debug select { font: inherit; padding: 1px 2px; }
 .debug button { font: inherit; padding: 2px 8px; border: 1px solid #bbb; border-radius: 4px; background: #fff; cursor: pointer; }

@@ -137,7 +137,7 @@ const ground = new THREE.Mesh(
   }),
 );
 ground.rotation.x = -Math.PI / 2;
-ground.position.y = -0.72;
+ground.position.y = -0.72; // moved under each object in frameWord
 scene.add(ground);
 
 const METAL = false; // true: brushed black metal body on the rock; false: plain white like the letters
@@ -452,7 +452,7 @@ function fillAll() {
 
 // ---- debug panel: lighting toggles and a fill button, on the dev server or with ?debug
 {
-  const panel = document.querySelector<HTMLElement>('.debug')!;
+  const panel = document.querySelector<HTMLDetailsElement>('.debug')!;
   panel.hidden = !(import.meta.env.DEV || new URLSearchParams(location.search).has('debug'));
   panel.querySelectorAll<HTMLInputElement>('input[data-uniform]').forEach((box) => {
     box.addEventListener('change', () => { shellMat.uniforms[box.dataset.uniform!].value = box.checked ? 1 : 0; });
@@ -677,6 +677,9 @@ function frameWord() {
   const height = bb.max.y - bb.min.y;
   const depth = bb.max.z - bb.min.z;
   const center = new THREE.Vector3((bb.min.x + bb.max.x) / 2, (bb.min.y + bb.max.y) / 2, (bb.min.z + bb.max.z) / 2);
+  // everything floats: the ground sits a gap below the object's lowest point, more for the rock so the moss
+  // around its belly never touches. The eye height below follows the ground.
+  ground.position.y = bb.min.y - (W.kind === 'rock' ? 0.4 : 0.25);
   const tanHalf = Math.tan(THREE.MathUtils.degToRad(camera.fov / 2));
   const aspect = innerWidth / innerHeight;
   // letters: height only, a wide word just runs past the edges.
