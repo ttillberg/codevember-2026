@@ -54,6 +54,8 @@ const LIGHT_BASE = new THREE.Vector3(1.2, 2.0, 1.0).normalize();
 const lightDir = LIGHT_BASE.clone(); // turned in place each frame; the uniform holds this object
 const UP = new THREE.Vector3(0, 1, 0);
 let shadowAz = NaN; // camera azimuth the shadow map was last rendered for
+let lastShadowMs = 0;
+let mossShadowStale = false;
 const shellMat = new THREE.ShaderMaterial({
   vertexShader: shellVertex,
   fragmentShader: shellFragment,
@@ -65,8 +67,8 @@ const shellMat = new THREE.ShaderMaterial({
     uRimDir: { value: new THREE.Vector3(0, 1, 0) },
     uRim: { value: 1 },
     uHemi: { value: 1 },
-    uTone: { value: 3 }, // Neutral by default
-    uExposure: { value: 1.15 },
+    uTone: { value: 2 }, // ACES by default
+    uExposure: { value: 1.1 },
     toneMappingExposure: { value: 1 },
     uHideRock: { value: 0 },
     uScale: { value: 1 },
@@ -937,17 +939,22 @@ renderer.setAnimationLoop(() => {
     for (let i = 0; i < W.n; i++) ptex[i * 4 + 2] = species[i * SPECIES + 3];
     fronds.puffTexture.needsUpdate = true;
     dirty = false;
+    mossShadowStale = true; // the moss grew or changed: its own shadows are out of date
   }
   if (++meterTick % 12 === 0) updateMeter();
   updateHover();
   controls.update();
   const az = controls.getAzimuthalAngle();
   lightDir.copy(LIGHT_BASE).applyAxisAngle(UP, az);
-  // re-render the shadow map every couple of degrees while orbiting, not every frame
-  if (shadowDirty || !(Math.abs(az - shadowAz) < 0.035)) {
+  // re-render the shadow map every couple of degrees while orbiting, and a few times a second while the
+  // moss grows, so freshly painted moss casts its shadow without having to turn the view first
+  const now = performance.now();
+  if (shadowDirty || !(Math.abs(az - shadowAz) < 0.035) || (mossShadowStale && now - lastShadowMs > 150)) {
     renderShadow();
     shadowAz = az;
+    lastShadowMs = now;
     shadowDirty = false;
+    mossShadowStale = false;
   }
   if (ssaoOn) {
     renderer.setRenderTarget(beautyRT);
