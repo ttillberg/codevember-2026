@@ -5,7 +5,7 @@ attribute float speciesW2; // fifth species weight: green reindeer moss (coral)
 attribute float dead;
 attribute float pillow;
 attribute float puff; // plumped up by repeated brushing, animated as a spring
-attribute float edge; // 0..1, edge between facets
+attribute vec3 mossNormal; // smoothed normal: the moss grows along this, the rock is lit with its own
 
 uniform float uHeight;
 uniform float uBulge;
@@ -26,11 +26,11 @@ varying vec4 vSpecies;
 varying float vSpecies2;
 varying float vDead;
 varying float vPillow;
-varying float vEdge;
 varying vec3 vLocal;
 varying vec3 vLocalNormal;
 varying vec3 vWorldPos;
 varying vec3 vWorldNormal;
+varying vec3 vMossNormal;
 
 void main() {
   float t = float(gl_InstanceID) / float(SHELLS - 1);
@@ -43,7 +43,6 @@ void main() {
   float profile = mix(moss * moss, 1.0 - (1.0 - moss) * (1.0 - moss), cush);
   float pil = mix(pillow, mix(0.8, 1.0, pillow), cush);
   float bulge = profile * mix(0.3, 1.0, pil) * uBulge * (dot(w, vec4(1.0, 0.6, 0.5, 1.7)) + w5 * 0.9);
-  bulge *= 1.0 - 0.35 * edge * cush; // a cushion lies low over an edge instead of bulging off it
   if (cush > 0.01) {
     vec3 q = position * 24.0 / max(uScale, 0.5);
     float emboss = vnoise(q) * 0.65 + vnoise(q * 2.3 + 7.0) * 0.35 - 0.5;
@@ -51,7 +50,7 @@ void main() {
     bulge += emboss * cush * uBulge * 0.16 * smoothstep(0.82, 1.0, moss);
   }
   bulge += puff * uBulge * 1.4 * smoothstep(0.0, 0.3, moss);
-  vec3 p = position + normal * (bulge + uHeight * t);
+  vec3 p = position + mossNormal * (bulge + uHeight * t);
 
 
   vShell = t;
@@ -60,12 +59,12 @@ void main() {
   vSpecies2 = w5;
   vDead = dead;
   vPillow = pillow;
-  vEdge = edge;
   vLocal = position;
-  vLocalNormal = normal;
+  vLocalNormal = mossNormal;
   vec4 wp = modelMatrix * vec4(p, 1.0);
   vWorldPos = wp.xyz;
   vWorldNormal = normalize(mat3(modelMatrix) * normal);
+  vMossNormal = normalize(mat3(modelMatrix) * mossNormal);
   gl_Position = projectionMatrix * viewMatrix * wp;
 }
 `;
@@ -110,11 +109,11 @@ varying vec4 vSpecies;
 varying float vSpecies2;
 varying float vDead;
 varying float vPillow;
-varying float vEdge;
 varying vec3 vLocal;
 varying vec3 vLocalNormal;
 varying vec3 vWorldPos;
 varying vec3 vWorldNormal;
+varying vec3 vMossNormal;
 
 float hash31(vec3 p) {
   p = fract(p * vec3(0.1031, 0.1030, 0.0973));
@@ -179,7 +178,7 @@ void main() {
 
   // the mounds are real geometry now: light them with the geometric normal, softened a little
   vec3 gN = normalize(cross(dFdx(vWorldPos), dFdy(vWorldPos)));
-  vec3 N = normalize(mix(normalize(vWorldNormal), gN, 0.7));
+  vec3 N = normalize(mix(normalize(vMossNormal), gN, 0.7)); // moss is lit along its own smooth field
 
   float ndv = max(dot(N, V), 0.0);
   float shadow = shadowAt(vWorldPos, N);
@@ -245,11 +244,8 @@ void main() {
   // ---- fuzz: a noise density field, dense at the root and thinning upward.
   float ageH = pow(age, dot(w, kAgePow) + w5 * kAgePow5);
   float top = ageH * mix(mix(0.5, 0.88, w.w), 1.0, lump) * mix(mix(0.35, 0.85, w.w), 1.0, pillow) * (dot(w, kHeight) + w5 * kHeight5);
-  // over an edge between facets the shell normals fan out and the layers stretch into streaks:
-  // the cushion stays, but as short velvet there
-  top *= mix(1.0, mix(1.0, 0.45, vEdge), w.w);
   // seen edge-on the stacked layers read as streaks too: short fuzz at grazing angles, the velvet base carries it
-  float facing = smoothstep(0.15, 0.6, abs(dot(gN, V)));
+  float facing = smoothstep(0.15, 0.6, abs(dot(normalize(vMossNormal), V)));
   top *= mix(1.0, mix(0.2, 1.0, facing), w.w);
   if (vShell > top) discard;
   float uu = vShell / max(top, 0.001);

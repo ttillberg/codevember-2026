@@ -34,7 +34,7 @@ export function renderSwatches(renderer: THREE.WebGLRenderer, shells: number, li
   geo.setAttribute('speciesW2', new THREE.InterleavedBufferAttribute(weightsAttr, 1, 4));
   geo.setAttribute('dead', new THREE.BufferAttribute(dead, 1));
   geo.setAttribute('pillow', new THREE.BufferAttribute(pillow, 1));
-  geo.setAttribute('edge', new THREE.BufferAttribute(new Float32Array(n), 1));
+  geo.setAttribute('mossNormal', geo.attributes.normal.clone());
 
   const mat = new THREE.ShaderMaterial({
     vertexShader: shellVertex,

@@ -11,7 +11,6 @@ export interface Surface {
   fertility: Float32Array; // 0..1, how willing moss is to spread here
   dead: Float32Array; // 0..1, bleached yellow-brown patches
   pillow: Float32Array; // 0..1, where the moss mounds up
-  edge: Float32Array; // 0..1, how much of an edge between facets this vertex is (normal turn per unit length)
 }
 
 // Mound field, shared by rock vertices and frond instances so both layers bulge together.
@@ -154,26 +153,20 @@ export function finishSurface(geo: THREE.BufferGeometry, seed = 7): Surface {
     pillow[i] = pillowAt(p.x, p.y, p.z);
   }
 
-  // edges: the largest normal turn per unit length to any neighbour. Cushion moss stays off these.
-  const curv = new Float32Array(n);
-  const na = new THREE.Vector3(), nb = new THREE.Vector3(), pb = new THREE.Vector3();
-  for (let i = 0; i < n; i++) {
-    na.fromBufferAttribute(norAttr, i);
-    p.fromBufferAttribute(posAttr, i);
-    let k = 0;
-    for (const j of adjacency[i]) {
-      nb.fromBufferAttribute(norAttr, j);
-      pb.fromBufferAttribute(posAttr, j);
-      const d = p.distanceTo(pb);
-      if (d > 1e-6) k = Math.max(k, Math.acos(THREE.MathUtils.clamp(na.dot(nb), -1, 1)) / d);
+  // a smoothed normal field for the moss to grow along. The rock keeps its crisp facets, but shells and fronds
+  // extrude along normals that turn gradually across an edge, so the layers never fan apart into streaks.
+  let mn = new Float32Array((norAttr.array as Float32Array).subarray(0, n * 3));
+  let next = new Float32Array(n * 3);
+  for (let it = 0; it < 10; it++) {
+    for (let i = 0; i < n; i++) {
+      let x = mn[i * 3], y = mn[i * 3 + 1], z = mn[i * 3 + 2];
+      for (const j of adjacency[i]) { x += mn[j * 3]; y += mn[j * 3 + 1]; z += mn[j * 3 + 2]; }
+      const l = Math.hypot(x, y, z) || 1;
+      next[i * 3] = x / l; next[i * 3 + 1] = y / l; next[i * 3 + 2] = z / l;
     }
-    curv[i] = k;
+    [mn, next] = [next, mn];
   }
-  const edge = new Float32Array(n);
-  for (let i = 0; i < n; i++) edge[i] = THREE.MathUtils.smoothstep(curv[i], EDGE_LO, EDGE_HI);
+  geo.setAttribute('mossNormal', new THREE.BufferAttribute(mn, 3));
 
-  return { geometry: geo, adjacency, fertility, dead, pillow, edge };
+  return { geometry: geo, adjacency, fertility, dead, pillow };
 }
-// measured on the rock: flat facets sit near 0, the rounded edge bands from about 3 up
-const EDGE_LO = 1.5;
-const EDGE_HI = 6.0;

@@ -35,7 +35,8 @@ function ribbonTemplate(mainSegs: number, branchSegs: number, leafSegs: number, 
 export function buildFronds(rock: THREE.BufferGeometry, fertility: Float32Array, count: number, seed = 3): Fronds {
   const rand = mulberry32(seed);
   const position = rock.attributes.position as THREE.BufferAttribute;
-  const normal = rock.attributes.normal as THREE.BufferAttribute;
+  // fronds stand along the smoothed moss normal when there is one, so they agree with the shells
+  const normal = (rock.attributes.mossNormal ?? rock.attributes.normal) as THREE.BufferAttribute;
   const index = rock.index!.array;
   const triCount = index.length / 3;
 
