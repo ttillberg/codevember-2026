@@ -160,8 +160,8 @@ float techGrid(vec3 p, vec3 n, float cell, float width) {
 // warm, greenish bounce from below instead of flat grey
 uniform float uHemi; // 0 = off (swatches, thumbnails)
 vec3 skyTint(vec3 N, float shade) {
-  vec3 sky = vec3(0.80, 0.92, 1.14);
-  vec3 bounce = vec3(1.10, 1.03, 0.68);
+  vec3 sky = vec3(0.60, 0.84, 1.32);
+  vec3 bounce = vec3(1.28, 1.10, 0.45);
   vec3 t = mix(bounce, sky, smoothstep(-0.6, 0.8, N.y));
   return mix(vec3(1.0), t, uHemi * clamp(shade, 0.0, 1.0));
 }
@@ -254,7 +254,7 @@ void main() {
     vec3 velvet = mix(deep, lime, (0.1 + 0.75 * bump) * wrap) + lime * sheen;
     velvet *= mix(mix(0.85, 0.96, w.w), 1.0, pillow);
     velvet *= mix(1.0, mix(0.65, 1.0, vDome), w.w); // dark crevice between cushion clumps  // valleys a touch darker, the mounds carry the shape not the colour
-    velvet *= skyTint(N, 1.0 - 0.8 * wrap);
+    velvet *= skyTint(N, 1.0 - 0.6 * wrap);
     velvet += rimLight(N, V) * lime * 2.2;
     vec3 ground = mix(vec3(0.03, 0.025, 0.012), velvet, (dot(w, kBase) + w5 * kBase5));
     vec3 lit = mix(rock, grade(ground), max(humus * 0.92, mature * (dot(w, kBase) + w5 * kBase5)));
@@ -302,7 +302,7 @@ void main() {
   col *= mix(1.0, mix(0.75, 1.0, vDome), w.w);
   // cushion hair has pale yellow-green tips
   col = mix(col, vec3(0.55, 0.76, 0.18), smoothstep(0.75, 1.0, uu) * 0.15 * w.w * vDome);
-  col *= skyTint(N, 1.0 - 0.8 * wrap);
+  col *= skyTint(N, 1.0 - 0.6 * wrap);
   col += rimLight(N, V) * lime * 3.0 * uu;
   col *= mix(1.0, 0.45, vCavity);
   gl_FragColor = vec4(grade(col), 1.0);
