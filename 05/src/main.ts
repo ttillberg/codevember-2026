@@ -26,6 +26,9 @@ const scene = new THREE.Scene();
 const pmrem = new THREE.PMREMGenerator(renderer);
 scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
 pmrem.dispose();
+const key = new THREE.DirectionalLight(0xffffff, 0.9);
+key.position.set(1.2, 2.0, 1.0).multiplyScalar(5);
+scene.add(key);
 const camera = new THREE.PerspectiveCamera(38, 1, 0.1, 50);
 camera.position.set(3.6, 1.1, 6.6);
 
@@ -100,6 +103,43 @@ ground.rotation.x = -Math.PI / 2;
 ground.position.y = -0.72;
 scene.add(ground);
 
+// ---- the metal: physically based, brushed. Roughness varies with a small noise texture so the
+// reflections break up instead of reading like chrome, plus a thin clearcoat for the sharp highlight.
+function noiseTexture(size: number, scale: number, lo: number, hi: number) {
+  const c = document.createElement('canvas');
+  c.width = c.height = size;
+  const ctx = c.getContext('2d')!;
+  const img = ctx.createImageData(size, size);
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const v = fbm3(x * scale, y * scale * 0.25, 0.5, 4, 3) * 0.5 + 0.5; // stretched: a brushed grain
+      const g = Math.round(255 * (lo + (hi - lo) * v));
+      const i = (y * size + x) * 4;
+      img.data[i] = img.data[i + 1] = img.data[i + 2] = g;
+      img.data[i + 3] = 255;
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+  const tex = new THREE.CanvasTexture(c);
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  tex.repeat.set(3, 3);
+  return tex;
+}
+let roughnessTex: THREE.Texture | null = null;
+function metalMaterial() {
+  roughnessTex ??= noiseTexture(256, 0.12, 0.28, 0.65);
+  return new THREE.MeshPhysicalMaterial({
+    color: 0xb9b9b5,
+    metalness: 1,
+    roughness: 1,
+    roughnessMap: roughnessTex,
+    envMapIntensity: 0.8,
+    clearcoat: 0.35,
+    clearcoatRoughness: 0.2,
+    polygonOffset: true, polygonOffsetFactor: 2, polygonOffsetUnits: 4,
+  });
+}
+
 // ---- the thing being painted, and its moss state. Swappable.
 interface World {
   surface: Surface;
@@ -156,10 +196,14 @@ function createWorld(text: string, kind: 'word' | 'rock' = 'word'): World {
   scene.add(shells, fronds.mesh, picker);
   let metal: THREE.Mesh | null = null;
   if (kind === 'rock') {
-    metal = new THREE.Mesh(
-      geo,
-      new THREE.MeshStandardMaterial({ color: 0xe4e4e2, metalness: 1, roughness: 0.22, polygonOffset: true, polygonOffsetFactor: 2, polygonOffsetUnits: 4 }),
-    );
+    // the hull has no uvs; a planar projection is plenty for a noise roughness map
+    if (!geo.attributes.uv) {
+      const pos = geo.attributes.position as THREE.BufferAttribute;
+      const uv = new Float32Array(n * 2);
+      for (let i = 0; i < n; i++) { uv[i * 2] = pos.getX(i) + pos.getZ(i) * 0.5; uv[i * 2 + 1] = pos.getY(i) + pos.getZ(i) * 0.3; }
+      geo.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+    }
+    metal = new THREE.Mesh(geo, metalMaterial());
     scene.add(metal);
   }
   // with a metal body the shell base only draws under moss
@@ -197,7 +241,7 @@ const font: Font = await new FontLoader().loadAsync(`${import.meta.env.BASE_URL}
     .replace('l 510 241', `l 510 ${241 + lift}`);
 }
 let pillowDirty = true;
-let W = createWorld('M');
+let W = createWorld('M', 'rock');
 let dirty = true;
 
 // ---- species weights
@@ -601,7 +645,7 @@ function seedWord() {
   }
   seedPatch(new THREE.Vector3(bb.min.x + w * 0.35, 0.2, 2.0), 0.35, 1);
 }
-seedWord();
+seedRock();
 
 // ---- loop
 function resize() {
