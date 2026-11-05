@@ -39,7 +39,7 @@ canvas { display: block; width: 100vw; height: 100vh; touch-action: none; }
 .scrape-btn.active i { transform: translateY(-4px) rotate(-8deg); }
 .scrape-btn.active span { border-bottom-color: #111; }
 @media (max-width: 640px), (pointer: coarse) {
-  .scrape-btn { left: auto; right: 10px; top: 10px; bottom: auto; transform: none; width: 64px; }
+  .scrape-btn { left: auto; right: 10px; top: 46px; bottom: auto; transform: none; width: 64px; } /* under the debug tab */
   .scrape-btn i { width: 52px; height: 52px; }
 }
 /* carousel mode: items stacked at the centre, placed by transform */
@@ -162,4 +162,4 @@ canvas { display: block; width: 100vw; height: 100vh; touch-action: none; }
 .debug label { display: flex; align-items: center; gap: 6px; cursor: pointer; user-select: none; }
 .debug select { font: inherit; padding: 1px 2px; }
 .debug button { font: inherit; padding: 2px 8px; border: 1px solid #bbb; border-radius: 4px; background: #fff; cursor: pointer; }
-@media (pointer: coarse), (max-width: 640px) { .debug { top: 84px; } } /* below the eraser */
+@media (pointer: coarse), (max-width: 640px) { .debug { top: 10px; right: 10px; } } /* above the eraser, same right edge */
