@@ -45,6 +45,7 @@ export function renderSwatches(renderer: THREE.WebGLRenderer, shells: number, li
       uTime: { value: 0 },
       uLightDir: { value: lightDir },
       uHideRock: { value: 0 },
+      uScale: { value: 3 }, // the ball's moss is scaled up a lot, so are its fuzz features
     },
   });
   const shellMesh = new THREE.InstancedMesh(geo, mat, shells);

@@ -346,7 +346,10 @@ void main() {
 
   // ride the mound: same displacement the rock shells use
   float wCoral = max(0.0, 1.0 - c4);
-  float bulge = age * age * mix(0.3, 1.0, clumpV) * uBulge * (dot(wgt, vec4(1.0, 0.6, 0.5, 1.3)) + wCoral * 0.9) + puff * uBulge * 1.4 * smoothstep(0.0, 0.3, age);
+  float cushW = wgt.w;
+  float profileF = mix(age * age, 1.0 - (1.0 - age) * (1.0 - age), cushW);
+  float pilF = mix(clumpV, mix(0.8, 1.0, clumpV), cushW);
+  float bulge = profileF * mix(0.3, 1.0, pilF) * uBulge * (dot(wgt, vec4(1.0, 0.6, 0.5, 1.7)) + wCoral * 0.9) + puff * uBulge * 1.4 * smoothstep(0.0, 0.3, age);
   vec3 p = iPos + N * bulge + local;
   vec4 wp = modelMatrix * vec4(p, 1.0);
   vWorldPos = wp.xyz;
