@@ -1,7 +1,8 @@
 // 05 / Moss — paint moss on a big M. Shell-textured undercoat plus instanced fronds.
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { type Surface } from './rock';
+import { buildRock, type Surface } from './rock';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { buildWord } from './objects';
 import { FontLoader, type Font } from 'three/addons/loaders/FontLoader.js';
 import { buildFronds, type Fronds } from './fronds';
@@ -21,6 +22,10 @@ renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 renderer.setClearColor(BG);
 
 const scene = new THREE.Scene();
+// a studio environment for the metal rock's reflections; the moss has its own shading
+const pmrem = new THREE.PMREMGenerator(renderer);
+scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+pmrem.dispose();
 const camera = new THREE.PerspectiveCamera(38, 1, 0.1, 50);
 camera.position.set(3.6, 1.1, 6.6);
 
@@ -68,6 +73,9 @@ function renderShadow() {
   lightCam.updateMatrixWorld();
   shadowMatrix.multiplyMatrices(lightCam.projectionMatrix, lightCam.matrixWorldInverse);
 
+  // unbind the shadow map while rendering into it, or the GPU complains about a feedback loop
+  const mats = [shellMat, W.fronds.mesh.material as THREE.ShaderMaterial];
+  for (const mat of mats) { mat.uniforms.uShadowOn.value = 0; mat.uniforms.uShadowMap.value = null; }
   ground.visible = false;
   renderer.setRenderTarget(shadowRT);
   renderer.clear();
@@ -75,7 +83,7 @@ function renderShadow() {
   renderer.setRenderTarget(null);
   ground.visible = true;
 
-  for (const mat of [shellMat, W.fronds.mesh.material as THREE.ShaderMaterial]) {
+  for (const mat of mats) {
     mat.uniforms.uShadowMap.value = shadowRT.depthTexture;
     mat.uniforms.uShadowMatrix.value.copy(shadowMatrix);
     mat.uniforms.uShadowOn.value = 1;
@@ -111,10 +119,12 @@ interface World {
   shells: THREE.InstancedMesh;
   fronds: Fronds;
   picker: THREE.Mesh;
+  kind: 'word' | 'rock';
+  metal: THREE.Mesh | null; // the silver rock body, drawn where there is no moss
 }
 
-function createWorld(text: string): World {
-  const surface = buildWord(text, font, coarse ? 1 : 2);
+function createWorld(text: string, kind: 'word' | 'rock' = 'word'): World {
+  const surface = kind === 'rock' ? buildRock(7, 3, coarse ? 2 : 3) : buildWord(text, font, coarse ? 1 : 2);
   const geo = surface.geometry;
   const n = geo.attributes.position.count;
   const moss = new Float32Array(n);
@@ -143,17 +153,28 @@ function createWorld(text: string): World {
   const fronds = buildFronds(geo, surface.fertility, coarse ? 40000 : 140000);
   const picker = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ visible: false }));
   scene.add(shells, fronds.mesh, picker);
+  let metal: THREE.Mesh | null = null;
+  if (kind === 'rock') {
+    metal = new THREE.Mesh(
+      geo,
+      new THREE.MeshStandardMaterial({ color: 0xe4e4e2, metalness: 1, roughness: 0.22, polygonOffset: true, polygonOffsetFactor: 2, polygonOffsetUnits: 4 }),
+    );
+    scene.add(metal);
+  }
+  // with a metal body the shell base only draws under moss
+  shellMat.uniforms.uHideRock.value = metal ? 1 : 0;
 
   return {
     surface, n,
     positions: geo.attributes.position as THREE.BufferAttribute,
     normals: geo.attributes.normal as THREE.BufferAttribute,
-    moss, cap, species, puff, puffVel, puffTarget, puffAttr, pillow, pillowAttr, mossAttr, speciesAttr, shells, fronds, picker,
+    moss, cap, species, puff, puffVel, puffTarget, puffAttr, pillow, pillowAttr, mossAttr, speciesAttr, shells, fronds, picker, kind, metal,
   };
 }
 
 function destroyWorld(w: World) {
   scene.remove(w.shells, w.fronds.mesh, w.picker);
+  if (w.metal) { scene.remove(w.metal); (w.metal.material as THREE.Material).dispose(); }
   w.surface.geometry.dispose();
   w.fronds.mesh.geometry.dispose();
   (w.fronds.mesh.material as THREE.Material).dispose();
@@ -386,14 +407,17 @@ addEventListener('keydown', (e) => {
   if (e.key === '3') setBrush(2);
   if (e.key === '4') setBrush(3);
   if (e.key === 'x') setBrush(null, !scrapeTool);
-  if (e.key === 'h') shellMat.uniforms.uHideRock.value = shellMat.uniforms.uHideRock.value ? 0 : 1;
+  if (e.key === 'h') {
+    const hidden = shellMat.uniforms.uHideRock.value === 1 && !W.metal ? 0 : 1;
+    shellMat.uniforms.uHideRock.value = hidden;
+    if (W.metal) W.metal.visible = hidden === 1 && W.metal.visible ? false : true;
+  }
 });
 setBrush(-1);
 renderSwatches(renderer, SHELLS, lightDir);
 renderEraser(renderer);
 
-// ---- the word
-const wordInput = document.querySelector<HTMLInputElement>('.word')!;
+// ---- framing
 function frameWord() {
   // fit the word's height into 70% of the viewport
   const bb = W.surface.geometry.boundingBox!;
@@ -413,24 +437,25 @@ function frameWord() {
   ground.scale.set(Math.max(1, width / 1.6), Math.max(1, depth / 1.2), 1);
   ground.position.x = center.x;
 }
-let wordTimer = 0;
-function setWord(text: string) {
-  const clean = text.replace(/[^A-Za-z0-9 ]/g, '').toUpperCase().slice(0, 8) || 'M';
+function rebuild(text: string, kind: 'word' | 'rock') {
   destroyWorld(W);
-  W = createWorld(clean);
+  W = createWorld(text, kind);
   pillowDirty = true;
-  seedWord();
+  if (kind === 'rock') seedRock(); else seedWord();
   frameWord();
   dirty = true;
   shadowDirty = true;
 }
+// ---- object toggle: letters or the silver rock
+const objectButtons = Array.from(document.querySelectorAll<HTMLButtonElement>('.objects button'));
+objectButtons.forEach((b) =>
+  b.addEventListener('click', () => {
+    const kind = b.dataset.object as 'word' | 'rock';
+    objectButtons.forEach((o) => o.classList.toggle('active', o === b));
+    rebuild('M', kind);
+  }),
+);
 let shadowDirty = true;
-// rebuild as you type, debounced: a word takes a good fraction of a second to build
-wordInput.addEventListener('input', () => {
-  clearTimeout(wordTimer);
-  wordTimer = window.setTimeout(() => setWord(wordInput.value), 150);
-});
-wordInput.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Enter') wordInput.blur(); });
 
 // ---- growth: painted moss ages up in place, it does not spread
 const GROW = 0.12; // age per second
@@ -533,6 +558,12 @@ function seedPatch(dir: THREE.Vector3, r: number, kind: number) {
     cap[i] = Math.max(cap[i], profile);
     setOneHot(i, kind);
   }
+}
+function seedRock() {
+  seedPatch(new THREE.Vector3(0.3, 1.0, 0.5), 0.45, 0);
+  seedPatch(new THREE.Vector3(-0.6, 0.8, 0.3), 0.32, 1);
+  seedPatch(new THREE.Vector3(0.9, 0.5, -0.3), 0.3, 2);
+  seedPatch(new THREE.Vector3(0.2, 0.5, 1.0), 0.3, 3);
 }
 function seedWord() {
   // a few patches along the top of the word and one on the front

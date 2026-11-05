@@ -87,3 +87,13 @@ canvas { display: block; width: 100vw; height: 100vh; touch-action: none; }
 @media (max-width: 480px) {
   .word { top: 44px; }
 }
+
+.objects { position: fixed; top: 12px; left: 12px; display: flex; gap: 6px; }
+.objects button {
+  font: 11px ui-monospace, Menlo, monospace; color: #333; background: transparent;
+  border: 1px solid #333; border-radius: 4px; padding: 3px 8px; opacity: .5; cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.objects button:hover, .objects button.active { opacity: 1; }
+.objects button.active { background: #333; color: #e6e6e3; }
+@media (max-width: 480px) { .objects { top: 44px; } }
