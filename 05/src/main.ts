@@ -304,18 +304,19 @@ function showRing(point: THREE.Vector3, r: number, x: number, y: number) {
 
 canvas.addEventListener('pointerdown', (e) => {
   const p = pick(e);
-  if (!p) return; // off the object: let OrbitControls have it
   if (e.metaKey || e.ctrlKey) {
+    // brush size works anywhere; off the object the ring is sized at the orbit target's depth
     sizing = true;
     sizeStartX = e.clientX;
     sizeStartY = e.clientY;
     sizeStartR = brushRadius;
-    sizeAnchor = p.clone();
+    sizeAnchor = p ? p.clone() : controls.target.clone();
     controls.enabled = false;
-    showRing(p, brushRadius, e.clientX, e.clientY);
+    showRing(sizeAnchor, brushRadius, e.clientX, e.clientY);
     try { canvas.setPointerCapture(e.pointerId); } catch { /* synthetic events */ }
     return;
   }
+  if (!p) return; // off the object: let OrbitControls have it
   painting = true;
   scraping = scrapeTool || e.shiftKey || e.button === 2;
   controls.enabled = false;
