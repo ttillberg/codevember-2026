@@ -339,12 +339,12 @@ void main() {
 export const groundFragment = /* glsl */ `
 precision highp float;
 uniform vec3 uBg;
-uniform float uBlob; // the fake contact shadow; off while SSAO does the job
 varying vec2 vUv;
 void main() {
   vec2 d = (vUv - 0.5) * vec2(10.0, 13.0);
   float r = length(d) * 2.0;
-  float shadow = smoothstep(1.0, 0.2, r) * 0.5 * uBlob;
+  // a fake soft shadow: the object floats too high for SSAO to reach the ground
+  float shadow = smoothstep(1.0, 0.2, r) * 0.5;
   gl_FragColor = vec4(uBg * (1.0 - shadow), 1.0);
   #include <colorspace_fragment>
 }

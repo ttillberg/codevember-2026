@@ -133,7 +133,7 @@ const ground = new THREE.Mesh(
   new THREE.ShaderMaterial({
     vertexShader: groundVertex,
     fragmentShader: groundFragment,
-    uniforms: { uBg: { value: BG }, uBlob: { value: 0 } },
+    uniforms: { uBg: { value: BG } },
   }),
 );
 ground.rotation.x = -Math.PI / 2;
@@ -1021,12 +1021,9 @@ aoPass.blendIntensity = 0.9;
 composer.addPass(aoPass);
 composer.addPass(new OutputPass());
 let ssaoOn = true;
-// the ground's fake contact blob only shows while SSAO is off; with it on, SSAO shades the ground itself
 function setSsao(on: boolean) {
   ssaoOn = on;
-  (ground.material as THREE.ShaderMaterial).uniforms.uBlob.value = on ? 0 : 1;
 }
-setSsao(true);
 
 function resize() {
   renderer.setSize(innerWidth, innerHeight);
