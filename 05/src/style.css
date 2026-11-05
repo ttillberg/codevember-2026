@@ -180,9 +180,5 @@ canvas { display: block; width: 100vw; height: 100vh; touch-action: none; }
 @keyframes unlock {
   0% { transform: scale(1); } 12% { transform: scale(1.22); } 30% { transform: scale(.96); } 45% { transform: scale(1.06); } 100% { transform: scale(1); }
 }
-.letter-pop .lock-note {
-  grid-column: 1 / -1; padding: 4px 2px 6px; text-align: center;
-  font: 10px ui-monospace, Menlo, monospace; color: #666;
-}
-.letter-pop.locked button:not(.rock) { opacity: .22; cursor: not-allowed; }
-.letter-pop.locked button:not(.rock):hover { background: transparent; }
+.letter-btn:not(.unlocked) { cursor: default; }
+.letter-btn:not(.unlocked):hover { transform: none; }

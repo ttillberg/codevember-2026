@@ -685,20 +685,17 @@ try { unlocked = localStorage.getItem(UNLOCK_KEY) === '1'; } catch { /* private 
 const ringFill = letterBtn.querySelector<SVGCircleElement>('.ring .fill')!;
 const RING_C = 2 * Math.PI * 30;
 ringFill.style.strokeDasharray = `${RING_C}`;
-const lockNote = document.createElement('div');
-lockNote.className = 'lock-note';
+// locked: the alphabet is hidden and the miniature is just the meter; unlocked: it opens the picker
 function setLocked() {
-  letterPop.querySelectorAll<HTMLButtonElement>('button:not(.rock)').forEach((b) => { b.disabled = !unlocked; });
-  letterPop.classList.toggle('locked', !unlocked);
+  letterPop.querySelectorAll<HTMLButtonElement>('button:not(.rock)').forEach((b) => { b.hidden = !unlocked; b.disabled = !unlocked; });
   letterBtn.classList.toggle('unlocked', unlocked);
+  letterBtn.setAttribute('aria-label', unlocked ? 'choose a letter' : 'moss meter');
+  if (!unlocked) setPop(false);
 }
 function updateMeter() {
   const c = coverage();
   ringFill.style.strokeDashoffset = `${RING_C * (1 - Math.min(1, c / UNLOCK_AT))}`;
   letterBtn.classList.toggle('full', c >= UNLOCK_AT);
-  lockNote.textContent = unlocked
-    ? `${Math.round(c * 100)}% covered`
-    : `cover the rock to unlock the alphabet · ${Math.round(Math.min(1, c / UNLOCK_AT) * 100)}%`;
   if (!unlocked && W.kind === 'rock' && c >= UNLOCK_AT) {
     unlocked = true;
     try { localStorage.setItem(UNLOCK_KEY, '1'); } catch { /* fine, it just will not be remembered */ }
@@ -714,7 +711,6 @@ function updateMeter() {
   rockBtn.setAttribute('aria-label', 'rock');
   rockBtn.innerHTML = '<i></i>';
   letterPop.appendChild(rockBtn);
-  letterPop.appendChild(lockNote);
   for (const c of CHARS) {
     const b = document.createElement('button');
     b.dataset.choice = c;
@@ -723,7 +719,7 @@ function updateMeter() {
   }
   setLocked();
 }
-letterBtn.addEventListener('click', (e) => { e.stopPropagation(); setPop(letterPop.hidden); });
+letterBtn.addEventListener('click', (e) => { e.stopPropagation(); if (unlocked) setPop(letterPop.hidden); });
 letterPop.addEventListener('click', (e) => {
   const b = (e.target as HTMLElement).closest('button') as HTMLButtonElement | null;
   if (!b?.dataset.choice || b.disabled) return;
