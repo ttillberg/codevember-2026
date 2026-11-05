@@ -91,21 +91,17 @@ const shadowMatrix = new THREE.Matrix4();
 function renderShadow() {
   const bb = W.surface.geometry.boundingBox!;
   const center = new THREE.Vector3((bb.min.x + bb.max.x) / 2, (bb.min.y + bb.max.y) / 2, (bb.min.z + bb.max.z) / 2);
-  // frame the object and the shadow it throws on the ground: aim between the centre and where the light
-  // carries the centre down onto the ground
-  const onGround = center.clone().addScaledVector(lightDir, -(center.y - ground.position.y) / lightDir.y);
-  const aim = center.clone().lerp(onGround, 0.5);
-  const radius = bb.min.distanceTo(bb.max) / 2 + center.distanceTo(aim) + 0.3;
+  const radius = bb.min.distanceTo(bb.max) / 2 + 0.3;
   lightCam.left = -radius; lightCam.right = radius; lightCam.top = radius; lightCam.bottom = -radius;
   lightCam.near = 0.1; lightCam.far = radius * 4;
-  lightCam.position.copy(aim).addScaledVector(lightDir, radius * 2);
-  lightCam.lookAt(aim);
+  lightCam.position.copy(center).addScaledVector(lightDir, radius * 2);
+  lightCam.lookAt(center);
   lightCam.updateProjectionMatrix();
   lightCam.updateMatrixWorld();
   shadowMatrix.multiplyMatrices(lightCam.projectionMatrix, lightCam.matrixWorldInverse);
 
   // unbind the shadow map while rendering into it, or the GPU complains about a feedback loop
-  const mats = [shellMat, W.fronds.mesh.material as THREE.ShaderMaterial, ground.material as THREE.ShaderMaterial];
+  const mats = [shellMat, W.fronds.mesh.material as THREE.ShaderMaterial];
   for (const mat of mats) { mat.uniforms.uShadowOn.value = 0; mat.uniforms.uShadowMap.value = null; }
   ground.visible = false;
   renderer.setRenderTarget(shadowRT);
@@ -127,13 +123,7 @@ const ground = new THREE.Mesh(
   new THREE.ShaderMaterial({
     vertexShader: groundVertex,
     fragmentShader: groundFragment,
-    uniforms: {
-      uBg: { value: BG },
-      uShadowMap: { value: null },
-      uShadowMatrix: { value: new THREE.Matrix4() },
-      uShadowOn: { value: 0 },
-      uGroundShadow: { value: 1 },
-    },
+    uniforms: { uBg: { value: BG }, uBlob: { value: 0 } },
   }),
 );
 ground.rotation.x = -Math.PI / 2;
@@ -444,12 +434,11 @@ function fillAll() {
   const panel = document.querySelector<HTMLElement>('.debug')!;
   panel.hidden = !(import.meta.env.DEV || new URLSearchParams(location.search).has('debug'));
   panel.querySelectorAll<HTMLInputElement>('input[data-uniform]').forEach((box) => {
-    const mat = box.dataset.target === 'ground' ? (ground.material as THREE.ShaderMaterial) : shellMat;
-    box.addEventListener('change', () => { mat.uniforms[box.dataset.uniform!].value = box.checked ? 1 : 0; });
+    box.addEventListener('change', () => { shellMat.uniforms[box.dataset.uniform!].value = box.checked ? 1 : 0; });
   });
   panel.querySelector('[data-action="fill"]')!.addEventListener('click', fillAll);
   const ssaoBox = panel.querySelector<HTMLInputElement>('input[data-toggle="ssao"]')!;
-  ssaoBox.addEventListener('change', () => { ssaoOn = ssaoBox.checked; });
+  ssaoBox.addEventListener('change', () => { setSsao(ssaoBox.checked); });
 }
 
 // ---- cursor (mouse only): a cross over the object where a drag paints, an open hand beside it where
@@ -965,6 +954,12 @@ aoPass.blendIntensity = 0.9;
 composer.addPass(aoPass);
 composer.addPass(new OutputPass());
 let ssaoOn = true;
+// the ground's fake contact blob only shows while SSAO is off; with it on, SSAO shades the ground itself
+function setSsao(on: boolean) {
+  ssaoOn = on;
+  (ground.material as THREE.ShaderMaterial).uniforms.uBlob.value = on ? 0 : 1;
+}
+setSsao(true);
 
 function resize() {
   renderer.setSize(innerWidth, innerHeight);

@@ -328,49 +328,21 @@ void main() {
 
 export const groundVertex = /* glsl */ `
 varying vec2 vUv;
-varying vec3 vWorld;
 void main() {
   vUv = uv;
-  vec4 wp = modelMatrix * vec4(position, 1.0);
-  vWorld = wp.xyz;
-  gl_Position = projectionMatrix * viewMatrix * wp;
+  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
 }
 `;
 
 export const groundFragment = /* glsl */ `
 precision highp float;
 uniform vec3 uBg;
-uniform sampler2D uShadowMap;
-uniform mat4 uShadowMatrix;
-uniform float uShadowOn;
-uniform float uGroundShadow; // 1 = the object's real shadow from the light, 0 = only the contact blob
+uniform float uBlob; // the fake contact shadow; off while SSAO does the job
 varying vec2 vUv;
-varying vec3 vWorld;
-
-// the object's cast shadow from the shadow map: wide soft taps, faded out towards the edge of the map
-float castShadow() {
-  if (uShadowOn < 0.5 || uGroundShadow < 0.5) return 0.0;
-  vec4 sc = uShadowMatrix * vec4(vWorld, 1.0);
-  vec3 p = sc.xyz / sc.w * 0.5 + 0.5;
-  if (p.x < 0.0 || p.x > 1.0 || p.y < 0.0 || p.y > 1.0 || p.z > 1.0) return 0.0;
-  vec2 e = min(p.xy, 1.0 - p.xy);
-  float edge = smoothstep(0.0, 0.08, min(e.x, e.y));
-  float texel = 9.0 / 2048.0; // softer than on the object: the ground is further from what casts it
-  float dark = 0.0;
-  for (int x = -2; x <= 2; x++)
-    for (int y = -2; y <= 2; y++) {
-      float d = texture2D(uShadowMap, p.xy + vec2(float(x), float(y)) * texel).r;
-      dark += 1.0 - smoothstep(-0.004, 0.004, d - (p.z - 0.002));
-    }
-  return dark / 25.0 * edge;
-}
-
 void main() {
   vec2 d = (vUv - 0.5) * vec2(10.0, 13.0);
   float r = length(d) * 2.0;
-  float blob = smoothstep(1.0, 0.2, r) * 0.5;
-  // with the real shadow on, the blob stays as a faint contact shade right underneath
-  float shadow = max(blob * mix(1.0, 0.45, uGroundShadow), castShadow() * 0.42);
+  float shadow = smoothstep(1.0, 0.2, r) * 0.5 * uBlob;
   gl_FragColor = vec4(uBg * (1.0 - shadow), 1.0);
   #include <colorspace_fragment>
 }
