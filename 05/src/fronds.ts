@@ -140,7 +140,7 @@ export function buildFronds(rock: THREE.BufferGeometry, fertility: Float32Array,
       uPuff: { value: puffTexture },
       uAgeSize: { value: new THREE.Vector2(texW, texH) },
       uLen: { value: 0.032 },
-      uStarLen: { value: 0.025 },
+      uStarLen: { value: 0.038 },
       uLichenLen: { value: 0.07 },
       uBulge: { value: 0.035 },
       uWidth: { value: 0.0042 },
@@ -223,7 +223,7 @@ void main() {
   bool unused;
   if (straw > 0.5) unused = strip > 0.5 || age < 0.3;
   else if (species < 0.5) unused = strip >= 2.0;                  // feather: stem + branch
-  else if (species < 1.5) unused = strip == 1.0 || iSeed.w < 0.45; // star: thinned rosettes
+  else if (species < 1.5) unused = strip == 1.0 || iSeed.w < 0.25; // star: lightly thinned rosettes
   else if (species < 2.5) unused = false;                           // lichen: every instance, all strips
   else unused = true;                                               // cushion: shells only
   if (age < 0.03 || unused) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); return; }
@@ -286,7 +286,7 @@ void main() {
       C = N * t * L + leanDir * t * t * L;
       D = normalize(N * L + leanDir * 2.0 * t * L);
       across = normalize(cross(D, B));
-      w = uWidth * 0.22 * (1.0 - 0.3 * t);
+      w = uWidth * 0.3 * (1.0 - 0.3 * t);
     } else {
       float k = strip - 2.0;
       float ang = k * 1.0472 + (hash(iSeed.w * 7.0 + k) - 0.5) * 0.9;
@@ -299,7 +299,7 @@ void main() {
       C = top + d0 * t * Ll - N * t * t * Ll * 0.25;            // slight droop
       D = normalize(d0 - N * t * 0.5);
       across = normalize(cross(D, N));
-      w = uWidth * 0.45 * (1.0 - t);                            // pointed
+      w = uWidth * 0.6 * (1.0 - t);                             // pointed
     }
   } else {
   // ---- feather moss
@@ -432,8 +432,8 @@ void main() {
   } else if (vSpecies >= 0.5) {
     // star moss: reddish stem, deep green leaves, pale yellow-green tips
     bool stem = vStrip < 0.5;
-    root = stem ? vec3(0.08, 0.03, 0.01) : vec3(0.012, 0.06, 0.008);
-    vec3 tipOld = vec3(0.10, 0.27, 0.035);
+    root = stem ? vec3(0.08, 0.03, 0.01) : vec3(0.015, 0.07, 0.01);
+    vec3 tipOld = vec3(0.12, 0.32, 0.04);
     vec3 tipYoung = vec3(0.13, 0.19, 0.03);
     tip = mix(tipYoung, tipOld, smoothstep(0.2, 0.9, vAge));
     tip = mix(tip, vec3(0.05, 0.16, 0.02), vHue * 0.5);

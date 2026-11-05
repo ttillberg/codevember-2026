@@ -104,7 +104,7 @@ float noise3(vec3 p) {
 // One model for every species. Per-species numbers live in these tables and are
 // blended by the vertex weights, so a 50/50 mix is a real in-between, never a switch.
 //                              feather  star    lichen  cushion
-const vec4 kHeight   = vec4(   1.0,     0.5,    1.0,    1.5  );   // shell height factor
+const vec4 kHeight   = vec4(   1.0,     0.9,    1.0,    1.5  );   // shell height factor
 const vec4 kAgePow   = vec4(   1.0,     1.0,    1.0,    2.0  );   // height vs age curve
 const vec4 kDensity  = vec4(   0.35,    0.4,    0.5,    0.25 );   // fuzz threshold at the root (higher = sparser)
 const vec4 kSheen    = vec4(   0.35,    0.2,    0.15,   0.7  );   // velvet rim strength
@@ -155,13 +155,13 @@ void main() {
   float hemi = 0.5 + 0.5 * N.y;
 
   // species palettes (linear)
-  vec3 deep = blend4(vec3(0.02, 0.045, 0.008), vec3(0.006, 0.03, 0.004), vec3(0.18, 0.18, 0.11), vec3(0.008, 0.04, 0.005), w);
-  vec3 lime = blend4(vec3(0.20, 0.56, 0.04),   vec3(0.035, 0.15, 0.012), vec3(0.34, 0.38, 0.24), vec3(0.30, 0.72, 0.05),  w);
+  vec3 deep = blend4(vec3(0.02, 0.045, 0.008), vec3(0.012, 0.05, 0.008), vec3(0.18, 0.18, 0.11), vec3(0.008, 0.04, 0.005), w);
+  vec3 lime = blend4(vec3(0.20, 0.56, 0.04),   vec3(0.05, 0.20, 0.015), vec3(0.34, 0.38, 0.24), vec3(0.30, 0.72, 0.05),  w);
   vec3 young = blend4(vec3(0.33, 0.31, 0.07),  vec3(0.13, 0.19, 0.03),   vec3(0.30, 0.30, 0.18), vec3(0.28, 0.40, 0.06),  w);
   lime = mix(young, lime, smoothstep(0.2, 0.9, age));
   vec3 deadCol = blend4(vec3(0.50, 0.38, 0.11), vec3(0.40, 0.30, 0.09), vec3(0.30, 0.24, 0.14), vec3(0.50, 0.38, 0.11), w);
   // yellow only as a per-strand sprinkle; the area field makes patches of darker, deeper moss instead
-  float deadMix = step(0.92, hash31(floor(vLocal * 260.0 / uScale) + 3.0)) * 0.8 * (1.0 - w.w); // cushion is an even velvet, no speckle
+  float deadMix = step(0.92, hash31(floor(vLocal * 260.0 / uScale) + 3.0)) * 0.8 * (1.0 - w.w) * (1.0 - 0.6 * w.y); // cushion even, star mostly even
   deep = mix(deep, vec3(0.12, 0.08, 0.02), deadMix);
   lime = mix(lime, deadCol, deadMix);
   // bright green towards the top and on upward faces, darker down the sides; the dark patch field only bites low down
