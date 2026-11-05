@@ -70,6 +70,7 @@ export const mossLighting = /* glsl */ `
 uniform sampler2D uShadowMap;
 uniform mat4 uShadowMatrix;
 uniform float uShadowOn;
+uniform float uCavityAO; // 1 = moss sits darker in holes and inner corners, 0 = AO disabled
 
 // soft shadow from a depth map rendered from the light: 16 Poisson taps. 1 = lit, 0.45 = fully shadowed.
 float shadowAt(vec3 worldPos, vec3 n) {
@@ -313,7 +314,7 @@ void main() {
     velvet += rimLight(N, V) * lime * 2.2;
     vec3 ground = mix(vec3(0.03, 0.025, 0.012), velvet, (dot(w, kBase) + w5 * kBase5));
     vec3 lit = mix(rock, tonemap(grade(ground)), max(humus * 0.92, mature * (dot(w, kBase) + w5 * kBase5)));
-    lit *= mix(1.0, 0.45, vCavity * mature); // moss in a hollow sits in the dark
+    lit *= mix(1.0, 0.45, vCavity * mature * uCavityAO); // moss in a hollow sits in the dark
     gl_FragColor = vec4(lit, 1.0);
     #include <colorspace_fragment>
     return;
@@ -329,7 +330,7 @@ void main() {
   col = mix(col, vec3(0.55, 0.76, 0.18), smoothstep(0.75, 1.0, uu) * 0.15 * w.w * vDome);
   col *= skyTint(N, 1.0 - 0.6 * wrap);
   col += rimLight(N, V) * lime * 3.0 * uu;
-  col *= mix(1.0, 0.45, vCavity);
+  col *= mix(1.0, 0.45, vCavity * uCavityAO);
   gl_FragColor = vec4(tonemap(grade(col)), 1.0);
   #include <colorspace_fragment>
 }

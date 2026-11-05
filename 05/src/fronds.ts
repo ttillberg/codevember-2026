@@ -156,6 +156,7 @@ export function buildFronds(rock: THREE.BufferGeometry, fertility: Float32Array,
       uRim: { value: 0 },
       uHemi: { value: 0 },
       uTone: { value: 0 },
+      uCavityAO: { value: 1 },
       uExposure: { value: 1 },
       toneMappingExposure: { value: 1 },
       uShadowMap: { value: null },
@@ -476,7 +477,7 @@ void main() {
   float gain = lichen ? 0.9 : (vSpecies >= 3.5 ? 0.8 : (vSpecies >= 0.5 ? 0.75 : 1.0));
   float ambient = lichen ? 0.55 : 0.34;  // lichen is matte, mostly ambient
   float wrapK = lichen ? 0.45 : 0.75;
-  ao *= mix(1.0, 0.45, vCavity);
+  ao *= mix(1.0, 0.45, vCavity * uCavityAO);
   vec3 lit = col * ao * (ambient * mix(0.7, 1.0, shadow) + wrapK * wrap + back * shadow) * gain + tip * rim * shadow;
   lit *= skyTint(normalize(vSurfN), 1.0 - 0.6 * wrap);
   lit += rimLight(normalize(vSurfN), V) * (col * 2.6 + tip * 0.6) * (0.2 + 0.8 * vT) * mix(1.0, 0.3, vCavity);

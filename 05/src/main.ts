@@ -68,6 +68,7 @@ const shellMat = new THREE.ShaderMaterial({
     uRim: { value: 1 },
     uHemi: { value: 1 },
     uTone: { value: 2 }, // ACES by default
+    uCavityAO: { value: 1 },
     uExposure: { value: 1.1 },
     toneMappingExposure: { value: 1 },
     uHideRock: { value: 0 },
@@ -78,7 +79,17 @@ const shellMat = new THREE.ShaderMaterial({
   },
 });
 
-const SHARED_UNIFORMS = ['uLightDir', 'uRimDir', 'uRim', 'uHemi', 'uTone', 'uExposure', 'toneMappingExposure', 'uShadowMap', 'uShadowMatrix', 'uShadowOn'];
+// ambient occlusion on or off: the SSAO pass and the baked darkening of moss in hollows
+const AO_KEY = 'codevember-05-no-ao';
+let aoOff = false;
+try { aoOff = localStorage.getItem(AO_KEY) === '1'; } catch { /* private mode */ }
+function setAO(on: boolean) {
+  aoOff = !on;
+  shellMat.uniforms.uCavityAO.value = on ? 1 : 0;
+}
+setAO(!aoOff);
+
+const SHARED_UNIFORMS = ['uCavityAO', 'uLightDir', 'uRimDir', 'uRim', 'uHemi', 'uTone', 'uExposure', 'toneMappingExposure', 'uShadowMap', 'uShadowMatrix', 'uShadowOn'];
 
 // ---- shadow map: the scene from the light's point of view, rendered when the word changes.
 // Letters shadow each other and the moss under overhangs; that is most of the contrast.
@@ -372,10 +383,10 @@ function fillAll() {
   dirty = true;
 }
 
-// ---- debug panel: lighting toggles and a fill button, on the dev server or with ?debug
+// ---- debug panel: lighting toggles and a fill button, collapsed by default
 {
   const panel = document.querySelector<HTMLDetailsElement>('.debug')!;
-  panel.hidden = !(import.meta.env.DEV || new URLSearchParams(location.search).has('debug'));
+  panel.hidden = false; // on everywhere, production too; it starts collapsed
   panel.querySelectorAll<HTMLInputElement>('input[data-uniform]').forEach((box) => {
     box.addEventListener('change', () => { shellMat.uniforms[box.dataset.uniform!].value = box.checked ? 1 : 0; });
   });
@@ -388,8 +399,13 @@ function fillAll() {
     shellMat.uniforms.uTone.value = k;
     shellMat.uniforms.uExposure.value = TONE_EXPOSURE[k];
   });
-  const ssaoBox = panel.querySelector<HTMLInputElement>('input[data-toggle="ssao"]')!;
-  ssaoBox.addEventListener('change', () => { ssaoOn = ssaoBox.checked; });
+  // disable AO: no SSAO pass and no baked darkening of moss in hollows. Remembered across visits.
+  const aoBox = panel.querySelector<HTMLInputElement>('input[data-toggle="noAO"]')!;
+  aoBox.checked = aoOff;
+  aoBox.addEventListener('change', () => {
+    setAO(!aoBox.checked);
+    try { localStorage.setItem(AO_KEY, aoOff ? '1' : '0'); } catch { /* private mode: just not remembered */ }
+  });
 }
 
 // ---- cursor (mouse only): a cross over the object where a drag paints, an open hand beside it where
@@ -893,7 +909,6 @@ aoPass.updatePdMaterial({ lumaPhi: 10, depthPhi: 2, normalPhi: 3, radius: 8, sam
 aoPass.blendIntensity = 0.9;
 composer.addPass(aoPass);
 composer.addPass(new OutputPass());
-let ssaoOn = true;
 
 function resize() {
   renderer.setSize(innerWidth, innerHeight);
@@ -956,7 +971,7 @@ renderer.setAnimationLoop(() => {
     shadowDirty = false;
     mossShadowStale = false;
   }
-  if (ssaoOn) {
+  if (!aoOff) {
     renderer.setRenderTarget(beautyRT);
     renderer.render(scene, camera);
     renderer.setRenderTarget(null);
