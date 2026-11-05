@@ -35,11 +35,12 @@ camera.position.set(3.6, 1.1, 6.6);
 const controls = new OrbitControls(camera, canvas);
 controls.target.set(0, 0.45, 0);
 controls.enableDamping = true;
-controls.enableZoom = false; // orbit only, the framing is the framing
+controls.enableZoom = coarse; // desktop: orbit only. Touch: pinch to zoom in a bit (limits set in frameWord)
 controls.enablePan = false;
 // touch: one finger paints, two fingers turn the object (zoom is off, so dolly-rotate is just rotate)
 controls.touches = { ONE: null as unknown as THREE.TOUCH, TWO: THREE.TOUCH.DOLLY_ROTATE };
 const touchIds = new Set<number>();
+const touchHint = document.querySelector<HTMLElement>('.touch-hint')!;
 controls.maxPolarAngle = Math.PI * 0.55;
 
 const lightDir = new THREE.Vector3(1.2, 2.0, 1.0).normalize();
@@ -381,7 +382,8 @@ canvas.addEventListener('pointerdown', (e) => {
   if (e.pointerType === 'touch') {
     touchIds.add(e.pointerId);
     if (touchIds.size >= 2) {
-      // a second finger: stop painting and let the controls rotate
+      // a second finger: stop painting and let the controls rotate; the hint has done its job
+      touchHint.classList.add('done');
       painting = false;
       sizing = false;
       sizeRing.style.display = 'none';
@@ -506,6 +508,11 @@ function frameWord() {
   const dW = span / (0.95 * 2 * tanHalf * aspect);
   const dist = W.kind === 'rock' ? Math.max(dH + depth, dW + depth * 0.5) : dH + depth; // the near face is closer than the centre
   camera.position.set(center.x + dist * 0.22, center.y + dist * 0.12, center.z + dist);
+  // touch zoom: in to about half the framed distance, never further out than the framing.
+  // The brush radius is in world units, so it keeps its size on the surface while zooming.
+  const framed = camera.position.distanceTo(center);
+  controls.minDistance = framed * 0.5;
+  controls.maxDistance = framed;
   controls.target.copy(center);
   // the contact shadow follows the word's footprint
   ground.scale.set(Math.max(1, width / 1.6), Math.max(1, depth / 1.2), 1);

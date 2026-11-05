@@ -110,3 +110,12 @@ canvas { display: block; width: 100vw; height: 100vh; touch-action: none; }
 
 /* top navigation hidden for now: object toggle and hint */
 .objects, .hint { display: none; }
+
+/* touch only: how to turn the object, fades out after the first two-finger gesture */
+.touch-hint {
+  display: none; position: fixed; left: 50%; top: 18px; transform: translateX(-50%);
+  font: 11px ui-monospace, Menlo, monospace; color: #444; opacity: .7; pointer-events: none;
+  transition: opacity .6s ease;
+}
+.touch-hint.done { opacity: 0; }
+@media (pointer: coarse), (max-width: 640px) { .touch-hint { display: block; } }
