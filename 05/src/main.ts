@@ -199,6 +199,7 @@ function createWorld(text: string, kind: 'word' | 'rock' = 'word'): World {
   const pillowAttr = new THREE.BufferAttribute(pillow, 1);
   pillowAttr.setUsage(THREE.DynamicDrawUsage);
   geo.setAttribute('pillow', pillowAttr);
+  geo.setAttribute('edge', new THREE.BufferAttribute(surface.edge, 1));
 
   const shells = new THREE.InstancedMesh(geo, shellMat, SHELLS);
   shells.frustumCulled = false;

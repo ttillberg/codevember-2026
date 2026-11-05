@@ -5,6 +5,7 @@ attribute float speciesW2; // fifth species weight: green reindeer moss (coral)
 attribute float dead;
 attribute float pillow;
 attribute float puff; // plumped up by repeated brushing, animated as a spring
+attribute float edge; // 0..1, edge between facets
 
 uniform float uHeight;
 uniform float uBulge;
@@ -25,6 +26,7 @@ varying vec4 vSpecies;
 varying float vSpecies2;
 varying float vDead;
 varying float vPillow;
+varying float vEdge;
 varying vec3 vLocal;
 varying vec3 vLocalNormal;
 varying vec3 vWorldPos;
@@ -41,10 +43,12 @@ void main() {
   float profile = mix(moss * moss, 1.0 - (1.0 - moss) * (1.0 - moss), cush);
   float pil = mix(pillow, mix(0.8, 1.0, pillow), cush);
   float bulge = profile * mix(0.3, 1.0, pil) * uBulge * (dot(w, vec4(1.0, 0.6, 0.5, 1.7)) + w5 * 0.9);
+  bulge *= 1.0 - 0.35 * edge * cush; // a cushion lies low over an edge instead of bulging off it
   if (cush > 0.01) {
     vec3 q = position * 24.0 / max(uScale, 0.5);
     float emboss = vnoise(q) * 0.65 + vnoise(q * 2.3 + 7.0) * 0.35 - 0.5;
-    bulge += emboss * cush * uBulge * 0.28 * smoothstep(0.35, 1.0, moss);
+    // only on the flat crown of the dome: on the shoulder the bumps tilt the surface and the shells shear into streaks
+    bulge += emboss * cush * uBulge * 0.16 * smoothstep(0.82, 1.0, moss);
   }
   bulge += puff * uBulge * 1.4 * smoothstep(0.0, 0.3, moss);
   vec3 p = position + normal * (bulge + uHeight * t);
@@ -56,6 +60,7 @@ void main() {
   vSpecies2 = w5;
   vDead = dead;
   vPillow = pillow;
+  vEdge = edge;
   vLocal = position;
   vLocalNormal = normal;
   vec4 wp = modelMatrix * vec4(p, 1.0);
@@ -105,6 +110,7 @@ varying vec4 vSpecies;
 varying float vSpecies2;
 varying float vDead;
 varying float vPillow;
+varying float vEdge;
 varying vec3 vLocal;
 varying vec3 vLocalNormal;
 varying vec3 vWorldPos;
@@ -128,7 +134,7 @@ float noise3(vec3 p) {
 // One model for every species. Per-species numbers live in these tables and are
 // blended by the vertex weights, so a 50/50 mix is a real in-between, never a switch.
 //                              feather  star    lichen  cushion
-const vec4 kHeight   = vec4(   1.0,     0.9,    1.0,    1.5  );   // shell height factor
+const vec4 kHeight   = vec4(   1.0,     0.9,    1.0,    0.7  );   // shell height factor (cushion short: velvet, not strands)
 const vec4 kAgePow   = vec4(   1.0,     1.0,    1.0,    2.0  );   // height vs age curve
 const vec4 kDensity  = vec4(   0.35,    0.4,    0.5,    0.14 );   // fuzz threshold at the root (higher = sparser)
 const vec4 kSheen    = vec4(   0.35,    0.2,    0.15,   0.7  );   // velvet rim strength
@@ -239,6 +245,12 @@ void main() {
   // ---- fuzz: a noise density field, dense at the root and thinning upward.
   float ageH = pow(age, dot(w, kAgePow) + w5 * kAgePow5);
   float top = ageH * mix(mix(0.5, 0.88, w.w), 1.0, lump) * mix(mix(0.35, 0.85, w.w), 1.0, pillow) * (dot(w, kHeight) + w5 * kHeight5);
+  // over an edge between facets the shell normals fan out and the layers stretch into streaks:
+  // the cushion stays, but as short velvet there
+  top *= mix(1.0, mix(1.0, 0.45, vEdge), w.w);
+  // seen edge-on the stacked layers read as streaks too: short fuzz at grazing angles, the velvet base carries it
+  float facing = smoothstep(0.15, 0.6, abs(dot(gN, V)));
+  top *= mix(1.0, mix(0.2, 1.0, facing), w.w);
   if (vShell > top) discard;
   float uu = vShell / max(top, 0.001);
 
