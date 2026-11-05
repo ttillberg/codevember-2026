@@ -498,10 +498,13 @@ function frameWord() {
   const center = new THREE.Vector3((bb.min.x + bb.max.x) / 2, (bb.min.y + bb.max.y) / 2, (bb.min.z + bb.max.z) / 2);
   const tanHalf = Math.tan(THREE.MathUtils.degToRad(camera.fov / 2));
   const aspect = innerWidth / innerHeight;
-  // height only: letters always the same size on screen, a wide word just runs past the edges
+  // letters: height only, a wide word just runs past the edges.
+  // rock: height and width, so it fits a portrait phone too (90% of the width).
+  // The rock is seen from the side as well, so its width uses the larger of x and z.
   const dH = (height * 1.08) / (0.7 * 2 * tanHalf);
-  const dist = dH + depth; // the near face is half a depth closer than the centre
-  void aspect; void width;
+  const span = W.kind === 'rock' ? Math.max(width, depth) : width;
+  const dW = span / (0.95 * 2 * tanHalf * aspect);
+  const dist = W.kind === 'rock' ? Math.max(dH + depth, dW + depth * 0.5) : dH + depth; // the near face is closer than the centre
   camera.position.set(center.x + dist * 0.22, center.y + dist * 0.12, center.z + dist);
   controls.target.copy(center);
   // the contact shadow follows the word's footprint
