@@ -148,3 +148,24 @@ canvas { display: block; width: 100vw; height: 100vh; touch-action: none; }
 
 /* no labels under the swatches: the balls speak for themselves, the active one keeps its little bar */
 .sw span, .scrape-btn span { font-size: 0; line-height: 0; width: 18px; padding-bottom: 0; }
+
+/* hover: the real botanical name above the swatch, the common name under it */
+@media (hover: hover) and (pointer: fine) {
+  .swatches:not(.carousel) .sw { position: relative; }
+  .swatches:not(.carousel) .sw::before,
+  .swatches:not(.carousel) .sw::after {
+    position: absolute; left: 50%; transform: translate(-50%, 4px);
+    white-space: nowrap; pointer-events: none; opacity: 0;
+    transition: opacity .15s ease, transform .15s ease;
+  }
+  .swatches:not(.carousel) .sw::before {
+    content: attr(data-latin); bottom: calc(100% + 18px);
+    font: italic 500 13px Georgia, "Times New Roman", serif; color: #222;
+  }
+  .swatches:not(.carousel) .sw::after {
+    content: attr(data-common); bottom: calc(100% + 4px);
+    font: 10px ui-monospace, Menlo, monospace; color: #666;
+  }
+  .swatches:not(.carousel) .sw:hover::before,
+  .swatches:not(.carousel) .sw:hover::after { opacity: 1; transform: translate(-50%, 0); }
+}
