@@ -1,0 +1,22 @@
+{
+  "name": "codevember-2026",
+  "private": true,
+  "description": "One mini project per day during Codevember 2026",
+  "homepage": "https://ttillberg.github.io/codevember-2026/",
+  "repository": "github:ttillberg/codevember-2026",
+  "license": "MIT",
+  "type": "module",
+  "packageManager": "pnpm@12.8.1",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "new": "node scripts/new.mjs",
+    "build": "node scripts/build.mjs",
+    "preview": "vite preview --outDir dist --base /codevember-2026/"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3",
+    "vite": "^7.3.1"
+  }
+}
