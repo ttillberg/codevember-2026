@@ -161,7 +161,7 @@ void main() {
   lime = mix(young, lime, smoothstep(0.2, 0.9, age));
   vec3 deadCol = blend4(vec3(0.50, 0.38, 0.11), vec3(0.40, 0.30, 0.09), vec3(0.30, 0.24, 0.14), vec3(0.50, 0.38, 0.11), w);
   // yellow only as a per-strand sprinkle; the area field makes patches of darker, deeper moss instead
-  float deadMix = step(0.92, hash31(floor(vLocal * 260.0 / uScale) + 3.0)) * 0.8;
+  float deadMix = step(0.92, hash31(floor(vLocal * 260.0 / uScale) + 3.0)) * 0.8 * (1.0 - w.w); // cushion is an even velvet, no speckle
   deep = mix(deep, vec3(0.12, 0.08, 0.02), deadMix);
   lime = mix(lime, deadCol, deadMix);
   // bright green towards the top and on upward faces, darker down the sides; the dark patch field only bites low down
@@ -219,7 +219,10 @@ void main() {
   vec3 lean = (vec3(noise3(vLocal * 60.0 / uScale), noise3(vLocal * 60.0 / uScale + 17.0), noise3(vLocal * 60.0 / uScale + 31.0)) - 0.5) * 2.0;
   lean -= vLocalNormal * dot(lean, vLocalNormal);
   vec3 q = vLocal + lean * uu * uu * 0.006;
-  float dens = noise3(q * 140.0 / uScale) * 0.5 + noise3(q * 420.0 / uScale) * 0.3 + hash31(floor(q * 420.0 / uScale)) * 0.2;
+  // cushion moss: smoother density, less grain
+  float fineW = mix(0.2, 0.04, w.w);
+  float midW = mix(0.3, 0.18, w.w);
+  float dens = noise3(q * 140.0 / uScale) * (1.0 - fineW - midW) + noise3(q * 420.0 / uScale) * midW + hash31(floor(q * 420.0 / uScale)) * fineW;
   // thin out more at grazing angles: the silhouette stays fuzzy but layers cannot line up
   float graze = 1.0 - ndv;
   if (dens < dot(w, kDensity) + 0.6 * uu + 0.35 * uu * graze) discard;
