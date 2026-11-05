@@ -231,13 +231,13 @@ function createWorld(text: string, kind: 'word' | 'rock' = 'word'): World {
   };
 }
 
-// the moss meter counts what you can actually cover: fertile surface, not the underside facing the ground
+// the moss meter counts what you can actually cover: fertile surface facing sideways or up, nothing facing down
 function reachOf(surface: Surface, normals: THREE.BufferAttribute) {
   const n = normals.count;
   const reach = new Float32Array(n);
   let reachTotal = 0;
   for (let i = 0; i < n; i++) {
-    if (surface.fertility[i] <= 0.05 || normals.getY(i) < -0.6) continue;
+    if (surface.fertility[i] <= 0.05 || normals.getY(i) < -0.15) continue;
     reach[i] = surface.area[i];
     reachTotal += reach[i];
   }
@@ -678,7 +678,7 @@ function setPop(open: boolean) {
 }
 
 // ---- moss meter: a ring around the miniature fills as you cover the object; a full rock unlocks the alphabet
-const UNLOCK_AT = 0.85;
+const UNLOCK_AT = 0.8;
 const UNLOCK_KEY = 'codevember-05-alphabet';
 let unlocked = false;
 try { unlocked = localStorage.getItem(UNLOCK_KEY) === '1'; } catch { /* private mode: start locked */ }
