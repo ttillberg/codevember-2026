@@ -1,4 +1,4 @@
-// Miniatures of every glyph, each a low-detail rounded letter in cushion moss (shells only, no fronds),
+// Miniatures of every glyph, each a low-detail bare rounded letter in the rock's white material,
 // rendered one per frame in the background so the picker fills in without a hitch.
 import * as THREE from 'three';
 import type { Font } from 'three/addons/loaders/FontLoader.js';
@@ -51,7 +51,7 @@ export function renderGlyphThumbs(
     const surface = buildWord(c, font, 1, 1);
     const geo = surface.geometry;
     const n = geo.attributes.position.count;
-    geo.setAttribute('moss', new THREE.BufferAttribute(new Float32Array(n).fill(1), 1));
+    geo.setAttribute('moss', new THREE.BufferAttribute(new Float32Array(n), 1)); // bare: the letter itself, no moss
     // all cushion moss: weights 0,0,0,1,0 interleaved like the main scene
     const w = new Float32Array(n * 5);
     for (let i = 0; i < n; i++) w[i * 5 + 3] = 1;
