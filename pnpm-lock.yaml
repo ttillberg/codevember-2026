@@ -173,15 +173,6 @@ importers:
         specifier: ^7.3.1
         version: 7.3.7
 
-  '01':
-    devDependencies:
-      typescript:
-        specifier: ^5.9.3
-        version: 5.9.3
-      vite:
-        specifier: ^7.3.1
-        version: 7.3.7
-
   '05':
     dependencies:
       three:

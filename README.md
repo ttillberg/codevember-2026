@@ -9,7 +9,7 @@ Live: https://ttillberg.github.io/codevember-2026/
 <!-- days:start -->
 | Day | Word | Experiment | Source |
 | --- | --- | --- | --- |
-| 01 | Fold | [View](https://ttillberg.github.io/codevember-2026/01/) | [Code](https://github.com/ttillberg/codevember-2026/tree/main/01) |
+| 01 | Fold | — | — |
 | 02 | Shatter | — | — |
 | 03 | Melt | — | — |
 | 04 | Tangle | — | — |
