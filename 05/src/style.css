@@ -39,7 +39,7 @@ canvas { display: block; width: 100vw; height: 100vh; touch-action: none; }
 .sw i.lichen { background: radial-gradient(circle at 35% 30%, #cbd3b6, #8f9a78 75%); }
 .sw i.cushion { background: radial-gradient(circle at 35% 30%, #a2e04a, #2d6b14 75%); }
 .scrape-btn {
-  position: fixed; bottom: 14px; left: calc(50% + 268px);
+  position: fixed; bottom: 14px; left: calc(50% + 320px);
   display: flex; flex-direction: column; align-items: center; gap: 7px;
   width: 88px; padding: 0; border: 0; background: transparent; cursor: pointer;
   font: 11px ui-monospace, Menlo, monospace; color: #444; opacity: .75;
@@ -51,7 +51,8 @@ canvas { display: block; width: 100vw; height: 100vh; touch-action: none; }
 .scrape-btn.active i { transform: translateY(-4px) rotate(-8deg); }
 .scrape-btn.active span { border-bottom-color: #111; }
 @media (max-width: 640px), (pointer: coarse) {
-  .scrape-btn { left: 50%; transform: translateX(-50%); bottom: 150px; }
+  .scrape-btn { left: auto; right: 10px; top: 10px; bottom: auto; transform: none; width: 64px; }
+  .scrape-btn i { width: 52px; height: 52px; }
 }
 .hint { left: 250px; right: 90px; text-align: right; pointer-events: none; }
 @media (max-width: 480px) {
@@ -87,3 +88,129 @@ canvas { display: block; width: 100vw; height: 100vh; touch-action: none; }
 @media (max-width: 480px) {
   .word { top: 44px; }
 }
+
+.objects { position: fixed; top: 12px; left: 12px; display: flex; gap: 6px; }
+.objects button {
+  font: 11px ui-monospace, Menlo, monospace; color: #333; background: transparent;
+  border: 1px solid #333; border-radius: 4px; padding: 3px 8px; opacity: .5; cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.objects button:hover, .objects button.active { opacity: 1; }
+.objects button.active { background: #333; color: #e6e6e3; }
+@media (max-width: 480px) { .objects { top: 44px; } }
+
+.scale { display: none; } /* hidden: fixed at 175%, the control stays in the markup for tinkering */
+.scale.show {
+  position: fixed; top: 48px; right: 12px; display: flex; flex-direction: column; align-items: flex-end; gap: 4px;
+  font: 11px ui-monospace, Menlo, monospace; color: #444; opacity: .7;
+}
+.scale:hover { opacity: 1; }
+.scale input { width: 140px; accent-color: #333; }
+@media (max-width: 480px) { .scale { top: 44px; right: 12px; } .scale input { width: 110px; } }
+
+/* top navigation hidden for now: object toggle and hint */
+.objects, .hint { display: none; }
+
+/* touch only: how to turn the object, fades out after the first two-finger gesture */
+.touch-hint {
+  display: none; position: fixed; left: 50%; top: 70%; transform: translateX(-50%); /* top is set under the object in frameWord */
+  font: 11px ui-monospace, Menlo, monospace; color: #444; opacity: .7; pointer-events: none;
+  transition: opacity .6s ease;
+}
+.touch-hint.done { opacity: 0; }
+@media (pointer: coarse), (max-width: 640px) { .touch-hint { display: block; } }
+
+/* object / letter picker */
+.letter-btn {
+  position: fixed; top: 8px; left: 8px; width: 64px; height: 64px; padding: 0;
+  background: transparent; border: 0; border-radius: 10px; cursor: pointer; opacity: .92;
+  -webkit-tap-highlight-color: transparent; transition: transform .12s ease, background .12s ease;
+}
+.letter-btn i { display: block; width: 100%; height: 100%; background: center / contain no-repeat; }
+.letter-btn:hover { transform: scale(1.06); }
+.letter-btn[aria-expanded="true"] { background: rgba(0, 0, 0, .06); opacity: 1; }
+.letter-pop {
+  position: fixed; top: 76px; left: 12px; z-index: 10;
+  display: grid; grid-template-columns: repeat(6, 40px); gap: 4px; padding: 8px;
+  background: rgba(240, 240, 236, .96); border-radius: 10px; box-shadow: 0 6px 24px rgba(0, 0, 0, .14);
+}
+.letter-pop[hidden] { display: none; }
+.letter-pop button {
+  width: 40px; height: 40px; padding: 0; border: 0; border-radius: 6px; background: transparent; cursor: pointer;
+  font: 700 22px "Helvetica Neue", Helvetica, Arial, sans-serif; color: #222;
+  -webkit-tap-highlight-color: transparent;
+}
+.letter-pop button:hover { background: rgba(0, 0, 0, .06); }
+.letter-pop button.active { background: #222; color: #eee; }
+.letter-pop button.rock { grid-column: 1 / -1; width: auto; height: 56px; }
+.letter-pop button.rock.active { background: rgba(0, 0, 0, .1); }
+.letter-pop button.rock i { display: block; width: 56px; height: 56px; margin: 0 auto; background: center / contain no-repeat; }
+
+/* no labels under the swatches: the balls speak for themselves, the active one keeps its little bar */
+.sw span, .scrape-btn span { font-size: 0; line-height: 0; width: 18px; padding-bottom: 0; }
+
+/* hover: the real botanical name above the swatch, the common name under it */
+@media (hover: hover) and (pointer: fine) {
+  .swatches:not(.carousel) .sw { position: relative; }
+  .swatches:not(.carousel) .sw::before,
+  .swatches:not(.carousel) .sw::after {
+    position: absolute; left: 50%; transform: translate(-50%, 4px);
+    white-space: nowrap; pointer-events: none; opacity: 0;
+    transition: opacity .15s ease, transform .15s ease;
+  }
+  .swatches:not(.carousel) .sw::before {
+    content: attr(data-latin); bottom: calc(100% + 18px);
+    font: italic 500 13px Georgia, "Times New Roman", serif; color: #222;
+  }
+  .swatches:not(.carousel) .sw::after {
+    content: attr(data-common); bottom: calc(100% + 4px);
+    font: 10px ui-monospace, Menlo, monospace; color: #666;
+  }
+  .swatches:not(.carousel) .sw:hover::before,
+  .swatches:not(.carousel) .sw:hover::after { opacity: 1; transform: translate(-50%, 0); }
+}
+
+/* moss meter around the miniature */
+.letter-btn .ring { position: absolute; inset: 0; width: 100%; height: 100%; transform: rotate(-90deg); pointer-events: none; }
+.letter-btn .ring circle { fill: none; stroke-width: 2.5; }
+.letter-btn .ring .track { stroke: rgba(0, 0, 0, .08); }
+.letter-btn .ring .fill { stroke: #5c9a2a; stroke-linecap: round; transition: stroke-dashoffset .4s ease, stroke .4s ease; }
+.letter-btn.full .ring .fill, .letter-btn.unlocked .ring .fill { stroke: #3f7d18; }
+.letter-btn.just-unlocked { animation: unlock 2.4s ease; }
+@keyframes unlock {
+  0% { transform: scale(1); } 12% { transform: scale(1.22); } 30% { transform: scale(.96); } 45% { transform: scale(1.06); } 100% { transform: scale(1); }
+}
+.letter-btn:not(.unlocked) { cursor: default; }
+.letter-btn:not(.unlocked):hover { transform: none; }
+
+/* unlocked: the meter has done its job */
+.letter-btn .ring { transition: opacity .6s ease .8s; }
+.letter-btn.unlocked .ring { opacity: 0; }
+/* glyphs in green, replaced by their mossy miniature once rendered */
+.letter-pop button:not(.rock) { color: #3f7d18; background: center / contain no-repeat; }
+.letter-pop button.thumb { color: transparent; }
+.letter-pop button.thumb.active { background-color: rgba(0, 0, 0, .1); }
+.letter-pop { grid-template-columns: repeat(6, 44px); }
+.letter-pop button { width: 44px; height: 44px; }
+/* moss confetti */
+.confetti { position: fixed; inset: 0; pointer-events: none; z-index: 20; overflow: hidden; }
+.confetti i { position: absolute; left: 0; top: 0; background: center / contain no-repeat; will-change: transform; }
+
+/* debug panel: lighting toggles while tuning. Dev server, or ?debug */
+.debug {
+  position: fixed; top: 12px; right: 12px; z-index: 5;
+  padding: 6px 10px;
+  font: 11px ui-monospace, Menlo, monospace; color: #333;
+  background: rgba(240, 240, 236, .9); border-radius: 8px; box-shadow: 0 2px 10px rgba(0, 0, 0, .08);
+}
+.debug[hidden] { display: none; }
+/* collapsed by default: just a small "debug" tab until opened */
+.debug summary { cursor: pointer; user-select: none; list-style: none; color: #666; }
+.debug summary::-webkit-details-marker { display: none; }
+.debug summary::before { content: '▸ '; }
+.debug[open] summary::before { content: '▾ '; }
+.debug-body { display: flex; flex-direction: column; gap: 4px; margin-top: 6px; }
+.debug label { display: flex; align-items: center; gap: 6px; cursor: pointer; user-select: none; }
+.debug select { font: inherit; padding: 1px 2px; }
+.debug button { font: inherit; padding: 2px 8px; border: 1px solid #bbb; border-radius: 4px; background: #fff; cursor: pointer; }
+@media (pointer: coarse), (max-width: 640px) { .debug { top: 84px; } } /* below the eraser */

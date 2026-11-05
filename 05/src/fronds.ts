@@ -3,7 +3,7 @@
 // mirrors the per-vertex moss attribute.
 import * as THREE from 'three';
 import { fbm3, mulberry32 } from './noise';
-import { deadAt, pillowAt } from './rock';
+import { deadAt, domeAt, pillowAt } from './rock';
 
 export interface Fronds {
   mesh: THREE.Mesh;
@@ -35,7 +35,8 @@ function ribbonTemplate(mainSegs: number, branchSegs: number, leafSegs: number, 
 export function buildFronds(rock: THREE.BufferGeometry, fertility: Float32Array, count: number, seed = 3): Fronds {
   const rand = mulberry32(seed);
   const position = rock.attributes.position as THREE.BufferAttribute;
-  const normal = rock.attributes.normal as THREE.BufferAttribute;
+  // fronds stand along the smoothed moss normal when there is one, so they agree with the shells
+  const normal = (rock.attributes.mossNormal ?? rock.attributes.normal) as THREE.BufferAttribute;
   const index = rock.index!.array;
   const triCount = index.length / 3;
 
@@ -62,6 +63,10 @@ export function buildFronds(rock: THREE.BufferGeometry, fertility: Float32Array,
   const iClump = new Float32Array(count);
   const iDead = new Float32Array(count);
   const iStraw = new Float32Array(count); // straw-rich areas: about a tenth of the surface
+  const iPick = new Float32Array(count);
+  const cav = rock.attributes.cavity as THREE.BufferAttribute | undefined;
+  const iCavity = new Float32Array(count); // baked occlusion, from the surface
+  const iDome = new Float32Array(count); // species pick threshold: a smooth field, so mixed zones form patches not noise
 
   const n = new THREE.Vector3(), t = new THREE.Vector3(), p = new THREE.Vector3();
   const na = new THREE.Vector3(), nb = new THREE.Vector3(), nc = new THREE.Vector3();
@@ -98,7 +103,10 @@ export function buildFronds(rock: THREE.BufferGeometry, fertility: Float32Array,
     iVert[i] = w >= u && w >= v ? ia : u >= v ? ib : ic;
     // same pillow field as the shell shader, so undercoat and fronds agree
     iDead[i] = deadAt(p.x, p.y, p.z);
+    iDome[i] = domeAt(p.x, p.y, p.z);
+    iCavity[i] = cav ? cav.getX(ia) * w + cav.getX(ib) * u + cav.getX(ic) * v : 0;
     iStraw[i] = THREE.MathUtils.smoothstep(fbm3(p.x * 1.7, p.y * 1.7, p.z * 1.7, 3, 61), 0.22, 0.38);
+    iPick[i] = THREE.MathUtils.clamp(fbm3(p.x * 4.5, p.y * 4.5, p.z * 4.5, 3, 83) * 0.9 + 0.5 + (rand() - 0.5) * 0.12, 0, 1);
     iClump[i] = pillowAt(p.x, p.y, p.z);
   }
 
@@ -114,6 +122,9 @@ export function buildFronds(rock: THREE.BufferGeometry, fertility: Float32Array,
   geo.setAttribute('iClump', new THREE.InstancedBufferAttribute(iClump, 1));
   geo.setAttribute('iDead', new THREE.InstancedBufferAttribute(iDead, 1));
   geo.setAttribute('iStraw', new THREE.InstancedBufferAttribute(iStraw, 1));
+  geo.setAttribute('iPick', new THREE.InstancedBufferAttribute(iPick, 1));
+  geo.setAttribute('iDome', new THREE.InstancedBufferAttribute(iDome, 1));
+  geo.setAttribute('iCavity', new THREE.InstancedBufferAttribute(iCavity, 1));
   geo.instanceCount = count;
 
   // age texture: one float per rock vertex
@@ -123,8 +134,8 @@ export function buildFronds(rock: THREE.BufferGeometry, fertility: Float32Array,
   const ageTexture = new THREE.DataTexture(new Float32Array(texW * texH * 4), texW, texH, THREE.RGBAFormat, THREE.FloatType);
   ageTexture.magFilter = ageTexture.minFilter = THREE.NearestFilter;
   ageTexture.needsUpdate = true;
-  // R = puff, G = the (dynamic) pillow field at the nearest vertex
-  const puffTexture = new THREE.DataTexture(new Float32Array(texW * texH * 2), texW, texH, THREE.RGFormat, THREE.FloatType);
+  // R = puff, G = the (dynamic) pillow field, B = the cushion weight (the fifth, coral, is the remainder)
+  const puffTexture = new THREE.DataTexture(new Float32Array(texW * texH * 4), texW, texH, THREE.RGBAFormat, THREE.FloatType);
   puffTexture.magFilter = puffTexture.minFilter = THREE.NearestFilter;
   puffTexture.needsUpdate = true;
 
@@ -137,11 +148,18 @@ export function buildFronds(rock: THREE.BufferGeometry, fertility: Float32Array,
       uPuff: { value: puffTexture },
       uAgeSize: { value: new THREE.Vector2(texW, texH) },
       uLen: { value: 0.032 },
-      uStarLen: { value: 0.025 },
-      uLichenLen: { value: 0.045 },
+      uStrawBase: { value: 0.01 }, // straws outside the straw-rich areas; letters set 0
+      uStarLen: { value: 0.038 },
+      uLichenLen: { value: 0.07 },
       uBulge: { value: 0.035 },
       uWidth: { value: 0.0042 },
       uLightDir: { value: new THREE.Vector3(1.2, 2.0, 1.0).normalize() },
+      uRimDir: { value: new THREE.Vector3(0, 1, 0) },
+      uRim: { value: 0 },
+      uHemi: { value: 0 },
+      uTone: { value: 0 },
+      uExposure: { value: 1 },
+      toneMappingExposure: { value: 1 },
       uShadowMap: { value: null },
       uShadowMatrix: { value: new THREE.Matrix4() },
       uShadowOn: { value: 0 },
@@ -162,11 +180,15 @@ attribute float iVert;
 attribute float iClump;
 attribute float iDead;
 attribute float iStraw;
+attribute float iPick;
+attribute float iDome;
+attribute float iCavity;
 
 uniform sampler2D uAge;
 uniform sampler2D uPuff;
 uniform vec2 uAgeSize;
 uniform float uLen;
+uniform float uStrawBase;
 uniform float uStarLen;
 uniform float uLichenLen;
 uniform float uBulge;
@@ -182,6 +204,8 @@ varying float vClump;
 varying float vSpecies;
 varying float vDead;
 varying float vShade;
+varying float vCavity;
+varying vec3 vSurfN; // the surface's normal under the frond: the back light reads the silhouette from it
 varying float vStraw;
 
 float hash(float x) { return fract(sin(x * 127.1) * 43758.5453); }
@@ -200,28 +224,31 @@ void main() {
   float iy = floor(iVert / uAgeSize.x);
   vec4 cell = texture2D(uAge, (vec2(ix, iy) + 0.5) / uAgeSize);
   float age = cell.r;
-  vec2 pp = texture2D(uPuff, (vec2(ix, iy) + 0.5) / uAgeSize).rg;
+  vec4 pp = texture2D(uPuff, (vec2(ix, iy) + 0.5) / uAgeSize);
   float puff = pp.r;
   float clumpV = pp.g; // live pillow field, the brush can rearrange it
   // draw this instance's species from the vertex's weights: mixed zones interleave
-  // weights are normalised on the CPU; the fourth (cushion moss) is the remainder and has no fronds
-  vec3 wgt = cell.gba;
-  float pick = hash(iSeed.x * 13.7 + iSeed.y * 5.1);
-  float species = pick < wgt.x ? 0.0 : (pick < wgt.x + wgt.y ? 1.0 : (pick < wgt.x + wgt.y + wgt.z ? 2.0 : 3.0));
+  // weights are normalised on the CPU: feather, star, lichen in the age texture, cushion in the puff texture,
+  // coral is the remainder. Cushion has no fronds.
+  vec4 wgt = vec4(cell.gba, pp.b);
+  float pick = iPick; // smooth field: neighbours pick alike, so weights turn into patches
+  float c1 = wgt.x, c2 = c1 + wgt.y, c3 = c2 + wgt.z, c4 = c3 + wgt.w;
+  float species = pick < c1 ? 0.0 : (pick < c2 ? 1.0 : (pick < c3 ? 2.0 : (pick < c4 ? 3.0 : 4.0)));
   float strip = position.z;
   float t = position.y;
   // a few percent of instances are a single thin grass straw instead, whatever the species
   // 1% of instances are straws, up to 9% in straw-rich areas, and tops get more than sides
   float upness = smoothstep(-0.1, 0.9, iNor.y);
-  float strawP = mix(0.01, 0.09, iStraw) * mix(0.3, 1.6, upness);
+  float strawP = mix(uStrawBase, 0.09, iStraw) * mix(0.3, 1.6, upness);
   float straw = step(1.0 - strawP, hash(iSeed.y * 31.7 + iSeed.z * 7.3));
   // cull: no moss, or strips this species does not use
   bool unused;
   if (straw > 0.5) unused = strip > 0.5 || age < 0.3;
   else if (species < 0.5) unused = strip >= 2.0;                  // feather: stem + branch
-  else if (species < 1.5) unused = strip == 1.0 || iSeed.w < 0.45; // star: thinned rosettes
-  else if (species < 2.5) unused = iSeed.w < 0.3;                   // lichen: all strips, a bit sparse
-  else unused = true;                                               // cushion: shells only
+  else if (species < 1.5) unused = strip == 1.0 || iSeed.w < 0.25; // star: lightly thinned rosettes
+  else if (species < 2.5) unused = false;                           // lichen: every instance, all strips
+  else if (species < 3.5) unused = true;                            // cushion: shells only
+  else unused = false;                                              // coral: every instance, all strips
   if (age < 0.03 || unused) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); return; }
 
   // local frame, spun by a random yaw
@@ -250,29 +277,31 @@ void main() {
     across = normalize(cross(D, B));
     w = uWidth * 0.16 * (1.0 - 0.7 * t);
   } else if (species >= 1.5) {
-    // ---- reindeer lichen: a curving stem with twigs forking off along its length
+    // ---- reindeer lichen: a curving stem with twigs forking off along its length.
+    // Coral (green reindeer moss) is the same build: shorter, thicker, twigs spread wider into round clumps.
+    float coral = step(3.5, species);
     // wide spread of heights, skewed short with a few tall ones poking out
-    float L = uLichenLen * (0.3 + 1.1 * pow(iSeed.y, 1.7)) * (0.3 + 0.7 * grown) * mix(0.6, 1.0, clumpV);
+    float L = uLichenLen * (0.5 + 1.1 * pow(iSeed.y, 1.4)) * (0.3 + 0.7 * grown) * mix(0.7, 1.0, clumpV) * mix(1.0, 0.7, coral);
     vec3 leanDir = T * (iSeed.z - 0.5) * 0.8;
     vec3 wob = B * 0.12 * L;
     if (strip < 0.5) {
       C = N * t * L + leanDir * t * t * L + wob * sin(t * 5.0 + iSeed.w * 6.0);
       D = normalize(N * L + leanDir * 2.0 * t * L + wob * 5.0 * cos(t * 5.0 + iSeed.w * 6.0));
       across = normalize(cross(D, B));
-      w = uWidth * 0.3 * (1.0 - 0.6 * t);
+      w = uWidth * 0.5 * (1.0 - 0.5 * t) * mix(1.0, 1.25, coral);
     } else {
       float k = strip - 1.0;                                     // 0..6
       float h0 = 0.25 + 0.1 * k + 0.08 * hash(iSeed.z * 9.0 + k);
       vec3 root = N * h0 * L + leanDir * h0 * h0 * L + wob * sin(h0 * 5.0 + iSeed.w * 6.0);
       float ang = k * 2.4 + (hash(iSeed.w * 7.0 + k) - 0.5) * 1.2;
       vec3 side = T * cos(ang) + B * sin(ang);
-      float elev = 0.55 + 0.5 * hash(iSeed.x * 3.0 + k);
-      float Lb = L * (0.3 + 0.2 * hash(iSeed.y * 5.0 + k)) * (1.1 - h0);
+      float elev = mix(0.55 + 0.5 * hash(iSeed.x * 3.0 + k), 0.25 + 0.55 * hash(iSeed.x * 3.0 + k), coral);
+      float Lb = L * (0.45 + 0.3 * hash(iSeed.y * 5.0 + k)) * (1.15 - h0) * mix(1.0, 1.35, coral);
       vec3 d0 = normalize(side * cos(elev) + N * sin(elev));
       C = root + d0 * t * Lb + N * t * t * Lb * 0.25;
       D = normalize(d0 + N * t * 0.5);
       across = normalize(cross(D, side));
-      w = uWidth * 0.22 * (1.0 - 0.8 * t);
+      w = uWidth * 0.36 * (1.0 - 0.75 * t) * mix(1.0, 1.2, coral);
     }
   } else if (species >= 0.5) {
     // ---- star moss: straight stem, rosette of stiff pointed leaves at the top
@@ -282,7 +311,7 @@ void main() {
       C = N * t * L + leanDir * t * t * L;
       D = normalize(N * L + leanDir * 2.0 * t * L);
       across = normalize(cross(D, B));
-      w = uWidth * 0.22 * (1.0 - 0.3 * t);
+      w = uWidth * 0.3 * (1.0 - 0.3 * t);
     } else {
       float k = strip - 2.0;
       float ang = k * 1.0472 + (hash(iSeed.w * 7.0 + k) - 0.5) * 0.9;
@@ -295,7 +324,7 @@ void main() {
       C = top + d0 * t * Ll - N * t * t * Ll * 0.25;            // slight droop
       D = normalize(d0 - N * t * 0.5);
       across = normalize(cross(D, N));
-      w = uWidth * 0.45 * (1.0 - t);                            // pointed
+      w = uWidth * 0.6 * (1.0 - t);                             // pointed
     }
   } else {
   // ---- feather moss
@@ -336,9 +365,15 @@ void main() {
   vec3 local = C + across * position.x * w;
 
   // ride the mound: same displacement the rock shells use
-  vec4 w4 = vec4(cell.gba, max(0.0, 1.0 - cell.g - cell.b - cell.a));
-  float bulge = age * age * mix(0.3, 1.0, clumpV) * uBulge * dot(w4, vec4(1.0, 0.6, 0.5, 1.3)) + puff * uBulge * 1.4 * smoothstep(0.0, 0.3, age);
-  vec3 p = iPos + N * bulge + local;
+  float wCoral = max(0.0, 1.0 - c4);
+  float cushW = wgt.w;
+  float profileF = mix(age * age, 1.0 - (1.0 - age) * (1.0 - age), cushW);
+  float pilF = mix(clumpV, mix(0.8, 1.0, clumpV), cushW);
+  float bulge = profileF * mix(0.3, 1.0, pilF) * uBulge * (dot(wgt, vec4(1.0, 0.6, 0.5, 1.7)) + wCoral * 0.9) * mix(1.0, mix(0.5, 1.0, iDome), cushW) + puff * uBulge * 1.4 * smoothstep(0.0, 0.3, age);
+  // hollows stay hollow: fronds in holes and inner corners sit low and short
+  vec3 p = iPos + N * bulge * (1.0 - 0.85 * iCavity) + local * mix(1.0, 0.45, iCavity);
+  vCavity = iCavity;
+  vSurfN = normalize(mat3(modelMatrix) * N);
   vec4 wp = modelMatrix * vec4(p, 1.0);
   vWorldPos = wp.xyz;
   vNormal = normalize(mat3(modelMatrix) * cross(D, across));
@@ -396,16 +431,52 @@ varying float vClump;
 varying float vSpecies;
 varying float vDead;
 varying float vShade;
+varying float vCavity;
+varying vec3 vSurfN; // the surface's normal under the frond: the back light reads the silhouette from it
 varying float vStraw;
 
 
 // colour grade for the moss only: a touch of exposure, saturation and contrast, in linear light
+// tone mapping, on the moss only: the white rock, the ground and the page background stay exactly as they are.
+// 0 = none (just the grade), 1 = AgX, 2 = ACES, 3 = Neutral; switchable in the debug panel
+#include <tonemapping_pars_fragment>
+uniform float uTone;
+uniform float uExposure;
+vec3 tonemap(vec3 c) {
+  if (uTone < 0.5) return c;
+  c *= uExposure;
+  if (uTone < 1.5) return AgXToneMapping(c);
+  if (uTone < 2.5) return ACESFilmicToneMapping(c);
+  return NeutralToneMapping(c);
+}
 vec3 grade(vec3 c) {
   c *= 1.3;
   float l = dot(c, vec3(0.299, 0.587, 0.114));
   c = mix(vec3(l), c, 1.35);
   c = (c - 0.18) * 1.1 + 0.18;
   return max(c, 0.0);
+}
+
+// coloured ambient: where the key light does not reach, the moss takes a cool sky fill from above and a
+// warm, greenish bounce from below instead of flat grey
+uniform float uHemi; // 0 = off (swatches, thumbnails)
+vec3 skyTint(vec3 N, float shade) {
+  vec3 sky = vec3(0.60, 0.84, 1.32);
+  vec3 bounce = vec3(1.28, 1.10, 0.45);
+  vec3 t = mix(bounce, sky, smoothstep(-0.6, 0.8, N.y));
+  return mix(vec3(1.0), t, uHemi * clamp(shade, 0.0, 1.0));
+}
+
+// back light: sits behind the object as seen from the camera, so it follows the view. It only reaches the
+// silhouette, where fuzz and frond tips catch it and glow against the background.
+uniform vec3 uRimDir;
+uniform float uRim; // 0 = off (swatches, thumbnails)
+vec3 rimLight(vec3 N, vec3 V) {
+  if (uRim <= 0.0) return vec3(0.0);
+  vec3 R = normalize(uRimDir);
+  float fres = pow(1.0 - max(dot(N, V), 0.0), 3.0); // tight: just the outline
+  float facing = smoothstep(-0.1, 0.7, dot(N, R));
+  return vec3(1.0, 0.93, 0.70) * fres * facing * uRim;
 }
 
 void main() {
@@ -420,6 +491,11 @@ void main() {
     root = vec3(0.10, 0.11, 0.03);
     tip = mix(vec3(0.34, 0.40, 0.12), vec3(0.42, 0.44, 0.18), vHue);
     col = mix(root, tip, pow(vT, 0.7));
+  } else if (vSpecies >= 3.5) {
+    // green reindeer moss: dark green in the clump, mid green twig tips
+    root = vec3(0.004, 0.018, 0.004);
+    tip = mix(vec3(0.07, 0.17, 0.035), vec3(0.11, 0.22, 0.05), vHue);
+    col = mix(root, tip, smoothstep(0.1, 0.9, vT));
   } else if (vSpecies >= 1.5) {
     // reindeer lichen: pale sage, matte, brown at the very base
     root = vec3(0.14, 0.09, 0.04);
@@ -428,8 +504,8 @@ void main() {
   } else if (vSpecies >= 0.5) {
     // star moss: reddish stem, deep green leaves, pale yellow-green tips
     bool stem = vStrip < 0.5;
-    root = stem ? vec3(0.08, 0.03, 0.01) : vec3(0.012, 0.06, 0.008);
-    vec3 tipOld = vec3(0.10, 0.27, 0.035);
+    root = stem ? vec3(0.08, 0.03, 0.01) : vec3(0.015, 0.07, 0.01);
+    vec3 tipOld = vec3(0.12, 0.32, 0.04);
     vec3 tipYoung = vec3(0.13, 0.19, 0.03);
     tip = mix(tipYoung, tipOld, smoothstep(0.2, 0.9, vAge));
     tip = mix(tip, vec3(0.05, 0.16, 0.02), vHue * 0.5);
@@ -450,20 +526,30 @@ void main() {
   deadCol *= 0.85 + 0.3 * vHue;
   col = mix(col, deadCol, vDead);
   tip = mix(tip, deadCol, vDead);
-  // darker-moss patches
-  col *= mix(1.0, 0.5, vShade);
-  tip *= mix(1.0, 0.55, vShade);
+  // bright towards the top and on upward faces, darker down the sides; dark patches only low down
+  float top = smoothstep(-0.4, 0.9, N.y) * 0.55 + smoothstep(-0.7, 1.9, vWorldPos.y) * 0.45;
+  float bottomDark = mix(0.72, 1.0, smoothstep(-0.75, 0.5, vWorldPos.y));
+  float lift = vSpecies >= 3.5 ? 0.5 : 1.0; // coral stays deep green even on top
+  col *= mix(1.0 - 0.22 * lift, 1.0 + 0.22 * lift, top) * bottomDark;
+  tip *= mix(1.0 - 0.22 * lift, 1.0 + 0.22 * lift, top) * bottomDark;
+  float shade = vShade * (1.0 - 0.75 * top) * 0.8;
+  col *= mix(1.0, 0.55, shade);
+  tip *= mix(1.0, 0.6, shade);
 
-  float ao = mix(0.3, 1.0, vT) * mix(0.5, 1.0, vClump);
+  float ao = mix(0.3, 1.0, vT) * mix(0.85, 1.0, vClump);
   float shadow = shadowAt(vWorldPos, N);
   float wrap = pow(max(dot(N, L) * 0.65 + 0.35, 0.0), 1.4) * shadow;
   float back = max(dot(-N, L), 0.0) * 0.35; // leaves glow a bit when lit from behind
   float rim = pow(1.0 - max(dot(N, V), 0.0), 3.0) * 0.2;
-  float gain = vSpecies >= 1.5 ? 0.9 : (vSpecies >= 0.5 ? 0.75 : 1.0);
-  float ambient = vSpecies >= 1.5 ? 0.55 : 0.32;  // lichen is matte, mostly ambient
-  float wrapK = vSpecies >= 1.5 ? 0.45 : 0.8;
+  bool lichen = vSpecies >= 1.5 && vSpecies < 3.5;
+  float gain = lichen ? 0.9 : (vSpecies >= 3.5 ? 0.8 : (vSpecies >= 0.5 ? 0.75 : 1.0));
+  float ambient = lichen ? 0.55 : 0.34;  // lichen is matte, mostly ambient
+  float wrapK = lichen ? 0.45 : 0.75;
+  ao *= mix(1.0, 0.45, vCavity);
   vec3 lit = col * ao * (ambient * mix(0.7, 1.0, shadow) + wrapK * wrap + back * shadow) * gain + tip * rim * shadow;
-  gl_FragColor = vec4(grade(lit), 1.0);
+  lit *= skyTint(normalize(vSurfN), 1.0 - 0.6 * wrap);
+  lit += rimLight(normalize(vSurfN), V) * (col * 2.6 + tip * 0.6) * (0.2 + 0.8 * vT) * mix(1.0, 0.3, vCavity);
+  gl_FragColor = vec4(tonemap(grade(lit)), 1.0);
   #include <colorspace_fragment>
 }
 `;

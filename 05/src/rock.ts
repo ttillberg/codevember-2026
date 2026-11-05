@@ -11,12 +11,41 @@ export interface Surface {
   fertility: Float32Array; // 0..1, how willing moss is to spread here
   dead: Float32Array; // 0..1, bleached yellow-brown patches
   pillow: Float32Array; // 0..1, where the moss mounds up
+  area: Float32Array; // surface area each vertex stands for (a third of its triangles)
+  dome: Float32Array; // 0..1, cushion clumps: round domes per cell, 0 in the crevices between them
 }
 
 // Mound field, shared by rock vertices and frond instances so both layers bulge together.
 export function pillowAt(x: number, y: number, z: number) {
   const v = fbm3(x * 9, y * 9, z * 9, 2, 5) * 0.65 + fbm3(x * 22, y * 22, z * 22, 2, 6) * 0.35;
   return THREE.MathUtils.smoothstep(v, -0.35, 0.35);
+}
+
+// Cushion clumps: a 3D cell field (Worley), each cell a round dome that drops to 0 at the crevice
+// between cells. Shared by rock vertices and frond instances so straws sit on the same domes.
+const DOME_CELL = 0.3;
+function cellHash(x: number, y: number, z: number, k: number) {
+  let h = (x * 374761393 + y * 668265263 + z * 1442695041 + k * 1274126177) | 0;
+  h = Math.imul(h ^ (h >>> 13), 1274126177);
+  return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
+}
+export function domeAt(x: number, y: number, z: number) {
+  const px = x / DOME_CELL, py = y / DOME_CELL, pz = z / DOME_CELL;
+  const ix = Math.floor(px), iy = Math.floor(py), iz = Math.floor(pz);
+  let f1 = 1e9, f2 = 1e9;
+  for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) for (let dz = -1; dz <= 1; dz++) {
+    const cx = ix + dx, cy = iy + dy, cz = iz + dz;
+    const ox = cx + 0.15 + 0.7 * cellHash(cx, cy, cz, 1) - px;
+    const oy = cy + 0.15 + 0.7 * cellHash(cx, cy, cz, 2) - py;
+    const oz = cz + 0.15 + 0.7 * cellHash(cx, cy, cz, 3) - pz;
+    const d = ox * ox + oy * oy + oz * oz;
+    if (d < f1) { f2 = f1; f1 = d; } else if (d < f2) f2 = d;
+  }
+  const edge = Math.sqrt(f2) - Math.sqrt(f1); // 0 on the border between two cells
+  const t = Math.min(1, edge / 0.85);
+  // smooth both ends: a sharp V at the crevice gets linearly interpolated across the triangles
+  // and shows the mesh as straight ridges, a rounded valley does not
+  return t * t * (3 - 2 * t);
 }
 
 // Shared by rock vertices and frond instances so both layers agree on where the moss is dying.
@@ -116,6 +145,52 @@ export function buildRock(seed = 7, linearLevels = 3, smoothLevels = 2): Surface
 }
 
 /** Turn any indexed geometry (positions + index) into a paintable surface: normals, adjacency and the per-vertex fields. */
+const CAVITY_CELL = 0.03; // voxel size, world units
+const CAVITY_REACH = 0.35; // a hit closer than this occludes the moss: it would fill the hollow
+// fixed ray set: a Fibonacci sphere, flipped into each vertex's hemisphere
+const CAVITY_DIRS = (() => {
+  const out: number[] = [];
+  const k = 24, ga = Math.PI * (3 - Math.sqrt(5));
+  for (let i = 0; i < k; i++) {
+    const y = 1 - ((i + 0.5) / k) * 2, r = Math.sqrt(1 - y * y);
+    out.push(Math.cos(ga * i) * r, y, Math.sin(ga * i) * r);
+  }
+  return out;
+})();
+function bakeCavity(pos: THREE.BufferAttribute, nrm: Float32Array, bb: THREE.Box3) {
+  const n = pos.count;
+  const c = CAVITY_CELL, pad = CAVITY_REACH + c;
+  const ox = bb.min.x - pad, oy = bb.min.y - pad, oz = bb.min.z - pad;
+  const nx = Math.ceil((bb.max.x - bb.min.x + 2 * pad) / c), ny = Math.ceil((bb.max.y - bb.min.y + 2 * pad) / c), nz = Math.ceil((bb.max.z - bb.min.z + 2 * pad) / c);
+  const grid = new Uint8Array(nx * ny * nz);
+  for (let i = 0; i < n; i++) {
+    const gx = Math.floor((pos.getX(i) - ox) / c), gy = Math.floor((pos.getY(i) - oy) / c), gz = Math.floor((pos.getZ(i) - oz) / c);
+    grid[gx + nx * (gy + ny * gz)] = 1;
+  }
+  const cavity = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    const px = pos.getX(i), py = pos.getY(i), pz = pos.getZ(i);
+    const qx = nrm[i * 3], qy = nrm[i * 3 + 1], qz = nrm[i * 3 + 2];
+    let near = 0, total = 0;
+    for (let d = 0; d < CAVITY_DIRS.length; d += 3) {
+      let dx = CAVITY_DIRS[d], dy = CAVITY_DIRS[d + 1], dz = CAVITY_DIRS[d + 2];
+      let cos = dx * qx + dy * qy + dz * qz;
+      if (cos < 0) { dx = -dx; dy = -dy; dz = -dz; cos = -cos; }
+      if (cos < 0.2) continue; // grazing rays just skim the surface they start on
+      total += cos;
+      // start a couple of cells out so the ray leaves its own voxel
+      for (let t = 2 * c; t <= CAVITY_REACH; t += c) {
+        const gx = Math.floor((px + dx * t - ox) / c), gy = Math.floor((py + dy * t - oy) / c), gz = Math.floor((pz + dz * t - oz) / c);
+        if (gx < 0 || gy < 0 || gz < 0 || gx >= nx || gy >= ny || gz >= nz) break;
+        if (grid[gx + nx * (gy + ny * gz)]) { near += cos * (1 - t / CAVITY_REACH * 0.5); break; }
+      }
+    }
+    // flat and convex spots still clip a few voxels of their own surface: up to ~0.15 is open ground
+    cavity[i] = THREE.MathUtils.smoothstep(total > 0 ? near / total : 0, 0.15, 0.7);
+  }
+  return cavity;
+}
+
 export function finishSurface(geo: THREE.BufferGeometry, seed = 7): Surface {
   geo.computeVertexNormals();
   geo.computeBoundingSphere();
@@ -147,11 +222,48 @@ export function finishSurface(geo: THREE.BufferGeometry, seed = 7): Surface {
 
   const dead = new Float32Array(n);
   const pillow = new Float32Array(n);
+  const dome = new Float32Array(n);
   for (let i = 0; i < n; i++) {
     p.fromBufferAttribute(posAttr, i);
     dead[i] = deadAt(p.x, p.y, p.z);
     pillow[i] = pillowAt(p.x, p.y, p.z);
+    dome[i] = domeAt(p.x, p.y, p.z);
+  }
+  geo.setAttribute('dome', new THREE.BufferAttribute(dome, 1));
+
+  // a smoothed normal field for the moss to grow along. The rock keeps its crisp facets, but shells and fronds
+  // extrude along normals that turn gradually across an edge, so the layers never fan apart into streaks.
+  let mn = new Float32Array((norAttr.array as Float32Array).subarray(0, n * 3));
+  let next = new Float32Array(n * 3);
+  for (let it = 0; it < 10; it++) {
+    for (let i = 0; i < n; i++) {
+      let x = mn[i * 3], y = mn[i * 3 + 1], z = mn[i * 3 + 2];
+      for (const j of adjacency[i]) { x += mn[j * 3]; y += mn[j * 3 + 1]; z += mn[j * 3 + 2]; }
+      const l = Math.hypot(x, y, z) || 1;
+      next[i * 3] = x / l; next[i * 3 + 1] = y / l; next[i * 3 + 2] = z / l;
+    }
+    [mn, next] = [next, mn];
+  }
+  geo.setAttribute('mossNormal', new THREE.BufferAttribute(mn, 3));
+
+  // cavity: holes and inner corners, as baked ambient occlusion. The vertices go into a voxel grid, then each
+  // vertex marches a dozen rays over its hemisphere and counts how many hit the surface again within a reach
+  // of a few moss thicknesses. World units on purpose: what matters is whether the moss would fill the hollow,
+  // not how dense the mesh is. One pass at build time, free at runtime.
+  const cavity = bakeCavity(posAttr, mn, geo.boundingBox!);
+  geo.setAttribute('cavity', new THREE.BufferAttribute(cavity, 1));
+
+  const area = new Float32Array(n);
+  {
+    const a = new THREE.Vector3(), b = new THREE.Vector3(), c = new THREE.Vector3();
+    for (let t = 0; t < index.length; t += 3) {
+      a.fromBufferAttribute(posAttr, index[t]);
+      b.fromBufferAttribute(posAttr, index[t + 1]);
+      c.fromBufferAttribute(posAttr, index[t + 2]);
+      const tri = b.sub(a).cross(c.sub(a)).length() / 6; // a third of the triangle's area, per corner
+      area[index[t]] += tri; area[index[t + 1]] += tri; area[index[t + 2]] += tri;
+    }
   }
 
-  return { geometry: geo, adjacency, fertility, dead, pillow };
+  return { geometry: geo, adjacency, fertility, dead, pillow, area, dome };
 }

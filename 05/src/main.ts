@@ -1,18 +1,24 @@
 // 05 / Moss — paint moss on a big M. Shell-textured undercoat plus instanced fronds.
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { type Surface } from './rock';
+import { buildRock, type Surface } from './rock';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { buildWord } from './objects';
 import { FontLoader, type Font } from 'three/addons/loaders/FontLoader.js';
 import { buildFronds, type Fronds } from './fronds';
 import { fbm3 } from './noise';
 import { shellVertex, shellFragment, groundVertex, groundFragment } from './shaders';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { TexturePass } from 'three/addons/postprocessing/TexturePass.js';
+import { GTAOPass } from 'three/addons/postprocessing/GTAOPass.js';
+import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { renderSwatches, renderEraser } from './swatches';
 import { setupCarousel, type Carousel } from './carousel';
+import { renderGlyphThumbs } from './glyphthumbs';
 
 const coarse = matchMedia('(pointer: coarse)').matches;
 const SHELLS = coarse ? 10 : 16;
-const SPECIES = 4;
+const SPECIES = 5; // feather, star, lichen, cushion, coral
 const BG = new THREE.Color(0xe6e6e3);
 
 const canvas = document.querySelector<HTMLCanvasElement>('#c')!;
@@ -21,17 +27,56 @@ renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 renderer.setClearColor(BG);
 
 const scene = new THREE.Scene();
+// a studio environment for the metal rock's reflections; the moss has its own shading
+const pmrem = new THREE.PMREMGenerator(renderer);
+scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+pmrem.dispose();
+const key = new THREE.DirectionalLight(0xffffff, 0.9);
+key.position.set(1.2, 2.0, 1.0).multiplyScalar(5);
+scene.add(key);
 const camera = new THREE.PerspectiveCamera(38, 1, 0.1, 50);
 camera.position.set(3.6, 1.1, 6.6);
+
+// the object sits on a turntable that turns around the vertical axis; only yaw, so up stays up for the moss
+// an outer group tilts the object towards or away from the camera on a vertical drag, up to ~30 degrees,
+// and stays tilted on release so the underside can be painted. Both pivot on the object's centre.
+const tiltGroup = new THREE.Group();
+const turntable = new THREE.Group();
+tiltGroup.add(turntable);
+scene.add(tiltGroup);
+let tilt = 0; // rad, around the camera's horizontal axis
+let tiltRaw = 0; // where the drag would put it before the soft limit
+let tiltVel = 0;
+const TILT_MAX = THREE.MathUtils.degToRad(30);
+let turnLastY = 0;
+let yaw = 0;
+let yawVel = 0; // rad/s, coasts and slows down after a flick
+let turning = false;
+let turnLastX = 0;
+let turnLastT = 0;
+const TURN_SPEED = 0.008; // rad per pixel
 
 const controls = new OrbitControls(camera, canvas);
 controls.target.set(0, 0.45, 0);
 controls.enableDamping = true;
-controls.enableZoom = false; // orbit only, the framing is the framing
+controls.enableZoom = coarse; // desktop: orbit only. Touch: pinch to zoom in a bit (limits set in frameWord)
 controls.enablePan = false;
+// the camera never orbits: a drag turns the object itself on a turntable (see below). The controls only
+// keep the touch pinch zoom; two fingers also turn the turntable.
+controls.enableRotate = false;
+controls.touches = { ONE: null as unknown as THREE.TOUCH, TWO: THREE.TOUCH.DOLLY_PAN };
+const touchIds = new Set<number>();
+const touchHint = document.querySelector<HTMLElement>('.touch-hint')!;
+// the hint fades once the first two-finger turn is done
+let touchTurned = false;
 controls.maxPolarAngle = Math.PI * 0.55;
 
-const lightDir = new THREE.Vector3(1.2, 2.0, 1.0).normalize();
+// the key light: front right, above. The camera never moves and the object turns under it, so every side
+// is lit the same way as it comes round.
+const LIGHT_BASE = new THREE.Vector3(1.2, 2.0, 1.0).normalize();
+const lightDir = LIGHT_BASE.clone();
+let shadowYaw = NaN; // turntable angle the shadow map was last rendered for
+let shadowTilt = NaN;
 const shellMat = new THREE.ShaderMaterial({
   vertexShader: shellVertex,
   fragmentShader: shellFragment,
@@ -41,7 +86,14 @@ const shellMat = new THREE.ShaderMaterial({
     uBulge: { value: 0.035 },
     uTime: { value: 0 },
     uLightDir: { value: lightDir },
+    uRimDir: { value: new THREE.Vector3(0, 1, 0) },
+    uRim: { value: 1 },
+    uHemi: { value: 1 },
+    uTone: { value: 3 }, // Neutral by default
+    uExposure: { value: 1.15 },
+    toneMappingExposure: { value: 1 },
     uHideRock: { value: 0 },
+    uScale: { value: 1 },
     uShadowMap: { value: null },
     uShadowMatrix: { value: new THREE.Matrix4() },
     uShadowOn: { value: 0 },
@@ -68,6 +120,9 @@ function renderShadow() {
   lightCam.updateMatrixWorld();
   shadowMatrix.multiplyMatrices(lightCam.projectionMatrix, lightCam.matrixWorldInverse);
 
+  // unbind the shadow map while rendering into it, or the GPU complains about a feedback loop
+  const mats = [shellMat, W.fronds.mesh.material as THREE.ShaderMaterial];
+  for (const mat of mats) { mat.uniforms.uShadowOn.value = 0; mat.uniforms.uShadowMap.value = null; }
   ground.visible = false;
   renderer.setRenderTarget(shadowRT);
   renderer.clear();
@@ -75,7 +130,7 @@ function renderShadow() {
   renderer.setRenderTarget(null);
   ground.visible = true;
 
-  for (const mat of [shellMat, W.fronds.mesh.material as THREE.ShaderMaterial]) {
+  for (const mat of mats) {
     mat.uniforms.uShadowMap.value = shadowRT.depthTexture;
     mat.uniforms.uShadowMatrix.value.copy(shadowMatrix);
     mat.uniforms.uShadowOn.value = 1;
@@ -85,11 +140,54 @@ function renderShadow() {
 // ground with a fake contact shadow
 const ground = new THREE.Mesh(
   new THREE.PlaneGeometry(30, 30),
-  new THREE.ShaderMaterial({ vertexShader: groundVertex, fragmentShader: groundFragment, uniforms: { uBg: { value: BG } } }),
+  new THREE.ShaderMaterial({
+    vertexShader: groundVertex,
+    fragmentShader: groundFragment,
+    uniforms: { uBg: { value: BG } },
+  }),
 );
 ground.rotation.x = -Math.PI / 2;
-ground.position.y = -0.72;
+ground.position.y = -0.72; // moved under each object in frameWord
 scene.add(ground);
+
+const METAL = false; // true: brushed black metal body on the rock; false: plain white like the letters
+
+// ---- the metal: physically based, brushed. Roughness varies with a small noise texture so the
+// reflections break up instead of reading like chrome, plus a thin clearcoat for the sharp highlight.
+function noiseTexture(size: number, scale: number, lo: number, hi: number) {
+  const c = document.createElement('canvas');
+  c.width = c.height = size;
+  const ctx = c.getContext('2d')!;
+  const img = ctx.createImageData(size, size);
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const v = fbm3(x * scale, y * scale * 0.25, 0.5, 4, 3) * 0.5 + 0.5; // stretched: a brushed grain
+      const g = Math.round(255 * (lo + (hi - lo) * v));
+      const i = (y * size + x) * 4;
+      img.data[i] = img.data[i + 1] = img.data[i + 2] = g;
+      img.data[i + 3] = 255;
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+  const tex = new THREE.CanvasTexture(c);
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  tex.repeat.set(3, 3);
+  return tex;
+}
+let roughnessTex: THREE.Texture | null = null;
+function metalMaterial() {
+  roughnessTex ??= noiseTexture(256, 0.12, 0.2, 0.55);
+  return new THREE.MeshPhysicalMaterial({
+    color: 0x1c1c1e,
+    metalness: 1,
+    roughness: 1,
+    roughnessMap: roughnessTex,
+    envMapIntensity: 1.0,
+    clearcoat: 0.5,
+    clearcoatRoughness: 0.18,
+    polygonOffset: true, polygonOffsetFactor: 2, polygonOffsetUnits: 4,
+  });
+}
 
 // ---- the thing being painted, and its moss state. Swappable.
 interface World {
@@ -105,16 +203,22 @@ interface World {
   puffTarget: Float32Array;
   puffAttr: THREE.BufferAttribute;
   pillow: Float32Array; // live copy of the surface's pillow field, rearranged by the brush
+  settle: Float32Array; // seconds left of species blending after a brush touch
   pillowAttr: THREE.BufferAttribute;
   mossAttr: THREE.BufferAttribute;
-  speciesAttr: THREE.BufferAttribute;
+  speciesAttr: THREE.InterleavedBuffer;
   shells: THREE.InstancedMesh;
   fronds: Fronds;
   picker: THREE.Mesh;
+  kind: 'word' | 'rock';
+  reach: Float32Array; // area of each vertex that counts towards the moss meter (0 where you cannot paint)
+  reachTotal: number;
+  metal: THREE.Mesh | null; // the silver rock body, drawn where there is no moss
 }
 
-function createWorld(text: string): World {
-  const surface = buildWord(text, font, coarse ? 1 : 2);
+function createWorld(text: string, kind: 'word' | 'rock' = 'word'): World {
+  // rock: mostly midpoint passes and a single Loop pass, so the facets keep some sharp edges
+  const surface = kind === 'rock' ? buildRock(7, coarse ? 3 : 4, 1) : buildWord(text, font, coarse ? 1 : 2);
   const geo = surface.geometry;
   const n = geo.attributes.position.count;
   const moss = new Float32Array(n);
@@ -122,7 +226,8 @@ function createWorld(text: string): World {
   const species = new Float32Array(n * SPECIES);
   const mossAttr = new THREE.BufferAttribute(moss, 1);
   mossAttr.setUsage(THREE.DynamicDrawUsage);
-  const speciesAttr = new THREE.BufferAttribute(species, SPECIES);
+  // five weights per vertex, read by the shells as a vec4 plus a float off one interleaved buffer
+  const speciesAttr = new THREE.InterleavedBuffer(species, SPECIES);
   speciesAttr.setUsage(THREE.DynamicDrawUsage);
   const puff = new Float32Array(n);
   const puffVel = new Float32Array(n);
@@ -131,8 +236,10 @@ function createWorld(text: string): World {
   puffAttr.setUsage(THREE.DynamicDrawUsage);
   geo.setAttribute('puff', puffAttr);
   geo.setAttribute('moss', mossAttr);
-  geo.setAttribute('speciesW', speciesAttr);
+  geo.setAttribute('speciesW', new THREE.InterleavedBufferAttribute(speciesAttr, 4, 0));
+  geo.setAttribute('speciesW2', new THREE.InterleavedBufferAttribute(speciesAttr, 1, 4));
   geo.setAttribute('dead', new THREE.BufferAttribute(surface.dead, 1));
+  const settle = new Float32Array(n);
   const pillow = Float32Array.from(surface.pillow);
   const pillowAttr = new THREE.BufferAttribute(pillow, 1);
   pillowAttr.setUsage(THREE.DynamicDrawUsage);
@@ -141,19 +248,66 @@ function createWorld(text: string): World {
   const shells = new THREE.InstancedMesh(geo, shellMat, SHELLS);
   shells.frustumCulled = false;
   const fronds = buildFronds(geo, surface.fertility, coarse ? 40000 : 140000);
+  // letters: grass only in the straw-rich patches, not along every top edge
+  if (kind === 'word') (fronds.mesh.material as THREE.ShaderMaterial).uniforms.uStrawBase.value = 0;
   const picker = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ visible: false }));
-  scene.add(shells, fronds.mesh, picker);
+  // the turntable's axis runs through the object's centre: the group sits there, the meshes are offset back
+  const tb = geo.boundingBox!;
+  const cx = (tb.min.x + tb.max.x) / 2, cz = (tb.min.z + tb.max.z) / 2;
+  const cy = (tb.min.y + tb.max.y) / 2;
+  tiltGroup.position.set(cx, cy, cz);
+  for (const m of [shells, fronds.mesh, picker]) m.position.set(-cx, -cy, -cz);
+  yaw = 0;
+  yawVel = 0;
+  tilt = tiltRaw = tiltVel = 0;
+  turntable.add(shells, fronds.mesh, picker);
+  let metal: THREE.Mesh | null = null;
+  if (kind === 'rock' && METAL) {
+    // the hull has no uvs; a planar projection is plenty for a noise roughness map
+    if (!geo.attributes.uv) {
+      const pos = geo.attributes.position as THREE.BufferAttribute;
+      const uv = new Float32Array(n * 2);
+      for (let i = 0; i < n; i++) { uv[i * 2] = pos.getX(i) + pos.getZ(i) * 0.5; uv[i * 2 + 1] = pos.getY(i) + pos.getZ(i) * 0.3; }
+      geo.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+    }
+    metal = new THREE.Mesh(geo, metalMaterial());
+    metal.position.set(-cx, -cy, -cz);
+    turntable.add(metal);
+  }
+  // with a metal body the shell base only draws under moss
+  shellMat.uniforms.uHideRock.value = metal ? 1 : 0;
 
   return {
     surface, n,
     positions: geo.attributes.position as THREE.BufferAttribute,
     normals: geo.attributes.normal as THREE.BufferAttribute,
-    moss, cap, species, puff, puffVel, puffTarget, puffAttr, pillow, pillowAttr, mossAttr, speciesAttr, shells, fronds, picker,
+    moss, cap, species, puff, puffVel, puffTarget, puffAttr, pillow, pillowAttr, settle, mossAttr, speciesAttr, shells, fronds, picker, kind, metal,
+    ...reachOf(surface, geo.attributes.normal as THREE.BufferAttribute),
   };
 }
 
+// the moss meter counts what you can actually cover: fertile surface facing sideways or up, nothing facing down
+function reachOf(surface: Surface, normals: THREE.BufferAttribute) {
+  const n = normals.count;
+  const reach = new Float32Array(n);
+  let reachTotal = 0;
+  for (let i = 0; i < n; i++) {
+    if (surface.fertility[i] <= 0.05 || normals.getY(i) < -0.15) continue;
+    reach[i] = surface.area[i];
+    reachTotal += reach[i];
+  }
+  return { reach, reachTotal };
+}
+function coverage() {
+  let covered = 0;
+  // only mature, visible moss counts: the thin young rim of a stroke should not fill the meter
+  for (let i = 0; i < W.n; i++) if (W.reach[i] > 0 && W.moss[i] > 0.55) covered += W.reach[i];
+  return W.reachTotal > 0 ? covered / W.reachTotal : 0;
+}
+
 function destroyWorld(w: World) {
-  scene.remove(w.shells, w.fronds.mesh, w.picker);
+  turntable.remove(w.shells, w.fronds.mesh, w.picker);
+  if (w.metal) { turntable.remove(w.metal); (w.metal.material as THREE.Material).dispose(); }
   w.surface.geometry.dispose();
   w.fronds.mesh.geometry.dispose();
   (w.fronds.mesh.material as THREE.Material).dispose();
@@ -162,20 +316,21 @@ function destroyWorld(w: World) {
   (w.picker.material as THREE.Material).dispose();
 }
 
-// the font is tiny and local, load it before anything else
-const font: Font = await new FontLoader().loadAsync(`${import.meta.env.BASE_URL}fonts/helvetiker_bold.typeface.json`);
+// the font is tiny and local, load it before anything else. Regular, not bold: the rounding and the moss
+// thicken every stroke, and bold counters (A, e, 4) close up
+const font: Font = await new FontLoader().loadAsync(`${import.meta.env.BASE_URL}fonts/helvetiker_regular.typeface.json`);
 // Helvetica's M runs its middle vertex all the way to the baseline, which turns into a heavy V once
 // the letter is rounded. Lift the flat bottom of the V and the notch above it by the same amount.
 {
   const lift = 300;
   const M = (font.data as { glyphs: Record<string, { o: string }> }).glyphs['M'];
   M.o = M.o
-    .replace('l 618 0', `l 618 ${lift}`)
-    .replace('l 402 0', `l 402 ${lift}`)
-    .replace('l 510 241', `l 510 ${241 + lift}`);
+    .replace('l 537 0', `l 537 ${lift}`)
+    .replace('l 405 0', `l 405 ${lift}`)
+    .replace('l 472 160', `l 472 ${160 + lift}`);
 }
 let pillowDirty = true;
-let W = createWorld('M');
+let W = createWorld('M', 'rock');
 let dirty = true;
 
 // ---- species weights
@@ -204,7 +359,7 @@ function addWeights(i: number, wgt: Float32Array, amount: number) {
 }
 
 // ---- auto brush: picks species by normal, speed, time and a bit of luck
-let currentSpecies = -1; // -1 = auto
+let currentSpecies = 0; // feather, the leftmost swatch, by default; -1 = auto mix
 const strokeBias = new Float32Array(SPECIES); // rolled per stroke
 const strokeShift = new THREE.Vector3(); // noise offset for rearranging mounds, rolled per stroke
 let speed = 0; // smoothed pointer speed, px per second
@@ -228,6 +383,9 @@ function autoWeights(i: number, out: Float32Array) {
   out[2] = (0.3 + 0.7 * strokeBias[2]) * lichenField * (0.4 + 0.6 * (1 - slow)) * THREE.MathUtils.smoothstep(up, -0.2, 0.5);
   // cushion: tops, slow lingering strokes, and the time drift
   out[3] = (0.4 + 0.6 * strokeBias[3]) * THREE.MathUtils.smoothstep(up, 0.1, 0.8) * (0.3 + 0.7 * slow) * (0.5 + 0.5 * drift);
+  // coral: round clumps in its own field, sides and tops
+  const coralField = THREE.MathUtils.smoothstep(fbm3(tmp.x * 2.2, tmp.y * 2.2, tmp.z * 2.2, 3, 91), 0.0, 0.3);
+  out[4] = (0.3 + 0.7 * strokeBias[4]) * coralField * THREE.MathUtils.smoothstep(up, -0.4, 0.4);
 }
 
 // ---- painting
@@ -239,15 +397,18 @@ let brushRadius = 0.24; // medium by default
 const BRUSH_MIN = 0.06;
 const BRUSH_MAX = 0.5;
 
-function pick(e: PointerEvent) {
+function pick(e: { clientX: number; clientY: number }) {
   pointer.set((e.clientX / innerWidth) * 2 - 1, -(e.clientY / innerHeight) * 2 + 1);
   raycaster.setFromCamera(pointer, camera);
   const hit = raycaster.intersectObject(W.picker, false)[0];
   return hit?.point ?? null;
 }
 
-function brush(point: THREE.Vector3, scrape: boolean) {
+const brushLocal = new THREE.Vector3();
+function brush(worldPoint: THREE.Vector3, scrape: boolean) {
   const { moss, cap, positions, surface } = W;
+  // the hit is in world space, the vertices are in the mesh's own space on the turntable
+  const point = W.picker.worldToLocal(brushLocal.copy(worldPoint));
   const r = scrape ? brushRadius * 1.35 : brushRadius;
   const r2 = r * r;
   for (let i = 0; i < W.n; i++) {
@@ -265,9 +426,9 @@ function brush(point: THREE.Vector3, scrape: boolean) {
       // (a per-stroke noise offset shifts the pillow field) and the surface gives a small bounce
       if (moss[i] > 0.2) {
         const shift = fbm3(tmp.x * 9 + strokeShift.x, tmp.y * 9 + strokeShift.y, tmp.z * 9 + strokeShift.z, 2, 5);
-        W.pillow[i] = THREE.MathUtils.clamp(W.pillow[i] + shift * falloff * 0.35, 0, 1);
+        W.pillow[i] = THREE.MathUtils.clamp(W.pillow[i] + shift * falloff * 0.12, 0, 1);
         W.puffTarget[i] = Math.min(0.3, W.puffTarget[i] + falloff * 0.02);
-        W.puffVel[i] += falloff * 0.5;
+        W.puffVel[i] = Math.min(W.puffVel[i] + falloff * 0.5, 1.5);
         pillowDirty = true;
       }
       // slow strokes press in thick moss, fast ones leave it thin
@@ -281,10 +442,85 @@ function brush(point: THREE.Vector3, scrape: boolean) {
       } else {
         addWeight(i, currentSpecies, falloff * 0.5);
       }
+      W.settle[i] = 2.0; // blend with the neighbours for a couple of seconds, then hold still
     }
   }
   dirty = true;
 }
+
+// moss over the whole object at once with the current brush, handy for comparing looks
+function fillAll() {
+  const { moss, cap, surface } = W;
+  for (let c = 0; c < SPECIES; c++) strokeBias[c] = 0.6 + 0.4 * Math.random();
+  for (let i = 0; i < W.n; i++) {
+    if (surface.fertility[i] <= 0.05) continue;
+    cap[i] = 1;
+    moss[i] = Math.max(moss[i], 0.75);
+    if (currentSpecies < 0) { autoWeights(i, autoW); addWeights(i, autoW, 1); } else addWeight(i, currentSpecies, 1);
+    W.settle[i] = 2.0;
+  }
+  dirty = true;
+}
+
+// ---- debug panel: lighting toggles and a fill button, on the dev server or with ?debug
+{
+  const panel = document.querySelector<HTMLDetailsElement>('.debug')!;
+  panel.hidden = !(import.meta.env.DEV || new URLSearchParams(location.search).has('debug'));
+  panel.querySelectorAll<HTMLInputElement>('input[data-uniform]').forEach((box) => {
+    box.addEventListener('change', () => { shellMat.uniforms[box.dataset.uniform!].value = box.checked ? 1 : 0; });
+  });
+  panel.querySelector('[data-action="fill"]')!.addEventListener('click', fillAll);
+  // tone mapping: each mode gets its own exposure, AgX and ACES darken differently
+  const TONE_EXPOSURE = [1, 1.5, 1.1, 1.15];
+  const toneSel = panel.querySelector<HTMLSelectElement>('select[data-tone]')!;
+  toneSel.addEventListener('change', () => {
+    const k = Number(toneSel.value);
+    shellMat.uniforms.uTone.value = k;
+    shellMat.uniforms.uExposure.value = TONE_EXPOSURE[k];
+  });
+  const ssaoBox = panel.querySelector<HTMLInputElement>('input[data-toggle="ssao"]')!;
+  ssaoBox.addEventListener('change', () => { setSsao(ssaoBox.checked); });
+}
+
+// ---- cursor (mouse only): a cross over the object where a drag paints, an open hand beside it where
+// a drag rotates, a closed hand while rotating, a resize arrow with cmd/ctrl held.
+const hover = { clientX: 0, clientY: 0, pending: false, over: false, mod: false };
+let orbiting = false;
+let spaceHeld = false; // see the space key handlers below
+function setCursor() {
+  canvas.style.cursor =
+    orbiting ? 'grabbing' :
+    sizing || hover.mod ? 'ew-resize' :
+    hover.over && !spaceHeld ? 'crosshair' : 'grab';
+}
+function updateHover() {
+  if (!hover.pending || painting || sizing || orbiting) return;
+  hover.pending = false;
+  hover.over = pick(hover) !== null;
+  setCursor();
+}
+canvas.addEventListener('pointermove', (e) => {
+  if (e.pointerType !== 'mouse') return;
+  hover.clientX = e.clientX; hover.clientY = e.clientY;
+  hover.mod = e.metaKey || e.ctrlKey;
+  hover.pending = true;
+});
+canvas.addEventListener('pointerleave', () => { hover.pending = false; });
+addEventListener('keydown', (e) => { if (e.key === 'Meta' || e.key === 'Control') { hover.mod = true; setCursor(); } });
+addEventListener('keyup', (e) => { if (e.key === 'Meta' || e.key === 'Control') { hover.mod = false; setCursor(); } });
+// space held: a drag turns and tilts the object wherever it starts, even on top of it (like a hand tool)
+const typing = (t: EventTarget | null) => t instanceof HTMLInputElement || t instanceof HTMLSelectElement || t instanceof HTMLTextAreaElement;
+addEventListener('keydown', (e) => {
+  if (e.code !== 'Space' || typing(e.target)) return;
+  e.preventDefault(); // no page scroll, no "click" on a focused swatch
+  if (!spaceHeld) { spaceHeld = true; setCursor(); }
+});
+addEventListener('keyup', (e) => {
+  if (e.code !== 'Space') return;
+  spaceHeld = false;
+  setCursor();
+});
+addEventListener('blur', () => { spaceHeld = false; });
 
 // ---- brush size: cmd/ctrl + drag sideways, with a ring showing the size
 const sizeRing = document.querySelector<HTMLElement>('.size-ring')!;
@@ -293,6 +529,7 @@ let sizeStartX = 0;
 let sizeStartY = 0;
 let sizeStartR = 0;
 let sizeAnchor: THREE.Vector3 | null = null;
+setCursor();
 function showRing(point: THREE.Vector3, r: number, x: number, y: number) {
   const d = camera.position.distanceTo(point);
   const px = (r / (d * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)))) * (innerHeight / 2);
@@ -302,24 +539,89 @@ function showRing(point: THREE.Vector3, r: number, x: number, y: number) {
   sizeRing.style.top = `${y}px`;
 }
 
+// ---- turntable drag: horizontal movement turns the object, a flick coasts to a stop
+const touchXY = new Map<number, [number, number]>();
+function mid(): [number, number] {
+  let x = 0, y = 0;
+  for (const v of touchXY.values()) { x += v[0]; y += v[1]; }
+  const n = Math.max(1, touchXY.size);
+  return [x / n, y / n];
+}
+function startTurn(x: number, y: number, t: number) {
+  turning = true;
+  turnLastX = x;
+  turnLastY = y;
+  turnLastT = t;
+  yawVel = 0;
+  // pick up where it is: undo the soft limit so the next drag continues without a jump
+  tiltRaw = TILT_MAX * Math.atanh(THREE.MathUtils.clamp(tilt / TILT_MAX, -0.999, 0.999));
+  tiltVel = 0;
+}
+function moveTurn(x: number, y: number, t: number) {
+  if (!turning) startTurn(x, y, t);
+  const d = (x - turnLastX) * TURN_SPEED;
+  const dt = Math.max(1, t - turnLastT) / 1000;
+  yaw += d;
+  yawVel = THREE.MathUtils.lerp(yawVel, d / dt, 0.5);
+  // vertical: drag up and the front comes up. A soft limit, so it gets heavier towards 30 degrees.
+  tiltRaw += (y - turnLastY) * TURN_SPEED;
+  const prev = tilt;
+  tilt = TILT_MAX * Math.tanh(tiltRaw / TILT_MAX);
+  tiltVel = THREE.MathUtils.lerp(tiltVel, (tilt - prev) / dt, 0.5);
+  turnLastX = x;
+  turnLastY = y;
+  turnLastT = t;
+}
+
 canvas.addEventListener('pointerdown', (e) => {
+  if (e.pointerType === 'touch') {
+    touchIds.add(e.pointerId);
+    touchXY.set(e.pointerId, [e.clientX, e.clientY]);
+    if (touchIds.size >= 2) {
+      // a second finger: stop painting, the two fingers turn the turntable (and pinch zooms)
+      painting = false;
+      sizing = false;
+      sizeRing.style.display = 'none';
+      startTurn(...mid(), e.timeStamp);
+      return;
+    }
+  }
+  if (spaceHeld && e.pointerType === 'mouse') {
+    orbiting = true;
+    startTurn(e.clientX, e.clientY, e.timeStamp);
+    setCursor();
+    try { canvas.setPointerCapture(e.pointerId); } catch { /* synthetic events */ }
+    return;
+  }
   const p = pick(e);
-  if (!p) return; // off the object: let OrbitControls have it
   if (e.metaKey || e.ctrlKey) {
+    // brush size works anywhere; off the object the ring is sized at the orbit target's depth
     sizing = true;
     sizeStartX = e.clientX;
     sizeStartY = e.clientY;
     sizeStartR = brushRadius;
-    sizeAnchor = p.clone();
+    sizeAnchor = p ? p.clone() : controls.target.clone();
     controls.enabled = false;
-    showRing(p, brushRadius, e.clientX, e.clientY);
+    showRing(sizeAnchor, brushRadius, e.clientX, e.clientY);
+    setCursor();
     try { canvas.setPointerCapture(e.pointerId); } catch { /* synthetic events */ }
+    return;
+  }
+  if (!p) {
+    // off the object: turn the turntable
+    if (e.pointerType === 'mouse') {
+      orbiting = true;
+      startTurn(e.clientX, e.clientY, e.timeStamp);
+      setCursor();
+      try { canvas.setPointerCapture(e.pointerId); } catch { /* synthetic events */ }
+    }
     return;
   }
   painting = true;
   scraping = scrapeTool || e.shiftKey || e.button === 2;
-  controls.enabled = false;
-  for (let c = 0; c < SPECIES; c++) strokeBias[c] = Math.random();
+  // mouse: keep the controls out of a paint drag. Touch: leave them on so a second finger can rotate.
+  if (e.pointerType !== 'touch') controls.enabled = false;
+  for (let c = 0; c < SPECIES; c++) strokeBias[c] = 0.6 + 0.4 * Math.random(); // mild, so strokes do not stripe
   strokeShift.set(Math.random() * 100, Math.random() * 100, Math.random() * 100);
   speed = 0;
   lastX = e.clientX; lastY = e.clientY; lastT = performance.now();
@@ -327,6 +629,9 @@ canvas.addEventListener('pointerdown', (e) => {
   try { canvas.setPointerCapture(e.pointerId); } catch { /* synthetic events */ }
 });
 canvas.addEventListener('pointermove', (e) => {
+  if (e.pointerType === 'touch' && touchXY.has(e.pointerId)) touchXY.set(e.pointerId, [e.clientX, e.clientY]);
+  if (touchIds.size >= 2) { moveTurn(...mid(), e.timeStamp); touchTurned = true; return; }
+  if (orbiting) { moveTurn(e.clientX, e.clientY, e.timeStamp); return; }
   if (sizing && sizeAnchor) {
     const k = Math.exp((e.clientX - sizeStartX) / 160); // exponential: same feel small and big
     brushRadius = THREE.MathUtils.clamp(sizeStartR * k, BRUSH_MIN, BRUSH_MAX);
@@ -348,8 +653,19 @@ const stop = () => {
   sizeRing.style.display = 'none';
   controls.enabled = true;
 };
-canvas.addEventListener('pointerup', stop);
-canvas.addEventListener('pointercancel', stop);
+const release = (e: PointerEvent) => {
+  if (touchIds.size >= 2 && touchTurned) touchHint.classList.add('done');
+  touchIds.delete(e.pointerId);
+  touchXY.delete(e.pointerId);
+  turning = false;
+  if (painting) requestThumb(45); // after the stroke has grown in a bit
+  stop();
+  orbiting = false;
+  hover.pending = true;
+  setCursor();
+};
+canvas.addEventListener('pointerup', release);
+canvas.addEventListener('pointercancel', release);
 canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 
 // ---- brush swatches
@@ -374,25 +690,30 @@ scrapeBtn.addEventListener('click', () => (scrapeTool ? setBrush(null, false) : 
 // phones: infinite swipe, centred item is the brush. Desktop: a plain row.
 const useCarousel = coarse || innerWidth < 640;
 if (useCarousel) {
-  carousel = setupCarousel(swatchBar, swatches, 104, (i) => selectSwatch(swatches[i], true), 0);
+  carousel = setupCarousel(swatchBar, swatches, 104, (i) => selectSwatch(swatches[i], true), swatchIndex());
 } else {
   swatches.forEach((b) => b.addEventListener('click', () => selectSwatch(b)));
 }
 addEventListener('keydown', (e) => {
-  if (e.key === '0' || e.key === 'a') setBrush(-1);
+  // keys follow the swatch order: feather, star, cushion, lichen, coral, mix
   if (e.key === '1') setBrush(0);
   if (e.key === '2') setBrush(1);
-  if (e.key === '3') setBrush(2);
-  if (e.key === '4') setBrush(3);
+  if (e.key === '3') setBrush(3);
+  if (e.key === '4') setBrush(2);
+  if (e.key === '5') setBrush(4);
+  if (e.key === '6' || e.key === 'a') setBrush(-1);
   if (e.key === 'x') setBrush(null, !scrapeTool);
-  if (e.key === 'h') shellMat.uniforms.uHideRock.value = shellMat.uniforms.uHideRock.value ? 0 : 1;
+  if (e.key === 'h') {
+    const hidden = shellMat.uniforms.uHideRock.value === 1 && !W.metal ? 0 : 1;
+    shellMat.uniforms.uHideRock.value = hidden;
+    if (W.metal) W.metal.visible = hidden === 1 && W.metal.visible ? false : true;
+  }
 });
-setBrush(-1);
-renderSwatches(renderer, SHELLS, lightDir);
+setBrush(0);
+renderSwatches(renderer, SHELLS, LIGHT_BASE.clone());
 renderEraser(renderer);
 
-// ---- the word
-const wordInput = document.querySelector<HTMLInputElement>('.word')!;
+// ---- framing
 function frameWord() {
   // fit the word's height into 70% of the viewport
   const bb = W.surface.geometry.boundingBox!;
@@ -400,47 +721,258 @@ function frameWord() {
   const height = bb.max.y - bb.min.y;
   const depth = bb.max.z - bb.min.z;
   const center = new THREE.Vector3((bb.min.x + bb.max.x) / 2, (bb.min.y + bb.max.y) / 2, (bb.min.z + bb.max.z) / 2);
+  // everything floats: the ground sits a gap below the object's lowest point, more for the rock so the moss
+  // around its belly never touches. The eye height below follows the ground.
+  ground.position.y = bb.min.y - (W.kind === 'rock' ? 0.4 : 0.25);
   const tanHalf = Math.tan(THREE.MathUtils.degToRad(camera.fov / 2));
   const aspect = innerWidth / innerHeight;
-  // height only: letters always the same size on screen, a wide word just runs past the edges
+  // letters: height only, a wide word just runs past the edges.
+  // rock: height and width, so it fits a portrait phone too (90% of the width).
+  // The rock is seen from the side as well, so its width uses the larger of x and z.
   const dH = (height * 1.08) / (0.7 * 2 * tanHalf);
-  const dist = dH + depth; // the near face is half a depth closer than the centre
-  void aspect; void width;
-  camera.position.set(center.x + dist * 0.22, center.y + dist * 0.12, center.z + dist);
+  const span = W.kind === 'rock' ? Math.max(width, depth) : width;
+  const dW = span / (0.95 * 2 * tanHalf * aspect);
+  const dist = W.kind === 'rock' ? Math.max(dH + depth, dW + depth * 0.5) : dH + depth; // the near face is closer than the centre
+  // default view: from the front, the eye almost down on the ground, looking slightly up at the object
+  const eye = new THREE.Vector3(center.x + dist * 0.08, ground.position.y + 0.18, center.z + dist).sub(center).setLength(dist);
+  camera.position.copy(center).add(eye);
+  // touch zoom: in to about half the framed distance, never further out than the framing.
+  // The brush radius is in world units, so it keeps its size on the surface while zooming.
+  framedPos.copy(camera.position);
+  framedTarget.copy(center);
+  const framed = camera.position.distanceTo(center);
+  controls.minDistance = framed * 0.5;
+  controls.maxDistance = framed;
   controls.target.copy(center);
   // the contact shadow follows the word's footprint
   ground.scale.set(Math.max(1, width / 1.6), Math.max(1, depth / 1.2), 1);
   ground.position.x = center.x;
+  // the touch hint sits just under the object, on the screen point of its bottom front edge
+  camera.lookAt(center);
+  camera.updateMatrixWorld();
+  const under = new THREE.Vector3(center.x, bb.min.y, bb.max.z).project(camera);
+  touchHint.style.top = `${Math.round((1 - under.y) * 0.5 * innerHeight + 34)}px`; // below the contact shadow
 }
-let wordTimer = 0;
-function setWord(text: string) {
-  const clean = text.replace(/[^A-Za-z0-9 ]/g, '').toUpperCase().slice(0, 8) || 'M';
+function rebuild(text: string, kind: 'word' | 'rock') {
   destroyWorld(W);
-  W = createWorld(clean);
+  W = createWorld(text, kind);
+  applyScale();
   pillowDirty = true;
-  seedWord();
   frameWord();
   dirty = true;
   shadowDirty = true;
 }
-let shadowDirty = true;
-// rebuild as you type, debounced: a word takes a good fraction of a second to build
-wordInput.addEventListener('input', () => {
-  clearTimeout(wordTimer);
-  wordTimer = window.setTimeout(() => setWord(wordInput.value), 150);
+// ---- moss size slider: scales fronds, straws, fuzz and bulge together
+const BASE = { height: 0.012, bulge: 0.035, len: 0.032, star: 0.038, lichen: 0.07, width: 0.0042 };
+let mossScale = 1.75;
+function applyScale() {
+  shellMat.uniforms.uHeight.value = BASE.height * mossScale;
+  shellMat.uniforms.uBulge.value = BASE.bulge * mossScale;
+  shellMat.uniforms.uScale.value = mossScale;
+  const fu = (W.fronds.mesh.material as THREE.ShaderMaterial).uniforms;
+  fu.uLen.value = BASE.len * mossScale;
+  fu.uStarLen.value = BASE.star * mossScale;
+  fu.uLichenLen.value = BASE.lichen * mossScale;
+  fu.uWidth.value = BASE.width * mossScale;
+  fu.uBulge.value = BASE.bulge * mossScale;
+}
+const scaleInput = document.querySelector<HTMLInputElement>('.scale input')!;
+const scaleLabel = document.querySelector<HTMLElement>('.scale span')!;
+scaleInput.addEventListener('input', () => {
+  mossScale = Number(scaleInput.value) / 100;
+  scaleLabel.textContent = `moss ${scaleInput.value}%`;
+  applyScale();
 });
-wordInput.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Enter') wordInput.blur(); });
+scaleInput.addEventListener('keydown', (e) => e.stopPropagation());
+applyScale(); // start at the default size
+
+// ---- thumbnail of the current object, with its moss, from the framed view
+const framedPos = new THREE.Vector3();
+const framedTarget = new THREE.Vector3();
+const THUMB = 128;
+const thumbRT = new THREE.WebGLRenderTarget(THUMB, THUMB, { colorSpace: THREE.SRGBColorSpace, samples: 4 });
+const thumbCam = new THREE.PerspectiveCamera(camera.fov, 1, 0.1, 50);
+const thumbPixels = new Uint8Array(THUMB * THUMB * 4);
+const thumbCanvas = document.createElement('canvas');
+thumbCanvas.width = thumbCanvas.height = THUMB;
+const thumbCtx = thumbCanvas.getContext('2d')!;
+const thumbImg = thumbCtx.createImageData(THUMB, THUMB);
+function snapshot(): string {
+  // square frame: pull back a little so the widest side fits
+  thumbCam.position.copy(framedTarget).add(framedPos.clone().sub(framedTarget).multiplyScalar(0.8));
+  thumbCam.lookAt(framedTarget);
+  const prevClear = renderer.getClearAlpha();
+  ground.visible = false;
+  renderer.setClearAlpha(0);
+  renderer.setRenderTarget(thumbRT);
+  renderer.clear();
+  renderer.render(scene, thumbCam);
+  renderer.readRenderTargetPixels(thumbRT, 0, 0, THUMB, THUMB, thumbPixels);
+  renderer.setRenderTarget(null);
+  renderer.setClearAlpha(prevClear);
+  ground.visible = true;
+  const row = THUMB * 4;
+  for (let y = 0; y < THUMB; y++) thumbImg.data.set(thumbPixels.subarray((THUMB - 1 - y) * row, (THUMB - y) * row), y * row);
+  thumbCtx.putImageData(thumbImg, 0, 0);
+  return thumbCanvas.toDataURL('image/png');
+}
+let thumbDirty = 0; // frames to wait before the next snapshot, 0 = nothing pending
+function requestThumb(delayFrames = 2) { thumbDirty = Math.max(thumbDirty, delayFrames); }
+function updateThumb() {
+  const url = snapshot();
+  (letterBtn.querySelector('i') as HTMLElement).style.backgroundImage = `url(${url})`;
+  if (W.kind === 'rock') {
+    const rockItem = letterPop.querySelector<HTMLElement>('button.rock i');
+    if (rockItem) rockItem.style.backgroundImage = `url(${url})`;
+  }
+}
+
+// ---- letter picker: one glyph at a time, from the three.js typeface, or the rock
+const letterBtn = document.querySelector<HTMLButtonElement>('.letter-btn')!;
+const letterPop = document.querySelector<HTMLElement>('.letter-pop')!;
+const glyphs = (font.data as { glyphs: Record<string, unknown> }).glyphs;
+const CHARS = [...'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'].filter((c) => c in glyphs);
+function pickObject(choice: string) {
+  letterPop.querySelectorAll('button').forEach((b) => b.classList.toggle('active', b.dataset.choice === choice));
+  if (choice === 'rock') rebuild('rock', 'rock');
+  else rebuild(choice, 'word');
+  requestThumb(4); // let the moss settle a frame or two first
+}
+function setPop(open: boolean) {
+  letterPop.hidden = !open;
+  letterBtn.setAttribute('aria-expanded', String(open));
+}
+
+// ---- moss meter: a ring around the miniature fills as you cover the object; a full rock unlocks the alphabet
+const UNLOCK_AT = 0.8;
+const UNLOCK_KEY = 'codevember-05-alphabet';
+let unlocked = false;
+try { unlocked = localStorage.getItem(UNLOCK_KEY) === '1'; } catch { /* private mode: start locked */ }
+const ringFill = letterBtn.querySelector<SVGCircleElement>('.ring .fill')!;
+const RING_C = 2 * Math.PI * 30;
+ringFill.style.strokeDasharray = `${RING_C}`;
+// locked: the alphabet is hidden and the miniature is just the meter; unlocked: it opens the picker
+let glyphThumbsStarted = false;
+function setLocked() {
+  letterPop.querySelectorAll<HTMLButtonElement>('button:not(.rock)').forEach((b) => { b.hidden = !unlocked; b.disabled = !unlocked; });
+  letterBtn.classList.toggle('unlocked', unlocked);
+  letterBtn.setAttribute('aria-label', unlocked ? 'choose a letter' : 'moss meter');
+  if (!unlocked) setPop(false);
+  if (unlocked && !glyphThumbsStarted) {
+    glyphThumbsStarted = true;
+    // mossy miniatures of every glyph, one per frame; the green text stands in until each one lands
+    renderGlyphThumbs(renderer, font, CHARS, LIGHT_BASE.clone(), (c, url) => {
+      const b = letterPop.querySelector<HTMLButtonElement>(`button[data-choice="${c}"]`);
+      if (!b) return;
+      b.style.backgroundImage = `url(${url})`;
+      b.classList.add('thumb');
+    });
+  }
+}
+
+// ---- moss confetti: the palette's moss balls burst out of the miniature and tumble down
+function mossConfetti() {
+  const sprites = Array.from(document.querySelectorAll<HTMLElement>('.sw i'))
+    .map((el) => el.style.backgroundImage)
+    .filter(Boolean);
+  if (!sprites.length) return;
+  const r = letterBtn.getBoundingClientRect();
+  const ox = r.left + r.width / 2, oy = r.top + r.height / 2;
+  const layer = document.createElement('div');
+  layer.className = 'confetti';
+  document.body.appendChild(layer);
+  const bits = Array.from({ length: 56 }, () => {
+    const el = document.createElement('i');
+    const size = 10 + Math.random() * 22;
+    el.style.width = el.style.height = `${size}px`;
+    el.style.backgroundImage = sprites[Math.floor(Math.random() * sprites.length)];
+    layer.appendChild(el);
+    const a = Math.random() * Math.PI * 0.9 - 0.15; // mostly out to the right and down from the corner
+    const v = 260 + Math.random() * 520;
+    return { el, x: ox, y: oy, vx: Math.cos(a) * v, vy: Math.sin(a) * v - 320, rot: Math.random() * 360, vr: (Math.random() - 0.5) * 720 };
+  });
+  let last = performance.now();
+  const t0 = last;
+  const tick = (now: number) => {
+    const dt = Math.min(0.05, (now - last) / 1000);
+    last = now;
+    const age = (now - t0) / 1000;
+    for (const b of bits) {
+      b.vy += 900 * dt;
+      b.vx *= 1 - 0.6 * dt;
+      b.x += b.vx * dt; b.y += b.vy * dt; b.rot += b.vr * dt;
+      b.el.style.transform = `translate(${b.x}px, ${b.y}px) translate(-50%, -50%) rotate(${b.rot}deg)`;
+      b.el.style.opacity = String(Math.max(0, 1 - Math.max(0, age - 1.6) / 0.8));
+    }
+    if (age < 2.4) requestAnimationFrame(tick);
+    else layer.remove();
+  };
+  requestAnimationFrame(tick);
+}
+function updateMeter() {
+  const c = coverage();
+  ringFill.style.strokeDashoffset = `${RING_C * (1 - Math.min(1, c / UNLOCK_AT))}`;
+  letterBtn.classList.toggle('full', c >= UNLOCK_AT);
+  if (!unlocked && W.kind === 'rock' && c >= UNLOCK_AT) {
+    unlocked = true;
+    try { localStorage.setItem(UNLOCK_KEY, '1'); } catch { /* fine, it just will not be remembered */ }
+    setLocked();
+    mossConfetti();
+    letterBtn.classList.add('just-unlocked');
+    setTimeout(() => letterBtn.classList.remove('just-unlocked'), 2400);
+  }
+}
+{
+  const rockBtn = document.createElement('button');
+  rockBtn.className = 'rock active';
+  rockBtn.dataset.choice = 'rock';
+  rockBtn.setAttribute('aria-label', 'rock');
+  rockBtn.innerHTML = '<i></i>';
+  letterPop.appendChild(rockBtn);
+  for (const c of CHARS) {
+    const b = document.createElement('button');
+    b.dataset.choice = c;
+    b.textContent = c;
+    letterPop.appendChild(b);
+  }
+  setLocked();
+}
+letterBtn.addEventListener('click', (e) => { e.stopPropagation(); if (unlocked) setPop(letterPop.hidden); });
+letterPop.addEventListener('click', (e) => {
+  const b = (e.target as HTMLElement).closest('button') as HTMLButtonElement | null;
+  if (!b?.dataset.choice || b.disabled) return;
+  e.stopPropagation();
+  setPop(false);
+  pickObject(b.dataset.choice);
+});
+addEventListener('pointerdown', (e) => {
+  if (!letterPop.hidden && !letterPop.contains(e.target as Node) && e.target !== letterBtn) setPop(false);
+});
+addEventListener('keydown', (e) => { if (e.key === 'Escape') setPop(false); });
+
+// ---- object toggle: letters or the silver rock
+const objectButtons = Array.from(document.querySelectorAll<HTMLButtonElement>('.objects button'));
+objectButtons.forEach((b) =>
+  b.addEventListener('click', () => {
+    const kind = b.dataset.object as 'word' | 'rock';
+    objectButtons.forEach((o) => o.classList.toggle('active', o === b));
+    rebuild('M', kind);
+  }),
+);
+let shadowDirty = true;
 
 // ---- growth: painted moss ages up in place, it does not spread
 const GROW = 0.12; // age per second
 function grow(dt: number) {
   const { moss, cap, surface } = W;
+  let changed = false;
   for (let i = 0; i < W.n; i++) {
     const a = moss[i];
     if (a <= 0 || a >= cap[i]) continue;
     moss[i] = Math.min(cap[i], a + GROW * dt * (0.3 + 0.7 * surface.fertility[i]));
+    changed = true;
   }
-  dirty = true;
+  if (changed) dirty = true;
 }
 
 // the puff spring: stiff and critically damped, a firm push that settles without wobbling
@@ -449,15 +981,24 @@ const PUFF_DAMP = 40; // critically damped: a quick firm push, no wobble
 let puffActive = false;
 function springPuff(dt: number) {
   const { puff, puffVel, puffTarget } = W;
+  const puffSteps = Math.min(16, Math.max(1, Math.ceil(dt * 240)));
+  const puffH = dt / puffSteps;
   let moving = false;
   for (let i = 0; i < W.n; i++) {
     const v = puffVel[i];
     const x = puff[i];
     const t = puffTarget[i];
     if (v === 0 && x === t) continue;
-    const a = (t - x) * PUFF_K - v * PUFF_DAMP;
-    let nv = v + a * dt;
-    let nx = x + nv * dt;
+    // fixed sub-steps: explicit Euler with damping 40 goes unstable once dt reaches ~1/20 s,
+    // which a slow, battery-saving CPU easily hits. Small steps keep it stable at any frame rate.
+    let nv = v;
+    let nx = x;
+    for (let k = 0; k < puffSteps; k++) {
+      const a = (t - nx) * PUFF_K - nv * PUFF_DAMP;
+      nv += a * puffH;
+      nx += nv * puffH;
+    }
+    nx = Math.min(Math.max(nx, -0.2), 1.2); // belt and braces: never let a vertex run off
     if (Math.abs(nv) < 0.002 && Math.abs(t - nx) < 0.002) { nx = t; nv = 0; }
     puff[i] = nx;
     puffVel[i] = nv;
@@ -469,8 +1010,8 @@ function springPuff(dt: number) {
     const tex = W.fronds.puffTexture.image.data as Float32Array;
     const pil = W.pillow;
     for (let i = 0; i < W.n; i++) {
-      tex[i * 2] = puff[i];
-      tex[i * 2 + 1] = pil[i];
+      tex[i * 4] = puff[i];
+      tex[i * 4 + 1] = pil[i];
     }
     W.fronds.puffTexture.needsUpdate = true;
     pillowDirty = false;
@@ -482,10 +1023,11 @@ function springPuff(dt: number) {
 const BLEND = 0.15;
 const acc = new Float32Array(SPECIES);
 function blendSpecies(dt: number) {
-  const { moss, species, surface } = W;
+  const { moss, species, surface, settle } = W;
   const k = Math.min(1, BLEND * dt);
   for (let i = 0; i < W.n; i++) {
-    if (moss[i] <= 0) continue;
+    if (moss[i] <= 0 || settle[i] <= 0) continue;
+    settle[i] -= dt;
     const nb = surface.adjacency[i];
     acc.fill(0);
     let cnt = 0;
@@ -498,57 +1040,41 @@ function blendSpecies(dt: number) {
     if (cnt === 0) continue;
     const o = i * SPECIES;
     for (let c = 0; c < SPECIES; c++) species[o + c] += (acc[c] / cnt - species[o + c]) * k;
+    dirty = true;
   }
 }
 
-// pre-grown patches so the word is not bare on load.
-// Seeded from the surface vertex nearest a direction, limited to vertices facing roughly the same way,
-// so a patch never wraps around an edge onto another face.
-const tmpN = new THREE.Vector3();
-const cN = new THREE.Vector3();
-function seedPatch(dir: THREE.Vector3, r: number, kind: number) {
-  const { positions, normals, moss, cap, surface } = W;
-  dir.normalize();
-  let c = 0, best = -Infinity;
-  for (let i = 0; i < W.n; i++) {
-    tmp.fromBufferAttribute(positions, i);
-    const d = tmp.normalize().dot(dir);
-    if (d > best) { best = d; c = i; }
-  }
-  const center = new THREE.Vector3().fromBufferAttribute(positions, c);
-  cN.fromBufferAttribute(normals, c);
-  const r2 = r * r;
-  for (let i = 0; i < W.n; i++) {
-    tmp.fromBufferAttribute(positions, i);
-    const d2 = tmp.distanceToSquared(center);
-    if (d2 > r2 || surface.fertility[i] < 0.15) continue;
-    tmpN.fromBufferAttribute(normals, i);
-    if (tmpN.dot(cN) < 0.25) continue;
-    const ragged = fbm3(tmp.x * 6, tmp.y * 6, tmp.z * 6, 3, 99) * 0.5;
-    const edge = 1 - Math.sqrt(d2 / r2) + ragged;
-    if (edge <= 0.12) continue;
-    const profile = Math.min(1, edge * 2.2) * (0.8 + 0.2 * surface.fertility[i]);
-    moss[i] = Math.max(moss[i], profile);
-    cap[i] = Math.max(cap[i], profile);
-    setOneHot(i, kind);
-  }
-}
-function seedWord() {
-  // a few patches along the top of the word and one on the front
-  const bb = W.surface.geometry.boundingBox!;
-  const w = bb.max.x - bb.min.x;
-  const kinds = [0, 3, 0, 2, 3];
-  for (let i = 0; i < Math.min(5, Math.ceil(w / 1.2)); i++) {
-    const x = bb.min.x + (i + 0.5) * (w / Math.min(5, Math.ceil(w / 1.2)));
-    seedPatch(new THREE.Vector3(x, 2.5, 0.3), 0.4, kinds[i % kinds.length]);
-  }
-  seedPatch(new THREE.Vector3(bb.min.x + w * 0.35, 0.2, 2.0), 0.35, 1);
-}
-seedWord();
+// every object starts bare: all the moss is yours
 
 // ---- loop
+// ---- SSAO: three's own GTAO, so it always matches the three version. It does not re-render the scene with
+// its own normal material (that would drop the shells' and fronds' vertex shaders): it gets our depth and
+// rebuilds normals from it. The scene renders into a multisampled target first, so MSAA stays.
+// Switchable in the debug panel; off, the canvas renders directly.
+const beautyRT = new THREE.WebGLRenderTarget(1, 1, {
+  type: THREE.HalfFloatType,
+  samples: 4,
+  depthTexture: new THREE.DepthTexture(1, 1),
+});
+const composer = new EffectComposer(renderer);
+composer.addPass(new TexturePass(beautyRT.texture));
+const aoPass = new GTAOPass(scene, camera, 1, 1, { depthTexture: beautyRT.depthTexture! });
+aoPass.updateGtaoMaterial({ radius: 0.6, distanceExponent: 1, thickness: 1, scale: 1, samples: 16 });
+aoPass.updatePdMaterial({ lumaPhi: 10, depthPhi: 2, normalPhi: 3, radius: 8, samples: 16 });
+aoPass.blendIntensity = 0.9;
+composer.addPass(aoPass);
+composer.addPass(new OutputPass());
+let ssaoOn = true;
+function setSsao(on: boolean) {
+  ssaoOn = on;
+}
+
 function resize() {
   renderer.setSize(innerWidth, innerHeight);
+  composer.setPixelRatio(renderer.getPixelRatio());
+  composer.setSize(innerWidth, innerHeight);
+  const px = renderer.getDrawingBufferSize(new THREE.Vector2());
+  beautyRT.setSize(px.x, px.y);
   camera.aspect = innerWidth / innerHeight;
   camera.updateProjectionMatrix();
   frameWord();
@@ -556,10 +1082,23 @@ function resize() {
 addEventListener('resize', resize);
 resize();
 
+let meterTick = 0;
 const clock = new THREE.Clock();
+const rimDir = new THREE.Vector3();
+shellMat.uniforms.uRimDir.value = rimDir;
 renderer.setAnimationLoop(() => {
   const dt = Math.min(clock.getDelta(), 0.05);
   shellMat.uniforms.uTime.value = clock.elapsedTime;
+  // the back light hangs behind the object and a bit above it, wherever the camera goes
+  camera.getWorldDirection(rimDir);
+  rimDir.y += 0.7;
+  rimDir.normalize();
+  const fu = (W.fronds.mesh.material as THREE.ShaderMaterial).uniforms;
+  fu.uRimDir.value = rimDir;
+  fu.uRim.value = shellMat.uniforms.uRim.value;
+  fu.uHemi.value = shellMat.uniforms.uHemi.value;
+  fu.uTone.value = shellMat.uniforms.uTone.value;
+  fu.uExposure.value = shellMat.uniforms.uExposure.value;
   grow(dt);
   blendSpecies(dt);
   springPuff(dt);
@@ -570,18 +1109,56 @@ renderer.setAnimationLoop(() => {
     const tex = fronds.ageTexture.image.data as Float32Array;
     for (let i = 0; i < W.n; i++) {
       tex[i * 4] = moss[i];
-      // fourth weight is implied: 1 - (g + b + a)
+      // feather, star, lichen here; cushion in the puff texture; coral is implied
       tex[i * 4 + 1] = species[i * SPECIES];
       tex[i * 4 + 2] = species[i * SPECIES + 1];
       tex[i * 4 + 3] = species[i * SPECIES + 2];
     }
     fronds.ageTexture.needsUpdate = true;
+    // cushion weight rides in the puff texture's B channel; coral is whatever is left
+    const ptex = fronds.puffTexture.image.data as Float32Array;
+    for (let i = 0; i < W.n; i++) ptex[i * 4 + 2] = species[i * SPECIES + 3];
+    fronds.puffTexture.needsUpdate = true;
     dirty = false;
-    if (shadowDirty) {
-      renderShadow();
-      shadowDirty = false;
-    }
   }
+  if (++meterTick % 12 === 0) updateMeter();
+  updateHover();
   controls.update();
-  renderer.render(scene, camera);
+  if (!turning && Math.abs(yawVel) > 1e-3) {
+    yaw += yawVel * dt;
+    yawVel *= Math.exp(-dt * 5);
+  }
+  if (!turning && (tiltVel !== 0 || Math.abs(tilt) > TILT_MAX)) {
+    // the tilt stays where it is let go, so the underside can be painted. A flick coasts on and slows down;
+    // past 30 degrees an underdamped spring pulls it back, so it bounces off the limit. Substepped, so a slow
+    // frame cannot blow the spring up.
+    let left = dt;
+    while (left > 1e-6) {
+      const h = Math.min(left, 1 / 240);
+      const over = tilt - THREE.MathUtils.clamp(tilt, -TILT_MAX, TILT_MAX);
+      tiltVel += (over !== 0 ? -160 * over - 6 * tiltVel : -4 * tiltVel) * h;
+      tilt += tiltVel * h;
+      left -= h;
+    }
+    if (Math.abs(tiltVel) < 1e-3 && Math.abs(tilt) <= TILT_MAX) tiltVel = 0;
+  }
+  turntable.rotation.y = yaw;
+  tiltGroup.rotation.x = tilt;
+  tiltGroup.updateMatrixWorld();
+  fu.uLightDir.value = lightDir;
+  // the object turns under a fixed light: re-render the shadow map every couple of degrees, not every frame
+  if (shadowDirty || !(Math.abs(yaw - shadowYaw) < 0.035) || !(Math.abs(tilt - shadowTilt) < 0.035)) {
+    renderShadow();
+    shadowYaw = yaw;
+    shadowTilt = tilt;
+    shadowDirty = false;
+  }
+  if (ssaoOn) {
+    renderer.setRenderTarget(beautyRT);
+    renderer.render(scene, camera);
+    renderer.setRenderTarget(null);
+    composer.render();
+  } else renderer.render(scene, camera);
+  if (thumbDirty > 0 && --thumbDirty === 0) updateThumb();
 });
+requestThumb(6);
