@@ -182,3 +182,16 @@ canvas { display: block; width: 100vw; height: 100vh; touch-action: none; }
 }
 .letter-btn:not(.unlocked) { cursor: default; }
 .letter-btn:not(.unlocked):hover { transform: none; }
+
+/* unlocked: the meter has done its job */
+.letter-btn .ring { transition: opacity .6s ease .8s; }
+.letter-btn.unlocked .ring { opacity: 0; }
+/* glyphs in green, replaced by their mossy miniature once rendered */
+.letter-pop button:not(.rock) { color: #3f7d18; background: center / contain no-repeat; }
+.letter-pop button.thumb { color: transparent; }
+.letter-pop button.thumb.active { background-color: rgba(0, 0, 0, .1); }
+.letter-pop { grid-template-columns: repeat(6, 44px); }
+.letter-pop button { width: 44px; height: 44px; }
+/* moss confetti */
+.confetti { position: fixed; inset: 0; pointer-events: none; z-index: 20; overflow: hidden; }
+.confetti i { position: absolute; left: 0; top: 0; background: center / contain no-repeat; will-change: transform; }

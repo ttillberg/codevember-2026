@@ -12,14 +12,6 @@ uniform float uBulge;
 uniform float uTime;
 uniform float uScale;
 
-// cheap value noise for the cushion's embossed surface
-float vhash(vec3 p) { p = fract(p * 0.3183099 + 0.1); p *= 17.0; return fract(p.x * p.y * p.z * (p.x + p.y + p.z)); }
-float vnoise(vec3 x) {
-  vec3 i = floor(x); vec3 f = fract(x); f = f * f * (3.0 - 2.0 * f);
-  return mix(mix(mix(vhash(i), vhash(i + vec3(1,0,0)), f.x), mix(vhash(i + vec3(0,1,0)), vhash(i + vec3(1,1,0)), f.x), f.y),
-             mix(mix(vhash(i + vec3(0,0,1)), vhash(i + vec3(1,0,1)), f.x), mix(vhash(i + vec3(0,1,1)), vhash(i + vec3(1,1,1)), f.x), f.y), f.z);
-}
-
 varying float vShell;
 varying float vMoss;
 varying vec4 vSpecies;
@@ -38,17 +30,11 @@ void main() {
   float wsum = max(speciesW.x + speciesW.y + speciesW.z + speciesW.w + speciesW2, 1e-4);
   vec4 w = speciesW / wsum;
   float w5 = speciesW2 / wsum;
-  // cushion (Leucobryum): a round dome, steep shoulder and flat crown, gentle mounds, a tiny embossed grain
+  // cushion (Leucobryum): a round dome, steep shoulder and flat crown, gentle mounds; smooth, no emboss
   float cush = w.w;
   float profile = mix(moss * moss, 1.0 - (1.0 - moss) * (1.0 - moss), cush);
   float pil = mix(pillow, mix(0.8, 1.0, pillow), cush);
   float bulge = profile * mix(0.3, 1.0, pil) * uBulge * (dot(w, vec4(1.0, 0.6, 0.5, 1.7)) + w5 * 0.9);
-  if (cush > 0.01) {
-    vec3 q = position * 24.0 / max(uScale, 0.5);
-    float emboss = vnoise(q) * 0.65 + vnoise(q * 2.3 + 7.0) * 0.35 - 0.5;
-    // only on the flat crown of the dome: on the shoulder the bumps tilt the surface and the shells shear into streaks
-    bulge += emboss * cush * uBulge * 0.16 * smoothstep(0.82, 1.0, moss);
-  }
   bulge += puff * uBulge * 1.4 * smoothstep(0.0, 0.3, moss);
   vec3 p = position + mossNormal * (bulge + uHeight * t);
 

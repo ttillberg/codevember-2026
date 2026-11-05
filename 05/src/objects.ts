@@ -51,7 +51,7 @@ export function buildLetterM(detail = 2): Surface {
 }
 
 /** A word in a bold sans, extruded, bevelled and Loop-rounded into soft pillowy letters, standing on the ground. */
-export function buildWord(text: string, font: Font, detail = 2): Surface {
+export function buildWord(text: string, font: Font, detail = 2, loopsOverride?: number): Surface {
   const size = 2.0;
   const depth = 0.6;
   const bevel = 0.18;
@@ -70,7 +70,7 @@ export function buildWord(text: string, font: Font, detail = 2): Surface {
   // centre horizontally and in depth, stand on the ground
   geo0.translate(-(bb.min.x + bb.max.x) / 2, GROUND - bb.min.y, -(bb.min.z + bb.max.z) / 2);
   // longer words get one Loop pass less so the triangle budget stays sane
-  const loops = text.length <= 2 ? 3 : 2;
+  const loops = loopsOverride ?? (text.length <= 2 ? 3 : 2);
   const geo = densify(geo0, Math.max(0, detail - 1), loops);
   return finishSurface(geo, 17 + text.length);
 }

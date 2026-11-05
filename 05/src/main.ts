@@ -10,6 +10,7 @@ import { fbm3 } from './noise';
 import { shellVertex, shellFragment, groundVertex, groundFragment } from './shaders';
 import { renderSwatches, renderEraser } from './swatches';
 import { setupCarousel, type Carousel } from './carousel';
+import { renderGlyphThumbs } from './glyphthumbs';
 
 const coarse = matchMedia('(pointer: coarse)').matches;
 const SHELLS = coarse ? 10 : 16;
@@ -686,11 +687,62 @@ const ringFill = letterBtn.querySelector<SVGCircleElement>('.ring .fill')!;
 const RING_C = 2 * Math.PI * 30;
 ringFill.style.strokeDasharray = `${RING_C}`;
 // locked: the alphabet is hidden and the miniature is just the meter; unlocked: it opens the picker
+let glyphThumbsStarted = false;
 function setLocked() {
   letterPop.querySelectorAll<HTMLButtonElement>('button:not(.rock)').forEach((b) => { b.hidden = !unlocked; b.disabled = !unlocked; });
   letterBtn.classList.toggle('unlocked', unlocked);
   letterBtn.setAttribute('aria-label', unlocked ? 'choose a letter' : 'moss meter');
   if (!unlocked) setPop(false);
+  if (unlocked && !glyphThumbsStarted) {
+    glyphThumbsStarted = true;
+    // mossy miniatures of every glyph, one per frame; the green text stands in until each one lands
+    renderGlyphThumbs(renderer, font, CHARS, lightDir, (c, url) => {
+      const b = letterPop.querySelector<HTMLButtonElement>(`button[data-choice="${c}"]`);
+      if (!b) return;
+      b.style.backgroundImage = `url(${url})`;
+      b.classList.add('thumb');
+    });
+  }
+}
+
+// ---- moss confetti: the palette's moss balls burst out of the miniature and tumble down
+function mossConfetti() {
+  const sprites = Array.from(document.querySelectorAll<HTMLElement>('.sw i'))
+    .map((el) => el.style.backgroundImage)
+    .filter(Boolean);
+  if (!sprites.length) return;
+  const r = letterBtn.getBoundingClientRect();
+  const ox = r.left + r.width / 2, oy = r.top + r.height / 2;
+  const layer = document.createElement('div');
+  layer.className = 'confetti';
+  document.body.appendChild(layer);
+  const bits = Array.from({ length: 56 }, () => {
+    const el = document.createElement('i');
+    const size = 10 + Math.random() * 22;
+    el.style.width = el.style.height = `${size}px`;
+    el.style.backgroundImage = sprites[Math.floor(Math.random() * sprites.length)];
+    layer.appendChild(el);
+    const a = Math.random() * Math.PI * 0.9 - 0.15; // mostly out to the right and down from the corner
+    const v = 260 + Math.random() * 520;
+    return { el, x: ox, y: oy, vx: Math.cos(a) * v, vy: Math.sin(a) * v - 320, rot: Math.random() * 360, vr: (Math.random() - 0.5) * 720 };
+  });
+  let last = performance.now();
+  const t0 = last;
+  const tick = (now: number) => {
+    const dt = Math.min(0.05, (now - last) / 1000);
+    last = now;
+    const age = (now - t0) / 1000;
+    for (const b of bits) {
+      b.vy += 900 * dt;
+      b.vx *= 1 - 0.6 * dt;
+      b.x += b.vx * dt; b.y += b.vy * dt; b.rot += b.vr * dt;
+      b.el.style.transform = `translate(${b.x}px, ${b.y}px) translate(-50%, -50%) rotate(${b.rot}deg)`;
+      b.el.style.opacity = String(Math.max(0, 1 - Math.max(0, age - 1.6) / 0.8));
+    }
+    if (age < 2.4) requestAnimationFrame(tick);
+    else layer.remove();
+  };
+  requestAnimationFrame(tick);
 }
 function updateMeter() {
   const c = coverage();
@@ -700,6 +752,7 @@ function updateMeter() {
     unlocked = true;
     try { localStorage.setItem(UNLOCK_KEY, '1'); } catch { /* fine, it just will not be remembered */ }
     setLocked();
+    mossConfetti();
     letterBtn.classList.add('just-unlocked');
     setTimeout(() => letterBtn.classList.remove('just-unlocked'), 2400);
   }
