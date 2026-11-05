@@ -60,6 +60,7 @@ const shellMat = new THREE.ShaderMaterial({
     uLightDir: { value: lightDir },
     uRimDir: { value: new THREE.Vector3(0, 1, 0) },
     uRim: { value: 1 },
+    uHemi: { value: 1 },
     uHideRock: { value: 0 },
     uScale: { value: 1 },
     uShadowMap: { value: null },
@@ -399,7 +400,7 @@ function brush(point: THREE.Vector3, scrape: boolean) {
   dirty = true;
 }
 
-// F: moss over the whole object at once with the current brush, handy for comparing looks
+// moss over the whole object at once with the current brush, handy for comparing looks
 function fillAll() {
   const { moss, cap, surface } = W;
   for (let c = 0; c < SPECIES; c++) strokeBias[c] = 0.6 + 0.4 * Math.random();
@@ -411,6 +412,16 @@ function fillAll() {
     W.settle[i] = 2.0;
   }
   dirty = true;
+}
+
+// ---- debug panel: lighting toggles and a fill button, on the dev server or with ?debug
+{
+  const panel = document.querySelector<HTMLElement>('.debug')!;
+  panel.hidden = !(import.meta.env.DEV || new URLSearchParams(location.search).has('debug'));
+  panel.querySelectorAll<HTMLInputElement>('input[data-uniform]').forEach((box) => {
+    box.addEventListener('change', () => { shellMat.uniforms[box.dataset.uniform!].value = box.checked ? 1 : 0; });
+  });
+  panel.querySelector('[data-action="fill"]')!.addEventListener('click', fillAll);
 }
 
 // ---- cursor (mouse only): a cross over the object where a drag paints, an open hand beside it where
@@ -567,8 +578,6 @@ addEventListener('keydown', (e) => {
   if (e.key === '5') setBrush(4);
   if (e.key === '6' || e.key === 'a') setBrush(-1);
   if (e.key === 'x') setBrush(null, !scrapeTool);
-  if (e.key === 'f') fillAll();
-  if (e.key === 'r') { shellMat.uniforms.uRim.value = shellMat.uniforms.uRim.value > 0 ? 0 : 1; dirty = true; } // compare with and without the back light
   if (e.key === 'h') {
     const hidden = shellMat.uniforms.uHideRock.value === 1 && !W.metal ? 0 : 1;
     shellMat.uniforms.uHideRock.value = hidden;
@@ -933,6 +942,7 @@ renderer.setAnimationLoop(() => {
   const fu = (W.fronds.mesh.material as THREE.ShaderMaterial).uniforms;
   fu.uRimDir.value = rimDir;
   fu.uRim.value = shellMat.uniforms.uRim.value;
+  fu.uHemi.value = shellMat.uniforms.uHemi.value;
   grow(dt);
   blendSpecies(dt);
   springPuff(dt);

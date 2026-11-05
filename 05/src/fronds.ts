@@ -156,6 +156,7 @@ export function buildFronds(rock: THREE.BufferGeometry, fertility: Float32Array,
       uLightDir: { value: new THREE.Vector3(1.2, 2.0, 1.0).normalize() },
       uRimDir: { value: new THREE.Vector3(0, 1, 0) },
       uRim: { value: 0 },
+      uHemi: { value: 0 },
       uShadowMap: { value: null },
       uShadowMatrix: { value: new THREE.Matrix4() },
       uShadowOn: { value: 0 },
@@ -441,6 +442,16 @@ vec3 grade(vec3 c) {
   return max(c, 0.0);
 }
 
+// coloured ambient: where the key light does not reach, the moss takes a cool sky fill from above and a
+// warm, greenish bounce from below instead of flat grey
+uniform float uHemi; // 0 = off (swatches, thumbnails)
+vec3 skyTint(vec3 N, float shade) {
+  vec3 sky = vec3(0.80, 0.92, 1.14);
+  vec3 bounce = vec3(1.10, 1.03, 0.68);
+  vec3 t = mix(bounce, sky, smoothstep(-0.6, 0.8, N.y));
+  return mix(vec3(1.0), t, uHemi * clamp(shade, 0.0, 1.0));
+}
+
 // back light: sits behind the object as seen from the camera, so it follows the view. It only reaches the
 // silhouette, where fuzz and frond tips catch it and glow against the background.
 uniform vec3 uRimDir;
@@ -521,6 +532,7 @@ void main() {
   float wrapK = lichen ? 0.45 : 0.75;
   ao *= mix(1.0, 0.45, vCavity);
   vec3 lit = col * ao * (ambient * mix(0.7, 1.0, shadow) + wrapK * wrap + back * shadow) * gain + tip * rim * shadow;
+  lit *= skyTint(normalize(vSurfN), 1.0 - 0.8 * wrap);
   lit += rimLight(normalize(vSurfN), V) * (col * 2.6 + tip * 0.6) * (0.2 + 0.8 * vT) * mix(1.0, 0.3, vCavity);
   gl_FragColor = vec4(grade(lit), 1.0);
   #include <colorspace_fragment>
