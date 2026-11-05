@@ -79,8 +79,8 @@ const shellMat = new THREE.ShaderMaterial({
     uRimDir: { value: new THREE.Vector3(0, 1, 0) },
     uRim: { value: 1 },
     uHemi: { value: 1 },
-    uTone: { value: 2 }, // ACES by default
-    uExposure: { value: 1.1 },
+    uTone: { value: 3 }, // Neutral by default
+    uExposure: { value: 1.15 },
     toneMappingExposure: { value: 1 },
     uHideRock: { value: 0 },
     uScale: { value: 1 },
