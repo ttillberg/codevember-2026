@@ -486,11 +486,12 @@ function fillAll() {
 // a drag rotates, a closed hand while rotating, a resize arrow with cmd/ctrl held.
 const hover = { clientX: 0, clientY: 0, pending: false, over: false, mod: false };
 let orbiting = false;
+let spaceHeld = false; // see the space key handlers below
 function setCursor() {
   canvas.style.cursor =
     orbiting ? 'grabbing' :
     sizing || hover.mod ? 'ew-resize' :
-    hover.over ? 'crosshair' : 'grab';
+    hover.over && !spaceHeld ? 'crosshair' : 'grab';
 }
 function updateHover() {
   if (!hover.pending || painting || sizing || orbiting) return;
@@ -507,6 +508,19 @@ canvas.addEventListener('pointermove', (e) => {
 canvas.addEventListener('pointerleave', () => { hover.pending = false; });
 addEventListener('keydown', (e) => { if (e.key === 'Meta' || e.key === 'Control') { hover.mod = true; setCursor(); } });
 addEventListener('keyup', (e) => { if (e.key === 'Meta' || e.key === 'Control') { hover.mod = false; setCursor(); } });
+// space held: a drag turns and tilts the object wherever it starts, even on top of it (like a hand tool)
+const typing = (t: EventTarget | null) => t instanceof HTMLInputElement || t instanceof HTMLSelectElement || t instanceof HTMLTextAreaElement;
+addEventListener('keydown', (e) => {
+  if (e.code !== 'Space' || typing(e.target)) return;
+  e.preventDefault(); // no page scroll, no "click" on a focused swatch
+  if (!spaceHeld) { spaceHeld = true; setCursor(); }
+});
+addEventListener('keyup', (e) => {
+  if (e.code !== 'Space') return;
+  spaceHeld = false;
+  setCursor();
+});
+addEventListener('blur', () => { spaceHeld = false; });
 
 // ---- brush size: cmd/ctrl + drag sideways, with a ring showing the size
 const sizeRing = document.querySelector<HTMLElement>('.size-ring')!;
@@ -571,6 +585,13 @@ canvas.addEventListener('pointerdown', (e) => {
       startTurn(...mid(), e.timeStamp);
       return;
     }
+  }
+  if (spaceHeld && e.pointerType === 'mouse') {
+    orbiting = true;
+    startTurn(e.clientX, e.clientY, e.timeStamp);
+    setCursor();
+    try { canvas.setPointerCapture(e.pointerId); } catch { /* synthetic events */ }
+    return;
   }
   const p = pick(e);
   if (e.metaKey || e.ctrlKey) {
