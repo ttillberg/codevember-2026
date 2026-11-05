@@ -52,7 +52,7 @@ export function renderSwatches(renderer: THREE.WebGLRenderer, shells: number, li
   const fu = (fronds.mesh.material as THREE.ShaderMaterial).uniforms;
   fu.uLen.value = 0.8;
   fu.uStarLen.value = 0.62;
-  fu.uLichenLen.value = 1.12;
+  fu.uLichenLen.value = 0.85;
   fu.uWidth.value = 0.104;
   fu.uBulge.value = 0.1;
 

@@ -141,7 +141,7 @@ export function buildFronds(rock: THREE.BufferGeometry, fertility: Float32Array,
       uAgeSize: { value: new THREE.Vector2(texW, texH) },
       uLen: { value: 0.032 },
       uStarLen: { value: 0.025 },
-      uLichenLen: { value: 0.045 },
+      uLichenLen: { value: 0.07 },
       uBulge: { value: 0.035 },
       uWidth: { value: 0.0042 },
       uLightDir: { value: new THREE.Vector3(1.2, 2.0, 1.0).normalize() },
@@ -224,7 +224,7 @@ void main() {
   if (straw > 0.5) unused = strip > 0.5 || age < 0.3;
   else if (species < 0.5) unused = strip >= 2.0;                  // feather: stem + branch
   else if (species < 1.5) unused = strip == 1.0 || iSeed.w < 0.45; // star: thinned rosettes
-  else if (species < 2.5) unused = iSeed.w < 0.3;                   // lichen: all strips, a bit sparse
+  else if (species < 2.5) unused = false;                           // lichen: every instance, all strips
   else unused = true;                                               // cushion: shells only
   if (age < 0.03 || unused) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); return; }
 
@@ -256,14 +256,14 @@ void main() {
   } else if (species >= 1.5) {
     // ---- reindeer lichen: a curving stem with twigs forking off along its length
     // wide spread of heights, skewed short with a few tall ones poking out
-    float L = uLichenLen * (0.3 + 1.1 * pow(iSeed.y, 1.7)) * (0.3 + 0.7 * grown) * mix(0.6, 1.0, clumpV);
+    float L = uLichenLen * (0.5 + 1.1 * pow(iSeed.y, 1.4)) * (0.3 + 0.7 * grown) * mix(0.7, 1.0, clumpV);
     vec3 leanDir = T * (iSeed.z - 0.5) * 0.8;
     vec3 wob = B * 0.12 * L;
     if (strip < 0.5) {
       C = N * t * L + leanDir * t * t * L + wob * sin(t * 5.0 + iSeed.w * 6.0);
       D = normalize(N * L + leanDir * 2.0 * t * L + wob * 5.0 * cos(t * 5.0 + iSeed.w * 6.0));
       across = normalize(cross(D, B));
-      w = uWidth * 0.3 * (1.0 - 0.6 * t);
+      w = uWidth * 0.5 * (1.0 - 0.5 * t);
     } else {
       float k = strip - 1.0;                                     // 0..6
       float h0 = 0.25 + 0.1 * k + 0.08 * hash(iSeed.z * 9.0 + k);
@@ -271,12 +271,12 @@ void main() {
       float ang = k * 2.4 + (hash(iSeed.w * 7.0 + k) - 0.5) * 1.2;
       vec3 side = T * cos(ang) + B * sin(ang);
       float elev = 0.55 + 0.5 * hash(iSeed.x * 3.0 + k);
-      float Lb = L * (0.3 + 0.2 * hash(iSeed.y * 5.0 + k)) * (1.1 - h0);
+      float Lb = L * (0.45 + 0.3 * hash(iSeed.y * 5.0 + k)) * (1.15 - h0);
       vec3 d0 = normalize(side * cos(elev) + N * sin(elev));
       C = root + d0 * t * Lb + N * t * t * Lb * 0.25;
       D = normalize(d0 + N * t * 0.5);
       across = normalize(cross(D, side));
-      w = uWidth * 0.22 * (1.0 - 0.8 * t);
+      w = uWidth * 0.36 * (1.0 - 0.75 * t);
     }
   } else if (species >= 0.5) {
     // ---- star moss: straight stem, rosette of stiff pointed leaves at the top
