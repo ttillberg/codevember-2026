@@ -145,7 +145,7 @@ canvas { display: block; width: 100vw; height: 100vh; touch-action: none; }
 .confetti { position: fixed; inset: 0; pointer-events: none; z-index: 20; overflow: hidden; }
 .confetti i { position: absolute; left: 0; top: 0; background: center / contain no-repeat; will-change: transform; }
 
-/* debug panel: lighting toggles while tuning. Dev server, or ?debug */
+/* debug panel: lighting toggles, collapsed by default */
 .debug {
   position: fixed; top: 12px; right: 12px; z-index: 5;
   padding: 6px 10px;
