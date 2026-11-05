@@ -341,7 +341,7 @@ canvas.addEventListener('pointerdown', (e) => {
   painting = true;
   scraping = scrapeTool || e.shiftKey || e.button === 2;
   controls.enabled = false;
-  for (let c = 0; c < SPECIES; c++) strokeBias[c] = Math.random();
+  for (let c = 0; c < SPECIES; c++) strokeBias[c] = 0.6 + 0.4 * Math.random(); // mild, so strokes do not stripe
   strokeShift.set(Math.random() * 100, Math.random() * 100, Math.random() * 100);
   speed = 0;
   lastX = e.clientX; lastY = e.clientY; lastT = performance.now();

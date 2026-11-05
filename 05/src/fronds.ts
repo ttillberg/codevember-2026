@@ -450,9 +450,13 @@ void main() {
   deadCol *= 0.85 + 0.3 * vHue;
   col = mix(col, deadCol, vDead);
   tip = mix(tip, deadCol, vDead);
-  // darker-moss patches
-  col *= mix(1.0, 0.5, vShade);
-  tip *= mix(1.0, 0.55, vShade);
+  // bright towards the top and on upward faces, darker down the sides; dark patches only low down
+  float top = smoothstep(-0.4, 0.9, N.y) * 0.55 + smoothstep(-0.7, 1.9, vWorldPos.y) * 0.45;
+  col *= mix(0.78, 1.22, top);
+  tip *= mix(0.78, 1.22, top);
+  float shade = vShade * (1.0 - 0.75 * top) * 0.8;
+  col *= mix(1.0, 0.55, shade);
+  tip *= mix(1.0, 0.6, shade);
 
   float ao = mix(0.3, 1.0, vT) * mix(0.5, 1.0, vClump);
   float shadow = shadowAt(vWorldPos, N);

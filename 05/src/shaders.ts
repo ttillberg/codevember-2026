@@ -148,9 +148,12 @@ void main() {
   float deadMix = step(0.92, hash31(floor(vLocal * 260.0) + 3.0)) * 0.8;
   deep = mix(deep, vec3(0.12, 0.08, 0.02), deadMix);
   lime = mix(lime, deadCol, deadMix);
-  float shade = vDead;
-  lime = mix(lime, lime * vec3(0.45, 0.55, 0.4), shade); // darker and a little bluer-green
-  deep *= mix(1.0, 0.6, shade);
+  // bright green towards the top and on upward faces, darker down the sides; the dark patch field only bites low down
+  float upTop = smoothstep(-0.4, 0.9, N.y) * 0.55 + smoothstep(-0.7, 1.9, vWorldPos.y) * 0.45;
+  lime = mix(lime * 0.78, lime * 1.22, upTop);
+  float shade = vDead * (1.0 - 0.75 * upTop) * 0.8;
+  lime = mix(lime, lime * vec3(0.5, 0.6, 0.45), shade);
+  deep *= mix(1.0, 0.7, shade);
 
   // shared fields
   float bump = noise3(vLocal * 70.0) * 0.6 + noise3(vLocal * 180.0) * 0.4;      // micro height
