@@ -275,7 +275,7 @@ function addWeights(i: number, wgt: Float32Array, amount: number) {
 }
 
 // ---- auto brush: picks species by normal, speed, time and a bit of luck
-let currentSpecies = -1; // -1 = auto
+let currentSpecies = 0; // feather by default; -1 = auto mix
 const strokeBias = new Float32Array(SPECIES); // rolled per stroke
 const strokeShift = new THREE.Vector3(); // noise offset for rearranging mounds, rolled per stroke
 let speed = 0; // smoothed pointer speed, px per second
@@ -452,11 +452,12 @@ if (useCarousel) {
   swatches.forEach((b) => b.addEventListener('click', () => selectSwatch(b)));
 }
 addEventListener('keydown', (e) => {
-  if (e.key === '0' || e.key === 'a') setBrush(-1);
+  // keys follow the swatch order: feather, cushion, star, lichen, mix
   if (e.key === '1') setBrush(0);
-  if (e.key === '2') setBrush(1);
-  if (e.key === '3') setBrush(2);
-  if (e.key === '4') setBrush(3);
+  if (e.key === '2') setBrush(3);
+  if (e.key === '3') setBrush(1);
+  if (e.key === '4') setBrush(2);
+  if (e.key === '5' || e.key === 'a') setBrush(-1);
   if (e.key === 'x') setBrush(null, !scrapeTool);
   if (e.key === 'h') {
     const hidden = shellMat.uniforms.uHideRock.value === 1 && !W.metal ? 0 : 1;
@@ -464,7 +465,7 @@ addEventListener('keydown', (e) => {
     if (W.metal) W.metal.visible = hidden === 1 && W.metal.visible ? false : true;
   }
 });
-setBrush(-1);
+setBrush(0);
 renderSwatches(renderer, SHELLS, lightDir);
 renderEraser(renderer);
 

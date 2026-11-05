@@ -106,7 +106,7 @@ float noise3(vec3 p) {
 //                              feather  star    lichen  cushion
 const vec4 kHeight   = vec4(   1.0,     0.9,    1.0,    1.5  );   // shell height factor
 const vec4 kAgePow   = vec4(   1.0,     1.0,    1.0,    2.0  );   // height vs age curve
-const vec4 kDensity  = vec4(   0.35,    0.4,    0.5,    0.25 );   // fuzz threshold at the root (higher = sparser)
+const vec4 kDensity  = vec4(   0.35,    0.4,    0.5,    0.14 );   // fuzz threshold at the root (higher = sparser)
 const vec4 kSheen    = vec4(   0.35,    0.2,    0.15,   0.7  );   // velvet rim strength
 const vec4 kBase     = vec4(   0.7,     0.8,    0.5,    1.0  );   // how much the ground takes the species shade
 
@@ -219,9 +219,9 @@ void main() {
   vec3 lean = (vec3(noise3(vLocal * 60.0 / uScale), noise3(vLocal * 60.0 / uScale + 17.0), noise3(vLocal * 60.0 / uScale + 31.0)) - 0.5) * 2.0;
   lean -= vLocalNormal * dot(lean, vLocalNormal);
   vec3 q = vLocal + lean * uu * uu * 0.006;
-  // cushion moss: smoother density, less grain
-  float fineW = mix(0.2, 0.04, w.w);
-  float midW = mix(0.3, 0.18, w.w);
+  // cushion moss: more fine grain than the others, so it reads as dense short strands
+  float fineW = mix(0.2, 0.32, w.w);
+  float midW = mix(0.3, 0.38, w.w);
   float dens = noise3(q * 140.0 / uScale) * (1.0 - fineW - midW) + noise3(q * 420.0 / uScale) * midW + hash31(floor(q * 420.0 / uScale)) * fineW;
   // thin out more at grazing angles: the silhouette stays fuzzy but layers cannot line up
   float graze = 1.0 - ndv;
