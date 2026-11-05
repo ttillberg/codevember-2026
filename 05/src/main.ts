@@ -342,7 +342,7 @@ function brush(point: THREE.Vector3, scrape: boolean) {
         const shift = fbm3(tmp.x * 9 + strokeShift.x, tmp.y * 9 + strokeShift.y, tmp.z * 9 + strokeShift.z, 2, 5);
         W.pillow[i] = THREE.MathUtils.clamp(W.pillow[i] + shift * falloff * 0.12, 0, 1);
         W.puffTarget[i] = Math.min(0.3, W.puffTarget[i] + falloff * 0.02);
-        W.puffVel[i] += falloff * 0.5;
+        W.puffVel[i] = Math.min(W.puffVel[i] + falloff * 0.5, 1.5);
         pillowDirty = true;
       }
       // slow strokes press in thick moss, fast ones leave it thin
@@ -669,15 +669,24 @@ const PUFF_DAMP = 40; // critically damped: a quick firm push, no wobble
 let puffActive = false;
 function springPuff(dt: number) {
   const { puff, puffVel, puffTarget } = W;
+  const puffSteps = Math.min(16, Math.max(1, Math.ceil(dt * 240)));
+  const puffH = dt / puffSteps;
   let moving = false;
   for (let i = 0; i < W.n; i++) {
     const v = puffVel[i];
     const x = puff[i];
     const t = puffTarget[i];
     if (v === 0 && x === t) continue;
-    const a = (t - x) * PUFF_K - v * PUFF_DAMP;
-    let nv = v + a * dt;
-    let nx = x + nv * dt;
+    // fixed sub-steps: explicit Euler with damping 40 goes unstable once dt reaches ~1/20 s,
+    // which a slow, battery-saving CPU easily hits. Small steps keep it stable at any frame rate.
+    let nv = v;
+    let nx = x;
+    for (let k = 0; k < puffSteps; k++) {
+      const a = (t - nx) * PUFF_K - nv * PUFF_DAMP;
+      nv += a * puffH;
+      nx += nv * puffH;
+    }
+    nx = Math.min(Math.max(nx, -0.2), 1.2); // belt and braces: never let a vertex run off
     if (Math.abs(nv) < 0.002 && Math.abs(t - nx) < 0.002) { nx = t; nv = 0; }
     puff[i] = nx;
     puffVel[i] = nv;
