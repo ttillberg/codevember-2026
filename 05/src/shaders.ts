@@ -251,7 +251,11 @@ void main() {
   // cushion moss: more fine grain than the others, so it reads as dense short strands
   float fineW = mix(0.2, 0.45, w.w);
   float midW = mix(0.3, 0.4, w.w);
-  float dens = noise3(q * 140.0 / uScale) * (1.0 - fineW - midW) + noise3(q * 420.0 / uScale) * midW + hash31(floor(q * 420.0 / uScale)) * fineW;
+  // the voxel hash reads as a grid on cushion's smooth domes: there it fades to smooth noise
+  // sampled in a rotated frame, so no lattice lines up with the surface
+  const mat3 rot = mat3(0.80, 0.36, -0.48, -0.60, 0.48, -0.64, 0.0, 0.80, 0.60);
+  float grain = mix(hash31(floor(q * 420.0 / uScale)), noise3(rot * q * 520.0 / uScale + 7.0), w.w);
+  float dens = noise3(q * 140.0 / uScale) * (1.0 - fineW - midW) + noise3(q * 420.0 / uScale) * midW + grain * fineW;
   // thin out more at grazing angles: the silhouette stays fuzzy but layers cannot line up
   float graze = 1.0 - ndv;
   if (dens < (dot(w, kDensity) + w5 * kDensity5) + 0.6 * uu + 0.35 * uu * graze) discard;
