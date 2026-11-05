@@ -112,6 +112,21 @@ const vec4 kBase     = vec4(   0.7,     0.8,    0.5,    1.0  );   // how much th
 
 vec3 blend4(vec3 a, vec3 b, vec3 c, vec3 d, vec4 w) { return a * w.x + b * w.y + c * w.z + d * w.w; }
 
+// anti-aliased grid lines along one axis pair, world space
+float gridLine(vec2 p, float cell, float width) {
+  vec2 g = abs(fract(p / cell - 0.5) - 0.5) * cell;
+  vec2 fw = fwidth(p) * 1.2 + 1e-4;
+  vec2 l = 1.0 - smoothstep(width - fw, width + fw, g);
+  return max(l.x, l.y);
+}
+// triplanar: pick the two world axes across the dominant normal axis, blend across corners
+float techGrid(vec3 p, vec3 n, float cell, float width) {
+  vec3 a = abs(n);
+  a = pow(a, vec3(6.0));
+  a /= a.x + a.y + a.z;
+  return gridLine(p.yz, cell, width) * a.x + gridLine(p.xz, cell, width) * a.y + gridLine(p.xy, cell, width) * a.z;
+}
+
 // colour grade for the moss only: a touch of exposure, saturation and contrast, in linear light
 vec3 grade(vec3 c) {
   c *= 1.3;
@@ -173,6 +188,11 @@ void main() {
     vec3 sN = normalize(vWorldNormal);
     float diff = max(dot(sN, L), 0.0) * mix(0.75, 1.0, shadowAt(vWorldPos, sN)); // gentle on the white
     vec3 rock = vec3(0.82) * (0.38 + 0.22 * (0.5 + 0.5 * sN.y) + 0.5 * diff);
+    // techie: a fine grid etched into the white, a heavier line every fifth, fading under the moss
+    float fine = techGrid(vWorldPos, sN, 0.1, 0.003);
+    float major = techGrid(vWorldPos, sN, 0.5, 0.006);
+    float grid = max(fine * 0.35, major * 0.6) * (1.0 - smoothstep(0.0, 0.3, age));
+    rock *= 1.0 - grid * 0.42;
     rock *= mix(0.75, 1.0, smoothstep(0.0, 0.1, 1.0 - age)); // slight contact shadow right under the moss
 
     // the ground takes the moss colour early, so neither white rock nor the mound's slope shows through the fuzz
