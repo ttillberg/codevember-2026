@@ -1,15 +1,14 @@
-import { useMemo, useRef } from 'react';
-import { Canvas, useFrame } from '@react-three/fiber';
-import { Line, OrbitControls } from '@react-three/drei';
-import { Mesh, Vector3 } from 'three';
+import { useEffect, useRef } from 'react';
+import { Canvas, useFrame, useThree } from '@react-three/fiber';
+import { Environment, Lightformer, OrbitControls } from '@react-three/drei';
+import { EffectComposer, ToneMapping } from '@react-three/postprocessing';
+import { ToneMappingMode } from 'postprocessing';
+import { BackSide } from 'three';
+import { Band } from './Band';
 import { clock } from './clock';
-import { elementsAt, orbitPath, planetRadius, position, sunRadius, toScene, type Scale } from './kepler';
-import { PLANETS, type Planet } from './planets';
+import { dateFromJd } from './kepler';
 
-const MODE: Scale = 'sqrt';
-const J2000 = 2451545;
-
-// Mounted first, so it advances time before any planet reads it.
+// Mounted first, so it advances time before the band reads it.
 function Tick() {
   useFrame((_, dt) => {
     if (!clock.paused) clock.jd += clock.speed * Math.min(dt, 0.1);
@@ -17,41 +16,69 @@ function Tick() {
   return null;
 }
 
-function Body({ p }: { p: Planet }) {
-  const ref = useRef<Mesh>(null!);
-  const path = useMemo(() => orbitPath(elementsAt(p.el, p.rate, J2000)).map((v) => toScene(v, MODE)), [p]);
-  const loop = useMemo(() => [...path, path[0]], [path]);
-  const tmp = useMemo(() => new Vector3(), []);
-  useFrame(() => {
-    position(elementsAt(p.el, p.rate, clock.jd), tmp);
-    ref.current.position.copy(toScene(tmp, MODE));
-  });
+// Dev only: window.__look(x, y, z, tx, ty, tz) moves the camera, window.__clock is the simulated time.
+function DevHooks() {
+  const { camera, controls } = useThree();
+  if (import.meta.env.DEV) {
+    (window as any).__clock = clock;
+    (window as any).__look = (x: number, y: number, z: number, tx = 0, ty = 0, tz = 0) => {
+      camera.position.set(x, y, z);
+      (controls as any)?.target.set(tx, ty, tz);
+      (controls as any)?.update();
+    };
+  }
+  return null;
+}
+
+// Bright studio built from light cards, no HDR files.
+function Studio() {
   return (
-    <>
-      <Line points={loop} color="#555" lineWidth={1} />
-      <mesh ref={ref}>
-        <sphereGeometry args={[planetRadius(p, MODE), 32, 16]} />
-        <meshStandardMaterial color="#ccc" />
+    <Environment resolution={256}>
+      <mesh scale={100}>
+        <sphereGeometry />
+        <meshBasicMaterial color="#d9dde2" side={BackSide} />
       </mesh>
-    </>
+      <Lightformer intensity={3} position={[0, 12, 0]} rotation-x={Math.PI / 2} scale={[30, 30, 1]} />
+      <Lightformer intensity={1.5} position={[-14, 3, 6]} rotation-y={Math.PI / 2} scale={[16, 5, 1]} />
+      <Lightformer intensity={1.5} position={[14, 3, -6]} rotation-y={-Math.PI / 2} scale={[16, 5, 1]} />
+      <Lightformer intensity={1} position={[0, 2, 16]} scale={[20, 3, 1]} />
+    </Environment>
   );
+}
+
+function DateLabel() {
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    let raf = 0;
+    const loop = () => {
+      if (ref.current) ref.current.textContent = dateFromJd(clock.jd).toISOString().slice(0, 10);
+      raf = requestAnimationFrame(loop);
+    };
+    loop();
+    const key = (e: KeyboardEvent) => {
+      if (e.code === 'Space') clock.paused = !clock.paused;
+    };
+    addEventListener('keydown', key);
+    return () => (cancelAnimationFrame(raf), removeEventListener('keydown', key));
+  }, []);
+  return <div ref={ref} className="date" />;
 }
 
 export function App() {
   return (
-    <Canvas camera={{ position: [0, 30, 100], fov: 40, near: 0.1, far: 800 }} dpr={[1, 2]}>
-      <color attach="background" args={['#07080b']} />
-      <Tick />
-      <mesh>
-        <sphereGeometry args={[sunRadius(MODE), 48, 24]} />
-        <meshBasicMaterial color="#ffd2a0" />
-      </mesh>
-      <pointLight intensity={2000} decay={2} color="#fff1e0" />
-      <ambientLight intensity={0.15} />
-      {PLANETS.map((p) => (
-        <Body key={p.name} p={p} />
-      ))}
-      <OrbitControls enableDamping makeDefault />
-    </Canvas>
+    <>
+      <Canvas camera={{ position: [0, 51, 0.01], fov: 40, near: 0.1, far: 400 }} dpr={[1, 2]}>
+        <color attach="background" args={['#000000']} />
+        <Tick />
+        <DevHooks />
+        <Studio />
+        <Band />
+        <OrbitControls enableDamping makeDefault />
+        <EffectComposer multisampling={4}>
+          <ToneMapping mode={ToneMappingMode.NEUTRAL} />
+        </EffectComposer>
+      </Canvas>
+      <DateLabel />
+    </>
   );
 }
