@@ -10,14 +10,14 @@ import { pick, usePicked } from './selection';
 
 // The flavour each planet's bean would be.
 const FLAVOUR: Record<string, string> = {
-  Mercury: 'café au lait',
+  Mercury: 'dark chocolate button, white nonpareils on top',
   Earth: 'blue raspberry and lime, a silver Moon on the side',
-  Venus: 'buttered popcorn',
-  Mars: 'cinnamon fire',
+  Venus: 'hard butter caramel',
+  Mars: 'cinnamon fire chili, two little chilis in tow',
   Jupiter: 'toffee swirl',
-  Saturn: 'caramel, with a sugar ring',
+  Saturn: 'a big gumball, with a ring of little ones',
   Uranus: 'sugared spearmint gum, rolling round on its side',
-  Neptune: 'blueberry',
+  Neptune: 'blueberry jelly rolled in nonpareils',
 };
 
 const AU_KM = 149597870.7;

@@ -1,13 +1,13 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useFrame } from '@react-three/fiber';
 import { BallCollider, CapsuleCollider, CylinderCollider, RigidBody, type RapierRigidBody } from '@react-three/rapier';
-import { AdditiveBlending, CanvasTexture, Vector4, Color, SRGBColorSpace, type Group as THREE_Group, InstancedMesh, Matrix4, type Mesh, ShaderMaterial, MeshPhysicalMaterial, Quaternion, SphereGeometry, Vector3 } from 'three';
+import { AdditiveBlending, BufferAttribute, LatheGeometry, Vector2, CanvasTexture, RepeatWrapping, Vector4, Color, SRGBColorSpace, type Group as THREE_Group, InstancedMesh, Matrix4, type Mesh, ShaderMaterial, MeshPhysicalMaterial, Quaternion, SphereGeometry, Vector3 } from 'three';
 import { clock } from './clock';
 import { PLANETS, type Planet } from './planets';
 import { planetAt } from './scale';
-import { AllsortSweet, Moons, type Allsort } from './Moons';
+import { AllsortSweet, Chili, Moons, type Allsort } from './Moons';
 import { pick } from './selection';
-import { planetPositions } from './world';
+import { moonPositions, planetPositions } from './world';
 
 // Each planet as a jelly bean, all the same size: the candy it is made of. A base colour with darker
 // patches, bigger patches of a second colour and highlights inside those; 'bands' lays them out in stripes round the
@@ -198,13 +198,21 @@ const PULL = 3;
 const TURN = 6;
 const DENSITY = 25; // heavy, so the loose sweets bounce off the planets rather than shove them about
 
-// Saturn's ring as a belt of tiny Smarties, each on its own circular orbit round the bean, the inner ones going round
+// Saturn's ring as a belt of tiny gumballs, each on its own circular orbit round the bean, the inner ones going round
 // faster than the outer ones (Kepler: angular speed falls as r^-1.5), so the belt shears slowly as it turns. In the
 // bean's units: the ring's inner and outer radius, and how thick it is.
 const BELT_COUNT = 700;
 const BELT_IN = 0.5, BELT_OUT = 0.78, BELT_THICK = 0.012;
 const BELT_SPIN = 0.8; // rad/s at the inner edge
-const BELT_COLOURS = ['#f4a6b7', '#ffd98a', '#a8d8ff', '#b8e6a1', '#ffc09a', '#d6c2ff', '#fff3d6'];
+// Little gumballs in the chalky pastels of a gumball machine.
+// Chalky pastels scatter light about inside the coat, so even their shaded side keeps some of its own colour.
+const chalkyGlow = (sh: { fragmentShader: string }) => {
+  sh.fragmentShader = sh.fragmentShader.replace(
+    '#include <emissivemap_fragment>',
+    '#include <emissivemap_fragment>\n  totalEmissiveRadiance += diffuseColor.rgb * 0.22;',
+  );
+};
+const BELT_COLOURS = ['#f29aa8', '#f08a7e', '#f5a04e', '#f2cc66', '#a9bde8', '#9fc7a8', '#f7b6c8'];
 
 // Saturn is playful, and has a beef with Mercury: when a quick planet comes past close by, Mercury most of all, it
 // pulls two or three sweets off its belt and lets fly. It aims where the target will be by the time they arrive,
@@ -233,11 +241,12 @@ let throwSweets: ((f: Fling[]) => void) | null = null;
 // (Jupiter and Uranus are sized further down, so their numbers are repeated here from LENGTH.)
 const AVOID: Record<string, number> = { bean: LENGTH * 0.55, Jupiter: LENGTH * 0.45 * 1.3, Uranus: LENGTH * 0.36 * 1.6 };
 const AVOID_SOFT = 0.8;
+const TITAN_AVOID = 0.3 + 0.25; // Titan's radius and a little room
 const BLOCKERS = Array.from({ length: 4 }, () => ({ at: new Vector3(), r: 0, soft: 0 }));
 
 function SaturnBelt({ shadows, playful }: { shadows: boolean; playful: boolean }) {
   const ref = useRef<InstancedMesh>(null!);
-  const geometry = useMemo(() => new SphereGeometry(0.022, 10, 6).scale(1, 1, 0.45), []);
+  const geometry = useMemo(() => new SphereGeometry(0.024, 12, 8), []);
   const sweets = useMemo(() => {
     let seed = 5;
     const rnd = () => ((seed = (seed * 16807) % 2147483647) - 1) / 2147483646;
@@ -250,6 +259,7 @@ function SaturnBelt({ shadows, playful }: { shadows: boolean; playful: boolean }
         z: (rnd() - 0.5) * BELT_THICK,
         w: BELT_SPIN * Math.pow(BELT_IN / r, 1.5),
         tilt: rnd() * Math.PI,
+        squash: [1 + (rnd() - 0.5) * 0.18, 1 + (rnd() - 0.5) * 0.18, 1 + (rnd() - 0.5) * 0.18], // each a little wonky
         colour: BELT_COLOURS[i % BELT_COLOURS.length],
         gone: 0, // seconds until it grows back, after being flung
       };
@@ -346,6 +356,14 @@ function SaturnBelt({ shadows, playful }: { shadows: boolean; playful: boolean }
         o.soft = AVOID_SOFT / scale;
         if (blockers === BLOCKERS.length) break;
       }
+      // And Saturn's own moon, going round just outside it, whenever its orbit takes it through the belt.
+      const titan = moonPositions.get('Titan');
+      if (titan && blockers < BLOCKERS.length) {
+        const o = BLOCKERS[blockers++];
+        mesh.worldToLocal(o.at.copy(titan));
+        o.r = TITAN_AVOID / scale;
+        o.soft = AVOID_SOFT * 0.6 / scale;
+      }
     }
 
     sweets.forEach((s, i) => {
@@ -364,13 +382,13 @@ function SaturnBelt({ shadows, playful }: { shadows: boolean; playful: boolean }
         p.sub(o.at).multiplyScalar(pushed / Math.max(d, 1e-5)).add(o.at);
       }
       q.setFromAxisAngle(z, s.a + s.tilt); // lying flat in the ring, each turned its own way
-      mesh.setMatrixAt(i, m.compose(p, q, size.setScalar(grow)));
+      mesh.setMatrixAt(i, m.compose(p, q, size.set(grow * s.squash[0], grow * s.squash[1], grow * s.squash[2])));
     });
     mesh.instanceMatrix.needsUpdate = true;
   });
   return (
     <instancedMesh ref={ref} args={[geometry, undefined, BELT_COUNT]} castShadow={shadows} receiveShadow={shadows} frustumCulled={false}>
-      <meshPhysicalMaterial roughness={0.35} clearcoat={0.8} />
+      <meshPhysicalMaterial roughness={0.3} clearcoat={0.75} clearcoatRoughness={0.15} sheen={0.3} sheenColor="#ffffff" onBeforeCompile={chalkyGlow} />
     </instancedMesh>
   );
 }
@@ -383,7 +401,7 @@ function Flung({ fling, done }: { fling: Fling; done: () => void }) {
   const body = useRef<RapierRigidBody>(null!);
   const look = useRef<THREE_Group>(null!);
   const life = useRef(0);
-  const geometry = useMemo(() => new SphereGeometry(0.022 * LENGTH * FLUNG_SIZE, 12, 8).scale(1, 0.45, 1), []);
+  const geometry = useMemo(() => new SphereGeometry(0.024 * LENGTH * FLUNG_SIZE, 16, 12), []);
   const v = useMemo(() => new Vector3(), []), home = useMemo(() => new Vector3(), []), finished = useRef(false);
   useFrame((_, dt) => {
     life.current += dt;
@@ -420,7 +438,7 @@ function Flung({ fling, done }: { fling: Fling; done: () => void }) {
       <BallCollider args={[0.022 * LENGTH * FLUNG_SIZE]} restitution={0.85} friction={0.1} density={400} />
       <group ref={look}>
         <mesh geometry={geometry} castShadow>
-          <meshPhysicalMaterial color={fling.colour} roughness={0.35} clearcoat={0.8} />
+          <meshPhysicalMaterial color={fling.colour} roughness={0.3} clearcoat={0.75} clearcoatRoughness={0.15} sheen={0.3} sheenColor="#ffffff" onBeforeCompile={chalkyGlow} />
         </mesh>
       </group>
     </RigidBody>
@@ -484,7 +502,7 @@ export const URANUS_RADIUS = LENGTH * 0.36;
 
 // The maps, painted once on canvases laid out like the sphere's UVs (longitude across, latitude down): the gum in two
 // shades, in soft wavy bands if it has any, and sugar grains over it.
-type Gum = { deep: number[]; pale: number[]; bands: number; size: number; grains: number };
+export type Gum = { deep: number[]; pale: number[]; bands: number; size: number; grains: number };
 function gumMaps({ deep, pale, bands, size: w, grains }: Gum) {
   const h = w / 2;
   const canvas = () => {
@@ -533,6 +551,7 @@ function gumMaps({ deep, pale, bands, size: w, grains }: Gum) {
     const t = new CanvasTexture(c);
     if (srgb) t.colorSpace = SRGBColorSpace;
     t.anisotropy = 8;
+    t.wrapS = RepeatWrapping; // round the sphere, so the maps meet at the seam
     return t;
   };
   return { map: tex(colour, true), bumpMap: tex(bump), roughnessMap: tex(rough) };
@@ -588,7 +607,8 @@ function squish(m: MeshPhysicalMaterial, self: number, toRoot: Matrix4) {
 
 // A sugared gum material, made once per gum. `glow` is the gum's own colour, deepened, for its light from inside.
 const GUMS = new Map<string, MeshPhysicalMaterial>();
-function gumMaterial(key: string, gum: Gum, radius: number, glow: string, glowing = 0.22, self = 0, toRoot = IDENTITY) {
+// `self` is its piece in the Uranus clump, or -1 for gum that isn't part of it and doesn't squish.
+export function gumMaterial(key: string, gum: Gum, radius: number, glow: string, glowing = 0.22, self = 0, toRoot = IDENTITY) {
   let m = GUMS.get(key);
   if (m) return m;
   m = new MeshPhysicalMaterial({
@@ -608,7 +628,7 @@ function gumMaterial(key: string, gum: Gum, radius: number, glow: string, glowin
     emissive: glow, // a little glow of its own, so the night side still reads as coloured gum
     emissiveIntensity: glowing,
   });
-  squish(m, self, toRoot);
+  if (self >= 0) squish(m, self, toRoot);
   GUMS.set(key, m);
   return m;
 }
@@ -711,6 +731,183 @@ function MoonDrops({ playful }: { playful: boolean }) {
   );
 }
 
+// Mercury is a little chocolate button covered in white nonpareils: a round, flattish oval, smaller than the beans,
+// lying along its orbit like them, dark glossy chocolate a little uneven, the beads thickest round the rim and
+// scattered over the faces. It rolls like the beans do, so it's dotted on both sides.
+const MERCURY = { a: LENGTH * 0.29, b: LENGTH * 0.16, c: LENGTH * 0.28 }; // half length, half height, half width
+const NONPAREILS = 1100;
+const CHOCOLATE_GEOMETRY = (() => {
+  const g = new SphereGeometry(1, 96, 48);
+  const p = g.attributes.position, v = new Vector3();
+  for (let i = 0; i < p.count; i++) {
+    v.fromBufferAttribute(p, i);
+    // The surface a little uneven where it set.
+    const lump = 1 + 0.03 * Math.sin(v.x * 7 + 1.3) * Math.sin(v.z * 6 - 0.4) + 0.015 * Math.sin(v.x * 17 + v.z * 13);
+    p.setXYZ(i, v.x * MERCURY.a * lump, v.y * MERCURY.b * lump, v.z * MERCURY.c * lump);
+  }
+  g.computeVertexNormals();
+  return g;
+})();
+const CHOCOLATE = new MeshPhysicalMaterial({ color: '#3b1d12', roughness: 0.42, clearcoat: 0.35, clearcoatRoughness: 0.35, sheen: 0.4, sheenColor: '#8a5a44', emissive: '#3b1d12', emissiveIntensity: 0.35 });
+const NONPAREIL = new MeshPhysicalMaterial({ color: '#fbf8f1', roughness: 0.5, emissive: '#fbf8f1', emissiveIntensity: 0.18 });
+const NONPAREIL_GEOMETRY = new SphereGeometry(1, 10, 8);
+function ChocolateButton({ shadows }: { shadows: boolean }) {
+  const ref = useRef<InstancedMesh>(null!);
+  useLayoutEffect(() => {
+    let seed = 3;
+    const rnd = () => ((seed = (seed * 16807) % 2147483647) - 1) / 2147483646;
+    const m = new Matrix4(), q = new Quaternion(), at = new Vector3(), n = new Vector3(), size = new Vector3();
+    for (let i = 0; i < NONPAREILS; ) {
+      // A direction over the button, kept more often the nearer the rim.
+      const y = rnd() * 2 - 1, a = rnd() * Math.PI * 2, ring = Math.sqrt(1 - y * y);
+      if (rnd() > 0.45 + 0.55 * (1 - Math.abs(y)) ** 2) continue;
+      at.set(Math.cos(a) * ring * MERCURY.a, y * MERCURY.b, Math.sin(a) * ring * MERCURY.c);
+      n.set(at.x / MERCURY.a ** 2, at.y / MERCURY.b ** 2, at.z / MERCURY.c ** 2).normalize();
+      const k = LENGTH * (0.009 + rnd() * 0.005);
+      at.addScaledVector(n, -k * 0.35); // pressed into the chocolate a little
+      m.compose(at, q, size.setScalar(k));
+      ref.current.setMatrixAt(i++, m);
+    }
+    ref.current.instanceMatrix.needsUpdate = true;
+  }, []);
+  return (
+    <>
+      <mesh geometry={CHOCOLATE_GEOMETRY} material={CHOCOLATE} castShadow={shadows} receiveShadow={shadows} />
+      <instancedMesh ref={ref} args={[NONPAREIL_GEOMETRY, NONPAREIL, NONPAREILS]} castShadow={shadows} receiveShadow={shadows} />
+    </>
+  );
+}
+
+// Saturn is a big gumball, the round chewing gum from a gumball machine: a pastel ball, glossy, not quite round,
+// its colour a little mottled, with a belt of little gumballs round it.
+const SATURN_RADIUS = LENGTH * 0.38;
+const SATURN_GEOMETRY = (() => {
+  const g = new SphereGeometry(SATURN_RADIUS, 96, 64);
+  // Mottled: the colour drifts a little lighter and darker over the ball, as the coat was panned on.
+  const p = g.attributes.position, colours = new Float32Array(p.count * 3), v = new Vector3();
+  for (let i = 0; i < p.count; i++) {
+    v.fromBufferAttribute(p, i).divideScalar(SATURN_RADIUS);
+    // Not quite round: a few slow dents and bulges, as a gumball is.
+    const wonk = 1 + 0.055 * Math.sin(v.x * 2.3 + 0.4) * Math.sin(v.y * 1.9 - 1.2) + 0.035 * Math.sin(v.z * 2.8 + v.x * 1.4 + 2.2) + 0.012 * Math.sin(v.y * 5.1 + v.z * 4.3);
+    p.setXYZ(i, v.x * SATURN_RADIUS * wonk, v.y * SATURN_RADIUS * wonk * 0.97, v.z * SATURN_RADIUS * wonk);
+    const k = 0.93 + 0.07 * Math.sin(v.x * 5 + 1.1) * Math.sin(v.y * 4.3 - 0.6) * Math.sin(v.z * 5.6 + 2) + 0.03 * Math.sin(v.x * 13 + v.z * 11);
+    colours.set([k, k, k], i * 3);
+  }
+  g.setAttribute('color', new BufferAttribute(colours, 3));
+  g.computeVertexNormals();
+  return g;
+})();
+const GUMBALL = new MeshPhysicalMaterial({ color: '#f5c46c', vertexColors: true, roughness: 0.3, clearcoat: 0.75, clearcoatRoughness: 0.15, sheen: 0.4, sheenColor: '#fff4e0', emissive: '#f5c46c', emissiveIntensity: 0.1 });
+
+// Venus is a hard butter caramel: a round golden puck, glossy and a little see-through, its face a raised ring round
+// a shallow dip with a small dome in the middle, its edge well rounded. Turned on a lathe. The planets roll, so it's
+// the same on both faces.
+const CARAMEL = { r: LENGTH * 0.28, h: LENGTH * 0.16 }; // radius, half thickness
+const CARAMEL_GEOMETRY = (() => {
+  const { r: R, h: H } = CARAMEL, edge = R * 0.42; // a wide, soft edge, so it's more pebble than puck
+  const smooth = (a: number, b: number, x: number) => {
+    const t = Math.min(1, Math.max(0, (x - a) / (b - a)));
+    return t * t * (3 - 2 * t);
+  };
+  // The face's height at radius r, out to where the rounded edge starts.
+  const face = (r: number) =>
+    H * (0.72 + 0.28 * smooth(0.2 * R, 0.45 * R, r) - 0.04 * smooth(0.45 * R, R - edge, r)) + H * 0.2 * Math.exp(-((r / (0.12 * R)) ** 2));
+  const top: Vector2[] = [];
+  const out = R - edge, steps = 60;
+  for (let i = 0; i <= steps; i++) {
+    const r = (i / steps) * out;
+    top.push(new Vector2(r, face(r)));
+  }
+  // The rounded edge: from the face's height down to the middle, a quarter ellipse.
+  const rim = face(out);
+  for (let i = 1; i <= 16; i++) {
+    const a = (i / 16) * (Math.PI / 2);
+    top.push(new Vector2(out + Math.sin(a) * edge, rim * Math.cos(a)));
+  }
+  // Bottom to top, as the lathe wants it: the underside (the face mirrored) from the middle out to the edge, then the
+  // top from the edge back in to the middle.
+  const profile = [...top.map((p) => new Vector2(p.x, -p.y)), ...top.slice(0, -1).reverse()].map((p) => new Vector2(Math.max(p.x, 0.0001), p.y));
+  const g = new LatheGeometry(profile, 96);
+  g.computeVertexNormals();
+  return g;
+})();
+const CARAMEL_MATERIAL = (() => {
+  const m = new MeshPhysicalMaterial({ color: '#e6a23c', roughness: 0.14, clearcoat: 1, clearcoatRoughness: 0.06, transmission: 0.08, thickness: CARAMEL.h * 2, attenuationColor: '#b0600e', attenuationDistance: 1.5 });
+  m.onBeforeCompile = (sh) => {
+    sh.fragmentShader = sh.fragmentShader.replace(
+      '#include <emissivemap_fragment>',
+      // Caramel holds the light: a warm glow, deeper at the thin edges.
+      /* glsl */ `#include <emissivemap_fragment>
+  float edge = 1.0 - abs(dot(normal, normalize(vViewPosition)));
+  totalEmissiveRadiance += diffuseColor.rgb * (0.08 + 0.3 * edge * edge);`,
+    );
+  };
+  return m;
+})();
+
+// Neptune is a jelly drop rolled in blue nonpareils: a soft, slightly squarish dome (a superquadric) packed all over
+// with tiny beads, mostly deep blues, a few pale ones and white. One instanced mesh of beads on a dark blue core.
+const NEPTUNE = { a: LENGTH * 0.36, b: LENGTH * 0.31, c: LENGTH * 0.36, n: 2.6 }; // half sizes, squareness
+const NEPTUNE_BEADS = 3600;
+const NEPTUNE_BEAD = LENGTH * 0.019;
+const NEPTUNE_COLOURS: [string, number][] = [['#2a2c86', 0.42], ['#3f55c2', 0.3], ['#6f86e0', 0.14], ['#a9bbf2', 0.08], ['#f1f3fb', 0.06]];
+const onNeptune = (d: Vector3, out: Vector3) => {
+  const { a, b, c, n } = NEPTUNE;
+  const k = Math.pow(Math.abs(d.x) ** n + Math.abs(d.y) ** n + Math.abs(d.z) ** n, 1 / n);
+  return out.set((d.x / k) * a, (d.y / k) * b, (d.z / k) * c);
+};
+const NEPTUNE_CORE = (() => {
+  const g = new SphereGeometry(1, 64, 32), p = g.attributes.position, v = new Vector3(), w = new Vector3();
+  for (let i = 0; i < p.count; i++) {
+    onNeptune(v.fromBufferAttribute(p, i), w);
+    p.setXYZ(i, w.x, w.y, w.z);
+  }
+  g.computeVertexNormals();
+  return g;
+})();
+const NEPTUNE_CORE_MATERIAL = new MeshPhysicalMaterial({ color: '#1c1f6a', roughness: 0.5 });
+const NEPTUNE_BEAD_GEOMETRY = new SphereGeometry(1, 10, 8);
+const NEPTUNE_BEAD_MATERIAL = new MeshPhysicalMaterial({ roughness: 0.38, clearcoat: 0.5, clearcoatRoughness: 0.3 });
+NEPTUNE_BEAD_MATERIAL.onBeforeCompile = (sh) => {
+  // Sugar beads scatter light, so they keep a little of their own colour on the shaded side.
+  sh.fragmentShader = sh.fragmentShader.replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\n  totalEmissiveRadiance += diffuseColor.rgb * 0.2;');
+};
+function NonpareilDrop({ shadows }: { shadows: boolean }) {
+  const ref = useRef<InstancedMesh>(null!);
+  useLayoutEffect(() => {
+    let seed = 17;
+    const rnd = () => ((seed = (seed * 16807) % 2147483647) - 1) / 2147483646;
+    const m = new Matrix4(), q = new Quaternion(), at = new Vector3(), d = new Vector3(), n = new Vector3(), size = new Vector3(), c = new Color();
+    const { a, b, c: cc, n: sq } = NEPTUNE;
+    for (let i = 0; i < NEPTUNE_BEADS; i++) {
+      const y = rnd() * 2 - 1, t = rnd() * Math.PI * 2, ring = Math.sqrt(1 - y * y);
+      onNeptune(d.set(Math.cos(t) * ring, y, Math.sin(t) * ring), at);
+      // The surface's normal there, from the superquadric's slope.
+      n.set(Math.sign(at.x) * Math.abs(at.x / a) ** (sq - 1) / a, Math.sign(at.y) * Math.abs(at.y / b) ** (sq - 1) / b, Math.sign(at.z) * Math.abs(at.z / cc) ** (sq - 1) / cc).normalize();
+      const k = NEPTUNE_BEAD * (0.8 + rnd() * 0.45);
+      at.addScaledVector(n, k * (0.35 + rnd() * 0.4)); // sitting in the jelly, some a little proud
+      m.compose(at, q, size.setScalar(k));
+      ref.current.setMatrixAt(i, m);
+      let pick = rnd(), colour = NEPTUNE_COLOURS[0][0];
+      for (const [hex, share] of NEPTUNE_COLOURS) {
+        if ((pick -= share) <= 0) {
+          colour = hex;
+          break;
+        }
+      }
+      ref.current.setColorAt(i, c.set(colour));
+    }
+    ref.current.instanceMatrix.needsUpdate = true;
+    if (ref.current.instanceColor) ref.current.instanceColor.needsUpdate = true;
+  }, []);
+  return (
+    <>
+      <mesh geometry={NEPTUNE_CORE} material={NEPTUNE_CORE_MATERIAL} receiveShadow={shadows} />
+      <instancedMesh ref={ref} args={[NEPTUNE_BEAD_GEOMETRY, NEPTUNE_BEAD_MATERIAL, NEPTUNE_BEADS]} castShadow={shadows} receiveShadow={shadows} />
+    </>
+  );
+}
+
 export function PlanetCandy({ name, shadows = true, playful = false }: { name: string; shadows?: boolean; playful?: boolean }) {
   const c = CANDY[name];
   // Pattern seed: Earth came last, so the others keep the patterns they've always had.
@@ -719,6 +916,21 @@ export function PlanetCandy({ name, shadows = true, playful = false }: { name: s
   const material = useMemo(() => candy(c, index * 17.3), [c, index]);
   const geometry = useMemo(() => lumpy(index + 1), [index]);
   if (name === 'Jupiter') return <AllsortSweet allsort={JUPITER_ROLL} size={JUPITER_RADIUS} seed={3} />;
+  if (name === 'Mercury') return <ChocolateButton shadows={shadows} />;
+  if (name === 'Neptune') return <NonpareilDrop shadows={shadows} />;
+  // Mars is a chili sweet, the length of a bean, its moons little chilis too.
+  if (name === 'Mars') return <Chili length={LENGTH * 1.05} radius={LENGTH * 0.2} colour="#c8141c" seed={0.4} shadows={shadows} />;
+  if (name === 'Venus') return <mesh geometry={CARAMEL_GEOMETRY} material={CARAMEL_MATERIAL} castShadow={shadows} receiveShadow={shadows} />;
+  if (name === 'Saturn')
+    return (
+      <>
+        <mesh geometry={SATURN_GEOMETRY} material={GUMBALL} castShadow={shadows} receiveShadow={shadows} />
+        {/* Its belt round its middle, tipped a little. */}
+        <group rotation={[0, Math.PI / 2, 0.35]} scale={LENGTH}>
+          <SaturnBelt shadows={shadows} playful={playful} />
+        </group>
+      </>
+    );
   if (name === 'Uranus')
     return (
       <>
@@ -791,7 +1003,17 @@ function Bean({ planet, index }: { planet: Planet; index: number }) {
       colliders={false}
       position={planetAt(planet, clock.jd).setY(-DIG)}
     >
-      {planet.name === 'Uranus' ? (
+      {planet.name === 'Neptune' ? (
+        <BallCollider density={DENSITY} args={[NEPTUNE.a]} />
+      ) : planet.name === 'Venus' ? (
+        <CylinderCollider density={DENSITY} args={[CARAMEL.h, CARAMEL.r]} />
+      ) : planet.name === 'Saturn' ? (
+        // The gumball; the belt itself doesn't collide.
+        <BallCollider density={DENSITY} args={[SATURN_RADIUS]} />
+      ) : planet.name === 'Mercury' ? (
+        // A flat capsule's worth along the button.
+        <CapsuleCollider density={DENSITY} args={[MERCURY.a - MERCURY.c * 0.6, MERCURY.c * 0.6]} rotation={[0, 0, Math.PI / 2]} />
+      ) : planet.name === 'Uranus' ? (
         // Round enough to cover the gum drops stuck on it too.
         <BallCollider density={DENSITY} args={[URANUS_REACH]} />
       ) : planet.name === 'Jupiter' ? (

@@ -102,7 +102,7 @@ export function App() {
   }, []);
   return (
     <>
-      <Canvas camera={{ position: [0, 85, 0.01], fov: 40, near: 1, far: 250 }} dpr={[1, 2]} shadows={{ type: PCFShadowMap }} gl={{ toneMapping: NeutralToneMapping }} onPointerMissed={() => pick(null)}>
+      <Canvas camera={{ position: [0, 72.6, 0.001], fov: 40, near: 1, far: 250 }} dpr={[1, 2]} shadows={{ type: PCFShadowMap }} gl={{ toneMapping: NeutralToneMapping }} onPointerMissed={() => pick(null)}>
         <color attach="background" args={[BACKGROUND[theme]]} />
         <Tick />
         <DevHooks />

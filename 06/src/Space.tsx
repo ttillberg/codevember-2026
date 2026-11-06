@@ -20,7 +20,7 @@ import { planetAt, toOrrery } from './scale';
 import { planetPositions } from './world';
 
 // The rest of the solar system's furniture, on real Kepler orbits like the planets, in the same compressed scale:
-// the main asteroid belt as sprinkles, Jupiter's Trojans, and Halley's comet.
+// the main asteroid belt as sprinkles, Jupiter's Trojans, and Halley's comet (a gummy worm).
 const ORBIT_Y = 12.6; // the orbits' plane, the glass ball's middle, where the planets ride
 const J2000 = 2451545;
 const DAY = 0.9856076686; // a 1 au orbit's mean motion, degrees per day; scales as a^-1.5
@@ -134,24 +134,60 @@ const HALLEY: Elements = { a: 17.834, e: 0.96714, I: 162.26, L: 0, w: HALLEY_W, 
 const HALLEY_L0 = HALLEY_W + HALLEY_N * (J2000 - 2446467.4);
 const NEXT_PERIHELION = jdFromDate(new Date(Date.UTC(2061, 6, 28)));
 
-// Icy blue sugar dust streaming off the comet, always away from the sun, longer the closer it gets to it.
-const TAIL = 600;
-const SUN = new Vector3(0, ORBIT_Y, 0);
+// Halley's comet is a gummy worm, worming its way round the solar system on Halley's orbit: its head where the comet
+// is, its body trailing back along the way it came, a wriggle running down it from head to tail. A ridged tube,
+// rounded at both ends, red at the head fading to orange, glossy see-through gum glowing a little of its own colour.
+const WORM_LENGTH = 3.4;
+const WORM_RADIUS = 0.17;
+const SPINE = 120; // rings along the body, a few to each ridge
+const RIM = 28; // points round each ring
+const RIDGES = 22; // the little ridges round a gummy worm
+const WORM_HEAD = new Color('#e3142a'), WORM_TAIL = new Color('#ff9a1c');
 
 function Comet() {
-  const nucleus = useRef<Mesh>(null!);
-  const tail = useRef<Points>(null!);
-  const { geometry, seeds } = useMemo(() => {
+  const worm = useRef<Mesh>(null!);
+  const geometry = useMemo(() => {
     const g = new BufferGeometry();
-    g.setAttribute('position', new BufferAttribute(new Float32Array(TAIL * 3), 3));
-    g.setAttribute('color', new BufferAttribute(new Float32Array(TAIL * 3), 3));
-    // Each grain: where it is along the tail (0 at the head), how fast it drifts out, and a sideways spread.
-    const seeds = Array.from({ length: TAIL }, () => ({
-      u: r(),
-      speed: 0.25 + r() * 0.5,
-      spread: new Vector3(r() - 0.5, r() - 0.5, r() - 0.5).multiplyScalar(2),
-    }));
-    return { geometry: g, seeds };
+    // Every ring's points, then one at each tip to close it off round.
+    const count = SPINE * RIM + 2;
+    g.setAttribute('position', new BufferAttribute(new Float32Array(count * 3), 3));
+    const colours = new Float32Array(count * 3), c = new Color();
+    for (let i = 0; i < SPINE; i++) {
+      // Red at the head, through to orange most of the way down, a soft blend between.
+      const t = i / (SPINE - 1);
+      c.copy(WORM_HEAD).lerp(WORM_TAIL, Math.min(1, Math.max(0, (t - 0.25) / 0.45)));
+      for (let j = 0; j < RIM; j++) colours.set([c.r, c.g, c.b], (i * RIM + j) * 3);
+    }
+    colours.set([WORM_HEAD.r, WORM_HEAD.g, WORM_HEAD.b], SPINE * RIM * 3);
+    colours.set([WORM_TAIL.r, WORM_TAIL.g, WORM_TAIL.b], (SPINE * RIM + 1) * 3);
+    g.setAttribute('color', new BufferAttribute(colours, 3));
+    const index: number[] = [];
+    const tip = SPINE * RIM, last = (SPINE - 1) * RIM;
+    for (let j = 0; j < RIM; j++) {
+      const k = (j + 1) % RIM;
+      index.push(tip, j, k); // the head's tip
+      index.push(last + j, tip + 1, last + k); // the tail's
+    }
+    for (let i = 0; i < SPINE - 1; i++)
+      for (let j = 0; j < RIM; j++) {
+        const a = i * RIM + j, b = i * RIM + ((j + 1) % RIM), c2 = a + RIM, d = b + RIM;
+        index.push(a, c2, b, b, c2, d);
+      }
+    g.setIndex(index);
+    return g;
+  }, []);
+  const material = useMemo(() => {
+    const m = new MeshPhysicalMaterial({ vertexColors: true, roughness: 0.22, clearcoat: 0.9, clearcoatRoughness: 0.15, transmission: 0.25, thickness: WORM_RADIUS * 2 });
+    m.onBeforeCompile = (sh) => {
+      sh.fragmentShader = sh.fragmentShader.replace(
+        '#include <emissivemap_fragment>',
+        // Gum lets light in: a glow of its own colour, stronger at the thin edges.
+        /* glsl */ `#include <emissivemap_fragment>
+  float edge = 1.0 - abs(dot(normal, normalize(vViewPosition)));
+  totalEmissiveRadiance += diffuseColor.rgb * (0.3 + 0.4 * edge * edge);`,
+      );
+    };
+    return m;
   }, []);
 
   // H jumps to a little before Halley's next perihelion, in 2061, to watch it swing past.
@@ -163,50 +199,70 @@ function Comet() {
     return () => removeEventListener('keydown', key);
   }, []);
 
-  const away = useMemo(() => new Vector3(), []);
-  const head = useMemo(() => new Vector3(), []);
-  const ice = useMemo(() => new Color('#5fb4ff'), []);
+  const s = useMemo(
+    () => ({
+      head: new Vector3(), ahead: new Vector3(), dir: new Vector3(1, 0, 0), side: new Vector3(), up: new Vector3(),
+      spine: Array.from({ length: SPINE }, () => new Vector3()), t: new Vector3(), n: new Vector3(), b: new Vector3(),
+      time: 0,
+    }),
+    [],
+  );
+  const where = (jd: number, out: Vector3) => {
+    HALLEY.L = HALLEY_L0 + HALLEY_N * (jd - J2000);
+    toOrrery(position(HALLEY, out)).y += ORBIT_Y;
+    return out;
+  };
   useFrame((_, dt) => {
-    HALLEY.L = HALLEY_L0 + HALLEY_N * (clock.jd - J2000);
-    position(HALLEY, head);
-    const au = head.length();
-    toOrrery(head).y += ORBIT_Y;
-    nucleus.current.position.copy(head);
-    nucleus.current.rotation.y += dt * 0.6;
-    away.subVectors(head, SUN).normalize();
-    // Tail length in scene units: nothing far out, growing as it nears the sun (sublimation, roughly 1/r²).
-    const length = Math.min(14, 30 / (au * au));
+    s.time += dt;
+    where(clock.jd, s.head);
+    // Which way it's going along the orbit: a little way ahead in time, far enough to see it move.
+    where(clock.jd + 30, s.ahead).sub(s.head);
+    if (s.ahead.lengthSq() > 1e-8) s.dir.copy(s.ahead).normalize();
+    s.side.crossVectors(s.dir, UP).normalize();
+    s.up.crossVectors(s.side, s.dir);
+    // The spine: back from the head along the way it came, a wave travelling down it, growing towards the tail.
+    for (let i = 0; i < SPINE; i++) {
+      const u = i / (SPINE - 1), along = u * WORM_LENGTH;
+      const wave = Math.sin(along * 2.4 - s.time * 4), lift = Math.sin(along * 1.7 - s.time * 3.1 + 1);
+      const swing = 0.25 + 0.75 * u;
+      s.spine[i]
+        .copy(s.head)
+        .addScaledVector(s.dir, -along)
+        .addScaledVector(s.side, wave * 0.32 * swing)
+        .addScaledVector(s.up, lift * 0.14 * swing);
+    }
+    // Rings round the spine, each square to it, ridged, rounded off at both ends.
     const pos = geometry.getAttribute('position') as BufferAttribute;
-    const col = geometry.getAttribute('color') as BufferAttribute;
-    seeds.forEach((g, i) => {
-      g.u = (g.u + dt * g.speed) % 1;
-      const d = g.u * length;
-      pos.setXYZ(
-        i,
-        head.x + away.x * d + g.spread.x * g.u * length * 0.08,
-        head.y + away.y * d + g.spread.y * g.u * length * 0.08,
-        head.z + away.z * d + g.spread.z * g.u * length * 0.08,
-      );
-      const fade = 1 - g.u; // fades towards the end of the tail, darkened to vanish against the light background
-      col.setXYZ(i, ice.r * fade + (1 - fade) * 0.93, ice.g * fade + (1 - fade) * 0.93, ice.b * fade + (1 - fade) * 0.93);
-    });
-    pos.needsUpdate = col.needsUpdate = true;
-    tail.current.visible = length > 0.3;
+    for (let i = 0; i < SPINE; i++) {
+      const prev = s.spine[Math.max(i - 1, 0)], next = s.spine[Math.min(i + 1, SPINE - 1)];
+      s.t.subVectors(prev, next).normalize();
+      // Square to the spine, kept from flipping round: the worm's own side, made square to this bit of spine.
+      s.n.copy(s.side).addScaledVector(s.t, -s.side.dot(s.t)).normalize();
+      s.b.crossVectors(s.n, s.t);
+      // Rounded ends: a quarter circle in profile, stopping short of nothing so the tips close smoothly.
+      const along = (i / (SPINE - 1)) * WORM_LENGTH, cap = WORM_RADIUS * 1.3;
+      const end = Math.min(1, (Math.min(along, WORM_LENGTH - along) + cap * 0.04) / cap);
+      const round = Math.sqrt(1 - (1 - end) ** 2);
+      const r = WORM_RADIUS * round * (1 + 0.07 * round * Math.cos((along / WORM_LENGTH) * RIDGES * Math.PI * 2));
+      for (let j = 0; j < RIM; j++) {
+        const a = (j / RIM) * Math.PI * 2, x = Math.cos(a) * r, y = Math.sin(a) * r, p = s.spine[i];
+        pos.setXYZ(i * RIM + j, p.x + s.n.x * x + s.b.x * y, p.y + s.n.y * x + s.b.y * y, p.z + s.n.z * x + s.b.z * y);
+      }
+    }
+    // The tips, a little out beyond the end rings along the spine.
+    s.t.subVectors(s.spine[0], s.spine[1]).normalize();
+    pos.setXYZ(SPINE * RIM, s.spine[0].x + s.t.x * WORM_RADIUS * 0.06, s.spine[0].y + s.t.y * WORM_RADIUS * 0.06, s.spine[0].z + s.t.z * WORM_RADIUS * 0.06);
+    s.t.subVectors(s.spine[SPINE - 1], s.spine[SPINE - 2]).normalize();
+    const e = s.spine[SPINE - 1];
+    pos.setXYZ(SPINE * RIM + 1, e.x + s.t.x * WORM_RADIUS * 0.06, e.y + s.t.y * WORM_RADIUS * 0.06, e.z + s.t.z * WORM_RADIUS * 0.06);
+    pos.needsUpdate = true;
+    geometry.computeVertexNormals();
+    geometry.computeBoundingSphere();
   });
 
-  return (
-    <>
-      {/* The nucleus: a lump of rock candy. */}
-      <mesh ref={nucleus} castShadow>
-        <icosahedronGeometry args={[0.55, 0]} />
-        <meshPhysicalMaterial color="#e8f4ff" roughness={0.15} clearcoat={1} flatShading />
-      </mesh>
-      <points ref={tail} geometry={geometry} frustumCulled={false}>
-        <pointsMaterial size={0.55} vertexColors transparent opacity={0.95} depthWrite={false} />
-      </points>
-    </>
-  );
+  return <mesh ref={worm} geometry={geometry} material={material} castShadow receiveShadow frustumCulled={false} />;
 }
+const UP = new Vector3(0, 1, 0);
 
 // A leader and a line of followers playing round the sun like dolphins: the leader loops quickly round the
 // lollipop the way the planets go, leaping up and diving down and swinging in and out; each of the others chases
