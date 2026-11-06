@@ -1,13 +1,45 @@
-html, body, #root { margin: 0; height: 100%; background: #000; overflow: hidden; }
+html, body, #root { margin: 0; height: 100%; background: #eceef1; overflow: hidden; }
 canvas { display: block; }
 .back {
   position: fixed; left: 12px; bottom: 12px;
-  font: 12px ui-monospace, Menlo, monospace; color: #fff; opacity: .5;
+  font: 12px ui-monospace, Menlo, monospace; color: #111; opacity: .5;
   text-decoration: none;
 }
 .back:hover { opacity: 1; }
 
 .date {
   position: fixed; left: 50%; bottom: 12px; transform: translateX(-50%);
-  font: 12px ui-monospace, Menlo, monospace; color: #fff; opacity: .6;
+  font: 12px ui-monospace, Menlo, monospace; color: #111; opacity: .6;
 }
+
+.card {
+  position: fixed; right: 24px; top: 50%; transform: translateY(-50%); width: 280px;
+  background: rgba(255, 255, 255, 0.82); backdrop-filter: blur(10px);
+  border-radius: 18px; box-shadow: 0 12px 40px rgba(0, 0, 0, 0.12);
+  padding: 0 20px 18px; font: 12px ui-monospace, Menlo, monospace; color: #222;
+}
+.card .view { height: 220px; margin: 0 -20px; }
+.card h2 { margin: 0; font: 600 20px ui-monospace, Menlo, monospace; }
+.card .flavour { margin: 2px 0 14px; opacity: 0.55; font-style: italic; }
+.card dl { display: grid; grid-template-columns: auto 1fr; gap: 6px 14px; margin: 0; }
+.card dt { opacity: 0.55; }
+.card dd { margin: 0; text-align: right; font-variant-numeric: tabular-nums; }
+.card .close {
+  position: absolute; right: 10px; top: 8px; border: 0; background: none; cursor: pointer;
+  font: 20px ui-monospace, Menlo, monospace; color: #222; opacity: 0.5;
+}
+.card .close:hover { opacity: 1; }
+@media (max-width: 640px) {
+  .card { top: auto; bottom: 40px; right: 16px; left: 16px; width: auto; transform: none; }
+  .card .view { height: 160px; }
+}
+
+.theme {
+  position: fixed; right: 12px; bottom: 10px; border: 0; background: none; cursor: pointer;
+  font: 12px ui-monospace, Menlo, monospace; color: #111; opacity: .5;
+}
+.theme:hover { opacity: 1; }
+
+/* Dark room: the page and its text follow the scene's background. */
+body[data-theme="dark"], body[data-theme="dark"] #root { background: #0b0c0f; }
+body[data-theme="dark"] .back, body[data-theme="dark"] .date, body[data-theme="dark"] .theme { color: #f2f2f2; }
