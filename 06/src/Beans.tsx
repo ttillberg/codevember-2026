@@ -5,7 +5,7 @@ import { AdditiveBlending, BufferAttribute, LatheGeometry, Vector2, CanvasTextur
 import { clock } from './clock';
 import { PLANETS, type Planet } from './planets';
 import { planetAt } from './scale';
-import { AllsortSweet, Chili, Moons, type Allsort } from './Moons';
+import { AllsortSweet, Moons, type Allsort } from './Moons';
 import { pick } from './selection';
 import { moonPositions, planetPositions } from './world';
 
@@ -918,8 +918,6 @@ export function PlanetCandy({ name, shadows = true, playful = false }: { name: s
   if (name === 'Jupiter') return <AllsortSweet allsort={JUPITER_ROLL} size={JUPITER_RADIUS} seed={3} />;
   if (name === 'Mercury') return <ChocolateButton shadows={shadows} />;
   if (name === 'Neptune') return <NonpareilDrop shadows={shadows} />;
-  // Mars is a chili sweet, the length of a bean, its moons little chilis too.
-  if (name === 'Mars') return <Chili length={LENGTH * 1.05} radius={LENGTH * 0.2} colour="#c8141c" seed={0.4} shadows={shadows} />;
   if (name === 'Venus') return <mesh geometry={CARAMEL_GEOMETRY} material={CARAMEL_MATERIAL} castShadow={shadows} receiveShadow={shadows} />;
   if (name === 'Saturn')
     return (

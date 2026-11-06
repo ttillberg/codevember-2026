@@ -16,6 +16,7 @@ import {
   Vector3,
 } from 'three';
 import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
+import { LENGTH, PlanetCandy } from './Beans';
 import { clock } from './clock';
 import { moonPositions, planetPositions } from './world';
 
@@ -36,7 +37,7 @@ type Moon = {
   metal?: boolean; // the silver dragée
   allsort?: Allsort; // one of the liquorice allsorts instead of a ball
   gumball?: boolean; // a glossy pastel gumball, like Saturn
-  chili?: boolean; // a little chili pepper, like Mars
+  bean?: string; // a little jelly bean, the same sweet as this planet's
 };
 // Liquorice allsorts: a square of layers (bottom to top), or a roll, a coloured coat round a core.
 export type Allsort =
@@ -55,9 +56,9 @@ const SYSTEMS: System[] = [
     host: 'Mars',
     normal: tipped(1),
     moons: [
-      // Mars is a chili, so its two little moons are tiny chilis, a red one and a green one.
-      { name: 'Phobos', period: 0.319, orbit: 2.4, radius: 0.18, colour: '#d81e1a', chili: true },
-      { name: 'Deimos', period: 1.263, orbit: 2.85, radius: 0.14, colour: '#4f9a22', chili: true },
+      // Mars is a chilli jelly bean, so its two little moons are chilli jelly beans too, just small.
+      { name: 'Phobos', period: 0.319, orbit: 2.4, radius: 0.18, colour: '#a5121c', bean: 'Mars' },
+      { name: 'Deimos', period: 1.263, orbit: 2.85, radius: 0.14, colour: '#a5121c', bean: 'Mars' },
     ],
   },
   {
@@ -150,8 +151,11 @@ function MoonBody({ moon, system, index }: { moon: Moon; system: System; index: 
   return (
     <RigidBody ref={ref} type="dynamic" gravityScale={0} canSleep={false} colliders={false} position={[0, -100, 0]}>
       <BallCollider args={[moon.radius]} restitution={0.8} density={DENSITY} />
-      {moon.chili ? (
-        <Chili length={moon.radius * 3.6} radius={moon.radius * 0.75} colour={moon.colour} seed={index * 2.3 + 1} />
+      {moon.bean ? (
+        // The planet's own sweet, shrunk to a moon: a bean a bit more than twice its radius long.
+        <group scale={(moon.radius * 2.4) / LENGTH}>
+          <PlanetCandy name={moon.bean} />
+        </group>
       ) : moon.allsort ? (
         <AllsortSweet allsort={moon.allsort} size={moon.radius} seed={index * 7.7 + moon.orbit} />
       ) : (
@@ -170,113 +174,6 @@ function MoonBody({ moon, system, index }: { moon: Moon; system: System; index: 
       )}
       {moon.haze && <Haze radius={moon.radius * 1.35} colour={moon.haze} />}
     </RigidBody>
-  );
-}
-
-// A chili pepper sweet: a glossy, waxy pod, round at the shoulder and tapering to a point, curving as it goes, with
-// three soft lobes along it and a green cap and stalk. Built along x, centred, the stalk at -x; the pod's length and
-// its widest radius.
-export function chiliGeometry(length: number, radius: number, seed: number) {
-  const pts: Vector2[] = [];
-  const n = 64;
-  for (let i = 0; i <= n; i++) {
-    const t = i / n;
-    // Round shoulder over the first eighth, then a taper to a soft point.
-    const shoulder = t < 0.12 ? Math.sqrt(1 - (1 - t / 0.12) ** 2) : 1;
-    const taper = Math.pow(1 - t, 0.75) * (1 - 0.15 * t);
-    pts.push(new Vector2(Math.max(radius * shoulder * taper, 0.0001), t * length));
-  }
-  const g = new LatheGeometry(pts, 48);
-  const p = g.attributes.position, v = new Vector3();
-  const bend = 0.22 + 0.08 * Math.sin(seed * 3.1);
-  for (let i = 0; i < p.count; i++) {
-    v.fromBufferAttribute(p, i);
-    const t = v.y / length, around = Math.atan2(v.z, v.x);
-    // Lobes, a few wrinkles, and the curve.
-    const k = 1 + 0.07 * Math.cos(around * 3 + seed) + 0.02 * Math.sin(t * 23 + around * 2 + seed);
-    const x = t * length - length / 2;
-    const curve = bend * length * (t * t - 1 / 3); // a parabola, shifted so the pod stays centred
-    p.setXYZ(i, x, v.x * k + curve, v.z * k);
-  }
-  g.computeVertexNormals();
-  return g;
-}
-
-// Waxy chili skin: glossy, the gloss breaking up a little, fine creases in the normal, darker down in them, and a
-// little light coming through the flesh. Noise in the pod's own space, scaled to its size.
-export function chiliMaterial(colour: string, size: number) {
-  const m = new MeshPhysicalMaterial({ color: colour, roughness: 0.22, clearcoat: 0.9, clearcoatRoughness: 0.12, sheen: 0.3, sheenColor: '#ffd0c0' });
-  m.onBeforeCompile = (sh) => {
-    sh.uniforms.uScale = { value: 1 / size };
-    sh.vertexShader = sh.vertexShader
-      .replace('void main() {', 'varying vec3 vObj;\nvarying mat3 vToView;\nvoid main() {')
-      .replace('#include <begin_vertex>', '#include <begin_vertex>\n  vObj = position;\n  vToView = normalMatrix;');
-    sh.fragmentShader = sh.fragmentShader
-      .replace(
-        'void main() {',
-        /* glsl */ `varying vec3 vObj;
-  varying mat3 vToView;
-  uniform float uScale;
-  float hash(vec3 p) { return fract(sin(dot(p, vec3(127.1, 311.7, 74.7))) * 43758.5453); }
-  float noise(vec3 p) {
-    vec3 i = floor(p), f = fract(p);
-    f = f * f * (3.0 - 2.0 * f);
-    return mix(
-      mix(mix(hash(i), hash(i + vec3(1, 0, 0)), f.x), mix(hash(i + vec3(0, 1, 0)), hash(i + vec3(1, 1, 0)), f.x), f.y),
-      mix(mix(hash(i + vec3(0, 0, 1)), hash(i + vec3(1, 0, 1)), f.x), mix(hash(i + vec3(0, 1, 1)), hash(i + vec3(1, 1, 1)), f.x), f.y),
-      f.z);
-  }
-  // Creases run along the pod (x), so the noise is stretched that way.
-  float crease(vec3 q) { return noise(q * vec3(0.35, 1.0, 1.0)) * 0.7 + noise(q * vec3(0.8, 2.6, 2.6)) * 0.3; }
-void main() {`,
-      )
-      .replace(
-        '#include <color_fragment>',
-        /* glsl */ `#include <color_fragment>
-  vec3 q = vObj * uScale * 9.0;
-  float cr = crease(q);
-  diffuseColor.rgb *= 0.82 + 0.3 * cr; // darker down in the creases`,
-      )
-      .replace('#include <roughnessmap_fragment>', '#include <roughnessmap_fragment>\n  roughnessFactor = mix(0.38, 0.16, cr); // the gloss breaks up in the creases')
-      .replace(
-        '#include <normal_fragment_maps>',
-        /* glsl */ `#include <normal_fragment_maps>
-  float e = 0.05;
-  vec3 g = vec3(crease(q + vec3(e, 0, 0)) - cr, crease(q + vec3(0, e, 0)) - cr, crease(q + vec3(0, 0, e)) - cr) / e;
-  normal = normalize(normal - vToView * g * 0.05);`,
-      )
-      .replace(
-        '#include <emissivemap_fragment>',
-        /* glsl */ `#include <emissivemap_fragment>
-  float edge = 1.0 - abs(dot(normal, normalize(vViewPosition)));
-  totalEmissiveRadiance += diffuseColor.rgb * (0.1 + 0.35 * edge * edge);`,
-      );
-  };
-  return m;
-}
-const STALK = new MeshPhysicalMaterial({ color: '#3d7a1f', roughness: 0.45, clearcoat: 0.4, emissive: '#1c3a0c', emissiveIntensity: 0.3 });
-
-export function Chili({ length, radius, colour, seed, shadows = true }: { length: number; radius: number; colour: string; seed: number; shadows?: boolean }) {
-  const { pod, material, cap, stalk } = useMemo(() => {
-    const cap = new SphereGeometry(radius * 0.62, 24, 12).scale(0.45, 1, 1);
-    // The stalk: a short bent cylinder out of the cap.
-    const stalk = new CylinderGeometry(radius * 0.13, radius * 0.17, length * 0.2, 10, 6);
-    const sp = stalk.attributes.position, v = new Vector3();
-    for (let i = 0; i < sp.count; i++) {
-      v.fromBufferAttribute(sp, i);
-      const t = v.y / (length * 0.2) + 0.5;
-      sp.setXYZ(i, v.x + t * t * length * 0.06, v.y, v.z);
-    }
-    stalk.rotateZ(Math.PI / 2).computeVertexNormals();
-    return { pod: chiliGeometry(length, radius, seed), material: chiliMaterial(colour, length), cap, stalk };
-  }, [length, radius, colour, seed]);
-  const shift = -(0.22 + 0.08 * Math.sin(seed * 3.1)) * length * (1 / 3); // where the curve puts the stalk end
-  return (
-    <group>
-      <mesh geometry={pod} material={material} castShadow={shadows} receiveShadow={shadows} />
-      <mesh geometry={cap} material={STALK} position={[-length / 2 + radius * 0.05, shift, 0]} castShadow={shadows} />
-      <mesh geometry={stalk} material={STALK} position={[-length / 2 - length * 0.09, shift + length * 0.03, 0]} rotation={[0, 0, -0.35]} castShadow={shadows} />
-    </group>
   );
 }
 
