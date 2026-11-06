@@ -1,20 +1,13 @@
-import { Suspense, useState } from 'react';
-import { Canvas, useFrame, useThree } from '@react-three/fiber';
-import { OrbitControls, OrthographicCamera, PerspectiveCamera } from '@react-three/drei';
-import { Bloom, EffectComposer, ToneMapping } from '@react-three/postprocessing';
-import { ToneMappingMode } from 'postprocessing';
-import { PCFShadowMap, Vector3 } from 'three';
-import { bodies, clock, tilts } from './clock';
-import { deckHeight, ringPath } from './layout';
-import type { Scale } from './kepler';
-import { Chains } from './Chains';
-import { Floor } from './Floor';
-import { Hud } from './Hud';
-import { Labels } from './Labels';
-import { Planet } from './Planet';
-import { PLANETS } from './planets';
-import { Sun } from './Sun';
-import type { View } from './views';
+import { useMemo, useRef } from 'react';
+import { Canvas, useFrame } from '@react-three/fiber';
+import { Line, OrbitControls } from '@react-three/drei';
+import { Mesh, Vector3 } from 'three';
+import { clock } from './clock';
+import { elementsAt, orbitPath, planetRadius, position, sunRadius, toScene, type Scale } from './kepler';
+import { PLANETS, type Planet } from './planets';
+
+const MODE: Scale = 'sqrt';
+const J2000 = 2451545;
 
 // Mounted first, so it advances time before any planet reads it.
 function Tick() {
@@ -24,71 +17,41 @@ function Tick() {
   return null;
 }
 
-// Dev only: lets a script point the camera at a body, window.__look('Jupiter', 4), and inspect the state.
-function DevHooks() {
-  const { camera, controls } = useThree();
-  if (import.meta.env.DEV) {
-    (window as any).__look = (name: string, dist = 4) => {
-      const b = bodies.get(name);
-      const c = controls as any;
-      if (!b || !c) return;
-      c.target.copy(b);
-      camera.position.set(b.x, b.y + dist * 0.5, b.z + dist);
-      c.update();
-    };
-    (window as any).__orrery = { bodies, tilts, ringPath, deckHeight, PLANETS };
-  }
-  return null;
-}
-
-const ISO = new Vector3(1, 1, 1).normalize().multiplyScalar(300); // 45 deg round, 35.26 deg up
-const FRAME_HEIGHT = 75; // world units the orthographic views fit vertically
-
-// Perspective for looking around; orthographic front and isometric for checking the rings' tilt angles.
-function Cameras({ view }: { view: View }) {
-  const { size } = useThree();
-  if (view === 'persp') return <PerspectiveCamera makeDefault position={[0, 30, 100]} fov={40} near={0.1} far={800} />;
+function Body({ p }: { p: Planet }) {
+  const ref = useRef<Mesh>(null!);
+  const path = useMemo(() => orbitPath(elementsAt(p.el, p.rate, J2000)).map((v) => toScene(v, MODE)), [p]);
+  const loop = useMemo(() => [...path, path[0]], [path]);
+  const tmp = useMemo(() => new Vector3(), []);
+  useFrame(() => {
+    position(elementsAt(p.el, p.rate, clock.jd), tmp);
+    ref.current.position.copy(toScene(tmp, MODE));
+  });
   return (
-    <OrthographicCamera
-      makeDefault
-      position={view === 'front' ? [0, 0, 300] : ISO.toArray()}
-      zoom={size.height / FRAME_HEIGHT}
-      near={-1000}
-      far={2000}
-    />
+    <>
+      <Line points={loop} color="#555" lineWidth={1} />
+      <mesh ref={ref}>
+        <sphereGeometry args={[planetRadius(p, MODE), 32, 16]} />
+        <meshStandardMaterial color="#ccc" />
+      </mesh>
+    </>
   );
 }
 
 export function App() {
-  const [labels, setLabels] = useState(false); // L toggles
-  const [mode, setMode] = useState<Scale>('sqrt');
-  const [view, setView] = useState<View>('persp'); // O cycles
   return (
-    <>
-      <Canvas shadows={{ type: PCFShadowMap }} dpr={[1, 2]}>
-        <Cameras view={view} />
-        <color attach="background" args={['#07080b']} />
-        <Tick />
-        <DevHooks />
-        {/* No ambient, no environment: the bulb is the only light in the room. */}
-        <Floor mode={mode} />
-        <Suspense fallback={null}>
-          <Sun mode={mode} />
-        </Suspense>
-        {PLANETS.map((p) => (
-          <Planet key={p.name} p={p} mode={mode} />
-        ))}
-        {/* After the planets, so it reads this frame's tilts. */}
-        <Chains mode={mode} />
-        <Labels visible={labels} />
-        <OrbitControls key={view} target={[0, 0, 0]} enableDamping makeDefault minDistance={0.001} maxDistance={260} />
-        {/* Only the filament is brighter than 1, so only it blooms. */}
-        <EffectComposer multisampling={4}>
-          <Bloom mipmapBlur luminanceThreshold={1} luminanceSmoothing={0.2} intensity={1.2} radius={0.7} />
-          <ToneMapping mode={ToneMappingMode.AGX} />
-        </EffectComposer>
-      </Canvas>
-      <Hud labels={labels} setLabels={setLabels} mode={mode} setMode={setMode} view={view} setView={setView} />
-    </>
+    <Canvas camera={{ position: [0, 30, 100], fov: 40, near: 0.1, far: 800 }} dpr={[1, 2]}>
+      <color attach="background" args={['#07080b']} />
+      <Tick />
+      <mesh>
+        <sphereGeometry args={[sunRadius(MODE), 48, 24]} />
+        <meshBasicMaterial color="#ffd2a0" />
+      </mesh>
+      <pointLight intensity={2000} decay={2} color="#fff1e0" />
+      <ambientLight intensity={0.15} />
+      {PLANETS.map((p) => (
+        <Body key={p.name} p={p} />
+      ))}
+      <OrbitControls enableDamping makeDefault />
+    </Canvas>
   );
 }

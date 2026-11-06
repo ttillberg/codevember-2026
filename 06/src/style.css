@@ -6,22 +6,3 @@ canvas { display: block; }
   text-decoration: none;
 }
 .back:hover { opacity: 1; }
-
-.label {
-  font: 10px ui-monospace, Menlo, monospace; color: #fff; opacity: .55;
-  white-space: nowrap; pointer-events: none; user-select: none;
-  position: absolute; left: 0; top: 0; will-change: transform;
-}
-.labels { position: fixed; inset: 0; pointer-events: none; overflow: hidden; }
-
-.hud {
-  position: fixed; left: 50%; bottom: 12px; transform: translateX(-50%);
-  display: flex; gap: 6px; align-items: center;
-  font: 12px ui-monospace, Menlo, monospace; color: #fff;
-}
-.hud .date { min-width: 96px; text-align: center; opacity: .8; }
-.hud button {
-  font: inherit; color: #fff; background: rgba(7,8,11,.6); cursor: pointer;
-  border: 1px solid rgba(255,255,255,.18); border-radius: 4px; padding: 3px 7px;
-}
-.hud button.on { border-color: rgba(255,255,255,.75); }

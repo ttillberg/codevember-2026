@@ -4,10 +4,8 @@ export type Planet = {
   name: string;
   el: Elements;
   rate: Elements; // per Julian century
-  radius: number; // marble radius in scene units, not to scale
+  radius: number; // hand-picked radius in scene units, not to scale
   km: number; // real mean radius
-  vanes: [string, string, string];
-  tint: string; // glass tint
   tilt: number; // axial tilt [deg]
   day: number; // sidereal rotation [days], negative is retrograde
   ring?: boolean;
@@ -20,48 +18,48 @@ export const PLANETS: Planet[] = [
     name: 'Mercury',
     el: e(0.38709927, 0.20563593, 7.00497902, 252.2503235, 77.45779628, 48.33076593),
     rate: e(0.00000037, 0.00001906, -0.00594749, 149472.67411175, 0.16047689, -0.12534081),
-    radius: 0.22, km: 2439.7, vanes: ['#9a8f86', '#c9b8a6', '#6d645e'], tint: '#e6e0da', tilt: 0.03, day: 58.65,
+    radius: 0.22, km: 2439.7, tilt: 0.03, day: 58.65,
   },
   {
     name: 'Venus',
     el: e(0.72333566, 0.00677672, 3.39467605, 181.9790995, 131.60246718, 76.67984255),
     rate: e(0.0000039, -0.00004107, -0.0007889, 58517.81538729, 0.00268329, -0.27769418),
-    radius: 0.32, km: 6051.8, vanes: ['#e8c37a', '#f3dfb0', '#c79a4a'], tint: '#fff1d6', tilt: 2.64, day: -243.02,
+    radius: 0.32, km: 6051.8, tilt: 2.64, day: -243.02,
   },
   {
     name: 'Earth',
     el: e(1.00000261, 0.01671123, -0.00001531, 100.46457166, 102.93768193, 0),
     rate: e(0.00000562, -0.00004392, -0.01294668, 35999.37244981, 0.32327364, 0),
-    radius: 0.34, km: 6371.0, vanes: ['#2f6fd6', '#3fae5a', '#f4f4f4'], tint: '#dff0ff', tilt: 23.44, day: 0.9973,
+    radius: 0.34, km: 6371.0, tilt: 23.44, day: 0.9973,
   },
   {
     name: 'Mars',
     el: e(1.52371034, 0.0933941, 1.84969142, -4.55343205, -23.94362959, 49.55953891),
     rate: e(0.00001847, 0.00007882, -0.00813131, 19140.30268499, 0.44441088, -0.29257343),
-    radius: 0.27, km: 3389.5, vanes: ['#c1440e', '#e07a4f', '#7a2a10'], tint: '#ffe0d4', tilt: 25.19, day: 1.026,
+    radius: 0.27, km: 3389.5, tilt: 25.19, day: 1.026,
   },
   {
     name: 'Jupiter',
     el: e(5.202887, 0.04838624, 1.30439695, 34.39644051, 14.72847983, 100.47390909),
     rate: e(-0.00011607, -0.00013253, -0.00183714, 3034.74612775, 0.21252668, 0.20469106),
-    radius: 0.8, km: 69911, vanes: ['#c8a27a', '#e9d7b9', '#a0522d'], tint: '#fff3e3', tilt: 3.13, day: 0.4135,
+    radius: 0.8, km: 69911, tilt: 3.13, day: 0.4135,
   },
   {
     name: 'Saturn',
     el: e(9.53667594, 0.05386179, 2.48599187, 49.95424423, 92.59887831, 113.66242448),
     rate: e(-0.0012506, -0.00050991, 0.00193609, 1222.49362201, -0.41897216, -0.28867794),
-    radius: 0.68, km: 58232, vanes: ['#e3c98f', '#f5e6c0', '#b8975a'], tint: '#fff8e6', tilt: 26.73, day: 0.444, ring: true,
+    radius: 0.68, km: 58232, tilt: 26.73, day: 0.444, ring: true,
   },
   {
     name: 'Uranus',
     el: e(19.18916464, 0.04725744, 0.77263783, 313.23810451, 170.9542763, 74.01692503),
     rate: e(-0.00196176, -0.00004397, -0.00242939, 428.48202785, 0.40805281, 0.04240589),
-    radius: 0.5, km: 25362, vanes: ['#7fd3d9', '#b9eef0', '#4fa9b5'], tint: '#e6fbff', tilt: 97.77, day: -0.718,
+    radius: 0.5, km: 25362, tilt: 97.77, day: -0.718,
   },
   {
     name: 'Neptune',
     el: e(30.06992276, 0.00859048, 1.77004347, -55.12002969, 44.96476227, 131.78422574),
     rate: e(0.00026291, 0.00005105, 0.00035372, 218.45945325, -0.32241464, -0.00508664),
-    radius: 0.48, km: 24622, vanes: ['#3b5bdb', '#5c7cfa', '#1e3a8a'], tint: '#e3eaff', tilt: 28.32, day: 0.671,
+    radius: 0.48, km: 24622, tilt: 28.32, day: 0.671,
   },
 ];
