@@ -333,7 +333,7 @@ const Row = ({ label, on, hint, act }: { label: string; on?: boolean; hint?: str
   </button>
 );
 
-// The finishes as little black balls: soft for matte, a sharp highlight for gloss, a chrome horizon for metal.
+// The finishes as little grey balls, in the icons' grey: soft for matte, a sharp highlight for gloss, a chrome horizon for metal.
 const FinishBall = ({ f }: { f: Finish }) => <i className={`ft-ball ${f}`} />;
 
 // The bar holding every control. It writes straight into `tool`; it re-renders after any click, input or key.
