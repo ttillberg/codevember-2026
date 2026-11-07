@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { clearDrips } from './drips';
 import { paint } from './Balloon';
 import type { Brush } from './paint';
@@ -8,6 +8,42 @@ import { resetTool, tool, type Finish } from './tool';
 type Medium = 'glaze' | 'bristle' | 'spray' | 'pencil' | 'scrape';
 const MEDIA: Medium[] = ['glaze', 'bristle', 'spray', 'pencil', 'scrape'];
 const FINISHES: Finish[] = ['matte', 'gloss', 'metal'];
+
+// Every bar icon is drawn at the colour swatch's height, 24px, top and bottom on the same lines. Fit measures the
+// drawing's real outline (sampled along each shape, so tilted ones fit tight, not by their tilted box) and frames it.
+// Lines keep `line` px whatever the scale.
+const H = 24;
+function Fit({ children, line = 0, className }: { children: React.ReactNode; line?: number; className?: string }) {
+  const g = useRef<SVGGElement>(null);
+  const [box, setBox] = useState<number[] | null>(null);
+  useLayoutEffect(() => {
+    const root = g.current;
+    if (!root) return;
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    const inv = root.getCTM()?.inverse();
+    for (const el of root.querySelectorAll<SVGGeometryElement>('path, circle, rect, ellipse, polygon')) {
+      if (el.closest('clipPath')) continue;
+      const m = inv?.multiply(el.getCTM()!);
+      const n = el.getTotalLength();
+      for (let i = 0; i <= 120; i++) {
+        let q = el.getPointAtLength((i / 120) * n);
+        if (m) q = q.matrixTransform(m);
+        x0 = Math.min(x0, q.x); y0 = Math.min(y0, q.y); x1 = Math.max(x1, q.x); y1 = Math.max(y1, q.y);
+      }
+    }
+    if (!isFinite(x0)) return;
+    const pad = (line / 2) * ((y1 - y0) / (H - line));
+    const next = [x0 - pad, y0 - pad, x1 - x0 + pad * 2, y1 - y0 + pad * 2];
+    if (!box || next.some((v, i) => Math.abs(v - box[i]) > 1e-3)) setBox(next);
+  });
+  const [x, y, w, h] = box ?? [0, 0, 16, 16];
+  return (
+    <svg height={H} width={(H * w) / h} viewBox={`${x} ${y} ${w} ${h}`} className={`ft-fit ${className ?? ''}`}
+      fill="none" stroke="currentColor" strokeWidth={line} strokeLinecap="round" strokeLinejoin="round">
+      <g ref={g}>{children}</g>
+    </svg>
+  );
+}
 
 // The media as little pictures: a pointed paintbrush, a bristle brush, a spray can, a pencil with a big round point, an eraser.
 // The paintbrush, the can, the pencil and the eraser are drawn upright and tilted into place.
@@ -20,10 +56,7 @@ const MEDIUM_ICON: Record<Medium, string> = {
 };
 const MEDIUM_TILT: Partial<Record<Medium, string>> = { glaze: 'rotate(45 8 8)', spray: 'rotate(-45 9.2 8.2)', pencil: 'rotate(45 8 8)', scrape: 'rotate(-40 8 8)' };
 const MediumIcon = ({ m }: { m: Medium }) => (
-  // The pictures span about 11 units; 34px brings them to the colour swatch's 24px, a thinner stroke keeps the line ~1.5px.
-  <svg width="34" height="34" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="0.7" strokeLinecap="round" strokeLinejoin="round">
-    <path d={MEDIUM_ICON[m]} transform={MEDIUM_TILT[m]} />
-  </svg>
+  <Fit key={m} line={1.5}><path d={MEDIUM_ICON[m]} transform={MEDIUM_TILT[m]} /></Fit>
 );
 
 type Num = 'size' | 'flow' | 'liquid' | 'watery';
@@ -80,11 +113,11 @@ function Knob({ name, get, put, face, track }: {
 // A volume ramp: a wedge from nothing to big, filled up to the size.
 const RAMP = 'M1 22 L25 4 L25 22 Z';
 const SizeRamp = ({ t }: { t: number }) => (
-  <svg width="26" height="26" viewBox="0 0 26 26" className="ft-ramp">
+  <Fit className="ft-ramp">
     <clipPath id="ft-ramp-fill"><rect x="0" y="0" width={1 + t * 24} height="26" /></clipPath>
     <path d={RAMP} className="ft-ramp-bg" />
     <path d={RAMP} clipPath="url(#ft-ramp-fill)" />
-  </svg>
+  </Fit>
 );
 
 // Size: a volume ramp on the button, the gauge fills up like a volume bar.
@@ -100,19 +133,19 @@ function SizeKnob() {
 // Flow: an opacity mark, a disc split on the diagonal. One half is solid; the other goes from the empty grey to
 // solid as the flow rises, mixed as plain colour rather than drawn see-through.
 const FlowDisc = ({ t }: { t: number }) => (
-  <svg width="26" height="26" viewBox="0 0 26 26" className="ft-ramp">
+  <Fit className="ft-ramp">
     <path d="M4.5 21.5A12 12 0 0 1 21.5 4.5z" />
     <path d="M21.5 4.5A12 12 0 0 1 4.5 21.5z" style={{ fill: `color-mix(in srgb, currentColor ${Math.round(t * 100)}%, var(--empty))` }} />
-  </svg>
+  </Fit>
 );
 // Watery or liquid, the medium's own option: a drop filled up to the level, like the ramp.
 const DROP = 'M13 2.5C17.2 8 19.5 11.6 19.5 15.5a6.5 6.5 0 0 1-13 0C6.5 11.6 8.8 8 13 2.5z';
 const WetDrop = ({ t }: { t: number }) => (
-  <svg width="32" height="32" viewBox="0 0 26 26" className="ft-ramp">
+  <Fit className="ft-ramp">
     <clipPath id="ft-drop-fill"><rect x="0" y={22 - t * 19.5} width="26" height="26" /></clipPath>
     <path d={DROP} className="ft-ramp-bg" />
     <path d={DROP} clipPath="url(#ft-drop-fill)" />
-  </svg>
+  </Fit>
 );
 function WetKnob({ k }: { k: Num }) {
   const { min, max } = RANGE[k];
@@ -223,7 +256,7 @@ function Picker<T extends string>({ name, items, cur, put, icon, solid, others }
   }, [open]);
   return (
     <div className={`ft-knob${solid ? '' : ' swatches'}`} ref={box}>
-      <button aria-label={`${name}: ${cur}`} title={`${cur} (press to change)`} className={`${solid ? 'ft-ringed' : ''}${open ? ' on' : ''}`}
+      <button aria-label={`${name}: ${cur}`} title={`${cur} (press to change)`} className={open ? 'on' : ''}
         onPointerDown={(e) => {
           e.preventDefault();
           if (open) { setOpen(false); return; }
@@ -277,7 +310,7 @@ const GEAR = (() => {
   }
   return `M${pts.join(' L')} Z`;
 })();
-// 30px puts a 12.8 unit gear or a 12 unit ring at 24px across, the colour swatch's size.
+// A plain small icon, for the menu buttons.
 const Icon = ({ children, size = 30, stroke = 0.8 }: { children: React.ReactNode; size?: number; stroke?: number }) => (
   <svg width={size} height={size} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={stroke} strokeLinecap="round" strokeLinejoin="round">
     {children}
@@ -285,10 +318,10 @@ const Icon = ({ children, size = 30, stroke = 0.8 }: { children: React.ReactNode
 );
 // Solid, the hole punched through with evenodd.
 const GearIcon = () => (
-  <Icon><path d={`${GEAR} M10.2 8 A2.2 2.2 0 1 0 5.8 8 A2.2 2.2 0 1 0 10.2 8 Z`} fill="currentColor" fillRule="evenodd" stroke="none" /></Icon>
+  <Fit><path d={`${GEAR} M10.2 8 A2.2 2.2 0 1 0 5.8 8 A2.2 2.2 0 1 0 10.2 8 Z`} fill="currentColor" fillRule="evenodd" stroke="none" /></Fit>
 );
 const HelpIcon = () => (
-  <Icon><circle cx="8" cy="8" r="6" /><path d="M6.25 6.4a1.8 1.8 0 1 1 2.6 1.6c-.55.28-.85.65-.85 1.2v.3" /><circle cx="8" cy="11.2" r="0.5" fill="currentColor" stroke="none" /></Icon>
+  <Fit line={1.5}><circle cx="8" cy="8" r="6" /><path d="M6.25 6.4a1.8 1.8 0 1 1 2.6 1.6c-.55.28-.85.65-.85 1.2v.3" /><circle cx="8" cy="11.2" r="0.5" fill="currentColor" stroke="none" /></Fit>
 );
 
 // A row in a popover menu: a label, and a little switch when it toggles.
