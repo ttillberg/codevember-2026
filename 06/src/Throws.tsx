@@ -14,7 +14,7 @@ const SPEED = 60; // scene units a second
 const CLICK = 6; // pixels: moved further than this between press and release, it's a drag, not a throw
 const RADIUS = 0.28;
 const LIFE = 6; // seconds
-const AIM = 0.07; // how near the click a planet must be to be aimed at: radians off the line of sight
+const AIM = 2; // a planet is aimed at only if the click is on it: the ray passes this near its middle (scene units)
 const COLOURS = ['#f29aa8', '#f08a7e', '#f5a04e', '#f2cc66', '#a9bde8', '#9fc7a8', '#f7b6c8'];
 const GEOMETRY = new SphereGeometry(RADIUS, 24, 16);
 const MATERIALS = COLOURS.map((c) => new MeshPhysicalMaterial({ color: c, roughness: 0.3, clearcoat: 0.75, emissive: c, emissiveIntensity: 0.25 }));
@@ -40,19 +40,15 @@ export function Throws() {
       ray.setFromCamera(ndc, camera);
       const from = camera.position.clone().addScaledVector(ray.ray.direction, 1.5);
       let dir = ray.ray.direction.clone();
-      // The planet nearest the ray, if near enough: lead it.
-      let best = AIM;
+      // Clicked on a planet: lead it, so it's hit where it will be. Anywhere else, straight where clicked.
+      let best = Infinity;
       for (const p of PLANETS) {
         const now = planetPositions.get(p.name);
         if (!now) continue;
-        // How far off the click it is, as an angle, and only ahead of the camera: a planet close by isn't
-        // aimed at just for being near.
-        to.subVectors(now, ray.ray.origin);
-        const ahead = to.dot(ray.ray.direction);
-        if (ahead <= 0) continue;
-        const miss = Math.atan2(ray.ray.distanceToPoint(now), ahead);
-        if (miss >= best) continue;
-        best = miss;
+        // Only ahead of the camera, under the click, and the nearest such one.
+        const ahead = to.subVectors(now, ray.ray.origin).dot(ray.ray.direction);
+        if (ahead <= 0 || ahead >= best || ray.ray.distanceToPoint(now) > AIM) continue;
+        best = ahead;
         let t = from.distanceTo(now) / SPEED;
         for (let i = 0; i < 3; i++) {
           planetAt(p, clock.jd + t * daysPerSecond(), at);
@@ -84,7 +80,7 @@ function Gumball({ t, done }: { t: Throw; done: () => void }) {
     if (life.current > LIFE) done();
   });
   return (
-    <RigidBody ref={body} position={t.from.toArray()} gravityScale={0} colliders={false} linearDamping={0.05} ccd>
+    <RigidBody ref={body} position={t.from.toArray()} gravityScale={0} colliders={false} linearDamping={0.05} ccd userData={{ gumball: t.vel.clone().normalize() }}>
       <BallCollider args={[RADIUS]} density={900} restitution={0.7} />
       <mesh geometry={GEOMETRY} material={MATERIALS[t.colour]} />
     </RigidBody>
