@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { clearDrips } from './drips';
 import { paint } from './Balloon';
 import type { Brush } from './paint';
-import { resetTool, tool, type Finish } from './tool';
+import { resetTool, save, tool, type Finish } from './tool';
 
 // The media, and the options each one answers to.
 type Medium = 'glaze' | 'bristle' | 'spray' | 'pencil' | 'scrape';
@@ -75,11 +75,45 @@ const OPTIONS: Record<Medium, Num[]> = {
   scrape: [],
 };
 
+// Shortcuts: hold a key and its popover opens; move the mouse to set it, let go of the key to keep it.
+// The pointer is tracked all the time so a key press knows where the mouse starts.
+const mouse = { x: 0, y: 0 };
+window.addEventListener('pointermove', (e) => { mouse.x = e.clientX; mouse.y = e.clientY; }, { capture: true });
+function useHotkey(code: string | undefined, down: () => void, up: () => void) {
+  const cb = useRef({ down, up });
+  cb.current = { down, up };
+  useEffect(() => {
+    if (!code) return;
+    const kd = (e: KeyboardEvent) => {
+      if (e.code !== code || e.repeat || e.metaKey || e.ctrlKey || e.altKey) return;
+      e.preventDefault();
+      cb.current.down();
+    };
+    const ku = (e: KeyboardEvent) => { if (e.code === code) cb.current.up(); };
+    window.addEventListener('keydown', kd);
+    window.addEventListener('keyup', ku);
+    return () => { window.removeEventListener('keydown', kd); window.removeEventListener('keyup', ku); };
+  }, [code]);
+}
+
+// Opened by its key, a popover sits under the cursor: the point (ax, ay) inside it lands on the mouse, held PAD px
+// inside the screen. It's placed absolutely in its knob (the bar is transformed, so fixed would be relative to it).
+const PAD = 12;
+type At = { left: number; top: number } | null;
+function placeAt(pop: HTMLElement, host: HTMLElement, ax: number, ay: number): At {
+  const w = pop.offsetWidth, h = pop.offsetHeight, r = host.getBoundingClientRect();
+  const x = Math.min(innerWidth - w - PAD, Math.max(PAD, mouse.x - ax));
+  const y = Math.min(innerHeight - h - PAD, Math.max(PAD, mouse.y - ay));
+  return { left: x - r.left, top: y - r.top };
+}
+const atStyle = (at: At): React.CSSProperties | undefined =>
+  at ? { left: at.left, top: at.top, bottom: 'auto', transform: 'none', transition: 'opacity 0.15s' } : undefined;
+
 // A knob in the bar, like a volume control: hold the button and drag up or down, a tall gauge shows while you hold.
 // It reads and writes a 0..1 value itself (get/put) so it redraws as you drag; the wheel over the button nudges it too.
 const TRAVEL = 140; // px of drag for the whole range, the gauge's height
-function Knob({ name, get, put, face, track }: {
-  name: string; get: () => number; put: (t: number) => void;
+function Knob({ name, get, put, face, track, hotkey }: {
+  name: string; get: () => number; put: (t: number) => void; hotkey?: string;
   face: (t: number) => React.ReactNode; track: (t: number) => React.ReactNode;
 }) {
   const [held, setHeld] = useState(false);
@@ -88,15 +122,35 @@ function Knob({ name, get, put, face, track }: {
   const [pinned, setPinned] = useState(false);
   const [, bump] = useState(0);
   const box = useRef<HTMLDivElement>(null);
-  const start = useRef({ x: 0, y: 0, t: 0, moved: false, wasPinned: false });
+  const gauge = useRef<HTMLDivElement>(null);
+  const trackEl = useRef<HTMLDivElement>(null);
+  const [spot, setSpot] = useState<At>(null);
+  const start = useRef({ x: 0, y: 0, t: 0, moved: false, wasPinned: false, key: false });
   // Let go anywhere ends the hold, even if the capture got lost on the way; a tap pins it.
+  // Held by its key instead, the gauge opens under the cursor at the current level, the value follows the mouse on it,
+  // and the key's release ends it.
   useEffect(() => {
-    if (!held) return;
+    if (!held || start.current.key) return;
     const up = () => { setHeld(false); setPinned(!start.current.moved && !start.current.wasPinned); };
     window.addEventListener('pointerup', up);
     window.addEventListener('pointercancel', up);
     return () => { window.removeEventListener('pointerup', up); window.removeEventListener('pointercancel', up); };
   }, [held]);
+  useEffect(() => {
+    if (!held || !start.current.key) return;
+    const move = () => {
+      const r = trackEl.current?.getBoundingClientRect();
+      if (r) to(1 - (mouse.y - r.top) / r.height);
+    };
+    window.addEventListener('pointermove', move);
+    return () => window.removeEventListener('pointermove', move);
+  }, [held]);
+  useHotkey(hotkey, () => {
+    start.current = { x: mouse.x, y: mouse.y, t: get(), moved: true, wasPinned: true, key: true };
+    if (gauge.current && box.current) setSpot(placeAt(gauge.current, box.current, gauge.current.offsetWidth / 2, 6 + (1 - get()) * TRAVEL));
+    setPinned(false);
+    setHeld(true);
+  }, () => { if (start.current.key) { start.current.key = false; setHeld(false); } });
   useEffect(() => {
     if (!pinned) return;
     const away = (e: PointerEvent) => { if (!box.current?.contains(e.target as Node)) setPinned(false); };
@@ -114,14 +168,15 @@ function Knob({ name, get, put, face, track }: {
   const open = held || pinned;
   return (
     <div className="ft-knob" ref={box}>
-      <button aria-label={name} title={`${name} (hold and drag, or click)`} className={open ? 'on' : ''}
+      <button aria-label={name} title={`${name} (hold and drag, or click${hotkey ? `; hold ${hotkey.slice(3)}` : ''})`} className={open ? 'on' : ''}
         onPointerDown={(e) => {
           e.currentTarget.setPointerCapture(e.pointerId);
-          start.current = { x: e.clientX, y: e.clientY, t, moved: false, wasPinned: pinned };
+          start.current = { x: e.clientX, y: e.clientY, t, moved: false, wasPinned: pinned, key: false };
+          setSpot(null);
           setHeld(true);
         }}
         onPointerMove={(e) => {
-          if (!held) return;
+          if (!held || start.current.key) return;
           const d = start.current.y - e.clientY + e.clientX - start.current.x; // up or right raises
           if (Math.abs(e.clientY - start.current.y) + Math.abs(e.clientX - start.current.x) > 4) start.current.moved = true;
           if (start.current.moved) to(start.current.t + d / TRAVEL);
@@ -129,8 +184,8 @@ function Knob({ name, get, put, face, track }: {
         onWheel={(e) => to(t - Math.sign(e.deltaY) * 0.02)}>
         {face(t)}
       </button>
-      <div className={`ft-gauge${open ? ' open' : ''}${pinned ? ' pinned' : ''}`}>
-        <div className="ft-gauge-track" style={{ '--t': t } as React.CSSProperties}
+      <div ref={gauge} className={`ft-gauge${open ? ' open' : ''}${pinned ? ' pinned' : ''}`} style={atStyle(spot)}>
+        <div ref={trackEl} className="ft-gauge-track" style={{ '--t': t } as React.CSSProperties}
           onPointerDown={(e) => { e.currentTarget.setPointerCapture(e.pointerId); at(e); }}
           onPointerMove={(e) => { if (e.currentTarget.hasPointerCapture(e.pointerId)) at(e); }}>
           {track(t)}
@@ -154,7 +209,7 @@ const SizeRamp = ({ t }: { t: number }) => (
 function SizeKnob() {
   const { min, max } = RANGE.size;
   return (
-    <Knob name="size" get={() => (tool.size - min) / (max - min)} put={(v) => { tool.size = min + v * (max - min); }}
+    <Knob name="size" hotkey="KeyS" get={() => (tool.size - min) / (max - min)} put={(v) => { tool.size = min + v * (max - min); }}
       face={(t) => <SizeRamp t={t} />}
       track={(t) => <><span className="ft-fill" /><b>{Math.round(t * 100)}</b></>} />
   );
@@ -180,7 +235,7 @@ const WetDrop = ({ t }: { t: number }) => (
 function WetKnob({ k }: { k: Num }) {
   const { min, max } = RANGE[k];
   return (
-    <Knob name={k} get={() => (tool[k] - min) / (max - min)} put={(v) => { tool[k] = min + v * (max - min); }}
+    <Knob name={k} hotkey="KeyW" get={() => (tool[k] - min) / (max - min)} put={(v) => { tool[k] = min + v * (max - min); }}
       face={(t) => <WetDrop t={t} />}
       track={(t) => <><span className="ft-fill" /><b>{Math.round(t * 100)}</b></>} />
   );
@@ -189,7 +244,7 @@ function WetKnob({ k }: { k: Num }) {
 function FlowKnob() {
   const { min, max } = RANGE.flow;
   return (
-    <Knob name="flow" get={() => (tool.flow - min) / (max - min)} put={(v) => { tool.flow = min + v * (max - min); }}
+    <Knob name="flow" hotkey="KeyF" get={() => (tool.flow - min) / (max - min)} put={(v) => { tool.flow = min + v * (max - min); }}
       face={(t) => <FlowDisc t={t} />}
       track={(t) => <><span className="ft-fill" /><b>{Math.round(t * 100)}</b></>} />
   );
@@ -227,7 +282,7 @@ const colorGet = () => {
 };
 function ColorKnob() {
   return (
-    <Knob name="color" get={colorGet} put={(v) => { colorT = v; tool.hex = stripAt(v); }}
+    <Knob name="color" hotkey="KeyC" get={colorGet} put={(v) => { colorT = v; tool.hex = stripAt(v); }}
       face={() => <i className="ft-swatch" style={{ background: tool.hex }} />}
       track={() => <><span className="ft-strip" style={{ background: STRIP }} /><span className="ft-mark" style={{ background: tool.hex }} /></>} />
   );
@@ -235,15 +290,39 @@ function ColorKnob() {
 
 // A picker in the bar: only the current choice shows. Press it and the choices pop up above; drag up to one and let
 // go to pick it, or tap and then click one. A press elsewhere closes it.
-function Picker<T extends string>({ name, items, cur, put, icon, solid, others }: {
-  name: string; items: T[]; cur: T; put: (v: T) => void; icon: (v: T) => React.ReactNode;
+function Picker<T extends string>({ name, items, cur, put, icon, solid, others, hotkey }: {
+  name: string; items: T[]; cur: T; put: (v: T) => void; icon: (v: T) => React.ReactNode; hotkey?: string;
   others?: boolean; // the popover lists only the other choices, the current one is already on the button
   solid?: boolean; // picked shows as black, for icons; off for swatches that carry their own look (a ring instead)
 }) {
   const [open, setOpen] = useState(false);
-  const [hot, setHot] = useState<T | null>(null);
+  const [hot, setHotState] = useState<T | null>(null);
+  const hotRef = useRef<T | null>(null);
+  const setHot = (v: T | null) => { hotRef.current = v; setHotState(v); };
   const box = useRef<HTMLDivElement>(null);
-  const drag = useRef({ y: 0, moved: false, down: false });
+  const popEl = useRef<HTMLDivElement>(null);
+  const [at, setAt] = useState<At>(null);
+  const [flip, setFlip] = useState(false); // opened on the right half, the labels go on the left so they stay on screen
+  const drag = useRef({ y: 0, moved: false, down: false, key: false });
+  const shown = items.filter((v) => !others || v !== cur);
+  // Held by its key, the popover opens under the cursor with the current choice on it (or, listing only the others,
+  // just above it, so nothing is picked until you move up); the row under the mouse is picked when the key is let go.
+  useHotkey(hotkey, () => {
+    drag.current = { y: mouse.y, moved: true, down: true, key: true };
+    const el = popEl.current;
+    if (el && box.current) {
+      const i = shown.indexOf(cur), h = el.offsetHeight;
+      setAt(placeAt(el, box.current, el.offsetWidth / 2, i < 0 ? h + 16 : h - (6 + 23 + i * 48)));
+    }
+    setFlip(mouse.x > innerWidth / 2);
+    setHot(null);
+    setOpen(true);
+  }, () => {
+    if (!drag.current.key) return;
+    drag.current.key = false; drag.current.down = false;
+    const v = hotRef.current;
+    if (v) pick(v); else setOpen(false);
+  });
   // The choice in the row at this height, wherever the pointer is sideways; past the top it's the top one.
   // Back down under the popover (over the button) it's none, so letting go there changes nothing.
   const rowAt = (y: number) => {
@@ -258,16 +337,17 @@ function Picker<T extends string>({ name, items, cur, put, icon, solid, others }
     }
     return (best?.dataset.item as T | undefined) ?? null;
   };
-  const pick = (v: T) => { put(v); setOpen(false); setHot(null); };
+  const pick = (v: T) => { put(v); save(); setOpen(false); setHot(null); };
   useEffect(() => {
     if (!open) return;
     const move = (e: PointerEvent) => {
       if (!drag.current.down) return;
+      if (drag.current.key) { setHot(rowAt(e.clientY)); return; }
       if (Math.abs(e.clientY - drag.current.y) > 6) drag.current.moved = true;
       setHot(rowAt(e.clientY));
     };
     const up = (e: PointerEvent) => {
-      if (!drag.current.down) return;
+      if (!drag.current.down || drag.current.key) return;
       drag.current.down = false;
       const v = rowAt(e.clientY);
       if (drag.current.moved) { if (v) pick(v); else setOpen(false); } // a drag picks where it ends; a tap leaves it open
@@ -290,13 +370,15 @@ function Picker<T extends string>({ name, items, cur, put, icon, solid, others }
         onPointerDown={(e) => {
           e.preventDefault();
           if (open) { setOpen(false); return; }
-          drag.current = { y: e.clientY, moved: false, down: true };
+          drag.current = { y: e.clientY, moved: false, down: true, key: false };
+          setAt(null);
+          setFlip(false);
           setOpen(true);
         }}>
         {icon(cur)}
       </button>
-      <div className={`ft-gauge ft-pick${open ? ' open' : ''}`}>
-        {items.filter((v) => !others || v !== cur).map((v) => (
+      <div ref={popEl} className={`ft-gauge ft-pick${open ? ' open' : ''}${flip ? ' flip' : ''}`} style={atStyle(at)}>
+        {shown.map((v) => (
           <button key={v} data-item={v} title={v} aria-label={v}
             className={(hot ?? cur) === v ? 'on' : ''} onClick={() => pick(v)}>
             {icon(v)}
@@ -385,13 +467,13 @@ export function Panel() {
     <>
     {/* Every control, in a frosted bar under the balloon. */}
     <div className="ft-media">
-      <Picker name="medium" items={MEDIA} cur={tool.brush as Medium} put={(m) => { tool.brush = m; }} icon={(m) => <MediumIcon m={m} />} solid others />
+      <Picker name="medium" items={MEDIA} cur={tool.brush as Medium} put={(m) => { tool.brush = m; }} icon={(m) => <MediumIcon m={m} />} solid others hotkey="KeyB" />
       {OPTIONS[tool.brush as Medium].map((k) => <WetKnob key={k} k={k} />)}
       <span className="ft-sep" />
       <SizeKnob />
       <FlowKnob />
       <ColorKnob />
-      <Picker name="paint" items={FINISHES} cur={tool.finish} put={(f) => { tool.finish = f; }} icon={(f) => <FinishBall f={f} />} />
+      <Picker name="paint" items={FINISHES} cur={tool.finish} put={(f) => { tool.finish = f; }} icon={(f) => <FinishBall f={f} />} hotkey="KeyM" />
       <span className="ft-sep" />
       <div className="ft-pair">
         <Pop name="settings" icon={<GearIcon />} className="ft-menu">
@@ -411,6 +493,7 @@ export function Panel() {
           <p><b>Click + drag</b> paint and turn</p>
           <p><b>Cmd + move</b> turn without painting</p>
           <p><b>Space</b> auto draw</p>
+          <p><b>Hold B M S F C W</b> brush, material, size, flow, colour, water: move the mouse, let go</p>
         </Pop>
       </div>
     </div>

@@ -44,7 +44,7 @@ try {
   }
 } catch { /* no storage, no memory */ }
 if (tool.brush === 'round' || (tool.brush as string) === 'flat') tool.brush = 'pencil'; // round is gone from the UI, flat is now pencil
-const save = () => { try { localStorage.setItem(KEY, JSON.stringify(tool)); } catch { /* ignore */ } };
+export const save = () => { try { localStorage.setItem(KEY, JSON.stringify(tool)); } catch { /* ignore */ } };
 for (const ev of ['click', 'input', 'keyup']) window.addEventListener(ev, save);
 
 export function hexToRgb(hex: string): [number, number, number] {
