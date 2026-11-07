@@ -13,7 +13,7 @@ type Drip = {
   seed: number;
   travelled: number; // since the last trail stamp, pole-to-pole units
   stuck: number;     // seconds without grip
-  thin: boolean;     // spray: a thin flat leg and a small flat bead, no thickness, so no relief
+  thin: boolean;     // spray: a thin flat leg that tapers off, no bead, no thickness, so no relief
 };
 
 export const dripSettings = {
@@ -121,12 +121,11 @@ export function stepDrips(dt: number, g: Vector3, size: number, liquid: number, 
     // nothing), or the drop is spent.
     d.stuck = gr.grip < 0.15 ? d.stuck + dt : 0;
     if (d.stuck > 0.5 || d.mass <= 0) {
-      // A spray leg ends in a small dry bead, flat like the spray; thick paint in a fat wet one the run pass may
-      // carry on.
-      paint.add({
+      // Thick paint ends in a fat wet bead the run pass may carry on; a spray leg just thins out and stops.
+      if (!d.thin) paint.add({
         u: ((d.u % 1) + 1) % 1, v: d.v, angle: 0, seed: d.seed,
-        size: size * dripSettings.bead * (0.5 + Math.max(d.mass, 0) + 0.5) * (d.thin ? 0.45 : 1),
-        rgb: d.rgb, flow: 1, brush: d.thin ? 'pencil' : 'round', rough: d.rough, metal: d.metal, load: d.thin ? 0 : 1.2, wet: d.thin ? 0 : 0.3,
+        size: size * dripSettings.bead * (0.5 + Math.max(d.mass, 0) + 0.5),
+        rgb: d.rgb, flow: 1, brush: 'round', rough: d.rough, metal: d.metal, load: 1.2, wet: 0.3,
       });
       drips.splice(i, 1);
       continue;
@@ -136,14 +135,16 @@ export function stepDrips(dt: number, g: Vector3, size: number, liquid: number, 
     d.mass -= spent;
     // The trail is stamped by distance, not by frame: a drop that is held up leaves no blot.
     d.travelled += step;
-    if (d.travelled < d.width * 0.25) continue;
+    // A spray leg tapers off over its last stretch, so it ends in a point.
+    const width = d.width * (d.thin ? 0.4 + 0.6 * Math.min(1, d.mass * 4) : 1);
+    if (d.travelled < width * 0.25) continue;
     d.travelled = 0;
     const angle = Math.atan2(gr.dy, gr.dx);
     // Inside the stroke it came from there is nothing to add: the trail starts where the paint ends.
     const cell = (Math.min(PH - 1, Math.round(d.v * PH))) * PW + ((Math.round(d.u * PW) % PW + PW) % PW);
     if (pile[cell] > 1.0) continue;
     paint.add({
-      u: ((d.u % 1) + 1) % 1, v: d.v, angle, seed: d.seed, size: d.width,
+      u: ((d.u % 1) + 1) % 1, v: d.v, angle, seed: d.seed, size: width,
       // Laid dry, so the run pass leaves it alone.
       rgb: d.rgb, flow: 0.6, brush: d.thin ? 'pencil' : 'round', rough: d.rough, metal: d.metal, load: d.thin ? 0 : 0.55, wet: 0,
     });
