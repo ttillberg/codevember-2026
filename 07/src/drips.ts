@@ -97,6 +97,9 @@ export function maybeSpawn(d: Dab, liquid: number, g: Vector3) {
   }
 }
 
+/** Forget every drop and all piled paint. */
+export function clearDrips() { drips.length = 0; pile.fill(0); }
+
 /** The pile sets with time. Call once a frame. */
 export function dryPile(dt: number) {
   const k = 1 - dripSettings.dry * dt;

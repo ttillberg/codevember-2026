@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react';
 import { SWATCHES, resetTool, tool, type Finish } from './tool';
+import { clearDrips } from './drips';
+import { paint } from './Balloon';
 import type { Brush } from './paint';
 
 const BRUSHES: Brush[] = ['flat', 'round', 'spray', 'bristle', 'glaze', 'scrape'];
@@ -68,6 +70,9 @@ export function Palette() {
           onInput={(e) => { tool.size = parseFloat((e.target as HTMLInputElement).value); }}
         />
       </label>
+      <button className="auto" onClick={() => set(() => { paint.clear(); clearDrips(); })}>
+        clear
+      </button>
       <button className="auto" onClick={() => set(resetTool)}>
         reset
       </button>
