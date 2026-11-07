@@ -15,7 +15,9 @@ import { Space } from './Space';
 import { Sun } from './Sun';
 import { clock } from './clock';
 import { ORBIT_Y } from './scale';
-import { dateFromJd } from './kepler';
+import { dateFromJd, jdFromDate } from './kepler';
+import { typing } from './selection';
+import { watchCursor } from './cursor';
 import { intro, INTRO_TIME, roomLight } from './intro';
 
 // Mounted first, so it advances time before the band reads it.
@@ -48,6 +50,13 @@ function Ready() {
 }
 
 // Dev only: window.__look(x, y, z, tx, ty, tz) moves the camera, window.__clock is the simulated time.
+// The pointer over the scene, kept to what a press would do (see cursor.ts).
+function Cursor() {
+  const { gl } = useThree();
+  useEffect(() => watchCursor(gl.domElement), [gl]);
+  return null;
+}
+
 function DevHooks() {
   const { camera, controls, scene, gl } = useThree();
   if (import.meta.env.DEV) {
@@ -86,18 +95,21 @@ function Studio() {
 // other things change it (focusing on a planet slows it down).
 const SPEEDS: [string, number][] = [['×0.5', 0.4], ['×1', 3], ['×5', 30]]; // label, days a second
 function Transport() {
-  const date = useRef<HTMLSpanElement>(null);
+  const date = useRef<HTMLInputElement>(null);
+  const editing = useRef(false);
   const [state, setState] = useState({ paused: clock.paused, speed: clock.speed });
   useEffect(() => {
     let raf = 0, shown = NaN;
+    redraw.current = () => (shown = NaN);
     const loop = () => {
       const day = Math.floor(clock.jd - 0.5); // a new date only once a day, at midnight
-      if (date.current && day !== shown) (shown = day), (date.current.textContent = dateFromJd(clock.jd).toISOString().slice(0, 10));
+      if (date.current && !editing.current && day !== shown) (shown = day), (date.current.value = dateFromJd(clock.jd).toISOString().slice(0, 10));
       setState((s) => (s.paused === clock.paused && s.speed === clock.speed ? s : { paused: clock.paused, speed: clock.speed }));
       raf = requestAnimationFrame(loop);
     };
     loop();
     const key = (e: KeyboardEvent) => {
+      if (typing(e)) return;
       if (e.code === 'Space') (e.preventDefault(), (clock.paused = !clock.paused));
       if (e.key === 'o' || e.key === 'O') orbitsShown.value = !orbitsShown.value;
     };
@@ -106,20 +118,43 @@ function Transport() {
   }, []);
   const at = SPEEDS.reduce((best, [, d], i) => (Math.abs(d - state.speed) < Math.abs(SPEEDS[best][1] - state.speed) ? i : best), 0);
   const blur = (e: React.MouseEvent<HTMLButtonElement>) => e.currentTarget.blur();
+  const redraw = useRef(() => {});
   return (
     <div className="transport">
-      <button className="play" onClick={(e) => ((clock.paused = !clock.paused), blur(e))} aria-label={state.paused ? 'Play' : 'Pause'}>
-        <svg viewBox="0 0 24 24" aria-hidden="true">
-          <path
-            d={state.paused ? 'M7.5 5.2v13.6L18.6 12z' : 'M7 5.5h2.6v13H7zM14.4 5.5H17v13h-2.6z'}
-            fill="currentColor"
-            stroke="currentColor"
-            strokeWidth="2.6"
-            strokeLinejoin="round"
-          />
-        </svg>
-      </button>
-      <span ref={date} className="when" />
+      <div className="now">
+        <button className="play" onClick={(e) => ((clock.paused = !clock.paused), blur(e))} aria-label={state.paused ? 'Play' : 'Pause'}>
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path
+              d={state.paused ? 'M7.5 5.2v13.6L18.6 12z' : 'M7 5.5h2.6v13H7zM14.4 5.5H17v13h-2.6z'}
+              fill="currentColor"
+              stroke="currentColor"
+              strokeWidth="2.6"
+              strokeLinejoin="round"
+            />
+          </svg>
+        </button>
+        <input
+          ref={date}
+          className="when"
+          inputMode="numeric"
+          aria-label="Date"
+          spellCheck={false}
+          onFocus={(e) => ((editing.current = true), (e.currentTarget.placeholder = e.currentTarget.value), (e.currentTarget.value = ''))}
+          onBlur={() => ((editing.current = false), redraw.current())}
+          onKeyDown={(e) => e.key === 'Escape' && e.currentTarget.blur()}
+          onChange={(e) => {
+            // Digits only, the dashes put in as you go; a whole, real date and it goes there and pauses, no enter needed.
+            const d = e.currentTarget.value.replace(/\D/g, '').slice(0, 8);
+            e.currentTarget.value = d.slice(0, 4) + (d.length > 4 ? '-' + d.slice(4, 6) : '') + (d.length > 6 ? '-' + d.slice(6, 8) : '');
+            if (d.length < 8) return;
+            const y = +d.slice(0, 4), m = +d.slice(4, 6), day = +d.slice(6, 8), at = new Date(Date.UTC(y, m - 1, day, 12));
+            if (at.getUTCMonth() !== m - 1 || at.getUTCDate() !== day) return; // not a real date: keep typing
+            clock.jd = jdFromDate(at);
+            clock.paused = true; // held there, to look at that day
+            e.currentTarget.blur();
+          }}
+        />
+      </div>
       <span className="speeds">
         {SPEEDS.map(([label, days], i) => (
           <button key={label} className={i === at ? 'on' : ''} onClick={(e) => ((clock.speed = days), blur(e))}>
@@ -142,6 +177,7 @@ export function App() {
         <color attach="background" args={[BACKGROUND]} />
         <Tick />
         <DevHooks />
+        <Cursor />
         <Studio />
         <Sun />
         <Sky />

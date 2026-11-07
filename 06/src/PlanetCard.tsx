@@ -5,7 +5,7 @@ import { elementsAt, position } from './kepler';
 import { PLANETS } from './planets';
 import { CURIOSITY, MOONS } from './PlanetList';
 import { COLOURS } from './Orbits';
-import { pick, usePicked } from './selection';
+import { pick, typing, usePicked } from './selection';
 
 // Only touches the page when the text actually changes.
 const write = (el: HTMLElement | null, text: string) => void (el && el.textContent !== text && (el.textContent = text));
@@ -39,7 +39,7 @@ export function PlanetCard() {
   const speed = useRef<HTMLElement>(null);
 
   useEffect(() => {
-    const key = (e: KeyboardEvent) => e.key === 'Escape' && pick(null);
+    const key = (e: KeyboardEvent) => !typing(e) && e.key === 'Escape' && pick(null);
     addEventListener('keydown', key);
     return () => removeEventListener('keydown', key);
   }, []);

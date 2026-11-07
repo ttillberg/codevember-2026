@@ -56,18 +56,20 @@ body[data-theme="dark"] .planets button { color: #f2f2f2; }
 /* Time, along the bottom: play big on the left, the date beside it, the speeds under the date, all on the page. */
 .transport {
   position: fixed; left: 50%; bottom: 22px; transform: translateX(-50%);
-  display: grid; grid-template-columns: auto auto; grid-template-rows: auto auto; column-gap: 12px; row-gap: 1px; align-items: center;
+  display: flex; flex-direction: column; align-items: center; gap: 4px; /* play and the date, the speeds under */
   font-family: "Helvetica Neue", Helvetica, Arial, sans-serif; color: #f2f2f2;
 }
+.transport .now { display: flex; align-items: center; gap: 14px; }
 .transport button { border: 0; background: none; padding: 0; cursor: pointer; color: inherit; font: inherit; }
-.transport .play { grid-row: 1 / span 2; width: 44px; height: 44px; opacity: 0.95; }
+.transport .play { box-sizing: border-box; width: 34px; height: 34px; padding: 6px; border: 3px solid currentColor; border-radius: 50%; opacity: 0.95; } /* in a thick round ring */
 .transport .play svg { display: block; width: 100%; height: 100%; }
 .transport .play:hover { opacity: 1; }
-.transport .when { font-size: 22px; font-weight: 700; font-variant-numeric: tabular-nums; letter-spacing: -0.01em; line-height: 1.05; }
-.transport .speeds { display: flex; gap: 12px; font-size: 13px; font-weight: 700; }
+.transport .when { width: 9.6ch; padding: 0; border: 0; outline: none; background: none; color: inherit; font-family: inherit; caret-color: currentColor; cursor: text; white-space: nowrap; font-size: 44px; font-weight: 700; font-variant-numeric: tabular-nums; letter-spacing: -0.01em; line-height: 1.05; }
+.transport .speeds { display: flex; justify-content: center; gap: 24px; font-size: 26px; font-weight: 700; }
 .transport .speeds button { opacity: 0.4; font-variant-numeric: tabular-nums; }
 .transport .speeds button:hover { opacity: 0.75; }
 .transport .speeds button.on { opacity: 1; }
+.transport .when::placeholder { color: inherit; opacity: 0.3; }
 
 
 

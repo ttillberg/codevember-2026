@@ -9,6 +9,9 @@ export function pick(name: string | null) {
   listeners.forEach((l) => l());
 }
 
+// Whether a key press is someone typing into a field (the date), so the keyboard shortcuts leave it alone.
+export const typing = (e: KeyboardEvent) => e.target instanceof HTMLInputElement;
+
 // The picked planet right now, for frame loops that mustn't re-render.
 export const pickedNow = () => picked;
 
