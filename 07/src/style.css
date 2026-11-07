@@ -123,17 +123,14 @@ canvas.grabbing { cursor: grabbing; }
   margin: 2px 6px 2px; font: 500 10px/1 Inter, "Helvetica Neue", Helvetica, Arial, sans-serif; letter-spacing: 0.06em;
   text-transform: uppercase; color: rgba(0, 0, 0, 0.4);
 }
-.ft-slide {
-  position: relative; height: 34px; border-radius: 999px; overflow: hidden; cursor: ew-resize; touch-action: none;
-  background: rgba(0, 0, 0, 0.08);
-}
-.ft-slide-fill {
-  position: absolute; left: 0; top: 0; bottom: 0; width: calc(34px + var(--t) * (100% - 34px)); overflow: hidden;
-  border-radius: 999px; background: #111;
-}
+.ft-slide { padding: 4px 4px 6px; cursor: ew-resize; touch-action: none; }
 .ft-slide-text {
-  position: absolute; left: 0; top: 0; bottom: 0; width: 180px; display: flex; align-items: center; justify-content: space-between;
-  padding: 0 14px; box-sizing: border-box; font: 500 11px/1 Inter, "Helvetica Neue", Helvetica, Arial, sans-serif;
-  color: rgba(0, 0, 0, 0.55); text-transform: capitalize; font-variant-numeric: tabular-nums; pointer-events: none;
+  display: flex; justify-content: space-between; margin: 0 2px 6px; pointer-events: none;
+  font: 500 11px/1 Inter, "Helvetica Neue", Helvetica, Arial, sans-serif; color: rgba(0, 0, 0, 0.55);
+  text-transform: capitalize; font-variant-numeric: tabular-nums;
 }
-.ft-slide-fill .ft-slide-text { color: #fff; }
+.ft-slide-text b { font-weight: 500; color: #111; }
+.ft-slide-track { position: relative; height: 10px; border-radius: 999px; background: rgba(0, 0, 0, 0.08); }
+.ft-slide-track i {
+  position: absolute; left: 0; top: 0; bottom: 0; width: calc(10px + var(--t) * (100% - 10px)); border-radius: 999px; background: #111;
+}

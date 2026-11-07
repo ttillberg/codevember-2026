@@ -205,8 +205,7 @@ function Picker<T extends string>({ name, items, cur, put, icon, solid }: {
   );
 }
 
-// One option as a fat horizontal slider: drag straight on it, the value under the pointer. The name sits inside;
-// a white copy of it rides the black fill so it reads on both.
+// One option as a slider: the name and value over a pill track. Drag anywhere on it, the value under the pointer.
 function OptionSlider({ k }: { k: Num }) {
   const [, bump] = useState(0);
   const { min, max } = RANGE[k];
@@ -216,13 +215,12 @@ function OptionSlider({ k }: { k: Num }) {
     tool[k] = min + Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)) * (max - min);
     bump((n) => n + 1);
   };
-  const label = <><span>{k}</span><b>{Math.round(t * 100)}</b></>;
   return (
     <div className="ft-slide" style={{ '--t': t } as React.CSSProperties}
       onPointerDown={(e) => { e.currentTarget.setPointerCapture(e.pointerId); at(e); }}
       onPointerMove={(e) => { if (e.currentTarget.hasPointerCapture(e.pointerId)) at(e); }}>
-      <div className="ft-slide-text">{label}</div>
-      <div className="ft-slide-fill"><div className="ft-slide-text">{label}</div></div>
+      <div className="ft-slide-text"><span>{k}</span><b>{Math.round(t * 100)}</b></div>
+      <div className="ft-slide-track"><i /></div>
     </div>
   );
 }
