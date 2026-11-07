@@ -18,7 +18,7 @@ canvas.grabbing { cursor: grabbing; }
 
 /* The media: big icons in a frosted bar under the balloon. */
 .ft-media {
-  position: fixed; left: 50%; bottom: 56px; transform: translateX(-50%);
+  position: fixed; left: 50%; bottom: 88px; transform: translateX(-50%);
   display: flex; gap: 4px; padding: 6px; border-radius: 999px; user-select: none;
   /* Frosted glass: a heavy blur, a pale sheen from the top, fine grain, a bright rim. */
   background: linear-gradient(to bottom, rgba(255, 255, 255, 0.55), rgba(255, 255, 255, 0.25));
