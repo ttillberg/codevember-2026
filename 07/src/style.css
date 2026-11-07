@@ -108,7 +108,7 @@ canvas.grabbing { cursor: grabbing; }
 
 /* Settings and help: small menus over their buttons. */
 .ft-menu {
-  display: flex; flex-direction: column; width: 200px; padding: 6px; border-radius: 20px; box-sizing: border-box; user-select: none;
+  display: flex; flex-direction: column; width: max-content; min-width: 200px; padding: 6px; border-radius: 20px; box-sizing: border-box; user-select: none;
   font: 12px/16px Inter, "Helvetica Neue", Helvetica, Arial, sans-serif; color: #111;
 }
 .ft-menu hr { width: calc(100% - 20px); margin: 4px auto; border: 0; height: 1px; background: rgba(0, 0, 0, 0.1); }
@@ -167,3 +167,8 @@ canvas.grabbing { cursor: grabbing; }
 @media (hover: hover) {
   .ft-media .ft-knob > button:hover:not(.on) .ft-tip { opacity: 1; transform: translate(-50%, 0); transition-delay: 0.35s; }
 }
+.ft-actions kbd {
+  display: inline-flex; align-items: center; height: 16px; padding: 0 4px; border-radius: 5px; background: #d2d1ce; color: #6b6a67;
+  font: 500 9px/1 Inter, "Helvetica Neue", Helvetica, Arial, sans-serif;
+}
+.ft-media .ft-actions button:hover kbd { background: #3a3a3a; color: #e6e6e6; }

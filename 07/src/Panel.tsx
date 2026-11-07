@@ -463,8 +463,13 @@ export function Panel() {
   const [, bump] = useState(0);
   useEffect(() => {
     const again = () => bump((n) => n + 1);
-    // Space toggles auto draw.
-    const key = (e: KeyboardEvent) => { if (e.code === 'Space') { e.preventDefault(); tool.auto = !tool.auto; again(); } };
+    // Space toggles auto draw; delete (or backspace) clears the balloon.
+    const key = (e: KeyboardEvent) => {
+      if (e.code === 'Space') { e.preventDefault(); tool.auto = !tool.auto; again(); }
+      if ((e.code === 'Delete' || e.code === 'Backspace') && !e.metaKey && !e.ctrlKey && !e.altKey) {
+        e.preventDefault(); paint.clear(); clearDrips();
+      }
+    };
     window.addEventListener('keydown', key);
     const events = ['click', 'input', 'keyup'];
     events.forEach((ev) => window.addEventListener(ev, again));
@@ -492,7 +497,7 @@ export function Panel() {
           <hr />
           <div className="ft-actions">
             <button onClick={() => set(() => { paint.clear(); clearDrips(); })}>
-              <Icon size={14} stroke={1.4}><circle cx="8" cy="8" r="5.5" /><path d="M4.1 11.9l7.8-7.8" /></Icon>Clear
+              <Icon size={14} stroke={1.4}><circle cx="8" cy="8" r="5.5" /><path d="M4.1 11.9l7.8-7.8" /></Icon>Clear<kbd>Del</kbd>
             </button>
             <button onClick={() => set(resetTool)}>
               <Icon size={14} stroke={1.4}><path d="M3 3v3.5h3.5" /><path d="M3.4 6.2A5.3 5.3 0 1 1 3.3 10" /></Icon>Reset tools
@@ -503,6 +508,7 @@ export function Panel() {
           <p><b>Click + drag</b> paint and turn</p>
           <p><b>Cmd + move</b> turn without painting</p>
           <p><b>Space</b> auto draw</p>
+          <p><b>Del</b> clear the balloon</p>
           <p><b>Hold B M S F C W</b> brush, material, size, flow, colour, water: move the mouse, let go</p>
         </Pop>
       </div>
