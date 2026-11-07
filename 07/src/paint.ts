@@ -12,7 +12,7 @@ import {
 } from 'three/webgpu';
 import {
   abs, cos, float, floor, hash, instancedBufferAttribute, length, max, min, mix, mrt, mx_noise_float, positionLocal, pow,
-  select, sign, sin,
+  select, sign, sin, sqrt,
   screenUV, smoothstep, texture, uniform, uv, varying, vec2, vec3, vec4, Fn,
 } from 'three/tsl';
 
@@ -177,7 +177,8 @@ const dabShape = (style: any, seed: any, watery: any) => Fn(() => {
   // Glaze: colour fused into the glass, a smooth soft-edged blob, softer the more watery (that rides in the
   // rough slot); the balloon shader gathers its pigment at the edge and lenses it.
   // Smooth: the ragged edge comes from the water (the bleed in the run pass), not from the dab.
-  const glaze = smoothstep(1, float(0.5).sub(watery.mul(0.4)), d);
+  // A firm core where the brush went; the water carries it out from there.
+  const glaze = smoothstep(1, float(0.6).sub(watery.mul(0.3)), d);
   return select(style.lessThan(0.5), round, select(style.lessThan(1.5), spray, select(style.lessThan(2.5), bristle,
     select(style.lessThan(3.5), scrape, glaze))));
 })();
@@ -323,7 +324,7 @@ export class PaintLayer {
       const across = vec2(d.dir.y.negate(), d.dir.x).mul(px).toVar();
       const cL: any = texture(src.textures[0], here.sub(across)), cR: any = texture(src.textures[0], here.add(across));
       const pL: any = texture(src.textures[1], here.sub(across)), pR: any = texture(src.textures[1], here.add(across));
-      const k = uSpread.mul(wet).toVar();
+      const k = uSpread.mul(wet).mul(min(max(p.x.mul(4), 0), 1)).toVar(); // runs only: a wash has its own melt
       const colorRun: any = v4(mix(color, cL.add(cR).mul(0.5), k)).toVar(); // vec4, whatever the typing thinks
       const propsRun: any = v4(mix(v4(thick, wet, rough, metal), v4(pL.x.add(pR.x).mul(0.5), wet, pL.z.add(pR.z).mul(0.5), pL.w.add(pR.w).mul(0.5)), k)).toVar();
       // Wet on wet: a thin wash floats out while it is wet. Its colour (and finish) diffuses into the four
@@ -335,24 +336,35 @@ export class PaintLayer {
       const pN = [vec2(b.x, 0), vec2(b.x, 0).negate(), vec2(0, b.y), vec2(0, b.y).negate()].map((o) => texture(src.textures[1], here.add(o)));
       const cAvg: any = cN[0].add(cN[1]).add(cN[2]).add(cN[3]).mul(0.25);
       const pAvg: any = pN[0].add(pN[1]).add(pN[2]).add(pN[3]).mul(0.25);
+      // The most any neighbour has, per channel: what the front grows towards, so it advances at strength.
+      const cMax: any = max(max(cN[0], cN[1]), max(cN[2], cN[3]));
+      const pMax: any = max(max(pN[0], pN[1]), max(pN[2], pN[3]));
       // Clamped: laid wetness blends on top of what is there and can read over 1 straight after a dab.
       const wetN: any = min(max(max(pN[0].y, pN[1].y), max(pN[2].y, pN[3].y)), 1);
-      const water = mx_noise_float(vec3(here.x.mul(PAINT_W / 22), here.y.mul(PAINT_H / 22), 11)).mul(0.5).add(0.5).mul(0.85).add(0.15);
+      // The water: big slow noise with a finer one on top, squared for contrast, so the bloom pushes out in broad
+      // fingers with narrow dry gaps between them.
+      const w1 = mx_noise_float(vec3(here.x.mul(PAINT_W / 70), here.y.mul(PAINT_H / 70), 11)).mul(0.5).add(0.5);
+      const w2 = mx_noise_float(vec3(here.x.mul(PAINT_W / 24), here.y.mul(PAINT_H / 24), 5)).mul(0.5).add(0.5);
+      const water = w1.mul(0.7).add(w2.mul(0.3)).toVar();
+      const waterK = water.mul(water).mul(1.6).add(0.08);
       const thin = float(1).sub(min(max(propsRun.x.mul(4), 0), 1));
-      const wetBleed: any = min(max(propsRun.y, wetN.mul(0.9)), 1).mul(thin); // the water reaches out, a tenth less each hop
-      const kB = uBleed.mul(wetBleed).mul(thin).mul(water).toVar();
+      const wetBleed: any = min(max(propsRun.y, wetN.mul(0.94)), 1).mul(thin); // the water reaches out, a little less each hop
+      const kB = min(uBleed.mul(wetBleed).mul(thin).mul(waterK), 0.6).toVar();
       // Melt first: wet thin paint evens out with its neighbours, so dabs run together into one wash.
-      const kM = uBleed.mul(0.35).mul(wetBleed).mul(thin).toVar();
+      const kM = min(uBleed.mul(0.05).mul(wetBleed).mul(thin), 0.05).toVar();
       const colorMelt: any = mix(colorRun, cAvg, kM).toVar();
       // Grows, never thins: a texel takes on what its neighbours have more of, capped lower the further the water
       // has carried it, so a bloom fades out towards its edge and keeps its heart. Two washes meeting bleed into
       // each other the same way, channel by channel.
-      const reach = wetBleed.mul(wetBleed).mul(wetBleed).mul(wetBleed).toVar();
-      const want: any = cAvg.mul(reach).toVar();
+      // Reach falls off gently with the water, and where the water is running out (the front) the pigment is
+      // allowed a little above its neighbours: the darker outline a wash dries with.
+      const front = smoothstep(0.75, 0.25, wetBleed).mul(smoothstep(0.05, 0.2, wetBleed)).mul(0.9);
+      const reach = wetBleed.mul(sqrt(wetBleed)).mul(front.add(1)).toVar();
+      const want: any = cMax.mul(reach).toVar();
       const grow = v4(max(want.x.sub(colorMelt.x), 0), max(want.y.sub(colorMelt.y), 0), max(want.z.sub(colorMelt.z), 0), max(want.w.sub(colorMelt.w), 0));
       const colorOut = colorMelt.add(grow.mul(kB));
       const propsOut = v4(propsRun.x, select(thin.greaterThan(0.5), wetBleed, propsRun.y),
-        propsRun.z.add(max(pAvg.z.mul(reach).sub(propsRun.z), 0).mul(kB)), propsRun.w.add(max(pAvg.w.mul(reach).sub(propsRun.w), 0).mul(kB)));
+        propsRun.z.add(max(pMax.z.mul(reach).sub(propsRun.z), 0).mul(kB)), propsRun.w.add(max(pMax.w.mul(reach).sub(propsRun.w), 0).mul(kB)));
       mat.colorNode = colorOut;
       mat.mrtNode = mrt({ color: colorOut, props: propsOut });
       return new QuadMesh(mat);
