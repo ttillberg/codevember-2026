@@ -4,6 +4,8 @@ import { paint } from './Balloon';
 import { PAINT_W, QUALITY, quality, setQuality, type Brush, type Quality } from './paint';
 import { resetTool, save, tool, type Finish } from './tool';
 import { downloadPng } from './snapshot';
+import { DARK_ENABLED, setTheme, theme } from './theme';
+import { compose, HUE_STRIP, setColour, shadeStrip, syncColour } from './color';
 
 // The media, and the options each one answers to.
 type Medium = 'glaze' | 'bristle' | 'spray' | 'pencil' | 'scrape';
@@ -268,41 +270,25 @@ function FlowKnob() {
   );
 }
 
-// Colour: one strip, black at the bottom, through every hue, to white at the top.
-const HUES = ['#f00', '#ff0', '#0f0', '#0ff', '#00f', '#f0f', '#f00'];
-const STOPS: [number, number[]][] = [
-  [0, [0, 0, 0]],
-  ...HUES.map((h, i): [number, number[]] => [0.12 + (i / 6) * 0.76, [...h.slice(1)].map((c) => (c === 'f' ? 255 : 0))]),
-  [1, [255, 255, 255]],
-];
-const STRIP = `linear-gradient(to top, ${STOPS.map(([p, c]) => `rgb(${c}) ${p * 100}%`).join(', ')})`;
-function stripAt(t: number) {
-  const i = Math.max(1, STOPS.findIndex(([p]) => p >= t));
-  const [p0, a] = STOPS[i - 1], [p1, b] = STOPS[i];
-  const k = (t - p0) / (p1 - p0);
-  return '#' + a.map((c, j) => Math.round(c + (b[j] - c) * k).toString(16).padStart(2, '0')).join('');
-}
-// Where a colour sits on the strip: the closest of a few hundred samples.
-function stripOf(hex: string) {
-  const n = parseInt(hex.slice(1), 16), rgb = [(n >> 16) & 255, (n >> 8) & 255, n & 255];
-  let best = 0, bestD = Infinity;
-  for (let i = 0; i <= 400; i++) {
-    const m = parseInt(stripAt(i / 400).slice(1), 16);
-    const d = [(m >> 16) & 255, (m >> 8) & 255, m & 255].reduce((s, c, j) => s + (c - rgb[j]) ** 2, 0);
-    if (d < bestD) { bestD = d; best = i / 400; }
-  }
-  return best;
-}
-let colorT: number | null = null;
-const colorGet = () => {
-  if (colorT === null || stripAt(colorT) !== tool.hex) colorT = stripOf(tool.hex); // changed elsewhere, or first time
-  return colorT;
-};
+// Colour: the hue round the wheel on one knob, its brightness, black through the pure hue to white, on the next.
 function ColorKnob() {
   return (
-    <Knob name="color" tip="Colour" hotkey="KeyC" get={colorGet} put={(v) => { colorT = v; tool.hex = stripAt(v); }}
+    <Knob name="color" tip="Colour" hotkey="KeyC" get={() => { syncColour(); return tool.hue; }} put={(v) => setColour(v, tool.shade)}
       face={() => <i className="ft-swatch" style={{ background: tool.hex }} />}
-      track={() => <><span className="ft-strip" style={{ background: STRIP }} /><span className="ft-mark" style={{ background: tool.hex }} /></>} />
+      track={() => <><span className="ft-strip" style={{ background: HUE_STRIP }} /><span className="ft-mark" style={{ background: compose(tool.hue, 0.5) }} /></>} />
+  );
+}
+// A sun: a disc and eight rays.
+const SUN_DISC = 'M17 13a4 4 0 1 1-8 0a4 4 0 1 1 8 0z';
+const SUN_RAYS = Array.from({ length: 8 }, (_, i) => {
+  const a = (i / 8) * Math.PI * 2, c = Math.cos(a), s = Math.sin(a);
+  return `M${13 + c * 6.5} ${13 + s * 6.5}L${13 + c * 10} ${13 + s * 10}`;
+}).join('');
+function ShadeKnob() {
+  return (
+    <Knob name="brightness" tip="Brightness" hotkey="KeyL" get={() => { syncColour(); return tool.shade; }} put={(v) => setColour(tool.hue, v)}
+      face={() => <Fit line={1.5}><path d={SUN_RAYS} /><path d={SUN_DISC} fill="currentColor" stroke="none" /></Fit>}
+      track={() => <><span className="ft-strip" style={{ background: shadeStrip(tool.hue) }} /><span className="ft-mark" style={{ background: tool.hex }} /></>} />
   );
 }
 
@@ -503,12 +489,14 @@ export function Panel() {
       <SizeKnob />
       <FlowKnob />
       <ColorKnob />
+      <ShadeKnob />
       <Picker name="paint" tip="Material" items={FINISHES} cur={tool.finish} put={(f) => { tool.finish = f; }} icon={(f) => <FinishBall f={f} />} hotkey="KeyM" />
       <span className="ft-sep" />
       <div className="ft-pair">
         <Pop name="settings" tip="Settings" icon={<GearIcon />} className="ft-menu">
           <Row label="Auto draw" hint="Space" on={tool.auto} act={() => set(() => { tool.auto = !tool.auto; })} />
           <Row label="Inertia" on={tool.inertia} act={() => set(() => { tool.inertia = !tool.inertia; })} />
+          {DARK_ENABLED && <Row label="Dark mode" on={theme === 'dark'} act={() => set(() => setTheme(theme === 'dark' ? 'light' : 'dark'))} />}
           <Row label={`Texture ${quality.toUpperCase()}`} hint={`${PAINT_W}×${PAINT_W / 2}`} act={() => {
             // Reloads: the targets and shaders are built on the size.
             const qs = Object.keys(QUALITY) as Quality[];
@@ -537,7 +525,7 @@ export function Panel() {
         <p><b>Space</b> auto draw</p>
         <p><b>Del</b> clear the balloon</p>
         <p><b>Shift + 0–9</b> save a preset, <b>0–9</b> recall it</p>
-        <p><b>Hold B M S F C W</b> brush, material, size, flow, colour, water: move the mouse, let go</p>
+        <p><b>Hold B M S F C L W</b> brush, material, size, flow, colour, light, water: move the mouse, let go</p>
       </Pop>
     </div>
     </>
