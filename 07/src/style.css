@@ -119,10 +119,6 @@ canvas.grabbing { cursor: grabbing; }
 .ft-opts svg { width: 18px; height: 18px; }
 .ft-sliders { display: flex; flex-direction: column; gap: 6px; width: 200px; padding: 10px; border-radius: 22px; box-sizing: border-box; }
 .ft-sliders.open { pointer-events: auto; }
-.ft-sliders h4 {
-  margin: 2px 6px 2px; font: 500 10px/1 Inter, "Helvetica Neue", Helvetica, Arial, sans-serif; letter-spacing: 0.06em;
-  text-transform: uppercase; color: rgba(0, 0, 0, 0.4);
-}
 .ft-slide { padding: 4px 4px 6px; cursor: ew-resize; touch-action: none; }
 .ft-slide-text {
   display: flex; justify-content: space-between; margin: 0 2px 6px; pointer-events: none;

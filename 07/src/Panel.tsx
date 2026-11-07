@@ -251,7 +251,6 @@ function OptionsKnob() {
         <OptionsIcon />
       </button>
       <div className={`ft-gauge ft-sliders${open ? ' open' : ''}`}>
-        <h4>{m}</h4>
         {OPTIONS[m].map((k) => <OptionSlider key={`${m}-${k}`} k={k} />)}
       </div>
     </div>
