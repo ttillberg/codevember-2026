@@ -11,11 +11,13 @@ const FLOW: Record<Brush, number> = { round: 0.2, bristle: 0.3, spray: 0.12, scr
 
 // The turntable, tunable live.
 export const wheel = {
-  speed: 0.35,   // radians per second
+  speed: 0.35,   // radians per second on its own
   lean: 1.2,     // most radians of tilt either way
   gain: 2.5,     // radians of tilt per window size of pointer travel
+  throwGain: 6,  // radians per second of extra spin per radian of sideways travel
+  drag: 3,       // how fast a throw dies away, per second
   ease: 10,      // how fast the lean follows, per second
-  aimX: 0, aimY: 0, roll: 0, pitch: 0, spin: 0,
+  aimY: 0, roll: 0, pitch: 0, spin: 0, throw: 0,
 };
 import { MeshPhysicalNodeMaterial, type WebGPURenderer } from 'three/webgpu';
 import {
@@ -143,11 +145,11 @@ export function Balloon() {
 
   useEffect(() => {
     const el = gl.domElement;
-    // Relative: the pointer's movement tips the balloon, however far it has gone. A whole window width of
-    // travel is about two radians, and the lean is clamped so it can't flip over.
+    // Like a trackball: moving sideways throws the balloon round on top of its own slow turn, the throw dying
+    // away; moving up and down tips it, however far the pointer has gone, clamped so it can't flip over.
     const aim = (e: PointerEvent) => {
       const g = wheel.gain / Math.min(window.innerWidth, window.innerHeight);
-      wheel.aimX = Math.max(-wheel.lean, Math.min(wheel.lean, wheel.aimX + e.movementX * g));
+      wheel.throw += e.movementX * g * wheel.throwGain;
       wheel.aimY = Math.max(-wheel.lean, Math.min(wheel.lean, wheel.aimY + e.movementY * g));
     };
     const down = (e: PointerEvent) => { if (e.button === 0) { painting.current = true; aim(e); } };
@@ -195,9 +197,9 @@ export function Balloon() {
     const g = groupRef.current;
     if (!g) return;
     const k = 1 - Math.exp(-dt * wheel.ease);
-    wheel.roll += (wheel.aimX - wheel.roll) * k;
     wheel.pitch += (wheel.aimY - wheel.pitch) * k;
-    wheel.spin += dt * wheel.speed;
+    wheel.throw *= Math.exp(-dt * wheel.drag);
+    wheel.spin += dt * (wheel.speed + wheel.throw);
     g.quaternion.setFromEuler(new Euler(wheel.pitch, 0, -wheel.roll, 'XYZ'));
     g.quaternion.multiply(new Quaternion().setFromAxisAngle(UP, wheel.spin));
   }, -3);
