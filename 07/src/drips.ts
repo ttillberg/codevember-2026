@@ -24,7 +24,7 @@ export const dripSettings = {
   // Where a drop forms: paint piles up in a coarse map as the brush lays it (one pass of the default brush
   // comes to about 1.3), and dries out of it slowly. A cell over the threshold lets a drop go with the excess.
   threshold: 1.2, // at full liquid; stiffer paint needs more
-  dry: 0.06,      // per second, share of the pile that sets
+  dry: 0.12,      // per second, share of the pile that sets
 };
 
 const drips: Drip[] = [];
@@ -48,7 +48,7 @@ function gravityAt(u: number, v: number, g: Vector3) {
 /** A brush dab lands: pile its paint up where it falls, and let a drop go where there is too much. */
 export function maybeSpawn(d: Dab, liquid: number, g: Vector3) {
   if (liquid <= 0.02) return;
-  const threshold = dripSettings.threshold / Math.max(liquid, 0.02) ** 1.5;
+  const threshold = dripSettings.threshold / Math.max(liquid, 0.02) ** 2.5; // steep: stiff paint hardly ever
   // The dab's paint over its disc, in cells; the disc is as wide in u as the sphere is narrow there.
   const amount = d.flow * (d.load ?? 0.85);
   const ry = Math.max(1, Math.round(d.size * 0.5 * PH));
