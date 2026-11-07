@@ -28,6 +28,11 @@ export function Palette() {
             onClick={() => set(() => { tool.hex = s.hex; })}
           />
         ))}
+        {/* Any colour at all: the browser's picker, shown as a rainbow swatch that takes the picked colour. */}
+        <label className={`pick ${SWATCHES.some((s) => s.hex === tool.hex) ? '' : 'on'}`} title="Any colour"
+          style={SWATCHES.some((s) => s.hex === tool.hex) ? undefined : { background: tool.hex }}>
+          <input type="color" value={tool.hex} onInput={(e) => set(() => { tool.hex = (e.target as HTMLInputElement).value; })} />
+        </label>
       </div>
       <div className="brushes">
         {BRUSHES.map((b) => (
