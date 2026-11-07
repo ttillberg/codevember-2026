@@ -15,11 +15,12 @@ const FAR_DIM = 0.25; // and at the far side of the shell, this much of that
 const COLOURS = ['#f29aa8', '#f08a7e', '#f5a04e', '#f2cc66', '#a9bde8', '#9fc7a8', '#f7b6c8', '#e0262e', '#ffffff', '#7a4bd0'];
 
 type Kind = { count: number; geometry: () => SphereGeometry | CapsuleGeometry; size: [number, number] };
+// Low poly: far off and a few pixels across, so a handful of triangles each is plenty.
 const KINDS: Kind[] = [
-  { count: 220, geometry: () => new SphereGeometry(0.5, 20, 14), size: [0.5, 1.6] }, // gumballs
-  { count: 240, geometry: () => new CapsuleGeometry(0.28, 0.5, 6, 14), size: [0.8, 1.8] }, // jelly beans
-  { count: 220, geometry: () => new SphereGeometry(0.5, 20, 10).scale(1, 0.38, 1), size: [0.6, 1.5] }, // lentils
-  { count: 800, geometry: () => new CapsuleGeometry(0.05, 0.22, 3, 6), size: [1, 2] }, // sprinkles
+  { count: 220, geometry: () => new SphereGeometry(0.5, 10, 7), size: [0.5, 1.6] }, // gumballs
+  { count: 240, geometry: () => new CapsuleGeometry(0.28, 0.5, 3, 8), size: [0.8, 1.8] }, // jelly beans
+  { count: 220, geometry: () => new SphereGeometry(0.5, 10, 6).scale(1, 0.38, 1), size: [0.6, 1.5] }, // lentils
+  { count: 800, geometry: () => new CapsuleGeometry(0.05, 0.22, 1, 4), size: [1, 2] }, // sprinkles
 ];
 
 const MATERIAL = new MeshPhysicalMaterial({ roughness: 0.32, clearcoat: 0.8, clearcoatRoughness: 0.18 });
