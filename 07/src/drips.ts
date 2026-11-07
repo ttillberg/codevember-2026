@@ -11,6 +11,8 @@ type Drip = {
   mass: number;      // what is left to spend, in pole-to-pole units of leg
   width: number;     // trail diameter, pole-to-pole units
   seed: number;
+  travelled: number; // since the last trail stamp, pole-to-pole units
+  stuck: number;     // seconds without grip
 };
 
 export const dripSettings = {
@@ -86,6 +88,7 @@ export function maybeSpawn(d: Dab, liquid: number, g: Vector3) {
         drips.push({
           u, v, rgb: d.rgb, rough: d.rough, metal: d.metal,
           mass, width: d.size * dripSettings.width * (0.8 + mass * 0.3), seed: Math.random() * 1000,
+          travelled: 0, stuck: 0,
         });
       }
     }
@@ -106,8 +109,10 @@ export function stepDrips(dt: number, g: Vector3, size: number, liquid: number, 
     const gr = gravityAt(d.u, d.v, g);
     const step = dripSettings.speed * dt * gr.grip * Math.min(1, d.mass + 0.3);
     const spent = step / legLength;
-    // Stop: no grip here (the bottom of the balloon as it hangs), or the drop is spent.
-    if (gr.grip < 0.15 || d.mass <= 0) {
+    // Stop: no grip here for a while (the bottom of the balloon as it hangs; a turn passing through counts for
+    // nothing), or the drop is spent.
+    d.stuck = gr.grip < 0.15 ? d.stuck + dt : 0;
+    if (d.stuck > 0.5 || d.mass <= 0) {
       paint.add({
         u: ((d.u % 1) + 1) % 1, v: d.v, angle: 0, seed: d.seed, size: size * dripSettings.bead * (0.5 + Math.max(d.mass, 0) + 0.5),
         rgb: d.rgb, flow: 1, brush: 'round', rough: d.rough, metal: d.metal, load: 1.2, wet: 0.3,
@@ -118,6 +123,10 @@ export function stepDrips(dt: number, g: Vector3, size: number, liquid: number, 
     d.u += gr.dx * step / (2 * Math.max(Math.sin(gr.theta), 0.05));
     d.v = Math.min(0.999, Math.max(0.001, d.v + gr.dy * step));
     d.mass -= spent;
+    // The trail is stamped by distance, not by frame: a drop that is held up leaves no blot.
+    d.travelled += step;
+    if (d.travelled < d.width * 0.25) continue;
+    d.travelled = 0;
     const angle = Math.atan2(gr.dy, gr.dx);
     // Inside the stroke it came from there is nothing to add: the trail starts where the paint ends.
     const cell = (Math.min(PH - 1, Math.round(d.v * PH))) * PW + ((Math.round(d.u * PW) % PW + PW) % PW);
