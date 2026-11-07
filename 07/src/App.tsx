@@ -3,6 +3,7 @@ import { WebGPURenderer } from 'three/webgpu';
 import { Balloon } from './Balloon';
 import { Shadow } from './Shadow';
 import { Panel } from './Panel';
+import { Snapshot } from './snapshot';
 import { makeStudio } from './env';
 import { useMemo } from 'react';
 
@@ -24,6 +25,7 @@ export function App() {
         <directionalLight position={[-4, 2, -3]} intensity={0.4} color="#cfd8ff" />
         <Balloon />
         <Shadow />
+        <Snapshot />
       </Canvas>
       <div id="reticle" className="reticle" />
       <Panel />

@@ -1,4 +1,6 @@
 html, body, #root { margin: 0; height: 100%; background: #e9e6e0; overflow: hidden; }
+/* Nothing to select or long-press on a painting toy. */
+html, body { user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent; }
 canvas { display: block; touch-action: none; cursor: grab; }
 canvas.grabbing { cursor: grabbing; }
 .back {
@@ -60,10 +62,10 @@ canvas.grabbing { cursor: grabbing; }
   position: absolute; left: 50%; bottom: calc(100% + 14px); padding: 6px; border-radius: 999px; pointer-events: none;
   background: rgba(255, 255, 255, 0.5); backdrop-filter: blur(18px) saturate(1.6); -webkit-backdrop-filter: blur(18px) saturate(1.6);
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.6), 0 8px 24px rgba(0, 0, 0, 0.1);
-  opacity: 0; transform: translate(-50%, 8px) scale(0.92); transform-origin: 50% 100%;
+  opacity: 0; transform: translate(calc(-50% + var(--dx, 0px)), 8px) scale(0.92); transform-origin: 50% 100%;
   transition: opacity 0.15s, transform 0.2s cubic-bezier(0.3, 1.4, 0.5, 1);
 }
-.ft-gauge.open { opacity: 1; transform: translate(-50%, 0) scale(1); }
+.ft-gauge.open { opacity: 1; transform: translate(calc(-50% + var(--dx, 0px)), 0) scale(1); }
 .ft-gauge-track { position: relative; width: 34px; height: 140px; border-radius: 999px; overflow: hidden; background: rgba(0, 0, 0, 0.08); }
 .ft-fill {
   position: absolute; left: 0; right: 0; bottom: 0; height: calc(17px + var(--t) * (100% - 17px)); border-radius: 999px; background: #111;
@@ -139,15 +141,16 @@ canvas.grabbing { cursor: grabbing; }
 /* Settings and help, spaced like the rest of the bar. */
 .ft-pair { display: flex; gap: 4px; }
 
-/* Clear and reset: two pill buttons with their icons. */
-.ft-actions { display: flex; gap: 6px; padding: 4px 4px 4px; }
+/* Clear, reset and download: stacked pill buttons with their icons, the key on the right. */
+.ft-actions { display: flex; flex-direction: column; gap: 4px; padding: 4px; }
 .ft-media .ft-actions button {
-  flex: 1; display: flex; align-items: center; justify-content: center; gap: 6px; width: auto; height: 32px; padding: 0 10px;
+  display: flex; align-items: center; justify-content: flex-start; gap: 8px; width: 100%; height: 32px; padding: 0 12px;
   border-radius: 999px; background: #e6e5e2; color: #111; font: 500 12px/1 Inter, "Helvetica Neue", Helvetica, Arial, sans-serif;
   white-space: nowrap;
 }
 .ft-media .ft-actions button:hover { background: #111; color: #fff; }
 .ft-actions svg { flex: none; }
+.ft-actions kbd { margin-left: auto; }
 
 
 /* A knob's gauge pinned open by a click: drag straight on it. */
@@ -203,3 +206,15 @@ canvas.grabbing { cursor: grabbing; }
 .ft-media .ft-knob > button:hover::before { background: rgba(0, 0, 0, 0.05); }
 .ft-media .ft-knob > button.on::before { background: #111; }
 .ft-media .ft-knob.swatches > button.on::before { background: rgba(0, 0, 0, 0.06); }
+
+/* Help on its own, a small frosted disc in the top right; its popover opens downward. */
+.ft-media.ft-corner { left: auto; right: 16px; top: 16px; bottom: auto; transform: none; }
+.ft-corner .ft-gauge { bottom: auto; top: calc(100% + 14px); transform-origin: 50% 0; transform: translate(calc(-50% + var(--dx, 0px)), -8px) scale(0.92); }
+.ft-corner .ft-gauge.open { transform: translate(calc(-50% + var(--dx, 0px)), 0) scale(1); }
+.ft-corner .ft-knob > button .ft-tip { bottom: auto; top: calc(100% + 12px); }
+.ft-corner .ft-help { white-space: normal; width: min(340px, calc(100vw - 24px)); }
+
+/* Phones: the bar sits low, out of the balloon's way. */
+@media (max-width: 600px) {
+  .ft-media:not(.ft-corner) { bottom: 40px; }
+}

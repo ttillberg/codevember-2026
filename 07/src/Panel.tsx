@@ -3,6 +3,7 @@ import { clearDrips } from './drips';
 import { paint } from './Balloon';
 import { PAINT_W, QUALITY, quality, setQuality, type Brush, type Quality } from './paint';
 import { resetTool, save, tool, type Finish } from './tool';
+import { downloadPng } from './snapshot';
 
 // The media, and the options each one answers to.
 type Medium = 'glaze' | 'bristle' | 'spray' | 'pencil' | 'scrape';
@@ -106,6 +107,16 @@ function placeAt(pop: HTMLElement, host: HTMLElement, ax: number, ay: number): A
   const y = Math.min(innerHeight - h - PAD, Math.max(PAD, mouse.y - ay));
   return { left: x - r.left, top: y - r.top };
 }
+// Opened from its button, a popover is centred over it but slid sideways to stay PAD px inside the screen.
+function useClamp(pop: React.RefObject<HTMLElement | null>, host: React.RefObject<HTMLElement | null>, open: boolean) {
+  useLayoutEffect(() => {
+    const e = pop.current, h = host.current;
+    if (!open || !e || !h) return;
+    const r = h.getBoundingClientRect(), w = e.offsetWidth, left = r.left + r.width / 2 - w / 2;
+    const dx = Math.max(PAD - left, 0) + Math.min(innerWidth - PAD - (left + w), 0);
+    e.style.setProperty('--dx', `${dx}px`);
+  }, [open]);
+}
 const atStyle = (at: At): React.CSSProperties | undefined =>
   at ? { left: at.left, top: at.top, bottom: 'auto', transform: 'none', transition: 'opacity 0.15s' } : undefined;
 
@@ -170,6 +181,7 @@ function Knob({ name, tip, get, put, face, track, hotkey }: {
     to(1 - (e.clientY - r.top) / r.height);
   };
   const open = held || pinned;
+  useClamp(gauge, box, open);
   return (
     <div className="ft-knob" ref={box}>
       <button aria-label={name} className={open ? 'on' : ''}
@@ -370,6 +382,7 @@ function Picker<T extends string>({ name, tip, items, cur, put, icon, solid, oth
       window.removeEventListener('pointerdown', away); window.removeEventListener('keydown', esc);
     };
   }, [open]);
+  useClamp(popEl, box, open);
   return (
     <div className={`ft-knob${solid ? '' : ' swatches'}`} ref={box}>
       <button aria-label={`${name}: ${cur}`} className={open ? 'on' : ''}
@@ -403,6 +416,7 @@ function Pop({ name, tip, icon, className, children }: {
 }) {
   const [open, setOpen] = useState(false);
   const box = useRef<HTMLDivElement>(null);
+  const pop = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!open) return;
     const away = (e: PointerEvent) => { if (!box.current?.contains(e.target as Node)) setOpen(false); };
@@ -411,6 +425,7 @@ function Pop({ name, tip, icon, className, children }: {
     window.addEventListener('keydown', esc);
     return () => { window.removeEventListener('pointerdown', away); window.removeEventListener('keydown', esc); };
   }, [open]);
+  useClamp(pop, box, open);
   return (
     <div className="ft-knob" ref={box}>
       <button aria-label={name} className={open ? 'on' : ''}
@@ -418,7 +433,7 @@ function Pop({ name, tip, icon, className, children }: {
         {icon}
         <Tip tip={tip} />
       </button>
-      <div className={`ft-gauge ft-popover ${className}${open ? ' open' : ''}`}>{children}</div>
+      <div ref={pop} className={`ft-gauge ft-popover ${className}${open ? ' open' : ''}`}>{children}</div>
     </div>
   );
 }
@@ -507,17 +522,23 @@ export function Panel() {
             <button onClick={() => set(resetTool)}>
               <Icon size={14} stroke={1.4}><path d="M3 3v3.5h3.5" /><path d="M3.4 6.2A5.3 5.3 0 1 1 3.3 10" /></Icon>Reset tools
             </button>
+            <button onClick={() => set(downloadPng)}>
+              <Icon size={14} stroke={1.4}><path d="M8 2.5v8M4.8 7.5L8 10.7l3.2-3.2M3 13.5h10" /></Icon>Download PNG
+            </button>
           </div>
         </Pop>
-        <Pop name="help" tip="Help" icon={<HelpIcon />} className="ft-menu ft-help">
-          <p><b>Click + drag</b> paint and turn</p>
-          <p><b>Cmd + move</b> turn without painting</p>
-          <p><b>Space</b> auto draw</p>
-          <p><b>Del</b> clear the balloon</p>
-          <p><b>Shift + 0–9</b> save a preset, <b>0–9</b> recall it</p>
-          <p><b>Hold B M S F C W</b> brush, material, size, flow, colour, water: move the mouse, let go</p>
-        </Pop>
       </div>
+    </div>
+    {/* Help sits on its own in the top right corner, out of the bar's way. */}
+    <div className="ft-media ft-corner">
+      <Pop name="help" tip="Help" icon={<HelpIcon />} className="ft-menu ft-help">
+        <p><b>Click + drag</b> paint and turn</p>
+        <p><b>Cmd + move</b> or <b>two fingers</b> turn without painting</p>
+        <p><b>Space</b> auto draw</p>
+        <p><b>Del</b> clear the balloon</p>
+        <p><b>Shift + 0–9</b> save a preset, <b>0–9</b> recall it</p>
+        <p><b>Hold B M S F C W</b> brush, material, size, flow, colour, water: move the mouse, let go</p>
+      </Pop>
     </div>
     </>
   );

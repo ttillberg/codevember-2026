@@ -21,7 +21,9 @@ import {
 export type Quality = 'low' | 'medium' | 'high';
 export const QUALITY: Record<Quality, number> = { low: 1024, medium: 2048, high: 4096 };
 const QKEY = 'codevember-07-quality';
-export const quality: Quality = (() => { try { const q = localStorage.getItem(QKEY) as Quality; return q in QUALITY ? q : 'medium'; } catch { return 'medium'; } })();
+// Touch devices (phones, tablets) start low, to spare their memory and fill rate; a saved choice wins.
+const fallback: Quality = typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches ? 'low' : 'medium';
+export const quality: Quality = (() => { try { const q = localStorage.getItem(QKEY) as Quality; return q in QUALITY ? q : fallback; } catch { return fallback; } })();
 export const setQuality = (q: Quality) => { try { localStorage.setItem(QKEY, q); } catch { /* ignore */ } location.reload(); };
 export const PAINT_W = QUALITY[quality], PAINT_H = PAINT_W / 2;
 // Texels per medium texel: distances set in texels (lanes, the pigment ring, the bump) scale with it, so the
