@@ -138,7 +138,7 @@ export function App() {
   useEffect(() => void (document.body.dataset.theme = 'dark'), []);
   return (
     <>
-      <Canvas camera={{ position: [0, 80, 0.001], fov: 40, near: 0.1, far: 250 }} dpr={[1, 2]} shadows={{ type: PCFShadowMap }} gl={{ toneMapping: NeutralToneMapping }} onPointerMissed={(e) => !(e.metaKey || e.ctrlKey) && pick(null)}>
+      <Canvas camera={{ position: [0, 80, 0.001], fov: 40, near: 0.1, far: 250 }} dpr={[1, 1.5]} shadows={{ type: PCFShadowMap }} gl={{ toneMapping: NeutralToneMapping }} onPointerMissed={(e) => !(e.metaKey || e.ctrlKey) && pick(null)}>
         <color attach="background" args={[BACKGROUND]} />
         <Tick />
         <DevHooks />

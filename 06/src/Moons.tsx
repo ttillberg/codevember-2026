@@ -351,7 +351,7 @@ function Bobble({ colour, size, seed }: { colour: string; size: number; seed: nu
       <mesh scale={[1, 0.85, 1]} material={sugarMaterial(colour, size)} castShadow receiveShadow>
         <sphereGeometry args={[r, 32, 16]} />
       </mesh>
-      <instancedMesh ref={ref} args={[bead, undefined, count]} castShadow receiveShadow>
+      <instancedMesh ref={ref} args={[bead, undefined, count]} receiveShadow>
         <meshPhysicalMaterial color={colour} roughness={0.45} clearcoat={0.4} emissive={colour} emissiveIntensity={0.15} />
       </instancedMesh>
     </group>
