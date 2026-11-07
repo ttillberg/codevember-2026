@@ -131,17 +131,20 @@ function ColorKnob() {
   );
 }
 
-// The medium: only the current one shows. Press it and the others pop up above; drag onto one and let go to pick
-// it, or tap and then click one. A press elsewhere closes it.
-function MediumKnob() {
+// A picker in the bar: only the current choice shows. Press it and the choices pop up above; drag up to one and let
+// go to pick it, or tap and then click one. A press elsewhere closes it.
+function Picker<T extends string>({ name, items, cur, put, icon, solid }: {
+  name: string; items: T[]; cur: T; put: (v: T) => void; icon: (v: T) => React.ReactNode;
+  solid?: boolean; // the button shows as picked (black), for icons; off for swatches that carry their own look
+}) {
   const [open, setOpen] = useState(false);
-  const [hot, setHot] = useState<Medium | null>(null);
+  const [hot, setHot] = useState<T | null>(null);
   const box = useRef<HTMLDivElement>(null);
   const drag = useRef({ y: 0, moved: false, down: false });
-  // The medium in the row at this height, wherever the pointer is sideways; past the top it's the top one.
+  // The choice in the row at this height, wherever the pointer is sideways; past the top it's the top one.
   // Back down under the popover (over the button) it's none, so letting go there changes nothing.
   const rowAt = (y: number) => {
-    const rows = [...(box.current?.querySelectorAll<HTMLElement>('[data-medium]') ?? [])];
+    const rows = [...(box.current?.querySelectorAll<HTMLElement>('[data-item]') ?? [])];
     const bottom = Math.max(...rows.map((r) => r.getBoundingClientRect().bottom));
     if (!rows.length || y > bottom + 6) return null;
     let best: HTMLElement | null = null, bestD = Infinity;
@@ -150,9 +153,9 @@ function MediumKnob() {
       const d = Math.abs(top + height / 2 - y);
       if (d < bestD) { bestD = d; best = r; }
     }
-    return (best?.dataset.medium as Medium | undefined) ?? null;
+    return (best?.dataset.item as T | undefined) ?? null;
   };
-  const pick = (m: Medium) => { tool.brush = m; setOpen(false); setHot(null); };
+  const pick = (v: T) => { put(v); setOpen(false); setHot(null); };
   useEffect(() => {
     if (!open) return;
     const move = (e: PointerEvent) => {
@@ -163,8 +166,8 @@ function MediumKnob() {
     const up = (e: PointerEvent) => {
       if (!drag.current.down) return;
       drag.current.down = false;
-      const m = rowAt(e.clientY);
-      if (drag.current.moved) { if (m) pick(m); else setOpen(false); } // a drag picks where it ends; a tap leaves it open
+      const v = rowAt(e.clientY);
+      if (drag.current.moved) { if (v) pick(v); else setOpen(false); } // a drag picks where it ends; a tap leaves it open
       setHot(null);
     };
     const away = (e: PointerEvent) => { if (!box.current?.contains(e.target as Node)) setOpen(false); };
@@ -178,30 +181,32 @@ function MediumKnob() {
       window.removeEventListener('pointerdown', away); window.removeEventListener('keydown', esc);
     };
   }, [open]);
-  const cur = tool.brush as Medium;
   return (
-    <div className="ft-knob" ref={box}>
-      <button aria-label={cur} title={`${cur} (press to change)`} className="on"
+    <div className={`ft-knob${solid ? '' : ' swatches'}`} ref={box}>
+      <button aria-label={`${name}: ${cur}`} title={`${cur} (press to change)`} className={solid || open ? 'on' : ''}
         onPointerDown={(e) => {
           e.preventDefault();
           if (open) { setOpen(false); return; }
           drag.current = { y: e.clientY, moved: false, down: true };
           setOpen(true);
         }}>
-        <MediumIcon m={cur} />
+        {icon(cur)}
       </button>
       <div className={`ft-gauge ft-pick${open ? ' open' : ''}`}>
-        {MEDIA.map((m) => (
-          <button key={m} data-medium={m} title={m} aria-label={m}
-            className={(hot ?? cur) === m ? 'on' : ''} onClick={() => pick(m)}>
-            <MediumIcon m={m} />
-            <span>{m}</span>
+        {items.map((v) => (
+          <button key={v} data-item={v} title={v} aria-label={v}
+            className={(hot ?? cur) === v ? 'on' : ''} onClick={() => pick(v)}>
+            {icon(v)}
+            <span>{v}</span>
           </button>
         ))}
       </div>
     </div>
   );
 }
+
+// The finishes as little black balls: soft for matte, a sharp highlight for gloss, a chrome horizon for metal.
+const FinishBall = ({ f }: { f: Finish }) => <i className={`ft-ball ${f}`} />;
 
 // A floating frosted panel holding every control, Figma style.
 // It writes straight into `tool`; it re-renders after any click, input or key.
@@ -219,13 +224,6 @@ export function Panel() {
   // Buttons give up focus after a click so the space bar stays the auto toggle.
   const set = (fn: () => void) => { fn(); (document.activeElement as HTMLElement | null)?.blur?.(); };
 
-  const chips = <T extends string>(items: T[], cur: string, apply: (v: T) => void) => (
-    <div className="ft-chips">
-      {items.map((v) => (
-        <button key={v} className={cur === v ? 'on' : ''} onClick={() => set(() => { apply(v); })}>{v}</button>
-      ))}
-    </div>
-  );
   const slider = (k: Num) => (
     <label key={k} className="ft-row">
       <span>{k}</span>
@@ -239,19 +237,16 @@ export function Panel() {
     <>
     {/* The media, as big icons in a frosted bar under the balloon. */}
     <div className="ft-media">
-      <MediumKnob />
+      <Picker name="medium" items={MEDIA} cur={tool.brush as Medium} put={(m) => { tool.brush = m; }} icon={(m) => <MediumIcon m={m} />} solid />
       <span className="ft-sep" />
       <SizeKnob />
       <ColorKnob />
+      <Picker name="paint" items={FINISHES} cur={tool.finish} put={(f) => { tool.finish = f; }} icon={(f) => <FinishBall f={f} />} />
     </div>
     <div className="ft-drawer">
         <section>
           <h4>{tool.brush}</h4>
           {(OPTIONS[tool.brush as Medium] ?? []).map(slider)}
-        </section>
-        <section>
-          <h4>Paint</h4>
-          {chips(FINISHES, tool.finish, (v) => { tool.finish = v; })}
         </section>
         <section>
           <h4>Settings</h4>

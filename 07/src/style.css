@@ -111,3 +111,18 @@ canvas.grabbing { cursor: grabbing; }
   color: #111; white-space: nowrap; transition: opacity 0.12s, transform 0.12s;
 }
 .ft-pick button.on span, .ft-pick button:hover span { opacity: 1; transform: translate(0, -50%); }
+
+/* Swatch pickers (the paint): no black fill on the picked one, a ring instead, so black balls stay visible. */
+.ft-knob.swatches button.on, .ft-knob.swatches .ft-pick button.on { background: rgba(0, 0, 0, 0.06); }
+.ft-knob.swatches .ft-pick button.on .ft-ball { box-shadow: 0 0 0 2px #fff, 0 0 0 3.5px #111; }
+.ft-ball { display: block; width: 24px; height: 24px; border-radius: 50%; box-shadow: 0 0 0 2px #fff; }
+.ft-ball.matte { background: radial-gradient(circle at 35% 30%, #4a4a4a, #1a1a1a 55%, #0c0c0c); }
+.ft-ball.gloss {
+  background: radial-gradient(circle at 34% 28%, #fff 0 7%, rgba(255, 255, 255, 0) 16%),
+    radial-gradient(circle at 50% 95%, rgba(255, 255, 255, 0.35), rgba(255, 255, 255, 0) 35%),
+    radial-gradient(circle at 40% 35%, #3a3a3a, #080808 60%, #000);
+}
+.ft-ball.metal {
+  background: radial-gradient(circle at 34% 26%, rgba(255, 255, 255, 0.9) 0 6%, rgba(255, 255, 255, 0) 18%),
+    linear-gradient(180deg, #f4f4f4 0%, #9a9a9a 44%, #161616 50%, #3c3c3c 68%, #c9c9c9 100%);
+}
