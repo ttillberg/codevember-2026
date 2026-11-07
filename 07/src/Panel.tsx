@@ -326,8 +326,14 @@ export function Panel() {
           <Row label="Auto draw" hint="Space" on={tool.auto} act={() => set(() => { tool.auto = !tool.auto; })} />
           <Row label="Inertia" on={tool.inertia} act={() => set(() => { tool.inertia = !tool.inertia; })} />
           <hr />
-          <Row label="Clear" act={() => set(() => { paint.clear(); clearDrips(); })} />
-          <Row label="Reset tools" act={() => set(resetTool)} />
+          <div className="ft-actions">
+            <button onClick={() => set(() => { paint.clear(); clearDrips(); })}>
+              <Icon size={14} stroke={1.4}><circle cx="8" cy="8" r="5.5" /><path d="M4.1 11.9l7.8-7.8" /></Icon>Clear
+            </button>
+            <button onClick={() => set(resetTool)}>
+              <Icon size={14} stroke={1.4}><path d="M3 3v3.5h3.5" /><path d="M3.4 6.2A5.3 5.3 0 1 1 3.3 10" /></Icon>Reset tools
+            </button>
+          </div>
         </Pop>
         <Pop name="help" icon={<HelpIcon />} className="ft-menu ft-help">
           <p><b>Click + drag</b> paint and turn</p>

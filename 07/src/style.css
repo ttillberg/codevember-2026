@@ -139,3 +139,13 @@ canvas.grabbing { cursor: grabbing; }
 
 /* Settings and help, spaced like the rest of the bar. */
 .ft-pair { display: flex; gap: 4px; }
+
+/* Clear and reset: two pill buttons with their icons. */
+.ft-actions { display: flex; gap: 6px; padding: 4px 4px 4px; }
+.ft-media .ft-actions button {
+  flex: 1; display: flex; align-items: center; justify-content: center; gap: 6px; width: auto; height: 32px; padding: 0 10px;
+  border-radius: 999px; background: #e6e5e2; color: #111; font: 500 12px/1 Inter, "Helvetica Neue", Helvetica, Arial, sans-serif;
+  white-space: nowrap;
+}
+.ft-media .ft-actions button:hover { background: #111; color: #fff; }
+.ft-actions svg { flex: none; }
