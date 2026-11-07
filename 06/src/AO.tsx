@@ -72,6 +72,7 @@ export function AO() {
     c.addPass(bokeh);
     c.addPass(new OutputPass());
     c.addPass(new ShaderPass(GradeShader));
+    if (import.meta.env.DEV) (window as any).__passes = { ao, bokeh, composer: c }; // dev: switch passes off to measure
     return { composer: c, bokeh };
   }, [gl, scene, camera]); // eslint-disable-line react-hooks/exhaustive-deps
 

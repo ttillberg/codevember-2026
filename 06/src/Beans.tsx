@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useFrame } from '@react-three/fiber';
 import { BallCollider, CapsuleCollider, CylinderCollider, RigidBody, type RapierRigidBody, type CollisionEnterPayload } from '@react-three/rapier';
-import { BufferAttribute, IcosahedronGeometry, LatheGeometry, Vector2, CanvasTexture, RepeatWrapping, Vector4, Color, SRGBColorSpace, type Group as THREE_Group, InstancedMesh, Matrix4, type Mesh, MeshPhysicalMaterial, Quaternion, SphereGeometry, Vector3 } from 'three';
+import { BufferAttribute, IcosahedronGeometry, LatheGeometry, Vector2, CanvasTexture, RepeatWrapping, Vector4, Color, SRGBColorSpace, type Group as THREE_Group, InstancedMesh, Matrix4, type Mesh, MeshBasicMaterial, MeshPhysicalMaterial, Quaternion, SphereGeometry, Vector3 } from 'three';
 import { mergeVertices } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { clock, daysPerSecond, motion } from './clock';
 import { PLANETS, type Planet } from './planets';
@@ -936,6 +936,9 @@ export function NonpareilDrop({
 
 // Earth: see EarthGumball below.
 export const EARTH_RADIUS = LENGTH * 0.34;
+// Casts a shadow, draws nothing.
+const SHADOW_BALL = new SphereGeometry(1, 24, 16);
+const SHADOW_ONLY = new MeshBasicMaterial({ colorWrite: false, depthWrite: false });
 const smoothstep = (a: number, b: number, x: number) => {
   const t = Math.min(1, Math.max(0, (x - a) / (b - a)));
   return t * t * (3 - 2 * t);
@@ -1048,7 +1051,10 @@ function EarthGumball({ shadows }: { shadows: boolean }) {
   return (
     <>
       <mesh geometry={core} material={EARTH_CORE_MATERIAL} receiveShadow={shadows} />
-      <instancedMesh ref={ref} args={[PEBBLE_GEOMETRY, PEBBLE_MATERIAL, EARTH_PEBBLES + EARTH_FILLERS]} castShadow={shadows} receiveShadow={shadows} />
+      <instancedMesh ref={ref} args={[PEBBLE_GEOMETRY, PEBBLE_MATERIAL, EARTH_PEBBLES + EARTH_FILLERS]} receiveShadow={shadows} />
+      {/* The shadow comes from a plain ball standing in for the pebbles, never drawn itself: 430 pebbles in the six
+          shadow maps cost far more than the lumps in the shadow would show. */}
+      <mesh geometry={SHADOW_BALL} material={SHADOW_ONLY} scale={EARTH_RADIUS * 0.98} castShadow={shadows} />
     </>
   );
 }
