@@ -138,20 +138,32 @@ function MediumKnob() {
   const [hot, setHot] = useState<Medium | null>(null);
   const box = useRef<HTMLDivElement>(null);
   const drag = useRef({ y: 0, moved: false, down: false });
-  const under = (x: number, y: number) =>
-    (document.elementFromPoint(x, y)?.closest('[data-medium]') as HTMLElement | null)?.dataset.medium as Medium | undefined;
+  // The medium in the row at this height, wherever the pointer is sideways; past the top it's the top one.
+  // Back down under the popover (over the button) it's none, so letting go there changes nothing.
+  const rowAt = (y: number) => {
+    const rows = [...(box.current?.querySelectorAll<HTMLElement>('[data-medium]') ?? [])];
+    const bottom = Math.max(...rows.map((r) => r.getBoundingClientRect().bottom));
+    if (!rows.length || y > bottom + 6) return null;
+    let best: HTMLElement | null = null, bestD = Infinity;
+    for (const r of rows) {
+      const { top, height } = r.getBoundingClientRect();
+      const d = Math.abs(top + height / 2 - y);
+      if (d < bestD) { bestD = d; best = r; }
+    }
+    return (best?.dataset.medium as Medium | undefined) ?? null;
+  };
   const pick = (m: Medium) => { tool.brush = m; setOpen(false); setHot(null); };
   useEffect(() => {
     if (!open) return;
     const move = (e: PointerEvent) => {
       if (!drag.current.down) return;
       if (Math.abs(e.clientY - drag.current.y) > 6) drag.current.moved = true;
-      setHot(under(e.clientX, e.clientY) ?? null);
+      setHot(rowAt(e.clientY));
     };
     const up = (e: PointerEvent) => {
       if (!drag.current.down) return;
       drag.current.down = false;
-      const m = under(e.clientX, e.clientY);
+      const m = rowAt(e.clientY);
       if (drag.current.moved) { if (m) pick(m); else setOpen(false); } // a drag picks where it ends; a tap leaves it open
       setHot(null);
     };
