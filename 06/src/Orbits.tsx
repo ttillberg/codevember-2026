@@ -6,6 +6,7 @@ import { PLANETS } from './planets';
 import { planetAt } from './scale';
 import { focus } from './CameraRig';
 import { pickedNow } from './selection';
+import { roomLight } from './intro';
 
 // Whether the orbits are drawn, switched from the planet list (or O).
 export const orbitsShown = { value: false };
@@ -65,7 +66,9 @@ export function Orbits() {
     const picked = pickedNow();
     if (picked) shown.current = picked;
     else if (focus.amount < 0.01) shown.current = null;
+    const room = roomLight();
     const fades = lines.map((l) => (l.name === shown.current ? Math.max(base * (1 - focus.amount), focus.amount) : orbitsShown.value ? 1 : base * (1 - focus.amount)));
+    for (let i = 0; i < fades.length; i++) fades[i] *= room;
     group.current.visible = fades.some((f) => f > 0.01);
     if (!group.current.visible) return;
     lines.forEach((l, n) => {

@@ -1,6 +1,7 @@
 import { useMemo, useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
-import { LatheGeometry, type Mesh, MeshPhysicalMaterial, Vector3, SphereGeometry, Vector2 } from 'three';
+import { sunGlow, sunLight } from './intro';
+import { LatheGeometry, type Mesh, type PointLight, MeshPhysicalMaterial, Vector3, SphereGeometry, Vector2 } from 'three';
 import { gumMaterial, type Gum } from './Beans';
 import { motion } from './clock';
 
@@ -94,8 +95,11 @@ export function Sun() {
 }
 
 function SunLight() {
+  const light = useRef<PointLight>(null!);
+  useFrame(() => void (light.current.intensity = 260 * sunLight()));
   return (
     <pointLight
+      ref={light}
       color="#ffe2b8"
       intensity={260}
       decay={1}
@@ -190,6 +194,7 @@ function JellySun() {
   const { geometry, material } = useMemo(() => ({ geometry: new SphereGeometry(RADIUS, 128, 64), material: jellyMaterial() }), []);
   const ball = useRef<Mesh>(null!);
   useFrame(({ camera }, dt) => {
+    material.emissiveIntensity = 1.5 * sunGlow();
     JELLY_TIME.value += dt * motion(); // the wobble stops with the clock, and slows with it
     // With the camera inside it (looking out from the sun's side at an inner planet) the candy is hidden; its light stays.
     ball.current.visible = camera.position.distanceTo(ball.current.getWorldPosition(SUN_AT)) > RADIUS * 1.15;

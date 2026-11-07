@@ -22,7 +22,7 @@ const CANDY: Record<string, Candy> = {
   // Green land, darker green in its heart, raised a touch; small ice caps; a thin blue atmosphere round it all.
   Earth: { base: '#1f5fd0', dark: '#123c8a', patch: '#2f9a4a', light: '#1c5a2a', bump: 1, poles: true },
   // Small patches, each sunk in a shallow moat like a crater.
-  Mars: { base: '#a5121c', dark: '#6b0a12', patch: '#f08a1e', light: '#ffcb5c', scale: 1.8, dent: 1 },
+  Mars: { base: '#a5121c', dark: '#6b0a12', patch: '#f08a1e', light: '#ffcb5c', scale: 1.8, dent: 0.4 },
   Jupiter: { base: '#c98a52', dark: '#8a4a24', patch: '#f1dcb6', light: '#fff6e6', bands: true },
   Saturn: { base: '#dcb877', dark: '#a8884e', patch: '#f3e2b4', light: '#fff8e2', bands: true, ring: true },
   Uranus: { base: '#5fd3db', dark: '#3aa9b6', patch: '#a8f1f2', light: '#e8ffff' },
@@ -51,7 +51,7 @@ const BEAN = beanGeometry();
 
 // No two jelly beans are quite the same shape: a copy of the bean with its surface pushed in and out a little by
 // smooth noise, its own for each seed, then its normals worked out again. Amount in bean lengths.
-const LUMPS = 0.035;
+const LUMPS = 0.018;
 function lumpy(seed: number) {
   const g = BEAN.clone();
   const pos = g.attributes.position;
@@ -221,8 +221,11 @@ const DENSITY = 25; // heavy, so the loose sweets bounce off the planets rather 
 // Saturn's ring as a belt of tiny gumballs, each on its own circular orbit round the bean, the inner ones going round
 // faster than the outer ones (Kepler: angular speed falls as r^-1.5), so the belt shears slowly as it turns. In the
 // bean's units: the ring's inner and outer radius, and how thick it is.
-const BELT_COUNT = 700;
-const BELT_IN = 0.5, BELT_OUT = 0.78, BELT_THICK = 0.012;
+const BELT_COUNT = 1500;
+const BELT_IN = 0.5, BELT_OUT = 0.78, BELT_THICK = 0.026;
+// Each sweet drifts a tiny bit off its circle, in and out and up and down, slowly and in its own time, so the belt
+// never sets into rows. In the bean's units.
+const BELT_WANDER = 0.012, BELT_BOB = 0.008;
 const BELT_SPIN = 0.8; // rad/s at the inner edge
 // Little gumballs in the chalky pastels of a gumball machine.
 // Chalky pastels scatter light about inside the coat, so even their shaded side keeps some of its own colour.
@@ -266,7 +269,7 @@ const BLOCKERS = Array.from({ length: 4 }, () => ({ at: new Vector3(), r: 0, sof
 
 function SaturnBelt({ shadows, playful }: { shadows: boolean; playful: boolean }) {
   const ref = useRef<InstancedMesh>(null!);
-  const geometry = useMemo(() => new SphereGeometry(0.024, 12, 8), []);
+  const geometry = useMemo(() => new SphereGeometry(0.015, 10, 7), []);
   const sweets = useMemo(() => {
     let seed = 5;
     const rnd = () => ((seed = (seed * 16807) % 2147483647) - 1) / 2147483646;
@@ -279,6 +282,8 @@ function SaturnBelt({ shadows, playful }: { shadows: boolean; playful: boolean }
         z: (rnd() - 0.5) * BELT_THICK,
         w: BELT_SPIN * Math.pow(BELT_IN / r, 1.5),
         tilt: rnd() * Math.PI,
+        grain: 0.65 + rnd() * 0.75, // sizes vary
+        wander: [rnd() * 6.3, rnd() * 6.3, 1 + rnd() * 2, 1 + rnd() * 3, rnd() * BELT_WANDER, rnd() * BELT_BOB], // phases, lobes round the ring, amounts
         squash: [1 + (rnd() - 0.5) * 0.18, 1 + (rnd() - 0.5) * 0.18, 1 + (rnd() - 0.5) * 0.18], // each a little wonky
         colour: BELT_COLOURS[i % BELT_COLOURS.length],
         gone: 0, // seconds until it grows back, after being flung
@@ -392,7 +397,9 @@ function SaturnBelt({ shadows, playful }: { shadows: boolean; playful: boolean }
       if (s.gone > 0 && s.gone !== Infinity) s.gone = Math.max(0, s.gone - dt);
       // Gone while it's away, then growing back over its last second.
       const grow = s.gone > 1 ? 0 : 1 - s.gone;
-      p.set(Math.cos(s.a) * s.r, Math.sin(s.a) * s.r, s.z);
+      const [pr, pz, lr, lz, ar, az] = s.wander;
+      const r = s.r + ar * Math.sin(s.a * Math.round(lr) + pr), zz = s.z + az * Math.sin(s.a * Math.round(lz) + pz);
+      p.set(Math.cos(s.a) * r, Math.sin(s.a) * r, zz);
       for (let b = 0; b < blockers; b++) {
         // A smooth max of its distance and the blocker's radius: untouched far off, eased out to just past the
         // radius close in, so the ring curves round rather than kinking.
@@ -403,7 +410,7 @@ function SaturnBelt({ shadows, playful }: { shadows: boolean; playful: boolean }
         p.sub(o.at).multiplyScalar(pushed / Math.max(d, 1e-5)).add(o.at);
       }
       q.setFromAxisAngle(z, s.a + s.tilt); // lying flat in the ring, each turned its own way
-      mesh.setMatrixAt(i, m.compose(p, q, size.set(grow * s.squash[0], grow * s.squash[1], grow * s.squash[2])));
+      mesh.setMatrixAt(i, m.compose(p, q, size.set(grow * s.grain * s.squash[0], grow * s.grain * s.squash[1], grow * s.grain * s.squash[2])));
     });
     mesh.instanceMatrix.needsUpdate = true;
   });

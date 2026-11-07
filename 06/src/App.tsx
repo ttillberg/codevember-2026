@@ -16,11 +16,28 @@ import { Space } from './Space';
 import { Sun } from './Sun';
 import { clock } from './clock';
 import { dateFromJd } from './kepler';
+import { intro, INTRO_TIME, roomLight } from './intro';
 
 // Mounted first, so it advances time before the band reads it.
 function Tick() {
-  useFrame((_, dt) => {
+  useFrame(({ scene, gl }, dt) => {
     if (!clock.paused) clock.jd += clock.speed * Math.min(dt, 0.1);
+    // The opening: dark until the candy's in, then lighting up over a few seconds.
+    if (intro.ready && intro.value < 1) intro.value = Math.min(1, (performance.now() - intro.ready) / 1000 / INTRO_TIME);
+    scene.environmentIntensity = 0.04 * roomLight();
+    gl.toneMappingExposure = 0.25 + 0.75 * roomLight();
+  });
+  return null;
+}
+
+// Mounted with the candy, inside the Suspense: once it's in and a couple of frames have drawn it (the shaders
+// compiled), the lights can come up. The page's controls fade in with them.
+function Ready() {
+  const frames = useRef(0);
+  useFrame(() => {
+    if (intro.ready || ++frames.current < 3) return;
+    intro.ready = performance.now();
+    document.body.classList.add('lit');
   });
   return null;
 }
@@ -128,6 +145,7 @@ export function App() {
           <Physics gravity={[0, -30, 0]} timeStep={1 / 60}>
             <Beans />
             <Sea />
+            <Ready />
           </Physics>
         </Suspense>
         {/* Looking straight down on the lollipop, the orbits round it filling the view. */}
