@@ -12,7 +12,9 @@ const FLOW: Record<Brush, number> = { round: 0.2, bristle: 0.3, spray: 0.12, scr
 // The turntable, tunable live.
 export const wheel = {
   speed: 0.35,   // radians per second
-  lean: 1.0,     // radians of tilt at the edge of the window
+  lean: 1.2,     // most radians of tilt either way
+  gain: 2.5,     // radians of tilt per window size of pointer travel
+  ease: 10,      // how fast the lean follows, per second
   aimX: 0, aimY: 0, roll: 0, pitch: 0, spin: 0,
 };
 import { MeshPhysicalNodeMaterial, type WebGPURenderer } from 'three/webgpu';
@@ -141,9 +143,12 @@ export function Balloon() {
 
   useEffect(() => {
     const el = gl.domElement;
+    // Relative: the pointer's movement tips the balloon, however far it has gone. A whole window width of
+    // travel is about two radians, and the lean is clamped so it can't flip over.
     const aim = (e: PointerEvent) => {
-      wheel.aimX = (e.clientX / window.innerWidth) * 2 - 1;
-      wheel.aimY = (e.clientY / window.innerHeight) * 2 - 1;
+      const g = wheel.gain / Math.min(window.innerWidth, window.innerHeight);
+      wheel.aimX = Math.max(-wheel.lean, Math.min(wheel.lean, wheel.aimX + e.movementX * g));
+      wheel.aimY = Math.max(-wheel.lean, Math.min(wheel.lean, wheel.aimY + e.movementY * g));
     };
     const down = (e: PointerEvent) => { if (e.button === 0) { painting.current = true; aim(e); } };
     const up = () => { painting.current = false; stroke.current = null; };
@@ -189,9 +194,9 @@ export function Balloon() {
   useFrame((_, dt) => {
     const g = groupRef.current;
     if (!g) return;
-    const k = 1 - Math.exp(-dt * 4);
-    wheel.roll += (wheel.aimX * wheel.lean - wheel.roll) * k;
-    wheel.pitch += (wheel.aimY * wheel.lean - wheel.pitch) * k;
+    const k = 1 - Math.exp(-dt * wheel.ease);
+    wheel.roll += (wheel.aimX - wheel.roll) * k;
+    wheel.pitch += (wheel.aimY - wheel.pitch) * k;
     wheel.spin += dt * wheel.speed;
     g.quaternion.setFromEuler(new Euler(wheel.pitch, 0, -wheel.roll, 'XYZ'));
     g.quaternion.multiply(new Quaternion().setFromAxisAngle(UP, wheel.spin));

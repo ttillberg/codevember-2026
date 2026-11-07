@@ -24,7 +24,7 @@ export function App() {
         <Balloon />
       </Canvas>
       <div id="reticle" className="reticle" />
-      <p className="hint">the balloon turns on its own, move to lean it, hold to paint, space for auto</p>
+      <p className="hint">the balloon turns on its own, move the mouse to tip it, hold to paint, space for auto</p>
       <Palette />
     </>
   );
