@@ -205,6 +205,61 @@ function Picker<T extends string>({ name, items, cur, put, icon, solid }: {
   );
 }
 
+// One option as a fat horizontal slider: drag straight on it, the value under the pointer. The name sits inside;
+// a white copy of it rides the black fill so it reads on both.
+function OptionSlider({ k }: { k: Num }) {
+  const [, bump] = useState(0);
+  const { min, max } = RANGE[k];
+  const t = (tool[k] - min) / (max - min);
+  const at = (e: React.PointerEvent<HTMLElement>) => {
+    const r = e.currentTarget.getBoundingClientRect();
+    tool[k] = min + Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)) * (max - min);
+    bump((n) => n + 1);
+  };
+  const label = <><span>{k}</span><b>{Math.round(t * 100)}</b></>;
+  return (
+    <div className="ft-slide" style={{ '--t': t } as React.CSSProperties}
+      onPointerDown={(e) => { e.currentTarget.setPointerCapture(e.pointerId); at(e); }}
+      onPointerMove={(e) => { if (e.currentTarget.hasPointerCapture(e.pointerId)) at(e); }}>
+      <div className="ft-slide-text">{label}</div>
+      <div className="ft-slide-fill"><div className="ft-slide-text">{label}</div></div>
+    </div>
+  );
+}
+
+// The current medium's options, behind a little sliders button next to it.
+const OptionsIcon = () => (
+  <svg width="22" height="22" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.1" strokeLinecap="round">
+    <path d="M2.5 5h11M2.5 11h11" />
+    <circle cx="6" cy="5" r="1.6" fill="currentColor" /><circle cx="10.5" cy="11" r="1.6" fill="currentColor" />
+  </svg>
+);
+function OptionsKnob() {
+  const [open, setOpen] = useState(false);
+  const box = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const away = (e: PointerEvent) => { if (!box.current?.contains(e.target as Node)) setOpen(false); };
+    const esc = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false); };
+    window.addEventListener('pointerdown', away);
+    window.addEventListener('keydown', esc);
+    return () => { window.removeEventListener('pointerdown', away); window.removeEventListener('keydown', esc); };
+  }, [open]);
+  const m = tool.brush as Medium;
+  return (
+    <div className="ft-knob" ref={box}>
+      <button aria-label="options" title={`${m} options`} className={`ft-opts${open ? ' on' : ''}`}
+        onPointerDown={(e) => e.preventDefault()} onClick={() => setOpen((o) => !o)}>
+        <OptionsIcon />
+      </button>
+      <div className={`ft-gauge ft-sliders${open ? ' open' : ''}`}>
+        <h4>{m}</h4>
+        {OPTIONS[m].map((k) => <OptionSlider key={`${m}-${k}`} k={k} />)}
+      </div>
+    </div>
+  );
+}
+
 // The finishes as little black balls: soft for matte, a sharp highlight for gloss, a chrome horizon for metal.
 const FinishBall = ({ f }: { f: Finish }) => <i className={`ft-ball ${f}`} />;
 
@@ -224,30 +279,18 @@ export function Panel() {
   // Buttons give up focus after a click so the space bar stays the auto toggle.
   const set = (fn: () => void) => { fn(); (document.activeElement as HTMLElement | null)?.blur?.(); };
 
-  const slider = (k: Num) => (
-    <label key={k} className="ft-row">
-      <span>{k}</span>
-      <input type="range" {...RANGE[k]} value={tool[k]}
-        style={{ '--p': `${((tool[k] - RANGE[k].min) / (RANGE[k].max - RANGE[k].min)) * 100}%` } as React.CSSProperties}
-        onInput={(e) => { tool[k] = parseFloat((e.target as HTMLInputElement).value); }} onChange={() => {}} />
-    </label>
-  );
-
   return (
     <>
     {/* The media, as big icons in a frosted bar under the balloon. */}
     <div className="ft-media">
       <Picker name="medium" items={MEDIA} cur={tool.brush as Medium} put={(m) => { tool.brush = m; }} icon={(m) => <MediumIcon m={m} />} solid />
+      <OptionsKnob />
       <span className="ft-sep" />
       <SizeKnob />
       <ColorKnob />
       <Picker name="paint" items={FINISHES} cur={tool.finish} put={(f) => { tool.finish = f; }} icon={(f) => <FinishBall f={f} />} />
     </div>
     <div className="ft-drawer">
-        <section>
-          <h4>{tool.brush}</h4>
-          {(OPTIONS[tool.brush as Medium] ?? []).map(slider)}
-        </section>
         <section>
           <h4>Settings</h4>
           <div className="ft-chips">

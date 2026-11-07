@@ -34,20 +34,6 @@ canvas.grabbing { cursor: grabbing; }
 .ft-chips button.on { background: #111; color: #fff; }
 .ft-help { margin: 14px 0 0; color: rgba(0, 0, 0, 0.4); line-height: 17px; }
 .ft-help b { color: #111; font-weight: 500; }
-.ft-row { display: flex; align-items: center; gap: 10px; height: 22px; }
-.ft-row span { width: 40px; color: rgba(0, 0, 0, 0.45); text-transform: capitalize; }
-.ft-row input[type=range] {
-  flex: 1; min-width: 0; height: 14px; margin: 0; padding: 0; background: none; cursor: pointer; -webkit-appearance: none; appearance: none;
-}
-.ft-row input[type=range]::-webkit-slider-runnable-track {
-  height: 2px; border-radius: 1px; background: linear-gradient(to right, #111 var(--p), rgba(0, 0, 0, 0.14) var(--p));
-}
-.ft-row input[type=range]::-moz-range-track { height: 2px; border-radius: 1px; background: rgba(0, 0, 0, 0.14); }
-.ft-row input[type=range]::-moz-range-progress { height: 2px; background: #111; }
-.ft-row input[type=range]::-webkit-slider-thumb {
-  -webkit-appearance: none; width: 10px; height: 10px; margin-top: -4px; border-radius: 50%; background: #111; border: 0;
-}
-.ft-row input[type=range]::-moz-range-thumb { width: 10px; height: 10px; border-radius: 50%; background: #111; border: 0; }
 
 /* The media: big icons in a frosted bar under the balloon. */
 .ft-media {
@@ -126,3 +112,26 @@ canvas.grabbing { cursor: grabbing; }
   background: radial-gradient(circle at 34% 26%, rgba(255, 255, 255, 0.9) 0 6%, rgba(255, 255, 255, 0) 18%),
     linear-gradient(180deg, #f4f4f4 0%, #9a9a9a 44%, #161616 50%, #3c3c3c 68%, #c9c9c9 100%);
 }
+
+/* The medium's options: a popover of fat horizontal sliders. */
+.ft-media button.ft-opts { width: 34px; border-radius: 999px; }
+.ft-sliders { display: flex; flex-direction: column; gap: 6px; width: 200px; padding: 10px; border-radius: 22px; box-sizing: border-box; }
+.ft-sliders.open { pointer-events: auto; }
+.ft-sliders h4 {
+  margin: 2px 6px 2px; font: 500 10px/1 Inter, "Helvetica Neue", Helvetica, Arial, sans-serif; letter-spacing: 0.06em;
+  text-transform: uppercase; color: rgba(0, 0, 0, 0.4);
+}
+.ft-slide {
+  position: relative; height: 34px; border-radius: 999px; overflow: hidden; cursor: ew-resize; touch-action: none;
+  background: rgba(0, 0, 0, 0.08);
+}
+.ft-slide-fill {
+  position: absolute; left: 0; top: 0; bottom: 0; width: calc(34px + var(--t) * (100% - 34px)); overflow: hidden;
+  border-radius: 999px; background: #111;
+}
+.ft-slide-text {
+  position: absolute; left: 0; top: 0; bottom: 0; width: 180px; display: flex; align-items: center; justify-content: space-between;
+  padding: 0 14px; box-sizing: border-box; font: 500 11px/1 Inter, "Helvetica Neue", Helvetica, Arial, sans-serif;
+  color: rgba(0, 0, 0, 0.55); text-transform: capitalize; font-variant-numeric: tabular-nums; pointer-events: none;
+}
+.ft-slide-fill .ft-slide-text { color: #fff; }
