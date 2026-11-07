@@ -3,7 +3,7 @@ import { Vector3 } from 'three';
 import { clock } from './clock';
 import { elementsAt, position } from './kepler';
 import { PLANETS } from './planets';
-import { CURIOSITY } from './PlanetList';
+import { CURIOSITY, MOONS } from './PlanetList';
 import { pick, usePicked } from './selection';
 
 // The flavour each planet's bean would be.
@@ -86,6 +86,12 @@ function Info({ planet, distance, speed }: { planet: (typeof PLANETS)[number]; d
         <dd>{planet.tilt.toFixed(1)}°</dd>
         <dt>eccentricity</dt>
         <dd>{planet.el.e.toFixed(3)}</dd>
+        {MOONS[planet.name] && (
+          <>
+            <dt>{MOONS[planet.name].length > 1 ? 'moons' : 'moon'}</dt>
+            <dd className="names">{MOONS[planet.name].join(', ')}</dd>
+          </>
+        )}
       </dl>
     </aside>
   );

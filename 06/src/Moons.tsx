@@ -80,7 +80,8 @@ const SYSTEMS: System[] = [
   { host: 'Neptune', normal: tipped(23), moons: [{ name: 'Triton', period: -5.877, orbit: 2.4, radius: 0.3, colour: '#ead6d2' }] },
 ];
 
-const SECONDS = 1.6; // a moon's squeezed period, in seconds, per square root of its real period in days
+const SECONDS = 6; // a moon's squeezed period, in seconds, per square root of its real period in days: Phobos, the quickest, goes round in about 3.4 s, never a blur
+const MAX_SPIN = 1.2; // radians a second: the fastest a knocked moon may turn about itself
 const PULL = 4; // per second: how hard a knocked moon is drawn back to its place on its orbit
 const DENSITY = 0.5; // light next to the planet beans (25), so they shove the moons and not the other way round
 
@@ -145,6 +146,12 @@ function MoonBody({ moon, system, index }: { moon: Moon; system: System; index: 
     vel.y += (at.y - p.y) * PULL;
     vel.z += (at.z - p.z) * PULL;
     rb.setLinvel(vel, true);
+    // Their own spin, from knocks, never runs away: capped, and damped back down (angularDamping below).
+    const turning = rb.angvel(), spin = Math.hypot(turning.x, turning.y, turning.z);
+    if (spin > MAX_SPIN) {
+      const k = MAX_SPIN / spin;
+      rb.setAngvel({ x: turning.x * k, y: turning.y * k, z: turning.z * k }, true);
+    }
     let mine = moonPositions.get(moon.name);
     if (!mine) moonPositions.set(moon.name, (mine = new Vector3()));
     mine.copy(p);
@@ -152,7 +159,7 @@ function MoonBody({ moon, system, index }: { moon: Moon; system: System; index: 
   });
 
   return (
-    <RigidBody ref={ref} type="dynamic" gravityScale={0} canSleep={false} colliders={false} position={[0, -100, 0]}>
+    <RigidBody ref={ref} type="dynamic" gravityScale={0} canSleep={false} colliders={false} angularDamping={1.5} position={[0, -100, 0]}>
       <BallCollider args={[moon.radius]} restitution={0.8} density={DENSITY} />
       {/* Not drawn while the camera is inside it, following a planet past it. */}
       <group ref={look}>

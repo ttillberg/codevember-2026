@@ -14,8 +14,8 @@ export const CURIOSITY: Record<string, string> = {
   Neptune: 'The windiest planet, its gusts over 2,000 km/h.',
 };
 
-// The moons in the scene, by planet, listed under it when it's picked.
-const MOONS: Record<string, string[]> = {
+// The moons in the scene, by planet, named in the facts when it's picked.
+export const MOONS: Record<string, string[]> = {
   Earth: ['Moon'],
   Mars: ['Phobos', 'Deimos'],
   Jupiter: ['Io', 'Europa', 'Ganymede', 'Callisto'],
@@ -42,18 +42,9 @@ export function PlanetList() {
   return (
     <nav className="planets">
       {PLANETS.map((p) => (
-        <div key={p.name}>
-          <button className={p.name === picked ? 'on' : ''} onClick={(e) => (pick(p.name === picked ? null : p.name), e.currentTarget.blur())}>
-            {p.name}
-          </button>
-          {p.name === picked && MOONS[p.name] && (
-            <ul className="moons">
-              {MOONS[p.name].map((m) => (
-                <li key={m}>{m}</li>
-              ))}
-            </ul>
-          )}
-        </div>
+        <button key={p.name} className={p.name === picked ? 'on' : ''} onClick={(e) => (pick(p.name === picked ? null : p.name), e.currentTarget.blur())}>
+          {p.name}
+        </button>
       ))}
     </nav>
   );

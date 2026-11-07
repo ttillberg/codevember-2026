@@ -61,15 +61,74 @@ function Studio() {
 // speed at the right (three steps, named for how they feel rather than the factor between them). Underneath: the
 // date, and a scrubber over two centuries to drag through time. Space plays and pauses too. Kept in step with the
 // clock every frame, as other things change it (focusing on a planet slows it down).
-const SPEEDS: [string, number][] = [['×0.25', 0.4], ['×1', 3], ['×5', 30]]; // label, days a second
+const SPEEDS: [string, number][] = [['×0.5', 0.4], ['×1', 3], ['×5', 30]]; // label, days a second
 const FROM = jdFromDate(new Date(Date.UTC(1900, 0, 1)));
 const TO = jdFromDate(new Date(Date.UTC(2100, 0, 1)));
+// Soft cornered glyphs, as QuickTime's: each shape filled and outlined with a round join, which rounds its corners.
 const Icon = ({ d }: { d: string }) => (
   <svg viewBox="0 0 24 24" aria-hidden="true">
-    <path d={d} fill="currentColor" />
+    <path d={d} fill="currentColor" stroke="currentColor" strokeWidth="2.6" strokeLinejoin="round" />
   </svg>
 );
+// The transport can be dragged anywhere by its glass (not its buttons or scrubber), kept this far from the edges.
+// Where it was left is remembered.
+const EDGE = 12;
+function useDraggable() {
+  const panel = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = panel.current;
+    if (!el) return;
+    const place = (x: number, y: number) => {
+      const cx = Math.min(Math.max(x, EDGE), innerWidth - el.offsetWidth - EDGE);
+      const cy = Math.min(Math.max(y, EDGE), innerHeight - el.offsetHeight - EDGE);
+      Object.assign(el.style, { left: `${cx}px`, top: `${cy}px`, bottom: 'auto', transform: 'none' });
+      return [cx, cy];
+    };
+    let saved: [number, number] | null = null;
+    try {
+      saved = JSON.parse(localStorage.getItem('orrery-transport') ?? 'null');
+    } catch {
+      // nothing remembered
+    }
+    if (saved) place(saved[0], saved[1]);
+    let grab: { dx: number; dy: number } | null = null;
+    const down = (e: PointerEvent) => {
+      if ((e.target as HTMLElement).closest('button, input')) return;
+      const r = el.getBoundingClientRect();
+      grab = { dx: e.clientX - r.left, dy: e.clientY - r.top };
+      el.setPointerCapture(e.pointerId);
+      el.classList.add('dragging');
+    };
+    const move = (e: PointerEvent) => grab && place(e.clientX - grab.dx, e.clientY - grab.dy);
+    const up = () => {
+      if (!grab) return;
+      grab = null;
+      el.classList.remove('dragging');
+      const r = el.getBoundingClientRect();
+      try {
+        localStorage.setItem('orrery-transport', JSON.stringify([r.left, r.top]));
+      } catch {
+        // private mode: just don't remember
+      }
+    };
+    // A smaller window shouldn't leave it off screen.
+    const resize = () => el.style.left && place(parseFloat(el.style.left), parseFloat(el.style.top));
+    el.addEventListener('pointerdown', down);
+    el.addEventListener('pointermove', move);
+    el.addEventListener('pointerup', up);
+    addEventListener('resize', resize);
+    return () => {
+      el.removeEventListener('pointerdown', down);
+      el.removeEventListener('pointermove', move);
+      el.removeEventListener('pointerup', up);
+      removeEventListener('resize', resize);
+    };
+  }, []);
+  return panel;
+}
+
 function Transport() {
+  const panel = useDraggable();
   const date = useRef<HTMLSpanElement>(null);
   const scrub = useRef<HTMLInputElement>(null);
   const dragging = useRef(false);
@@ -94,26 +153,26 @@ function Transport() {
   const step = (by: number) => (clock.speed = SPEEDS[Math.min(SPEEDS.length - 1, Math.max(0, at + by))][1]);
   const blur = (e: React.MouseEvent<HTMLButtonElement>) => e.currentTarget.blur();
   return (
-    <div className="transport">
+    <div ref={panel} className="transport">
       <div className="top">
         <div className="buttons">
           <button onClick={(e) => (step(-1), blur(e))} aria-label="Slower" disabled={at === 0}>
-            <Icon d="M11.5 6v12L3 12zM21 6v12l-8.5-6z" />
+            <Icon d="M11.2 7.2v9.6L4.2 12zM20.2 7.2v9.6L13.2 12z" />
           </button>
           <button className="play" onClick={(e) => ((clock.paused = !clock.paused), blur(e))} aria-label={state.paused ? 'Play' : 'Pause'}>
-            <Icon d={state.paused ? 'M7 4.5v15L19.5 12z' : 'M6.5 4.5h4v15h-4zM13.5 4.5h4v15h-4z'} />
+            <Icon d={state.paused ? 'M7.5 5.2v13.6L18.6 12z' : 'M7 5.5h2.6v13H7zM14.4 5.5H17v13h-2.6z'} />
           </button>
           <button onClick={(e) => (step(1), blur(e))} aria-label="Faster" disabled={at === SPEEDS.length - 1}>
-            <Icon d="M3 6v12l8.5-6zM12.5 6v12L21 12z" />
+            <Icon d="M3.8 7.2v9.6l7-4.8zM12.8 7.2v9.6l7-4.8z" />
           </button>
         </div>
-        <button className="speed" onClick={(e) => ((clock.speed = SPEEDS[(at + 1) % SPEEDS.length][1]), blur(e))} aria-label="Speed">
-          <svg viewBox="0 0 24 24" aria-hidden="true">
-            <circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" strokeWidth="1.8" />
-            <path d="M12 12l4-4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-          </svg>
-          {SPEEDS[at][0]}
-        </button>
+        <div className="speed">
+          {SPEEDS.map(([label, days], i) => (
+            <button key={label} className={i === at ? 'on' : ''} onClick={(e) => ((clock.speed = days), blur(e))}>
+              {label}
+            </button>
+          ))}
+        </div>
       </div>
       <div className="timeline">
         <span ref={date} className="when" />
@@ -135,37 +194,15 @@ function Transport() {
   );
 }
 
-// Light or dark room. The choice is remembered between visits; B toggles it too.
-const BACKGROUND = { light: '#eceef1', dark: '#0b0c0f' };
-type Theme = keyof typeof BACKGROUND;
-function savedTheme(): Theme {
-  try {
-    return localStorage.getItem('orrery-theme') === 'dark' ? 'dark' : 'light';
-  } catch {
-    return 'light';
-  }
-}
+// Always the dark room: the page's text and panels follow it via body[data-theme].
+const BACKGROUND = '#0b0c0f';
 
 export function App() {
-  const [theme, setTheme] = useState<Theme>(savedTheme);
-  const toggle = () => setTheme((t) => (t === 'light' ? 'dark' : 'light'));
-  useEffect(() => {
-    document.body.dataset.theme = theme;
-    try {
-      localStorage.setItem('orrery-theme', theme);
-    } catch {
-      // private mode: just don't remember
-    }
-  }, [theme]);
-  useEffect(() => {
-    const key = (e: KeyboardEvent) => (e.key === 'b' || e.key === 'B') && toggle();
-    addEventListener('keydown', key);
-    return () => removeEventListener('keydown', key);
-  }, []);
+  useEffect(() => void (document.body.dataset.theme = 'dark'), []);
   return (
     <>
       <Canvas camera={{ position: [0, 72.6, 0.001], fov: 40, near: 1, far: 250 }} dpr={[1, 2]} shadows={{ type: PCFShadowMap }} gl={{ toneMapping: NeutralToneMapping }} onPointerMissed={() => pick(null)}>
-        <color attach="background" args={[BACKGROUND[theme]]} />
+        <color attach="background" args={[BACKGROUND]} />
         <Tick />
         <DevHooks />
         <Studio />
@@ -184,9 +221,6 @@ export function App() {
       </Canvas>
       <PlanetList />
       <Transport />
-      <button className="theme" onClick={toggle} aria-label="Toggle dark or light background">
-        {theme === 'light' ? 'dark' : 'light'}
-      </button>
       <PlanetCard />
     </>
   );
