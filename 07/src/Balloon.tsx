@@ -14,8 +14,9 @@ export const wheel = {
   speed: 0.35,   // radians per second on its own
   lean: 1.2,     // most radians of tilt either way
   gain: 2.5,     // radians of tilt per window size of pointer travel
-  throwGain: 6,  // radians per second of extra spin per radian of sideways travel
-  drag: 3,       // how fast a throw dies away, per second
+  throwGain: 14, // radians per second of extra spin per radian of sideways travel: a half-window swipe is a few turns
+  drag: 1.4,     // how fast a throw dies away, per second: the inertia
+  maxThrow: 60,  // radians per second, so a wild swing stays watchable
   ease: 10,      // how fast the lean follows, per second
   aimY: 0, roll: 0, pitch: 0, spin: 0, throw: 0,
 };
@@ -149,7 +150,7 @@ export function Balloon() {
     // away; moving up and down tips it, however far the pointer has gone, clamped so it can't flip over.
     const aim = (e: PointerEvent) => {
       const g = wheel.gain / Math.min(window.innerWidth, window.innerHeight);
-      wheel.throw += e.movementX * g * wheel.throwGain;
+      wheel.throw = Math.max(-wheel.maxThrow, Math.min(wheel.maxThrow, wheel.throw + e.movementX * g * wheel.throwGain));
       wheel.aimY = Math.max(-wheel.lean, Math.min(wheel.lean, wheel.aimY + e.movementY * g));
     };
     const down = (e: PointerEvent) => { if (e.button === 0) { painting.current = true; aim(e); } };

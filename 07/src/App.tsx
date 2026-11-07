@@ -10,7 +10,7 @@ export function App() {
   return (
     <>
       <Canvas
-        camera={{ position: [0, 0, 3.4], fov: 40 }}
+        camera={{ position: [0, 0, 6.8], fov: 40 }}
         gl={async (props) => {
           const renderer = new WebGPURenderer({ ...(props as any), antialias: true });
           await renderer.init();
