@@ -186,3 +186,20 @@ canvas.grabbing { cursor: grabbing; }
   pointer-events: none; opacity: 0; transition: opacity 0.15s, transform 0.2s; z-index: 10;
 }
 .ft-toast.on { opacity: 1; transform: translate(-50%, 0); }
+
+/* Spacing: one unit, S = 17px (the bar's 6px padding plus half of a 46px button around a 24px icon), between the
+   bar's ends and the first and last icon, between icons, and either side of a separator. A button is its icon plus
+   S/2 either side; its hover and pressed disc is still a 46px circle, drawn behind and wider than the button. */
+.ft-media { gap: 0; padding: 6px 8.5px; }
+.ft-pair { gap: 0; }
+.ft-sep { margin: 10px 8.5px; }
+.ft-media .ft-knob > button { width: auto; padding: 0 8.5px; isolation: isolate; }
+.ft-media .ft-knob > button, .ft-media .ft-knob > button:hover, .ft-media .ft-knob > button.on,
+.ft-media .ft-knob.swatches > button.on { background: none; }
+.ft-media .ft-knob > button::before {
+  content: ''; position: absolute; left: 50%; top: 50%; width: 46px; height: 46px; margin: -23px 0 0 -23px;
+  border-radius: 50%; z-index: -1; transition: background 0.1s;
+}
+.ft-media .ft-knob > button:hover::before { background: rgba(0, 0, 0, 0.05); }
+.ft-media .ft-knob > button.on::before { background: #111; }
+.ft-media .ft-knob.swatches > button.on::before { background: rgba(0, 0, 0, 0.06); }
