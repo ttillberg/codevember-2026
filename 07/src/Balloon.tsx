@@ -1,24 +1,22 @@
 import { useEffect, useMemo, useRef } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
-import { BackSide, Euler, FrontSide, Group, Mesh, Quaternion, Raycaster, SphereGeometry, Vector2, Vector3 } from 'three';
+import { BackSide, FrontSide, Group, Mesh, Quaternion, Raycaster, SphereGeometry, Vector2, Vector3 } from 'three';
 
 const CENTRE = new Vector2(0, 0);
-const UP = new Vector3(0, 1, 0);
 // Dab spacing as a fraction of the brush size, and the alpha each dab adds, so a stroke builds up smoothly rather
 // than popping in dab by dab: about a dozen dabs overlap at any point of a round stroke.
 const SPACING: Record<Brush, number> = { round: 0.06, bristle: 0.06, spray: 0.08, scrape: 0.08 };
 const FLOW: Record<Brush, number> = { round: 0.2, bristle: 0.3, spray: 0.12, scrape: 0.12 };
 
-// The wheel, tunable live. Grab the balloon and spin it; it keeps turning, a flick adds to the spin, and it
-// slows only a little on its own. Dragging up and down tips it.
+// The wheel, tunable live. A trackball: drag turns the balloon about the axis across the drag, any direction,
+// and it keeps turning once let go, slowing only a little. A flick adds to the spin, grabbing never stops it.
 export const wheel = {
-  gain: Math.PI, // radians of spin per window width of drag
-  lean: 1.2,     // most radians of tilt either way
-  tiltGain: 2.5, // radians of tilt per window height of drag
+  gain: Math.PI, // radians of turn per window width of drag
   drag: 0.08,    // how fast the spin dies away once let go, per second: next to nothing
   maxSpin: 40,   // radians per second
-  ease: 10,      // how fast the tilt follows, per second
-  aimY: 0, pitch: 0, spin: 0, vel: 0, grabbed: false,
+  q: new Quaternion(),      // the balloon's orientation
+  omega: new Vector3(),     // angular velocity, world space
+  grabbed: false,
 };
 import { MeshPhysicalNodeMaterial, type WebGPURenderer } from 'three/webgpu';
 import {
@@ -147,24 +145,28 @@ export function Balloon() {
   useEffect(() => {
     const el = gl.domElement;
     // Grabbing never stops it: the balloon keeps turning under the hand, the drag turns it on top (a window
-    // width is half a turn), and the hand's speed over the last few events is added to the spin on release, so
-    // a flick along speeds it up and a flick against slows it.
-    let lastT = 0, hand = 0;
+    // width is half a turn, about the axis across the drag), and the hand's angular speed over the last few
+    // events is added to the spin on release, so a flick along speeds it up and a flick against slows it.
+    let lastT = 0;
+    const hand = new Vector3(), axis = new Vector3(), dq = new Quaternion();
     const move = (e: PointerEvent) => {
       if (!wheel.grabbed) return;
-      const w = window.innerWidth, h = window.innerHeight;
-      const dSpin = e.movementX * (wheel.gain / w);
-      wheel.spin += dSpin;
-      wheel.aimY = Math.max(-wheel.lean, Math.min(wheel.lean, wheel.aimY + e.movementY * (wheel.tiltGain / h)));
+      const g = wheel.gain / Math.min(window.innerWidth, window.innerHeight);
+      axis.set(e.movementY * g, e.movementX * g, 0); // right drag turns about y, down drag about x
+      const angle = axis.length();
+      if (angle > 0) {
+        dq.setFromAxisAngle(axis.clone().divideScalar(angle), angle);
+        wheel.q.premultiply(dq);
+      }
       const t = e.timeStamp, dt = Math.max((t - lastT) / 1000, 1 / 240);
-      hand = hand * 0.6 + (dSpin / dt) * 0.4;
+      hand.multiplyScalar(0.6).addScaledVector(axis, 0.4 / dt);
       lastT = t;
     };
     const down = (e: PointerEvent) => {
       if (e.button !== 0) return;
       painting.current = true;
       wheel.grabbed = true;
-      hand = 0;
+      hand.set(0, 0, 0);
       lastT = e.timeStamp;
     };
     const up = (e: PointerEvent) => {
@@ -173,7 +175,10 @@ export function Balloon() {
       if (!wheel.grabbed) return;
       wheel.grabbed = false;
       // A hand that stopped before letting go adds nothing.
-      if (e.timeStamp - lastT < 80) wheel.vel = Math.max(-wheel.maxSpin, Math.min(wheel.maxSpin, wheel.vel + hand));
+      if (e.timeStamp - lastT < 80) {
+        wheel.omega.add(hand);
+        if (wheel.omega.length() > wheel.maxSpin) wheel.omega.setLength(wheel.maxSpin);
+      }
     };
     el.addEventListener('pointerdown', down);
     window.addEventListener('pointermove', move);
@@ -213,15 +218,17 @@ export function Balloon() {
 
   // Spin on, once let go, with hardly any drag.
   const groupRef = useRef<Group>(null);
+  const step = useMemo(() => new Quaternion(), []);
   useFrame((_, dt) => {
     const g = groupRef.current;
     if (!g) return;
-    const k = 1 - Math.exp(-dt * wheel.ease);
-    wheel.pitch += (wheel.aimY - wheel.pitch) * k;
-    if (!wheel.grabbed) wheel.vel *= Math.exp(-dt * wheel.drag);
-    wheel.spin += dt * wheel.vel;
-    g.quaternion.setFromEuler(new Euler(wheel.pitch, 0, 0, 'XYZ'));
-    g.quaternion.multiply(new Quaternion().setFromAxisAngle(UP, wheel.spin));
+    if (!wheel.grabbed) wheel.omega.multiplyScalar(Math.exp(-dt * wheel.drag));
+    const w = wheel.omega.length();
+    if (w > 0) {
+      step.setFromAxisAngle(wheel.omega.clone().divideScalar(w), w * dt);
+      wheel.q.premultiply(step);
+    }
+    g.quaternion.copy(wheel.q);
   }, -3);
 
   return (

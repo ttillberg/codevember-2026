@@ -26,7 +26,7 @@ export function App() {
         <Shadow />
       </Canvas>
       <div id="reticle" className="reticle" />
-      <p className="hint">grab and spin the balloon, it keeps turning; drag up and down to tip it; painting while you hold, or space for auto</p>
+      <p className="hint">grab and spin the balloon any way, it keeps turning; painting while you hold, or space for auto</p>
       <Palette />
     </>
   );
