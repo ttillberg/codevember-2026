@@ -2,7 +2,6 @@ import { useEffect, useRef, useState } from 'react';
 import { clearDrips } from './drips';
 import { paint } from './Balloon';
 import type { Brush } from './paint';
-import { ColorPicker } from './ColorPicker';
 import { resetTool, tool, type Finish } from './tool';
 
 // The media, and the options each one answers to.
@@ -39,15 +38,15 @@ const OPTIONS: Record<Medium, Num[]> = {
   scrape: ['flow'],
 };
 
-// Brush size, like a volume knob: hold the button and drag up or down, a tall gauge shows while you hold.
-// The wheel over the button nudges it too.
+// A knob in the bar, like a volume control: hold the button and drag up or down, a tall gauge shows while you hold.
+// It works on a 0..1 value; the wheel over the button nudges it too.
 const TRAVEL = 140; // px of drag for the whole range, the gauge's height
-function SizeControl() {
+function Knob({ name, t, put, face, track }: {
+  name: string; t: number; put: (t: number) => void; face: React.ReactNode; track: React.ReactNode;
+}) {
   const [held, setHeld] = useState(false);
   const [, bump] = useState(0);
-  const start = useRef({ y: 0, v: 0 });
-  const { min, max } = RANGE.size;
-  const t = (tool.size - min) / (max - min);
+  const start = useRef({ y: 0, t: 0 });
   // Let go anywhere closes it, even if the capture got lost on the way.
   useEffect(() => {
     if (!held) return;
@@ -56,21 +55,65 @@ function SizeControl() {
     window.addEventListener('pointercancel', up);
     return () => { window.removeEventListener('pointerup', up); window.removeEventListener('pointercancel', up); };
   }, [held]);
-  const put = (v: number) => { tool.size = Math.min(max, Math.max(min, v)); bump((n) => n + 1); };
+  const to = (v: number) => { put(Math.min(1, Math.max(0, v))); bump((n) => n + 1); };
   return (
-    <div className="ft-size">
-      <button aria-label="size" title="size (hold and drag)" className={held ? 'on' : ''}
-        onPointerDown={(e) => { e.currentTarget.setPointerCapture(e.pointerId); start.current = { y: e.clientY, v: tool.size }; setHeld(true); }}
-        onPointerMove={(e) => { if (held) put(start.current.v + ((start.current.y - e.clientY) / TRAVEL) * (max - min)); }}
-        onWheel={(e) => put(tool.size - Math.sign(e.deltaY) * RANGE.size.step * 2)}>
-        <i style={{ width: 6 + t * 20, height: 6 + t * 20 }} />
+    <div className="ft-knob">
+      <button aria-label={name} title={`${name} (hold and drag)`} className={held ? 'on' : ''}
+        onPointerDown={(e) => { e.currentTarget.setPointerCapture(e.pointerId); start.current = { y: e.clientY, t }; setHeld(true); }}
+        onPointerMove={(e) => { if (held) to(start.current.t + (start.current.y - e.clientY) / TRAVEL); }}
+        onWheel={(e) => to(t - Math.sign(e.deltaY) * 0.02)}>
+        {face}
       </button>
       <div className={`ft-gauge${held ? ' open' : ''}`}>
-        <div className="ft-gauge-track" style={{ '--t': t } as React.CSSProperties}>
-          <b>{Math.round(t * 100)}</b>
-        </div>
+        <div className="ft-gauge-track" style={{ '--t': t } as React.CSSProperties}>{track}</div>
       </div>
     </div>
+  );
+}
+
+// Size: a dot that grows with the brush, the gauge fills up like a volume bar.
+function SizeKnob() {
+  const { min, max } = RANGE.size;
+  const t = (tool.size - min) / (max - min);
+  return (
+    <Knob name="size" t={t} put={(v) => { tool.size = min + v * (max - min); }}
+      face={<i className="ft-dot" style={{ width: 6 + t * 20, height: 6 + t * 20 }} />}
+      track={<><span className="ft-fill" /><b>{Math.round(t * 100)}</b></>} />
+  );
+}
+
+// Colour: one strip, black at the bottom, through every hue, to white at the top.
+const HUES = ['#f00', '#ff0', '#0f0', '#0ff', '#00f', '#f0f', '#f00'];
+const STOPS: [number, number[]][] = [
+  [0, [0, 0, 0]],
+  ...HUES.map((h, i): [number, number[]] => [0.12 + (i / 6) * 0.76, [...h.slice(1)].map((c) => (c === 'f' ? 255 : 0))]),
+  [1, [255, 255, 255]],
+];
+const STRIP = `linear-gradient(to top, ${STOPS.map(([p, c]) => `rgb(${c}) ${p * 100}%`).join(', ')})`;
+function stripAt(t: number) {
+  const i = Math.max(1, STOPS.findIndex(([p]) => p >= t));
+  const [p0, a] = STOPS[i - 1], [p1, b] = STOPS[i];
+  const k = (t - p0) / (p1 - p0);
+  return '#' + a.map((c, j) => Math.round(c + (b[j] - c) * k).toString(16).padStart(2, '0')).join('');
+}
+// Where a colour sits on the strip: the closest of a few hundred samples.
+function stripOf(hex: string) {
+  const n = parseInt(hex.slice(1), 16), rgb = [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+  let best = 0, bestD = Infinity;
+  for (let i = 0; i <= 400; i++) {
+    const m = parseInt(stripAt(i / 400).slice(1), 16);
+    const d = [(m >> 16) & 255, (m >> 8) & 255, m & 255].reduce((s, c, j) => s + (c - rgb[j]) ** 2, 0);
+    if (d < bestD) { bestD = d; best = i / 400; }
+  }
+  return best;
+}
+let colorT: number | null = null;
+function ColorKnob() {
+  if (colorT === null || stripAt(colorT) !== tool.hex) colorT = stripOf(tool.hex); // changed elsewhere, or first time
+  return (
+    <Knob name="color" t={colorT} put={(v) => { colorT = v; tool.hex = stripAt(v); }}
+      face={<i className="ft-swatch" style={{ background: tool.hex }} />}
+      track={<><span className="ft-strip" style={{ background: STRIP }} /><span className="ft-mark" style={{ background: tool.hex }} /></>} />
   );
 }
 
@@ -116,16 +159,13 @@ export function Panel() {
         </button>
       ))}
       <span className="ft-sep" />
-      <SizeControl />
+      <SizeKnob />
+      <ColorKnob />
     </div>
     <div className="ft-drawer">
         <section>
           <h4>{tool.brush}</h4>
           {(OPTIONS[tool.brush as Medium] ?? []).map(slider)}
-        </section>
-        <section>
-          <h4>Color</h4>
-          <ColorPicker />
         </section>
         <section>
           <h4>Paint</h4>

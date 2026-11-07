@@ -39,15 +39,6 @@ canvas.grabbing { cursor: grabbing; }
 .ft-chips button.on { background: #111; color: #fff; }
 .ft-help { margin: 14px 0 0; color: rgba(0, 0, 0, 0.4); line-height: 17px; }
 .ft-help b { color: #111; font-weight: 500; }
-.cp {
-  position: relative; height: 110px; border-radius: 14px; cursor: crosshair; touch-action: none;
-  background: linear-gradient(to bottom, #fff 0%, rgba(255, 255, 255, 0) 50%, rgba(0, 0, 0, 0) 50%, #000 100%),
-    linear-gradient(to right, #f00, #ff0, #0f0, #0ff, #00f, #f0f, #f00);
-}
-.cp i {
-  position: absolute; width: 14px; height: 14px; margin: -7px 0 0 -7px; border-radius: 50%; pointer-events: none;
-  box-shadow: 0 0 0 2px #fff, 0 1px 4px rgba(0, 0, 0, 0.35);
-}
 .ft-row { display: flex; align-items: center; gap: 10px; height: 22px; }
 .ft-row span { width: 40px; color: rgba(0, 0, 0, 0.45); text-transform: capitalize; }
 .ft-row input[type=range] {
@@ -79,10 +70,12 @@ canvas.grabbing { cursor: grabbing; }
 .ft-media svg { display: block; }
 .ft-sep { width: 1px; margin: 10px 4px; background: rgba(0, 0, 0, 0.12); }
 
-/* Size: a dot that grows with the brush, and a tall gauge while it's held. */
-.ft-size { position: relative; display: flex; }
-.ft-size button { touch-action: none; }
-.ft-size button i { display: block; border-radius: 50%; background: currentColor; transition: width 0.08s, height 0.08s; }
+/* Knobs: size and colour, hold and drag, a tall gauge shows while held. */
+.ft-knob { position: relative; display: flex; }
+.ft-knob button { touch-action: none; }
+.ft-dot { display: block; border-radius: 50%; background: currentColor; transition: width 0.08s, height 0.08s; }
+.ft-swatch { display: block; width: 24px; height: 24px; border-radius: 50%; box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.12), 0 0 0 2px #fff; }
+.ft-knob button.on .ft-swatch { box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.12), 0 0 0 2px #fff; transform: scale(1.1); }
 .ft-gauge {
   position: absolute; left: 50%; bottom: calc(100% + 14px); padding: 6px; border-radius: 999px; pointer-events: none;
   background: rgba(255, 255, 255, 0.5); backdrop-filter: blur(18px) saturate(1.6); -webkit-backdrop-filter: blur(18px) saturate(1.6);
@@ -91,14 +84,17 @@ canvas.grabbing { cursor: grabbing; }
   transition: opacity 0.15s, transform 0.2s cubic-bezier(0.3, 1.4, 0.5, 1);
 }
 .ft-gauge.open { opacity: 1; transform: translate(-50%, 0) scale(1); }
-.ft-gauge-track {
-  position: relative; width: 34px; height: 140px; border-radius: 999px; overflow: hidden; background: rgba(0, 0, 0, 0.08);
-}
-.ft-gauge-track::before {
-  content: ''; position: absolute; left: 0; right: 0; bottom: 0; height: calc(17px + var(--t) * (100% - 17px));
-  border-radius: 999px; background: #111;
+.ft-gauge-track { position: relative; width: 34px; height: 140px; border-radius: 999px; overflow: hidden; background: rgba(0, 0, 0, 0.08); }
+.ft-fill {
+  position: absolute; left: 0; right: 0; bottom: 0; height: calc(17px + var(--t) * (100% - 17px)); border-radius: 999px; background: #111;
 }
 .ft-gauge-track b {
-  position: absolute; left: 0; right: 0; bottom: 10px; text-align: center; color: #fff; mix-blend-mode: difference;
+  position: absolute; left: 0; right: 0; bottom: 10px; text-align: center; color: #fff;
   font: 500 10px/1 Inter, "Helvetica Neue", Helvetica, Arial, sans-serif; font-variant-numeric: tabular-nums;
+}
+.ft-strip { position: absolute; inset: 0; border-radius: 999px; box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.08); }
+/* The picked colour: a ring riding the strip. */
+.ft-mark {
+  position: absolute; left: 50%; bottom: calc(13px + var(--t) * (100% - 26px)); width: 22px; height: 22px; margin: 0 0 -11px -11px;
+  border-radius: 50%; box-shadow: 0 0 0 3px #fff, 0 2px 6px rgba(0, 0, 0, 0.35);
 }
