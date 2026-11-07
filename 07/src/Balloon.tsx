@@ -82,7 +82,9 @@ function balloonMaterial(side: typeof FrontSide | typeof BackSide) {
   // target. Orange peel on thick paint, ridges along bristle strokes, rounded lips on the runs.
   const px = float(1 / PAINT_W).mul(uScale), py = 1 / PAINT_H;
   // Height is the thickness, clamped so a big drop reads as a dome and not a cliff, plus a fine grain.
-  const height = (at: any, props: any) => { const h = min(props.x, 1.2); return h.add(mx_noise_float(at.mul(vec2(PAINT_W / 3, PAINT_H / 3))).mul(uGrain).mul(h)); };
+  // Compressed smoothly towards 1.5 rather than clamped: a hard cap drew a contour line wherever a run piled
+  // the paint over it.
+  const height = (at: any, props: any) => { const h = props.x.div(props.x.mul(1 / 1.5).add(1)); return h.add(mx_noise_float(at.mul(vec2(PAINT_W / 3, PAINT_H / 3))).mul(uGrain).mul(h)); };
   const hL = height(uv().sub(vec2(px, 0)), paint.propsAt(uv().sub(vec2(px, 0))));
   const hR = height(uv().add(vec2(px, 0)), paint.propsAt(uv().add(vec2(px, 0))));
   const hD = height(uv().sub(vec2(0, py)), paint.propsAt(uv().sub(vec2(0, py))));
