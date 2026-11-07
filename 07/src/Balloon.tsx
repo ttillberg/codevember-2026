@@ -6,7 +6,7 @@ const CENTRE = new Vector2(0, 0);
 const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
 // Dab spacing as a fraction of the brush size, and the alpha each dab adds, so a stroke builds up smoothly rather
 // than popping in dab by dab: about a dozen dabs overlap at any point of a round stroke.
-const SPACING: Record<Brush, number> = { round: 0.06, bristle: 0.06, spray: 0.08, scrape: 0.08, glaze: 0.035 };
+const SPACING: Record<Brush, number> = { round: 0.06, bristle: 0.06, spray: 0.05, scrape: 0.08, glaze: 0.035 };
 const FLOW: Record<Brush, number> = { round: 0.2, bristle: 0.3, spray: 0.3, scrape: 0.12, glaze: 0.16 };
 
 // The wheel, tunable live. A trackball: drag turns the balloon about the axis across the drag, any direction,
@@ -286,13 +286,19 @@ export function Balloon() {
     } else {
       advance(h.u, h.v);
       if (tool.brush === 'spray') {
-        // The cloud widens the longer the can stays: up to twice the brush after a couple of seconds.
-        sprayHold.current += dt;
-        sprayHeld.current += dt;
-        if (sprayHold.current > 0.05) {
-          sprayHold.current = 0;
-          dabAt(h.u, h.v, 0, stroke.current.seed + Math.random() * 97, 1 + Math.min(sprayHeld.current, 2.5) * 0.4);
-        }
+        // Held still (not just moving slowly): the can keeps spraying and the cloud widens, up to twice the
+        // brush after a couple of seconds. Moving, the stroke is the same at any speed.
+        const s = stroke.current;
+        let du = h.u - s.u; if (du > 0.5) du -= 1; else if (du < -0.5) du += 1;
+        const moved = Math.hypot(du * 2 * Math.max(Math.sin(s.v * Math.PI), 0.02), h.v - s.v);
+        if (moved < tool.size * SPACING.spray * 0.5) {
+          sprayHeld.current += dt;
+          sprayHold.current += dt;
+          if (sprayHeld.current > 0.15 && sprayHold.current > 0.05) {
+            sprayHold.current = 0;
+            dabAt(h.u, h.v, 0, s.seed + Math.random() * 97, 1 + Math.min(sprayHeld.current, 2.5) * 0.4);
+          }
+        } else sprayHeld.current = 0;
       }
     }
   }, -2); // before the flush; a positive priority would turn off R3F's own render
