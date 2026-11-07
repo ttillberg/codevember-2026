@@ -1,6 +1,7 @@
 import { Canvas } from '@react-three/fiber';
 import { WebGPURenderer } from 'three/webgpu';
 import { Balloon } from './Balloon';
+import { Shadow } from './Shadow';
 import { Palette } from './Palette';
 import { makeStudio } from './env';
 import { useMemo } from 'react';
@@ -10,7 +11,7 @@ export function App() {
   return (
     <>
       <Canvas
-        camera={{ position: [0, 0, 6.8], fov: 40 }}
+        camera={{ position: [0, 2.2, 9.5], fov: 40 }}
         gl={async (props) => {
           const renderer = new WebGPURenderer({ ...(props as any), antialias: true });
           await renderer.init();
@@ -22,9 +23,10 @@ export function App() {
         <directionalLight position={[3, 5, 4]} intensity={1.2} />
         <directionalLight position={[-4, 2, -3]} intensity={0.4} color="#cfd8ff" />
         <Balloon />
+        <Shadow />
       </Canvas>
       <div id="reticle" className="reticle" />
-      <p className="hint">the balloon turns on its own, move sideways to spin it, up and down to tip it, hold to paint, space for auto</p>
+      <p className="hint">grab and spin the balloon, it keeps turning; drag up and down to tip it; painting while you hold, or space for auto</p>
       <Palette />
     </>
   );

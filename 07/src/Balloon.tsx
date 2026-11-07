@@ -9,16 +9,16 @@ const UP = new Vector3(0, 1, 0);
 const SPACING: Record<Brush, number> = { round: 0.06, bristle: 0.06, spray: 0.08, scrape: 0.08 };
 const FLOW: Record<Brush, number> = { round: 0.2, bristle: 0.3, spray: 0.12, scrape: 0.12 };
 
-// The turntable, tunable live.
+// The wheel, tunable live. Grab the balloon and spin it; it keeps turning, a flick adds to the spin, and it
+// slows only a little on its own. Dragging up and down tips it.
 export const wheel = {
-  speed: 0.35,   // radians per second on its own
+  gain: Math.PI, // radians of spin per window width of drag
   lean: 1.2,     // most radians of tilt either way
-  gain: 2.5,     // radians of tilt per window size of pointer travel
-  throwGain: 14, // radians per second of extra spin per radian of sideways travel: a half-window swipe is a few turns
-  drag: 1.4,     // how fast a throw dies away, per second: the inertia
-  maxThrow: 60,  // radians per second, so a wild swing stays watchable
-  ease: 10,      // how fast the lean follows, per second
-  aimY: 0, roll: 0, pitch: 0, spin: 0, throw: 0,
+  tiltGain: 2.5, // radians of tilt per window height of drag
+  drag: 0.08,    // how fast the spin dies away once let go, per second: next to nothing
+  maxSpin: 40,   // radians per second
+  ease: 10,      // how fast the tilt follows, per second
+  aimY: 0, pitch: 0, spin: 0, vel: 0, grabbed: false,
 };
 import { MeshPhysicalNodeMaterial, type WebGPURenderer } from 'three/webgpu';
 import {
@@ -146,22 +146,42 @@ export function Balloon() {
 
   useEffect(() => {
     const el = gl.domElement;
-    // Like a trackball: moving sideways throws the balloon round on top of its own slow turn, the throw dying
-    // away; moving up and down tips it, however far the pointer has gone, clamped so it can't flip over.
-    const aim = (e: PointerEvent) => {
-      const g = wheel.gain / Math.min(window.innerWidth, window.innerHeight);
-      wheel.throw = Math.max(-wheel.maxThrow, Math.min(wheel.maxThrow, wheel.throw + e.movementX * g * wheel.throwGain));
-      wheel.aimY = Math.max(-wheel.lean, Math.min(wheel.lean, wheel.aimY + e.movementY * g));
+    // Grabbing never stops it: the balloon keeps turning under the hand, the drag turns it on top (a window
+    // width is half a turn), and the hand's speed over the last few events is added to the spin on release, so
+    // a flick along speeds it up and a flick against slows it.
+    let lastT = 0, hand = 0;
+    const move = (e: PointerEvent) => {
+      if (!wheel.grabbed) return;
+      const w = window.innerWidth, h = window.innerHeight;
+      const dSpin = e.movementX * (wheel.gain / w);
+      wheel.spin += dSpin;
+      wheel.aimY = Math.max(-wheel.lean, Math.min(wheel.lean, wheel.aimY + e.movementY * (wheel.tiltGain / h)));
+      const t = e.timeStamp, dt = Math.max((t - lastT) / 1000, 1 / 240);
+      hand = hand * 0.6 + (dSpin / dt) * 0.4;
+      lastT = t;
     };
-    const down = (e: PointerEvent) => { if (e.button === 0) { painting.current = true; aim(e); } };
-    const up = () => { painting.current = false; stroke.current = null; };
+    const down = (e: PointerEvent) => {
+      if (e.button !== 0) return;
+      painting.current = true;
+      wheel.grabbed = true;
+      hand = 0;
+      lastT = e.timeStamp;
+    };
+    const up = (e: PointerEvent) => {
+      painting.current = false;
+      stroke.current = null;
+      if (!wheel.grabbed) return;
+      wheel.grabbed = false;
+      // A hand that stopped before letting go adds nothing.
+      if (e.timeStamp - lastT < 80) wheel.vel = Math.max(-wheel.maxSpin, Math.min(wheel.maxSpin, wheel.vel + hand));
+    };
     el.addEventListener('pointerdown', down);
-    window.addEventListener('pointermove', aim);
+    window.addEventListener('pointermove', move);
     window.addEventListener('pointerup', up);
     window.addEventListener('pointercancel', up);
     return () => {
       el.removeEventListener('pointerdown', down);
-      window.removeEventListener('pointermove', aim);
+      window.removeEventListener('pointermove', move);
       window.removeEventListener('pointerup', up);
       window.removeEventListener('pointercancel', up);
     };
@@ -191,17 +211,16 @@ export function Balloon() {
     } else advance(h.u, h.v);
   }, -2); // before the flush; a positive priority would turn off R3F's own render
 
-  // The wheel: the balloon turns on its own, the cursor leans it. Left and right roll it, up and down pitch it
-  // towards and away from you; the lean eases in so the stroke stays smooth.
+  // Spin on, once let go, with hardly any drag.
   const groupRef = useRef<Group>(null);
   useFrame((_, dt) => {
     const g = groupRef.current;
     if (!g) return;
     const k = 1 - Math.exp(-dt * wheel.ease);
     wheel.pitch += (wheel.aimY - wheel.pitch) * k;
-    wheel.throw *= Math.exp(-dt * wheel.drag);
-    wheel.spin += dt * (wheel.speed + wheel.throw);
-    g.quaternion.setFromEuler(new Euler(wheel.pitch, 0, -wheel.roll, 'XYZ'));
+    if (!wheel.grabbed) wheel.vel *= Math.exp(-dt * wheel.drag);
+    wheel.spin += dt * wheel.vel;
+    g.quaternion.setFromEuler(new Euler(wheel.pitch, 0, 0, 'XYZ'));
     g.quaternion.multiply(new Quaternion().setFromAxisAngle(UP, wheel.spin));
   }, -3);
 
