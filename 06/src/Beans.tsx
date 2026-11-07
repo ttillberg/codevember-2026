@@ -258,7 +258,7 @@ let throwSweets: ((f: Fling[]) => void) | null = null;
 // How far the belt keeps from each planet passing through it, in scene units: a bean's half length (whichever way
 // it's turned), Jupiter's roll, Uranus with its moon drops. And how soft the bend round them is.
 // (Jupiter and Uranus are sized further down, so their numbers are repeated here from LENGTH.)
-const AVOID: Record<string, number> = { bean: LENGTH * 0.55, Jupiter: LENGTH * 0.36 * 1.3, Uranus: LENGTH * 0.36 * 1.6, Neptune: LENGTH * 0.4 };
+const AVOID: Record<string, number> = { bean: LENGTH * 0.55, Jupiter: LENGTH * 0.36 * 1.3, Uranus: LENGTH * 0.36 * 1.45, Neptune: LENGTH * 0.4 };
 const AVOID_SOFT = 0.8;
 const TITAN_AVOID = 0.3 + 0.25; // Titan's radius and a little room
 const BLOCKERS = Array.from({ length: 4 }, () => ({ at: new Vector3(), r: 0, soft: 0 }));
@@ -492,7 +492,7 @@ function Flings() {
 // core, lying along its orbit like the beans and spinning about its length. Its moons are allsorts too.
 // All the planets about the Earth's size (LENGTH * 0.34), so the system can sit tight.
 export const JUPITER_RADIUS = LENGTH * 0.36;
-const JUPITER_ROLL: Allsort = { kind: 'roll', coat: '#f2d65a', core: '#1a1416' };
+const JUPITER_ROLL: Allsort = { kind: 'roll', coat: '#f7da34', core: '#1a1416' };
 const JUPITER_LENGTH = JUPITER_RADIUS * 1.5; // the roll's length, as AllsortSweet makes it
 
 // Uranus isn't a bean either: a round sugared gum drop, cyan, see-through soft gum under a frost of sugar. Plain
@@ -654,13 +654,13 @@ const URANUS_GEOMETRY = new SphereGeometry(URANUS_RADIUS, 128, 64).rotateZ(Math.
 // on the spot. Sizes go roughly with the real moons.
 const DROP_GEOMETRY = new SphereGeometry(1, 64, 32).scale(1, 0.78, 1);
 const URANUS_MOONS = [
-  { name: 'Miranda', size: 0.3, tilt: [0.35, 0.9, 0.25], speed: 0.62, deep: [200, 24, 40], pale: [246, 70, 76], glow: '#8a0a18' },
-  { name: 'Ariel', size: 0.4, tilt: [-0.5, 0.75, -0.35], speed: -0.48, deep: [240, 120, 10], pale: [255, 170, 60], glow: '#a54a00' },
-  { name: 'Umbriel', size: 0.38, tilt: [0.2, 0.25, -1], speed: 0.41, deep: [110, 200, 90], pale: [175, 236, 150], glow: '#2f7a1e' },
-  { name: 'Titania', size: 0.48, tilt: [0.1, -0.35, 0.95], speed: 0.3, deep: [16, 80, 170], pale: [50, 130, 210], glow: '#082a6a' },
-  { name: 'Oberon', size: 0.46, tilt: [-0.45, -0.85, -0.2], speed: -0.26, deep: [240, 200, 10], pale: [255, 236, 90], glow: '#9a7a00' },
+  { name: 'Miranda', size: 0.22, tilt: [0.35, 0.9, 0.25], speed: 0.62, deep: [200, 24, 40], pale: [246, 70, 76], glow: '#8a0a18' },
+  { name: 'Ariel', size: 0.3, tilt: [-0.5, 0.75, -0.35], speed: -0.48, deep: [240, 120, 10], pale: [255, 170, 60], glow: '#a54a00' },
+  { name: 'Umbriel', size: 0.28, tilt: [0.2, 0.25, -1], speed: 0.41, deep: [110, 200, 90], pale: [175, 236, 150], glow: '#2f7a1e' },
+  { name: 'Titania', size: 0.36, tilt: [0.1, -0.35, 0.95], speed: 0.3, deep: [16, 80, 170], pale: [50, 130, 210], glow: '#082a6a' },
+  { name: 'Oberon', size: 0.34, tilt: [-0.45, -0.85, -0.2], speed: -0.26, deep: [240, 200, 10], pale: [255, 236, 90], glow: '#9a7a00' },
 ];
-export const URANUS_REACH = URANUS_RADIUS * 1.6; // out over the drops going round, for the collider
+export const URANUS_REACH = URANUS_RADIUS * 1.45; // out over the drops going round, for the collider
 const GAP = 1.05; // how far out a drop rides: its middle this many of its radii off Uranus's surface
 const DROPS = URANUS_MOONS.map((moon, i) => {
   const r = URANUS_RADIUS * moon.size;

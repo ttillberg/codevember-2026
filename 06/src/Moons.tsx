@@ -262,22 +262,28 @@ function organic<T extends BufferGeometry>(g: T, amount: number, seed: number, s
 // slope of a smooth 3D noise in the sweet's own space (no texture, so no pixels and no UV seams).
 // Three finishes: fondant (fine sugar), coconut (the rolls' coats, coarse flakes), liquorice (smooth, a soft sheen).
 type Finish = 'fondant' | 'coconut' | 'liquorice';
-const FINISH: Record<Finish, { scale: number; depth: number; roughness: number; clearcoat: number }> = {
-  fondant: { scale: 22, depth: 0.06, roughness: 0.8, clearcoat: 0 },
-  coconut: { scale: 12, depth: 0.14, roughness: 0.9, clearcoat: 0 },
-  liquorice: { scale: 14, depth: 0.03, roughness: 0.45, clearcoat: 0.35 },
+// scale: grains per scene unit, the same for a planet sized sweet and a moon sized one, so the small ones don't go
+// smooth; depth: how much they tip the light; mottle: how uneven the colour is;
+// sparkle: how many sugar crystals catch the light.
+const FINISH: Record<Finish, { scale: number; depth: number; roughness: number; clearcoat: number; mottle: number; sparkle: number }> = {
+  fondant: { scale: 42, depth: 0.12, roughness: 0.8, clearcoat: 0, mottle: 0.06, sparkle: 0.6 },
+  coconut: { scale: 38, depth: 0.22, roughness: 0.92, clearcoat: 0, mottle: 0.1, sparkle: 1 },
+  liquorice: { scale: 10, depth: 0.03, roughness: 0.3, clearcoat: 0.8, mottle: 0.05, sparkle: 0 },
 };
 const LIQUORICE = '#1a1416';
+const LIQUORICE_GLOW = '#3c3236'; // a warm glow for liquorice, so on its night side it reads as sweet, not as a hole
 const SUGAR = new Map<string, MeshPhysicalMaterial>();
-function sugarMaterial(colour: string, size: number, finish: Finish = colour === LIQUORICE ? 'liquorice' : 'fondant') {
-  const key = colour + size + finish;
+function sugarMaterial(colour: string, finish: Finish = colour === LIQUORICE ? 'liquorice' : 'fondant') {
+  const key = colour + finish;
   let m = SUGAR.get(key);
   if (m) return m;
   const f = FINISH[finish];
-  m = new MeshPhysicalMaterial({ color: colour, roughness: f.roughness, clearcoat: f.clearcoat, clearcoatRoughness: 0.4, emissive: colour, emissiveIntensity: 0.15 });
+  m = new MeshPhysicalMaterial({ color: colour, roughness: f.roughness, clearcoat: f.clearcoat, clearcoatRoughness: 0.4, emissive: finish === 'liquorice' ? LIQUORICE_GLOW : colour, emissiveIntensity: finish === 'liquorice' ? 0.35 : 0.15 });
   m.onBeforeCompile = (sh) => {
-    sh.uniforms.uGrain = { value: f.scale / size };
+    sh.uniforms.uGrain = { value: f.scale };
     sh.uniforms.uDepth = { value: f.depth };
+    sh.uniforms.uMottle = { value: f.mottle };
+    sh.uniforms.uSparkle = { value: f.sparkle };
     sh.vertexShader = sh.vertexShader
       .replace('void main() {', 'varying vec3 vObj;\nvarying mat3 vToView;\nvoid main() {')
       .replace('#include <begin_vertex>', '#include <begin_vertex>\n  vObj = position;\n  vToView = normalMatrix;');
@@ -286,20 +292,36 @@ function sugarMaterial(colour: string, size: number, finish: Finish = colour ===
         'void main() {',
         /* glsl */ `varying vec3 vObj;
   varying mat3 vToView; // object to view space, for normals
-  uniform float uGrain, uDepth;
+  uniform float uGrain, uDepth, uMottle, uSparkle;
   ${NOISE}
-  // Two octaves, the second folded into ridges, so it reads as flakes and crystals rather than a soft blur.
-  float grain(vec3 q) { return noise(q) + 0.6 * abs(noise(q * 2.9 + 11.0) * 2.0 - 1.0); }
+  float grain(vec3 q, float fine) { return noise(q) + 0.5 * fine * noise(q * 2.7 + 11.0); }
 void main() {`,
       )
+      .replace(
+        '#include <color_fragment>',
+        /* glsl */ `#include <color_fragment>
+  vec3 q = vObj * uGrain;
+  // Grain finer than a couple of pixels fades out instead of shimmering into streaks.
+  float fine = 1.0 - smoothstep(0.25, 0.8, length(fwidth(q)));
+  // Uneven colour, as if mixed and rolled by hand, and here and there a sugar crystal, paler and catching the light.
+  diffuseColor.rgb *= 1.0 + uMottle * (noise(vObj * uGrain * 0.05 + 7.0) * 2.0 - 1.0);
+  // Sandy: each grain a touch lighter or darker than the next.
+  diffuseColor.rgb *= 1.0 + 0.3 * uSparkle * fine * (noise(q * 1.3) - 0.5);
+  // A crystal: in one cell in four or so, a small spot round a random point in it.
+  vec3 c = q * 0.3, cell = floor(c), at = vec3(hash(cell + 1.3), hash(cell + 2.7), hash(cell + 5.1));
+  float crystal = step(0.55, hash(cell)) * smoothstep(0.2, 0.08, length(fract(c) - at)) * uSparkle;
+  diffuseColor.rgb = mix(diffuseColor.rgb, min(diffuseColor.rgb * 1.5 + 0.08, vec3(1.0)), crystal);`,
+      )
+      .replace('#include <roughnessmap_fragment>', '#include <roughnessmap_fragment>\n  roughnessFactor = mix(roughnessFactor, 0.2, crystal);')
       .replace(
         '#include <normal_fragment_maps>',
         /* glsl */ `#include <normal_fragment_maps>
   // The grain's slope, in object space, turned to view space to tip the normal.
-  vec3 q = vObj * uGrain;
-  float e = 0.12, g0 = grain(q);
-  vec3 g = vec3(grain(q + vec3(e, 0, 0)) - g0, grain(q + vec3(0, e, 0)) - g0, grain(q + vec3(0, 0, e)) - g0) / e;
-  normal = normalize(normal - vToView * g * uDepth);`,
+  // The finer octave fades out sooner than the coarse one.
+  float finer = 1.0 - smoothstep(0.1, 0.3, length(fwidth(q)));
+  float e = 0.12, g0 = grain(q, finer);
+  vec3 g = vec3(grain(q + vec3(e, 0, 0), finer) - g0, grain(q + vec3(0, e, 0), finer) - g0, grain(q + vec3(0, 0, e), finer) - g0) / e;
+  normal = normalize(normal - vToView * g * uDepth * fine);`,
       );
   };
   SUGAR.set(key, m);
@@ -319,7 +341,7 @@ function resample(pts: Vector2[], step: number) {
 // A roll's coat, turned on a lathe: a thick tube, its outer edges rounded over, and at each end a small lip curling
 // into the hole, where the core sits a touch recessed.
 function rollCoat(radius: number, core: number, length: number) {
-  const pts: Vector2[] = [], half = length / 2, round = radius * 0.16, lip = radius * 0.05, n = 12;
+  const pts: Vector2[] = [], half = length / 2, round = radius * 0.2, lip = radius * 0.03, n = 12;
   const corner = (cx: number, cy: number, r: number, from: number, to: number) => {
     for (let i = 0; i <= n; i++) {
       const a = from + (i / n) * (to - from);
@@ -333,6 +355,33 @@ function rollCoat(radius: number, core: number, length: number) {
   corner(core + lip, half - lip, lip, Math.PI / 2, Math.PI); // the lip, back into the hole
   pts.push(new Vector2(core, half - lip * 2));
   const g = new LatheGeometry(resample(pts, radius * 0.04), 128);
+  return g;
+}
+
+// Make a roll (coat or core, along y, round the middle) look cut and rolled by hand: a little oval, lumpy round its
+// edge, the core off the middle, a slight barrel, and each end cut at its own small slant. The same for coat and
+// core, so they keep fitting: the core's shift fades out to nothing at the coat's outside.
+function handRolled<T extends BufferGeometry>(g: T, radius: number, core: number, half: number, seed: number): T {
+  const p = g.attributes.position, shift = new Vector2(Math.cos(seed * 2.1), Math.sin(seed * 2.1)).multiplyScalar(core * 0.18);
+  const slantA = new Vector2(Math.cos(seed * 1.3), Math.sin(seed * 1.3)).multiplyScalar(0.07);
+  const slantB = new Vector2(Math.cos(seed * 3.7), Math.sin(seed * 3.7)).multiplyScalar(0.05);
+  for (let i = 0; i < p.count; i++) {
+    let x = p.getX(i), y = p.getY(i), z = p.getZ(i);
+    const r = Math.hypot(x, z), a = Math.atan2(z, x);
+    // Lumpy and a little oval round the edge, fuller in the middle of its length.
+    const k = (1 + 0.025 * Math.sin(2 * a + seed) + 0.015 * Math.sin(3 * a + seed * 2.3) + 0.01 * Math.sin(5 * a - seed)) * (1 + 0.03 * (1 - (y / half) ** 2));
+    x *= k;
+    z *= k * 0.94;
+    // The core sits off the middle; the coat follows it inside, less and less towards its outside.
+    const near = 1 - Math.min(1, Math.max(0, (r - core) / (radius - core)));
+    x += shift.x * near;
+    z += shift.y * near;
+    // Each end cut at a slant of its own.
+    const end = y > 0 ? slantA : slantB, t = Math.abs(y) / half;
+    y += Math.sign(y) * t * t * (x * end.x + z * end.y);
+    p.setXYZ(i, x, y, z);
+  }
+  g.computeVertexNormals();
   return g;
 }
 
@@ -355,7 +404,7 @@ function Bobble({ colour, size, seed }: { colour: string; size: number; seed: nu
   }, [r, seed]);
   return (
     <group>
-      <mesh scale={[1, 0.85, 1]} material={sugarMaterial(colour, size)} castShadow receiveShadow>
+      <mesh scale={[1, 0.85, 1]} material={sugarMaterial(colour)} castShadow receiveShadow>
         <sphereGeometry args={[r, 32, 16]} />
       </mesh>
       <instancedMesh ref={ref} args={[bead, undefined, count]} receiveShadow>
@@ -377,7 +426,7 @@ function Cut({ allsort, size, seed }: { allsort: Exclude<Allsort, { kind: 'bobbl
       const side = size * 1.6, layer = (side * 0.75) / allsort.layers.length;
       return allsort.layers.map((colour, i) => ({
         colour,
-        geometry: organic(new RoundedBoxGeometry(side, layer * 1.04, side, 6, layer * 0.3), 0.02, seed + i, size),
+        geometry: organic(new RoundedBoxGeometry(side, layer * 1.04, side, 6, layer * 0.3), 0.035, seed + i, size),
         // Each layer sits a touch off the one below, as if cut by hand.
         position: [(Math.sin(seed + i * 2.3) * side) / 40, (i - (allsort.layers.length - 1) / 2) * layer, (Math.cos(seed + i * 1.7) * side) / 40] as [number, number, number],
         rotation: [0, Math.sin(seed * 3 + i) * 0.05, 0] as [number, number, number],
@@ -385,11 +434,11 @@ function Cut({ allsort, size, seed }: { allsort: Exclude<Allsort, { kind: 'bobbl
     }
     const length = size * 1.5, core = size * 0.36; // the liquorice core about a third of the roll across, as in the bag
     return [
-      { colour: allsort.coat, finish: 'coconut' as Finish, geometry: organic(rollCoat(size, core, length), 0.012, seed, size), position: [0, 0, 0] as [number, number, number], rotation: [0, 0, 0] as [number, number, number] },
-      // The core: a little shorter, so it sits just recessed in the coat's lips, wobbling with the same noise.
+      { colour: allsort.coat, finish: 'coconut' as Finish, geometry: organic(handRolled(rollCoat(size, core, length), size, core, length / 2, seed), 0.02, seed, size), position: [0, 0, 0] as [number, number, number], rotation: [0, 0, 0] as [number, number, number] },
+      // The core: about as long as the coat, so its ends sit flush with the coat's, shaped and wobbling the same.
       {
         colour: allsort.core,
-        geometry: organic(new CylinderGeometry(core * 1.01, core * 1.01, length - size * 0.12, 96, 12), 0.012, seed, size),
+        geometry: organic(handRolled(new CylinderGeometry(core * 1.01, core * 1.01, length - size * 0.03, 96, 12), size, core, length / 2, seed), 0.02, seed, size),
         position: [0, 0, 0] as [number, number, number],
         rotation: [0, 0, 0] as [number, number, number],
       },
@@ -398,7 +447,7 @@ function Cut({ allsort, size, seed }: { allsort: Exclude<Allsort, { kind: 'bobbl
   return (
     <group rotation={allsort.kind === 'roll' ? [0, 0, Math.PI / 2] : [0, 0, 0]} scale={allsort.kind === 'roll' ? [1, 1, 0.9] : [1, 1, 1]}>
       {parts.map((part, i) => (
-        <mesh key={i} geometry={part.geometry} material={sugarMaterial(part.colour, size, 'finish' in part ? part.finish : undefined)} position={part.position} rotation={part.rotation} castShadow receiveShadow />
+        <mesh key={i} geometry={part.geometry} material={sugarMaterial(part.colour, 'finish' in part ? part.finish : undefined)} position={part.position} rotation={part.rotation} castShadow receiveShadow />
       ))}
     </group>
   );
