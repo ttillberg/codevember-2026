@@ -99,3 +99,8 @@ body[data-theme="dark"] .planets button { color: #f2f2f2; }
 .transport input[type="range"]::-moz-range-thumb { width: 22px; height: 15px; border: 0; border-radius: 8px; background: #fff; }
 
 
+
+/* Cockpit / Free, under the planets. */
+.planets .pilot { display: flex; gap: 12px; margin-top: 16px; }
+.planets .pilot button { font-size: 14px; opacity: 0.45; transform: none; }
+.planets .pilot button.on { opacity: 1; transform: none; }

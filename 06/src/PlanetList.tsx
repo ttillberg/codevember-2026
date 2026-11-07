@@ -1,4 +1,5 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
+import { piloting } from './CameraRig';
 import { PLANETS } from './planets';
 import { pick, usePicked } from './selection';
 
@@ -46,6 +47,22 @@ export function PlanetList() {
           {p.name}
         </button>
       ))}
+      <Pilot />
     </nav>
+  );
+}
+
+// Who flies the camera when no planet is in focus: the tour (Cockpit) or you (Free).
+function Pilot() {
+  const [mode, setMode] = useState(piloting.value);
+  const set = (m: typeof mode) => ((piloting.value = m), setMode(m));
+  return (
+    <div className="pilot">
+      {(['Cockpit', 'Free'] as const).map((m) => (
+        <button key={m} className={m === mode ? 'on' : ''} onClick={(e) => (set(m), e.currentTarget.blur())}>
+          {m}
+        </button>
+      ))}
+    </div>
   );
 }

@@ -73,17 +73,17 @@ const SYSTEMS: System[] = [
     normal: tipped(2),
     moons: [
       // Jupiter's moons are liquorice allsorts, round its big yellow roll.
-      { name: 'Io', period: 1.769, orbit: 3.4, radius: 0.3, colour: '#f06a9a', allsort: { kind: 'bobble', colour: '#f06a9a' } },
-      { name: 'Europa', period: 3.551, orbit: 3.95, radius: 0.32, colour: '#f3efe6', allsort: { kind: 'layers', layers: ['#f3efe6', '#1a1416', '#f3efe6', '#1a1416', '#f3efe6'] } },
-      { name: 'Ganymede', period: 7.155, orbit: 4.55, radius: 0.4, colour: '#f2a65a', allsort: { kind: 'layers', layers: ['#f2a65a', '#1a1416', '#f2a65a'] } },
-      { name: 'Callisto', period: 16.689, orbit: 5.2, radius: 0.36, colour: '#1a1416', allsort: { kind: 'roll', coat: '#1a1416', core: '#f3efe6' } },
+      { name: 'Io', period: 1.769, orbit: 2.3, radius: 0.3, colour: '#f06a9a', allsort: { kind: 'bobble', colour: '#f06a9a' } },
+      { name: 'Europa', period: 3.551, orbit: 2.7, radius: 0.32, colour: '#f3efe6', allsort: { kind: 'layers', layers: ['#f3efe6', '#1a1416', '#f3efe6', '#1a1416', '#f3efe6'] } },
+      { name: 'Ganymede', period: 7.155, orbit: 3.15, radius: 0.4, colour: '#f2a65a', allsort: { kind: 'layers', layers: ['#f2a65a', '#1a1416', '#f2a65a'] } },
+      { name: 'Callisto', period: 16.689, orbit: 3.6, radius: 0.36, colour: '#1a1416', allsort: { kind: 'roll', coat: '#1a1416', core: '#f3efe6' } },
     ],
   },
   // Titan, just beyond the belt of little gumballs: a gumball itself, orange. The belt bends round it as it passes.
-  { host: 'Saturn', normal: tipped(-20), moons: [{ name: 'Titan', period: 15.945, orbit: 5.4, radius: 0.3, colour: '#f5a04e', gumball: true }] },
+  { host: 'Saturn', normal: tipped(-20), moons: [{ name: 'Titan', period: 15.945, orbit: 3.4, radius: 0.3, colour: '#f5a04e', gumball: true }] },
   // Uranus's moons aren't here: they're gum drops stuck on to it, see Beans.
   // Triton goes round backwards, on an orbit tipped well over.
-  { host: 'Neptune', normal: tipped(23), moons: [{ name: 'Triton', period: -5.877, orbit: 3.0, radius: 0.3, colour: '#de3592', nonpareil: true }] },
+  { host: 'Neptune', normal: tipped(23), moons: [{ name: 'Triton', period: -5.877, orbit: 2.3, radius: 0.3, colour: '#de3592', nonpareil: true }] },
 ];
 
 const SECONDS = 6; // a moon's squeezed period, in seconds, per square root of its real period in days: Phobos, the quickest, goes round in about 3.4 s, never a blur

@@ -258,7 +258,7 @@ let throwSweets: ((f: Fling[]) => void) | null = null;
 // How far the belt keeps from each planet passing through it, in scene units: a bean's half length (whichever way
 // it's turned), Jupiter's roll, Uranus with its moon drops. And how soft the bend round them is.
 // (Jupiter and Uranus are sized further down, so their numbers are repeated here from LENGTH.)
-const AVOID: Record<string, number> = { bean: LENGTH * 0.55, Jupiter: LENGTH * 0.68 * 1.3, Uranus: LENGTH * 0.51 * 1.6, Neptune: LENGTH * 0.55 };
+const AVOID: Record<string, number> = { bean: LENGTH * 0.55, Jupiter: LENGTH * 0.36 * 1.3, Uranus: LENGTH * 0.36 * 1.6, Neptune: LENGTH * 0.4 };
 const AVOID_SOFT = 0.8;
 const TITAN_AVOID = 0.3 + 0.25; // Titan's radius and a little room
 const BLOCKERS = Array.from({ length: 4 }, () => ({ at: new Vector3(), r: 0, soft: 0 }));
@@ -487,8 +487,8 @@ function Flings() {
 // A planet's jelly bean on its own, with Saturn's ring: used in the scene and in the close up card.
 // Jupiter isn't a jelly bean: it's the big one from the liquorice allsorts, a yellow roll round a black liquorice
 // core, lying along its orbit like the beans and spinning about its length. Its moons are allsorts too.
-// Sizes go in three classes, from the Earth's (LENGTH * 0.34) up: the gas giants twice it, the ice giants one and a half.
-export const JUPITER_RADIUS = LENGTH * 0.68;
+// All the planets about the Earth's size (LENGTH * 0.34), so the system can sit tight.
+export const JUPITER_RADIUS = LENGTH * 0.36;
 const JUPITER_ROLL: Allsort = { kind: 'roll', coat: '#f2d65a', core: '#1a1416' };
 const JUPITER_LENGTH = JUPITER_RADIUS * 1.5; // the roll's length, as AllsortSweet makes it
 
@@ -496,7 +496,7 @@ const JUPITER_LENGTH = JUPITER_RADIUS * 1.5; // the roll's length, as AllsortSwe
 // PBR: real transmission for the gum, sheen for the frost, and painted maps (colour, bump, roughness) for the sugar
 // grains and the faint wavy bands. It spins about the bean's length, which lies along its orbit, so like the real
 // Uranus it rolls round on its side; the sphere is turned so its poles, and the bands, go round that axis.
-export const URANUS_RADIUS = LENGTH * 0.51;
+export const URANUS_RADIUS = LENGTH * 0.36;
 
 // The maps, painted once on canvases laid out like the sphere's UVs (longitude across, latitude down): the gum in two
 // shades, in soft wavy bands if it has any, and sugar grains over it.
@@ -778,7 +778,7 @@ function ChocolateButton({ shadows }: { shadows: boolean }) {
 
 // Saturn is a big gumball, the round chewing gum from a gumball machine: a pastel ball, glossy, not quite round,
 // its colour a little mottled, with a belt of little gumballs round it.
-const SATURN_RADIUS = LENGTH * 0.68;
+const SATURN_RADIUS = LENGTH * 0.36;
 const SATURN_GEOMETRY = (() => {
   const g = new SphereGeometry(SATURN_RADIUS, 96, 64);
   // Mottled: the colour drifts a little lighter and darker over the ball, as the coat was panned on.
@@ -845,8 +845,8 @@ const CARAMEL_MATERIAL = (() => {
 
 // Neptune is a jelly drop rolled in blue nonpareils: a soft, slightly squarish dome (a superquadric) packed all over
 // with tiny beads, mostly deep blues, a few pale ones and white. One instanced mesh of beads on a dark blue core.
-export const NEPTUNE = { a: LENGTH * 0.51, b: LENGTH * 0.44, c: LENGTH * 0.51, n: 2.6 }; // half sizes, squareness
-const NEPTUNE_BEADS = 7200;
+export const NEPTUNE = { a: LENGTH * 0.36, b: LENGTH * 0.31, c: LENGTH * 0.36, n: 2.6 }; // half sizes, squareness
+const NEPTUNE_BEADS = 3600;
 const NEPTUNE_BEAD = LENGTH * 0.019;
 const NEPTUNE_COLOURS: [string, number][] = [['#2a2c86', 0.42], ['#3f55c2', 0.3], ['#6f86e0', 0.14], ['#a9bbf2', 0.08], ['#f1f3fb', 0.06]];
 const onNeptune = (d: Vector3, out: Vector3) => {
@@ -1068,7 +1068,7 @@ export function PlanetCandy({ name, shadows = true, playful = false }: { name: s
       <>
         <mesh geometry={SATURN_GEOMETRY} material={GUMBALL} castShadow={shadows} receiveShadow={shadows} />
         {/* Its belt round its middle, tipped a little. */}
-        <group rotation={[0, Math.PI / 2, 0.35]} scale={LENGTH * 1.55}>
+        <group rotation={[0, Math.PI / 2, 0.35]} scale={LENGTH * 0.95}>
           <SaturnBelt shadows={shadows} playful={playful} />
         </group>
       </>
@@ -1095,7 +1095,7 @@ export function PlanetCandy({ name, shadows = true, playful = false }: { name: s
 
 // How near the camera can come to a planet before it's inside it: then that planet isn't drawn, so it doesn't fill
 // the view while following another one past it. The followed planet itself always shows.
-const INSIDE: Record<string, number> = { Saturn: LENGTH * 1.25, Uranus: LENGTH * 0.85, Jupiter: LENGTH * 0.75, Neptune: LENGTH * 0.55 };
+const INSIDE: Record<string, number> = { Saturn: LENGTH * 0.75, Uranus: LENGTH * 0.6, Jupiter: LENGTH * 0.45, Neptune: LENGTH * 0.4 };
 const INSIDE_BEAN = LENGTH * 0.55;
 
 function Bean({ planet, index }: { planet: Planet; index: number }) {

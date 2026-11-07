@@ -10,22 +10,54 @@ import { planetPositions } from './world';
 export const focus = { distance: 30, amount: 0, depth: 1.5 };
 // How far each planet reaches out from its middle (rings, clumps of moons), so the depth of field is opened up to
 // keep all of it sharp.
-const DEPTH: Record<string, number> = { Saturn: 5, Jupiter: 3.2, Uranus: 3.4, Neptune: 2.3 };
+const DEPTH: Record<string, number> = { Saturn: 3, Jupiter: 2, Uranus: 2.4, Neptune: 1.6 };
 // Focusing on a planet always puts time into slow motion (days a second, the ×0.5 step); the speed from before
 // comes back on the way home.
 export const FOCUS_SPEED = 0.4;
 
 // How far out the camera circles each planet, bigger for the ones with rings or clumps of moons round them.
-const VIEW: Record<string, number> = { Jupiter: 15, Saturn: 19, Uranus: 15, Neptune: 12 };
+const VIEW: Record<string, number> = { Jupiter: 10, Saturn: 12, Uranus: 10, Neptune: 8.5 };
 const DEFAULT_VIEW = 8.5;
-const HOME = new Vector3(0, 91, 0.001);
+const HOME = new Vector3(0, 80, 0.001);
 const HOME_TARGET = new Vector3(0, 12.6, 0);
 const SUN = new Vector3(0, 12.6, 0);
+const UP = new Vector3(0, 1, 0);
 // The camera sits out beyond the planet, looking in past it at the sun, swung this far round to one side (radians)
 // so a crescent of the planet's lit side shows, and raised a little.
 const SWING = 0.45;
 const RAISE = 0.3;
 const FLY = 2.2; // per second: how quickly the camera closes on where it's going
+
+// The tour: left alone with nothing picked, the camera rides slowly along a winding path through the system (below).
+// In real time, so it's as calm at any clock speed. A drag or a scroll takes over; it starts again after IDLE seconds.
+const IDLE = 6;
+// Cockpit: the tour flies the camera; Free: it's all yours. Switched from the planet list.
+export const piloting = { value: 'Cockpit' as 'Cockpit' | 'Free' };
+const TOUR_SPEED = 2.2; // scene units a second along the path
+const LOOK_AHEAD = 0.9; // how far ahead along the path it looks (radians round)
+const LOOK_IN = 0.4; // and how far in from there towards the sun, so it looks across the disc, not out of it
+const CLEAR = 5; // never nearer a planet than this
+const SUN_CLEAR = 9; // nor the sun than this
+// The path, round the sun the way the planets go: its distance out swings in and out across the orbits, and it rises
+// and dips a little above their plane.
+const pathRadius = (a: number) => 14 + 6 * Math.sin(a * 0.7) + 2 * Math.sin(a * 1.9 + 1);
+function pathAt(a: number, out: Vector3) {
+  const r = pathRadius(a);
+  return out.set(r * Math.cos(a), 12.6 + 2.8 + 1.6 * Math.sin(a * 1.3), -r * Math.sin(a));
+}
+// Pushed out of any planet's or the sun's way, smoothly.
+const nudge = new Vector3();
+function keepClear(p: Vector3, scratch: Vector3) {
+  planetPositions.forEach((pp) => {
+    scratch.subVectors(p, pp);
+    const d = scratch.length();
+    if (d < CLEAR && d > 1e-4) p.addScaledVector(scratch, ((CLEAR - d) / d) * (1 - d / CLEAR / 2));
+  });
+  nudge.set(0, 12.6, 0);
+  scratch.subVectors(p, nudge);
+  const d = scratch.length();
+  if (d < SUN_CLEAR && d > 1e-4) p.addScaledVector(scratch, (SUN_CLEAR - d) / d);
+}
 
 // Ways of looking at the picked planet: from beyond it facing the sun, from the sun's side looking out at it,
 // chasing it from behind along its orbit (the default), or from straight above. Keys 1 to 4 switch, for testing.
@@ -41,6 +73,13 @@ export function CameraRig() {
   // Following, a drag turns the camera round the planet (sideways) and up or down over it; it then keeps that
   // angle to the planet's heading as it follows. Reset when another planet is picked.
   const drag = useMemo(() => ({ yaw: 0, pitch: 0, down: false, x: 0, y: 0 }), []);
+  const tour = useMemo(
+    () => ({
+      touched: performance.now(), a: 0, on: false,
+      want: new Vector3(), look: HOME_TARGET.clone(), away: new Vector3(), prev: new Vector3(),
+    }),
+    [],
+  );
   useEffect(() => {
     const el = gl.domElement;
     const down = (e: PointerEvent) => ((drag.down = true), (drag.x = e.clientX), (drag.y = e.clientY));
@@ -52,10 +91,19 @@ export function CameraRig() {
       drag.y = e.clientY;
     };
     const up = () => (drag.down = false);
+    const touch = () => (tour.touched = performance.now());
     el.addEventListener('pointerdown', down);
+    el.addEventListener('pointerdown', touch);
+    el.addEventListener('wheel', touch);
     addEventListener('pointermove', move);
     addEventListener('pointerup', up);
-    return () => (el.removeEventListener('pointerdown', down), removeEventListener('pointermove', move), removeEventListener('pointerup', up));
+    return () => (
+      el.removeEventListener('pointerdown', down),
+      el.removeEventListener('pointerdown', touch),
+      el.removeEventListener('wheel', touch),
+      removeEventListener('pointermove', move),
+      removeEventListener('pointerup', up)
+    );
   }, [gl, drag]);
   useEffect(() => {
     const key = (e: KeyboardEvent) => {
@@ -72,6 +120,7 @@ export function CameraRig() {
     const close = 1 - Math.exp(-dt * FLY);
     const p = picked ? planetPositions.get(picked) : undefined;
     if (picked && p) {
+      camera.up.copy(UP);
       if (s.following !== picked) {
         // Look from wherever the camera is aiming now, so it swings across rather than jumping; into slow motion,
         // remembering how fast it was.
@@ -127,7 +176,33 @@ export function CameraRig() {
           orbit.enabled = true;
           orbit.update();
         }
+        tour.touched = performance.now(); // a moment at home before the tour picks up again
       }
+    } else if (piloting.value === 'Cockpit' && (performance.now() - tour.touched) / 1000 > IDLE) {
+      // The tour: a calm ride along a fixed winding path through the disc of the orbits, weaving in and out between
+      // them and gently up and down, just above the planets' plane, looking a little way ahead along the path itself,
+      // so the view swings smoothly with the road and the horizon stays level. It keeps clear of the planets and the
+      // sun as it goes.
+      if (!tour.on) {
+        tour.on = true;
+        // Join the path at the point nearest round from where the camera is.
+        tour.a = Math.atan2(-camera.position.z, camera.position.x);
+        tour.look.copy(orbit?.target ?? HOME_TARGET);
+      }
+      tour.a += (dt * TOUR_SPEED) / pathRadius(tour.a); // the same speed along the path, whatever its radius
+      pathAt(tour.a, tour.want);
+      keepClear(tour.want, tour.away);
+      camera.position.lerp(tour.want, 1 - Math.exp(-dt * 1.2));
+      pathAt(tour.a + LOOK_AHEAD, tour.away).lerp(SUN, LOOK_IN);
+      tour.away.y -= 1; // and a touch down, onto the disc
+      keepClear(tour.away, tour.prev);
+      tour.look.lerp(tour.away, 1 - Math.exp(-dt * 1.5));
+      camera.up.copy(UP);
+      camera.lookAt(tour.look);
+      orbit?.target.copy(tour.look);
+    } else if (tour.on) {
+      tour.on = false;
+      camera.up.copy(UP); // level again for the orbit controls
     }
   });
   return null;
