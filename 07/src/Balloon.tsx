@@ -57,10 +57,7 @@ function balloonMaterial(side: typeof FrontSide | typeof BackSide) {
     .add(paint.colorAt(uv().sub(vec2(0, e.y))).a).add(paint.colorAt(uv().add(vec2(0, e.y))).a).mul(0.25);
   const wash = float(1).sub(saturate(p.x.mul(4))).toVar(); // no thickness: a wash
   const ring = saturate(c.a.sub(around).mul(uEdge)).mul(wash);
-  // And the body of a wash is granular, the pigment settling unevenly.
-  const grainW = mx_noise_float(uv().mul(vec2(PAINT_W / 20, PAINT_H / 20))).mul(0.5).add(0.5);
-  const body = mix(float(1), grainW.mul(0.1).add(0.95), wash);
-  const washA = c.a.mul(body).mul(ring.mul(1.3).add(1));
+  const washA = c.a.mul(ring.mul(1.3).add(1));
   const cov = max(saturate(washA), saturate(p.x.mul(2.5))).toVar();
   const safe = max(c.a, 0.001);
   const tint = c.rgb.div(safe);
