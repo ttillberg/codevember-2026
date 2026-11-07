@@ -1,0 +1,79 @@
+html, body, #root { margin: 0; height: 100%; background: #0b0c0f; overflow: hidden; }
+canvas { display: block; }
+.back {
+  position: fixed; left: 12px; bottom: 12px;
+  font: 12px ui-monospace, Menlo, monospace; color: #111; opacity: .5;
+  text-decoration: none;
+}
+.back:hover { opacity: 1; }
+
+
+.info {
+  position: fixed; right: 28px; top: 50%; transform: translateY(-50%); width: 264px; padding: 20px 22px 18px;
+  font-family: "Helvetica Neue", Helvetica, Arial, sans-serif; font-size: 13px; line-height: 1.4; color: #111;
+  /* An Apple style panel: plain black in a squircle (a true squircle where corner-shape is supported). */
+  background: #000; border-radius: 30px; corner-shape: squircle;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.35);
+}
+@supports not (corner-shape: squircle) { .info { border-radius: 22px; } }
+.info h2 { margin: 0 0 4px; font-size: 34px; font-weight: 700; letter-spacing: -0.02em; line-height: 1.05; }
+.info .flavour { margin: 0 0 12px; opacity: 0.6; }
+.info .curiosity { margin: 0 0 16px; }
+.info p, .info dd.names { text-wrap: pretty; } /* no lone word on the last line */
+.info dl { display: grid; grid-template-columns: auto 1fr; gap: 4px 14px; margin: 0; }
+.info dt { opacity: 0.5; }
+.info dd { margin: 0; text-align: right; font-weight: 700; font-variant-numeric: tabular-nums; }
+.info dd.names { font-variant-numeric: normal; line-height: 1.35; }
+body[data-theme="dark"] .info { color: #f2f2f2; }
+@media (max-width: 640px) {
+  .info { top: auto; bottom: 40px; right: 16px; left: 16px; width: auto; transform: none; }
+  .info h2 { font-size: 24px; }
+}
+
+
+/* Dark room: the page and its text follow the scene's background. */
+body[data-theme="dark"], body[data-theme="dark"] #root { background: #0b0c0f; }
+body[data-theme="dark"] .back { color: #f2f2f2; }
+
+/* The planet list down the left: bold Helvetica, the picked one full strength. */
+.planets {
+  position: fixed; left: 28px; top: 50%; transform: translateY(-50%);
+  display: flex; flex-direction: column; gap: 2px; max-width: 300px;
+}
+.planets button {
+  border: 0; background: none; padding: 3px 0; text-align: left; cursor: pointer; color: #111;
+  font-family: "Helvetica Neue", Helvetica, Arial, sans-serif; font-weight: 700;
+  opacity: 1; transition: transform 0.25s; transform-origin: left center;
+}
+/* Always white; the picked one steps out a little. */
+.planets button.on { transform: translateX(8px); }
+.planets button { font-size: 22px; letter-spacing: -0.02em; line-height: 1.1; }
+body[data-theme="dark"] .planets button { color: #f2f2f2; }
+@media (max-width: 640px) {
+  .planets { left: 16px; top: 16px; transform: none; max-width: 60vw; }
+  .planets button { font-size: 15px; }
+}
+
+/* Time, along the bottom: play big on the left, the date beside it, the speeds under the date, all on the page. */
+.transport {
+  position: fixed; left: 50%; bottom: 22px; transform: translateX(-50%);
+  display: grid; grid-template-columns: auto auto; grid-template-rows: auto auto; column-gap: 12px; row-gap: 1px; align-items: center;
+  font-family: "Helvetica Neue", Helvetica, Arial, sans-serif; color: #f2f2f2;
+}
+.transport button { border: 0; background: none; padding: 0; cursor: pointer; color: inherit; font: inherit; }
+.transport .play { grid-row: 1 / span 2; width: 44px; height: 44px; opacity: 0.95; }
+.transport .play svg { display: block; width: 100%; height: 100%; }
+.transport .play:hover { opacity: 1; }
+.transport .when { font-size: 22px; font-weight: 700; font-variant-numeric: tabular-nums; letter-spacing: -0.01em; line-height: 1.05; }
+.transport .speeds { display: flex; gap: 12px; font-size: 13px; font-weight: 700; }
+.transport .speeds button { opacity: 0.4; font-variant-numeric: tabular-nums; }
+.transport .speeds button:hover { opacity: 0.75; }
+.transport .speeds button.on { opacity: 1; }
+
+
+
+
+
+/* The opening: the list and the time controls come in as the sun lights up. */
+.planets, .transport { transition: opacity 2s ease 3s; }
+body:not(.lit) .planets, body:not(.lit) .transport { opacity: 0; pointer-events: none; }
