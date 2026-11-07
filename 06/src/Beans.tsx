@@ -9,7 +9,7 @@ import { planetAt } from './scale';
 import { AllsortSweet, Moons, type Allsort } from './Moons';
 import { pick } from './selection';
 import { isThrowClick, Throws } from './Throws';
-import { moonPositions, planetPositions } from './world';
+import { moonPositions, planetPositions, planetVelocities } from './world';
 import { rng } from './random';
 import { NOISE } from './glsl';
 import { cursor, updateCursor } from './cursor';
@@ -1110,6 +1110,8 @@ function Bean({ planet, index }: { planet: Planet; index: number }) {
   const turn = useRef({ roll: index * 1.3, tip: index * 0.7 });
   const dir = Math.sign(planet.day);
   const knock = useMemo(() => new Vector3(), []);
+  const shown = useRef<THREE_Group>(null!); // an empty group riding on the body: where it was last drawn
+  const drawn = useRef(false);
   const hit = (e: CollisionEnterPayload) => {
     // Along the way it was thrown (by the time this runs it may already have bounced back off).
     const thrown = (e.other.rigidBody?.userData as { gumball?: Vector3 } | undefined)?.gumball;
@@ -1139,7 +1141,11 @@ function Bean({ planet, index }: { planet: Planet; index: number }) {
     const p = rb.translation();
     let mine = planetPositions.get(planet.name);
     if (!mine) planetPositions.set(planet.name, (mine = new Vector3()));
-    mine.set(p.x, p.y, p.z);
+    // Where it is drawn, not the physics' own position: that only moves in whole fixed steps, and the drawn bodies
+    // are interpolated between them, so anything following the raw one (moons, the station, the camera) stutters.
+    if (drawn.current) mine.setFromMatrixPosition(shown.current.matrixWorld);
+    else mine.set(p.x, p.y, p.z);
+    drawn.current = true;
     vel.subVectors(a, b).multiplyScalar(daysPerSecond()); // a and b are a day either side: units per day
     // Knocked, it drifts off along the knock and is only pulled back gently until the knock has died away.
     knock.multiplyScalar(Math.exp(-h * KNOCK_FADE));
@@ -1148,6 +1154,10 @@ function Bean({ planet, index }: { planet: Planet; index: number }) {
     vel.y += (pos.y - p.y) * pull + knock.y;
     vel.z += (pos.z - p.z) * pull + knock.z;
     rb.setLinvel(vel, true);
+    let moving = planetVelocities.get(planet.name);
+    if (!moving) planetVelocities.set(planet.name, (moving = new Vector3()));
+    if (clock.paused) moving.set(0, 0, 0);
+    else moving.copy(vel);
     // Small angle rotation error, as an angular velocity towards the target.
     const r = rb.rotation();
     cur.set(r.x, r.y, r.z, r.w).invert().premultiply(q);
@@ -1171,6 +1181,7 @@ function Bean({ planet, index }: { planet: Planet; index: number }) {
       position={planetAt(planet, clock.jd)}
       onCollisionEnter={hit}
     >
+      <group ref={shown} />
       {planet.name === 'Earth' ? (
         <BallCollider density={DENSITY} args={[EARTH_RADIUS]} />
       ) : planet.name === 'Neptune' ? (
