@@ -514,6 +514,7 @@ export function Panel() {
           <p><b>Cmd + move</b> turn without painting</p>
           <p><b>Space</b> auto draw</p>
           <p><b>Del</b> clear the balloon</p>
+          <p><b>Shift + 0–9</b> save a preset, <b>0–9</b> recall it</p>
           <p><b>Hold B M S F C W</b> brush, material, size, flow, colour, water: move the mouse, let go</p>
         </Pop>
       </div>

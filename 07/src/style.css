@@ -172,3 +172,11 @@ canvas.grabbing { cursor: grabbing; }
   font: 500 9px/1 Inter, "Helvetica Neue", Helvetica, Arial, sans-serif;
 }
 .ft-media .ft-actions button:hover kbd { background: #3a3a3a; color: #e6e6e6; }
+
+/* A short note at the top when a preset is saved or recalled. */
+.ft-toast {
+  position: fixed; left: 50%; top: 20px; transform: translate(-50%, -6px); padding: 8px 14px; border-radius: 999px;
+  background: #777673; color: #fff; font: 500 12px/1 Inter, "Helvetica Neue", Helvetica, Arial, sans-serif;
+  pointer-events: none; opacity: 0; transition: opacity 0.15s, transform 0.2s; z-index: 10;
+}
+.ft-toast.on { opacity: 1; transform: translate(-50%, 0); }
