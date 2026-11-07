@@ -233,7 +233,9 @@ const OptionsIcon = () => (
   </svg>
 );
 // A small icon button in the bar that opens a popover above it; a press elsewhere or escape closes it.
-function Pop({ name, icon, className, children }: { name: string; icon: React.ReactNode; className: string; children: React.ReactNode }) {
+function Pop({ name, icon, className, small, children }: {
+  name: string; icon: React.ReactNode; className: string; small?: boolean; children: React.ReactNode;
+}) {
   const [open, setOpen] = useState(false);
   const box = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -246,7 +248,7 @@ function Pop({ name, icon, className, children }: { name: string; icon: React.Re
   }, [open]);
   return (
     <div className="ft-knob" ref={box}>
-      <button aria-label={name} title={name} className={`ft-opts${open ? ' on' : ''}`}
+      <button aria-label={name} title={name} className={`${small ? 'ft-opts' : ''}${open ? ' on' : ''}`}
         onPointerDown={(e) => e.preventDefault()} onClick={() => setOpen((o) => !o)}>
         {icon}
       </button>
@@ -304,7 +306,7 @@ export function Panel() {
     {/* Every control, in a frosted bar under the balloon. */}
     <div className="ft-media">
       <Picker name="medium" items={MEDIA} cur={tool.brush as Medium} put={(m) => { tool.brush = m; }} icon={(m) => <MediumIcon m={m} />} solid />
-      <Pop name={`${tool.brush} options`} icon={<OptionsIcon />} className="ft-sliders">
+      <Pop name={`${tool.brush} options`} icon={<OptionsIcon />} className="ft-sliders" small>
         {OPTIONS[tool.brush as Medium].map((k) => <OptionSlider key={`${tool.brush}-${k}`} k={k} />)}
       </Pop>
       <span className="ft-sep" />
