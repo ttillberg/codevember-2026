@@ -1,8 +1,16 @@
 import { useEffect, useMemo, useRef } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
-import { BackSide, FrontSide, Mesh, Raycaster, SphereGeometry, Vector2, Vector3 } from 'three';
+import { BackSide, Euler, FrontSide, Group, Mesh, Quaternion, Raycaster, SphereGeometry, Vector2, Vector3 } from 'three';
 
 const CENTRE = new Vector2(0, 0);
+const UP = new Vector3(0, 1, 0);
+
+// The turntable, tunable live.
+export const wheel = {
+  speed: 0.35,   // radians per second
+  lean: 1.0,     // radians of tilt at the edge of the window
+  aimX: 0, aimY: 0, roll: 0, pitch: 0, spin: 0,
+};
 import { MeshPhysicalNodeMaterial, type WebGPURenderer } from 'three/webgpu';
 import {
   abs, float, max, mix, mx_noise_float, normalMap, normalViewGeometry, positionViewDirection, saturate, select, uniform, uv,
@@ -17,7 +25,7 @@ const uDebug = uniform(0);
 const uWetGloss = uniform(1);
 const uBump = uniform(sim.bump);
 const uGrain = uniform(sim.grain);
-if (import.meta.env.DEV) { (window as any).__sim = sim; (window as any).__paint = paint; (window as any).__dbg = uDebug; (window as any).__wetGloss = uWetGloss; }
+if (import.meta.env.DEV) { (window as any).__wheel = wheel; (window as any).__sim = sim; (window as any).__paint = paint; (window as any).__dbg = uDebug; (window as any).__wetGloss = uWetGloss; }
 
 // Thin clear rubber with paint on it. Clear rubber has no diffuse of its own, only its reflections and a faint
 // darkening at the rim; where there is paint the surface is opaque in the paint's colour and finish, wet paint
@@ -127,13 +135,19 @@ export function Balloon() {
 
   useEffect(() => {
     const el = gl.domElement;
-    const down = (e: PointerEvent) => { if (e.button === 0) painting.current = true; };
+    const aim = (e: PointerEvent) => {
+      wheel.aimX = (e.clientX / window.innerWidth) * 2 - 1;
+      wheel.aimY = (e.clientY / window.innerHeight) * 2 - 1;
+    };
+    const down = (e: PointerEvent) => { if (e.button === 0) { painting.current = true; aim(e); } };
     const up = () => { painting.current = false; stroke.current = null; };
     el.addEventListener('pointerdown', down);
+    window.addEventListener('pointermove', aim);
     window.addEventListener('pointerup', up);
     window.addEventListener('pointercancel', up);
     return () => {
       el.removeEventListener('pointerdown', down);
+      window.removeEventListener('pointermove', aim);
       window.removeEventListener('pointerup', up);
       window.removeEventListener('pointercancel', up);
     };
@@ -163,8 +177,22 @@ export function Balloon() {
     } else advance(h.u, h.v);
   }, -2); // before the flush; a positive priority would turn off R3F's own render
 
+  // The wheel: the balloon turns on its own, the cursor leans it. Left and right roll it, up and down pitch it
+  // towards and away from you; the lean eases in so the stroke stays smooth.
+  const groupRef = useRef<Group>(null);
+  useFrame((_, dt) => {
+    const g = groupRef.current;
+    if (!g) return;
+    const k = 1 - Math.exp(-dt * 4);
+    wheel.roll += (wheel.aimX * wheel.lean - wheel.roll) * k;
+    wheel.pitch += (wheel.aimY * wheel.lean - wheel.pitch) * k;
+    wheel.spin += dt * wheel.speed;
+    g.quaternion.setFromEuler(new Euler(wheel.pitch, 0, -wheel.roll, 'XYZ'));
+    g.quaternion.multiply(new Quaternion().setFromAxisAngle(UP, wheel.spin));
+  }, -3);
+
   return (
-    <group scale={[1, 1.12, 1]}>
+    <group ref={groupRef} scale={[1, 1.12, 1]}>
       <mesh geometry={geo} material={back} renderOrder={0} />
       <mesh ref={frontRef} geometry={geo} material={front} renderOrder={1} />
     </group>

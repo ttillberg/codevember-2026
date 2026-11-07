@@ -2,7 +2,7 @@
 
 2026-11-07
 
-Paint on a hollow, clear balloon. WebGPU through three's node materials (TSL) in React Three Fiber. The brush sits at the centre of the screen and you turn the balloon under it: a left drag orbits and paints, a right drag only orbits. Four tools: a round brush, spray, a bristle brush and a scraper; three finishes: matte, gloss and metal. Thick wet paint runs down the balloon, evens out sideways and dries where it stops.
+Paint on a hollow, clear balloon. WebGPU through three's node materials (TSL) in React Three Fiber. The brush sits at the centre of the screen and the balloon turns under it on its own, like a pot on a wheel. The cursor leans it: left and right roll it, up and down pitch it. Hold the button to paint, so a still hand gives a ring and a moving one a spiral. Four tools: a round brush, spray, a bristle brush and a scraper; three finishes: matte, gloss and metal. Thick wet paint runs down the balloon, evens out sideways and dries where it stops.
 
 ## How
 
@@ -10,7 +10,7 @@ Paint on a hollow, clear balloon. WebGPU through three's node materials (TSL) in
 - **Run pass**: a full-screen quad reads the current target and writes the next. A texel above a per-column threshold (hashed, so sheets break into drips) sends its excess down one texel per frame, scaled by its wetness; colour, roughness and metalness travel with the thickness as fractions. Arriving paint is wet, resting paint dries at a constant rate, wet paint is blended a little with its neighbours sideways so runs round off. Thickness is capped.
 - **Balloon**: a sphere with a front mesh and a back mesh (BackSide, drawn first) so the paint on the far side shows through. Clear rubber has no diffuse at all: black colour, 5% opacity plus a cubed fresnel rim, a faint pale emissive rim as a stand-in for the room. Paint coverage is the larger of the dab coverage and thickness × 2.5, so runs read as paint. Wet paint is glossier. A tiny procedural equirect studio (gradient plus two soft boxes in a data texture) is the environment, so gloss and metal have something to reflect.
 - **Relief**: the normal comes from the paint's height, thickness plus a fine noise grain scaled by thickness, differenced one texel each way in the target (not screen-space derivatives, which are resolution dependent and noisy) and fed through `normalMap` as a tangent-space normal. Dabs lay the paint in ridges along the stroke (noise on the load), so round strokes get orange peel, bristle strokes get furrows, and runs get a lip.
-- **Brush**: every frame a ray through the screen centre is cast at the balloon and the hit's uv is fed to the stroke, dabs laid at the brush's spacing along the way, with the stroke's angle from the uv step. The ring on screen is the brush's radius projected from the hit point.
+- **Wheel**: the balloon's quaternion is the lean (pitch and roll from the cursor, eased) times a spin about its own axis that grows with time. Every frame a ray through the screen centre is cast at the balloon and the hit's uv is fed to the stroke, dabs laid at the brush's spacing along the way, with the stroke's angle from the uv step. The ring on screen is the brush's radius projected from the hit point. The runs follow the balloon's own axis towards the knot, not the room's down, so a leaned balloon drips sideways.
 - **UV mapping**: dab width is divided by sin(πv) so dabs stay round near the poles, dabs within reach of the u seam are drawn again a turn over, and strokes take the short way round the seam.
 
 ## Learned
