@@ -14,6 +14,12 @@ canvas.grabbing { cursor: grabbing; }
   width: 20px; height: 20px; pointer-events: none; transition: opacity 0.2s; border-radius: 50%;
   border: 1.5px solid rgba(0, 0, 0, 0.6); box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.5), inset 0 0 0 1px rgba(255, 255, 255, 0.5);
 }
+/* A tiny plus at its centre, the exact spot. */
+.reticle::before, .reticle::after {
+  content: ''; position: absolute; left: 50%; top: 50%; background: rgba(0, 0, 0, 0.6); transform: translate(-50%, -50%);
+}
+.reticle::before { width: 7px; height: 1px; }
+.reticle::after { width: 1px; height: 7px; }
 
 
 /* The media: big icons in a frosted bar under the balloon. */

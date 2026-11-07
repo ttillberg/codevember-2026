@@ -65,7 +65,10 @@ export const sim = {
   grain: 0.05,   // fine texture in the paint's height
   spread: 0.12,  // smoothing of wet paint across the flow, per step
   bleed: 0.06,   // how fast a wet wash floats out, per step
+  melt: 0.05,    // dev: the wash's melt, as a share of the bleed
+  grow: 1,       // dev: the wash's bloom, 0 to switch it off
   flushes: 0,    // dev counter
+  steps: 0,      // dev counter, run steps taken
 };
 const uRunAt = uniform(sim.runAt);
 const uRunNoise = uniform(sim.runNoise);
@@ -77,6 +80,7 @@ const uGravity = uniform(sim.gravity);
 const uGravityObj = uniform(new Vector3(0, -1, 0));
 const uSpread = uniform(sim.spread);
 const uBleed = uniform(sim.bleed);
+const uMelt = uniform(sim.melt), uGrow = uniform(sim.grow);
 
 // MRT outputs default to no blending; these take the material's.
 function materialBlended(m: ReturnType<typeof mrt>) {
@@ -241,6 +245,10 @@ export class PaintLayer {
       const a = dabShape(vMisc.x, vMisc.y, vMisc.z).mul(vCol.w).toVar();
       const isGlaze = vMisc.x.greaterThan(3.5);
       const isPencil = vMisc.x.greaterThan(4.5);
+      // The props target blends on its own alpha (metalness times coverage, nought for most paint), so roughness
+      // adds up dab on dab while the coverage saturates: the ratio of the two climbs with the overlap. A wash is
+      // marked by a roughness of nought, which stays nought however many dabs land; the balloon gives it its gloss.
+      const isWash = isGlaze.and(isPencil.not());
       const brushLoad = select(vMisc.x.lessThan(0.5), float(LOAD.round), select(vMisc.x.lessThan(1.5), float(LOAD.spray),
         select(vMisc.x.lessThan(2.5), float(LOAD.bristle), select(isPencil, float(LOAD.pencil), float(0))))); // scrape and glaze lay none
       const load = select(vExtra.x.lessThan(0), brushLoad, vExtra.x);
@@ -250,7 +258,7 @@ export class PaintLayer {
       mat.colorNode = v4(vCol.xyz.mul(a), a);
       mat.mrtNode = materialBlended(mrt({
         color: v4(vCol.xyz.mul(a), a),
-        props: v4(load.mul(ridge).mul(a), select(isGlaze, (select as any)(a.greaterThan(0.002), vExtra.y, float(0)), min(a.mul(4), vExtra.y)), select(isGlaze, float(0.04), vMisc.z).mul(a), vMisc.w.mul(a)),
+        props: v4(load.mul(ridge).mul(a), select(isGlaze, (select as any)(a.greaterThan(0.002), vExtra.y, float(0)), min(a.mul(4), vExtra.y)), select(isWash, float(0), vMisc.z).mul(a), vMisc.w.mul(a)),
       }));
     });
     // Scrapes: Zero / OneMinusSrcAlpha, everything in both targets scaled down where the blade passes.
@@ -356,8 +364,6 @@ export class PaintLayer {
       const b = vec2(float(4 / PAINT_W).mul(uScale), 4 / PAINT_H);
       const cN = [vec2(b.x, 0), vec2(b.x, 0).negate(), vec2(0, b.y), vec2(0, b.y).negate()].map((o) => texture(src.textures[0], here.add(o)));
       const pN = [vec2(b.x, 0), vec2(b.x, 0).negate(), vec2(0, b.y), vec2(0, b.y).negate()].map((o) => texture(src.textures[1], here.add(o)));
-      const cAvg: any = cN[0].add(cN[1]).add(cN[2]).add(cN[3]).mul(0.25);
-      const pAvg: any = pN[0].add(pN[1]).add(pN[2]).add(pN[3]).mul(0.25);
       // The most any neighbour has, per channel: what the front grows towards, so it advances at strength.
       const cMax: any = max(max(cN[0], cN[1]), max(cN[2], cN[3]));
       const pMax: any = max(max(pN[0], pN[1]), max(pN[2], pN[3]));
@@ -374,9 +380,22 @@ export class PaintLayer {
       const thin = float(1).sub(min(max(propsRun.x.mul(4), 0), 1));
       const wetBleed: any = min(max(propsRun.y, wetN.mul(0.94)), 1).mul(thin); // the water reaches out, a little less each hop
       const kB = min(uBleed.mul(wetBleed).mul(thin).mul(waterK), 0.6).toVar();
-      // Melt first: wet thin paint evens out with its neighbours, so dabs run together into one wash.
-      const kM = min(uBleed.mul(0.05).mul(wetBleed).mul(thin), 0.05).toVar();
-      const colorMelt: any = mix(colorRun, cAvg, kM).toVar();
+      // Melt first: wet thin paint evens out with its neighbours, so dabs run together into one wash. An exchange
+      // per pair of texels at the rate of the drier of the two, so what one gives the other gets: melting towards
+      // the neighbours' mean at the texel's own rate let the wet heart give more than the drier rim took, and a
+      // wash lost a third of its pigment into nothing as it dried.
+      const wetSelf = min(propsRun.y, 1).mul(thin);
+      const kN = pN.map((pn: any) => {
+        const wetNbr = min(pn.y, 1).mul(float(1).sub(min(max(pn.x.mul(4), 0), 1)));
+        return min(uBleed.mul(uMelt).mul(min(wetSelf, wetNbr)), 0.05).mul(0.25);
+      });
+      let colorMelt: any = colorRun, zMelt: any = propsRun.z, wMelt: any = propsRun.w;
+      for (let i = 0; i < 4; i++) {
+        colorMelt = colorMelt.add(cN[i].sub(colorRun).mul(kN[i]));
+        zMelt = zMelt.add(pN[i].z.sub(propsRun.z).mul(kN[i]));
+        wMelt = wMelt.add(pN[i].w.sub(propsRun.w).mul(kN[i]));
+      }
+      colorMelt = colorMelt.toVar();
       // Grows, never thins: a texel takes on what its neighbours have more of, capped lower the further the water
       // has carried it, so a bloom fades out towards its edge and keeps its heart. Two washes meeting bleed into
       // each other the same way, channel by channel.
@@ -386,9 +405,12 @@ export class PaintLayer {
       const reach = wetBleed.mul(sqrt(wetBleed)).mul(front.add(1)).toVar();
       const want: any = cMax.mul(reach).toVar();
       const grow = v4(max(want.x.sub(colorMelt.x), 0), max(want.y.sub(colorMelt.y), 0), max(want.z.sub(colorMelt.z), 0), max(want.w.sub(colorMelt.w), 0));
-      const colorOut = colorMelt.add(grow.mul(kB));
+      const colorOut = colorMelt.add(grow.mul(kB).mul(uGrow));
+      // The finish (roughness and metalness, times coverage) melts and grows the same way as the colour, so it
+      // keeps step with the coverage: grown but never melted, it crept up over the coverage until a wash read as
+      // thin gloss paint and lost its watercolour.
       const propsOut = v4(propsRun.x, select(thin.greaterThan(0.5), wetBleed, propsRun.y),
-        propsRun.z.add(max(pMax.z.mul(reach).sub(propsRun.z), 0).mul(kB)), propsRun.w.add(max(pMax.w.mul(reach).sub(propsRun.w), 0).mul(kB)));
+        zMelt.add(max(pMax.z.mul(reach).sub(zMelt), 0).mul(kB)), wMelt.add(max(pMax.w.mul(reach).sub(wMelt), 0).mul(kB)));
       mat.colorNode = colorOut;
       mat.mrtNode = mrt({ color: colorOut, props: propsOut });
       return new QuadMesh(mat);
@@ -425,7 +447,7 @@ export class PaintLayer {
     const half = (h: number) => { const s = (h >> 15) & 1, e = (h >> 10) & 31, f = h & 1023; const m = e === 0 ? f / 1024 * 2 ** -14 : (1 + f / 1024) * 2 ** (e - 15); return (s ? -1 : 1) * m; };
     const c = await renderer.readRenderTargetPixelsAsync(t, x, y, 1, 1, 0);
     const p = await renderer.readRenderTargetPixelsAsync(t, x, y, 1, 1, 1);
-    return { a: +half(c[3]).toFixed(3), t: +half(p[0]).toFixed(3), w: +half(p[1]).toFixed(3) };
+    return { a: +half(c[3]).toFixed(3), t: +half(p[0]).toFixed(3), w: +half(p[1]).toFixed(3), r: +half(p[2]).toFixed(3) };
   }
 
   /** Dev: read one texel of colour and props at (u, v). */
@@ -442,7 +464,9 @@ export class PaintLayer {
     let best = 0, bx = -1;
     for (let x = 0; x < PAINT_W; x++) { const a = half(c[x * 4 + 3]); if (a > best) { best = a; bx = x; } }
     const px = (arr: ArrayLike<number>, x: number) => [0, 1, 2, 3].map((i) => +half(arr[x * 4 + i]).toFixed(3));
-    return { bx, u: bx / PAINT_W, color: px(c, Math.max(bx, 0)), props: px(p, Math.max(bx, 0)), empty: { color: px(c, 10), props: px(p, 10) } };
+    const alphas: number[] = []; let sum = 0;
+    for (let x = 0; x < PAINT_W; x++) { const a = half(c[x * 4 + 3]); alphas.push(a); sum += a; }
+    return { bx, u: bx / PAINT_W, color: px(c, Math.max(bx, 0)), props: px(p, Math.max(bx, 0)), empty: { color: px(c, 10), props: px(p, 10) }, alphas, sum: +sum.toFixed(1) };
   }
 
   private point() {
@@ -472,9 +496,10 @@ export class PaintLayer {
       this.scrape.count = 0;
     }
     // 2. run and dry: current -> next, then swap
-    uRunAt.value = sim.runAt; uRunNoise.value = sim.runNoise; uLane.value = sim.lane * K; uLaneSharp.value = sim.laneSharp; uRunRate.value = sim.runRate; uDry.value = sim.dry; uGravity.value = sim.gravity; uSpread.value = sim.spread; uBleed.value = sim.bleed; uGravityObj.value.copy(sim.gravityObj);
+    uRunAt.value = sim.runAt; uRunNoise.value = sim.runNoise; uLane.value = sim.lane * K; uLaneSharp.value = sim.laneSharp; uRunRate.value = sim.runRate; uDry.value = sim.dry; uGravity.value = sim.gravity; uSpread.value = sim.spread; uBleed.value = sim.bleed; uMelt.value = sim.melt; uGrow.value = sim.grow; uGravityObj.value.copy(sim.gravityObj);
     // The run moves at most a texel a step, so slow frames take more steps: the pace is the same at 60 and 120.
     const steps = Math.max(1, Math.min(4, Math.round(dt * 120)));
+    sim.steps += steps;
     for (let i = 0; i < steps; i++) {
       const next = 1 - this.cur;
       renderer.setRenderTarget(this.targets[next]);

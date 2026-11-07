@@ -58,9 +58,10 @@ function balloonMaterial(side: typeof FrontSide | typeof BackSide) {
   const e = vec2(float(26 * K / PAINT_W).mul(uScale), 26 * K / PAINT_H);
   const around = paint.colorAt(uv().sub(vec2(e.x, 0))).a.add(paint.colorAt(uv().add(vec2(e.x, 0))).a)
     .add(paint.colorAt(uv().sub(vec2(0, e.y))).a).add(paint.colorAt(uv().add(vec2(0, e.y))).a).mul(0.25);
-  // A wash: no thickness, and the glaze's glass-smooth finish (0.04), which no other brush lays. Pencil paint and
-  // spray are thin too but keep their own finish, so they get none of the watercolour.
-  const wash = float(1).sub(saturate(p.x.mul(4))).mul(float(1).sub(smoothstep(0.05, 0.1, p.z.div(max(c.a, 0.001))))).toVar();
+  // A wash: no thickness, and no roughness at all, which only the glaze lays. Pencil paint and spray are thin too
+  // but carry their finish, so they get none of the watercolour. (Roughness over coverage climbs with the overlap,
+  // since the props target adds roughness up but saturates coverage; nought stays nought.)
+  const wash = float(1).sub(saturate(p.x.mul(4))).mul(float(1).sub(smoothstep(0.02, 0.06, p.z.div(max(c.a, 0.001))))).toVar();
   const ring = saturate(c.a.sub(around).mul(uEdge)).mul(wash);
   const washA = c.a.mul(ring.mul(1.3).add(1));
   const cov = max(saturate(washA), saturate(p.x.mul(2.5))).toVar();
@@ -78,7 +79,7 @@ function balloonMaterial(side: typeof FrontSide | typeof BackSide) {
   const opaque = uDebug.equal(5).or(uDebug.equal(7));
   m.colorNode = select(flat, dbgView, mix(vec3(0), tint, cov));
   m.opacityNode = select(flat.or(opaque), float(1), mix(float(0.008).add(fresnel.mul(0.6)), float(1), cov));
-  const roughPaint = p.z.div(safe).toVar();
+  const roughPaint = mix(p.z.div(safe), float(0.04), wash).toVar(); // a wash is glass smooth
   // Wet paint glosses up, but matte less so: it stays dull even wet.
   const wetGloss = wet.mul(uWetGloss).mul(float(1).sub(smoothstep(0.6, 0.9, roughPaint)));
   m.roughnessNode = select(flat, float(1), mix(float(0.08), roughPaint.mul(mix(1, 0.3, wetGloss)), cov));
