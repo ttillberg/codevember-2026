@@ -10,6 +10,20 @@ type Medium = 'glaze' | 'bristle' | 'spray' | 'flat' | 'scrape';
 const MEDIA: Medium[] = ['glaze', 'bristle', 'spray', 'flat', 'scrape'];
 const FINISHES: Finish[] = ['matte', 'gloss', 'metal'];
 
+// The media as little pictures: a drop, a bristle brush, a spray can, a flat swatch, a blade.
+const MEDIUM_ICON: Record<Medium, string> = {
+  glaze: 'M8 2.5c2.5 3.5 4 5.5 4 7.5a4 4 0 0 1-8 0c0-2 1.5-4 4-7.5z',
+  bristle: 'M4 3h8v4H4zM5 7v5M7 7v6M9 7v6M11 7v5',
+  spray: 'M6 6h4v7.5H6zM7 6V4.5h2V6M9 3h1.5M11.5 3.5l1-1M11.5 5h1.5',
+  flat: 'M3 4h10v8H3z',
+  scrape: 'M3 11l7-7 3 3-7 7H3zM9 5l3 3',
+};
+const MediumIcon = ({ m }: { m: Medium }) => (
+  <svg width="26" height="26" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.1" strokeLinecap="round" strokeLinejoin="round">
+    <path d={MEDIUM_ICON[m]} />
+  </svg>
+);
+
 type Num = 'size' | 'flow' | 'liquid' | 'watery';
 const RANGE: Record<Num, { min: number; max: number; step: number }> = {
   size: { min: 0.01, max: 0.2, step: 0.005 },
@@ -26,15 +40,17 @@ const OPTIONS: Record<Medium, Num[]> = {
 };
 
 // A floating frosted panel holding every control, Figma style.
-// It writes straight into `tool` like the old palette; the old UI's changes show up here because we re-render after
-// any click, input or key.
+// It writes straight into `tool`; it re-renders after any click, input or key.
 export function Panel() {
   const [, bump] = useState(0);
   useEffect(() => {
     const again = () => bump((n) => n + 1);
+    // Space toggles auto draw.
+    const key = (e: KeyboardEvent) => { if (e.code === 'Space') { e.preventDefault(); tool.auto = !tool.auto; again(); } };
+    window.addEventListener('keydown', key);
     const events = ['click', 'input', 'keyup'];
     events.forEach((ev) => window.addEventListener(ev, again));
-    return () => { events.forEach((ev) => window.removeEventListener(ev, again)) };
+    return () => { events.forEach((ev) => window.removeEventListener(ev, again)); window.removeEventListener('keydown', key); };
   }, []);
   // Buttons give up focus after a click so the space bar stays the auto toggle.
   const set = (fn: () => void) => { fn(); (document.activeElement as HTMLElement | null)?.blur?.(); };
@@ -56,10 +72,18 @@ export function Panel() {
   );
 
   return (
+    <>
+    {/* The media, as big icons in a frosted bar under the balloon. */}
+    <div className="ft-media">
+      {MEDIA.map((m) => (
+        <button key={m} title={m} aria-label={m} className={tool.brush === m ? 'on' : ''} onClick={() => set(() => { tool.brush = m; })}>
+          <MediumIcon m={m} />
+        </button>
+      ))}
+    </div>
     <div className="ft-drawer">
         <section>
-          <h4>Medium</h4>
-          {chips(MEDIA, tool.brush, (v) => { tool.brush = v; })}
+          <h4>{tool.brush}</h4>
           {(OPTIONS[tool.brush as Medium] ?? []).map(slider)}
         </section>
         <section>
@@ -85,5 +109,6 @@ export function Panel() {
         </section>
         <p className="ft-help"><b>Click + drag</b> paint and turn<br /><b>Cmd + move</b> turn without painting<br /><b>Space</b> auto draw</p>
     </div>
+    </>
   );
 }

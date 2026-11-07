@@ -2,7 +2,6 @@ import { Canvas } from '@react-three/fiber';
 import { WebGPURenderer } from 'three/webgpu';
 import { Balloon } from './Balloon';
 import { Shadow } from './Shadow';
-import { Palette } from './Palette';
 import { Panel } from './Panel';
 import { makeStudio } from './env';
 import { useMemo } from 'react';
@@ -27,7 +26,6 @@ export function App() {
         <Shadow />
       </Canvas>
       <div id="reticle" className="reticle" />
-      <Palette />
       <Panel />
     </>
   );
