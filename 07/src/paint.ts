@@ -18,10 +18,10 @@ import {
 
 // The paint target's size, a quality setting: read once at load, since the targets and every shader are built
 // on it; changing it reloads the page.
-export type Quality = 'lo' | 'med' | 'hi';
-export const QUALITY: Record<Quality, number> = { lo: 1024, med: 2048, hi: 4096 };
+export type Quality = 'low' | 'medium' | 'high';
+export const QUALITY: Record<Quality, number> = { low: 1024, medium: 2048, high: 4096 };
 const QKEY = 'codevember-07-quality';
-export const quality: Quality = (() => { try { const q = localStorage.getItem(QKEY) as Quality; return q in QUALITY ? q : 'med'; } catch { return 'med'; } })();
+export const quality: Quality = (() => { try { const q = localStorage.getItem(QKEY) as Quality; return q in QUALITY ? q : 'medium'; } catch { return 'medium'; } })();
 export const setQuality = (q: Quality) => { try { localStorage.setItem(QKEY, q); } catch { /* ignore */ } location.reload(); };
 export const PAINT_W = QUALITY[quality], PAINT_H = PAINT_W / 2;
 // Texels per medium texel: distances set in texels (lanes, the pigment ring, the bump) scale with it, so the

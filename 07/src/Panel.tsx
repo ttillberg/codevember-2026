@@ -494,7 +494,7 @@ export function Panel() {
         <Pop name="settings" tip="Settings" icon={<GearIcon />} className="ft-menu">
           <Row label="Auto draw" hint="Space" on={tool.auto} act={() => set(() => { tool.auto = !tool.auto; })} />
           <Row label="Inertia" on={tool.inertia} act={() => set(() => { tool.inertia = !tool.inertia; })} />
-          <Row label={`Texture ${quality}`} hint={`${PAINT_W}×${PAINT_W / 2}`} act={() => {
+          <Row label={`Texture ${quality.toUpperCase()}`} hint={`${PAINT_W}×${PAINT_W / 2}`} act={() => {
             // Reloads: the targets and shaders are built on the size.
             const qs = Object.keys(QUALITY) as Quality[];
             setQuality(qs[(qs.indexOf(quality) + 1) % qs.length]);
