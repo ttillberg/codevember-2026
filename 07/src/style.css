@@ -96,23 +96,7 @@ canvas.grabbing { cursor: grabbing; }
     linear-gradient(180deg, #f4f4f4 0%, #9a9a9a 44%, #161616 50%, #3c3c3c 68%, #c9c9c9 100%);
 }
 
-/* The medium's options: a popover of fat horizontal sliders. */
-.ft-media button.ft-opts { width: 34px; height: 34px; align-self: center; border-radius: 50%; }
-.ft-opts svg { width: 18px; height: 18px; }
 .ft-popover.open { pointer-events: auto; }
-.ft-sliders { display: flex; flex-direction: column; gap: 6px; width: 200px; padding: 10px; border-radius: 22px; box-sizing: border-box; }
-.ft-sliders.open { pointer-events: auto; }
-.ft-slide { padding: 4px 4px 6px; cursor: ew-resize; touch-action: none; }
-.ft-slide-text {
-  display: flex; justify-content: space-between; margin: 0 2px 6px; pointer-events: none;
-  font: 500 11px/1 Inter, "Helvetica Neue", Helvetica, Arial, sans-serif; color: rgba(0, 0, 0, 0.55);
-  text-transform: capitalize; font-variant-numeric: tabular-nums;
-}
-.ft-slide-text b { font-weight: 500; color: #111; }
-.ft-slide-track { position: relative; height: 10px; border-radius: 999px; background: rgba(0, 0, 0, 0.08); }
-.ft-slide-track i {
-  position: absolute; left: 0; top: 0; bottom: 0; width: calc(10px + var(--t) * (100% - 10px)); border-radius: 999px; background: #111;
-}
 
 /* Settings and help: small menus over their buttons. */
 .ft-menu {

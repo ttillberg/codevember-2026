@@ -33,7 +33,7 @@ const RANGE: Record<Num, { min: number; max: number; step: number }> = {
   liquid: { min: 0, max: 1, step: 0.01 },
   watery: { min: 0, max: 1, step: 0.01 },
 };
-// What each medium answers to beyond size, flow and colour, which they all share and which sit in the bar.
+// What each medium answers to beyond size, flow and colour; it sits beside the medium in the bar.
 const OPTIONS: Record<Medium, Num[]> = {
   glaze: ['watery'],
   bristle: ['liquid'],
@@ -105,6 +105,24 @@ const FlowDisc = ({ t }: { t: number }) => (
     <path d="M21.5 4.5A12 12 0 0 1 4.5 21.5z" style={{ fill: `color-mix(in srgb, currentColor ${Math.round(t * 100)}%, var(--empty))` }} />
   </svg>
 );
+// Watery or liquid, the medium's own option: a drop filled up to the level, like the ramp.
+const DROP = 'M13 2.5C17.2 8 19.5 11.6 19.5 15.5a6.5 6.5 0 0 1-13 0C6.5 11.6 8.8 8 13 2.5z';
+const WetDrop = ({ t }: { t: number }) => (
+  <svg width="32" height="32" viewBox="0 0 26 26" className="ft-ramp">
+    <clipPath id="ft-drop-fill"><rect x="0" y={22 - t * 19.5} width="26" height="26" /></clipPath>
+    <path d={DROP} className="ft-ramp-bg" />
+    <path d={DROP} clipPath="url(#ft-drop-fill)" />
+  </svg>
+);
+function WetKnob({ k }: { k: Num }) {
+  const { min, max } = RANGE[k];
+  return (
+    <Knob name={k} get={() => (tool[k] - min) / (max - min)} put={(v) => { tool[k] = min + v * (max - min); }}
+      face={(t) => <WetDrop t={t} />}
+      track={(t) => <><span className="ft-fill" /><b>{Math.round(t * 100)}</b></>} />
+  );
+}
+
 function FlowKnob() {
   const { min, max } = RANGE.flow;
   return (
@@ -227,37 +245,8 @@ function Picker<T extends string>({ name, items, cur, put, icon, solid, others }
   );
 }
 
-// One option as a slider: the name and value over a pill track. Drag anywhere on it, the value under the pointer.
-function OptionSlider({ k }: { k: Num }) {
-  const [, bump] = useState(0);
-  const { min, max } = RANGE[k];
-  const t = (tool[k] - min) / (max - min);
-  const at = (e: React.PointerEvent<HTMLElement>) => {
-    const r = e.currentTarget.getBoundingClientRect();
-    tool[k] = min + Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)) * (max - min);
-    bump((n) => n + 1);
-  };
-  return (
-    <div className="ft-slide" style={{ '--t': t } as React.CSSProperties}
-      onPointerDown={(e) => { e.currentTarget.setPointerCapture(e.pointerId); at(e); }}
-      onPointerMove={(e) => { if (e.currentTarget.hasPointerCapture(e.pointerId)) at(e); }}>
-      <div className="ft-slide-text"><span>{k}</span><b>{Math.round(t * 100)}</b></div>
-      <div className="ft-slide-track"><i /></div>
-    </div>
-  );
-}
-
-// The current medium's options, behind a little sliders button next to it.
-const OptionsIcon = () => (
-  <svg width="22" height="22" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.1" strokeLinecap="round">
-    <path d="M2.5 5h11M2.5 11h11" />
-    <circle cx="6" cy="5" r="1.6" fill="currentColor" /><circle cx="10.5" cy="11" r="1.6" fill="currentColor" />
-  </svg>
-);
 // A small icon button in the bar that opens a popover above it; a press elsewhere or escape closes it.
-function Pop({ name, icon, className, small, children }: {
-  name: string; icon: React.ReactNode; className: string; small?: boolean; children: React.ReactNode;
-}) {
+function Pop({ name, icon, className, children }: { name: string; icon: React.ReactNode; className: string; children: React.ReactNode }) {
   const [open, setOpen] = useState(false);
   const box = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -270,7 +259,7 @@ function Pop({ name, icon, className, small, children }: {
   }, [open]);
   return (
     <div className="ft-knob" ref={box}>
-      <button aria-label={name} title={name} className={`${small ? 'ft-opts' : ''}${open ? ' on' : ''}`}
+      <button aria-label={name} title={name} className={open ? 'on' : ''}
         onPointerDown={(e) => e.preventDefault()} onClick={() => setOpen((o) => !o)}>
         {icon}
       </button>
@@ -334,11 +323,7 @@ export function Panel() {
     {/* Every control, in a frosted bar under the balloon. */}
     <div className="ft-media">
       <Picker name="medium" items={MEDIA} cur={tool.brush as Medium} put={(m) => { tool.brush = m; }} icon={(m) => <MediumIcon m={m} />} solid others />
-      {OPTIONS[tool.brush as Medium].length > 0 && (
-        <Pop name={`${tool.brush} options`} icon={<OptionsIcon />} className="ft-sliders" small>
-          {OPTIONS[tool.brush as Medium].map((k) => <OptionSlider key={`${tool.brush}-${k}`} k={k} />)}
-        </Pop>
-      )}
+      {OPTIONS[tool.brush as Medium].map((k) => <WetKnob key={k} k={k} />)}
       <span className="ft-sep" />
       <SizeKnob />
       <FlowKnob />
