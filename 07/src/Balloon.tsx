@@ -132,7 +132,8 @@ export function Balloon() {
     const d: Dab = {
       u, v, angle, seed,
       // Watery glaze: wider, thinner. Its softness rides in the rough slot, which the glaze doesn't use.
-      size: tool.size * (glaze ? 1 + w * 0.7 : 1) * grow,
+      // The spray dab is drawn bigger than the brush: its dense core is the brush, the mist goes outside it.
+      size: tool.size * (glaze ? 1 + w * 0.7 : tool.brush === 'spray' ? 1.7 : 1) * grow,
       rgb: hexToRgb(tool.hex),
       // Dabs overlap many times along the stroke, so each one carries only a little.
       flow: FLOW[tool.brush] * tool.flow * (glaze ? 1 - w * 0.45 : 1),
@@ -147,12 +148,12 @@ export function Balloon() {
     if (tool.brush === 'spray' && Math.random() < 0.07) {
       const n = 1 + Math.floor(Math.random() * 2);
       for (let i = 0; i < n; i++) {
-        const r = tool.size * (0.5 + Math.random() * 1.0), t = Math.random() * Math.PI * 2;
+        const r = tool.size * (0.55 + Math.random() * 0.5), t = Math.random() * Math.PI * 2;
         const circ = 2 * Math.max(Math.sin(v * Math.PI), 0.05);
         paint.add({
           ...d, brush: 'round', seed: Math.random() * 1000, angle: 0,
           u: ((u + Math.cos(t) * r / circ) % 1 + 1) % 1, v: Math.min(0.999, Math.max(0.001, v + Math.sin(t) * r)),
-          size: tool.size * (0.06 + Math.random() ** 2 * 0.22), flow: 0.5 + Math.random() * 0.4, load: 0.3, // thin, or the bump rings them
+          size: tool.size * (0.03 + Math.random() ** 2 * 0.06), flow: 0.6 + Math.random() * 0.4, load: 0.3, // small dots, thin
         });
       }
     }
