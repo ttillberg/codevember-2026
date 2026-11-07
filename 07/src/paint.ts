@@ -172,15 +172,9 @@ const dabShape = (style: any, seed: any) => Fn(() => {
   const bristle = smoothstep(1, 0.8, d).mul(select(lane.greaterThan(0.35), float(1), float(0))).mul(mix(0.6, 1, along));
   // Scrape: a flat blade, hard edged across, soft along.
   const scrape = smoothstep(1, 0.85, q.x.abs()).mul(smoothstep(1, 0.5, q.y.abs()));
-  // Glaze: colour fused into the glass. A soft disc whose edge is eaten by noise drawn out along v, like a hot
-  // worked inclusion; the noise is in target space so overlapping dabs run into one field.
-  const t = screenUV.mul(vec2(PAINT_W, PAINT_H));
-  const pull = mx_noise_float(vec3(t.x.div(16), t.y.div(70), seed.mul(0.01))).mul(0.5).add(0.5);
-  const fine = mx_noise_float(vec3(t.x.div(5), t.y.div(22), seed.mul(0.013))).mul(0.5).add(0.5);
-  const edge = pull.mul(0.65).add(fine.mul(0.35));
-  const core = smoothstep(0.65, 0.3, d);
-  const halo = smoothstep(1.05, 0.3, d).mul(smoothstep(0.3, 0.75, edge));
-  const glaze = max(core, halo.mul(0.85));
+  // Glaze: colour fused into the glass, a smooth soft-edged blob; the balloon shader gathers its pigment at
+  // the edge and lenses it.
+  const glaze = smoothstep(1, 0.45, d);
   return select(style.lessThan(0.5), round, select(style.lessThan(1.5), spray, select(style.lessThan(2.5), bristle,
     select(style.lessThan(3.5), scrape, glaze))));
 })();
@@ -207,6 +201,13 @@ export class PaintLayer {
     return node as any;
   }
 
+  /** A colour read at another uv, likewise. */
+  colorAt(uvNode: any) {
+    const node = texture(this.targets[this.cur].textures[0], uvNode);
+    this.readers.push({ node, index: 0 });
+    return node as any;
+  }
+
   constructor() {
     // Paint dabs: premultiplied, One / OneMinusSrcAlpha into both targets, so thickness, roughness and metalness
     // are set to the brush's where it covers and kept where it doesn't.
@@ -217,7 +218,8 @@ export class PaintLayer {
       mat.positionNode = dabPosition(dab);
       const a = dabShape(vMisc.x, vMisc.y).mul(vCol.w).toVar();
       const isGlaze = vMisc.x.greaterThan(3.5);
-      const brushLoad = select(vMisc.x.lessThan(0.5), float(LOAD.round), select(vMisc.x.lessThan(1.5), float(LOAD.spray), float(LOAD.bristle)));
+      const brushLoad = select(vMisc.x.lessThan(0.5), float(LOAD.round), select(vMisc.x.lessThan(1.5), float(LOAD.spray),
+        select(vMisc.x.lessThan(2.5), float(LOAD.bristle), float(0)))); // scrape and glaze lay no thickness
       const load = select(vExtra.x.lessThan(0), brushLoad, vExtra.x);
       // Impasto: the paint is laid thicker and thinner across the dab, in ridges along the stroke.
       // In target space (the ortho pass fills the target, so screenUV is it), so overlapping dabs agree.
