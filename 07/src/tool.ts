@@ -23,7 +23,9 @@ export const SWATCHES: { name: string; hex: string }[] = [
 export const tool = {
   brush: 'glaze' as Brush,
   finish: 'gloss' as Finish,
-  hex: '#00aaff', // a cyan blue, on the colour strip between cyan and blue
+  hex: '#00aaff', // a cyan blue, between cyan and blue: made from hue and shade
+  hue: 0.5556, // round the wheel, 0 red .. 1 red again
+  shade: 0.5, // 0 black, 0.5 the pure hue, 1 white
   size: 0.086, // pole to pole units, 40% along the size knob
   flow: 0.9,
   auto: false, // paint without holding the button

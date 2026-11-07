@@ -3,7 +3,7 @@
 import { save, tool } from './tool';
 
 const KEY = 'codevember-07-presets';
-const FIELDS = ['brush', 'finish', 'hex', 'size', 'flow', 'liquid', 'watery'] as const;
+const FIELDS = ['brush', 'finish', 'hex', 'hue', 'shade', 'size', 'flow', 'liquid', 'watery'] as const;
 type Preset = Pick<typeof tool, (typeof FIELDS)[number]>;
 
 let slots: Record<string, Preset> = {};
