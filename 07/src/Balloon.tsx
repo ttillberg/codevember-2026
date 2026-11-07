@@ -7,7 +7,7 @@ const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
 // Dab spacing as a fraction of the brush size, and the alpha each dab adds, so a stroke builds up smoothly rather
 // than popping in dab by dab: about a dozen dabs overlap at any point of a round stroke.
 const SPACING: Record<Brush, number> = { round: 0.06, bristle: 0.06, spray: 0.08, scrape: 0.08, glaze: 0.035 };
-const FLOW: Record<Brush, number> = { round: 0.2, bristle: 0.3, spray: 0.12, scrape: 0.12, glaze: 0.055 };
+const FLOW: Record<Brush, number> = { round: 0.2, bristle: 0.3, spray: 0.12, scrape: 0.12, glaze: 0.09 };
 
 // The wheel, tunable live. A trackball: drag turns the balloon about the axis across the drag, any direction,
 // and it keeps turning once let go at the speed of the last move, slowing only a little. Grabbing never stops it.
@@ -34,7 +34,7 @@ const uDebug = uniform(0);
 const uWetGloss = uniform(1);
 const uBump = uniform(sim.bump);
 const uGrain = uniform(sim.grain);
-const uEdge = uniform(5); // how much pigment gathers at a wash's edge
+const uEdge = uniform(3); // how much pigment gathers at a wash's edge
 if (import.meta.env.DEV) { (window as any).__tool = tool; (window as any).__drips = dripSettings; (window as any).__wheel = wheel; (window as any).__sim = sim; (window as any).__paint = paint; (window as any).__dbg = uDebug; (window as any).__wetGloss = uWetGloss; (window as any).__edge = uEdge; }
 
 // Thin clear rubber with paint on it. Clear rubber has no diffuse of its own, only its reflections and a faint
@@ -50,13 +50,17 @@ function balloonMaterial(side: typeof FrontSide | typeof BackSide) {
   // Thick paint covers even where few dabs landed, so runs read as paint and not as a glaze.
   // Watercolour on the flat, dry washes (the glaze): pigment gathers where the wash ends, so the edge of a stroke,
   // and the edge of one layer over another, is denser than the middle, which is a little granular.
-  const e = vec2(12 / PAINT_W, 12 / PAINT_H);
-  const aL = paint.colorAt(uv().sub(vec2(e.x, 0))).a, aR = paint.colorAt(uv().add(vec2(e.x, 0))).a;
-  const aD = paint.colorAt(uv().sub(vec2(0, e.y))).a, aU = paint.colorAt(uv().add(vec2(0, e.y))).a;
-  const slopeA = vec2(aR.sub(aL), aU.sub(aD)).toVar();
+  // The ring sits just inside the rim: where the coverage is above the mean of its surroundings, a good way out,
+  // the pigment has dried denser. Wide and soft, like a coffee ring, not a line.
+  const e = vec2(26 / PAINT_W, 26 / PAINT_H);
+  const around = paint.colorAt(uv().sub(vec2(e.x, 0))).a.add(paint.colorAt(uv().add(vec2(e.x, 0))).a)
+    .add(paint.colorAt(uv().sub(vec2(0, e.y))).a).add(paint.colorAt(uv().add(vec2(0, e.y))).a).mul(0.25);
   const wash = float(1).sub(saturate(p.x.mul(4))).toVar(); // no thickness: a wash
-  const edgeUp = saturate(slopeA.length().mul(uEdge)).mul(wash);
-  const washA = c.a.mul(edgeUp.mul(1.6).add(1));
+  const ring = saturate(c.a.sub(around).mul(uEdge)).mul(wash);
+  // And the body of a wash is granular, the pigment settling unevenly.
+  const grainW = mx_noise_float(uv().mul(vec2(PAINT_W / 20, PAINT_H / 20))).mul(0.5).add(0.5);
+  const body = mix(float(1), grainW.mul(0.25).add(0.85), wash);
+  const washA = c.a.mul(body).mul(ring.mul(1.3).add(1));
   const cov = max(saturate(washA), saturate(p.x.mul(2.5))).toVar();
   const safe = max(c.a, 0.001);
   const tint = c.rgb.div(safe);
@@ -126,7 +130,7 @@ export function Balloon() {
       size: tool.size * (glaze ? 1 + w * 0.7 : 1),
       rgb: hexToRgb(tool.hex),
       // Dabs overlap many times along the stroke, so each one carries only a little.
-      flow: FLOW[tool.brush] * tool.flow * (glaze ? 1 - w * 0.65 : 1),
+      flow: FLOW[tool.brush] * tool.flow * (glaze ? 1 - w * 0.45 : 1),
       brush: tool.brush,
       rough: glaze ? w : finish.rough,
       metal: finish.metal,

@@ -174,7 +174,11 @@ const dabShape = (style: any, seed: any, watery: any) => Fn(() => {
   const scrape = smoothstep(1, 0.85, q.x.abs()).mul(smoothstep(1, 0.5, q.y.abs()));
   // Glaze: colour fused into the glass, a smooth soft-edged blob, softer the more watery (that rides in the
   // rough slot); the balloon shader gathers its pigment at the edge and lenses it.
-  const glaze = smoothstep(1, float(0.5).sub(watery.mul(0.45)), d);
+  // The outline wanders: noise in target space pushes the rim in and out, so the wash's edge is ragged the way a
+  // wet edge dries, and the same across every dab of the stroke.
+  const tt = screenUV.mul(vec2(PAINT_W, PAINT_H));
+  const rim = mx_noise_float(vec3(tt.x.div(40), tt.y.div(40), 3.7)).mul(0.5).add(0.5);
+  const glaze = smoothstep(1, float(0.5).sub(watery.mul(0.4)), d.add(rim.sub(0.5).mul(0.2)));
   return select(style.lessThan(0.5), round, select(style.lessThan(1.5), spray, select(style.lessThan(2.5), bristle,
     select(style.lessThan(3.5), scrape, glaze))));
 })();
