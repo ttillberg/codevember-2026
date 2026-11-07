@@ -190,8 +190,8 @@ const dabShape = (style: any, seed: any, watery: any) => Fn(() => {
   // into grain instead of averaging into a fog.
   const texel = floor(screenUV.mul(vec2(PAINT_W, PAINT_H)));
   const n = hash(texel.x.add(texel.y.mul(PAINT_W)).add(0.5));
-  const core = smoothstep(0.5, 0.1, d).mul(mix(0.6, 1, n));
-  const density = smoothstep(1.0, 0.3, d).pow(2).mul(0.5);
+  const core = smoothstep(0.85, 0.3, d).mul(mix(0.6, 1, n));
+  const density = smoothstep(1.0, 0.5, d).pow(2).mul(0.5);
   const mist = select(n.lessThan(density), float(0.6), float(0));
   const spray = max(core, mist);
   // Bristle: streaks along the stroke, broken up along it.

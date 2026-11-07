@@ -141,8 +141,8 @@ export function Balloon() {
     const d: Dab = {
       u, v, angle, seed,
       // Watery glaze: wider, thinner. Its softness rides in the rough slot, which the glaze doesn't use.
-      // The spray dab is drawn bigger than the brush: its dense core is the brush, the mist goes outside it.
-      size: tool.size * (glaze ? 1 + w * 0.7 : tool.brush === 'spray' ? 1.5 : 1) * grow,
+      // The spray dab is drawn a little bigger than the brush: the dense core fills the ring, the speckles go just outside.
+      size: tool.size * (glaze ? 1 + w * 0.7 : tool.brush === 'spray' ? 1.2 : 1) * grow,
       rgb: hexToRgb(tool.hex),
       // Dabs overlap many times along the stroke, so each one carries only a little.
       flow: FLOW[tool.brush] * tool.flow * (glaze ? 1 - w * 0.45 : 1),
