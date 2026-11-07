@@ -96,3 +96,6 @@ body[data-theme="dark"] .planets button { color: #f2f2f2; }
 .transport input[type="range"]::-moz-range-thumb { width: 22px; height: 15px; border: 0; border-radius: 8px; background: #fff; }
 
 
+
+/* The orbits switch, under the planets. */
+.planets .orbits { margin-top: 14px; font-size: 14px; }

@@ -13,9 +13,9 @@ export const focus = { distance: 30, amount: 0 };
 export const FOCUS_SPEED = 3;
 
 // How far out the camera circles each planet, bigger for the ones with rings or clumps of moons round them.
-const VIEW: Record<string, number> = { Jupiter: 11, Saturn: 13, Uranus: 11, Neptune: 9 };
+const VIEW: Record<string, number> = { Jupiter: 15, Saturn: 19, Uranus: 15, Neptune: 12 };
 const DEFAULT_VIEW = 8.5;
-const HOME = new Vector3(0, 72.6, 0.001);
+const HOME = new Vector3(0, 85, 0.001);
 const HOME_TARGET = new Vector3(0, 12.6, 0);
 const SUN = new Vector3(0, 12.6, 0);
 // The camera sits out beyond the planet, looking in past it at the sun, swung this far round to one side (radians)

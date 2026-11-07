@@ -3,6 +3,8 @@ import { useFrame } from '@react-three/fiber';
 import { BallCollider, RigidBody, type RapierRigidBody } from '@react-three/rapier';
 import {
   AdditiveBlending,
+  BoxGeometry,
+  BufferAttribute,
   BufferGeometry,
   type Group,
   Color,
@@ -17,8 +19,9 @@ import {
   Vector3,
 } from 'three';
 import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
-import { LENGTH, PlanetCandy } from './Beans';
-import { clock } from './clock';
+import { mergeGeometries, mergeVertices } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
+import { LENGTH, NEPTUNE, NonpareilDrop, PlanetCandy, TRITON_COLOURS } from './Beans';
+import { clock, motion } from './clock';
 import { moonPositions, planetPositions } from './world';
 
 // The planets' main moons, as small sugar coated sweets on circles round their planet beans. Real periods (days),
@@ -39,6 +42,8 @@ type Moon = {
   allsort?: Allsort; // one of the liquorice allsorts instead of a ball
   gumball?: boolean; // a glossy pastel gumball, like Saturn
   bean?: string; // a little jelly bean, the same sweet as this planet's
+  nonpareil?: boolean; // a little nonpareil drop like Neptune, in pinks
+  popcorn?: boolean; // a piece of popcorn
 };
 // Liquorice allsorts: a square of layers (bottom to top), or a roll, a coloured coat round a core.
 export type Allsort =
@@ -52,7 +57,7 @@ const tipped = (deg: number, axis = new Vector3(1, 0, 0)) => UP.clone().applyAxi
 
 const SYSTEMS: System[] = [
   // The Moon's orbit is tipped 5° to Earth's.
-  { host: 'Earth', normal: tipped(5.1), moons: [{ name: 'Moon', period: 27.32, orbit: 2.5, radius: 0.45, colour: '#f1f3f6', metal: true }] },
+  { host: 'Earth', normal: tipped(5.1), moons: [{ name: 'Moon', period: 27.32, orbit: 2.5, radius: 0.42, colour: '#f6ecd0', popcorn: true }] },
   {
     host: 'Mars',
     normal: tipped(1),
@@ -67,17 +72,17 @@ const SYSTEMS: System[] = [
     normal: tipped(2),
     moons: [
       // Jupiter's moons are liquorice allsorts, round its big yellow roll.
-      { name: 'Io', period: 1.769, orbit: 2.7, radius: 0.3, colour: '#f06a9a', allsort: { kind: 'bobble', colour: '#f06a9a' } },
-      { name: 'Europa', period: 3.551, orbit: 3.2, radius: 0.32, colour: '#f3efe6', allsort: { kind: 'layers', layers: ['#f3efe6', '#1a1416', '#f3efe6', '#1a1416', '#f3efe6'] } },
-      { name: 'Ganymede', period: 7.155, orbit: 3.75, radius: 0.4, colour: '#f2a65a', allsort: { kind: 'layers', layers: ['#f2a65a', '#1a1416', '#f2a65a'] } },
-      { name: 'Callisto', period: 16.689, orbit: 4.35, radius: 0.36, colour: '#1a1416', allsort: { kind: 'roll', coat: '#1a1416', core: '#f3efe6' } },
+      { name: 'Io', period: 1.769, orbit: 3.4, radius: 0.3, colour: '#f06a9a', allsort: { kind: 'bobble', colour: '#f06a9a' } },
+      { name: 'Europa', period: 3.551, orbit: 3.95, radius: 0.32, colour: '#f3efe6', allsort: { kind: 'layers', layers: ['#f3efe6', '#1a1416', '#f3efe6', '#1a1416', '#f3efe6'] } },
+      { name: 'Ganymede', period: 7.155, orbit: 4.55, radius: 0.4, colour: '#f2a65a', allsort: { kind: 'layers', layers: ['#f2a65a', '#1a1416', '#f2a65a'] } },
+      { name: 'Callisto', period: 16.689, orbit: 5.2, radius: 0.36, colour: '#1a1416', allsort: { kind: 'roll', coat: '#1a1416', core: '#f3efe6' } },
     ],
   },
   // Titan, just beyond the belt of little gumballs: a gumball itself, orange. The belt bends round it as it passes.
-  { host: 'Saturn', normal: tipped(-20), moons: [{ name: 'Titan', period: 15.945, orbit: 3.5, radius: 0.3, colour: '#f5a04e', gumball: true }] },
+  { host: 'Saturn', normal: tipped(-20), moons: [{ name: 'Titan', period: 15.945, orbit: 5.4, radius: 0.3, colour: '#f5a04e', gumball: true }] },
   // Uranus's moons aren't here: they're gum drops stuck on to it, see Beans.
   // Triton goes round backwards, on an orbit tipped well over.
-  { host: 'Neptune', normal: tipped(23), moons: [{ name: 'Triton', period: -5.877, orbit: 2.4, radius: 0.3, colour: '#ead6d2' }] },
+  { host: 'Neptune', normal: tipped(23), moons: [{ name: 'Triton', period: -5.877, orbit: 3.0, radius: 0.3, colour: '#de3592', nonpareil: true }] },
 ];
 
 const SECONDS = 6; // a moon's squeezed period, in seconds, per square root of its real period in days: Phobos, the quickest, goes round in about 3.4 s, never a blur
@@ -127,7 +132,7 @@ function MoonBody({ moon, system, index }: { moon: Moon; system: System; index: 
     if (!host || !ref.current) return;
     // Turns a second: the real pace at the clock's speed, or the squeezed one, whichever is slower.
     const period = Math.abs(moon.period);
-    const turns = clock.paused ? 0 : Math.min(clock.speed / period, 1 / (SECONDS * Math.sqrt(period)));
+    const turns = clock.paused ? 0 : Math.min(clock.speed / period, motion() / (SECONDS * Math.sqrt(period)));
     angle.current += dt * turns * Math.sign(moon.period) * Math.PI * 2;
     const a = angle.current;
     before.copy(at);
@@ -145,10 +150,11 @@ function MoonBody({ moon, system, index }: { moon: Moon; system: System; index: 
     vel.x += (at.x - p.x) * PULL;
     vel.y += (at.y - p.y) * PULL;
     vel.z += (at.z - p.z) * PULL;
-    rb.setLinvel(vel, true);
+    rb.setLinvel(clock.paused ? { x: 0, y: 0, z: 0 } : vel, true);
     // Their own spin, from knocks, never runs away: capped, and damped back down (angularDamping below).
     const turning = rb.angvel(), spin = Math.hypot(turning.x, turning.y, turning.z);
-    if (spin > MAX_SPIN) {
+    if (clock.paused) rb.setAngvel({ x: 0, y: 0, z: 0 }, true); // paused: everything holds still
+    else if (spin > MAX_SPIN) {
       const k = MAX_SPIN / spin;
       rb.setAngvel({ x: turning.x * k, y: turning.y * k, z: turning.z * k }, true);
     }
@@ -163,7 +169,13 @@ function MoonBody({ moon, system, index }: { moon: Moon; system: System; index: 
       <BallCollider args={[moon.radius]} restitution={0.8} density={DENSITY} />
       {/* Not drawn while the camera is inside it, following a planet past it. */}
       <group ref={look}>
-      {moon.bean ? (
+      {moon.popcorn ? (
+        <Popcorn radius={moon.radius} seed={index + 4} />
+      ) : moon.nonpareil ? (
+        <group scale={moon.radius / NEPTUNE.a}>
+          <NonpareilDrop colours={TRITON_COLOURS} core="#5e0934" count={500} />
+        </group>
+      ) : moon.bean ? (
         // The planet's own sweet, shrunk to a moon: a bean a bit more than twice its radius long.
         <group scale={(moon.radius * 2.4) / LENGTH}>
           <PlanetCandy name={moon.bean} />
@@ -188,6 +200,52 @@ function MoonBody({ moon, system, index }: { moon: Moon; system: System; index: 
       </group>
     </RigidBody>
   );
+}
+
+// The Moon is a piece of popcorn: a puffy, lumpy cluster of lobes burst out of the kernel, matt and super white, the
+// faintest warm tint down between them, with a scrap of brown hull stuck on.
+function popcornGeometry(radius: number, seed: number) {
+  let s = seed * 7 + 3;
+  const rnd = () => ((s = (s * 16807) % 2147483647) - 1) / 2147483646;
+  const lobes: BufferGeometry[] = [];
+  const cream = new Color('#ffffff'), butter = new Color('#f6efe0'), hull = new Color('#7a4a24'), c = new Color();
+  const lobe = (r: number, at: Vector3, colour: Color, lumps: number) => {
+    const raw = new IcosahedronGeometry(r, 4);
+    raw.deleteAttribute('normal');
+    raw.deleteAttribute('uv');
+    const g = mergeVertices(raw); // shared corners, so it shades smooth
+    const p = g.attributes.position, v = new Vector3(), colours = new Float32Array(p.count * 3), k = rnd() * 10;
+    for (let i = 0; i < p.count; i++) {
+      v.fromBufferAttribute(p, i);
+      const n = v.clone().normalize();
+      // Puffed and creased, like a burst kernel.
+      const bump = 1 + lumps * (Math.sin(n.x * 5 + k) * Math.sin(n.y * 4 - k) * Math.sin(n.z * 6 + k * 0.5) + 0.4 * Math.sin(n.x * 11 + n.z * 9 + k));
+      v.multiplyScalar(bump).add(at);
+      p.setXYZ(i, v.x, v.y, v.z);
+      // Buttery towards the middle of the piece, creamy out at the tips.
+      c.copy(butter).lerp(colour, Math.min(1, v.length() / radius));
+      colours.set([c.r, c.g, c.b], i * 3);
+    }
+    g.setAttribute('color', new BufferAttribute(colours, 3));
+    lobes.push(g);
+  };
+  lobe(radius * 0.55, new Vector3(), cream, 0.12);
+  const count = 6 + Math.floor(rnd() * 3);
+  for (let i = 0; i < count; i++) {
+    const y = rnd() * 2 - 1, a = rnd() * Math.PI * 2, ring = Math.sqrt(1 - y * y);
+    const dir = new Vector3(Math.cos(a) * ring, y, Math.sin(a) * ring);
+    lobe(radius * (0.32 + rnd() * 0.2), dir.multiplyScalar(radius * (0.42 + rnd() * 0.15)), cream, 0.16);
+  }
+  lobe(radius * 0.16, new Vector3(0, -radius * 0.5, radius * 0.18), hull, 0.25); // the hull
+  const merged = mergeGeometries(lobes);
+  merged.computeVertexNormals();
+  return merged;
+}
+// Super white: a strong glow of its own as well, so even its shaded side stays bright.
+const POPCORN = new MeshPhysicalMaterial({ vertexColors: true, roughness: 0.82, sheen: 0.5, sheenColor: '#ffffff', emissive: '#ffffff', emissiveIntensity: 0.75 });
+function Popcorn({ radius, seed }: { radius: number; seed: number }) {
+  const geometry = useMemo(() => popcornGeometry(radius, seed), [radius, seed]);
+  return <mesh geometry={geometry} material={POPCORN} castShadow receiveShadow />;
 }
 
 // Liquorice allsorts are soft and handmade looking: corners rounded off, surfaces slightly uneven, layers not quite
@@ -403,6 +461,62 @@ export function Moons() {
   return (
     <>
       {SYSTEMS.flatMap((s) => s.moons.map((m, i) => <MoonBody key={m.name} moon={m} system={s} index={i} />))}
+      <SpaceStation />
     </>
+  );
+}
+
+// The International Space Station, in candy, so small it only shows once you're close to the Earth: a candy cane
+// truss, three marshmallow modules across it, and eight panels of dark blue hard candy, going round low and fast on
+// an orbit tipped 51.6°, always pointing the way it's going. Not part of the physics.
+const ISS_ORBIT = 1.36 + 0.42; // just off the Earth's pebbles
+const ISS_TURNS = 0.12; // turns a second at full speed (the real one goes round about every 92 minutes)
+const ISS_NORMAL = new Vector3(0, 1, 0).applyAxisAngle(new Vector3(1, 0, 0), (51.6 * Math.PI) / 180);
+const CANE = (() => {
+  // The truss: a thin stick striped red and white along its length, lying along x.
+  const g = new CylinderGeometry(0.012, 0.012, 0.56, 10, 28).rotateZ(Math.PI / 2);
+  const p = g.attributes.position, colours = new Float32Array(p.count * 3), red = new Color('#e0242c'), white = new Color('#ffffff');
+  for (let i = 0; i < p.count; i++) {
+    const c = Math.floor((p.getX(i) + 0.28) / 0.04) % 2 ? red : white;
+    colours.set([c.r, c.g, c.b], i * 3);
+  }
+  g.setAttribute('color', new BufferAttribute(colours, 3));
+  return g;
+})();
+const CANE_MATERIAL = new MeshPhysicalMaterial({ vertexColors: true, roughness: 0.3, clearcoat: 0.8, emissive: '#ffffff', emissiveIntensity: 0.08 });
+const MALLOW = new CylinderGeometry(0.032, 0.032, 0.11, 16).rotateX(Math.PI / 2);
+const MALLOWS = ['#f7c6d9', '#ffffff', '#c9f0de'].map((colour) => new MeshPhysicalMaterial({ color: colour, roughness: 0.85, sheen: 0.6, sheenColor: '#ffffff', emissive: colour, emissiveIntensity: 0.2 }));
+const PANEL = new BoxGeometry(0.11, 0.004, 0.05);
+const PANEL_MATERIAL = new MeshPhysicalMaterial({ color: '#1b2f8a', roughness: 0.15, clearcoat: 1, emissive: '#1b2f8a', emissiveIntensity: 0.35 });
+function SpaceStation() {
+  const ref = useRef<Group>(null!);
+  const s = useMemo(() => ({ angle: 0, at: new Vector3(), ahead: new Vector3(), u: new Vector3(1, 0, 0).projectOnPlane(ISS_NORMAL).normalize(), w: new Vector3() }), []);
+  s.w.crossVectors(ISS_NORMAL, s.u);
+  const look = useMemo(() => new Matrix4(), []);
+  useFrame((_, dt) => {
+    const earth = planetPositions.get('Earth');
+    if (!earth || !ref.current) return;
+    s.angle += dt * Math.min(clock.paused ? 0 : clock.speed * 15.5, motion() * ISS_TURNS) * Math.PI * 2;
+    const place = (a: number, out: Vector3) =>
+      out.copy(earth).addScaledVector(s.u, Math.cos(a) * ISS_ORBIT).addScaledVector(s.w, Math.sin(a) * ISS_ORBIT);
+    place(s.angle, s.at);
+    place(s.angle + 0.05, s.ahead);
+    ref.current.position.copy(s.at);
+    // The truss across the way it's going, the panels' faces towards the Earth.
+    look.lookAt(s.at, s.ahead, s.at.clone().sub(earth).normalize());
+    ref.current.quaternion.setFromRotationMatrix(look);
+  });
+  return (
+    <group ref={ref}>
+      <mesh geometry={CANE} material={CANE_MATERIAL} />
+      {MALLOWS.map((m, i) => (
+        <mesh key={i} geometry={MALLOW} material={m} position={[(i - 1) * 0.036, 0, 0.04]} />
+      ))}
+      {[-1, 1].flatMap((side) =>
+        [0, 1, 2, 3].map((k) => (
+          <mesh key={`${side}${k}`} geometry={PANEL} material={PANEL_MATERIAL} position={[side * (0.17 + (k % 2) * 0.12), 0, k < 2 ? 0.035 : -0.035]} />
+        )),
+      )}
+    </group>
   );
 }

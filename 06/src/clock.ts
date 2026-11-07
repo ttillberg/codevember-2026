@@ -6,3 +6,9 @@ export const clock = {
   speed: 30, // days per second
   paused: false,
 };
+
+// How fast the scene's own motions run (spins, wriggles, wobbles, the belt, the pod), as a multiplier on real
+// time: still when paused, full at the fastest speed (×5, 30 days a second) they were tuned at, and slower with the
+// clock, eased (a square root) so slow motion still moves.
+export const FULL_SPEED = 30;
+export const motion = () => (clock.paused ? 0 : Math.sqrt(clock.speed / FULL_SPEED));

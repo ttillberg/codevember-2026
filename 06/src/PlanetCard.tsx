@@ -9,7 +9,7 @@ import { pick, usePicked } from './selection';
 // The flavour each planet's bean would be.
 const FLAVOUR: Record<string, string> = {
   Mercury: 'dark chocolate button, white nonpareils on top',
-  Earth: 'blue raspberry and lime, a silver Moon on the side',
+  Earth: 'a ball of blue and green nonpareils, a popcorn Moon',
   Venus: 'hard butter caramel',
   Mars: 'cinnamon fire chilli bean, two little ones in tow',
   Jupiter: 'coconut roll round a liquorice core',

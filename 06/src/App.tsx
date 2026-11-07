@@ -5,6 +5,7 @@ import { Physics } from '@react-three/rapier';
 import { BackSide, NeutralToneMapping, PCFShadowMap } from 'three';
 import { AO } from './AO';
 import { CameraRig } from './CameraRig';
+import { Orbits } from './Orbits';
 import { PlanetList } from './PlanetList';
 import { Beans } from './Beans';
 import { PlanetCard } from './PlanetCard';
@@ -201,13 +202,14 @@ export function App() {
   useEffect(() => void (document.body.dataset.theme = 'dark'), []);
   return (
     <>
-      <Canvas camera={{ position: [0, 72.6, 0.001], fov: 40, near: 1, far: 250 }} dpr={[1, 2]} shadows={{ type: PCFShadowMap }} gl={{ toneMapping: NeutralToneMapping }} onPointerMissed={() => pick(null)}>
+      <Canvas camera={{ position: [0, 85, 0.001], fov: 40, near: 0.1, far: 250 }} dpr={[1, 2]} shadows={{ type: PCFShadowMap }} gl={{ toneMapping: NeutralToneMapping }} onPointerMissed={() => pick(null)}>
         <color attach="background" args={[BACKGROUND]} />
         <Tick />
         <DevHooks />
         <Studio />
         <Sun />
         <Space />
+        <Orbits />
         <Suspense fallback={null}>
           <Physics gravity={[0, -30, 0]} timeStep={1 / 60}>
             <Beans />

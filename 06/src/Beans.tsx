@@ -1,8 +1,9 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useFrame } from '@react-three/fiber';
 import { BallCollider, CapsuleCollider, CylinderCollider, RigidBody, type RapierRigidBody } from '@react-three/rapier';
-import { AdditiveBlending, BufferAttribute, LatheGeometry, Vector2, CanvasTexture, RepeatWrapping, Vector4, Color, SRGBColorSpace, type Group as THREE_Group, InstancedMesh, Matrix4, type Mesh, ShaderMaterial, MeshPhysicalMaterial, Quaternion, SphereGeometry, Vector3 } from 'three';
-import { clock } from './clock';
+import { AdditiveBlending, BufferAttribute, IcosahedronGeometry, LatheGeometry, Vector2, CanvasTexture, RepeatWrapping, Vector4, Color, SRGBColorSpace, type Group as THREE_Group, InstancedMesh, Matrix4, type Mesh, ShaderMaterial, MeshPhysicalMaterial, Quaternion, SphereGeometry, Vector3 } from 'three';
+import { mergeVertices } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
+import { clock, motion } from './clock';
 import { PLANETS, type Planet } from './planets';
 import { planetAt } from './scale';
 import { AllsortSweet, Moons, type Allsort } from './Moons';
@@ -239,7 +240,7 @@ let throwSweets: ((f: Fling[]) => void) | null = null;
 // How far the belt keeps from each planet passing through it, in scene units: a bean's half length (whichever way
 // it's turned), Jupiter's roll, Uranus with its moon drops. And how soft the bend round them is.
 // (Jupiter and Uranus are sized further down, so their numbers are repeated here from LENGTH.)
-const AVOID: Record<string, number> = { bean: LENGTH * 0.55, Jupiter: LENGTH * 0.45 * 1.3, Uranus: LENGTH * 0.36 * 1.6 };
+const AVOID: Record<string, number> = { bean: LENGTH * 0.55, Jupiter: LENGTH * 0.68 * 1.3, Uranus: LENGTH * 0.51 * 1.6, Neptune: LENGTH * 0.55 };
 const AVOID_SOFT = 0.8;
 const TITAN_AVOID = 0.3 + 0.25; // Titan's radius and a little room
 const BLOCKERS = Array.from({ length: 4 }, () => ({ at: new Vector3(), r: 0, soft: 0 }));
@@ -366,8 +367,9 @@ function SaturnBelt({ shadows, playful }: { shadows: boolean; playful: boolean }
       }
     }
 
+    const rate = motion();
     sweets.forEach((s, i) => {
-      s.a += dt * s.w;
+      s.a += dt * rate * s.w;
       if (s.gone > 0 && s.gone !== Infinity) s.gone = Math.max(0, s.gone - dt);
       // Gone while it's away, then growing back over its last second.
       const grow = s.gone > 1 ? 0 : 1 - s.gone;
@@ -463,34 +465,12 @@ function Flings() {
   );
 }
 
-// Earth's atmosphere: a slightly bigger shell round the bean, clear where you look straight through it and a soft
-// blue glow towards its rim, where the line of sight runs through more air. Added on top, no shadows, no depth.
-const ATMOSPHERE = new ShaderMaterial({
-  uniforms: { uColour: { value: new Color('#7fb8ff') } },
-  vertexShader: /* glsl */ `
-    varying vec3 vN, vV;
-    void main() {
-      vec4 mv = modelViewMatrix * vec4(position, 1.0);
-      vN = normalize(normalMatrix * normal);
-      vV = normalize(-mv.xyz);
-      gl_Position = projectionMatrix * mv;
-    }`,
-  fragmentShader: /* glsl */ `
-    uniform vec3 uColour;
-    varying vec3 vN, vV;
-    void main() {
-      float rim = pow(1.0 - abs(dot(normalize(vN), normalize(vV))), 2.5);
-      gl_FragColor = vec4(uColour, rim * 0.75);
-    }`,
-  transparent: true,
-  depthWrite: false,
-  blending: AdditiveBlending,
-});
 
 // A planet's jelly bean on its own, with Saturn's ring: used in the scene and in the close up card.
 // Jupiter isn't a jelly bean: it's the big one from the liquorice allsorts, a yellow roll round a black liquorice
 // core, lying along its orbit like the beans and spinning about its length. Its moons are allsorts too.
-export const JUPITER_RADIUS = LENGTH * 0.45;
+// Sizes go in three classes, from the Earth's (LENGTH * 0.34) up: the gas giants twice it, the ice giants one and a half.
+export const JUPITER_RADIUS = LENGTH * 0.68;
 const JUPITER_ROLL: Allsort = { kind: 'roll', coat: '#f2d65a', core: '#1a1416' };
 const JUPITER_LENGTH = JUPITER_RADIUS * 1.5; // the roll's length, as AllsortSweet makes it
 
@@ -498,7 +478,7 @@ const JUPITER_LENGTH = JUPITER_RADIUS * 1.5; // the roll's length, as AllsortSwe
 // PBR: real transmission for the gum, sheen for the frost, and painted maps (colour, bump, roughness) for the sugar
 // grains and the faint wavy bands. It spins about the bean's length, which lies along its orbit, so like the real
 // Uranus it rolls round on its side; the sphere is turned so its poles, and the bands, go round that axis.
-export const URANUS_RADIUS = LENGTH * 0.36;
+export const URANUS_RADIUS = LENGTH * 0.51;
 
 // The maps, painted once on canvases laid out like the sphere's UVs (longitude across, latitude down): the gum in two
 // shades, in soft wavy bands if it has any, and sugar grains over it.
@@ -712,7 +692,7 @@ function MoonDrops({ playful }: { playful: boolean }) {
     [],
   );
   useFrame((_, dt) => {
-    if (playful && !clock.paused) stepDrops(Math.min(dt, 0.1));
+    if (playful && !clock.paused) stepDrops(Math.min(dt, 0.1) * motion());
     meshes.current.forEach((m, i) => m && m.matrix.copy(DROPS[i].matrix));
   });
   return (
@@ -734,7 +714,7 @@ function MoonDrops({ playful }: { playful: boolean }) {
 // Mercury is a little chocolate button covered in white nonpareils: a round, flattish oval, smaller than the beans,
 // lying along its orbit like them, dark glossy chocolate a little uneven, the beads thickest round the rim and
 // scattered over the faces. It rolls like the beans do, so it's dotted on both sides.
-const MERCURY = { a: LENGTH * 0.29, b: LENGTH * 0.16, c: LENGTH * 0.28 }; // half length, half height, half width
+const MERCURY = { a: LENGTH * 0.24, b: LENGTH * 0.13, c: LENGTH * 0.23 }; // half length, half height, half width
 const NONPAREILS = 1100;
 const CHOCOLATE_GEOMETRY = (() => {
   const g = new SphereGeometry(1, 96, 48);
@@ -780,7 +760,7 @@ function ChocolateButton({ shadows }: { shadows: boolean }) {
 
 // Saturn is a big gumball, the round chewing gum from a gumball machine: a pastel ball, glossy, not quite round,
 // its colour a little mottled, with a belt of little gumballs round it.
-const SATURN_RADIUS = LENGTH * 0.38;
+const SATURN_RADIUS = LENGTH * 0.68;
 const SATURN_GEOMETRY = (() => {
   const g = new SphereGeometry(SATURN_RADIUS, 96, 64);
   // Mottled: the colour drifts a little lighter and darker over the ball, as the coat was panned on.
@@ -802,7 +782,7 @@ const GUMBALL = new MeshPhysicalMaterial({ color: '#f5c46c', vertexColors: true,
 // Venus is a hard butter caramel: a round golden puck, glossy and a little see-through, its face a raised ring round
 // a shallow dip with a small dome in the middle, its edge well rounded. Turned on a lathe. The planets roll, so it's
 // the same on both faces.
-const CARAMEL = { r: LENGTH * 0.28, h: LENGTH * 0.16 }; // radius, half thickness
+const CARAMEL = { r: LENGTH * 0.32, h: LENGTH * 0.18 }; // radius, half thickness
 const CARAMEL_GEOMETRY = (() => {
   const { r: R, h: H } = CARAMEL, edge = R * 0.42; // a wide, soft edge, so it's more pebble than puck
   const smooth = (a: number, b: number, x: number) => {
@@ -847,8 +827,8 @@ const CARAMEL_MATERIAL = (() => {
 
 // Neptune is a jelly drop rolled in blue nonpareils: a soft, slightly squarish dome (a superquadric) packed all over
 // with tiny beads, mostly deep blues, a few pale ones and white. One instanced mesh of beads on a dark blue core.
-const NEPTUNE = { a: LENGTH * 0.36, b: LENGTH * 0.31, c: LENGTH * 0.36, n: 2.6 }; // half sizes, squareness
-const NEPTUNE_BEADS = 3600;
+export const NEPTUNE = { a: LENGTH * 0.51, b: LENGTH * 0.44, c: LENGTH * 0.51, n: 2.6 }; // half sizes, squareness
+const NEPTUNE_BEADS = 7200;
 const NEPTUNE_BEAD = LENGTH * 0.019;
 const NEPTUNE_COLOURS: [string, number][] = [['#2a2c86', 0.42], ['#3f55c2', 0.3], ['#6f86e0', 0.14], ['#a9bbf2', 0.08], ['#f1f3fb', 0.06]];
 const onNeptune = (d: Vector3, out: Vector3) => {
@@ -865,31 +845,46 @@ const NEPTUNE_CORE = (() => {
   g.computeVertexNormals();
   return g;
 })();
-const NEPTUNE_CORE_MATERIAL = new MeshPhysicalMaterial({ color: '#1c1f6a', roughness: 0.5 });
 const NEPTUNE_BEAD_GEOMETRY = new SphereGeometry(1, 10, 8);
 const NEPTUNE_BEAD_MATERIAL = new MeshPhysicalMaterial({ roughness: 0.38, clearcoat: 0.5, clearcoatRoughness: 0.3 });
 NEPTUNE_BEAD_MATERIAL.onBeforeCompile = (sh) => {
   // Sugar beads scatter light, so they keep a little of their own colour on the shaded side.
   sh.fragmentShader = sh.fragmentShader.replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\n  totalEmissiveRadiance += diffuseColor.rgb * 0.2;');
 };
-function NonpareilDrop({ shadows }: { shadows: boolean }) {
+// Its moon Triton is a little one of the same, in pinks.
+export const TRITON_COLOURS: [string, number][] = [['#a3125f', 0.4], ['#de3592', 0.3], ['#f27cc0', 0.15], ['#ffc2e3', 0.09], ['#fff4fa', 0.06]];
+
+// A nonpareil drop: by default Neptune itself; with fewer beads they're drawn bigger, so it's still packed.
+export function NonpareilDrop({
+  shadows = true,
+  colours = NEPTUNE_COLOURS,
+  core = '#1c1f6a',
+  count = NEPTUNE_BEADS,
+}: {
+  shadows?: boolean;
+  colours?: [string, number][];
+  core?: string;
+  count?: number;
+}) {
   const ref = useRef<InstancedMesh>(null!);
+  const coreMaterial = useMemo(() => new MeshPhysicalMaterial({ color: core, roughness: 0.5 }), [core]);
+  const grow = Math.sqrt(NEPTUNE_BEADS / count);
   useLayoutEffect(() => {
     let seed = 17;
     const rnd = () => ((seed = (seed * 16807) % 2147483647) - 1) / 2147483646;
     const m = new Matrix4(), q = new Quaternion(), at = new Vector3(), d = new Vector3(), n = new Vector3(), size = new Vector3(), c = new Color();
     const { a, b, c: cc, n: sq } = NEPTUNE;
-    for (let i = 0; i < NEPTUNE_BEADS; i++) {
+    for (let i = 0; i < count; i++) {
       const y = rnd() * 2 - 1, t = rnd() * Math.PI * 2, ring = Math.sqrt(1 - y * y);
       onNeptune(d.set(Math.cos(t) * ring, y, Math.sin(t) * ring), at);
       // The surface's normal there, from the superquadric's slope.
       n.set(Math.sign(at.x) * Math.abs(at.x / a) ** (sq - 1) / a, Math.sign(at.y) * Math.abs(at.y / b) ** (sq - 1) / b, Math.sign(at.z) * Math.abs(at.z / cc) ** (sq - 1) / cc).normalize();
-      const k = NEPTUNE_BEAD * (0.8 + rnd() * 0.45);
+      const k = NEPTUNE_BEAD * grow * (0.8 + rnd() * 0.45);
       at.addScaledVector(n, k * (0.35 + rnd() * 0.4)); // sitting in the jelly, some a little proud
       m.compose(at, q, size.setScalar(k));
       ref.current.setMatrixAt(i, m);
-      let pick = rnd(), colour = NEPTUNE_COLOURS[0][0];
-      for (const [hex, share] of NEPTUNE_COLOURS) {
+      let pick = rnd(), colour = colours[0][0];
+      for (const [hex, share] of colours) {
         if ((pick -= share) <= 0) {
           colour = hex;
           break;
@@ -899,14 +894,144 @@ function NonpareilDrop({ shadows }: { shadows: boolean }) {
     }
     ref.current.instanceMatrix.needsUpdate = true;
     if (ref.current.instanceColor) ref.current.instanceColor.needsUpdate = true;
-  }, []);
+  }, [colours, count, grow]);
   return (
     <>
-      <mesh geometry={NEPTUNE_CORE} material={NEPTUNE_CORE_MATERIAL} receiveShadow={shadows} />
-      <instancedMesh ref={ref} args={[NEPTUNE_BEAD_GEOMETRY, NEPTUNE_BEAD_MATERIAL, NEPTUNE_BEADS]} castShadow={shadows} receiveShadow={shadows} />
+      <mesh geometry={NEPTUNE_CORE} material={coreMaterial} receiveShadow={shadows} />
+      <instancedMesh ref={ref} args={[NEPTUNE_BEAD_GEOMETRY, NEPTUNE_BEAD_MATERIAL, count]} castShadow={shadows} receiveShadow={shadows} />
     </>
   );
 }
+
+// Earth: see EarthGumball below.
+export const EARTH_RADIUS = LENGTH * 0.34;
+const smoothstep = (a: number, b: number, x: number) => {
+  const t = Math.min(1, Math.max(0, (x - a) / (b - a)));
+  return t * t * (3 - 2 * t);
+};
+// Where the land is, from smooth noise over the ball: 0 sea, 1 land, with soft coasts. Kept off the poles.
+const landAt = (d: Vector3) => {
+  const n =
+    Math.sin(d.x * 2.1 + 0.3) * Math.sin(d.y * 2.6 - 1.1) * Math.sin(d.z * 2.3 + 2.0) +
+    0.55 * Math.sin(d.y * 4.7 + d.z * 3.9 + 0.8) * Math.sin(d.x * 3.3 - 0.4) +
+    0.25 * Math.sin(d.z * 9.1 - d.y * 7.3 + d.x * 5.2);
+  return smoothstep(0.12, 0.26, n) * (1 - smoothstep(0.62, 0.72, Math.abs(d.x)));
+};
+// Earth as a cluster of crunchy candy pebbles round a dark blue gum middle, the way those sweets come: big, lumpy,
+// sugary pebbles packed all over, green over the land and light blue over the sea, so it still reads as the Earth.
+const EARTH_PEBBLES = 130; // the big ones
+const EARTH_FILLERS = 300; // smaller ones in between, sitting a little lower
+const EARTH_GREENS = ['#22b53a', '#3fcc45', '#6edc5a', '#16993a', '#8fe26a'];
+const EARTH_BLUES = ['#45b2f2', '#6cc8ff', '#3a9ae6'];
+// One lumpy pebble, a smooth shaded icosahedron with its surface pushed about a little.
+const PEBBLE_GEOMETRY = (() => {
+  const raw = new IcosahedronGeometry(1, 4);
+  raw.deleteAttribute('normal');
+  raw.deleteAttribute('uv');
+  const g = mergeVertices(raw), p = g.attributes.position, v = new Vector3();
+  for (let i = 0; i < p.count; i++) {
+    v.fromBufferAttribute(p, i);
+    v.multiplyScalar(1 + 0.08 * Math.sin(v.x * 4 + 1) * Math.sin(v.y * 5 - 2) * Math.sin(v.z * 4.5) + 0.04 * Math.sin(v.x * 9 + v.z * 7));
+    p.setXYZ(i, v.x, v.y, v.z);
+  }
+  g.computeVertexNormals();
+  return g;
+})();
+// Crunchy sugar: matt, a fine grain in the normal, and a little glow of its own colour.
+const PEBBLE_MATERIAL = new MeshPhysicalMaterial({ roughness: 0.66, sheen: 0.12, sheenColor: '#ffffff', clearcoat: 0.15, clearcoatRoughness: 0.5 });
+PEBBLE_MATERIAL.onBeforeCompile = (sh) => {
+  sh.vertexShader = sh.vertexShader
+    .replace('void main() {', 'varying vec3 vPebble;\nvarying mat3 vToView;\nvoid main() {')
+    .replace('#include <begin_vertex>', '#include <begin_vertex>\n  vPebble = position;\n  vToView = normalMatrix * mat3(instanceMatrix);');
+  sh.fragmentShader = sh.fragmentShader
+    .replace(
+      'void main() {',
+      /* glsl */ `varying vec3 vPebble;
+  varying mat3 vToView;
+  float hash(vec3 p) { return fract(sin(dot(p, vec3(127.1, 311.7, 74.7))) * 43758.5453); }
+  float noise(vec3 p) {
+    vec3 i = floor(p), f = fract(p);
+    f = f * f * (3.0 - 2.0 * f);
+    return mix(
+      mix(mix(hash(i), hash(i + vec3(1, 0, 0)), f.x), mix(hash(i + vec3(0, 1, 0)), hash(i + vec3(1, 1, 0)), f.x), f.y),
+      mix(mix(hash(i + vec3(0, 0, 1)), hash(i + vec3(1, 0, 1)), f.x), mix(hash(i + vec3(0, 1, 1)), hash(i + vec3(1, 1, 1)), f.x), f.y),
+      f.z);
+  }
+void main() {`,
+    )
+    .replace(
+      '#include <color_fragment>',
+      /* glsl */ `#include <color_fragment>
+  // Each pebble's colour a little uneven: darker down in its creases, a touch lighter on its bumps.
+  float tone = noise(vPebble * 3.0) * 0.6 + noise(vPebble * 7.0) * 0.4;
+  diffuseColor.rgb *= 0.78 + 0.36 * tone;
+  // Sugar crystals: a few tiny bright specks.
+  float speck = step(0.93, noise(vPebble * 38.0));
+  diffuseColor.rgb = mix(diffuseColor.rgb, vec3(1.0), speck * 0.55);`,
+    )
+    .replace('#include <roughnessmap_fragment>', '#include <roughnessmap_fragment>\n  roughnessFactor = mix(roughnessFactor, 0.2, speck); // the crystals glint')
+    .replace(
+      '#include <normal_fragment_maps>',
+      /* glsl */ `#include <normal_fragment_maps>
+  // Crunchy sugar: two scales of grain.
+  vec3 q = vPebble * 9.0;
+  float e = 0.1, g0 = noise(q) + 0.5 * noise(q * 3.1);
+  vec3 gr = vec3(noise(q + vec3(e, 0, 0)) + 0.5 * noise((q + vec3(e, 0, 0)) * 3.1) - g0, noise(q + vec3(0, e, 0)) + 0.5 * noise((q + vec3(0, e, 0)) * 3.1) - g0, noise(q + vec3(0, 0, e)) + 0.5 * noise((q + vec3(0, 0, e)) * 3.1) - g0) / e;
+  normal = normalize(normal - normalize(vToView * gr + 1e-5) * min(length(gr), 2.0) * 0.16);`,
+    )
+    .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\n  totalEmissiveRadiance += diffuseColor.rgb * 0.16;');
+};
+const EARTH_CORE_MATERIAL = new MeshPhysicalMaterial({ color: '#244fa8', roughness: 0.3, clearcoat: 0.5, emissive: '#16357a', emissiveIntensity: 0.4 });
+function EarthGumball({ shadows }: { shadows: boolean }) {
+  const ref = useRef<InstancedMesh>(null!);
+  const core = useMemo(() => new SphereGeometry(EARTH_RADIUS * 0.86, 48, 32), []);
+  useLayoutEffect(() => {
+    let seed = 23;
+    const rnd = () => ((seed = (seed * 16807) % 2147483647) - 1) / 2147483646;
+    const m = new Matrix4(), q = new Quaternion(), d = new Vector3(), size = new Vector3(), axis = new Vector3(), c = new Color();
+    const golden = Math.PI * (3 - Math.sqrt(5));
+    for (let i = 0; i < EARTH_PEBBLES; i++) {
+      // Spread evenly round the ball (a Fibonacci spiral), each nudged off its place a little.
+      const y = 1 - (2 * (i + 0.5)) / EARTH_PEBBLES, ring = Math.sqrt(1 - y * y), a = i * golden;
+      d.set(Math.cos(a) * ring + (rnd() - 0.5) * 0.12, y + (rnd() - 0.5) * 0.12, Math.sin(a) * ring + (rnd() - 0.5) * 0.12).normalize();
+      // A lumpy pebble, longer one way than the others, any which way, half sunk into the gum.
+      const k = EARTH_RADIUS * (0.2 + rnd() * 0.09);
+      q.setFromAxisAngle(axis.set(rnd() - 0.5, rnd() - 0.5, rnd() - 0.5).normalize(), rnd() * Math.PI);
+      size.set(k * (1.1 + rnd() * 0.35), k * (0.8 + rnd() * 0.2), k * (0.85 + rnd() * 0.2));
+      m.compose(d.clone().multiplyScalar(EARTH_RADIUS * 0.92), q, size);
+      ref.current.setMatrixAt(i, m);
+      const sea = landAt(d) < 0.4;
+      const blue = sea ? rnd() < 0.8 : rnd() < 0.08;
+      const list = blue ? EARTH_BLUES : EARTH_GREENS;
+      ref.current.setColorAt(i, c.set(list[Math.floor(rnd() * list.length)]));
+    }
+    // The fillers: smaller pebbles on their own spiral, offset from the big ones', a little deeper in the gum.
+    for (let j = 0; j < EARTH_FILLERS; j++) {
+      const i = EARTH_PEBBLES + j;
+      const y = 1 - (2 * (j + 0.5)) / EARTH_FILLERS, ring = Math.sqrt(1 - y * y), a = j * golden + 1.3;
+      d.set(Math.cos(a) * ring + (rnd() - 0.5) * 0.1, y + (rnd() - 0.5) * 0.1, Math.sin(a) * ring + (rnd() - 0.5) * 0.1).normalize();
+      const k = EARTH_RADIUS * (0.09 + rnd() * 0.06);
+      q.setFromAxisAngle(axis.set(rnd() - 0.5, rnd() - 0.5, rnd() - 0.5).normalize(), rnd() * Math.PI);
+      size.set(k * (1.1 + rnd() * 0.3), k * (0.8 + rnd() * 0.2), k * (0.85 + rnd() * 0.2));
+      m.compose(d.clone().multiplyScalar(EARTH_RADIUS * 0.9), q, size);
+      ref.current.setMatrixAt(i, m);
+      const sea = landAt(d) < 0.4;
+      const list = (sea ? rnd() < 0.8 : rnd() < 0.08) ? EARTH_BLUES : EARTH_GREENS;
+      ref.current.setColorAt(i, c.set(list[Math.floor(rnd() * list.length)]));
+    }
+    ref.current.instanceMatrix.needsUpdate = true;
+    if (ref.current.instanceColor) ref.current.instanceColor.needsUpdate = true;
+  }, []);
+  return (
+    <>
+      <mesh geometry={core} material={EARTH_CORE_MATERIAL} receiveShadow={shadows} />
+      <instancedMesh ref={ref} args={[PEBBLE_GEOMETRY, PEBBLE_MATERIAL, EARTH_PEBBLES + EARTH_FILLERS]} castShadow={shadows} receiveShadow={shadows} />
+    </>
+  );
+}
+
+// Beans a little smaller than the rest.
+const BEAN_SIZE: Record<string, number> = { Mars: 0.86 };
 
 export function PlanetCandy({ name, shadows = true, playful = false }: { name: string; shadows?: boolean; playful?: boolean }) {
   const c = CANDY[name];
@@ -918,13 +1043,14 @@ export function PlanetCandy({ name, shadows = true, playful = false }: { name: s
   if (name === 'Jupiter') return <AllsortSweet allsort={JUPITER_ROLL} size={JUPITER_RADIUS} seed={3} />;
   if (name === 'Mercury') return <ChocolateButton shadows={shadows} />;
   if (name === 'Neptune') return <NonpareilDrop shadows={shadows} />;
+  if (name === 'Earth') return <EarthGumball shadows={shadows} />;
   if (name === 'Venus') return <mesh geometry={CARAMEL_GEOMETRY} material={CARAMEL_MATERIAL} castShadow={shadows} receiveShadow={shadows} />;
   if (name === 'Saturn')
     return (
       <>
         <mesh geometry={SATURN_GEOMETRY} material={GUMBALL} castShadow={shadows} receiveShadow={shadows} />
         {/* Its belt round its middle, tipped a little. */}
-        <group rotation={[0, Math.PI / 2, 0.35]} scale={LENGTH}>
+        <group rotation={[0, Math.PI / 2, 0.35]} scale={LENGTH * 1.55}>
           <SaturnBelt shadows={shadows} playful={playful} />
         </group>
       </>
@@ -938,8 +1064,7 @@ export function PlanetCandy({ name, shadows = true, playful = false }: { name: s
     );
   return (
     <>
-      <mesh geometry={geometry} material={material} scale={LENGTH} castShadow={shadows} receiveShadow={shadows} />
-      {name === 'Earth' && <mesh geometry={geometry} material={ATMOSPHERE} scale={LENGTH * 1.09} />}
+      <mesh geometry={geometry} material={material} scale={LENGTH * (BEAN_SIZE[name] ?? 1)} castShadow={shadows} receiveShadow={shadows} />
       {c.ring && (
         // Saturn's ring round the bean's waist, tipped a little.
         <group rotation={[0, Math.PI / 2, 0.35]} scale={LENGTH}>
@@ -952,7 +1077,7 @@ export function PlanetCandy({ name, shadows = true, playful = false }: { name: s
 
 // How near the camera can come to a planet before it's inside it: then that planet isn't drawn, so it doesn't fill
 // the view while following another one past it. The followed planet itself always shows.
-const INSIDE: Record<string, number> = { Saturn: LENGTH * 0.8, Uranus: LENGTH * 0.6, Jupiter: LENGTH * 0.5 };
+const INSIDE: Record<string, number> = { Saturn: LENGTH * 1.25, Uranus: LENGTH * 0.85, Jupiter: LENGTH * 0.75, Neptune: LENGTH * 0.55 };
 const INSIDE_BEAN = LENGTH * 0.55;
 
 function Bean({ planet, index }: { planet: Planet; index: number }) {
@@ -972,8 +1097,8 @@ function Bean({ planet, index }: { planet: Planet; index: number }) {
     T.subVectors(planetAt(planet, clock.jd + 0.5, a), planetAt(planet, clock.jd - 0.5, b)).normalize();
     side.crossVectors(T, UP).normalize();
     up.crossVectors(side, T);
-    turn.current.roll += h * ROLL * dir;
-    turn.current.tip += h * TIP;
+    turn.current.roll += h * motion() * ROLL * dir;
+    turn.current.tip += h * motion() * TIP;
     // Its length along the orbit, its top up: a basis that turns smoothly all the way round, so the bean never flips.
     q.setFromRotationMatrix(basis.makeBasis(T, up, side));
     qa.setFromAxisAngle(T, turn.current.roll);
@@ -998,7 +1123,11 @@ function Bean({ planet, index }: { planet: Planet; index: number }) {
     const r = rb.rotation();
     cur.set(r.x, r.y, r.z, r.w).invert().premultiply(q);
     const sign = cur.w < 0 ? -1 : 1;
-    rb.setAngvel({ x: 2 * cur.x * sign * TURN, y: 2 * cur.y * sign * TURN, z: 2 * cur.z * sign * TURN }, true);
+    if (clock.paused) {
+      // Paused: everything holds still where it is.
+      rb.setLinvel({ x: 0, y: 0, z: 0 }, true);
+      rb.setAngvel({ x: 0, y: 0, z: 0 }, true);
+    } else rb.setAngvel({ x: 2 * cur.x * sign * TURN, y: 2 * cur.y * sign * TURN, z: 2 * cur.z * sign * TURN }, true);
   });
 
   return (
@@ -1010,7 +1139,9 @@ function Bean({ planet, index }: { planet: Planet; index: number }) {
       colliders={false}
       position={planetAt(planet, clock.jd).setY(-DIG)}
     >
-      {planet.name === 'Neptune' ? (
+      {planet.name === 'Earth' ? (
+        <BallCollider density={DENSITY} args={[EARTH_RADIUS]} />
+      ) : planet.name === 'Neptune' ? (
         <BallCollider density={DENSITY} args={[NEPTUNE.a]} />
       ) : planet.name === 'Venus' ? (
         <CylinderCollider density={DENSITY} args={[CARAMEL.h, CARAMEL.r]} />
@@ -1029,8 +1160,8 @@ function Bean({ planet, index }: { planet: Planet; index: number }) {
       ) : (
         <CapsuleCollider
           density={DENSITY}
-          args={[BEAN_CAPSULE.half * LENGTH, BEAN_CAPSULE.radius * LENGTH]}
-          position={[0, BEAN_CAPSULE.lift * LENGTH, 0]}
+          args={[BEAN_CAPSULE.half * LENGTH * (BEAN_SIZE[planet.name] ?? 1), BEAN_CAPSULE.radius * LENGTH * (BEAN_SIZE[planet.name] ?? 1)]}
+          position={[0, BEAN_CAPSULE.lift * LENGTH * (BEAN_SIZE[planet.name] ?? 1), 0]}
           rotation={[0, 0, Math.PI / 2]}
         />
       )}

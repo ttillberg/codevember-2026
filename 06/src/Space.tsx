@@ -13,7 +13,7 @@ import {
   Quaternion,
   Vector3,
 } from 'three';
-import { clock } from './clock';
+import { clock, motion } from './clock';
 import { elementsAt, jdFromDate, position, type Elements } from './kepler';
 import { PLANETS } from './planets';
 import { planetAt, toOrrery } from './scale';
@@ -213,7 +213,7 @@ function Comet() {
     return out;
   };
   useFrame((_, dt) => {
-    s.time += dt;
+    s.time += dt * motion(); // the wriggle stops with the clock
     where(clock.jd, s.head);
     // Which way it's going along the orbit: a little way ahead in time, far enough to see it move.
     where(clock.jd + 30, s.ahead).sub(s.head);
@@ -335,7 +335,7 @@ function Pod() {
   const velocityOf = (p: (typeof PLANETS)[number], out: Vector3) =>
     out.subVectors(planetAt(p, clock.jd + 0.5, a), planetAt(p, clock.jd - 0.5, b)).multiplyScalar(clock.paused ? 0 : clock.speed);
   useFrame((_, delta) => {
-    const dt = Math.min(delta, 1 / 30), S = state;
+    const dt = Math.min(delta, 1 / 30) * motion(), S = state; // the pod stops with the clock, and slows with it
     S.time += dt;
     // The leader's path: round the lollipop, quick, leaping and swinging in and out.
     S.angle += dt * 0.9;
