@@ -120,14 +120,17 @@ export function Balloon() {
 
   const dabAt = (u: number, v: number, angle: number, seed: number) => {
     const finish = FINISH[tool.finish];
+    const glaze = tool.brush === 'glaze';
+    const w = tool.watery;
     const d: Dab = {
       u, v, angle, seed,
-      size: tool.size,
+      // Watery glaze: wider, thinner. Its softness rides in the rough slot, which the glaze doesn't use.
+      size: tool.size * (glaze ? 1 + w * 0.7 : 1),
       rgb: hexToRgb(tool.hex),
       // Dabs overlap many times along the stroke, so each one carries only a little.
-      flow: FLOW[tool.brush] * tool.flow,
+      flow: FLOW[tool.brush] * tool.flow * (glaze ? 1 - w * 0.65 : 1),
       brush: tool.brush,
-      rough: finish.rough,
+      rough: glaze ? w : finish.rough,
       metal: finish.metal,
     };
     paint.add(d);

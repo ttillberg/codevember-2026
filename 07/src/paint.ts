@@ -158,7 +158,7 @@ const dabPosition = (dab: any) => Fn(() => {
 })();
 
 // The dab's footprint, 0..1, by brush style.
-const dabShape = (style: any, seed: any) => Fn(() => {
+const dabShape = (style: any, seed: any, watery: any) => Fn(() => {
   const q = uv().mul(2).sub(1);
   const d = length(q);
   const round = smoothstep(1, 0.6, d);
@@ -172,9 +172,9 @@ const dabShape = (style: any, seed: any) => Fn(() => {
   const bristle = smoothstep(1, 0.8, d).mul(select(lane.greaterThan(0.35), float(1), float(0))).mul(mix(0.6, 1, along));
   // Scrape: a flat blade, hard edged across, soft along.
   const scrape = smoothstep(1, 0.85, q.x.abs()).mul(smoothstep(1, 0.5, q.y.abs()));
-  // Glaze: colour fused into the glass, a smooth soft-edged blob; the balloon shader gathers its pigment at
-  // the edge and lenses it.
-  const glaze = smoothstep(1, 0.45, d);
+  // Glaze: colour fused into the glass, a smooth soft-edged blob, softer the more watery (that rides in the
+  // rough slot); the balloon shader gathers its pigment at the edge and lenses it.
+  const glaze = smoothstep(1, float(0.5).sub(watery.mul(0.45)), d);
   return select(style.lessThan(0.5), round, select(style.lessThan(1.5), spray, select(style.lessThan(2.5), bristle,
     select(style.lessThan(3.5), scrape, glaze))));
 })();
@@ -216,7 +216,7 @@ export class PaintLayer {
       mat.blendSrcAlpha = OneFactor; mat.blendDstAlpha = OneMinusSrcAlphaFactor;
       const vCol: any = varying(col), vMisc: any = varying(misc), vExtra: any = varying(extra);
       mat.positionNode = dabPosition(dab);
-      const a = dabShape(vMisc.x, vMisc.y).mul(vCol.w).toVar();
+      const a = dabShape(vMisc.x, vMisc.y, vMisc.z).mul(vCol.w).toVar();
       const isGlaze = vMisc.x.greaterThan(3.5);
       const brushLoad = select(vMisc.x.lessThan(0.5), float(LOAD.round), select(vMisc.x.lessThan(1.5), float(LOAD.spray),
         select(vMisc.x.lessThan(2.5), float(LOAD.bristle), float(0)))); // scrape and glaze lay no thickness
@@ -236,7 +236,7 @@ export class PaintLayer {
       mat.blendSrcAlpha = ZeroFactor; mat.blendDstAlpha = OneMinusSrcAlphaFactor;
       const vCol: any = varying(col), vMisc: any = varying(misc);
       mat.positionNode = dabPosition(dab);
-      const a = dabShape(vMisc.x, vMisc.y).mul(vCol.w).toVar();
+      const a = dabShape(vMisc.x, vMisc.y, float(0)).mul(vCol.w).toVar();
       mat.colorNode = v4(0, 0, 0, a);
       mat.mrtNode = materialBlended(mrt({ color: v4(0, 0, 0, a), props: v4(0, 0, 0, a) }));
     });

@@ -45,6 +45,13 @@ export function Palette() {
         auto
       </button>
       <label className="size">
+        watery
+        <input
+          type="range" min={0} max={1} step={0.01} defaultValue={tool.watery}
+          onInput={(e) => { tool.watery = parseFloat((e.target as HTMLInputElement).value); }}
+        />
+      </label>
+      <label className="size">
         liquid
         <input
           type="range" min={0} max={1} step={0.01} defaultValue={tool.liquid}

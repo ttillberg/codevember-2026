@@ -28,6 +28,7 @@ export const tool = {
   flow: 0.9,
   auto: false, // paint without holding the button
   liquid: 0.3, // 0 stiff paint that stays put, 1 thin paint with long legs
+  watery: 0.5, // the glaze: 0 a firm blob, 1 a wide thin wash that spreads and mixes
 };
 
 export function hexToRgb(hex: string): [number, number, number] {
