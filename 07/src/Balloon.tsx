@@ -76,7 +76,7 @@ function balloonMaterial(side: typeof FrontSide | typeof BackSide) {
   m.opacityNode = select(flat.or(opaque), float(1), mix(float(0.05).add(fresnel.mul(0.35)), float(1), cov));
   const roughPaint = p.z.div(safe).toVar();
   // Wet paint glosses up, but matte less so: it stays dull even wet.
-  const wetGloss = wet.mul(uWetGloss).mul(float(1).sub(smoothstep(0.7, 0.95, roughPaint).mul(0.7)));
+  const wetGloss = wet.mul(uWetGloss).mul(float(1).sub(smoothstep(0.6, 0.9, roughPaint)));
   m.roughnessNode = select(flat, float(1), mix(float(0.08), roughPaint.mul(mix(1, 0.3, wetGloss)), cov));
   m.metalnessNode = select(flat, float(0), p.w.div(safe).mul(cov));
   // A rough paint also reflects less: matte is matte, not just blurry.
