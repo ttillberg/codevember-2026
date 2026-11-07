@@ -177,7 +177,9 @@ export function Balloon() {
     return h?.uv ? { u: h.uv.x, v: h.uv.y, point: h.point } : null;
   };
 
-  const advance = (u: number, v: number) => {
+  // Spray thins with speed, like a real can: full width dawdling, down to a quarter on a quick flick. Smoothed.
+  const sprayWidth = useRef(1);
+  const advance = (u: number, v: number, dt = 1 / 120) => {
     const s = stroke.current;
     if (!s) return;
     let du = u - s.u;
@@ -187,6 +189,11 @@ export function Balloon() {
     const circ = 2 * Math.max(Math.sin(s.v * Math.PI), 0.02);
     const dist = Math.hypot(du * circ, dv);
     const spacing = tool.size * SPACING[tool.brush];
+    if (tool.brush === 'spray') {
+      const speed = dist / Math.max(dt, 1e-3); // pole-to-pole units a second
+      const want = 1 - 0.75 * Math.min(1, Math.max(0, (speed - 0.15) / 1.0));
+      sprayWidth.current += (want - sprayWidth.current) * Math.min(1, dt * 12);
+    } else sprayWidth.current = 1;
     if (dist < spacing) return;
     sprayHeld.current = 0; // moving again
     const angle = Math.atan2(dv, du * circ);
@@ -194,7 +201,7 @@ export function Balloon() {
     for (let i = 1; i <= n; i++) {
       const t = i / n;
       // Spray speckles differ per dab; the other brushes keep the stroke's seed so their furrows run on.
-      dabAt(((s.u + du * t) % 1 + 1) % 1, s.v + dv * t, angle, tool.brush === 'spray' ? s.seed + i : s.seed);
+      dabAt(((s.u + du * t) % 1 + 1) % 1, s.v + dv * t, angle, tool.brush === 'spray' ? s.seed + i : s.seed, sprayWidth.current);
     }
     const t = n / (dist / spacing);
     s.u = ((s.u + du * t) % 1 + 1) % 1;
@@ -284,7 +291,7 @@ export function Balloon() {
       sprayHeld.current = 0;
       dabAt(h.u, h.v, 0, seed);
     } else {
-      advance(h.u, h.v);
+      advance(h.u, h.v, dt);
       if (tool.brush === 'spray') {
         // Held still (not just moving slowly): the can keeps spraying and the cloud widens, up to twice the
         // brush after a couple of seconds. Moving, the stroke is the same at any speed.
