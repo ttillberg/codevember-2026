@@ -38,8 +38,8 @@ const uGrain = uniform(sim.grain);
 const uEdge = uniform(2.2); // how much pigment gathers at a wash's edge
 if (import.meta.env.DEV) { (window as any).__tool = tool; (window as any).__drips = dripSettings; (window as any).__wheel = wheel; (window as any).__sim = sim; (window as any).__paint = paint; (window as any).__dbg = uDebug; (window as any).__wetGloss = uWetGloss; (window as any).__edge = uEdge; }
 
-// Thin clear rubber with paint on it. Clear rubber has no diffuse of its own, only its reflections and a faint
-// darkening at the rim; where there is paint the surface is opaque in the paint's colour and finish, wet paint
+// Thin clear rubber with paint on it. Clear rubber has no diffuse of its own, only its reflections and a thin
+// border where it is seen edge on; where there is paint the surface is opaque in the paint's colour and finish, wet paint
 // glossier, and the paint's thickness bumps the normal so runs and ridges catch the light.
 function balloonMaterial(side: typeof FrontSide | typeof BackSide) {
   const m = new MeshPhysicalNodeMaterial();
@@ -67,7 +67,9 @@ function balloonMaterial(side: typeof FrontSide | typeof BackSide) {
   const safe = max(c.a, 0.001);
   const tint = c.rgb.div(safe);
   const f1 = saturate(float(1).sub(abs(normalViewGeometry.dot(positionViewDirection))));
-  const fresnel = f1.mul(f1).mul(f1);
+  // Only a thin border: the rubber shows edge on and almost nowhere else.
+  const f2 = f1.mul(f1);
+  const fresnel = f2.mul(f2).mul(f2).mul(f1);
   const wet = p.y;
   // Dev views: 1..4 flat data, 5 lit diffuse only, 6 no specular, 7 opacity 1.
   const flat = uDebug.greaterThanEqual(1).and(uDebug.lessThanEqual(4));
@@ -75,7 +77,7 @@ function balloonMaterial(side: typeof FrontSide | typeof BackSide) {
   const noSpec = uDebug.equal(5).or(uDebug.equal(6));
   const opaque = uDebug.equal(5).or(uDebug.equal(7));
   m.colorNode = select(flat, dbgView, mix(vec3(0), tint, cov));
-  m.opacityNode = select(flat.or(opaque), float(1), mix(float(0.05).add(fresnel.mul(0.35)), float(1), cov));
+  m.opacityNode = select(flat.or(opaque), float(1), mix(float(0.008).add(fresnel.mul(0.6)), float(1), cov));
   const roughPaint = p.z.div(safe).toVar();
   // Wet paint glosses up, but matte less so: it stays dull even wet.
   const wetGloss = wet.mul(uWetGloss).mul(float(1).sub(smoothstep(0.6, 0.9, roughPaint)));
@@ -339,13 +341,13 @@ export function Balloon() {
     const bob = Math.sin(wheel.time * (2 * Math.PI / 7)) * 0.03 * wheel.calm;
     const sway = Math.sin(wheel.time * (2 * Math.PI / 11) + 1.3) * 0.015 * wheel.calm;
     g.position.set(sway, bob, 0);
-    g.scale.set(1 + breath, 1.12 * (1 - breath * 0.5), 1 + breath);
+    g.scale.setScalar(1 + breath); // always a perfect sphere, it only swells
     // The room's down, in the balloon's frame, for the runs.
     sim.gravityObj.set(0, -1, 0).applyQuaternion(g.quaternion.clone().invert());
   }, -3);
 
   return (
-    <group ref={groupRef} scale={[1, 1.12, 1]}>
+    <group ref={groupRef}>
       <mesh geometry={geo} material={back} renderOrder={0} />
       <mesh ref={frontRef} geometry={geo} material={front} renderOrder={1} />
     </group>

@@ -16,5 +16,5 @@ export function Shadow() {
     m.opacityNode = smoothstep(1, 0.15, d).mul(float(0.36));
     return m;
   }, []);
-  return <mesh geometry={geo} material={mat} rotation={[-Math.PI / 2, 0, 0]} position={[0, -1.18, 0]} renderOrder={-1} />;
+  return <mesh geometry={geo} material={mat} rotation={[-Math.PI / 2, 0, 0]} position={[0, -1.06, 0]} renderOrder={-1} />;
 }
