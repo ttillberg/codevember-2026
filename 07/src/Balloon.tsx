@@ -107,11 +107,12 @@ export function Balloon() {
     // Liquid: how runny the paint is. The tongues along a stroke's edge start at less thickness, move faster
     // and dry slower; the legs are the drips (drips.ts), which form where paint piles up.
     const l = tool.liquid;
-    sim.runAt = lerp(0.7, 0.35, l);
+    // At zero nothing runs at all: the threshold sits above the thickest impasto and the rate is nil.
+    sim.runAt = lerp(1.3, 0.35, l);
     sim.runNoise = lerp(0.3, 0.4, l);
     sim.lane = 14;
     sim.laneSharp = 1;
-    sim.runRate = lerp(0.3, 0.7, l);
+    sim.runRate = lerp(0, 0.7, Math.min(1, l * 2.5)) * lerp(0.3, 1, l);
     sim.dry = lerp(0.002, 0.00015, l);
     sim.spread = lerp(0.06, 0.12, l);
     sim.bleed = 0.03 + tool.watery * 0.14;
