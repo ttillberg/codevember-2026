@@ -264,7 +264,7 @@ const BLOCKERS = Array.from({ length: 4 }, () => ({ at: new Vector3(), r: 0, sof
 
 function SaturnBelt({ shadows, playful }: { shadows: boolean; playful: boolean }) {
   const ref = useRef<InstancedMesh>(null!);
-  const geometry = useMemo(() => new SphereGeometry(0.015, 10, 7), []);
+  const geometry = useMemo(() => new SphereGeometry(0.015, 7, 5), []);
   const sweets = useMemo(() => {
     const rnd = rng(5);
     return Array.from({ length: BELT_COUNT }, (_, i) => {
@@ -761,7 +761,7 @@ const CHOCOLATE_GEOMETRY = (() => {
 })();
 const CHOCOLATE = new MeshPhysicalMaterial({ color: '#3b1d12', roughness: 0.42, clearcoat: 0.35, clearcoatRoughness: 0.35, sheen: 0.4, sheenColor: '#8a5a44', emissive: '#3b1d12', emissiveIntensity: 0.12 });
 const NONPAREIL = new MeshPhysicalMaterial({ color: '#fbf8f1', roughness: 0.5, emissive: '#fbf8f1', emissiveIntensity: 0.07 });
-const NONPAREIL_GEOMETRY = new SphereGeometry(1, 10, 8);
+const NONPAREIL_GEOMETRY = new SphereGeometry(1, 7, 5); // a few pixels across: few triangles
 function ChocolateButton({ shadows }: { shadows: boolean }) {
   const ref = useRef<InstancedMesh>(null!);
   useLayoutEffect(() => {
@@ -783,7 +783,7 @@ function ChocolateButton({ shadows }: { shadows: boolean }) {
   return (
     <>
       <mesh geometry={CHOCOLATE_GEOMETRY} material={CHOCOLATE} castShadow={shadows} receiveShadow={shadows} />
-      <instancedMesh ref={ref} args={[NONPAREIL_GEOMETRY, NONPAREIL, NONPAREILS]} castShadow={shadows} receiveShadow={shadows} />
+      <instancedMesh ref={ref} args={[NONPAREIL_GEOMETRY, NONPAREIL, NONPAREILS]} receiveShadow={shadows} /> {/* the chocolate casts the shadow */}
     </>
   );
 }
@@ -842,7 +842,7 @@ const CARAMEL_GEOMETRY = (() => {
   return g;
 })();
 const CARAMEL_MATERIAL = (() => {
-  const m = new MeshPhysicalMaterial({ color: '#e6a23c', roughness: 0.14, clearcoat: 1, clearcoatRoughness: 0.06, transmission: 0.08, thickness: CARAMEL.h * 2, attenuationColor: '#b0600e', attenuationDistance: 1.5 });
+  const m = new MeshPhysicalMaterial({ color: '#e6a23c', roughness: 0.14, clearcoat: 1, clearcoatRoughness: 0.06 });
   m.onBeforeCompile = (sh) => {
     sh.fragmentShader = sh.fragmentShader.replace(
       '#include <emissivemap_fragment>',
@@ -926,8 +926,9 @@ export function NonpareilDrop({
   }, [colours, count, grow]);
   return (
     <>
-      <mesh geometry={NEPTUNE_CORE} material={coreMaterial} receiveShadow={shadows} />
-      <instancedMesh ref={ref} args={[NEPTUNE_BEAD_GEOMETRY, NEPTUNE_BEAD_MATERIAL, count]} castShadow={shadows} receiveShadow={shadows} />
+      {/* The core casts the shadow for the whole drop: thousands of tiny beads in the shadow maps cost far more than they show. */}
+      <mesh geometry={NEPTUNE_CORE} material={coreMaterial} castShadow={shadows} receiveShadow={shadows} />
+      <instancedMesh ref={ref} args={[NEPTUNE_BEAD_GEOMETRY, NEPTUNE_BEAD_MATERIAL, count]} receiveShadow={shadows} />
     </>
   );
 }
@@ -954,7 +955,7 @@ const EARTH_GREENS = ['#22b53a', '#3fcc45', '#6edc5a', '#16993a', '#8fe26a'];
 const EARTH_BLUES = ['#45b2f2', '#6cc8ff', '#3a9ae6'];
 // One lumpy pebble, a smooth shaded icosahedron with its surface pushed about a little.
 const PEBBLE_GEOMETRY = (() => {
-  const raw = new IcosahedronGeometry(1, 4);
+  const raw = new IcosahedronGeometry(1, 3);
   raw.deleteAttribute('normal');
   raw.deleteAttribute('uv');
   const g = mergeVertices(raw), p = g.attributes.position, v = new Vector3();

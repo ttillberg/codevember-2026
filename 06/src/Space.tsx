@@ -173,7 +173,7 @@ function Comet() {
     return g;
   }, []);
   const material = useMemo(() => {
-    const m = new MeshPhysicalMaterial({ vertexColors: true, roughness: 0.22, clearcoat: 0.9, clearcoatRoughness: 0.15, transmission: 0.25, thickness: WORM_RADIUS * 2 });
+    const m = new MeshPhysicalMaterial({ vertexColors: true, roughness: 0.22, clearcoat: 0.9, clearcoatRoughness: 0.15 });
     m.onBeforeCompile = (sh) => {
       sh.fragmentShader = sh.fragmentShader.replace(
         '#include <emissivemap_fragment>',
