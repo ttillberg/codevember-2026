@@ -83,28 +83,58 @@ function Knob({ name, get, put, face, track }: {
   face: (t: number) => React.ReactNode; track: (t: number) => React.ReactNode;
 }) {
   const [held, setHeld] = useState(false);
+  // A click without a drag pins the gauge open: then drag on the gauge itself, the value under the pointer.
+  // A press elsewhere, escape, or another click on the button closes it.
+  const [pinned, setPinned] = useState(false);
   const [, bump] = useState(0);
-  const start = useRef({ x: 0, y: 0, t: 0 });
-  // Let go anywhere closes it, even if the capture got lost on the way.
+  const box = useRef<HTMLDivElement>(null);
+  const start = useRef({ x: 0, y: 0, t: 0, moved: false, wasPinned: false });
+  // Let go anywhere ends the hold, even if the capture got lost on the way; a tap pins it.
   useEffect(() => {
     if (!held) return;
-    const up = () => setHeld(false);
+    const up = () => { setHeld(false); setPinned(!start.current.moved && !start.current.wasPinned); };
     window.addEventListener('pointerup', up);
     window.addEventListener('pointercancel', up);
     return () => { window.removeEventListener('pointerup', up); window.removeEventListener('pointercancel', up); };
   }, [held]);
+  useEffect(() => {
+    if (!pinned) return;
+    const away = (e: PointerEvent) => { if (!box.current?.contains(e.target as Node)) setPinned(false); };
+    const esc = (e: KeyboardEvent) => { if (e.key === 'Escape') setPinned(false); };
+    window.addEventListener('pointerdown', away);
+    window.addEventListener('keydown', esc);
+    return () => { window.removeEventListener('pointerdown', away); window.removeEventListener('keydown', esc); };
+  }, [pinned]);
   const t = get();
   const to = (v: number) => { put(Math.min(1, Math.max(0, v))); bump((n) => n + 1); };
+  const at = (e: React.PointerEvent<HTMLElement>) => {
+    const r = e.currentTarget.getBoundingClientRect();
+    to(1 - (e.clientY - r.top) / r.height);
+  };
+  const open = held || pinned;
   return (
-    <div className="ft-knob">
-      <button aria-label={name} title={`${name} (hold and drag)`} className={held ? 'on' : ''}
-        onPointerDown={(e) => { e.currentTarget.setPointerCapture(e.pointerId); start.current = { x: e.clientX, y: e.clientY, t }; setHeld(true); }}
-        onPointerMove={(e) => { if (held) to(start.current.t + (start.current.y - e.clientY + e.clientX - start.current.x) / TRAVEL); }} // up or right raises
+    <div className="ft-knob" ref={box}>
+      <button aria-label={name} title={`${name} (hold and drag, or click)`} className={open ? 'on' : ''}
+        onPointerDown={(e) => {
+          e.currentTarget.setPointerCapture(e.pointerId);
+          start.current = { x: e.clientX, y: e.clientY, t, moved: false, wasPinned: pinned };
+          setHeld(true);
+        }}
+        onPointerMove={(e) => {
+          if (!held) return;
+          const d = start.current.y - e.clientY + e.clientX - start.current.x; // up or right raises
+          if (Math.abs(e.clientY - start.current.y) + Math.abs(e.clientX - start.current.x) > 4) start.current.moved = true;
+          if (start.current.moved) to(start.current.t + d / TRAVEL);
+        }}
         onWheel={(e) => to(t - Math.sign(e.deltaY) * 0.02)}>
         {face(t)}
       </button>
-      <div className={`ft-gauge${held ? ' open' : ''}`}>
-        <div className="ft-gauge-track" style={{ '--t': t } as React.CSSProperties}>{track(t)}</div>
+      <div className={`ft-gauge${open ? ' open' : ''}${pinned ? ' pinned' : ''}`}>
+        <div className="ft-gauge-track" style={{ '--t': t } as React.CSSProperties}
+          onPointerDown={(e) => { e.currentTarget.setPointerCapture(e.pointerId); at(e); }}
+          onPointerMove={(e) => { if (e.currentTarget.hasPointerCapture(e.pointerId)) at(e); }}>
+          {track(t)}
+        </div>
       </div>
     </div>
   );

@@ -143,3 +143,7 @@ canvas.grabbing { cursor: grabbing; }
 .ft-media .ft-actions button:hover { background: #111; color: #fff; }
 .ft-actions svg { flex: none; }
 
+
+/* A knob's gauge pinned open by a click: drag straight on it. */
+.ft-gauge.pinned { pointer-events: auto; }
+.ft-gauge.pinned .ft-gauge-track { cursor: ns-resize; touch-action: none; }
