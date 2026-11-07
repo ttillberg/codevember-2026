@@ -224,13 +224,19 @@ export function Balloon() {
     // Grabbing never stops it: held still, the balloon keeps turning under the hand. Moved, it follows the hand
     // (a window width is half a turn, about the axis across the drag) and on release spins on at the speed of the
     // last move.
+    // Every finger (or the mouse) down on the balloon, at its last place. Two or more fingers turn it without
+    // painting; the turn follows their centre, each finger moving it a share.
     let lastT = 0;
     const hand = new Vector3(), axis = new Vector3(), dq = new Quaternion();
+    const fingers = new Map<number, { x: number; y: number }>();
     const move = (e: PointerEvent) => {
-      if (!wheel.grabbed) return;
-      if (Math.abs(e.movementX) + Math.abs(e.movementY) < 2) return; // a twitch, not a move
-      const g = wheel.gain / Math.min(window.innerWidth, window.innerHeight);
-      axis.set(e.movementY * g, e.movementX * g, 0); // right drag turns about y, down drag about x
+      const f = fingers.get(e.pointerId);
+      if (!wheel.grabbed || !f) return;
+      const mx = e.clientX - f.x, my = e.clientY - f.y;
+      if (Math.abs(mx) + Math.abs(my) < 2) return; // a twitch, not a move
+      f.x = e.clientX; f.y = e.clientY;
+      const g = wheel.gain / Math.min(window.innerWidth, window.innerHeight) / fingers.size;
+      axis.set(my * g, mx * g, 0); // right drag turns about y, down drag about x
       const angle = axis.length();
       if (angle > 0) {
         dq.setFromAxisAngle(axis.clone().divideScalar(angle), angle);
@@ -245,6 +251,8 @@ export function Balloon() {
     };
     const down = (e: PointerEvent) => {
       if (e.button !== 0) return;
+      fingers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (fingers.size > 1) { painting.current = false; stroke.current = null; return; } // a second finger: just turn
       painting.current = !e.metaKey; // cmd: turn it without painting
       wheel.grabbed = true;
       el.classList.add('grabbing');
@@ -252,8 +260,10 @@ export function Balloon() {
       lastT = e.timeStamp;
     };
     const up = (e: PointerEvent) => {
-      painting.current = false;
+      if (!fingers.delete(e.pointerId)) return; // not one of ours
+      painting.current = false; // lifting one of two fingers doesn't start painting again
       stroke.current = null;
+      if (fingers.size > 0) return; // still held by the other finger
       el.classList.remove('grabbing');
       if (!wheel.grabbed) return;
       wheel.grabbed = false;
