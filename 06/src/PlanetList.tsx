@@ -1,6 +1,6 @@
 import { useEffect } from 'react';
 import { PLANETS } from './planets';
-import { pick, usePicked } from './selection';
+import { pick, typing, usePicked } from './selection';
 import { COLOURS } from './Orbits'; // the picked one in its own colour, as its orbit
 
 // A curiosity for each planet, shown with its facts on the right when it's picked.
@@ -30,7 +30,7 @@ export function PlanetList() {
   const picked = usePicked();
   useEffect(() => {
     const key = (e: KeyboardEvent) => {
-      if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
+      if (typing(e) || (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft')) return;
       e.preventDefault();
       const at = PLANETS.findIndex((p) => p.name === picked);
       const step = e.key === 'ArrowRight' ? 1 : -1;

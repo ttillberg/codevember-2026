@@ -12,6 +12,7 @@ import { isThrowClick, Throws } from './Throws';
 import { moonPositions, planetPositions } from './world';
 import { rng } from './random';
 import { NOISE } from './glsl';
+import { cursor, updateCursor } from './cursor';
 
 // Each planet as a jelly bean, all the same size: the candy it is made of. A base colour with darker
 // patches, bigger patches of a second colour and highlights inside those; 'bands' lays them out in stripes round the
@@ -1197,8 +1198,8 @@ function Bean({ planet, index }: { planet: Planet; index: number }) {
           if (isThrowClick(e.nativeEvent)) return; // cmd click throws, it doesn't pick
           pick(planet.name);
         }}
-        onPointerOver={() => (document.body.style.cursor = 'pointer')}
-        onPointerOut={() => (document.body.style.cursor = '')}
+        onPointerOver={() => ((cursor.over = true), updateCursor())}
+        onPointerOut={() => ((cursor.over = false), updateCursor())}
       >
         <PlanetCandy name={planet.name} playful />
       </group>

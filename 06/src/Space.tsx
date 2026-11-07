@@ -17,7 +17,7 @@ import { elementsAt, J2000, jdFromDate, position, type Elements } from './kepler
 import { PLANETS } from './planets';
 import { ORBIT_Y, planetAt, SUN, toOrrery } from './scale';
 import { planetPositions } from './world';
-import { pickedNow } from './selection';
+import { pickedNow, typing } from './selection';
 import { rng } from './random';
 
 // The rest of the solar system's furniture, on real Kepler orbits like the planets, in the same compressed scale:
@@ -189,7 +189,7 @@ function Comet() {
   // H jumps to a little before Halley's next perihelion, in 2061, to watch it swing past.
   useEffect(() => {
     const key = (e: KeyboardEvent) => {
-      if (e.key === 'h' || e.key === 'H') clock.jd = NEXT_PERIHELION - 220;
+      if (!typing(e) && (e.key === 'h' || e.key === 'H')) clock.jd = NEXT_PERIHELION - 220;
     };
     addEventListener('keydown', key);
     return () => removeEventListener('keydown', key);
