@@ -186,7 +186,7 @@ function Picker<T extends string>({ name, items, cur, put, icon, solid }: {
   }, [open]);
   return (
     <div className={`ft-knob${solid ? '' : ' swatches'}`} ref={box}>
-      <button aria-label={`${name}: ${cur}`} title={`${cur} (press to change)`} className={open ? 'on' : ''}
+      <button aria-label={`${name}: ${cur}`} title={`${cur} (press to change)`} className={`${solid ? 'ft-ringed' : ''}${open ? ' on' : ''}`}
         onPointerDown={(e) => {
           e.preventDefault();
           if (open) { setOpen(false); return; }
