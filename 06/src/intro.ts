@@ -1,6 +1,11 @@
 // The opening: everything dark until the scene has loaded and runs smoothly, then the sun lights up and its light
 // spreads out over the planets. `ready` is when it started (0 until then); `value` runs 0 to 1 from then.
 export const intro = { ready: 0, value: 0 };
+// In dev it's skipped: everything shows as it is straight away.
+if (import.meta.env.DEV) {
+  intro.ready = intro.value = 1;
+  document.body.classList.add('lit'); // before the first paint, so the controls don't fade in either
+}
 
 export const INTRO_TIME = 6; // seconds
 const ease = (t: number) => t * t * (3 - 2 * t);

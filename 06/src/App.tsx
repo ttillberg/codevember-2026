@@ -6,7 +6,7 @@ import { BackSide, NeutralToneMapping, PCFShadowMap } from 'three';
 import { AO } from './AO';
 import { CameraRig, ORBIT_SPEED } from './CameraRig';
 import { Orbits, orbitsShown } from './Orbits';
-import { Stars } from './Stars';
+import { Sky } from './Sky';
 import { PlanetList } from './PlanetList';
 import { Beans } from './Beans';
 import { PlanetCard } from './PlanetCard';
@@ -144,7 +144,7 @@ export function App() {
         <DevHooks />
         <Studio />
         <Sun />
-        <Stars />
+        <Sky />
         <Space />
         <Orbits />
         <Suspense fallback={null}>
