@@ -86,7 +86,7 @@ export function Balloon() {
 
   if (import.meta.env.DEV) (window as any).__gl = gl;
   // Splat this frame's dabs and run the paint before the scene renders.
-  useFrame(() => { uBump.value = sim.bump; uGrain.value = sim.grain; paint.flush(gl); }, -1);
+  useFrame((_, dt) => { uBump.value = sim.bump; uGrain.value = sim.grain; paint.flush(gl, dt); }, -1);
 
   const dabAt = (u: number, v: number, angle: number, seed: number) => {
     const finish = FINISH[tool.finish];
@@ -233,6 +233,8 @@ export function Balloon() {
       wheel.q.premultiply(step);
     }
     g.quaternion.copy(wheel.q);
+    // The room's down, in the balloon's frame, for the runs.
+    sim.gravityObj.set(0, -1, 0).applyQuaternion(g.quaternion.clone().invert());
   }, -3);
 
   return (

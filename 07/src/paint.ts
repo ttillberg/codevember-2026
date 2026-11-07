@@ -8,10 +8,11 @@
 import {
   CustomBlending, DoubleSide, HalfFloatType, InstancedBufferAttribute, InstancedBufferGeometry, Mesh, MeshBasicNodeMaterial,
   NodeMaterial, OneFactor, OneMinusSrcAlphaFactor, OrthographicCamera, PlaneGeometry, QuadMesh, RenderTarget,
-  RepeatWrapping, Scene, ZeroFactor, NoBlending, BlendMode, MaterialBlending, type Texture, type WebGPURenderer,
+  RepeatWrapping, Scene, ZeroFactor, NoBlending, BlendMode, MaterialBlending, Vector3, type Texture, type WebGPURenderer,
 } from 'three/webgpu';
 import {
-  float, floor, hash, instancedBufferAttribute, length, max, min, mix, mrt, mx_noise_float, positionLocal, select, sin,
+  abs, cos, float, floor, hash, instancedBufferAttribute, length, max, min, mix, mrt, mx_noise_float, positionLocal, select,
+  sign, sin,
   screenUV, smoothstep, texture, uniform, uv, varying, vec2, vec3, vec4, Fn,
 } from 'three/tsl';
 
@@ -39,18 +40,20 @@ export type Dab = {
 // Tunables, live.
 export const sim = {
   runAt: 0.5,    // thickness above which wet paint runs
-  runRate: 0.3,  // texels per frame of excess paint moving down
-  dry: 0.0008,   // wetness lost per frame
+  runRate: 0.5,  // texels per step (120 a second) of excess paint moving down
+  dry: 0.0008,   // wetness lost per step
   gravity: 1,    // 0 freezes the paint
+  gravityObj: new Vector3(0, -1, 0), // the room's down in the balloon's own frame, set each frame
   bump: 22,      // slope per unit of thickness across a texel
   grain: 0.05,   // fine texture in the paint's height
-  spread: 0.25,  // sideways smoothing of wet paint per frame
+  spread: 0.12,  // smoothing of wet paint across the flow, per step
   flushes: 0,    // dev counter
 };
 const uRunAt = uniform(sim.runAt);
 const uRunRate = uniform(sim.runRate);
 const uDry = uniform(sim.dry);
 const uGravity = uniform(sim.gravity);
+const uGravityObj = uniform(new Vector3(0, -1, 0));
 const uSpread = uniform(sim.spread);
 
 // MRT outputs default to no blending; these take the material's.
@@ -224,31 +227,62 @@ export class PaintLayer {
       const src = this.targets[from];
       const mat = new NodeMaterial();
       mat.blending = NoBlending; mat.depthTest = false; mat.depthWrite = false;
-      const px = 1 / PAINT_H;
+      const px = vec2(1 / PAINT_W, 1 / PAINT_H);
       const here = uv();
-      const above = uv().add(vec2(0, px));
-      // Where paint starts to run varies a little across the surface, so sheets break into drips.
-      const runAt = (p: any) => uRunAt.add(mx_noise_float(vec3(p.x.mul(PAINT_W / 14), p.y.mul(PAINT_H / 40), 0)).mul(0.5).add(0.5).mul(0.35));
-      const flowOf = (p: any, props: any) => max(props.x.sub(runAt(p)), 0).mul(props.y).mul(uRunRate).mul(uGravity);
+      // Where paint starts to run varies a little across the surface, in lanes along the flow, so sheets break
+      // into drips whichever way they run: fine noise across the flow, coarse along it.
+      const runAt = (p: any, dir: any) => {
+        const t = p.mul(vec2(PAINT_W, PAINT_H));
+        const along = t.dot(dir), across = t.dot(vec2(dir.y.negate(), dir.x));
+        return uRunAt.add(mx_noise_float(vec3(across.div(14), along.div(40), 0)).mul(0.5).add(0.5).mul(0.35));
+      };
+      // Gravity on the sphere at a texel, in texture space: the object-space gravity projected on the tangents
+      // of three's sphere mapping (u round the y axis, v from the bottom pole up), scaled to texels. Its
+      // strength is what is left after the part straight into or out of the surface.
+      const downAt = (p: any) => {
+        const phi = p.x.mul(2 * Math.PI), theta = float(1).sub(p.y).mul(Math.PI);
+        const tu = vec3(sin(phi), 0, cos(phi));
+        const tv = vec3(cos(phi).mul(cos(theta)), sin(theta), sin(phi).negate().mul(cos(theta)));
+        const g = vec2(uGravityObj.dot(tu), uGravityObj.dot(tv));
+        const strength = length(g);
+        const dir = g.div(max(strength, 1e-5));
+        // Share of the flow that goes to the x neighbour and to the y neighbour, by the direction's components.
+        const ax = abs(dir.x), ay = abs(dir.y);
+        const share = vec2(ax, ay).div(max(ax.add(ay), 1e-5));
+        return { dir, strength, share };
+      };
+      const flowOf = (p: any, props: any, d: any) => max(props.x.sub(runAt(p, d.dir)), 0).mul(props.y).mul(uRunRate).mul(uGravity).mul(d.strength);
       const c: any = texture(src.textures[0], here).toVar(), p: any = texture(src.textures[1], here).toVar();
-      const cU: any = texture(src.textures[0], above).toVar(), pU: any = texture(src.textures[1], above).toVar();
-      const leaving: any = min(flowOf(here, p), p.x).toVar();
-      const arriving: any = select(above.y.lessThan(1), min(flowOf(above, pU), pU.x), float(0)).toVar();
+      const d = downAt(here);
+      const sx = sign(d.dir.x).toVar(), sy = sign(d.dir.y).toVar();
+      // Upstream neighbours: the ones gravity points from, in x and in y.
+      const upX = here.sub(vec2(sx.mul(px.x), 0)).toVar(), upY = here.sub(vec2(0, sy.mul(px.y))).toVar();
+      const cX: any = texture(src.textures[0], upX).toVar(), pX: any = texture(src.textures[1], upX).toVar();
+      const cY: any = texture(src.textures[0], upY).toVar(), pY: any = texture(src.textures[1], upY).toVar();
+      const dX = downAt(upX), dY = downAt(upY);
+      const leaving: any = min(flowOf(here, p, d), p.x).toVar();
+      // What the neighbours send our way: their flow, times the share they send along this axis towards us.
+      const towardX = max(dX.dir.x.mul(sx), 0).div(max(abs(dX.dir.x).add(abs(dX.dir.y)), 1e-5));
+      const towardY = max(dY.dir.y.mul(sy), 0).div(max(abs(dY.dir.x).add(abs(dY.dir.y)), 1e-5));
+      const inX: any = min(flowOf(upX, pX, dX), pX.x).mul(towardX).toVar();
+      const inY: any = select(upY.y.greaterThanEqual(0).and(upY.y.lessThanEqual(1)), min(flowOf(upY, pY, dY), pY.x).mul(towardY), float(0)).toVar();
+      const arriving = inX.add(inY).toVar();
       const fOut = leaving.div(max(p.x, 1e-4));
-      const fIn = arriving.div(max(pU.x, 1e-4)).toVar();
+      const fInX = inX.div(max(pX.x, 1e-4)).toVar(), fInY = inY.div(max(pY.x, 1e-4)).toVar();
       const keep = float(1).sub(fOut).toVar();
-      const moved: any = c.mul(keep).add(cU.mul(fIn)).toVar();
+      const moved: any = c.mul(keep).add(cX.mul(fInX)).add(cY.mul(fInY)).toVar();
       // Coverage can't pass 1: scale the premultiplied colour back with it.
       const over = max(moved.w, 1).toVar();
       const color = moved.div(over);
       const thick = min(p.x.sub(leaving).add(arriving), 1.5);
-      const wet = min(max(max(p.y.sub(uDry), 0), select(arriving.greaterThan(0), pU.y, float(0))), 1);
-      const rough = p.z.mul(keep).add(pU.z.mul(fIn)).div(over);
-      const metal = p.w.mul(keep).add(pU.w.mul(fIn)).div(over);
-      // Wet paint also evens out sideways, so runs round off instead of staying in texel columns.
-      const pxU = 1 / PAINT_W;
-      const cL: any = texture(src.textures[0], uv().sub(vec2(pxU, 0))), cR: any = texture(src.textures[0], uv().add(vec2(pxU, 0)));
-      const pL: any = texture(src.textures[1], uv().sub(vec2(pxU, 0))), pR: any = texture(src.textures[1], uv().add(vec2(pxU, 0)));
+      const wetIn = max(select(inX.greaterThan(0), pX.y, float(0)), select(inY.greaterThan(0), pY.y, float(0)));
+      const wet = min(max(max(p.y.sub(uDry), 0), wetIn), 1);
+      const rough = p.z.mul(keep).add(pX.z.mul(fInX)).add(pY.z.mul(fInY)).div(over);
+      const metal = p.w.mul(keep).add(pX.w.mul(fInX)).add(pY.w.mul(fInY)).div(over);
+      // Wet paint also evens out across the flow, so runs round off instead of staying in texel lanes.
+      const across = vec2(d.dir.y.negate(), d.dir.x).mul(px).toVar();
+      const cL: any = texture(src.textures[0], here.sub(across)), cR: any = texture(src.textures[0], here.add(across));
+      const pL: any = texture(src.textures[1], here.sub(across)), pR: any = texture(src.textures[1], here.add(across));
       const k = uSpread.mul(wet).toVar();
       const colorOut = mix(color, cL.add(cR).mul(0.5), k);
       const propsOut = mix(v4(thick, wet, rough, metal), v4(pL.x.add(pR.x).mul(0.5), wet, pL.z.add(pR.z).mul(0.5), pL.w.add(pR.w).mul(0.5)), k);
@@ -295,7 +329,7 @@ export class PaintLayer {
   }
 
   /** Splat the queued dabs, run the paint, swap. Call once per frame before the main render. */
-  flush(renderer: WebGPURenderer) {
+  flush(renderer: WebGPURenderer, dt = 1 / 120) {
     sim.flushes++;
     const prevTarget = renderer.getRenderTarget();
     const prevAuto = renderer.autoClear;
@@ -314,11 +348,15 @@ export class PaintLayer {
       this.scrape.count = 0;
     }
     // 2. run and dry: current -> next, then swap
-    uRunAt.value = sim.runAt; uRunRate.value = sim.runRate; uDry.value = sim.dry; uGravity.value = sim.gravity; uSpread.value = sim.spread;
-    const next = 1 - this.cur;
-    renderer.setRenderTarget(this.targets[next]);
-    this.simQuads[this.cur].render(renderer);
-    this.cur = next;
+    uRunAt.value = sim.runAt; uRunRate.value = sim.runRate; uDry.value = sim.dry; uGravity.value = sim.gravity; uSpread.value = sim.spread; uGravityObj.value.copy(sim.gravityObj);
+    // The run moves at most a texel a step, so slow frames take more steps: the pace is the same at 60 and 120.
+    const steps = Math.max(1, Math.min(4, Math.round(dt * 120)));
+    for (let i = 0; i < steps; i++) {
+      const next = 1 - this.cur;
+      renderer.setRenderTarget(this.targets[next]);
+      this.simQuads[this.cur].render(renderer);
+      this.cur = next;
+    }
     this.point();
     renderer.autoClear = prevAuto;
     renderer.setRenderTarget(prevTarget);
