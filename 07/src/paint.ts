@@ -214,7 +214,7 @@ export class PaintLayer {
       mat.colorNode = v4(vCol.xyz.mul(a), a);
       mat.mrtNode = materialBlended(mrt({
         color: v4(vCol.xyz.mul(a), a),
-        props: v4(load.mul(ridge).mul(a), min(a.mul(4), vExtra.y), vMisc.z.mul(a), vMisc.w.mul(a)), // wet 0.85: laid, not arrived
+        props: v4(load.mul(ridge).mul(a), min(a.mul(4), vExtra.y), vMisc.z.mul(a), vMisc.w.mul(a)),
       }));
     });
     // Scrapes: Zero / OneMinusSrcAlpha, everything in both targets scaled down where the blade passes.
@@ -271,16 +271,9 @@ export class PaintLayer {
         const share = vec2(ax, ay).div(max(ax.add(ay), 1e-5));
         return { dir, strength, share };
       };
-      // Paint that has just arrived (wetness 1, dabs lay 0.85) is in a stream: it holds next to nothing back and
-      // passes the rest on, until it dries. That is what makes a run keep going as a leg instead of draining
-      // into its lane at every texel.
-      // Only in an open lane, though, so the streams are few and narrow: elsewhere arrived paint just sits.
-      const flowOf = (p: any, props: any, d: any) => {
-        const l = lanes(p, d.dir);
-        const inStream = smoothstep(0.9, 0.97, props.y).mul(smoothstep(0.3, 0.7, l.open));
-        const hold = mix(l.hold, uRunAt.mul(0.5), inStream);
-        return max(props.x.sub(hold), 0).mul(props.y).mul(uRunRate).mul(uGravity).mul(d.strength);
-      };
+      // The long legs are particles (drips.ts); this pass only makes the soft tongues along a stroke's edge.
+      const flowOf = (p: any, props: any, d: any) =>
+        max(props.x.sub(lanes(p, d.dir).hold), 0).mul(props.y).mul(uRunRate).mul(uGravity).mul(d.strength);
       const c: any = texture(src.textures[0], here).toVar(), p: any = texture(src.textures[1], here).toVar();
       const d = downAt(here);
       const sx = sign(d.dir.x).toVar(), sy = sign(d.dir.y).toVar();
@@ -306,7 +299,7 @@ export class PaintLayer {
       const color = moved.div(over);
       // A high cap: a drop collects a column's worth of paint on its way down and must keep it, or it is lost.
       const thick = min(p.x.sub(leaving).add(arriving), 8);
-      const wetIn = select(arriving.greaterThan(1e-4), float(1), float(0)); // arrived: fully wet, in a stream
+      const wetIn = max(select(inX.greaterThan(0), pX.y, float(0)), select(inY.greaterThan(0), pY.y, float(0)));
       const wet = min(max(max(p.y.sub(uDry), 0), wetIn), 1);
       const rough = p.z.mul(keep).add(pX.z.mul(fInX)).add(pY.z.mul(fInY)).div(over);
       const metal = p.w.mul(keep).add(pX.w.mul(fInX)).add(pY.w.mul(fInY)).div(over);
@@ -314,9 +307,7 @@ export class PaintLayer {
       const across = vec2(d.dir.y.negate(), d.dir.x).mul(px).toVar();
       const cL: any = texture(src.textures[0], here.sub(across)), cR: any = texture(src.textures[0], here.add(across));
       const pL: any = texture(src.textures[1], here.sub(across)), pR: any = texture(src.textures[1], here.add(across));
-      // A stream keeps to itself: no spreading there, or it would bleed away sideways over the length of a leg.
-      const inStreamHere = smoothstep(0.9, 0.97, wet).mul(smoothstep(0.3, 0.7, lanes(here, d.dir).open));
-      const k = uSpread.mul(wet).mul(float(1).sub(inStreamHere)).toVar();
+      const k = uSpread.mul(wet).toVar();
       const colorOut = mix(color, cL.add(cR).mul(0.5), k);
       const propsOut = mix(v4(thick, wet, rough, metal), v4(pL.x.add(pR.x).mul(0.5), wet, pL.z.add(pR.z).mul(0.5), pL.w.add(pR.w).mul(0.5)), k);
       mat.colorNode = colorOut;

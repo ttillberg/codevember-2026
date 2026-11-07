@@ -26,7 +26,7 @@ import {
 } from 'three/tsl';
 import { PAINT_H, PAINT_W, PaintLayer, sim, type Brush, type Dab } from './paint';
 import { FINISH, hexToRgb, tool } from './tool';
-import { dripSettings, maybeSpawn, stepDrips } from './drips';
+import { dripSettings, dryPile, maybeSpawn, stepDrips } from './drips';
 
 export const paint = new PaintLayer();
 // Dev: 0 normal, 1 coverage, 2 wetness, 3 thickness, 4 tint. And how much wet paint glosses up.
@@ -91,16 +91,17 @@ export function Balloon() {
   // Splat this frame's dabs and run the paint before the scene renders.
   useFrame((_, dt) => {
     uBump.value = sim.bump; uGrain.value = sim.grain;
-    // Liquid: how runny the paint is. Thin paint runs in its easiest lanes at almost no thickness and keeps almost
-    // nothing behind there (so the legs are long) while the stiff lanes hold, moves faster and dries slower.
+    // Liquid: how runny the paint is. The tongues along a stroke's edge start at less thickness, move faster
+    // and dry slower; the legs are the drips (drips.ts), which form where paint piles up.
     const l = tool.liquid;
-    sim.runAt = lerp(0.7, 0.05, l);
-    sim.runNoise = lerp(0.3, 0.75, l);
-    sim.lane = lerp(14, 26, l);
-    sim.laneSharp = lerp(1, 4, l);
-    sim.runRate = lerp(0.3, 1.0, l); // at 1 a stream moves all of its excess each step, so a drop stays a drop
+    sim.runAt = lerp(0.7, 0.35, l);
+    sim.runNoise = lerp(0.3, 0.4, l);
+    sim.lane = 14;
+    sim.laneSharp = 1;
+    sim.runRate = lerp(0.3, 0.7, l);
     sim.dry = lerp(0.002, 0.00015, l);
-    sim.spread = lerp(0.06, 0.025, l); // thin paint keeps to its lanes, so the legs stay narrow and go far
+    sim.spread = lerp(0.06, 0.12, l);
+    dryPile(dt);
     stepDrips(dt, sim.gravityObj, tool.size, l, paint);
     paint.flush(gl, dt);
   }, -1);

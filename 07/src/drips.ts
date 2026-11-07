@@ -14,16 +14,22 @@ type Drip = {
 };
 
 export const dripSettings = {
-  chance: 0.05,   // per brush dab, at full liquid (scaled by liquid squared)
   speed: 0.12,    // pole-to-pole units a second, at full mass and full grip
   legs: 7,        // leg length in brush sizes, at full liquid, for a drop of mass 1
-  width: 0.14,    // trail diameter in brush sizes
+  width: 0.09,    // trail diameter in brush sizes
   bead: 0.45,     // bead diameter in brush sizes, at mass 1
   max: 400,
+  // Where a drop forms: paint piles up in a coarse map as the brush lays it (one pass of the default brush
+  // comes to about 1.3), and dries out of it slowly. A cell over the threshold lets a drop go with the excess.
+  threshold: 1.2, // at full liquid; stiffer paint needs more
+  dry: 0.06,      // per second, share of the pile that sets
 };
 
 const drips: Drip[] = [];
 const g2 = { x: 0, y: 0 };
+
+const PW = 512, PH = 256;
+const pile = new Float32Array(PW * PH);
 
 // Gravity on the sphere at (u, v) in texture space, direction and grip, as in the run pass: the object-space
 // gravity on the tangents of three's sphere mapping.
@@ -37,21 +43,59 @@ function gravityAt(u: number, v: number, g: Vector3) {
   return { dx: g2.x / Math.max(grip, 1e-6), dy: g2.y / Math.max(grip, 1e-6), grip, theta };
 }
 
-/** A brush dab passes by: maybe let a drop go from its lower edge. */
+/** A brush dab lands: pile its paint up where it falls, and let a drop go where there is too much. */
 export function maybeSpawn(d: Dab, liquid: number, g: Vector3) {
-  if (drips.length >= dripSettings.max) return;
-  if (Math.random() > dripSettings.chance * liquid * liquid) return;
-  const gr = gravityAt(d.u, d.v, g);
-  if (gr.grip < 0.2) return;
-  // Most drops are small and stop soon, a few go far.
-  const mass = (0.15 + Math.random() ** 2 * 1.1) * liquid;
-  // Start half a brush down the slope, so the leg comes out from under the stroke.
-  const r = d.size * 0.5;
-  drips.push({
-    u: d.u + gr.dx * r / (2 * Math.max(Math.sin(gr.theta), 0.05)), v: d.v + gr.dy * r,
-    rgb: d.rgb, rough: d.rough, metal: d.metal,
-    mass, width: d.size * dripSettings.width * (0.7 + mass * 0.5), seed: Math.random() * 1000,
-  });
+  if (liquid <= 0.02) return;
+  const threshold = dripSettings.threshold / Math.max(liquid, 0.02) ** 1.5;
+  // The dab's paint over its disc, in cells; the disc is as wide in u as the sphere is narrow there.
+  const amount = d.flow * (d.load ?? 0.85);
+  const ry = Math.max(1, Math.round(d.size * 0.5 * PH));
+  const rx = Math.max(1, Math.round(ry / Math.max(Math.sin((1 - d.v) * Math.PI), 0.05) * 0.5 * (PW / PH)));
+  const cx = Math.round(d.u * PW), cy = Math.round(d.v * PH);
+  for (let j = -ry; j <= ry; j++) {
+    const y = cy + j;
+    if (y < 0 || y >= PH) continue;
+    for (let i = -rx; i <= rx; i++) {
+      const fall = 1 - Math.hypot(i / rx, j / ry);
+      if (fall <= 0) continue;
+      const x = ((cx + i) % PW + PW) % PW;
+      const k = y * PW + x;
+      pile[k] += amount * fall;
+      // Each spot lets go at its own moment, so the legs don't line up like a comb.
+      if (pile[k] > threshold * (0.7 + Math.random() * 0.6) && drips.length < dripSettings.max) {
+        const u = x / PW, v = y / PH;
+        const gr = gravityAt(u, v, g);
+        if (gr.grip < 0.2) continue;
+        // The drop gathers the paint around it, a brush's width, so there is one drop per spot and the spot has
+        // to fill up again before the next.
+        let gathered = 0;
+        const reach = 0.9 + Math.random() * 1.4;
+        const gy = Math.round(ry * reach), gx = Math.round(rx * reach);
+        for (let jj = -gy; jj <= gy; jj++) {
+          const yy = y + jj;
+          if (yy < 0 || yy >= PH) continue;
+          for (let ii = -gx; ii <= gx; ii++) {
+            if (Math.hypot(ii / gx, jj / gy) > 1) continue;
+            const kk = yy * PW + ((x + ii) % PW + PW) % PW;
+            const take = pile[kk] * 0.6;
+            pile[kk] -= take;
+            gathered += take;
+          }
+        }
+        const mass = Math.min(1.3, gathered / (threshold * gx * gy * 0.8)) * liquid * (0.35 + Math.random() ** 1.5 * 1.1);
+        drips.push({
+          u, v, rgb: d.rgb, rough: d.rough, metal: d.metal,
+          mass, width: d.size * dripSettings.width * (0.8 + mass * 0.3), seed: Math.random() * 1000,
+        });
+      }
+    }
+  }
+}
+
+/** The pile sets with time. Call once a frame. */
+export function dryPile(dt: number) {
+  const k = 1 - dripSettings.dry * dt;
+  for (let i = 0; i < pile.length; i++) if (pile[i] > 0) pile[i] *= k;
 }
 
 /** Move every drop and stamp its trail; beads where they stop. */
@@ -66,7 +110,7 @@ export function stepDrips(dt: number, g: Vector3, size: number, liquid: number, 
     if (gr.grip < 0.15 || d.mass <= 0) {
       paint.add({
         u: ((d.u % 1) + 1) % 1, v: d.v, angle: 0, seed: d.seed, size: size * dripSettings.bead * (0.5 + Math.max(d.mass, 0) + 0.5),
-        rgb: d.rgb, flow: 1, brush: 'round', rough: d.rough, metal: d.metal, load: 1.0, wet: 0.3,
+        rgb: d.rgb, flow: 1, brush: 'round', rough: d.rough, metal: d.metal, load: 1.2, wet: 0.3,
       });
       drips.splice(i, 1);
       continue;
@@ -75,9 +119,13 @@ export function stepDrips(dt: number, g: Vector3, size: number, liquid: number, 
     d.v = Math.min(0.999, Math.max(0.001, d.v + gr.dy * step));
     d.mass -= spent;
     const angle = Math.atan2(gr.dy, gr.dx);
+    // Inside the stroke it came from there is nothing to add: the trail starts where the paint ends.
+    const cell = (Math.min(PH - 1, Math.round(d.v * PH))) * PW + ((Math.round(d.u * PW) % PW + PW) % PW);
+    if (pile[cell] > 1.0) continue;
     paint.add({
       u: ((d.u % 1) + 1) % 1, v: d.v, angle, seed: d.seed, size: d.width,
-      rgb: d.rgb, flow: 0.45, brush: 'round', rough: d.rough, metal: d.metal, load: 0.35, wet: 0,
+      // Laid dry, so the run pass leaves it alone.
+      rgb: d.rgb, flow: 0.6, brush: 'round', rough: d.rough, metal: d.metal, load: 0.55, wet: 0,
     });
   }
 }
