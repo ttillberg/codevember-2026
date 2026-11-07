@@ -266,8 +266,9 @@ const GEAR = (() => {
   }
   return `M${pts.join(' L')} Z`;
 })();
-const Icon = ({ children }: { children: React.ReactNode }) => (
-  <svg width="22" height="22" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.1" strokeLinecap="round" strokeLinejoin="round">
+// 30px puts a 12.8 unit gear or a 12 unit ring at 24px across, the colour swatch's size.
+const Icon = ({ children, size = 30, stroke = 0.8 }: { children: React.ReactNode; size?: number; stroke?: number }) => (
+  <svg width={size} height={size} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={stroke} strokeLinecap="round" strokeLinejoin="round">
     {children}
   </svg>
 );
@@ -275,7 +276,7 @@ const Icon = ({ children }: { children: React.ReactNode }) => (
 const GearIcon = () => (
   <Icon><path d={`${GEAR} M10.2 8 A2.2 2.2 0 1 0 5.8 8 A2.2 2.2 0 1 0 10.2 8 Z`} fill="currentColor" fillRule="evenodd" stroke="none" /></Icon>
 );
-const InfoIcon = () => <Icon><circle cx="8" cy="8" r="6" /><path d="M8 7.3V11" /><circle cx="8" cy="5" r="0.4" fill="currentColor" /></Icon>;
+const InfoIcon = () => <Icon><circle cx="8" cy="8" r="6" /><path d="M8 7.3V11" /><circle cx="8" cy="5" r="0.5" fill="currentColor" /></Icon>;
 
 // A row in a popover menu: a label, and a little switch when it toggles.
 const Row = ({ label, on, hint, act }: { label: string; on?: boolean; hint?: string; act: () => void }) => (
