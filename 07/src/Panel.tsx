@@ -317,18 +317,20 @@ export function Panel() {
       <ColorKnob />
       <Picker name="paint" items={FINISHES} cur={tool.finish} put={(f) => { tool.finish = f; }} icon={(f) => <FinishBall f={f} />} />
       <span className="ft-sep" />
-      <Pop name="settings" icon={<GearIcon />} className="ft-menu">
-        <Row label="Auto draw" hint="Space" on={tool.auto} act={() => set(() => { tool.auto = !tool.auto; })} />
-        <Row label="Inertia" on={tool.inertia} act={() => set(() => { tool.inertia = !tool.inertia; })} />
-        <hr />
-        <Row label="Clear" act={() => set(() => { paint.clear(); clearDrips(); })} />
-        <Row label="Reset tools" act={() => set(resetTool)} />
-      </Pop>
-      <Pop name="help" icon={<InfoIcon />} className="ft-menu ft-help">
-        <p><b>Click + drag</b> paint and turn</p>
-        <p><b>Cmd + move</b> turn without painting</p>
-        <p><b>Space</b> auto draw</p>
-      </Pop>
+      <div className="ft-pair">
+        <Pop name="settings" icon={<GearIcon />} className="ft-menu">
+          <Row label="Auto draw" hint="Space" on={tool.auto} act={() => set(() => { tool.auto = !tool.auto; })} />
+          <Row label="Inertia" on={tool.inertia} act={() => set(() => { tool.inertia = !tool.inertia; })} />
+          <hr />
+          <Row label="Clear" act={() => set(() => { paint.clear(); clearDrips(); })} />
+          <Row label="Reset tools" act={() => set(resetTool)} />
+        </Pop>
+        <Pop name="help" icon={<InfoIcon />} className="ft-menu ft-help">
+          <p><b>Click + drag</b> paint and turn</p>
+          <p><b>Cmd + move</b> turn without painting</p>
+          <p><b>Space</b> auto draw</p>
+        </Pop>
+      </div>
     </div>
     </>
   );
