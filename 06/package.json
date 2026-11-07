@@ -1,7 +1,7 @@
 {
   "name": "day-06",
   "private": true,
-  "description": "Glass marbles on tilting wire rings round a hanging bulb, real Kepler orbits",
+  "description": "A candy orrery",
   "type": "module",
   "scripts": {
     "dev": "vite",

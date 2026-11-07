@@ -5,6 +5,7 @@ import { clock } from './clock';
 import { PLANETS } from './planets';
 import { planetAt } from './scale';
 import { focus } from './CameraRig';
+import { pickedNow } from './selection';
 
 // Whether the orbits are drawn, switched from the planet list (or O).
 export const orbitsShown = { value: false };
@@ -55,21 +56,29 @@ export function Orbits() {
       }),
     [start],
   );
+  const shown = useRef<string | null>(null); // the planet in focus, kept while the focus fades out again
   useFrame(({ camera }) => {
     // On by themselves once the camera's far out, gone again close in; the switch keeps them on regardless.
     const far = camera.position.distanceTo(SUN), t = Math.min(1, Math.max(0, (far - NEAR) / (FAR - NEAR)));
-    // Off too while a planet's in focus, however far out it is.
-    const fade = orbitsShown.value ? 1 : t * t * (3 - 2 * t) * (1 - focus.amount);
-    group.current.visible = fade > 0.01;
+    const base = orbitsShown.value ? 1 : t * t * (3 - 2 * t);
+    // In focus, only the focused planet's own orbit stays: the rest fade out.
+    const picked = pickedNow();
+    if (picked) shown.current = picked;
+    else if (focus.amount < 0.01) shown.current = null;
+    const fades = lines.map((l) => (l.name === shown.current ? Math.max(base * (1 - focus.amount), focus.amount) : orbitsShown.value ? 1 : base * (1 - focus.amount)));
+    group.current.visible = fades.some((f) => f > 0.01);
     if (!group.current.visible) return;
-    for (const l of lines) {
+    lines.forEach((l, n) => {
+      const fade = fades[n];
+      l.line.visible = fade > 0.01;
+      if (!l.line.visible) return;
       const now = (((clock.jd - start) / l.year) % 1 + 1) % 1, colour = l.geometry.getAttribute('color') as BufferAttribute;
       for (let i = 0; i <= l.steps; i++) {
         const behind = (((now - i / l.steps) % 1) + 1) % 1; // 0 at the planet, towards 1 round behind it
         colour.setW(i, OPACITY * fade * Math.pow(1 - behind, 1.6));
       }
       colour.needsUpdate = true;
-    }
+    });
   });
   return (
     <group ref={group} visible={false}>
