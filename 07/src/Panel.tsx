@@ -232,7 +232,8 @@ const OptionsIcon = () => (
     <circle cx="6" cy="5" r="1.6" fill="currentColor" /><circle cx="10.5" cy="11" r="1.6" fill="currentColor" />
   </svg>
 );
-function OptionsKnob() {
+// A small icon button in the bar that opens a popover above it; a press elsewhere or escape closes it.
+function Pop({ name, icon, className, children }: { name: string; icon: React.ReactNode; className: string; children: React.ReactNode }) {
   const [open, setOpen] = useState(false);
   const box = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -243,25 +244,47 @@ function OptionsKnob() {
     window.addEventListener('keydown', esc);
     return () => { window.removeEventListener('pointerdown', away); window.removeEventListener('keydown', esc); };
   }, [open]);
-  const m = tool.brush as Medium;
   return (
     <div className="ft-knob" ref={box}>
-      <button aria-label="options" title={`${m} options`} className={`ft-opts${open ? ' on' : ''}`}
+      <button aria-label={name} title={name} className={`ft-opts${open ? ' on' : ''}`}
         onPointerDown={(e) => e.preventDefault()} onClick={() => setOpen((o) => !o)}>
-        <OptionsIcon />
+        {icon}
       </button>
-      <div className={`ft-gauge ft-sliders${open ? ' open' : ''}`}>
-        {OPTIONS[m].map((k) => <OptionSlider key={`${m}-${k}`} k={k} />)}
-      </div>
+      <div className={`ft-gauge ft-popover ${className}${open ? ' open' : ''}`}>{children}</div>
     </div>
   );
 }
 
+// A gear: eight teeth around a hole.
+const GEAR = (() => {
+  const pts: string[] = [];
+  for (let i = 0; i < 16; i++) {
+    const r = i % 2 ? 4.7 : 6.4, a0 = (i / 16) * Math.PI * 2 - 0.12, a1 = ((i + 1) / 16) * Math.PI * 2 - 0.12 - 0.12;
+    pts.push(`${8 + r * Math.cos(a0)} ${8 + r * Math.sin(a0)}`, `${8 + r * Math.cos(a1)} ${8 + r * Math.sin(a1)}`);
+  }
+  return `M${pts.join(' L')} Z`;
+})();
+const Icon = ({ children }: { children: React.ReactNode }) => (
+  <svg width="22" height="22" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.1" strokeLinecap="round" strokeLinejoin="round">
+    {children}
+  </svg>
+);
+const GearIcon = () => <Icon><path d={GEAR} /><circle cx="8" cy="8" r="2" /></Icon>;
+const InfoIcon = () => <Icon><circle cx="8" cy="8" r="6" /><path d="M8 7.3V11" /><circle cx="8" cy="5" r="0.4" fill="currentColor" /></Icon>;
+
+// A row in a popover menu: a label, and a little switch when it toggles.
+const Row = ({ label, on, hint, act }: { label: string; on?: boolean; hint?: string; act: () => void }) => (
+  <button className="ft-row" onClick={act}>
+    <span>{label}</span>
+    {hint && <kbd>{hint}</kbd>}
+    {on !== undefined && <i className={`ft-switch${on ? ' on' : ''}`} />}
+  </button>
+);
+
 // The finishes as little black balls: soft for matte, a sharp highlight for gloss, a chrome horizon for metal.
 const FinishBall = ({ f }: { f: Finish }) => <i className={`ft-ball ${f}`} />;
 
-// A floating frosted panel holding every control, Figma style.
-// It writes straight into `tool`; it re-renders after any click, input or key.
+// The bar holding every control. It writes straight into `tool`; it re-renders after any click, input or key.
 export function Panel() {
   const [, bump] = useState(0);
   useEffect(() => {
@@ -278,26 +301,29 @@ export function Panel() {
 
   return (
     <>
-    {/* The media, as big icons in a frosted bar under the balloon. */}
+    {/* Every control, in a frosted bar under the balloon. */}
     <div className="ft-media">
       <Picker name="medium" items={MEDIA} cur={tool.brush as Medium} put={(m) => { tool.brush = m; }} icon={(m) => <MediumIcon m={m} />} solid />
-      <OptionsKnob />
+      <Pop name={`${tool.brush} options`} icon={<OptionsIcon />} className="ft-sliders">
+        {OPTIONS[tool.brush as Medium].map((k) => <OptionSlider key={`${tool.brush}-${k}`} k={k} />)}
+      </Pop>
       <span className="ft-sep" />
       <SizeKnob />
       <ColorKnob />
       <Picker name="paint" items={FINISHES} cur={tool.finish} put={(f) => { tool.finish = f; }} icon={(f) => <FinishBall f={f} />} />
-    </div>
-    <div className="ft-drawer">
-        <section>
-          <h4>Settings</h4>
-          <div className="ft-chips">
-            <button className={tool.auto ? 'on' : ''} onClick={() => set(() => { tool.auto = !tool.auto; })}>Auto draw</button>
-            <button className={tool.inertia ? 'on' : ''} onClick={() => set(() => { tool.inertia = !tool.inertia; })}>Inertia</button>
-            <button onClick={() => set(() => { paint.clear(); clearDrips(); })}>Clear</button>
-            <button onClick={() => set(resetTool)}>Reset tools</button>
-          </div>
-        </section>
-        <p className="ft-help"><b>Click + drag</b> paint and turn<br /><b>Cmd + move</b> turn without painting<br /><b>Space</b> auto draw</p>
+      <span className="ft-sep" />
+      <Pop name="settings" icon={<GearIcon />} className="ft-menu">
+        <Row label="Auto draw" hint="Space" on={tool.auto} act={() => set(() => { tool.auto = !tool.auto; })} />
+        <Row label="Inertia" on={tool.inertia} act={() => set(() => { tool.inertia = !tool.inertia; })} />
+        <hr />
+        <Row label="Clear" act={() => set(() => { paint.clear(); clearDrips(); })} />
+        <Row label="Reset tools" act={() => set(resetTool)} />
+      </Pop>
+      <Pop name="help" icon={<InfoIcon />} className="ft-menu ft-help">
+        <p><b>Click + drag</b> paint and turn</p>
+        <p><b>Cmd + move</b> turn without painting</p>
+        <p><b>Space</b> auto draw</p>
+      </Pop>
     </div>
     </>
   );
