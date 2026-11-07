@@ -137,6 +137,5 @@ canvas.grabbing { cursor: grabbing; }
 .ft-help p { margin: 0; }
 .ft-help b { color: #111; font-weight: 500; }
 
-/* Settings and help sit close together. */
-.ft-pair { display: flex; }
-.ft-pair > .ft-knob > button { width: 40px; height: 40px; align-self: center; }
+/* Settings and help, spaced like the rest of the bar. */
+.ft-pair { display: flex; gap: 4px; }
