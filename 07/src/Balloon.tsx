@@ -25,7 +25,7 @@ import {
   abs, float, max, min, mix, mx_noise_float, normalMap, sin, smoothstep, normalViewGeometry, positionViewDirection, saturate, select, uniform, uv,
   vec2, vec3,
 } from 'three/tsl';
-import { PAINT_H, PAINT_W, PaintLayer, sim, type Brush, type Dab } from './paint';
+import { K, PAINT_H, PAINT_W, PaintLayer, sim, type Brush, type Dab } from './paint';
 import { FINISH, hexToRgb, tool } from './tool';
 import { dripSettings, dryPile, maybeSpawn, stepDrips } from './drips';
 
@@ -55,7 +55,7 @@ function balloonMaterial(side: typeof FrontSide | typeof BackSide) {
   // the pigment has dried denser. Wide and soft, like a coffee ring, not a line.
   // u offsets stretched by 1 / sin(theta), clamped, so the measure is the same distance all over the sphere.
   const uScale = min(float(1).div(max(sin(float(1).sub(uv().y).mul(Math.PI)), 0.02)), 8).toVar();
-  const e = vec2(float(26 / PAINT_W).mul(uScale), 26 / PAINT_H);
+  const e = vec2(float(26 * K / PAINT_W).mul(uScale), 26 * K / PAINT_H);
   const around = paint.colorAt(uv().sub(vec2(e.x, 0))).a.add(paint.colorAt(uv().add(vec2(e.x, 0))).a)
     .add(paint.colorAt(uv().sub(vec2(0, e.y))).a).add(paint.colorAt(uv().add(vec2(0, e.y))).a).mul(0.25);
   // A wash: no thickness, and the glaze's glass-smooth finish (0.04), which no other brush lays. Pencil paint and
@@ -90,11 +90,11 @@ function balloonMaterial(side: typeof FrontSide | typeof BackSide) {
   // Normal from the paint's height: thickness plus a fine grain, differenced across one texel each way in the
   // target. Orange peel on thick paint, ridges along bristle strokes, rounded lips on the runs.
   // Two texels either way: a step a run leaves is spread over a few texels, not drawn as a line.
-  const px = float(2 / PAINT_W).mul(uScale), py = 2 / PAINT_H;
+  const px = float(2 * K / PAINT_W).mul(uScale), py = 2 * K / PAINT_H;
   // Height is the thickness, clamped so a big drop reads as a dome and not a cliff, plus a fine grain.
   // Compressed smoothly towards 1.5 rather than clamped: a hard cap drew a contour line wherever a run piled
   // the paint over it.
-  const height = (at: any, props: any) => { const h = props.x.div(props.x.add(1)); return h.add(mx_noise_float(at.mul(vec2(PAINT_W / 3, PAINT_H / 3))).mul(uGrain).mul(h)); };
+  const height = (at: any, props: any) => { const h = props.x.div(props.x.add(1)); return h.add(mx_noise_float(at.mul(vec2(2048 / 3, 1024 / 3))).mul(uGrain).mul(h)); };
   const hL = height(uv().sub(vec2(px, 0)), paint.propsAt(uv().sub(vec2(px, 0))));
   const hR = height(uv().add(vec2(px, 0)), paint.propsAt(uv().add(vec2(px, 0))));
   const hD = height(uv().sub(vec2(0, py)), paint.propsAt(uv().sub(vec2(0, py))));

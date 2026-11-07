@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { clearDrips } from './drips';
 import { paint } from './Balloon';
-import type { Brush } from './paint';
+import { PAINT_W, QUALITY, quality, setQuality, type Brush, type Quality } from './paint';
 import { resetTool, save, tool, type Finish } from './tool';
 
 // The media, and the options each one answers to.
@@ -494,6 +494,11 @@ export function Panel() {
         <Pop name="settings" tip="Settings" icon={<GearIcon />} className="ft-menu">
           <Row label="Auto draw" hint="Space" on={tool.auto} act={() => set(() => { tool.auto = !tool.auto; })} />
           <Row label="Inertia" on={tool.inertia} act={() => set(() => { tool.inertia = !tool.inertia; })} />
+          <Row label={`Texture ${quality}`} hint={`${PAINT_W}×${PAINT_W / 2}`} act={() => {
+            // Reloads: the targets and shaders are built on the size.
+            const qs = Object.keys(QUALITY) as Quality[];
+            setQuality(qs[(qs.indexOf(quality) + 1) % qs.length]);
+          }} />
           <hr />
           <div className="ft-actions">
             <button onClick={() => set(() => { paint.clear(); clearDrips(); })}>

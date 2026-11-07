@@ -16,7 +16,18 @@ import {
   screenUV, smoothstep, texture, uniform, uv, varying, vec2, vec3, vec4, Fn,
 } from 'three/tsl';
 
-export const PAINT_W = 2048, PAINT_H = 1024;
+// The paint target's size, a quality setting: read once at load, since the targets and every shader are built
+// on it; changing it reloads the page.
+export type Quality = 'lo' | 'med' | 'hi';
+export const QUALITY: Record<Quality, number> = { lo: 1024, med: 2048, hi: 4096 };
+const QKEY = 'codevember-07-quality';
+export const quality: Quality = (() => { try { const q = localStorage.getItem(QKEY) as Quality; return q in QUALITY ? q : 'med'; } catch { return 'med'; } })();
+export const setQuality = (q: Quality) => { try { localStorage.setItem(QKEY, q); } catch { /* ignore */ } location.reload(); };
+export const PAINT_W = QUALITY[quality], PAINT_H = PAINT_W / 2;
+// Texels per medium texel: distances set in texels (lanes, the pigment ring, the bump) scale with it, so the
+// paint looks the same at every size, only finer or coarser. The run pass keeps its steps a second, so at hi the
+// runs crawl at half the pace: scaling the steps too spiralled (a slow frame asks for more steps) down to 11 fps.
+export const K = PAINT_W / 2048;
 const v4 = vec4 as any; // the typings lack the (vec3, float) overload
 const MAX_DABS = 2048; // per frame, per kind
 const TRAIL = 0.3;     // coverage a run leaves behind it, whatever the paint did
@@ -235,7 +246,7 @@ export class PaintLayer {
       const load = select(vExtra.x.lessThan(0), brushLoad, vExtra.x);
       // Impasto: the paint is laid thicker and thinner across the dab, in ridges along the stroke.
       // In target space (the ortho pass fills the target, so screenUV is it), so overlapping dabs agree.
-      const ridge = select(isPencil, float(1), mx_noise_float(vec3(screenUV.x.mul(PAINT_W / 10), screenUV.y.mul(PAINT_H / 10), vMisc.y.mul(0.01))).mul(0.35).add(1));
+      const ridge = select(isPencil, float(1), mx_noise_float(vec3(screenUV.x.mul(2048 / 10), screenUV.y.mul(1024 / 10), vMisc.y.mul(0.01))).mul(0.35).add(1));
       mat.colorNode = v4(vCol.xyz.mul(a), a);
       mat.mrtNode = materialBlended(mrt({
         color: v4(vCol.xyz.mul(a), a),
@@ -355,7 +366,7 @@ export class PaintLayer {
       // The water: big slow noise with a finer one on top, squared for contrast, so the bloom pushes out in broad
       // fingers with narrow dry gaps between them.
       // The water field in roughly even coordinates on the sphere, so it doesn't pinch into rays at the poles.
-      const wx = here.x.mul(PAINT_W).div(uScale), wy = here.y.mul(PAINT_H);
+      const wx = here.x.mul(2048).div(uScale), wy = here.y.mul(1024);
       const w1 = mx_noise_float(vec3(wx.div(70), wy.div(70), 11)).mul(0.5).add(0.5);
       const w2 = mx_noise_float(vec3(wx.div(24), wy.div(24), 5)).mul(0.5).add(0.5);
       const water = w1.mul(0.7).add(w2.mul(0.3)).toVar();
@@ -461,7 +472,7 @@ export class PaintLayer {
       this.scrape.count = 0;
     }
     // 2. run and dry: current -> next, then swap
-    uRunAt.value = sim.runAt; uRunNoise.value = sim.runNoise; uLane.value = sim.lane; uLaneSharp.value = sim.laneSharp; uRunRate.value = sim.runRate; uDry.value = sim.dry; uGravity.value = sim.gravity; uSpread.value = sim.spread; uBleed.value = sim.bleed; uGravityObj.value.copy(sim.gravityObj);
+    uRunAt.value = sim.runAt; uRunNoise.value = sim.runNoise; uLane.value = sim.lane * K; uLaneSharp.value = sim.laneSharp; uRunRate.value = sim.runRate; uDry.value = sim.dry; uGravity.value = sim.gravity; uSpread.value = sim.spread; uBleed.value = sim.bleed; uGravityObj.value.copy(sim.gravityObj);
     // The run moves at most a texel a step, so slow frames take more steps: the pace is the same at 60 and 120.
     const steps = Math.max(1, Math.min(4, Math.round(dt * 120)));
     for (let i = 0; i < steps; i++) {
