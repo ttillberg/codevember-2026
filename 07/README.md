@@ -2,7 +2,7 @@
 
 2026-11-07
 
-Paint on a hollow, clear balloon. WebGPU through three's node materials (TSL) in React Three Fiber. The brush sits at the centre of the screen and the balloon turns under it on its own, like a pot on a wheel. The cursor leans it: left and right roll it, up and down pitch it. Hold the button to paint, so a still hand gives a ring and a moving one a spiral. Four tools: a round brush, spray, a bristle brush and a scraper; three finishes: matte, gloss and metal. Thick wet paint runs down the balloon, evens out sideways and dries where it stops.
+Paint on a hollow, clear balloon. WebGPU through three's node materials (TSL) in React Three Fiber. The brush sits at the centre of the screen and the balloon turns under it on its own, like a pot on a wheel. The cursor leans it: left and right roll it, up and down pitch it. Hold the button to paint, or switch on auto (the button, or space) and the brush never lifts: a still hand gives a ring and a moving one a spiral. Four tools: a round brush, spray, a bristle brush and a scraper; three finishes: matte, gloss and metal. Thick wet paint runs down the balloon, evens out sideways and dries where it stops.
 
 ## How
 

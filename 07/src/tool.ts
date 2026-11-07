@@ -26,6 +26,7 @@ export const tool = {
   hex: SWATCHES[0].hex,
   size: 0.06, // pole to pole units
   flow: 0.9,
+  auto: false, // paint without holding the button
 };
 
 export function hexToRgb(hex: string): [number, number, number] {

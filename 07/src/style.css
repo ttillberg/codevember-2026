@@ -43,5 +43,10 @@ canvas { display: block; touch-action: none; }
   font: inherit; color: inherit;
 }
 .brushes button.on { background: #111; color: #fff; }
+.auto {
+  border: 1.5px solid rgba(0, 0, 0, 0.25); background: none; padding: 5px 10px; border-radius: 999px; cursor: pointer;
+  font: inherit; color: inherit;
+}
+.auto.on { background: #e63b2e; border-color: #e63b2e; color: #fff; }
 .size { display: flex; align-items: center; gap: 8px; opacity: 0.7; }
 .size input { width: 110px; }

@@ -25,7 +25,7 @@ const uDebug = uniform(0);
 const uWetGloss = uniform(1);
 const uBump = uniform(sim.bump);
 const uGrain = uniform(sim.grain);
-if (import.meta.env.DEV) { (window as any).__wheel = wheel; (window as any).__sim = sim; (window as any).__paint = paint; (window as any).__dbg = uDebug; (window as any).__wetGloss = uWetGloss; }
+if (import.meta.env.DEV) { (window as any).__tool = tool; (window as any).__wheel = wheel; (window as any).__sim = sim; (window as any).__paint = paint; (window as any).__dbg = uDebug; (window as any).__wetGloss = uWetGloss; }
 
 // Thin clear rubber with paint on it. Clear rubber has no diffuse of its own, only its reflections and a faint
 // darkening at the rim; where there is paint the surface is opaque in the paint's colour and finish, wet paint
@@ -169,7 +169,7 @@ export function Balloon() {
       ring.style.width = ring.style.height = `${Math.max(px * 2, 6)}px`;
       ring.style.opacity = h ? '1' : '0.3';
     }
-    if (!painting.current || !h) { if (!h) stroke.current = null; return; }
+    if (!(painting.current || tool.auto) || !h) { stroke.current = null; return; }
     if (!stroke.current) {
       const seed = Math.random() * 1000;
       stroke.current = { u: h.u, v: h.v, seed };

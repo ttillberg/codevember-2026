@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { SWATCHES, tool, type Finish } from './tool';
 import type { Brush } from './paint';
 
@@ -7,7 +7,13 @@ const FINISHES: Finish[] = ['matte', 'gloss', 'metal'];
 
 export function Palette() {
   const [, bump] = useState(0);
-  const set = (fn: () => void) => { fn(); bump((n) => n + 1); };
+  // Buttons give up focus after a click so the space bar stays the auto toggle and never re-presses them.
+  const set = (fn: () => void) => { fn(); bump((n) => n + 1); (document.activeElement as HTMLElement | null)?.blur?.(); };
+  useEffect(() => {
+    const key = (e: KeyboardEvent) => { if (e.code === 'Space') { e.preventDefault(); set(() => { tool.auto = !tool.auto; }); } };
+    window.addEventListener('keydown', key);
+    return () => window.removeEventListener('keydown', key);
+  }, []);
   return (
     <div className="palette">
       <div className="swatches">
@@ -35,6 +41,9 @@ export function Palette() {
           </button>
         ))}
       </div>
+      <button className={`auto ${tool.auto ? 'on' : ''}`} onClick={() => set(() => { tool.auto = !tool.auto; })}>
+        auto
+      </button>
       <label className="size">
         size
         <input
