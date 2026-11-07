@@ -7,7 +7,7 @@ const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
 // Dab spacing as a fraction of the brush size, and the alpha each dab adds, so a stroke builds up smoothly rather
 // than popping in dab by dab: about a dozen dabs overlap at any point of a round stroke.
 const SPACING: Record<Brush, number> = { round: 0.06, bristle: 0.06, spray: 0.05, scrape: 0.08, glaze: 0.035, pencil: 0.06 };
-const FLOW: Record<Brush, number> = { round: 0.2, bristle: 0.3, spray: 0.3, scrape: 0.12, glaze: 0.16, pencil: 0.25 };
+const FLOW: Record<Brush, number> = { round: 0.2, bristle: 0.3, spray: 0.3, scrape: 0.12, glaze: 0.08, pencil: 0.25 };
 
 // The wheel, tunable live. A trackball: drag turns the balloon about the axis across the drag, any direction,
 // and it keeps turning once let go at the speed of the last move, slowing only a little. Grabbing never stops it.

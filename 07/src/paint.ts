@@ -1,4 +1,4 @@
-// The paint on the balloon lives in UV space as two half float textures, rendered ping-pong between two targets:
+// The paint on the balloon lives in UV space as two float textures, rendered ping-pong between two targets:
 //   color: premultiplied rgb, coverage in a
 //   props: thickness, wetness, roughness * coverage, metalness * coverage
 // Each frame: the queued dabs are splatted into the current target (one instanced draw, never cleared between
@@ -6,7 +6,7 @@
 // the next: wet, thick paint runs down the balloon, paint dries. Dab width is stretched by 1 / sin(pi v) so a dab
 // stays round near the poles, and dabs near the u seam are drawn again a full turn over so a stroke crosses it.
 import {
-  CustomBlending, DoubleSide, HalfFloatType, InstancedBufferAttribute, InstancedBufferGeometry, Mesh, MeshBasicNodeMaterial,
+  CustomBlending, DoubleSide, FloatType, InstancedBufferAttribute, InstancedBufferGeometry, Mesh, MeshBasicNodeMaterial,
   NodeMaterial, OneFactor, OneMinusSrcAlphaFactor, OrthographicCamera, PlaneGeometry, QuadMesh, RenderTarget,
   RepeatWrapping, Scene, ZeroFactor, NoBlending, BlendMode, MaterialBlending, Vector3, type Texture, type WebGPURenderer,
 } from 'three/webgpu';
@@ -67,6 +67,9 @@ export const sim = {
   bleed: 0.06,   // how fast a wet wash floats out, per step
   melt: 0.05,    // dev: the wash's melt, as a share of the bleed
   grow: 1,       // dev: the wash's bloom, 0 to switch it off
+  reach: 1,      // how much of a neighbour's colour a texel grows towards, per hop of the bloom
+  front: 0.9,    // the lift at the drying front, the ring
+  evap: 0.00025, // pigment a wet wash loses a step, the water carrying it off: it dries a little paler
   flushes: 0,    // dev counter
   steps: 0,      // dev counter, run steps taken
 };
@@ -80,7 +83,7 @@ const uGravity = uniform(sim.gravity);
 const uGravityObj = uniform(new Vector3(0, -1, 0));
 const uSpread = uniform(sim.spread);
 const uBleed = uniform(sim.bleed);
-const uMelt = uniform(sim.melt), uGrow = uniform(sim.grow);
+const uMelt = uniform(sim.melt), uGrow = uniform(sim.grow), uReach = uniform(sim.reach), uFront = uniform(sim.front), uEvap = uniform(sim.evap);
 
 // MRT outputs default to no blending; these take the material's.
 function materialBlended(m: ReturnType<typeof mrt>) {
@@ -90,7 +93,10 @@ function materialBlended(m: ReturnType<typeof mrt>) {
 }
 
 function makeTarget() {
-  const rt = new RenderTarget(PAINT_W, PAINT_H, { count: 2, depthBuffer: false, type: HalfFloatType });
+  // Float, not half: a half-float store truncates towards zero, so any change under an ulp (a slow drying, a
+  // melt in a flat wash) costs a whole ulp a step, and the sim dried three times too fast and ate a third of a
+  // wash's pigment. 64 MB a target at 2048, four times that at 4096.
+  const rt = new RenderTarget(PAINT_W, PAINT_H, { count: 2, depthBuffer: false, type: FloatType });
   rt.textures[0].name = 'color';
   rt.textures[1].name = 'props';
   for (const t of rt.textures) { t.wrapS = RepeatWrapping; t.generateMipmaps = false; }
@@ -385,10 +391,8 @@ export class PaintLayer {
       // the neighbours' mean at the texel's own rate let the wet heart give more than the drier rim took, and a
       // wash lost a third of its pigment into nothing as it dried.
       const wetSelf = min(propsRun.y, 1).mul(thin);
-      const kN = pN.map((pn: any) => {
-        const wetNbr = min(pn.y, 1).mul(float(1).sub(min(max(pn.x.mul(4), 0), 1)));
-        return min(uBleed.mul(uMelt).mul(min(wetSelf, wetNbr)), 0.05).mul(0.25);
-      });
+      const wetNbrs = pN.map((pn: any) => min(pn.y, 1).mul(float(1).sub(min(max(pn.x.mul(4), 0), 1))));
+      const kN = wetNbrs.map((wetNbr: any) => min(uBleed.mul(uMelt).mul(min(wetSelf, wetNbr)), 0.05).mul(0.25));
       let colorMelt: any = colorRun, zMelt: any = propsRun.z, wMelt: any = propsRun.w;
       for (let i = 0; i < 4; i++) {
         colorMelt = colorMelt.add(cN[i].sub(colorRun).mul(kN[i]));
@@ -401,11 +405,14 @@ export class PaintLayer {
       // each other the same way, channel by channel.
       // Reach falls off gently with the water, and where the water is running out (the front) the pigment is
       // allowed a little above its neighbours: the darker outline a wash dries with.
-      const front = smoothstep(0.75, 0.25, wetBleed).mul(smoothstep(0.05, 0.2, wetBleed)).mul(0.9);
-      const reach = wetBleed.mul(sqrt(wetBleed)).mul(front.add(1)).toVar();
+      const front = smoothstep(0.75, 0.25, wetBleed).mul(smoothstep(0.05, 0.2, wetBleed)).mul(uFront);
+      const reach = wetBleed.mul(sqrt(wetBleed)).mul(front.add(1)).mul(uReach).toVar();
       const want: any = cMax.mul(reach).toVar();
       const grow = v4(max(want.x.sub(colorMelt.x), 0), max(want.y.sub(colorMelt.y), 0), max(want.z.sub(colorMelt.z), 0), max(want.w.sub(colorMelt.w), 0));
-      const colorOut = colorMelt.add(grow.mul(kB).mul(uGrow));
+      // A wet wash dries a little paler: some pigment goes with the water. (The half-float targets used to do this
+      // by accident, an ulp a step, and the look was tuned on it.)
+      const paler = max(float(1).sub(uEvap.mul(wetSelf).div(max(colorMelt.w, 1e-3))), 0);
+      const colorOut = colorMelt.mul(paler).add(grow.mul(kB).mul(uGrow));
       // The finish (roughness and metalness, times coverage) melts and grows the same way as the colour, so it
       // keeps step with the coverage: grown but never melted, it crept up over the coverage until a wash read as
       // thin gloss paint and lost its watercolour.
@@ -432,7 +439,7 @@ export class PaintLayer {
   /** Dev: total thickness and coverage over the whole target, to check the run keeps its paint. */
   async total(renderer: WebGPURenderer) {
     const t = this.targets[this.cur];
-    const half = (h: number) => { const s = (h >> 15) & 1, e = (h >> 10) & 31, f = h & 1023; const m = e === 0 ? f / 1024 * 2 ** -14 : (1 + f / 1024) * 2 ** (e - 15); return (s ? -1 : 1) * m; };
+    const half = (h: number) => h; // float targets read back as floats
     const p = await renderer.readRenderTargetPixelsAsync(t, 0, 0, PAINT_W, PAINT_H, 1);
     const c = await renderer.readRenderTargetPixelsAsync(t, 0, 0, PAINT_W, PAINT_H, 0);
     let thick = 0, cov = 0, wet = 0;
@@ -444,7 +451,7 @@ export class PaintLayer {
   async probeAt(renderer: WebGPURenderer, u: number, v: number) {
     const t = this.targets[this.cur];
     const x = Math.round(u * PAINT_W), y = Math.round(v * PAINT_H);
-    const half = (h: number) => { const s = (h >> 15) & 1, e = (h >> 10) & 31, f = h & 1023; const m = e === 0 ? f / 1024 * 2 ** -14 : (1 + f / 1024) * 2 ** (e - 15); return (s ? -1 : 1) * m; };
+    const half = (h: number) => h; // float targets read back as floats
     const c = await renderer.readRenderTargetPixelsAsync(t, x, y, 1, 1, 0);
     const p = await renderer.readRenderTargetPixelsAsync(t, x, y, 1, 1, 1);
     return { a: +half(c[3]).toFixed(3), t: +half(p[0]).toFixed(3), w: +half(p[1]).toFixed(3), r: +half(p[2]).toFixed(3) };
@@ -454,11 +461,7 @@ export class PaintLayer {
   async probe(renderer: WebGPURenderer, v: number) {
     const t = this.targets[this.cur];
     const y = Math.round(v * PAINT_H);
-    const half = (h: number) => { // fp16 bits to number
-      const s = (h >> 15) & 1, e = (h >> 10) & 31, f = h & 1023;
-      const m = e === 0 ? f / 1024 * 2 ** -14 : (1 + f / 1024) * 2 ** (e - 15);
-      return (s ? -1 : 1) * m;
-    };
+    const half = (h: number) => h; // float targets read back as floats
     const c = await renderer.readRenderTargetPixelsAsync(t, 0, y, PAINT_W, 1, 0);
     const p = await renderer.readRenderTargetPixelsAsync(t, 0, y, PAINT_W, 1, 1);
     let best = 0, bx = -1;
@@ -496,7 +499,7 @@ export class PaintLayer {
       this.scrape.count = 0;
     }
     // 2. run and dry: current -> next, then swap
-    uRunAt.value = sim.runAt; uRunNoise.value = sim.runNoise; uLane.value = sim.lane * K; uLaneSharp.value = sim.laneSharp; uRunRate.value = sim.runRate; uDry.value = sim.dry; uGravity.value = sim.gravity; uSpread.value = sim.spread; uBleed.value = sim.bleed; uMelt.value = sim.melt; uGrow.value = sim.grow; uGravityObj.value.copy(sim.gravityObj);
+    uRunAt.value = sim.runAt; uRunNoise.value = sim.runNoise; uLane.value = sim.lane * K; uLaneSharp.value = sim.laneSharp; uRunRate.value = sim.runRate; uDry.value = sim.dry; uGravity.value = sim.gravity; uSpread.value = sim.spread; uBleed.value = sim.bleed; uMelt.value = sim.melt; uGrow.value = sim.grow; uReach.value = sim.reach; uFront.value = sim.front; uEvap.value = sim.evap; uGravityObj.value.copy(sim.gravityObj);
     // The run moves at most a texel a step, so slow frames take more steps: the pace is the same at 60 and 120.
     const steps = Math.max(1, Math.min(4, Math.round(dt * 120)));
     sim.steps += steps;
