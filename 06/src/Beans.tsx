@@ -6,7 +6,7 @@ import { clock } from './clock';
 import { PLANETS, type Planet } from './planets';
 import { planetAt } from './scale';
 import { AllsortSweet, Moons, type Allsort } from './Moons';
-import { pick } from './selection';
+import { pick, pickedNow } from './selection';
 import { moonPositions, planetPositions } from './world';
 
 // Each planet as a jelly bean, all the same size: the candy it is made of. A base colour with darker
@@ -950,14 +950,23 @@ export function PlanetCandy({ name, shadows = true, playful = false }: { name: s
   );
 }
 
+// How near the camera can come to a planet before it's inside it: then that planet isn't drawn, so it doesn't fill
+// the view while following another one past it. The followed planet itself always shows.
+const INSIDE: Record<string, number> = { Saturn: LENGTH * 0.8, Uranus: LENGTH * 0.6, Jupiter: LENGTH * 0.5 };
+const INSIDE_BEAN = LENGTH * 0.55;
+
 function Bean({ planet, index }: { planet: Planet; index: number }) {
   const ref = useRef<RapierRigidBody>(null!);
+  const look = useRef<THREE_Group>(null!);
   const pos = useMemo(() => new Vector3(), []);
   const turn = useRef({ roll: index * 1.3, tip: index * 0.7 });
   const dir = Math.sign(planet.day);
 
-  useFrame((_, dt) => {
+  useFrame(({ camera }, dt) => {
     const h = Math.min(dt, 1 / 30);
+    const there = planetPositions.get(planet.name);
+    if (look.current && there)
+      look.current.visible = pickedNow() === planet.name || camera.position.distanceTo(there) > (INSIDE[planet.name] ?? INSIDE_BEAN) + 0.5;
     planetAt(planet, clock.jd, pos).y -= DIG;
     // Lying along its orbit, rolling about its length and slowly rocking end over end.
     T.subVectors(planetAt(planet, clock.jd + 0.5, a), planetAt(planet, clock.jd - 0.5, b)).normalize();
@@ -1027,6 +1036,7 @@ function Bean({ planet, index }: { planet: Planet; index: number }) {
       )}
       {/* Tap a planet for its close up card. */}
       <group
+        ref={look}
         onClick={(e) => {
           e.stopPropagation();
           pick(planet.name);

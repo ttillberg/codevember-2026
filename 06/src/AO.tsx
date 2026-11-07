@@ -4,6 +4,8 @@ import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer
 import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { SSAOPass } from 'three/examples/jsm/postprocessing/SSAOPass.js';
+import { BokehPass } from 'three/examples/jsm/postprocessing/BokehPass.js';
+import { focus } from './CameraRig';
 import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass.js';
 import { BrightnessContrastShader } from 'three/examples/jsm/shaders/BrightnessContrastShader.js';
 import { ColorCorrectionShader } from 'three/examples/jsm/shaders/ColorCorrectionShader.js';
@@ -24,7 +26,7 @@ const GRADE = {
 // R3F (priority 1).
 export function AO() {
   const { gl, scene, camera, size } = useThree();
-  const composer = useMemo(() => {
+  const { composer, bokeh } = useMemo(() => {
     const c = new EffectComposer(gl);
     c.addPass(new RenderPass(scene, camera));
     const ao = new SSAOPass(scene, camera, size.width, size.height);
@@ -34,6 +36,11 @@ export function AO() {
     ao.minDistance = 0.0002;
     ao.maxDistance = 0.01;
     c.addPass(ao);
+    // Depth of field round a picked planet: sharp at its distance, the rest of the system soft. Off when nothing's
+    // picked, as it costs a depth render of its own.
+    const bokeh = new BokehPass(scene, camera, { focus: 30, aperture: 0, maxblur: 0.012 });
+    bokeh.enabled = false;
+    c.addPass(bokeh);
     c.addPass(new OutputPass());
     const bc = new ShaderPass(BrightnessContrastShader);
     bc.uniforms.brightness.value = GRADE.brightness;
@@ -47,7 +54,7 @@ export function AO() {
     cc.uniforms.mulRGB.value.set(...GRADE.mul);
     cc.uniforms.powRGB.value.set(...GRADE.pow);
     c.addPass(cc);
-    return c;
+    return { composer: c, bokeh };
   }, [gl, scene, camera]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
@@ -56,6 +63,12 @@ export function AO() {
   }, [composer, gl, size]);
   useEffect(() => () => composer.dispose(), [composer]);
 
-  useFrame(() => composer.render(), 1);
+  useFrame(() => {
+    bokeh.enabled = focus.amount > 0.02;
+    const u = (bokeh as unknown as { uniforms: Record<string, { value: number }> }).uniforms;
+    u.focus.value = focus.distance;
+    u.aperture.value = 0.0016 * focus.amount;
+    composer.render();
+  }, 1);
   return null;
 }

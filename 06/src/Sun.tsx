@@ -1,6 +1,6 @@
-import { useMemo } from 'react';
+import { useMemo, useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
-import { LatheGeometry, MeshPhysicalMaterial, SphereGeometry, Vector2 } from 'three';
+import { LatheGeometry, type Mesh, MeshPhysicalMaterial, Vector3, SphereGeometry, Vector2 } from 'three';
 import { gumMaterial, type Gum } from './Beans';
 
 // The sun is a lollipop at the middle of the orbits: a round lemon yellow ball with a moulding seam round its middle,
@@ -113,6 +113,7 @@ function SunLight() {
 // through, so the middle is bright and pale; towards the rim it crosses more, so it dims and deepens to amber.
 // It casts no shadow of its own.
 const JELLY_TIME = { value: 0 };
+const SUN_AT = new Vector3();
 function jellyMaterial() {
   const m = gumMaterial('Sun', JELLY, RADIUS, '#ff8a00', 1, -1);
   m.emissive.set('#ffffff');
@@ -186,10 +187,15 @@ void main() {`,
 
 function JellySun() {
   const { geometry, material } = useMemo(() => ({ geometry: new SphereGeometry(RADIUS, 128, 64), material: jellyMaterial() }), []);
-  useFrame((_, dt) => void (JELLY_TIME.value += dt)); // the wobble keeps going even while the clock is paused
+  const ball = useRef<Mesh>(null!);
+  useFrame(({ camera }, dt) => {
+    JELLY_TIME.value += dt; // the wobble keeps going even while the clock is paused
+    // With the camera inside it (looking out from the sun's side at an inner planet) the candy is hidden; its light stays.
+    ball.current.visible = camera.position.distanceTo(ball.current.getWorldPosition(SUN_AT)) > RADIUS * 1.15;
+  });
   return (
     <group position={[0, CENTRE, 0]}>
-      <mesh geometry={geometry} material={material} />
+      <mesh ref={ball} geometry={geometry} material={material} />
       <SunLight />
     </group>
   );

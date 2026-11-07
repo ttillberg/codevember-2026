@@ -7,31 +7,26 @@ canvas { display: block; }
 }
 .back:hover { opacity: 1; }
 
-.date {
-  position: fixed; left: 50%; bottom: 12px; transform: translateX(-50%);
-  font: 12px ui-monospace, Menlo, monospace; color: #111; opacity: .6;
-}
 
-.card {
-  position: fixed; right: 24px; top: 50%; transform: translateY(-50%); width: 280px;
-  background: rgba(255, 255, 255, 0.82); backdrop-filter: blur(10px);
-  border-radius: 18px; box-shadow: 0 12px 40px rgba(0, 0, 0, 0.12);
-  padding: 0 20px 18px; font: 12px ui-monospace, Menlo, monospace; color: #222;
+.info {
+  position: fixed; right: 28px; top: 50%; transform: translateY(-50%); width: 264px; padding: 20px 22px 18px;
+  font-family: "Helvetica Neue", Helvetica, Arial, sans-serif; font-size: 13px; line-height: 1.4; color: #111;
+  /* An Apple style panel: frosted glass in a black squircle (a true squircle where corner-shape is supported). */
+  background: rgba(255, 255, 255, 0.5); backdrop-filter: blur(20px) saturate(1.6); -webkit-backdrop-filter: blur(20px) saturate(1.6);
+  border: 1.5px solid #111; border-radius: 30px; corner-shape: squircle;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.12);
 }
-.card .view { height: 220px; margin: 0 -20px; }
-.card h2 { margin: 0; font: 600 20px ui-monospace, Menlo, monospace; }
-.card .flavour { margin: 2px 0 14px; opacity: 0.55; font-style: italic; }
-.card dl { display: grid; grid-template-columns: auto 1fr; gap: 6px 14px; margin: 0; }
-.card dt { opacity: 0.55; }
-.card dd { margin: 0; text-align: right; font-variant-numeric: tabular-nums; }
-.card .close {
-  position: absolute; right: 10px; top: 8px; border: 0; background: none; cursor: pointer;
-  font: 20px ui-monospace, Menlo, monospace; color: #222; opacity: 0.5;
-}
-.card .close:hover { opacity: 1; }
+@supports not (corner-shape: squircle) { .info { border-radius: 22px; } }
+.info h2 { margin: 0 0 4px; font-size: 34px; font-weight: 700; letter-spacing: -0.02em; line-height: 1.05; }
+.info .flavour { margin: 0 0 12px; opacity: 0.6; }
+.info .curiosity { margin: 0 0 16px; }
+.info dl { display: grid; grid-template-columns: auto 1fr; gap: 4px 14px; margin: 0; }
+.info dt { opacity: 0.5; }
+.info dd { margin: 0; text-align: right; font-weight: 700; font-variant-numeric: tabular-nums; }
+body[data-theme="dark"] .info { color: #f2f2f2; background: rgba(28, 30, 36, 0.5); border-color: #000; }
 @media (max-width: 640px) {
-  .card { top: auto; bottom: 40px; right: 16px; left: 16px; width: auto; transform: none; }
-  .card .view { height: 160px; }
+  .info { top: auto; bottom: 40px; right: 16px; left: 16px; width: auto; transform: none; }
+  .info h2 { font-size: 24px; }
 }
 
 .theme {
@@ -42,4 +37,76 @@ canvas { display: block; }
 
 /* Dark room: the page and its text follow the scene's background. */
 body[data-theme="dark"], body[data-theme="dark"] #root { background: #0b0c0f; }
-body[data-theme="dark"] .back, body[data-theme="dark"] .date, body[data-theme="dark"] .theme { color: #f2f2f2; }
+body[data-theme="dark"] .back, body[data-theme="dark"] .theme { color: #f2f2f2; }
+
+/* The planet list down the left: bold Helvetica, the picked one full strength. */
+.planets {
+  position: fixed; left: 28px; top: 50%; transform: translateY(-50%);
+  display: flex; flex-direction: column; gap: 2px; max-width: 300px;
+}
+.planets button {
+  border: 0; background: none; padding: 3px 0; text-align: left; cursor: pointer; color: #111;
+  font-family: "Helvetica Neue", Helvetica, Arial, sans-serif; font-weight: 700;
+  opacity: 0.38; transition: opacity 0.25s, transform 0.25s; transform-origin: left center;
+}
+.planets button:hover { opacity: 0.75; }
+.planets button.on { opacity: 1; }
+.planets button { font-size: 22px; letter-spacing: -0.02em; line-height: 1.1; }
+body[data-theme="dark"] .planets button { color: #f2f2f2; }
+@media (max-width: 640px) {
+  .planets { left: 16px; top: 16px; transform: none; max-width: 60vw; }
+  .planets button { font-size: 15px; }
+}
+
+/* The transport, laid out like QuickTime's: grey frosted glass, white controls; buttons on top, the speed at the
+   right, the date and a scrubber underneath. */
+.transport {
+  position: fixed; left: 50%; bottom: 18px; transform: translateX(-50%); width: min(560px, calc(100vw - 32px)); box-sizing: border-box;
+  padding: 10px 18px 12px; color: #fff;
+  background: rgba(110, 110, 112, 0.5); backdrop-filter: blur(22px) saturate(1.4); -webkit-backdrop-filter: blur(22px) saturate(1.4);
+  border: 1px solid rgba(255, 255, 255, 0.22); border-radius: 22px; corner-shape: squircle;
+  box-shadow: 0 10px 34px rgba(0, 0, 0, 0.18);
+  font-family: "Helvetica Neue", Helvetica, Arial, sans-serif; font-size: 13px;
+}
+@supports not (corner-shape: squircle) { .transport { border-radius: 16px; } }
+.transport button { border: 0; background: none; padding: 0; cursor: pointer; color: inherit; font: inherit; }
+.transport button:disabled { opacity: 0.35; cursor: default; }
+.transport svg { display: block; width: 100%; height: 100%; }
+.transport .top { position: relative; display: flex; justify-content: center; align-items: center; height: 40px; }
+.transport .buttons { display: flex; align-items: center; gap: 22px; }
+.transport .buttons button { width: 26px; height: 26px; opacity: 0.92; }
+.transport .buttons button.play { width: 38px; height: 38px; }
+.transport .buttons button:not(:disabled):hover { opacity: 1; }
+.transport .speed {
+  position: absolute; right: 0; top: 50%; transform: translateY(-50%);
+  display: flex; align-items: center; gap: 6px; font-weight: 700; font-variant-numeric: tabular-nums; opacity: 0.92;
+}
+.transport .speed svg { width: 22px; height: 22px; }
+.transport .timeline { display: flex; align-items: center; gap: 14px; margin-top: 6px; }
+.transport .when, .transport .end { font-variant-numeric: tabular-nums; opacity: 0.85; white-space: nowrap; }
+.transport input[type="range"] {
+  flex: 1; -webkit-appearance: none; appearance: none; height: 6px; border-radius: 3px; margin: 0;
+  background: rgba(255, 255, 255, 0.28); outline: none; cursor: pointer;
+}
+.transport input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none; width: 26px; height: 18px; border-radius: 9px; background: #fff; box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25);
+}
+.transport input[type="range"]::-moz-range-thumb { width: 26px; height: 18px; border: 0; border-radius: 9px; background: #fff; }
+/* Bigger on a desktop; the compact size above stays for phones. */
+@media (min-width: 641px) {
+  .transport { width: 640px; bottom: 24px; padding: 14px 26px 16px; border-radius: 30px; font-size: 16px; }
+  .transport .top { height: 56px; }
+  .transport .buttons { gap: 30px; }
+  .transport .buttons button { width: 34px; height: 34px; }
+  .transport .buttons button.play { width: 52px; height: 52px; }
+  .transport .speed svg { width: 28px; height: 28px; }
+  .transport .timeline { gap: 18px; margin-top: 10px; }
+}
+
+
+/* The picked planet's moons, under its name. */
+.planets .moons {
+  list-style: none; margin: 2px 0 8px 14px; padding: 0; color: #111;
+  font-family: "Helvetica Neue", Helvetica, Arial, sans-serif; font-weight: 700; font-size: 14px; line-height: 1.35; opacity: 0.6;
+}
+body[data-theme="dark"] .planets .moons { color: #f2f2f2; }

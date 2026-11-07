@@ -4,6 +4,8 @@ import { Environment, Lightformer, OrbitControls } from '@react-three/drei';
 import { Physics } from '@react-three/rapier';
 import { BackSide, NeutralToneMapping, PCFShadowMap } from 'three';
 import { AO } from './AO';
+import { CameraRig } from './CameraRig';
+import { PlanetList } from './PlanetList';
 import { Beans } from './Beans';
 import { PlanetCard } from './PlanetCard';
 import { pick } from './selection';
@@ -11,7 +13,7 @@ import { Sea } from './Sea';
 import { Space } from './Space';
 import { Sun } from './Sun';
 import { clock } from './clock';
-import { dateFromJd } from './kepler';
+import { dateFromJd, jdFromDate } from './kepler';
 
 // Mounted first, so it advances time before the band reads it.
 function Tick() {
@@ -55,22 +57,82 @@ function Studio() {
   );
 }
 
-function DateLabel() {
-  const ref = useRef<HTMLDivElement>(null);
+// A QuickTime style transport along the bottom, on frosted glass. On top: slower, play or pause, faster, and the
+// speed at the right (three steps, named for how they feel rather than the factor between them). Underneath: the
+// date, and a scrubber over two centuries to drag through time. Space plays and pauses too. Kept in step with the
+// clock every frame, as other things change it (focusing on a planet slows it down).
+const SPEEDS: [string, number][] = [['×0.25', 0.4], ['×1', 3], ['×5', 30]]; // label, days a second
+const FROM = jdFromDate(new Date(Date.UTC(1900, 0, 1)));
+const TO = jdFromDate(new Date(Date.UTC(2100, 0, 1)));
+const Icon = ({ d }: { d: string }) => (
+  <svg viewBox="0 0 24 24" aria-hidden="true">
+    <path d={d} fill="currentColor" />
+  </svg>
+);
+function Transport() {
+  const date = useRef<HTMLSpanElement>(null);
+  const scrub = useRef<HTMLInputElement>(null);
+  const dragging = useRef(false);
+  const [state, setState] = useState({ paused: clock.paused, speed: clock.speed });
   useEffect(() => {
     let raf = 0;
     const loop = () => {
-      if (ref.current) ref.current.textContent = dateFromJd(clock.jd).toISOString().slice(0, 10);
+      if (date.current) date.current.textContent = dateFromJd(clock.jd).toISOString().slice(0, 10);
+      if (scrub.current && !dragging.current) scrub.current.value = String(clock.jd);
+      setState((s) => (s.paused === clock.paused && s.speed === clock.speed ? s : { paused: clock.paused, speed: clock.speed }));
       raf = requestAnimationFrame(loop);
     };
     loop();
     const key = (e: KeyboardEvent) => {
-      if (e.code === 'Space') clock.paused = !clock.paused;
+      if (e.code === 'Space') (e.preventDefault(), (clock.paused = !clock.paused));
     };
     addEventListener('keydown', key);
     return () => (cancelAnimationFrame(raf), removeEventListener('keydown', key));
   }, []);
-  return <div ref={ref} className="date" />;
+  // The nearest step to the clock's speed, and stepping from it.
+  const at = SPEEDS.reduce((best, [, d], i) => (Math.abs(d - state.speed) < Math.abs(SPEEDS[best][1] - state.speed) ? i : best), 0);
+  const step = (by: number) => (clock.speed = SPEEDS[Math.min(SPEEDS.length - 1, Math.max(0, at + by))][1]);
+  const blur = (e: React.MouseEvent<HTMLButtonElement>) => e.currentTarget.blur();
+  return (
+    <div className="transport">
+      <div className="top">
+        <div className="buttons">
+          <button onClick={(e) => (step(-1), blur(e))} aria-label="Slower" disabled={at === 0}>
+            <Icon d="M11.5 6v12L3 12zM21 6v12l-8.5-6z" />
+          </button>
+          <button className="play" onClick={(e) => ((clock.paused = !clock.paused), blur(e))} aria-label={state.paused ? 'Play' : 'Pause'}>
+            <Icon d={state.paused ? 'M7 4.5v15L19.5 12z' : 'M6.5 4.5h4v15h-4zM13.5 4.5h4v15h-4z'} />
+          </button>
+          <button onClick={(e) => (step(1), blur(e))} aria-label="Faster" disabled={at === SPEEDS.length - 1}>
+            <Icon d="M3 6v12l8.5-6zM12.5 6v12L21 12z" />
+          </button>
+        </div>
+        <button className="speed" onClick={(e) => ((clock.speed = SPEEDS[(at + 1) % SPEEDS.length][1]), blur(e))} aria-label="Speed">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" strokeWidth="1.8" />
+            <path d="M12 12l4-4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+          </svg>
+          {SPEEDS[at][0]}
+        </button>
+      </div>
+      <div className="timeline">
+        <span ref={date} className="when" />
+        <input
+          ref={scrub}
+          type="range"
+          min={FROM}
+          max={TO}
+          step={1}
+          defaultValue={clock.jd}
+          aria-label="Date"
+          onPointerDown={() => (dragging.current = true)}
+          onPointerUp={(e) => ((dragging.current = false), e.currentTarget.blur())}
+          onInput={(e) => (clock.jd = Number(e.currentTarget.value))}
+        />
+        <span className="end">2100</span>
+      </div>
+    </div>
+  );
 }
 
 // Light or dark room. The choice is remembered between visits; B toggles it too.
@@ -117,9 +179,11 @@ export function App() {
         </Suspense>
         {/* Looking straight down on the lollipop, the orbits round it filling the view. */}
         <OrbitControls enableDamping makeDefault target={[0, 12.6, 0]} />
+        <CameraRig />
         <AO />
       </Canvas>
-      <DateLabel />
+      <PlanetList />
+      <Transport />
       <button className="theme" onClick={toggle} aria-label="Toggle dark or light background">
         {theme === 'light' ? 'dark' : 'light'}
       </button>

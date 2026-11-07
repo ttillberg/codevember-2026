@@ -9,6 +9,9 @@ export function pick(name: string | null) {
   listeners.forEach((l) => l());
 }
 
+// The picked planet right now, for frame loops that mustn't re-render.
+export const pickedNow = () => picked;
+
 export function usePicked() {
   return useSyncExternalStore(
     (l) => (listeners.add(l), () => listeners.delete(l)),

@@ -4,6 +4,7 @@ import { BallCollider, RigidBody, type RapierRigidBody } from '@react-three/rapi
 import {
   AdditiveBlending,
   BufferGeometry,
+  type Group,
   Color,
   CylinderGeometry,
   MeshPhysicalMaterial,
@@ -99,6 +100,7 @@ function potatoGeometry(radius: number, seed: number) {
 
 function MoonBody({ moon, system, index }: { moon: Moon; system: System; index: number }) {
   const ref = useRef<RapierRigidBody>(null!);
+  const look = useRef<Group>(null!);
   // A stable random number per moon, from its name, for its starting place and its own small tilt.
   const luck = useMemo(() => {
     let h = 2166136261;
@@ -119,7 +121,7 @@ function MoonBody({ moon, system, index }: { moon: Moon; system: System; index: 
   const started = useRef(false);
   const potato = useMemo(() => (moon.potato ? potatoGeometry(moon.radius, index * 3.1) : null), [moon, index]);
 
-  useFrame((_, dt) => {
+  useFrame(({ camera }, dt) => {
     const host = planetPositions.get(system.host);
     if (!host || !ref.current) return;
     // Turns a second: the real pace at the clock's speed, or the squeezed one, whichever is slower.
@@ -146,11 +148,14 @@ function MoonBody({ moon, system, index }: { moon: Moon; system: System; index: 
     let mine = moonPositions.get(moon.name);
     if (!mine) moonPositions.set(moon.name, (mine = new Vector3()));
     mine.copy(p);
+    if (look.current) look.current.visible = camera.position.distanceTo(mine) > moon.radius * 2 + 0.5;
   });
 
   return (
     <RigidBody ref={ref} type="dynamic" gravityScale={0} canSleep={false} colliders={false} position={[0, -100, 0]}>
       <BallCollider args={[moon.radius]} restitution={0.8} density={DENSITY} />
+      {/* Not drawn while the camera is inside it, following a planet past it. */}
+      <group ref={look}>
       {moon.bean ? (
         // The planet's own sweet, shrunk to a moon: a bean a bit more than twice its radius long.
         <group scale={(moon.radius * 2.4) / LENGTH}>
@@ -173,6 +178,7 @@ function MoonBody({ moon, system, index }: { moon: Moon; system: System; index: 
       </mesh>
       )}
       {moon.haze && <Haze radius={moon.radius * 1.35} colour={moon.haze} />}
+      </group>
     </RigidBody>
   );
 }
