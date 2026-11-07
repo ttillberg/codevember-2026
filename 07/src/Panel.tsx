@@ -257,7 +257,7 @@ function Pop({ name, icon, className, small, children }: {
   );
 }
 
-// A gear: eight teeth around a hole.
+// A gear: eight teeth.
 const GEAR = (() => {
   const pts: string[] = [];
   for (let i = 0; i < 16; i++) {
@@ -271,7 +271,10 @@ const Icon = ({ children }: { children: React.ReactNode }) => (
     {children}
   </svg>
 );
-const GearIcon = () => <Icon><path d={GEAR} /><circle cx="8" cy="8" r="2" /></Icon>;
+// Solid, the hole punched through with evenodd.
+const GearIcon = () => (
+  <Icon><path d={`${GEAR} M10.2 8 A2.2 2.2 0 1 0 5.8 8 A2.2 2.2 0 1 0 10.2 8 Z`} fill="currentColor" fillRule="evenodd" strokeWidth="0.8" /></Icon>
+);
 const InfoIcon = () => <Icon><circle cx="8" cy="8" r="6" /><path d="M8 7.3V11" /><circle cx="8" cy="5" r="0.4" fill="currentColor" /></Icon>;
 
 // A row in a popover menu: a label, and a little switch when it toggles.
