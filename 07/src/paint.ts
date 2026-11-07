@@ -24,7 +24,7 @@ const TRAIL = 0.3;     // coverage a run leaves behind it, whatever the paint di
 export type Brush = 'round' | 'spray' | 'bristle' | 'glaze' | 'scrape';
 const STYLE: Record<Brush, number> = { round: 0, spray: 1, bristle: 2, scrape: 3, glaze: 4 };
 // How much paint each brush leaves: above the run threshold it drips while wet.
-export const LOAD: Record<Brush, number> = { round: 0.85, spray: 0.12, bristle: 0.65, scrape: 0, glaze: 0 }; // spray is flat
+export const LOAD: Record<Brush, number> = { round: 0.85, spray: 0, bristle: 0.65, scrape: 0, glaze: 0 }; // spray is flat
 
 export type Dab = {
   u: number; v: number;
@@ -227,6 +227,7 @@ export class PaintLayer {
       const isGlaze = vMisc.x.greaterThan(3.5);
       const brushLoad = select(vMisc.x.lessThan(0.5), float(LOAD.round), select(vMisc.x.lessThan(1.5), float(LOAD.spray),
         select(vMisc.x.lessThan(2.5), float(LOAD.bristle), float(0)))); // scrape and glaze lay no thickness
+      // Spray is flat too: the select above gives it LOAD.spray, which is 0.
       const load = select(vExtra.x.lessThan(0), brushLoad, vExtra.x);
       // Impasto: the paint is laid thicker and thinner across the dab, in ridges along the stroke.
       // In target space (the ortho pass fills the target, so screenUV is it), so overlapping dabs agree.

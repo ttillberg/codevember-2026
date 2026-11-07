@@ -140,7 +140,7 @@ export function Balloon() {
       brush: tool.brush,
       rough: glaze ? w : finish.rough,
       metal: finish.metal,
-      wet: glaze ? 1 : undefined, // a wash is laid wet: it floats out until it dries
+      wet: glaze ? 1 : tool.brush === 'spray' ? 0 : undefined, // a wash is laid wet and floats out; spray is dry and flat
     };
     paint.add(d);
     if (tool.brush !== 'scrape') maybeSpawn(d, tool.liquid, sim.gravityObj);
