@@ -117,6 +117,66 @@ function ColorKnob() {
   );
 }
 
+// The medium: only the current one shows. Press it and the others pop up above; drag onto one and let go to pick
+// it, or tap and then click one. A press elsewhere closes it.
+function MediumKnob() {
+  const [open, setOpen] = useState(false);
+  const [hot, setHot] = useState<Medium | null>(null);
+  const box = useRef<HTMLDivElement>(null);
+  const drag = useRef({ y: 0, moved: false, down: false });
+  const under = (x: number, y: number) =>
+    (document.elementFromPoint(x, y)?.closest('[data-medium]') as HTMLElement | null)?.dataset.medium as Medium | undefined;
+  const pick = (m: Medium) => { tool.brush = m; setOpen(false); setHot(null); };
+  useEffect(() => {
+    if (!open) return;
+    const move = (e: PointerEvent) => {
+      if (!drag.current.down) return;
+      if (Math.abs(e.clientY - drag.current.y) > 6) drag.current.moved = true;
+      setHot(under(e.clientX, e.clientY) ?? null);
+    };
+    const up = (e: PointerEvent) => {
+      if (!drag.current.down) return;
+      drag.current.down = false;
+      const m = under(e.clientX, e.clientY);
+      if (drag.current.moved) { if (m) pick(m); else setOpen(false); } // a drag picks where it ends; a tap leaves it open
+      setHot(null);
+    };
+    const away = (e: PointerEvent) => { if (!box.current?.contains(e.target as Node)) setOpen(false); };
+    const esc = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false); };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+    window.addEventListener('pointerdown', away);
+    window.addEventListener('keydown', esc);
+    return () => {
+      window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up);
+      window.removeEventListener('pointerdown', away); window.removeEventListener('keydown', esc);
+    };
+  }, [open]);
+  const cur = tool.brush as Medium;
+  return (
+    <div className="ft-knob" ref={box}>
+      <button aria-label={cur} title={`${cur} (press to change)`} className="on"
+        onPointerDown={(e) => {
+          e.preventDefault();
+          if (open) { setOpen(false); return; }
+          drag.current = { y: e.clientY, moved: false, down: true };
+          setOpen(true);
+        }}>
+        <MediumIcon m={cur} />
+      </button>
+      <div className={`ft-gauge ft-pick${open ? ' open' : ''}`}>
+        {MEDIA.map((m) => (
+          <button key={m} data-medium={m} title={m} aria-label={m}
+            className={(hot ?? cur) === m ? 'on' : ''} onClick={() => pick(m)}>
+            <MediumIcon m={m} />
+            <span>{m}</span>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 // A floating frosted panel holding every control, Figma style.
 // It writes straight into `tool`; it re-renders after any click, input or key.
 export function Panel() {
@@ -153,11 +213,7 @@ export function Panel() {
     <>
     {/* The media, as big icons in a frosted bar under the balloon. */}
     <div className="ft-media">
-      {MEDIA.map((m) => (
-        <button key={m} title={m} aria-label={m} className={tool.brush === m ? 'on' : ''} onClick={() => set(() => { tool.brush = m; })}>
-          <MediumIcon m={m} />
-        </button>
-      ))}
+      <MediumKnob />
       <span className="ft-sep" />
       <SizeKnob />
       <ColorKnob />
