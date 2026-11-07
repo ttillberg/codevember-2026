@@ -53,47 +53,21 @@ body[data-theme="dark"] .planets button { color: #f2f2f2; }
   .planets button { font-size: 15px; }
 }
 
-/* The transport, laid out like QuickTime's: grey frosted glass, white controls; buttons on top, the speed at the
-   right, the date and a scrubber underneath. Compact. */
+/* Time, along the bottom: play big on the left, the date beside it, the speeds under the date, all on the page. */
 .transport {
-  position: fixed; left: 50%; bottom: 16px; transform: translateX(-50%); width: min(350px, calc(100vw - 32px)); box-sizing: border-box;
-  padding: 9px 20px 13px; color: #fff;
-  background: rgba(36, 37, 42, 0.55); backdrop-filter: blur(22px) saturate(1.4); -webkit-backdrop-filter: blur(22px) saturate(1.4);
-  border: 1px solid rgba(255, 255, 255, 0.12); border-radius: 18px; corner-shape: squircle;
-  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.16);
-  font-family: "Helvetica Neue", Helvetica, Arial, sans-serif; font-size: 12px;
+  position: fixed; left: 50%; bottom: 22px; transform: translateX(-50%);
+  display: grid; grid-template-columns: auto auto; grid-template-rows: auto auto; column-gap: 12px; row-gap: 1px; align-items: center;
+  font-family: "Helvetica Neue", Helvetica, Arial, sans-serif; color: #f2f2f2;
 }
-@supports not (corner-shape: squircle) { .transport { border-radius: 14px; } }
-.transport { cursor: grab; touch-action: none; user-select: none; }
-.transport.dragging { cursor: grabbing; }
 .transport button { border: 0; background: none; padding: 0; cursor: pointer; color: inherit; font: inherit; }
-.transport button:disabled { opacity: 0.35; cursor: default; }
-.transport svg { display: block; width: 100%; height: 100%; }
-.transport .top { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; height: 34px; }
-.transport .buttons { grid-column: 2; }
-.transport .buttons { display: flex; align-items: center; gap: 10px; }
-.transport .buttons button { width: 22px; height: 22px; opacity: 0.92; }
-.transport .buttons button.play { width: 30px; height: 30px; }
-.transport .buttons button:not(:disabled):hover { opacity: 1; }
-.transport .speed {
-  grid-column: 3; justify-self: end;
-  display: flex; align-items: center; gap: 6px; font-weight: 700; font-variant-numeric: tabular-nums;
-}
-.transport .speed button { opacity: 0.45; }
-.transport .speed button:hover { opacity: 0.8; }
-.transport .speed button.on { opacity: 1; }
-/* The date and the end year in equal columns either side, so the scrubber sits centred. */
-.transport .timeline { display: grid; grid-template-columns: 74px 1fr 74px; align-items: center; gap: 10px; margin-top: 2px; }
-.transport .end { text-align: right; }
-.transport .when, .transport .end { font-variant-numeric: tabular-nums; opacity: 0.85; white-space: nowrap; }
-.transport input[type="range"] {
-  width: 100%; -webkit-appearance: none; appearance: none; height: 5px; border-radius: 3px; margin: 0;
-  background: rgba(255, 255, 255, 0.28); outline: none; cursor: pointer;
-}
-.transport input[type="range"]::-webkit-slider-thumb {
-  -webkit-appearance: none; width: 22px; height: 15px; border-radius: 8px; background: #fff; box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25);
-}
-.transport input[type="range"]::-moz-range-thumb { width: 22px; height: 15px; border: 0; border-radius: 8px; background: #fff; }
+.transport .play { grid-row: 1 / span 2; width: 44px; height: 44px; opacity: 0.95; }
+.transport .play svg { display: block; width: 100%; height: 100%; }
+.transport .play:hover { opacity: 1; }
+.transport .when { font-size: 22px; font-weight: 700; font-variant-numeric: tabular-nums; letter-spacing: -0.01em; line-height: 1.05; }
+.transport .speeds { display: flex; gap: 12px; font-size: 13px; font-weight: 700; }
+.transport .speeds button { opacity: 0.4; font-variant-numeric: tabular-nums; }
+.transport .speeds button:hover { opacity: 0.75; }
+.transport .speeds button.on { opacity: 1; }
 
 
 

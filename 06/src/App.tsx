@@ -15,7 +15,7 @@ import { Sea } from './Sea';
 import { Space } from './Space';
 import { Sun } from './Sun';
 import { clock } from './clock';
-import { dateFromJd, jdFromDate } from './kepler';
+import { dateFromJd } from './kepler';
 
 // Mounted first, so it advances time before the band reads it.
 function Tick() {
@@ -59,87 +59,17 @@ function Studio() {
   );
 }
 
-// A QuickTime style transport along the bottom, on frosted glass. On top: slower, play or pause, faster, and the
-// speed at the right (three steps, named for how they feel rather than the factor between them). Underneath: the
-// date, and a scrubber over two centuries to drag through time. Space plays and pauses too. Kept in step with the
-// clock every frame, as other things change it (focusing on a planet slows it down).
+// Time, along the bottom: play or pause, the date beside it, and the three speeds under the date (named for how they
+// feel rather than the factor between them). Space plays and pauses too. Kept in step with the clock every frame, as
+// other things change it (focusing on a planet slows it down).
 const SPEEDS: [string, number][] = [['×0.5', 0.4], ['×1', 3], ['×5', 30]]; // label, days a second
-const FROM = jdFromDate(new Date(Date.UTC(1900, 0, 1)));
-const TO = jdFromDate(new Date(Date.UTC(2100, 0, 1)));
-// Soft cornered glyphs, as QuickTime's: each shape filled and outlined with a round join, which rounds its corners.
-const Icon = ({ d }: { d: string }) => (
-  <svg viewBox="0 0 24 24" aria-hidden="true">
-    <path d={d} fill="currentColor" stroke="currentColor" strokeWidth="2.6" strokeLinejoin="round" />
-  </svg>
-);
-// The transport can be dragged anywhere by its glass (not its buttons or scrubber), kept this far from the edges.
-// Where it was left is remembered.
-const EDGE = 12;
-function useDraggable() {
-  const panel = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    const el = panel.current;
-    if (!el) return;
-    const place = (x: number, y: number) => {
-      const cx = Math.min(Math.max(x, EDGE), innerWidth - el.offsetWidth - EDGE);
-      const cy = Math.min(Math.max(y, EDGE), innerHeight - el.offsetHeight - EDGE);
-      Object.assign(el.style, { left: `${cx}px`, top: `${cy}px`, bottom: 'auto', transform: 'none' });
-      return [cx, cy];
-    };
-    let saved: [number, number] | null = null;
-    try {
-      saved = JSON.parse(localStorage.getItem('orrery-transport') ?? 'null');
-    } catch {
-      // nothing remembered
-    }
-    if (saved) place(saved[0], saved[1]);
-    let grab: { dx: number; dy: number } | null = null;
-    const down = (e: PointerEvent) => {
-      if ((e.target as HTMLElement).closest('button, input')) return;
-      const r = el.getBoundingClientRect();
-      grab = { dx: e.clientX - r.left, dy: e.clientY - r.top };
-      el.setPointerCapture(e.pointerId);
-      el.classList.add('dragging');
-    };
-    const move = (e: PointerEvent) => grab && place(e.clientX - grab.dx, e.clientY - grab.dy);
-    const up = () => {
-      if (!grab) return;
-      grab = null;
-      el.classList.remove('dragging');
-      const r = el.getBoundingClientRect();
-      try {
-        localStorage.setItem('orrery-transport', JSON.stringify([r.left, r.top]));
-      } catch {
-        // private mode: just don't remember
-      }
-    };
-    // A smaller window shouldn't leave it off screen.
-    const resize = () => el.style.left && place(parseFloat(el.style.left), parseFloat(el.style.top));
-    el.addEventListener('pointerdown', down);
-    el.addEventListener('pointermove', move);
-    el.addEventListener('pointerup', up);
-    addEventListener('resize', resize);
-    return () => {
-      el.removeEventListener('pointerdown', down);
-      el.removeEventListener('pointermove', move);
-      el.removeEventListener('pointerup', up);
-      removeEventListener('resize', resize);
-    };
-  }, []);
-  return panel;
-}
-
 function Transport() {
-  const panel = useDraggable();
   const date = useRef<HTMLSpanElement>(null);
-  const scrub = useRef<HTMLInputElement>(null);
-  const dragging = useRef(false);
   const [state, setState] = useState({ paused: clock.paused, speed: clock.speed });
   useEffect(() => {
     let raf = 0;
     const loop = () => {
       if (date.current) date.current.textContent = dateFromJd(clock.jd).toISOString().slice(0, 10);
-      if (scrub.current && !dragging.current) scrub.current.value = String(clock.jd);
       setState((s) => (s.paused === clock.paused && s.speed === clock.speed ? s : { paused: clock.paused, speed: clock.speed }));
       raf = requestAnimationFrame(loop);
     };
@@ -151,48 +81,29 @@ function Transport() {
     addEventListener('keydown', key);
     return () => (cancelAnimationFrame(raf), removeEventListener('keydown', key));
   }, []);
-  // The nearest step to the clock's speed, and stepping from it.
   const at = SPEEDS.reduce((best, [, d], i) => (Math.abs(d - state.speed) < Math.abs(SPEEDS[best][1] - state.speed) ? i : best), 0);
-  const step = (by: number) => (clock.speed = SPEEDS[Math.min(SPEEDS.length - 1, Math.max(0, at + by))][1]);
   const blur = (e: React.MouseEvent<HTMLButtonElement>) => e.currentTarget.blur();
   return (
-    <div ref={panel} className="transport">
-      <div className="top">
-        <div className="buttons">
-          <button onClick={(e) => (step(-1), blur(e))} aria-label="Slower" disabled={at === 0}>
-            <Icon d="M11.2 7.2v9.6L4.2 12zM20.2 7.2v9.6L13.2 12z" />
+    <div className="transport">
+      <button className="play" onClick={(e) => ((clock.paused = !clock.paused), blur(e))} aria-label={state.paused ? 'Play' : 'Pause'}>
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path
+            d={state.paused ? 'M7.5 5.2v13.6L18.6 12z' : 'M7 5.5h2.6v13H7zM14.4 5.5H17v13h-2.6z'}
+            fill="currentColor"
+            stroke="currentColor"
+            strokeWidth="2.6"
+            strokeLinejoin="round"
+          />
+        </svg>
+      </button>
+      <span ref={date} className="when" />
+      <span className="speeds">
+        {SPEEDS.map(([label, days], i) => (
+          <button key={label} className={i === at ? 'on' : ''} onClick={(e) => ((clock.speed = days), blur(e))}>
+            {label}
           </button>
-          <button className="play" onClick={(e) => ((clock.paused = !clock.paused), blur(e))} aria-label={state.paused ? 'Play' : 'Pause'}>
-            <Icon d={state.paused ? 'M7.5 5.2v13.6L18.6 12z' : 'M7 5.5h2.6v13H7zM14.4 5.5H17v13h-2.6z'} />
-          </button>
-          <button onClick={(e) => (step(1), blur(e))} aria-label="Faster" disabled={at === SPEEDS.length - 1}>
-            <Icon d="M3.8 7.2v9.6l7-4.8zM12.8 7.2v9.6l7-4.8z" />
-          </button>
-        </div>
-        <div className="speed">
-          {SPEEDS.map(([label, days], i) => (
-            <button key={label} className={i === at ? 'on' : ''} onClick={(e) => ((clock.speed = days), blur(e))}>
-              {label}
-            </button>
-          ))}
-        </div>
-      </div>
-      <div className="timeline">
-        <span ref={date} className="when" />
-        <input
-          ref={scrub}
-          type="range"
-          min={FROM}
-          max={TO}
-          step={1}
-          defaultValue={clock.jd}
-          aria-label="Date"
-          onPointerDown={() => (dragging.current = true)}
-          onPointerUp={(e) => ((dragging.current = false), e.currentTarget.blur())}
-          onInput={(e) => (clock.jd = Number(e.currentTarget.value))}
-        />
-        <span className="end">2100-01-01</span>
-      </div>
+        ))}
+      </span>
     </div>
   );
 }
@@ -220,7 +131,7 @@ export function App() {
           </Physics>
         </Suspense>
         {/* Looking straight down on the lollipop, the orbits round it filling the view. */}
-        <OrbitControls enableDamping makeDefault target={[0, 12.6, 0]} autoRotateSpeed={ORBIT_SPEED} />
+        <OrbitControls enableDamping enableZoom={false} enablePan={false} makeDefault target={[0, 12.6, 0]} autoRotateSpeed={ORBIT_SPEED} />
         <CameraRig />
         <AO />
       </Canvas>
