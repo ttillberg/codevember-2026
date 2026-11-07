@@ -5,7 +5,7 @@ import { PAINT_W, QUALITY, quality, setQuality, type Brush, type Quality } from 
 import { resetTool, save, tool, type Finish } from './tool';
 import { downloadPng } from './snapshot';
 import { DARK_ENABLED, setTheme, theme } from './theme';
-import { compose, HUE_STRIP, setColour, shadeStrip, syncColour } from './color';
+import { hueStrip, setColour, shadeStrip, syncColour } from './color';
 
 // The media, and the options each one answers to.
 type Medium = 'glaze' | 'bristle' | 'spray' | 'pencil' | 'scrape';
@@ -275,7 +275,7 @@ function ColorKnob() {
   return (
     <Knob name="color" tip="Colour" hotkey="KeyC" get={() => { syncColour(); return tool.hue; }} put={(v) => setColour(v, tool.shade)}
       face={() => <i className="ft-swatch" style={{ background: tool.hex }} />}
-      track={() => <><span className="ft-strip" style={{ background: HUE_STRIP }} /><span className="ft-mark" style={{ background: compose(tool.hue, 0.5) }} /></>} />
+      track={() => <><span className="ft-strip" style={{ background: hueStrip(tool.shade) }} /><span className="ft-mark" style={{ background: tool.hex }} /></>} />
   );
 }
 // A sun: a disc and eight rays.
