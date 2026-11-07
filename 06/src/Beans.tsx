@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useFrame } from '@react-three/fiber';
-import { BallCollider, CapsuleCollider, CylinderCollider, RigidBody, type RapierRigidBody } from '@react-three/rapier';
+import { BallCollider, CapsuleCollider, CylinderCollider, RigidBody, type RapierRigidBody, type CollisionEnterPayload } from '@react-three/rapier';
 import { BufferAttribute, IcosahedronGeometry, LatheGeometry, Vector2, CanvasTexture, RepeatWrapping, Vector4, Color, SRGBColorSpace, type Group as THREE_Group, InstancedMesh, Matrix4, type Mesh, MeshPhysicalMaterial, Quaternion, SphereGeometry, Vector3 } from 'three';
 import { mergeVertices } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { clock, daysPerSecond, motion } from './clock';
@@ -207,6 +207,9 @@ const a = new Vector3(), b = new Vector3(), vel = new Vector3(), cur = new Quate
 // Steering towards the orbit, per second: how hard a bean pulled off its track is drawn back to its place on it,
 // and back to its proper turn.
 const PULL = 3;
+// A thrown gumball hits hard: the planet is knocked away along the throw, this fast (scene units a second), the
+// knock dying away over a couple of seconds while the steering eases it back onto its orbit.
+const KNOCK = 16, KNOCK_FADE = 1.2; // per second
 const TURN = 6;
 const DENSITY = 25; // heavy, so the loose sweets bounce off the planets rather than shove them about
 
@@ -1098,6 +1101,12 @@ function Bean({ planet, index }: { planet: Planet; index: number }) {
   const pos = useMemo(() => new Vector3(), []);
   const turn = useRef({ roll: index * 1.3, tip: index * 0.7 });
   const dir = Math.sign(planet.day);
+  const knock = useMemo(() => new Vector3(), []);
+  const hit = (e: CollisionEnterPayload) => {
+    // Along the way it was thrown (by the time this runs it may already have bounced back off).
+    const thrown = (e.other.rigidBody?.userData as { gumball?: Vector3 } | undefined)?.gumball;
+    if (thrown) knock.addScaledVector(thrown, KNOCK);
+  };
 
   useFrame((_, dt) => {
     const h = Math.min(dt, 1 / 30);
@@ -1124,9 +1133,12 @@ function Bean({ planet, index }: { planet: Planet; index: number }) {
     if (!mine) planetPositions.set(planet.name, (mine = new Vector3()));
     mine.set(p.x, p.y, p.z);
     vel.subVectors(a, b).multiplyScalar(daysPerSecond()); // a and b are a day either side: units per day
-    vel.x += (pos.x - p.x) * PULL;
-    vel.y += (pos.y - p.y) * PULL;
-    vel.z += (pos.z - p.z) * PULL;
+    // Knocked, it drifts off along the knock and is only pulled back gently until the knock has died away.
+    knock.multiplyScalar(Math.exp(-h * KNOCK_FADE));
+    const pull = PULL / (1 + knock.length() * 0.5);
+    vel.x += (pos.x - p.x) * pull + knock.x;
+    vel.y += (pos.y - p.y) * pull + knock.y;
+    vel.z += (pos.z - p.z) * pull + knock.z;
     rb.setLinvel(vel, true);
     // Small angle rotation error, as an angular velocity towards the target.
     const r = rb.rotation();
@@ -1149,6 +1161,7 @@ function Bean({ planet, index }: { planet: Planet; index: number }) {
       canSleep={false}
       colliders={false}
       position={planetAt(planet, clock.jd)}
+      onCollisionEnter={hit}
     >
       {planet.name === 'Earth' ? (
         <BallCollider density={DENSITY} args={[EARTH_RADIUS]} />

@@ -11,7 +11,6 @@ import { PlanetList } from './PlanetList';
 import { Beans } from './Beans';
 import { PlanetCard } from './PlanetCard';
 import { pick } from './selection';
-import { Sea } from './Sea';
 import { Space } from './Space';
 import { Sun } from './Sun';
 import { clock } from './clock';
@@ -24,20 +23,24 @@ function Tick() {
   useFrame(({ scene, gl }, dt) => {
     if (!clock.paused) clock.jd += clock.speed * Math.min(dt, 0.1);
     // The opening: dark until the candy's in, then lighting up over a few seconds.
-    if (!intro.born) intro.born = performance.now();
     if (intro.ready && intro.value < 1) intro.value = Math.min(1, (performance.now() - intro.ready) / 1000 / INTRO_TIME);
     scene.environmentIntensity = 0.04 * roomLight();
-    gl.toneMappingExposure = 0.5 + 0.5 * roomLight();
+    gl.toneMappingExposure = intro.ready ? 0.25 + 0.75 * roomLight() : 0; // black until then
   });
   return null;
 }
 
-// Mounted with the candy, inside the Suspense: once it's in and a couple of frames have drawn it (the shaders
-// compiled), the lights can come up. The page's controls fade in with them.
+// Mounted with the candy, inside the Suspense: once it's in, the lights can come up, the page's controls with them.
+// Rendered black meanwhile, so shaders compile and textures upload unseen; it waits for a run of smooth frames
+// (or gives up waiting after a while, on a slow device) before starting, so the opening doesn't stutter.
+const SMOOTH_FRAMES = 10, SMOOTH_DT = 1 / 40, WAIT_AT_MOST = 6; // frames, seconds, seconds
 function Ready() {
-  const frames = useRef(0);
-  useFrame(() => {
-    if (intro.ready || ++frames.current < 3) return;
+  const s = useRef({ smooth: 0, since: 0 });
+  useFrame((_, dt) => {
+    if (intro.ready) return;
+    s.current.since += dt;
+    s.current.smooth = dt < SMOOTH_DT ? s.current.smooth + 1 : 0;
+    if (s.current.smooth < SMOOTH_FRAMES && s.current.since < WAIT_AT_MOST) return;
     intro.ready = performance.now();
     document.body.classList.add('lit');
   });
@@ -147,7 +150,6 @@ export function App() {
         <Suspense fallback={null}>
           <Physics gravity={[0, -30, 0]} timeStep={1 / 60}>
             <Beans />
-            <Sea />
             <Ready />
           </Physics>
         </Suspense>
