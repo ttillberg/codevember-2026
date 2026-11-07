@@ -36,6 +36,8 @@ export type Dab = {
   seed: number;
   rough: number;     // the finish
   metal: number;
+  load?: number;     // thickness laid, instead of the brush's
+  wet?: number;      // wetness laid, instead of 0.85 (0 lays dry paint the run pass leaves alone)
 };
 
 // Tunables, live.
@@ -84,11 +86,12 @@ class Splats {
   dab = new Float32Array(MAX_DABS * 4);   // u v size angle
   col = new Float32Array(MAX_DABS * 4);   // r g b flow
   misc = new Float32Array(MAX_DABS * 4);  // style seed rough metal
-  aDab: InstancedBufferAttribute; aCol: InstancedBufferAttribute; aMisc: InstancedBufferAttribute;
+  extra = new Float32Array(MAX_DABS * 2); // load wet (negative load: the brush's)
+  aDab: InstancedBufferAttribute; aCol: InstancedBufferAttribute; aMisc: InstancedBufferAttribute; aExtra: InstancedBufferAttribute;
   count = 0;
   mesh: Mesh;
 
-  constructor(build: (dab: any, col: any, misc: any, mat: MeshBasicNodeMaterial) => void) {
+  constructor(build: (dab: any, col: any, misc: any, extra: any, mat: MeshBasicNodeMaterial) => void) {
     const plane = new PlaneGeometry(1, 1);
     const geo = new InstancedBufferGeometry();
     geo.index = plane.index;
@@ -97,9 +100,11 @@ class Splats {
     this.aDab = new InstancedBufferAttribute(this.dab, 4);
     this.aCol = new InstancedBufferAttribute(this.col, 4);
     this.aMisc = new InstancedBufferAttribute(this.misc, 4);
+    this.aExtra = new InstancedBufferAttribute(this.extra, 2);
     geo.setAttribute('aDab', this.aDab);
     geo.setAttribute('aCol', this.aCol);
     geo.setAttribute('aMisc', this.aMisc);
+    geo.setAttribute('aExtra', this.aExtra);
     geo.instanceCount = 0;
     this.geo = geo;
     const mat = new MeshBasicNodeMaterial();
@@ -110,6 +115,7 @@ class Splats {
       instancedBufferAttribute(this.aDab, 'vec4') as any,
       instancedBufferAttribute(this.aCol, 'vec4') as any,
       instancedBufferAttribute(this.aMisc, 'vec4') as any,
+      instancedBufferAttribute(this.aExtra, 'vec2') as any,
       mat,
     );
     this.mesh = new Mesh(geo, mat);
@@ -123,6 +129,7 @@ class Splats {
     this.dab.set([d.u + shift, d.v, d.size, d.angle], i * 4);
     this.col.set([d.rgb[0], d.rgb[1], d.rgb[2], d.flow], i * 4);
     this.misc.set([STYLE[d.brush], d.seed, d.rough, d.metal], i * 4);
+    this.extra.set([d.load ?? -1, d.wet ?? 0.85], i * 2);
   }
 
   /** Arms the draw for this frame, or hides it. */
@@ -133,6 +140,7 @@ class Splats {
       this.aDab.needsUpdate = true;
       this.aCol.needsUpdate = true;
       this.aMisc.needsUpdate = true;
+      this.aExtra.needsUpdate = true;
     }
   }
 }
@@ -192,24 +200,25 @@ export class PaintLayer {
   constructor() {
     // Paint dabs: premultiplied, One / OneMinusSrcAlpha into both targets, so thickness, roughness and metalness
     // are set to the brush's where it covers and kept where it doesn't.
-    this.paint = new Splats((dab, col, misc, mat) => {
+    this.paint = new Splats((dab, col, misc, extra, mat) => {
       mat.blendSrc = OneFactor; mat.blendDst = OneMinusSrcAlphaFactor;
       mat.blendSrcAlpha = OneFactor; mat.blendDstAlpha = OneMinusSrcAlphaFactor;
-      const vCol: any = varying(col), vMisc: any = varying(misc);
+      const vCol: any = varying(col), vMisc: any = varying(misc), vExtra: any = varying(extra);
       mat.positionNode = dabPosition(dab);
       const a = dabShape(vMisc.x, vMisc.y).mul(vCol.w).toVar();
-      const load = select(vMisc.x.lessThan(0.5), float(LOAD.round), select(vMisc.x.lessThan(1.5), float(LOAD.spray), float(LOAD.bristle)));
+      const brushLoad = select(vMisc.x.lessThan(0.5), float(LOAD.round), select(vMisc.x.lessThan(1.5), float(LOAD.spray), float(LOAD.bristle)));
+      const load = select(vExtra.x.lessThan(0), brushLoad, vExtra.x);
       // Impasto: the paint is laid thicker and thinner across the dab, in ridges along the stroke.
       // In target space (the ortho pass fills the target, so screenUV is it), so overlapping dabs agree.
       const ridge = mx_noise_float(vec3(screenUV.x.mul(PAINT_W / 10), screenUV.y.mul(PAINT_H / 10), vMisc.y.mul(0.01))).mul(0.35).add(1);
       mat.colorNode = v4(vCol.xyz.mul(a), a);
       mat.mrtNode = materialBlended(mrt({
         color: v4(vCol.xyz.mul(a), a),
-        props: v4(load.mul(ridge).mul(a), min(a.mul(4), 0.85), vMisc.z.mul(a), vMisc.w.mul(a)), // wet 0.85: laid, not arrived
+        props: v4(load.mul(ridge).mul(a), min(a.mul(4), vExtra.y), vMisc.z.mul(a), vMisc.w.mul(a)), // wet 0.85: laid, not arrived
       }));
     });
     // Scrapes: Zero / OneMinusSrcAlpha, everything in both targets scaled down where the blade passes.
-    this.scrape = new Splats((dab, col, misc, mat) => {
+    this.scrape = new Splats((dab, col, misc, _extra, mat) => {
       mat.blendSrc = ZeroFactor; mat.blendDst = OneMinusSrcAlphaFactor;
       mat.blendSrcAlpha = ZeroFactor; mat.blendDstAlpha = OneMinusSrcAlphaFactor;
       const vCol: any = varying(col), vMisc: any = varying(misc);

@@ -26,6 +26,7 @@ import {
 } from 'three/tsl';
 import { PAINT_H, PAINT_W, PaintLayer, sim, type Brush, type Dab } from './paint';
 import { FINISH, hexToRgb, tool } from './tool';
+import { dripSettings, maybeSpawn, stepDrips } from './drips';
 
 export const paint = new PaintLayer();
 // Dev: 0 normal, 1 coverage, 2 wetness, 3 thickness, 4 tint. And how much wet paint glosses up.
@@ -33,7 +34,7 @@ const uDebug = uniform(0);
 const uWetGloss = uniform(1);
 const uBump = uniform(sim.bump);
 const uGrain = uniform(sim.grain);
-if (import.meta.env.DEV) { (window as any).__tool = tool; (window as any).__wheel = wheel; (window as any).__sim = sim; (window as any).__paint = paint; (window as any).__dbg = uDebug; (window as any).__wetGloss = uWetGloss; }
+if (import.meta.env.DEV) { (window as any).__tool = tool; (window as any).__drips = dripSettings; (window as any).__wheel = wheel; (window as any).__sim = sim; (window as any).__paint = paint; (window as any).__dbg = uDebug; (window as any).__wetGloss = uWetGloss; }
 
 // Thin clear rubber with paint on it. Clear rubber has no diffuse of its own, only its reflections and a faint
 // darkening at the rim; where there is paint the surface is opaque in the paint's colour and finish, wet paint
@@ -100,6 +101,7 @@ export function Balloon() {
     sim.runRate = lerp(0.3, 1.0, l); // at 1 a stream moves all of its excess each step, so a drop stays a drop
     sim.dry = lerp(0.002, 0.00015, l);
     sim.spread = lerp(0.06, 0.025, l); // thin paint keeps to its lanes, so the legs stay narrow and go far
+    stepDrips(dt, sim.gravityObj, tool.size, l, paint);
     paint.flush(gl, dt);
   }, -1);
 
@@ -116,6 +118,7 @@ export function Balloon() {
       metal: finish.metal,
     };
     paint.add(d);
+    if (tool.brush !== 'scrape') maybeSpawn(d, tool.liquid, sim.gravityObj);
   };
 
   // The brush sits at the centre of the screen: turning the balloon under it is the stroke. The left button
