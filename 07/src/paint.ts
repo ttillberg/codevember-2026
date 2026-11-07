@@ -24,7 +24,7 @@ const TRAIL = 0.3;     // coverage a run leaves behind it, whatever the paint di
 export type Brush = 'round' | 'spray' | 'bristle' | 'glaze' | 'scrape';
 const STYLE: Record<Brush, number> = { round: 0, spray: 1, bristle: 2, scrape: 3, glaze: 4 };
 // How much paint each brush leaves: above the run threshold it drips while wet.
-export const LOAD: Record<Brush, number> = { round: 0.85, spray: 0.9, bristle: 0.65, scrape: 0, glaze: 0 };
+export const LOAD: Record<Brush, number> = { round: 0.85, spray: 0.7, bristle: 0.65, scrape: 0, glaze: 0 };
 
 export type Dab = {
   u: number; v: number;
@@ -165,9 +165,12 @@ const dabShape = (style: any, seed: any, watery: any) => Fn(() => {
   const d = length(q);
   const round = smoothstep(1, 0.6, d);
   // Spray: a round cloud of speckles, denser at the middle.
+  // Spray: a dense core where the jet hits, and a mist of overspray around it, grainy and faint.
   const cell = floor(uv().mul(48));
   const n = hash(cell.x.add(cell.y.mul(131)).add(seed.mul(7919)));
-  const spray = select(n.greaterThan(mix(0.55, 1.0, d)), float(1), float(0)).mul(smoothstep(1, 0.3, d));
+  const core = smoothstep(0.55, 0.15, d);
+  const mist = smoothstep(1.0, 0.3, d).mul(mix(0.12, 1.0, select(n.greaterThan(0.6), float(1), float(0)))).mul(0.45);
+  const spray = max(core, mist);
   // Bristle: streaks along the stroke, broken up along it.
   const lane = hash(floor(uv().y.mul(14)).add(seed.mul(1013)));
   const along = hash(floor(uv().x.mul(6)).add(floor(uv().y.mul(14)).mul(17)).add(seed.mul(331)));

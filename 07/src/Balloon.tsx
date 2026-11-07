@@ -143,7 +143,22 @@ export function Balloon() {
     };
     paint.add(d);
     if (tool.brush !== 'scrape') maybeSpawn(d, tool.liquid, sim.gravityObj);
+    // Spray splatters: now and then a fat drop lands off to the side, outside the mist.
+    if (tool.brush === 'spray' && Math.random() < 0.07) {
+      const n = 1 + Math.floor(Math.random() * 2);
+      for (let i = 0; i < n; i++) {
+        const r = tool.size * (0.5 + Math.random() * 1.0), t = Math.random() * Math.PI * 2;
+        const circ = 2 * Math.max(Math.sin(v * Math.PI), 0.05);
+        paint.add({
+          ...d, brush: 'round', seed: Math.random() * 1000, angle: 0,
+          u: ((u + Math.cos(t) * r / circ) % 1 + 1) % 1, v: Math.min(0.999, Math.max(0.001, v + Math.sin(t) * r)),
+          size: tool.size * (0.06 + Math.random() ** 2 * 0.22), flow: 0.5 + Math.random() * 0.4, load: 0.3, // thin, or the bump rings them
+        });
+      }
+    }
   };
+  // Spray keeps coming while the can is held still: a dab every so often at the same spot, so it builds up.
+  const sprayHold = useRef(0);
 
   // The brush sits at the centre of the screen: turning the balloon under it is the stroke. The left button
   // paints while it orbits, the right button only orbits. Each frame the centre ray is cast at the balloon and the
@@ -245,7 +260,7 @@ export function Balloon() {
   }, [gl]);
 
   // Paint under the brush where the camera is now, and size the ring on screen.
-  useFrame(({ size }) => {
+  useFrame(({ size }, dt) => {
     const h = hit();
     const ring = document.getElementById('reticle');
     if (ring) {
@@ -265,7 +280,13 @@ export function Balloon() {
       const seed = Math.random() * 1000;
       stroke.current = { u: h.u, v: h.v, seed };
       dabAt(h.u, h.v, 0, seed);
-    } else advance(h.u, h.v);
+    } else {
+      advance(h.u, h.v);
+      if (tool.brush === 'spray') {
+        sprayHold.current += dt;
+        if (sprayHold.current > 0.05) { sprayHold.current = 0; dabAt(h.u, h.v, 0, stroke.current.seed + Math.random() * 97); }
+      }
+    }
   }, -2); // before the flush; a positive priority would turn off R3F's own render
 
   // Spin on, once let go, with hardly any drag.
