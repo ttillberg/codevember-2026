@@ -81,7 +81,7 @@ const BOB = 0.35; // how far up and down
 const BOB_RATE = 2.2; // rad/s
 
 const v = new Vector3(), prev = new Vector3(), dir = new Vector3(), m = new Matrix4(), sc = new Vector3(), q = new Quaternion();
-const spot = new Vector3(), tumble = new Quaternion();
+const spot = new Vector3(), trailAt = new Vector3(), tumble = new Quaternion();
 const AXIS = new Vector3(0, 1, 0); // the capsule's length
 
 function Rubble() {
@@ -264,14 +264,13 @@ const UP = new Vector3(0, 1, 0);
 // where the one in front of it was a moment ago, swaying a little from side to side, so the line ripples along
 // behind. The leader knows where each planet will be by the time it gets there, from its orbit, and steers clear of
 // that; and when it comes alongside one going about its own speed, it stops to play, looping round it two or three
-// times before going on, the line in tow. Each one is a little cluster of sprinkles. They stop with the clock and
+// times before going on, the line in tow, sprinkles strewn all along it. They stop with the clock and
 // slow with it.
 const FOLLOWERS = 14;
 const POD = FOLLOWERS + 1; // the leader first
 const BEHIND = 4; // frames: how far back along the one in front each follower aims, its spacing in the line
-const CLUSTER = 7; // each one is a little string of sprinkles
-const GAP = 1; // frames between one sprinkle and the next along its string
-const HISTORY = Math.max(BEHIND, CLUSTER * GAP) + 3;
+const CLUSTER = 7; // sprinkles per swimmer, strewn along the stream rather than kept together
+const HISTORY = BEHIND + 3 + 3; // frames of path kept: enough for the widest gap between two swimmers
 const FAST = 14, SLOW = 4; // speed limits, scene units per second
 
 function Pod() {
@@ -292,7 +291,12 @@ function Pod() {
       Array.from({ length: POD * CLUSTER }, (_, n) => {
         const k = n % CLUSTER;
         return {
-          at: new Vector3((r() - 0.5) * 0.2, (k - (CLUSTER - 1) / 2) * -0.17 + (r() - 0.5) * 0.08, (r() - 0.5) * 0.18),
+          at: new Vector3((r() - 0.5) * 0.36, (k - (CLUSTER - 1) / 2) * -0.17 + (r() - 0.5) * 0.08, (r() - 0.5) * 0.32),
+          // Not in clusters: each sprinkle has its own place anywhere along the stream, behind one of the swimmers
+          // and somewhere in the gap to the next, so they're strewn along the whole line, unevenly.
+          fish: Math.floor(r() * POD),
+          gap: r(),
+          size: 0.7 + r() * 0.6,
           // Its own little curve on top: across and up and down, slowly, each at its own pace.
           wander: [0.8 + r() * 1.4, 0.7 + r() * 1.5, r() * 6.3, r() * 6.3, 0.03 + r() * 0.08, 0.03 + r() * 0.07],
           axis: new Vector3(r() - 0.5, 0, r() - 0.5).normalize(),
@@ -310,7 +314,8 @@ function Pod() {
     const fish = Array.from({ length: POD }, (_, i) => {
       const p = new Vector3(9, ORBIT_Y, i * 0.8);
       // A few don't quite keep to the line (wild): now and then they go off ahead, drop back or swim alongside.
-      return { p, v: new Vector3(0, 0, -8), trail: Array.from({ length: HISTORY }, () => p.clone()), sway: r() * Math.PI * 2, wild: i > 0 && r() < 0.35 ? 1 : 0, wander: r() * 100 };
+      // And the gaps between them vary: each follows the one in front at its own distance.
+      return { p, v: new Vector3(0, 0, -8), trail: Array.from({ length: HISTORY }, () => p.clone()), sway: r() * Math.PI * 2, wild: i > 0 && r() < 0.35 ? 1 : 0, wander: r() * 100, behind: BEHIND - 1 + Math.floor(r() * 4) };
     });
     return {
       fish,
@@ -397,7 +402,7 @@ function Pod() {
       } else {
         // Where the one in front was a moment ago, nudged to one side and the other.
         const ahead = S.fish[i - 1];
-        aim.copy(ahead.trail[(S.head - BEHIND + HISTORY * 2) % HISTORY]);
+        aim.copy(ahead.trail[(S.head - f.behind + HISTORY * 2) % HISTORY]);
         side.crossVectors(ahead.v, up).normalize();
         aim.addScaledVector(side, Math.sin(S.time * 3 + f.sway) * 0.6);
         if (f.wild) {
@@ -433,16 +438,17 @@ function Pod() {
     // it there, a soft wave running back down the string, the odd one straying ahead, back or alongside. The leader's
     // a bit bigger.
     if (dt > 0) S.head = (S.head + 1) % HISTORY;
-    S.fish.forEach((f, i) => {
-      f.trail[S.head].copy(f.p);
-      const big = i === 0 ? 1.35 : 1;
-      // The whole cluster drifts a little off the line too, in its own slow curve.
-      const swayX = 0.12 * Math.sin(S.time * (1.1 + i * 0.13) + i * 2.3), swayY = 0.1 * Math.cos(S.time * (0.9 + i * 0.17) + i * 1.7);
-      for (let k = 0; k < CLUSTER; k++) {
-        const bit = bits[i * CLUSTER + k];
-        const at = f.trail[(S.head - k * GAP + HISTORY * 2) % HISTORY];
-        const before = f.trail[(S.head - k * GAP - 1 + HISTORY * 2) % HISTORY];
-        dir.subVectors(at, before);
+    for (const f of S.fish) f.trail[S.head].copy(f.p);
+    bits.forEach((bit, n) => {
+      const i = bit.fish, f = S.fish[i], k = n % CLUSTER, big = 1;
+      // A slow sway of its own on top, off the line.
+      const swayX = 0.12 * Math.sin(S.time * (1.1 + n * 0.013) + n * 2.3), swayY = 0.1 * Math.cos(S.time * (0.9 + n * 0.017) + n * 1.7);
+      {
+        // Somewhere between its swimmer and the next one behind, where they actually are now, so the stream has no
+        // gaps; the last ones trail off behind the last swimmer.
+        const next = i + 1 < POD ? S.fish[i + 1].p : f.trail[(S.head - BEHIND + HISTORY * 2) % HISTORY];
+        const at = trailAt.lerpVectors(f.p, next, bit.gap);
+        dir.subVectors(f.p, next);
         if (dir.lengthSq() < 1e-8) dir.copy(f.v);
         if (dir.lengthSq() < 1e-8) dir.set(0, 0, 1);
         dir.normalize();
@@ -460,7 +466,7 @@ function Pod() {
         spot.copy(at).addScaledVector(side, across * big).addScaledVector(dir, along * big).addScaledVector(up, lift * big);
         q.setFromUnitVectors(AXIS, dir);
         tumble.setFromAxisAngle(bit.axis, bit.turn * 0.5 + 0.25 * Math.sin(S.time * bit.spin + bit.phase));
-        ref.current.setMatrixAt(i * CLUSTER + k, m.compose(spot, tumble.premultiply(q), sc.setScalar(big)));
+        ref.current.setMatrixAt(n, m.compose(spot, tumble.premultiply(q), sc.setScalar(big * bit.size)));
       }
     });
     ref.current.instanceMatrix.needsUpdate = true;
