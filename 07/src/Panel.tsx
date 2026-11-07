@@ -109,11 +109,15 @@ function placeAt(pop: HTMLElement, host: HTMLElement, ax: number, ay: number): A
 const atStyle = (at: At): React.CSSProperties | undefined =>
   at ? { left: at.left, top: at.top, bottom: 'auto', transform: 'none', transition: 'opacity 0.15s' } : undefined;
 
+// A styled tooltip over a bar button: its name and its key. Shows after a short hover, never while its popover is up.
+const Tip = ({ tip, hotkey }: { tip?: string; hotkey?: string }) =>
+  tip ? <span className="ft-tip" aria-hidden>{tip}{hotkey && <kbd>{hotkey.slice(3)}</kbd>}</span> : null;
+
 // A knob in the bar, like a volume control: hold the button and drag up or down, a tall gauge shows while you hold.
 // It reads and writes a 0..1 value itself (get/put) so it redraws as you drag; the wheel over the button nudges it too.
 const TRAVEL = 140; // px of drag for the whole range, the gauge's height
-function Knob({ name, get, put, face, track, hotkey }: {
-  name: string; get: () => number; put: (t: number) => void; hotkey?: string;
+function Knob({ name, tip, get, put, face, track, hotkey }: {
+  name: string; tip?: string; get: () => number; put: (t: number) => void; hotkey?: string;
   face: (t: number) => React.ReactNode; track: (t: number) => React.ReactNode;
 }) {
   const [held, setHeld] = useState(false);
@@ -168,7 +172,7 @@ function Knob({ name, get, put, face, track, hotkey }: {
   const open = held || pinned;
   return (
     <div className="ft-knob" ref={box}>
-      <button aria-label={name} title={`${name} (hold and drag, or click${hotkey ? `; hold ${hotkey.slice(3)}` : ''})`} className={open ? 'on' : ''}
+      <button aria-label={name} className={open ? 'on' : ''}
         onPointerDown={(e) => {
           e.currentTarget.setPointerCapture(e.pointerId);
           start.current = { x: e.clientX, y: e.clientY, t, moved: false, wasPinned: pinned, key: false };
@@ -183,6 +187,7 @@ function Knob({ name, get, put, face, track, hotkey }: {
         }}
         onWheel={(e) => to(t - Math.sign(e.deltaY) * 0.02)}>
         {face(t)}
+        <Tip tip={tip} hotkey={hotkey} />
       </button>
       <div ref={gauge} className={`ft-gauge${open ? ' open' : ''}${pinned ? ' pinned' : ''}`} style={atStyle(spot)}>
         <div ref={trackEl} className="ft-gauge-track" style={{ '--t': t } as React.CSSProperties}
@@ -209,7 +214,7 @@ const SizeRamp = ({ t }: { t: number }) => (
 function SizeKnob() {
   const { min, max } = RANGE.size;
   return (
-    <Knob name="size" hotkey="KeyS" get={() => (tool.size - min) / (max - min)} put={(v) => { tool.size = min + v * (max - min); }}
+    <Knob name="size" tip="Size" hotkey="KeyS" get={() => (tool.size - min) / (max - min)} put={(v) => { tool.size = min + v * (max - min); }}
       face={(t) => <SizeRamp t={t} />}
       track={(t) => <><span className="ft-fill" /><b>{Math.round(t * 100)}</b></>} />
   );
@@ -235,7 +240,7 @@ const WetDrop = ({ t }: { t: number }) => (
 function WetKnob({ k }: { k: Num }) {
   const { min, max } = RANGE[k];
   return (
-    <Knob name={k} hotkey="KeyW" get={() => (tool[k] - min) / (max - min)} put={(v) => { tool[k] = min + v * (max - min); }}
+    <Knob name={k} tip={k === 'watery' ? 'Watery' : 'Liquid'} hotkey="KeyW" get={() => (tool[k] - min) / (max - min)} put={(v) => { tool[k] = min + v * (max - min); }}
       face={(t) => <WetDrop t={t} />}
       track={(t) => <><span className="ft-fill" /><b>{Math.round(t * 100)}</b></>} />
   );
@@ -244,7 +249,7 @@ function WetKnob({ k }: { k: Num }) {
 function FlowKnob() {
   const { min, max } = RANGE.flow;
   return (
-    <Knob name="flow" hotkey="KeyF" get={() => (tool.flow - min) / (max - min)} put={(v) => { tool.flow = min + v * (max - min); }}
+    <Knob name="flow" tip="Flow" hotkey="KeyF" get={() => (tool.flow - min) / (max - min)} put={(v) => { tool.flow = min + v * (max - min); }}
       face={(t) => <FlowDisc t={t} />}
       track={(t) => <><span className="ft-fill" /><b>{Math.round(t * 100)}</b></>} />
   );
@@ -282,7 +287,7 @@ const colorGet = () => {
 };
 function ColorKnob() {
   return (
-    <Knob name="color" hotkey="KeyC" get={colorGet} put={(v) => { colorT = v; tool.hex = stripAt(v); }}
+    <Knob name="color" tip="Colour" hotkey="KeyC" get={colorGet} put={(v) => { colorT = v; tool.hex = stripAt(v); }}
       face={() => <i className="ft-swatch" style={{ background: tool.hex }} />}
       track={() => <><span className="ft-strip" style={{ background: STRIP }} /><span className="ft-mark" style={{ background: tool.hex }} /></>} />
   );
@@ -290,8 +295,8 @@ function ColorKnob() {
 
 // A picker in the bar: only the current choice shows. Press it and the choices pop up above; drag up to one and let
 // go to pick it, or tap and then click one. A press elsewhere closes it.
-function Picker<T extends string>({ name, items, cur, put, icon, solid, others, hotkey }: {
-  name: string; items: T[]; cur: T; put: (v: T) => void; icon: (v: T) => React.ReactNode; hotkey?: string;
+function Picker<T extends string>({ name, tip, items, cur, put, icon, solid, others, hotkey }: {
+  name: string; tip?: string; items: T[]; cur: T; put: (v: T) => void; icon: (v: T) => React.ReactNode; hotkey?: string;
   others?: boolean; // the popover lists only the other choices, the current one is already on the button
   solid?: boolean; // picked shows as black, for icons; off for swatches that carry their own look (a ring instead)
 }) {
@@ -366,7 +371,7 @@ function Picker<T extends string>({ name, items, cur, put, icon, solid, others, 
   }, [open]);
   return (
     <div className={`ft-knob${solid ? '' : ' swatches'}`} ref={box}>
-      <button aria-label={`${name}: ${cur}`} title={`${cur} (press to change)`} className={open ? 'on' : ''}
+      <button aria-label={`${name}: ${cur}`} className={open ? 'on' : ''}
         onPointerDown={(e) => {
           e.preventDefault();
           if (open) { setOpen(false); return; }
@@ -376,10 +381,11 @@ function Picker<T extends string>({ name, items, cur, put, icon, solid, others, 
           setOpen(true);
         }}>
         {icon(cur)}
+        <Tip tip={tip} hotkey={hotkey} />
       </button>
       <div ref={popEl} className={`ft-gauge ft-pick${open ? ' open' : ''}${flip ? ' flip' : ''}`} style={atStyle(at)}>
         {shown.map((v) => (
-          <button key={v} data-item={v} title={v} aria-label={v}
+          <button key={v} data-item={v} aria-label={v}
             className={(hot ?? cur) === v ? 'on' : ''} onClick={() => pick(v)}>
             {icon(v)}
             <span>{v}</span>
@@ -391,7 +397,9 @@ function Picker<T extends string>({ name, items, cur, put, icon, solid, others, 
 }
 
 // A small icon button in the bar that opens a popover above it; a press elsewhere or escape closes it.
-function Pop({ name, icon, className, children }: { name: string; icon: React.ReactNode; className: string; children: React.ReactNode }) {
+function Pop({ name, tip, icon, className, children }: {
+  name: string; tip?: string; icon: React.ReactNode; className: string; children: React.ReactNode;
+}) {
   const [open, setOpen] = useState(false);
   const box = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -404,9 +412,10 @@ function Pop({ name, icon, className, children }: { name: string; icon: React.Re
   }, [open]);
   return (
     <div className="ft-knob" ref={box}>
-      <button aria-label={name} title={name} className={open ? 'on' : ''}
+      <button aria-label={name} className={open ? 'on' : ''}
         onPointerDown={(e) => e.preventDefault()} onClick={() => setOpen((o) => !o)}>
         {icon}
+        <Tip tip={tip} />
       </button>
       <div className={`ft-gauge ft-popover ${className}${open ? ' open' : ''}`}>{children}</div>
     </div>
@@ -467,16 +476,16 @@ export function Panel() {
     <>
     {/* Every control, in a frosted bar under the balloon. */}
     <div className="ft-media">
-      <Picker name="medium" items={MEDIA} cur={tool.brush as Medium} put={(m) => { tool.brush = m; }} icon={(m) => <MediumIcon m={m} />} solid others hotkey="KeyB" />
+      <Picker name="medium" tip="Brush" items={MEDIA} cur={tool.brush as Medium} put={(m) => { tool.brush = m; }} icon={(m) => <MediumIcon m={m} />} solid others hotkey="KeyB" />
       {OPTIONS[tool.brush as Medium].map((k) => <WetKnob key={k} k={k} />)}
       <span className="ft-sep" />
       <SizeKnob />
       <FlowKnob />
       <ColorKnob />
-      <Picker name="paint" items={FINISHES} cur={tool.finish} put={(f) => { tool.finish = f; }} icon={(f) => <FinishBall f={f} />} hotkey="KeyM" />
+      <Picker name="paint" tip="Material" items={FINISHES} cur={tool.finish} put={(f) => { tool.finish = f; }} icon={(f) => <FinishBall f={f} />} hotkey="KeyM" />
       <span className="ft-sep" />
       <div className="ft-pair">
-        <Pop name="settings" icon={<GearIcon />} className="ft-menu">
+        <Pop name="settings" tip="Settings" icon={<GearIcon />} className="ft-menu">
           <Row label="Auto draw" hint="Space" on={tool.auto} act={() => set(() => { tool.auto = !tool.auto; })} />
           <Row label="Inertia" on={tool.inertia} act={() => set(() => { tool.inertia = !tool.inertia; })} />
           <hr />
@@ -489,7 +498,7 @@ export function Panel() {
             </button>
           </div>
         </Pop>
-        <Pop name="help" icon={<HelpIcon />} className="ft-menu ft-help">
+        <Pop name="help" tip="Help" icon={<HelpIcon />} className="ft-menu ft-help">
           <p><b>Click + drag</b> paint and turn</p>
           <p><b>Cmd + move</b> turn without painting</p>
           <p><b>Space</b> auto draw</p>

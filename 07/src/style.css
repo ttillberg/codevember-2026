@@ -149,3 +149,21 @@ canvas.grabbing { cursor: grabbing; }
 .ft-gauge.pinned .ft-gauge-track { cursor: ns-resize; touch-action: none; }
 .ft-pick.flip button span { left: auto; right: calc(100% + 14px); transform: translate(4px, -50%); }
 .ft-pick.flip button.on span, .ft-pick.flip button:hover span { transform: translate(0, -50%); }
+
+/* Tooltips over the bar buttons: a small dark pill with the key in a chip. */
+.ft-media .ft-knob > button { position: relative; }
+.ft-tip {
+  position: absolute; left: 50%; bottom: calc(100% + 12px); transform: translate(-50%, 4px); z-index: 2;
+  display: flex; align-items: center; gap: 6px; padding: 5px 6px 5px 10px; border-radius: 999px; white-space: nowrap;
+  background: #111; color: #fff; font: 500 11px/1 Inter, "Helvetica Neue", Helvetica, Arial, sans-serif;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.18); pointer-events: none; opacity: 0;
+  transition: opacity 0.12s, transform 0.12s;
+}
+.ft-tip:not(:has(kbd)) { padding-right: 10px; }
+.ft-tip kbd {
+  display: inline-flex; align-items: center; justify-content: center; min-width: 16px; height: 16px; padding: 0 4px;
+  box-sizing: border-box; border-radius: 5px; background: #3a3a3a; color: #e6e6e6; font: inherit; font-size: 10px;
+}
+@media (hover: hover) {
+  .ft-media .ft-knob > button:hover:not(.on) .ft-tip { opacity: 1; transform: translate(-50%, 0); transition-delay: 0.35s; }
+}
