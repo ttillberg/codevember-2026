@@ -135,7 +135,7 @@ function ColorKnob() {
 // go to pick it, or tap and then click one. A press elsewhere closes it.
 function Picker<T extends string>({ name, items, cur, put, icon, solid }: {
   name: string; items: T[]; cur: T; put: (v: T) => void; icon: (v: T) => React.ReactNode;
-  solid?: boolean; // the button shows as picked (black), for icons; off for swatches that carry their own look
+  solid?: boolean; // picked shows as black, for icons; off for swatches that carry their own look (a ring instead)
 }) {
   const [open, setOpen] = useState(false);
   const [hot, setHot] = useState<T | null>(null);
@@ -183,7 +183,7 @@ function Picker<T extends string>({ name, items, cur, put, icon, solid }: {
   }, [open]);
   return (
     <div className={`ft-knob${solid ? '' : ' swatches'}`} ref={box}>
-      <button aria-label={`${name}: ${cur}`} title={`${cur} (press to change)`} className={solid || open ? 'on' : ''}
+      <button aria-label={`${name}: ${cur}`} title={`${cur} (press to change)`} className={open ? 'on' : ''}
         onPointerDown={(e) => {
           e.preventDefault();
           if (open) { setOpen(false); return; }
