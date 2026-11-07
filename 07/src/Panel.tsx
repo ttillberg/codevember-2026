@@ -136,8 +136,9 @@ function ColorKnob() {
 
 // A picker in the bar: only the current choice shows. Press it and the choices pop up above; drag up to one and let
 // go to pick it, or tap and then click one. A press elsewhere closes it.
-function Picker<T extends string>({ name, items, cur, put, icon, solid }: {
+function Picker<T extends string>({ name, items, cur, put, icon, solid, others }: {
   name: string; items: T[]; cur: T; put: (v: T) => void; icon: (v: T) => React.ReactNode;
+  others?: boolean; // the popover lists only the other choices, the current one is already on the button
   solid?: boolean; // picked shows as black, for icons; off for swatches that carry their own look (a ring instead)
 }) {
   const [open, setOpen] = useState(false);
@@ -196,7 +197,7 @@ function Picker<T extends string>({ name, items, cur, put, icon, solid }: {
         {icon(cur)}
       </button>
       <div className={`ft-gauge ft-pick${open ? ' open' : ''}`}>
-        {items.map((v) => (
+        {items.filter((v) => !others || v !== cur).map((v) => (
           <button key={v} data-item={v} title={v} aria-label={v}
             className={(hot ?? cur) === v ? 'on' : ''} onClick={() => pick(v)}>
             {icon(v)}
@@ -314,7 +315,7 @@ export function Panel() {
     <>
     {/* Every control, in a frosted bar under the balloon. */}
     <div className="ft-media">
-      <Picker name="medium" items={MEDIA} cur={tool.brush as Medium} put={(m) => { tool.brush = m; }} icon={(m) => <MediumIcon m={m} />} solid />
+      <Picker name="medium" items={MEDIA} cur={tool.brush as Medium} put={(m) => { tool.brush = m; }} icon={(m) => <MediumIcon m={m} />} solid others />
       <Pop name={`${tool.brush} options`} icon={<OptionsIcon />} className="ft-sliders" small>
         {OPTIONS[tool.brush as Medium].map((k) => <OptionSlider key={`${tool.brush}-${k}`} k={k} />)}
       </Pop>
