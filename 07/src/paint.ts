@@ -12,7 +12,7 @@ import {
 } from 'three/webgpu';
 import {
   float, floor, hash, instancedBufferAttribute, length, max, min, mix, mrt, mx_noise_float, positionLocal, select, sin,
-  smoothstep, texture, uniform, uv, varying, vec2, vec3, vec4, Fn,
+  screenUV, smoothstep, texture, uniform, uv, varying, vec2, vec3, vec4, Fn,
 } from 'three/tsl';
 
 export const PAINT_W = 2048, PAINT_H = 1024;
@@ -190,7 +190,8 @@ export class PaintLayer {
       const a = dabShape(vMisc.x, vMisc.y).mul(vCol.w).toVar();
       const load = select(vMisc.x.lessThan(0.5), float(LOAD.round), select(vMisc.x.lessThan(1.5), float(LOAD.spray), float(LOAD.bristle)));
       // Impasto: the paint is laid thicker and thinner across the dab, in ridges along the stroke.
-      const ridge = mx_noise_float(vec3(uv().x.mul(3), uv().y.mul(9), vMisc.y)).mul(0.35).add(1);
+      // In target space (the ortho pass fills the target, so screenUV is it), so overlapping dabs agree.
+      const ridge = mx_noise_float(vec3(screenUV.x.mul(PAINT_W / 10), screenUV.y.mul(PAINT_H / 10), vMisc.y.mul(0.01))).mul(0.35).add(1);
       mat.colorNode = v4(vCol.xyz.mul(a), a);
       mat.mrtNode = materialBlended(mrt({
         color: v4(vCol.xyz.mul(a), a),

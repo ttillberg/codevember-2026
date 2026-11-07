@@ -4,6 +4,10 @@ import { BackSide, Euler, FrontSide, Group, Mesh, Quaternion, Raycaster, SphereG
 
 const CENTRE = new Vector2(0, 0);
 const UP = new Vector3(0, 1, 0);
+// Dab spacing as a fraction of the brush size, and the alpha each dab adds, so a stroke builds up smoothly rather
+// than popping in dab by dab: about a dozen dabs overlap at any point of a round stroke.
+const SPACING: Record<Brush, number> = { round: 0.06, bristle: 0.06, spray: 0.08, scrape: 0.08 };
+const FLOW: Record<Brush, number> = { round: 0.2, bristle: 0.3, spray: 0.12, scrape: 0.12 };
 
 // The turntable, tunable live.
 export const wheel = {
@@ -16,7 +20,7 @@ import {
   abs, float, max, mix, mx_noise_float, normalMap, normalViewGeometry, positionViewDirection, saturate, select, uniform, uv,
   vec2, vec3,
 } from 'three/tsl';
-import { PAINT_H, PAINT_W, PaintLayer, sim, type Dab } from './paint';
+import { PAINT_H, PAINT_W, PaintLayer, sim, type Brush, type Dab } from './paint';
 import { FINISH, hexToRgb, tool } from './tool';
 
 export const paint = new PaintLayer();
@@ -87,7 +91,8 @@ export function Balloon() {
       u, v, angle, seed,
       size: tool.size,
       rgb: hexToRgb(tool.hex),
-      flow: tool.brush === 'spray' ? tool.flow * 0.35 : tool.brush === 'scrape' ? 0.5 : tool.flow,
+      // Dabs overlap many times along the stroke, so each one carries only a little.
+      flow: FLOW[tool.brush] * tool.flow,
       brush: tool.brush,
       rough: finish.rough,
       metal: finish.metal,
@@ -120,13 +125,14 @@ export function Balloon() {
     // Distance in v units: a u step is worth the circumference at this latitude.
     const circ = 2 * Math.max(Math.sin(s.v * Math.PI), 0.02);
     const dist = Math.hypot(du * circ, dv);
-    const spacing = tool.size * (tool.brush === 'spray' ? 0.12 : 0.2);
+    const spacing = tool.size * SPACING[tool.brush];
     if (dist < spacing) return;
     const angle = Math.atan2(dv, du * circ);
     const n = Math.floor(dist / spacing);
     for (let i = 1; i <= n; i++) {
       const t = i / n;
-      dabAt(((s.u + du * t) % 1 + 1) % 1, s.v + dv * t, angle, s.seed + i);
+      // Spray speckles differ per dab; the other brushes keep the stroke's seed so their furrows run on.
+      dabAt(((s.u + du * t) % 1 + 1) % 1, s.v + dv * t, angle, tool.brush === 'spray' ? s.seed + i : s.seed);
     }
     const t = n / (dist / spacing);
     s.u = ((s.u + du * t) % 1 + 1) % 1;
