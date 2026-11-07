@@ -164,12 +164,14 @@ const dabShape = (style: any, seed: any, watery: any) => Fn(() => {
   const q = uv().mul(2).sub(1);
   const d = length(q);
   const round = smoothstep(1, 0.6, d);
-  // Spray: a round cloud of speckles, denser at the middle.
-  // Spray: a dense core where the jet hits, and a mist of overspray around it, grainy and faint.
-  const cell = floor(uv().mul(48));
-  const n = hash(cell.x.add(cell.y.mul(131)).add(seed.mul(7919)));
-  const core = smoothstep(0.55, 0.15, d);
-  const mist = smoothstep(1.0, 0.3, d).mul(mix(0.25, 1.0, select(n.greaterThan(0.55), float(1), float(0)))).mul(0.7);
+  // Spray: a dense core where the jet hits, and speckles of overspray around it, fewer the further out. The
+  // speckles are keyed on the texel, not the dab, so the dabs along a stroke hit the same ones and they build up
+  // into grain instead of averaging into a fog.
+  const texel = floor(screenUV.mul(vec2(PAINT_W, PAINT_H)));
+  const n = hash(texel.x.add(texel.y.mul(PAINT_W)).add(0.5));
+  const core = smoothstep(0.5, 0.1, d).mul(mix(0.6, 1, n));
+  const density = smoothstep(1.0, 0.3, d).pow(2).mul(0.5);
+  const mist = select(n.lessThan(density), float(0.6), float(0));
   const spray = max(core, mist);
   // Bristle: streaks along the stroke, broken up along it.
   const lane = hash(floor(uv().y.mul(14)).add(seed.mul(1013)));

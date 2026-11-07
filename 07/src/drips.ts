@@ -13,6 +13,7 @@ type Drip = {
   seed: number;
   travelled: number; // since the last trail stamp, pole-to-pole units
   stuck: number;     // seconds without grip
+  thin: boolean;     // spray: a thin dry leg and a small dry bead
 };
 
 export const dripSettings = {
@@ -46,13 +47,15 @@ function gravityAt(u: number, v: number, g: Vector3) {
 }
 
 /** A brush dab lands: pile its paint up where it falls, and let a drop go where there is too much. */
-export function maybeSpawn(d: Dab, liquid: number, g: Vector3) {
+export function maybeSpawn(d: Dab, liquid: number, g: Vector3, held = false) {
   if (liquid <= 0.02) return;
+  const spray = d.brush === 'spray';
   const threshold = dripSettings.threshold / Math.max(liquid, 0.02) ** 2.5; // steep: stiff paint hardly ever
   // The dab's paint over its disc, in cells; the disc is as wide in u as the sphere is narrow there.
-  // Spray lays flat, but held on one spot it pools like anything else: pile it as if it were thick.
-  // Spray piles as if thick, the rest as it is; pencil and washes never drip.
-  const amount = d.flow * (d.brush === 'spray' ? 0.8 : d.brush === 'pencil' || d.brush === 'glaze' ? 0 : d.load ?? 0.85);
+  // Spray lays a thin coat that never drips on its own; only the can held on one spot pools enough. Pencil
+  // and washes never drip.
+  const amount = d.flow * (spray ? (held ? 0.5 : 0) : d.brush === 'pencil' || d.brush === 'glaze' ? 0 : d.load ?? 0.85);
+  if (amount <= 0) return;
   const ry = Math.max(1, Math.round(d.size * 0.5 * PH));
   const rx = Math.max(1, Math.round(ry / Math.max(Math.sin((1 - d.v) * Math.PI), 0.05) * 0.5 * (PW / PH)));
   const cx = Math.round(d.u * PW), cy = Math.round(d.v * PH);
@@ -86,11 +89,11 @@ export function maybeSpawn(d: Dab, liquid: number, g: Vector3) {
             gathered += take;
           }
         }
-        const mass = Math.min(1.3, gathered / (threshold * gx * gy * 0.8)) * liquid * (0.35 + Math.random() ** 1.5 * 1.1);
+        const mass = Math.min(1.3, gathered / (threshold * gx * gy * 0.8)) * liquid * (0.35 + Math.random() ** 1.5 * 1.1) * (spray ? 0.6 : 1);
         drips.push({
           u, v, rgb: d.rgb, rough: d.rough, metal: d.metal,
-          mass, width: d.size * dripSettings.width * (0.8 + mass * 0.3), seed: Math.random() * 1000,
-          travelled: 0, stuck: 0,
+          mass, width: d.size * dripSettings.width * (0.8 + mass * 0.3) * (spray ? 0.5 : 1), seed: Math.random() * 1000,
+          travelled: 0, stuck: 0, thin: spray,
         });
       }
     }
@@ -118,9 +121,11 @@ export function stepDrips(dt: number, g: Vector3, size: number, liquid: number, 
     // nothing), or the drop is spent.
     d.stuck = gr.grip < 0.15 ? d.stuck + dt : 0;
     if (d.stuck > 0.5 || d.mass <= 0) {
+      // A spray leg ends in a small dry bead; thick paint in a fat wet one the run pass may carry on.
       paint.add({
-        u: ((d.u % 1) + 1) % 1, v: d.v, angle: 0, seed: d.seed, size: size * dripSettings.bead * (0.5 + Math.max(d.mass, 0) + 0.5),
-        rgb: d.rgb, flow: 1, brush: 'round', rough: d.rough, metal: d.metal, load: 1.2, wet: 0.3,
+        u: ((d.u % 1) + 1) % 1, v: d.v, angle: 0, seed: d.seed,
+        size: size * dripSettings.bead * (0.5 + Math.max(d.mass, 0) + 0.5) * (d.thin ? 0.45 : 1),
+        rgb: d.rgb, flow: 1, brush: 'round', rough: d.rough, metal: d.metal, load: d.thin ? 0.4 : 1.2, wet: d.thin ? 0 : 0.3,
       });
       drips.splice(i, 1);
       continue;
@@ -139,7 +144,7 @@ export function stepDrips(dt: number, g: Vector3, size: number, liquid: number, 
     paint.add({
       u: ((d.u % 1) + 1) % 1, v: d.v, angle, seed: d.seed, size: d.width,
       // Laid dry, so the run pass leaves it alone.
-      rgb: d.rgb, flow: 0.6, brush: 'round', rough: d.rough, metal: d.metal, load: 0.55, wet: 0,
+      rgb: d.rgb, flow: 0.6, brush: 'round', rough: d.rough, metal: d.metal, load: d.thin ? 0.25 : 0.55, wet: 0,
     });
   }
 }

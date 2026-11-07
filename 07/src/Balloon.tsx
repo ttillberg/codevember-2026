@@ -140,7 +140,7 @@ export function Balloon() {
       u, v, angle, seed,
       // Watery glaze: wider, thinner. Its softness rides in the rough slot, which the glaze doesn't use.
       // The spray dab is drawn bigger than the brush: its dense core is the brush, the mist goes outside it.
-      size: tool.size * (glaze ? 1 + w * 0.7 : tool.brush === 'spray' ? 1.7 : 1) * grow,
+      size: tool.size * (glaze ? 1 + w * 0.7 : tool.brush === 'spray' ? 1.5 : 1) * grow,
       rgb: hexToRgb(tool.hex),
       // Dabs overlap many times along the stroke, so each one carries only a little.
       flow: FLOW[tool.brush] * tool.flow * (glaze ? 1 - w * 0.45 : 1),
@@ -150,7 +150,7 @@ export function Balloon() {
       wet: glaze ? 1 : tool.brush === 'spray' || tool.brush === 'pencil' ? 0 : undefined, // a wash is laid wet and floats out; spray and pencil are dry
     };
     paint.add(d);
-    if (tool.brush !== 'scrape') maybeSpawn(d, tool.liquid, sim.gravityObj);
+    if (tool.brush !== 'scrape') maybeSpawn(d, tool.liquid, sim.gravityObj, grow > 1); // grow > 1: the can held still
     // Spray splatters: now and then a fat drop lands off to the side, outside the mist.
     if (tool.brush === 'spray' && Math.random() < 0.12) {
       const n = 1 + Math.floor(Math.random() * 2);
@@ -262,7 +262,7 @@ export function Balloon() {
         wheel.omega.copy(hand);
         if (wheel.omega.length() > wheel.maxSpin) wheel.omega.setLength(wheel.maxSpin);
         // A nudge for the wobble: the hand's direction on screen (x drag turns about y, y drag about x).
-        const k = Math.min(0.14, hand.length() * 0.006);
+        const k = Math.min(0.3, hand.length() * 0.012);
         wheel.nudge.x += hand.y / Math.max(hand.length(), 1e-6) * k;
         wheel.nudge.y -= hand.x / Math.max(hand.length(), 1e-6) * k;
       }
@@ -335,20 +335,21 @@ export function Balloon() {
     }
     g.quaternion.copy(wheel.q);
     // The wobble: a soft spring on the balloon's place. Let go with a flick and it drifts a touch that way and
-    // comes back, squashing a little along the way, like a bubble. Barely there.
+    // comes back, squashing along the way and jiggling a few times before it settles, like a bubble.
     const sp = wheel.spring, nv = wheel.springVel;
     nv.add(wheel.nudge); wheel.nudge.set(0, 0);
-    nv.x += (-sp.x * 60 - nv.x * 6) * dt; nv.y += (-sp.y * 60 - nv.y * 6) * dt;
+    nv.x += (-sp.x * 60 - nv.x * 4.5) * dt; nv.y += (-sp.y * 60 - nv.y * 4.5) * dt;
     sp.x += nv.x * dt; sp.y += nv.y * dt;
-    // Breathing, while nothing much is happening: a slow swell and a slower bob, a fraction of a percent, fading
-    // out while it is held or spinning.
+    // Breathing, while nothing much is happening: a slow swell, a slower bob and a lazy sway, a couple of percent,
+    // fading out while it is held or spinning.
     wheel.time += dt;
     const calmWant = wheel.grabbed ? 0 : 1 - Math.min(1, wheel.omega.length() / 2);
     wheel.calm += (calmWant - wheel.calm) * Math.min(1, dt * 2);
-    const breath = Math.sin(wheel.time * (2 * Math.PI / 4.5)) * 0.006 * wheel.calm;
-    const bob = Math.sin(wheel.time * (2 * Math.PI / 7)) * 0.004 * wheel.calm;
-    g.position.set(sp.x, sp.y + bob, 0);
-    const sq = Math.min(0.03, Math.hypot(sp.x, sp.y) * 0.6);
+    const breath = Math.sin(wheel.time * (2 * Math.PI / 4.5)) * 0.018 * wheel.calm;
+    const bob = Math.sin(wheel.time * (2 * Math.PI / 7)) * 0.03 * wheel.calm;
+    const sway = Math.sin(wheel.time * (2 * Math.PI / 11) + 1.3) * 0.015 * wheel.calm;
+    g.position.set(sp.x + sway, sp.y + bob, 0);
+    const sq = Math.min(0.07, Math.hypot(sp.x, sp.y) * 1.0);
     const ax = Math.abs(sp.x) / Math.max(Math.hypot(sp.x, sp.y), 1e-6);
     g.scale.set((1 + sq * ax - sq * (1 - ax) * 0.5) * (1 + breath), 1.12 * (1 + sq * (1 - ax) - sq * ax * 0.5) * (1 - breath * 0.5), (1 - sq * 0.3) * (1 + breath));
     // The room's down, in the balloon's frame, for the runs.
