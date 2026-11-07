@@ -19,6 +19,7 @@ export const wheel = {
   omega: new Vector3(),     // angular velocity, world space
   grabbed: false,
   spring: new Vector2(), springVel: new Vector2(), nudge: new Vector2(), // the wobble
+  time: 0, calm: 1, // the breathing
 };
 import { MeshPhysicalNodeMaterial, type WebGPURenderer } from 'three/webgpu';
 import {
@@ -335,10 +336,17 @@ export function Balloon() {
     nv.add(wheel.nudge); wheel.nudge.set(0, 0);
     nv.x += (-sp.x * 60 - nv.x * 6) * dt; nv.y += (-sp.y * 60 - nv.y * 6) * dt;
     sp.x += nv.x * dt; sp.y += nv.y * dt;
-    g.position.set(sp.x, sp.y, 0);
+    // Breathing, while nothing much is happening: a slow swell and a slower bob, a fraction of a percent, fading
+    // out while it is held or spinning.
+    wheel.time += dt;
+    const calmWant = wheel.grabbed ? 0 : 1 - Math.min(1, wheel.omega.length() / 2);
+    wheel.calm += (calmWant - wheel.calm) * Math.min(1, dt * 2);
+    const breath = Math.sin(wheel.time * (2 * Math.PI / 4.5)) * 0.006 * wheel.calm;
+    const bob = Math.sin(wheel.time * (2 * Math.PI / 7)) * 0.004 * wheel.calm;
+    g.position.set(sp.x, sp.y + bob, 0);
     const sq = Math.min(0.03, Math.hypot(sp.x, sp.y) * 0.6);
     const ax = Math.abs(sp.x) / Math.max(Math.hypot(sp.x, sp.y), 1e-6);
-    g.scale.set(1 + sq * ax - sq * (1 - ax) * 0.5, 1.12 * (1 + sq * (1 - ax) - sq * ax * 0.5), 1 - sq * 0.3);
+    g.scale.set((1 + sq * ax - sq * (1 - ax) * 0.5) * (1 + breath), 1.12 * (1 + sq * (1 - ax) - sq * ax * 0.5) * (1 - breath * 0.5), (1 - sq * 0.3) * (1 + breath));
     // The room's down, in the balloon's frame, for the runs.
     sim.gravityObj.set(0, -1, 0).applyQuaternion(g.quaternion.clone().invert());
   }, -3);
