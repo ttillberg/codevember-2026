@@ -47,7 +47,7 @@ function Knob({ name, get, put, face, track }: {
 }) {
   const [held, setHeld] = useState(false);
   const [, bump] = useState(0);
-  const start = useRef({ y: 0, t: 0 });
+  const start = useRef({ x: 0, y: 0, t: 0 });
   // Let go anywhere closes it, even if the capture got lost on the way.
   useEffect(() => {
     if (!held) return;
@@ -61,8 +61,8 @@ function Knob({ name, get, put, face, track }: {
   return (
     <div className="ft-knob">
       <button aria-label={name} title={`${name} (hold and drag)`} className={held ? 'on' : ''}
-        onPointerDown={(e) => { e.currentTarget.setPointerCapture(e.pointerId); start.current = { y: e.clientY, t }; setHeld(true); }}
-        onPointerMove={(e) => { if (held) to(start.current.t + (start.current.y - e.clientY) / TRAVEL); }}
+        onPointerDown={(e) => { e.currentTarget.setPointerCapture(e.pointerId); start.current = { x: e.clientX, y: e.clientY, t }; setHeld(true); }}
+        onPointerMove={(e) => { if (held) to(start.current.t + (start.current.y - e.clientY + e.clientX - start.current.x) / TRAVEL); }} // up or right raises
         onWheel={(e) => to(t - Math.sign(e.deltaY) * 0.02)}>
         {face(t)}
       </button>
