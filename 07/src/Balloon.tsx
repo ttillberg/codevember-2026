@@ -28,7 +28,7 @@ import {
 import { K, PAINT_H, PAINT_W, PaintLayer, sim, type Brush, type Dab } from './paint';
 import { FINISH, hexToRgb, tool } from './tool';
 import { dripSettings, dryPile, maybeSpawn, stepDrips } from './drips';
-import { uRubber } from './theme';
+import { uRim, uRubber } from './theme';
 
 export const paint = new PaintLayer();
 // Dev: 0 normal, 1 coverage, 2 wetness, 3 thickness, 4 tint. And how much wet paint glosses up.
@@ -88,7 +88,7 @@ function balloonMaterial(side: typeof FrontSide | typeof BackSide) {
   // A rough paint also reflects less: matte is matte, not just blurry.
   m.specularIntensityNode = select(flat.or(noSpec), float(0), mix(float(1), float(0.2), smoothstep(0.6, 0.95, roughPaint).mul(cov)));
   // Pale rim like a reflection of the room, instead of an environment map.
-  m.emissiveNode = select(flat.or(noSpec), vec3(0), vec3(0.9, 0.88, 0.85).mul(fresnel).mul(0.35).mul(float(1).sub(cov.mul(0.7))));
+  m.emissiveNode = select(flat.or(noSpec), vec3(0), vec3(0.9, 0.88, 0.85).mul(fresnel).mul(uRim).mul(float(1).sub(cov.mul(0.7))));
   // Normal from the paint's height: thickness plus a fine grain, differenced across one texel each way in the
   // target. Orange peel on thick paint, ridges along bristle strokes, rounded lips on the runs.
   // Two texels either way: a step a run leaves is spread over a few texels, not drawn as a line.

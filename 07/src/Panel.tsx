@@ -4,7 +4,7 @@ import { paint } from './Balloon';
 import { PAINT_W, QUALITY, quality, setQuality, type Brush, type Quality } from './paint';
 import { resetTool, save, tool, type Finish } from './tool';
 import { downloadPng } from './snapshot';
-import { setTheme, theme } from './theme';
+import { DARK_ENABLED, setTheme, theme } from './theme';
 import { compose, HUE_STRIP, setColour, shadeStrip, syncColour } from './color';
 
 // The media, and the options each one answers to.
@@ -496,7 +496,7 @@ export function Panel() {
         <Pop name="settings" tip="Settings" icon={<GearIcon />} className="ft-menu">
           <Row label="Auto draw" hint="Space" on={tool.auto} act={() => set(() => { tool.auto = !tool.auto; })} />
           <Row label="Inertia" on={tool.inertia} act={() => set(() => { tool.inertia = !tool.inertia; })} />
-          <Row label="Dark mode" on={theme === 'dark'} act={() => set(() => setTheme(theme === 'dark' ? 'light' : 'dark'))} />
+          {DARK_ENABLED && <Row label="Dark mode" on={theme === 'dark'} act={() => set(() => setTheme(theme === 'dark' ? 'light' : 'dark'))} />}
           <Row label={`Texture ${quality.toUpperCase()}`} hint={`${PAINT_W}×${PAINT_W / 2}`} act={() => {
             // Reloads: the targets and shaders are built on the size.
             const qs = Object.keys(QUALITY) as Quality[];

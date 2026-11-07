@@ -221,7 +221,7 @@ canvas.grabbing { cursor: grabbing; }
 
 /* Dark mode: the same pieces, the greys turned over. Icons stay a plain grey; the picked and pressed go light. */
 :root[data-theme='dark'] { color-scheme: dark; }
-[data-theme='dark'] body, [data-theme='dark'] #root, :root[data-theme='dark'] { background: #1c1c1a; }
+[data-theme='dark'] body, [data-theme='dark'] #root, :root[data-theme='dark'] { background: #000; }
 [data-theme='dark'] .back { color: #eee; }
 [data-theme='dark'] .reticle { box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.45), inset 0 0 0 1px rgba(0, 0, 0, 0.45); }
 [data-theme='dark'] .ft-media {
