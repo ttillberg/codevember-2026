@@ -12,11 +12,11 @@ canvas.grabbing { cursor: grabbing; }
 .reticle {
   position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%); box-sizing: border-box;
   width: 20px; height: 20px; pointer-events: none; transition: opacity 0.2s; border-radius: 50%;
-  border: 1.5px solid rgba(0, 0, 0, 0.6); box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.5), inset 0 0 0 1px rgba(255, 255, 255, 0.5);
+  border: 1.5px solid #868583; box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.5), inset 0 0 0 1px rgba(255, 255, 255, 0.5);
 }
 /* A tiny plus at its centre, the exact spot. */
 .reticle::before, .reticle::after {
-  content: ''; position: absolute; left: 50%; top: 50%; background: rgba(0, 0, 0, 0.6); transform: translate(-50%, -50%);
+  content: ''; position: absolute; left: 50%; top: 50%; background: #868583; transform: translate(-50%, -50%);
 }
 .reticle::before { width: 7px; height: 1px; }
 .reticle::after { width: 1px; height: 7px; }
