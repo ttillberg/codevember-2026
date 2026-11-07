@@ -321,7 +321,7 @@ export class PaintLayer {
       const rough = p.z.mul(keep).add(pX.z.mul(fInX)).add(pY.z.mul(fInY)).div(over);
       const metal = p.w.mul(keep).add(pX.w.mul(fInX)).add(pY.w.mul(fInY)).div(over);
       // Wet paint also evens out across the flow, so runs round off instead of staying in texel lanes.
-      const across = vec2(d.dir.y.negate(), d.dir.x).mul(px).toVar();
+      const across = vec2(d.dir.y.negate(), d.dir.x).mul(px).mul(vec2(min(float(1).div(max(sin(float(1).sub(here.y).mul(Math.PI)), 0.02)), 8), 1)).toVar();
       const cL: any = texture(src.textures[0], here.sub(across)), cR: any = texture(src.textures[0], here.add(across));
       const pL: any = texture(src.textures[1], here.sub(across)), pR: any = texture(src.textures[1], here.add(across));
       const k = uSpread.mul(wet).mul(min(max(p.x.mul(4), 0), 1)).toVar(); // runs only: a wash has its own melt
@@ -331,7 +331,10 @@ export class PaintLayer {
       // neighbours a few texels off, through a water field of noise so the edge fingers rather than fans, and the
       // wetness goes along, a little less each hop, so the front keeps moving until it dries. Where there is
       // colour already it mixes in; thick paint is left alone.
-      const b = vec2(4 / PAINT_W, 4 / PAINT_H);
+      // Towards the poles a texel in u is next to nothing on the sphere: stretch every u offset by 1 / sin(theta),
+      // clamped, so the water reaches the same distance in every direction.
+      const uScale = min(float(1).div(max(sin(float(1).sub(here.y).mul(Math.PI)), 0.02)), 8).toVar();
+      const b = vec2(float(4 / PAINT_W).mul(uScale), 4 / PAINT_H);
       const cN = [vec2(b.x, 0), vec2(b.x, 0).negate(), vec2(0, b.y), vec2(0, b.y).negate()].map((o) => texture(src.textures[0], here.add(o)));
       const pN = [vec2(b.x, 0), vec2(b.x, 0).negate(), vec2(0, b.y), vec2(0, b.y).negate()].map((o) => texture(src.textures[1], here.add(o)));
       const cAvg: any = cN[0].add(cN[1]).add(cN[2]).add(cN[3]).mul(0.25);
@@ -343,8 +346,10 @@ export class PaintLayer {
       const wetN: any = min(max(max(pN[0].y, pN[1].y), max(pN[2].y, pN[3].y)), 1);
       // The water: big slow noise with a finer one on top, squared for contrast, so the bloom pushes out in broad
       // fingers with narrow dry gaps between them.
-      const w1 = mx_noise_float(vec3(here.x.mul(PAINT_W / 70), here.y.mul(PAINT_H / 70), 11)).mul(0.5).add(0.5);
-      const w2 = mx_noise_float(vec3(here.x.mul(PAINT_W / 24), here.y.mul(PAINT_H / 24), 5)).mul(0.5).add(0.5);
+      // The water field in roughly even coordinates on the sphere, so it doesn't pinch into rays at the poles.
+      const wx = here.x.mul(PAINT_W).div(uScale), wy = here.y.mul(PAINT_H);
+      const w1 = mx_noise_float(vec3(wx.div(70), wy.div(70), 11)).mul(0.5).add(0.5);
+      const w2 = mx_noise_float(vec3(wx.div(24), wy.div(24), 5)).mul(0.5).add(0.5);
       const water = w1.mul(0.7).add(w2.mul(0.3)).toVar();
       const waterK = water.mul(water).mul(1.6).add(0.08);
       const thin = float(1).sub(min(max(propsRun.x.mul(4), 0), 1));

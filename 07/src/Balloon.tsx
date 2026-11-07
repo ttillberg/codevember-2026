@@ -21,7 +21,7 @@ export const wheel = {
 };
 import { MeshPhysicalNodeMaterial, type WebGPURenderer } from 'three/webgpu';
 import {
-  abs, float, max, min, mix, mx_noise_float, normalMap, normalViewGeometry, positionViewDirection, saturate, select, uniform, uv,
+  abs, float, max, min, mix, mx_noise_float, normalMap, sin, normalViewGeometry, positionViewDirection, saturate, select, uniform, uv,
   vec2, vec3,
 } from 'three/tsl';
 import { PAINT_H, PAINT_W, PaintLayer, sim, type Brush, type Dab } from './paint';
@@ -52,7 +52,9 @@ function balloonMaterial(side: typeof FrontSide | typeof BackSide) {
   // and the edge of one layer over another, is denser than the middle, which is a little granular.
   // The ring sits just inside the rim: where the coverage is above the mean of its surroundings, a good way out,
   // the pigment has dried denser. Wide and soft, like a coffee ring, not a line.
-  const e = vec2(26 / PAINT_W, 26 / PAINT_H);
+  // u offsets stretched by 1 / sin(theta), clamped, so the measure is the same distance all over the sphere.
+  const uScale = min(float(1).div(max(sin(float(1).sub(uv().y).mul(Math.PI)), 0.02)), 8).toVar();
+  const e = vec2(float(26 / PAINT_W).mul(uScale), 26 / PAINT_H);
   const around = paint.colorAt(uv().sub(vec2(e.x, 0))).a.add(paint.colorAt(uv().add(vec2(e.x, 0))).a)
     .add(paint.colorAt(uv().sub(vec2(0, e.y))).a).add(paint.colorAt(uv().add(vec2(0, e.y))).a).mul(0.25);
   const wash = float(1).sub(saturate(p.x.mul(4))).toVar(); // no thickness: a wash
@@ -78,7 +80,7 @@ function balloonMaterial(side: typeof FrontSide | typeof BackSide) {
   m.emissiveNode = select(flat.or(noSpec), vec3(0), vec3(0.9, 0.88, 0.85).mul(fresnel).mul(0.35).mul(float(1).sub(cov.mul(0.7))));
   // Normal from the paint's height: thickness plus a fine grain, differenced across one texel each way in the
   // target. Orange peel on thick paint, ridges along bristle strokes, rounded lips on the runs.
-  const px = 1 / PAINT_W, py = 1 / PAINT_H;
+  const px = float(1 / PAINT_W).mul(uScale), py = 1 / PAINT_H;
   // Height is the thickness, clamped so a big drop reads as a dome and not a cliff, plus a fine grain.
   const height = (at: any, props: any) => { const h = min(props.x, 1.2); return h.add(mx_noise_float(at.mul(vec2(PAINT_W / 3, PAINT_H / 3))).mul(uGrain).mul(h)); };
   const hL = height(uv().sub(vec2(px, 0)), paint.propsAt(uv().sub(vec2(px, 0))));
