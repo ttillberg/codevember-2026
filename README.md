@@ -15,7 +15,7 @@ Live: https://ttillberg.github.io/codevember-2026/
 | 04 | Tangle | — | — |
 | 05 | Moss | [View](https://ttillberg.github.io/codevember-2026/05/) | [Code](https://github.com/ttillberg/codevember-2026/tree/main/05) |
 | 06 | Orrery | [View](https://ttillberg.github.io/codevember-2026/06/) | [Code](https://github.com/ttillberg/codevember-2026/tree/main/06) |
-| 07 | Hollow | — | — |
+| 07 | Hollow | [View](https://ttillberg.github.io/codevember-2026/07/) | [Code](https://github.com/ttillberg/codevember-2026/tree/main/07) |
 | 08 | Tesseract | — | — |
 | 09 | Membrane | — | — |
 | 10 | Caustic | — | — |
