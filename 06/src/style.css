@@ -25,9 +25,9 @@ canvas { display: block; }
 .info dd { margin: 0; text-align: right; font-weight: 700; font-variant-numeric: tabular-nums; }
 .info dd.names { font-variant-numeric: normal; line-height: 1.35; }
 body[data-theme="dark"] .info { color: #f2f2f2; }
+/* On phones the panel would cover the whole view: left out, the planet list and the flight are enough. */
 @media (max-width: 640px) {
-  .info { top: auto; bottom: 40px; right: 16px; left: 16px; width: auto; transform: none; }
-  .info h2 { font-size: 24px; }
+  .info { display: none; }
 }
 
 
