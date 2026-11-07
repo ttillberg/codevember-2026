@@ -52,6 +52,60 @@ canvas.grabbing { cursor: grabbing; }
 .size { display: flex; align-items: center; gap: 8px; opacity: 0.7; }
 .size input { width: 110px; }
 
+/* Figma-style floating toolbar at the bottom (the new UI; the old palette sits above it for now). */
+.palette { bottom: 90px; }
+.ft {
+  position: fixed; left: 50%; bottom: 22px; transform: translateX(-50%);
+  display: flex; align-items: center; gap: 2px; padding: 5px; border-radius: 999px;
+  background: rgba(255, 255, 255, 0.55); backdrop-filter: blur(18px) saturate(1.6); -webkit-backdrop-filter: blur(18px) saturate(1.6); color: #1e1e1e;
+  font: 11px/16px Inter, "Helvetica Neue", Helvetica, Arial, sans-serif; user-select: none;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.6), 0 0 0 0.5px rgba(0, 0, 0, 0.08), 0 8px 24px rgba(0, 0, 0, 0.12);
+}
+.ft-item { position: relative; }
+.ft-btn {
+  display: flex; align-items: center; justify-content: center; min-width: 32px; height: 32px; padding: 0 8px; border: 0;
+  background: none; border-radius: 999px; cursor: pointer; font: inherit; color: inherit; text-transform: capitalize;
+}
+.ft-btn:hover { background: rgba(255, 255, 255, 0.6); }
+.ft-btn.on { background: #0d99ff; color: #fff; }
+.ft-btn.txt { font-size: 12px; }
+.ft-dot { width: 18px; height: 18px; border-radius: 50%; box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.15); }
+.ft-sep { width: 1px; height: 18px; margin: 0 4px; background: rgba(0, 0, 0, 0.1); }
+.ft-size { width: 84px; margin: 0 6px; accent-color: #0d99ff; }
+.ft-drawer {
+  position: absolute; bottom: calc(100% + 12px); left: 50%; width: 252px; box-sizing: border-box; max-height: calc(100vh - 110px); overflow-y: auto;
+  padding: 6px 16px 14px; border-radius: 28px; background: rgba(255, 255, 255, 0.55);
+  backdrop-filter: blur(18px) saturate(1.6); -webkit-backdrop-filter: blur(18px) saturate(1.6);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.6), 0 0 0 0.5px rgba(0, 0, 0, 0.08), 0 8px 24px rgba(0, 0, 0, 0.12);
+  opacity: 0; pointer-events: none; transform: translate(-50%, 16px); transition: opacity 0.2s, transform 0.25s cubic-bezier(.2, .8, .2, 1);
+}
+.ft-drawer.open { opacity: 1; pointer-events: auto; transform: translate(-50%, 0); }
+.ft-drawer section { padding: 10px 0 2px; }
+.ft-drawer section + section { border-top: 1px solid rgba(0, 0, 0, 0.07); }
+.ft-drawer h4 { margin: 0 0 6px; font-weight: 600; font-size: 11px; color: rgba(0, 0, 0, 0.5); }
+.ft-chips { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 4px; }
+.ft-chips button {
+  border: 0; background: rgba(255, 255, 255, 0.55); padding: 4px 11px; border-radius: 999px; cursor: pointer; font: inherit;
+  color: inherit; text-transform: capitalize; box-shadow: inset 0 0 0 0.5px rgba(0, 0, 0, 0.1);
+}
+.ft-chips button:hover { background: rgba(255, 255, 255, 0.85); }
+.ft-chips button.on { background: #0d99ff; color: #fff; box-shadow: none; }
+.ft-help { margin: 10px 0 0; padding-top: 10px; border-top: 1px solid rgba(0, 0, 0, 0.07); color: rgba(0, 0, 0, 0.55); line-height: 18px; }
+.ft-help b { color: #1e1e1e; font-weight: 600; }
+.cp {
+  position: relative; height: 120px; border-radius: 16px; cursor: crosshair; touch-action: none; margin-bottom: 8px;
+  background: linear-gradient(to bottom, #fff 0%, rgba(255, 255, 255, 0) 50%, rgba(0, 0, 0, 0) 50%, #000 100%),
+    linear-gradient(to right, #f00, #ff0, #0f0, #0ff, #00f, #f0f, #f00);
+  box-shadow: inset 0 0 0 0.5px rgba(0, 0, 0, 0.15);
+}
+.cp i {
+  position: absolute; width: 16px; height: 16px; margin: -8px 0 0 -8px; border-radius: 50%; pointer-events: none;
+  box-shadow: 0 0 0 2px #fff, 0 1px 4px rgba(0, 0, 0, 0.35);
+}
+.ft-row { display: flex; align-items: center; gap: 10px; height: 26px; }
+.ft-row span { width: 44px; color: rgba(0, 0, 0, 0.6); text-transform: capitalize; }
+.ft-row input { flex: 1; min-width: 0; accent-color: #0d99ff; }
+
 /* The colour picker: a rainbow swatch until a colour is picked, then that colour. */
 .swatches .pick {
   position: relative; width: 26px; height: 26px; border-radius: 50%; border: 2px solid rgba(0, 0, 0, 0.15); cursor: pointer;

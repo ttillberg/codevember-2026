@@ -256,7 +256,9 @@ export function Balloon() {
       if (!wheel.grabbed) return;
       wheel.grabbed = false;
       // Let go while moving: it spins on at the hand's speed. Let go after a pause: it stays as it is.
-      if (e.timeStamp - lastT < 80 && hand.lengthSq() > 0) {
+      if (!tool.inertia) {
+        wheel.omega.set(0, 0, 0); // no inertia: it stops where the hand lets go
+      } else if (e.timeStamp - lastT < 80 && hand.lengthSq() > 0) {
         wheel.omega.copy(hand);
         if (wheel.omega.length() > wheel.maxSpin) wheel.omega.setLength(wheel.maxSpin);
         // A nudge for the wobble: the hand's direction on screen (x drag turns about y, y drag about x).

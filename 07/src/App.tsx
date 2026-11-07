@@ -3,6 +3,7 @@ import { WebGPURenderer } from 'three/webgpu';
 import { Balloon } from './Balloon';
 import { Shadow } from './Shadow';
 import { Palette } from './Palette';
+import { Panel } from './Panel';
 import { makeStudio } from './env';
 import { useMemo } from 'react';
 
@@ -26,8 +27,8 @@ export function App() {
         <Shadow />
       </Canvas>
       <div id="reticle" className="reticle" />
-      <p className="hint">grab and spin the balloon any way, it keeps turning; painting while you hold (cmd to only turn), or space for auto</p>
       <Palette />
+      <Panel />
     </>
   );
 }
