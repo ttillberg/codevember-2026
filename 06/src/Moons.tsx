@@ -22,7 +22,8 @@ import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeom
 import { mergeGeometries, mergeVertices } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { LENGTH, NEPTUNE, NonpareilDrop, PlanetCandy, TRITON_COLOURS } from './Beans';
 import { clock, motion } from './clock';
-import { moonPositions, planetPositions } from './world';
+import { inTheWay, moonPositions, planetPositions } from './world';
+import { pickedNow } from './selection';
 
 // The planets' main moons, as small sugar coated sweets on circles round their planet beans. Real periods (days),
 // distances squeezed in close, just clear of the bean, sizes to suit. At 30 days a second the real periods would blur
@@ -161,7 +162,10 @@ function MoonBody({ moon, system, index }: { moon: Moon; system: System; index: 
     let mine = moonPositions.get(moon.name);
     if (!mine) moonPositions.set(moon.name, (mine = new Vector3()));
     mine.copy(p);
-    if (look.current) look.current.visible = camera.position.distanceTo(mine) > moon.radius * 2 + 0.5;
+    if (look.current) {
+      const focus = pickedNow(), target = focus ? planetPositions.get(focus) : undefined;
+      look.current.visible = camera.position.distanceTo(mine) > moon.radius * 2 + 0.5 && !(target && system.host !== focus && inTheWay(camera.position, target, mine, moon.radius));
+    }
   });
 
   return (

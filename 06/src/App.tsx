@@ -5,7 +5,7 @@ import { Physics } from '@react-three/rapier';
 import { BackSide, NeutralToneMapping, PCFShadowMap } from 'three';
 import { AO } from './AO';
 import { CameraRig } from './CameraRig';
-import { Orbits } from './Orbits';
+import { Orbits, orbitsShown } from './Orbits';
 import { PlanetList } from './PlanetList';
 import { Beans } from './Beans';
 import { PlanetCard } from './PlanetCard';
@@ -133,18 +133,21 @@ function Transport() {
   const date = useRef<HTMLSpanElement>(null);
   const scrub = useRef<HTMLInputElement>(null);
   const dragging = useRef(false);
-  const [state, setState] = useState({ paused: clock.paused, speed: clock.speed });
+  const [state, setState] = useState({ paused: clock.paused, speed: clock.speed, orbits: orbitsShown.value });
   useEffect(() => {
     let raf = 0;
     const loop = () => {
       if (date.current) date.current.textContent = dateFromJd(clock.jd).toISOString().slice(0, 10);
       if (scrub.current && !dragging.current) scrub.current.value = String(clock.jd);
-      setState((s) => (s.paused === clock.paused && s.speed === clock.speed ? s : { paused: clock.paused, speed: clock.speed }));
+      setState((s) =>
+        s.paused === clock.paused && s.speed === clock.speed && s.orbits === orbitsShown.value ? s : { paused: clock.paused, speed: clock.speed, orbits: orbitsShown.value },
+      );
       raf = requestAnimationFrame(loop);
     };
     loop();
     const key = (e: KeyboardEvent) => {
       if (e.code === 'Space') (e.preventDefault(), (clock.paused = !clock.paused));
+      if (e.key === 'o' || e.key === 'O') orbitsShown.value = !orbitsShown.value;
     };
     addEventListener('keydown', key);
     return () => (cancelAnimationFrame(raf), removeEventListener('keydown', key));
@@ -156,6 +159,14 @@ function Transport() {
   return (
     <div ref={panel} className="transport">
       <div className="top">
+        {/* The orbits on or off (O too): a little orbit with its planet. */}
+        <button className={`orbits${state.orbits ? ' on' : ''}`} onClick={(e) => ((orbitsShown.value = !orbitsShown.value), blur(e))} aria-label="Orbits">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <ellipse cx="12" cy="12" rx="9.5" ry="6" fill="none" stroke="currentColor" strokeWidth="1.6" transform="rotate(-20 12 12)" />
+            <circle cx="12" cy="12" r="2.6" fill="currentColor" />
+            <circle cx="19.6" cy="8.4" r="1.9" fill="currentColor" />
+          </svg>
+        </button>
         <div className="buttons">
           <button onClick={(e) => (step(-1), blur(e))} aria-label="Slower" disabled={at === 0}>
             <Icon d="M11.2 7.2v9.6L4.2 12zM20.2 7.2v9.6L13.2 12z" />
@@ -202,7 +213,7 @@ export function App() {
   useEffect(() => void (document.body.dataset.theme = 'dark'), []);
   return (
     <>
-      <Canvas camera={{ position: [0, 85, 0.001], fov: 40, near: 0.1, far: 250 }} dpr={[1, 2]} shadows={{ type: PCFShadowMap }} gl={{ toneMapping: NeutralToneMapping }} onPointerMissed={() => pick(null)}>
+      <Canvas camera={{ position: [0, 91, 0.001], fov: 40, near: 0.1, far: 250 }} dpr={[1, 2]} shadows={{ type: PCFShadowMap }} gl={{ toneMapping: NeutralToneMapping }} onPointerMissed={() => pick(null)}>
         <color attach="background" args={[BACKGROUND]} />
         <Tick />
         <DevHooks />

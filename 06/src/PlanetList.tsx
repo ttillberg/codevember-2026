@@ -1,5 +1,4 @@
-import { useEffect, useState } from 'react';
-import { orbitsShown } from './Orbits';
+import { useEffect } from 'react';
 import { PLANETS } from './planets';
 import { pick, usePicked } from './selection';
 
@@ -40,14 +39,6 @@ export function PlanetList() {
     addEventListener('keydown', key);
     return () => removeEventListener('keydown', key);
   }, [picked]);
-  // The dotted orbits, on or off; O does it too.
-  const [orbits, setOrbits] = useState(orbitsShown.value);
-  const toggleOrbits = () => setOrbits((o) => (orbitsShown.value = !o));
-  useEffect(() => {
-    const key = (e: KeyboardEvent) => (e.key === 'o' || e.key === 'O') && toggleOrbits();
-    addEventListener('keydown', key);
-    return () => removeEventListener('keydown', key);
-  }, []);
   return (
     <nav className="planets">
       {PLANETS.map((p) => (
@@ -55,9 +46,6 @@ export function PlanetList() {
           {p.name}
         </button>
       ))}
-      <button className={`orbits${orbits ? ' on' : ''}`} onClick={(e) => (toggleOrbits(), e.currentTarget.blur())}>
-        Orbits
-      </button>
     </nav>
   );
 }

@@ -7,15 +7,18 @@ import { planetPositions } from './world';
 
 // How the picked planet is framed, read by the post processing: the distance to keep sharp, and how much the rest
 // is blurred (0 none, 1 full), eased in and out with the flight.
-export const focus = { distance: 30, amount: 0 };
-// While a planet is in focus time slows down to this (days a second), so following one, Mercury above all, doesn't
-// swing the camera round dizzyingly; the speed from before comes back on the way home.
-export const FOCUS_SPEED = 3;
+export const focus = { distance: 30, amount: 0, depth: 1.5 };
+// How far each planet reaches out from its middle (rings, clumps of moons), so the depth of field is opened up to
+// keep all of it sharp.
+const DEPTH: Record<string, number> = { Saturn: 5, Jupiter: 3.2, Uranus: 3.4, Neptune: 2.3 };
+// Focusing on a planet always puts time into slow motion (days a second, the ×0.5 step); the speed from before
+// comes back on the way home.
+export const FOCUS_SPEED = 0.4;
 
 // How far out the camera circles each planet, bigger for the ones with rings or clumps of moons round them.
 const VIEW: Record<string, number> = { Jupiter: 15, Saturn: 19, Uranus: 15, Neptune: 12 };
 const DEFAULT_VIEW = 8.5;
-const HOME = new Vector3(0, 85, 0.001);
+const HOME = new Vector3(0, 91, 0.001);
 const HOME_TARGET = new Vector3(0, 12.6, 0);
 const SUN = new Vector3(0, 12.6, 0);
 // The camera sits out beyond the planet, looking in past it at the sun, swung this far round to one side (radians)
@@ -70,13 +73,14 @@ export function CameraRig() {
     const p = picked ? planetPositions.get(picked) : undefined;
     if (picked && p) {
       if (s.following !== picked) {
-        // Look from wherever the camera is aiming now, so it swings across rather than jumping; slow time down,
+        // Look from wherever the camera is aiming now, so it swings across rather than jumping; into slow motion,
         // remembering how fast it was.
         if (!s.away && orbit) s.target.copy(orbit.target);
         if (!s.following) {
           s.speed = clock.speed;
           clock.speed = FOCUS_SPEED;
         }
+
         s.following = picked;
         s.away = true;
         drag.yaw = drag.pitch = 0;
@@ -104,12 +108,11 @@ export function CameraRig() {
       camera.lookAt(s.target);
       orbit?.target.copy(s.target);
       focus.distance = camera.position.distanceTo(p);
+      focus.depth = DEPTH[picked] ?? 1.5;
       focus.amount += (1 - focus.amount) * close;
     } else if (s.away) {
-      if (s.following) {
-        clock.speed = s.speed; // back to how fast it was going
-        s.following = null;
-      }
+      if (s.following) clock.speed = s.speed; // back to how fast it was going
+      s.following = null;
       camera.position.lerp(HOME, close);
       s.target.lerp(HOME_TARGET, close);
       camera.lookAt(s.target);

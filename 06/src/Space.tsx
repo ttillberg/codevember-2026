@@ -13,11 +13,12 @@ import {
   Quaternion,
   Vector3,
 } from 'three';
-import { clock, motion } from './clock';
+import { clock, FULL_SPEED, motion } from './clock';
 import { elementsAt, jdFromDate, position, type Elements } from './kepler';
 import { PLANETS } from './planets';
 import { planetAt, toOrrery } from './scale';
 import { planetPositions } from './world';
+import { pickedNow } from './selection';
 
 // The rest of the solar system's furniture, on real Kepler orbits like the planets, in the same compressed scale:
 // the main asteroid belt as sprinkles, Jupiter's Trojans, and Halley's comet (a gummy worm).
@@ -86,6 +87,7 @@ const BOB = 0.35; // how far up and down
 const BOB_RATE = 2.2; // rad/s
 
 const v = new Vector3(), prev = new Vector3(), dir = new Vector3(), m = new Matrix4(), sc = new Vector3(), q = new Quaternion();
+const spot = new Vector3(), stray = new Vector3(), tumble = new Quaternion();
 const AXIS = new Vector3(0, 1, 0); // the capsule's length
 
 function Rubble() {
@@ -269,40 +271,52 @@ const UP = new Vector3(0, 1, 0);
 // where the one in front of it was a moment ago, swaying a little from side to side, so the line ripples along
 // behind. The leader knows where each planet will be by the time it gets there, from its orbit, and steers clear of
 // that; and when it comes alongside one going about its own speed, it stops to play, looping round it two or three
-// times before going on, the line in tow. Each leaves a short wake. Runs on real time, so they keep playing when the
-// clock is paused.
+// times before going on, the line in tow. Each one is a little cluster of sprinkles. They stop with the clock and
+// slow with it.
 const FOLLOWERS = 14;
 const POD = FOLLOWERS + 1; // the leader first
 const BEHIND = 4; // frames: how far back along the one in front each follower aims, its spacing in the line
-const WAKE = 4; // the sprinkle and its wake
-const WAKE_GAP = 3; // frames between wake copies
-const HISTORY = Math.max(WAKE * WAKE_GAP, BEHIND) + 2;
+const CLUSTER = 7; // each one is a little string of sprinkles
+const GAP = 1; // frames between one sprinkle and the next along its string
+const HISTORY = Math.max(BEHIND, CLUSTER * GAP) + 3;
 const CENTRE = new Vector3(0, ORBIT_Y, 0);
 const FAST = 14, SLOW = 4; // speed limits, scene units per second
 
-// Translucent sugar: see-through, glowing a little in its own colour, more at the thin edges, and no shadows, so the
-// pod reads as light and quick rather than solid.
-function jelly() {
-  const m = new MeshPhysicalMaterial({ roughness: 0.3, clearcoat: 0.8, transparent: true, opacity: 0.6, depthWrite: false });
-  m.onBeforeCompile = (sh) => {
-    sh.fragmentShader = sh.fragmentShader.replace(
-      '#include <emissivemap_fragment>',
-      /* glsl */ `#include <emissivemap_fragment>
-  float edge = pow(1.0 - abs(dot(normal, normalize(vViewPosition))), 2.0);
-  totalEmissiveRadiance += diffuseColor.rgb * (0.35 + 0.8 * edge);`,
-    );
-  };
-  return m;
-}
-
 function Pod() {
   const ref = useRef<InstancedMesh>(null!);
-  const geometry = useMemo(() => new CapsuleGeometry(0.1, 0.42, 3, 8), []);
-  const material = useMemo(jelly, []);
+  // A sprinkle: a short rounded rod, glossy, glowing a little in its own colour.
+  const geometry = useMemo(() => new CapsuleGeometry(0.036, 0.08, 4, 10), []);
+  const material = useMemo(() => {
+    const m = new MeshPhysicalMaterial({ roughness: 0.3, clearcoat: 0.8, clearcoatRoughness: 0.2 });
+    m.onBeforeCompile = (sh) => {
+      sh.fragmentShader = sh.fragmentShader.replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\n  totalEmissiveRadiance += diffuseColor.rgb * 0.25;');
+    };
+    return m;
+  }, []);
+  // Each cluster's sprinkles, more or less in single file along the way it's going: strung out one behind another
+  // with a little sideways stagger, each pointing roughly forward, tipped a little its own way and wobbling.
+  const bits = useMemo(
+    () =>
+      Array.from({ length: POD * CLUSTER }, (_, n) => {
+        const k = n % CLUSTER;
+        return {
+          at: new Vector3((r() - 0.5) * 0.1, (k - (CLUSTER - 1) / 2) * -0.17 + (r() - 0.5) * 0.05, (r() - 0.5) * 0.1),
+          axis: new Vector3(r() - 0.5, 0, r() - 0.5).normalize(),
+          turn: (r() - 0.5) * 0.7,
+          spin: 1.5 + r() * 2,
+          phase: r() * Math.PI * 2,
+          // A couple in each line don't stay put: they drift ahead, back or alongside now and then.
+          stray: r() < 0.3 ? 1 : 0,
+          colour: SPRINKLES[Math.floor(r() * SPRINKLES.length)],
+        };
+      }),
+    [],
+  );
   const state = useMemo(() => {
     const fish = Array.from({ length: POD }, (_, i) => {
       const p = new Vector3(9, ORBIT_Y, i * 0.8);
-      return { p, v: new Vector3(0, 0, -8), trail: Array.from({ length: HISTORY }, () => p.clone()), sway: r() * Math.PI * 2 };
+      // A few don't quite keep to the line (wild): now and then they go off ahead, drop back or swim alongside.
+      return { p, v: new Vector3(0, 0, -8), trail: Array.from({ length: HISTORY }, () => p.clone()), sway: r() * Math.PI * 2, wild: i > 0 && r() < 0.35 ? 1 : 0, wander: r() * 100 };
     });
     return {
       fish,
@@ -321,8 +335,7 @@ function Pod() {
   useLayoutEffect(() => {
     const c = new Color();
     for (let i = 0; i < POD; i++) {
-      c.set(SPRINKLES[i % SPRINKLES.length]);
-      for (let k = 0; k < WAKE; k++) ref.current.setColorAt(i * WAKE + k, c);
+      for (let k = 0; k < CLUSTER; k++) ref.current.setColorAt(i * CLUSTER + k, c.set(bits[i * CLUSTER + k].colour));
     }
     if (ref.current.instanceColor) ref.current.instanceColor.needsUpdate = true;
   }, []);
@@ -335,7 +348,10 @@ function Pod() {
   const velocityOf = (p: (typeof PLANETS)[number], out: Vector3) =>
     out.subVectors(planetAt(p, clock.jd + 0.5, a), planetAt(p, clock.jd - 0.5, b)).multiplyScalar(clock.paused ? 0 : clock.speed);
   useFrame((_, delta) => {
-    const dt = Math.min(delta, 1 / 30) * motion(), S = state; // the pod stops with the clock, and slows with it
+    // The pod stops with the clock, but only slows a little with it (×1 about four fifths of full pace, ×0.5 about two thirds), and
+    // keeps playing at full pace while a planet is in focus.
+    const rate = clock.paused ? 0 : pickedNow() ? 1 : Math.pow(clock.speed / FULL_SPEED, 0.1);
+    const dt = Math.min(delta, 1 / 30) * rate, S = state;
     S.time += dt;
     // The leader's path: round the lollipop, quick, leaping and swinging in and out.
     S.angle += dt * 0.9;
@@ -390,6 +406,14 @@ function Pod() {
         aim.copy(ahead.trail[(S.head - BEHIND + HISTORY * 2) % HISTORY]);
         side.crossVectors(ahead.v, up).normalize();
         aim.addScaledVector(side, Math.sin(S.time * 3 + f.sway) * 0.6);
+        if (f.wild) {
+          // Off on its own for a while: a slow swell that comes and goes, pulling it ahead or back along the line and
+          // out to the side.
+          const urge = Math.max(0, Math.sin(S.time * 0.4 + f.wander)) ** 2;
+          d.copy(ahead.v).normalize();
+          aim.addScaledVector(d, urge * 1.6 * Math.sin(S.time * 0.23 + f.wander * 1.7));
+          aim.addScaledVector(side, urge * 1.3 * Math.cos(S.time * 0.31 + f.wander));
+        }
       }
       // Steer: a velocity towards the aim, eased in.
       const crisp = i > 0 || S.play; // the leader turns tighter while it plays
@@ -410,25 +434,41 @@ function Pod() {
       f.v.multiplyScalar(Math.min(Math.max(speed, SLOW), i === 0 ? FAST : FAST * 1.4) / speed);
       f.p.addScaledVector(f.v, dt);
     });
-    // Record the paths and draw each sprinkle with its wake, pointing along the way it's going; the leader a bit bigger.
-    S.head = (S.head + 1) % HISTORY;
+    // Record the paths and draw each one as a string of sprinkles laid along the way it has just come, so the string
+    // bends through every turn like something swimming: each sprinkle at its own point on the path, pointing along
+    // it there, a soft wave running back down the string, the odd one straying ahead, back or alongside. The leader's
+    // a bit bigger.
+    if (dt > 0) S.head = (S.head + 1) % HISTORY;
     S.fish.forEach((f, i) => {
       f.trail[S.head].copy(f.p);
-      const big = i === 0 ? 1.5 : 1;
-      for (let k = 0; k < WAKE; k++) {
-        const at = f.trail[(S.head - k * WAKE_GAP + HISTORY * 2) % HISTORY];
-        const before = f.trail[(S.head - k * WAKE_GAP - 1 + HISTORY * 2) % HISTORY];
+      const big = i === 0 ? 1.35 : 1;
+      for (let k = 0; k < CLUSTER; k++) {
+        const bit = bits[i * CLUSTER + k];
+        const at = f.trail[(S.head - k * GAP + HISTORY * 2) % HISTORY];
+        const before = f.trail[(S.head - k * GAP - 1 + HISTORY * 2) % HISTORY];
         dir.subVectors(at, before);
         if (dir.lengthSq() < 1e-8) dir.copy(f.v);
-        q.setFromUnitVectors(AXIS, dir.normalize());
-        const size = (1 - k / WAKE) * big;
-        ref.current.setMatrixAt(i * WAKE + k, m.compose(at, q, sc.set(size, size * (k ? 1.5 : 1), size)));
+        if (dir.lengthSq() < 1e-8) dir.set(0, 0, 1);
+        dir.normalize();
+        side.crossVectors(dir, up).normalize();
+        // The wave, and a straying one's wander, across and along the path.
+        let across = bit.at.x + 0.07 * Math.sin(S.time * 6 - k * 0.9 + i);
+        let along = 0;
+        if (bit.stray) {
+          const urge = Math.max(0, Math.sin(S.time * 0.7 + bit.phase)) ** 2;
+          along = urge * 0.45 * Math.sin(S.time * 0.37 + bit.phase * 2.1);
+          across += urge * 0.3 * Math.cos(S.time * 0.53 + bit.phase);
+        }
+        spot.copy(at).addScaledVector(side, across * big).addScaledVector(dir, along * big).addScaledVector(up, bit.at.z * big);
+        q.setFromUnitVectors(AXIS, dir);
+        tumble.setFromAxisAngle(bit.axis, bit.turn * 0.5 + 0.25 * Math.sin(S.time * bit.spin + bit.phase));
+        ref.current.setMatrixAt(i * CLUSTER + k, m.compose(spot, tumble.premultiply(q), sc.setScalar(big)));
       }
     });
     ref.current.instanceMatrix.needsUpdate = true;
   });
 
-  return <instancedMesh ref={ref} args={[geometry, material, POD * WAKE]} frustumCulled={false} />;
+  return <instancedMesh ref={ref} args={[geometry, material, POD * CLUSTER]} frustumCulled={false} />;
 }
 
 const SHOW_BELT = false; // the main belt and the Trojans, off while the pod plays

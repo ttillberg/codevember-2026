@@ -38,7 +38,7 @@ export function AO() {
     c.addPass(ao);
     // Depth of field round a picked planet: sharp at its distance, the rest of the system soft. Off when nothing's
     // picked, as it costs a depth render of its own.
-    const bokeh = new BokehPass(scene, camera, { focus: 30, aperture: 0, maxblur: 0.012 });
+    const bokeh = new BokehPass(scene, camera, { focus: 30, aperture: 0, maxblur: 0.009 });
     bokeh.enabled = false;
     c.addPass(bokeh);
     c.addPass(new OutputPass());
@@ -67,7 +67,8 @@ export function AO() {
     bokeh.enabled = focus.amount > 0.02;
     const u = (bokeh as unknown as { uniforms: Record<string, { value: number }> }).uniforms;
     u.focus.value = focus.distance;
-    u.aperture.value = 0.0016 * focus.amount;
+    // Opened up for the big ones, so a whole ringed planet stays sharp while the rest of the system goes soft.
+    u.aperture.value = 0.0016 * focus.amount * Math.min(1, 1.5 / focus.depth) ** 1.6;
     composer.render();
   }, 1);
   return null;

@@ -8,18 +8,20 @@ import { PLANETS, type Planet } from './planets';
 import { planetAt } from './scale';
 import { AllsortSweet, Moons, type Allsort } from './Moons';
 import { pick, pickedNow } from './selection';
-import { moonPositions, planetPositions } from './world';
+import { inTheWay, moonPositions, planetPositions } from './world';
 
 // Each planet as a jelly bean, all the same size: the candy it is made of. A base colour with darker
 // patches, bigger patches of a second colour and highlights inside those; 'bands' lays them out in stripes round the
 // bean instead, for the gas giants.
-type Candy = { base: string; dark: string; patch: string; light: string; bands?: boolean; ring?: boolean; bump?: number; poles?: boolean };
+// scale: how fine the patches are (bigger is smaller patches); dent: how deep a moat is sunk round each one.
+type Candy = { base: string; dark: string; patch: string; light: string; bands?: boolean; ring?: boolean; bump?: number; poles?: boolean; scale?: number; dent?: number };
 const CANDY: Record<string, Candy> = {
   Mercury: { base: '#5e544c', dark: '#2e2824', patch: '#a2968a', light: '#d8cfc4' },
   Venus: { base: '#d9a54a', dark: '#a8742a', patch: '#f2d79a', light: '#fff1cf' },
   // Green land, darker green in its heart, raised a touch; small ice caps; a thin blue atmosphere round it all.
   Earth: { base: '#1f5fd0', dark: '#123c8a', patch: '#2f9a4a', light: '#1c5a2a', bump: 1, poles: true },
-  Mars: { base: '#a5121c', dark: '#6b0a12', patch: '#f08a1e', light: '#ffcb5c' },
+  // Small patches, each sunk in a shallow moat like a crater.
+  Mars: { base: '#a5121c', dark: '#6b0a12', patch: '#f08a1e', light: '#ffcb5c', scale: 1.8, dent: 1 },
   Jupiter: { base: '#c98a52', dark: '#8a4a24', patch: '#f1dcb6', light: '#fff6e6', bands: true },
   Saturn: { base: '#dcb877', dark: '#a8884e', patch: '#f3e2b4', light: '#fff8e2', bands: true, ring: true },
   Uranus: { base: '#5fd3db', dark: '#3aa9b6', patch: '#a8f1f2', light: '#e8ffff' },
@@ -100,6 +102,8 @@ function candy(c: Candy, seed: number) {
       uBands: { value: c.bands ? 1 : 0 },
       uBump: { value: c.bump ?? 0 },
       uPoles: { value: c.poles ? 1 : 0 },
+      uScale: { value: c.scale ?? 1 },
+      uDent: { value: c.dent ?? 0 },
     });
     sh.vertexShader = sh.vertexShader
       // The bean's own axes in view space, so slopes worked out on the bean can tip the view space normal.
@@ -114,7 +118,7 @@ function candy(c: Candy, seed: number) {
         /* glsl */ `varying vec3 vObj, vAxX, vAxY, vAxZ;
   vec3 toView(vec3 g) { return g.x * vAxX + g.y * vAxY + g.z * vAxZ; }
   uniform vec3 uBase, uDark, uPatch, uLight;
-  uniform float uSeed, uBands, uBump, uPoles;
+  uniform float uSeed, uBands, uBump, uPoles, uScale, uDent;
   float hash(vec3 p) { return fract(sin(dot(p, vec3(127.1, 311.7, 74.7))) * 43758.5453); }
   float noise(vec3 p) {
     vec3 i = floor(p), f = fract(p);
@@ -130,12 +134,18 @@ function candy(c: Candy, seed: number) {
     vec3 p = o * 6.4 + uSeed;
     return smoothstep(0.5, 0.66, fbm(p + fbm(p * 1.9) * 0.9));
   }
+  // The moat round each patch: a band just outside its edge, for the dent.
+  float moatAt(vec3 o) {
+    vec3 p = o * 6.4 * uScale + uSeed;
+    float n = fbm(p + fbm(p * 1.9) * 0.9);
+    return smoothstep(0.48, 0.54, n) * (1.0 - smoothstep(0.555, 0.6, n));
+  }
 void main() {`,
       )
       .replace(
         '#include <color_fragment>',
         /* glsl */ `#include <color_fragment>
-  vec3 p = vObj * 6.4 + uSeed;
+  vec3 p = vObj * 6.4 * uScale + uSeed;
   float n = fbm(p + fbm(p * 1.9) * 0.9);
   // Gas giants: stripes round the bean's length, wavering.
   float band = 0.5 + 0.5 * sin(vObj.x * 22.0 + fbm(p * 0.8) * 3.0);
@@ -147,6 +157,8 @@ void main() {`,
   c = mix(c, uPatch, blot);
   c = mix(c, uLight, light);
   diffuseColor.rgb = c;
+  // Down in the moats the candy is a little darker, in shadow.
+  diffuseColor.rgb *= 1.0 - 0.3 * uDent * smoothstep(0.48, 0.54, n) * (1.0 - smoothstep(0.555, 0.6, n));
   // The patches are a sugary crust on the glaze: how much of one is here, for the gloss and the grain below.
   float stain = max(blot, light) * (1.0 - uBands * 0.6);
   // Ice caps at the poles, the ends of the bean (it spins about its length), with ragged edges.
@@ -169,6 +181,12 @@ void main() {`,
   normal = normalize(normal - toView(grad) * mix(0.008, 0.022, stain));
   // Bump: the land stands a touch proud of the sea (Earth), the slope of the pattern itself tipping the normal at
   // the coasts.
+  if (uDent > 0.0) {
+    // Dent: the moats sunk below the rest, so their slope tips the normal the other way to a bump.
+    float de = 0.006 / uScale, d0 = moatAt(vObj);
+    vec3 dg = vec3(moatAt(vObj + vec3(de, 0, 0)) - d0, moatAt(vObj + vec3(0, de, 0)) - d0, moatAt(vObj + vec3(0, 0, de)) - d0) / de;
+    normal = normalize(normal + toView(dg) * 0.004 * uDent);
+  }
   if (uBump > 0.0) {
     float be = 0.01, b0 = landAt(vObj);
     vec3 bg = vec3(landAt(vObj + vec3(be, 0, 0)) - b0, landAt(vObj + vec3(0, be, 0)) - b0, landAt(vObj + vec3(0, 0, be)) - b0) / be;
@@ -1090,8 +1108,12 @@ function Bean({ planet, index }: { planet: Planet; index: number }) {
   useFrame(({ camera }, dt) => {
     const h = Math.min(dt, 1 / 30);
     const there = planetPositions.get(planet.name);
-    if (look.current && there)
-      look.current.visible = pickedNow() === planet.name || camera.position.distanceTo(there) > (INSIDE[planet.name] ?? INSIDE_BEAN) + 0.5;
+    if (look.current && there) {
+      // Not drawn with the camera inside it, nor while it's in the way of the planet in focus; that one always shows.
+      const focus = pickedNow(), reach = INSIDE[planet.name] ?? INSIDE_BEAN, target = focus ? planetPositions.get(focus) : undefined;
+      look.current.visible =
+        focus === planet.name || (camera.position.distanceTo(there) > reach + 0.5 && !(target && inTheWay(camera.position, target, there, reach)));
+    }
     planetAt(planet, clock.jd, pos).y -= DIG;
     // Lying along its orbit, rolling about its length and slowly rocking end over end.
     T.subVectors(planetAt(planet, clock.jd + 0.5, a), planetAt(planet, clock.jd - 0.5, b)).normalize();
