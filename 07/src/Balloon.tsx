@@ -28,6 +28,7 @@ import {
 import { K, PAINT_H, PAINT_W, PaintLayer, sim, type Brush, type Dab } from './paint';
 import { FINISH, hexToRgb, tool } from './tool';
 import { dripSettings, dryPile, maybeSpawn, stepDrips } from './drips';
+import { uRubber } from './theme';
 
 export const paint = new PaintLayer();
 // Dev: 0 normal, 1 coverage, 2 wetness, 3 thickness, 4 tint. And how much wet paint glosses up.
@@ -77,7 +78,7 @@ function balloonMaterial(side: typeof FrontSide | typeof BackSide) {
   const dbgView = select(uDebug.equal(1), vec3(cov), select(uDebug.equal(2), vec3(wet), select(uDebug.equal(3), vec3(p.x), tint)));
   const noSpec = uDebug.equal(5).or(uDebug.equal(6));
   const opaque = uDebug.equal(5).or(uDebug.equal(7));
-  m.colorNode = select(flat, dbgView, mix(vec3(0), tint, cov));
+  m.colorNode = select(flat, dbgView, mix(uRubber, tint, cov));
   m.opacityNode = select(flat.or(opaque), float(1), mix(float(0.008).add(fresnel.mul(0.6)), float(1), cov));
   const roughPaint = mix(p.z.div(safe), float(0.04), wash).toVar(); // a wash is glass smooth
   // Wet paint glosses up, but matte less so: it stays dull even wet.
