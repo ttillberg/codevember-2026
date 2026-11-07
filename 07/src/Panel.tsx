@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { clearDrips } from './drips';
 import { paint } from './Balloon';
 import type { Brush } from './paint';
@@ -38,6 +38,41 @@ const OPTIONS: Record<Medium, Num[]> = {
   flat: ['flow'],
   scrape: ['flow'],
 };
+
+// Brush size, like a volume knob: hold the button and drag up or down, a tall gauge shows while you hold.
+// The wheel over the button nudges it too.
+const TRAVEL = 140; // px of drag for the whole range, the gauge's height
+function SizeControl() {
+  const [held, setHeld] = useState(false);
+  const [, bump] = useState(0);
+  const start = useRef({ y: 0, v: 0 });
+  const { min, max } = RANGE.size;
+  const t = (tool.size - min) / (max - min);
+  // Let go anywhere closes it, even if the capture got lost on the way.
+  useEffect(() => {
+    if (!held) return;
+    const up = () => setHeld(false);
+    window.addEventListener('pointerup', up);
+    window.addEventListener('pointercancel', up);
+    return () => { window.removeEventListener('pointerup', up); window.removeEventListener('pointercancel', up); };
+  }, [held]);
+  const put = (v: number) => { tool.size = Math.min(max, Math.max(min, v)); bump((n) => n + 1); };
+  return (
+    <div className="ft-size">
+      <button aria-label="size" title="size (hold and drag)" className={held ? 'on' : ''}
+        onPointerDown={(e) => { e.currentTarget.setPointerCapture(e.pointerId); start.current = { y: e.clientY, v: tool.size }; setHeld(true); }}
+        onPointerMove={(e) => { if (held) put(start.current.v + ((start.current.y - e.clientY) / TRAVEL) * (max - min)); }}
+        onWheel={(e) => put(tool.size - Math.sign(e.deltaY) * RANGE.size.step * 2)}>
+        <i style={{ width: 6 + t * 20, height: 6 + t * 20 }} />
+      </button>
+      <div className={`ft-gauge${held ? ' open' : ''}`}>
+        <div className="ft-gauge-track" style={{ '--t': t } as React.CSSProperties}>
+          <b>{Math.round(t * 100)}</b>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 // A floating frosted panel holding every control, Figma style.
 // It writes straight into `tool`; it re-renders after any click, input or key.
@@ -80,15 +115,13 @@ export function Panel() {
           <MediumIcon m={m} />
         </button>
       ))}
+      <span className="ft-sep" />
+      <SizeControl />
     </div>
     <div className="ft-drawer">
         <section>
           <h4>{tool.brush}</h4>
           {(OPTIONS[tool.brush as Medium] ?? []).map(slider)}
-        </section>
-        <section>
-          <h4>Size</h4>
-          {slider('size')}
         </section>
         <section>
           <h4>Color</h4>
