@@ -3,6 +3,7 @@ import { useFrame, useThree } from '@react-three/fiber';
 import { BackSide, FrontSide, Group, Mesh, Quaternion, Raycaster, SphereGeometry, Vector2, Vector3 } from 'three';
 
 const CENTRE = new Vector2(0, 0);
+const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
 // Dab spacing as a fraction of the brush size, and the alpha each dab adds, so a stroke builds up smoothly rather
 // than popping in dab by dab: about a dozen dabs overlap at any point of a round stroke.
 const SPACING: Record<Brush, number> = { round: 0.06, bristle: 0.06, spray: 0.08, scrape: 0.08 };
@@ -20,7 +21,7 @@ export const wheel = {
 };
 import { MeshPhysicalNodeMaterial, type WebGPURenderer } from 'three/webgpu';
 import {
-  abs, float, max, mix, mx_noise_float, normalMap, normalViewGeometry, positionViewDirection, saturate, select, uniform, uv,
+  abs, float, max, min, mix, mx_noise_float, normalMap, normalViewGeometry, positionViewDirection, saturate, select, uniform, uv,
   vec2, vec3,
 } from 'three/tsl';
 import { PAINT_H, PAINT_W, PaintLayer, sim, type Brush, type Dab } from './paint';
@@ -66,7 +67,8 @@ function balloonMaterial(side: typeof FrontSide | typeof BackSide) {
   // Normal from the paint's height: thickness plus a fine grain, differenced across one texel each way in the
   // target. Orange peel on thick paint, ridges along bristle strokes, rounded lips on the runs.
   const px = 1 / PAINT_W, py = 1 / PAINT_H;
-  const height = (at: any, props: any) => props.x.add(mx_noise_float(at.mul(vec2(PAINT_W / 3, PAINT_H / 3))).mul(uGrain).mul(props.x));
+  // Height is the thickness, clamped so a big drop reads as a dome and not a cliff, plus a fine grain.
+  const height = (at: any, props: any) => { const h = min(props.x, 1.2); return h.add(mx_noise_float(at.mul(vec2(PAINT_W / 3, PAINT_H / 3))).mul(uGrain).mul(h)); };
   const hL = height(uv().sub(vec2(px, 0)), paint.propsAt(uv().sub(vec2(px, 0))));
   const hR = height(uv().add(vec2(px, 0)), paint.propsAt(uv().add(vec2(px, 0))));
   const hD = height(uv().sub(vec2(0, py)), paint.propsAt(uv().sub(vec2(0, py))));
@@ -86,7 +88,20 @@ export function Balloon() {
 
   if (import.meta.env.DEV) (window as any).__gl = gl;
   // Splat this frame's dabs and run the paint before the scene renders.
-  useFrame((_, dt) => { uBump.value = sim.bump; uGrain.value = sim.grain; paint.flush(gl, dt); }, -1);
+  useFrame((_, dt) => {
+    uBump.value = sim.bump; uGrain.value = sim.grain;
+    // Liquid: how runny the paint is. Thin paint runs in its easiest lanes at almost no thickness and keeps almost
+    // nothing behind there (so the legs are long) while the stiff lanes hold, moves faster and dries slower.
+    const l = tool.liquid;
+    sim.runAt = lerp(0.7, 0.05, l);
+    sim.runNoise = lerp(0.3, 0.75, l);
+    sim.lane = lerp(14, 26, l);
+    sim.laneSharp = lerp(1, 4, l);
+    sim.runRate = lerp(0.3, 1.0, l); // at 1 a stream moves all of its excess each step, so a drop stays a drop
+    sim.dry = lerp(0.002, 0.00015, l);
+    sim.spread = lerp(0.06, 0.025, l); // thin paint keeps to its lanes, so the legs stay narrow and go far
+    paint.flush(gl, dt);
+  }, -1);
 
   const dabAt = (u: number, v: number, angle: number, seed: number) => {
     const finish = FINISH[tool.finish];

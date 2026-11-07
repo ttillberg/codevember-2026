@@ -27,6 +27,7 @@ export const tool = {
   size: 0.06, // pole to pole units
   flow: 0.9,
   auto: false, // paint without holding the button
+  liquid: 0.4, // 0 stiff paint that stays put, 1 thin paint with long legs
 };
 
 export function hexToRgb(hex: string): [number, number, number] {

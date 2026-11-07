@@ -11,14 +11,15 @@ import {
   RepeatWrapping, Scene, ZeroFactor, NoBlending, BlendMode, MaterialBlending, Vector3, type Texture, type WebGPURenderer,
 } from 'three/webgpu';
 import {
-  abs, cos, float, floor, hash, instancedBufferAttribute, length, max, min, mix, mrt, mx_noise_float, positionLocal, select,
-  sign, sin,
+  abs, cos, float, floor, hash, instancedBufferAttribute, length, max, min, mix, mrt, mx_noise_float, positionLocal, pow,
+  select, sign, sin,
   screenUV, smoothstep, texture, uniform, uv, varying, vec2, vec3, vec4, Fn,
 } from 'three/tsl';
 
 export const PAINT_W = 2048, PAINT_H = 1024;
 const v4 = vec4 as any; // the typings lack the (vec3, float) overload
 const MAX_DABS = 2048; // per frame, per kind
+const TRAIL = 0.3;     // coverage a run leaves behind it, whatever the paint did
 
 export type Brush = 'round' | 'spray' | 'bristle' | 'scrape';
 const STYLE: Record<Brush, number> = { round: 0, spray: 1, bristle: 2, scrape: 3 };
@@ -39,7 +40,10 @@ export type Dab = {
 
 // Tunables, live.
 export const sim = {
-  runAt: 0.5,    // thickness above which wet paint runs
+  runAt: 0.5,    // thickness above which wet paint runs, in the easiest lanes
+  runNoise: 0.35, // how much higher the threshold is in the stiffest lanes: big, and only a few lanes run, far
+  lane: 14,      // lane width in texels
+  laneSharp: 1,  // 1 lanes evenly spread, 4 most lanes stiff and a few runny
   runRate: 0.5,  // texels per step (120 a second) of excess paint moving down
   dry: 0.0008,   // wetness lost per step
   gravity: 1,    // 0 freezes the paint
@@ -50,6 +54,9 @@ export const sim = {
   flushes: 0,    // dev counter
 };
 const uRunAt = uniform(sim.runAt);
+const uRunNoise = uniform(sim.runNoise);
+const uLane = uniform(sim.lane);
+const uLaneSharp = uniform(sim.laneSharp);
 const uRunRate = uniform(sim.runRate);
 const uDry = uniform(sim.dry);
 const uGravity = uniform(sim.gravity);
@@ -198,7 +205,7 @@ export class PaintLayer {
       mat.colorNode = v4(vCol.xyz.mul(a), a);
       mat.mrtNode = materialBlended(mrt({
         color: v4(vCol.xyz.mul(a), a),
-        props: v4(load.mul(ridge).mul(a), min(a.mul(4), 1), vMisc.z.mul(a), vMisc.w.mul(a)),
+        props: v4(load.mul(ridge).mul(a), min(a.mul(4), 0.85), vMisc.z.mul(a), vMisc.w.mul(a)), // wet 0.85: laid, not arrived
       }));
     });
     // Scrapes: Zero / OneMinusSrcAlpha, everything in both targets scaled down where the blade passes.
@@ -231,10 +238,14 @@ export class PaintLayer {
       const here = uv();
       // Where paint starts to run varies a little across the surface, in lanes along the flow, so sheets break
       // into drips whichever way they run: fine noise across the flow, coarse along it.
-      const runAt = (p: any, dir: any) => {
+      // The lanes: noise 0..1, raised so that most lanes sit high (hold) and a few dip low (run), the more so the
+      // sharper; lane width in texels.
+      const lanes = (p: any, dir: any) => {
         const t = p.mul(vec2(PAINT_W, PAINT_H));
         const along = t.dot(dir), across = t.dot(vec2(dir.y.negate(), dir.x));
-        return uRunAt.add(mx_noise_float(vec3(across.div(14), along.div(40), 0)).mul(0.5).add(0.5).mul(0.35));
+        const n = mx_noise_float(vec3(across.div(uLane), along.div(uLane.mul(30)), 0)).mul(0.5).add(0.5); // long lanes along the flow
+        const open = pow(n, uLaneSharp).toVar(); // 1 in the runniest lanes, 0 in the stiffest
+        return { hold: uRunAt.add(float(1).sub(open).mul(uRunNoise)), open };
       };
       // Gravity on the sphere at a texel, in texture space: the object-space gravity projected on the tangents
       // of three's sphere mapping (u round the y axis, v from the bottom pole up), scaled to texels. Its
@@ -251,7 +262,16 @@ export class PaintLayer {
         const share = vec2(ax, ay).div(max(ax.add(ay), 1e-5));
         return { dir, strength, share };
       };
-      const flowOf = (p: any, props: any, d: any) => max(props.x.sub(runAt(p, d.dir)), 0).mul(props.y).mul(uRunRate).mul(uGravity).mul(d.strength);
+      // Paint that has just arrived (wetness 1, dabs lay 0.85) is in a stream: it holds next to nothing back and
+      // passes the rest on, until it dries. That is what makes a run keep going as a leg instead of draining
+      // into its lane at every texel.
+      // Only in an open lane, though, so the streams are few and narrow: elsewhere arrived paint just sits.
+      const flowOf = (p: any, props: any, d: any) => {
+        const l = lanes(p, d.dir);
+        const inStream = smoothstep(0.9, 0.97, props.y).mul(smoothstep(0.3, 0.7, l.open));
+        const hold = mix(l.hold, uRunAt.mul(0.5), inStream);
+        return max(props.x.sub(hold), 0).mul(props.y).mul(uRunRate).mul(uGravity).mul(d.strength);
+      };
       const c: any = texture(src.textures[0], here).toVar(), p: any = texture(src.textures[1], here).toVar();
       const d = downAt(here);
       const sx = sign(d.dir.x).toVar(), sy = sign(d.dir.y).toVar();
@@ -269,13 +289,15 @@ export class PaintLayer {
       const arriving = inX.add(inY).toVar();
       const fOut = leaving.div(max(p.x, 1e-4));
       const fInX = inX.div(max(pX.x, 1e-4)).toVar(), fInY = inY.div(max(pY.x, 1e-4)).toVar();
-      const keep = float(1).sub(fOut).toVar();
+      // Pigment stains: the paint leaves, but the colour it leaves behind never drops under a trail's worth.
+      const keep = max(float(1).sub(fOut), min(float(1), float(TRAIL).div(max(c.w, 1e-4)))).toVar();
       const moved: any = c.mul(keep).add(cX.mul(fInX)).add(cY.mul(fInY)).toVar();
       // Coverage can't pass 1: scale the premultiplied colour back with it.
       const over = max(moved.w, 1).toVar();
       const color = moved.div(over);
-      const thick = min(p.x.sub(leaving).add(arriving), 1.5);
-      const wetIn = max(select(inX.greaterThan(0), pX.y, float(0)), select(inY.greaterThan(0), pY.y, float(0)));
+      // A high cap: a drop collects a column's worth of paint on its way down and must keep it, or it is lost.
+      const thick = min(p.x.sub(leaving).add(arriving), 8);
+      const wetIn = select(arriving.greaterThan(1e-4), float(1), float(0)); // arrived: fully wet, in a stream
       const wet = min(max(max(p.y.sub(uDry), 0), wetIn), 1);
       const rough = p.z.mul(keep).add(pX.z.mul(fInX)).add(pY.z.mul(fInY)).div(over);
       const metal = p.w.mul(keep).add(pX.w.mul(fInX)).add(pY.w.mul(fInY)).div(over);
@@ -283,7 +305,9 @@ export class PaintLayer {
       const across = vec2(d.dir.y.negate(), d.dir.x).mul(px).toVar();
       const cL: any = texture(src.textures[0], here.sub(across)), cR: any = texture(src.textures[0], here.add(across));
       const pL: any = texture(src.textures[1], here.sub(across)), pR: any = texture(src.textures[1], here.add(across));
-      const k = uSpread.mul(wet).toVar();
+      // A stream keeps to itself: no spreading there, or it would bleed away sideways over the length of a leg.
+      const inStreamHere = smoothstep(0.9, 0.97, wet).mul(smoothstep(0.3, 0.7, lanes(here, d.dir).open));
+      const k = uSpread.mul(wet).mul(float(1).sub(inStreamHere)).toVar();
       const colorOut = mix(color, cL.add(cR).mul(0.5), k);
       const propsOut = mix(v4(thick, wet, rough, metal), v4(pL.x.add(pR.x).mul(0.5), wet, pL.z.add(pR.z).mul(0.5), pL.w.add(pR.w).mul(0.5)), k);
       mat.colorNode = colorOut;
@@ -303,6 +327,27 @@ export class PaintLayer {
   }
 
   clear() { this.cleared = false; }
+
+  /** Dev: total thickness and coverage over the whole target, to check the run keeps its paint. */
+  async total(renderer: WebGPURenderer) {
+    const t = this.targets[this.cur];
+    const half = (h: number) => { const s = (h >> 15) & 1, e = (h >> 10) & 31, f = h & 1023; const m = e === 0 ? f / 1024 * 2 ** -14 : (1 + f / 1024) * 2 ** (e - 15); return (s ? -1 : 1) * m; };
+    const p = await renderer.readRenderTargetPixelsAsync(t, 0, 0, PAINT_W, PAINT_H, 1);
+    const c = await renderer.readRenderTargetPixelsAsync(t, 0, 0, PAINT_W, PAINT_H, 0);
+    let thick = 0, cov = 0, wet = 0;
+    for (let i = 0; i < PAINT_W * PAINT_H; i++) { thick += half(p[i * 4]); wet += half(p[i * 4 + 1]); cov += half(c[i * 4 + 3]); }
+    return { thick: +thick.toFixed(1), wet: +wet.toFixed(1), cov: +cov.toFixed(1) };
+  }
+
+  /** Dev: one texel's colour and props at (u, v). */
+  async probeAt(renderer: WebGPURenderer, u: number, v: number) {
+    const t = this.targets[this.cur];
+    const x = Math.round(u * PAINT_W), y = Math.round(v * PAINT_H);
+    const half = (h: number) => { const s = (h >> 15) & 1, e = (h >> 10) & 31, f = h & 1023; const m = e === 0 ? f / 1024 * 2 ** -14 : (1 + f / 1024) * 2 ** (e - 15); return (s ? -1 : 1) * m; };
+    const c = await renderer.readRenderTargetPixelsAsync(t, x, y, 1, 1, 0);
+    const p = await renderer.readRenderTargetPixelsAsync(t, x, y, 1, 1, 1);
+    return { a: +half(c[3]).toFixed(3), t: +half(p[0]).toFixed(3), w: +half(p[1]).toFixed(3) };
+  }
 
   /** Dev: read one texel of colour and props at (u, v). */
   async probe(renderer: WebGPURenderer, v: number) {
@@ -348,7 +393,7 @@ export class PaintLayer {
       this.scrape.count = 0;
     }
     // 2. run and dry: current -> next, then swap
-    uRunAt.value = sim.runAt; uRunRate.value = sim.runRate; uDry.value = sim.dry; uGravity.value = sim.gravity; uSpread.value = sim.spread; uGravityObj.value.copy(sim.gravityObj);
+    uRunAt.value = sim.runAt; uRunNoise.value = sim.runNoise; uLane.value = sim.lane; uLaneSharp.value = sim.laneSharp; uRunRate.value = sim.runRate; uDry.value = sim.dry; uGravity.value = sim.gravity; uSpread.value = sim.spread; uGravityObj.value.copy(sim.gravityObj);
     // The run moves at most a texel a step, so slow frames take more steps: the pace is the same at 60 and 120.
     const steps = Math.max(1, Math.min(4, Math.round(dt * 120)));
     for (let i = 0; i < steps; i++) {
