@@ -11,7 +11,7 @@ export function App() {
   return (
     <>
       <Canvas
-        camera={{ position: [0, 1.65, 7.14], fov: 40 }}
+        camera={{ position: [0, 1.55, 6.7], fov: 40 }}
         gl={async (props) => {
           const renderer = new WebGPURenderer({ ...(props as any), antialias: true });
           await renderer.init();
@@ -26,7 +26,7 @@ export function App() {
         <Shadow />
       </Canvas>
       <div id="reticle" className="reticle" />
-      <p className="hint">grab and spin the balloon any way, it keeps turning; painting while you hold, or space for auto</p>
+      <p className="hint">grab and spin the balloon any way, it keeps turning; painting while you hold (cmd to only turn), or space for auto</p>
       <Palette />
     </>
   );

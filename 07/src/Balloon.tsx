@@ -18,6 +18,7 @@ export const wheel = {
   q: new Quaternion(),      // the balloon's orientation
   omega: new Vector3(),     // angular velocity, world space
   grabbed: false,
+  spring: new Vector2(), springVel: new Vector2(), nudge: new Vector2(), // the wobble
 };
 import { MeshPhysicalNodeMaterial, type WebGPURenderer } from 'three/webgpu';
 import {
@@ -209,7 +210,7 @@ export function Balloon() {
     };
     const down = (e: PointerEvent) => {
       if (e.button !== 0) return;
-      painting.current = true;
+      painting.current = !e.metaKey; // cmd: turn it without painting
       wheel.grabbed = true;
       el.classList.add('grabbing');
       hand.set(0, 0, 0);
@@ -225,6 +226,10 @@ export function Balloon() {
       if (e.timeStamp - lastT < 80 && hand.lengthSq() > 0) {
         wheel.omega.copy(hand);
         if (wheel.omega.length() > wheel.maxSpin) wheel.omega.setLength(wheel.maxSpin);
+        // A nudge for the wobble: the hand's direction on screen (x drag turns about y, y drag about x).
+        const k = Math.min(0.14, hand.length() * 0.006);
+        wheel.nudge.x += hand.y / Math.max(hand.length(), 1e-6) * k;
+        wheel.nudge.y -= hand.x / Math.max(hand.length(), 1e-6) * k;
       }
     };
     el.addEventListener('pointerdown', down);
@@ -276,6 +281,16 @@ export function Balloon() {
       wheel.q.premultiply(step);
     }
     g.quaternion.copy(wheel.q);
+    // The wobble: a soft spring on the balloon's place. Let go with a flick and it drifts a touch that way and
+    // comes back, squashing a little along the way, like a bubble. Barely there.
+    const sp = wheel.spring, nv = wheel.springVel;
+    nv.add(wheel.nudge); wheel.nudge.set(0, 0);
+    nv.x += (-sp.x * 60 - nv.x * 6) * dt; nv.y += (-sp.y * 60 - nv.y * 6) * dt;
+    sp.x += nv.x * dt; sp.y += nv.y * dt;
+    g.position.set(sp.x, sp.y, 0);
+    const sq = Math.min(0.03, Math.hypot(sp.x, sp.y) * 0.6);
+    const ax = Math.abs(sp.x) / Math.max(Math.hypot(sp.x, sp.y), 1e-6);
+    g.scale.set(1 + sq * ax - sq * (1 - ax) * 0.5, 1.12 * (1 + sq * (1 - ax) - sq * ax * 0.5), 1 - sq * 0.3);
     // The room's down, in the balloon's frame, for the runs.
     sim.gravityObj.set(0, -1, 0).applyQuaternion(g.quaternion.clone().invert());
   }, -3);
