@@ -497,45 +497,29 @@ const JUPITER_LENGTH = JUPITER_RADIUS * 1.5; // the roll's length, as AllsortSwe
 // Uranus it rolls round on its side; the sphere is turned so its poles, and the bands, go round that axis.
 export const URANUS_RADIUS = LENGTH * 0.36;
 
-// The maps, painted once on canvases laid out like the sphere's UVs (longitude across, latitude down): the gum in two
-// shades, in soft wavy bands if it has any, and sugar grains over it.
+// A gum: its deep and pale colours, how many bands (0 for soft swirls), its maps' width and how many sugar grains.
 export type Gum = { deep: number[]; pale: number[]; bands: number; size: number; grains: number };
-function gumMaps({ deep, pale, bands, size: w, grains }: Gum) {
-  const h = w / 2;
-  const canvas = () => {
-    const c = document.createElement('canvas');
-    c.width = w;
-    c.height = h;
-    return [c, c.getContext('2d')!] as const;
-  };
-  const [colour, cx] = canvas(), [bump, bx] = canvas(), [rough, rx] = canvas();
-  const img = cx.createImageData(w, h);
-  for (let y = 0; y < h; y++) {
-    for (let x = 0; x < w; x++) {
-      const lon = (x / w) * Math.PI * 2, lat = y / h;
-      const wave = Math.sin(lat * Math.PI) * 0.04 * Math.sin(lon * 3 + lat * 9);
-      const t = bands ? 0.5 + 0.5 * Math.sin((lat + wave) * Math.PI * bands) : 0.5 + 0.25 * Math.sin(lon * 2 + lat * 5) * Math.sin(lat * 7);
-      const k = t * t * (3 - 2 * t), i = (y * w + x) * 4;
-      for (let c = 0; c < 3; c++) img.data[i + c] = deep[c] + (pale[c] - deep[c]) * k;
-      img.data[i + 3] = 255;
-    }
-  }
-  cx.putImageData(img, 0, 0);
-  bx.fillStyle = '#000';
+
+// The sugar on a gum, painted once for each map size and grain count and shared by every gum that uses them: lots
+// of small grains, a few bigger, drawn as ellipses widened towards the poles so they come out round on the sphere.
+// Two layers from the same grains: the sugar to lay over each gum's colour, and one texture for both the bump (red:
+// raised where the grains are) and the roughness (green: bare gum fairly glossy, sugar matte).
+const SUGAR = new Map<string, { sugar: HTMLCanvasElement; bumpRough: CanvasTexture }>();
+function sugarFor(w: number, grains: number) {
+  const key = `${w}:${grains}`, done = SUGAR.get(key);
+  if (done) return done;
+  const h = w / 2, canvas = () => Object.assign(document.createElement('canvas'), { width: w, height: h });
+  const sugar = canvas(), bumpRough = canvas(), sx = sugar.getContext('2d')!, bx = bumpRough.getContext('2d')!;
+  bx.fillStyle = 'rgb(0,80,0)';
   bx.fillRect(0, 0, w, h);
-  rx.fillStyle = 'rgb(80,80,80)'; // bare gum: fairly glossy
-  rx.fillRect(0, 0, w, h);
-  // The sugar: lots of small grains, a few bigger, drawn as ellipses widened towards the poles so they come out
-  // round on the sphere.
   const rnd = rng(11);
   for (let i = 0; i < grains; i++) {
     const x = rnd() * w, y = Math.acos(1 - 2 * rnd()) / Math.PI * h; // even over the sphere, not the map
     const stretch = 1 / Math.max(Math.sin((y / h) * Math.PI), 0.08);
     const r = 0.7 + rnd() ** 3 * 2.6, a = 0.35 + rnd() * 0.65;
     for (const [g, style] of [
-      [cx, `rgba(240,252,252,${a * 0.85})`],
-      [bx, `rgba(255,255,255,${a})`],
-      [rx, `rgba(200,200,200,${a})`], // sugar is matte
+      [sx, `rgba(240,252,252,${a * 0.85})`],
+      [bx, `rgba(255,200,0,${a})`],
     ] as const) {
       g.fillStyle = style;
       g.beginPath();
@@ -543,14 +527,42 @@ function gumMaps({ deep, pale, bands, size: w, grains }: Gum) {
       g.fill();
     }
   }
-  const tex = (c: HTMLCanvasElement, srgb = false) => {
-    const t = new CanvasTexture(c);
-    if (srgb) t.colorSpace = SRGBColorSpace;
-    t.anisotropy = 8;
-    t.wrapS = RepeatWrapping; // round the sphere, so the maps meet at the seam
-    return t;
-  };
-  return { map: tex(colour, true), bumpMap: tex(bump), roughnessMap: tex(rough) };
+  const made = { sugar, bumpRough: gumTexture(bumpRough) };
+  SUGAR.set(key, made);
+  return made;
+}
+function gumTexture(c: HTMLCanvasElement, srgb = false) {
+  const t = new CanvasTexture(c);
+  if (srgb) t.colorSpace = SRGBColorSpace;
+  t.anisotropy = 8;
+  t.wrapS = RepeatWrapping; // round the sphere, so the maps meet at the seam
+  return t;
+}
+
+// A gum's maps: its colour, soft bands or swirls from deep to pale (worked out small, as they're smooth, and scaled
+// up), with the shared sugar over it.
+const GRADIENT_SCALE = 8;
+function gumMaps({ deep, pale, bands, size: w, grains }: Gum) {
+  const h = w / 2, gw = w / GRADIENT_SCALE, gh = h / GRADIENT_SCALE;
+  const small = Object.assign(document.createElement('canvas'), { width: gw, height: gh }), sx = small.getContext('2d')!;
+  const img = sx.createImageData(gw, gh);
+  for (let y = 0; y < gh; y++) {
+    for (let x = 0; x < gw; x++) {
+      const lon = ((x + 0.5) / gw) * Math.PI * 2, lat = (y + 0.5) / gh;
+      const wave = Math.sin(lat * Math.PI) * 0.04 * Math.sin(lon * 3 + lat * 9);
+      const t = bands ? 0.5 + 0.5 * Math.sin((lat + wave) * Math.PI * bands) : 0.5 + 0.25 * Math.sin(lon * 2 + lat * 5) * Math.sin(lat * 7);
+      const k = t * t * (3 - 2 * t), i = (y * gw + x) * 4;
+      for (let c = 0; c < 3; c++) img.data[i + c] = deep[c] + (pale[c] - deep[c]) * k;
+      img.data[i + 3] = 255;
+    }
+  }
+  sx.putImageData(img, 0, 0);
+  const colour = Object.assign(document.createElement('canvas'), { width: w, height: h }), cx = colour.getContext('2d')!;
+  cx.imageSmoothingQuality = 'high';
+  cx.drawImage(small, 0, 0, w, h);
+  const { sugar, bumpRough } = sugarFor(w, grains);
+  cx.drawImage(sugar, 0, 0);
+  return { map: gumTexture(colour, true), bumpMap: bumpRough, roughnessMap: bumpRough };
 }
 
 // Gum squishes: where two pieces of the clump meet, each one's vertices are pushed out of the other, so they flatten

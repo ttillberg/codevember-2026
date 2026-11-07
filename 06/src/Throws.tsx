@@ -14,7 +14,7 @@ const SPEED = 60; // scene units a second
 const CLICK = 6; // pixels: moved further than this between press and release, it's a drag, not a throw
 const RADIUS = 0.28;
 const LIFE = 6; // seconds
-const AIM = 3.5; // how near the ray a planet must be to be aimed at
+const AIM = 0.07; // how near the click a planet must be to be aimed at: radians off the line of sight
 const COLOURS = ['#f29aa8', '#f08a7e', '#f5a04e', '#f2cc66', '#a9bde8', '#9fc7a8', '#f7b6c8'];
 const GEOMETRY = new SphereGeometry(RADIUS, 24, 16);
 const MATERIALS = COLOURS.map((c) => new MeshPhysicalMaterial({ color: c, roughness: 0.3, clearcoat: 0.75, emissive: c, emissiveIntensity: 0.25 }));
@@ -45,7 +45,12 @@ export function Throws() {
       for (const p of PLANETS) {
         const now = planetPositions.get(p.name);
         if (!now) continue;
-        const miss = ray.ray.distanceToPoint(now);
+        // How far off the click it is, as an angle, and only ahead of the camera: a planet close by isn't
+        // aimed at just for being near.
+        to.subVectors(now, ray.ray.origin);
+        const ahead = to.dot(ray.ray.direction);
+        if (ahead <= 0) continue;
+        const miss = Math.atan2(ray.ray.distanceToPoint(now), ahead);
         if (miss >= best) continue;
         best = miss;
         let t = from.distanceTo(now) / SPEED;
