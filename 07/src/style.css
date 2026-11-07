@@ -8,17 +8,12 @@ canvas.grabbing { cursor: grabbing; }
 }
 .back:hover { opacity: 1; }
 
-/* The brush: a cross at the centre of the screen, its arms as long as the brush on the balloon. */
+/* The brush: a ring at the centre of the screen, as wide as the brush on the balloon. */
 .reticle {
-  position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%);
-  width: 20px; height: 20px; pointer-events: none; transition: opacity 0.2s;
+  position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%); box-sizing: border-box;
+  width: 20px; height: 20px; pointer-events: none; transition: opacity 0.2s; border-radius: 50%;
+  border: 1.5px solid rgba(0, 0, 0, 0.6); box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.5), inset 0 0 0 1px rgba(255, 255, 255, 0.5);
 }
-.reticle::before, .reticle::after {
-  content: ''; position: absolute; background: rgba(0, 0, 0, 0.6);
-  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.5);
-}
-.reticle::before { left: 0; right: 0; top: 50%; height: 1.5px; transform: translateY(-50%); }
-.reticle::after { top: 0; bottom: 0; left: 50%; width: 1.5px; transform: translateX(-50%); }
 
 /* The floating panel with every control . */
 .ft-drawer {
