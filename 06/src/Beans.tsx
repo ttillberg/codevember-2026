@@ -8,6 +8,7 @@ import { PLANETS, type Planet } from './planets';
 import { planetAt } from './scale';
 import { AllsortSweet, Moons, type Allsort } from './Moons';
 import { pick, pickedNow } from './selection';
+import { isThrowClick, Throws } from './Throws';
 import { inTheWay, moonPositions, planetPositions } from './world';
 
 // Each planet as a jelly bean, all the same size: the candy it is made of. A base colour with darker
@@ -202,7 +203,7 @@ void main() {`,
         '#include <emissivemap_fragment>',
         /* glsl */ `#include <emissivemap_fragment>
   float edge = pow(1.0 - abs(dot(normal, normalize(vViewPosition))), 2.0);
-  totalEmissiveRadiance += diffuseColor.rgb * 0.06 + uDark * edge * 0.6;`,
+  totalEmissiveRadiance += diffuseColor.rgb * 0.02 + uDark * edge * 0.4;`,
       );
   };
   return m;
@@ -228,7 +229,7 @@ const BELT_SPIN = 0.8; // rad/s at the inner edge
 const chalkyGlow = (sh: { fragmentShader: string }) => {
   sh.fragmentShader = sh.fragmentShader.replace(
     '#include <emissivemap_fragment>',
-    '#include <emissivemap_fragment>\n  totalEmissiveRadiance += diffuseColor.rgb * 0.22;',
+    '#include <emissivemap_fragment>\n  totalEmissiveRadiance += diffuseColor.rgb * 0.08;',
   );
 };
 const BELT_COLOURS = ['#f29aa8', '#f08a7e', '#f5a04e', '#f2cc66', '#a9bde8', '#9fc7a8', '#f7b6c8'];
@@ -705,7 +706,7 @@ function MoonDrops({ playful }: { playful: boolean }) {
   const materials = useMemo(
     () =>
       DROPS.map((d, i) =>
-        gumMaterial(d.moon.name, { deep: d.moon.deep, pale: d.moon.pale, bands: 0, size: 1024, grains: 26000 }, d.r, d.moon.glow, 0.4, i + 1, d.matrix),
+        gumMaterial(d.moon.name, { deep: d.moon.deep, pale: d.moon.pale, bands: 0, size: 1024, grains: 26000 }, d.r, d.moon.glow, 0.15, i + 1, d.matrix),
       ),
     [],
   );
@@ -746,8 +747,8 @@ const CHOCOLATE_GEOMETRY = (() => {
   g.computeVertexNormals();
   return g;
 })();
-const CHOCOLATE = new MeshPhysicalMaterial({ color: '#3b1d12', roughness: 0.42, clearcoat: 0.35, clearcoatRoughness: 0.35, sheen: 0.4, sheenColor: '#8a5a44', emissive: '#3b1d12', emissiveIntensity: 0.35 });
-const NONPAREIL = new MeshPhysicalMaterial({ color: '#fbf8f1', roughness: 0.5, emissive: '#fbf8f1', emissiveIntensity: 0.18 });
+const CHOCOLATE = new MeshPhysicalMaterial({ color: '#3b1d12', roughness: 0.42, clearcoat: 0.35, clearcoatRoughness: 0.35, sheen: 0.4, sheenColor: '#8a5a44', emissive: '#3b1d12', emissiveIntensity: 0.12 });
+const NONPAREIL = new MeshPhysicalMaterial({ color: '#fbf8f1', roughness: 0.5, emissive: '#fbf8f1', emissiveIntensity: 0.07 });
 const NONPAREIL_GEOMETRY = new SphereGeometry(1, 10, 8);
 function ChocolateButton({ shadows }: { shadows: boolean }) {
   const ref = useRef<InstancedMesh>(null!);
@@ -795,7 +796,7 @@ const SATURN_GEOMETRY = (() => {
   g.computeVertexNormals();
   return g;
 })();
-const GUMBALL = new MeshPhysicalMaterial({ color: '#f5c46c', vertexColors: true, roughness: 0.3, clearcoat: 0.75, clearcoatRoughness: 0.15, sheen: 0.4, sheenColor: '#fff4e0', emissive: '#f5c46c', emissiveIntensity: 0.1 });
+const GUMBALL = new MeshPhysicalMaterial({ color: '#f5c46c', vertexColors: true, roughness: 0.3, clearcoat: 0.75, clearcoatRoughness: 0.15, sheen: 0.4, sheenColor: '#fff4e0', emissive: '#f5c46c', emissiveIntensity: 0.03 });
 
 // Venus is a hard butter caramel: a round golden puck, glossy and a little see-through, its face a raised ring round
 // a shallow dip with a small dome in the middle, its edge well rounded. Turned on a lathe. The planets roll, so it's
@@ -837,7 +838,7 @@ const CARAMEL_MATERIAL = (() => {
       // Caramel holds the light: a warm glow, deeper at the thin edges.
       /* glsl */ `#include <emissivemap_fragment>
   float edge = 1.0 - abs(dot(normal, normalize(vViewPosition)));
-  totalEmissiveRadiance += diffuseColor.rgb * (0.08 + 0.3 * edge * edge);`,
+  totalEmissiveRadiance += diffuseColor.rgb * (0.03 + 0.2 * edge * edge);`,
     );
   };
   return m;
@@ -867,7 +868,7 @@ const NEPTUNE_BEAD_GEOMETRY = new SphereGeometry(1, 10, 8);
 const NEPTUNE_BEAD_MATERIAL = new MeshPhysicalMaterial({ roughness: 0.38, clearcoat: 0.5, clearcoatRoughness: 0.3 });
 NEPTUNE_BEAD_MATERIAL.onBeforeCompile = (sh) => {
   // Sugar beads scatter light, so they keep a little of their own colour on the shaded side.
-  sh.fragmentShader = sh.fragmentShader.replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\n  totalEmissiveRadiance += diffuseColor.rgb * 0.2;');
+  sh.fragmentShader = sh.fragmentShader.replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\n  totalEmissiveRadiance += diffuseColor.rgb * 0.07;');
 };
 // Its moon Triton is a little one of the same, in pinks.
 export const TRITON_COLOURS: [string, number][] = [['#a3125f', 0.4], ['#de3592', 0.3], ['#f27cc0', 0.15], ['#ffc2e3', 0.09], ['#fff4fa', 0.06]];
@@ -995,11 +996,12 @@ void main() {`,
   vec3 q = vPebble * 9.0;
   float e = 0.1, g0 = noise(q) + 0.5 * noise(q * 3.1);
   vec3 gr = vec3(noise(q + vec3(e, 0, 0)) + 0.5 * noise((q + vec3(e, 0, 0)) * 3.1) - g0, noise(q + vec3(0, e, 0)) + 0.5 * noise((q + vec3(0, e, 0)) * 3.1) - g0, noise(q + vec3(0, 0, e)) + 0.5 * noise((q + vec3(0, 0, e)) * 3.1) - g0) / e;
-  normal = normalize(normal - normalize(vToView * gr + 1e-5) * min(length(gr), 2.0) * 0.16);`,
+  float gl = length(gr);
+  if (gl > 1e-4) normal = normalize(normal - normalize(vToView * gr) * min(gl, 2.0) * 0.16);`,
     )
-    .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\n  totalEmissiveRadiance += diffuseColor.rgb * 0.16;');
+    .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\n  totalEmissiveRadiance += diffuseColor.rgb * 0.05;');
 };
-const EARTH_CORE_MATERIAL = new MeshPhysicalMaterial({ color: '#244fa8', roughness: 0.3, clearcoat: 0.5, emissive: '#16357a', emissiveIntensity: 0.4 });
+const EARTH_CORE_MATERIAL = new MeshPhysicalMaterial({ color: '#244fa8', roughness: 0.3, clearcoat: 0.5, emissive: '#16357a', emissiveIntensity: 0.15 });
 function EarthGumball({ shadows }: { shadows: boolean }) {
   const ref = useRef<InstancedMesh>(null!);
   const core = useMemo(() => new SphereGeometry(EARTH_RADIUS * 0.86, 48, 32), []);
@@ -1076,7 +1078,7 @@ export function PlanetCandy({ name, shadows = true, playful = false }: { name: s
   if (name === 'Uranus')
     return (
       <>
-        <mesh geometry={URANUS_GEOMETRY} material={gumMaterial('Uranus', URANUS_GUM, URANUS_RADIUS, '#0b7f8a')} castShadow={shadows} receiveShadow={shadows} />
+        <mesh geometry={URANUS_GEOMETRY} material={gumMaterial('Uranus', URANUS_GUM, URANUS_RADIUS, '#0b7f8a', 0.08)} castShadow={shadows} receiveShadow={shadows} />
         <MoonDrops playful={playful} />
       </>
     );
@@ -1146,7 +1148,9 @@ function Bean({ planet, index }: { planet: Planet; index: number }) {
     cur.set(r.x, r.y, r.z, r.w).invert().premultiply(q);
     const sign = cur.w < 0 ? -1 : 1;
     if (clock.paused) {
-      // Paused: everything holds still where it is.
+      // Paused: held still, exactly in its place for the date shown, so scrubbing through time still moves it.
+      rb.setTranslation(pos, true);
+      rb.setRotation(q, true);
       rb.setLinvel({ x: 0, y: 0, z: 0 }, true);
       rb.setAngvel({ x: 0, y: 0, z: 0 }, true);
     } else rb.setAngvel({ x: 2 * cur.x * sign * TURN, y: 2 * cur.y * sign * TURN, z: 2 * cur.z * sign * TURN }, true);
@@ -1192,6 +1196,7 @@ function Bean({ planet, index }: { planet: Planet; index: number }) {
         ref={look}
         onClick={(e) => {
           e.stopPropagation();
+          if (isThrowClick(e.nativeEvent)) return; // cmd click throws, it doesn't pick
           pick(planet.name);
         }}
         onPointerOver={() => (document.body.style.cursor = 'pointer')}
@@ -1211,6 +1216,7 @@ export function Beans() {
         <Bean key={p.name} planet={p} index={i} />
       ))}
       <Moons />
+      <Throws />
       <Flings />
     </>
   );

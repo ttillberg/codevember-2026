@@ -21,9 +21,9 @@ export function Stars() {
       // Half of them only kept near the band, so it reads thicker there.
       if (i % 2 === 1 && Math.abs(d.dot(BAND)) > 0.12 + rnd() * 0.1) continue;
       pos.set([d.x * RADIUS, d.y * RADIUS, d.z * RADIUS], i * 3);
-      c.set(tints[Math.floor(rnd() * tints.length)]).multiplyScalar(0.7 + 0.6 * rnd());
+      c.set(tints[Math.floor(rnd() * tints.length)]).multiplyScalar(0.25 + 0.35 * rnd()); // faint, mostly
       col.set([c.r, c.g, c.b], i * 3);
-      size[i] = 1.6 + rnd() ** 5 * 5; // mostly tiny, now and then a bright one
+      size[i] = 1.2 + rnd() ** 6 * 3; // mostly tiny, now and then a bigger one
       phase[i] = rnd() * 100;
       i++;
     }

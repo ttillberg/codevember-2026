@@ -151,7 +151,11 @@ function MoonBody({ moon, system, index }: { moon: Moon; system: System; index: 
     vel.x += (at.x - p.x) * PULL;
     vel.y += (at.y - p.y) * PULL;
     vel.z += (at.z - p.z) * PULL;
-    rb.setLinvel(clock.paused ? { x: 0, y: 0, z: 0 } : vel, true);
+    if (clock.paused) {
+      // Paused: held in its place on its orbit, so it stays with its planet when time is scrubbed.
+      rb.setTranslation(at, true);
+      rb.setLinvel({ x: 0, y: 0, z: 0 }, true);
+    } else rb.setLinvel(vel, true);
     // Their own spin, from knocks, never runs away: capped, and damped back down (angularDamping below).
     const turning = rb.angvel(), spin = Math.hypot(turning.x, turning.y, turning.z);
     if (clock.paused) rb.setAngvel({ x: 0, y: 0, z: 0 }, true); // paused: everything holds still
@@ -190,7 +194,7 @@ function MoonBody({ moon, system, index }: { moon: Moon; system: System; index: 
       <mesh geometry={potato ?? undefined} castShadow receiveShadow>
         {!potato && <sphereGeometry args={[moon.radius, 32, 16]} />}
         {moon.gumball ? (
-          <meshPhysicalMaterial color={moon.colour} roughness={0.3} clearcoat={0.75} clearcoatRoughness={0.15} sheen={0.4} sheenColor="#fff4e0" emissive={moon.colour} emissiveIntensity={0.15} />
+          <meshPhysicalMaterial color={moon.colour} roughness={0.3} clearcoat={0.75} clearcoatRoughness={0.15} sheen={0.4} sheenColor="#fff4e0" emissive={moon.colour} emissiveIntensity={0.05} />
         ) : moon.metal ? (
           // Silver, but kept bright: a fully metal ball would just mirror the dark room.
           <meshPhysicalMaterial color={moon.colour} metalness={0.65} roughness={0.25} clearcoat={0.8} envMapIntensity={3} />

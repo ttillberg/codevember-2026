@@ -1,9 +1,10 @@
 import { useMemo, useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
-import { BufferAttribute, BufferGeometry, Color, type Group, Vector3 } from 'three';
+import { BufferAttribute, BufferGeometry, Color, type Group, Line, LineDashedMaterial, Vector3 } from 'three';
 import { clock } from './clock';
 import { PLANETS } from './planets';
 import { planetAt } from './scale';
+import { focus } from './CameraRig';
 
 // Whether the orbits are drawn, switched from the planet list (or O).
 export const orbitsShown = { value: false };
@@ -23,6 +24,10 @@ const COLOURS: Record<string, string> = {
   Neptune: '#4f6ad8',
 };
 const OPACITY = 0.6; // at the planet; fading off behind it
+const DASH = 0.35, GAP = 0.25; // scene units
+// Shown by themselves when the camera is this far from the sun or more, faded out by NEAR.
+const NEAR = 26, FAR = 32; // the default view sits about 36 out
+const SUN = new Vector3(0, 12.6, 0);
 
 // Each orbit fades like a trail: brightest at the planet, thinning away behind it round the orbit, almost gone just
 // ahead of it. The orbit is sampled over one year from when it was made, so where the planet is along it now is
@@ -44,18 +49,24 @@ export function Orbits() {
         const c = new Color(COLOURS[p.name] ?? '#d8dbe4'), colours = new Float32Array((steps + 1) * 4);
         for (let i = 0; i <= steps; i++) colours.set([c.r, c.g, c.b, 0], i * 4);
         g.setAttribute('color', new BufferAttribute(colours, 4));
-        return { name: p.name, geometry: g, year, steps };
+        const line = new Line(g, new LineDashedMaterial({ vertexColors: true, transparent: true, depthWrite: false, dashSize: DASH, gapSize: GAP }));
+        line.computeLineDistances();
+        return { name: p.name, geometry: g, year, steps, line };
       }),
     [start],
   );
-  useFrame(() => {
-    group.current.visible = orbitsShown.value;
-    if (!orbitsShown.value) return;
+  useFrame(({ camera }) => {
+    // On by themselves once the camera's far out, gone again close in; the switch keeps them on regardless.
+    const far = camera.position.distanceTo(SUN), t = Math.min(1, Math.max(0, (far - NEAR) / (FAR - NEAR)));
+    // Off too while a planet's in focus, however far out it is.
+    const fade = orbitsShown.value ? 1 : t * t * (3 - 2 * t) * (1 - focus.amount);
+    group.current.visible = fade > 0.01;
+    if (!group.current.visible) return;
     for (const l of lines) {
       const now = (((clock.jd - start) / l.year) % 1 + 1) % 1, colour = l.geometry.getAttribute('color') as BufferAttribute;
       for (let i = 0; i <= l.steps; i++) {
         const behind = (((now - i / l.steps) % 1) + 1) % 1; // 0 at the planet, towards 1 round behind it
-        colour.setW(i, OPACITY * Math.pow(1 - behind, 1.6));
+        colour.setW(i, OPACITY * fade * Math.pow(1 - behind, 1.6));
       }
       colour.needsUpdate = true;
     }
@@ -63,10 +74,7 @@ export function Orbits() {
   return (
     <group ref={group} visible={false}>
       {lines.map((l) => (
-        <line key={l.name}>
-          <primitive object={l.geometry} attach="geometry" />
-          <lineBasicMaterial vertexColors transparent depthWrite={false} />
-        </line>
+        <primitive key={l.name} object={l.line} />
       ))}
     </group>
   );
