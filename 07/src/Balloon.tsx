@@ -80,11 +80,12 @@ function balloonMaterial(side: typeof FrontSide | typeof BackSide) {
   m.emissiveNode = select(flat.or(noSpec), vec3(0), vec3(0.9, 0.88, 0.85).mul(fresnel).mul(0.35).mul(float(1).sub(cov.mul(0.7))));
   // Normal from the paint's height: thickness plus a fine grain, differenced across one texel each way in the
   // target. Orange peel on thick paint, ridges along bristle strokes, rounded lips on the runs.
-  const px = float(1 / PAINT_W).mul(uScale), py = 1 / PAINT_H;
+  // Two texels either way: a step a run leaves is spread over a few texels, not drawn as a line.
+  const px = float(2 / PAINT_W).mul(uScale), py = 2 / PAINT_H;
   // Height is the thickness, clamped so a big drop reads as a dome and not a cliff, plus a fine grain.
   // Compressed smoothly towards 1.5 rather than clamped: a hard cap drew a contour line wherever a run piled
   // the paint over it.
-  const height = (at: any, props: any) => { const h = props.x.div(props.x.mul(1 / 1.5).add(1)); return h.add(mx_noise_float(at.mul(vec2(PAINT_W / 3, PAINT_H / 3))).mul(uGrain).mul(h)); };
+  const height = (at: any, props: any) => { const h = props.x.div(props.x.add(1)); return h.add(mx_noise_float(at.mul(vec2(PAINT_W / 3, PAINT_H / 3))).mul(uGrain).mul(h)); };
   const hL = height(uv().sub(vec2(px, 0)), paint.propsAt(uv().sub(vec2(px, 0))));
   const hR = height(uv().add(vec2(px, 0)), paint.propsAt(uv().add(vec2(px, 0))));
   const hD = height(uv().sub(vec2(0, py)), paint.propsAt(uv().sub(vec2(0, py))));
