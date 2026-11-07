@@ -35,8 +35,7 @@ const uWetGloss = uniform(1);
 const uBump = uniform(sim.bump);
 const uGrain = uniform(sim.grain);
 const uEdge = uniform(5); // how much pigment gathers at a wash's edge
-const uLens = uniform(1.2); // how much a wash's rim tilts the normal
-if (import.meta.env.DEV) { (window as any).__tool = tool; (window as any).__drips = dripSettings; (window as any).__wheel = wheel; (window as any).__sim = sim; (window as any).__paint = paint; (window as any).__dbg = uDebug; (window as any).__wetGloss = uWetGloss; (window as any).__edge = uEdge; (window as any).__lens = uLens; }
+if (import.meta.env.DEV) { (window as any).__tool = tool; (window as any).__drips = dripSettings; (window as any).__wheel = wheel; (window as any).__sim = sim; (window as any).__paint = paint; (window as any).__dbg = uDebug; (window as any).__wetGloss = uWetGloss; (window as any).__edge = uEdge; }
 
 // Thin clear rubber with paint on it. Clear rubber has no diffuse of its own, only its reflections and a faint
 // darkening at the rim; where there is paint the surface is opaque in the paint's colour and finish, wet paint
@@ -85,8 +84,7 @@ function balloonMaterial(side: typeof FrontSide | typeof BackSide) {
   const hR = height(uv().add(vec2(px, 0)), paint.propsAt(uv().add(vec2(px, 0))));
   const hD = height(uv().sub(vec2(0, py)), paint.propsAt(uv().sub(vec2(0, py))));
   const hU = height(uv().add(vec2(0, py)), paint.propsAt(uv().add(vec2(0, py))));
-  // A wash is a lens: its coverage falls off at the rim, and that slope tilts the normal like a bead of glass.
-  const slope = vec2(hR.sub(hL), hU.sub(hD)).mul(uBump).mul(-0.5).add(slopeA.mul(uLens).mul(wash).mul(-1));
+  const slope = vec2(hR.sub(hL), hU.sub(hD)).mul(uBump).mul(-0.5);
   const nTs = vec3(slope, 1).normalize();
   m.normalNode = normalMap(nTs.mul(0.5).add(0.5), float(1)) as any;
   return m;
