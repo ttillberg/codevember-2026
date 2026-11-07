@@ -33,12 +33,13 @@ const RANGE: Record<Num, { min: number; max: number; step: number }> = {
   liquid: { min: 0, max: 1, step: 0.01 },
   watery: { min: 0, max: 1, step: 0.01 },
 };
+// What each medium answers to beyond size, flow and colour, which they all share and which sit in the bar.
 const OPTIONS: Record<Medium, Num[]> = {
-  glaze: ['flow', 'watery'],
-  bristle: ['flow', 'liquid'],
-  spray: ['flow', 'liquid'],
-  pencil: ['flow'],
-  scrape: ['flow'],
+  glaze: ['watery'],
+  bristle: ['liquid'],
+  spray: ['liquid'],
+  pencil: [],
+  scrape: [],
 };
 
 // A knob in the bar, like a volume control: hold the button and drag up or down, a tall gauge shows while you hold.
@@ -92,6 +93,23 @@ function SizeKnob() {
   return (
     <Knob name="size" get={() => (tool.size - min) / (max - min)} put={(v) => { tool.size = min + v * (max - min); }}
       face={(t) => <SizeRamp t={t} />}
+      track={(t) => <><span className="ft-fill" /><b>{Math.round(t * 100)}</b></>} />
+  );
+}
+
+// Flow: an opacity mark, a disc split on the diagonal. One half is solid; the other goes from the empty grey to
+// solid as the flow rises, mixed as plain colour rather than drawn see-through.
+const FlowDisc = ({ t }: { t: number }) => (
+  <svg width="26" height="26" viewBox="0 0 26 26" className="ft-ramp">
+    <path d="M4.5 21.5A12 12 0 0 1 21.5 4.5z" />
+    <path d="M21.5 4.5A12 12 0 0 1 4.5 21.5z" style={{ fill: `color-mix(in srgb, currentColor ${Math.round(t * 100)}%, var(--empty))` }} />
+  </svg>
+);
+function FlowKnob() {
+  const { min, max } = RANGE.flow;
+  return (
+    <Knob name="flow" get={() => (tool.flow - min) / (max - min)} put={(v) => { tool.flow = min + v * (max - min); }}
+      face={(t) => <FlowDisc t={t} />}
       track={(t) => <><span className="ft-fill" /><b>{Math.round(t * 100)}</b></>} />
   );
 }
@@ -316,11 +334,14 @@ export function Panel() {
     {/* Every control, in a frosted bar under the balloon. */}
     <div className="ft-media">
       <Picker name="medium" items={MEDIA} cur={tool.brush as Medium} put={(m) => { tool.brush = m; }} icon={(m) => <MediumIcon m={m} />} solid others />
-      <Pop name={`${tool.brush} options`} icon={<OptionsIcon />} className="ft-sliders" small>
-        {OPTIONS[tool.brush as Medium].map((k) => <OptionSlider key={`${tool.brush}-${k}`} k={k} />)}
-      </Pop>
+      {OPTIONS[tool.brush as Medium].length > 0 && (
+        <Pop name={`${tool.brush} options`} icon={<OptionsIcon />} className="ft-sliders" small>
+          {OPTIONS[tool.brush as Medium].map((k) => <OptionSlider key={`${tool.brush}-${k}`} k={k} />)}
+        </Pop>
+      )}
       <span className="ft-sep" />
       <SizeKnob />
+      <FlowKnob />
       <ColorKnob />
       <Picker name="paint" items={FINISHES} cur={tool.finish} put={(f) => { tool.finish = f; }} icon={(f) => <FinishBall f={f} />} />
       <span className="ft-sep" />
