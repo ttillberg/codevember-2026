@@ -154,14 +154,14 @@ export function Balloon() {
     if (tool.brush === 'spray' && Math.random() < 0.12) {
       const n = 1 + Math.floor(Math.random() * 2);
       for (let i = 0; i < n; i++) {
-        // Small dots, the same size whatever the brush, close by the stroke.
+        // Small dots, the same size whatever the brush, just outside the mist.
         const reach = Math.min(tool.size, 0.06);
-        const r = reach * (0.6 + Math.random() * 0.6), t = Math.random() * Math.PI * 2;
+        const r = reach * (0.5 + Math.random() * 0.4), t = Math.random() * Math.PI * 2;
         const circ = 2 * Math.max(Math.sin(v * Math.PI), 0.05);
         paint.add({
           ...d, brush: 'round', seed: Math.random() * 1000, angle: 0,
           u: ((u + Math.cos(t) * r / circ) % 1 + 1) % 1, v: Math.min(0.999, Math.max(0.001, v + Math.sin(t) * r)),
-          size: 0.003 + Math.random() ** 2 * 0.006, flow: 0.7 + Math.random() * 0.3, load: 0, wet: 0, // tiny flat dots
+          size: 0.0015 + Math.random() ** 2 * 0.003, flow: 0.7 + Math.random() * 0.3, load: 0, wet: 0, // tiny flat dots
         });
       }
     }
