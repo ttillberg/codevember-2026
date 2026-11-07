@@ -39,10 +39,11 @@ const OPTIONS: Record<Medium, Num[]> = {
 };
 
 // A knob in the bar, like a volume control: hold the button and drag up or down, a tall gauge shows while you hold.
-// It works on a 0..1 value; the wheel over the button nudges it too.
+// It reads and writes a 0..1 value itself (get/put) so it redraws as you drag; the wheel over the button nudges it too.
 const TRAVEL = 140; // px of drag for the whole range, the gauge's height
-function Knob({ name, t, put, face, track }: {
-  name: string; t: number; put: (t: number) => void; face: React.ReactNode; track: React.ReactNode;
+function Knob({ name, get, put, face, track }: {
+  name: string; get: () => number; put: (t: number) => void;
+  face: (t: number) => React.ReactNode; track: (t: number) => React.ReactNode;
 }) {
   const [held, setHeld] = useState(false);
   const [, bump] = useState(0);
@@ -55,6 +56,7 @@ function Knob({ name, t, put, face, track }: {
     window.addEventListener('pointercancel', up);
     return () => { window.removeEventListener('pointerup', up); window.removeEventListener('pointercancel', up); };
   }, [held]);
+  const t = get();
   const to = (v: number) => { put(Math.min(1, Math.max(0, v))); bump((n) => n + 1); };
   return (
     <div className="ft-knob">
@@ -62,23 +64,32 @@ function Knob({ name, t, put, face, track }: {
         onPointerDown={(e) => { e.currentTarget.setPointerCapture(e.pointerId); start.current = { y: e.clientY, t }; setHeld(true); }}
         onPointerMove={(e) => { if (held) to(start.current.t + (start.current.y - e.clientY) / TRAVEL); }}
         onWheel={(e) => to(t - Math.sign(e.deltaY) * 0.02)}>
-        {face}
+        {face(t)}
       </button>
       <div className={`ft-gauge${held ? ' open' : ''}`}>
-        <div className="ft-gauge-track" style={{ '--t': t } as React.CSSProperties}>{track}</div>
+        <div className="ft-gauge-track" style={{ '--t': t } as React.CSSProperties}>{track(t)}</div>
       </div>
     </div>
   );
 }
 
-// Size: a dot that grows with the brush, the gauge fills up like a volume bar.
+// A volume ramp: a wedge from nothing to big, filled up to the size.
+const RAMP = 'M2 21 L24 5 L24 21 Z';
+const SizeRamp = ({ t }: { t: number }) => (
+  <svg width="26" height="26" viewBox="0 0 26 26" className="ft-ramp">
+    <clipPath id="ft-ramp-fill"><rect x="0" y="0" width={2 + t * 23} height="26" /></clipPath>
+    <path d={RAMP} className="ft-ramp-bg" />
+    <path d={RAMP} clipPath="url(#ft-ramp-fill)" />
+  </svg>
+);
+
+// Size: a volume ramp on the button, the gauge fills up like a volume bar.
 function SizeKnob() {
   const { min, max } = RANGE.size;
-  const t = (tool.size - min) / (max - min);
   return (
-    <Knob name="size" t={t} put={(v) => { tool.size = min + v * (max - min); }}
-      face={<i className="ft-dot" style={{ width: 6 + t * 20, height: 6 + t * 20 }} />}
-      track={<><span className="ft-fill" /><b>{Math.round(t * 100)}</b></>} />
+    <Knob name="size" get={() => (tool.size - min) / (max - min)} put={(v) => { tool.size = min + v * (max - min); }}
+      face={(t) => <SizeRamp t={t} />}
+      track={(t) => <><span className="ft-fill" /><b>{Math.round(t * 100)}</b></>} />
   );
 }
 
@@ -108,12 +119,15 @@ function stripOf(hex: string) {
   return best;
 }
 let colorT: number | null = null;
-function ColorKnob() {
+const colorGet = () => {
   if (colorT === null || stripAt(colorT) !== tool.hex) colorT = stripOf(tool.hex); // changed elsewhere, or first time
+  return colorT;
+};
+function ColorKnob() {
   return (
-    <Knob name="color" t={colorT} put={(v) => { colorT = v; tool.hex = stripAt(v); }}
-      face={<i className="ft-swatch" style={{ background: tool.hex }} />}
-      track={<><span className="ft-strip" style={{ background: STRIP }} /><span className="ft-mark" style={{ background: tool.hex }} /></>} />
+    <Knob name="color" get={colorGet} put={(v) => { colorT = v; tool.hex = stripAt(v); }}
+      face={() => <i className="ft-swatch" style={{ background: tool.hex }} />}
+      track={() => <><span className="ft-strip" style={{ background: STRIP }} /><span className="ft-mark" style={{ background: tool.hex }} /></>} />
   );
 }
 
