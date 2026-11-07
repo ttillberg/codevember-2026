@@ -13,7 +13,7 @@ export const orbitsShown = { value: false };
 
 // Each planet's orbit as a thin line in the colour of its sweet, sampled finely over one year from the same Kepler
 // elements that place the planet, worked out once (they drift too slowly to matter).
-const COLOURS: Record<string, string> = {
+export const COLOURS: Record<string, string> = {
   Mercury: '#a8704a',
   Venus: '#e6a23c',
   Earth: '#3fcc45',

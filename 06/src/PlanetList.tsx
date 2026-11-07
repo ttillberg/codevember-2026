@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { PLANETS } from './planets';
 import { pick, usePicked } from './selection';
+import { COLOURS } from './Orbits'; // the picked one in its own colour, as its orbit
 
 // A curiosity for each planet, shown with its facts on the right when it's picked.
 export const CURIOSITY: Record<string, string> = {
@@ -42,7 +43,7 @@ export function PlanetList() {
   return (
     <nav className="planets">
       {PLANETS.map((p) => (
-        <button key={p.name} className={p.name === picked ? 'on' : ''} onClick={(e) => (pick(p.name === picked ? null : p.name), e.currentTarget.blur())}>
+        <button key={p.name} className={p.name === picked ? 'on' : ''} style={p.name === picked ? { color: COLOURS[p.name] } : undefined} onClick={(e) => (pick(p.name === picked ? null : p.name), e.currentTarget.blur())}>
           {p.name}
         </button>
       ))}

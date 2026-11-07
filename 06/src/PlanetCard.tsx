@@ -4,6 +4,7 @@ import { clock } from './clock';
 import { elementsAt, position } from './kepler';
 import { PLANETS } from './planets';
 import { CURIOSITY, MOONS } from './PlanetList';
+import { COLOURS } from './Orbits';
 import { pick, usePicked } from './selection';
 
 // Only touches the page when the text actually changes.
@@ -68,7 +69,7 @@ function Info({ planet, distance, speed }: { planet: (typeof PLANETS)[number]; d
   const years = Math.pow(planet.el.a, 1.5);
   return (
     <aside className="info">
-      <h2>{planet.name}</h2>
+      <h2 style={{ color: COLOURS[planet.name] }}>{planet.name}</h2>
       <p className="flavour">{FLAVOUR[planet.name]}</p>
       <p className="curiosity">{CURIOSITY[planet.name]}</p>
       <dl>
