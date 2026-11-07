@@ -1,15 +1,17 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useFrame } from '@react-three/fiber';
 import { BallCollider, CapsuleCollider, CylinderCollider, RigidBody, type RapierRigidBody } from '@react-three/rapier';
-import { AdditiveBlending, BufferAttribute, IcosahedronGeometry, LatheGeometry, Vector2, CanvasTexture, RepeatWrapping, Vector4, Color, SRGBColorSpace, type Group as THREE_Group, InstancedMesh, Matrix4, type Mesh, ShaderMaterial, MeshPhysicalMaterial, Quaternion, SphereGeometry, Vector3 } from 'three';
+import { BufferAttribute, IcosahedronGeometry, LatheGeometry, Vector2, CanvasTexture, RepeatWrapping, Vector4, Color, SRGBColorSpace, type Group as THREE_Group, InstancedMesh, Matrix4, type Mesh, MeshPhysicalMaterial, Quaternion, SphereGeometry, Vector3 } from 'three';
 import { mergeVertices } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
-import { clock, motion } from './clock';
+import { clock, daysPerSecond, motion } from './clock';
 import { PLANETS, type Planet } from './planets';
 import { planetAt } from './scale';
 import { AllsortSweet, Moons, type Allsort } from './Moons';
-import { pick, pickedNow } from './selection';
+import { pick } from './selection';
 import { isThrowClick, Throws } from './Throws';
-import { inTheWay, moonPositions, planetPositions } from './world';
+import { moonPositions, planetPositions } from './world';
+import { rng } from './random';
+import { NOISE } from './glsl';
 
 // Each planet as a jelly bean, all the same size: the candy it is made of. A base colour with darker
 // patches, bigger patches of a second colour and highlights inside those; 'bands' lays them out in stripes round the
@@ -30,8 +32,6 @@ const CANDY: Record<string, Candy> = {
 };
 
 export const LENGTH = 4.0; // every bean's length in scene units
-// How far below their orbits' plane the beans ride (negative is above): at the glass ball's centre, halfway up.
-const DIG = -12.6;
 const ROLL = 1.6; // rad/s about its length, backwards for the retrograde spinners
 const TIP = 0.5; // rad/s of the slow end over end rocking
 
@@ -120,15 +120,7 @@ function candy(c: Candy, seed: number) {
   vec3 toView(vec3 g) { return g.x * vAxX + g.y * vAxY + g.z * vAxZ; }
   uniform vec3 uBase, uDark, uPatch, uLight;
   uniform float uSeed, uBands, uBump, uPoles, uScale, uDent;
-  float hash(vec3 p) { return fract(sin(dot(p, vec3(127.1, 311.7, 74.7))) * 43758.5453); }
-  float noise(vec3 p) {
-    vec3 i = floor(p), f = fract(p);
-    f = f * f * (3.0 - 2.0 * f);
-    return mix(
-      mix(mix(hash(i), hash(i + vec3(1, 0, 0)), f.x), mix(hash(i + vec3(0, 1, 0)), hash(i + vec3(1, 1, 0)), f.x), f.y),
-      mix(mix(hash(i + vec3(0, 0, 1)), hash(i + vec3(1, 0, 1)), f.x), mix(hash(i + vec3(0, 1, 1)), hash(i + vec3(1, 1, 1)), f.x), f.y),
-      f.z);
-  }
+  ${NOISE}
   float fbm(vec3 p) { return 0.55 * noise(p) + 0.3 * noise(p * 2.3 + 7.1) + 0.15 * noise(p * 5.1 + 3.7); }
   // The patches' height, for the bump: high where the land is, eased so the coasts slope rather than step.
   float landAt(vec3 o) {
@@ -271,8 +263,7 @@ function SaturnBelt({ shadows, playful }: { shadows: boolean; playful: boolean }
   const ref = useRef<InstancedMesh>(null!);
   const geometry = useMemo(() => new SphereGeometry(0.015, 10, 7), []);
   const sweets = useMemo(() => {
-    let seed = 5;
-    const rnd = () => ((seed = (seed * 16807) % 2147483647) - 1) / 2147483646;
+    const rnd = rng(5);
     return Array.from({ length: BELT_COUNT }, (_, i) => {
       // More of them towards the inner edge, like the bright B ring.
       const r = BELT_IN + (BELT_OUT - BELT_IN) * Math.pow(rnd(), 1.4);
@@ -280,7 +271,7 @@ function SaturnBelt({ shadows, playful }: { shadows: boolean; playful: boolean }
         r,
         a: rnd() * Math.PI * 2,
         z: (rnd() - 0.5) * BELT_THICK,
-        w: BELT_SPIN * Math.pow(BELT_IN / r, 1.5),
+        w: BELT_SPIN * Math.pow(BELT_IN / r, 1.5) * (0.9 + rnd() * 0.2), // each a touch faster or slower than its neighbours
         tilt: rnd() * Math.PI,
         grain: 0.65 + rnd() * 0.75, // sizes vary
         wander: [rnd() * 6.3, rnd() * 6.3, 1 + rnd() * 2, 1 + rnd() * 3, rnd() * BELT_WANDER, rnd() * BELT_BOB], // phases, lobes round the ring, amounts
@@ -326,7 +317,7 @@ function SaturnBelt({ shadows, playful }: { shadows: boolean; playful: boolean }
         }
         if (was) continue;
         near.current.add(pl.name);
-        speedOf.subVectors(planetAt(pl, clock.jd + 0.5, at0), planetAt(pl, clock.jd - 0.5, at1)).multiplyScalar(clock.paused ? 0 : clock.speed);
+        speedOf.subVectors(planetAt(pl, clock.jd + 0.5, at0), planetAt(pl, clock.jd - 0.5, at1)).multiplyScalar(daysPerSecond());
         if (speedOf.length() < QUICK) continue;
         if (rest.current > 0) continue; // still resting from the last throw
         if (pl.name !== 'Mercury' && Math.random() < SHRUG) continue;
@@ -350,7 +341,7 @@ function SaturnBelt({ shadows, playful }: { shadows: boolean; playful: boolean }
           const at = new Vector3();
           let t = 1;
           for (let it = 0; it < 6; it++) {
-            planetAt(target, clock.jd + t * (clock.paused ? 0 : clock.speed), at).y -= DIG;
+            planetAt(target, clock.jd + t * daysPerSecond(), at);
             t = at.distanceTo(here) / THROW;
           }
           aim = at.sub(here).divideScalar(t); // the velocity that gets there on time
@@ -536,8 +527,7 @@ function gumMaps({ deep, pale, bands, size: w, grains }: Gum) {
   rx.fillRect(0, 0, w, h);
   // The sugar: lots of small grains, a few bigger, drawn as ellipses widened towards the poles so they come out
   // round on the sphere.
-  let seed = 11;
-  const rnd = () => ((seed = (seed * 16807) % 2147483647) - 1) / 2147483646;
+  const rnd = rng(11);
   for (let i = 0; i < grains; i++) {
     const x = rnd() * w, y = Math.acos(1 - 2 * rnd()) / Math.PI * h; // even over the sphere, not the map
     const stretch = 1 / Math.max(Math.sin((y / h) * Math.PI), 0.08);
@@ -760,8 +750,7 @@ const NONPAREIL_GEOMETRY = new SphereGeometry(1, 10, 8);
 function ChocolateButton({ shadows }: { shadows: boolean }) {
   const ref = useRef<InstancedMesh>(null!);
   useLayoutEffect(() => {
-    let seed = 3;
-    const rnd = () => ((seed = (seed * 16807) % 2147483647) - 1) / 2147483646;
+    const rnd = rng(3);
     const m = new Matrix4(), q = new Quaternion(), at = new Vector3(), n = new Vector3(), size = new Vector3();
     for (let i = 0; i < NONPAREILS; ) {
       // A direction over the button, kept more often the nearer the rim.
@@ -871,7 +860,7 @@ const NEPTUNE_CORE = (() => {
   g.computeVertexNormals();
   return g;
 })();
-const NEPTUNE_BEAD_GEOMETRY = new SphereGeometry(1, 10, 8);
+const NEPTUNE_BEAD_GEOMETRY = NONPAREIL_GEOMETRY; // the same little ball
 const NEPTUNE_BEAD_MATERIAL = new MeshPhysicalMaterial({ roughness: 0.38, clearcoat: 0.5, clearcoatRoughness: 0.3 });
 NEPTUNE_BEAD_MATERIAL.onBeforeCompile = (sh) => {
   // Sugar beads scatter light, so they keep a little of their own colour on the shaded side.
@@ -896,8 +885,7 @@ export function NonpareilDrop({
   const coreMaterial = useMemo(() => new MeshPhysicalMaterial({ color: core, roughness: 0.5 }), [core]);
   const grow = Math.sqrt(NEPTUNE_BEADS / count);
   useLayoutEffect(() => {
-    let seed = 17;
-    const rnd = () => ((seed = (seed * 16807) % 2147483647) - 1) / 2147483646;
+    const rnd = rng(17);
     const m = new Matrix4(), q = new Quaternion(), at = new Vector3(), d = new Vector3(), n = new Vector3(), size = new Vector3(), c = new Color();
     const { a, b, c: cc, n: sq } = NEPTUNE;
     for (let i = 0; i < count; i++) {
@@ -974,15 +962,7 @@ PEBBLE_MATERIAL.onBeforeCompile = (sh) => {
       'void main() {',
       /* glsl */ `varying vec3 vPebble;
   varying mat3 vToView;
-  float hash(vec3 p) { return fract(sin(dot(p, vec3(127.1, 311.7, 74.7))) * 43758.5453); }
-  float noise(vec3 p) {
-    vec3 i = floor(p), f = fract(p);
-    f = f * f * (3.0 - 2.0 * f);
-    return mix(
-      mix(mix(hash(i), hash(i + vec3(1, 0, 0)), f.x), mix(hash(i + vec3(0, 1, 0)), hash(i + vec3(1, 1, 0)), f.x), f.y),
-      mix(mix(hash(i + vec3(0, 0, 1)), hash(i + vec3(1, 0, 1)), f.x), mix(hash(i + vec3(0, 1, 1)), hash(i + vec3(1, 1, 1)), f.x), f.y),
-      f.z);
-  }
+  ${NOISE}
 void main() {`,
     )
     .replace(
@@ -1013,8 +993,7 @@ function EarthGumball({ shadows }: { shadows: boolean }) {
   const ref = useRef<InstancedMesh>(null!);
   const core = useMemo(() => new SphereGeometry(EARTH_RADIUS * 0.86, 48, 32), []);
   useLayoutEffect(() => {
-    let seed = 23;
-    const rnd = () => ((seed = (seed * 16807) % 2147483647) - 1) / 2147483646;
+    const rnd = rng(23);
     const m = new Matrix4(), q = new Quaternion(), d = new Vector3(), size = new Vector3(), axis = new Vector3(), c = new Color();
     const golden = Math.PI * (3 - Math.sqrt(5));
     for (let i = 0; i < EARTH_PEBBLES; i++) {
@@ -1102,28 +1081,15 @@ export function PlanetCandy({ name, shadows = true, playful = false }: { name: s
   );
 }
 
-// How near the camera can come to a planet before it's inside it: then that planet isn't drawn, so it doesn't fill
-// the view while following another one past it. The followed planet itself always shows.
-const INSIDE: Record<string, number> = { Saturn: LENGTH * 0.75, Uranus: LENGTH * 0.6, Jupiter: LENGTH * 0.45, Neptune: LENGTH * 0.4 };
-const INSIDE_BEAN = LENGTH * 0.55;
-
 function Bean({ planet, index }: { planet: Planet; index: number }) {
   const ref = useRef<RapierRigidBody>(null!);
-  const look = useRef<THREE_Group>(null!);
   const pos = useMemo(() => new Vector3(), []);
   const turn = useRef({ roll: index * 1.3, tip: index * 0.7 });
   const dir = Math.sign(planet.day);
 
-  useFrame(({ camera }, dt) => {
+  useFrame((_, dt) => {
     const h = Math.min(dt, 1 / 30);
-    const there = planetPositions.get(planet.name);
-    if (look.current && there) {
-      // Not drawn with the camera inside it, nor while it's in the way of the planet in focus; that one always shows.
-      const focus = pickedNow(), reach = INSIDE[planet.name] ?? INSIDE_BEAN, target = focus ? planetPositions.get(focus) : undefined;
-      look.current.visible =
-        focus === planet.name || (camera.position.distanceTo(there) > reach + 0.5 && !(target && inTheWay(camera.position, target, there, reach)));
-    }
-    planetAt(planet, clock.jd, pos).y -= DIG;
+    planetAt(planet, clock.jd, pos);
     // Lying along its orbit, rolling about its length and slowly rocking end over end.
     T.subVectors(planetAt(planet, clock.jd + 0.5, a), planetAt(planet, clock.jd - 0.5, b)).normalize();
     side.crossVectors(T, UP).normalize();
@@ -1145,7 +1111,7 @@ function Bean({ planet, index }: { planet: Planet; index: number }) {
     let mine = planetPositions.get(planet.name);
     if (!mine) planetPositions.set(planet.name, (mine = new Vector3()));
     mine.set(p.x, p.y, p.z);
-    vel.subVectors(a, b).multiplyScalar(clock.paused ? 0 : clock.speed); // a and b are a day either side: units per day
+    vel.subVectors(a, b).multiplyScalar(daysPerSecond()); // a and b are a day either side: units per day
     vel.x += (pos.x - p.x) * PULL;
     vel.y += (pos.y - p.y) * PULL;
     vel.z += (pos.z - p.z) * PULL;
@@ -1155,7 +1121,7 @@ function Bean({ planet, index }: { planet: Planet; index: number }) {
     cur.set(r.x, r.y, r.z, r.w).invert().premultiply(q);
     const sign = cur.w < 0 ? -1 : 1;
     if (clock.paused) {
-      // Paused: held still, exactly in its place for the date shown, so scrubbing through time still moves it.
+      // Paused: held still, exactly in its place for the date shown.
       rb.setTranslation(pos, true);
       rb.setRotation(q, true);
       rb.setLinvel({ x: 0, y: 0, z: 0 }, true);
@@ -1170,7 +1136,7 @@ function Bean({ planet, index }: { planet: Planet; index: number }) {
       gravityScale={0}
       canSleep={false}
       colliders={false}
-      position={planetAt(planet, clock.jd).setY(-DIG)}
+      position={planetAt(planet, clock.jd)}
     >
       {planet.name === 'Earth' ? (
         <BallCollider density={DENSITY} args={[EARTH_RADIUS]} />
@@ -1200,7 +1166,6 @@ function Bean({ planet, index }: { planet: Planet; index: number }) {
       )}
       {/* Tap a planet for its close up card. */}
       <group
-        ref={look}
         onClick={(e) => {
           e.stopPropagation();
           if (isThrowClick(e.nativeEvent)) return; // cmd click throws, it doesn't pick

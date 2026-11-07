@@ -2,7 +2,6 @@ import { useLayoutEffect, useMemo, useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
 import { BallCollider, RigidBody, type RapierRigidBody } from '@react-three/rapier';
 import {
-  AdditiveBlending,
   BoxGeometry,
   BufferAttribute,
   BufferGeometry,
@@ -22,8 +21,9 @@ import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeom
 import { mergeGeometries, mergeVertices } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { LENGTH, NEPTUNE, NonpareilDrop, PlanetCandy, TRITON_COLOURS } from './Beans';
 import { clock, motion } from './clock';
-import { inTheWay, moonPositions, planetPositions } from './world';
-import { pickedNow } from './selection';
+import { moonPositions, planetPositions } from './world';
+import { rng } from './random';
+import { NOISE } from './glsl';
 
 // The planets' main moons, as small sugar coated sweets on circles round their planet beans. Real periods (days),
 // distances squeezed in close, just clear of the bean, sizes to suit. At 30 days a second the real periods would blur
@@ -37,9 +37,6 @@ type Moon = {
   orbit: number; // scene units from the planet's middle
   radius: number;
   colour: string;
-  potato?: boolean; // a lumpy little rock rather than a ball
-  haze?: string; // a coloured atmosphere round it
-  metal?: boolean; // the silver dragée
   allsort?: Allsort; // one of the liquorice allsorts instead of a ball
   gumball?: boolean; // a glossy pastel gumball, like Saturn
   bean?: string; // a little jelly bean, the same sweet as this planet's
@@ -91,23 +88,8 @@ const MAX_SPIN = 1.2; // radians a second: the fastest a knocked moon may turn a
 const PULL = 4; // per second: how hard a knocked moon is drawn back to its place on its orbit
 const DENSITY = 0.5; // light next to the planet beans (25), so they shove the moons and not the other way round
 
-// A lumpy little rock: an icosahedron with its corners pushed in and out.
-function potatoGeometry(radius: number, seed: number) {
-  const g = new IcosahedronGeometry(radius, 2);
-  const p = g.attributes.position;
-  for (let i = 0; i < p.count; i++) {
-    const v = new Vector3().fromBufferAttribute(p, i);
-    const k = 1 + 0.22 * Math.sin(v.x * 9 + seed) * Math.cos(v.y * 7 - seed) + 0.12 * Math.sin(v.z * 13 + seed * 2);
-    v.multiplyScalar(k).multiply(new Vector3(1.3, 0.85, 1));
-    p.setXYZ(i, v.x, v.y, v.z);
-  }
-  g.computeVertexNormals();
-  return g;
-}
-
 function MoonBody({ moon, system, index }: { moon: Moon; system: System; index: number }) {
   const ref = useRef<RapierRigidBody>(null!);
-  const look = useRef<Group>(null!);
   // A stable random number per moon, from its name, for its starting place and its own small tilt.
   const luck = useMemo(() => {
     let h = 2166136261;
@@ -126,9 +108,8 @@ function MoonBody({ moon, system, index }: { moon: Moon; system: System; index: 
   }, [system, luck]);
   const at = useMemo(() => new Vector3(), []), before = useMemo(() => new Vector3(), []), vel = useMemo(() => new Vector3(), []);
   const started = useRef(false);
-  const potato = useMemo(() => (moon.potato ? potatoGeometry(moon.radius, index * 3.1) : null), [moon, index]);
 
-  useFrame(({ camera }, dt) => {
+  useFrame((_, dt) => {
     const host = planetPositions.get(system.host);
     if (!host || !ref.current) return;
     // Turns a second: the real pace at the clock's speed, or the squeezed one, whichever is slower.
@@ -152,7 +133,7 @@ function MoonBody({ moon, system, index }: { moon: Moon; system: System; index: 
     vel.y += (at.y - p.y) * PULL;
     vel.z += (at.z - p.z) * PULL;
     if (clock.paused) {
-      // Paused: held in its place on its orbit, so it stays with its planet when time is scrubbed.
+      // Paused: held in its place on its orbit, so it stays with its planet while paused.
       rb.setTranslation(at, true);
       rb.setLinvel({ x: 0, y: 0, z: 0 }, true);
     } else rb.setLinvel(vel, true);
@@ -166,17 +147,12 @@ function MoonBody({ moon, system, index }: { moon: Moon; system: System; index: 
     let mine = moonPositions.get(moon.name);
     if (!mine) moonPositions.set(moon.name, (mine = new Vector3()));
     mine.copy(p);
-    if (look.current) {
-      const focus = pickedNow(), target = focus ? planetPositions.get(focus) : undefined;
-      look.current.visible = camera.position.distanceTo(mine) > moon.radius * 2 + 0.5 && !(target && system.host !== focus && inTheWay(camera.position, target, mine, moon.radius));
-    }
   });
 
   return (
     <RigidBody ref={ref} type="dynamic" gravityScale={0} canSleep={false} colliders={false} angularDamping={1.5} position={[0, -100, 0]}>
       <BallCollider args={[moon.radius]} restitution={0.8} density={DENSITY} />
-      {/* Not drawn while the camera is inside it, following a planet past it. */}
-      <group ref={look}>
+      <group>
       {moon.popcorn ? (
         <Popcorn radius={moon.radius} seed={index + 4} />
       ) : moon.nonpareil ? (
@@ -191,20 +167,16 @@ function MoonBody({ moon, system, index }: { moon: Moon; system: System; index: 
       ) : moon.allsort ? (
         <AllsortSweet allsort={moon.allsort} size={moon.radius} seed={index * 7.7 + moon.orbit} />
       ) : (
-      <mesh geometry={potato ?? undefined} castShadow receiveShadow>
-        {!potato && <sphereGeometry args={[moon.radius, 32, 16]} />}
+      <mesh castShadow receiveShadow>
+        <sphereGeometry args={[moon.radius, 32, 16]} />
         {moon.gumball ? (
           <meshPhysicalMaterial color={moon.colour} roughness={0.3} clearcoat={0.75} clearcoatRoughness={0.15} sheen={0.4} sheenColor="#fff4e0" emissive={moon.colour} emissiveIntensity={0.05} />
-        ) : moon.metal ? (
-          // Silver, but kept bright: a fully metal ball would just mirror the dark room.
-          <meshPhysicalMaterial color={moon.colour} metalness={0.65} roughness={0.25} clearcoat={0.8} envMapIntensity={3} />
         ) : (
           // A faint glow of its own colour, so the night side still reads, like the planet beans.
-          <meshPhysicalMaterial color={moon.colour} roughness={moon.potato ? 0.8 : 0.35} clearcoat={moon.potato ? 0 : 1} emissive={moon.colour} emissiveIntensity={0.25} />
+          <meshPhysicalMaterial color={moon.colour} roughness={0.35} clearcoat={1} emissive={moon.colour} emissiveIntensity={0.25} />
         )}
       </mesh>
       )}
-      {moon.haze && <Haze radius={moon.radius * 1.35} colour={moon.haze} />}
       </group>
     </RigidBody>
   );
@@ -213,8 +185,7 @@ function MoonBody({ moon, system, index }: { moon: Moon; system: System; index: 
 // The Moon is a piece of popcorn: a puffy, lumpy cluster of lobes burst out of the kernel, matt and super white, the
 // faintest warm tint down between them, with a scrap of brown hull stuck on.
 function popcornGeometry(radius: number, seed: number) {
-  let s = seed * 7 + 3;
-  const rnd = () => ((s = (s * 16807) % 2147483647) - 1) / 2147483646;
+  const rnd = rng(seed * 7 + 3);
   const lobes: BufferGeometry[] = [];
   const cream = new Color('#ffffff'), butter = new Color('#f6efe0'), hull = new Color('#7a4a24'), c = new Color();
   const lobe = (r: number, at: Vector3, colour: Color, lumps: number) => {
@@ -309,15 +280,7 @@ function sugarMaterial(colour: string, size: number, finish: Finish = colour ===
         /* glsl */ `varying vec3 vObj;
   varying mat3 vToView; // object to view space, for normals
   uniform float uGrain, uDepth;
-  float hash(vec3 p) { return fract(sin(dot(p, vec3(127.1, 311.7, 74.7))) * 43758.5453); }
-  float noise(vec3 p) {
-    vec3 i = floor(p), f = fract(p);
-    f = f * f * (3.0 - 2.0 * f);
-    return mix(
-      mix(mix(hash(i), hash(i + vec3(1, 0, 0)), f.x), mix(hash(i + vec3(0, 1, 0)), hash(i + vec3(1, 1, 0)), f.x), f.y),
-      mix(mix(hash(i + vec3(0, 0, 1)), hash(i + vec3(1, 0, 1)), f.x), mix(hash(i + vec3(0, 1, 1)), hash(i + vec3(1, 1, 1)), f.x), f.y),
-      f.z);
-  }
+  ${NOISE}
   // Two octaves, the second folded into ridges, so it reads as flakes and crystals rather than a soft blur.
   float grain(vec3 q) { return noise(q) + 0.6 * abs(noise(q * 2.9 + 11.0) * 2.0 - 1.0); }
 void main() {`,
@@ -431,37 +394,6 @@ function Cut({ allsort, size, seed }: { allsort: Exclude<Allsort, { kind: 'bobbl
         <mesh key={i} geometry={part.geometry} material={sugarMaterial(part.colour, size, 'finish' in part ? part.finish : undefined)} position={part.position} rotation={part.rotation} castShadow receiveShadow />
       ))}
     </group>
-  );
-}
-
-// A soft glow round a moon with an atmosphere, brighter towards its rim, like Earth's.
-function Haze({ radius, colour }: { radius: number; colour: string }) {
-  const uniforms = useMemo(() => ({ uColour: { value: new Color(colour) } }), [colour]);
-  return (
-    <mesh>
-      <sphereGeometry args={[radius, 32, 16]} />
-      <shaderMaterial
-        uniforms={uniforms}
-        transparent
-        depthWrite={false}
-        blending={AdditiveBlending}
-        vertexShader={/* glsl */ `
-          varying vec3 vN, vV;
-          void main() {
-            vec4 mv = modelViewMatrix * vec4(position, 1.0);
-            vN = normalize(normalMatrix * normal);
-            vV = normalize(-mv.xyz);
-            gl_Position = projectionMatrix * mv;
-          }`}
-        fragmentShader={/* glsl */ `
-          uniform vec3 uColour;
-          varying vec3 vN, vV;
-          void main() {
-            float rim = pow(1.0 - abs(dot(normalize(vN), normalize(vV))), 2.0);
-            gl_FragColor = vec4(uColour, 0.15 + rim * 0.8);
-          }`}
-      />
-    </mesh>
   );
 }
 

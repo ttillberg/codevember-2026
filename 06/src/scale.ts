@@ -45,9 +45,13 @@ export function toOrrery(v: Vector3) {
 // much (Mercury's 7° becomes 28°). Only in the scene: the close up card's facts use the real orbit.
 export const TILT = 4;
 
+// The orbits' plane, and the sun at its middle: everything rides at this height.
+export const ORBIT_Y = 12.6;
+export const SUN = new Vector3(0, ORBIT_Y, 0);
+
 // A planet's place in the scene at Julian date jd.
 export function planetAt(p: Planet, jd: number, out = new Vector3()) {
   const el = elementsAt(p.el, p.rate, jd);
   el.I *= TILT;
-  return toOrrery(position(el, out));
+  return toOrrery(position(el, out)).setY(out.y + ORBIT_Y);
 }

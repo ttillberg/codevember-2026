@@ -11,4 +11,6 @@ export const clock = {
 // time: still when paused, full at the fastest speed (×5, 30 days a second) they were tuned at, and slower with the
 // clock, eased (a square root) so slow motion still moves.
 export const FULL_SPEED = 30;
+// Simulated days going by each real second: none while paused.
+export const daysPerSecond = () => (clock.paused ? 0 : clock.speed);
 export const motion = () => (clock.paused ? 0 : Math.sqrt(clock.speed / FULL_SPEED));

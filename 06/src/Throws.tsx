@@ -2,16 +2,16 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import { BallCollider, RigidBody, type RapierRigidBody } from '@react-three/rapier';
 import { MeshPhysicalMaterial, Raycaster, SphereGeometry, Vector2, Vector3 } from 'three';
-import { clock } from './clock';
+import { clock, daysPerSecond } from './clock';
 import { PLANETS } from './planets';
 import { planetAt } from './scale';
-import { pickedNow } from './selection';
 import { planetPositions } from './world';
 
-// Cmd (or ctrl) click throws a gumball, hard, from the camera the way you clicked. Pointing near a
+// Cmd (or ctrl) click (a click, not a drag) throws a gumball, hard, from the camera the way you clicked. Pointing near a
 // planet, it leads that planet, aiming where it will be when the gumball gets there. Heavy, so a hit knocks the
 // planet off its track for a while; gone after a few seconds.
-const SPEED = 38; // scene units a second
+const SPEED = 60; // scene units a second
+const CLICK = 6; // pixels: moved further than this between press and release, it's a drag, not a throw
 const RADIUS = 0.28;
 const LIFE = 6; // seconds
 const AIM = 3.5; // how near the ray a planet must be to be aimed at
@@ -30,9 +30,11 @@ export function Throws() {
   const [throws, setThrows] = useState<Throw[]>([]);
   const ray = useMemo(() => new Raycaster(), []);
   useEffect(() => {
-    const el = gl.domElement, ndc = new Vector2(), to = new Vector3(), at = new Vector3();
-    const down = (e: PointerEvent) => {
-      if (e.button !== 0 || !isThrowClick(e) || pickedNow()) return;
+    const el = gl.domElement, ndc = new Vector2(), to = new Vector3(), at = new Vector3(), press = { x: 0, y: 0, on: false };
+    const down = (e: PointerEvent) => void ((press.on = e.button === 0 && isThrowClick(e)), (press.x = e.clientX), (press.y = e.clientY));
+    const up = (e: PointerEvent) => {
+      if (!press.on || !isThrowClick(e) || Math.hypot(e.clientX - press.x, e.clientY - press.y) > CLICK) return;
+      press.on = false;
       const r = el.getBoundingClientRect();
       ndc.set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
       ray.setFromCamera(ndc, camera);
@@ -48,7 +50,7 @@ export function Throws() {
         best = miss;
         let t = from.distanceTo(now) / SPEED;
         for (let i = 0; i < 3; i++) {
-          planetAt(p, clock.jd + t * (clock.paused ? 0 : clock.speed), at).y += 12.6;
+          planetAt(p, clock.jd + t * daysPerSecond(), at);
           t = from.distanceTo(at) / SPEED;
         }
         dir = to.subVectors(at, from).normalize().clone();
@@ -56,7 +58,8 @@ export function Throws() {
       setThrows((list) => [...list.slice(-12), { id: ids++, from, vel: dir.multiplyScalar(SPEED), colour: ids % COLOURS.length }]);
     };
     el.addEventListener('pointerdown', down);
-    return () => el.removeEventListener('pointerdown', down);
+    el.addEventListener('pointerup', up);
+    return () => (el.removeEventListener('pointerdown', down), el.removeEventListener('pointerup', up));
   }, [gl, camera, ray]);
   return (
     <>

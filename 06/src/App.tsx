@@ -15,6 +15,7 @@ import { Sea } from './Sea';
 import { Space } from './Space';
 import { Sun } from './Sun';
 import { clock } from './clock';
+import { ORBIT_Y } from './scale';
 import { dateFromJd } from './kepler';
 import { intro, INTRO_TIME, roomLight } from './intro';
 
@@ -25,7 +26,7 @@ function Tick() {
     // The opening: dark until the candy's in, then lighting up over a few seconds.
     if (intro.ready && intro.value < 1) intro.value = Math.min(1, (performance.now() - intro.ready) / 1000 / INTRO_TIME);
     scene.environmentIntensity = 0.04 * roomLight();
-    gl.toneMappingExposure = 0.25 + 0.75 * roomLight();
+    gl.toneMappingExposure = intro.ready ? 0.25 + 0.75 * roomLight() : 0; // black until then
   });
   return null;
 }
@@ -62,7 +63,7 @@ function DevHooks() {
 function Studio() {
   return (
     // Very dim, a little fill and the reflections in the glazes: the sun is the key light, so each planet has a lit
-    // side facing the lollipop and a dark side away from it.
+    // side facing the sun and a dark side away from it.
     <Environment resolution={256} environmentIntensity={0.04}>
       <mesh scale={100}>
         <sphereGeometry />
@@ -84,9 +85,10 @@ function Transport() {
   const date = useRef<HTMLSpanElement>(null);
   const [state, setState] = useState({ paused: clock.paused, speed: clock.speed });
   useEffect(() => {
-    let raf = 0;
+    let raf = 0, shown = NaN;
     const loop = () => {
-      if (date.current) date.current.textContent = dateFromJd(clock.jd).toISOString().slice(0, 10);
+      const day = Math.floor(clock.jd - 0.5); // a new date only once a day, at midnight
+      if (date.current && day !== shown) (shown = day), (date.current.textContent = dateFromJd(clock.jd).toISOString().slice(0, 10));
       setState((s) => (s.paused === clock.paused && s.speed === clock.speed ? s : { paused: clock.paused, speed: clock.speed }));
       raf = requestAnimationFrame(loop);
     };
@@ -148,8 +150,8 @@ export function App() {
             <Ready />
           </Physics>
         </Suspense>
-        {/* Looking straight down on the lollipop, the orbits round it filling the view. */}
-        <OrbitControls enableDamping enableZoom={false} enablePan={false} makeDefault target={[0, 12.6, 0]} autoRotateSpeed={ORBIT_SPEED} />
+        {/* Orbit round the sun; the rig sets where it starts. */}
+        <OrbitControls enableDamping enableZoom={false} enablePan={false} makeDefault target={[0, ORBIT_Y, 0]} autoRotateSpeed={ORBIT_SPEED} />
         <CameraRig />
         <AO />
       </Canvas>

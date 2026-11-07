@@ -2,7 +2,7 @@
 // the planets. `ready` is when the candy was in (0 until then); `value` runs 0 to 1 from then.
 export const intro = { ready: 0, value: 0 };
 
-export const INTRO_TIME = 3; // seconds
+export const INTRO_TIME = 6; // seconds
 const ease = (t: number) => t * t * (3 - 2 * t);
 const span = (from: number, to: number) => ease(Math.min(1, Math.max(0, (intro.value - from) / (to - from))));
 

@@ -3,15 +3,13 @@ import { useFrame } from '@react-three/fiber';
 import { BufferAttribute, BufferGeometry, Color, type Group, Line, LineDashedMaterial, Vector3 } from 'three';
 import { clock } from './clock';
 import { PLANETS } from './planets';
-import { planetAt } from './scale';
+import { planetAt, SUN } from './scale';
 import { focus } from './CameraRig';
 import { pickedNow } from './selection';
 import { roomLight } from './intro';
 
-// Whether the orbits are drawn, switched from the planet list (or O).
+// Whether the orbits are forced on, with the O key.
 export const orbitsShown = { value: false };
-
-const ORBIT_Y = 12.6; // the orbits' plane, where the planets ride
 
 // Each planet's orbit as a thin line in the colour of its sweet, sampled finely over one year from the same Kepler
 // elements that place the planet, worked out once (they drift too slowly to matter).
@@ -25,11 +23,11 @@ const COLOURS: Record<string, string> = {
   Uranus: '#2fc4d0',
   Neptune: '#4f6ad8',
 };
-const OPACITY = 0.6; // at the planet; fading off behind it
-const DASH = 0.35, GAP = 0.25; // scene units
+const OPACITY = 0.38; // at the planet; fading off behind it
+const TRAIL = 3; // how steeply: higher fades out sooner behind the planet
+const DASH = 0.16, GAP = 0.34; // scene units: short dashes, wide gaps
 // Shown by themselves when the camera is this far from the sun or more, faded out by NEAR.
 const NEAR = 26, FAR = 32; // the default view sits about 36 out
-const SUN = new Vector3(0, 12.6, 0);
 
 // Each orbit fades like a trail: brightest at the planet, thinning away behind it round the orbit, almost gone just
 // ahead of it. The orbit is sampled over one year from when it was made, so where the planet is along it now is
@@ -42,7 +40,7 @@ export function Orbits() {
       PLANETS.map((p) => {
         const year = Math.pow(p.el.a, 1.5) * 365.25, steps = 720, points: number[] = [], at = new Vector3();
         for (let i = 0; i <= steps; i++) {
-          planetAt(p, start + (i / steps) * year, at).y += ORBIT_Y;
+          planetAt(p, start + (i / steps) * year, at);
           points.push(at.x, at.y, at.z);
         }
         const g = new BufferGeometry();
@@ -67,21 +65,20 @@ export function Orbits() {
     if (picked) shown.current = picked;
     else if (focus.amount < 0.01) shown.current = null;
     const room = roomLight();
-    const fades = lines.map((l) => (l.name === shown.current ? Math.max(base * (1 - focus.amount), focus.amount) : orbitsShown.value ? 1 : base * (1 - focus.amount)));
-    for (let i = 0; i < fades.length; i++) fades[i] *= room;
-    group.current.visible = fades.some((f) => f > 0.01);
-    if (!group.current.visible) return;
-    lines.forEach((l, n) => {
-      const fade = fades[n];
+    let any = false;
+    for (const l of lines) {
+      const fade = room * (l.name === shown.current ? Math.max(base * (1 - focus.amount), focus.amount) : orbitsShown.value ? 1 : base * (1 - focus.amount));
       l.line.visible = fade > 0.01;
-      if (!l.line.visible) return;
+      if (!l.line.visible) continue;
+      any = true;
       const now = (((clock.jd - start) / l.year) % 1 + 1) % 1, colour = l.geometry.getAttribute('color') as BufferAttribute;
       for (let i = 0; i <= l.steps; i++) {
         const behind = (((now - i / l.steps) % 1) + 1) % 1; // 0 at the planet, towards 1 round behind it
-        colour.setW(i, OPACITY * fade * Math.pow(1 - behind, 1.6));
+        colour.setW(i, OPACITY * fade * Math.pow(1 - behind, TRAIL));
       }
       colour.needsUpdate = true;
-    });
+    }
+    group.current.visible = any;
   });
   return (
     <group ref={group} visible={false}>

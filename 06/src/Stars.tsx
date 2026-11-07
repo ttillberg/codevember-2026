@@ -2,6 +2,7 @@ import { useMemo, useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
 import { AdditiveBlending, BufferAttribute, BufferGeometry, Color, type Points, ShaderMaterial, Vector3 } from 'three';
 import { motion } from './clock';
+import { rng } from './random';
 
 // The stars: a sphere of them far out round everything, most faint and small, a few bright, the odd one warm or blue,
 // thicker in a band across the sky like the Milky Way. Each twinkles a little, in time with the scene.
@@ -11,8 +12,7 @@ const BAND = new Vector3(0.3, 1, 0.45).normalize(); // the band's pole: it runs 
 
 export function Stars() {
   const { geometry, material } = useMemo(() => {
-    let seed = 41;
-    const rnd = () => ((seed = (seed * 16807) % 2147483647) - 1) / 2147483646;
+    const rnd = rng(41);
     const pos = new Float32Array(COUNT * 3), col = new Float32Array(COUNT * 3), size = new Float32Array(COUNT), phase = new Float32Array(COUNT);
     const d = new Vector3(), c = new Color(), tints = ['#ffffff', '#ffffff', '#ffffff', '#fff1d6', '#d8e6ff', '#ffe2c2'];
     for (let i = 0; i < COUNT; ) {

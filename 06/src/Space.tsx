@@ -9,27 +9,21 @@ import {
   InstancedMesh,
   Matrix4,
   Mesh,
-  Points,
   Quaternion,
   Vector3,
 } from 'three';
-import { clock, FULL_SPEED, motion } from './clock';
-import { elementsAt, jdFromDate, position, type Elements } from './kepler';
+import { clock, daysPerSecond, FULL_SPEED, motion } from './clock';
+import { elementsAt, J2000, jdFromDate, position, type Elements } from './kepler';
 import { PLANETS } from './planets';
-import { planetAt, toOrrery } from './scale';
+import { ORBIT_Y, planetAt, SUN, toOrrery } from './scale';
 import { planetPositions } from './world';
 import { pickedNow } from './selection';
+import { rng } from './random';
 
 // The rest of the solar system's furniture, on real Kepler orbits like the planets, in the same compressed scale:
 // the main asteroid belt as sprinkles, Jupiter's Trojans, and Halley's comet (a gummy worm).
-const ORBIT_Y = 12.6; // the orbits' plane, the glass ball's middle, where the planets ride
-const J2000 = 2451545;
 const DAY = 0.9856076686; // a 1 au orbit's mean motion, degrees per day; scales as a^-1.5
 
-// Small seeded random, so the belt is the same every load.
-function rng(seed: number) {
-  return () => ((seed = (seed * 16807) % 2147483647) - 1) / 2147483646;
-}
 const r = rng(11);
 const between = (lo: number, hi: number) => lo + (hi - lo) * r();
 const rayleigh = (sigma: number) => sigma * Math.sqrt(-2 * Math.log(1 - r() * 0.999)); // small inclinations, eccentricities
@@ -87,7 +81,7 @@ const BOB = 0.35; // how far up and down
 const BOB_RATE = 2.2; // rad/s
 
 const v = new Vector3(), prev = new Vector3(), dir = new Vector3(), m = new Matrix4(), sc = new Vector3(), q = new Quaternion();
-const spot = new Vector3(), stray = new Vector3(), tumble = new Quaternion();
+const spot = new Vector3(), tumble = new Quaternion();
 const AXIS = new Vector3(0, 1, 0); // the capsule's length
 
 function Rubble() {
@@ -259,7 +253,6 @@ function Comet() {
     pos.setXYZ(SPINE * RIM + 1, e.x + s.t.x * WORM_RADIUS * 0.06, e.y + s.t.y * WORM_RADIUS * 0.06, e.z + s.t.z * WORM_RADIUS * 0.06);
     pos.needsUpdate = true;
     geometry.computeVertexNormals();
-    geometry.computeBoundingSphere();
   });
 
   return <mesh ref={worm} geometry={geometry} material={material} castShadow receiveShadow frustumCulled={false} />;
@@ -267,7 +260,7 @@ function Comet() {
 const UP = new Vector3(0, 1, 0);
 
 // A leader and a line of followers playing round the sun like dolphins: the leader loops quickly round the
-// lollipop the way the planets go, leaping up and diving down and swinging in and out; each of the others chases
+// sun the way the planets go, leaping up and diving down and swinging in and out; each of the others chases
 // where the one in front of it was a moment ago, swaying a little from side to side, so the line ripples along
 // behind. The leader knows where each planet will be by the time it gets there, from its orbit, and steers clear of
 // that; and when it comes alongside one going about its own speed, it stops to play, looping round it two or three
@@ -279,7 +272,6 @@ const BEHIND = 4; // frames: how far back along the one in front each follower a
 const CLUSTER = 7; // each one is a little string of sprinkles
 const GAP = 1; // frames between one sprinkle and the next along its string
 const HISTORY = Math.max(BEHIND, CLUSTER * GAP) + 3;
-const CENTRE = new Vector3(0, ORBIT_Y, 0);
 const FAST = 14, SLOW = 4; // speed limits, scene units per second
 
 function Pod() {
@@ -300,7 +292,9 @@ function Pod() {
       Array.from({ length: POD * CLUSTER }, (_, n) => {
         const k = n % CLUSTER;
         return {
-          at: new Vector3((r() - 0.5) * 0.1, (k - (CLUSTER - 1) / 2) * -0.17 + (r() - 0.5) * 0.05, (r() - 0.5) * 0.1),
+          at: new Vector3((r() - 0.5) * 0.2, (k - (CLUSTER - 1) / 2) * -0.17 + (r() - 0.5) * 0.08, (r() - 0.5) * 0.18),
+          // Its own little curve on top: across and up and down, slowly, each at its own pace.
+          wander: [0.8 + r() * 1.4, 0.7 + r() * 1.5, r() * 6.3, r() * 6.3, 0.03 + r() * 0.08, 0.03 + r() * 0.07],
           axis: new Vector3(r() - 0.5, 0, r() - 0.5).normalize(),
           turn: (r() - 0.5) * 0.7,
           spin: 1.5 + r() * 2,
@@ -346,14 +340,14 @@ function Pod() {
   const pv = useMemo(() => new Vector3(), []), a = useMemo(() => new Vector3(), []), b = useMemo(() => new Vector3(), []);
   // A planet's velocity in the scene, units per second at the current clock speed.
   const velocityOf = (p: (typeof PLANETS)[number], out: Vector3) =>
-    out.subVectors(planetAt(p, clock.jd + 0.5, a), planetAt(p, clock.jd - 0.5, b)).multiplyScalar(clock.paused ? 0 : clock.speed);
+    out.subVectors(planetAt(p, clock.jd + 0.5, a), planetAt(p, clock.jd - 0.5, b)).multiplyScalar(daysPerSecond());
   useFrame((_, delta) => {
     // The pod stops with the clock, but only slows a little with it (×1 about four fifths of full pace, ×0.5 about two thirds), and
     // keeps playing at full pace while a planet is in focus.
     const rate = clock.paused ? 0 : pickedNow() ? 1 : Math.pow(clock.speed / FULL_SPEED, 0.1);
     const dt = Math.min(delta, 1 / 30) * rate, S = state;
     S.time += dt;
-    // The leader's path: round the lollipop, quick, leaping and swinging in and out.
+    // The leader's path: round the sun, quick, leaping and swinging in and out.
     S.angle += dt * 0.9;
     const radius = 9 + 3.5 * Math.sin(S.time * 0.53);
     S.target.set(
@@ -393,7 +387,7 @@ function Pod() {
             }
             // Otherwise look ahead: where will it be by the time we get there? Steer clear of that.
             const t = Math.min(lead.p.distanceTo(now) / Math.max(lead.v.length(), 1), 1.5);
-            there.copy(planetAt(p, clock.jd + t * (clock.paused ? 0 : clock.speed), a)).setY(a.y + ORBIT_Y);
+            there.copy(planetAt(p, clock.jd + t * daysPerSecond(), a));
             ahead.copy(lead.p).addScaledVector(lead.v, t);
             d.subVectors(ahead, there);
             const miss = d.length();
@@ -419,13 +413,13 @@ function Pod() {
       const crisp = i > 0 || S.play; // the leader turns tighter while it plays
       d.subVectors(aim, f.p).multiplyScalar(crisp ? 14 : 2.5);
       f.v.lerp(d, Math.min(1, dt * (crisp ? 14 : 2)));
-      // Last ditch swerve, if anyone gets right up against a planet, and stay clear of the lollipop and the glass.
+      // Last ditch swerve, if anyone gets right up against a planet, and stay clear of the sun.
       for (const q of planetPositions.values()) {
         d.subVectors(f.p, q);
         const dist = d.length();
         if (dist < 2.6) f.v.addScaledVector(d.normalize(), (2.6 - dist) * 60 * dt);
       }
-      d.subVectors(f.p, CENTRE);
+      d.subVectors(f.p, SUN);
       const fromSun = d.length();
       if (fromSun < 6) f.v.addScaledVector(d.normalize(), (6 - fromSun) * 50 * dt);
       if (fromSun > 24) f.v.addScaledVector(d.normalize(), (24 - fromSun) * 20 * dt);
@@ -442,6 +436,8 @@ function Pod() {
     S.fish.forEach((f, i) => {
       f.trail[S.head].copy(f.p);
       const big = i === 0 ? 1.35 : 1;
+      // The whole cluster drifts a little off the line too, in its own slow curve.
+      const swayX = 0.12 * Math.sin(S.time * (1.1 + i * 0.13) + i * 2.3), swayY = 0.1 * Math.cos(S.time * (0.9 + i * 0.17) + i * 1.7);
       for (let k = 0; k < CLUSTER; k++) {
         const bit = bits[i * CLUSTER + k];
         const at = f.trail[(S.head - k * GAP + HISTORY * 2) % HISTORY];
@@ -452,14 +448,16 @@ function Pod() {
         dir.normalize();
         side.crossVectors(dir, up).normalize();
         // The wave, and a straying one's wander, across and along the path.
-        let across = bit.at.x + 0.07 * Math.sin(S.time * 6 - k * 0.9 + i);
+        const [f1, f2, p1, p2, a1, a2] = bit.wander;
+        let across = bit.at.x + 0.07 * Math.sin(S.time * 6 - k * 0.9 + i) + swayX + a1 * Math.sin(S.time * f1 + p1 + k * 0.4);
+        const lift = bit.at.z + swayY + a2 * Math.sin(S.time * f2 + p2);
         let along = 0;
         if (bit.stray) {
           const urge = Math.max(0, Math.sin(S.time * 0.7 + bit.phase)) ** 2;
           along = urge * 0.45 * Math.sin(S.time * 0.37 + bit.phase * 2.1);
           across += urge * 0.3 * Math.cos(S.time * 0.53 + bit.phase);
         }
-        spot.copy(at).addScaledVector(side, across * big).addScaledVector(dir, along * big).addScaledVector(up, bit.at.z * big);
+        spot.copy(at).addScaledVector(side, across * big).addScaledVector(dir, along * big).addScaledVector(up, lift * big);
         q.setFromUnitVectors(AXIS, dir);
         tumble.setFromAxisAngle(bit.axis, bit.turn * 0.5 + 0.25 * Math.sin(S.time * bit.spin + bit.phase));
         ref.current.setMatrixAt(i * CLUSTER + k, m.compose(spot, tumble.premultiply(q), sc.setScalar(big)));

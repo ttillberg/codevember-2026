@@ -6,6 +6,9 @@ import { PLANETS } from './planets';
 import { CURIOSITY, MOONS } from './PlanetList';
 import { pick, usePicked } from './selection';
 
+// Only touches the page when the text actually changes.
+const write = (el: HTMLElement | null, text: string) => void (el && el.textContent !== text && (el.textContent = text));
+
 // The flavour each planet's bean would be.
 const FLAVOUR: Record<string, string> = {
   Mercury: 'dark chocolate button, white nonpareils on top',
@@ -49,8 +52,8 @@ export function PlanetCard() {
       const el = elementsAt(planet.el, planet.rate, clock.jd);
       const r = position(el, v).length();
       const kms = Math.sqrt(GM_SUN * (2 / (r * AU_KM) - 1 / (el.a * AU_KM)));
-      if (distance.current) distance.current.textContent = `${r.toFixed(3)} au`;
-      if (speed.current) speed.current.textContent = `${kms.toFixed(1)} km/s`;
+      write(distance.current, `${r.toFixed(3)} au`);
+      write(speed.current, `${kms.toFixed(1)} km/s`);
       raf = requestAnimationFrame(loop);
     };
     loop();
