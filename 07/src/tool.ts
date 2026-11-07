@@ -21,7 +21,7 @@ export const SWATCHES: { name: string; hex: string }[] = [
 ];
 
 export const tool = {
-  brush: 'flat' as Brush,
+  brush: 'pencil' as Brush,
   finish: 'gloss' as Finish,
   hex: SWATCHES[0].hex,
   size: 0.06, // pole to pole units
@@ -43,7 +43,7 @@ try {
     if (typeof saved[k] === typeof tool[k]) (tool as Record<string, unknown>)[k] = saved[k];
   }
 } catch { /* no storage, no memory */ }
-if (tool.brush === 'round') tool.brush = 'flat'; // round is gone from the UI
+if (tool.brush === 'round' || (tool.brush as string) === 'flat') tool.brush = 'pencil'; // round is gone from the UI, flat is now pencil
 const save = () => { try { localStorage.setItem(KEY, JSON.stringify(tool)); } catch { /* ignore */ } };
 for (const ev of ['click', 'input', 'keyup']) window.addEventListener(ev, save);
 

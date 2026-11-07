@@ -6,8 +6,8 @@ const CENTRE = new Vector2(0, 0);
 const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
 // Dab spacing as a fraction of the brush size, and the alpha each dab adds, so a stroke builds up smoothly rather
 // than popping in dab by dab: about a dozen dabs overlap at any point of a round stroke.
-const SPACING: Record<Brush, number> = { round: 0.06, bristle: 0.06, spray: 0.05, scrape: 0.08, glaze: 0.035, flat: 0.06 };
-const FLOW: Record<Brush, number> = { round: 0.2, bristle: 0.3, spray: 0.3, scrape: 0.12, glaze: 0.16, flat: 0.25 };
+const SPACING: Record<Brush, number> = { round: 0.06, bristle: 0.06, spray: 0.05, scrape: 0.08, glaze: 0.035, pencil: 0.06 };
+const FLOW: Record<Brush, number> = { round: 0.2, bristle: 0.3, spray: 0.3, scrape: 0.12, glaze: 0.16, pencil: 0.25 };
 
 // The wheel, tunable live. A trackball: drag turns the balloon about the axis across the drag, any direction,
 // and it keeps turning once let go at the speed of the last move, slowing only a little. Grabbing never stops it.
@@ -59,7 +59,7 @@ function balloonMaterial(side: typeof FrontSide | typeof BackSide) {
   const e = vec2(float(26 / PAINT_W).mul(uScale), 26 / PAINT_H);
   const around = paint.colorAt(uv().sub(vec2(e.x, 0))).a.add(paint.colorAt(uv().add(vec2(e.x, 0))).a)
     .add(paint.colorAt(uv().sub(vec2(0, e.y))).a).add(paint.colorAt(uv().add(vec2(0, e.y))).a).mul(0.25);
-  // A wash: no thickness, and the glaze's glass-smooth finish (0.04), which no other brush lays. Flat paint and
+  // A wash: no thickness, and the glaze's glass-smooth finish (0.04), which no other brush lays. Pencil paint and
   // spray are thin too but keep their own finish, so they get none of the watercolour.
   const wash = float(1).sub(saturate(p.x.mul(4))).mul(float(1).sub(smoothstep(0.05, 0.1, p.z.div(max(c.a, 0.001))))).toVar();
   const ring = saturate(c.a.sub(around).mul(uEdge)).mul(wash);
@@ -147,7 +147,7 @@ export function Balloon() {
       brush: tool.brush,
       rough: glaze ? w : finish.rough,
       metal: finish.metal,
-      wet: glaze ? 1 : tool.brush === 'spray' || tool.brush === 'flat' ? 0 : undefined, // a wash is laid wet and floats out; spray and flat are dry
+      wet: glaze ? 1 : tool.brush === 'spray' || tool.brush === 'pencil' ? 0 : undefined, // a wash is laid wet and floats out; spray and pencil are dry
     };
     paint.add(d);
     if (tool.brush !== 'scrape') maybeSpawn(d, tool.liquid, sim.gravityObj);
