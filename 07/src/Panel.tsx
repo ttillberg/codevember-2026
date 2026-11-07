@@ -18,7 +18,8 @@ const MEDIUM_ICON: Record<Medium, string> = {
   scrape: 'M3 11l7-7 3 3-7 7H3zM9 5l3 3',
 };
 const MediumIcon = ({ m }: { m: Medium }) => (
-  <svg width="26" height="26" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.1" strokeLinecap="round" strokeLinejoin="round">
+  // The pictures span about 11 units; 34px brings them to the colour swatch's 24px, a thinner stroke keeps the line ~1.5px.
+  <svg width="34" height="34" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="0.7" strokeLinecap="round" strokeLinejoin="round">
     <path d={MEDIUM_ICON[m]} />
   </svg>
 );
