@@ -3,7 +3,7 @@ import type { Brush } from './paint';
 
 export type Finish = 'matte' | 'gloss' | 'metal';
 export const FINISH: Record<Finish, { rough: number; metal: number }> = {
-  matte: { rough: 0.85, metal: 0 },
+  matte: { rough: 0.97, metal: 0 },
   gloss: { rough: 0.18, metal: 0 },
   metal: { rough: 0.3, metal: 1 },
 };

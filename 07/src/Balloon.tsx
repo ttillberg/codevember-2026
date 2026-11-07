@@ -22,7 +22,7 @@ export const wheel = {
 };
 import { MeshPhysicalNodeMaterial, type WebGPURenderer } from 'three/webgpu';
 import {
-  abs, float, max, min, mix, mx_noise_float, normalMap, sin, normalViewGeometry, positionViewDirection, saturate, select, uniform, uv,
+  abs, float, max, min, mix, mx_noise_float, normalMap, sin, smoothstep, normalViewGeometry, positionViewDirection, saturate, select, uniform, uv,
   vec2, vec3,
 } from 'three/tsl';
 import { PAINT_H, PAINT_W, PaintLayer, sim, type Brush, type Dab } from './paint';
@@ -74,9 +74,13 @@ function balloonMaterial(side: typeof FrontSide | typeof BackSide) {
   const opaque = uDebug.equal(5).or(uDebug.equal(7));
   m.colorNode = select(flat, dbgView, mix(vec3(0), tint, cov));
   m.opacityNode = select(flat.or(opaque), float(1), mix(float(0.05).add(fresnel.mul(0.35)), float(1), cov));
-  m.roughnessNode = select(flat, float(1), mix(float(0.08), p.z.div(safe).mul(mix(1, 0.3, wet.mul(uWetGloss))), cov));
+  const roughPaint = p.z.div(safe).toVar();
+  // Wet paint glosses up, but matte less so: it stays dull even wet.
+  const wetGloss = wet.mul(uWetGloss).mul(float(1).sub(smoothstep(0.7, 0.95, roughPaint).mul(0.7)));
+  m.roughnessNode = select(flat, float(1), mix(float(0.08), roughPaint.mul(mix(1, 0.3, wetGloss)), cov));
   m.metalnessNode = select(flat, float(0), p.w.div(safe).mul(cov));
-  m.specularIntensityNode = select(flat.or(noSpec), float(0), float(1));
+  // A rough paint also reflects less: matte is matte, not just blurry.
+  m.specularIntensityNode = select(flat.or(noSpec), float(0), mix(float(1), float(0.2), smoothstep(0.6, 0.95, roughPaint).mul(cov)));
   // Pale rim like a reflection of the room, instead of an environment map.
   m.emissiveNode = select(flat.or(noSpec), vec3(0), vec3(0.9, 0.88, 0.85).mul(fresnel).mul(0.35).mul(float(1).sub(cov.mul(0.7))));
   // Normal from the paint's height: thickness plus a fine grain, differenced across one texel each way in the
