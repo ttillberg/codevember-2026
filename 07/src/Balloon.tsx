@@ -7,7 +7,7 @@ const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
 // Dab spacing as a fraction of the brush size, and the alpha each dab adds, so a stroke builds up smoothly rather
 // than popping in dab by dab: about a dozen dabs overlap at any point of a round stroke.
 const SPACING: Record<Brush, number> = { round: 0.06, bristle: 0.06, spray: 0.08, scrape: 0.08, glaze: 0.035 };
-const FLOW: Record<Brush, number> = { round: 0.2, bristle: 0.3, spray: 0.12, scrape: 0.12, glaze: 0.16 };
+const FLOW: Record<Brush, number> = { round: 0.2, bristle: 0.3, spray: 0.3, scrape: 0.12, glaze: 0.16 };
 
 // The wheel, tunable live. A trackball: drag turns the balloon about the axis across the drag, any direction,
 // and it keeps turning once let go at the speed of the last move, slowing only a little. Grabbing never stops it.
@@ -125,14 +125,14 @@ export function Balloon() {
     paint.flush(gl, dt);
   }, -1);
 
-  const dabAt = (u: number, v: number, angle: number, seed: number) => {
+  const dabAt = (u: number, v: number, angle: number, seed: number, grow = 1) => {
     const finish = FINISH[tool.finish];
     const glaze = tool.brush === 'glaze';
     const w = tool.watery;
     const d: Dab = {
       u, v, angle, seed,
       // Watery glaze: wider, thinner. Its softness rides in the rough slot, which the glaze doesn't use.
-      size: tool.size * (glaze ? 1 + w * 0.7 : 1),
+      size: tool.size * (glaze ? 1 + w * 0.7 : 1) * grow,
       rgb: hexToRgb(tool.hex),
       // Dabs overlap many times along the stroke, so each one carries only a little.
       flow: FLOW[tool.brush] * tool.flow * (glaze ? 1 - w * 0.45 : 1),
@@ -158,7 +158,7 @@ export function Balloon() {
     }
   };
   // Spray keeps coming while the can is held still: a dab every so often at the same spot, so it builds up.
-  const sprayHold = useRef(0);
+  const sprayHold = useRef(0), sprayHeld = useRef(0);
 
   // The brush sits at the centre of the screen: turning the balloon under it is the stroke. The left button
   // paints while it orbits, the right button only orbits. Each frame the centre ray is cast at the balloon and the
@@ -187,6 +187,7 @@ export function Balloon() {
     const dist = Math.hypot(du * circ, dv);
     const spacing = tool.size * SPACING[tool.brush];
     if (dist < spacing) return;
+    sprayHeld.current = 0; // moving again
     const angle = Math.atan2(dv, du * circ);
     const n = Math.floor(dist / spacing);
     for (let i = 1; i <= n; i++) {
@@ -279,12 +280,18 @@ export function Balloon() {
     if (!stroke.current) {
       const seed = Math.random() * 1000;
       stroke.current = { u: h.u, v: h.v, seed };
+      sprayHeld.current = 0;
       dabAt(h.u, h.v, 0, seed);
     } else {
       advance(h.u, h.v);
       if (tool.brush === 'spray') {
+        // The cloud widens the longer the can stays: up to twice the brush after a couple of seconds.
         sprayHold.current += dt;
-        if (sprayHold.current > 0.05) { sprayHold.current = 0; dabAt(h.u, h.v, 0, stroke.current.seed + Math.random() * 97); }
+        sprayHeld.current += dt;
+        if (sprayHold.current > 0.05) {
+          sprayHold.current = 0;
+          dabAt(h.u, h.v, 0, stroke.current.seed + Math.random() * 97, 1 + Math.min(sprayHeld.current, 2.5) * 0.4);
+        }
       }
     }
   }, -2); // before the flush; a positive priority would turn off R3F's own render

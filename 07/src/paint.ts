@@ -24,7 +24,7 @@ const TRAIL = 0.3;     // coverage a run leaves behind it, whatever the paint di
 export type Brush = 'round' | 'spray' | 'bristle' | 'glaze' | 'scrape';
 const STYLE: Record<Brush, number> = { round: 0, spray: 1, bristle: 2, scrape: 3, glaze: 4 };
 // How much paint each brush leaves: above the run threshold it drips while wet.
-export const LOAD: Record<Brush, number> = { round: 0.85, spray: 0.7, bristle: 0.65, scrape: 0, glaze: 0 };
+export const LOAD: Record<Brush, number> = { round: 0.85, spray: 0.12, bristle: 0.65, scrape: 0, glaze: 0 }; // spray is flat
 
 export type Dab = {
   u: number; v: number;
