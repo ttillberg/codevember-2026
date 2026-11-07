@@ -176,11 +176,8 @@ const dabShape = (style: any, seed: any, watery: any) => Fn(() => {
   const scrape = smoothstep(1, 0.85, q.x.abs()).mul(smoothstep(1, 0.5, q.y.abs()));
   // Glaze: colour fused into the glass, a smooth soft-edged blob, softer the more watery (that rides in the
   // rough slot); the balloon shader gathers its pigment at the edge and lenses it.
-  // The outline wanders: noise in target space pushes the rim in and out, so the wash's edge is ragged the way a
-  // wet edge dries, and the same across every dab of the stroke.
-  const tt = screenUV.mul(vec2(PAINT_W, PAINT_H));
-  const rim = mx_noise_float(vec3(tt.x.div(40), tt.y.div(40), 3.7)).mul(0.5).add(0.5);
-  const glaze = smoothstep(1, float(0.5).sub(watery.mul(0.4)), d.add(rim.sub(0.5).mul(0.2)));
+  // Smooth: the ragged edge comes from the water (the bleed in the run pass), not from the dab.
+  const glaze = smoothstep(1, float(0.5).sub(watery.mul(0.4)), d);
   return select(style.lessThan(0.5), round, select(style.lessThan(1.5), spray, select(style.lessThan(2.5), bristle,
     select(style.lessThan(3.5), scrape, glaze))));
 })();
@@ -344,13 +341,16 @@ export class PaintLayer {
       const thin = float(1).sub(min(max(propsRun.x.mul(4), 0), 1));
       const wetBleed: any = min(max(propsRun.y, wetN.mul(0.9)), 1).mul(thin); // the water reaches out, a tenth less each hop
       const kB = uBleed.mul(wetBleed).mul(thin).mul(water).toVar();
+      // Melt first: wet thin paint evens out with its neighbours, so dabs run together into one wash.
+      const kM = uBleed.mul(0.35).mul(wetBleed).mul(thin).toVar();
+      const colorMelt: any = mix(colorRun, cAvg, kM).toVar();
       // Grows, never thins: a texel takes on what its neighbours have more of, capped lower the further the water
       // has carried it, so a bloom fades out towards its edge and keeps its heart. Two washes meeting bleed into
       // each other the same way, channel by channel.
       const reach = wetBleed.mul(wetBleed).mul(wetBleed).mul(wetBleed).toVar();
       const want: any = cAvg.mul(reach).toVar();
-      const grow = v4(max(want.x.sub(colorRun.x), 0), max(want.y.sub(colorRun.y), 0), max(want.z.sub(colorRun.z), 0), max(want.w.sub(colorRun.w), 0));
-      const colorOut = colorRun.add(grow.mul(kB));
+      const grow = v4(max(want.x.sub(colorMelt.x), 0), max(want.y.sub(colorMelt.y), 0), max(want.z.sub(colorMelt.z), 0), max(want.w.sub(colorMelt.w), 0));
+      const colorOut = colorMelt.add(grow.mul(kB));
       const propsOut = v4(propsRun.x, select(thin.greaterThan(0.5), wetBleed, propsRun.y),
         propsRun.z.add(max(pAvg.z.mul(reach).sub(propsRun.z), 0).mul(kB)), propsRun.w.add(max(pAvg.w.mul(reach).sub(propsRun.w), 0).mul(kB)));
       mat.colorNode = colorOut;

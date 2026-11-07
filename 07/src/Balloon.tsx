@@ -34,7 +34,7 @@ const uDebug = uniform(0);
 const uWetGloss = uniform(1);
 const uBump = uniform(sim.bump);
 const uGrain = uniform(sim.grain);
-const uEdge = uniform(3); // how much pigment gathers at a wash's edge
+const uEdge = uniform(2.2); // how much pigment gathers at a wash's edge
 if (import.meta.env.DEV) { (window as any).__tool = tool; (window as any).__drips = dripSettings; (window as any).__wheel = wheel; (window as any).__sim = sim; (window as any).__paint = paint; (window as any).__dbg = uDebug; (window as any).__wetGloss = uWetGloss; (window as any).__edge = uEdge; }
 
 // Thin clear rubber with paint on it. Clear rubber has no diffuse of its own, only its reflections and a faint
@@ -59,7 +59,7 @@ function balloonMaterial(side: typeof FrontSide | typeof BackSide) {
   const ring = saturate(c.a.sub(around).mul(uEdge)).mul(wash);
   // And the body of a wash is granular, the pigment settling unevenly.
   const grainW = mx_noise_float(uv().mul(vec2(PAINT_W / 20, PAINT_H / 20))).mul(0.5).add(0.5);
-  const body = mix(float(1), grainW.mul(0.25).add(0.85), wash);
+  const body = mix(float(1), grainW.mul(0.1).add(0.95), wash);
   const washA = c.a.mul(body).mul(ring.mul(1.3).add(1));
   const cov = max(saturate(washA), saturate(p.x.mul(2.5))).toVar();
   const safe = max(c.a, 0.001);
