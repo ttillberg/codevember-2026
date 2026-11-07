@@ -9,7 +9,7 @@ const SPACING: Record<Brush, number> = { round: 0.06, bristle: 0.06, spray: 0.08
 const FLOW: Record<Brush, number> = { round: 0.2, bristle: 0.3, spray: 0.12, scrape: 0.12 };
 
 // The wheel, tunable live. A trackball: drag turns the balloon about the axis across the drag, any direction,
-// and it keeps turning once let go, slowing only a little. A flick adds to the spin, grabbing never stops it.
+// and it keeps turning once let go at the speed of the last move, slowing only a little. Grabbing never stops it.
 export const wheel = {
   gain: Math.PI, // radians of turn per window width of drag
   drag: 0.08,    // how fast the spin dies away once let go, per second: next to nothing
@@ -144,13 +144,14 @@ export function Balloon() {
 
   useEffect(() => {
     const el = gl.domElement;
-    // Grabbing never stops it: the balloon keeps turning under the hand, the drag turns it on top (a window
-    // width is half a turn, about the axis across the drag), and the hand's angular speed over the last few
-    // events is added to the spin on release, so a flick along speeds it up and a flick against slows it.
+    // Grabbing never stops it: held still, the balloon keeps turning under the hand. Moved, it follows the hand
+    // (a window width is half a turn, about the axis across the drag) and on release spins on at the speed of the
+    // last move.
     let lastT = 0;
     const hand = new Vector3(), axis = new Vector3(), dq = new Quaternion();
     const move = (e: PointerEvent) => {
       if (!wheel.grabbed) return;
+      if (Math.abs(e.movementX) + Math.abs(e.movementY) < 2) return; // a twitch, not a move
       const g = wheel.gain / Math.min(window.innerWidth, window.innerHeight);
       axis.set(e.movementY * g, e.movementX * g, 0); // right drag turns about y, down drag about x
       const angle = axis.length();
@@ -159,7 +160,10 @@ export function Balloon() {
         wheel.q.premultiply(dq);
       }
       const t = e.timeStamp, dt = Math.max((t - lastT) / 1000, 1 / 240);
-      hand.multiplyScalar(0.6).addScaledVector(axis, 0.4 / dt);
+      // The hand's speed, from this step and the one before so a single odd event timing doesn't throw it.
+      hand.multiplyScalar(0.5).addScaledVector(axis, 0.5 / dt);
+      // Once the hand moves, the balloon is the hand's: the old spin fades out under it.
+      wheel.omega.multiplyScalar(0.7);
       lastT = t;
     };
     const down = (e: PointerEvent) => {
@@ -174,9 +178,9 @@ export function Balloon() {
       stroke.current = null;
       if (!wheel.grabbed) return;
       wheel.grabbed = false;
-      // A hand that stopped before letting go adds nothing.
-      if (e.timeStamp - lastT < 80) {
-        wheel.omega.add(hand);
+      // Let go while moving: it spins on at the hand's speed. Let go after a pause: it stays as it is.
+      if (e.timeStamp - lastT < 80 && hand.lengthSq() > 0) {
+        wheel.omega.copy(hand);
         if (wheel.omega.length() > wheel.maxSpin) wheel.omega.setLength(wheel.maxSpin);
       }
     };
