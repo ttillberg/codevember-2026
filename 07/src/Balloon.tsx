@@ -145,7 +145,7 @@ export function Balloon() {
     paint.add(d);
     if (tool.brush !== 'scrape') maybeSpawn(d, tool.liquid, sim.gravityObj);
     // Spray splatters: now and then a fat drop lands off to the side, outside the mist.
-    if (tool.brush === 'spray' && Math.random() < 0.07) {
+    if (tool.brush === 'spray' && Math.random() < 0.12) {
       const n = 1 + Math.floor(Math.random() * 2);
       for (let i = 0; i < n; i++) {
         const r = tool.size * (0.55 + Math.random() * 0.5), t = Math.random() * Math.PI * 2;
@@ -153,7 +153,7 @@ export function Balloon() {
         paint.add({
           ...d, brush: 'round', seed: Math.random() * 1000, angle: 0,
           u: ((u + Math.cos(t) * r / circ) % 1 + 1) % 1, v: Math.min(0.999, Math.max(0.001, v + Math.sin(t) * r)),
-          size: tool.size * (0.03 + Math.random() ** 2 * 0.06), flow: 0.6 + Math.random() * 0.4, load: 0.3, // small dots, thin
+          size: tool.size * (0.04 + Math.random() ** 2 * 0.1), flow: 0.7 + Math.random() * 0.3, load: 0.3, // small dots, thin
         });
       }
     }

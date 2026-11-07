@@ -169,7 +169,7 @@ const dabShape = (style: any, seed: any, watery: any) => Fn(() => {
   const cell = floor(uv().mul(48));
   const n = hash(cell.x.add(cell.y.mul(131)).add(seed.mul(7919)));
   const core = smoothstep(0.55, 0.15, d);
-  const mist = smoothstep(1.0, 0.3, d).mul(mix(0.12, 1.0, select(n.greaterThan(0.6), float(1), float(0)))).mul(0.45);
+  const mist = smoothstep(1.0, 0.3, d).mul(mix(0.25, 1.0, select(n.greaterThan(0.55), float(1), float(0)))).mul(0.7);
   const spray = max(core, mist);
   // Bristle: streaks along the stroke, broken up along it.
   const lane = hash(floor(uv().y.mul(14)).add(seed.mul(1013)));
