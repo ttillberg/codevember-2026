@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef } from 'react';
-import { useFrame, useThree, type ThreeEvent } from '@react-three/fiber';
-import { BackSide, FrontSide, SphereGeometry } from 'three';
+import { useFrame, useThree } from '@react-three/fiber';
+import { BackSide, FrontSide, Mesh, Raycaster, SphereGeometry, Vector2, Vector3 } from 'three';
+
+const CENTRE = new Vector2(0, 0);
 import { MeshPhysicalNodeMaterial, type WebGPURenderer } from 'three/webgpu';
 import {
   abs, float, max, mix, mx_noise_float, normalMap, normalViewGeometry, positionViewDirection, saturate, select, uniform, uv,
@@ -62,7 +64,6 @@ function balloonMaterial(side: typeof FrontSide | typeof BackSide) {
 
 export function Balloon() {
   const gl = useThree((s) => s.gl) as unknown as WebGPURenderer;
-  const controls = useThree((s) => s.controls) as any;
   const geo = useMemo(() => new SphereGeometry(1, 128, 96), []);
   const front = useMemo(() => balloonMaterial(FrontSide), []);
   const back = useMemo(() => balloonMaterial(BackSide), []);
@@ -86,22 +87,28 @@ export function Balloon() {
     paint.add(d);
   };
 
-  const down = (e: ThreeEvent<PointerEvent>) => {
-    if (e.button !== 0 || !e.uv) return;
-    e.stopPropagation();
-    (e.target as HTMLElement).setPointerCapture?.(e.pointerId);
-    if (controls) controls.enabled = false;
-    const seed = Math.random() * 1000;
-    stroke.current = { u: e.uv.x, v: e.uv.y, seed };
-    dabAt(e.uv.x, e.uv.y, 0, seed);
+  // The brush sits at the centre of the screen: turning the balloon under it is the stroke. The left button
+  // paints while it orbits, the right button only orbits. Each frame the centre ray is cast at the balloon and the
+  // hit's uv is fed to the stroke, dabs laid at the brush's spacing along the way.
+  const frontRef = useRef<Mesh>(null);
+  const painting = useRef(false);
+  const raycaster = useMemo(() => new Raycaster(), []);
+  const camera = useThree((s) => s.camera);
+
+  const hit = () => {
+    const mesh = frontRef.current;
+    if (!mesh) return null;
+    raycaster.setFromCamera(CENTRE, camera);
+    const h = raycaster.intersectObject(mesh, false)[0];
+    return h?.uv ? { u: h.uv.x, v: h.uv.y, point: h.point } : null;
   };
 
-  const move = (e: ThreeEvent<PointerEvent>) => {
+  const advance = (u: number, v: number) => {
     const s = stroke.current;
-    if (!s || !e.uv) return;
-    let du = e.uv.x - s.u;
+    if (!s) return;
+    let du = u - s.u;
     if (du > 0.5) du -= 1; else if (du < -0.5) du += 1; // shortest way round the seam
-    const dv = e.uv.y - s.v;
+    const dv = v - s.v;
     // Distance in v units: a u step is worth the circumference at this latitude.
     const circ = 2 * Math.max(Math.sin(s.v * Math.PI), 0.02);
     const dist = Math.hypot(du * circ, dv);
@@ -111,9 +118,7 @@ export function Balloon() {
     const n = Math.floor(dist / spacing);
     for (let i = 1; i <= n; i++) {
       const t = i / n;
-      let u = s.u + du * t;
-      u = ((u % 1) + 1) % 1;
-      dabAt(u, s.v + dv * t, angle, s.seed + i);
+      dabAt(((s.u + du * t) % 1 + 1) % 1, s.v + dv * t, angle, s.seed + i);
     }
     const t = n / (dist / spacing);
     s.u = ((s.u + du * t) % 1 + 1) % 1;
@@ -121,19 +126,47 @@ export function Balloon() {
   };
 
   useEffect(() => {
-    const up = () => {
-      stroke.current = null;
-      if (controls) controls.enabled = true;
-    };
+    const el = gl.domElement;
+    const down = (e: PointerEvent) => { if (e.button === 0) painting.current = true; };
+    const up = () => { painting.current = false; stroke.current = null; };
+    el.addEventListener('pointerdown', down);
     window.addEventListener('pointerup', up);
     window.addEventListener('pointercancel', up);
-    return () => { window.removeEventListener('pointerup', up); window.removeEventListener('pointercancel', up); };
-  }, [controls]);
+    return () => {
+      el.removeEventListener('pointerdown', down);
+      window.removeEventListener('pointerup', up);
+      window.removeEventListener('pointercancel', up);
+    };
+  }, [gl]);
+
+  // Paint under the brush where the camera is now, and size the ring on screen.
+  useFrame(({ size }) => {
+    const h = hit();
+    const ring = document.getElementById('reticle');
+    if (ring) {
+      // The brush diameter is in v units, pole to pole is pi r: project a point one radius to the side.
+      let px = 0;
+      if (h) {
+        const r = tool.size * Math.PI * 0.5;
+        const right = new Vector3().setFromMatrixColumn(camera.matrixWorld, 0).multiplyScalar(r);
+        const a = h.point.clone().project(camera), b = h.point.clone().add(right).project(camera);
+        px = Math.abs(b.x - a.x) * size.width * 0.5;
+      }
+      ring.style.width = ring.style.height = `${Math.max(px * 2, 6)}px`;
+      ring.style.opacity = h ? '1' : '0.3';
+    }
+    if (!painting.current || !h) { if (!h) stroke.current = null; return; }
+    if (!stroke.current) {
+      const seed = Math.random() * 1000;
+      stroke.current = { u: h.u, v: h.v, seed };
+      dabAt(h.u, h.v, 0, seed);
+    } else advance(h.u, h.v);
+  }, -2); // before the flush; a positive priority would turn off R3F's own render
 
   return (
     <group scale={[1, 1.12, 1]}>
       <mesh geometry={geo} material={back} renderOrder={0} />
-      <mesh geometry={geo} material={front} renderOrder={1} onPointerDown={down} onPointerMove={move} />
+      <mesh ref={frontRef} geometry={geo} material={front} renderOrder={1} />
     </group>
   );
 }
