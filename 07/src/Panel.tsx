@@ -3,6 +3,7 @@ import { clearDrips } from './drips';
 import { paint } from './Balloon';
 import { PAINT_W, QUALITY, quality, setQuality, type Brush, type Quality } from './paint';
 import { resetTool, save, tool, type Finish } from './tool';
+import { downloadPng } from './snapshot';
 
 // The media, and the options each one answers to.
 type Medium = 'glaze' | 'bristle' | 'spray' | 'pencil' | 'scrape';
@@ -506,6 +507,9 @@ export function Panel() {
             </button>
             <button onClick={() => set(resetTool)}>
               <Icon size={14} stroke={1.4}><path d="M3 3v3.5h3.5" /><path d="M3.4 6.2A5.3 5.3 0 1 1 3.3 10" /></Icon>Reset tools
+            </button>
+            <button onClick={() => set(downloadPng)}>
+              <Icon size={14} stroke={1.4}><path d="M8 2.5v8M4.8 7.5L8 10.7l3.2-3.2M3 13.5h10" /></Icon>Download PNG
             </button>
           </div>
         </Pop>
