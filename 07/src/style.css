@@ -114,7 +114,9 @@ canvas.grabbing { cursor: grabbing; }
 }
 
 /* The medium's options: a popover of fat horizontal sliders. */
-.ft-media button.ft-opts { width: 34px; border-radius: 999px; }
+.ft-media button.ft-opts { width: 34px; height: 34px; align-self: center; border-radius: 50%; box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.14); }
+.ft-media button.ft-opts.on { box-shadow: none; }
+.ft-opts svg { width: 18px; height: 18px; }
 .ft-sliders { display: flex; flex-direction: column; gap: 6px; width: 200px; padding: 10px; border-radius: 22px; box-sizing: border-box; }
 .ft-sliders.open { pointer-events: auto; }
 .ft-sliders h4 {
