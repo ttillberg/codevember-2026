@@ -9,18 +9,20 @@ type Medium = 'glaze' | 'bristle' | 'spray' | 'flat' | 'scrape';
 const MEDIA: Medium[] = ['glaze', 'bristle', 'spray', 'flat', 'scrape'];
 const FINISHES: Finish[] = ['matte', 'gloss', 'metal'];
 
-// The media as little pictures: a drop, a bristle brush, a spray can, a flat swatch, a blade.
+// The media as little pictures: a pointed paintbrush, a bristle brush, a spray can, a marker with a big round nib, an eraser.
+// The paintbrush, the marker and the eraser are drawn upright and tilted into place.
 const MEDIUM_ICON: Record<Medium, string> = {
-  glaze: 'M8 2.5c2.5 3.5 4 5.5 4 7.5a4 4 0 0 1-8 0c0-2 1.5-4 4-7.5z',
+  glaze: 'M7.3 7l.3-5.2a.4.4 0 0 1 .8 0L8.7 7M6.6 7h2.8v2H6.6zM6.6 9c0 2 .7 3.6 1.4 5 .7-1.4 1.4-3 1.4-5',
   bristle: 'M4 3h8v4H4zM5 7v5M7 7v6M9 7v6M11 7v5',
   spray: 'M6 6h4v7.5H6zM7 6V4.5h2V6M9 3h1.5M11.5 3.5l1-1M11.5 5h1.5',
-  flat: 'M3 4h10v8H3z',
-  scrape: 'M3 11l7-7 3 3-7 7H3zM9 5l3 3',
+  flat: 'M6 2.5h4v7H6zM6 4.5h4M6 9.5l.9 2.1a1.2 1.2 0 0 0 2.2 0L10 9.5',
+  scrape: 'M4.5 5.5h7A1.5 1.5 0 0 1 13 7v2a1.5 1.5 0 0 1-1.5 1.5h-7A1.5 1.5 0 0 1 3 9V7a1.5 1.5 0 0 1 1.5-1.5zM7.5 5.5v5',
 };
+const MEDIUM_TILT: Partial<Record<Medium, string>> = { glaze: 'rotate(45 8 8)', flat: 'rotate(45 8 8)', scrape: 'rotate(-40 8 8)' };
 const MediumIcon = ({ m }: { m: Medium }) => (
   // The pictures span about 11 units; 34px brings them to the colour swatch's 24px, a thinner stroke keeps the line ~1.5px.
   <svg width="34" height="34" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="0.7" strokeLinecap="round" strokeLinejoin="round">
-    <path d={MEDIUM_ICON[m]} />
+    <path d={MEDIUM_ICON[m]} transform={MEDIUM_TILT[m]} />
   </svg>
 );
 
