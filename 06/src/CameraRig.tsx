@@ -4,7 +4,8 @@ import { Vector3 } from 'three';
 import { clock } from './clock';
 import { pickedNow, usePicked } from './selection';
 import { planetPositions } from './world';
-import { ORBIT_Y, SUN } from './scale';
+import { ORBIT_Y, planetAt, SUN } from './scale';
+import { PLANETS } from './planets';
 
 // How the picked planet is framed, read by the post processing: the distance to keep sharp, and how much the rest
 // is blurred (0 none, 1 full), eased in and out with the flight.
@@ -19,7 +20,6 @@ const FOCUS_SPEED = 0.4;
 // How far out the camera circles each planet, bigger for the ones with rings or clumps of moons round them.
 const VIEW: Record<string, number> = { Jupiter: 10, Saturn: 12, Uranus: 10, Neptune: 8.5 };
 const DEFAULT_VIEW = 8.5;
-const HOME = new Vector3(0, 80, 0.001);
 const HOME_TARGET = SUN;
 // The default view: low, just outside the furthest planet and a little to its right and above, looking in past the
 // sun, so the furthest one sits big in the bottom left corner and the rest of the system fills the screen behind it.
@@ -27,10 +27,11 @@ const HOME_TARGET = SUN;
 const FURTHEST = 'Neptune';
 const HOME_BACK = 13, HOME_RIGHT = 6.5, HOME_UP = 6; // from the furthest planet
 const HOME_LOOK_RIGHT = 4, HOME_LOOK_DOWN = 2; // where it looks, from the sun
-const homeOut = new Vector3(), homeRight = new Vector3();
+const homeOut = new Vector3(), homeRight = new Vector3(), homeFrom = new Vector3();
+const FURTHEST_PLANET = PLANETS.find((p) => p.name === FURTHEST)!;
 function homeView(position: Vector3, target: Vector3) {
-  const far = planetPositions.get(FURTHEST);
-  if (!far) return (position.copy(HOME), target.copy(HOME_TARGET), false);
+  // Where the planet is, or (still loading) where its orbit puts it, so the view is right from the first frame.
+  const far = planetPositions.get(FURTHEST) ?? planetAt(FURTHEST_PLANET, clock.jd, homeFrom);
   homeOut.set(far.x, 0, far.z).normalize();
   homeRight.set(-homeOut.z, 0, homeOut.x).negate(); // to the right, looking in towards the sun
   position.copy(far).addScaledVector(homeOut, HOME_BACK).addScaledVector(homeRight, HOME_RIGHT);

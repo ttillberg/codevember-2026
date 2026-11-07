@@ -24,9 +24,10 @@ function Tick() {
   useFrame(({ scene, gl }, dt) => {
     if (!clock.paused) clock.jd += clock.speed * Math.min(dt, 0.1);
     // The opening: dark until the candy's in, then lighting up over a few seconds.
+    if (!intro.born) intro.born = performance.now();
     if (intro.ready && intro.value < 1) intro.value = Math.min(1, (performance.now() - intro.ready) / 1000 / INTRO_TIME);
     scene.environmentIntensity = 0.04 * roomLight();
-    gl.toneMappingExposure = intro.ready ? 0.25 + 0.75 * roomLight() : 0; // black until then
+    gl.toneMappingExposure = 0.5 + 0.5 * roomLight();
   });
   return null;
 }
