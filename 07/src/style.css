@@ -25,7 +25,7 @@ canvas.grabbing { cursor: grabbing; }
 }
 .ft-media button {
   display: flex; align-items: center; justify-content: center; width: 46px; height: 46px; padding: 0; border: 0;
-  border-radius: 50%; background: none; color: rgba(0, 0, 0, 0.45); cursor: pointer;
+  border-radius: 50%; background: none; color: #868583; cursor: pointer;
 }
 .ft-media button:hover { color: #111; background: rgba(0, 0, 0, 0.05); }
 .ft-media button.on { background: #111; color: #fff; }
@@ -36,8 +36,9 @@ canvas.grabbing { cursor: grabbing; }
 .ft-knob { position: relative; display: flex; }
 .ft-knob button { touch-action: none; }
 .ft-ramp { display: block; overflow: visible; }
-.ft-ramp path { fill: currentColor; stroke: currentColor; stroke-width: 2.5; stroke-linejoin: round; }
-.ft-ramp .ft-ramp-bg { opacity: 0.3; }
+.ft-ramp path { fill: currentColor; }
+.ft-ramp .ft-ramp-bg { fill: #d6d5d2; }
+.ft-media button.on .ft-ramp .ft-ramp-bg { fill: #4a4a4a; }
 .ft-swatch { display: block; width: 24px; height: 24px; border-radius: 50%; box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.12), 0 0 0 2px #fff; }
 .ft-knob button.on .ft-swatch { box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.12), 0 0 0 2px #fff; transform: scale(1.1); }
 .ft-gauge {
@@ -68,7 +69,7 @@ canvas.grabbing { cursor: grabbing; }
 .ft-pick.open { pointer-events: auto; }
 .ft-pick button {
   position: relative; display: flex; align-items: center; justify-content: center; width: 46px; height: 46px; padding: 0;
-  border: 0; border-radius: 50%; background: none; color: rgba(0, 0, 0, 0.45); cursor: pointer; transition: background 0.1s, color 0.1s;
+  border: 0; border-radius: 50%; background: none; color: #868583; cursor: pointer; transition: background 0.1s, color 0.1s;
 }
 .ft-pick button:hover { color: #111; background: rgba(0, 0, 0, 0.05); }
 .ft-pick button.on { background: #111; color: #fff; }

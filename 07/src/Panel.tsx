@@ -74,10 +74,10 @@ function Knob({ name, get, put, face, track }: {
 }
 
 // A volume ramp: a wedge from nothing to big, filled up to the size.
-const RAMP = 'M2 21 L24 5 L24 21 Z';
+const RAMP = 'M1 22 L25 4 L25 22 Z';
 const SizeRamp = ({ t }: { t: number }) => (
   <svg width="26" height="26" viewBox="0 0 26 26" className="ft-ramp">
-    <clipPath id="ft-ramp-fill"><rect x="0" y="0" width={2 + t * 23} height="26" /></clipPath>
+    <clipPath id="ft-ramp-fill"><rect x="0" y="0" width={1 + t * 24} height="26" /></clipPath>
     <path d={RAMP} className="ft-ramp-bg" />
     <path d={RAMP} clipPath="url(#ft-ramp-fill)" />
   </svg>
