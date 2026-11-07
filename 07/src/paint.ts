@@ -6,13 +6,13 @@
 // the next: wet, thick paint runs down the balloon, paint dries. Dab width is stretched by 1 / sin(pi v) so a dab
 // stays round near the poles, and dabs near the u seam are drawn again a full turn over so a stroke crosses it.
 import {
-  CustomBlending, HalfFloatType, InstancedBufferAttribute, InstancedBufferGeometry, Mesh, MeshBasicNodeMaterial,
+  CustomBlending, DoubleSide, HalfFloatType, InstancedBufferAttribute, InstancedBufferGeometry, Mesh, MeshBasicNodeMaterial,
   NodeMaterial, OneFactor, OneMinusSrcAlphaFactor, OrthographicCamera, PlaneGeometry, QuadMesh, RenderTarget,
   RepeatWrapping, Scene, ZeroFactor, NoBlending, BlendMode, MaterialBlending, type Texture, type WebGPURenderer,
 } from 'three/webgpu';
 import {
-  float, floor, hash, instancedBufferAttribute, length, max, min, mix, mrt, positionLocal, select, sin, smoothstep,
-  texture, uniform, uv, varying, vec2, vec3, vec4, Fn,
+  float, floor, hash, instancedBufferAttribute, length, max, min, mix, mrt, mx_noise_float, positionLocal, select, sin,
+  smoothstep, texture, uniform, uv, varying, vec2, vec3, vec4, Fn,
 } from 'three/tsl';
 
 export const PAINT_W = 2048, PAINT_H = 1024;
@@ -38,11 +38,12 @@ export type Dab = {
 
 // Tunables, live.
 export const sim = {
-  runAt: 0.55,   // thickness above which wet paint runs
+  runAt: 0.5,    // thickness above which wet paint runs
   runRate: 0.3,  // texels per frame of excess paint moving down
   dry: 0.0008,   // wetness lost per frame
   gravity: 1,    // 0 freezes the paint
-  bump: 0.01,    // normal from thickness, applied at build
+  bump: 22,      // slope per unit of thickness across a texel
+  grain: 0.05,   // fine texture in the paint's height
   spread: 0.25,  // sideways smoothing of wet paint per frame
   flushes: 0,    // dev counter
 };
@@ -93,6 +94,7 @@ class Splats {
     this.geo = geo;
     const mat = new MeshBasicNodeMaterial();
     mat.transparent = true; mat.depthTest = false; mat.depthWrite = false;
+    mat.side = DoubleSide; // the quad is mirrored in v, which turns its winding
     mat.blending = CustomBlending;
     build(
       instancedBufferAttribute(this.aDab, 'vec4') as any,
@@ -133,7 +135,8 @@ const dabPosition = (dab: any) => Fn(() => {
   const circ = max(sin(c.y.mul(Math.PI)), 0.02);
   // A v unit is pole to pole (pi r), a u unit is a full turn (2 pi r sin): half as wide at the equator.
   const o = vec2(r.x.div(circ).mul(0.5), r.y);
-  return vec3(c.add(o), 0);
+  // The target's rows run the other way from the sphere's v: mirror the quad.
+  return vec3(c.x.add(o.x), float(1).sub(c.y.add(o.y)), 0);
 })();
 
 // The dab's footprint, 0..1, by brush style.
@@ -167,6 +170,14 @@ export class PaintLayer {
   /** The balloon reads these; they point at the current target after every flush. */
   readonly colorNode = texture(this.targets[0].textures[0]);
   readonly propsNode = texture(this.targets[0].textures[1]);
+  private readers: { node: any; index: number }[] = [];
+
+  /** A props read at another uv, for neighbours; follows the swap like propsNode. */
+  propsAt(uvNode: any) {
+    const node = texture(this.targets[this.cur].textures[1], uvNode);
+    this.readers.push({ node, index: 1 });
+    return node as any;
+  }
 
   constructor() {
     // Paint dabs: premultiplied, One / OneMinusSrcAlpha into both targets, so thickness, roughness and metalness
@@ -178,10 +189,12 @@ export class PaintLayer {
       mat.positionNode = dabPosition(dab);
       const a = dabShape(vMisc.x, vMisc.y).mul(vCol.w).toVar();
       const load = select(vMisc.x.lessThan(0.5), float(LOAD.round), select(vMisc.x.lessThan(1.5), float(LOAD.spray), float(LOAD.bristle)));
+      // Impasto: the paint is laid thicker and thinner across the dab, in ridges along the stroke.
+      const ridge = mx_noise_float(vec3(uv().x.mul(3), uv().y.mul(9), vMisc.y)).mul(0.35).add(1);
       mat.colorNode = v4(vCol.xyz.mul(a), a);
       mat.mrtNode = materialBlended(mrt({
         color: v4(vCol.xyz.mul(a), a),
-        props: v4(load.mul(a), min(a.mul(4), 1), vMisc.z.mul(a), vMisc.w.mul(a)),
+        props: v4(load.mul(ridge).mul(a), min(a.mul(4), 1), vMisc.z.mul(a), vMisc.w.mul(a)),
       }));
     });
     // Scrapes: Zero / OneMinusSrcAlpha, everything in both targets scaled down where the blade passes.
@@ -214,7 +227,7 @@ export class PaintLayer {
       const here = uv();
       const above = uv().add(vec2(0, px));
       // Where paint starts to run varies a little across the surface, so sheets break into drips.
-      const runAt = (p: any) => uRunAt.add(hash(floor(p.x.mul(PAINT_W).div(9)).add(floor(p.y.mul(12)).mul(977))).mul(0.35));
+      const runAt = (p: any) => uRunAt.add(mx_noise_float(vec3(p.x.mul(PAINT_W / 14), p.y.mul(PAINT_H / 40), 0)).mul(0.5).add(0.5).mul(0.35));
       const flowOf = (p: any, props: any) => max(props.x.sub(runAt(p)), 0).mul(props.y).mul(uRunRate).mul(uGravity);
       const c: any = texture(src.textures[0], here).toVar(), p: any = texture(src.textures[1], here).toVar();
       const cU: any = texture(src.textures[0], above).toVar(), pU: any = texture(src.textures[1], above).toVar();
@@ -277,6 +290,7 @@ export class PaintLayer {
     const t = this.targets[this.cur];
     this.colorNode.value = t.textures[0] as Texture;
     this.propsNode.value = t.textures[1] as Texture;
+    for (const r of this.readers) r.node.value = t.textures[r.index];
   }
 
   /** Splat the queued dabs, run the paint, swap. Call once per frame before the main render. */

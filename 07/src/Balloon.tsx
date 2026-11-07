@@ -3,15 +3,18 @@ import { useFrame, useThree, type ThreeEvent } from '@react-three/fiber';
 import { BackSide, FrontSide, SphereGeometry } from 'three';
 import { MeshPhysicalNodeMaterial, type WebGPURenderer } from 'three/webgpu';
 import {
-  abs, bumpMap, float, max, mix, normalViewGeometry, positionViewDirection, saturate, select, uniform, vec3,
+  abs, float, max, mix, mx_noise_float, normalMap, normalViewGeometry, positionViewDirection, saturate, select, uniform, uv,
+  vec2, vec3,
 } from 'three/tsl';
-import { PaintLayer, sim, type Dab } from './paint';
+import { PAINT_H, PAINT_W, PaintLayer, sim, type Dab } from './paint';
 import { FINISH, hexToRgb, tool } from './tool';
 
 export const paint = new PaintLayer();
 // Dev: 0 normal, 1 coverage, 2 wetness, 3 thickness, 4 tint. And how much wet paint glosses up.
 const uDebug = uniform(0);
 const uWetGloss = uniform(1);
+const uBump = uniform(sim.bump);
+const uGrain = uniform(sim.grain);
 if (import.meta.env.DEV) { (window as any).__sim = sim; (window as any).__paint = paint; (window as any).__dbg = uDebug; (window as any).__wetGloss = uWetGloss; }
 
 // Thin clear rubber with paint on it. Clear rubber has no diffuse of its own, only its reflections and a faint
@@ -43,7 +46,17 @@ function balloonMaterial(side: typeof FrontSide | typeof BackSide) {
   m.specularIntensityNode = select(flat.or(noSpec), float(0), float(1));
   // Pale rim like a reflection of the room, instead of an environment map.
   m.emissiveNode = select(flat.or(noSpec), vec3(0), vec3(0.9, 0.88, 0.85).mul(fresnel).mul(0.35).mul(float(1).sub(cov.mul(0.7))));
-  if (sim.bump > 0) m.normalNode = bumpMap(p, float(sim.bump)) as any;
+  // Normal from the paint's height: thickness plus a fine grain, differenced across one texel each way in the
+  // target. Orange peel on thick paint, ridges along bristle strokes, rounded lips on the runs.
+  const px = 1 / PAINT_W, py = 1 / PAINT_H;
+  const height = (at: any, props: any) => props.x.add(mx_noise_float(at.mul(vec2(PAINT_W / 3, PAINT_H / 3))).mul(uGrain).mul(props.x));
+  const hL = height(uv().sub(vec2(px, 0)), paint.propsAt(uv().sub(vec2(px, 0))));
+  const hR = height(uv().add(vec2(px, 0)), paint.propsAt(uv().add(vec2(px, 0))));
+  const hD = height(uv().sub(vec2(0, py)), paint.propsAt(uv().sub(vec2(0, py))));
+  const hU = height(uv().add(vec2(0, py)), paint.propsAt(uv().add(vec2(0, py))));
+  const slope = vec2(hR.sub(hL), hU.sub(hD)).mul(uBump).mul(-0.5);
+  const nTs = vec3(slope, 1).normalize();
+  m.normalNode = normalMap(nTs.mul(0.5).add(0.5), float(1)) as any;
   return m;
 }
 
@@ -57,7 +70,7 @@ export function Balloon() {
 
   if (import.meta.env.DEV) (window as any).__gl = gl;
   // Splat this frame's dabs and run the paint before the scene renders.
-  useFrame(() => paint.flush(gl), -1);
+  useFrame(() => { uBump.value = sim.bump; uGrain.value = sim.grain; paint.flush(gl); }, -1);
 
   const dabAt = (u: number, v: number, angle: number, seed: number) => {
     const finish = FINISH[tool.finish];
