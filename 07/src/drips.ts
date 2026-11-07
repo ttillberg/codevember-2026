@@ -13,7 +13,7 @@ type Drip = {
   seed: number;
   travelled: number; // since the last trail stamp, pole-to-pole units
   stuck: number;     // seconds without grip
-  thin: boolean;     // spray: a thin dry leg and a small dry bead
+  thin: boolean;     // spray: a thin flat leg and a small flat bead, no thickness, so no relief
 };
 
 export const dripSettings = {
@@ -121,11 +121,12 @@ export function stepDrips(dt: number, g: Vector3, size: number, liquid: number, 
     // nothing), or the drop is spent.
     d.stuck = gr.grip < 0.15 ? d.stuck + dt : 0;
     if (d.stuck > 0.5 || d.mass <= 0) {
-      // A spray leg ends in a small dry bead; thick paint in a fat wet one the run pass may carry on.
+      // A spray leg ends in a small dry bead, flat like the spray; thick paint in a fat wet one the run pass may
+      // carry on.
       paint.add({
         u: ((d.u % 1) + 1) % 1, v: d.v, angle: 0, seed: d.seed,
         size: size * dripSettings.bead * (0.5 + Math.max(d.mass, 0) + 0.5) * (d.thin ? 0.45 : 1),
-        rgb: d.rgb, flow: 1, brush: 'round', rough: d.rough, metal: d.metal, load: d.thin ? 0.4 : 1.2, wet: d.thin ? 0 : 0.3,
+        rgb: d.rgb, flow: 1, brush: d.thin ? 'pencil' : 'round', rough: d.rough, metal: d.metal, load: d.thin ? 0 : 1.2, wet: d.thin ? 0 : 0.3,
       });
       drips.splice(i, 1);
       continue;
@@ -144,7 +145,7 @@ export function stepDrips(dt: number, g: Vector3, size: number, liquid: number, 
     paint.add({
       u: ((d.u % 1) + 1) % 1, v: d.v, angle, seed: d.seed, size: d.width,
       // Laid dry, so the run pass leaves it alone.
-      rgb: d.rgb, flow: 0.6, brush: 'round', rough: d.rough, metal: d.metal, load: d.thin ? 0.25 : 0.55, wet: 0,
+      rgb: d.rgb, flow: 0.6, brush: d.thin ? 'pencil' : 'round', rough: d.rough, metal: d.metal, load: d.thin ? 0 : 0.55, wet: 0,
     });
   }
 }
