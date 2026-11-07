@@ -1,12 +1,12 @@
 import { useEffect, useState } from 'react';
-import { SWATCHES, tool, type Finish } from './tool';
+import { SWATCHES, resetTool, tool, type Finish } from './tool';
 import type { Brush } from './paint';
 
 const BRUSHES: Brush[] = ['round', 'spray', 'bristle', 'glaze', 'scrape'];
 const FINISHES: Finish[] = ['matte', 'gloss', 'metal'];
 
 export function Palette() {
-  const [, bump] = useState(0);
+  const [rev, bump] = useState(0);
   // Buttons give up focus after a click so the space bar stays the auto toggle and never re-presses them.
   const set = (fn: () => void) => { fn(); bump((n) => n + 1); (document.activeElement as HTMLElement | null)?.blur?.(); };
   useEffect(() => {
@@ -47,6 +47,7 @@ export function Palette() {
       <label className="size">
         watery
         <input
+          key={rev}
           type="range" min={0} max={1} step={0.01} defaultValue={tool.watery}
           onInput={(e) => { tool.watery = parseFloat((e.target as HTMLInputElement).value); }}
         />
@@ -54,6 +55,7 @@ export function Palette() {
       <label className="size">
         liquid
         <input
+          key={rev}
           type="range" min={0} max={1} step={0.01} defaultValue={tool.liquid}
           onInput={(e) => { tool.liquid = parseFloat((e.target as HTMLInputElement).value); }}
         />
@@ -61,10 +63,14 @@ export function Palette() {
       <label className="size">
         size
         <input
+          key={rev}
           type="range" min={0.01} max={0.2} step={0.005} defaultValue={tool.size}
           onInput={(e) => { tool.size = parseFloat((e.target as HTMLInputElement).value); }}
         />
       </label>
+      <button className="auto" onClick={() => set(resetTool)}>
+        reset
+      </button>
     </div>
   );
 }

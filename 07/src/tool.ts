@@ -31,6 +31,20 @@ export const tool = {
   watery: 0.5, // the glaze: 0 a firm blob, 1 a wide thin wash that spreads and mixes
 };
 
+const DEFAULTS = { ...tool };
+export const resetTool = () => { Object.assign(tool, DEFAULTS); };
+
+// Remember the tool between visits. The UI writes straight into `tool`, so save after any click, slider move or key.
+const KEY = 'codevember-07-tool';
+try {
+  const saved = JSON.parse(localStorage.getItem(KEY) ?? '{}');
+  for (const k of Object.keys(tool) as (keyof typeof tool)[]) {
+    if (typeof saved[k] === typeof tool[k]) (tool as Record<string, unknown>)[k] = saved[k];
+  }
+} catch { /* no storage, no memory */ }
+const save = () => { try { localStorage.setItem(KEY, JSON.stringify(tool)); } catch { /* ignore */ } };
+for (const ev of ['click', 'input', 'keyup']) window.addEventListener(ev, save);
+
 export function hexToRgb(hex: string): [number, number, number] {
   const n = parseInt(hex.slice(1), 16);
   // sRGB to linear, the paint target is linear.
