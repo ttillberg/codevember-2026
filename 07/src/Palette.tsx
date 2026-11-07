@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { SWATCHES, resetTool, tool, type Finish } from './tool';
 import type { Brush } from './paint';
 
-const BRUSHES: Brush[] = ['round', 'spray', 'bristle', 'glaze', 'scrape'];
+const BRUSHES: Brush[] = ['flat', 'round', 'spray', 'bristle', 'glaze', 'scrape'];
 const FINISHES: Finish[] = ['matte', 'gloss', 'metal'];
 
 export function Palette() {

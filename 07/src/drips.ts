@@ -51,7 +51,8 @@ export function maybeSpawn(d: Dab, liquid: number, g: Vector3) {
   const threshold = dripSettings.threshold / Math.max(liquid, 0.02) ** 2.5; // steep: stiff paint hardly ever
   // The dab's paint over its disc, in cells; the disc is as wide in u as the sphere is narrow there.
   // Spray lays flat, but held on one spot it pools like anything else: pile it as if it were thick.
-  const amount = d.flow * (d.brush === 'spray' ? 0.8 : d.load ?? 0.85);
+  // Spray piles as if thick, flat as it is; flat paint and washes never drip.
+  const amount = d.flow * (d.brush === 'spray' ? 0.8 : d.brush === 'flat' || d.brush === 'glaze' ? 0 : d.load ?? 0.85);
   const ry = Math.max(1, Math.round(d.size * 0.5 * PH));
   const rx = Math.max(1, Math.round(ry / Math.max(Math.sin((1 - d.v) * Math.PI), 0.05) * 0.5 * (PW / PH)));
   const cx = Math.round(d.u * PW), cy = Math.round(d.v * PH);

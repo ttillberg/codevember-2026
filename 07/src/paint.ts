@@ -21,10 +21,10 @@ const v4 = vec4 as any; // the typings lack the (vec3, float) overload
 const MAX_DABS = 2048; // per frame, per kind
 const TRAIL = 0.3;     // coverage a run leaves behind it, whatever the paint did
 
-export type Brush = 'round' | 'spray' | 'bristle' | 'glaze' | 'scrape';
-const STYLE: Record<Brush, number> = { round: 0, spray: 1, bristle: 2, scrape: 3, glaze: 4 };
+export type Brush = 'round' | 'spray' | 'bristle' | 'glaze' | 'flat' | 'scrape';
+const STYLE: Record<Brush, number> = { round: 0, spray: 1, bristle: 2, scrape: 3, glaze: 4, flat: 5 };
 // How much paint each brush leaves: above the run threshold it drips while wet.
-export const LOAD: Record<Brush, number> = { round: 0.85, spray: 0, bristle: 0.65, scrape: 0, glaze: 0 }; // spray is flat
+export const LOAD: Record<Brush, number> = { round: 0.85, spray: 0, bristle: 0.65, scrape: 0, glaze: 0, flat: 0 }; // spray, glaze and flat lay no thickness
 
 export type Dab = {
   u: number; v: number;
@@ -182,8 +182,10 @@ const dabShape = (style: any, seed: any, watery: any) => Fn(() => {
   // Smooth: the ragged edge comes from the water (the bleed in the run pass), not from the dab.
   // A firm core where the brush went; the water carries it out from there.
   const glaze = smoothstep(1, float(0.6).sub(watery.mul(0.3)), d);
+  // Flat: just colour. A smooth round dab, nothing else.
+  const flat = smoothstep(1, 0.55, d);
   return select(style.lessThan(0.5), round, select(style.lessThan(1.5), spray, select(style.lessThan(2.5), bristle,
-    select(style.lessThan(3.5), scrape, glaze))));
+    select(style.lessThan(3.5), scrape, select(style.lessThan(4.5), glaze, flat)))));
 })();
 
 export class PaintLayer {
@@ -225,13 +227,13 @@ export class PaintLayer {
       mat.positionNode = dabPosition(dab);
       const a = dabShape(vMisc.x, vMisc.y, vMisc.z).mul(vCol.w).toVar();
       const isGlaze = vMisc.x.greaterThan(3.5);
+      const isFlat = vMisc.x.greaterThan(4.5);
       const brushLoad = select(vMisc.x.lessThan(0.5), float(LOAD.round), select(vMisc.x.lessThan(1.5), float(LOAD.spray),
-        select(vMisc.x.lessThan(2.5), float(LOAD.bristle), float(0)))); // scrape and glaze lay no thickness
-      // Spray is flat too: the select above gives it LOAD.spray, which is 0.
+        select(vMisc.x.lessThan(2.5), float(LOAD.bristle), select(isFlat, float(LOAD.flat), float(0))))); // scrape and glaze lay none
       const load = select(vExtra.x.lessThan(0), brushLoad, vExtra.x);
       // Impasto: the paint is laid thicker and thinner across the dab, in ridges along the stroke.
       // In target space (the ortho pass fills the target, so screenUV is it), so overlapping dabs agree.
-      const ridge = mx_noise_float(vec3(screenUV.x.mul(PAINT_W / 10), screenUV.y.mul(PAINT_H / 10), vMisc.y.mul(0.01))).mul(0.35).add(1);
+      const ridge = select(isFlat, float(1), mx_noise_float(vec3(screenUV.x.mul(PAINT_W / 10), screenUV.y.mul(PAINT_H / 10), vMisc.y.mul(0.01))).mul(0.35).add(1));
       mat.colorNode = v4(vCol.xyz.mul(a), a);
       mat.mrtNode = materialBlended(mrt({
         color: v4(vCol.xyz.mul(a), a),
