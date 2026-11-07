@@ -1,9 +1,11 @@
 import { jdFromDate } from './kepler';
 
+export const ONE = 3; // days per second at the ×1 step, the default
+
 // Simulated time lives outside React so the frame loop never re-renders anything.
 export const clock = {
   jd: jdFromDate(new Date()),
-  speed: 3, // days per second: the ×1 step
+  speed: ONE, // days per second
   paused: false,
 };
 

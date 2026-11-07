@@ -20,8 +20,8 @@ import {
 import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
 import { mergeGeometries, mergeVertices } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { LENGTH, NEPTUNE, NonpareilDrop, PlanetCandy, TRITON_COLOURS } from './Beans';
-import { clock, motion } from './clock';
-import { moonPositions, planetPositions } from './world';
+import { clock, motion, ONE } from './clock';
+import { moonPositions, planetPositions, planetVelocities } from './world';
 import { rng } from './random';
 import { NOISE } from './glsl';
 
@@ -83,9 +83,11 @@ const SYSTEMS: System[] = [
   { host: 'Neptune', normal: tipped(23), moons: [{ name: 'Triton', period: -5.877, orbit: 2.3, radius: 0.3, colour: '#de3592', nonpareil: true }] },
 ];
 
-const SECONDS = 6; // a moon's squeezed period, in seconds, per square root of its real period in days: Phobos, the quickest, goes round in about 3.4 s, never a blur
+const SECONDS = 6; // a moon's squeezed period at ×1, in seconds, per square root of its real period in days: the Moon goes round in about 31 s
+const FASTEST_LAP = 2; // seconds: no moon goes round quicker than this, at any speed, so Phobos is never a blur
 const MAX_SPIN = 1.2; // radians a second: the fastest a knocked moon may turn about itself
 const PULL = 4; // per second: how hard a knocked moon is drawn back to its place on its orbit
+const ZERO = new Vector3();
 const DENSITY = 0.5; // light next to the planet beans (25), so they shove the moons and not the other way round
 
 function MoonBody({ moon, system, index }: { moon: Moon; system: System; index: number }) {
@@ -106,18 +108,20 @@ function MoonBody({ moon, system, index }: { moon: Moon; system: System; index: 
     const w = new Vector3().crossVectors(normal, u);
     return { u, w };
   }, [system, luck]);
-  const at = useMemo(() => new Vector3(), []), before = useMemo(() => new Vector3(), []), vel = useMemo(() => new Vector3(), []);
+  const at = useMemo(() => new Vector3(), []), vel = useMemo(() => new Vector3(), []);
   const started = useRef(false);
 
   useFrame((_, dt) => {
     const host = planetPositions.get(system.host);
     if (!host || !ref.current) return;
-    // Turns a second: the real pace at the clock's speed, or the squeezed one, whichever is slower.
+    // Turns a second: the real pace at the clock's speed, or the squeezed one (eased with the clock, a square root,
+    // full at ×1), whichever is slower.
     const period = Math.abs(moon.period);
-    const turns = clock.paused ? 0 : Math.min(clock.speed / period, motion() / (SECONDS * Math.sqrt(period)));
-    angle.current += dt * turns * Math.sign(moon.period) * Math.PI * 2;
+    const squeezed = Math.sqrt(clock.speed / ONE) / (SECONDS * Math.sqrt(period));
+    const turns = clock.paused ? 0 : Math.min(clock.speed / period, squeezed, 1 / FASTEST_LAP);
+    const spin = turns * Math.sign(moon.period) * Math.PI * 2; // radians a second round its planet
+    angle.current += dt * spin;
     const a = angle.current;
-    before.copy(at);
     at.copy(host).addScaledVector(u, Math.cos(a) * moon.orbit).addScaledVector(w, Math.sin(a) * moon.orbit);
     const rb = ref.current;
     if (!started.current) {
@@ -126,9 +130,12 @@ function MoonBody({ moon, system, index }: { moon: Moon; system: System; index: 
       started.current = true;
       return;
     }
-    // Move with its place on the orbit, plus a pull back to it: a knock sends it off, the pull brings it home.
+    // Move with its place on the orbit, plus a pull back to it: a knock sends it off, the pull brings it home. The
+    // place's velocity is worked out, not taken from frame to frame differences: the planet's position only moves
+    // in whole physics steps, which would make the moon stutter.
     const p = rb.translation();
-    vel.subVectors(at, before).divideScalar(Math.max(dt, 1e-4));
+    vel.copy(planetVelocities.get(system.host) ?? ZERO);
+    vel.addScaledVector(u, -Math.sin(a) * moon.orbit * spin).addScaledVector(w, Math.cos(a) * moon.orbit * spin);
     vel.x += (at.x - p.x) * PULL;
     vel.y += (at.y - p.y) * PULL;
     vel.z += (at.z - p.z) * PULL;
@@ -138,10 +145,10 @@ function MoonBody({ moon, system, index }: { moon: Moon; system: System; index: 
       rb.setLinvel({ x: 0, y: 0, z: 0 }, true);
     } else rb.setLinvel(vel, true);
     // Their own spin, from knocks, never runs away: capped, and damped back down (angularDamping below).
-    const turning = rb.angvel(), spin = Math.hypot(turning.x, turning.y, turning.z);
+    const turning = rb.angvel(), spun = Math.hypot(turning.x, turning.y, turning.z);
     if (clock.paused) rb.setAngvel({ x: 0, y: 0, z: 0 }, true); // paused: everything holds still
-    else if (spin > MAX_SPIN) {
-      const k = MAX_SPIN / spin;
+    else if (spun > MAX_SPIN) {
+      const k = MAX_SPIN / spun;
       rb.setAngvel({ x: turning.x * k, y: turning.y * k, z: turning.z * k }, true);
     }
     let mine = moonPositions.get(moon.name);
