@@ -7,7 +7,7 @@ const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
 // Dab spacing as a fraction of the brush size, and the alpha each dab adds, so a stroke builds up smoothly rather
 // than popping in dab by dab: about a dozen dabs overlap at any point of a round stroke.
 const SPACING: Record<Brush, number> = { round: 0.06, bristle: 0.06, spray: 0.08, scrape: 0.08, glaze: 0.035 };
-const FLOW: Record<Brush, number> = { round: 0.2, bristle: 0.3, spray: 0.12, scrape: 0.12, glaze: 0.09 };
+const FLOW: Record<Brush, number> = { round: 0.2, bristle: 0.3, spray: 0.12, scrape: 0.12, glaze: 0.12 };
 
 // The wheel, tunable live. A trackball: drag turns the balloon about the axis across the drag, any direction,
 // and it keeps turning once let go at the speed of the last move, slowing only a little. Grabbing never stops it.
@@ -115,6 +115,7 @@ export function Balloon() {
     sim.runRate = lerp(0.3, 0.7, l);
     sim.dry = lerp(0.002, 0.00015, l);
     sim.spread = lerp(0.06, 0.12, l);
+    sim.bleed = 0.02 + tool.watery * 0.1;
     dryPile(dt);
     stepDrips(dt, sim.gravityObj, tool.size, l, paint);
     paint.flush(gl, dt);
@@ -134,6 +135,7 @@ export function Balloon() {
       brush: tool.brush,
       rough: glaze ? w : finish.rough,
       metal: finish.metal,
+      wet: glaze ? 1 : undefined, // a wash is laid wet: it floats out until it dries
     };
     paint.add(d);
     if (tool.brush !== 'scrape') maybeSpawn(d, tool.liquid, sim.gravityObj);

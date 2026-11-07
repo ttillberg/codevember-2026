@@ -53,6 +53,7 @@ export const sim = {
   bump: 22,      // slope per unit of thickness across a texel
   grain: 0.05,   // fine texture in the paint's height
   spread: 0.12,  // smoothing of wet paint across the flow, per step
+  bleed: 0.06,   // how fast a wet wash floats out, per step
   flushes: 0,    // dev counter
 };
 const uRunAt = uniform(sim.runAt);
@@ -64,6 +65,7 @@ const uDry = uniform(sim.dry);
 const uGravity = uniform(sim.gravity);
 const uGravityObj = uniform(new Vector3(0, -1, 0));
 const uSpread = uniform(sim.spread);
+const uBleed = uniform(sim.bleed);
 
 // MRT outputs default to no blending; these take the material's.
 function materialBlended(m: ReturnType<typeof mrt>) {
@@ -231,7 +233,7 @@ export class PaintLayer {
       mat.colorNode = v4(vCol.xyz.mul(a), a);
       mat.mrtNode = materialBlended(mrt({
         color: v4(vCol.xyz.mul(a), a),
-        props: v4(load.mul(ridge).mul(a), select(isGlaze, float(0), min(a.mul(4), vExtra.y)), select(isGlaze, float(0.04), vMisc.z).mul(a), vMisc.w.mul(a)),
+        props: v4(load.mul(ridge).mul(a), select(isGlaze, (select as any)(a.greaterThan(0.002), vExtra.y, float(0)), min(a.mul(4), vExtra.y)), select(isGlaze, float(0.04), vMisc.z).mul(a), vMisc.w.mul(a)),
       }));
     });
     // Scrapes: Zero / OneMinusSrcAlpha, everything in both targets scaled down where the blade passes.
@@ -325,8 +327,32 @@ export class PaintLayer {
       const cL: any = texture(src.textures[0], here.sub(across)), cR: any = texture(src.textures[0], here.add(across));
       const pL: any = texture(src.textures[1], here.sub(across)), pR: any = texture(src.textures[1], here.add(across));
       const k = uSpread.mul(wet).toVar();
-      const colorOut = mix(color, cL.add(cR).mul(0.5), k);
-      const propsOut = mix(v4(thick, wet, rough, metal), v4(pL.x.add(pR.x).mul(0.5), wet, pL.z.add(pR.z).mul(0.5), pL.w.add(pR.w).mul(0.5)), k);
+      const colorRun: any = v4(mix(color, cL.add(cR).mul(0.5), k)).toVar(); // vec4, whatever the typing thinks
+      const propsRun: any = v4(mix(v4(thick, wet, rough, metal), v4(pL.x.add(pR.x).mul(0.5), wet, pL.z.add(pR.z).mul(0.5), pL.w.add(pR.w).mul(0.5)), k)).toVar();
+      // Wet on wet: a thin wash floats out while it is wet. Its colour (and finish) diffuses into the four
+      // neighbours a few texels off, through a water field of noise so the edge fingers rather than fans, and the
+      // wetness goes along, a little less each hop, so the front keeps moving until it dries. Where there is
+      // colour already it mixes in; thick paint is left alone.
+      const b = vec2(4 / PAINT_W, 4 / PAINT_H);
+      const cN = [vec2(b.x, 0), vec2(b.x, 0).negate(), vec2(0, b.y), vec2(0, b.y).negate()].map((o) => texture(src.textures[0], here.add(o)));
+      const pN = [vec2(b.x, 0), vec2(b.x, 0).negate(), vec2(0, b.y), vec2(0, b.y).negate()].map((o) => texture(src.textures[1], here.add(o)));
+      const cAvg: any = cN[0].add(cN[1]).add(cN[2]).add(cN[3]).mul(0.25);
+      const pAvg: any = pN[0].add(pN[1]).add(pN[2]).add(pN[3]).mul(0.25);
+      // Clamped: laid wetness blends on top of what is there and can read over 1 straight after a dab.
+      const wetN: any = min(max(max(pN[0].y, pN[1].y), max(pN[2].y, pN[3].y)), 1);
+      const water = mx_noise_float(vec3(here.x.mul(PAINT_W / 22), here.y.mul(PAINT_H / 22), 11)).mul(0.5).add(0.5).mul(0.85).add(0.15);
+      const thin = float(1).sub(min(max(propsRun.x.mul(4), 0), 1));
+      const wetBleed: any = min(max(propsRun.y, wetN.mul(0.9)), 1).mul(thin); // the water reaches out, a tenth less each hop
+      const kB = uBleed.mul(wetBleed).mul(thin).mul(water).toVar();
+      // Grows, never thins: a texel takes on what its neighbours have more of, capped lower the further the water
+      // has carried it, so a bloom fades out towards its edge and keeps its heart. Two washes meeting bleed into
+      // each other the same way, channel by channel.
+      const reach = wetBleed.mul(wetBleed).mul(wetBleed).mul(wetBleed).toVar();
+      const want: any = cAvg.mul(reach).toVar();
+      const grow = v4(max(want.x.sub(colorRun.x), 0), max(want.y.sub(colorRun.y), 0), max(want.z.sub(colorRun.z), 0), max(want.w.sub(colorRun.w), 0));
+      const colorOut = colorRun.add(grow.mul(kB));
+      const propsOut = v4(propsRun.x, select(thin.greaterThan(0.5), wetBleed, propsRun.y),
+        propsRun.z.add(max(pAvg.z.mul(reach).sub(propsRun.z), 0).mul(kB)), propsRun.w.add(max(pAvg.w.mul(reach).sub(propsRun.w), 0).mul(kB)));
       mat.colorNode = colorOut;
       mat.mrtNode = mrt({ color: colorOut, props: propsOut });
       return new QuadMesh(mat);
@@ -410,7 +436,7 @@ export class PaintLayer {
       this.scrape.count = 0;
     }
     // 2. run and dry: current -> next, then swap
-    uRunAt.value = sim.runAt; uRunNoise.value = sim.runNoise; uLane.value = sim.lane; uLaneSharp.value = sim.laneSharp; uRunRate.value = sim.runRate; uDry.value = sim.dry; uGravity.value = sim.gravity; uSpread.value = sim.spread; uGravityObj.value.copy(sim.gravityObj);
+    uRunAt.value = sim.runAt; uRunNoise.value = sim.runNoise; uLane.value = sim.lane; uLaneSharp.value = sim.laneSharp; uRunRate.value = sim.runRate; uDry.value = sim.dry; uGravity.value = sim.gravity; uSpread.value = sim.spread; uBleed.value = sim.bleed; uGravityObj.value.copy(sim.gravityObj);
     // The run moves at most a texel a step, so slow frames take more steps: the pace is the same at 60 and 120.
     const steps = Math.max(1, Math.min(4, Math.round(dt * 120)));
     for (let i = 0; i < steps; i++) {
