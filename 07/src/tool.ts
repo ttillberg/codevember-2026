@@ -21,10 +21,10 @@ export const SWATCHES: { name: string; hex: string }[] = [
 ];
 
 export const tool = {
-  brush: 'pencil' as Brush,
+  brush: 'glaze' as Brush,
   finish: 'gloss' as Finish,
   hex: SWATCHES[0].hex,
-  size: 0.06, // pole to pole units
+  size: 0.086, // pole to pole units, 40% along the size knob
   flow: 0.9,
   auto: false, // paint without holding the button
   inertia: true, // it keeps turning once let go
