@@ -21,10 +21,10 @@ const v4 = vec4 as any; // the typings lack the (vec3, float) overload
 const MAX_DABS = 2048; // per frame, per kind
 const TRAIL = 0.3;     // coverage a run leaves behind it, whatever the paint did
 
-export type Brush = 'round' | 'spray' | 'bristle' | 'scrape';
-const STYLE: Record<Brush, number> = { round: 0, spray: 1, bristle: 2, scrape: 3 };
+export type Brush = 'round' | 'spray' | 'bristle' | 'glaze' | 'scrape';
+const STYLE: Record<Brush, number> = { round: 0, spray: 1, bristle: 2, scrape: 3, glaze: 4 };
 // How much paint each brush leaves: above the run threshold it drips while wet.
-export const LOAD: Record<Brush, number> = { round: 0.85, spray: 0.9, bristle: 0.65, scrape: 0 };
+export const LOAD: Record<Brush, number> = { round: 0.85, spray: 0.9, bristle: 0.65, scrape: 0, glaze: 0 };
 
 export type Dab = {
   u: number; v: number;
@@ -172,7 +172,17 @@ const dabShape = (style: any, seed: any) => Fn(() => {
   const bristle = smoothstep(1, 0.8, d).mul(select(lane.greaterThan(0.35), float(1), float(0))).mul(mix(0.6, 1, along));
   // Scrape: a flat blade, hard edged across, soft along.
   const scrape = smoothstep(1, 0.85, q.x.abs()).mul(smoothstep(1, 0.5, q.y.abs()));
-  return select(style.lessThan(0.5), round, select(style.lessThan(1.5), spray, select(style.lessThan(2.5), bristle, scrape)));
+  // Glaze: colour fused into the glass. A soft disc whose edge is eaten by noise drawn out along v, like a hot
+  // worked inclusion; the noise is in target space so overlapping dabs run into one field.
+  const t = screenUV.mul(vec2(PAINT_W, PAINT_H));
+  const pull = mx_noise_float(vec3(t.x.div(16), t.y.div(70), seed.mul(0.01))).mul(0.5).add(0.5);
+  const fine = mx_noise_float(vec3(t.x.div(5), t.y.div(22), seed.mul(0.013))).mul(0.5).add(0.5);
+  const edge = pull.mul(0.65).add(fine.mul(0.35));
+  const core = smoothstep(0.65, 0.3, d);
+  const halo = smoothstep(1.05, 0.3, d).mul(smoothstep(0.3, 0.75, edge));
+  const glaze = max(core, halo.mul(0.85));
+  return select(style.lessThan(0.5), round, select(style.lessThan(1.5), spray, select(style.lessThan(2.5), bristle,
+    select(style.lessThan(3.5), scrape, glaze))));
 })();
 
 export class PaintLayer {
@@ -206,6 +216,7 @@ export class PaintLayer {
       const vCol: any = varying(col), vMisc: any = varying(misc), vExtra: any = varying(extra);
       mat.positionNode = dabPosition(dab);
       const a = dabShape(vMisc.x, vMisc.y).mul(vCol.w).toVar();
+      const isGlaze = vMisc.x.greaterThan(3.5);
       const brushLoad = select(vMisc.x.lessThan(0.5), float(LOAD.round), select(vMisc.x.lessThan(1.5), float(LOAD.spray), float(LOAD.bristle)));
       const load = select(vExtra.x.lessThan(0), brushLoad, vExtra.x);
       // Impasto: the paint is laid thicker and thinner across the dab, in ridges along the stroke.
@@ -214,7 +225,7 @@ export class PaintLayer {
       mat.colorNode = v4(vCol.xyz.mul(a), a);
       mat.mrtNode = materialBlended(mrt({
         color: v4(vCol.xyz.mul(a), a),
-        props: v4(load.mul(ridge).mul(a), min(a.mul(4), vExtra.y), vMisc.z.mul(a), vMisc.w.mul(a)),
+        props: v4(load.mul(ridge).mul(a), select(isGlaze, float(0), min(a.mul(4), vExtra.y)), select(isGlaze, float(0.04), vMisc.z).mul(a), vMisc.w.mul(a)),
       }));
     });
     // Scrapes: Zero / OneMinusSrcAlpha, everything in both targets scaled down where the blade passes.
