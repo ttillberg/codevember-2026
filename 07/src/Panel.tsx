@@ -276,7 +276,9 @@ const Icon = ({ children, size = 30, stroke = 0.8 }: { children: React.ReactNode
 const GearIcon = () => (
   <Icon><path d={`${GEAR} M10.2 8 A2.2 2.2 0 1 0 5.8 8 A2.2 2.2 0 1 0 10.2 8 Z`} fill="currentColor" fillRule="evenodd" stroke="none" /></Icon>
 );
-const InfoIcon = () => <Icon><circle cx="8" cy="8" r="6" /><path d="M8 7.3V11" /><circle cx="8" cy="5" r="0.5" fill="currentColor" /></Icon>;
+const HelpIcon = () => (
+  <Icon><circle cx="8" cy="8" r="6" /><path d="M6.25 6.4a1.8 1.8 0 1 1 2.6 1.6c-.55.28-.85.65-.85 1.2v.3" /><circle cx="8" cy="11.2" r="0.5" fill="currentColor" stroke="none" /></Icon>
+);
 
 // A row in a popover menu: a label, and a little switch when it toggles.
 const Row = ({ label, on, hint, act }: { label: string; on?: boolean; hint?: string; act: () => void }) => (
@@ -326,7 +328,7 @@ export function Panel() {
           <Row label="Clear" act={() => set(() => { paint.clear(); clearDrips(); })} />
           <Row label="Reset tools" act={() => set(resetTool)} />
         </Pop>
-        <Pop name="help" icon={<InfoIcon />} className="ft-menu ft-help">
+        <Pop name="help" icon={<HelpIcon />} className="ft-menu ft-help">
           <p><b>Click + drag</b> paint and turn</p>
           <p><b>Cmd + move</b> turn without painting</p>
           <p><b>Space</b> auto draw</p>
