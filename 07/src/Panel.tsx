@@ -273,7 +273,7 @@ const Icon = ({ children }: { children: React.ReactNode }) => (
 );
 // Solid, the hole punched through with evenodd.
 const GearIcon = () => (
-  <Icon><path d={`${GEAR} M10.2 8 A2.2 2.2 0 1 0 5.8 8 A2.2 2.2 0 1 0 10.2 8 Z`} fill="currentColor" fillRule="evenodd" strokeWidth="0.8" /></Icon>
+  <Icon><path d={`${GEAR} M10.2 8 A2.2 2.2 0 1 0 5.8 8 A2.2 2.2 0 1 0 10.2 8 Z`} fill="currentColor" fillRule="evenodd" stroke="none" /></Icon>
 );
 const InfoIcon = () => <Icon><circle cx="8" cy="8" r="6" /><path d="M8 7.3V11" /><circle cx="8" cy="5" r="0.4" fill="currentColor" /></Icon>;
 
