@@ -188,7 +188,7 @@ function Transport() {
           onPointerUp={(e) => ((dragging.current = false), e.currentTarget.blur())}
           onInput={(e) => (clock.jd = Number(e.currentTarget.value))}
         />
-        <span className="end">2100</span>
+        <span className="end">2100-01-01</span>
       </div>
     </div>
   );

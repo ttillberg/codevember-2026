@@ -11,10 +11,9 @@ canvas { display: block; }
 .info {
   position: fixed; right: 28px; top: 50%; transform: translateY(-50%); width: 264px; padding: 20px 22px 18px;
   font-family: "Helvetica Neue", Helvetica, Arial, sans-serif; font-size: 13px; line-height: 1.4; color: #111;
-  /* An Apple style panel: frosted glass in a black squircle (a true squircle where corner-shape is supported). */
-  background: rgba(255, 255, 255, 0.5); backdrop-filter: blur(20px) saturate(1.6); -webkit-backdrop-filter: blur(20px) saturate(1.6);
-  border: 1.5px solid #111; border-radius: 30px; corner-shape: squircle;
-  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.12);
+  /* An Apple style panel: plain black in a squircle (a true squircle where corner-shape is supported). */
+  background: #000; border-radius: 30px; corner-shape: squircle;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.35);
 }
 @supports not (corner-shape: squircle) { .info { border-radius: 22px; } }
 .info h2 { margin: 0 0 4px; font-size: 34px; font-weight: 700; letter-spacing: -0.02em; line-height: 1.05; }
@@ -24,7 +23,7 @@ canvas { display: block; }
 .info dt { opacity: 0.5; }
 .info dd { margin: 0; text-align: right; font-weight: 700; font-variant-numeric: tabular-nums; }
 .info dd.names { font-variant-numeric: normal; line-height: 1.35; }
-body[data-theme="dark"] .info { color: #f2f2f2; background: rgba(28, 30, 36, 0.5); border-color: #000; }
+body[data-theme="dark"] .info { color: #f2f2f2; }
 @media (max-width: 640px) {
   .info { top: auto; bottom: 40px; right: 16px; left: 16px; width: auto; transform: none; }
   .info h2 { font-size: 24px; }
@@ -58,7 +57,7 @@ body[data-theme="dark"] .planets button { color: #f2f2f2; }
    right, the date and a scrubber underneath. Compact. */
 .transport {
   position: fixed; left: 50%; bottom: 16px; transform: translateX(-50%); width: min(350px, calc(100vw - 32px)); box-sizing: border-box;
-  padding: 6px 16px 10px; color: #fff;
+  padding: 9px 20px 13px; color: #fff;
   background: rgba(36, 37, 42, 0.55); backdrop-filter: blur(22px) saturate(1.4); -webkit-backdrop-filter: blur(22px) saturate(1.4);
   border: 1px solid rgba(255, 255, 255, 0.12); border-radius: 18px; corner-shape: squircle;
   box-shadow: 0 8px 28px rgba(0, 0, 0, 0.16);
@@ -78,15 +77,17 @@ body[data-theme="dark"] .planets button { color: #f2f2f2; }
 .transport .buttons button:not(:disabled):hover { opacity: 1; }
 .transport .speed {
   grid-column: 3; justify-self: end;
-  display: flex; align-items: center; gap: 7px; font-weight: 700; font-variant-numeric: tabular-nums;
+  display: flex; align-items: center; gap: 6px; font-weight: 700; font-variant-numeric: tabular-nums;
 }
 .transport .speed button { opacity: 0.45; }
 .transport .speed button:hover { opacity: 0.8; }
 .transport .speed button.on { opacity: 1; }
-.transport .timeline { display: flex; align-items: center; gap: 10px; margin-top: 2px; }
+/* The date and the end year in equal columns either side, so the scrubber sits centred. */
+.transport .timeline { display: grid; grid-template-columns: 74px 1fr 74px; align-items: center; gap: 10px; margin-top: 2px; }
+.transport .end { text-align: right; }
 .transport .when, .transport .end { font-variant-numeric: tabular-nums; opacity: 0.85; white-space: nowrap; }
 .transport input[type="range"] {
-  flex: 1; -webkit-appearance: none; appearance: none; height: 5px; border-radius: 3px; margin: 0;
+  width: 100%; -webkit-appearance: none; appearance: none; height: 5px; border-radius: 3px; margin: 0;
   background: rgba(255, 255, 255, 0.28); outline: none; cursor: pointer;
 }
 .transport input[type="range"]::-webkit-slider-thumb {
