@@ -43,10 +43,9 @@ body[data-theme="dark"] .back { color: #f2f2f2; }
 .planets button {
   border: 0; background: none; padding: 3px 0; text-align: left; cursor: pointer; color: #111;
   font-family: "Helvetica Neue", Helvetica, Arial, sans-serif; font-weight: 700;
-  opacity: 1; transition: transform 0.25s; transform-origin: left center;
+  opacity: 1; transition: color 0.25s;
 }
-/* Always white; the picked one steps out a little. */
-.planets button.on { transform: translateX(8px); }
+/* White; the picked one in its own colour (set inline, as its orbit's). */
 .planets button { font-size: 22px; letter-spacing: -0.02em; line-height: 1.1; }
 body[data-theme="dark"] .planets button { color: #f2f2f2; }
 @media (max-width: 640px) {
