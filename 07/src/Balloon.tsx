@@ -170,12 +170,14 @@ export function Balloon() {
       if (e.button !== 0) return;
       painting.current = true;
       wheel.grabbed = true;
+      el.classList.add('grabbing');
       hand.set(0, 0, 0);
       lastT = e.timeStamp;
     };
     const up = (e: PointerEvent) => {
       painting.current = false;
       stroke.current = null;
+      el.classList.remove('grabbing');
       if (!wheel.grabbed) return;
       wheel.grabbed = false;
       // Let go while moving: it spins on at the hand's speed. Let go after a pause: it stays as it is.
@@ -209,7 +211,7 @@ export function Balloon() {
         const a = h.point.clone().project(camera), b = h.point.clone().add(right).project(camera);
         px = Math.abs(b.x - a.x) * size.width * 0.5;
       }
-      ring.style.width = ring.style.height = `${Math.max(px * 2, 6)}px`;
+      ring.style.width = ring.style.height = `${Math.max(px * 2, 12)}px`;
       ring.style.opacity = h ? '1' : '0.3';
     }
     if (!(painting.current || tool.auto) || !h) { stroke.current = null; return; }
