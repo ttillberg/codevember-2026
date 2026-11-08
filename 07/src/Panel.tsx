@@ -415,6 +415,8 @@ const Icon = ({ children }: { children: React.ReactNode }) => (
 const GearIcon = () => (
   <Fit><path d={`${GEAR} M10.2 8 A2.2 2.2 0 1 0 5.8 8 A2.2 2.2 0 1 0 10.2 8 Z`} fill="currentColor" fillRule="evenodd" stroke="none" /></Fit>
 );
+// An upright axle with a platter round its foot, seen a little from above.
+const TurntableIcon = () => <Fit line={1.5}><path d="M8 1.5V11" /><ellipse cx="8" cy="11" rx="6" ry="2.2" /></Fit>;
 const HelpIcon = () => (
   // On its own in the corner, so drawn a little bolder than the bar icons.
   <Fit line={2.2}><circle cx="8" cy="8" r="6" /><path d="M6.25 6.4a1.8 1.8 0 1 1 2.6 1.6c-.55.28-.85.65-.85 1.2v.3" /><circle cx="8" cy="11.25" r="0.65" fill="currentColor" stroke="none" /></Fit>
@@ -442,9 +444,10 @@ export function Panel() {
   const [, bump] = useState(0);
   useEffect(() => {
     const again = () => bump((n) => n + 1);
-    // Space toggles auto draw; delete (or backspace) clears the balloon.
+    // T (or space) toggles the turntable; delete (or backspace) clears the balloon.
     const key = (e: KeyboardEvent) => {
-      if (e.code === 'Space') { e.preventDefault(); tool.auto = !tool.auto; again(); }
+      const plain = !e.metaKey && !e.ctrlKey && !e.altKey;
+      if ((e.code === 'KeyT' && plain && !e.repeat) || e.code === 'Space') { e.preventDefault(); tool.auto = !tool.auto; again(); }
       if ((e.code === 'Delete' || e.code === 'Backspace') && !e.metaKey && !e.ctrlKey && !e.altKey) {
         e.preventDefault(); paint.clear(); clearDrips();
       }
@@ -472,8 +475,16 @@ export function Panel() {
       <ShadeKnob />
       <Picker name="paint" tip="Material" items={FINISHES} cur={tool.finish} put={(f) => { tool.finish = f; }} icon={(f) => <FinishBall f={f} />} hotkey="KeyM" />
       <span className="ft-sep" />
+      {/* Turntable: the brush never lifts, the balloon turns under it like a record. */}
+      <div className="ft-knob ft-toggle">
+        <button aria-label="turntable" aria-pressed={tool.auto} className={tool.auto ? 'on' : ''}
+          onPointerDown={(e) => e.preventDefault()} onClick={() => set(() => { tool.auto = !tool.auto; })}>
+          <TurntableIcon />
+          <Tip tip="Turntable" hotkey="KeyT" />
+        </button>
+      </div>
+      <span className="ft-sep" />
       <Pop name="settings" tip="Settings" icon={<GearIcon />} className="ft-menu">
-        <Row label="Auto draw" hint="Space" on={tool.auto} act={() => set(() => { tool.auto = !tool.auto; })} />
         <Row label="Inertia" on={tool.inertia} act={() => set(() => { tool.inertia = !tool.inertia; })} />
         {DARK_ENABLED && <Row label="Dark mode" on={theme === 'dark'} act={() => set(() => setTheme(theme === 'dark' ? 'light' : 'dark'))} />}
         {/* Picking a size reloads: the targets and shaders are built on it. */}
@@ -504,7 +515,7 @@ export function Panel() {
       <Pop name="help" tip="Help" icon={<HelpIcon />} className="ft-menu ft-help">
         <p><b>Click + drag</b> paint and turn</p>
         <p><Key>{MAC ? '⌘' : 'Ctrl'}</Key> + drag, or <b>two fingers</b>: turn without painting</p>
-        <p><Key wide>Space</Key> auto draw</p>
+        <p><Key>T</Key> turntable: the brush never lifts, the balloon turns under it</p>
         <p><Key>{MAC ? '⌫' : 'Del'}</Key> clear the balloon</p>
         <p><Key>⇧</Key> <Key>0–9</Key> save a preset, <Key>0–9</Key> recall it</p>
         <h5>Quick menus <span>hold the key, move, let go</span></h5>
