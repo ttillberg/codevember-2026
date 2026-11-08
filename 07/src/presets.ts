@@ -32,6 +32,7 @@ window.addEventListener('keydown', (e) => {
   } else if (slots[n]) {
     const p = slots[n];
     for (const k of FIELDS) if (typeof p[k] === typeof tool[k]) (tool as Record<string, unknown>)[k] = p[k];
+    if ((tool.brush as string) === 'scrape') tool.brush = 'erase'; // saved before scrape was renamed
     save();
     tell(`Preset ${n}`);
   } else {

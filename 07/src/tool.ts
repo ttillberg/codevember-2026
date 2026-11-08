@@ -9,7 +9,7 @@ export const FINISH: Record<Finish, { rough: number; metal: number }> = {
 };
 
 export const tool = {
-  brush: 'glaze' as Brush,
+  brush: 'bristle' as Brush,
   finish: 'gloss' as Finish,
   hex: '#00aaff', // a cyan blue, between cyan and blue: made from hue and shade
   hue: 0.5556, // round the wheel, 0 red .. 1 red again
@@ -18,7 +18,7 @@ export const tool = {
   flow: 0.9,
   auto: false, // paint without holding the button
   inertia: true, // it keeps turning once let go
-  liquid: 0.3, // 0 stiff paint that stays put, 1 thin paint with long legs
+  liquid: 0.4, // 0 stiff paint that stays put, 1 thin paint with long legs
   watery: 0.5, // the glaze: 0 a firm blob, 1 a wide thin wash that spreads and mixes
 };
 
@@ -34,6 +34,7 @@ try {
   }
 } catch { /* no storage, no memory */ }
 if (tool.brush === 'round' || (tool.brush as string) === 'flat') tool.brush = 'pencil'; // round is gone from the UI, flat is now pencil
+if ((tool.brush as string) === 'scrape') tool.brush = 'erase'; // scrape is now erase
 // Written only when something changed: this runs on every click and key.
 let saved = '';
 export const save = () => {

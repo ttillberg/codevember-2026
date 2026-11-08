@@ -11,8 +11,8 @@ const _c = new Vector3(), _s = new Vector3(), _oc = new Vector3(), _local = new 
 const _hit = { u: 0, v: 0, point: new Vector3() };
 // Dab spacing as a fraction of the brush size, and the alpha each dab adds, so a stroke builds up smoothly rather
 // than popping in dab by dab: about a dozen dabs overlap at any point of a round stroke.
-const SPACING: Record<Brush, number> = { round: 0.06, bristle: 0.06, spray: 0.05, scrape: 0.08, glaze: 0.035, pencil: 0.06 };
-const FLOW: Record<Brush, number> = { round: 0.2, bristle: 0.3, spray: 0.3, scrape: 0.12, glaze: 0.08, pencil: 0.25 };
+const SPACING: Record<Brush, number> = { round: 0.06, bristle: 0.06, spray: 0.05, erase: 0.08, glaze: 0.035, pencil: 0.06 };
+const FLOW: Record<Brush, number> = { round: 0.2, bristle: 0.3, spray: 0.3, erase: 0.12, glaze: 0.08, pencil: 0.25 };
 
 // The wheel, tunable live. A trackball: drag turns the balloon about the axis across the drag, any direction,
 // and it keeps turning once let go at the speed of the last move, slowing only a little. Grabbing never stops it.
@@ -34,6 +34,7 @@ import { K, PAINT_H, PAINT_W, PaintLayer, sim, type Brush, type Dab } from './pa
 import { FINISH, hexToRgb, tool } from './tool';
 import { dripSettings, dryPile, maybeSpawn, stepDrips } from './drips';
 import { uRim, uRubber } from './theme';
+import { compose, syncColour } from './color';
 
 export const paint = new PaintLayer();
 // Dev: 0 normal, 1 coverage, 2 wetness, 3 thickness, 4 tint. And how much wet paint glosses up.
@@ -153,7 +154,22 @@ export function Balloon() {
     paint.flush(gl, dt);
   }, -1);
 
+  // Each touch varies the brush a little, like a real one never takes paint the same way twice: size, load, how
+  // runny, and a hair of hue and brightness. Drawn once per stroke as offsets on the knobs, which keep their values;
+  // the colour is remade when the knobs move, so a long auto-draw stroke still follows them.
+  const jitter = useRef({ size: 1, flow: 1, liquid: 0, dh: 0, ds: 0, key: '', rgb: hexToRgb(tool.hex) });
+  const rollJitter = () => {
+    const r = (a: number) => (Math.random() * 2 - 1) * a;
+    jitter.current = { ...jitter.current, size: 1 + r(0.15), flow: 0.975 + r(0.125), liquid: r(0.08), dh: r(0.012), ds: r(0.04), key: '' };
+  };
   const dabAt = (u: number, v: number, angle: number, seed: number, grow = 1) => {
+    const j = jitter.current;
+    syncColour(); // a hex set elsewhere (a preset) brings hue and shade along first
+    const key = `${tool.hue} ${tool.shade}`;
+    if (j.key !== key) {
+      j.rgb = hexToRgb(compose(((tool.hue + j.dh) % 1 + 1) % 1, Math.min(1, Math.max(0, tool.shade + j.ds))));
+      j.key = key;
+    }
     const finish = FINISH[tool.finish];
     const glaze = tool.brush === 'glaze';
     const w = tool.watery;
@@ -161,17 +177,17 @@ export function Balloon() {
       u, v, angle, seed,
       // Watery glaze: wider, thinner. Its softness rides in the rough slot, which the glaze doesn't use.
       // The spray dab is drawn a little bigger than the brush: the dense core fills the ring, the speckles go just outside.
-      size: tool.size * (glaze ? 1 + w * 0.7 : tool.brush === 'spray' ? 1.2 : 1) * grow,
-      rgb: hexToRgb(tool.hex),
+      size: tool.size * (glaze ? 1 + w * 0.7 : tool.brush === 'spray' ? 1.2 : 1) * grow * j.size,
+      rgb: j.rgb,
       // Dabs overlap many times along the stroke, so each one carries only a little.
-      flow: FLOW[tool.brush] * tool.flow * (glaze ? 1 - w * 0.45 : 1),
+      flow: FLOW[tool.brush] * tool.flow * (glaze ? 1 - w * 0.45 : 1) * j.flow,
       brush: tool.brush,
       rough: glaze ? w : finish.rough,
       metal: finish.metal,
       wet: glaze ? 1 : tool.brush === 'spray' || tool.brush === 'pencil' ? 0 : undefined, // a wash is laid wet and floats out; spray and pencil are dry
     };
     paint.add(d);
-    if (tool.brush !== 'scrape') maybeSpawn(d, tool.liquid, sim.gravityObj, grow > 1); // grow > 1: the can held still
+    if (tool.brush !== 'erase') maybeSpawn(d, Math.min(1, Math.max(0, tool.liquid + j.liquid)), sim.gravityObj, grow > 1); // grow > 1: the can held still
     // Spray splatters: now and then a fat drop lands off to the side, outside the mist.
     if (tool.brush === 'spray' && Math.random() < 0.12) {
       const n = 1 + Math.floor(Math.random() * 2);
@@ -346,6 +362,7 @@ export function Balloon() {
     if (!stroke.current) {
       const seed = Math.random() * 1000;
       stroke.current = { u: h.u, v: h.v, seed };
+      rollJitter();
       sprayHeld.current = 0;
       dabAt(h.u, h.v, 0, seed);
     } else {

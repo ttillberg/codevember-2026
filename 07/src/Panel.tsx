@@ -8,8 +8,8 @@ import { DARK_ENABLED, setTheme, theme } from './theme';
 import { hueStrip, setColour, shadeStrip, syncColour } from './color';
 
 // The media, and the options each one answers to.
-type Medium = 'glaze' | 'bristle' | 'spray' | 'pencil' | 'scrape';
-const MEDIA: Medium[] = ['glaze', 'bristle', 'spray', 'pencil', 'scrape'];
+type Medium = 'glaze' | 'bristle' | 'spray' | 'pencil' | 'erase';
+const MEDIA: Medium[] = ['glaze', 'bristle', 'spray', 'pencil', 'erase'];
 const FINISHES: Finish[] = ['matte', 'gloss', 'metal'];
 
 // Every bar icon is drawn at the colour swatch's height, 24px, top and bottom on the same lines. Fit measures the
@@ -54,9 +54,9 @@ const MEDIUM_ICON: Record<Medium, string> = {
   bristle: 'M4 3h8v4H4zM5 7v5M7 7v6M9 7v6M11 7v5',
   spray: 'M6 6h4v7.5H6zM7 6V4.5h2V6M9 3h1.5M11.5 3.5l1-1M11.5 5h1.5',
   pencil: 'M6 2.5h4v7H6zM6 4.5h4M6 9.5l.9 2.1a1.2 1.2 0 0 0 2.2 0L10 9.5',
-  scrape: 'M4.5 5.5h7A1.5 1.5 0 0 1 13 7v2a1.5 1.5 0 0 1-1.5 1.5h-7A1.5 1.5 0 0 1 3 9V7a1.5 1.5 0 0 1 1.5-1.5zM7.5 5.5v5',
+  erase: 'M4.5 5.5h7A1.5 1.5 0 0 1 13 7v2a1.5 1.5 0 0 1-1.5 1.5h-7A1.5 1.5 0 0 1 3 9V7a1.5 1.5 0 0 1 1.5-1.5zM7.5 5.5v5',
 };
-const MEDIUM_TILT: Partial<Record<Medium, string>> = { glaze: 'rotate(45 8 8)', spray: 'rotate(-45 9.2 8.2)', pencil: 'rotate(45 8 8)', scrape: 'rotate(-40 8 8)' };
+const MEDIUM_TILT: Partial<Record<Medium, string>> = { glaze: 'rotate(45 8 8)', spray: 'rotate(-45 9.2 8.2)', pencil: 'rotate(45 8 8)', erase: 'rotate(-40 8 8)' };
 const MediumIcon = ({ m }: { m: Medium }) => (
   <Fit key={m} line={1.5}><path d={MEDIUM_ICON[m]} transform={MEDIUM_TILT[m]} /></Fit>
 );
@@ -74,7 +74,7 @@ const OPTIONS: Record<Medium, Num[]> = {
   bristle: ['liquid'],
   spray: ['liquid'],
   pencil: [],
-  scrape: [],
+  erase: [],
 };
 
 // Shortcuts: hold a key and its popover opens; move the mouse to set it, let go of the key to keep it.
