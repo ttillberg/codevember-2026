@@ -6,6 +6,9 @@ const CENTRE = new Vector2(0, 0);
 const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
 // Scratch for the per-frame and per-move maths, so nothing is allocated there.
 const _right = new Vector3(), _a = new Vector3(), _b = new Vector3(), _axis = new Vector3(), _inv = new Quaternion();
+// Scratch for the analytic brush hit, reused every frame.
+const _c = new Vector3(), _s = new Vector3(), _oc = new Vector3(), _local = new Vector3(), _q = new Quaternion();
+const _hit = { u: 0, v: 0, point: new Vector3() };
 // Dab spacing as a fraction of the brush size, and the alpha each dab adds, so a stroke builds up smoothly rather
 // than popping in dab by dab: about a dozen dabs overlap at any point of a round stroke.
 const SPACING: Record<Brush, number> = { round: 0.06, bristle: 0.06, spray: 0.05, scrape: 0.08, glaze: 0.035, pencil: 0.06 };
@@ -183,12 +186,26 @@ export function Balloon() {
   const raycaster = useMemo(() => new Raycaster(), []);
   const camera = useThree((s) => s.camera);
 
+  // Where the screen centre meets the balloon. It's a perfect sphere, so the ray is met analytically instead of
+  // tested against its 24k triangles: the near root of |o + t d - c| = r, then the hit turned back into the
+  // balloon's own frame and read as SphereGeometry lays its uvs (u = atan2(z, -x) / 2pi, v = 1 - acos(y) / pi).
   const hit = () => {
     const mesh = frontRef.current;
     if (!mesh) return null;
     raycaster.setFromCamera(CENTRE, camera);
-    const h = raycaster.intersectObject(mesh, false)[0];
-    return h?.uv ? { u: h.uv.x, v: h.uv.y, point: h.point } : null;
+    const { origin, direction } = raycaster.ray;
+    mesh.getWorldPosition(_c);
+    const r = mesh.getWorldScale(_s).x;
+    _oc.subVectors(origin, _c);
+    const b = _oc.dot(direction), disc = b * b - (_oc.lengthSq() - r * r);
+    if (disc < 0) return null;
+    const t = -b - Math.sqrt(disc);
+    if (t < 0) return null;
+    _hit.point.copy(origin).addScaledVector(direction, t);
+    _local.subVectors(_hit.point, _c).divideScalar(r).applyQuaternion(mesh.getWorldQuaternion(_q).invert());
+    _hit.u = ((Math.atan2(_local.z, -_local.x) / (2 * Math.PI)) % 1 + 1) % 1;
+    _hit.v = 1 - Math.acos(Math.min(1, Math.max(-1, _local.y))) / Math.PI;
+    return _hit;
   };
 
   // Spray thins with speed, like a real can: full width dawdling, down to a quarter on a quick flick. Smoothed.
