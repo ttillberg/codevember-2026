@@ -185,7 +185,7 @@ canvas.grabbing { cursor: grabbing; }
 .ft-toast.on { opacity: 1; transform: translate(-50%, 0); }
 
 /* The bar's own buttons: icon plus S/2 either side, the hover and pressed disc drawn behind. */
-.ft-media .ft-knob > button { position: relative; width: auto; padding: 0 8.5px; isolation: isolate; }
+.ft-media .ft-knob > button { position: relative; width: auto; min-width: 41px; padding: 0 8.5px; isolation: isolate; } /* narrow icons (the drop, the brushes) sit in a 24px slot, centred */
 .ft-media .ft-knob > button, .ft-media .ft-knob > button:hover, .ft-media .ft-knob > button.on,
 .ft-media .ft-knob.swatches > button.on { background: none; }
 .ft-media .ft-knob > button::before {
