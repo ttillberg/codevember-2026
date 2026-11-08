@@ -32,7 +32,7 @@ export function Shadow() {
   return (
     <>
       <mesh geometry={geo} material={mat} rotation={[-Math.PI / 2, 0, 0]} position={[0, -1.45, 0]} renderOrder={-1} />
-      <mesh geometry={spot} material={caustic} rotation={[-Math.PI / 2, 0, 0]} position={[-0.3, -1.445, 0.15]} renderOrder={-1} />
+      <mesh geometry={spot} material={caustic} rotation={[-Math.PI / 2, 0, 0]} position={[-0.3, -1.445, -0.75]} renderOrder={-1} />
     </>
   );
 }
