@@ -110,7 +110,9 @@ canvas.grabbing { cursor: grabbing; }
     linear-gradient(180deg, #f2f1ee 0%, #b7b6b3 44%, #64635f 50%, #8c8b88 68%, #dddcd9 100%);
 }
 
-.ft-pick.open, .ft-popover.open, 
+/* Popovers that take input while open, and a gauge pinned open. */
+.ft-pick.open, .ft-popover.open, .ft-gauge.pinned { pointer-events: auto; }
+
 /* Settings and help: small menus over their buttons. */
 .ft-menu {
   display: flex; flex-direction: column; width: max-content; min-width: 200px; padding: 6px; border-radius: 20px; box-sizing: border-box; user-select: none;
