@@ -1,13 +1,14 @@
 import { useEffect, useMemo, useRef } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
-import { BackSide, FrontSide, Group, Matrix4, Mesh, Quaternion, Ray, Raycaster, Sphere, SphereGeometry, Vector2, Vector3 } from 'three';
+import { BackSide, FrontSide, Group, Mesh, Quaternion, Raycaster, SphereGeometry, Vector2, Vector3 } from 'three';
 
 const CENTRE = new Vector2(0, 0);
-const UNIT = new Sphere(new Vector3(), 1);
 const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
 // Scratch for the per-frame and per-move maths, so nothing is allocated there.
 const _right = new Vector3(), _a = new Vector3(), _b = new Vector3(), _axis = new Vector3(), _inv = new Quaternion();
-const _ray = new Ray(), _toLocal = new Matrix4(), _hit = new Vector3();
+// Scratch for the analytic brush hit, reused every frame.
+const _c = new Vector3(), _s = new Vector3(), _oc = new Vector3(), _local = new Vector3(), _q = new Quaternion();
+const _hit = { u: 0, v: 0, point: new Vector3() };
 // Dab spacing as a fraction of the brush size, and the alpha each dab adds, so a stroke builds up smoothly rather
 // than popping in dab by dab: about a dozen dabs overlap at any point of a round stroke.
 const SPACING: Record<Brush, number> = { round: 0.06, bristle: 0.06, spray: 0.05, scrape: 0.08, glaze: 0.035, pencil: 0.06 };
@@ -198,17 +199,26 @@ export function Balloon() {
   const raycaster = useMemo(() => new Raycaster(), []);
   const camera = useThree((s) => s.camera);
 
-  // The centre ray against the sphere itself, in the balloon's frame, not against its 24 000 triangles; the uv is
-  // three's sphere mapping (u round the y axis from -x, v up from the bottom pole), as the geometry has it.
+  // Where the screen centre meets the balloon. It's a perfect sphere, so the ray is met analytically instead of
+  // tested against its 24k triangles: the near root of |o + t d - c| = r, then the hit turned back into the
+  // balloon's own frame and read as SphereGeometry lays its uvs (u = atan2(z, -x) / 2pi, v = 1 - acos(y) / pi).
   const hit = () => {
     const mesh = frontRef.current;
     if (!mesh) return null;
     raycaster.setFromCamera(CENTRE, camera);
-    _ray.copy(raycaster.ray).applyMatrix4(_toLocal.copy(mesh.matrixWorld).invert());
-    if (!_ray.intersectSphere(UNIT, _hit)) return null;
-    const theta = Math.acos(Math.max(-1, Math.min(1, _hit.y / _hit.length())));
-    const u = (Math.atan2(_hit.z, -_hit.x) / (2 * Math.PI) + 1) % 1;
-    return { u, v: 1 - theta / Math.PI, point: _hit.applyMatrix4(mesh.matrixWorld) };
+    const { origin, direction } = raycaster.ray;
+    mesh.getWorldPosition(_c);
+    const r = mesh.getWorldScale(_s).x;
+    _oc.subVectors(origin, _c);
+    const b = _oc.dot(direction), disc = b * b - (_oc.lengthSq() - r * r);
+    if (disc < 0) return null;
+    const t = -b - Math.sqrt(disc);
+    if (t < 0) return null;
+    _hit.point.copy(origin).addScaledVector(direction, t);
+    _local.subVectors(_hit.point, _c).divideScalar(r).applyQuaternion(mesh.getWorldQuaternion(_q).invert());
+    _hit.u = ((Math.atan2(_local.z, -_local.x) / (2 * Math.PI)) % 1 + 1) % 1;
+    _hit.v = 1 - Math.acos(Math.min(1, Math.max(-1, _local.y))) / Math.PI;
+    return _hit;
   };
 
   // Spray thins with speed, like a real can: full width dawdling, down to a quarter on a quick flick. Smoothed.
