@@ -15,7 +15,7 @@ export const tool = {
   hue: 0.5556, // round the wheel, 0 red .. 1 red again
   shade: 0.5, // 0 black, 0.5 the pure hue, 1 white
   size: 0.086, // pole to pole units, 40% along the size knob
-  flow: 0.9,
+  flow: 1, // always full: no control for it, and a saved value is overridden below
   auto: false, // paint without holding the button
   inertia: true, // it keeps turning once let go
   liquid: 0.4, // 0 stiff paint that stays put, 1 thin paint with long legs
@@ -35,6 +35,7 @@ try {
 } catch { /* no storage, no memory */ }
 if (tool.brush === 'round' || (tool.brush as string) === 'flat') tool.brush = 'pencil'; // round is gone from the UI, flat is now pencil
 if ((tool.brush as string) === 'scrape') tool.brush = 'erase'; // scrape is now erase
+tool.flow = 1; // flow left the bar: whatever was saved, it's full
 // Written only when something changed: this runs on every click and key.
 let saved = '';
 export const save = () => {

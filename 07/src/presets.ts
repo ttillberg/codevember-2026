@@ -1,9 +1,9 @@
 // Presets: shift + 0..9 stores the brush as it is now in that slot, 0..9 alone brings it back. A slot holds the
-// brush, its finish, colour, size, flow and wetness, not the room settings (auto draw, inertia). Kept between visits.
+// brush, its finish, colour, size and wetness, not the room settings (auto draw, inertia). Kept between visits.
 import { save, tool } from './tool';
 
 const KEY = 'codevember-07-presets';
-const FIELDS = ['brush', 'finish', 'hex', 'hue', 'shade', 'size', 'flow', 'liquid', 'watery'] as const;
+const FIELDS = ['brush', 'finish', 'hex', 'hue', 'shade', 'size', 'liquid', 'watery'] as const; // not flow: always full
 type Preset = Pick<typeof tool, (typeof FIELDS)[number]>;
 
 let slots: Record<string, Preset> = {};
