@@ -302,7 +302,7 @@ export function Balloon() {
       if (e.button !== 0) return;
       fingers.set(e.pointerId, { x: e.clientX, y: e.clientY });
       if (fingers.size > 1) { painting.current = false; stroke.current = null; return; } // a second finger: just turn
-      painting.current = !e.metaKey; // cmd: turn it without painting
+      painting.current = !(e.metaKey || e.ctrlKey); // cmd (ctrl off a Mac): turn it without painting
       wheel.grabbed = true;
       el.classList.add('grabbing');
       hand.set(0, 0, 0);

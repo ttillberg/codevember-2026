@@ -66,8 +66,9 @@ canvas.grabbing { cursor: grabbing; }
   position: absolute; left: 50%; bottom: calc(100% + 14px); padding: 6px; border-radius: 999px; pointer-events: none;
   background: rgba(255, 255, 255, 0.5); backdrop-filter: blur(18px) saturate(1.6); -webkit-backdrop-filter: blur(18px) saturate(1.6);
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.6), 0 8px 24px rgba(0, 0, 0, 0.1);
-  opacity: 0; transform: translate(calc(-50% + var(--dx, 0px)), 8px) scale(0.92); transform-origin: 50% 100%;
-  transition: opacity 0.15s, transform 0.2s cubic-bezier(0.3, 1.4, 0.5, 1);
+  /* Grows from its button: the origin sits over the button even when the popover is slid sideways to fit. */
+  opacity: 0; transform: translate(calc(-50% + var(--dx, 0px)), 6px) scale(0.96); transform-origin: calc(50% - var(--dx, 0px)) 100%;
+  transition: opacity 0.16s ease-out, transform 0.2s cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 .ft-gauge.open { opacity: 1; transform: translate(calc(-50% + var(--dx, 0px)), 0) scale(1); }
 .ft-gauge-track { position: relative; width: 34px; height: 140px; border-radius: 999px; overflow: hidden; background: rgba(0, 0, 0, 0.08); }
@@ -136,6 +137,20 @@ canvas.grabbing { cursor: grabbing; }
 .ft-help { width: auto; white-space: nowrap; padding: 12px 14px; gap: 6px; color: rgba(0, 0, 0, 0.45); }
 .ft-help p { margin: 0; }
 .ft-help b { color: #111; font-weight: 500; }
+/* Keys: flat light grey caps, the macOS way. */
+.ft-key {
+  display: inline-flex; align-items: center; justify-content: center; min-width: 18px; height: 18px; padding: 0 5px;
+  box-sizing: border-box; border: 0; border-radius: 5px; vertical-align: 1px;
+  font: 500 11px/1 var(--ui-font); color: #111; background: #e2e1de;
+}
+.ft-key.wide { padding: 0 9px; }
+.ft-help h5 {
+  margin: 6px 0 0; font: 500 10px/1 var(--ui-font); letter-spacing: 0.06em; text-transform: uppercase; color: rgba(0, 0, 0, 0.4);
+}
+.ft-help h5 span { margin-left: 6px; letter-spacing: 0; text-transform: none; font-size: 11px; font-weight: 400; }
+.ft-quick { display: grid; grid-template-columns: repeat(4, auto); gap: 6px 14px; justify-content: start; }
+.ft-quick span { display: inline-flex; align-items: center; gap: 6px; }
+[data-theme='dark'] .ft-key { background: #3a3937; color: #eee; }
 
 
 /* Clear, reset and download: stacked pill buttons with their icons, the key on the right. */
@@ -198,7 +213,11 @@ canvas.grabbing { cursor: grabbing; }
 
 /* Help on its own, a small frosted disc in the top right; its popover opens downward. */
 .ft-media.ft-corner { left: auto; right: 16px; top: 16px; bottom: auto; transform: none; }
-.ft-corner .ft-gauge { bottom: auto; top: calc(100% + 14px); transform-origin: 50% 0; transform: translate(calc(-50% + var(--dx, 0px)), -8px) scale(0.92); }
+/* Flat: just the grey icon, a little bigger, no frosted disc. */
+.ft-media.ft-corner { background: none; box-shadow: none; backdrop-filter: none; -webkit-backdrop-filter: none; }
+.ft-media.ft-corner::before { display: none; }
+.ft-corner .ft-knob > button .ft-fit { width: 30px; height: 30px; }
+.ft-corner .ft-gauge { bottom: auto; top: calc(100% + 14px); transform-origin: calc(50% - var(--dx, 0px)) 0; transform: translate(calc(-50% + var(--dx, 0px)), -6px) scale(0.96); }
 .ft-corner .ft-gauge.open { transform: translate(calc(-50% + var(--dx, 0px)), 0) scale(1); }
 .ft-corner .ft-knob > button .ft-tip { bottom: auto; top: calc(100% + 12px); }
 .ft-corner .ft-help { white-space: normal; width: min(340px, calc(100vw - 24px)); }
