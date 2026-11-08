@@ -123,14 +123,16 @@ function placeAt(pop: HTMLElement, host: HTMLElement, ax: number, ay: number): A
   return { left: x - r.left, top: y - r.top };
 }
 // Opened from its button, a popover is centred over it but slid sideways to stay PAD px inside the screen.
+// The slide is worked out while it's closed, so it opens already in place (and grows from its button, see the CSS)
+// instead of gliding in sideways; it isn't re-read while open, so nothing is measured during a drag.
 function useClamp(pop: React.RefObject<HTMLElement | null>, host: React.RefObject<HTMLElement | null>, open: boolean) {
   useLayoutEffect(() => {
     const e = pop.current, h = host.current;
-    if (!open || !e || !h) return;
+    if (open || !e || !h) return;
     const r = h.getBoundingClientRect(), w = e.offsetWidth, left = r.left + r.width / 2 - w / 2;
     const dx = Math.max(PAD - left, 0) + Math.min(innerWidth - PAD - (left + w), 0);
     e.style.setProperty('--dx', `${dx}px`);
-  }, [open]);
+  });
 }
 const atStyle = (at: At): React.CSSProperties | undefined =>
   at ? { left: at.left, top: at.top, bottom: 'auto', transform: 'none', transition: 'opacity 0.15s' } : undefined;
