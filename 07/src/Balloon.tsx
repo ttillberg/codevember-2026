@@ -18,7 +18,8 @@ const FLOW: Record<Brush, number> = { round: 0.2, bristle: 0.3, spray: 0.3, eras
 // and it keeps turning once let go at the speed of the last move, slowing only a little. Grabbing never stops it.
 export const wheel = {
   gain: Math.PI, // radians of turn per window width of drag
-  drag: 0.08,    // how fast the spin dies away once let go, per second: next to nothing
+  drag: 0.1,     // how fast the spin dies away once let go, per second: it spins a long while...
+  friction: 0.05, // ...and this steady brake, radians per second per second, brings it to a stop at the end
   maxSpin: 40,   // radians per second
   q: new Quaternion(),      // the balloon's orientation
   omega: new Vector3(),     // angular velocity, world space
@@ -390,7 +391,9 @@ export function Balloon() {
         ringLast.current = { d, o };
       }
     }
-    if (!(painting.current || tool.auto) || !h) { stroke.current = null; return; }
+    // The turntable only paints while the balloon turns: standing (near) still, the brush would pile on one spot.
+    const turning = wheel.grabbed || wheel.omega.length() > 0.15;
+    if (!(painting.current || (tool.auto && turning)) || !h) { stroke.current = null; return; }
     if (!stroke.current) {
       const seed = Math.random() * 1000;
       stroke.current = { u: h.u, v: h.v, seed };
@@ -423,7 +426,11 @@ export function Balloon() {
   useFrame((_, dt) => {
     const g = groupRef.current;
     if (!g) return;
-    if (!wheel.grabbed) wheel.omega.multiplyScalar(Math.exp(-dt * wheel.drag));
+    if (!wheel.grabbed) {
+      wheel.omega.multiplyScalar(Math.exp(-dt * wheel.drag));
+      const w0 = wheel.omega.length();
+      wheel.omega.setLength(Math.max(0, w0 - wheel.friction * dt)); // a zero-length vector stays zero
+    }
     const w = wheel.omega.length();
     if (w > 0) {
       step.setFromAxisAngle(_axis.copy(wheel.omega).divideScalar(w), w * dt);
