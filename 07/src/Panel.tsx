@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { clearDrips } from './drips';
 import { paint } from './Balloon';
-import { PAINT_W, QUALITY, quality, setQuality, type Brush, type Quality } from './paint';
+import { QUALITY, quality, setQuality, type Brush, type Quality } from './paint';
 import { resetTool, save, tool, type Finish } from './tool';
 import { downloadPng } from './snapshot';
 import { DARK_ENABLED, setTheme, theme } from './theme';
@@ -497,11 +497,15 @@ export function Panel() {
           <Row label="Auto draw" hint="Space" on={tool.auto} act={() => set(() => { tool.auto = !tool.auto; })} />
           <Row label="Inertia" on={tool.inertia} act={() => set(() => { tool.inertia = !tool.inertia; })} />
           {DARK_ENABLED && <Row label="Dark mode" on={theme === 'dark'} act={() => set(() => setTheme(theme === 'dark' ? 'light' : 'dark'))} />}
-          <Row label={`Texture ${quality.toUpperCase()}`} hint={`${PAINT_W}×${PAINT_W / 2}`} act={() => {
-            // Reloads: the targets and shaders are built on the size.
-            const qs = Object.keys(QUALITY) as Quality[];
-            setQuality(qs[(qs.indexOf(quality) + 1) % qs.length]);
-          }} />
+          {/* Picking a size reloads: the targets and shaders are built on it. */}
+          <label className="ft-row ft-select">
+            <span>Texture</span>
+            <select value={quality} onChange={(e) => setQuality(e.target.value as Quality)}>
+              {(Object.keys(QUALITY) as Quality[]).map((q) => (
+                <option key={q} value={q}>{({ low: 'LOW', medium: 'MED', high: 'HIGH' } as const)[q]}</option>
+              ))}
+            </select>
+          </label>
           <hr />
           <div className="ft-actions">
             <button onClick={() => set(() => { paint.clear(); clearDrips(); })}>
