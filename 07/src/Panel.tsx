@@ -238,7 +238,8 @@ const SizeRamp = ({ t }: { t: number }) => (
 // Watery or liquid, the medium's own option: a drop filled up to the level, like the ramp.
 const DROP = 'M13 2.5C17.2 8 19.5 11.6 19.5 15.5a6.5 6.5 0 0 1-13 0C6.5 11.6 8.8 8 13 2.5z';
 const WetDrop = ({ t }: { t: number }) => (
-  <Fit className="ft-ramp">
+  // Outlined like the ramp, so the empty part of the drop still reads.
+  <Fit className="ft-ramp" line={1.5}>
     <clipPath id="ft-drop-fill"><rect x="0" y={22 - t * 19.5} width="26" height="26" /></clipPath>
     <path d={DROP} className="ft-ramp-bg" />
     <path d={DROP} clipPath="url(#ft-drop-fill)" />
