@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "proto": "vite --port 5181 --open /prototype.html"
   },
   "devDependencies": {
     "@types/react": "^19.3.0",
