@@ -17,10 +17,6 @@ export function compose(h: number, s: number) {
   const w = (s - 0.5) * 2;
   return hex(c.map((v) => v + (255 - v) * w) as RGB);
 }
-// The hue strip at the current brightness: darker or paler hues as the brightness knob says, so it shows what you'd get.
-export const hueStrip = (s: number) =>
-  `linear-gradient(to top, ${Array.from({ length: 13 }, (_, i) => `${compose(i / 12, s)} ${(i / 12) * 100}%`).join(', ')})`;
-export const shadeStrip = (h: number) => `linear-gradient(to top, #000, ${compose(h, 0.5)}, #fff)`;
 
 // Back from a hex (one set elsewhere, a preset from before): the nearest hue and brightness.
 function derive(x: string) {
