@@ -162,10 +162,12 @@ class Splats {
     this.geo.instanceCount = this.count;
     this.mesh.visible = this.count > 0;
     if (this.count > 0) {
-      this.aDab.needsUpdate = true;
-      this.aCol.needsUpdate = true;
-      this.aMisc.needsUpdate = true;
-      this.aExtra.needsUpdate = true;
+      // Only the dabs there are go up, not the whole buffer.
+      for (const [a, n] of [[this.aDab, 4], [this.aCol, 4], [this.aMisc, 4], [this.aExtra, 2]] as const) {
+        a.clearUpdateRanges();
+        a.addUpdateRange(0, this.count * n);
+        a.needsUpdate = true;
+      }
     }
   }
 }
@@ -228,19 +230,31 @@ export class PaintLayer {
   readonly propsNode = texture(this.targets[0].textures[1]);
   private readers: { node: any; index: number }[] = [];
 
-  /** A props read at another uv, for neighbours; follows the swap like propsNode. */
-  propsAt(uvNode: any) {
-    const node = texture(this.targets[this.cur].textures[1], uvNode);
+  /**
+   * A props read at another uv, for neighbours; follows the swap like propsNode. With a level it samples that
+   * level outright, which WGSL allows inside a branch where a plain sample is refused.
+   */
+  propsAt(uvNode: any, level?: number) {
+    const tex = this.targets[this.cur].textures[1];
+    const node = level === undefined ? texture(tex, uvNode) : texture(tex, uvNode, float(level));
     this.readers.push({ node, index: 1 });
     return node as any;
   }
 
   /** A colour read at another uv, likewise. */
-  colorAt(uvNode: any) {
-    const node = texture(this.targets[this.cur].textures[0], uvNode);
+  colorAt(uvNode: any, level?: number) {
+    const tex = this.targets[this.cur].textures[0];
+    const node = level === undefined ? texture(tex, uvNode) : texture(tex, uvNode, float(level));
     this.readers.push({ node, index: 0 });
     return node as any;
   }
+
+  /**
+   * The most wetness any texel may still hold, kept in step with the shader's drying: a texel reads at most 1 after
+   * a step, loses uDry a step, and the tail of a wash goes down 6% a hop. At nought the run pass has nothing to do
+   * and is skipped until the next dab lands.
+   */
+  private wet = 0;
 
   constructor() {
     // Paint dabs: premultiplied, One / OneMinusSrcAlpha into both targets, so thickness, roughness and metalness
@@ -431,6 +445,7 @@ export class PaintLayer {
   add(d: Dab) {
     const halfU = d.size / Math.max(Math.sin(d.v * Math.PI), 0.02) * 0.25;
     const s = d.brush === 'scrape' ? this.scrape : this.paint;
+    this.wet = 1;
     s.push(d, 0);
     if (d.u - halfU < 0) s.push(d, 1);
     if (d.u + halfU > 1) s.push(d, -1);
@@ -497,18 +512,24 @@ export class PaintLayer {
       this.paint.count = 0;
       this.scrape.count = 0;
     }
-    // 2. run and dry: current -> next, then swap
-    uRunAt.value = sim.runAt; uRunNoise.value = sim.runNoise; uLane.value = sim.lane * K; uLaneSharp.value = sim.laneSharp; uRunRate.value = sim.runRate; uDry.value = sim.dry; uGravity.value = sim.gravity; uSpread.value = sim.spread; uBleed.value = sim.bleed; uMelt.value = sim.melt; uGrow.value = sim.grow; uReach.value = sim.reach; uFront.value = sim.front; uEvap.value = sim.evap; uGravityObj.value.copy(sim.gravityObj);
-    // The run moves at most a texel a step, so slow frames take more steps: the pace is the same at 60 and 120.
-    const steps = Math.max(1, Math.min(4, Math.round(dt * 120)));
-    sim.steps += steps;
-    for (let i = 0; i < steps; i++) {
-      const next = 1 - this.cur;
-      renderer.setRenderTarget(this.targets[next]);
-      this.simQuads[this.cur].render(renderer);
-      this.cur = next;
+    // 2. run and dry: current -> next, then swap. Only while something may still be wet: every term in the pass
+    // (the run, the spread, the melt, the bloom, the evaporation) is scaled by wetness, so on dry paint it is a
+    // copy, and once the drying has had time to take every texel to nought it is left out.
+    if (this.wet > 0) {
+      uRunAt.value = sim.runAt; uRunNoise.value = sim.runNoise; uLane.value = sim.lane * K; uLaneSharp.value = sim.laneSharp; uRunRate.value = sim.runRate; uDry.value = sim.dry; uGravity.value = sim.gravity; uSpread.value = sim.spread; uBleed.value = sim.bleed; uMelt.value = sim.melt; uGrow.value = sim.grow; uReach.value = sim.reach; uFront.value = sim.front; uEvap.value = sim.evap; uGravityObj.value.copy(sim.gravityObj);
+      // The run moves at most a texel a step, so slow frames take more steps: the pace is the same at 60 and 120.
+      const steps = Math.max(1, Math.min(4, Math.round(dt * 120)));
+      sim.steps += steps;
+      for (let i = 0; i < steps; i++) {
+        const next = 1 - this.cur;
+        renderer.setRenderTarget(this.targets[next]);
+        this.simQuads[this.cur].render(renderer);
+        this.cur = next;
+        this.wet = Math.max(this.wet - sim.dry, this.wet * 0.94);
+      }
+      if (this.wet < 1e-3) this.wet = 0;
+      this.point();
     }
-    this.point();
     renderer.autoClear = prevAuto;
     renderer.setRenderTarget(prevTarget);
   }
