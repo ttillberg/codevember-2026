@@ -416,7 +416,8 @@ const GearIcon = () => (
   <Fit><path d={`${GEAR} M10.2 8 A2.2 2.2 0 1 0 5.8 8 A2.2 2.2 0 1 0 10.2 8 Z`} fill="currentColor" fillRule="evenodd" stroke="none" /></Fit>
 );
 const HelpIcon = () => (
-  <Fit line={1.5}><circle cx="8" cy="8" r="6" /><path d="M6.25 6.4a1.8 1.8 0 1 1 2.6 1.6c-.55.28-.85.65-.85 1.2v.3" /><circle cx="8" cy="11.2" r="0.5" fill="currentColor" stroke="none" /></Fit>
+  // On its own in the corner, so drawn a little bolder than the bar icons.
+  <Fit line={2.2}><circle cx="8" cy="8" r="6" /><path d="M6.25 6.4a1.8 1.8 0 1 1 2.6 1.6c-.55.28-.85.65-.85 1.2v.3" /><circle cx="8" cy="11.25" r="0.65" fill="currentColor" stroke="none" /></Fit>
 );
 
 // Keys as little outlined caps, with the Mac's symbols on a Mac and the PC's names elsewhere.
