@@ -4,9 +4,9 @@ import { Balloon } from './Balloon';
 import { Shadow } from './Shadow';
 import { Panel } from './Panel';
 import { Snapshot } from './snapshot';
-import { BG, envIntensity } from './theme';
+import { backgroundNode, envIntensity } from './theme';
 import { useFrame } from '@react-three/fiber';
-import { makeStudio } from './env';
+import { studioTexture } from './env';
 import { useMemo } from 'react';
 
 // The room's reflections follow the theme.
@@ -16,7 +16,7 @@ function Env() {
 }
 
 export function App() {
-  const studio = useMemo(makeStudio, []);
+  const studio = useMemo(studioTexture, []);
   return (
     <>
       <Canvas
@@ -27,7 +27,7 @@ export function App() {
           return renderer;
         }}
       >
-        <primitive attach="background" object={BG} />
+        <primitive attach="backgroundNode" object={backgroundNode} />
         <primitive attach="environment" object={studio} />
         <directionalLight position={[3, 5, 4]} intensity={1.2} />
         <directionalLight position={[-4, 2, -3]} intensity={0.4} color="#cfd8ff" />
