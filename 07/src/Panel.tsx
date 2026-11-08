@@ -419,6 +419,11 @@ const HelpIcon = () => (
   <Fit line={1.5}><circle cx="8" cy="8" r="6" /><path d="M6.25 6.4a1.8 1.8 0 1 1 2.6 1.6c-.55.28-.85.65-.85 1.2v.3" /><circle cx="8" cy="11.2" r="0.5" fill="currentColor" stroke="none" /></Fit>
 );
 
+// Keys as little outlined caps, with the Mac's symbols on a Mac and the PC's names elsewhere.
+const MAC = typeof navigator !== 'undefined' && /Mac|iPhone|iPad|iPod/.test(navigator.platform || navigator.userAgent);
+const Key = ({ children, wide }: { children: React.ReactNode; wide?: boolean }) => <kbd className={`ft-key${wide ? ' wide' : ''}`}>{children}</kbd>;
+const QUICK: [string, string][] = [['B', 'brush'], ['M', 'material'], ['S', 'size'], ['F', 'flow'], ['C', 'colour'], ['L', 'light'], ['W', 'water']];
+
 // A row in a popover menu: a label, and a little switch when it toggles.
 const Row = ({ label, on, hint, act }: { label: string; on?: boolean; hint?: string; act: () => void }) => (
   <button className="ft-row" onClick={act}>
@@ -497,11 +502,14 @@ export function Panel() {
     <div className="ft-media ft-corner">
       <Pop name="help" tip="Help" icon={<HelpIcon />} className="ft-menu ft-help">
         <p><b>Click + drag</b> paint and turn</p>
-        <p><b>Cmd + move</b> or <b>two fingers</b> turn without painting</p>
-        <p><b>Space</b> auto draw</p>
-        <p><b>Del</b> clear the balloon</p>
-        <p><b>Shift + 0–9</b> save a preset, <b>0–9</b> recall it</p>
-        <p><b>Hold B M S F C L W</b> brush, material, size, flow, colour, light, water: move the mouse, let go</p>
+        <p><Key>{MAC ? '⌘' : 'Ctrl'}</Key> + drag, or <b>two fingers</b>: turn without painting</p>
+        <p><Key wide>Space</Key> auto draw</p>
+        <p><Key>{MAC ? '⌫' : 'Del'}</Key> clear the balloon</p>
+        <p><Key>⇧</Key> <Key>0–9</Key> save a preset, <Key>0–9</Key> recall it</p>
+        <h5>Quick menus <span>hold the key, move, let go</span></h5>
+        <div className="ft-quick">
+          {QUICK.map(([k, what]) => <span key={k}><Key>{k}</Key>{what}</span>)}
+        </div>
       </Pop>
     </div>
     </>

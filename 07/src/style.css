@@ -137,6 +137,20 @@ canvas.grabbing { cursor: grabbing; }
 .ft-help { width: auto; white-space: nowrap; padding: 12px 14px; gap: 6px; color: rgba(0, 0, 0, 0.45); }
 .ft-help p { margin: 0; }
 .ft-help b { color: #111; font-weight: 500; }
+/* Keys: flat light grey caps, the macOS way. */
+.ft-key {
+  display: inline-flex; align-items: center; justify-content: center; min-width: 18px; height: 18px; padding: 0 5px;
+  box-sizing: border-box; border: 0; border-radius: 5px; vertical-align: 1px;
+  font: 500 11px/1 var(--ui-font); color: #111; background: #e2e1de;
+}
+.ft-key.wide { padding: 0 9px; }
+.ft-help h5 {
+  margin: 6px 0 0; font: 500 10px/1 var(--ui-font); letter-spacing: 0.06em; text-transform: uppercase; color: rgba(0, 0, 0, 0.4);
+}
+.ft-help h5 span { margin-left: 6px; letter-spacing: 0; text-transform: none; font-size: 11px; font-weight: 400; }
+.ft-quick { display: grid; grid-template-columns: repeat(4, auto); gap: 6px 14px; justify-content: start; }
+.ft-quick span { display: inline-flex; align-items: center; gap: 6px; }
+[data-theme='dark'] .ft-key { background: #3a3937; color: #eee; }
 
 
 /* Clear, reset and download: stacked pill buttons with their icons, the key on the right. */
