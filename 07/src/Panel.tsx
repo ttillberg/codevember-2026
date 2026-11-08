@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { clearDrips } from './drips';
 import { paint } from './Balloon';
-import { QUALITY, quality, setQuality, type Brush, type Quality } from './paint';
+import { QUALITY, quality, setQuality, type Quality } from './paint';
 import { resetTool, save, tool, type Finish } from './tool';
 import { downloadPng } from './snapshot';
 import { DARK_ENABLED, setTheme, theme } from './theme';
@@ -36,9 +36,8 @@ function Fit({ children, line = 0, className }: { children: React.ReactNode; lin
     }
     if (!isFinite(x0)) return;
     const pad = (line / 2) * ((y1 - y0) / (H - line));
-    const next = [x0 - pad, y0 - pad, x1 - x0 + pad * 2, y1 - y0 + pad * 2];
-    if (!box || next.some((v, i) => Math.abs(v - box[i]) > 1e-3)) setBox(next);
-  });
+    setBox([x0 - pad, y0 - pad, x1 - x0 + pad * 2, y1 - y0 + pad * 2]);
+  }, []); // once: the outlines are constants (a different icon remounts through its key); only clip rects move
   const [x, y, w, h] = box ?? [0, 0, 16, 16];
   return (
     <svg height={H} width={(H * w) / h} viewBox={`${x} ${y} ${w} ${h}`} className={`ft-fit ${className ?? ''}`}
@@ -63,11 +62,11 @@ const MediumIcon = ({ m }: { m: Medium }) => (
 );
 
 type Num = 'size' | 'flow' | 'liquid' | 'watery';
-const RANGE: Record<Num, { min: number; max: number; step: number }> = {
-  size: { min: 0.01, max: 0.2, step: 0.005 },
-  flow: { min: 0, max: 1, step: 0.01 },
-  liquid: { min: 0, max: 1, step: 0.01 },
-  watery: { min: 0, max: 1, step: 0.01 },
+const RANGE: Record<Num, { min: number; max: number }> = {
+  size: { min: 0.01, max: 0.2 },
+  flow: { min: 0, max: 1 },
+  liquid: { min: 0, max: 1 },
+  watery: { min: 0, max: 1 },
 };
 // What each medium answers to beyond size, flow and colour; it sits beside the medium in the bar.
 const OPTIONS: Record<Medium, Num[]> = {
@@ -97,6 +96,20 @@ function useHotkey(code: string | undefined, down: () => void, up: () => void) {
     window.addEventListener('keyup', ku);
     return () => { window.removeEventListener('keydown', kd); window.removeEventListener('keyup', ku); };
   }, [code]);
+}
+
+// An open popover closes on a press outside its box, or on escape.
+function useDismiss(box: React.RefObject<HTMLElement | null>, open: boolean, close: () => void) {
+  const cb = useRef(close);
+  cb.current = close;
+  useEffect(() => {
+    if (!open) return;
+    const away = (e: PointerEvent) => { if (!box.current?.contains(e.target as Node)) cb.current(); };
+    const esc = (e: KeyboardEvent) => { if (e.key === 'Escape') cb.current(); };
+    window.addEventListener('pointerdown', away);
+    window.addEventListener('keydown', esc);
+    return () => { window.removeEventListener('pointerdown', away); window.removeEventListener('keydown', esc); };
+  }, [open]);
 }
 
 // Opened by its key, a popover sits under the cursor: the point (ax, ay) inside it lands on the mouse, held PAD px
@@ -163,19 +176,12 @@ function Knob({ name, tip, get, put, face, track, hotkey }: {
     return () => window.removeEventListener('pointermove', move);
   }, [held]);
   useHotkey(hotkey, () => {
-    start.current = { x: mouse.x, y: mouse.y, t: get(), moved: true, wasPinned: true, key: true };
+    start.current = { ...start.current, key: true };
     if (gauge.current && box.current) setSpot(placeAt(gauge.current, box.current, gauge.current.offsetWidth / 2, 6 + (1 - get()) * TRAVEL));
     setPinned(false);
     setHeld(true);
   }, () => { if (start.current.key) { start.current.key = false; setHeld(false); } });
-  useEffect(() => {
-    if (!pinned) return;
-    const away = (e: PointerEvent) => { if (!box.current?.contains(e.target as Node)) setPinned(false); };
-    const esc = (e: KeyboardEvent) => { if (e.key === 'Escape') setPinned(false); };
-    window.addEventListener('pointerdown', away);
-    window.addEventListener('keydown', esc);
-    return () => { window.removeEventListener('pointerdown', away); window.removeEventListener('keydown', esc); };
-  }, [pinned]);
+  useDismiss(box, pinned, () => setPinned(false));
   const t = get();
   const to = (v: number) => { put(Math.min(1, Math.max(0, v))); bump((n) => n + 1); };
   const at = (e: React.PointerEvent<HTMLElement>) => {
@@ -225,16 +231,6 @@ const SizeRamp = ({ t }: { t: number }) => (
   </Fit>
 );
 
-// Size: a volume ramp on the button, the gauge fills up like a volume bar.
-function SizeKnob() {
-  const { min, max } = RANGE.size;
-  return (
-    <Knob name="size" tip="Size" hotkey="KeyS" get={() => (tool.size - min) / (max - min)} put={(v) => { tool.size = min + v * (max - min); }}
-      face={(t) => <SizeRamp t={t} />}
-      track={(t) => <><span className="ft-fill" /><b>{Math.round(t * 100)}</b></>} />
-  );
-}
-
 // Flow: an opacity mark, a disc split on the diagonal. One half is solid; the other goes from the empty grey to
 // solid as the flow rises, mixed as plain colour rather than drawn see-through.
 const FlowDisc = ({ t }: { t: number }) => (
@@ -252,21 +248,12 @@ const WetDrop = ({ t }: { t: number }) => (
     <path d={DROP} clipPath="url(#ft-drop-fill)" />
   </Fit>
 );
-function WetKnob({ k }: { k: Num }) {
+// A knob on one of the tool's numbers, mapped through its range; the gauge fills up like a volume bar.
+function RangeKnob({ k, tip, hotkey, face }: { k: Num; tip: string; hotkey: string; face: (t: number) => React.ReactNode }) {
   const { min, max } = RANGE[k];
   return (
-    <Knob name={k} tip={k === 'watery' ? 'Watery' : 'Liquid'} hotkey="KeyW" get={() => (tool[k] - min) / (max - min)} put={(v) => { tool[k] = min + v * (max - min); }}
-      face={(t) => <WetDrop t={t} />}
-      track={(t) => <><span className="ft-fill" /><b>{Math.round(t * 100)}</b></>} />
-  );
-}
-
-function FlowKnob() {
-  const { min, max } = RANGE.flow;
-  return (
-    <Knob name="flow" tip="Flow" hotkey="KeyF" get={() => (tool.flow - min) / (max - min)} put={(v) => { tool.flow = min + v * (max - min); }}
-      face={(t) => <FlowDisc t={t} />}
-      track={(t) => <><span className="ft-fill" /><b>{Math.round(t * 100)}</b></>} />
+    <Knob name={k} tip={tip} hotkey={hotkey} get={() => (tool[k] - min) / (max - min)} put={(v) => { tool[k] = min + v * (max - min); }}
+      face={face} track={(t) => <><span className="ft-fill" /><b>{Math.round(t * 100)}</b></>} />
   );
 }
 
@@ -300,9 +287,7 @@ function Picker<T extends string>({ name, tip, items, cur, put, icon, solid, oth
   solid?: boolean; // picked shows as black, for icons; off for swatches that carry their own look (a ring instead)
 }) {
   const [open, setOpen] = useState(false);
-  const [hot, setHotState] = useState<T | null>(null);
-  const hotRef = useRef<T | null>(null);
-  const setHot = (v: T | null) => { hotRef.current = v; setHotState(v); };
+  const [hot, setHot] = useState<T | null>(null);
   const box = useRef<HTMLDivElement>(null);
   const popEl = useRef<HTMLDivElement>(null);
   const [at, setAt] = useState<At>(null);
@@ -324,8 +309,7 @@ function Picker<T extends string>({ name, tip, items, cur, put, icon, solid, oth
   }, () => {
     if (!drag.current.key) return;
     drag.current.key = false; drag.current.down = false;
-    const v = hotRef.current;
-    if (v) pick(v); else setOpen(false);
+    if (hot) pick(hot); else setOpen(false);
   });
   // The choice in the row at this height, wherever the pointer is sideways; past the top it's the top one.
   // Back down under the popover (over the button) it's none, so letting go there changes nothing.
@@ -346,7 +330,6 @@ function Picker<T extends string>({ name, tip, items, cur, put, icon, solid, oth
     if (!open) return;
     const move = (e: PointerEvent) => {
       if (!drag.current.down) return;
-      if (drag.current.key) { setHot(rowAt(e.clientY)); return; }
       if (Math.abs(e.clientY - drag.current.y) > 6) drag.current.moved = true;
       setHot(rowAt(e.clientY));
     };
@@ -357,17 +340,11 @@ function Picker<T extends string>({ name, tip, items, cur, put, icon, solid, oth
       if (drag.current.moved) { if (v) pick(v); else setOpen(false); } // a drag picks where it ends; a tap leaves it open
       setHot(null);
     };
-    const away = (e: PointerEvent) => { if (!box.current?.contains(e.target as Node)) setOpen(false); };
-    const esc = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false); };
     window.addEventListener('pointermove', move);
     window.addEventListener('pointerup', up);
-    window.addEventListener('pointerdown', away);
-    window.addEventListener('keydown', esc);
-    return () => {
-      window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up);
-      window.removeEventListener('pointerdown', away); window.removeEventListener('keydown', esc);
-    };
+    return () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); };
   }, [open]);
+  useDismiss(box, open, () => setOpen(false));
   useClamp(popEl, box, open);
   return (
     <div className={`ft-knob${solid ? '' : ' swatches'}`} ref={box}>
@@ -403,14 +380,7 @@ function Pop({ name, tip, icon, className, children }: {
   const [open, setOpen] = useState(false);
   const box = useRef<HTMLDivElement>(null);
   const pop = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (!open) return;
-    const away = (e: PointerEvent) => { if (!box.current?.contains(e.target as Node)) setOpen(false); };
-    const esc = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false); };
-    window.addEventListener('pointerdown', away);
-    window.addEventListener('keydown', esc);
-    return () => { window.removeEventListener('pointerdown', away); window.removeEventListener('keydown', esc); };
-  }, [open]);
+  useDismiss(box, open, () => setOpen(false));
   useClamp(pop, box, open);
   return (
     <div className="ft-knob" ref={box}>
@@ -434,8 +404,8 @@ const GEAR = (() => {
   return `M${pts.join(' L')} Z`;
 })();
 // A plain small icon, for the menu buttons.
-const Icon = ({ children, size = 30, stroke = 0.8 }: { children: React.ReactNode; size?: number; stroke?: number }) => (
-  <svg width={size} height={size} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={stroke} strokeLinecap="round" strokeLinejoin="round">
+const Icon = ({ children }: { children: React.ReactNode }) => (
+  <svg width={14} height={14} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={1.4} strokeLinecap="round" strokeLinejoin="round">
     {children}
   </svg>
 );
@@ -484,42 +454,42 @@ export function Panel() {
     {/* Every control, in a frosted bar under the balloon. */}
     <div className="ft-media">
       <Picker name="medium" tip="Brush" items={MEDIA} cur={tool.brush as Medium} put={(m) => { tool.brush = m; }} icon={(m) => <MediumIcon m={m} />} solid others hotkey="KeyB" />
-      {OPTIONS[tool.brush as Medium].map((k) => <WetKnob key={k} k={k} />)}
+      {OPTIONS[tool.brush as Medium].map((k) => (
+        <RangeKnob key={k} k={k} tip={k === 'watery' ? 'Watery' : 'Liquid'} hotkey="KeyW" face={(t) => <WetDrop t={t} />} />
+      ))}
       <span className="ft-sep" />
-      <SizeKnob />
-      <FlowKnob />
+      <RangeKnob k="size" tip="Size" hotkey="KeyS" face={(t) => <SizeRamp t={t} />} />
+      <RangeKnob k="flow" tip="Flow" hotkey="KeyF" face={(t) => <FlowDisc t={t} />} />
       <ColorKnob />
       <ShadeKnob />
       <Picker name="paint" tip="Material" items={FINISHES} cur={tool.finish} put={(f) => { tool.finish = f; }} icon={(f) => <FinishBall f={f} />} hotkey="KeyM" />
       <span className="ft-sep" />
-      <div className="ft-pair">
-        <Pop name="settings" tip="Settings" icon={<GearIcon />} className="ft-menu">
-          <Row label="Auto draw" hint="Space" on={tool.auto} act={() => set(() => { tool.auto = !tool.auto; })} />
-          <Row label="Inertia" on={tool.inertia} act={() => set(() => { tool.inertia = !tool.inertia; })} />
-          {DARK_ENABLED && <Row label="Dark mode" on={theme === 'dark'} act={() => set(() => setTheme(theme === 'dark' ? 'light' : 'dark'))} />}
-          {/* Picking a size reloads: the targets and shaders are built on it. */}
-          <label className="ft-row ft-select">
-            <span>Texture</span>
-            <select value={quality} onChange={(e) => setQuality(e.target.value as Quality)}>
-              {(Object.keys(QUALITY) as Quality[]).map((q) => (
-                <option key={q} value={q}>{({ low: 'LOW', medium: 'MED', high: 'HIGH' } as const)[q]}</option>
-              ))}
-            </select>
-          </label>
-          <hr />
-          <div className="ft-actions">
-            <button onClick={() => set(() => { paint.clear(); clearDrips(); })}>
-              <Icon size={14} stroke={1.4}><circle cx="8" cy="8" r="5.5" /><path d="M4.1 11.9l7.8-7.8" /></Icon>Clear<kbd>Del</kbd>
-            </button>
-            <button onClick={() => set(resetTool)}>
-              <Icon size={14} stroke={1.4}><path d="M3 3v3.5h3.5" /><path d="M3.4 6.2A5.3 5.3 0 1 1 3.3 10" /></Icon>Reset tools
-            </button>
-            <button onClick={() => set(downloadPng)}>
-              <Icon size={14} stroke={1.4}><path d="M8 2.5v8M4.8 7.5L8 10.7l3.2-3.2M3 13.5h10" /></Icon>Download PNG
-            </button>
-          </div>
-        </Pop>
-      </div>
+      <Pop name="settings" tip="Settings" icon={<GearIcon />} className="ft-menu">
+        <Row label="Auto draw" hint="Space" on={tool.auto} act={() => set(() => { tool.auto = !tool.auto; })} />
+        <Row label="Inertia" on={tool.inertia} act={() => set(() => { tool.inertia = !tool.inertia; })} />
+        {DARK_ENABLED && <Row label="Dark mode" on={theme === 'dark'} act={() => set(() => setTheme(theme === 'dark' ? 'light' : 'dark'))} />}
+        {/* Picking a size reloads: the targets and shaders are built on it. */}
+        <label className="ft-row ft-select">
+          <span>Texture</span>
+          <select value={quality} onChange={(e) => setQuality(e.target.value as Quality)}>
+            {(Object.keys(QUALITY) as Quality[]).map((q) => (
+              <option key={q} value={q}>{({ low: 'LOW', medium: 'MED', high: 'HIGH' } as const)[q]}</option>
+            ))}
+          </select>
+        </label>
+        <hr />
+        <div className="ft-actions">
+          <button onClick={() => set(() => { paint.clear(); clearDrips(); })}>
+            <Icon><circle cx="8" cy="8" r="5.5" /><path d="M4.1 11.9l7.8-7.8" /></Icon>Clear<kbd>Del</kbd>
+          </button>
+          <button onClick={() => set(resetTool)}>
+            <Icon><path d="M3 3v3.5h3.5" /><path d="M3.4 6.2A5.3 5.3 0 1 1 3.3 10" /></Icon>Reset tools
+          </button>
+          <button onClick={() => set(downloadPng)}>
+            <Icon><path d="M8 2.5v8M4.8 7.5L8 10.7l3.2-3.2M3 13.5h10" /></Icon>Download PNG
+          </button>
+        </div>
+      </Pop>
     </div>
     {/* Help sits on its own in the top right corner, out of the bar's way. */}
     <div className="ft-media ft-corner">

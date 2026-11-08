@@ -441,11 +441,10 @@ export class PaintLayer {
   /** Dev: total thickness and coverage over the whole target, to check the run keeps its paint. */
   async total(renderer: WebGPURenderer) {
     const t = this.targets[this.cur];
-    const half = (h: number) => h; // float targets read back as floats
     const p = await renderer.readRenderTargetPixelsAsync(t, 0, 0, PAINT_W, PAINT_H, 1);
     const c = await renderer.readRenderTargetPixelsAsync(t, 0, 0, PAINT_W, PAINT_H, 0);
     let thick = 0, cov = 0, wet = 0;
-    for (let i = 0; i < PAINT_W * PAINT_H; i++) { thick += half(p[i * 4]); wet += half(p[i * 4 + 1]); cov += half(c[i * 4 + 3]); }
+    for (let i = 0; i < PAINT_W * PAINT_H; i++) { thick += p[i * 4]; wet += p[i * 4 + 1]; cov += c[i * 4 + 3]; }
     return { thick: +thick.toFixed(1), wet: +wet.toFixed(1), cov: +cov.toFixed(1) };
   }
 
@@ -453,24 +452,22 @@ export class PaintLayer {
   async probeAt(renderer: WebGPURenderer, u: number, v: number) {
     const t = this.targets[this.cur];
     const x = Math.round(u * PAINT_W), y = Math.round(v * PAINT_H);
-    const half = (h: number) => h; // float targets read back as floats
     const c = await renderer.readRenderTargetPixelsAsync(t, x, y, 1, 1, 0);
     const p = await renderer.readRenderTargetPixelsAsync(t, x, y, 1, 1, 1);
-    return { a: +half(c[3]).toFixed(3), t: +half(p[0]).toFixed(3), w: +half(p[1]).toFixed(3), r: +half(p[2]).toFixed(3) };
+    return { a: +c[3].toFixed(3), t: +p[0].toFixed(3), w: +p[1].toFixed(3), r: +p[2].toFixed(3) };
   }
 
   /** Dev: read one texel of colour and props at (u, v). */
   async probe(renderer: WebGPURenderer, v: number) {
     const t = this.targets[this.cur];
     const y = Math.round(v * PAINT_H);
-    const half = (h: number) => h; // float targets read back as floats
     const c = await renderer.readRenderTargetPixelsAsync(t, 0, y, PAINT_W, 1, 0);
     const p = await renderer.readRenderTargetPixelsAsync(t, 0, y, PAINT_W, 1, 1);
     let best = 0, bx = -1;
-    for (let x = 0; x < PAINT_W; x++) { const a = half(c[x * 4 + 3]); if (a > best) { best = a; bx = x; } }
-    const px = (arr: ArrayLike<number>, x: number) => [0, 1, 2, 3].map((i) => +half(arr[x * 4 + i]).toFixed(3));
+    for (let x = 0; x < PAINT_W; x++) { const a = c[x * 4 + 3]; if (a > best) { best = a; bx = x; } }
+    const px = (arr: ArrayLike<number>, x: number) => [0, 1, 2, 3].map((i) => +arr[x * 4 + i].toFixed(3));
     const alphas: number[] = []; let sum = 0;
-    for (let x = 0; x < PAINT_W; x++) { const a = half(c[x * 4 + 3]); alphas.push(a); sum += a; }
+    for (let x = 0; x < PAINT_W; x++) { const a = c[x * 4 + 3]; alphas.push(a); sum += a; }
     return { bx, u: bx / PAINT_W, color: px(c, Math.max(bx, 0)), props: px(p, Math.max(bx, 0)), empty: { color: px(c, 10), props: px(p, 10) }, alphas, sum: +sum.toFixed(1) };
   }
 

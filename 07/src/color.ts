@@ -6,7 +6,7 @@ type RGB = [number, number, number]; // 0..255
 const HUES: RGB[] = [[255, 0, 0], [255, 255, 0], [0, 255, 0], [0, 255, 255], [0, 0, 255], [255, 0, 255], [255, 0, 0]];
 const hex = (c: RGB) => '#' + c.map((v) => Math.round(v).toString(16).padStart(2, '0')).join('');
 
-export function hueRgb(h: number): RGB {
+function hueRgb(h: number): RGB {
   const x = Math.min(0.99999, Math.max(0, h)) * 6, i = Math.floor(x), k = x - i;
   const a = HUES[i], b = HUES[i + 1];
   return [a[0] + (b[0] - a[0]) * k, a[1] + (b[1] - a[1]) * k, a[2] + (b[2] - a[2]) * k];

@@ -8,18 +8,6 @@ export const FINISH: Record<Finish, { rough: number; metal: number }> = {
   metal: { rough: 0.3, metal: 1 },
 };
 
-export const SWATCHES: { name: string; hex: string }[] = [
-  { name: 'Cadmium red', hex: '#e63b2e' },
-  { name: 'Marigold', hex: '#f6a21c' },
-  { name: 'Lemon', hex: '#f4e04d' },
-  { name: 'Leaf', hex: '#3fa34d' },
-  { name: 'Cobalt', hex: '#2457c5' },
-  { name: 'Violet', hex: '#7b3fbf' },
-  { name: 'Rose', hex: '#f08cae' },
-  { name: 'Titanium white', hex: '#f4f1ea' },
-  { name: 'Ivory black', hex: '#1b1a19' },
-];
-
 export const tool = {
   brush: 'glaze' as Brush,
   finish: 'gloss' as Finish,
@@ -46,7 +34,14 @@ try {
   }
 } catch { /* no storage, no memory */ }
 if (tool.brush === 'round' || (tool.brush as string) === 'flat') tool.brush = 'pencil'; // round is gone from the UI, flat is now pencil
-export const save = () => { try { localStorage.setItem(KEY, JSON.stringify(tool)); } catch { /* ignore */ } };
+// Written only when something changed: this runs on every click and key.
+let saved = '';
+export const save = () => {
+  const s = JSON.stringify(tool);
+  if (s === saved) return;
+  saved = s;
+  try { localStorage.setItem(KEY, s); } catch { /* ignore */ }
+};
 for (const ev of ['click', 'input', 'keyup']) window.addEventListener(ev, save);
 
 export function hexToRgb(hex: string): [number, number, number] {
