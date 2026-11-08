@@ -11,8 +11,8 @@ const _c = new Vector3(), _s = new Vector3(), _oc = new Vector3(), _local = new 
 const _hit = { u: 0, v: 0, point: new Vector3() };
 // Dab spacing as a fraction of the brush size, and the alpha each dab adds, so a stroke builds up smoothly rather
 // than popping in dab by dab: about a dozen dabs overlap at any point of a round stroke.
-const SPACING: Record<Brush, number> = { round: 0.06, bristle: 0.06, spray: 0.05, scrape: 0.08, glaze: 0.035, pencil: 0.06 };
-const FLOW: Record<Brush, number> = { round: 0.2, bristle: 0.3, spray: 0.3, scrape: 0.12, glaze: 0.08, pencil: 0.25 };
+const SPACING: Record<Brush, number> = { round: 0.06, bristle: 0.06, spray: 0.05, erase: 0.08, glaze: 0.035, pencil: 0.06 };
+const FLOW: Record<Brush, number> = { round: 0.2, bristle: 0.3, spray: 0.3, erase: 0.12, glaze: 0.08, pencil: 0.25 };
 
 // The wheel, tunable live. A trackball: drag turns the balloon about the axis across the drag, any direction,
 // and it keeps turning once let go at the speed of the last move, slowing only a little. Grabbing never stops it.
@@ -187,7 +187,7 @@ export function Balloon() {
       wet: glaze ? 1 : tool.brush === 'spray' || tool.brush === 'pencil' ? 0 : undefined, // a wash is laid wet and floats out; spray and pencil are dry
     };
     paint.add(d);
-    if (tool.brush !== 'scrape') maybeSpawn(d, Math.min(1, Math.max(0, tool.liquid + j.liquid)), sim.gravityObj, grow > 1); // grow > 1: the can held still
+    if (tool.brush !== 'erase') maybeSpawn(d, Math.min(1, Math.max(0, tool.liquid + j.liquid)), sim.gravityObj, grow > 1); // grow > 1: the can held still
     // Spray splatters: now and then a fat drop lands off to the side, outside the mist.
     if (tool.brush === 'spray' && Math.random() < 0.12) {
       const n = 1 + Math.floor(Math.random() * 2);

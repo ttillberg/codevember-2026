@@ -34,6 +34,7 @@ try {
   }
 } catch { /* no storage, no memory */ }
 if (tool.brush === 'round' || (tool.brush as string) === 'flat') tool.brush = 'pencil'; // round is gone from the UI, flat is now pencil
+if ((tool.brush as string) === 'scrape') tool.brush = 'erase'; // scrape is now erase
 // Written only when something changed: this runs on every click and key.
 let saved = '';
 export const save = () => {

@@ -34,10 +34,10 @@ const v4 = vec4 as any; // the typings lack the (vec3, float) overload
 const MAX_DABS = 2048; // per frame, per kind
 const TRAIL = 0.3;     // coverage a run leaves behind it, whatever the paint did
 
-export type Brush = 'round' | 'spray' | 'bristle' | 'glaze' | 'pencil' | 'scrape';
-const STYLE: Record<Brush, number> = { round: 0, spray: 1, bristle: 2, scrape: 3, glaze: 4, pencil: 5 };
+export type Brush = 'round' | 'spray' | 'bristle' | 'glaze' | 'pencil' | 'erase';
+const STYLE: Record<Brush, number> = { round: 0, spray: 1, bristle: 2, erase: 3, glaze: 4, pencil: 5 };
 // How much paint each brush leaves: above the run threshold it drips while wet.
-export const LOAD: Record<Brush, number> = { round: 0.85, spray: 0, bristle: 0.65, scrape: 0, glaze: 0, pencil: 0 }; // spray, glaze and pencil lay no thickness
+export const LOAD: Record<Brush, number> = { round: 0.85, spray: 0, bristle: 0.65, erase: 0, glaze: 0, pencil: 0 }; // spray, glaze and pencil lay no thickness
 
 export type Dab = {
   u: number; v: number;
@@ -202,8 +202,8 @@ const dabShape = (style: any, seed: any, watery: any) => Fn(() => {
   const lane = hash(floor(uv().y.mul(14)).add(seed.mul(1013)));
   const along = hash(floor(uv().x.mul(6)).add(floor(uv().y.mul(14)).mul(17)).add(seed.mul(331)));
   const bristle = smoothstep(1, 0.8, d).mul(select(lane.greaterThan(0.35), float(1), float(0))).mul(mix(0.6, 1, along));
-  // Scrape: a flat blade, hard edged across, soft along.
-  const scrape = smoothstep(1, 0.85, q.x.abs()).mul(smoothstep(1, 0.5, q.y.abs()));
+  // Erase: a flat blade, hard edged across, soft along, that scrapes the paint off.
+  const erase = smoothstep(1, 0.85, q.x.abs()).mul(smoothstep(1, 0.5, q.y.abs()));
   // Glaze: colour fused into the glass, a smooth soft-edged blob, softer the more watery (that rides in the
   // rough slot); the balloon shader gathers its pigment at the edge and lenses it.
   // Smooth: the ragged edge comes from the water (the bleed in the run pass), not from the dab.
@@ -212,7 +212,7 @@ const dabShape = (style: any, seed: any, watery: any) => Fn(() => {
   // Pencil: just colour. A smooth round dab, nothing else.
   const pencil = smoothstep(1, 0.55, d);
   return select(style.lessThan(0.5), round, select(style.lessThan(1.5), spray, select(style.lessThan(2.5), bristle,
-    select(style.lessThan(3.5), scrape, select(style.lessThan(4.5), glaze, pencil)))));
+    select(style.lessThan(3.5), erase, select(style.lessThan(4.5), glaze, pencil)))));
 })();
 
 export class PaintLayer {
@@ -221,7 +221,7 @@ export class PaintLayer {
   private scene = new Scene();
   private camera = new OrthographicCamera(0, 1, 1, 0, -1, 1);
   private paint: Splats;
-  private scrape: Splats;
+  private erase: Splats;
   private simQuads: QuadMesh[];
   private zero: QuadMesh;
   private cleared = false;
@@ -272,7 +272,7 @@ export class PaintLayer {
       // marked by a roughness of nought, which stays nought however many dabs land; the balloon gives it its gloss.
       const isWash = isGlaze.and(isPencil.not());
       const brushLoad = select(vMisc.x.lessThan(0.5), float(LOAD.round), select(vMisc.x.lessThan(1.5), float(LOAD.spray),
-        select(vMisc.x.lessThan(2.5), float(LOAD.bristle), select(isPencil, float(LOAD.pencil), float(0))))); // scrape and glaze lay none
+        select(vMisc.x.lessThan(2.5), float(LOAD.bristle), select(isPencil, float(LOAD.pencil), float(0))))); // erase and glaze lay none
       const load = select(vExtra.x.lessThan(0), brushLoad, vExtra.x);
       // Impasto: the paint is laid thicker and thinner across the dab, in ridges along the stroke.
       // In target space (the ortho pass fills the target, so screenUV is it), so overlapping dabs agree.
@@ -283,8 +283,8 @@ export class PaintLayer {
         props: v4(load.mul(ridge).mul(a), select(isGlaze, (select as any)(a.greaterThan(0.002), vExtra.y, float(0)), min(a.mul(4), vExtra.y)), select(isWash, float(0), vMisc.z).mul(a), vMisc.w.mul(a)),
       }));
     });
-    // Scrapes: Zero / OneMinusSrcAlpha, everything in both targets scaled down where the blade passes.
-    this.scrape = new Splats((dab, col, misc, _extra, mat) => {
+    // Erasing: Zero / OneMinusSrcAlpha, everything in both targets scaled down where the blade passes.
+    this.erase = new Splats((dab, col, misc, _extra, mat) => {
       mat.blendSrc = ZeroFactor; mat.blendDst = OneMinusSrcAlphaFactor;
       mat.blendSrcAlpha = ZeroFactor; mat.blendDstAlpha = OneMinusSrcAlphaFactor;
       const vCol: any = varying(col), vMisc: any = varying(misc);
@@ -293,7 +293,7 @@ export class PaintLayer {
       mat.colorNode = v4(0, 0, 0, a);
       mat.mrtNode = materialBlended(mrt({ color: v4(0, 0, 0, a), props: v4(0, 0, 0, a) }));
     });
-    this.scene.add(this.paint.mesh, this.scrape.mesh);
+    this.scene.add(this.paint.mesh, this.erase.mesh);
 
     // Zeroes both attachments: renderer.clear() leaves alpha 1 on the second.
     {
@@ -444,7 +444,7 @@ export class PaintLayer {
   /** Queue one dab. Wraps across the u seam when the dab reaches it. */
   add(d: Dab) {
     const halfU = d.size / Math.max(Math.sin(d.v * Math.PI), 0.02) * 0.25;
-    const s = d.brush === 'scrape' ? this.scrape : this.paint;
+    const s = d.brush === 'erase' ? this.erase : this.paint;
     this.wet = 1;
     s.push(d, 0);
     if (d.u - halfU < 0) s.push(d, 1);
@@ -503,14 +503,14 @@ export class PaintLayer {
       this.cleared = true;
     }
     renderer.autoClear = false;
-    // 1. dabs and scrapes into the current target
+    // 1. dabs and erasing into the current target
     this.paint.prepare();
-    this.scrape.prepare();
-    if (this.paint.count > 0 || this.scrape.count > 0) {
+    this.erase.prepare();
+    if (this.paint.count > 0 || this.erase.count > 0) {
       renderer.setRenderTarget(this.targets[this.cur]);
       renderer.render(this.scene, this.camera);
       this.paint.count = 0;
-      this.scrape.count = 0;
+      this.erase.count = 0;
     }
     // 2. run and dry: current -> next, then swap. Only while something may still be wet: every term in the pass
     // (the run, the spread, the melt, the bloom, the evaporation) is scaled by wetness, so on dry paint it is a
