@@ -7,7 +7,7 @@ import { uShadow, uShadowA } from './theme';
 // A soft dark disc on the floor under the balloon: not a real shadow, the balloon is clear and casts little,
 // just enough to put it on something.
 export function Shadow() {
-  const geo = useMemo(() => new CircleGeometry(1.6, 64), []);
+  const geo = useMemo(() => new CircleGeometry(2, 64), []);
   const mat = useMemo(() => {
     const m = new MeshBasicNodeMaterial();
     m.transparent = true;
@@ -31,8 +31,8 @@ export function Shadow() {
   const spot = useMemo(() => new CircleGeometry(0.55, 48), []);
   return (
     <>
-      <mesh geometry={geo} material={mat} rotation={[-Math.PI / 2, 0, 0]} position={[0, -1.06, 0]} renderOrder={-1} />
-      <mesh geometry={spot} material={caustic} rotation={[-Math.PI / 2, 0, 0]} position={[-0.3, -1.055, 0.15]} renderOrder={-1} />
+      <mesh geometry={geo} material={mat} rotation={[-Math.PI / 2, 0, 0]} position={[0, -1.45, 0]} renderOrder={-1} />
+      <mesh geometry={spot} material={caustic} rotation={[-Math.PI / 2, 0, 0]} position={[-0.3, -1.445, 0.15]} renderOrder={-1} />
     </>
   );
 }

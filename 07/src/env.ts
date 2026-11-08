@@ -22,13 +22,13 @@ function makeStudio() {
     for (let i = 0; i < W; i++) {
       const u = i / W;
       // Warm grey room, lighter towards the ceiling, a darker floor below a soft horizon.
-      const floor = 1 - Math.min(1, Math.max(0, (v - 0.44) / 0.04));
+      const floor = 1 - Math.min(1, Math.max(0, (v - 0.28) / 0.05)); // low, so its reflection sits low on the ball
       let r = 0.42 + 0.3 * v - floor * 0.2, g = 0.41 + 0.29 * v - floor * 0.2, b = 0.4 + 0.27 * v - floor * 0.19;
       // A crisp four-pane window up and to the left (the bars cut thin dark lines), a cooler strip low on the right.
       const bars = Math.min(1, Math.abs(u - 0.2) / 0.004) * Math.min(1, Math.abs(v - 0.78) / 0.008);
       const key = box(u, v, 0.2, 0.78, 0.07, 0.09, 0.012) * bars * 6;
       const glow = box(u, v, 0.2, 0.78, 0.07, 0.09, 0.12) * 0.6;
-      const fill = box(u, v, 0.72, 0.35, 0.16, 0.025, 0.03) * 1.4;
+      const fill = box(u, v, 0.72, 0.2, 0.16, 0.025, 0.03) * 1.4;
       r += key + glow + fill * 0.85; g += key + glow + fill * 0.9; b += key + glow * 1.02 + fill * 1.0;
       const k = (j * W + i) * 4;
       data[k] = r; data[k + 1] = g; data[k + 2] = b; data[k + 3] = 1;
