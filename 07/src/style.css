@@ -287,3 +287,9 @@ canvas.grabbing { cursor: grabbing; }
 }
 .ft-select select:hover { background-color: #dcdbd8; }
 [data-theme='dark'] .ft-select select { background-color: #32312f; color: #eee; }
+
+/* A toggle that stays on (the turntable): a grey disc while on, not the black of a button being pressed. */
+.ft-media .ft-knob.ft-toggle > button.on { color: #111; }
+.ft-media .ft-knob.ft-toggle > button.on::before { background: #d3d2cf; }
+[data-theme='dark'] .ft-media .ft-knob.ft-toggle > button.on { color: #eee; }
+[data-theme='dark'] .ft-media .ft-knob.ft-toggle > button.on::before { background: #3a3937; }
