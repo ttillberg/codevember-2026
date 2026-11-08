@@ -61,10 +61,9 @@ const MediumIcon = ({ m }: { m: Medium }) => (
   <Fit key={m} line={1.5}><path d={MEDIUM_ICON[m]} transform={MEDIUM_TILT[m]} /></Fit>
 );
 
-type Num = 'size' | 'flow' | 'liquid' | 'watery';
+type Num = 'size' | 'liquid' | 'watery';
 const RANGE: Record<Num, { min: number; max: number }> = {
   size: { min: 0.01, max: 0.2 },
-  flow: { min: 0, max: 1 },
   liquid: { min: 0, max: 1 },
   watery: { min: 0, max: 1 },
 };
@@ -134,6 +133,9 @@ function useClamp(pop: React.RefObject<HTMLElement | null>, host: React.RefObjec
     e.style.setProperty('--dx', `${dx}px`);
   });
 }
+// A popover opened under the cursor keeps that spot while it fades out, then drops it, so the next opening from its
+// button starts from its own place instead of sliding over from where the cursor was.
+const afterFade = (fn: () => void) => { setTimeout(fn, 250); };
 const atStyle = (at: At): React.CSSProperties | undefined =>
   at ? { left: at.left, top: at.top, bottom: 'auto', transform: 'none', transition: 'opacity 0.15s' } : undefined;
 
@@ -182,7 +184,7 @@ function Knob({ name, tip, get, put, face, track, hotkey }: {
     if (gauge.current && box.current) setSpot(placeAt(gauge.current, box.current, gauge.current.offsetWidth / 2, 6 + (1 - get()) * TRAVEL));
     setPinned(false);
     setHeld(true);
-  }, () => { if (start.current.key) { start.current.key = false; setHeld(false); } });
+  }, () => { if (start.current.key) { start.current.key = false; setHeld(false); afterFade(() => !start.current.key && setSpot(null)); } });
   useDismiss(box, pinned, () => setPinned(false));
   const t = get();
   const to = (v: number) => { put(Math.min(1, Math.max(0, v))); bump((n) => n + 1); };
@@ -233,14 +235,6 @@ const SizeRamp = ({ t }: { t: number }) => (
   </Fit>
 );
 
-// Flow: an opacity mark, a disc split on the diagonal. One half is solid; the other goes from the empty grey to
-// solid as the flow rises, mixed as plain colour rather than drawn see-through.
-const FlowDisc = ({ t }: { t: number }) => (
-  <Fit className="ft-ramp">
-    <path d="M4.5 21.5A12 12 0 0 1 21.5 4.5z" />
-    <path d="M21.5 4.5A12 12 0 0 1 4.5 21.5z" style={{ fill: `color-mix(in srgb, currentColor ${Math.round(t * 100)}%, var(--empty))` }} />
-  </Fit>
-);
 // Watery or liquid, the medium's own option: a drop filled up to the level, like the ramp.
 const DROP = 'M13 2.5C17.2 8 19.5 11.6 19.5 15.5a6.5 6.5 0 0 1-13 0C6.5 11.6 8.8 8 13 2.5z';
 const WetDrop = ({ t }: { t: number }) => (
@@ -301,7 +295,7 @@ function ColorPad() {
     if (pop.current && box.current) setSpot(placeAt(pop.current, box.current, 6 + tool.hue * PAD_W, 6 + (1 - tool.shade) * PAD_H));
     setPinned(false);
     setHeld(true);
-  }, () => { if (start.current.key) { start.current.key = false; setHeld(false); } });
+  }, () => { if (start.current.key) { start.current.key = false; setHeld(false); afterFade(() => !start.current.key && setSpot(null)); } });
   useDismiss(box, pinned, () => setPinned(false));
   const open = held || pinned;
   useClamp(pop, box, open);
@@ -366,6 +360,7 @@ function Picker<T extends string>({ name, tip, items, cur, put, icon, solid, oth
     if (!drag.current.key) return;
     drag.current.key = false; drag.current.down = false;
     if (hot) pick(hot); else setOpen(false);
+    afterFade(() => !drag.current.key && setAt(null));
   });
   // The choice in the row at this height, wherever the pointer is sideways; past the top it's the top one.
   // Back down under the popover (over the button) it's none, so letting go there changes nothing.
@@ -479,7 +474,7 @@ const HelpIcon = () => (
 // Keys as little outlined caps, with the Mac's symbols on a Mac and the PC's names elsewhere.
 const MAC = typeof navigator !== 'undefined' && /Mac|iPhone|iPad|iPod/.test(navigator.platform || navigator.userAgent);
 const Key = ({ children, wide }: { children: React.ReactNode; wide?: boolean }) => <kbd className={`ft-key${wide ? ' wide' : ''}`}>{children}</kbd>;
-const QUICK: [string, string][] = [['B', 'brush'], ['M', 'material'], ['S', 'size'], ['F', 'flow'], ['C', 'colour'], ['W', 'water']];
+const QUICK: [string, string][] = [['B', 'brush'], ['M', 'material'], ['S', 'size'], ['C', 'colour'], ['W', 'water']];
 
 // A row in a popover menu: a label, and a little switch when it toggles.
 const Row = ({ label, on, hint, act }: { label: string; on?: boolean; hint?: string; act: () => void }) => (
@@ -524,7 +519,6 @@ export function Panel() {
       ))}
       <span className="ft-sep" />
       <RangeKnob k="size" tip="Size" hotkey="KeyS" face={(t) => <SizeRamp t={t} />} />
-      <RangeKnob k="flow" tip="Flow" hotkey="KeyF" face={(t) => <FlowDisc t={t} />} />
       <ColorPad />
       <Picker name="paint" tip="Material" items={FINISHES} cur={tool.finish} put={(f) => { tool.finish = f; }} icon={(f) => <FinishBall f={f} />} hotkey="KeyM" />
       <span className="ft-sep" />
