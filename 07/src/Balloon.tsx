@@ -25,11 +25,12 @@ export const wheel = {
   grabbed: false,
   time: 0, calm: 1, // the breathing
 };
-import { MeshPhysicalNodeMaterial, type WebGPURenderer } from 'three/webgpu';
+import { MeshBasicNodeMaterial, MeshPhysicalNodeMaterial, type WebGPURenderer } from 'three/webgpu';
 import {
-  Fn, If, abs, float, max, min, mix, mx_noise_float, normalMap, sin, smoothstep, normalViewGeometry, positionViewDirection, saturate, select, uniform, uv,
-  vec2, vec3,
+  Fn, If, abs, cos, float, max, min, mix, mx_noise_float, normalMap, positionLocal, reflectVector, sin, smoothstep, normalViewGeometry,
+  equirectUV, positionViewDirection, saturate, select, texture, time, uniform, uv, vec2, vec3,
 } from 'three/tsl';
+import { studioTexture } from './env';
 import { K, PAINT_H, PAINT_W, PaintLayer, sim, type Brush, type Dab } from './paint';
 import { FINISH, hexToRgb, tool } from './tool';
 import { dripSettings, dryPile, maybeSpawn, stepDrips } from './drips';
@@ -126,11 +127,34 @@ function balloonMaterial(side: typeof FrontSide | typeof BackSide) {
   return m;
 }
 
+// The soap film: a thin layer over the clear rubber with what a real bubble shows, the rainbow of light bouncing
+// between the two faces of the film (its colour set by how thick the film is there, which swirls slowly and runs
+// thinner towards the rim) and the room mirrored in it, the window crisp, bars and all. Its own draw with ordinary alpha, because
+// the rubber's own reflections are scaled down to almost nothing by its 0.8% opacity. Gone where there's paint.
+function filmMaterial() {
+  const m = new MeshBasicNodeMaterial();
+  m.transparent = true;
+  m.depthWrite = false;
+  const f1 = saturate(float(1).sub(abs(normalViewGeometry.dot(positionViewDirection))));
+  const swirl = mx_noise_float(positionLocal.mul(1.4).add(vec3(0, time.mul(0.025), 0)));
+  const thick = swirl.mul(0.35).add(0.5).add(f1.mul(0.7)); // in bands: each whole step is one turn of the rainbow
+  const film = mix(cos(thick.mul(Math.PI * 2 * 1.6).add(vec3(0, 2.1, 4.2))).mul(0.5).add(0.5), vec3(1), 0.6); // a hint of colour, mostly pale
+  // The studio in the reflected direction: only its bright parts (the window, the light strip) show on a clear film.
+  const room = texture(studioTexture(), equirectUV(reflectVector)).rgb;
+  const glint = saturate(room.dot(vec3(0.3, 0.59, 0.11)).sub(1.1).mul(0.6));
+  const clear = float(1).sub(saturate(max(paint.colorNode.a, paint.propsNode.x.mul(2.5))));
+  const sheen = f1.mul(f1).mul(0.3).add(0.03);
+  m.colorNode = mix(film, vec3(1), saturate(glint));
+  m.opacityNode = saturate(sheen.add(glint)).mul(clear);
+  return m;
+}
+
 export function Balloon() {
   const gl = useThree((s) => s.gl) as unknown as WebGPURenderer;
   const geo = useMemo(() => new SphereGeometry(1, 128, 96), []);
   const front = useMemo(() => balloonMaterial(FrontSide), []);
   const back = useMemo(() => balloonMaterial(BackSide), []);
+  const film = useMemo(filmMaterial, []);
   const stroke = useRef<{ u: number; v: number; seed: number } | null>(null);
 
   if (import.meta.env.DEV) (window as any).__gl = gl;
@@ -417,6 +441,7 @@ export function Balloon() {
     <group ref={groupRef}>
       <mesh geometry={geo} material={back} renderOrder={0} />
       <mesh ref={frontRef} geometry={geo} material={front} renderOrder={1} />
+      <mesh geometry={geo} material={film} renderOrder={2} scale={1.002} />
     </group>
   );
 }

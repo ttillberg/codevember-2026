@@ -6,7 +6,7 @@ import { Panel } from './Panel';
 import { Snapshot } from './snapshot';
 import { BG, envIntensity } from './theme';
 import { useFrame } from '@react-three/fiber';
-import { makeStudio } from './env';
+import { studioTexture } from './env';
 import { useMemo } from 'react';
 
 // The room's reflections follow the theme.
@@ -16,7 +16,7 @@ function Env() {
 }
 
 export function App() {
-  const studio = useMemo(makeStudio, []);
+  const studio = useMemo(studioTexture, []);
   return (
     <>
       <Canvas
