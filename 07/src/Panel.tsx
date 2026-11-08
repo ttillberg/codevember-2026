@@ -565,6 +565,7 @@ export function Panel() {
         <p><b>Click + drag</b> paint and turn</p>
         <p><Key>{MAC ? '⌘' : 'Ctrl'}</Key> + drag, or <b>two fingers</b>: turn without painting</p>
         <p><Key>T</Key> turntable: the brush never lifts, the balloon turns under it</p>
+        <p><Key>⇧</Key> + drag: erase with the brush</p>
         <p><Key>{MAC ? '⌫' : 'Del'}</Key> clear the balloon</p>
         <p><Key>⇧</Key> <Key>0–9</Key> save a preset, <Key>0–9</Key> recall it</p>
         <h5>Quick menus <span>hold the key, move, let go</span></h5>
