@@ -543,7 +543,9 @@ export function Panel() {
         {/* Picking a size reloads: the targets and shaders are built on it. */}
         <label className="ft-row ft-select">
           <span>Texture</span>
-          <select value={quality} onChange={(e) => setQuality(e.target.value as Quality)}>
+          {/* Uncontrolled: the bar re-renders on every input event, which put a controlled select back to the old
+              value between the input and change events, so the change read the old size and saved it. */}
+          <select defaultValue={quality} onChange={(e) => setQuality(e.target.value as Quality)}>
             {(Object.keys(QUALITY) as Quality[]).map((q) => (
               <option key={q} value={q}>{({ low: 'LOW', medium: 'MED', high: 'HIGH' } as const)[q]}</option>
             ))}
