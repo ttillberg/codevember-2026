@@ -18,7 +18,8 @@ const FLOW: Record<Brush, number> = { round: 0.2, bristle: 0.3, spray: 0.3, eras
 // and it keeps turning once let go at the speed of the last move, slowing only a little. Grabbing never stops it.
 export const wheel = {
   gain: Math.PI, // radians of turn per window width of drag
-  drag: 0.08,    // how fast the spin dies away once let go, per second: next to nothing
+  drag: 0.1,     // how fast the spin dies away once let go, per second: it spins a long while...
+  friction: 0.05, // ...and this steady brake, radians per second per second, brings it to a stop at the end
   maxSpin: 40,   // radians per second
   q: new Quaternion(),      // the balloon's orientation
   omega: new Vector3(),     // angular velocity, world space
@@ -38,6 +39,13 @@ import { uRim, uRubber } from './theme';
 import { compose, syncColour } from './color';
 
 export const paint = new PaintLayer();
+// Shift held: the brush erases instead, at its size, until it's let go.
+let erasing = false;
+const shift = (e: KeyboardEvent) => { erasing = e.shiftKey; };
+window.addEventListener('keydown', shift);
+window.addEventListener('keyup', shift);
+window.addEventListener('blur', () => { erasing = false; });
+const brushNow = (): Brush => (erasing ? 'erase' : tool.brush);
 // Dev: 0 normal, 1 coverage, 2 wetness, 3 thickness, 4 tint. And how much wet paint glosses up.
 const uDebug = uniform(0);
 const uWetGloss = uniform(1);
@@ -195,25 +203,25 @@ export function Balloon() {
       j.key = key;
     }
     const finish = FINISH[tool.finish];
-    const glaze = tool.brush === 'glaze';
+    const glaze = brushNow() === 'glaze';
     const w = tool.watery;
     const d: Dab = {
       u, v, angle, seed,
       // Watery glaze: wider, thinner. Its softness rides in the rough slot, which the glaze doesn't use.
       // The spray dab is drawn a little bigger than the brush: the dense core fills the ring, the speckles go just outside.
-      size: tool.size * (glaze ? 1 + w * 0.7 : tool.brush === 'spray' ? 1.2 : 1) * grow * j.size,
+      size: tool.size * (glaze ? 1 + w * 0.7 : brushNow() === 'spray' ? 1.2 : 1) * grow * j.size,
       rgb: j.rgb,
       // Dabs overlap many times along the stroke, so each one carries only a little.
-      flow: FLOW[tool.brush] * tool.flow * (glaze ? 1 - w * 0.45 : 1) * j.flow,
-      brush: tool.brush,
+      flow: FLOW[brushNow()] * tool.flow * (glaze ? 1 - w * 0.45 : 1) * j.flow,
+      brush: brushNow(),
       rough: glaze ? w : finish.rough,
       metal: finish.metal,
-      wet: glaze ? 1 : tool.brush === 'spray' || tool.brush === 'pencil' ? 0 : undefined, // a wash is laid wet and floats out; spray and pencil are dry
+      wet: glaze ? 1 : brushNow() === 'spray' || brushNow() === 'pencil' ? 0 : undefined, // a wash is laid wet and floats out; spray and pencil are dry
     };
     paint.add(d);
-    if (tool.brush !== 'erase') maybeSpawn(d, Math.min(1, Math.max(0, tool.liquid + j.liquid)), sim.gravityObj, grow > 1); // grow > 1: the can held still
+    if (brushNow() !== 'erase') maybeSpawn(d, Math.min(1, Math.max(0, tool.liquid + j.liquid)), sim.gravityObj, grow > 1); // grow > 1: the can held still
     // Spray splatters: now and then a fat drop lands off to the side, outside the mist.
-    if (tool.brush === 'spray' && Math.random() < 0.12) {
+    if (brushNow() === 'spray' && Math.random() < 0.12) {
       const n = 1 + Math.floor(Math.random() * 2);
       for (let i = 0; i < n; i++) {
         // Small dots, the same size whatever the brush, just outside the mist.
@@ -272,8 +280,8 @@ export function Balloon() {
     // Distance in v units: a u step is worth the circumference at this latitude.
     const circ = 2 * Math.max(Math.sin(s.v * Math.PI), 0.02);
     const dist = Math.hypot(du * circ, dv);
-    const spacing = tool.size * SPACING[tool.brush];
-    if (tool.brush === 'spray') {
+    const spacing = tool.size * SPACING[brushNow()];
+    if (brushNow() === 'spray') {
       const speed = dist / Math.max(dt, 1e-3); // pole-to-pole units a second
       const want = 1 - 0.75 * Math.min(1, Math.max(0, (speed - 0.15) / 1.0));
       sprayWidth.current += (want - sprayWidth.current) * Math.min(1, dt * 12);
@@ -285,7 +293,7 @@ export function Balloon() {
     for (let i = 1; i <= n; i++) {
       const t = i / n;
       // Spray speckles differ per dab; the other brushes keep the stroke's seed so their furrows run on.
-      dabAt(((s.u + du * t) % 1 + 1) % 1, s.v + dv * t, angle, tool.brush === 'spray' ? s.seed + i : s.seed, sprayWidth.current);
+      dabAt(((s.u + du * t) % 1 + 1) % 1, s.v + dv * t, angle, brushNow() === 'spray' ? s.seed + i : s.seed, sprayWidth.current);
     }
     const t = n / (dist / spacing);
     s.u = ((s.u + du * t) % 1 + 1) % 1;
@@ -376,13 +384,16 @@ export function Balloon() {
       }
       // Restyle only when the ring actually changes size or state.
       const d = Math.round(Math.max(px * 2, 12)), o = h ? '1' : '0.3';
+      ring.current.classList.toggle('erasing', erasing);
       if (d !== ringLast.current.d || o !== ringLast.current.o) {
         ring.current.style.width = ring.current.style.height = `${d}px`;
         ring.current.style.opacity = o;
         ringLast.current = { d, o };
       }
     }
-    if (!(painting.current || tool.auto) || !h) { stroke.current = null; return; }
+    // The turntable only paints while the balloon turns: standing (near) still, the brush would pile on one spot.
+    const turning = wheel.grabbed || wheel.omega.length() > 0.15;
+    if (!(painting.current || (tool.auto && turning)) || !h) { stroke.current = null; return; }
     if (!stroke.current) {
       const seed = Math.random() * 1000;
       stroke.current = { u: h.u, v: h.v, seed };
@@ -391,7 +402,7 @@ export function Balloon() {
       dabAt(h.u, h.v, 0, seed);
     } else {
       advance(h.u, h.v, dt);
-      if (tool.brush === 'spray') {
+      if (brushNow() === 'spray') {
         // Held still (not just moving slowly): the can keeps spraying and the cloud widens, up to twice the
         // brush after a couple of seconds. Moving, the stroke is the same at any speed.
         const s = stroke.current;
@@ -415,7 +426,11 @@ export function Balloon() {
   useFrame((_, dt) => {
     const g = groupRef.current;
     if (!g) return;
-    if (!wheel.grabbed) wheel.omega.multiplyScalar(Math.exp(-dt * wheel.drag));
+    if (!wheel.grabbed) {
+      wheel.omega.multiplyScalar(Math.exp(-dt * wheel.drag));
+      const w0 = wheel.omega.length();
+      wheel.omega.setLength(Math.max(0, w0 - wheel.friction * dt)); // a zero-length vector stays zero
+    }
     const w = wheel.omega.length();
     if (w > 0) {
       step.setFromAxisAngle(_axis.copy(wheel.omega).divideScalar(w), w * dt);

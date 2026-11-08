@@ -21,6 +21,7 @@ canvas.grabbing { cursor: grabbing; }
 .reticle::before, .reticle::after {
   content: ''; position: absolute; left: 50%; top: 50%; background: #868583; transform: translate(-50%, -50%);
 }
+.reticle.erasing { border-style: dashed; } /* shift held: the brush erases */
 .reticle::before { width: 7px; height: 1px; }
 .reticle::after { width: 1px; height: 7px; }
 
@@ -130,7 +131,11 @@ canvas.grabbing { cursor: grabbing; }
 .ft-switch.on::after { transform: translateX(12px); }
 .ft-help { width: auto; white-space: nowrap; padding: 12px 14px; gap: 6px; color: rgba(0, 0, 0, 0.45); }
 .ft-help p { margin: 0; }
-.ft-help b { color: #111; font-weight: 500; }
+.ft-help h5:first-child, .ft-dos > h5:first-child { margin-top: 0; }
+/* Rows: the gesture or keys, then what it does in small caps. */
+.ft-dos { display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 7px 14px; }
+.ft-how { color: #555; display: inline-flex; align-items: center; gap: 4px; }
+.ft-what { font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase; color: rgba(0, 0, 0, 0.45); }
 /* Keys: flat light grey caps, the macOS way. */
 .ft-key {
   display: inline-flex; align-items: center; justify-content: center; min-width: 18px; height: 18px; padding: 0 5px;
@@ -138,13 +143,17 @@ canvas.grabbing { cursor: grabbing; }
   font: 500 11px/1 var(--ui-font); color: #111; background: #e2e1de;
 }
 .ft-key.wide { padding: 0 9px; }
+/* Section names: black small caps, not bold, a hairline running on to the edge. */
 .ft-help h5 {
-  margin: 6px 0 0; font: 500 10px/1 var(--ui-font); letter-spacing: 0.06em; text-transform: uppercase; color: rgba(0, 0, 0, 0.4);
+  grid-column: 1 / -1; display: flex; align-items: center; gap: 8px; margin: 10px 0 1px;
+  font: 400 10px/1 var(--ui-font); letter-spacing: 0.08em; text-transform: uppercase; color: #111;
 }
-.ft-help h5 span { margin-left: 6px; letter-spacing: 0; text-transform: none; font-size: 11px; font-weight: 400; }
-.ft-quick { display: grid; grid-template-columns: repeat(4, auto); gap: 6px 14px; justify-content: start; }
-.ft-quick span { display: inline-flex; align-items: center; gap: 6px; }
+.ft-help h5::after { content: ''; flex: 1; height: 1px; background: rgba(0, 0, 0, 0.12); }
+.ft-help h5 span { margin-left: -2px; font-size: 11px; letter-spacing: 0; text-transform: none; color: rgba(0, 0, 0, 0.45); }
 [data-theme='dark'] .ft-key { background: #3a3937; color: #eee; }
+[data-theme='dark'] .ft-help h5, [data-theme='dark'] .ft-how { color: #eee; }
+[data-theme='dark'] .ft-help h5::after { background: rgba(255, 255, 255, 0.14); }
+[data-theme='dark'] .ft-what { color: rgba(255, 255, 255, 0.5); }
 
 
 /* Clear, reset and download: stacked pill buttons with their icons, the key on the right. */
@@ -263,7 +272,6 @@ canvas.grabbing { cursor: grabbing; }
 [data-theme='dark'] .ft-switch.on { background: #f2f1ee; }
 [data-theme='dark'] .ft-switch.on::after { background: #1b1b1a; }
 [data-theme='dark'] .ft-help { color: rgba(255, 255, 255, 0.5); }
-[data-theme='dark'] .ft-help b { color: #eee; }
 [data-theme='dark'] .ft-media .ft-actions button { background: #32312f; color: #eee; }
 [data-theme='dark'] .ft-media .ft-actions button:hover { background: #f2f1ee; color: #111; }
 [data-theme='dark'] .ft-actions kbd { background: #454442; color: #b5b4b1; }
