@@ -4,6 +4,8 @@ import { BackSide, FrontSide, Group, Mesh, Quaternion, Raycaster, SphereGeometry
 
 const CENTRE = new Vector2(0, 0);
 const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
+// Scratch for the per-frame and per-move maths, so nothing is allocated there.
+const _right = new Vector3(), _a = new Vector3(), _b = new Vector3(), _axis = new Vector3(), _inv = new Quaternion();
 // Dab spacing as a fraction of the brush size, and the alpha each dab adds, so a stroke builds up smoothly rather
 // than popping in dab by dab: about a dozen dabs overlap at any point of a round stroke.
 const SPACING: Record<Brush, number> = { round: 0.06, bristle: 0.06, spray: 0.05, scrape: 0.08, glaze: 0.035, pencil: 0.06 };
@@ -240,7 +242,7 @@ export function Balloon() {
       axis.set(my * g, mx * g, 0); // right drag turns about y, down drag about x
       const angle = axis.length();
       if (angle > 0) {
-        dq.setFromAxisAngle(axis.clone().divideScalar(angle), angle);
+        dq.setFromAxisAngle(_axis.copy(axis).divideScalar(angle), angle);
         wheel.q.premultiply(dq);
       }
       const t = e.timeStamp, dt = Math.max((t - lastT) / 1000, 1 / 240);
@@ -288,21 +290,27 @@ export function Balloon() {
     };
   }, [gl]);
 
+  const ring = useRef<HTMLElement | null>(null), ringLast = useRef({ d: -1, o: '' });
   // Paint under the brush where the camera is now, and size the ring on screen.
   useFrame(({ size }, dt) => {
     const h = hit();
-    const ring = document.getElementById('reticle');
-    if (ring) {
+    ring.current ??= document.getElementById('reticle');
+    if (ring.current) {
       // The brush diameter is in v units, pole to pole is pi r: project a point one radius to the side.
       let px = 0;
       if (h) {
         const r = tool.size * Math.PI * 0.5;
-        const right = new Vector3().setFromMatrixColumn(camera.matrixWorld, 0).multiplyScalar(r);
-        const a = h.point.clone().project(camera), b = h.point.clone().add(right).project(camera);
-        px = Math.abs(b.x - a.x) * size.width * 0.5;
+        _right.setFromMatrixColumn(camera.matrixWorld, 0).multiplyScalar(r);
+        _a.copy(h.point).project(camera); _b.copy(h.point).add(_right).project(camera);
+        px = Math.abs(_b.x - _a.x) * size.width * 0.5;
       }
-      ring.style.width = ring.style.height = `${Math.max(px * 2, 12)}px`;
-      ring.style.opacity = h ? '1' : '0.3';
+      // Restyle only when the ring actually changes size or state.
+      const d = Math.round(Math.max(px * 2, 12)), o = h ? '1' : '0.3';
+      if (d !== ringLast.current.d || o !== ringLast.current.o) {
+        ring.current.style.width = ring.current.style.height = `${d}px`;
+        ring.current.style.opacity = o;
+        ringLast.current = { d, o };
+      }
     }
     if (!(painting.current || tool.auto) || !h) { stroke.current = null; return; }
     if (!stroke.current) {
@@ -339,7 +347,7 @@ export function Balloon() {
     if (!wheel.grabbed) wheel.omega.multiplyScalar(Math.exp(-dt * wheel.drag));
     const w = wheel.omega.length();
     if (w > 0) {
-      step.setFromAxisAngle(wheel.omega.clone().divideScalar(w), w * dt);
+      step.setFromAxisAngle(_axis.copy(wheel.omega).divideScalar(w), w * dt);
       wheel.q.premultiply(step);
     }
     g.quaternion.copy(wheel.q);
@@ -355,7 +363,7 @@ export function Balloon() {
     g.position.set(sway, bob, 0);
     g.scale.setScalar(1 + breath); // always a perfect sphere, it only swells
     // The room's down, in the balloon's frame, for the runs.
-    sim.gravityObj.set(0, -1, 0).applyQuaternion(g.quaternion.clone().invert());
+    sim.gravityObj.set(0, -1, 0).applyQuaternion(_inv.copy(g.quaternion).invert());
   }, -3);
 
   return (

@@ -1,4 +1,5 @@
 html, body, #root { margin: 0; height: 100%; background: #e9e6e0; overflow: hidden; }
+:root { --ui-font: Inter, "Helvetica Neue", Helvetica, Arial, sans-serif; }
 /* Nothing to select or long-press on a painting toy. */
 html, body { user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent; }
 canvas { display: block; touch-action: none; cursor: grab; }
@@ -24,10 +25,13 @@ canvas.grabbing { cursor: grabbing; }
 .reticle::after { width: 1px; height: 7px; }
 
 
-/* The media: big icons in a frosted bar under the balloon. */
+/* The bar: icons in a frosted pill under the balloon.
+   Spacing is one unit, S = 17px (the bar's 6px padding plus half of a 46px button around a 24px icon), between the
+   bar's ends and the first and last icon, between icons, and either side of a separator. A button is its icon plus
+   S/2 either side; its hover and pressed disc is still a 46px circle, drawn behind and wider than the button. */
 .ft-media {
   position: fixed; left: 50%; bottom: 88px; transform: translateX(-50%);
-  display: flex; gap: 4px; padding: 6px; border-radius: 999px; user-select: none;
+  display: flex; gap: 0; padding: 6px 8.5px; border-radius: 999px; user-select: none;
   /* Frosted glass: a heavy blur, a pale sheen from the top, fine grain, a bright rim. */
   background: linear-gradient(to bottom, rgba(255, 255, 255, 0.55), rgba(255, 255, 255, 0.25));
   backdrop-filter: blur(30px) saturate(1.8) brightness(1.04); -webkit-backdrop-filter: blur(30px) saturate(1.8) brightness(1.04);
@@ -45,7 +49,7 @@ canvas.grabbing { cursor: grabbing; }
 .ft-media button:hover { color: #111; background: rgba(0, 0, 0, 0.05); }
 .ft-media button.on { background: #111; color: #fff; }
 .ft-media svg { display: block; }
-.ft-sep { width: 1px; margin: 10px 4px; background: rgba(0, 0, 0, 0.12); }
+.ft-sep { width: 1px; margin: 10px 8.5px; background: rgba(0, 0, 0, 0.12); }
 
 /* Knobs: size and colour, hold and drag, a tall gauge shows while held. */
 .ft-knob { position: relative; display: flex; }
@@ -57,7 +61,7 @@ canvas.grabbing { cursor: grabbing; }
 .ft-ramp path { fill: currentColor; }
 .ft-ramp .ft-ramp-bg { fill: var(--empty); }
 .ft-swatch { display: block; width: 24px; height: 24px; border-radius: 50%; box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.12), 0 0 0 2px #fff; }
-.ft-knob button.on .ft-swatch { box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.12), 0 0 0 2px #fff; transform: scale(1.1); }
+.ft-knob button.on .ft-swatch { transform: scale(1.1); }
 .ft-gauge {
   position: absolute; left: 50%; bottom: calc(100% + 14px); padding: 6px; border-radius: 999px; pointer-events: none;
   background: rgba(255, 255, 255, 0.5); backdrop-filter: blur(18px) saturate(1.6); -webkit-backdrop-filter: blur(18px) saturate(1.6);
@@ -72,7 +76,7 @@ canvas.grabbing { cursor: grabbing; }
 }
 .ft-gauge-track b {
   position: absolute; left: 0; right: 0; bottom: 10px; text-align: center; color: #fff;
-  font: 500 10px/1 Inter, "Helvetica Neue", Helvetica, Arial, sans-serif; font-variant-numeric: tabular-nums;
+  font: 500 10px/1 var(--ui-font); font-variant-numeric: tabular-nums;
 }
 .ft-strip { position: absolute; inset: 0; border-radius: 999px; box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.08); }
 /* The picked colour: a ring riding the strip. */
@@ -83,22 +87,16 @@ canvas.grabbing { cursor: grabbing; }
 
 /* The media picker: the five media stacked over the current one, the label slides out beside each. */
 .ft-pick { display: flex; flex-direction: column-reverse; gap: 2px; border-radius: 29px; }
-.ft-pick.open { pointer-events: auto; }
-.ft-pick button {
-  position: relative; display: flex; align-items: center; justify-content: center; width: 46px; height: 46px; padding: 0;
-  border: 0; border-radius: 50%; background: none; color: #868583; cursor: pointer; transition: background 0.1s, color 0.1s;
-}
-.ft-pick button:hover { color: #111; background: rgba(0, 0, 0, 0.05); }
-.ft-pick button.on { background: #111; color: #fff; }
+.ft-pick button { position: relative; transition: background 0.1s, color 0.1s; } /* sized and coloured by .ft-media button */
 .ft-pick button span {
   position: absolute; left: calc(100% + 14px); top: 50%; transform: translate(-4px, -50%); opacity: 0; pointer-events: none;
-  font: 500 10px/1 Inter, "Helvetica Neue", Helvetica, Arial, sans-serif; letter-spacing: 0.06em; text-transform: uppercase;
+  font: 500 10px/1 var(--ui-font); letter-spacing: 0.06em; text-transform: uppercase;
   color: #111; white-space: nowrap; transition: opacity 0.12s, transform 0.12s;
 }
 .ft-pick button.on span, .ft-pick button:hover span { opacity: 1; transform: translate(0, -50%); }
 
 /* Swatch pickers (the paint): no black fill on the picked one, a ring instead, so black balls stay visible. */
-.ft-knob.swatches button.on, .ft-knob.swatches .ft-pick button.on { background: rgba(0, 0, 0, 0.06); }
+.ft-knob.swatches .ft-pick button.on { background: rgba(0, 0, 0, 0.06); }
 .ft-knob.swatches .ft-pick button.on .ft-ball { box-shadow: 0 0 0 2px #fff, 0 0 0 3.5px #111; }
 .ft-ball { display: block; width: 24px; height: 24px; border-radius: 50%; box-shadow: 0 0 0 2px #fff; }
 .ft-ball.matte { background: radial-gradient(circle at 35% 30%, #a6a5a2, #8a8986 55%, #737270); }
@@ -112,12 +110,11 @@ canvas.grabbing { cursor: grabbing; }
     linear-gradient(180deg, #f2f1ee 0%, #b7b6b3 44%, #64635f 50%, #8c8b88 68%, #dddcd9 100%);
 }
 
-.ft-popover.open { pointer-events: auto; }
-
+.ft-pick.open, .ft-popover.open, 
 /* Settings and help: small menus over their buttons. */
 .ft-menu {
   display: flex; flex-direction: column; width: max-content; min-width: 200px; padding: 6px; border-radius: 20px; box-sizing: border-box; user-select: none;
-  font: 12px/16px Inter, "Helvetica Neue", Helvetica, Arial, sans-serif; color: #111;
+  font: 12px/16px var(--ui-font); color: #111;
 }
 .ft-menu hr { width: calc(100% - 20px); margin: 4px auto; border: 0; height: 1px; background: rgba(0, 0, 0, 0.1); }
 .ft-media .ft-menu .ft-row {
@@ -126,7 +123,7 @@ canvas.grabbing { cursor: grabbing; }
 }
 .ft-media .ft-menu .ft-row:hover { background: rgba(0, 0, 0, 0.05); }
 .ft-row span { flex: 1; }
-.ft-row kbd { font: 500 10px/1 Inter, "Helvetica Neue", Helvetica, Arial, sans-serif; color: rgba(0, 0, 0, 0.4); }
+.ft-row kbd { font: 500 10px/1 var(--ui-font); color: rgba(0, 0, 0, 0.4); }
 .ft-switch { position: relative; width: 28px; height: 16px; border-radius: 999px; background: rgba(0, 0, 0, 0.14); transition: background 0.15s; }
 .ft-switch::after {
   content: ''; position: absolute; left: 2px; top: 2px; width: 12px; height: 12px; border-radius: 50%; background: #fff;
@@ -138,33 +135,28 @@ canvas.grabbing { cursor: grabbing; }
 .ft-help p { margin: 0; }
 .ft-help b { color: #111; font-weight: 500; }
 
-/* Settings and help, spaced like the rest of the bar. */
-.ft-pair { display: flex; gap: 4px; }
 
 /* Clear, reset and download: stacked pill buttons with their icons, the key on the right. */
 .ft-actions { display: flex; flex-direction: column; gap: 4px; padding: 4px; }
 .ft-media .ft-actions button {
   display: flex; align-items: center; justify-content: flex-start; gap: 8px; width: 100%; height: 32px; padding: 0 12px;
-  border-radius: 999px; background: #e6e5e2; color: #111; font: 500 12px/1 Inter, "Helvetica Neue", Helvetica, Arial, sans-serif;
+  border-radius: 999px; background: #e6e5e2; color: #111; font: 500 12px/1 var(--ui-font);
   white-space: nowrap;
 }
 .ft-media .ft-actions button:hover { background: #111; color: #fff; }
 .ft-actions svg { flex: none; }
-.ft-actions kbd { margin-left: auto; }
 
 
 /* A knob's gauge pinned open by a click: drag straight on it. */
-.ft-gauge.pinned { pointer-events: auto; }
 .ft-gauge.pinned .ft-gauge-track { cursor: ns-resize; touch-action: none; }
 .ft-pick.flip button span { left: auto; right: calc(100% + 14px); transform: translate(4px, -50%); }
 .ft-pick.flip button.on span, .ft-pick.flip button:hover span { transform: translate(0, -50%); }
 
 /* Tooltips over the bar buttons: a small grey pill, the icons' grey a shade darker, with the key in a chip. */
-.ft-media .ft-knob > button { position: relative; }
 .ft-tip {
   position: absolute; left: 50%; bottom: calc(100% + 12px); transform: translate(-50%, 4px); z-index: 2;
   display: flex; align-items: center; gap: 6px; padding: 5px 6px 5px 10px; border-radius: 999px; white-space: nowrap;
-  background: #777673; color: #fff; font: 500 11px/1 Inter, "Helvetica Neue", Helvetica, Arial, sans-serif;
+  background: #777673; color: #fff; font: 500 11px/1 var(--ui-font);
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12); pointer-events: none; opacity: 0;
   transition: opacity 0.12s, transform 0.12s;
 }
@@ -177,26 +169,21 @@ canvas.grabbing { cursor: grabbing; }
   .ft-media .ft-knob > button:hover:not(.on) .ft-tip { opacity: 1; transform: translate(-50%, 0); transition-delay: 0.35s; }
 }
 .ft-actions kbd {
-  display: inline-flex; align-items: center; height: 16px; padding: 0 4px; border-radius: 5px; background: #d2d1ce; color: #6b6a67;
-  font: 500 9px/1 Inter, "Helvetica Neue", Helvetica, Arial, sans-serif;
+  display: inline-flex; align-items: center; height: 16px; padding: 0 4px; margin-left: auto; border-radius: 5px; background: #d2d1ce; color: #6b6a67;
+  font: 500 9px/1 var(--ui-font);
 }
 .ft-media .ft-actions button:hover kbd { background: #3a3a3a; color: #e6e6e6; }
 
 /* A short note at the top when a preset is saved or recalled. */
 .ft-toast {
   position: fixed; left: 50%; top: 20px; transform: translate(-50%, -6px); padding: 8px 14px; border-radius: 999px;
-  background: #777673; color: #fff; font: 500 12px/1 Inter, "Helvetica Neue", Helvetica, Arial, sans-serif;
+  background: #777673; color: #fff; font: 500 12px/1 var(--ui-font);
   pointer-events: none; opacity: 0; transition: opacity 0.15s, transform 0.2s; z-index: 10;
 }
 .ft-toast.on { opacity: 1; transform: translate(-50%, 0); }
 
-/* Spacing: one unit, S = 17px (the bar's 6px padding plus half of a 46px button around a 24px icon), between the
-   bar's ends and the first and last icon, between icons, and either side of a separator. A button is its icon plus
-   S/2 either side; its hover and pressed disc is still a 46px circle, drawn behind and wider than the button. */
-.ft-media { gap: 0; padding: 6px 8.5px; }
-.ft-pair { gap: 0; }
-.ft-sep { margin: 10px 8.5px; }
-.ft-media .ft-knob > button { width: auto; padding: 0 8.5px; isolation: isolate; }
+/* The bar's own buttons: icon plus S/2 either side, the hover and pressed disc drawn behind. */
+.ft-media .ft-knob > button { position: relative; width: auto; padding: 0 8.5px; isolation: isolate; }
 .ft-media .ft-knob > button, .ft-media .ft-knob > button:hover, .ft-media .ft-knob > button.on,
 .ft-media .ft-knob.swatches > button.on { background: none; }
 .ft-media .ft-knob > button::before {
@@ -237,7 +224,7 @@ canvas.grabbing { cursor: grabbing; }
 [data-theme='dark'] .ft-media .ft-knob.swatches > button.on::before { background: rgba(255, 255, 255, 0.1); }
 [data-theme='dark'] .ft-ramp { --empty: #4a4947; }
 [data-theme='dark'] .ft-media button.on .ft-ramp { --empty: #bdbcb9; }
-[data-theme='dark'] .ft-swatch, [data-theme='dark'] .ft-knob button.on .ft-swatch { box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.12), 0 0 0 2px #2c2b29; }
+[data-theme='dark'] .ft-swatch { box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.12), 0 0 0 2px #2c2b29; }
 [data-theme='dark'] .ft-ball { box-shadow: 0 0 0 2px #2c2b29; }
 [data-theme='dark'] .ft-knob.swatches .ft-pick button.on .ft-ball { box-shadow: 0 0 0 2px #2c2b29, 0 0 0 3.5px #f2f1ee; }
 [data-theme='dark'] .ft-gauge {
@@ -275,7 +262,7 @@ canvas.grabbing { cursor: grabbing; }
 .ft-select select {
   appearance: none; -webkit-appearance: none; border: 0; border-radius: 999px; height: 24px; padding: 0 24px 0 10px;
   background: #e6e5e2 url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%23868583' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") no-repeat right 9px center;
-  color: #111; font: 500 11px/1 Inter, "Helvetica Neue", Helvetica, Arial, sans-serif; cursor: pointer; outline: none;
+  color: #111; font: 500 11px/1 var(--ui-font); cursor: pointer; outline: none;
 }
 .ft-select select:hover { background-color: #dcdbd8; }
 [data-theme='dark'] .ft-select select { background-color: #32312f; color: #eee; }
