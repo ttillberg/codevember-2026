@@ -476,6 +476,42 @@ const MAC = typeof navigator !== 'undefined' && /Mac|iPhone|iPad|iPod/.test(navi
 const Key = ({ children, wide }: { children: React.ReactNode; wide?: boolean }) => <kbd className={`ft-key${wide ? ' wide' : ''}`}>{children}</kbd>;
 const QUICK: [string, string][] = [['B', 'brush'], ['M', 'material'], ['S', 'size'], ['C', 'colour'], ['W', 'water']];
 
+// Help, in sections: the gesture or keys on the left, what it does on the right in small caps. A touch screen gets its
+// gestures and no keys; a mouse and keyboard get clicks and shortcuts.
+const TOUCH = typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches;
+const Do = ({ how, what }: { how: React.ReactNode; what: string }) => <><span className="ft-how">{how}</span><span className="ft-what">{what}</span></>;
+function Help() {
+  if (TOUCH) return (
+    <>
+      <div className="ft-dos">
+        <h5>Paint</h5>
+        <Do how="Tap + drag" what="paint and turn" />
+        <Do how="Two fingers" what="turn without painting" />
+        <h5>Buttons</h5>
+        <Do how="Hold + drag" what="set it" />
+        <Do how="Tap" what="open it" />
+      </div>
+    </>
+  );
+  return (
+    <>
+      <div className="ft-dos">
+        <h5>Paint</h5>
+        <Do how="Click + drag" what="paint and turn" />
+        <Do how={<><Key>⇧</Key> + drag</>} what="erase" />
+        <Do how={<><Key>{MAC ? '⌘' : 'Ctrl'}</Key> + drag</>} what="turn without painting" />
+        <Do how={<Key>T</Key>} what="turntable" />
+        <Do how={<Key>{MAC ? '⌫' : 'Del'}</Key>} what="clear" />
+        <h5>Presets</h5>
+        <Do how={<><Key>⇧</Key> <Key>0–9</Key></>} what="save" />
+        <Do how={<Key>0–9</Key>} what="recall" />
+        <h5>Quick menus <span>hold the key, move, let go</span></h5>
+        {QUICK.map(([k, what]) => <Do key={k} how={<Key>{k}</Key>} what={what} />)}
+      </div>
+    </>
+  );
+}
+
 // A row in a popover menu: a label, and a little switch when it toggles.
 const Row = ({ label, on, hint, act }: { label: string; on?: boolean; hint?: string; act: () => void }) => (
   <button className="ft-row" onClick={act}>
@@ -562,16 +598,7 @@ export function Panel() {
     {/* Help sits on its own in the top right corner, out of the bar's way. */}
     <div className="ft-media ft-corner">
       <Pop name="help" tip="Help" icon={<HelpIcon />} className="ft-menu ft-help">
-        <p><b>Click + drag</b> paint and turn</p>
-        <p><Key>{MAC ? '⌘' : 'Ctrl'}</Key> + drag, or <b>two fingers</b>: turn without painting</p>
-        <p><Key>T</Key> turntable: the brush never lifts, the balloon turns under it</p>
-        <p><Key>⇧</Key> + drag: erase with the brush</p>
-        <p><Key>{MAC ? '⌫' : 'Del'}</Key> clear the balloon</p>
-        <p><Key>⇧</Key> <Key>0–9</Key> save a preset, <Key>0–9</Key> recall it</p>
-        <h5>Quick menus <span>hold the key, move, let go</span></h5>
-        <div className="ft-quick">
-          {QUICK.map(([k, what]) => <span key={k}><Key>{k}</Key>{what}</span>)}
-        </div>
+        <Help />
       </Pop>
     </div>
     </>
