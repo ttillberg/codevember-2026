@@ -4,14 +4,18 @@ import * as THREE from 'three';
 import { LineSegments2 } from 'three/examples/jsm/lines/LineSegments2.js';
 import { LineSegmentsGeometry } from 'three/examples/jsm/lines/LineSegmentsGeometry.js';
 import { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js';
-import { CELLS, EDGES, FACES, STEPS, centreAt, corner, foldPoint, project, zoomAt, type V4 } from './fold';
-import { state, STEP_TIME, UNFOLD_TIME, advance } from './state';
+import {
+  CELLS, CONTENTS, DOOR_FACES, DOOR_JOIN_T, DOOR_STEP, EDGES, FACES, HANDLE, STEPS, centreAt, corner, foldPoint, project,
+  stepProgress, zoomAt, DOOR, type V4,
+} from './fold';
+import { state, labels, STEP_TIME, UNFOLD_TIME, advance } from './state';
 
 // Assembly manual drawing: white paper, black line work. Faces are opaque white so they hide what is behind them;
 // the edges are drawn twice, solid where they are in front of every face, and again as thin grey dashes where a face
 // covers them (depth test reversed). The cells about to turn are shaded grey, an arrow shows where they go.
 
 const TAU = Math.PI * 2;
+const SPIN_T = DOOR_STEP / STEPS; // page 5, the closed wardrobe
 const SPIN = [0.37, 0.23, 0.15]; // rad/s in XW, YW, ZW
 const INK = '#1a1a1a';
 const SHADE = new THREE.Color('#e4e4e4');
@@ -26,9 +30,13 @@ function step(dt: number) {
     s.wait -= dt;
     if (s.wait <= 0) advance();
   }
-  // the 4D turn only lives in the folded tesseract: anywhere else it unwinds to the nearest whole turn
+  // The 4D turn only lives on the closed wardrobe's page: open, the door swings out far enough to cross the eye.
+  // Anywhere else it unwinds to the nearest whole turn, and nothing folds on until it has.
+  // it rests a moment first, so the page is seen as printed, with its arrow
+  s.rest = s.t === s.target ? s.rest + dt : 0;
+  const at = s.t === SPIN_T && s.target === SPIN_T && s.rest > 2.5;
   let home = true;
-  if (s.t < 1 || s.target < 1) {
+  if (!at) {
     for (let i = 0; i < 3; i++) {
       const a = s.angles[i], to = Math.round(a / TAU) * TAU;
       s.angles[i] = Math.abs(a - to) < 1e-3 ? to : damp(a, to, 3, dt);
@@ -37,17 +45,17 @@ function step(dt: number) {
   } else if (s.spin) {
     for (let i = 0; i < 3; i++) s.angles[i] += SPIN[i] * dt;
   }
-  // fold towards the target; unfolding waits until the turn has unwound
-  if (s.t !== s.target && (s.target > s.t || home || s.t < 1)) {
+  s.still = s.angles.every((a) => a === Math.round(a / TAU) * TAU);
+  if (s.t !== s.target && (home || s.t !== SPIN_T)) {
     s.t = s.target > s.t
       ? Math.min(s.target, s.t + dt / (STEP_TIME * STEPS))
       : Math.max(s.target, s.t - dt / UNFOLD_TIME);
   }
 }
 
-/** The cells that turn on their own hinge in step s. The far cell's lid is left out: its arrow runs on the bottom
- * arm's, the same line twice. */
-const leaders = (s: number) => CELLS.filter((c) => c.hinges.length === 1 && c.hinges[0].step === s);
+/** The cells that turn in step s. The far cell's lid is left out: its arrow runs on the bottom arm's. */
+const leaders = (s: number) => CELLS.filter((c) => !c.noArrow && c.hinges.some((hg) => hg.step === s));
+const OFF = 1e4; // where hidden segments go, outside the camera's depth range
 
 /** The arrow for a cell in its step: the path of a point just off the middle of its outer face. */
 function arrowPath(ci: number, s: number): Float32Array {
@@ -55,11 +63,12 @@ function arrowPath(ci: number, s: number): Float32Array {
   const o = cell.offset;
   const len = Math.hypot(o[0], o[1], o[2]);
   const n = o.map((x) => x / len);
+  const from = cell.arrow ?? o.map((x, a) => x + n[a] * 1.45);
   const pts = new Float32Array(ARROW_SAMPLES * 3);
   const p: V4 = [0, 0, 0, 0], c: V4 = [0, 0, 0, 0];
   for (let i = 0; i < ARROW_SAMPLES; i++) {
     const t = (s + 0.04 + 0.9 * (i / (ARROW_SAMPLES - 1))) / STEPS;
-    for (let a = 0; a < 3; a++) p[a] = o[a] + n[a] * 1.45;
+    for (let a = 0; a < 3; a++) p[a] = from[a];
     p[3] = 0;
     foldPoint(cell, p, t);
     project(p, centreAt(t, c), [0, 0, 0], zoomAt(t), pts, i * 3);
@@ -104,7 +113,7 @@ export function Tesseract() {
 
   // edge lines: solid in front, dashed behind, sharing one geometry
   const lines = useMemo(() => {
-    const segs = new Float32Array(CELLS.length * EDGES.length * 6);
+    const segs = new Float32Array((CELLS.length * EDGES.length + (CONTENTS.length + HANDLE.length) / 2) * 6);
     const geo = new LineSegmentsGeometry();
     geo.setPositions(segs);
     const front = new LineSegments2(geo, lineMat(INK, 2.2));
@@ -151,7 +160,7 @@ export function Tesseract() {
     [],
   );
 
-  useFrame((_, dt) => {
+  useFrame(({ camera, size }, dt) => {
     step(Math.min(dt, 0.05));
     const { p, c, pts } = tmp;
     const t = state.t;
@@ -165,17 +174,34 @@ export function Tesseract() {
     // faces
     const s = Math.min(STEPS - 1, Math.floor(t * STEPS + 1e-6)); // the step we're at or in
     const frac = t * STEPS - s;
-    const folding = state.target > t || (state.target === t && t < 1);
+    // arrows, shading and letters are for the drawing as printed, not while it turns in 4D
+    const folding = state.still && (state.target > t || (state.target === t && t < 1));
+    const open = stepProgress(t, DOOR_STEP);
     CELLS.forEach((cell, ci) => {
       const pos = geos[ci].attributes.position as THREE.BufferAttribute;
       let o = 0;
-      for (const f of FACES) for (const k of [f[0], f[1], f[2], f[0], f[2], f[3]]) {
-        const i = (ci * 8 + k) * 3;
-        pos.array[o++] = pts[i]; pos.array[o++] = pts[i + 1]; pos.array[o++] = pts[i + 2];
-      }
+      FACES.forEach((f, fi) => {
+        const gone = (open > 0.01 || t >= DOOR_JOIN_T[ci] - 1e-6) && DOOR_FACES[ci].includes(fi); // the door's, not ours
+        for (const k of [f[0], f[1], f[2], f[0], f[2], f[3]]) {
+          const i = (ci * 8 + k) * 3;
+          pos.array[o++] = gone ? OFF : pts[i]; pos.array[o++] = gone ? OFF : pts[i + 1]; pos.array[o++] = gone ? OFF : pts[i + 2];
+        }
+      });
       pos.needsUpdate = true;
       const active = folding && t < 1 && cell.hinges.some((hg) => hg.step === s);
       mats[ci].color.lerp(active ? SHADE : PAPER, 1 - Math.exp(-8 * dt));
+    });
+
+    // part letters on the cells this page is about
+    CELLS.forEach((cell, ci) => {
+      const l = labels[ci];
+      l.on = folding && t < 1 && cell.hinges.some((hg) => hg.step === s) || (t === 0 && ci === 0);
+      if (!l.on) return;
+      tmp.a.set(0, 0, 0);
+      for (let k = 0; k < 8; k++) tmp.a.x += pts[(ci * 8 + k) * 3] / 8, tmp.a.y += pts[(ci * 8 + k) * 3 + 1] / 8, tmp.a.z += pts[(ci * 8 + k) * 3 + 2] / 8;
+      tmp.a.project(camera);
+      l.x = (tmp.a.x * 0.5 + 0.5) * size.width;
+      l.y = (-tmp.a.y * 0.5 + 0.5) * size.height;
     });
 
     // edges
@@ -185,6 +211,18 @@ export function Tesseract() {
       lines.segs.set(pts.subarray((ci * 8 + j) * 3, (ci * 8 + j) * 3 + 3), o + 3);
       o += 6;
     }
+    // what's inside, once the door is half open, and the handle, once it's on
+    const put = (src: V4[], show: boolean, frame: (p: V4) => void) => {
+      for (const q of src) {
+        if (!show) { lines.segs.fill(OFF, o, o + 3); o += 3; continue; }
+        p[0] = q[0]; p[1] = q[1]; p[2] = q[2]; p[3] = q[3];
+        frame(p);
+        project(p, c, state.angles, zoom, lines.segs, o);
+        o += 3;
+      }
+    };
+    put(CONTENTS, open > 0.3, () => {});
+    put(HANDLE, t >= DOOR_STEP / STEPS - 1e-6, (q) => foldPoint(CELLS[DOOR], q, t));
     const start = lines.geo.attributes.instanceStart as THREE.InterleavedBufferAttribute;
     (start.data.array as Float32Array).set(lines.segs);
     start.data.needsUpdate = true;

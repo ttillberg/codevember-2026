@@ -15,14 +15,65 @@ canvas:active { cursor: grabbing; }
   position: fixed; left: 36px; top: 20px; pointer-events: none;
   font: 700 88px/1 var(--font); color: var(--ink); letter-spacing: -0.04em;
 }
-/* Parts box on the first page. */
+/* Parts for the page: drawn parts, counts, letters, in a rounded box. */
 .parts {
-  position: fixed; left: 40px; top: 128px; pointer-events: none;
-  display: flex; align-items: center; gap: 10px; padding: 10px 14px 10px 10px;
-  border: 2px solid var(--ink); border-radius: 10px;
-  font: 700 22px var(--font); color: var(--ink);
+  position: fixed; left: 40px; top: 124px; pointer-events: none;
+  display: flex; align-items: center; gap: 16px; padding: 10px 16px;
+  border: 2px solid var(--ink); border-radius: 10px; background: #fff;
 }
-.parts svg { display: block; fill: #fff; stroke: var(--ink); stroke-width: 1.6; stroke-linejoin: round; }
+.parts .item { position: relative; display: flex; align-items: center; gap: 4px; }
+.parts .n { font: 700 18px var(--font); color: var(--ink); }
+.parts .tag {
+  position: absolute; left: -6px; top: -4px; font: 700 11px var(--font); color: var(--ink);
+}
+.ico { display: block; fill: #fff; stroke: var(--ink); stroke-width: 1.5; stroke-linejoin: round; stroke-linecap: round; }
+
+/* Part letters on the cells being fitted. */
+.label {
+  position: fixed; left: -13px; top: -13px; width: 26px; height: 26px; pointer-events: none;
+  display: flex; align-items: center; justify-content: center; box-sizing: border-box;
+  border: 2px solid var(--ink); border-radius: 50%; background: #fff;
+  font: 700 13px var(--font); color: var(--ink);
+}
+
+.foot {
+  position: fixed; right: 20px; bottom: 14px; pointer-events: none;
+  font: 12px var(--font); color: var(--ink); letter-spacing: 0.04em;
+}
+.foot b { font-weight: 800; margin-right: 6px; }
+
+.help {
+  position: fixed; right: 20px; top: 20px; width: 40px; height: 40px; padding: 0;
+  border: 2px solid var(--ink); border-radius: 50%; background: #fff; cursor: pointer;
+  font: 800 20px var(--font); color: var(--ink);
+}
+.help:hover { background: #f0f0f0; }
+
+.service {
+  position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
+  background: rgba(255, 255, 255, 0.82);
+}
+.service .card {
+  position: relative; width: min(340px, calc(100vw - 32px)); box-sizing: border-box; padding: 28px 28px 22px;
+  border: 2px solid var(--ink); border-radius: 12px; background: #fff; text-align: center;
+  font: 14px/1.4 var(--font); color: var(--ink);
+}
+.service .phone { fill: #fff; stroke: var(--ink); stroke-width: 2.5; stroke-linejoin: round; }
+.service .q {
+  position: absolute; right: 70px; top: 18px; width: 40px; height: 40px; line-height: 36px; box-sizing: border-box;
+  border: 2.5px solid var(--ink); border-radius: 50%; font: 800 24px/34px var(--font);
+}
+.service h2 { margin: 10px 0 6px; font: 800 22px var(--font); letter-spacing: 0.06em; }
+.service p { margin: 4px 0; }
+.service .num { font: 800 28px var(--font); letter-spacing: 0.04em; margin: 10px 0 2px; }
+.service .hours { font-size: 12px; opacity: 0.7; }
+.service dl { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; margin: 18px 0 18px; text-align: left; font-size: 13px; }
+.service dt { font-weight: 700; white-space: nowrap; }
+.service dd { margin: 0; }
+.service button {
+  padding: 6px 22px; border: 2px solid var(--ink); border-radius: 6px; background: var(--ink); color: #fff;
+  font: 700 14px var(--font); cursor: pointer;
+}
 
 .bar {
   position: fixed; left: 50%; bottom: 28px; transform: translateX(-50%);
@@ -40,8 +91,11 @@ canvas:active { cursor: grabbing; }
 
 @media (max-width: 600px) {
   .step { left: 20px; top: 14px; font-size: 64px; }
-  .parts { left: 22px; top: 94px; }
+  .parts { left: 18px; top: 90px; gap: 10px; padding: 6px 10px; transform: scale(0.8); transform-origin: 0 0; }
+  .help { right: 14px; top: 14px; }
+  .foot { display: none; }
   .bar { bottom: 44px; gap: 4px; }
   .bar button { width: 34px; height: 34px; }
 }
 .clean .back { display: none; }
+button:focus:not(:focus-visible) { outline: none; }

@@ -1,7 +1,7 @@
 {
   "name": "day-08",
   "private": true,
-  "description": "Fold a hypercube, step by step",
+  "description": "Assemble a 4D wardrobe",
   "type": "module",
   "scripts": {
     "dev": "vite",
