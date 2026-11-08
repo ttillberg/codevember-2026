@@ -68,6 +68,7 @@ export function maybeSpawn(d: Dab, liquid: number, g: Vector3, held = false) {
       const x = ((cx + i) % PW + PW) % PW;
       const k = y * PW + x;
       pile[k] += amount * fall;
+      pileLive = true;
       // Each spot lets go at its own moment, so the legs don't line up like a comb.
       if (pile[k] > threshold * (0.7 + Math.random() * 0.6) && drips.length < dripSettings.max) {
         const u = x / PW, v = y / PH;
@@ -101,12 +102,22 @@ export function maybeSpawn(d: Dab, liquid: number, g: Vector3, held = false) {
 }
 
 /** Forget every drop and all piled paint. */
-export function clearDrips() { drips.length = 0; pile.fill(0); }
+export function clearDrips() { drips.length = 0; pile.fill(0); pileLive = false; }
 
 /** The pile sets with time. Call once a frame. */
+// Whether any cell holds paint: the sweep is skipped once all of it has set. A cell under 1e-3 is set (nothing below
+// about 1 is ever read), snapped to 0 so it stops decaying forever into denormals.
+let pileLive = false;
 export function dryPile(dt: number) {
+  if (!pileLive) return;
   const k = 1 - dripSettings.dry * dt;
-  for (let i = 0; i < pile.length; i++) if (pile[i] > 0) pile[i] *= k;
+  let live = false;
+  for (let i = 0; i < pile.length; i++) {
+    if (pile[i] <= 0) continue;
+    pile[i] = pile[i] < 1e-3 ? 0 : pile[i] * k;
+    live ||= pile[i] > 0;
+  }
+  pileLive = live;
 }
 
 /** Move every drop and stamp its trail; beads where they stop. */
@@ -151,4 +162,3 @@ export function stepDrips(dt: number, g: Vector3, size: number, liquid: number, 
   }
 }
 
-export function dripCount() { return drips.length; }

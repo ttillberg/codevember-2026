@@ -6,7 +6,7 @@ type RGB = [number, number, number]; // 0..255
 const HUES: RGB[] = [[255, 0, 0], [255, 255, 0], [0, 255, 0], [0, 255, 255], [0, 0, 255], [255, 0, 255], [255, 0, 0]];
 const hex = (c: RGB) => '#' + c.map((v) => Math.round(v).toString(16).padStart(2, '0')).join('');
 
-export function hueRgb(h: number): RGB {
+function hueRgb(h: number): RGB {
   const x = Math.min(0.99999, Math.max(0, h)) * 6, i = Math.floor(x), k = x - i;
   const a = HUES[i], b = HUES[i + 1];
   return [a[0] + (b[0] - a[0]) * k, a[1] + (b[1] - a[1]) * k, a[2] + (b[2] - a[2]) * k];
@@ -17,7 +17,9 @@ export function compose(h: number, s: number) {
   const w = (s - 0.5) * 2;
   return hex(c.map((v) => v + (255 - v) * w) as RGB);
 }
-export const HUE_STRIP = `linear-gradient(to top, ${HUES.map((c, i) => `rgb(${c}) ${(i / 6) * 100}%`).join(', ')})`;
+// The hue strip at the current brightness: darker or paler hues as the brightness knob says, so it shows what you'd get.
+export const hueStrip = (s: number) =>
+  `linear-gradient(to top, ${Array.from({ length: 13 }, (_, i) => `${compose(i / 12, s)} ${(i / 12) * 100}%`).join(', ')})`;
 export const shadeStrip = (h: number) => `linear-gradient(to top, #000, ${compose(h, 0.5)}, #fff)`;
 
 // Back from a hex (one set elsewhere, a preset from before): the nearest hue and brightness.
