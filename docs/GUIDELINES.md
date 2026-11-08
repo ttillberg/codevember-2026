@@ -41,6 +41,20 @@ Each day also has a short `README.md`: what it is, what was tried, what was lear
 
 Optional `NN/screengrab.png`: a square shot of the experiment, no UI, 1200 × 1200. The build copies it to `dist/NN/screengrab.png`, the index shows it in the day's square, and the day's `index.html` can point `og:image` at `https://ttillberg.github.io/codevember-2026/NN/screengrab.png`.
 
+## Process captures
+
+Every day keeps a trail of its own making in `NN/process/` (gitignored), for timelapses:
+
+```sh
+pnpm grab 08                  # screenshot of the dev server (http://localhost:5173/), 1280 × 800
+pnpm grab 08 --video 6        # 6 s clip, mp4 through ffmpeg
+pnpm grab 08 --url http://localhost:5174/ --wait 3000
+pnpm grab 08 --next png       # print the next file name, to save a shot taken another way
+pnpm grab 08 --timelapse      # stitch every png into NN/process/NN-timelapse.mp4
+```
+
+Files are numbered in order: `NN-0001-YYYYMMDD-HHMMSS.png`. Same viewport every time so the frames line up. Grab whenever something visibly changes: a first light, a new look, a fix you can see. A clip when the change is motion. The dev server must be running; headless system Chrome, WebGPU included.
+
 ## Build and deploy
 
 ```sh
