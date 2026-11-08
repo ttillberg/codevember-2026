@@ -269,3 +269,13 @@ canvas.grabbing { cursor: grabbing; }
 [data-theme='dark'] .ft-tip { background: #5f5e5b; }
 [data-theme='dark'] .ft-tip kbd { background: #7a7976; }
 [data-theme='dark'] .ft-toast { background: #5f5e5b; }
+
+/* The texture size: a small pill dropdown on the right of its row. */
+.ft-select { cursor: default; box-sizing: border-box; } /* a label, not a button: count the padding in the 100% width */
+.ft-select select {
+  appearance: none; -webkit-appearance: none; border: 0; border-radius: 999px; height: 24px; padding: 0 24px 0 10px;
+  background: #e6e5e2 url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%23868583' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") no-repeat right 9px center;
+  color: #111; font: 500 11px/1 Inter, "Helvetica Neue", Helvetica, Arial, sans-serif; cursor: pointer; outline: none;
+}
+.ft-select select:hover { background-color: #dcdbd8; }
+[data-theme='dark'] .ft-select select { background-color: #32312f; color: #eee; }
