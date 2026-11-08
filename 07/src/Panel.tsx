@@ -5,7 +5,7 @@ import { QUALITY, quality, setQuality, type Quality } from './paint';
 import { resetTool, save, tool, type Finish } from './tool';
 import { downloadPng } from './snapshot';
 import { DARK_ENABLED, setTheme, theme } from './theme';
-import { hueStrip, setColour, shadeStrip, syncColour } from './color';
+import { compose, setColour, syncColour } from './color';
 
 // The media, and the options each one answers to.
 type Medium = 'glaze' | 'bristle' | 'spray' | 'pencil' | 'erase';
@@ -259,25 +259,79 @@ function RangeKnob({ k, tip, hotkey, face }: { k: Num; tip: string; hotkey: stri
   );
 }
 
-// Colour: the hue round the wheel on one knob, its brightness, black through the pure hue to white, on the next.
-function ColorKnob() {
+// Colour: one square, the hue left to right and the brightness top to bottom (white, the pure hue in the middle,
+// black). Like a knob: hold the swatch and drag (across turns the hue, up and down the brightness), click to pin the
+// square open and drag on it, or hold C and it opens under the cursor with the current colour right there.
+const PAD_W = 180, PAD_H = 140; // the square's size, and the drag for the whole range each way
+const PAD_BG = `linear-gradient(to bottom, #fff, rgba(255, 255, 255, 0) 50%, rgba(0, 0, 0, 0) 50%, #000), ` +
+  `linear-gradient(to right, ${Array.from({ length: 13 }, (_, i) => `${compose(i / 12, 0.5)} ${(i / 12) * 100}%`).join(', ')})`;
+function ColorPad() {
+  const [held, setHeld] = useState(false);
+  const [pinned, setPinned] = useState(false);
+  const [, bump] = useState(0);
+  const [spot, setSpot] = useState<At>(null);
+  const box = useRef<HTMLDivElement>(null), pop = useRef<HTMLDivElement>(null), pad = useRef<HTMLDivElement>(null);
+  const start = useRef({ x: 0, y: 0, h: 0, s: 0, moved: false, wasPinned: false, key: false });
+  syncColour();
+  const to = (h: number, s: number) => {
+    setColour(Math.min(1, Math.max(0, h)), Math.min(1, Math.max(0, s)));
+    bump((n) => n + 1);
+  };
+  const at = (x: number, y: number) => {
+    const r = pad.current?.getBoundingClientRect();
+    if (r) to((x - r.left) / r.width, 1 - (y - r.top) / r.height);
+  };
+  // Let go anywhere ends a drag; a tap pins it. Held by its key, the mouse sets it on the square and the key's
+  // release ends it.
+  useEffect(() => {
+    if (!held || start.current.key) return;
+    const up = () => { setHeld(false); setPinned(!start.current.moved && !start.current.wasPinned); };
+    window.addEventListener('pointerup', up);
+    window.addEventListener('pointercancel', up);
+    return () => { window.removeEventListener('pointerup', up); window.removeEventListener('pointercancel', up); };
+  }, [held]);
+  useEffect(() => {
+    if (!held || !start.current.key) return;
+    const move = () => at(mouse.x, mouse.y);
+    window.addEventListener('pointermove', move);
+    return () => window.removeEventListener('pointermove', move);
+  }, [held]);
+  useHotkey('KeyC', () => {
+    start.current = { ...start.current, key: true };
+    if (pop.current && box.current) setSpot(placeAt(pop.current, box.current, 6 + tool.hue * PAD_W, 6 + (1 - tool.shade) * PAD_H));
+    setPinned(false);
+    setHeld(true);
+  }, () => { if (start.current.key) { start.current.key = false; setHeld(false); } });
+  useDismiss(box, pinned, () => setPinned(false));
+  const open = held || pinned;
+  useClamp(pop, box, open);
   return (
-    <Knob name="color" tip="Colour" hotkey="KeyC" get={() => { syncColour(); return tool.hue; }} put={(v) => setColour(v, tool.shade)}
-      face={() => <i className="ft-swatch" style={{ background: tool.hex }} />}
-      track={() => <><span className="ft-strip" style={{ background: hueStrip(tool.shade) }} /><span className="ft-mark" style={{ background: tool.hex }} /></>} />
-  );
-}
-// A sun: a disc and eight rays.
-const SUN_DISC = 'M17 13a4 4 0 1 1-8 0a4 4 0 1 1 8 0z';
-const SUN_RAYS = Array.from({ length: 8 }, (_, i) => {
-  const a = (i / 8) * Math.PI * 2, c = Math.cos(a), s = Math.sin(a);
-  return `M${13 + c * 6.5} ${13 + s * 6.5}L${13 + c * 10} ${13 + s * 10}`;
-}).join('');
-function ShadeKnob() {
-  return (
-    <Knob name="brightness" tip="Brightness" hotkey="KeyL" get={() => { syncColour(); return tool.shade; }} put={(v) => setColour(tool.hue, v)}
-      face={() => <Fit line={1.5}><path d={SUN_RAYS} /><path d={SUN_DISC} fill="currentColor" stroke="none" /></Fit>}
-      track={() => <><span className="ft-strip" style={{ background: shadeStrip(tool.hue) }} /><span className="ft-mark" style={{ background: tool.hex }} /></>} />
+    <div className="ft-knob" ref={box}>
+      <button aria-label="colour" className={open ? 'on' : ''}
+        onPointerDown={(e) => {
+          e.currentTarget.setPointerCapture(e.pointerId);
+          start.current = { x: e.clientX, y: e.clientY, h: tool.hue, s: tool.shade, moved: false, wasPinned: pinned, key: false };
+          setSpot(null);
+          setHeld(true);
+        }}
+        onPointerMove={(e) => {
+          if (!held || start.current.key) return;
+          const dx = e.clientX - start.current.x, dy = e.clientY - start.current.y;
+          if (Math.abs(dx) + Math.abs(dy) > 4) start.current.moved = true;
+          if (start.current.moved) to(start.current.h + dx / PAD_W, start.current.s - dy / PAD_H);
+        }}
+        onWheel={(e) => to(tool.hue, tool.shade - Math.sign(e.deltaY) * 0.02)}>
+        <i className="ft-swatch" style={{ background: tool.hex }} />
+        <Tip tip="Colour" hotkey="KeyC" />
+      </button>
+      <div ref={pop} className={`ft-gauge ft-padpop${open ? ' open' : ''}${pinned ? ' pinned' : ''}`} style={atStyle(spot)}>
+        <div ref={pad} className="ft-pad" style={{ background: PAD_BG }}
+          onPointerDown={(e) => { e.currentTarget.setPointerCapture(e.pointerId); at(e.clientX, e.clientY); }}
+          onPointerMove={(e) => { if (e.currentTarget.hasPointerCapture(e.pointerId)) at(e.clientX, e.clientY); }}>
+          <i className="ft-padmark" style={{ left: `${tool.hue * 100}%`, top: `${(1 - tool.shade) * 100}%`, background: tool.hex }} />
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -425,7 +479,7 @@ const HelpIcon = () => (
 // Keys as little outlined caps, with the Mac's symbols on a Mac and the PC's names elsewhere.
 const MAC = typeof navigator !== 'undefined' && /Mac|iPhone|iPad|iPod/.test(navigator.platform || navigator.userAgent);
 const Key = ({ children, wide }: { children: React.ReactNode; wide?: boolean }) => <kbd className={`ft-key${wide ? ' wide' : ''}`}>{children}</kbd>;
-const QUICK: [string, string][] = [['B', 'brush'], ['M', 'material'], ['S', 'size'], ['F', 'flow'], ['C', 'colour'], ['L', 'light'], ['W', 'water']];
+const QUICK: [string, string][] = [['B', 'brush'], ['M', 'material'], ['S', 'size'], ['F', 'flow'], ['C', 'colour'], ['W', 'water']];
 
 // A row in a popover menu: a label, and a little switch when it toggles.
 const Row = ({ label, on, hint, act }: { label: string; on?: boolean; hint?: string; act: () => void }) => (
@@ -471,8 +525,7 @@ export function Panel() {
       <span className="ft-sep" />
       <RangeKnob k="size" tip="Size" hotkey="KeyS" face={(t) => <SizeRamp t={t} />} />
       <RangeKnob k="flow" tip="Flow" hotkey="KeyF" face={(t) => <FlowDisc t={t} />} />
-      <ColorKnob />
-      <ShadeKnob />
+      <ColorPad />
       <Picker name="paint" tip="Material" items={FINISHES} cur={tool.finish} put={(f) => { tool.finish = f; }} icon={(f) => <FinishBall f={f} />} hotkey="KeyM" />
       <span className="ft-sep" />
       {/* Turntable: the brush never lifts, the balloon turns under it like a record. */}
