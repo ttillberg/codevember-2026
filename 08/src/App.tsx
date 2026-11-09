@@ -42,6 +42,7 @@ export function App() {
   const [program, setProgram] = useState(st.program);
   const [smooth, setSmooth] = useState(st.smooth);
   const [hard, setHard] = useState(st.hard);
+  const [inout, setInout] = useState(st.inout);
   const [manual, setManual] = useState(drone.pilot);
   const [locked, setLocked] = useState(false);
   const stage = useRef<HTMLDivElement>(null);
@@ -127,6 +128,7 @@ export function App() {
       const k = e.key.toLowerCase();
       if (k === 'p') { setMode(!drone.pilot); return; }
       if (k === 'h') { st.hard = !st.hard; setHard(st.hard); return; }
+      if (k === 'o') { st.inout = !st.inout; setInout(st.inout); return; }
       if (drone.pilot) {
         // manual: w s and up down forward and back, a d and the side arrows strafe, space forward, l the lock
         if (k === ' ' || k === 'w' || k === 'arrowup') keys.thrust = 1;
@@ -193,12 +195,14 @@ export function App() {
         <span><kbd>space</kbd>forward</span>
         <span><kbd>l</kbd>{locked ? 'unlock pointer' : 'lock pointer'}</span>
         <span><kbd>h</kbd>{hard ? 'hard off' : 'hard'}</span>
+        <span><kbd>o</kbd>{inout ? 'fold' : 'in, out'}</span>
         <span><kbd>p</kbd>auto</span>
       </div> : <div className="keys">
         <span><kbd>drag</kbd>orbit</span>
         <span><kbd>space</kbd>{program ? 'stop program' : 'run program'}</span>
         <span><kbd>m</kbd>{smooth ? 'servo' : 'smooth'}</span>
         <span><kbd>h</kbd>{hard ? 'hard off' : 'hard'}</span>
+        <span><kbd>o</kbd>{inout ? 'fold' : 'in, out'}</span>
         <span><kbd>p</kbd>manual</span>
       </div>}
     </>

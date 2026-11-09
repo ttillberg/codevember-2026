@@ -25,6 +25,7 @@ export const st = {
   flipIn: 12, // seconds until it turns round on its own
   spinVel: 0, // the smooth mode's speed, eased towards SPIN * way so a flip is a swing, not a knock
   hard: false, // hard mode: the machine turns in 4D all the time, changing plane as it passes each quarter
+  inout: false, // the hand-over at a wall: false, both halves at once, folded at the wall; true, the body goes all the way in, then comes out
   /** Longest and shortest strut right now, for the readout. */
   lengths: { min: 0, max: 0 },
   /** How far the machine reaches from its centre right now, in the 3D picture, for the camera to fit it. */
