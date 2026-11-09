@@ -128,6 +128,34 @@ function dress(g: THREE.Group) {
   });
 }
 
+// The works that move the walls, built here on the model: at each hinge a barrel with a steel pin through it, and
+// a linear actuator, a cylinder on the core and a rod to the inside of the petal, that strokes as the petal turns.
+// Model units; the eye looks along -z, the petals sit on ±x and ±y, hinged 150 degrees back from the eye.
+const EYE = new THREE.Vector3(0, 0, -1);
+const SIDES = [new THREE.Vector3(1, 0, 0), new THREE.Vector3(0, 1, 0), new THREE.Vector3(-1, 0, 0), new THREE.Vector3(0, -1, 0)];
+const onSphere = (side: THREE.Vector3, latDeg: number, r: number) => {
+  const a = (latDeg * Math.PI) / 180;
+  return new THREE.Vector3().addScaledVector(EYE, Math.cos(a)).addScaledVector(side, Math.sin(a)).multiplyScalar(r);
+};
+const Y = new THREE.Vector3(0, 1, 0);
+let works: { graphite: THREE.Material; steel: THREE.Material; barrel: THREE.BufferGeometry; rod: THREE.BufferGeometry; lug: THREE.BufferGeometry; hinge: THREE.BufferGeometry; pin: THREE.BufferGeometry } | null = null;
+function makeWorks() {
+  const graphite = new THREE.MeshStandardMaterial({ color: '#1e1e22', roughness: 0.5, metalness: 0.2 });
+  const steel = new THREE.MeshStandardMaterial({ color: '#c8c8cc', roughness: 0.3, metalness: 0.9 });
+  const along = (r: number) => new THREE.CylinderGeometry(r, r, 1, 20).translate(0, 0.5, 0); // from the origin up its y, unit long
+  return {
+    graphite, steel,
+    barrel: along(0.045), rod: along(0.02), lug: new THREE.SphereGeometry(0.048, 16, 12),
+    hinge: new THREE.CylinderGeometry(0.042, 0.042, 0.3, 16), pin: new THREE.CylinderGeometry(0.018, 0.018, 0.42, 12),
+  };
+}
+/** The matrix of `o` relative to its ancestor `anc`, from local matrices (kept current by the caller). */
+function relTo(o: THREE.Object3D, anc: THREE.Object3D) {
+  const m = new THREE.Matrix4();
+  for (let p: THREE.Object3D | null = o; p && p !== anc; p = p.parent) m.premultiply(p.matrix);
+  return m;
+}
+
 /** A copy of the loaded model at `size` (its radius), with its hinges wired. Materials are shared between copies. */
 export function device(model: THREE.Object3D, size: number): Device {
   const g = model.clone(true) as THREE.Group;
@@ -135,6 +163,45 @@ export function device(model: THREE.Object3D, size: number): Device {
   g.scale.setScalar(size);
   // the rest pose in the file is open; the hinges turn in a fixed ratio from there (blender: leaf 95 -> 160, wall -55 -> 0)
   const walls = [0, 1, 2, 3].map((k) => { const w = g.getObjectByName(`wall_${k}`)!; return { o: w, rest: w.rotation.x }; });
+
+  // the works: hinges and actuators, in the frame the core sits in
+  works ??= makeWorks();
+  const W = works;
+  const frame = g.getObjectByName('core')!.parent!;
+  const acts = walls.map((w, k) => {
+    const side = SIDES[k];
+    const axis = new THREE.Vector3().crossVectors(side, EYE).normalize(); // across the petal's meridian: the hinge line
+    const hingeAt = onSphere(side, 150, 0.965);
+    for (const [geo, mat] of [[W.hinge, W.graphite], [W.pin, W.steel]] as const) {
+      const m = new THREE.Mesh(geo, mat);
+      m.position.copy(hingeAt);
+      m.quaternion.setFromUnitVectors(Y, axis);
+      frame.add(m);
+    }
+    // mounts: a lug on the core, and one on the petal's inside, fixed in the petal's own frame in the closed pose
+    const coreAt = onSphere(side, 112, 0.69);
+    w.o.rotation.x = 0; w.o.updateMatrix();
+    const wallAt = onSphere(side, 100, 0.915);
+    const local = wallAt.clone().applyMatrix4(relTo(w.o, frame).invert());
+    const lugA = new THREE.Mesh(W.lug, W.graphite); lugA.position.copy(coreAt); frame.add(lugA);
+    const lugB = new THREE.Mesh(W.lug, W.graphite); lugB.position.copy(local); w.o.add(lugB);
+    const barrel = new THREE.Mesh(W.barrel, W.graphite); frame.add(barrel);
+    const rod = new THREE.Mesh(W.rod, W.steel); frame.add(rod);
+    w.o.rotation.x = w.rest; w.o.updateMatrix();
+    return { w, coreAt, local, barrel, rod, d: new THREE.Vector3(), at: new THREE.Vector3() };
+  });
+  const stroke = () => {
+    for (const a of acts) {
+      a.w.o.updateMatrix();
+      a.at.copy(a.local).applyMatrix4(relTo(a.w.o, frame));
+      a.d.subVectors(a.at, a.coreAt);
+      const L = a.d.length(); a.d.divideScalar(L);
+      // the cylinder from the core mount, two thirds of the shortest stroke long; the rod from the petal mount back into it
+      a.barrel.position.copy(a.coreAt); a.barrel.quaternion.setFromUnitVectors(Y, a.d); a.barrel.scale.set(1, Math.min(L - 0.04, 0.3), 1);
+      a.rod.position.copy(a.at); a.rod.quaternion.setFromUnitVectors(Y, a.d.clone().negate()); a.rod.scale.set(1, L - 0.05, 1);
+    }
+  };
+  stroke();
   const leaves = [0, 1, 2, 3, 4, 5, 6, 7].map((i) => { const l = g.getObjectByName(`leaf_${i}`)!; return { o: l, rest: l.rotation.y }; });
   g.traverse((o) => {
     if ((o as THREE.Mesh).isMesh) {
@@ -145,7 +212,7 @@ export function device(model: THREE.Object3D, size: number): Device {
   });
   return {
     g,
-    shield: (k) => { for (const w of walls) w.o.rotation.x = w.rest * (1 - k); },
+    shield: (k) => { for (const w of walls) w.o.rotation.x = w.rest * (1 - k); stroke(); },
     shutter: (k) => { for (const l of leaves) l.o.rotation.y = l.rest * (1 + (65 / 95) * k); },
   };
 }
