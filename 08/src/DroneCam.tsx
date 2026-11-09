@@ -78,11 +78,11 @@ export function DroneCam() {
     for (let x = -2; x <= 2; x++) for (let y = -2; y <= 2; y++) for (let z = -2; z <= 2; z++) {
       if (Math.abs(x) + Math.abs(y) + Math.abs(z) <= 2) rooms.push([x, y, z]);
     }
-    const beams = BEAMS.map(() => [{ w: 1, o: 1, core: true }, { w: 3.5, o: 0.35, core: false }, { w: 9, o: 0.12, core: false }].map((l) => {
+    const beams = BEAMS.map(() => [{ w: 1, o: 0.75, core: true }, { w: 3, o: 0.22, core: false }, { w: 8, o: 0.07, core: false }].map((l) => {
       const geo = new LineSegmentsGeometry();
       geo.setPositions([0, 0, 0, 0, 0, 0]);
       geo.setColors([1, 1, 1, 1, 1, 1]);
-      const mat = new LineMaterial({ linewidth: l.w, vertexColors: true, toneMapped: false, transparent: true, opacity: l.o, depthWrite: false });
+      const mat = new LineMaterial({ linewidth: l.w, vertexColors: true, toneMapped: false, transparent: true, opacity: l.o, depthWrite: false, fog: true });
       const line = new LineSegments2(geo, mat);
       line.frustumCulled = false;
       line.visible = false;
