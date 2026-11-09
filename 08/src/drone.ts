@@ -27,8 +27,10 @@ export const drone = {
   /** The walls round the body, 0 open to 1 shut, and the shutter over the eye, same scale; the cam's copy follows. */
   shield: 0,
   shutter: 0,
-  /** The grip out in front of the eye, 0 home to 1 out with the claws shut. */
+  /** The grip out in front of the eye, 0 home to 1 out with the claws shut, and how far out the ring must go, in
+   * device radii, to be on the piece. */
   grip: 0,
+  gripAt: 1.83,
   /** The face being passed: its four corners in 4D and how hard it is lit, 0 to 1. */
   flash: { corners: [[0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]] as V4[], a: 0 },
 };

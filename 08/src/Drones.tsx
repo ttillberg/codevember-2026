@@ -150,7 +150,7 @@ export function Drones() {
     const beyond1 = mix4(face1, face2, 0.45); beyond1[a1] = s1;
     const beyond2 = mix4(face2, to, 0.45); beyond2[a2] = s2;
     // the last leg stops a grip's reach short of the piece, so it is taken in the ring, not in the body
-    const stop = add4(to, unit4(sub4(to, face2)), -0.1);
+    const stop = add4(to, unit4(sub4(to, face2)), -0.15);
     s.plan = [
       { kind: 'portal', axis: a1, sign: s1, face: face1, beyond: beyond1 },
       { kind: 'portal', axis: a2, sign: s2, face: face2, beyond: beyond2 },
@@ -277,11 +277,12 @@ export function Drones() {
     const BLINK = 0.55;
     const shut = s.blink < BLINK ? Math.sin((s.blink / BLINK) * Math.PI) : 0;
     if (s.blink >= BLINK) s.blink = Infinity;
-    // the grip: out fast when the piece is within reach, home again once it is taken
+    // the grip: out fast when the piece is within reach, as far as the piece is, home again once it is taken
     const near = target.up && len4(sub4(target.p, s.p)) < 0.3;
     s.grip += ((near ? 1 : 0) - s.grip) * Math.min(1, dt * (near ? 16 : 5));
+    if (near) drone.gripAt = project(m, target.p, new THREE.Vector3()).distanceTo(project(m, s.p, new THREE.Vector3())) / SIZE_MAIN;
     drone.shield = s.shield; drone.shutter = shut; drone.grip = s.grip;
-    s.q.shield(s.shield); s.q.shutter(shut); s.q.grip(s.grip);
+    s.q.shield(s.shield); s.q.shutter(shut); s.q.grip(s.grip, drone.gripAt);
 
     // draw: where it is in 3D. Its orientation lives in cell space, drone.q: at the controls the pilot's, on its own
     // the way it is going, with an up carried from frame to frame so no leg straight up or down flips it. From
@@ -294,7 +295,13 @@ export function Drones() {
       const c = toCell(s.p);
       const cv = new THREE.Vector3(c[0] - s.cLast[0], c[1] - s.cLast[1], c[2] - s.cLast[2]);
       s.cLast = c;
-      if (cv.lengthSq() > 1e-10 && cv.lengthSq() < 0.25) s.look.lerp(cv.normalize(), Math.min(1, dt * 4)).normalize();
+      // the way it is going; near the piece, the piece itself, so the grip goes out at it
+      const near = target.up && len4(sub4(target.p, s.p)) < 0.3;
+      if (near) {
+        const t3 = toCell(target.p);
+        const at = new THREE.Vector3(t3[0] - c[0], t3[1] - c[1], t3[2] - c[2]);
+        if (at.lengthSq() > 1e-8) s.look.lerp(at.normalize(), Math.min(1, dt * 10)).normalize();
+      } else if (cv.lengthSq() > 1e-10 && cv.lengthSq() < 0.25) s.look.lerp(cv.normalize(), Math.min(1, dt * 4)).normalize();
       s.camUp.set(0, 1, 0).applyQuaternion(drone.q);
       s.camUp.lerp(tmp.up, 0.04 * (1 - Math.abs(s.look.y))).normalize();
       tmp.m.lookAt(new THREE.Vector3(), s.look, s.camUp);
@@ -325,7 +332,7 @@ export function Drones() {
       s.q2.g.visible = true;
       s.q2.g.position.copy(v);
       s.q2.g.quaternion.copy(s.heading2);
-      s.q2.shield(s.shield); s.q2.shutter(shut); s.q2.grip(s.grip);
+      s.q2.shield(s.shield); s.q2.shutter(shut); s.q2.grip(s.grip, drone.gripAt);
       const [c0, c1, c2] = drone.flash.corners.map((c4) => project(m, c4, new THREE.Vector3()));
       s.planeA.setFromCoplanarPoints(c0, c1, c2);
       const centre: V4 = [0, 0, 0, 0]; centre[drone.held] = drone.sign;

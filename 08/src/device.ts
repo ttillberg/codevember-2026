@@ -14,8 +14,9 @@ useGLTF.preload(DEVICE_URL);
 
 export type Device = {
   g: THREE.Group;
-  /** 0 home to 1 out: the ring on its arm in front of the eye, claws closing as it reaches. */
-  grip: (k: number) => void;
+  /** 0 home to 1 out: the ring on its arm in front of the eye, claws closing as it reaches; `at` is how far out the
+   * ring should be at full reach, in the model's units from the centre (default a radius and a bit). */
+  grip: (k: number, at?: number) => void;
   /** Clip every part of this copy to one side of these planes (needs the renderer's local clipping on). */
   clip: (planes: THREE.Plane[]) => void;
   /** 0 open (fins back) to 1 shut (the walls closed round the body). */
@@ -214,10 +215,10 @@ export function device(model: THREE.Object3D, size: number, own = false): Device
     });
     return { grp, arm, ring, claws };
   })();
-  const grip = (k: number) => {
+  const grip = (k: number, at = 1.83) => {
     const { grp, arm, ring, claws } = gripParts;
     grp.visible = k > 0.01;
-    const reach = 0.5 + 0.55 * k; // the ring's z out from the eye cap at 0.78
+    const reach = 0.5 + (Math.max(1.3, Math.min(2.6, at)) - 0.78 - 0.5) * k; // the ring's z out from the eye cap at 0.78
     arm.position.set(0, 0, -0.7); arm.quaternion.setFromUnitVectors(Y, new THREE.Vector3(0, 0, -1)); arm.scale.set(0.8, reach + 0.08, 0.8); // from the cap to the ring
     ring.position.set(0, 0, -(0.78 + reach));
     for (const h of claws) h.rotation.y = -0.35 - 1.0 * k; // tilt in towards the axis as it closes

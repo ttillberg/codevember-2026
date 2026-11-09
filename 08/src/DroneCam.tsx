@@ -154,7 +154,11 @@ export function DroneCam() {
     tmp.q.setFromRotationMatrix(tmp.m);
     cell.q.slerp(tmp.q, 0.2);
     cell.dev.g.visible = follow;
-    cell.dev.shield(drone.shield); cell.dev.shutter(drone.shutter); cell.dev.grip(drone.grip);
+    cell.dev.shield(drone.shield); cell.dev.shutter(drone.shutter);
+    // the grip reaches the piece in cell space too: its distance here over the device's size here
+    let at = 1.83;
+    if (target.up && target.map) { const t3 = toCellWith(target.map, target.p); at = Math.hypot(t3[0] - c[0], t3[1] - c[1], t3[2] - c[2]) / SIZE_CAM; }
+    cell.dev.grip(drone.grip, at);
     if (follow) {
       cell.dev.g.position.copy(tmp.pos);
       tmp.m.lookAt(new THREE.Vector3(), cell.look, camUp); // the eye looks along -z
