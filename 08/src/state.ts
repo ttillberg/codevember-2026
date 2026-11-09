@@ -67,13 +67,15 @@ const pick = <T,>(xs: [T, number][]) => {
   return xs[xs.length - 1][0];
 };
 
-/** Bank q whole quarter turns in the live plane into the base, and move on to another plane. */
+/** Bank q whole quarter turns in the live plane into the base, and move on to another plane. The plane only changes
+ * when nothing is left over: a leftover angle carried into a new plane is a different pose, and the machine would
+ * jump. */
 function fold(q: number) {
   st.base = mul(rotPlane(st.plane, q * QUARTER), st.base).map((row) => row.map(Math.round)) as M4;
   st.angle -= q * QUARTER;
   st.target -= q * QUARTER;
   st.quarters += Math.abs(q);
-  st.plane = pick<number>([0, 1, 2].filter((p) => p !== st.plane).map((p) => [p, 1]));
+  if (Math.abs(st.angle) < 1e-3) st.plane = pick<number>([0, 1, 2].filter((p) => p !== st.plane).map((p) => [p, 1]));
 }
 
 /** A quarter turn, queued as one move or as two or three uneven lurches; the last one is followed by a hold. */
@@ -107,8 +109,10 @@ export function tick(dt: number) {
     st.angle = st.target = glide.from + (glide.to - glide.from) * e;
     st.vel = 0;
     if (u >= 1) {
+      st.angle = st.target = glide.to;
       glide = null;
-      if (Math.abs(st.angle) >= QUARTER - 1e-6) fold(Math.sign(st.angle));
+      const q = Math.round(st.angle / QUARTER);
+      if (q !== 0) fold(q);
     }
     return;
   }
@@ -140,7 +144,9 @@ let glide: { from: number; to: number; t: number; dur: number } | null = null;
 export function turnGlide(dur = 2) {
   const q = Math.round(st.target / QUARTER);
   if (q !== 0) fold(q);
-  glide = { from: st.angle, to: st.angle + QUARTER * (Math.random() < 0.1 ? -1 : 1) * st.way, t: 0, dur };
+  // to an exact quarter, so the bank at the end leaves nothing over and the pose is continuous through it
+  const dir = (Math.random() < 0.1 ? -1 : 1) * st.way;
+  glide = { from: st.angle, to: (Math.round(st.angle / QUARTER) + dir) * QUARTER, t: 0, dur };
 }
 
 /** For the readout: what the servo is doing. */
