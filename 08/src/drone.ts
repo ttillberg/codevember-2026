@@ -107,7 +107,9 @@ export const cellName = () => `${drone.sign > 0 ? '+' : '\u2212'}${'xyzw'[drone.
 
 /** Cross the face on axis `f` at side `t`: the new cell holds f, and frees the axis that was held. */
 export function crossInto(f: number, t: number) {
-  crossRow(drone, drone.axisOf.indexOf(f), t);
+  const k = drone.axisOf.indexOf(f);
+  if (k < 0) return; // the held axis has no wall to cross
+  crossRow(drone, k, t);
   drone.crossings++;
 }
 

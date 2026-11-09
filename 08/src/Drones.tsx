@@ -151,21 +151,52 @@ export function Drones() {
     const face2 = mix4(s.p, to, 0.7); face2[a1] = s1; face2[a2] = s2; face2[s.held] = s.sign * 0.45;
     const beyond1 = mix4(face1, face2, 0.45); beyond1[a1] = s1;
     const beyond2 = mix4(face2, to, 0.45); beyond2[a2] = s2;
-    // the last leg stops a grip's reach short of the piece, so it is taken in the ring, not in the body. A reach is
-    // a 3D distance and the projection stretches 4D differently from place to place, so the 4D step back is sized
-    // from the local scale of the projection at the piece: probe how far a small 4D step moves on screen there.
-    const back = unit4(sub4(to, face2));
-    const m0 = pose(), E = 0.02;
-    const scale3 = project(m0, to, new THREE.Vector3()).distanceTo(project(m0, add4(to, back, -E), new THREE.Vector3())) / E;
-    const d4 = Math.max(0.06, Math.min(0.45, (REACH3 * SIZE_MAIN) / Math.max(0.2, scale3)));
-    const stop = add4(to, back, -d4);
     s.plan = [
       { kind: 'portal', axis: a1, sign: s1, face: face1, beyond: beyond1 },
       { kind: 'portal', axis: a2, sign: s2, face: face2, beyond: beyond2 },
-      { kind: 'cruise', to: stop, toTarget: true },
+      { kind: 'cruise', to: stopBefore(to, face2), toTarget: true },
     ];
     target.p = to; target.up = true; target.scale = 0;
     target.map = mapAcross(mapAcross(drone, a1, s1), a2, s2);
+  }
+  /** Where the last leg to the piece at `to`, coming from `from`, stops: a grip's reach short of it, so it is taken in
+   * the ring, not in the body. A reach is a 3D distance and the projection stretches 4D differently from place to
+   * place, so the 4D step back is sized from the local scale of the projection at the piece: probe how far a small 4D
+   * step moves on screen there. */
+  function stopBefore(to: V4, from: V4): V4 {
+    const back = unit4(sub4(to, from));
+    const m0 = pose(), E = 0.02;
+    const scale3 = project(m0, to, new THREE.Vector3()).distanceTo(project(m0, add4(to, back, -E), new THREE.Vector3())) / E;
+    const d4 = Math.max(0.06, Math.min(0.45, (REACH3 * SIZE_MAIN) / Math.max(0.2, scale3)));
+    return add4(to, back, -d4);
+  }
+  /** A plan from the cell the device is in to the piece where it is: straight to it in this cell, through one wall from
+   * next door, through a cell between from across the machine. Let go at the controls, the old plan was laid from
+   * another cell, or is spent, and the device would wander this room for good. */
+  function planTo(s: S) {
+    const tm = target.map!, to = target.p, steps: Step[] = [];
+    let held = s.held, sign = s.sign, from = s.p;
+    /** A point on the wall of the cell held at `h`, `g` on axis `a`, `t`, the rest clear of the struts. */
+    const onWall = (p: V4, h: number, g: number, a: number, t: number): V4 => {
+      const f = p.map((x, i) => (i === h ? g : i === a ? t : Math.max(-ROOM, Math.min(ROOM, x)))) as V4;
+      return f;
+    };
+    if (tm.held === held && tm.sign === -sign) {
+      // across: through a cell between, on any other axis
+      const a1 = pick([0, 1, 2, 3].filter((a) => a !== held)), s1 = Math.random() < 0.5 ? -1 : 1;
+      const face = onWall(mix4(from, to, 0.35), held, sign, a1, s1);
+      const beyond = mix4(face, to, 0.3); beyond[a1] = s1; beyond[held] = sign * 0.45;
+      steps.push({ kind: 'portal', axis: a1, sign: s1, face, beyond });
+      held = a1; sign = s1; from = beyond;
+    }
+    if (tm.held !== held) {
+      const face = onWall(mix4(from, to, 0.5), held, sign, tm.held, tm.sign);
+      const beyond = mix4(face, to, 0.45); beyond[tm.held] = tm.sign; beyond[held] = sign * 0.45;
+      steps.push({ kind: 'portal', axis: tm.held, sign: tm.sign, face, beyond });
+      from = beyond;
+    }
+    steps.push({ kind: 'cruise', to: stopBefore(to, from), toTarget: true });
+    s.plan = steps;
   }
 
   const tmp = useMemo(() => ({ v: new THREE.Vector3(), m: new THREE.Matrix4(), up: new THREE.Vector3(0, 1, 0), q: new THREE.Quaternion(), tilt: new THREE.Quaternion(), axis: new THREE.Vector3(), fwd: new THREE.Vector3(), right: new THREE.Vector3(), qa: new THREE.Quaternion() }), []);
@@ -180,6 +211,9 @@ export function Drones() {
   function letGo(s: S) {
     s.p[s.held] = s.sign;
     s.leg = null; s.came = null;
+    // a fresh plan from here; a catch that was about to begin begins over
+    if (target.up && target.map) planTo(s); else s.plan = [];
+    if (s.phase === 'settle') s.phase = 'seek';
   }
   /** One step at the controls, in cell space: eased yaw and pitch, thrust along the eye against drag, and the same
    * crossing as on its own when it goes through a wall; the field round the walls slows it too. Returns the field. */
@@ -262,9 +296,11 @@ export function Drones() {
     } else {
       // move, in 4D, along the leg; the field round a face slows it
       if (!s.leg) {
-        // the next step of the plan; with none, a first piece
-        if (!s.plan.length && !target.up) newTarget(s);
-        const step = s.plan.shift();
+        // the next step of the plan; with none, a first piece, or the way to the one that is up
+        if (!s.plan.length) { if (target.up && target.map) planTo(s); else newTarget(s); }
+        let step = s.plan.shift();
+        // a wall on the held axis is no wall of this cell: the plan was laid from another cell, lay it again from here
+        if (step && step.kind === 'portal' && step.axis === s.held) { planTo(s); step = s.plan.shift(); }
         s.leg = !step ? cruiseLeg(s) : step.kind === 'cruise' ? cruiseLeg(s, step.to, step.toTarget) : portalLeg(s, step.axis, step.sign, step.face, step.beyond);
         s.s = 0;
       }
