@@ -105,12 +105,17 @@ export function gouges(g: CanvasRenderingContext2D, r: () => number, w: number, 
 export function grunge(g: CanvasRenderingContext2D, r: () => number, w: number, h: number, color: string, alpha: number) {
   const src = sheet('scratch', color);
   if (!src) return;
-  const sw = src.width * (0.28 + r() * 0.14), sh = sw * (h / w);
-  const sx = r() * (src.width - sw), sy = r() * (src.height - sh);
+  // a square window, turned any way and flipped either way, drawn over the canvas's diagonal so it covers it at
+  // any angle: the sheet has a grain of its own, and without the turn every part would wear the same way
+  const sw = src.height * (0.3 + r() * 0.14);
+  const sx = r() * (src.width - sw), sy = r() * (src.height - sw);
+  const D = Math.hypot(w, h);
   g.save();
   g.globalAlpha = alpha;
-  if (r() < 0.5) { g.translate(w, 0); g.scale(-1, 1); } // half of them mirrored, so no two read alike
-  g.drawImage(src, sx, sy, sw, sh, 0, 0, w, h);
+  g.translate(w / 2, h / 2);
+  g.rotate(r() * Math.PI * 2);
+  g.scale(r() < 0.5 ? -1 : 1, r() < 0.5 ? -1 : 1);
+  g.drawImage(src, sx, sy, sw, sw, -D / 2, -D / 2, D, D);
   g.restore();
 }
 
