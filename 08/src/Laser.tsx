@@ -16,13 +16,11 @@ import { pose, rig } from './state';
 
 export const laser = { on: true };
 export const BEAM = { LOSS: 0.9 };
-/** The beams, each fixed in the room; and where each met walls this frame, in 4D, nearest first, with the strength it
- * had there, for the drone cam. */
+/** The beams, each fixed in the room. */
 export const BEAMS = [
   { origin: new THREE.Vector3(12, 0, 0), dir: new THREE.Vector3(-1, 0, 0), tint: new THREE.Color('#ef5f9f'), core: new THREE.Color('#ffd6ea') },
   { origin: new THREE.Vector3(0, -12, 0), dir: new THREE.Vector3(0, 1, 0), tint: new THREE.Color('#3fd5e6'), core: new THREE.Color('#d9f8fc') },
 ];
-export const beamHits: { i: number; si: number; j: number; sj: number; p4: V4; k: number }[][] = BEAMS.map(() => []);
 
 const PAPER = new THREE.Color('#e6e6e4'); // what the beam fades towards
 /** No post bloom on a transparent canvas: the glow is the beam drawn three times, a hot core and two soft halos. */
@@ -57,7 +55,6 @@ export function Laser() {
 function Beam({ index }: { index: number }) {
   const { size } = useThree();
   const { origin: ORIGIN, dir: DIR, tint: PINK, core: CORE } = BEAMS[index];
-  const myHits = beamHits[index];
   const parts = useMemo(() => {
     const group = new THREE.Group();
     const lines = LAYERS.map((l) => {
@@ -130,7 +127,6 @@ function Beam({ index }: { index: number }) {
 
   useFrame(() => {
     const { group, lines, dots } = parts;
-    myHits.length = 0;
     if (!laser.on) { group.visible = false; return; }
     const m = pose();
     const { hand, beam, off, cur, dummy, col, qi } = tmp;
@@ -154,7 +150,6 @@ function Beam({ index }: { index: number }) {
     tint();
     off.set(0, 0, 0);
     for (const h of walls) {
-      myHits.push({ i: h.face.i, si: h.face.si, j: h.face.j, sj: h.face.sj, p4: h.p4, k: strength });
       cur.copy(h.at).add(off);
       push(cur); tint(); marks.push({ p: cur.clone(), k: strength });
       jog(m, h, beam.direction, tmp.n);

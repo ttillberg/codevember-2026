@@ -42,11 +42,11 @@ export function startCell(held: number, sign: number) {
   drone.centre = [0, 0, 0];
 }
 
-export type CellMap = { held: number; sign: number; A: number[][]; b: number[]; axisOf: number[]; centre: number[] };
+type CellMap = { held: number; sign: number; A: number[][]; b: number[]; axisOf: number[]; centre: number[] };
 
-/** The crossing rule on any cell map: through the face on row `k` at side `t`, the new cell holds that row's axis
- * and frees the axis that was held, inward, two rooms on. */
-export function crossRow(c: CellMap, k: number, t: number) {
+/** The crossing rule: through the face on row `k` at side `t`, the new cell holds that row's axis and frees the axis
+ * that was held, inward, two rooms on. */
+function crossRow(c: CellMap, k: number, t: number) {
   const f = c.axisOf[k];
   const old = c.held, s = c.sign;
   c.A[k] = [0, 1, 2, 3].map((i) => (i === old ? -t * s : 0));
@@ -60,20 +60,6 @@ export function crossRow(c: CellMap, k: number, t: number) {
 export function crossInto(f: number, t: number) {
   crossRow(drone, drone.axisOf.indexOf(f), t);
   drone.crossings++;
-}
-
-/** The cell and map of the room at grid offset `o` in the net, reached from the drone's room one wall at a time,
- * axis by axis. The net is not a true grid: a diagonal room depends on the order, this is the x-then-y-then-z one. */
-export function roomAt(o: number[]): CellMap {
-  const c: CellMap = { held: drone.held, sign: drone.sign, A: drone.A.map((r) => r.slice()), b: drone.b.slice(), axisOf: drone.axisOf.slice(), centre: drone.centre.slice() };
-  for (let k = 0; k < 3; k++) for (let n = 0; n < Math.abs(o[k]); n++) crossRow(c, k, Math.sign(o[k]));
-  return c;
-}
-
-/** Where a 4D point is in a room's cell space. */
-export function toRoom(c: CellMap, p: V4, out: number[] = [0, 0, 0]): number[] {
-  for (let k = 0; k < 3; k++) out[k] = c.A[k][0] * p[0] + c.A[k][1] * p[1] + c.A[k][2] * p[2] + c.A[k][3] * p[3] + c.b[k];
-  return out;
 }
 
 /** Where a 4D point is in cell space. */
