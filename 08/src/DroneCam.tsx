@@ -26,18 +26,17 @@ export function DroneCam() {
   const cell = useMemo(() => {
     const cs = new THREE.Scene();
     cs.background = new THREE.Color('#dad9d4');
-    cs.fog = new THREE.FogExp2('#dad9d4', 0.42); // the rooms beyond fade into the paper
+    cs.fog = new THREE.FogExp2('#dad9d4', 0.5); // the rooms beyond fade into the paper
     cs.add(new THREE.HemisphereLight('#ffffff', '#8a8780', 1.0));
     const sun = new THREE.DirectionalLight('#ffffff', 1.2);
     sun.position.set(2, 5, 3);
     cs.add(sun);
-    // the rooms: this one and every cube within two steps, 25 of them, so a new one is born well out in the fog
+    // the rooms: a box of 5 × 5 × 5 cubes round this one. When the net recentres on a new room the only cubes born
+    // are a whole slab on the far side, four units out at the least, already in the fog; nothing pops in nearby.
     const paint = new THREE.MeshStandardMaterial({ roughness: 0.7 });
     const black = new THREE.MeshStandardMaterial({ color: '#141414', roughness: 0.55 });
     const offsets: number[][] = [];
-    for (let x = -2; x <= 2; x++) for (let y = -2; y <= 2; y++) for (let z = -2; z <= 2; z++) {
-      if (Math.abs(x) + Math.abs(y) + Math.abs(z) <= 2) offsets.push([x, y, z]);
-    }
+    for (let x = -2; x <= 2; x++) for (let y = -2; y <= 2; y++) for (let z = -2; z <= 2; z++) offsets.push([x, y, z]);
     const edges: Edge[] = [];
     const struts = new THREE.InstancedMesh(new THREE.CylinderGeometry(R_STRUT, R_STRUT, 2, 20), paint, offsets.length * 12);
     const nodes = new THREE.InstancedMesh(new THREE.SphereGeometry(R_NODE, 20, 14), black, offsets.length * 8);
