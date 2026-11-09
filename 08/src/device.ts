@@ -155,7 +155,7 @@ function makeWorks() {
   };
 }
 /** How far out from the centre the grip's ring is, in model units, at extension `k` reaching for a piece `at` away. */
-export const ringOut = (k: number, at = 1.83) => 1.28 + (Math.max(1.3, Math.min(2.6, at)) - 1.28) * k;
+export const ringOut = (k: number, at = 1.83) => 1.28 + (Math.max(0.95, Math.min(3.2, at)) - 1.28) * k;
 
 /** The matrix of `o` relative to its ancestor `anc`, from local matrices (kept current by the caller). */
 function relTo(o: THREE.Object3D, anc: THREE.Object3D) {

@@ -23,6 +23,7 @@ const DIP = 0.3; // how much of the speed the field takes: a lean through it, no
 // the catch, in phases: still in front of the piece; the grip takes it; the machine glides a quarter turn while the
 // next piece emerges; still again; and off
 const SETTLE = 0.6, CATCH = 0.35, GLIDE = 2.0, REST = 0.5;
+const REACH3 = 1.9; // where the piece should sit when the device stops, in device radii, on screen
 type Phase = 'seek' | 'settle' | 'catch' | 'turn' | 'rest';
 // at the controls: cell-space units per second squared and per second, radians per second
 const THRUST = 1.6, DRAG = 1.1, VMAX = 1.1, TURN = 1.7;
@@ -155,8 +156,14 @@ export function Drones() {
     const face2 = mix4(s.p, to, 0.7); face2[a1] = s1; face2[a2] = s2; face2[s.held] = s.sign * 0.45;
     const beyond1 = mix4(face1, face2, 0.45); beyond1[a1] = s1;
     const beyond2 = mix4(face2, to, 0.45); beyond2[a2] = s2;
-    // the last leg stops a grip's reach short of the piece, so it is taken in the ring, not in the body
-    const stop = add4(to, unit4(sub4(to, face2)), -0.15);
+    // the last leg stops a grip's reach short of the piece, so it is taken in the ring, not in the body. A reach is
+    // a 3D distance and the projection stretches 4D differently from place to place, so the 4D step back is sized
+    // from the local scale of the projection at the piece: probe how far a small 4D step moves on screen there.
+    const back = unit4(sub4(to, face2));
+    const m0 = pose(), E = 0.02;
+    const scale3 = project(m0, to, new THREE.Vector3()).distanceTo(project(m0, add4(to, back, -E), new THREE.Vector3())) / E;
+    const d4 = Math.max(0.06, Math.min(0.45, (REACH3 * SIZE_MAIN) / Math.max(0.2, scale3)));
+    const stop = add4(to, back, -d4);
     s.plan = [
       { kind: 'portal', axis: a1, sign: s1, face: face1, beyond: beyond1 },
       { kind: 'portal', axis: a2, sign: s2, face: face2, beyond: beyond2 },
