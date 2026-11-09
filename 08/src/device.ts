@@ -14,6 +14,8 @@ useGLTF.preload(DEVICE_URL);
 
 export type Device = {
   g: THREE.Group;
+  /** 0 home to 1 out: the ring on its arm in front of the eye, claws closing as it reaches. */
+  grip: (k: number) => void;
   /** Clip every part of this copy to one side of these planes (needs the renderer's local clipping on). */
   clip: (planes: THREE.Plane[]) => void;
   /** 0 open (fins back) to 1 shut (the walls closed round the body). */
@@ -193,6 +195,34 @@ export function device(model: THREE.Object3D, size: number, own = false): Device
     w.o.rotation.x = w.rest; w.o.updateMatrix();
     return { w, coreAt, local, barrel, rod, d: new THREE.Vector3(), at: new THREE.Vector3() };
   });
+  // the grip: a ring on a short arm out of the eye cap, three claws round it that close as it reaches. Home it sits
+  // in the cap; out it is a device's radius ahead, quick, to take the piece.
+  const gripParts = (() => {
+    const grp = new THREE.Group();
+    frame.add(grp);
+    const arm = new THREE.Mesh(W.barrel, W.graphite); arm.scale.set(0.8, 1, 0.8); grp.add(arm);
+    const ring = new THREE.Group(); grp.add(ring);
+    ring.add(new THREE.Mesh(new THREE.TorusGeometry(0.2, 0.025, 10, 32), W.steel));
+    const claws = [0, 1, 2].map((i) => {
+      const pivot = new THREE.Group();
+      pivot.rotation.z = (i * Math.PI * 2) / 3;
+      const claw = new THREE.Mesh(new THREE.CylinderGeometry(0.016, 0.01, 0.18, 8), W.graphite);
+      claw.position.set(0.2, 0, -0.09); claw.rotation.x = Math.PI / 2; // along -z from the ring, hinged there
+      const hinge = new THREE.Group(); hinge.position.set(0.2, 0, 0); hinge.add(claw); claw.position.set(0, 0, -0.09);
+      pivot.add(hinge); ring.add(pivot);
+      return hinge;
+    });
+    return { grp, arm, ring, claws };
+  })();
+  const grip = (k: number) => {
+    const { grp, arm, ring, claws } = gripParts;
+    grp.visible = k > 0.01;
+    const reach = 0.5 + 0.55 * k; // the ring's z out from the eye cap at 0.78
+    arm.position.set(0, 0, -0.7); arm.quaternion.setFromUnitVectors(Y, new THREE.Vector3(0, 0, -1)); arm.scale.set(0.8, reach + 0.08, 0.8); // from the cap to the ring
+    ring.position.set(0, 0, -(0.78 + reach));
+    for (const h of claws) h.rotation.y = -0.35 - 1.0 * k; // tilt in towards the axis as it closes
+  };
+  grip(0);
   const stroke = () => {
     for (const a of acts) {
       a.w.o.updateMatrix();
@@ -218,6 +248,7 @@ export function device(model: THREE.Object3D, size: number, own = false): Device
   return {
     g,
     clip: (planes) => { g.traverse((o) => { if ((o as THREE.Mesh).isMesh) ((o as THREE.Mesh).material as THREE.Material).clippingPlanes = planes; }); },
+    grip,
     shield: (k) => { for (const w of walls) w.o.rotation.x = w.rest * (1 - k); stroke(); },
     shutter: (k) => { for (const l of leaves) l.o.rotation.y = l.rest * (1 + (65 / 95) * k); },
   };

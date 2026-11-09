@@ -90,6 +90,7 @@ export function Drones() {
       q2, planeA, planeB, cLast: [0, 0, 0], look: new THREE.Vector3(0, 0, -1), camUp: new THREE.Vector3(0, 1, 0),
       wall: null as { axis: number; sign: number } | null, // the wall it is at, if any: the face's 4D axis and side
       plan: [] as Step[], wait: 0, // the steps to the piece; seconds since the last one was taken
+      grip: 0,
       shield: 0, blink: Infinity, nextBlink: 3 + Math.random() * 5, // seconds into the blink; seconds to a blink of its own
       wasPilot: false, yawV: 0, pitchV: 0,
     };
@@ -148,10 +149,12 @@ export function Drones() {
     const face2 = mix4(s.p, to, 0.7); face2[a1] = s1; face2[a2] = s2; face2[s.held] = s.sign * 0.45;
     const beyond1 = mix4(face1, face2, 0.45); beyond1[a1] = s1;
     const beyond2 = mix4(face2, to, 0.45); beyond2[a2] = s2;
+    // the last leg stops a grip's reach short of the piece, so it is taken in the ring, not in the body
+    const stop = add4(to, unit4(sub4(to, face2)), -0.1);
     s.plan = [
       { kind: 'portal', axis: a1, sign: s1, face: face1, beyond: beyond1 },
       { kind: 'portal', axis: a2, sign: s2, face: face2, beyond: beyond2 },
-      { kind: 'cruise', to, toTarget: true },
+      { kind: 'cruise', to: stop, toTarget: true },
     ];
     target.p = to; target.up = true; target.scale = 0;
     target.map = mapAcross(mapAcross(drone, a1, s1), a2, s2);
@@ -274,8 +277,11 @@ export function Drones() {
     const BLINK = 0.55;
     const shut = s.blink < BLINK ? Math.sin((s.blink / BLINK) * Math.PI) : 0;
     if (s.blink >= BLINK) s.blink = Infinity;
-    drone.shield = s.shield; drone.shutter = shut;
-    s.q.shield(s.shield); s.q.shutter(shut);
+    // the grip: out fast when the piece is within reach, home again once it is taken
+    const near = target.up && len4(sub4(target.p, s.p)) < 0.3;
+    s.grip += ((near ? 1 : 0) - s.grip) * Math.min(1, dt * (near ? 16 : 5));
+    drone.shield = s.shield; drone.shutter = shut; drone.grip = s.grip;
+    s.q.shield(s.shield); s.q.shutter(shut); s.q.grip(s.grip);
 
     // draw: where it is in 3D. Its orientation lives in cell space, drone.q: at the controls the pilot's, on its own
     // the way it is going, with an up carried from frame to frame so no leg straight up or down flips it. From
@@ -319,7 +325,7 @@ export function Drones() {
       s.q2.g.visible = true;
       s.q2.g.position.copy(v);
       s.q2.g.quaternion.copy(s.heading2);
-      s.q2.shield(s.shield); s.q2.shutter(shut);
+      s.q2.shield(s.shield); s.q2.shutter(shut); s.q2.grip(s.grip);
       const [c0, c1, c2] = drone.flash.corners.map((c4) => project(m, c4, new THREE.Vector3()));
       s.planeA.setFromCoplanarPoints(c0, c1, c2);
       const centre: V4 = [0, 0, 0, 0]; centre[drone.held] = drone.sign;

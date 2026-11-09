@@ -27,19 +27,25 @@ export const drone = {
   /** The walls round the body, 0 open to 1 shut, and the shutter over the eye, same scale; the cam's copy follows. */
   shield: 0,
   shutter: 0,
+  /** The grip out in front of the eye, 0 home to 1 out with the claws shut. */
+  grip: 0,
   /** The face being passed: its four corners in 4D and how hard it is lit, 0 to 1. */
   flash: { corners: [[0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]] as V4[], a: 0 },
 };
 
-/** The piece: a small steel ball with a pinhead lamp on it that flashes fast. `blink(t)` runs the lamp. */
-export const PIECE_R = 0.04;
+/** The piece: a small steel ball with a pinhead lamp on each axis, six, flashing fast. `blink(t)` runs them. */
+export const PIECE_R = 0.02;
 const lampMat = new THREE.MeshStandardMaterial({ color: '#ff6a3a', emissive: '#ff6a3a', emissiveIntensity: 0, toneMapped: false });
 export function pieceMesh(scale = 1) {
   const g = new THREE.Group();
-  const ball = new THREE.Mesh(new THREE.SphereGeometry(PIECE_R * scale, 24, 16), new THREE.MeshStandardMaterial({ color: '#d4d4d8', roughness: 0.3, metalness: 0.95 }));
-  const lamp = new THREE.Mesh(new THREE.SphereGeometry(PIECE_R * scale * 0.22, 10, 8), lampMat);
-  lamp.position.set(0, PIECE_R * scale * 0.95, 0);
-  g.add(ball, lamp);
+  const r = PIECE_R * scale;
+  g.add(new THREE.Mesh(new THREE.SphereGeometry(r, 24, 16), new THREE.MeshStandardMaterial({ color: '#d4d4d8', roughness: 0.3, metalness: 0.95 })));
+  const lampGeo = new THREE.SphereGeometry(r * 0.2, 8, 6);
+  for (const [x, y, z] of [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]]) {
+    const lamp = new THREE.Mesh(lampGeo, lampMat);
+    lamp.position.set(x * r * 0.96, y * r * 0.96, z * r * 0.96);
+    g.add(lamp);
+  }
   return g;
 }
 /** The lamp: a quick double flash every half second or so. */

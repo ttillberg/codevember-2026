@@ -154,7 +154,7 @@ export function DroneCam() {
     tmp.q.setFromRotationMatrix(tmp.m);
     cell.q.slerp(tmp.q, 0.2);
     cell.dev.g.visible = follow;
-    cell.dev.shield(drone.shield); cell.dev.shutter(drone.shutter);
+    cell.dev.shield(drone.shield); cell.dev.shutter(drone.shutter); cell.dev.grip(drone.grip);
     if (follow) {
       cell.dev.g.position.copy(tmp.pos);
       tmp.m.lookAt(new THREE.Vector3(), cell.look, camUp); // the eye looks along -z
