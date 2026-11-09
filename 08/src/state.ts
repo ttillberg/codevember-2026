@@ -11,7 +11,7 @@ export const st = {
   target: 0.3, // where the servo is told to be
   vel: 0,
   program: true, // the servo picks its own targets
-  smooth: true, // the default: an even spin and a slow turntable. M swaps in the servo
+  smooth: true, // the default: an even spin. M swaps in the servo
   next: 1.2, // seconds until the next step
   crank: 0, // held key, -1 0 1
   /** Orbiting sets the way: the camera's azimuth, written by the controls, and the way the last drag went. */
