@@ -236,6 +236,13 @@ export function Drones() {
     drone.flash.color = CELL_HEX[cellId()];
     s.blink = 0;
     s.crossed = true; s.inT = 0; s.lastWall = null;
+    // the copies swap cells: this one now draws the cell just entered, the other the one left. Each takes over the
+    // pose and the tint the other had there, so neither half jumps or changes colour at the crossing
+    [s.heading, s.heading2] = [s.heading2, s.heading];
+    [s.tintA, s.tintB] = [s.tintB, s.tintA];
+    [s.tintHexA, s.tintHexB] = [s.tintHexB, s.tintHexA];
+    if (s.tintHexA) s.q.tint(s.tintHexA, s.tintA);
+    if (s.tintHexB) s.q2.tint(s.tintHexB, s.tintB);
   }
   /** One step at the controls, in cell space: the look as it came in from the page, thrust along the eye and strafe
    * across it against drag, and the same crossing as on its own when it goes through a wall; the field round the

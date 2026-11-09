@@ -4,9 +4,9 @@ What the cleanup review (/simplify) left on the table, to go through one by one.
 
 ## Hand-over at a wall
 
-- [ ] **The hand-over as its own object.** One `handover: { from, to, corners, t, crossed } | null`. A wall ahead creates it, and a different face just replaces it. The crossing sets `crossed`. It ends on its own `done`, not on `s.wall`. Copy A stays bound to `from` and copy B to `to` for its whole life, so pose, clip side and colour carry through the crossing. That removes `lastWall`, `linger`/`LINGER`, `inT`, the "another wall ahead" check and the `tintHex*` caches. (`Drones.tsx`, hand-over block)
+- [ ] **The hand-over as its own object** (less pressing now: the swing it would have fixed is fixed). One `handover: { from, to, corners, t, crossed } | null`. A wall ahead creates it, and a different face just replaces it. The crossing sets `crossed`. It ends on its own `done`, not on `s.wall`. Copy A stays bound to `from` and copy B to `to` for its whole life, so pose, clip side and colour carry through the crossing. That removes `lastWall`, `linger`/`LINGER`, `inT`, the "another wall ahead" check and the `tintHex*` caches. (`Drones.tsx`, hand-over block)
 - [ ] **A wall as a pair of cells** `{(h1,s1),(h2,s2)}` instead of `{axis, sign}` seen from the current cell. Then it is never renamed at a crossing: no `came`, no `was`, no `s.came!`. The "other" cell is whichever of the pair it isn't in. It also makes `from`/`to` above free.
-- [ ] **Swing after a crossing.** `heading`/`heading2` are slerped, and `q`/`q2` swap roles at the crossing. Each half probably swings between the two poses for ~0.1–0.2 s. Check it, and if so it is fixed by binding the copies as above.
+- [x] **Swing after a crossing.** Measured: each half jumped 40–150° in one frame at every crossing, then swung back over ~0.3 s. Fixed by swapping the copies' pose and tint in `cross()`: now 0.1–2.7°, the same as plain motion.
 
 ## Flight
 
