@@ -2,7 +2,7 @@ import { useMemo } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import { useGLTF } from '@react-three/drei';
 import * as THREE from 'three';
-import { drone, toCell, faceQuad } from './drone';
+import { drone, target, toCell, toCellWith, faceQuad } from './drone';
 import { device, DEVICE_URL } from './device';
 
 // The device's camera, in a corner of the page. It renders cell space: the cube the device is in, rigid, and the
@@ -96,6 +96,9 @@ export function DroneCam() {
     cs.add(dev.g);
     const flash = faceQuad('#c9e35b');
     cs.add(flash.mesh);
+    const piece = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, 0.042, 6), new THREE.MeshStandardMaterial({ color: '#d4d4d8', roughness: 0.32, metalness: 0.95 }));
+    piece.visible = false;
+    cs.add(piece);
     // the eye: a cube map rendered from where it is, unwrapped by the fisheye onto a quad that fills the frame
     const rt = new THREE.WebGLCubeRenderTarget(CUBE, { type: THREE.HalfFloatType, generateMipmaps: false, minFilter: THREE.LinearFilter });
     const eye = new THREE.CubeCamera(0.03, 40, rt);
@@ -105,7 +108,7 @@ export function DroneCam() {
     lens.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), FISHEYE));
     const flat = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
     return {
-      cs, net, edges, struts, dev, flash, eye, lens, flat, sand, graphite,
+      cs, net, edges, struts, dev, flash, piece, eye, lens, flat, sand, graphite,
       q: new THREE.Quaternion(), look: new THREE.Vector3(0, 0, -1), last: [0, 0, 0], crossings: -1,
       pos: new THREE.Vector3(), eyeAt: new THREE.Vector3(), heading: new THREE.Quaternion(),
     };
@@ -180,6 +183,15 @@ export function DroneCam() {
     drone.flash.corners.forEach((c4, i) => { const c3 = toCell(c4); cell.flash.set(i, tmp.at.set(c3[0], c3[1], c3[2])); });
     cell.flash.done();
     cell.flash.mat.opacity = 0.6 * drone.flash.a;
+    // the piece, in its own cell's room of the net
+    cell.piece.visible = target.scale > 0.02 && !!target.map;
+    if (cell.piece.visible) {
+      const c3 = toCellWith(target.map!, target.p);
+      cell.piece.position.set(c3[0], c3[1], c3[2]);
+      if (!target.up) cell.piece.position.lerp(tmp.pos, 1 - target.scale);
+      cell.piece.scale.setScalar(target.scale);
+      cell.piece.rotation.y += 0.02; cell.piece.rotation.x = 0.6;
+    }
 
     // the eye: the room into the cube map, then the lens into the corner
     const w = Math.round(CAM.w()), h = Math.round(CAM.w() / CAM.ratio);

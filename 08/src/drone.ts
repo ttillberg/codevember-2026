@@ -94,13 +94,30 @@ export function dirFromCellWith(map: CellMap, c: number[], out: V4 = [0, 0, 0, 0
 }
 export const dirFromCell = (c: number[], out?: V4) => dirFromCellWith(drone, c, out);
 
-/** The map of the cell on the other side of the wall where 4D axis `axis` is `sign`: the current map crossed there. */
-export function otherMap(axis: number, sign: number): CellMap {
-  const c: CellMap = { held: drone.held, sign: drone.sign, A: drone.A.map((r) => r.slice()), b: drone.b.slice(), axisOf: drone.axisOf.slice(), centre: drone.centre.slice() };
-  const k = drone.axisOf.indexOf(axis);
+/** A map crossed through the wall where 4D axis `axis` is `sign`: the cell on the other side, as the net sees it. */
+export function mapAcross(map: CellMap, axis: number, sign: number): CellMap {
+  const c: CellMap = { held: map.held, sign: map.sign, A: map.A.map((r) => r.slice()), b: map.b.slice(), axisOf: map.axisOf.slice(), centre: map.centre.slice() };
+  const k = map.axisOf.indexOf(axis);
   if (k >= 0) crossRow(c, k, sign); // the held axis has no wall of its own; then the copy is this cell
   return c;
 }
+/** The map of the cell on the other side of the wall where 4D axis `axis` is `sign`: the current map crossed there. */
+export const otherMap = (axis: number, sign: number) => mapAcross(drone, axis, sign);
+
+/** Where a 4D point is in a map's cell space. */
+export function toCellWith(map: CellMap, p: V4, out: number[] = [0, 0, 0]): number[] {
+  for (let k = 0; k < 3; k++) out[k] = map.A[k][0] * p[0] + map.A[k][1] * p[1] + map.A[k][2] * p[2] + map.A[k][3] * p[3] + map.b[k];
+  return out;
+}
+
+/** The piece the device goes for: a bit of metal in a cell two walls away. `up` while it is there to be had; `scale`
+ * grows as it emerges and shrinks as it is taken; `map` is its cell's map, for the cam, fixed when it is set. */
+export const target = {
+  p: [0, 0, 0, 0] as V4,
+  up: false,
+  scale: 0,
+  map: null as CellMap | null,
+};
 
 /** The four joints of the wall on row `k`, side `t`, of the current cell, in 4D. */
 export function wallCorners(k: number, t: number): V4[] {

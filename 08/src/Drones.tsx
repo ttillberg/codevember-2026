@@ -4,7 +4,7 @@ import { useGLTF } from '@react-three/drei';
 import * as THREE from 'three';
 import { project, type V4 } from './tesseract';
 import { pose } from './state';
-import { drone, startCell, crossInto, faceQuad, toCell, fromCell, dirFromCellWith, otherMap, wallCorners, type CellMap } from './drone';
+import { drone, target, startCell, crossInto, faceQuad, toCell, fromCell, dirFromCellWith, otherMap, mapAcross, wallCorners, type CellMap } from './drone';
 import { device, DEVICE_URL } from './device';
 
 // A device that lives in the tesseract: a ball with one eye, fins that are walls, a shutter. It is inside one of the eight cells, a cube with one coordinate held at
@@ -18,12 +18,18 @@ const TRAIL = 56;
 const TRAIL_EVERY = 0.05; // seconds between trail samples
 const SPEED = 0.5; // 4D units per second, cruising
 const ROOM = 0.62; // how far from a cell's walls a waypoint stays, so the drone keeps clear of the struts
-const FIELD = 0.12; // half-width, in path fraction, of the slow zone round the face
-const DIP = 0.55; // how much of the speed the field takes
+const FIELD = 0.14; // half-width, in path fraction, of the slow zone round the face
+const DIP = 0.3; // how much of the speed the field takes: a lean through it, not a stop
+const PIECE = 0.07; // the metal piece's size
+const HOLD = 1.0; // seconds from a piece taken to the next one emerging
 // at the controls: cell-space units per second squared and per second, radians per second
 const THRUST = 1.6, DRAG = 1.1, VMAX = 1.1, TURN = 1.7;
 
-type Leg = { kind: 'cruise' | 'portal'; pts: V4[]; len: number; face?: { axis: number; sign: number; corners: V4[] }; crossed: boolean };
+type Leg = { kind: 'cruise' | 'portal'; pts: V4[]; len: number; face?: { axis: number; sign: number; corners: V4[] }; crossed: boolean; toTarget?: boolean };
+/** A step of a plan, made into a leg when its turn comes, from wherever the device is then. */
+type Step = { kind: 'portal'; axis: number; sign: number; face: V4; beyond: V4 } | { kind: 'cruise'; to: V4; toTarget: boolean };
+const mix4 = (a: V4, b: V4, t: number): V4 => a.map((x, i) => x + (b[i] - x) * t) as V4;
+const pick = <T,>(xs: T[]) => xs[Math.floor(Math.random() * xs.length)];
 
 const rnd = (a: number, b: number) => a + Math.random() * (b - a);
 const add4 = (a: V4, b: V4, k = 1): V4 => a.map((x, i) => x + b[i] * k) as V4;
@@ -71,9 +77,12 @@ export function Drones() {
     group.add(line);
     const flash = faceQuad(LED);
     group.add(flash.mesh);
+    const piece = new THREE.Mesh(new THREE.CylinderGeometry(PIECE, PIECE, PIECE * 0.6, 6), new THREE.MeshStandardMaterial({ color: '#d4d4d8', roughness: 0.32, metalness: 0.95 }));
+    piece.visible = false;
+    group.add(piece);
     const held = Math.floor(Math.random() * 4), sign = Math.random() < 0.5 ? -1 : 1;
     const s = {
-      group, q, line, flash,
+      group, q, line, flash, piece,
       held, sign, came: null as [number, number] | null,
       p: [0, 0, 0, 0] as V4, dir: [0, 0, 0, 0] as V4, // where it is, which way it is going, in 4D
       leg: null as Leg | null, s: 0,
@@ -81,6 +90,7 @@ export function Drones() {
       last: new THREE.Vector3(), vel: new THREE.Vector3(), heading: new THREE.Quaternion(), heading2: new THREE.Quaternion(),
       q2, planeA, planeB, cLast: [0, 0, 0], look: new THREE.Vector3(0, 0, -1), camUp: new THREE.Vector3(0, 1, 0),
       wall: null as { axis: number; sign: number } | null, // the wall it is at, if any: the face's 4D axis and side
+      plan: [] as Step[], wait: 0, // the steps to the piece; seconds since the last one was taken
       shield: 0, blink: Infinity, nextBlink: 3 + Math.random() * 5, // seconds into the blink; seconds to a blink of its own
       wasPilot: false, yawV: 0, pitchV: 0,
     };
@@ -98,33 +108,20 @@ export function Drones() {
     return v;
   }
   /** A leg to a point inside the cell, bending out of the current heading. */
-  function cruiseLeg(s: S): Leg {
-    const to = roomIn(s);
+  function cruiseLeg(s: S, to: V4 = roomIn(s), toTarget = false): Leg {
     const L = len4(sub4(to, s.p));
     const c0 = inCell(add4(s.p, s.dir, L * 0.35), s.held, s.sign);
-    const mid = inCell(add4(scale4(add4(s.p, to), 0.5), [rnd(-0.15, 0.15), rnd(-0.15, 0.15), rnd(-0.15, 0.15), rnd(-0.15, 0.15)]), s.held, s.sign);
+    const mid = inCell(add4(scale4(add4(s.p, to), 0.5), [rnd(-0.1, 0.1), rnd(-0.1, 0.1), rnd(-0.1, 0.1), rnd(-0.1, 0.1)]), s.held, s.sign);
     const c1 = inCell(add4(mid, sub4(c0, s.p), -0.3), s.held, s.sign);
     const c2 = inCell(add4(mid, sub4(to, mid), 0.3), s.held, s.sign);
     const c3 = inCell(add4(to, sub4(to, mid), -0.2), s.held, s.sign);
     const pts = [s.p, c0, c1, mid, c2, c3, to];
-    return { kind: 'cruise', pts, len: pathLen(pts), crossed: false };
+    return { kind: 'cruise', pts, len: pathLen(pts), crossed: false, toTarget };
   }
-  /** A leg out through a face into the neighbour, not the face it came through: one curve, the face at its middle. */
-  function portalLeg(s: S): Leg {
-    const choices: [number, number][] = [];
-    for (const axis of [0, 1, 2, 3]) if (axis !== s.held) for (const sign of [-1, 1]) {
-      if (s.came && s.came[0] === axis && s.came[1] === sign) continue;
-      choices.push([axis, sign]);
-    }
-    const [axis, sign] = choices[Math.floor(Math.random() * choices.length)];
-    const face = roomIn(s);
-    face[axis] = sign;
-    // beyond the face the held axis is free: a point in the next cell, a little in
-    const beyond = face.slice() as V4;
-    beyond[s.held] = s.sign * rnd(0.2, 0.6);
-    for (const i of [0, 1, 2, 3]) if (i !== axis && i !== s.held) beyond[i] = rnd(-ROOM, ROOM);
-    // in square to the face and square on from it: the turn is the 4D right angle itself, taken in the face, slowed
-    // by the field. Every control point stays on the boundary, inside its cell; the path never leaves the tesseract.
+  /** A leg out through the face where `axis` is `sign`, at `face`, on to `beyond` in the next cell: one curve, the
+   * face at its middle. In square to the face and square on from it: the turn is the 4D right angle itself, taken in
+   * the face, eased by the field. Every control point stays on the boundary, inside its cell. */
+  function portalLeg(s: S, axis: number, sign: number, face: V4, beyond: V4): Leg {
     const out: V4 = [0, 0, 0, 0]; out[axis] = sign;
     const inward: V4 = [0, 0, 0, 0]; inward[s.held] = -s.sign;
     const L0 = len4(sub4(face, s.p)), L1 = len4(sub4(beyond, face));
@@ -140,6 +137,25 @@ export function Drones() {
       return c;
     });
     return { kind: 'portal', pts, len: pathLen(pts), face: { axis, sign, corners }, crossed: false };
+  }
+  /** A new piece two walls away, never back where it is, and the plan to it: two faces, each a little towards the
+   * piece on the axes the cells share, then the last stretch. The piece's cell map is kept for the cam. */
+  function newTarget(s: S) {
+    const a1 = pick([0, 1, 2, 3].filter((a) => a !== s.held)), s1 = Math.random() < 0.5 ? -1 : 1;
+    const a2 = pick([0, 1, 2, 3].filter((a) => a !== a1 && a !== s.held)), s2 = Math.random() < 0.5 ? -1 : 1;
+    const to: V4 = [0, 1, 2, 3].map(() => rnd(-0.55, 0.55)) as V4;
+    to[a2] = s2;
+    const face1 = mix4(s.p, to, 0.35); face1[s.held] = s.sign; face1[a1] = s1; face1[a2] = Math.max(-0.5, Math.min(0.5, face1[a2]));
+    const face2 = mix4(s.p, to, 0.7); face2[a1] = s1; face2[a2] = s2; face2[s.held] = s.sign * 0.45;
+    const beyond1 = mix4(face1, face2, 0.45); beyond1[a1] = s1;
+    const beyond2 = mix4(face2, to, 0.45); beyond2[a2] = s2;
+    s.plan = [
+      { kind: 'portal', axis: a1, sign: s1, face: face1, beyond: beyond1 },
+      { kind: 'portal', axis: a2, sign: s2, face: face2, beyond: beyond2 },
+      { kind: 'cruise', to, toTarget: true },
+    ];
+    target.p = to; target.up = true; target.scale = 0;
+    target.map = mapAcross(mapAcross(drone, a1, s1), a2, s2);
   }
 
   const tmp = useMemo(() => ({ v: new THREE.Vector3(), m: new THREE.Matrix4(), up: new THREE.Vector3(0, 1, 0), q: new THREE.Quaternion(), tilt: new THREE.Quaternion(), axis: new THREE.Vector3(), fwd: new THREE.Vector3(), right: new THREE.Vector3(), qa: new THREE.Quaternion() }), []);
@@ -208,7 +224,13 @@ export function Drones() {
       field = pilot(s, dt);
     } else {
       // move, in 4D, along the leg; the field round a face slows it
-      if (!s.leg) { s.leg = Math.random() < 0.5 ? cruiseLeg(s) : portalLeg(s); s.s = 0; }
+      if (!s.leg) {
+        // the next step of the plan; with none, a new piece once the last is a second gone; meanwhile a turn in the room
+        if (!s.plan.length && !target.up && s.wait >= HOLD) newTarget(s);
+        const step = s.plan.shift();
+        s.leg = !step ? cruiseLeg(s) : step.kind === 'cruise' ? cruiseLeg(s, step.to, step.toTarget) : portalLeg(s, step.axis, step.sign, step.face, step.beyond);
+        s.s = 0;
+      }
       leg = s.leg;
       field = leg.kind === 'portal' ? DIP * Math.exp(-(((s.s - 0.5) / FIELD) ** 2)) : 0;
       s.s += (SPEED * (1 - field) / leg.len) * dt;
@@ -224,7 +246,10 @@ export function Drones() {
         s.held = leg.face!.axis; s.sign = leg.face!.sign;
         s.blink = 0;
       }
-      if (s.s >= 1) { s.p[s.held] = s.sign; s.leg = null; }
+      if (s.s >= 1) {
+        s.p[s.held] = s.sign; s.leg = null;
+        if (leg.toTarget) { target.up = false; s.wait = 0; s.blink = 0; } // taken: a blink, and the next one in a while
+      }
       // the face lights just before the drone goes through, and is out again as it does
       if (leg.kind === 'portal') {
         drone.flash.corners = leg.face!.corners;
@@ -304,6 +329,16 @@ export function Drones() {
     } else {
       s.q2.g.visible = false;
       s.planeA.set(tmp.up, 1e4); s.planeB.set(tmp.up, 1e4);
+    }
+
+    // the piece: emerging, there, or going; it turns slowly, and shrinks into the device as it is taken
+    s.wait += dt;
+    target.scale += ((target.up ? 1 : 0) - target.scale) * Math.min(1, dt * (target.up ? 4 : 10));
+    s.piece.visible = target.scale > 0.02;
+    if (s.piece.visible) {
+      project(m, target.up ? target.p : mix4(target.p, s.p, 1 - target.scale), s.piece.position);
+      s.piece.scale.setScalar(target.scale);
+      s.piece.rotation.y += dt * 1.2; s.piece.rotation.x = 0.6;
     }
 
     drone.flash.corners.forEach((c4, i) => { project(m, c4, v); s.flash.set(i, v); });
