@@ -20,15 +20,15 @@ const CORE = new THREE.Color('#ffd6ea'); // the hot middle of the beam
 const PAPER = new THREE.Color('#e6e6e4'); // what the beam fades towards
 /** No post bloom on a transparent canvas: the glow is the beam drawn three times, a hot core and two soft halos. */
 const LAYERS = [
-  { width: 1.6, opacity: 1, core: true },
-  { width: 6, opacity: 0.35, core: false },
-  { width: 16, opacity: 0.12, core: false },
+  { width: 1, opacity: 1, core: true },
+  { width: 3.5, opacity: 0.35, core: false },
+  { width: 9, opacity: 0.12, core: false },
 ];
 const MAX_WALLS = 8;
 const STEP = 0.11; // the jog at a wall, 3D units
 const LOSS = 0.5; // the strength left after a wall
 const TAIL = 0.7; // how far the beam runs past the last wall
-const HAND = new THREE.Vector3(1.1, -0.7, -1.2); // the pointer in the camera's frame: right, down, ahead
+const HAND = new THREE.Vector3(0.35, -0.55, -1.2); // the pointer in the camera's frame: a little right, below, ahead
 
 /** The 24 square faces: two axes fixed at ±1, two free. Corners in order round the square. */
 const FACES: { i: number; si: number; j: number; sj: number; corners: V4[] }[] = [];
@@ -65,7 +65,7 @@ export function Laser() {
       group.add(o);
       return o;
     };
-    const dots = [dot(0.022, 1), dot(0.05, 0.3), dot(0.09, 0.1)];
+    const dots = [dot(0.016, 1), dot(0.035, 0.3), dot(0.065, 0.1)];
     group.visible = false;
     return { group, lines, dots };
   }, []);
