@@ -17,7 +17,6 @@ export const drone = {
   centre: [0, 0, 0], // the current cell's centre in cell space
   crossings: 0,
   /** The corner camera: the drone's own eyes, or a chase camera behind it. A click on the frame swaps. */
-  view: 'pov' as 'pov' | 'follow',
   /** Someone at the controls: keys from the page, the device's orientation (its eye along -z) and speed, in cell
    * space. On its own it flies its legs; piloted it has momentum, thrust along the eye, yaw and pitch. */
   pilot: false,

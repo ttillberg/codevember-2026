@@ -11,7 +11,6 @@ import { st, rig, spinRig, DEBUG } from './state';
 
 const PARAMS = new URLSearchParams(location.search);
 const CLEAN = PARAMS.has('clean'); // no page furniture, for the screengrab
-if (PARAMS.has('follow')) drone.view = 'follow';
 
 /** The machine and the drone on a rig the drag turns; the camera stands still. */
 function Rig({ children }: { children: React.ReactNode }) {
@@ -40,13 +39,13 @@ export function App() {
   const drag = useRef<{ x: number; y: number; t: number } | null>(null);
   // at the controls the pointer is the look and a held button the thrust; otherwise it turns the rig
   const LOOK = 0.0035; // radians per pixel
-  // the eye's view: at the controls a drag in it is the look, yaw and pitch; a click without a drag toggles the view
-  const camDrag = useRef<{ x: number; y: number; moved: number } | null>(null);
+  // the eye's view: at the controls a drag in it is the look, yaw and pitch
+  const camDrag = useRef<{ x: number; y: number } | null>(null);
   const onCamDown = (e: React.PointerEvent) => {
     if (e.button !== 0) return;
     e.stopPropagation();
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
-    camDrag.current = { x: e.clientX, y: e.clientY, moved: 0 };
+    camDrag.current = { x: e.clientX, y: e.clientY };
   };
   const onCamMove = (e: React.PointerEvent) => {
     const d = camDrag.current;
@@ -55,7 +54,6 @@ export function App() {
     // the button is up and the release never came: the drag is over, and hovering is not a turn
     if (!(e.buttons & 1)) { camDrag.current = null; return; }
     const dx = e.clientX - d.x, dy = e.clientY - d.y;
-    d.moved += Math.abs(dx) + Math.abs(dy);
     if (drone.pilot) { drone.turn[0] += dx * LOOK * 1.6; drone.turn[1] += -dy * LOOK * 1.6; }
     d.x = e.clientX; d.y = e.clientY;
   };
@@ -64,7 +62,6 @@ export function App() {
     if (!d) return;
     e.stopPropagation();
     camDrag.current = null;
-    if (d.moved < 4) drone.view = drone.view === 'pov' ? 'follow' : 'pov';
   };
   const last = useRef<{ x: number; y: number } | null>(null);
   const onDown = (e: React.PointerEvent) => {

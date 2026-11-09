@@ -1,9 +1,8 @@
 import { useMemo } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
-import { useGLTF } from '@react-three/drei';
 import * as THREE from 'three';
 import { drone, target, toCell, toCellWith, faceQuad, pieceMesh } from './drone';
-import { device, ringOut, DEVICE_URL } from './device';
+import { ringOut } from './device';
 
 // The device's camera, in a corner of the page. It renders cell space: the cube the device is in, rigid, and the
 // rooms continuing straight through its faces, as in a net. Nothing telescopes here; from inside, a tesseract is
@@ -47,7 +46,6 @@ const FISHEYE = new THREE.ShaderMaterial({
 
 export function DroneCam() {
   const { gl, scene, camera, size } = useThree();
-  const gltf = useGLTF(DEVICE_URL);
   const cell = useMemo(() => {
     const cs = new THREE.Scene();
     cs.background = new THREE.Color('#dad9d4');
@@ -92,8 +90,6 @@ export function DroneCam() {
     net.add(struts, nodes);
     cs.add(net);
     const sand = new THREE.Color(SAND), graphite = new THREE.Color(GRAPHITE);
-    const dev = device(gltf.scene, SIZE_CAM);
-    cs.add(dev.g);
     const flash = faceQuad();
     cs.add(flash.mesh);
     const piece = pieceMesh();
@@ -111,13 +107,13 @@ export function DroneCam() {
     lens.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), FISHEYE));
     const flat = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
     return {
-      cs, net, edges, struts, dev, flash, piece, grabbed, eye, lens, flat, sand, graphite,
+      cs, net, edges, struts, flash, piece, grabbed, eye, lens, flat, sand, graphite,
       q: new THREE.Quaternion(), look: new THREE.Vector3(0, 0, -1), last: [0, 0, 0], crossings: -1,
-      pos: new THREE.Vector3(), eyeAt: new THREE.Vector3(), heading: new THREE.Quaternion(),
+      pos: new THREE.Vector3(),
     };
-  }, [gltf]);
+  }, []);
 
-  const tmp = useMemo(() => ({ pos: new THREE.Vector3(), vel: new THREE.Vector3(), at: new THREE.Vector3(), up: new THREE.Vector3(0, 1, 0), camUp: new THREE.Vector3(0, 1, 0), m: new THREE.Matrix4(), q: new THREE.Quaternion(), tilt: new THREE.Quaternion(), axis: new THREE.Vector3() }), []);
+  const tmp = useMemo(() => ({ pos: new THREE.Vector3(), vel: new THREE.Vector3(), at: new THREE.Vector3(), up: new THREE.Vector3(0, 1, 0), camUp: new THREE.Vector3(0, 1, 0), m: new THREE.Matrix4(), q: new THREE.Quaternion(), axis: new THREE.Vector3() }), []);
 
   useFrame(() => {
     // the main picture. setViewport and setScissor take CSS pixels and apply the pixel ratio themselves.
@@ -141,41 +137,14 @@ export function DroneCam() {
     // at the controls the view's up is the eye's own, so a drag in the view turns the way it is dragged
     if (drone.pilot) camUp.lerp(tmp.axis.set(0, 1, 0).applyQuaternion(drone.q), 0.25).normalize();
     else camUp.lerp(tmp.up, 0.04 * (1 - Math.abs(cell.look.y))).normalize();
-    const follow = drone.view === 'follow';
-    if (follow) {
-      // a chase camera: behind, a little above and off to one side, eased; the device in three-quarter view
-      tmp.axis.crossVectors(cell.look, camUp).normalize();
-      tmp.at.copy(tmp.pos).addScaledVector(cell.look, -0.42).addScaledVector(camUp, 0.16).addScaledVector(tmp.axis, 0.3);
-      if (cell.eyeAt.lengthSq() === 0) cell.eyeAt.copy(tmp.at);
-      cell.eyeAt.lerp(tmp.at, 0.12);
-      cell.pos.copy(cell.eyeAt);
-      tmp.at.copy(tmp.pos).addScaledVector(cell.look, 0.4);
-    } else {
-      cell.eyeAt.set(0, 0, 0);
-      cell.pos.copy(tmp.pos);
-      tmp.at.copy(tmp.pos).add(cell.look);
-    }
+    cell.pos.copy(tmp.pos);
+    tmp.at.copy(tmp.pos).add(cell.look);
     tmp.m.lookAt(cell.pos, tmp.at, camUp);
     tmp.q.setFromRotationMatrix(tmp.m);
     cell.q.slerp(tmp.q, 0.2);
-    cell.dev.g.visible = follow;
-    cell.dev.shield(drone.shield); cell.dev.shutter(drone.shutter);
-    // the grip reaches the piece in cell space too: its distance here over the device's size here
+    // the grip reaches the piece in cell space too: its distance here over the device's size here, for the taken piece
     let at = drone.gripAt;
     if (target.up && target.map) { const t3 = toCellWith(target.map, target.p); at = Math.hypot(t3[0] - c[0], t3[1] - c[1], t3[2] - c[2]) / SIZE_CAM; }
-    cell.dev.grip(drone.grip, at);
-    if (follow) {
-      cell.dev.g.position.copy(tmp.pos);
-      tmp.m.lookAt(new THREE.Vector3(), cell.look, camUp); // the eye looks along -z
-      tmp.q.setFromRotationMatrix(tmp.m);
-      tmp.axis.crossVectors(camUp, cell.look);
-      if (tmp.axis.lengthSq() > 1e-8) {
-        tmp.tilt.setFromAxisAngle(tmp.axis.normalize(), 0.2);
-        tmp.q.premultiply(tmp.tilt);
-      }
-      cell.heading.slerp(tmp.q, 0.1);
-      cell.dev.g.quaternion.copy(cell.heading);
-    }
 
     if (cell.crossings !== drone.crossings) {
       cell.crossings = drone.crossings;
