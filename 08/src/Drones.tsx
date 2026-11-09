@@ -297,19 +297,24 @@ export function Drones() {
     if (drone.pilot !== s.wasPilot) { s.wasPilot = drone.pilot; if (drone.pilot) takeOver(s); else letGo(s); }
     drone.docking = drone.pilot && s.phase !== 'seek';
     let field = 0, leg: Leg | null = null;
+    /** The take: the piece is drawn from where it is into the ring over the catch, then rides in with the grip. */
+    const take = () => {
+      s.phase = 'catch'; s.t = 0; s.blink = 0;
+      target.up = false; target.scale = 0;
+      drone.taken = 1; drone.grab4 = target.p.slice() as V4; drone.grabMap = target.map; drone.grabK = 0;
+    };
     if (s.phase !== 'seek') {
-      // the catch, in either mode: the device holds still through it, eye on the piece, then on the room
+      // the catch's clock, in either mode. At the controls the device docks and holds still through it; on its own
+      // it takes the piece on the fly and carries on in its curve, the machine turning as it goes
       s.t += dt;
-      drone.turn[0] = drone.turn[1] = 0; drone.cvel = [0, 0, 0];
-      if (s.phase === 'settle' && s.t > SETTLE) {
-        // the catch: the piece is drawn from where it is into the ring over the phase, then rides in with the grip
-        s.phase = 'catch'; s.t = 0; s.blink = 0;
-        target.up = false; target.scale = 0;
-        drone.taken = 1; drone.grab4 = target.p.slice() as V4; drone.grabMap = target.map; drone.grabK = 0;
-      }
-      else if (s.phase === 'catch' && s.t > CATCH) { s.phase = 'turn'; s.t = 0; if (!st.hard) turnGlide(GLIDE); newTarget(s); } // hard mode turns all the time anyway
+      if (s.phase === 'settle' && s.t > SETTLE) take();
+      else if (s.phase === 'catch' && s.t > CATCH) { s.phase = 'turn'; s.t = 0; if (!st.hard) turnGlide(GLIDE); if (!target.up) newTarget(s); } // hard mode turns all the time anyway
       else if (s.phase === 'turn' && s.t > GLIDE) { s.phase = 'rest'; s.t = 0; }
       else if (s.phase === 'rest' && s.t > REST) { s.phase = 'seek'; }
+    }
+    if (s.phase !== 'seek' && drone.pilot) {
+      // docked: still, eye on the piece
+      drone.turn[0] = drone.turn[1] = 0; drone.cvel = [0, 0, 0];
       s.wall = null; s.clipCorners = null;
     } else if (drone.pilot) {
       field = pilot(s, dt);
@@ -342,7 +347,7 @@ export function Drones() {
       }
       if (s.s >= 1) {
         s.p[s.held] = s.sign; s.leg = null;
-        if (leg.toTarget) { s.phase = 'settle'; s.t = 0; } // in front of the piece: the catch begins
+        if (leg.toTarget) take(); // at the piece: taken on the fly
       }
       if (leg.kind === 'portal') {
         // the wall, named from whichever cell it is in now: before the crossing the face's axis, after it the old held
@@ -367,7 +372,7 @@ export function Drones() {
     // the grip: out fast once the device has come to a stop in front of the piece (at the controls, when it is within
     // reach), as far as the piece is; home again once it is taken, the piece riding in the ring
     const near = target.up && len4(sub4(target.p, s.p)) < 0.3;
-    const want = (s.phase === 'settle' && s.t > 0.25) || s.phase === 'catch' || (drone.pilot && s.phase === 'seek' && near);
+    const want = (s.phase === 'settle' && s.t > 0.25) || s.phase === 'catch' || (s.phase === 'seek' && near); // out as it closes in, through the take, then home
     s.grip += ((want ? 1 : 0) - s.grip) * Math.min(1, dt * (want ? 16 : 5));
     if (near) drone.gripAt = project(m, target.p, new THREE.Vector3()).distanceTo(project(m, s.p, new THREE.Vector3())) / SIZE_MAIN;
     drone.shield = s.shield; drone.shutter = shut; drone.grip = s.grip;
