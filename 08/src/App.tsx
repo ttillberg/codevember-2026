@@ -52,6 +52,8 @@ export function App() {
     const d = camDrag.current;
     if (!d) return;
     e.stopPropagation();
+    // the button is up and the release never came: the drag is over, and hovering is not a turn
+    if (!(e.buttons & 1)) { camDrag.current = null; return; }
     const dx = e.clientX - d.x, dy = e.clientY - d.y;
     d.moved += Math.abs(dx) + Math.abs(dy);
     if (drone.pilot) { drone.turn[0] += dx * LOOK * 1.6; drone.turn[1] += -dy * LOOK * 1.6; }
@@ -71,6 +73,7 @@ export function App() {
     drag.current = { x: e.clientX, y: e.clientY, t: performance.now() }; rig.vel[0] = rig.vel[1] = 0;
   };
   const onMove = (e: React.PointerEvent) => {
+    if (drag.current && !(e.buttons & 1)) { drag.current = null; if (drone.pilot) drone.keys.thrust = 0; } // a release that never came
     if (DEBUG) {
       // debugging: the drag orbits the camera, in either mode
       const d = drag.current;

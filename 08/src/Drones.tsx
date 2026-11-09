@@ -217,6 +217,7 @@ export function Drones() {
   function letGo(s: S) {
     s.p[s.held] = s.sign;
     s.leg = null; s.came = null;
+    drone.turn[0] = drone.turn[1] = 0; drone.keys.thrust = drone.keys.yaw = drone.keys.pitch = 0; s.yawV = s.pitchV = 0;
     // a fresh plan from here; a catch that was about to begin begins over
     if (target.up && target.map) planTo(s); else s.plan = [];
     if (s.phase === 'settle') s.phase = 'seek';
