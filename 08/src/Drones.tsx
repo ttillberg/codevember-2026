@@ -7,6 +7,7 @@ import { pose, turnGlide } from './state';
 import { drone, target, startCell, crossInto, faceQuad, pieceMesh, blink, toCell, fromCell, dirFromCellWith, otherMap, mapAcross, wallCorners, cellId, CELL_HEX, RIPPLE, type CellMap } from './drone';
 import { device, ringOut, DEVICE_URL } from './device';
 import { makeSmoke } from './smoke';
+import { makeLaser } from './laser';
 
 // A device that lives in the tesseract: a ball with one eye, fins that are walls, a shutter. It is inside one of the eight cells, a cube with one coordinate held at
 // ±1 and the other three free, and it can only leave through a square face into the neighbouring cell. The passage is
@@ -73,6 +74,8 @@ export function Drones() {
     q.clip([planeA]); q2.clip([planeB]);
     const smoke = makeSmoke();
     group.add(smoke.points);
+    const laser = makeLaser();
+    group.add(laser.line);
     const flash = faceQuad();
     group.add(flash.mesh);
     const piece = pieceMesh();
@@ -83,7 +86,7 @@ export function Drones() {
     group.add(grabbed);
     const held = Math.floor(Math.random() * 4), sign = Math.random() < 0.5 ? -1 : 1;
     const s = {
-      group, q, smoke, puffAt: new THREE.Vector3(1e9, 0, 0), puffGap: 0.04, trailAt: new THREE.Vector3(1e9, 0, 0), flash, clipCorners: null as V4[] | null, fadeA: 1, fadeB: 1, piece, grabbed,
+      group, q, smoke, laser, puffAt: new THREE.Vector3(1e9, 0, 0), puffGap: 0.04, trailAt: new THREE.Vector3(1e9, 0, 0), flash, clipCorners: null as V4[] | null, fadeA: 1, fadeB: 1, piece, grabbed,
       held, sign, came: null as [number, number] | null,
       p: [0, 0, 0, 0] as V4, dir: [0, 0, 0, 0] as V4, // where it is, which way it is going, in 4D
       leg: null as Leg | null, s: 0,
@@ -367,6 +370,9 @@ export function Drones() {
       s.smoke.spawn(add4(s.p, s.dir, -0.05), now, CELL_HEX[cellId()], 0.45);
       s.trailAt.copy(v);
     }
+    // the laser through it, along the same way
+    s.laser.sample(add4(s.p, s.dir, -0.05), now, CELL_HEX[cellId()]);
+    s.laser.update(m, now, size.width * viewport.dpr, size.height * viewport.dpr);
     const fovH = (camera as THREE.PerspectiveCamera).fov * Math.PI / 180;
     s.smoke.update(m, now, (size.height * viewport.dpr) / (2 * Math.tan(fovH / 2)));
     if (!drone.pilot) {
