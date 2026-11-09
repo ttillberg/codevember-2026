@@ -37,7 +37,13 @@ type Phase = 'seek' | 'settle' | 'catch' | 'turn' | 'rest';
 // at the controls: cell-space units per second squared and per second, radians per second
 const THRUST = 1.6, DRAG = 1.1, VMAX = 1.1;
 
-type Leg = { pts: V4[]; len: number; crossed: boolean } & ({ kind: 'cruise'; toTarget: boolean } | { kind: 'portal'; face: { axis: number; sign: number } });
+/** A wall of the current cell: the 4D axis of its face and the side it is on. */
+type Wall = { axis: number; sign: number };
+const sameWall = (a: Wall, b: Wall) => a.axis === b.axis && a.sign === b.sign;
+/** The hand-over at a wall: which wall, named from the cell the device is in; whether it has gone through; seconds
+ * the body has been all the way in since; seconds since the flight last had the wall ahead. */
+type Handover = { wall: Wall; crossed: boolean; inT: number; gone: number };
+type Leg = { pts: V4[]; len: number; crossed: boolean } & ({ kind: 'cruise'; toTarget: boolean } | { kind: 'portal'; face: Wall });
 /** A step of a plan, made into a leg when its turn comes, from wherever the device is then. */
 type Step = { kind: 'portal'; axis: number; sign: number; face: V4; beyond: V4 } | { kind: 'cruise'; to: V4; toTarget: boolean };
 const mix4 = (a: V4, b: V4, t: number): V4 => a.map((x, i) => x + (b[i] - x) * t) as V4;
@@ -96,13 +102,13 @@ export function Drones() {
     group.add(grabbed);
     startCell(Math.floor(Math.random() * 4), Math.random() < 0.5 ? -1 : 1);
     const s = {
-      group, q, smoke, laser, puffAt: new THREE.Vector3(1e9, 0, 0), puffGap: 0.04, trailAt: new THREE.Vector3(1e9, 0, 0), flash, lastWall: null as { axis: number; sign: number } | null, linger: 0, inT: 0, shift: new THREE.Vector3(), tintA: 0, tintB: 0, tintHexA: '', tintHexB: '', crossed: false, piece, grabbed,
-      came: null as [number, number] | null, // the cell it came from through the wall of the leg it is on
+      group, q, smoke, laser, puffAt: new THREE.Vector3(1e9, 0, 0), puffGap: 0.04, trailAt: new THREE.Vector3(1e9, 0, 0), flash, ho: null as Handover | null, shift: new THREE.Vector3(), tintA: 0, tintB: 0, tintHexA: '', tintHexB: '', piece, grabbed,
+      came: null as Wall | null, // the wall of the leg it is on, once through it, named from the new cell
       p: [0, 0, 0, 0] as V4, dir: [0, 0, 0, 0] as V4, // where it is, which way it is going, in 4D
       leg: null as Leg | null, s: 0,
       last: new THREE.Vector3(), heading: new THREE.Quaternion(), heading2: new THREE.Quaternion(),
       q2, planeA, planeB, cLast: [0, 0, 0], look: new THREE.Vector3(0, 0, -1), camUp: new THREE.Vector3(0, 1, 0),
-      wall: null as { axis: number; sign: number } | null, // the wall it is at, if any: the face's 4D axis and side
+      wall: null as Wall | null, // the wall the flight has it at, if any
       plan: [] as Step[], phase: 'seek' as Phase, t: 0, // the steps to the piece; the catch's phase and its clock
       grip: 0,
       shield: 0, blink: Infinity, nextBlink: 3 + Math.random() * 5, // seconds into the blink; seconds to a blink of its own
@@ -229,13 +235,15 @@ export function Drones() {
     if (s.phase === 'settle') s.phase = 'seek';
   }
   /** Through the wall where 4D axis `axis` is `sign`, crossed at `p4`: the face's axis is held now, the old one free;
-   * the wall ripples from the crossing in the new cell's colour, the shutter blinks, and a hand-over starts. */
-  function cross(s: S, axis: number, sign: number, p4: V4) {
+   * the wall ripples from the crossing in the new cell's colour, the shutter blinks, and the hand-over goes on in the
+   * new cell. Returns the wall just crossed as the new cell names it: the axis that was held, now free. */
+  function cross(s: S, axis: number, sign: number, p4: V4): Wall {
+    const was = { axis: drone.held, sign: drone.sign };
     drone.flash.corners = faceCorners(axis, sign); drone.flash.p4 = p4; drone.flash.t = 0;
     crossInto(axis, sign);
     drone.flash.color = CELL_HEX[cellId()];
     s.blink = 0;
-    s.crossed = true; s.inT = 0; s.lastWall = null;
+    s.ho = { wall: was, crossed: true, inT: 0, gone: 0 };
     // the copies swap cells: this one now draws the cell just entered, the other the one left. Each takes over the
     // pose and the tint the other had there, so neither half jumps or changes colour at the crossing
     [s.heading, s.heading2] = [s.heading2, s.heading];
@@ -243,6 +251,7 @@ export function Drones() {
     [s.tintHexA, s.tintHexB] = [s.tintHexB, s.tintHexA];
     if (s.tintHexA) s.q.tint(s.tintHexA, s.tintA);
     if (s.tintHexB) s.q2.tint(s.tintHexB, s.tintB);
+    return was;
   }
   /** One step at the controls, in cell space: the look as it came in from the page, thrust along the eye and strafe
    * across it against drag, and the same crossing as on its own when it goes through a wall; the field round the
@@ -291,9 +300,8 @@ export function Drones() {
     // through: the same swap of held axis as on its own
     const over = c[kw] - (drone.centre[kw] + tw);
     if (over * tw > 0) {
-      const was = { axis: drone.held, sign: drone.sign }, w = wallOf(kw, tw);
-      cross(s, w.axis, w.sign, fromCell(c));
-      s.wall = was; // the wall just crossed, named from the new cell: the axis that was held, now free
+      const w = wallOf(kw, tw);
+      s.wall = cross(s, w.axis, w.sign, fromCell(c));
     }
     moveTo(s, fromCell(c));
     return field;
@@ -346,15 +354,14 @@ export function Drones() {
       moveTo(s, path(leg.pts, Math.min(1, s.s)));
       if (leg.kind === 'portal' && !leg.crossed && s.s >= 0.5) {
         leg.crossed = true;
-        s.came = [drone.held, drone.sign];
-        cross(s, leg.face.axis, leg.face.sign, s.p.slice() as V4);
+        s.came = cross(s, leg.face.axis, leg.face.sign, s.p.slice() as V4);
       }
       if (s.s >= 1) {
         s.p[drone.held] = drone.sign; s.leg = null;
         if (leg.kind === 'cruise' && leg.toTarget) take(); // at the piece: taken on the fly
       }
       // the wall, named from whichever cell it is in now: before the crossing the face's axis, after it the old held
-      s.wall = leg.kind === 'portal' && s.s > 0.25 && s.s < 0.75 ? (leg.crossed ? { axis: s.came![0], sign: s.came![1] } : leg.face) : null;
+      s.wall = leg.kind === 'portal' && s.s > 0.25 && s.s < 0.75 ? (leg.crossed ? s.came : leg.face) : null;
     }
     // the ripple runs its course
     if (drone.flash.t >= 0) { drone.flash.t += dt; if (drone.flash.t > RIPPLE) drone.flash.t = -1; }
@@ -435,22 +442,18 @@ export function Drones() {
     // At a wall the body is two copies, one in each cell's pose, each clipped to its own cell's side of the wall's
     // plane. In 4D nothing of the kind happens, the body just moves on, but in the picture two spaces meet at the
     // wall and this makes the hand-over plain. Away from walls the planes are far off and the other copy hidden.
-    // The wall state the flight hands over ends by where the device is on its leg; the hand-over here ends when the
-    // body has come all the way up out of the wall, which can be later. So the last wall is kept and the state
-    // lingers until the set-back is spent.
-    if (s.wall) {
-      // another wall ahead while a hand-over is still pending (two walls close together, as through a thin cell in
-      // the picture): the pending one is dropped, or the new wall would be taken as already crossed. A crossing
-      // clears the last wall, so the wall it is named by from the new side is not taken for another
-      if (s.crossed && s.lastWall && (s.wall.axis !== s.lastWall.axis || s.wall.sign !== s.lastWall.sign)) s.crossed = false;
-      s.lastWall = s.wall;
-    }
-    const wall = s.wall ?? (s.crossed ? s.lastWall : null);
+    // The hand-over has its own life: it starts with a wall ahead, goes on through the crossing (cross() hands it to
+    // the new cell) and ends once the body has come all the way up out of the wall, which can be after the flight
+    // has left the wall behind. Another wall ahead in the meantime (two walls close together, as through a thin cell
+    // in the picture) starts a new one; backing off a wall without going through drops it.
+    if (s.wall && !(s.ho && sameWall(s.ho.wall, s.wall))) s.ho = { wall: s.wall, crossed: false, inT: 0, gone: 0 };
+    else if (!s.wall && s.ho && !s.ho.crossed) s.ho = null;
+    const ho = s.ho, wall = ho?.wall;
     const other = wall ? otherMap(wall.axis, wall.sign) : null;
     // how far each copy is into the wall, 0 to 1, for its tint; and whether the other copy is rising out of it
     let immA = 0, immB = 0, rising = false;
     s.q.g.visible = true;
-    if (wall && other) {
+    if (ho && wall && other) {
       pose3(other, s.heading2);
       const corners = faceCorners(wall.axis, wall.sign);
       const [c0, c1, c2] = tmp.corners.map((c3, i) => project(m, corners[i], c3));
@@ -477,7 +480,7 @@ export function Drones() {
         // both at once: this copy is this far into the wall, the other this far still in it
         s.q2.g.visible = true;
         immA = imm(-d); immB = imm(d);
-      } else if (!s.crossed) {
+      } else if (!ho.crossed) {
         // in, then out (o): going in, this copy sinks and the other is not there yet
         s.q2.g.visible = false;
         immA = imm(-d);
@@ -487,20 +490,20 @@ export function Drones() {
         // time, not distance: in the picture a cell can be small, and a distance there is a long way in 4D
         s.q2.g.visible = true;
         rising = true;
-        if (d >= R) s.inT += dt;
-        const e = smoothstep(s.inT, INOUT_GAP, INOUT_GAP + INOUT_RISE);
+        if (d >= R) ho.inT += dt;
+        const e = smoothstep(ho.inT, INOUT_GAP, INOUT_GAP + INOUT_RISE);
         // it starts deep enough to be inside the wall however far the body has gone, and the set-back eases to
         // nothing along the rise, so the copy comes out at the body's own speed, no catching up to be seen
         const back = Math.max(INOUT_SET * R, d + R) * (1 - e);
-        s.q.g.visible = s.inT >= INOUT_GAP;
+        s.q.g.visible = ho.inT >= INOUT_GAP;
         s.shift.copy(s.planeA.normal).multiplyScalar(-back);
         immB = imm(d);
         immA = s.q.g.visible ? imm(back - d) : 1;
         done = e >= 1;
       }
-      // all the way across, or long enough past the wall: the hand-over is done
-      if (s.wall) s.linger = 0;
-      else if (s.crossed && (done || (s.linger += dt) > LINGER)) s.crossed = false;
+      // past the wall and all the way across, or long enough past it: the hand-over is done
+      if (s.wall) ho.gone = 0;
+      else if (ho.crossed && (done || (ho.gone += dt) > LINGER)) s.ho = null;
       // the renderer clips in world space, and the machine sits on a turned rig: the planes go through its matrix
       s.planeA.applyMatrix4(s.group.matrixWorld); s.planeB.applyMatrix4(s.group.matrixWorld);
     } else {

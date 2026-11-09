@@ -4,7 +4,7 @@ What the cleanup review (/simplify) left on the table, to go through one by one.
 
 ## Hand-over at a wall
 
-- [ ] **The hand-over as its own object** (less pressing now: the swing it would have fixed is fixed). One `handover: { from, to, corners, t, crossed } | null`. A wall ahead creates it, and a different face just replaces it. The crossing sets `crossed`. It ends on its own `done`, not on `s.wall`. Copy A stays bound to `from` and copy B to `to` for its whole life, so pose, clip side and colour carry through the crossing. That removes `lastWall`, `linger`/`LINGER`, `inT`, the "another wall ahead" check and the `tintHex*` caches. (`Drones.tsx`, hand-over block)
+- [x] **The hand-over as its own object.** `s.ho = { wall, crossed, inT, gone } | null`: started by a wall ahead, handed on by `cross()`, ended when the body is out. `lastWall`, `linger`, `inT`, `crossed` and the wall-ahead check are gone. The copies are not bound to from/to; `cross()` swaps their pose and tint instead, which does the same.
 - [ ] **A wall as a pair of cells** `{(h1,s1),(h2,s2)}` instead of `{axis, sign}` seen from the current cell. Then it is never renamed at a crossing: no `came`, no `was`, no `s.came!`. The "other" cell is whichever of the pair it isn't in. It also makes `from`/`to` above free.
 - [x] **Swing after a crossing.** Measured: each half jumped 40–150° in one frame at every crossing, then swung back over ~0.3 s. Fixed by swapping the copies' pose and tint in `cross()`: now 0.1–2.7°, the same as plain motion.
 
