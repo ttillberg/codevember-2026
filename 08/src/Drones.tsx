@@ -83,7 +83,7 @@ export function Drones() {
     group.add(grabbed);
     const held = Math.floor(Math.random() * 4), sign = Math.random() < 0.5 ? -1 : 1;
     const s = {
-      group, q, smoke, puffAt: new THREE.Vector3(1e9, 0, 0), puffGap: 0.04, flash, clipCorners: null as V4[] | null, piece, grabbed,
+      group, q, smoke, puffAt: new THREE.Vector3(1e9, 0, 0), puffGap: 0.04, trailAt: new THREE.Vector3(1e9, 0, 0), flash, clipCorners: null as V4[] | null, piece, grabbed,
       held, sign, came: null as [number, number] | null,
       p: [0, 0, 0, 0] as V4, dir: [0, 0, 0, 0] as V4, // where it is, which way it is going, in 4D
       leg: null as Leg | null, s: 0,
@@ -357,10 +357,15 @@ export function Drones() {
     // a gap between
     if (v.distanceTo(s.puffAt) > s.puffGap) {
       const at = add4(s.p, s.dir, -0.05), n = 2 + Math.floor(Math.random() * 3), hex = CELL_HEX[cellId()];
-      s.smoke.spawn(add4(at, [0, 1, 2, 3].map(() => rnd(-0.01, 0.01)) as V4), now, hex, true);
+      s.smoke.spawn(add4(at, [0, 1, 2, 3].map(() => rnd(-0.01, 0.01)) as V4), now, hex, 2.2 + Math.random());
       for (let i = 0; i < n; i++) s.smoke.spawn(add4(at, [0, 1, 2, 3].map(() => rnd(-0.022, 0.022)) as V4), now + rnd(0, 0.15), hex);
       s.puffAt.copy(v);
       s.puffGap = rnd(0.05, 0.12);
+    }
+    // and a steady line of small ones between the clusters, so the way it came reads
+    if (v.distanceTo(s.trailAt) > 0.02) {
+      s.smoke.spawn(add4(s.p, s.dir, -0.05), now, CELL_HEX[cellId()], 0.45);
+      s.trailAt.copy(v);
     }
     const fovH = (camera as THREE.PerspectiveCamera).fov * Math.PI / 180;
     s.smoke.update(m, now, (size.height * viewport.dpr) / (2 * Math.tan(fovH / 2)));

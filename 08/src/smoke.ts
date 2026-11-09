@@ -97,12 +97,13 @@ export function makeSmoke() {
   const v = new THREE.Vector3(), col = new THREE.Color(), white = new THREE.Color('#ffffff');
   return {
     points,
-    /** A puff at `p` in 4D, now, tinted `hex` washed towards white; `big`, a large faint one that binds a cluster. */
-    spawn(p: V4, now: number, hex: string, big = false) {
+    /** A puff at `p` in 4D, now, tinted `hex` washed towards white, `grow` times the usual size (a random small one
+     * if left out); the big ones come out faint. */
+    spawn(p: V4, now: number, hex: string, grow0?: number) {
       const i = head; head = (head + 1) % N;
       p4[i] = p.slice() as V4;
       birth[i] = now; seed[i] = Math.random();
-      grow[i] = big ? 2.2 + Math.random() * 1.0 : 0.6 + Math.random() * 0.6;
+      grow[i] = grow0 ?? 0.6 + Math.random() * 0.6;
       (geo.attributes.grow as THREE.BufferAttribute).needsUpdate = true;
       col.set(hex).lerp(white, FOG);
       tint[i * 3] = col.r; tint[i * 3 + 1] = col.g; tint[i * 3 + 2] = col.b;
