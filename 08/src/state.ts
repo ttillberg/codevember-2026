@@ -1,3 +1,4 @@
+import * as THREE from 'three';
 import { mul, rotPlane, type M4 } from './tesseract';
 
 // Shared mutable state between the scene and the page. Read every frame, no React in the loop.
@@ -20,15 +21,23 @@ export const st = {
   smooth: true, // the default: an even turn. M swaps in the servo
   next: 1.2, // seconds until the next step
   crank: 0, // held key, -1 0 1
-  /** Orbiting sets the way: the camera's azimuth, written by the controls, and the way the last drag went. */
-  azimuth: 0,
-  lastAzimuth: 0,
   way: 1, // which way it turns, +1 or -1: the last drag, or a flip now and then
   flipIn: 12, // seconds until it turns round on its own
   spinVel: 0, // the smooth mode's speed, eased towards SPIN * way so a flip is a swing, not a knock
   /** Longest and shortest strut right now, for the readout. */
   lengths: { min: 0, max: 0 },
 };
+
+/** The rig: the camera stands still, straight on; dragging turns the machine itself, about the room's axes. */
+export const rig = {
+  q: new THREE.Quaternion().setFromEuler(new THREE.Euler(0.27, -0.55, 0, 'YXZ')),
+  vel: [0, 0], // rad/s about y and x, from the last drag, decaying
+  zoom: 10.5, // camera distance
+};
+const AX = new THREE.Vector3(1, 0, 0), AY = new THREE.Vector3(0, 1, 0), tq = new THREE.Quaternion();
+export function spinRig(dy: number, dx: number) {
+  rig.q.premultiply(tq.setFromAxisAngle(AY, dy)).premultiply(tq.setFromAxisAngle(AX, dx));
+}
 
 export const CRANK = 1.6; // rad/s of target with a key held
 const SPIN = 0.22; // rad/s, the smooth mode
@@ -82,11 +91,13 @@ function step() {
 }
 
 export function tick(dt: number) {
-  // orbit the camera one way and the machine turns that way from then on; it also turns round on its own
-  let dAz = st.azimuth - st.lastAzimuth;
-  if (dAz > Math.PI) dAz -= 2 * Math.PI; else if (dAz < -Math.PI) dAz += 2 * Math.PI;
-  st.lastAzimuth = st.azimuth;
-  if (Math.abs(dAz) > 1e-3) { st.way = Math.sign(dAz); st.flipIn = 8 + Math.random() * 14; }
+  // the rig coasts after a drag; drag one way and the machine turns that way from then on; it also turns round on its own
+  if (rig.vel[0] || rig.vel[1]) {
+    spinRig(rig.vel[0] * dt, rig.vel[1] * dt);
+    const k = Math.exp(-dt * 4);
+    rig.vel[0] *= k; rig.vel[1] *= k;
+    if (Math.abs(rig.vel[0]) + Math.abs(rig.vel[1]) < 1e-3) rig.vel[0] = rig.vel[1] = 0;
+  }
   st.flipIn -= dt;
   if (st.flipIn <= 0) { st.way = -st.way; st.flipIn = 8 + Math.random() * 14; }
 

@@ -5,7 +5,7 @@ import { Line2 } from 'three/examples/jsm/lines/Line2.js';
 import { LineGeometry } from 'three/examples/jsm/lines/LineGeometry.js';
 import { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js';
 import { project, type V4, type M4 } from './tesseract';
-import { pose } from './state';
+import { pose, rig } from './state';
 
 // A laser into the tesseract. A pink beam fixed in the room, level, along x through the centre of the machine, going
 // straight through it. The machine turns inside the beam, so the walls it crosses change. At every wall it
@@ -75,7 +75,7 @@ export function Laser() {
   useEffect(() => { for (const l of parts.lines) l.mat.resolution.set(size.width, size.height); }, [size, parts]);
 
   const tmp = useMemo(() => ({
-    hand: new THREE.Vector3(), beam: new THREE.Ray(ORIGIN.clone(), DIR.clone()),
+    hand: new THREE.Vector3(), beam: new THREE.Ray(), qi: new THREE.Quaternion(),
     a: new THREE.Vector3(), b: new THREE.Vector3(), c: new THREE.Vector3(), d: new THREE.Vector3(), hit: new THREE.Vector3(),
     bary: new THREE.Vector3(), p: new THREE.Vector3(), q: new THREE.Vector3(), n: new THREE.Vector3(), off: new THREE.Vector3(),
     cur: new THREE.Vector3(), dummy: new THREE.Object3D(), col: new THREE.Color(),
@@ -122,7 +122,11 @@ export function Laser() {
     beamHits.length = 0;
     if (!laser.on) { group.visible = false; return; }
     const m = pose();
-    const { hand, beam, off, cur, dummy, col } = tmp;
+    const { hand, beam, off, cur, dummy, col, qi } = tmp;
+    // the beam is fixed in the room; we draw under the rig, so bring it into the rig's frame
+    qi.copy(rig.q).invert();
+    beam.origin.copy(ORIGIN).applyQuaternion(qi);
+    beam.direction.copy(DIR).applyQuaternion(qi);
     hand.copy(beam.origin);
 
     // every wall along the beam, nearest first; at each a jog, then on parallel, half as strong
