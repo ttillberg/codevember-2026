@@ -294,6 +294,7 @@ export function Drones() {
     const s = d;
 
     if (drone.pilot !== s.wasPilot) { s.wasPilot = drone.pilot; if (drone.pilot) takeOver(s); else letGo(s); }
+    drone.docking = drone.pilot && s.phase !== 'seek';
     let field = 0, leg: Leg | null = null;
     if (s.phase !== 'seek') {
       // the catch, in either mode: the device holds still through it, eye on the piece, then on the room

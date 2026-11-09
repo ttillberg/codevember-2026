@@ -168,6 +168,7 @@ export function App() {
         </Canvas>
       </div>
       {CLEAN ? null : <div className="plate"><b>Tesseract</b><i>CDVMBR 08</i></div>}
+      <div id="lock" className="lock"><i /><i /><i /><i /><b>lock</b></div>
       <div className={`cam ${manual ? 'square' : 'pass'}`} style={manual ? { width: insetSide, height: insetSide, top: INSET.top, right: INSET.right, bottom: 'auto' } : undefined} {...camHandlers} />
       {DEBUG ? <div className="cell"><i style={{ background: CELL_HEX[cell.id] }} />cell {cell.name}</div> : null}
       {CLEAN ? null : manual ? <div className="keys">

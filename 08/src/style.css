@@ -117,3 +117,15 @@ body.clean .plate, body.clean .keys { display: none; }
 /* debugging: the cell readout, under the plate */
 .cell{position:fixed;top:72px;left:24px;display:flex;align-items:center;gap:8px;font:600 11px/1 "Helvetica Neue", Helvetica, Arial, sans-serif;letter-spacing:.08em;text-transform:uppercase;color:#333;opacity:.8}
 .cell i{width:12px;height:12px;border-radius:50%;display:inline-block}
+
+/* the lock bracket round the piece in the eye's view, at the controls: four corners and a word, placed from DroneCam */
+.lock { position: fixed; left: 0; top: 0; display: none; pointer-events: none; color: var(--ink); animation: lockblink 0.5s steps(2, end) infinite; }
+.lock i { position: absolute; width: 30%; height: 30%; border: 1.5px solid currentColor; }
+.lock i:nth-child(1) { left: 0; top: 0; border-right: 0; border-bottom: 0; }
+.lock i:nth-child(2) { right: 0; top: 0; border-left: 0; border-bottom: 0; }
+.lock i:nth-child(3) { left: 0; bottom: 0; border-right: 0; border-top: 0; }
+.lock i:nth-child(4) { right: 0; bottom: 0; border-left: 0; border-top: 0; }
+.lock b { position: absolute; left: 50%; top: 100%; transform: translate(-50%, 6px); font: 600 10px/1 "Helvetica Neue", Helvetica, Arial, sans-serif; letter-spacing: 0.14em; text-transform: uppercase; }
+.lock.on { animation: none; color: var(--lime); }
+.lock.on b::after { content: 'ed'; }
+@keyframes lockblink { 0% { opacity: 1; } 100% { opacity: 0.35; } }

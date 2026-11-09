@@ -1,7 +1,7 @@
 import { useMemo } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
-import { drone, target, toCell, toCellWith, faceQuad, pieceMesh } from './drone';
+import { drone, target, toCell, toCellWith, faceQuad, pieceMesh, PIECE_R } from './drone';
 import { ringOut } from './device';
 
 // The device's camera, in a corner of the page. It renders cell space: the cube the device is in, rigid, and the
@@ -20,6 +20,7 @@ export const CAM = {
 // frame in App follows INSET
 export const INSET = { side: () => Math.round(Math.max(160, Math.min(Math.sqrt(innerWidth * innerHeight) / 2, innerWidth - 48, innerHeight - 150))), right: 24, top: 24 };
 const INSET_ZOOM = 1.3; // the machine in the corner is seen from a little further out, to fit the square
+const LOCK_RANGE = 1.1; // cell units from the piece within which the lock bracket shows, at the controls
 
 const SAND = '#d9b985', GRAPHITE = '#3a3a3d';
 const R_STRUT = 0.075, R_NODE = 0.11;
@@ -187,6 +188,33 @@ export function DroneCam() {
       const g3 = toCellWith(drone.grabMap!, drone.grab4);
       cell.grabbed.position.set(g3[0], g3[1], g3[2]).lerp(ring, drone.grabK);
       cell.grabbed.scale.setScalar(drone.taken);
+    }
+
+    // the lock: at the controls, the piece in this cell and close, a bracket round it in the view, LOCK while
+    // closing in and LOCKED once the catch has taken over. The piece's place in the view is the fisheye's own map:
+    // its direction in the eye's frame, the angle off the axis as the radius, the lens then stretched by the aspect
+    const lockEl = document.getElementById('lock');
+    if (lockEl) {
+      let show = false;
+      if (drone.pilot && target.up && target.map && target.map.held === drone.held && target.map.sign === drone.sign) {
+        const t3 = toCell(target.p), d = tmp.axis.set(t3[0] - c[0], t3[1] - c[1], t3[2] - c[2]), dist = d.length();
+        if (dist < LOCK_RANGE && dist > 1e-6) {
+          d.divideScalar(dist).applyQuaternion(tmp.q.copy(cell.q).invert());
+          const theta = Math.acos(Math.max(-1, Math.min(1, -d.z))), r = theta / (Math.PI / 2), l = Math.hypot(d.x, d.y) || 1;
+          if (r < 1.02) {
+            const full = drone.pilot, aspect = full ? W / H : 1;
+            const vw = full ? W : w, vh = full ? H : h, vx = full ? 0 : x, vtop = full ? 0 : H - y - h;
+            const px = vx + ((r * d.x / l) + 1) / 2 * vw, py = vtop + (1 - (r * d.y / l) * aspect) / 2 * vh;
+            const ballPx = ((PIECE_R * PIECE_K) / dist / (Math.PI / 2)) * (vw / 2);
+            const size = Math.max(28, ballPx * 3.4) * (drone.docking ? 0.62 : 1);
+            lockEl.style.transform = `translate(${px.toFixed(1)}px, ${py.toFixed(1)}px) translate(-50%, -50%)`;
+            lockEl.style.width = lockEl.style.height = `${size.toFixed(1)}px`;
+            lockEl.classList.toggle('on', drone.docking);
+            show = true;
+          }
+        }
+      }
+      lockEl.style.display = show ? 'block' : 'none';
     }
 
     // the eye: the room into the cube map, then the lens onto the page
