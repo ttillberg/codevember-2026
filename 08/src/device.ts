@@ -19,6 +19,8 @@ export type Device = {
   grip: (k: number, at?: number) => void;
   /** Clip every part of this copy to one side of these planes (needs the renderer's local clipping on). */
   clip: (planes: THREE.Plane[]) => void;
+  /** Fade the whole copy: 1 as made, 0 gone. */
+  fade: (k: number) => void;
   /** 0 open (fins back) to 1 shut (the walls closed round the body). */
   shield: (k: number) => void;
   /** 0 open to 1 shut, the blades across the eye. */
@@ -246,12 +248,21 @@ export function device(model: THREE.Object3D, size: number, own = false): Device
       if (own) mesh.material = (mesh.material as THREE.Material).clone();
       const m = mesh.material as THREE.MeshStandardMaterial;
       if (m.transparent) m.depthWrite = false; // the glass
+      m.userData.opacity = m.opacity; m.userData.transparent = m.transparent; // as made, for the fade
       o.frustumCulled = false;
     }
   });
   return {
     g,
     clip: (planes) => { g.traverse((o) => { if ((o as THREE.Mesh).isMesh) ((o as THREE.Mesh).material as THREE.Material).clippingPlanes = planes; }); },
+    fade: (k) => {
+      g.traverse((o) => {
+        if (!(o as THREE.Mesh).isMesh) return;
+        const m = (o as THREE.Mesh).material as THREE.Material;
+        m.opacity = (m.userData.opacity ?? 1) * k;
+        m.transparent = (m.userData.transparent ?? false) || k < 0.999;
+      });
+    },
     grip,
     shield: (k) => { for (const w of walls) w.o.rotation.x = w.rest * (1 - k); stroke(); },
     shutter: (k) => { for (const l of leaves) l.o.rotation.y = l.rest * (1 + (65 / 95) * k); },

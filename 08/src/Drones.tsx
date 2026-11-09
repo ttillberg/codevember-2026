@@ -83,7 +83,7 @@ export function Drones() {
     group.add(grabbed);
     const held = Math.floor(Math.random() * 4), sign = Math.random() < 0.5 ? -1 : 1;
     const s = {
-      group, q, smoke, puffAt: new THREE.Vector3(1e9, 0, 0), puffGap: 0.04, trailAt: new THREE.Vector3(1e9, 0, 0), flash, clipCorners: null as V4[] | null, piece, grabbed,
+      group, q, smoke, puffAt: new THREE.Vector3(1e9, 0, 0), puffGap: 0.04, trailAt: new THREE.Vector3(1e9, 0, 0), flash, clipCorners: null as V4[] | null, fadeA: 1, fadeB: 1, piece, grabbed,
       held, sign, came: null as [number, number] | null,
       p: [0, 0, 0, 0] as V4, dir: [0, 0, 0, 0] as V4, // where it is, which way it is going, in 4D
       leg: null as Leg | null, s: 0,
@@ -402,8 +402,12 @@ export function Drones() {
     pose3(drone, s.heading);
     s.q.g.position.copy(v);
     s.q.g.quaternion.copy(s.heading);
-    // at a wall: the other copy in the neighbour's pose, and the two clipped against the wall's plane, this cell's
-    // side for this copy, the far side for the other. Away from walls the planes are far off and the other copy hidden.
+    // at a wall: the other copy in the neighbour's pose, and each copy clipped to its own cell's side of the wall's
+    // plane. Between two cells on opposite sides of the wall that is two halves of one body, folded at the wall.
+    // Through the outer wall the next cell is on the same side as this one, so both copies keep the same half and
+    // overlap: then they cross-fade with how far through the body is. Away from walls the planes are far off and
+    // the other copy hidden.
+    let fadeA = 1, fadeB = 1;
     if (s.wall) {
       const other = otherMap(s.wall.axis, s.wall.sign);
       pose3(other, s.heading2);
@@ -415,11 +419,19 @@ export function Drones() {
       s.planeA.setFromCoplanarPoints(c0, c1, c2);
       const centre: V4 = [0, 0, 0, 0]; centre[drone.held] = drone.sign;
       if (s.planeA.distanceToPoint(project(m, centre, new THREE.Vector3())) < 0) s.planeA.negate();
-      s.planeB.copy(s.planeA).negate();
+      s.planeB.copy(s.planeA);
+      const centre2: V4 = [0, 0, 0, 0]; centre2[other.held] = other.sign;
+      if (s.planeB.distanceToPoint(project(m, centre2, new THREE.Vector3())) < 0) s.planeB.negate();
+      if (s.planeA.normal.dot(s.planeB.normal) > 0) {
+        const through = Math.max(0, Math.min(1, 0.5 - s.planeA.distanceToPoint(v) / (2 * SIZE_MAIN)));
+        fadeA = 1 - through; fadeB = through;
+      }
     } else {
       s.q2.g.visible = false;
       s.planeA.set(tmp.up, 1e4); s.planeB.set(tmp.up, 1e4);
     }
+    if (Math.abs(fadeA - s.fadeA) > 0.004) { s.q.fade(fadeA); s.fadeA = fadeA; }
+    if (Math.abs(fadeB - s.fadeB) > 0.004) { s.q2.fade(fadeB); s.fadeB = fadeB; }
 
     // the piece: emerging or there, turning slowly; taken, it is the held one: in the ring, riding in with the grip,
     // swallowed as the ring reaches the cap
