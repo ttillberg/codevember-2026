@@ -5,8 +5,8 @@ import { ContactShadows, Environment, Lightformer } from '@react-three/drei';
 import { Machine } from './Machine';
 import { Drones } from './Drones';
 import { DroneCam } from './DroneCam';
-import { drone, cellId, cellName, CELL_HEX } from './drone';
-import { st, rig, orbitBy, DEBUG } from './state';
+import { drone } from './drone';
+import { st, rig, orbitBy } from './state';
 
 const PARAMS = new URLSearchParams(location.search);
 const CLEAN = PARAMS.has('clean'); // no page furniture, for the screengrab
@@ -41,18 +41,9 @@ export function App() {
   const [program, setProgram] = useState(st.program);
   const [smooth, setSmooth] = useState(st.smooth);
   const [hard, setHard] = useState(st.hard);
-  const [inout, setInout] = useState(st.inout);
   const [manual, setManual] = useState(drone.pilot);
   const [locked, setLocked] = useState(false);
   const stage = useRef<HTMLDivElement>(null);
-  // debugging: which cell the device is in, in its colour
-  const [cell, setCell] = useState({ id: cellId(), name: cellName() });
-  useEffect(() => {
-    if (!DEBUG) return;
-    const t = setInterval(() => { const id = cellId(); setCell((c) => (c.id === id ? c : { id, name: cellName() })); }, 100);
-    return () => clearInterval(t);
-  }, []);
-
   // the orbit: a drag turns the camera round the machine as it goes, and its speed is kept, smoothed, to coast on
   const orbit = useRef<{ x: number; y: number; t: number } | null>(null);
   const orbitDown = (e: React.PointerEvent) => {
@@ -108,19 +99,21 @@ export function App() {
     return () => { document.removeEventListener('pointerlockchange', change); document.removeEventListener('mousemove', move); removeEventListener('keyup', up); };
   }, []);
 
+  // manual or auto, from p or the switch on the left
+  const setMode = (m: boolean) => {
+    drone.pilot = m; setManual(m);
+    drone.keys.thrust = drone.keys.strafe = 0; st.crank = 0;
+    rig.turntable = !m;
+    if (!m && document.pointerLockElement) document.exitPointerLock();
+  };
+
   useEffect(() => {
     const keys = drone.keys;
-    const setMode = (m: boolean) => {
-      drone.pilot = m; setManual(m);
-      keys.thrust = keys.strafe = 0; st.crank = 0;
-      rig.turntable = !m;
-      if (!m && document.pointerLockElement) document.exitPointerLock();
-    };
     const down = (e: KeyboardEvent) => {
       const k = e.key.toLowerCase();
       if (k === 'p') { setMode(!drone.pilot); return; }
       if (k === 'h') { st.hard = !st.hard; setHard(st.hard); return; }
-      if (k === 'o') { st.inout = !st.inout; setInout(st.inout); return; }
+      if (k === 'o') { st.inout = !st.inout; return; } // the hand-over at a wall: in-then-out by default, o folds
       if (drone.pilot) {
         // manual: w s and up down forward and back, a d and the side arrows strafe, space forward, l the lock
         if (k === ' ' || k === 'w' || k === 'arrowup') keys.thrust = 1;
@@ -176,10 +169,21 @@ export function App() {
           <directionalLight position={[4, 8, 6]} intensity={1.1} />
         </Canvas>
       </div>
-      {CLEAN ? null : <div className="plate"><b>Tesseract</b><i>CDVMBR 08</i></div>}
+      {CLEAN ? null : <div className="plate"><b>08 Tesseract</b><i>Codevember 08</i></div>}
       <div id="lock" className="lock"><i /><i /><i /><i /><b>lock</b></div>
       <div className={`cam ${manual ? 'look' : 'pass'}`} {...camHandlers} />
-      {DEBUG ? <div className="cell"><i style={{ background: CELL_HEX[cell.id] }} />cell {cell.name}</div> : null}
+      {CLEAN ? null : <div className="toggles">
+        <button className={`toggle ${manual ? 'on' : ''}`} role="switch" aria-checked={manual} tabIndex={-1}
+          onPointerDown={(e) => e.preventDefault()} onClick={() => setMode(!drone.pilot)}>
+          <span className="track"><i /></span>
+          <span className="label">Pilot</span>
+        </button>
+        <button className={`toggle ${hard ? 'on' : ''}`} role="switch" aria-checked={hard} tabIndex={-1}
+          onPointerDown={(e) => e.preventDefault()} onClick={() => { st.hard = !st.hard; setHard(st.hard); }}>
+          <span className="track"><i /></span>
+          <span className="label">Hard mode</span>
+        </button>
+      </div>}
       {CLEAN ? null : manual ? <div className="keys">
         <span><kbd>{locked ? 'mouse' : 'drag eye'}</kbd>look</span>
         <span><kbd>{locked ? 'shift mouse' : 'drag'}</kbd>orbit</span>
@@ -188,14 +192,12 @@ export function App() {
         <span><kbd>space</kbd>forward</span>
         <span><kbd>l</kbd>{locked ? 'unlock pointer' : 'lock pointer'}</span>
         <span><kbd>h</kbd>{hard ? 'hard off' : 'hard'}</span>
-        <span><kbd>o</kbd>{inout ? 'fold' : 'in, out'}</span>
         <span><kbd>p</kbd>auto</span>
       </div> : <div className="keys">
         <span><kbd>drag</kbd>orbit</span>
         <span><kbd>space</kbd>{program ? 'stop program' : 'run program'}</span>
         <span><kbd>m</kbd>{smooth ? 'servo' : 'smooth'}</span>
         <span><kbd>h</kbd>{hard ? 'hard off' : 'hard'}</span>
-        <span><kbd>o</kbd>{inout ? 'fold' : 'in, out'}</span>
         <span><kbd>p</kbd>manual</span>
       </div>}
     </>

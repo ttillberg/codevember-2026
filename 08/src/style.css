@@ -34,19 +34,22 @@ body {
 }
 .plate b {
   display: block;
-  font-size: 22px;
-  font-weight: 900;
-  letter-spacing: -0.01em;
-  line-height: 1;
+  font-family: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-size: 56px;
+  font-weight: 700; /* Plex Sans tops out at bold */
+  letter-spacing: -0.02em;
+  line-height: 0.9;
+  text-transform: uppercase;
 }
 .plate i {
   display: block;
   margin-top: 6px;
   font-style: normal;
   font-weight: 600;
-  font-size: 11px;
+  font-size: 14px; /* a quarter of the title */
   letter-spacing: 0.12em;
-  color: var(--mute);
+  text-transform: uppercase;
+  color: var(--ink);
 }
 
 .keys {
@@ -110,13 +113,12 @@ body.clean .plate, body.clean .keys { display: none; }
 
 @media (max-width: 640px) {
   .plate { width: calc(100% - 48px); }
+  .plate b { font-size: 36px; }
+  .plate i { font-size: 9px; }
   .plate p { display: none; }
   .keys { gap: 10px; font-size: 10px; }
 }
 
-/* debugging: the cell readout, under the plate */
-.cell{position:fixed;top:72px;left:24px;display:flex;align-items:center;gap:8px;font:600 11px/1 "Helvetica Neue", Helvetica, Arial, sans-serif;letter-spacing:.08em;text-transform:uppercase;color:#333;opacity:.8}
-.cell i{width:12px;height:12px;border-radius:50%;display:inline-block}
 
 /* the lock bracket round the piece in the eye's view, at the controls: four corners and a word, placed from DroneCam */
 .lock { position: fixed; left: 0; top: 0; display: none; pointer-events: none; color: var(--ink); animation: lockblink 0.5s steps(2, end) infinite; }
@@ -129,3 +131,26 @@ body.clean .plate, body.clean .keys { display: none; }
 .lock.on { animation: none; color: var(--lime); }
 .lock.on b::after { content: 'ed'; }
 @keyframes lockblink { 0% { opacity: 1; } 100% { opacity: 0.35; } }
+
+/* the switches on the left: big, ink on paper, lime when on */
+.toggles { position: fixed; left: 24px; top: 50%; transform: translateY(-50%); display: flex; flex-direction: column; gap: 22px; }
+.toggle {
+  display: flex; gap: 14px; align-items: center;
+  padding: 0; border: 0; background: none; cursor: pointer; color: var(--ink); text-align: left;
+  font: 900 22px/1 "Helvetica Neue", Helvetica, Arial, sans-serif; letter-spacing: 0.02em; text-transform: uppercase;
+}
+/* the label says what on means and stays put; the switch shows the state */
+.toggle .label { color: var(--mute); transition: color 0.25s; }
+.toggle.on .label { color: var(--ink); }
+.toggle .track {
+  position: relative; width: 76px; height: 40px; box-sizing: border-box;
+  border: 1.5px solid var(--ink); border-radius: 20px; background: rgba(255, 255, 255, 0.6);
+  transition: background 0.25s;
+}
+.toggle .track i {
+  position: absolute; left: 4px; top: 4px; width: 29px; height: 29px; border-radius: 50%;
+  background: var(--ink); transition: transform 0.28s cubic-bezier(0.5, 1.6, 0.4, 1);
+}
+.toggle.on .track { background: var(--lime); }
+.toggle.on .track i { transform: translateX(36px); }
+.toggle:hover .track { box-shadow: 0 0 0 3px rgba(28, 28, 28, 0.08); }
