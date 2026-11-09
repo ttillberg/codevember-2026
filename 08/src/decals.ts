@@ -12,6 +12,8 @@ export type Decal = {
   axis: string;
   seed: number;
   accent: string;
+  /** The sleeve at the far end hangs the other way up: turn the lettering round so both ends read alike. */
+  flip?: boolean;
 };
 
 const W = 512, H = 416;
@@ -63,11 +65,13 @@ export function sleeveDecal(d: Decal): THREE.CanvasTexture {
   g.fillRect(0, H - 28, W, 2);
   g.globalAlpha = 1;
 
-  // brand, round the tube. The cylinder's u runs the other way round, so text round it is drawn mirrored.
+  // lettering: canvas x runs round the tube the way a viewer outside reads it, so text is drawn as is
+  const upright = () => { if (d.flip) { g.translate(W / 2, H / 2); g.rotate(Math.PI); g.translate(-W / 2, -H / 2); } };
+
+  // brand, round the tube
   if (has.brand) {
   g.save();
-  g.translate(W, 0);
-  g.scale(-1, 1);
+  upright();
   g.fillStyle = d.ink;
   g.font = '800 46px "Helvetica Neue", Helvetica, Arial, sans-serif';
   g.textBaseline = 'middle';
@@ -83,6 +87,7 @@ export function sleeveDecal(d: Decal): THREE.CanvasTexture {
   // serial, along the tube
   if (has.serial) {
   g.save();
+  upright();
   g.translate(W - 96, H - 40);
   g.rotate(-Math.PI / 2);
   g.font = '900 54px "Helvetica Neue", Helvetica, Arial, sans-serif';
@@ -96,6 +101,7 @@ export function sleeveDecal(d: Decal): THREE.CanvasTexture {
   // barcode
   if (has.barcode) {
   g.save();
+  upright();
   g.translate(40, 200);
   let x = 0;
   while (x < 150) {
@@ -104,9 +110,7 @@ export function sleeveDecal(d: Decal): THREE.CanvasTexture {
     x += w + 2;
   }
   g.font = '500 14px Menlo, monospace';
-  g.translate(150, 140);
-  g.scale(-1, 1);
-  g.fillText(`${d.serial.replace('—', '')}-${Math.floor(r() * 9000 + 1000)}`, 0, 0);
+  g.fillText(`${d.serial.replace('—', '')}-${Math.floor(r() * 9000 + 1000)}`, 0, 140);
   g.restore();
   }
 

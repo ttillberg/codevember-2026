@@ -33,6 +33,14 @@ const LEDS: { node: number; dir: [number, number, number]; color: string; blink:
 ];
 const R_LED = 0.012; // a few pixels
 
+// Assembly marks. A parting line round each ball, two screws on it; a groove round each sleeve by the ball, a screw
+// beside it. Screws are a dark disc flush with the surface and a darker hex socket in it: the eye reads the recess.
+const SEAM_T = 0.0045; // half-thickness of a seam line
+const GROOVE_AT = 0.07; // along the sleeve from its start
+const R_SCREW = 0.016, R_HEX = 0.0075;
+const X = new THREE.Vector3(1, 0, 0);
+const ROT_TORUS = new THREE.Quaternion().setFromAxisAngle(X, Math.PI / 2); // torus axis z → y
+
 export function Machine() {
   const parts = useMemo(() => {
     const group = new THREE.Group();
@@ -58,6 +66,23 @@ export function Machine() {
       return o;
     };
     const nodes = VERTS.map(() => mesh(sph, black));
+
+    const dark = new THREE.MeshStandardMaterial({ color: '#0c0c0c', roughness: 0.7 });
+    const head = new THREE.MeshStandardMaterial({ color: '#8a8a90', roughness: 0.3, metalness: 0.85 });
+    const hex = new THREE.MeshStandardMaterial({ color: '#070707', roughness: 0.9 });
+    const inst = (g: THREE.BufferGeometry, m: THREE.Material, n: number) => {
+      const o = new THREE.InstancedMesh(g, m, n);
+      o.frustumCulled = false;
+      group.add(o);
+      return o;
+    };
+    const nScrews = VERTS.length * 2 + EDGES.length * 2;
+    const marks = {
+      seams: inst(new THREE.TorusGeometry(1, SEAM_T / R_NODE, 8, 64), dark, VERTS.length),
+      grooves: inst(new THREE.TorusGeometry(1, SEAM_T / R_SLEEVE, 8, 48), dark, EDGES.length * 2),
+      heads: inst(new THREE.CylinderGeometry(1, 1, 1, 24), head, nScrews),
+      hexes: inst(new THREE.CylinderGeometry(1, 1, 1, 6), hex, nScrews),
+    };
     const leds = LEDS.map((l) => {
       const m = new THREE.MeshStandardMaterial({ color: l.color, emissive: l.color, emissiveIntensity: 1, roughness: 0.3, toneMapped: false });
       const o = mesh(sph, m);
@@ -72,7 +97,7 @@ export function Machine() {
         if ((i * 2 + end) % 3 !== 1) return mesh(cyl, plain[sand ? 1 : 0]);
         const serial = `SYS—${String(i + 1).padStart(2, '0')}${end ? 'B' : 'A'}`;
         const accent = ACCENTS[(i * 3 + end) % ACCENTS.length];
-        const map = sleeveDecal({ base: sand ? SAND : GRAPHITE, ink: sand ? INK : PAPER, serial, axis, seed: seed++, accent });
+        const map = sleeveDecal({ base: sand ? SAND : GRAPHITE, ink: sand ? INK : PAPER, serial, axis, seed: seed++, accent, flip: end === 1 });
         return mesh(cyl, new THREE.MeshStandardMaterial({ map, roughness: sand ? 0.78 : 0.62, metalness: 0.05 }));
       });
       // one in five sleeve mouths gets a coloured ring instead of a black seal
@@ -82,7 +107,7 @@ export function Machine() {
       const rod = mesh(cyl, silver);
       return { sleeves, seals, stages, wipers, rod };
     });
-    return { group, nodes, struts, leds };
+    return { group, nodes, struts, leds, marks };
   }, []);
 
   const tmp = useMemo(() => ({
@@ -91,6 +116,8 @@ export function Machine() {
     back: new THREE.Vector3(),
     q: new THREE.Quaternion(),
     qb: new THREE.Quaternion(),
+    dummy: new THREE.Object3D(),
+    side: new THREE.Vector3(),
   }), []);
 
   useFrame((_, dt) => {
@@ -99,9 +126,36 @@ export function Machine() {
     parts.group.rotation.y = st.turntable.angle;
 
     const m = turn([st.angle, 0, 0]);
-    const { P, dir, back, q, qb } = tmp;
+    const { P, dir, back, q, qb, dummy, side } = tmp;
+    const { seams, grooves, heads, hexes } = parts.marks;
+    let screw = 0;
+    /** A screw at p, its axis along n (unit, pointing out of the surface). */
+    const putScrew = (p: THREE.Vector3, n: THREE.Vector3) => {
+      dummy.quaternion.setFromUnitVectors(Y, n);
+      dummy.position.copy(p).addScaledVector(n, -0.004);
+      dummy.scale.set(R_SCREW, 0.01, R_SCREW);
+      dummy.updateMatrix();
+      heads.setMatrixAt(screw, dummy.matrix);
+      dummy.position.copy(p).addScaledVector(n, -0.0025);
+      dummy.scale.set(R_HEX, 0.01, R_HEX);
+      dummy.updateMatrix();
+      hexes.setMatrixAt(screw, dummy.matrix);
+      screw++;
+    };
     VERTS.forEach((v, k) => project(m, v, P[k]));
-    parts.nodes.forEach((n, k) => { n.position.copy(P[k]); n.scale.setScalar(R_NODE); });
+    parts.nodes.forEach((n, k) => {
+      n.position.copy(P[k]); n.scale.setScalar(R_NODE);
+      // parting line round the ball, its axis y in the group's frame; two screws on it
+      dummy.position.copy(P[k]);
+      dummy.quaternion.copy(ROT_TORUS);
+      dummy.scale.setScalar(R_NODE * 0.995);
+      dummy.updateMatrix();
+      seams.setMatrixAt(k, dummy.matrix);
+      for (const a of [0.7, 0.7 + Math.PI]) {
+        side.set(Math.cos(a), 0, Math.sin(a));
+        putScrew(side.clone().multiplyScalar(R_NODE).add(P[k]), side);
+      }
+    });
 
     const place = (o: THREE.Mesh, from: THREE.Vector3, d: THREE.Vector3, rot: THREE.Quaternion, at: number, len: number, r: number) => {
       o.position.copy(from).addScaledVector(d, at + len / 2);
@@ -125,6 +179,14 @@ export function Machine() {
       for (const end of [0, 1] as const) {
         const from = end ? b : a, d = end ? back : dir, rot = end ? qb : q;
         place(s.sleeves[end], from, d, rot, start, SLEEVE, R_SLEEVE);
+        // groove round the sleeve by the ball, a screw just past it
+        dummy.position.copy(from).addScaledVector(d, start + GROOVE_AT);
+        dummy.quaternion.copy(rot).multiply(ROT_TORUS);
+        dummy.scale.setScalar(R_SLEEVE * 0.995);
+        dummy.updateMatrix();
+        grooves.setMatrixAt(i * 2 + end, dummy.matrix);
+        side.copy(X).applyQuaternion(rot);
+        putScrew(from.clone().addScaledVector(d, start + GROOVE_AT + 0.05).addScaledVector(side, R_SLEEVE), side);
         place(s.seals[end], from, d, rot, mouth - SEAL, SEAL, R_SLEEVE * 1.07);
         place(s.stages[end], from, d, rot, mouth - OVER, ext + OVER, R_STAGE);
         place(s.wipers[end], from, d, rot, mouth + ext - SEAL, SEAL, R_STAGE * 1.1);
@@ -133,6 +195,10 @@ export function Machine() {
       place(s.rod, a, dir, q, rodFrom, L - 2 * rodFrom, R_ROD);
     });
     st.lengths.min = min; st.lengths.max = max;
+    seams.instanceMatrix.needsUpdate = true;
+    grooves.instanceMatrix.needsUpdate = true;
+    heads.instanceMatrix.needsUpdate = true;
+    hexes.instanceMatrix.needsUpdate = true;
 
     const now = performance.now() / 1000;
     for (const l of parts.leds) {
