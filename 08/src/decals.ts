@@ -38,6 +38,14 @@ function rng(seed: number) {
 }
 
 const GRAPHITE_BASE = '#3a3a3d';
+/** A canvas of w x h logical units drawn at `k` times the pixels: the same coordinates, finer detail. */
+function sharp(w: number, h: number, k = 2) {
+  const c = document.createElement('canvas');
+  c.width = w * k; c.height = h * k;
+  const g = c.getContext('2d')!;
+  g.scale(k, k);
+  return { c, g };
+}
 const SMALL = ['CODEVEMBER 2026 · DAY 08', 'R3F · DREI · THREE', 'MAX 2.5 BAR', 'W-AXIS ONLY', 'ASYNC//SYSTEMS · UNIT 08', 'TELESCOPIC · 3 STG'];
 
 
@@ -105,25 +113,22 @@ export function gouges(g: CanvasRenderingContext2D, r: () => number, w: number, 
 export function grunge(g: CanvasRenderingContext2D, r: () => number, w: number, h: number, color: string, alpha: number) {
   const src = sheet('scratch', color);
   if (!src) return;
-  // a square window, turned any way and flipped either way, drawn over the canvas's diagonal so it covers it at
-  // any angle: the sheet has a grain of its own, and without the turn every part would wear the same way
-  const sw = src.height * (0.3 + r() * 0.14);
-  const sx = r() * (src.width - sw), sy = r() * (src.height - sw);
-  const D = Math.hypot(w, h);
+  // the sheet as a repeating pattern at about a quarter of its size, turned any way, flipped either way and shifted:
+  // fine wear everywhere, no grain in common between parts, and never scaled up, so it stays crisp
+  const pat = g.createPattern(src, 'repeat');
+  if (!pat) return;
+  const k = 0.22 + r() * 0.1;
+  pat.setTransform(new DOMMatrix().translateSelf(r() * w, r() * h).rotateSelf(r() * 360).scaleSelf(k * (r() < 0.5 ? -1 : 1), k * (r() < 0.5 ? -1 : 1)));
   g.save();
   g.globalAlpha = alpha;
-  g.translate(w / 2, h / 2);
-  g.rotate(r() * Math.PI * 2);
-  g.scale(r() < 0.5 ? -1 : 1, r() < 0.5 ? -1 : 1);
-  g.drawImage(src, sx, sy, sw, sw, -D / 2, -D / 2, D, D);
+  g.fillStyle = pat;
+  g.fillRect(0, 0, w, h);
   g.restore();
 }
 
 /** A plain sleeve with a scrape or two on it, for the few undecaled sleeves that have been knocked about. */
 export function scuffSleeve(base: string, seed: number): THREE.CanvasTexture {
-  const c = document.createElement('canvas');
-  c.width = W; c.height = H;
-  const g = c.getContext('2d')!;
+  const { c, g } = sharp(W, H);
   g.fillStyle = base;
   g.fillRect(0, 0, W, H);
   const r = rng(seed);
@@ -141,9 +146,7 @@ export function scuffSleeve(base: string, seed: number): THREE.CanvasTexture {
  * a light window of the sheet; the machine keeps a handful per colour and deals them out. */
 export function wear(base: string, seed: number): THREE.CanvasTexture {
   const w = 256, h = 208;
-  const c = document.createElement('canvas');
-  c.width = w; c.height = h;
-  const g = c.getContext('2d')!;
+  const { c, g } = sharp(w, h);
   g.fillStyle = base;
   g.fillRect(0, 0, w, h);
   const r = rng(seed);
@@ -151,6 +154,45 @@ export function wear(base: string, seed: number): THREE.CanvasTexture {
   t.colorSpace = THREE.SRGBColorSpace;
   t.anisotropy = 8;
   withLogos(() => { grunge(g, r, w, h, WEAR_INK(base), 0.32 + r() * 0.16); t.needsUpdate = true; });
+  return t;
+}
+
+/** Brushed metal for the rods: the silver with a fine grain along the rod, and on a couple of them a CE mark etched
+ * into it, dark and faint, as if laser-marked through the brushing. The grain is canvas y, the rod's length. */
+export function brushed(base: string, seed: number, mark = false): THREE.CanvasTexture {
+  const w = 256, h = 512;
+  const c = document.createElement('canvas');
+  c.width = w; c.height = h;
+  const g = c.getContext('2d')!;
+  g.fillStyle = base;
+  g.fillRect(0, 0, w, h);
+  const r = rng(seed);
+  g.lineCap = 'butt';
+  for (let i = 0; i < 900; i++) {
+    const x = r() * w, y0 = r() * h, len = 40 + r() * 300;
+    g.strokeStyle = r() < 0.5 ? '#ffffff' : '#9a9a9e';
+    g.globalAlpha = 0.04 + r() * 0.1;
+    g.lineWidth = 0.6 + r() * 1.2;
+    g.beginPath(); g.moveTo(x, y0); g.lineTo(x + (r() - 0.5) * 1.5, y0 + len); g.stroke();
+  }
+  g.globalAlpha = 1;
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.anisotropy = 8;
+  if (mark) {
+    const mx = r() * w, my = 120 + r() * (h - 240), ang = r() < 0.5 ? 0 : Math.PI / 2;
+    withLogos(() => {
+      const img = logo('ce', 160, '#4a4a4e');
+      if (!img) return;
+      g.save();
+      g.globalAlpha = 0.7;
+      for (const o of [-w, 0, w]) { // and again either side, so it wraps round the seam
+        g.save(); g.translate(mx + o, my); g.rotate(ang); g.drawImage(img, -40, -40, 80, 80); g.restore();
+      }
+      g.restore();
+      t.needsUpdate = true;
+    });
+  }
   return t;
 }
 
@@ -170,9 +212,7 @@ export function scratchMap(): THREE.CanvasTexture {
 }
 
 export function sleeveDecal(d: Decal): THREE.CanvasTexture {
-  const c = document.createElement('canvas');
-  c.width = W; c.height = H;
-  const g = c.getContext('2d')!;
+  const { c, g } = sharp(W, H);
   const r = rng(d.seed);
   const pick = <T,>(xs: T[]) => xs[Math.floor(r() * xs.length)];
 

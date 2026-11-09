@@ -3,8 +3,8 @@
 // once and lay these on when they arrive, then flag their textures. Each is tinted to the decal's ink: the SVGs by
 // their alpha, the pmndrs bitmap by its brightness, the scratches by their darkness.
 
-export type LogoName = 'three' | 'github' | 'pmndrs' | 'scratch';
-const SRC: Record<LogoName, string> = { three: 'logos/three.svg', github: 'logos/github.svg', pmndrs: 'logos/pmndrs.png', scratch: 'tex/scratches.png' };
+export type LogoName = 'three' | 'github' | 'pmndrs' | 'ce' | 'scratch';
+const SRC: Record<LogoName, string> = { three: 'logos/three.svg', github: 'logos/github.svg', pmndrs: 'logos/pmndrs.png', ce: 'logos/ce.svg', scratch: 'tex/scratches.png' };
 const COUNT = Object.keys(SRC).length;
 
 const imgs: Partial<Record<LogoName, HTMLImageElement>> = {};
@@ -55,7 +55,9 @@ export function logo(name: LogoName, size: number, color: string): HTMLCanvasEle
   const g = c.getContext('2d')!;
   // the pmndrs avatar has the mark small in the middle of its square: zoom in on it
   const zoom = name === 'pmndrs' ? 2.4 : 1;
-  g.drawImage(img, (size - size * zoom) / 2, (size - size * zoom) / 2, size * zoom, size * zoom);
+  const ar = img.naturalWidth / img.naturalHeight || 1; // the CE mark is wider than tall: keep its shape, centred
+  const dw = size * zoom * (ar >= 1 ? 1 : ar), dh = size * zoom * (ar >= 1 ? 1 / ar : 1);
+  g.drawImage(img, (size - dw) / 2, (size - dh) / 2, dw, dh);
   key(g, name, size, size, color);
   tinted.set(k, c);
   return c;

@@ -3,7 +3,7 @@ import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import { EDGES, VERTS, project } from './tesseract';
 import { st, tick, pose } from './state';
-import { sleeveDecal, scuffSleeve, scratchMap, wear, ACCENTS, type Brand } from './decals';
+import { sleeveDecal, scuffSleeve, scratchMap, wear, brushed, ACCENTS, type Brand } from './decals';
 
 // The mechanism. Every edge is a strut in three stages: a sleeve fixed to each ball joint, a stanchion sliding out of
 // each sleeve, a rod between the stanchions. Radii are constant, as on a real part; only the lengths change. The sleeves
@@ -48,7 +48,10 @@ export function Machine() {
     const cyl = new THREE.CylinderGeometry(1, 1, 1, 48, 1);
     const sph = new THREE.SphereGeometry(1, 40, 28);
     const black = new THREE.MeshStandardMaterial({ color: '#141414', roughness: 0.6, metalness: 0.1, roughnessMap: scratchMap() });
-    const silver = new THREE.MeshStandardMaterial({ color: '#dedede', roughness: 0.28, metalness: 0.75 });
+    // the rods: brushed, and two of them carry a CE mark etched in
+    const silver = new THREE.MeshStandardMaterial({ map: brushed('#dedede', 41), roughness: 0.3, metalness: 0.75 });
+    const marked = [0, 1].map((k) => new THREE.MeshStandardMaterial({ map: brushed('#dedede', 43 + k, true), roughness: 0.3, metalness: 0.75 }));
+    const CE_RODS = [7, 26];
     // every painted part is a little worn, all over, the metal is not: a hand of wear textures per paint, dealt out
     const POOL = 6;
     const worn = (base: string, roughness: number, metalness: number, salt: number) =>
@@ -114,7 +117,7 @@ export function Machine() {
       const seals = [0, 1].map((end) => mesh(cyl, (i * 2 + end) % 5 === 0 ? accents[(i + end) % accents.length] : black));
       const stages = [0, 1].map((k) => mesh(cyl, stageMats[sand ? 1 : 0][(i * 3 + k * 2) % POOL]));
       const wipers = [0, 1].map(() => mesh(cyl, black));
-      const rod = mesh(cyl, silver);
+      const rod = mesh(cyl, CE_RODS.includes(i) ? marked[CE_RODS.indexOf(i)] : silver);
       return { sleeves, seals, stages, wipers, rod };
     });
     return { group, nodes, struts, leds, marks };
