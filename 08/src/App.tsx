@@ -4,7 +4,7 @@ import * as THREE from 'three';
 import { ContactShadows, Environment, Lightformer } from '@react-three/drei';
 import { Machine } from './Machine';
 import { Drones } from './Drones';
-import { DroneCam, EYE } from './DroneCam';
+import { DroneCam, INSET } from './DroneCam';
 import { drone, cellId, cellName, CELL_HEX } from './drone';
 import { st, rig, DEBUG } from './state';
 
@@ -13,7 +13,7 @@ const CLEAN = PARAMS.has('clean'); // no page furniture, for the screengrab
 
 // Two modes. Auto, the attract mode: the device flies on its own, the machine fills the page and turns slowly on a
 // turntable, the eye's view sits in the corner, a drag orbits the camera. Manual: the eye's view fills the middle of
-// the page and the machine goes to the corner; a drag on the page is the look, or with the pointer locked (l) the
+// the page and the machine goes top right, a quarter of the page; a drag on the page is the look, or with the pointer locked (l) the
 // mouse itself is; w s and the up and down arrows go forward and back, a d and the side arrows strafe, space is
 // forward too. Hard mode (h), in either: the machine turns in 4D all the time, changing plane as it goes.
 
@@ -39,9 +39,9 @@ export function App() {
   const [manual, setManual] = useState(drone.pilot);
   const [locked, setLocked] = useState(false);
   const stage = useRef<HTMLDivElement>(null);
-  // the big eye's outline follows the viewport it is drawn in
-  const [eyeSide, setEyeSide] = useState(EYE.side());
-  useEffect(() => { const r = () => setEyeSide(EYE.side()); addEventListener('resize', r); return () => removeEventListener('resize', r); }, []);
+  // the machine's frame in manual mode follows the viewport it is drawn in
+  const [insetSide, setInsetSide] = useState(INSET.side());
+  useEffect(() => { const r = () => setInsetSide(INSET.side()); addEventListener('resize', r); return () => removeEventListener('resize', r); }, []);
   // debugging: which cell the device is in, in its colour
   const [cell, setCell] = useState({ id: cellId(), name: cellName() });
   useEffect(() => {
@@ -168,8 +168,7 @@ export function App() {
         </Canvas>
       </div>
       {CLEAN ? null : <div className="plate"><b>Tesseract</b><i>CDVMBR 08</i></div>}
-      {manual ? <div className="eye" style={{ width: eyeSide, height: eyeSide }} /> : null}
-      <div className={`cam ${manual ? 'square' : 'pass'}`} {...camHandlers} />
+      <div className={`cam ${manual ? 'square' : 'pass'}`} style={manual ? { width: insetSide, height: insetSide, top: INSET.top, right: INSET.right, bottom: 'auto' } : undefined} {...camHandlers} />
       {DEBUG ? <div className="cell"><i style={{ background: CELL_HEX[cell.id] }} />cell {cell.name}</div> : null}
       {CLEAN ? null : manual ? <div className="keys">
         <span><kbd>{locked ? 'mouse' : 'drag'}</kbd>look</span>

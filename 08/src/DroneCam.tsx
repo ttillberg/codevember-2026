@@ -16,8 +16,9 @@ export const CAM = {
   w: () => Math.max(120, Math.min(Math.min(360, Math.max(220, innerWidth * 0.26)), innerWidth - 48, innerHeight - 150)),
   ratio: 1, right: 24, bottom: 72,
 };
-// the middle of the page, square, where the eye goes in the manual mode; the .eye outline in App follows it
-export const EYE = { side: () => Math.max(160, Math.min(innerWidth - 48, innerHeight - 150)) };
+// manual: the eye fills the page, the machine sits top right in a square a quarter of the page's area; the .cam
+// frame in App follows INSET
+export const INSET = { side: () => Math.round(Math.max(160, Math.min(Math.sqrt(innerWidth * innerHeight) / 2, innerWidth - 48, innerHeight - 150))), right: 24, top: 24 };
 const INSET_ZOOM = 1.3; // the machine in the corner is seen from a little further out, to fit the square
 
 const SAND = '#d9b985', GRAPHITE = '#3a3a3d';
@@ -193,26 +194,24 @@ export function DroneCam() {
     cell.eye.position.copy(cell.pos);
     cell.eye.update(gl, cell.cs);
     FISHEYE.uniforms.rot.value.setFromMatrix4(tmp.m.makeRotationFromQuaternion(cell.q));
-    FISHEYE.uniforms.aspect.value = 1;
     if (drone.pilot) {
-      // manual: the page is cleared, the eye fills a square in the middle, and the machine goes to the corner, seen
+      // manual: the eye fills the page, a right angle out to each side edge, and the machine goes top right, seen
       // square from a little further out
+      FISHEYE.uniforms.aspect.value = W / H;
       gl.setScissorTest(false);
       gl.setViewport(0, 0, W, H);
       gl.setClearColor(0x000000, 0); // the cube camera left the cell scene's backdrop as the clear colour
-      gl.clear();
-      const side = Math.round(EYE.side()), ex = Math.round((W - side) / 2), ey = Math.round((H - side) / 2);
-      gl.setScissorTest(true);
-      gl.setScissor(ex, ey, side, side);
-      gl.setViewport(ex, ey, side, side);
       gl.render(cell.lens, cell.flat);
+      const side = INSET.side(), ix = W - INSET.right - side, iy = H - INSET.top - side;
       const cam = camera as THREE.PerspectiveCamera, aspect = cam.aspect;
       cam.aspect = 1; cam.position.multiplyScalar(INSET_ZOOM); cam.updateProjectionMatrix();
-      gl.setScissor(x, y, w, h);
-      gl.setViewport(x, y, w, h);
+      gl.setScissorTest(true);
+      gl.setScissor(ix, iy, side, side);
+      gl.setViewport(ix, iy, side, side);
       gl.render(scene, camera);
       cam.position.multiplyScalar(1 / INSET_ZOOM); cam.aspect = aspect; cam.updateProjectionMatrix();
     } else {
+      FISHEYE.uniforms.aspect.value = 1;
       gl.setScissorTest(true);
       gl.setScissor(x, y, w, h);
       gl.setViewport(x, y, w, h);
