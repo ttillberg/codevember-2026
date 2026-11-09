@@ -40,6 +40,30 @@ export function App() {
   const drag = useRef<{ x: number; y: number; t: number } | null>(null);
   // at the controls the pointer is the look and a held button the thrust; otherwise it turns the rig
   const LOOK = 0.0035; // radians per pixel
+  // the eye's view: at the controls a drag in it is the look, yaw and pitch; a click without a drag toggles the view
+  const camDrag = useRef<{ x: number; y: number; moved: number } | null>(null);
+  const onCamDown = (e: React.PointerEvent) => {
+    if (e.button !== 0) return;
+    e.stopPropagation();
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    camDrag.current = { x: e.clientX, y: e.clientY, moved: 0 };
+  };
+  const onCamMove = (e: React.PointerEvent) => {
+    const d = camDrag.current;
+    if (!d) return;
+    e.stopPropagation();
+    const dx = e.clientX - d.x, dy = e.clientY - d.y;
+    d.moved += Math.abs(dx) + Math.abs(dy);
+    if (drone.pilot) { drone.turn[0] += dx * LOOK * 1.6; drone.turn[1] += -dy * LOOK * 1.6; }
+    d.x = e.clientX; d.y = e.clientY;
+  };
+  const onCamUp = (e: React.PointerEvent) => {
+    const d = camDrag.current;
+    if (!d) return;
+    e.stopPropagation();
+    camDrag.current = null;
+    if (d.moved < 4) drone.view = drone.view === 'pov' ? 'follow' : 'pov';
+  };
   const last = useRef<{ x: number; y: number } | null>(null);
   const onDown = (e: React.PointerEvent) => {
     if (e.button !== 0) return;
@@ -133,9 +157,10 @@ export function App() {
         </Canvas>
       </div>
       {CLEAN ? null : <div className="plate"><b>Tesseract</b><i>CDVMBR 08</i></div>}
-      <div className="cam" onClick={() => { drone.view = drone.view === 'pov' ? 'follow' : 'pov'; }} />
+      <div className={pilot ? 'cam look' : 'cam'} onPointerDown={onCamDown} onPointerMove={onCamMove} onPointerUp={onCamUp} onPointerCancel={onCamUp} />
       {DEBUG ? <div className="cell"><i style={{ background: CELL_HEX[cell.id] }} />cell {cell.name}</div> : null}
       {CLEAN ? null : pilot ? <div className="keys">
+        <span><kbd>drag eye</kbd>look</span>
         {DEBUG ? <><span><kbd>drag</kbd>orbit</span><span><kbd>a d</kbd>yaw</span><span><kbd>↑ ↓</kbd>pitch</span></> : <><span><kbd>move</kbd>look</span><span><kbd>hold</kbd>thrust</span></>}
         <span><kbd>space</kbd>thrust</span>
         <span><kbd>p</kbd>let go</span>

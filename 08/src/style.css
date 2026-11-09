@@ -87,6 +87,8 @@ kbd {
   box-sizing: border-box;
 }
 .cam:hover { box-shadow: 0 0 0 1px var(--ink); }
+.cam.look { cursor: grab; touch-action: none; }
+.cam.look:active { cursor: grabbing; }
 
 .back {
   position: fixed;
