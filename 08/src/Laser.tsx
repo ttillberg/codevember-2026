@@ -7,15 +7,21 @@ import { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js';
 import { project, type V4, type M4 } from './tesseract';
 import { pose } from './state';
 
-// A laser pointer into the tesseract. Hold the pointer still and a pink beam enters the machine where you point and
-// travels the way the drone does: straight through the cell it is in, and at every face on into the neighbouring
-// cell, the 4D right angle taken. A straight line in 4D would project to a straight line in 3D, so this is what
-// following the space looks like from outside: a beam that kinks at every wall it passes.
+// A laser pointer into the tesseract. Hold the pointer still and a pink beam from a hand-held pointer, low and to the
+// right of the camera, aims at the point you hold it on and goes straight on through the machine. At every wall it
+// crosses it is displaced: a short jog sideways along that wall's 4D normal as it projects right now, and then on,
+// parallel to itself, at half the strength. Straight, stepped and dimmed at every wall, like light through a stack
+// of glass; the steps turn with the machine because the normals do.
 
 export const laser = { on: false, x: 0, y: 0 }; // pointer, css px
 
-const PINK = '#ef5f9f';
-const MAX_CROSS = 7, MAX_LEN = 10;
+const PINK = new THREE.Color('#ef5f9f');
+const PAPER = new THREE.Color('#e6e6e4'); // what the beam fades towards
+const MAX_WALLS = 8;
+const STEP = 0.11; // the jog at a wall, 3D units
+const LOSS = 0.5; // the strength left after a wall
+const TAIL = 0.7; // how far the beam runs past the last wall
+const HAND = new THREE.Vector3(1.1, -0.7, -1.2); // the pointer in the camera's frame: right, down, ahead
 
 /** The 24 square faces: two axes fixed at ±1, two free. Corners in order round the square. */
 const FACES: { i: number; si: number; j: number; sj: number; corners: V4[] }[] = [];
@@ -29,20 +35,19 @@ for (let i = 0; i < 4; i++) for (let j = i + 1; j < 4; j++) for (const si of [-1
   FACES.push({ i, si, j, sj, corners });
 }
 
-type Cell = { held: number; sign: number; free: number[] };
-const cellOf = (held: number, sign: number): Cell => ({ held, sign, free: [0, 1, 2, 3].filter((a) => a !== held) });
-const embed = (c: Cell, u: number[]): V4 => { const p: V4 = [0, 0, 0, 0]; p[c.held] = c.sign; c.free.forEach((a, k) => { p[a] = u[k]; }); return p; };
+type Hit = { face: typeof FACES[number]; dist: number; at: THREE.Vector3; p4: V4 };
 
 export function Laser() {
   const { camera, size } = useThree();
   const parts = useMemo(() => {
     const geo = new LineGeometry();
     geo.setPositions([0, 0, 0, 0, 0, 0]);
-    const mat = new LineMaterial({ color: PINK, linewidth: 2.5, transparent: true, opacity: 0.95, toneMapped: false });
+    geo.setColors([1, 1, 1, 1, 1, 1]);
+    const mat = new LineMaterial({ linewidth: 2.5, vertexColors: true, toneMapped: false });
     const line = new Line2(geo, mat);
     line.frustumCulled = false;
     line.visible = false;
-    const dots = new THREE.InstancedMesh(new THREE.SphereGeometry(0.035, 12, 8), new THREE.MeshBasicMaterial({ color: PINK, toneMapped: false }), MAX_CROSS + 1);
+    const dots = new THREE.InstancedMesh(new THREE.SphereGeometry(0.028, 12, 8), new THREE.MeshBasicMaterial({ toneMapped: false }), MAX_WALLS * 2);
     dots.count = 0;
     dots.frustumCulled = false;
     return { line, geo, mat, dots };
@@ -50,97 +55,97 @@ export function Laser() {
   useEffect(() => { parts.mat.resolution.set(size.width, size.height); }, [size, parts]);
 
   const tmp = useMemo(() => ({
-    ray: new THREE.Raycaster(), ndc: new THREE.Vector2(),
+    ray: new THREE.Raycaster(), ndc: new THREE.Vector2(), hand: new THREE.Vector3(), beam: new THREE.Ray(),
     a: new THREE.Vector3(), b: new THREE.Vector3(), c: new THREE.Vector3(), d: new THREE.Vector3(), hit: new THREE.Vector3(),
-    J: new THREE.Matrix3(), v: new THREE.Vector3(), p: new THREE.Vector3(), q: new THREE.Vector3(), dummy: new THREE.Object3D(),
+    bary: new THREE.Vector3(), p: new THREE.Vector3(), q: new THREE.Vector3(), n: new THREE.Vector3(), off: new THREE.Vector3(),
+    cur: new THREE.Vector3(), dummy: new THREE.Object3D(), col: new THREE.Color(),
   }), []);
 
-  /** d(project)/du at u in the cell, by central differences. */
-  function jacobian(m: M4, cell: Cell, u: number[]): THREE.Matrix3 {
-    const h = 0.01, cols: number[] = [];
-    for (let k = 0; k < 3; k++) {
-      const up = u.slice(), dn = u.slice();
-      up[k] += h; dn[k] -= h;
-      project(m, embed(cell, up), tmp.p); project(m, embed(cell, dn), tmp.q);
-      cols.push((tmp.p.x - tmp.q.x) / (2 * h), (tmp.p.y - tmp.q.y) / (2 * h), (tmp.p.z - tmp.q.z) / (2 * h));
+  /** Every face a ray meets, nearest first, each with the 4D point met. */
+  function hits(m: M4, ray: THREE.Ray, all: boolean): Hit[] {
+    const { a, b, c, d, hit, bary } = tmp;
+    const out: Hit[] = [];
+    for (const face of FACES) {
+      const P = face.corners.map((k, n) => project(m, k, [a, b, c, d][n]));
+      for (const [i0, i1, i2] of [[0, 1, 2], [0, 2, 3]]) {
+        if (!ray.intersectTriangle(P[i0], P[i1], P[i2], false, hit)) continue;
+        THREE.Triangle.getBarycoord(hit, P[i0], P[i1], P[i2], bary);
+        const w = [0, 0, 0, 0];
+        w[i0] = bary.x; w[i1] = bary.y; w[i2] = bary.z;
+        const p4 = [0, 1, 2, 3].map((k) => face.corners.reduce((acc, cn, n) => acc + cn[k] * w[n], 0)) as V4;
+        out.push({ face, dist: hit.distanceTo(ray.origin), at: hit.clone(), p4 });
+        if (!all) break;
+      }
     }
-    // columns are d/du_k; Matrix3.set is row-major
-    return tmp.J.set(cols[0], cols[3], cols[6], cols[1], cols[4], cols[7], cols[2], cols[5], cols[8]);
+    out.sort((x, y) => x.dist - y.dist);
+    return out;
+  }
+
+  /** The wall's 4D normal, seen in 3D at the point: the fixed axis that lies most across the beam, pointing inward. */
+  function jog(m: M4, h: Hit, dir: THREE.Vector3, out: THREE.Vector3) {
+    const { p, q, n } = tmp;
+    let best = Infinity;
+    for (const [axis, sign] of [[h.face.i, h.face.si], [h.face.j, h.face.sj]]) {
+      const up = h.p4.slice() as V4, dn = h.p4.slice() as V4;
+      up[axis] += 0.01; dn[axis] -= 0.01;
+      project(m, up, p); project(m, dn, q);
+      n.subVectors(p, q).multiplyScalar(-sign).normalize(); // inward
+      n.addScaledVector(dir, -n.dot(dir)); // across the beam
+      const along = Math.abs(1 - n.length()); // small when the normal was already across
+      if (n.lengthSq() > 1e-6 && along < best) { best = along; out.copy(n).normalize(); }
+    }
+    if (best === Infinity) out.set(0, 0, 0);
   }
 
   useFrame(() => {
     const { line, geo, dots } = parts;
     if (!laser.on) { line.visible = false; dots.count = 0; return; }
     const m = pose();
-    const { ray, ndc, a, b, c, d, hit, v, dummy } = tmp;
+    const { ray, ndc, hand, beam, off, cur, dummy, col } = tmp;
     ndc.set((laser.x / size.width) * 2 - 1, -((laser.y / size.height) * 2 - 1));
     ray.setFromCamera(ndc, camera);
 
-    // the first face the pointer's ray meets, and where on it, as weights of its corners
-    let best: { face: typeof FACES[number]; dist: number; w: number[] } | null = null;
-    for (const face of FACES) {
-      const P = face.corners.map((k, n) => project(m, k, [a, b, c, d][n]));
-      for (const [i0, i1, i2] of [[0, 1, 2], [0, 2, 3]]) {
-        if (!ray.ray.intersectTriangle(P[i0], P[i1], P[i2], false, hit)) continue;
-        const dist = hit.distanceTo(ray.ray.origin);
-        if (best && dist >= best.dist) continue;
-        const bary = new THREE.Vector3();
-        THREE.Triangle.getBarycoord(hit, P[i0], P[i1], P[i2], bary);
-        const w = [0, 0, 0, 0];
-        w[i0] = bary.x; w[i1] = bary.y; w[i2] = bary.z;
-        best = { face, dist, w };
-      }
-    }
-    if (!best) { line.visible = false; dots.count = 0; return; }
-    const { face, w } = best;
-    const p4 = [0, 1, 2, 3].map((k) => face.corners.reduce((acc, cn, n) => acc + cn[k] * w[n], 0)) as V4;
+    // the point under the pointer, on the first face its ray meets; the beam runs from the hand through it
+    const target = hits(m, ray.ray, false)[0];
+    if (!target) { line.visible = false; dots.count = 0; return; }
+    hand.copy(HAND).applyMatrix4(camera.matrixWorld);
+    beam.set(hand, cur.subVectors(target.at, hand).normalize());
 
-    // of the two cells on the face, the one the beam goes into: where its direction points away from the wall
-    let cell: Cell | null = null, dir: number[] = [];
-    for (const [held, sign, wall, wallSign] of [[face.i, face.si, face.j, face.sj], [face.j, face.sj, face.i, face.si]]) {
-      const cnd = cellOf(held, sign);
-      const u = cnd.free.map((ax) => p4[ax]);
-      const J = jacobian(m, cnd, u).invert();
-      v.copy(ray.ray.direction).applyMatrix3(J).normalize();
-      const dd = [v.x, v.y, v.z];
-      const k = cnd.free.indexOf(wall);
-      if (Math.sign(dd[k]) === -wallSign || !cell) { cell = cnd; dir = dd; if (Math.sign(dd[k]) === -wallSign) break; }
+    // every wall along the beam, nearest first; at each a jog, then on parallel, half as strong
+    const walls = hits(m, beam, true).filter((h, i, arr) => i === 0 || h.dist - arr[i - 1].dist > 1e-3).slice(0, MAX_WALLS);
+    const pts: number[] = [hand.x, hand.y, hand.z];
+    const cols: number[] = [];
+    const marks: { p: THREE.Vector3; k: number }[] = [];
+    let strength = 1;
+    const push = (p: THREE.Vector3) => { pts.push(p.x, p.y, p.z); };
+    const tint = () => { col.copy(PAPER).lerp(PINK, strength); cols.push(col.r, col.g, col.b); };
+    tint();
+    off.set(0, 0, 0);
+    for (const h of walls) {
+      cur.copy(h.at).add(off);
+      push(cur); tint(); marks.push({ p: cur.clone(), k: strength });
+      jog(m, h, beam.direction, tmp.n);
+      off.addScaledVector(tmp.n, STEP);
+      strength *= LOSS;
+      cur.copy(h.at).add(off);
+      push(cur); tint(); marks.push({ p: cur.clone(), k: strength });
     }
-    if (!cell) return;
-    const u = cell.free.map((ax) => p4[ax]);
+    const last = walls.length ? walls[walls.length - 1].dist : target.dist;
+    cur.copy(beam.origin).addScaledVector(beam.direction, last + TAIL).add(off);
+    push(cur); tint();
 
-    // march: straight in the cell to the next wall, through it into the neighbour, the held axis swapping
-    const pts: number[] = [];
-    const hits: THREE.Vector3[] = [];
-    project(m, p4, v); pts.push(v.x, v.y, v.z); hits.push(v.clone());
-    let len = 0;
-    for (let n = 0; n < MAX_CROSS; n++) {
-      let t = Infinity, k = -1;
-      for (let i = 0; i < 3; i++) if (Math.abs(dir[i]) > 1e-6) {
-        const ti = (Math.sign(dir[i]) - u[i]) / dir[i];
-        if (ti < t) { t = ti; k = i; }
-      }
-      if (k < 0) break;
-      t = Math.min(t, MAX_LEN - len);
-      for (let i = 0; i < 3; i++) u[i] += dir[i] * t;
-      len += t;
-      project(m, embed(cell, u), v); pts.push(v.x, v.y, v.z);
-      if (len >= MAX_LEN) break;
-      hits.push(v.clone());
-      // through the wall on axis k: it is held now; the old held axis is free, and we move inward along it
-      const wallAxis = cell.free[k], wallSign = Math.sign(dir[k]);
-      const old = cell.held, oldSign = cell.sign;
-      const next = cellOf(wallAxis, wallSign);
-      const u2 = next.free.map((ax) => (ax === old ? oldSign : u[cell!.free.indexOf(ax)]));
-      const d2 = next.free.map((ax) => (ax === old ? -oldSign * Math.abs(dir[k]) : dir[cell!.free.indexOf(ax)]));
-      cell = next; u.splice(0, 3, ...u2); dir = d2;
-    }
     geo.setPositions(pts);
+    geo.setColors(cols);
     line.visible = true;
     line.computeLineDistances();
-    hits.forEach((h, i) => { dummy.position.copy(h); dummy.scale.setScalar(i === 0 ? 1.4 : 1); dummy.updateMatrix(); dots.setMatrixAt(i, dummy.matrix); });
-    dots.count = hits.length;
+    marks.forEach(({ p, k }, i) => {
+      dummy.position.copy(p); dummy.scale.setScalar(0.6 + 0.4 * k); dummy.updateMatrix();
+      dots.setMatrixAt(i, dummy.matrix);
+      dots.setColorAt(i, col.copy(PAPER).lerp(PINK, k));
+    });
+    dots.count = marks.length;
     dots.instanceMatrix.needsUpdate = true;
+    if (dots.instanceColor) dots.instanceColor.needsUpdate = true;
   });
 
   return (
