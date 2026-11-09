@@ -57,6 +57,17 @@ export function Machine() {
     const worn = (base: string, roughness: number, metalness: number, salt: number) =>
       Array.from({ length: POOL }, (_, k) => new THREE.MeshStandardMaterial({ map: wear(base, salt + k), roughness, metalness }));
     const stageMats = [worn('#2f2f32', 0.5, 0.15, 700), worn('#c8a874', 0.7, 0.05, 800)];
+    // the same six textures on a hundred parts would show: each part takes its own copy of one, shifted round the
+    // tube by a random turn and mirrored either way. The copies share the image on the GPU; only the mapping differs.
+    const dealt = (pool: THREE.MeshStandardMaterial[], k: number) => {
+      const m = pool[k % pool.length].clone();
+      const t = m.map!.clone();
+      t.offset.x = rnd();
+      t.repeat.set(rnd() < 0.5 ? -1 : 1, rnd() < 0.5 ? -1 : 1);
+      t.needsUpdate = true;
+      m.map = t;
+      return m;
+    };
     const accents = ACCENTS.map((c) => new THREE.MeshStandardMaterial({ color: c, roughness: 0.6 }));
     // most sleeves are plain paint; one in three carries a decal
     const plain = [worn(GRAPHITE, 0.62, 0.05, 500), worn(SAND, 0.78, 0.05, 600)];
@@ -105,7 +116,7 @@ export function Machine() {
       const sleeves = [0, 1].map((end) => {
         if ((i * 2 + end) % 3 !== 1) {
           // most plain; one in six of these has been knocked about
-          if ((i * 7 + end) % 6 !== 0) return mesh(cyl, plain[sand ? 1 : 0][(i * 5 + end * 3) % POOL]);
+          if ((i * 7 + end) % 6 !== 0) return mesh(cyl, dealt(plain[sand ? 1 : 0], i * 5 + end * 3));
           return mesh(cyl, new THREE.MeshStandardMaterial({ map: scuffSleeve(sand ? SAND : GRAPHITE, i * 2 + end + 300), roughness: sand ? 0.78 : 0.62, metalness: 0.05 }));
         }
         const serial = `SYS—${String(i + 1).padStart(2, '0')}${end ? 'B' : 'A'}`;
@@ -115,7 +126,7 @@ export function Machine() {
       });
       // one in five sleeve mouths gets a coloured ring instead of a black seal
       const seals = [0, 1].map((end) => mesh(cyl, (i * 2 + end) % 5 === 0 ? accents[(i + end) % accents.length] : black));
-      const stages = [0, 1].map((k) => mesh(cyl, stageMats[sand ? 1 : 0][(i * 3 + k * 2) % POOL]));
+      const stages = [0, 1].map((k) => mesh(cyl, dealt(stageMats[sand ? 1 : 0], i * 3 + k * 2)));
       const wipers = [0, 1].map(() => mesh(cyl, black));
       const rod = mesh(cyl, CE_RODS.includes(i) ? marked[CE_RODS.indexOf(i)] : silver);
       return { sleeves, seals, stages, wipers, rod };

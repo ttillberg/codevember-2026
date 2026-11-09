@@ -153,6 +153,7 @@ export function wear(base: string, seed: number): THREE.CanvasTexture {
   const t = new THREE.CanvasTexture(c);
   t.colorSpace = THREE.SRGBColorSpace;
   t.anisotropy = 8;
+  t.wrapS = t.wrapT = THREE.RepeatWrapping; // so a part can shift it round the tube and mirror it
   withLogos(() => { grunge(g, r, w, h, WEAR_INK(base), 0.32 + r() * 0.16); t.needsUpdate = true; });
   return t;
 }
