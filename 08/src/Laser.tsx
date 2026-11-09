@@ -7,8 +7,8 @@ import { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js';
 import { project, type V4, type M4 } from './tesseract';
 import { pose } from './state';
 
-// A laser pointer into the tesseract. Hold the pointer still and a pink beam from a hand-held pointer, low and to the
-// right of the camera, aims at the point you hold it on and goes straight on through the machine. At every wall it
+// A laser into the tesseract. Hold the pointer still and a pink beam comes in level across the screen, right to left,
+// through the point you hold it on, and goes straight on through the machine. At every wall it
 // crosses it is displaced: a short jog sideways along that wall's 4D normal as it projects right now, and then on,
 // parallel to itself, at half the strength. Straight, stepped and dimmed at every wall, like light through a stack
 // of glass; the steps turn with the machine because the normals do.
@@ -31,7 +31,7 @@ const MAX_WALLS = 8;
 const STEP = 0.11; // the jog at a wall, 3D units
 const LOSS = 0.5; // the strength left after a wall
 const TAIL = 0.7; // how far the beam runs past the last wall
-const HAND = new THREE.Vector3(0.35, -0.55, -1.2); // the pointer in the camera's frame: a little right, below, ahead
+const FROM_RIGHT = 9; // the beam comes in level across the screen, from this far right of the point you hold
 
 /** The 24 square faces: two axes fixed at ±1, two free. Corners in order round the square. */
 const FACES: { i: number; si: number; j: number; sj: number; corners: V4[] }[] = [];
@@ -126,11 +126,13 @@ export function Laser() {
     ndc.set((laser.x / size.width) * 2 - 1, -((laser.y / size.height) * 2 - 1));
     ray.setFromCamera(ndc, camera);
 
-    // the point under the pointer, on the first face its ray meets; the beam runs from the hand through it
+    // the point under the pointer, on the first face its ray meets; the beam comes in level across the screen,
+    // right to left, through it
     const target = hits(m, ray.ray, false)[0];
     if (!target) { group.visible = false; return; }
-    hand.copy(HAND).applyMatrix4(camera.matrixWorld);
-    beam.set(hand, cur.subVectors(target.at, hand).normalize());
+    cur.setFromMatrixColumn(camera.matrixWorld, 0); // the camera's right
+    hand.copy(target.at).addScaledVector(cur, FROM_RIGHT);
+    beam.set(hand, cur.negate());
 
     // every wall along the beam, nearest first; at each a jog, then on parallel, half as strong
     const walls = hits(m, beam, true).filter((h, i, arr) => i === 0 || h.dist - arr[i - 1].dist > 1e-3).slice(0, MAX_WALLS);
