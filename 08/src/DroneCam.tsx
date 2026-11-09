@@ -12,7 +12,11 @@ import { device, DEVICE_URL } from './device';
 // eye itself, or a chase camera a little behind and above, with the device in the picture. Takes over the render
 // loop: main scene first, then this one in a scissored viewport.
 
-export const CAM = { w: () => Math.min(380, Math.max(240, innerWidth * 0.28)), ratio: 1.6, right: 24, bottom: 72 };
+// square; the side matches the .cam rule in style.css exactly: max(120, min(clamp(220, 26vw, 360), 100vw - 48, 100vh - 150))
+export const CAM = {
+  w: () => Math.max(120, Math.min(Math.min(360, Math.max(220, innerWidth * 0.26)), innerWidth - 48, innerHeight - 150)),
+  ratio: 1, right: 24, bottom: 72,
+};
 
 const SAND = '#d9b985', GRAPHITE = '#3a3a3d';
 const R_STRUT = 0.075, R_NODE = 0.11;
@@ -22,7 +26,7 @@ const SIZE_CAM = 0.17; // the device's radius in cell space
 type Edge = { index: number; row: number; through: boolean }; // through: the cube sits off along this row, so the edge runs the held axis
 
 const FISHEYE = new THREE.ShaderMaterial({
-  uniforms: { tCube: { value: null }, rot: { value: new THREE.Matrix3() }, aspect: { value: 1.6 } },
+  uniforms: { tCube: { value: null }, rot: { value: new THREE.Matrix3() }, aspect: { value: 1 } },
   vertexShader: `varying vec2 vUv; void main() { vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }`,
   fragmentShader: `
     uniform samplerCube tCube; uniform mat3 rot; uniform float aspect;
@@ -33,7 +37,8 @@ const FISHEYE = new THREE.ShaderMaterial({
       float theta = r * 1.5707963;
       vec2 u = r > 1e-5 ? p / r : vec2(0.0);
       vec3 d = rot * vec3(sin(theta) * u, -cos(theta));
-      gl_FragColor = textureCube(tCube, d);
+      vec4 col = textureCube(tCube, d);
+      gl_FragColor = vec4(mix(col.rgb, vec3(0.708, 0.694, 0.658), smoothstep(1.0, 1.02, r)), 1.0); // a disc, the paper outside
       #include <tonemapping_fragment>
       #include <colorspace_fragment>
     }`,
@@ -114,8 +119,6 @@ export function DroneCam() {
     gl.setScissorTest(false);
     gl.setViewport(0, 0, W, H);
     gl.render(scene, camera);
-
-    if (document.body.classList.contains('clean')) return;
 
     // the device: where it is and where it is going, in cell space
     const c = toCell(drone.p);

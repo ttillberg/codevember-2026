@@ -79,8 +79,8 @@ kbd {
   position: fixed;
   right: 24px;
   bottom: 72px;
-  width: clamp(240px, 28vw, 380px);
-  aspect-ratio: 1.6;
+  width: max(120px, min(clamp(220px, 26vw, 360px), calc(100vw - 48px), calc(100vh - 150px)));
+  aspect-ratio: 1;
   border: 1.5px solid var(--ink);
   border-radius: 4px;
   cursor: pointer;
@@ -100,20 +100,8 @@ kbd {
   text-decoration: none;
 }
 .back:hover { color: var(--ink); }
-body.clean .cam {
-  position: fixed;
-  right: 24px;
-  bottom: 72px;
-  width: clamp(240px, 28vw, 380px);
-  aspect-ratio: 1.6;
-  border: 1.5px solid var(--ink);
-  border-radius: 4px;
-  cursor: pointer;
-  box-sizing: border-box;
-}
-.cam:hover { box-shadow: 0 0 0 2px var(--ink); }
-
 .back { display: none; }
+body.clean .plate, body.clean .keys { display: none; }
 
 @media (max-width: 640px) {
   .plate { width: calc(100% - 48px); }

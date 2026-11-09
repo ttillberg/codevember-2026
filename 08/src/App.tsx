@@ -101,9 +101,7 @@ export function App() {
         </Canvas>
       </div>
       {CLEAN ? null : <div className="plate"><b>Tesseract</b><i>CDVMBR 08</i></div>}
-      {CLEAN ? null : (
-        <div className="cam" onClick={() => { drone.view = drone.view === 'pov' ? 'follow' : 'pov'; }} />
-      )}
+      <div className="cam" onClick={() => { drone.view = drone.view === 'pov' ? 'follow' : 'pov'; }} />
       {CLEAN ? null : pilot ? <div className="keys">
         <span><kbd>w s</kbd>thrust</span>
         <span><kbd>a d</kbd>yaw</span>
