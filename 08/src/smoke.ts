@@ -5,8 +5,8 @@ import { project, type M4, type V4 } from './tesseract';
 // with the machine. A puff is a point sprite with a lumpy cloud texture, turning slowly as it grows and thins out. It
 // is tinted with the colour of the cell it was left in, light and foggy, so the wake tells the cells apart.
 
-const N = 400; // puffs alive at most
-const LIFE = 4.6; // seconds a puff lasts
+const N = 900; // puffs alive at most
+const LIFE = 8; // seconds a puff lasts
 const FOG = 0.45; // how far a puff's tint is washed towards white
 
 /** A lumpy cloud: a handful of soft discs round the middle, under a soft edge. Only the alpha is used. */

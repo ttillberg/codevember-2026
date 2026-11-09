@@ -366,7 +366,7 @@ export function Drones() {
       s.smoke.spawn(add4(at, [0, 1, 2, 3].map(() => rnd(-0.01, 0.01)) as V4), now, hex, true);
       for (let i = 0; i < n; i++) s.smoke.spawn(add4(at, [0, 1, 2, 3].map(() => rnd(-0.022, 0.022)) as V4), now + rnd(0, 0.15), hex);
       s.puffAt.copy(v);
-      s.puffGap = rnd(0.08, 0.2);
+      s.puffGap = rnd(0.05, 0.12);
     }
     const fovH = (camera as THREE.PerspectiveCamera).fov * Math.PI / 180;
     s.smoke.update(m, now, (size.height * viewport.dpr) / (2 * Math.tan(fovH / 2)));
