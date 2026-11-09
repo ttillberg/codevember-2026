@@ -359,10 +359,12 @@ export function Drones() {
     project(m, s.p, v);
     s.vel.subVectors(v, s.last).divideScalar(Math.max(dt, 1e-3));
     s.last.copy(v);
-    // the wake: little clusters of puffs, a few at a time round a point just behind the device, a gap between
+    // the wake: little clusters of puffs, a few small ones in a large faint one, round a point just behind the device,
+    // a gap between
     if (v.distanceTo(s.puffAt) > s.puffGap) {
-      const at = add4(s.p, s.dir, -0.05), n = 2 + Math.floor(Math.random() * 4);
-      for (let i = 0; i < n; i++) s.smoke.spawn(add4(at, [0, 1, 2, 3].map(() => rnd(-0.022, 0.022)) as V4), now + rnd(0, 0.15), CELL_HEX[cellId()]);
+      const at = add4(s.p, s.dir, -0.05), n = 2 + Math.floor(Math.random() * 3), hex = CELL_HEX[cellId()];
+      s.smoke.spawn(add4(at, [0, 1, 2, 3].map(() => rnd(-0.01, 0.01)) as V4), now, hex, true);
+      for (let i = 0; i < n; i++) s.smoke.spawn(add4(at, [0, 1, 2, 3].map(() => rnd(-0.022, 0.022)) as V4), now + rnd(0, 0.15), hex);
       s.puffAt.copy(v);
       s.puffGap = rnd(0.08, 0.2);
     }

@@ -55,7 +55,7 @@ const VERT = /* glsl */ `
     float size = grow * mix(0.035, 0.13, pow(u, 0.5));
     gl_PointSize = size * uScale / max(0.1, -mv.z);
     float fadeIn = smoothstep(0.0, 0.06, u);
-    vA = fadeIn * (1.0 - u) * (1.0 - u) * 0.6 / sqrt(grow);
+    vA = fadeIn * (1.0 - u) * (1.0 - u) * 0.6 / pow(grow, 0.9); // the big ones are faint, a haze the small ones sit in
     if (age < 0.0 || age > uLife) { vA = 0.0; gl_PointSize = 0.0; }
     vRot = seed * 6.2831 + age * (seed - 0.5) * 0.9;
     gl_Position = projectionMatrix * mv;
@@ -97,12 +97,12 @@ export function makeSmoke() {
   const v = new THREE.Vector3(), col = new THREE.Color(), white = new THREE.Color('#ffffff');
   return {
     points,
-    /** A puff at `p` in 4D, now, tinted `hex` washed towards white. */
-    spawn(p: V4, now: number, hex: string) {
+    /** A puff at `p` in 4D, now, tinted `hex` washed towards white; `big`, a large faint one that binds a cluster. */
+    spawn(p: V4, now: number, hex: string, big = false) {
       const i = head; head = (head + 1) % N;
       p4[i] = p.slice() as V4;
       birth[i] = now; seed[i] = Math.random();
-      grow[i] = Math.random() < 0.12 ? 1.8 + Math.random() * 0.8 : 0.65 + Math.random() * 0.6; // one in eight a big one
+      grow[i] = big ? 2.2 + Math.random() * 1.0 : 0.6 + Math.random() * 0.6;
       (geo.attributes.grow as THREE.BufferAttribute).needsUpdate = true;
       col.set(hex).lerp(white, FOG);
       tint[i * 3] = col.r; tint[i * 3 + 1] = col.g; tint[i * 3 + 2] = col.b;
