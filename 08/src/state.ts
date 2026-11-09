@@ -28,11 +28,17 @@ export const st = {
   lengths: { min: 0, max: 0 },
 };
 
-/** The rig: the camera stands still, straight on; dragging turns the machine itself, about the room's axes. */
+/** Debugging the flight: no turntable, the drag orbits the camera round a still machine (at the controls too, so the
+ * device is steered by keys), and the trail is long and coloured by the cell it was flown in. */
+export const DEBUG = true;
+
+/** The rig: the camera stands still, straight on; dragging turns the machine itself, about the room's axes. Debugging,
+ * the machine stands still and the drag orbits the camera instead: `yaw` and `pitch` round the centre. */
 export const rig = {
   q: new THREE.Quaternion().setFromEuler(new THREE.Euler(0.27, -0.55, 0, 'YXZ')),
   vel: [0, 0], // rad/s about y and x, from the last drag, decaying
   zoom: 10.5, // camera distance
+  yaw: 0, pitch: 0, // the camera's orbit, debugging
 };
 const AX = new THREE.Vector3(1, 0, 0), AY = new THREE.Vector3(0, 1, 0), tq = new THREE.Quaternion();
 export function spinRig(dy: number, dx: number) {
@@ -95,7 +101,7 @@ function step() {
 
 export function tick(dt: number) {
   // a slow turntable, always, about the room's up; a drag adds to it and coasts off again
-  spinRig(TURNTABLE * dt, 0);
+  if (!DEBUG) spinRig(TURNTABLE * dt, 0);
   // the rig coasts after a drag; drag one way and the machine turns that way from then on; it also turns round on its own
   if (rig.vel[0] || rig.vel[1]) {
     spinRig(rig.vel[0] * dt, rig.vel[1] * dt);

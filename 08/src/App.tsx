@@ -7,7 +7,7 @@ import { Machine } from './Machine';
 import { Drones } from './Drones';
 import { DroneCam } from './DroneCam';
 import { drone } from './drone';
-import { st, rig, spinRig } from './state';
+import { st, rig, spinRig, DEBUG } from './state';
 
 const PARAMS = new URLSearchParams(location.search);
 const CLEAN = PARAMS.has('clean'); // no page furniture, for the screengrab
@@ -18,7 +18,8 @@ function Rig({ children }: { children: React.ReactNode }) {
   const ref = useRef<THREE.Group>(null);
   useFrame(({ camera }) => {
     ref.current?.quaternion.copy(rig.q);
-    camera.position.set(0, 0, rig.zoom);
+    const cp = Math.cos(rig.pitch);
+    camera.position.set(Math.sin(rig.yaw) * cp * rig.zoom, Math.sin(rig.pitch) * rig.zoom, Math.cos(rig.yaw) * cp * rig.zoom);
     camera.lookAt(0, 0, 0);
   });
   return <group ref={ref}>{children}</group>;
@@ -35,10 +36,19 @@ export function App() {
   const last = useRef<{ x: number; y: number } | null>(null);
   const onDown = (e: React.PointerEvent) => {
     if (e.button !== 0) return;
-    if (drone.pilot) { drone.keys.thrust = 1; return; }
+    if (drone.pilot && !DEBUG) { drone.keys.thrust = 1; return; }
     drag.current = { x: e.clientX, y: e.clientY, t: performance.now() }; rig.vel[0] = rig.vel[1] = 0;
   };
   const onMove = (e: React.PointerEvent) => {
+    if (DEBUG) {
+      // debugging: the drag orbits the camera, in either mode
+      const d = drag.current;
+      if (!d) return;
+      rig.yaw -= (e.clientX - d.x) * 0.006;
+      rig.pitch = Math.max(-1.4, Math.min(1.4, rig.pitch + (e.clientY - d.y) * 0.006));
+      drag.current = { x: e.clientX, y: e.clientY, t: performance.now() };
+      return;
+    }
     if (drone.pilot) {
       const l = last.current;
       if (l) { drone.turn[0] += (e.clientX - l.x) * LOOK; drone.turn[1] += -(e.clientY - l.y) * LOOK; }
@@ -55,7 +65,7 @@ export function App() {
     if (Math.abs(e.clientX - d.x) > 2) { st.way = Math.sign(e.clientX - d.x); st.flipIn = 8 + Math.random() * 14; }
     drag.current = { x: e.clientX, y: e.clientY, t: now };
   };
-  const onUp = () => { drag.current = null; if (drone.pilot) drone.keys.thrust = 0; };
+  const onUp = () => { drag.current = null; if (drone.pilot && !DEBUG) drone.keys.thrust = 0; };
   const onLeave = () => { drag.current = null; last.current = null; if (drone.pilot) drone.keys.thrust = 0; };
   const onWheel = (e: React.WheelEvent) => { rig.zoom = Math.min(18, Math.max(6, rig.zoom * Math.exp(e.deltaY * 0.001))); };
 
@@ -118,13 +128,12 @@ export function App() {
       {CLEAN ? null : <div className="plate"><b>Tesseract</b><i>CDVMBR 08</i></div>}
       <div className="cam" onClick={() => { drone.view = drone.view === 'pov' ? 'follow' : 'pov'; }} />
       {CLEAN ? null : pilot ? <div className="keys">
-        <span><kbd>move</kbd>look</span>
-        <span><kbd>hold</kbd>thrust</span>
+        {DEBUG ? <><span><kbd>drag</kbd>orbit</span><span><kbd>a d</kbd>yaw</span><span><kbd>↑ ↓</kbd>pitch</span></> : <><span><kbd>move</kbd>look</span><span><kbd>hold</kbd>thrust</span></>}
         <span><kbd>space</kbd>thrust</span>
         <span><kbd>p</kbd>let go</span>
       </div> : <div className="keys">
         <span><kbd>space</kbd>{program ? 'stop program' : 'run program'}</span>
-        <span><kbd>drag</kbd>turn, sets the way</span>
+        <span><kbd>drag</kbd>{DEBUG ? 'orbit' : 'turn, sets the way'}</span>
         <span><kbd>m</kbd>{smooth ? 'servo' : 'smooth'}</span>
         <span><kbd>p</kbd>take the controls</span>
       </div>}

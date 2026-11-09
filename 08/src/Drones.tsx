@@ -2,8 +2,11 @@ import { useMemo } from 'react';
 import { useFrame } from '@react-three/fiber';
 import { useGLTF } from '@react-three/drei';
 import * as THREE from 'three';
+import { Line2 } from 'three/examples/jsm/lines/Line2.js';
+import { LineGeometry } from 'three/examples/jsm/lines/LineGeometry.js';
+import { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js';
 import { project, type V4 } from './tesseract';
-import { pose, turnGlide } from './state';
+import { pose, turnGlide, DEBUG } from './state';
 import { drone, target, startCell, crossInto, faceQuad, pieceMesh, blink, toCell, fromCell, dirFromCellWith, otherMap, mapAcross, wallCorners, type CellMap } from './drone';
 import { device, ringOut, DEVICE_URL } from './device';
 
@@ -14,8 +17,11 @@ import { device, ringOut, DEVICE_URL } from './device';
 // through the same turn and perspective as the struts, so what looks like speed is partly the warp of the cell it is
 // in. The trail is kept in 4D too, and turns with the rest.
 
-const TRAIL = 56;
+const TRAIL = DEBUG ? 600 : 56;
 const TRAIL_EVERY = 0.05; // seconds between trail samples
+// debugging, the trail is coloured by the cell it was flown in: one colour per held axis and side
+const CELL_COLOURS = ['#ff3b30', '#ff9500', '#ffd60a', '#34c759', '#00c7be', '#007aff', '#af52de', '#ff2d87'].map((c) => new THREE.Color(c));
+const cellId = () => drone.held * 2 + (drone.sign > 0 ? 1 : 0);
 const SPEED = 0.5; // 4D units per second, cruising
 const ROOM = 0.62; // how far from a cell's walls a waypoint stays, so the drone keeps clear of the struts
 const FIELD = 0.14; // half-width, in path fraction, of the slow zone round the face
@@ -77,6 +83,12 @@ export function Drones() {
     geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(TRAIL * 3), 3));
     const line = new THREE.Line(geo, new THREE.LineBasicMaterial({ color: BLUE, transparent: true, opacity: 0.55, toneMapped: false }));
     line.frustumCulled = false;
+    line.visible = !DEBUG;
+    // debugging: a fat trail, pixels wide, coloured by cell, drawn over the struts
+    const fatMat = new LineMaterial({ linewidth: 4, vertexColors: true, toneMapped: false, depthTest: false, worldUnits: false });
+    const fat = new Line2(new LineGeometry(), fatMat);
+    fat.frustumCulled = false; fat.renderOrder = 10; fat.visible = DEBUG;
+    group.add(fat);
     group.add(line);
     const flash = faceQuad(LED);
     group.add(flash.mesh);
@@ -88,11 +100,11 @@ export function Drones() {
     group.add(grabbed);
     const held = Math.floor(Math.random() * 4), sign = Math.random() < 0.5 ? -1 : 1;
     const s = {
-      group, q, line, flash, piece, grabbed,
+      group, q, line, fat, fatMat, flash, piece, grabbed,
       held, sign, came: null as [number, number] | null,
       p: [0, 0, 0, 0] as V4, dir: [0, 0, 0, 0] as V4, // where it is, which way it is going, in 4D
       leg: null as Leg | null, s: 0,
-      trail: [] as V4[], trailAt: 0,
+      trail: [] as V4[], trailCells: [] as number[], trailAt: 0,
       last: new THREE.Vector3(), vel: new THREE.Vector3(), heading: new THREE.Quaternion(), heading2: new THREE.Quaternion(),
       q2, planeA, planeB, cLast: [0, 0, 0], look: new THREE.Vector3(0, 0, -1), camUp: new THREE.Vector3(0, 1, 0),
       wall: null as { axis: number; sign: number } | null, // the wall it is at, if any: the face's 4D axis and side
@@ -214,9 +226,17 @@ export function Drones() {
     const sp = Math.hypot(cv[0], cv[1], cv[2]);
     if (sp > VMAX) for (let i = 0; i < 3; i++) cv[i] *= VMAX / sp;
     for (let i = 0; i < 3; i++) c[i] += cv[i] * (1 - field) * dt;
-    // the wall ahead lights as it closes in, and through: the same swap of held axis as on its own
-    drone.flash.corners = wallCorners(kw, tw);
-    drone.flash.a = Math.exp(-(((dmin - 0.1) / 0.12) ** 2));
+    // the wall ahead lights as it closes in: the one the velocity points at, first to be hit, not the nearest one
+    let tHit = Infinity, ka = kw, ta = tw;
+    for (let i = 0; i < 3; i++) {
+      if (Math.abs(cv[i]) < 1e-4) continue;
+      const side = Math.sign(cv[i]), t = (drone.centre[i] + side - c[i]) / cv[i];
+      if (t >= 0 && t < tHit) { tHit = t; ka = i; ta = side; }
+    }
+    const dAhead = Math.abs(drone.centre[ka] + ta - c[ka]);
+    drone.flash.corners = wallCorners(ka, ta);
+    drone.flash.a = tHit < Infinity ? Math.exp(-(((dAhead - 0.1) / 0.12) ** 2)) : 0;
+    // through: the same swap of held axis as on its own; the clip is at the nearest wall, the one being straddled
     s.wall = dmin < 0.5 ? { axis: drone.axisOf[kw], sign: tw * drone.A[kw][drone.axisOf[kw]] } : null;
     const over = c[kw] - (drone.centre[kw] + tw);
     if (over * tw > 0) {
@@ -233,7 +253,7 @@ export function Drones() {
     return field;
   }
 
-  useFrame((_, dt) => {
+  useFrame(({ size, viewport }, dt) => {
     dt = Math.min(dt, 0.05);
     const m = pose();
     const now = performance.now() / 1000;
@@ -294,8 +314,8 @@ export function Drones() {
     }
     drone.p = s.p;
     if (now - s.trailAt > TRAIL_EVERY) {
-      s.trail.push(s.p.slice() as V4);
-      if (s.trail.length > TRAIL) s.trail.shift();
+      s.trail.push(s.p.slice() as V4); s.trailCells.push(cellId());
+      if (s.trail.length > TRAIL) { s.trail.shift(); s.trailCells.shift(); }
       s.trailAt = now;
     }
 
@@ -405,6 +425,13 @@ export function Drones() {
     s.trail.forEach((p4, i) => { project(m, p4, v); pos.setXYZ(i, v.x, v.y, v.z); });
     pos.needsUpdate = true;
     s.line.geometry.setDrawRange(0, s.trail.length);
+    if (DEBUG && s.trail.length > 1) {
+      const n = s.trail.length, ps = new Float32Array(n * 3), cs = new Float32Array(n * 3);
+      for (let i = 0; i < n; i++) { ps[i * 3] = pos.getX(i); ps[i * 3 + 1] = pos.getY(i); ps[i * 3 + 2] = pos.getZ(i); const c = CELL_COLOURS[s.trailCells[i]]; cs[i * 3] = c.r; cs[i * 3 + 1] = c.g; cs[i * 3 + 2] = c.b; }
+      s.fat.geometry.dispose();
+      s.fat.geometry = new LineGeometry(); s.fat.geometry.setPositions(ps); s.fat.geometry.setColors(cs);
+      s.fatMat.resolution.set(size.width * viewport.dpr, size.height * viewport.dpr);
+    }
   });
 
   return <primitive object={d.group} />;
