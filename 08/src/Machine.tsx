@@ -16,6 +16,7 @@ const STAGE = 0.8, R_STAGE = 0.07;
 const R_ROD = 0.05;
 const OVER = 0.1; // hidden overlap of a stage inside the one round it
 const SEAL = 0.03;
+const LIP = 0.01; // a seal stands proud of the mouth it sits on, so their end caps never share a plane
 
 const Y = new THREE.Vector3(0, 1, 0);
 const FLIP = new THREE.Quaternion(1, 0, 0, 0); // y → -y
@@ -187,9 +188,9 @@ export function Machine() {
         grooves.setMatrixAt(i * 2 + end, dummy.matrix);
         side.copy(X).applyQuaternion(rot);
         putScrew(from.clone().addScaledVector(d, start + GROOVE_AT + 0.05).addScaledVector(side, R_SLEEVE), side);
-        place(s.seals[end], from, d, rot, mouth - SEAL, SEAL, R_SLEEVE * 1.07);
+        place(s.seals[end], from, d, rot, mouth - SEAL + LIP, SEAL, R_SLEEVE * 1.07);
         place(s.stages[end], from, d, rot, mouth - OVER, ext + OVER, R_STAGE);
-        place(s.wipers[end], from, d, rot, mouth + ext - SEAL, SEAL, R_STAGE * 1.1);
+        place(s.wipers[end], from, d, rot, mouth + ext - SEAL + LIP, SEAL, R_STAGE * 1.1);
       }
       const rodFrom = mouth + ext - OVER;
       place(s.rod, a, dir, q, rodFrom, L - 2 * rodFrom, R_ROD);
