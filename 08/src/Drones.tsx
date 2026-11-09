@@ -4,7 +4,7 @@ import { useGLTF } from '@react-three/drei';
 import * as THREE from 'three';
 import { project, type V4 } from './tesseract';
 import { pose } from './state';
-import { drone, target, startCell, crossInto, faceQuad, toCell, fromCell, dirFromCellWith, otherMap, mapAcross, wallCorners, type CellMap } from './drone';
+import { drone, target, startCell, crossInto, faceQuad, pieceMesh, blink, toCell, fromCell, dirFromCellWith, otherMap, mapAcross, wallCorners, type CellMap } from './drone';
 import { device, DEVICE_URL } from './device';
 
 // A device that lives in the tesseract: a ball with one eye, fins that are walls, a shutter. It is inside one of the eight cells, a cube with one coordinate held at
@@ -20,7 +20,6 @@ const SPEED = 0.5; // 4D units per second, cruising
 const ROOM = 0.62; // how far from a cell's walls a waypoint stays, so the drone keeps clear of the struts
 const FIELD = 0.14; // half-width, in path fraction, of the slow zone round the face
 const DIP = 0.3; // how much of the speed the field takes: a lean through it, not a stop
-const PIECE = 0.07; // the metal piece's size
 const HOLD = 1.0; // seconds from a piece taken to the next one emerging
 // at the controls: cell-space units per second squared and per second, radians per second
 const THRUST = 1.6, DRAG = 1.1, VMAX = 1.1, TURN = 1.7;
@@ -77,7 +76,7 @@ export function Drones() {
     group.add(line);
     const flash = faceQuad(LED);
     group.add(flash.mesh);
-    const piece = new THREE.Mesh(new THREE.CylinderGeometry(PIECE, PIECE, PIECE * 0.6, 6), new THREE.MeshStandardMaterial({ color: '#d4d4d8', roughness: 0.32, metalness: 0.95 }));
+    const piece = pieceMesh();
     piece.visible = false;
     group.add(piece);
     const held = Math.floor(Math.random() * 4), sign = Math.random() < 0.5 ? -1 : 1;
@@ -338,8 +337,9 @@ export function Drones() {
     if (s.piece.visible) {
       project(m, target.up ? target.p : mix4(target.p, s.p, 1 - target.scale), s.piece.position);
       s.piece.scale.setScalar(target.scale);
-      s.piece.rotation.y += dt * 1.2; s.piece.rotation.x = 0.6;
+      s.piece.rotation.y += dt * 0.8; s.piece.rotation.z = 0.5;
     }
+    blink(now);
 
     drone.flash.corners.forEach((c4, i) => { project(m, c4, v); s.flash.set(i, v); });
     s.flash.done();

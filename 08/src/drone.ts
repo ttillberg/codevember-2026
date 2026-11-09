@@ -31,6 +31,23 @@ export const drone = {
   flash: { corners: [[0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]] as V4[], a: 0 },
 };
 
+/** The piece: a small steel ball with a pinhead lamp on it that flashes fast. `blink(t)` runs the lamp. */
+export const PIECE_R = 0.04;
+const lampMat = new THREE.MeshStandardMaterial({ color: '#ff6a3a', emissive: '#ff6a3a', emissiveIntensity: 0, toneMapped: false });
+export function pieceMesh(scale = 1) {
+  const g = new THREE.Group();
+  const ball = new THREE.Mesh(new THREE.SphereGeometry(PIECE_R * scale, 24, 16), new THREE.MeshStandardMaterial({ color: '#d4d4d8', roughness: 0.3, metalness: 0.95 }));
+  const lamp = new THREE.Mesh(new THREE.SphereGeometry(PIECE_R * scale * 0.22, 10, 8), lampMat);
+  lamp.position.set(0, PIECE_R * scale * 0.95, 0);
+  g.add(ball, lamp);
+  return g;
+}
+/** The lamp: a quick double flash every half second or so. */
+export function blink(t: number) {
+  const u = t % 0.7;
+  lampMat.emissiveIntensity = (u < 0.06 || (u > 0.14 && u < 0.2)) ? 5 : 0;
+}
+
 /** A flat square between four points, redrawn every frame; the material fades with the flash. */
 export function faceQuad(color: string) {
   const geo = new THREE.BufferGeometry();

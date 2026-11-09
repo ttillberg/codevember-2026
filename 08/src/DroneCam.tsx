@@ -2,7 +2,7 @@ import { useMemo } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import { useGLTF } from '@react-three/drei';
 import * as THREE from 'three';
-import { drone, target, toCell, toCellWith, faceQuad } from './drone';
+import { drone, target, toCell, toCellWith, faceQuad, pieceMesh } from './drone';
 import { device, DEVICE_URL } from './device';
 
 // The device's camera, in a corner of the page. It renders cell space: the cube the device is in, rigid, and the
@@ -96,7 +96,7 @@ export function DroneCam() {
     cs.add(dev.g);
     const flash = faceQuad('#c9e35b');
     cs.add(flash.mesh);
-    const piece = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, 0.042, 6), new THREE.MeshStandardMaterial({ color: '#d4d4d8', roughness: 0.32, metalness: 0.95 }));
+    const piece = pieceMesh();
     piece.visible = false;
     cs.add(piece);
     // the eye: a cube map rendered from where it is, unwrapped by the fisheye onto a quad that fills the frame
@@ -190,7 +190,7 @@ export function DroneCam() {
       cell.piece.position.set(c3[0], c3[1], c3[2]);
       if (!target.up) cell.piece.position.lerp(tmp.pos, 1 - target.scale);
       cell.piece.scale.setScalar(target.scale);
-      cell.piece.rotation.y += 0.02; cell.piece.rotation.x = 0.6;
+      cell.piece.rotation.y += 0.013; cell.piece.rotation.z = 0.5;
     }
 
     // the eye: the room into the cube map, then the lens into the corner
