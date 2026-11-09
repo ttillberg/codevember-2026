@@ -152,6 +152,9 @@ export function bumpSheet(w: number, h: number) {
   hg.fillRect(0, 0, w, h);
   const nc = document.createElement('canvas');
   nc.width = w; nc.height = h;
+  const flat = nc.getContext('2d')!;
+  flat.fillStyle = '#8080ff'; // a flat normal everywhere until the bake, so nothing shines oddly meanwhile
+  flat.fillRect(0, 0, w, h);
   const t = new THREE.CanvasTexture(nc);
   t.wrapS = t.wrapT = THREE.RepeatWrapping;
   t.anisotropy = 4;

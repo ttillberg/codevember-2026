@@ -4,6 +4,7 @@ import * as THREE from 'three';
 import { EDGES, VERTS, project } from './tesseract';
 import { st, tick, pose } from './state';
 import { sleeveDecal, scuffSleeve, scratchMap, wear, brushed, ROD_SPAN, ACCENTS, type Brand } from './decals';
+import { withLogos } from './logos';
 
 // The mechanism. Every edge is a strut in three stages: a sleeve fixed to each ball joint, a stanchion sliding out of
 // each sleeve, a rod between the stanchions. Radii are constant, as on a real part; only the lengths change. The sleeves
@@ -61,9 +62,13 @@ export function Machine() {
     const stageMats = [worn('#2f2f32', 0.5, 0.15, 700), worn('#c8a874', 0.7, 0.05, 800)];
     // the same six textures on a hundred parts would show: each part takes its own copy of one, shifted round the
     // tube by a random turn and mirrored either way. The copies share the image on the GPU; only the mapping differs.
+    // A clone shares its image with the original but not its upload flag: when the sheets land and the originals are
+    // redrawn, every clone has to be flagged too, or the GPU keeps the bare canvas it saw first.
+    const clones: THREE.Texture[] = [];
     const dealt = (pool: THREE.MeshStandardMaterial[], k: number) => {
       const m = pool[k % pool.length].clone();
       const t = m.map!.clone(), n = m.normalMap!.clone();
+      clones.push(t, n);
       t.offset.x = rnd();
       t.repeat.set(rnd() < 0.5 ? -1 : 1, rnd() < 0.5 ? -1 : 1);
       n.offset.copy(t.offset); n.repeat.copy(t.repeat); // the grooves must sit on the marks
@@ -136,10 +141,12 @@ export function Machine() {
       // the mark keep their size instead of squashing with it
       const rodMat = (ALL_CE ? marked[i % 2] : CE_RODS.includes(i) ? marked[CE_RODS.indexOf(i)] : silver).clone();
       const rodTex = rodMat.map!.clone();
+      clones.push(rodTex);
       rodMat.map = rodTex;
       const rod = mesh(cyl, rodMat);
       return { sleeves, seals, stages, wipers, rod, rodTex };
     });
+    withLogos(() => { for (const t of clones) t.needsUpdate = true; }); // after the sheets are drawn on: registered last, runs last
     return { group, nodes, struts, leds, marks };
   }, []);
 
