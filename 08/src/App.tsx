@@ -21,10 +21,6 @@ function Readout() {
         cells[2].textContent = st.lengths.min.toFixed(2);
         cells[3].textContent = st.lengths.max.toFixed(2);
         cells[4].textContent = phase();
-        const cam = document.querySelector('.cam b');
-        if (cam) cam.textContent = `CELL ${'XYZW'[drone.held]} = ${drone.sign > 0 ? '+1' : '−1'}`;
-        const label = document.querySelector('.cam span');
-        if (label) label.textContent = drone.view === 'pov' ? 'DRONE CAM' : 'FOLLOW CAM';
       }
       raf = requestAnimationFrame(tick);
     };
@@ -94,9 +90,7 @@ export function App() {
         <Readout />
       </div>}
       {CLEAN ? null : (
-        <div className="cam" title="click: drone cam / follow cam" onClick={() => { drone.view = drone.view === 'pov' ? 'follow' : 'pov'; }}>
-          <span>DRONE CAM</span><b>CELL</b>
-        </div>
+        <div className="cam" onClick={() => { drone.view = drone.view === 'pov' ? 'follow' : 'pov'; }} />
       )}
       {CLEAN ? null : <div className="keys">
         <span><kbd>space</kbd>{program ? 'stop program' : 'run program'}</span>

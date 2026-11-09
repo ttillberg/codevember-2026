@@ -111,29 +111,7 @@ kbd {
   border-radius: 4px;
   cursor: pointer;
   box-sizing: border-box;
-  font: 600 10px/1 Menlo, "SF Mono", monospace;
-  letter-spacing: 0.1em;
 }
-.cam span, .cam b {
-  position: absolute;
-  top: 8px;
-  padding: 3px 5px;
-  background: var(--ink);
-  color: var(--paper);
-}
-.cam span { left: 8px; }
-.cam span::before {
-  content: '';
-  display: inline-block;
-  width: 6px; height: 6px;
-  margin-right: 6px;
-  border-radius: 50%;
-  background: var(--pink);
-  vertical-align: 0.05em;
-  animation: rec 1.2s steps(1) infinite;
-}
-@keyframes rec { 50% { opacity: 0.2; } }
-.cam b { right: 8px; font-weight: 600; }
 .cam:hover { box-shadow: 0 0 0 2px var(--ink); }
 
 .back {
@@ -158,29 +136,7 @@ body.clean .cam {
   border-radius: 4px;
   cursor: pointer;
   box-sizing: border-box;
-  font: 600 10px/1 Menlo, "SF Mono", monospace;
-  letter-spacing: 0.1em;
 }
-.cam span, .cam b {
-  position: absolute;
-  top: 8px;
-  padding: 3px 5px;
-  background: var(--ink);
-  color: var(--paper);
-}
-.cam span { left: 8px; }
-.cam span::before {
-  content: '';
-  display: inline-block;
-  width: 6px; height: 6px;
-  margin-right: 6px;
-  border-radius: 50%;
-  background: var(--pink);
-  vertical-align: 0.05em;
-  animation: rec 1.2s steps(1) infinite;
-}
-@keyframes rec { 50% { opacity: 0.2; } }
-.cam b { right: 8px; font-weight: 600; }
 .cam:hover { box-shadow: 0 0 0 2px var(--ink); }
 
 .back { display: none; }

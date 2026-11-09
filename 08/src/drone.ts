@@ -1,3 +1,4 @@
+import * as THREE from 'three';
 import type { V4 } from './tesseract';
 
 // The drone as the drone sees itself: the state the cell camera reads.
@@ -17,7 +18,20 @@ export const drone = {
   crossings: 0,
   /** The corner camera: the drone's own eyes, or a chase camera behind it. A click on the frame swaps. */
   view: 'pov' as 'pov' | 'follow',
+  /** The face being passed: its four corners in 4D and how hard it is lit, 0 to 1. */
+  flash: { corners: [[0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]] as V4[], a: 0 },
 };
+
+/** A flat square between four points, redrawn every frame; the material fades with the flash. */
+export function faceQuad(color: string) {
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(12), 3));
+  geo.setIndex([0, 1, 2, 0, 2, 3]);
+  const mat = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0, side: THREE.DoubleSide, depthWrite: false, toneMapped: false });
+  const mesh = new THREE.Mesh(geo, mat);
+  mesh.frustumCulled = false;
+  return { mesh, mat, set: (i: number, v: THREE.Vector3) => (geo.attributes.position as THREE.BufferAttribute).setXYZ(i, v.x, v.y, v.z), done: () => { geo.attributes.position.needsUpdate = true; } };
+}
 
 /** Start in the cell with `held` at `sign`: rows are the free axes in order. */
 export function startCell(held: number, sign: number) {

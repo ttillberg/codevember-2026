@@ -1,7 +1,7 @@
 import { useMemo } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
-import { drone, toCell } from './drone';
+import { drone, toCell, faceQuad } from './drone';
 import { quad } from './Drones';
 
 // The drone's camera, in a corner of the page. It renders cell space: the cube the drone is in, rigid, and the six
@@ -62,7 +62,9 @@ export function DroneCam() {
     const cam = new THREE.PerspectiveCamera(95, CAM.ratio, 0.03, 40);
     const q = quad(0.14);
     cs.add(q.g);
-    return { cs, net, edges, cam, q, sand, graphite, look: new THREE.Vector3(0, 0, -1), last: [0, 0, 0], crossings: -1, eye: new THREE.Vector3(), spin: 0, heading: new THREE.Quaternion() };
+    const flash = faceQuad('#c9e35b');
+    cs.add(flash.mesh);
+    return { cs, net, edges, cam, q, flash, sand, graphite, look: new THREE.Vector3(0, 0, -1), last: [0, 0, 0], crossings: -1, eye: new THREE.Vector3(), spin: 0, heading: new THREE.Quaternion() };
   }, []);
 
   const tmp = useMemo(() => ({ pos: new THREE.Vector3(), vel: new THREE.Vector3(), at: new THREE.Vector3(), up: new THREE.Vector3(0, 1, 0), m: new THREE.Matrix4(), q: new THREE.Quaternion(), tilt: new THREE.Quaternion(), axis: new THREE.Vector3() }), []);
@@ -121,6 +123,10 @@ export function DroneCam() {
         e.mesh.material = axis === 3 ? cell.sand : cell.graphite;
       }
     }
+
+    drone.flash.corners.forEach((c4, i) => { const c3 = toCell(c4); cell.flash.set(i, tmp.at.set(c3[0], c3[1], c3[2])); });
+    cell.flash.done();
+    cell.flash.mat.opacity = 0.6 * drone.flash.a;
 
     const w = Math.round(CAM.w()), h = Math.round(CAM.w() / CAM.ratio);
     const x = W - CAM.right - w, y = CAM.bottom;

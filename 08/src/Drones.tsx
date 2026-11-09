@@ -3,7 +3,7 @@ import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import { project, type V4 } from './tesseract';
 import { pose } from './state';
-import { drone, startCell, crossInto } from './drone';
+import { drone, startCell, crossInto, faceQuad } from './drone';
 
 // A quad drone that lives in the tesseract. It is inside one of the eight cells, a cube with one coordinate held at
 // ±1 and the other three free, and it can only leave through a square face into the neighbouring cell. The passage is
@@ -20,7 +20,7 @@ const SIZE = 0.075; // half the span across the rotors
 const FIELD = 0.12; // half-width, in path fraction, of the slow zone round the face
 const DIP = 0.55; // how much of the speed the field takes
 
-type Leg = { kind: 'cruise' | 'portal'; pts: V4[]; len: number; face?: { axis: number; sign: number }; crossed: boolean };
+type Leg = { kind: 'cruise' | 'portal'; pts: V4[]; len: number; face?: { axis: number; sign: number; corners: V4[] }; crossed: boolean };
 
 const rnd = (a: number, b: number) => a + Math.random() * (b - a);
 const add4 = (a: V4, b: V4, k = 1): V4 => a.map((x, i) => x + b[i] * k) as V4;
@@ -88,9 +88,11 @@ export function Drones() {
     const line = new THREE.Line(geo, new THREE.LineBasicMaterial({ color: LED, transparent: true, opacity: 0.7, toneMapped: false }));
     line.frustumCulled = false;
     group.add(line);
+    const flash = faceQuad(LED);
+    group.add(flash.mesh);
     const held = Math.floor(Math.random() * 4), sign = Math.random() < 0.5 ? -1 : 1;
     const s = {
-      group, q, line,
+      group, q, line, flash,
       held, sign, came: null as [number, number] | null,
       p: [0, 0, 0, 0] as V4, dir: [0, 0, 0, 0] as V4, // where it is, which way it is going, in 4D
       leg: null as Leg | null, s: 0,
@@ -146,7 +148,14 @@ export function Drones() {
       s.p, add4(s.p, s.dir, L0 * 0.35), add4(face, tan, -L0 * 0.4), face,
       add4(face, tan, L1 * 0.4), add4(beyond, sub4(beyond, face), -0.25), beyond,
     ];
-    return { kind: 'portal', pts, len: pathLen(pts), face: { axis, sign }, crossed: false };
+    // the face's four joints: the held axis and the face's axis fixed, the other two at the corners
+    const corners: V4[] = [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([u, v]) => {
+      const c: V4 = [0, 0, 0, 0];
+      const free = [0, 1, 2, 3].filter((i) => i !== axis && i !== s.held);
+      c[axis] = sign; c[s.held] = s.sign; c[free[0]] = u; c[free[1]] = v;
+      return c;
+    });
+    return { kind: 'portal', pts, len: pathLen(pts), face: { axis, sign, corners }, crossed: false };
   }
 
   const tmp = useMemo(() => ({ v: new THREE.Vector3(), m: new THREE.Matrix4(), up: new THREE.Vector3(0, 1, 0), q: new THREE.Quaternion(), tilt: new THREE.Quaternion(), axis: new THREE.Vector3() }), []);
@@ -176,6 +185,11 @@ export function Drones() {
     if (s.s >= 1) { s.p[s.held] = s.sign; s.leg = null; }
 
     drone.p = s.p;
+    // the face lights as the drone comes through, a flash with the field's shape, sharper
+    if (leg.kind === 'portal') {
+      drone.flash.corners = leg.face!.corners;
+      drone.flash.a = Math.exp(-(((s.s - 0.5) / (FIELD * 0.8)) ** 2));
+    } else drone.flash.a = 0;
     if (now - s.trailAt > TRAIL_EVERY) {
       s.trail.push(s.p.slice() as V4);
       if (s.trail.length > TRAIL) s.trail.shift();
@@ -201,6 +215,10 @@ export function Drones() {
     s.spin += dt * (40 + speed * 30);
     s.q.rotors.forEach((r, i) => { r.rotation.y = s.spin * (i % 2 ? 1 : -1); });
     s.q.lampMat.emissiveIntensity = 2.5 + 3 * field * (0.5 + 0.5 * Math.sin(now * 9)); // brighter, breathing, in the field
+
+    drone.flash.corners.forEach((c4, i) => { project(m, c4, v); s.flash.set(i, v); });
+    s.flash.done();
+    s.flash.mat.opacity = 0.6 * drone.flash.a;
 
     const pos = s.line.geometry.attributes.position as THREE.BufferAttribute;
     s.trail.forEach((p4, i) => { project(m, p4, v); pos.setXYZ(i, v.x, v.y, v.z); });
