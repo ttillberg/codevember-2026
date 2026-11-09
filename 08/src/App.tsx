@@ -39,40 +39,26 @@ const CLEAN = new URLSearchParams(location.search).has('clean'); // no page furn
 export function App() {
   const [program, setProgram] = useState(st.program);
   const [smooth, setSmooth] = useState(st.smooth);
-  const [shift, setShift] = useState(false);
   useEffect(() => {
     const down = (e: KeyboardEvent) => {
       if (e.key === ' ') { e.preventDefault(); st.program = !st.program; setProgram(st.program); }
-      if (e.key === 't') st.turntable.on = !st.turntable.on;
       if (e.key === 'm') { st.smooth = !st.smooth; setSmooth(st.smooth); }
-      if (e.key === 'Shift') { st.shift = true; setShift(true); }
       if (e.key === 'ArrowRight') { e.preventDefault(); st.crank = 1; }
       if (e.key === 'ArrowLeft') { e.preventDefault(); st.crank = -1; }
     };
     const up = (e: KeyboardEvent) => {
-      if (e.key === 'Shift') { st.shift = false; setShift(false); }
       if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') st.crank = 0;
     };
-    const blur = () => { st.crank = 0; st.shift = false; setShift(false); };
+    const blur = () => { st.crank = 0; };
     addEventListener('keydown', down);
     addEventListener('keyup', up);
     addEventListener('blur', blur);
     return () => { removeEventListener('keydown', down); removeEventListener('keyup', up); removeEventListener('blur', blur); };
   }, []);
 
-  // shift + drag cranks
-  const drag = useRef<number | null>(null);
-  const onDown = (e: React.PointerEvent) => { if (st.shift) drag.current = e.clientX; };
-  const onMove = (e: React.PointerEvent) => {
-    if (drag.current === null) return;
-    st.target += (e.clientX - drag.current) * 0.006;
-    drag.current = e.clientX;
-  };
-  const onUp = () => { drag.current = null; };
-
   return (
     <>
-      <div className="stage" onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onUp} onPointerLeave={onUp}>
+      <div className="stage">
         <Canvas camera={{ position: [4.8, 2.6, 8.2], fov: 34 }} gl={{ alpha: true, antialias: true, toneMappingExposure: 1.15 }} dpr={[1, 2]}>
           <Machine />
           <ContactShadows position={[0, -3.4, 0]} opacity={0.6} scale={16} blur={2.6} far={5} resolution={1024} color="#2a2620" />
@@ -84,7 +70,7 @@ export function App() {
           </Environment>
           <directionalLight position={[4, 8, 6]} intensity={1.1} />
           <OrbitControls
-            enabled={!shift} enableDamping enablePan={false} minDistance={5} maxDistance={20} target={[0, -0.2, 0]}
+            enableDamping enablePan={false} minDistance={5} maxDistance={20} target={[0, -0.2, 0]}
             onChange={(e) => { if (e) st.azimuth = (e.target as { getAzimuthalAngle: () => number }).getAzimuthalAngle(); }}
           />
         </Canvas>
@@ -99,10 +85,7 @@ export function App() {
       </div>}
       {CLEAN ? null : <div className="keys">
         <span><kbd>space</kbd>{program ? 'stop program' : 'run program'}</span>
-        <span><kbd>←</kbd><kbd>→</kbd>crank</span>
-        <span><kbd>⇧</kbd>drag crank</span>
         <span><kbd>drag</kbd>orbit, sets the way</span>
-        <span><kbd>t</kbd>turntable</span>
         <span><kbd>m</kbd>{smooth ? 'servo' : 'smooth'}</span>
       </div>}
     </>
