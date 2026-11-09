@@ -268,14 +268,15 @@ export function Machine() {
       const centre4 = [0, 0, 0, 0] as [number, number, number, number];
       centre4[drone.held] = drone.sign;
       const centre = project(m, centre4, dir);
-      const hex = CELL_HEX[cellId()], b = now % 0.5 < 0.25 ? 1 : 0.15;
+      const hex = CELL_HEX[cellId()];
       let n = 0;
       VERTS.forEach((v, k) => {
         if (v[drone.held] !== drone.sign) return;
         const l = parts.cellLeds[n++], p = P[k];
+        const b = (now + n / 8) % 1 < 0.07 ? 1 : 0.08; // a quick blink each second, each corner in its turn
         back.copy(centre).sub(p).normalize();
         l.o.position.copy(p).addScaledVector(back, R_NODE * 0.97);
-        l.o.scale.setScalar(R_LED * 2);
+        l.o.scale.setScalar(R_LED * 0.8);
         l.m.emissive.set(hex);
         l.m.emissiveIntensity = 0.1 + 3 * b;
         l.m.color.set(l.m.emissive).multiplyScalar(0.2 + 0.8 * b);
