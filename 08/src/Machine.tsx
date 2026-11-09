@@ -1,8 +1,8 @@
 import { useMemo } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
-import { EDGES, VERTS, project, turn } from './tesseract';
-import { st, tick } from './state';
+import { EDGES, VERTS, project } from './tesseract';
+import { st, tick, pose } from './state';
 import { sleeveDecal, ACCENTS } from './decals';
 
 // The mechanism. Every edge is a strut in three stages: a sleeve fixed to each ball joint, a stanchion sliding out of
@@ -125,7 +125,7 @@ export function Machine() {
     dt = Math.min(dt, 0.05);
     tick(dt);
 
-    const m = turn([st.angle, 0, 0]);
+    const m = pose();
     const { P, dir, back, q, qb, dummy, side } = tmp;
     const { seams, grooves, heads, hexes } = parts.marks;
     let screw = 0;

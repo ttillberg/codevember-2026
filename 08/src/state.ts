@@ -1,17 +1,23 @@
+import { mul, rotPlane, type M4 } from './tesseract';
+
 // Shared mutable state between the scene and the page. Read every frame, no React in the loop.
 //
-// One crank, one plane: the machine turns in XW only. Composing turns in two planes can point an edge straight at the
-// eye, and a strut would have to shrink to nothing. In one plane the shortest strut is 0.73, the longest 3.03.
+// One plane at a time. The machine turns in XW, YW or ZW, never two at once: compose turns in two planes and an edge
+// can point straight at the eye, and a strut would have to shrink to nothing. But after a quarter turn the tesseract
+// stands on itself again (a cell has moved to the next place), so the next quarter can go in any plane. The pose is a
+// base of whole quarter turns, a signed permutation of the axes, and one live angle in one plane on top of it.
 //
-// The crank is a servo. It holds, then snaps a quarter turn, settles, holds again. A quarter turn is the tesseract's
-// own period, so every hold is the same shape with the colours moved on. Some steps stagger: two or three uneven
-// lurches with a breath between, like a stepper catching up.
+// The smooth mode turns evenly and changes plane as it passes each quarter. The servo holds, snaps a quarter turn,
+// settles, holds again; some steps stagger in two or three uneven lurches with a breath between.
 export const st = {
-  angle: 0.3, // XW, radians, where the crank is
+  plane: 0, // 0 1 2: the axis turning with w right now
+  base: [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]] as M4, // the quarter turns done so far
+  angle: 0.3, // radians in the live plane, where the crank is
   target: 0.3, // where the servo is told to be
   vel: 0,
+  quarters: 0, // quarter turns done
   program: true, // the servo picks its own targets
-  smooth: true, // the default: an even spin. M swaps in the servo
+  smooth: true, // the default: an even turn. M swaps in the servo
   next: 1.2, // seconds until the next step
   crank: 0, // held key, -1 0 1
   /** Orbiting sets the way: the camera's azimuth, written by the controls, and the way the last drag went. */
@@ -26,6 +32,11 @@ export const st = {
 
 export const CRANK = 1.6; // rad/s of target with a key held
 const SPIN = 0.22; // rad/s, the smooth mode
+const QUARTER = Math.PI / 2;
+const DEG = Math.PI / 180;
+
+/** The whole 4D rotation right now: the live plane's turn on top of the base. */
+export const pose = (): M4 => mul(rotPlane(st.plane, st.angle), st.base);
 
 /** Stiff spring, a touch under critical: a step lands with one small overshoot, no wobble. */
 const SERVO = { k: 360, zeta: 0.68 };
@@ -41,16 +52,27 @@ function spring(x: number, v: number, target: number, dt: number, p: { k: number
   return [x, v];
 }
 
-const DEG = Math.PI / 180;
 const pick = <T,>(xs: [T, number][]) => {
   let r = Math.random() * xs.reduce((a, [, w]) => a + w, 0);
   for (const [x, w] of xs) { r -= w; if (r <= 0) return x; }
   return xs[xs.length - 1][0];
 };
 
+/** Bank q whole quarter turns in the live plane into the base, and move on to another plane. */
+function fold(q: number) {
+  st.base = mul(rotPlane(st.plane, q * QUARTER), st.base).map((row) => row.map(Math.round)) as M4;
+  st.angle -= q * QUARTER;
+  st.target -= q * QUARTER;
+  st.quarters += Math.abs(q);
+  st.plane = pick<number>([0, 1, 2].filter((p) => p !== st.plane).map((p) => [p, 1]));
+}
+
 /** A quarter turn, queued as one move or as two or three uneven lurches; the last one is followed by a hold. */
 const queue: { delta: number; wait: number }[] = [];
 function step() {
+  // bank what the last step did, so this one starts from a standing tesseract in a fresh plane
+  const q = Math.round(st.target / QUARTER);
+  if (q !== 0) fold(q);
   const sign = (Math.random() < 0.1 ? -1 : 1) * st.way;
   const parts = pick<number[]>([[[1], 5], [[0.65, 0.35], 3], [[0.5, 0.3, 0.2], 2]]);
   parts.forEach((f, i) => queue.push({
@@ -60,7 +82,7 @@ function step() {
 }
 
 export function tick(dt: number) {
-  // orbit the camera one way and the machine turns that way from then on
+  // orbit the camera one way and the machine turns that way from then on; it also turns round on its own
   let dAz = st.azimuth - st.lastAzimuth;
   if (dAz > Math.PI) dAz -= 2 * Math.PI; else if (dAz < -Math.PI) dAz += 2 * Math.PI;
   st.lastAzimuth = st.azimuth;
@@ -70,9 +92,11 @@ export function tick(dt: number) {
 
   if (st.smooth) {
     st.spinVel += (SPIN * st.way * (st.program ? 1 : 0) - st.spinVel) * Math.min(1, dt * 1.2);
-    st.target += st.spinVel * dt;
-    st.target += st.crank * CRANK * dt;
+    st.target += (st.spinVel + st.crank * CRANK) * dt;
     st.angle = st.target; st.vel = 0;
+    // past a quarter, bank it and carry on in another plane
+    while (st.angle >= QUARTER) fold(1);
+    while (st.angle <= -QUARTER) fold(-1);
     return;
   }
   if (st.program) {

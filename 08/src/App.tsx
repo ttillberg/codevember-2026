@@ -13,8 +13,8 @@ function Readout() {
       if (el) {
         const a = st.angle * 180 / Math.PI;
         const cells = el.querySelectorAll('b');
-        cells[0].textContent = `${String(Math.round(((a % 360) + 360) % 360)).padStart(3, '0')}°`;
-        cells[1].textContent = String(Math.floor(a / 360));
+        cells[0].textContent = `${'XYZ'[st.plane]}W ${String(Math.round(((a % 360) + 360) % 360)).padStart(3, '0')}°`;
+        cells[1].textContent = String(st.quarters);
         cells[2].textContent = st.lengths.min.toFixed(2);
         cells[3].textContent = st.lengths.max.toFixed(2);
         cells[4].textContent = phase();
@@ -26,8 +26,8 @@ function Readout() {
   }, []);
   return (
     <div className="readout" ref={ref}>
-      <span>XW <b>000°</b></span>
-      <span>TURNS <b>0</b></span>
+      <span>PLANE <b>XW 000°</b></span>
+      <span>QUARTERS <b>0</b></span>
       <span>STRUT <b>0.00</b>–<b>0.00</b></span>
       <span>SERVO <b>HOLD</b></span>
     </div>
@@ -80,7 +80,7 @@ export function App() {
           <b>TESSERAKT</b>
           <i>四次元 · 超立方体 · UNIT 08</i>
         </div>
-        <p>A hypercube built for real. 32 telescopic struts on 16 ball joints, one crank turning it through the XW plane: a 4D turn seen in 3D is an object whose edges change length. Everything else is rigid.</p>
+        <p>A hypercube built for real. 32 telescopic struts on 16 ball joints, one crank turning it a quarter at a time through the XW, YW or ZW plane: a 4D turn seen in 3D is an object whose edges change length. Everything else is rigid.</p>
         <Readout />
       </div>}
       {CLEAN ? null : <div className="keys">
