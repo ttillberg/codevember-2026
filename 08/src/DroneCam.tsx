@@ -15,7 +15,7 @@ const R_STRUT = 0.075, R_NODE = 0.11;
 type Edge = { mesh: THREE.Mesh; row: number; cube: number }; // cube -1 the centre, else the face row k*2 + (sign>0)
 
 export function DroneCam() {
-  const { gl, scene, camera } = useThree();
+  const { gl, scene, camera, size } = useThree();
   const cell = useMemo(() => {
     const cs = new THREE.Scene();
     cs.background = new THREE.Color('#dad9d4');
@@ -63,9 +63,8 @@ export function DroneCam() {
   const tmp = useMemo(() => ({ pos: new THREE.Vector3(), vel: new THREE.Vector3(), at: new THREE.Vector3() }), []);
 
   useFrame(() => {
-    // the main picture
-    const dpr = gl.getPixelRatio();
-    const W = gl.domElement.width, H = gl.domElement.height;
+    // the main picture. setViewport and setScissor take CSS pixels and apply the pixel ratio themselves.
+    const W = size.width, H = size.height;
     gl.setScissorTest(false);
     gl.setViewport(0, 0, W, H);
     gl.render(scene, camera);
@@ -94,8 +93,8 @@ export function DroneCam() {
       }
     }
 
-    const w = Math.round(CAM.w() * dpr), h = Math.round((CAM.w() / CAM.ratio) * dpr);
-    const x = W - Math.round(CAM.right * dpr) - w, y = Math.round(CAM.bottom * dpr);
+    const w = Math.round(CAM.w()), h = Math.round(CAM.w() / CAM.ratio);
+    const x = W - CAM.right - w, y = CAM.bottom;
     cell.cam.aspect = w / h;
     cell.cam.updateProjectionMatrix();
     cell.cs.environment = scene.environment;
