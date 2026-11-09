@@ -3,7 +3,7 @@ import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import { EDGES, VERTS, project } from './tesseract';
 import { st, tick, pose } from './state';
-import { sleeveDecal, scuffSleeve, scratchMap, wear, brushed, ACCENTS, type Brand } from './decals';
+import { sleeveDecal, scuffSleeve, scratchMap, wear, brushed, ROD_SPAN, ACCENTS, type Brand } from './decals';
 
 // The mechanism. Every edge is a strut in three stages: a sleeve fixed to each ball joint, a stanchion sliding out of
 // each sleeve, a rod between the stanchions. Radii are constant, as on a real part; only the lengths change. The sleeves
@@ -55,18 +55,20 @@ export function Machine() {
     const ALL_CE = true; // debugging: every rod marked, to see it
     // every painted part is a little worn, all over, the metal is not: a hand of wear textures per paint, dealt out
     const POOL = 6;
+    const BUMP = new THREE.Vector2(0.35, 0.35); // the hard wear as tiny grooves
     const worn = (base: string, roughness: number, metalness: number, salt: number) =>
-      Array.from({ length: POOL }, (_, k) => new THREE.MeshStandardMaterial({ map: wear(base, salt + k), roughness, metalness }));
+      Array.from({ length: POOL }, (_, k) => { const map = wear(base, salt + k); return new THREE.MeshStandardMaterial({ map, normalMap: map.userData.bump, normalScale: BUMP, roughness, metalness }); });
     const stageMats = [worn('#2f2f32', 0.5, 0.15, 700), worn('#c8a874', 0.7, 0.05, 800)];
     // the same six textures on a hundred parts would show: each part takes its own copy of one, shifted round the
     // tube by a random turn and mirrored either way. The copies share the image on the GPU; only the mapping differs.
     const dealt = (pool: THREE.MeshStandardMaterial[], k: number) => {
       const m = pool[k % pool.length].clone();
-      const t = m.map!.clone();
+      const t = m.map!.clone(), n = m.normalMap!.clone();
       t.offset.x = rnd();
       t.repeat.set(rnd() < 0.5 ? -1 : 1, rnd() < 0.5 ? -1 : 1);
-      t.needsUpdate = true;
-      m.map = t;
+      n.offset.copy(t.offset); n.repeat.copy(t.repeat); // the grooves must sit on the marks
+      t.needsUpdate = n.needsUpdate = true;
+      m.map = t; m.normalMap = n;
       return m;
     };
     const accents = ACCENTS.map((c) => new THREE.MeshStandardMaterial({ color: c, roughness: 0.6 }));
@@ -118,19 +120,25 @@ export function Machine() {
         if ((i * 2 + end) % 3 !== 1) {
           // most plain; one in six of these has been knocked about
           if ((i * 7 + end) % 6 !== 0) return mesh(cyl, dealt(plain[sand ? 1 : 0], i * 5 + end * 3));
-          return mesh(cyl, new THREE.MeshStandardMaterial({ map: scuffSleeve(sand ? SAND : GRAPHITE, i * 2 + end + 300), roughness: sand ? 0.78 : 0.62, metalness: 0.05 }));
+          const map = scuffSleeve(sand ? SAND : GRAPHITE, i * 2 + end + 300);
+          return mesh(cyl, new THREE.MeshStandardMaterial({ map, normalMap: map.userData.bump, normalScale: BUMP, roughness: sand ? 0.78 : 0.62, metalness: 0.05 }));
         }
         const serial = `SYS—${String(i + 1).padStart(2, '0')}${end ? 'B' : 'A'}`;
         const accent = ACCENTS[(i * 3 + end) % ACCENTS.length];
         const map = sleeveDecal({ base: sand ? SAND : GRAPHITE, ink: sand ? INK : PAPER, serial, axis, seed: seed++, accent, flip: end === 1, brand: brandOf.get(i * 2 + end) ?? null });
-        return mesh(cyl, new THREE.MeshStandardMaterial({ map, roughness: sand ? 0.78 : 0.62, metalness: 0.05 }));
+        return mesh(cyl, new THREE.MeshStandardMaterial({ map, normalMap: map.userData.bump, normalScale: BUMP, roughness: sand ? 0.78 : 0.62, metalness: 0.05 }));
       });
       // one in five sleeve mouths gets a coloured ring instead of a black seal
       const seals = [0, 1].map((end) => mesh(cyl, (i * 2 + end) % 5 === 0 ? accents[(i + end) % accents.length] : black));
       const stages = [0, 1].map((k) => mesh(cyl, dealt(stageMats[sand ? 1 : 0], i * 3 + k * 2)));
       const wipers = [0, 1].map(() => mesh(cyl, black));
-      const rod = mesh(cyl, ALL_CE ? marked[i % 2] : CE_RODS.includes(i) ? marked[CE_RODS.indexOf(i)] : silver);
-      return { sleeves, seals, stages, wipers, rod };
+      // the rod's texture is its own: the rod telescopes, and the mapping is reset every frame so the brushing and
+      // the mark keep their size instead of squashing with it
+      const rodMat = (ALL_CE ? marked[i % 2] : CE_RODS.includes(i) ? marked[CE_RODS.indexOf(i)] : silver).clone();
+      const rodTex = rodMat.map!.clone();
+      rodMat.map = rodTex;
+      const rod = mesh(cyl, rodMat);
+      return { sleeves, seals, stages, wipers, rod, rodTex };
     });
     return { group, nodes, struts, leds, marks };
   }, []);
@@ -216,7 +224,11 @@ export function Machine() {
         place(s.wipers[end], from, d, rot, mouth + ext - SEAL + LIP, SEAL, R_STAGE * 1.1);
       }
       const rodFrom = mouth + ext - OVER;
-      place(s.rod, a, dir, q, rodFrom, L - 2 * rodFrom, R_ROD);
+      const rodLen = L - 2 * rodFrom;
+      place(s.rod, a, dir, q, rodFrom, rodLen, R_ROD);
+      // the canvas spans ROD_SPAN circumferences of rod; show the window of it this length takes, centred
+      s.rodTex.repeat.y = rodLen / (2 * Math.PI * R_ROD * ROD_SPAN);
+      s.rodTex.offset.y = (1 - s.rodTex.repeat.y) / 2;
     });
     st.lengths.min = min; st.lengths.max = max;
     seams.instanceMatrix.needsUpdate = true;

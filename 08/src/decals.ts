@@ -110,20 +110,67 @@ export function gouges(g: CanvasRenderingContext2D, r: () => number, w: number, 
 
 /** Rough wear from the scratch sheet: a random window of it laid over the canvas in `color`. The sheet is dense,
  * so a window of a third of it at most, and the alpha keeps it in the paint rather than on top of it. */
-export function grunge(g: CanvasRenderingContext2D, r: () => number, w: number, h: number, color: string, alpha: number) {
+export function grunge(g: CanvasRenderingContext2D, r: () => number, w: number, h: number, color: string, alpha: number, bump?: CanvasRenderingContext2D) {
   const src = sheet('scratch', color);
   if (!src) return;
   // the sheet as a repeating pattern at about a quarter of its size, turned any way, flipped either way and shifted:
   // fine wear everywhere, no grain in common between parts, and never scaled up, so it stays crisp
-  const pat = g.createPattern(src, 'repeat');
-  if (!pat) return;
-  const k = 0.22 + r() * 0.1;
-  pat.setTransform(new DOMMatrix().translateSelf(r() * w, r() * h).rotateSelf(r() * 360).scaleSelf(k * (r() < 0.5 ? -1 : 1), k * (r() < 0.5 ? -1 : 1)));
-  g.save();
-  g.globalAlpha = alpha;
-  g.fillStyle = pat;
-  g.fillRect(0, 0, w, h);
-  g.restore();
+  const lay = (ctx: CanvasRenderingContext2D, img: CanvasImageSource, k: number, m: DOMMatrix, a: number) => {
+    const pat = ctx.createPattern(img, 'repeat');
+    if (!pat) return;
+    pat.setTransform(m);
+    ctx.save();
+    ctx.globalAlpha = a;
+    ctx.fillStyle = pat;
+    ctx.fillRect(0, 0, w, h);
+    ctx.restore();
+    void k;
+  };
+  const turn = (k: number) => new DOMMatrix().translateSelf(r() * w, r() * h).rotateSelf(r() * 360).scaleSelf(k * (r() < 0.5 ? -1 : 1), k * (r() < 0.5 ? -1 : 1));
+  // soft: all over, faint
+  const k1 = 0.22 + r() * 0.1;
+  lay(g, src, k1, turn(k1), alpha * 0.7);
+  // hard: a patch of it, bigger and darker, where the part has been dragged over something; into the heights too
+  if (r() < 0.75) {
+    const k2 = 0.3 + r() * 0.15, m = turn(k2);
+    const cx = r() * w, cy = r() * h, rx = w * (0.18 + r() * 0.22), ry = h * (0.18 + r() * 0.25), rot = r() * Math.PI;
+    const clip = (ctx: CanvasRenderingContext2D) => { ctx.beginPath(); ctx.ellipse(cx, cy, rx, ry, rot, 0, Math.PI * 2); ctx.clip(); };
+    g.save(); clip(g); lay(g, src, k2, m, Math.min(1, alpha * 1.8)); g.restore();
+    if (bump) {
+      const dark = sheet('scratch', '#000000');
+      if (dark) { bump.save(); clip(bump); lay(bump, dark, k2, m, 1); bump.restore(); }
+    }
+  }
+}
+
+/** A height sheet (white, scratches dark) and the normal map made from it: the hard wear as tiny grooves. */
+export function bumpSheet(w: number, h: number) {
+  const hc = document.createElement('canvas');
+  hc.width = w; hc.height = h;
+  const hg = hc.getContext('2d')!;
+  hg.fillStyle = '#ffffff';
+  hg.fillRect(0, 0, w, h);
+  const nc = document.createElement('canvas');
+  nc.width = w; nc.height = h;
+  const t = new THREE.CanvasTexture(nc);
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  t.anisotropy = 4;
+  /** Read the heights and write the normals; call once the hard wear is on the sheet. */
+  const bake = (strength = 1.6) => {
+    const src = hg.getImageData(0, 0, w, h).data;
+    const ng = nc.getContext('2d')!;
+    const id = ng.createImageData(w, h), px = id.data;
+    const at = (x: number, y: number) => src[(((y + h) % h) * w + ((x + w) % w)) * 4] / 255;
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+      const gx = (at(x + 1, y) - at(x - 1, y)) * strength, gv = (at(x, y - 1) - at(x, y + 1)) * strength; // v runs up
+      const inv = 1 / Math.hypot(gx, gv, 1);
+      const o = (y * w + x) * 4;
+      px[o] = (-gx * inv * 0.5 + 0.5) * 255; px[o + 1] = (-gv * inv * 0.5 + 0.5) * 255; px[o + 2] = (inv * 0.5 + 0.5) * 255; px[o + 3] = 255;
+    }
+    ng.putImageData(id, 0, 0);
+    t.needsUpdate = true;
+  };
+  return { hg, t, bake };
 }
 
 /** A plain sleeve with a scrape or two on it, for the few undecaled sleeves that have been knocked about. */
@@ -138,7 +185,9 @@ export function scuffSleeve(base: string, seed: number): THREE.CanvasTexture {
   const t = new THREE.CanvasTexture(c);
   t.colorSpace = THREE.SRGBColorSpace;
   t.anisotropy = 8;
-  withLogos(() => { grunge(g, r, W, H, WEAR_INK(base), 0.55); t.needsUpdate = true; });
+  const bump = bumpSheet(W, H);
+  t.userData.bump = bump.t;
+  withLogos(() => { grunge(g, r, W, H, WEAR_INK(base), 0.55, bump.hg); bump.bake(); t.needsUpdate = true; });
   return t;
 }
 
@@ -154,14 +203,18 @@ export function wear(base: string, seed: number): THREE.CanvasTexture {
   t.colorSpace = THREE.SRGBColorSpace;
   t.anisotropy = 8;
   t.wrapS = t.wrapT = THREE.RepeatWrapping; // so a part can shift it round the tube and mirror it
-  withLogos(() => { grunge(g, r, w, h, WEAR_INK(base), 0.32 + r() * 0.16); t.needsUpdate = true; });
+  const bump = bumpSheet(w, h);
+  t.userData.bump = bump.t;
+  withLogos(() => { grunge(g, r, w, h, WEAR_INK(base), 0.32 + r() * 0.16, bump.hg); bump.bake(); t.needsUpdate = true; });
   return t;
 }
 
 /** Brushed metal for the rods: the silver with a fine grain along the rod, and on a couple of them a CE mark etched
  * into it, dark and faint, as if laser-marked through the brushing. The grain is canvas y, the rod's length. */
+/** How many times round the rod the brushed canvas is long: the rod shows a window of it sized to its length. */
+export const ROD_SPAN = 8;
 export function brushed(base: string, seed: number, mark = false): THREE.CanvasTexture {
-  const w = 256, h = 512;
+  const w = 256, h = 256 * ROD_SPAN;
   const c = document.createElement('canvas');
   c.width = w; c.height = h;
   const g = c.getContext('2d')!;
@@ -169,7 +222,7 @@ export function brushed(base: string, seed: number, mark = false): THREE.CanvasT
   g.fillRect(0, 0, w, h);
   const r = rng(seed);
   g.lineCap = 'butt';
-  for (let i = 0; i < 900; i++) {
+  for (let i = 0; i < 450 * ROD_SPAN; i++) {
     const x = r() * w, y0 = r() * h, len = 40 + r() * 300;
     g.strokeStyle = r() < 0.5 ? '#ffffff' : '#9a9a9e';
     g.globalAlpha = 0.04 + r() * 0.1;
@@ -180,16 +233,17 @@ export function brushed(base: string, seed: number, mark = false): THREE.CanvasT
   const t = new THREE.CanvasTexture(c);
   t.colorSpace = THREE.SRGBColorSpace;
   t.anisotropy = 8;
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
   if (mark) {
-    // mid-rod, reading along it, three times round the tube so one always faces the viewer
-    const mx = r() * w, my = h / 2;
+    // mid-rod, reading along it, once; drawn again a turn either side only so it wraps whole over the seam
+    const mx = r() * w, my = h / 2, sz = 56;
     withLogos(() => {
       const img = logo('ce', 160, '#4a4a4e');
       if (!img) return;
       g.save();
       g.globalAlpha = 0.7;
-      for (let k = -1; k <= 3; k++) { // every third of the way round, and over the seam
-        g.save(); g.translate(mx + (k * w) / 3, my); g.rotate(Math.PI / 2); g.drawImage(img, -40, -40, 80, 80); g.restore();
+      for (const o of [-w, 0, w]) {
+        g.save(); g.translate(mx + o, my); g.rotate(Math.PI / 2); g.drawImage(img, -sz / 2, -sz / 2, sz, sz); g.restore();
       }
       g.restore();
       t.needsUpdate = true;
@@ -343,6 +397,8 @@ export function sleeveDecal(d: Decal): THREE.CanvasTexture {
   t.colorSpace = THREE.SRGBColorSpace;
   t.anisotropy = 8;
   t.wrapS = THREE.RepeatWrapping;
-  withLogos(() => { grunge(g, r, W, H, WEAR_INK(d.base), 0.5); drawBrand(); t.needsUpdate = true; });
+  const bump = bumpSheet(W, H);
+  t.userData.bump = bump.t;
+  withLogos(() => { grunge(g, r, W, H, WEAR_INK(d.base), 0.5, bump.hg); bump.bake(); drawBrand(); t.needsUpdate = true; });
   return t;
 }
