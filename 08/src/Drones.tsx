@@ -24,6 +24,9 @@ const DIP = 0.3; // how much of the speed the field takes: a lean through it, no
 // next piece emerges; still again; and off
 const SETTLE = 0.6, CATCH = 0.35, GLIDE = 2.0, REST = 0.5;
 const TINT_IN = 14; // how fast the glow on the half inside a new cell comes and goes, per second
+// in-then-out: how far the body goes on past all-in before the next cell's copy starts up out of the wall, and over
+// how far it rises, both in radii; the hand-over may linger this long past the wall state
+const INOUT_GAP = 1.5, INOUT_RISE = 3, LINGER = 3;
 const GLOW = 0.9; // the strength of the cell-colour tint on a half in a wall: 0.9 of the tint's own 0.55 is about half
 // at the controls the device docks on its own: the piece this close (in device radii, in cell space), the device this
 // slow (cell units a second) and the piece this well ahead (cosine), and the catch takes over
@@ -484,11 +487,12 @@ export function Drones() {
         s.shift.set(0, 0, 0);
         s.immA = Math.max(0, Math.min(1, (R - d) / (2 * R))); s.immB = 0;
       } else {
-        // across: the old copy sinks the rest of the way; this one waits inside the wall until the body is all in,
-        // then comes up out of it, set back two radii, and catches the body up over the next few
+        // across: the old copy sinks the rest of the way; this one waits inside the wall until the body is all in
+        // and a gap more, then comes up out of it, set back two radii, and catches the body up over the rise
         s.q2.g.visible = true;
-        const back = d < R ? 2 * R : Math.max(0, 2 * R - (d - R) * (2 / 3));
-        s.q.g.visible = d >= R;
+        const from = R * (1 + INOUT_GAP);
+        const back = d < from ? 2 * R : Math.max(0, 2 * R * (1 - (d - from) / (R * INOUT_RISE)));
+        s.q.g.visible = d >= from;
         s.shift.copy(s.planeA.normal).multiplyScalar(-back);
         s.immB = Math.max(0, Math.min(1, (R + d) / (2 * R)));
         s.immA = s.q.g.visible ? Math.max(0, Math.min(1, (R - (d - back)) / (2 * R))) : 1;
@@ -496,7 +500,7 @@ export function Drones() {
       }
       if (s.crossed) {
         if (!s.wall) s.linger += dt; else s.linger = 0;
-        if ((done || s.linger > 2) && !s.wall) s.crossed = false; // all the way across, or long enough: the hand-over is done
+        if ((done || s.linger > LINGER) && !s.wall) s.crossed = false; // all the way across, or long enough: the hand-over is done
       }
       // the renderer clips in world space, and the machine sits on a turned rig: the planes go through its matrix
       s.planeA.applyMatrix4(s.group.matrixWorld); s.planeB.applyMatrix4(s.group.matrixWorld);
