@@ -3,7 +3,7 @@ import { useFrame } from '@react-three/fiber';
 import { useGLTF } from '@react-three/drei';
 import * as THREE from 'three';
 import { project, type V4 } from './tesseract';
-import { pose } from './state';
+import { pose, turnOnce } from './state';
 import { drone, target, startCell, crossInto, faceQuad, pieceMesh, blink, toCell, fromCell, dirFromCellWith, otherMap, mapAcross, wallCorners, type CellMap } from './drone';
 import { device, DEVICE_URL } from './device';
 
@@ -250,7 +250,7 @@ export function Drones() {
       }
       if (s.s >= 1) {
         s.p[s.held] = s.sign; s.leg = null;
-        if (leg.toTarget) { target.up = false; s.wait = 0; s.blink = 0; } // taken: a blink, and the next one in a while
+        if (leg.toTarget) { target.up = false; s.wait = 0; s.blink = 0; turnOnce(); } // taken: a blink, the machine turns a quarter, and the next one in a while
       }
       // the face lights just before the drone goes through, and is out again as it does
       if (leg.kind === 'portal') {

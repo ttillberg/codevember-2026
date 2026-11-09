@@ -17,8 +17,8 @@ export const st = {
   target: 0.3, // where the servo is told to be
   vel: 0,
   quarters: 0, // quarter turns done
-  program: true, // the servo picks its own targets
-  smooth: true, // the default: an even turn. M swaps in the servo
+  program: false, // the servo picks its own targets; off, it only turns when told to (a catch)
+  smooth: false, // an even turn instead of the servo's steps. M swaps
   next: 1.2, // seconds until the next step
   crank: 0, // held key, -1 0 1
   way: 1, // which way it turns, +1 or -1: the last drag, or a flip now and then
@@ -110,7 +110,7 @@ export function tick(dt: number) {
     while (st.angle <= -QUARTER) fold(-1);
     return;
   }
-  if (st.program) {
+  if (st.program || queue.length) {
     st.next -= dt;
     if (st.next <= 0) {
       if (!queue.length) step();
@@ -121,6 +121,12 @@ export function tick(dt: number) {
   }
   st.target += st.crank * CRANK * dt;
   [st.angle, st.vel] = spring(st.angle, st.vel, st.target, dt, SERVO);
+}
+
+/** One quarter turn now, servo style: the machine changes shape when the device takes a piece, and holds between. */
+export function turnOnce() {
+  if (!queue.length) step();
+  st.next = 0;
 }
 
 /** For the readout: what the servo is doing. */
