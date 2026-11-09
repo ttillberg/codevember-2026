@@ -54,7 +54,7 @@ const rnd = (a: number, b: number) => a + Math.random() * (b - a);
 export const pose = (): M4 => mul(rotPlane(st.plane, st.angle), st.base);
 
 /** Stiff spring, a touch under critical: a step lands with one small overshoot, no wobble. */
-const SERVO = { k: 360, zeta: 0.68 };
+const SERVO = { k: 160, zeta: 0.68 };
 
 function spring(x: number, v: number, target: number, dt: number, p: { k: number; zeta: number }): [number, number] {
   const c = 2 * Math.sqrt(p.k) * p.zeta;
@@ -90,10 +90,10 @@ function burst() {
   st.bursting = true;
   st.target = st.angle; st.vel = st.spinVel; st.next = 0; // from where the spin is, at its speed
   const w = st.way;
-  queue.push({ delta: (Math.floor((st.angle * w) / QUARTER + 1e-6) + 1) * QUARTER * w - st.angle, wait: rnd(0.18, 0.3) });
+  queue.push({ delta: (Math.floor((st.angle * w) / QUARTER + 1e-6) + 1) * QUARTER * w - st.angle, wait: rnd(0.28, 0.45) });
   for (let n = 1 + Math.floor(Math.random() * 3); n > 0; n--) {
     const parts = pick<number[]>([[[1], 5], [[0.65, 0.35], 3], [[0.5, 0.3, 0.2], 2]]);
-    parts.forEach((f, i) => queue.push({ delta: w * QUARTER * f, wait: i === parts.length - 1 ? rnd(0.16, 0.32) : rnd(0.06, 0.1) }));
+    parts.forEach((f, i) => queue.push({ delta: w * QUARTER * f, wait: i === parts.length - 1 ? rnd(0.25, 0.45) : rnd(0.09, 0.15) }));
   }
 }
 
