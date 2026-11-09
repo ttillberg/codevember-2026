@@ -138,7 +138,9 @@ export function DroneCam() {
     // another direction. It leans back towards the room's up only while the look is level, slowly.
     const { camUp } = tmp;
     camUp.set(0, 1, 0).applyQuaternion(cell.q);
-    camUp.lerp(tmp.up, 0.04 * (1 - Math.abs(cell.look.y))).normalize();
+    // at the controls the view's up is the eye's own, so a drag in the view turns the way it is dragged
+    if (drone.pilot) camUp.lerp(tmp.axis.set(0, 1, 0).applyQuaternion(drone.q), 0.25).normalize();
+    else camUp.lerp(tmp.up, 0.04 * (1 - Math.abs(cell.look.y))).normalize();
     const follow = drone.view === 'follow';
     if (follow) {
       // a chase camera: behind, a little above and off to one side, eased; the device in three-quarter view

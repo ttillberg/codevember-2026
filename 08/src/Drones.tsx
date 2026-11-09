@@ -227,15 +227,22 @@ export function Drones() {
     const { fwd, right, qa } = tmp, k = drone.keys;
     s.yawV += (k.yaw * TURN - s.yawV) * Math.min(1, dt * 6);
     s.pitchV += (k.pitch * TURN - s.pitchV) * Math.min(1, dt * 6);
+    // the turns are about the eye's own axes, so a drag right turns towards the right of the view and a drag up
+    // towards its top whatever way the device is rolled or pitched; the keys the same
+    const upq = new THREE.Vector3(0, 1, 0).applyQuaternion(drone.q);
     right.set(1, 0, 0).applyQuaternion(drone.q);
-    drone.q.premultiply(qa.setFromAxisAngle(tmp.up, s.yawV * dt)).premultiply(qa.setFromAxisAngle(right, s.pitchV * dt)).normalize();
-    // the trackpad's look, as it came in: right is a turn to the right, up a turn up
-    if (drone.turn[0] || drone.turn[1]) {
-      right.set(1, 0, 0).applyQuaternion(drone.q);
-      drone.q.premultiply(qa.setFromAxisAngle(tmp.up, -drone.turn[0])).premultiply(qa.setFromAxisAngle(right, drone.turn[1])).normalize();
-      drone.turn[0] = drone.turn[1] = 0;
-    }
+    drone.q.premultiply(qa.setFromAxisAngle(upq, s.yawV * dt - drone.turn[0])).premultiply(qa.setFromAxisAngle(right, s.pitchV * dt + drone.turn[1])).normalize();
+    drone.turn[0] = drone.turn[1] = 0;
     fwd.set(0, 0, -1).applyQuaternion(drone.q);
+    // and it rights itself slowly towards the room's up while the look is level, so roll does not build up
+    upq.set(0, 1, 0).applyQuaternion(drone.q);
+    const level = 1 - Math.abs(fwd.y);
+    if (level > 0.05) {
+      upq.lerp(tmp.up, 0.5).normalize();
+      tmp.m.lookAt(new THREE.Vector3(), fwd, upq);
+      qa.setFromRotationMatrix(tmp.m);
+      drone.q.slerp(qa, Math.min(1, dt * 1.5 * level));
+    }
     const c = toCell(s.p), cv = drone.cvel;
     // the nearest wall and the field there
     let dmin = Infinity, kw = 0, tw = 1;
