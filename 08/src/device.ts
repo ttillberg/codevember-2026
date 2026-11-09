@@ -144,17 +144,18 @@ const onSphere = (side: THREE.Vector3, latDeg: number, r: number) => {
 };
 const Y = new THREE.Vector3(0, 1, 0);
 const SCOOP_R = 0.27; // the bowl's radius, model units: the piece is 0.21 in them
-type Works = Record<'graphite' | 'steel' | 'cup', THREE.Material> & Record<'barrel' | 'rod' | 'lug' | 'hinge' | 'pin' | 'bowl' | 'blade' | 'scoopPin', THREE.BufferGeometry>;
+type Works = Record<'graphite' | 'steel' | 'cup' | 'bladeMat', THREE.Material> & Record<'barrel' | 'rod' | 'lug' | 'hinge' | 'pin' | 'bowl' | 'blade' | 'scoopPin', THREE.BufferGeometry>;
 let works: Works | null = null;
 function makeWorks(): Works {
   const graphite = new THREE.MeshStandardMaterial({ color: '#1e1e22', roughness: 0.5, metalness: 0.2 });
   const steel = new THREE.MeshStandardMaterial({ color: '#c8c8cc', roughness: 0.3, metalness: 0.9 });
   const cup = new THREE.MeshStandardMaterial({ color: '#d4d4d8', roughness: 0.22, metalness: 0.95, side: THREE.DoubleSide }); // seen inside and out
+  const bladeMat = new THREE.MeshStandardMaterial({ color: '#141416', roughness: 0.45, metalness: 0.3, side: THREE.DoubleSide }); // the half that scoops, black
   // a half shell, its dome towards the device (+z), its mouth ahead (-z)
   const shell = (r: number) => new THREE.SphereGeometry(r, 32, 12, 0, Math.PI * 2, 0, Math.PI / 2).rotateX(Math.PI / 2);
   const along = (r: number) => new THREE.CylinderGeometry(r, r, 1, 20).translate(0, 0.5, 0); // from the origin up its y, unit long
   return {
-    graphite, steel, cup,
+    graphite, steel, cup, bladeMat,
     bowl: shell(SCOOP_R), blade: shell(SCOOP_R * 0.96), scoopPin: new THREE.CylinderGeometry(0.035, 0.035, 0.07, 12),
     barrel: along(0.045), rod: along(0.02), lug: new THREE.SphereGeometry(0.048, 16, 12),
     hinge: new THREE.CylinderGeometry(0.042, 0.042, 0.3, 16), pin: new THREE.CylinderGeometry(0.018, 0.018, 0.42, 12),
@@ -218,7 +219,7 @@ export function device(model: THREE.Object3D, size: number): Device {
     const head = new THREE.Group(); grp.add(head); // at the bowl's centre
     const bowl = new THREE.Mesh(W.bowl, W.cup); head.add(bowl);
     const swing = new THREE.Group(); head.add(swing); // turns about the pins, across the bowl
-    swing.add(new THREE.Mesh(W.blade, W.cup));
+    swing.add(new THREE.Mesh(W.blade, W.bladeMat));
     for (const x of [-1, 1]) {
       const pin = new THREE.Mesh(W.scoopPin, W.graphite);
       pin.position.set(x * SCOOP_R, 0, 0); pin.rotation.z = Math.PI / 2;
