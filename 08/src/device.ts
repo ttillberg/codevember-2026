@@ -21,6 +21,8 @@ export type Device = {
   clip: (planes: THREE.Plane[]) => void;
   /** Fade the whole copy: 1 as made, 0 gone. */
   fade: (k: number) => void;
+  /** Tint the whole copy with a glow of `hex`, `k` strong: 0 as made. */
+  tint: (hex: string, k: number) => void;
   /** 0 open (fins back) to 1 shut (the walls closed round the body). */
   shield: (k: number) => void;
   /** 0 open to 1 shut, the blades across the eye. */
@@ -168,6 +170,7 @@ function relTo(o: THREE.Object3D, anc: THREE.Object3D) {
 
 /** A copy of the loaded model at `size` (its radius), with its hinges wired. Materials are shared between copies,
  * unless `own`: then every mesh gets its own, for clipping planes of its own. */
+const tintColor = new THREE.Color();
 export function device(model: THREE.Object3D, size: number, own = false): Device {
   const g = model.clone(true) as THREE.Group;
   dress(g);
@@ -249,12 +252,22 @@ export function device(model: THREE.Object3D, size: number, own = false): Device
       const m = mesh.material as THREE.MeshStandardMaterial;
       if (m.transparent) m.depthWrite = false; // the glass
       m.userData.opacity = m.opacity; m.userData.transparent = m.transparent; // as made, for the fade
+      if (m.emissive) m.userData.emissive = m.emissive.clone(); // and the tint
       o.frustumCulled = false;
     }
   });
   return {
     g,
     clip: (planes) => { g.traverse((o) => { if ((o as THREE.Mesh).isMesh) ((o as THREE.Mesh).material as THREE.Material).clippingPlanes = planes; }); },
+    tint: (hex, k) => {
+      tintColor.set(hex);
+      g.traverse((o) => {
+        if (!(o as THREE.Mesh).isMesh) return;
+        const m = (o as THREE.Mesh).material as THREE.MeshStandardMaterial;
+        if (!m.emissive || !m.userData.emissive) return;
+        m.emissive.copy(m.userData.emissive).lerp(tintColor, k * 0.55);
+      });
+    },
     fade: (k) => {
       g.traverse((o) => {
         if (!(o as THREE.Mesh).isMesh) return;
