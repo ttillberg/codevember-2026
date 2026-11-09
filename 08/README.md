@@ -11,7 +11,7 @@ TESSERAKT, a hypercube built for real. A tesseract cannot exist in three dimensi
 - **Struts** (`Machine.tsx`): per edge, a sleeve sunk into each ball, a stanchion sliding out of each sleeve as far as the strut needs up to 0.8, and a rod between the stanchions taking the rest. Each stage overlaps the one round it by 0.1 so nothing shows daylight. Two sleeves fully compressed are 0.65 with the balls, under the shortest strut. Seals are short fat rings at every mouth.
 - **Colour**: the eight edges along w are sand, the other 24 graphite, so you can follow which edges are which as the inner cube turns out and the outer turns in.
 - **Decals** (`decals.ts`): canvas textures on the cylinder UVs, not `DecalGeometry`. One sleeve in three has one, the rest are plain paint; x runs round the tube, y along it, the open end at the top. Each carries a few of: hazard band at the mouth, brand round the tube, serial along it, barcode, a coloured tab, a cube's net as pictogram. Seeded, so the same every load.
-- **LEDs** (`Machine.tsx`): six status lights on the balls, each with its own blink: heartbeat, breathe, a flash every five seconds, fast steady, slow square, tick. An emissive bead in a black collar, and an additive halo sphere whose opacity follows the blink.
+- **LEDs** (`Machine.tsx`): six status lights on the balls, each with its own blink: heartbeat, breathe, a flash every five seconds, fast steady, slow square, tick. A pinhead emissive bead in a black collar, a few pixels, no glow.
 - **Light**: drei `Environment` from four `Lightformer`s, no HDR download, plus one directional. `ContactShadows` on a transparent canvas, the graph paper is CSS.
 
 ## Learned

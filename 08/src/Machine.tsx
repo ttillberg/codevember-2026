@@ -31,7 +31,7 @@ const LEDS: { node: number; dir: [number, number, number]; color: string; blink:
   { node: 3, dir: [0.7, 0.3, 0.6], color: '#8e7cf0', blink: (t) => (t % 3.2 < 1.6 ? 1 : 0.05) }, // slow square
   { node: 15, dir: [-0.5, 0.5, -0.7], color: '#ef5f9f', blink: (t) => (t % 1.1 < 0.05 ? 1 : 0.03) }, // tick
 ];
-const R_LED = 0.03, R_HALO = 0.11;
+const R_LED = 0.012; // a few pixels
 
 export function Machine() {
   const parts = useMemo(() => {
@@ -62,9 +62,7 @@ export function Machine() {
       const m = new THREE.MeshStandardMaterial({ color: l.color, emissive: l.color, emissiveIntensity: 1, roughness: 0.3, toneMapped: false });
       const o = mesh(sph, m);
       const bezel = mesh(cyl, black); // a short black collar round it
-      const hm = new THREE.MeshBasicMaterial({ color: l.color, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false });
-      const halo = mesh(sph, hm);
-      return { o, m, bezel, halo, hm, dir: new THREE.Vector3(...l.dir).normalize(), blink: l.blink, node: l.node };
+      return { o, m, bezel, dir: new THREE.Vector3(...l.dir).normalize(), blink: l.blink, node: l.node };
     });
     let seed = 8;
     const struts = EDGES.map((e, i) => {
@@ -143,13 +141,10 @@ export function Machine() {
       l.o.scale.setScalar(R_LED);
       l.bezel.position.copy(p).addScaledVector(l.dir, R_NODE * 0.9);
       l.bezel.quaternion.setFromUnitVectors(Y, l.dir);
-      l.bezel.scale.set(R_LED * 1.7, R_NODE * 0.2, R_LED * 1.7);
+      l.bezel.scale.set(R_LED * 2, R_NODE * 0.2, R_LED * 2);
       const b = l.blink(now);
-      l.m.emissiveIntensity = 0.2 + 2.2 * b;
-      l.m.color.set(l.m.emissive).multiplyScalar(0.3 + 0.7 * b);
-      l.halo.position.copy(p).addScaledVector(l.dir, R_NODE * 1.1);
-      l.halo.scale.setScalar(R_HALO * (0.6 + 0.4 * b));
-      l.hm.opacity = 0.28 * b;
+      l.m.emissiveIntensity = 0.1 + 3 * b;
+      l.m.color.set(l.m.emissive).multiplyScalar(0.2 + 0.8 * b);
     }
   });
 
