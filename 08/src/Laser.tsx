@@ -10,13 +10,13 @@ import { pose } from './state';
 // A laser into the tesseract. Wherever the pointer is, a pink beam comes in level across the screen, right to left,
 // through the point under it, and goes straight on through the machine. At every wall it
 // crosses it is displaced: a short jog sideways along that wall's 4D normal as it projects right now, and then on,
-// parallel to itself, at half the strength. Straight, stepped and dimmed at every wall, like light through a stack
+// parallel to itself, a tenth weaker. Straight, stepped and dimmed at every wall, like light through a stack
 // of glass; the steps turn with the machine because the normals do.
 
 export const laser = { on: false, x: 0, y: 0 }; // pointer, css px
 /** Where the beam met walls this frame, in 4D, nearest first, with the strength it had there. For the drone cam. */
 export const beamHits: { i: number; si: number; j: number; sj: number; p4: V4; k: number }[] = [];
-export const BEAM = { PINK: new THREE.Color('#ef5f9f'), CORE: new THREE.Color('#ffd6ea'), LOSS: 0.5 };
+export const BEAM = { PINK: new THREE.Color('#ef5f9f'), CORE: new THREE.Color('#ffd6ea'), LOSS: 0.9 };
 
 const PINK = BEAM.PINK;
 const CORE = BEAM.CORE; // the hot middle of the beam
@@ -29,7 +29,7 @@ const LAYERS = [
 ];
 const MAX_WALLS = 8;
 const STEP = 0.11; // the jog at a wall, 3D units
-const LOSS = 0.5; // the strength left after a wall
+const LOSS = BEAM.LOSS; // the strength left after a wall
 const TAIL = 0.7; // how far the beam runs past the last wall
 const FROM_RIGHT = 9; // the beam comes in level across the screen, from this far right of the point you hold
 
