@@ -1,7 +1,7 @@
 import { useMemo } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
-import { drone, target, toCell, toCellWith, faceQuad, pieceMesh, PIECE_R, SIZE_MAIN, SIZE_CELL } from './drone';
+import { drone, target, toCell, toCellWith, faceQuad, pieceMesh, PIECE_R, SIZE_MAIN, SIZE_CELL, LOCK_RANGE } from './drone';
 import { ringOut } from './device';
 import { SAND, GRAPHITE } from './decals';
 
@@ -16,7 +16,6 @@ const CAM = {
   w: () => Math.max(120, Math.min(Math.min(360, Math.max(220, innerWidth * 0.26)), innerWidth - 48, innerHeight - 150)),
   right: 24, bottom: 72,
 };
-const LOCK_RANGE = 1.1; // cell units from the piece within which the lock bracket shows, at the controls
 
 const R_STRUT = 0.075, R_NODE = 0.11;
 const CUBE = 512; // the cube map's face size
@@ -118,6 +117,7 @@ export function DroneCam() {
       cs, net, edges, struts, flash, piece, grabbed, eye, lens, flat, sand, graphite,
       q: new THREE.Quaternion(), look: new THREE.Vector3(0, 0, -1), last: [0, 0, 0], crossings: -1,
       pos: new THREE.Vector3(), lockEl: null as HTMLElement | null,
+      grabOf: null as number[] | null, grabLocal: new THREE.Vector3(), // the piece taken, and where it was from the eye then, in its frame
     };
   }, []);
 
@@ -178,13 +178,14 @@ export function DroneCam() {
       cell.piece.scale.setScalar(target.scale);
       cell.piece.rotation.y += 0.013; cell.piece.rotation.z = 0.5;
     }
-    // the one just taken, in the ring in front of the eye, riding in
+    // the one just taken, in the scoop in front of the eye, riding in
     cell.grabbed.visible = drone.taken > 0.02 && !!drone.grabMap;
     if (cell.grabbed.visible) {
       const fwd = tmp.at.set(0, 0, -1).applyQuaternion(drone.q);
       const ring = tmp.ring.copy(cell.pos).addScaledVector(fwd, ringOut(drone.grip, at) * SIZE_CELL);
-      const g3 = toCellWith(drone.grabMap!, drone.grab4);
-      cell.grabbed.position.set(g3[0], g3[1], g3[2]).lerp(ring, drone.grabK);
+      // it goes with the device from where it was when taken, and is drawn from there into the bowl
+      if (cell.grabOf !== drone.grab4) { cell.grabOf = drone.grab4; cell.grabLocal.fromArray(toCellWith(drone.grabMap!, drone.grab4)).sub(cell.pos).applyQuaternion(tmp.q.copy(drone.q).invert()); }
+      cell.grabbed.position.copy(cell.grabLocal).applyQuaternion(drone.q).add(cell.pos).lerp(ring, drone.grabK);
       cell.grabbed.scale.setScalar(drone.taken);
     }
 

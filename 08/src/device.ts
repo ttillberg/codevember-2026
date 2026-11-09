@@ -14,9 +14,9 @@ useGLTF.preload(DEVICE_URL);
 
 export type Device = {
   g: THREE.Group;
-  /** 0 home to 1 out: the ring on its arm in front of the eye, claws closing as it reaches; `at` is how far out the
-   * ring should be at full reach, in device radii from the centre. */
-  grip: (k: number, at: number) => void;
+  /** The scoop: `k` 0 home to 1 out on its arm in front of the eye, `at` how far out its bowl's centre is at full reach,
+   * in device radii from the centre; `shut` 0 open to 1 closed, the blade swung over the bowl's mouth. */
+  grip: (k: number, at: number, shut: number) => void;
   /** Clip every part of this copy to one side of these planes (needs the renderer's local clipping on). */
   clip: (planes: THREE.Plane[]) => void;
   /** Tint the whole copy with a glow of `hex`, `k` strong: 0 as made. */
@@ -143,18 +143,24 @@ const onSphere = (side: THREE.Vector3, latDeg: number, r: number) => {
   return new THREE.Vector3().addScaledVector(EYE, Math.cos(a)).addScaledVector(side, Math.sin(a)).multiplyScalar(r);
 };
 const Y = new THREE.Vector3(0, 1, 0);
-let works: { graphite: THREE.Material; steel: THREE.Material; barrel: THREE.BufferGeometry; rod: THREE.BufferGeometry; lug: THREE.BufferGeometry; hinge: THREE.BufferGeometry; pin: THREE.BufferGeometry } | null = null;
-function makeWorks() {
+const SCOOP_R = 0.27; // the bowl's radius, model units: the piece is 0.21 in them
+type Works = Record<'graphite' | 'steel' | 'cup', THREE.Material> & Record<'barrel' | 'rod' | 'lug' | 'hinge' | 'pin' | 'bowl' | 'blade' | 'scoopPin', THREE.BufferGeometry>;
+let works: Works | null = null;
+function makeWorks(): Works {
   const graphite = new THREE.MeshStandardMaterial({ color: '#1e1e22', roughness: 0.5, metalness: 0.2 });
   const steel = new THREE.MeshStandardMaterial({ color: '#c8c8cc', roughness: 0.3, metalness: 0.9 });
+  const cup = new THREE.MeshStandardMaterial({ color: '#d4d4d8', roughness: 0.22, metalness: 0.95, side: THREE.DoubleSide }); // seen inside and out
+  // a half shell, its dome towards the device (+z), its mouth ahead (-z)
+  const shell = (r: number) => new THREE.SphereGeometry(r, 32, 12, 0, Math.PI * 2, 0, Math.PI / 2).rotateX(Math.PI / 2);
   const along = (r: number) => new THREE.CylinderGeometry(r, r, 1, 20).translate(0, 0.5, 0); // from the origin up its y, unit long
   return {
-    graphite, steel,
+    graphite, steel, cup,
+    bowl: shell(SCOOP_R), blade: shell(SCOOP_R * 0.96), scoopPin: new THREE.CylinderGeometry(0.035, 0.035, 0.07, 12),
     barrel: along(0.045), rod: along(0.02), lug: new THREE.SphereGeometry(0.048, 16, 12),
     hinge: new THREE.CylinderGeometry(0.042, 0.042, 0.3, 16), pin: new THREE.CylinderGeometry(0.018, 0.018, 0.42, 12),
   };
 }
-/** How far out from the centre the grip's ring is, in model units, at extension `k` reaching for a piece `at` away. */
+/** How far out from the centre the scoop's bowl is, in model units, at extension `k` reaching for a piece `at` away. */
 export const ringOut = (k: number, at: number) => 1.28 + (Math.max(0.95, Math.min(3.2, at)) - 1.28) * k;
 
 /** The matrix of `o` relative to its ancestor `anc`, from local matrices (kept current by the caller). */
@@ -201,35 +207,36 @@ export function device(model: THREE.Object3D, size: number): Device {
     w.o.rotation.x = w.rest; w.o.updateMatrix();
     return { w, coreAt, local, barrel, rod, d: new THREE.Vector3(), at: new THREE.Vector3() };
   });
-  // the grip: a ring on a short arm out of the eye cap, three claws round it that close as it reaches. Home it sits
-  // in the cap; out it is a device's radius ahead, quick, to take the piece.
+  // the grip is a scoop, as for ice cream: a steel bowl on an arm out of the eye cap, its mouth to the piece, and in
+  // it a blade, a second shell nested in the bowl, that swings over the mouth on two pins at the rim and shuts the
+  // piece in. Home it is folded into the cap; out, the bowl's centre lands on the piece.
   const gripParts = (() => {
     const grp = new THREE.Group();
     frame.add(grp);
     const arm = new THREE.Mesh(W.barrel, W.graphite); grp.add(arm);
-    arm.position.set(0, 0, -0.7); arm.quaternion.setFromUnitVectors(Y, EYE); // from the cap towards the ring
-    const ring = new THREE.Group(); grp.add(ring);
-    ring.add(new THREE.Mesh(new THREE.TorusGeometry(0.2, 0.025, 10, 32), W.steel));
-    const claws = [0, 1, 2].map((i) => {
-      const pivot = new THREE.Group();
-      pivot.rotation.z = (i * Math.PI * 2) / 3;
-      const claw = new THREE.Mesh(new THREE.CylinderGeometry(0.016, 0.01, 0.18, 8), W.graphite);
-      claw.rotation.x = Math.PI / 2; // along -z from the ring, hinged there
-      const hinge = new THREE.Group(); hinge.position.set(0.2, 0, 0); hinge.add(claw); claw.position.set(0, 0, -0.09);
-      pivot.add(hinge); ring.add(pivot);
-      return hinge;
-    });
-    return { grp, arm, ring, claws };
+    arm.position.set(0, 0, -0.7); arm.quaternion.setFromUnitVectors(Y, EYE); // from the cap towards the bowl
+    const head = new THREE.Group(); grp.add(head); // at the bowl's centre
+    const bowl = new THREE.Mesh(W.bowl, W.cup); head.add(bowl);
+    const swing = new THREE.Group(); head.add(swing); // turns about the pins, across the bowl
+    swing.add(new THREE.Mesh(W.blade, W.cup));
+    for (const x of [-1, 1]) {
+      const pin = new THREE.Mesh(W.scoopPin, W.graphite);
+      pin.position.set(x * SCOOP_R, 0, 0); pin.rotation.z = Math.PI / 2;
+      head.add(pin);
+    }
+    return { grp, arm, head, swing };
   })();
-  const grip = (k: number, at: number) => {
-    const { grp, arm, ring, claws } = gripParts;
+  const grip = (k: number, at: number, shut: number) => {
+    const { grp, arm, head, swing } = gripParts;
     grp.visible = k > 0.01;
-    const reach = ringOut(k, at) - 0.78; // the ring's z out from the eye cap at 0.78
-    arm.scale.set(0.8, reach + 0.08, 0.8); // from the cap to the ring
-    ring.position.set(0, 0, -(0.78 + reach));
-    for (const h of claws) h.rotation.y = -0.35 - 1.0 * k; // tilt in towards the axis as it closes
+    // it unfolds out of the cap over the first stretch, so it never pops in or out
+    grp.scale.setScalar(THREE.MathUtils.smoothstep(k, 0, 0.2));
+    const centre = ringOut(k, at); // the bowl's centre, out from the device's
+    arm.scale.set(0.8, centre - SCOOP_R - 0.7 + 0.04, 0.8); // from the cap to the back of the bowl
+    head.position.set(0, 0, -centre);
+    swing.rotation.x = Math.PI * shut; // nested in the bowl, then over its mouth
   };
-  grip(0, 1); // home: the reach does not matter
+  grip(0, 1, 0); // home: the reach does not matter
   const stroke = () => {
     for (const a of acts) {
       a.w.o.updateMatrix();

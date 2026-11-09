@@ -48,6 +48,8 @@ export const drone = {
 export const PIECE_R = 0.02;
 /** The device's radius in the main picture, and in cell space. */
 export const SIZE_MAIN = 0.095, SIZE_CELL = 0.17;
+/** At the controls, the piece is in the lock when it is in this cell, this close (cell units) and ahead of the eye. */
+export const LOCK_RANGE = 1.1;
 // the lamps' colour is the colour of the cell the piece is in; one material in the fog, one out of it for the eye
 const lampMats = [true, false].map((fog) => new THREE.MeshStandardMaterial({ color: '#ff6a3a', emissive: '#ff6a3a', emissiveIntensity: 0, toneMapped: false, fog }));
 export function lampColor(hex: string) { for (const m of lampMats) { m.color.set(hex); m.emissive.set(hex); } }

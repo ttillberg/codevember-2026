@@ -4,7 +4,7 @@ import { useGLTF } from '@react-three/drei';
 import * as THREE from 'three';
 import { project, type V4 } from './tesseract';
 import { pose, turnGlide, st } from './state';
-import { drone, target, startCell, crossInto, faceQuad, pieceMesh, blink, toCell, fromCell, dirFromCellWith, otherMap, mapAcross, relayTarget, faceCorners, wallOf, cellId, cellIdOf, lampColor, CELL_HEX, RIPPLE, SIZE_MAIN, SIZE_CELL, type CellMap } from './drone';
+import { drone, target, startCell, LOCK_RANGE, crossInto, faceQuad, pieceMesh, blink, toCell, fromCell, dirFromCellWith, otherMap, mapAcross, relayTarget, faceCorners, wallOf, cellId, cellIdOf, lampColor, CELL_HEX, RIPPLE, SIZE_MAIN, SIZE_CELL, type CellMap } from './drone';
 import { device, ringOut, DEVICE_URL, type Device } from './device';
 import { makeSmoke } from './smoke';
 import { makeLaser } from './laser';
@@ -20,20 +20,21 @@ const SPEED = 0.5; // 4D units per second, cruising
 const ROOM = 0.62; // how far from a cell's walls a waypoint stays, so the drone keeps clear of the struts
 const FIELD = 0.14; // half-width, in path fraction, of the slow zone round the face
 const DIP = 0.3; // how much of the speed the field takes: a lean through it, not a stop
-// the catch, in phases: still in front of the piece; the grip takes it; the machine glides a quarter turn while the
-// next piece emerges; still again; and off
-const SETTLE = 0.6, CATCH = 0.35, GLIDE = 2.0, REST = 0.5;
+// the catch, in phases: still in front of the piece, a beat with the scoop home, then the scoop out on it; the piece
+// drawn into the bowl and the blade swung shut over it; the machine glides a quarter turn while the next piece
+// emerges; still again; and off
+const PAUSE = 0.4, SETTLE = PAUSE + 0.35, CATCH = 0.6, GLIDE = 2.0, REST = 0.5;
 const TINT_IN = 14; // how fast the glow on the half inside a new cell comes and goes, per second
 // in-then-out: seconds the body stays in after it is all in before the next cell's copy starts up out of the wall,
 // and seconds that copy takes to come out; how deep in the wall it starts, in radii; and seconds the hand-over may
 // linger past the wall state
 const INOUT_GAP = 0.3, INOUT_RISE = 0.7, INOUT_SET = 3, LINGER = 3;
 const GLOW = 0.9; // the strength of the cell-colour tint on a half in a wall: 0.9 of the tint's own 0.55 is about half
-// at the controls the device docks on its own: the piece this close (in device radii, in cell space), the device this
-// slow (cell units a second) and the piece this well ahead (cosine), and the catch takes over
-const DOCK_AT = 2.6, DOCK_V = 0.35, DOCK_AHEAD = 0.6;
+// at the controls the device docks on its own once the piece has been in the lock this long (seconds): it turns its
+// eye on it and closes to a scoop's reach (device radii, in cell space), and the catch takes over
+const LOCK_HOLD = 0.5, STAND = 2.0;
 const REACH3 = 1.9; // where the piece should sit when the device stops, in device radii, on screen
-type Phase = 'seek' | 'settle' | 'catch' | 'turn' | 'rest';
+type Phase = 'seek' | 'dock' | 'settle' | 'catch' | 'turn' | 'rest';
 // at the controls: cell-space units per second squared and per second, radians per second
 const THRUST = 1.6, DRAG = 1.1, VMAX = 1.1;
 
@@ -110,7 +111,8 @@ export function Drones() {
       q2, planeA, planeB, cLast: [0, 0, 0], look: new THREE.Vector3(0, 0, -1), camUp: new THREE.Vector3(0, 1, 0),
       wall: null as Wall | null, // the wall the flight has it at, if any
       plan: [] as Step[], phase: 'seek' as Phase, t: 0, // the steps to the piece; the catch's phase and its clock
-      grip: 0,
+      grip: 0, shut: 0, lockT: 0, // the scoop out, and shut; seconds the piece has been in the lock
+      grabOf: null as V4 | null, grabLocal: new THREE.Vector3(), // the piece taken, and where it was from the device then, in its frame
       shield: 0, blink: Infinity, nextBlink: 3 + Math.random() * 5, // seconds into the blink; seconds to a blink of its own
       wasPilot: false,
     };
@@ -232,7 +234,7 @@ export function Drones() {
     drone.turn[0] = drone.turn[1] = 0; drone.keys.thrust = drone.keys.strafe = 0;
     // the flight lays a fresh plan from here when it next needs one; a catch that was about to begin begins over
     s.plan = [];
-    if (s.phase === 'settle') s.phase = 'seek';
+    if (s.phase === 'settle' || s.phase === 'dock') s.phase = 'seek';
   }
   /** Through the wall where 4D axis `axis` is `sign`, crossed at `p4`: the face's axis is held now, the old one free;
    * the wall ripples from the crossing in the new cell's colour, the shutter blinks, and the hand-over goes on in the
@@ -287,14 +289,17 @@ export function Drones() {
     const sp = Math.hypot(cv[0], cv[1], cv[2]);
     if (sp > VMAX) for (let i = 0; i < 3; i++) cv[i] *= VMAX / sp;
     for (let i = 0; i < 3; i++) c[i] += cv[i] * (1 - field) * dt;
-    // close to the piece, slow and facing it: dock, and the catch takes over from here
-    if (target.up && target.map && target.map.held === drone.held && target.map.sign === drone.sign && sp < DOCK_V) {
+    // the piece in the lock (in this cell, close, ahead of the eye) for a moment: the device docks on its own
+    let locked = false;
+    if (target.up && target.map && target.map.held === drone.held && target.map.sign === drone.sign) {
       const t3 = toCell(target.p), dx = t3[0] - c[0], dy = t3[1] - c[1], dz = t3[2] - c[2], dist = Math.hypot(dx, dy, dz);
-      if (dist < DOCK_AT * SIZE_CELL && dist > 1e-6 && (fwd.x * dx + fwd.y * dy + fwd.z * dz) / dist > DOCK_AHEAD) {
-        s.phase = 'settle'; s.t = 0;
-        cv[0] = cv[1] = cv[2] = 0; k.thrust = 0; drone.turn[0] = drone.turn[1] = 0;
-        s.look.copy(fwd); s.cLast = c.slice();
-      }
+      locked = dist < LOCK_RANGE && dist > 1e-6 && fwd.x * dx + fwd.y * dy + fwd.z * dz > 0;
+    }
+    s.lockT = locked ? s.lockT + dt : 0;
+    if (s.lockT > LOCK_HOLD) {
+      s.phase = 'dock'; s.t = 0; s.lockT = 0;
+      cv[0] = cv[1] = cv[2] = 0; k.thrust = 0; drone.turn[0] = drone.turn[1] = 0;
+      s.look.copy(fwd); s.cLast = c.slice();
     }
     // the clip is at the nearest wall, the one being straddled
     s.wall = dmin < 0.5 ? wallOf(kw, tw) : null;
@@ -306,6 +311,23 @@ export function Drones() {
     }
     moveTo(s, fromCell(c));
     return field;
+  }
+
+  /** Docking, at the controls: the eye turns on the piece and the device closes to a scoop's reach of it, eased;
+   * square on and there, the catch takes over. */
+  function dock(s: S, dt: number) {
+    drone.turn[0] = drone.turn[1] = 0; drone.cvel = [0, 0, 0];
+    s.wall = null;
+    if (!target.up) return;
+    const c = toCell(s.p), t3 = toCell(target.p);
+    const to = tmp.a.set(t3[0] - c[0], t3[1] - c[1], t3[2] - c[2]), dist = to.length();
+    if (dist < 1e-6) return;
+    to.divideScalar(dist);
+    const gap = dist - STAND * SIZE_CELL, step = gap * Math.min(1, dt * 2.5);
+    for (let i = 0; i < 3; i++) c[i] += to.getComponent(i) * step;
+    moveTo(s, fromCell(c));
+    const square = tmp.fwd.set(0, 0, -1).applyQuaternion(drone.q).dot(to) > Math.cos(degToRad(4));
+    if ((Math.abs(gap) < 0.01 && square) || s.t > 4) { s.phase = 'settle'; s.t = 0; }
   }
 
   useFrame(({ size, viewport, camera }, dt) => {
@@ -332,7 +354,9 @@ export function Drones() {
       else if (s.phase === 'turn' && s.t > GLIDE) { s.phase = 'rest'; s.t = 0; }
       else if (s.phase === 'rest' && s.t > REST) { s.phase = 'seek'; }
     }
-    if (s.phase !== 'seek' && drone.pilot) {
+    if (s.phase === 'dock' && drone.pilot) {
+      dock(s, dt);
+    } else if (s.phase !== 'seek' && drone.pilot) {
       // docked: still, eye on the piece
       drone.turn[0] = drone.turn[1] = 0; drone.cvel = [0, 0, 0];
       s.wall = null;
@@ -378,14 +402,17 @@ export function Drones() {
     const BLINK = 0.55;
     const shut = s.blink < BLINK ? Math.sin((s.blink / BLINK) * Math.PI) : 0;
     if (s.blink >= BLINK) s.blink = Infinity;
-    // the grip: out fast once the device has come to a stop in front of the piece (at the controls, when it is within
-    // reach), as far as the piece is; home again once it is taken, the piece riding in the ring
+    // the scoop: out fast once the device has come to a stop in front of the piece (on its own, as it closes in), as
+    // far as the piece is; it shuts once the piece is in the bowl, and goes home shut, the piece riding in it
     const near = target.up && len4(sub4(target.p, s.p)) < 0.3;
-    const want = (s.phase === 'settle' && s.t > 0.25) || s.phase === 'catch' || (s.phase === 'seek' && near); // out as it closes in, through the take, then home
+    const onPiece = near || (drone.pilot && s.phase !== 'seek' && target.up); // at the controls, docking or docked
+    const want = (s.phase === 'settle' && s.t > PAUSE) || s.phase === 'catch' || (s.phase === 'seek' && near); // out as it closes in, through the take, then home
     s.grip += ((want ? 1 : 0) - s.grip) * Math.min(1, dt * (want ? 16 : 5));
-    if (near) drone.gripAt = project(m, target.p, tmp.a).distanceTo(project(m, s.p, tmp.b)) / SIZE_MAIN;
+    const wantShut = s.phase === 'catch' ? s.t > CATCH * 0.6 : drone.taken > 0.02;
+    s.shut += ((wantShut ? 1 : 0) - s.shut) * Math.min(1, dt * (wantShut ? 12 : 6));
+    if (onPiece) drone.gripAt = project(m, target.p, tmp.a).distanceTo(project(m, s.p, tmp.b)) / SIZE_MAIN;
     drone.shield = s.shield; drone.shutter = shut; drone.grip = s.grip;
-    const drive = (dev: Device) => { dev.shield(s.shield); dev.shutter(shut); dev.grip(s.grip, drone.gripAt); };
+    const drive = (dev: Device) => { dev.shield(s.shield); dev.shutter(shut); dev.grip(s.grip, drone.gripAt, s.shut); };
     drive(s.q);
 
     // draw: where it is in 3D. Its orientation lives in cell space, drone.q: at the controls the pilot's, on its own
@@ -417,8 +444,8 @@ export function Drones() {
       const c = toCell(s.p);
       const cv = tmp.a.set(c[0] - s.cLast[0], c[1] - s.cLast[1], c[2] - s.cLast[2]);
       s.cLast = c;
-      // the way it is going; near the piece, the piece itself, so the grip goes out at it
-      if (near) {
+      // the way it is going; near the piece, the piece itself, so the scoop goes out at it
+      if (onPiece) {
         const t3 = toCell(target.p);
         const at = tmp.b.set(t3[0] - c[0], t3[1] - c[1], t3[2] - c[2]);
         if (at.lengthSq() > 1e-8) s.look.lerp(at.normalize(), Math.min(1, dt * 10)).normalize();
@@ -536,11 +563,14 @@ export function Drones() {
       s.piece.rotation.y += dt * 0.8; s.piece.rotation.z = 0.5;
     }
     if (drone.taken > 0) {
-      drone.grabK = s.phase === 'catch' ? smoothstep(s.t, 0, CATCH) : 1;
+      drone.grabK = s.phase === 'catch' ? smoothstep(s.t, 0, CATCH * 0.6) : 1; // into the bowl, then the blade shuts
       if (s.grip < 0.2 && drone.grabK >= 1) drone.taken = Math.max(0, drone.taken - dt * 6);
       const fwd3 = tmp.a.set(0, 0, -1).applyQuaternion(s.heading);
       const ring = tmp.b.copy(v).addScaledVector(fwd3, ringOut(s.grip, drone.gripAt) * SIZE_MAIN);
-      project(m, drone.grab4, s.grabbed.position).lerp(ring, drone.grabK);
+      // taken, the piece goes with the device from where it was then, and is drawn from there into the bowl: on its
+      // own the device flies on, and a piece left in 4D would fall behind and come in through the back of the bowl
+      if (s.grabOf !== drone.grab4) { s.grabOf = drone.grab4; project(m, drone.grab4, s.grabLocal).sub(v).applyQuaternion(tmp.qa.copy(s.heading).invert()); }
+      s.grabbed.position.copy(s.grabLocal).applyQuaternion(s.heading).add(v).lerp(ring, drone.grabK);
       s.grabbed.scale.setScalar(drone.taken);
     }
     s.grabbed.visible = drone.taken > 0.02;
