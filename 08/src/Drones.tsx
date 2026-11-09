@@ -5,7 +5,7 @@ import * as THREE from 'three';
 import { project, type V4 } from './tesseract';
 import { pose, turnGlide } from './state';
 import { drone, target, startCell, crossInto, faceQuad, pieceMesh, blink, toCell, fromCell, dirFromCellWith, otherMap, mapAcross, wallCorners, type CellMap } from './drone';
-import { device, DEVICE_URL } from './device';
+import { device, ringOut, DEVICE_URL } from './device';
 
 // A device that lives in the tesseract: a ball with one eye, fins that are walls, a shutter. It is inside one of the eight cells, a cube with one coordinate held at
 // ±1 and the other three free, and it can only leave through a square face into the neighbouring cell. The passage is
@@ -82,9 +82,12 @@ export function Drones() {
     const piece = pieceMesh();
     piece.visible = false;
     group.add(piece);
+    const grabbed = pieceMesh(); // the one just taken, in the ring on its way in
+    grabbed.visible = false;
+    group.add(grabbed);
     const held = Math.floor(Math.random() * 4), sign = Math.random() < 0.5 ? -1 : 1;
     const s = {
-      group, q, line, flash, piece,
+      group, q, line, flash, piece, grabbed,
       held, sign, came: null as [number, number] | null,
       p: [0, 0, 0, 0] as V4, dir: [0, 0, 0, 0] as V4, // where it is, which way it is going, in 4D
       leg: null as Leg | null, s: 0,
@@ -230,7 +233,7 @@ export function Drones() {
     } else if (s.phase !== 'seek') {
       // the catch: the device holds still through it, eye on the piece, then on the room
       s.t += dt;
-      if (s.phase === 'settle' && s.t > SETTLE) { s.phase = 'catch'; s.t = 0; target.up = false; s.blink = 0; }
+      if (s.phase === 'settle' && s.t > SETTLE) { s.phase = 'catch'; s.t = 0; target.up = false; target.scale = 0; drone.taken = 1; s.blink = 0; }
       else if (s.phase === 'catch' && s.t > CATCH) { s.phase = 'turn'; s.t = 0; turnGlide(GLIDE); newTarget(s); }
       else if (s.phase === 'turn' && s.t > GLIDE) { s.phase = 'rest'; s.t = 0; }
       else if (s.phase === 'rest' && s.t > REST) { s.phase = 'seek'; }
@@ -288,9 +291,11 @@ export function Drones() {
     const BLINK = 0.55;
     const shut = s.blink < BLINK ? Math.sin((s.blink / BLINK) * Math.PI) : 0;
     if (s.blink >= BLINK) s.blink = Infinity;
-    // the grip: out fast when the piece is within reach, as far as the piece is, home again once it is taken
+    // the grip: out fast once the device has come to a stop in front of the piece (at the controls, when it is within
+    // reach), as far as the piece is; home again once it is taken, the piece riding in the ring
     const near = target.up && len4(sub4(target.p, s.p)) < 0.3;
-    s.grip += ((near ? 1 : 0) - s.grip) * Math.min(1, dt * (near ? 16 : 5));
+    const want = drone.pilot ? near : (s.phase === 'settle' && s.t > 0.25) || s.phase === 'catch';
+    s.grip += ((want ? 1 : 0) - s.grip) * Math.min(1, dt * (want ? 16 : 5));
     if (near) drone.gripAt = project(m, target.p, new THREE.Vector3()).distanceTo(project(m, s.p, new THREE.Vector3())) / SIZE_MAIN;
     drone.shield = s.shield; drone.shutter = shut; drone.grip = s.grip;
     s.q.shield(s.shield); s.q.shutter(shut); s.q.grip(s.grip, drone.gripAt);
@@ -354,14 +359,22 @@ export function Drones() {
       s.planeA.set(tmp.up, 1e4); s.planeB.set(tmp.up, 1e4);
     }
 
-    // the piece: emerging, there, or going; it turns slowly, and shrinks into the device as it is taken
-    target.scale += ((target.up ? 1 : 0) - target.scale) * Math.min(1, dt * (target.up ? 4 : 10));
-    s.piece.visible = target.scale > 0.02;
+    // the piece: emerging or there, turning slowly; taken, it is the held one: in the ring, riding in with the grip,
+    // swallowed as the ring reaches the cap
+    target.scale += ((target.up ? 1 : 0) - target.scale) * Math.min(1, dt * 4);
+    s.piece.visible = target.up && target.scale > 0.02;
     if (s.piece.visible) {
-      project(m, target.up ? target.p : mix4(target.p, s.p, 1 - target.scale), s.piece.position);
+      project(m, target.p, s.piece.position);
       s.piece.scale.setScalar(target.scale);
       s.piece.rotation.y += dt * 0.8; s.piece.rotation.z = 0.5;
     }
+    if (drone.taken > 0) {
+      if (s.grip < 0.2) drone.taken = Math.max(0, drone.taken - dt * 6);
+      const fwd3 = new THREE.Vector3(0, 0, -1).applyQuaternion(s.heading);
+      s.grabbed.position.copy(v).addScaledVector(fwd3, ringOut(s.grip, drone.gripAt) * SIZE_MAIN);
+      s.grabbed.scale.setScalar(drone.taken);
+    }
+    s.grabbed.visible = drone.taken > 0.02;
     blink(now);
 
     drone.flash.corners.forEach((c4, i) => { project(m, c4, v); s.flash.set(i, v); });

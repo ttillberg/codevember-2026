@@ -31,6 +31,8 @@ export const drone = {
    * device radii, to be on the piece. */
   grip: 0,
   gripAt: 1.83,
+  /** The piece just taken, riding in the ring on the way in: how big it still is, 0 once swallowed. */
+  taken: 0,
   /** The face being passed: its four corners in 4D and how hard it is lit, 0 to 1. */
   flash: { corners: [[0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]] as V4[], a: 0 },
 };

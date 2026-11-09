@@ -154,6 +154,9 @@ function makeWorks() {
     hinge: new THREE.CylinderGeometry(0.042, 0.042, 0.3, 16), pin: new THREE.CylinderGeometry(0.018, 0.018, 0.42, 12),
   };
 }
+/** How far out from the centre the grip's ring is, in model units, at extension `k` reaching for a piece `at` away. */
+export const ringOut = (k: number, at = 1.83) => 1.28 + (Math.max(1.3, Math.min(2.6, at)) - 1.28) * k;
+
 /** The matrix of `o` relative to its ancestor `anc`, from local matrices (kept current by the caller). */
 function relTo(o: THREE.Object3D, anc: THREE.Object3D) {
   const m = new THREE.Matrix4();
@@ -218,7 +221,7 @@ export function device(model: THREE.Object3D, size: number, own = false): Device
   const grip = (k: number, at = 1.83) => {
     const { grp, arm, ring, claws } = gripParts;
     grp.visible = k > 0.01;
-    const reach = 0.5 + (Math.max(1.3, Math.min(2.6, at)) - 0.78 - 0.5) * k; // the ring's z out from the eye cap at 0.78
+    const reach = ringOut(k, at) - 0.78; // the ring's z out from the eye cap at 0.78
     arm.position.set(0, 0, -0.7); arm.quaternion.setFromUnitVectors(Y, new THREE.Vector3(0, 0, -1)); arm.scale.set(0.8, reach + 0.08, 0.8); // from the cap to the ring
     ring.position.set(0, 0, -(0.78 + reach));
     for (const h of claws) h.rotation.y = -0.35 - 1.0 * k; // tilt in towards the axis as it closes
