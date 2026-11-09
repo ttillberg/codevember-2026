@@ -23,7 +23,10 @@ const DIP = 0.3; // how much of the speed the field takes: a lean through it, no
 // the catch, in phases: still in front of the piece; the grip takes it; the machine glides a quarter turn while the
 // next piece emerges; still again; and off
 const SETTLE = 0.6, CATCH = 0.35, GLIDE = 2.0, REST = 0.5;
-const TINT = 0.7; // seconds the entered half glows in the cell's colour after a crossing
+const TINT_IN = 14; // how fast the glow on the half inside a new cell comes and goes, per second
+// at the controls the device docks on its own: the piece this close (in device radii, in cell space), the device this
+// slow (cell units a second) and the piece this well ahead (cosine), and the catch takes over
+const DOCK_AT = 2.6, DOCK_V = 0.35, DOCK_AHEAD = 0.6, SIZE_CELL = 0.17;
 const REACH3 = 1.9; // where the piece should sit when the device stops, in device radii, on screen
 type Phase = 'seek' | 'settle' | 'catch' | 'turn' | 'rest';
 // at the controls: cell-space units per second squared and per second, radians per second
@@ -87,7 +90,7 @@ export function Drones() {
     group.add(grabbed);
     const held = Math.floor(Math.random() * 4), sign = Math.random() < 0.5 ? -1 : 1;
     const s = {
-      group, q, smoke, laser, puffAt: new THREE.Vector3(1e9, 0, 0), puffGap: 0.04, trailAt: new THREE.Vector3(1e9, 0, 0), flash, clipCorners: null as V4[] | null, fadeA: 1, fadeB: 1, tintA: 0, tintB: 0, tintHex: '', piece, grabbed,
+      group, q, smoke, laser, puffAt: new THREE.Vector3(1e9, 0, 0), puffGap: 0.04, trailAt: new THREE.Vector3(1e9, 0, 0), flash, clipCorners: null as V4[] | null, fadeA: 1, fadeB: 1, tintA: 0, tintB: 0, tintHex: '', tintHexA: '', piece, grabbed,
       held, sign, came: null as [number, number] | null,
       p: [0, 0, 0, 0] as V4, dir: [0, 0, 0, 0] as V4, // where it is, which way it is going, in 4D
       leg: null as Leg | null, s: 0,
@@ -246,6 +249,15 @@ export function Drones() {
     const sp = Math.hypot(cv[0], cv[1], cv[2]);
     if (sp > VMAX) for (let i = 0; i < 3; i++) cv[i] *= VMAX / sp;
     for (let i = 0; i < 3; i++) c[i] += cv[i] * (1 - field) * dt;
+    // close to the piece, slow and facing it: dock, and the catch takes over from here
+    if (target.up && target.map && target.map.held === drone.held && target.map.sign === drone.sign && sp < DOCK_V) {
+      const t3 = toCell(target.p), dx = t3[0] - c[0], dy = t3[1] - c[1], dz = t3[2] - c[2], dist = Math.hypot(dx, dy, dz);
+      if (dist < DOCK_AT * SIZE_CELL && dist > 1e-6 && (fwd.x * dx + fwd.y * dy + fwd.z * dz) / dist > DOCK_AHEAD) {
+        s.phase = 'settle'; s.t = 0;
+        cv[0] = cv[1] = cv[2] = 0; k.thrust = 0; drone.turn[0] = drone.turn[1] = 0;
+        s.look.copy(fwd); s.cLast = c.slice();
+      }
+    }
     // the clip is at the nearest wall, the one being straddled
     s.wall = dmin < 0.5 ? { axis: drone.axisOf[kw], sign: tw * drone.A[kw][drone.axisOf[kw]] } : null;
     s.clipCorners = s.wall ? wallCorners(kw, tw) : null;
@@ -275,11 +287,10 @@ export function Drones() {
 
     if (drone.pilot !== s.wasPilot) { s.wasPilot = drone.pilot; if (drone.pilot) takeOver(s); else letGo(s); }
     let field = 0, leg: Leg | null = null;
-    if (drone.pilot) {
-      field = pilot(s, dt);
-    } else if (s.phase !== 'seek') {
-      // the catch: the device holds still through it, eye on the piece, then on the room
+    if (s.phase !== 'seek') {
+      // the catch, in either mode: the device holds still through it, eye on the piece, then on the room
       s.t += dt;
+      drone.turn[0] = drone.turn[1] = 0; drone.cvel = [0, 0, 0];
       if (s.phase === 'settle' && s.t > SETTLE) {
         // the catch: the piece is drawn from where it is into the ring over the phase, then rides in with the grip
         s.phase = 'catch'; s.t = 0; s.blink = 0;
@@ -290,6 +301,8 @@ export function Drones() {
       else if (s.phase === 'turn' && s.t > GLIDE) { s.phase = 'rest'; s.t = 0; }
       else if (s.phase === 'rest' && s.t > REST) { s.phase = 'seek'; }
       s.wall = null; s.clipCorners = null;
+    } else if (drone.pilot) {
+      field = pilot(s, dt);
     } else {
       // move, in 4D, along the leg; the field round a face slows it
       if (!s.leg) {
@@ -344,7 +357,7 @@ export function Drones() {
     // the grip: out fast once the device has come to a stop in front of the piece (at the controls, when it is within
     // reach), as far as the piece is; home again once it is taken, the piece riding in the ring
     const near = target.up && len4(sub4(target.p, s.p)) < 0.3;
-    const want = drone.pilot ? near : (s.phase === 'settle' && s.t > 0.25) || s.phase === 'catch';
+    const want = (s.phase === 'settle' && s.t > 0.25) || s.phase === 'catch' || (drone.pilot && s.phase === 'seek' && near);
     s.grip += ((want ? 1 : 0) - s.grip) * Math.min(1, dt * (want ? 16 : 5));
     if (near) drone.gripAt = project(m, target.p, new THREE.Vector3()).distanceTo(project(m, s.p, new THREE.Vector3())) / SIZE_MAIN;
     drone.shield = s.shield; drone.shutter = shut; drone.grip = s.grip;
@@ -376,7 +389,7 @@ export function Drones() {
     s.laser.update(m, now, size.width * viewport.dpr, size.height * viewport.dpr);
     const fovH = (camera as THREE.PerspectiveCamera).fov * Math.PI / 180;
     s.smoke.update(m, now, (size.height * viewport.dpr) / (2 * Math.tan(fovH / 2)));
-    if (!drone.pilot) {
+    if (!drone.pilot || s.phase !== 'seek') {
       const c = toCell(s.p);
       const cv = new THREE.Vector3(c[0] - s.cLast[0], c[1] - s.cLast[1], c[2] - s.cLast[2]);
       s.cLast = c;
@@ -439,13 +452,17 @@ export function Drones() {
     }
     if (Math.abs(fadeA - s.fadeA) > 0.004) { s.q.fade(fadeA); s.fadeA = fadeA; }
     if (Math.abs(fadeB - s.fadeB) > 0.004) { s.q2.fade(fadeB); s.fadeB = fadeB; }
-    // the half that has entered a cell glows in that cell's colour: the other copy as it pushes through the wall,
-    // then this one once the device is across, fading over the ripple
-    let tintA = 0, tintB = 0, hexB = drone.flash.color;
-    if (drone.flash.t >= 0) tintA = Math.max(0, 1 - drone.flash.t / TINT);
-    else if (s.wall) { const other = otherMap(s.wall.axis, s.wall.sign); hexB = CELL_HEX[other.held * 2 + (other.sign > 0 ? 1 : 0)]; tintB = 1; }
-    if (Math.abs(tintA - s.tintA) > 0.004) { s.q.tint(drone.flash.color, tintA); s.tintA = tintA; }
-    if (Math.abs(tintB - s.tintB) > 0.004 || (tintB && s.tintHex !== hexB)) { s.q2.tint(hexB, tintB); s.tintB = tintB; s.tintHex = hexB; }
+    // while the body is sliced by a wall, the half inside the cell being entered glows in that cell's colour: the
+    // other copy as it pushes through, then this one once the centre is across; whole again, the glow goes
+    let wantA = 0, wantB = 0, hexB = drone.flash.color;
+    if (s.wall) {
+      if (drone.flash.t >= 0) wantA = 1;
+      else { const other = otherMap(s.wall.axis, s.wall.sign); hexB = CELL_HEX[other.held * 2 + (other.sign > 0 ? 1 : 0)]; wantB = 1; }
+    }
+    const tintA = s.tintA + (wantA - s.tintA) * Math.min(1, dt * TINT_IN), tintB = s.tintB + (wantB - s.tintB) * Math.min(1, dt * TINT_IN);
+    if (Math.abs(tintA - s.tintA) > 0.002 || (wantA && s.tintHexA !== drone.flash.color)) { s.q.tint(drone.flash.color, tintA); s.tintHexA = drone.flash.color; }
+    if (Math.abs(tintB - s.tintB) > 0.002 || (wantB && s.tintHex !== hexB)) { s.q2.tint(hexB, tintB); s.tintHex = hexB; }
+    s.tintA = tintA; s.tintB = tintB;
 
     // the piece: emerging or there, turning slowly; taken, it is the held one: in the ring, riding in with the grip,
     // swallowed as the ring reaches the cap
