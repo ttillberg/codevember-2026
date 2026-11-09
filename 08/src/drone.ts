@@ -100,6 +100,11 @@ function crossRow(c: CellMap, k: number, t: number) {
   c.held = f; c.sign = t;
 }
 
+/** The cells, numbered by held axis and side: 0..7, and a colour and a name for each, for the trail and the readout. */
+export const cellId = () => drone.held * 2 + (drone.sign > 0 ? 1 : 0);
+export const CELL_HEX = ['#ff3b30', '#ff9500', '#ffd60a', '#34c759', '#00c7be', '#007aff', '#af52de', '#ff2d87'];
+export const cellName = () => `${drone.sign > 0 ? '+' : '\u2212'}${'xyzw'[drone.held]}`;
+
 /** Cross the face on axis `f` at side `t`: the new cell holds f, and frees the axis that was held. */
 export function crossInto(f: number, t: number) {
   crossRow(drone, drone.axisOf.indexOf(f), t);

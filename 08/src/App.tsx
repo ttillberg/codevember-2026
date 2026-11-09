@@ -6,7 +6,7 @@ import { ContactShadows, Environment, Lightformer } from '@react-three/drei';
 import { Machine } from './Machine';
 import { Drones } from './Drones';
 import { DroneCam } from './DroneCam';
-import { drone } from './drone';
+import { drone, cellId, cellName, CELL_HEX } from './drone';
 import { st, rig, spinRig, DEBUG } from './state';
 
 const PARAMS = new URLSearchParams(location.search);
@@ -29,6 +29,13 @@ export function App() {
   const [program, setProgram] = useState(st.program);
   const [smooth, setSmooth] = useState(st.smooth);
   const [pilot, setPilot] = useState(drone.pilot);
+  // debugging: which cell the device is in, in the trail's colour for it
+  const [cell, setCell] = useState({ id: cellId(), name: cellName() });
+  useEffect(() => {
+    if (!DEBUG) return;
+    const t = setInterval(() => { const id = cellId(); setCell((c) => (c.id === id ? c : { id, name: cellName() })); }, 100);
+    return () => clearInterval(t);
+  }, []);
   // drag turns the machine, not the camera; the wheel zooms
   const drag = useRef<{ x: number; y: number; t: number } | null>(null);
   // at the controls the pointer is the look and a held button the thrust; otherwise it turns the rig
@@ -127,6 +134,7 @@ export function App() {
       </div>
       {CLEAN ? null : <div className="plate"><b>Tesseract</b><i>CDVMBR 08</i></div>}
       <div className="cam" onClick={() => { drone.view = drone.view === 'pov' ? 'follow' : 'pov'; }} />
+      {DEBUG ? <div className="cell"><i style={{ background: CELL_HEX[cell.id] }} />cell {cell.name}</div> : null}
       {CLEAN ? null : pilot ? <div className="keys">
         {DEBUG ? <><span><kbd>drag</kbd>orbit</span><span><kbd>a d</kbd>yaw</span><span><kbd>↑ ↓</kbd>pitch</span></> : <><span><kbd>move</kbd>look</span><span><kbd>hold</kbd>thrust</span></>}
         <span><kbd>space</kbd>thrust</span>

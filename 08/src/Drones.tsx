@@ -7,7 +7,7 @@ import { LineGeometry } from 'three/examples/jsm/lines/LineGeometry.js';
 import { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js';
 import { project, type V4 } from './tesseract';
 import { pose, turnGlide, DEBUG } from './state';
-import { drone, target, startCell, crossInto, faceQuad, pieceMesh, blink, toCell, fromCell, dirFromCellWith, otherMap, mapAcross, wallCorners, type CellMap } from './drone';
+import { drone, target, startCell, crossInto, faceQuad, pieceMesh, blink, toCell, fromCell, dirFromCellWith, otherMap, mapAcross, wallCorners, cellId, CELL_HEX, type CellMap } from './drone';
 import { device, ringOut, DEVICE_URL } from './device';
 
 // A device that lives in the tesseract: a ball with one eye, fins that are walls, a shutter. It is inside one of the eight cells, a cube with one coordinate held at
@@ -20,8 +20,7 @@ import { device, ringOut, DEVICE_URL } from './device';
 const TRAIL = DEBUG ? 600 : 56;
 const TRAIL_EVERY = 0.05; // seconds between trail samples
 // debugging, the trail is coloured by the cell it was flown in: one colour per held axis and side
-const CELL_COLOURS = ['#ff3b30', '#ff9500', '#ffd60a', '#34c759', '#00c7be', '#007aff', '#af52de', '#ff2d87'].map((c) => new THREE.Color(c));
-const cellId = () => drone.held * 2 + (drone.sign > 0 ? 1 : 0);
+const CELL_COLOURS = CELL_HEX.map((c) => new THREE.Color(c));
 const SPEED = 0.5; // 4D units per second, cruising
 const ROOM = 0.62; // how far from a cell's walls a waypoint stays, so the drone keeps clear of the struts
 const FIELD = 0.14; // half-width, in path fraction, of the slow zone round the face
