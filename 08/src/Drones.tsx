@@ -4,7 +4,7 @@ import { useGLTF } from '@react-three/drei';
 import * as THREE from 'three';
 import { project, type V4 } from './tesseract';
 import { pose, turnGlide, st } from './state';
-import { drone, target, startCell, crossInto, faceQuad, pieceMesh, blink, toCell, fromCell, dirFromCellWith, otherMap, mapAcross, faceCorners, wallOf, cellId, cellIdOf, lampColor, CELL_HEX, RIPPLE, SIZE_MAIN, SIZE_CELL, type CellMap } from './drone';
+import { drone, target, startCell, crossInto, faceQuad, pieceMesh, blink, toCell, fromCell, dirFromCellWith, otherMap, mapAcross, relayTarget, faceCorners, wallOf, cellId, cellIdOf, lampColor, CELL_HEX, RIPPLE, SIZE_MAIN, SIZE_CELL, type CellMap } from './drone';
 import { device, ringOut, DEVICE_URL, type Device } from './device';
 import { makeSmoke } from './smoke';
 import { makeLaser } from './laser';
@@ -241,6 +241,7 @@ export function Drones() {
     const was = { axis: drone.held, sign: drone.sign };
     drone.flash.corners = faceCorners(axis, sign); drone.flash.p4 = p4; drone.flash.t = 0;
     crossInto(axis, sign);
+    relayTarget(p4);
     drone.flash.color = CELL_HEX[cellId()];
     s.blink = 0;
     s.ho = { wall: was, crossed: true, inT: 0, gone: 0 };

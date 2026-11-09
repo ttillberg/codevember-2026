@@ -195,7 +195,8 @@ export function toCellWith(map: CellMap, p: V4, out: number[] = [0, 0, 0]): numb
 }
 
 /** The piece the device goes for: a bit of metal in a cell two walls away. `up` while it is there to be had; `scale`
- * grows as it emerges and shrinks as it is taken; `map` is its cell's map, for the cam, fixed when it is set. */
+ * grows as it emerges and shrinks as it is taken; `map` is its cell's map, for the cam: where its room lies in the
+ * net, laid out again at every crossing by `relayTarget`. */
 export const target = {
   p: [0, 0, 0, 0] as V4,
   up: false,
@@ -215,3 +216,33 @@ export function faceCorners(axis: number, sign: number): V4[] {
 }
 /** The 4D name of the wall on cell-space row `k`, side `t`: its axis, and that axis's side. */
 export const wallOf = (k: number, t: number) => ({ axis: drone.axisOf[k], sign: t * drone.A[k][drone.axisOf[k]] });
+
+const sameMap = (a: CellMap, b: CellMap) =>
+  a.held === b.held && a.sign === b.sign && a.b.every((x, k) => Math.abs(x - b.b[k]) < 1e-9) && a.A.every((r, k) => r.every((x, i) => x === b.A[k][i]));
+const copyMap = (m: CellMap): CellMap => ({ held: m.held, sign: m.sign, A: m.A.map((r) => r.slice()), b: m.b.slice(), axisOf: m.axisOf.slice(), centre: m.centre.slice() });
+
+/** Every room of the net, within two walls of the current cell, that is the cell held at `held`, `sign`: straight
+ * through a wall, or through any cell between. */
+function roomsOf(held: number, sign: number): CellMap[] {
+  const out: CellMap[] = [];
+  if (held !== drone.held) out.push(mapAcross(drone, held, sign));
+  for (const a of drone.axisOf) for (const t of [-1, 1]) {
+    if (a === held) continue; // that one is the cell itself, or the cell across from it
+    out.push(mapAcross(mapAcross(drone, a, t), held, sign));
+  }
+  return out;
+}
+
+/** The net is not the same along every way round: a cell reached by another way lies in another room. So at every
+ * crossing the piece's room is laid out again from here. In its cell, it is this room. Otherwise the room it was in
+ * is kept while it is still within two walls (on its own the device flies the way the room was laid out, and
+ * nothing moves), or else the nearest room of its cell is taken. */
+export function relayTarget(at: V4) {
+  const m = target.map;
+  if (!m) return;
+  if (m.held === drone.held && m.sign === drone.sign) { target.map = copyMap(drone); return; }
+  const rooms = roomsOf(m.held, m.sign);
+  if (rooms.some((r) => sameMap(r, m))) return;
+  const here = toCell(at), dist = (r: CellMap) => { const c = toCellWith(r, target.p); return Math.hypot(c[0] - here[0], c[1] - here[1], c[2] - here[2]); };
+  target.map = rooms.reduce((a, b) => (dist(b) < dist(a) ? b : a));
+}
