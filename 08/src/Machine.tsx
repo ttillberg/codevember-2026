@@ -22,6 +22,17 @@ const FLIP = new THREE.Quaternion(1, 0, 0, 0); // y → -y
 
 const SAND = '#d9b985', GRAPHITE = '#3a3a3d', INK = '#1a1a1a', PAPER = '#efe9dd';
 
+// A few status LEDs on the balls: which node, where on it, what colour, how it blinks.
+const LEDS: { node: number; dir: [number, number, number]; color: string; blink: (t: number) => number }[] = [
+  { node: 0, dir: [0.3, 0.8, 0.5], color: '#c9e35b', blink: (t) => (t % 2.4 < 0.08 || (t % 2.4 > 0.22 && t % 2.4 < 0.3) ? 1 : 0.04) }, // heartbeat
+  { node: 5, dir: [-0.6, 0.6, 0.5], color: '#ef5f9f', blink: (t) => 0.3 + 0.7 * (0.5 + 0.5 * Math.sin(t * 1.3)) }, // breathe
+  { node: 10, dir: [0.5, 0.7, -0.5], color: '#f2703f', blink: (t) => (t % 5.1 < 0.06 ? 1 : 0.02) }, // rare flash
+  { node: 12, dir: [-0.4, 0.9, 0.2], color: '#c9e35b', blink: (t) => (Math.floor(t * 4) % 2 ? 1 : 0.1) }, // fast steady
+  { node: 3, dir: [0.7, 0.3, 0.6], color: '#8e7cf0', blink: (t) => (t % 3.2 < 1.6 ? 1 : 0.05) }, // slow square
+  { node: 15, dir: [-0.5, 0.5, -0.7], color: '#ef5f9f', blink: (t) => (t % 1.1 < 0.05 ? 1 : 0.03) }, // tick
+];
+const R_LED = 0.03, R_HALO = 0.11;
+
 export function Machine() {
   const parts = useMemo(() => {
     const group = new THREE.Group();
@@ -47,6 +58,14 @@ export function Machine() {
       return o;
     };
     const nodes = VERTS.map(() => mesh(sph, black));
+    const leds = LEDS.map((l) => {
+      const m = new THREE.MeshStandardMaterial({ color: l.color, emissive: l.color, emissiveIntensity: 1, roughness: 0.3, toneMapped: false });
+      const o = mesh(sph, m);
+      const bezel = mesh(cyl, black); // a short black collar round it
+      const hm = new THREE.MeshBasicMaterial({ color: l.color, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false });
+      const halo = mesh(sph, hm);
+      return { o, m, bezel, halo, hm, dir: new THREE.Vector3(...l.dir).normalize(), blink: l.blink, node: l.node };
+    });
     let seed = 8;
     const struts = EDGES.map((e, i) => {
       const sand = e.axis === 3;
@@ -65,7 +84,7 @@ export function Machine() {
       const rod = mesh(cyl, silver);
       return { sleeves, seals, stages, wipers, rod };
     });
-    return { group, nodes, struts };
+    return { group, nodes, struts, leds };
   }, []);
 
   const tmp = useMemo(() => ({
@@ -116,6 +135,22 @@ export function Machine() {
       place(s.rod, a, dir, q, rodFrom, L - 2 * rodFrom, R_ROD);
     });
     st.lengths.min = min; st.lengths.max = max;
+
+    const now = performance.now() / 1000;
+    for (const l of parts.leds) {
+      const p = P[l.node];
+      l.o.position.copy(p).addScaledVector(l.dir, R_NODE * 0.97);
+      l.o.scale.setScalar(R_LED);
+      l.bezel.position.copy(p).addScaledVector(l.dir, R_NODE * 0.9);
+      l.bezel.quaternion.setFromUnitVectors(Y, l.dir);
+      l.bezel.scale.set(R_LED * 1.7, R_NODE * 0.2, R_LED * 1.7);
+      const b = l.blink(now);
+      l.m.emissiveIntensity = 0.2 + 2.2 * b;
+      l.m.color.set(l.m.emissive).multiplyScalar(0.3 + 0.7 * b);
+      l.halo.position.copy(p).addScaledVector(l.dir, R_NODE * 1.1);
+      l.halo.scale.setScalar(R_HALO * (0.6 + 0.4 * b));
+      l.hm.opacity = 0.28 * b;
+    }
   });
 
   return <primitive object={parts.group} />;
