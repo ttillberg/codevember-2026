@@ -41,6 +41,7 @@ export function spinRig(dy: number, dx: number) {
 
 export const CRANK = 1.6; // rad/s of target with a key held
 const SPIN = 0.22; // rad/s, the smooth mode
+const TURNTABLE = 0.07; // rad/s, the rig's slow turn about the room's up, a revolution in a minute and a half
 const QUARTER = Math.PI / 2;
 const DEG = Math.PI / 180;
 
@@ -93,6 +94,8 @@ function step() {
 }
 
 export function tick(dt: number) {
+  // a slow turntable, always, about the room's up; a drag adds to it and coasts off again
+  spinRig(TURNTABLE * dt, 0);
   // the rig coasts after a drag; drag one way and the machine turns that way from then on; it also turns round on its own
   if (rig.vel[0] || rig.vel[1]) {
     spinRig(rig.vel[0] * dt, rig.vel[1] * dt);
