@@ -4,7 +4,7 @@ import { useGLTF } from '@react-three/drei';
 import * as THREE from 'three';
 import { project, type V4 } from './tesseract';
 import { pose } from './state';
-import { drone, startCell, crossInto, faceQuad, toCell, fromCell, wallCorners } from './drone';
+import { drone, startCell, crossInto, faceQuad, toCell, fromCell, dirFromCell, wallCorners } from './drone';
 import { device, DEVICE_URL } from './device';
 
 // A device that lives in the tesseract: a ball with one eye, fins that are walls, a shutter. It is inside one of the eight cells, a cube with one coordinate held at
@@ -251,7 +251,23 @@ export function Drones() {
     s.last.copy(v);
     s.q.g.position.copy(v);
     const speed = s.vel.length();
-    if (speed > 0.05) {
+    if (drone.pilot) {
+      // at the controls the eye points where the pilot points it: the cell-space forward and up, taken to 4D and
+      // seen through the projection at the device, so a turn on the spot shows in the main view too
+      const { fwd, right: upv, qa } = tmp;
+      fwd.set(0, 0, -1).applyQuaternion(drone.q);
+      upv.set(0, 1, 0).applyQuaternion(drone.q);
+      const E = 0.02;
+      const here = project(m, s.p, new THREE.Vector3());
+      const f4 = dirFromCell([fwd.x, fwd.y, fwd.z]), u4 = dirFromCell([upv.x, upv.y, upv.z]);
+      const f3 = project(m, add4(s.p, f4, E), new THREE.Vector3()).sub(here);
+      const u3 = project(m, add4(s.p, u4, E), new THREE.Vector3()).sub(here);
+      if (f3.lengthSq() > 1e-10 && u3.lengthSq() > 1e-10) {
+        tmp.m.lookAt(new THREE.Vector3(), f3, u3);
+        qa.setFromRotationMatrix(tmp.m);
+        s.heading.slerp(qa, Math.min(1, dt * 6));
+      }
+    } else if (speed > 0.05) {
       tmp.m.lookAt(new THREE.Vector3(), s.vel, up); // the eye looks along -z
       q.setFromRotationMatrix(tmp.m);
       axis.crossVectors(up, s.vel).normalize();

@@ -86,6 +86,13 @@ export function fromCell(c: number[], out: V4 = [0, 0, 0, 0]): V4 {
   return out;
 }
 
+/** A direction in cell space back to 4D: nothing along the held axis, each row's axis from its row. */
+export function dirFromCell(c: number[], out: V4 = [0, 0, 0, 0]): V4 {
+  out[drone.held] = 0;
+  for (let k = 0; k < 3; k++) { const a = drone.axisOf[k]; out[a] = c[k] / drone.A[k][a]; }
+  return out;
+}
+
 /** The four joints of the wall on row `k`, side `t`, of the current cell, in 4D. */
 export function wallCorners(k: number, t: number): V4[] {
   const a = drone.axisOf[k], side = t * drone.A[k][a];
