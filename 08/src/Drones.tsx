@@ -90,7 +90,7 @@ export function Drones() {
     group.add(grabbed);
     const held = Math.floor(Math.random() * 4), sign = Math.random() < 0.5 ? -1 : 1;
     const s = {
-      group, q, smoke, laser, puffAt: new THREE.Vector3(1e9, 0, 0), puffGap: 0.04, trailAt: new THREE.Vector3(1e9, 0, 0), flash, clipCorners: null as V4[] | null, fadeA: 1, fadeB: 1, tintA: 0, tintB: 0, tintHex: '', tintHexA: '', piece, grabbed,
+      group, q, smoke, laser, puffAt: new THREE.Vector3(1e9, 0, 0), puffGap: 0.04, trailAt: new THREE.Vector3(1e9, 0, 0), flash, clipCorners: null as V4[] | null, fadeA: 1, fadeB: 1, tintA: 0, tintB: 0, tintHex: '', tintHexA: '', crossed: false, piece, grabbed,
       held, sign, came: null as [number, number] | null,
       p: [0, 0, 0, 0] as V4, dir: [0, 0, 0, 0] as V4, // where it is, which way it is going, in 4D
       leg: null as Leg | null, s: 0,
@@ -273,7 +273,7 @@ export function Drones() {
     const over = c[kw] - (drone.centre[kw] + tw);
     if (over * tw > 0) {
       const was = { axis: drone.held, sign: drone.sign };
-      drone.flash.corners = wallCorners(kw, tw); drone.flash.p4 = fromCell(c); drone.flash.t = 0;
+      drone.flash.corners = wallCorners(kw, tw); drone.flash.p4 = fromCell(c); drone.flash.t = 0; s.crossed = true;
       crossInto(drone.axisOf[kw], tw * drone.A[kw][drone.axisOf[kw]]);
       s.held = drone.held; s.sign = drone.sign;
       drone.flash.color = CELL_HEX[cellId()];
@@ -336,7 +336,7 @@ export function Drones() {
         crossInto(leg.face!.axis, leg.face!.sign);
         s.held = leg.face!.axis; s.sign = leg.face!.sign;
         s.blink = 0;
-        drone.flash.corners = leg.face!.corners; drone.flash.p4 = s.p.slice() as V4; drone.flash.t = 0; drone.flash.color = CELL_HEX[cellId()];
+        drone.flash.corners = leg.face!.corners; drone.flash.p4 = s.p.slice() as V4; drone.flash.t = 0; drone.flash.color = CELL_HEX[cellId()]; s.crossed = true;
       }
       if (s.s >= 1) {
         s.p[s.held] = s.sign; s.leg = null;
@@ -454,6 +454,8 @@ export function Drones() {
         const through = Math.max(0, Math.min(1, 0.5 - s.planeA.distanceToPoint(v) / (2 * SIZE_MAIN)));
         fadeA = 1 - through; fadeB = through;
       }
+      // the renderer clips in world space, and the machine sits on a turned rig: the planes go through its matrix
+      s.planeA.applyMatrix4(s.group.matrixWorld); s.planeB.applyMatrix4(s.group.matrixWorld);
     } else {
       s.q2.g.visible = false;
       s.planeA.set(tmp.up, 1e4); s.planeB.set(tmp.up, 1e4);
@@ -463,8 +465,9 @@ export function Drones() {
     // while the body is sliced by a wall, the half inside the cell being entered glows in that cell's colour: the
     // other copy as it pushes through, then this one once the centre is across; whole again, the glow goes
     let wantA = 0, wantB = 0, hexB = drone.flash.color;
+    if (!s.wall) s.crossed = false; // clear of the wall: the next one is ahead again
     if (s.wall) {
-      if (drone.flash.t >= 0) wantA = 1;
+      if (s.crossed) wantA = 1;
       else { const other = otherMap(s.wall.axis, s.wall.sign); hexB = CELL_HEX[other.held * 2 + (other.sign > 0 ? 1 : 0)]; wantB = 1; }
     }
     const tintA = s.tintA + (wantA - s.tintA) * Math.min(1, dt * TINT_IN), tintB = s.tintB + (wantB - s.tintB) * Math.min(1, dt * TINT_IN);
