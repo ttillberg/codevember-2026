@@ -15,7 +15,14 @@ export type Decal = {
   accent: string;
   /** The sleeve at the far end hangs the other way up: turn the lettering round so both ends read alike. */
   flip?: boolean;
+  /** The mark on this sleeve, if any: the machine hands them out, two of each, so they do not repeat. */
+  brand?: Brand | null;
 };
+export type Brand = 'word' | 'three' | 'pmndrs' | 'github';
+
+/** Is a hex colour on the light side? Decides whether wear shows dark or light on it. */
+const isLight = (hex: string) => { const n = parseInt(hex.slice(1), 16); return ((n >> 16) * 0.299 + ((n >> 8) & 255) * 0.587 + (n & 255) * 0.114) > 110; };
+const WEAR_INK = (base: string) => (isLight(base) ? '#4a3d2c' : '#9a9a9e');
 
 const W = 512, H = 416;
 
@@ -121,7 +128,24 @@ export function scuffSleeve(base: string, seed: number): THREE.CanvasTexture {
   const t = new THREE.CanvasTexture(c);
   t.colorSpace = THREE.SRGBColorSpace;
   t.anisotropy = 8;
-  withLogos(() => { grunge(g, r, W, H, sand ? '#4a3d2c' : '#9a9a9e', sand ? 0.75 : 0.6); t.needsUpdate = true; });
+  withLogos(() => { grunge(g, r, W, H, WEAR_INK(base), 0.55); t.needsUpdate = true; });
+  return t;
+}
+
+/** Plain paint with a little wear all over: for the sleeves and stages that carry nothing else. A small canvas,
+ * a light window of the sheet; the machine keeps a handful per colour and deals them out. */
+export function wear(base: string, seed: number): THREE.CanvasTexture {
+  const w = 256, h = 208;
+  const c = document.createElement('canvas');
+  c.width = w; c.height = h;
+  const g = c.getContext('2d')!;
+  g.fillStyle = base;
+  g.fillRect(0, 0, w, h);
+  const r = rng(seed);
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.anisotropy = 8;
+  withLogos(() => { grunge(g, r, w, h, WEAR_INK(base), 0.32 + r() * 0.16); t.needsUpdate = true; });
   return t;
 }
 
@@ -150,7 +174,7 @@ export function sleeveDecal(d: Decal): THREE.CanvasTexture {
   g.fillStyle = d.base;
   g.fillRect(0, 0, W, H);
   // a sleeve carries a few of these, not all: hazard band, brand, serial, barcode, tab, pictogram
-  const has = { hazard: r() < 0.35, brand: true, serial: r() < 0.5, barcode: r() < 0.3, tab: r() < 0.5 };
+  const has = { hazard: r() < 0.35, brand: !!d.brand, serial: r() < 0.5, barcode: r() < 0.3, tab: r() < 0.5 };
   if (!has.brand && !has.serial) has.serial = true;
 
   // hazard band at the mouth
@@ -178,9 +202,11 @@ export function sleeveDecal(d: Decal): THREE.CanvasTexture {
 
   // brand, round the tube: one mark per sleeve, the real ones, small, the GitHub one smallest; or the wordmark.
   // The marks are images: the block is laid on when they have loaded, and the texture flagged.
-  const brand = (['word', 'three', 'pmndrs', 'github'] as const)[d.seed % 4];
+  const brand = d.brand ?? null;
   const bx = 20 + Math.floor(r() * 100);
   const small = r() < 0.5 ? pick(SMALL) : null;
+  // a mark lands anywhere along the sleeve, at any angle, so no two sit alike
+  const my = 70 + r() * (H - 160), ang = (r() - 0.5) * Math.PI * 2;
   const drawBrand = () => {
     if (!has.brand) return;
     g.save();
@@ -192,10 +218,16 @@ export function sleeveDecal(d: Decal): THREE.CanvasTexture {
       if (brand === 'word') {
         g.font = '800 46px "Helvetica Neue", Helvetica, Arial, sans-serif';
         g.fillText('CDVMBR 08', bx + o, 110);
-      } else {
+      } else if (brand) {
         const size = brand === 'github' ? 34 : brand === 'three' ? 160 : 52;
         const img = logo(brand, size * 2, d.ink);
-        if (img) g.drawImage(img, bx + o, 110 - size / 2, size, size);
+        if (img) {
+          g.save();
+          g.translate(bx + o + size / 2, my);
+          g.rotate(ang);
+          g.drawImage(img, -size / 2, -size / 2, size, size);
+          g.restore();
+        }
       }
       if (small && brand !== 'three') {
         g.font = '500 17px "Helvetica Neue", Helvetica, Arial, sans-serif';
@@ -264,6 +296,6 @@ export function sleeveDecal(d: Decal): THREE.CanvasTexture {
   t.colorSpace = THREE.SRGBColorSpace;
   t.anisotropy = 8;
   t.wrapS = THREE.RepeatWrapping;
-  withLogos(() => { grunge(g, r, W, H, sand ? '#4a3d2c' : '#9a9a9e', sand ? 0.7 : 0.55); drawBrand(); t.needsUpdate = true; });
+  withLogos(() => { grunge(g, r, W, H, WEAR_INK(d.base), 0.5); drawBrand(); t.needsUpdate = true; });
   return t;
 }

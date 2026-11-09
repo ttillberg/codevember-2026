@@ -3,7 +3,7 @@ import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import { EDGES, VERTS, project } from './tesseract';
 import { st, tick, pose } from './state';
-import { sleeveDecal, scuffSleeve, scratchMap, ACCENTS } from './decals';
+import { sleeveDecal, scuffSleeve, scratchMap, wear, ACCENTS, type Brand } from './decals';
 
 // The mechanism. Every edge is a strut in three stages: a sleeve fixed to each ball joint, a stanchion sliding out of
 // each sleeve, a rod between the stanchions. Radii are constant, as on a real part; only the lengths change. The sleeves
@@ -49,16 +49,21 @@ export function Machine() {
     const sph = new THREE.SphereGeometry(1, 40, 28);
     const black = new THREE.MeshStandardMaterial({ color: '#141414', roughness: 0.6, metalness: 0.1, roughnessMap: scratchMap() });
     const silver = new THREE.MeshStandardMaterial({ color: '#dedede', roughness: 0.28, metalness: 0.75 });
-    const stageMats = [
-      new THREE.MeshStandardMaterial({ color: '#2f2f32', roughness: 0.5, metalness: 0.15 }),
-      new THREE.MeshStandardMaterial({ color: '#c8a874', roughness: 0.7, metalness: 0.05 }),
-    ];
+    // every painted part is a little worn, all over, the metal is not: a hand of wear textures per paint, dealt out
+    const POOL = 6;
+    const worn = (base: string, roughness: number, metalness: number, salt: number) =>
+      Array.from({ length: POOL }, (_, k) => new THREE.MeshStandardMaterial({ map: wear(base, salt + k), roughness, metalness }));
+    const stageMats = [worn('#2f2f32', 0.5, 0.15, 700), worn('#c8a874', 0.7, 0.05, 800)];
     const accents = ACCENTS.map((c) => new THREE.MeshStandardMaterial({ color: c, roughness: 0.6 }));
     // most sleeves are plain paint; one in three carries a decal
-    const plain = [
-      new THREE.MeshStandardMaterial({ color: GRAPHITE, roughness: 0.62, metalness: 0.05 }),
-      new THREE.MeshStandardMaterial({ color: SAND, roughness: 0.78, metalness: 0.05 }),
-    ];
+    const plain = [worn(GRAPHITE, 0.62, 0.05, 500), worn(SAND, 0.78, 0.05, 600)];
+    // the marks: two of each on the decaled sleeves, wherever the shuffle puts them; a few wordmarks; the rest none
+    const decaled = EDGES.flatMap((_, i) => [0, 1].filter((end) => (i * 2 + end) % 3 === 1).map((end) => i * 2 + end));
+    let h = 8;
+    const rnd = () => ((h = (h * 1664525 + 1013904223) >>> 0) / 4294967296);
+    for (let k = decaled.length - 1; k > 0; k--) { const j = Math.floor(rnd() * (k + 1)); [decaled[k], decaled[j]] = [decaled[j], decaled[k]]; }
+    const hand: Brand[] = ['three', 'three', 'pmndrs', 'pmndrs', 'github', 'github', 'word', 'word', 'word'];
+    const brandOf = new Map<number, Brand>(decaled.slice(0, hand.length).map((id, k) => [id, hand[k]]));
 
     const mesh = (g: THREE.BufferGeometry, m: THREE.Material) => {
       const o = new THREE.Mesh(g, m);
@@ -97,17 +102,17 @@ export function Machine() {
       const sleeves = [0, 1].map((end) => {
         if ((i * 2 + end) % 3 !== 1) {
           // most plain; one in six of these has been knocked about
-          if ((i * 7 + end) % 6 !== 0) return mesh(cyl, plain[sand ? 1 : 0]);
+          if ((i * 7 + end) % 6 !== 0) return mesh(cyl, plain[sand ? 1 : 0][(i * 5 + end * 3) % POOL]);
           return mesh(cyl, new THREE.MeshStandardMaterial({ map: scuffSleeve(sand ? SAND : GRAPHITE, i * 2 + end + 300), roughness: sand ? 0.78 : 0.62, metalness: 0.05 }));
         }
         const serial = `SYS—${String(i + 1).padStart(2, '0')}${end ? 'B' : 'A'}`;
         const accent = ACCENTS[(i * 3 + end) % ACCENTS.length];
-        const map = sleeveDecal({ base: sand ? SAND : GRAPHITE, ink: sand ? INK : PAPER, serial, axis, seed: seed++, accent, flip: end === 1 });
+        const map = sleeveDecal({ base: sand ? SAND : GRAPHITE, ink: sand ? INK : PAPER, serial, axis, seed: seed++, accent, flip: end === 1, brand: brandOf.get(i * 2 + end) ?? null });
         return mesh(cyl, new THREE.MeshStandardMaterial({ map, roughness: sand ? 0.78 : 0.62, metalness: 0.05 }));
       });
       // one in five sleeve mouths gets a coloured ring instead of a black seal
       const seals = [0, 1].map((end) => mesh(cyl, (i * 2 + end) % 5 === 0 ? accents[(i + end) % accents.length] : black));
-      const stages = [0, 1].map(() => mesh(cyl, stageMats[sand ? 1 : 0]));
+      const stages = [0, 1].map((k) => mesh(cyl, stageMats[sand ? 1 : 0][(i * 3 + k * 2) % POOL]));
       const wipers = [0, 1].map(() => mesh(cyl, black));
       const rod = mesh(cyl, silver);
       return { sleeves, seals, stages, wipers, rod };
