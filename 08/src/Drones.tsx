@@ -239,7 +239,12 @@ export function Drones() {
     } else if (s.phase !== 'seek') {
       // the catch: the device holds still through it, eye on the piece, then on the room
       s.t += dt;
-      if (s.phase === 'settle' && s.t > SETTLE) { s.phase = 'catch'; s.t = 0; target.up = false; target.scale = 0; drone.taken = 1; s.blink = 0; }
+      if (s.phase === 'settle' && s.t > SETTLE) {
+        // the catch: the piece is drawn from where it is into the ring over the phase, then rides in with the grip
+        s.phase = 'catch'; s.t = 0; s.blink = 0;
+        target.up = false; target.scale = 0;
+        drone.taken = 1; drone.grab4 = target.p.slice() as V4; drone.grabMap = target.map; drone.grabK = 0;
+      }
       else if (s.phase === 'catch' && s.t > CATCH) { s.phase = 'turn'; s.t = 0; turnGlide(GLIDE); newTarget(s); }
       else if (s.phase === 'turn' && s.t > GLIDE) { s.phase = 'rest'; s.t = 0; }
       else if (s.phase === 'rest' && s.t > REST) { s.phase = 'seek'; }
@@ -375,9 +380,11 @@ export function Drones() {
       s.piece.rotation.y += dt * 0.8; s.piece.rotation.z = 0.5;
     }
     if (drone.taken > 0) {
-      if (s.grip < 0.2) drone.taken = Math.max(0, drone.taken - dt * 6);
+      if (s.phase === 'catch') { const u = Math.min(1, s.t / CATCH); drone.grabK = u * u * (3 - 2 * u); } else drone.grabK = 1;
+      if (s.grip < 0.2 && drone.grabK >= 1) drone.taken = Math.max(0, drone.taken - dt * 6);
       const fwd3 = new THREE.Vector3(0, 0, -1).applyQuaternion(s.heading);
-      s.grabbed.position.copy(v).addScaledVector(fwd3, ringOut(s.grip, drone.gripAt) * SIZE_MAIN);
+      const ring = new THREE.Vector3().copy(v).addScaledVector(fwd3, ringOut(s.grip, drone.gripAt) * SIZE_MAIN);
+      project(m, drone.grab4, s.grabbed.position).lerp(ring, drone.grabK);
       s.grabbed.scale.setScalar(drone.taken);
     }
     s.grabbed.visible = drone.taken > 0.02;

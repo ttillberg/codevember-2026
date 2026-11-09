@@ -199,10 +199,12 @@ export function DroneCam() {
       cell.piece.rotation.y += 0.013; cell.piece.rotation.z = 0.5;
     }
     // the one just taken, in the ring in front of the eye, riding in
-    cell.grabbed.visible = drone.taken > 0.02;
+    cell.grabbed.visible = drone.taken > 0.02 && !!drone.grabMap;
     if (cell.grabbed.visible) {
       const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(drone.q);
-      cell.grabbed.position.copy(tmp.pos).addScaledVector(fwd, ringOut(drone.grip, at) * SIZE_CAM);
+      const ring = new THREE.Vector3().copy(tmp.pos).addScaledVector(fwd, ringOut(drone.grip, at) * SIZE_CAM);
+      const g3 = toCellWith(drone.grabMap!, drone.grab4);
+      cell.grabbed.position.set(g3[0], g3[1], g3[2]).lerp(ring, drone.grabK);
       cell.grabbed.scale.setScalar(drone.taken);
     }
 
