@@ -1,11 +1,13 @@
 import { useMemo } from 'react';
 import { useFrame } from '@react-three/fiber';
+import { useGLTF } from '@react-three/drei';
 import * as THREE from 'three';
 import { project, type V4 } from './tesseract';
 import { pose } from './state';
 import { drone, startCell, crossInto, faceQuad } from './drone';
+import { device, DEVICE_URL } from './device';
 
-// A quad drone that lives in the tesseract. It is inside one of the eight cells, a cube with one coordinate held at
+// A device that lives in the tesseract: a ball with one eye, fins that are walls, a shutter. It is inside one of the eight cells, a cube with one coordinate held at
 // ±1 and the other three free, and it can only leave through a square face into the neighbouring cell. The passage is
 // one smooth curve in 4D: it bends from the way it was flying to the way into the next cell, which in 4D is a right
 // angle, slows to half speed in the face and picks up again, as if through a field. Everything is a point in 4D seen
@@ -16,7 +18,6 @@ const TRAIL = 56;
 const TRAIL_EVERY = 0.05; // seconds between trail samples
 const SPEED = 0.5; // 4D units per second, cruising
 const ROOM = 0.62; // how far from a cell's walls a waypoint stays, so the drone keeps clear of the struts
-const SIZE = 0.075; // half the span across the rotors
 const FIELD = 0.12; // half-width, in path fraction, of the slow zone round the face
 const DIP = 0.55; // how much of the speed the field takes
 
@@ -46,48 +47,18 @@ function pathLen(pts: V4[]): number {
   return L;
 }
 
-const SAND = '#d9b985', DARK = '#1c1c1e', LED = '#c9e35b';
-
-/** The quad: a sand body, four dark arms, four rotor discs, a lamp under the belly. Span 2 × size, facing -z. */
-export function quad(size = SIZE) {
-  const g = new THREE.Group();
-  const sand = new THREE.MeshStandardMaterial({ color: SAND, roughness: 0.75 });
-  const dark = new THREE.MeshStandardMaterial({ color: DARK, roughness: 0.5, metalness: 0.2 });
-  const blur = new THREE.MeshStandardMaterial({ color: '#2a2a2c', roughness: 0.6, transparent: true, opacity: 0.45, side: THREE.DoubleSide });
-  const body = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.16, 0.6), sand);
-  const nose = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.1, 0.16), dark);
-  nose.position.set(0, 0, -0.36);
-  const belly = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.1, 0.1, 16), dark);
-  belly.position.y = -0.12;
-  const rotors: THREE.Mesh[] = [];
-  for (const [x, z] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) {
-    const arm = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.035, 0.72, 10), dark);
-    arm.rotation.z = Math.PI / 2;
-    arm.rotation.y = Math.atan2(z, x);
-    arm.position.set(x * 0.36, 0.02, z * 0.36);
-    const hub = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 0.12, 12), dark);
-    hub.position.set(x * 0.72, 0.06, z * 0.72);
-    const rotor = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.3, 0.012, 24), blur);
-    rotor.position.set(x * 0.72, 0.13, z * 0.72);
-    rotors.push(rotor);
-    g.add(arm, hub, rotor);
-  }
-  const lampMat = new THREE.MeshStandardMaterial({ color: LED, emissive: LED, emissiveIntensity: 2.5, toneMapped: false });
-  const lamp = new THREE.Mesh(new THREE.SphereGeometry(0.07, 12, 8), lampMat);
-  lamp.position.y = -0.2;
-  g.add(body, nose, belly, lamp);
-  g.scale.setScalar(size / 1.02);
-  return { g, rotors, lampMat };
-}
+const BLUE = '#4f8cff', LED = '#c9e35b';
+const SIZE_MAIN = 0.095; // the device's radius in the main scene
 
 export function Drones() {
+  const gltf = useGLTF(DEVICE_URL);
   const d = useMemo(() => {
     const group = new THREE.Group();
-    const q = quad();
+    const q = device(gltf.scene, SIZE_MAIN);
     group.add(q.g);
     const geo = new THREE.BufferGeometry();
     geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(TRAIL * 3), 3));
-    const line = new THREE.Line(geo, new THREE.LineBasicMaterial({ color: LED, transparent: true, opacity: 0.7, toneMapped: false }));
+    const line = new THREE.Line(geo, new THREE.LineBasicMaterial({ color: BLUE, transparent: true, opacity: 0.55, toneMapped: false }));
     line.frustumCulled = false;
     group.add(line);
     const flash = faceQuad(LED);
@@ -99,7 +70,8 @@ export function Drones() {
       p: [0, 0, 0, 0] as V4, dir: [0, 0, 0, 0] as V4, // where it is, which way it is going, in 4D
       leg: null as Leg | null, s: 0,
       trail: [] as V4[], trailAt: 0,
-      last: new THREE.Vector3(), vel: new THREE.Vector3(), heading: new THREE.Quaternion(), spin: 0,
+      last: new THREE.Vector3(), vel: new THREE.Vector3(), heading: new THREE.Quaternion(),
+      shield: 0, blink: Infinity, nextBlink: 3 + Math.random() * 5, // seconds into the blink; seconds to a blink of its own
     };
     s.p = roomIn(s);
     s.dir = unit4(sub4(roomIn(s), s.p));
@@ -197,7 +169,21 @@ export function Drones() {
       s.trailAt = now;
     }
 
-    // draw: where it is in 3D, which way it is going there, a lean into the move
+    // the walls close in the field, the ball shuts round the body going through a wall, and open out again after;
+    // the shutter blinks once at the crossing and now and then on its own
+    const wantShield = field > 0.12 ? 1 : 0;
+    s.shield += (wantShield - s.shield) * Math.min(1, dt * (wantShield ? 5 : 2.5));
+    if (leg.kind === 'portal' && leg.crossed && s.blink === Infinity && s.s < 0.55) s.blink = 0;
+    s.nextBlink -= dt;
+    if (s.nextBlink <= 0) { s.blink = 0; s.nextBlink = 4 + Math.random() * 6; }
+    s.blink += dt;
+    const BLINK = 0.55;
+    const shut = s.blink < BLINK ? Math.sin((s.blink / BLINK) * Math.PI) : 0;
+    if (s.blink >= BLINK) s.blink = Infinity;
+    drone.shield = s.shield; drone.shutter = shut;
+    s.q.shield(s.shield); s.q.shutter(shut);
+
+    // draw: where it is in 3D, the eye along the way it is going, a slow lean into the move, nothing abrupt
     const { v, up, q, tilt, axis } = tmp;
     project(m, s.p, v);
     s.vel.subVectors(v, s.last).divideScalar(Math.max(dt, 1e-3));
@@ -205,17 +191,14 @@ export function Drones() {
     s.q.g.position.copy(v);
     const speed = s.vel.length();
     if (speed > 0.05) {
-      tmp.m.lookAt(new THREE.Vector3(), s.vel.clone().negate(), up); // the quad's nose is -z
+      tmp.m.lookAt(new THREE.Vector3(), s.vel, up); // the eye looks along -z
       q.setFromRotationMatrix(tmp.m);
       axis.crossVectors(up, s.vel).normalize();
-      tilt.setFromAxisAngle(axis, Math.min(0.5, speed * 0.35)); // lean forward, more the faster
+      tilt.setFromAxisAngle(axis, Math.min(0.3, speed * 0.2));
       q.premultiply(tilt);
-      s.heading.slerp(q, Math.min(1, dt * 6));
+      s.heading.slerp(q, Math.min(1, dt * 2.5));
     }
     s.q.g.quaternion.copy(s.heading);
-    s.spin += dt * (40 + speed * 30);
-    s.q.rotors.forEach((r, i) => { r.rotation.y = s.spin * (i % 2 ? 1 : -1); });
-    s.q.lampMat.emissiveIntensity = 2.5 + 3 * field * (0.5 + 0.5 * Math.sin(now * 9)); // brighter, breathing, in the field
 
     drone.flash.corners.forEach((c4, i) => { project(m, c4, v); s.flash.set(i, v); });
     s.flash.done();

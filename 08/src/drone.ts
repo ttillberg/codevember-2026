@@ -18,6 +18,9 @@ export const drone = {
   crossings: 0,
   /** The corner camera: the drone's own eyes, or a chase camera behind it. A click on the frame swaps. */
   view: 'pov' as 'pov' | 'follow',
+  /** The walls round the body, 0 open to 1 shut, and the shutter over the eye, same scale; the cam's copy follows. */
+  shield: 0,
+  shutter: 0,
   /** The face being passed: its four corners in 4D and how hard it is lit, 0 to 1. */
   flash: { corners: [[0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]] as V4[], a: 0 },
 };
