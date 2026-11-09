@@ -187,6 +187,12 @@ export function Drones() {
     s.pitchV += (k.pitch * TURN - s.pitchV) * Math.min(1, dt * 6);
     right.set(1, 0, 0).applyQuaternion(drone.q);
     drone.q.premultiply(qa.setFromAxisAngle(tmp.up, s.yawV * dt)).premultiply(qa.setFromAxisAngle(right, s.pitchV * dt)).normalize();
+    // the trackpad's look, as it came in: right is a turn to the right, up a turn up
+    if (drone.turn[0] || drone.turn[1]) {
+      right.set(1, 0, 0).applyQuaternion(drone.q);
+      drone.q.premultiply(qa.setFromAxisAngle(tmp.up, -drone.turn[0])).premultiply(qa.setFromAxisAngle(right, drone.turn[1])).normalize();
+      drone.turn[0] = drone.turn[1] = 0;
+    }
     fwd.set(0, 0, -1).applyQuaternion(drone.q);
     const c = toCell(s.p), cv = drone.cvel;
     // the nearest wall and the field there

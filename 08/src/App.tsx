@@ -30,8 +30,22 @@ export function App() {
   const [pilot, setPilot] = useState(drone.pilot);
   // drag turns the machine, not the camera; the wheel zooms
   const drag = useRef<{ x: number; y: number; t: number } | null>(null);
-  const onDown = (e: React.PointerEvent) => { if (e.button === 0) { drag.current = { x: e.clientX, y: e.clientY, t: performance.now() }; rig.vel[0] = rig.vel[1] = 0; } };
+  // at the controls the pointer is the look and a held button the thrust; otherwise it turns the rig
+  const LOOK = 0.0035; // radians per pixel
+  const last = useRef<{ x: number; y: number } | null>(null);
+  const onDown = (e: React.PointerEvent) => {
+    if (e.button !== 0) return;
+    if (drone.pilot) { drone.keys.thrust = 1; return; }
+    drag.current = { x: e.clientX, y: e.clientY, t: performance.now() }; rig.vel[0] = rig.vel[1] = 0;
+  };
   const onMove = (e: React.PointerEvent) => {
+    if (drone.pilot) {
+      const l = last.current;
+      if (l) { drone.turn[0] += (e.clientX - l.x) * LOOK; drone.turn[1] += -(e.clientY - l.y) * LOOK; }
+      last.current = { x: e.clientX, y: e.clientY };
+      return;
+    }
+    last.current = null;
     const d = drag.current;
     if (!d) return;
     const now = performance.now(), dt = Math.max(1, now - d.t) / 1000;
@@ -41,7 +55,8 @@ export function App() {
     if (Math.abs(e.clientX - d.x) > 2) { st.way = Math.sign(e.clientX - d.x); st.flipIn = 8 + Math.random() * 14; }
     drag.current = { x: e.clientX, y: e.clientY, t: now };
   };
-  const onUp = () => { drag.current = null; };
+  const onUp = () => { drag.current = null; if (drone.pilot) drone.keys.thrust = 0; };
+  const onLeave = () => { drag.current = null; last.current = null; if (drone.pilot) drone.keys.thrust = 0; };
   const onWheel = (e: React.WheelEvent) => { rig.zoom = Math.min(18, Math.max(6, rig.zoom * Math.exp(e.deltaY * 0.001))); };
 
   useEffect(() => {
@@ -49,7 +64,7 @@ export function App() {
     const keys = drone.keys;
     const down = (e: KeyboardEvent) => {
       const k = e.key.toLowerCase();
-      if (k === ' ') { e.preventDefault(); st.program = !st.program; setProgram(st.program); }
+      if (k === ' ') { e.preventDefault(); if (drone.pilot) { keys.thrust = 1; return; } st.program = !st.program; setProgram(st.program); }
       if (k === 'm') { st.smooth = !st.smooth; setSmooth(st.smooth); }
       if (k === 'p') { drone.pilot = !drone.pilot; setPilot(drone.pilot); keys.thrust = keys.yaw = keys.pitch = 0; st.crank = 0; }
       if (drone.pilot) {
@@ -68,7 +83,7 @@ export function App() {
     const up = (e: KeyboardEvent) => {
       const k = e.key.toLowerCase();
       if (k === 'arrowright' || k === 'arrowleft') st.crank = 0;
-      if (k === 'w' || k === 's') keys.thrust = 0;
+      if (k === 'w' || k === 's' || k === ' ') keys.thrust = 0;
       if (k === 'a' || k === 'd' || k === 'arrowleft' || k === 'arrowright') keys.yaw = 0;
       if (k === 'arrowup' || k === 'arrowdown') keys.pitch = 0;
     };
@@ -81,7 +96,7 @@ export function App() {
 
   return (
     <>
-      <div className="stage" onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onUp} onPointerLeave={onUp} onPointerCancel={onUp} onWheel={onWheel}>
+      <div className="stage" onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onUp} onPointerLeave={onLeave} onPointerCancel={onUp} onWheel={onWheel}>
         <Canvas camera={{ position: [0, 0, 10.5], fov: 34 }} gl={{ alpha: true, antialias: true, toneMapping: THREE.NeutralToneMapping, toneMappingExposure: 1.0, localClippingEnabled: true }} dpr={[1, 2]}>
           <Suspense fallback={null}>
             <Rig>
@@ -103,9 +118,9 @@ export function App() {
       {CLEAN ? null : <div className="plate"><b>Tesseract</b><i>CDVMBR 08</i></div>}
       <div className="cam" onClick={() => { drone.view = drone.view === 'pov' ? 'follow' : 'pov'; }} />
       {CLEAN ? null : pilot ? <div className="keys">
-        <span><kbd>w s</kbd>thrust</span>
-        <span><kbd>a d</kbd>yaw</span>
-        <span><kbd>↑ ↓</kbd>pitch</span>
+        <span><kbd>move</kbd>look</span>
+        <span><kbd>hold</kbd>thrust</span>
+        <span><kbd>space</kbd>thrust</span>
         <span><kbd>p</kbd>let go</span>
       </div> : <div className="keys">
         <span><kbd>space</kbd>{program ? 'stop program' : 'run program'}</span>

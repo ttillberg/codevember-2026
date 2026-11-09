@@ -22,6 +22,8 @@ export const drone = {
    * space. On its own it flies its legs; piloted it has momentum, thrust along the eye, yaw and pitch. */
   pilot: false,
   keys: { thrust: 0, yaw: 0, pitch: 0 },
+  /** The look from the trackpad: radians to turn right and up, gathered by the page, spent by the device each frame. */
+  turn: [0, 0],
   q: new THREE.Quaternion(),
   cvel: [0, 0, 0],
   /** The walls round the body, 0 open to 1 shut, and the shutter over the eye, same scale; the cam's copy follows. */
