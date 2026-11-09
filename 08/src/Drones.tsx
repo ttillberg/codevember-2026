@@ -90,7 +90,7 @@ export function Drones() {
     group.add(grabbed);
     const held = Math.floor(Math.random() * 4), sign = Math.random() < 0.5 ? -1 : 1;
     const s = {
-      group, q, smoke, laser, puffAt: new THREE.Vector3(1e9, 0, 0), puffGap: 0.04, trailAt: new THREE.Vector3(1e9, 0, 0), flash, clipCorners: null as V4[] | null, shift: new THREE.Vector3(), tintA: 0, tintB: 0, tintHex: '', tintHexA: '', crossed: false, piece, grabbed,
+      group, q, smoke, laser, puffAt: new THREE.Vector3(1e9, 0, 0), puffGap: 0.04, trailAt: new THREE.Vector3(1e9, 0, 0), flash, clipCorners: null as V4[] | null, lastWall: null as { axis: number; sign: number } | null, lastCorners: null as V4[] | null, linger: 0, shift: new THREE.Vector3(), tintA: 0, tintB: 0, tintHex: '', tintHexA: '', crossed: false, piece, grabbed,
       held, sign, came: null as [number, number] | null,
       p: [0, 0, 0, 0] as V4, dir: [0, 0, 0, 0] as V4, // where it is, which way it is going, in 4D
       leg: null as Leg | null, s: 0,
@@ -437,11 +437,16 @@ export function Drones() {
     // inside the wall, and catches the body up over the next few radii. In 4D nothing of the kind happens, the body
     // just moves on, but in the picture two spaces meet at the wall and this makes the hand-over plain. Away from
     // walls the planes are far off and the other copy hidden.
+    // The wall state the flight hands over ends by where the device is on its leg; the hand-over here ends when the
+    // body has come all the way up out of the wall, which can be later. So the last wall is kept and the state
+    // lingers until the set-back is spent.
+    if (s.wall) { s.lastWall = s.wall; s.lastCorners = s.clipCorners; }
+    const wall = s.wall ?? (s.crossed ? s.lastWall : null), corners = s.wall ? s.clipCorners : s.lastCorners;
     s.q.g.visible = true;
-    if (s.wall) {
-      const other = otherMap(s.wall.axis, s.wall.sign);
+    if (wall && corners) {
+      const other = otherMap(wall.axis, wall.sign);
       pose3(other, s.heading2);
-      const [c0, c1, c2] = s.clipCorners!.map((c4) => project(m, c4, new THREE.Vector3()));
+      const [c0, c1, c2] = corners.map((c4) => project(m, c4, new THREE.Vector3()));
       s.planeA.setFromCoplanarPoints(c0, c1, c2);
       const centre: V4 = [0, 0, 0, 0]; centre[drone.held] = drone.sign;
       if (s.planeA.distanceToPoint(project(m, centre, new THREE.Vector3())) < 0) s.planeA.negate();
@@ -455,14 +460,19 @@ export function Drones() {
         s.shift.set(0, 0, 0);
       } else {
         // across: the old copy, now the other, is what is left behind the wall; this copy waits inside the wall until
-        // the body is all the way in, then comes up out of it, set back, and catches up
+        // the body is all the way in, then comes up out of it, set back, and catches up. Through the outer wall the
+        // next cell is on the same side, and the body's path turns back in at the wall: the old copy is mirrored in
+        // the wall's plane then, so it carries on out and sinks all the way instead of coming back up
         s.q2.g.visible = true;
         s.q2.g.position.copy(v);
+        if (s.planeA.normal.dot(s.planeB.normal) > 0) s.q2.g.position.addScaledVector(s.planeA.normal, -2 * d);
         s.q2.g.quaternion.copy(s.heading2);
         s.q2.shield(s.shield); s.q2.shutter(shut); s.q2.grip(s.grip, drone.gripAt);
         const back = d < R ? 2 * R : Math.max(0, 2 * R - (d - R) * (2 / 3));
         s.q.g.visible = d >= R;
         s.shift.copy(s.planeA.normal).multiplyScalar(-back);
+        if (!s.wall) s.linger += dt; else s.linger = 0;
+        if ((back <= 0 || s.linger > 2) && !s.wall) s.crossed = false; // up and out, or long enough: the hand-over is done
       }
       // the renderer clips in world space, and the machine sits on a turned rig: the planes go through its matrix
       s.planeA.applyMatrix4(s.group.matrixWorld); s.planeB.applyMatrix4(s.group.matrixWorld);
@@ -475,8 +485,7 @@ export function Drones() {
     // while the body is sliced by a wall each half glows in the colour of the cell it is in: this copy in this
     // cell's, the other copy in the neighbour's, so the cut reads at a glance; whole again, the glow goes
     let glow = 0, hexA = CELL_HEX[cellId()], hexB = hexA;
-    if (!s.wall) s.crossed = false; // clear of the wall: the next one is ahead again
-    if (s.wall) { const other = otherMap(s.wall.axis, s.wall.sign); hexB = CELL_HEX[cellIdOf(other)]; glow = 1; }
+    if (wall) { const other = otherMap(wall.axis, wall.sign); hexB = CELL_HEX[cellIdOf(other)]; glow = 1; }
     const tint = s.tintA + (glow - s.tintA) * Math.min(1, dt * TINT_IN);
     if (Math.abs(tint - s.tintA) > 0.002 || (glow && s.tintHexA !== hexA)) { s.q.tint(hexA, tint); s.tintHexA = hexA; }
     if (Math.abs(tint - s.tintB) > 0.002 || (glow && s.tintHex !== hexB)) { s.q2.tint(hexB, tint); s.tintHex = hexB; }
