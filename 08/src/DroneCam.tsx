@@ -38,11 +38,11 @@ const FISHEYE = new THREE.ShaderMaterial({
       vec2 u = r > 1e-5 ? p / r : vec2(0.0);
       vec3 d = rot * vec3(sin(theta) * u, -cos(theta));
       vec4 col = textureCube(tCube, d);
-      gl_FragColor = vec4(mix(col.rgb, vec3(0.708, 0.694, 0.658), smoothstep(1.0, 1.02, r)), 1.0); // a disc, the paper outside
+      gl_FragColor = vec4(col.rgb, 1.0 - smoothstep(0.995, 1.005, r)); // a disc; outside it the page shows through
       #include <tonemapping_fragment>
       #include <colorspace_fragment>
     }`,
-  depthTest: false, depthWrite: false,
+  depthTest: false, depthWrite: false, transparent: true,
 });
 
 export function DroneCam() {

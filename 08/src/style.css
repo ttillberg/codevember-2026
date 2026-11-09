@@ -81,12 +81,12 @@ kbd {
   bottom: 72px;
   width: max(120px, min(clamp(220px, 26vw, 360px), calc(100vw - 48px), calc(100vh - 150px)));
   aspect-ratio: 1;
-  border: 1.5px solid var(--ink);
-  border-radius: 4px;
+  border: 1px solid var(--ink);
+  border-radius: 50%;
   cursor: pointer;
   box-sizing: border-box;
 }
-.cam:hover { box-shadow: 0 0 0 2px var(--ink); }
+.cam:hover { box-shadow: 0 0 0 1px var(--ink); }
 
 .back {
   position: fixed;
