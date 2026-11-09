@@ -2,7 +2,8 @@ import { useMemo } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import { EDGES, VERTS, project } from './tesseract';
-import { st, tick, pose } from './state';
+import { st, tick, pose, DEBUG } from './state';
+import { drone, cellId, CELL_HEX } from './drone';
 import { sleeveDecal, scuffSleeve, scratchMap, wear, brushed, ROD_SPAN, ACCENTS, type Brand } from './decals';
 import { withLogos } from './logos';
 
@@ -117,6 +118,13 @@ export function Machine() {
       const bezel = mesh(cyl, black); // a short black collar round it
       return { o, m, bezel, dir: new THREE.Vector3(...l.dir).normalize(), blink: l.blink, node: l.node };
     });
+    // debugging: a lamp on each of the eight corners of the cell the device is in, in that cell's colour, blinking
+    const cellLeds = DEBUG ? Array.from({ length: 8 }, () => {
+      // drawn through the ball, so it reads from any side
+      const m = new THREE.MeshStandardMaterial({ color: '#fff', emissive: '#fff', emissiveIntensity: 1, roughness: 0.3, toneMapped: false, depthTest: false });
+      const o = mesh(sph, m); o.renderOrder = 11;
+      return { o, m };
+    }) : [];
     let seed = 8;
     const struts = EDGES.map((e, i) => {
       const sand = e.axis === 3;
@@ -147,7 +155,7 @@ export function Machine() {
       return { sleeves, seals, stages, wipers, rod, rodTex };
     });
     withLogos(() => { for (const t of clones) t.needsUpdate = true; }); // after the sheets are drawn on: registered last, runs last
-    return { group, nodes, struts, leds, marks };
+    return { group, nodes, struts, leds, cellLeds, marks };
   }, []);
 
   const tmp = useMemo(() => ({
@@ -254,6 +262,24 @@ export function Machine() {
       const b = l.blink(now);
       l.m.emissiveIntensity = 0.1 + 3 * b;
       l.m.color.set(l.m.emissive).multiplyScalar(0.2 + 0.8 * b);
+    }
+    if (parts.cellLeds.length) {
+      // the cell's corners are the vertices on its side of its held axis; each lamp sits on its ball facing the cell's middle
+      const centre4 = [0, 0, 0, 0] as [number, number, number, number];
+      centre4[drone.held] = drone.sign;
+      const centre = project(m, centre4, dir);
+      const hex = CELL_HEX[cellId()], b = now % 0.5 < 0.25 ? 1 : 0.15;
+      let n = 0;
+      VERTS.forEach((v, k) => {
+        if (v[drone.held] !== drone.sign) return;
+        const l = parts.cellLeds[n++], p = P[k];
+        back.copy(centre).sub(p).normalize();
+        l.o.position.copy(p).addScaledVector(back, R_NODE * 0.97);
+        l.o.scale.setScalar(R_LED * 2);
+        l.m.emissive.set(hex);
+        l.m.emissiveIntensity = 0.1 + 3 * b;
+        l.m.color.set(l.m.emissive).multiplyScalar(0.2 + 0.8 * b);
+      });
     }
   });
 
