@@ -4,7 +4,7 @@ import { useGLTF } from '@react-three/drei';
 import * as THREE from 'three';
 import { project, type V4 } from './tesseract';
 import { pose, turnGlide } from './state';
-import { drone, target, startCell, crossInto, faceQuad, pieceMesh, blink, toCell, fromCell, dirFromCellWith, otherMap, mapAcross, wallCorners, type CellMap } from './drone';
+import { drone, target, startCell, crossInto, faceQuad, pieceMesh, blink, toCell, fromCell, dirFromCellWith, otherMap, mapAcross, wallCorners, cellId, CELL_HEX, type CellMap } from './drone';
 import { device, ringOut, DEVICE_URL } from './device';
 import { makeSmoke } from './smoke';
 
@@ -323,9 +323,9 @@ export function Drones() {
     project(m, s.p, v);
     s.vel.subVectors(v, s.last).divideScalar(Math.max(dt, 1e-3));
     s.last.copy(v);
-    // the wake: a puff every little way, born just behind the device in 4D
+    // the wake: a puff every little way, born just behind the device in 4D, in the colour of the cell it is in
     if (v.distanceTo(s.puffAt) > 0.012) {
-      s.smoke.spawn(add4(s.p, s.dir, -0.05), now);
+      s.smoke.spawn(add4(s.p, s.dir, -0.05), now, CELL_HEX[cellId()]);
       s.puffAt.copy(v);
     }
     const fovH = (camera as THREE.PerspectiveCamera).fov * Math.PI / 180;
