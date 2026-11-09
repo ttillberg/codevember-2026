@@ -91,7 +91,7 @@ export function App() {
           <b>TESSERAKT</b>
           <i>四次元 · 超立方体 · UNIT 08</i>
         </div>
-        <p>A hypercube built for real. 32 telescopic struts on 16 ball joints, one servo cranking it through the XW plane in steps: a 4D turn seen in 3D is an object whose edges change length. Everything else is rigid.</p>
+        <p>A hypercube built for real. 32 telescopic struts on 16 ball joints, one crank turning it through the XW plane: a 4D turn seen in 3D is an object whose edges change length. Everything else is rigid.</p>
         <Readout />
       </div>}
       {CLEAN ? null : <div className="keys">

@@ -11,7 +11,7 @@ export const st = {
   target: 0.3, // where the servo is told to be
   vel: 0,
   program: true, // the servo picks its own targets
-  smooth: false, // M: the old motion, an even spin and a slow turntable, to compare
+  smooth: true, // the default: an even spin and a slow turntable. M swaps in the servo
   next: 1.2, // seconds until the next step
   crank: 0, // held key, -1 0 1
   shift: false, // shift held: drag moves the target instead of orbiting
