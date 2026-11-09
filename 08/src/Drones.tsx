@@ -26,7 +26,7 @@ const SETTLE = 0.6, CATCH = 0.35, GLIDE = 2.0, REST = 0.5;
 const TINT_IN = 14; // how fast the glow on the half inside a new cell comes and goes, per second
 // in-then-out: how far the body goes on past all-in before the next cell's copy starts up out of the wall, and over
 // how far it rises, both in radii; the hand-over may linger this long past the wall state
-const INOUT_GAP = 1.5, INOUT_RISE = 3, LINGER = 3;
+const INOUT_GAP = 1.5, INOUT_RISE = 4, INOUT_SET = 3, LINGER = 3; // INOUT_SET: how deep in the wall the copy starts, in radii, past the fins
 const GLOW = 0.9; // the strength of the cell-colour tint on a half in a wall: 0.9 of the tint's own 0.55 is about half
 // at the controls the device docks on its own: the piece this close (in device radii, in cell space), the device this
 // slow (cell units a second) and the piece this well ahead (cosine), and the catch takes over
@@ -490,8 +490,10 @@ export function Drones() {
         // across: the old copy sinks the rest of the way; this one waits inside the wall until the body is all in
         // and a gap more, then comes up out of it, set back two radii, and catches the body up over the rise
         s.q2.g.visible = true;
-        const from = R * (1 + INOUT_GAP);
-        const back = d < from ? 2 * R : Math.max(0, 2 * R * (1 - (d - from) / (R * INOUT_RISE)));
+        // the set-back eases from its full depth to nothing along the rise, so the copy starts out at the body's own
+        // speed and ends at it too, no catching up to be seen
+        const from = R * (1 + INOUT_GAP), u = Math.max(0, Math.min(1, (d - from) / (R * INOUT_RISE)));
+        const back = INOUT_SET * R * (1 - u * u * (3 - 2 * u));
         s.q.g.visible = d >= from;
         s.shift.copy(s.planeA.normal).multiplyScalar(-back);
         s.immB = Math.max(0, Math.min(1, (R + d) / (2 * R)));
