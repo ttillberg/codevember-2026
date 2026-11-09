@@ -4,6 +4,7 @@ import { ContactShadows, Environment, Lightformer, OrbitControls } from '@react-
 import { Machine } from './Machine';
 import { Drones } from './Drones';
 import { DroneCam } from './DroneCam';
+import { Laser, laser } from './Laser';
 import { drone } from './drone';
 import { st, phase } from './state';
 
@@ -39,10 +40,30 @@ function Readout() {
 
 const CLEAN = new URLSearchParams(location.search).has('clean'); // no page furniture, for the screengrab
 if (new URLSearchParams(location.search).has('follow')) drone.view = 'follow';
+if (new URLSearchParams(location.search).has('laser')) { laser.on = true; laser.x = innerWidth * 0.5; laser.y = innerHeight * 0.48; } // for a screenshot
 
 export function App() {
   const [program, setProgram] = useState(st.program);
   const [smooth, setSmooth] = useState(st.smooth);
+  const [orbit, setOrbit] = useState(true);
+
+  // hold the pointer still a moment and it becomes a laser; move it straight away and it orbits
+  const hold = useRef<{ x: number; y: number; timer: number } | null>(null);
+  const onDown = (e: React.PointerEvent) => {
+    if (e.button !== 0) return;
+    laser.x = e.clientX; laser.y = e.clientY;
+    const timer = window.setTimeout(() => { laser.on = true; setOrbit(false); hold.current = null; }, 220);
+    hold.current = { x: e.clientX, y: e.clientY, timer };
+  };
+  const onMove = (e: React.PointerEvent) => {
+    laser.x = e.clientX; laser.y = e.clientY;
+    const h = hold.current;
+    if (h && Math.hypot(e.clientX - h.x, e.clientY - h.y) > 4) { clearTimeout(h.timer); hold.current = null; }
+  };
+  const onUp = () => {
+    if (hold.current) { clearTimeout(hold.current.timer); hold.current = null; }
+    if (laser.on) { laser.on = false; setOrbit(true); }
+  };
   useEffect(() => {
     const down = (e: KeyboardEvent) => {
       if (e.key === ' ') { e.preventDefault(); st.program = !st.program; setProgram(st.program); }
@@ -62,11 +83,12 @@ export function App() {
 
   return (
     <>
-      <div className="stage">
+      <div className="stage" onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onUp} onPointerLeave={onUp} onPointerCancel={onUp}>
         <Canvas camera={{ position: [4.8, 2.6, 8.2], fov: 34 }} gl={{ alpha: true, antialias: true, toneMappingExposure: 1.15 }} dpr={[1, 2]}>
           <Machine />
           <Drones />
           <DroneCam />
+          <Laser />
           <ContactShadows position={[0, -3.4, 0]} opacity={0.6} scale={16} blur={2.6} far={5} resolution={1024} color="#2a2620" />
           <Environment resolution={256}>
             <Lightformer intensity={2.6} rotation-x={Math.PI / 2} position={[0, 7, 0]} scale={[10, 10, 1]} />
@@ -76,7 +98,7 @@ export function App() {
           </Environment>
           <directionalLight position={[4, 8, 6]} intensity={1.1} />
           <OrbitControls
-            enableDamping enablePan={false} minDistance={5} maxDistance={20} target={[0, -0.2, 0]}
+            enabled={orbit} enableDamping enablePan={false} minDistance={5} maxDistance={20} target={[0, -0.2, 0]}
             onChange={(e) => { if (e) st.azimuth = (e.target as { getAzimuthalAngle: () => number }).getAzimuthalAngle(); }}
           />
         </Canvas>
@@ -95,6 +117,7 @@ export function App() {
       {CLEAN ? null : <div className="keys">
         <span><kbd>space</kbd>{program ? 'stop program' : 'run program'}</span>
         <span><kbd>drag</kbd>orbit, sets the way</span>
+        <span><kbd>hold</kbd>laser</span>
         <span><kbd>m</kbd>{smooth ? 'servo' : 'smooth'}</span>
       </div>}
     </>
