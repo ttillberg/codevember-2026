@@ -29,6 +29,8 @@ const scale4 = (a: V4, k: number): V4 => a.map((x) => x * k) as V4;
 const len4 = (a: V4) => Math.hypot(a[0], a[1], a[2], a[3]);
 const unit4 = (a: V4): V4 => scale4(a, 1 / (len4(a) || 1));
 const smooth = (t: number) => t * t * (3 - 2 * t);
+/** Keep a control point inside the cell: the held coordinate on its wall, the others short of the struts. */
+const inCell = (v: V4, held: number, sign: number): V4 => v.map((x, i) => (i === held ? sign : Math.max(-0.9, Math.min(0.9, x)))) as V4;
 
 /** Cubic Bezier through two segments, s in [0, 1], the join at 0.5. pts = [p0, c0, c1, join, c2, c3, p1]. */
 function path(pts: V4[], s: number): V4 {
@@ -116,12 +118,11 @@ export function Drones() {
   function cruiseLeg(s: S): Leg {
     const to = roomIn(s);
     const L = len4(sub4(to, s.p));
-    const c0 = add4(s.p, s.dir, L * 0.35);
-    const mid = add4(scale4(add4(s.p, to), 0.5), [rnd(-0.15, 0.15), rnd(-0.15, 0.15), rnd(-0.15, 0.15), rnd(-0.15, 0.15)]);
-    mid[s.held] = s.sign;
-    const c1 = add4(mid, sub4(c0, s.p), -0.3);
-    const c2 = add4(mid, sub4(to, mid), 0.3);
-    const c3 = add4(to, sub4(to, mid), -0.2);
+    const c0 = inCell(add4(s.p, s.dir, L * 0.35), s.held, s.sign);
+    const mid = inCell(add4(scale4(add4(s.p, to), 0.5), [rnd(-0.15, 0.15), rnd(-0.15, 0.15), rnd(-0.15, 0.15), rnd(-0.15, 0.15)]), s.held, s.sign);
+    const c1 = inCell(add4(mid, sub4(c0, s.p), -0.3), s.held, s.sign);
+    const c2 = inCell(add4(mid, sub4(to, mid), 0.3), s.held, s.sign);
+    const c3 = inCell(add4(to, sub4(to, mid), -0.2), s.held, s.sign);
     const pts = [s.p, c0, c1, mid, c2, c3, to];
     return { kind: 'cruise', pts, len: pathLen(pts), crossed: false };
   }
@@ -139,14 +140,14 @@ export function Drones() {
     const beyond = face.slice() as V4;
     beyond[s.held] = s.sign * rnd(0.2, 0.6);
     for (const i of [0, 1, 2, 3]) if (i !== axis && i !== s.held) beyond[i] = rnd(-ROOM, ROOM);
-    // the tangent in the face: half the way out, half the way in, the right angle rounded
+    // in square to the face and square on from it: the turn is the 4D right angle itself, taken in the face, slowed
+    // by the field. Every control point stays on the boundary, inside its cell; the path never leaves the tesseract.
     const out: V4 = [0, 0, 0, 0]; out[axis] = sign;
     const inward: V4 = [0, 0, 0, 0]; inward[s.held] = -s.sign;
-    const tan = unit4(add4(out, inward));
     const L0 = len4(sub4(face, s.p)), L1 = len4(sub4(beyond, face));
     const pts = [
-      s.p, add4(s.p, s.dir, L0 * 0.35), add4(face, tan, -L0 * 0.4), face,
-      add4(face, tan, L1 * 0.4), add4(beyond, sub4(beyond, face), -0.25), beyond,
+      s.p, inCell(add4(s.p, s.dir, L0 * 0.35), s.held, s.sign), add4(face, out, -L0 * 0.4), face,
+      add4(face, inward, L1 * 0.4), inCell(add4(beyond, sub4(beyond, face), -0.25), axis, sign), beyond,
     ];
     // the face's four joints: the held axis and the face's axis fixed, the other two at the corners
     const corners: V4[] = [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([u, v]) => {
@@ -185,10 +186,10 @@ export function Drones() {
     if (s.s >= 1) { s.p[s.held] = s.sign; s.leg = null; }
 
     drone.p = s.p;
-    // the face lights as the drone comes through, a flash with the field's shape, sharper
+    // the face lights just before the drone goes through, and is out again as it does
     if (leg.kind === 'portal') {
       drone.flash.corners = leg.face!.corners;
-      drone.flash.a = Math.exp(-(((s.s - 0.5) / (FIELD * 0.8)) ** 2));
+      drone.flash.a = Math.exp(-(((s.s - 0.4) / 0.06) ** 2));
     } else drone.flash.a = 0;
     if (now - s.trailAt > TRAIL_EVERY) {
       s.trail.push(s.p.slice() as V4);
