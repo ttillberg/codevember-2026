@@ -1,7 +1,5 @@
 :root {
   --paper: #e6e6e4;
-  --grid: #d4d4d1;
-  --grid-fine: #dcdcd9;
   --ink: #1c1c1c;
   --mute: #6b6b68;
   --pink: #ef5f9f;
@@ -19,11 +17,7 @@ html, body, #root {
 body {
   background-color: var(--paper);
   background-image:
-    linear-gradient(var(--grid) 1px, transparent 1px),
-    linear-gradient(90deg, var(--grid) 1px, transparent 1px),
-    linear-gradient(var(--grid-fine) 1px, transparent 1px),
-    linear-gradient(90deg, var(--grid-fine) 1px, transparent 1px);
-  background-size: 120px 120px, 120px 120px, 24px 24px, 24px 24px;
+    radial-gradient(ellipse 70% 60% at 50% 42%, #f4f4f1 0%, var(--paper) 55%, #d6d6d2 100%);
   overflow: hidden;
 }
 
