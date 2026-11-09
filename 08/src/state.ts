@@ -16,7 +16,6 @@ export const st = {
   angle: 0.3, // radians in the live plane, where the crank is
   target: 0.3, // where the servo is told to be
   vel: 0,
-  quarters: 0, // quarter turns done
   program: false, // the servo picks its own targets; off, it only turns when told to (a catch)
   smooth: false, // an even turn instead of the servo's steps. M swaps
   next: 1.2, // seconds until the next step
@@ -26,8 +25,6 @@ export const st = {
   spinVel: 0, // the smooth mode's speed, eased towards SPIN * way so a flip is a swing, not a knock
   hard: false, // hard mode: the machine turns in 4D all the time, changing plane as it passes each quarter
   inout: false, // the hand-over at a wall: false, both halves at once, folded at the wall; true, the body goes all the way in, then comes out
-  /** Longest and shortest strut right now, for the readout. */
-  lengths: { min: 0, max: 0 },
   /** How far the machine reaches from its centre right now, in the 3D picture, for the camera to fit it. */
   reach: 4,
 };
@@ -46,9 +43,10 @@ export const rig = {
   turntable: true, // the slow turn on its own, in the attract mode
 };
 
-export const CRANK = 1.6; // rad/s of target with a key held
+const CRANK = 1.6; // rad/s of target with a key held
 const SPIN = 0.22; // rad/s, the smooth mode
 const HARD_SPIN = 0.4; // rad/s, the hard mode's turn in 4D
+const PITCH_MAX = 1.4; // radians the orbit goes up or down at most
 const TURNTABLE = 0.07; // rad/s, the camera's slow orbit in the attract mode, a revolution in a minute and a half
 const QUARTER = Math.PI / 2;
 const DEG = Math.PI / 180;
@@ -83,7 +81,6 @@ function fold(q: number) {
   st.base = mul(rotPlane(st.plane, q * QUARTER), st.base).map((row) => row.map(Math.round)) as M4;
   st.angle -= q * QUARTER;
   st.target -= q * QUARTER;
-  st.quarters += Math.abs(q);
   if (Math.abs(st.angle) < 1e-3) st.plane = pick<number>([0, 1, 2].filter((p) => p !== st.plane).map((p) => [p, 1]));
 }
 
@@ -101,13 +98,22 @@ function step() {
   }));
 }
 
+/** A drag on the orbit: `dy` radians of yaw and `dp` of pitch, over `dt` seconds; the speed is kept, smoothed, to
+ * coast on once it is let go. */
+export function orbitBy(dy: number, dp: number, dt: number) {
+  rig.orbiting = true;
+  rig.yaw += dy;
+  rig.pitch = THREE.MathUtils.clamp(rig.pitch + dp, -PITCH_MAX, PITCH_MAX);
+  rig.orbitVel[0] += (dy / dt - rig.orbitVel[0]) * 0.5; rig.orbitVel[1] += (dp / dt - rig.orbitVel[1]) * 0.5;
+}
+
 export function tick(dt: number) {
   // the turntable: the camera orbits slowly on its own, in the attract mode
   if (rig.turntable) rig.yaw += TURNTABLE * dt;
   // the orbit coasts after a drag, slowing over a second or two
   if (!rig.orbiting && (rig.orbitVel[0] || rig.orbitVel[1])) {
     rig.yaw += rig.orbitVel[0] * dt;
-    rig.pitch = Math.max(-1.4, Math.min(1.4, rig.pitch + rig.orbitVel[1] * dt));
+    rig.pitch = THREE.MathUtils.clamp(rig.pitch + rig.orbitVel[1] * dt, -PITCH_MAX, PITCH_MAX);
     const k = Math.exp(-dt * 2.5);
     rig.orbitVel[0] *= k; rig.orbitVel[1] *= k;
     if (Math.abs(rig.orbitVel[0]) + Math.abs(rig.orbitVel[1]) < 1e-3) rig.orbitVel[0] = rig.orbitVel[1] = 0;
@@ -126,7 +132,6 @@ export function tick(dt: number) {
       const q = Math.sign(st.angle);
       st.angle = st.target = q * QUARTER;
       fold(q);
-      st.angle = st.target = 0;
       st.plane = pick<number>([0, 1, 2].filter((p) => p !== st.plane).map((p) => [p, 1]));
     }
     return;
@@ -134,10 +139,10 @@ export function tick(dt: number) {
 
   if (glide) {
     glide.t += dt;
-    const u = Math.min(1, glide.t / glide.dur), e = u * u * (3 - 2 * u);
+    const e = THREE.MathUtils.smoothstep(glide.t, 0, glide.dur);
     st.angle = st.target = glide.from + (glide.to - glide.from) * e;
     st.vel = 0;
-    if (u >= 1) {
+    if (glide.t >= glide.dur) {
       st.angle = st.target = glide.to;
       glide = null;
       const q = Math.round(st.angle / QUARTER);
@@ -176,12 +181,4 @@ export function turnGlide(dur = 2) {
   // to an exact quarter, so the bank at the end leaves nothing over and the pose is continuous through it
   const dir = (Math.random() < 0.1 ? -1 : 1) * st.way;
   glide = { from: st.angle, to: (Math.round(st.angle / QUARTER) + dir) * QUARTER, t: 0, dur };
-}
-
-/** For the readout: what the servo is doing. */
-export function phase(): string {
-  if (st.smooth) return 'SMOOTH';
-  if (Math.abs(st.target - st.angle) > 1.5 * DEG) return 'MOVE';
-  if (Math.abs(st.vel) > 0.05) return 'SETTLE';
-  return 'HOLD';
 }

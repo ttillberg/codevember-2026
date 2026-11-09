@@ -15,39 +15,48 @@ const ROOM = new THREE.Color('#e9e6df');
 
 export function makeLaser() {
   const mat = new LineMaterial({ linewidth: 1.6, vertexColors: true, toneMapped: false, worldUnits: false });
-  const line = new Line2(new LineGeometry(), mat);
+  // one geometry for good, sized for every sample there can be: each frame the segments are written in place and
+  // only as many drawn as there are
+  const geo = new LineGeometry();
+  geo.setPositions(new Float32Array(N * 3)); geo.setColors(new Float32Array(N * 3));
+  const segBuf = (geo.attributes.instanceStart as THREE.InterleavedBufferAttribute).data;
+  const colBuf = (geo.attributes.instanceColorStart as THREE.InterleavedBufferAttribute).data;
+  const seg = segBuf.array as Float32Array, col = colBuf.array as Float32Array;
+  const line = new Line2(geo, mat);
   line.frustumCulled = false;
   line.renderOrder = 4;
   line.visible = false;
-  const p4: V4[] = [], hex: string[] = [], born: number[] = [];
+  const p4: V4[] = [], rgb: THREE.Color[] = [], born: number[] = [];
   let last = -1e9;
-  const v = new THREE.Vector3(), c = new THREE.Color();
+  const ps = new Float32Array(N * 3), cs = new Float32Array(N * 3), v = new THREE.Vector3(), c = new THREE.Color();
   return {
     line,
     /** The device is at `p` now, in the cell coloured `hex`: a sample, if it is time for one. */
     sample(p: V4, now: number, h: string) {
       if (now - last < EVERY) return;
       last = now;
-      p4.push(p.slice() as V4); hex.push(h); born.push(now);
-      while (p4.length > N || (born.length && now - born[0] > LIFE)) { p4.shift(); hex.shift(); born.shift(); }
+      p4.push(p.slice() as V4); rgb.push(new THREE.Color(h)); born.push(now);
+      while (p4.length > N || (born.length && now - born[0] > LIFE)) { p4.shift(); rgb.shift(); born.shift(); }
     },
     /** Redraw under the pose `m`. */
     update(m: M4, now: number, width: number, height: number) {
       const n = p4.length;
       line.visible = n > 1;
       if (n < 2) return;
-      const ps = new Float32Array(n * 3), cs = new Float32Array(n * 3);
       for (let i = 0; i < n; i++) {
         project(m, p4[i], v);
         ps[i * 3] = v.x; ps[i * 3 + 1] = v.y; ps[i * 3 + 2] = v.z;
         const age = (now - born[i]) / LIFE, k = Math.max(0, 1 - age) ** 1.5;
-        c.set(hex[i]).lerp(ROOM, 1 - k);
+        c.copy(rgb[i]).lerp(ROOM, 1 - k);
         cs[i * 3] = c.r; cs[i * 3 + 1] = c.g; cs[i * 3 + 2] = c.b;
       }
-      line.geometry.dispose();
-      line.geometry = new LineGeometry();
-      line.geometry.setPositions(ps);
-      line.geometry.setColors(cs);
+      // a polyline as segments, each from one sample to the next, as LineGeometry lays them out
+      for (let i = 0; i < n - 1; i++) {
+        seg.set(ps.subarray(i * 3, i * 3 + 6), i * 6);
+        col.set(cs.subarray(i * 3, i * 3 + 6), i * 6);
+      }
+      segBuf.needsUpdate = true; colBuf.needsUpdate = true;
+      geo.instanceCount = n - 1;
       mat.resolution.set(width, height);
     },
   };

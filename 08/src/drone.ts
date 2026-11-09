@@ -16,7 +16,6 @@ export const drone = {
   axisOf: [1, 2, 3], // the 4D axis each cell-space row runs along
   centre: [0, 0, 0], // the current cell's centre in cell space
   crossings: 0,
-  /** The corner camera: the drone's own eyes, or a chase camera behind it. A click on the frame swaps. */
   /** Someone at the controls: keys from the page, the device's orientation (its eye along -z) and speed, in cell
    * space. On its own it flies its legs; piloted it has momentum, thrust along the eye, yaw and pitch. */
   pilot: false,
@@ -40,7 +39,6 @@ export const drone = {
   grab4: [0, 0, 0, 0] as V4,
   grabMap: null as CellMap | null,
   grabK: 0,
-  /** The face being passed: its four corners in 4D and how hard it is lit, 0 to 1. */
   /** The wall just gone through: its corners, where it was crossed, in 4D, seconds since (none, -1), and the colour
    * of the cell entered. It ripples out from the crossing, like a wave from a button pressed. */
   flash: { corners: [[0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]] as V4[], p4: [0, 0, 0, 0] as V4, t: -1, color: '#c9e35b' },
@@ -48,6 +46,8 @@ export const drone = {
 
 /** The piece: a small steel ball with a pinhead lamp on each axis, six, flashing fast. `blink(t)` runs them. */
 export const PIECE_R = 0.02;
+/** The device's radius in the main picture, and in cell space. */
+export const SIZE_MAIN = 0.095, SIZE_CELL = 0.17;
 // the lamps' colour is the colour of the cell the piece is in; one material in the fog, one out of it for the eye
 const lampMats = [true, false].map((fog) => new THREE.MeshStandardMaterial({ color: '#ff6a3a', emissive: '#ff6a3a', emissiveIntensity: 0, toneMapped: false, fog }));
 export function lampColor(hex: string) { for (const m of lampMats) { m.color.set(hex); m.emissive.set(hex); } }
@@ -162,10 +162,7 @@ export function crossInto(f: number, t: number) {
 }
 
 /** Where a 4D point is in cell space. */
-export function toCell(p: V4, out: number[] = [0, 0, 0]): number[] {
-  for (let k = 0; k < 3; k++) out[k] = drone.A[k][0] * p[0] + drone.A[k][1] * p[1] + drone.A[k][2] * p[2] + drone.A[k][3] * p[3] + drone.b[k];
-  return out;
-}
+export const toCell = (p: V4, out?: number[]) => toCellWith(drone, p, out);
 
 /** Back from cell space: the held coordinate on its wall, each row's axis from its row. Rows hold one ±1 each. */
 export function fromCell(c: number[], out: V4 = [0, 0, 0, 0]): V4 {
@@ -180,7 +177,6 @@ export function dirFromCellWith(map: CellMap, c: number[], out: V4 = [0, 0, 0, 0
   for (let k = 0; k < 3; k++) { const a = map.axisOf[k]; out[a] = c[k] / map.A[k][a]; }
   return out;
 }
-export const dirFromCell = (c: number[], out?: V4) => dirFromCellWith(drone, c, out);
 
 /** A map crossed through the wall where 4D axis `axis` is `sign`: the cell on the other side, as the net sees it. */
 export function mapAcross(map: CellMap, axis: number, sign: number): CellMap {
@@ -207,13 +203,15 @@ export const target = {
   map: null as CellMap | null,
 };
 
-/** The four joints of the wall on row `k`, side `t`, of the current cell, in 4D. */
-export function wallCorners(k: number, t: number): V4[] {
-  const a = drone.axisOf[k], side = t * drone.A[k][a];
-  const free = [0, 1, 2, 3].filter((i) => i !== a && i !== drone.held);
+/** The four joints of the current cell's wall where 4D axis `axis` is `sign`: the held axis and the face's axis
+ * fixed, the other two at the corners. */
+export function faceCorners(axis: number, sign: number): V4[] {
+  const free = [0, 1, 2, 3].filter((i) => i !== axis && i !== drone.held);
   return [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([u, v]) => {
     const c: V4 = [0, 0, 0, 0];
-    c[drone.held] = drone.sign; c[a] = side; c[free[0]] = u; c[free[1]] = v;
+    c[drone.held] = drone.sign; c[axis] = sign; c[free[0]] = u; c[free[1]] = v;
     return c;
   });
 }
+/** The 4D name of the wall on cell-space row `k`, side `t`: its axis, and that axis's side. */
+export const wallOf = (k: number, t: number) => ({ axis: drone.axisOf[k], sign: t * drone.A[k][drone.axisOf[k]] });

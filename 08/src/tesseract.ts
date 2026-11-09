@@ -30,7 +30,8 @@ export const mul = (a: M4, b: M4): M4 => a.map((row) => [0, 1, 2, 3].map((j) => 
 
 /** Turn a vertex and project it: perspective along w, eye at (0, 0, 0, D). */
 export function project(m: M4, v: V4, out: THREE.Vector3): THREE.Vector3 {
-  const p = [0, 1, 2, 3].map((r) => m[r][0] * v[0] + m[r][1] * v[1] + m[r][2] * v[2] + m[r][3] * v[3]);
-  const s = (D / (D - p[3])) * SCALE;
-  return out.set(p[0] * s, p[1] * s, p[2] * s);
+  // per frame this runs for every joint, puff and laser sample: four dot products, nothing allocated
+  const [x, y, z, w] = v, [r0, r1, r2, r3] = m;
+  const s = (D / (D - (r3[0] * x + r3[1] * y + r3[2] * z + r3[3] * w))) * SCALE;
+  return out.set((r0[0] * x + r0[1] * y + r0[2] * z + r0[3] * w) * s, (r1[0] * x + r1[1] * y + r1[2] * z + r1[3] * w) * s, (r2[0] * x + r2[1] * y + r2[2] * z + r2[3] * w) * s);
 }

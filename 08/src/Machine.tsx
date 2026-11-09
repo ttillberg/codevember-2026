@@ -4,7 +4,7 @@ import * as THREE from 'three';
 import { EDGES, VERTS, project } from './tesseract';
 import { st, tick, pose, DEBUG } from './state';
 import { drone, cellId, CELL_HEX } from './drone';
-import { sleeveDecal, scuffSleeve, scratchMap, wear, brushed, ROD_SPAN, ACCENTS, type Brand } from './decals';
+import { sleeveDecal, scuffSleeve, scratchMap, wear, brushed, ROD_SPAN, ACCENTS, SAND, GRAPHITE, type Brand } from './decals';
 import { withLogos } from './logos';
 
 // The mechanism. Every edge is a strut in three stages: a sleeve fixed to each ball joint, a stanchion sliding out of
@@ -23,7 +23,7 @@ const LIP = 0.01; // a seal stands proud of the mouth it sits on, so their end c
 const Y = new THREE.Vector3(0, 1, 0);
 const FLIP = new THREE.Quaternion(1, 0, 0, 0); // y → -y
 
-const SAND = '#d9b985', GRAPHITE = '#3a3a3d', INK = '#1a1a1a', PAPER = '#efe9dd';
+const INK = '#1a1a1a', PAPER = '#efe9dd';
 
 // A few status LEDs on the balls: which node, where on it, what colour, how it blinks.
 const LEDS: { node: number; dir: [number, number, number]; color: string; blink: (t: number) => number }[] = [
@@ -60,6 +60,7 @@ export function Machine() {
     const BUMP = new THREE.Vector2(0.35, 0.35); // the hard wear as tiny grooves
     const worn = (base: string, roughness: number, metalness: number, salt: number) =>
       Array.from({ length: POOL }, (_, k) => { const map = wear(base, salt + k); return new THREE.MeshStandardMaterial({ map, normalMap: map.userData.bump, normalScale: BUMP, roughness, metalness }); });
+    const paint = (map: THREE.Texture, sand: boolean) => new THREE.MeshStandardMaterial({ map, normalMap: map.userData.bump, normalScale: BUMP, roughness: sand ? 0.78 : 0.62, metalness: 0.05 });
     const stageMats = [worn('#2f2f32', 0.5, 0.15, 700), worn('#c8a874', 0.7, 0.05, 800)];
     // the same six textures on a hundred parts would show: each part takes its own copy of one, shifted round the
     // tube by a random turn and mirrored either way. The copies share the image on the GPU; only the mapping differs.
@@ -134,12 +135,12 @@ export function Machine() {
           // most plain; one in six of these has been knocked about
           if ((i * 7 + end) % 6 !== 0) return mesh(cyl, dealt(plain[sand ? 1 : 0], i * 5 + end * 3));
           const map = scuffSleeve(sand ? SAND : GRAPHITE, i * 2 + end + 300);
-          return mesh(cyl, new THREE.MeshStandardMaterial({ map, normalMap: map.userData.bump, normalScale: BUMP, roughness: sand ? 0.78 : 0.62, metalness: 0.05 }));
+          return mesh(cyl, paint(map, sand));
         }
         const serial = `SYS—${String(i + 1).padStart(2, '0')}${end ? 'B' : 'A'}`;
         const accent = ACCENTS[(i * 3 + end) % ACCENTS.length];
         const map = sleeveDecal({ base: sand ? SAND : GRAPHITE, ink: sand ? INK : PAPER, serial, axis, seed: seed++, accent, flip: end === 1, brand: brandOf.get(i * 2 + end) ?? null });
-        return mesh(cyl, new THREE.MeshStandardMaterial({ map, normalMap: map.userData.bump, normalScale: BUMP, roughness: sand ? 0.78 : 0.62, metalness: 0.05 }));
+        return mesh(cyl, paint(map, sand));
       });
       // one in five sleeve mouths gets a coloured ring instead of a black seal
       const seals = [0, 1].map((end) => mesh(cyl, (i * 2 + end) % 5 === 0 ? accents[(i + end) % accents.length] : black));
@@ -209,14 +210,12 @@ export function Machine() {
       o.quaternion.copy(rot);
       o.scale.set(r, len, r);
     };
-    let min = Infinity, max = 0;
     EDGES.forEach((e, i) => {
       const a = P[e.a], b = P[e.b];
       dir.subVectors(b, a);
       const L = dir.length();
       dir.divideScalar(L);
       back.copy(dir).negate();
-      min = Math.min(min, L); max = Math.max(max, L);
       q.setFromUnitVectors(Y, dir);
       qb.copy(q).multiply(FLIP);
       const s = parts.struts[i];
@@ -245,7 +244,6 @@ export function Machine() {
       s.rodTex.repeat.y = rodLen / (2 * Math.PI * R_ROD * ROD_SPAN);
       s.rodTex.offset.y = (1 - s.rodTex.repeat.y) / 2;
     });
-    st.lengths.min = min; st.lengths.max = max;
     st.reach = Math.max(...P.map((p) => p.length())) + R_NODE;
     seams.instanceMatrix.needsUpdate = true;
     grooves.instanceMatrix.needsUpdate = true;

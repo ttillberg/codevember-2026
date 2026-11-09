@@ -15,12 +15,10 @@ useGLTF.preload(DEVICE_URL);
 export type Device = {
   g: THREE.Group;
   /** 0 home to 1 out: the ring on its arm in front of the eye, claws closing as it reaches; `at` is how far out the
-   * ring should be at full reach, in the model's units from the centre (default a radius and a bit). */
-  grip: (k: number, at?: number) => void;
+   * ring should be at full reach, in device radii from the centre. */
+  grip: (k: number, at: number) => void;
   /** Clip every part of this copy to one side of these planes (needs the renderer's local clipping on). */
   clip: (planes: THREE.Plane[]) => void;
-  /** Fade the whole copy: 1 as made, 0 gone. */
-  fade: (k: number) => void;
   /** Tint the whole copy with a glow of `hex`, `k` strong: 0 as made. */
   tint: (hex: string, k: number) => void;
   /** 0 open (fins back) to 1 shut (the walls closed round the body). */
@@ -67,7 +65,6 @@ function makeMarks() {
     g.textBaseline = 'middle'; g.textAlign = 'center';
     g.fillText('CDVMBR 08 · UNIT 01', 256, 34);
   }));
-  // scuffs: hairlines, and on two of them a proper scrape that reads from the main view
   // scuffs: hairlines and, when the sheet is here, a window of real wear; two of them also get a proper scrape
   const scuff = [11, 29, 47, 63, 83].map((seed, i) => {
     const r = rngOf(seed);
@@ -105,7 +102,7 @@ function skin(mesh: THREE.Mesh, at = 0) {
   const c = new THREE.Box3().setFromObject(mesh).getCenter(new THREE.Vector3());
   const dir = c.clone().normalize();
   if (at) dir.applyAxisAngle(new THREE.Vector3().crossVectors(dir, new THREE.Vector3(0, 0, 1)).normalize(), at);
-  const ray = new THREE.Raycaster(dir.clone().multiplyScalar(4).add(c.clone().multiplyScalar(0)), dir.clone().negate());
+  const ray = new THREE.Raycaster(dir.clone().multiplyScalar(4), dir.clone().negate());
   const hit = ray.intersectObject(mesh, false)[0];
   if (!hit || !hit.face) return null;
   const n = hit.face.normal.clone().transformDirection(mesh.matrixWorld);
@@ -159,19 +156,20 @@ function makeWorks() {
   };
 }
 /** How far out from the centre the grip's ring is, in model units, at extension `k` reaching for a piece `at` away. */
-export const ringOut = (k: number, at = 1.83) => 1.28 + (Math.max(0.95, Math.min(3.2, at)) - 1.28) * k;
+export const ringOut = (k: number, at: number) => 1.28 + (Math.max(0.95, Math.min(3.2, at)) - 1.28) * k;
 
 /** The matrix of `o` relative to its ancestor `anc`, from local matrices (kept current by the caller). */
-function relTo(o: THREE.Object3D, anc: THREE.Object3D) {
-  const m = new THREE.Matrix4();
+function relTo(o: THREE.Object3D, anc: THREE.Object3D, m = new THREE.Matrix4()) {
+  m.identity();
   for (let p: THREE.Object3D | null = o; p && p !== anc; p = p.parent) m.premultiply(p.matrix);
   return m;
 }
 
-/** A copy of the loaded model at `size` (its radius), with its hinges wired. Materials are shared between copies,
- * unless `own`: then every mesh gets its own, for clipping planes of its own. */
+/** A copy of the loaded model at `size` (its radius), with its hinges wired. Every mesh gets a material of its own,
+ * for clipping planes and a tint of its own. */
 const tintColor = new THREE.Color();
-export function device(model: THREE.Object3D, size: number, own = false): Device {
+const _rel = new THREE.Matrix4(), _back = new THREE.Vector3();
+export function device(model: THREE.Object3D, size: number): Device {
   const g = model.clone(true) as THREE.Group;
   dress(g);
   g.scale.setScalar(size);
@@ -209,75 +207,70 @@ export function device(model: THREE.Object3D, size: number, own = false): Device
   const gripParts = (() => {
     const grp = new THREE.Group();
     frame.add(grp);
-    const arm = new THREE.Mesh(W.barrel, W.graphite); arm.scale.set(0.8, 1, 0.8); grp.add(arm);
+    const arm = new THREE.Mesh(W.barrel, W.graphite); grp.add(arm);
+    arm.position.set(0, 0, -0.7); arm.quaternion.setFromUnitVectors(Y, EYE); // from the cap towards the ring
     const ring = new THREE.Group(); grp.add(ring);
     ring.add(new THREE.Mesh(new THREE.TorusGeometry(0.2, 0.025, 10, 32), W.steel));
     const claws = [0, 1, 2].map((i) => {
       const pivot = new THREE.Group();
       pivot.rotation.z = (i * Math.PI * 2) / 3;
       const claw = new THREE.Mesh(new THREE.CylinderGeometry(0.016, 0.01, 0.18, 8), W.graphite);
-      claw.position.set(0.2, 0, -0.09); claw.rotation.x = Math.PI / 2; // along -z from the ring, hinged there
+      claw.rotation.x = Math.PI / 2; // along -z from the ring, hinged there
       const hinge = new THREE.Group(); hinge.position.set(0.2, 0, 0); hinge.add(claw); claw.position.set(0, 0, -0.09);
       pivot.add(hinge); ring.add(pivot);
       return hinge;
     });
     return { grp, arm, ring, claws };
   })();
-  const grip = (k: number, at = 1.83) => {
+  const grip = (k: number, at: number) => {
     const { grp, arm, ring, claws } = gripParts;
     grp.visible = k > 0.01;
     const reach = ringOut(k, at) - 0.78; // the ring's z out from the eye cap at 0.78
-    arm.position.set(0, 0, -0.7); arm.quaternion.setFromUnitVectors(Y, new THREE.Vector3(0, 0, -1)); arm.scale.set(0.8, reach + 0.08, 0.8); // from the cap to the ring
+    arm.scale.set(0.8, reach + 0.08, 0.8); // from the cap to the ring
     ring.position.set(0, 0, -(0.78 + reach));
     for (const h of claws) h.rotation.y = -0.35 - 1.0 * k; // tilt in towards the axis as it closes
   };
-  grip(0);
+  grip(0, 1); // home: the reach does not matter
   const stroke = () => {
     for (const a of acts) {
       a.w.o.updateMatrix();
-      a.at.copy(a.local).applyMatrix4(relTo(a.w.o, frame));
+      a.at.copy(a.local).applyMatrix4(relTo(a.w.o, frame, _rel));
       a.d.subVectors(a.at, a.coreAt);
       const L = a.d.length(); a.d.divideScalar(L);
       // the cylinder from the core mount, two thirds of the shortest stroke long; the rod from the petal mount back into it
       a.barrel.position.copy(a.coreAt); a.barrel.quaternion.setFromUnitVectors(Y, a.d); a.barrel.scale.set(1, Math.min(L - 0.04, 0.3), 1);
-      a.rod.position.copy(a.at); a.rod.quaternion.setFromUnitVectors(Y, a.d.clone().negate()); a.rod.scale.set(1, L - 0.05, 1);
+      a.rod.position.copy(a.at); a.rod.quaternion.setFromUnitVectors(Y, _back.copy(a.d).negate()); a.rod.scale.set(1, L - 0.05, 1);
     }
   };
   stroke();
   const leaves = [0, 1, 2, 3, 4, 5, 6, 7].map((i) => { const l = g.getObjectByName(`leaf_${i}`)!; return { o: l, rest: l.rotation.y }; });
+  // every material of this copy, gathered once; the tintable ones keep their own emissive as made
+  const mats: THREE.Material[] = [], tinted: { m: THREE.MeshStandardMaterial; base: THREE.Color }[] = [];
   g.traverse((o) => {
     if ((o as THREE.Mesh).isMesh) {
       const mesh = o as THREE.Mesh;
-      if (own) mesh.material = (mesh.material as THREE.Material).clone();
-      const m = mesh.material as THREE.MeshStandardMaterial;
+      const m = (mesh.material = (mesh.material as THREE.Material).clone()) as THREE.MeshStandardMaterial;
       if (m.transparent) m.depthWrite = false; // the glass
-      m.userData.opacity = m.opacity; m.userData.transparent = m.transparent; // as made, for the fade
-      if (m.emissive) m.userData.emissive = m.emissive.clone(); // and the tint
+      mats.push(m);
+      if (m.emissive) tinted.push({ m, base: m.emissive.clone() });
       o.frustumCulled = false;
     }
   });
+  let shieldK = -1;
   return {
     g,
-    clip: (planes) => { g.traverse((o) => { if ((o as THREE.Mesh).isMesh) ((o as THREE.Mesh).material as THREE.Material).clippingPlanes = planes; }); },
+    clip: (planes) => { for (const m of mats) m.clippingPlanes = planes; },
     tint: (hex, k) => {
       tintColor.set(hex);
-      g.traverse((o) => {
-        if (!(o as THREE.Mesh).isMesh) return;
-        const m = (o as THREE.Mesh).material as THREE.MeshStandardMaterial;
-        if (!m.emissive || !m.userData.emissive) return;
-        m.emissive.copy(m.userData.emissive).lerp(tintColor, k * 0.55);
-      });
-    },
-    fade: (k) => {
-      g.traverse((o) => {
-        if (!(o as THREE.Mesh).isMesh) return;
-        const m = (o as THREE.Mesh).material as THREE.Material;
-        m.opacity = (m.userData.opacity ?? 1) * k;
-        m.transparent = (m.userData.transparent ?? false) || k < 0.999;
-      });
+      for (const t of tinted) t.m.emissive.copy(t.base).lerp(tintColor, k * 0.55);
     },
     grip,
-    shield: (k) => { for (const w of walls) w.o.rotation.x = w.rest * (1 - k); stroke(); },
+    shield: (k) => {
+      if (Math.abs(k - shieldK) < 1e-4) return; // at rest: nothing moves
+      shieldK = k;
+      for (const w of walls) w.o.rotation.x = w.rest * (1 - k);
+      stroke();
+    },
     shutter: (k) => { for (const l of leaves) l.o.rotation.y = l.rest * (1 + (65 / 95) * k); },
   };
 }

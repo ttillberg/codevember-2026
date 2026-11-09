@@ -1,39 +1,37 @@
 import { useMemo } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
-import { drone, target, toCell, toCellWith, faceQuad, pieceMesh, PIECE_R } from './drone';
+import { drone, target, toCell, toCellWith, faceQuad, pieceMesh, PIECE_R, SIZE_MAIN, SIZE_CELL } from './drone';
 import { ringOut } from './device';
+import { SAND, GRAPHITE } from './decals';
 
 // The device's camera, in a corner of the page. It renders cell space: the cube the device is in, rigid, and the
 // rooms continuing straight through its faces, as in a net. Nothing telescopes here; from inside, a tesseract is
 // just rooms. The eye is a 180 degree fisheye: the room is drawn into a cube map from the eye and that is unwrapped
-// with an equidistant lens, a right angle out to each side edge. Two views, swapped by a click on the frame: the
-// eye itself, or a chase camera a little behind and above, with the device in the picture. Takes over the render
-// loop: main scene first, then this one in a scissored viewport.
+// with an equidistant lens, a right angle out to each side edge. Takes over the render loop: main scene first, then
+// this one in a scissored viewport.
 
 // the corner, square; the side matches the .cam rule in style.css exactly: max(120, min(clamp(220, 26vw, 360), 100vw - 48, 100vh - 150))
-export const CAM = {
+const CAM = {
   w: () => Math.max(120, Math.min(Math.min(360, Math.max(220, innerWidth * 0.26)), innerWidth - 48, innerHeight - 150)),
-  ratio: 1, right: 24, bottom: 72,
+  right: 24, bottom: 72,
 };
 const LOCK_RANGE = 1.1; // cell units from the piece within which the lock bracket shows, at the controls
 
-const SAND = '#d9b985', GRAPHITE = '#3a3a3d';
 const R_STRUT = 0.075, R_NODE = 0.11;
 const CUBE = 512; // the cube map's face size
-const SIZE_CAM = 0.17; // the device's radius in cell space
-const PIECE_K = SIZE_CAM / 0.095; // the piece scaled with the device, whose radius in the main picture is 0.095
+const PIECE_K = SIZE_CELL / SIZE_MAIN; // the piece scaled with the device
 
 type Edge = { index: number; row: number; through: boolean }; // through: the cube sits off along this row, so the edge runs the held axis
 
 const FISHEYE = new THREE.ShaderMaterial({
-  uniforms: { tCube: { value: null }, rot: { value: new THREE.Matrix3() }, aspect: { value: 1 } },
+  uniforms: { tCube: { value: null }, rot: { value: new THREE.Matrix3() } },
   vertexShader: `varying vec2 vUv; void main() { vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }`,
   fragmentShader: `
-    uniform samplerCube tCube; uniform mat3 rot; uniform float aspect;
+    uniform samplerCube tCube; uniform mat3 rot;
     varying vec2 vUv;
     void main() {
-      vec2 p = vUv * 2.0 - 1.0; p.y /= aspect; // a right angle out to the side edge
+      vec2 p = vUv * 2.0 - 1.0; // a right angle out to the side edge
       float r = length(p);
       float theta = r * 1.5707963;
       vec2 u = r > 1e-5 ? p / r : vec2(0.0);
@@ -62,11 +60,12 @@ export function DroneCam() {
     const black = new THREE.MeshStandardMaterial({ color: '#141414', roughness: 0.55 });
     const offsets: number[][] = [];
     for (let x = -2; x <= 2; x++) for (let y = -2; y <= 2; y++) for (let z = -2; z <= 2; z++) offsets.push([x, y, z]);
+    // neighbouring cubes share their corners and edges: each is drawn once
     const edges: Edge[] = [];
     const struts = new THREE.InstancedMesh(new THREE.CylinderGeometry(R_STRUT, R_STRUT, 2, 20), paint, offsets.length * 12);
     const nodes = new THREE.InstancedMesh(new THREE.SphereGeometry(R_NODE, 20, 14), black, offsets.length * 8);
     struts.frustumCulled = nodes.frustumCulled = false;
-    const dummy = new THREE.Object3D();
+    const dummy = new THREE.Object3D(), seen = new Set<string>();
     let e = 0, nn = 0;
     for (const o of offsets) {
       const c = [o[0] * 2, o[1] * 2, o[2] * 2];
@@ -75,6 +74,9 @@ export function DroneCam() {
         for (const a of [-1, 1]) for (const b of [-1, 1]) {
           const pos = [0, 0, 0]; pos[i] = a; pos[j] = b;
           dummy.position.set(c[0] + pos[0], c[1] + pos[1], c[2] + pos[2]);
+          const key = `e${dummy.position.toArray()}`;
+          if (seen.has(key)) continue;
+          seen.add(key);
           dummy.rotation.set(k === 2 ? Math.PI / 2 : 0, 0, k === 0 ? Math.PI / 2 : 0);
           dummy.updateMatrix();
           struts.setMatrixAt(e, dummy.matrix);
@@ -83,11 +85,15 @@ export function DroneCam() {
       }
       for (let n = 0; n < 8; n++) {
         dummy.position.set(c[0] + (n & 1 ? 1 : -1), c[1] + (n & 2 ? 1 : -1), c[2] + (n & 4 ? 1 : -1));
+        const key = `n${dummy.position.toArray()}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
         dummy.rotation.set(0, 0, 0);
         dummy.updateMatrix();
         nodes.setMatrixAt(nn++, dummy.matrix);
       }
     }
+    struts.count = e; nodes.count = nn;
     const net = new THREE.Group();
     net.add(struts, nodes);
     cs.add(net);
@@ -111,23 +117,23 @@ export function DroneCam() {
     return {
       cs, net, edges, struts, flash, piece, grabbed, eye, lens, flat, sand, graphite,
       q: new THREE.Quaternion(), look: new THREE.Vector3(0, 0, -1), last: [0, 0, 0], crossings: -1,
-      pos: new THREE.Vector3(),
+      pos: new THREE.Vector3(), lockEl: null as HTMLElement | null,
     };
   }, []);
 
-  const tmp = useMemo(() => ({ pos: new THREE.Vector3(), vel: new THREE.Vector3(), at: new THREE.Vector3(), up: new THREE.Vector3(0, 1, 0), camUp: new THREE.Vector3(0, 1, 0), m: new THREE.Matrix4(), q: new THREE.Quaternion(), axis: new THREE.Vector3() }), []);
+  const tmp = useMemo(() => ({ vel: new THREE.Vector3(), ring: new THREE.Vector3(), at: new THREE.Vector3(), up: new THREE.Vector3(0, 1, 0), camUp: new THREE.Vector3(0, 1, 0), m: new THREE.Matrix4(), q: new THREE.Quaternion(), axis: new THREE.Vector3() }), []);
 
   useFrame(() => {
     // setViewport and setScissor take CSS pixels and apply the pixel ratio themselves
     const W = size.width, H = size.height;
-    const w = Math.round(CAM.w()), h = Math.round(CAM.w() / CAM.ratio), x = W - CAM.right - w, y = CAM.bottom;
+    const w = Math.round(CAM.w()), h = w, x = W - CAM.right - w, y = CAM.bottom;
     gl.setScissorTest(false);
     gl.setViewport(0, 0, W, H);
     gl.render(scene, camera);
 
     // the device: where it is and where it is going, in cell space
     const c = toCell(drone.p);
-    tmp.pos.set(c[0], c[1], c[2]);
+    cell.pos.fromArray(c);
     tmp.vel.set(c[0] - cell.last[0], c[1] - cell.last[1], c[2] - cell.last[2]);
     cell.last = c;
     // the look: the way it is going; at the controls, the way the eye points
@@ -140,14 +146,13 @@ export function DroneCam() {
     // at the controls the view's up is the eye's own, so a drag in the view turns the way it is dragged
     if (drone.pilot) camUp.lerp(tmp.axis.set(0, 1, 0).applyQuaternion(drone.q), 0.25).normalize();
     else camUp.lerp(tmp.up, 0.04 * (1 - Math.abs(cell.look.y))).normalize();
-    cell.pos.copy(tmp.pos);
-    tmp.at.copy(tmp.pos).add(cell.look);
+    tmp.at.copy(cell.pos).add(cell.look);
     tmp.m.lookAt(cell.pos, tmp.at, camUp);
     tmp.q.setFromRotationMatrix(tmp.m);
     cell.q.slerp(tmp.q, 0.2);
     // the grip reaches the piece in cell space too: its distance here over the device's size here, for the taken piece
     let at = drone.gripAt;
-    if (target.up && target.map) { const t3 = toCellWith(target.map, target.p); at = Math.hypot(t3[0] - c[0], t3[1] - c[1], t3[2] - c[2]) / SIZE_CAM; }
+    if (target.up && target.map) { const t3 = toCellWith(target.map, target.p); at = tmp.at.fromArray(t3).distanceTo(cell.pos) / SIZE_CELL; }
 
     if (cell.crossings !== drone.crossings) {
       cell.crossings = drone.crossings;
@@ -176,8 +181,8 @@ export function DroneCam() {
     // the one just taken, in the ring in front of the eye, riding in
     cell.grabbed.visible = drone.taken > 0.02 && !!drone.grabMap;
     if (cell.grabbed.visible) {
-      const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(drone.q);
-      const ring = new THREE.Vector3().copy(tmp.pos).addScaledVector(fwd, ringOut(drone.grip, at) * SIZE_CAM);
+      const fwd = tmp.at.set(0, 0, -1).applyQuaternion(drone.q);
+      const ring = tmp.ring.copy(cell.pos).addScaledVector(fwd, ringOut(drone.grip, at) * SIZE_CELL);
       const g3 = toCellWith(drone.grabMap!, drone.grab4);
       cell.grabbed.position.set(g3[0], g3[1], g3[2]).lerp(ring, drone.grabK);
       cell.grabbed.scale.setScalar(drone.taken);
@@ -186,7 +191,7 @@ export function DroneCam() {
     // the lock: at the controls, the piece in this cell and close, a bracket round it in the view, LOCK while
     // closing in and LOCKED once the catch has taken over. The piece's place in the view is the fisheye's own map:
     // its direction in the eye's frame, the angle off the axis as the radius, the lens then stretched by the aspect
-    const lockEl = document.getElementById('lock');
+    const lockEl = (cell.lockEl ??= document.getElementById('lock'));
     if (lockEl) {
       let show = false;
       if (drone.pilot && target.up && target.map && target.map.held === drone.held && target.map.sign === drone.sign) {
@@ -214,7 +219,6 @@ export function DroneCam() {
     cell.eye.position.copy(cell.pos);
     cell.eye.update(gl, cell.cs);
     FISHEYE.uniforms.rot.value.setFromMatrix4(tmp.m.makeRotationFromQuaternion(cell.q));
-    FISHEYE.uniforms.aspect.value = 1;
     gl.setScissorTest(true);
     gl.setScissor(x, y, w, h);
     gl.setViewport(x, y, w, h);

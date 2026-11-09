@@ -6,7 +6,7 @@ import { Machine } from './Machine';
 import { Drones } from './Drones';
 import { DroneCam } from './DroneCam';
 import { drone, cellId, cellName, CELL_HEX } from './drone';
-import { st, rig, DEBUG } from './state';
+import { st, rig, orbitBy, DEBUG } from './state';
 
 const PARAMS = new URLSearchParams(location.search);
 const CLEAN = PARAMS.has('clean'); // no page furniture, for the screengrab
@@ -25,11 +25,10 @@ function Rig({ children }: { children: React.ReactNode }) {
     // the distance fits the machine's reach to the page, whichever way is narrower, with a margin; eased, so the
     // picture breathes as the machine changes shape rather than jumps; the wheel scales it
     const cam = camera as THREE.PerspectiveCamera;
-    const vfov = (cam.fov * Math.PI) / 180, hfov = 2 * Math.atan(Math.tan(vfov / 2) * (size.width / size.height));
+    const vfov = THREE.MathUtils.degToRad(cam.fov), hfov = 2 * Math.atan(Math.tan(vfov / 2) * (size.width / size.height));
     const fit = (st.reach * 0.98) / Math.sin(Math.min(vfov, hfov) / 2);
     rig.zoom += (fit * rig.zoomK - rig.zoom) * Math.min(1, dt * 2.5);
-    const cp = Math.cos(rig.pitch);
-    camera.position.set(Math.sin(rig.yaw) * cp * rig.zoom, Math.sin(rig.pitch) * rig.zoom, Math.cos(rig.yaw) * cp * rig.zoom);
+    camera.position.setFromSphericalCoords(rig.zoom, Math.PI / 2 - rig.pitch, rig.yaw);
     camera.lookAt(0, 0, 0);
   });
   return <group ref={ref}>{children}</group>;
@@ -66,11 +65,8 @@ export function App() {
     const d = orbit.current;
     if (!d) return;
     if (!(e.buttons & 1)) { orbit.current = null; rig.orbiting = false; return; } // a release that never came
-    const now = performance.now(), dt = Math.max(1, now - d.t) / 1000;
-    const dy = -(e.clientX - d.x) * ORBIT, dp = (e.clientY - d.y) * ORBIT;
-    rig.yaw += dy;
-    rig.pitch = Math.max(-1.4, Math.min(1.4, rig.pitch + dp));
-    rig.orbitVel[0] += (dy / dt - rig.orbitVel[0]) * 0.5; rig.orbitVel[1] += (dp / dt - rig.orbitVel[1]) * 0.5;
+    const now = performance.now();
+    orbitBy(-(e.clientX - d.x) * ORBIT, (e.clientY - d.y) * ORBIT, Math.max(1, now - d.t) / 1000);
     orbit.current = { x: e.clientX, y: e.clientY, t: now };
   };
   const orbitEnd = () => { orbit.current = null; rig.orbiting = false; };
@@ -100,11 +96,7 @@ export function App() {
       if (document.pointerLockElement !== stage.current || !drone.pilot) return;
       if (e.shiftKey) {
         const now = performance.now(), dt = Math.max(1, now - last) / 1000; last = now;
-        const dy = -e.movementX * ORBIT, dp = e.movementY * ORBIT;
-        rig.orbiting = true;
-        rig.yaw += dy;
-        rig.pitch = Math.max(-1.4, Math.min(1.4, rig.pitch + dp));
-        rig.orbitVel[0] += (dy / dt - rig.orbitVel[0]) * 0.5; rig.orbitVel[1] += (dp / dt - rig.orbitVel[1]) * 0.5;
+        orbitBy(-e.movementX * ORBIT, e.movementY * ORBIT, dt);
         return;
       }
       drone.turn[0] += e.movementX * LOOK; drone.turn[1] += -e.movementY * LOOK;

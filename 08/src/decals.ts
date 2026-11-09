@@ -37,7 +37,8 @@ function rng(seed: number) {
   };
 }
 
-const GRAPHITE_BASE = '#3a3a3d';
+/** The two paints: sand on the struts that run along w, graphite on the rest. */
+export const SAND = '#d9b985', GRAPHITE = '#3a3a3d';
 /** A canvas of w x h logical units drawn at `k` times the pixels: the same coordinates, finer detail. */
 function sharp(w: number, h: number, k = 2) {
   const c = document.createElement('canvas');
@@ -115,7 +116,7 @@ export function grunge(g: CanvasRenderingContext2D, r: () => number, w: number, 
   if (!src) return;
   // the sheet as a repeating pattern at about a quarter of its size, turned any way, flipped either way and shifted:
   // fine wear everywhere, no grain in common between parts, and never scaled up, so it stays crisp
-  const lay = (ctx: CanvasRenderingContext2D, img: CanvasImageSource, k: number, m: DOMMatrix, a: number) => {
+  const lay = (ctx: CanvasRenderingContext2D, img: CanvasImageSource, m: DOMMatrix, a: number) => {
     const pat = ctx.createPattern(img, 'repeat');
     if (!pat) return;
     pat.setTransform(m);
@@ -124,21 +125,20 @@ export function grunge(g: CanvasRenderingContext2D, r: () => number, w: number, 
     ctx.fillStyle = pat;
     ctx.fillRect(0, 0, w, h);
     ctx.restore();
-    void k;
   };
   const turn = (k: number) => new DOMMatrix().translateSelf(r() * w, r() * h).rotateSelf(r() * 360).scaleSelf(k * (r() < 0.5 ? -1 : 1), k * (r() < 0.5 ? -1 : 1));
   // soft: all over, faint
   const k1 = 0.22 + r() * 0.1;
-  lay(g, src, k1, turn(k1), alpha * 0.7);
+  lay(g, src, turn(k1), alpha * 0.7);
   // hard: a patch of it, bigger and darker, where the part has been dragged over something; into the heights too
   if (r() < 0.75) {
     const k2 = 0.3 + r() * 0.15, m = turn(k2);
     const cx = r() * w, cy = r() * h, rx = w * (0.18 + r() * 0.22), ry = h * (0.18 + r() * 0.25), rot = r() * Math.PI;
     const clip = (ctx: CanvasRenderingContext2D) => { ctx.beginPath(); ctx.ellipse(cx, cy, rx, ry, rot, 0, Math.PI * 2); ctx.clip(); };
-    g.save(); clip(g); lay(g, src, k2, m, Math.min(1, alpha * 1.8)); g.restore();
+    g.save(); clip(g); lay(g, src, m, Math.min(1, alpha * 1.8)); g.restore();
     if (bump) {
       const dark = sheet('scratch', '#000000');
-      if (dark) { bump.save(); clip(bump); lay(bump, dark, k2, m, 1); bump.restore(); }
+      if (dark) { bump.save(); clip(bump); lay(bump, dark, m, 1); bump.restore(); }
     }
   }
 }
@@ -182,7 +182,7 @@ export function scuffSleeve(base: string, seed: number): THREE.CanvasTexture {
   g.fillStyle = base;
   g.fillRect(0, 0, W, H);
   const r = rng(seed);
-  const sand = base !== GRAPHITE_BASE;
+  const sand = base !== GRAPHITE;
   if (sand) gouges(g, r, W, H, 1 + Math.floor(r() * 2), '#3e3429', '#f6ead0', 14);
   else gouges(g, r, W, H, 1 + Math.floor(r() * 2), '#a8a8ac', '#000000', 14);
   const t = new THREE.CanvasTexture(c);
@@ -379,7 +379,7 @@ export function sleeveDecal(d: Decal): THREE.CanvasTexture {
     g.fillRect(220 + Math.floor(r() * 60), 236, 70, 6);
   }
   // a worn prototype: hairline scratches, and the paint rubbed thin at the lips
-  const sand = d.base !== GRAPHITE_BASE;
+  const sand = d.base !== GRAPHITE;
   const light = sand ? '#f4e6c4' : '#a4a4a8', dark = sand ? '#6e5a3a' : '#111111';
   scratches(g, r, W, H, 16, light, dark);
   if (r() < 0.35) gouges(g, r, W, H, 1, sand ? '#3e3429' : '#a8a8ac', sand ? '#f6ead0' : '#000000', 14);
