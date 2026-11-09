@@ -6,7 +6,6 @@ import { ContactShadows, Environment, Lightformer } from '@react-three/drei';
 import { Machine } from './Machine';
 import { Drones } from './Drones';
 import { DroneCam } from './DroneCam';
-import { Laser } from './Laser';
 import { drone } from './drone';
 import { st, rig, spinRig } from './state';
 
@@ -14,7 +13,7 @@ const PARAMS = new URLSearchParams(location.search);
 const CLEAN = PARAMS.has('clean'); // no page furniture, for the screengrab
 if (PARAMS.has('follow')) drone.view = 'follow';
 
-/** The machine, the drone and the laser on a rig the drag turns; the camera stands still. */
+/** The machine and the drone on a rig the drag turns; the camera stands still. */
 function Rig({ children }: { children: React.ReactNode }) {
   const ref = useRef<THREE.Group>(null);
   useFrame(({ camera }) => {
@@ -68,7 +67,6 @@ export function App() {
           <Rig>
             <Machine />
             <Drones />
-            <Laser />
           </Rig>
           <DroneCam />
           <ContactShadows position={[0, -3.4, 0]} opacity={0.6} scale={16} blur={2.6} far={5} resolution={1024} color="#2a2620" />
