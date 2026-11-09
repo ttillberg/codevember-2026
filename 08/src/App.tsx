@@ -3,6 +3,8 @@ import { Canvas } from '@react-three/fiber';
 import { ContactShadows, Environment, Lightformer, OrbitControls } from '@react-three/drei';
 import { Machine } from './Machine';
 import { Drones } from './Drones';
+import { DroneCam } from './DroneCam';
+import { drone } from './drone';
 import { st, phase } from './state';
 
 function Readout() {
@@ -19,6 +21,8 @@ function Readout() {
         cells[2].textContent = st.lengths.min.toFixed(2);
         cells[3].textContent = st.lengths.max.toFixed(2);
         cells[4].textContent = phase();
+        const cam = document.querySelector('.cam b');
+        if (cam) cam.textContent = `CELL ${'XYZW'[drone.held]} = ${drone.sign > 0 ? '+1' : '−1'}`;
       }
       raf = requestAnimationFrame(tick);
     };
@@ -63,6 +67,7 @@ export function App() {
         <Canvas camera={{ position: [4.8, 2.6, 8.2], fov: 34 }} gl={{ alpha: true, antialias: true, toneMappingExposure: 1.15 }} dpr={[1, 2]}>
           <Machine />
           <Drones />
+          <DroneCam />
           <ContactShadows position={[0, -3.4, 0]} opacity={0.6} scale={16} blur={2.6} far={5} resolution={1024} color="#2a2620" />
           <Environment resolution={256}>
             <Lightformer intensity={2.6} rotation-x={Math.PI / 2} position={[0, 7, 0]} scale={[10, 10, 1]} />
@@ -85,6 +90,7 @@ export function App() {
         <p>A hypercube built for real. 32 telescopic struts on 16 ball joints, one crank turning it a quarter at a time through the XW, YW or ZW plane: a 4D turn seen in 3D is an object whose edges change length. Everything else is rigid.</p>
         <Readout />
       </div>}
+      {CLEAN ? null : <div className="cam"><span>DRONE CAM</span><b>CELL</b></div>}
       {CLEAN ? null : <div className="keys">
         <span><kbd>space</kbd>{program ? 'stop program' : 'run program'}</span>
         <span><kbd>drag</kbd>orbit, sets the way</span>

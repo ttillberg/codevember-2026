@@ -3,6 +3,7 @@ import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import { project, type V4 } from './tesseract';
 import { pose } from './state';
+import { drone, startCell, crossInto } from './drone';
 
 // A quad drone that lives in the tesseract. It is inside one of the eight cells, a cube with one coordinate held at
 // ±1 and the other three free, and it can only leave through a square face into the neighbouring cell: fly to the
@@ -80,6 +81,7 @@ export function Drones() {
     s.p = roomIn(s);
     go(s, roomIn(s), 'cruise');
     project(pose(), s.p, s.last);
+    startCell(held, sign);
     return s;
   }, []);
   type S = typeof d;
@@ -125,6 +127,7 @@ export function Drones() {
         const face = s.to.slice() as V4;
         const axis = [0, 1, 2, 3].find((i) => i !== s.held && Math.abs(face[i]) > 0.999)!;
         s.came = [s.held, s.sign];
+        crossInto(axis, Math.sign(face[axis]));
         s.held = axis; s.sign = Math.sign(face[axis]);
         s.p = face; s.p[s.held] = s.sign;
         const inside = roomIn(s);
@@ -142,6 +145,7 @@ export function Drones() {
         else go(s, nextFace(s), 'approach', SPEED * 0.8);
       }
     }
+    drone.p = s.p;
     if (now - s.trailAt > TRAIL_EVERY) {
       s.trail.push(s.p.slice() as V4);
       if (s.trail.length > TRAIL) s.trail.shift();
