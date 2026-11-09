@@ -81,7 +81,7 @@ export function App() {
           <directionalLight position={[4, 8, 6]} intensity={1.1} />
         </Canvas>
       </div>
-      {CLEAN ? null : <div className="plate"><b>CDVMBR 08</b></div>}
+      {CLEAN ? null : <div className="plate"><b>Tesseract</b><i>CDVMBR 08</i></div>}
       {CLEAN ? null : (
         <div className="cam" onClick={() => { drone.view = drone.view === 'pov' ? 'follow' : 'pov'; }} />
       )}

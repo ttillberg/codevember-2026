@@ -3,7 +3,7 @@ import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import { drone, toCell, faceQuad } from './drone';
 import { quad } from './Drones';
-import { beamHits, BEAM } from './Laser';
+import { beamHits, BEAMS } from './Laser';
 import { Line2 } from 'three/examples/jsm/lines/Line2.js';
 import { LineGeometry } from 'three/examples/jsm/lines/LineGeometry.js';
 import { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js';
@@ -72,8 +72,8 @@ export function DroneCam() {
     cs.add(q.g);
     const flash = faceQuad('#c9e35b');
     cs.add(flash.mesh);
-    // the laser where it crosses this room: the hits on the room's own walls, joined, in the same three layers
-    const beam = [{ w: 1, o: 1, core: true }, { w: 3.5, o: 0.35, core: false }, { w: 9, o: 0.12, core: false }].map((l) => {
+    // the lasers where they cross this room: the hits on the room's own walls, joined, in the same three layers
+    const beams = BEAMS.map(() => [{ w: 1, o: 1, core: true }, { w: 3.5, o: 0.35, core: false }, { w: 9, o: 0.12, core: false }].map((l) => {
       const geo = new LineGeometry();
       geo.setPositions([0, 0, 0, 0, 0, 0]);
       geo.setColors([1, 1, 1, 1, 1, 1]);
@@ -83,8 +83,8 @@ export function DroneCam() {
       line.visible = false;
       cs.add(line);
       return { line, geo, mat, core: l.core };
-    });
-    return { cs, net, edges, struts, cam, q, flash, beam, sand, graphite, look: new THREE.Vector3(0, 0, -1), last: [0, 0, 0], crossings: -1, eye: new THREE.Vector3(), spin: 0, heading: new THREE.Quaternion() };
+    }));
+    return { cs, net, edges, struts, cam, q, flash, beams, sand, graphite, look: new THREE.Vector3(0, 0, -1), last: [0, 0, 0], crossings: -1, eye: new THREE.Vector3(), spin: 0, heading: new THREE.Quaternion() };
   }, []);
 
   const tmp = useMemo(() => ({ pos: new THREE.Vector3(), vel: new THREE.Vector3(), at: new THREE.Vector3(), up: new THREE.Vector3(0, 1, 0), m: new THREE.Matrix4(), q: new THREE.Quaternion(), tilt: new THREE.Quaternion(), axis: new THREE.Vector3() }), []);
@@ -148,24 +148,25 @@ export function DroneCam() {
     cell.flash.done();
     cell.flash.mat.opacity = 0.6 * drone.flash.a;
 
-    // the laser's hits on this room's walls, joined in order along the beam
-    const mine = beamHits.filter((h) => (h.i === drone.held && h.si === drone.sign) || (h.j === drone.held && h.sj === drone.sign));
-    if (mine.length >= 2) {
+    // each laser's hits on this room's walls, joined in order along the beam
+    const w = Math.round(CAM.w()), h = Math.round(CAM.w() / CAM.ratio);
+    const paper = cell.cs.background as THREE.Color, col = new THREE.Color();
+    BEAMS.forEach((b, bi) => {
+      const mine = beamHits[bi].filter((x) => (x.i === drone.held && x.si === drone.sign) || (x.j === drone.held && x.sj === drone.sign));
+      const layers = cell.beams[bi];
+      for (const l of layers) l.mat.resolution.set(w, h);
+      if (mine.length < 2) { for (const l of layers) l.line.visible = false; return; }
       const pts: number[] = [], cols: number[] = [], cores: number[] = [];
-      const paper = cell.cs.background as THREE.Color, c = new THREE.Color();
-      for (const h of mine) {
-        const c3 = toCell(h.p4);
+      for (const x of mine) {
+        const c3 = toCell(x.p4);
         pts.push(c3[0], c3[1], c3[2]);
-        c.copy(paper).lerp(BEAM.PINK, h.k); cols.push(c.r, c.g, c.b);
-        c.copy(paper).lerp(BEAM.CORE, h.k); cores.push(c.r, c.g, c.b);
+        col.copy(paper).lerp(b.tint, x.k); cols.push(col.r, col.g, col.b);
+        col.copy(paper).lerp(b.core, x.k); cores.push(col.r, col.g, col.b);
       }
-      for (const l of cell.beam) {
+      for (const l of layers) {
         l.geo.setPositions(pts); l.geo.setColors(l.core ? cores : cols); l.line.computeLineDistances(); l.line.visible = true;
       }
-    } else for (const l of cell.beam) l.line.visible = false;
-
-    const w = Math.round(CAM.w()), h = Math.round(CAM.w() / CAM.ratio);
-    for (const l of cell.beam) l.mat.resolution.set(w, h);
+    });
     const x = W - CAM.right - w, y = CAM.bottom;
     cell.cam.aspect = w / h;
     cell.cam.updateProjectionMatrix();
