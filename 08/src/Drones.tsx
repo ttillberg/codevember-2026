@@ -360,7 +360,7 @@ export function Drones() {
     s.vel.subVectors(v, s.last).divideScalar(Math.max(dt, 1e-3));
     s.last.copy(v);
     // the wake: a puff every little way, born just behind the device in 4D, in the colour of the cell it is in
-    if (v.distanceTo(s.puffAt) > 0.012) {
+    if (v.distanceTo(s.puffAt) > 0.04) {
       s.smoke.spawn(add4(s.p, s.dir, -0.05), now, CELL_HEX[cellId()]);
       s.puffAt.copy(v);
     }

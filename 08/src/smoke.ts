@@ -51,10 +51,10 @@ const VERT = /* glsl */ `
     float u = clamp(age / uLife, 0.0, 1.0);
     vec3 p = position + drift * age;
     vec4 mv = modelViewMatrix * vec4(p, 1.0);
-    float size = mix(0.07, 0.32, pow(u, 0.5));
+    float size = mix(0.035, 0.13, pow(u, 0.5));
     gl_PointSize = size * uScale / max(0.1, -mv.z);
     float fadeIn = smoothstep(0.0, 0.06, u);
-    vA = fadeIn * (1.0 - u) * (1.0 - u) * 0.8;
+    vA = fadeIn * (1.0 - u) * (1.0 - u) * 0.6;
     if (age < 0.0 || age > uLife) { vA = 0.0; gl_PointSize = 0.0; }
     vRot = seed * 6.2831 + age * (seed - 0.5) * 0.9;
     gl_Position = projectionMatrix * mv;
