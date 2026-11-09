@@ -21,7 +21,9 @@ body {
   overflow: hidden;
 }
 
-.stage { position: fixed; inset: 0; }
+.stage { position: fixed; inset: 0; cursor: grab; }
+.stage:active { cursor: grabbing; }
+.stage.locked, .stage.locked:active { cursor: none; }
 .stage canvas { touch-action: none; }
 
 .plate {
@@ -83,12 +85,25 @@ kbd {
   aspect-ratio: 1;
   border: 1px solid var(--ink);
   border-radius: 50%;
-  cursor: pointer;
+  cursor: grab;
+  touch-action: none;
   box-sizing: border-box;
 }
-.cam:hover { box-shadow: 0 0 0 1px var(--ink); }
-.cam.look { cursor: grab; touch-action: none; }
-.cam.look:active { cursor: grabbing; }
+.cam:active { cursor: grabbing; }
+.cam.pass { pointer-events: none; } /* auto: the eye in the corner, the page behind it orbits */
+.cam.square { border-radius: 10px; } /* manual: the machine in the corner, a drag on it orbits */
+
+/* manual: the outline of the eye's view, in the middle of the page; its size follows EYE in DroneCam */
+.eye {
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  border: 1px solid var(--ink);
+  border-radius: 50%;
+  pointer-events: none;
+  box-sizing: border-box;
+}
 
 .back {
   position: fixed;

@@ -3,7 +3,7 @@ import { useFrame } from '@react-three/fiber';
 import { useGLTF } from '@react-three/drei';
 import * as THREE from 'three';
 import { project, type V4 } from './tesseract';
-import { pose, turnGlide } from './state';
+import { pose, turnGlide, st } from './state';
 import { drone, target, startCell, crossInto, faceQuad, pieceMesh, blink, toCell, fromCell, dirFromCellWith, otherMap, mapAcross, wallCorners, cellId, cellIdOf, lampColor, CELL_HEX, RIPPLE, type CellMap } from './drone';
 import { device, ringOut, DEVICE_URL } from './device';
 import { makeSmoke } from './smoke';
@@ -30,7 +30,7 @@ const DOCK_AT = 2.6, DOCK_V = 0.35, DOCK_AHEAD = 0.6, SIZE_CELL = 0.17;
 const REACH3 = 1.9; // where the piece should sit when the device stops, in device radii, on screen
 type Phase = 'seek' | 'settle' | 'catch' | 'turn' | 'rest';
 // at the controls: cell-space units per second squared and per second, radians per second
-const THRUST = 1.6, DRAG = 1.1, VMAX = 1.1, TURN = 1.7;
+const THRUST = 1.6, DRAG = 1.1, VMAX = 1.1;
 
 type Leg = { kind: 'cruise' | 'portal'; pts: V4[]; len: number; face?: { axis: number; sign: number; corners: V4[] }; crossed: boolean; toTarget?: boolean };
 /** A step of a plan, made into a leg when its turn comes, from wherever the device is then. */
@@ -100,7 +100,7 @@ export function Drones() {
       plan: [] as Step[], phase: 'seek' as Phase, t: 0, // the steps to the piece; the catch's phase and its clock
       grip: 0,
       shield: 0, blink: Infinity, nextBlink: 3 + Math.random() * 5, // seconds into the blink; seconds to a blink of its own
-      wasPilot: false, yawV: 0, pitchV: 0,
+      wasPilot: false,
     };
     s.p = roomIn(s);
     s.dir = unit4(sub4(roomIn(s), s.p));
@@ -213,29 +213,28 @@ export function Drones() {
     // the orientation is already kept in cell space; it carries on from there, at cruising speed along the eye
     const v = new THREE.Vector3(0, 0, -1).applyQuaternion(drone.q);
     drone.cvel = [v.x * SPEED, v.y * SPEED, v.z * SPEED];
-    s.yawV = s.pitchV = 0;
   }
   function letGo(s: S) {
     s.p[s.held] = s.sign;
     s.leg = null; s.came = null;
-    drone.turn[0] = drone.turn[1] = 0; drone.keys.thrust = drone.keys.yaw = drone.keys.pitch = 0; s.yawV = s.pitchV = 0;
+    drone.turn[0] = drone.turn[1] = 0; drone.keys.thrust = drone.keys.strafe = 0;
     // a fresh plan from here; a catch that was about to begin begins over
     if (target.up && target.map) planTo(s); else s.plan = [];
     if (s.phase === 'settle') s.phase = 'seek';
   }
-  /** One step at the controls, in cell space: eased yaw and pitch, thrust along the eye against drag, and the same
-   * crossing as on its own when it goes through a wall; the field round the walls slows it too. Returns the field. */
+  /** One step at the controls, in cell space: the look as it came in from the page, thrust along the eye and strafe
+   * across it against drag, and the same crossing as on its own when it goes through a wall; the field round the
+   * walls slows it too. Returns the field. */
   function pilot(s: S, dt: number): number {
     const { fwd, right, qa } = tmp, k = drone.keys;
-    s.yawV += (k.yaw * TURN - s.yawV) * Math.min(1, dt * 6);
-    s.pitchV += (k.pitch * TURN - s.pitchV) * Math.min(1, dt * 6);
     // the turns are about the eye's own axes, so a drag right turns towards the right of the view and a drag up
-    // towards its top whatever way the device is rolled or pitched; the keys the same
+    // towards its top whatever way the device is rolled or pitched
     const upq = new THREE.Vector3(0, 1, 0).applyQuaternion(drone.q);
     right.set(1, 0, 0).applyQuaternion(drone.q);
-    drone.q.premultiply(qa.setFromAxisAngle(upq, s.yawV * dt - drone.turn[0])).premultiply(qa.setFromAxisAngle(right, s.pitchV * dt + drone.turn[1])).normalize();
+    drone.q.premultiply(qa.setFromAxisAngle(upq, -drone.turn[0])).premultiply(qa.setFromAxisAngle(right, drone.turn[1])).normalize();
     drone.turn[0] = drone.turn[1] = 0;
     fwd.set(0, 0, -1).applyQuaternion(drone.q);
+    right.set(1, 0, 0).applyQuaternion(drone.q);
     // and it rights itself slowly towards the room's up while the look is level, so roll does not build up
     upq.set(0, 1, 0).applyQuaternion(drone.q);
     const level = 1 - Math.abs(fwd.y);
@@ -254,7 +253,7 @@ export function Drones() {
     }
     const field = DIP * Math.exp(-((dmin / 0.22) ** 2));
     const drag = Math.exp(-DRAG * dt);
-    for (let i = 0; i < 3; i++) cv[i] = (cv[i] + fwd.getComponent(i) * k.thrust * THRUST * dt) * drag;
+    for (let i = 0; i < 3; i++) cv[i] = (cv[i] + (fwd.getComponent(i) * k.thrust + right.getComponent(i) * k.strafe) * THRUST * dt) * drag;
     const sp = Math.hypot(cv[0], cv[1], cv[2]);
     if (sp > VMAX) for (let i = 0; i < 3; i++) cv[i] *= VMAX / sp;
     for (let i = 0; i < 3; i++) c[i] += cv[i] * (1 - field) * dt;
@@ -306,7 +305,7 @@ export function Drones() {
         target.up = false; target.scale = 0;
         drone.taken = 1; drone.grab4 = target.p.slice() as V4; drone.grabMap = target.map; drone.grabK = 0;
       }
-      else if (s.phase === 'catch' && s.t > CATCH) { s.phase = 'turn'; s.t = 0; turnGlide(GLIDE); newTarget(s); }
+      else if (s.phase === 'catch' && s.t > CATCH) { s.phase = 'turn'; s.t = 0; if (!st.hard) turnGlide(GLIDE); newTarget(s); } // hard mode turns all the time anyway
       else if (s.phase === 'turn' && s.t > GLIDE) { s.phase = 'rest'; s.t = 0; }
       else if (s.phase === 'rest' && s.t > REST) { s.phase = 'seek'; }
       s.wall = null; s.clipCorners = null;

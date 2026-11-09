@@ -11,11 +11,14 @@ import { ringOut } from './device';
 // eye itself, or a chase camera a little behind and above, with the device in the picture. Takes over the render
 // loop: main scene first, then this one in a scissored viewport.
 
-// square; the side matches the .cam rule in style.css exactly: max(120, min(clamp(220, 26vw, 360), 100vw - 48, 100vh - 150))
+// the corner, square; the side matches the .cam rule in style.css exactly: max(120, min(clamp(220, 26vw, 360), 100vw - 48, 100vh - 150))
 export const CAM = {
   w: () => Math.max(120, Math.min(Math.min(360, Math.max(220, innerWidth * 0.26)), innerWidth - 48, innerHeight - 150)),
   ratio: 1, right: 24, bottom: 72,
 };
+// the middle of the page, square, where the eye goes in the manual mode; the .eye outline in App follows it
+export const EYE = { side: () => Math.max(160, Math.min(innerWidth - 48, innerHeight - 150)) };
+const INSET_ZOOM = 1.3; // the machine in the corner is seen from a little further out, to fit the square
 
 const SAND = '#d9b985', GRAPHITE = '#3a3a3d';
 const R_STRUT = 0.075, R_NODE = 0.11;
@@ -117,11 +120,15 @@ export function DroneCam() {
   const tmp = useMemo(() => ({ pos: new THREE.Vector3(), vel: new THREE.Vector3(), at: new THREE.Vector3(), up: new THREE.Vector3(0, 1, 0), camUp: new THREE.Vector3(0, 1, 0), m: new THREE.Matrix4(), q: new THREE.Quaternion(), axis: new THREE.Vector3() }), []);
 
   useFrame(() => {
-    // the main picture. setViewport and setScissor take CSS pixels and apply the pixel ratio themselves.
+    // setViewport and setScissor take CSS pixels and apply the pixel ratio themselves
     const W = size.width, H = size.height;
-    gl.setScissorTest(false);
-    gl.setViewport(0, 0, W, H);
-    gl.render(scene, camera);
+    const w = Math.round(CAM.w()), h = Math.round(CAM.w() / CAM.ratio), x = W - CAM.right - w, y = CAM.bottom;
+    if (!drone.pilot) {
+      // auto: the machine fills the page
+      gl.setScissorTest(false);
+      gl.setViewport(0, 0, W, H);
+      gl.render(scene, camera);
+    }
 
     // the device: where it is and where it is going, in cell space
     const c = toCell(drone.p);
@@ -181,18 +188,36 @@ export function DroneCam() {
       cell.grabbed.scale.setScalar(drone.taken);
     }
 
-    // the eye: the room into the cube map, then the lens into the corner
-    const w = Math.round(CAM.w()), h = Math.round(CAM.w() / CAM.ratio);
+    // the eye: the room into the cube map, then the lens onto the page
     cell.cs.environment = scene.environment;
     cell.eye.position.copy(cell.pos);
     cell.eye.update(gl, cell.cs);
     FISHEYE.uniforms.rot.value.setFromMatrix4(tmp.m.makeRotationFromQuaternion(cell.q));
-    FISHEYE.uniforms.aspect.value = w / h;
-    const x = W - CAM.right - w, y = CAM.bottom;
-    gl.setScissorTest(true);
-    gl.setScissor(x, y, w, h);
-    gl.setViewport(x, y, w, h);
-    gl.render(cell.lens, cell.flat);
+    FISHEYE.uniforms.aspect.value = 1;
+    if (drone.pilot) {
+      // manual: the page is cleared, the eye fills a square in the middle, and the machine goes to the corner, seen
+      // square from a little further out
+      gl.setScissorTest(false);
+      gl.setViewport(0, 0, W, H);
+      gl.setClearColor(0x000000, 0); // the cube camera left the cell scene's backdrop as the clear colour
+      gl.clear();
+      const side = Math.round(EYE.side()), ex = Math.round((W - side) / 2), ey = Math.round((H - side) / 2);
+      gl.setScissorTest(true);
+      gl.setScissor(ex, ey, side, side);
+      gl.setViewport(ex, ey, side, side);
+      gl.render(cell.lens, cell.flat);
+      const cam = camera as THREE.PerspectiveCamera, aspect = cam.aspect;
+      cam.aspect = 1; cam.position.multiplyScalar(INSET_ZOOM); cam.updateProjectionMatrix();
+      gl.setScissor(x, y, w, h);
+      gl.setViewport(x, y, w, h);
+      gl.render(scene, camera);
+      cam.position.multiplyScalar(1 / INSET_ZOOM); cam.aspect = aspect; cam.updateProjectionMatrix();
+    } else {
+      gl.setScissorTest(true);
+      gl.setScissor(x, y, w, h);
+      gl.setViewport(x, y, w, h);
+      gl.render(cell.lens, cell.flat);
+    }
     gl.setScissorTest(false);
     gl.setViewport(0, 0, W, H);
   }, 1);

@@ -24,31 +24,28 @@ export const st = {
   way: 1, // which way it turns, +1 or -1: the last drag, or a flip now and then
   flipIn: 12, // seconds until it turns round on its own
   spinVel: 0, // the smooth mode's speed, eased towards SPIN * way so a flip is a swing, not a knock
+  hard: false, // hard mode: the machine turns in 4D all the time, changing plane as it passes each quarter
   /** Longest and shortest strut right now, for the readout. */
   lengths: { min: 0, max: 0 },
 };
 
-/** Debugging the flight: no turntable, the drag orbits the camera round a still machine (at the controls too, so the
- * device is steered by keys), a readout of the cell the device is in, and lamps on that cell's corners. */
+/** Debugging the flight: a readout of the cell the device is in, and lamps on that cell's corners. */
 export const DEBUG = true;
 
-/** The rig: the camera stands still, straight on; dragging turns the machine itself, about the room's axes. Debugging,
- * the machine stands still and the drag orbits the camera instead: `yaw` and `pitch` round the centre. */
+/** The rig: the machine on a fixed tilt, and the camera orbiting round it, `yaw` and `pitch` about the centre; a
+ * drag turns it and it coasts after; in the attract mode a turntable turns it slowly on its own. */
 export const rig = {
   q: new THREE.Quaternion().setFromEuler(new THREE.Euler(0.27, -0.55, 0, 'YXZ')),
-  vel: [0, 0], // rad/s about y and x, from the last drag, decaying
   zoom: 10.5, // camera distance
-  yaw: 0, pitch: 0, // the camera's orbit, debugging
+  yaw: 0, pitch: 0, // the camera's orbit
   orbitVel: [0, 0], orbiting: false, // rad/s of yaw and pitch from the last drag, coasting once it is let go
+  turntable: true, // the slow turn on its own, in the attract mode
 };
-const AX = new THREE.Vector3(1, 0, 0), AY = new THREE.Vector3(0, 1, 0), tq = new THREE.Quaternion();
-export function spinRig(dy: number, dx: number) {
-  rig.q.premultiply(tq.setFromAxisAngle(AY, dy)).premultiply(tq.setFromAxisAngle(AX, dx));
-}
 
 export const CRANK = 1.6; // rad/s of target with a key held
 const SPIN = 0.22; // rad/s, the smooth mode
-const TURNTABLE = 0.07; // rad/s, the rig's slow turn about the room's up, a revolution in a minute and a half
+const HARD_SPIN = 0.4; // rad/s, the hard mode's turn in 4D
+const TURNTABLE = 0.07; // rad/s, the camera's slow orbit in the attract mode, a revolution in a minute and a half
 const QUARTER = Math.PI / 2;
 const DEG = Math.PI / 180;
 
@@ -101,8 +98,8 @@ function step() {
 }
 
 export function tick(dt: number) {
-  // a slow turntable, always, about the room's up; a drag adds to it and coasts off again
-  if (!DEBUG) spinRig(TURNTABLE * dt, 0);
+  // the turntable: the camera orbits slowly on its own, in the attract mode
+  if (rig.turntable) rig.yaw += TURNTABLE * dt;
   // the orbit coasts after a drag, slowing over a second or two
   if (!rig.orbiting && (rig.orbitVel[0] || rig.orbitVel[1])) {
     rig.yaw += rig.orbitVel[0] * dt;
@@ -111,15 +108,25 @@ export function tick(dt: number) {
     rig.orbitVel[0] *= k; rig.orbitVel[1] *= k;
     if (Math.abs(rig.orbitVel[0]) + Math.abs(rig.orbitVel[1]) < 1e-3) rig.orbitVel[0] = rig.orbitVel[1] = 0;
   }
-  // the rig coasts after a drag; drag one way and the machine turns that way from then on; it also turns round on its own
-  if (rig.vel[0] || rig.vel[1]) {
-    spinRig(rig.vel[0] * dt, rig.vel[1] * dt);
-    const k = Math.exp(-dt * 4);
-    rig.vel[0] *= k; rig.vel[1] *= k;
-    if (Math.abs(rig.vel[0]) + Math.abs(rig.vel[1]) < 1e-3) rig.vel[0] = rig.vel[1] = 0;
-  }
   st.flipIn -= dt;
   if (st.flipIn <= 0) { st.way = -st.way; st.flipIn = 8 + Math.random() * 14; }
+
+  if (st.hard) {
+    // hard mode: an even turn all the time, turning round now and then; past each quarter it is banked, what little
+    // is left over dropped (a frame's worth at most), and the turn goes on in another plane
+    glide = null;
+    st.spinVel += (HARD_SPIN * st.way - st.spinVel) * Math.min(1, dt * 1.2);
+    st.angle += st.spinVel * dt;
+    st.target = st.angle; st.vel = 0;
+    if (Math.abs(st.angle) >= QUARTER) {
+      const q = Math.sign(st.angle);
+      st.angle = st.target = q * QUARTER;
+      fold(q);
+      st.angle = st.target = 0;
+      st.plane = pick<number>([0, 1, 2].filter((p) => p !== st.plane).map((p) => [p, 1]));
+    }
+    return;
+  }
 
   if (glide) {
     glide.t += dt;

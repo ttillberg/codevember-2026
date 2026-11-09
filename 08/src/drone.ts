@@ -20,7 +20,7 @@ export const drone = {
   /** Someone at the controls: keys from the page, the device's orientation (its eye along -z) and speed, in cell
    * space. On its own it flies its legs; piloted it has momentum, thrust along the eye, yaw and pitch. */
   pilot: false,
-  keys: { thrust: 0, yaw: 0, pitch: 0 },
+  keys: { thrust: 0, strafe: 0 }, // held, -1 0 1: along the eye, and across it to the right
   /** The look from the trackpad: radians to turn right and up, gathered by the page, spent by the device each frame. */
   turn: [0, 0],
   q: new THREE.Quaternion(),
