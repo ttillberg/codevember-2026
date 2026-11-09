@@ -29,7 +29,7 @@ export const st = {
 };
 
 /** Debugging the flight: no turntable, the drag orbits the camera round a still machine (at the controls too, so the
- * device is steered by keys), and the trail is long and coloured by the cell it was flown in. */
+ * device is steered by keys), a readout of the cell the device is in, and lamps on that cell's corners. */
 export const DEBUG = true;
 
 /** The rig: the camera stands still, straight on; dragging turns the machine itself, about the room's axes. Debugging,

@@ -2,25 +2,19 @@ import { useMemo } from 'react';
 import { useFrame } from '@react-three/fiber';
 import { useGLTF } from '@react-three/drei';
 import * as THREE from 'three';
-import { Line2 } from 'three/examples/jsm/lines/Line2.js';
-import { LineGeometry } from 'three/examples/jsm/lines/LineGeometry.js';
-import { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js';
 import { project, type V4 } from './tesseract';
-import { pose, turnGlide, DEBUG } from './state';
-import { drone, target, startCell, crossInto, faceQuad, pieceMesh, blink, toCell, fromCell, dirFromCellWith, otherMap, mapAcross, wallCorners, cellId, CELL_HEX, type CellMap } from './drone';
+import { pose, turnGlide } from './state';
+import { drone, target, startCell, crossInto, faceQuad, pieceMesh, blink, toCell, fromCell, dirFromCellWith, otherMap, mapAcross, wallCorners, type CellMap } from './drone';
 import { device, ringOut, DEVICE_URL } from './device';
+import { makeSmoke } from './smoke';
 
 // A device that lives in the tesseract: a ball with one eye, fins that are walls, a shutter. It is inside one of the eight cells, a cube with one coordinate held at
 // ±1 and the other three free, and it can only leave through a square face into the neighbouring cell. The passage is
 // one smooth curve in 4D: it bends from the way it was flying to the way into the next cell, which in 4D is a right
 // angle, slows to half speed in the face and picks up again, as if through a field. Everything is a point in 4D seen
 // through the same turn and perspective as the struts, so what looks like speed is partly the warp of the cell it is
-// in. The trail is kept in 4D too, and turns with the rest.
+// in. The wake is smoke, each puff kept in 4D too, so it turns with the rest.
 
-const TRAIL = DEBUG ? 600 : 56;
-const TRAIL_EVERY = 0.05; // seconds between trail samples
-// debugging, the trail is coloured by the cell it was flown in: one colour per held axis and side
-const CELL_COLOURS = CELL_HEX.map((c) => new THREE.Color(c));
 const SPEED = 0.5; // 4D units per second, cruising
 const ROOM = 0.62; // how far from a cell's walls a waypoint stays, so the drone keeps clear of the struts
 const FIELD = 0.14; // half-width, in path fraction, of the slow zone round the face
@@ -63,7 +57,7 @@ function pathLen(pts: V4[]): number {
   return L;
 }
 
-const BLUE = '#4f8cff', LED = '#c9e35b';
+const LED = '#c9e35b';
 const SIZE_MAIN = 0.095; // the device's radius in the main scene
 
 export function Drones() {
@@ -78,17 +72,8 @@ export function Drones() {
     group.add(q.g, q2.g);
     const planeA = new THREE.Plane(new THREE.Vector3(0, 1, 0), 1e4), planeB = new THREE.Plane(new THREE.Vector3(0, -1, 0), 1e4);
     q.clip([planeA]); q2.clip([planeB]);
-    const geo = new THREE.BufferGeometry();
-    geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(TRAIL * 3), 3));
-    const line = new THREE.Line(geo, new THREE.LineBasicMaterial({ color: BLUE, transparent: true, opacity: 0.55, toneMapped: false }));
-    line.frustumCulled = false;
-    line.visible = !DEBUG;
-    // debugging: a fat trail, pixels wide, coloured by cell, drawn over the struts
-    const fatMat = new LineMaterial({ linewidth: 4, vertexColors: true, toneMapped: false, depthTest: false, worldUnits: false });
-    const fat = new Line2(new LineGeometry(), fatMat);
-    fat.frustumCulled = false; fat.renderOrder = 10; fat.visible = DEBUG;
-    group.add(fat);
-    group.add(line);
+    const smoke = makeSmoke();
+    group.add(smoke.points);
     const flash = faceQuad(LED);
     group.add(flash.mesh);
     const piece = pieceMesh();
@@ -99,11 +84,10 @@ export function Drones() {
     group.add(grabbed);
     const held = Math.floor(Math.random() * 4), sign = Math.random() < 0.5 ? -1 : 1;
     const s = {
-      group, q, line, fat, fatMat, flash, piece, grabbed,
+      group, q, smoke, puffAt: new THREE.Vector3(1e9, 0, 0), flash, piece, grabbed,
       held, sign, came: null as [number, number] | null,
       p: [0, 0, 0, 0] as V4, dir: [0, 0, 0, 0] as V4, // where it is, which way it is going, in 4D
       leg: null as Leg | null, s: 0,
-      trail: [] as V4[], trailCells: [] as number[], trailAt: 0,
       last: new THREE.Vector3(), vel: new THREE.Vector3(), heading: new THREE.Quaternion(), heading2: new THREE.Quaternion(),
       q2, planeA, planeB, cLast: [0, 0, 0], look: new THREE.Vector3(0, 0, -1), camUp: new THREE.Vector3(0, 1, 0),
       wall: null as { axis: number; sign: number } | null, // the wall it is at, if any: the face's 4D axis and side
@@ -252,7 +236,7 @@ export function Drones() {
     return field;
   }
 
-  useFrame(({ size, viewport }, dt) => {
+  useFrame(({ size, viewport, camera }, dt) => {
     dt = Math.min(dt, 0.05);
     const m = pose();
     const now = performance.now() / 1000;
@@ -312,11 +296,6 @@ export function Drones() {
       } else { drone.flash.a = 0; s.wall = null; }
     }
     drone.p = s.p;
-    if (now - s.trailAt > TRAIL_EVERY) {
-      s.trail.push(s.p.slice() as V4); s.trailCells.push(cellId());
-      if (s.trail.length > TRAIL) { s.trail.shift(); s.trailCells.shift(); }
-      s.trailAt = now;
-    }
 
     // the walls close in the field, the ball shuts round the body going through a wall, and open out again after;
     // the shutter blinks once at the crossing and now and then on its own
@@ -344,6 +323,13 @@ export function Drones() {
     project(m, s.p, v);
     s.vel.subVectors(v, s.last).divideScalar(Math.max(dt, 1e-3));
     s.last.copy(v);
+    // the wake: a puff every little way, born just behind the device in 4D
+    if (v.distanceTo(s.puffAt) > 0.012) {
+      s.smoke.spawn(add4(s.p, s.dir, -0.05), now);
+      s.puffAt.copy(v);
+    }
+    const fovH = (camera as THREE.PerspectiveCamera).fov * Math.PI / 180;
+    s.smoke.update(m, now, (size.height * viewport.dpr) / (2 * Math.tan(fovH / 2)));
     if (!drone.pilot) {
       const c = toCell(s.p);
       const cv = new THREE.Vector3(c[0] - s.cLast[0], c[1] - s.cLast[1], c[2] - s.cLast[2]);
@@ -419,18 +405,6 @@ export function Drones() {
     drone.flash.corners.forEach((c4, i) => { project(m, c4, v); s.flash.set(i, v); });
     s.flash.done();
     s.flash.mat.opacity = 0.6 * drone.flash.a;
-
-    const pos = s.line.geometry.attributes.position as THREE.BufferAttribute;
-    s.trail.forEach((p4, i) => { project(m, p4, v); pos.setXYZ(i, v.x, v.y, v.z); });
-    pos.needsUpdate = true;
-    s.line.geometry.setDrawRange(0, s.trail.length);
-    if (DEBUG && s.trail.length > 1) {
-      const n = s.trail.length, ps = new Float32Array(n * 3), cs = new Float32Array(n * 3);
-      for (let i = 0; i < n; i++) { ps[i * 3] = pos.getX(i); ps[i * 3 + 1] = pos.getY(i); ps[i * 3 + 2] = pos.getZ(i); const c = CELL_COLOURS[s.trailCells[i]]; cs[i * 3] = c.r; cs[i * 3 + 1] = c.g; cs[i * 3 + 2] = c.b; }
-      s.fat.geometry.dispose();
-      s.fat.geometry = new LineGeometry(); s.fat.geometry.setPositions(ps); s.fat.geometry.setColors(cs);
-      s.fatMat.resolution.set(size.width * viewport.dpr, size.height * viewport.dpr);
-    }
   });
 
   return <primitive object={d.group} />;
