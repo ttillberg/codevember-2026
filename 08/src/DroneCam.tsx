@@ -94,7 +94,7 @@ export function DroneCam() {
     const sand = new THREE.Color(SAND), graphite = new THREE.Color(GRAPHITE);
     const dev = device(gltf.scene, SIZE_CAM);
     cs.add(dev.g);
-    const flash = faceQuad('#c9e35b');
+    const flash = faceQuad();
     cs.add(flash.mesh);
     const piece = pieceMesh();
     piece.visible = false;
@@ -189,7 +189,8 @@ export function DroneCam() {
 
     drone.flash.corners.forEach((c4, i) => { const c3 = toCell(c4); cell.flash.set(i, tmp.at.set(c3[0], c3[1], c3[2])); });
     cell.flash.done();
-    cell.flash.mat.opacity = 0.6 * drone.flash.a;
+    const f3 = toCell(drone.flash.p4);
+    cell.flash.pulse(tmp.at.set(f3[0], f3[1], f3[2]), Math.SQRT2, drone.flash.t, drone.flash.color);
     // the piece, in its own cell's room of the net
     cell.piece.visible = target.up && target.scale > 0.02 && !!target.map;
     if (cell.piece.visible) {

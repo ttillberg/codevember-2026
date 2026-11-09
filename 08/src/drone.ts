@@ -40,7 +40,9 @@ export const drone = {
   grabMap: null as CellMap | null,
   grabK: 0,
   /** The face being passed: its four corners in 4D and how hard it is lit, 0 to 1. */
-  flash: { corners: [[0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]] as V4[], a: 0 },
+  /** The wall just gone through: its corners, where it was crossed, in 4D, seconds since (none, -1), and the colour
+   * of the cell entered. It ripples out from the crossing, like a wave from a button pressed. */
+  flash: { corners: [[0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]] as V4[], p4: [0, 0, 0, 0] as V4, t: -1, color: '#c9e35b' },
 };
 
 /** The piece: a small steel ball with a pinhead lamp on each axis, six, flashing fast. `blink(t)` runs them. */
@@ -64,15 +66,55 @@ export function blink(t: number) {
   lampMat.emissiveIntensity = (u < 0.06 || (u > 0.14 && u < 0.2)) ? 5 : 0;
 }
 
-/** A flat square between four points, redrawn every frame; the material fades with the flash. */
-export function faceQuad(color: string) {
+export const RIPPLE = 1.1; // seconds a wall's ripple lasts
+
+const RIPPLE_VERT = /* glsl */ `
+  varying vec3 vPos;
+  void main() { vPos = position; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }
+`;
+const RIPPLE_FRAG = /* glsl */ `
+  uniform vec3 uColor, uCentre;
+  uniform float uT, uSize, uDur;
+  varying vec3 vPos;
+  void main() {
+    if (uT < 0.0) discard;
+    float u = uT / uDur;
+    float dn = distance(vPos, uCentre) / uSize; // 1 at the far side of the wall, about
+    float r = 1.6 * u;
+    float ring = exp(-pow((dn - r) / 0.07, 2.0));
+    float fill = (1.0 - smoothstep(r - 0.4, r, dn)) * 0.4;
+    float a = (ring * 0.9 + fill) * pow(1.0 - u, 1.5) * 0.8;
+    if (a < 0.003) discard;
+    gl_FragColor = vec4(uColor, a);
+  }
+`;
+
+/** A flat square between four points, redrawn every frame, with a ripple of colour running out from a point on it. */
+export function faceQuad() {
   const geo = new THREE.BufferGeometry();
   geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(12), 3));
   geo.setIndex([0, 1, 2, 0, 2, 3]);
-  const mat = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0, side: THREE.DoubleSide, depthWrite: false, toneMapped: false });
+  const mat = new THREE.ShaderMaterial({
+    uniforms: { uColor: { value: new THREE.Color('#c9e35b') }, uCentre: { value: new THREE.Vector3() }, uT: { value: -1 }, uSize: { value: 1 }, uDur: { value: RIPPLE } },
+    vertexShader: RIPPLE_VERT, fragmentShader: RIPPLE_FRAG,
+    transparent: true, side: THREE.DoubleSide, depthWrite: false, toneMapped: false,
+  });
   const mesh = new THREE.Mesh(geo, mat);
   mesh.frustumCulled = false;
-  return { mesh, mat, set: (i: number, v: THREE.Vector3) => (geo.attributes.position as THREE.BufferAttribute).setXYZ(i, v.x, v.y, v.z), done: () => { geo.attributes.position.needsUpdate = true; } };
+  const pos = geo.attributes.position as THREE.BufferAttribute;
+  return {
+    mesh, mat,
+    set: (i: number, v: THREE.Vector3) => pos.setXYZ(i, v.x, v.y, v.z),
+    done: () => { pos.needsUpdate = true; },
+    /** The ripple: out from `centre`, over a wall `size` across to its far side, `t` seconds in (none, below 0). */
+    pulse(centre: THREE.Vector3, size: number, t: number, hex: string) {
+      mesh.visible = t >= 0;
+      mat.uniforms.uCentre.value.copy(centre);
+      mat.uniforms.uSize.value = size;
+      mat.uniforms.uT.value = t;
+      (mat.uniforms.uColor.value as THREE.Color).set(hex);
+    },
+  };
 }
 
 /** Start in the cell with `held` at `sign`: rows are the free axes in order. */

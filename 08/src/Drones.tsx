@@ -4,7 +4,7 @@ import { useGLTF } from '@react-three/drei';
 import * as THREE from 'three';
 import { project, type V4 } from './tesseract';
 import { pose, turnGlide } from './state';
-import { drone, target, startCell, crossInto, faceQuad, pieceMesh, blink, toCell, fromCell, dirFromCellWith, otherMap, mapAcross, wallCorners, cellId, CELL_HEX, type CellMap } from './drone';
+import { drone, target, startCell, crossInto, faceQuad, pieceMesh, blink, toCell, fromCell, dirFromCellWith, otherMap, mapAcross, wallCorners, cellId, CELL_HEX, RIPPLE, type CellMap } from './drone';
 import { device, ringOut, DEVICE_URL } from './device';
 import { makeSmoke } from './smoke';
 
@@ -57,7 +57,6 @@ function pathLen(pts: V4[]): number {
   return L;
 }
 
-const LED = '#c9e35b';
 const SIZE_MAIN = 0.095; // the device's radius in the main scene
 
 export function Drones() {
@@ -74,7 +73,7 @@ export function Drones() {
     q.clip([planeA]); q2.clip([planeB]);
     const smoke = makeSmoke();
     group.add(smoke.points);
-    const flash = faceQuad(LED);
+    const flash = faceQuad();
     group.add(flash.mesh);
     const piece = pieceMesh();
     piece.visible = false;
@@ -84,7 +83,7 @@ export function Drones() {
     group.add(grabbed);
     const held = Math.floor(Math.random() * 4), sign = Math.random() < 0.5 ? -1 : 1;
     const s = {
-      group, q, smoke, puffAt: new THREE.Vector3(1e9, 0, 0), puffGap: 0.04, flash, piece, grabbed,
+      group, q, smoke, puffAt: new THREE.Vector3(1e9, 0, 0), puffGap: 0.04, flash, clipCorners: null as V4[] | null, piece, grabbed,
       held, sign, came: null as [number, number] | null,
       p: [0, 0, 0, 0] as V4, dir: [0, 0, 0, 0] as V4, // where it is, which way it is going, in 4D
       leg: null as Leg | null, s: 0,
@@ -243,23 +242,17 @@ export function Drones() {
     const sp = Math.hypot(cv[0], cv[1], cv[2]);
     if (sp > VMAX) for (let i = 0; i < 3; i++) cv[i] *= VMAX / sp;
     for (let i = 0; i < 3; i++) c[i] += cv[i] * (1 - field) * dt;
-    // the wall ahead lights as it closes in: the one the velocity points at, first to be hit, not the nearest one
-    let tHit = Infinity, ka = kw, ta = tw;
-    for (let i = 0; i < 3; i++) {
-      if (Math.abs(cv[i]) < 1e-4) continue;
-      const side = Math.sign(cv[i]), t = (drone.centre[i] + side - c[i]) / cv[i];
-      if (t >= 0 && t < tHit) { tHit = t; ka = i; ta = side; }
-    }
-    const dAhead = Math.abs(drone.centre[ka] + ta - c[ka]);
-    drone.flash.corners = wallCorners(ka, ta);
-    drone.flash.a = tHit < Infinity ? Math.exp(-(((dAhead - 0.1) / 0.12) ** 2)) : 0;
-    // through: the same swap of held axis as on its own; the clip is at the nearest wall, the one being straddled
+    // the clip is at the nearest wall, the one being straddled
     s.wall = dmin < 0.5 ? { axis: drone.axisOf[kw], sign: tw * drone.A[kw][drone.axisOf[kw]] } : null;
+    s.clipCorners = s.wall ? wallCorners(kw, tw) : null;
+    // through: the same swap of held axis as on its own, and the wall ripples from the crossing in the new cell's colour
     const over = c[kw] - (drone.centre[kw] + tw);
     if (over * tw > 0) {
       const was = { axis: drone.held, sign: drone.sign };
+      drone.flash.corners = wallCorners(kw, tw); drone.flash.p4 = fromCell(c); drone.flash.t = 0;
       crossInto(drone.axisOf[kw], tw * drone.A[kw][drone.axisOf[kw]]);
       s.held = drone.held; s.sign = drone.sign;
+      drone.flash.color = CELL_HEX[cellId()];
       s.blink = 0;
       s.wall = was; // the wall just crossed, named from the new cell: the axis that was held, now free
     }
@@ -292,7 +285,7 @@ export function Drones() {
       else if (s.phase === 'catch' && s.t > CATCH) { s.phase = 'turn'; s.t = 0; turnGlide(GLIDE); newTarget(s); }
       else if (s.phase === 'turn' && s.t > GLIDE) { s.phase = 'rest'; s.t = 0; }
       else if (s.phase === 'rest' && s.t > REST) { s.phase = 'seek'; }
-      drone.flash.a = 0; s.wall = null;
+      s.wall = null; s.clipCorners = null;
     } else {
       // move, in 4D, along the leg; the field round a face slows it
       if (!s.leg) {
@@ -318,19 +311,20 @@ export function Drones() {
         crossInto(leg.face!.axis, leg.face!.sign);
         s.held = leg.face!.axis; s.sign = leg.face!.sign;
         s.blink = 0;
+        drone.flash.corners = leg.face!.corners; drone.flash.p4 = s.p.slice() as V4; drone.flash.t = 0; drone.flash.color = CELL_HEX[cellId()];
       }
       if (s.s >= 1) {
         s.p[s.held] = s.sign; s.leg = null;
         if (leg.toTarget) { s.phase = 'settle'; s.t = 0; } // in front of the piece: the catch begins
       }
-      // the face lights just before the drone goes through, and is out again as it does
       if (leg.kind === 'portal') {
-        drone.flash.corners = leg.face!.corners;
-        drone.flash.a = Math.exp(-(((s.s - 0.4) / 0.06) ** 2));
         // the wall, named from whichever cell it is in now: before the crossing the face's axis, after it the old held
         s.wall = s.s > 0.25 && s.s < 0.75 ? (leg.crossed ? { axis: s.came![0], sign: s.came![1] } : { axis: leg.face!.axis, sign: leg.face!.sign }) : null;
-      } else { drone.flash.a = 0; s.wall = null; }
+        s.clipCorners = s.wall ? leg.face!.corners : null;
+      } else { s.wall = null; s.clipCorners = null; }
     }
+    // the ripple runs its course
+    if (drone.flash.t >= 0) { drone.flash.t += dt; if (drone.flash.t > RIPPLE) drone.flash.t = -1; }
     drone.p = s.p;
 
     // the walls close in the field, the ball shuts round the body going through a wall, and open out again after;
@@ -412,7 +406,7 @@ export function Drones() {
       s.q2.g.position.copy(v);
       s.q2.g.quaternion.copy(s.heading2);
       s.q2.shield(s.shield); s.q2.shutter(shut); s.q2.grip(s.grip, drone.gripAt);
-      const [c0, c1, c2] = drone.flash.corners.map((c4) => project(m, c4, new THREE.Vector3()));
+      const [c0, c1, c2] = s.clipCorners!.map((c4) => project(m, c4, new THREE.Vector3()));
       s.planeA.setFromCoplanarPoints(c0, c1, c2);
       const centre: V4 = [0, 0, 0, 0]; centre[drone.held] = drone.sign;
       if (s.planeA.distanceToPoint(project(m, centre, new THREE.Vector3())) < 0) s.planeA.negate();
@@ -444,7 +438,8 @@ export function Drones() {
 
     drone.flash.corners.forEach((c4, i) => { project(m, c4, v); s.flash.set(i, v); });
     s.flash.done();
-    s.flash.mat.opacity = 0.6 * drone.flash.a;
+    const across = project(m, drone.flash.corners[0], v).distanceTo(project(m, drone.flash.corners[2], tmp.fwd)) / 2;
+    s.flash.pulse(project(m, drone.flash.p4, v), across, drone.flash.t, drone.flash.color);
   });
 
   return <primitive object={d.group} />;
