@@ -26,7 +26,7 @@ const SETTLE = 0.6, CATCH = 0.35, GLIDE = 2.0, REST = 0.5;
 const TINT_IN = 14; // how fast the glow on the half inside a new cell comes and goes, per second
 // in-then-out: how far the body goes on past all-in before the next cell's copy starts up out of the wall, and over
 // how far it rises, both in radii; the hand-over may linger this long past the wall state
-const INOUT_GAP = 1.5, INOUT_RISE = 4, INOUT_SET = 3, LINGER = 3; // INOUT_SET: how deep in the wall the copy starts, in radii, past the fins
+const INOUT_GAP = 0.3, INOUT_RISE = 0.7, INOUT_SET = 3, LINGER = 3; // seconds the body stays in after all-in, seconds it takes to come out; how deep in the wall it starts, in radii, past the fins
 const GLOW = 0.9; // the strength of the cell-colour tint on a half in a wall: 0.9 of the tint's own 0.55 is about half
 // at the controls the device docks on its own: the piece this close (in device radii, in cell space), the device this
 // slow (cell units a second) and the piece this well ahead (cosine), and the catch takes over
@@ -94,7 +94,7 @@ export function Drones() {
     group.add(grabbed);
     const held = Math.floor(Math.random() * 4), sign = Math.random() < 0.5 ? -1 : 1;
     const s = {
-      group, q, smoke, laser, puffAt: new THREE.Vector3(1e9, 0, 0), puffGap: 0.04, trailAt: new THREE.Vector3(1e9, 0, 0), flash, clipCorners: null as V4[] | null, lastWall: null as { axis: number; sign: number } | null, lastCorners: null as V4[] | null, linger: 0, justCrossed: false, shift: new THREE.Vector3(), immA: 0, immB: 0, tintA: 0, tintB: 0, tintHex: '', tintHexA: '', crossed: false, piece, grabbed,
+      group, q, smoke, laser, puffAt: new THREE.Vector3(1e9, 0, 0), puffGap: 0.04, trailAt: new THREE.Vector3(1e9, 0, 0), flash, clipCorners: null as V4[] | null, lastWall: null as { axis: number; sign: number } | null, lastCorners: null as V4[] | null, linger: 0, justCrossed: false, inT: 0, shift: new THREE.Vector3(), immA: 0, immB: 0, tintA: 0, tintB: 0, tintHex: '', tintHexA: '', crossed: false, piece, grabbed,
       held, sign, came: null as [number, number] | null,
       p: [0, 0, 0, 0] as V4, dir: [0, 0, 0, 0] as V4, // where it is, which way it is going, in 4D
       leg: null as Leg | null, s: 0,
@@ -448,9 +448,10 @@ export function Drones() {
     if (s.wall) {
       // another wall ahead while a hand-over is still pending (two walls close together, as through a thin cell in
       // the picture): the pending one is dropped, or the new wall would be taken as already crossed
-      if (s.crossed && !s.justCrossed && s.lastWall && (s.wall.axis !== s.lastWall.axis || s.wall.sign !== s.lastWall.sign)) { s.crossed = false; s.shift.set(0, 0, 0); }
+      if (s.crossed && !s.justCrossed && s.lastWall && (s.wall.axis !== s.lastWall.axis || s.wall.sign !== s.lastWall.sign)) s.crossed = false;
       s.lastWall = s.wall; s.lastCorners = s.clipCorners;
     }
+    if (s.justCrossed) s.inT = 0;
     s.justCrossed = false;
     const wall = s.wall ?? (s.crossed ? s.lastWall : null), corners = s.wall ? s.clipCorners : s.lastCorners;
     s.q.g.visible = true;
@@ -482,23 +483,27 @@ export function Drones() {
         s.immA = Math.max(0, Math.min(1, (R - d) / (2 * R)));
         s.immB = Math.max(0, Math.min(1, (R + d) / (2 * R)));
       } else if (!s.crossed) {
-        // in, then out (o): going in, this copy sinks and the other is not there yet
+        // in, then out (o): going in, this copy sinks and the other is not there yet; a set-back left over from a
+        // hand-over cut short eases off rather than snapping
         s.q2.g.visible = false;
-        s.shift.set(0, 0, 0);
+        s.shift.multiplyScalar(Math.max(0, 1 - dt * 6));
         s.immA = Math.max(0, Math.min(1, (R - d) / (2 * R))); s.immB = 0;
       } else {
         // across: the old copy sinks the rest of the way; this one waits inside the wall until the body is all in
-        // and a gap more, then comes up out of it, set back two radii, and catches the body up over the rise
+        // and a moment more, then comes up out of it and catches the body up over the rise. Gap and rise are in
+        // time, not distance: in the picture a cell can be small, and a distance there is a long way in 4D
         s.q2.g.visible = true;
-        // the set-back eases from its full depth to nothing along the rise, so the copy starts out at the body's own
-        // speed and ends at it too, no catching up to be seen
-        const from = R * (1 + INOUT_GAP), u = Math.max(0, Math.min(1, (d - from) / (R * INOUT_RISE)));
-        const back = INOUT_SET * R * (1 - u * u * (3 - 2 * u));
-        s.q.g.visible = d >= from;
+        if (d >= R) s.inT += dt;
+        const u = Math.max(0, Math.min(1, (s.inT - INOUT_GAP) / INOUT_RISE));
+        // it starts deep enough to be inside the wall however far the body has gone, and the set-back eases to
+        // nothing along the rise, so the copy comes out at the body's own speed, no catching up to be seen
+        const depth = Math.max(INOUT_SET * R, d + R);
+        const back = depth * (1 - u * u * (3 - 2 * u));
+        s.q.g.visible = s.inT >= INOUT_GAP;
         s.shift.copy(s.planeA.normal).multiplyScalar(-back);
         s.immB = Math.max(0, Math.min(1, (R + d) / (2 * R)));
         s.immA = s.q.g.visible ? Math.max(0, Math.min(1, (R - (d - back)) / (2 * R))) : 1;
-        done = back <= 0;
+        done = u >= 1;
       }
       if (s.crossed) {
         if (!s.wall) s.linger += dt; else s.linger = 0;
