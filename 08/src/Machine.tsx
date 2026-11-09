@@ -3,7 +3,7 @@ import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import { EDGES, VERTS, project } from './tesseract';
 import { st, tick, pose } from './state';
-import { sleeveDecal, ACCENTS } from './decals';
+import { sleeveDecal, scratchMap, ACCENTS } from './decals';
 
 // The mechanism. Every edge is a strut in three stages: a sleeve fixed to each ball joint, a stanchion sliding out of
 // each sleeve, a rod between the stanchions. Radii are constant, as on a real part; only the lengths change. The sleeves
@@ -47,7 +47,7 @@ export function Machine() {
     const group = new THREE.Group();
     const cyl = new THREE.CylinderGeometry(1, 1, 1, 48, 1);
     const sph = new THREE.SphereGeometry(1, 40, 28);
-    const black = new THREE.MeshStandardMaterial({ color: '#141414', roughness: 0.55, metalness: 0.1 });
+    const black = new THREE.MeshStandardMaterial({ color: '#141414', roughness: 0.6, metalness: 0.1, roughnessMap: scratchMap() });
     const silver = new THREE.MeshStandardMaterial({ color: '#dedede', roughness: 0.28, metalness: 0.75 });
     const stageMats = [
       new THREE.MeshStandardMaterial({ color: '#2f2f32', roughness: 0.5, metalness: 0.15 }),
