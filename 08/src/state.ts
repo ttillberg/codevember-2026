@@ -101,6 +101,17 @@ export function tick(dt: number) {
   st.flipIn -= dt;
   if (st.flipIn <= 0) { st.way = -st.way; st.flipIn = 8 + Math.random() * 14; }
 
+  if (glide) {
+    glide.t += dt;
+    const u = Math.min(1, glide.t / glide.dur), e = u * u * (3 - 2 * u);
+    st.angle = st.target = glide.from + (glide.to - glide.from) * e;
+    st.vel = 0;
+    if (u >= 1) {
+      glide = null;
+      if (Math.abs(st.angle) >= QUARTER - 1e-6) fold(Math.sign(st.angle));
+    }
+    return;
+  }
   if (st.smooth) {
     st.spinVel += (SPIN * st.way * (st.program ? 1 : 0) - st.spinVel) * Math.min(1, dt * 1.2);
     st.target += (st.spinVel + st.crank * CRANK) * dt;
@@ -123,10 +134,13 @@ export function tick(dt: number) {
   [st.angle, st.vel] = spring(st.angle, st.vel, st.target, dt, SERVO);
 }
 
-/** One quarter turn now, servo style: the machine changes shape when the device takes a piece, and holds between. */
-export function turnOnce() {
-  if (!queue.length) step();
-  st.next = 0;
+/** One quarter turn as a glide, eased in and out over `dur` seconds: the machine changes shape when the device has
+ * taken a piece, and holds between. */
+let glide: { from: number; to: number; t: number; dur: number } | null = null;
+export function turnGlide(dur = 2) {
+  const q = Math.round(st.target / QUARTER);
+  if (q !== 0) fold(q);
+  glide = { from: st.angle, to: st.angle + QUARTER * (Math.random() < 0.1 ? -1 : 1) * st.way, t: 0, dur };
 }
 
 /** For the readout: what the servo is doing. */

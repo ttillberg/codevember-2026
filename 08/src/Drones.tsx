@@ -3,7 +3,7 @@ import { useFrame } from '@react-three/fiber';
 import { useGLTF } from '@react-three/drei';
 import * as THREE from 'three';
 import { project, type V4 } from './tesseract';
-import { pose, turnOnce } from './state';
+import { pose, turnGlide } from './state';
 import { drone, target, startCell, crossInto, faceQuad, pieceMesh, blink, toCell, fromCell, dirFromCellWith, otherMap, mapAcross, wallCorners, type CellMap } from './drone';
 import { device, DEVICE_URL } from './device';
 
@@ -20,7 +20,10 @@ const SPEED = 0.5; // 4D units per second, cruising
 const ROOM = 0.62; // how far from a cell's walls a waypoint stays, so the drone keeps clear of the struts
 const FIELD = 0.14; // half-width, in path fraction, of the slow zone round the face
 const DIP = 0.3; // how much of the speed the field takes: a lean through it, not a stop
-const HOLD = 1.0; // seconds from a piece taken to the next one emerging
+// the catch, in phases: still in front of the piece; the grip takes it; the machine glides a quarter turn while the
+// next piece emerges; still again; and off
+const SETTLE = 0.6, CATCH = 0.35, GLIDE = 2.0, REST = 0.5;
+type Phase = 'seek' | 'settle' | 'catch' | 'turn' | 'rest';
 // at the controls: cell-space units per second squared and per second, radians per second
 const THRUST = 1.6, DRAG = 1.1, VMAX = 1.1, TURN = 1.7;
 
@@ -89,7 +92,7 @@ export function Drones() {
       last: new THREE.Vector3(), vel: new THREE.Vector3(), heading: new THREE.Quaternion(), heading2: new THREE.Quaternion(),
       q2, planeA, planeB, cLast: [0, 0, 0], look: new THREE.Vector3(0, 0, -1), camUp: new THREE.Vector3(0, 1, 0),
       wall: null as { axis: number; sign: number } | null, // the wall it is at, if any: the face's 4D axis and side
-      plan: [] as Step[], wait: 0, // the steps to the piece; seconds since the last one was taken
+      plan: [] as Step[], phase: 'seek' as Phase, t: 0, // the steps to the piece; the catch's phase and its clock
       grip: 0,
       shield: 0, blink: Infinity, nextBlink: 3 + Math.random() * 5, // seconds into the blink; seconds to a blink of its own
       wasPilot: false, yawV: 0, pitchV: 0,
@@ -224,11 +227,19 @@ export function Drones() {
     let field = 0, leg: Leg | null = null;
     if (drone.pilot) {
       field = pilot(s, dt);
+    } else if (s.phase !== 'seek') {
+      // the catch: the device holds still through it, eye on the piece, then on the room
+      s.t += dt;
+      if (s.phase === 'settle' && s.t > SETTLE) { s.phase = 'catch'; s.t = 0; target.up = false; s.blink = 0; }
+      else if (s.phase === 'catch' && s.t > CATCH) { s.phase = 'turn'; s.t = 0; turnGlide(GLIDE); newTarget(s); }
+      else if (s.phase === 'turn' && s.t > GLIDE) { s.phase = 'rest'; s.t = 0; }
+      else if (s.phase === 'rest' && s.t > REST) { s.phase = 'seek'; }
+      drone.flash.a = 0; s.wall = null;
     } else {
       // move, in 4D, along the leg; the field round a face slows it
       if (!s.leg) {
-        // the next step of the plan; with none, a new piece once the last is a second gone; meanwhile a turn in the room
-        if (!s.plan.length && !target.up && s.wait >= HOLD) newTarget(s);
+        // the next step of the plan; with none, a first piece
+        if (!s.plan.length && !target.up) newTarget(s);
         const step = s.plan.shift();
         s.leg = !step ? cruiseLeg(s) : step.kind === 'cruise' ? cruiseLeg(s, step.to, step.toTarget) : portalLeg(s, step.axis, step.sign, step.face, step.beyond);
         s.s = 0;
@@ -250,7 +261,7 @@ export function Drones() {
       }
       if (s.s >= 1) {
         s.p[s.held] = s.sign; s.leg = null;
-        if (leg.toTarget) { target.up = false; s.wait = 0; s.blink = 0; turnOnce(); } // taken: a blink, the machine turns a quarter, and the next one in a while
+        if (leg.toTarget) { s.phase = 'settle'; s.t = 0; } // in front of the piece: the catch begins
       }
       // the face lights just before the drone goes through, and is out again as it does
       if (leg.kind === 'portal') {
@@ -344,7 +355,6 @@ export function Drones() {
     }
 
     // the piece: emerging, there, or going; it turns slowly, and shrinks into the device as it is taken
-    s.wait += dt;
     target.scale += ((target.up ? 1 : 0) - target.scale) * Math.min(1, dt * (target.up ? 4 : 10));
     s.piece.visible = target.scale > 0.02;
     if (s.piece.visible) {
