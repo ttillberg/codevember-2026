@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Canvas } from '@react-three/fiber';
 import * as THREE from 'three';
 import { ContactShadows, Environment, Lightformer, OrbitControls } from '@react-three/drei';
@@ -12,30 +12,15 @@ import { st } from './state';
 const PARAMS = new URLSearchParams(location.search);
 const CLEAN = PARAMS.has('clean'); // no page furniture, for the screengrab
 if (PARAMS.has('follow')) drone.view = 'follow';
-if (PARAMS.has('laser')) { laser.on = true; laser.x = innerWidth * 0.5; laser.y = innerHeight * 0.48; } // for a screenshot
+if (PARAMS.has('laser')) { laser.on = true; laser.x = innerWidth * 0.5; laser.y = innerHeight * 0.48; } // for a screenshot without a pointer
 
 export function App() {
   const [program, setProgram] = useState(st.program);
   const [smooth, setSmooth] = useState(st.smooth);
-  const [orbit, setOrbit] = useState(true);
+  // the laser follows the pointer whenever it is over the page
+  const onMove = (e: React.PointerEvent) => { laser.x = e.clientX; laser.y = e.clientY; laser.on = true; };
+  const onLeave = () => { laser.on = false; };
 
-  // hold the pointer still a moment and it becomes a laser; move it straight away and it orbits
-  const hold = useRef<{ x: number; y: number; timer: number } | null>(null);
-  const onDown = (e: React.PointerEvent) => {
-    if (e.button !== 0) return;
-    laser.x = e.clientX; laser.y = e.clientY;
-    const timer = window.setTimeout(() => { laser.on = true; setOrbit(false); hold.current = null; }, 220);
-    hold.current = { x: e.clientX, y: e.clientY, timer };
-  };
-  const onMove = (e: React.PointerEvent) => {
-    laser.x = e.clientX; laser.y = e.clientY;
-    const h = hold.current;
-    if (h && Math.hypot(e.clientX - h.x, e.clientY - h.y) > 4) { clearTimeout(h.timer); hold.current = null; }
-  };
-  const onUp = () => {
-    if (hold.current) { clearTimeout(hold.current.timer); hold.current = null; }
-    if (laser.on) { laser.on = false; setOrbit(true); }
-  };
   useEffect(() => {
     const down = (e: KeyboardEvent) => {
       if (e.key === ' ') { e.preventDefault(); st.program = !st.program; setProgram(st.program); }
@@ -55,7 +40,7 @@ export function App() {
 
   return (
     <>
-      <div className="stage" onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onUp} onPointerLeave={onUp} onPointerCancel={onUp}>
+      <div className="stage" onPointerMove={onMove} onPointerLeave={onLeave}>
         <Canvas camera={{ position: [4.8, 2.6, 8.2], fov: 34 }} gl={{ alpha: true, antialias: true, toneMapping: THREE.NeutralToneMapping, toneMappingExposure: 1.0 }} dpr={[1, 2]}>
           <Machine />
           <Drones />
@@ -70,7 +55,7 @@ export function App() {
           </Environment>
           <directionalLight position={[4, 8, 6]} intensity={1.1} />
           <OrbitControls
-            enabled={orbit} enableDamping enablePan={false} minDistance={5} maxDistance={20} target={[0, -0.2, 0]}
+            enableDamping enablePan={false} minDistance={5} maxDistance={20} target={[0, -0.2, 0]}
             onChange={(e) => { if (e) st.azimuth = (e.target as { getAzimuthalAngle: () => number }).getAzimuthalAngle(); }}
           />
         </Canvas>
@@ -82,7 +67,6 @@ export function App() {
       {CLEAN ? null : <div className="keys">
         <span><kbd>space</kbd>{program ? 'stop program' : 'run program'}</span>
         <span><kbd>drag</kbd>orbit, sets the way</span>
-        <span><kbd>hold</kbd>laser</span>
         <span><kbd>m</kbd>{smooth ? 'servo' : 'smooth'}</span>
       </div>}
     </>

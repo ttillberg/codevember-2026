@@ -7,8 +7,8 @@ import { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js';
 import { project, type V4, type M4 } from './tesseract';
 import { pose } from './state';
 
-// A laser into the tesseract. Hold the pointer still and a pink beam comes in level across the screen, right to left,
-// through the point you hold it on, and goes straight on through the machine. At every wall it
+// A laser into the tesseract. Wherever the pointer is, a pink beam comes in level across the screen, right to left,
+// through the point under it, and goes straight on through the machine. At every wall it
 // crosses it is displaced: a short jog sideways along that wall's 4D normal as it projects right now, and then on,
 // parallel to itself, at half the strength. Straight, stepped and dimmed at every wall, like light through a stack
 // of glass; the steps turn with the machine because the normals do.
