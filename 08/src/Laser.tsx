@@ -101,7 +101,8 @@ export function Laser() {
     return out;
   }
 
-  /** The wall's 4D normal, seen in 3D at the point: the fixed axis that lies most across the beam, pointing inward. */
+  /** The wall's 4D normal, seen in 3D at the point, as it is: of the two fixed axes the one lying most across the
+   * beam, pointing inward. Not squared off against the beam, so the jog leans the way the warp leans. */
   function jog(m: M4, h: Hit, dir: THREE.Vector3, out: THREE.Vector3) {
     const { p, q, n } = tmp;
     let best = Infinity;
@@ -109,10 +110,11 @@ export function Laser() {
       const up = h.p4.slice() as V4, dn = h.p4.slice() as V4;
       up[axis] += 0.01; dn[axis] -= 0.01;
       project(m, up, p); project(m, dn, q);
-      n.subVectors(p, q).multiplyScalar(-sign).normalize(); // inward
-      n.addScaledVector(dir, -n.dot(dir)); // across the beam
-      const along = Math.abs(1 - n.length()); // small when the normal was already across
-      if (n.lengthSq() > 1e-6 && along < best) { best = along; out.copy(n).normalize(); }
+      n.subVectors(p, q).multiplyScalar(-sign);
+      if (n.lengthSq() < 1e-8) continue;
+      n.normalize();
+      const along = Math.abs(n.dot(dir));
+      if (along < best) { best = along; out.copy(n); }
     }
     if (best === Infinity) out.set(0, 0, 0);
   }
