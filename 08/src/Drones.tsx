@@ -91,7 +91,7 @@ export function Drones() {
     group.add(grabbed);
     const held = Math.floor(Math.random() * 4), sign = Math.random() < 0.5 ? -1 : 1;
     const s = {
-      group, q, smoke, laser, puffAt: new THREE.Vector3(1e9, 0, 0), puffGap: 0.04, trailAt: new THREE.Vector3(1e9, 0, 0), flash, clipCorners: null as V4[] | null, lastWall: null as { axis: number; sign: number } | null, lastCorners: null as V4[] | null, linger: 0, justCrossed: false, shift: new THREE.Vector3(), immA: 0, immB: 0, tintA: 0, tintB: 0, tintHex: '', tintHexA: '', crossed: false, piece, grabbed,
+      group, q, smoke, laser, puffAt: new THREE.Vector3(1e9, 0, 0), puffGap: 0.04, trailAt: new THREE.Vector3(1e9, 0, 0), flash, clipCorners: null as V4[] | null, lastWall: null as { axis: number; sign: number } | null, lastCorners: null as V4[] | null, linger: 0, justCrossed: false, immA: 0, immB: 0, tintA: 0, tintB: 0, tintHex: '', tintHexA: '', crossed: false, piece, grabbed,
       held, sign, came: null as [number, number] | null,
       p: [0, 0, 0, 0] as V4, dir: [0, 0, 0, 0] as V4, // where it is, which way it is going, in 4D
       leg: null as Leg | null, s: 0,
@@ -436,20 +436,16 @@ export function Drones() {
     };
     pose3(drone, s.heading);
     s.q.g.quaternion.copy(s.heading);
-    // At a wall the body goes in, then comes out. Each copy is clipped to its own cell's side of the wall's plane.
-    // Coming up to the wall this copy, in this cell's pose, sinks into it: the part past the plane is simply not
-    // drawn, and once the whole body is across nothing of it is left. Only then does the copy in the next cell's
-    // pose rise out of the wall on that cell's side: it is set back two radii along the wall's normal, so it starts
-    // inside the wall, and catches the body up over the next few radii. In 4D nothing of the kind happens, the body
-    // just moves on, but in the picture two spaces meet at the wall and this makes the hand-over plain. Away from
-    // walls the planes are far off and the other copy hidden.
+    // At a wall the body is two copies, one in each cell's pose, each clipped to its own cell's side of the wall's
+    // plane. In 4D nothing of the kind happens, the body just moves on, but in the picture two spaces meet at the
+    // wall and this makes the hand-over plain. Away from walls the planes are far off and the other copy hidden.
     // The wall state the flight hands over ends by where the device is on its leg; the hand-over here ends when the
     // body has come all the way up out of the wall, which can be later. So the last wall is kept and the state
     // lingers until the set-back is spent.
     if (s.wall) {
       // another wall ahead while a hand-over is still pending (two walls close together, as through a thin cell in
       // the picture): the pending one is dropped, or the new wall would be taken as already crossed
-      if (s.crossed && !s.justCrossed && s.lastWall && (s.wall.axis !== s.lastWall.axis || s.wall.sign !== s.lastWall.sign)) { s.crossed = false; s.shift.set(0, 0, 0); }
+      if (s.crossed && !s.justCrossed && s.lastWall && (s.wall.axis !== s.lastWall.axis || s.wall.sign !== s.lastWall.sign)) s.crossed = false;
       s.lastWall = s.wall; s.lastCorners = s.clipCorners;
     }
     s.justCrossed = false;
@@ -465,40 +461,32 @@ export function Drones() {
       s.planeB.copy(s.planeA);
       const centre2: V4 = [0, 0, 0, 0]; centre2[other.held] = other.sign;
       if (s.planeB.distanceToPoint(project(m, centre2, new THREE.Vector3())) < 0) s.planeB.negate();
-      const R = SIZE_MAIN, d = s.planeA.distanceToPoint(v); // how far the centre is into this cell's side, in 3D
-      if (!s.crossed) {
-        // going in: this copy sinks, the other is not there yet
-        s.q2.g.visible = false;
-        s.shift.set(0, 0, 0);
-        s.immA = Math.max(0, Math.min(1, (R - d) / (2 * R))); s.immB = 0;
-      } else {
-        // across: the old copy, now the other, is what is left behind the wall; this copy waits inside the wall until
-        // the body is all the way in, then comes up out of it, set back, and catches up. Through the outer wall the
-        // next cell is on the same side, and the body's path turns back in at the wall: the old copy is mirrored in
-        // the wall's plane then, so it carries on out and sinks all the way instead of coming back up
-        s.q2.g.visible = true;
-        s.q2.g.position.copy(v);
-        if (s.planeA.normal.dot(s.planeB.normal) > 0) s.q2.g.position.addScaledVector(s.planeA.normal, -2 * d);
-        s.q2.g.quaternion.copy(s.heading2);
-        s.q2.shield(s.shield); s.q2.shutter(shut); s.q2.grip(s.grip, drone.gripAt);
-        const back = d < R ? 2 * R : Math.max(0, 2 * R - (d - R) * (2 / 3));
-        s.q.g.visible = d >= R;
-        s.shift.copy(s.planeA.normal).multiplyScalar(-back);
-        // the old copy is this far in, the new one this far still in on its way out
-        s.immB = Math.max(0, Math.min(1, (R + d) / (2 * R)));
-        s.immA = s.q.g.visible ? Math.max(0, Math.min(1, (R - (d - back)) / (2 * R))) : 1;
+      // The body goes in and comes out at once: as this cell's copy sinks into the wall the other cell's copy rises
+      // out of it on that cell's side by the same amount, so between two cells on opposite sides of the wall that is
+      // the two halves of one body, folded at the wall. Through the outer wall the next cell is on the same side, so
+      // the other copy is mirrored in the wall's plane: it comes up out of the wall as this one goes down into it,
+      // and the body's path, which turns back in at the wall, is read as the same body coming out again.
+      const R = SIZE_MAIN, d = Math.max(0, s.planeA.distanceToPoint(v)); // how far the centre is into this cell's side, in 3D
+      s.q2.g.visible = true;
+      s.q2.g.position.copy(v);
+      if (s.planeA.normal.dot(s.planeB.normal) > 0) s.q2.g.position.addScaledVector(s.planeA.normal, -2 * d);
+      s.q2.g.quaternion.copy(s.heading2);
+      s.q2.shield(s.shield); s.q2.shutter(shut); s.q2.grip(s.grip, drone.gripAt);
+      // this copy is this far into the wall, the other this far still in it
+      s.immA = Math.max(0, Math.min(1, (R - d) / (2 * R)));
+      s.immB = Math.max(0, Math.min(1, (R + d) / (2 * R)));
+      if (s.crossed) {
         if (!s.wall) s.linger += dt; else s.linger = 0;
-        if ((back <= 0 || s.linger > 2) && !s.wall) s.crossed = false; // up and out, or long enough: the hand-over is done
+        if ((d >= R || s.linger > 2) && !s.wall) s.crossed = false; // all the way across, or long enough: the hand-over is done
       }
       // the renderer clips in world space, and the machine sits on a turned rig: the planes go through its matrix
       s.planeA.applyMatrix4(s.group.matrixWorld); s.planeB.applyMatrix4(s.group.matrixWorld);
     } else {
       s.q2.g.visible = false;
       s.planeA.set(tmp.up, 1e4); s.planeB.set(tmp.up, 1e4);
-      s.shift.multiplyScalar(Math.max(0, 1 - dt * 6)); // whatever set-back is left, the body catches up
       s.immA = s.immB = 0;
     }
-    s.q.g.position.copy(v).add(s.shift);
+    s.q.g.position.copy(v);
     // while the body is sliced by a wall each half glows in the colour of the cell it is in: this copy in this
     // cell's, the other copy in the neighbour's, so the cut reads at a glance; whole again, the glow goes
     // a tint, not a glow: nothing until a quarter of the body is in the wall, then up a curve to half strength with
