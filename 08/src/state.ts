@@ -18,7 +18,9 @@ export const st = {
   /** Orbiting sets the way: the camera's azimuth, written by the controls, and the way the last drag went. */
   azimuth: 0,
   lastAzimuth: 0,
-  way: 1, // the idle spin follows the last drag: +1 or -1
+  way: 1, // which way it turns, +1 or -1: the last drag, or a flip now and then
+  flipIn: 12, // seconds until it turns round on its own
+  spinVel: 0, // the smooth mode's speed, eased towards SPIN * way so a flip is a swing, not a knock
   /** Longest and shortest strut right now, for the readout. */
   lengths: { min: 0, max: 0 },
 };
@@ -64,10 +66,13 @@ export function tick(dt: number) {
   let dAz = st.azimuth - st.lastAzimuth;
   if (dAz > Math.PI) dAz -= 2 * Math.PI; else if (dAz < -Math.PI) dAz += 2 * Math.PI;
   st.lastAzimuth = st.azimuth;
-  if (Math.abs(dAz) > 1e-3) st.way = Math.sign(dAz);
+  if (Math.abs(dAz) > 1e-3) { st.way = Math.sign(dAz); st.flipIn = 8 + Math.random() * 14; }
+  st.flipIn -= dt;
+  if (st.flipIn <= 0) { st.way = -st.way; st.flipIn = 8 + Math.random() * 14; }
 
   if (st.smooth) {
-    if (st.program) st.target += SPIN * st.way * dt;
+    st.spinVel += (SPIN * st.way * (st.program ? 1 : 0) - st.spinVel) * Math.min(1, dt * 1.2);
+    st.target += st.spinVel * dt;
     st.target += st.crank * CRANK * dt;
     st.angle = st.target; st.vel = 0;
     const t = st.turntable;
