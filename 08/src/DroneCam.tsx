@@ -2,10 +2,13 @@ import { useMemo } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import { drone, toCell } from './drone';
+import { quad } from './Drones';
 
-// The drone's own camera, in a corner of the page. It renders cell space: the cube the drone is in, rigid, and the
-// six neighbouring cubes continuing straight through its faces, as in a net. Nothing telescopes here; from inside,
-// a tesseract is just rooms. Takes over the render loop: main scene first, then this one in a scissored viewport.
+// The drone's camera, in a corner of the page. It renders cell space: the cube the drone is in, rigid, and the six
+// neighbouring cubes continuing straight through its faces, as in a net. Nothing telescopes here; from inside, a
+// tesseract is just rooms. Two views, swapped by a click on the frame: the drone's own eyes, or a chase camera a
+// little behind and above it, with the quad in the picture. Takes over the render loop: main scene first, then this
+// one in a scissored viewport.
 
 export const CAM = { w: () => Math.min(380, Math.max(240, innerWidth * 0.28)), ratio: 1.6, right: 24, bottom: 72 };
 
@@ -57,10 +60,12 @@ export function DroneCam() {
       cube(c, k * 2 + (sgn > 0 ? 1 : 0));
     }
     const cam = new THREE.PerspectiveCamera(95, CAM.ratio, 0.03, 40);
-    return { cs, net, edges, cam, sand, graphite, look: new THREE.Vector3(0, 0, -1), last: [0, 0, 0], crossings: -1 };
+    const q = quad(0.14);
+    cs.add(q.g);
+    return { cs, net, edges, cam, q, sand, graphite, look: new THREE.Vector3(0, 0, -1), last: [0, 0, 0], crossings: -1, eye: new THREE.Vector3(), spin: 0, heading: new THREE.Quaternion() };
   }, []);
 
-  const tmp = useMemo(() => ({ pos: new THREE.Vector3(), vel: new THREE.Vector3(), at: new THREE.Vector3() }), []);
+  const tmp = useMemo(() => ({ pos: new THREE.Vector3(), vel: new THREE.Vector3(), at: new THREE.Vector3(), up: new THREE.Vector3(0, 1, 0), m: new THREE.Matrix4(), q: new THREE.Quaternion(), tilt: new THREE.Quaternion(), axis: new THREE.Vector3() }), []);
 
   useFrame(() => {
     // the main picture. setViewport and setScissor take CSS pixels and apply the pixel ratio themselves.
@@ -77,9 +82,33 @@ export function DroneCam() {
     tmp.vel.set(c[0] - cell.last[0], c[1] - cell.last[1], c[2] - cell.last[2]);
     cell.last = c;
     if (tmp.vel.lengthSq() > 1e-8 && tmp.vel.lengthSq() < 0.25) cell.look.lerp(tmp.vel.normalize(), 0.08).normalize();
-    cell.cam.position.copy(tmp.pos);
     cell.cam.up.set(0, 1, 0);
-    cell.cam.lookAt(tmp.at.copy(tmp.pos).add(cell.look));
+    const follow = drone.view === 'follow';
+    if (follow) {
+      // a chase camera: behind and a little above, eased; the quad in frame, nosing along its way
+      tmp.at.copy(tmp.pos).addScaledVector(cell.look, -0.42).addScaledVector(tmp.up, 0.16);
+      if (cell.eye.lengthSq() === 0) cell.eye.copy(tmp.at);
+      cell.eye.lerp(tmp.at, 0.12);
+      cell.cam.position.copy(cell.eye);
+      cell.cam.lookAt(tmp.at.copy(tmp.pos).addScaledVector(cell.look, 0.4));
+    } else {
+      cell.eye.set(0, 0, 0);
+      cell.cam.position.copy(tmp.pos);
+      cell.cam.lookAt(tmp.at.copy(tmp.pos).add(cell.look));
+    }
+    cell.q.g.visible = follow;
+    if (follow) {
+      cell.q.g.position.copy(tmp.pos);
+      tmp.m.lookAt(new THREE.Vector3(), tmp.at.copy(cell.look).negate(), tmp.up);
+      tmp.q.setFromRotationMatrix(tmp.m);
+      tmp.axis.crossVectors(tmp.up, cell.look).normalize();
+      tmp.tilt.setFromAxisAngle(tmp.axis, 0.25);
+      tmp.q.premultiply(tmp.tilt);
+      cell.heading.slerp(tmp.q, 0.1);
+      cell.q.g.quaternion.copy(cell.heading);
+      cell.spin += 0.9;
+      cell.q.rotors.forEach((r, i) => { r.rotation.y = cell.spin * (i % 2 ? 1 : -1); });
+    }
 
     if (cell.crossings !== drone.crossings) {
       cell.crossings = drone.crossings;

@@ -15,6 +15,8 @@ export const drone = {
   axisOf: [1, 2, 3], // the 4D axis each cell-space row runs along
   centre: [0, 0, 0], // the current cell's centre in cell space
   crossings: 0,
+  /** The corner camera: the drone's own eyes, or a chase camera behind it. A click on the frame swaps. */
+  view: 'pov' as 'pov' | 'follow',
 };
 
 /** Start in the cell with `held` at `sign`: rows are the free axes in order. */

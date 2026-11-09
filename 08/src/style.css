@@ -109,7 +109,7 @@ kbd {
   aspect-ratio: 1.6;
   border: 1.5px solid var(--ink);
   border-radius: 4px;
-  pointer-events: none;
+  cursor: pointer;
   box-sizing: border-box;
   font: 600 10px/1 Menlo, "SF Mono", monospace;
   letter-spacing: 0.1em;
@@ -134,6 +134,7 @@ kbd {
 }
 @keyframes rec { 50% { opacity: 0.2; } }
 .cam b { right: 8px; font-weight: 600; }
+.cam:hover { box-shadow: 0 0 0 2px var(--ink); }
 
 .back {
   position: fixed;
@@ -155,7 +156,7 @@ body.clean .cam {
   aspect-ratio: 1.6;
   border: 1.5px solid var(--ink);
   border-radius: 4px;
-  pointer-events: none;
+  cursor: pointer;
   box-sizing: border-box;
   font: 600 10px/1 Menlo, "SF Mono", monospace;
   letter-spacing: 0.1em;
@@ -180,6 +181,7 @@ body.clean .cam {
 }
 @keyframes rec { 50% { opacity: 0.2; } }
 .cam b { right: 8px; font-weight: 600; }
+.cam:hover { box-shadow: 0 0 0 2px var(--ink); }
 
 .back { display: none; }
 

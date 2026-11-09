@@ -46,8 +46,8 @@ function pathLen(pts: V4[]): number {
 
 const SAND = '#d9b985', DARK = '#1c1c1e', LED = '#c9e35b';
 
-/** The quad: a sand body, four dark arms, four rotor discs, a lamp under the belly. Span 2 × SIZE, facing -z. */
-function quad() {
+/** The quad: a sand body, four dark arms, four rotor discs, a lamp under the belly. Span 2 × size, facing -z. */
+export function quad(size = SIZE) {
   const g = new THREE.Group();
   const sand = new THREE.MeshStandardMaterial({ color: SAND, roughness: 0.75 });
   const dark = new THREE.MeshStandardMaterial({ color: DARK, roughness: 0.5, metalness: 0.2 });
@@ -74,7 +74,7 @@ function quad() {
   const lamp = new THREE.Mesh(new THREE.SphereGeometry(0.07, 12, 8), lampMat);
   lamp.position.y = -0.2;
   g.add(body, nose, belly, lamp);
-  g.scale.setScalar(SIZE / 1.02);
+  g.scale.setScalar(size / 1.02);
   return { g, rotors, lampMat };
 }
 

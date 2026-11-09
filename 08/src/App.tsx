@@ -23,6 +23,8 @@ function Readout() {
         cells[4].textContent = phase();
         const cam = document.querySelector('.cam b');
         if (cam) cam.textContent = `CELL ${'XYZW'[drone.held]} = ${drone.sign > 0 ? '+1' : '−1'}`;
+        const label = document.querySelector('.cam span');
+        if (label) label.textContent = drone.view === 'pov' ? 'DRONE CAM' : 'FOLLOW CAM';
       }
       raf = requestAnimationFrame(tick);
     };
@@ -40,6 +42,7 @@ function Readout() {
 }
 
 const CLEAN = new URLSearchParams(location.search).has('clean'); // no page furniture, for the screengrab
+if (new URLSearchParams(location.search).has('follow')) drone.view = 'follow';
 
 export function App() {
   const [program, setProgram] = useState(st.program);
@@ -90,7 +93,11 @@ export function App() {
         <p>A hypercube built for real. 32 telescopic struts on 16 ball joints, one crank turning it a quarter at a time through the XW, YW or ZW plane: a 4D turn seen in 3D is an object whose edges change length. Everything else is rigid.</p>
         <Readout />
       </div>}
-      {CLEAN ? null : <div className="cam"><span>DRONE CAM</span><b>CELL</b></div>}
+      {CLEAN ? null : (
+        <div className="cam" title="click: drone cam / follow cam" onClick={() => { drone.view = drone.view === 'pov' ? 'follow' : 'pov'; }}>
+          <span>DRONE CAM</span><b>CELL</b>
+        </div>
+      )}
       {CLEAN ? null : <div className="keys">
         <span><kbd>space</kbd>{program ? 'stop program' : 'run program'}</span>
         <span><kbd>drag</kbd>orbit, sets the way</span>
