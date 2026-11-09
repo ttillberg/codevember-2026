@@ -16,6 +16,10 @@ export const st = {
   crank: 0, // held key, -1 0 1
   shift: false, // shift held: drag moves the target instead of orbiting
   turntable: { on: true, angle: 0, target: 0, vel: 0, next: 3 },
+  /** Orbiting sets the way: the camera's azimuth, written by the controls, and the way the last drag went. */
+  azimuth: 0,
+  lastAzimuth: 0,
+  way: 1, // the idle spin follows the last drag: +1 or -1
   /** Longest and shortest strut right now, for the readout. */
   lengths: { min: 0, max: 0 },
 };
@@ -49,14 +53,20 @@ const pick = <T,>(xs: [T, number][]) => {
 function step() {
   const size = pick<number>([[5, 1], [15, 4], [30, 3], [45, 1.5], [90, 1]]);
   const back = Math.random() < (size <= 15 ? 0.3 : 0.12);
-  st.target += (back ? -1 : 1) * size * DEG;
+  st.target += (back ? -1 : 1) * st.way * size * DEG;
   // hold: longer after a big move, sometimes a quick second step
   st.next = Math.random() < 0.25 ? 0.14 + Math.random() * 0.1 : 0.35 + Math.random() * (size >= 45 ? 1.6 : 1.0);
 }
 
 export function tick(dt: number) {
+  // orbit the camera one way and the machine turns that way from then on
+  let dAz = st.azimuth - st.lastAzimuth;
+  if (dAz > Math.PI) dAz -= 2 * Math.PI; else if (dAz < -Math.PI) dAz += 2 * Math.PI;
+  st.lastAzimuth = st.azimuth;
+  if (Math.abs(dAz) > 1e-3) st.way = Math.sign(dAz);
+
   if (st.smooth) {
-    if (st.program) st.target += SPIN * dt;
+    if (st.program) st.target += SPIN * st.way * dt;
     st.target += st.crank * CRANK * dt;
     st.angle = st.target; st.vel = 0;
     const t = st.turntable;

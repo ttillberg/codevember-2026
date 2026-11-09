@@ -83,7 +83,10 @@ export function App() {
             <Lightformer intensity={0.6} rotation-x={-Math.PI / 2} position={[0, -6, 0]} scale={[12, 12, 1]} color="#d8d2c6" />
           </Environment>
           <directionalLight position={[4, 8, 6]} intensity={1.1} />
-          <OrbitControls enabled={!shift} enableDamping enablePan={false} minDistance={5} maxDistance={20} target={[0, -0.2, 0]} />
+          <OrbitControls
+            enabled={!shift} enableDamping enablePan={false} minDistance={5} maxDistance={20} target={[0, -0.2, 0]}
+            onChange={(e) => { if (e) st.azimuth = (e.target as { getAzimuthalAngle: () => number }).getAzimuthalAngle(); }}
+          />
         </Canvas>
       </div>
       {CLEAN ? null : <div className="plate">
@@ -98,7 +101,7 @@ export function App() {
         <span><kbd>space</kbd>{program ? 'stop program' : 'run program'}</span>
         <span><kbd>←</kbd><kbd>→</kbd>crank</span>
         <span><kbd>⇧</kbd>drag crank</span>
-        <span><kbd>drag</kbd>orbit</span>
+        <span><kbd>drag</kbd>orbit, sets the way</span>
         <span><kbd>t</kbd>turntable</span>
         <span><kbd>m</kbd>{smooth ? 'servo' : 'smooth'}</span>
       </div>}
