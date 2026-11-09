@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { useGLTF } from '@react-three/drei';
 import { DecalGeometry } from 'three/examples/jsm/geometries/DecalGeometry.js';
-import { scratches, gouges } from './decals';
+import { scratches, gouges, grunge } from './decals';
 import { logo, withLogos, type LogoName } from './logos';
 
 // The device: a ball modelled in Blender (model/device.blend), exported to public/device.glb. A graphite core
@@ -59,11 +59,19 @@ function makeMarks() {
     g.fillText('CDVMBR 08 · UNIT 01', 256, 34);
   }));
   // scuffs: hairlines, and on two of them a proper scrape that reads from the main view
-  const scuff = [11, 29, 47, 63, 83].map((seed, i) => decalMat(canvasTex(256, 256, (g) => {
+  // scuffs: hairlines and, when the sheet is here, a window of real wear; two of them also get a proper scrape
+  const scuff = [11, 29, 47, 63, 83].map((seed, i) => {
     const r = rngOf(seed);
-    scratches(g, r, 256, 256, 9, '#e6e6e0', '#000000', 0.5);
-    if (i === 1 || i === 4) gouges(g, r, 256, 256, 1, '#d2d2cc', '#000000', 2.6);
-  })));
+    const tex = canvasTex(256, 256, (g) => {
+      scratches(g, r, 256, 256, 9, '#e6e6e0', '#000000', 0.5);
+      if (i === 1 || i === 4) gouges(g, r, 256, 256, 1, '#d2d2cc', '#000000', 2.6);
+    });
+    withLogos(() => {
+      grunge((tex.image as HTMLCanvasElement).getContext('2d')!, r, 256, 256, '#c8c8c4', 0.7);
+      tex.needsUpdate = true;
+    });
+    return decalMat(tex);
+  });
   return { three, pmndrs, serial, github, scuff };
 }
 
@@ -104,7 +112,7 @@ function dress(g: THREE.Group) {
     const n = new THREE.Vector3(...dir).normalize();
     stick(core, mat, n.clone().multiplyScalar(0.7), n, w, h, roll);
   };
-  onCore([0.45, 0.85, -0.45], m.three, 0.26, 0.26);
+  onCore([0.45, 0.85, -0.45], m.three, 0.55, 0.55);
   onCore([-0.45, 0.85, -0.45], m.pmndrs, 0.2, 0.2);
   onCore([0, -0.85, -0.5], m.serial, 0.5, 0.0625);
   onCore([0.6, -0.3, 0.7], m.scuff[4], 0.7, 0.7, 0.5);

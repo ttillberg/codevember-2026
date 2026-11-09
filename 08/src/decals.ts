@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { logo, withLogos } from './logos';
+import { logo, sheet, withLogos } from './logos';
 
 // Decal textures for the sleeves, drawn on canvases: brand, serial, barcode, a hazard band at the mouth, a coloured
 // tab. Canvas x runs round the tube, canvas y along it, the top of the canvas at the sleeve's open end.
@@ -93,6 +93,20 @@ export function gouges(g: CanvasRenderingContext2D, r: () => number, w: number, 
   g.restore();
 }
 
+/** Rough wear from the scratch sheet: a random window of it laid over the canvas in `color`. The sheet is dense,
+ * so a window of a third of it at most, and the alpha keeps it in the paint rather than on top of it. */
+export function grunge(g: CanvasRenderingContext2D, r: () => number, w: number, h: number, color: string, alpha: number) {
+  const src = sheet('scratch', color);
+  if (!src) return;
+  const sw = src.width * (0.28 + r() * 0.14), sh = sw * (h / w);
+  const sx = r() * (src.width - sw), sy = r() * (src.height - sh);
+  g.save();
+  g.globalAlpha = alpha;
+  if (r() < 0.5) { g.translate(w, 0); g.scale(-1, 1); } // half of them mirrored, so no two read alike
+  g.drawImage(src, sx, sy, sw, sh, 0, 0, w, h);
+  g.restore();
+}
+
 /** A plain sleeve with a scrape or two on it, for the few undecaled sleeves that have been knocked about. */
 export function scuffSleeve(base: string, seed: number): THREE.CanvasTexture {
   const c = document.createElement('canvas');
@@ -107,6 +121,7 @@ export function scuffSleeve(base: string, seed: number): THREE.CanvasTexture {
   const t = new THREE.CanvasTexture(c);
   t.colorSpace = THREE.SRGBColorSpace;
   t.anisotropy = 8;
+  withLogos(() => { grunge(g, r, W, H, sand ? '#4a3d2c' : '#9a9a9e', sand ? 0.75 : 0.6); t.needsUpdate = true; });
   return t;
 }
 
@@ -178,11 +193,11 @@ export function sleeveDecal(d: Decal): THREE.CanvasTexture {
         g.font = '800 46px "Helvetica Neue", Helvetica, Arial, sans-serif';
         g.fillText('CDVMBR 08', bx + o, 110);
       } else {
-        const size = brand === 'github' ? 34 : brand === 'three' ? 64 : 52;
+        const size = brand === 'github' ? 34 : brand === 'three' ? 160 : 52;
         const img = logo(brand, size * 2, d.ink);
         if (img) g.drawImage(img, bx + o, 110 - size / 2, size, size);
       }
-      if (small) {
+      if (small && brand !== 'three') {
         g.font = '500 17px "Helvetica Neue", Helvetica, Arial, sans-serif';
         g.fillText(small, bx + 2 + o, 166);
       }
@@ -249,6 +264,6 @@ export function sleeveDecal(d: Decal): THREE.CanvasTexture {
   t.colorSpace = THREE.SRGBColorSpace;
   t.anisotropy = 8;
   t.wrapS = THREE.RepeatWrapping;
-  withLogos(() => { drawBrand(); t.needsUpdate = true; });
+  withLogos(() => { grunge(g, r, W, H, sand ? '#4a3d2c' : '#9a9a9e', sand ? 0.7 : 0.55); drawBrand(); t.needsUpdate = true; });
   return t;
 }
