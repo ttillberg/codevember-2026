@@ -39,9 +39,13 @@ export function sleeveDecal(d: Decal): THREE.CanvasTexture {
 
   g.fillStyle = d.base;
   g.fillRect(0, 0, W, H);
+  // a sleeve carries a few of these, not all: hazard band, brand, serial, barcode, tab, pictogram
+  const has = { hazard: r() < 0.35, brand: r() < 0.6, serial: r() < 0.5, barcode: r() < 0.3, tab: r() < 0.5, picto: r() < 0.25 };
+  if (!has.brand && !has.serial) has.serial = true;
 
   // hazard band at the mouth
   const hz = 34;
+  if (has.hazard) {
   g.save();
   g.beginPath(); g.rect(0, 0, W, hz); g.clip();
   g.fillStyle = d.ink;
@@ -51,15 +55,16 @@ export function sleeveDecal(d: Decal): THREE.CanvasTexture {
   g.restore();
   g.fillStyle = d.ink;
   g.fillRect(0, hz, W, 3);
+  }
 
-  // hairlines
+  // a hairline
   g.fillStyle = d.ink;
   g.globalAlpha = 0.35;
   g.fillRect(0, H - 28, W, 2);
-  g.fillRect(0, 150, W, 1);
   g.globalAlpha = 1;
 
   // brand, round the tube. The cylinder's u runs the other way round, so text round it is drawn mirrored.
+  if (has.brand) {
   g.save();
   g.translate(W, 0);
   g.scale(-1, 1);
@@ -71,10 +76,12 @@ export function sleeveDecal(d: Decal): THREE.CanvasTexture {
   g.fillText(brand, bx, 110);
   g.fillText(brand, bx + W, 110);
   g.font = '500 17px "Helvetica Neue", Helvetica, Arial, sans-serif';
-  g.fillText(pick(SMALL), bx + 2, 150 + 16);
+  if (r() < 0.5) g.fillText(pick(SMALL), bx + 2, 150 + 16);
   g.restore();
+  }
 
   // serial, along the tube
+  if (has.serial) {
   g.save();
   g.translate(W - 96, H - 40);
   g.rotate(-Math.PI / 2);
@@ -84,8 +91,10 @@ export function sleeveDecal(d: Decal): THREE.CanvasTexture {
   g.font = '600 18px "Helvetica Neue", Helvetica, Arial, sans-serif';
   g.fillText(`AXIS ${d.axis} · ASYNC SYSTEMS`, 0, 22);
   g.restore();
+  }
 
   // barcode
+  if (has.barcode) {
   g.save();
   g.translate(40, 200);
   let x = 0;
@@ -99,16 +108,21 @@ export function sleeveDecal(d: Decal): THREE.CanvasTexture {
   g.scale(-1, 1);
   g.fillText(`${d.serial.replace('—', '')}-${Math.floor(r() * 9000 + 1000)}`, 0, 0);
   g.restore();
+  }
 
   // a coloured tab, and a black one
-  g.fillStyle = d.accent;
-  g.fillRect(220 + Math.floor(r() * 60), 210, 44, 16);
-  g.fillStyle = d.ink;
-  g.fillRect(220 + Math.floor(r() * 60), 236, 70, 6);
-  // a little pictogram: four squares, the net of a cube
-  g.fillStyle = d.ink;
-  const px = 300, py = 290;
-  for (const [i, j] of [[0, 0], [1, 0], [2, 0], [1, 1], [1, -1], [3, 0]]) g.fillRect(px + i * 22, py + j * 22, 18, 18);
+  if (has.tab) {
+    g.fillStyle = d.accent;
+    g.fillRect(220 + Math.floor(r() * 60), 210, 44, 16);
+    g.fillStyle = d.ink;
+    g.fillRect(220 + Math.floor(r() * 60), 236, 70, 6);
+  }
+  // a little pictogram: the net of a cube
+  if (has.picto) {
+    g.fillStyle = d.ink;
+    const px = 300, py = 290;
+    for (const [i, j] of [[0, 0], [1, 0], [2, 0], [1, 1], [1, -1], [3, 0]]) g.fillRect(px + i * 22, py + j * 22, 18, 18);
+  }
 
   const t = new THREE.CanvasTexture(c);
   t.colorSpace = THREE.SRGBColorSpace;

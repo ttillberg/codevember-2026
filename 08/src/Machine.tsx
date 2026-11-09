@@ -34,6 +34,11 @@ export function Machine() {
       new THREE.MeshStandardMaterial({ color: '#c8a874', roughness: 0.7, metalness: 0.05 }),
     ];
     const accents = ACCENTS.map((c) => new THREE.MeshStandardMaterial({ color: c, roughness: 0.6 }));
+    // most sleeves are plain paint; one in three carries a decal
+    const plain = [
+      new THREE.MeshStandardMaterial({ color: GRAPHITE, roughness: 0.62, metalness: 0.05 }),
+      new THREE.MeshStandardMaterial({ color: SAND, roughness: 0.78, metalness: 0.05 }),
+    ];
 
     const mesh = (g: THREE.BufferGeometry, m: THREE.Material) => {
       const o = new THREE.Mesh(g, m);
@@ -47,6 +52,7 @@ export function Machine() {
       const sand = e.axis === 3;
       const axis = 'XYZW'[e.axis];
       const sleeves = [0, 1].map((end) => {
+        if ((i * 2 + end) % 3 !== 1) return mesh(cyl, plain[sand ? 1 : 0]);
         const serial = `SYS—${String(i + 1).padStart(2, '0')}${end ? 'B' : 'A'}`;
         const accent = ACCENTS[(i * 3 + end) % ACCENTS.length];
         const map = sleeveDecal({ base: sand ? SAND : GRAPHITE, ink: sand ? INK : PAPER, serial, axis, seed: seed++, accent });
