@@ -2,7 +2,7 @@ import { useMemo } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import { EDGES, VERTS, project, turn } from './tesseract';
-import { st, SPIN, CRANK, TURNTABLE } from './state';
+import { st, tick } from './state';
 import { sleeveDecal, ACCENTS } from './decals';
 
 // The mechanism. Every edge is a strut in three stages: a sleeve fixed to each ball joint, a stanchion sliding out of
@@ -72,9 +72,8 @@ export function Machine() {
 
   useFrame((_, dt) => {
     dt = Math.min(dt, 0.05);
-    if (st.spin) st.angle += SPIN * dt;
-    st.angle += st.crank * CRANK * dt;
-    if (st.turntable) parts.group.rotation.y += TURNTABLE * dt;
+    tick(dt);
+    parts.group.rotation.y = st.turntable.angle;
 
     const m = turn([st.angle, 0, 0]);
     const { P, dir, back, q, qb } = tmp;

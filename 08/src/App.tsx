@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Canvas } from '@react-three/fiber';
 import { ContactShadows, Environment, Lightformer, OrbitControls } from '@react-three/drei';
 import { Machine } from './Machine';
-import { st } from './state';
+import { st, phase } from './state';
 
 function Readout() {
   const ref = useRef<HTMLDivElement>(null);
@@ -17,6 +17,7 @@ function Readout() {
         cells[1].textContent = String(Math.floor(a / 360));
         cells[2].textContent = st.lengths.min.toFixed(2);
         cells[3].textContent = st.lengths.max.toFixed(2);
+        cells[4].textContent = phase();
       }
       raf = requestAnimationFrame(tick);
     };
@@ -28,6 +29,7 @@ function Readout() {
       <span>XW <b>000°</b></span>
       <span>TURNS <b>0</b></span>
       <span>STRUT <b>0.00</b>–<b>0.00</b></span>
+      <span>SERVO <b>HOLD</b></span>
     </div>
   );
 }
@@ -35,12 +37,12 @@ function Readout() {
 const CLEAN = new URLSearchParams(location.search).has('clean'); // no page furniture, for the screengrab
 
 export function App() {
-  const [spin, setSpin] = useState(st.spin);
+  const [program, setProgram] = useState(st.program);
   const [shift, setShift] = useState(false);
   useEffect(() => {
     const down = (e: KeyboardEvent) => {
-      if (e.key === ' ') { e.preventDefault(); st.spin = !st.spin; setSpin(st.spin); }
-      if (e.key === 't') st.turntable = !st.turntable;
+      if (e.key === ' ') { e.preventDefault(); st.program = !st.program; setProgram(st.program); }
+      if (e.key === 't') st.turntable.on = !st.turntable.on;
       if (e.key === 'Shift') { st.shift = true; setShift(true); }
       if (e.key === 'ArrowRight') { e.preventDefault(); st.crank = 1; }
       if (e.key === 'ArrowLeft') { e.preventDefault(); st.crank = -1; }
@@ -61,7 +63,7 @@ export function App() {
   const onDown = (e: React.PointerEvent) => { if (st.shift) drag.current = e.clientX; };
   const onMove = (e: React.PointerEvent) => {
     if (drag.current === null) return;
-    st.angle += (e.clientX - drag.current) * 0.006;
+    st.target += (e.clientX - drag.current) * 0.006;
     drag.current = e.clientX;
   };
   const onUp = () => { drag.current = null; };
@@ -87,11 +89,11 @@ export function App() {
           <b>TESSERAKT</b>
           <i>四次元 · 超立方体 · UNIT 08</i>
         </div>
-        <p>A hypercube built for real. 32 telescopic struts on 16 ball joints, one crank turning it in the XW plane: a 4D turn seen in 3D is an object whose edges change length. Everything else is rigid.</p>
+        <p>A hypercube built for real. 32 telescopic struts on 16 ball joints, one servo cranking it through the XW plane in steps: a 4D turn seen in 3D is an object whose edges change length. Everything else is rigid.</p>
         <Readout />
       </div>}
       {CLEAN ? null : <div className="keys">
-        <span><kbd>space</kbd>{spin ? 'stop crank' : 'run crank'}</span>
+        <span><kbd>space</kbd>{program ? 'stop program' : 'run program'}</span>
         <span><kbd>←</kbd><kbd>→</kbd>crank</span>
         <span><kbd>⇧</kbd>drag crank</span>
         <span><kbd>drag</kbd>orbit</span>
