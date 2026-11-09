@@ -1,101 +1,122 @@
-html, body, #root { margin: 0; height: 100%; background: #fff; overflow: hidden; }
-html, body { user-select: none; -webkit-user-select: none; -webkit-tap-highlight-color: transparent; }
-:root { --ink: #1a1a1a; --font: "Helvetica Neue", Helvetica, Arial, sans-serif; }
-canvas { display: block; touch-action: none; cursor: grab; }
-canvas:active { cursor: grabbing; }
+:root {
+  --paper: #e6e6e4;
+  --grid: #d4d4d1;
+  --grid-fine: #dcdcd9;
+  --ink: #1c1c1c;
+  --mute: #6b6b68;
+  --pink: #ef5f9f;
+  --lime: #c9e35b;
+  --orange: #f2703f;
+}
+
+html, body, #root {
+  margin: 0;
+  height: 100%;
+  color: var(--ink);
+  font: 13px/1.4 "Helvetica Neue", Helvetica, Arial, sans-serif;
+}
+
+body {
+  background-color: var(--paper);
+  background-image:
+    linear-gradient(var(--grid) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid) 1px, transparent 1px),
+    linear-gradient(var(--grid-fine) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid-fine) 1px, transparent 1px);
+  background-size: 120px 120px, 120px 120px, 24px 24px, 24px 24px;
+  overflow: hidden;
+}
+
+.stage { position: fixed; inset: 0; }
+.stage canvas { touch-action: none; }
+
+.plate {
+  position: fixed;
+  top: 24px;
+  left: 24px;
+  width: 300px;
+  pointer-events: none;
+}
+.brand { display: flex; flex-direction: column; gap: 2px; }
+.brand b {
+  font-size: 34px;
+  font-weight: 900;
+  letter-spacing: -0.02em;
+  line-height: 1;
+}
+.brand b::after {
+  content: '';
+  display: inline-block;
+  width: 10px; height: 10px;
+  margin-left: 10px;
+  background: var(--pink);
+  vertical-align: 0.5em;
+  box-shadow: 16px 0 0 var(--lime), 32px 0 0 var(--orange);
+}
+.brand i {
+  font-style: normal;
+  font-weight: 600;
+  font-size: 12px;
+  letter-spacing: 0.12em;
+  color: var(--mute);
+}
+.plate p { margin: 14px 0 0; color: var(--mute); }
+
+.readout {
+  margin-top: 14px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  font: 600 11px/1 Menlo, "SF Mono", monospace;
+  letter-spacing: 0.06em;
+  color: var(--mute);
+}
+.readout b { color: var(--ink); font-weight: 700; }
+
+.keys {
+  position: fixed;
+  left: 50%;
+  bottom: 22px;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 18px;
+  pointer-events: none;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--mute);
+  white-space: nowrap;
+}
+.keys span { display: flex; align-items: center; gap: 6px; }
+kbd {
+  display: inline-block;
+  min-width: 14px;
+  padding: 5px 7px;
+  border: 1.5px solid var(--ink);
+  border-radius: 5px;
+  font: 600 11px/1 "Helvetica Neue", Helvetica, Arial, sans-serif;
+  text-align: center;
+  color: var(--ink);
+  background: rgba(255, 255, 255, 0.6);
+}
+
 .back {
-  position: fixed; left: 12px; bottom: 12px;
-  font: 12px ui-monospace, Menlo, monospace; color: var(--ink); opacity: .5;
+  position: fixed;
+  right: 24px;
+  top: 24px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--mute);
   text-decoration: none;
 }
-.back:hover { opacity: 1; }
+.back:hover { color: var(--ink); }
+body.clean .back { display: none; }
 
-/* The step number, big and bold in the corner like a manual's. */
-.step {
-  position: fixed; left: 36px; top: 20px; pointer-events: none;
-  font: 700 88px/1 var(--font); color: var(--ink); letter-spacing: -0.04em;
+@media (max-width: 640px) {
+  .plate { width: calc(100% - 48px); }
+  .plate p { display: none; }
+  .keys { gap: 10px; font-size: 10px; }
 }
-/* Parts for the page: drawn parts, counts, letters, in a rounded box. */
-.parts {
-  position: fixed; left: 40px; top: 124px; pointer-events: none;
-  display: flex; align-items: center; gap: 16px; padding: 10px 16px;
-  border: 2px solid var(--ink); border-radius: 10px; background: #fff;
-}
-.parts .item { position: relative; display: flex; align-items: center; gap: 4px; }
-.parts .n { font: 700 18px var(--font); color: var(--ink); }
-.parts .tag {
-  position: absolute; left: -6px; top: -4px; font: 700 11px var(--font); color: var(--ink);
-}
-.ico { display: block; fill: #fff; stroke: var(--ink); stroke-width: 1.5; stroke-linejoin: round; stroke-linecap: round; }
-
-/* Part letters on the cells being fitted. */
-.label {
-  position: fixed; left: -13px; top: -13px; width: 26px; height: 26px; pointer-events: none;
-  display: flex; align-items: center; justify-content: center; box-sizing: border-box;
-  border: 2px solid var(--ink); border-radius: 50%; background: #fff;
-  font: 700 13px var(--font); color: var(--ink);
-}
-
-.foot {
-  position: fixed; right: 20px; bottom: 14px; pointer-events: none;
-  font: 12px var(--font); color: var(--ink); letter-spacing: 0.04em;
-}
-.foot b { font-weight: 800; margin-right: 6px; }
-
-.help {
-  position: fixed; right: 20px; top: 20px; width: 40px; height: 40px; padding: 0;
-  border: 2px solid var(--ink); border-radius: 50%; background: #fff; cursor: pointer;
-  font: 800 20px var(--font); color: var(--ink);
-}
-.help:hover { background: #f0f0f0; }
-
-.service {
-  position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
-  background: rgba(255, 255, 255, 0.82);
-}
-.service .card {
-  position: relative; width: min(340px, calc(100vw - 32px)); box-sizing: border-box; padding: 28px 28px 22px;
-  border: 2px solid var(--ink); border-radius: 12px; background: #fff; text-align: center;
-  font: 14px/1.4 var(--font); color: var(--ink);
-}
-.service .phone { fill: #fff; stroke: var(--ink); stroke-width: 2.5; stroke-linejoin: round; }
-.service .q {
-  position: absolute; right: 70px; top: 18px; width: 40px; height: 40px; line-height: 36px; box-sizing: border-box;
-  border: 2.5px solid var(--ink); border-radius: 50%; font: 800 24px/34px var(--font);
-}
-.service h2 { margin: 10px 0 6px; font: 800 22px var(--font); letter-spacing: 0.06em; }
-.service p { margin: 4px 0; }
-.service .num { font: 800 28px var(--font); letter-spacing: 0.04em; margin: 10px 0 2px; }
-.service .hours { font-size: 12px; opacity: 0.7; }
-.service dl { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; margin: 18px 0 18px; text-align: left; font-size: 13px; }
-.service dt { font-weight: 700; white-space: nowrap; }
-.service dd { margin: 0; }
-.service button {
-  padding: 6px 22px; border: 2px solid var(--ink); border-radius: 6px; background: var(--ink); color: #fff;
-  font: 700 14px var(--font); cursor: pointer;
-}
-
-.bar {
-  position: fixed; left: 50%; bottom: 28px; transform: translateX(-50%);
-  display: flex; align-items: center; gap: 6px;
-}
-.bar button {
-  width: 38px; height: 38px; padding: 0; border: 2px solid var(--ink); border-radius: 6px;
-  background: #fff; color: var(--ink); font: 700 15px var(--font); cursor: pointer;
-  display: flex; align-items: center; justify-content: center;
-}
-.bar button svg { fill: currentColor; }
-.bar button:hover { background: #f0f0f0; }
-.bar button.on { background: var(--ink); color: #fff; }
-.bar .sep { width: 10px; }
-
-@media (max-width: 600px) {
-  .step { left: 20px; top: 14px; font-size: 64px; }
-  .parts { left: 18px; top: 90px; gap: 10px; padding: 6px 10px; transform: scale(0.8); transform-origin: 0 0; }
-  .help { right: 14px; top: 14px; }
-  .foot { display: none; }
-  .bar { bottom: 44px; gap: 4px; }
-  .bar button { width: 34px; height: 34px; }
-}
-.clean .back { display: none; }
-button:focus:not(:focus-visible) { outline: none; }

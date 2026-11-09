@@ -2,24 +2,20 @@
 
 2026-11-08
 
-TESSERAKTA, a wardrobe in four dimensions, with its assembly manual. It comes flat-packed as the tesseract's net, eight boxes in the cross Dalí painted, and folds up through w over four numbered pages, each with the parts it needs in a box in the corner (letters, counts, screws), the boxes being fitted shaded grey, lettered, and an arrow showing where they go. Page 5 puts on the hinges and the handle, and the closed wardrobe turns in 4D for a while; on page 6 the door opens on rails of shirts and coats. Stuck? The ? calls customer service. Space plays or pauses, 1 to 6 or the arrows go to a page, D toggles the 4D turn, drag walks round it, shift and drag turns it in 4D. `?step=N` opens on a page, `?clean` hides the page furniture.
+TESSERAKT, a hypercube built for real. A tesseract cannot exist in three dimensions, but its shadow can: turned in 4D and seen in perspective, it is a 3D object whose edges change length and nothing else. So that is the machine. 32 telescopic struts in three stages, sleeve, stanchion, rod, on 16 ball joints, with one crank turning it in the XW plane. Radii are constant like on a real part, only the lengths move. Painted sand and graphite with decals, silver rods, black seals, a coloured ring here and there, on graph paper. Space stops the crank, the arrows or shift and drag turn it by hand, drag orbits, T stops the turntable. `?clean` hides the page furniture.
 
 ## How
 
-- **Net and hinges** (`fold.ts`): folded, the wardrobe is [-A,A] × [-B,B] × [-C,C] × [0,L], tall and shallow in 3D, L deep in w. The net lies in w = 0, the base in the middle, an L-thick box on each face, the far box (w = L) under the bottom arm. A hinge is a rotation in a plane about a square face; the fold hinges turn in the plane of the arm's direction and w, a quarter turn standing the arm up along w. The far box turns on its own hinge in the net's frame first, then rides the bottom arm's turn, which sends w into +y and lays it over the base. Checked: folded, the 64 corners land on exactly 16 points.
-- **Steps**: ±x, then the back and the door, then the top, then the bottom and the far box together. One after the other, the far box stands straight out along w and runs into the eye at w = D; together it closes like a lid.
-- **The door** is the +z box. Folded, it hangs on its face with the +x box and swings in the zx plane like any door, but a door of a 4D wardrobe is a whole cube, so it opens as a frustum. Every square face is shared by two boxes: the six the door shares are drawn by the door only, from the moment each is joined (two coplanar faces, one white one grey, fight), and go with it when it opens.
-- **Parts**: same size, same letter. Screws are counted, not written in: per step, the pairs of boxes that newly meet on a face, four screws a joint, none for the door's (it has to open). 0 + 8 + 12 + 28, 48 screws for 12 joints; with the door's 5 that's 17, the tesseract's 24 faces less the 7 hinges in the flat pack.
-- **Inside**: three rails at three depths in w, hangers and shirts on each, all in 4D, through the same projection. Perspective along w scales them towards the base, so the inside runs back further than the box it's in.
-- **4D → 3D**: centred on the mean of the carcass's corners, turned in XW, YW, ZW, perspective along w with the eye at D = 3. The 4D turn only lives on page 5, after a rest so the page is seen as printed: with the door open, it swings far enough out to cross the eye. Anywhere else the turn unwinds to the nearest whole turn before anything folds on.
-- **Drawing**: orthographic camera, no lights. Faces are opaque white, pushed back with polygon offset; edges and contents are fat lines drawn twice from one geometry, solid black where depth passes, thin grey dashes with the depth test reversed (`GreaterDepth`) where a face covers them. Hidden line removal for free.
-- **Arrows**: the path a point off the box's outer face (the door's free edge, for the door) takes through the whole step, through the same fold and projection, so the arrow is exactly where it's going.
+- **One plane only** (`state.ts`): the machine turns in XW and nothing else. Compose turns in two planes and an edge can point straight at the eye; its strut would have to shrink to nothing. In one plane the shortest strut is 0.73 and the longest 3.03 (`node` sweep over the whole turn), and no two joints that are not neighbours come closer than 1.0. Seeing it from other sides is a 3D job: orbit, and a slow turntable.
+- **Struts** (`Machine.tsx`): per edge, a sleeve sunk into each ball, a stanchion sliding out of each sleeve as far as the strut needs up to 0.8, and a rod between the stanchions taking the rest. Each stage overlaps the one round it by 0.1 so nothing shows daylight. Two sleeves fully compressed are 0.65 with the balls, under the shortest strut. Seals are short fat rings at every mouth.
+- **Colour**: the eight edges along w are sand, the other 24 graphite, so you can follow which edges are which as the inner cube turns out and the outer turns in.
+- **Decals** (`decals.ts`): one canvas per sleeve, x round the tube, y along it, the open end at the top: hazard band at the mouth, brand round the tube, serial along it, barcode, a coloured tab, a cube's net as pictogram. Seeded, so the same every load.
+- **Light**: drei `Environment` from four `Lightformer`s, no HDR download, plus one directional. `ContactShadows` on a transparent canvas, the graph paper is CSS.
 
 ## Learned
 
-- `MeshBasicMaterial` white comes out grey under R3F's default ACES tone mapping. `flat` on the canvas.
-- On a case-insensitive disk `tesseract.ts` and `Tesseract.tsx` are the same module to tsc.
-- Keying faces by their centre with `toFixed` splits `-0.000` from `0.000`. Add 0 after rounding.
+- Perspective along w is what gives the w-edges length at all; in parallel projection they vanish. The eye distance is a trade between long w-edges (near) and a tame length range (far).
+- `setFromUnitVectors(Y, dir)` and the same quaternion times `(1,0,0,0)` gives the strut's two ends the same roll, so decals on both sleeves line up.
 
 ```sh
 pnpm -C 08 dev
