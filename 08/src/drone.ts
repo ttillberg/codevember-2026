@@ -46,14 +46,17 @@ export const drone = {
 
 /** The piece: a small steel ball with a pinhead lamp on each axis, six, flashing fast. `blink(t)` runs them. */
 export const PIECE_R = 0.02;
-const lampMat = new THREE.MeshStandardMaterial({ color: '#ff6a3a', emissive: '#ff6a3a', emissiveIntensity: 0, toneMapped: false });
-export function pieceMesh(scale = 1) {
+// the lamps' colour is the colour of the cell the piece is in; one material in the fog, one out of it for the eye
+const lampMats = [true, false].map((fog) => new THREE.MeshStandardMaterial({ color: '#ff6a3a', emissive: '#ff6a3a', emissiveIntensity: 0, toneMapped: false, fog }));
+export function lampColor(hex: string) { for (const m of lampMats) { m.color.set(hex); m.emissive.set(hex); } }
+/** `fog` off, the piece shows through the rooms' haze, for the eye's view, where the rooms beyond fade. */
+export function pieceMesh(scale = 1, fog = true) {
   const g = new THREE.Group();
   const r = PIECE_R * scale;
-  g.add(new THREE.Mesh(new THREE.SphereGeometry(r, 24, 16), new THREE.MeshStandardMaterial({ color: '#d4d4d8', roughness: 0.3, metalness: 0.95 })));
+  g.add(new THREE.Mesh(new THREE.SphereGeometry(r, 24, 16), new THREE.MeshStandardMaterial({ color: '#d4d4d8', roughness: 0.3, metalness: 0.95, fog })));
   const lampGeo = new THREE.SphereGeometry(r * 0.2, 8, 6);
   for (const [x, y, z] of [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]]) {
-    const lamp = new THREE.Mesh(lampGeo, lampMat);
+    const lamp = new THREE.Mesh(lampGeo, lampMats[fog ? 0 : 1]);
     lamp.position.set(x * r * 0.96, y * r * 0.96, z * r * 0.96);
     g.add(lamp);
   }
@@ -62,7 +65,8 @@ export function pieceMesh(scale = 1) {
 /** The lamp: a quick double flash every half second or so. */
 export function blink(t: number) {
   const u = t % 0.7;
-  lampMat.emissiveIntensity = (u < 0.06 || (u > 0.14 && u < 0.2)) ? 5 : 0;
+  const on = (u < 0.06 || (u > 0.14 && u < 0.2)) ? 5 : 0;
+  for (const m of lampMats) m.emissiveIntensity = on;
 }
 
 export const RIPPLE = 1.1; // seconds a wall's ripple lasts
@@ -142,7 +146,8 @@ function crossRow(c: CellMap, k: number, t: number) {
 }
 
 /** The cells, numbered by held axis and side: 0..7, and a colour and a name for each, for the trail and the readout. */
-export const cellId = () => drone.held * 2 + (drone.sign > 0 ? 1 : 0);
+export const cellIdOf = (map: { held: number; sign: number }) => map.held * 2 + (map.sign > 0 ? 1 : 0);
+export const cellId = () => cellIdOf(drone);
 export const CELL_HEX = ['#ff3b30', '#ff9500', '#ffd60a', '#34c759', '#00c7be', '#007aff', '#af52de', '#ff2d87'];
 export const cellName = () => `${drone.sign > 0 ? '+' : '\u2212'}${'xyzw'[drone.held]}`;
 

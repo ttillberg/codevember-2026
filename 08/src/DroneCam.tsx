@@ -21,6 +21,7 @@ const SAND = '#d9b985', GRAPHITE = '#3a3a3d';
 const R_STRUT = 0.075, R_NODE = 0.11;
 const CUBE = 512; // the cube map's face size
 const SIZE_CAM = 0.17; // the device's radius in cell space
+const PIECE_K = SIZE_CAM / 0.095; // the piece scaled with the device, whose radius in the main picture is 0.095
 
 type Edge = { index: number; row: number; through: boolean }; // through: the cube sits off along this row, so the edge runs the held axis
 
@@ -92,10 +93,10 @@ export function DroneCam() {
     const sand = new THREE.Color(SAND), graphite = new THREE.Color(GRAPHITE);
     const flash = faceQuad();
     cs.add(flash.mesh);
-    const piece = pieceMesh();
+    const piece = pieceMesh(PIECE_K, false); // as big against the device here as in the main picture, and out of the fog
     piece.visible = false;
     cs.add(piece);
-    const grabbed = pieceMesh();
+    const grabbed = pieceMesh(PIECE_K, false);
     grabbed.visible = false;
     cs.add(grabbed);
     // the eye: a cube map rendered from where it is, unwrapped by the fisheye onto a quad that fills the frame

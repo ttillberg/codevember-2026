@@ -4,7 +4,7 @@ import { useGLTF } from '@react-three/drei';
 import * as THREE from 'three';
 import { project, type V4 } from './tesseract';
 import { pose, turnGlide } from './state';
-import { drone, target, startCell, crossInto, faceQuad, pieceMesh, blink, toCell, fromCell, dirFromCellWith, otherMap, mapAcross, wallCorners, cellId, CELL_HEX, RIPPLE, type CellMap } from './drone';
+import { drone, target, startCell, crossInto, faceQuad, pieceMesh, blink, toCell, fromCell, dirFromCellWith, otherMap, mapAcross, wallCorners, cellId, cellIdOf, lampColor, CELL_HEX, RIPPLE, type CellMap } from './drone';
 import { device, ringOut, DEVICE_URL } from './device';
 import { makeSmoke } from './smoke';
 import { makeLaser } from './laser';
@@ -164,6 +164,7 @@ export function Drones() {
     ];
     target.p = to; target.up = true; target.scale = 0;
     target.map = mapAcross(mapAcross(drone, a1, s1), a2, s2);
+    lampColor(CELL_HEX[cellIdOf(target.map)]); // the lamps in the colour of the cell the piece is in
   }
   /** Where the last leg to the piece at `to`, coming from `from`, stops: a grip's reach short of it, so it is taken in
    * the ring, not in the body. A reach is a 3D distance and the projection stretches 4D differently from place to
@@ -468,7 +469,7 @@ export function Drones() {
     if (!s.wall) s.crossed = false; // clear of the wall: the next one is ahead again
     if (s.wall) {
       if (s.crossed) wantA = 1;
-      else { const other = otherMap(s.wall.axis, s.wall.sign); hexB = CELL_HEX[other.held * 2 + (other.sign > 0 ? 1 : 0)]; wantB = 1; }
+      else { const other = otherMap(s.wall.axis, s.wall.sign); hexB = CELL_HEX[cellIdOf(other)]; wantB = 1; }
     }
     const tintA = s.tintA + (wantA - s.tintA) * Math.min(1, dt * TINT_IN), tintB = s.tintB + (wantB - s.tintB) * Math.min(1, dt * TINT_IN);
     if (Math.abs(tintA - s.tintA) > 0.002 || (wantA && s.tintHexA !== drone.flash.color)) { s.q.tint(drone.flash.color, tintA); s.tintHexA = drone.flash.color; }
