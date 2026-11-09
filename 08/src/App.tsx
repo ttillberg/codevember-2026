@@ -38,8 +38,6 @@ const LOOK = 0.0035; // radians per pixel of look
 const ORBIT = 0.006; // radians per pixel of orbit
 
 export function App() {
-  const [program, setProgram] = useState(st.program);
-  const [smooth, setSmooth] = useState(st.smooth);
   const [hard, setHard] = useState(st.hard);
   const [manual, setManual] = useState(drone.pilot);
   const [locked, setLocked] = useState(false);
@@ -102,7 +100,7 @@ export function App() {
   // manual or auto, from p or the switch on the left
   const setMode = (m: boolean) => {
     drone.pilot = m; setManual(m);
-    drone.keys.thrust = drone.keys.strafe = 0; st.crank = 0;
+    drone.keys.thrust = drone.keys.strafe = 0;
     rig.turntable = !m;
     if (!m && document.pointerLockElement) document.exitPointerLock();
   };
@@ -124,19 +122,13 @@ export function App() {
         if (k === ' ' || k.startsWith('arrow')) e.preventDefault();
         return;
       }
-      // auto: space runs the program, m swaps servo and smooth, the side arrows crank
-      if (k === ' ') { e.preventDefault(); st.program = !st.program; setProgram(st.program); }
-      if (k === 'm') { st.smooth = !st.smooth; setSmooth(st.smooth); }
-      if (k === 'arrowright') { e.preventDefault(); st.crank = 1; }
-      if (k === 'arrowleft') { e.preventDefault(); st.crank = -1; }
     };
     const up = (e: KeyboardEvent) => {
       const k = e.key.toLowerCase();
-      if (k === 'arrowright' || k === 'arrowleft') st.crank = 0;
       if (k === ' ' || k === 'w' || k === 's' || k === 'arrowup' || k === 'arrowdown') keys.thrust = 0;
       if (k === 'a' || k === 'd' || k === 'arrowleft' || k === 'arrowright') keys.strafe = 0;
     };
-    const blur = () => { st.crank = 0; keys.thrust = keys.strafe = 0; rig.orbiting = false; };
+    const blur = () => { keys.thrust = keys.strafe = 0; rig.orbiting = false; };
     addEventListener('keydown', down);
     addEventListener('keyup', up);
     addEventListener('blur', blur);
@@ -195,8 +187,6 @@ export function App() {
         <span><kbd>p</kbd>auto</span>
       </div> : <div className="keys">
         <span><kbd>drag</kbd>orbit</span>
-        <span><kbd>space</kbd>{program ? 'stop program' : 'run program'}</span>
-        <span><kbd>m</kbd>{smooth ? 'servo' : 'smooth'}</span>
         <span><kbd>h</kbd>{hard ? 'hard off' : 'hard'}</span>
         <span><kbd>p</kbd>manual</span>
       </div>}
