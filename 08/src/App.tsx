@@ -4,24 +4,30 @@ import * as THREE from 'three';
 import { ContactShadows, Environment, Lightformer } from '@react-three/drei';
 import { Machine } from './Machine';
 import { Drones } from './Drones';
-import { DroneCam, INSET } from './DroneCam';
+import { DroneCam } from './DroneCam';
 import { drone, cellId, cellName, CELL_HEX } from './drone';
 import { st, rig, DEBUG } from './state';
 
 const PARAMS = new URLSearchParams(location.search);
 const CLEAN = PARAMS.has('clean'); // no page furniture, for the screengrab
 
-// Two modes. Auto, the attract mode: the device flies on its own, the machine fills the page and turns slowly on a
-// turntable, the eye's view sits in the corner, a drag orbits the camera. Manual: the eye's view fills the middle of
-// the page and the machine goes top right, a quarter of the page; a drag on the page is the look, or with the pointer locked (l) the
-// mouse itself is; w s and the up and down arrows go forward and back, a d and the side arrows strafe, space is
-// forward too. Hard mode (h), in either: the machine turns in 4D all the time, changing plane as it goes.
+// Two modes, the same two views in both: the machine fills the page, the eye's view sits in the corner, a drag on
+// the page orbits the camera. Auto, the attract mode: the device flies on its own and the camera turns slowly on a
+// turntable. Manual: a drag in the eye's view is the look, or with the pointer locked (l) the mouse itself is; w s
+// and the up and down arrows go forward and back, a d and the side arrows strafe, space is forward too. Hard mode
+// (h), in either: the machine turns in 4D all the time, changing plane as it goes.
 
 /** The machine and the device on a rig with a fixed tilt; the camera orbits round it. */
 function Rig({ children }: { children: React.ReactNode }) {
   const ref = useRef<THREE.Group>(null);
-  useFrame(({ camera }) => {
+  useFrame(({ camera, size }, dt) => {
     ref.current?.quaternion.copy(rig.q);
+    // the distance fits the machine's reach to the page, whichever way is narrower, with a margin; eased, so the
+    // picture breathes as the machine changes shape rather than jumps; the wheel scales it
+    const cam = camera as THREE.PerspectiveCamera;
+    const vfov = (cam.fov * Math.PI) / 180, hfov = 2 * Math.atan(Math.tan(vfov / 2) * (size.width / size.height));
+    const fit = (st.reach * 0.98) / Math.sin(Math.min(vfov, hfov) / 2);
+    rig.zoom += (fit * rig.zoomK - rig.zoom) * Math.min(1, dt * 2.5);
     const cp = Math.cos(rig.pitch);
     camera.position.set(Math.sin(rig.yaw) * cp * rig.zoom, Math.sin(rig.pitch) * rig.zoom, Math.cos(rig.yaw) * cp * rig.zoom);
     camera.lookAt(0, 0, 0);
@@ -39,9 +45,6 @@ export function App() {
   const [manual, setManual] = useState(drone.pilot);
   const [locked, setLocked] = useState(false);
   const stage = useRef<HTMLDivElement>(null);
-  // the machine's frame in manual mode follows the viewport it is drawn in
-  const [insetSide, setInsetSide] = useState(INSET.side());
-  useEffect(() => { const r = () => setInsetSide(INSET.side()); addEventListener('resize', r); return () => removeEventListener('resize', r); }, []);
   // debugging: which cell the device is in, in its colour
   const [cell, setCell] = useState({ id: cellId(), name: cellName() });
   useEffect(() => {
@@ -85,18 +88,31 @@ export function App() {
     d.x = e.clientX; d.y = e.clientY;
   };
   const lookEnd = () => { look.current = null; };
-  const onWheel = (e: React.WheelEvent) => { rig.zoom = Math.min(18, Math.max(6, rig.zoom * Math.exp(e.deltaY * 0.001))); };
+  const onWheel = (e: React.WheelEvent) => { rig.zoomK = Math.min(2.2, Math.max(0.5, rig.zoomK * Math.exp(e.deltaY * 0.001))); };
 
-  // the pointer lock: the mouse itself is the look, no drag
+  // the pointer lock: the mouse itself is the look, no drag; with shift held it orbits the machine instead, and
+  // coasts when shift is let go
   useEffect(() => {
     const change = () => setLocked(document.pointerLockElement === stage.current);
+    let last = 0;
     const move = (e: MouseEvent) => {
       if (document.pointerLockElement !== stage.current || !drone.pilot) return;
+      if (e.shiftKey) {
+        const now = performance.now(), dt = Math.max(1, now - last) / 1000; last = now;
+        const dy = -e.movementX * ORBIT, dp = e.movementY * ORBIT;
+        rig.orbiting = true;
+        rig.yaw += dy;
+        rig.pitch = Math.max(-1.4, Math.min(1.4, rig.pitch + dp));
+        rig.orbitVel[0] += (dy / dt - rig.orbitVel[0]) * 0.5; rig.orbitVel[1] += (dp / dt - rig.orbitVel[1]) * 0.5;
+        return;
+      }
       drone.turn[0] += e.movementX * LOOK; drone.turn[1] += -e.movementY * LOOK;
     };
+    const up = (e: KeyboardEvent) => { if (e.key === 'Shift') rig.orbiting = false; };
     document.addEventListener('pointerlockchange', change);
     document.addEventListener('mousemove', move);
-    return () => { document.removeEventListener('pointerlockchange', change); document.removeEventListener('mousemove', move); };
+    addEventListener('keyup', up);
+    return () => { document.removeEventListener('pointerlockchange', change); document.removeEventListener('mousemove', move); removeEventListener('keyup', up); };
   }, []);
 
   useEffect(() => {
@@ -140,11 +156,9 @@ export function App() {
     return () => { removeEventListener('keydown', down); removeEventListener('keyup', up); removeEventListener('blur', blur); };
   }, []);
 
-  // in auto the page orbits; in manual the page is the look and the corner, where the machine is, orbits
-  const stageHandlers = manual
-    ? { onPointerDown: lookDown, onPointerMove: lookMove, onPointerUp: lookEnd, onPointerCancel: lookEnd }
-    : { onPointerDown: orbitDown, onPointerMove: orbitMove, onPointerUp: orbitEnd, onPointerCancel: orbitEnd };
-  const camHandlers = manual ? { onPointerDown: orbitDown, onPointerMove: orbitMove, onPointerUp: orbitEnd, onPointerCancel: orbitEnd } : {};
+  // the page orbits; in manual a drag in the eye's view is the look, in auto the view lets the drag through
+  const stageHandlers = { onPointerDown: orbitDown, onPointerMove: orbitMove, onPointerUp: orbitEnd, onPointerCancel: orbitEnd };
+  const camHandlers = manual ? { onPointerDown: lookDown, onPointerMove: lookMove, onPointerUp: lookEnd, onPointerCancel: lookEnd } : {};
 
   return (
     <>
@@ -169,10 +183,11 @@ export function App() {
       </div>
       {CLEAN ? null : <div className="plate"><b>Tesseract</b><i>CDVMBR 08</i></div>}
       <div id="lock" className="lock"><i /><i /><i /><i /><b>lock</b></div>
-      <div className={`cam ${manual ? 'square' : 'pass'}`} style={manual ? { width: insetSide, height: insetSide, top: INSET.top, right: INSET.right, bottom: 'auto' } : undefined} {...camHandlers} />
+      <div className={`cam ${manual ? 'look' : 'pass'}`} {...camHandlers} />
       {DEBUG ? <div className="cell"><i style={{ background: CELL_HEX[cell.id] }} />cell {cell.name}</div> : null}
       {CLEAN ? null : manual ? <div className="keys">
-        <span><kbd>{locked ? 'mouse' : 'drag'}</kbd>look</span>
+        <span><kbd>{locked ? 'mouse' : 'drag eye'}</kbd>look</span>
+        <span><kbd>{locked ? 'shift mouse' : 'drag'}</kbd>orbit</span>
         <span><kbd>w s ↑ ↓</kbd>forward, back</span>
         <span><kbd>a d ← →</kbd>strafe</span>
         <span><kbd>space</kbd>forward</span>

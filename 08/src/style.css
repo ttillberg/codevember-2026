@@ -91,7 +91,7 @@ kbd {
 }
 .cam:active { cursor: grabbing; }
 .cam.pass { pointer-events: none; } /* auto: the eye in the corner, the page behind it orbits */
-.cam.square { border-radius: 10px; } /* manual: the machine top right, sized from App, a drag on it orbits */
+.cam.look { cursor: grab; } /* manual: a drag in the eye's view is the look */
 
 .back {
   position: fixed;

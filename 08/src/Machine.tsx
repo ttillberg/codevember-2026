@@ -246,6 +246,7 @@ export function Machine() {
       s.rodTex.offset.y = (1 - s.rodTex.repeat.y) / 2;
     });
     st.lengths.min = min; st.lengths.max = max;
+    st.reach = Math.max(...P.map((p) => p.length())) + R_NODE;
     seams.instanceMatrix.needsUpdate = true;
     grooves.instanceMatrix.needsUpdate = true;
     heads.instanceMatrix.needsUpdate = true;

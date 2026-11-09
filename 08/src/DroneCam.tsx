@@ -16,10 +16,6 @@ export const CAM = {
   w: () => Math.max(120, Math.min(Math.min(360, Math.max(220, innerWidth * 0.26)), innerWidth - 48, innerHeight - 150)),
   ratio: 1, right: 24, bottom: 72,
 };
-// manual: the eye fills the page, the machine sits top right in a square a quarter of the page's area; the .cam
-// frame in App follows INSET
-export const INSET = { side: () => Math.round(Math.max(160, Math.min(Math.sqrt(innerWidth * innerHeight) / 2, innerWidth - 48, innerHeight - 150))), right: 24, top: 24 };
-const INSET_ZOOM = 1.3; // the machine in the corner is seen from a little further out, to fit the square
 const LOCK_RANGE = 1.1; // cell units from the piece within which the lock bracket shows, at the controls
 
 const SAND = '#d9b985', GRAPHITE = '#3a3a3d';
@@ -54,8 +50,8 @@ export function DroneCam() {
   const { gl, scene, camera, size } = useThree();
   const cell = useMemo(() => {
     const cs = new THREE.Scene();
-    cs.background = new THREE.Color('#dad9d4');
-    cs.fog = new THREE.FogExp2('#dad9d4', 0.5); // the rooms beyond fade into the paper
+    cs.background = new THREE.Color('#ebebe8'); // the page's paper
+    cs.fog = new THREE.Fog('#ebebe8', 1.6, 5.2); // clear through this room, the fog sets in from the next one and the rooms beyond fade into the paper
     cs.add(new THREE.HemisphereLight('#ffffff', '#8a8780', 1.0));
     const sun = new THREE.DirectionalLight('#ffffff', 1.2);
     sun.position.set(2, 5, 3);
@@ -125,12 +121,9 @@ export function DroneCam() {
     // setViewport and setScissor take CSS pixels and apply the pixel ratio themselves
     const W = size.width, H = size.height;
     const w = Math.round(CAM.w()), h = Math.round(CAM.w() / CAM.ratio), x = W - CAM.right - w, y = CAM.bottom;
-    if (!drone.pilot) {
-      // auto: the machine fills the page
-      gl.setScissorTest(false);
-      gl.setViewport(0, 0, W, H);
-      gl.render(scene, camera);
-    }
+    gl.setScissorTest(false);
+    gl.setViewport(0, 0, W, H);
+    gl.render(scene, camera);
 
     // the device: where it is and where it is going, in cell space
     const c = toCell(drone.p);
@@ -202,9 +195,8 @@ export function DroneCam() {
           d.divideScalar(dist).applyQuaternion(tmp.q.copy(cell.q).invert());
           const theta = Math.acos(Math.max(-1, Math.min(1, -d.z))), r = theta / (Math.PI / 2), l = Math.hypot(d.x, d.y) || 1;
           if (r < 1.02) {
-            const full = drone.pilot, aspect = full ? W / H : 1;
-            const vw = full ? W : w, vh = full ? H : h, vx = full ? 0 : x, vtop = full ? 0 : H - y - h;
-            const px = vx + ((r * d.x / l) + 1) / 2 * vw, py = vtop + (1 - (r * d.y / l) * aspect) / 2 * vh;
+            const vw = w, vh = h, vx = x, vtop = H - y - h; // the corner, in CSS pixels from the top left
+            const px = vx + ((r * d.x / l) + 1) / 2 * vw, py = vtop + (1 - (r * d.y / l)) / 2 * vh;
             const ballPx = ((PIECE_R * PIECE_K) / dist / (Math.PI / 2)) * (vw / 2);
             const size = Math.max(28, ballPx * 3.4) * (drone.docking ? 0.62 : 1);
             lockEl.style.transform = `translate(${px.toFixed(1)}px, ${py.toFixed(1)}px) translate(-50%, -50%)`;
@@ -222,29 +214,11 @@ export function DroneCam() {
     cell.eye.position.copy(cell.pos);
     cell.eye.update(gl, cell.cs);
     FISHEYE.uniforms.rot.value.setFromMatrix4(tmp.m.makeRotationFromQuaternion(cell.q));
-    if (drone.pilot) {
-      // manual: the eye fills the page, a right angle out to each side edge, and the machine goes top right, seen
-      // square from a little further out
-      FISHEYE.uniforms.aspect.value = W / H;
-      gl.setScissorTest(false);
-      gl.setViewport(0, 0, W, H);
-      gl.setClearColor(0x000000, 0); // the cube camera left the cell scene's backdrop as the clear colour
-      gl.render(cell.lens, cell.flat);
-      const side = INSET.side(), ix = W - INSET.right - side, iy = H - INSET.top - side;
-      const cam = camera as THREE.PerspectiveCamera, aspect = cam.aspect;
-      cam.aspect = 1; cam.position.multiplyScalar(INSET_ZOOM); cam.updateProjectionMatrix();
-      gl.setScissorTest(true);
-      gl.setScissor(ix, iy, side, side);
-      gl.setViewport(ix, iy, side, side);
-      gl.render(scene, camera);
-      cam.position.multiplyScalar(1 / INSET_ZOOM); cam.aspect = aspect; cam.updateProjectionMatrix();
-    } else {
-      FISHEYE.uniforms.aspect.value = 1;
-      gl.setScissorTest(true);
-      gl.setScissor(x, y, w, h);
-      gl.setViewport(x, y, w, h);
-      gl.render(cell.lens, cell.flat);
-    }
+    FISHEYE.uniforms.aspect.value = 1;
+    gl.setScissorTest(true);
+    gl.setScissor(x, y, w, h);
+    gl.setViewport(x, y, w, h);
+    gl.render(cell.lens, cell.flat);
     gl.setScissorTest(false);
     gl.setViewport(0, 0, W, H);
   }, 1);

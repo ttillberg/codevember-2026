@@ -463,18 +463,15 @@ export function Drones() {
     }
     if (Math.abs(fadeA - s.fadeA) > 0.004) { s.q.fade(fadeA); s.fadeA = fadeA; }
     if (Math.abs(fadeB - s.fadeB) > 0.004) { s.q2.fade(fadeB); s.fadeB = fadeB; }
-    // while the body is sliced by a wall, the half inside the cell being entered glows in that cell's colour: the
-    // other copy as it pushes through, then this one once the centre is across; whole again, the glow goes
-    let wantA = 0, wantB = 0, hexB = drone.flash.color;
+    // while the body is sliced by a wall each half glows in the colour of the cell it is in: this copy in this
+    // cell's, the other copy in the neighbour's, so the cut reads at a glance; whole again, the glow goes
+    let glow = 0, hexA = CELL_HEX[cellId()], hexB = hexA;
     if (!s.wall) s.crossed = false; // clear of the wall: the next one is ahead again
-    if (s.wall) {
-      if (s.crossed) wantA = 1;
-      else { const other = otherMap(s.wall.axis, s.wall.sign); hexB = CELL_HEX[cellIdOf(other)]; wantB = 1; }
-    }
-    const tintA = s.tintA + (wantA - s.tintA) * Math.min(1, dt * TINT_IN), tintB = s.tintB + (wantB - s.tintB) * Math.min(1, dt * TINT_IN);
-    if (Math.abs(tintA - s.tintA) > 0.002 || (wantA && s.tintHexA !== drone.flash.color)) { s.q.tint(drone.flash.color, tintA); s.tintHexA = drone.flash.color; }
-    if (Math.abs(tintB - s.tintB) > 0.002 || (wantB && s.tintHex !== hexB)) { s.q2.tint(hexB, tintB); s.tintHex = hexB; }
-    s.tintA = tintA; s.tintB = tintB;
+    if (s.wall) { const other = otherMap(s.wall.axis, s.wall.sign); hexB = CELL_HEX[cellIdOf(other)]; glow = 1; }
+    const tint = s.tintA + (glow - s.tintA) * Math.min(1, dt * TINT_IN);
+    if (Math.abs(tint - s.tintA) > 0.002 || (glow && s.tintHexA !== hexA)) { s.q.tint(hexA, tint); s.tintHexA = hexA; }
+    if (Math.abs(tint - s.tintB) > 0.002 || (glow && s.tintHex !== hexB)) { s.q2.tint(hexB, tint); s.tintHex = hexB; }
+    s.tintA = s.tintB = tint;
 
     // the piece: emerging or there, turning slowly; taken, it is the held one: in the ring, riding in with the grip,
     // swallowed as the ring reaches the cap

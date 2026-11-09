@@ -27,6 +27,8 @@ export const st = {
   hard: false, // hard mode: the machine turns in 4D all the time, changing plane as it passes each quarter
   /** Longest and shortest strut right now, for the readout. */
   lengths: { min: 0, max: 0 },
+  /** How far the machine reaches from its centre right now, in the 3D picture, for the camera to fit it. */
+  reach: 4,
 };
 
 /** Debugging the flight: a readout of the cell the device is in, and lamps on that cell's corners. */
@@ -36,7 +38,8 @@ export const DEBUG = true;
  * drag turns it and it coasts after; in the attract mode a turntable turns it slowly on its own. */
 export const rig = {
   q: new THREE.Quaternion().setFromEuler(new THREE.Euler(0.27, -0.55, 0, 'YXZ')),
-  zoom: 10.5, // camera distance
+  zoom: 10.5, // camera distance, eased towards the fit
+  zoomK: 1, // the wheel's factor on the fit, 1 fits the machine to the page
   yaw: 0, pitch: 0, // the camera's orbit
   orbitVel: [0, 0], orbiting: false, // rad/s of yaw and pitch from the last drag, coasting once it is let go
   turntable: true, // the slow turn on its own, in the attract mode
