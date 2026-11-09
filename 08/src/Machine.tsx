@@ -52,6 +52,7 @@ export function Machine() {
     const silver = new THREE.MeshStandardMaterial({ map: brushed('#dedede', 41), roughness: 0.3, metalness: 0.75 });
     const marked = [0, 1].map((k) => new THREE.MeshStandardMaterial({ map: brushed('#dedede', 43 + k, true), roughness: 0.3, metalness: 0.75 }));
     const CE_RODS = [7, 26];
+    const ALL_CE = true; // debugging: every rod marked, to see it
     // every painted part is a little worn, all over, the metal is not: a hand of wear textures per paint, dealt out
     const POOL = 6;
     const worn = (base: string, roughness: number, metalness: number, salt: number) =>
@@ -128,7 +129,7 @@ export function Machine() {
       const seals = [0, 1].map((end) => mesh(cyl, (i * 2 + end) % 5 === 0 ? accents[(i + end) % accents.length] : black));
       const stages = [0, 1].map((k) => mesh(cyl, dealt(stageMats[sand ? 1 : 0], i * 3 + k * 2)));
       const wipers = [0, 1].map(() => mesh(cyl, black));
-      const rod = mesh(cyl, CE_RODS.includes(i) ? marked[CE_RODS.indexOf(i)] : silver);
+      const rod = mesh(cyl, ALL_CE ? marked[i % 2] : CE_RODS.includes(i) ? marked[CE_RODS.indexOf(i)] : silver);
       return { sleeves, seals, stages, wipers, rod };
     });
     return { group, nodes, struts, leds, marks };

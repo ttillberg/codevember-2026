@@ -181,14 +181,15 @@ export function brushed(base: string, seed: number, mark = false): THREE.CanvasT
   t.colorSpace = THREE.SRGBColorSpace;
   t.anisotropy = 8;
   if (mark) {
-    const mx = r() * w, my = 120 + r() * (h - 240), ang = r() < 0.5 ? 0 : Math.PI / 2;
+    // mid-rod, reading along it, three times round the tube so one always faces the viewer
+    const mx = r() * w, my = h / 2;
     withLogos(() => {
       const img = logo('ce', 160, '#4a4a4e');
       if (!img) return;
       g.save();
       g.globalAlpha = 0.7;
-      for (const o of [-w, 0, w]) { // and again either side, so it wraps round the seam
-        g.save(); g.translate(mx + o, my); g.rotate(ang); g.drawImage(img, -40, -40, 80, 80); g.restore();
+      for (let k = -1; k <= 3; k++) { // every third of the way round, and over the seam
+        g.save(); g.translate(mx + (k * w) / 3, my); g.rotate(Math.PI / 2); g.drawImage(img, -40, -40, 80, 80); g.restore();
       }
       g.restore();
       t.needsUpdate = true;
