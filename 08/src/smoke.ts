@@ -40,6 +40,7 @@ function puffTexture(): THREE.Texture {
 const VERT = /* glsl */ `
   attribute float birth;
   attribute float seed;
+  attribute float grow; // the puff's size against the usual, a big one now and then
   attribute vec3 drift;
   attribute vec3 tint;
   uniform float uTime, uScale, uLife;
@@ -51,10 +52,10 @@ const VERT = /* glsl */ `
     float u = clamp(age / uLife, 0.0, 1.0);
     vec3 p = position + drift * age;
     vec4 mv = modelViewMatrix * vec4(p, 1.0);
-    float size = mix(0.035, 0.13, pow(u, 0.5));
+    float size = grow * mix(0.035, 0.13, pow(u, 0.5));
     gl_PointSize = size * uScale / max(0.1, -mv.z);
     float fadeIn = smoothstep(0.0, 0.06, u);
-    vA = fadeIn * (1.0 - u) * (1.0 - u) * 0.6;
+    vA = fadeIn * (1.0 - u) * (1.0 - u) * 0.6 / sqrt(grow);
     if (age < 0.0 || age > uLife) { vA = 0.0; gl_PointSize = 0.0; }
     vRot = seed * 6.2831 + age * (seed - 0.5) * 0.9;
     gl_Position = projectionMatrix * mv;
@@ -76,10 +77,11 @@ const FRAG = /* glsl */ `
 
 export function makeSmoke() {
   const geo = new THREE.BufferGeometry();
-  const pos = new Float32Array(N * 3), birth = new Float32Array(N).fill(-1e9), seed = new Float32Array(N), drift = new Float32Array(N * 3), tint = new Float32Array(N * 3);
+  const pos = new Float32Array(N * 3), birth = new Float32Array(N).fill(-1e9), seed = new Float32Array(N), grow = new Float32Array(N).fill(1), drift = new Float32Array(N * 3), tint = new Float32Array(N * 3);
   geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
   geo.setAttribute('birth', new THREE.BufferAttribute(birth, 1));
   geo.setAttribute('seed', new THREE.BufferAttribute(seed, 1));
+  geo.setAttribute('grow', new THREE.BufferAttribute(grow, 1));
   geo.setAttribute('drift', new THREE.BufferAttribute(drift, 3));
   geo.setAttribute('tint', new THREE.BufferAttribute(tint, 3));
   const mat = new THREE.ShaderMaterial({
@@ -100,6 +102,8 @@ export function makeSmoke() {
       const i = head; head = (head + 1) % N;
       p4[i] = p.slice() as V4;
       birth[i] = now; seed[i] = Math.random();
+      grow[i] = Math.random() < 0.12 ? 1.8 + Math.random() * 0.8 : 0.65 + Math.random() * 0.6; // one in eight a big one
+      (geo.attributes.grow as THREE.BufferAttribute).needsUpdate = true;
       col.set(hex).lerp(white, FOG);
       tint[i * 3] = col.r; tint[i * 3 + 1] = col.g; tint[i * 3 + 2] = col.b;
       (geo.attributes.tint as THREE.BufferAttribute).needsUpdate = true;

@@ -84,7 +84,7 @@ export function Drones() {
     group.add(grabbed);
     const held = Math.floor(Math.random() * 4), sign = Math.random() < 0.5 ? -1 : 1;
     const s = {
-      group, q, smoke, puffAt: new THREE.Vector3(1e9, 0, 0), flash, piece, grabbed,
+      group, q, smoke, puffAt: new THREE.Vector3(1e9, 0, 0), puffGap: 0.04, flash, piece, grabbed,
       held, sign, came: null as [number, number] | null,
       p: [0, 0, 0, 0] as V4, dir: [0, 0, 0, 0] as V4, // where it is, which way it is going, in 4D
       leg: null as Leg | null, s: 0,
@@ -360,9 +360,11 @@ export function Drones() {
     s.vel.subVectors(v, s.last).divideScalar(Math.max(dt, 1e-3));
     s.last.copy(v);
     // the wake: a puff every little way, born just behind the device in 4D, in the colour of the cell it is in
-    if (v.distanceTo(s.puffAt) > 0.04) {
-      s.smoke.spawn(add4(s.p, s.dir, -0.05), now, CELL_HEX[cellId()]);
+    if (v.distanceTo(s.puffAt) > s.puffGap) {
+      const jitter = [0, 1, 2, 3].map(() => rnd(-0.012, 0.012)) as V4;
+      s.smoke.spawn(add4(add4(s.p, s.dir, -0.05), jitter), now, CELL_HEX[cellId()]);
       s.puffAt.copy(v);
+      s.puffGap = rnd(0.025, 0.075); // an uneven spacing, so the wake is not a string of beads
     }
     const fovH = (camera as THREE.PerspectiveCamera).fov * Math.PI / 180;
     s.smoke.update(m, now, (size.height * viewport.dpr) / (2 * Math.tan(fovH / 2)));
