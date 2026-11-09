@@ -14,9 +14,12 @@ import { pose } from './state';
 // of glass; the steps turn with the machine because the normals do.
 
 export const laser = { on: false, x: 0, y: 0 }; // pointer, css px
+/** Where the beam met walls this frame, in 4D, nearest first, with the strength it had there. For the drone cam. */
+export const beamHits: { i: number; si: number; j: number; sj: number; p4: V4; k: number }[] = [];
+export const BEAM = { PINK: new THREE.Color('#ef5f9f'), CORE: new THREE.Color('#ffd6ea'), LOSS: 0.5 };
 
-const PINK = new THREE.Color('#ef5f9f');
-const CORE = new THREE.Color('#ffd6ea'); // the hot middle of the beam
+const PINK = BEAM.PINK;
+const CORE = BEAM.CORE; // the hot middle of the beam
 const PAPER = new THREE.Color('#e6e6e4'); // what the beam fades towards
 /** No post bloom on a transparent canvas: the glow is the beam drawn three times, a hot core and two soft halos. */
 const LAYERS = [
@@ -116,6 +119,7 @@ export function Laser() {
 
   useFrame(() => {
     const { group, lines, dots } = parts;
+    beamHits.length = 0;
     if (!laser.on) { group.visible = false; return; }
     const m = pose();
     const { ray, ndc, hand, beam, off, cur, dummy, col } = tmp;
@@ -142,6 +146,7 @@ export function Laser() {
     tint();
     off.set(0, 0, 0);
     for (const h of walls) {
+      beamHits.push({ i: h.face.i, si: h.face.si, j: h.face.j, sj: h.face.sj, p4: h.p4, k: strength });
       cur.copy(h.at).add(off);
       push(cur); tint(); marks.push({ p: cur.clone(), k: strength });
       jog(m, h, beam.direction, tmp.n);

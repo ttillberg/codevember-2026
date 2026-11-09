@@ -3,6 +3,10 @@ import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import { drone, toCell, faceQuad } from './drone';
 import { quad } from './Drones';
+import { beamHits, BEAM } from './Laser';
+import { Line2 } from 'three/examples/jsm/lines/Line2.js';
+import { LineGeometry } from 'three/examples/jsm/lines/LineGeometry.js';
+import { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js';
 
 // The drone's camera, in a corner of the page. It renders cell space: the cube the drone is in, rigid, and the six
 // neighbouring cubes continuing straight through its faces, as in a net. Nothing telescopes here; from inside, a
@@ -15,56 +19,73 @@ export const CAM = { w: () => Math.min(380, Math.max(240, innerWidth * 0.28)), r
 const SAND = '#d9b985', GRAPHITE = '#3a3a3d';
 const R_STRUT = 0.075, R_NODE = 0.11;
 
-type Edge = { mesh: THREE.Mesh; row: number; cube: number }; // cube -1 the centre, else the face row k*2 + (sign>0)
+type Edge = { index: number; row: number; through: boolean }; // through: the cube sits off along this row, so the edge runs the held axis
 
 export function DroneCam() {
   const { gl, scene, camera, size } = useThree();
   const cell = useMemo(() => {
     const cs = new THREE.Scene();
     cs.background = new THREE.Color('#dad9d4');
+    cs.fog = new THREE.FogExp2('#dad9d4', 0.42); // the rooms beyond fade into the paper
     cs.add(new THREE.HemisphereLight('#ffffff', '#8a8780', 1.0));
     const sun = new THREE.DirectionalLight('#ffffff', 1.2);
     sun.position.set(2, 5, 3);
     cs.add(sun);
-    const sand = new THREE.MeshStandardMaterial({ color: SAND, roughness: 0.75 });
-    const graphite = new THREE.MeshStandardMaterial({ color: GRAPHITE, roughness: 0.62 });
+    // the rooms: this one and every cube within two steps, 25 of them, so a new one is born well out in the fog
+    const paint = new THREE.MeshStandardMaterial({ roughness: 0.7 });
     const black = new THREE.MeshStandardMaterial({ color: '#141414', roughness: 0.55 });
-    const cyl = new THREE.CylinderGeometry(R_STRUT, R_STRUT, 2, 20);
-    const sph = new THREE.SphereGeometry(R_NODE, 20, 14);
-    const net = new THREE.Group();
-    cs.add(net);
+    const offsets: number[][] = [];
+    for (let x = -2; x <= 2; x++) for (let y = -2; y <= 2; y++) for (let z = -2; z <= 2; z++) {
+      if (Math.abs(x) + Math.abs(y) + Math.abs(z) <= 2) offsets.push([x, y, z]);
+    }
     const edges: Edge[] = [];
-    /** A cube of edges and corners centred at c. Edge along row k, at the other two coords ±1. */
-    const cube = (c: number[], id: number) => {
+    const struts = new THREE.InstancedMesh(new THREE.CylinderGeometry(R_STRUT, R_STRUT, 2, 20), paint, offsets.length * 12);
+    const nodes = new THREE.InstancedMesh(new THREE.SphereGeometry(R_NODE, 20, 14), black, offsets.length * 8);
+    struts.frustumCulled = nodes.frustumCulled = false;
+    const dummy = new THREE.Object3D();
+    let e = 0, nn = 0;
+    for (const o of offsets) {
+      const c = [o[0] * 2, o[1] * 2, o[2] * 2];
       for (let k = 0; k < 3; k++) {
         const [i, j] = [0, 1, 2].filter((r) => r !== k);
         for (const a of [-1, 1]) for (const b of [-1, 1]) {
-          const m = new THREE.Mesh(cyl, graphite);
           const pos = [0, 0, 0]; pos[i] = a; pos[j] = b;
-          m.position.set(c[0] + pos[0], c[1] + pos[1], c[2] + pos[2]);
-          if (k === 0) m.rotation.z = Math.PI / 2;
-          if (k === 2) m.rotation.x = Math.PI / 2;
-          net.add(m);
-          edges.push({ mesh: m, row: k, cube: id });
+          dummy.position.set(c[0] + pos[0], c[1] + pos[1], c[2] + pos[2]);
+          dummy.rotation.set(k === 2 ? Math.PI / 2 : 0, 0, k === 0 ? Math.PI / 2 : 0);
+          dummy.updateMatrix();
+          struts.setMatrixAt(e, dummy.matrix);
+          edges.push({ index: e++, row: k, through: o[k] !== 0 });
         }
       }
       for (let n = 0; n < 8; n++) {
-        const s = new THREE.Mesh(sph, black);
-        s.position.set(c[0] + (n & 1 ? 1 : -1), c[1] + (n & 2 ? 1 : -1), c[2] + (n & 4 ? 1 : -1));
-        net.add(s);
+        dummy.position.set(c[0] + (n & 1 ? 1 : -1), c[1] + (n & 2 ? 1 : -1), c[2] + (n & 4 ? 1 : -1));
+        dummy.rotation.set(0, 0, 0);
+        dummy.updateMatrix();
+        nodes.setMatrixAt(nn++, dummy.matrix);
       }
-    };
-    cube([0, 0, 0], -1);
-    for (let k = 0; k < 3; k++) for (const sgn of [-1, 1]) {
-      const c = [0, 0, 0]; c[k] = 2 * sgn;
-      cube(c, k * 2 + (sgn > 0 ? 1 : 0));
     }
+    const net = new THREE.Group();
+    net.add(struts, nodes);
+    cs.add(net);
+    const sand = new THREE.Color(SAND), graphite = new THREE.Color(GRAPHITE);
     const cam = new THREE.PerspectiveCamera(95, CAM.ratio, 0.03, 40);
     const q = quad(0.14);
     cs.add(q.g);
     const flash = faceQuad('#c9e35b');
     cs.add(flash.mesh);
-    return { cs, net, edges, cam, q, flash, sand, graphite, look: new THREE.Vector3(0, 0, -1), last: [0, 0, 0], crossings: -1, eye: new THREE.Vector3(), spin: 0, heading: new THREE.Quaternion() };
+    // the laser where it crosses this room: the hits on the room's own walls, joined, in the same three layers
+    const beam = [{ w: 1, o: 1, core: true }, { w: 3.5, o: 0.35, core: false }, { w: 9, o: 0.12, core: false }].map((l) => {
+      const geo = new LineGeometry();
+      geo.setPositions([0, 0, 0, 0, 0, 0]);
+      geo.setColors([1, 1, 1, 1, 1, 1]);
+      const mat = new LineMaterial({ linewidth: l.w, vertexColors: true, toneMapped: false, transparent: true, opacity: l.o, depthWrite: false });
+      const line = new Line2(geo, mat);
+      line.frustumCulled = false;
+      line.visible = false;
+      cs.add(line);
+      return { line, geo, mat, core: l.core };
+    });
+    return { cs, net, edges, struts, cam, q, flash, beam, sand, graphite, look: new THREE.Vector3(0, 0, -1), last: [0, 0, 0], crossings: -1, eye: new THREE.Vector3(), spin: 0, heading: new THREE.Quaternion() };
   }, []);
 
   const tmp = useMemo(() => ({ pos: new THREE.Vector3(), vel: new THREE.Vector3(), at: new THREE.Vector3(), up: new THREE.Vector3(0, 1, 0), m: new THREE.Matrix4(), q: new THREE.Quaternion(), tilt: new THREE.Quaternion(), axis: new THREE.Vector3() }), []);
@@ -118,17 +139,34 @@ export function DroneCam() {
       // colour: an edge is sand if it runs along w in 4D. In the centre cube and the neighbours' side edges that is
       // the row's axis; a neighbour's edges through its face run along the axis the centre cube holds.
       for (const e of cell.edges) {
-        const through = e.cube >= 0 && Math.floor(e.cube / 2) === e.row;
-        const axis = through ? drone.held : drone.axisOf[e.row];
-        e.mesh.material = axis === 3 ? cell.sand : cell.graphite;
+        const axis = e.through ? drone.held : drone.axisOf[e.row];
+        cell.struts.setColorAt(e.index, axis === 3 ? cell.sand : cell.graphite);
       }
+      if (cell.struts.instanceColor) cell.struts.instanceColor.needsUpdate = true;
     }
 
     drone.flash.corners.forEach((c4, i) => { const c3 = toCell(c4); cell.flash.set(i, tmp.at.set(c3[0], c3[1], c3[2])); });
     cell.flash.done();
     cell.flash.mat.opacity = 0.6 * drone.flash.a;
 
+    // the laser's hits on this room's walls, joined in order along the beam
+    const mine = beamHits.filter((h) => (h.i === drone.held && h.si === drone.sign) || (h.j === drone.held && h.sj === drone.sign));
+    if (mine.length >= 2) {
+      const pts: number[] = [], cols: number[] = [], cores: number[] = [];
+      const paper = cell.cs.background as THREE.Color, c = new THREE.Color();
+      for (const h of mine) {
+        const c3 = toCell(h.p4);
+        pts.push(c3[0], c3[1], c3[2]);
+        c.copy(paper).lerp(BEAM.PINK, h.k); cols.push(c.r, c.g, c.b);
+        c.copy(paper).lerp(BEAM.CORE, h.k); cores.push(c.r, c.g, c.b);
+      }
+      for (const l of cell.beam) {
+        l.geo.setPositions(pts); l.geo.setColors(l.core ? cores : cols); l.line.computeLineDistances(); l.line.visible = true;
+      }
+    } else for (const l of cell.beam) l.line.visible = false;
+
     const w = Math.round(CAM.w()), h = Math.round(CAM.w() / CAM.ratio);
+    for (const l of cell.beam) l.mat.resolution.set(w, h);
     const x = W - CAM.right - w, y = CAM.bottom;
     cell.cam.aspect = w / h;
     cell.cam.updateProjectionMatrix();
