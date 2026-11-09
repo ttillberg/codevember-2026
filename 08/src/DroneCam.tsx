@@ -71,7 +71,7 @@ export function DroneCam() {
     return { cs, net, edges, struts, cam, q, flash, sand, graphite, look: new THREE.Vector3(0, 0, -1), last: [0, 0, 0], crossings: -1, eye: new THREE.Vector3(), spin: 0, heading: new THREE.Quaternion() };
   }, []);
 
-  const tmp = useMemo(() => ({ pos: new THREE.Vector3(), vel: new THREE.Vector3(), at: new THREE.Vector3(), up: new THREE.Vector3(0, 1, 0), m: new THREE.Matrix4(), q: new THREE.Quaternion(), tilt: new THREE.Quaternion(), axis: new THREE.Vector3() }), []);
+  const tmp = useMemo(() => ({ pos: new THREE.Vector3(), vel: new THREE.Vector3(), at: new THREE.Vector3(), up: new THREE.Vector3(0, 1, 0), camUp: new THREE.Vector3(0, 1, 0), eye: new THREE.Vector3(), m: new THREE.Matrix4(), q: new THREE.Quaternion(), tilt: new THREE.Quaternion(), axis: new THREE.Vector3() }), []);
 
   useFrame(() => {
     // the main picture. setViewport and setScissor take CSS pixels and apply the pixel ratio themselves.
@@ -88,28 +88,38 @@ export function DroneCam() {
     tmp.vel.set(c[0] - cell.last[0], c[1] - cell.last[1], c[2] - cell.last[2]);
     cell.last = c;
     if (tmp.vel.lengthSq() > 1e-8 && tmp.vel.lengthSq() < 0.25) cell.look.lerp(tmp.vel.normalize(), 0.08).normalize();
-    cell.cam.up.set(0, 1, 0);
+    // No gimbal lock: the camera keeps its own up from the last frame, so looking straight up or down a room is
+    // just another direction. It leans back towards the room's up only while the look is level, slowly.
+    const { camUp } = tmp;
+    camUp.set(0, 1, 0).applyQuaternion(cell.cam.quaternion);
+    camUp.lerp(tmp.up, 0.04 * (1 - Math.abs(cell.look.y))).normalize();
     const follow = drone.view === 'follow';
     if (follow) {
       // a chase camera: behind and a little above, eased; the quad in frame, nosing along its way
-      tmp.at.copy(tmp.pos).addScaledVector(cell.look, -0.42).addScaledVector(tmp.up, 0.16);
+      tmp.at.copy(tmp.pos).addScaledVector(cell.look, -0.42).addScaledVector(camUp, 0.16);
       if (cell.eye.lengthSq() === 0) cell.eye.copy(tmp.at);
       cell.eye.lerp(tmp.at, 0.12);
-      cell.cam.position.copy(cell.eye);
-      cell.cam.lookAt(tmp.at.copy(tmp.pos).addScaledVector(cell.look, 0.4));
+      tmp.eye.copy(cell.eye);
+      tmp.at.copy(tmp.pos).addScaledVector(cell.look, 0.4);
     } else {
       cell.eye.set(0, 0, 0);
-      cell.cam.position.copy(tmp.pos);
-      cell.cam.lookAt(tmp.at.copy(tmp.pos).add(cell.look));
+      tmp.eye.copy(tmp.pos);
+      tmp.at.copy(tmp.pos).add(cell.look);
     }
+    cell.cam.position.copy(tmp.eye);
+    tmp.m.lookAt(tmp.eye, tmp.at, camUp);
+    tmp.q.setFromRotationMatrix(tmp.m);
+    cell.cam.quaternion.slerp(tmp.q, 0.2);
     cell.q.g.visible = follow;
     if (follow) {
       cell.q.g.position.copy(tmp.pos);
-      tmp.m.lookAt(new THREE.Vector3(), tmp.at.copy(cell.look).negate(), tmp.up);
+      tmp.m.lookAt(new THREE.Vector3(), tmp.at.copy(cell.look).negate(), camUp);
       tmp.q.setFromRotationMatrix(tmp.m);
-      tmp.axis.crossVectors(tmp.up, cell.look).normalize();
-      tmp.tilt.setFromAxisAngle(tmp.axis, 0.25);
-      tmp.q.premultiply(tmp.tilt);
+      tmp.axis.crossVectors(camUp, cell.look);
+      if (tmp.axis.lengthSq() > 1e-8) {
+        tmp.tilt.setFromAxisAngle(tmp.axis.normalize(), 0.25);
+        tmp.q.premultiply(tmp.tilt);
+      }
       cell.heading.slerp(tmp.q, 0.1);
       cell.q.g.quaternion.copy(cell.heading);
       cell.spin += 0.9;
