@@ -359,12 +359,12 @@ export function Drones() {
     project(m, s.p, v);
     s.vel.subVectors(v, s.last).divideScalar(Math.max(dt, 1e-3));
     s.last.copy(v);
-    // the wake: a puff every little way, born just behind the device in 4D, in the colour of the cell it is in
+    // the wake: little clusters of puffs, a few at a time round a point just behind the device, a gap between
     if (v.distanceTo(s.puffAt) > s.puffGap) {
-      const jitter = [0, 1, 2, 3].map(() => rnd(-0.012, 0.012)) as V4;
-      s.smoke.spawn(add4(add4(s.p, s.dir, -0.05), jitter), now, CELL_HEX[cellId()]);
+      const at = add4(s.p, s.dir, -0.05), n = 2 + Math.floor(Math.random() * 4);
+      for (let i = 0; i < n; i++) s.smoke.spawn(add4(at, [0, 1, 2, 3].map(() => rnd(-0.022, 0.022)) as V4), now + rnd(0, 0.15), CELL_HEX[cellId()]);
       s.puffAt.copy(v);
-      s.puffGap = rnd(0.025, 0.075); // an uneven spacing, so the wake is not a string of beads
+      s.puffGap = rnd(0.08, 0.2);
     }
     const fovH = (camera as THREE.PerspectiveCamera).fov * Math.PI / 180;
     s.smoke.update(m, now, (size.height * viewport.dpr) / (2 * Math.tan(fovH / 2)));
