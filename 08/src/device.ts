@@ -14,6 +14,8 @@ useGLTF.preload(DEVICE_URL);
 
 export type Device = {
   g: THREE.Group;
+  /** Clip every part of this copy to one side of these planes (needs the renderer's local clipping on). */
+  clip: (planes: THREE.Plane[]) => void;
   /** 0 open (fins back) to 1 shut (the walls closed round the body). */
   shield: (k: number) => void;
   /** 0 open to 1 shut, the blades across the eye. */
@@ -156,8 +158,9 @@ function relTo(o: THREE.Object3D, anc: THREE.Object3D) {
   return m;
 }
 
-/** A copy of the loaded model at `size` (its radius), with its hinges wired. Materials are shared between copies. */
-export function device(model: THREE.Object3D, size: number): Device {
+/** A copy of the loaded model at `size` (its radius), with its hinges wired. Materials are shared between copies,
+ * unless `own`: then every mesh gets its own, for clipping planes of its own. */
+export function device(model: THREE.Object3D, size: number, own = false): Device {
   const g = model.clone(true) as THREE.Group;
   dress(g);
   g.scale.setScalar(size);
@@ -205,13 +208,16 @@ export function device(model: THREE.Object3D, size: number): Device {
   const leaves = [0, 1, 2, 3, 4, 5, 6, 7].map((i) => { const l = g.getObjectByName(`leaf_${i}`)!; return { o: l, rest: l.rotation.y }; });
   g.traverse((o) => {
     if ((o as THREE.Mesh).isMesh) {
-      const m = (o as THREE.Mesh).material as THREE.MeshStandardMaterial;
+      const mesh = o as THREE.Mesh;
+      if (own) mesh.material = (mesh.material as THREE.Material).clone();
+      const m = mesh.material as THREE.MeshStandardMaterial;
       if (m.transparent) m.depthWrite = false; // the glass
       o.frustumCulled = false;
     }
   });
   return {
     g,
+    clip: (planes) => { g.traverse((o) => { if ((o as THREE.Mesh).isMesh) ((o as THREE.Mesh).material as THREE.Material).clippingPlanes = planes; }); },
     shield: (k) => { for (const w of walls) w.o.rotation.x = w.rest * (1 - k); stroke(); },
     shutter: (k) => { for (const l of leaves) l.o.rotation.y = l.rest * (1 + (65 / 95) * k); },
   };

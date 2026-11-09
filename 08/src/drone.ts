@@ -51,7 +51,7 @@ export function startCell(held: number, sign: number) {
   drone.centre = [0, 0, 0];
 }
 
-type CellMap = { held: number; sign: number; A: number[][]; b: number[]; axisOf: number[]; centre: number[] };
+export type CellMap = { held: number; sign: number; A: number[][]; b: number[]; axisOf: number[]; centre: number[] };
 
 /** The crossing rule: through the face where row `k`'s axis is `t` (in 4D), the new cell holds that axis and frees
  * the axis that was held, inward, two rooms on in cell space. The row may run its axis backwards, so the side of the
@@ -86,11 +86,20 @@ export function fromCell(c: number[], out: V4 = [0, 0, 0, 0]): V4 {
   return out;
 }
 
-/** A direction in cell space back to 4D: nothing along the held axis, each row's axis from its row. */
-export function dirFromCell(c: number[], out: V4 = [0, 0, 0, 0]): V4 {
-  out[drone.held] = 0;
-  for (let k = 0; k < 3; k++) { const a = drone.axisOf[k]; out[a] = c[k] / drone.A[k][a]; }
+/** A direction in cell space back to 4D under a map: nothing along its held axis, each row's axis from its row. */
+export function dirFromCellWith(map: CellMap, c: number[], out: V4 = [0, 0, 0, 0]): V4 {
+  out[map.held] = 0;
+  for (let k = 0; k < 3; k++) { const a = map.axisOf[k]; out[a] = c[k] / map.A[k][a]; }
   return out;
+}
+export const dirFromCell = (c: number[], out?: V4) => dirFromCellWith(drone, c, out);
+
+/** The map of the cell on the other side of the wall where 4D axis `axis` is `sign`: the current map crossed there. */
+export function otherMap(axis: number, sign: number): CellMap {
+  const c: CellMap = { held: drone.held, sign: drone.sign, A: drone.A.map((r) => r.slice()), b: drone.b.slice(), axisOf: drone.axisOf.slice(), centre: drone.centre.slice() };
+  const k = drone.axisOf.indexOf(axis);
+  if (k >= 0) crossRow(c, k, sign); // the held axis has no wall of its own; then the copy is this cell
+  return c;
 }
 
 /** The four joints of the wall on row `k`, side `t`, of the current cell, in 4D. */

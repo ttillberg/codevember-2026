@@ -4,7 +4,7 @@ import { useGLTF } from '@react-three/drei';
 import * as THREE from 'three';
 import { project, type V4 } from './tesseract';
 import { pose } from './state';
-import { drone, startCell, crossInto, faceQuad, toCell, fromCell, dirFromCell, wallCorners } from './drone';
+import { drone, startCell, crossInto, faceQuad, toCell, fromCell, dirFromCellWith, otherMap, wallCorners, type CellMap } from './drone';
 import { device, DEVICE_URL } from './device';
 
 // A device that lives in the tesseract: a ball with one eye, fins that are walls, a shutter. It is inside one of the eight cells, a cube with one coordinate held at
@@ -56,8 +56,14 @@ export function Drones() {
   const gltf = useGLTF(DEVICE_URL);
   const d = useMemo(() => {
     const group = new THREE.Group();
-    const q = device(gltf.scene, SIZE_MAIN);
-    group.add(q.g);
+    // two copies: the one in this cell, and one for the cell on the other side of a wall it is passing through.
+    // In 4D the half of the body through the wall lies in the neighbour's space and projects with the neighbour's
+    // turn, so each copy is oriented by its own cell's map and clipped at the wall's plane; together they fold.
+    const q = device(gltf.scene, SIZE_MAIN, true);
+    const q2 = device(gltf.scene, SIZE_MAIN, true);
+    group.add(q.g, q2.g);
+    const planeA = new THREE.Plane(new THREE.Vector3(0, 1, 0), 1e4), planeB = new THREE.Plane(new THREE.Vector3(0, -1, 0), 1e4);
+    q.clip([planeA]); q2.clip([planeB]);
     const geo = new THREE.BufferGeometry();
     geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(TRAIL * 3), 3));
     const line = new THREE.Line(geo, new THREE.LineBasicMaterial({ color: BLUE, transparent: true, opacity: 0.55, toneMapped: false }));
@@ -72,7 +78,9 @@ export function Drones() {
       p: [0, 0, 0, 0] as V4, dir: [0, 0, 0, 0] as V4, // where it is, which way it is going, in 4D
       leg: null as Leg | null, s: 0,
       trail: [] as V4[], trailAt: 0,
-      last: new THREE.Vector3(), vel: new THREE.Vector3(), heading: new THREE.Quaternion(),
+      last: new THREE.Vector3(), vel: new THREE.Vector3(), heading: new THREE.Quaternion(), heading2: new THREE.Quaternion(),
+      q2, planeA, planeB, cLast: [0, 0, 0], look: new THREE.Vector3(0, 0, -1), camUp: new THREE.Vector3(0, 1, 0),
+      wall: null as { axis: number; sign: number } | null, // the wall it is at, if any: the face's 4D axis and side
       shield: 0, blink: Infinity, nextBlink: 3 + Math.random() * 5, // seconds into the blink; seconds to a blink of its own
       wasPilot: false, yawV: 0, pitchV: 0,
     };
@@ -138,12 +146,8 @@ export function Drones() {
 
   /** Hands on: taken over, the device keeps the way it was going; let go, it carries on from there on its own. */
   function takeOver(s: S) {
-    const here = toCell(s.p), ahead = toCell(add4(s.p, s.dir, 0.1));
-    const v = new THREE.Vector3(ahead[0] - here[0], ahead[1] - here[1], ahead[2] - here[2]);
-    if (v.lengthSq() < 1e-8) v.set(0, 0, -1);
-    v.normalize();
-    tmp.m.lookAt(new THREE.Vector3(), v, tmp.up);
-    drone.q.setFromRotationMatrix(tmp.m);
+    // the orientation is already kept in cell space; it carries on from there, at cruising speed along the eye
+    const v = new THREE.Vector3(0, 0, -1).applyQuaternion(drone.q);
     drone.cvel = [v.x * SPEED, v.y * SPEED, v.z * SPEED];
     s.yawV = s.pitchV = 0;
   }
@@ -176,11 +180,14 @@ export function Drones() {
     // the wall ahead lights as it closes in, and through: the same swap of held axis as on its own
     drone.flash.corners = wallCorners(kw, tw);
     drone.flash.a = Math.exp(-(((dmin - 0.1) / 0.12) ** 2));
+    s.wall = dmin < 0.5 ? { axis: drone.axisOf[kw], sign: tw * drone.A[kw][drone.axisOf[kw]] } : null;
     const over = c[kw] - (drone.centre[kw] + tw);
     if (over * tw > 0) {
+      const was = { axis: drone.held, sign: drone.sign };
       crossInto(drone.axisOf[kw], tw * drone.A[kw][drone.axisOf[kw]]);
       s.held = drone.held; s.sign = drone.sign;
       s.blink = 0;
+      s.wall = was; // the wall just crossed, named from the new cell: the axis that was held, now free
     }
     const prev = s.p;
     s.p = fromCell(c);
@@ -222,7 +229,9 @@ export function Drones() {
       if (leg.kind === 'portal') {
         drone.flash.corners = leg.face!.corners;
         drone.flash.a = Math.exp(-(((s.s - 0.4) / 0.06) ** 2));
-      } else drone.flash.a = 0;
+        // the wall, named from whichever cell it is in now: before the crossing the face's axis, after it the old held
+        s.wall = s.s > 0.25 && s.s < 0.75 ? (leg.crossed ? { axis: s.came![0], sign: s.came![1] } : { axis: leg.face!.axis, sign: leg.face!.sign }) : null;
+      } else { drone.flash.a = 0; s.wall = null; }
     }
     drone.p = s.p;
     if (now - s.trailAt > TRAIL_EVERY) {
@@ -244,38 +253,58 @@ export function Drones() {
     drone.shield = s.shield; drone.shutter = shut;
     s.q.shield(s.shield); s.q.shutter(shut);
 
-    // draw: where it is in 3D, the eye along the way it is going, a slow lean into the move, nothing abrupt
-    const { v, up, q, tilt, axis } = tmp;
+    // draw: where it is in 3D. Its orientation lives in cell space, drone.q: at the controls the pilot's, on its own
+    // the way it is going, with an up carried from frame to frame so no leg straight up or down flips it. From
+    // there a cell's map takes the eye's forward and up to 4D, and the projection at the device gives the 3D pose.
+    const { v, q, qa } = tmp;
     project(m, s.p, v);
     s.vel.subVectors(v, s.last).divideScalar(Math.max(dt, 1e-3));
     s.last.copy(v);
-    s.q.g.position.copy(v);
-    const speed = s.vel.length();
-    if (drone.pilot) {
-      // at the controls the eye points where the pilot points it: the cell-space forward and up, taken to 4D and
-      // seen through the projection at the device, so a turn on the spot shows in the main view too
-      const { fwd, right: upv, qa } = tmp;
+    if (!drone.pilot) {
+      const c = toCell(s.p);
+      const cv = new THREE.Vector3(c[0] - s.cLast[0], c[1] - s.cLast[1], c[2] - s.cLast[2]);
+      s.cLast = c;
+      if (cv.lengthSq() > 1e-10 && cv.lengthSq() < 0.25) s.look.lerp(cv.normalize(), Math.min(1, dt * 4)).normalize();
+      s.camUp.set(0, 1, 0).applyQuaternion(drone.q);
+      s.camUp.lerp(tmp.up, 0.04 * (1 - Math.abs(s.look.y))).normalize();
+      tmp.m.lookAt(new THREE.Vector3(), s.look, s.camUp);
+      qa.setFromRotationMatrix(tmp.m);
+      drone.q.slerp(qa, Math.min(1, dt * 5));
+    }
+    const pose3 = (map: CellMap, out: THREE.Quaternion) => {
+      const { fwd, right: upv } = tmp;
       fwd.set(0, 0, -1).applyQuaternion(drone.q);
       upv.set(0, 1, 0).applyQuaternion(drone.q);
       const E = 0.02;
-      const here = project(m, s.p, new THREE.Vector3());
-      const f4 = dirFromCell([fwd.x, fwd.y, fwd.z]), u4 = dirFromCell([upv.x, upv.y, upv.z]);
-      const f3 = project(m, add4(s.p, f4, E), new THREE.Vector3()).sub(here);
-      const u3 = project(m, add4(s.p, u4, E), new THREE.Vector3()).sub(here);
-      if (f3.lengthSq() > 1e-10 && u3.lengthSq() > 1e-10) {
-        tmp.m.lookAt(new THREE.Vector3(), f3, u3);
-        qa.setFromRotationMatrix(tmp.m);
-        s.heading.slerp(qa, Math.min(1, dt * 6));
-      }
-    } else if (speed > 0.05) {
-      tmp.m.lookAt(new THREE.Vector3(), s.vel, up); // the eye looks along -z
+      const f4 = dirFromCellWith(map, [fwd.x, fwd.y, fwd.z]), u4 = dirFromCellWith(map, [upv.x, upv.y, upv.z]);
+      const f3 = project(m, add4(s.p, f4, E), new THREE.Vector3()).sub(v);
+      const u3 = project(m, add4(s.p, u4, E), new THREE.Vector3()).sub(v);
+      if (f3.lengthSq() < 1e-10 || u3.lengthSq() < 1e-10) return;
+      tmp.m.lookAt(new THREE.Vector3(), f3, u3);
       q.setFromRotationMatrix(tmp.m);
-      axis.crossVectors(up, s.vel).normalize();
-      tilt.setFromAxisAngle(axis, Math.min(0.3, speed * 0.2));
-      q.premultiply(tilt);
-      s.heading.slerp(q, Math.min(1, dt * 2.5));
-    }
+      out.slerp(q, Math.min(1, dt * 8));
+    };
+    pose3(drone, s.heading);
+    s.q.g.position.copy(v);
     s.q.g.quaternion.copy(s.heading);
+    // at a wall: the other copy in the neighbour's pose, and the two clipped against the wall's plane, this cell's
+    // side for this copy, the far side for the other. Away from walls the planes are far off and the other copy hidden.
+    if (s.wall) {
+      const other = otherMap(s.wall.axis, s.wall.sign);
+      pose3(other, s.heading2);
+      s.q2.g.visible = true;
+      s.q2.g.position.copy(v);
+      s.q2.g.quaternion.copy(s.heading2);
+      s.q2.shield(s.shield); s.q2.shutter(shut);
+      const [c0, c1, c2] = drone.flash.corners.map((c4) => project(m, c4, new THREE.Vector3()));
+      s.planeA.setFromCoplanarPoints(c0, c1, c2);
+      const centre: V4 = [0, 0, 0, 0]; centre[drone.held] = drone.sign;
+      if (s.planeA.distanceToPoint(project(m, centre, new THREE.Vector3())) < 0) s.planeA.negate();
+      s.planeB.copy(s.planeA).negate();
+    } else {
+      s.q2.g.visible = false;
+      s.planeA.set(tmp.up, 1e4); s.planeB.set(tmp.up, 1e4);
+    }
 
     drone.flash.corners.forEach((c4, i) => { project(m, c4, v); s.flash.set(i, v); });
     s.flash.done();
