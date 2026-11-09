@@ -64,23 +64,22 @@ export function App() {
   const orbitMove = (e: React.PointerEvent) => {
     const d = orbit.current;
     if (!d) return;
-    if (!(e.buttons & 1)) { orbit.current = null; rig.orbiting = false; return; } // a release that never came
     const now = performance.now();
     orbitBy(-(e.clientX - d.x) * ORBIT, (e.clientY - d.y) * ORBIT, Math.max(1, now - d.t) / 1000);
     orbit.current = { x: e.clientX, y: e.clientY, t: now };
   };
+  // a drag ends when its pointer capture does: on release, on cancel, or when the page takes the pointer away
   const orbitEnd = () => { orbit.current = null; rig.orbiting = false; };
   // the look: a drag turns the eye the way it is dragged
   const look = useRef<{ x: number; y: number } | null>(null);
   const lookDown = (e: React.PointerEvent) => {
-    if (e.button !== 0 || document.pointerLockElement) return;
+    if (e.button !== 0 || !drone.pilot || document.pointerLockElement) return;
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
     look.current = { x: e.clientX, y: e.clientY };
   };
   const lookMove = (e: React.PointerEvent) => {
     const d = look.current;
-    if (!d) return;
-    if (!(e.buttons & 1)) { look.current = null; return; }
+    if (!d || !drone.pilot) return;
     drone.turn[0] += (e.clientX - d.x) * LOOK * 1.6; drone.turn[1] += -(e.clientY - d.y) * LOOK * 1.6;
     d.x = e.clientX; d.y = e.clientY;
   };
@@ -99,6 +98,7 @@ export function App() {
         orbitBy(-e.movementX * ORBIT, e.movementY * ORBIT, dt);
         return;
       }
+      rig.orbiting = false; // shift let go without its keyup reaching the page: the orbit coasts
       drone.turn[0] += e.movementX * LOOK; drone.turn[1] += -e.movementY * LOOK;
     };
     const up = (e: KeyboardEvent) => { if (e.key === 'Shift') rig.orbiting = false; };
@@ -143,16 +143,17 @@ export function App() {
       if (k === ' ' || k === 'w' || k === 's' || k === 'arrowup' || k === 'arrowdown') keys.thrust = 0;
       if (k === 'a' || k === 'd' || k === 'arrowleft' || k === 'arrowright') keys.strafe = 0;
     };
-    const blur = () => { st.crank = 0; keys.thrust = keys.strafe = 0; };
+    const blur = () => { st.crank = 0; keys.thrust = keys.strafe = 0; rig.orbiting = false; };
     addEventListener('keydown', down);
     addEventListener('keyup', up);
     addEventListener('blur', blur);
     return () => { removeEventListener('keydown', down); removeEventListener('keyup', up); removeEventListener('blur', blur); };
   }, []);
 
-  // the page orbits; in manual a drag in the eye's view is the look, in auto the view lets the drag through
-  const stageHandlers = { onPointerDown: orbitDown, onPointerMove: orbitMove, onPointerUp: orbitEnd, onPointerCancel: orbitEnd };
-  const camHandlers = manual ? { onPointerDown: lookDown, onPointerMove: lookMove, onPointerUp: lookEnd, onPointerCancel: lookEnd } : {};
+  // the page orbits; in manual a drag in the eye's view is the look, in auto the view lets the drag through (css).
+  // The handlers stay on in both modes, so a mode switch mid-drag cannot leave a drag behind
+  const stageHandlers = { onPointerDown: orbitDown, onPointerMove: orbitMove, onLostPointerCapture: orbitEnd };
+  const camHandlers = { onPointerDown: lookDown, onPointerMove: lookMove, onLostPointerCapture: lookEnd };
 
   return (
     <>

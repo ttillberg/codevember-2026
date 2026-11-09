@@ -26,7 +26,8 @@ const WEAR_INK = (base: string) => (isLight(base) ? '#4a3d2c' : '#9a9a9e');
 
 const W = 512, H = 416;
 
-function rng(seed: number) {
+/** A seeded random stream, mulberry32: the same seed deals the same wear every load. */
+export function rng(seed: number) {
   let a = seed >>> 0;
   return () => {
     a = (a + 0x6d2b79f5) >>> 0;

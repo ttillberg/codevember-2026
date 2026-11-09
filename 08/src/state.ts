@@ -131,8 +131,7 @@ export function tick(dt: number) {
     if (Math.abs(st.angle) >= QUARTER) {
       const q = Math.sign(st.angle);
       st.angle = st.target = q * QUARTER;
-      fold(q);
-      st.plane = pick<number>([0, 1, 2].filter((p) => p !== st.plane).map((p) => [p, 1]));
+      fold(q); // banked to an exact quarter, so fold moves on to another plane
     }
     return;
   }

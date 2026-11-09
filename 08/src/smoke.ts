@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { project, type M4, type V4 } from './tesseract';
+import { rng } from './decals';
 
 // The device's wake: puffs of vapour, each born behind it in 4D and projected like everything else, so the wake turns
 // with the machine. A puff is a point sprite with a lumpy cloud texture, turning slowly as it grows and thins out. It
@@ -14,8 +15,7 @@ function puffTexture(): THREE.Texture {
   const S = 128, c = document.createElement('canvas');
   c.width = c.height = S;
   const g = c.getContext('2d')!;
-  let seed = 11;
-  const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+  const rnd = rng(11);
   g.globalCompositeOperation = 'lighter';
   for (let i = 0; i < 16; i++) {
     const a = rnd() * Math.PI * 2, d = rnd() * S * 0.22, r = S * (0.16 + rnd() * 0.16);

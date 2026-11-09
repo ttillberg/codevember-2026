@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { useGLTF } from '@react-three/drei';
 import { DecalGeometry } from 'three/examples/jsm/geometries/DecalGeometry.js';
-import { scratches, gouges, grunge } from './decals';
+import { scratches, gouges, grunge, rng } from './decals';
 import { logo, withLogos, type LogoName } from './logos';
 
 // The device: a ball modelled in Blender (model/device.blend), exported to public/device.glb. A graphite core
@@ -39,7 +39,6 @@ const canvasTex = (w: number, h: number, draw: (g: CanvasRenderingContext2D) => 
   t.anisotropy = 8;
   return t;
 };
-const rngOf = (seed: number) => { let a = seed; return () => ((a = (a * 1664525 + 1013904223) >>> 0) / 4294967296); };
 const decalMat = (map: THREE.Texture) => new THREE.MeshStandardMaterial({
   map, transparent: true, depthTest: true, depthWrite: false, roughness: 0.6, metalness: 0.05,
   polygonOffset: true, polygonOffsetFactor: -4,
@@ -67,7 +66,7 @@ function makeMarks() {
   }));
   // scuffs: hairlines and, when the sheet is here, a window of real wear; two of them also get a proper scrape
   const scuff = [11, 29, 47, 63, 83].map((seed, i) => {
-    const r = rngOf(seed);
+    const r = rng(seed);
     const tex = canvasTex(256, 256, (g) => {
       scratches(g, r, 256, 256, 9, '#e6e6e0', '#000000', 0.5);
       if (i === 1 || i === 4) gouges(g, r, 256, 256, 1, '#d2d2cc', '#000000', 2.6);

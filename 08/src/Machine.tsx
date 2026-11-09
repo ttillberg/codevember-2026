@@ -4,7 +4,7 @@ import * as THREE from 'three';
 import { EDGES, VERTS, project } from './tesseract';
 import { st, tick, pose, DEBUG } from './state';
 import { drone, cellId, CELL_HEX } from './drone';
-import { sleeveDecal, scuffSleeve, scratchMap, wear, brushed, ROD_SPAN, ACCENTS, SAND, GRAPHITE, type Brand } from './decals';
+import { sleeveDecal, scuffSleeve, scratchMap, wear, brushed, rng, ROD_SPAN, ACCENTS, SAND, GRAPHITE, type Brand } from './decals';
 import { withLogos } from './logos';
 
 // The mechanism. Every edge is a strut in three stages: a sleeve fixed to each ball joint, a stanchion sliding out of
@@ -83,8 +83,7 @@ export function Machine() {
     const plain = [worn(GRAPHITE, 0.62, 0.05, 500), worn(SAND, 0.78, 0.05, 600)];
     // the marks: two of each on the decaled sleeves, wherever the shuffle puts them; a few wordmarks; the rest none
     const decaled = EDGES.flatMap((_, i) => [0, 1].filter((end) => (i * 2 + end) % 3 === 1).map((end) => i * 2 + end));
-    let h = 8;
-    const rnd = () => ((h = (h * 1664525 + 1013904223) >>> 0) / 4294967296);
+    const rnd = rng(8);
     for (let k = decaled.length - 1; k > 0; k--) { const j = Math.floor(rnd() * (k + 1)); [decaled[k], decaled[j]] = [decaled[j], decaled[k]]; }
     const hand: Brand[] = ['three', 'three', 'pmndrs', 'pmndrs', 'github', 'github', 'word', 'word', 'word'];
     const brandOf = new Map<number, Brand>(decaled.slice(0, hand.length).map((id, k) => [id, hand[k]]));
