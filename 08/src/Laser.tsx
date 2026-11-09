@@ -16,7 +16,14 @@ import { pose } from './state';
 export const laser = { on: false, x: 0, y: 0 }; // pointer, css px
 
 const PINK = new THREE.Color('#ef5f9f');
+const CORE = new THREE.Color('#ffd6ea'); // the hot middle of the beam
 const PAPER = new THREE.Color('#e6e6e4'); // what the beam fades towards
+/** No post bloom on a transparent canvas: the glow is the beam drawn three times, a hot core and two soft halos. */
+const LAYERS = [
+  { width: 1.6, opacity: 1, core: true },
+  { width: 6, opacity: 0.35, core: false },
+  { width: 16, opacity: 0.12, core: false },
+];
 const MAX_WALLS = 8;
 const STEP = 0.11; // the jog at a wall, 3D units
 const LOSS = 0.5; // the strength left after a wall
@@ -40,19 +47,29 @@ type Hit = { face: typeof FACES[number]; dist: number; at: THREE.Vector3; p4: V4
 export function Laser() {
   const { camera, size } = useThree();
   const parts = useMemo(() => {
-    const geo = new LineGeometry();
-    geo.setPositions([0, 0, 0, 0, 0, 0]);
-    geo.setColors([1, 1, 1, 1, 1, 1]);
-    const mat = new LineMaterial({ linewidth: 2.5, vertexColors: true, toneMapped: false });
-    const line = new Line2(geo, mat);
-    line.frustumCulled = false;
-    line.visible = false;
-    const dots = new THREE.InstancedMesh(new THREE.SphereGeometry(0.028, 12, 8), new THREE.MeshBasicMaterial({ toneMapped: false }), MAX_WALLS * 2);
-    dots.count = 0;
-    dots.frustumCulled = false;
-    return { line, geo, mat, dots };
+    const group = new THREE.Group();
+    const lines = LAYERS.map((l) => {
+      const geo = new LineGeometry();
+      geo.setPositions([0, 0, 0, 0, 0, 0]);
+      geo.setColors([1, 1, 1, 1, 1, 1]);
+      const mat = new LineMaterial({ linewidth: l.width, vertexColors: true, toneMapped: false, transparent: true, opacity: l.opacity, depthWrite: false });
+      const line = new Line2(geo, mat);
+      line.frustumCulled = false;
+      group.add(line);
+      return { line, geo, mat, core: l.core };
+    });
+    const dot = (r: number, opacity: number) => {
+      const o = new THREE.InstancedMesh(new THREE.SphereGeometry(r, 12, 8), new THREE.MeshBasicMaterial({ toneMapped: false, transparent: opacity < 1, opacity, depthWrite: opacity === 1 }), MAX_WALLS * 2);
+      o.count = 0;
+      o.frustumCulled = false;
+      group.add(o);
+      return o;
+    };
+    const dots = [dot(0.022, 1), dot(0.05, 0.3), dot(0.09, 0.1)];
+    group.visible = false;
+    return { group, lines, dots };
   }, []);
-  useEffect(() => { parts.mat.resolution.set(size.width, size.height); }, [size, parts]);
+  useEffect(() => { for (const l of parts.lines) l.mat.resolution.set(size.width, size.height); }, [size, parts]);
 
   const tmp = useMemo(() => ({
     ray: new THREE.Raycaster(), ndc: new THREE.Vector2(), hand: new THREE.Vector3(), beam: new THREE.Ray(),
@@ -98,8 +115,8 @@ export function Laser() {
   }
 
   useFrame(() => {
-    const { line, geo, dots } = parts;
-    if (!laser.on) { line.visible = false; dots.count = 0; return; }
+    const { group, lines, dots } = parts;
+    if (!laser.on) { group.visible = false; return; }
     const m = pose();
     const { ray, ndc, hand, beam, off, cur, dummy, col } = tmp;
     ndc.set((laser.x / size.width) * 2 - 1, -((laser.y / size.height) * 2 - 1));
@@ -107,18 +124,21 @@ export function Laser() {
 
     // the point under the pointer, on the first face its ray meets; the beam runs from the hand through it
     const target = hits(m, ray.ray, false)[0];
-    if (!target) { line.visible = false; dots.count = 0; return; }
+    if (!target) { group.visible = false; return; }
     hand.copy(HAND).applyMatrix4(camera.matrixWorld);
     beam.set(hand, cur.subVectors(target.at, hand).normalize());
 
     // every wall along the beam, nearest first; at each a jog, then on parallel, half as strong
     const walls = hits(m, beam, true).filter((h, i, arr) => i === 0 || h.dist - arr[i - 1].dist > 1e-3).slice(0, MAX_WALLS);
     const pts: number[] = [hand.x, hand.y, hand.z];
-    const cols: number[] = [];
+    const cols: number[] = [], coreCols: number[] = [];
     const marks: { p: THREE.Vector3; k: number }[] = [];
     let strength = 1;
     const push = (p: THREE.Vector3) => { pts.push(p.x, p.y, p.z); };
-    const tint = () => { col.copy(PAPER).lerp(PINK, strength); cols.push(col.r, col.g, col.b); };
+    const tint = () => {
+      col.copy(PAPER).lerp(PINK, strength); cols.push(col.r, col.g, col.b);
+      col.copy(PAPER).lerp(CORE, strength); coreCols.push(col.r, col.g, col.b);
+    };
     tint();
     off.set(0, 0, 0);
     for (const h of walls) {
@@ -134,24 +154,23 @@ export function Laser() {
     cur.copy(beam.origin).addScaledVector(beam.direction, last + TAIL).add(off);
     push(cur); tint();
 
-    geo.setPositions(pts);
-    geo.setColors(cols);
-    line.visible = true;
-    line.computeLineDistances();
-    marks.forEach(({ p, k }, i) => {
-      dummy.position.copy(p); dummy.scale.setScalar(0.6 + 0.4 * k); dummy.updateMatrix();
-      dots.setMatrixAt(i, dummy.matrix);
-      dots.setColorAt(i, col.copy(PAPER).lerp(PINK, k));
-    });
-    dots.count = marks.length;
-    dots.instanceMatrix.needsUpdate = true;
-    if (dots.instanceColor) dots.instanceColor.needsUpdate = true;
+    for (const l of lines) {
+      l.geo.setPositions(pts);
+      l.geo.setColors(l.core ? coreCols : cols);
+      l.line.computeLineDistances();
+    }
+    group.visible = true;
+    for (const d of dots) {
+      marks.forEach(({ p, k }, i) => {
+        dummy.position.copy(p); dummy.scale.setScalar(0.6 + 0.4 * k); dummy.updateMatrix();
+        d.setMatrixAt(i, dummy.matrix);
+        d.setColorAt(i, col.copy(PAPER).lerp(d === dots[0] ? CORE : PINK, k));
+      });
+      d.count = marks.length;
+      d.instanceMatrix.needsUpdate = true;
+      if (d.instanceColor) d.instanceColor.needsUpdate = true;
+    }
   });
 
-  return (
-    <>
-      <primitive object={parts.line} />
-      <primitive object={parts.dots} />
-    </>
-  );
+  return <primitive object={parts.group} />;
 }

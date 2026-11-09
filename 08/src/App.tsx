@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Canvas } from '@react-three/fiber';
+import * as THREE from 'three';
 import { ContactShadows, Environment, Lightformer, OrbitControls } from '@react-three/drei';
 import { Machine } from './Machine';
 import { Drones } from './Drones';
@@ -84,7 +85,7 @@ export function App() {
   return (
     <>
       <div className="stage" onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onUp} onPointerLeave={onUp} onPointerCancel={onUp}>
-        <Canvas camera={{ position: [4.8, 2.6, 8.2], fov: 34 }} gl={{ alpha: true, antialias: true, toneMappingExposure: 1.15 }} dpr={[1, 2]}>
+        <Canvas camera={{ position: [4.8, 2.6, 8.2], fov: 34 }} gl={{ alpha: true, antialias: true, toneMapping: THREE.NeutralToneMapping, toneMappingExposure: 1.0 }} dpr={[1, 2]}>
           <Machine />
           <Drones />
           <DroneCam />
