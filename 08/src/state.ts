@@ -39,6 +39,7 @@ export const rig = {
   vel: [0, 0], // rad/s about y and x, from the last drag, decaying
   zoom: 10.5, // camera distance
   yaw: 0, pitch: 0, // the camera's orbit, debugging
+  orbitVel: [0, 0], orbiting: false, // rad/s of yaw and pitch from the last drag, coasting once it is let go
 };
 const AX = new THREE.Vector3(1, 0, 0), AY = new THREE.Vector3(0, 1, 0), tq = new THREE.Quaternion();
 export function spinRig(dy: number, dx: number) {
@@ -102,6 +103,14 @@ function step() {
 export function tick(dt: number) {
   // a slow turntable, always, about the room's up; a drag adds to it and coasts off again
   if (!DEBUG) spinRig(TURNTABLE * dt, 0);
+  // the orbit coasts after a drag, slowing over a second or two
+  if (!rig.orbiting && (rig.orbitVel[0] || rig.orbitVel[1])) {
+    rig.yaw += rig.orbitVel[0] * dt;
+    rig.pitch = Math.max(-1.4, Math.min(1.4, rig.pitch + rig.orbitVel[1] * dt));
+    const k = Math.exp(-dt * 2.5);
+    rig.orbitVel[0] *= k; rig.orbitVel[1] *= k;
+    if (Math.abs(rig.orbitVel[0]) + Math.abs(rig.orbitVel[1]) < 1e-3) rig.orbitVel[0] = rig.orbitVel[1] = 0;
+  }
   // the rig coasts after a drag; drag one way and the machine turns that way from then on; it also turns round on its own
   if (rig.vel[0] || rig.vel[1]) {
     spinRig(rig.vel[0] * dt, rig.vel[1] * dt);

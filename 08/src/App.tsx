@@ -67,17 +67,21 @@ export function App() {
   const onDown = (e: React.PointerEvent) => {
     if (e.button !== 0) return;
     if (drone.pilot && !DEBUG) { drone.keys.thrust = 1; return; }
-    drag.current = { x: e.clientX, y: e.clientY, t: performance.now() }; rig.vel[0] = rig.vel[1] = 0;
+    drag.current = { x: e.clientX, y: e.clientY, t: performance.now() }; rig.vel[0] = rig.vel[1] = 0; rig.orbitVel[0] = rig.orbitVel[1] = 0; rig.orbiting = true;
   };
   const onMove = (e: React.PointerEvent) => {
-    if (drag.current && !(e.buttons & 1)) { drag.current = null; if (drone.pilot) drone.keys.thrust = 0; } // a release that never came
+    if (drag.current && !(e.buttons & 1)) { drag.current = null; rig.orbiting = false; if (drone.pilot) drone.keys.thrust = 0; } // a release that never came
     if (DEBUG) {
       // debugging: the drag orbits the camera, in either mode
       const d = drag.current;
       if (!d) return;
-      rig.yaw -= (e.clientX - d.x) * 0.006;
-      rig.pitch = Math.max(-1.4, Math.min(1.4, rig.pitch + (e.clientY - d.y) * 0.006));
-      drag.current = { x: e.clientX, y: e.clientY, t: performance.now() };
+      // the drag turns the orbit as it goes, and its speed is kept, smoothed, to coast on when the button is let go
+      const now = performance.now(), dt = Math.max(1, now - d.t) / 1000;
+      const dy = -(e.clientX - d.x) * 0.006, dp = (e.clientY - d.y) * 0.006;
+      rig.yaw += dy;
+      rig.pitch = Math.max(-1.4, Math.min(1.4, rig.pitch + dp));
+      rig.orbitVel[0] += (dy / dt - rig.orbitVel[0]) * 0.5; rig.orbitVel[1] += (dp / dt - rig.orbitVel[1]) * 0.5;
+      drag.current = { x: e.clientX, y: e.clientY, t: now };
       return;
     }
     if (drone.pilot) {
@@ -96,8 +100,8 @@ export function App() {
     if (Math.abs(e.clientX - d.x) > 2) { st.way = Math.sign(e.clientX - d.x); st.flipIn = 8 + Math.random() * 14; }
     drag.current = { x: e.clientX, y: e.clientY, t: now };
   };
-  const onUp = () => { drag.current = null; if (drone.pilot && !DEBUG) drone.keys.thrust = 0; };
-  const onLeave = () => { drag.current = null; last.current = null; if (drone.pilot) drone.keys.thrust = 0; };
+  const onUp = () => { drag.current = null; rig.orbiting = false; if (drone.pilot && !DEBUG) drone.keys.thrust = 0; };
+  const onLeave = () => { drag.current = null; last.current = null; rig.orbiting = false; if (drone.pilot) drone.keys.thrust = 0; };
   const onWheel = (e: React.WheelEvent) => { rig.zoom = Math.min(18, Math.max(6, rig.zoom * Math.exp(e.deltaY * 0.001))); };
 
   useEffect(() => {
