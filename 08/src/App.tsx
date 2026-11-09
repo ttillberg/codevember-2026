@@ -5,22 +5,17 @@ import { ContactShadows, Environment, Lightformer, OrbitControls } from '@react-
 import { Machine } from './Machine';
 import { Drones } from './Drones';
 import { DroneCam } from './DroneCam';
-import { Laser, laser } from './Laser';
+import { Laser } from './Laser';
 import { drone } from './drone';
 import { st } from './state';
 
 const PARAMS = new URLSearchParams(location.search);
 const CLEAN = PARAMS.has('clean'); // no page furniture, for the screengrab
 if (PARAMS.has('follow')) drone.view = 'follow';
-if (PARAMS.has('laser')) { laser.on = true; laser.x = innerWidth * 0.5; laser.y = innerHeight * 0.48; } // for a screenshot without a pointer
 
 export function App() {
   const [program, setProgram] = useState(st.program);
   const [smooth, setSmooth] = useState(st.smooth);
-  // the laser follows the pointer whenever it is over the page
-  const onMove = (e: React.PointerEvent) => { laser.x = e.clientX; laser.y = e.clientY; laser.on = true; };
-  const onLeave = () => { laser.on = false; };
-
   useEffect(() => {
     const down = (e: KeyboardEvent) => {
       if (e.key === ' ') { e.preventDefault(); st.program = !st.program; setProgram(st.program); }
@@ -40,7 +35,7 @@ export function App() {
 
   return (
     <>
-      <div className="stage" onPointerMove={onMove} onPointerLeave={onLeave}>
+      <div className="stage">
         <Canvas camera={{ position: [4.8, 2.6, 8.2], fov: 34 }} gl={{ alpha: true, antialias: true, toneMapping: THREE.NeutralToneMapping, toneMappingExposure: 1.0 }} dpr={[1, 2]}>
           <Machine />
           <Drones />

@@ -7,13 +7,13 @@ import { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js';
 import { project, type V4, type M4 } from './tesseract';
 import { pose } from './state';
 
-// A laser into the tesseract. Wherever the pointer is, a pink beam comes in level across the screen, right to left,
-// through the point under it, and goes straight on through the machine. At every wall it
+// A laser into the tesseract. A pink beam fixed in the room, level, along x through the centre of the machine, going
+// straight through it. The machine turns inside the beam, so the walls it crosses change. At every wall it
 // crosses it is displaced: a short jog sideways along that wall's 4D normal as it projects right now, and then on,
 // parallel to itself, a tenth weaker. Straight, stepped and dimmed at every wall, like light through a stack
 // of glass; the steps turn with the machine because the normals do.
 
-export const laser = { on: false, x: 0, y: 0 }; // pointer, css px
+export const laser = { on: true };
 /** Where the beam met walls this frame, in 4D, nearest first, with the strength it had there. For the drone cam. */
 export const beamHits: { i: number; si: number; j: number; sj: number; p4: V4; k: number }[] = [];
 export const BEAM = { PINK: new THREE.Color('#ef5f9f'), CORE: new THREE.Color('#ffd6ea'), LOSS: 0.9 };
@@ -31,7 +31,7 @@ const MAX_WALLS = 8;
 const STEP = 0.11; // the jog at a wall, 3D units
 const LOSS = BEAM.LOSS; // the strength left after a wall
 const TAIL = 0.7; // how far the beam runs past the last wall
-const FROM_RIGHT = 9; // the beam comes in level across the screen, from this far right of the point you hold
+const ORIGIN = new THREE.Vector3(9, 0, 0), DIR = new THREE.Vector3(-1, 0, 0); // in along x, through the centre
 
 /** The 24 square faces: two axes fixed at ±1, two free. Corners in order round the square. */
 const FACES: { i: number; si: number; j: number; sj: number; corners: V4[] }[] = [];
@@ -48,7 +48,7 @@ for (let i = 0; i < 4; i++) for (let j = i + 1; j < 4; j++) for (const si of [-1
 type Hit = { face: typeof FACES[number]; dist: number; at: THREE.Vector3; p4: V4 };
 
 export function Laser() {
-  const { camera, size } = useThree();
+  const { size } = useThree();
   const parts = useMemo(() => {
     const group = new THREE.Group();
     const lines = LAYERS.map((l) => {
@@ -75,7 +75,7 @@ export function Laser() {
   useEffect(() => { for (const l of parts.lines) l.mat.resolution.set(size.width, size.height); }, [size, parts]);
 
   const tmp = useMemo(() => ({
-    ray: new THREE.Raycaster(), ndc: new THREE.Vector2(), hand: new THREE.Vector3(), beam: new THREE.Ray(),
+    hand: new THREE.Vector3(), beam: new THREE.Ray(ORIGIN.clone(), DIR.clone()),
     a: new THREE.Vector3(), b: new THREE.Vector3(), c: new THREE.Vector3(), d: new THREE.Vector3(), hit: new THREE.Vector3(),
     bary: new THREE.Vector3(), p: new THREE.Vector3(), q: new THREE.Vector3(), n: new THREE.Vector3(), off: new THREE.Vector3(),
     cur: new THREE.Vector3(), dummy: new THREE.Object3D(), col: new THREE.Color(),
@@ -122,17 +122,8 @@ export function Laser() {
     beamHits.length = 0;
     if (!laser.on) { group.visible = false; return; }
     const m = pose();
-    const { ray, ndc, hand, beam, off, cur, dummy, col } = tmp;
-    ndc.set((laser.x / size.width) * 2 - 1, -((laser.y / size.height) * 2 - 1));
-    ray.setFromCamera(ndc, camera);
-
-    // the point under the pointer, on the first face its ray meets; the beam comes in level across the screen,
-    // right to left, through it
-    const target = hits(m, ray.ray, false)[0];
-    if (!target) { group.visible = false; return; }
-    cur.setFromMatrixColumn(camera.matrixWorld, 0); // the camera's right
-    hand.copy(target.at).addScaledVector(cur, FROM_RIGHT);
-    beam.set(hand, cur.negate());
+    const { hand, beam, off, cur, dummy, col } = tmp;
+    hand.copy(beam.origin);
 
     // every wall along the beam, nearest first; at each a jog, then on parallel, half as strong
     const walls = hits(m, beam, true).filter((h, i, arr) => i === 0 || h.dist - arr[i - 1].dist > 1e-3).slice(0, MAX_WALLS);
@@ -157,7 +148,7 @@ export function Laser() {
       cur.copy(h.at).add(off);
       push(cur); tint(); marks.push({ p: cur.clone(), k: strength });
     }
-    const last = walls.length ? walls[walls.length - 1].dist : target.dist;
+    const last = walls.length ? walls[walls.length - 1].dist : ORIGIN.length();
     cur.copy(beam.origin).addScaledVector(beam.direction, last + TAIL).add(off);
     push(cur); tint();
 
