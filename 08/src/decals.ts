@@ -107,6 +107,59 @@ export function scratches(g: CanvasRenderingContext2D, r: () => number, w: numbe
   g.restore();
 }
 
+/** A few proper scrapes: each a cluster of two or three near-parallel gouges, a `core` where the paint is off, a
+ * `rim` round it, wider and offset. Bold enough to read from the main view at a sleeve's few pixels; use them in a
+ * couple of places, not all over. On sand the core is dark (graphite under the paint), on graphite it is light. */
+export function gouges(g: CanvasRenderingContext2D, r: () => number, w: number, h: number, n: number, core: string, rim: string, scale = 1) {
+  const light = core, dark = rim;
+  g.save();
+  g.lineCap = 'round';
+  for (let i = 0; i < n; i++) {
+    const along = r() < 0.6;
+    // start so the whole scrape fits on the canvas, whichever way it runs
+    const len = along ? h * (0.4 + r() * 0.3) : w * (0.3 + r() * 0.3);
+    const sc = along ? scale : scale * 0.35; // across the sleeve the strokes stay finer, or they turn to blobs
+    const x = along ? w * (0.1 + r() * 0.8) : w * (0.08 + r() * 0.55), y = along ? h * (0.06 + r() * 0.24) : h * (0.15 + r() * 0.7);
+    const a = (along ? Math.PI / 2 : 0) + (r() - 0.5) * 0.7;
+    const dx = Math.cos(a) * len, dy = Math.sin(a) * len;
+    const strands = 2 + Math.floor(r() * 2);
+    for (let k = 0; k < strands; k++) {
+      const off = (k - (strands - 1) / 2) * (3 + r() * 3) * sc;
+      const ox = -Math.sin(a) * off, oy = Math.cos(a) * off;
+      const shrink = 0.7 + r() * 0.3;
+      const x0 = x + ox + dx * (1 - shrink) * r(), y0 = y + oy + dy * (1 - shrink) * r();
+      const bend = (r() - 0.5) * 10 * sc;
+      const path = () => {
+        g.beginPath();
+        g.moveTo(x0, y0);
+        g.quadraticCurveTo(x0 + dx * shrink / 2 - Math.sin(a) * bend, y0 + dy * shrink / 2 + Math.cos(a) * bend, x0 + dx * shrink, y0 + dy * shrink);
+      };
+      g.strokeStyle = dark; g.globalAlpha = 0.55; g.lineWidth = (3 + r() * 2.5) * sc;
+      path(); g.translate(0.8 * sc, 1.2 * sc); g.stroke(); g.translate(-0.8 * sc, -1.2 * sc);
+      g.strokeStyle = light; g.globalAlpha = 0.8; g.lineWidth = (1.6 + r() * 1.8) * sc;
+      path(); g.stroke();
+    }
+  }
+  g.restore();
+}
+
+/** A plain sleeve with a scrape or two on it, for the few undecaled sleeves that have been knocked about. */
+export function scuffSleeve(base: string, seed: number): THREE.CanvasTexture {
+  const c = document.createElement('canvas');
+  c.width = W; c.height = H;
+  const g = c.getContext('2d')!;
+  g.fillStyle = base;
+  g.fillRect(0, 0, W, H);
+  const r = rng(seed);
+  const sand = base !== GRAPHITE_BASE;
+  if (sand) gouges(g, r, W, H, 1 + Math.floor(r() * 2), '#3e3429', '#f6ead0', 14);
+  else gouges(g, r, W, H, 1 + Math.floor(r() * 2), '#a8a8ac', '#000000', 14);
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.anisotropy = 8;
+  return t;
+}
+
 /** One shared scratch map for the dark rubber and graphite parts: a mid grey, scuffed lighter (rougher) and darker (glossier). */
 export function scratchMap(): THREE.CanvasTexture {
   const c = document.createElement('canvas');
@@ -232,6 +285,7 @@ export function sleeveDecal(d: Decal): THREE.CanvasTexture {
   const sand = d.base !== GRAPHITE_BASE;
   const light = sand ? '#f4e6c4' : '#a4a4a8', dark = sand ? '#6e5a3a' : '#111111';
   scratches(g, r, W, H, 16, light, dark);
+  if (r() < 0.35) gouges(g, r, W, H, 1, sand ? '#3e3429' : '#a8a8ac', sand ? '#f6ead0' : '#000000', 14);
   g.save();
   g.lineCap = 'round';
   for (let i = 0; i < 46; i++) {

@@ -3,7 +3,7 @@ import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import { EDGES, VERTS, project } from './tesseract';
 import { st, tick, pose } from './state';
-import { sleeveDecal, scratchMap, ACCENTS } from './decals';
+import { sleeveDecal, scuffSleeve, scratchMap, ACCENTS } from './decals';
 
 // The mechanism. Every edge is a strut in three stages: a sleeve fixed to each ball joint, a stanchion sliding out of
 // each sleeve, a rod between the stanchions. Radii are constant, as on a real part; only the lengths change. The sleeves
@@ -95,7 +95,11 @@ export function Machine() {
       const sand = e.axis === 3;
       const axis = 'XYZW'[e.axis];
       const sleeves = [0, 1].map((end) => {
-        if ((i * 2 + end) % 3 !== 1) return mesh(cyl, plain[sand ? 1 : 0]);
+        if ((i * 2 + end) % 3 !== 1) {
+          // most plain; one in six of these has been knocked about
+          if ((i * 7 + end) % 6 !== 0) return mesh(cyl, plain[sand ? 1 : 0]);
+          return mesh(cyl, new THREE.MeshStandardMaterial({ map: scuffSleeve(sand ? SAND : GRAPHITE, i * 2 + end + 300), roughness: sand ? 0.78 : 0.62, metalness: 0.05 }));
+        }
         const serial = `SYS—${String(i + 1).padStart(2, '0')}${end ? 'B' : 'A'}`;
         const accent = ACCENTS[(i * 3 + end) % ACCENTS.length];
         const map = sleeveDecal({ base: sand ? SAND : GRAPHITE, ink: sand ? INK : PAPER, serial, axis, seed: seed++, accent, flip: end === 1 });

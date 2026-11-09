@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { useGLTF } from '@react-three/drei';
 import { DecalGeometry } from 'three/examples/jsm/geometries/DecalGeometry.js';
-import { threeMark, pmndrsMark, githubMark, scratches } from './decals';
+import { threeMark, pmndrsMark, githubMark, scratches, gouges } from './decals';
 
 // The device: a ball modelled in Blender (model/device.blend), exported to public/device.glb. A graphite core
 // with one principal eye looking along -z, a blue collar, two green ring pods on the sides, and round it four shell
@@ -48,8 +48,11 @@ function makeMarks() {
     g.fillText('CDVMBR 08 · UNIT 01', 256, 34);
   }));
   const github = decalMat(canvasTex(128, 128, (g) => { g.globalAlpha = 0.8; githubMark(g, 32, 32, 64, INK); }));
-  const scuff = [11, 29, 47, 63, 83].map((seed) => decalMat(canvasTex(256, 256, (g) => {
-    scratches(g, rngOf(seed), 256, 256, 9, '#e6e6e0', '#000000', 0.5);
+  // scuffs: hairlines, and on two of them a proper scrape that reads from the main view
+  const scuff = [11, 29, 47, 63, 83].map((seed, i) => decalMat(canvasTex(256, 256, (g) => {
+    const r = rngOf(seed);
+    scratches(g, r, 256, 256, 9, '#e6e6e0', '#000000', 0.5);
+    if (i === 1 || i === 4) gouges(g, r, 256, 256, 1, '#d2d2cc', '#000000', 2.6);
   })));
   return { three, pmndrs, serial, github, scuff };
 }
