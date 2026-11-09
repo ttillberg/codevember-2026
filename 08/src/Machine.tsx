@@ -124,7 +124,6 @@ export function Machine() {
   useFrame((_, dt) => {
     dt = Math.min(dt, 0.05);
     tick(dt);
-    parts.group.rotation.y = st.turntable.angle;
 
     const m = turn([st.angle, 0, 0]);
     const { P, dir, back, q, qb, dummy, side } = tmp;
