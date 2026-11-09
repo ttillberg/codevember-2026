@@ -27,6 +27,7 @@ function Rig({ children }: { children: React.ReactNode }) {
 export function App() {
   const [program, setProgram] = useState(st.program);
   const [smooth, setSmooth] = useState(st.smooth);
+  const [pilot, setPilot] = useState(drone.pilot);
   // drag turns the machine, not the camera; the wheel zooms
   const drag = useRef<{ x: number; y: number; t: number } | null>(null);
   const onDown = (e: React.PointerEvent) => { if (e.button === 0) { drag.current = { x: e.clientX, y: e.clientY, t: performance.now() }; rig.vel[0] = rig.vel[1] = 0; } };
@@ -44,16 +45,34 @@ export function App() {
   const onWheel = (e: React.WheelEvent) => { rig.zoom = Math.min(18, Math.max(6, rig.zoom * Math.exp(e.deltaY * 0.001))); };
 
   useEffect(() => {
+    // at the controls: w s thrust, a d and the side arrows yaw, up and down pitch; the keys are held, not tapped
+    const keys = drone.keys;
     const down = (e: KeyboardEvent) => {
-      if (e.key === ' ') { e.preventDefault(); st.program = !st.program; setProgram(st.program); }
-      if (e.key === 'm') { st.smooth = !st.smooth; setSmooth(st.smooth); }
-      if (e.key === 'ArrowRight') { e.preventDefault(); st.crank = 1; }
-      if (e.key === 'ArrowLeft') { e.preventDefault(); st.crank = -1; }
+      const k = e.key.toLowerCase();
+      if (k === ' ') { e.preventDefault(); st.program = !st.program; setProgram(st.program); }
+      if (k === 'm') { st.smooth = !st.smooth; setSmooth(st.smooth); }
+      if (k === 'p') { drone.pilot = !drone.pilot; setPilot(drone.pilot); keys.thrust = keys.yaw = keys.pitch = 0; st.crank = 0; }
+      if (drone.pilot) {
+        if (k === 'w') keys.thrust = 1;
+        if (k === 's') keys.thrust = -1;
+        if (k === 'a' || k === 'arrowleft') keys.yaw = 1;
+        if (k === 'd' || k === 'arrowright') keys.yaw = -1;
+        if (k === 'arrowup') keys.pitch = 1;
+        if (k === 'arrowdown') keys.pitch = -1;
+        if (k.startsWith('arrow')) e.preventDefault();
+        return;
+      }
+      if (k === 'arrowright') { e.preventDefault(); st.crank = 1; }
+      if (k === 'arrowleft') { e.preventDefault(); st.crank = -1; }
     };
     const up = (e: KeyboardEvent) => {
-      if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') st.crank = 0;
+      const k = e.key.toLowerCase();
+      if (k === 'arrowright' || k === 'arrowleft') st.crank = 0;
+      if (k === 'w' || k === 's') keys.thrust = 0;
+      if (k === 'a' || k === 'd' || k === 'arrowleft' || k === 'arrowright') keys.yaw = 0;
+      if (k === 'arrowup' || k === 'arrowdown') keys.pitch = 0;
     };
-    const blur = () => { st.crank = 0; };
+    const blur = () => { st.crank = 0; keys.thrust = keys.yaw = keys.pitch = 0; };
     addEventListener('keydown', down);
     addEventListener('keyup', up);
     addEventListener('blur', blur);
@@ -85,10 +104,16 @@ export function App() {
       {CLEAN ? null : (
         <div className="cam" onClick={() => { drone.view = drone.view === 'pov' ? 'follow' : 'pov'; }} />
       )}
-      {CLEAN ? null : <div className="keys">
+      {CLEAN ? null : pilot ? <div className="keys">
+        <span><kbd>w s</kbd>thrust</span>
+        <span><kbd>a d</kbd>yaw</span>
+        <span><kbd>↑ ↓</kbd>pitch</span>
+        <span><kbd>p</kbd>let go</span>
+      </div> : <div className="keys">
         <span><kbd>space</kbd>{program ? 'stop program' : 'run program'}</span>
         <span><kbd>drag</kbd>turn, sets the way</span>
         <span><kbd>m</kbd>{smooth ? 'servo' : 'smooth'}</span>
+        <span><kbd>p</kbd>take the controls</span>
       </div>}
     </>
   );

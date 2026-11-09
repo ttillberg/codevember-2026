@@ -122,7 +122,9 @@ export function DroneCam() {
     tmp.pos.set(c[0], c[1], c[2]);
     tmp.vel.set(c[0] - cell.last[0], c[1] - cell.last[1], c[2] - cell.last[2]);
     cell.last = c;
-    if (tmp.vel.lengthSq() > 1e-8 && tmp.vel.lengthSq() < 0.25) cell.look.lerp(tmp.vel.normalize(), 0.08).normalize();
+    // the look: the way it is going; at the controls, the way the eye points
+    if (drone.pilot) cell.look.lerp(tmp.at.set(0, 0, -1).applyQuaternion(drone.q), 0.25).normalize();
+    else if (tmp.vel.lengthSq() > 1e-8 && tmp.vel.lengthSq() < 0.25) cell.look.lerp(tmp.vel.normalize(), 0.08).normalize();
     // No gimbal lock: the view keeps its own up from the last frame, so looking straight up or down a room is just
     // another direction. It leans back towards the room's up only while the look is level, slowly.
     const { camUp } = tmp;

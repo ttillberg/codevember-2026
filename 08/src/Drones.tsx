@@ -4,7 +4,7 @@ import { useGLTF } from '@react-three/drei';
 import * as THREE from 'three';
 import { project, type V4 } from './tesseract';
 import { pose } from './state';
-import { drone, startCell, crossInto, faceQuad } from './drone';
+import { drone, startCell, crossInto, faceQuad, toCell, fromCell, wallCorners } from './drone';
 import { device, DEVICE_URL } from './device';
 
 // A device that lives in the tesseract: a ball with one eye, fins that are walls, a shutter. It is inside one of the eight cells, a cube with one coordinate held at
@@ -20,6 +20,8 @@ const SPEED = 0.5; // 4D units per second, cruising
 const ROOM = 0.62; // how far from a cell's walls a waypoint stays, so the drone keeps clear of the struts
 const FIELD = 0.12; // half-width, in path fraction, of the slow zone round the face
 const DIP = 0.55; // how much of the speed the field takes
+// at the controls: cell-space units per second squared and per second, radians per second
+const THRUST = 1.6, DRAG = 1.1, VMAX = 1.1, TURN = 1.7;
 
 type Leg = { kind: 'cruise' | 'portal'; pts: V4[]; len: number; face?: { axis: number; sign: number; corners: V4[] }; crossed: boolean };
 
@@ -72,6 +74,7 @@ export function Drones() {
       trail: [] as V4[], trailAt: 0,
       last: new THREE.Vector3(), vel: new THREE.Vector3(), heading: new THREE.Quaternion(),
       shield: 0, blink: Infinity, nextBlink: 3 + Math.random() * 5, // seconds into the blink; seconds to a blink of its own
+      wasPilot: false, yawV: 0, pitchV: 0,
     };
     s.p = roomIn(s);
     s.dir = unit4(sub4(roomIn(s), s.p));
@@ -131,7 +134,60 @@ export function Drones() {
     return { kind: 'portal', pts, len: pathLen(pts), face: { axis, sign, corners }, crossed: false };
   }
 
-  const tmp = useMemo(() => ({ v: new THREE.Vector3(), m: new THREE.Matrix4(), up: new THREE.Vector3(0, 1, 0), q: new THREE.Quaternion(), tilt: new THREE.Quaternion(), axis: new THREE.Vector3() }), []);
+  const tmp = useMemo(() => ({ v: new THREE.Vector3(), m: new THREE.Matrix4(), up: new THREE.Vector3(0, 1, 0), q: new THREE.Quaternion(), tilt: new THREE.Quaternion(), axis: new THREE.Vector3(), fwd: new THREE.Vector3(), right: new THREE.Vector3(), qa: new THREE.Quaternion() }), []);
+
+  /** Hands on: taken over, the device keeps the way it was going; let go, it carries on from there on its own. */
+  function takeOver(s: S) {
+    const here = toCell(s.p), ahead = toCell(add4(s.p, s.dir, 0.1));
+    const v = new THREE.Vector3(ahead[0] - here[0], ahead[1] - here[1], ahead[2] - here[2]);
+    if (v.lengthSq() < 1e-8) v.set(0, 0, -1);
+    v.normalize();
+    tmp.m.lookAt(new THREE.Vector3(), v, tmp.up);
+    drone.q.setFromRotationMatrix(tmp.m);
+    drone.cvel = [v.x * SPEED, v.y * SPEED, v.z * SPEED];
+    s.yawV = s.pitchV = 0;
+  }
+  function letGo(s: S) {
+    s.p[s.held] = s.sign;
+    s.leg = null; s.came = null;
+  }
+  /** One step at the controls, in cell space: eased yaw and pitch, thrust along the eye against drag, and the same
+   * crossing as on its own when it goes through a wall; the field round the walls slows it too. Returns the field. */
+  function pilot(s: S, dt: number): number {
+    const { fwd, right, qa } = tmp, k = drone.keys;
+    s.yawV += (k.yaw * TURN - s.yawV) * Math.min(1, dt * 6);
+    s.pitchV += (k.pitch * TURN - s.pitchV) * Math.min(1, dt * 6);
+    right.set(1, 0, 0).applyQuaternion(drone.q);
+    drone.q.premultiply(qa.setFromAxisAngle(tmp.up, s.yawV * dt)).premultiply(qa.setFromAxisAngle(right, s.pitchV * dt)).normalize();
+    fwd.set(0, 0, -1).applyQuaternion(drone.q);
+    const c = toCell(s.p), cv = drone.cvel;
+    // the nearest wall and the field there
+    let dmin = Infinity, kw = 0, tw = 1;
+    for (let i = 0; i < 3; i++) for (const t of [-1, 1]) {
+      const dist = Math.abs(drone.centre[i] + t - c[i]);
+      if (dist < dmin) { dmin = dist; kw = i; tw = t; }
+    }
+    const field = DIP * Math.exp(-((dmin / 0.22) ** 2));
+    const drag = Math.exp(-DRAG * dt);
+    for (let i = 0; i < 3; i++) cv[i] = (cv[i] + fwd.getComponent(i) * k.thrust * THRUST * dt) * drag;
+    const sp = Math.hypot(cv[0], cv[1], cv[2]);
+    if (sp > VMAX) for (let i = 0; i < 3; i++) cv[i] *= VMAX / sp;
+    for (let i = 0; i < 3; i++) c[i] += cv[i] * (1 - field) * dt;
+    // the wall ahead lights as it closes in, and through: the same swap of held axis as on its own
+    drone.flash.corners = wallCorners(kw, tw);
+    drone.flash.a = Math.exp(-(((dmin - 0.1) / 0.12) ** 2));
+    const over = c[kw] - (drone.centre[kw] + tw);
+    if (over * tw > 0) {
+      crossInto(drone.axisOf[kw], tw * drone.A[kw][drone.axisOf[kw]]);
+      s.held = drone.held; s.sign = drone.sign;
+      s.blink = 0;
+    }
+    const prev = s.p;
+    s.p = fromCell(c);
+    const step = sub4(s.p, prev);
+    if (len4(step) > 1e-6) s.dir = unit4(step);
+    return field;
+  }
 
   useFrame((_, dt) => {
     dt = Math.min(dt, 0.05);
@@ -139,30 +195,36 @@ export function Drones() {
     const now = performance.now() / 1000;
     const s = d;
 
-    // move, in 4D, along the leg; the field round a face slows it
-    if (!s.leg) { s.leg = Math.random() < 0.5 ? cruiseLeg(s) : portalLeg(s); s.s = 0; }
-    const leg = s.leg;
-    const field = leg.kind === 'portal' ? DIP * Math.exp(-(((s.s - 0.5) / FIELD) ** 2)) : 0;
-    s.s += (SPEED * (1 - field) / leg.len) * dt;
-    const prev = s.p;
-    s.p = path(leg.pts, Math.min(1, s.s));
-    const step = sub4(s.p, prev);
-    if (len4(step) > 1e-6) s.dir = unit4(step);
-    if (leg.kind === 'portal' && !leg.crossed && s.s >= 0.5) {
-      // through: the face's axis is held now, the old one is free
-      leg.crossed = true;
-      s.came = [s.held, s.sign];
-      crossInto(leg.face!.axis, leg.face!.sign);
-      s.held = leg.face!.axis; s.sign = leg.face!.sign;
+    if (drone.pilot !== s.wasPilot) { s.wasPilot = drone.pilot; if (drone.pilot) takeOver(s); else letGo(s); }
+    let field = 0, leg: Leg | null = null;
+    if (drone.pilot) {
+      field = pilot(s, dt);
+    } else {
+      // move, in 4D, along the leg; the field round a face slows it
+      if (!s.leg) { s.leg = Math.random() < 0.5 ? cruiseLeg(s) : portalLeg(s); s.s = 0; }
+      leg = s.leg;
+      field = leg.kind === 'portal' ? DIP * Math.exp(-(((s.s - 0.5) / FIELD) ** 2)) : 0;
+      s.s += (SPEED * (1 - field) / leg.len) * dt;
+      const prev = s.p;
+      s.p = path(leg.pts, Math.min(1, s.s));
+      const step = sub4(s.p, prev);
+      if (len4(step) > 1e-6) s.dir = unit4(step);
+      if (leg.kind === 'portal' && !leg.crossed && s.s >= 0.5) {
+        // through: the face's axis is held now, the old one is free
+        leg.crossed = true;
+        s.came = [s.held, s.sign];
+        crossInto(leg.face!.axis, leg.face!.sign);
+        s.held = leg.face!.axis; s.sign = leg.face!.sign;
+        s.blink = 0;
+      }
+      if (s.s >= 1) { s.p[s.held] = s.sign; s.leg = null; }
+      // the face lights just before the drone goes through, and is out again as it does
+      if (leg.kind === 'portal') {
+        drone.flash.corners = leg.face!.corners;
+        drone.flash.a = Math.exp(-(((s.s - 0.4) / 0.06) ** 2));
+      } else drone.flash.a = 0;
     }
-    if (s.s >= 1) { s.p[s.held] = s.sign; s.leg = null; }
-
     drone.p = s.p;
-    // the face lights just before the drone goes through, and is out again as it does
-    if (leg.kind === 'portal') {
-      drone.flash.corners = leg.face!.corners;
-      drone.flash.a = Math.exp(-(((s.s - 0.4) / 0.06) ** 2));
-    } else drone.flash.a = 0;
     if (now - s.trailAt > TRAIL_EVERY) {
       s.trail.push(s.p.slice() as V4);
       if (s.trail.length > TRAIL) s.trail.shift();
@@ -173,7 +235,6 @@ export function Drones() {
     // the shutter blinks once at the crossing and now and then on its own
     const wantShield = field > 0.12 ? 1 : 0;
     s.shield += (wantShield - s.shield) * Math.min(1, dt * (wantShield ? 5 : 2.5));
-    if (leg.kind === 'portal' && leg.crossed && s.blink === Infinity && s.s < 0.55) s.blink = 0;
     s.nextBlink -= dt;
     if (s.nextBlink <= 0) { s.blink = 0; s.nextBlink = 4 + Math.random() * 6; }
     s.blink += dt;

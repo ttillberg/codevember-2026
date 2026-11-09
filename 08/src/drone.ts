@@ -18,6 +18,12 @@ export const drone = {
   crossings: 0,
   /** The corner camera: the drone's own eyes, or a chase camera behind it. A click on the frame swaps. */
   view: 'pov' as 'pov' | 'follow',
+  /** Someone at the controls: keys from the page, the device's orientation (its eye along -z) and speed, in cell
+   * space. On its own it flies its legs; piloted it has momentum, thrust along the eye, yaw and pitch. */
+  pilot: false,
+  keys: { thrust: 0, yaw: 0, pitch: 0 },
+  q: new THREE.Quaternion(),
+  cvel: [0, 0, 0],
   /** The walls round the body, 0 open to 1 shut, and the shutter over the eye, same scale; the cam's copy follows. */
   shield: 0,
   shutter: 0,
@@ -47,14 +53,16 @@ export function startCell(held: number, sign: number) {
 
 type CellMap = { held: number; sign: number; A: number[][]; b: number[]; axisOf: number[]; centre: number[] };
 
-/** The crossing rule: through the face on row `k` at side `t`, the new cell holds that row's axis and frees the axis
- * that was held, inward, two rooms on. */
+/** The crossing rule: through the face where row `k`'s axis is `t` (in 4D), the new cell holds that axis and frees
+ * the axis that was held, inward, two rooms on in cell space. The row may run its axis backwards, so the side of the
+ * room the wall is on is `t` times the row's sign; the next room is on that side, and the freed axis runs in from it. */
 function crossRow(c: CellMap, k: number, t: number) {
   const f = c.axisOf[k];
   const old = c.held, s = c.sign;
-  c.A[k] = [0, 1, 2, 3].map((i) => (i === old ? -t * s : 0));
-  c.b[k] += 2 * t;
-  c.centre[k] += 2 * t;
+  const side = t * c.A[k][f];
+  c.A[k] = [0, 1, 2, 3].map((i) => (i === old ? -side * s : 0));
+  c.b[k] = c.centre[k] + 2 * side;
+  c.centre[k] += 2 * side;
   c.axisOf[k] = old;
   c.held = f; c.sign = t;
 }
@@ -69,4 +77,22 @@ export function crossInto(f: number, t: number) {
 export function toCell(p: V4, out: number[] = [0, 0, 0]): number[] {
   for (let k = 0; k < 3; k++) out[k] = drone.A[k][0] * p[0] + drone.A[k][1] * p[1] + drone.A[k][2] * p[2] + drone.A[k][3] * p[3] + drone.b[k];
   return out;
+}
+
+/** Back from cell space: the held coordinate on its wall, each row's axis from its row. Rows hold one ±1 each. */
+export function fromCell(c: number[], out: V4 = [0, 0, 0, 0]): V4 {
+  out[drone.held] = drone.sign;
+  for (let k = 0; k < 3; k++) { const a = drone.axisOf[k]; out[a] = (c[k] - drone.b[k]) / drone.A[k][a]; }
+  return out;
+}
+
+/** The four joints of the wall on row `k`, side `t`, of the current cell, in 4D. */
+export function wallCorners(k: number, t: number): V4[] {
+  const a = drone.axisOf[k], side = t * drone.A[k][a];
+  const free = [0, 1, 2, 3].filter((i) => i !== a && i !== drone.held);
+  return [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([u, v]) => {
+    const c: V4 = [0, 0, 0, 0];
+    c[drone.held] = drone.sign; c[a] = side; c[free[0]] = u; c[free[1]] = v;
+    return c;
+  });
 }
