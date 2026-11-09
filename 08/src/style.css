@@ -34,44 +34,14 @@ body {
   position: fixed;
   top: 24px;
   left: 24px;
-  width: 300px;
   pointer-events: none;
 }
-.brand { display: flex; flex-direction: column; gap: 2px; }
-.brand b {
-  font-size: 34px;
+.plate b {
+  font-size: 22px;
   font-weight: 900;
-  letter-spacing: -0.02em;
+  letter-spacing: -0.01em;
   line-height: 1;
 }
-.brand b::after {
-  content: '';
-  display: inline-block;
-  width: 10px; height: 10px;
-  margin-left: 10px;
-  background: var(--pink);
-  vertical-align: 0.5em;
-  box-shadow: 16px 0 0 var(--lime), 32px 0 0 var(--orange);
-}
-.brand i {
-  font-style: normal;
-  font-weight: 600;
-  font-size: 12px;
-  letter-spacing: 0.12em;
-  color: var(--mute);
-}
-.plate p { margin: 14px 0 0; color: var(--mute); }
-
-.readout {
-  margin-top: 14px;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px 14px;
-  font: 600 11px/1 Menlo, "SF Mono", monospace;
-  letter-spacing: 0.06em;
-  color: var(--mute);
-}
-.readout b { color: var(--ink); font-weight: 700; }
 
 .keys {
   position: fixed;

@@ -7,41 +7,12 @@ import { Drones } from './Drones';
 import { DroneCam } from './DroneCam';
 import { Laser, laser } from './Laser';
 import { drone } from './drone';
-import { st, phase } from './state';
+import { st } from './state';
 
-function Readout() {
-  const ref = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    let raf = 0;
-    const tick = () => {
-      const el = ref.current;
-      if (el) {
-        const a = st.angle * 180 / Math.PI;
-        const cells = el.querySelectorAll('b');
-        cells[0].textContent = `${'XYZ'[st.plane]}W ${String(Math.round(((a % 360) + 360) % 360)).padStart(3, '0')}°`;
-        cells[1].textContent = String(st.quarters);
-        cells[2].textContent = st.lengths.min.toFixed(2);
-        cells[3].textContent = st.lengths.max.toFixed(2);
-        cells[4].textContent = phase();
-      }
-      raf = requestAnimationFrame(tick);
-    };
-    raf = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(raf);
-  }, []);
-  return (
-    <div className="readout" ref={ref}>
-      <span>PLANE <b>XW 000°</b></span>
-      <span>QUARTERS <b>0</b></span>
-      <span>STRUT <b>0.00</b>–<b>0.00</b></span>
-      <span>SERVO <b>HOLD</b></span>
-    </div>
-  );
-}
-
-const CLEAN = new URLSearchParams(location.search).has('clean'); // no page furniture, for the screengrab
-if (new URLSearchParams(location.search).has('follow')) drone.view = 'follow';
-if (new URLSearchParams(location.search).has('laser')) { laser.on = true; laser.x = innerWidth * 0.5; laser.y = innerHeight * 0.48; } // for a screenshot
+const PARAMS = new URLSearchParams(location.search);
+const CLEAN = PARAMS.has('clean'); // no page furniture, for the screengrab
+if (PARAMS.has('follow')) drone.view = 'follow';
+if (PARAMS.has('laser')) { laser.on = true; laser.x = innerWidth * 0.5; laser.y = innerHeight * 0.48; } // for a screenshot
 
 export function App() {
   const [program, setProgram] = useState(st.program);
@@ -104,14 +75,7 @@ export function App() {
           />
         </Canvas>
       </div>
-      {CLEAN ? null : <div className="plate">
-        <div className="brand">
-          <b>TESSERAKT</b>
-          <i>四次元 · 超立方体 · UNIT 08</i>
-        </div>
-        <p>A hypercube built for real. 32 telescopic struts on 16 ball joints, one crank turning it a quarter at a time through the XW, YW or ZW plane: a 4D turn seen in 3D is an object whose edges change length. Everything else is rigid.</p>
-        <Readout />
-      </div>}
+      {CLEAN ? null : <div className="plate"><b>CDVMBR 08</b></div>}
       {CLEAN ? null : (
         <div className="cam" onClick={() => { drone.view = drone.view === 'pov' ? 'follow' : 'pov'; }} />
       )}

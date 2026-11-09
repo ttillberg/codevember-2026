@@ -29,8 +29,20 @@ function rng(seed: number) {
   };
 }
 
-const BRANDS = ['ASYNC SYSTEMS', '非同期システム', 'HYPER//CUBE', 'テッセラクト', 'ASYNC SYSTEMS', '超立方体 UNIT 77'];
-const SMALL = ['4D · 2.60 · STICKY', 'FIELD SVC 2 · 非同期', 'MAX 2.5 BAR', 'W-AXIS ONLY', 'ASYNC//SYSTEMS · UNIT 77', 'TELESCOPIC · 3 STG'];
+const BRANDS = ['CDVMBR 08', 'three.js', 'pmndrs', 'CDVMBR 08', 'ASYNC SYSTEMS'];
+const SMALL = ['CODEVEMBER 2026 · DAY 08', 'R3F · DREI · THREE', 'MAX 2.5 BAR', 'W-AXIS ONLY', 'ASYNC//SYSTEMS · UNIT 08', 'TELESCOPIC · 3 STG'];
+
+/** The three.js mark: a triangle cut into triangles, two levels down, in strokes. */
+function threeMark(g: CanvasRenderingContext2D, x: number, y: number, size: number, depth: number) {
+  const h = size * Math.sqrt(3) / 2;
+  g.beginPath();
+  g.moveTo(x, y); g.lineTo(x + size, y); g.lineTo(x + size / 2, y + h); g.closePath();
+  g.stroke();
+  if (depth === 0) return;
+  threeMark(g, x, y, size / 2, depth - 1);
+  threeMark(g, x + size / 2, y, size / 2, depth - 1);
+  threeMark(g, x + size / 4, y + h / 2, size / 2, depth - 1);
+}
 
 export function sleeveDecal(d: Decal): THREE.CanvasTexture {
   const c = document.createElement('canvas');
@@ -77,8 +89,14 @@ export function sleeveDecal(d: Decal): THREE.CanvasTexture {
   g.textBaseline = 'middle';
   const brand = pick(BRANDS);
   const bx = Math.floor(r() * 120);
-  g.fillText(brand, bx, 110);
-  g.fillText(brand, bx + W, 110);
+  if (brand === 'three.js') { // the mark before the word
+    g.lineWidth = 3; g.strokeStyle = d.ink;
+    threeMark(g, bx, 88, 44, 2); threeMark(g, bx + W, 88, 44, 2);
+    g.fillText(brand, bx + 56, 110); g.fillText(brand, bx + W + 56, 110);
+  } else {
+    g.fillText(brand, bx, 110);
+    g.fillText(brand, bx + W, 110);
+  }
   g.font = '500 17px "Helvetica Neue", Helvetica, Arial, sans-serif';
   if (r() < 0.5) g.fillText(pick(SMALL), bx + 2, 150 + 16);
   g.restore();
@@ -121,11 +139,10 @@ export function sleeveDecal(d: Decal): THREE.CanvasTexture {
     g.fillStyle = d.ink;
     g.fillRect(220 + Math.floor(r() * 60), 236, 70, 6);
   }
-  // a little pictogram: the net of a cube
+  // a little pictogram: the three.js mark
   if (has.picto) {
-    g.fillStyle = d.ink;
-    const px = 300, py = 290;
-    for (const [i, j] of [[0, 0], [1, 0], [2, 0], [1, 1], [1, -1], [3, 0]]) g.fillRect(px + i * 22, py + j * 22, 18, 18);
+    g.lineWidth = 2.5; g.strokeStyle = d.ink;
+    threeMark(g, 300, 280, 64, 2);
   }
 
   const t = new THREE.CanvasTexture(c);
