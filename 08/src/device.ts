@@ -1,7 +1,8 @@
 import * as THREE from 'three';
 import { useGLTF } from '@react-three/drei';
 import { DecalGeometry } from 'three/examples/jsm/geometries/DecalGeometry.js';
-import { threeMark, pmndrsMark, githubMark, scratches, gouges } from './decals';
+import { scratches, gouges } from './decals';
+import { logo, withLogos, type LogoName } from './logos';
 
 // The device: a ball modelled in Blender (model/device.blend), exported to public/device.glb. A graphite core
 // with one principal eye looking along -z, a blue collar, two green ring pods on the sides, and round it four shell
@@ -39,15 +40,24 @@ const decalMat = (map: THREE.Texture) => new THREE.MeshStandardMaterial({
 
 let marks: { three: THREE.Material; pmndrs: THREE.Material; serial: THREE.Material; github: THREE.Material; scuff: THREE.Material[] } | null = null;
 function makeMarks() {
-  const three = decalMat(canvasTex(256, 256, (g) => { g.strokeStyle = INK; g.lineWidth = 5; g.globalAlpha = 0.85; threeMark(g, 128, 130, 200); }));
-  const pmndrs = decalMat(canvasTex(256, 256, (g) => { g.globalAlpha = 0.85; pmndrsMark(g, 36, 36, 184, INK); }));
+  // the marks are images: drawn on when they have loaded, and the texture flagged
+  const mark = (name: LogoName) => {
+    const tex = canvasTex(256, 256, () => {});
+    withLogos(() => {
+      const g = (tex.image as HTMLCanvasElement).getContext('2d')!;
+      const img = logo(name, 512, INK);
+      if (img) { g.globalAlpha = 0.85; g.drawImage(img, 16, 16, 224, 224); }
+      tex.needsUpdate = true;
+    });
+    return decalMat(tex);
+  };
+  const three = mark('three'), pmndrs = mark('pmndrs'), github = mark('github');
   const serial = decalMat(canvasTex(512, 64, (g) => {
     g.fillStyle = INK; g.globalAlpha = 0.8;
     g.font = '700 30px Menlo, "Courier New", monospace';
     g.textBaseline = 'middle'; g.textAlign = 'center';
     g.fillText('CDVMBR 08 · UNIT 01', 256, 34);
   }));
-  const github = decalMat(canvasTex(128, 128, (g) => { g.globalAlpha = 0.8; githubMark(g, 32, 32, 64, INK); }));
   // scuffs: hairlines, and on two of them a proper scrape that reads from the main view
   const scuff = [11, 29, 47, 63, 83].map((seed, i) => decalMat(canvasTex(256, 256, (g) => {
     const r = rngOf(seed);

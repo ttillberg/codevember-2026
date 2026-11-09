@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { logo, withLogos } from './logos';
 
 // Decal textures for the sleeves, drawn on canvases: brand, serial, barcode, a hazard band at the mouth, a coloured
 // tab. Canvas x runs round the tube, canvas y along it, the top of the canvas at the sleeve's open end.
@@ -32,59 +33,8 @@ function rng(seed: number) {
 const GRAPHITE_BASE = '#3a3a3d';
 const SMALL = ['CODEVEMBER 2026 · DAY 08', 'R3F · DREI · THREE', 'MAX 2.5 BAR', 'W-AXIS ONLY', 'ASYNC//SYSTEMS · UNIT 08', 'TELESCOPIC · 3 STG'];
 
-/** The three.js mark: a triangle cut into n rows of triangles, in strokes, tilted like the logo. (x, y) is the centre. */
-export function threeMark(g: CanvasRenderingContext2D, x: number, y: number, size: number, n = 4) {
-  const h = size * Math.sqrt(3) / 2;
-  g.save();
-  g.translate(x, y);
-  g.rotate(0.3);
-  g.translate(-size / 2, -h / 3);
-  const A = [0, 0], B = [size, 0], C = [size / 2, h];
-  const at = (p: number[], q: number[], t: number) => [p[0] + (q[0] - p[0]) * t, p[1] + (q[1] - p[1]) * t];
-  g.beginPath();
-  for (let k = 0; k <= n; k++) {
-    const t = k / n;
-    for (const [p, q, r] of [[A, B, C], [B, C, A], [C, A, B]]) {
-      const u = at(p, r, t), v = at(q, r, t);
-      g.moveTo(u[0], u[1]); g.lineTo(v[0], v[1]);
-    }
-  }
-  g.lineJoin = 'round';
-  g.stroke();
-  g.restore();
-}
 
-/** The pmndrs mark: a cluster of pixel squares, a big one top right, the overlap of two a half-tone. (x, y) is the top left. */
-export function pmndrsMark(g: CanvasRenderingContext2D, x: number, y: number, size: number, color: string) {
-  const u = size / 60;
-  g.save();
-  g.translate(x, y);
-  g.scale(u, u);
-  g.fillStyle = color;
-  g.fillRect(22, 0, 40, 40); // big
-  g.fillRect(0, 18, 22, 22); // left
-  g.fillRect(22, 40, 20, 20); // below
-  g.globalCompositeOperation = 'destination-out'; // the overlap lets the surface through, half
-  g.globalAlpha = 0.55;
-  g.fillRect(22, 18, 20, 22);
-  g.restore();
-}
 
-// GitHub octicon `mark-github`, 16x16 viewBox, MIT
-const GITHUB = typeof Path2D !== 'undefined'
-  ? new Path2D('M8 0c4.42 0 8 3.58 8 8a8.013 8.013 0 0 1-5.45 7.59c-.4.08-.55-.17-.55-.38 0-.27.01-1.13.01-2.2 0-.75-.25-1.23-.54-1.48 1.78-.2 3.65-.88 3.65-3.95 0-.88-.31-1.59-.82-2.15.08-.2.36-1.02-.08-2.12 0 0-.67-.22-2.2.82-.64-.18-1.32-.27-2-.27-.68 0-1.36.09-2 .27-1.53-1.03-2.2-.82-2.2-.82-.44 1.1-.16 1.92-.08 2.12-.51.56-.82 1.28-.82 2.15 0 3.06 1.86 3.75 3.64 3.95-.23.2-.44.55-.51 1.07-.46.21-1.61.55-2.33-.66-.15-.24-.6-.83-1.23-.82-.67.01-.27.38.01.53.34.19.73.9.82 1.13.16.45.68 1.31 2.69.94 0 .67.01 1.3.01 1.49 0 .21-.15.45-.55.38A7.995 7.995 0 0 1 0 8c0-4.42 3.58-8 8-8Z')
-  : null;
-
-/** The GitHub mark, filled. (x, y) is the top left. */
-export function githubMark(g: CanvasRenderingContext2D, x: number, y: number, size: number, color: string) {
-  if (!GITHUB) return;
-  g.save();
-  g.translate(x, y);
-  g.scale(size / 16, size / 16);
-  g.fillStyle = color;
-  g.fill(GITHUB);
-  g.restore();
-}
 
 /** Hairline scratches and nicks on a canvas: mostly along y, a few across, light and dark at low alpha. */
 export function scratches(g: CanvasRenderingContext2D, r: () => number, w: number, h: number, n: number, light: string, dark: string, alpha = 0.22) {
@@ -211,38 +161,34 @@ export function sleeveDecal(d: Decal): THREE.CanvasTexture {
   // lettering: canvas x runs round the tube the way a viewer outside reads it, so text is drawn as is
   const upright = () => { if (d.flip) { g.translate(W / 2, H / 2); g.rotate(Math.PI); g.translate(-W / 2, -H / 2); } };
 
-  // brand, round the tube: one logo per sleeve, small, the GitHub one smallest
-  if (has.brand) {
-  g.save();
-  upright();
-  g.fillStyle = d.ink;
-  g.strokeStyle = d.ink;
-  g.textBaseline = 'middle';
-  const logo = (['word', 'three', 'pmndrs', 'github'] as const)[d.seed % 4];
+  // brand, round the tube: one mark per sleeve, the real ones, small, the GitHub one smallest; or the wordmark.
+  // The marks are images: the block is laid on when they have loaded, and the texture flagged.
+  const brand = (['word', 'three', 'pmndrs', 'github'] as const)[d.seed % 4];
   const bx = 20 + Math.floor(r() * 100);
-  g.globalAlpha = 0.92;
-  for (const o of [0, W]) { // twice, so it wraps round the seam
-    g.font = '800 46px "Helvetica Neue", Helvetica, Arial, sans-serif';
-    if (logo === 'three') {
-      g.lineWidth = 2;
-      threeMark(g, bx + 24 + o, 100, 44);
-      g.fillText('three.js', bx + 62 + o, 110);
-    } else if (logo === 'pmndrs') {
-      pmndrsMark(g, bx + o, 82, 40, d.ink);
-      g.fillText('pmndrs', bx + 52 + o, 110);
-    } else {
-      g.fillText('CDVMBR 08', bx + o, 110);
+  const small = r() < 0.5 ? pick(SMALL) : null;
+  const drawBrand = () => {
+    if (!has.brand) return;
+    g.save();
+    upright();
+    g.fillStyle = d.ink;
+    g.textBaseline = 'middle';
+    g.globalAlpha = 0.92;
+    for (const o of [0, W]) { // twice, so it wraps round the seam
+      if (brand === 'word') {
+        g.font = '800 46px "Helvetica Neue", Helvetica, Arial, sans-serif';
+        g.fillText('CDVMBR 08', bx + o, 110);
+      } else {
+        const size = brand === 'github' ? 34 : brand === 'three' ? 64 : 52;
+        const img = logo(brand, size * 2, d.ink);
+        if (img) g.drawImage(img, bx + o, 110 - size / 2, size, size);
+      }
+      if (small) {
+        g.font = '500 17px "Helvetica Neue", Helvetica, Arial, sans-serif';
+        g.fillText(small, bx + 2 + o, 166);
+      }
     }
-    g.font = '500 17px "Helvetica Neue", Helvetica, Arial, sans-serif';
-    if (logo === 'github') {
-      githubMark(g, bx + o, 140, 24, d.ink);
-      g.fillText('OPEN SOURCE', bx + 34 + o, 152);
-    } else if (r() < 0.5) {
-      g.fillText(pick(SMALL), bx + 2 + o, 166);
-    }
-  }
-  g.restore();
-  }
+    g.restore();
+  };
 
   // serial, along the tube
   if (has.serial) {
@@ -303,5 +249,6 @@ export function sleeveDecal(d: Decal): THREE.CanvasTexture {
   t.colorSpace = THREE.SRGBColorSpace;
   t.anisotropy = 8;
   t.wrapS = THREE.RepeatWrapping;
+  withLogos(() => { drawBrand(); t.needsUpdate = true; });
   return t;
 }
