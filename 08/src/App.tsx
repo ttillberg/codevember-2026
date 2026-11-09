@@ -38,11 +38,13 @@ const CLEAN = new URLSearchParams(location.search).has('clean'); // no page furn
 
 export function App() {
   const [program, setProgram] = useState(st.program);
+  const [smooth, setSmooth] = useState(st.smooth);
   const [shift, setShift] = useState(false);
   useEffect(() => {
     const down = (e: KeyboardEvent) => {
       if (e.key === ' ') { e.preventDefault(); st.program = !st.program; setProgram(st.program); }
       if (e.key === 't') st.turntable.on = !st.turntable.on;
+      if (e.key === 'm') { st.smooth = !st.smooth; setSmooth(st.smooth); }
       if (e.key === 'Shift') { st.shift = true; setShift(true); }
       if (e.key === 'ArrowRight') { e.preventDefault(); st.crank = 1; }
       if (e.key === 'ArrowLeft') { e.preventDefault(); st.crank = -1; }
@@ -98,6 +100,7 @@ export function App() {
         <span><kbd>⇧</kbd>drag crank</span>
         <span><kbd>drag</kbd>orbit</span>
         <span><kbd>t</kbd>turntable</span>
+        <span><kbd>m</kbd>{smooth ? 'servo' : 'smooth'}</span>
       </div>}
     </>
   );

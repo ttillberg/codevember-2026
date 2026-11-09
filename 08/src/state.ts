@@ -11,6 +11,7 @@ export const st = {
   target: 0.3, // where the servo is told to be
   vel: 0,
   program: true, // the servo picks its own targets
+  smooth: false, // M: the old motion, an even spin and a slow turntable, to compare
   next: 1.2, // seconds until the next step
   crank: 0, // held key, -1 0 1
   shift: false, // shift held: drag moves the target instead of orbiting
@@ -20,6 +21,7 @@ export const st = {
 };
 
 export const CRANK = 1.6; // rad/s of target with a key held
+const SPIN = 0.22, TURNTABLE = 0.08; // rad/s, the smooth mode
 
 /** Underdamped spring: stiff and a bit bouncy, the look of a first prototype's actuator. */
 const SERVO = { k: 360, zeta: 0.42 };
@@ -53,6 +55,15 @@ function step() {
 }
 
 export function tick(dt: number) {
+  if (st.smooth) {
+    if (st.program) st.target += SPIN * dt;
+    st.target += st.crank * CRANK * dt;
+    st.angle = st.target; st.vel = 0;
+    const t = st.turntable;
+    if (t.on) t.target += TURNTABLE * dt;
+    t.angle = t.target; t.vel = 0;
+    return;
+  }
   if (st.program) {
     st.next -= dt;
     if (st.next <= 0) step();
@@ -73,6 +84,7 @@ export function tick(dt: number) {
 
 /** For the readout: what the servo is doing. */
 export function phase(): string {
+  if (st.smooth) return 'SMOOTH';
   if (Math.abs(st.target - st.angle) > 1.5 * DEG) return 'MOVE';
   if (Math.abs(st.vel) > 0.05) return 'SETTLE';
   return 'HOLD';

@@ -2,7 +2,7 @@
 
 2026-11-08
 
-TESSERAKT, a hypercube built for real. A tesseract cannot exist in three dimensions, but its shadow can: turned in 4D and seen in perspective, it is a 3D object whose edges change length and nothing else. So that is the machine. 32 telescopic struts in three stages, sleeve, stanchion, rod, on 16 ball joints, with one servo cranking it through the XW plane in steps, the way a first prototype moves: hold, snap, overshoot, settle. Radii are constant like on a real part, only the lengths move. Painted sand and graphite with decals, silver rods, black seals, a coloured ring here and there, on graph paper. Space stops the program, the arrows or shift and drag turn it by hand, drag orbits, T stops the turntable. `?clean` hides the page furniture.
+TESSERAKT, a hypercube built for real. A tesseract cannot exist in three dimensions, but its shadow can: turned in 4D and seen in perspective, it is a 3D object whose edges change length and nothing else. So that is the machine. 32 telescopic struts in three stages, sleeve, stanchion, rod, on 16 ball joints, with one servo cranking it through the XW plane in steps, the way a first prototype moves: hold, snap, overshoot, settle. Radii are constant like on a real part, only the lengths move. Painted sand and graphite with decals, silver rods, black seals, a coloured ring here and there, on graph paper. Space stops the program, the arrows or shift and drag turn it by hand, drag orbits, T stops the turntable, M swaps the servo for an even spin. `?clean` hides the page furniture.
 
 ## How
 
