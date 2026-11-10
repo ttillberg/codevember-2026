@@ -165,34 +165,32 @@ const PlayPause = ({ playing }: { playing: boolean }) => (
     {playing ? <path d="M4 2.5h2.6v11H4zM9.4 2.5H12v11H9.4z" /> : <path d="M4.5 2.3 13.5 8l-9 5.7z" />}
   </svg>
 );
-// On a phone at the controls the fisheye view is a pad: held in the middle the probe flies forward; held between the
-// middle's ring and a dashed ring round it, it flies forward and turns towards the finger, both at once; held further
-// out, by the arrows, it only turns; it turns at the finger's angle from the middle (up and to the right, both at
-// once), for as long as it is held, and the finger can slide from one to another. Outlined arrows at the edges, the
-// dashed ring and a ring with a dot in the middle show it, the arrow nearest the finger lit. (Only the four ways, by
-// quarters, for a while; a FORWARD button before.)
+// On a phone at the controls the fisheye view is a pad: held in the middle the probe flies forward, and dragged out
+// of it, it keeps flying and turns towards the finger; put down outside the middle it only turns, no thrust. It turns
+// at the finger's angle from the middle (up and to the right, both at once), for as long as it is held. Outlined
+// arrows at the edges and a ring with a dot in the middle show it, the arrow nearest the finger lit. (A dashed ring
+// between, forward and turning inside it, for a moment; only the four ways, by quarters, for a while; a FORWARD
+// button before.)
 type Zone = 'c' | 't' | 'r' | 'b' | 'l' | null;
 const PAD_TURN = 1.3; // rad/s, held off the middle
-const PAD_MIDDLE = 44, PAD_BOTH = 68; // CSS px from the middle: forward only within the first, forward and turning within the second (the rings 64 and 120 across)
+const PAD_MIDDLE = 44; // CSS px from the middle: the middle, where a hold starts the thrust (its ring 64 across)
 function Pad() {
   const [zone, setZone] = useState<Zone>(null);
   const held = useRef<Zone>(null);
-  const [both, setBoth] = useState(false); // between the rings: forward and turning
-  const bothRef = useRef(false);
+  const go = useRef(false); // the hold started in the middle: it flies, wherever the finger goes after
   const dir = useRef<[number, number]>([0, 0]); // the way to turn, a unit vector, x right and y up
-  const hold = (z: Zone, b = false) => {
-    const go = z === 'c' || (z !== null && b);
-    drone.keys.thrust = go ? 1 : 0;
-    if (b !== bothRef.current) { bothRef.current = b; setBoth(b); }
+  const hold = (z: Zone) => {
+    drone.keys.thrust = z !== null && (go.current || z === 'c') ? 1 : 0;
     if (z === held.current) return;
     held.current = z; setZone(z);
   };
-  const holdAt = (e: React.PointerEvent) => {
+  const holdAt = (e: React.PointerEvent, start = false) => {
     const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
     const x = e.clientX - r.left - r.width / 2, y = e.clientY - r.top - r.height / 2, d = Math.hypot(x, y);
+    if (start) go.current = d < PAD_MIDDLE;
     if (d < PAD_MIDDLE) return hold('c');
     dir.current = [x / d, -y / d];
-    hold(Math.abs(x) > Math.abs(y) ? (x > 0 ? 'r' : 'l') : (y > 0 ? 'b' : 't'), d < PAD_BOTH);
+    hold(Math.abs(x) > Math.abs(y) ? (x > 0 ? 'r' : 'l') : (y > 0 ? 'b' : 't'));
   };
   useEffect(() => {
     // an edge held turns it a little every frame (the probe takes its turn a frame at a time)
@@ -214,12 +212,11 @@ function Pad() {
     </svg>
   );
   return (
-    <div className="pad" aria-label="Fly: hold the middle to go forward, round it to go forward and turn, an edge to turn" onContextMenu={(e) => e.preventDefault()}
-      onPointerDown={(e) => { e.preventDefault(); (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId); holdAt(e); }}
+    <div className="pad" aria-label="Fly: hold the middle to go forward and drag out of it to turn as it goes, hold off the middle to turn only" onContextMenu={(e) => e.preventDefault()}
+      onPointerDown={(e) => { e.preventDefault(); (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId); holdAt(e, true); }}
       onPointerMove={(e) => { if (held.current) holdAt(e); }}
-      onLostPointerCapture={() => hold(null)}>
+      onLostPointerCapture={() => { go.current = false; hold(null); }}>
       {(['t', 'r', 'b', 'l'] as const).map(arrow)}
-      <svg className={`dash ${both ? 'on' : ''}`} width={124} height={124} viewBox="0 0 124 124" aria-hidden><circle cx={62} cy={62} r={60} /></svg>
       <span className={`ring ${zone === 'c' ? 'on' : ''}`}><i /></span>
     </div>
   );
