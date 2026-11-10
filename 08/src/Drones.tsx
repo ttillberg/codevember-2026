@@ -132,6 +132,9 @@ const REACH3 = 1.9; // where the piece should sit when the device stops, in devi
 type Phase = 'seek' | 'dock' | 'settle' | 'catch' | 'turn' | 'rest';
 // at the controls: cell-space units per second squared and per second, radians per second
 const THRUST = 1.6, DRAG = 1.1, VMAX = 1.1;
+// at the controls, how near the device may come to an edge of its room, in cell units (the room 2 across): the strut is
+// there, the eye inside it sees only its dark inside, and by an edge it is near two walls at once and crossed the wrong one
+const EDGE_CLEAR = 0.15;
 
 /** A wall of the current cell: the 4D axis of its face and the side it is on. */
 type Wall = { axis: number; sign: number };
@@ -406,6 +409,19 @@ export function Drones() {
     const sp = Math.hypot(cv[0], cv[1], cv[2]);
     if (sp > VMAX) for (let i = 0; i < 3; i++) cv[i] *= VMAX / sp;
     for (let i = 0; i < 3; i++) c[i] += cv[i] * (1 - field) * dt;
+    // clear of the room's twelve edges: pushed back out to EDGE_CLEAR from any it comes too near, and the way into it
+    // taken off the speed, so it slides along the edge and goes through a face, never in by an edge
+    for (let i = 0; i < 3; i++) for (let j = i + 1; j < 3; j++) {
+      const ui = c[i] - drone.centre[i], uj = c[j] - drone.centre[j];
+      const a = Math.max(0, 1 - Math.abs(ui)), b = Math.max(0, 1 - Math.abs(uj)); // to the two walls meeting there
+      const dd = Math.hypot(a, b);
+      if (dd >= EDGE_CLEAR) continue;
+      const si = Math.sign(ui) || 1, sj = Math.sign(uj) || 1;
+      const ni = dd > 1e-6 ? a / dd : Math.SQRT1_2, nj = dd > 1e-6 ? b / dd : Math.SQRT1_2; // out from the edge, inwards
+      c[i] = drone.centre[i] + si * (1 - ni * EDGE_CLEAR); c[j] = drone.centre[j] + sj * (1 - nj * EDGE_CLEAR);
+      const vn = -si * ni * cv[i] - sj * nj * cv[j]; // the speed out from the edge; below 0, into it
+      if (vn < 0) { cv[i] += vn * si * ni; cv[j] += vn * sj * nj; }
+    }
     // the piece in the lock (in this cell, close, ahead of the eye) for a moment: the device docks on its own
     let locked = false;
     if (target.up && target.map && target.map.held === drone.held && target.map.sign === drone.sign) {
