@@ -249,6 +249,57 @@ function Pad({ take, shown }: { take: () => void; shown: boolean }) {
 /** PILOT's mark on a phone: four arrows out from the middle, the moves the pad gives. */
 const PROBE_WHAT = 'The shadow alone is hard to read, so we put a physical object in it. The probe lives in 4D: its position and rotation are transposed from there. We give it a predictable task, fetching a ball, so its path is easy to follow as it flies from one cell into the next.';
 
+// The phone's cheat sheet, as an assembly manual draws it: line art, no words but a caption, the hand and the arrows
+// doing the telling. A cube in hairline, the struts out of sight dashed; one finger on a strut, lime, with an arrow
+// along it and one across, the two ways it turns the machine in 4D; two fingers and a sweep over the cube, the orbit.
+const CUBE = (
+  <>
+    <path className="far" d="M26 13V29M12 36L26 29L40 36" />
+    <path d="M12 20L26 13L40 20L26 27ZM12 20V36L26 43L40 36V20M26 27V43" />
+  </>
+);
+/** An arrowhead at (x, y) pointing along angle `a` (degrees, 0 to the right, y down). */
+const Head = ({ x, y, a }: { x: number; y: number; a: number }) => (
+  <path className="head" d="M-3.2 -2.4L0 0L-3.2 2.4" transform={`translate(${x} ${y}) rotate(${a})`} />
+);
+// A hand as a manual draws it, in local units, the fingertip at the origin and the wrist down at y 46, cut by the
+// drawing's edge: one finger out, the others curled, the thumb in; or two out together, for the two-finger turn.
+const HAND_ONE = 'M-6 46C-7 40 -6 34 -5 29C-7 27 -11 24 -11 21C-11 17 -6 16 -3.5 19V3A3.5 3.5 0 0 1 3.5 3V18C3.5 15 10 14.5 10 18V21C10 19.5 13.5 19.5 13.5 22.5V25C13.5 24 16 24.5 16 27V31C16 37 13 40 12 46';
+const HAND_TWO = 'M-6 46C-7 40 -6 34 -5 29C-7 27 -11 24 -11 21C-11 17 -6 16 -3.5 19V3A3.5 3.5 0 0 1 3.5 3V1A3.5 3.5 0 0 1 10.5 1V20C10.5 18 14 18 14 22V25C14 24 16.5 24.5 16.5 27V31C16.5 37 13 40 12 46';
+/** A hand coming in from below, its fingertip at (x, y), leaning `a` degrees, `two` with two fingers out. */
+const Hand = ({ x, y, a, two = false, k = 0.8 }: { x: number; y: number; a: number; two?: boolean; k?: number }) => (
+  <g className="hand" transform={`translate(${x} ${y}) rotate(${a}) scale(${k})`}>
+    <path className="skin" d={two ? HAND_TWO : HAND_ONE} />
+    <path d={two ? 'M3.5 3V20M-2 3.5Q0 1.5 2 3.5M5 1.5Q7 -0.5 9 1.5M10.5 20V23M14 25V27.5' : 'M-2 3.5Q0 1.5 2 3.5M3.5 18V22M10 21V24M13.5 25V27.5'} />
+    <path d="M-3.5 19C-3 22 -4 25 -5 27" />
+  </g>
+);
+const Cheat = () => (
+  <div className="cheat" aria-hidden>
+    <b className="label">Instructions</b>
+    <figure>
+      <svg width={64} height={64} viewBox="0 0 64 64">
+        {CUBE}
+        <path className="edge" d="M40 20V36" /><path className="lime" d="M40 20V36" />
+        <path className="arrow" d="M52 17V39" /><Head x={52} y={17} a={-90} /><Head x={52} y={39} a={90} />
+        <path className="arrow" d="M29 9H51" /><Head x={29} y={9} a={180} /><Head x={51} y={9} a={0} />
+        <Hand x={40} y={29} a={-24} />
+      </svg>
+      <figcaption>Transform</figcaption>
+    </figure>
+    <i className="rule" />
+    <figure>
+      <svg width={64} height={64} viewBox="0 0 64 64">
+        <g transform="translate(32 21) scale(0.62) translate(-26 -28)">{CUBE}</g>
+        <path className="arrow" d="M13 19A19 14 0 0 1 51 19" /><Head x={51} y={19} a={72} />
+        <Hand x={30} y={38} a={-8} two />
+      </svg>
+      <figcaption>Rotate</figcaption>
+    </figure>
+  </div>
+);
+
+
 const Moves = () => (
   <svg className="moves" width={13} height={13} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
     <path d="M8 1.5v13M1.5 8h13M8 1.5 6 3.5M8 1.5l2 2M8 14.5l-2-2M8 14.5l2-2M1.5 8l2-2M1.5 8l2 2M14.5 8l-2-2M14.5 8l-2 2" />
@@ -570,6 +621,8 @@ export function App() {
         </Canvas>
       </div>
       {CLEAN ? null : <div className={`plate ${open ? '' : 'folded'} ${beetle ? 'probing' : ''}`}><div className="head"><b>08 Tesseract</b><i>Codevember 2026</i></div><div className="blurb"><p>A tesseract is the four-dimensional cube: it is to a cube what a cube is to a square. A square is bounded by four edges and a cube by six square faces; a tesseract is bounded by eight cubical cells, meeting at right angles. We only see its shadow in 3D, a cube inside a cube, and as it turns in 4D, without bending, the inner cube swells out and the struts stretch.</p><h5>Probe<span className="ends">{beetle ? <button className="stop" tabIndex={-1} aria-label="Deactivate probe" onPointerDown={(e) => e.preventDefault()} onClick={toggleBeetle}><Stop /></button> : null}{beetle ? <button className="probe off" tabIndex={-1} aria-label={manual ? "Back to following" : "Back, the probe out"} onPointerDown={(e) => e.preventDefault()} onClick={() => { if (drone.pilot) setMode("follow"); else toggleBeetle(); }}><svg width={8} height={8} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={2.6} strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M10.5 2.5 5 8l5.5 5.5" /></svg>Back</button> : null}</span></h5><p className="probe-what">{PROBE_WHAT}</p>{beetle ? null : <button className="probe" tabIndex={-1} onPointerDown={(e) => e.preventDefault()} onClick={toggleBeetle}><PlayPause playing={false} />Activate probe</button>}{beetle ? <><h5 className="small">Info</h5><p>Each cell has its own colour. The trail is left in the colour of the cell the probe was in, a wall lights up in the colour of the cell beyond as it goes through, and a steel ball blinks in the colour of the cell it is in.</p><p>The fisheye drawing is what the probe sees. From inside, every cell is a true cube however the shadow twists: pick Pilot to fly it by that view.</p></> : null}</div>{beetle ? null : <div className="curtain"><button tabIndex={-1} aria-label={open ? 'Fold the text away' : 'Unfold the text'} onPointerDown={(e) => e.preventDefault()} onClick={() => setOpen(!open)}><svg width={10} height={10} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round" aria-hidden style={{ transform: open ? 'none' : 'rotate(180deg)' }}><path d="M2.5 10.5 8 5l5.5 5.5" /></svg></button></div>}</div>}
+      {/* an upright phone's home page: under the box, how the hands work */}
+      {CLEAN || beetle ? null : <div className="plate cheat-wrap"><Cheat /></div>}
       {/* an upright phone's home page: under the box the probe, a line drawing of it, what it is, and the way in, the
           probe in, full screen and followed (in the box, at its foot, for a moment) */}
       {CLEAN || beetle ? null : <div className="plate chapter"><h5>Probe</h5><img className="drawing" src={`${import.meta.env.BASE_URL}drawings/probe.png`} width={220} height={220} alt="" draggable={false} /><p className="probe-what">{PROBE_WHAT}</p><button className="probe" tabIndex={-1} onPointerDown={(e) => e.preventDefault()} onClick={toggleBeetle}><PlayPause playing={false} />Activate probe</button></div>}
