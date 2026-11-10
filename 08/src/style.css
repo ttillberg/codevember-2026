@@ -29,7 +29,7 @@ body {
 .stage.locked, .stage.locked:active { cursor: none; }
 .stage.edge { cursor: pointer; } /* over a strut, on its own: a drag turns the machine by it */
 .stage.edge:active { cursor: grabbing; }
-.stage canvas { touch-action: none; }
+.stage, .stage canvas { touch-action: none; } /* the fingers are the page's, not the browser's: no scroll, no pinch zoom */
 
 .plate {
   position: fixed;
@@ -38,7 +38,7 @@ body {
   pointer-events: none;
 }
 .plate b {
-  display: block;
+  display: block; white-space: nowrap; /* one line, a little past the column if it must */
   font-family: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   font-size: 56px;
   font-weight: 700; /* Plex Sans tops out at bold */
@@ -60,6 +60,18 @@ body {
 .plate > i + i { margin-top: 0; } /* the second line, what it is, straight under the first */
 /* the blurb: what a tesseract is and what goes on here, two short paragraphs, small, in the panel's grey */
 .plate .blurb { max-width: var(--col); margin-top: 14px; }
+/* the text's fold: a little circle with an i at the right of the PROBE heading, by the stop, filled while the text is
+   open (a chevron, and on the CODEVEMBER line, for a moment);
+   folded, the paragraphs and INFO go, the title and the probe's heading and button stay (it folds as the probe comes in) */
+.plate { width: var(--col); }
+.plate h5 .ends { display: flex; gap: 6px; }
+.fold {
+  display: grid; place-items: center; width: 24px; height: 24px; margin: -4px 0; padding: 0;
+  border: 1.5px solid var(--ui); border-radius: 50%; background: none; color: var(--ui); cursor: pointer; pointer-events: auto;
+}
+.fold:hover { box-shadow: 0 0 0 3px rgba(28, 28, 28, 0.08); }
+.fold.at { background: var(--ui); color: var(--paper); }
+.plate.folded .blurb p, .plate.folded h5.small { display: none; }
 /* the probe in the blurb: its own section, a heading with the hairline under it as the panel's, why it is there,
    and a button to send it in (an ON | OFF switch before); in, the button takes it out, and how to read it follows */
 .plate h5 { /* mid size, between the title and the panel's headings, in the title's face */
@@ -157,14 +169,30 @@ body {
 .back { display: none; }
 body.clean .plate, body.clean .keys { display: none; }
 
-@media (max-width: 640px) {
-  .plate { width: calc(100% - 48px); }
+/* a phone, either way up: narrow, or low (on its side); the same as `phone` in DroneCam.tsx and App.tsx */
+@media (max-width: 640px), (max-height: 500px) {
+  .plate { width: min(var(--col), calc(100% - 48px)); } /* no wider than the column, on its side too */
   .plate b { font-size: 36px; }
   .plate > i { font-size: 9px; }
-  .plate p { display: none; }
-  .keys { width: auto; }
+  .plate .blurb { max-width: min(var(--col), 100%); }
+  .plate h5 { font-size: 18px; margin: 14px 0 8px; }
+  .plate .blurb p:not(:first-child), .plate h5.small { display: none; } /* the tesseract's paragraph and the probe's button, no more */
+  .keys { width: min(var(--col), calc(100vw - 48px)); }
   .keys.right { display: none; } /* no keys on a phone */
   .cellmap.side { display: none; }
+}
+@media (max-height: 500px) {
+  .plate, .keys { width: min(260px, calc(100% - 48px)); } /* on its side the column narrower, the tesseract beside it */
+  .plate .blurb p { display: none; } /* on its side: the title, PROBE and its button */
+  .plate h5 { margin-top: 8px; }
+}
+/* touch: no keys, so no pilot and no shortcuts; a finger turns it in 4D, two orbit and pinch, the phone's lean turns the view */
+.play.forward { display: none; touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
+.play.forward:active { background: var(--ui); color: var(--paper); } /* held: filled */
+@media (pointer: coarse) {
+  .keys.right { display: none; }
+  .play.lockpill { display: none; } /* no pointer to lock */
+  .play.forward { display: inline-flex; padding: 14px 26px 13px 22px; } /* the one button at the controls, a thumb's size */
 }
 
 
@@ -194,14 +222,20 @@ body.clean .plate, body.clean .keys { display: none; }
 .play.hint { border-color: transparent; background: none; cursor: default; box-shadow: none; } /* locked: esc to unlock, no pill to press */
 .play.hint .key { height: 18px; }
 /* the first person view's corner button, top right, in the strip's corner or the page's: outlined, on the paper */
-/* in the view's top right corner: it is the column wide in the left column, 76 up from the bottom, --cam-h high */
+/* in the view's top right corner, --eye-x, --eye-y from DroneCam: the right half's, the lower half's on an upright phone, or the page's */
 .maxi {
-  position: fixed; bottom: calc(76px + var(--cam-h, var(--col)) - 36px); left: calc(24px + var(--col) - 36px); width: 28px; height: 28px; padding: 0; display: grid; place-items: center;
+  position: fixed; top: calc(var(--eye-y, 0px) + 16px); left: calc(var(--eye-x, 100vw) - 44px); width: 28px; height: 28px; padding: 0; display: grid; place-items: center;
   border: 1.2px solid var(--ui); border-radius: 6px; background: var(--paper); color: var(--ui); cursor: pointer;
 }
 .maxi:hover { box-shadow: 0 0 0 3px rgba(28, 28, 28, 0.08); }
-.maxi:not(.eye) { left: calc(24px + var(--col) - 70px); } /* the eye in the corner, maximize to its left */
-.maxi.solo { left: calc(24px + var(--col) - 36px); } /* minimized there is no eye (only maximized, or hidden, to bring it back): maximize alone in the corner */
+.maxi:not(.eye) { left: calc(var(--eye-x, 100vw) - 78px); } /* the eye in the corner, maximize to its left */
+.maxi.solo { left: calc(var(--eye-x, 100vw) - 44px); } /* minimized there is no eye (only maximized, or hidden, to bring it back): maximize alone in the corner */
+/* split: a hairline down the middle, between the machine and the view; across it on an upright phone */
+.divider { position: fixed; top: 0; bottom: 0; left: var(--cam-x, 50%); width: 1px; background: var(--ui); opacity: 0.5; pointer-events: none; }
+@media (max-width: 640px) and (orientation: portrait) {
+  .middle { bottom: 76px; } /* over the mode pills, which take the row here */
+  .divider { top: var(--eye-y, 50%); bottom: auto; left: 0; right: 0; width: auto; height: 1px; }
+}
 /* the mode: three pills in a row, outlined, the one picked filled in the panel's grey, a line under on what it does */
 .pills { grid-column: 1 / -1; display: flex; gap: 8px; margin: 2px 0; pointer-events: auto; } /* bigger: the three across the panel, each a third */
 .pill {

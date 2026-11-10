@@ -17,13 +17,37 @@ import { st } from './state';
 // even full only at `strength`, so it sits back as a ground (it was the right third, fading over its left part, at
 // full strength; a full-page view with the machine moved right was tried before that and dropped)
 const STRENGTH = 0.4;
-/** The first person view's switch: maximized, the whole page behind the machine as above; not (to start), a square in
- * the top right corner, at full strength, no fade (a strip down the right side, top to bottom, was tried and dropped). */
+/** The first person view's switch: maximized, the whole page behind the machine as above; not (to start), the window
+ * split in two, the machine in one half and the view in the other, at full strength, no fade (a square in the left
+ * column, a square top right and a strip down the right side before). */
 export const eyeView = { max: false };
+/** The split: with the probe in and its view shown, not maximized, 'side', the machine and the view side by side; on a
+ * phone held upright, 'stack', the machine over the view; otherwise none. */
+export function splitOf(W: number, H: number): 'side' | 'stack' | null {
+  if (!drone.on || !st.grid || eyeView.max) return null;
+  return W <= 640 && H > W ? 'stack' : 'side';
+}
+/** What the page tells the layout: under ?clean there is no text; textBottom, the text's foot, measured each frame. */
+export const page = { clean: false, textBottom: 0 };
+type Rect = { x: number; y: number; w: number; h: number }; // CSS px, from the top left
+/** Where the machine goes and where the view goes. The machine never under the text: beside the text column, or under
+ * it on an upright phone; split, the room left over halved between the machine and the view (the view off, or
+ * maximized behind it all, the machine has all of it). */
+export function regionsOf(W: number, H: number): { main: Rect; cam: Rect | null } {
+  const split = splitOf(W, H), upright = W <= 640 && H > W;
+  if (upright) {
+    const top = page.clean ? 0 : Math.min(H * 0.45, page.textBottom + 8);
+    const camH = split ? Math.round((H - top) / 2) : 0;
+    return { main: { x: 0, y: top, w: W, h: H - top - camH }, cam: split ? { x: 0, y: H - camH, w: W, h: camH } : null };
+  }
+  const low = H <= 500;
+  const left = page.clean ? 0 : Math.min(W * 0.45, (low ? 260 : 380) + 48); // the column and its gutters
+  const rest = W - left, camW = split ? Math.round(rest / 2) : 0;
+  return { main: { x: left, y: 0, w: rest - camW, h: H }, cam: split ? { x: W - camW, y: 0, w: camW, h: H } : null };
+}
 // the fog the far rooms fade into, by the view's size: minimized, a grey, and the view's background that grey too, so
 // the rooms go into it; maximized, the page's paper, and no background, the page itself between the lines
 const FOG_MINI = new THREE.Color('#bdbdb9'), FOG_MAX = new THREE.Color('#f4f4f2');
-const COL = 380, MARGIN = 24, OVER = 76, GAP = 16, MIN_H = 120; // the square, in the left column: its side, the column's width, its gap from the page's left edge, and how far up from the bottom it sits, over the mode pills (CSS px; top right, half the page high, before)
 
 const CUBE = 1024; // the cube map's face size: fine enough for a hull a pixel or so wide through the lens
 const R_STRUT = 0.04, R_NODE = 0.06; // the outlined rooms: the tube, the joint
@@ -153,7 +177,7 @@ export function DroneCam() {
     return {
       cs, tubes, flash, piece, grabbed, eye, lens, flat,
       q: new THREE.Quaternion(), look: new THREE.Vector3(0, 0, -1), last: [0, 0, 0], crossings: -1,
-      pos: new THREE.Vector3(), lockEl: null as HTMLElement | null, plateEl: null as Element | null, camH: 0, lockLast: '', // the bracket's last style, written only on change
+      pos: new THREE.Vector3(), lockEl: null as HTMLElement | null, eyeX: -1, eyeY: -1, camX: -1, plateEl: null as Element | null, lockLast: '', // the bracket's last style, written only on change
       grabOf: null as number[] | null, grabLocal: new THREE.Vector3(), // the piece taken, and where it was from the eye then, in its frame
     };
   }, []);
@@ -162,11 +186,15 @@ export function DroneCam() {
 
   useFrame(() => {
     const lockEl = (cell.lockEl ??= document.getElementById('lock'));
+    // the text's foot, for the layout (an upright phone puts the machine under it)
+    page.textBottom = (cell.plateEl ??= document.querySelector('.plate'))?.getBoundingClientRect().bottom ?? 0;
     const auto = gl.autoClear;
     // the camera grid off, or no beetle: no eye, no lock bracket, just the page and the machine
     if (st.grid && drone.on) drawEye(); else { setLock(lockEl, 'none'); gl.setRenderTarget(null); gl.clear(); }
     gl.autoClear = false;
-    renderDof(gl, scene, camera); // the lens writes no depth, so the machine draws over it whole, through the depth of field
+    // the machine over the lens, through the depth of field, only in its own part, never under the text
+    const W = size.width, H = size.height, { main } = regionsOf(W, H);
+    renderDof(gl, scene, camera, [main.x, H - main.y - main.h, main.w, main.h]);
     gl.autoClear = auto;
   }, 1);
 
@@ -183,19 +211,23 @@ export function DroneCam() {
   function drawEye() {
     // setViewport takes CSS pixels and applies the pixel ratio itself
     const W = size.width, H = size.height;
-    // the lens's square round the middle of what it fills, big enough that the disc covers all of it: the whole page,
-    // or the view in the left column (S wide, SH high; sx, sy its corner from the bottom left, GL's way; top its top
-    // from the page's top)
-    // the view: as wide as the column, square at most, lower (landscape) where the text above leaves less room, not
-    // below MIN_H; its height goes to the page as --cam-h, for the buttons in its corner
-    const S = Math.round(Math.min(COL, W - 2 * MARGIN));
-    const textBottom = (cell.plateEl ??= document.querySelector('.plate'))?.getBoundingClientRect().bottom ?? MARGIN;
-    const SH = Math.round(Math.max(MIN_H, Math.min(S, H - OVER - textBottom - GAP)));
-    if (SH !== cell.camH) { cell.camH = SH; document.documentElement.style.setProperty('--cam-h', `${SH}px`); }
-    const full = eyeView.max, sx = MARGIN, sy = OVER, top = H - OVER - SH;
-    const w = full ? Math.hypot(W, H) : Math.hypot(S, SH), h = w;
-    const x = (full ? W / 2 : sx + S / 2) - w / 2, y = (full ? H / 2 : sy + SH / 2) - h / 2;
-    const [bx0, by0, bx1, by1] = full ? [0, 0, W, H] : [sx, top, sx + S, top + SH]; // where the lock can show, from the top left
+    // what the view fills: the whole page, maximized, or its part of it (S wide, SH high; sx, sy its corner from the
+    // bottom left, GL's way; top its top from the page's top); its top right corner to the page as --eye-x, --eye-y,
+    // for its buttons
+    const { cam: part } = regionsOf(W, H), full = !part;
+    const r = part ?? { x: 0, y: 0, w: W, h: H };
+    const S = r.w, SH = r.h, sx = r.x, sy = H - r.y - r.h, top = r.y;
+    if (sx + S !== cell.eyeX || top !== cell.eyeY || sx !== cell.camX) {
+      cell.camX = sx;
+      cell.eyeX = sx + S; cell.eyeY = top;
+      document.documentElement.style.setProperty('--eye-x', `${sx + S}px`);
+      document.documentElement.style.setProperty('--eye-y', `${top}px`);
+      document.documentElement.style.setProperty('--cam-x', `${sx}px`); // its left edge, for the hairline
+    }
+    // the lens's square round its middle, big enough that the disc covers all of it
+    const w = Math.hypot(S, SH), h = w;
+    const x = sx + S / 2 - w / 2, y = sy + SH / 2 - h / 2;
+    const [bx0, by0, bx1, by1] = [sx, top, sx + S, top + SH]; // where the lock can show, from the top left
 
     // the device: where it is and where it is going, in cell space
     const c = toCell(drone.p);
@@ -286,7 +318,7 @@ export function DroneCam() {
     gl.setClearColor(tmp.clear, wasA);
     gl.autoClear = false; // from here the page is cleared once, by hand, and the lens and the machine go over it
     FISHEYE.uniforms.rot.value.setFromMatrix4(tmp.m.makeRotationFromQuaternion(cell.q));
-    FISHEYE.uniforms.fade.value = full ? W * gl.getPixelRatio() : 0; // the square: no fade
+    FISHEYE.uniforms.fade.value = full ? W * gl.getPixelRatio() : 0; // the half: no fade
     FISHEYE.uniforms.strength.value = full ? STRENGTH : 1; // and all there
     gl.setRenderTarget(null);
     gl.setViewport(0, 0, W, H);
