@@ -160,7 +160,7 @@ body {
 }
 .back:hover { color: var(--ink); }
 .back { display: none; }
-.plate.chapter, .slot { display: none; } /* an upright phone's home page's only */
+.plate.chapter, .plate.home-activate, .slot { display: none; } /* an upright phone's home page's only */
 .curtain { display: none; position: relative; width: 100vw; height: 28px; margin: 8px 0 0 -24px; pointer-events: none; }
 .curtain::before { content: ''; position: absolute; left: 0; right: 0; top: 50%; border-top: 0.5px solid var(--ui); }
 .curtain button {
@@ -297,15 +297,17 @@ body.clean .plate, body.clean .keys { display: none; }
   body.home .stage { order: 1; position: relative; inset: auto; flex: none; box-sizing: border-box; width: calc(100% - 48px); min-width: 0; aspect-ratio: 1; margin: 16px 24px 0; overflow: hidden; border: 0.5px solid var(--ui); }
   body.home .stage, body.home .stage canvas { touch-action: pan-y; }
   body.home .stage > div { min-width: 0; } /* Safari let the canvas's own width push the box out past the right margin */
-  body.home .plate.chapter { display: block; order: 2; margin: 0 24px; }
+  body.home .plate.home-activate { display: block; order: 2; margin: 14px 24px 0; }
+  body.home .plate.home-activate .probe:not(.off) { position: static; transform: none; margin: 0; }
+  body.home .plate.chapter { display: block; order: 3; margin: 0 24px; }
   body.home .plate.chapter .drawing { display: block; margin: 6px auto 4px; }
-  /* the canvas's two places, the box (1) and the probe's view (3), the one it is not in a still */
+  /* the canvas's two places, the box (1) and the probe's view (4), the one it is not in a still */
   body.home .slot { display: block; position: relative; box-sizing: border-box; width: calc(100% - 48px); aspect-ratio: 1; margin: 16px 24px 0; border: 0.5px solid var(--ui); overflow: hidden; }
   body.home .slot img { display: block; width: 100%; height: 100%; }
   body.home .slot.top { order: 1; }
-  body.home .slot.probe { order: 3; margin: 8px 24px 40px; }
+  body.home .slot.probe { order: 4; margin: 8px 24px 40px; }
   body.home:not(.at-probe) .slot.top, body.home.at-probe .slot.probe { display: none; }
-  body.home.at-probe .stage { order: 3; margin: 8px 24px 40px; }
+  body.home.at-probe .stage { order: 4; margin: 8px 24px 40px; }
   /* the home page's curtain: a hairline across the whole screen under the text, a frosted handle in its middle, an
      arrow up to fold the text away, the title left, the machine up into the room, and down to bring it back */
   body .curtain { display: block; }

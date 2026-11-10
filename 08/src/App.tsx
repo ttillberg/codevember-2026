@@ -602,6 +602,8 @@ export function App() {
       {/* an upright phone's home page: under the box the probe, a line drawing of it, what it is, and its view, live,
           the canvas's other place (ACTIVATE PROBE there for a moment); the place the canvas is not in holds a still */}
       {CLEAN || beetle ? null : <div className="slot top">{stills.current.top ? <img src={stills.current.top} alt="" /> : null}</div>}
+      {/* under the box, the way in: the probe in, full screen, followed */}
+      {CLEAN || beetle ? null : <div className="plate home-activate"><button className="probe" tabIndex={-1} onPointerDown={(e) => e.preventDefault()} onClick={toggleBeetle}><PlayPause playing={false} />Activate probe</button></div>}
       {CLEAN || beetle ? null : <div className="plate chapter"><h5>Probe</h5><img className="drawing" src={`${import.meta.env.BASE_URL}drawings/probe.png`} width={220} height={220} alt="" draggable={false} /><p className="probe-what">{PROBE_WHAT}</p></div>}
       {CLEAN || beetle ? null : <div className="slot probe">{stills.current.probe ? <img src={stills.current.probe} alt="" /> : null}</div>}
       {/* an upright phone with the probe in: no text, a footer instead, where it is (08 TESSERACT / PROBE / PILOT,
