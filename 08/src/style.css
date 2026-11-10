@@ -1,0 +1,212 @@
+:root {
+  --paper: #f4f4f2;
+  --ink: #1c1c1c;
+  --mute: #6b6b68;
+  --pink: #ef5f9f;
+  --lime: #c9e35b;
+  --orange: #f2703f;
+  --ui: #5c5c5a; /* the panel's one grey: headings, rules, switches, keys, words, the button */
+  --col: 380px; /* the left column: the blurb, the first person view, the mode pills (330 before); DroneCam's COL the same */
+  --purple: #8e7cf0; /* the machine's purple ring: the controls, on, and the lock pointer */
+}
+
+html, body, #root {
+  margin: 0;
+  height: 100%;
+  color: var(--ink);
+  font: 13px/1.4 "Helvetica Neue", Helvetica, Arial, sans-serif;
+}
+
+body {
+  background-color: var(--paper);
+  background-image:
+    radial-gradient(ellipse 70% 60% at 50% 42%, #fdfdfc 0%, var(--paper) 55%, #e6e6e3 100%);
+  overflow: hidden;
+}
+
+.stage { position: fixed; inset: 0; cursor: grab; }
+.stage:active { cursor: grabbing; }
+.stage.locked, .stage.locked:active { cursor: none; }
+.stage.edge { cursor: pointer; } /* over a strut, on its own: a drag turns the machine by it */
+.stage.edge:active { cursor: grabbing; }
+.stage canvas { touch-action: none; }
+
+.plate {
+  position: fixed;
+  top: 24px;
+  left: 24px;
+  pointer-events: none;
+}
+.plate b {
+  display: block;
+  font-family: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-size: 56px;
+  font-weight: 700; /* Plex Sans tops out at bold */
+  letter-spacing: -0.02em;
+  line-height: 0.9;
+  text-transform: uppercase;
+}
+.plate > i { /* the plate's own lines, not the i inside the beetle switch */
+  display: block;
+  margin-top: 6px;
+  font-style: normal;
+  font-weight: 600;
+  font-size: 14px; /* a quarter of the title */
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink);
+}
+.plate > i { line-height: 1.15; }
+.plate > i + i { margin-top: 0; } /* the second line, what it is, straight under the first */
+/* the blurb: what a tesseract is and what goes on here, two short paragraphs, small, in the panel's grey */
+.plate .blurb { max-width: var(--col); margin-top: 14px; }
+/* the probe in the blurb: its own section, a heading with the hairline under it as the panel's, why it is there,
+   and a button to send it in (an ON | OFF switch before); in, the button takes it out, and how to read it follows */
+.plate h5 { /* mid size, between the title and the panel's headings, in the title's face */
+  margin: 18px 0 9px; padding-bottom: 6px; border-bottom: 1px solid var(--ui);
+  font: 700 22px/1 "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; letter-spacing: -0.01em; text-transform: uppercase; color: var(--ink);
+}
+/* INFO: a small heading with the hairline under it, as the panel's, then what it says (folded behind a (?) for a
+   while) */
+.plate h5.small {
+  margin: 16px 0 8px; padding-bottom: 5px;
+  font: 700 10px/1 "Helvetica Neue", Helvetica, Arial, sans-serif; letter-spacing: 0.14em; color: var(--ui);
+}
+/* the cells' map: the tesseract at rest in hairlines, a dot for each cell between the cubes, the colours under it; in
+   the right column under the first person view's square, as wide (in INFO for a moment) */
+.cellmap { margin: 0; }
+.cellmap.side { position: fixed; right: 24px; top: 24px; pointer-events: none; } /* top right, where the first person view's square was */
+.cellmap svg { display: block; margin: 0 0 10px; }
+.cellmap figcaption { display: grid; grid-template-columns: repeat(4, auto); justify-content: start; gap: 7px 16px; } /* under it, packed left */
+.cellmap span { display: inline-flex; align-items: center; gap: 5px; font-size: 10px; letter-spacing: 0.04em; color: var(--ui); white-space: nowrap; }
+.cellmap i { width: 7px; height: 7px; border-radius: 50%; flex: none; }
+.probe {
+  display: inline-flex; align-items: center; gap: 8px; margin: 4px 0 12px; padding: 10px 18px 9px 15px; pointer-events: auto; cursor: pointer; /* the size of the other pills */
+  border: 1.5px solid var(--purple); border-radius: 999px; background: var(--purple); color: #fff; /* the machine's purple (magenta for a moment) */
+  font: 700 12px/1 "Helvetica Neue", Helvetica, Arial, sans-serif; letter-spacing: 0.14em; text-transform: uppercase;
+}
+/* in, the way out: a stop square in a circle at the end of the PROBE heading (a DEACTIVATE PROBE pill before) */
+.plate h5 { display: flex; justify-content: space-between; align-items: center; }
+.stop {
+  display: grid; place-items: center; width: 24px; height: 24px; margin: -4px 0; padding: 0; /* no taller than the heading's line, so the text under it stays put as it comes and goes */ border: 1.5px solid var(--ui); border-radius: 50%;
+  background: none; color: var(--ui); cursor: pointer; pointer-events: auto;
+}
+.stop:hover { box-shadow: 0 0 0 3px rgba(28, 28, 28, 0.08); }
+.probe svg { flex: none; margin-top: -1px; } /* play to send it in */
+.probe:hover { box-shadow: 0 0 0 3px rgba(28, 28, 28, 0.08); }
+.plate p {
+  margin: 0 0 7px;
+  font: 11px/1.5 "Helvetica Neue", Helvetica, Arial, sans-serif;
+  color: var(--ui);
+  text-wrap: pretty;
+}
+
+/* mode and settings bottom left, as wide as the blurb, and the keys bottom right, as wide, as day 07's help but straight
+   on the page: rows of the keys or gesture on the left and what it does on the right */
+.keys {
+  position: fixed; left: 24px; bottom: 24px; width: var(--col); box-sizing: border-box;
+  display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 7px 14px;
+  pointer-events: none; user-select: none; white-space: nowrap;
+  font: 12px/16px "Helvetica Neue", Helvetica, Arial, sans-serif;
+}
+/* flush right and mirrored: what it does on the left, set right, the keys on the right edge (rtl swaps the columns, ltr back inside) */
+.keys.right { left: auto; right: 24px; width: auto; direction: rtl; }
+.keys.right > * { direction: ltr; }
+.keys.right .what, .keys.right h6 { text-align: right; }
+.keys.right .how { justify-content: flex-end; } /* the keys flush with the edge */
+.keys.right h6 { visibility: hidden; } /* no names over the groups, the gap between them kept */
+
+.keys .how { display: inline-flex; align-items: center; gap: 4px; color: var(--ui); font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase; }
+.keys .what { font-size: 12px; color: var(--ui); } /* what it does: a sentence, in sentence case */
+/* the sections, SETTINGS and SHORTCUTS: small caps in ink and a hairline under, across the column */
+.keys h5 {
+  grid-column: 1 / -1; margin: 12px 0 2px; padding-bottom: 5px; border-bottom: 1px solid var(--ui);
+  font: 700 10px/1 "Helvetica Neue", Helvetica, Arial, sans-serif; letter-spacing: 0.14em; text-transform: uppercase; color: var(--ui);
+}
+.keys h5:first-child { margin-top: 0; }
+/* the subsections of the shortcuts, NAVIGATION, VIEW, OPTIONS: smaller, grey, no rule */
+.keys h6 {
+  grid-column: 1 / -1; margin: 6px 0 -1px;
+  font: 700 9px/1 "Helvetica Neue", Helvetica, Arial, sans-serif; letter-spacing: 0.14em; text-transform: uppercase; color: var(--ui);
+}
+.keys h5 + h6 { margin-top: 2px; }
+.keys h6:first-child { margin-top: 0; } /* the shortcuts start straight on their first subsection, no heading over them */
+.keys h5 span { font-weight: 400; font-size: 11px; letter-spacing: 0; text-transform: none; color: var(--ui); } /* a note after the name */
+/* keys: outlined caps, no fill, the outline and the letters in one mid grey (tried filled, near black then mid grey) */
+.key {
+  display: inline-flex; align-items: center; justify-content: center; min-width: 18px; height: 18px; padding: 0 5px;
+  box-sizing: border-box; border: 1.2px solid var(--ui); border-radius: 5px;
+  font: 600 10px/1 "Helvetica Neue", Helvetica, Arial, sans-serif; color: var(--ui); background: none;
+  text-transform: uppercase; letter-spacing: 0.04em;
+}
+.key.wide { padding: 0 9px; }
+
+
+.back {
+  position: fixed;
+  right: 24px;
+  top: 24px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--mute);
+  text-decoration: none;
+}
+.back:hover { color: var(--ink); }
+.back { display: none; }
+body.clean .plate, body.clean .keys { display: none; }
+
+@media (max-width: 640px) {
+  .plate { width: calc(100% - 48px); }
+  .plate b { font-size: 36px; }
+  .plate > i { font-size: 9px; }
+  .plate p { display: none; }
+  .keys { width: auto; }
+  .keys.right { display: none; } /* no keys on a phone */
+  .cellmap.side { display: none; }
+}
+
+
+/* the lock bracket round the piece in the eye's view, at the controls: four corners and a word, placed from DroneCam */
+.lock { position: fixed; left: 0; top: 0; display: none; pointer-events: none; color: var(--ink); animation: lockblink 0.5s steps(2, end) infinite; }
+.lock i { position: absolute; width: 30%; height: 30%; border: 4px solid currentColor; /* thick, ink */ }
+.lock i:nth-child(1) { left: 0; top: 0; border-right: 0; border-bottom: 0; }
+.lock i:nth-child(2) { right: 0; top: 0; border-left: 0; border-bottom: 0; }
+.lock i:nth-child(3) { left: 0; bottom: 0; border-right: 0; border-top: 0; }
+.lock i:nth-child(4) { right: 0; bottom: 0; border-left: 0; border-top: 0; }
+.lock b { position: absolute; left: 50%; top: 100%; transform: translate(-50%, 6px); font: 900 11px/1 "Helvetica Neue", Helvetica, Arial, sans-serif; letter-spacing: 0.14em; text-transform: uppercase; }
+.lock.on { animation: none; } /* locked: it holds still, in the same ink */
+.lock.on b::after { content: 'ed'; }
+@keyframes lockblink { 0% { opacity: 1; } 100% { opacity: 0.35; } }
+
+
+/* bottom middle, side by side: transform's play/pause and, at the controls, the pointer lock (on the left over the keys
+   before, white) */
+.middle { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); display: flex; gap: 8px; }
+.play { /* a pill as the mode's, the icon then the word (a round icon button before) */
+  display: inline-flex; align-items: center; gap: 8px; white-space: nowrap;
+  padding: 10px 18px 9px 15px; border: 1.5px solid var(--ui); border-radius: 999px; background: var(--paper); cursor: pointer;
+  font: 700 12px/1 "Helvetica Neue", Helvetica, Arial, sans-serif; letter-spacing: 0.14em; text-transform: uppercase; color: var(--ui);
+}
+.play svg { flex: none; margin-top: -1px; }
+.play:hover { box-shadow: 0 0 0 3px rgba(28, 28, 28, 0.08); }
+.play.hint { border-color: transparent; background: none; cursor: default; box-shadow: none; } /* locked: esc to unlock, no pill to press */
+.play.hint .key { height: 18px; }
+/* the first person view's corner button, top right, in the strip's corner or the page's: outlined, on the paper */
+/* in the view's top right corner: it is the column wide in the left column, 76 up from the bottom, --cam-h high */
+.maxi {
+  position: fixed; bottom: calc(76px + var(--cam-h, var(--col)) - 36px); left: calc(24px + var(--col) - 36px); width: 28px; height: 28px; padding: 0; display: grid; place-items: center;
+  border: 1.2px solid var(--ui); border-radius: 6px; background: var(--paper); color: var(--ui); cursor: pointer;
+}
+.maxi:hover { box-shadow: 0 0 0 3px rgba(28, 28, 28, 0.08); }
+.maxi:not(.eye) { left: calc(24px + var(--col) - 70px); } /* the eye in the corner, maximize to its left */
+.maxi.solo { left: calc(24px + var(--col) - 36px); } /* minimized there is no eye (only maximized, or hidden, to bring it back): maximize alone in the corner */
+/* the mode: three pills in a row, outlined, the one picked filled in the panel's grey, a line under on what it does */
+.pills { grid-column: 1 / -1; display: flex; gap: 8px; margin: 2px 0; pointer-events: auto; } /* bigger: the three across the panel, each a third */
+.pill {
+  flex: 1; padding: 10px 0 9px; border: 1.5px solid var(--ui); border-radius: 999px; background: none; cursor: pointer;
+  font: 700 12px/1 "Helvetica Neue", Helvetica, Arial, sans-serif; letter-spacing: 0.14em; text-transform: uppercase; color: var(--ui);
+}
+.pill.at { background: var(--ui); color: var(--paper); }
+.pill:hover { box-shadow: 0 0 0 3px rgba(28, 28, 28, 0.08); }

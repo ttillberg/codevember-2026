@@ -13,9 +13,11 @@
   "scripts": {
     "new": "node scripts/new.mjs",
     "build": "node scripts/build.mjs",
+    "grab": "node scripts/grab.mjs",
     "preview": "vite preview --outDir dist --base /codevember-2026/"
   },
   "devDependencies": {
+    "playwright-core": "^1.65.0",
     "typescript": "^5.9.3",
     "vite": "^7.3.1"
   }
