@@ -24,6 +24,7 @@ export const st = {
   cranking: false, // an alt-drag has it: nothing else turns it
   way: 1, // which way it turns, +1 or -1: the last drag, or a flip now and then
   flipIn: 12, // seconds until it turns round on its own
+  breath: 0, // transform's swing, its phase (rad)
   spinVel: 0, // the hard mode's speed, eased towards HARD_SPIN * way so a flip is a swing, not a knock
   transform: false, // the transform switch, off to start (on for a while, and off before that), and the play/pause button bottom middle: the machine turns in 4D all the time, evenly and softly, changing plane at each quarter
   hard: false, // hard mode: the machine turns in 4D all the time, changing plane as it passes each quarter
@@ -57,7 +58,8 @@ export const rig = {
 if (import.meta.env.DEV) Object.assign(window, { __st: st, __rig: rig });
 
 const HARD_SPIN = 0.4; // rad/s, the hard mode's turn in 4D
-const SOFT_SPIN = 0.22; // rad/s, transform's: the same turn, softer
+const SOFT_SPIN = 0.22; // rad/s, transform's: the same turn, softer (transform swings now, BREATH; hard mode still turns)
+const BREATH_A = 0.5, BREATH_T = 6; // transform's swing: how far either way of the quarter it stands on (rad), and a whole swing (s)
 const BURST_EVERY: [number, number] = [6, 14]; // seconds between the servo's bursts, in hard mode
 const PITCH_MAX = 1.4; // radians the orbit goes up or down at most
 const TURNTABLE = 0.07; // rad/s, the camera's slow orbit in the attract mode, a revolution in a minute and a half
@@ -198,6 +200,21 @@ export function tick(dt: number) {
     if (st.hard) {
       st.burstIn -= dt;
       if (st.burstIn <= 0) { burst(); return; }
+    }
+    if (!st.hard) {
+      // transform breathes: the turn swings to and fro either way of the quarter it stands on, eased in from where it
+      // is, so the inner cube swells out and draws back in; each time a whole swing is back through rest, another
+      // plane (it turned evenly all the way round for a while, as hard mode still does)
+      const was = st.breath;
+      st.breath += (dt * Math.PI * 2) / BREATH_T;
+      const want = BREATH_A * Math.sin(st.breath);
+      st.angle = Math.abs(want - st.angle) < 0.03 ? want : st.angle + (want - st.angle) * Math.min(1, dt * 4); // eased in, then on the swing itself, so it is at rest at each turn of the swing
+      st.target = st.angle; st.vel = 0;
+      if (Math.floor(was / (Math.PI * 2)) !== Math.floor(st.breath / (Math.PI * 2)) && Math.abs(st.angle) < 0.08) {
+        st.angle = st.target = 0;
+        st.plane = pick<number>([0, 1, 2].filter((p) => p !== st.plane).map((p) => [p, 1]));
+      }
+      return;
     }
     // an even turn all the time, turning round now and then; past each quarter it is banked, what little is left
     // over dropped (a frame's worth at most), and the turn goes on in another plane
