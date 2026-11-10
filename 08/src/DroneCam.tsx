@@ -32,8 +32,9 @@ export function splitOf(W: number, H: number): 'side' | 'stack' | null {
 export function eyeShown(W: number, H: number) {
   return drone.on && st.grid && (drone.pilot || !(W <= 640 || H <= 500));
 }
-/** What the page tells the layout: under ?clean there is no text; textBottom, the text's foot, measured each frame. */
-export const page = { clean: false, textBottom: 0 };
+/** What the page tells the layout: under ?clean there is no text; textBottom, the text's foot, and footTop, the top
+ * of an upright phone's footer with the probe in (0, none), measured each frame. */
+export const page = { clean: false, textBottom: 0, footTop: 0 };
 type Rect = { x: number; y: number; w: number; h: number; round?: boolean }; // CSS px, from the top left; round, a disc in the square
 /** Where the machine goes and where the view goes. The machine never under the text: beside the text column, or under
  * it on an upright phone; split, the room left over halved between the machine and the view (the view off, or
@@ -44,11 +45,13 @@ export function regionsOf(W: number, H: number): { main: Rect; cam: Rect | null;
   // middle upright, bottom right on its side; the machine aimed off its middle, a third of the way down (or across),
   // so the disc never hides the probe (the room was halved between the two, for a while)
   if (upright) {
-    const top = page.clean ? 0 : Math.min(H * 0.45, page.textBottom + 8);
-    const main = { x: 0, y: top, w: W, h: H - top };
+    // the text on top and the machine under it; with the probe in, no text, the machine down to the footer
+    const top = page.clean || page.footTop ? 0 : Math.min(H * 0.45, page.textBottom + 8);
+    const foot = page.clean || !page.footTop ? H : page.footTop - FOOT_GAP; // as far over the footer's words as they are over the screen's foot
+    const main = { x: 0, y: top, w: W, h: foot - top };
     if (!split) return { main, cam: null };
     const d = Math.round(Math.min(260, Math.max(160, W * 0.6)));
-    return { main, cam: { x: Math.round((W - d) / 2), y: H - PIP_GAP - d, w: d, h: d, round: true }, aim: { x: W / 2, y: top + main.h / 3 } };
+    return { main, cam: { x: Math.round((W - d) / 2), y: foot - FOOT_GAP - d, w: d, h: d, round: true }, aim: { x: W / 2, y: top + main.h / 3 } };
   }
   const low = H <= 500;
   const left = page.clean ? 0 : Math.min(W * 0.45, (low ? 260 : 380) + 48); // the column and its gutters
@@ -67,6 +70,7 @@ export function regionsOf(W: number, H: number): { main: Rect; cam: Rect | null;
   return { main, cam: { x: 24, y: H - COL_OVER - h, w, h } };
 }
 const PIP_GAP = 24; // the phone's disc in from the edges (CSS px)
+const FOOT_GAP = 24; // an upright phone's footer: from its words up to the machine's edge, and from that up to the disc and PILOT (CSS px)
 const COL_OVER = 76, COL_MIN_H = 120; // the view in the column: how far up from the bottom, over the mode pills, and its least height (CSS px)
 // the fog the far rooms fade into, by the view's size: minimized, a grey, and the view's background that grey too, so
 // the rooms go into it; maximized, the page's paper, and no background, the page itself between the lines
@@ -211,6 +215,10 @@ export function DroneCam() {
     const lockEl = (cell.lockEl ??= document.getElementById('lock'));
     // the text's foot, for the layout (an upright phone puts the machine under it)
     page.textBottom = (cell.plateEl ??= document.querySelector('.plate'))?.getBoundingClientRect().bottom ?? 0;
+    // the footer's top, when there is one (an upright phone, the probe in); PILOT goes over it (--foot-top)
+    const foot = document.querySelector('.crumbs')?.getBoundingClientRect();
+    const footTop = foot && foot.height ? Math.round(foot.top) : 0;
+    if (footTop !== page.footTop) { page.footTop = footTop; document.documentElement.style.setProperty('--foot-top', `${footTop || size.height}px`); }
     const auto = gl.autoClear;
     // the camera grid off, or no beetle: no eye, no lock bracket, just the page and the machine
     if (eyeShown(size.width, size.height)) drawEye(); else { setLock(lockEl, 'none'); gl.setRenderTarget(null); gl.clear(); }

@@ -47,7 +47,7 @@ body {
   line-height: 0.9;
   text-transform: uppercase;
 }
-.plate > i { /* the plate's own lines, not the i inside the beetle switch */
+.plate .head > i { /* the plate's own lines, not the i inside the beetle switch */
   display: block;
   margin-top: 6px;
   font-style: normal;
@@ -57,8 +57,8 @@ body {
   text-transform: uppercase;
   color: var(--ink);
 }
-.plate > i { line-height: 1.15; }
-.plate > i + i { margin-top: 0; } /* the second line, what it is, straight under the first */
+.plate .head > i { line-height: 1.15; }
+.plate .head > i + i { margin-top: 0; } /* the second line, what it is, straight under the first */
 /* the blurb: what a tesseract is and what goes on here, two short paragraphs, small, in the panel's grey */
 .plate .blurb { max-width: var(--col); margin-top: 14px; }
 /* the column; folded (a phone, as the probe comes in), the paragraphs and INFO go, the title and the probe's heading and button stay (an i to fold it by hand for a while) */
@@ -160,13 +160,34 @@ body {
 }
 .back:hover { color: var(--ink); }
 .back { display: none; }
+.curtain { display: none; position: relative; width: 100vw; height: 28px; margin: 8px 0 0 -24px; pointer-events: none; }
+.curtain::before { content: ''; position: absolute; left: 0; right: 0; top: 50%; border-top: 0.5px solid var(--ui); }
+.curtain button {
+  position: absolute; left: 50%; top: 0; transform: translateX(-50%); width: 28px; height: 28px; padding: 0;
+  display: grid; place-items: center; border: 0.5px solid var(--ui); border-radius: 50%; color: var(--ui); cursor: pointer; pointer-events: auto;
+  background: rgba(244, 244, 242, 0.55); -webkit-backdrop-filter: blur(10px) saturate(1.3); backdrop-filter: blur(10px) saturate(1.3);
+}
+/* the footer, an upright phone's with the probe in: where it is on the left, each step a way back to there, the one it
+   is at in ink, the rest grey; BACK on the right */
+/* the line as high as the capitals (Plex, 0.7 em), so the box is the letters and the 24 px round it is true */
+.crumbs { display: none; position: fixed; left: 24px; right: 24px; bottom: 24px; align-items: center; justify-content: space-between; gap: 12px; }
+.crumbs .trail { display: flex; align-items: baseline; gap: 6px; white-space: nowrap; min-width: 0; }
+.crumbs .trail button, .crumbs .trail i {
+  padding: 0; border: 0; background: none; color: var(--ui); cursor: pointer; font-style: normal;
+  font: 700 14px/10px "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; letter-spacing: 0.02em; text-transform: uppercase;
+}
+.crumbs .trail i { cursor: default; opacity: 0.6; }
+.crumbs .trail .at { color: var(--ink); cursor: default; }
+/* BACK there the small pill, its pad hanging out over and under the line so the line keeps the capitals' height (a
+   bare word for a moment) */
+.crumbs .probe.off { margin: -9.5px 0; }
 body.clean .plate, body.clean .keys { display: none; }
 
 /* a phone, either way up: narrow, or low (on its side); the same as `phone` in DroneCam.tsx and App.tsx */
 @media (max-width: 640px), (max-height: 500px) {
   .plate { width: min(var(--col), calc(100% - 48px)); } /* no wider than the column, on its side too */
   .plate b { font-size: 36px; }
-  .plate > i { font-size: 9px; }
+  .plate .head > i { font-size: 9px; }
   .plate .blurb { max-width: min(var(--col), 100%); }
   .plate h5 { font-size: 18px; margin: 14px 0 8px; }
   .plate h5 .ends { gap: 14px; } /* the i and the stop, apart for a thumb */
@@ -259,6 +280,23 @@ body.clean .plate, body.clean .keys { display: none; }
 /* split: a hairline down the middle, between the machine and the view; across it on an upright phone */
 .divider { position: fixed; top: 0; bottom: 0; left: var(--cam-x, 50%); width: 1px; background: var(--ui); opacity: 0.5; pointer-events: none; display: none; } /* a phone's split only: on a desktop the view is in the column */
 @media (max-width: 640px) and (orientation: portrait) {
+  /* an upright phone with the probe in: no text on top, the machine has the screen down to a footer, the trail
+     08 TESSERACT / PROBE / PILOT and BACK (the text and the title at the foot, the machine above, for a moment);
+     PILOT over the footer, in the middle, well clear of it (--foot-top from DroneCam; on the right for a moment) */
+  body .plate.probing { display: none; }
+  /* the home page's curtain: a hairline across the whole screen under the text, a frosted handle in its middle, an
+     arrow up to fold the text away, the title left, the machine up into the room, and down to bring it back */
+  body .curtain { display: block; }
+  body .plate.folded:not(.probing) .blurb > :not(.probe) { display: none; }
+  /* the home page: ACTIVATE PROBE at the foot, in the middle, over the machine, on frosted glass, the purple at 0.7,
+     a hairline round it (under the probe's text, purple, for a while) */
+  body .plate .probe:not(.off) {
+    position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); margin: 0;
+    border: 0.5px solid var(--purple); color: #fff; white-space: nowrap;
+    background: rgba(142, 124, 240, 0.7); -webkit-backdrop-filter: blur(10px) saturate(1.3); backdrop-filter: blur(10px) saturate(1.3);
+  }
+  body .crumbs { display: flex; }
+  body .keys { bottom: auto; top: calc(var(--foot-top, 100vh) - 46px); /* 24 over the machine's edge, 24 over the footer's words, less the pills' 2 px margin */ left: 50%; right: auto; transform: translate(-50%, -100%); }
   .middle { bottom: 76px; } /* over the mode pills, which take the row here */
   body.pilot .middle { bottom: 24px; } /* the pills gone at the controls: down on their row */
   .divider { top: var(--eye-y, 50%); bottom: auto; left: 0; right: 0; width: auto; height: 1px; }
@@ -285,3 +323,6 @@ body.clean .plate, body.clean .keys { display: none; }
 }
 .pill.at { background: rgba(92, 92, 90, 0.6); border-color: transparent; } /* the picked one frosted too, dark glass */
 .play.hint { background: none; -webkit-backdrop-filter: none; backdrop-filter: none; }
+/* the buttons' outline a true hairline, one device pixel on any screen (0.5 px rounds up to one; it was 1.5 px, 1.2 on
+   the smaller ones) */
+.pill, .play, .maxi, .stop, .probe.off { border-width: 0.5px; }
