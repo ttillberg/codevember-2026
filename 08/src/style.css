@@ -168,6 +168,10 @@ html:not(:has(body.home)) { overflow: hidden; }
 }
 .back:hover { color: var(--ink); }
 .back { display: none; }
+/* a desktop: the cheat sheet's drawing bottom right too, over the shortcuts, away from the controls (a phone's alone for a while) */
+@media (min-width: 641px) and (min-height: 501px) {
+  body:not(.pilot) .stage .cheat { display: grid; position: absolute; right: 24px; bottom: 92px; margin: 0; z-index: 1; }
+}
 /* a desktop with the probe in: the probe's section, PROBE and what it is, down on the view in the column, its foot
    14 px over the view's top (--eye-y from DroneCam), the intro text left on top (under it, for a while) */
 @media (min-width: 641px) and (min-height: 501px) {
