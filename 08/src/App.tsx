@@ -143,7 +143,6 @@ function handMove(dx: number, dy: number) {
 function handUp() { if (hand.on && hand.picked) crankEnd(); hand.on = false; grip.held = -1; }
 
 export function App() {
-  const [, setHard] = useState(st.hard); // no switch for now, h; kept so the key re-renders
   const [spin, setSpin] = useState(rig.spin);
   const [transform, setTransform] = useState(st.transform);
   const [follow, setFollow] = useState(rig.follow);
@@ -222,7 +221,7 @@ export function App() {
       const k = e.key.toLowerCase();
       if (e.key === 'Alt') { grip.alt = true; e.preventDefault(); return; } // alt held: the strut under the pointer shows
       if (k === 'p') { setMode(!drone.pilot); return; }
-      if (k === 'h') { st.hard = !st.hard; setHard(st.hard); return; }
+      if (k === 'h') { st.hard = !st.hard; return; } // no switch for now
       if (k === 'o') { st.inout = !st.inout; return; } // the hand-over at a wall: folded by default, o for in, then out
       if (drone.pilot) {
         // manual: w s and up down forward and back, a d and the side arrows strafe, space forward, l the lock
@@ -287,7 +286,7 @@ export function App() {
           <directionalLight position={[4, 8, 6]} intensity={1.1} />
         </Canvas>
       </div>
-      {CLEAN ? null : <div className="plate"><b>08 Tesseract</b><i>Codevember 2026</i><div className="blurb"><p>A tesseract is a cube in four dimensions: eight cubes, each wall shared by two. We can only see its shadow, a cube inside a cube.</p><p>It turns in 4D without bending, yet in the shadow the inner cube swells out and the struts stretch. A beetle flies through the cells, searching for blinking steel balls to catch; behind is what it sees, each cell a true cube from inside.</p></div></div>}
+      {CLEAN ? null : <div className="plate"><b>08 Tesseract</b><i>Codevember 2026</i><div className="blurb"><p>A tesseract is a cube in four dimensions: eight cubes, each wall shared by two. We can only see its shadow, a cube inside a cube.</p><p>It turns in 4D without bending, yet in the shadow the inner cube swells out and the struts stretch. A beetle flies through the cells, searching for blinking steel balls to catch. The line drawing behind is what it sees, each cell a true cube from inside: use it for navigating with controls on.</p></div></div>}
       <div id="lock" className="lock"><i /><i /><i /><i /><b>lock</b></div>
       {/* bottom left, under the blurb and as wide: mode, settings, shortcuts */}
       {CLEAN ? null : <div className="keys">
