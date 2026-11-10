@@ -160,6 +160,7 @@ body {
 }
 .back:hover { color: var(--ink); }
 .back { display: none; }
+.plate.chapter { display: none; } /* an upright phone's home page's only */
 .curtain { display: none; position: relative; width: 100vw; height: 28px; margin: 8px 0 0 -24px; pointer-events: none; }
 .curtain::before { content: ''; position: absolute; left: 0; right: 0; top: 50%; border-top: 0.5px solid var(--ui); }
 .curtain button {
@@ -286,6 +287,19 @@ body.clean .plate, body.clean .keys { display: none; }
      08 TESSERACT / PROBE / PILOT and BACK (the text and the title at the foot, the machine above, for a moment);
      PILOT over the footer, in the middle, well clear of it (--foot-top from DroneCam; on the right for a moment) */
   body .plate.probing { display: none; }
+  /* the home page is a page that scrolls: the text in the flow, the canvas a square box under it, 1:1, a hairline
+     round it, the page's margin either side, then the probe; a finger off the struts in the box scrolls the page */
+  html:has(body.home), body.home { height: auto; }
+  body.home { overflow-y: auto; background-attachment: fixed; }
+  body.home #root { display: flex; flex-direction: column; height: auto; }
+  body.home .plate { position: relative; top: 0; left: 0; margin: 24px 24px 0; order: 0; z-index: 1; pointer-events: auto; touch-action: pan-y; }
+  body.home .plate .blurb > h5, body.home .plate .blurb > .probe-what, body.home .plate .blurb > .probe, body.home .curtain { display: none; }
+  body.home .stage { order: 1; position: relative; inset: auto; flex: none; box-sizing: border-box; width: calc(100% - 48px); min-width: 0; aspect-ratio: 1; margin: 16px 24px 0; overflow: hidden; border: 0.5px solid var(--ui); }
+  body.home .stage, body.home .stage canvas { touch-action: pan-y; }
+  body.home .stage > div { min-width: 0; } /* Safari let the canvas's own width push the box out past the right margin */
+  body.home .plate.chapter { display: block; order: 2; margin: 0 24px 40px; }
+  body.home .plate.chapter .drawing { display: block; margin: 6px auto 4px; }
+  body.home .plate.chapter .probe:not(.off) { position: static; transform: none; margin: 8px 0 0; }
   /* the home page's curtain: a hairline across the whole screen under the text, a frosted handle in its middle, an
      arrow up to fold the text away, the title left, the machine up into the room, and down to bring it back */
   body .curtain { display: block; }

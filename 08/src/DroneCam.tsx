@@ -34,12 +34,13 @@ export function eyeShown(W: number, H: number) {
 }
 /** What the page tells the layout: under ?clean there is no text; textBottom, the text's foot, and footTop, the top
  * of an upright phone's footer with the probe in (0, none), measured each frame. */
-export const page = { clean: false, textBottom: 0, footTop: 0 };
+export const page = { clean: false, textBottom: 0, footTop: 0, boxed: false }; // boxed: the canvas is the home page's box, all of it the machine's
 type Rect = { x: number; y: number; w: number; h: number; round?: boolean }; // CSS px, from the top left; round, a disc in the square
 /** Where the machine goes and where the view goes. The machine never under the text: beside the text column, or under
  * it on an upright phone; split, the room left over halved between the machine and the view (the view off, or
  * maximized behind it all, the machine has all of it). */
 export function regionsOf(W: number, H: number): { main: Rect; cam: Rect | null; aim?: { x: number; y: number } } {
+  if (page.boxed) return { main: { x: 0, y: 0, w: W, h: H }, cam: null };
   const split = splitOf(W, H), upright = W <= 640 && H > W;
   // a phone: the machine has all the room under (or beside) the text, and the view is a little disc over it, bottom
   // middle upright, bottom right on its side; the machine aimed off its middle, a third of the way down (or across),

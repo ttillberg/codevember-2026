@@ -83,7 +83,7 @@ function Rig({ children }: { children: React.ReactNode }) {
     const t = Math.tan(THREE.MathUtils.degToRad(cam.fov) / 2);
     const vfov = 2 * Math.atan(t * (part.h / size.height)), hfov = 2 * Math.atan(t * (part.w / size.height));
     // an upright phone's home page: a third bigger than the fit, out past the sides (the width is what holds it in)
-    const home = size.width <= 640 && size.height > size.width && !drone.on ? HOME_BIG : 1;
+    const home = size.width <= 640 && size.height > size.width && !drone.on && !page.boxed ? HOME_BIG : 1; // in the box, just the fit
     const fit = (st.reach * 1.0) / Math.sin(Math.min(vfov, hfov) / 2) / home;
     rig.zoom += (fit * rig.zoomK - rig.zoom) * Math.min(1, dt * 2.5);
     // on the turntable the look leans towards the device a part of the way from the machine's middle, slowly, so it
@@ -247,6 +247,8 @@ function Pad({ take, shown }: { take: () => void; shown: boolean }) {
 }
 
 /** PILOT's mark on a phone: four arrows out from the middle, the moves the pad gives. */
+const PROBE_WHAT = 'The shadow alone is hard to read, so we put a physical object in it. The probe lives in 4D: its position and rotation are transposed from there. We give it a predictable task, fetching a ball, so its path is easy to follow as it flies from one cell into the next.';
+
 const Moves = () => (
   <svg className="moves" width={13} height={13} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
     <path d="M8 1.5v13M1.5 8h13M8 1.5 6 3.5M8 1.5l2 2M8 14.5l-2-2M8 14.5l2-2M1.5 8l2-2M1.5 8l2 2M14.5 8l-2-2M14.5 8l-2 2" />
@@ -339,6 +341,31 @@ export function App() {
   const [grid, setGrid] = useState(st.grid);
   const [maxi, setMaxi] = useState(eyeView.max);
   const [beetle, setBeetle] = useState(drone.on);
+  // an upright phone's home page is a page that scrolls: the text, the machine in a square box, the probe under it;
+  // the canvas is the box, in the flow, so the page scrolls it as it scrolls the text
+  useEffect(() => {
+    document.body.classList.toggle('home', !beetle && !CLEAN);
+    if (beetle) window.scrollTo(0, 0);
+    const upright = matchMedia('(max-width: 640px) and (orientation: portrait)');
+    const box = () => { page.boxed = !beetle && !CLEAN && upright.matches; };
+    box(); upright.addEventListener('change', box);
+    return () => upright.removeEventListener('change', box);
+  }, [beetle]);
+  // in the box a finger off the struts is the page's, so it scrolls: only one on a strut, or two, are kept from the
+  // browser (touch-action lets it pan; this takes the touch back where the machine wants it)
+  useEffect(() => {
+    const el = stage.current;
+    if (!el) return;
+    const keep = (e: TouchEvent) => {
+      if (!page.boxed || drone.pilot) return;
+      if (e.touches.length >= 2) { if (e.cancelable) e.preventDefault(); return; }
+      if (e.type !== 'touchstart') return;
+      const t = e.touches[0], r = el.getBoundingClientRect();
+      if (strutAt(t.clientX - r.left, t.clientY - r.top, PICK_TOUCH) >= 0 && e.cancelable) e.preventDefault();
+    };
+    el.addEventListener('touchstart', keep, { passive: false }); el.addEventListener('touchmove', keep, { passive: false });
+    return () => { el.removeEventListener('touchstart', keep); el.removeEventListener('touchmove', keep); };
+  }, []);
   const [open, setOpen] = useState(!drone.on || !matchMedia('(max-width: 640px), (max-height: 500px)').matches); // the text: all of it to start; on a phone folded with the probe in
   const [mode, setModeState] = useState<Mode>(drone.pilot ? 'pilot' : rig.follow ? 'follow' : 'orbit');
   const manual = mode === 'pilot';
@@ -359,7 +386,7 @@ export function App() {
   const dragDown = (e: React.PointerEvent) => {
     // a drag only from the machine's own part: not from the fisheye view, not from behind the text
     const { main } = regionsOf(innerWidth, innerHeight);
-    if (e.clientX < main.x || e.clientX > main.x + main.w || e.clientY < main.y || e.clientY > main.y + main.h) return;
+    if (!page.boxed && (e.clientX < main.x || e.clientX > main.x + main.w || e.clientY < main.y || e.clientY > main.y + main.h)) return;
     if (e.pointerType === 'touch') {
       (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
       fingers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
@@ -368,6 +395,8 @@ export function App() {
         // anywhere else it orbits (it turned in 4D by the drag anywhere, for a while); at the controls it is the look
         const at = (e.currentTarget as HTMLElement).getBoundingClientRect(); // the joints are in the canvas's pixels
         const strut = drone.pilot ? -1 : strutAt(e.clientX - at.left, e.clientY - at.top, PICK_TOUCH);
+        // in the home page's box, off the struts it is the page's: it scrolls, nothing turns (two fingers orbit)
+        if (page.boxed && strut < 0) { drag.current = null; return; }
         const kind = drone.pilot ? 'look' : strut >= 0 ? 'crank' : 'orbit';
         drag.current = { kind, x: e.clientX, y: e.clientY, t: performance.now() };
         if (strut >= 0) { grip.held = strut; const w = strutW(strut); handDown(Math.abs(w) > 0.2 ? -Math.sign(w) : 1); }
@@ -539,7 +568,9 @@ export function App() {
           <directionalLight position={[4, 8, 6]} intensity={1.1} />
         </Canvas>
       </div>
-      {CLEAN ? null : <div className={`plate ${open ? '' : 'folded'} ${beetle ? 'probing' : ''}`}><div className="head"><b>08 Tesseract</b><i>Codevember 2026</i></div><div className="blurb"><p>A tesseract is the four-dimensional cube: it is to a cube what a cube is to a square. A square is bounded by four edges and a cube by six square faces; a tesseract is bounded by eight cubical cells, meeting at right angles. We only see its shadow in 3D, a cube inside a cube, and as it turns in 4D, without bending, the inner cube swells out and the struts stretch.</p><h5>Probe<span className="ends">{beetle ? <button className="stop" tabIndex={-1} aria-label="Deactivate probe" onPointerDown={(e) => e.preventDefault()} onClick={toggleBeetle}><Stop /></button> : null}{beetle ? <button className="probe off" tabIndex={-1} aria-label={manual ? "Back to following" : "Back, the probe out"} onPointerDown={(e) => e.preventDefault()} onClick={() => { if (drone.pilot) setMode("follow"); else toggleBeetle(); }}><svg width={8} height={8} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={2.6} strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M10.5 2.5 5 8l5.5 5.5" /></svg>Back</button> : null}</span></h5><p className="probe-what">The shadow alone is hard to read, so we put a physical object in it. The probe lives in 4D: its position and rotation are transposed from there. We give it a predictable task, fetching a ball, so its path is easy to follow as it flies from one cell into the next.</p>{beetle ? null : <button className="probe" tabIndex={-1} onPointerDown={(e) => e.preventDefault()} onClick={toggleBeetle}><PlayPause playing={false} />Activate probe</button>}{beetle ? <><h5 className="small">Info</h5><p>Each cell has its own colour. The trail is left in the colour of the cell the probe was in, a wall lights up in the colour of the cell beyond as it goes through, and a steel ball blinks in the colour of the cell it is in.</p><p>The fisheye drawing is what the probe sees. From inside, every cell is a true cube however the shadow twists: pick Pilot to fly it by that view.</p></> : null}</div>{beetle ? null : <div className="curtain"><button tabIndex={-1} aria-label={open ? 'Fold the text away' : 'Unfold the text'} onPointerDown={(e) => e.preventDefault()} onClick={() => setOpen(!open)}><svg width={10} height={10} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round" aria-hidden style={{ transform: open ? 'none' : 'rotate(180deg)' }}><path d="M2.5 10.5 8 5l5.5 5.5" /></svg></button></div>}</div>}
+      {CLEAN ? null : <div className={`plate ${open ? '' : 'folded'} ${beetle ? 'probing' : ''}`}><div className="head"><b>08 Tesseract</b><i>Codevember 2026</i></div><div className="blurb"><p>A tesseract is the four-dimensional cube: it is to a cube what a cube is to a square. A square is bounded by four edges and a cube by six square faces; a tesseract is bounded by eight cubical cells, meeting at right angles. We only see its shadow in 3D, a cube inside a cube, and as it turns in 4D, without bending, the inner cube swells out and the struts stretch.</p><h5>Probe<span className="ends">{beetle ? <button className="stop" tabIndex={-1} aria-label="Deactivate probe" onPointerDown={(e) => e.preventDefault()} onClick={toggleBeetle}><Stop /></button> : null}{beetle ? <button className="probe off" tabIndex={-1} aria-label={manual ? "Back to following" : "Back, the probe out"} onPointerDown={(e) => e.preventDefault()} onClick={() => { if (drone.pilot) setMode("follow"); else toggleBeetle(); }}><svg width={8} height={8} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={2.6} strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M10.5 2.5 5 8l5.5 5.5" /></svg>Back</button> : null}</span></h5><p className="probe-what">{PROBE_WHAT}</p>{beetle ? null : <button className="probe" tabIndex={-1} onPointerDown={(e) => e.preventDefault()} onClick={toggleBeetle}><PlayPause playing={false} />Activate probe</button>}{beetle ? <><h5 className="small">Info</h5><p>Each cell has its own colour. The trail is left in the colour of the cell the probe was in, a wall lights up in the colour of the cell beyond as it goes through, and a steel ball blinks in the colour of the cell it is in.</p><p>The fisheye drawing is what the probe sees. From inside, every cell is a true cube however the shadow twists: pick Pilot to fly it by that view.</p></> : null}</div>{beetle ? null : <div className="curtain"><button tabIndex={-1} aria-label={open ? 'Fold the text away' : 'Unfold the text'} onPointerDown={(e) => e.preventDefault()} onClick={() => setOpen(!open)}><svg width={10} height={10} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round" aria-hidden style={{ transform: open ? 'none' : 'rotate(180deg)' }}><path d="M2.5 10.5 8 5l5.5 5.5" /></svg></button></div>}</div>}
+      {/* an upright phone's home page: under the box the probe, a line drawing of it, what it is, and the way in */}
+      {CLEAN || beetle ? null : <div className="plate chapter"><h5>Probe</h5><img className="drawing" src={`${import.meta.env.BASE_URL}drawings/probe.png`} width={220} height={220} alt="" draggable={false} /><p className="probe-what">{PROBE_WHAT}</p><button className="probe" tabIndex={-1} onPointerDown={(e) => e.preventDefault()} onClick={toggleBeetle}><PlayPause playing={false} />Activate probe</button></div>}
       {/* an upright phone with the probe in: no text, a footer instead, where it is (08 TESSERACT / PROBE / PILOT,
           each a way back to there) and BACK, one up */}
       {CLEAN || !beetle ? null : <nav className="crumbs" aria-label="Where you are">
