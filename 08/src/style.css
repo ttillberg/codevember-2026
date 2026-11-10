@@ -26,6 +26,10 @@ body {
 }
 
 .stage { position: fixed; inset: 0; cursor: grab; }
+/* full screen, down to the screen's very foot even with the browser's bar folded away after a scroll (the small
+   viewport left a bare strip under it); the document itself never scrolls but on a phone's home page */
+@supports (height: 100lvh) { .stage { bottom: auto; height: 100lvh; } }
+html:not(:has(body.home)) { overflow: hidden; }
 .stage:active { cursor: grabbing; }
 .stage.locked, .stage.locked:active { cursor: none; }
 .stage.edge { cursor: pointer; } /* over a strut, on its own: a drag turns the machine by it */
@@ -294,7 +298,7 @@ body.clean .plate, body.clean .keys { display: none; }
   body.home #root { display: flex; flex-direction: column; height: auto; }
   body.home .plate { position: relative; top: 0; left: 0; margin: 24px 24px 0; order: 0; z-index: 1; pointer-events: auto; touch-action: pan-y; }
   body.home .plate .blurb > h5, body.home .plate .blurb > .probe-what, body.home .plate .blurb > .probe, body.home .curtain { display: none; }
-  body.home .stage { order: 1; position: relative; inset: auto; flex: none; box-sizing: border-box; width: calc(100% - 48px); min-width: 0; aspect-ratio: 1; margin: 16px 24px 0; overflow: hidden; border: 0.5px solid var(--ui); }
+  body.home .stage { order: 1; position: relative; inset: auto; height: auto; flex: none; box-sizing: border-box; width: calc(100% - 48px); min-width: 0; aspect-ratio: 1; margin: 16px 24px 0; overflow: hidden; border: 0.5px solid var(--ui); }
   body.home .stage, body.home .stage canvas { touch-action: pan-y; }
   body.home .stage > div { min-width: 0; } /* Safari let the canvas's own width push the box out past the right margin */
   body.home .plate.chapter { display: block; order: 2; margin: 0 24px 40px; }

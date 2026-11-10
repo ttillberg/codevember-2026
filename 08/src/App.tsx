@@ -530,6 +530,7 @@ export function App() {
   const toggleTransformRef = useRef(toggleTransform); // for the keys, set up once
   toggleTransformRef.current = toggleTransform;
   const toggleBeetle = () => {
+    window.scrollTo(0, 0); // to the top first: going full screen from a scrolled page left the screen's foot bare
     drone.on = !beetle; setBeetle(drone.on);
     // on a phone the probe in folds the text to make room, out it opens again; on a desktop the text stays open
     if (matchMedia('(max-width: 640px), (max-height: 500px)').matches) setOpen(!drone.on);
