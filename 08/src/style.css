@@ -18,6 +18,7 @@ html, body, #root {
 }
 
 body {
+  user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; /* nothing to select or hold for a menu: a held finger flies */
   background-color: var(--paper);
   background-image:
     radial-gradient(ellipse 70% 60% at 50% 42%, #fdfdfc 0%, var(--paper) 55%, #e6e6e3 100%);
@@ -175,7 +176,9 @@ body.clean .plate, body.clean .keys { display: none; }
   .plate b { font-size: 36px; }
   .plate > i { font-size: 9px; }
   .plate .blurb { max-width: min(var(--col), 100%); }
-  .plate h5 { font-size: 18px; margin: 14px 0 8px; }
+  .plate h5 { font-size: 18px; margin: 14px 0 8px; border-bottom: 0; padding-bottom: 0; } /* no rule: the views go edge to edge, a rule in from the edges does not */
+  .plate h5 .ends { gap: 14px; } /* the i and the stop, apart for a thumb */
+  .pill.orbit { display: none; } /* with the probe in, followed or flown: no orbit */
   .plate .blurb p:not(:first-child), .plate h5.small { display: none; } /* the tesseract's paragraph and the probe's button, no more */
   .keys { width: min(var(--col), calc(100vw - 48px)); }
   .keys.right { display: none; } /* no keys on a phone */
@@ -187,12 +190,9 @@ body.clean .plate, body.clean .keys { display: none; }
   .plate h5 { margin-top: 8px; }
 }
 /* touch: no keys, so no pilot and no shortcuts; a finger turns it in 4D, two orbit and pinch, the phone's lean turns the view */
-.play.forward { display: none; touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
-.play.forward:active { background: var(--ui); color: var(--paper); } /* held: filled */
 @media (pointer: coarse) {
   .keys.right { display: none; }
   .play.lockpill { display: none; } /* no pointer to lock */
-  .play.forward { display: inline-flex; padding: 14px 26px 13px 22px; } /* the one button at the controls, a thumb's size */
 }
 
 
@@ -212,10 +212,28 @@ body.clean .plate, body.clean .keys { display: none; }
 /* bottom middle, side by side: transform's play/pause and, at the controls, the pointer lock (on the left over the keys
    before, white) */
 .middle { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); display: flex; gap: 8px; }
+/* the pad: over the fisheye view, on a phone at the controls; arrows at its edges and a ring with a dot in the middle,
+   outlined in white with a grey edge so they read on the grey view, the one held filled */
+.pad { display: none; position: fixed; left: var(--cam-x, 0px); top: var(--eye-y, 50vh); width: calc(var(--eye-x, 100vw) - var(--cam-x, 0px)); height: var(--cam-h, 50vh); z-index: 1; touch-action: none; }
+.pad .arrow { position: absolute; overflow: visible; }
+.pad .arrow path { fill: none; stroke: #fff; stroke-width: 1.6; stroke-linejoin: round; filter: drop-shadow(0 0 1px var(--ui)); }
+.pad .arrow.on path { fill: #fff; }
+.pad .arrow.t { top: 18px; left: calc(50% - 13px); }
+.pad .arrow.b { bottom: 18px; left: calc(50% - 13px); }
+.pad .arrow.l { left: 18px; top: calc(50% - 13px); }
+.pad .arrow.r { right: 18px; top: calc(50% - 13px); }
+.pad .ring {
+  position: absolute; left: 50%; top: 50%; width: 64px; height: 64px; transform: translate(-50%, -50%); border-radius: 50%;
+  border: 1.6px solid #fff; box-shadow: 0 0 1px var(--ui), inset 0 0 1px var(--ui); display: grid; place-items: center;
+}
+.pad .ring i { width: 8px; height: 8px; border-radius: 50%; background: #fff; box-shadow: 0 0 1px var(--ui); }
+.pad .ring.on { background: rgba(255, 255, 255, 0.35); }
+.maxi, .close { z-index: 2; } /* over the pad */
 /* the close: only on a phone at the controls, a circle bottom left where the pills were, back to orbit or follow */
 .close { display: none; }
 @media (max-width: 640px), (max-height: 500px) {
   body:not(.pilot) .maxi, body:not(.pilot) .divider { display: none; } /* orbit and follow: no view, the machine has it all */
+  body.pilot .pad { display: block; } /* the view a pad to fly by */
   body.pilot .keys { display: none; } /* at the controls no pills, */
   body.pilot .close { /* a close instead */
     display: grid; place-items: center; position: fixed; left: 24px; bottom: 24px; width: 46px; height: 46px; padding: 0;
