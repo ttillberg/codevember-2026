@@ -55,6 +55,7 @@ export const drone = {
   worldFwd: new THREE.Vector3(0, 0, -1),
   worldUp: new THREE.Vector3(0, 1, 0),
 };
+if (import.meta.env.DEV) Object.assign(window, { __drone: drone }); // for grabs and debugging, as __st, __rig, __grip
 
 /** The piece: a small steel ball with a pinhead lamp on each axis, six, flashing fast. `blink(t)` runs them. */
 export const PIECE_R = (0.02 * 2) / 3; // two thirds of what it was, with the device
