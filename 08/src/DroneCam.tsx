@@ -153,7 +153,7 @@ export function DroneCam() {
     return {
       cs, tubes, flash, piece, grabbed, eye, lens, flat,
       q: new THREE.Quaternion(), look: new THREE.Vector3(0, 0, -1), last: [0, 0, 0], crossings: -1,
-      pos: new THREE.Vector3(), lockEl: null as HTMLElement | null, plateEl: null as Element | null, camH: 0, lockLast: '', // the bracket's last style, written only on change
+      pos: new THREE.Vector3(), lockEl: null as HTMLElement | null, plateEl: null as Element | null, camH: 0, camW: 0, lockLast: '', // the bracket's last style, written only on change
       grabOf: null as number[] | null, grabLocal: new THREE.Vector3(), // the piece taken, and where it was from the eye then, in its frame
     };
   }, []);
@@ -188,10 +188,13 @@ export function DroneCam() {
     // from the page's top)
     // the view: as wide as the column, square at most, lower (landscape) where the text above leaves less room, not
     // below MIN_H; its height goes to the page as --cam-h, for the buttons in its corner
-    const S = Math.round(Math.min(COL, W - 2 * MARGIN));
+    // on a phone (narrow, or low on its side) a small square, about two fifths of the shorter side
+    const phone = W <= 640 || H <= 500;
+    const S = Math.round(phone ? Math.min(W, H) * 0.42 : Math.min(COL, W - 2 * MARGIN));
     const textBottom = (cell.plateEl ??= document.querySelector('.plate'))?.getBoundingClientRect().bottom ?? MARGIN;
     const SH = Math.round(Math.max(MIN_H, Math.min(S, H - OVER - textBottom - GAP)));
     if (SH !== cell.camH) { cell.camH = SH; document.documentElement.style.setProperty('--cam-h', `${SH}px`); }
+    if (S !== cell.camW) { cell.camW = S; document.documentElement.style.setProperty('--cam-w', `${S}px`); }
     const full = eyeView.max, sx = MARGIN, sy = OVER, top = H - OVER - SH;
     const w = full ? Math.hypot(W, H) : Math.hypot(S, SH), h = w;
     const x = (full ? W / 2 : sx + S / 2) - w / 2, y = (full ? H / 2 : sy + SH / 2) - h / 2;

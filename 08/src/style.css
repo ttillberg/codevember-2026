@@ -157,14 +157,26 @@ body {
 .back { display: none; }
 body.clean .plate, body.clean .keys { display: none; }
 
-@media (max-width: 640px) {
-  .plate { width: calc(100% - 48px); }
+/* a phone, either way up: narrow, or low (on its side); the same as `phone` in DroneCam.tsx and App.tsx */
+@media (max-width: 640px), (max-height: 500px) {
+  .plate { width: min(var(--col), calc(100% - 48px)); } /* no wider than the column, on its side too */
   .plate b { font-size: 36px; }
   .plate > i { font-size: 9px; }
-  .plate p { display: none; }
-  .keys { width: auto; }
+  .plate .blurb { max-width: min(var(--col), 100%); }
+  .plate h5 { font-size: 18px; margin: 14px 0 8px; }
+  .plate .blurb p:not(:first-child), .plate h5.small { display: none; } /* the tesseract's paragraph and the probe's button, no more */
+  .keys { width: min(var(--col), calc(100vw - 48px)); }
   .keys.right { display: none; } /* no keys on a phone */
   .cellmap.side { display: none; }
+}
+@media (max-height: 500px) {
+  .plate, .keys { width: min(260px, calc(100% - 48px)); } /* on its side the column narrower, the tesseract beside it */
+  .plate .blurb p { display: none; } /* on its side: the title, PROBE and its button */
+  .plate h5 { margin-top: 8px; }
+}
+/* touch: no keys to fly with, so no pilot */
+@media (pointer: coarse) {
+  .pill.pilot { display: none; }
 }
 
 
@@ -196,12 +208,12 @@ body.clean .plate, body.clean .keys { display: none; }
 /* the first person view's corner button, top right, in the strip's corner or the page's: outlined, on the paper */
 /* in the view's top right corner: it is the column wide in the left column, 76 up from the bottom, --cam-h high */
 .maxi {
-  position: fixed; bottom: calc(76px + var(--cam-h, var(--col)) - 36px); left: calc(24px + var(--col) - 36px); width: 28px; height: 28px; padding: 0; display: grid; place-items: center;
+  position: fixed; bottom: calc(76px + var(--cam-h, var(--col)) - 36px); left: calc(24px + var(--cam-w, var(--col)) - 36px); width: 28px; height: 28px; padding: 0; display: grid; place-items: center;
   border: 1.2px solid var(--ui); border-radius: 6px; background: var(--paper); color: var(--ui); cursor: pointer;
 }
 .maxi:hover { box-shadow: 0 0 0 3px rgba(28, 28, 28, 0.08); }
-.maxi:not(.eye) { left: calc(24px + var(--col) - 70px); } /* the eye in the corner, maximize to its left */
-.maxi.solo { left: calc(24px + var(--col) - 36px); } /* minimized there is no eye (only maximized, or hidden, to bring it back): maximize alone in the corner */
+.maxi:not(.eye) { left: calc(24px + var(--cam-w, var(--col)) - 70px); } /* the eye in the corner, maximize to its left */
+.maxi.solo { left: calc(24px + var(--cam-w, var(--col)) - 36px); } /* minimized there is no eye (only maximized, or hidden, to bring it back): maximize alone in the corner */
 /* the mode: three pills in a row, outlined, the one picked filled in the panel's grey, a line under on what it does */
 .pills { grid-column: 1 / -1; display: flex; gap: 8px; margin: 2px 0; pointer-events: auto; } /* bigger: the three across the panel, each a third */
 .pill {

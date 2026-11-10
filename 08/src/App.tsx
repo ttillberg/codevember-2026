@@ -69,7 +69,8 @@ function Rig({ children }: { children: React.ReactNode }) {
     } else camera.lookAt(look.copy(rig.focus));
     // following, the beetle two thirds across, clear of the left column: the picture slid right by a sixth of the page,
     // the view itself the same, eased in and out with the follow
-    const slide = fk * FOLLOW_SLIDE * size.width;
+    const phone = size.width <= 640 || size.height <= 500; // on a phone the column is not beside it: the beetle in the middle
+    const slide = phone ? 0 : fk * FOLLOW_SLIDE * size.width;
     if (slide > 0.5) cam.setViewOffset(size.width, size.height, -slide, 0, size.width, size.height);
     else if (cam.view?.enabled) cam.clearViewOffset();
     // the depth of field on what the camera looks at, the beetle when following; nearer, the blur deeper, as a lens's
@@ -304,7 +305,7 @@ export function App() {
   };
   const controls = !beetle ? null : <>
     <div className="pills" role="radiogroup" aria-label="Mode">
-      {MODES.map(([m, name]) => <button key={m} className={`pill ${mode === m ? 'at' : ''}`} role="radio" aria-checked={mode === m} tabIndex={-1}
+      {MODES.map(([m, name]) => <button key={m} className={`pill ${m} ${mode === m ? 'at' : ''}`} role="radio" aria-checked={mode === m} tabIndex={-1}
         onPointerDown={(e) => e.preventDefault()} onClick={() => setMode(m)}>{name}</button>)}
     </div>
   </>;
