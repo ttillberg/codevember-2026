@@ -284,7 +284,6 @@ const Cheat = () => (
         <path className="arrow" d="M29 9H51" /><Head x={29} y={9} a={180} /><Head x={51} y={9} a={0} />
         <Hand x={40} y={29} a={-24} />
       </svg>
-      <figcaption>Transform</figcaption>
     </figure>
     <i className="rule" />
     <figure>
@@ -293,7 +292,6 @@ const Cheat = () => (
         <path className="arrow" d="M13 19A19 14 0 0 1 51 19" /><Head x={51} y={19} a={72} />
         <Hand x={30} y={38} a={-8} two />
       </svg>
-      <figcaption>Rotate</figcaption>
     </figure>
   </div>
 );
