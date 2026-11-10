@@ -75,7 +75,8 @@ body {
   pointer-events: none; user-select: none; white-space: nowrap;
   font: 12px/16px "Helvetica Neue", Helvetica, Arial, sans-serif;
 }
-.keys.right { left: auto; right: 24px; } /* the shortcuts, bottom right; mode and settings stay bottom left */
+.keys.right { left: auto; right: 24px; } /* the shortcuts, bottom right; mode stays bottom left */
+.keys.top { left: auto; right: 24px; bottom: auto; top: 24px; min-width: 200px; } /* the settings, top right */
 .keys .how { display: inline-flex; align-items: center; gap: 4px; color: var(--ui); font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase; }
 .keys .what { font-size: 12px; color: var(--ui); } /* what it does: a sentence, in sentence case */
 /* the sections, SETTINGS and SHORTCUTS: small caps in ink and a hairline under, across the column */
@@ -123,6 +124,7 @@ body.clean .plate, body.clean .keys { display: none; }
   .plate i { font-size: 9px; }
   .plate p { display: none; }
   .keys.right { display: none; } /* no keys on a phone, the settings stay */
+  .keys.top { right: auto; left: 24px; top: 100px; } /* under the title, the blurb being hidden here */
 }
 
 

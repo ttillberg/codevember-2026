@@ -298,11 +298,11 @@ export function App() {
           <Crosshair />
           Lock pointer
         </button>}
-        {smalls}
       </div> : <div className="keys">
         {controls}
-        {smalls}
       </div>}
+      {/* the settings, top right */}
+      {CLEAN ? null : <div className="keys top">{smalls}</div>}
       {/* the shortcuts on their own, bottom right */}
       {CLEAN ? null : manual ? <div className="keys right">
         <h5 className="shortcuts">Shortcuts <span>(interactive mode)</span></h5>
