@@ -22,6 +22,9 @@ const CLEAN = PARAMS.has('clean'); // no page furniture, for the screengrab
 // time, changing plane as it goes.
 
 
+// the turntable goes with transform, one switch for both: the camera's slow turn and the machine's in 4D
+rig.spin = st.transform;
+
 /** A small switch: its name, then ON | OFF at the end of the line, the one it is at filled; a click anywhere on it
  * flips it. Never takes focus, so space stays forward. */
 const Small = ({ on, label, act }: { on: boolean; label: string; act: () => void }) => (
@@ -144,7 +147,6 @@ function handMove(dx: number, dy: number) {
 function handUp() { if (hand.on && hand.picked) crankEnd(); hand.on = false; grip.held = -1; }
 
 export function App() {
-  const [spin, setSpin] = useState(rig.spin);
   const [transform, setTransform] = useState(st.transform);
   const [follow, setFollow] = useState(rig.follow);
   const [grid, setGrid] = useState(st.grid);
@@ -255,8 +257,7 @@ export function App() {
   const smalls = <>
     <h5>Settings</h5>
     <div className="smalls">
-      <Small on={spin} label="Turntable" act={() => { rig.spin = !rig.spin; setSpin(rig.spin); }} />
-      <Small on={transform} label="Transform" act={() => { st.transform = !st.transform; setTransform(st.transform); }} />
+      <Small on={transform} label="Transform" act={() => { st.transform = !st.transform; rig.spin = st.transform; setTransform(st.transform); }} />
       <Small on={grid} label="Camera grid" act={() => { st.grid = !st.grid; setGrid(st.grid); }} />
       {/* follow is for the attract mode only */}
       {manual ? null : <Small on={follow} label="Follow" act={() => { rig.follow = !rig.follow; setFollow(rig.follow); }} />}
