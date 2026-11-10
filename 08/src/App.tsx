@@ -288,7 +288,7 @@ export function App() {
       </div>
       {CLEAN ? null : <div className="plate"><b>08 Tesseract</b><i>Codevember 2026</i><div className="blurb"><p>A tesseract is a cube in four dimensions: eight cubes, each wall shared by two. We can only see its shadow, a cube inside a cube.</p><p>It turns in 4D without bending, yet in the shadow the inner cube swells out and the struts stretch. A beetle flies through the cells, searching for blinking steel balls to catch. The line drawing behind is what it sees, each cell a true cube from inside: use it for navigating with controls on.</p></div></div>}
       <div id="lock" className="lock"><i /><i /><i /><i /><b>lock</b></div>
-      {/* bottom left, under the blurb and as wide: mode, settings, shortcuts */}
+      {/* bottom left, under the blurb and as wide: mode and settings; the shortcuts bottom right, as wide */}
       {CLEAN ? null : <div className="keys">
         {controls}
         {/* then the pointer lock; locked, there is no pointer to click with, so the way out instead: esc */}
@@ -298,6 +298,8 @@ export function App() {
           Lock pointer
         </button>}
         {smalls}
+      </div>}
+      {CLEAN ? null : <div className="keys right">
         {manual ? <>
         <h5 className="shortcuts">Shortcuts <span>(interactive mode)</span></h5>
         <h6 className="shortcuts">Navigation</h6>
