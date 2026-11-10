@@ -387,6 +387,10 @@ body.clean .plate, body.clean .keys { display: none; }
 }
 /* the mode: three pills in a row, outlined, the one picked filled in the panel's grey, a line under on what it does */
 .pills { grid-column: 1 / -1; display: flex; gap: 8px; margin: 2px 0; pointer-events: auto; } /* each as wide as its word (the three across the panel, a third each, for a while) */
+/* a radio's circle before each mode's word, filled for the one picked (a desktop's; a phone has PILOT alone, its arrows) */
+.pill .radio { flex: none; width: 7px; height: 7px; border: 1px solid currentColor; border-radius: 50%; box-sizing: border-box; margin-top: -1px; }
+.pill.at .radio { background: currentColor; }
+@media (max-width: 640px), (max-height: 500px) { .pill .radio { display: none; } }
 /* on a desktop the three share the column's width, a third each, the word in the middle (each as wide as its word for a while) */
 @media (min-width: 641px) and (min-height: 501px) { .pills .pill { flex: 1; justify-content: center; } }
 .pill {

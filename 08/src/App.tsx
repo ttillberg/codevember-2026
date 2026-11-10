@@ -583,7 +583,7 @@ export function App() {
   const controls = !beetle ? null : <>
     <div className="pills" role="radiogroup" aria-label="Mode">
       {MODES.map(([m, name]) => <button key={m} className={`pill ${m} ${mode === m ? 'at' : ''}`} role="radio" aria-checked={mode === m} tabIndex={-1}
-        onPointerDown={(e) => e.preventDefault()} onClick={() => setMode(m)}>{m === 'pilot' ? <Moves /> : null}{name}</button>)}
+        onPointerDown={(e) => e.preventDefault()} onClick={() => setMode(m)}><i className="radio" />{m === 'pilot' ? <Moves /> : null}{name}</button>)}
     </div>
   </>;
 
