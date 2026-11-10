@@ -656,12 +656,10 @@ export function App() {
       {CLEAN ? null : <div className={`plate ${open ? '' : 'folded'} ${beetle ? 'probing' : ''}`}><div className="head"><b>08 Tesseract</b><i>Codevember 2026</i></div>{beetle ? null : <div className="curtain"><button tabIndex={-1} aria-label={open ? 'Fold the text away' : 'Unfold the text'} onPointerDown={(e) => e.preventDefault()} onClick={() => setOpen(!open)}><svg width={10} height={10} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round" aria-hidden style={{ transform: open ? 'none' : 'rotate(180deg)' }}><path d="M2.5 10.5 8 5l5.5 5.5" /></svg></button></div>}</div>}
       {/* an upright phone's home page: under the box the probe, a line drawing of it, what it is, and the way in, the
           probe in, full screen and followed (in the box, at its foot, for a moment) */}
-      {/* an upright phone with the probe in: no text, a footer instead, where it is (08 TESSERACT / PROBE / PILOT,
-          each a way back to there) and BACK, one up */}
+      {/* an upright phone with the probe in: no text, a footer instead, where it is (08 TESSERACT, and / PILOT at the controls; a PROBE between them for a while) and BACK, one up */}
       {CLEAN || !beetle ? null : <nav className="crumbs" aria-label="Where you are">
         <span className="trail">
-          <span>08 Tesseract</span><i>/</i>
-          <button tabIndex={-1} className={manual ? '' : 'at'} onPointerDown={(e) => e.preventDefault()} onClick={() => setMode('follow')}>Probe</button>
+          <span className={manual ? '' : 'at'}>08 Tesseract</span>
           {manual ? <><i>/</i><button tabIndex={-1} className="at">Pilot</button></> : null}
         </span>
         {manual ? <button className="probe off" tabIndex={-1} aria-label="Back to following" onPointerDown={(e) => e.preventDefault()} onClick={() => setMode("follow")}><svg width={8} height={8} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={2.6} strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M10.5 2.5 5 8l5.5 5.5" /></svg>Back</button> : null}

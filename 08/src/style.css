@@ -256,7 +256,7 @@ body.home .stage .corner { top: 10px; right: 10px; }
 /* the line as high as the capitals (Plex, 0.7 em), so the box is the letters and the 24 px round it is true */
 .crumbs { display: none; position: fixed; left: 24px; right: 24px; bottom: 24px; align-items: center; justify-content: space-between; gap: 12px; }
 .crumbs .trail { display: flex; align-items: baseline; gap: 6px; white-space: nowrap; min-width: 0; }
-.crumbs .trail button, .crumbs .trail i {
+.crumbs .trail button, .crumbs .trail span, .crumbs .trail i {
   padding: 0; border: 0; background: none; color: var(--ui); cursor: pointer; font-style: normal;
   font: 700 14px/10px "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; letter-spacing: 0.02em; text-transform: uppercase;
 }
