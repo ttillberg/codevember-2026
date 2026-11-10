@@ -30,11 +30,11 @@ if (CLEAN) { eyeView.max = true; page.clean = true; }
 // The three modes, pills under MODE, nothing more (a line on the one picked under them before): on its own the camera orbits the machine or follows
 // the beetle; the pilot is at the controls.
 type Mode = 'orbit' | 'follow' | 'pilot';
-// in this order: FOLLOW first, the one the probe comes in in, then PILOT, then ORBIT (orbit, follow, pilot for a while)
+// in this order: ORBIT, FOLLOW, PILOT, from the farthest to the controls (follow, pilot, orbit for a moment)
 const MODES: [Mode, string][] = [
+  ['orbit', 'Orbit'],
   ['follow', 'Follow'],
   ['pilot', 'Pilot'],
-  ['orbit', 'Orbit'],
 ];
 
 // the turntable and the transform off to start (both on, then the turntable alone, for a while); no switch for the
