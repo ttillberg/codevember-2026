@@ -16,7 +16,10 @@ const PARAMS = new URLSearchParams(location.search);
 const CLEAN = PARAMS.has('clean'); // no page furniture, for the screengrab: the first person view maximized, a faint ground
 // the probe in from the start, for the screengrab (no button to press under ?clean), followed as it comes in by the
 // button, but orbited for the screengrab
-if (PARAMS.has('probe')) { drone.on = true; if (!CLEAN) rig.follow = true; }
+// the probe is in from the start, followed (an ACTIVATE PROBE button brought it in, for a while); under ?clean
+// only with ?probe, and orbited
+if (!CLEAN || PARAMS.has('probe')) drone.on = true;
+if (!CLEAN) rig.follow = true;
 if (CLEAN) { eyeView.max = true; page.clean = true; }
 
 // Two modes, the same two views in both: the machine fills the page, the eye's view the right third behind it.
@@ -275,7 +278,6 @@ function Pad({ take, shown }: { take: () => void; shown: boolean }) {
 }
 
 /** PILOT's mark on a phone: four arrows out from the middle, the moves the pad gives. */
-const PROBE_WHAT = 'The shadow alone is hard to read, so we put a physical object in it. The probe lives in 4D: its position and rotation are transposed from there. We give it a predictable task, fetching a ball, so its path is easy to follow as it flies from one cell into the next.';
 
 // The phone's cheat sheet, as an assembly manual draws it: line art, no words but a caption, the hand and the arrows
 // doing the telling. A cube in hairline, the struts out of sight dashed; one finger on a strut, lime, with an arrow
@@ -610,14 +612,6 @@ export function App() {
   // following, where from: FREE, BACK, SIDE, TOP, a switch under AUTOTRANSFORM
   const toggleTransformRef = useRef(toggleTransform); // for the keys, set up once
   toggleTransformRef.current = toggleAuto; // T: AUTOTRANSFORM's (the transform and the turntable together for a while)
-  const toggleBeetle = () => {
-    window.scrollTo(0, 0); // to the top first: going full screen from a scrolled page left the screen's foot bare
-    drone.on = !beetle; setBeetle(drone.on);
-    // on a phone the probe in folds the text to make room, out it opens again; on a desktop the text stays open
-    if (matchMedia('(max-width: 640px), (max-height: 500px)').matches) setOpen(!drone.on);
-    if (!drone.on) setMode('orbit'); // nothing to follow or fly
-    else setMode('follow'); // in, it is followed, on a desktop too (orbit, there, for a while)
-  };
   const controls = !beetle ? null : <>
     <div className="pills" role="radiogroup" aria-label="Mode">
       {MODES.map(([m, name]) => <button key={m} className={`pill ${m} ${mode === m ? 'at' : ''}`} role="radio" aria-checked={mode === m} tabIndex={-1}
@@ -659,19 +653,18 @@ export function App() {
         {/* an upright phone's home page: how the hands work, in the box, bottom right (bottom left, and under it, titled INSTRUCTIONS, for a moment) */}
         {CLEAN ? null : <Cheat />}{/* shown by the page: a phone's home page's box, a desktop's corner away from the controls (style.css) */}
       </div>
-      {CLEAN ? null : <div className={`plate ${open ? '' : 'folded'} ${beetle ? 'probing' : ''}`}><div className="head"><b>08 Tesseract</b><i>Codevember 2026</i></div><div className="blurb"><p>A tesseract is the four-dimensional cube: it is to a cube what a cube is to a square. A square is bounded by four edges and a cube by six square faces; a tesseract is bounded by eight cubical cells, meeting at right angles. We only see its shadow in 3D, a cube inside a cube, and as it turns in 4D, without bending, the inner cube swells out and the struts stretch.</p><div className="probe-sec"><h5>Probe<span className="ends">{beetle ? <button className="stop" tabIndex={-1} aria-label="Deactivate probe" onPointerDown={(e) => e.preventDefault()} onClick={toggleBeetle}><Stop /></button> : null}{beetle ? <button className="probe off" tabIndex={-1} aria-label={manual ? "Back to following" : "Back, the probe out"} onPointerDown={(e) => e.preventDefault()} onClick={() => { if (drone.pilot) setMode("follow"); else toggleBeetle(); }}><svg width={8} height={8} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={2.6} strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M10.5 2.5 5 8l5.5 5.5" /></svg>Back</button> : null}</span></h5><p className="probe-what">{PROBE_WHAT}</p>{beetle ? null : <button className="probe" tabIndex={-1} onPointerDown={(e) => e.preventDefault()} onClick={toggleBeetle}><PlayPause playing={false} />Activate probe</button>}</div></div>{beetle ? null : <div className="curtain"><button tabIndex={-1} aria-label={open ? 'Fold the text away' : 'Unfold the text'} onPointerDown={(e) => e.preventDefault()} onClick={() => setOpen(!open)}><svg width={10} height={10} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round" aria-hidden style={{ transform: open ? 'none' : 'rotate(180deg)' }}><path d="M2.5 10.5 8 5l5.5 5.5" /></svg></button></div>}</div>}
+      {CLEAN ? null : <div className={`plate ${open ? '' : 'folded'} ${beetle ? 'probing' : ''}`}><div className="head"><b>08 Tesseract</b><i>Codevember 2026</i></div><div className="blurb"><p>A tesseract is the four-dimensional cube: it is to a cube what a cube is to a square. A square is bounded by four edges and a cube by six square faces; a tesseract is bounded by eight cubical cells, meeting at right angles. We only see its shadow in 3D, a cube inside a cube, and as it turns in 4D, without bending, the inner cube swells out and the struts stretch.</p><div className="probe-sec"><h5>Probe<span className="ends">{beetle && manual ? <button className="probe off" tabIndex={-1} aria-label="Back to following" onPointerDown={(e) => e.preventDefault()} onClick={() => setMode("follow")}><svg width={8} height={8} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={2.6} strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M10.5 2.5 5 8l5.5 5.5" /></svg>Back</button> : null}</span></h5></div></div>{beetle ? null : <div className="curtain"><button tabIndex={-1} aria-label={open ? 'Fold the text away' : 'Unfold the text'} onPointerDown={(e) => e.preventDefault()} onClick={() => setOpen(!open)}><svg width={10} height={10} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round" aria-hidden style={{ transform: open ? 'none' : 'rotate(180deg)' }}><path d="M2.5 10.5 8 5l5.5 5.5" /></svg></button></div>}</div>}
       {/* an upright phone's home page: under the box the probe, a line drawing of it, what it is, and the way in, the
           probe in, full screen and followed (in the box, at its foot, for a moment) */}
-      {CLEAN || beetle ? null : <div className="plate chapter"><h5>Probe</h5><img className="drawing" src={`${import.meta.env.BASE_URL}drawings/probe.png`} width={220} height={220} alt="" draggable={false} /><p className="probe-what">{PROBE_WHAT}</p><button className="probe" tabIndex={-1} onPointerDown={(e) => e.preventDefault()} onClick={toggleBeetle}><PlayPause playing={false} />Activate probe</button></div>}
       {/* an upright phone with the probe in: no text, a footer instead, where it is (08 TESSERACT / PROBE / PILOT,
           each a way back to there) and BACK, one up */}
       {CLEAN || !beetle ? null : <nav className="crumbs" aria-label="Where you are">
         <span className="trail">
-          <button tabIndex={-1} onPointerDown={(e) => e.preventDefault()} onClick={toggleBeetle}>08 Tesseract</button><i>/</i>
+          <span>08 Tesseract</span><i>/</i>
           <button tabIndex={-1} className={manual ? '' : 'at'} onPointerDown={(e) => e.preventDefault()} onClick={() => setMode('follow')}>Probe</button>
           {manual ? <><i>/</i><button tabIndex={-1} className="at">Pilot</button></> : null}
         </span>
-        <button className="probe off" tabIndex={-1} aria-label={manual ? "Back to following" : "Back, the probe out"} onPointerDown={(e) => e.preventDefault()} onClick={() => { if (drone.pilot) setMode("follow"); else toggleBeetle(); }}><svg width={8} height={8} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={2.6} strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M10.5 2.5 5 8l5.5 5.5" /></svg>Back</button>
+        {manual ? <button className="probe off" tabIndex={-1} aria-label="Back to following" onPointerDown={(e) => e.preventDefault()} onClick={() => setMode("follow")}><svg width={8} height={8} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={2.6} strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M10.5 2.5 5 8l5.5 5.5" /></svg>Back</button> : null}
       </nav>}
       {/* the first person view's corner, top right: hide or show it, and, shown, maximize or
           minimize it, the corner the only way to them */}
