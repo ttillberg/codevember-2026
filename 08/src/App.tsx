@@ -104,7 +104,7 @@ function Rig({ children }: { children: React.ReactNode }) {
     rig.followK += (((rig.follow && !drone.pilot) || (drone.pilot && phoneNow) ? 1 : 0) - rig.followK) * Math.min(1, dt * 2);
     const fk = rig.followK;
     if (fk > 0.001) {
-      off.setFromSphericalCoords(rig.zoom * (page.boxed ? FOLLOW_BOX : size.width <= 640 || size.height <= 500 ? FOLLOW_PHONE : FOLLOW), Math.PI / 2 - THREE.MathUtils.clamp(pitch, -LEVEL, LEVEL), yaw);
+      off.setFromSphericalCoords(rig.zoom * (size.width <= 640 || size.height <= 500 ? FOLLOW_PHONE : FOLLOW), Math.PI / 2 - THREE.MathUtils.clamp(pitch, -LEVEL, LEVEL), yaw);
       look.copy(rig.focus).lerp(tail, fk);
       camera.position.lerp(followAt.copy(tail).add(off), fk);
       camera.lookAt(look);
@@ -131,7 +131,6 @@ const DOF_WIDE = 0.007, DOF_FOLLOW = 0.009; // the blur at twice the focus dista
 // nothing to hold to and the picture spins. (Shots in turn, from the back, the side, above, and a close-up on the
 // catch, were tried first, with cuts and then glides; too much.)
 const HOME_BIG = 1.33; // the machine on an upright phone's home page, against the fit
-const FOLLOW_BOX = 0.75; // in the home page's probe view, a small square: further off, the probe and its room in it
 const FOLLOW = 0.5, FOLLOW_PHONE = 0.35; // the distance to the beetle against the fit to the whole machine; nearer on a phone
 const FOLLOW_EASE = 2; // how fast the look goes after the beetle (1/s)
 const LEVEL = 0.87; // radians, about 50 degrees
@@ -352,42 +351,13 @@ export function App() {
     box(); upright.addEventListener('change', box);
     return () => upright.removeEventListener('change', box);
   }, [beetle]);
-  // the home page's one canvas has two places: the box under the text, and the probe's view at the foot of the page,
-  // under what the probe is. As that comes in at the foot of the screen, once the box has begun to go off the top,
-  // the canvas goes to it, the probe in and followed, and the box keeps a still of its last frame; back up, the other
-  // way round. One canvas, one context, one place running at a time.
-  const [slot, setSlot] = useState<'top' | 'probe'>('top');
-  const stills = useRef<{ top?: string; probe?: string }>({});
-  useEffect(() => {
-    if (beetle || CLEAN) return;
-    const pick = () => {
-      const at = document.body.classList.contains('at-probe');
-      const view = document.querySelector(at ? '.stage' : '.slot.probe'), box = document.querySelector(at ? '.slot.top' : '.stage');
-      const s = !!view && view.getBoundingClientRect().top < innerHeight - 60 && !!box && box.getBoundingClientRect().top < 0 ? 'probe' : 'top';
-      setSlot((was) => {
-        if (was === s) return was;
-        const c = document.querySelector('.stage canvas') as HTMLCanvasElement | null;
-        try { if (c) stills.current[was] = c.toDataURL('image/png'); } catch { /* no still, a blank box */ }
-        return s;
-      });
-    };
-    window.addEventListener('scroll', pick, { passive: true }); window.addEventListener('resize', pick);
-    const t = [requestAnimationFrame(() => requestAnimationFrame(pick)), window.setTimeout(pick, 400)];
-    return () => { window.removeEventListener('scroll', pick); window.removeEventListener('resize', pick); cancelAnimationFrame(t[0]); clearTimeout(t[1]); };
-  }, [beetle]);
-  useEffect(() => {
-    if (beetle) { document.body.classList.remove('at-probe'); return; }
-    // the probe's view: the probe in and followed; the box: the probe out again, the machine on its own
-    drone.on = slot === 'probe'; rig.follow = slot === 'probe';
-    document.body.classList.toggle('at-probe', slot === 'probe');
-  }, [slot, beetle]);
   // in the box a finger off the struts is the page's, so it scrolls: only one on a strut, or two, are kept from the
   // browser (touch-action lets it pan; this takes the touch back where the machine wants it)
   useEffect(() => {
     const el = stage.current;
     if (!el) return;
     const keep = (e: TouchEvent) => {
-      if (!page.boxed || drone.pilot) return;
+      if (!page.boxed || drone.pilot || (e.target as Element).closest?.('.in-box')) return; // the button in the box is the button's
       if (e.touches.length >= 2) { if (e.cancelable) e.preventDefault(); return; }
       if (e.type !== 'touchstart') return;
       const t = e.touches[0], r = el.getBoundingClientRect();
@@ -560,7 +530,7 @@ export function App() {
   const toggleTransformRef = useRef(toggleTransform); // for the keys, set up once
   toggleTransformRef.current = toggleTransform;
   const toggleBeetle = () => {
-    drone.on = !beetle; setBeetle(drone.on); // by the page's state: the home page's probe view has it in already, unseen by the page
+    drone.on = !beetle; setBeetle(drone.on);
     // on a phone the probe in folds the text to make room, out it opens again; on a desktop the text stays open
     if (matchMedia('(max-width: 640px), (max-height: 500px)').matches) setOpen(!drone.on);
     if (!drone.on) setMode('orbit'); // nothing to follow or fly
@@ -579,11 +549,11 @@ export function App() {
   return (
     <>
       <div ref={stage} className={`stage ${locked ? 'locked' : ''}`} {...stageHandlers} onWheel={onWheel}>
-        <Canvas camera={{ position: [0, 0, 10.5], fov: 34 }} gl={{ alpha: true, antialias: true, toneMapping: THREE.NeutralToneMapping, toneMappingExposure: 1.0, localClippingEnabled: true, preserveDrawingBuffer: true }} dpr={[1, 2]}>
+        <Canvas camera={{ position: [0, 0, 10.5], fov: 34 }} gl={{ alpha: true, antialias: true, toneMapping: THREE.NeutralToneMapping, toneMappingExposure: 1.0, localClippingEnabled: true }} dpr={[1, 2]}>
           <Suspense fallback={null}>
             <Rig>
               <Machine />
-              <group visible={beetle || slot === 'probe'}><Drones /></group>{/* in, or in the home page's probe view */}
+              <group visible={beetle}><Drones /></group>
               <Grip />
             </Rig>
             <DroneCam />
@@ -597,15 +567,12 @@ export function App() {
           </Environment>
           <directionalLight position={[4, 8, 6]} intensity={1.1} />
         </Canvas>
+        {/* an upright phone's home page: the way in, in the box, at its foot; the probe in, full screen, followed */}
+        {CLEAN || beetle ? null : <button className="probe in-box" tabIndex={-1} onPointerDown={(e) => { e.preventDefault(); e.stopPropagation(); }} onClick={toggleBeetle}><PlayPause playing={false} />Activate probe</button>}
       </div>
       {CLEAN ? null : <div className={`plate ${open ? '' : 'folded'} ${beetle ? 'probing' : ''}`}><div className="head"><b>08 Tesseract</b><i>Codevember 2026</i></div><div className="blurb"><p>A tesseract is the four-dimensional cube: it is to a cube what a cube is to a square. A square is bounded by four edges and a cube by six square faces; a tesseract is bounded by eight cubical cells, meeting at right angles. We only see its shadow in 3D, a cube inside a cube, and as it turns in 4D, without bending, the inner cube swells out and the struts stretch.</p><h5>Probe<span className="ends">{beetle ? <button className="stop" tabIndex={-1} aria-label="Deactivate probe" onPointerDown={(e) => e.preventDefault()} onClick={toggleBeetle}><Stop /></button> : null}{beetle ? <button className="probe off" tabIndex={-1} aria-label={manual ? "Back to following" : "Back, the probe out"} onPointerDown={(e) => e.preventDefault()} onClick={() => { if (drone.pilot) setMode("follow"); else toggleBeetle(); }}><svg width={8} height={8} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={2.6} strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M10.5 2.5 5 8l5.5 5.5" /></svg>Back</button> : null}</span></h5><p className="probe-what">{PROBE_WHAT}</p>{beetle ? null : <button className="probe" tabIndex={-1} onPointerDown={(e) => e.preventDefault()} onClick={toggleBeetle}><PlayPause playing={false} />Activate probe</button>}{beetle ? <><h5 className="small">Info</h5><p>Each cell has its own colour. The trail is left in the colour of the cell the probe was in, a wall lights up in the colour of the cell beyond as it goes through, and a steel ball blinks in the colour of the cell it is in.</p><p>The fisheye drawing is what the probe sees. From inside, every cell is a true cube however the shadow twists: pick Pilot to fly it by that view.</p></> : null}</div>{beetle ? null : <div className="curtain"><button tabIndex={-1} aria-label={open ? 'Fold the text away' : 'Unfold the text'} onPointerDown={(e) => e.preventDefault()} onClick={() => setOpen(!open)}><svg width={10} height={10} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round" aria-hidden style={{ transform: open ? 'none' : 'rotate(180deg)' }}><path d="M2.5 10.5 8 5l5.5 5.5" /></svg></button></div>}</div>}
-      {/* an upright phone's home page: under the box the probe, a line drawing of it, what it is, and its view, live,
-          the canvas's other place (ACTIVATE PROBE there for a moment); the place the canvas is not in holds a still */}
-      {CLEAN || beetle ? null : <div className="slot top">{stills.current.top ? <img src={stills.current.top} alt="" /> : null}</div>}
-      {/* under the box, the way in: the probe in, full screen, followed */}
-      {CLEAN || beetle ? null : <div className="plate home-activate"><button className="probe" tabIndex={-1} onPointerDown={(e) => e.preventDefault()} onClick={toggleBeetle}><PlayPause playing={false} />Activate probe</button></div>}
+      {/* an upright phone's home page: under the box the probe, a line drawing of it and what it is */}
       {CLEAN || beetle ? null : <div className="plate chapter"><h5>Probe</h5><img className="drawing" src={`${import.meta.env.BASE_URL}drawings/probe.png`} width={220} height={220} alt="" draggable={false} /><p className="probe-what">{PROBE_WHAT}</p></div>}
-      {CLEAN || beetle ? null : <div className="slot probe">{stills.current.probe ? <img src={stills.current.probe} alt="" /> : null}</div>}
       {/* an upright phone with the probe in: no text, a footer instead, where it is (08 TESSERACT / PROBE / PILOT,
           each a way back to there) and BACK, one up */}
       {CLEAN || !beetle ? null : <nav className="crumbs" aria-label="Where you are">
