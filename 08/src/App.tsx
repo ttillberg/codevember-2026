@@ -661,6 +661,7 @@ export function App() {
       {CLEAN ? null : <div className="keys">
         {controls}
       </div>}
+      {/* the drags only: L, T and P still work, unlisted (listed for a while) */}
       {CLEAN ? null : <div className="keys right">
         {manual ? <>
         <h6 className="shortcuts">Navigation</h6>
@@ -671,15 +672,10 @@ export function App() {
         <h6 className="shortcuts">View</h6>
         <Do how={<><Key>⇧</Key> + <Key wide>{locked ? 'Mouse' : 'Drag'}</Key></>} what="Orbit" />
         <Do how={<><Key>{MAC ? '⌥' : 'Alt'}</Key> + <Key wide>{locked ? 'Mouse' : 'Drag'}</Key></>} what="Transform" />
-        <Do how={<Key>L</Key>} what={locked ? 'Unlock pointer' : 'Lock pointer'} />
-        <Do how={<Key>T</Key>} what="Autotransform" />
-        <Do how={<Key>P</Key>} what="Pause everything" />
         </> : <>
         <h6 className="shortcuts">View</h6>
         <Do how={<Key wide>Drag</Key>} what="Rotate" />
         <Do how={<><Key>{MAC ? '⌥' : 'Alt'}</Key> + <Key wide>Drag</Key></>} what="Transform" />
-        <Do how={<Key>T</Key>} what="Autotransform" />
-        <Do how={<Key>P</Key>} what="Pause everything" />
         </>}
       </div>}
     </>
