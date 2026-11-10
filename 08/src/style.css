@@ -220,6 +220,10 @@ body.clean .plate, body.clean .keys { display: none; }
 }
 .pad .ring i { width: 8px; height: 8px; border-radius: 50%; background: #fff; box-shadow: 0 0 1px var(--ui); }
 .pad .ring.on { background: rgba(255, 255, 255, 0.35); }
+/* the dashed ring between: held inside it, forward and turning */
+.pad .dash { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); overflow: visible; pointer-events: none; }
+.pad .dash circle { fill: none; stroke: #fff; stroke-width: 1.6; stroke-dasharray: 4 5; filter: drop-shadow(0 0 1px var(--ui)); }
+.pad .dash.on circle { fill: rgba(255, 255, 255, 0.2); }
 .maxi { z-index: 2; } /* over the pad */
 /* the close: only on a phone at the controls, a circle bottom left where the pills were, back to orbit or follow */
 /* the way out: on a desktop a stop square at the end of the PROBE heading; on a phone a small < BACK pill there, at the controls back to following, following back to the start, the probe out (DEACTIVATE PROBE for a moment),
