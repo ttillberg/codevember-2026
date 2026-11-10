@@ -22,6 +22,15 @@ const CLEAN = PARAMS.has('clean'); // no page furniture, for the screengrab
 // time, changing plane as it goes.
 
 
+// The three modes, pills under MODE with a line on the one picked: on its own the camera orbits the machine or follows
+// the beetle; the pilot is at the controls.
+type Mode = 'orbit' | 'follow' | 'pilot';
+const MODES: [Mode, string, string][] = [
+  ['orbit', 'Orbit', 'The whole tesseract in view, the beetle on its own. Drag to turn it.'],
+  ['follow', 'Follow', 'The camera stays with the beetle as it flies through the cells.'],
+  ['pilot', 'Pilot', 'You fly the beetle: drag to steer, W and S to go.'],
+];
+
 // the turntable goes with transform, one switch for both: the camera's slow turn and the machine's in 4D
 rig.spin = st.transform;
 
@@ -148,9 +157,10 @@ function handUp() { if (hand.on && hand.picked) crankEnd(); hand.on = false; gri
 
 export function App() {
   const [transform, setTransform] = useState(st.transform);
-  const [follow, setFollow] = useState(rig.follow);
   const [grid, setGrid] = useState(st.grid);
-  const [manual, setManual] = useState(drone.pilot);
+  const [mode, setModeState] = useState<Mode>(drone.pilot ? 'pilot' : rig.follow ? 'follow' : 'orbit');
+  const manual = mode === 'pilot';
+  const lastAuto = useRef<Mode>(rig.follow ? 'follow' : 'orbit'); // where p goes back to from the pilot
   const [locked, setLocked] = useState(false);
   const stage = useRef<HTMLDivElement>(null);
   // A drag anywhere on the page, what it does set when it starts: with alt it turns the machine in 4D by hand; at
@@ -211,19 +221,21 @@ export function App() {
     return () => { document.removeEventListener('pointerlockchange', change); document.removeEventListener('mousemove', move); removeEventListener('keyup', up); };
   }, []);
 
-  // manual or auto, from p or the switch on the left
-  const setMode = (m: boolean) => {
-    drone.pilot = m; setManual(m);
+  // the mode, from the pills on the left or p: orbit and follow on its own, the pilot at the controls
+  const setMode = (m: Mode) => {
+    if (m !== 'pilot') lastAuto.current = m;
+    drone.pilot = m === 'pilot'; rig.follow = m === 'follow'; setModeState(m);
     drone.keys.thrust = drone.keys.strafe = 0;
-    rig.turntable = !m;
-    if (!m && document.pointerLockElement) document.exitPointerLock();  };
+    rig.turntable = m !== 'pilot';
+    if (m !== 'pilot' && document.pointerLockElement) document.exitPointerLock();
+  };
 
   useEffect(() => {
     const keys = drone.keys;
     const down = (e: KeyboardEvent) => {
       const k = e.key.toLowerCase();
       if (e.key === 'Alt') { grip.alt = true; e.preventDefault(); return; } // alt held: the strut under the pointer shows
-      if (k === 'p') { setMode(!drone.pilot); return; }
+      if (k === 'p') { setMode(drone.pilot ? lastAuto.current : 'pilot'); return; }
       if (k === 'h') { st.hard = !st.hard; return; } // no switch for now
       if (k === 'o') { st.inout = !st.inout; return; } // the hand-over at a wall: folded by default, o for in, then out
       if (drone.pilot) {
@@ -253,14 +265,19 @@ export function App() {
   // bottom left over the keys in either mode: on top the controls switch (manual or auto), twice the small size;
   // then the settings, the camera's turntable and the machine turning in 4D on its own. Hard mode has no switch for
   // now: h.
-  const controls = <><h5>Mode</h5><div className="smalls"><Small on={manual} label="Controls" act={() => setMode(!drone.pilot)} /></div></>;
+  const controls = <>
+    <h5>Mode</h5>
+    <div className="pills" role="radiogroup" aria-label="Mode">
+      {MODES.map(([m, name]) => <button key={m} className={`pill ${mode === m ? 'at' : ''}`} role="radio" aria-checked={mode === m} tabIndex={-1}
+        onPointerDown={(e) => e.preventDefault()} onClick={() => setMode(m)}>{name}</button>)}
+    </div>
+    <p className="mode-what">{MODES.find(([m]) => m === mode)![2]}</p>
+  </>;
   const smalls = <>
     <h5>Settings</h5>
     <div className="smalls">
       <Small on={transform} label="Transform" act={() => { st.transform = !st.transform; rig.spin = st.transform; setTransform(st.transform); }} />
       <Small on={grid} label="Camera grid" act={() => { st.grid = !st.grid; setGrid(st.grid); }} />
-      {/* follow is for the attract mode only */}
-      {manual ? null : <Small on={follow} label="Follow" act={() => { rig.follow = !rig.follow; setFollow(rig.follow); }} />}
     </div>
   </>;
 

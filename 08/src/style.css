@@ -172,5 +172,14 @@ body.clean .plate, body.clean .keys { display: none; }
 .toggle .seg i.at { background: var(--ui); color: var(--paper); }
 .toggle:hover .seg { box-shadow: 0 0 0 3px rgba(28, 28, 28, 0.08); }
 
+/* the mode: three pills in a row, outlined, the one picked filled in the panel's grey, a line under on what it does */
+.pills { grid-column: 1 / -1; display: flex; gap: 6px; pointer-events: auto; }
+.pill {
+  padding: 5px 12px 4px; border: 1.2px solid var(--ui); border-radius: 999px; background: none; cursor: pointer;
+  font: 600 10px/1 "Helvetica Neue", Helvetica, Arial, sans-serif; letter-spacing: 0.12em; text-transform: uppercase; color: var(--ui);
+}
+.pill.at { background: var(--ui); color: var(--paper); }
+.pill:hover { box-shadow: 0 0 0 3px rgba(28, 28, 28, 0.08); }
+.mode-what { grid-column: 1 / -1; margin: 0; white-space: normal; font-size: 12px; line-height: 1.4; color: var(--ui); }
 /* the switches, in a column across the panel, each its own line */
 .smalls { grid-column: 1 / -1; display: flex; flex-direction: column; gap: 8px; pointer-events: auto; }
