@@ -57,10 +57,11 @@ body {
 }
 .plate i { line-height: 1.15; }
 .plate i + i { margin-top: 0; } /* the second line, what it is, straight under the first */
-/* the blurb: what a tesseract is and what goes on here, small, in the panel's grey */
+/* the blurb: what a tesseract is and what goes on here, small, in the panel's grey; on a short page only its first
+   and last paragraphs, so it stays clear of the panel */
+.plate .blurb { max-width: 330px; margin-top: 14px; }
 .plate p {
-  max-width: 300px;
-  margin: 14px 0 0;
+  margin: 0 0 7px;
   font: 11px/1.5 "Helvetica Neue", Helvetica, Arial, sans-serif;
   color: var(--ui);
   text-wrap: pretty;
@@ -113,6 +114,7 @@ body {
 .back:hover { color: var(--ink); }
 .back { display: none; }
 body.clean .plate, body.clean .keys { display: none; }
+@media (max-height: 860px) { .plate .blurb p:not(:first-child):not(:last-child) { display: none; } }
 
 @media (max-width: 640px) {
   .plate { width: calc(100% - 48px); }
