@@ -57,6 +57,14 @@ body {
 }
 .plate i { line-height: 1.15; }
 .plate i + i { margin-top: 0; } /* the second line, what it is, straight under the first */
+/* the blurb: what a tesseract is and what goes on here, small, in the panel's grey */
+.plate p {
+  max-width: 300px;
+  margin: 14px 0 0;
+  font: 11px/1.5 "Helvetica Neue", Helvetica, Arial, sans-serif;
+  color: var(--ui);
+  text-wrap: pretty;
+}
 
 /* the keys at the controls, bottom left, as day 07's help but straight on the page: rows of the keys or gesture on
    the left and what it does in small caps on the right */

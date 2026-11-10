@@ -13,9 +13,10 @@ import { st } from './state';
 // and that is unwrapped with an equidistant lens. Takes over the render loop: this one first, in a scissored
 // viewport, then the main scene over it.
 
-// the eye's panel: the right third of the page, full height, fading out over its left part into the page; the same
-// in both modes (a full-page view at the controls was tried, the machine moved right, and dropped)
-const CAM = { share: 1 / 3, fade: 0.45 };
+// the eye's panel: the whole page behind the machine, fading in from nothing at the left edge to full at the right, and
+// even full only at `strength`, so it sits back as a ground (it was the right third, fading over its left part, at
+// full strength; a full-page view with the machine moved right was tried before that and dropped)
+const CAM = { share: 1, fade: 1, strength: 0.4 };
 /** 0 at a, 1 at b, eased: the fade's ramp. */
 const ramp = (x: number, a: number, b: number) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a || 1))); return t * t * (3 - 2 * t); };
 
@@ -61,10 +62,11 @@ const HAIR = new THREE.ShaderMaterial({
   fragmentShader: `
     uniform vec3 uColor;
     uniform vec2 fade;
+    uniform float strength;
     float ramp(float x, vec2 f) { float t = clamp((x - f.x) / (f.y - f.x), 0.0, 1.0); return t * t * (3.0 - 2.0 * t); }
     varying float vA;
     void main() {
-      float a = vA * ramp(gl_FragCoord.x, fade);
+      float a = vA * ramp(gl_FragCoord.x, fade) * strength;
       if (a < 0.003) discard;
       gl_FragColor = vec4(uColor, a);
       #include <colorspace_fragment>
@@ -83,11 +85,12 @@ function hairMat(fog: boolean, ring = 0, color?: string) {
 }
 
 const FISHEYE = new THREE.ShaderMaterial({
-  uniforms: { tCube: { value: null }, rot: { value: new THREE.Matrix3() }, fade: { value: new THREE.Vector2() } },
+  uniforms: { tCube: { value: null }, rot: { value: new THREE.Matrix3() }, fade: { value: new THREE.Vector2() }, strength: { value: CAM.strength } },
   vertexShader: `varying vec2 vUv; void main() { vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }`,
   fragmentShader: `
     uniform samplerCube tCube; uniform mat3 rot;
     uniform vec2 fade; // device pixels: transparent at x, full at y
+    uniform float strength; // the most it ever shows
     float ramp(float x, vec2 f) { float t = clamp((x - f.x) / (f.y - f.x), 0.0, 1.0); return t * t * (3.0 - 2.0 * t); }
     varying vec2 vUv;
     void main() {
@@ -98,7 +101,7 @@ const FISHEYE = new THREE.ShaderMaterial({
       vec3 d = rot * vec3(sin(theta) * u, -cos(theta));
       vec4 col = textureCube(tCube, d);
       float a = 1.0 - smoothstep(0.995, 1.005, r); // a disc; outside it the page shows through
-      a *= ramp(gl_FragCoord.x, fade); // and out to the left into the page
+      a *= ramp(gl_FragCoord.x, fade) * strength; // and out to the left into the page, and never all there
       gl_FragColor = vec4(col.rgb, a);
       #include <tonemapping_fragment>
       #include <colorspace_fragment>
@@ -148,6 +151,7 @@ export function DroneCam() {
     hair.add(net);
     // the panel's fade, shared with the lens
     HAIR.uniforms.fade = FISHEYE.uniforms.fade;
+    HAIR.uniforms.strength = FISHEYE.uniforms.strength;
     // a circle round every joint, the corners shared like the edges, each a ring of pieces facing the eye (RING)
     const rp: number[] = [], ra: number[] = [];
     for (let x = -5; x <= 5; x += 2) for (let y = -5; y <= 5; y += 2) for (let z = -5; z <= 5; z += 2)
@@ -278,7 +282,6 @@ export function DroneCam() {
     const pw = W * CAM.share, px = W - pw;
     const w = Math.hypot(pw, H), h = w, x = px + (pw - w) / 2, y = (H - h) / 2;
     const fade0: [number, number] = [px, px + pw * CAM.fade];
-    const alphaAt = (bx: number) => ramp(bx, ...fade0);
 
     // the device: where it is and where it is going, in cell space
     const c = toCell(drone.p);
@@ -350,7 +353,7 @@ export function DroneCam() {
           const theta = Math.acos(Math.max(-1, Math.min(1, -d.z))), r = theta / (Math.PI / 2), l = Math.hypot(d.x, d.y) || 1;
           const vw = w, vh = h, vx = x, vtop = H - y - h; // the lens's square, in CSS pixels from the top left
           const bx = vx + ((r * d.x / l) + 1) / 2 * vw, by = vtop + (1 - (r * d.y / l)) / 2 * vh;
-          if (r < 1.02 && alphaAt(bx) > 0.35) { // in the panel, not out in its fade
+          if (r < 1.02 && bx > 0 && bx < W && by > 0 && by < H) { // on the page: the panel is all of it now, faint or not
             const ballPx = ((PIECE_R * PIECE_K) / dist / (Math.PI / 2)) * (vw / 2);
             const size = Math.max(28, ballPx * 3.4) * (drone.docking ? 0.62 : 1);
             lockEl.style.transform = `translate(${bx.toFixed(1)}px, ${by.toFixed(1)}px) translate(-50%, -50%)`;

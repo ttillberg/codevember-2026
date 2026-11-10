@@ -225,7 +225,6 @@ export function App() {
       if (k === 'p') { setMode(!drone.pilot); return; }
       if (k === 'h') { st.hard = !st.hard; setHard(st.hard); return; }
       if (k === 'o') { st.inout = !st.inout; return; } // the hand-over at a wall: folded by default, o for in, then out
-      if (k === 'g') { st.eye = ({ drawing: 'outline', outline: 'hairline', hairline: 'drawing' } as const)[st.eye]; return; } // the eye's rooms: drawing, outlines, hairlines
       if (drone.pilot) {
         // manual: w s and up down forward and back, a d and the side arrows strafe, space forward, l the lock
         if (k === ' ' || k === 'w' || k === 'arrowup') keys.thrust = 1;
@@ -289,7 +288,7 @@ export function App() {
           <directionalLight position={[4, 8, 6]} intensity={1.1} />
         </Canvas>
       </div>
-      {CLEAN ? null : <div className="plate"><b>08 Tesseract</b><i>Codevember 2026</i></div>}
+      {CLEAN ? null : <div className="plate"><b>08 Tesseract</b><i>Codevember 2026</i><p>A tesseract is a cube in four dimensions: eight cubes, each wall shared by two. What you see is its shadow in three, the small cube inside being the one furthest off in the fourth. Turning in 4D, the cells trade places and turn inside out. A little beetle flies through them after the pieces, crossing walls from cell to cell; on the right is what it sees. Switch the controls on to fly it, or alt-drag a strut to twist the tesseract by hand.</p></div>}
       <div id="lock" className="lock"><i /><i /><i /><i /><b>lock</b></div>
       {CLEAN ? null : manual ? <div className="keys">
         {controls}
@@ -311,7 +310,6 @@ export function App() {
         <Do how={<Key>L</Key>} what={locked ? 'Unlock pointer' : 'Lock pointer'} />
         <h6 className="shortcuts">Options</h6>
         <Do how={<><Key>{MAC ? '⌥' : 'Alt'}</Key> + <Key wide>{locked ? 'Mouse' : 'Drag'}</Key></>} what="Twist the tesseract" />
-        <Do how={<Key>G</Key>} what="Drawing, outlines or hairlines in the eye" />
       </div> : <div className="keys">
         {controls}
         {smalls}
@@ -320,7 +318,6 @@ export function App() {
         <Do how={<Key wide>Drag</Key>} what="Rotate" />
         <h6 className="shortcuts">Options</h6>
         <Do how={<><Key>{MAC ? '⌥' : 'Alt'}</Key> + <Key wide>Drag</Key></>} what="Twist the tesseract, by an edge if over one" />
-        <Do how={<Key>G</Key>} what="Drawing, outlines or hairlines in the eye" />
       </div>}
     </>
   );
