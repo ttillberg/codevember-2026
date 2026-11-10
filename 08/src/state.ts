@@ -27,10 +27,10 @@ export const st = {
   spinVel: 0, // the hard mode's speed, eased towards HARD_SPIN * way so a flip is a swing, not a knock
   transform: false, // the transform switch, off to start: the machine turns in 4D all the time, evenly and softly, changing plane at each quarter
   hard: false, // hard mode: the machine turns in 4D all the time, changing plane as it passes each quarter
-  /** The eye's rooms, hairlines only now (g went round them): 'drawing', the outlined tubes with dash-dot centre lines and detail circles
+  /** The eye's rooms, the outlines (hairline thin) now that g is gone: 'drawing', the outlined tubes with dash-dot centre lines and detail circles
    * over them, as an architect's drawing; 'outline', the tubes alone; 'hairline', a pixel line each, circles at the joints. */
   grid: true, // the camera grid, on to start: the rooms in the eye's view, or the piece alone in the paper
-  eye: 'hairline' as 'drawing' | 'outline' | 'hairline',
+  eye: 'outline' as 'drawing' | 'outline' | 'hairline',
   inout: false, // the hand-over at a wall: false, both halves at once, folded at the wall; true (o), the body goes all the way in, then comes out
   /** How far the machine reaches from its centre right now, in the 3D picture, for the camera to fit it. */
   reach: 4,

@@ -20,12 +20,34 @@ const CAM = { share: 1, fade: 1, strength: 0.4 };
 /** 0 at a, 1 at b, eased: the fade's ramp. */
 const ramp = (x: number, a: number, b: number) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a || 1))); return t * t * (3 - 2 * t); };
 
-const CUBE = 512; // the cube map's face size
+const CUBE = 1024; // the cube map's face size: fine enough for a hull a pixel or so wide through the lens
 const SEGS = 24; // pieces to an edge of a room, so it bends as the lens bends it
 const RING_SEGS = 24, R_JOINT = 0.07, R_DETAIL = 0.11; // a joint's circle: its pieces, its radius in cell units, and round the joint ball in the drawing
 // the centre line's pattern over an edge's pieces, an architect's dash-dot: a long dash, a gap, a dot, a gap
 const DASH = [1, 1, 1, 1, 0, 1, 0];
-const R_STRUT = 0.04, R_NODE = 0.06, R_INK = 0.013; // the outlined rooms: the tube, the joint, the outline round both
+const R_STRUT = 0.04, R_NODE = 0.06; // the outlined rooms: the tube, the joint
+// the outline round them, as an angle: the hull is pushed out by this times its distance from the eye, so it is the same
+// hairline near and far, about a pixel through the lens (it was a fixed 0.013, fat up close and lost far off)
+const INK = 0.0022;
+
+/** The inverted hull's ink, a hairline at any distance: each vertex out along its normal by INK times how far it is
+ * from the eye, in view space, after the instance and the model. */
+function inkMat(fog = true) {
+  const m = new THREE.MeshBasicMaterial({ color: GRAPHITE, side: THREE.BackSide, fog });
+  m.onBeforeCompile = (sh) => {
+    sh.vertexShader = sh.vertexShader.replace('#include <project_vertex>', `
+      vec4 mvPosition = vec4(transformed, 1.0);
+      vec3 inkN = normal;
+      #ifdef USE_INSTANCING
+        mvPosition = instanceMatrix * mvPosition;
+        inkN = mat3(instanceMatrix) * inkN;
+      #endif
+      mvPosition = modelViewMatrix * mvPosition;
+      mvPosition.xyz += normalize(mat3(modelViewMatrix) * inkN) * (${INK.toFixed(5)} * length(mvPosition.xyz));
+      gl_Position = projectionMatrix * mvPosition;`);
+  };
+  return m;
+}
 const PIECE_K = SIZE_CELL / SIZE_MAIN; // the piece scaled with the device
 
 // The rooms are drawn as true hairlines, a pixel wide on the screen. Through the cube map a line would be blown up
@@ -175,13 +197,13 @@ export function DroneCam() {
     // graphite, the joints the same
     const tubes = (() => {
       const fill = new THREE.MeshBasicMaterial({ color: '#f2f2ef' });
-      const ink = new THREE.MeshBasicMaterial({ color: GRAPHITE, side: THREE.BackSide });
+      const ink = inkMat();
       const n = offsets.length;
       const parts = [
         new THREE.InstancedMesh(new THREE.CylinderGeometry(R_STRUT, R_STRUT, 2, 16), fill, n * 12),
-        new THREE.InstancedMesh(new THREE.CylinderGeometry(R_STRUT + R_INK, R_STRUT + R_INK, 2, 16), ink, n * 12),
+        new THREE.InstancedMesh(new THREE.CylinderGeometry(R_STRUT, R_STRUT, 2, 16), ink, n * 12),
         new THREE.InstancedMesh(new THREE.SphereGeometry(R_NODE, 16, 12), fill, n * 8),
-        new THREE.InstancedMesh(new THREE.SphereGeometry(R_NODE + R_INK, 16, 12), ink, n * 8),
+        new THREE.InstancedMesh(new THREE.SphereGeometry(R_NODE, 16, 12), ink, n * 8),
       ];
       const dummy = new THREE.Object3D(), done = new Set<string>();
       let e = 0, v = 0;
@@ -237,8 +259,8 @@ export function DroneCam() {
     // with the outlined rooms it is outlined too, the same way: a ball of paper and an ink hull round it, in the cube
     // map, the outline a touch bolder than the tubes' since the ball is small
     const rBall = PIECE_R * PIECE_K;
-    const inked = [new THREE.SphereGeometry(rBall, 24, 16), new THREE.SphereGeometry(rBall * 1.22, 24, 16)];
-    const inkedMats = [new THREE.MeshBasicMaterial({ color: '#f2f2ef', fog: false }), new THREE.MeshBasicMaterial({ color: GRAPHITE, side: THREE.BackSide, fog: false })]; // out of the fog, as the piece was
+    const inked = [new THREE.SphereGeometry(rBall, 24, 16), new THREE.SphereGeometry(rBall, 24, 16)];
+    const inkedMats = [new THREE.MeshBasicMaterial({ color: '#f2f2ef', fog: false }), inkMat(false)]; // out of the fog, as the piece was
     const balls = [piece, grabbed].map((g) => {
       for (const c of g.children) c.visible = false; // the steel ball, the lamps
       const l = new THREE.LineSegments(ballGeo, ballMat);
