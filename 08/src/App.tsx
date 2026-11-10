@@ -23,8 +23,8 @@ const CLEAN = PARAMS.has('clean'); // no page furniture, for the screengrab
 
 
 /** A small switch: a track and a label, lime when on; never takes focus, so space stays forward. */
-const Small = ({ on, label, act, big }: { on: boolean; label: string; act: () => void; big?: boolean }) => (
-  <button className={`toggle small ${big ? 'x2' : ''} ${on ? 'on' : ''}`} role="switch" aria-checked={on} tabIndex={-1}
+const Small = ({ on, label, act }: { on: boolean; label: string; act: () => void }) => (
+  <button className={`toggle small ${on ? 'on' : ''}`} role="switch" aria-checked={on} tabIndex={-1}
     onPointerDown={(e) => e.preventDefault()} onClick={act}>
     <span className="track"><i /></span>
     <span className="label">{label}</span>
@@ -252,7 +252,7 @@ export function App() {
   // bottom left over the keys in either mode: on top the controls switch (manual or auto), twice the small size;
   // then the settings, the camera's turntable and the machine turning in 4D on its own. Hard mode has no switch for
   // now: h.
-  const controls = <><h5>Mode</h5><div className="smalls"><Small big on={manual} label={`Controls ${manual ? 'on' : 'off'}`} act={() => setMode(!drone.pilot)} /></div></>;
+  const controls = <><h5>Mode</h5><div className="smalls"><Small on={manual} label={`Controls ${manual ? 'on' : 'off'}`} act={() => setMode(!drone.pilot)} /></div></>;
   const smalls = <>
     <h5>Settings</h5>
     <div className="smalls">

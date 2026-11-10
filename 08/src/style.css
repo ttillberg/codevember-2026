@@ -182,8 +182,3 @@ body.clean .plate, body.clean .keys { display: none; }
 .toggle.small .track { width: 30px; height: 17px; border-width: 1.5px; border-radius: 9px; }
 .toggle.small .track i { left: 2px; top: 2px; width: 10px; height: 10px; }
 .toggle.small.on .track i { transform: translateX(13px); }
-/* the controls switch on top: the small one at one and a half times the size, the same weight */
-.toggle.small.x2 { gap: 11px; font-size: 16px; font-weight: 600; letter-spacing: 0.1em; }
-.toggle.small.x2 .track { width: 45px; height: 26px; border-width: 1.5px; border-radius: 13px; }
-.toggle.small.x2 .track i { left: 3px; top: 3px; width: 17px; height: 17px; }
-.toggle.small.x2.on .track i { transform: translateX(19px); }
