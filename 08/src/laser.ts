@@ -11,6 +11,9 @@ import { project, type M4, type V4 } from './tesseract';
 const EVERY = 0.05; // seconds between samples
 const LIFE = 8; // seconds a sample stays, the puffs' life
 const N = Math.ceil(LIFE / EVERY) + 2;
+// none of it the first second behind the device, then it fades in over the next, so the line starts a way back
+// in the wake and is at its strongest there, not at the device's tail
+const HIDE = 1, RISE = 1.2;
 const ROOM = new THREE.Color('#e9e6df');
 
 export function makeLaser() {
@@ -46,7 +49,7 @@ export function makeLaser() {
       for (let i = 0; i < n; i++) {
         project(m, p4[i], v);
         ps[i * 3] = v.x; ps[i * 3 + 1] = v.y; ps[i * 3 + 2] = v.z;
-        const age = (now - born[i]) / LIFE, k = Math.max(0, 1 - age) ** 1.5;
+        const sec = now - born[i], age = sec / LIFE, k = Math.max(0, 1 - age) ** 1.5 * THREE.MathUtils.smoothstep(sec, HIDE, HIDE + RISE);
         c.copy(rgb[i]).lerp(ROOM, 1 - k);
         cs[i * 3] = c.r; cs[i * 3 + 1] = c.g; cs[i * 3 + 2] = c.b;
       }
