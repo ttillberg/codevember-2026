@@ -34,7 +34,7 @@ export function eyeShown(W: number, H: number) {
 }
 /** What the page tells the layout: under ?clean there is no text; textBottom, the text's foot, and footTop, the top
  * of an upright phone's footer with the probe in (0, none), measured each frame. */
-export const page = { clean: false, textBottom: 0, footTop: 0, boxed: false }; // boxed: the canvas is the home page's box, all of it the machine's
+export const page = { clean: false, textBottom: 0, footTop: 0, boxed: false, probeH: 0 }; // boxed: the canvas is the home page's box, all of it the machine's
 type Rect = { x: number; y: number; w: number; h: number; round?: boolean }; // CSS px, from the top left; round, a disc in the square
 /** Where the machine goes and where the view goes. The machine never under the text: beside the text column, or under
  * it on an upright phone; split, the room left over halved between the machine and the view (the view off, or
@@ -67,7 +67,8 @@ export function regionsOf(W: number, H: number): { main: Rect; cam: Rect | null;
   // half the room beside the column, for a while)
   const main = { x: left, y: 0, w: W - left, h: H };
   if (!split) return { main, cam: null };
-  const w = Math.min(380, W - 48), h = Math.round(Math.max(COL_MIN_H, Math.min(w, H - COL_OVER - page.textBottom - 16)));
+  // the probe's section sits on the view, under the text: the view the room between them (page.probeH, its height)
+  const w = Math.min(380, W - 48), h = Math.round(Math.max(COL_MIN_H, Math.min(w, H - COL_OVER - page.textBottom - 16 - page.probeH - 14)));
   return { main, cam: { x: 24, y: H - COL_OVER - h, w, h } };
 }
 const PIP_GAP = 24; // the phone's disc in from the edges (CSS px)
@@ -216,6 +217,9 @@ export function DroneCam() {
     const lockEl = (cell.lockEl ??= document.getElementById('lock'));
     // the text's foot, for the layout (an upright phone puts the machine under it)
     page.textBottom = (cell.plateEl ??= document.querySelector('.plate'))?.getBoundingClientRect().bottom ?? 0;
+    // a desktop's probe section, on the view when it is fixed there (the probe in), else in the text's flow
+    const sec = document.querySelector('.plate.probing .probe-sec') as HTMLElement | null;
+    page.probeH = sec && getComputedStyle(sec).position === 'fixed' ? sec.getBoundingClientRect().height : 0;
     // the footer's top, when there is one (an upright phone, the probe in); PILOT goes over it (--foot-top)
     const foot = document.querySelector('.crumbs')?.getBoundingClientRect();
     const footTop = foot && foot.height ? Math.round(foot.top) : 0;
