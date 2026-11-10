@@ -309,13 +309,11 @@ export function App() {
         <Do how={<Key wide>Space</Key>} what="Forward" />
         <h6 className="shortcuts">View</h6>
         <Do how={<><Key>⇧</Key> + <Key wide>{locked ? 'Mouse' : 'Drag'}</Key></>} what="Orbit" />
-        <Do how={<Key>L</Key>} what={locked ? 'Unlock pointer' : 'Lock pointer'} />
-        <h6 className="shortcuts">Options</h6>
         <Do how={<><Key>{MAC ? '⌥' : 'Alt'}</Key> + <Key wide>{locked ? 'Mouse' : 'Drag'}</Key></>} what="Transform" />
+        <Do how={<Key>L</Key>} what={locked ? 'Unlock pointer' : 'Lock pointer'} />
         </> : <>
         <h6 className="shortcuts">View</h6>
         <Do how={<Key wide>Drag</Key>} what="Rotate" />
-        <h6 className="shortcuts">Options</h6>
         <Do how={<><Key>{MAC ? '⌥' : 'Alt'}</Key> + <Key wide>Drag</Key></>} what="Transform" />
         </>}
       </div>}
