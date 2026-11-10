@@ -76,9 +76,11 @@ let rt: THREE.WebGLRenderTarget | null = null;
 const size = new THREE.Vector2(), dir = new THREE.Vector3(), to = new THREE.Vector3(), clear = new THREE.Color();
 
 /** The scene through the depth of field onto the screen, over what is there already. */
-export function renderDof(gl: THREE.WebGLRenderer, scene: THREE.Scene, camera: THREE.Camera) {
+export function renderDof(gl: THREE.WebGLRenderer, scene: THREE.Scene, camera: THREE.Camera, clip?: [number, number, number, number]) {
+  // clip: only this part of the page (CSS px, from the bottom left), the machine's half when the window is split
   const cam = camera as THREE.PerspectiveCamera;
-  if (!dof.on || !cam.isPerspectiveCamera) { gl.render(scene, camera); return; }
+  const scissor = (on: boolean) => { if (!clip) return; gl.setScissorTest(on); if (on) gl.setScissor(...clip); };
+  if (!dof.on || !cam.isPerspectiveCamera) { scissor(true); gl.render(scene, camera); scissor(false); return; }
   gl.getDrawingBufferSize(size);
   if (!rt || rt.width !== size.x || rt.height !== size.y) {
     rt?.dispose();
@@ -101,5 +103,7 @@ export function renderDof(gl: THREE.WebGLRenderer, scene: THREE.Scene, camera: T
   gl.render(scene, camera);
   gl.setRenderTarget(null);
   gl.setClearColor(clear, wasA);
+  scissor(true);
   gl.render(SCENE, FLAT);
+  scissor(false);
 }

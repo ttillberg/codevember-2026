@@ -4,7 +4,7 @@ import * as THREE from 'three';
 import { ContactShadows, Environment, Lightformer } from '@react-three/drei';
 import { Machine } from './Machine';
 import { Drones } from './Drones';
-import { DroneCam, eyeView } from './DroneCam';
+import { DroneCam, eyeView, regionsOf, page } from './DroneCam';
 import { Grip, grip } from './Grip';
 // CellMap (./CellMap.tsx), the cells' little map with their colours, is off the page for now
 import { drone } from './drone';
@@ -15,7 +15,7 @@ import { dof } from './dof';
 const PARAMS = new URLSearchParams(location.search);
 const CLEAN = PARAMS.has('clean'); // no page furniture, for the screengrab: the first person view maximized, a faint ground
 if (PARAMS.has('probe')) drone.on = true; // the probe in from the start, for the screengrab (no button to press under ?clean)
-if (CLEAN) eyeView.max = true;
+if (CLEAN) { eyeView.max = true; page.clean = true; }
 
 // Two modes, the same two views in both: the machine fills the page, the eye's view the right third behind it.
 // Auto, the attract mode: the device flies on its own, the camera turns slowly on a turntable, a drag orbits it.
@@ -38,6 +38,29 @@ const MODES: [Mode, string][] = [
 rig.spin = st.transform;
 
 
+// A phone's tilt (its device orientation, the gyroscope): leaning it turns the view a little round the machine, from how
+// it was held when the tilt came on. Asked for at the first touch's end (iOS wants a gesture and a yes); elsewhere it
+// just starts. TILT_K: degrees of view for a degree of lean; TILT_MAX the most either way.
+const tilt = { asked: false, base: null as null | [number, number], want: [0, 0], now: [0, 0] };
+const TILT_K = 0.7, TILT_MAX = THREE.MathUtils.degToRad(28);
+function tiltOn() {
+  if (tilt.asked || typeof DeviceOrientationEvent === 'undefined') return;
+  tilt.asked = true;
+  const listen = () => addEventListener('deviceorientation', (e) => {
+    if (e.beta == null || e.gamma == null) return;
+    // the lean across and the lean back, as the screen is turned (on its side the two swap)
+    const a = (screen.orientation?.angle ?? 0) % 360;
+    const across = a === 90 ? e.beta : a === 270 || a === -90 ? -e.beta : a === 180 ? -e.gamma : e.gamma;
+    const back = a === 90 ? -e.gamma : a === 270 || a === -90 ? e.gamma : a === 180 ? -e.beta : e.beta;
+    tilt.base ??= [across, back];
+    const c = (v: number) => THREE.MathUtils.clamp(THREE.MathUtils.degToRad(v * TILT_K), -TILT_MAX, TILT_MAX);
+    tilt.want = [c(across - tilt.base[0]), c(back - tilt.base[1])];
+  });
+  const D = DeviceOrientationEvent as unknown as { requestPermission?: () => Promise<string> };
+  if (typeof D.requestPermission === 'function') D.requestPermission().then((s) => { if (s === 'granted') listen(); }).catch(() => {});
+  else listen();
+}
+
 /** The machine and the device on a rig with a fixed tilt; the camera orbits round it. */
 function Rig({ children }: { children: React.ReactNode }) {
   const ref = useRef<THREE.Group>(null);
@@ -47,7 +70,14 @@ function Rig({ children }: { children: React.ReactNode }) {
     // the distance fits the machine's reach to the page, whichever way is narrower, with a margin; eased, so the
     // picture breathes as the machine changes shape rather than jumps; the wheel scales it
     const cam = camera as THREE.PerspectiveCamera;
-    const vfov = THREE.MathUtils.degToRad(cam.fov), hfov = 2 * Math.atan(Math.tan(vfov / 2) * (size.width / size.height));
+    // the machine has its own part of the window, never under the text (regionsOf): it fits that part, and is moved
+    // into it (below), both eased, so the probe coming in slides it over
+    const { main } = regionsOf(size.width, size.height);
+    const k = part.w ? Math.min(1, dt * 3) : 1;
+    part.x += (main.x + main.w / 2 - part.x) * k; part.y += (main.y + main.h / 2 - part.y) * k;
+    part.w += (main.w - part.w) * k; part.h += (main.h - part.h) * k;
+    const t = Math.tan(THREE.MathUtils.degToRad(cam.fov) / 2);
+    const vfov = 2 * Math.atan(t * (part.h / size.height)), hfov = 2 * Math.atan(t * (part.w / size.height));
     const fit = (st.reach * 1.0) / Math.sin(Math.min(vfov, hfov) / 2);
     rig.zoom += (fit * rig.zoomK - rig.zoom) * Math.min(1, dt * 2.5);
     // on the turntable the look leans towards the device a part of the way from the machine's middle, slowly, so it
@@ -56,22 +86,24 @@ function Rig({ children }: { children: React.ReactNode }) {
     project(pose(), drone.p, focusAt).applyQuaternion(rig.q).multiplyScalar(lean);
     const sdt = drone.frozen ? 0 : dt; // P: what goes after the beetle holds too; a drag and the wheel still go
     rig.focus.lerp(focusAt, Math.min(1, sdt * 0.8));
-    camera.position.setFromSphericalCoords(rig.zoom, Math.PI / 2 - rig.pitch, rig.yaw);
+    // a phone's lean, eased, on top of the orbit
+    tilt.now[0] += (tilt.want[0] - tilt.now[0]) * Math.min(1, dt * 6); tilt.now[1] += (tilt.want[1] - tilt.now[1]) * Math.min(1, dt * 6);
+    const yaw = rig.yaw - tilt.now[0], pitch = THREE.MathUtils.clamp(rig.pitch + tilt.now[1] * 0.6, -1.4, 1.4);
+    camera.position.setFromSphericalCoords(rig.zoom, Math.PI / 2 - pitch, yaw);
     // follow (the switch): the same orbit, round the beetle instead of the machine's middle, nearer; eased in and out
     tail.lerp(drone.world, Math.min(1, sdt * FOLLOW_EASE));
     rig.followK += ((rig.follow && !drone.pilot ? 1 : 0) - rig.followK) * Math.min(1, dt * 2); // on its own only: at the controls the camera is the usual one
     const fk = rig.followK;
     if (fk > 0.001) {
-      off.setFromSphericalCoords(rig.zoom * FOLLOW, Math.PI / 2 - THREE.MathUtils.clamp(rig.pitch, -LEVEL, LEVEL), rig.yaw);
+      off.setFromSphericalCoords(rig.zoom * FOLLOW, Math.PI / 2 - THREE.MathUtils.clamp(pitch, -LEVEL, LEVEL), yaw);
       look.copy(rig.focus).lerp(tail, fk);
       camera.position.lerp(followAt.copy(tail).add(off), fk);
       camera.lookAt(look);
     } else camera.lookAt(look.copy(rig.focus));
-    // following, the beetle two thirds across, clear of the left column: the picture slid right by a sixth of the page,
-    // the view itself the same, eased in and out with the follow
-    const phone = size.width <= 640 || size.height <= 500; // on a phone the column is not beside it: the beetle in the middle
-    const slide = phone ? 0 : fk * FOLLOW_SLIDE * size.width;
-    if (slide > 0.5) cam.setViewOffset(size.width, size.height, -slide, 0, size.width, size.height);
+    // into its part: the picture slid so the page's middle lands on the part's (it was the beetle two thirds across,
+    // following, and then the left half, split)
+    const ox = size.width / 2 - part.x, oy = size.height / 2 - part.y;
+    if (Math.abs(ox) > 0.5 || Math.abs(oy) > 0.5) cam.setViewOffset(size.width, size.height, ox, oy, size.width, size.height);
     else if (cam.view?.enabled) cam.clearViewOffset();
     // the depth of field on what the camera looks at, the beetle when following; nearer, the blur deeper, as a lens's
     dof.focus.copy(look);
@@ -81,6 +113,7 @@ function Rig({ children }: { children: React.ReactNode }) {
 }
 const FOCUS = 0.3; // how far the turntable's look leans from the machine's middle to the device
 const look = new THREE.Vector3(), followAt = new THREE.Vector3();
+const part = { x: 0, y: 0, w: 0, h: 0 }; // the machine's part of the window, its middle and size, eased
 const DOF_WIDE = 0.007, DOF_FOLLOW = 0.009; // the blur at twice the focus distance, against the page's height
 
 // Follow: the orbit round the beetle, and nothing more. The look eases after it, a point that glides rather than
@@ -90,7 +123,6 @@ const DOF_WIDE = 0.007, DOF_FOLLOW = 0.009; // the blur at twice the focus dista
 // catch, were tried first, with cuts and then glides; too much.)
 const FOLLOW = 0.5; // the distance to the beetle against the fit to the whole machine
 const FOLLOW_EASE = 2; // how fast the look goes after the beetle (1/s)
-const FOLLOW_SLIDE = 2 / 3 - 1 / 2; // where the beetle sits across the page, following: two thirds, from the middle
 const LEVEL = 0.87; // radians, about 50 degrees
 const tail = new THREE.Vector3(), off = new THREE.Vector3();
 const focusAt = new THREE.Vector3();
@@ -126,6 +158,13 @@ const EyeOrGrid = ({ shown }: { shown: boolean }) => (
 const PlayPause = ({ playing }: { playing: boolean }) => (
   <svg width={11} height={11} viewBox="0 0 16 16" fill="currentColor" aria-hidden>
     {playing ? <path d="M4 2.5h2.6v11H4zM9.4 2.5H12v11H9.4z" /> : <path d="M4.5 2.3 13.5 8l-9 5.7z" />}
+  </svg>
+);
+/** The text's fold: an i, for info (a chevron for a moment); the circle filled while the text is open. */
+const InfoMark = () => (
+  <svg width={10} height={10} viewBox="0 0 16 16" fill="currentColor" aria-hidden>
+    <circle cx="8" cy="2.6" r="1.7" />
+    <path d="M6 6.2h3.4v6.6H11v1.6H5v-1.6h1.6V7.8H6z" />
   </svg>
 );
 /** The probe's way out: a stop, a small square. */
@@ -187,6 +226,7 @@ export function App() {
   const [grid, setGrid] = useState(st.grid);
   const [maxi, setMaxi] = useState(eyeView.max);
   const [beetle, setBeetle] = useState(drone.on);
+  const [open, setOpen] = useState(!drone.on); // the text: all of it to start, folded with the probe in
   const [mode, setModeState] = useState<Mode>(drone.pilot ? 'pilot' : rig.follow ? 'follow' : 'orbit');
   const manual = mode === 'pilot';
   const lastAuto = useRef<Mode>(rig.follow ? 'follow' : 'orbit'); // where p goes back to from the pilot
@@ -196,7 +236,29 @@ export function App() {
   // the controls a plain drag is the look and shift orbits the camera; on its own a plain drag orbits. The orbit's
   // speed is kept, smoothed, to coast on.
   const drag = useRef<{ kind: 'look' | 'orbit' | 'crank'; x: number; y: number; t: number } | null>(null);
+  // touch: one finger turns the machine in 4D (alt-drag's job), two orbit it and pinch to zoom; each finger kept
+  const fingers = useRef(new Map<number, { x: number; y: number }>());
+  const pair = useRef<{ x: number; y: number; d: number; t: number } | null>(null);
+  const pairOf = () => {
+    const [a, b] = [...fingers.current.values()];
+    return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2, d: Math.hypot(a.x - b.x, a.y - b.y) || 1, t: performance.now() };
+  };
   const dragDown = (e: React.PointerEvent) => {
+    if (e.pointerType === 'touch') {
+      (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+      fingers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (fingers.current.size === 1) {
+        const kind = drone.pilot ? 'look' : 'crank';
+        drag.current = { kind, x: e.clientX, y: e.clientY, t: performance.now() };
+        if (kind === 'crank') handDown();
+      } else if (fingers.current.size === 2) {
+        // the second finger: no more turning by hand, the pair orbits from here
+        handUp(); drag.current = null;
+        pair.current = pairOf();
+        rig.orbitVel[0] = rig.orbitVel[1] = 0; rig.orbiting = true;
+      }
+      return;
+    }
     if (e.button !== 0 || document.pointerLockElement) return;
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
     // on its own, with alt held, a drag on a strut takes it in the hand; alt is the only way to a strut
@@ -210,7 +272,18 @@ export function App() {
   // the pointer, for the strut under it
   const pointerAt = (e: React.PointerEvent) => { grip.x = e.clientX; grip.y = e.clientY; grip.in = true; grip.alt = e.altKey; };
   const dragMove = (e: React.PointerEvent) => {
-    pointerAt(e);
+    if (e.pointerType === 'touch') {
+      if (!fingers.current.has(e.pointerId)) return;
+      fingers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      const p0 = pair.current;
+      if (p0 && fingers.current.size >= 2) {
+        const p = pairOf();
+        orbitBy(-(p.x - p0.x) * ORBIT, (p.y - p0.y) * ORBIT, Math.max(1, p.t - p0.t) / 1000);
+        rig.zoomK = Math.min(2.2, Math.max(0.5, rig.zoomK * (p0.d / p.d))); // apart, nearer
+        pair.current = p;
+        return;
+      }
+    } else pointerAt(e);
     const d = drag.current;
     if (!d) return;
     const now = performance.now(), dx = e.clientX - d.x, dy = e.clientY - d.y;
@@ -220,7 +293,14 @@ export function App() {
     d.x = e.clientX; d.y = e.clientY; d.t = now;
   };
   // a drag ends when its pointer capture does: on release, on cancel, or when the page takes the pointer away
-  const dragEnd = () => { drag.current = null; rig.orbiting = false; handUp(); };
+  const dragEnd = (e?: React.PointerEvent) => {
+    if (e?.pointerType === 'touch') {
+      fingers.current.delete(e.pointerId);
+      if (fingers.current.size < 2 && pair.current) { pair.current = null; rig.orbiting = false; } // the pair broken: the orbit coasts, the finger left does nothing till all are up
+      if (fingers.current.size > 0) return;
+    }
+    drag.current = null; rig.orbiting = false; handUp();
+  };
   const onWheel = (e: React.WheelEvent) => { rig.zoomK = Math.min(2.2, Math.max(0.5, rig.zoomK * Math.exp(e.deltaY * 0.001))); };
 
   // the pointer lock: the mouse itself is the look, no drag; with shift held it orbits the machine instead, and
@@ -301,6 +381,7 @@ export function App() {
   toggleTransformRef.current = toggleTransform;
   const toggleBeetle = () => {
     drone.on = !drone.on; setBeetle(drone.on);
+    setOpen(!drone.on); // the probe in, the text folds to make room; out, it opens again
     if (!drone.on) setMode('orbit'); // nothing to follow or fly
   };
   const controls = !beetle ? null : <>
@@ -310,7 +391,8 @@ export function App() {
     </div>
   </>;
 
-  const stageHandlers = { onPointerDown: dragDown, onPointerMove: dragMove, onLostPointerCapture: dragEnd, onPointerLeave: () => { grip.in = false; } };
+  const stageHandlers = { onPointerDown: dragDown, onPointerMove: dragMove, onLostPointerCapture: dragEnd, onPointerLeave: () => { grip.in = false; },
+    onPointerUp: (e: React.PointerEvent) => { if (e.pointerType === 'touch') tiltOn(); } }; // a touch's end, a gesture iOS lets ask for the tilt
 
   return (
     <>
@@ -334,7 +416,7 @@ export function App() {
           <directionalLight position={[4, 8, 6]} intensity={1.1} />
         </Canvas>
       </div>
-      {CLEAN ? null : <div className="plate"><b>08 Tesseract</b><i>Codevember 2026</i><div className="blurb"><p>A tesseract is a cube in four dimensions: eight cubes, each wall shared by two. We only see its shadow, a cube inside a cube. It turns in 4D without bending, yet in the shadow the inner cube swells out and the struts stretch.</p><h5>Probe{beetle ? <button className="stop" tabIndex={-1} aria-label="Deactivate probe" onPointerDown={(e) => e.preventDefault()} onClick={toggleBeetle}><Stop /></button> : null}</h5><p>The shadow alone is hard to read, so we put a physical object in it. The probe lives in 4D: its position and rotation are transposed from there, and as it flies from one cell into the next it shows how they join, searching for blinking steel balls to catch.</p>{beetle ? null : <button className="probe" tabIndex={-1} onPointerDown={(e) => e.preventDefault()} onClick={toggleBeetle}><PlayPause playing={false} />Activate probe</button>}{beetle ? <><h5 className="small">Info</h5><p>Each cell has its own colour. The trail is left in the colour of the cell the probe was in, a wall lights up in the colour of the cell beyond as it goes through, and a steel ball blinks in the colour of the cell it is in.</p><p>The fisheye drawing below is what the probe sees. From inside, every cell is a true cube however the shadow twists: pick Pilot to fly it by that view.</p></> : null}</div></div>}
+      {CLEAN ? null : <div className={`plate ${open ? '' : 'folded'}`}><b>08 Tesseract</b><i>Codevember 2026</i><div className="blurb"><p>A tesseract is a cube in four dimensions: eight cubes, each wall shared by two. We only see its shadow, a cube inside a cube. It turns in 4D without bending, yet in the shadow the inner cube swells out and the struts stretch.</p><h5>Probe<span className="ends"><button className={`fold ${open ? 'at' : ''}`} tabIndex={-1} aria-label={open ? 'Hide info' : 'Show info'} aria-expanded={open} onPointerDown={(e) => e.preventDefault()} onClick={() => setOpen(!open)}><InfoMark /></button>{beetle ? <button className="stop" tabIndex={-1} aria-label="Deactivate probe" onPointerDown={(e) => e.preventDefault()} onClick={toggleBeetle}><Stop /></button> : null}</span></h5><p>The shadow alone is hard to read, so we put a physical object in it. The probe lives in 4D: its position and rotation are transposed from there, and as it flies from one cell into the next it shows how they join, searching for blinking steel balls to catch.</p>{beetle ? null : <button className="probe" tabIndex={-1} onPointerDown={(e) => e.preventDefault()} onClick={toggleBeetle}><PlayPause playing={false} />Activate probe</button>}{beetle ? <><h5 className="small">Info</h5><p>Each cell has its own colour. The trail is left in the colour of the cell the probe was in, a wall lights up in the colour of the cell beyond as it goes through, and a steel ball blinks in the colour of the cell it is in.</p><p>The fisheye drawing is what the probe sees. From inside, every cell is a true cube however the shadow twists: pick Pilot to fly it by that view.</p></> : null}</div></div>}
       {/* the first person view's corner, top right: hide or show it, and, shown, maximize or
           minimize it, the corner the only way to them */}
       {CLEAN || !beetle || (!maxi && grid) ? null : <button className="maxi eye" tabIndex={-1} aria-label={grid ? 'Hide the first person view' : 'Show the first person view'}
@@ -348,12 +430,21 @@ export function App() {
       {/* bottom middle, at the controls: the pointer lock; locked, there is no pointer to click with, so the way out
           instead: esc (transform's play/pause beside it for a while) */}
       {CLEAN || !manual ? null : <div className="middle">
-        {locked ? <div className="play hint"><Key wide>Esc</Key>to unlock</div> : <button className="play" tabIndex={-1}
+        {locked ? <div className="play hint"><Key wide>Esc</Key>to unlock</div> : <button className="play lockpill" tabIndex={-1}
           onPointerDown={(e) => e.preventDefault()} onClick={() => stage.current?.requestPointerLock()}>
           <Crosshair />
           Lock pointer
         </button>}
+        {/* on a touch screen, no keys and no lock: one button, held to fly forward; a finger on the page steers */}
+        <button className="play forward" tabIndex={-1} aria-label="Forward, held"
+          onPointerDown={(e) => { e.preventDefault(); (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId); drone.keys.thrust = 1; }}
+          onLostPointerCapture={() => { drone.keys.thrust = 0; }} onContextMenu={(e) => e.preventDefault()}>
+          <Tri d="up" />
+          Forward
+        </button>
       </div>}
+      {/* split: a hairline between the machine's half and the view's */}
+      {CLEAN || !beetle || !grid || maxi ? null : <div className="divider" />}
       <div id="lock" className="lock"><i /><i /><i /><i /><b>lock</b></div>
       {/* bottom left, under the blurb and as wide: mode and settings; the shortcuts bottom right, as wide */}
       {CLEAN ? null : <div className="keys">
