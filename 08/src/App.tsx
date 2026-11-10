@@ -583,7 +583,7 @@ export function App() {
           <Suspense fallback={null}>
             <Rig>
               <Machine />
-              <group visible={beetle}><Drones /></group>
+              <group visible={beetle || slot === 'probe'}><Drones /></group>{/* in, or in the home page's probe view */}
               <Grip />
             </Rig>
             <DroneCam />
