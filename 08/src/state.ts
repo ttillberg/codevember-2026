@@ -64,8 +64,6 @@ const BURST_EVERY: [number, number] = [6, 14]; // seconds between the servo's bu
 const PITCH_MAX = 1.4; // radians the orbit goes up or down at most
 const TURNTABLE = 0.07; // rad/s, the camera's slow orbit in the attract mode, a revolution in a minute and a half
 const QUARTER = Math.PI / 2;
-/** The machine's beat: half the time transform takes over a quarter turn. The follow camera changes shot on it. */
-export const BEAT = QUARTER / SOFT_SPIN / 2;
 const rnd = (a: number, b: number) => a + Math.random() * (b - a);
 
 /** The whole 4D rotation right now: the live plane's turn on top of the base. */

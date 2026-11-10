@@ -42,11 +42,8 @@ export const drone = {
   /** The wall just gone through: its corners, where it was crossed, in 4D, seconds since (none, -1), and the colour
    * of the cell entered. It ripples out from the crossing, like a wave from a button pressed. */
   flash: { corners: [[0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]] as V4[], p4: [0, 0, 0, 0] as V4, t: -1, color: '#c9e35b' },
-  /** For the follow camera, in the world: where the device is, the way it faces, and, going through a wall, the
-   * wall's normal into the cell beyond (`wallOn`, from the wall ahead until the hand-over is over). */
-  world: new THREE.Vector3(), fwd: new THREE.Vector3(0, 0, -1), wallN: new THREE.Vector3(), wallOn: false,
-  /** For the follow camera too: the catch on, from closing in on the piece till it is taken, and the piece in the world. */
-  capturing: false, pieceWorld: new THREE.Vector3(),
+  /** For the follow camera and the depth of field: where the device is, in the world. */
+  world: new THREE.Vector3(),
 };
 
 /** The piece: a small steel ball with a pinhead lamp on each axis, six, flashing fast. `blink(t)` runs them. */

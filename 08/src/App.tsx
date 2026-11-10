@@ -9,6 +9,7 @@ import { Grip, grip } from './Grip';
 import { drone } from './drone';
 import { st, rig, orbitBy, crankStart, crankBy, crankEnd, pose } from './state';
 import { project } from './tesseract';
+import { dof } from './dof';
 
 const PARAMS = new URLSearchParams(location.search);
 const CLEAN = PARAMS.has('clean'); // no page furniture, for the screengrab
@@ -48,138 +49,35 @@ function Rig({ children }: { children: React.ReactNode }) {
     project(pose(), drone.p, focusAt).applyQuaternion(rig.q).multiplyScalar(lean);
     rig.focus.lerp(focusAt, Math.min(1, dt * 0.8));
     camera.position.setFromSphericalCoords(rig.zoom, Math.PI / 2 - rig.pitch, rig.yaw);
-    // follow (the switch): the director takes the camera, eased in and out by followK
+    // follow (the switch): the same orbit, round the beetle instead of the machine's middle, nearer; eased in and out
+    tail.lerp(drone.world, Math.min(1, dt * FOLLOW_EASE));
     rig.followK += ((rig.follow && !drone.pilot ? 1 : 0) - rig.followK) * Math.min(1, dt * 2); // on its own only: at the controls the camera is the usual one
     const fk = rig.followK;
     if (fk > 0.001) {
-      direct(dt);
-      look.copy(rig.focus).lerp(cut.look, fk);
-      camera.position.lerp(followAt.copy(cut.look).add(cut.off), fk);
-      // on the shoulder: a little handheld sway, slow sines out of step, the camera and its look each their own way,
-      // as big as the distance to the beetle allows, so a close shot shakes no more than a wide one
-      const t = performance.now() / 1000, amp = cut.off.length() * SHAKE * fk;
-      camera.position.x += amp * (Math.sin(t * 0.71) * 0.6 + Math.sin(t * 1.93 + 1.3) * 0.25);
-      camera.position.y += amp * (Math.sin(t * 0.53 + 2.1) * 0.5 + Math.sin(t * 2.37) * 0.2);
-      camera.position.z += amp * (Math.sin(t * 0.83 + 4.2) * 0.6 + Math.sin(t * 1.61 + 0.7) * 0.25);
-      look.x += amp * 0.5 * Math.sin(t * 1.13 + 0.4); look.y += amp * 0.5 * Math.sin(t * 0.97 + 3.3); look.z += amp * 0.5 * Math.sin(t * 1.27 + 5.1);
+      off.setFromSphericalCoords(rig.zoom * FOLLOW, Math.PI / 2 - THREE.MathUtils.clamp(rig.pitch, -LEVEL, LEVEL), rig.yaw);
+      look.copy(rig.focus).lerp(tail, fk);
+      camera.position.lerp(followAt.copy(tail).add(off), fk);
       camera.lookAt(look);
-    } else camera.lookAt(rig.focus);
+    } else camera.lookAt(look.copy(rig.focus));
+    // the depth of field on what the camera looks at, the beetle when following; nearer, the blur deeper, as a lens's
+    dof.focus.copy(look);
+    dof.aperture = THREE.MathUtils.lerp(DOF_WIDE, DOF_FOLLOW, fk);
   });
   return <group ref={ref}>{children}</group>;
 }
 const FOCUS = 0.3; // how far the turntable's look leans from the machine's middle to the device
 const look = new THREE.Vector3(), followAt = new THREE.Vector3();
+const DOF_WIDE = 0.007, DOF_FOLLOW = 0.009; // the blur at twice the focus distance, against the page's height
 
-// The director, for follow: no drastic moves, and nothing from the machine's own turn. The beetle kept in frame, the
-// look easing after it, and four shots round it taken in turn on their own time (SHOT_TIME, not the machine's), the
-// camera gliding from one to the next: from the back, from 45 degrees round, from the side, and from above. They are
-// laid round the camera's own way in the world, the orbit's yaw that the turntable and a drag turn, not round the
-// beetle's way: the machine turning in 4D swings the beetle's way on the page, and the camera does not go with it.
-// No cut at a wall. The catch glides in close, from the side of the line from the beetle to the piece where no strut
-// is in the way, and out again after. A drag takes the orbit from wherever the camera is; a shot's time later it goes
-// on with its round. A little sway as if on a shoulder. No shot looks more than LEVEL up or down but the one from
-// above, at TOP: straight above or below, the camera's up has nothing to hold to and the picture spins. (Hard cuts on
-// the machine's beat and at every wall, then shots laid round the beetle's way, were tried first; too hectic.)
-type Shot = 'wide' | 'back' | 'deg45' | 'side' | 'top' | 'catch';
-const ROUND: Shot[] = ['back', 'deg45', 'side', 'top'];
-const SHOT = { wide: 0.75, back: 0.5, deg45: 0.48, side: 0.48, top: 0.55, catch: 0.2 }; // distances against the fit to the whole machine
-// each flying shot round the heading: how far round from straight behind (radians, + to the right), and how far up
-const LAY = { back: [0, 0.3], deg45: [Math.PI / 4, 0.55], side: [Math.PI / 2, 0.12], top: [0, 1.22] } as const;
-const cut = { shot: 'back' as Shot, t: 0, i: 0, catchA: 0, free: 0, look: new THREE.Vector3(), aim: new THREE.Vector3(), off: new THREE.Vector3(0, 0, 5), want: new THREE.Vector3(), head: new THREE.Vector3(0, 0, -1) };
-const UP = new THREE.Vector3(0, 1, 0), sph = new THREE.Spherical(), want = new THREE.Spherical(), across = new THREE.Vector3();
-const LEVEL = 0.87, TOP = 1.25; // radians: as far up or down as a shot looks (about 50 degrees), and the one from above (about 72)
-const SHAKE = 0.012; // the handheld sway, against the distance to the beetle
-const GLIDE = 1.4, GLIDE_CATCH = 0.7, HEAD_EASE = 3; // seconds: the camera to its shot, to the catch, and the heading after the beetle's way (slow: the machine's turn swings its way on the page)
-const MAX_TURN = THREE.MathUtils.degToRad(40); // per second: the fastest the camera goes round the beetle, or up and down
-const SHOT_TIME = 8, LOOK_EASE = 3; // seconds a shot holds, its own time and not the machine's; and how quick the look comes after the beetle, per second
-const CATCH_HOLD = 1.2, CATCH_LET = 0.6; // seconds the catch shot holds at the least, and the catch must have been over before it lets go
-/** `v` brought to within `max` of level, its length kept; straight up or down, it takes the way the camera faces now. */
-function level(v: THREE.Vector3, max = LEVEL) {
-  const len = v.length(), h = Math.hypot(v.x, v.z);
-  if (h < 1e-4 * len) { v.x = cut.off.x || 1; v.z = cut.off.z; }
-  const el = THREE.MathUtils.clamp(Math.atan2(v.y, h || 1e-4 * len), -max, max), hl = Math.hypot(v.x, v.z) || 1;
-  return v.set((v.x / hl) * Math.cos(el) * len, Math.sin(el) * len, (v.z / hl) * Math.cos(el) * len);
-}
-const ray = new THREE.Raycaster(), turnRound = new THREE.Quaternion(), axis = new THREE.Vector3(), cand = new THREE.Vector3();
-/** For the catch: the way to the camera, square to the line from the beetle to the piece (`across`), turned `a`
- * round that line, and a little above. */
-function catchDir(out: THREE.Vector3, a: number) {
-  axis.copy(across).normalize();
-  out.crossVectors(axis, UP);
-  if (out.lengthSq() < 1e-8) out.set(1, 0, 0);
-  return out.normalize().applyQuaternion(turnRound.setFromAxisAngle(axis, a)).addScaledVector(UP, 0.3).normalize();
-}
-/** Of eight turns round the line, the first with nothing of the machine between the camera and the catch, or the one
- * that sees furthest before a strut. */
-function clearest(aim: THREE.Vector3, dist: number) {
-  if (!rig.machine) return 0;
-  let best = 0, bestFree = -1;
-  for (let k = 0; k < 8; k++) {
-    const a = (k % 2 ? -1 : 1) * Math.ceil(k / 2) * (Math.PI / 4); // 0, -45, 45, -90, 90 ... round from the first
-    level(catchDir(cand, a).multiplyScalar(dist));
-    ray.set(aim, cand.normalize()); ray.far = dist;
-    const hit = ray.intersectObject(rig.machine, true)[0];
-    if (!hit) return a;
-    if (hit.distance > bestFree) { bestFree = hit.distance; best = a; }
-  }
-  return best;
-}
-function direct(dt: number) {
-  cut.t += dt;
-  // the heading the shots are laid round: the beetle's way on the level, eased
-  const fx = drone.fwd.x, fz = drone.fwd.z, fl = Math.hypot(fx, fz);
-  if (fl > 1e-3) cut.head.lerp(cand.set(fx / fl, 0, fz / fl), 1 - Math.exp(-dt / HEAD_EASE)).normalize();
-  // the catch flickers at its edge, the piece just in and out of reach: it is held a while, and let go only once it
-  // has been over a moment
-  cut.free = drone.capturing ? 0 : cut.free + dt;
-  let into = false;
-  if (rig.orbiting && cut.shot !== 'wide') {
-    // a drag: the orbit round the beetle from wherever the camera is
-    sph.setFromVector3(cut.off); rig.yaw = sph.theta; rig.pitch = Math.PI / 2 - sph.phi;
-    cut.shot = 'wide';
-  }
-  if (rig.orbiting) cut.t = 0;
-  else if (drone.capturing && cut.shot !== 'catch') { cut.shot = 'catch'; cut.t = 0; into = true; }
-  else if (cut.shot === 'catch' && cut.free > CATCH_LET && cut.t > CATCH_HOLD) { cut.shot = ROUND[cut.i % ROUND.length]; cut.t = 0; }
-  else if (cut.shot !== 'catch' && cut.t >= SHOT_TIME) { cut.shot = ROUND[++cut.i % ROUND.length]; cut.t = 0; } // the next in the round
-  // where the shot wants the camera, and what it looks at
-  const d = rig.zoom * SHOT[cut.shot];
-  cut.aim.copy(drone.world);
-  if (cut.shot === 'wide') {
-    rig.pitch = THREE.MathUtils.clamp(rig.pitch, -LEVEL, LEVEL);
-    cut.want.setFromSphericalCoords(d, Math.PI / 2 - rig.pitch, rig.yaw);
-  } else if (cut.shot === 'catch') {
-    // from the side of the line from the beetle to the piece, looking at the middle of it, both in frame; the side
-    // picked as it goes in, round that line, where no strut is in the way
-    across.subVectors(drone.pieceWorld, drone.world);
-    if (across.lengthSq() < 1e-8) across.copy(cut.head);
-    cut.aim.addScaledVector(across, 0.5);
-    const dist = Math.max(d, across.length() * 1.3);
-    if (into) cut.catchA = clearest(cut.aim, dist);
-    level(catchDir(cut.want, cut.catchA).multiplyScalar(dist));
-  } else {
-    // round the camera's own way in the world (the orbit's yaw: the turntable and a drag turn it), not the beetle's,
-    // so the machine's turn, which swings the beetle's way on the page, does not swing the camera: turned `round`,
-    // `up` above the level
-    const [round, up] = LAY[cut.shot];
-    const back = rig.yaw + round; // the way from the beetle to the camera, on the level
-    cut.want.set(Math.sin(back) * Math.cos(up), Math.sin(up), Math.cos(back) * Math.cos(up)).multiplyScalar(d);
-    level(cut.want, cut.shot === 'top' ? TOP : LEVEL);
-  }
-  // no cuts: the camera glides to its shot, the look stays on the beetle
-  cut.look.lerp(cut.aim, Math.min(1, dt * LOOK_EASE));
-  // the glide goes round the beetle, not through: the way round the short way, the height and the distance each eased
-  // on their own, and the turn never faster than MAX_TURN. (Straight from one place to the next it crossed over the
-  // top when the two were on either side, and dived at the beetle.)
-  const k = 1 - Math.exp(-dt / (cut.shot === 'catch' ? GLIDE_CATCH : GLIDE)), cap = MAX_TURN * dt;
-  sph.setFromVector3(cut.off); want.setFromVector3(cut.want);
-  let dAz = want.theta - sph.theta;
-  dAz -= Math.round(dAz / (2 * Math.PI)) * 2 * Math.PI;
-  sph.theta += THREE.MathUtils.clamp(dAz * k, -cap, cap);
-  sph.phi += THREE.MathUtils.clamp((want.phi - sph.phi) * k, -cap, cap);
-  sph.radius += (want.radius - sph.radius) * k;
-  cut.off.setFromSpherical(sph);
-}
+// Follow: the orbit round the beetle, and nothing more. The look eases after it, a point that glides rather than
+// jumps; the way round is the orbit's own yaw and pitch, which the turntable and a drag turn, so nothing of the
+// machine's turn in 4D swings the camera. No higher or lower than LEVEL: straight above or below, the camera's up has
+// nothing to hold to and the picture spins. (Shots in turn, from the back, the side, above, and a close-up on the
+// catch, were tried first, with cuts and then glides; too much.)
+const FOLLOW = 0.5; // the distance to the beetle against the fit to the whole machine
+const FOLLOW_EASE = 2; // how fast the look goes after the beetle (1/s)
+const LEVEL = 0.87; // radians, about 50 degrees
+const tail = new THREE.Vector3(), off = new THREE.Vector3();
 const focusAt = new THREE.Vector3();
 
 // The keys at the controls, as day 07's help: flat grey caps, and what each does in small caps beside them.

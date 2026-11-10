@@ -1,5 +1,6 @@
 import { useMemo } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
+import { renderDof } from './dof';
 import * as THREE from 'three';
 import { drone, target, toCell, toCellWith, faceQuad, pieceMesh, PIECE_R, SIZE_MAIN, SIZE_CELL, LOCK_RANGE } from './drone';
 import { ringOut } from './device';
@@ -264,6 +265,13 @@ export function DroneCam() {
   const tmp = useMemo(() => ({ vel: new THREE.Vector3(), ring: new THREE.Vector3(), at: new THREE.Vector3(), up: new THREE.Vector3(0, 1, 0), camUp: new THREE.Vector3(0, 1, 0), m: new THREE.Matrix4(), q: new THREE.Quaternion(), axis: new THREE.Vector3(), clear: new THREE.Color() }), []);
 
   useFrame(() => {
+    // the camera grid off: no eye at all, just the scene, and no lock bracket
+    if (!st.grid) {
+      const lockEl = (cell.lockEl ??= document.getElementById('lock'));
+      if (lockEl) lockEl.style.display = 'none';
+      gl.render(scene, camera);
+      return;
+    }
     // setViewport and setScissor take CSS pixels and apply the pixel ratio themselves
     const W = size.width, H = size.height;
     // the panel, and the lens's square round its middle, big enough that the disc covers the whole panel
@@ -359,8 +367,8 @@ export function DroneCam() {
     // detail circles over them after the lens; the tubes alone; or the hairlines alone. The piece goes with the tubes
     // or the hairlines (balls)
     const ink = st.eye !== 'hairline';
-    cell.tubes.visible = ink && st.grid; // the camera grid off: no rooms, the piece alone
-    cell.net.visible = st.eye !== 'outline' && st.grid;
+    cell.tubes.visible = ink;
+    cell.net.visible = st.eye !== 'outline';
     HAIR.visible = st.eye === 'hairline'; // the net's own lines; its children have their own materials
     cell.centre.visible = st.eye === 'drawing';
     cell.rings.material.uniforms.uRing.value = st.eye === 'drawing' ? R_DETAIL : R_JOINT;
@@ -386,7 +394,7 @@ export function DroneCam() {
     gl.render(cell.hair, cell.flat); // the rooms' hairlines, through the same lens, at the screen's resolution
     gl.setScissorTest(false);
     gl.setViewport(0, 0, W, H);
-    gl.render(scene, camera); // the lens writes no depth, so the machine draws over it whole
+    renderDof(gl, scene, camera); // the lens writes no depth, so the machine draws over it whole, through the depth of field
     gl.autoClear = auto;
   }, 1);
 

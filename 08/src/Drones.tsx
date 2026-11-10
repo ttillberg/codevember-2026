@@ -485,9 +485,6 @@ export function Drones() {
     // the wings, the four shell petals: half shut as it flies, shut through a wall, and spread wide only for the
     // catch, from closing in on the piece till it is taken
     const capture = near || s.phase === 'settle' || s.phase === 'catch' || s.phase === 'dock';
-    // for the follow camera: the catch, and where the piece is in the world (the device's own place is set below)
-    drone.capturing = capture && (target.up || drone.taken > 0.02);
-    if (target.up) drone.pieceWorld.copy(project(m, target.p, tmp.b)).applyMatrix4(s.group.matrixWorld);
     const wantShield = field > 0.12 ? 1 : capture ? 0 : WINGS_REST;
     s.shield += (wantShield - s.shield) * Math.min(1, dt * (wantShield > s.shield ? 5 : 2.5));
     drone.shield = s.shield; drone.shutter = shut; drone.grip = s.grip;
@@ -617,20 +614,15 @@ export function Drones() {
       else if (ho.crossed && (done || (ho.gone += dt) > LINGER)) s.ho = null;
       // the renderer clips in world space, and the machine sits on a turned rig: the planes go through its matrix
       s.planeA.applyMatrix4(s.group.matrixWorld); s.planeB.applyMatrix4(s.group.matrixWorld);
-      // for the follow camera: the wall's normal into the cell beyond, while it is ahead
-      if (!ho.crossed) drone.wallN.copy(s.planeB.normal);
-      drone.wallOn = true;
     } else {
       s.q2.g.visible = false;
       s.planeA.set(tmp.up, 1e4); s.planeB.set(tmp.up, 1e4);
-      drone.wallOn = false;
     }
     // whatever set-back is left from a hand-over cut short, the body catches up, eased rather than snapped
     if (!rising) s.shift.multiplyScalar(Math.max(0, 1 - dt * 6));
     s.q.g.position.copy(v).add(s.shift);
-    // for the follow camera: the device and the way it faces, in the world
+    // for the follow camera and the depth of field: the device in the world
     drone.world.copy(v).applyMatrix4(s.group.matrixWorld);
-    drone.fwd.set(0, 0, -1).applyQuaternion(s.heading).transformDirection(s.group.matrixWorld);
     // while the body is sliced by a wall each half glows in the colour of the cell it is in: this copy in this
     // cell's, the other copy in the neighbour's, so the cut reads at a glance; whole again, the glow goes
     // a tint, not a glow: nothing until a quarter of the body is in the wall, then up a curve to half strength with
