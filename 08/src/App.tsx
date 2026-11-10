@@ -380,6 +380,19 @@ const Cheat = () => (
         <path className="crease" d="M824 880L834 944M870 856L874 940M914 870L902 934" />
       </svg>
     </figure>
+    <i className="rule" />
+    <figure>
+      {/* the orbit: a drag on the page off the struts, the same glove, its finger on nothing, a sweep over it and the
+          way the finger goes, both ways */}
+      <svg className="manual" width={72} height={74} viewBox="250 200 790 820">
+        <path className="far" d="M330 470A300 120 0 0 0 930 470" />
+        <path className="arr" d="M330 470A300 120 0 0 1 930 470M300 418L330 470L388 452M872 452L930 470L960 418" />
+        <path className="arr" d="M560 560H880M606 528L560 560L606 594M834 528L880 560L834 594" />
+        <path className="glove" d="M760 975C742 988 750 1030 790 1034L915 1030C950 1025 955 978 930 965Z" />
+        <path className="glove" d="M682 648C680 602 742 594 762 634L822 770C818 720 882 702 906 770C906 720 982 720 990 820C995 880 975 940 945 965L760 977C730 952 700 928 660 916C610 905 590 860 612 830C642 800 700 815 742 846Z" />
+        <path className="crease" d="M824 880L834 944M870 856L874 940M914 870L902 934" />
+      </svg>
+    </figure>
   </div>
 );
 
