@@ -111,7 +111,12 @@ function burst() {
 
 /** A drag on the orbit: `dy` radians of yaw and `dp` of pitch, over `dt` seconds; the speed is kept, smoothed, to
  * coast on once it is let go. */
+// A hand on it stops it doing so on its own: after a turn by hand in 4D the transform waits, after an orbit by hand
+// the turntable waits, each IDLE seconds from the last touch, then picks up again (they ran on through it for a while).
+const IDLE = 30;
+let clock = 0, handAt = -Infinity, orbitAt = -Infinity;
 export function orbitBy(dy: number, dp: number, dt: number) {
+  orbitAt = clock;
   rig.orbiting = true;
   rig.yaw += dy;
   rig.pitch = THREE.MathUtils.clamp(rig.pitch + dp, -PITCH_MAX, PITCH_MAX);
@@ -122,6 +127,7 @@ export function orbitBy(dy: number, dp: number, dt: number) {
  * pick, but only while the machine stands on a whole quarter: with a turn part done, another plane would be another
  * pose and it would jump. Returns the plane it turns in. */
 export function crankStart(plane: number): number {
+  handAt = clock;
   glide = null; st.settling = false; st.cranking = true;
   if (st.bursting) { stopBurst(); st.burstIn = rnd(...BURST_EVERY); }
   st.target = st.angle; st.vel = 0; st.spinVel = 0;
@@ -138,6 +144,7 @@ function bank() { const q = Math.round(st.angle / QUARTER); if (q !== 0) fold(q)
 /** `d` radians in the live plane, by hand; the way it goes is the way it turns from then on, and each whole quarter
  * is banked, in the same plane, so the drag goes on as it started. */
 export function crankBy(d: number) {
+  handAt = clock;
   st.angle += d; st.target = st.angle; st.vel = 0;
   if (d) st.way = Math.sign(d);
   if (Math.abs(st.angle) >= QUARTER) { const p = st.plane; fold(Math.trunc(st.angle / QUARTER)); st.plane = p; }
@@ -145,15 +152,17 @@ export function crankBy(d: number) {
 /** Let go: the servo takes it on to the nearest whole quarter, with its small overshoot, so the next drag can pick any
  * plane. In hard mode the spin just picks up from there. */
 export function crankEnd() {
-  st.cranking = false;
-  if (st.hard || st.transform) return;
+  st.cranking = false; handAt = clock;
+  if (st.hard) return; // transform on, it settles on its quarter too, and waits there (it spun straight on from the hand for a while)
   st.target = Math.round(st.angle / QUARTER) * QUARTER;
   st.settling = true;
 }
 
 export function tick(dt: number) {
-  // the turntable: the camera orbits slowly on its own, in the attract mode
-  if (rig.turntable && rig.spin) rig.yaw += TURNTABLE * dt;
+  clock += dt;
+  if (rig.orbiting) orbitAt = clock;
+  // the turntable: the camera orbits slowly on its own, in the attract mode, but not for IDLE after a hand on it
+  if (rig.turntable && rig.spin && clock - orbitAt > IDLE) rig.yaw += TURNTABLE * dt;
   // the orbit coasts after a drag, slowing over a second or two
   if (!rig.orbiting && (rig.orbitVel[0] || rig.orbitVel[1])) {
     rig.yaw += rig.orbitVel[0] * dt;
@@ -166,7 +175,8 @@ export function tick(dt: number) {
   st.flipIn -= dt;
   if (st.flipIn <= 0) { st.way = -st.way; st.flipIn = 8 + Math.random() * 14; }
 
-  if (st.hard || st.transform) {
+  // transform waits IDLE after the last turn by hand (hard mode does not)
+  if (st.hard || (st.transform && clock - handAt > IDLE)) {
     glide = null; st.settling = false;
     // transform alone is the soft one: the same even turn, slower, and no servo cutting in
     if (!st.hard && st.bursting) stopBurst();
