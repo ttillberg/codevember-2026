@@ -299,6 +299,12 @@ export function App() {
           Lock pointer
         </button>}
         {smalls}
+      </div> : <div className="keys">
+        {controls}
+        {smalls}
+      </div>}
+      {/* the shortcuts on their own, bottom right */}
+      {CLEAN ? null : manual ? <div className="keys right">
         <h5 className="shortcuts">Shortcuts <span>(interactive mode)</span></h5>
         <h6 className="shortcuts">Navigation</h6>
         <Do how={<Key wide>{locked ? 'Mouse' : 'Drag'}</Key>} what="Steer" />
@@ -310,9 +316,7 @@ export function App() {
         <Do how={<Key>L</Key>} what={locked ? 'Unlock pointer' : 'Lock pointer'} />
         <h6 className="shortcuts">Options</h6>
         <Do how={<><Key>{MAC ? '⌥' : 'Alt'}</Key> + <Key wide>{locked ? 'Mouse' : 'Drag'}</Key></>} what="Twist the tesseract" />
-      </div> : <div className="keys">
-        {controls}
-        {smalls}
+      </div> : <div className="keys right">
         <h5 className="shortcuts">Shortcuts</h5>
         <h6 className="shortcuts">View</h6>
         <Do how={<Key wide>Drag</Key>} what="Rotate" />
