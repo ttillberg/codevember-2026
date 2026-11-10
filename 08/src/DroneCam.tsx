@@ -34,22 +34,29 @@ export function eyeShown(W: number, H: number) {
 }
 /** What the page tells the layout: under ?clean there is no text; textBottom, the text's foot, measured each frame. */
 export const page = { clean: false, textBottom: 0 };
-type Rect = { x: number; y: number; w: number; h: number }; // CSS px, from the top left
+type Rect = { x: number; y: number; w: number; h: number; round?: boolean }; // CSS px, from the top left; round, a disc in the square
 /** Where the machine goes and where the view goes. The machine never under the text: beside the text column, or under
  * it on an upright phone; split, the room left over halved between the machine and the view (the view off, or
  * maximized behind it all, the machine has all of it). */
-export function regionsOf(W: number, H: number): { main: Rect; cam: Rect | null } {
+export function regionsOf(W: number, H: number): { main: Rect; cam: Rect | null; aim?: { x: number; y: number } } {
   const split = splitOf(W, H), upright = W <= 640 && H > W;
+  // a phone: the machine has all the room under (or beside) the text, and the view is a little disc over it, bottom
+  // middle upright, bottom right on its side; the machine aimed off its middle, a third of the way down (or across),
+  // so the disc never hides the probe (the room was halved between the two, for a while)
   if (upright) {
     const top = page.clean ? 0 : Math.min(H * 0.45, page.textBottom + 8);
-    const camH = split ? Math.round((H - top) / 2) : 0;
-    return { main: { x: 0, y: top, w: W, h: H - top - camH }, cam: split ? { x: 0, y: H - camH, w: W, h: camH } : null };
+    const main = { x: 0, y: top, w: W, h: H - top };
+    if (!split) return { main, cam: null };
+    const d = Math.round(Math.min(260, Math.max(160, W * 0.6)));
+    return { main, cam: { x: Math.round((W - d) / 2), y: H - PIP_GAP - d, w: d, h: d, round: true }, aim: { x: W / 2, y: top + main.h / 3 } };
   }
   const low = H <= 500;
   const left = page.clean ? 0 : Math.min(W * 0.45, (low ? 260 : 380) + 48); // the column and its gutters
-  if (low) { // a phone on its side: the room beside the column halved, the machine and the view
-    const rest = W - left, camW = split ? Math.round(rest / 2) : 0;
-    return { main: { x: left, y: 0, w: rest - camW, h: H }, cam: split ? { x: W - camW, y: 0, w: camW, h: H } : null };
+  if (low) {
+    const main = { x: left, y: 0, w: W - left, h: H };
+    if (!split) return { main, cam: null };
+    const d = Math.round(Math.min(220, H * 0.55));
+    return { main, cam: { x: W - PIP_GAP - d, y: H - PIP_GAP - d, w: d, h: d, round: true }, aim: { x: left + main.w / 3, y: H / 2 } };
   }
   // a desktop: the machine has all the room beside the column, and the view is in the column, as wide as it, over the
   // mode pills, square at most and lower (landscape) where the text above leaves less room, down to COL_MIN_H (it was
@@ -59,6 +66,7 @@ export function regionsOf(W: number, H: number): { main: Rect; cam: Rect | null 
   const w = Math.min(380, W - 48), h = Math.round(Math.max(COL_MIN_H, Math.min(w, H - COL_OVER - page.textBottom - 16)));
   return { main, cam: { x: 24, y: H - COL_OVER - h, w, h } };
 }
+const PIP_GAP = 24; // the phone's disc in from the edges (CSS px)
 const COL_OVER = 76, COL_MIN_H = 120; // the view in the column: how far up from the bottom, over the mode pills, and its least height (CSS px)
 // the fog the far rooms fade into, by the view's size: minimized, a grey, and the view's background that grey too, so
 // the rooms go into it; maximized, the page's paper, and no background, the page itself between the lines
@@ -192,7 +200,7 @@ export function DroneCam() {
     return {
       cs, tubes, flash, piece, grabbed, eye, lens, flat,
       q: new THREE.Quaternion(), look: new THREE.Vector3(0, 0, -1), last: [0, 0, 0], crossings: -1,
-      pos: new THREE.Vector3(), lockEl: null as HTMLElement | null, eyeX: -1, eyeY: -1, camX: -1, camH: -1, plateEl: null as Element | null, lockLast: '', // the bracket's last style, written only on change
+      pos: new THREE.Vector3(), lockEl: null as HTMLElement | null, eyeX: -1, eyeY: -1, camX: -1, camH: -1, plateEl: null as Element | null, lockLast: '', over: null as number[] | null, // the bracket's last style, written only on change
       grabOf: null as number[] | null, grabLocal: new THREE.Vector3(), // the piece taken, and where it was from the eye then, in its frame
     };
   }, []);
@@ -210,6 +218,14 @@ export function DroneCam() {
     // the machine over the lens, through the depth of field, only in its own part, never under the text
     const W = size.width, H = size.height, { main } = regionsOf(W, H);
     renderDof(gl, scene, camera, [main.x, H - main.y - main.h, main.w, main.h]);
+    if (cell.over) { // the phone's disc: over the machine, not under it
+      const [x, y, w, h] = cell.over;
+      gl.setViewport(x, y, w, h);
+      gl.setScissorTest(true); gl.setScissor(x, y, w, h);
+      gl.render(cell.lens, cell.flat);
+      gl.setScissorTest(false); gl.setViewport(0, 0, W, H);
+      cell.over = null;
+    }
     gl.autoClear = auto;
   }, 1);
 
@@ -240,8 +256,8 @@ export function DroneCam() {
       document.documentElement.style.setProperty('--cam-x', `${sx}px`); // its left edge, for the hairline
       document.documentElement.style.setProperty('--cam-h', `${SH}px`); // and its height, for the pad over it
     }
-    // the lens's square round its middle, big enough that the disc covers all of it
-    const w = Math.hypot(S, SH), h = w;
+    // the lens's square round its middle, big enough that the disc covers all of it; the phone's disc, in it
+    const w = r.round ? S : Math.hypot(S, SH), h = w;
     const x = sx + S / 2 - w / 2, y = sy + SH / 2 - h / 2;
     const [bx0, by0, bx1, by1] = [sx, top, sx + S, top + SH]; // where the lock can show, from the top left
 
@@ -339,6 +355,7 @@ export function DroneCam() {
     gl.setRenderTarget(null);
     gl.setViewport(0, 0, W, H);
     gl.clear();
+    if (r.round) { cell.over = [x, y, w, h]; return; } // drawn after the machine, over it
     gl.setViewport(x, y, w, h);
     if (!full) { gl.setScissorTest(true); gl.setScissor(sx, sy, S, SH); }
     gl.render(cell.lens, cell.flat);

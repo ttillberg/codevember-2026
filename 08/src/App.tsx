@@ -72,9 +72,11 @@ function Rig({ children }: { children: React.ReactNode }) {
     const cam = camera as THREE.PerspectiveCamera;
     // the machine has its own part of the window, never under the text (regionsOf): it fits that part, and is moved
     // into it (below), both eased, so the probe coming in slides it over
-    const { main } = regionsOf(size.width, size.height);
+    const { main, aim } = regionsOf(size.width, size.height);
     const k = part.w ? Math.min(1, dt * 3) : 1;
-    part.x += (main.x + main.w / 2 - part.x) * k; part.y += (main.y + main.h / 2 - part.y) * k;
+    // its middle, or off it where the phone's view disc would hide the probe
+    const ax = aim?.x ?? main.x + main.w / 2, ay = aim?.y ?? main.y + main.h / 2;
+    part.x += (ax - part.x) * k; part.y += (ay - part.y) * k;
     part.w += (main.w - part.w) * k; part.h += (main.h - part.h) * k;
     const t = Math.tan(THREE.MathUtils.degToRad(cam.fov) / 2);
     const vfov = 2 * Math.atan(t * (part.h / size.height)), hfov = 2 * Math.atan(t * (part.w / size.height));
@@ -163,37 +165,40 @@ const PlayPause = ({ playing }: { playing: boolean }) => (
     {playing ? <path d="M4 2.5h2.6v11H4zM9.4 2.5H12v11H9.4z" /> : <path d="M4.5 2.3 13.5 8l-9 5.7z" />}
   </svg>
 );
-// On a phone at the controls the fisheye view is a pad: held in the middle the probe flies forward, held towards an
-// edge it turns that way, for as long as it is held; the finger can slide from one to another. Outlined arrows at the
-// edges and a ring with a dot in the middle show it, the one held lit. (A FORWARD button for a while.)
+// On a phone at the controls the fisheye view is a pad: held in the middle the probe flies forward, held anywhere
+// round it it turns towards the finger, at the finger's angle from the middle (up and to the right, both at once), for
+// as long as it is held; the finger can slide from one to another. Outlined arrows at the edges and a ring with a dot
+// in the middle show it, the arrow nearest the finger lit. (Only the four ways, by quarters, for a while; a FORWARD
+// button before.)
 type Zone = 'c' | 't' | 'r' | 'b' | 'l' | null;
-const PAD_TURN = 1.3; // rad/s, an edge held
+const PAD_TURN = 1.3; // rad/s, held off the middle
 const PAD_MIDDLE = 0.22; // the middle's radius, against the view's shorter side
 function Pad() {
   const [zone, setZone] = useState<Zone>(null);
   const held = useRef<Zone>(null);
+  const dir = useRef<[number, number]>([0, 0]); // the way to turn, a unit vector, x right and y up
   const hold = (z: Zone) => {
     if (z === held.current) return;
     if (held.current === 'c') drone.keys.thrust = 0;
     if (z === 'c') drone.keys.thrust = 1;
     held.current = z; setZone(z);
   };
-  const zoneAt = (e: React.PointerEvent) => {
+  const zoneAt = (e: React.PointerEvent): Zone => {
     const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
-    const x = e.clientX - r.left - r.width / 2, y = e.clientY - r.top - r.height / 2;
-    if (Math.hypot(x, y) < Math.min(r.width, r.height) * PAD_MIDDLE) return 'c';
-    return Math.abs(x) / r.width > Math.abs(y) / r.height ? (x > 0 ? 'r' : 'l') : (y > 0 ? 'b' : 't');
+    const x = e.clientX - r.left - r.width / 2, y = e.clientY - r.top - r.height / 2, d = Math.hypot(x, y);
+    if (d < Math.min(r.width, r.height) * PAD_MIDDLE) return 'c';
+    dir.current = [x / d, -y / d];
+    return Math.abs(x) > Math.abs(y) ? (x > 0 ? 'r' : 'l') : (y > 0 ? 'b' : 't');
   };
   useEffect(() => {
     // an edge held turns it a little every frame (the probe takes its turn a frame at a time)
     let raf = 0, last = performance.now();
     const tick = (now: number) => {
       const dt = Math.min(0.05, (now - last) / 1000); last = now;
-      const z = held.current;
-      if (z === 'l') drone.turn[0] -= PAD_TURN * dt;
-      else if (z === 'r') drone.turn[0] += PAD_TURN * dt;
-      else if (z === 't') drone.turn[1] += PAD_TURN * dt;
-      else if (z === 'b') drone.turn[1] -= PAD_TURN * dt;
+      if (held.current && held.current !== 'c') {
+        drone.turn[0] += dir.current[0] * PAD_TURN * dt;
+        drone.turn[1] += dir.current[1] * PAD_TURN * dt;
+      }
       raf = requestAnimationFrame(tick);
     };
     raf = requestAnimationFrame(tick);

@@ -168,7 +168,6 @@ body.clean .plate, body.clean .keys { display: none; }
   .plate b { font-size: 36px; }
   .plate > i { font-size: 9px; }
   .plate .blurb { max-width: min(var(--col), 100%); }
-  body.pilot .divider { display: block; }
   .plate h5 { font-size: 18px; margin: 14px 0 8px; }
   .plate h5 .ends { gap: 14px; } /* the i and the stop, apart for a thumb */
   .pill.orbit, .pill.follow { display: none; } /* with the probe in it is followed; only PILOT to pick, BACK the way back */
@@ -186,7 +185,6 @@ body.clean .plate, body.clean .keys { display: none; }
 /* touch: no keys, so no pilot and no shortcuts; a finger turns it in 4D, two orbit and pinch, the phone's lean turns the view */
 @media (pointer: coarse) {
   .keys.right { display: none; }
-  .play.lockpill { display: none; } /* no pointer to lock */
 }
 
 
@@ -233,7 +231,8 @@ body.clean .plate, body.clean .keys { display: none; }
 @media (max-width: 640px), (max-height: 500px) {
   body .maxi { display: none; } /* no full screen view on a phone, nor hiding it */
   body:not(.pilot) .divider { display: none; } /* orbit and follow: no view, the machine has it all */
-  body.pilot .pad { display: block; } /* the view a pad to fly by */
+  body .middle { display: none; } /* no pointer to lock on a phone */
+  body.pilot .pad { display: block; border-radius: 50%; box-shadow: 0 0 0 1.5px #fff; } /* the view, a disc over the machine, a pad to fly by */
   body.pilot .keys { display: none; } /* at the controls no pills: the probe's x takes it out, and out of the controls */
   .plate .stop { display: none; }
   .plate.probing h5 { border-bottom-color: transparent; } /* the probe in, the views edge to edge: no rule under PROBE (kept, unseen, so nothing moves) */
