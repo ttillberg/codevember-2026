@@ -9,6 +9,8 @@ import { device, ringOut, DEVICE_URL, type Device } from './device';
 import { makeSmoke } from './smoke';
 import { makeLaser } from './laser';
 
+const LASER = false; // the laser line through the wake: hidden for now, the clouds carry the way it came
+
 // A device that lives in the tesseract: a ball with one eye, fins that are walls, a shutter. It is inside one of the eight cells, a cube with one coordinate held at
 // ±1 and the other three free, and it can only leave through a square face into the neighbouring cell. The passage is
 // one smooth curve in 4D: it bends from the way it was flying to the way into the next cell, which in 4D is a right
@@ -198,7 +200,7 @@ export function Drones() {
     const smoke = makeSmoke();
     group.add(smoke.points);
     const laser = makeLaser();
-    group.add(laser.line);
+    if (LASER) group.add(laser.line);
     // the ripple at a crossing, run through the honeycomb: each edge of it lights as the wave from the crossing
     // reaches it (rings of hairlines before that, and a filled ring in a shader before them, faceQuad); a colour
     // with alpha per end, so each edge has its own strength
@@ -546,20 +548,22 @@ export function Drones() {
     // the wake: little clusters of puffs, a few small ones in a large faint one, round a point just behind the device,
     // a gap between
     if (v.distanceTo(s.puffAt) > s.puffGap) {
-      const at = add4(s.p, s.dir, -0.05), n = 2 + Math.floor(Math.random() * 3), hex = CELL_HEX[cellId()];
+      const at = add4(s.p, s.dir, -0.05), n = 3 + Math.floor(Math.random() * 4), hex = CELL_HEX[cellId()];
       s.smoke.spawn(add4(at, [0, 1, 2, 3].map(() => rnd(-0.01, 0.01)) as V4), now, hex, 2.2 + Math.random());
       for (let i = 0; i < n; i++) s.smoke.spawn(add4(at, [0, 1, 2, 3].map(() => rnd(-0.022, 0.022)) as V4), now + rnd(0, 0.15), hex);
       s.puffAt.copy(v);
-      s.puffGap = rnd(0.05, 0.12);
+      s.puffGap = rnd(0.025, 0.06); // more clouds: twice as often as at first, and more to each
     }
     // and a steady line of small ones between the clusters, so the way it came reads
     if (v.distanceTo(s.trailAt) > 0.02) {
       s.smoke.spawn(add4(s.p, s.dir, -0.05), now, CELL_HEX[cellId()], 0.45);
       s.trailAt.copy(v);
     }
-    // the laser through it, along the same way
-    s.laser.sample(add4(s.p, s.dir, -0.05), now, CELL_HEX[cellId()]);
-    s.laser.update(m, now, size.width * viewport.dpr, size.height * viewport.dpr);
+    // the laser through it, along the same way (LASER)
+    if (LASER) {
+      s.laser.sample(add4(s.p, s.dir, -0.05), now, CELL_HEX[cellId()]);
+      s.laser.update(m, now, size.width * viewport.dpr, size.height * viewport.dpr);
+    }
     const vfov = degToRad((camera as THREE.PerspectiveCamera).fov);
     s.smoke.update(m, now, (size.height * viewport.dpr) / (2 * Math.tan(vfov / 2)));
     if (!drone.pilot || s.phase !== 'seek') {
