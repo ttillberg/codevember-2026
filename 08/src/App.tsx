@@ -613,7 +613,7 @@ export function App() {
         </Canvas>
         {/* the machine turning in 4D on its own, a switch top right of the view, on a desktop, in the phone's box and full screen */}
         {CLEAN ? null : <button className="autot" tabIndex={-1} role="switch" aria-checked={transform} aria-label="Autotransform" onPointerDown={(e) => { e.preventDefault(); e.stopPropagation(); }} onClick={toggleAuto}>
-          <span className="name">Autotransform</span><span className={`seg ${transform ? 'at' : ''}`}>On</span><span className={`seg ${transform ? '' : 'at'}`}>Off</span>
+          <span className="name">Autotransform</span><span className="segs"><span className={`seg ${transform ? 'at' : ''}`}>On</span><span className={`seg ${transform ? '' : 'at'}`}>Off</span></span>
         </button>}
         {/* an upright phone's home page: how the hands work, in the box, bottom right (bottom left, and under it, titled INSTRUCTIONS, for a moment) */}
         {CLEAN || beetle ? null : <Cheat />}
