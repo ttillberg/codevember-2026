@@ -2,7 +2,7 @@ import { useMemo } from 'react';
 import { useFrame } from '@react-three/fiber';
 import { useGLTF } from '@react-three/drei';
 import * as THREE from 'three';
-import { project, type V4 } from './tesseract';
+import { project, D, SCALE, type M4, type V4 } from './tesseract';
 import { pose, turnGlide, st } from './state';
 import { drone, target, startCell, LOCK_RANGE, crossInto, pieceMesh, blink, toCell, fromCell, dirFromCellWith, otherMap, mapAcross, relayTarget, faceCorners, facePoint, wallOf, cellId, cellIdOf, lampColor, CELL_HEX, RIPPLE, SIZE_MAIN, SIZE_CELL, type CellMap } from './drone';
 import { device, ringOut, DEVICE_URL, type Device } from './device';
@@ -30,7 +30,7 @@ const TINT_IN = 14; // how fast the glow on the half inside a new cell comes and
 const WINGS_REST = 0.5; // the wings as it flies: half shut, 0 spread to 1 shut; spread only for the catch
 const LOOK_EASE = 1.5; // per second: how quick the eye, on its own, comes round to the way it is going (it was 4, and nodded with every turn)
 const RIPPLE_R = 2.3, RIPPLE_W = 0.22; // the ripple: how far out its wave runs on the wall in 4D (the wall is 2 across), and how wide its front is
-const HEX = 0.12, GRID_A = 0.7; // the grid on a wall being gone through: a honeycomb, its cell's radius on the wall (2 across), and its strength
+const HEX = 0.012, GRID_A = 0.7; // the grid on a wall being gone through: a honeycomb, its cell's radius on the wall (2 across), and its strength
 /** The honeycomb's edges on the wall, in its own coordinates (-1 to 1 each way), each once, cut at the wall's square:
  * worked out once, put through the turn each frame. Flat-topped cells, centres on a grid of 1.5 by √3 radii. */
 const HEXES: [number, number, number, number][] = (() => {
@@ -63,6 +63,60 @@ const HEXES: [number, number, number, number][] = (() => {
   }
   return out;
 })();
+/** The honeycomb on the GPU: some 33,000 edges, too many to put through the 4D turn on the CPU each frame. Each end
+ * keeps its place on the wall (u, v) and its edge's middle; the wall comes in as its middle and its two unit ways
+ * along it, already turned (`turned`), and the shader puts the point through the w perspective as `project` does. */
+const HEX_GEO = (() => {
+  const pos = new Float32Array(HEXES.length * 6), mid = new Float32Array(HEXES.length * 4);
+  HEXES.forEach(([u0, v0, u1, v1], j) => {
+    pos.set([u0, v0, 0, u1, v1, 0], 6 * j);
+    const mu = (u0 + u1) / 2, mv = (v0 + v1) / 2;
+    mid.set([mu, mv, mu, mv], 4 * j);
+  });
+  return new THREE.BufferGeometry().setAttribute('position', new THREE.BufferAttribute(pos, 3)).setAttribute('mid', new THREE.BufferAttribute(mid, 2));
+})();
+HEX_GEO.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 1e4);
+/** The honeycomb's material: one colour and strength for the grid; with `ripple`, each edge lit as the wave from the
+ * crossing (`at`, on the wall) reaches it, its front at `front`, a faint wash left behind it. */
+function hexMaterial(ripple: boolean) {
+  return new THREE.ShaderMaterial({
+    uniforms: {
+      wC: { value: new THREE.Vector4() }, wU: { value: new THREE.Vector4() }, wV: { value: new THREE.Vector4() },
+      color: { value: new THREE.Color() }, opacity: { value: 0 },
+      at: { value: new THREE.Vector2() }, front: { value: 0 },
+    },
+    defines: { D: D.toFixed(4), SCALE: SCALE.toFixed(4), ...(ripple ? { RIPPLE_W: RIPPLE_W.toFixed(4) } : {}) },
+    vertexShader: /* glsl */ `
+      uniform vec4 wC, wU, wV;
+      uniform vec2 at;
+      uniform float front;
+      attribute vec2 mid;
+      varying float vA;
+      void main() {
+        vec4 q = wC + position.x * wU + position.y * wV;
+        vec3 p = q.xyz * (D / (D - q.w)) * SCALE;
+        vA = 1.0;
+        #ifdef RIPPLE_W
+          float d = distance(mid, at), e = (d - front) / RIPPLE_W;
+          vA = min(1.0, exp(-e * e) + (d < front ? 0.25 : 0.0));
+        #endif
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(p, 1.0);
+      }`,
+    fragmentShader: /* glsl */ `
+      uniform vec3 color;
+      uniform float opacity;
+      varying float vA;
+      void main() {
+        gl_FragColor = vec4(color, opacity * vA);
+        #include <colorspace_fragment>
+      }`,
+    transparent: true, depthWrite: false, toneMapped: false,
+  });
+}
+type HexMat = ReturnType<typeof hexMaterial>;
+/** A point of 4D through the turn alone, no perspective: the four rows' dot products. */
+const turned = (m: M4, v: number[], out: THREE.Vector4) =>
+  out.set(...(m.map((r) => r[0] * v[0] + r[1] * v[1] + r[2] * v[2] + r[3] * v[3]) as [number, number, number, number]));
 // in-then-out, in distance: how far the body goes on past all in, in radii, before the next cell's copy starts up out
 // of the wall, and over how far it comes out; how deep in the wall it starts at the least, in radii; and seconds the
 // hand-over may linger past the wall state. (Tried in seconds for a while; the distance reads as the body going in,
@@ -148,19 +202,11 @@ export function Drones() {
     // the ripple at a crossing, run through the honeycomb: each edge of it lights as the wave from the crossing
     // reaches it (rings of hairlines before that, and a filled ring in a shader before them, faceQuad); a colour
     // with alpha per end, so each edge has its own strength
-    const ripple = new THREE.LineSegments(
-      new THREE.BufferGeometry()
-        .setAttribute('position', new THREE.BufferAttribute(new Float32Array(HEXES.length * 2 * 3), 3))
-        .setAttribute('color', new THREE.BufferAttribute(new Float32Array(HEXES.length * 2 * 4), 4)),
-      new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, depthWrite: false, toneMapped: false }),
-    );
+    const ripple = new THREE.LineSegments(HEX_GEO, hexMaterial(true));
     ripple.frustumCulled = false; ripple.visible = false; ripple.renderOrder = 4;
     group.add(ripple);
     // the grid on a wall about to be gone through: a honeycomb (HEXES), in the colour of the cell beyond
-    const grid = new THREE.LineSegments(
-      new THREE.BufferGeometry().setAttribute('position', new THREE.BufferAttribute(new Float32Array(HEXES.length * 2 * 3), 3)),
-      new THREE.LineBasicMaterial({ transparent: true, opacity: 0, depthWrite: false, toneMapped: false }),
-    );
+    const grid = new THREE.LineSegments(HEX_GEO, hexMaterial(false));
     grid.frustumCulled = false; grid.visible = false; grid.renderOrder = 4;
     group.add(grid);
     const piece = pieceMesh();
@@ -643,18 +689,17 @@ export function Drones() {
       s.gridK = k;
       // with the hand-over over and the grid still fading, it fades where it was last drawn
       s.grid.visible = k > 0.01;
-      (s.grid.material as THREE.LineBasicMaterial).opacity = k * GRID_A;
+      const gu = (s.grid.material as HexMat).uniforms;
+      gu.opacity.value = k * GRID_A;
       if (s.grid.visible && wall) {
-        const pos = s.grid.geometry.getAttribute('position') as THREE.BufferAttribute;
-        let n = 0;
-        for (const [u0, v0, u1, v1] of HEXES) {
-          project(m, facePoint(wall.axis, wall.sign, u0, v0), tmp.a); pos.setXYZ(n++, tmp.a.x, tmp.a.y, tmp.a.z);
-          project(m, facePoint(wall.axis, wall.sign, u1, v1), tmp.a); pos.setXYZ(n++, tmp.a.x, tmp.a.y, tmp.a.z);
-        }
-        pos.needsUpdate = true;
+        // the wall's middle and its two ways along it, through the turn; the shader does the rest
+        const c0 = facePoint(wall.axis, wall.sign, 0, 0), cu = facePoint(wall.axis, wall.sign, 1, 0), cv = facePoint(wall.axis, wall.sign, 0, 1);
+        turned(m, c0, gu.wC.value);
+        turned(m, cu.map((x, i) => x - c0[i]), gu.wU.value);
+        turned(m, cv.map((x, i) => x - c0[i]), gu.wV.value);
         // the cell beyond: before the crossing the neighbour, after it this one
         const hex = ho && !ho.crossed ? hexB : hexA;
-        if (hex !== s.gridHex) { (s.grid.material as THREE.LineBasicMaterial).color.set(hex); s.gridHex = hex; }
+        if (hex !== s.gridHex) { gu.color.value.set(hex); s.gridHex = hex; }
       }
     }
 
@@ -693,17 +738,12 @@ export function Drones() {
         const C = c0.map((x, i) => x + U[i] + V[i]); // the wall's middle
         let pu = 0, pv = 0; // the crossing, on the wall
         for (let i = 0; i < 4; i++) { pu += (p4[i] - C[i]) * U[i]; pv += (p4[i] - C[i]) * V[i]; }
-        const onWall = (a: number, b: number) => C.map((x, i) => x + a * U[i] + b * V[i]) as V4;
-        const pos = rip.geometry.getAttribute('position') as THREE.BufferAttribute, col = rip.geometry.getAttribute('color') as THREE.BufferAttribute;
-        const c = tmp.color.set(drone.flash.color), front = RIPPLE_R * u, fade = Math.pow(1 - u, 1.2);
-        HEXES.forEach(([u0, v0, u1, v1], j) => {
-          project(m, onWall(u0, v0), v); pos.setXYZ(2 * j, v.x, v.y, v.z);
-          project(m, onWall(u1, v1), v); pos.setXYZ(2 * j + 1, v.x, v.y, v.z);
-          const d = Math.hypot((u0 + u1) / 2 - pu, (v0 + v1) / 2 - pv); // the edge's middle from the crossing
-          const a = Math.min(1, Math.exp(-(((d - front) / RIPPLE_W) ** 2)) + (d < front ? 0.25 : 0)) * fade;
-          col.setXYZW(2 * j, c.r, c.g, c.b, a); col.setXYZW(2 * j + 1, c.r, c.g, c.b, a);
-        });
-        pos.needsUpdate = true; col.needsUpdate = true;
+        const ru = (rip.material as HexMat).uniforms;
+        turned(m, C, ru.wC.value); turned(m, U, ru.wU.value); turned(m, V, ru.wV.value);
+        ru.color.value.set(drone.flash.color);
+        ru.at.value.set(pu, pv);
+        ru.front.value = RIPPLE_R * u;
+        ru.opacity.value = Math.pow(1 - u, 1.2);
       }
     }
   });
