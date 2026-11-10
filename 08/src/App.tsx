@@ -38,6 +38,32 @@ const MODES: [Mode, string][] = [
   ['pilot', 'Pilot'],
 ];
 
+/** A phone's mode, top right: the mode it is in and a chevron, and a tap opens the three under it, frosted, the one it
+ * is in darker with its dot filled; a tap on one picks it, a tap anywhere else folds it. Hidden on a desktop. */
+function ModeMenu({ mode, pick }: { mode: Mode; pick: (m: Mode) => void }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const away = (e: PointerEvent) => { if (!ref.current?.contains(e.target as Node)) setOpen(false); };
+    document.addEventListener('pointerdown', away, true);
+    return () => document.removeEventListener('pointerdown', away, true);
+  }, [open]);
+  const stop = (e: React.PointerEvent) => { e.preventDefault(); e.stopPropagation(); };
+  return (
+    <div ref={ref} className={`modemenu ${open ? 'open' : ''}`}>
+      <button className="now" tabIndex={-1} aria-haspopup="listbox" aria-expanded={open} onPointerDown={stop} onClick={() => setOpen(!open)}>
+        {MODES.find(([m]) => m === mode)?.[1]}
+        <svg width={9} height={9} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={2.4} strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M3.5 6 8 10.5 12.5 6" /></svg>
+      </button>
+      {open ? <div className="list" role="listbox" aria-label="Mode">
+        {MODES.map(([m, name]) => <button key={m} className={mode === m ? 'at' : ''} role="option" aria-selected={mode === m} tabIndex={-1}
+          onPointerDown={stop} onClick={() => { pick(m); setOpen(false); }}><i className="radio" />{name}</button>)}
+      </div> : null}
+    </div>
+  );
+}
+
 // the turntable and the transform off to start (both on, then the turntable alone, for a while); no switch for the
 // turntable, AUTOTRANSFORM and T for the transform
 rig.spin = false;
@@ -644,6 +670,8 @@ export function App() {
         </Canvas>
         {/* the machine turning in 4D on its own, a switch top right of the view, on a desktop, in the phone's box and full screen */}
         {CLEAN ? null : <div className="corner">
+          {/* a phone's mode: a dropdown top right, over AUTOTRANSFORM (the three pills on a row at the foot, for a while) */}
+          <ModeMenu mode={mode} pick={setMode} />
           <button className={`autot ${transform ? 'on' : ''}`} tabIndex={-1} role="checkbox" aria-checked={transform} onPointerDown={(e) => { e.preventDefault(); e.stopPropagation(); }} onClick={toggleAuto}>
           <i className="box" aria-hidden>{transform ? <svg width={8} height={8} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={2.6} strokeLinecap="round" strokeLinejoin="round"><path d="M3 8.5l3.2 3.2L13 4.5" /></svg> : null}</i>Autotransform
         </button>
