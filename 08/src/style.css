@@ -19,11 +19,15 @@ html, body, #root {
 
 body {
   user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; /* nothing to select or hold for a menu: a held finger flies */
-  background-color: var(--paper);
+  /* the ground: one gradient, not tiled, over its own edge colour, so past the body's foot (a phone's browser bar
+     folded away) it carries on as its edge and not as its light top again (a light strip under the footer) */
+  background-color: #e6e6e3;
   background-image:
     radial-gradient(ellipse 70% 60% at 50% 42%, #fdfdfc 0%, var(--paper) 55%, #e6e6e3 100%);
+  background-repeat: no-repeat;
   overflow: hidden;
 }
+@supports (height: 100lvh) { html { height: 100lvh; } } /* the page as high as the screen with the browser's bar folded away */
 
 .stage { position: fixed; inset: 0; cursor: grab; }
 /* full screen, down to the screen's very foot even with the browser's bar folded away after a scroll (the small
