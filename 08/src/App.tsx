@@ -22,12 +22,13 @@ const CLEAN = PARAMS.has('clean'); // no page furniture, for the screengrab
 // time, changing plane as it goes.
 
 
-/** A small switch: a track and a label, lime when on; never takes focus, so space stays forward. */
+/** A small switch: its name, then ON | OFF at the end of the line, the one it is at filled; a click anywhere on it
+ * flips it. Never takes focus, so space stays forward. */
 const Small = ({ on, label, act }: { on: boolean; label: string; act: () => void }) => (
-  <button className={`toggle small ${on ? 'on' : ''}`} role="switch" aria-checked={on} tabIndex={-1}
+  <button className={`toggle small ${on ? 'on' : ''}`} role="switch" aria-checked={on} aria-label={label} tabIndex={-1}
     onPointerDown={(e) => e.preventDefault()} onClick={act}>
-    <span className="track"><i /></span>
     <span className="label">{label}</span>
+    <span className="seg" aria-hidden><i className={on ? 'at' : ''}>On</i><i className={on ? '' : 'at'}>Off</i></span>
   </button>
 );
 
@@ -250,15 +251,15 @@ export function App() {
   // bottom left over the keys in either mode: on top the controls switch (manual or auto), twice the small size;
   // then the settings, the camera's turntable and the machine turning in 4D on its own. Hard mode has no switch for
   // now: h.
-  const controls = <><h5>Mode</h5><div className="smalls"><Small on={manual} label={`Controls ${manual ? 'on' : 'off'}`} act={() => setMode(!drone.pilot)} /></div></>;
+  const controls = <><h5>Mode</h5><div className="smalls"><Small on={manual} label="Controls" act={() => setMode(!drone.pilot)} /></div></>;
   const smalls = <>
     <h5>Settings</h5>
     <div className="smalls">
-      <Small on={spin} label={`Turntable ${spin ? 'on' : 'off'}`} act={() => { rig.spin = !rig.spin; setSpin(rig.spin); }} />
-      <Small on={transform} label={`Transform ${transform ? 'on' : 'off'}`} act={() => { st.transform = !st.transform; setTransform(st.transform); }} />
-      <Small on={grid} label={`Camera grid ${grid ? 'on' : 'off'}`} act={() => { st.grid = !st.grid; setGrid(st.grid); }} />
+      <Small on={spin} label="Turntable" act={() => { rig.spin = !rig.spin; setSpin(rig.spin); }} />
+      <Small on={transform} label="Transform" act={() => { st.transform = !st.transform; setTransform(st.transform); }} />
+      <Small on={grid} label="Camera grid" act={() => { st.grid = !st.grid; setGrid(st.grid); }} />
       {/* follow is for the attract mode only */}
-      {manual ? null : <Small on={follow} label={`Follow ${follow ? 'on' : 'off'}`} act={() => { rig.follow = !rig.follow; setFollow(rig.follow); }} />}
+      {manual ? null : <Small on={follow} label="Follow" act={() => { rig.follow = !rig.follow; setFollow(rig.follow); }} />}
     </div>
   </>;
 
@@ -310,12 +311,12 @@ export function App() {
         <Do how={<><Key>⇧</Key> + <Key wide>{locked ? 'Mouse' : 'Drag'}</Key></>} what="Orbit" />
         <Do how={<Key>L</Key>} what={locked ? 'Unlock pointer' : 'Lock pointer'} />
         <h6 className="shortcuts">Options</h6>
-        <Do how={<><Key>{MAC ? '⌥' : 'Alt'}</Key> + <Key wide>{locked ? 'Mouse' : 'Drag'}</Key></>} what="Twist the tesseract" />
+        <Do how={<><Key>{MAC ? '⌥' : 'Alt'}</Key> + <Key wide>{locked ? 'Mouse' : 'Drag'}</Key></>} what="Transform" />
         </> : <>
         <h6 className="shortcuts">View</h6>
         <Do how={<Key wide>Drag</Key>} what="Rotate" />
         <h6 className="shortcuts">Options</h6>
-        <Do how={<><Key>{MAC ? '⌥' : 'Alt'}</Key> + <Key wide>Drag</Key></>} what="Twist the tesseract, by an edge if over one" />
+        <Do how={<><Key>{MAC ? '⌥' : 'Alt'}</Key> + <Key wide>Drag</Key></>} what="Transform" />
         </>}
       </div>}
     </>

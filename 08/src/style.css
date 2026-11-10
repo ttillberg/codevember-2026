@@ -158,28 +158,19 @@ body.clean .plate, body.clean .keys { display: none; }
 /* where the button was, while the pointer is locked: no pointer to click with, so a hint, not a button */
 .action.hint { gap: 8px; padding: 0; border: 0; background: none; color: var(--ui); cursor: default; pointer-events: none; }
 .action.hint .key { height: 20px; padding: 0 8px; font-size: 10px; }
+/* a switch: its name, and ON | OFF at the end of the line in an outlined box, the one it is at filled in the panel's
+   grey (a sliding knob in a track was tried first) */
 .toggle {
-  display: flex; gap: 14px; align-items: center;
+  display: flex; align-items: center; justify-content: space-between; gap: 14px; width: 100%;
   padding: 0; border: 0; background: none; cursor: pointer; color: var(--ui); text-align: left;
-  font: 900 22px/1 "Helvetica Neue", Helvetica, Arial, sans-serif; letter-spacing: 0.02em; text-transform: uppercase;
+  font: 600 11px/1 "Helvetica Neue", Helvetica, Arial, sans-serif; letter-spacing: 0.12em; text-transform: uppercase;
 }
-/* the label in ink, on or off; the switch shows the state */
 .toggle .label { color: var(--ui); }
-.toggle .track {
-  position: relative; width: 76px; height: 40px; box-sizing: border-box;
-  border: 1.5px solid var(--ui); border-radius: 20px; background: none; /* off: just the outline */
-}
-.toggle .track i {
-  position: absolute; left: 4px; top: 4px; width: 29px; height: 29px; border-radius: 50%;
-  background: var(--ui); transition: transform 0.28s cubic-bezier(0.5, 1.6, 0.4, 1);
-}
-/* on: the knob over to the right, nothing else; no fill either way (a white fill when on was tried) */
-.toggle.on .track i { transform: translateX(36px); }
-.toggle:hover .track { box-shadow: 0 0 0 3px rgba(28, 28, 28, 0.08); }
+.toggle .seg { display: inline-flex; border: 1.2px solid var(--ui); border-radius: 4px; overflow: hidden; }
+.toggle .seg i { font-style: normal; font-size: 9px; letter-spacing: 0.1em; padding: 3px 6px 2px; color: var(--ui); }
+.toggle .seg i + i { border-left: 1.2px solid var(--ui); }
+.toggle .seg i.at { background: var(--ui); color: var(--paper); }
+.toggle:hover .seg { box-shadow: 0 0 0 3px rgba(28, 28, 28, 0.08); }
 
-/* the small switches, bottom left over the keys: the same switch, a third the size, the label in small caps */
-.smalls { grid-column: 1 / -1; justify-self: start; display: flex; flex-direction: column; gap: 8px; pointer-events: auto; }
-.toggle.small { gap: 8px; font-size: 11px; font-weight: 600; letter-spacing: 0.12em; }
-.toggle.small .track { width: 30px; height: 17px; border-width: 1.5px; border-radius: 9px; }
-.toggle.small .track i { left: 2px; top: 2px; width: 10px; height: 10px; }
-.toggle.small.on .track i { transform: translateX(13px); }
+/* the switches, in a column across the panel, each its own line */
+.smalls { grid-column: 1 / -1; display: flex; flex-direction: column; gap: 8px; pointer-events: auto; }
