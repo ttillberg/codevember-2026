@@ -2,10 +2,11 @@ import { useMemo } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import { EDGES, VERTS, project } from './tesseract';
-import { st, tick, pose, DEBUG } from './state';
+import { st, tick, pose, DEBUG, rig } from './state';
 import { drone, cellId, CELL_HEX } from './drone';
 import { sleeveDecal, scuffSleeve, scratchMap, wear, brushed, rng, ROD_SPAN, ACCENTS, SAND, GRAPHITE, type Brand } from './decals';
 import { withLogos } from './logos';
+import { cut, withCut, DITHER_PX } from './cutaway';
 
 // The mechanism. Every edge is a strut in three stages: a sleeve fixed to each ball joint, a stanchion sliding out of
 // each sleeve, a rod between the stanchions. Radii are constant, as on a real part; only the lengths change. The sleeves
@@ -168,8 +169,16 @@ export function Machine() {
     side: new THREE.Vector3(),
   }), []);
 
-  useFrame((_, dt) => {
+  const cutTmp = useMemo(() => new THREE.Vector3(), []);
+  useFrame(({ camera, size, gl }, dt) => {
     dt = Math.min(dt, 0.05);
+    // the cutaway round the probe: where it is on the page, on while it is followed or flown, eased; every material
+    // the machine has gets it (cheap once they have)
+    withCut(parts.group);
+    cutTmp.copy(drone.world).project(camera);
+    cut.at.value.copy(cutTmp); cut.aspect.value = size.width / size.height; cut.px.value = DITHER_PX * gl.getPixelRatio();
+    const cutOn = drone.on && (rig.follow || drone.pilot) ? 1 : 0;
+    cut.on.value += (cutOn - cut.on.value) * Math.min(1, dt * 3);
     tick(drone.frozen ? 0 : dt); // P: no turn, no turntable
 
     const m = pose();
