@@ -283,12 +283,17 @@ const Hand = ({ x, y, a, k = 0.72 }: { x: number; y: number; a: number; k?: numb
 const Cheat = () => (
   <div className="cheat" aria-hidden>
     <figure>
-      <svg width={64} height={64} viewBox="0 0 64 64">
-        {CUBE}
-        <path className="edge" d="M40 20V36" /><path className="lime" d="M40 20V36" />
-        <path className="arrow" d="M52 17V39" /><Head x={52} y={17} a={-90} /><Head x={52} y={39} a={90} />
-        <path className="arrow" d="M29 9H51" /><Head x={29} y={9} a={180} /><Head x={51} y={9} a={0} />
-        <Hand x={40} y={29} a={-24} />
+      {/* drawn after Theo's sketch: the cube, its hidden edges dashed, the strut in lime, the two ways it goes, and a
+          gloved hand, its finger on the strut's foot (a thin hand and hairlines for a while) */}
+      <svg className="manual" width={72} height={74} viewBox="250 200 790 820">
+        <path className="far" d="M498 345V560M330 668L495 575M500 575L670 668" />
+        <path className="cube" d="M295 452L498 337L686 448M295 452L498 568L686 452M295 452V688L498 800L686 690V452M498 568V800" />
+        <path className="edge-o" d="M686 452V604" /><path className="edge-i" d="M686 452V604" />
+        <path className="arr" d="M545 272H850M592 240L545 272L592 306M802 238L850 272L802 306" />
+        <path className="arr" d="M848 392V632M814 438L848 392L882 438M814 586L848 632L882 586" />
+        <path className="glove" d="M760 975C742 988 750 1030 790 1034L915 1030C950 1025 955 978 930 965Z" />
+        <path className="glove" d="M682 648C680 602 742 594 762 634L822 770C818 720 882 702 906 770C906 720 982 720 990 820C995 880 975 940 945 965L760 977C730 952 700 928 660 916C610 905 590 860 612 830C642 800 700 815 742 846Z" />
+        <path className="crease" d="M824 880L834 944M870 856L874 940M914 870L902 934" />
       </svg>
     </figure>
   </div>

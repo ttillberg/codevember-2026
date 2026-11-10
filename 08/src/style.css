@@ -230,6 +230,16 @@ body.home .stage .autot { top: 10px; right: 10px; }
 .cheat .steps .row { display: flex; gap: 10px; justify-content: space-between; }
 .cheat .steps .step { position: relative; display: block; padding-left: 12px; }
 .cheat .steps .step > b { position: absolute; left: 0; top: 0; font: 700 8px/1 "Helvetica Neue", Helvetica, Arial, sans-serif; color: var(--ink); }
+/* the sketch's drawing, in its own units (about 11 to a CSS px): bold, as a manual's */
+.cheat svg.manual { overflow: visible; }
+.cheat svg.manual path { fill: none; stroke: var(--ink); stroke-linecap: round; stroke-linejoin: round; opacity: 1; stroke-dasharray: none; }
+.cheat svg.manual .cube { stroke-width: 9; }
+.cheat svg.manual .far { stroke-width: 6; stroke-dasharray: 24 20; stroke-linecap: butt; opacity: 0.5; }
+.cheat svg.manual .edge-o { stroke-width: 34; }
+.cheat svg.manual .edge-i { stroke: #c9e35b; stroke-width: 20; }
+.cheat svg.manual .arr { stroke-width: 12; stroke-linecap: square; stroke-linejoin: miter; }
+.cheat svg.manual .glove { fill: #fff; stroke-width: 11; }
+.cheat svg.manual .crease { stroke-width: 8; }
 .cheat figcaption { font: 700 7px/1 "Helvetica Neue", Helvetica, Arial, sans-serif; letter-spacing: 0.14em; text-transform: uppercase; color: var(--ui); }
 .plate.chapter { display: none; } /* an upright phone's home page's only */
 .curtain { display: none; position: relative; width: 100vw; height: 28px; margin: 8px 0 0 -24px; pointer-events: none; }
