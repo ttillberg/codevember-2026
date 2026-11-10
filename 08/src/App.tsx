@@ -266,14 +266,18 @@ const Head = ({ x, y, a }: { x: number; y: number; a: number }) => (
 );
 // A hand as a manual draws it, in local units, the fingertip at the origin and the wrist down at y 46, cut by the
 // drawing's edge: one finger out, the others curled, the thumb in; or two out together, for the two-finger turn.
-const HAND_ONE = 'M-6 46C-7 40 -6 34 -5 29C-7 27 -11 24 -11 21C-11 17 -6 16 -3.5 19V3A3.5 3.5 0 0 1 3.5 3V18C3.5 15 10 14.5 10 18V21C10 19.5 13.5 19.5 13.5 22.5V25C13.5 24 16 24.5 16 27V31C16 37 13 40 12 46';
-const HAND_TWO = 'M-6 46C-7 40 -6 34 -5 29C-7 27 -11 24 -11 21C-11 17 -6 16 -3.5 19V3A3.5 3.5 0 0 1 3.5 3V1A3.5 3.5 0 0 1 10.5 1V20C10.5 18 14 18 14 22V25C14 24 16.5 24.5 16.5 27V31C16.5 37 13 40 12 46';
-/** A hand coming in from below, its fingertip at (x, y), leaning `a` degrees, `two` with two fingers out. */
-const Hand = ({ x, y, a, two = false, k = 0.8 }: { x: number; y: number; a: number; two?: boolean; k?: number }) => (
+// the hand as a pointing hand in a manual: the index up, a round tip, the other three folded, their knuckles a row
+// of bumps down the right, the thumb out to the left and curled in, a cuff at the wrist (a thinner hand, the fingers
+// barely folded, for a while)
+const HAND_ONE = 'M-4.5 21V4.5A4.5 4.5 0 0 1 4.5 4.5V17C5 13.5 11.5 13.5 11.5 17.5C12 15 17 15.5 17 19.5C17.5 17.5 21.5 18.5 21 22.5C21 30 19 34 16.5 38H-7.5C-10.5 34 -13 31 -14 27C-15.5 23 -14.5 19 -11.5 18.5C-8.5 18 -6 20 -4.5 21Z';
+const HAND_LINES = 'M4.5 17V22M11.5 17.5V23M17 19.5V24.5M-4.5 21C-6 23 -6.5 26 -6 28';
+const CUFF = 'M-9 38H18V45H-9ZM-4 39.5V43.5M1 39.5V43.5';
+/** A hand coming in from below, its fingertip at (x, y), leaning `a` degrees. */
+const Hand = ({ x, y, a, k = 0.72 }: { x: number; y: number; a: number; k?: number }) => (
   <g className="hand" transform={`translate(${x} ${y}) rotate(${a}) scale(${k})`}>
-    <path className="skin" d={two ? HAND_TWO : HAND_ONE} />
-    <path d={two ? 'M3.5 3V20M-2 3.5Q0 1.5 2 3.5M5 1.5Q7 -0.5 9 1.5M10.5 20V23M14 25V27.5' : 'M-2 3.5Q0 1.5 2 3.5M3.5 18V22M10 21V24M13.5 25V27.5'} />
-    <path d="M-3.5 19C-3 22 -4 25 -5 27" />
+    <path className="skin" d={HAND_ONE} />
+    <path d={HAND_LINES} />
+    <path className="skin" d={CUFF} />
   </g>
 );
 const Cheat = () => (
@@ -285,16 +289,6 @@ const Cheat = () => (
         <path className="arrow" d="M52 17V39" /><Head x={52} y={17} a={-90} /><Head x={52} y={39} a={90} />
         <path className="arrow" d="M29 9H51" /><Head x={29} y={9} a={180} /><Head x={51} y={9} a={0} />
         <Hand x={40} y={29} a={-24} />
-      </svg>
-    </figure>
-    {/* a desktop's too: a drag on the page, off the struts, turns the view round the machine */}
-    <i className="rule rot" />
-    <figure className="rot">
-      <svg width={64} height={64} viewBox="0 0 64 64">
-        <g transform="translate(32 20) scale(0.6) translate(-26 -28)">{CUBE}</g>
-        <path className="arrow" d="M12 18A20 13 0 0 1 52 18" /><Head x={52} y={18} a={70} />
-        <path className="arrow" d="M18 37H46" /><Head x={18} y={37} a={180} /><Head x={46} y={37} a={0} />
-        <Hand x={32} y={42} a={-8} />
       </svg>
     </figure>
   </div>
