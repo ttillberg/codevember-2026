@@ -608,8 +608,6 @@ export function App() {
   // AUTOTRANSFORM, top right of the view: the machine's turn in 4D on its own, alone, the turntable left as it is
   const toggleAuto = () => { st.transform = !st.transform; setTransform(st.transform); };
   // following, where from: FREE, BACK, SIDE, TOP, a switch under AUTOTRANSFORM
-  const [view, setView] = useState(rig.view);
-  const pickView = (v: typeof rig.view) => { rig.view = v; setView(v); };
   const toggleTransformRef = useRef(toggleTransform); // for the keys, set up once
   toggleTransformRef.current = toggleAuto; // T: AUTOTRANSFORM's (the transform and the turntable together for a while)
   const toggleBeetle = () => {
@@ -656,9 +654,7 @@ export function App() {
           <button className={`autot ${transform ? 'on' : ''}`} tabIndex={-1} role="checkbox" aria-checked={transform} onPointerDown={(e) => { e.preventDefault(); e.stopPropagation(); }} onClick={toggleAuto}>
           <i className="box" aria-hidden>{transform ? <svg width={8} height={8} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={2.6} strokeLinecap="round" strokeLinejoin="round"><path d="M3 8.5l3.2 3.2L13 4.5" /></svg> : null}</i>Autotransform
         </button>
-          {beetle && mode === 'follow' ? <span className="views" role="radiogroup" aria-label="Follow from">
-            {(['free', 'back', 'side', 'top'] as const).map((v) => <button key={v} className={`seg ${view === v ? 'at' : ''}`} tabIndex={-1} role="radio" aria-checked={view === v} onPointerDown={(e) => { e.preventDefault(); e.stopPropagation(); }} onClick={() => pickView(v)}>{v}</button>)}
-          </span> : null}
+          {/* FREE | BACK | SIDE | TOP, where the follow is from, was here for a while: FREE, round it by the drag, kept */}
         </div>}
         {/* an upright phone's home page: how the hands work, in the box, bottom right (bottom left, and under it, titled INSTRUCTIONS, for a moment) */}
         {CLEAN ? null : <Cheat />}{/* shown by the page: a phone's home page's box, a desktop's corner away from the controls (style.css) */}
