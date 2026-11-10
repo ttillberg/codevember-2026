@@ -227,7 +227,7 @@ body.home .stage .corner { top: 10px; right: 10px; }
 @keyframes menuin { from { opacity: 0; transform: translateY(-4px) scale(0.96); } to { opacity: 1; transform: none; } }
 @media (max-width: 640px), (max-height: 500px) {
   .modemenu, .settings { display: block; }
-  body:not(.pilot) .stage .cheat { display: grid; position: absolute; right: 24px; bottom: 24px; margin: 0; z-index: 1; } /* the drawings bottom right on a phone too */
+  body:not(.pilot) .stage .cheat { display: grid; position: fixed; right: 24px; bottom: calc(24px + env(safe-area-inset-bottom)); margin: 0; z-index: 1; } /* the drawings bottom right on a phone too, fixed to the screen that shows: the stage runs on under the browser's bar (100lvh) and hid them there */
   .stage .corner { flex-direction: row; align-items: flex-start; }
   .stage .corner > .autot { display: none; } /* in the wheel's card on a phone */
   /* the top's pills as big as the title beside them (9 px words, a smaller pill, for a while) */

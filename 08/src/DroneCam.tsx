@@ -49,10 +49,11 @@ export function regionsOf(W: number, H: number): { main: Rect; cam: Rect | null;
     // the text on top and the machine under it; with the probe in, no text, the machine down to the footer
     const top = page.clean || page.footTop ? 0 : Math.min(H * 0.45, page.textBottom + 8);
     const foot = H; // the crumbs over it at the top, the machine down to the foot (over a footer, as far over its words as they were over the screen's foot, for a while)
+    const seen = Math.min(H, window.innerHeight || H); // the screen that shows: the canvas runs on under the browser's bar (100lvh)
     const main = { x: 0, y: top, w: W, h: foot - top };
     if (!split) return { main, cam: null };
     const d = Math.round(Math.min(260, Math.max(160, W * 0.6)));
-    return { main, cam: { x: Math.round((W - d) / 2), y: foot - PILLS_UP - d, w: d, h: d, round: true }, aim: { x: W / 2, y: top + main.h / 3 } };
+    return { main, cam: { x: Math.round((W - d) / 2), y: seen - PILLS_UP - d, w: d, h: d, round: true }, aim: { x: W / 2, y: top + main.h / 3 } };
   }
   const low = H <= 500;
   const left = page.clean ? 0 : Math.min(W * 0.45, (low ? 260 : 380) + 48); // the column and its gutters
