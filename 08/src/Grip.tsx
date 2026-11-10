@@ -68,7 +68,7 @@ export function Grip() {
     });
     // the nearest strut under the pointer, on its own only, and not while a strut is held
     if (grip.held < 0) {
-      grip.hover = !drone.pilot && grip.in && grip.alt ? strutAt(grip.x, grip.y) : -1;
+      grip.hover = !drone.pilot && grip.in ? strutAt(grip.x, grip.y) : -1; // the strut under the pointer, alt or not (alt only, for a while)
     }
     const i = grip.held >= 0 ? grip.held : grip.hover;
     if (i !== t.last) { document.querySelector('.stage')?.classList.toggle('edge', i >= 0); t.last = i; }

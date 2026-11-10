@@ -453,8 +453,9 @@ export function App() {
     }
     if (e.button !== 0 || document.pointerLockElement) return;
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
-    // on its own, with alt held, a drag on a strut takes it in the hand; alt is the only way to a strut
-    const strut = !drone.pilot && e.altKey ? grip.hover : -1;
+    // on its own a drag on a strut takes it in the hand, no alt needed (alt was the only way to a strut for a while);
+    // alt-drag anywhere still turns it in 4D by the drag
+    const strut = !drone.pilot ? grip.hover : -1;
     const kind = e.altKey || strut >= 0 ? 'crank' : drone.pilot && !e.shiftKey ? 'look' : 'orbit';
     drag.current = { kind, x: e.clientX, y: e.clientY, t: performance.now() };
     if (kind === 'orbit') { rig.orbitVel[0] = rig.orbitVel[1] = 0; rig.orbiting = true; }
@@ -675,7 +676,7 @@ export function App() {
         </> : <>
         <h6 className="shortcuts">View</h6>
         <Do how={<Key wide>Drag</Key>} what="Rotate" />
-        <Do how={<><Key>{MAC ? '⌥' : 'Alt'}</Key> + <Key wide>Drag</Key></>} what="Transform" />
+        <Do how={<Key wide>Drag an edge</Key>} what="Transform" />
         </>}
       </div>}
     </>
