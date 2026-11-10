@@ -613,8 +613,8 @@ export function App() {
           <directionalLight position={[4, 8, 6]} intensity={1.1} />
         </Canvas>
         {/* the machine turning in 4D on its own, a switch top right of the view, on a desktop, in the phone's box and full screen */}
-        {CLEAN ? null : <button className="autot" tabIndex={-1} role="switch" aria-checked={transform} aria-label="Autotransform" onPointerDown={(e) => { e.preventDefault(); e.stopPropagation(); }} onClick={toggleAuto}>
-          <span className="name">Autotransform</span><span className="segs"><span className={`seg ${transform ? 'at' : ''}`}>On</span><span className={`seg ${transform ? '' : 'at'}`}>Off</span></span>
+        {CLEAN ? null : <button className={`autot ${transform ? 'on' : ''}`} tabIndex={-1} role="checkbox" aria-checked={transform} onPointerDown={(e) => { e.preventDefault(); e.stopPropagation(); }} onClick={toggleAuto}>
+          <i className="box" aria-hidden>{transform ? <svg width={8} height={8} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={2.6} strokeLinecap="round" strokeLinejoin="round"><path d="M3 8.5l3.2 3.2L13 4.5" /></svg> : null}</i>Autotransform
         </button>}
         {/* an upright phone's home page: how the hands work, in the box, bottom right (bottom left, and under it, titled INSTRUCTIONS, for a moment) */}
         {CLEAN || beetle ? null : <Cheat />}
