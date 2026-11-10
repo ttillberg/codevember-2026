@@ -160,7 +160,7 @@ body {
 }
 .back:hover { color: var(--ink); }
 .back { display: none; }
-.plate.chapter, .stage .probe.in-box { display: none; } /* an upright phone's home page's only */
+.plate.chapter { display: none; } /* an upright phone's home page's only */
 .curtain { display: none; position: relative; width: 100vw; height: 28px; margin: 8px 0 0 -24px; pointer-events: none; }
 .curtain::before { content: ''; position: absolute; left: 0; right: 0; top: 50%; border-top: 0.5px solid var(--ui); }
 .curtain button {
@@ -299,10 +299,9 @@ body.clean .plate, body.clean .keys { display: none; }
   body.home .stage > div { min-width: 0; } /* Safari let the canvas's own width push the box out past the right margin */
   body.home .plate.chapter { display: block; order: 2; margin: 0 24px 40px; }
   body.home .plate.chapter .drawing { display: block; margin: 6px auto 4px; }
-  /* ACTIVATE PROBE in the box, at its foot, in the middle, frosted purple (under the box for a moment) */
-  body.home .stage .probe.in-box {
-    display: inline-flex; position: absolute; left: 50%; bottom: 16px; transform: translateX(-50%); margin: 0; z-index: 1; touch-action: manipulation; white-space: nowrap;
-    border: 0.5px solid var(--purple); color: #fff;
+  /* ACTIVATE PROBE under the probe's text, in the flow, frosted purple (in the box, and under it, for a moment) */
+  body.home .plate.chapter .probe:not(.off) {
+    position: static; transform: none; margin: 8px 0 0; white-space: nowrap; border: 0.5px solid var(--purple); color: #fff;
     background: rgba(142, 124, 240, 0.7); -webkit-backdrop-filter: blur(10px) saturate(1.3); backdrop-filter: blur(10px) saturate(1.3);
   }
   /* the home page's curtain: a hairline across the whole screen under the text, a frosted handle in its middle, an

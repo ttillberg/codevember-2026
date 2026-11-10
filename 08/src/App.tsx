@@ -357,7 +357,7 @@ export function App() {
     const el = stage.current;
     if (!el) return;
     const keep = (e: TouchEvent) => {
-      if (!page.boxed || drone.pilot || (e.target as Element).closest?.('.in-box')) return; // the button in the box is the button's
+      if (!page.boxed || drone.pilot) return;
       if (e.touches.length >= 2) { if (e.cancelable) e.preventDefault(); return; }
       if (e.type !== 'touchstart') return;
       const t = e.touches[0], r = el.getBoundingClientRect();
@@ -567,12 +567,11 @@ export function App() {
           </Environment>
           <directionalLight position={[4, 8, 6]} intensity={1.1} />
         </Canvas>
-        {/* an upright phone's home page: the way in, in the box, at its foot; the probe in, full screen, followed */}
-        {CLEAN || beetle ? null : <button className="probe in-box" tabIndex={-1} onPointerDown={(e) => { e.preventDefault(); e.stopPropagation(); }} onClick={toggleBeetle}><PlayPause playing={false} />Activate probe</button>}
       </div>
       {CLEAN ? null : <div className={`plate ${open ? '' : 'folded'} ${beetle ? 'probing' : ''}`}><div className="head"><b>08 Tesseract</b><i>Codevember 2026</i></div><div className="blurb"><p>A tesseract is the four-dimensional cube: it is to a cube what a cube is to a square. A square is bounded by four edges and a cube by six square faces; a tesseract is bounded by eight cubical cells, meeting at right angles. We only see its shadow in 3D, a cube inside a cube, and as it turns in 4D, without bending, the inner cube swells out and the struts stretch.</p><h5>Probe<span className="ends">{beetle ? <button className="stop" tabIndex={-1} aria-label="Deactivate probe" onPointerDown={(e) => e.preventDefault()} onClick={toggleBeetle}><Stop /></button> : null}{beetle ? <button className="probe off" tabIndex={-1} aria-label={manual ? "Back to following" : "Back, the probe out"} onPointerDown={(e) => e.preventDefault()} onClick={() => { if (drone.pilot) setMode("follow"); else toggleBeetle(); }}><svg width={8} height={8} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={2.6} strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M10.5 2.5 5 8l5.5 5.5" /></svg>Back</button> : null}</span></h5><p className="probe-what">{PROBE_WHAT}</p>{beetle ? null : <button className="probe" tabIndex={-1} onPointerDown={(e) => e.preventDefault()} onClick={toggleBeetle}><PlayPause playing={false} />Activate probe</button>}{beetle ? <><h5 className="small">Info</h5><p>Each cell has its own colour. The trail is left in the colour of the cell the probe was in, a wall lights up in the colour of the cell beyond as it goes through, and a steel ball blinks in the colour of the cell it is in.</p><p>The fisheye drawing is what the probe sees. From inside, every cell is a true cube however the shadow twists: pick Pilot to fly it by that view.</p></> : null}</div>{beetle ? null : <div className="curtain"><button tabIndex={-1} aria-label={open ? 'Fold the text away' : 'Unfold the text'} onPointerDown={(e) => e.preventDefault()} onClick={() => setOpen(!open)}><svg width={10} height={10} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round" aria-hidden style={{ transform: open ? 'none' : 'rotate(180deg)' }}><path d="M2.5 10.5 8 5l5.5 5.5" /></svg></button></div>}</div>}
-      {/* an upright phone's home page: under the box the probe, a line drawing of it and what it is */}
-      {CLEAN || beetle ? null : <div className="plate chapter"><h5>Probe</h5><img className="drawing" src={`${import.meta.env.BASE_URL}drawings/probe.png`} width={220} height={220} alt="" draggable={false} /><p className="probe-what">{PROBE_WHAT}</p></div>}
+      {/* an upright phone's home page: under the box the probe, a line drawing of it, what it is, and the way in, the
+          probe in, full screen and followed (in the box, at its foot, for a moment) */}
+      {CLEAN || beetle ? null : <div className="plate chapter"><h5>Probe</h5><img className="drawing" src={`${import.meta.env.BASE_URL}drawings/probe.png`} width={220} height={220} alt="" draggable={false} /><p className="probe-what">{PROBE_WHAT}</p><button className="probe" tabIndex={-1} onPointerDown={(e) => e.preventDefault()} onClick={toggleBeetle}><PlayPause playing={false} />Activate probe</button></div>}
       {/* an upright phone with the probe in: no text, a footer instead, where it is (08 TESSERACT / PROBE / PILOT,
           each a way back to there) and BACK, one up */}
       {CLEAN || !beetle ? null : <nav className="crumbs" aria-label="Where you are">
