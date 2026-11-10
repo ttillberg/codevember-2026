@@ -103,6 +103,8 @@ function Rig({ children }: { children: React.ReactNode }) {
     camera.position.setFromSphericalCoords(rig.zoom, Math.PI / 2 - pitch, yaw);
     // follow (the switch): the same orbit, round the beetle instead of the machine's middle, nearer; eased in and out
     tail.lerp(drone.world, Math.min(1, sdt * FOLLOW_EASE));
+    if (rig.followK < 0.001) lag.copy(tail); // not following: the camera's own catch-up starts from where the look is
+    lag.lerp(tail, Math.min(1, sdt * FOLLOW_LAG));
     // on its own, the switch
     rig.followK += ((rig.follow && !drone.pilot ? 1 : 0) - rig.followK) * Math.min(1, dt * 2); // at the controls the chase, below (the follow on a phone for a while)
     const fk = rig.followK;
@@ -122,8 +124,8 @@ function Rig({ children }: { children: React.ReactNode }) {
       }
       viewOff.lerp(off, Math.min(1, sdt * 3)); // a change of view glides
       look.copy(rig.focus).lerp(tail, fk);
-      camera.position.lerp(followAt.copy(tail).add(viewOff), fk);
-    } else { look.copy(rig.focus); viewOff.copy(camera.position).sub(tail); }
+      camera.position.lerp(followAt.copy(lag).add(viewOff), fk);
+    } else { look.copy(rig.focus); viewOff.copy(camera.position).sub(lag); }
     camUp.lerp(upWant, Math.min(1, dt * 3)).normalize(); camera.up.copy(camUp); // over it, the camera's up its way, not the sky's
     // at the controls, the chase: from behind the probe and a little over it, looking past it the way it flies, eased
     // after it so a turn swings the view round rather than snapping it (the usual camera, and on a phone the follow,
@@ -160,8 +162,9 @@ const DOF_WIDE = 0.007, DOF_FOLLOW = 0.009; // the blur at twice the focus dista
 const HOME_BIG = 1.33; // the machine on an upright phone's home page, against the fit
 const FOLLOW = 0.18, FOLLOW_PHONE = 0.22; // the distance to the beetle against the fit to the whole machine (0.5 and 0.35, then 0.3 on a desktop, for a while)
 const FOLLOW_EASE = 2; // how fast the look goes after the beetle (1/s)
+const FOLLOW_LAG = 0.35; // how fast the camera itself catches up with it (1/s): slowly, so it trails the probe and the look turns after it (it went with the look for a while)
 const LEVEL = 0.87; // radians, about 50 degrees
-const tail = new THREE.Vector3(), off = new THREE.Vector3();
+const tail = new THREE.Vector3(), lag = new THREE.Vector3(), off = new THREE.Vector3();
 const chaseFwd = new THREE.Vector3(0, 0, -1), chaseUp = new THREE.Vector3(0, 1, 0), chaseAt = new THREE.Vector3(), chaseLook = new THREE.Vector3();
 const CHASE_BACK = 1.7, CHASE_UP = 0.4, CHASE_AHEAD = 2; // world units: behind it, over it, and the look ahead of it (a quarter of these, the probe filling the screen, for a moment)
 const sideV = new THREE.Vector3(), viewOff = new THREE.Vector3(), camUp = new THREE.Vector3(0, 1, 0), WORLD_UP = new THREE.Vector3(0, 1, 0);
