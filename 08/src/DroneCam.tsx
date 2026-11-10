@@ -48,11 +48,11 @@ export function regionsOf(W: number, H: number): { main: Rect; cam: Rect | null;
   if (upright) {
     // the text on top and the machine under it; with the probe in, no text, the machine down to the footer
     const top = page.clean || page.footTop ? 0 : Math.min(H * 0.45, page.textBottom + 8);
-    const foot = page.clean || !page.footTop ? H : page.footTop - FOOT_GAP; // as far over the footer's words as they are over the screen's foot
+    const foot = H; // the crumbs over it at the top, the machine down to the foot (over a footer, as far over its words as they were over the screen's foot, for a while)
     const main = { x: 0, y: top, w: W, h: foot - top };
     if (!split) return { main, cam: null };
     const d = Math.round(Math.min(260, Math.max(160, W * 0.6)));
-    return { main, cam: { x: Math.round((W - d) / 2), y: foot - FOOT_GAP - d, w: d, h: d, round: true }, aim: { x: W / 2, y: top + main.h / 3 } };
+    return { main, cam: { x: Math.round((W - d) / 2), y: foot - PILLS_UP - d, w: d, h: d, round: true }, aim: { x: W / 2, y: top + main.h / 3 } };
   }
   const low = H <= 500;
   const left = page.clean ? 0 : Math.min(W * 0.45, (low ? 260 : 380) + 48); // the column and its gutters
@@ -76,7 +76,7 @@ export function regionsOf(W: number, H: number): { main: Rect; cam: Rect | null;
   return { main, cam, draw };
 }
 const PIP_GAP = 24; // the phone's disc in from the edges (CSS px)
-const FOOT_GAP = 24; // an upright phone's footer: from its words up to the machine's edge, and from that up to the disc and PILOT (CSS px)
+const PILLS_UP = 84; // an upright phone's disc: over the mode pills at the foot (CSS px)
 const COL_OVER = 76, COL_MIN_H = 120; // the view in the column: how far up from the bottom, over the mode pills, and its least height (CSS px)
 // the fog the far rooms fade into, by the view's size: minimized, a grey, and the view's background that grey too, so
 // the rooms go into it; maximized, the page's paper, and no background, the page itself between the lines
@@ -209,7 +209,7 @@ export function DroneCam() {
     const flat = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
     return {
       cs, tubes, flash, piece, grabbed, eye, lens, flat,
-      q: new THREE.Quaternion(), look: new THREE.Vector3(0, 0, -1), last: [0, 0, 0], crossings: -1,
+      q: new THREE.Quaternion(), look: new THREE.Vector3(0, 0, -1), last: [0, 0, 0], crossings: -1, footH: 0,
       pos: new THREE.Vector3(), lockEl: null as HTMLElement | null, eyeX: -1, eyeY: -1, camX: -1, camH: -1, plateEl: null as Element | null, lockLast: '', over: null as number[] | null, // the bracket's last style, written only on change
       grabOf: null as number[] | null, grabLocal: new THREE.Vector3(), // the piece taken, and where it was from the eye then, in its frame
     };
@@ -227,7 +227,7 @@ export function DroneCam() {
     // the footer's top, when there is one (an upright phone, the probe in); PILOT goes over it (--foot-top)
     const foot = document.querySelector('.crumbs')?.getBoundingClientRect();
     const footTop = foot && foot.height ? Math.round(foot.top) : 0;
-    if (footTop !== page.footTop) { page.footTop = footTop; document.documentElement.style.setProperty('--foot-top', `${footTop || size.height}px`); }
+    if (footTop !== page.footTop || size.height !== cell.footH) { page.footTop = footTop; cell.footH = size.height; document.documentElement.style.setProperty('--foot-top', `${size.height}px`); } // PILOT from the foot now, the crumbs at the top
     const auto = gl.autoClear;
     // the camera grid off, or no beetle: no eye, no lock bracket, just the page and the machine
     if (eyeShown(size.width, size.height)) drawEye(); else { setLock(lockEl, 'none'); gl.setRenderTarget(null); gl.clear(); }

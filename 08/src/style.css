@@ -254,7 +254,9 @@ body.home .stage .corner { top: 10px; right: 10px; }
 /* the footer, an upright phone's with the probe in: where it is on the left, each step a way back to there, the one it
    is at in ink, the rest grey; BACK on the right */
 /* the line as high as the capitals (Plex, 0.7 em), so the box is the letters and the 24 px round it is true */
-.crumbs { display: none; position: fixed; left: 24px; right: 24px; bottom: 24px; align-items: center; justify-content: space-between; gap: 12px; }
+/* now at the top, the machine under it all the way down to the foot, no band of its own (at the foot over a band of
+   page, for a while) */
+.crumbs { display: none; position: fixed; left: 24px; top: 31px; align-items: center; gap: 12px; z-index: 2; } /* top: level with AUTOTRANSFORM's middle */
 .crumbs .trail { display: flex; align-items: baseline; gap: 6px; white-space: nowrap; min-width: 0; }
 .crumbs .trail button, .crumbs .trail span, .crumbs .trail i {
   padding: 0; border: 0; background: none; color: var(--ui); cursor: pointer; font-style: normal;
@@ -275,9 +277,7 @@ body.clean .plate, body.clean .keys { display: none; }
   .plate .blurb { max-width: min(var(--col), 100%); }
   .plate h5 { font-size: 18px; margin: 14px 0 8px; }
   .plate h5 .ends { gap: 14px; } /* the i and the stop, apart for a thumb */
-  .pill.orbit, .pill.follow { display: none; } /* with the probe in it is followed; only PILOT to pick, BACK the way back */
-  .keys { left: auto; right: 24px; width: auto; } /* PILOT bottom right */
-  body .pill .moves { display: block; }
+  .keys { left: auto; right: 24px; width: auto; } /* the three on a row bottom right (PILOT alone, with its arrows, and BACK the way back, for a while) */
   .plate .blurb p:not(:first-child):not(.probe-what), .plate h5.small { display: none; } /* the tesseract's paragraph, the probe's and its button; no INFO */
   .keys.right { display: none; } /* no keys on a phone */
   .cellmap.side { display: none; }
@@ -340,7 +340,6 @@ body.clean .plate, body.clean .keys { display: none; }
   body .middle { display: none; } /* no pointer to lock on a phone */
   body:not(.pilot) .pad { display: none; } /* on a phone only at the controls, the disc */
   body.pilot .pad { display: block; border-radius: 50%; box-shadow: 0 0 0 1.5px #fff; } /* the view, a disc over the machine, a pad to fly by */
-  body.pilot .keys { display: none; } /* at the controls no pills: the probe's x takes it out, and out of the controls */
   .plate .stop { display: none; }
   .plate.probing h5 { border-bottom-color: transparent; } /* the probe in, the views edge to edge: no rule under PROBE (kept, unseen, so nothing moves) */
   .probe.off { display: inline-flex; }
@@ -400,9 +399,9 @@ body.clean .plate, body.clean .keys { display: none; }
     background: rgba(142, 124, 240, 0.7); -webkit-backdrop-filter: blur(10px) saturate(1.3); backdrop-filter: blur(10px) saturate(1.3);
   }
   body .crumbs { display: flex; }
-  body .keys { bottom: auto; top: calc(var(--foot-top, 100vh) - 46px); /* 24 over the machine's edge, 24 over the footer's words, less the pills' 2 px margin */ left: 50%; right: auto; transform: translate(-50%, -100%); }
+  body .keys { bottom: 22px; left: 24px; right: 24px; width: auto; } /* ORBIT FOLLOW PILOT across the foot, a third each, as on a desktop (PILOT alone in the middle over a footer, for a while) */
+  body .keys .pills .pill { flex: 1; }
   .middle { bottom: 76px; } /* over the mode pills, which take the row here */
-  body.pilot .middle { bottom: 24px; } /* the pills gone at the controls: down on their row */
   .divider { top: var(--eye-y, 50%); bottom: auto; left: 0; right: 0; width: auto; height: 1px; }
 }
 /* the mode: three pills in a row, outlined, the one picked filled in the panel's grey, a line under on what it does */
@@ -410,7 +409,6 @@ body.clean .plate, body.clean .keys { display: none; }
 /* a radio's circle before each mode's word, filled for the one picked (a desktop's; a phone has PILOT alone, its arrows) */
 .pill .radio { flex: none; width: 7px; height: 7px; border: 1px solid currentColor; border-radius: 50%; box-sizing: border-box; margin-top: -1px; }
 .pill.at .radio { background: currentColor; }
-@media (max-width: 640px), (max-height: 500px) { .pill .radio { display: none; } }
 /* on a desktop the three share the column's width, a third each, the word in the middle (each as wide as its word for a while) */
 @media (min-width: 641px) and (min-height: 501px) { .pills .pill { flex: 1; justify-content: center; } }
 .pill {

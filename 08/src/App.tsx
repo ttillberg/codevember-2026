@@ -658,11 +658,8 @@ export function App() {
           probe in, full screen and followed (in the box, at its foot, for a moment) */}
       {/* an upright phone with the probe in: no text, a footer instead, where it is (08 TESSERACT, and / PILOT at the controls; a PROBE between them for a while) and BACK, one up */}
       {CLEAN || !beetle ? null : <nav className="crumbs" aria-label="Where you are">
-        <span className="trail">
-          <span className={manual ? '' : 'at'}>08 Tesseract</span>
-          {manual ? <><i>/</i><button tabIndex={-1} className="at">Pilot</button></> : null}
-        </span>
-        {manual ? <button className="probe off" tabIndex={-1} aria-label="Back to following" onPointerDown={(e) => e.preventDefault()} onClick={() => setMode("follow")}><svg width={8} height={8} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={2.6} strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M10.5 2.5 5 8l5.5 5.5" /></svg>Back</button> : null}
+        {/* the title alone: the mode pills at the foot are the way between the modes (08 TESSERACT / PILOT and BACK in a footer, then BACK alone up here, for a while) */}
+        <span className="trail"><span className="at">08 Tesseract</span></span>
       </nav>}
       {/* the first person view's corner, top right: hide or show it, and, shown, maximize or
           minimize it, the corner the only way to them */}
