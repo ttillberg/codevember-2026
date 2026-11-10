@@ -38,6 +38,31 @@ const MODES: [Mode, string][] = [
   ['pilot', 'Pilot'],
 ];
 
+/** The ?'s note: why this is short, and two days late. Frosted, over everything; a tap outside it, the x or Esc closes it. */
+function Note({ close }: { close: () => void }) {
+  useEffect(() => {
+    const key = (e: KeyboardEvent) => { if (e.key === 'Escape') { e.stopPropagation(); close(); } };
+    addEventListener('keydown', key, true);
+    return () => removeEventListener('keydown', key, true);
+  }, []);
+  return (
+    <div className="note-veil" onPointerDown={(e) => { if (e.target === e.currentTarget) close(); }}>
+      <article className="note" role="dialog" aria-label="On cutting short">
+        <button className="x" aria-label="Close" onClick={close}>
+          <svg width={10} height={10} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={2.4} strokeLinecap="round" aria-hidden><path d="M3 3l10 10M13 3 3 13" /></svg>
+        </button>
+        <h3>On cutting short</h3>
+        <p>Codevember is one small thing a day. A day is a short form, and the whole point of a short form is that it stays short. This one is two days late.</p>
+        <p>It began as a tesseract that turns. To make the turn readable it needed something living inside it, so a probe; the probe needed a view, the view a map, the map a lens, the walls a honeycomb, the honeycomb a ripple. Each step made sense on its own. Together they were another project. In the end I took out nine tenths of it, and what is left is closer to the first idea than anything in between.</p>
+        <p>It is an old problem. Pascal, in 1656, apologised for a long letter: he had not had the time to make it shorter. Hemingway said he rewrote the last page of <i>A Farewell to Arms</i> thirty-nine times. Kubrick cut nineteen minutes out of <i>2001</i> after its premiere. Leonardo kept the Mona Lisa with him for more than a decade, still touching it. <i>Duke Nukem Forever</i> was announced in 1997 and came out in 2011, to reviews that were mostly about the wait. The Sagrada Família, begun in 1882, is still being built.</p>
+        <p>What separates them is not talent but whether the work is allowed to end. Saint-Exupéry put it like the pilot and engineer he was: perfection is reached not when there is nothing left to add, but when there is nothing left to take away. Jobs told the Macintosh team the shorter version in 1983: real artists ship.</p>
+        <p>The honest part is that nobody sees the nine tenths. Not the hours, not the versions, not the wave that was tried and reverted. They see a cube inside a cube, turning, and a small thing flying through it. That was always the point. Going too far is not the mistake; it is how you find out where the edge is. The work is walking back.</p>
+        <p className="sign">Two days late, one tesseract, one probe. The rest stays on the cutting room floor.</p>
+      </article>
+    </div>
+  );
+}
+
 /** Folds itself away on a tap anywhere outside `ref`, while `open`. */
 function useAway(open: boolean, close: () => void) {
   const ref = useRef<HTMLDivElement>(null);
@@ -486,6 +511,7 @@ function handUp() { if (hand.on && hand.picked) crankEnd(); hand.on = false; gri
 
 export function App() {
   const [transform, setTransform] = useState(st.transform);
+  const [why, setWhy] = useState(false); // the ? and its note
   const [grid, setGrid] = useState(st.grid);
   const [maxi, setMaxi] = useState(eyeView.max);
   const [beetle, setBeetle] = useState(drone.on);
@@ -691,6 +717,7 @@ export function App() {
 
   return (
     <>
+      {why ? <Note close={() => setWhy(false)} /> : null}
       <div ref={stage} className={`stage ${locked ? 'locked' : ''}`} {...stageHandlers} onWheel={onWheel}>
         <Canvas camera={{ position: [0, 0, 10.5], fov: 34 }} gl={{ alpha: true, antialias: true, toneMapping: THREE.NeutralToneMapping, toneMappingExposure: 1.0, localClippingEnabled: true }} dpr={[1, 2]}>
           <Suspense fallback={null}>
@@ -716,6 +743,8 @@ export function App() {
           <ModeMenu mode={mode} pick={setMode} />
           {/* and beside it a wheel, the settings: AUTOTRANSFORM in it (on its own under the dropdown, for a while) */}
           <Settings transform={transform} toggle={toggleAuto} />
+          {/* a ? that opens a note, on frosted glass: why this is short (beside AUTOTRANSFORM on a desktop, bottom left on a phone) */}
+          <button className="why" tabIndex={-1} aria-label="Why this is short" onPointerDown={(e) => { e.preventDefault(); e.stopPropagation(); }} onClick={() => setWhy(true)}>?</button>
           <button className={`autot ${transform ? 'on' : ''}`} tabIndex={-1} role="checkbox" aria-checked={transform} onPointerDown={(e) => { e.preventDefault(); e.stopPropagation(); }} onClick={toggleAuto}>
           <i className="box" aria-hidden>{transform ? <svg width={8} height={8} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={2.6} strokeLinecap="round" strokeLinejoin="round"><path d="M3 8.5l3.2 3.2L13 4.5" /></svg> : null}</i>Autotransform
         </button>

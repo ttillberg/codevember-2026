@@ -224,12 +224,39 @@ body.home .stage .corner { top: 10px; right: 10px; }
 .settings .list .box { display: grid; place-items: center; flex: none; width: 13px; height: 13px; box-sizing: border-box; margin-top: -1px; border: 1px solid currentColor; border-radius: 2px; }
 .settings .list .at .box { background: #fff; color: var(--ui); }
 .settings .list button.at { background: none; } /* a checkbox, not a pick: no dark row */
+/* the ?: a round button as the wheel, beside AUTOTRANSFORM on a desktop, bottom left on a phone */
+.stage .corner { flex-direction: row; align-items: center; } /* a row: the ? and AUTOTRANSFORM on a desktop */
+.why {
+  display: grid; place-items: center; width: 26px; height: 26px; padding: 0; border: 0; border-radius: 50%; cursor: pointer; touch-action: manipulation;
+  background: rgba(92, 92, 90, 0.72); color: #fff; -webkit-backdrop-filter: blur(10px) saturate(1.3); backdrop-filter: blur(10px) saturate(1.3);
+  font: 700 12px/1 "IBM Plex Sans", system-ui, sans-serif;
+}
+/* the note: a frosted card over a soft veil, the essay in it, small and grey as the plate's blurb was */
+.note-veil {
+  position: fixed; inset: 0; z-index: 20; display: grid; place-items: center; padding: 24px;
+  background: rgba(230, 230, 227, 0.35); -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px); animation: veilin 0.2s ease-out;
+}
+.note {
+  position: relative; box-sizing: border-box; width: min(520px, 100%); max-height: calc(100dvh - 48px); overflow: auto; padding: 28px 30px 26px;
+  border-radius: 18px; border: 0.5px solid rgba(255, 255, 255, 0.7);
+  background: rgba(250, 250, 248, 0.62); -webkit-backdrop-filter: blur(22px) saturate(1.4); backdrop-filter: blur(22px) saturate(1.4);
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.14); color: var(--ink); animation: menuin 0.22s ease-out; user-select: text; -webkit-user-select: text;
+}
+.note h3 { margin: 0 0 14px; font: 700 22px/1.05 "IBM Plex Sans", system-ui, sans-serif; text-transform: uppercase; letter-spacing: 0.01em; }
+.note p { margin: 0 0 11px; font-size: 13px; line-height: 1.5; color: #3b3b39; }
+.note p.sign { margin: 16px 0 0; font: 700 9px/1.4 "Helvetica Neue", Helvetica, Arial, sans-serif; letter-spacing: 0.14em; text-transform: uppercase; color: var(--ui); }
+.note .x { position: absolute; top: 14px; right: 14px; display: grid; place-items: center; width: 28px; height: 28px; padding: 0; border: 0; border-radius: 50%; cursor: pointer; background: rgba(28, 28, 28, 0.82); color: #fff; }
+@keyframes veilin { from { opacity: 0; } to { opacity: 1; } }
 @keyframes menuin { from { opacity: 0; transform: translateY(-4px) scale(0.96); } to { opacity: 1; transform: none; } }
 @media (max-width: 640px), (max-height: 500px) {
   .modemenu, .settings { display: block; }
   body:not(.pilot) .stage .cheat { display: grid; position: fixed; right: 24px; bottom: calc(24px + env(safe-area-inset-bottom)); margin: 0; z-index: 1; } /* the drawings bottom right on a phone too, fixed to the screen that shows: the stage runs on under the browser's bar (100lvh) and hid them there */
   .stage .corner { flex-direction: row; align-items: flex-start; }
   .stage .corner > .autot { display: none; } /* in the wheel's card on a phone */
+  .stage .corner > .why { position: fixed; left: 24px; bottom: calc(24px + env(safe-area-inset-bottom)); width: 30px; height: 30px; background: rgba(28, 28, 28, 0.82); } /* bottom left, across from the drawings */
+  body.pilot .stage .corner > .why { display: none; }
+  .note { padding: 24px 22px 22px; }
+  .note h3 { font-size: 20px; }
   /* the top's pills as big as the title beside them (9 px words, a smaller pill, for a while) */
   .modemenu .now, .stage .autot { font-size: 11px; padding: 10px 14px 9px; gap: 10px; }
   .modemenu .now svg { width: 11px; height: 11px; }
