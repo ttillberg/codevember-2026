@@ -182,7 +182,7 @@ export function DroneCam() {
     return {
       cs, tubes, flash, piece, grabbed, eye, lens, flat,
       q: new THREE.Quaternion(), look: new THREE.Vector3(0, 0, -1), last: [0, 0, 0], crossings: -1,
-      pos: new THREE.Vector3(), lockEl: null as HTMLElement | null, eyeX: -1, eyeY: -1, camX: -1, plateEl: null as Element | null, lockLast: '', // the bracket's last style, written only on change
+      pos: new THREE.Vector3(), lockEl: null as HTMLElement | null, eyeX: -1, eyeY: -1, camX: -1, camH: -1, plateEl: null as Element | null, lockLast: '', // the bracket's last style, written only on change
       grabOf: null as number[] | null, grabLocal: new THREE.Vector3(), // the piece taken, and where it was from the eye then, in its frame
     };
   }, []);
@@ -222,12 +222,13 @@ export function DroneCam() {
     const { cam: part } = regionsOf(W, H), full = !part;
     const r = part ?? { x: 0, y: 0, w: W, h: H };
     const S = r.w, SH = r.h, sx = r.x, sy = H - r.y - r.h, top = r.y;
-    if (sx + S !== cell.eyeX || top !== cell.eyeY || sx !== cell.camX) {
-      cell.camX = sx;
+    if (sx + S !== cell.eyeX || top !== cell.eyeY || sx !== cell.camX || SH !== cell.camH) {
+      cell.camX = sx; cell.camH = SH;
       cell.eyeX = sx + S; cell.eyeY = top;
       document.documentElement.style.setProperty('--eye-x', `${sx + S}px`);
       document.documentElement.style.setProperty('--eye-y', `${top}px`);
       document.documentElement.style.setProperty('--cam-x', `${sx}px`); // its left edge, for the hairline
+      document.documentElement.style.setProperty('--cam-h', `${SH}px`); // and its height, for the pad over it
     }
     // the lens's square round its middle, big enough that the disc covers all of it
     const w = Math.hypot(S, SH), h = w;

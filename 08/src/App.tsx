@@ -95,7 +95,7 @@ function Rig({ children }: { children: React.ReactNode }) {
     rig.followK += ((rig.follow && !drone.pilot ? 1 : 0) - rig.followK) * Math.min(1, dt * 2); // on its own only: at the controls the camera is the usual one
     const fk = rig.followK;
     if (fk > 0.001) {
-      off.setFromSphericalCoords(rig.zoom * FOLLOW, Math.PI / 2 - THREE.MathUtils.clamp(pitch, -LEVEL, LEVEL), yaw);
+      off.setFromSphericalCoords(rig.zoom * (size.width <= 640 || size.height <= 500 ? FOLLOW_PHONE : FOLLOW), Math.PI / 2 - THREE.MathUtils.clamp(pitch, -LEVEL, LEVEL), yaw);
       look.copy(rig.focus).lerp(tail, fk);
       camera.position.lerp(followAt.copy(tail).add(off), fk);
       camera.lookAt(look);
@@ -121,7 +121,7 @@ const DOF_WIDE = 0.007, DOF_FOLLOW = 0.009; // the blur at twice the focus dista
 // machine's turn in 4D swings the camera. No higher or lower than LEVEL: straight above or below, the camera's up has
 // nothing to hold to and the picture spins. (Shots in turn, from the back, the side, above, and a close-up on the
 // catch, were tried first, with cuts and then glides; too much.)
-const FOLLOW = 0.5; // the distance to the beetle against the fit to the whole machine
+const FOLLOW = 0.5, FOLLOW_PHONE = 0.35; // the distance to the beetle against the fit to the whole machine; nearer on a phone
 const FOLLOW_EASE = 2; // how fast the look goes after the beetle (1/s)
 const LEVEL = 0.87; // radians, about 50 degrees
 const tail = new THREE.Vector3(), off = new THREE.Vector3();
@@ -160,6 +160,58 @@ const PlayPause = ({ playing }: { playing: boolean }) => (
     {playing ? <path d="M4 2.5h2.6v11H4zM9.4 2.5H12v11H9.4z" /> : <path d="M4.5 2.3 13.5 8l-9 5.7z" />}
   </svg>
 );
+// On a phone at the controls the fisheye view is a pad: held in the middle the probe flies forward, held towards an
+// edge it turns that way, for as long as it is held; the finger can slide from one to another. Outlined arrows at the
+// edges and a ring with a dot in the middle show it, the one held lit. (A FORWARD button for a while.)
+type Zone = 'c' | 't' | 'r' | 'b' | 'l' | null;
+const PAD_TURN = 1.3; // rad/s, an edge held
+const PAD_MIDDLE = 0.22; // the middle's radius, against the view's shorter side
+function Pad() {
+  const [zone, setZone] = useState<Zone>(null);
+  const held = useRef<Zone>(null);
+  const hold = (z: Zone) => {
+    if (z === held.current) return;
+    if (held.current === 'c') drone.keys.thrust = 0;
+    if (z === 'c') drone.keys.thrust = 1;
+    held.current = z; setZone(z);
+  };
+  const zoneAt = (e: React.PointerEvent) => {
+    const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    const x = e.clientX - r.left - r.width / 2, y = e.clientY - r.top - r.height / 2;
+    if (Math.hypot(x, y) < Math.min(r.width, r.height) * PAD_MIDDLE) return 'c';
+    return Math.abs(x) / r.width > Math.abs(y) / r.height ? (x > 0 ? 'r' : 'l') : (y > 0 ? 'b' : 't');
+  };
+  useEffect(() => {
+    // an edge held turns it a little every frame (the probe takes its turn a frame at a time)
+    let raf = 0, last = performance.now();
+    const tick = (now: number) => {
+      const dt = Math.min(0.05, (now - last) / 1000); last = now;
+      const z = held.current;
+      if (z === 'l') drone.turn[0] -= PAD_TURN * dt;
+      else if (z === 'r') drone.turn[0] += PAD_TURN * dt;
+      else if (z === 't') drone.turn[1] += PAD_TURN * dt;
+      else if (z === 'b') drone.turn[1] -= PAD_TURN * dt;
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => { cancelAnimationFrame(raf); if (held.current === 'c') drone.keys.thrust = 0; };
+  }, []);
+  const arrow = (d: 't' | 'r' | 'b' | 'l') => (
+    <svg key={d} className={`arrow ${d} ${zone === d ? 'on' : ''}`} width={26} height={26} viewBox="0 0 26 26" aria-hidden>
+      <path d="M13 5 22 19H4Z" style={{ transform: `rotate(${{ t: 0, r: 90, b: 180, l: 270 }[d]}deg)`, transformOrigin: '13px 13px' }} />
+    </svg>
+  );
+  return (
+    <div className="pad" aria-label="Fly: hold the middle to go forward, an edge to turn" onContextMenu={(e) => e.preventDefault()}
+      onPointerDown={(e) => { e.preventDefault(); (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId); hold(zoneAt(e)); }}
+      onPointerMove={(e) => { if (held.current) hold(zoneAt(e)); }}
+      onLostPointerCapture={() => hold(null)}>
+      {(['t', 'r', 'b', 'l'] as const).map(arrow)}
+      <span className={`ring ${zone === 'c' ? 'on' : ''}`}><i /></span>
+    </div>
+  );
+}
+
 /** The text's fold: an i, for info (a chevron for a moment); the circle filled while the text is open. */
 const InfoMark = () => (
   <svg width={10} height={10} viewBox="0 0 16 16" fill="currentColor" aria-hidden>
@@ -236,7 +288,7 @@ export function App() {
   // the controls a plain drag is the look and shift orbits the camera; on its own a plain drag orbits. The orbit's
   // speed is kept, smoothed, to coast on.
   const drag = useRef<{ kind: 'look' | 'orbit' | 'crank'; x: number; y: number; t: number } | null>(null);
-  // touch: one finger turns the machine in 4D (alt-drag's job), two orbit it and pinch to zoom; each finger kept
+  // touch: one finger turns the machine in 4D (alt-drag's job), two orbit it (a pinch zoomed too, and got in the way of the orbit); each finger kept
   const fingers = useRef(new Map<number, { x: number; y: number }>());
   const pair = useRef<{ x: number; y: number; d: number; t: number } | null>(null);
   const pairOf = () => {
@@ -244,6 +296,9 @@ export function App() {
     return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2, d: Math.hypot(a.x - b.x, a.y - b.y) || 1, t: performance.now() };
   };
   const dragDown = (e: React.PointerEvent) => {
+    // a drag only from the machine's own part: not from the fisheye view, not from behind the text
+    const { main } = regionsOf(innerWidth, innerHeight);
+    if (e.clientX < main.x || e.clientX > main.x + main.w || e.clientY < main.y || e.clientY > main.y + main.h) return;
     if (e.pointerType === 'touch') {
       (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
       fingers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
@@ -279,7 +334,6 @@ export function App() {
       if (p0 && fingers.current.size >= 2) {
         const p = pairOf();
         orbitBy(-(p.x - p0.x) * ORBIT, (p.y - p0.y) * ORBIT, Math.max(1, p.t - p0.t) / 1000);
-        rig.zoomK = Math.min(2.2, Math.max(0.5, rig.zoomK * (p0.d / p.d))); // apart, nearer
         pair.current = p;
         return;
       }
@@ -384,6 +438,8 @@ export function App() {
     drone.on = !drone.on; setBeetle(drone.on);
     setOpen(!drone.on); // the probe in, the text folds to make room; out, it opens again
     if (!drone.on) setMode('orbit'); // nothing to follow or fly
+    // on a phone the probe is followed or flown, no orbit: in, it is followed
+    else if (matchMedia('(max-width: 640px), (max-height: 500px)').matches) setMode('follow');
   };
   const controls = !beetle ? null : <>
     <div className="pills" role="radiogroup" aria-label="Mode">
@@ -430,6 +486,8 @@ export function App() {
       </button>}
       {/* bottom middle, at the controls: the pointer lock; locked, there is no pointer to click with, so the way out
           instead: esc (transform's play/pause beside it for a while) */}
+      {/* on a phone at the controls, the fisheye view is the pad */}
+      {CLEAN || !manual ? null : <Pad />}
       {/* on a phone, no pills at the controls: a close, back to where it was */}
       {CLEAN || !manual ? null : <button className="close" tabIndex={-1} aria-label="Leave the controls" onPointerDown={(e) => e.preventDefault()} onClick={() => setMode(lastAuto.current)}>
         <svg width={12} height={12} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" aria-hidden><path d="M3.5 3.5l9 9M12.5 3.5l-9 9" /></svg>
@@ -440,13 +498,6 @@ export function App() {
           <Crosshair />
           Lock pointer
         </button>}
-        {/* on a touch screen, no keys and no lock: one button, held to fly forward; a finger on the page steers */}
-        <button className="play forward" tabIndex={-1} aria-label="Forward, held"
-          onPointerDown={(e) => { e.preventDefault(); (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId); drone.keys.thrust = 1; }}
-          onLostPointerCapture={() => { drone.keys.thrust = 0; }} onContextMenu={(e) => e.preventDefault()}>
-          <Tri d="up" />
-          Forward
-        </button>
       </div>}
       {/* split: a hairline between the machine's half and the view's */}
       {CLEAN || !beetle || !grid || maxi ? null : <div className="divider" />}
