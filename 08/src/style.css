@@ -168,6 +168,10 @@ html:not(:has(body.home)) { overflow: hidden; }
 }
 .back:hover { color: var(--ink); }
 .back { display: none; }
+/* AUTOTRANSFORM, top right of the view, in the view (the stage): the page's corner on a desktop, the box's on a phone's
+   home page, the screen's full screen; small, outlined off, dark frosted on, as a picked pill */
+.stage .pill.autot { position: absolute; top: 24px; right: 24px; z-index: 2; padding: 10px 11px 9px 12px; font-size: 9px; border-width: 0.5px; touch-action: manipulation; }
+body.home .stage .pill.autot { top: 10px; right: 10px; }
 /* the cheat sheet, an upright phone's home page's: one frosted sheet under the box, two little line drawings
    on it, as an assembly manual draws them, a hairline between and a word under each; folded away with the text (over
    ACTIVATE PROBE for a moment, two panes either side of it, with bare fingertips, before that) */

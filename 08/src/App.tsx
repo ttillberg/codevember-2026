@@ -36,9 +36,9 @@ const MODES: [Mode, string][] = [
   ['pilot', 'Pilot'],
 ];
 
-// the turntable on to start, the transform off (they started together for a while); the play/pause sets both: the
-// camera's slow turn and the machine's in 4D
-rig.spin = true;
+// the turntable and the transform off to start (both on, then the turntable alone, for a while); no switch for the
+// turntable, AUTOTRANSFORM and T for the transform
+rig.spin = false;
 
 
 // A phone's tilt (its device orientation, the gyroscope): leaning it turns the view a little round the machine, from how
@@ -398,7 +398,7 @@ export function App() {
     const el = stage.current;
     if (!el) return;
     const keep = (e: TouchEvent) => {
-      if (!page.boxed || drone.pilot) return;
+      if (!page.boxed || drone.pilot || (e.target as Element).closest?.('button')) return; // a button in the box is the button's
       if (e.touches.length >= 2) { if (e.cancelable) e.preventDefault(); return; }
       if (e.type !== 'touchstart') return;
       const t = e.touches[0], r = el.getBoundingClientRect();
@@ -568,8 +568,10 @@ export function App() {
   // now: h.
   // transform, and the turntable with it: the play/pause button bottom middle (a TRANSFORM switch under SETTINGS before)
   const toggleTransform = () => { st.transform = !st.transform; rig.spin = st.transform; setTransform(st.transform); };
+  // AUTOTRANSFORM, top right of the view: the machine's turn in 4D on its own, alone, the turntable left as it is
+  const toggleAuto = () => { st.transform = !st.transform; setTransform(st.transform); };
   const toggleTransformRef = useRef(toggleTransform); // for the keys, set up once
-  toggleTransformRef.current = toggleTransform;
+  toggleTransformRef.current = toggleAuto; // T: AUTOTRANSFORM's (the transform and the turntable together for a while)
   const toggleBeetle = () => {
     window.scrollTo(0, 0); // to the top first: going full screen from a scrolled page left the screen's foot bare
     drone.on = !beetle; setBeetle(drone.on);
@@ -609,6 +611,8 @@ export function App() {
           </Environment>
           <directionalLight position={[4, 8, 6]} intensity={1.1} />
         </Canvas>
+        {/* the machine turning in 4D on its own, a switch top right of the view, on a desktop, in the phone's box and full screen */}
+        {CLEAN ? null : <button className={`pill autot ${transform ? 'at' : ''}`} tabIndex={-1} role="switch" aria-checked={transform} onPointerDown={(e) => { e.preventDefault(); e.stopPropagation(); }} onClick={toggleAuto}>Autotransform</button>}
         {/* an upright phone's home page: how the hands work, in the box, bottom right (bottom left, and under it, titled INSTRUCTIONS, for a moment) */}
         {CLEAN || beetle ? null : <Cheat />}
       </div>
@@ -665,13 +669,13 @@ export function App() {
         <Do how={<><Key>⇧</Key> + <Key wide>{locked ? 'Mouse' : 'Drag'}</Key></>} what="Orbit" />
         <Do how={<><Key>{MAC ? '⌥' : 'Alt'}</Key> + <Key wide>{locked ? 'Mouse' : 'Drag'}</Key></>} what="Transform" />
         <Do how={<Key>L</Key>} what={locked ? 'Unlock pointer' : 'Lock pointer'} />
-        <Do how={<Key>T</Key>} what={transform ? 'Pause transforms' : 'Play transforms'} />
+        <Do how={<Key>T</Key>} what="Autotransform" />
         <Do how={<Key>P</Key>} what="Pause everything" />
         </> : <>
         <h6 className="shortcuts">View</h6>
         <Do how={<Key wide>Drag</Key>} what="Rotate" />
         <Do how={<><Key>{MAC ? '⌥' : 'Alt'}</Key> + <Key wide>Drag</Key></>} what="Transform" />
-        <Do how={<Key>T</Key>} what={transform ? 'Pause transforms' : 'Play transforms'} />
+        <Do how={<Key>T</Key>} what="Autotransform" />
         <Do how={<Key>P</Key>} what="Pause everything" />
         </>}
       </div>}
