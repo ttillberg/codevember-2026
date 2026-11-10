@@ -14,8 +14,8 @@ import { mul, rotPlane, type M4 } from './tesseract';
 export const st = {
   plane: 0, // 0 1 2: the axis turning with w right now
   base: [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]] as M4, // the quarter turns done so far
-  angle: 0.3, // radians in the live plane
-  target: 0.3, // where the servo is told to be
+  angle: 0, // radians in the live plane; 0 to start, the tesseract at rest, the small cube square in the middle of the big one (0.3, a little turned, for a while, when it turned on its own from the start)
+  target: 0, // where the servo is told to be
   vel: 0,
   next: 0, // seconds until the servo's next move in a burst
   burstIn: 8, // seconds until the next burst, in hard mode
