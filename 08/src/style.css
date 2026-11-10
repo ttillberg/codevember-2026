@@ -161,13 +161,12 @@ body.clean .plate, body.clean .keys { display: none; }
 .toggle .track {
   position: relative; width: 76px; height: 40px; box-sizing: border-box;
   border: 1.5px solid var(--ui); border-radius: 20px; background: none; /* off: just the outline */
-  transition: background 0.25s;
 }
 .toggle .track i {
   position: absolute; left: 4px; top: 4px; width: 29px; height: 29px; border-radius: 50%;
   background: var(--ui); transition: transform 0.28s cubic-bezier(0.5, 1.6, 0.4, 1);
 }
-.toggle.on .track { background: #fff; } /* on: white, no colour; the knob over to the right */
+/* on: the knob over to the right, nothing else; no fill either way (a white fill when on was tried) */
 .toggle.on .track i { transform: translateX(36px); }
 .toggle:hover .track { box-shadow: 0 0 0 3px rgba(28, 28, 28, 0.08); }
 
