@@ -47,9 +47,19 @@ export function regionsOf(W: number, H: number): { main: Rect; cam: Rect | null 
   }
   const low = H <= 500;
   const left = page.clean ? 0 : Math.min(W * 0.45, (low ? 260 : 380) + 48); // the column and its gutters
-  const rest = W - left, camW = split ? Math.round(rest / 2) : 0;
-  return { main: { x: left, y: 0, w: rest - camW, h: H }, cam: split ? { x: W - camW, y: 0, w: camW, h: H } : null };
+  if (low) { // a phone on its side: the room beside the column halved, the machine and the view
+    const rest = W - left, camW = split ? Math.round(rest / 2) : 0;
+    return { main: { x: left, y: 0, w: rest - camW, h: H }, cam: split ? { x: W - camW, y: 0, w: camW, h: H } : null };
+  }
+  // a desktop: the machine has all the room beside the column, and the view is in the column, as wide as it, over the
+  // mode pills, square at most and lower (landscape) where the text above leaves less room, down to COL_MIN_H (it was
+  // half the room beside the column, for a while)
+  const main = { x: left, y: 0, w: W - left, h: H };
+  if (!split) return { main, cam: null };
+  const w = Math.min(380, W - 48), h = Math.round(Math.max(COL_MIN_H, Math.min(w, H - COL_OVER - page.textBottom - 16)));
+  return { main, cam: { x: 24, y: H - COL_OVER - h, w, h } };
 }
+const COL_OVER = 76, COL_MIN_H = 120; // the view in the column: how far up from the bottom, over the mode pills, and its least height (CSS px)
 // the fog the far rooms fade into, by the view's size: minimized, a grey, and the view's background that grey too, so
 // the rooms go into it; maximized, the page's paper, and no background, the page itself between the lines
 const FOG_MINI = new THREE.Color('#bdbdb9'), FOG_MAX = new THREE.Color('#f4f4f2');
