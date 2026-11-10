@@ -24,8 +24,13 @@ export const eyeView = { max: false };
 /** The split: with the probe in and its view shown, not maximized, 'side', the machine and the view side by side; on a
  * phone held upright, 'stack', the machine over the view; otherwise none. */
 export function splitOf(W: number, H: number): 'side' | 'stack' | null {
-  if (!drone.on || !st.grid || eyeView.max) return null;
+  if (!eyeShown(W, H) || eyeView.max) return null;
   return W <= 640 && H > W ? 'stack' : 'side';
+}
+/** The view at all: the probe in and the view not hidden; on a phone only at the controls, orbit and follow having
+ * the whole screen for the machine. */
+export function eyeShown(W: number, H: number) {
+  return drone.on && st.grid && (drone.pilot || !(W <= 640 || H <= 500));
 }
 /** What the page tells the layout: under ?clean there is no text; textBottom, the text's foot, measured each frame. */
 export const page = { clean: false, textBottom: 0 };
@@ -190,7 +195,7 @@ export function DroneCam() {
     page.textBottom = (cell.plateEl ??= document.querySelector('.plate'))?.getBoundingClientRect().bottom ?? 0;
     const auto = gl.autoClear;
     // the camera grid off, or no beetle: no eye, no lock bracket, just the page and the machine
-    if (st.grid && drone.on) drawEye(); else { setLock(lockEl, 'none'); gl.setRenderTarget(null); gl.clear(); }
+    if (eyeShown(size.width, size.height)) drawEye(); else { setLock(lockEl, 'none'); gl.setRenderTarget(null); gl.clear(); }
     gl.autoClear = false;
     // the machine over the lens, through the depth of field, only in its own part, never under the text
     const W = size.width, H = size.height, { main } = regionsOf(W, H);

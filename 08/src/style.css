@@ -212,6 +212,16 @@ body.clean .plate, body.clean .keys { display: none; }
 /* bottom middle, side by side: transform's play/pause and, at the controls, the pointer lock (on the left over the keys
    before, white) */
 .middle { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); display: flex; gap: 8px; }
+/* the close: only on a phone at the controls, a circle bottom left where the pills were, back to orbit or follow */
+.close { display: none; }
+@media (max-width: 640px), (max-height: 500px) {
+  body:not(.pilot) .maxi, body:not(.pilot) .divider { display: none; } /* orbit and follow: no view, the machine has it all */
+  body.pilot .keys { display: none; } /* at the controls no pills, */
+  body.pilot .close { /* a close instead */
+    display: grid; place-items: center; position: fixed; left: 24px; bottom: 24px; width: 46px; height: 46px; padding: 0;
+    border: 1.5px solid var(--ui); border-radius: 50%; background: var(--paper); color: var(--ui); cursor: pointer;
+  }
+}
 .play { /* a pill as the mode's, the icon then the word (a round icon button before) */
   display: inline-flex; align-items: center; gap: 8px; white-space: nowrap;
   padding: 10px 18px 9px 15px; border: 1.5px solid var(--ui); border-radius: 999px; background: var(--paper); cursor: pointer;
@@ -234,6 +244,7 @@ body.clean .plate, body.clean .keys { display: none; }
 .divider { position: fixed; top: 0; bottom: 0; left: var(--cam-x, 50%); width: 1px; background: var(--ui); opacity: 0.5; pointer-events: none; }
 @media (max-width: 640px) and (orientation: portrait) {
   .middle { bottom: 76px; } /* over the mode pills, which take the row here */
+  body.pilot .middle { bottom: 24px; } /* the pills gone at the controls: down on their row */
   .divider { top: var(--eye-y, 50%); bottom: auto; left: 0; right: 0; width: auto; height: 1px; }
 }
 /* the mode: three pills in a row, outlined, the one picked filled in the panel's grey, a line under on what it does */

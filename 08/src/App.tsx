@@ -334,6 +334,7 @@ export function App() {
   const setMode = (m: Mode) => {
     if (m !== 'pilot') lastAuto.current = m;
     drone.pilot = m === 'pilot'; rig.follow = m === 'follow'; setModeState(m);
+    document.body.classList.toggle('pilot', m === 'pilot'); // on a phone: the view, the close, no pills (style.css)
     drone.keys.thrust = drone.keys.strafe = 0;
     rig.turntable = m !== 'pilot';
     if (m !== 'pilot' && document.pointerLockElement) document.exitPointerLock();
@@ -429,6 +430,10 @@ export function App() {
       </button>}
       {/* bottom middle, at the controls: the pointer lock; locked, there is no pointer to click with, so the way out
           instead: esc (transform's play/pause beside it for a while) */}
+      {/* on a phone, no pills at the controls: a close, back to where it was */}
+      {CLEAN || !manual ? null : <button className="close" tabIndex={-1} aria-label="Leave the controls" onPointerDown={(e) => e.preventDefault()} onClick={() => setMode(lastAuto.current)}>
+        <svg width={12} height={12} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" aria-hidden><path d="M3.5 3.5l9 9M12.5 3.5l-9 9" /></svg>
+      </button>}
       {CLEAN || !manual ? null : <div className="middle">
         {locked ? <div className="play hint"><Key wide>Esc</Key>to unlock</div> : <button className="play lockpill" tabIndex={-1}
           onPointerDown={(e) => e.preventDefault()} onClick={() => stage.current?.requestPointerLock()}>
