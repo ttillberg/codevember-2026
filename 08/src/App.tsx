@@ -14,7 +14,9 @@ import { dof } from './dof';
 
 const PARAMS = new URLSearchParams(location.search);
 const CLEAN = PARAMS.has('clean'); // no page furniture, for the screengrab: the first person view maximized, a faint ground
-if (PARAMS.has('probe')) drone.on = true; // the probe in from the start, for the screengrab (no button to press under ?clean)
+// the probe in from the start, for the screengrab (no button to press under ?clean), followed as it comes in by the
+// button, but orbited for the screengrab
+if (PARAMS.has('probe')) { drone.on = true; if (!CLEAN) rig.follow = true; }
 if (CLEAN) { eyeView.max = true; page.clean = true; }
 
 // Two modes, the same two views in both: the machine fills the page, the eye's view the right third behind it.
@@ -451,8 +453,7 @@ export function App() {
     // on a phone the probe in folds the text to make room, out it opens again; on a desktop the text stays open
     if (matchMedia('(max-width: 640px), (max-height: 500px)').matches) setOpen(!drone.on);
     if (!drone.on) setMode('orbit'); // nothing to follow or fly
-    // on a phone the probe is followed or flown, no orbit: in, it is followed
-    else if (matchMedia('(max-width: 640px), (max-height: 500px)').matches) setMode('follow');
+    else setMode('follow'); // in, it is followed, on a desktop too (orbit, there, for a while)
   };
   const controls = !beetle ? null : <>
     <div className="pills" role="radiogroup" aria-label="Mode">
