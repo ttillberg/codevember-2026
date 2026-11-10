@@ -100,24 +100,35 @@ function Rig({ children }: { children: React.ReactNode }) {
     camera.position.setFromSphericalCoords(rig.zoom, Math.PI / 2 - pitch, yaw);
     // follow (the switch): the same orbit, round the beetle instead of the machine's middle, nearer; eased in and out
     tail.lerp(drone.world, Math.min(1, sdt * FOLLOW_EASE));
-    // on its own, the switch; at the controls the camera is the usual one, but on a phone it follows there too, the
-    // probe flown by the pad and kept in view
-    const phoneNow = size.width <= 640 || size.height <= 500;
-    rig.followK += (((rig.follow && !drone.pilot) || (drone.pilot && phoneNow) ? 1 : 0) - rig.followK) * Math.min(1, dt * 2);
+    // on its own, the switch
+    rig.followK += ((rig.follow && !drone.pilot ? 1 : 0) - rig.followK) * Math.min(1, dt * 2); // at the controls the chase, below (the follow on a phone for a while)
     const fk = rig.followK;
     if (fk > 0.001) {
       off.setFromSphericalCoords(rig.zoom * (size.width <= 640 || size.height <= 500 ? FOLLOW_PHONE : FOLLOW), Math.PI / 2 - THREE.MathUtils.clamp(pitch, -LEVEL, LEVEL), yaw);
       look.copy(rig.focus).lerp(tail, fk);
       camera.position.lerp(followAt.copy(tail).add(off), fk);
       camera.lookAt(look);
-    } else camera.lookAt(look.copy(rig.focus));
+    } else look.copy(rig.focus);
+    // at the controls, the chase: from behind the probe and a little over it, looking past it the way it flies, eased
+    // after it so a turn swings the view round rather than snapping it (the usual camera, and on a phone the follow,
+    // for a while)
+    rig.chaseK += ((drone.pilot ? 1 : 0) - rig.chaseK) * Math.min(1, dt * 2);
+    if (rig.chaseK > 0.001) {
+      const e = Math.min(1, sdt * CHASE_EASE);
+      chaseFwd.lerp(drone.worldFwd, e).normalize(); chaseUp.lerp(drone.worldUp, e).normalize();
+      chaseAt.copy(drone.world).addScaledVector(chaseFwd, -CHASE_BACK).addScaledVector(chaseUp, CHASE_UP);
+      chaseLook.copy(drone.world).addScaledVector(chaseFwd, CHASE_AHEAD);
+      camera.position.lerp(chaseAt, rig.chaseK);
+      look.lerp(chaseLook, rig.chaseK);
+    }
+    camera.lookAt(look);
     // into its part: the picture slid so the page's middle lands on the part's (it was the beetle two thirds across,
     // following, and then the left half, split)
     const ox = size.width / 2 - part.x, oy = size.height / 2 - part.y;
     if (Math.abs(ox) > 0.5 || Math.abs(oy) > 0.5) cam.setViewOffset(size.width, size.height, ox, oy, size.width, size.height);
     else if (cam.view?.enabled) cam.clearViewOffset();
     // the depth of field on what the camera looks at, the beetle when following; nearer, the blur deeper, as a lens's
-    dof.focus.copy(look);
+    dof.focus.copy(look).lerp(drone.world, rig.chaseK); // chasing, on the probe, not past it
     dof.aperture = THREE.MathUtils.lerp(DOF_WIDE, DOF_FOLLOW, fk);
   });
   return <group ref={ref}>{children}</group>;
@@ -137,6 +148,9 @@ const FOLLOW = 0.5, FOLLOW_PHONE = 0.35; // the distance to the beetle against t
 const FOLLOW_EASE = 2; // how fast the look goes after the beetle (1/s)
 const LEVEL = 0.87; // radians, about 50 degrees
 const tail = new THREE.Vector3(), off = new THREE.Vector3();
+const chaseFwd = new THREE.Vector3(0, 0, -1), chaseUp = new THREE.Vector3(0, 1, 0), chaseAt = new THREE.Vector3(), chaseLook = new THREE.Vector3();
+const CHASE_BACK = 1.7, CHASE_UP = 0.4, CHASE_AHEAD = 2; // world units: behind it, over it, and the look ahead of it (a quarter of these, the probe filling the screen, for a moment)
+const CHASE_EASE = 4; // how fast the chase swings round after the probe's turn (1/s)
 const focusAt = new THREE.Vector3();
 
 // The keys at the controls, as day 07's help: flat grey caps, and what each does in small caps beside them.

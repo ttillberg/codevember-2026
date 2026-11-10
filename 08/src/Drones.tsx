@@ -230,6 +230,7 @@ export function Drones() {
       q2, planeA, planeB, cLast: [0, 0, 0], look: new THREE.Vector3(0, 0, -1), camUp: new THREE.Vector3(0, 1, 0),
       wall: null as Wall | null, // the wall the flight has it at, if any
       plan: [] as Step[], phase: 'seek' as Phase, t: 0, // the steps to the piece; the catch's phase and its clock
+      eyeCap: null as THREE.Object3D | null, // the eye cap, found once: which way it looks, for the chase camera
       grip: 0, shut: 0, lockT: 0, // the scoop out, and shut; seconds the piece has been in the lock
       grabOf: null as V4 | null, grabLocal: new THREE.Vector3(), // the piece taken, and where it was from the device then, in its frame
       shield: 0, blink: Infinity, nextBlink: 3 + Math.random() * 5, // seconds into the blink; seconds to a blink of its own
@@ -339,7 +340,7 @@ export function Drones() {
   const tmp = useMemo(() => ({
     v: new THREE.Vector3(), m: new THREE.Matrix4(), up: new THREE.Vector3(0, 1, 0), q: new THREE.Quaternion(), fwd: new THREE.Vector3(), right: new THREE.Vector3(), qa: new THREE.Quaternion(),
     a: new THREE.Vector3(), b: new THREE.Vector3(), f3: new THREE.Vector3(), u3: new THREE.Vector3(), corners: [new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3()],
-    color: new THREE.Color(),
+    color: new THREE.Color(), gq: new THREE.Quaternion(),
   }), []);
 
   /** Hands on: taken over, the device keeps the way it was going; let go, it carries on from there on its own. */
@@ -691,6 +692,15 @@ export function Drones() {
     s.q.g.position.copy(v).add(s.shift);
     // for the follow camera and the depth of field: the device in the world
     drone.world.copy(v).applyMatrix4(s.group.matrixWorld);
+    // and which way it looks, in the world, for the chase camera: from its middle to its eye cap, the model's own
+    // (its heading's axes, guessed, put the camera in front for a moment); its up, the cap's frame's
+    const cap = (s.eyeCap ??= s.q.g.getObjectByName('eye_cap') ?? null);
+    if (cap) {
+      cap.getWorldPosition(tmp.a); s.q.g.getWorldPosition(tmp.b);
+      if (tmp.a.distanceToSquared(tmp.b) > 1e-12) drone.worldFwd.subVectors(tmp.a, tmp.b).normalize();
+      s.group.getWorldQuaternion(tmp.gq);
+      drone.worldUp.set(0, 1, 0).applyQuaternion(s.heading).applyQuaternion(tmp.gq);
+    }
     // while the body is sliced by a wall each half glows in the colour of the cell it is in: this copy in this
     // cell's, the other copy in the neighbour's, so the cut reads at a glance; whole again, the glow goes
     // a tint, not a glow: nothing until a quarter of the body is in the wall, then up a curve to half strength with

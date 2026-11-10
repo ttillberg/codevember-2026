@@ -51,6 +51,9 @@ export const drone = {
   flash: { corners: [[0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]] as V4[], p4: [0, 0, 0, 0] as V4, t: -1, color: '#c9e35b' },
   /** For the follow camera and the depth of field: where the device is, in the world. */
   world: new THREE.Vector3(),
+  /** Which way its eye looks, and its up, in the world: for the chase camera at the controls. */
+  worldFwd: new THREE.Vector3(0, 0, -1),
+  worldUp: new THREE.Vector3(0, 1, 0),
 };
 
 /** The piece: a small steel ball with a pinhead lamp on each axis, six, flashing fast. `blink(t)` runs them. */
