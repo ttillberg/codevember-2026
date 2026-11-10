@@ -103,19 +103,30 @@ function Rig({ children }: { children: React.ReactNode }) {
     // on its own, the switch
     rig.followK += ((rig.follow && !drone.pilot ? 1 : 0) - rig.followK) * Math.min(1, dt * 2); // at the controls the chase, below (the follow on a phone for a while)
     const fk = rig.followK;
+    // the probe's own way and up in the world, eased, for the views by its turn and the chase
+    const ve = Math.min(1, sdt * CHASE_EASE);
+    chaseFwd.lerp(drone.worldFwd, ve).normalize(); chaseUp.lerp(drone.worldUp, ve).normalize();
+    let upWant = WORLD_UP;
     if (fk > 0.001) {
-      off.setFromSphericalCoords(rig.zoom * (size.width <= 640 || size.height <= 500 ? FOLLOW_PHONE : FOLLOW), Math.PI / 2 - THREE.MathUtils.clamp(pitch, -LEVEL, LEVEL), yaw);
+      const D = rig.zoom * (size.width <= 640 || size.height <= 500 ? FOLLOW_PHONE : FOLLOW);
+      if (rig.view === 'free') off.setFromSphericalCoords(D, Math.PI / 2 - THREE.MathUtils.clamp(pitch, -LEVEL, LEVEL), yaw);
+      else {
+        // behind it, beside it or over it, by its own turn (the follow went round by the drag alone for a while)
+        sideV.crossVectors(chaseFwd, chaseUp).normalize();
+        if (rig.view === 'back') off.copy(chaseFwd).multiplyScalar(-D).addScaledVector(chaseUp, D * 0.25);
+        else if (rig.view === 'side') off.copy(sideV).multiplyScalar(D).addScaledVector(chaseUp, D * 0.15);
+        else { off.copy(chaseUp).multiplyScalar(D).addScaledVector(chaseFwd, -D * 0.2); upWant = chaseFwd; }
+      }
+      viewOff.lerp(off, Math.min(1, sdt * 3)); // a change of view glides
       look.copy(rig.focus).lerp(tail, fk);
-      camera.position.lerp(followAt.copy(tail).add(off), fk);
-      camera.lookAt(look);
-    } else look.copy(rig.focus);
+      camera.position.lerp(followAt.copy(tail).add(viewOff), fk);
+    } else { look.copy(rig.focus); viewOff.copy(camera.position).sub(tail); }
+    camUp.lerp(upWant, Math.min(1, dt * 3)).normalize(); camera.up.copy(camUp); // over it, the camera's up its way, not the sky's
     // at the controls, the chase: from behind the probe and a little over it, looking past it the way it flies, eased
     // after it so a turn swings the view round rather than snapping it (the usual camera, and on a phone the follow,
     // for a while)
     rig.chaseK += ((drone.pilot ? 1 : 0) - rig.chaseK) * Math.min(1, dt * 2);
     if (rig.chaseK > 0.001) {
-      const e = Math.min(1, sdt * CHASE_EASE);
-      chaseFwd.lerp(drone.worldFwd, e).normalize(); chaseUp.lerp(drone.worldUp, e).normalize();
       chaseAt.copy(drone.world).addScaledVector(chaseFwd, -CHASE_BACK).addScaledVector(chaseUp, CHASE_UP);
       chaseLook.copy(drone.world).addScaledVector(chaseFwd, CHASE_AHEAD);
       camera.position.lerp(chaseAt, rig.chaseK);
@@ -144,12 +155,13 @@ const DOF_WIDE = 0.007, DOF_FOLLOW = 0.009; // the blur at twice the focus dista
 // nothing to hold to and the picture spins. (Shots in turn, from the back, the side, above, and a close-up on the
 // catch, were tried first, with cuts and then glides; too much.)
 const HOME_BIG = 1.33; // the machine on an upright phone's home page, against the fit
-const FOLLOW = 0.3, FOLLOW_PHONE = 0.22; // the distance to the beetle against the fit to the whole machine; nearer on a phone (0.5 and 0.35 for a while)
+const FOLLOW = 0.18, FOLLOW_PHONE = 0.22; // the distance to the beetle against the fit to the whole machine (0.5 and 0.35, then 0.3 on a desktop, for a while)
 const FOLLOW_EASE = 2; // how fast the look goes after the beetle (1/s)
 const LEVEL = 0.87; // radians, about 50 degrees
 const tail = new THREE.Vector3(), off = new THREE.Vector3();
 const chaseFwd = new THREE.Vector3(0, 0, -1), chaseUp = new THREE.Vector3(0, 1, 0), chaseAt = new THREE.Vector3(), chaseLook = new THREE.Vector3();
 const CHASE_BACK = 1.7, CHASE_UP = 0.4, CHASE_AHEAD = 2; // world units: behind it, over it, and the look ahead of it (a quarter of these, the probe filling the screen, for a moment)
+const sideV = new THREE.Vector3(), viewOff = new THREE.Vector3(), camUp = new THREE.Vector3(0, 1, 0), WORLD_UP = new THREE.Vector3(0, 1, 0);
 const CHASE_EASE = 4; // how fast the chase swings round after the probe's turn (1/s)
 const focusAt = new THREE.Vector3();
 
@@ -595,6 +607,9 @@ export function App() {
   const toggleTransform = () => { st.transform = !st.transform; rig.spin = st.transform; setTransform(st.transform); };
   // AUTOTRANSFORM, top right of the view: the machine's turn in 4D on its own, alone, the turntable left as it is
   const toggleAuto = () => { st.transform = !st.transform; setTransform(st.transform); };
+  // following, where from: FREE, BACK, SIDE, TOP, a switch under AUTOTRANSFORM
+  const [view, setView] = useState(rig.view);
+  const pickView = (v: typeof rig.view) => { rig.view = v; setView(v); };
   const toggleTransformRef = useRef(toggleTransform); // for the keys, set up once
   toggleTransformRef.current = toggleAuto; // T: AUTOTRANSFORM's (the transform and the turntable together for a while)
   const toggleBeetle = () => {
@@ -637,9 +652,14 @@ export function App() {
           <directionalLight position={[4, 8, 6]} intensity={1.1} />
         </Canvas>
         {/* the machine turning in 4D on its own, a switch top right of the view, on a desktop, in the phone's box and full screen */}
-        {CLEAN ? null : <button className={`autot ${transform ? 'on' : ''}`} tabIndex={-1} role="checkbox" aria-checked={transform} onPointerDown={(e) => { e.preventDefault(); e.stopPropagation(); }} onClick={toggleAuto}>
+        {CLEAN ? null : <div className="corner">
+          <button className={`autot ${transform ? 'on' : ''}`} tabIndex={-1} role="checkbox" aria-checked={transform} onPointerDown={(e) => { e.preventDefault(); e.stopPropagation(); }} onClick={toggleAuto}>
           <i className="box" aria-hidden>{transform ? <svg width={8} height={8} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={2.6} strokeLinecap="round" strokeLinejoin="round"><path d="M3 8.5l3.2 3.2L13 4.5" /></svg> : null}</i>Autotransform
-        </button>}
+        </button>
+          {beetle && mode === 'follow' ? <span className="views" role="radiogroup" aria-label="Follow from">
+            {(['free', 'back', 'side', 'top'] as const).map((v) => <button key={v} className={`seg ${view === v ? 'at' : ''}`} tabIndex={-1} role="radio" aria-checked={view === v} onPointerDown={(e) => { e.preventDefault(); e.stopPropagation(); }} onClick={() => pickView(v)}>{v}</button>)}
+          </span> : null}
+        </div>}
         {/* an upright phone's home page: how the hands work, in the box, bottom right (bottom left, and under it, titled INSTRUCTIONS, for a moment) */}
         {CLEAN ? null : <Cheat />}{/* shown by the page: a phone's home page's box, a desktop's corner away from the controls (style.css) */}
       </div>
