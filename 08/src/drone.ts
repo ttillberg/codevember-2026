@@ -42,12 +42,17 @@ export const drone = {
   /** The wall just gone through: its corners, where it was crossed, in 4D, seconds since (none, -1), and the colour
    * of the cell entered. It ripples out from the crossing, like a wave from a button pressed. */
   flash: { corners: [[0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]] as V4[], p4: [0, 0, 0, 0] as V4, t: -1, color: '#c9e35b' },
+  /** For the follow camera, in the world: where the device is, the way it faces, and, going through a wall, the
+   * wall's normal into the cell beyond (`wallOn`, from the wall ahead until the hand-over is over). */
+  world: new THREE.Vector3(), fwd: new THREE.Vector3(0, 0, -1), wallN: new THREE.Vector3(), wallOn: false,
+  /** For the follow camera too: the catch on, from closing in on the piece till it is taken, and the piece in the world. */
+  capturing: false, pieceWorld: new THREE.Vector3(),
 };
 
 /** The piece: a small steel ball with a pinhead lamp on each axis, six, flashing fast. `blink(t)` runs them. */
-export const PIECE_R = 0.02;
+export const PIECE_R = 0.02 / 3; // a third of what it was, with the device
 /** The device's radius in the main picture, and in cell space. */
-export const SIZE_MAIN = 0.095, SIZE_CELL = 0.17;
+export const SIZE_MAIN = 0.095 / 3, SIZE_CELL = 0.17; // in the main picture a third of what it was, the piece with it
 /** At the controls, the piece is in the lock when it is in this cell, this close (cell units) and ahead of the eye. */
 export const LOCK_RANGE = 1.1;
 // the lamps' colour is the colour of the cell the piece is in; one material in the fog, one out of it for the eye
@@ -88,9 +93,9 @@ const RIPPLE_FRAG = /* glsl */ `
     float u = uT / uDur;
     float dn = distance(vPos, uCentre) / uSize; // 1 at the far side of the wall, about
     float r = 1.6 * u;
-    float ring = exp(-pow((dn - r) / 0.07, 2.0));
-    float fill = (1.0 - smoothstep(r - 0.4, r, dn)) * 0.4;
-    float a = (ring * 0.9 + fill) * pow(1.0 - u, 1.5) * 0.8;
+    float ring = exp(-pow((dn - r) / 0.14, 2.0)); // a soft, wide band
+    float fill = (1.0 - smoothstep(r - 0.25, r, dn)) * 0.06; // barely a wash behind the band
+    float a = (ring * 0.55 + fill) * pow(1.0 - u, 1.5) * 0.5; // a hint, not a flash
     if (a < 0.003) discard;
     gl_FragColor = vec4(uColor, a);
   }
@@ -215,6 +220,14 @@ export function faceCorners(axis: number, sign: number): V4[] {
     c[drone.held] = drone.sign; c[axis] = sign; c[free[0]] = u; c[free[1]] = v;
     return c;
   });
+}
+/** A point on that wall, `u` `v` across it from -1 to 1, in the corners' order: for the grid drawn on a wall about
+ * to be gone through. */
+export function facePoint(axis: number, sign: number, u: number, v: number): V4 {
+  const free = [0, 1, 2, 3].filter((i) => i !== axis && i !== drone.held);
+  const c: V4 = [0, 0, 0, 0];
+  c[drone.held] = drone.sign; c[axis] = sign; c[free[0]] = u; c[free[1]] = v;
+  return c;
 }
 /** The 4D name of the wall on cell-space row `k`, side `t`: its axis, and that axis's side. */
 export const wallOf = (k: number, t: number) => ({ axis: drone.axisOf[k], sign: t * drone.A[k][drone.axisOf[k]] });

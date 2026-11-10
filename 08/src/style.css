@@ -1,10 +1,12 @@
 :root {
-  --paper: #e6e6e4;
+  --paper: #f4f4f2;
   --ink: #1c1c1c;
   --mute: #6b6b68;
   --pink: #ef5f9f;
   --lime: #c9e35b;
   --orange: #f2703f;
+  --ui: #5c5c5a; /* the panel's one grey: headings, rules, switches, keys, words, the button */
+  --purple: #8e7cf0; /* the machine's purple ring: the controls, on, and the lock pointer */
 }
 
 html, body, #root {
@@ -17,13 +19,15 @@ html, body, #root {
 body {
   background-color: var(--paper);
   background-image:
-    radial-gradient(ellipse 70% 60% at 50% 42%, #f4f4f1 0%, var(--paper) 55%, #d6d6d2 100%);
+    radial-gradient(ellipse 70% 60% at 50% 42%, #fdfdfc 0%, var(--paper) 55%, #e6e6e3 100%);
   overflow: hidden;
 }
 
 .stage { position: fixed; inset: 0; cursor: grab; }
 .stage:active { cursor: grabbing; }
 .stage.locked, .stage.locked:active { cursor: none; }
+.stage.edge { cursor: pointer; } /* over a strut, on its own: a drag turns the machine by it */
+.stage.edge:active { cursor: grabbing; }
 .stage canvas { touch-action: none; }
 
 .plate {
@@ -51,50 +55,41 @@ body {
   text-transform: uppercase;
   color: var(--ink);
 }
+.plate i { line-height: 1.15; }
+.plate i + i { margin-top: 0; } /* the second line, what it is, straight under the first */
 
+/* the keys at the controls, bottom left, as day 07's help but straight on the page: rows of the keys or gesture on
+   the left and what it does in small caps on the right */
 .keys {
-  position: fixed;
-  left: 50%;
-  bottom: 22px;
-  transform: translateX(-50%);
-  display: flex;
-  gap: 18px;
-  pointer-events: none;
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  color: var(--mute);
-  white-space: nowrap;
+  position: fixed; left: 24px; bottom: 24px;
+  display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 7px 14px;
+  pointer-events: none; user-select: none; white-space: nowrap;
+  font: 12px/16px "Helvetica Neue", Helvetica, Arial, sans-serif;
 }
-.keys span { display: flex; align-items: center; gap: 6px; }
-kbd {
-  display: inline-block;
-  min-width: 14px;
-  padding: 5px 7px;
-  border: 1.5px solid var(--ink);
-  border-radius: 5px;
-  font: 600 11px/1 "Helvetica Neue", Helvetica, Arial, sans-serif;
-  text-align: center;
-  color: var(--ink);
-  background: rgba(255, 255, 255, 0.6);
+.keys .how { display: inline-flex; align-items: center; gap: 4px; color: var(--ui); font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase; }
+.keys .what { font-size: 12px; color: var(--ui); } /* what it does: a sentence, in sentence case */
+/* the sections, SETTINGS and SHORTCUTS: small caps in ink and a hairline under, across the column */
+.keys h5 {
+  grid-column: 1 / -1; margin: 12px 0 2px; padding-bottom: 5px; border-bottom: 1px solid var(--ui);
+  font: 700 10px/1 "Helvetica Neue", Helvetica, Arial, sans-serif; letter-spacing: 0.14em; text-transform: uppercase; color: var(--ui);
 }
+.keys h5:first-child { margin-top: 0; }
+/* the subsections of the shortcuts, NAVIGATION, VIEW, OPTIONS: smaller, grey, no rule */
+.keys h6 {
+  grid-column: 1 / -1; margin: 6px 0 -1px;
+  font: 700 9px/1 "Helvetica Neue", Helvetica, Arial, sans-serif; letter-spacing: 0.14em; text-transform: uppercase; color: var(--ui);
+}
+.keys h5 + h6 { margin-top: 2px; }
+.keys h5 span { font-weight: 400; font-size: 11px; letter-spacing: 0; text-transform: none; color: var(--ui); } /* a note after the name */
+/* keys: outlined caps, no fill, the outline and the letters in one mid grey (tried filled, near black then mid grey) */
+.key {
+  display: inline-flex; align-items: center; justify-content: center; min-width: 18px; height: 18px; padding: 0 5px;
+  box-sizing: border-box; border: 1.2px solid var(--ui); border-radius: 5px;
+  font: 600 10px/1 "Helvetica Neue", Helvetica, Arial, sans-serif; color: var(--ui); background: none;
+  text-transform: uppercase; letter-spacing: 0.04em;
+}
+.key.wide { padding: 0 9px; }
 
-.cam {
-  position: fixed;
-  right: 24px;
-  bottom: 72px;
-  width: max(120px, min(clamp(220px, 26vw, 360px), calc(100vw - 48px), calc(100vh - 150px)));
-  aspect-ratio: 1;
-  border: 1px solid var(--ink);
-  border-radius: 50%;
-  cursor: grab;
-  touch-action: none;
-  box-sizing: border-box;
-}
-.cam:active { cursor: grabbing; }
-.cam.pass { pointer-events: none; } /* auto: the eye in the corner, the page behind it orbits */
-.cam.look { cursor: grab; } /* manual: a drag in the eye's view is the look */
 
 .back {
   position: fixed;
@@ -116,41 +111,65 @@ body.clean .plate, body.clean .keys { display: none; }
   .plate b { font-size: 36px; }
   .plate i { font-size: 9px; }
   .plate p { display: none; }
-  .keys { gap: 10px; font-size: 10px; }
+  .keys > .how, .keys > .what, .keys > .shortcuts { display: none; } /* no keys on a phone, the settings stay */
 }
 
 
 /* the lock bracket round the piece in the eye's view, at the controls: four corners and a word, placed from DroneCam */
 .lock { position: fixed; left: 0; top: 0; display: none; pointer-events: none; color: var(--ink); animation: lockblink 0.5s steps(2, end) infinite; }
-.lock i { position: absolute; width: 30%; height: 30%; border: 1.5px solid currentColor; }
+.lock i { position: absolute; width: 30%; height: 30%; border: 4px solid currentColor; /* thick, ink */ }
 .lock i:nth-child(1) { left: 0; top: 0; border-right: 0; border-bottom: 0; }
 .lock i:nth-child(2) { right: 0; top: 0; border-left: 0; border-bottom: 0; }
 .lock i:nth-child(3) { left: 0; bottom: 0; border-right: 0; border-top: 0; }
 .lock i:nth-child(4) { right: 0; bottom: 0; border-left: 0; border-top: 0; }
-.lock b { position: absolute; left: 50%; top: 100%; transform: translate(-50%, 6px); font: 600 10px/1 "Helvetica Neue", Helvetica, Arial, sans-serif; letter-spacing: 0.14em; text-transform: uppercase; }
-.lock.on { animation: none; color: var(--lime); }
+.lock b { position: absolute; left: 50%; top: 100%; transform: translate(-50%, 6px); font: 900 11px/1 "Helvetica Neue", Helvetica, Arial, sans-serif; letter-spacing: 0.14em; text-transform: uppercase; }
+.lock.on { animation: none; } /* locked: it holds still, in the same ink */
 .lock.on b::after { content: 'ed'; }
 @keyframes lockblink { 0% { opacity: 1; } 100% { opacity: 0.35; } }
 
-/* the switches on the left: big, ink on paper, lime when on */
-.toggles { position: fixed; left: 24px; top: 50%; transform: translateY(-50%); display: flex; flex-direction: column; gap: 22px; }
+/* the switch: ink on paper, lime when on; used small, in the settings (.small) */
+.toggle[hidden] { display: none; }
+/* the lock pointer button, at the controls, under the controls switch: white, in the panel's grey, a crosshair on its left */
+.action {
+  display: inline-flex; align-items: center; gap: 8px; height: 30px; padding: 0 12px 0 9px; box-sizing: border-box;
+  border: 1.5px solid var(--ui); border-radius: 15px; background: #fff; color: var(--ui); cursor: pointer;
+  font: 900 11px/1 "Helvetica Neue", Helvetica, Arial, sans-serif; letter-spacing: 0.06em; text-transform: uppercase;
+  transition: background 0.15s;
+}
+.action:hover { background: #f2f1ee; }
+.action .icon { display: block; flex: none; width: 15px; height: 15px; }
+.keys > .action { grid-column: 1 / -1; justify-self: start; pointer-events: auto; }
+/* where the button was, while the pointer is locked: no pointer to click with, so a hint, not a button */
+.action.hint { gap: 8px; padding: 0; border: 0; background: none; color: var(--ui); cursor: default; pointer-events: none; }
+.action.hint .key { height: 20px; padding: 0 8px; font-size: 10px; }
 .toggle {
   display: flex; gap: 14px; align-items: center;
-  padding: 0; border: 0; background: none; cursor: pointer; color: var(--ink); text-align: left;
+  padding: 0; border: 0; background: none; cursor: pointer; color: var(--ui); text-align: left;
   font: 900 22px/1 "Helvetica Neue", Helvetica, Arial, sans-serif; letter-spacing: 0.02em; text-transform: uppercase;
 }
-/* the label says what on means and stays put; the switch shows the state */
-.toggle .label { color: var(--mute); transition: color 0.25s; }
-.toggle.on .label { color: var(--ink); }
+/* the label in ink, on or off; the switch shows the state */
+.toggle .label { color: var(--ui); }
 .toggle .track {
   position: relative; width: 76px; height: 40px; box-sizing: border-box;
-  border: 1.5px solid var(--ink); border-radius: 20px; background: rgba(255, 255, 255, 0.6);
+  border: 1.5px solid var(--ui); border-radius: 20px; background: none; /* off: just the outline */
   transition: background 0.25s;
 }
 .toggle .track i {
   position: absolute; left: 4px; top: 4px; width: 29px; height: 29px; border-radius: 50%;
-  background: var(--ink); transition: transform 0.28s cubic-bezier(0.5, 1.6, 0.4, 1);
+  background: var(--ui); transition: transform 0.28s cubic-bezier(0.5, 1.6, 0.4, 1);
 }
-.toggle.on .track { background: var(--lime); }
+.toggle.on .track { background: #fff; } /* on: white, no colour; the knob over to the right */
 .toggle.on .track i { transform: translateX(36px); }
 .toggle:hover .track { box-shadow: 0 0 0 3px rgba(28, 28, 28, 0.08); }
+
+/* the small switches, bottom left over the keys: the same switch, a third the size, the label in small caps */
+.smalls { grid-column: 1 / -1; justify-self: start; display: flex; flex-direction: column; gap: 8px; pointer-events: auto; }
+.toggle.small { gap: 8px; font-size: 11px; font-weight: 600; letter-spacing: 0.12em; }
+.toggle.small .track { width: 30px; height: 17px; border-width: 1.5px; border-radius: 9px; }
+.toggle.small .track i { left: 2px; top: 2px; width: 10px; height: 10px; }
+.toggle.small.on .track i { transform: translateX(13px); }
+/* the controls switch on top: the small one at one and a half times the size, the same weight */
+.toggle.small.x2 { gap: 11px; font-size: 16px; font-weight: 600; letter-spacing: 0.1em; }
+.toggle.small.x2 .track { width: 45px; height: 26px; border-width: 1.5px; border-radius: 13px; }
+.toggle.small.x2 .track i { left: 3px; top: 3px; width: 17px; height: 17px; }
+.toggle.small.x2.on .track i { transform: translateX(19px); }

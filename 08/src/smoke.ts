@@ -9,6 +9,7 @@ import { rng } from './decals';
 const N = 900; // puffs alive at most
 const LIFE = 8; // seconds a puff lasts
 const FOG = 0.45; // how far a puff's tint is washed towards white
+const OPACITY = 0.12; // the whole wake's strength: a whisper, the laser carries the line
 
 /** A lumpy cloud: a handful of soft discs round the middle, under a soft edge. Only the alpha is used. */
 function puffTexture(): THREE.Texture {
@@ -43,7 +44,7 @@ const VERT = /* glsl */ `
   attribute float grow; // the puff's size against the usual, a big one now and then
   attribute vec3 drift;
   attribute vec3 tint;
-  uniform float uTime, uScale, uLife;
+  uniform float uTime, uScale, uLife, uOpacity;
   varying float vA, vRot;
   varying vec3 vTint;
   void main() {
@@ -55,7 +56,7 @@ const VERT = /* glsl */ `
     float size = grow * mix(0.035, 0.13, pow(u, 0.5));
     gl_PointSize = size * uScale / max(0.1, -mv.z);
     float fadeIn = smoothstep(0.0, 0.06, u);
-    vA = fadeIn * (1.0 - u) * (1.0 - u) * 0.6 / pow(grow, 0.9); // the big ones are faint, a haze the small ones sit in
+    vA = fadeIn * (1.0 - u) * (1.0 - u) * uOpacity / pow(grow, 0.9); // the big ones are faint, a haze the small ones sit in
     if (age < 0.0 || age > uLife) { vA = 0.0; gl_PointSize = 0.0; }
     vRot = seed * 6.2831 + age * (seed - 0.5) * 0.9;
     gl_Position = projectionMatrix * mv;
@@ -85,7 +86,7 @@ export function makeSmoke() {
   geo.setAttribute('drift', new THREE.BufferAttribute(drift, 3));
   geo.setAttribute('tint', new THREE.BufferAttribute(tint, 3));
   const mat = new THREE.ShaderMaterial({
-    uniforms: { uTime: { value: 0 }, uScale: { value: 1 }, uLife: { value: LIFE }, uMap: { value: puffTexture() } },
+    uniforms: { uTime: { value: 0 }, uScale: { value: 1 }, uLife: { value: LIFE }, uOpacity: { value: OPACITY }, uMap: { value: puffTexture() } },
     vertexShader: VERT, fragmentShader: FRAG,
     transparent: true, depthWrite: false, toneMapped: false,
   });

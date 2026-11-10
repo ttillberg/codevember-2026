@@ -21,6 +21,8 @@ export type Device = {
   clip: (planes: THREE.Plane[]) => void;
   /** Tint the whole copy with a glow of `hex`, `k` strong: 0 as made. */
   tint: (hex: string, k: number) => void;
+  /** Fade the whole copy: 1 as made, 0 gone; each material keeps its own opacity to fade from. */
+  fade: (k: number) => void;
   /** 0 open (fins back) to 1 shut (the walls closed round the body). */
   shield: (k: number) => void;
   /** 0 open to 1 shut, the blades across the eye. */
@@ -264,12 +266,26 @@ export function device(model: THREE.Object3D, size: number): Device {
     }
   });
   let shieldK = -1;
+  // for fade: each material's own opacity and transparency, as made
+  const fades = mats.map((m) => ({ m, opacity: m.opacity, transparent: m.transparent }));
+  let faded = false, fadeK = 1;
   return {
     g,
     clip: (planes) => { for (const m of mats) m.clippingPlanes = planes; },
     tint: (hex, k) => {
       tintColor.set(hex);
       for (const t of tinted) t.m.emissive.copy(t.base).lerp(tintColor, k * 0.55);
+    },
+    fade: (k) => {
+      const on = k < 0.999;
+      if (on === faded && (!on || Math.abs(k - fadeK) < 0.003)) return;
+      for (const f of fades) {
+        // made transparent only while fading, so the opaque parts sort as they did; a switch needs a new program
+        const tr = on || f.transparent;
+        if (f.m.transparent !== tr) { f.m.transparent = tr; f.m.needsUpdate = true; }
+        f.m.opacity = f.opacity * (on ? k : 1);
+      }
+      faded = on; fadeK = k;
     },
     grip,
     shield: (k) => {

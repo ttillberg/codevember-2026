@@ -14,7 +14,7 @@ const N = Math.ceil(LIFE / EVERY) + 2;
 const ROOM = new THREE.Color('#e9e6df');
 
 export function makeLaser() {
-  const mat = new LineMaterial({ linewidth: 1.6, vertexColors: true, toneMapped: false, worldUnits: false });
+  const mat = new LineMaterial({ linewidth: 0.8, vertexColors: true, toneMapped: false, worldUnits: false });
   // one geometry for good, sized for every sample there can be: each frame the segments are written in place and
   // only as many drawn as there are
   const geo = new LineGeometry();

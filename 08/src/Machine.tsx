@@ -2,7 +2,7 @@ import { useMemo } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import { EDGES, VERTS, project } from './tesseract';
-import { st, tick, pose, DEBUG } from './state';
+import { st, tick, pose, rig, DEBUG } from './state';
 import { drone, cellId, CELL_HEX } from './drone';
 import { sleeveDecal, scuffSleeve, scratchMap, wear, brushed, rng, ROD_SPAN, ACCENTS, SAND, GRAPHITE, type Brand } from './decals';
 import { withLogos } from './logos';
@@ -282,5 +282,6 @@ export function Machine() {
     }
   });
 
+  rig.machine = parts.group;
   return <primitive object={parts.group} />;
 }
