@@ -724,13 +724,13 @@ export function App() {
         {/* an upright phone's home page: how the hands work, in the box, bottom right (bottom left, and under it, titled INSTRUCTIONS, for a moment) */}
         {CLEAN ? null : <Cheat />}{/* shown by the page: a phone's home page's box, a desktop's corner away from the controls (style.css) */}
       </div>
-      {CLEAN ? null : <div className={`plate ${open ? '' : 'folded'} ${beetle ? 'probing' : ''}`}><div className="head"><b>08 Tesseract</b><i>Codevember 2026</i></div>{beetle ? null : <div className="curtain"><button tabIndex={-1} aria-label={open ? 'Fold the text away' : 'Unfold the text'} onPointerDown={(e) => e.preventDefault()} onClick={() => setOpen(!open)}><svg width={10} height={10} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round" aria-hidden style={{ transform: open ? 'none' : 'rotate(180deg)' }}><path d="M2.5 10.5 8 5l5.5 5.5" /></svg></button></div>}</div>}
+      {CLEAN ? null : <div className={`plate ${open ? '' : 'folded'} ${beetle ? 'probing' : ''}`}><div className="head"><b>08 Tesseract</b><i><a className="home" href="../">Codevember 2026 <span lang="ja">すべてのプロジェクト</span></a></i></div>{beetle ? null : <div className="curtain"><button tabIndex={-1} aria-label={open ? 'Fold the text away' : 'Unfold the text'} onPointerDown={(e) => e.preventDefault()} onClick={() => setOpen(!open)}><svg width={10} height={10} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round" aria-hidden style={{ transform: open ? 'none' : 'rotate(180deg)' }}><path d="M2.5 10.5 8 5l5.5 5.5" /></svg></button></div>}</div>}
       {/* an upright phone's home page: under the box the probe, a line drawing of it, what it is, and the way in, the
           probe in, full screen and followed (in the box, at its foot, for a moment) */}
       {/* an upright phone with the probe in: no text, a footer instead, where it is (08 TESSERACT, and / PILOT at the controls; a PROBE between them for a while) and BACK, one up */}
       {CLEAN || !beetle ? null : <nav className="crumbs" aria-label="Where you are">
         {/* the title alone: the mode pills at the foot are the way between the modes (08 TESSERACT / PILOT and BACK in a footer, then BACK alone up here, for a while) */}
-        <span className="trail"><span className="at">08 Tesseract</span></span>
+        <span className="trail title"><span className="at">08 Tesseract</span><a className="home" href="../">Codevember 2026 <span lang="ja">すべてのプロジェクト</span></a></span>
       </nav>}
       {/* the first person view's corner, top right: hide or show it, and, shown, maximize or
           minimize it, the corner the only way to them */}

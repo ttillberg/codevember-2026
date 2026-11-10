@@ -310,6 +310,12 @@ body.home .stage .corner { top: 10px; right: 10px; }
 }
 .crumbs .trail i { cursor: default; opacity: 0.6; }
 .crumbs .trail > span { font-size: 24px; line-height: 18px; letter-spacing: 0; } /* the title, bigger (14 px as the crumbs, for a while) */
+/* under the title, a quarter its size: CODEVEMBER 2026 and all projects in Japanese, a link to the index */
+.crumbs .trail.title { flex-direction: column; align-items: flex-start; gap: 7px; }
+a.home { color: inherit; text-decoration: none; pointer-events: auto; cursor: pointer; }
+a.home span[lang="ja"] { margin-left: 0.4em; font-family: "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Noto Sans JP", "Yu Gothic", sans-serif; letter-spacing: 0.06em; }
+.crumbs .trail .home, .crumbs .trail .home span { font: 700 6px/1 "Helvetica Neue", Helvetica, Arial, sans-serif; letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink); }
+.crumbs .trail .home span[lang="ja"] { font-family: "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Noto Sans JP", "Yu Gothic", sans-serif; letter-spacing: 0.06em; }
 .crumbs .trail .at { color: var(--ink); cursor: default; }
 /* BACK there the small pill, its pad hanging out over and under the line so the line keeps the capitals' height (a
    bare word for a moment) */
