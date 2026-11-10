@@ -346,7 +346,7 @@ body.clean .plate, body.clean .keys { display: none; }
   body.home .stage { order: 1; position: relative; inset: auto; height: auto; flex: none; box-sizing: border-box; width: calc(100% - 48px); min-width: 0; aspect-ratio: 1; margin: 16px 24px 0; overflow: hidden; border: 0.5px solid var(--ui); }
   body.home .stage, body.home .stage canvas { touch-action: pan-y; }
   body.home .stage > div { min-width: 0; } /* Safari let the canvas's own width push the box out past the right margin */
-  body.home .stage .cheat { display: grid; position: absolute; left: 10px; bottom: 10px; margin: 0; z-index: 1; }
+  body.home .stage .cheat { display: grid; position: absolute; right: 10px; bottom: 10px; margin: 0; z-index: 1; } /* bottom left for a moment */
   body.home .plate.chapter { display: block; order: 2; margin: 0 24px 40px; }
   body.home .plate.chapter .drawing { display: block; margin: 6px auto 4px; }
   /* ACTIVATE PROBE under the probe's text, in the flow, frosted purple (in the box, and under it, for a moment) */
