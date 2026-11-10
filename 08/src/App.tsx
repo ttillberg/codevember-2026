@@ -144,7 +144,7 @@ const DOF_WIDE = 0.007, DOF_FOLLOW = 0.009; // the blur at twice the focus dista
 // nothing to hold to and the picture spins. (Shots in turn, from the back, the side, above, and a close-up on the
 // catch, were tried first, with cuts and then glides; too much.)
 const HOME_BIG = 1.33; // the machine on an upright phone's home page, against the fit
-const FOLLOW = 0.5, FOLLOW_PHONE = 0.35; // the distance to the beetle against the fit to the whole machine; nearer on a phone
+const FOLLOW = 0.3, FOLLOW_PHONE = 0.22; // the distance to the beetle against the fit to the whole machine; nearer on a phone (0.5 and 0.35 for a while)
 const FOLLOW_EASE = 2; // how fast the look goes after the beetle (1/s)
 const LEVEL = 0.87; // radians, about 50 degrees
 const tail = new THREE.Vector3(), off = new THREE.Vector3();
