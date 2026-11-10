@@ -290,19 +290,17 @@ export function App() {
       </div>
       {CLEAN ? null : <div className="plate"><b>08 Tesseract</b><i>Codevember 2026</i><div className="blurb"><p>A tesseract is a cube in four dimensions: 16 corners, 32 edges, 24 square faces and 8 cubes for cells, each wall shared by two. Every edge is as long as the next and every corner is square.</p><p>Four dimensions can not be seen, only their shadow. As a cube drawn on paper is a square inside a square, the tesseract cast into three is a cube inside a cube, the small one the cell furthest off in the fourth.</p><p>Here it turns in 4D, one plane at a time, always a plane with the fourth axis in it. The turn is rigid, nothing bends, yet in the shadow the inner cube swells out through the outer one and the outer shrinks in. The struts telescope to show it: in the shadow the edges change length, in four dimensions they never do.</p><p>A little beetle flies through the cells after the pieces. From outside the cells are warped boxes; from inside each is a true cube, and the drawing behind is what the beetle sees in there, square however the shadow twists. A grid in the next cell's colour marks the wall before it goes through.</p><p>Switch the controls on to fly it, or alt-drag a strut to twist the tesseract by hand.</p></div></div>}
       <div id="lock" className="lock"><i /><i /><i /><i /><b>lock</b></div>
-      {CLEAN ? null : manual ? <div className="keys">
+      {/* the right column: mode and settings top right, the shortcuts bottom right, one width */}
+      {CLEAN ? null : <div className="keys top">
         {controls}
         {/* then the pointer lock; locked, there is no pointer to click with, so the way out instead: esc */}
-        {locked ? <div className="action hint"><Key wide>Esc</Key>to unlock</div> : <button className="action" tabIndex={-1}
+        {!manual ? null : locked ? <div className="action hint"><Key wide>Esc</Key>to unlock</div> : <button className="action" tabIndex={-1}
           onPointerDown={(e) => e.preventDefault()} onClick={() => stage.current?.requestPointerLock()}>
           <Crosshair />
           Lock pointer
         </button>}
-      </div> : <div className="keys">
-        {controls}
+        {smalls}
       </div>}
-      {/* the settings, top right */}
-      {CLEAN ? null : <div className="keys top">{smalls}</div>}
       {/* the shortcuts on their own, bottom right */}
       {CLEAN ? null : manual ? <div className="keys right">
         <h5 className="shortcuts">Shortcuts <span>(interactive mode)</span></h5>
