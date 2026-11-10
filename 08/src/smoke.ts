@@ -9,7 +9,7 @@ import { rng } from './decals';
 const N = 2400; // puffs alive at most
 const LIFE = 8; // seconds a puff lasts
 const FOG = 0.45; // how far a puff's tint is washed towards white
-const OPACITY = 0.16; // the whole wake's strength: soft, the laser carries the line (0.12 before more clouds)
+const OPACITY = 0.16; // the whole wake's strength: soft (0.12 before more clouds)
 
 /** A lumpy cloud: a handful of soft discs round the middle, under a soft edge. Only the alpha is used. */
 function puffTexture(): THREE.Texture {

@@ -3,13 +3,13 @@ import { useFrame } from '@react-three/fiber';
 import { useGLTF } from '@react-three/drei';
 import * as THREE from 'three';
 import { project, D, SCALE, type M4, type V4 } from './tesseract';
-import { pose, turnGlide, st } from './state';
+import { pose, st } from './state';
 import { drone, target, startCell, LOCK_RANGE, crossInto, pieceMesh, blink, toCell, fromCell, dirFromCellWith, otherMap, mapAcross, relayTarget, faceCorners, facePoint, wallOf, cellId, cellIdOf, lampColor, CELL_HEX, RIPPLE, SIZE_MAIN, SIZE_CELL, type CellMap } from './drone';
 import { device, ringOut, DEVICE_URL, type Device } from './device';
 import { makeSmoke } from './smoke';
 import { makeLaser } from './laser';
 
-const LASER = false; // the laser line through the wake: hidden for now, the clouds carry the way it came
+const LASER = true; // the laser line through the wake (hidden for a while, the clouds alone)
 
 // A device that lives in the tesseract: a ball with one eye, fins that are walls, a shutter. It is inside one of the eight cells, a cube with one coordinate held at
 // ±1 and the other three free, and it can only leave through a square face into the neighbouring cell. The passage is
@@ -199,8 +199,8 @@ export function Drones() {
     q.clip([planeA]); q2.clip([planeB]);
     const smoke = makeSmoke();
     group.add(smoke.points);
-    const laser = makeLaser();
-    if (LASER) group.add(laser.line);
+    const laser = LASER ? makeLaser() : null; // built only if shown
+    if (laser) group.add(laser.line);
     // the ripple at a crossing, run through the honeycomb: each edge of it lights as the wave from the crossing
     // reaches it (rings of hairlines before that, and a filled ring in a shader before them, faceQuad); a colour
     // with alpha per end, so each edge has its own strength
@@ -449,8 +449,10 @@ export function Drones() {
 
   useFrame(({ size, viewport, camera }, dt) => {
     dt = Math.min(dt, 0.05);
+    if (drone.frozen) return; // P: all of it held where it is, the clouds and the laser too, their clock stopped
+    drone.clock += dt;
     const m = pose();
-    const now = performance.now() / 1000;
+    const now = drone.clock;
     const s = d;
 
     if (drone.pilot !== s.wasPilot) { s.wasPilot = drone.pilot; if (drone.pilot) takeOver(); else letGo(s); }
@@ -467,7 +469,7 @@ export function Drones() {
       // it takes the piece on the fly and carries on in its curve, the machine turning as it goes
       s.t += dt;
       if (s.phase === 'settle' && s.t > SETTLE) take();
-      else if (s.phase === 'catch' && s.t > CATCH) { s.phase = 'turn'; s.t = 0; if (!st.hard && !st.transform) turnGlide(GLIDE); if (!target.up) newTarget(s); } // hard mode and transform turn all the time anyway
+      else if (s.phase === 'catch' && s.t > CATCH) { s.phase = 'turn'; s.t = 0; if (!target.up) newTarget(s); } // the catch no longer turns the machine a quarter: paused, it stays still; turning, it turns anyway
       else if (s.phase === 'turn' && s.t > GLIDE) { s.phase = 'rest'; s.t = 0; }
       else if (s.phase === 'rest' && s.t > REST) { s.phase = 'seek'; }
     }
@@ -560,7 +562,7 @@ export function Drones() {
       s.trailAt.copy(v);
     }
     // the laser through it, along the same way (LASER)
-    if (LASER) {
+    if (s.laser) {
       s.laser.sample(add4(s.p, s.dir, -0.05), now, CELL_HEX[cellId()]);
       s.laser.update(m, now, size.width * viewport.dpr, size.height * viewport.dpr);
     }

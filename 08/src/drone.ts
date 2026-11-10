@@ -19,6 +19,13 @@ export const drone = {
   /** Someone at the controls: keys from the page, the device's orientation (its eye along -z) and speed, in cell
    * space. On its own it flies its legs; piloted it has momentum, thrust along the eye, yaw and pitch. */
   pilot: false,
+  /** The beetle in the picture at all: off to start, just the tesseract; the PROBE switch under the blurb. Hidden it
+   * flies on all the same, so it is under way when it shows. */
+  on: false,
+  /** P: everything still, the probe, its clouds and laser, the machine's turns and lamps, the turntable; the look and a
+   * drag still go. `clock` is the time they all run on, seconds, and it stops with them. */
+  frozen: false,
+  clock: 0,
   /** At the controls, the catch has taken over: the device is docking on the piece. */
   docking: false,
   keys: { thrust: 0, strafe: 0 }, // held, -1 0 1: along the eye, and across it to the right

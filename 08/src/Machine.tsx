@@ -2,7 +2,7 @@ import { useMemo } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import { EDGES, VERTS, project } from './tesseract';
-import { st, tick, pose, rig, DEBUG } from './state';
+import { st, tick, pose, DEBUG } from './state';
 import { drone, cellId, CELL_HEX } from './drone';
 import { sleeveDecal, scuffSleeve, scratchMap, wear, brushed, rng, ROD_SPAN, ACCENTS, SAND, GRAPHITE, type Brand } from './decals';
 import { withLogos } from './logos';
@@ -170,7 +170,7 @@ export function Machine() {
 
   useFrame((_, dt) => {
     dt = Math.min(dt, 0.05);
-    tick(dt);
+    tick(drone.frozen ? 0 : dt); // P: no turn, no turntable
 
     const m = pose();
     const { P, dir, back, q, qb, dummy, side } = tmp;
@@ -249,7 +249,7 @@ export function Machine() {
     heads.instanceMatrix.needsUpdate = true;
     hexes.instanceMatrix.needsUpdate = true;
 
-    const now = performance.now() / 1000;
+    const now = drone.clock; // the lamps on the probe's clock, so P holds them too
     for (const l of parts.leds) {
       const p = P[l.node];
       l.o.position.copy(p).addScaledVector(l.dir, R_NODE * 0.97);
@@ -282,6 +282,5 @@ export function Machine() {
     }
   });
 
-  rig.machine = parts.group;
   return <primitive object={parts.group} />;
 }

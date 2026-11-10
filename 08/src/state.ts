@@ -25,12 +25,9 @@ export const st = {
   way: 1, // which way it turns, +1 or -1: the last drag, or a flip now and then
   flipIn: 12, // seconds until it turns round on its own
   spinVel: 0, // the hard mode's speed, eased towards HARD_SPIN * way so a flip is a swing, not a knock
-  transform: false, // the transform switch, off to start: the machine turns in 4D all the time, evenly and softly, changing plane at each quarter
+  transform: true, // the transform switch, on to start (off for a while), and the play/pause button bottom middle: the machine turns in 4D all the time, evenly and softly, changing plane at each quarter
   hard: false, // hard mode: the machine turns in 4D all the time, changing plane as it passes each quarter
-  /** The eye's rooms, the outlines (hairline thin) now that g is gone: 'drawing', the outlined tubes with dash-dot centre lines and detail circles
-   * over them, as an architect's drawing; 'outline', the tubes alone; 'hairline', a pixel line each, circles at the joints. */
-  grid: true, // the camera grid, on to start: the rooms in the eye's view, or the piece alone in the paper
-  eye: 'outline' as 'drawing' | 'outline' | 'hairline',
+  grid: true, // the camera grid, on to start: the eye's view behind the machine, or none
   inout: false, // the hand-over at a wall: false, both halves at once, folded at the wall; true (o), the body goes all the way in, then comes out
   /** How far the machine reaches from its centre right now, in the 3D picture, for the camera to fit it. */
   reach: 4,
@@ -52,7 +49,6 @@ export const rig = {
   follow: false, followK: 0, // the follow switch, and 0 to 1 eased: the camera in close on the device, going round it
   focus: new THREE.Vector3(), // where the camera looks: the machine's middle, leaning towards the device on the turntable
   camera: null as THREE.Camera | null, // the main camera, for a drag to see where the machine's axes point on the page
-  machine: null as THREE.Object3D | null, // the machine's parts, for the follow camera to see what is in its way
 };
 
 // in dev, the state on the page for scripted checks
@@ -127,15 +123,18 @@ export function orbitBy(dy: number, dp: number, dt: number) {
  * pose and it would jump. Returns the plane it turns in. */
 export function crankStart(plane: number): number {
   glide = null; st.settling = false; st.cranking = true;
-  if (st.bursting) { st.bursting = false; queue.length = 0; st.burstIn = rnd(...BURST_EVERY); }
+  if (st.bursting) { stopBurst(); st.burstIn = rnd(...BURST_EVERY); }
   st.target = st.angle; st.vel = 0; st.spinVel = 0;
-  const q = Math.round(st.angle / QUARTER);
-  if (Math.abs(st.angle - q * QUARTER) < 1e-3) {
-    if (q !== 0) fold(q);
+  if (Math.abs(st.angle - Math.round(st.angle / QUARTER) * QUARTER) < 1e-3) {
+    bank();
     st.angle = st.target = 0; st.plane = plane;
   }
   return st.plane;
 }
+/** The servo lets go where the machine is: the burst's moves dropped. */
+function stopBurst() { st.bursting = false; queue.length = 0; st.target = st.angle; st.vel = 0; }
+/** The whole quarters turned so far folded into the pose, in another plane (`fold`), what is left over kept. */
+function bank() { const q = Math.round(st.angle / QUARTER); if (q !== 0) fold(q); }
 /** `d` radians in the live plane, by hand; the way it goes is the way it turns from then on, and each whole quarter
  * is banked, in the same plane, so the drag goes on as it started. */
 export function crankBy(d: number) {
@@ -170,7 +169,7 @@ export function tick(dt: number) {
   if (st.hard || st.transform) {
     glide = null; st.settling = false;
     // transform alone is the soft one: the same even turn, slower, and no servo cutting in
-    if (!st.hard && st.bursting) { st.bursting = false; queue.length = 0; st.target = st.angle; st.vel = 0; }
+    if (!st.hard && st.bursting) stopBurst();
     if (st.bursting) {
       // the servo has it: each move on its cue, the spring after it; once the last has landed and settled, bank the
       // quarters, change plane, and let the spin pick up again from still
@@ -179,8 +178,7 @@ export function tick(dt: number) {
       [st.angle, st.vel] = spring(st.angle, st.vel, st.target, dt, SERVO);
       if (!queue.length && st.next <= 0 && Math.abs(st.target - st.angle) < 2e-3 && Math.abs(st.vel) < 0.03) {
         st.angle = st.target; st.vel = 0; st.spinVel = 0;
-        const q = Math.round(st.angle / QUARTER);
-        if (q !== 0) fold(q);
+        bank();
         st.bursting = false; st.burstIn = rnd(...BURST_EVERY);
       }
       return;
@@ -202,14 +200,13 @@ export function tick(dt: number) {
     return;
   }
   // out of hard mode mid-burst: the servo lets go where the machine is
-  if (st.bursting) { st.bursting = false; queue.length = 0; st.target = st.angle; st.vel = 0; }
+  if (st.bursting) stopBurst();
 
   if (st.settling) {
     [st.angle, st.vel] = spring(st.angle, st.vel, st.target, dt, SERVO);
     if (Math.abs(st.target - st.angle) < 2e-3 && Math.abs(st.vel) < 0.03) {
       st.angle = st.target; st.vel = 0; st.settling = false;
-      const q = Math.round(st.angle / QUARTER);
-      if (q !== 0) fold(q);
+      bank();
     }
   }
 
@@ -221,8 +218,7 @@ export function tick(dt: number) {
     if (glide.t >= glide.dur) {
       st.angle = st.target = glide.to;
       glide = null;
-      const q = Math.round(st.angle / QUARTER);
-      if (q !== 0) fold(q);
+      bank();
     }
   }
 }

@@ -4,15 +4,18 @@ import * as THREE from 'three';
 import { ContactShadows, Environment, Lightformer } from '@react-three/drei';
 import { Machine } from './Machine';
 import { Drones } from './Drones';
-import { DroneCam } from './DroneCam';
+import { DroneCam, eyeView } from './DroneCam';
 import { Grip, grip } from './Grip';
+// CellMap (./CellMap.tsx), the cells' little map with their colours, is off the page for now
 import { drone } from './drone';
 import { st, rig, orbitBy, crankStart, crankBy, crankEnd, pose } from './state';
 import { project } from './tesseract';
 import { dof } from './dof';
 
 const PARAMS = new URLSearchParams(location.search);
-const CLEAN = PARAMS.has('clean'); // no page furniture, for the screengrab
+const CLEAN = PARAMS.has('clean'); // no page furniture, for the screengrab: the first person view maximized, a faint ground
+if (PARAMS.has('probe')) drone.on = true; // the probe in from the start, for the screengrab (no button to press under ?clean)
+if (CLEAN) eyeView.max = true;
 
 // Two modes, the same two views in both: the machine fills the page, the eye's view the right third behind it.
 // Auto, the attract mode: the device flies on its own, the camera turns slowly on a turntable, a drag orbits it.
@@ -22,27 +25,18 @@ const CLEAN = PARAMS.has('clean'); // no page furniture, for the screengrab
 // time, changing plane as it goes.
 
 
-// The three modes, pills under MODE with a line on the one picked: on its own the camera orbits the machine or follows
+// The three modes, pills under MODE, nothing more (a line on the one picked under them before): on its own the camera orbits the machine or follows
 // the beetle; the pilot is at the controls.
 type Mode = 'orbit' | 'follow' | 'pilot';
-const MODES: [Mode, string, string][] = [
-  ['orbit', 'Orbit', 'The whole tesseract in view, the beetle on its own. Drag to turn it.'],
-  ['follow', 'Follow', 'The camera stays with the beetle as it flies through the cells.'],
-  ['pilot', 'Pilot', 'You fly the beetle: drag to steer, W and S to go.'],
+const MODES: [Mode, string][] = [
+  ['orbit', 'Orbit'],
+  ['follow', 'Follow'],
+  ['pilot', 'Pilot'],
 ];
 
-// the turntable goes with transform, one switch for both: the camera's slow turn and the machine's in 4D
+// the turntable goes with transform, the play/pause for both: the camera's slow turn and the machine's in 4D
 rig.spin = st.transform;
 
-/** A small switch: its name, then ON | OFF at the end of the line, the one it is at filled; a click anywhere on it
- * flips it. Never takes focus, so space stays forward. */
-const Small = ({ on, label, act }: { on: boolean; label: string; act: () => void }) => (
-  <button className={`toggle small ${on ? 'on' : ''}`} role="switch" aria-checked={on} aria-label={label} tabIndex={-1}
-    onPointerDown={(e) => e.preventDefault()} onClick={act}>
-    <span className="label">{label}</span>
-    <span className="seg" aria-hidden><i className={on ? 'at' : ''}>On</i><i className={on ? '' : 'at'}>Off</i></span>
-  </button>
-);
 
 /** The machine and the device on a rig with a fixed tilt; the camera orbits round it. */
 function Rig({ children }: { children: React.ReactNode }) {
@@ -58,12 +52,13 @@ function Rig({ children }: { children: React.ReactNode }) {
     rig.zoom += (fit * rig.zoomK - rig.zoom) * Math.min(1, dt * 2.5);
     // on the turntable the look leans towards the device a part of the way from the machine's middle, slowly, so it
     // follows the flight without chasing it; and eases back to the middle off it
-    const lean = rig.turntable && rig.spin ? FOCUS : 0;
+    const lean = rig.turntable && rig.spin && drone.on ? FOCUS : 0; // no beetle, the middle
     project(pose(), drone.p, focusAt).applyQuaternion(rig.q).multiplyScalar(lean);
-    rig.focus.lerp(focusAt, Math.min(1, dt * 0.8));
+    const sdt = drone.frozen ? 0 : dt; // P: what goes after the beetle holds too; a drag and the wheel still go
+    rig.focus.lerp(focusAt, Math.min(1, sdt * 0.8));
     camera.position.setFromSphericalCoords(rig.zoom, Math.PI / 2 - rig.pitch, rig.yaw);
     // follow (the switch): the same orbit, round the beetle instead of the machine's middle, nearer; eased in and out
-    tail.lerp(drone.world, Math.min(1, dt * FOLLOW_EASE));
+    tail.lerp(drone.world, Math.min(1, sdt * FOLLOW_EASE));
     rig.followK += ((rig.follow && !drone.pilot ? 1 : 0) - rig.followK) * Math.min(1, dt * 2); // on its own only: at the controls the camera is the usual one
     const fk = rig.followK;
     if (fk > 0.001) {
@@ -72,6 +67,11 @@ function Rig({ children }: { children: React.ReactNode }) {
       camera.position.lerp(followAt.copy(tail).add(off), fk);
       camera.lookAt(look);
     } else camera.lookAt(look.copy(rig.focus));
+    // following, the beetle two thirds across, clear of the left column: the picture slid right by a sixth of the page,
+    // the view itself the same, eased in and out with the follow
+    const slide = fk * FOLLOW_SLIDE * size.width;
+    if (slide > 0.5) cam.setViewOffset(size.width, size.height, -slide, 0, size.width, size.height);
+    else if (cam.view?.enabled) cam.clearViewOffset();
     // the depth of field on what the camera looks at, the beetle when following; nearer, the blur deeper, as a lens's
     dof.focus.copy(look);
     dof.aperture = THREE.MathUtils.lerp(DOF_WIDE, DOF_FOLLOW, fk);
@@ -89,6 +89,7 @@ const DOF_WIDE = 0.007, DOF_FOLLOW = 0.009; // the blur at twice the focus dista
 // catch, were tried first, with cuts and then glides; too much.)
 const FOLLOW = 0.5; // the distance to the beetle against the fit to the whole machine
 const FOLLOW_EASE = 2; // how fast the look goes after the beetle (1/s)
+const FOLLOW_SLIDE = 2 / 3 - 1 / 2; // where the beetle sits across the page, following: two thirds, from the middle
 const LEVEL = 0.87; // radians, about 50 degrees
 const tail = new THREE.Vector3(), off = new THREE.Vector3();
 const focusAt = new THREE.Vector3();
@@ -99,11 +100,36 @@ const Key = ({ children, wide }: { children: React.ReactNode; wide?: boolean }) 
 /** A crosshair, the sight of a first-person game: the pointer lock makes the mouse the look. A ring, four ticks
  * through it with a gap at the middle, a dot there. */
 const Crosshair = () => (
-  <svg className="icon" width={22} height={22} viewBox="0 0 22 22" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" aria-hidden>
+  <svg className="icon" width={14} height={14} viewBox="0 0 22 22" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" aria-hidden>
     <circle cx="11" cy="11" r="6.5" />
     <path d="M11 1.5v5M11 15.5v5M1.5 11h5M15.5 11h5" />
     <circle cx="11" cy="11" r="1.1" fill="currentColor" stroke="none" />
   </svg>
+);
+/** The first person view's corner button: four corners pointing out to maximize, in to minimize. */
+const Corners = ({ out }: { out: boolean }) => (
+  <svg width={14} height={14} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+    <path d={out ? 'M2 6V2h4M10 2h4v4M14 10v4h-4M6 14H2v-4' : 'M6 2v4H2M10 2v4h4M10 14v-4h4M6 14v-4H2'} />
+  </svg>
+);
+/** The first person view's other corner button: an eye while it shows (to hide it), a grid while it is hidden (to
+ * bring it back). */
+const EyeOrGrid = ({ shown }: { shown: boolean }) => (
+  <svg width={15} height={15} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+    {shown
+      ? <><path d="M1.5 8C3.2 4.8 5.4 3.3 8 3.3S12.8 4.8 14.5 8C12.8 11.2 10.6 12.7 8 12.7S3.2 11.2 1.5 8Z" /><circle cx="8" cy="8" r="2.2" /></>
+      : <path d="M2.5 2.5h11v11h-11zM6.2 2.5v11M9.8 2.5v11M2.5 6.2h11M2.5 9.8h11" />}
+  </svg>
+);
+/** Transform's button: a pause while it turns, a play while it is still. */
+const PlayPause = ({ playing }: { playing: boolean }) => (
+  <svg width={11} height={11} viewBox="0 0 16 16" fill="currentColor" aria-hidden>
+    {playing ? <path d="M4 2.5h2.6v11H4zM9.4 2.5H12v11H9.4z" /> : <path d="M4.5 2.3 13.5 8l-9 5.7z" />}
+  </svg>
+);
+/** The probe's way out: a stop, a small square. */
+const Stop = () => (
+  <svg width={8} height={8} viewBox="0 0 16 16" fill="currentColor" aria-hidden><path d="M2 2h12v12H2z" /></svg>
 );
 /** An arrow key's mark: a small solid triangle, drawn, so no font turns it into an emoji. */
 const Tri = ({ d }: { d: 'up' | 'down' | 'left' | 'right' }) => (
@@ -158,6 +184,8 @@ function handUp() { if (hand.on && hand.picked) crankEnd(); hand.on = false; gri
 export function App() {
   const [transform, setTransform] = useState(st.transform);
   const [grid, setGrid] = useState(st.grid);
+  const [maxi, setMaxi] = useState(eyeView.max);
+  const [beetle, setBeetle] = useState(drone.on);
   const [mode, setModeState] = useState<Mode>(drone.pilot ? 'pilot' : rig.follow ? 'follow' : 'orbit');
   const manual = mode === 'pilot';
   const lastAuto = useRef<Mode>(rig.follow ? 'follow' : 'orbit'); // where p goes back to from the pilot
@@ -235,7 +263,8 @@ export function App() {
     const down = (e: KeyboardEvent) => {
       const k = e.key.toLowerCase();
       if (e.key === 'Alt') { grip.alt = true; e.preventDefault(); return; } // alt held: the strut under the pointer shows
-      if (k === 'p') { setMode(drone.pilot ? lastAuto.current : 'pilot'); return; }
+      if (k === 'p') { drone.frozen = !drone.frozen; return; } // pause everything (it was the pilot, which the pills do)
+      if (k === 't') { toggleTransformRef.current(); return; } // transform, play or pause
       if (k === 'h') { st.hard = !st.hard; return; } // no switch for now
       if (k === 'o') { st.inout = !st.inout; return; } // the hand-over at a wall: folded by default, o for in, then out
       if (drone.pilot) {
@@ -265,19 +294,18 @@ export function App() {
   // bottom left over the keys in either mode: on top the controls switch (manual or auto), twice the small size;
   // then the settings, the camera's turntable and the machine turning in 4D on its own. Hard mode has no switch for
   // now: h.
-  const controls = <>
-    <h5>Mode</h5>
+  // transform, and the turntable with it: the play/pause button bottom middle (a TRANSFORM switch under SETTINGS before)
+  const toggleTransform = () => { st.transform = !st.transform; rig.spin = st.transform; setTransform(st.transform); };
+  const toggleTransformRef = useRef(toggleTransform); // for the keys, set up once
+  toggleTransformRef.current = toggleTransform;
+  const toggleBeetle = () => {
+    drone.on = !drone.on; setBeetle(drone.on);
+    if (!drone.on) setMode('orbit'); // nothing to follow or fly
+  };
+  const controls = !beetle ? null : <>
     <div className="pills" role="radiogroup" aria-label="Mode">
       {MODES.map(([m, name]) => <button key={m} className={`pill ${mode === m ? 'at' : ''}`} role="radio" aria-checked={mode === m} tabIndex={-1}
         onPointerDown={(e) => e.preventDefault()} onClick={() => setMode(m)}>{name}</button>)}
-    </div>
-    <p className="mode-what">{MODES.find(([m]) => m === mode)![2]}</p>
-  </>;
-  const smalls = <>
-    <h5>Settings</h5>
-    <div className="smalls">
-      <Small on={transform} label="Transform" act={() => { st.transform = !st.transform; rig.spin = st.transform; setTransform(st.transform); }} />
-      <Small on={grid} label="Camera grid" act={() => { st.grid = !st.grid; setGrid(st.grid); }} />
     </div>
   </>;
 
@@ -290,7 +318,7 @@ export function App() {
           <Suspense fallback={null}>
             <Rig>
               <Machine />
-              <Drones />
+              <group visible={beetle}><Drones /></group>
               <Grip />
             </Rig>
             <DroneCam />
@@ -305,18 +333,30 @@ export function App() {
           <directionalLight position={[4, 8, 6]} intensity={1.1} />
         </Canvas>
       </div>
-      {CLEAN ? null : <div className="plate"><b>08 Tesseract</b><i>Codevember 2026</i><div className="blurb"><p>A tesseract is a cube in four dimensions: eight cubes, each wall shared by two. We can only see its shadow, a cube inside a cube.</p><p>It turns in 4D without bending, yet in the shadow the inner cube swells out and the struts stretch. In an attempt to illustrate it, a physical object, a beetle, moves through the cubes, searching for blinking steel balls to catch. Its position and rotation are transposed from 4D space. The line drawing behind is what it sees, each cell a true cube from inside: use it for navigating with controls on.</p></div></div>}
-      <div id="lock" className="lock"><i /><i /><i /><i /><b>lock</b></div>
-      {/* bottom left, under the blurb and as wide: mode and settings; the shortcuts bottom right, as wide */}
-      {CLEAN ? null : <div className="keys">
-        {controls}
-        {/* then the pointer lock; locked, there is no pointer to click with, so the way out instead: esc */}
-        {!manual ? null : locked ? <div className="action hint"><Key wide>Esc</Key>to unlock</div> : <button className="action" tabIndex={-1}
+      {CLEAN ? null : <div className="plate"><b>08 Tesseract</b><i>Codevember 2026</i><div className="blurb"><p>A tesseract is a cube in four dimensions: eight cubes, each wall shared by two. We only see its shadow, a cube inside a cube. It turns in 4D without bending, yet in the shadow the inner cube swells out and the struts stretch.</p><h5>Probe{beetle ? <button className="stop" tabIndex={-1} aria-label="Deactivate probe" onPointerDown={(e) => e.preventDefault()} onClick={toggleBeetle}><Stop /></button> : null}</h5><p>The shadow alone is hard to read, so we put a physical object in it. The probe lives in 4D: its position and rotation are transposed from there, and as it flies from one cell into the next it shows how they join, searching for blinking steel balls to catch.</p>{beetle ? null : <button className="probe" tabIndex={-1} onPointerDown={(e) => e.preventDefault()} onClick={toggleBeetle}><PlayPause playing={false} />Activate probe</button>}{beetle ? <><h5 className="small">Info</h5><p>Each cell has its own colour. The trail is left in the colour of the cell the probe was in, a wall lights up in the colour of the cell beyond as it goes through, and a steel ball blinks in the colour of the cell it is in.</p><p>The fisheye drawing below is what the probe sees. From inside, every cell is a true cube however the shadow twists: pick Pilot to fly it by that view.</p></> : null}</div></div>}
+      {/* the first person view's corner, top right: hide or show it, and, shown, maximize or
+          minimize it, the corner the only way to them */}
+      {CLEAN || !beetle || (!maxi && grid) ? null : <button className="maxi eye" tabIndex={-1} aria-label={grid ? 'Hide the first person view' : 'Show the first person view'}
+        onPointerDown={(e) => e.preventDefault()} onClick={() => { st.grid = !st.grid; setGrid(st.grid); }}>
+        <EyeOrGrid shown={grid} />
+      </button>}
+      {CLEAN || !beetle || !grid ? null : <button className={`maxi ${maxi ? "" : "solo"}`} tabIndex={-1} aria-label={maxi ? 'Minimize the first person view' : 'Maximize the first person view'}
+        onPointerDown={(e) => e.preventDefault()} onClick={() => { eyeView.max = !eyeView.max; setMaxi(eyeView.max); }}>
+        <Corners out={!maxi} />
+      </button>}
+      {/* bottom middle, at the controls: the pointer lock; locked, there is no pointer to click with, so the way out
+          instead: esc (transform's play/pause beside it for a while) */}
+      {CLEAN || !manual ? null : <div className="middle">
+        {locked ? <div className="play hint"><Key wide>Esc</Key>to unlock</div> : <button className="play" tabIndex={-1}
           onPointerDown={(e) => e.preventDefault()} onClick={() => stage.current?.requestPointerLock()}>
           <Crosshair />
           Lock pointer
         </button>}
-        {smalls}
+      </div>}
+      <div id="lock" className="lock"><i /><i /><i /><i /><b>lock</b></div>
+      {/* bottom left, under the blurb and as wide: mode and settings; the shortcuts bottom right, as wide */}
+      {CLEAN ? null : <div className="keys">
+        {controls}
       </div>}
       {CLEAN ? null : <div className="keys right">
         {manual ? <>
@@ -329,10 +369,14 @@ export function App() {
         <Do how={<><Key>⇧</Key> + <Key wide>{locked ? 'Mouse' : 'Drag'}</Key></>} what="Orbit" />
         <Do how={<><Key>{MAC ? '⌥' : 'Alt'}</Key> + <Key wide>{locked ? 'Mouse' : 'Drag'}</Key></>} what="Transform" />
         <Do how={<Key>L</Key>} what={locked ? 'Unlock pointer' : 'Lock pointer'} />
+        <Do how={<Key>T</Key>} what={transform ? 'Pause transforms' : 'Play transforms'} />
+        <Do how={<Key>P</Key>} what="Pause everything" />
         </> : <>
         <h6 className="shortcuts">View</h6>
         <Do how={<Key wide>Drag</Key>} what="Rotate" />
         <Do how={<><Key>{MAC ? '⌥' : 'Alt'}</Key> + <Key wide>Drag</Key></>} what="Transform" />
+        <Do how={<Key>T</Key>} what={transform ? 'Pause transforms' : 'Play transforms'} />
+        <Do how={<Key>P</Key>} what="Pause everything" />
         </>}
       </div>}
     </>

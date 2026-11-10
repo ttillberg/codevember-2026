@@ -6,6 +6,7 @@
   --lime: #c9e35b;
   --orange: #f2703f;
   --ui: #5c5c5a; /* the panel's one grey: headings, rules, switches, keys, words, the button */
+  --col: 380px; /* the left column: the blurb, the first person view, the mode pills (330 before); DroneCam's COL the same */
   --purple: #8e7cf0; /* the machine's purple ring: the controls, on, and the lock pointer */
 }
 
@@ -45,7 +46,7 @@ body {
   line-height: 0.9;
   text-transform: uppercase;
 }
-.plate i {
+.plate > i { /* the plate's own lines, not the i inside the beetle switch */
   display: block;
   margin-top: 6px;
   font-style: normal;
@@ -55,10 +56,44 @@ body {
   text-transform: uppercase;
   color: var(--ink);
 }
-.plate i { line-height: 1.15; }
-.plate i + i { margin-top: 0; } /* the second line, what it is, straight under the first */
+.plate > i { line-height: 1.15; }
+.plate > i + i { margin-top: 0; } /* the second line, what it is, straight under the first */
 /* the blurb: what a tesseract is and what goes on here, two short paragraphs, small, in the panel's grey */
-.plate .blurb { max-width: 330px; margin-top: 14px; }
+.plate .blurb { max-width: var(--col); margin-top: 14px; }
+/* the probe in the blurb: its own section, a heading with the hairline under it as the panel's, why it is there,
+   and a button to send it in (an ON | OFF switch before); in, the button takes it out, and how to read it follows */
+.plate h5 { /* mid size, between the title and the panel's headings, in the title's face */
+  margin: 18px 0 9px; padding-bottom: 6px; border-bottom: 1px solid var(--ui);
+  font: 700 22px/1 "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; letter-spacing: -0.01em; text-transform: uppercase; color: var(--ink);
+}
+/* INFO: a small heading with the hairline under it, as the panel's, then what it says (folded behind a (?) for a
+   while) */
+.plate h5.small {
+  margin: 16px 0 8px; padding-bottom: 5px;
+  font: 700 10px/1 "Helvetica Neue", Helvetica, Arial, sans-serif; letter-spacing: 0.14em; color: var(--ui);
+}
+/* the cells' map: the tesseract at rest in hairlines, a dot for each cell between the cubes, the colours under it; in
+   the right column under the first person view's square, as wide (in INFO for a moment) */
+.cellmap { margin: 0; }
+.cellmap.side { position: fixed; right: 24px; top: 24px; pointer-events: none; } /* top right, where the first person view's square was */
+.cellmap svg { display: block; margin: 0 0 10px; }
+.cellmap figcaption { display: grid; grid-template-columns: repeat(4, auto); justify-content: start; gap: 7px 16px; } /* under it, packed left */
+.cellmap span { display: inline-flex; align-items: center; gap: 5px; font-size: 10px; letter-spacing: 0.04em; color: var(--ui); white-space: nowrap; }
+.cellmap i { width: 7px; height: 7px; border-radius: 50%; flex: none; }
+.probe {
+  display: inline-flex; align-items: center; gap: 8px; margin: 4px 0 12px; padding: 10px 18px 9px 15px; pointer-events: auto; cursor: pointer; /* the size of the other pills */
+  border: 1.5px solid var(--purple); border-radius: 999px; background: var(--purple); color: #fff; /* the machine's purple (magenta for a moment) */
+  font: 700 12px/1 "Helvetica Neue", Helvetica, Arial, sans-serif; letter-spacing: 0.14em; text-transform: uppercase;
+}
+/* in, the way out: a stop square in a circle at the end of the PROBE heading (a DEACTIVATE PROBE pill before) */
+.plate h5 { display: flex; justify-content: space-between; align-items: center; }
+.stop {
+  display: grid; place-items: center; width: 24px; height: 24px; margin: -4px 0; padding: 0; /* no taller than the heading's line, so the text under it stays put as it comes and goes */ border: 1.5px solid var(--ui); border-radius: 50%;
+  background: none; color: var(--ui); cursor: pointer; pointer-events: auto;
+}
+.stop:hover { box-shadow: 0 0 0 3px rgba(28, 28, 28, 0.08); }
+.probe svg { flex: none; margin-top: -1px; } /* play to send it in */
+.probe:hover { box-shadow: 0 0 0 3px rgba(28, 28, 28, 0.08); }
 .plate p {
   margin: 0 0 7px;
   font: 11px/1.5 "Helvetica Neue", Helvetica, Arial, sans-serif;
@@ -69,7 +104,7 @@ body {
 /* mode and settings bottom left, as wide as the blurb, and the keys bottom right, as wide, as day 07's help but straight
    on the page: rows of the keys or gesture on the left and what it does on the right */
 .keys {
-  position: fixed; left: 24px; bottom: 24px; width: 330px; box-sizing: border-box;
+  position: fixed; left: 24px; bottom: 24px; width: var(--col); box-sizing: border-box;
   display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 7px 14px;
   pointer-events: none; user-select: none; white-space: nowrap;
   font: 12px/16px "Helvetica Neue", Helvetica, Arial, sans-serif;
@@ -80,6 +115,7 @@ body {
 .keys.right .what, .keys.right h6 { text-align: right; }
 .keys.right .how { justify-content: flex-end; } /* the keys flush with the edge */
 .keys.right h6 { visibility: hidden; } /* no names over the groups, the gap between them kept */
+
 .keys .how { display: inline-flex; align-items: center; gap: 4px; color: var(--ui); font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase; }
 .keys .what { font-size: 12px; color: var(--ui); } /* what it does: a sentence, in sentence case */
 /* the sections, SETTINGS and SHORTCUTS: small caps in ink and a hairline under, across the column */
@@ -124,10 +160,11 @@ body.clean .plate, body.clean .keys { display: none; }
 @media (max-width: 640px) {
   .plate { width: calc(100% - 48px); }
   .plate b { font-size: 36px; }
-  .plate i { font-size: 9px; }
+  .plate > i { font-size: 9px; }
   .plate p { display: none; }
   .keys { width: auto; }
-  .keys.right { display: none; } /* no keys on a phone, the settings stay */
+  .keys.right { display: none; } /* no keys on a phone */
+  .cellmap.side { display: none; }
 }
 
 
@@ -143,43 +180,33 @@ body.clean .plate, body.clean .keys { display: none; }
 .lock.on b::after { content: 'ed'; }
 @keyframes lockblink { 0% { opacity: 1; } 100% { opacity: 0.35; } }
 
-/* the switch: ink on paper, lime when on; used small, in the settings (.small) */
-.toggle[hidden] { display: none; }
-/* the lock pointer button, at the controls, under the controls switch: white, in the panel's grey, a crosshair on its left */
-.action {
-  display: inline-flex; align-items: center; gap: 8px; height: 30px; padding: 0 12px 0 9px; box-sizing: border-box;
-  border: 1.5px solid var(--ui); border-radius: 15px; background: #fff; color: var(--ui); cursor: pointer;
-  font: 900 11px/1 "Helvetica Neue", Helvetica, Arial, sans-serif; letter-spacing: 0.06em; text-transform: uppercase;
-  transition: background 0.15s;
-}
-.action:hover { background: #f2f1ee; }
-.action .icon { display: block; flex: none; width: 15px; height: 15px; }
-.keys > .action { grid-column: 1 / -1; justify-self: start; pointer-events: auto; }
-/* where the button was, while the pointer is locked: no pointer to click with, so a hint, not a button */
-.action.hint { gap: 8px; padding: 0; border: 0; background: none; color: var(--ui); cursor: default; pointer-events: none; }
-.action.hint .key { height: 20px; padding: 0 8px; font-size: 10px; }
-/* a switch: its name, and ON | OFF at the end of the line in an outlined box, the one it is at filled in the panel's
-   grey (a sliding knob in a track was tried first) */
-.toggle {
-  display: flex; align-items: center; justify-content: space-between; gap: 14px; width: 100%;
-  padding: 0; border: 0; background: none; cursor: pointer; color: var(--ui); text-align: left;
-  font: 600 11px/1 "Helvetica Neue", Helvetica, Arial, sans-serif; letter-spacing: 0.12em; text-transform: uppercase;
-}
-.toggle .label { color: var(--ui); }
-.toggle .seg { display: inline-flex; border: 1.2px solid var(--ui); border-radius: 4px; overflow: hidden; }
-.toggle .seg i { font-style: normal; font-size: 9px; letter-spacing: 0.1em; padding: 3px 6px 2px; color: var(--ui); }
-.toggle .seg i + i { border-left: 1.2px solid var(--ui); }
-.toggle .seg i.at { background: var(--ui); color: var(--paper); }
-.toggle:hover .seg { box-shadow: 0 0 0 3px rgba(28, 28, 28, 0.08); }
 
+/* bottom middle, side by side: transform's play/pause and, at the controls, the pointer lock (on the left over the keys
+   before, white) */
+.middle { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); display: flex; gap: 8px; }
+.play { /* a pill as the mode's, the icon then the word (a round icon button before) */
+  display: inline-flex; align-items: center; gap: 8px; white-space: nowrap;
+  padding: 10px 18px 9px 15px; border: 1.5px solid var(--ui); border-radius: 999px; background: var(--paper); cursor: pointer;
+  font: 700 12px/1 "Helvetica Neue", Helvetica, Arial, sans-serif; letter-spacing: 0.14em; text-transform: uppercase; color: var(--ui);
+}
+.play svg { flex: none; margin-top: -1px; }
+.play:hover { box-shadow: 0 0 0 3px rgba(28, 28, 28, 0.08); }
+.play.hint { border-color: transparent; background: none; cursor: default; box-shadow: none; } /* locked: esc to unlock, no pill to press */
+.play.hint .key { height: 18px; }
+/* the first person view's corner button, top right, in the strip's corner or the page's: outlined, on the paper */
+/* in the view's top right corner: it is the column wide in the left column, 76 up from the bottom, --cam-h high */
+.maxi {
+  position: fixed; bottom: calc(76px + var(--cam-h, var(--col)) - 36px); left: calc(24px + var(--col) - 36px); width: 28px; height: 28px; padding: 0; display: grid; place-items: center;
+  border: 1.2px solid var(--ui); border-radius: 6px; background: var(--paper); color: var(--ui); cursor: pointer;
+}
+.maxi:hover { box-shadow: 0 0 0 3px rgba(28, 28, 28, 0.08); }
+.maxi:not(.eye) { left: calc(24px + var(--col) - 70px); } /* the eye in the corner, maximize to its left */
+.maxi.solo { left: calc(24px + var(--col) - 36px); } /* minimized there is no eye (only maximized, or hidden, to bring it back): maximize alone in the corner */
 /* the mode: three pills in a row, outlined, the one picked filled in the panel's grey, a line under on what it does */
-.pills { grid-column: 1 / -1; display: flex; gap: 6px; pointer-events: auto; }
+.pills { grid-column: 1 / -1; display: flex; gap: 8px; margin: 2px 0; pointer-events: auto; } /* bigger: the three across the panel, each a third */
 .pill {
-  padding: 5px 12px 4px; border: 1.2px solid var(--ui); border-radius: 999px; background: none; cursor: pointer;
-  font: 600 10px/1 "Helvetica Neue", Helvetica, Arial, sans-serif; letter-spacing: 0.12em; text-transform: uppercase; color: var(--ui);
+  flex: 1; padding: 10px 0 9px; border: 1.5px solid var(--ui); border-radius: 999px; background: none; cursor: pointer;
+  font: 700 12px/1 "Helvetica Neue", Helvetica, Arial, sans-serif; letter-spacing: 0.14em; text-transform: uppercase; color: var(--ui);
 }
 .pill.at { background: var(--ui); color: var(--paper); }
 .pill:hover { box-shadow: 0 0 0 3px rgba(28, 28, 28, 0.08); }
-.mode-what { grid-column: 1 / -1; margin: 0; white-space: normal; font-size: 12px; line-height: 1.4; color: var(--ui); }
-/* the switches, in a column across the panel, each its own line */
-.smalls { grid-column: 1 / -1; display: flex; flex-direction: column; gap: 8px; pointer-events: auto; }
