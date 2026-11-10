@@ -74,7 +74,12 @@ body {
   pointer-events: none; user-select: none; white-space: nowrap;
   font: 12px/16px "Helvetica Neue", Helvetica, Arial, sans-serif;
 }
-.keys.right { left: auto; right: 24px; }
+/* flush right and mirrored: what it does on the left, set right, the keys on the right edge (rtl swaps the columns, ltr back inside) */
+.keys.right { left: auto; right: 24px; width: auto; direction: rtl; }
+.keys.right > * { direction: ltr; }
+.keys.right .what, .keys.right h6 { text-align: right; }
+.keys.right .how { justify-content: flex-end; } /* the keys flush with the edge */
+.keys.right h6 { visibility: hidden; } /* no names over the groups, the gap between them kept */
 .keys .how { display: inline-flex; align-items: center; gap: 4px; color: var(--ui); font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase; }
 .keys .what { font-size: 12px; color: var(--ui); } /* what it does: a sentence, in sentence case */
 /* the sections, SETTINGS and SHORTCUTS: small caps in ink and a hairline under, across the column */
@@ -89,6 +94,7 @@ body {
   font: 700 9px/1 "Helvetica Neue", Helvetica, Arial, sans-serif; letter-spacing: 0.14em; text-transform: uppercase; color: var(--ui);
 }
 .keys h5 + h6 { margin-top: 2px; }
+.keys h6:first-child { margin-top: 0; } /* the shortcuts start straight on their first subsection, no heading over them */
 .keys h5 span { font-weight: 400; font-size: 11px; letter-spacing: 0; text-transform: none; color: var(--ui); } /* a note after the name */
 /* keys: outlined caps, no fill, the outline and the letters in one mid grey (tried filled, near black then mid grey) */
 .key {

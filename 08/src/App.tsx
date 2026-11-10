@@ -301,7 +301,6 @@ export function App() {
       </div>}
       {CLEAN ? null : <div className="keys right">
         {manual ? <>
-        <h5 className="shortcuts">Shortcuts <span>(interactive mode)</span></h5>
         <h6 className="shortcuts">Navigation</h6>
         <Do how={<Key wide>{locked ? 'Mouse' : 'Drag'}</Key>} what="Steer" />
         <Do how={<><Key>W</Key><Key>S</Key><Key><Tri d="up" /></Key><Key><Tri d="down" /></Key></>} what="Forward, back" />
@@ -313,7 +312,6 @@ export function App() {
         <h6 className="shortcuts">Options</h6>
         <Do how={<><Key>{MAC ? '⌥' : 'Alt'}</Key> + <Key wide>{locked ? 'Mouse' : 'Drag'}</Key></>} what="Twist the tesseract" />
         </> : <>
-        <h5 className="shortcuts">Shortcuts</h5>
         <h6 className="shortcuts">View</h6>
         <Do how={<Key wide>Drag</Key>} what="Rotate" />
         <h6 className="shortcuts">Options</h6>
