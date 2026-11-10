@@ -16,10 +16,9 @@ const PARAMS = new URLSearchParams(location.search);
 const CLEAN = PARAMS.has('clean'); // no page furniture, for the screengrab: the first person view maximized, a faint ground
 // the probe in from the start, for the screengrab (no button to press under ?clean), followed as it comes in by the
 // button, but orbited for the screengrab
-// the probe is in from the start, followed (an ACTIVATE PROBE button brought it in, for a while); under ?clean
-// only with ?probe, and orbited
+// the probe is in from the start (an ACTIVATE PROBE button brought it in, for a while), the camera free, ORBIT
+// (followed to start, for a while); under ?clean only with ?probe
 if (!CLEAN || PARAMS.has('probe')) drone.on = true;
-if (!CLEAN) rig.follow = true;
 if (CLEAN) { eyeView.max = true; page.clean = true; }
 
 // Two modes, the same two views in both: the machine fills the page, the eye's view the right third behind it.
