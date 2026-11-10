@@ -47,9 +47,9 @@ export const drone = {
 };
 
 /** The piece: a small steel ball with a pinhead lamp on each axis, six, flashing fast. `blink(t)` runs them. */
-export const PIECE_R = 0.02 / 3; // a third of what it was, with the device
+export const PIECE_R = (0.02 * 2) / 3; // two thirds of what it was, with the device
 /** The device's radius in the main picture, and in cell space. */
-export const SIZE_MAIN = 0.095 / 3, SIZE_CELL = 0.17; // in the main picture a third of what it was, the piece with it
+export const SIZE_MAIN = (0.095 * 2) / 3, SIZE_CELL = 0.17; // in the main picture two thirds of what it was (a third, then twice that), the piece with it
 /** At the controls, the piece is in the lock when it is in this cell, this close (cell units) and ahead of the eye. */
 export const LOCK_RANGE = 1.1;
 // the lamps' colour is the colour of the cell the piece is in; one material in the fog, one out of it for the eye
