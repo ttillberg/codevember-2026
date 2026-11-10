@@ -26,8 +26,7 @@ if (CLEAN) { eyeView.max = true; page.clean = true; }
 // Auto, the attract mode: the device flies on its own, the camera turns slowly on a turntable, a drag orbits it.
 // Manual: a drag anywhere is the look, shift-drag orbits, or with the pointer locked (l) the mouse itself is the
 // look; w s and the up and down arrows go forward and back, a d and the side arrows strafe, space is forward too.
-// In both an alt-drag turns the machine in 4D by hand. Hard mode (h), in either: the machine turns in 4D all the
-// time, changing plane as it goes.
+// In both an alt-drag turns the machine in 4D by hand.
 
 
 // The three modes, pills under MODE, nothing more (a line on the one picked under them before): on its own the camera orbits the machine or follows
@@ -579,7 +578,6 @@ export function App() {
       if (e.key === 'Alt') { grip.alt = true; e.preventDefault(); return; } // alt held: the strut under the pointer shows
       if (k === 'p') { drone.frozen = !drone.frozen; return; } // pause everything (it was the pilot, which the pills do)
       if (k === 't') { toggleTransformRef.current(); return; } // transform, play or pause
-      if (k === 'h') { st.hard = !st.hard; return; } // no switch for now
       if (k === 'o') { st.inout = !st.inout; return; } // the hand-over at a wall: in, then out by default, o for folded
       if (drone.pilot) {
         // manual: w s and up down forward and back, a d and the side arrows strafe, space forward, l the lock
@@ -606,8 +604,7 @@ export function App() {
   }, []);
 
   // bottom left over the keys in either mode: on top the controls switch (manual or auto), twice the small size;
-  // then the settings, the camera's turntable and the machine turning in 4D on its own. Hard mode has no switch for
-  // now: h.
+  // then the settings, the camera's turntable and the machine turning in 4D on its own.
   // transform, and the turntable with it: the play/pause button bottom middle (a TRANSFORM switch under SETTINGS before)
   const toggleTransform = () => { st.transform = !st.transform; rig.spin = st.transform; setTransform(st.transform); };
   // AUTOTRANSFORM, top right of the view: the machine's turn in 4D on its own, alone, the turntable left as it is
