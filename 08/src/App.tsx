@@ -288,7 +288,7 @@ export function App() {
           <directionalLight position={[4, 8, 6]} intensity={1.1} />
         </Canvas>
       </div>
-      {CLEAN ? null : <div className="plate"><b>08 Tesseract</b><i>Codevember 2026</i><div className="blurb"><p>A tesseract is a cube in four dimensions: eight cubes, each wall shared by two. We can only see its shadow, a cube inside a cube.</p><p>It turns in 4D without bending, yet in the shadow the inner cube swells out and the struts stretch. A beetle flies through the cells; behind is what it sees, each cell a true cube from inside.</p></div></div>}
+      {CLEAN ? null : <div className="plate"><b>08 Tesseract</b><i>Codevember 2026</i><div className="blurb"><p>A tesseract is a cube in four dimensions: eight cubes, each wall shared by two. We can only see its shadow, a cube inside a cube.</p><p>It turns in 4D without bending, yet in the shadow the inner cube swells out and the struts stretch. A beetle flies through the cells, searching for blinking steel balls to catch; behind is what it sees, each cell a true cube from inside.</p></div></div>}
       <div id="lock" className="lock"><i /><i /><i /><i /><b>lock</b></div>
       {/* bottom left, under the blurb and as wide: mode, settings, shortcuts */}
       {CLEAN ? null : <div className="keys">
