@@ -36,8 +36,9 @@ const MODES: [Mode, string][] = [
   ['pilot', 'Pilot'],
 ];
 
-// the turntable goes with transform, the play/pause for both: the camera's slow turn and the machine's in 4D
-rig.spin = st.transform;
+// the turntable on to start, the transform off (they started together for a while); the play/pause sets both: the
+// camera's slow turn and the machine's in 4D
+rig.spin = true;
 
 
 // A phone's tilt (its device orientation, the gyroscope): leaning it turns the view a little round the machine, from how
@@ -283,14 +284,6 @@ const Cheat = () => (
         <path className="arrow" d="M52 17V39" /><Head x={52} y={17} a={-90} /><Head x={52} y={39} a={90} />
         <path className="arrow" d="M29 9H51" /><Head x={29} y={9} a={180} /><Head x={51} y={9} a={0} />
         <Hand x={40} y={29} a={-24} />
-      </svg>
-    </figure>
-    <i className="rule" />
-    <figure>
-      <svg width={64} height={64} viewBox="0 0 64 64">
-        <g transform="translate(32 21) scale(0.62) translate(-26 -28)">{CUBE}</g>
-        <path className="arrow" d="M13 19A19 14 0 0 1 51 19" /><Head x={51} y={19} a={72} />
-        <Hand x={30} y={38} a={-8} two />
       </svg>
     </figure>
   </div>

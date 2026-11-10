@@ -25,7 +25,7 @@ export const st = {
   way: 1, // which way it turns, +1 or -1: the last drag, or a flip now and then
   flipIn: 12, // seconds until it turns round on its own
   spinVel: 0, // the hard mode's speed, eased towards HARD_SPIN * way so a flip is a swing, not a knock
-  transform: true, // the transform switch, on to start (off for a while), and the play/pause button bottom middle: the machine turns in 4D all the time, evenly and softly, changing plane at each quarter
+  transform: false, // the transform switch, off to start (on for a while, and off before that), and the play/pause button bottom middle: the machine turns in 4D all the time, evenly and softly, changing plane at each quarter
   hard: false, // hard mode: the machine turns in 4D all the time, changing plane as it passes each quarter
   grid: true, // the camera grid, on to start: the eye's view behind the machine, or none
   inout: false, // the hand-over at a wall: false, both halves at once, folded at the wall; true (o), the body goes all the way in, then comes out
