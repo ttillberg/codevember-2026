@@ -169,9 +169,18 @@ html:not(:has(body.home)) { overflow: hidden; }
 .back:hover { color: var(--ink); }
 .back { display: none; }
 /* AUTOTRANSFORM, top right of the view, in the view (the stage): the page's corner on a desktop, the box's on a phone's
-   home page, the screen's full screen; small, outlined off, dark frosted on, as a picked pill */
-.stage .pill.autot { position: absolute; top: 24px; right: 24px; z-index: 2; padding: 10px 11px 9px 12px; font-size: 9px; border-width: 0.5px; touch-action: manipulation; }
-body.home .stage .pill.autot { top: 10px; right: 10px; }
+   home page, the screen's full screen; a switch, its name then ON | OFF, the one it is at dark frosted, on a frosted
+   pane with a hairline round it (a pill, outlined off and filled on, for a moment) */
+.stage .autot {
+  position: absolute; top: 24px; right: 24px; z-index: 2; display: inline-flex; align-items: center; gap: 2px;
+  padding: 3px 3px 3px 12px; border: 0.5px solid var(--ui); border-radius: 999px; cursor: pointer; touch-action: manipulation;
+  background: rgba(244, 244, 242, 0.55); -webkit-backdrop-filter: blur(10px) saturate(1.3); backdrop-filter: blur(10px) saturate(1.3);
+  font: 700 9px/1 "Helvetica Neue", Helvetica, Arial, sans-serif; letter-spacing: 0.14em; text-transform: uppercase; color: var(--ui);
+}
+.stage .autot .name { margin-right: 8px; }
+.stage .autot .seg { padding: 7px 9px 6px 10px; border-radius: 999px; }
+.stage .autot .seg.at { background: rgba(92, 92, 90, 0.6); color: var(--paper); }
+body.home .stage .autot { top: 10px; right: 10px; }
 /* the cheat sheet, an upright phone's home page's: one frosted sheet under the box, two little line drawings
    on it, as an assembly manual draws them, a hairline between and a word under each; folded away with the text (over
    ACTIVATE PROBE for a moment, two panes either side of it, with bare fingertips, before that) */
@@ -377,6 +386,8 @@ body.clean .plate, body.clean .keys { display: none; }
 }
 /* the mode: three pills in a row, outlined, the one picked filled in the panel's grey, a line under on what it does */
 .pills { grid-column: 1 / -1; display: flex; gap: 8px; margin: 2px 0; pointer-events: auto; } /* each as wide as its word (the three across the panel, a third each, for a while) */
+/* on a desktop the three share the column's width, a third each, the word in the middle (each as wide as its word for a while) */
+@media (min-width: 641px) and (min-height: 501px) { .pills .pill { flex: 1; justify-content: center; } }
 .pill {
   /* the pad round the word about the same every way, about 1.6 of its capitals' height, as a pill should be; a little
      more on the left, the letter spacing trailing on the right */
