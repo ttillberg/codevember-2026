@@ -39,7 +39,7 @@ type Rect = { x: number; y: number; w: number; h: number; round?: boolean }; // 
 /** Where the machine goes and where the view goes. The machine never under the text: beside the text column, or under
  * it on an upright phone; split, the room left over halved between the machine and the view (the view off, or
  * maximized behind it all, the machine has all of it). */
-export function regionsOf(W: number, H: number): { main: Rect; cam: Rect | null; aim?: { x: number; y: number } } {
+export function regionsOf(W: number, H: number): { main: Rect; cam: Rect | null; aim?: { x: number; y: number }; draw?: Rect[] } {
   if (page.boxed) return { main: { x: 0, y: 0, w: W, h: H }, cam: null };
   const split = splitOf(W, H), upright = W <= 640 && H > W;
   // a phone: the machine has all the room under (or beside) the text, and the view is a little disc over it, bottom
@@ -65,11 +65,15 @@ export function regionsOf(W: number, H: number): { main: Rect; cam: Rect | null;
   // a desktop: the machine has all the room beside the column, and the view is in the column, as wide as it, over the
   // mode pills, square at most and lower (landscape) where the text above leaves less room, down to COL_MIN_H (it was
   // half the room beside the column, for a while)
-  const main = { x: left, y: 0, w: W - left, h: H };
-  if (!split) return { main, cam: null };
+  // the machine fits and is aimed in its part, but drawn on the whole page, the column transparent over it, all but
+  // the view (it stopped at the column, for a while)
+  const main = { x: left, y: 0, w: W - left, h: H }, all = { x: 0, y: 0, w: W, h: H };
+  if (!split) return { main, cam: null, draw: [all] };
   // the probe's section sits on the view, under the text: the view the room between them (page.probeH, its height)
   const w = Math.min(380, W - 48), h = Math.round(Math.max(COL_MIN_H, Math.min(w, H - COL_OVER - page.textBottom - 16 - page.probeH - 14)));
-  return { main, cam: { x: 24, y: H - COL_OVER - h, w, h } };
+  const cam = { x: 24, y: H - COL_OVER - h, w, h };
+  const draw = [main, { x: 0, y: 0, w: left, h: cam.y }, { x: 0, y: cam.y + h, w: left, h: H - cam.y - h }, { x: 0, y: cam.y, w: cam.x, h }, { x: cam.x + w, y: cam.y, w: left - cam.x - w, h }];
+  return { main, cam, draw };
 }
 const PIP_GAP = 24; // the phone's disc in from the edges (CSS px)
 const FOOT_GAP = 24; // an upright phone's footer: from its words up to the machine's edge, and from that up to the disc and PILOT (CSS px)
@@ -229,8 +233,8 @@ export function DroneCam() {
     if (eyeShown(size.width, size.height)) drawEye(); else { setLock(lockEl, 'none'); gl.setRenderTarget(null); gl.clear(); }
     gl.autoClear = false;
     // the machine over the lens, through the depth of field, only in its own part, never under the text
-    const W = size.width, H = size.height, { main } = regionsOf(W, H);
-    renderDof(gl, scene, camera, [main.x, H - main.y - main.h, main.w, main.h]);
+    const W = size.width, H = size.height, { main, draw = [main] } = regionsOf(W, H);
+    renderDof(gl, scene, camera, draw.filter((d) => d.w > 0 && d.h > 0).map((d) => [d.x, H - d.y - d.h, d.w, d.h] as [number, number, number, number]));
     if (cell.over) { // the phone's disc: over the machine, not under it
       const [x, y, w, h] = cell.over;
       gl.setViewport(x, y, w, h);

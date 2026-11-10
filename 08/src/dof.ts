@@ -76,11 +76,18 @@ let rt: THREE.WebGLRenderTarget | null = null;
 const size = new THREE.Vector2(), dir = new THREE.Vector3(), to = new THREE.Vector3(), clear = new THREE.Color();
 
 /** The scene through the depth of field onto the screen, over what is there already. */
-export function renderDof(gl: THREE.WebGLRenderer, scene: THREE.Scene, camera: THREE.Camera, clip?: [number, number, number, number]) {
-  // clip: only this part of the page (CSS px, from the bottom left), the machine's half when the window is split
+type Clip = [number, number, number, number];
+export function renderDof(gl: THREE.WebGLRenderer, scene: THREE.Scene, camera: THREE.Camera, clips?: Clip[]) {
+  // clips: only these parts of the page (CSS px, from the bottom left), the page round the first person view; the
+  // buffer is drawn once and laid onto each
   const cam = camera as THREE.PerspectiveCamera;
-  const scissor = (on: boolean) => { if (!clip) return; gl.setScissorTest(on); if (on) gl.setScissor(...clip); };
-  if (!dof.on || !cam.isPerspectiveCamera) { scissor(true); gl.render(scene, camera); scissor(false); return; }
+  const each = (draw: () => void) => {
+    if (!clips) { draw(); return; }
+    gl.setScissorTest(true);
+    for (const c of clips) { gl.setScissor(...c); draw(); }
+    gl.setScissorTest(false);
+  };
+  if (!dof.on || !cam.isPerspectiveCamera) { each(() => gl.render(scene, camera)); return; }
   gl.getDrawingBufferSize(size);
   if (!rt || rt.width !== size.x || rt.height !== size.y) {
     rt?.dispose();
@@ -103,7 +110,5 @@ export function renderDof(gl: THREE.WebGLRenderer, scene: THREE.Scene, camera: T
   gl.render(scene, camera);
   gl.setRenderTarget(null);
   gl.setClearColor(clear, wasA);
-  scissor(true);
-  gl.render(SCENE, FLAT);
-  scissor(false);
+  each(() => gl.render(SCENE, FLAT));
 }
