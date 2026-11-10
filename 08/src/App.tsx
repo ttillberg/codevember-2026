@@ -287,6 +287,16 @@ const Cheat = () => (
         <Hand x={40} y={29} a={-24} />
       </svg>
     </figure>
+    {/* a desktop's too: a drag on the page, off the struts, turns the view round the machine */}
+    <i className="rule rot" />
+    <figure className="rot">
+      <svg width={64} height={64} viewBox="0 0 64 64">
+        <g transform="translate(32 20) scale(0.6) translate(-26 -28)">{CUBE}</g>
+        <path className="arrow" d="M12 18A20 13 0 0 1 52 18" /><Head x={52} y={18} a={70} />
+        <path className="arrow" d="M18 37H46" /><Head x={18} y={37} a={180} /><Head x={46} y={37} a={0} />
+        <Hand x={32} y={42} a={-8} />
+      </svg>
+    </figure>
   </div>
 );
 
@@ -673,11 +683,7 @@ export function App() {
         <h6 className="shortcuts">View</h6>
         <Do how={<><Key>⇧</Key> + <Key wide>{locked ? 'Mouse' : 'Drag'}</Key></>} what="Orbit" />
         <Do how={<><Key>{MAC ? '⌥' : 'Alt'}</Key> + <Key wide>{locked ? 'Mouse' : 'Drag'}</Key></>} what="Transform" />
-        </> : <>
-        <h6 className="shortcuts">View</h6>
-        <Do how={<Key wide>Drag</Key>} what="Rotate" />
-        <Do how={<Key wide>Drag an edge</Key>} what="Transform" />
-        </>}
+        </> : null /* on its own the drawing bottom right says it, rotate and transform (listed, DRAG and DRAG AN EDGE, for a while) */}
       </div>}
     </>
   );
