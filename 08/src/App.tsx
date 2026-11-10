@@ -575,7 +575,7 @@ export function App() {
       if (k === 'p') { drone.frozen = !drone.frozen; return; } // pause everything (it was the pilot, which the pills do)
       if (k === 't') { toggleTransformRef.current(); return; } // transform, play or pause
       if (k === 'h') { st.hard = !st.hard; return; } // no switch for now
-      if (k === 'o') { st.inout = !st.inout; return; } // the hand-over at a wall: folded by default, o for in, then out
+      if (k === 'o') { st.inout = !st.inout; return; } // the hand-over at a wall: in, then out by default, o for folded
       if (drone.pilot) {
         // manual: w s and up down forward and back, a d and the side arrows strafe, space forward, l the lock
         if (k === ' ' || k === 'w' || k === 'arrowup') keys.thrust = 1;

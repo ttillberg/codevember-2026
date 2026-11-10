@@ -29,7 +29,7 @@ export const st = {
   transform: false, // the transform switch, off to start (on for a while, and off before that), and the play/pause button bottom middle: the machine turns in 4D all the time, evenly and softly, changing plane at each quarter
   hard: false, // hard mode: the machine turns in 4D all the time, changing plane as it passes each quarter
   grid: true, // the camera grid, on to start: the eye's view behind the machine, or none
-  inout: false, // the hand-over at a wall: false, both halves at once, folded at the wall; true (o), the body goes all the way in, then comes out
+  inout: true, // the hand-over at a wall: true, the body goes all the way in, then comes out (on to start: folded, it read as a bounce); false (o), both halves at once, folded at the wall
   /** How far the machine reaches from its centre right now, in the 3D picture, for the camera to fit it. */
   reach: 4,
 };
