@@ -214,7 +214,6 @@ export function App() {
     drone.pilot = m; setManual(m);
     drone.keys.thrust = drone.keys.strafe = 0;
     rig.turntable = !m;
-    st.grid = m; setGrid(m); // the camera grid comes with the controls, goes with them
     if (!m && document.pointerLockElement) document.exitPointerLock();  };
 
   useEffect(() => {
