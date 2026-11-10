@@ -114,11 +114,11 @@ body {
   pointer-events: none; user-select: none; white-space: nowrap;
   font: 12px/16px "Helvetica Neue", Helvetica, Arial, sans-serif;
 }
-/* flush right and mirrored: what it does on the left, set right, the keys on the right edge (rtl swaps the columns, ltr back inside) */
+/* bottom right and mirrored: what it does on the left, the keys on the right (rtl swaps the columns, ltr back inside) */
 .keys.right { left: auto; right: 24px; width: auto; direction: rtl; }
 .keys.right > * { direction: ltr; }
-.keys.right .what, .keys.right h6 { text-align: right; }
-.keys.right .how { justify-content: flex-end; } /* the keys flush with the edge */
+.keys.right .what, .keys.right h6 { text-align: left; } /* both columns set left, a table (set right, the keys flush with the edge, for a while) */
+.keys.right .how { justify-content: flex-start; }
 .keys.right h6 { visibility: hidden; } /* no names over the groups, the gap between them kept */
 
 .keys .how { display: inline-flex; align-items: center; gap: 4px; color: var(--ui); font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase; }
@@ -228,6 +228,7 @@ body.clean .plate, body.clean .keys { display: none; }
 /* the pad: over the fisheye view, on a phone at the controls; arrows at its edges and a ring with a dot in the middle,
    outlined in white with a grey edge so they read on the grey view, the one held filled */
 .pad { display: none; position: fixed; left: var(--cam-x, 0px); top: var(--eye-y, 50vh); width: calc(var(--eye-x, 100vw) - var(--cam-x, 0px)); height: var(--cam-h, 50vh); z-index: 1; touch-action: none; }
+.pad.shown { display: block; } /* a desktop's: over the view in the column, in any mode; pressed, it takes the controls */
 .pad .arrow { position: absolute; overflow: visible; }
 .pad .arrow path { fill: none; stroke: #fff; stroke-width: 1.6; stroke-linejoin: round; filter: drop-shadow(0 0 1px var(--ui)); }
 .pad .arrow.on path { fill: #fff; }
@@ -253,6 +254,7 @@ body.clean .plate, body.clean .keys { display: none; }
   body .maxi { display: none; } /* no full screen view on a phone, nor hiding it */
   body:not(.pilot) .divider { display: none; } /* orbit and follow: no view, the machine has it all */
   body .middle { display: none; } /* no pointer to lock on a phone */
+  body:not(.pilot) .pad { display: none; } /* on a phone only at the controls, the disc */
   body.pilot .pad { display: block; border-radius: 50%; box-shadow: 0 0 0 1.5px #fff; } /* the view, a disc over the machine, a pad to fly by */
   body.pilot .keys { display: none; } /* at the controls no pills: the probe's x takes it out, and out of the controls */
   .plate .stop { display: none; }

@@ -179,9 +179,15 @@ const PlayPause = ({ playing }: { playing: boolean }) => (
 type Zone = 'c' | 't' | 'r' | 'b' | 'l' | null;
 const PAD_TURN = 1.3; // rad/s, held off the middle
 const PAD_MIDDLE = 44; // CSS px from the middle: the middle, where a hold starts the thrust (its ring 64 across)
-function Pad() {
+/** The pad, on a phone at the controls and on a desktop wherever the view is in the column; `take`, pressed away from
+ * the controls, takes them first, so the view is always a way in to flying. On a desktop it is only a sign: a drag
+ * on the view is the look, as anywhere at the controls, the arrow it goes towards lit, and the ring lit while it
+ * flies forward (the keys); holding to fly is a phone's. */
+function Pad({ take, shown }: { take: () => void; shown: boolean }) {
   const [zone, setZone] = useState<Zone>(null);
   const held = useRef<Zone>(null);
+  const drag = useRef<[number, number] | null>(null); // a desktop's: where the pointer was
+  const [going, setGoing] = useState(false); // a desktop's: flying forward, by the keys
   const go = useRef(false); // the hold started in the middle: it flies, wherever the finger goes after
   const dir = useRef<[number, number]>([0, 0]); // the way to turn, a unit vector, x right and y up
   const hold = (z: Zone) => {
@@ -202,6 +208,9 @@ function Pad() {
     let raf = 0, last = performance.now();
     const tick = (now: number) => {
       const dt = Math.min(0.05, (now - last) / 1000); last = now;
+      if (!isPhone()) { const g = drone.pilot && drone.keys.thrust > 0; setGoing((was) => (was === g ? was : g)); }
+      // the thrust kept on while held: taking the controls clears the keys a frame after the press
+      else if (held.current) drone.keys.thrust = go.current || held.current === 'c' ? 1 : 0;
       if (held.current && held.current !== 'c') {
         drone.turn[0] += dir.current[0] * PAD_TURN * dt;
         drone.turn[1] += dir.current[1] * PAD_TURN * dt;
@@ -217,12 +226,22 @@ function Pad() {
     </svg>
   );
   return (
-    <div className="pad" aria-label="Fly: hold the middle to go forward and drag out of it to turn as it goes, hold off the middle to turn only" onContextMenu={(e) => e.preventDefault()}
-      onPointerDown={(e) => { e.preventDefault(); (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId); holdAt(e, true); }}
-      onPointerMove={(e) => { if (held.current) holdAt(e); }}
-      onLostPointerCapture={() => { go.current = false; hold(null); }}>
+    <div className={`pad ${shown ? 'shown' : ''}`} aria-label="Fly: hold the middle to go forward and drag out of it to turn as it goes, hold off the middle to turn only" onContextMenu={(e) => e.preventDefault()}
+      onPointerDown={(e) => {
+        e.preventDefault(); if (!drone.pilot) take(); (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+        if (isPhone()) holdAt(e, true); else drag.current = [e.clientX, e.clientY];
+      }}
+      onPointerMove={(e) => {
+        if (held.current) { holdAt(e); return; }
+        if (!drag.current) return;
+        const dx = e.clientX - drag.current[0], dy = e.clientY - drag.current[1];
+        drag.current = [e.clientX, e.clientY];
+        drone.turn[0] += dx * LOOK * 1.6; drone.turn[1] += -dy * LOOK * 1.6; // the look, as a drag at the controls
+        if (Math.hypot(dx, dy) > 0.5) { const z: Zone = Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 'r' : 'l') : (dy > 0 ? 'b' : 't'); setZone((was) => (was === z ? was : z)); }
+      }}
+      onLostPointerCapture={() => { go.current = false; drag.current = null; hold(null); setZone(null); }}>
       {(['t', 'r', 'b', 'l'] as const).map(arrow)}
-      <span className={`ring ${zone === 'c' ? 'on' : ''}`}><i /></span>
+      <span className={`ring ${zone === 'c' || going ? 'on' : ''}`}><i /></span>
     </div>
   );
 }
@@ -246,6 +265,7 @@ const Tri = ({ d }: { d: 'up' | 'down' | 'left' | 'right' }) => (
 const Do = ({ how, what }: { how: React.ReactNode; what: string }) => <><span className="how">{how}</span><span className="what">{what}</span></>;
 
 const LOOK = 0.0035; // radians per pixel of look
+const isPhone = () => matchMedia('(max-width: 640px), (max-height: 500px)').matches;
 const ORBIT = 0.006; // radians per pixel of orbit
 const CRANK = 0.006; // radians in 4D per pixel of an alt-drag
 const CRANK_PICK = 6; // px an alt-drag moves before it picks its plane
@@ -511,7 +531,7 @@ export function App() {
       {/* bottom middle, at the controls: the pointer lock; locked, there is no pointer to click with, so the way out
           instead: esc (transform's play/pause beside it for a while) */}
       {/* on a phone at the controls, the fisheye view is the pad */}
-      {CLEAN || !manual ? null : <Pad />}
+      {CLEAN || !beetle ? null : <Pad take={() => setMode('pilot')} shown={grid && !maxi} />}
       {CLEAN || !manual ? null : <div className="middle">
         {locked ? <div className="play hint"><Key wide>Esc</Key>to unlock</div> : <button className="play lockpill" tabIndex={-1}
           onPointerDown={(e) => e.preventDefault()} onClick={() => stage.current?.requestPointerLock()}>
