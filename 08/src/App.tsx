@@ -38,18 +38,47 @@ const MODES: [Mode, string][] = [
   ['pilot', 'Pilot'],
 ];
 
+/** Folds itself away on a tap anywhere outside `ref`, while `open`. */
+function useAway(open: boolean, close: () => void) {
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const away = (e: PointerEvent) => { if (!ref.current?.contains(e.target as Node)) close(); };
+    document.addEventListener('pointerdown', away, true);
+    return () => document.removeEventListener('pointerdown', away, true);
+  }, [open]);
+  return ref;
+}
+const hold = (e: React.PointerEvent) => { e.preventDefault(); e.stopPropagation(); };
+
+/** A phone's settings, top right beside the mode: a wheel, and a tap opens a card under it with AUTOTRANSFORM, a
+ * checkbox row. Hidden on a desktop, AUTOTRANSFORM on its own there. */
+function Settings({ transform, toggle }: { transform: boolean; toggle: () => void }) {
+  const [open, setOpen] = useState(false);
+  const ref = useAway(open, () => setOpen(false));
+  return (
+    <div ref={ref} className={`settings ${open ? 'open' : ''}`}>
+      <button className="wheel" tabIndex={-1} aria-label="Settings" aria-expanded={open} onPointerDown={hold} onClick={() => setOpen(!open)}>
+        <svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+          <circle cx={12} cy={12} r={3} />
+          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+        </svg>
+      </button>
+      {open ? <div className="list">
+        <button className={transform ? 'at' : ''} role="checkbox" aria-checked={transform} tabIndex={-1} onPointerDown={hold} onClick={toggle}>
+          <i className="box" aria-hidden>{transform ? <svg width={8} height={8} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={2.6} strokeLinecap="round" strokeLinejoin="round"><path d="M3 8.5l3.2 3.2L13 4.5" /></svg> : null}</i>Autotransform
+        </button>
+      </div> : null}
+    </div>
+  );
+}
+
 /** A phone's mode, top right: the mode it is in and a chevron, and a tap opens the three under it, frosted, the one it
  * is in darker with its dot filled; a tap on one picks it, a tap anywhere else folds it. Hidden on a desktop. */
 function ModeMenu({ mode, pick }: { mode: Mode; pick: (m: Mode) => void }) {
   const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (!open) return;
-    const away = (e: PointerEvent) => { if (!ref.current?.contains(e.target as Node)) setOpen(false); };
-    document.addEventListener('pointerdown', away, true);
-    return () => document.removeEventListener('pointerdown', away, true);
-  }, [open]);
-  const stop = (e: React.PointerEvent) => { e.preventDefault(); e.stopPropagation(); };
+  const ref = useAway(open, () => setOpen(false));
+  const stop = hold;
   return (
     <div ref={ref} className={`modemenu ${open ? 'open' : ''}`}>
       <button className="now" tabIndex={-1} aria-haspopup="listbox" aria-expanded={open} onPointerDown={stop} onClick={() => setOpen(!open)}>
@@ -672,6 +701,8 @@ export function App() {
         {CLEAN ? null : <div className="corner">
           {/* a phone's mode: a dropdown top right, over AUTOTRANSFORM (the three pills on a row at the foot, for a while) */}
           <ModeMenu mode={mode} pick={setMode} />
+          {/* and beside it a wheel, the settings: AUTOTRANSFORM in it (on its own under the dropdown, for a while) */}
+          <Settings transform={transform} toggle={toggleAuto} />
           <button className={`autot ${transform ? 'on' : ''}`} tabIndex={-1} role="checkbox" aria-checked={transform} onPointerDown={(e) => { e.preventDefault(); e.stopPropagation(); }} onClick={toggleAuto}>
           <i className="box" aria-hidden>{transform ? <svg width={8} height={8} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={2.6} strokeLinecap="round" strokeLinejoin="round"><path d="M3 8.5l3.2 3.2L13 4.5" /></svg> : null}</i>Autotransform
         </button>
