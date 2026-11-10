@@ -24,7 +24,8 @@ const FIELD = 0.14; // half-width, in path fraction, of the field round the face
 const DIP = 0.3; // the field's depth, 0 to DIP: what shuts the wings and the ball; the speed keeps on through it
 // at a wall it goes in and comes out, not straight through (which, seen in 3D, read as a bounce off it): it eases into
 // the face over WALL_IN of 4D distance, to WALL_SLOW of cruising, holds there WALL_HOLD seconds, and eases out again
-const WALL_IN = 0.16, WALL_SLOW = 0.08, WALL_HOLD = 0.5;
+const WALL_IN = 0.12, WALL_SLOW = 0.16, WALL_HOLD = 0.25; // (0.16, 0.08 and half a second at first: too slow)
+const WALL_QUIET = 0.08; // within this of the face, in 4D, it is in the wall: no smoke and no laser behind it
 const CURVE = 0.45; // how far the heading carries into a leg, of its length: longer, rounder sweeps (it was 0.35)
 const ARRIVE = 0.4, ARRIVE_SLOW = 0.25; // the last stretch to the piece: over this much of the leg it slows, to this much of cruising
 // the catch, in phases: still in front of the piece, a beat with the scoop home, then the scoop out on it; the piece
@@ -228,7 +229,7 @@ export function Drones() {
       group, q, smoke, laser, puffAt: new THREE.Vector3(1e9, 0, 0), puffGap: 0.04, trailAt: new THREE.Vector3(1e9, 0, 0), ripple, grid, gridK: 0, gridHex: '', ho: null as Handover | null, shift: new THREE.Vector3(), tintA: 0, tintB: 0, tintHexA: '', tintHexB: '', piece, grabbed,
       came: null as Wall | null, // the wall of the leg it is on, once through it, named from the new cell
       p: [0, 0, 0, 0] as V4, dir: [0, 0, 0, 0] as V4, // where it is, which way it is going, in 4D
-      leg: null as Leg | null, s: 0, dist: 0, hold: 0, // the leg, its parameter, and how far along it, in 4D
+      leg: null as Leg | null, s: 0, dist: 0, hold: 0, inWall: false, // the leg, its parameter, and how far along it, in 4D
       last: new THREE.Vector3(), heading: new THREE.Quaternion(), heading2: new THREE.Quaternion(),
       q2, planeA, planeB, cLast: [0, 0, 0], look: new THREE.Vector3(0, 0, -1), camUp: new THREE.Vector3(0, 1, 0),
       wall: null as Wall | null, // the wall the flight has it at, if any
@@ -522,6 +523,7 @@ export function Drones() {
         k *= WALL_SLOW + (1 - WALL_SLOW) * smoothstep(Math.abs(s.dist - leg.arc[ARC_N >> 1]), 0, WALL_IN);
         if (s.hold > 0) { s.hold -= dt; k = 0; }
       }
+      s.inWall = leg.kind === 'portal' && Math.abs(s.dist - leg.arc[ARC_N >> 1]) < WALL_QUIET;
       s.dist += SPEED * k * dt;
       s.s = s.dist >= leg.len ? 1 : atDist(leg.arc, s.dist);
       moveTo(s, path(leg.pts, Math.min(1, s.s)));
@@ -575,7 +577,9 @@ export function Drones() {
     s.last.copy(v);
     // the wake: little clusters of puffs, a few small ones in a large faint one, round a point just behind the device,
     // a gap between
-    if (v.distanceTo(s.puffAt) > s.puffGap) {
+    if (drone.pilot || !s.leg) s.inWall = false;
+    if (s.inWall) { s.puffAt.copy(v); s.trailAt.copy(v); } // in the wall: no wake, it starts again on the far side
+    if (!s.inWall && v.distanceTo(s.puffAt) > s.puffGap) {
       const at = add4(s.p, s.dir, -0.05), n = 3 + Math.floor(Math.random() * 4), hex = CELL_HEX[cellId()];
       s.smoke.spawn(add4(at, [0, 1, 2, 3].map(() => rnd(-0.01, 0.01)) as V4), now, hex, 2.2 + Math.random());
       for (let i = 0; i < n; i++) s.smoke.spawn(add4(at, [0, 1, 2, 3].map(() => rnd(-0.022, 0.022)) as V4), now + rnd(0, 0.15), hex);
@@ -583,13 +587,13 @@ export function Drones() {
       s.puffGap = rnd(0.025, 0.06); // more clouds: twice as often as at first, and more to each
     }
     // and a steady line of small ones between the clusters, so the way it came reads
-    if (v.distanceTo(s.trailAt) > 0.02) {
+    if (!s.inWall && v.distanceTo(s.trailAt) > 0.02) {
       s.smoke.spawn(add4(s.p, s.dir, -0.05), now, CELL_HEX[cellId()], 0.45);
       s.trailAt.copy(v);
     }
     // the laser through it, along the same way (LASER)
     if (s.laser) {
-      s.laser.sample(add4(s.p, s.dir, -0.05), now, CELL_HEX[cellId()]);
+      if (!s.inWall) s.laser.sample(add4(s.p, s.dir, -0.05), now, CELL_HEX[cellId()]);
       s.laser.update(m, now, size.width * viewport.dpr, size.height * viewport.dpr);
     }
     const vfov = degToRad((camera as THREE.PerspectiveCamera).fov);
