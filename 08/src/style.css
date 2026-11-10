@@ -217,6 +217,12 @@ body.home .stage .corner { top: 10px; right: 10px; }
 @keyframes menuin { from { opacity: 0; transform: translateY(-4px) scale(0.96); } to { opacity: 1; transform: none; } }
 @media (max-width: 640px), (max-height: 500px) {
   .modemenu { display: block; }
+  /* the top's pills as big as the title beside them (9 px words, a smaller pill, for a while) */
+  .modemenu .now, .stage .autot { font-size: 11px; padding: 10px 14px 9px; gap: 10px; }
+  .modemenu .now svg { width: 11px; height: 11px; }
+  .stage .autot .box { width: 13px; height: 13px; }
+  .modemenu .list { min-width: 160px; }
+  .modemenu .list button { font-size: 12px; padding: 13px 14px 12px; }
   body .keys { display: none; } /* the pills give way to the dropdown */
 }
 /* the cheat sheet, an upright phone's home page's: one frosted sheet under the box, two little line drawings
@@ -283,7 +289,7 @@ body.home .stage .corner { top: 10px; right: 10px; }
 /* the line as high as the capitals (Plex, 0.7 em), so the box is the letters and the 24 px round it is true */
 /* now at the top, the machine under it all the way down to the foot, no band of its own (at the foot over a band of
    page, for a while) */
-.crumbs { display: none; position: fixed; left: 24px; top: 28px; align-items: center; gap: 12px; z-index: 2; } /* top: level with AUTOTRANSFORM's middle */
+.crumbs { display: none; position: fixed; left: 24px; top: 30px; align-items: center; gap: 12px; z-index: 2; } /* top: level with AUTOTRANSFORM's middle */
 .crumbs .trail { display: flex; align-items: baseline; gap: 6px; white-space: nowrap; min-width: 0; }
 .crumbs .trail button, .crumbs .trail span, .crumbs .trail i {
   padding: 0; border: 0; background: none; color: var(--ui); cursor: pointer; font-style: normal;
