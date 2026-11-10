@@ -414,3 +414,9 @@ body.clean .plate, body.clean .keys { display: none; }
 /* the buttons' outline a true hairline, one device pixel on any screen (0.5 px rounds up to one; it was 1.5 px, 1.2 on
    the smaller ones) */
 .pill, .play, .maxi, .stop, .probe.off { border-width: 0.5px; }
+/* the buttons grey, their words white: the grey frosted, the picked mode darker (the paper frosted and grey words, the
+   picked one grey, for a while); ACTIVATE PROBE keeps its purple */
+.pill, .play, .maxi, .stop, .probe.off, .stage .autot { background: rgba(92, 92, 90, 0.72); color: #fff; border-color: transparent; }
+.pill.at { background: rgba(28, 28, 28, 0.82); }
+.play.hint { background: none; color: var(--ui); }
+.stage .autot.on .box { background: #fff; color: var(--ui); }
