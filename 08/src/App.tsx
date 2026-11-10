@@ -87,7 +87,7 @@ function ModeMenu({ mode, pick }: { mode: Mode; pick: (m: Mode) => void }) {
       </button>
       {open ? <div className="list" role="listbox" aria-label="Mode">
         {MODES.map(([m, name]) => <button key={m} className={mode === m ? 'at' : ''} role="option" aria-selected={mode === m} tabIndex={-1}
-          onPointerDown={stop} onClick={() => { pick(m); setOpen(false); }}><i className="radio" />{name}</button>)}
+          onPointerDown={stop} onClick={() => { pick(m); setOpen(false); }}>{name}</button>)}
       </div> : null}
     </div>
   );

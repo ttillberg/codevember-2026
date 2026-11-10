@@ -212,8 +212,6 @@ body.home .stage .corner { top: 10px; right: 10px; }
   font: 700 10px/1 "Helvetica Neue", Helvetica, Arial, sans-serif; letter-spacing: 0.14em; text-transform: uppercase; touch-action: manipulation;
 }
 .modemenu .list button.at { background: rgba(28, 28, 28, 0.82); }
-.modemenu .list .radio { flex: none; width: 7px; height: 7px; border: 1px solid currentColor; border-radius: 50%; box-sizing: border-box; margin-top: -1px; }
-.modemenu .list .at .radio { background: currentColor; }
 /* a phone's settings: a round wheel beside the mode, as dark; open, a card under it as the mode's, AUTOTRANSFORM in it */
 .settings { position: relative; z-index: 3; display: none; }
 .settings .wheel {
