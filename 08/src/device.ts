@@ -201,7 +201,7 @@ export function device(model: THREE.Object3D, size: number): Device {
     // mounts: a lug on the core, and one on the petal's inside, fixed in the petal's own frame in the closed pose
     const coreAt = onSphere(side, 112, 0.69);
     w.o.rotation.x = 0; w.o.updateMatrix();
-    const wallAt = onSphere(side, 100, 0.915);
+    const wallAt = onSphere(side, 100, 0.955); // on the wall's inside, touching it (0.915, a little in the air, for a while)
     const local = wallAt.clone().applyMatrix4(relTo(w.o, frame).invert());
     const lugA = new THREE.Mesh(W.lug, W.graphite); lugA.position.copy(coreAt); frame.add(lugA);
     const lugB = new THREE.Mesh(W.lug, W.graphite); lugB.position.copy(local); w.o.add(lugB);

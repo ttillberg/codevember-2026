@@ -5,7 +5,7 @@ import { ContactShadows, Environment, Lightformer } from '@react-three/drei';
 import { Machine } from './Machine';
 import { Drones } from './Drones';
 import { DroneCam, eyeView, regionsOf, page } from './DroneCam';
-import { Grip, grip } from './Grip';
+import { Grip, grip, strutAt, strutW, PICK_TOUCH } from './Grip';
 // CellMap (./CellMap.tsx), the cells' little map with their colours, is off the page for now
 import { drone } from './drone';
 import { st, rig, orbitBy, crankStart, crankBy, crankEnd, pose } from './state';
@@ -278,7 +278,13 @@ const CRANK_PICK = 6; // px an alt-drag moves before it picks its plane
 // on its own axis, across it goes along one of the other two, up and down another turn than left and right. The
 // turn's sign is set so the strut goes with the drag: one out toward the eye in 4D (the outer cube) moves the other
 // way to one in the inner cube; one along w spans both, and goes the way alt does.
-const hand = { on: false, axis: [0, 0], acc: [0, 0], picked: false, sign: 1 };
+// It can take another plane without letting go: when the drag swings round so another axis fits it better and next to
+// none of it runs along the one in hand, the machine glides on to the nearest whole quarter, a little each move, and
+// the drag takes the new axis there (one plane per drag, till the release, for a while).
+const hand = { on: false, axis: [0, 0], acc: [0, 0], picked: false, sign: 1, recent: [0, 0], want: -1 };
+const SWITCH_PX = 24; // how far the recent drag must have gone, its way, before it may ask for another axis
+const SWITCH_ALONG = 0.5; // ... and how little of it may run along the axis in hand (the cosine)
+const QUARTER_TURN = Math.PI / 2;
 const tmpV = new THREE.Vector3(), tmpO = new THREE.Vector3();
 /** Where axis `k` of the machine points on the page, in pixels, y down; long when it lies across the view. */
 function onPage(k: number): [number, number] {
@@ -286,22 +292,43 @@ function onPage(k: number): [number, number] {
   if (!cam) return k === 0 ? [1, 0] : k === 1 ? [0, -1] : [0, 0];
   tmpO.set(0, 0, 0).project(cam);
   tmpV.set(k === 0 ? 1 : 0, k === 1 ? 1 : 0, k === 2 ? 1 : 0).applyQuaternion(rig.q).project(cam);
-  return [(tmpV.x - tmpO.x) * innerWidth / 2, -(tmpV.y - tmpO.y) * innerHeight / 2];
+  const c = document.querySelector('.stage canvas') as HTMLElement | null, w = c?.clientWidth || innerWidth, h = c?.clientHeight || innerHeight; // the canvas's shape
+  return [(tmpV.x - tmpO.x) * w / 2, -(tmpV.y - tmpO.y) * h / 2];
 }
-function handDown(sign = 1) { hand.on = true; hand.picked = false; hand.acc = [0, 0]; hand.sign = sign; }
+function handDown(sign = 1) { hand.on = true; hand.picked = false; hand.acc = [0, 0]; hand.sign = sign; hand.recent = [0, 0]; hand.want = -1; }
+/** The axis the drag (ux, uy), a unit on the page, runs along most. */
+function axisFor(ux: number, uy: number) {
+  let best = 0, score = -1;
+  for (let k = 0; k < 3; k++) { const [ax, ay] = onPage(k), s = Math.abs(ax * ux + ay * uy); if (s > score) { score = s; best = k; } }
+  return best;
+}
+function takeAxis(k: number) { const [ax, ay] = onPage(k), l = Math.hypot(ax, ay) || 1; hand.axis = [ax / l, ay / l]; }
 function handMove(dx: number, dy: number) {
   if (!hand.on) return;
   if (!hand.picked) {
     hand.acc[0] += dx; hand.acc[1] += dy;
     const n = Math.hypot(hand.acc[0], hand.acc[1]);
     if (n < CRANK_PICK) return;
-    const ux = hand.acc[0] / n, uy = hand.acc[1] / n;
-    let best = 0, score = -1;
-    for (let k = 0; k < 3; k++) { const [ax, ay] = onPage(k), s = Math.abs(ax * ux + ay * uy); if (s > score) { score = s; best = k; } }
+    const best = axisFor(hand.acc[0] / n, hand.acc[1] / n);
     const k = crankStart(best); // the plane it is free to take, or the one it is part way through
-    const [ax, ay] = onPage(k), l = Math.hypot(ax, ay) || 1;
-    hand.axis = [ax / l, ay / l]; hand.picked = true;
+    takeAxis(k); hand.picked = true;
+    hand.want = best !== k ? best : -1; // part way through another: on to its quarter, then this one
     dx = hand.acc[0]; dy = hand.acc[1]; // what moved while it was picking counts too
+  }
+  // the drag's way lately, for another axis
+  hand.recent = [hand.recent[0] * 0.8 + dx, hand.recent[1] * 0.8 + dy];
+  const rn = Math.hypot(hand.recent[0], hand.recent[1]);
+  if (hand.want < 0 && rn > SWITCH_PX) {
+    const ux = hand.recent[0] / rn, uy = hand.recent[1] / rn, b = axisFor(ux, uy);
+    if (b !== st.plane && Math.abs(ux * hand.axis[0] + uy * hand.axis[1]) < SWITCH_ALONG) hand.want = b;
+  }
+  if (hand.want >= 0) {
+    // on to the nearest whole quarter, eased by the move, then the new plane from there
+    const diff = Math.round(st.angle / QUARTER_TURN) * QUARTER_TURN - st.angle;
+    if (Math.abs(diff) > 0.01) { crankBy(diff * 0.3); return; }
+    crankBy(diff);
+    takeAxis(crankStart(hand.want)); hand.want = -1; hand.recent = [0, 0];
+    return;
   }
   crankBy((dx * hand.axis[0] + dy * hand.axis[1]) * CRANK * hand.sign);
 }
@@ -337,9 +364,14 @@ export function App() {
       (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
       fingers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
       if (fingers.current.size === 1) {
-        const kind = drone.pilot ? 'look' : 'crank';
+        // a finger down on a strut takes it in the hand and turns the machine in 4D by it, as alt-drag on a desktop;
+        // anywhere else it orbits (it turned in 4D by the drag anywhere, for a while); at the controls it is the look
+        const at = (e.currentTarget as HTMLElement).getBoundingClientRect(); // the joints are in the canvas's pixels
+        const strut = drone.pilot ? -1 : strutAt(e.clientX - at.left, e.clientY - at.top, PICK_TOUCH);
+        const kind = drone.pilot ? 'look' : strut >= 0 ? 'crank' : 'orbit';
         drag.current = { kind, x: e.clientX, y: e.clientY, t: performance.now() };
-        if (kind === 'crank') handDown();
+        if (strut >= 0) { grip.held = strut; const w = strutW(strut); handDown(Math.abs(w) > 0.2 ? -Math.sign(w) : 1); }
+        if (kind === 'orbit') { rig.orbitVel[0] = rig.orbitVel[1] = 0; rig.orbiting = true; }
       } else if (fingers.current.size === 2) {
         // the second finger: no more turning by hand, the pair orbits from here
         handUp(); drag.current = null;
