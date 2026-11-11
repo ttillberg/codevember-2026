@@ -815,9 +815,7 @@ export function App() {
         <Do how={<><Key>W</Key><Key>S</Key><Key><Tri d="up" /></Key><Key><Tri d="down" /></Key></>} what="Forward, back" />
         <Do how={<><Key>A</Key><Key>D</Key><Key><Tri d="left" /></Key><Key><Tri d="right" /></Key></>} what="Strafe" />
         <Do how={<Key wide>Space</Key>} what="Forward" />
-        <h6 className="shortcuts">View</h6>
-        <Do how={<><Key>⇧</Key> + <Key wide>{locked ? 'Mouse' : 'Drag'}</Key></>} what="Orbit" />
-        <Do how={<><Key>{MAC ? '⌥' : 'Alt'}</Key> + <Key wide>{locked ? 'Mouse' : 'Drag'}</Key></>} what="Transform" />
+        {/* shift-drag to orbit and alt-drag to transform, under VIEW, were listed here for a while; they still work */}
         </> : null /* on its own the drawing bottom right says it, rotate and transform (listed, DRAG and DRAG AN EDGE, for a while) */}
       </div>}
     </>
