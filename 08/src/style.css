@@ -252,7 +252,7 @@ body.home .stage .corner { top: 10px; right: 10px; }
 .modemenu, .settings { display: block; }
 .stage .corner { flex-direction: row; align-items: center; }
 .stage .corner > .autot { display: none; } /* in the wheel's card */
-.stage .corner > .why { order: -1; width: 30px; height: 30px; background: rgba(28, 28, 28, 0.82); }
+.stage .corner > .why { order: 2; width: 30px; height: 30px; background: rgba(28, 28, 28, 0.82); }
 .keys:not(.right) { display: none; } /* the mode pills give way to the dropdown */
 /* the top's pills as big as a phone's title beside them (9 px words, a smaller pill, for a while) */
 .modemenu .now, .stage .autot { font-size: 11px; padding: 10px 14px 9px; gap: 10px; }
