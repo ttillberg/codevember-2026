@@ -59,10 +59,13 @@ export function Machine() {
     // every painted part is a little worn, all over, the metal is not: a hand of wear textures per paint, dealt out
     const POOL = 6;
     const BUMP = new THREE.Vector2(0.35, 0.35); // the hard wear as tiny grooves
-    const worn = (base: string, roughness: number, metalness: number, salt: number) =>
-      Array.from({ length: POOL }, (_, k) => { const map = wear(base, salt + k); return new THREE.MeshStandardMaterial({ map, normalMap: map.userData.bump, normalScale: BUMP, roughness, metalness }); });
-    const paint = (map: THREE.Texture, sand: boolean) => new THREE.MeshStandardMaterial({ map, normalMap: map.userData.bump, normalScale: BUMP, roughness: sand ? 0.78 : 0.62, metalness: 0.05 });
-    const stageMats = [worn('#2f2f32', 0.5, 0.15, 700), worn('#c8a874', 0.7, 0.05, 800)];
+    // the sand lit up more by the room than the graphite, so it reads light, its shade side not muddy (as the graphite,
+    // for a while: lots of shadow on it)
+    const SAND_LIGHT = 1.5;
+    const worn = (base: string, roughness: number, metalness: number, salt: number, light = 1) =>
+      Array.from({ length: POOL }, (_, k) => { const map = wear(base, salt + k); return new THREE.MeshStandardMaterial({ map, normalMap: map.userData.bump, normalScale: BUMP, roughness, metalness, envMapIntensity: light }); });
+    const paint = (map: THREE.Texture, sand: boolean) => new THREE.MeshStandardMaterial({ map, normalMap: map.userData.bump, normalScale: BUMP, roughness: sand ? 0.78 : 0.62, metalness: 0.05, envMapIntensity: sand ? SAND_LIGHT : 1 });
+    const stageMats = [worn('#2f2f32', 0.5, 0.15, 700), worn('#c8a874', 0.7, 0.05, 800, SAND_LIGHT)];
     // the same six textures on a hundred parts would show: each part takes its own copy of one, shifted round the
     // tube by a random turn and mirrored either way. The copies share the image on the GPU; only the mapping differs.
     // A clone shares its image with the original but not its upload flag: when the sheets land and the originals are
@@ -81,7 +84,7 @@ export function Machine() {
     };
     const accents = ACCENTS.map((c) => new THREE.MeshStandardMaterial({ color: c, roughness: 0.6 }));
     // most sleeves are plain paint; one in three carries a decal
-    const plain = [worn(GRAPHITE, 0.62, 0.05, 500), worn(SAND, 0.78, 0.05, 600)];
+    const plain = [worn(GRAPHITE, 0.62, 0.05, 500), worn(SAND, 0.78, 0.05, 600, SAND_LIGHT)];
     // the marks: two of each on the decaled sleeves, wherever the shuffle puts them; a few wordmarks; the rest none
     const decaled = EDGES.flatMap((_, i) => [0, 1].filter((end) => (i * 2 + end) % 3 === 1).map((end) => i * 2 + end));
     const rnd = rng(8);

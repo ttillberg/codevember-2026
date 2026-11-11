@@ -746,7 +746,8 @@ export function App() {
             <Lightformer intensity={2.6} rotation-x={Math.PI / 2} position={[0, 7, 0]} scale={[10, 10, 1]} />
             <Lightformer intensity={1.8} rotation-y={Math.PI / 2} position={[-8, 2, 2]} scale={[8, 5, 1]} color="#fff4e6" />
             <Lightformer intensity={1.2} rotation-y={-Math.PI / 2} position={[8, 1, -2]} scale={[8, 5, 1]} color="#e6f0ff" />
-            <Lightformer intensity={0.6} rotation-x={-Math.PI / 2} position={[0, -6, 0]} scale={[12, 12, 1]} color="#d8d2c6" />
+            {/* the fill from below, stronger, so the shade side of a strut is lifted, not muddy (0.6, for a while) */}
+            <Lightformer intensity={1.8} rotation-x={-Math.PI / 2} position={[0, -6, 0]} scale={[12, 12, 1]} color="#ece6da" />
           </Environment>
           <directionalLight position={[4, 8, 6]} intensity={1.1} />
         </Canvas>
