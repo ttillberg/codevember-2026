@@ -40,6 +40,10 @@ export function rng(seed: number) {
 
 /** The two paints: sand on the struts that run along w, graphite on the rest. */
 export const SAND = '#d9b985', GRAPHITE = '#3a3a3d';
+// the sleeve's texture is wrapped once round a tube 0.09 in radius and 0.26 long (Machine's R_SLEEVE, SLEEVE): a canvas
+// unit runs this much longer round the tube than along it, so a mark drawn on it is squeezed back by it (the marks
+// came out drawn out round the tube, for a while)
+const SLEEVE_STRETCH = ((2 * Math.PI * 0.09) / 512) / (0.26 / 416);
 const STICKER_INK = '#141414'; // the mark on a sticker
 const STICKER_GLOSS = '#3a3a3a'; // the sticker in the roughness sheet: about a quarter of the paint's roughness, glossy
 /** A canvas of w x h logical units drawn at `k` times the pixels: the same coordinates, finer detail. */
@@ -338,7 +342,7 @@ export function sleeveDecal(d: Decal): THREE.CanvasTexture {
           const cx = bx + o + Math.max(size, stick) / 2, cy = Math.min(Math.max(my, Math.max(size, stick) / 2), H - Math.max(size, stick) / 2); // a big mark kept on the sleeve
           if (stick) {
             const card = (q: CanvasRenderingContext2D, fill: string) => {
-              q.save(); q.translate(cx, cy); q.rotate(ang); q.globalAlpha = 1; q.fillStyle = fill;
+              q.save(); q.translate(cx, cy); q.scale(1 / SLEEVE_STRETCH, 1); q.rotate(ang); q.globalAlpha = 1; q.fillStyle = fill;
               q.beginPath(); q.arc(0, 0, stick / 2, 0, Math.PI * 2); q.fill(); q.restore();
             };
             card(g, d.accent);
@@ -346,6 +350,7 @@ export function sleeveDecal(d: Decal): THREE.CanvasTexture {
           }
           g.save();
           g.translate(cx, cy);
+          g.scale(1 / SLEEVE_STRETCH, 1); // round on the tube, not drawn out round it
           g.rotate(ang);
           g.globalAlpha = 1;
           g.drawImage(img, -size / 2, -size / 2, size, size);
