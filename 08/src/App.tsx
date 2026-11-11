@@ -104,8 +104,8 @@ function ModeMenu({ mode, pick }: { mode: Mode; pick: (m: Mode) => void }) {
 
 // the turntable and the transform off to start (both on, then the turntable alone, for a while); no switch for the
 // turntable, AUTOTRANSFORM and T for the transform
-// ATTRACT to start on a desktop, till the mouse first moves (or a key, or the wheel); a phone starts in ORBIT
-const ATTRACT_FIRST = !CLEAN && !matchMedia('(max-width: 640px), (max-height: 500px), (pointer: coarse)').matches;
+// ORBIT to start, everywhere (DEMO on a desktop till the mouse first moved, for a while), AUTOTRANSFORM on
+const ATTRACT_FIRST = false;
 // on the page's first load only: a hot reload runs this again over the rig as it is (in state.ts, not reloaded), and
 // put DEMO back on under PILOT
 if (!rig.booted) {
@@ -424,12 +424,6 @@ const Crosshair = () => (
     <circle cx="11" cy="11" r="6.5" />
     <path d="M11 1.5v5M11 15.5v5M1.5 11h5M15.5 11h5" />
     <circle cx="11" cy="11" r="1.1" fill="currentColor" stroke="none" />
-  </svg>
-);
-/** The first person view's corner button: four corners pointing out to maximize, in to minimize. */
-const Corners = ({ out }: { out: boolean }) => (
-  <svg width={14} height={14} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-    <path d={out ? 'M2 6V2h4M10 2h4v4M14 10v4h-4M6 14H2v-4' : 'M6 2v4H2M10 2v4h4M10 14v-4h4M6 14v-4H2'} />
   </svg>
 );
 /** The first person view's other corner button: an eye while it shows (to hide it), a grid while it is hidden (to
@@ -899,10 +893,7 @@ export function App() {
         onPointerDown={(e) => e.preventDefault()} onClick={() => { st.grid = !st.grid; setGrid(st.grid); }}>
         <EyeOrGrid shown={grid} />
       </button>}
-      {CLEAN || !beetle || !grid ? null : <button className={`maxi ${maxi ? "" : "solo"}`} tabIndex={-1} aria-label={maxi ? 'Minimize the first person view' : 'Maximize the first person view'}
-        onPointerDown={(e) => e.preventDefault()} onClick={() => { eyeView.max = !eyeView.max; setMaxi(eyeView.max); }}>
-        <Corners out={!maxi} />
-      </button>}
+      {/* the corner's maximize, the view full screen, gone (there for a while) */}
       {/* bottom middle, at the controls: the pointer lock; locked, there is no pointer to click with, so the way out
           instead: esc (transform's play/pause beside it for a while) */}
       {/* on a phone at the controls, the fisheye view is the pad */}

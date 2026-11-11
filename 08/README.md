@@ -89,6 +89,8 @@ TESSERAKT, a hypercube built for real. A tesseract cannot exist in three dimensi
 - **DEMO last**: in the dropdown after PILOT (first, for a while).
 - **Orbit at the controls**: in PILOT a drag on the fisheye view steers, as before; a drag anywhere else goes round the probe, the chase camera's offset turned about it (over it no more than 1.1 rad), shift with the pointer locked the same; taking the controls puts the chase back behind it. The keys' list says which: STEER on the view, ORBIT off it. The keys' caps white on the frosted card (the card through them, for a while).
 - **A hot reload keeps the mode**: DEMO on to start and the turntable's switch are set once, on the page's first load (`rig.booted`); a hot reload ran them again over the rig, which lives on in `state.ts`, and put DEMO's camera on under PILOT.
+- **ORBIT and AUTOTRANSFORM to start**: the page opens in ORBIT everywhere, the machine turning in 4D from the first frame (DEMO on a desktop till the mouse first moved, and AUTOTRANSFORM off, for a while); DEMO is still in the dropdown.
+- **No full screen view**: the fisheye view's maximize button is gone; it stays in its corner (`?clean` still draws it full screen for the screengrab).
 
 ## Learned
 
