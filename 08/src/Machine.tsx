@@ -64,7 +64,7 @@ export function Machine() {
     const SAND_LIGHT = 1.5;
     const worn = (base: string, roughness: number, metalness: number, salt: number, light = 1) =>
       Array.from({ length: POOL }, (_, k) => { const map = wear(base, salt + k); return new THREE.MeshStandardMaterial({ map, normalMap: map.userData.bump, normalScale: BUMP, roughness, metalness, envMapIntensity: light }); });
-    const paint = (map: THREE.Texture, sand: boolean) => new THREE.MeshStandardMaterial({ map, normalMap: map.userData.bump, normalScale: BUMP, roughnessMap: map.userData.rough ?? null, roughness: sand ? 0.78 : 0.62, metalness: 0.05, envMapIntensity: sand ? SAND_LIGHT : 1 }); // a sticker's gloss in its roughness map
+    const paint = (map: THREE.Texture, sand: boolean) => new THREE.MeshStandardMaterial({ map, normalMap: map.userData.bump, normalScale: map.userData.bumpScale ? new THREE.Vector2(map.userData.bumpScale, map.userData.bumpScale) : BUMP, roughnessMap: map.userData.rough ?? null, roughness: sand ? 0.78 : 0.62, metalness: 0.05, envMapIntensity: sand ? SAND_LIGHT : 1 }); // a sticker's gloss in its roughness map
     const stageMats = [worn('#2f2f32', 0.5, 0.15, 700), worn('#c8a874', 0.7, 0.05, 800, SAND_LIGHT)];
     // the same six textures on a hundred parts would show: each part takes its own copy of one, shifted round the
     // tube by a random turn and mirrored either way. The copies share the image on the GPU; only the mapping differs.
