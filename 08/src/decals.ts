@@ -17,6 +17,8 @@ export type Decal = {
   flip?: boolean;
   /** The mark on this sleeve, if any: the machine hands them out, two of each, so they do not repeat. */
   brand?: Brand | null;
+  /** A three.js sticker's colouring, dealt by the machine: black or white, or the sleeve's accent. */
+  tone?: 'black' | 'white' | 'colour';
 };
 export type Brand = 'word' | 'three' | 'pmndrs' | 'github';
 
@@ -45,7 +47,7 @@ export const SAND = '#d9b985', GRAPHITE = '#3a3a3d';
 // came out drawn out round the tube, for a while)
 const SLEEVE_STRETCH = ((2 * Math.PI * 0.09) / 512) / (0.26 / 416);
 const STICKER_INK = '#141414';
-const STICKER_WHITE = '#f4f3ef', STICKER_GOLD = '#c9a43a'; // pmndrs' square stickers // the mark on a sticker
+const STICKER_WHITE = '#f4f3ef', STICKER_GOLD = '#c9a43a', STICKER_BLACK = '#161616'; // pmndrs' square stickers // the mark on a sticker
 const STICKER_GLOSS = '#3a3a3a'; // the sticker in the roughness sheet: about a quarter of the paint's roughness, glossy
 /** A canvas of w x h logical units drawn at `k` times the pixels: the same coordinates, finer detail. */
 function sharp(w: number, h: number, k = 2) {
@@ -317,8 +319,11 @@ export function sleeveDecal(d: Decal): THREE.CanvasTexture {
   const brand = d.brand ?? null;
   // the stickers: three.js on a round one in the sleeve's accent; pmndrs on a square one, white or gold, the mark black
   // on both (pmndrs bare in the ink, for a while); each glossy against the matt paint and raised a little off it
-  const sticker = brand === 'three' ? { round: true, size: 200, k: 1.45, fill: d.accent }
-    : brand === 'pmndrs' ? { round: false, size: 156, k: 1.32, fill: d.seed % 2 ? STICKER_WHITE : STICKER_GOLD } : null;
+  // three.js: mostly black and white, a black one with the mark white or a white one with it black, now and then in the
+  // sleeve's accent (all in the accent, for a while); the machine deals the tones
+  const tone = d.tone ?? 'colour';
+  const sticker = brand === 'three' ? { round: true, size: 200, k: 1.45, ...(tone === 'colour' ? { fill: d.accent, ink: STICKER_INK } : tone === 'black' ? { fill: STICKER_BLACK, ink: STICKER_WHITE } : { fill: STICKER_WHITE, ink: STICKER_INK }) }
+    : brand === 'pmndrs' ? { round: false, size: 156, k: 1.32, fill: d.seed % 2 ? STICKER_WHITE : STICKER_GOLD, ink: STICKER_INK } : null;
   const shape = (q: CanvasRenderingContext2D, s: number) => {
     q.beginPath();
     if (sticker?.round) q.arc(0, 0, s / 2, 0, Math.PI * 2); else q.roundRect(-s / 2, -s / 2, s, s, s * 0.07);
@@ -345,7 +350,7 @@ export function sleeveDecal(d: Decal): THREE.CanvasTexture {
         // three.js 200 (160, then 320 bare, for a while), pmndrs three times what it was (52), each on its sticker
         const size = sticker ? sticker.size : 34;
         const stick = sticker ? size * sticker.k : 0;
-        const img = logo(brand, size * 2, sticker ? STICKER_INK : d.ink);
+        const img = logo(brand, size * 2, sticker ? sticker.ink : d.ink);
         if (img) {
           const reach = sticker && !sticker.round ? stick * 0.72 : Math.max(size, stick) / 2; // a turned square reaches out to its corners
           const cx = bx + o + Math.max(size, stick) / 2, cy = Math.min(Math.max(my, reach), H - reach); // a big mark kept on the sleeve
@@ -436,7 +441,7 @@ export function sleeveDecal(d: Decal): THREE.CanvasTexture {
   const bump = bumpSheet(W, H);
   t.userData.bump = bump.t;
   const rough = gloss ? new THREE.CanvasTexture(gloss.c) : null;
-  if (rough) { rough.wrapS = THREE.RepeatWrapping; t.userData.rough = rough; t.userData.bumpScale = 1.4; } // a sticker's sleeve: its relief shown full, so the rim reads (the paint's 0.35)
+  if (rough) { rough.wrapS = THREE.RepeatWrapping; t.userData.rough = rough; t.userData.bumpScale = 0.8; } // a sticker's sleeve: its relief shown stronger, so the rim reads (the paint's 0.35; 1.4, too much)
   // the sticker raised off the paint, a little: in the height sheet a smooth plateau where it is, the wear wiped
   // off it, and round its edge a soft fall to the paint, so the light catches a rim all the way round (flat, for a while)
   const emboss = (q: CanvasRenderingContext2D) => {
@@ -446,8 +451,8 @@ export function sleeveDecal(d: Decal): THREE.CanvasTexture {
     if (d.flip) { q.translate(W / 2, H / 2); q.rotate(Math.PI); q.translate(-W / 2, -H / 2); }
     for (const o of [0, W]) {
       q.save(); q.translate(bx + o + stick / 2, cy); q.scale(1 / SLEEVE_STRETCH, 1); q.rotate(ang);
-      q.filter = 'blur(3px)'; q.strokeStyle = '#000000'; q.lineWidth = 12; // a deep, soft fall (a faint one, #5a5a5a 7 wide, for a while: unseen)
-      shape(q, stick + 10); q.stroke();
+      q.filter = 'blur(2.5px)'; q.strokeStyle = '#4a4a4a'; q.lineWidth = 8; // a soft fall, between the two tried: #5a5a5a 7 wide, unseen, and #000 12 wide, too much
+      shape(q, stick + 7); q.stroke();
       q.filter = 'none'; q.fillStyle = '#ffffff';
       shape(q, stick); q.fill();
       q.restore();
