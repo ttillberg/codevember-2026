@@ -124,20 +124,11 @@ function dress(g: THREE.Group) {
     const n = new THREE.Vector3(...dir).normalize();
     stick(core, mat, n.clone().multiplyScalar(0.7), n, w, h, roll);
   };
-  onCore([0.45, 0.85, -0.45], m.three, 0.55, 0.55);
-  onCore([-0.45, 0.85, -0.45], m.pmndrs, 0.2, 0.2);
+  // no brands on the probe (three.js and pmndrs on the core and GitHub on a wing, for a while): they are the machine's,
+  // on its sleeves; the probe keeps its own serial
   onCore([0, -0.85, -0.5], m.serial, 0.5, 0.0625);
   onCore([0.6, -0.3, 0.7], m.scuff[4], 0.7, 0.7, 0.5);
-  [0, 1, 2, 3].forEach((k) => {
-    const wall = g.getObjectByName(`wall_${k}`) as THREE.Mesh;
-    const hit = skin(wall);
-    if (!hit) return;
-    // no scuffs on the wings any more: a honeycomb under them instead (honeycomb, in the copy's own material)
-    if (k === 0) {
-      const h2 = skin(wall, 0.25);
-      if (h2) stick(wall, m.github, h2.p, h2.n, 0.1, 0.1);
-    }
-  });
+  // no scuffs on the wings any more: a honeycomb under them instead (honeycomb, in the copy's own material)
 }
 
 // The works that move the walls, built here on the model: at each hinge a barrel with a steel pin through it, and
