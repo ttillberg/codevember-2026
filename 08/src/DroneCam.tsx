@@ -83,7 +83,10 @@ const COL_OVER = 76, COL_MIN_H = 120; // the view in the column: how far up from
 // the rooms go into it; maximized, the page's paper, and no background, the page itself between the lines
 const FOG_MINI = new THREE.Color('#bdbdb9'), FOG_MAX = new THREE.Color('#f4f4f2');
 
-const CUBE = 1024; // the cube map's face size: fine enough for a hull a pixel or so wide through the lens
+// a phone: the eye's view cheaper for the battery, a smaller cube map, redrawn every other frame (the lens turns it
+// every frame, so the look stays smooth)
+const PHONE = typeof matchMedia !== 'undefined' && matchMedia('(max-width: 640px), (max-height: 500px), (pointer: coarse)').matches;
+const CUBE = PHONE ? 384 : 1024; // the cube map's face size: on a desktop fine enough for a hull a pixel or so wide through the lens
 const R_STRUT = 0.04, R_NODE = 0.06; // the outlined rooms: the tube, the joint
 // the outline round them, as an angle: the hull is pushed out by this times its distance from the eye, so it is the same
 // hairline near and far, about a pixel through the lens (it was a fixed 0.013, fat up close and lost far off)
@@ -213,7 +216,7 @@ export function DroneCam() {
     const flat = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
     return {
       cs, tubes, flash, piece, grabbed, eye, lens, flat, pieceFill, ballHex: '', toEl: null as HTMLElement | null, toLast: '',
-      q: new THREE.Quaternion(), look: new THREE.Vector3(0, 0, -1), last: [0, 0, 0], crossings: -1, footH: 0,
+      q: new THREE.Quaternion(), look: new THREE.Vector3(0, 0, -1), last: [0, 0, 0], crossings: -1, footH: 0, frame: 0,
       pos: new THREE.Vector3(), lockEl: null as HTMLElement | null, eyeX: -1, eyeY: -1, camX: -1, camH: -1, plateEl: null as Element | null, lockLast: '', over: null as number[] | null, // the bracket's last style, written only on change
       grabOf: null as number[] | null, grabLocal: new THREE.Vector3(), // the piece taken, and where it was from the eye then, in its frame
     };
@@ -398,7 +401,7 @@ export function DroneCam() {
     const wasA = gl.getClearAlpha();
     gl.getClearColor(tmp.clear);
     gl.setClearColor(0x000000, 0); // each face cleared to nothing as it renders
-    cell.eye.update(gl, cell.cs);
+    if (!PHONE || (cell.frame = (cell.frame + 1) % 2) === 0) cell.eye.update(gl, cell.cs);
     gl.setClearColor(tmp.clear, wasA);
     gl.autoClear = false; // from here the page is cleared once, by hand, and the lens and the machine go over it
     FISHEYE.uniforms.rot.value.setFromMatrix4(tmp.m.makeRotationFromQuaternion(cell.q));

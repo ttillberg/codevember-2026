@@ -14,7 +14,9 @@ export const dof = {
   aperture: 0.006,
 };
 const MAX_R = 10; // CSS pixels, the widest blur
-const TAPS = 48;
+// a phone (narrow or low, or a finger for a pointer): the blur cheaper, 16 taps and no multisampling, for the battery
+const PHONE = typeof matchMedia !== 'undefined' && matchMedia('(max-width: 640px), (max-height: 500px), (pointer: coarse)').matches;
+const TAPS = PHONE ? 16 : 48;
 
 const MAT = new THREE.ShaderMaterial({
   uniforms: {
@@ -91,7 +93,7 @@ export function renderDof(gl: THREE.WebGLRenderer, scene: THREE.Scene, camera: T
   gl.getDrawingBufferSize(size);
   if (!rt || rt.width !== size.x || rt.height !== size.y) {
     rt?.dispose();
-    rt = new THREE.WebGLRenderTarget(size.x, size.y, { type: THREE.HalfFloatType, samples: 4, depthTexture: new THREE.DepthTexture(size.x, size.y) });
+    rt = new THREE.WebGLRenderTarget(size.x, size.y, { type: THREE.HalfFloatType, samples: PHONE ? 0 : 4, depthTexture: new THREE.DepthTexture(size.x, size.y) });
   }
   const u = MAT.uniforms;
   cam.getWorldDirection(dir);
