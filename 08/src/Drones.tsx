@@ -760,9 +760,15 @@ export function Drones() {
       else if (ho.crossed && (done || (ho.gone += dt) > LINGER)) s.ho = null;
       // the renderer clips in world space, and the machine sits on a turned rig: the planes go through its matrix
       s.planeA.applyMatrix4(s.group.matrixWorld); s.planeB.applyMatrix4(s.group.matrixWorld);
+      // the warp at the seam, on both copies, each in the colour of the cell it is coming into: strongest with the body
+      // in the wall, none clear of it (the halves fought at the seam, for a while)
+      const k = 1 - smoothstep(d, R * 0.6, R * 1.6);
+      s.q.warp(s.planeA, CELL_HEX[cellIdOf(other)], k, drone.clock);
+      s.q2.warp(s.planeB, CELL_HEX[cellId()], k, drone.clock);
     } else {
       s.q2.g.visible = false;
       s.planeA.set(tmp.up, 1e4); s.planeB.set(tmp.up, 1e4);
+      s.q.warp(s.planeA, '#000000', 0, drone.clock);
     }
     // whatever set-back is left from a hand-over cut short, the body catches up, eased rather than snapped
     if (!rising) s.shift.multiplyScalar(Math.max(0, 1 - dt * 6));

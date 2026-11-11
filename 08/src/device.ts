@@ -19,6 +19,9 @@ export type Device = {
   grip: (k: number, at: number, shut: number) => void;
   /** Clip every part of this copy to one side of these planes (needs the renderer's local clipping on). */
   clip: (planes: THREE.Plane[]) => void;
+  /** Going through a wall: the seam at `plane` (world space, its clip plane) glows in `hex` and dithers away near it, so
+   * the two copies interleave there rather than fight; `k` 0 to 1, how much. */
+  warp: (plane: THREE.Plane, hex: string, k: number, t: number) => void;
   /** Tint the whole copy with a glow of `hex`, `k` strong: 0 as made. */
   tint: (hex: string, k: number) => void;
   /** Fade the whole copy: 1 as made, 0 gone; each material keeps its own opacity to fade from. */
@@ -195,6 +198,9 @@ function shellCentre(geo: THREE.BufferGeometry) {
  * turned to its centre), laid on from three sides by position (no UVs needed), each side weighted by how squarely
  * the surface faces it, so the seams do not show. */
 const WHITE_PLASTIC = '#efefeb';
+// the warp at a wall, in world units against a probe some 0.063 across: the glowing band, the dithered band twice it,
+// how much at most thins away there, and the rings' frequency
+const WARP_W = 0.022, WARP_THIN = 0.7, WARP_RINGS = 420;
 const BROW_R = 0.73; // the brows' reach from the middle: on the core (0.7), at its collar (0.72), not hovering off it (0.8 for a moment)
 const BLACK = '#121214'; // the blue, gone to black
 const HEX = 16; // hexagons across a model unit
@@ -341,6 +347,37 @@ export function device(model: THREE.Object3D, size: number): Device {
       o.frustumCulled = false;
     }
   });
+  // the warp at a wall: shared uniforms for every material of this copy, laid on after whatever each already does
+  const warpU = { uWarp: { value: new THREE.Vector4(0, 1, 0, 1e4) }, uWarpK: { value: 0 }, uWarpC: { value: new THREE.Color() }, uWarpT: { value: 0 } };
+  for (const m of mats) {
+    const before = m.onBeforeCompile.bind(m);
+    m.onBeforeCompile = (sh, gl) => {
+      before(sh, gl);
+      Object.assign(sh.uniforms, warpU);
+      sh.vertexShader = 'varying vec3 vWarpW;\n' + sh.vertexShader.replace('#include <project_vertex>', '#include <project_vertex>\n  vWarpW = (modelMatrix * vec4(transformed, 1.0)).xyz;');
+      sh.fragmentShader = `varying vec3 vWarpW; uniform vec4 uWarp; uniform float uWarpK; uniform vec3 uWarpC; uniform float uWarpT;
+const float WARP_BAYER[16] = float[16](0., 8., 2., 10., 12., 4., 14., 6., 3., 11., 1., 9., 15., 7., 13., 5.);
+` + sh.fragmentShader
+        .replace('#include <clipping_planes_fragment>', `#include <clipping_planes_fragment>
+  float warpD = abs(dot(uWarp.xyz, vWarpW) + uWarp.w);
+  if (uWarpK > 0.0) {
+    // near the seam the body thins away to a dither, so the two copies interleave there, not fight
+    float thin = uWarpK * ${WARP_THIN.toFixed(2)} * (1.0 - smoothstep(0.0, ${WARP_W.toFixed(4)} * 2.0, warpD));
+    ivec2 wq = ivec2(mod(floor(gl_FragCoord.xy), 4.0));
+    if (thin > (WARP_BAYER[wq.x + wq.y * 4] + 0.5) / 16.0) discard;
+  }`)
+        .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
+  if (uWarpK > 0.0) {
+    // and the seam glows in the colour of the cell beyond, in rings running out from it
+    float edge = 1.0 - smoothstep(0.0, ${WARP_W.toFixed(4)}, warpD);
+    float rings = 0.55 + 0.45 * sin(warpD * ${WARP_RINGS.toFixed(1)} - uWarpT * 14.0);
+    totalEmissiveRadiance += uWarpC * edge * rings * uWarpK * 2.4;
+  }`);
+    };
+    const key = m.customProgramCacheKey.bind(m);
+    m.customProgramCacheKey = () => key() + '|warp';
+    m.needsUpdate = true;
+  }
   let shieldK = -1;
   // for fade: each material's own opacity and transparency, as made
   const fades = mats.map((m) => ({ m, opacity: m.opacity, transparent: m.transparent }));
@@ -348,6 +385,10 @@ export function device(model: THREE.Object3D, size: number): Device {
   return {
     g,
     clip: (planes) => { for (const m of mats) m.clippingPlanes = planes; },
+    warp: (plane, hex, k, time) => {
+      warpU.uWarp.value.set(plane.normal.x, plane.normal.y, plane.normal.z, plane.constant);
+      warpU.uWarpK.value = k; warpU.uWarpC.value.set(hex); warpU.uWarpT.value = time;
+    },
     tint: (hex, k) => {
       tintColor.set(hex);
       for (const t of tinted) t.m.emissive.copy(t.base).lerp(tintColor, k * 0.55);
