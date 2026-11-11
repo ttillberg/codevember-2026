@@ -89,7 +89,7 @@ export function Machine() {
     const decaled = EDGES.flatMap((_, i) => [0, 1].filter((end) => (i * 2 + end) % 3 === 1).map((end) => i * 2 + end));
     const rnd = rng(8);
     for (let k = decaled.length - 1; k > 0; k--) { const j = Math.floor(rnd() * (k + 1)); [decaled[k], decaled[j]] = [decaled[j], decaled[k]]; }
-    const hand: Brand[] = ['three', 'three', 'pmndrs', 'pmndrs', 'github', 'github', 'word', 'word', 'word'];
+    const hand: Brand[] = ['three', 'three', 'three', 'three', 'three', 'pmndrs', 'pmndrs', 'github', 'github', 'word', 'word', 'word']; // five three.js marks (two, for a while)
     const brandOf = new Map<number, Brand>(decaled.slice(0, hand.length).map((id, k) => [id, hand[k]]));
 
     const mesh = (g: THREE.BufferGeometry, m: THREE.Material) => {
