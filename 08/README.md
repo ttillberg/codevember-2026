@@ -92,6 +92,7 @@ TESSERAKT, a hypercube built for real. A tesseract cannot exist in three dimensi
 - **ORBIT and AUTOTRANSFORM to start**: the page opens in ORBIT everywhere, the machine turning in 4D from the first frame (DEMO on a desktop till the mouse first moved, and AUTOTRANSFORM off, for a while); DEMO is still in the dropdown.
 - **No full screen view**: the fisheye view's maximize button is gone; it stays in its corner (`?clean` still draws it full screen for the screengrab).
 - **ORBIT on a light gradient**: in ORBIT the ground is a studio sweep, white at the top through #f3f4f5 to a cool grey (#d3d7dc) at the foot (#e2e3e4, too near the usual, for a moment), over the usual light; it fades in and out with the mode in 0.6 s (`body.orbit::before`). Millimetre paper there, for a moment.
+- **PILOT's camera, always the same**: at the controls the camera is the chase alone, from the same place on the probe whatever the mode before: the way in a fixed 0.7 s ramp, eased at both ends (eased on and on, for a while, so the last mode's camera stayed in the mix for seconds), and the camera's up the probe's. No drag moves it: a drag on the view steers, off it nothing (it orbited round the probe, for a moment), and shift with the pointer locked no longer orbits.
 
 ## Learned
 

@@ -200,22 +200,20 @@ function Rig({ children }: { children: React.ReactNode }) {
     // at the controls, the chase: from behind the probe and a little over it, looking past it the way it flies, eased
     // after it so a turn swings the view round rather than snapping it (the usual camera, and on a phone the follow,
     // for a while)
-    rig.chaseK += ((drone.pilot ? 1 : 0) - rig.chaseK) * Math.min(1, dt * 2);
+    // the way in and out is a fixed ramp, CHASE_IN long, eased at both ends, and then the chase alone: the camera always
+    // in the same place on the probe, whatever the mode before (eased on and on, for a while, so the last mode's camera
+    // stayed in the mix for seconds)
+    rig.chaseT = THREE.MathUtils.clamp(rig.chaseT + (drone.pilot ? 1 : -1) * dt / CHASE_IN, 0, 1);
+    rig.chaseK = rig.chaseT * rig.chaseT * (3 - 2 * rig.chaseT);
     if (rig.chaseK > 0.001) {
       // 45 degrees round from straight behind, to its right, so it is seen three-quarters and its way still reads
       // (straight behind, for a while)
       sideV.crossVectors(chaseFwd, chaseUp).normalize();
       chaseAt.copy(drone.world).addScaledVector(chaseFwd, -CHASE_BACK * Math.cos(CHASE_YAW)).addScaledVector(sideV, CHASE_BACK * Math.sin(CHASE_YAW)).addScaledVector(chaseUp, CHASE_UP);
       chaseLook.copy(drone.world).addScaledVector(chaseFwd, CHASE_AHEAD);
-      // a drag off the view goes round the probe: the chase's offset turned about its up, then over it
-      if (rig.chaseYaw || rig.chasePitch) {
-        off.copy(chaseAt).sub(drone.world).applyAxisAngle(chaseUp, rig.chaseYaw);
-        sideV.crossVectors(off, chaseUp).normalize();
-        off.applyAxisAngle(sideV, rig.chasePitch);
-        chaseAt.copy(drone.world).add(off);
-      }
       camera.position.lerp(chaseAt, rig.chaseK);
       look.lerp(chaseLook, rig.chaseK);
+      camera.up.copy(camUp).lerp(chaseUp, rig.chaseK).normalize(); // the probe's up, so the chase is the same from any side of it
     }
     if (rig.attract) directShot(camera, dt, sdt, size.width <= 640 || size.height <= 500);
     else attract.on = false;
@@ -397,14 +395,12 @@ const LEVEL = 0.87; // radians, about 50 degrees
 const tail = new THREE.Vector3(), lag = new THREE.Vector3(), off = new THREE.Vector3();
 const chaseFwd = new THREE.Vector3(0, 0, -1), chaseUp = new THREE.Vector3(0, 1, 0), chaseAt = new THREE.Vector3(), chaseLook = new THREE.Vector3();
 const CHASE_YAW = Math.PI / 4; // round from straight behind, to the right
-/** At the controls: is the point on the fisheye view? There the drag steers; off it, it orbits round the probe. */
+const CHASE_IN = 0.7; // seconds from the last mode's camera to the chase, and back
+/** At the controls: is the point on the fisheye view? There the drag steers; off it, nothing. */
 function onView(x: number, y: number) {
   const { cam } = regionsOf(innerWidth, innerHeight);
   return !!cam && x >= cam.x && x <= cam.x + cam.w && y >= cam.y && y <= cam.y + cam.h;
 }
-/** The chase turned round the probe by a drag, over it no more than CHASE_PITCH either way. */
-function chaseBy(dy: number, dp: number) { rig.chaseYaw += dy; rig.chasePitch = THREE.MathUtils.clamp(rig.chasePitch + dp, -CHASE_PITCH, CHASE_PITCH); }
-const CHASE_PITCH = 1.1;
 const CHASE_BACK = 1.7, CHASE_UP = 0.4, CHASE_AHEAD = 0.25; // the look all but on the probe: from 45 degrees round, a look far ahead put it off its mark, on a phone behind the view (1, then 2 straight behind) // world units: behind it, over it, and the look ahead of it (2, straight behind; a quarter of these, the probe filling the screen, for a moment)
 const sideV = new THREE.Vector3(), viewOff = new THREE.Vector3(), camUp = new THREE.Vector3(0, 1, 0), WORLD_UP = new THREE.Vector3(0, 1, 0);
 const CHASE_EASE = 4; // how fast the chase swings round after the probe's turn (1/s)
@@ -697,7 +693,8 @@ export function App() {
         const strut = drone.pilot ? -1 : strutAt(e.clientX - at.left, e.clientY - at.top, PICK_TOUCH);
         // in the home page's box, off the struts it is the page's: it scrolls, nothing turns (two fingers orbit)
         if (page.boxed && strut < 0) { drag.current = null; return; }
-        const kind = drone.pilot && onView(e.clientX, e.clientY) ? 'look' : strut >= 0 ? 'crank' : 'orbit';
+        if (drone.pilot && !onView(e.clientX, e.clientY)) { drag.current = null; return; } // at the controls, the view only
+        const kind = drone.pilot ? 'look' : strut >= 0 ? 'crank' : 'orbit';
         drag.current = { kind, x: e.clientX, y: e.clientY, t: performance.now() };
         if (strut >= 0) { grip.held = strut; const w = strutW(strut); handDown(Math.abs(w) > 0.2 ? -Math.sign(w) : 1); }
         if (kind === 'orbit') { rig.orbitVel[0] = rig.orbitVel[1] = 0; rig.orbiting = true; }
@@ -713,8 +710,11 @@ export function App() {
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
     // on its own a drag on a strut takes it in the hand, no alt needed (alt was the only way to a strut for a while);
     // alt-drag anywhere still turns it in 4D by the drag
+    // at the controls a drag only on the view, to steer: off it nothing, the camera is the chase's alone (off it, it
+    // orbited round the probe, for a moment)
+    if (drone.pilot && !e.altKey && !onView(e.clientX, e.clientY)) return;
     const strut = !drone.pilot ? grip.hover : -1;
-    const kind = e.altKey || strut >= 0 ? 'crank' : drone.pilot && !e.shiftKey && onView(e.clientX, e.clientY) ? 'look' : 'orbit';
+    const kind = e.altKey || strut >= 0 ? 'crank' : drone.pilot ? 'look' : 'orbit';
     drag.current = { kind, x: e.clientX, y: e.clientY, t: performance.now() };
     if (kind === 'orbit') { rig.orbitVel[0] = rig.orbitVel[1] = 0; rig.orbiting = true; }
     if (kind === 'crank' && strut < 0) handDown();
@@ -737,8 +737,7 @@ export function App() {
     const d = drag.current;
     if (!d) return;
     const now = performance.now(), dx = e.clientX - d.x, dy = e.clientY - d.y;
-    if (d.kind === 'orbit' && drone.pilot) chaseBy(-dx * ORBIT, -dy * ORBIT);
-    else if (d.kind === 'orbit') orbitBy(-dx * ORBIT, dy * ORBIT, Math.max(1, now - d.t) / 1000);
+    if (d.kind === 'orbit') orbitBy(-dx * ORBIT, dy * ORBIT, Math.max(1, now - d.t) / 1000);
     else if (d.kind === 'crank') handMove(dx, dy);
     else if (drone.pilot) { drone.turn[0] += dx * LOOK * 1.6; drone.turn[1] += -dy * LOOK * 1.6; }
     d.x = e.clientX; d.y = e.clientY; d.t = now;
@@ -754,19 +753,15 @@ export function App() {
   };
   const onWheel = (e: React.WheelEvent) => { rig.zoomK = Math.min(2.2, Math.max(0.5, rig.zoomK * Math.exp(e.deltaY * 0.001))); };
 
-  // the pointer lock: the mouse itself is the look, no drag; with shift held it orbits the machine instead, and
-  // coasts when shift is let go; with alt it turns the machine
+  // the pointer lock: the mouse itself is the look, no drag (with shift held it orbited, for a while), and
+  // with alt it turns the machine
   useEffect(() => {
     const change = () => setLocked(document.pointerLockElement === stage.current);
     const move = (e: MouseEvent) => {
       if (document.pointerLockElement !== stage.current || !drone.pilot) return;
       if (e.altKey) { if (!hand.on) handDown(); handMove(e.movementX, e.movementY); return; }
       handUp(); // alt let go without its keyup reaching the page
-      if (e.shiftKey) {
-        chaseBy(-e.movementX * ORBIT, -e.movementY * ORBIT); // round the probe, the chase being the camera here
-        return;
-      }
-      rig.orbiting = false; // shift let go without its keyup reaching the page: the orbit coasts
+      // no orbit at the controls, shift or not: the camera is the chase's alone (shift orbited, for a while)
       drone.turn[0] += e.movementX * LOOK; drone.turn[1] += -e.movementY * LOOK;
     };
     const up = (e: KeyboardEvent) => {
@@ -789,7 +784,6 @@ export function App() {
     document.body.classList.toggle('pilot', m === 'pilot'); // on a phone: the view, the pad, no pills (style.css)
     drone.keys.thrust = drone.keys.strafe = 0;
     rig.turntable = m !== 'pilot';
-    if (m === 'pilot') rig.chaseYaw = rig.chasePitch = 0; // the controls taken: the chase from its own place again
     if (m !== 'pilot' && document.pointerLockElement) document.exitPointerLock();
   };
 
@@ -922,7 +916,6 @@ export function App() {
         {manual ? <>
         <h6 className="shortcuts">Navigation</h6>
         <Do how={<Key wide>{locked ? 'Mouse' : 'Drag'}</Key>} what={locked ? 'Steer' : 'Steer, on the view'} />
-        {locked ? null : <Do how={<Key wide>Drag</Key>} what="Orbit, off the view" />}
         <Do how={<><Key>W</Key><Key>S</Key><Key><Tri d="up" /></Key><Key><Tri d="down" /></Key></>} what="Forward, back" />
         <Do how={<><Key>A</Key><Key>D</Key><Key><Tri d="left" /></Key><Key><Tri d="right" /></Key></>} what="Strafe" />
         <Do how={<Key wide>Space</Key>} what="Forward" />

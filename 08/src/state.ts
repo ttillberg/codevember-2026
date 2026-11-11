@@ -39,7 +39,7 @@ export const rig = {
   zoomK: 1, // the wheel's factor on the fit, 1 fits the machine to the page
   yaw: 0, pitch: 0, // the camera's orbit
   booted: false, // App.tsx's start-up done: a hot reload leaves the mode alone
-  chaseYaw: 0, chasePitch: 0, // at the controls, a drag off the view orbits the chase round the probe (reset on taking them)
+  chaseT: 0, // the way into the chase, 0 to 1 at a steady rate (chaseK is it eased)
   orbitVel: [0, 0], orbiting: false, // rad/s of yaw and pitch from the last drag, coasting once it is let go
   turntable: true, // the slow turn on its own, in the attract mode
   spin: true, // the turntable switch: off, the camera stays where it is left
