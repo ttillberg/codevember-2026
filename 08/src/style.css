@@ -297,6 +297,7 @@ body.home .stage .corner { top: 10px; right: 10px; }
    proportions, a pill three times its words high, 1.1 of them either side: 33 px high, 12 px aside; the wheel as high
    (48 px, 16 px words, for a moment; 30 px, 11 px words, a tighter pill, for a while) */
 @media (min-width: 641px) and (min-height: 501px) {
+  .stage .corner { top: 30px; } /* the pills' tops on the title's caps, 6 px under its box (on the box's top, 24 px, for a while) */
   .modemenu .now { height: 33px; box-sizing: border-box; padding: 0 11px 0 12px; gap: 7px; font-size: 11px; letter-spacing: 0.1em; }
   .modemenu .now svg { width: 10px; height: 10px; }
   .settings .wheel { width: 33px; height: 33px; }
