@@ -431,6 +431,8 @@ body.clean .plate, body.clean .keys { display: none; }
 .pad.shown { display: block; } /* a desktop's: over the view in the column, in any mode; pressed, it takes the controls */
 .pad .arrow { position: absolute; overflow: visible; }
 body:not(.pilot) .pad .arrow { display: none; } /* the arrows only at the controls (always, for a while) */
+body.pilot .pad { cursor: grab; } /* the arrows out: a drag on the view is the look, the hand says so */
+body.pilot .pad:active { cursor: grabbing; }
 .pad .arrow path { fill: none; stroke: #fff; stroke-width: 1.6; stroke-linejoin: round; filter: drop-shadow(0 0 1px var(--ui)); }
 .pad .arrow.on path { fill: #fff; }
 .pad .arrow.t { top: 18px; left: calc(50% - 13px); }
