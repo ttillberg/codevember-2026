@@ -72,11 +72,12 @@ export function regionsOf(W: number, H: number): { main: Rect; cam: Rect | null;
   const all = { x: 0, y: 0, w: W, h: H }, main = all, beside = { x: left, y: 0, w: W - left, h: H };
   if (!split) return { main, cam: null, draw: [all] };
   // the probe's section sits on the view, under the text: the view the room between them (page.probeH, its height)
-  const w = Math.min(380, W - 48), h = Math.round(Math.max(COL_MIN_H, Math.min(w, H - COL_OVER - page.textBottom - 16 - page.probeH - 14)));
+  const w = Math.min(CAM_W, W - 48), h = Math.round(Math.max(COL_MIN_H, Math.min(w, H - COL_OVER - page.textBottom - 16 - page.probeH - 14)));
   const cam = { x: 24, y: H - COL_OVER - h, w, h };
   const draw = [beside, { x: 0, y: 0, w: left, h: cam.y }, { x: 0, y: cam.y + h, w: left, h: H - cam.y - h }, { x: 0, y: cam.y, w: cam.x, h }, { x: cam.x + w, y: cam.y, w: left - cam.x - w, h }];
   return { main, cam, draw };
 }
+const CAM_W = 190; // a desktop's view, its width at most: half the column (all 380 of it, for a while)
 const CAM_RADIUS = 3; // a desktop's view's corners (CSS px)
 const PIP_GAP = 24; // the phone's disc in from the edges (CSS px)
 const PILLS_UP = 24; // an upright phone's disc: up from the foot (84, over the mode pills there, for a while) (CSS px)
