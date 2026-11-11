@@ -247,7 +247,7 @@ const LEVEL = 0.87; // radians, about 50 degrees
 const tail = new THREE.Vector3(), lag = new THREE.Vector3(), off = new THREE.Vector3();
 const chaseFwd = new THREE.Vector3(0, 0, -1), chaseUp = new THREE.Vector3(0, 1, 0), chaseAt = new THREE.Vector3(), chaseLook = new THREE.Vector3();
 const CHASE_YAW = Math.PI / 4; // round from straight behind, to the right
-const CHASE_BACK = 1.7, CHASE_UP = 0.4, CHASE_AHEAD = 1; // world units: behind it, over it, and the look ahead of it (2, straight behind; a quarter of these, the probe filling the screen, for a moment)
+const CHASE_BACK = 1.7, CHASE_UP = 0.4, CHASE_AHEAD = 0.25; // the look all but on the probe: from 45 degrees round, a look far ahead put it off its mark, on a phone behind the view (1, then 2 straight behind) // world units: behind it, over it, and the look ahead of it (2, straight behind; a quarter of these, the probe filling the screen, for a moment)
 const sideV = new THREE.Vector3(), viewOff = new THREE.Vector3(), camUp = new THREE.Vector3(0, 1, 0), WORLD_UP = new THREE.Vector3(0, 1, 0);
 const CHASE_EASE = 4; // how fast the chase swings round after the probe's turn (1/s)
 const focusAt = new THREE.Vector3();
