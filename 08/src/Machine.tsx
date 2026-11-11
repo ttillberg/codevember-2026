@@ -55,7 +55,7 @@ export function Machine() {
     const silver = new THREE.MeshStandardMaterial({ map: brushed('#dedede', 41), roughness: 0.3, metalness: 0.75 });
     const marked = [0, 1].map((k) => new THREE.MeshStandardMaterial({ map: brushed('#dedede', 43 + k, true), roughness: 0.3, metalness: 0.75 }));
     const CE_RODS = [7, 26];
-    const ALL_CE = true; // debugging: every rod marked, to see it
+    const ALL_CE = false; // debugging: every rod marked, to see it (on for a while; off, only CE_RODS carry it)
     // every painted part is a little worn, all over, the metal is not: a hand of wear textures per paint, dealt out
     const POOL = 6;
     const BUMP = new THREE.Vector2(0.35, 0.35); // the hard wear as tiny grooves
