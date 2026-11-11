@@ -126,7 +126,7 @@ function dress(g: THREE.Group) {
   };
   // no brands on the probe (three.js and pmndrs on the core and GitHub on a wing, for a while): they are the machine's,
   // on its sleeves; the probe keeps its own serial
-  onCore([0, -0.85, -0.5], m.serial, 0.5, 0.0625);
+  onCore([0, -0.85, -0.5], m.serial, 0.8, 0.1); // readable, 1.6 times the size, as wide as the decal can bend round the core (0.5 x 0.0625, for a while: a smudge)
   onCore([0.6, -0.3, 0.7], m.scuff[4], 0.7, 0.7, 0.5);
   // no scuffs on the wings any more: a honeycomb under them instead (honeycomb, in the copy's own material)
 }
