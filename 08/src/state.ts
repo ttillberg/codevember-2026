@@ -101,6 +101,8 @@ let clock = 0, handAt = -Infinity, orbitAt = -Infinity;
 export function transformNow() { handAt = -Infinity; }
 /** TURNTABLE switched on: the same, it turns now, not IDLE after the last orbit by hand. */
 export function turntableNow() { orbitAt = -Infinity; }
+/** Out of ATTRACT with the switch off: the servo takes the turn on to the nearest whole quarter, not left part way. */
+export function settleTurn() { if (st.transform || st.cranking) return; st.target = Math.round(st.angle / QUARTER) * QUARTER; st.settling = true; }
 export function orbitBy(dy: number, dp: number, dt: number) {
   orbitAt = clock;
   rig.orbiting = true;
@@ -158,7 +160,8 @@ export function tick(dt: number) {
   if (st.flipIn <= 0) { st.way = -st.way; st.flipIn = 8 + Math.random() * 14; }
 
   // transform waits IDLE after the last turn by hand
-  if (st.transform && clock - handAt > IDLE) {
+  // in ATTRACT it turns too, whatever the switch: the joints move for their close-ups
+  if ((st.transform && clock - handAt > IDLE) || rig.attract) {
     glide = null; st.settling = false;
     // an even turn all the time, turning round now and then; past each quarter it is banked, what little is left
     // over dropped (a frame's worth at most), and the turn goes on in another plane (it breathed, to and fro either

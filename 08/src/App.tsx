@@ -8,7 +8,7 @@ import { DroneCam, eyeView, regionsOf, page } from './DroneCam';
 import { Grip, grip, strutAt, strutW, PICK_TOUCH } from './Grip';
 // CellMap (./CellMap.tsx), the cells' little map with their colours, is off the page for now
 import { drone, target } from './drone';
-import { st, rig, orbitBy, crankStart, crankBy, crankEnd, pose, transformNow, turntableNow } from './state';
+import { st, rig, orbitBy, crankStart, crankBy, crankEnd, pose, transformNow, turntableNow, settleTurn } from './state';
 import { project, VERTS } from './tesseract';
 import { dof } from './dof';
 
@@ -808,6 +808,7 @@ export function App() {
   const setMode = (m: Mode) => {
     attractFirst.current = false; // picked: whatever it is, it stays
     if (m !== 'pilot') lastAuto.current = m;
+    if (rig.attract && m !== 'attract') settleTurn(); // it turned in ATTRACT: on to a whole quarter, unless AUTOTRANSFORM goes on
     drone.pilot = m === 'pilot'; rig.follow = m === 'follow'; rig.attract = m === 'attract'; setModeState(m);
     if (m === 'attract') attract.next = 0; // straight into a shot
     document.body.classList.toggle('pilot', m === 'pilot'); // on a phone: the view, the pad, no pills (style.css)
