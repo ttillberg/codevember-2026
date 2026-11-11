@@ -9,6 +9,7 @@ import { device, ringOut, DEVICE_URL, type Device } from './device';
 import { makeSmoke } from './smoke';
 import { makeLaser } from './laser';
 
+const LASER_BACK = 0.1; // 4D: the laser starts this far behind the probe's middle, out of its back (0.05, inside its body, for a while)
 const LASER = true; // the laser line through the wake (hidden for a while, the clouds alone)
 
 // A device that lives in the tesseract: a ball with one eye, fins that are walls, a shutter. It is inside one of the eight cells, a cube with one coordinate held at
@@ -657,7 +658,7 @@ export function Drones() {
     }
     // the laser through it, along the same way (LASER)
     if (s.laser) {
-      s.laser.sample(add4(s.p, s.dir, -0.05), now, CELL_HEX[cellId()]);
+      s.laser.sample(add4(s.p, s.dir, -LASER_BACK), now, CELL_HEX[cellId()]);
       s.laser.update(m, now, size.width * viewport.dpr, size.height * viewport.dpr);
     }
     const vfov = degToRad((camera as THREE.PerspectiveCamera).fov);

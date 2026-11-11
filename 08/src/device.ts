@@ -201,6 +201,7 @@ const WHITE_PLASTIC = '#efefeb';
 // the warp at a wall, in world units against a probe some 0.063 across: the glowing band, the dithered band twice it,
 // how much at most thins away there, and the rings' frequency
 const WARP_W = 0.022, WARP_THIN = 0.7, WARP_RINGS = 420;
+const BACK_K = 0.55; // the back's ring and glow, against their size as made
 const BROW_R = 0.73; // the brows' reach from the middle: on the core (0.7), at its collar (0.72), not hovering off it (0.8 for a moment)
 const BLACK = '#121214'; // the blue, gone to black
 const HEX = 16; // hexagons across a model unit
@@ -240,6 +241,13 @@ export function device(model: THREE.Object3D, size: number): Device {
   g.scale.setScalar(size);
   // the rest pose in the file is open; the hinges turn in a fixed ratio from there (blender: leaf 95 -> 160, wall -55 -> 0)
   const walls = [0, 1, 2, 3].map((k) => { const w = g.getObjectByName(`wall_${k}`)!; return { o: w, rest: w.rotation.x }; });
+  // the back: the ring, its throat and the glow in it smaller and set into the shell rather than standing out of it
+  // (the ring 0.26 across at 0.69, out past the core's curve, for a while)
+  // flush with the core's curve where they sit (0.7 across it), the throat a hair below the ring's lip, the glow at its floor
+  for (const [name, z] of [['back_ring', 0.688], ['back_throat', 0.668], ['back_glow', 0.697]] as const) {
+    const o = g.getObjectByName(name);
+    if (o) { o.scale.multiplyScalar(BACK_K); o.position.z = z; }
+  }
   // the brows: the four arcs that hung by the wings' lips, off the body; taken off the hinges onto one ring on the
   // core, drawn in to sit close round it, so they turn together round the eye's axis
   const root = g.getObjectByName('core')!.parent!;
