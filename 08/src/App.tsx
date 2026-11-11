@@ -30,12 +30,13 @@ if (CLEAN) { eyeView.max = true; page.clean = true; }
 
 // The three modes, pills under MODE, nothing more (a line on the one picked under them before): on its own the camera orbits the machine or follows
 // the beetle; the pilot is at the controls.
-type Mode = 'attract' | 'orbit' | 'follow' | 'pilot';
+type Mode = 'attract' | 'orbit' | 'follow' | 'probe' | 'pilot';
 // in this order: ORBIT, FOLLOW, PILOT, from the farthest to the controls (follow, pilot, orbit for a moment)
 const MODES: [Mode, string][] = [
   ['attract', 'Attract'],
   ['orbit', 'Orbit'],
   ['follow', 'Follow'],
+  ['probe', 'Probe'],
   ['pilot', 'Pilot'],
 ];
 
@@ -202,9 +203,9 @@ function Rig({ children }: { children: React.ReactNode }) {
     const yaw = rig.yaw - tilt.now[0], pitch = THREE.MathUtils.clamp(rig.pitch + tilt.now[1] * 0.6, -1.4, 1.4);
     camera.position.setFromSphericalCoords(rig.zoom, Math.PI / 2 - pitch, yaw);
     // follow (the switch): the same orbit, round the beetle instead of the machine's middle, nearer; eased in and out
-    tail.lerp(drone.world, Math.min(1, sdt * FOLLOW_EASE));
+    tail.lerp(drone.world, Math.min(1, sdt * (rig.close ? CLOSE_LAG * 2 : FOLLOW_EASE))); // in close, the look right on it
     if (rig.followK < 0.001) lag.copy(tail); // not following: the camera's own catch-up starts from where the look is
-    lag.lerp(tail, Math.min(1, sdt * FOLLOW_LAG));
+    lag.lerp(tail, Math.min(1, sdt * (rig.close ? CLOSE_LAG : FOLLOW_LAG))); // in close, the camera keeps up
     // on its own, the switch
     rig.followK += ((rig.follow && !drone.pilot ? 1 : 0) - rig.followK) * Math.min(1, dt * 2); // at the controls the chase, below (the follow on a phone for a while)
     const fk = rig.followK;
@@ -213,7 +214,7 @@ function Rig({ children }: { children: React.ReactNode }) {
     chaseFwd.lerp(drone.worldFwd, ve).normalize(); chaseUp.lerp(drone.worldUp, ve).normalize();
     let upWant = WORLD_UP;
     if (fk > 0.001) {
-      const D = rig.zoom * (size.width <= 640 || size.height <= 500 ? FOLLOW_PHONE : FOLLOW);
+      const D = rig.close ? PROBE_D : rig.zoom * (size.width <= 640 || size.height <= 500 ? FOLLOW_PHONE : FOLLOW);
       if (rig.view === 'free') off.setFromSphericalCoords(D, Math.PI / 2 - THREE.MathUtils.clamp(pitch, -LEVEL, LEVEL), yaw);
       else {
         // behind it, beside it or over it, by its own turn (the follow went round by the drag alone for a while)
@@ -250,12 +251,14 @@ function Rig({ children }: { children: React.ReactNode }) {
     else if (cam.view?.enabled) cam.clearViewOffset();
     // the depth of field on what the camera looks at, the beetle when following; nearer, the blur deeper, as a lens's
     dof.focus.copy(look).lerp(drone.world, rig.chaseK); // chasing, on the probe, not past it
-    dof.aperture = THREE.MathUtils.lerp(DOF_WIDE, DOF_FOLLOW, fk);
+    dof.aperture = THREE.MathUtils.lerp(DOF_WIDE, rig.close ? DOF_CLOSE : DOF_FOLLOW, fk); // in close, shallow
     dof.skip = !rig.follow && !drone.pilot; // in ORBIT none, whatever the switch: the whole machine sharp (on there too, for a while)
     if (rig.attract) { dof.skip = attract.kind === 'wide' || attract.kind === 'flyover' || attract.kind === 'edge'; dof.focus.copy(attract.focus); dof.aperture = attract.kind === 'follow' ? DOF_FOLLOW : attract.kind === 'ball' ? DOF_FOLLOW * 0.4 : DOF_CLOSE; } // the ball so near, a narrow blur, or it goes soft across its own depth // in ATTRACT on what the shot is of, but for the wide shots
   });
   return <group ref={ref}>{children}</group>;
 }
+// PROBE: the follow in close on the probe, as near as a close-up, the camera keeping right up with it, the drag going round it
+const PROBE_D = 0.5, CLOSE_LAG = 6;
 const FOCUS = 0.3; // how far the turntable's look leans from the machine's middle to the device
 const DOF_CLOSE = 0.016; // ATTRACT's close-ups: a shallow focus, the probe sharp and the struts round it soft
 
@@ -876,9 +879,9 @@ export function App() {
   // the mode, from the pills on the left or p: orbit and follow on its own, the pilot at the controls
   const setMode = (m: Mode) => {
     attractFirst.current = false; // picked: whatever it is, it stays
-    if (m !== 'pilot') lastAuto.current = m;
+    if (m !== 'pilot' && m !== 'probe') lastAuto.current = m; // where the pilot and the probe's button go back to
     if (rig.attract && m !== 'attract') settleTurn(); // it turned in ATTRACT: on to a whole quarter, unless AUTOTRANSFORM goes on
-    drone.pilot = m === 'pilot'; rig.follow = m === 'follow'; rig.attract = m === 'attract'; setModeState(m);
+    drone.pilot = m === 'pilot'; rig.follow = m === 'follow' || m === 'probe'; rig.close = m === 'probe'; rig.attract = m === 'attract'; setModeState(m);
     if (m === 'attract') { attract.left = 0; attract.beats = 1; } // straight into a shot, on a beat
     document.body.classList.toggle('pilot', m === 'pilot'); // on a phone: the view, the pad, no pills (style.css)
     drone.keys.thrust = drone.keys.strafe = 0;
@@ -965,6 +968,11 @@ export function App() {
         {CLEAN ? null : <div className="corner">
           {/* a phone's mode: a dropdown top right, over AUTOTRANSFORM (the three pills on a row at the foot, for a while) */}
           <ModeMenu mode={mode} pick={setMode} />
+          {/* PROBE at a tap: a round button beside the mode, a target; on it, a tap goes back to where it was */}
+          <button className={`focus ${mode === 'probe' ? 'on' : ''}`} tabIndex={-1} aria-label={mode === 'probe' ? 'Back from the probe' : 'Focus on the probe'} aria-pressed={mode === 'probe'}
+            onPointerDown={(e) => { e.preventDefault(); e.stopPropagation(); }} onClick={() => setMode(mode === 'probe' ? lastAuto.current : 'probe')}>
+            <svg width={15} height={15} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" aria-hidden><circle cx={12} cy={12} r={7} /><circle cx={12} cy={12} r={2.2} fill="currentColor" stroke="none" /><path d="M12 1.5v3.5M12 19v3.5M1.5 12H5M19 12h3.5" /></svg>
+          </button>
           {/* and beside it a wheel, the settings: AUTOTRANSFORM in it (on its own under the dropdown, for a while) */}
           <Settings transform={transform} toggle={toggleAuto} turntable={turntable} toggleTurntable={toggleTurntable} blur={blur} toggleBlur={toggleBlur} />
           {/* a ? that opens a note, on frosted glass: why this is short (beside AUTOTRANSFORM on a desktop, bottom left on a phone) */}

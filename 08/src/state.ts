@@ -41,7 +41,7 @@ export const rig = {
   orbitVel: [0, 0], orbiting: false, // rad/s of yaw and pitch from the last drag, coasting once it is let go
   turntable: true, // the slow turn on its own, in the attract mode
   spin: true, // the turntable switch: off, the camera stays where it is left
-  follow: false, followK: 0, // the follow switch, and 0 to 1 eased: the camera in close on the device, going round it
+  follow: false, followK: 0, close: false, // close: PROBE, the follow in close on the probe, the camera keeping up with it // the follow switch, and 0 to 1 eased: the camera in close on the device, going round it
   chaseK: 0, // at the controls, 0 to 1 eased: the camera behind the probe
   attract: false, // ATTRACT: the camera cuts between shots on a beat, on its own
   view: 'free' as 'free' | 'back' | 'side' | 'top', // following, where from: round it by the drag, or behind, beside or over the probe by its own turn
