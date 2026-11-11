@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import type { V4 } from './tesseract';
+import { bumpSheet } from './decals';
 
 // The drone as the drone sees itself: the state the cell camera reads.
 //
@@ -68,12 +69,38 @@ export const SIZE_MAIN = (0.095 * 2) / 3, SIZE_CELL = 0.17; // in the main pictu
 /** At the controls, the piece is in the lock when it is in this cell, this close (cell units) and ahead of the eye. */
 export const LOCK_RANGE = 1.1;
 // its colour is the colour of the cell the piece is in; one of each material in the fog, one out of it for the eye
+// CDVMBR 08 pressed into the jelly, round its middle, twice: a sheet of heights, the letters sunk in it, baked to a
+// normal map, and the letters a shade deeper in the colour (the sphere's own UVs, the equator across the middle)
+let inset: { map: THREE.Texture; normal: THREE.Texture } | null = null;
+function jellyInset() {
+  if (inset || typeof document === 'undefined') return inset;
+  const W = 1024, H = 512;
+  const c = document.createElement('canvas'); c.width = W; c.height = H;
+  const g = c.getContext('2d')!;
+  g.fillStyle = '#ffffff'; g.fillRect(0, 0, W, H);
+  const bump = bumpSheet(W, H);
+  const word = (q: CanvasRenderingContext2D, fill: string) => {
+    q.save(); q.fillStyle = fill; q.textAlign = 'center'; q.textBaseline = 'middle';
+    q.font = '800 64px "Helvetica Neue", Helvetica, Arial, sans-serif';
+    for (const x of [W * 0.25, W * 0.75]) q.fillText('CDVMBR 08', x, H / 2);
+    q.restore();
+  };
+  word(g, '#c4c4c4');
+  bump.hg.filter = 'blur(1.5px)'; word(bump.hg, '#000000'); bump.hg.filter = 'none';
+  bump.bake(2.2);
+  const map = new THREE.CanvasTexture(c);
+  map.colorSpace = THREE.SRGBColorSpace; map.anisotropy = 4;
+  inset = { map, normal: bump.t };
+  return inset;
+}
 const jellyMats = [true, false].map((fog) => new THREE.MeshPhysicalMaterial({
   color: '#ff6a3a', emissive: '#ff6a3a', emissiveIntensity: 0.35, roughness: 0.12, metalness: 0, clearcoat: 1, clearcoatRoughness: 0.04,
   transparent: true, opacity: 0.72, fog, // writes its depth: the depth of field keeps it sharp where it is in focus
 }));
 const coreMats = [true, false].map((fog) => new THREE.MeshStandardMaterial({ color: '#ff6a3a', emissive: '#ff6a3a', emissiveIntensity: 0.8, roughness: 0.5, toneMapped: false, fog }));
-export function lampColor(hex: string) { for (const m of [...jellyMats, ...coreMats]) { m.color.set(hex); m.emissive.set(hex); } }
+let insetOn = false;
+export function lampColor(hex: string) {
+  if (!insetOn) { const t = jellyInset(); if (t) { insetOn = true; for (const m of jellyMats) { m.map = t.map; m.normalMap = t.normal; m.normalScale.set(1, 1); m.needsUpdate = true; } } } for (const m of [...jellyMats, ...coreMats]) { m.color.set(hex); m.emissive.set(hex); } }
 /** `fog` off, the piece shows through the rooms' haze, for the eye's view, where the rooms beyond fade. */
 export function pieceMesh(scale = 1, fog = true) {
   const g = new THREE.Group();
