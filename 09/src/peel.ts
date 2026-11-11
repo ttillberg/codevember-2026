@@ -14,7 +14,7 @@
 import { Quaternion, Vector3 } from 'three';
 import { FILM_N, dirToFace, faceToDir } from './film';
 import { LIFT_M, CELL, liftIndex, liftRead } from './lift';
-import { TEXEL, eraseFlood, idAt, texelAt } from './filmops';
+import { TEXEL, coveredOver, eraseFlood, idAt, texelAt } from './filmops';
 import { R } from './state';
 import type { World } from './state';
 
@@ -142,7 +142,9 @@ function arc(ax: number, ay: number, az: number, bx: number, by: number, bz: num
 const STUCK = 0, LOOSE = 1, HELD = 2;
 
 export function createPeeler(world: World) {
-  const film = world.film, lift = world.lift;
+  const films = world.films, lift = world.lift;
+  /** The film being pulled, and where it is in the stack (0 on top). */
+  let film = films[0], layer = 0;
   const st = new Uint8Array(COUNT);
   const has = new Uint8Array(COUNT);        // film of the piece at the cell: 0 unknown, 1 yes, 2 no
   const linkKnown = new Uint8Array(COUNT);  // bit k: link k looked at
@@ -182,6 +184,15 @@ export function createPeeler(world: World) {
   function hasFilm(c: number): boolean {
     if (has[c] === 0) has[c] = idAt(film, rest[c * 3], rest[c * 3 + 1], rest[c * 3 + 2]) === id ? 1 : 2;
     return has[c] === 1;
+  }
+
+  /** Is there film of an upper layer over this cell? Then it can never let go: the film on
+   *  top holds it down, and its edge is where this one parts. */
+  const pin = new Uint8Array(COUNT); // 0 unknown, 1 free, 2 held down
+  function pinned(c: number): boolean {
+    if (layer === 0) return false;
+    if (pin[c] === 0) pin[c] = coveredOver(films, layer, rest[c * 3], rest[c * 3 + 1], rest[c * 3 + 2]) ? 2 : 1;
+    return pin[c] === 2;
   }
 
   /** Is the film whole from cell c to its neighbour k? */
@@ -244,6 +255,7 @@ export function createPeeler(world: World) {
 
   function clear() {
     runFrom.fill(-1);
+    pin.fill(0);
     st.fill(0); has.fill(0); linkKnown.fill(0); linkOk.fill(0);
     nLoose = nHeld = nFront = nEdge = 0;
     world.tension.count = 0;
@@ -256,10 +268,12 @@ export function createPeeler(world: World) {
     lift.version++;
   }
 
-  /** Take hold of piece `pieceId` at the edge point e (unit, sphere-local), on the side
+  /** Take hold of piece `pieceId` of film `which` at the edge point e (unit, sphere-local), on the side
    *  the unit tangent `into` points to. */
-  function start(pieceId: number, e: Vector3, into: Vector3): boolean {
+  function start(which: number, pieceId: number, e: Vector3, into: Vector3): boolean {
     clear();
+    layer = which;
+    film = films[which];
     id = pieceId;
     G.copy(e).normalize();
     F.copy(G).multiplyScalar(R);
@@ -273,7 +287,7 @@ export function createPeeler(world: World) {
       for (let m = 0; m < ring.length && ring.length < 90; m++) {
         const c = ring[m];
         const d = Math.hypot(rest[c * 3] - x * R, rest[c * 3 + 1] - y * R, rest[c * 3 + 2] - z * R);
-        if (d < bestD && hasFilm(c)) { bestD = d; best = c; }
+        if (d < bestD && hasFilm(c) && !pinned(c)) { bestD = d; best = c; }
         if (d < 3.2 * CELL_RAD * R) for (let k = 0; k < 8; k++) { const n = nb[c * 8 + k]; if (n >= 0 && !ring.includes(n)) ring.push(n); }
       }
       return best;
@@ -296,13 +310,14 @@ export function createPeeler(world: World) {
         for (let k = 0; k < 8; k++) {
           if (!link(c, k)) continue;
           const n = nb[c * 8 + k];
-          if (st[n] === STUCK && inGrip(n)) loosen(n, HELD, 0);
+          if (st[n] === STUCK && inGrip(n) && !pinned(n)) loosen(n, HELD, 0);
         }
       }
     }
     if (nLoose === 0) { clear(); return false; }
     nHeld = nLoose;
     on = true;
+    lift.layer = layer;
     lift.id = id;
     dirty = true;
     return true;
@@ -581,6 +596,7 @@ export function createPeeler(world: World) {
         const n = nb[c * 8 + k];
         if (st[n] !== STUCK) continue;
         left = true;
+        if (pinned(n)) continue; // under the film above: it stays
         // not the front being pulled (and not just a leftover speck): it stays as it is
         const fo = frontSeen[n] === frontGen ? frontOf[n] : -1;
         if (fo >= 0 && fo !== liveFront && frontSize[fo] >= SPECK) continue;
@@ -806,9 +822,16 @@ export function createPeeler(world: World) {
       // The new edge is the front as it was drawn: the 0.5 line of the atlas. Along a cut
       // the lattice cannot say which side a texel is on, so there a lifted cell goes whole:
       // the flood cannot cross the cut anyway.
+      // Where the film above holds this one down the cells never let go, so the drawn front
+      // stops half a cell short of that film's edge. There the film parts along the edge
+      // itself: a held-down cell next to loose film goes as far as it is not covered.
       const data = lift.data, seeds: number[] = [], whole = accN;
       for (const c of region) {
-        if (mask[c] > 0.5) seeds.push(texelAt(rest[c * 3], rest[c * 3 + 1], rest[c * 3 + 2]));
+        if (mask[c] > 0.5 && st[c] !== STUCK) seeds.push(texelAt(rest[c * 3], rest[c * 3 + 1], rest[c * 3 + 2]));
+        if (st[c] === STUCK && pinned(c)) {
+          for (let q = 0; q < 8; q++) if (link(c, q) && st[nb[c * 8 + q]] !== STUCK) { whole[c] = 1; break; }
+          if (whole[c]) continue;
+        }
         for (let q = 0; q < 8; q++) {
           const w = nb[c * 8 + q];
           if (w >= 0 && hasFilm(w) && !link(c, q) && (mask[c] > 0.5 || (inRegion[w] && mask[w] > 0.5))) { whole[c] = 1; break; }
@@ -819,6 +842,8 @@ export function createPeeler(world: World) {
         const col = k % W3, row = (k / W3) | 0;
         const fc = (col / FILM_N) | 0, fr = (row / FILM_N) | 0;
         const f = fr * 3 + fc, x = (col - fc * FILM_N + 0.5) / CELL, y = (row - fr * FILM_N + 0.5) / CELL;
+        // never under the film above: this is exact, to the texel
+        for (let q = 0; q < layer; q++) if (films[q].cover[k] >= 128) return false;
         return whole[(f * M + (y | 0)) * M + (x | 0)] === 1 || liftRead(data, f, x, y, 3) > 0.5;
       });
       for (const c of region) whole[c] = 0;

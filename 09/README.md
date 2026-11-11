@@ -2,7 +2,7 @@
 
 2026-11-09
 
-A sphere of light millimetre paper, wrapped in one glossy, lightly tinted film with a print on it. Cut the film, peel it off.
+A sphere of millimetre paper wrapped in two thin films, one over the other. Cut the film on top, peel it off, then do the same to the one under it.
 
 Three tools, bottom left or keys 1 / 2 / 3:
 
@@ -11,6 +11,8 @@ Three tools, bottom left or keys 1 / 2 / 3:
 - `free`: draw a cut on the surface.
 
 How it works:
+
+- The films are a stack. A cut only goes into the film on top where it lands, never through two; a hairline cut in the upper film is not an opening. Only one film is pulled at a time, and film with another film over it cannot let go: the lower one peels as far as the upper one has been removed, and parts along its edge.
 
 - The film is a texture on the sphere, unwrapped onto a cube: one atlas says where film is left, one says which piece each texel belongs to. No mesh is ever cut, the fragment shader discards.
 - A cut paints a hairline groove into the first atlas. Pieces are whatever is still connected, found by a flood fill each time something was cut or peeled.

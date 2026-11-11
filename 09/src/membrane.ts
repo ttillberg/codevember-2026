@@ -9,23 +9,26 @@ import { ATLAS_H, ATLAS_W, FILM_GLSL } from './film';
 import { LIFT_GLSL, LIFT_H, LIFT_W } from './lift';
 import type { Layer } from './layers';
 
-// The sphere and its top membrane.
+// The sphere and its stack of membranes.
 //
-// Three draws, in this order:
-//   under      opaque       world.next, a plain sphere a hair below R. Seen through grooves, where
-//                           film is gone or lifted, and through translucent layers.
-//   attached   blended, 1   world.layer, all film lying on the sphere, undeformed: everything but
-//                           the lifted part of the piece being pulled.
-//   lifted     blended, 2   that lifted part, the same sphere moved by the lift atlas (lift.ts).
+// Draws, in this order:
+//   under      opaque          world.next, a plain sphere a hair below the films. Seen through
+//                              grooves, where film is gone or lifted, and through translucent films.
+//   attached   blended, 1..N   one a film, from the bottom one (films[N - 1]) up to the top one
+//                              (films[0]): all of that film lying on the sphere, undeformed. The
+//                              film being pulled leaves out the lifted part of its piece.
+//   lifted     blended, N + 1  that lifted part, the same sphere moved by the lift atlas (lift.ts).
 // Where the film is and which piece it belongs to comes from the film atlases (film.ts), looked
 // up from the UNDEFORMED sphere-local position, so the cut edges are exact whatever the mesh
 // does. attached and lifted split the pulled piece on the same w = 0.5 line, so nothing is
 // missing or doubled at the peel front, and everything on the sphere is down before the lifted
-// sheet blends over it. Below the layer underneath nothing is drawn, it is treated as opaque.
+// sheet blends over it. Each film sits FILM_STEP below the one over it, so they never z-fight.
+// Below the sphere underneath nothing is drawn, it is treated as opaque.
 
 const DENSITY = 150; // cells per cube face edge: 6 * 151² ≈ 137k verts
 const UNDER_DENSITY = 80;
 const UNDER_RADIUS = R * 0.998; // a membrane: the film is all but on the surface underneath
+const FILM_STEP = R * 0.0006;   // from one film down to the next, just enough for the depth buffer
 
 // Light balance for the membranes. RoomEnvironment is bright (a white room lit by a 900 cd
 // point light plus emissive panels, one of them straight behind the camera): at
@@ -217,9 +220,13 @@ uniform sampler2D uCover; // film.cover: bilinear, film where the filtered value
 ${LIFT_GLSL}
 
 uniform sampler2D uId;    // film.id: nearest, low and high byte of the piece id
-uniform vec4 uUnder;      // top layer underside rgb, roughness
-uniform vec3 uTop;        // top layer opacity, translucent (0/1), scatter alpha
+uniform vec4 uUnder;      // this film's underside rgb, roughness
+uniform vec3 uTop;        // this film's opacity, translucent (0/1), scatter alpha
 uniform sampler2D uPrint; // ink coverage of the print on the film, tiles
+uniform float uPrintOn;   // 1 this film carries the print (the top one), 0 plain
+uniform sampler2D uAbove; // cover of the film over this one, for the hairline of its cuts
+uniform float uAboveOn;   // 1 there is a film over this one, 0 it is the top one
+uniform float uAboveLift; // 1 the film over this one is being pulled
 uniform float uGrid;      // 1 draws the millimetre grid on the sphere, 0 leaves it plain
 uniform vec4 uEnv;        // env diffuse, env specular gloss / matte, direct specular matte
 
@@ -274,15 +281,24 @@ float downAt(vec3 p, vec2 uv) {
   if (uLiftId == 0 || pieceAt(uv) != uLiftId) return 1.0;
   return 1.0 - step(0.5, liftAt(p).w);
 }
+#endif
+#ifdef ROLE_ATTACHED
+// The same for the film above. Its ids are not at hand here: all of the lift atlas counts,
+// which only differs from the piece's own lifted part within a cell of a cut.
+float downAt(vec3 p, vec2 uv) {
+  return uAboveLift > 0.5 ? 1.0 - step(0.5, liftAt(p).w) : 1.0;
+}
+#endif
 
-// A cut reads as a thin dark line on any colour: the paper darkens a little inside a narrow
-// groove, where film is down on both sides within GROOVE_REACH texels. Wide bare areas, and
-// the paper along their edges, stay clean. No ledge or cast shadows anywhere: the film is a
-// membrane, it has no thickness to shade.
+#if defined(ROLE_UNDER) || defined(ROLE_ATTACHED)
+// A cut reads as a thin dark line on any colour: what is underneath darkens a little inside a
+// narrow groove, where film is down on both sides within GROOVE_REACH texels. Wide bare areas,
+// and what is along their edges, stay clean. No ledge or cast shadows anywhere: the film is a
+// membrane, it has no thickness to shade. film is the cover of the film the groove is cut in,
+// open how much of it is missing here.
 #define GROOVE_REACH 4.0
 #define GROOVE_DARK 0.6
-float grooveShade(vec3 P, float cov) {
-  float open = 1.0 - cov;
+float grooveShade(sampler2D film, vec3 P, float open) {
   if (open <= 0.0) return 1.0;
   vec3 n = P / MR;
   vec3 t1 = perpTo(n);
@@ -295,7 +311,7 @@ float grooveShade(vec3 P, float cov) {
     vec3 pb = normalize(P - t) * MR;
     vec2 ua = filmUV(pa);
     vec2 ub = filmUV(pb);
-    float both = smoothstep(0.5, 0.9, min(textureLod(uCover, ua, 0.0).r, textureLod(uCover, ub, 0.0).r));
+    float both = smoothstep(0.5, 0.9, min(textureLod(film, ua, 0.0).r, textureLod(film, ub, 0.0).r));
     if (both <= g) continue;
     g = max(g, both * downAt(pa, ua) * downAt(pb, ub));
   }
@@ -364,7 +380,7 @@ const FRAG_PRE = /* glsl */ `
   float shade = 1.0;
   bool backFilm = false;
 #ifdef ROLE_UNDER
-  shade = grooveShade(P, cov);
+  shade = grooveShade(uCover, P, 1.0 - cov);
 #else
   // Cells behind the peel front, and how much of this pixel is past it.
   float lw = uLiftId != 0 ? liftDepth(P) : 0.0;
@@ -373,6 +389,9 @@ const FRAG_PRE = /* glsl */ `
 #ifdef ROLE_ATTACHED
   vec3 dPx = dFdx(vLocal);
   vec3 dPy = dFdy(vLocal);
+  // How much of the film above is missing here, for the hairline of its cuts on this one.
+  float ac = texture(uAbove, fuv).r;
+  float aboveOpen = 1.0 - coverAA(ac, max(fwidth(ac), 1e-4));
 #endif
 #ifdef ROLE_LIFTED
   vec3 dN = cross(dFdx(vViewPosition), dFdy(vViewPosition));
@@ -389,6 +408,9 @@ const FRAG_PRE = /* glsl */ `
   cov *= lifted;
   #endif
   if (cov <= 0.0) discard;
+#endif
+#ifdef ROLE_ATTACHED
+  if (uAboveOn > 0.5) shade = grooveShade(uAbove, P, aboveOpen);
 #endif
 `;
 
@@ -415,7 +437,7 @@ const FRAG_COLOR = /* glsl */ `
   // and a different underside would show each one.
   #endif
   // The print: ink on the film, so it travels with every piece and shows mirrored from behind.
-  float ink = texture2D(uPrint, printUV(P)).r * (backFilm ? 0.55 : 1.0);
+  float ink = texture2D(uPrint, printUV(P)).r * (backFilm ? 0.55 : 1.0) * uPrintOn;
   #ifdef ROLE_LIFTED
   ink = 0.0; // peeled film is plain: its own flat, see-through look, no print
   #endif
@@ -494,8 +516,6 @@ const FRAG_POST = /* glsl */ `
 
 type Role = 'under' | 'attached' | 'lifted';
 
-const BLEND_ORDER: Record<Role, number> = { under: 0, attached: 1, lifted: 2 };
-
 function patch(src: string, find: string, add: string, before = false): string {
   if (!src.includes(find)) throw new Error(`membrane: shader chunk ${find} not found`);
   return src.replace(find, before ? `${add}\n${find}` : `${find}\n${add}`);
@@ -550,23 +570,30 @@ export function createMembrane(ctx: Ctx): Module {
   const group = new Group();
   scene.add(group);
 
-  // ---- the film atlases, uploaded only when the sim bumps their version
-  const coverTex = new DataTexture(world.film.cover, ATLAS_W, ATLAS_H, RedFormat, UnsignedByteType);
-  coverTex.magFilter = coverTex.minFilter = LinearFilter;
-  const idTex = new DataTexture(world.film.id, ATLAS_W, ATLAS_H, RGFormat, UnsignedByteType);
-  for (const t of [coverTex, idTex]) {
-    t.generateMipmaps = false;
-    t.flipY = false;
-    t.unpackAlignment = 1; // 1 and 2 byte texels: rows need not be 4-byte aligned
-  }
-  let coverVersion = -1;
-  let idVersion = -1;
-  const syncFilm = () => {
-    const f = world.film;
-    if (coverTex.image.data !== f.cover) { coverTex.image.data = f.cover; coverVersion = -1; }
-    if (idTex.image.data !== f.id) { idTex.image.data = f.id; idVersion = -1; }
-    if (f.coverVersion !== coverVersion) { coverVersion = f.coverVersion; coverTex.needsUpdate = true; }
-    if (f.idVersion !== idVersion) { idVersion = f.idVersion; idTex.needsUpdate = true; }
+  const n = world.films.length; // the stack never grows or shrinks
+  // Which film is pulled, kept in range.
+  const pulled = () => Math.min(Math.max(world.lift.layer | 0, 0), n - 1);
+
+  // ---- the film atlases, a pair a film, each uploaded only when the sim bumps its version
+  const atlases = world.films.map((f) => {
+    const cover = new DataTexture(f.cover, ATLAS_W, ATLAS_H, RedFormat, UnsignedByteType);
+    cover.magFilter = cover.minFilter = LinearFilter;
+    const id = new DataTexture(f.id, ATLAS_W, ATLAS_H, RGFormat, UnsignedByteType);
+    for (const t of [cover, id]) {
+      t.generateMipmaps = false;
+      t.flipY = false;
+      t.unpackAlignment = 1; // 1 and 2 byte texels: rows need not be 4-byte aligned
+    }
+    return { cover, id, coverVersion: -1, idVersion: -1 };
+  });
+  const syncFilms = () => {
+    for (let k = 0; k < n; k++) {
+      const f = world.films[k], a = atlases[k];
+      if (a.cover.image.data !== f.cover) { a.cover.image.data = f.cover; a.coverVersion = -1; }
+      if (a.id.image.data !== f.id) { a.id.image.data = f.id; a.idVersion = -1; }
+      if (f.coverVersion !== a.coverVersion) { a.coverVersion = f.coverVersion; a.cover.needsUpdate = true; }
+      if (f.idVersion !== a.idVersion) { a.idVersion = f.idVersion; a.id.needsUpdate = true; }
+    }
   };
 
   // ---- the lift atlas, same deal
@@ -583,48 +610,78 @@ export function createMembrane(ctx: Ctx): Module {
 
   // ---- shared uniforms (same objects in every material)
   const shared = {
-    uCover: { value: coverTex },
-    uId: { value: idTex },
     uLift: { value: liftTex },
-    uLiftId: { value: 0 },
     uLiftFade: { value: 1 },
     uGrid: { value: 1 },
     uLiftGhost: { value: 0.45 },
-    uHoverId: { value: 0 },
     uHoverOk: { value: 1 },
-    uUnder: { value: new Vector4(1, 1, 1, 0.25) },
-    uTop: { value: new Vector3(1, 0, 1) },
     uPrint: { value: makePrint(ctx.renderer.capabilities.getMaxAnisotropy()) },
     uEnv: { value: new Vector4(ENV_DIFFUSE, ENV_SPEC_GLOSS, ENV_SPEC_MATTE, DIRECT_SPEC_MATTE) },
   };
 
+  // ---- per film uniforms: the same names for every film, its own objects
+  const filmUniforms = (k: number) => ({
+    uCover: { value: atlases[k].cover },
+    uId: { value: atlases[k].id },
+    uLiftId: { value: 0 },  // the pulled piece when this is the film pulled, else 0
+    uHoverId: { value: 0 }, // the hovered piece when it is on this film, else 0
+    uUnder: { value: new Vector4(1, 1, 1, 0.25) },
+    uTop: { value: new Vector3(1, 0, 1) },
+    uPrintOn: { value: k === 0 ? 1 : 0 },
+    uAbove: { value: atlases[k > 0 ? k - 1 : k].cover },
+    uAboveOn: { value: k > 0 ? 1 : 0 },
+    uAboveLift: { value: 0 },
+  });
+  const perFilm = world.films.map((_, k) => filmUniforms(k));
+  // The lifted draw is whichever film is pulled: its own objects, pointed at that film each frame.
+  const liftU = filmUniforms(0);
+  liftU.uPrintOn.value = 0;
+  liftU.uAboveOn.value = 0;
+
+  // Film k sits k FILM_STEP below R: the mesh is scaled, the shaders read the unscaled position.
+  const filmScale = (k: number) => (R - k * FILM_STEP) / R;
   const geo = cubeSphere(DENSITY, R);
-  const mk = (role: Role, g: BufferGeometry) => {
-    const mesh = new Mesh(g, makeMaterial(role, shared));
-    mesh.renderOrder = BLEND_ORDER[role];
+  const mk = (role: Role, g: BufferGeometry, uniforms: Record<string, { value: unknown }>, order: number) => {
+    const mesh = new Mesh(g, makeMaterial(role, uniforms));
+    mesh.renderOrder = order;
     group.add(mesh);
     return mesh;
   };
-  const under = mk('under', cubeSphere(UNDER_DENSITY, UNDER_RADIUS));
-  const attached = mk('attached', geo);
-  const lifted = mk('lifted', geo);
+  // The sphere shows the grooves of the bottom film, the one lying on it.
+  const under = mk('under', cubeSphere(UNDER_DENSITY, Math.min(UNDER_RADIUS, R - n * FILM_STEP)),
+    { ...shared, ...perFilm[n - 1] }, 0);
+  // Bottom film first (1), top film last (n), so each blends over the ones below.
+  const attached = perFilm.map((u, k) => {
+    const mesh = mk('attached', geo, { ...shared, ...u }, n - k);
+    mesh.scale.setScalar(filmScale(k));
+    return mesh;
+  });
+  const lifted = mk('lifted', geo, { ...shared, ...liftU }, n + 1);
   lifted.frustumCulled = false; // moved by the lift atlas, past the sphere's bounds
-  const filmMats = [attached.material, lifted.material];
 
   // ---- layers
-  let curLayer: Layer | null = null;
+  const curLayers: Array<Layer | null> = perFilm.map(() => null);
+  let curLifted: Layer | null = null;
   let curNext: Layer | null = null;
   const syncLayers = () => {
-    if (world.layer !== curLayer) {
-      curLayer = world.layer;
-      for (const m of filmMats) applyLayer(m, curLayer);
-      const uc = curLayer.under.color;
-      shared.uUnder.value.set(uc.r, uc.g, uc.b, curLayer.under.roughness);
-      const op = curLayer.opacity;
+    for (let k = 0; k < n; k++) {
+      const layer = world.layers[k];
+      if (layer === curLayers[k]) continue;
+      curLayers[k] = layer;
+      applyLayer(attached[k].material, layer);
+      const u = perFilm[k];
+      const uc = layer.under.color;
+      u.uUnder.value.set(uc.r, uc.g, uc.b, layer.under.roughness);
+      const op = layer.opacity;
       const translucent = op < 0.999;
       // A milky film: it simply lays its own colour over what is underneath.
       const scatter = translucent ? op : 1;
-      shared.uTop.value.set(op, translucent ? 1 : 0, scatter);
+      u.uTop.value.set(op, translucent ? 1 : 0, scatter);
+    }
+    const pulledLayer = world.layers[pulled()];
+    if (pulledLayer !== curLifted) {
+      curLifted = pulledLayer;
+      applyLayer(lifted.material, curLifted);
     }
     if (world.next !== curNext) {
       curNext = world.next;
@@ -643,18 +700,32 @@ export function createMembrane(ctx: Ctx): Module {
   return {
     update() {
       syncLayers();
-      syncFilm();
+      syncFilms();
       syncLift();
       if (!warmed) prewarm();
       group.quaternion.copy(world.rotation);
 
-      shared.uHoverId.value = world.show.debug ? world.hover.id : 0;
-      shared.uHoverOk.value = world.hover.ok ? 1 : 0;
-      shared.uLiftId.value = world.lift.id;
-      shared.uLiftFade.value = world.lift.fade;
+      const { lift, hover } = world;
+      for (let k = 0; k < n; k++) {
+        const u = perFilm[k];
+        u.uLiftId.value = lift.layer === k ? lift.id : 0;
+        u.uHoverId.value = world.show.debug && hover.layer === k ? hover.id : 0;
+        u.uAboveLift.value = k > 0 && lift.layer === k - 1 && lift.id !== 0 ? 1 : 0;
+      }
+      // The lifted draw takes on the pulled film: its atlases, its look, its height.
+      const k = pulled(), p = perFilm[k];
+      liftU.uCover.value = p.uCover.value;
+      liftU.uId.value = p.uId.value;
+      liftU.uUnder.value = p.uUnder.value;
+      liftU.uTop.value = p.uTop.value;
+      liftU.uLiftId.value = lift.id;
+      lifted.scale.setScalar(filmScale(k));
+
+      shared.uHoverOk.value = hover.ok ? 1 : 0;
+      shared.uLiftFade.value = lift.fade;
       shared.uGrid.value = world.show.grid ? 1 : 0;
-      shared.uLiftGhost.value = world.lift.ghost;
-      lifted.visible = world.lift.id !== 0;
+      shared.uLiftGhost.value = lift.ghost;
+      lifted.visible = lift.id !== 0;
     },
   };
 }

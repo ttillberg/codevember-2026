@@ -1,8 +1,8 @@
 // Shared contract for day 09. Every module reads and writes this (and film.ts), nothing
 // else is shared.
 //
-// The idea: a sphere of millimetre paper wrapped in one thin film. Tools cut the film, the
-// pieces are peeled off by hand.
+// The idea: a sphere of millimetre paper wrapped in thin films, one over the other. Tools
+// cut the film on top, the pieces are peeled off by hand.
 //
 // Spaces
 //   Everything here is in SPHERE-LOCAL space: unit sphere at the origin, radius R.
@@ -13,8 +13,17 @@
 //   The film is a pair of atlases (film.ts): cover says where film is left, id says which
 //   piece each texel belongs to. A cut paints a groove into cover. Pieces are the connected
 //   regions of what is left; ids are relabelled whenever the film was cut or peeled.
-//   Peeling removes film for good: letting go paints everything behind the fold out of
-//   cover, and the fold line is the new edge. Nothing ever lies back down.
+//   Peeling removes film for good: what has let go is painted out of cover, and the front
+//   is the new edge. Nothing ever lies back down.
+//
+// Layers
+//   world.films is a stack, films[0] on top. Each film is its own pair of atlases with its
+//   own pieces. Three rules tie them together:
+//     - only the film on top at a point can be cut there: a cut never goes through two;
+//     - only one film is pulled at a time;
+//     - film with another film over it cannot let go. A lower film peels as far as the
+//       film above has been removed and no further: the edge of the film above is a hard
+//       edge for it, and that is where it parts.
 //
 // Peeling (peel.ts simulates it, membrane.ts draws it, lift.ts is their contract)
 //   The film round a grab is a lattice of particles. Each one is stuck to the sphere until
@@ -60,22 +69,23 @@ export interface WorldEvents {
 export type Listener<K extends keyof WorldEvents> = (e: WorldEvents[K]) => void;
 
 export interface World {
-  /** The film's look. */
-  layer: Layer;
-  /** The sphere underneath. */
+  /** The films, from the one on top down. */
+  films: Film[];
+  /** Their looks, in the same order. */
+  layers: Layer[];
+  /** The sphere underneath them all. */
   next: Layer;
-  film: Film;
-  /** The film being pulled right now. */
+  /** The film being pulled right now (lift.layer says which of films). */
   lift: Lift;
-  /** Keyed by id. Every piece with film left. */
-  pieces: Map<number, Piece>;
+  /** Per film, in the same order: its pieces keyed by id. Every piece with film left. */
+  pieces: Array<Map<number, Piece>>;
   /** Orientation of the sphere in world space. */
   rotation: Quaternion;
   tool: Tool;
   aim: Aim;
-  /** The piece a press would grab right now (hand tool): id 0 when there is none. ok is
-   *  always true today. Drawn as a debug outline of that piece. */
-  hover: { id: number; ok: boolean };
+  /** The piece a press would grab right now (hand tool): which film, and its id there, 0
+   *  when there is none. ok is always true today. Drawn as a debug outline of that piece. */
+  hover: { layer: number; id: number; ok: boolean };
   /** Where the finger really is while it pulls: the edge point it took hold of and the point
    *  it has carried that to (unit, sphere-local; it rolls on over the back of the sphere past
    *  the silhouette), and how high it holds the film. Drawn as a cross bent round the sphere. */

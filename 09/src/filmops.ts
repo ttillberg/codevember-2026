@@ -2,9 +2,7 @@
 // and relabelling what is left into pieces. Plain typed arrays, no three.js, so it also
 // runs headless.
 //
-// Nothing here bumps film.coverVersion / idVersion directly: the ops mark the atlas dirty
-// and flushFilm() bumps each version at most once, so a stroke drawn over many pointer
-// events costs one upload a frame.
+// Every op bumps the version of the film it changed; membrane re-uploads once a frame.
 //
 // The id atlas is read and written as one Uint16 a texel (low byte first): every browser
 // this runs in is little-endian.
@@ -29,21 +27,13 @@ const AX_A = [1, 1, 0, 0, 0, 0];
 const AX_B = [2, 2, 2, 2, 1, 1];
 const SGN = [1, -1, 1, -1, 1, -1];
 
-let coverDirty = false, idDirty = false;
-
-/** Bump the versions of whatever changed since the last call. Once a frame. */
-export function flushFilm(film: Film): void {
-  if (coverDirty) { film.coverVersion++; coverDirty = false; }
-  if (idDirty) { film.idVersion++; idDirty = false; }
-}
-
 // ------------------------------------------------------------------------------- lookups
 
-let idSrc: Uint8Array | null = null;
-let idView: Uint16Array = new Uint16Array(0);
+const idViews = new WeakMap<Uint8Array, Uint16Array>();
 export function ids16(film: Film): Uint16Array {
-  if (film.id !== idSrc) { idSrc = film.id; idView = new Uint16Array(film.id.buffer, film.id.byteOffset, film.id.length >> 1); }
-  return idView;
+  let v = idViews.get(film.id);
+  if (!v) idViews.set(film.id, (v = new Uint16Array(film.id.buffer, film.id.byteOffset, film.id.length >> 1)));
+  return v;
 }
 
 const tmp = new Float64Array(3);
@@ -91,11 +81,60 @@ function project(off: number, x: number, y: number, z: number) {
   }
 }
 
-let painted = 0;
+/** How far (texels) film reaches out over what is under it: under a hairline cut in the
+ *  film above, the film below still counts as covered. */
+const OVERHANG = 3;
+
+/** Is there film of one of films[0..layer-1] over texel (f, i, j)? A cut in them does not
+ *  count as an opening: the texels OVERHANG either side are looked at too. */
+export function coveredAt(films: Film[], layer: number, f: number, i: number, j: number): boolean {
+  const i0 = Math.max(0, i - OVERHANG), i1 = Math.min(N - 1, i + OVERHANG);
+  const j0 = Math.max(0, j - OVERHANG), j1 = Math.min(N - 1, j + OVERHANG);
+  const k = texelIndex(f, i, j), ka = texelIndex(f, i0, j), kb = texelIndex(f, i1, j), kc = texelIndex(f, i, j0), kd = texelIndex(f, i, j1);
+  for (let q = 0; q < layer; q++) {
+    const c = films[q].cover;
+    if (c[k] >= 128 || c[ka] >= 128 || c[kb] >= 128 || c[kc] >= 128 || c[kd] >= 128) return true;
+  }
+  return false;
+}
+
+/** The same for a direction. */
+export function coveredOver(films: Film[], layer: number, x: number, y: number, z: number): boolean {
+  if (layer === 0) return false;
+  dirToFace(x, y, z, tmp);
+  return coveredAt(films, layer, tmp[0], Math.min(N - 1, tmp[1] | 0), Math.min(N - 1, tmp[2] | 0));
+}
+
+/** The film on top at a direction: its index in films, -1 where the sphere is bare. */
+export function topFilm(films: Film[], x: number, y: number, z: number): number {
+  const k = texelAt(x, y, z);
+  for (let q = 0; q < films.length; q++) if (films[q].cover[k] >= 128) return q;
+  return -1;
+}
+
+// A cut only goes into the film on top where it lands, never through two. Which film that
+// is for a texel is settled the first time a stroke touches it and kept for the rest of the
+// stroke: otherwise the next stamp, finding the top film already cut there, would carry on
+// into the one below. 0 not touched yet, 1 + film index, 255 nothing to cut.
+let strokeFilm: Uint8Array | null = null;
+/** Bits of the films the stroke has cut into so far. */
+let strokeTouched = 0;
+
+/** Start a new cut. Returns nothing; endStroke says which films it changed. */
+export function beginStroke(): void {
+  if (!strokeFilm) strokeFilm = new Uint8Array(N * 3 * N * 2);
+  else strokeFilm.fill(0);
+  strokeTouched = 0;
+}
+/** Bit q set: films[q] was cut by the stroke. */
+export function endStroke(): number {
+  return strokeTouched;
+}
 
 const c = [0, 0, 0];
 /** Lower cover around the current curve near one point of it. */
-function stamp(cover: Uint8Array, x: number, y: number, z: number) {
+function stamp(films: Film[], x: number, y: number, z: number) {
+  const mark = strokeFilm!;
   c[0] = x; c[1] = y; c[2] = z;
   for (let f = 0; f < 6; f++) {
     const m = SGN[f] * c[AX_C[f]];
@@ -130,14 +169,31 @@ function stamp(cover: Uint8Array, x: number, y: number, z: number) {
         if (d >= REACH) continue;
         const v = d <= CORE ? 0 : ((d - CORE) / RAMP * 255 + 0.5) | 0;
         const k = row + i;
-        if (v < cover[k]) { cover[k] = v; painted++; }
+        let w = mark[k];
+        if (w === 0) {
+          // the film on top here; under an overhang of the one above there is nothing to cut
+          w = 255;
+          for (let q = 0; q < films.length; q++) {
+            if (films[q].cover[k] < 128) continue;
+            if (!coveredAt(films, q, f, i, j)) w = q + 1;
+            break;
+          }
+          mark[k] = w;
+        }
+        if (w === 255) continue;
+        const cover = films[w - 1].cover;
+        if (v < cover[k]) {
+          cover[k] = v;
+          if (!(strokeTouched & (1 << (w - 1)))) { strokeTouched |= 1 << (w - 1); films[w - 1].coverVersion++; }
+        }
       }
     }
   }
 }
 
-/** Groove along the whole circle where the plane p·n = w meets the unit sphere (n unit). */
-export function paintCircle(film: Film, nx: number, ny: number, nz: number, w: number): void {
+/** Groove along the whole circle where the plane p·n = w meets the unit sphere (n unit),
+ *  in whichever film is on top along it. Between beginStroke and endStroke. */
+export function paintCircle(films: Film[], nx: number, ny: number, nz: number, w: number): void {
   if (Math.abs(w) >= 1) return;
   const r = Math.sqrt(1 - w * w);
   mode = CIRCLE; cw = w; cInvCos = 1 / r;
@@ -149,16 +205,14 @@ export function paintCircle(film: Film, nx: number, ny: number, nz: number, w: n
   ux /= ul; uy /= ul; uz /= ul;
   const vx = ny * uz - nz * uy, vy = nz * ux - nx * uz, vz = nx * uy - ny * ux;
   const steps = Math.ceil((2 * Math.PI * r) / SPACING);
-  painted = 0;
   for (let s = 0; s < steps; s++) {
     const t = (s / steps) * 2 * Math.PI, c = Math.cos(t) * r, sn = Math.sin(t) * r;
-    stamp(film.cover, w * nx + c * ux + sn * vx, w * ny + c * uy + sn * vy, w * nz + c * uz + sn * vz);
+    stamp(films, w * nx + c * ux + sn * vx, w * ny + c * uy + sn * vy, w * nz + c * uz + sn * vz);
   }
-  if (painted) coverDirty = true;
 }
 
 /** Groove along the shorter great-circle arc between two unit points, round at the ends. */
-export function paintArc(film: Film, ax: number, ay: number, az: number, bx: number, by: number, bz: number): void {
+export function paintArc(films: Film[], ax: number, ay: number, az: number, bx: number, by: number, bz: number): void {
   const dot = ax * bx + ay * by + az * bz;
   if (dot < 0.5) {
     // Long arcs go in halves, so "between" is never ambiguous.
@@ -166,18 +220,17 @@ export function paintArc(film: Film, ax: number, ay: number, az: number, bx: num
     const ml = Math.hypot(mx, my, mz);
     if (ml < 1e-9) return;
     mx /= ml; my /= ml; mz /= ml;
-    paintArc(film, ax, ay, az, mx, my, mz);
-    paintArc(film, mx, my, mz, bx, by, bz);
+    paintArc(films, ax, ay, az, mx, my, mz);
+    paintArc(films, mx, my, mz, bx, by, bz);
     return;
   }
   let nx = ay * bz - az * by, ny = az * bx - ax * bz, nz = ax * by - ay * bx;
   const nl = Math.hypot(nx, ny, nz);
   project(9, ax, ay, az);
   project(12, bx, by, bz);
-  painted = 0;
   if (nl < 1e-9) {
     mode = DOT;
-    stamp(film.cover, ax, ay, az);
+    stamp(films, ax, ay, az);
   } else {
     mode = ARC;
     nx /= nl; ny /= nl; nz /= nl;
@@ -190,22 +243,21 @@ export function paintArc(film: Film, ax: number, ay: number, az: number, bx: num
     for (let s = 0; s <= steps; s++) {
       const t = s / steps;
       const ka = Math.sin((1 - t) * th) * si, kb = Math.sin(t * th) * si;
-      stamp(film.cover, ka * ax + kb * bx, ka * ay + kb * by, ka * az + kb * bz);
+      stamp(films, ka * ax + kb * bx, ka * ay + kb * by, ka * az + kb * bz);
     }
   }
-  if (painted) coverDirty = true;
 }
 
 /** The film as it was when `cover` was copied from it. Relabel afterwards. */
 export function restoreFilm(film: Film, cover: Uint8Array): void {
   film.cover.set(cover);
-  coverDirty = true;
+  film.coverVersion++;
 }
 
 /** Whole film again, everywhere. Relabel afterwards. */
 export function fillFilm(film: Film): void {
   film.cover.fill(255);
-  coverDirty = true;
+  film.coverVersion++;
 }
 
 // ---------------------------------------------------------------------------- removing
@@ -235,7 +287,7 @@ export function removeBehind(film: Film, id: number, dx: number, dy: number, dz:
       }
     }
   }
-  if (n) coverDirty = true;
+  if (n) film.coverVersion++;
   return n;
 }
 
@@ -250,7 +302,7 @@ export function erasePiece(film: Film, id: number): number {
       for (let k = row + bb[0]; k < row + bb[1]; k++) if (ids[k] === id && cover[k] !== 0) { cover[k] = 0; n++; }
     }
   }
-  if (n) coverDirty = true;
+  if (n) film.coverVersion++;
   return n;
 }
 
@@ -649,8 +701,8 @@ export function relabel(film: Film, reserved: Iterable<number>): Labels {
     out.centroid[c * 3] = cx * k; out.centroid[c * 3 + 1] = cy * k; out.centroid[c * 3 + 2] = cz * k;
   }
   out.n = n;
-  idDirty = true;
-  if (erased) coverDirty = true;
+  film.idVersion++;
+  if (erased) film.coverVersion++;
   return out;
 }
 
@@ -696,6 +748,6 @@ export function eraseFlood(film: Film, id: number, seeds: ArrayLike<number>, gon
     }
   }
   for (let m = 0; m < tail; m++) { const k = queue[m]; seen[k] = 0; cover[k] = 0; }
-  if (tail) coverDirty = true;
+  if (tail) film.coverVersion++;
   return tail;
 }

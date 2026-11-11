@@ -37,7 +37,9 @@ export interface Lift {
   data: Float32Array;
   /** Bumped when data changed; membrane re-uploads. */
   version: number;
-  /** The piece (id atlas value) being pulled, 0 when nothing is. Only its film is lifted. */
+  /** Which film is being pulled (index into world.films), and the piece of it (its id
+   *  atlas value), 0 when nothing is. Only that piece's film is lifted. */
+  layer: number;
   id: number;
   /** 1 while held. After letting go it runs to 0 and the lifted film goes with it. */
   fade: number;
@@ -47,7 +49,7 @@ export interface Lift {
 }
 
 export function createLift(): Lift {
-  return { data: new Float32Array(LIFT_W * LIFT_H * 4), version: 1, id: 0, fade: 1, ghost: 0.45 };
+  return { data: new Float32Array(LIFT_W * LIFT_H * 4), version: 1, layer: 0, id: 0, fade: 1, ghost: 0.45 };
 }
 
 /** Index into data (times 4 already) of cell (f, i, j), i and j in -1..LIFT_M. */

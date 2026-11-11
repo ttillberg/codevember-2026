@@ -10,7 +10,7 @@ import { createFilm } from './film';
 import { createLift } from './lift';
 import { R } from './state';
 import type { Ctx, Listener, Module, Piece, Tool, World, WorldEvents } from './state';
-import { TEXEL, edgeNormal, fillFilm, flushFilm, restoreFilm, idAt, paintArc, paintCircle, relabel } from './filmops';
+import { TEXEL, beginStroke, edgeNormal, endStroke, fillFilm, restoreFilm, idAt, paintArc, paintCircle, relabel } from './filmops';
 import { initPieces, syncPieces } from './pieces';
 import { TENSION_POINTS, createPeeler, tune } from './peel';
 import type { Tune } from './peel';
@@ -24,7 +24,8 @@ const GRAB_PX_TOUCH = 56;
 const GRAZE = 0.97;             // a line's plane must pass closer than this to the centre
 const TEAR_SPEED = 0.5;         // how much a fast pull (rad/s) adds to the load on the front
 const STORE = 'codevember-2026-09-settings';
-const HISTORY = 8;              // steps back that are kept (a copy of the film each)
+const FILMS_DEEP = 2;           // films on the sphere, one over the other
+const HISTORY = 5;              // steps back that are kept (a copy of every film each)
 const FADE_TIME = 0.16;         // s, what was lifted fades where it is once let go
 const STEP = 1.2 * TEXEL;       // grab search step, under a groove's width so none is jumped
 const DIRS = 24;                // grab search directions
@@ -38,15 +39,15 @@ const HOME = new Euler(0.38, -0.55, 0.12); // how the sphere is turned at the st
 export function createWorld(): World {
   const subs = new Map<keyof WorldEvents, Array<(e: unknown) => void>>();
   const world: World = {
-    layer: makeLayer(0),
+    films: Array.from({ length: FILMS_DEEP }, () => createFilm()),
+    layers: Array.from({ length: FILMS_DEEP }, (_, k) => makeLayer(0, k)),
     next: makeLayer(1),
-    film: createFilm(),
     lift: createLift(),
-    pieces: new Map(),
+    pieces: Array.from({ length: FILMS_DEEP }, () => new Map()),
     rotation: new Quaternion().setFromEuler(HOME),
     tool: 'hand',
     aim: { active: false, x0: 0, y0: 0, x1: 0, y1: 0, valid: false },
-    hover: { id: 0, ok: true },
+    hover: { layer: 0, id: 0, ok: true },
     show: { debug: true, grid: true },
     tension: { pos: new Float32Array(TENSION_POINTS * 3), col: new Float32Array(TENSION_POINTS * 3), count: 0 },
     finger: { active: false, from: new Vector3(0, 0, 1), at: new Vector3(0, 0, 1), height: 0 },
@@ -61,7 +62,7 @@ export function createWorld(): World {
       if (l) for (let i = 0; i < l.length; i++) l[i](e);
     },
   };
-  initPieces(world);
+  for (const pieces of world.pieces) initPieces(pieces);
   return world;
 }
 
@@ -142,32 +143,38 @@ export function createSim(ctx: Ctx): Module {
   // ------------------------------------------------------------------------------- film
 
   function hasLive() {
-    return world.pieces.size > 0;
+    return world.pieces.some((p) => p.size > 0);
   }
 
-  /** Relabel the film now, or as soon as nothing is being pulled. */
+  /** Relabel the films now, or as soon as nothing is being pulled. */
   function requestRelabel() {
     if (peeler.active) relabelDue = true;
     else relabelNow();
   }
 
+  // The cover each film had when its pieces were last worked out.
+  const labelled = world.films.map(() => -1);
   function relabelNow() {
     relabelDue = false;
-    syncPieces(world, relabel(world.film, world.pieces.keys()));
+    world.films.forEach((film, k) => {
+      if (film.coverVersion === labelled[k]) return;
+      syncPieces(world.pieces[k], relabel(film, world.pieces[k].keys()));
+      labelled[k] = film.coverVersion; // relabel may have swept crumbs out of cover itself
+    });
     world.hover.id = 0;
-    if (!bare && world.pieces.size === 0) { bare = true; world.emit('filmGone', {}); }
+    if (!bare && !hasLive()) { bare = true; world.emit('filmGone', {}); }
   }
 
   // ---------------------------------------------------------------------------- history
 
   // The film and how the sphere was turned, before each cut and each pull: a step back to
   // try the same thing again with other settings.
-  type Step = { cover: Uint8Array; rotation: Quaternion };
+  type Step = { covers: Uint8Array[]; rotation: Quaternion };
   const history: Step[] = [];
   /** Steps undone, to take again. Any new step drops them. */
   const ahead: Step[] = [];
 
-  const snapshot = (): Step => ({ cover: world.film.cover.slice(), rotation: world.rotation.clone() });
+  const snapshot = (): Step => ({ covers: world.films.map((f) => f.cover.slice()), rotation: world.rotation.clone() });
   function push(stack: Step[], s: Step) {
     if (stack.length === HISTORY) stack.shift();
     stack.push(s);
@@ -203,7 +210,7 @@ export function createSim(ctx: Ctx): Module {
     peeler.clear();
     fading = 0;
     omega.set(0, 0, 0);
-    restoreFilm(world.film, h.cover);
+    world.films.forEach((f, k) => restoreFilm(f, h.covers[k]));
     world.rotation.copy(h.rotation);
     bare = false;
     relabelNow();
@@ -239,8 +246,9 @@ export function createSim(ctx: Ctx): Module {
     qInv.copy(world.rotation).invert();
     tA.set(plane.x, plane.y, plane.z).applyQuaternion(qInv);
     remember();
-    paintCircle(world.film, tA.x, tA.y, tA.z, plane.w / R);
-    requestRelabel();
+    beginStroke();
+    paintCircle(world.films, tA.x, tA.y, tA.z, plane.w / R);
+    if (endStroke()) requestRelabel();
     return true;
   }
 
@@ -255,9 +263,10 @@ export function createSim(ctx: Ctx): Module {
     if (!hit(tW)) { stroke.on = false; return; }
     tH.copy(tW).applyQuaternion(qInv);
     if (stroke.on) {
-      if (!stroke.painted) remember();
+      // one stroke from press to release: it stays in the film it started in at each point
+      if (!stroke.painted) { remember(); beginStroke(); }
       const a = stroke.last;
-      paintArc(world.film, a.x, a.y, a.z, tH.x, tH.y, tH.z);
+      paintArc(world.films, a.x, a.y, a.z, tH.x, tH.y, tH.z);
       stroke.painted = true;
     }
     stroke.last.copy(tH);
@@ -284,7 +293,7 @@ export function createSim(ctx: Ctx): Module {
 
   /** Take hold of the film at the grab. */
   function startPull(): boolean {
-    if (!peeler.start(grab.piece!.id, grab.e, grab.n)) return false;
+    if (!peeler.start(grab.layer, grab.piece!.id, grab.e, grab.n)) return false;
     remember();
     finger(hit0);
     fading = 0;
@@ -347,21 +356,31 @@ export function createSim(ctx: Ctx): Module {
   let cursor = '';
   const setCursor = (c: string) => { if (c !== cursor) { cursor = c; canvas.style.cursor = c; } };
 
-  const grab = { piece: null as Piece | null, g: new Vector3(), e: new Vector3(), n: new Vector3() };
-  function grabbable(pc: Piece | undefined): pc is Piece {
-    return pc !== undefined && !peeler.active;
-  }
+  const grab = { layer: 0, piece: null as Piece | null, g: new Vector3(), e: new Vector3(), n: new Vector3() };
 
   /** Point at angle rho from tH along the tangent tD, into out. */
   function march(rho: number, out: Vector3) {
     out.copy(tH).multiplyScalar(Math.cos(rho)).addScaledVector(tD, Math.sin(rho));
   }
 
+  /** What is seen at a point: the film on top there and the piece of it, as
+   *  film * 65536 + id, or -1 where the sphere is bare. */
+  function seen(x: number, y: number, z: number): number {
+    for (let k = 0; k < world.films.length; k++) {
+      const id = idAt(world.films[k], x, y, z);
+      if (id !== 0) return k * 65536 + id;
+    }
+    return -1;
+  }
+
   /**
-   * Is (x, y) on the sphere within reach of an edge of a grabbable piece? An edge is where
-   * film ends (a groove, or film peeled away), found by marching out from the pointer over
-   * the atlas. On a piece it grabs that piece; on bare sphere, the nearest piece across.
-   * Fills grab: the piece, the point to hold, the edge point and the inward direction there.
+   * Is (x, y) on the sphere within reach of an edge of a piece? An edge is where the film
+   * seen changes, found by marching out from the pointer over the atlases. What is grabbed
+   * is the film that ends there: the piece under the pointer where the sphere or a lower
+   * film shows beyond it, or the piece across the edge when that one lies on top (the rim
+   * of an upper film, reached from the bare sphere or from the film under it).
+   * Fills grab: the film, the piece, the point to hold, the edge point and the inward
+   * direction there.
    */
   function findGrab(x: number, y: number): boolean {
     grab.piece = null;
@@ -369,9 +388,7 @@ export function createSim(ctx: Ctx): Module {
     ray(x, y);
     if (!hit(tW)) return false;
     tH.copy(tW).applyQuaternion(qInv);
-    const film = world.film;
-    const under = world.pieces.get(idAt(film, tH.x, tH.y, tH.z));
-    const on = grabbable(under) ? under : null;
+    const here = seen(tH.x, tH.y, tH.z);
     // Near the silhouette a pixel spans more of the surface: march further there.
     tA.copy(rayO).sub(tW).normalize();
     let best = touch ? GRAB_PX_TOUCH : GRAB_PX_MOUSE;
@@ -380,46 +397,52 @@ export function createSim(ctx: Ctx): Module {
     if (tU.lengthSq() < 1e-6) tU.set(0, -tH.z, tH.y);
     tU.normalize();
     tV.crossVectors(tH, tU);
+    let got = -1;
     for (let k = 0; k < DIRS; k++) {
       const phi = (k / DIRS) * 2 * Math.PI;
       tD.copy(tU).multiplyScalar(Math.cos(phi)).addScaledVector(tV, Math.sin(phi));
       for (let rho = STEP; rho <= reach; rho += STEP) {
         march(rho, tM);
-        const id = idAt(film, tM.x, tM.y, tM.z);
-        const pc = on ?? world.pieces.get(id);
-        if (on ? id === on.id : !grabbable(pc)) continue;
-        // To a fraction of a step: a stays on the side the march came from.
-        const target = on ? on.id : id;
+        const there = seen(tM.x, tM.y, tM.z);
+        if (there === here) continue;
+        // To a fraction of a step: a stays on the pointer's side.
         let a = rho - STEP, b = rho;
         for (let it = 0; it < 6; it++) {
           const m = (a + b) / 2;
           march(m, tM);
-          if ((idAt(film, tM.x, tM.y, tM.z) === target) === (on !== null)) a = m; else b = m;
+          if (seen(tM.x, tM.y, tM.z) === here) a = m; else b = m;
         }
-        // The edge point on the piece's side, if the camera sees it.
-        march(on ? a : b, tM);
+        // Whose edge is it: the film that lies on top of the other.
+        const mine = here >= 0 && (there < 0 || there >> 16 > here >> 16 || there >> 16 === here >> 16);
+        const key = mine ? here : there;
+        if (key < 0) break;
+        march(mine ? a : b, tM);
         tB.copy(tM).applyQuaternion(world.rotation);
-        if (tC.copy(rayO).sub(tB).dot(tB) <= 0) break;
+        if (tC.copy(rayO).sub(tB).dot(tB) <= 0) break; // the camera does not see it
         toScreen(tB);
         const dpx = Math.hypot(sx - x, sy - y);
         if (dpx < best) {
           best = dpx;
-          grab.piece = pc!;
+          got = key;
           grab.e.copy(tM);
-          if (on) grab.g.copy(tH);
+          if (mine) grab.g.copy(tH);
           else {
             march(b + 0.004, tM);
-            grab.g.copy(idAt(film, tM.x, tM.y, tM.z) === id ? tM : grab.e);
+            grab.g.copy(seen(tM.x, tM.y, tM.z) === key ? tM : grab.e);
           }
           // In case the film cannot tell: into the piece, away from where the march crossed.
-          grab.n.copy(tD).multiplyScalar(on ? -1 : 1);
+          grab.n.copy(tD).multiplyScalar(mine ? -1 : 1);
         }
         break;
       }
     }
-    if (!grab.piece) return false;
+    if (got < 0) return false;
+    grab.layer = got >> 16;
+    const piece = world.pieces[grab.layer].get(got & 65535);
+    if (!piece) return false;
+    grab.piece = piece;
     const e = grab.e;
-    if (edgeNormal(film, grab.piece.id, e.x, e.y, e.z, nOut)) grab.n.set(nOut[0], nOut[1], nOut[2]);
+    if (edgeNormal(world.films[grab.layer], piece.id, e.x, e.y, e.z, nOut)) grab.n.set(nOut[0], nOut[1], nOut[2]);
     grab.n.addScaledVector(e, -grab.n.dot(e)).normalize();
     return true;
   }
@@ -439,6 +462,7 @@ export function createSim(ctx: Ctx): Module {
       return;
     }
     if (findGrab(px, py)) {
+      h.layer = grab.layer;
       h.id = grab.piece!.id;
       setCursor('grab');
     } else setCursor('move');
@@ -555,7 +579,7 @@ export function createSim(ctx: Ctx): Module {
     finishes: [FILMS, ROOTS],
     show: world.show,
     // every setting as text, to paste somewhere else
-    settings: () => JSON.stringify({ film: world.layer.name, base: world.next.name, tune, show: world.show }, null, 2),
+    settings: () => JSON.stringify({ film: world.layers[0].name, base: world.next.name, tune, show: world.show }, null, 2),
     onTool: setTool,
     onFinish: setFinish,
     onBench: bench,
@@ -582,20 +606,21 @@ export function createSim(ctx: Ctx): Module {
     omega.set(0, 0, 0);
     world.rotation.setFromEuler(HOME);
     qInv.copy(world.rotation).invert();
-    const film = world.film;
-    fillFilm(film);
+    for (const film of world.films) fillFilm(film);
     // (x, y) as seen from the camera, in sphere radii, to a point on the film
     const at = (x: number, y: number, out: Vector3) =>
       out.set(x, y, Math.sqrt(Math.max(0, 1 - x * x - y * y))).applyQuaternion(qInv);
     const stroke = (pts: Array<[number, number]>) => {
+      beginStroke();
       for (let i = 1; i < pts.length; i++) {
         at(pts[i - 1][0], pts[i - 1][1], tA);
         at(pts[i][0], pts[i][1], tB);
-        paintArc(film, tA.x, tA.y, tA.z, tB.x, tB.y, tB.z);
+        paintArc(world.films, tA.x, tA.y, tA.z, tB.x, tB.y, tB.z);
       }
     };
     tC.set(0.12, 1, 0).normalize().applyQuaternion(qInv);
-    paintCircle(film, tC.x, tC.y, tC.z, -0.42);
+    beginStroke();
+    paintCircle(world.films, tC.x, tC.y, tC.z, -0.42);
     stroke([[-0.5, 0.12], [-0.05, 0.12]]);
     stroke([[0.18, 0.5], [0.18, 0.08], [0.55, 0.08], [0.55, 0.5]]);
     bare = false;
@@ -605,13 +630,13 @@ export function createSim(ctx: Ctx): Module {
   function setFinish(index: number, variant: number) {
     const count = index === 0 ? FILMS.length : ROOTS.length;
     pick[index] = ((variant % count) + count) % count;
-    const layer = makeLayer(index, pick[index]);
     if (index === 0) {
-      world.layer = layer;
-      tune.elastic = layer.elastic;
-      tune.adhesion = layer.adhesion;
+      // the swatch is the film on top; each one under it is the next in the list
+      world.layers = world.films.map((_, k) => makeLayer(0, (pick[0] + k) % count));
+      tune.elastic = world.layers[0].elastic;
+      tune.adhesion = world.layers[0].adhesion;
       ui.syncSliders();
-    } else world.next = layer;
+    } else world.next = makeLayer(1, pick[1]);
     ui.setFinish(index, pick[index]);
   }
   // Settings are kept between visits: the two finishes by name and every slider. A film's
@@ -634,7 +659,7 @@ export function createSim(ctx: Ctx): Module {
   let storeIn = 0;
 
   function settingsNow(): string {
-    return JSON.stringify({ film: world.layer.name, base: world.next.name, tune, show: world.show });
+    return JSON.stringify({ film: world.layers[0].name, base: world.next.name, tune, show: world.show });
   }
   function loadSettings(): { film?: string; base?: string; tune?: Partial<Record<keyof Tune, unknown>>; show?: { debug?: unknown; grid?: unknown } } | null {
     try { return JSON.parse(localStorage.getItem(STORE) ?? 'null'); } catch { return null; }
@@ -711,7 +736,6 @@ export function createSim(ctx: Ctx): Module {
       world.finger.active = peeler.active && fading <= 0;
       if (relabelDue && !peeler.active) relabelNow();
       updateHover();
-      flushFilm(world.film);
     },
     resize() { measure(); },
   };
