@@ -43,6 +43,7 @@ export const rig = {
   spin: true, // the turntable switch: off, the camera stays where it is left
   follow: false, followK: 0, // the follow switch, and 0 to 1 eased: the camera in close on the device, going round it
   chaseK: 0, // at the controls, 0 to 1 eased: the camera behind the probe
+  attract: false, // ATTRACT: the camera cuts between shots on a beat, on its own
   view: 'free' as 'free' | 'back' | 'side' | 'top', // following, where from: round it by the drag, or behind, beside or over the probe by its own turn
   focus: new THREE.Vector3(), // where the camera looks: the machine's middle, leaning towards the device on the turntable
   camera: null as THREE.Camera | null, // the main camera, for a drag to see where the machine's axes point on the page

@@ -30,9 +30,10 @@ if (CLEAN) { eyeView.max = true; page.clean = true; }
 
 // The three modes, pills under MODE, nothing more (a line on the one picked under them before): on its own the camera orbits the machine or follows
 // the beetle; the pilot is at the controls.
-type Mode = 'orbit' | 'follow' | 'pilot';
+type Mode = 'attract' | 'orbit' | 'follow' | 'pilot';
 // in this order: ORBIT, FOLLOW, PILOT, from the farthest to the controls (follow, pilot, orbit for a moment)
 const MODES: [Mode, string][] = [
+  ['attract', 'Attract'],
   ['orbit', 'Orbit'],
   ['follow', 'Follow'],
   ['pilot', 'Pilot'],
@@ -129,6 +130,9 @@ function ModeMenu({ mode, pick }: { mode: Mode; pick: (m: Mode) => void }) {
 
 // the turntable and the transform off to start (both on, then the turntable alone, for a while); no switch for the
 // turntable, AUTOTRANSFORM and T for the transform
+// ATTRACT to start on a desktop, till the mouse first moves (or a key, or the wheel); a phone starts in ORBIT
+const ATTRACT_FIRST = !CLEAN && !matchMedia('(max-width: 640px), (max-height: 500px), (pointer: coarse)').matches;
+if (ATTRACT_FIRST) rig.attract = true;
 rig.spin = true; // the turntable on to start, a switch for it in the wheel's card (off, for a while)
 
 
@@ -227,6 +231,8 @@ function Rig({ children }: { children: React.ReactNode }) {
       camera.position.lerp(chaseAt, rig.chaseK);
       look.lerp(chaseLook, rig.chaseK);
     }
+    if (rig.attract) directShot(camera, dt, sdt, size.width <= 640 || size.height <= 500);
+    else attract.on = false;
     camera.lookAt(look);
     // into its part: the picture slid so the page's middle lands on the part's (it was the beetle two thirds across,
     // following, and then the left half, split)
@@ -237,10 +243,80 @@ function Rig({ children }: { children: React.ReactNode }) {
     dof.focus.copy(look).lerp(drone.world, rig.chaseK); // chasing, on the probe, not past it
     dof.aperture = THREE.MathUtils.lerp(DOF_WIDE, DOF_FOLLOW, fk);
     dof.skip = !rig.follow && !drone.pilot; // in ORBIT none, whatever the switch: the whole machine sharp (on there too, for a while)
+    if (rig.attract) { dof.skip = attract.kind === 'wide'; dof.focus.copy(drone.world); dof.aperture = attract.kind === 'close' ? DOF_CLOSE : DOF_FOLLOW; } // in ATTRACT on the probe, but for the wide shots
   });
   return <group ref={ref}>{children}</group>;
 }
 const FOCUS = 0.3; // how far the turntable's look leans from the machine's middle to the device
+const DOF_CLOSE = 0.016; // ATTRACT's close-ups: a shallow focus, the probe sharp and the struts round it soft
+
+// ATTRACT: the camera cuts, hard, between shots on a beat, as a trailer would: wide angles round the machine and
+// close-ups of the probe for half a beat, follows of the probe from one side of it or another for a whole one; a wall
+// gone through or a piece caught brings the next cut in early, on a close-up. Within a shot the camera drifts a
+// little, so no shot is a still. It runs after the rest of the rig, over whatever the orbit and the follow eased.
+const BEAT = 3; // seconds
+const attract = {
+  on: false, next: 0, t: 0, len: BEAT, kind: 'wide' as 'wide' | 'follow' | 'close',
+  yaw: 0, pitch: 0, dist: 1, view: 0, dir: new THREE.Vector3(), drift: 0, crossings: -1, taken: 0,
+};
+// the follows: from where round the probe, in its own frame (ahead, to its right, up), and the camera's up its way or
+// the sky's
+const FOLLOWS: { at: [number, number, number]; upFwd?: boolean }[] = [
+  { at: [-1, 0, 0.3] }, // behind and a little over
+  { at: [0, 1, 0.15] }, // beside
+  { at: [-0.25, 0, 1], upFwd: true }, // over it, looking down its back
+  { at: [1, 0.2, 0.15] }, // ahead, coming at the camera
+  { at: [-0.7, -0.5, -0.45] }, // under and behind, looking up at it
+  { at: [0.6, -0.8, 0.3] }, // three-quarters ahead
+];
+const sv = new THREE.Vector3(), pv = new THREE.Vector3();
+const rand = (a: number, b: number) => a + Math.random() * (b - a);
+function nextShot(early: boolean) {
+  const a = attract;
+  // a wall or a catch: a close-up; else a wide or a close-up a third of the time each, a follow the rest
+  const r = Math.random();
+  a.kind = early ? 'close' : r < 0.3 ? 'wide' : r < 0.55 ? 'close' : 'follow';
+  a.len = a.kind === 'follow' ? BEAT : BEAT / 2;
+  a.t = 0; a.drift = rand(-1, 1);
+  a.yaw = rand(0, Math.PI * 2); a.pitch = rand(-0.35, 0.9); a.dist = rand(0.55, 1.05);
+  a.view = Math.floor(Math.random() * FOLLOWS.length);
+  a.dir.set(rand(-1, 1), rand(-0.6, 1), rand(-1, 1)).normalize();
+  a.next = a.len;
+}
+function directShot(camera: THREE.Camera, dt: number, sdt: number, phone: boolean) {
+  const a = attract;
+  if (!a.on) { a.on = true; a.crossings = drone.crossings; a.taken = drone.taken; nextShot(false); }
+  a.t += sdt; a.next -= sdt;
+  // a wall gone through or a piece taken: cut in on it now, if this shot has had a moment
+  const event = drone.crossings !== a.crossings || (drone.taken > 0.5 && a.taken <= 0.5);
+  a.crossings = drone.crossings; a.taken = drone.taken;
+  if (a.next <= 0 || (event && a.t > 0.6 && a.kind !== 'close')) nextShot(event);
+  const u = a.t / a.len; // 0 to 1 through the shot, for the drift
+  const up = (camera as THREE.PerspectiveCamera).up;
+  if (a.kind === 'wide') {
+    // round the machine, a slow sweep, looking at its middle
+    camera.position.setFromSphericalCoords(rig.zoom * a.dist * (1 - 0.06 * u), Math.PI / 2 - a.pitch, a.yaw + a.drift * 0.25 * u);
+    look.set(0, 0, 0).lerp(drone.world, 0.25);
+    up.copy(WORLD_UP);
+    return;
+  }
+  sideV.crossVectors(chaseFwd, chaseUp).normalize();
+  if (a.kind === 'follow') {
+    const f = FOLLOWS[a.view], D = rig.zoom * (phone ? FOLLOW_PHONE : FOLLOW) * (1 + 0.15 * a.drift * u);
+    sv.set(0, 0, 0).addScaledVector(chaseFwd, f.at[0]).addScaledVector(sideV, f.at[1]).addScaledVector(chaseUp, f.at[2]).normalize();
+    camera.position.copy(drone.world).addScaledVector(sv, D);
+    look.copy(drone.world);
+    up.copy(f.upFwd ? chaseFwd : chaseUp);
+    return;
+  }
+  // a close-up: in on the probe from anywhere, pushing in a little
+  const D = CLOSE * (1 - 0.18 * u);
+  pv.copy(a.dir).applyAxisAngle(WORLD_UP, a.drift * 0.4 * u);
+  camera.position.copy(drone.world).addScaledVector(pv, D);
+  look.copy(drone.world);
+  up.copy(WORLD_UP);
+}
+const CLOSE = 0.42; // world units: a close-up's distance from the probe, about four of its radii
 const look = new THREE.Vector3(), followAt = new THREE.Vector3();
 const part = { x: 0, y: 0, w: 0, h: 0 }; // the machine's part of the window, its middle and size, eased
 const DOF_WIDE = 0.007, DOF_FOLLOW = 0.009; // the blur at twice the focus distance, against the page's height
@@ -574,8 +650,26 @@ export function App() {
     return () => { el.removeEventListener('touchstart', keep); el.removeEventListener('touchmove', keep); };
   }, []);
   const [open, setOpen] = useState(!drone.on || !matchMedia('(max-width: 640px), (max-height: 500px)').matches); // the text: all of it to start; on a phone folded with the probe in
-  const [mode, setModeState] = useState<Mode>(drone.pilot ? 'pilot' : rig.follow ? 'follow' : 'orbit');
+  const [mode, setModeState] = useState<Mode>(drone.pilot ? 'pilot' : rig.follow ? 'follow' : rig.attract ? 'attract' : 'orbit');
   const manual = mode === 'pilot';
+  // ATTRACT to start, on a desktop: the first move of the mouse, a key or the wheel and it is over, ORBIT from there
+  const attractFirst = useRef(ATTRACT_FIRST);
+  useEffect(() => {
+    if (!ATTRACT_FIRST) return;
+    let moved = 0; // a real move: some way across the page (the browser sends a still one of its own as the page lays out)
+    const wake = (e: Event) => {
+      if (!attractFirst.current) return off();
+      if (e instanceof PointerEvent) {
+        if (e.pointerType !== 'mouse') return;
+        moved += Math.hypot(e.movementX, e.movementY);
+        if (moved < 30) return;
+      }
+      setMode('orbit'); off();
+    };
+    const off = () => { removeEventListener('pointermove', wake); removeEventListener('keydown', wake); removeEventListener('wheel', wake); };
+    addEventListener('pointermove', wake); addEventListener('keydown', wake); addEventListener('wheel', wake);
+    return off;
+  }, []);
   const lastAuto = useRef<Mode>(rig.follow ? 'follow' : 'orbit'); // where p goes back to from the pilot
   const [locked, setLocked] = useState(false);
   const stage = useRef<HTMLDivElement>(null);
@@ -689,8 +783,10 @@ export function App() {
 
   // the mode, from the pills on the left or p: orbit and follow on its own, the pilot at the controls
   const setMode = (m: Mode) => {
+    attractFirst.current = false; // picked: whatever it is, it stays
     if (m !== 'pilot') lastAuto.current = m;
-    drone.pilot = m === 'pilot'; rig.follow = m === 'follow'; setModeState(m);
+    drone.pilot = m === 'pilot'; rig.follow = m === 'follow'; rig.attract = m === 'attract'; setModeState(m);
+    if (m === 'attract') attract.next = 0; // straight into a shot
     document.body.classList.toggle('pilot', m === 'pilot'); // on a phone: the view, the pad, no pills (style.css)
     drone.keys.thrust = drone.keys.strafe = 0;
     rig.turntable = m !== 'pilot';
