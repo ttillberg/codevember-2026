@@ -127,7 +127,7 @@ function ModeMenu({ mode, pick }: { mode: Mode; pick: (m: Mode) => void }) {
 
 // the turntable and the transform off to start (both on, then the turntable alone, for a while); no switch for the
 // turntable, AUTOTRANSFORM and T for the transform
-rig.spin = false;
+rig.spin = true; // the turntable on to start, a switch for it in the wheel's card (off, for a while)
 
 
 // A phone's tilt (its device orientation, the gyroscope): leaning it turns the view a little round the machine, from how
