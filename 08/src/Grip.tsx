@@ -14,6 +14,7 @@ const PICK = 14; // px from a strut's line that still picks it
 export const PICK_TOUCH = 28; // a finger's: wider, a finger hides what it is on
 const R_OUTLINE = 0.115; // the outline's radius: round the sleeves (0.09) with a band to spare
 export const LIME = '#c9e35b';
+const LIME_HOT = '#c8f000'; // the outline round a strut: saturated, so it holds through the depth of field
 
 export const grip = {
   x: 0, y: 0, in: false, // the pointer on the page
@@ -80,7 +81,7 @@ export function Grip() {
     t.mesh.position.copy(A);
     t.mesh.quaternion.setFromUnitVectors(Y, t.v.copy(t.d).normalize());
     t.mesh.scale.set(1, t.d.length(), 1);
-    t.mat.color.set(grip.held >= 0 ? LIME : '#e6f29e'); // paler on hover, full lime in the hand
+    t.mat.color.set(LIME_HOT); // one strong lime, on hover and in the hand (paler on hover, #e6f29e, and the softer LIME in the hand, for a while: it read faded)
   });
 
   return <group ref={ref}><primitive object={t.mesh} /></group>;
