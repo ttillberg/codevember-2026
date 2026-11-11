@@ -260,6 +260,31 @@ export function device(model: THREE.Object3D, size: number): Device {
     browR = Math.max(browR, l.geometry.boundingSphere!.center.clone().applyMatrix4(l.matrix).length());
   }
   if (browR > 0) brows.scale.setScalar(BROW_R / browR); // in close, just off the core (they hung out round the wings, for a while)
+  // and glass between them: the four arcs lie on one band round the eye's axis; a clear glass band fills it, the arcs
+  // its frame, turning with them (open between them, for a while)
+  {
+    let lo = { z: Infinity, r: 0 }, hi = { z: -Infinity, r: 0 };
+    const v = new THREE.Vector3();
+    for (const l of brows.children as THREE.Mesh[]) {
+      const pos = l.geometry.attributes.position;
+      for (let i = 0; i < pos.count; i++) {
+        v.fromBufferAttribute(pos, i).applyMatrix4(l.matrix);
+        const r = Math.hypot(v.x, v.y);
+        if (v.z < lo.z) lo = { z: v.z, r }; if (v.z > hi.z) hi = { z: v.z, r };
+      }
+    }
+    if (Number.isFinite(lo.z) && hi.z > lo.z) {
+      // a lathe round z through the band's two rims, a little inside the arcs so it reads as set into them
+      const pts = [new THREE.Vector2(lo.r * 0.995, lo.z), new THREE.Vector2(hi.r * 0.995, hi.z)];
+      const geo = new THREE.LatheGeometry(pts, 96).rotateX(Math.PI / 2);
+      const glass = new THREE.Mesh(geo, new THREE.MeshPhysicalMaterial({
+        color: '#eef4f6', roughness: 0.04, metalness: 0, clearcoat: 1, clearcoatRoughness: 0.02, transparent: true, opacity: 0.22,
+        side: THREE.DoubleSide, depthWrite: false, envMapIntensity: 1.6,
+      }));
+      glass.renderOrder = 3;
+      brows.add(glass);
+    }
+  }
 
   // the works: hinges and actuators, in the frame the core sits in
   works ??= makeWorks();
