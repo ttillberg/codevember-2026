@@ -232,7 +232,7 @@ const DOF_CLOSE = 0.016; // ATTRACT's close-ups: a shallow focus, the probe shar
 // at once, off the beat, for a while). The beat runs on the page's own clock, so a pause or a slow frame does not
 // shift it. It runs after the rest of the rig, over whatever the orbit and the follow eased.
 const attract = {
-  on: false, t: 0, bpm: 40, beats: 0, left: 1, pending: false, clock: 0, span: 1.5, edge: 0, along: 0.5, // the tempo; beats run, as a fraction; beats left in this shot; a close-up asked for
+  on: false, t: 0, bpm: 40, beats: 0, left: 1, ran: 0, pending: false, clock: 0, span: 1.5, edge: 0, along: 0.5, // the tempo; beats run, as a fraction; beats left in this shot; a close-up asked for
  kind: 'wide' as 'wide' | 'flyover' | 'edge' | 'follow' | 'close' | 'ball' | 'smoke' | 'joint', flow: 1,
   yaw: 0, pitch: 0, dist: 1, view: 0, dir: new THREE.Vector3(), drift: 0, crossings: -1, taken: 0, joint: 0,
   focus: new THREE.Vector3(), // what the shot is of, for the depth of field
@@ -255,8 +255,13 @@ function nextShot(early: boolean) {
   // ball close, the smoke, a joint close as it moves, or a follow (the ball only while there is one up)
   const r = Math.random();
   // (far shots from well outside it, for a while: little use; a fly-over now, and slow runs along the edges inside)
-  a.kind = early ? 'close' : r < 0.1 ? 'wide' : r < 0.22 ? 'flyover' : r < 0.36 ? 'edge' : r < 0.47 ? 'close' : r < 0.56 ? (target.up ? 'ball' : 'close') : r < 0.64 ? 'smoke' : r < 0.71 ? 'joint' : 'follow';
-  a.left = a.kind === 'follow' || a.kind === 'flyover' || a.kind === 'edge' ? 2 : 1; // in beats
+  // the whole machine every other shot: after one in close, a wide (or a fly-over, a quarter of the time), then the rest
+  // by chance, a wall or a catch's close-up first (a wide a tenth of the time, for a while)
+  const whole = a.kind === 'wide' || a.kind === 'flyover';
+  a.kind = !whole ? (Math.random() < 0.75 ? 'wide' : 'flyover') : early ? 'close' : r < 0.15 ? 'edge' : r < 0.35 ? 'close' : r < 0.5 ? (target.up ? 'ball' : 'close') : r < 0.6 ? 'smoke' : r < 0.7 ? 'joint' : 'follow';
+  // longer shots: four beats for the wide ones and the follows, two for a close-up (two and one, for a while)
+  a.left = a.kind === 'follow' || a.kind === 'flyover' || a.kind === 'edge' || a.kind === 'wide' ? 4 : 2; // in beats
+  a.ran = 0;
   a.span = (a.left * 60) / a.bpm; // the shot's length in seconds, for a move that crosses it whole
   // along an edge of the outer cube as it stands now (the twelve farthest from the middle), in between it and the inner
   // one, clear of both (any of the 32, for a moment: inside the inner struts, or in a joint)
@@ -269,7 +274,7 @@ function nextShot(early: boolean) {
   // the way only changes now and then, not at every cut (each shot drifted its own way, for a while)
   if (Math.random() < FLOW_FLIP) a.flow = -a.flow;
   a.yaw = rand(0, Math.PI * 2); a.pitch = rand(-0.35, 0.9);
-  a.dist = rand(0.55, 1.05);
+  a.dist = rand(0.62, 0.85); // the wide's distance against the fit: the whole of it in, or nearly, filling the page (0.72 to 0.95, then 0.8 to 1.1, small, for a moment; 0.55 to 1.05, often cut off, for a while)
   // follows: from behind it half the time, the rest from any side (any side alike, for a while)
   a.view = Math.random() < 0.5 ? 0 : Math.floor(Math.random() * FOLLOWS.length);
   a.dir.set(rand(-1, 1), rand(-0.6, 1), rand(-1, 1)).normalize();
@@ -287,8 +292,10 @@ function directShot(camera: THREE.Camera, dt: number, sdt: number, phone: boolea
   a.clock = now;
   if (a.beats > 4) a.beats %= 1; // back from a hidden tab: on the beat still, without a burst of cuts
   while (a.beats >= 1) {
-    a.beats -= 1; a.left -= 1;
-    if (a.left <= 0 || a.pending) { const early = a.pending; a.pending = false; nextShot(early); }
+    a.beats -= 1; a.left -= 1; a.ran += 1;
+    // a wall or a catch cuts in, but not before the shot has had two beats, and never into a wide: that one plays out
+    // and the close-up follows it (at once, on the next beat, for a while)
+    if (a.left <= 0 || (a.pending && a.ran >= 2 && a.kind !== 'wide' && a.kind !== 'flyover')) { const early = a.pending; a.pending = false; nextShot(early); }
   }
   const turn = a.flow * a.t; // seconds into the shot, the way round: the same rates in every shot, so the move runs on
   const up = (camera as THREE.PerspectiveCamera).up;
