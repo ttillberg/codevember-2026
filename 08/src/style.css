@@ -260,6 +260,9 @@ body.home .stage .corner { top: 10px; right: 10px; }
   /* the top's pills as big as the title beside them (9 px words, a smaller pill, for a while) */
   .modemenu .now, .stage .autot { font-size: 11px; padding: 10px 14px 9px; gap: 10px; }
   .modemenu .now svg { width: 11px; height: 11px; }
+}
+@media (max-width: 400px) {
+  .modemenu .now { letter-spacing: 0.08em; padding: 10px 10px 9px 12px; gap: 7px; } /* narrow: the dropdown tighter, so FOLLOW keeps clear of the bigger title */
   .stage .autot .box { width: 13px; height: 13px; }
   .modemenu .list { min-width: 160px; }
   .modemenu .list button, .settings .list button { font-size: 12px; padding: 13px 14px 12px; }
@@ -336,7 +339,7 @@ body.home .stage .corner { top: 10px; right: 10px; }
   font: 700 14px/10px "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; letter-spacing: 0.02em; text-transform: uppercase;
 }
 .crumbs .trail i { cursor: default; opacity: 0.6; }
-.crumbs .trail > span { font-size: 24px; line-height: 18px; letter-spacing: 0; } /* the title, bigger (14 px as the crumbs, for a while) */
+.crumbs .trail > span { font-size: clamp(24px, 6.8vw, 30px); line-height: 18px; letter-spacing: 0; } /* the title, bigger, as wide as the screen lets it beside the dropdown (14 px as the crumbs, then 24, for a while) */
 /* under the title, a quarter its size: CODEVEMBER 2026 and all projects in Japanese, a link to the index */
 .crumbs .trail.title { flex-direction: column; align-items: flex-start; gap: 7px; }
 a.home { color: inherit; text-decoration: none; pointer-events: auto; cursor: pointer; }
