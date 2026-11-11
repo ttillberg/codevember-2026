@@ -227,6 +227,15 @@ body.home .stage .corner { top: 10px; right: 10px; }
 .settings .list .box { display: grid; place-items: center; flex: none; width: 13px; height: 13px; box-sizing: border-box; margin-top: -1px; border: 1px solid currentColor; border-radius: 2px; }
 .settings .list .at .box { background: #fff; color: var(--ui); }
 .settings .list button.at { background: none; } /* a checkbox, not a pick: no dark row */
+/* the tempo row: its name, down, the beats a minute, up, and TAP, on one line */
+.settings .list .tempo { display: flex; align-items: center; gap: 6px; padding: 9px 10px 8px 14px; color: #fff; font: 700 12px/1 "Helvetica Neue", Helvetica, Arial, sans-serif; letter-spacing: 0.14em; text-transform: uppercase; }
+.settings .list .tempo .name { flex: 1; }
+.settings .list .tempo button { display: grid; place-items: center; width: 26px; height: 26px; padding: 0; border-radius: 50%; background: rgba(28, 28, 28, 0.82); font-size: 14px; letter-spacing: 0; }
+.settings .list .tempo .bpm { min-width: 52px; text-align: center; font-variant-numeric: tabular-nums; letter-spacing: 0.04em; }
+.settings .list .tempo .bpm i { font-style: normal; font-size: 8px; margin-left: 3px; opacity: 0.7; }
+.settings .list .tempo .tap { width: auto; padding: 0 10px; border-radius: 999px; font-size: 10px; letter-spacing: 0.14em; }
+.settings .list .tempo .tap:active { background: #fff; color: #1c1c1c; }
+.settings .list { min-width: 250px; }
 /* the ?: a round button as the wheel, beside AUTOTRANSFORM on a desktop, bottom left on a phone */
 .why {
   display: grid; place-items: center; width: 26px; height: 26px; padding: 0; border: 0; border-radius: 50%; cursor: pointer; touch-action: manipulation;

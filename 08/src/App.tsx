@@ -89,6 +89,7 @@ const Check = ({ on, toggle, children }: { on: boolean; toggle: () => void; chil
 function Settings({ transform, toggle, turntable, toggleTurntable, blur, toggleBlur }: { transform: boolean; toggle: () => void; turntable: boolean; toggleTurntable: () => void; blur: boolean; toggleBlur: () => void }) {
   const [open, setOpen] = useState(false);
   const ref = useAway(open, () => setOpen(false));
+  const [bpm, setBpm] = useState(getTempo);
   return (
     <div ref={ref} className={`settings ${open ? 'open' : ''}`}>
       <button className="wheel" tabIndex={-1} aria-label="Settings" aria-expanded={open} onPointerDown={hold} onClick={() => setOpen(!open)}>
@@ -103,6 +104,14 @@ function Settings({ transform, toggle, turntable, toggleTurntable, blur, toggleB
         <Check on={turntable} toggle={toggleTurntable}>Turntable</Check>
         {/* the depth of field, on to start: off, the machine sharp all through, and cheaper */}
         <Check on={blur} toggle={toggleBlur}>Depth of field</Check>
+        {/* ATTRACT's beat: down, the tempo, up, and TAP to tap it in (the cuts then land on the taps) */}
+        <div className="tempo">
+          <span className="name">Tempo</span>
+          <button tabIndex={-1} aria-label="Slower" onPointerDown={hold} onClick={() => setBpm(setTempo(Math.round(bpm) - 4))}>−</button>
+          <span className="bpm">{bpm.toFixed(bpm % 1 ? 1 : 0)}<i>bpm</i></span>
+          <button tabIndex={-1} aria-label="Faster" onPointerDown={hold} onClick={() => setBpm(setTempo(Math.round(bpm) + 4))}>+</button>
+          <button className="tap" tabIndex={-1} onPointerDown={(e) => { hold(e); setBpm(tapTempo()); }}>Tap</button>
+        </div>
       </div> : null}
     </div>
   );
@@ -250,13 +259,14 @@ function Rig({ children }: { children: React.ReactNode }) {
 const FOCUS = 0.3; // how far the turntable's look leans from the machine's middle to the device
 const DOF_CLOSE = 0.016; // ATTRACT's close-ups: a shallow focus, the probe sharp and the struts round it soft
 
-// ATTRACT: the camera cuts, hard, between shots on a beat, as a trailer would: wide angles round the machine and
-// close-ups of the probe for half a beat, follows of the probe from one side of it or another for a whole one; a wall
-// gone through or a piece caught brings the next cut in early, on a close-up. Within a shot the camera drifts a
-// little, so no shot is a still. It runs after the rest of the rig, over whatever the orbit and the follow eased.
-const BEAT = 3; // seconds
+// ATTRACT: the camera cuts, hard, between shots on a strict beat, as a trailer cut to music would: every cut lands on
+// the beat, at a tempo that can be set (TEMPO in the wheel's card, or tapped in); close shots last one beat, follows
+// and far shots two; a wall gone through or a piece caught makes the next cut, on the next beat, a close-up (it cut in
+// at once, off the beat, for a while). The beat runs on the page's own clock, so a pause or a slow frame does not
+// shift it. It runs after the rest of the rig, over whatever the orbit and the follow eased.
 const attract = {
-  on: false, next: 0, t: 0, len: BEAT, kind: 'wide' as 'wide' | 'far' | 'follow' | 'close' | 'ball' | 'smoke' | 'joint', flow: 1,
+  on: false, t: 0, bpm: 40, beats: 0, left: 1, pending: false, clock: 0, // the tempo; beats run, as a fraction; beats left in this shot; a close-up asked for
+ kind: 'wide' as 'wide' | 'far' | 'follow' | 'close' | 'ball' | 'smoke' | 'joint', flow: 1,
   yaw: 0, pitch: 0, dist: 1, view: 0, dir: new THREE.Vector3(), drift: 0, crossings: -1, taken: 0, joint: 0,
   focus: new THREE.Vector3(), // what the shot is of, for the depth of field
 };
@@ -278,7 +288,7 @@ function nextShot(early: boolean) {
   // ball close, the smoke, a joint close as it moves, or a follow (the ball only while there is one up)
   const r = Math.random();
   a.kind = early ? 'close' : r < 0.13 ? 'wide' : r < 0.28 ? 'far' : r < 0.42 ? 'close' : r < 0.54 ? (target.up ? 'ball' : 'close') : r < 0.65 ? 'smoke' : r < 0.75 ? 'joint' : 'follow';
-  a.len = a.kind === 'follow' || a.kind === 'far' ? BEAT : a.kind === 'smoke' ? BEAT * 0.66 : BEAT / 2;
+  a.left = a.kind === 'follow' || a.kind === 'far' ? 2 : 1; // in beats
   a.joint = Math.floor(Math.random() * VERTS.length);
   a.t = 0;
   // the move carries on over the cut: every shot turns round its subject the same way, at its own steady rate, and
@@ -288,16 +298,23 @@ function nextShot(early: boolean) {
   a.dist = a.kind === 'far' ? rand(1.9, 3.2) : rand(0.55, 1.05); // far: out past the machine's reach, the whole of it small in the frame
   a.view = Math.floor(Math.random() * FOLLOWS.length);
   a.dir.set(rand(-1, 1), rand(-0.6, 1), rand(-1, 1)).normalize();
-  a.next = a.len;
 }
 function directShot(camera: THREE.Camera, dt: number, sdt: number, phone: boolean) {
   const a = attract;
-  if (!a.on) { a.on = true; a.crossings = drone.crossings; a.taken = drone.taken; nextShot(false); }
-  a.t += sdt; a.next -= sdt;
-  // a wall gone through or a piece taken: cut in on it now, if this shot has had a moment
-  const event = drone.crossings !== a.crossings || (drone.taken > 0.5 && a.taken <= 0.5);
+  if (!a.on) { a.on = true; a.clock = 0; a.crossings = drone.crossings; a.taken = drone.taken; nextShot(false); }
+  a.t += sdt;
+  // a wall gone through or a piece taken: the next cut is a close-up on it, and comes on the next beat
+  if (drone.crossings !== a.crossings || (drone.taken > 0.5 && a.taken <= 0.5)) a.pending = true;
   a.crossings = drone.crossings; a.taken = drone.taken;
-  if (a.next <= 0 || (event && a.t > 0.6 && a.kind !== 'close')) nextShot(event);
+  // the beat, on the real clock: a cut only ever on it
+  const now = performance.now(); // the wall clock, not the frame's step, which is clamped on a slow frame
+  if (a.clock > 0) a.beats += ((now - a.clock) / 1000) * (a.bpm / 60);
+  a.clock = now;
+  if (a.beats > 4) a.beats %= 1; // back from a hidden tab: on the beat still, without a burst of cuts
+  while (a.beats >= 1) {
+    a.beats -= 1; a.left -= 1;
+    if (a.left <= 0 || a.pending) { const early = a.pending; a.pending = false; nextShot(early); }
+  }
   const turn = a.flow * a.t; // seconds into the shot, the way round: the same rates in every shot, so the move runs on
   const up = (camera as THREE.PerspectiveCamera).up;
   if (a.kind === 'wide' || a.kind === 'far') {
@@ -344,7 +361,22 @@ function directShot(camera: THREE.Camera, dt: number, sdt: number, phone: boolea
 const FLOW_WIDE = 0.16, FLOW_FAR = 0.1, FLOW_CLOSE = 0.35, FLOW_FOLLOW = 0.22; // rad/s round the subject, by shot (a push in on the close-ups, for a while)
 const FLOW_FLIP = 0.15; // the chance at a cut that the way round turns about
 // in dev, a shot on demand for scripted checks: __shot('ball')
-if (import.meta.env.DEV) Object.assign(window, { __shot: (k: typeof attract.kind) => { nextShot(false); attract.kind = k; attract.len = 30; attract.next = 30; } });
+if (import.meta.env.DEV) Object.assign(window, { __attract: attract, __shot: (k: typeof attract.kind) => { nextShot(false); attract.kind = k; attract.left = 999; } });
+/** TEMPO: set it, in beats a minute, or tap it in: two taps or more, the beat from their spacing, the beat brought onto
+ * the last tap, so the cuts fall on the taps. */
+const TEMPO_MIN = 20, TEMPO_MAX = 180;
+function setTempo(bpm: number, exact = false) { const b = THREE.MathUtils.clamp(bpm, TEMPO_MIN, TEMPO_MAX); attract.bpm = exact ? b : Math.round(b); return attract.bpm; } // a tapped tempo kept to the fraction, so it holds to the music
+const getTempo = () => attract.bpm;
+const taps: number[] = [];
+function tapTempo() {
+  const now = performance.now();
+  if (taps.length && now - taps[taps.length - 1] > 3000) taps.length = 0; // a pause: a new count
+  taps.push(now); if (taps.length > 6) taps.shift();
+  attract.beats = 0; // on the beat, now
+  if (taps.length < 2) return attract.bpm;
+  const gap = (taps[taps.length - 1] - taps[0]) / (taps.length - 1);
+  return setTempo(60000 / gap, true);
+}
 const CLOSE = 0.42; // world units: a close-up's distance from the probe, about four of its radii
 const SMOKE_BACK = 0.55, SMOKE_OUT = 0.6; // the wake's shot: how far back along it, and how far off to its side
 const look = new THREE.Vector3(), followAt = new THREE.Vector3();
@@ -817,7 +849,7 @@ export function App() {
     if (m !== 'pilot') lastAuto.current = m;
     if (rig.attract && m !== 'attract') settleTurn(); // it turned in ATTRACT: on to a whole quarter, unless AUTOTRANSFORM goes on
     drone.pilot = m === 'pilot'; rig.follow = m === 'follow'; rig.attract = m === 'attract'; setModeState(m);
-    if (m === 'attract') attract.next = 0; // straight into a shot
+    if (m === 'attract') { attract.left = 0; attract.beats = 1; } // straight into a shot, on a beat
     document.body.classList.toggle('pilot', m === 'pilot'); // on a phone: the view, the pad, no pills (style.css)
     drone.keys.thrust = drone.keys.strafe = 0;
     rig.turntable = m !== 'pilot';
