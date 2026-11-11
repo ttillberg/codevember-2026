@@ -33,10 +33,10 @@ if (CLEAN) { eyeView.max = true; page.clean = true; }
 type Mode = 'attract' | 'orbit' | 'follow' | 'probe' | 'pilot';
 // in this order: ORBIT, FOLLOW, PILOT, from the farthest to the controls (follow, pilot, orbit for a moment)
 const MODES: [Mode, string][] = [
-  ['attract', 'Demo'],
   ['orbit', 'Orbit'],
   ['follow', 'Follow'],
   ['pilot', 'Pilot'],
+  ['attract', 'Demo'], // last (first, for a while)
 ];
 
 /** Folds itself away on a tap anywhere outside `ref`, while `open`. */

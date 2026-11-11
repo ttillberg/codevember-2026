@@ -86,6 +86,7 @@ TESSERAKT, a hypercube built for real. A tesseract cannot exist in three dimensi
 - **DEMO, the whole machine, longer**: every other shot is the whole tesseract, a wide (or a fly-over, a quarter of the time), 0.62 to 0.85 of the fit away, so it fills the page, at most a little cut off (0.55 to 1.05, a wide a tenth of the time, for a while); then one in close by chance. Longer shots: four beats for the wides, the fly-overs, the runs along an edge and the follows, two for a close-up (two and one, for a while). A wall or a catch cuts in only after a shot has had two beats, and never into a wide: that plays out and the close-up follows it.
 - **Bigger buttons on a desktop**: the mode's dropdown and the wheel top right as a site's ABOUT pill Theo pointed at: 48 px high, 16 px words, 18 px either side, the wheel 48 round; the cards under them to match, 44 px rows, 14 px words (30 px, 11 px words, for a while). The probe's round target button is gone: no way into PROBE any more.
 - **The Japanese**: beside CODEVEMBER 2026 now 超立方体, hypercube, what the piece is (すべてのプロジェクト, all projects, for a while); still the one link back to the index.
+- **DEMO last**: in the dropdown after PILOT (first, for a while).
 
 ## Learned
 
