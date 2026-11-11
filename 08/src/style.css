@@ -420,6 +420,7 @@ body.clean .plate, body.clean .keys { display: none; }
 .pad { display: none; position: fixed; left: var(--cam-x, 0px); top: var(--eye-y, 50vh); width: calc(var(--eye-x, 100vw) - var(--cam-x, 0px)); height: var(--cam-h, 50vh); z-index: 1; touch-action: none; }
 .pad.shown { display: block; } /* a desktop's: over the view in the column, in any mode; pressed, it takes the controls */
 .pad .arrow { position: absolute; overflow: visible; }
+body:not(.pilot) .pad .arrow { display: none; } /* the arrows only at the controls (always, for a while) */
 .pad .arrow path { fill: none; stroke: #fff; stroke-width: 1.6; stroke-linejoin: round; filter: drop-shadow(0 0 1px var(--ui)); }
 .pad .arrow.on path { fill: #fff; }
 .pad .arrow.t { top: 18px; left: calc(50% - 13px); }

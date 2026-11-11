@@ -76,6 +76,7 @@ export function regionsOf(W: number, H: number): { main: Rect; cam: Rect | null;
   const draw = [main, { x: 0, y: 0, w: left, h: cam.y }, { x: 0, y: cam.y + h, w: left, h: H - cam.y - h }, { x: 0, y: cam.y, w: cam.x, h }, { x: cam.x + w, y: cam.y, w: left - cam.x - w, h }];
   return { main, cam, draw };
 }
+const CAM_RADIUS = 3; // a desktop's view's corners (CSS px)
 const PIP_GAP = 24; // the phone's disc in from the edges (CSS px)
 const PILLS_UP = 24; // an upright phone's disc: up from the foot (84, over the mode pills there, for a while) (CSS px)
 const COL_OVER = 24, COL_MIN_H = 120; // the view in the column: how far up from the bottom (76, over the mode pills, before they went into the dropdown), and its least height (CSS px)
@@ -113,12 +114,13 @@ function inkMat(fog = true) {
 const PIECE_K = SIZE_CELL / SIZE_MAIN; // the piece scaled with the device
 
 const FISHEYE = new THREE.ShaderMaterial({
-  uniforms: { tCube: { value: null }, rot: { value: new THREE.Matrix3() }, fade: { value: 0 }, strength: { value: STRENGTH } },
+  uniforms: { tCube: { value: null }, rot: { value: new THREE.Matrix3() }, fade: { value: 0 }, strength: { value: STRENGTH }, box: { value: new THREE.Vector4() }, radius: { value: 0 } },
   vertexShader: `varying vec2 vUv; void main() { vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }`,
   fragmentShader: `
     uniform samplerCube tCube; uniform mat3 rot;
     uniform float fade; // device pixels: transparent at the left edge, full here, at the right
     uniform float strength; // the most it ever shows
+    uniform vec4 box; uniform float radius; // the view's rectangle and its corners' radius, device pixels (no rounding at 0)
     varying vec2 vUv;
     void main() {
       vec2 p = vUv * 2.0 - 1.0; // a right angle out to the side edge
@@ -129,6 +131,11 @@ const FISHEYE = new THREE.ShaderMaterial({
       vec4 col = textureCube(tCube, d);
       float a = 1.0 - smoothstep(0.995, 1.005, r); // a disc; outside it the page shows through
       a *= smoothstep(0.0, fade, gl_FragCoord.x) * strength; // and out to the left into the page, and never all there
+      if (radius > 0.0) { // the corners rounded, a rounded box's distance, antialiased
+        vec2 q = abs(gl_FragCoord.xy - (box.xy + box.zw * 0.5)) - box.zw * 0.5 + radius;
+        float sd = length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - radius;
+        a *= 1.0 - smoothstep(-0.5, 0.5, sd);
+      }
       gl_FragColor = vec4(col.rgb / max(col.a, 1e-4), a * col.a); // the lines alone, the page between; no tone mapping, no pass of any kind on the view
       #include <colorspace_fragment>
     }`,
@@ -407,6 +414,10 @@ export function DroneCam() {
     FISHEYE.uniforms.rot.value.setFromMatrix4(tmp.m.makeRotationFromQuaternion(cell.q));
     FISHEYE.uniforms.fade.value = full ? W * gl.getPixelRatio() : 0; // the half: no fade
     FISHEYE.uniforms.strength.value = full ? STRENGTH : 1; // and all there
+    // a desktop's view in the column: its corners rounded 3 px (square, for a while)
+    const dpr = gl.getPixelRatio();
+    FISHEYE.uniforms.radius.value = !full && !r.round ? CAM_RADIUS * dpr : 0;
+    FISHEYE.uniforms.box.value.set(sx * dpr, sy * dpr, S * dpr, SH * dpr);
     gl.setRenderTarget(null);
     gl.setViewport(0, 0, W, H);
     gl.clear();
