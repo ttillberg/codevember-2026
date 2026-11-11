@@ -85,7 +85,7 @@ const Check = ({ on, toggle, children }: { on: boolean; toggle: () => void; chil
     <i className="box" aria-hidden>{on ? <svg width={8} height={8} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={2.6} strokeLinecap="round" strokeLinejoin="round"><path d="M3 8.5l3.2 3.2L13 4.5" /></svg> : null}</i>{children}
   </button>
 );
-function Settings({ transform, toggle, turntable, toggleTurntable }: { transform: boolean; toggle: () => void; turntable: boolean; toggleTurntable: () => void }) {
+function Settings({ transform, toggle, turntable, toggleTurntable, blur, toggleBlur }: { transform: boolean; toggle: () => void; turntable: boolean; toggleTurntable: () => void; blur: boolean; toggleBlur: () => void }) {
   const [open, setOpen] = useState(false);
   const ref = useAway(open, () => setOpen(false));
   return (
@@ -100,6 +100,8 @@ function Settings({ transform, toggle, turntable, toggleTurntable }: { transform
         <Check on={transform} toggle={toggle}>Autotransform</Check>
         {/* the camera's slow turn round the machine, off to start (no switch for it, for a while) */}
         <Check on={turntable} toggle={toggleTurntable}>Turntable</Check>
+        {/* the depth of field, on to start: off, the machine sharp all through, and cheaper */}
+        <Check on={blur} toggle={toggleBlur}>Depth of field</Check>
       </div> : null}
     </div>
   );
@@ -529,6 +531,8 @@ export function App() {
   const [why, setWhy] = useState(false); // the ? and its note
   // TURNTABLE, in the wheel's card: the camera's slow orbit, off to start; switched on it starts at once
   const [turntable, setTurntable] = useState(rig.spin);
+  const [blur, setBlur] = useState(dof.on); // DEPTH OF FIELD, in the wheel's card
+  const toggleBlur = () => { dof.on = !dof.on; setBlur(dof.on); };
   const toggleTurntable = () => { rig.spin = !rig.spin; if (rig.spin) turntableNow(); setTurntable(rig.spin); };
   // the piece in the lock, at the controls: LOCK can be tapped (polled, drone.lockable is set each frame)
   // (a class on #lock, not React's: DroneCam toggles its `on` there too)
@@ -767,7 +771,7 @@ export function App() {
           {/* a phone's mode: a dropdown top right, over AUTOTRANSFORM (the three pills on a row at the foot, for a while) */}
           <ModeMenu mode={mode} pick={setMode} />
           {/* and beside it a wheel, the settings: AUTOTRANSFORM in it (on its own under the dropdown, for a while) */}
-          <Settings transform={transform} toggle={toggleAuto} turntable={turntable} toggleTurntable={toggleTurntable} />
+          <Settings transform={transform} toggle={toggleAuto} turntable={turntable} toggleTurntable={toggleTurntable} blur={blur} toggleBlur={toggleBlur} />
           {/* a ? that opens a note, on frosted glass: why this is short (beside AUTOTRANSFORM on a desktop, bottom left on a phone) */}
           <button className="why" tabIndex={-1} aria-label="Why this is short" onPointerDown={(e) => { e.preventDefault(); e.stopPropagation(); }} onClick={() => setWhy(true)}>?</button>
           <button className={`autot ${transform ? 'on' : ''}`} tabIndex={-1} role="checkbox" aria-checked={transform} onPointerDown={(e) => { e.preventDefault(); e.stopPropagation(); }} onClick={toggleAuto}>
