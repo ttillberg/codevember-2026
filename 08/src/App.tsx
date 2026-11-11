@@ -75,8 +75,8 @@ function useAway(open: boolean, close: () => void) {
 }
 const hold = (e: React.PointerEvent) => { e.preventDefault(); e.stopPropagation(); };
 
-/** A phone's settings, top right beside the mode: a wheel, and a tap opens a card under it with AUTOTRANSFORM, a
- * checkbox row. Hidden on a desktop, AUTOTRANSFORM on its own there. */
+/** The settings, top right beside the mode: a wheel, and a tap opens a card under it with AUTOTRANSFORM, a checkbox
+ * row (a phone's only, AUTOTRANSFORM on its own on a desktop, for a while). */
 function Settings({ transform, toggle }: { transform: boolean; toggle: () => void }) {
   const [open, setOpen] = useState(false);
   const ref = useAway(open, () => setOpen(false));
@@ -98,7 +98,7 @@ function Settings({ transform, toggle }: { transform: boolean; toggle: () => voi
 }
 
 /** A phone's mode, top right: the mode it is in and a chevron, and a tap opens the three under it, frosted, the one it
- * is in darker with its dot filled; a tap on one picks it, a tap anywhere else folds it. Hidden on a desktop. */
+ * is in darker; a tap on one picks it, a tap anywhere else folds it. On a desktop too now (the pills there, for a while). */
 function ModeMenu({ mode, pick }: { mode: Mode; pick: (m: Mode) => void }) {
   const [open, setOpen] = useState(false);
   const ref = useAway(open, () => setOpen(false));

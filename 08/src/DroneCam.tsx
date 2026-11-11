@@ -78,7 +78,7 @@ export function regionsOf(W: number, H: number): { main: Rect; cam: Rect | null;
 }
 const PIP_GAP = 24; // the phone's disc in from the edges (CSS px)
 const PILLS_UP = 24; // an upright phone's disc: up from the foot (84, over the mode pills there, for a while) (CSS px)
-const COL_OVER = 76, COL_MIN_H = 120; // the view in the column: how far up from the bottom, over the mode pills, and its least height (CSS px)
+const COL_OVER = 24, COL_MIN_H = 120; // the view in the column: how far up from the bottom (76, over the mode pills, before they went into the dropdown), and its least height (CSS px)
 // the fog the far rooms fade into, by the view's size: minimized, a grey, and the view's background that grey too, so
 // the rooms go into it; maximized, the page's paper, and no background, the page itself between the lines
 const FOG_MINI = new THREE.Color('#bdbdb9'), FOG_MAX = new THREE.Color('#f4f4f2');
