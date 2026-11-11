@@ -265,6 +265,10 @@ const focusAt = new THREE.Vector3();
 
 // The keys at the controls, as day 07's help: flat grey caps, and what each does in small caps beside them.
 const MAC = /Mac|iPhone|iPad|iPod/.test(navigator.platform || navigator.userAgent);
+/** The Enter key's mark, a return arrow, drawn, so no font makes it an emoji. */
+const EnterMark = () => (
+  <svg width={10} height={9} viewBox="0 0 12 10" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" aria-label="Enter"><path d="M10.5 1v4.5H2M4.5 3 2 5.5 4.5 8" /></svg>
+);
 const Key = ({ children, wide }: { children: React.ReactNode; wide?: boolean }) => <kbd className={`key${wide ? ' wide' : ''}`}>{children}</kbd>;
 /** A crosshair, the sight of a first-person game: the pointer lock makes the mouse the look. A ring, four ticks
  * through it with a gap at the middle, a dot there. */
@@ -817,7 +821,7 @@ export function App() {
       {CLEAN || !beetle || !grid || maxi ? null : <div className="divider" />}
       {/* the lock round the piece in the view, and LOCK under it a button in the piece's colour: tapped, the probe docks
           and takes it (it docked on its own after half a second in the lock, for a while) */}
-      <div id="lock" className="lock"><i /><i /><i /><i /><button tabIndex={-1} onPointerDown={(e) => { e.preventDefault(); e.stopPropagation(); }} onClick={() => { drone.catchAsk = true; }}><span className="word">Collect</span><Key wide>Enter</Key></button></div>
+      <div id="lock" className="lock"><i /><i /><i /><i /><button tabIndex={-1} onPointerDown={(e) => { e.preventDefault(); e.stopPropagation(); }} onClick={() => { drone.catchAsk = true; }}><span className="word">Collect</span><Key><EnterMark /></Key></button></div>
       {/* a little arrow on the view's rim, towards the piece while it is out of sight, in its colour (DroneCam) */}
       <div id="toball" className="toball" aria-hidden><svg width={22} height={22} viewBox="0 0 16 16"><path d="M3 2.5 14 8 3 13.5 5.5 8Z" /></svg></div>
       {/* bottom left, under the blurb and as wide: mode and settings; the shortcuts bottom right, as wide */}
@@ -832,7 +836,7 @@ export function App() {
         <Do how={<><Key>W</Key><Key>S</Key><Key><Tri d="up" /></Key><Key><Tri d="down" /></Key></>} what="Forward, back" />
         <Do how={<><Key>A</Key><Key>D</Key><Key><Tri d="left" /></Key><Key><Tri d="right" /></Key></>} what="Strafe" />
         <Do how={<Key wide>Space</Key>} what="Forward" />
-        <Do how={<Key wide>Enter</Key>} what="Collect" />
+        <Do how={<Key><EnterMark /></Key>} what="Collect" />
         {/* shift-drag to orbit and alt-drag to transform, under VIEW, were listed here for a while; they still work */}
         </> : null /* on its own the drawing bottom right says it, rotate and transform (listed, DRAG and DRAG AN EDGE, for a while) */}
       </div>}
