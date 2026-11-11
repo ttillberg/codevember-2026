@@ -87,6 +87,8 @@ TESSERAKT, a hypercube built for real. A tesseract cannot exist in three dimensi
 - **Bigger buttons on a desktop**: the mode's dropdown and the wheel top right as a site's ABOUT pill Theo pointed at: 48 px high, 16 px words, 18 px either side, the wheel 48 round; the cards under them to match, 44 px rows, 14 px words (30 px, 11 px words, for a while). The probe's round target button is gone: no way into PROBE any more.
 - **The Japanese**: beside CODEVEMBER 2026 now 超立方体, hypercube, what the piece is (すべてのプロジェクト, all projects, for a while); still the one link back to the index.
 - **DEMO last**: in the dropdown after PILOT (first, for a while).
+- **Orbit at the controls**: in PILOT a drag on the fisheye view steers, as before; a drag anywhere else goes round the probe, the chase camera's offset turned about it (over it no more than 1.1 rad), shift with the pointer locked the same; taking the controls puts the chase back behind it. The keys' list says which: STEER on the view, ORBIT off it. The keys' caps white on the frosted card (the card through them, for a while).
+- **A hot reload keeps the mode**: DEMO on to start and the turntable's switch are set once, on the page's first load (`rig.booted`); a hot reload ran them again over the rig, which lives on in `state.ts`, and put DEMO's camera on under PILOT.
 
 ## Learned
 
