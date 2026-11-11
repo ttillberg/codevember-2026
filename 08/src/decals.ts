@@ -324,11 +324,11 @@ export function sleeveDecal(d: Decal): THREE.CanvasTexture {
         g.font = '800 46px "Helvetica Neue", Helvetica, Arial, sans-serif';
         g.fillText('CDVMBR 08', bx + o, 110);
       } else if (brand) {
-        const size = brand === 'github' ? 34 : brand === 'three' ? 160 : 52;
+        const size = brand === 'github' ? 34 : brand === 'three' ? 320 : 156; // three.js twice and pmndrs three times what they were (160, 52)
         const img = logo(brand, size * 2, d.ink);
         if (img) {
           g.save();
-          g.translate(bx + o + size / 2, my);
+          g.translate(bx + o + size / 2, Math.min(Math.max(my, size / 2), H - size / 2)); // a big mark kept on the sleeve
           g.rotate(ang);
           g.drawImage(img, -size / 2, -size / 2, size, size);
           g.restore();
