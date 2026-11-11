@@ -77,7 +77,7 @@ export function regionsOf(W: number, H: number): { main: Rect; cam: Rect | null;
   const draw = [beside, { x: 0, y: 0, w: left, h: cam.y }, { x: 0, y: cam.y + h, w: left, h: H - cam.y - h }, { x: 0, y: cam.y, w: cam.x, h }, { x: cam.x + w, y: cam.y, w: left - cam.x - w, h }];
   return { main, cam, draw };
 }
-const CAM_W = 190, CAM_W_PILOT = 380; // a desktop's view, its width at most: half the column, and at the controls the whole of it (all 380 always, for a while)
+const CAM_W = 253, CAM_W_PILOT = 380; // a desktop's view, its width at most: a third over half the column (190, half, for a while), and at the controls the whole of it (all 380 always, for a while)
 const CAM_RADIUS = 3; // a desktop's view's corners (CSS px)
 const PIP_GAP = 24; // the phone's disc in from the edges (CSS px)
 const PILLS_UP = 24; // an upright phone's disc: up from the foot (84, over the mode pills there, for a while) (CSS px)

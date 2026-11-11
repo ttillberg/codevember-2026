@@ -21,7 +21,7 @@ export const st = {
   way: 1, // which way it turns, +1 or -1: the last drag, or a flip now and then
   flipIn: 12, // seconds until it turns round on its own
   spinVel: 0, // transform's speed, eased towards SOFT_SPIN * way so a flip is a swing, not a knock
-  transform: false, // the transform switch, off to start (on for a while, and off before that), and the play/pause button bottom middle: the machine turns in 4D all the time, evenly and softly, changing plane at each quarter
+  transform: true, // the transform switch, on to start, turning at once (off for a while, on before that, and off before that), and the play/pause button bottom middle: the machine turns in 4D all the time, evenly and softly, changing plane at each quarter
   grid: true, // the camera grid, on to start: the eye's view behind the machine, or none
   inout: false, // the hand-over at a wall: false, both halves at once, folded at the wall, straight through; true (o), the body goes all the way in, then comes out (on to start for a moment)
   /** How far the machine reaches from its centre right now, in the 3D picture, for the camera to fit it. */
@@ -38,10 +38,12 @@ export const rig = {
   zoom: 10.5, // camera distance, eased towards the fit
   zoomK: 1, // the wheel's factor on the fit, 1 fits the machine to the page
   yaw: 0, pitch: 0, // the camera's orbit
+  booted: false, // App.tsx's start-up done: a hot reload leaves the mode alone
+  chaseT: 0, // the way into the chase, 0 to 1 at a steady rate (chaseK is it eased)
   orbitVel: [0, 0], orbiting: false, // rad/s of yaw and pitch from the last drag, coasting once it is let go
   turntable: true, // the slow turn on its own, in the attract mode
   spin: true, // the turntable switch: off, the camera stays where it is left
-  follow: false, followK: 0, // the follow switch, and 0 to 1 eased: the camera in close on the device, going round it
+  follow: false, followK: 0, close: false, // close: PROBE, the follow in close on the probe, the camera keeping up with it // the follow switch, and 0 to 1 eased: the camera in close on the device, going round it
   chaseK: 0, // at the controls, 0 to 1 eased: the camera behind the probe
   attract: false, // ATTRACT: the camera cuts between shots on a beat, on its own
   view: 'free' as 'free' | 'back' | 'side' | 'top', // following, where from: round it by the drag, or behind, beside or over the probe by its own turn

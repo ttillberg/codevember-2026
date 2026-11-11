@@ -30,40 +30,15 @@ if (CLEAN) { eyeView.max = true; page.clean = true; }
 
 // The three modes, pills under MODE, nothing more (a line on the one picked under them before): on its own the camera orbits the machine or follows
 // the beetle; the pilot is at the controls.
-type Mode = 'attract' | 'orbit' | 'follow' | 'pilot';
+type Mode = 'attract' | 'orbit' | 'follow' | 'probe' | 'pilot';
 // in this order: ORBIT, FOLLOW, PILOT, from the farthest to the controls (follow, pilot, orbit for a moment)
-const MODES: [Mode, string][] = [
-  ['attract', 'Attract'],
+// each its word and, after it, a second the phone's dropdown leaves off at the top (too wide beside the title there)
+const MODES: [Mode, string, string?][] = [
   ['orbit', 'Orbit'],
-  ['follow', 'Follow'],
-  ['pilot', 'Pilot'],
+  ['follow', 'Follow', 'probe'],
+  ['pilot', 'Pilot', 'probe'],
+  ['attract', 'Auto', 'cam'], // last (first, for a while); DEMO, then ATTRACT, for a while
 ];
-
-/** The ?'s note: why this is short, and two days late, plainly (next to Pascal, Kubrick and the rest, then a stamp collector's drawer, for a moment). Frosted, over everything; a tap outside it, the x or Esc closes it. */
-function Note({ close }: { close: () => void }) {
-  useEffect(() => {
-    const key = (e: KeyboardEvent) => { if (e.key === 'Escape') { e.stopPropagation(); close(); } };
-    addEventListener('keydown', key, true);
-    return () => removeEventListener('keydown', key, true);
-  }, []);
-  return (
-    <div className="note-veil" onPointerDown={(e) => { if (e.target === e.currentTarget) close(); }}>
-      <article className="note" role="dialog" aria-label="On cutting short">
-        <button className="x" aria-label="Close" onClick={close}>
-          <svg width={10} height={10} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={2.4} strokeLinecap="round" aria-hidden><path d="M3 3l10 10M13 3 3 13" /></svg>
-        </button>
-        <h3>On cutting short</h3>
-        <p>Thanks for your curiosity. I started writing proper documentation, but quickly realised most of it was either easier to figure out yourself or better left unexplained.</p>
-        <p>Codevember is supposed to be one small thing a day. This one is already two days late.</p>
-        <p>It started as a rotating tesseract. Then I added a little probe, which suddenly had to obey four-dimensional geometry while still looking reasonable in three dimensions. A surprisingly effective way of inventing problems that didn&rsquo;t need solving.</p>
-        <p>The probe needed a view, the view a map, the map a lens. Each addition seemed perfectly reasonable at the time.</p>
-        <p>Eventually I removed about ninety percent of it.</p>
-        <p>What remains is a cube inside a cube that turns. I seem to have a talent for inventing problems, solving them, and removing all evidence they ever existed.</p>
-        <p className="sign">At least the cube turns.</p>
-      </article>
-    </div>
-  );
-}
 
 /** Folds itself away on a tap anywhere outside `ref`, while `open`. */
 function useAway(open: boolean, close: () => void) {
@@ -89,7 +64,6 @@ const Check = ({ on, toggle, children }: { on: boolean; toggle: () => void; chil
 function Settings({ transform, toggle, turntable, toggleTurntable, blur, toggleBlur }: { transform: boolean; toggle: () => void; turntable: boolean; toggleTurntable: () => void; blur: boolean; toggleBlur: () => void }) {
   const [open, setOpen] = useState(false);
   const ref = useAway(open, () => setOpen(false));
-  const [bpm, setBpm] = useState(getTempo);
   return (
     <div ref={ref} className={`settings ${open ? 'open' : ''}`}>
       <button className="wheel" tabIndex={-1} aria-label="Settings" aria-expanded={open} onPointerDown={hold} onClick={() => setOpen(!open)}>
@@ -104,14 +78,6 @@ function Settings({ transform, toggle, turntable, toggleTurntable, blur, toggleB
         <Check on={turntable} toggle={toggleTurntable}>Turntable</Check>
         {/* the depth of field, on to start: off, the machine sharp all through, and cheaper */}
         <Check on={blur} toggle={toggleBlur}>Depth of field</Check>
-        {/* ATTRACT's beat: down, the tempo, up, and TAP to tap it in (the cuts then land on the taps) */}
-        <div className="tempo">
-          <span className="name">Tempo</span>
-          <button tabIndex={-1} aria-label="Slower" onPointerDown={hold} onClick={() => setBpm(setTempo(Math.round(bpm) - 4))}>−</button>
-          <span className="bpm">{bpm.toFixed(bpm % 1 ? 1 : 0)}<i>bpm</i></span>
-          <button tabIndex={-1} aria-label="Faster" onPointerDown={hold} onClick={() => setBpm(setTempo(Math.round(bpm) + 4))}>+</button>
-          <button className="tap" tabIndex={-1} onPointerDown={(e) => { hold(e); setBpm(tapTempo()); }}>Tap</button>
-        </div>
       </div> : null}
     </div>
   );
@@ -126,12 +92,12 @@ function ModeMenu({ mode, pick }: { mode: Mode; pick: (m: Mode) => void }) {
   return (
     <div ref={ref} className={`modemenu ${open ? 'open' : ''}`}>
       <button className="now" tabIndex={-1} aria-haspopup="listbox" aria-expanded={open} onPointerDown={stop} onClick={() => setOpen(!open)}>
-        {MODES.find(([m]) => m === mode)?.[1]}
+        {(([, n, ext]) => <span>{n}{ext ? <span className="ext"> {ext}</span> : null}</span>)(MODES.find(([m]) => m === mode) ?? MODES[0])}
         <svg width={9} height={9} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={2.4} strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M3.5 6 8 10.5 12.5 6" /></svg>
       </button>
       {open ? <div className="list" role="listbox" aria-label="Mode">
-        {MODES.map(([m, name]) => <button key={m} className={mode === m ? 'at' : ''} role="option" aria-selected={mode === m} tabIndex={-1}
-          onPointerDown={stop} onClick={() => { pick(m); setOpen(false); }}>{name}</button>)}
+        {MODES.map(([m, name, ext]) => <button key={m} className={mode === m ? 'at' : ''} role="option" aria-selected={mode === m} tabIndex={-1}
+          onPointerDown={stop} onClick={() => { pick(m); setOpen(false); }}>{name}{ext ? ` ${ext}` : ''}</button>)}
       </div> : null}
     </div>
   );
@@ -139,10 +105,15 @@ function ModeMenu({ mode, pick }: { mode: Mode; pick: (m: Mode) => void }) {
 
 // the turntable and the transform off to start (both on, then the turntable alone, for a while); no switch for the
 // turntable, AUTOTRANSFORM and T for the transform
-// ATTRACT to start on a desktop, till the mouse first moves (or a key, or the wheel); a phone starts in ORBIT
-const ATTRACT_FIRST = !CLEAN && !matchMedia('(max-width: 640px), (max-height: 500px), (pointer: coarse)').matches;
-if (ATTRACT_FIRST) rig.attract = true;
-rig.spin = true; // the turntable on to start, a switch for it in the wheel's card (off, for a while)
+// ORBIT to start, everywhere (DEMO on a desktop till the mouse first moved, for a while), AUTOTRANSFORM on
+const ATTRACT_FIRST = false;
+// on the page's first load only: a hot reload runs this again over the rig as it is (in state.ts, not reloaded), and
+// put DEMO back on under PILOT
+if (!rig.booted) {
+  rig.booted = true;
+  if (ATTRACT_FIRST) rig.attract = true;
+  rig.spin = true; // the turntable on to start, a switch for it in the wheel's card (off, for a while)
+}
 
 
 // A phone's tilt (its device orientation, the gyroscope): leaning it turns the view a little round the machine, from how
@@ -202,9 +173,9 @@ function Rig({ children }: { children: React.ReactNode }) {
     const yaw = rig.yaw - tilt.now[0], pitch = THREE.MathUtils.clamp(rig.pitch + tilt.now[1] * 0.6, -1.4, 1.4);
     camera.position.setFromSphericalCoords(rig.zoom, Math.PI / 2 - pitch, yaw);
     // follow (the switch): the same orbit, round the beetle instead of the machine's middle, nearer; eased in and out
-    tail.lerp(drone.world, Math.min(1, sdt * FOLLOW_EASE));
+    tail.lerp(drone.world, Math.min(1, sdt * (rig.close ? CLOSE_LAG * 2 : FOLLOW_EASE))); // in close, the look right on it
     if (rig.followK < 0.001) lag.copy(tail); // not following: the camera's own catch-up starts from where the look is
-    lag.lerp(tail, Math.min(1, sdt * FOLLOW_LAG));
+    lag.lerp(tail, Math.min(1, sdt * (rig.close ? CLOSE_LAG : FOLLOW_LAG))); // in close, the camera keeps up
     // on its own, the switch
     rig.followK += ((rig.follow && !drone.pilot ? 1 : 0) - rig.followK) * Math.min(1, dt * 2); // at the controls the chase, below (the follow on a phone for a while)
     const fk = rig.followK;
@@ -213,7 +184,7 @@ function Rig({ children }: { children: React.ReactNode }) {
     chaseFwd.lerp(drone.worldFwd, ve).normalize(); chaseUp.lerp(drone.worldUp, ve).normalize();
     let upWant = WORLD_UP;
     if (fk > 0.001) {
-      const D = rig.zoom * (size.width <= 640 || size.height <= 500 ? FOLLOW_PHONE : FOLLOW);
+      const D = rig.close ? PROBE_D : rig.zoom * (size.width <= 640 || size.height <= 500 ? FOLLOW_PHONE : FOLLOW);
       if (rig.view === 'free') off.setFromSphericalCoords(D, Math.PI / 2 - THREE.MathUtils.clamp(pitch, -LEVEL, LEVEL), yaw);
       else {
         // behind it, beside it or over it, by its own turn (the follow went round by the drag alone for a while)
@@ -230,7 +201,11 @@ function Rig({ children }: { children: React.ReactNode }) {
     // at the controls, the chase: from behind the probe and a little over it, looking past it the way it flies, eased
     // after it so a turn swings the view round rather than snapping it (the usual camera, and on a phone the follow,
     // for a while)
-    rig.chaseK += ((drone.pilot ? 1 : 0) - rig.chaseK) * Math.min(1, dt * 2);
+    // the way in and out is a fixed ramp, CHASE_IN long, eased at both ends, and then the chase alone: the camera always
+    // in the same place on the probe, whatever the mode before (eased on and on, for a while, so the last mode's camera
+    // stayed in the mix for seconds)
+    rig.chaseT = THREE.MathUtils.clamp(rig.chaseT + (drone.pilot ? 1 : -1) * dt / CHASE_IN, 0, 1);
+    rig.chaseK = rig.chaseT * rig.chaseT * (3 - 2 * rig.chaseT);
     if (rig.chaseK > 0.001) {
       // 45 degrees round from straight behind, to its right, so it is seen three-quarters and its way still reads
       // (straight behind, for a while)
@@ -239,6 +214,7 @@ function Rig({ children }: { children: React.ReactNode }) {
       chaseLook.copy(drone.world).addScaledVector(chaseFwd, CHASE_AHEAD);
       camera.position.lerp(chaseAt, rig.chaseK);
       look.lerp(chaseLook, rig.chaseK);
+      camera.up.copy(camUp).lerp(chaseUp, rig.chaseK).normalize(); // the probe's up, so the chase is the same from any side of it
     }
     if (rig.attract) directShot(camera, dt, sdt, size.width <= 640 || size.height <= 500);
     else attract.on = false;
@@ -250,12 +226,14 @@ function Rig({ children }: { children: React.ReactNode }) {
     else if (cam.view?.enabled) cam.clearViewOffset();
     // the depth of field on what the camera looks at, the beetle when following; nearer, the blur deeper, as a lens's
     dof.focus.copy(look).lerp(drone.world, rig.chaseK); // chasing, on the probe, not past it
-    dof.aperture = THREE.MathUtils.lerp(DOF_WIDE, DOF_FOLLOW, fk);
+    dof.aperture = THREE.MathUtils.lerp(DOF_WIDE, rig.close ? DOF_CLOSE : DOF_FOLLOW, fk); // in close, shallow
     dof.skip = !rig.follow && !drone.pilot; // in ORBIT none, whatever the switch: the whole machine sharp (on there too, for a while)
     if (rig.attract) { dof.skip = attract.kind === 'wide' || attract.kind === 'flyover' || attract.kind === 'edge'; dof.focus.copy(attract.focus); dof.aperture = attract.kind === 'follow' ? DOF_FOLLOW : attract.kind === 'ball' ? DOF_FOLLOW * 0.4 : DOF_CLOSE; } // the ball so near, a narrow blur, or it goes soft across its own depth // in ATTRACT on what the shot is of, but for the wide shots
   });
   return <group ref={ref}>{children}</group>;
 }
+// PROBE: the follow in close on the probe, as near as a close-up, the camera keeping right up with it, the drag going round it
+const PROBE_D = 0.5, CLOSE_LAG = 6;
 const FOCUS = 0.3; // how far the turntable's look leans from the machine's middle to the device
 const DOF_CLOSE = 0.016; // ATTRACT's close-ups: a shallow focus, the probe sharp and the struts round it soft
 
@@ -265,7 +243,7 @@ const DOF_CLOSE = 0.016; // ATTRACT's close-ups: a shallow focus, the probe shar
 // at once, off the beat, for a while). The beat runs on the page's own clock, so a pause or a slow frame does not
 // shift it. It runs after the rest of the rig, over whatever the orbit and the follow eased.
 const attract = {
-  on: false, t: 0, bpm: 40, beats: 0, left: 1, pending: false, clock: 0, span: 1.5, edge: 0, along: 0.5, // the tempo; beats run, as a fraction; beats left in this shot; a close-up asked for
+  on: false, t: 0, bpm: 40, beats: 0, left: 1, ran: 0, pending: false, clock: 0, span: 1.5, edge: 0, along: 0.5, // the tempo; beats run, as a fraction; beats left in this shot; a close-up asked for
  kind: 'wide' as 'wide' | 'flyover' | 'edge' | 'follow' | 'close' | 'ball' | 'smoke' | 'joint', flow: 1,
   yaw: 0, pitch: 0, dist: 1, view: 0, dir: new THREE.Vector3(), drift: 0, crossings: -1, taken: 0, joint: 0,
   focus: new THREE.Vector3(), // what the shot is of, for the depth of field
@@ -288,8 +266,13 @@ function nextShot(early: boolean) {
   // ball close, the smoke, a joint close as it moves, or a follow (the ball only while there is one up)
   const r = Math.random();
   // (far shots from well outside it, for a while: little use; a fly-over now, and slow runs along the edges inside)
-  a.kind = early ? 'close' : r < 0.1 ? 'wide' : r < 0.22 ? 'flyover' : r < 0.36 ? 'edge' : r < 0.47 ? 'close' : r < 0.56 ? (target.up ? 'ball' : 'close') : r < 0.64 ? 'smoke' : r < 0.71 ? 'joint' : 'follow';
-  a.left = a.kind === 'follow' || a.kind === 'flyover' || a.kind === 'edge' ? 2 : 1; // in beats
+  // the whole machine every other shot: after one in close, a wide (or a fly-over, a quarter of the time), then the rest
+  // by chance, a wall or a catch's close-up first (a wide a tenth of the time, for a while)
+  const whole = a.kind === 'wide' || a.kind === 'flyover';
+  a.kind = !whole ? (Math.random() < 0.75 ? 'wide' : 'flyover') : early ? 'close' : r < 0.15 ? 'edge' : r < 0.35 ? 'close' : r < 0.5 ? (target.up ? 'ball' : 'close') : r < 0.6 ? 'smoke' : r < 0.7 ? 'joint' : 'follow';
+  // longer shots: four beats for the wide ones and the follows, two for a close-up (two and one, for a while)
+  a.left = a.kind === 'follow' || a.kind === 'flyover' || a.kind === 'edge' || a.kind === 'wide' ? 4 : 2; // in beats
+  a.ran = 0;
   a.span = (a.left * 60) / a.bpm; // the shot's length in seconds, for a move that crosses it whole
   // along an edge of the outer cube as it stands now (the twelve farthest from the middle), in between it and the inner
   // one, clear of both (any of the 32, for a moment: inside the inner struts, or in a joint)
@@ -302,7 +285,7 @@ function nextShot(early: boolean) {
   // the way only changes now and then, not at every cut (each shot drifted its own way, for a while)
   if (Math.random() < FLOW_FLIP) a.flow = -a.flow;
   a.yaw = rand(0, Math.PI * 2); a.pitch = rand(-0.35, 0.9);
-  a.dist = rand(0.55, 1.05);
+  a.dist = rand(0.62, 0.85); // the wide's distance against the fit: the whole of it in, or nearly, filling the page (0.72 to 0.95, then 0.8 to 1.1, small, for a moment; 0.55 to 1.05, often cut off, for a while)
   // follows: from behind it half the time, the rest from any side (any side alike, for a while)
   a.view = Math.random() < 0.5 ? 0 : Math.floor(Math.random() * FOLLOWS.length);
   a.dir.set(rand(-1, 1), rand(-0.6, 1), rand(-1, 1)).normalize();
@@ -320,8 +303,10 @@ function directShot(camera: THREE.Camera, dt: number, sdt: number, phone: boolea
   a.clock = now;
   if (a.beats > 4) a.beats %= 1; // back from a hidden tab: on the beat still, without a burst of cuts
   while (a.beats >= 1) {
-    a.beats -= 1; a.left -= 1;
-    if (a.left <= 0 || a.pending) { const early = a.pending; a.pending = false; nextShot(early); }
+    a.beats -= 1; a.left -= 1; a.ran += 1;
+    // a wall or a catch cuts in, but not before the shot has had two beats, and never into a wide: that one plays out
+    // and the close-up follows it (at once, on the next beat, for a while)
+    if (a.left <= 0 || (a.pending && a.ran >= 2 && a.kind !== 'wide' && a.kind !== 'flyover')) { const early = a.pending; a.pending = false; nextShot(early); }
   }
   const turn = a.flow * a.t; // seconds into the shot, the way round: the same rates in every shot, so the move runs on
   const up = (camera as THREE.PerspectiveCamera).up;
@@ -392,21 +377,6 @@ const EDGE_RATE = 0.06, EDGE_IN = 0.62; // along a strut: of its length a second
 const FLOW_FLIP = 0.15; // the chance at a cut that the way round turns about
 // in dev, a shot on demand for scripted checks: __shot('ball')
 if (import.meta.env.DEV) Object.assign(window, { __attract: attract, __shot: (k: typeof attract.kind) => { nextShot(false); attract.kind = k; attract.left = 999; } });
-/** TEMPO: set it, in beats a minute, or tap it in: two taps or more, the beat from their spacing, the beat brought onto
- * the last tap, so the cuts fall on the taps. */
-const TEMPO_MIN = 20, TEMPO_MAX = 180;
-function setTempo(bpm: number, exact = false) { const b = THREE.MathUtils.clamp(bpm, TEMPO_MIN, TEMPO_MAX); attract.bpm = exact ? b : Math.round(b); return attract.bpm; } // a tapped tempo kept to the fraction, so it holds to the music
-const getTempo = () => attract.bpm;
-const taps: number[] = [];
-function tapTempo() {
-  const now = performance.now();
-  if (taps.length && now - taps[taps.length - 1] > 3000) taps.length = 0; // a pause: a new count
-  taps.push(now); if (taps.length > 6) taps.shift();
-  attract.beats = 0; // on the beat, now
-  if (taps.length < 2) return attract.bpm;
-  const gap = (taps[taps.length - 1] - taps[0]) / (taps.length - 1);
-  return setTempo(60000 / gap, true);
-}
 const CLOSE = 0.42; // world units: a close-up's distance from the probe, about four of its radii
 const SMOKE_BACK = 0.55, SMOKE_OUT = 0.6; // the wake's shot: how far back along it, and how far off to its side
 const look = new THREE.Vector3(), followAt = new THREE.Vector3();
@@ -426,6 +396,12 @@ const LEVEL = 0.87; // radians, about 50 degrees
 const tail = new THREE.Vector3(), lag = new THREE.Vector3(), off = new THREE.Vector3();
 const chaseFwd = new THREE.Vector3(0, 0, -1), chaseUp = new THREE.Vector3(0, 1, 0), chaseAt = new THREE.Vector3(), chaseLook = new THREE.Vector3();
 const CHASE_YAW = Math.PI / 4; // round from straight behind, to the right
+const CHASE_IN = 0.7; // seconds from the last mode's camera to the chase, and back
+/** At the controls: is the point on the fisheye view? There the drag steers; off it, nothing. */
+function onView(x: number, y: number) {
+  const { cam } = regionsOf(innerWidth, innerHeight);
+  return !!cam && x >= cam.x && x <= cam.x + cam.w && y >= cam.y && y <= cam.y + cam.h;
+}
 const CHASE_BACK = 1.7, CHASE_UP = 0.4, CHASE_AHEAD = 0.25; // the look all but on the probe: from 45 degrees round, a look far ahead put it off its mark, on a phone behind the view (1, then 2 straight behind) // world units: behind it, over it, and the look ahead of it (2, straight behind; a quarter of these, the probe filling the screen, for a moment)
 const sideV = new THREE.Vector3(), viewOff = new THREE.Vector3(), camUp = new THREE.Vector3(0, 1, 0), WORLD_UP = new THREE.Vector3(0, 1, 0);
 const CHASE_EASE = 4; // how fast the chase swings round after the probe's turn (1/s)
@@ -445,12 +421,6 @@ const Crosshair = () => (
     <circle cx="11" cy="11" r="6.5" />
     <path d="M11 1.5v5M11 15.5v5M1.5 11h5M15.5 11h5" />
     <circle cx="11" cy="11" r="1.1" fill="currentColor" stroke="none" />
-  </svg>
-);
-/** The first person view's corner button: four corners pointing out to maximize, in to minimize. */
-const Corners = ({ out }: { out: boolean }) => (
-  <svg width={14} height={14} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-    <path d={out ? 'M2 6V2h4M10 2h4v4M14 10v4h-4M6 14H2v-4' : 'M6 2v4H2M10 2v4h4M10 14v-4h4M6 14v-4H2'} />
   </svg>
 );
 /** The first person view's other corner button: an eye while it shows (to hide it), a grid while it is hidden (to
@@ -546,70 +516,6 @@ function Pad({ take, shown }: { take: () => void; shown: boolean }) {
 
 /** PILOT's mark on a phone: four arrows out from the middle, the moves the pad gives. */
 
-// The phone's cheat sheet, as an assembly manual draws it: line art, no words but a caption, the hand and the arrows
-// doing the telling. A cube in hairline, the struts out of sight dashed; one finger on a strut, lime, with an arrow
-// along it and one across, the two ways it turns the machine in 4D; two fingers and a sweep over the cube, the orbit.
-const CUBE = (
-  <>
-    <path className="far" d="M26 13V29M12 36L26 29L40 36" />
-    <path d="M12 20L26 13L40 20L26 27ZM12 20V36L26 43L40 36V20M26 27V43" />
-  </>
-);
-/** An arrowhead at (x, y) pointing along angle `a` (degrees, 0 to the right, y down). */
-const Head = ({ x, y, a }: { x: number; y: number; a: number }) => (
-  <path className="head" d="M-3.2 -2.4L0 0L-3.2 2.4" transform={`translate(${x} ${y}) rotate(${a})`} />
-);
-// A hand as a manual draws it, in local units, the fingertip at the origin and the wrist down at y 46, cut by the
-// drawing's edge: one finger out, the others curled, the thumb in; or two out together, for the two-finger turn.
-// the hand as a pointing hand in a manual: the index up, a round tip, the other three folded, their knuckles a row
-// of bumps down the right, the thumb out to the left and curled in, a cuff at the wrist (a thinner hand, the fingers
-// barely folded, for a while)
-const HAND_ONE = 'M-4.5 21V4.5A4.5 4.5 0 0 1 4.5 4.5V17C5 13.5 11.5 13.5 11.5 17.5C12 15 17 15.5 17 19.5C17.5 17.5 21.5 18.5 21 22.5C21 30 19 34 16.5 38H-7.5C-10.5 34 -13 31 -14 27C-15.5 23 -14.5 19 -11.5 18.5C-8.5 18 -6 20 -4.5 21Z';
-const HAND_LINES = 'M4.5 17V22M11.5 17.5V23M17 19.5V24.5M-4.5 21C-6 23 -6.5 26 -6 28';
-const CUFF = 'M-9 38H18V45H-9ZM-4 39.5V43.5M1 39.5V43.5';
-/** A hand coming in from below, its fingertip at (x, y), leaning `a` degrees. */
-const Hand = ({ x, y, a, k = 0.72 }: { x: number; y: number; a: number; k?: number }) => (
-  <g className="hand" transform={`translate(${x} ${y}) rotate(${a}) scale(${k})`}>
-    <path className="skin" d={HAND_ONE} />
-    <path d={HAND_LINES} />
-    <path className="skin" d={CUFF} />
-  </g>
-);
-const Cheat = ({ close }: { close: () => void }) => (
-  <div className="cheat">
-    {/* a small round x on its top right corner: away with it, and it stays away on this browser */}
-    <button className="x" aria-label="Dismiss the instructions" tabIndex={-1} onPointerDown={(e) => { e.preventDefault(); e.stopPropagation(); }} onClick={close}>
-      <svg width={7} height={7} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={2.8} strokeLinecap="round" aria-hidden><path d="M3 3l10 10M13 3 3 13" /></svg>
-    </button>
-    <figure>
-      {/* drawn after Theo's sketch: the cube, its hidden edges dashed, the strut in lime, the two ways it goes, and a
-          gloved hand, its finger on the strut's foot (a thin hand and hairlines for a while) */}
-      <svg className="manual" width={72} height={74} viewBox="250 200 790 820">
-        <path className="far" d="M498 345V560M330 668L495 575M500 575L670 668" />
-        <path className="cube" d="M295 452L498 337L686 448M295 452L498 568L686 452M295 452V688L498 800L686 690V452M498 568V800" />
-        <path className="edge-o" d="M686 452V604" /><path className="edge-i" d="M686 452V604" />
-        <path className="arr" d="M545 272H850M592 240L545 272L592 306M802 238L850 272L802 306" />
-        <path className="arr" d="M848 392V632M814 438L848 392L882 438M814 586L848 632L882 586" />
-        <path className="glove" d="M760 975C742 988 750 1030 790 1034L915 1030C950 1025 955 978 930 965Z" />
-        <path className="glove" d="M682 648C680 602 742 594 762 634L822 770C818 720 882 702 906 770C906 720 982 720 990 820C995 880 975 940 945 965L760 977C730 952 700 928 660 916C610 905 590 860 612 830C642 800 700 815 742 846Z" />
-        <path className="crease" d="M824 880L834 944M870 856L874 940M914 870L902 934" />
-      </svg>
-    </figure>
-    <i className="rule" />
-    <figure>
-      {/* the orbit: a drag on the page off the struts, the same glove, its finger on nothing, a sweep over it and the
-          way the finger goes, both ways */}
-      <svg className="manual" width={72} height={74} viewBox="250 200 790 820">
-        <path className="far" d="M330 470A300 120 0 0 0 930 470" />
-        <path className="arr" d="M330 470A300 120 0 0 1 930 470M300 418L330 470L388 452M872 452L930 470L960 418" />
-        <path className="arr" d="M560 560H880M606 528L560 560L606 594M834 528L880 560L834 594" />
-        <path className="glove" d="M760 975C742 988 750 1030 790 1034L915 1030C950 1025 955 978 930 965Z" />
-        <path className="glove" d="M682 648C680 602 742 594 762 634L822 770C818 720 882 702 906 770C906 720 982 720 990 820C995 880 975 940 945 965L760 977C730 952 700 928 660 916C610 905 590 860 612 830C642 800 700 815 742 846Z" />
-        <path className="crease" d="M824 880L834 944M870 856L874 940M914 870L902 934" />
-      </svg>
-    </figure>
-  </div>
-);
 
 
 const Moves = () => (
@@ -701,7 +607,6 @@ function handUp() { if (hand.on && hand.picked) crankEnd(); hand.on = false; gri
 
 export function App() {
   const [transform, setTransform] = useState(st.transform);
-  const [why, setWhy] = useState(false); // the ? and its note
   // TURNTABLE, in the wheel's card: the camera's slow orbit, off to start; switched on it starts at once
   const [turntable, setTurntable] = useState(rig.spin);
   const [blur, setBlur] = useState(dof.on); // DEPTH OF FIELD, in the wheel's card
@@ -711,8 +616,6 @@ export function App() {
   // (a class on #lock, not React's: DroneCam toggles its `on` there too)
   useEffect(() => { const id = setInterval(() => document.getElementById('lock')?.classList.toggle('can', drone.lockable && drone.pilot && !drone.docking), 100); return () => clearInterval(id); }, []);
   // the instructions bottom right, until dismissed by their x; remembered on this browser if it lets us
-  const [cheat, setCheat] = useState(() => { try { return localStorage.getItem('08-cheat') !== 'off'; } catch { return true; } });
-  const dismissCheat = () => { setCheat(false); try { localStorage.setItem('08-cheat', 'off'); } catch { /* not kept, fine */ } };
   const [grid, setGrid] = useState(st.grid);
   const [maxi, setMaxi] = useState(eyeView.max);
   const [beetle, setBeetle] = useState(drone.on);
@@ -744,6 +647,7 @@ export function App() {
   const [open, setOpen] = useState(!drone.on || !matchMedia('(max-width: 640px), (max-height: 500px)').matches); // the text: all of it to start; on a phone folded with the probe in
   const [mode, setModeState] = useState<Mode>(drone.pilot ? 'pilot' : rig.follow ? 'follow' : rig.attract ? 'attract' : 'orbit');
   const manual = mode === 'pilot';
+  useEffect(() => { document.body.classList.toggle('orbit', mode === 'orbit'); }, [mode]); // ORBIT on a light gradient (style.css)
   // ATTRACT to start, on a desktop: the first move of the mouse, a key or the wheel and it is over, ORBIT from there
   const attractFirst = useRef(ATTRACT_FIRST);
   useEffect(() => {
@@ -790,6 +694,7 @@ export function App() {
         const strut = drone.pilot ? -1 : strutAt(e.clientX - at.left, e.clientY - at.top, PICK_TOUCH);
         // in the home page's box, off the struts it is the page's: it scrolls, nothing turns (two fingers orbit)
         if (page.boxed && strut < 0) { drag.current = null; return; }
+        if (drone.pilot && !onView(e.clientX, e.clientY)) { drag.current = null; return; } // at the controls, the view only
         const kind = drone.pilot ? 'look' : strut >= 0 ? 'crank' : 'orbit';
         drag.current = { kind, x: e.clientX, y: e.clientY, t: performance.now() };
         if (strut >= 0) { grip.held = strut; const w = strutW(strut); handDown(Math.abs(w) > 0.2 ? -Math.sign(w) : 1); }
@@ -806,8 +711,11 @@ export function App() {
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
     // on its own a drag on a strut takes it in the hand, no alt needed (alt was the only way to a strut for a while);
     // alt-drag anywhere still turns it in 4D by the drag
+    // at the controls a drag only on the view, to steer: off it nothing, the camera is the chase's alone (off it, it
+    // orbited round the probe, for a moment)
+    if (drone.pilot && !e.altKey && !onView(e.clientX, e.clientY)) return;
     const strut = !drone.pilot ? grip.hover : -1;
-    const kind = e.altKey || strut >= 0 ? 'crank' : drone.pilot && !e.shiftKey ? 'look' : 'orbit';
+    const kind = e.altKey || strut >= 0 ? 'crank' : drone.pilot ? 'look' : 'orbit';
     drag.current = { kind, x: e.clientX, y: e.clientY, t: performance.now() };
     if (kind === 'orbit') { rig.orbitVel[0] = rig.orbitVel[1] = 0; rig.orbiting = true; }
     if (kind === 'crank' && strut < 0) handDown();
@@ -846,21 +754,15 @@ export function App() {
   };
   const onWheel = (e: React.WheelEvent) => { rig.zoomK = Math.min(2.2, Math.max(0.5, rig.zoomK * Math.exp(e.deltaY * 0.001))); };
 
-  // the pointer lock: the mouse itself is the look, no drag; with shift held it orbits the machine instead, and
-  // coasts when shift is let go; with alt it turns the machine
+  // the pointer lock: the mouse itself is the look, no drag (with shift held it orbited, for a while), and
+  // with alt it turns the machine
   useEffect(() => {
     const change = () => setLocked(document.pointerLockElement === stage.current);
-    let last = 0;
     const move = (e: MouseEvent) => {
       if (document.pointerLockElement !== stage.current || !drone.pilot) return;
       if (e.altKey) { if (!hand.on) handDown(); handMove(e.movementX, e.movementY); return; }
       handUp(); // alt let go without its keyup reaching the page
-      if (e.shiftKey) {
-        const now = performance.now(), dt = Math.max(1, now - last) / 1000; last = now;
-        orbitBy(-e.movementX * ORBIT, e.movementY * ORBIT, dt);
-        return;
-      }
-      rig.orbiting = false; // shift let go without its keyup reaching the page: the orbit coasts
+      // no orbit at the controls, shift or not: the camera is the chase's alone (shift orbited, for a while)
       drone.turn[0] += e.movementX * LOOK; drone.turn[1] += -e.movementY * LOOK;
     };
     const up = (e: KeyboardEvent) => {
@@ -876,9 +778,9 @@ export function App() {
   // the mode, from the pills on the left or p: orbit and follow on its own, the pilot at the controls
   const setMode = (m: Mode) => {
     attractFirst.current = false; // picked: whatever it is, it stays
-    if (m !== 'pilot') lastAuto.current = m;
+    if (m !== 'pilot' && m !== 'probe') lastAuto.current = m; // where the pilot and the probe's button go back to
     if (rig.attract && m !== 'attract') settleTurn(); // it turned in ATTRACT: on to a whole quarter, unless AUTOTRANSFORM goes on
-    drone.pilot = m === 'pilot'; rig.follow = m === 'follow'; rig.attract = m === 'attract'; setModeState(m);
+    drone.pilot = m === 'pilot'; rig.follow = m === 'follow' || m === 'probe'; rig.close = m === 'probe'; rig.attract = m === 'attract'; setModeState(m);
     if (m === 'attract') { attract.left = 0; attract.beats = 1; } // straight into a shot, on a beat
     document.body.classList.toggle('pilot', m === 'pilot'); // on a phone: the view, the pad, no pills (style.css)
     drone.keys.thrust = drone.keys.strafe = 0;
@@ -940,7 +842,6 @@ export function App() {
 
   return (
     <>
-      {why ? <Note close={() => setWhy(false)} /> : null}
       <div ref={stage} className={`stage ${locked ? 'locked' : ''}`} {...stageHandlers} onWheel={onWheel}>
         <Canvas camera={{ position: [0, 0, 10.5], fov: 34 }} gl={{ alpha: true, antialias: true, toneMapping: THREE.NeutralToneMapping, toneMappingExposure: 1.0, localClippingEnabled: true }} dpr={[1, 2]}>
           <Suspense fallback={null}>
@@ -967,23 +868,20 @@ export function App() {
           <ModeMenu mode={mode} pick={setMode} />
           {/* and beside it a wheel, the settings: AUTOTRANSFORM in it (on its own under the dropdown, for a while) */}
           <Settings transform={transform} toggle={toggleAuto} turntable={turntable} toggleTurntable={toggleTurntable} blur={blur} toggleBlur={toggleBlur} />
-          {/* a ? that opens a note, on frosted glass: why this is short (beside AUTOTRANSFORM on a desktop, bottom left on a phone) */}
-          <button className="why" tabIndex={-1} aria-label="Why this is short" onPointerDown={(e) => { e.preventDefault(); e.stopPropagation(); }} onClick={() => setWhy(true)}>?</button>
           <button className={`autot ${transform ? 'on' : ''}`} tabIndex={-1} role="checkbox" aria-checked={transform} onPointerDown={(e) => { e.preventDefault(); e.stopPropagation(); }} onClick={toggleAuto}>
           <i className="box" aria-hidden>{transform ? <svg width={8} height={8} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={2.6} strokeLinecap="round" strokeLinejoin="round"><path d="M3 8.5l3.2 3.2L13 4.5" /></svg> : null}</i>Autotransform
         </button>
           {/* FREE | BACK | SIDE | TOP, where the follow is from, was here for a while: FREE, round it by the drag, kept */}
         </div>}
         {/* an upright phone's home page: how the hands work, in the box, bottom right (bottom left, and under it, titled INSTRUCTIONS, for a moment) */}
-        {CLEAN || !cheat ? null : <Cheat close={dismissCheat} />}{/* shown by the page: a phone's home page's box, a desktop's corner away from the controls (style.css) */}
       </div>
-      {CLEAN ? null : <div className={`plate ${open ? '' : 'folded'} ${beetle ? 'probing' : ''}`}><div className="head"><b>08 Tesseract</b><i><a className="home" href="../">Codevember 2026 <span lang="ja">すべてのプロジェクト</span></a></i></div>{beetle ? null : <div className="curtain"><button tabIndex={-1} aria-label={open ? 'Fold the text away' : 'Unfold the text'} onPointerDown={(e) => e.preventDefault()} onClick={() => setOpen(!open)}><svg width={10} height={10} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round" aria-hidden style={{ transform: open ? 'none' : 'rotate(180deg)' }}><path d="M2.5 10.5 8 5l5.5 5.5" /></svg></button></div>}</div>}
+      {CLEAN ? null : <div className={`plate ${open ? '' : 'folded'} ${beetle ? 'probing' : ''}`}><div className="head"><b>08 Tesseract</b><i><a className="home" href="../">Codevember 2026 <span lang="ja">超立方体</span></a></i></div>{beetle ? null : <div className="curtain"><button tabIndex={-1} aria-label={open ? 'Fold the text away' : 'Unfold the text'} onPointerDown={(e) => e.preventDefault()} onClick={() => setOpen(!open)}><svg width={10} height={10} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round" aria-hidden style={{ transform: open ? 'none' : 'rotate(180deg)' }}><path d="M2.5 10.5 8 5l5.5 5.5" /></svg></button></div>}</div>}
       {/* an upright phone's home page: under the box the probe, a line drawing of it, what it is, and the way in, the
           probe in, full screen and followed (in the box, at its foot, for a moment) */}
       {/* an upright phone with the probe in: no text, a footer instead, where it is (08 TESSERACT, and / PILOT at the controls; a PROBE between them for a while) and BACK, one up */}
       {CLEAN || !beetle ? null : <nav className="crumbs" aria-label="Where you are">
         {/* the title alone: the mode pills at the foot are the way between the modes (08 TESSERACT / PILOT and BACK in a footer, then BACK alone up here, for a while) */}
-        <span className="trail title"><span className="at">08 Tesseract</span><a className="home" href="../">Codevember 2026 <span lang="ja">すべてのプロジェクト</span></a></span>
+        <span className="trail title"><span className="at">08 Tesseract</span><a className="home" href="../">Codevember 2026 <span lang="ja">超立方体</span></a></span>
       </nav>}
       {/* the first person view's corner, top right: hide or show it, and, shown, maximize or
           minimize it, the corner the only way to them */}
@@ -991,10 +889,7 @@ export function App() {
         onPointerDown={(e) => e.preventDefault()} onClick={() => { st.grid = !st.grid; setGrid(st.grid); }}>
         <EyeOrGrid shown={grid} />
       </button>}
-      {CLEAN || !beetle || !grid ? null : <button className={`maxi ${maxi ? "" : "solo"}`} tabIndex={-1} aria-label={maxi ? 'Minimize the first person view' : 'Maximize the first person view'}
-        onPointerDown={(e) => e.preventDefault()} onClick={() => { eyeView.max = !eyeView.max; setMaxi(eyeView.max); }}>
-        <Corners out={!maxi} />
-      </button>}
+      {/* the corner's maximize, the view full screen, gone (there for a while) */}
       {/* bottom middle, at the controls: the pointer lock; locked, there is no pointer to click with, so the way out
           instead: esc (transform's play/pause beside it for a while) */}
       {/* on a phone at the controls, the fisheye view is the pad */}
@@ -1021,7 +916,7 @@ export function App() {
       {CLEAN ? null : <div className="keys right">
         {manual ? <>
         <h6 className="shortcuts">Navigation</h6>
-        <Do how={<Key wide>{locked ? 'Mouse' : 'Drag'}</Key>} what="Steer" />
+        <Do how={<Key wide>{locked ? 'Mouse' : 'Drag'}</Key>} what={locked ? 'Steer' : 'Steer, on the view'} />
         <Do how={<><Key>W</Key><Key>S</Key><Key><Tri d="up" /></Key><Key><Tri d="down" /></Key></>} what="Forward, back" />
         <Do how={<><Key>A</Key><Key>D</Key><Key><Tri d="left" /></Key><Key><Tri d="right" /></Key></>} what="Strafe" />
         <Do how={<Key wide>Space</Key>} what="Forward" />

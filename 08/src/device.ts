@@ -124,20 +124,11 @@ function dress(g: THREE.Group) {
     const n = new THREE.Vector3(...dir).normalize();
     stick(core, mat, n.clone().multiplyScalar(0.7), n, w, h, roll);
   };
-  onCore([0.45, 0.85, -0.45], m.three, 0.55, 0.55);
-  onCore([-0.45, 0.85, -0.45], m.pmndrs, 0.2, 0.2);
-  onCore([0, -0.85, -0.5], m.serial, 0.5, 0.0625);
+  // no brands on the probe (three.js and pmndrs on the core and GitHub on a wing, for a while): they are the machine's,
+  // on its sleeves; the probe keeps its own serial
+  onCore([0, -0.85, -0.5], m.serial, 0.8, 0.1); // readable, 1.6 times the size, as wide as the decal can bend round the core (0.5 x 0.0625, for a while: a smudge)
   onCore([0.6, -0.3, 0.7], m.scuff[4], 0.7, 0.7, 0.5);
-  [0, 1, 2, 3].forEach((k) => {
-    const wall = g.getObjectByName(`wall_${k}`) as THREE.Mesh;
-    const hit = skin(wall);
-    if (!hit) return;
-    // no scuffs on the wings any more: a honeycomb under them instead (honeycomb, in the copy's own material)
-    if (k === 0) {
-      const h2 = skin(wall, 0.25);
-      if (h2) stick(wall, m.github, h2.p, h2.n, 0.1, 0.1);
-    }
-  });
+  // no scuffs on the wings any more: a honeycomb under them instead (honeycomb, in the copy's own material)
 }
 
 // The works that move the walls, built here on the model: at each hinge a barrel with a steel pin through it, and
@@ -201,7 +192,40 @@ const WHITE_PLASTIC = '#efefeb';
 // the warp at a wall, in world units against a probe some 0.063 across: the glowing band, the dithered band twice it,
 // how much at most thins away there, and the rings' frequency
 const WARP_W = 0.022, WARP_THIN = 0.7, WARP_RINGS = 420;
+const MOUNT_LAT = 22, MOUNT_R = 0.022; // the wings' mount: its hexagon's corners off the back axis (degrees), and its bars' radius
+const mountBar = new THREE.CylinderGeometry(1, 1, 1, 10, 1);
+const screwHead = new THREE.CylinderGeometry(0.03, 0.034, 0.024, 16);
+const screwSocket = new THREE.CylinderGeometry(0.013, 0.013, 0.01, 6);
+const screwDark = new THREE.MeshStandardMaterial({ color: '#0c0c0c', roughness: 0.8 });
+const EYES_GLASS = 0.8; // the panes on the brows: up off the core (0.7), clear of the cameras (0.728 for the triangles, 0.745 for the dome, 0.75 for panes lying on the shell, for a while)
+const paneUp = new THREE.CylinderGeometry(0.009, 0.011, 1, 10); // a post from a brow to its pane, a unit tall, scaled to the gap
+const EYE_IN = 0.24; // the eye sunk into the core: the cap, the shutter, the lens and what is behind them, so the blades' tips stay under the shell (proud of it, for a while)
+const HOLE_R = 0.352; // the core cut open round the eye, just inside the cap's edge (0.36)
+const socketMat = new THREE.MeshStandardMaterial({ color: '#0b0b0d', roughness: 0.7, metalness: 0.1, side: THREE.DoubleSide });
+// the core's triangles, less those round the eye, so it sits in a hole rather than on the shell; one per loaded geometry
+const holed = new WeakMap<THREE.BufferGeometry, THREE.BufferGeometry>();
+function holeInCore(src: THREE.BufferGeometry) {
+  let out = holed.get(src);
+  if (out) return out;
+  const pos = src.getAttribute('position'), idx = src.index;
+  const n = idx ? idx.count : pos.count, keep: number[] = [];
+  const v = (k: number) => (idx ? idx.getX(k) : k);
+  for (let t = 0; t < n; t += 3) {
+    let x = 0, y = 0, z = 0;
+    for (let c = 0; c < 3; c++) { const i = v(t + c); x += pos.getX(i); y += pos.getY(i); z += pos.getZ(i); }
+    if (z < 0 && Math.hypot(x, y) / 3 < HOLE_R) continue;
+    keep.push(v(t), v(t + 1), v(t + 2));
+  }
+  out = src.clone(); out.setIndex(keep);
+  holed.set(src, out);
+  return out;
+}
+const camHousing = new THREE.CylinderGeometry(0.075, 0.08, 0.03, 24);
+const camRing = new THREE.TorusGeometry(0.06, 0.008, 8, 24).rotateX(Math.PI / 2);
+const camLens = new THREE.SphereGeometry(0.048, 20, 12, 0, Math.PI * 2, 0, Math.PI / 2);
+const camLensMat = new THREE.MeshPhysicalMaterial({ color: '#05070a', roughness: 0.05, metalness: 0.2, clearcoat: 1, emissive: '#0a2a24', emissiveIntensity: 0.6 });
 const BROW_R = 0.73; // the brows' reach from the middle: on the core (0.7), at its collar (0.72), not hovering off it (0.8 for a moment)
+const BACK_K = 0.55; // the back's ring and glow, against their size as made
 const BLACK = '#121214'; // the blue, gone to black
 const HEX = 16; // hexagons across a model unit
 function honeycomb(m: THREE.MeshStandardMaterial, centre: THREE.Vector3) {
@@ -240,6 +264,36 @@ export function device(model: THREE.Object3D, size: number): Device {
   g.scale.setScalar(size);
   // the rest pose in the file is open; the hinges turn in a fixed ratio from there (blender: leaf 95 -> 160, wall -55 -> 0)
   const walls = [0, 1, 2, 3].map((k) => { const w = g.getObjectByName(`wall_${k}`)!; return { o: w, rest: w.rotation.x }; });
+  // the back: the ring, its throat and the glow in it smaller and set into the shell rather than standing out of it
+  // (the ring 0.26 across at 0.69, out past the core's curve, for a while)
+  // flush with the core's curve where they sit (0.7 across it), the throat a hair below the ring's lip, the glow at its floor
+  for (const [name, z] of [['back_ring', 0.688], ['back_throat', 0.668], ['back_glow', 0.697]] as const) {
+    const o = g.getObjectByName(name);
+    if (o) { o.scale.multiplyScalar(BACK_K); o.position.z = z; }
+  }
+  // the eye sunk in: the core cut open round it, and the cap, the shutter, the lens and its throat let down into the
+  // hole, the cap's face a hair under the hole's lip, so the blades, swinging out past the cap as it blinks, go under
+  // the shell rather than out over it (the eye stood proud of the core, the blades' tips showing, for a while)
+  {
+    const core = g.getObjectByName('core') as THREE.Mesh;
+    core.geometry = holeInCore(core.geometry);
+    for (const name of ['eye_bezel', 'eye_cap', 'eye_iris', 'eye_lens', 'eye_throat', ...[0, 1, 2, 3, 4, 5, 6, 7].map((i) => `leafpin_${i}`)]) {
+      const o = g.getObjectByName(name);
+      if (o) o.position.z += EYE_IN;
+    }
+    // the hole's wall, dark, from its lip down past the cap, and a dark floor behind it all, so the core's inside
+    // never shows
+    const lip = Math.sqrt(0.49 - HOLE_R * HOLE_R);
+    const wall = new THREE.Mesh(new THREE.CylinderGeometry(HOLE_R, HOLE_R, 0.3, 48, 1, true).rotateX(Math.PI / 2), socketMat);
+    wall.position.z = -lip + 0.15 - 0.004; core.parent!.add(wall);
+    const floor = new THREE.Mesh(new THREE.CircleGeometry(HOLE_R, 48), socketMat);
+    floor.position.z = -lip + 0.3; core.parent!.add(floor);
+    // the lip, a smooth flange lying on the shell round the hole and turning down into it, over the core's stepped cut
+    const f0 = HOLE_R - 0.016, f1 = HOLE_R + 0.04, FR = 0.703, prof: THREE.Vector2[] = [new THREE.Vector2(f0, Math.sqrt(FR * FR - f0 * f0) - 0.03)];
+    for (let n = 0; n <= 12; n++) { const r = f0 + ((f1 - f0) * n) / 12; prof.push(new THREE.Vector2(r, Math.sqrt(FR * FR - r * r))); }
+    const flange = new THREE.Mesh(new THREE.LatheGeometry(prof.reverse(), 96).rotateX(-Math.PI / 2), (works ??= makeWorks()).graphite); // out from the middle, so it faces out
+    core.parent!.add(flange);
+  }
   // the brows: the four arcs that hung by the wings' lips, off the body; taken off the hinges onto one ring on the
   // core, drawn in to sit close round it, so they turn together round the eye's axis
   const root = g.getObjectByName('core')!.parent!;
@@ -260,6 +314,60 @@ export function device(model: THREE.Object3D, size: number): Device {
     browR = Math.max(browR, l.geometry.boundingSphere!.center.clone().applyMatrix4(l.matrix).length());
   }
   if (browR > 0) brows.scale.setScalar(BROW_R / browR); // in close, just off the core (they hung out round the wings, for a while)
+  const panes = new THREE.Group(); // the glass on the brows, turning with them (unscaled, so apart from them)
+  root.add(panes);
+  // the eyes: the orifice in the middle is the grip now, so the probe sees by two cameras on the core, up and out to
+  // either side of it, flush in the shell, under four glass panes on the brows (one glass band between the brows, two
+  // bent triangles, a dome over the top, one ring of glass all round, then four panes lying on the shell, for a while)
+  {
+    const Wk = (works ??= makeWorks());
+    const at = (polar: number, az: number, r: number) => {
+      const p = (polar * Math.PI) / 180, a = (az * Math.PI) / 180;
+      return new THREE.Vector3(Math.sin(p) * Math.cos(a), Math.sin(p) * Math.sin(a), -Math.cos(p)).multiplyScalar(r); // polar from the eye (-z), az round it, 90 up
+    };
+    const glassMat = new THREE.MeshPhysicalMaterial({
+      color: '#eef4f6', roughness: 0.03, metalness: 0, clearcoat: 1, clearcoatRoughness: 0.02, transparent: true, opacity: 0.26,
+      side: THREE.DoubleSide, depthWrite: false, envMapIntensity: 1.8,
+    });
+    // the panes: four, one on each brow, turning with them; each a piece of a sphere a little off the core, lying on its
+    // curve like a shield, from just outside the hole out past the cameras, as wide as its brow, held up off it on two
+    // posts, a dark hairline round its edge (lying on the shell, fixed, for a moment)
+    const P0 = 34, P1 = 58, SPAN = 37, NP = 16, NA = 40; // inner and outer edge, degrees off the eye; half its width round it
+    const BROW_AT = 38.5; // the brows' line, degrees off the eye
+    for (const c of [0, 90, 180, 270]) {
+      const pos: number[] = [], idx: number[] = [];
+      for (let i = 0; i <= NP; i++) for (let j = 0; j <= NA; j++) {
+        const v = at(P0 + ((P1 - P0) * i) / NP, c - SPAN + (2 * SPAN * j) / NA, EYES_GLASS); pos.push(v.x, v.y, v.z);
+        if (i < NP && j < NA) { const k = i * (NA + 1) + j; idx.push(k, k + NA + 1, k + 1, k + 1, k + NA + 1, k + NA + 2); }
+      }
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); geo.setIndex(idx); geo.computeVertexNormals();
+      const pane = new THREE.Mesh(geo, glassMat); pane.renderOrder = 3; panes.add(pane);
+      const edge: THREE.Vector3[] = [];
+      for (let n = 0; n < 24; n++) edge.push(at(P0, c - SPAN + (2 * SPAN * n) / 24, EYES_GLASS));
+      for (let n = 0; n < 12; n++) edge.push(at(P0 + ((P1 - P0) * n) / 12, c + SPAN, EYES_GLASS));
+      for (let n = 0; n < 24; n++) edge.push(at(P1, c + SPAN - (2 * SPAN * n) / 24, EYES_GLASS));
+      for (let n = 0; n < 12; n++) edge.push(at(P1 - ((P1 - P0) * n) / 12, c - SPAN, EYES_GLASS));
+      panes.add(new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(edge, true, 'catmullrom', 0.1), 144, 0.005, 6, true), Wk.graphite));
+      // the posts: from the brow up to the pane's underside
+      for (const s of [-1, 1]) {
+        const n = at(BROW_AT, c + s * (SPAN - 10), 1);
+        const post = new THREE.Mesh(paneUp, Wk.graphite);
+        post.position.copy(n).multiplyScalar((BROW_R + EYES_GLASS) / 2); post.quaternion.setFromUnitVectors(Y, n);
+        post.scale.set(1, EYES_GLASS - BROW_R, 1); panes.add(post);
+      }
+    }
+    // the cameras under it, flush in the shell, set in so their lenses stay under the glass: a dark housing, a glossy
+    // lens, a white ring
+    for (const s of [-1, 1]) {
+      const n = at(47, 90 - s * 24, 1); // out past the brows' line, so the posts turning by clear them
+      const q = new THREE.Quaternion().setFromUnitVectors(Y, n);
+      const part = (geo2: THREE.BufferGeometry, mat: THREE.Material, out: number) => { const m = new THREE.Mesh(geo2, mat); m.position.copy(n).multiplyScalar(out); m.quaternion.copy(q); root.add(m); };
+      part(camHousing, Wk.graphite, 0.695);
+      part(camRing, Wk.steel, 0.706);
+      part(camLens, camLensMat, 0.69);
+    }
+  }
 
   // the works: hinges and actuators, in the frame the core sits in
   works ??= makeWorks();
@@ -294,7 +402,7 @@ export function device(model: THREE.Object3D, size: number): Device {
     const grp = new THREE.Group();
     frame.add(grp);
     const arm = new THREE.Mesh(W.barrel, W.graphite); grp.add(arm);
-    arm.position.set(0, 0, -0.7); arm.quaternion.setFromUnitVectors(Y, EYE); // from the cap towards the bowl
+    arm.position.set(0, 0, -0.58); arm.quaternion.setFromUnitVectors(Y, EYE); // from the cap towards the bowl
     const head = new THREE.Group(); grp.add(head); // at the bowl's centre
     const bowl = new THREE.Mesh(W.bowl, W.cup); head.add(bowl);
     const swing = new THREE.Group(); head.add(swing); // turns about the pins, across the bowl
@@ -312,7 +420,7 @@ export function device(model: THREE.Object3D, size: number): Device {
     // it unfolds out of the cap over the first stretch, so it never pops in or out
     grp.scale.setScalar(THREE.MathUtils.smoothstep(k, 0, 0.2));
     const centre = ringOut(k, at); // the bowl's centre, out from the device's
-    arm.scale.set(0.8, centre - SCOOP_R - 0.7 + 0.04, 0.8); // from the cap to the back of the bowl
+    arm.scale.set(0.8, centre - SCOOP_R - 0.58 + 0.04, 0.8); // from the cap, sunk in the core (0.7, for a while), to the back of the bowl
     head.position.set(0, 0, -centre);
     swing.rotation.x = Math.PI * shut; // nested in the bowl, then over its mouth
   };
@@ -329,6 +437,44 @@ export function device(model: THREE.Object3D, size: number): Device {
     }
   };
   stroke();
+  // the mount: the wings held to the body. On the back of the core round its small ring, a hexagonal frame lying on
+  // its curve, screwed down at its six corners; from it four arms run out along the core and up to the four hinges
+  // (the hinges sat on nothing, for a while)
+  {
+    const bar = (a: THREE.Vector3, b: THREE.Vector3, r = MOUNT_R) => {
+      const d = new THREE.Vector3().subVectors(b, a), L = d.length();
+      const m = new THREE.Mesh(mountBar, W.graphite);
+      m.position.copy(a).addScaledVector(d, 0.5);
+      m.quaternion.setFromUnitVectors(Y, d.normalize());
+      m.scale.set(r, L, r);
+      frame.add(m);
+    };
+    const BACK = new THREE.Vector3(0, 0, 1);
+    const onBack = (deg: number, around: number, r: number) => {
+      const a = (deg * Math.PI) / 180, side = new THREE.Vector3(Math.cos(around), Math.sin(around), 0);
+      return new THREE.Vector3().addScaledVector(BACK, Math.cos(a)).addScaledVector(side, Math.sin(a)).multiplyScalar(r);
+    };
+    const corners = [0, 1, 2, 3, 4, 5].map((k) => onBack(MOUNT_LAT, (k * Math.PI) / 3, 0.715));
+    corners.forEach((c, k) => {
+      bar(c, corners[(k + 1) % 6]);
+      // a screw at each corner: a low head on the curve, facing out, a dark socket in it
+      const n = c.clone().normalize();
+      for (const [geo, mat, out] of [[screwHead, W.steel, 0.012], [screwSocket, screwDark, 0.02]] as const) {
+        const s = new THREE.Mesh(geo, mat);
+        s.position.copy(n).multiplyScalar(0.715 + out);
+        s.quaternion.setFromUnitVectors(Y, n);
+        frame.add(s);
+      }
+    });
+    // the arms: from the frame, straight out each hinge's way, along the core and up into the hinge
+    SIDES.forEach((side) => {
+      const around = Math.atan2(side.y, side.x);
+      const from = onBack(MOUNT_LAT * (Math.abs(Math.sin(3 * around)) > 0.5 ? 0.87 : 1), around, 0.712); // a corner, or an edge's middle
+      const knee = onBack(27, around, 0.735);
+      const hinge = onSphere(side, 150, 0.965);
+      bar(from, knee); bar(knee, hinge.clone().multiplyScalar(0.985));
+    });
+  }
   const leaves = [0, 1, 2, 3, 4, 5, 6, 7].map((i) => { const l = g.getObjectByName(`leaf_${i}`)!; return { o: l, rest: l.rotation.y }; });
   // every material of this copy, gathered once; the tintable ones keep their own emissive as made
   const mats: THREE.Material[] = [], tinted: { m: THREE.MeshStandardMaterial; base: THREE.Color }[] = [];
@@ -405,13 +551,13 @@ const float WARP_BAYER[16] = float[16](0., 8., 2., 10., 12., 4., 14., 6., 3., 11
       faded = on; fadeK = k;
     },
     grip,
-    brow: (a) => { brows.rotation.z = a; },
     shield: (k) => {
       if (Math.abs(k - shieldK) < 1e-4) return; // at rest: nothing moves
       shieldK = k;
       for (const w of walls) w.o.rotation.x = w.rest * (1 - k);
       stroke();
     },
+    brow: (a) => { brows.rotation.z = a; panes.rotation.z = a; },
     shutter: (k) => { for (const l of leaves) l.o.rotation.y = l.rest * (1 + (65 / 95) * k); },
   };
 }

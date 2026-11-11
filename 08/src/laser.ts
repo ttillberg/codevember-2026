@@ -11,6 +11,7 @@ import { project, type M4, type V4 } from './tesseract';
 const EVERY = 0.05; // seconds between samples
 const LIFE = 8; // seconds a sample stays, the puffs' life
 const N = Math.ceil(LIFE / EVERY) + 2;
+const MOVED = 0.012; // 4D: a sample only this far on from the last
 // none of it the first second behind the device, then it fades in over the next, so the line starts a way back
 // in the wake and is at its strongest there, not at the device's tail
 const HIDE = 1, RISE = 1.2;
@@ -37,6 +38,10 @@ export function makeLaser() {
     /** The device is at `p` now, in the cell coloured `hex`: a sample, if it is time for one. */
     sample(p: V4, now: number, h: string) {
       if (now - last < EVERY) return;
+      // only where it has moved on: standing still (a catch, a rest) the samples piled up at its tail and, a second
+      // on, showed through its body
+      const q = p4[p4.length - 1];
+      if (q && Math.hypot(p[0] - q[0], p[1] - q[1], p[2] - q[2], p[3] - q[3]) < MOVED) { last = now; return; }
       last = now;
       p4.push(p.slice() as V4); rgb.push(new THREE.Color(h)); born.push(now);
       while (p4.length > N || (born.length && now - born[0] > LIFE)) { p4.shift(); rgb.shift(); born.shift(); }
