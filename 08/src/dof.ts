@@ -9,6 +9,8 @@ import * as THREE from 'three';
 
 export const dof = {
   on: true,
+  /** this frame without it, the switch aside: ORBIT */
+  skip: false,
   focus: new THREE.Vector3(),
   /** the blur at twice the focus distance, against the page's height */
   aperture: 0.006,
@@ -89,7 +91,7 @@ export function renderDof(gl: THREE.WebGLRenderer, scene: THREE.Scene, camera: T
     for (const c of clips) { gl.setScissor(...c); draw(); }
     gl.setScissorTest(false);
   };
-  if (!dof.on || !cam.isPerspectiveCamera) { each(() => gl.render(scene, camera)); return; }
+  if (!dof.on || dof.skip || !cam.isPerspectiveCamera) { each(() => gl.render(scene, camera)); return; }
   gl.getDrawingBufferSize(size);
   if (!rt || rt.width !== size.x || rt.height !== size.y) {
     rt?.dispose();

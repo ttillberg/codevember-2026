@@ -236,6 +236,7 @@ function Rig({ children }: { children: React.ReactNode }) {
     // the depth of field on what the camera looks at, the beetle when following; nearer, the blur deeper, as a lens's
     dof.focus.copy(look).lerp(drone.world, rig.chaseK); // chasing, on the probe, not past it
     dof.aperture = THREE.MathUtils.lerp(DOF_WIDE, DOF_FOLLOW, fk);
+    dof.skip = !rig.follow && !drone.pilot; // in ORBIT none, whatever the switch: the whole machine sharp (on there too, for a while)
   });
   return <group ref={ref}>{children}</group>;
 }
