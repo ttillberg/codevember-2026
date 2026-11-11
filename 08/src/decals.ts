@@ -329,17 +329,17 @@ export function sleeveDecal(d: Decal): THREE.CanvasTexture {
         g.font = '800 46px "Helvetica Neue", Helvetica, Arial, sans-serif';
         g.fillText('CDVMBR 08', bx + o, 110);
       } else if (brand) {
-        // three.js on a sticker: a rounded square in the sleeve's accent colour, glossy against the matt paint (its
+        // three.js on a sticker: a round one (a rounded square, for a moment) in the sleeve's accent colour, glossy against the matt paint (its
         // own patch in the roughness map), the mark in ink on it; 200 (160, then 320 bare, for a while)
         const size = brand === 'github' ? 34 : brand === 'three' ? 200 : 156; // pmndrs three times what it was (52)
-        const stick = brand === 'three' ? size * 1.28 : 0;
+        const stick = brand === 'three' ? size * 1.45 : 0; // round, so wider than the mark's square
         const img = logo(brand, size * 2, brand === 'three' ? STICKER_INK : d.ink);
         if (img) {
           const cx = bx + o + Math.max(size, stick) / 2, cy = Math.min(Math.max(my, Math.max(size, stick) / 2), H - Math.max(size, stick) / 2); // a big mark kept on the sleeve
           if (stick) {
             const card = (q: CanvasRenderingContext2D, fill: string) => {
               q.save(); q.translate(cx, cy); q.rotate(ang); q.globalAlpha = 1; q.fillStyle = fill;
-              q.beginPath(); q.roundRect(-stick / 2, -stick / 2, stick, stick, stick * 0.12); q.fill(); q.restore();
+              q.beginPath(); q.arc(0, 0, stick / 2, 0, Math.PI * 2); q.fill(); q.restore();
             };
             card(g, d.accent);
             if (gloss) { gloss.g.save(); if (d.flip) { gloss.g.translate(W / 2, H / 2); gloss.g.rotate(Math.PI); gloss.g.translate(-W / 2, -H / 2); } card(gloss.g, STICKER_GLOSS); gloss.g.restore(); }
