@@ -22,6 +22,7 @@ const SPEED = 0.5; // 4D units per second, cruising
 const ROOM = 0.62; // how far from a cell's walls a waypoint stays, so the drone keeps clear of the struts
 const FIELD = 0.14; // half-width, in path fraction, of the field round the face (it shuts the ball and the wings)
 const DIP = 0.3; // the field's depth, 0 to DIP: what shuts the wings and the ball; the speed keeps on through it
+// through a wall straight on, at speed (eased into the face, held a quarter second with no wake and eased out, for a moment)
 const CURVE = 0.45; // how far the heading carries into a leg, of its length: longer, rounder sweeps (it was 0.35)
 const ARRIVE = 0.4, ARRIVE_SLOW = 0.25; // the last stretch to the piece: over this much of the leg it slows, to this much of cruising
 // the catch, in phases: still in front of the piece, a beat with the scoop home, then the scoop out on it; the piece
@@ -125,9 +126,16 @@ const turned = (m: M4, v: number[], out: THREE.Vector4) =>
 // then out, and it is back.)
 const INOUT_GAP = 1.5, INOUT_RISE = 4, INOUT_SET = 3, LINGER = 3;
 const GLOW = 0.9; // the strength of the cell-colour tint on a half in a wall: 0.9 of the tint's own 0.55 is about half
-// at the controls the device docks on its own once the piece has been in the lock this long (seconds): it turns its
-// eye on it and closes to a scoop's reach (device radii, in cell space), and the catch takes over
-const LOCK_HOLD = 0.5, STAND = 2.0;
+// at the controls the device docks once LOCK is tapped with the piece in the lock (half a second in it and it docked
+// on its own, for a while): it turns its eye on it and closes to a scoop's reach (device radii, in cell space), and the
+// catch takes over
+const STAND = 2.0;
+const RUN_SPEED = 0.85; // 4D units a second, the piece darting: faster than the probe (0.5); between, it lies still (0.2 all the time, for a moment)
+const RUN_ESCAPES = 3; // rooms it gets out of before it tires and stays in the one it is in
+const RUN_REST: [number, number] = [1.6, 3.4]; // seconds it lies still between dashes, two thirds of that with the probe in its room
+const CHASE_AGAIN = 0.12; // 4D: the piece this far from where the leg after it ends, the leg is laid again
+const TAKE_R = 0.42; // 4D: in reach of the piece, taken (as far as a leg to it stops short of it, a grip's reach)
+const BROW_EVERY: [number, number] = [3, 8], BROW_ALERT = 2.4; // the brows: seconds between turns; rad/s on and on with the piece in sight
 const REACH3 = 1.9; // where the piece should sit when the device stops, in device radii, on screen
 type Phase = 'seek' | 'dock' | 'settle' | 'catch' | 'turn' | 'rest';
 // at the controls: cell-space units per second squared and per second, radians per second
@@ -230,7 +238,9 @@ export function Drones() {
       q2, planeA, planeB, cLast: [0, 0, 0], look: new THREE.Vector3(0, 0, -1), camUp: new THREE.Vector3(0, 1, 0),
       wall: null as Wall | null, // the wall the flight has it at, if any
       plan: [] as Step[], phase: 'seek' as Phase, t: 0, // the steps to the piece; the catch's phase and its clock
-      grip: 0, shut: 0, lockT: 0, // the scoop out, and shut; seconds the piece has been in the lock
+      eyeCap: null as THREE.Object3D | null, // the eye cap, found once: which way it looks, for the chase camera
+      tCell: -1, // the room the piece was in, to see it move on
+      grip: 0, shut: 0, lockT: 0, brow: 0, browTo: 0, browIn: 3, // the brows' turn, where it is going, and seconds till the next // the scoop out, and shut; seconds the piece has been in the lock
       grabOf: null as V4 | null, grabLocal: new THREE.Vector3(), // the piece taken, and where it was from the device then, in its frame
       shield: 0, blink: Infinity, nextBlink: 3 + Math.random() * 5, // seconds into the blink; seconds to a blink of its own
       wasPilot: false,
@@ -310,6 +320,49 @@ export function Drones() {
     const d4 = clamp((REACH3 * SIZE_MAIN) / Math.max(0.2, scale3), 0.06, 0.45);
     return add4(to, back, -d4);
   }
+  /** The piece runs. Never into the probe's room: it makes for the room across the machine from it, the one cell that is
+   * two walls from the probe whichever way, and once there it drifts about in it; caught in the probe's own room it
+   * slips out through any wall. It goes in straight stretches, through a wall at a point on it, then on into the room
+   * beyond, in dashes: it lies still a while, darts, faster than the probe, and lies still again, so it can be had
+   * between (it crept on, slower than the probe, for a moment). It holds still while it is being caught, and as it
+   * comes up. (It sat still where it came up, for a while.) */
+  function runTarget(dt: number) {
+    const tm = target.map;
+    if (!target.up) { run.escapes = 0; run.to = null; run.wait = RUN_REST[0]; } // a new one: fresh
+    if (!tm || !target.up || target.scale < 0.9 || d.phase !== 'seek' || drone.docking) return;
+    const probe = { held: drone.held, sign: drone.sign };
+    const inProbe = (h: number, g: number) => h === probe.held && g === probe.sign;
+    // lying still: for its while, cut short if the probe comes into its room
+    if (run.wait > 0) { run.wait -= dt * (inProbe(tm.held, tm.sign) ? 1.5 : 1); return; }
+    // the way it is going is spoilt if the probe has come into its room, or into the room it is making for
+    if (run.to && ((!run.cross && inProbe(tm.held, tm.sign)) || (run.cross && inProbe(run.cross.axis, run.cross.sign)))) run.to = null;
+    if (!run.to) {
+      const goal = { held: probe.held, sign: -probe.sign };
+      const onFace = (a: number, g: number): V4 => [0, 1, 2, 3].map((i) => (i === tm.held ? tm.sign : i === a ? g : rnd(-0.5, 0.5))) as V4;
+      // there, or tired out (it gets out of a room so many times, then only darts about the one it is in): about the room
+      if ((tm.held === goal.held && tm.sign === goal.sign) || run.escapes >= RUN_ESCAPES) {
+        run.to = [0, 1, 2, 3].map((i) => (i === tm.held ? tm.sign : rnd(-0.55, 0.55))) as V4; run.cross = null; run.speed = RUN_SPEED * 0.6;
+      } else {
+        // next door to it: straight through to it; in the probe's room (across from it): out through any wall
+        const a = tm.held !== goal.held ? goal.held : pick([0, 1, 2, 3].filter((i) => i !== tm.held));
+        const g = tm.held !== goal.held ? goal.sign : Math.random() < 0.5 ? -1 : 1;
+        run.to = onFace(a, g); run.cross = { axis: a, sign: g }; run.speed = RUN_SPEED;
+      }
+    }
+    const way = sub4(run.to, target.p), L = len4(way), step = run.speed * dt;
+    if (L > step) { target.p = add4(target.p, way, step / L); return; }
+    target.p = run.to.slice() as V4;
+    if (run.cross) {
+      // through: the room beyond, and on in, off the wall it came through
+      const was = tm.held, wasSign = tm.sign;
+      target.map = mapAcross(tm, run.cross.axis, run.cross.sign);
+      run.escapes++;
+      lampColor(CELL_HEX[cellIdOf(target.map)]);
+      const on = target.p.slice() as V4; on[was] = wasSign * 0.45;
+      run.to = on; run.cross = null; run.speed = RUN_SPEED;
+    } else { run.to = null; run.wait = RUN_REST[0] + Math.random() * (RUN_REST[1] - RUN_REST[0]); } // a dash done: lie still
+  }
+
   /** A plan from the cell the device is in to the piece where it is: straight to it in this cell, through one wall from
    * next door, through a cell between from across the machine. Let go at the controls, the old plan was laid from
    * another cell, or is spent, and the device would wander this room for good. */
@@ -332,14 +385,16 @@ export function Drones() {
       steps.push({ kind: 'portal', axis: tm.held, sign: tm.sign, face, beyond });
       from = beyond;
     }
-    steps.push({ kind: 'cruise', to: stopBefore(to, from), toTarget: true });
+    // straight at it, not a grip's reach short: it runs, and is taken as soon as it is in reach
+    steps.push({ kind: 'cruise', to: to.slice() as V4, toTarget: true });
     s.plan = steps;
   }
 
+  const run = useMemo(() => ({ to: null as V4 | null, cross: null as { axis: number; sign: number } | null, speed: 0, wait: 1.5, escapes: 0 }), []); // the piece's way
   const tmp = useMemo(() => ({
     v: new THREE.Vector3(), m: new THREE.Matrix4(), up: new THREE.Vector3(0, 1, 0), q: new THREE.Quaternion(), fwd: new THREE.Vector3(), right: new THREE.Vector3(), qa: new THREE.Quaternion(),
     a: new THREE.Vector3(), b: new THREE.Vector3(), f3: new THREE.Vector3(), u3: new THREE.Vector3(), corners: [new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3()],
-    color: new THREE.Color(),
+    color: new THREE.Color(), gq: new THREE.Quaternion(),
   }), []);
 
   /** Hands on: taken over, the device keeps the way it was going; let go, it carries on from there on its own. */
@@ -422,14 +477,17 @@ export function Drones() {
       const vn = -si * ni * cv[i] - sj * nj * cv[j]; // the speed out from the edge; below 0, into it
       if (vn < 0) { cv[i] += vn * si * ni; cv[j] += vn * sj * nj; }
     }
-    // the piece in the lock (in this cell, close, ahead of the eye) for a moment: the device docks on its own
+    // the piece in the lock (in this cell, close, ahead of the eye): LOCK can be tapped, and tapped the device docks
     let locked = false;
     if (target.up && target.map && target.map.held === drone.held && target.map.sign === drone.sign) {
       const t3 = toCell(target.p), dx = t3[0] - c[0], dy = t3[1] - c[1], dz = t3[2] - c[2], dist = Math.hypot(dx, dy, dz);
       locked = dist < LOCK_RANGE && dist > 1e-6 && fwd.x * dx + fwd.y * dy + fwd.z * dz > 0;
     }
     s.lockT = locked ? s.lockT + dt : 0;
-    if (s.lockT > LOCK_HOLD) {
+    drone.lockable = locked;
+    if (!locked) drone.catchAsk = false;
+    if (locked && drone.catchAsk) {
+      drone.catchAsk = false;
       s.phase = 'dock'; s.t = 0; s.lockT = 0;
       cv[0] = cv[1] = cv[2] = 0; k.thrust = 0; drone.turn[0] = drone.turn[1] = 0;
       s.look.copy(fwd); s.cLast = c.slice();
@@ -480,6 +538,16 @@ export function Drones() {
       target.up = false; target.scale = 0;
       drone.taken = 1; drone.grab4 = target.p.slice() as V4; drone.grabMap = target.map; drone.grabK = 0;
     };
+    // the piece runs; when it changes room the probe lays its way again, at the end of the leg it is on (now, if it is
+    // in a room, not in a wall)
+    runTarget(dt);
+    const tCell = target.up && target.map ? cellIdOf(target.map) : -1;
+    if (tCell !== s.tCell) {
+      s.tCell = tCell;
+      if (!drone.pilot && s.phase === 'seek' && target.up) { s.plan = []; if (s.leg && s.leg.kind === 'cruise') s.leg = null; }
+    }
+    // on the last leg after it, and it has moved on from where the leg ends: a new leg, from here, to where it is now
+    if (!drone.pilot && s.phase === 'seek' && target.up && s.leg && s.leg.kind === 'cruise' && s.leg.toTarget && len4(sub4(target.p, s.leg.pts[s.leg.pts.length - 1])) > CHASE_AGAIN) { s.leg = null; s.plan = []; }
     if (s.phase !== 'seek') {
       // the catch's clock, in either mode. At the controls the device docks and holds still through it; on its own
       // it takes the piece on the fly and carries on in its curve, the machine turning as it goes
@@ -520,9 +588,12 @@ export function Drones() {
         leg.crossed = true;
         s.came = cross(s, leg.face.axis, leg.face.sign, s.p.slice() as V4);
       }
-      if (s.s >= 1) {
+      // in reach of the piece, wherever on the leg: taken on the fly (at the end of the last leg, for a while: it sat still)
+      const reach = target.up && target.map && target.map.held === drone.held && target.map.sign === drone.sign && len4(sub4(target.p, s.p)) < TAKE_R;
+      if (reach && s.phase === 'seek') { take(); s.leg = null; s.plan = []; }
+      else if (s.s >= 1) {
         s.p[drone.held] = drone.sign; s.leg = null;
-        if (leg.kind === 'cruise' && leg.toTarget) take(); // at the piece: taken on the fly
+        if (leg.kind === 'cruise' && leg.toTarget) s.plan = []; // got there, the piece gone on: after it again
       }
       // the wall, named from whichever cell it is in now: before the crossing the face's axis, after it the old held
       s.wall = leg.kind === 'portal' && s.s > 0.25 && s.s < 0.75 ? (leg.crossed ? s.came : leg.face) : null;
@@ -554,7 +625,14 @@ export function Drones() {
     const wantShield = field > 0.12 ? 1 : capture ? 0 : WINGS_REST;
     s.shield += (wantShield - s.shield) * Math.min(1, dt * (wantShield > s.shield ? 5 : 2.5));
     drone.shield = s.shield; drone.shutter = shut; drone.grip = s.grip;
-    const drive = (dev: Device) => { dev.shield(s.shield); dev.shutter(shut); dev.grip(s.grip, drone.gripAt, s.shut); };
+    // the brows turn round the eye now and then, a quarter or so, eased; with the piece in sight they turn on and on, as if
+    // reading it (still, for a while)
+    const alert = near || drone.lockable || s.phase === 'settle' || s.phase === 'dock';
+    s.browIn -= dt;
+    if (alert) { s.browTo += dt * BROW_ALERT; s.browIn = BROW_EVERY[0]; }
+    else if (s.browIn <= 0) { s.browTo += (Math.random() < 0.5 ? -1 : 1) * (Math.PI / 4 + Math.random() * Math.PI / 3); s.browIn = BROW_EVERY[0] + Math.random() * (BROW_EVERY[1] - BROW_EVERY[0]); }
+    s.brow += (s.browTo - s.brow) * Math.min(1, dt * (alert ? 8 : 3));
+    const drive = (dev: Device) => { dev.shield(s.shield); dev.shutter(shut); dev.grip(s.grip, drone.gripAt, s.shut); dev.brow(s.brow); };
     drive(s.q);
 
     // draw: where it is in 3D. Its orientation lives in cell space, drone.q: at the controls the pilot's, on its own
@@ -682,15 +760,30 @@ export function Drones() {
       else if (ho.crossed && (done || (ho.gone += dt) > LINGER)) s.ho = null;
       // the renderer clips in world space, and the machine sits on a turned rig: the planes go through its matrix
       s.planeA.applyMatrix4(s.group.matrixWorld); s.planeB.applyMatrix4(s.group.matrixWorld);
+      // the warp at the seam, on both copies, each in the colour of the cell it is coming into: strongest with the body
+      // in the wall, none clear of it (the halves fought at the seam, for a while)
+      const k = 1 - smoothstep(d, R * 0.6, R * 1.6);
+      s.q.warp(s.planeA, CELL_HEX[cellIdOf(other)], k, drone.clock);
+      s.q2.warp(s.planeB, CELL_HEX[cellId()], k, drone.clock);
     } else {
       s.q2.g.visible = false;
       s.planeA.set(tmp.up, 1e4); s.planeB.set(tmp.up, 1e4);
+      s.q.warp(s.planeA, '#000000', 0, drone.clock);
     }
     // whatever set-back is left from a hand-over cut short, the body catches up, eased rather than snapped
     if (!rising) s.shift.multiplyScalar(Math.max(0, 1 - dt * 6));
     s.q.g.position.copy(v).add(s.shift);
     // for the follow camera and the depth of field: the device in the world
     drone.world.copy(v).applyMatrix4(s.group.matrixWorld);
+    // and which way it looks, in the world, for the chase camera: from its middle to its eye cap, the model's own
+    // (its heading's axes, guessed, put the camera in front for a moment); its up, the cap's frame's
+    const cap = (s.eyeCap ??= s.q.g.getObjectByName('eye_cap') ?? null);
+    if (cap) {
+      cap.getWorldPosition(tmp.a); s.q.g.getWorldPosition(tmp.b);
+      if (tmp.a.distanceToSquared(tmp.b) > 1e-12) drone.worldFwd.subVectors(tmp.a, tmp.b).normalize();
+      s.group.getWorldQuaternion(tmp.gq);
+      drone.worldUp.set(0, 1, 0).applyQuaternion(s.heading).applyQuaternion(tmp.gq);
+    }
     // while the body is sliced by a wall each half glows in the colour of the cell it is in: this copy in this
     // cell's, the other copy in the neighbour's, so the cut reads at a glance; whole again, the glow goes
     // a tint, not a glow: nothing until a quarter of the body is in the wall, then up a curve to half strength with

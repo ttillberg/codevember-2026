@@ -17,6 +17,8 @@ export type Decal = {
   flip?: boolean;
   /** The mark on this sleeve, if any: the machine hands them out, two of each, so they do not repeat. */
   brand?: Brand | null;
+  /** A three.js sticker's colouring, dealt by the machine: black or white, or the sleeve's accent. */
+  tone?: 'black' | 'white' | 'colour';
 };
 export type Brand = 'word' | 'three' | 'pmndrs' | 'github';
 
@@ -40,6 +42,13 @@ export function rng(seed: number) {
 
 /** The two paints: sand on the struts that run along w, graphite on the rest. */
 export const SAND = '#d9b985', GRAPHITE = '#3a3a3d';
+// the sleeve's texture is wrapped once round a tube 0.09 in radius and 0.26 long (Machine's R_SLEEVE, SLEEVE): a canvas
+// unit runs this much longer round the tube than along it, so a mark drawn on it is squeezed back by it (the marks
+// came out drawn out round the tube, for a while)
+const SLEEVE_STRETCH = ((2 * Math.PI * 0.09) / 512) / (0.26 / 416);
+const STICKER_INK = '#141414';
+const STICKER_WHITE = '#f4f3ef', STICKER_GOLD = '#c9a43a', STICKER_BLACK = '#161616'; // pmndrs' square stickers // the mark on a sticker
+const STICKER_GLOSS = '#3a3a3a'; // the sticker in the roughness sheet: about a quarter of the paint's roughness, glossy
 /** A canvas of w x h logical units drawn at `k` times the pixels: the same coordinates, finer detail. */
 function sharp(w: number, h: number, k = 2) {
   const c = document.createElement('canvas');
@@ -308,6 +317,20 @@ export function sleeveDecal(d: Decal): THREE.CanvasTexture {
   // brand, round the tube: one mark per sleeve, the real ones, small, the GitHub one smallest; or the wordmark.
   // The marks are images: the block is laid on when they have loaded, and the texture flagged.
   const brand = d.brand ?? null;
+  // the stickers: three.js on a round one in the sleeve's accent; pmndrs on a square one, white or gold, the mark black
+  // on both (pmndrs bare in the ink, for a while); each glossy against the matt paint and raised a little off it
+  // three.js: mostly black and white, a black one with the mark white or a white one with it black, now and then in the
+  // sleeve's accent (all in the accent, for a while); the machine deals the tones
+  const tone = d.tone ?? 'colour';
+  const sticker = brand === 'three' ? { round: true, size: 200, k: 1.45, ...(tone === 'colour' ? { fill: d.accent, ink: STICKER_INK } : tone === 'black' ? { fill: STICKER_BLACK, ink: STICKER_WHITE } : { fill: STICKER_WHITE, ink: STICKER_INK }) }
+    : brand === 'pmndrs' ? { round: false, size: 156, k: 1.32, fill: d.seed % 2 ? STICKER_WHITE : STICKER_GOLD, ink: STICKER_INK } : null;
+  const shape = (q: CanvasRenderingContext2D, s: number) => {
+    q.beginPath();
+    if (sticker?.round) q.arc(0, 0, s / 2, 0, Math.PI * 2); else q.roundRect(-s / 2, -s / 2, s, s, s * 0.07);
+  };
+  // the stickers' gloss: a roughness sheet, matt white all over but the sticker
+  const gloss = sticker ? sharp(W, H) : null;
+  if (gloss) { gloss.g.fillStyle = '#ffffff'; gloss.g.fillRect(0, 0, W, H); }
   const bx = 20 + Math.floor(r() * 100);
   const small = r() < 0.5 ? pick(SMALL) : null;
   // a mark lands anywhere along the sleeve, at any angle, so no two sit alike
@@ -324,17 +347,31 @@ export function sleeveDecal(d: Decal): THREE.CanvasTexture {
         g.font = '800 46px "Helvetica Neue", Helvetica, Arial, sans-serif';
         g.fillText('CDVMBR 08', bx + o, 110);
       } else if (brand) {
-        const size = brand === 'github' ? 34 : brand === 'three' ? 160 : 52;
-        const img = logo(brand, size * 2, d.ink);
+        // three.js 200 (160, then 320 bare, for a while), pmndrs three times what it was (52), each on its sticker
+        const size = sticker ? sticker.size : 34;
+        const stick = sticker ? size * sticker.k : 0;
+        const img = logo(brand, size * 2, sticker ? sticker.ink : d.ink);
         if (img) {
+          const reach = sticker && !sticker.round ? stick * 0.72 : Math.max(size, stick) / 2; // a turned square reaches out to its corners
+          const cx = bx + o + Math.max(size, stick) / 2, cy = Math.min(Math.max(my, reach), H - reach); // a big mark kept on the sleeve
+          if (stick) {
+            const card = (q: CanvasRenderingContext2D, fill: string) => {
+              q.save(); q.translate(cx, cy); q.scale(1 / SLEEVE_STRETCH, 1); q.rotate(ang); q.globalAlpha = 1; q.fillStyle = fill;
+              shape(q, stick); q.fill(); q.restore();
+            };
+            card(g, sticker!.fill);
+            if (gloss) { gloss.g.save(); if (d.flip) { gloss.g.translate(W / 2, H / 2); gloss.g.rotate(Math.PI); gloss.g.translate(-W / 2, -H / 2); } card(gloss.g, STICKER_GLOSS); gloss.g.restore(); }
+          }
           g.save();
-          g.translate(bx + o + size / 2, my);
+          g.translate(cx, cy);
+          g.scale(1 / SLEEVE_STRETCH, 1); // round on the tube, not drawn out round it
           g.rotate(ang);
+          g.globalAlpha = 1;
           g.drawImage(img, -size / 2, -size / 2, size, size);
           g.restore();
         }
       }
-      if (small && brand !== 'three') {
+      if (small && !sticker) { // no small print under a sticker
         g.font = '500 17px "Helvetica Neue", Helvetica, Arial, sans-serif';
         g.fillText(small, bx + 2 + o, 166);
       }
@@ -403,6 +440,25 @@ export function sleeveDecal(d: Decal): THREE.CanvasTexture {
   t.wrapS = THREE.RepeatWrapping;
   const bump = bumpSheet(W, H);
   t.userData.bump = bump.t;
-  withLogos(() => { grunge(g, r, W, H, WEAR_INK(d.base), 0.5, bump.hg); bump.bake(); drawBrand(); t.needsUpdate = true; });
+  const rough = gloss ? new THREE.CanvasTexture(gloss.c) : null;
+  if (rough) { rough.wrapS = THREE.RepeatWrapping; t.userData.rough = rough; t.userData.bumpScale = 0.8; } // a sticker's sleeve: its relief shown stronger, so the rim reads (the paint's 0.35; 1.4, too much)
+  // the sticker raised off the paint, a little: in the height sheet a smooth plateau where it is, the wear wiped
+  // off it, and round its edge a soft fall to the paint, so the light catches a rim all the way round (flat, for a while)
+  const emboss = (q: CanvasRenderingContext2D) => {
+    if (!sticker) return;
+    const stick = sticker.size * sticker.k, reach = sticker.round ? stick / 2 : stick * 0.72, cy = Math.min(Math.max(my, reach), H - reach);
+    q.save();
+    if (d.flip) { q.translate(W / 2, H / 2); q.rotate(Math.PI); q.translate(-W / 2, -H / 2); }
+    for (const o of [0, W]) {
+      q.save(); q.translate(bx + o + stick / 2, cy); q.scale(1 / SLEEVE_STRETCH, 1); q.rotate(ang);
+      q.filter = 'blur(2.5px)'; q.strokeStyle = '#4a4a4a'; q.lineWidth = 8; // a soft fall, between the two tried: #5a5a5a 7 wide, unseen, and #000 12 wide, too much
+      shape(q, stick + 7); q.stroke();
+      q.filter = 'none'; q.fillStyle = '#ffffff';
+      shape(q, stick); q.fill();
+      q.restore();
+    }
+    q.restore();
+  };
+  withLogos(() => { grunge(g, r, W, H, WEAR_INK(d.base), 0.5, bump.hg); emboss(bump.hg); bump.bake(); drawBrand(); t.needsUpdate = true; if (rough) rough.needsUpdate = true; });
   return t;
 }

@@ -2,7 +2,7 @@ import { useMemo } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import { renderDof } from './dof';
 import * as THREE from 'three';
-import { drone, target, toCell, toCellWith, faceQuad, PIECE_R, SIZE_MAIN, SIZE_CELL, LOCK_RANGE } from './drone';
+import { drone, target, toCell, toCellWith, faceQuad, PIECE_R, SIZE_MAIN, SIZE_CELL, LOCK_RANGE, CELL_HEX, cellIdOf } from './drone';
 import { ringOut } from './device';
 import { GRAPHITE } from './decals';
 import { st } from './state';
@@ -34,12 +34,13 @@ export function eyeShown(W: number, H: number) {
 }
 /** What the page tells the layout: under ?clean there is no text; textBottom, the text's foot, and footTop, the top
  * of an upright phone's footer with the probe in (0, none), measured each frame. */
-export const page = { clean: false, textBottom: 0, footTop: 0 };
+export const page = { clean: false, textBottom: 0, footTop: 0, boxed: false, probeH: 0 }; // boxed: the canvas is the home page's box, all of it the machine's
 type Rect = { x: number; y: number; w: number; h: number; round?: boolean }; // CSS px, from the top left; round, a disc in the square
 /** Where the machine goes and where the view goes. The machine never under the text: beside the text column, or under
  * it on an upright phone; split, the room left over halved between the machine and the view (the view off, or
  * maximized behind it all, the machine has all of it). */
-export function regionsOf(W: number, H: number): { main: Rect; cam: Rect | null; aim?: { x: number; y: number } } {
+export function regionsOf(W: number, H: number): { main: Rect; cam: Rect | null; aim?: { x: number; y: number }; draw?: Rect[] } {
+  if (page.boxed) return { main: { x: 0, y: 0, w: W, h: H }, cam: null };
   const split = splitOf(W, H), upright = W <= 640 && H > W;
   // a phone: the machine has all the room under (or beside) the text, and the view is a little disc over it, bottom
   // middle upright, bottom right on its side; the machine aimed off its middle, a third of the way down (or across),
@@ -47,11 +48,12 @@ export function regionsOf(W: number, H: number): { main: Rect; cam: Rect | null;
   if (upright) {
     // the text on top and the machine under it; with the probe in, no text, the machine down to the footer
     const top = page.clean || page.footTop ? 0 : Math.min(H * 0.45, page.textBottom + 8);
-    const foot = page.clean || !page.footTop ? H : page.footTop - FOOT_GAP; // as far over the footer's words as they are over the screen's foot
+    const foot = H; // the crumbs over it at the top, the machine down to the foot (over a footer, as far over its words as they were over the screen's foot, for a while)
+    const seen = Math.min(H, window.innerHeight || H); // the screen that shows: the canvas runs on under the browser's bar (100lvh)
     const main = { x: 0, y: top, w: W, h: foot - top };
     if (!split) return { main, cam: null };
     const d = Math.round(Math.min(260, Math.max(160, W * 0.6)));
-    return { main, cam: { x: Math.round((W - d) / 2), y: foot - FOOT_GAP - d, w: d, h: d, round: true }, aim: { x: W / 2, y: top + main.h / 3 } };
+    return { main, cam: { x: Math.round((W - d) / 2), y: seen - PILLS_UP - d, w: d, h: d, round: true }, aim: { x: W / 2, y: top + main.h / 3 } };
   }
   const low = H <= 500;
   const left = page.clean ? 0 : Math.min(W * 0.45, (low ? 260 : 380) + 48); // the column and its gutters
@@ -64,19 +66,30 @@ export function regionsOf(W: number, H: number): { main: Rect; cam: Rect | null;
   // a desktop: the machine has all the room beside the column, and the view is in the column, as wide as it, over the
   // mode pills, square at most and lower (landscape) where the text above leaves less room, down to COL_MIN_H (it was
   // half the room beside the column, for a while)
-  const main = { x: left, y: 0, w: W - left, h: H };
-  if (!split) return { main, cam: null };
-  const w = Math.min(380, W - 48), h = Math.round(Math.max(COL_MIN_H, Math.min(w, H - COL_OVER - page.textBottom - 16)));
-  return { main, cam: { x: 24, y: H - COL_OVER - h, w, h } };
+  // the machine fits and is aimed in its part, but drawn on the whole page, the column transparent over it, all but
+  // the view (it stopped at the column, for a while)
+  // fitted and aimed on the whole page now, the tesseract in its middle (in the room beside the column, for a while)
+  const all = { x: 0, y: 0, w: W, h: H }, main = all, beside = { x: left, y: 0, w: W - left, h: H };
+  if (!split) return { main, cam: null, draw: [all] };
+  // the probe's section sits on the view, under the text: the view the room between them (page.probeH, its height)
+  const w = Math.min(drone.pilot ? CAM_W_PILOT : CAM_W, W - 48), h = Math.round(Math.max(COL_MIN_H, Math.min(w, H - COL_OVER - page.textBottom - 16 - page.probeH - 14)));
+  const cam = { x: 24, y: H - COL_OVER - h, w, h };
+  const draw = [beside, { x: 0, y: 0, w: left, h: cam.y }, { x: 0, y: cam.y + h, w: left, h: H - cam.y - h }, { x: 0, y: cam.y, w: cam.x, h }, { x: cam.x + w, y: cam.y, w: left - cam.x - w, h }];
+  return { main, cam, draw };
 }
+const CAM_W = 190, CAM_W_PILOT = 380; // a desktop's view, its width at most: half the column, and at the controls the whole of it (all 380 always, for a while)
+const CAM_RADIUS = 3; // a desktop's view's corners (CSS px)
 const PIP_GAP = 24; // the phone's disc in from the edges (CSS px)
-const FOOT_GAP = 24; // an upright phone's footer: from its words up to the machine's edge, and from that up to the disc and PILOT (CSS px)
-const COL_OVER = 76, COL_MIN_H = 120; // the view in the column: how far up from the bottom, over the mode pills, and its least height (CSS px)
+const PILLS_UP = 24; // an upright phone's disc: up from the foot (84, over the mode pills there, for a while) (CSS px)
+const COL_OVER = 24, COL_MIN_H = 120; // the view in the column: how far up from the bottom (76, over the mode pills, before they went into the dropdown), and its least height (CSS px)
 // the fog the far rooms fade into, by the view's size: minimized, a grey, and the view's background that grey too, so
 // the rooms go into it; maximized, the page's paper, and no background, the page itself between the lines
 const FOG_MINI = new THREE.Color('#bdbdb9'), FOG_MAX = new THREE.Color('#f4f4f2');
 
-const CUBE = 1024; // the cube map's face size: fine enough for a hull a pixel or so wide through the lens
+// a phone: the eye's view cheaper for the battery, a smaller cube map, redrawn every other frame (the lens turns it
+// every frame, so the look stays smooth)
+const PHONE = typeof matchMedia !== 'undefined' && matchMedia('(max-width: 640px), (max-height: 500px), (pointer: coarse)').matches;
+const CUBE = PHONE ? 384 : 1024; // the cube map's face size: on a desktop fine enough for a hull a pixel or so wide through the lens
 const R_STRUT = 0.04, R_NODE = 0.06; // the outlined rooms: the tube, the joint
 // the outline round them, as an angle: the hull is pushed out by this times its distance from the eye, so it is the same
 // hairline near and far, about a pixel through the lens (it was a fixed 0.013, fat up close and lost far off)
@@ -103,12 +116,13 @@ function inkMat(fog = true) {
 const PIECE_K = SIZE_CELL / SIZE_MAIN; // the piece scaled with the device
 
 const FISHEYE = new THREE.ShaderMaterial({
-  uniforms: { tCube: { value: null }, rot: { value: new THREE.Matrix3() }, fade: { value: 0 }, strength: { value: STRENGTH } },
+  uniforms: { tCube: { value: null }, rot: { value: new THREE.Matrix3() }, fade: { value: 0 }, strength: { value: STRENGTH }, box: { value: new THREE.Vector4() }, radius: { value: 0 } },
   vertexShader: `varying vec2 vUv; void main() { vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }`,
   fragmentShader: `
     uniform samplerCube tCube; uniform mat3 rot;
     uniform float fade; // device pixels: transparent at the left edge, full here, at the right
     uniform float strength; // the most it ever shows
+    uniform vec4 box; uniform float radius; // the view's rectangle and its corners' radius, device pixels (no rounding at 0)
     varying vec2 vUv;
     void main() {
       vec2 p = vUv * 2.0 - 1.0; // a right angle out to the side edge
@@ -119,6 +133,11 @@ const FISHEYE = new THREE.ShaderMaterial({
       vec4 col = textureCube(tCube, d);
       float a = 1.0 - smoothstep(0.995, 1.005, r); // a disc; outside it the page shows through
       a *= smoothstep(0.0, fade, gl_FragCoord.x) * strength; // and out to the left into the page, and never all there
+      if (radius > 0.0) { // the corners rounded, a rounded box's distance, antialiased
+        vec2 q = abs(gl_FragCoord.xy - (box.xy + box.zw * 0.5)) - box.zw * 0.5 + radius;
+        float sd = length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - radius;
+        a *= 1.0 - smoothstep(-0.5, 0.5, sd);
+      }
       gl_FragColor = vec4(col.rgb / max(col.a, 1e-4), a * col.a); // the lines alone, the page between; no tone mapping, no pass of any kind on the view
       #include <colorspace_fragment>
     }`,
@@ -193,6 +212,9 @@ export function DroneCam() {
     const ballMats = [new THREE.MeshBasicMaterial({ color: '#f2f2ef', fog: false }), inkMat(false)];
     const ball = () => { const g = new THREE.Group(); g.add(new THREE.Mesh(ballGeo, ballMats[0]), new THREE.Mesh(ballGeo, ballMats[1])); g.visible = false; cs.add(g); return g; };
     const piece = ball(), grabbed = ball();
+    // the piece in its cell's colour here, the grabbed one paper as before (both paper, for a while)
+    const pieceFill = new THREE.MeshBasicMaterial({ color: '#f2f2ef', fog: false });
+    (piece.children[0] as THREE.Mesh).material = pieceFill;
     // the eye: a cube map rendered from where it is, unwrapped by the fisheye onto a quad that fills the frame
     const rt = new THREE.WebGLCubeRenderTarget(CUBE, { type: THREE.HalfFloatType, generateMipmaps: false, minFilter: THREE.LinearFilter });
     const eye = new THREE.CubeCamera(0.03, 40, rt);
@@ -202,8 +224,8 @@ export function DroneCam() {
     lens.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), FISHEYE));
     const flat = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
     return {
-      cs, tubes, flash, piece, grabbed, eye, lens, flat,
-      q: new THREE.Quaternion(), look: new THREE.Vector3(0, 0, -1), last: [0, 0, 0], crossings: -1,
+      cs, tubes, flash, piece, grabbed, eye, lens, flat, pieceFill, ballHex: '', toEl: null as HTMLElement | null, toLast: '',
+      q: new THREE.Quaternion(), look: new THREE.Vector3(0, 0, -1), last: [0, 0, 0], crossings: -1, footH: 0, frame: 0,
       pos: new THREE.Vector3(), lockEl: null as HTMLElement | null, eyeX: -1, eyeY: -1, camX: -1, camH: -1, plateEl: null as Element | null, lockLast: '', over: null as number[] | null, // the bracket's last style, written only on change
       grabOf: null as number[] | null, grabLocal: new THREE.Vector3(), // the piece taken, and where it was from the eye then, in its frame
     };
@@ -215,17 +237,20 @@ export function DroneCam() {
     const lockEl = (cell.lockEl ??= document.getElementById('lock'));
     // the text's foot, for the layout (an upright phone puts the machine under it)
     page.textBottom = (cell.plateEl ??= document.querySelector('.plate'))?.getBoundingClientRect().bottom ?? 0;
+    // a desktop's probe section, on the view when it is fixed there (the probe in), else in the text's flow
+    const sec = document.querySelector('.plate.probing .probe-sec') as HTMLElement | null;
+    page.probeH = sec && getComputedStyle(sec).position === 'fixed' ? sec.getBoundingClientRect().height : 0;
     // the footer's top, when there is one (an upright phone, the probe in); PILOT goes over it (--foot-top)
     const foot = document.querySelector('.crumbs')?.getBoundingClientRect();
     const footTop = foot && foot.height ? Math.round(foot.top) : 0;
-    if (footTop !== page.footTop) { page.footTop = footTop; document.documentElement.style.setProperty('--foot-top', `${footTop || size.height}px`); }
+    if (footTop !== page.footTop || size.height !== cell.footH) { page.footTop = footTop; cell.footH = size.height; document.documentElement.style.setProperty('--foot-top', `${size.height}px`); } // PILOT from the foot now, the crumbs at the top
     const auto = gl.autoClear;
     // the camera grid off, or no beetle: no eye, no lock bracket, just the page and the machine
-    if (eyeShown(size.width, size.height)) drawEye(); else { setLock(lockEl, 'none'); gl.setRenderTarget(null); gl.clear(); }
+    if (eyeShown(size.width, size.height)) drawEye(); else { setLock(lockEl, 'none'); const te = document.getElementById('toball'); if (te) te.style.display = 'none'; cell.toLast = 'none'; gl.setRenderTarget(null); gl.clear(); }
     gl.autoClear = false;
     // the machine over the lens, through the depth of field, only in its own part, never under the text
-    const W = size.width, H = size.height, { main } = regionsOf(W, H);
-    renderDof(gl, scene, camera, [main.x, H - main.y - main.h, main.w, main.h]);
+    const W = size.width, H = size.height, { main, draw = [main] } = regionsOf(W, H);
+    renderDof(gl, scene, camera, draw.filter((d) => d.w > 0 && d.h > 0).map((d) => [d.x, H - d.y - d.h, d.w, d.h] as [number, number, number, number]));
     if (cell.over) { // the phone's disc: over the machine, not under it
       const [x, y, w, h] = cell.over;
       gl.setViewport(x, y, w, h);
@@ -324,6 +349,37 @@ export function DroneCam() {
       cell.grabbed.scale.setScalar(drone.taken);
     }
 
+    // the piece's colour, the cell it is in: its fill here, LOCK's and the arrow's (--ball)
+    if (target.map) {
+      const hex = CELL_HEX[cellIdOf(target.map)];
+      if (hex !== cell.ballHex) { cell.ballHex = hex; cell.pieceFill.color.set(hex); document.documentElement.style.setProperty('--ball', hex); }
+    }
+    // a little arrow on the view's rim towards the piece, while it is out of sight: its way in the eye's frame, through
+    // the net of rooms, flattened onto the view
+    {
+      let to = 'none';
+      if (target.up && target.map && target.scale > 0.02) {
+        const t3 = toCellWith(target.map, target.p), d = tmp.axis.set(t3[0] - c[0], t3[1] - c[1], t3[2] - c[2]), dist = d.length();
+        if (dist > 1e-6) {
+          d.divideScalar(dist).applyQuaternion(tmp.q.copy(cell.q).invert());
+          const theta = Math.acos(Math.max(-1, Math.min(1, -d.z))), rr = theta / (Math.PI / 2), l = Math.hypot(d.x, d.y) || 1;
+          const ux = d.x / l, uy = -d.y / l; // on the page, y down
+          const vtop = H - y - h, cx = x + w / 2, cy = vtop + h / 2;
+          const bx = cx + rr * ux * w / 2, by = cy + rr * uy * h / 2;
+          const seen = rr < 1 && bx > bx0 + 8 && bx < bx1 - 8 && by > by0 + 8 && by < by1 - 8;
+          if (!seen) {
+            // on the rim: as far out along that way as the view goes, less a margin
+            const hw = S / 2 - 46, hh = (r.round ? S / 2 : SH / 2) - 46; // in from the rim, clear of the pad's arrows
+            const k = r.round ? hw : Math.min(Math.abs(ux) > 1e-6 ? hw / Math.abs(ux) : Infinity, Math.abs(uy) > 1e-6 ? hh / Math.abs(uy) : Infinity);
+            const ax = sx + S / 2 + ux * k, ay = top + SH / 2 + uy * k, deg = (Math.atan2(uy, ux) * 180) / Math.PI;
+            to = `translate(${ax.toFixed(1)}px, ${ay.toFixed(1)}px) translate(-50%, -50%) rotate(${deg.toFixed(1)}deg)`;
+          }
+        }
+      }
+      const el = (cell.toEl ??= document.getElementById('toball'));
+      if (el && to !== cell.toLast) { cell.toLast = to; if (to === 'none') el.style.display = 'none'; else { el.style.display = 'block'; el.style.transform = to; } }
+    }
+
     // the lock: at the controls, the piece in this cell and close, a bracket round it in the view, LOCK while
     // closing in and LOCKED once the catch has taken over. The piece's place in the view is the fisheye's own map:
     // its direction in the eye's frame, the angle off the axis as the radius, the lens then stretched by the aspect
@@ -354,12 +410,16 @@ export function DroneCam() {
     const wasA = gl.getClearAlpha();
     gl.getClearColor(tmp.clear);
     gl.setClearColor(0x000000, 0); // each face cleared to nothing as it renders
-    cell.eye.update(gl, cell.cs);
+    if (!PHONE || (cell.frame = (cell.frame + 1) % 2) === 0) cell.eye.update(gl, cell.cs);
     gl.setClearColor(tmp.clear, wasA);
     gl.autoClear = false; // from here the page is cleared once, by hand, and the lens and the machine go over it
     FISHEYE.uniforms.rot.value.setFromMatrix4(tmp.m.makeRotationFromQuaternion(cell.q));
     FISHEYE.uniforms.fade.value = full ? W * gl.getPixelRatio() : 0; // the half: no fade
     FISHEYE.uniforms.strength.value = full ? STRENGTH : 1; // and all there
+    // a desktop's view in the column: its corners rounded 3 px (square, for a while)
+    const dpr = gl.getPixelRatio();
+    FISHEYE.uniforms.radius.value = !full && !r.round ? CAM_RADIUS * dpr : 0;
+    FISHEYE.uniforms.box.value.set(sx * dpr, sy * dpr, S * dpr, SH * dpr);
     gl.setRenderTarget(null);
     gl.setViewport(0, 0, W, H);
     gl.clear();

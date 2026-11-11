@@ -9,12 +9,16 @@ import * as THREE from 'three';
 
 export const dof = {
   on: true,
+  /** this frame without it, the switch aside: ORBIT */
+  skip: false,
   focus: new THREE.Vector3(),
   /** the blur at twice the focus distance, against the page's height */
   aperture: 0.006,
 };
 const MAX_R = 10; // CSS pixels, the widest blur
-const TAPS = 48;
+// a phone (narrow or low, or a finger for a pointer): the blur cheaper, 16 taps and no multisampling, for the battery
+const PHONE = typeof matchMedia !== 'undefined' && matchMedia('(max-width: 640px), (max-height: 500px), (pointer: coarse)').matches;
+const TAPS = PHONE ? 16 : 48;
 
 const MAT = new THREE.ShaderMaterial({
   uniforms: {
@@ -76,15 +80,22 @@ let rt: THREE.WebGLRenderTarget | null = null;
 const size = new THREE.Vector2(), dir = new THREE.Vector3(), to = new THREE.Vector3(), clear = new THREE.Color();
 
 /** The scene through the depth of field onto the screen, over what is there already. */
-export function renderDof(gl: THREE.WebGLRenderer, scene: THREE.Scene, camera: THREE.Camera, clip?: [number, number, number, number]) {
-  // clip: only this part of the page (CSS px, from the bottom left), the machine's half when the window is split
+type Clip = [number, number, number, number];
+export function renderDof(gl: THREE.WebGLRenderer, scene: THREE.Scene, camera: THREE.Camera, clips?: Clip[]) {
+  // clips: only these parts of the page (CSS px, from the bottom left), the page round the first person view; the
+  // buffer is drawn once and laid onto each
   const cam = camera as THREE.PerspectiveCamera;
-  const scissor = (on: boolean) => { if (!clip) return; gl.setScissorTest(on); if (on) gl.setScissor(...clip); };
-  if (!dof.on || !cam.isPerspectiveCamera) { scissor(true); gl.render(scene, camera); scissor(false); return; }
+  const each = (draw: () => void) => {
+    if (!clips) { draw(); return; }
+    gl.setScissorTest(true);
+    for (const c of clips) { gl.setScissor(...c); draw(); }
+    gl.setScissorTest(false);
+  };
+  if (!dof.on || dof.skip || !cam.isPerspectiveCamera) { each(() => gl.render(scene, camera)); return; }
   gl.getDrawingBufferSize(size);
   if (!rt || rt.width !== size.x || rt.height !== size.y) {
     rt?.dispose();
-    rt = new THREE.WebGLRenderTarget(size.x, size.y, { type: THREE.HalfFloatType, samples: 4, depthTexture: new THREE.DepthTexture(size.x, size.y) });
+    rt = new THREE.WebGLRenderTarget(size.x, size.y, { type: THREE.HalfFloatType, samples: PHONE ? 0 : 4, depthTexture: new THREE.DepthTexture(size.x, size.y) });
   }
   const u = MAT.uniforms;
   cam.getWorldDirection(dir);
@@ -103,7 +114,5 @@ export function renderDof(gl: THREE.WebGLRenderer, scene: THREE.Scene, camera: T
   gl.render(scene, camera);
   gl.setRenderTarget(null);
   gl.setClearColor(clear, wasA);
-  scissor(true);
-  gl.render(SCENE, FLAT);
-  scissor(false);
+  each(() => gl.render(SCENE, FLAT));
 }

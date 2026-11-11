@@ -11,8 +11,10 @@ import { drone } from './drone';
 // near a joint the ball counts as the joint's, not the strut's.
 
 const PICK = 14; // px from a strut's line that still picks it
+export const PICK_TOUCH = 28; // a finger's: wider, a finger hides what it is on
 const R_OUTLINE = 0.115; // the outline's radius: round the sleeves (0.09) with a band to spare
 export const LIME = '#c9e35b';
+const LIME_HOT = '#c8f000'; // the outline round a strut: saturated, so it holds through the depth of field
 
 export const grip = {
   x: 0, y: 0, in: false, // the pointer on the page
@@ -24,6 +26,26 @@ export const grip = {
 };
 
 if (import.meta.env.DEV) Object.assign(window, { __grip: grip });
+
+/** The joints on the page last frame, for picking a strut at once where a finger lands (a touch has no hover). */
+const S = VERTS.map(() => new THREE.Vector2());
+/** The nearest strut to (x, y) within `pick` px, by its line between the joints, a joint's ball left to the joint; -1, none. */
+export function strutAt(x: number, y: number, pick = PICK) {
+  let best = -1, bd = pick;
+  EDGES.forEach((e, i) => {
+    const A = S[e.a], B = S[e.b], abx = B.x - A.x, aby = B.y - A.y, l2 = abx * abx + aby * aby || 1;
+    const u = ((x - A.x) * abx + (y - A.y) * aby) / l2;
+    if (u < 0.08 || u > 0.92) return; // by a joint: the ball's
+    const dx = A.x + abx * u - x, dy = A.y + aby * u - y, dd = Math.hypot(dx, dy);
+    if (dd < bd) { bd = dd; best = i; }
+  });
+  return best;
+}
+/** A strut's w in 4D after the turn, its middle's: + toward the eye. */
+export function strutW(i: number) {
+  const m = pose(), e = EDGES[i];
+  return m[3].reduce((s, x, j) => s + x * (VERTS[e.a][j] + VERTS[e.b][j]) / 2, 0);
+}
 
 export function Grip() {
   const ref = useRef<THREE.Group>(null);
@@ -43,32 +65,23 @@ export function Grip() {
       project(m, v, t.P[k]);
       t.v.copy(t.P[k]).applyMatrix4(g.matrixWorld).project(camera);
       t.S[k].set((t.v.x + 1) / 2 * size.width, (1 - t.v.y) / 2 * size.height);
+      S[k].copy(t.S[k]);
     });
     // the nearest strut under the pointer, on its own only, and not while a strut is held
     if (grip.held < 0) {
-      let best = -1, bd = PICK;
-      if (!drone.pilot && grip.in && grip.alt) {
-        EDGES.forEach((e, i) => {
-          const A = t.S[e.a], B = t.S[e.b], abx = B.x - A.x, aby = B.y - A.y, l2 = abx * abx + aby * aby || 1;
-          const u = ((grip.x - A.x) * abx + (grip.y - A.y) * aby) / l2;
-          if (u < 0.08 || u > 0.92) return; // by a joint: the ball's
-          const dx = A.x + abx * u - grip.x, dy = A.y + aby * u - grip.y, dd = Math.hypot(dx, dy);
-          if (dd < bd) { bd = dd; best = i; }
-        });
-      }
-      grip.hover = best;
+      grip.hover = !drone.pilot && grip.in ? strutAt(grip.x, grip.y) : -1; // the strut under the pointer, alt or not (alt only, for a while)
     }
     const i = grip.held >= 0 ? grip.held : grip.hover;
     if (i !== t.last) { document.querySelector('.stage')?.classList.toggle('edge', i >= 0); t.last = i; }
     t.mesh.visible = i >= 0;
     if (i < 0) return;
     const e = EDGES[i], A = t.P[e.a], B = t.P[e.b];
-    grip.w = (m[3].reduce((s, x, j) => s + x * (VERTS[e.a][j] + VERTS[e.b][j]) / 2, 0));
+    grip.w = strutW(i);
     t.d.subVectors(B, A);
     t.mesh.position.copy(A);
     t.mesh.quaternion.setFromUnitVectors(Y, t.v.copy(t.d).normalize());
     t.mesh.scale.set(1, t.d.length(), 1);
-    t.mat.color.set(grip.held >= 0 ? LIME : '#e6f29e'); // paler on hover, full lime in the hand
+    t.mat.color.set(LIME_HOT); // one strong lime, on hover and in the hand (paler on hover, #e6f29e, and the softer LIME in the hand, for a while: it read faded)
   });
 
   return <group ref={ref}><primitive object={t.mesh} /></group>;

@@ -11,9 +11,10 @@ export const VERTS: V4[] = Array.from({ length: 16 }, (_, k) => [0, 1, 2, 3].map
 export const EDGES: { a: number; b: number; axis: number }[] = [];
 for (let k = 0; k < 16; k++) for (let i = 0; i < 4; i++) if (!(k & (1 << i))) EDGES.push({ a: k, b: k | (1 << i), axis: i });
 
-/** Eye distance along w. A corner gets to w = 2 at most, so the eye stays clear. */
-export const D = 4.6;
-export const SCALE = 1.05;
+/** Eye distance along w. A corner gets to w = 2 at most, so the eye stays clear. Nearer, the perspective along w
+ * stronger: at rest the inner cube 0.55 of the outer (4.6 for a while, 0.64); SCALE keeps the outer about as big. */
+export const D = 3.4;
+export const SCALE = 0.95;
 
 export type M4 = number[][];
 

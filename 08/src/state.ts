@@ -8,27 +8,22 @@ import { mul, rotPlane, type M4 } from './tesseract';
 // stands on itself again (a cell has moved to the next place), so the next quarter can go in any plane. The pose is a
 // base of whole quarter turns, a signed permutation of the axes, and one live angle in one plane on top of it.
 //
-// On its own the machine holds its shape and glides a quarter turn at each catch. Hard mode turns it evenly all the
-// time, changing plane as it passes each quarter, and every so often the servo cuts in: the spin stops dead and a
-// burst of quick quarter turns snaps through, some staggered in uneven lurches, each landing with a small overshoot.
+// On its own the machine holds its shape and glides a quarter turn at each catch; AUTOTRANSFORM swings it to and fro.
+// (A hard mode, an even spin with the servo cutting in now and then with bursts of quick quarter turns, was dropped.)
 export const st = {
   plane: 0, // 0 1 2: the axis turning with w right now
   base: [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]] as M4, // the quarter turns done so far
-  angle: 0.3, // radians in the live plane
-  target: 0.3, // where the servo is told to be
+  angle: 0, // radians in the live plane; 0 to start, the tesseract at rest, the small cube square in the middle of the big one (0.3, a little turned, for a while, when it turned on its own from the start)
+  target: 0, // where the servo is told to be
   vel: 0,
-  next: 0, // seconds until the servo's next move in a burst
-  burstIn: 8, // seconds until the next burst, in hard mode
-  bursting: false, // the servo has the machine: the hard mode's spin waits
   settling: false, // let go after an alt-drag: the servo takes it to the nearest whole quarter
   cranking: false, // an alt-drag has it: nothing else turns it
   way: 1, // which way it turns, +1 or -1: the last drag, or a flip now and then
   flipIn: 12, // seconds until it turns round on its own
-  spinVel: 0, // the hard mode's speed, eased towards HARD_SPIN * way so a flip is a swing, not a knock
-  transform: true, // the transform switch, on to start (off for a while), and the play/pause button bottom middle: the machine turns in 4D all the time, evenly and softly, changing plane at each quarter
-  hard: false, // hard mode: the machine turns in 4D all the time, changing plane as it passes each quarter
+  spinVel: 0, // transform's speed, eased towards SOFT_SPIN * way so a flip is a swing, not a knock
+  transform: false, // the transform switch, off to start (on for a while, and off before that), and the play/pause button bottom middle: the machine turns in 4D all the time, evenly and softly, changing plane at each quarter
   grid: true, // the camera grid, on to start: the eye's view behind the machine, or none
-  inout: false, // the hand-over at a wall: false, both halves at once, folded at the wall; true (o), the body goes all the way in, then comes out
+  inout: false, // the hand-over at a wall: false, both halves at once, folded at the wall, straight through; true (o), the body goes all the way in, then comes out (on to start for a moment)
   /** How far the machine reaches from its centre right now, in the 3D picture, for the camera to fit it. */
   reach: 4,
 };
@@ -47,6 +42,9 @@ export const rig = {
   turntable: true, // the slow turn on its own, in the attract mode
   spin: true, // the turntable switch: off, the camera stays where it is left
   follow: false, followK: 0, // the follow switch, and 0 to 1 eased: the camera in close on the device, going round it
+  chaseK: 0, // at the controls, 0 to 1 eased: the camera behind the probe
+  attract: false, // ATTRACT: the camera cuts between shots on a beat, on its own
+  view: 'free' as 'free' | 'back' | 'side' | 'top', // following, where from: round it by the drag, or behind, beside or over the probe by its own turn
   focus: new THREE.Vector3(), // where the camera looks: the machine's middle, leaning towards the device on the turntable
   camera: null as THREE.Camera | null, // the main camera, for a drag to see where the machine's axes point on the page
 };
@@ -54,13 +52,10 @@ export const rig = {
 // in dev, the state on the page for scripted checks
 if (import.meta.env.DEV) Object.assign(window, { __st: st, __rig: rig });
 
-const HARD_SPIN = 0.4; // rad/s, the hard mode's turn in 4D
-const SOFT_SPIN = 0.22; // rad/s, transform's: the same turn, softer
-const BURST_EVERY: [number, number] = [6, 14]; // seconds between the servo's bursts, in hard mode
+const SOFT_SPIN = 0.22; // rad/s, transform's even turn in 4D (it swung to and fro either way of a quarter, breathing, for a while)
 const PITCH_MAX = 1.4; // radians the orbit goes up or down at most
 const TURNTABLE = 0.07; // rad/s, the camera's slow orbit in the attract mode, a revolution in a minute and a half
 const QUARTER = Math.PI / 2;
-const rnd = (a: number, b: number) => a + Math.random() * (b - a);
 
 /** The whole 4D rotation right now: the live plane's turn on top of the base. */
 export const pose = (): M4 => mul(rotPlane(st.plane, st.angle), st.base);
@@ -95,35 +90,33 @@ function fold(q: number) {
   if (Math.abs(st.angle) < 1e-3) st.plane = pick<number>([0, 1, 2].filter((p) => p !== st.plane).map((p) => [p, 1]));
 }
 
-/** The servo's burst, queued: first a snap to the next quarter the way it is turning, then one to three more quarter
- * turns, each whole or in two or three uneven lurches, quick, with a breath between. */
-const queue: { delta: number; wait: number }[] = [];
-function burst() {
-  st.bursting = true;
-  st.target = st.angle; st.vel = st.spinVel; st.next = 0; // from where the spin is, at its speed
-  const w = st.way;
-  queue.push({ delta: (Math.floor((st.angle * w) / QUARTER + 1e-6) + 1) * QUARTER * w - st.angle, wait: rnd(0.28, 0.45) });
-  for (let n = 1 + Math.floor(Math.random() * 3); n > 0; n--) {
-    const parts = pick<number[]>([[[1], 5], [[0.65, 0.35], 3], [[0.5, 0.3, 0.2], 2]]);
-    parts.forEach((f, i) => queue.push({ delta: w * QUARTER * f, wait: i === parts.length - 1 ? rnd(0.25, 0.45) : rnd(0.09, 0.15) }));
-  }
-}
-
 /** A drag on the orbit: `dy` radians of yaw and `dp` of pitch, over `dt` seconds; the speed is kept, smoothed, to
  * coast on once it is let go. */
+// A hand on it stops it doing so on its own: after a turn by hand in 4D the transform waits, after an orbit by hand
+// the turntable waits, each IDLE seconds from the last touch, then picks up again (they ran on through it for a while).
+const IDLE = 30;
+let clock = 0, handAt = -Infinity, orbitAt = -Infinity;
+/** AUTOTRANSFORM switched on: it starts now, not IDLE after the last hand on the machine (it waited, and on a phone,
+ * a finger having touched a strut, it looked dead for half a minute). */
+export function transformNow() { handAt = -Infinity; }
+/** TURNTABLE switched on: the same, it turns now, not IDLE after the last orbit by hand. */
+export function turntableNow() { orbitAt = -Infinity; }
+/** Out of ATTRACT with the switch off: the servo takes the turn on to the nearest whole quarter, not left part way. */
+export function settleTurn() { if (st.transform || st.cranking) return; st.target = Math.round(st.angle / QUARTER) * QUARTER; st.settling = true; }
 export function orbitBy(dy: number, dp: number, dt: number) {
+  orbitAt = clock;
   rig.orbiting = true;
   rig.yaw += dy;
   rig.pitch = THREE.MathUtils.clamp(rig.pitch + dp, -PITCH_MAX, PITCH_MAX);
   rig.orbitVel[0] += (dy / dt - rig.orbitVel[0]) * 0.5; rig.orbitVel[1] += (dp / dt - rig.orbitVel[1]) * 0.5;
 }
 
-/** An alt-drag turns the machine by hand. It takes over from a glide, a burst or a settle. The plane is the drag's to
+/** An alt-drag turns the machine by hand. It takes over from a glide or a settle. The plane is the drag's to
  * pick, but only while the machine stands on a whole quarter: with a turn part done, another plane would be another
  * pose and it would jump. Returns the plane it turns in. */
 export function crankStart(plane: number): number {
+  handAt = clock;
   glide = null; st.settling = false; st.cranking = true;
-  if (st.bursting) { stopBurst(); st.burstIn = rnd(...BURST_EVERY); }
   st.target = st.angle; st.vel = 0; st.spinVel = 0;
   if (Math.abs(st.angle - Math.round(st.angle / QUARTER) * QUARTER) < 1e-3) {
     bank();
@@ -131,29 +124,29 @@ export function crankStart(plane: number): number {
   }
   return st.plane;
 }
-/** The servo lets go where the machine is: the burst's moves dropped. */
-function stopBurst() { st.bursting = false; queue.length = 0; st.target = st.angle; st.vel = 0; }
 /** The whole quarters turned so far folded into the pose, in another plane (`fold`), what is left over kept. */
 function bank() { const q = Math.round(st.angle / QUARTER); if (q !== 0) fold(q); }
 /** `d` radians in the live plane, by hand; the way it goes is the way it turns from then on, and each whole quarter
  * is banked, in the same plane, so the drag goes on as it started. */
 export function crankBy(d: number) {
+  handAt = clock;
   st.angle += d; st.target = st.angle; st.vel = 0;
   if (d) st.way = Math.sign(d);
   if (Math.abs(st.angle) >= QUARTER) { const p = st.plane; fold(Math.trunc(st.angle / QUARTER)); st.plane = p; }
 }
 /** Let go: the servo takes it on to the nearest whole quarter, with its small overshoot, so the next drag can pick any
- * plane. In hard mode the spin just picks up from there. */
+ * plane. */
 export function crankEnd() {
-  st.cranking = false;
-  if (st.hard || st.transform) return;
+  st.cranking = false; handAt = clock;
   st.target = Math.round(st.angle / QUARTER) * QUARTER;
   st.settling = true;
 }
 
 export function tick(dt: number) {
-  // the turntable: the camera orbits slowly on its own, in the attract mode
-  if (rig.turntable && rig.spin) rig.yaw += TURNTABLE * dt;
+  clock += dt;
+  if (rig.orbiting) orbitAt = clock;
+  // the turntable: the camera orbits slowly on its own, in the attract mode, but not for IDLE after a hand on it
+  if (rig.turntable && rig.spin && clock - orbitAt > IDLE) rig.yaw += TURNTABLE * dt;
   // the orbit coasts after a drag, slowing over a second or two
   if (!rig.orbiting && (rig.orbitVel[0] || rig.orbitVel[1])) {
     rig.yaw += rig.orbitVel[0] * dt;
@@ -166,30 +159,14 @@ export function tick(dt: number) {
   st.flipIn -= dt;
   if (st.flipIn <= 0) { st.way = -st.way; st.flipIn = 8 + Math.random() * 14; }
 
-  if (st.hard || st.transform) {
+  // transform waits IDLE after the last turn by hand
+  // in ATTRACT it turns too, whatever the switch: the joints move for their close-ups
+  if ((st.transform && clock - handAt > IDLE) || rig.attract) {
     glide = null; st.settling = false;
-    // transform alone is the soft one: the same even turn, slower, and no servo cutting in
-    if (!st.hard && st.bursting) stopBurst();
-    if (st.bursting) {
-      // the servo has it: each move on its cue, the spring after it; once the last has landed and settled, bank the
-      // quarters, change plane, and let the spin pick up again from still
-      st.next -= dt;
-      if (queue.length && st.next <= 0) { const q = queue.shift()!; st.target += q.delta; st.next = q.wait; }
-      [st.angle, st.vel] = spring(st.angle, st.vel, st.target, dt, SERVO);
-      if (!queue.length && st.next <= 0 && Math.abs(st.target - st.angle) < 2e-3 && Math.abs(st.vel) < 0.03) {
-        st.angle = st.target; st.vel = 0; st.spinVel = 0;
-        bank();
-        st.bursting = false; st.burstIn = rnd(...BURST_EVERY);
-      }
-      return;
-    }
-    if (st.hard) {
-      st.burstIn -= dt;
-      if (st.burstIn <= 0) { burst(); return; }
-    }
     // an even turn all the time, turning round now and then; past each quarter it is banked, what little is left
-    // over dropped (a frame's worth at most), and the turn goes on in another plane
-    st.spinVel += ((st.hard ? HARD_SPIN : SOFT_SPIN) * st.way - st.spinVel) * Math.min(1, dt * 1.2);
+    // over dropped (a frame's worth at most), and the turn goes on in another plane (it breathed, to and fro either
+    // way of a quarter, for a while)
+    st.spinVel += (SOFT_SPIN * st.way - st.spinVel) * Math.min(1, dt * 1.2);
     st.angle += st.spinVel * dt;
     st.target = st.angle; st.vel = 0;
     if (Math.abs(st.angle) >= QUARTER) {
@@ -199,8 +176,6 @@ export function tick(dt: number) {
     }
     return;
   }
-  // out of hard mode mid-burst: the servo lets go where the machine is
-  if (st.bursting) stopBurst();
 
   if (st.settling) {
     [st.angle, st.vel] = spring(st.angle, st.vel, st.target, dt, SERVO);
