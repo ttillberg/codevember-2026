@@ -91,6 +91,7 @@ TESSERAKT, a hypercube built for real. A tesseract cannot exist in three dimensi
 - **A hot reload keeps the mode**: DEMO on to start and the turntable's switch are set once, on the page's first load (`rig.booted`); a hot reload ran them again over the rig, which lives on in `state.ts`, and put DEMO's camera on under PILOT.
 - **ORBIT and AUTOTRANSFORM to start**: the page opens in ORBIT everywhere, the machine turning in 4D from the first frame (DEMO on a desktop till the mouse first moved, and AUTOTRANSFORM off, for a while); DEMO is still in the dropdown.
 - **No full screen view**: the fisheye view's maximize button is gone; it stays in its corner (`?clean` still draws it full screen for the screengrab).
+- **ORBIT on a light gradient**: in ORBIT the ground is a studio sweep, white at the top through #f3f4f5 to a cool grey (#d3d7dc) at the foot (#e2e3e4, too near the usual, for a moment), over the usual light; it fades in and out with the mode in 0.6 s (`body.orbit::before`). Millimetre paper there, for a moment.
 
 ## Learned
 

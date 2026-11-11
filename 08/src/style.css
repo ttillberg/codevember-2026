@@ -27,7 +27,15 @@ body {
   background-repeat: no-repeat;
   overflow: hidden;
 }
-@supports (height: 100lvh) { html { height: 100lvh; } } /* the page as high as the screen with the browser's bar folded away */
+@supports (height: 100lvh) { html { height: 100lvh; } }
+/* ORBIT on a light gradient: a studio sweep, white at the top down to a soft cool grey at the foot, faded in and out
+   with the mode (a pseudo layer, so it can fade; gradients do not) (millimetre paper, for a moment) */
+body::before {
+  content: ''; position: fixed; inset: 0; pointer-events: none; opacity: 0; transition: opacity 0.6s ease;
+  background: linear-gradient(to bottom, #ffffff 0%, #f3f4f5 40%, #d3d7dc 100%); /* a touch deeper and cooler at the foot (#e2e3e4 through #f6f6f5, too near the usual, for a moment) */
+}
+body.orbit::before { opacity: 1; }
+ /* the page as high as the screen with the browser's bar folded away */
 
 .stage { position: fixed; inset: 0; cursor: grab; }
 /* full screen, down to the screen's very foot even with the browser's bar folded away after a scroll (the small

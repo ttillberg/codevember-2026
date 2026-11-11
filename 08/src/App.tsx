@@ -650,6 +650,7 @@ export function App() {
   const [open, setOpen] = useState(!drone.on || !matchMedia('(max-width: 640px), (max-height: 500px)').matches); // the text: all of it to start; on a phone folded with the probe in
   const [mode, setModeState] = useState<Mode>(drone.pilot ? 'pilot' : rig.follow ? 'follow' : rig.attract ? 'attract' : 'orbit');
   const manual = mode === 'pilot';
+  useEffect(() => { document.body.classList.toggle('orbit', mode === 'orbit'); }, [mode]); // ORBIT on a light gradient (style.css)
   // ATTRACT to start, on a desktop: the first move of the mouse, a key or the wheel and it is over, ORBIT from there
   const attractFirst = useRef(ATTRACT_FIRST);
   useEffect(() => {
