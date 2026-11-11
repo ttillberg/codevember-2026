@@ -197,6 +197,11 @@ const mountBar = new THREE.CylinderGeometry(1, 1, 1, 10, 1);
 const screwHead = new THREE.CylinderGeometry(0.03, 0.034, 0.024, 16);
 const screwSocket = new THREE.CylinderGeometry(0.013, 0.013, 0.01, 6);
 const screwDark = new THREE.MeshStandardMaterial({ color: '#0c0c0c', roughness: 0.8 });
+const EYES_GLASS = 0.728; // the eyes' glass: just off the core (0.7), over the cameras, tight to the body
+const camHousing = new THREE.CylinderGeometry(0.075, 0.08, 0.03, 24);
+const camRing = new THREE.TorusGeometry(0.06, 0.008, 8, 24).rotateX(Math.PI / 2);
+const camLens = new THREE.SphereGeometry(0.048, 20, 12, 0, Math.PI * 2, 0, Math.PI / 2);
+const camLensMat = new THREE.MeshPhysicalMaterial({ color: '#05070a', roughness: 0.05, metalness: 0.2, clearcoat: 1, emissive: '#0a2a24', emissiveIntensity: 0.6 });
 const BACK_K = 0.55; // the back's ring and glow, against their size as made
 const BROW_R = 0.73; // the brows' reach from the middle: on the core (0.7), at its collar (0.72), not hovering off it (0.8 for a moment)
 const BLACK = '#121214'; // the blue, gone to black
@@ -264,29 +269,50 @@ export function device(model: THREE.Object3D, size: number): Device {
     browR = Math.max(browR, l.geometry.boundingSphere!.center.clone().applyMatrix4(l.matrix).length());
   }
   if (browR > 0) brows.scale.setScalar(BROW_R / browR); // in close, just off the core (they hung out round the wings, for a while)
-  // and glass between them: the four arcs lie on one band round the eye's axis; a clear glass band fills it, the arcs
-  // its frame, turning with them (open between them, for a while)
+  // the eyes: the orifice in the middle is the grip now, so the probe sees by two cameras on the core, up and out to
+  // either side of it, flush in the shell, each under its own glass, a bent triangle lying tight on the core's curve,
+  // stopping short of the orifice (one glass band all round between the brows, for a while)
   {
-    let lo = { z: Infinity, r: 0 }, hi = { z: -Infinity, r: 0 };
-    const v = new THREE.Vector3();
-    for (const l of brows.children as THREE.Mesh[]) {
-      const pos = l.geometry.attributes.position;
-      for (let i = 0; i < pos.count; i++) {
-        v.fromBufferAttribute(pos, i).applyMatrix4(l.matrix);
-        const r = Math.hypot(v.x, v.y);
-        if (v.z < lo.z) lo = { z: v.z, r }; if (v.z > hi.z) hi = { z: v.z, r };
+    const Wk = (works ??= makeWorks());
+    const at = (polar: number, az: number, r: number) => {
+      const p = (polar * Math.PI) / 180, a = (az * Math.PI) / 180;
+      return new THREE.Vector3(Math.sin(p) * Math.cos(a), Math.sin(p) * Math.sin(a), -Math.cos(p)).multiplyScalar(r); // polar from the eye (-z), az round it, 90 up
+    };
+    const glassMat = new THREE.MeshPhysicalMaterial({
+      color: '#eef4f6', roughness: 0.03, metalness: 0, clearcoat: 1, clearcoatRoughness: 0.02, transparent: true, opacity: 0.16,
+      side: THREE.DoubleSide, depthWrite: false, envMapIntensity: 1.8,
+    });
+    for (const s of [-1, 1]) {
+      // the glass: a spherical triangle, a grid of points pushed out onto the sphere, so it bends with the core
+      const A = at(30, 90 - s * 12, 1), B = at(30, 90 - s * 82, 1), C = at(64, 90 - s * 48, 1), N = 14;
+      const pos: number[] = [], idx: number[] = [], row: number[] = [];
+      let k = 0;
+      for (let i = 0; i <= N; i++) { row.push(k); for (let j = 0; j <= N - i; j++) {
+        const u = i / N, v = j / N, w = 1 - u - v;
+        const p = new THREE.Vector3().addScaledVector(A, w).addScaledVector(B, u).addScaledVector(C, v).normalize().multiplyScalar(EYES_GLASS);
+        pos.push(p.x, p.y, p.z); k++;
+      } }
+      for (let i = 0; i < N; i++) for (let j = 0; j < N - i; j++) {
+        const a = row[i] + j, b = row[i + 1] + j, c = a + 1;
+        idx.push(a, b, c);
+        if (j < N - i - 1) idx.push(c, b, b + 1);
       }
-    }
-    if (Number.isFinite(lo.z) && hi.z > lo.z) {
-      // a lathe round z through the band's two rims, a little inside the arcs so it reads as set into them
-      const pts = [new THREE.Vector2(lo.r * 0.995, lo.z), new THREE.Vector2(hi.r * 0.995, hi.z)];
-      const geo = new THREE.LatheGeometry(pts, 96).rotateX(Math.PI / 2);
-      const glass = new THREE.Mesh(geo, new THREE.MeshPhysicalMaterial({
-        color: '#eef4f6', roughness: 0.04, metalness: 0, clearcoat: 1, clearcoatRoughness: 0.02, transparent: true, opacity: 0.22,
-        side: THREE.DoubleSide, depthWrite: false, envMapIntensity: 1.6,
-      }));
-      glass.renderOrder = 3;
-      brows.add(glass);
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); geo.setIndex(idx); geo.computeVertexNormals();
+      const glass = new THREE.Mesh(geo, glassMat); glass.renderOrder = 3; root.add(glass);
+      // its rim, a thin dark edge round the triangle, so the pane reads
+      for (const [p, q] of [[A, B], [B, C], [C, A]] as const) {
+        const pts = Array.from({ length: 13 }, (_, n) => p.clone().lerp(q, n / 12).normalize().multiplyScalar(EYES_GLASS));
+        const tube = new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts), 24, 0.008, 6), Wk.graphite);
+        root.add(tube);
+      }
+      // the camera under it, at the triangle's middle, flush in the shell: a dark housing, a glossy lens, a white ring
+      const n = new THREE.Vector3().add(A).add(B).add(C).normalize();
+      const q = new THREE.Quaternion().setFromUnitVectors(Y, n);
+      const part = (geo2: THREE.BufferGeometry, mat: THREE.Material, out: number) => { const m = new THREE.Mesh(geo2, mat); m.position.copy(n).multiplyScalar(out); m.quaternion.copy(q); root.add(m); };
+      part(camHousing, Wk.graphite, 0.7);
+      part(camRing, Wk.steel, 0.712);
+      part(camLens, camLensMat, 0.708);
     }
   }
 
