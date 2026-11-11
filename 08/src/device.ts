@@ -122,12 +122,12 @@ function dress(g: THREE.Group) {
   onCore([0.45, 0.85, -0.45], m.three, 0.55, 0.55);
   onCore([-0.45, 0.85, -0.45], m.pmndrs, 0.2, 0.2);
   onCore([0, -0.85, -0.5], m.serial, 0.5, 0.0625);
-  // no scuffs on the core, under the wings: a honeycomb there instead (honeycomb, in the copy's own material)
+  onCore([0.6, -0.3, 0.7], m.scuff[4], 0.7, 0.7, 0.5);
   [0, 1, 2, 3].forEach((k) => {
     const wall = g.getObjectByName(`wall_${k}`) as THREE.Mesh;
     const hit = skin(wall);
     if (!hit) return;
-    stick(wall, m.scuff[k], hit.p, hit.n, 0.9, 0.9, k * 1.1);
+    // no scuffs on the wings any more: a honeycomb under them instead (honeycomb, in the copy's own material)
     if (k === 0) {
       const h2 = skin(wall, 0.25);
       if (h2) stick(wall, m.github, h2.p, h2.n, 0.1, 0.1);
@@ -173,13 +173,32 @@ function relTo(o: THREE.Object3D, anc: THREE.Object3D, m = new THREE.Matrix4()) 
   return m;
 }
 
-/** The core under the wings, a honeycomb: fine hexagonal ribs in a lighter graphite, laid on it from three sides by its
- * own position (no UVs needed), each side weighted by how squarely the surface faces it, so the seams do not show. */
+/** A wing's shell is a piece of a sphere: its centre, in the geometry's own space, by a least-squares fit of its points,
+ * so the inside of the shell (facing it) can be told from the outside. */
+function shellCentre(geo: THREE.BufferGeometry) {
+  const p = geo.attributes.position, A = Array.from({ length: 4 }, () => [0, 0, 0, 0, 0]);
+  for (let i = 0; i < p.count; i++) {
+    const x = p.getX(i), y = p.getY(i), z = p.getZ(i), row = [2 * x, 2 * y, 2 * z, 1], b = x * x + y * y + z * z;
+    for (let a = 0; a < 4; a++) { for (let c = 0; c < 4; c++) A[a][c] += row[a] * row[c]; A[a][4] += row[a] * b; }
+  }
+  for (let c = 0; c < 4; c++) { // Gauss-Jordan on the normal equations
+    let piv = c; for (let r = c + 1; r < 4; r++) if (Math.abs(A[r][c]) > Math.abs(A[piv][c])) piv = r;
+    [A[c], A[piv]] = [A[piv], A[c]];
+    for (let r = 0; r < 4; r++) if (r !== c) { const f = A[r][c] / (A[c][c] || 1e-12); for (let k = c; k < 5; k++) A[r][k] -= f * A[c][k]; }
+  }
+  return new THREE.Vector3(A[0][4] / A[0][0], A[1][4] / A[1][1], A[2][4] / A[2][2]);
+}
+
+/** Under the wings, a honeycomb: fine hexagonal ribs in a lighter graphite on the inside of each shell (the faces
+ * turned to its centre), laid on from three sides by position (no UVs needed), each side weighted by how squarely
+ * the surface faces it, so the seams do not show. */
+const WHITE_PLASTIC = '#efefeb';
 const HEX = 16; // hexagons across a model unit
-function honeycomb(m: THREE.MeshStandardMaterial) {
+function honeycomb(m: THREE.MeshStandardMaterial, centre: THREE.Vector3) {
   m.onBeforeCompile = (sh) => {
+    sh.uniforms.uHexC = { value: centre };
     sh.vertexShader = 'varying vec3 vHexP; varying vec3 vHexN;\n' + sh.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\n  vHexP = position; vHexN = normal;');
-    sh.fragmentShader = `varying vec3 vHexP; varying vec3 vHexN;
+    sh.fragmentShader = `varying vec3 vHexP; varying vec3 vHexN; uniform vec3 uHexC;
 float hexEdge(vec2 p) {
   const vec2 s = vec2(1.0, 1.7320508);
   vec4 hc = floor(vec4(p, p - vec2(0.5, 1.0)) / s.xyxy) + 0.5;
@@ -192,10 +211,12 @@ float hexRib(vec2 p) { return 1.0 - smoothstep(0.025, 0.07, hexEdge(p * ${HEX.to
   {
     vec3 w = pow(abs(normalize(vHexN)), vec3(4.0)); w /= (w.x + w.y + w.z);
     float rib = hexRib(vHexP.yz) * w.x + hexRib(vHexP.xz) * w.y + hexRib(vHexP.xy) * w.z;
+    vec3 hexN = gl_FrontFacing ? normalize(vHexN) : -normalize(vHexN); // the side seen: a shell drawn from both sides
+    rib *= smoothstep(0.1, 0.4, -dot(hexN, normalize(vHexP - uHexC))); // the inside of the shell only
     diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.16, 0.16, 0.18), rib * 0.85);
   }`);
   };
-  m.customProgramCacheKey = () => 'hexcore';
+  m.customProgramCacheKey = () => 'hexwing';
   m.needsUpdate = true;
 }
 
@@ -286,7 +307,9 @@ export function device(model: THREE.Object3D, size: number): Device {
       const mesh = o as THREE.Mesh;
       const m = (mesh.material = (mesh.material as THREE.Material).clone()) as THREE.MeshStandardMaterial;
       if (m.transparent) m.depthWrite = false; // the glass
-      if (mesh.name === 'core') honeycomb(m);
+      // no bare metal on it: what was steel or chrome is a white plastic now, satin (metal against the graphite, for a while)
+      if (m.metalness > 0.5) { m.metalness = 0; m.roughness = 0.35; m.color?.set(WHITE_PLASTIC); m.map = null; }
+      if (/^wall_\d$/.test(mesh.name)) honeycomb(m, shellCentre(mesh.geometry)); // under the wings (on the core, for a moment)
       mats.push(m);
       if (m.emissive) tinted.push({ m, base: m.emissive.clone() });
       o.frustumCulled = false;
