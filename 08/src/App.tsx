@@ -8,7 +8,7 @@ import { DroneCam, eyeView, regionsOf, page } from './DroneCam';
 import { Grip, grip, strutAt, strutW, PICK_TOUCH } from './Grip';
 // CellMap (./CellMap.tsx), the cells' little map with their colours, is off the page for now
 import { drone } from './drone';
-import { st, rig, orbitBy, crankStart, crankBy, crankEnd, pose, transformNow } from './state';
+import { st, rig, orbitBy, crankStart, crankBy, crankEnd, pose, transformNow, turntableNow } from './state';
 import { project } from './tesseract';
 import { dof } from './dof';
 
@@ -79,7 +79,13 @@ const hold = (e: React.PointerEvent) => { e.preventDefault(); e.stopPropagation(
 
 /** The settings, top right beside the mode: a wheel, and a tap opens a card under it with AUTOTRANSFORM, a checkbox
  * row (a phone's only, AUTOTRANSFORM on its own on a desktop, for a while). */
-function Settings({ transform, toggle }: { transform: boolean; toggle: () => void }) {
+/** One checkbox row of the settings' card. */
+const Check = ({ on, toggle, children }: { on: boolean; toggle: () => void; children: React.ReactNode }) => (
+  <button className={on ? 'at' : ''} role="checkbox" aria-checked={on} tabIndex={-1} onPointerDown={hold} onClick={toggle}>
+    <i className="box" aria-hidden>{on ? <svg width={8} height={8} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={2.6} strokeLinecap="round" strokeLinejoin="round"><path d="M3 8.5l3.2 3.2L13 4.5" /></svg> : null}</i>{children}
+  </button>
+);
+function Settings({ transform, toggle, turntable, toggleTurntable }: { transform: boolean; toggle: () => void; turntable: boolean; toggleTurntable: () => void }) {
   const [open, setOpen] = useState(false);
   const ref = useAway(open, () => setOpen(false));
   return (
@@ -91,9 +97,9 @@ function Settings({ transform, toggle }: { transform: boolean; toggle: () => voi
         </svg>
       </button>
       {open ? <div className="list">
-        <button className={transform ? 'at' : ''} role="checkbox" aria-checked={transform} tabIndex={-1} onPointerDown={hold} onClick={toggle}>
-          <i className="box" aria-hidden>{transform ? <svg width={8} height={8} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={2.6} strokeLinecap="round" strokeLinejoin="round"><path d="M3 8.5l3.2 3.2L13 4.5" /></svg> : null}</i>Autotransform
-        </button>
+        <Check on={transform} toggle={toggle}>Autotransform</Check>
+        {/* the camera's slow turn round the machine, off to start (no switch for it, for a while) */}
+        <Check on={turntable} toggle={toggleTurntable}>Turntable</Check>
       </div> : null}
     </div>
   );
@@ -521,6 +527,9 @@ function handUp() { if (hand.on && hand.picked) crankEnd(); hand.on = false; gri
 export function App() {
   const [transform, setTransform] = useState(st.transform);
   const [why, setWhy] = useState(false); // the ? and its note
+  // TURNTABLE, in the wheel's card: the camera's slow orbit, off to start; switched on it starts at once
+  const [turntable, setTurntable] = useState(rig.spin);
+  const toggleTurntable = () => { rig.spin = !rig.spin; if (rig.spin) turntableNow(); setTurntable(rig.spin); };
   // the piece in the lock, at the controls: LOCK can be tapped (polled, drone.lockable is set each frame)
   // (a class on #lock, not React's: DroneCam toggles its `on` there too)
   useEffect(() => { const id = setInterval(() => document.getElementById('lock')?.classList.toggle('can', drone.lockable && drone.pilot && !drone.docking), 100); return () => clearInterval(id); }, []);
@@ -758,7 +767,7 @@ export function App() {
           {/* a phone's mode: a dropdown top right, over AUTOTRANSFORM (the three pills on a row at the foot, for a while) */}
           <ModeMenu mode={mode} pick={setMode} />
           {/* and beside it a wheel, the settings: AUTOTRANSFORM in it (on its own under the dropdown, for a while) */}
-          <Settings transform={transform} toggle={toggleAuto} />
+          <Settings transform={transform} toggle={toggleAuto} turntable={turntable} toggleTurntable={toggleTurntable} />
           {/* a ? that opens a note, on frosted glass: why this is short (beside AUTOTRANSFORM on a desktop, bottom left on a phone) */}
           <button className="why" tabIndex={-1} aria-label="Why this is short" onPointerDown={(e) => { e.preventDefault(); e.stopPropagation(); }} onClick={() => setWhy(true)}>?</button>
           <button className={`autot ${transform ? 'on' : ''}`} tabIndex={-1} role="checkbox" aria-checked={transform} onPointerDown={(e) => { e.preventDefault(); e.stopPropagation(); }} onClick={toggleAuto}>

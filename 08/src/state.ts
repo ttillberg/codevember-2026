@@ -98,6 +98,8 @@ let clock = 0, handAt = -Infinity, orbitAt = -Infinity;
 /** AUTOTRANSFORM switched on: it starts now, not IDLE after the last hand on the machine (it waited, and on a phone,
  * a finger having touched a strut, it looked dead for half a minute). */
 export function transformNow() { handAt = -Infinity; }
+/** TURNTABLE switched on: the same, it turns now, not IDLE after the last orbit by hand. */
+export function turntableNow() { orbitAt = -Infinity; }
 export function orbitBy(dy: number, dp: number, dt: number) {
   orbitAt = clock;
   rig.orbiting = true;
