@@ -428,6 +428,23 @@ export function sleeveDecal(d: Decal): THREE.CanvasTexture {
   t.userData.bump = bump.t;
   const rough = gloss ? new THREE.CanvasTexture(gloss.c) : null;
   if (rough) { rough.wrapS = THREE.RepeatWrapping; t.userData.rough = rough; }
-  withLogos(() => { grunge(g, r, W, H, WEAR_INK(d.base), 0.5, bump.hg); bump.bake(); drawBrand(); t.needsUpdate = true; if (rough) rough.needsUpdate = true; });
+  // the sticker raised off the paint, a little: in the height sheet a smooth plateau where it is, the wear wiped
+  // off it, and round its edge a soft fall to the paint, so the light catches a rim all the way round (flat, for a while)
+  const emboss = (q: CanvasRenderingContext2D) => {
+    if (brand !== 'three') return;
+    const size = 200, stick = size * 1.45, cy = Math.min(Math.max(my, stick / 2), H - stick / 2);
+    q.save();
+    if (d.flip) { q.translate(W / 2, H / 2); q.rotate(Math.PI); q.translate(-W / 2, -H / 2); }
+    for (const o of [0, W]) {
+      q.save(); q.translate(bx + o + stick / 2, cy); q.scale(1 / SLEEVE_STRETCH, 1); q.rotate(ang);
+      q.filter = 'blur(2.5px)'; q.strokeStyle = '#5a5a5a'; q.lineWidth = 7;
+      q.beginPath(); q.arc(0, 0, stick / 2 + 3.5, 0, Math.PI * 2); q.stroke();
+      q.filter = 'none'; q.fillStyle = '#ffffff';
+      q.beginPath(); q.arc(0, 0, stick / 2, 0, Math.PI * 2); q.fill();
+      q.restore();
+    }
+    q.restore();
+  };
+  withLogos(() => { grunge(g, r, W, H, WEAR_INK(d.base), 0.5, bump.hg); emboss(bump.hg); bump.bake(); drawBrand(); t.needsUpdate = true; if (rough) rough.needsUpdate = true; });
   return t;
 }
