@@ -417,7 +417,11 @@ body.clean .plate, body.clean .keys { display: none; }
 .toball { position: fixed; left: 0; top: 0; z-index: 2; display: none; pointer-events: none; }
 .toball svg { display: block; overflow: visible; }
 .toball path { fill: var(--ball, var(--ink)); stroke: #fff; stroke-width: 1.4; stroke-linejoin: round; }
-.lock.on button::after { content: 'ed'; } /* docking: LOCKED */
+.lock.on .word::after { content: 'ing'; } /* docking: COLLECTING (LOCK and LOCKED, for a while: it collects the piece) */
+.lock button { display: inline-flex; align-items: center; gap: 8px; }
+.lock button .key { color: #fff; border-color: rgba(255, 255, 255, 0.85); height: 16px; font-size: 9px; text-shadow: none; } /* the key that does it, Enter, beside the word */
+.lock.on button .key { display: none; }
+@media (max-width: 640px), (max-height: 500px), (pointer: coarse) { .lock button .key { display: none; } } /* no keys on a phone */
 .lock i { border-color: var(--ball, currentColor); } /* the bracket in the piece's colour too */
 @keyframes lockblink { 0% { opacity: 1; } 100% { opacity: 0.35; } }
 

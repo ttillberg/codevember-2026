@@ -701,6 +701,7 @@ export function App() {
       if (k === 'p') { drone.frozen = !drone.frozen; return; } // pause everything (it was the pilot, which the pills do)
       if (k === 't') { toggleTransformRef.current(); return; } // transform, play or pause
       if (k === 'o') { st.inout = !st.inout; return; } // the hand-over at a wall: in, then out by default, o for folded
+      if (e.key === 'Enter' && drone.pilot) { e.preventDefault(); drone.catchAsk = true; return; } // COLLECT: dock and take the piece, if it is in the lock
       if (drone.pilot) {
         // manual: w s and up down forward and back, a d and the side arrows strafe, space forward, l the lock
         if (k === ' ' || k === 'w' || k === 'arrowup') keys.thrust = 1;
@@ -816,7 +817,7 @@ export function App() {
       {CLEAN || !beetle || !grid || maxi ? null : <div className="divider" />}
       {/* the lock round the piece in the view, and LOCK under it a button in the piece's colour: tapped, the probe docks
           and takes it (it docked on its own after half a second in the lock, for a while) */}
-      <div id="lock" className="lock"><i /><i /><i /><i /><button tabIndex={-1} onPointerDown={(e) => { e.preventDefault(); e.stopPropagation(); }} onClick={() => { drone.catchAsk = true; }}>lock</button></div>
+      <div id="lock" className="lock"><i /><i /><i /><i /><button tabIndex={-1} onPointerDown={(e) => { e.preventDefault(); e.stopPropagation(); }} onClick={() => { drone.catchAsk = true; }}><span className="word">Collect</span><Key wide>Enter</Key></button></div>
       {/* a little arrow on the view's rim, towards the piece while it is out of sight, in its colour (DroneCam) */}
       <div id="toball" className="toball" aria-hidden><svg width={22} height={22} viewBox="0 0 16 16"><path d="M3 2.5 14 8 3 13.5 5.5 8Z" /></svg></div>
       {/* bottom left, under the blurb and as wide: mode and settings; the shortcuts bottom right, as wide */}
@@ -831,6 +832,7 @@ export function App() {
         <Do how={<><Key>W</Key><Key>S</Key><Key><Tri d="up" /></Key><Key><Tri d="down" /></Key></>} what="Forward, back" />
         <Do how={<><Key>A</Key><Key>D</Key><Key><Tri d="left" /></Key><Key><Tri d="right" /></Key></>} what="Strafe" />
         <Do how={<Key wide>Space</Key>} what="Forward" />
+        <Do how={<Key wide>Enter</Key>} what="Collect" />
         {/* shift-drag to orbit and alt-drag to transform, under VIEW, were listed here for a while; they still work */}
         </> : null /* on its own the drawing bottom right says it, rotate and transform (listed, DRAG and DRAG AN EDGE, for a while) */}
       </div>}
