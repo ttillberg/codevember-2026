@@ -122,7 +122,7 @@ function dress(g: THREE.Group) {
   onCore([0.45, 0.85, -0.45], m.three, 0.55, 0.55);
   onCore([-0.45, 0.85, -0.45], m.pmndrs, 0.2, 0.2);
   onCore([0, -0.85, -0.5], m.serial, 0.5, 0.0625);
-  onCore([0.6, -0.3, 0.7], m.scuff[4], 0.7, 0.7, 0.5);
+  // no scuffs on the core, under the wings: a honeycomb there instead (honeycomb, in the copy's own material)
   [0, 1, 2, 3].forEach((k) => {
     const wall = g.getObjectByName(`wall_${k}`) as THREE.Mesh;
     const hit = skin(wall);
@@ -171,6 +171,32 @@ function relTo(o: THREE.Object3D, anc: THREE.Object3D, m = new THREE.Matrix4()) 
   m.identity();
   for (let p: THREE.Object3D | null = o; p && p !== anc; p = p.parent) m.premultiply(p.matrix);
   return m;
+}
+
+/** The core under the wings, a honeycomb: fine hexagonal ribs in a lighter graphite, laid on it from three sides by its
+ * own position (no UVs needed), each side weighted by how squarely the surface faces it, so the seams do not show. */
+const HEX = 16; // hexagons across a model unit
+function honeycomb(m: THREE.MeshStandardMaterial) {
+  m.onBeforeCompile = (sh) => {
+    sh.vertexShader = 'varying vec3 vHexP; varying vec3 vHexN;\n' + sh.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\n  vHexP = position; vHexN = normal;');
+    sh.fragmentShader = `varying vec3 vHexP; varying vec3 vHexN;
+float hexEdge(vec2 p) {
+  const vec2 s = vec2(1.0, 1.7320508);
+  vec4 hc = floor(vec4(p, p - vec2(0.5, 1.0)) / s.xyxy) + 0.5;
+  vec4 h = vec4(p - hc.xy * s, p - (hc.zw + 0.5) * s);
+  vec2 q = abs(dot(h.xy, h.xy) < dot(h.zw, h.zw) ? h.xy : h.zw);
+  return 0.5 - max(dot(q, s * 0.5), q.x);
+}
+float hexRib(vec2 p) { return 1.0 - smoothstep(0.025, 0.07, hexEdge(p * ${HEX.toFixed(1)})); }
+` + sh.fragmentShader.replace('#include <map_fragment>', `#include <map_fragment>
+  {
+    vec3 w = pow(abs(normalize(vHexN)), vec3(4.0)); w /= (w.x + w.y + w.z);
+    float rib = hexRib(vHexP.yz) * w.x + hexRib(vHexP.xz) * w.y + hexRib(vHexP.xy) * w.z;
+    diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.16, 0.16, 0.18), rib * 0.85);
+  }`);
+  };
+  m.customProgramCacheKey = () => 'hexcore';
+  m.needsUpdate = true;
 }
 
 /** A copy of the loaded model at `size` (its radius), with its hinges wired. Every mesh gets a material of its own,
@@ -260,6 +286,7 @@ export function device(model: THREE.Object3D, size: number): Device {
       const mesh = o as THREE.Mesh;
       const m = (mesh.material = (mesh.material as THREE.Material).clone()) as THREE.MeshStandardMaterial;
       if (m.transparent) m.depthWrite = false; // the glass
+      if (mesh.name === 'core') honeycomb(m);
       mats.push(m);
       if (m.emissive) tinted.push({ m, base: m.emissive.clone() });
       o.frustumCulled = false;
