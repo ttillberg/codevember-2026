@@ -95,6 +95,9 @@ function fold(q: number) {
 // the turntable waits, each IDLE seconds from the last touch, then picks up again (they ran on through it for a while).
 const IDLE = 30;
 let clock = 0, handAt = -Infinity, orbitAt = -Infinity;
+/** AUTOTRANSFORM switched on: it starts now, not IDLE after the last hand on the machine (it waited, and on a phone,
+ * a finger having touched a strut, it looked dead for half a minute). */
+export function transformNow() { handAt = -Infinity; }
 export function orbitBy(dy: number, dp: number, dt: number) {
   orbitAt = clock;
   rig.orbiting = true;

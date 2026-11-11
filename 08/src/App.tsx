@@ -8,7 +8,7 @@ import { DroneCam, eyeView, regionsOf, page } from './DroneCam';
 import { Grip, grip, strutAt, strutW, PICK_TOUCH } from './Grip';
 // CellMap (./CellMap.tsx), the cells' little map with their colours, is off the page for now
 import { drone } from './drone';
-import { st, rig, orbitBy, crankStart, crankBy, crankEnd, pose } from './state';
+import { st, rig, orbitBy, crankStart, crankBy, crankEnd, pose, transformNow } from './state';
 import { project } from './tesseract';
 import { dof } from './dof';
 
@@ -710,7 +710,7 @@ export function App() {
   // transform, and the turntable with it: the play/pause button bottom middle (a TRANSFORM switch under SETTINGS before)
   const toggleTransform = () => { st.transform = !st.transform; rig.spin = st.transform; setTransform(st.transform); };
   // AUTOTRANSFORM, top right of the view: the machine's turn in 4D on its own, alone, the turntable left as it is
-  const toggleAuto = () => { st.transform = !st.transform; setTransform(st.transform); };
+  const toggleAuto = () => { st.transform = !st.transform; if (st.transform) transformNow(); setTransform(st.transform); };
   // following, where from: FREE, BACK, SIDE, TOP, a switch under AUTOTRANSFORM
   const toggleTransformRef = useRef(toggleTransform); // for the keys, set up once
   toggleTransformRef.current = toggleAuto; // T: AUTOTRANSFORM's (the transform and the turntable together for a while)
