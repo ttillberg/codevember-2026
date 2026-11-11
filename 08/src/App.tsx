@@ -116,28 +116,6 @@ if (!rig.booted) {
 }
 
 
-// A phone's tilt (its device orientation, the gyroscope): leaning it turns the view a little round the machine, from how
-// it was held when the tilt came on. Asked for at the first touch's end (iOS wants a gesture and a yes); elsewhere it
-// just starts. TILT_K: degrees of view for a degree of lean; TILT_MAX the most either way.
-const tilt = { asked: false, base: null as null | [number, number], want: [0, 0], now: [0, 0] };
-const TILT_K = 0.7, TILT_MAX = THREE.MathUtils.degToRad(28);
-function tiltOn() {
-  if (tilt.asked || typeof DeviceOrientationEvent === 'undefined') return;
-  tilt.asked = true;
-  const listen = () => addEventListener('deviceorientation', (e) => {
-    if (e.beta == null || e.gamma == null) return;
-    // the lean across and the lean back, as the screen is turned (on its side the two swap)
-    const a = (screen.orientation?.angle ?? 0) % 360;
-    const across = a === 90 ? e.beta : a === 270 || a === -90 ? -e.beta : a === 180 ? -e.gamma : e.gamma;
-    const back = a === 90 ? -e.gamma : a === 270 || a === -90 ? e.gamma : a === 180 ? -e.beta : e.beta;
-    tilt.base ??= [across, back];
-    const c = (v: number) => THREE.MathUtils.clamp(THREE.MathUtils.degToRad(v * TILT_K), -TILT_MAX, TILT_MAX);
-    tilt.want = [c(across - tilt.base[0]), c(back - tilt.base[1])];
-  });
-  const D = DeviceOrientationEvent as unknown as { requestPermission?: () => Promise<string> };
-  if (typeof D.requestPermission === 'function') D.requestPermission().then((s) => { if (s === 'granted') listen(); }).catch(() => {});
-  else listen();
-}
 
 /** The machine and the device on a rig with a fixed tilt; the camera orbits round it. */
 function Rig({ children }: { children: React.ReactNode }) {
@@ -168,9 +146,8 @@ function Rig({ children }: { children: React.ReactNode }) {
     project(pose(), drone.p, focusAt).applyQuaternion(rig.q).multiplyScalar(lean);
     const sdt = drone.frozen ? 0 : dt; // P: what goes after the beetle holds too; a drag and the wheel still go
     rig.focus.lerp(focusAt, Math.min(1, sdt * 0.8));
-    // a phone's lean, eased, on top of the orbit
-    tilt.now[0] += (tilt.want[0] - tilt.now[0]) * Math.min(1, dt * 6); tilt.now[1] += (tilt.want[1] - tilt.now[1]) * Math.min(1, dt * 6);
-    const yaw = rig.yaw - tilt.now[0], pitch = THREE.MathUtils.clamp(rig.pitch + tilt.now[1] * 0.6, -1.4, 1.4);
+    // the orbit alone (a phone's lean, its device orientation, on top of it for a while)
+    const yaw = rig.yaw, pitch = THREE.MathUtils.clamp(rig.pitch, -1.4, 1.4);
     camera.position.setFromSphericalCoords(rig.zoom, Math.PI / 2 - pitch, yaw);
     // follow (the switch): the same orbit, round the beetle instead of the machine's middle, nearer; eased in and out
     tail.lerp(drone.world, Math.min(1, sdt * (rig.close ? CLOSE_LAG * 2 : FOLLOW_EASE))); // in close, the look right on it
@@ -837,8 +814,7 @@ export function App() {
     </div>
   </>;
 
-  const stageHandlers = { onPointerDown: dragDown, onPointerMove: dragMove, onLostPointerCapture: dragEnd, onPointerLeave: () => { grip.in = false; },
-    onPointerUp: (e: React.PointerEvent) => { if (e.pointerType === 'touch') tiltOn(); } }; // a touch's end, a gesture iOS lets ask for the tilt
+  const stageHandlers = { onPointerDown: dragDown, onPointerMove: dragMove, onLostPointerCapture: dragEnd, onPointerLeave: () => { grip.in = false; } };
 
   return (
     <>
