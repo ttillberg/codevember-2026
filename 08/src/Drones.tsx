@@ -130,6 +130,7 @@ const GLOW = 0.9; // the strength of the cell-colour tint on a half in a wall: 0
 // on its own, for a while): it turns its eye on it and closes to a scoop's reach (device radii, in cell space), and the
 // catch takes over
 const STAND = 2.0;
+const BROW_EVERY: [number, number] = [3, 8], BROW_ALERT = 2.4; // the brows: seconds between turns; rad/s on and on with the piece in sight
 const REACH3 = 1.9; // where the piece should sit when the device stops, in device radii, on screen
 type Phase = 'seek' | 'dock' | 'settle' | 'catch' | 'turn' | 'rest';
 // at the controls: cell-space units per second squared and per second, radians per second
@@ -233,7 +234,7 @@ export function Drones() {
       wall: null as Wall | null, // the wall the flight has it at, if any
       plan: [] as Step[], phase: 'seek' as Phase, t: 0, // the steps to the piece; the catch's phase and its clock
       eyeCap: null as THREE.Object3D | null, // the eye cap, found once: which way it looks, for the chase camera
-      grip: 0, shut: 0, lockT: 0, // the scoop out, and shut; seconds the piece has been in the lock
+      grip: 0, shut: 0, lockT: 0, brow: 0, browTo: 0, browIn: 3, // the brows' turn, where it is going, and seconds till the next // the scoop out, and shut; seconds the piece has been in the lock
       grabOf: null as V4 | null, grabLocal: new THREE.Vector3(), // the piece taken, and where it was from the device then, in its frame
       shield: 0, blink: Infinity, nextBlink: 3 + Math.random() * 5, // seconds into the blink; seconds to a blink of its own
       wasPilot: false,
@@ -560,7 +561,14 @@ export function Drones() {
     const wantShield = field > 0.12 ? 1 : capture ? 0 : WINGS_REST;
     s.shield += (wantShield - s.shield) * Math.min(1, dt * (wantShield > s.shield ? 5 : 2.5));
     drone.shield = s.shield; drone.shutter = shut; drone.grip = s.grip;
-    const drive = (dev: Device) => { dev.shield(s.shield); dev.shutter(shut); dev.grip(s.grip, drone.gripAt, s.shut); };
+    // the brows turn round the eye now and then, a quarter or so, eased; with the piece in sight they turn on and on, as if
+    // reading it (still, for a while)
+    const alert = near || drone.lockable || s.phase === 'settle' || s.phase === 'dock';
+    s.browIn -= dt;
+    if (alert) { s.browTo += dt * BROW_ALERT; s.browIn = BROW_EVERY[0]; }
+    else if (s.browIn <= 0) { s.browTo += (Math.random() < 0.5 ? -1 : 1) * (Math.PI / 4 + Math.random() * Math.PI / 3); s.browIn = BROW_EVERY[0] + Math.random() * (BROW_EVERY[1] - BROW_EVERY[0]); }
+    s.brow += (s.browTo - s.brow) * Math.min(1, dt * (alert ? 8 : 3));
+    const drive = (dev: Device) => { dev.shield(s.shield); dev.shutter(shut); dev.grip(s.grip, drone.gripAt, s.shut); dev.brow(s.brow); };
     drive(s.q);
 
     // draw: where it is in 3D. Its orientation lives in cell space, drone.q: at the controls the pilot's, on its own

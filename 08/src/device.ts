@@ -25,6 +25,8 @@ export type Device = {
   fade: (k: number) => void;
   /** 0 open (fins back) to 1 shut (the walls closed round the body). */
   shield: (k: number) => void;
+  /** The brows, the four arcs round the eye: turned this far round the eye's axis (rad). */
+  brow: (a: number) => void;
   /** 0 open to 1 shut, the blades across the eye. */
   shutter: (k: number) => void;
 };
@@ -193,6 +195,8 @@ function shellCentre(geo: THREE.BufferGeometry) {
  * turned to its centre), laid on from three sides by position (no UVs needed), each side weighted by how squarely
  * the surface faces it, so the seams do not show. */
 const WHITE_PLASTIC = '#efefeb';
+const BROW_R = 0.73; // the brows' reach from the middle: on the core (0.7), at its collar (0.72), not hovering off it (0.8 for a moment)
+const BLACK = '#121214'; // the blue, gone to black
 const HEX = 16; // hexagons across a model unit
 function honeycomb(m: THREE.MeshStandardMaterial, centre: THREE.Vector3) {
   m.onBeforeCompile = (sh) => {
@@ -230,6 +234,26 @@ export function device(model: THREE.Object3D, size: number): Device {
   g.scale.setScalar(size);
   // the rest pose in the file is open; the hinges turn in a fixed ratio from there (blender: leaf 95 -> 160, wall -55 -> 0)
   const walls = [0, 1, 2, 3].map((k) => { const w = g.getObjectByName(`wall_${k}`)!; return { o: w, rest: w.rotation.x }; });
+  // the brows: the four arcs that hung by the wings' lips, off the body; taken off the hinges onto one ring on the
+  // core, drawn in to sit close round it, so they turn together round the eye's axis
+  const root = g.getObjectByName('core')!.parent!;
+  g.updateMatrixWorld(true);
+  const brows = new THREE.Group();
+  root.add(brows);
+  const inv = new THREE.Matrix4().copy(root.matrixWorld).invert();
+  let browR = 0;
+  for (let k = 0; k < 4; k++) {
+    const l = g.getObjectByName(`wall_light_${k}`) as THREE.Mesh | undefined;
+    if (!l) continue;
+    l.updateMatrixWorld(true);
+    const m = new THREE.Matrix4().multiplyMatrices(inv, l.matrixWorld);
+    l.parent!.remove(l);
+    m.decompose(l.position, l.quaternion, l.scale);
+    brows.add(l);
+    l.geometry.computeBoundingSphere();
+    browR = Math.max(browR, l.geometry.boundingSphere!.center.clone().applyMatrix4(l.matrix).length());
+  }
+  if (browR > 0) brows.scale.setScalar(BROW_R / browR); // in close, just off the core (they hung out round the wings, for a while)
 
   // the works: hinges and actuators, in the frame the core sits in
   works ??= makeWorks();
@@ -309,6 +333,8 @@ export function device(model: THREE.Object3D, size: number): Device {
       if (m.transparent) m.depthWrite = false; // the glass
       // no bare metal on it: what was steel or chrome is a white plastic now, satin (metal against the graphite, for a while)
       if (m.metalness > 0.5) { m.metalness = 0; m.roughness = 0.35; m.color?.set(WHITE_PLASTIC); m.map = null; }
+      // no blue on it either: the collar, the brows and the back glow black, gloss, lit only by a crossing's tint (blue, for a while)
+      if (m.name === 'blue') { m.color.set(BLACK); m.emissive.set('#000000'); m.roughness = 0.3; }
       if (/^wall_\d$/.test(mesh.name)) honeycomb(m, shellCentre(mesh.geometry)); // under the wings (on the core, for a moment)
       mats.push(m);
       if (m.emissive) tinted.push({ m, base: m.emissive.clone() });
@@ -338,6 +364,7 @@ export function device(model: THREE.Object3D, size: number): Device {
       faded = on; fadeK = k;
     },
     grip,
+    brow: (a) => { brows.rotation.z = a; },
     shield: (k) => {
       if (Math.abs(k - shieldK) < 1e-4) return; // at rest: nothing moves
       shieldK = k;
