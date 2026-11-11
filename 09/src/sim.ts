@@ -272,6 +272,15 @@ export function createSim(ctx: Ctx): Module {
     out.applyQuaternion(qInv).normalize();
   }
 
+  /** Where the pointer's ray (set by finger) meets the sphere of radius r, or the point of
+   *  that sphere nearest the ray if it passes outside. Unit direction, sphere-local. */
+  function lifted(r: number, out: Vector3) {
+    const b = rayO.dot(rayD);
+    const disc = b * b - (rayO.lengthSq() - r * r);
+    out.copy(rayO).addScaledVector(rayD, disc >= 0 ? -b - Math.sqrt(disc) : -b);
+    out.applyQuaternion(qInv).normalize();
+  }
+
   /** Take hold of the film at the grab. */
   function startPull(): boolean {
     if (!peeler.start(grab.piece!.id, grab.e, grab.n)) return false;
@@ -301,8 +310,12 @@ export function createSim(ctx: Ctx): Module {
       return;
     }
     finger(tH);
-    rot.setFromUnitVectors(hit0, tH);
     const travel = hit0.angleTo(tH);
+    // The hand lifts as it pulls. The finger is on the pointer's ray, as high above the
+    // sphere as the pull has earned: over the place where the film comes off, not dragged
+    // flat along the surface. Past the silhouette that ray still meets the raised shell.
+    lifted(R + peeler.rise(travel), tH);
+    rot.setFromUnitVectors(hit0, tH);
     pullSpeed += (Math.abs(travel - lastTravel) / dt - pullSpeed) * (1 - Math.exp(-12 * dt));
     lastTravel = travel;
     peeler.carry(rot, travel);

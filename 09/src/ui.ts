@@ -38,11 +38,12 @@ const KNOBS: Array<[keyof Tune, string, number, number, string]> = [
   ['shear', 'shear', 0, 15, 'How much film dragged flat along the surface holds out, compared with film folded back and peeled. Higher keeps the peel a narrow tongue along the pull.'],
   ['load', 'front', 0, 4, 'How much a wide peel front weighs. At 0 width makes no difference. Only matters with cling above 0.'],
   ['stiff', 'taut', 0.1, 1, 'How tight the loose sheet is. Low is slack, 1 is taut. Looks only.'],
-  ['lift', 'lift', 0, 1, 'How high the finger lifts the film off the surface as you pull.'],
+  ['lift', 'lift', 0, 1, 'How the hand pulls. 0 drags the film flat back over itself. 1 lifts it up and away as it goes, so the finger stays over the place where the film comes off.'],
   ['ghost', 'ghost', 0, 1, 'How visible the lifted film stays behind the front. 0 fades out, 1 stays solid. Looks only.'],
   ['rough', 'rough', 0, 1, 'How unevenly the film sticks from spot to spot. 0 gives a clean front, 1 a stuttering one.'],
   ['tear', 'tear', 0, 10, 'Strength. The film breaks off when the peel front gets this wide, sooner on a fast pull. 0 never breaks.'],
   ['edge', 'edge', 0, 1, 'How much more easily the film lets go along a free edge than in the middle. Higher lets the peel run out along a cut, so the front meets it as an arc.'],
+  ['straight', 'straight', 0, 1, 'Above 0.5 the lifted film is a taut flat sheet: stuck film lying under it lets go, so the front runs straight from edge to edge. Below 0.5 each spot only answers for itself.'],
   ['grip', 'grip', 1, 12, 'How wide a strip of the edge the finger holds. Narrow gathers the film to a point, wide pulls it off flat. Takes effect on the next grab.'],
 ];
 
