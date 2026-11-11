@@ -68,12 +68,13 @@ export function regionsOf(W: number, H: number): { main: Rect; cam: Rect | null;
   // half the room beside the column, for a while)
   // the machine fits and is aimed in its part, but drawn on the whole page, the column transparent over it, all but
   // the view (it stopped at the column, for a while)
-  const main = { x: left, y: 0, w: W - left, h: H }, all = { x: 0, y: 0, w: W, h: H };
+  // fitted and aimed on the whole page now, the tesseract in its middle (in the room beside the column, for a while)
+  const all = { x: 0, y: 0, w: W, h: H }, main = all, beside = { x: left, y: 0, w: W - left, h: H };
   if (!split) return { main, cam: null, draw: [all] };
   // the probe's section sits on the view, under the text: the view the room between them (page.probeH, its height)
   const w = Math.min(380, W - 48), h = Math.round(Math.max(COL_MIN_H, Math.min(w, H - COL_OVER - page.textBottom - 16 - page.probeH - 14)));
   const cam = { x: 24, y: H - COL_OVER - h, w, h };
-  const draw = [main, { x: 0, y: 0, w: left, h: cam.y }, { x: 0, y: cam.y + h, w: left, h: H - cam.y - h }, { x: 0, y: cam.y, w: cam.x, h }, { x: cam.x + w, y: cam.y, w: left - cam.x - w, h }];
+  const draw = [beside, { x: 0, y: 0, w: left, h: cam.y }, { x: 0, y: cam.y + h, w: left, h: H - cam.y - h }, { x: 0, y: cam.y, w: cam.x, h }, { x: cam.x + w, y: cam.y, w: left - cam.x - w, h }];
   return { main, cam, draw };
 }
 const CAM_RADIUS = 3; // a desktop's view's corners (CSS px)
