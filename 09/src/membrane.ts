@@ -220,6 +220,7 @@ uniform sampler2D uId;    // film.id: nearest, low and high byte of the piece id
 uniform vec4 uUnder;      // top layer underside rgb, roughness
 uniform vec3 uTop;        // top layer opacity, translucent (0/1), scatter alpha
 uniform sampler2D uPrint; // ink coverage of the print on the film, tiles
+uniform float uGrid;      // 1 draws the millimetre grid on the sphere, 0 leaves it plain
 uniform vec4 uEnv;        // env diffuse, env specular gloss / matte, direct specular matte
 
 #define LIFT_FADE_CELLS ${LIFT_FADE_CELLS.toFixed(1)}
@@ -407,7 +408,7 @@ const FRAG_NORMAL = /* glsl */ `
 const FRAG_COLOR = /* glsl */ `
   float liftFade = 1.0;
 #ifdef ROLE_UNDER
-  diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.2, 0.27, 0.36), 0.7 * mmGrid(P)); // grey-blue ink
+  diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.2, 0.27, 0.36), 0.7 * uGrid * mmGrid(P)); // grey-blue ink
 #else
   #ifdef ROLE_LIFTED
   // Both sides of the film look the same: gathered film turns its facets every which way,
@@ -587,6 +588,7 @@ export function createMembrane(ctx: Ctx): Module {
     uLift: { value: liftTex },
     uLiftId: { value: 0 },
     uLiftFade: { value: 1 },
+    uGrid: { value: 1 },
     uLiftGhost: { value: 0.45 },
     uHoverId: { value: 0 },
     uHoverOk: { value: 1 },
@@ -646,10 +648,11 @@ export function createMembrane(ctx: Ctx): Module {
       if (!warmed) prewarm();
       group.quaternion.copy(world.rotation);
 
-      shared.uHoverId.value = world.hover.id;
+      shared.uHoverId.value = world.show.debug ? world.hover.id : 0;
       shared.uHoverOk.value = world.hover.ok ? 1 : 0;
       shared.uLiftId.value = world.lift.id;
       shared.uLiftFade.value = world.lift.fade;
+      shared.uGrid.value = world.show.grid ? 1 : 0;
       shared.uLiftGhost.value = world.lift.ghost;
       lifted.visible = world.lift.id !== 0;
     },

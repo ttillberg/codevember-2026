@@ -294,3 +294,11 @@ canvas { display: block; width: 100vw; height: 100vh; }
 @media (prefers-reduced-motion: reduce) {
   .ui *, .ui { transition: none !important; }
 }
+
+/* Under the sliders: toggles for what is drawn on top, and copy. */
+.extras { display: flex; gap: 6px; border-top: 1px solid var(--line); margin-top: 4px; padding-top: 8px; }
+.extras .btn { flex: 1 1 0; min-width: 0; padding: 0 6px; font-size: 12px; white-space: nowrap; }
+.extras .btn:not(.on):not(:last-child) { color: rgba(255, 255, 255, 0.45); }
+.extras .btn.on { color: var(--accent); border-color: rgba(143, 208, 255, 0.35); background-color: rgba(143, 208, 255, 0.14); }
+.extras { flex: none; padding-bottom: 2px; }
+.extras .btn { height: 36px; min-height: 36px; border-radius: 10px; }

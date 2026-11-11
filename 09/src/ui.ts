@@ -13,6 +13,10 @@ export interface UiHandlers {
   tools: readonly Tool[];
   /** Films, then bases. */
   finishes: readonly [readonly Finish[], readonly Finish[]];
+  /** What is drawn on top (world.show). The toggles write here. */
+  show: { debug: boolean; grid: boolean };
+  /** Every setting as text, for the copy button. */
+  settings(): string;
   onTool(t: Tool): void;
   /** Pick finish `variant` for `index` (0 film, 1 base). */
   onFinish(index: number, variant: number): void;
@@ -27,6 +31,8 @@ export interface Ui {
   setFinish(index: number, variant: number): void;
   /** Read every slider back from `tune`. */
   syncSliders(): void;
+  /** Read the toggles back from `show`. */
+  syncShow(): void;
   /** Steps that can be undone and redone; 0 disables the button. */
   setHistory(undo: number, redo: number): void;
 }
@@ -280,6 +286,42 @@ export function createUi(h: UiHandlers): Ui {
     return { key, input, show };
   });
 
+  // Under the sliders: what is drawn on top, and the settings as text.
+  const extras = el('div', 'extras');
+  body.append(extras);
+  const toggles = ([['debug', 'debug', 'Outline of what a press would grab, the finger marker and the tension lines'], ['grid', 'grid', 'The millimetre grid on the sphere']] as const)
+    .map(([key, label, text]) => {
+      const b = button('btn chip', () => { h.show[key] = !h.show[key]; paint(); }, text);
+      b.textContent = label;
+      b.setAttribute('role', 'switch');
+      const paint = () => { b.classList.toggle('on', h.show[key]); b.setAttribute('aria-checked', String(h.show[key])); };
+      extras.append(b);
+      return paint;
+    });
+  const copy = button('btn chip', () => {
+    const text = h.settings();
+    const done = (ok: boolean) => {
+      copy.textContent = ok ? 'copied' : 'no clipboard';
+      window.setTimeout(() => { copy.textContent = 'copy settings'; }, 1200);
+    };
+    // The clipboard API needs https or localhost; on a phone over the LAN it is not there.
+    const byHand = () => {
+      const t = document.createElement('textarea');
+      t.value = text;
+      t.style.cssText = 'position:fixed;left:0;top:0;opacity:0;';
+      document.body.append(t);
+      t.select();
+      let ok = false;
+      try { ok = document.execCommand('copy'); } catch { /* fine */ }
+      t.remove();
+      done(ok);
+    };
+    if (navigator.clipboard?.writeText) navigator.clipboard.writeText(text).then(() => done(true), byHand);
+    else byHand();
+  }, 'Copy every setting as text');
+  copy.textContent = 'copy settings';
+  extras.append(copy);
+
   let open = false;
   function setOpen(o: boolean) {
     open = o;
@@ -314,6 +356,7 @@ export function createUi(h: UiHandlers): Ui {
       if (index === 1) base = g.list[variant].color;
       paintSwatches();
     },
+    syncShow() { for (const paint of toggles) paint(); },
     syncSliders() {
       for (const s of sliders) { s.input.value = String(tune[s.key]); s.show(); }
     },

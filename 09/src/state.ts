@@ -80,6 +80,10 @@ export interface World {
    *  it has carried that to (unit, sphere-local; it rolls on over the back of the sphere past
    *  the silhouette), and how high it holds the film. Drawn as a cross bent round the sphere. */
   finger: { active: boolean; from: Vector3; at: Vector3; height: number };
+  /** What is drawn on top of the piece itself. debug: the outline of the piece a press
+   *  would grab, the finger marker and the tension lines. grid: the millimetre grid on the
+   *  sphere. */
+  show: { debug: boolean; grid: boolean };
   /** Debug: where the pull is, as line segments in sphere-local space (two points a
    *  segment, xyz) with a colour a point (rgb). Blue slack, yellow taut, red about to let
    *  go. `count` is the number of points in use this frame. */

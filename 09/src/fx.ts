@@ -93,7 +93,7 @@ export function createFx(ctx: Ctx): Module {
 
   function drawMarker() {
     const f = world.finger;
-    marker.visible = f.active;
+    marker.visible = f.active && world.show.debug;
     if (!f.active) return;
     marker.quaternion.copy(world.rotation);
     // u: along the pull at the finger (back towards the grab), v: across it
@@ -123,7 +123,7 @@ export function createFx(ctx: Ctx): Module {
 
   function drawTension() {
     const t = world.tension;
-    tLines.visible = world.finger.active && t.count > 0;
+    tLines.visible = world.show.debug && world.finger.active && t.count > 0;
     if (!tLines.visible) return;
     tLines.quaternion.copy(world.rotation);
     tGeo.setDrawRange(0, t.count);

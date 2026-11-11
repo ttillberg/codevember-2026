@@ -47,6 +47,7 @@ export function createWorld(): World {
     tool: 'hand',
     aim: { active: false, x0: 0, y0: 0, x1: 0, y1: 0, valid: false },
     hover: { id: 0, ok: true },
+    show: { debug: true, grid: true },
     tension: { pos: new Float32Array(TENSION_POINTS * 3), col: new Float32Array(TENSION_POINTS * 3), count: 0 },
     finger: { active: false, from: new Vector3(0, 0, 1), at: new Vector3(0, 0, 1), height: 0 },
     time: 0,
@@ -552,6 +553,9 @@ export function createSim(ctx: Ctx): Module {
   const ui = createUi({
     tools: TOOLS,
     finishes: [FILMS, ROOTS],
+    show: world.show,
+    // every setting as text, to paste somewhere else
+    settings: () => JSON.stringify({ film: world.layer.name, base: world.next.name, tune, show: world.show }, null, 2),
     onTool: setTool,
     onFinish: setFinish,
     onBench: bench,
@@ -623,13 +627,16 @@ export function createSim(ctx: Ctx): Module {
     }
     ui.syncSliders();
   }
+  if (typeof saved?.show?.debug === 'boolean') world.show.debug = saved.show.debug;
+  if (typeof saved?.show?.grid === 'boolean') world.show.grid = saved.show.grid;
+  ui.syncShow();
   let stored = settingsNow();
   let storeIn = 0;
 
   function settingsNow(): string {
-    return JSON.stringify({ film: world.layer.name, base: world.next.name, tune });
+    return JSON.stringify({ film: world.layer.name, base: world.next.name, tune, show: world.show });
   }
-  function loadSettings(): { film?: string; base?: string; tune?: Partial<Record<keyof Tune, unknown>> } | null {
+  function loadSettings(): { film?: string; base?: string; tune?: Partial<Record<keyof Tune, unknown>>; show?: { debug?: unknown; grid?: unknown } } | null {
     try { return JSON.parse(localStorage.getItem(STORE) ?? 'null'); } catch { return null; }
   }
   /** Write the settings out if they changed. Storage can be missing or full: then not. */
