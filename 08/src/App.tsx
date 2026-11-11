@@ -91,7 +91,7 @@ function ModeMenu({ mode, pick }: { mode: Mode; pick: (m: Mode) => void }) {
   return (
     <div ref={ref} className={`modemenu ${open ? 'open' : ''}`}>
       <button className="now" tabIndex={-1} aria-haspopup="listbox" aria-expanded={open} onPointerDown={stop} onClick={() => setOpen(!open)}>
-        {MODES.find(([m]) => m === mode)?.[1] ?? 'Probe'}
+        {MODES.find(([m]) => m === mode)?.[1]}
         <svg width={9} height={9} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={2.4} strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M3.5 6 8 10.5 12.5 6" /></svg>
       </button>
       {open ? <div className="list" role="listbox" aria-label="Mode">
@@ -856,11 +856,6 @@ export function App() {
         {CLEAN ? null : <div className="corner">
           {/* a phone's mode: a dropdown top right, over AUTOTRANSFORM (the three pills on a row at the foot, for a while) */}
           <ModeMenu mode={mode} pick={setMode} />
-          {/* PROBE at a tap: a round button beside the mode, a target; on it, a tap goes back to where it was */}
-          <button className={`focus ${mode === 'probe' ? 'on' : ''}`} tabIndex={-1} aria-label={mode === 'probe' ? 'Back from the probe' : 'Focus on the probe'} aria-pressed={mode === 'probe'}
-            onPointerDown={(e) => { e.preventDefault(); e.stopPropagation(); }} onClick={() => setMode(mode === 'probe' ? lastAuto.current : 'probe')}>
-            <svg width={15} height={15} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" aria-hidden><circle cx={12} cy={12} r={7} /><circle cx={12} cy={12} r={2.2} fill="currentColor" stroke="none" /><path d="M12 1.5v3.5M12 19v3.5M1.5 12H5M19 12h3.5" /></svg>
-          </button>
           {/* and beside it a wheel, the settings: AUTOTRANSFORM in it (on its own under the dropdown, for a while) */}
           <Settings transform={transform} toggle={toggleAuto} turntable={turntable} toggleTurntable={toggleTurntable} blur={blur} toggleBlur={toggleBlur} />
           <button className={`autot ${transform ? 'on' : ''}`} tabIndex={-1} role="checkbox" aria-checked={transform} onPointerDown={(e) => { e.preventDefault(); e.stopPropagation(); }} onClick={toggleAuto}>
