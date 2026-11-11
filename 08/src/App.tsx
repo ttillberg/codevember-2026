@@ -38,7 +38,7 @@ const MODES: [Mode, string][] = [
   ['pilot', 'Pilot'],
 ];
 
-/** The ?'s note: why this is short, and two days late, put next to a stamp collector's drawer (next to Pascal, Kubrick and the rest, for a moment). Frosted, over everything; a tap outside it, the x or Esc closes it. */
+/** The ?'s note: why this is short, and two days late, plainly (next to Pascal, Kubrick and the rest, then a stamp collector's drawer, for a moment). Frosted, over everything; a tap outside it, the x or Esc closes it. */
 function Note({ close }: { close: () => void }) {
   useEffect(() => {
     const key = (e: KeyboardEvent) => { if (e.key === 'Escape') { e.stopPropagation(); close(); } };
@@ -54,10 +54,9 @@ function Note({ close }: { close: () => void }) {
         <h3>On cutting short</h3>
         <p>Codevember is one small thing a day. A day is a short form, and the whole point of a short form is that it stays short. This one is two days late.</p>
         <p>It began as a tesseract that turns. To make the turn readable it needed something living inside it, so a probe; the probe needed a view, the view a map, the map a lens, the walls a honeycomb, the honeycomb a ripple. Each step made sense on its own. In the end I took out nine tenths of it. And the honest part is that most of what is left could have been had without all that work. Almost.</p>
-        <p>There are people who spend their evenings sorting stamps by the teeth along their edges. In 1866 a French doctor, Jacques Legrand, made a ruler for it, the perforation gauge, so that two stamps that look the same to everyone else can be told apart by half a hole every two centimetres. To the collector that is the whole difference. The albums go back in a drawer. Nobody asks to see them.</p>
-        <p>That is nearer to what this is. The marks on the struts that nobody reads, a honeycomb finer than the eye can tell, a wave that was tried and taken out again: stamps in a drawer. Not wasted, exactly. Just not for anyone else.</p>
-        <p>The almost is the part I keep. Without the nine tenths there is a cube in a cube that turns. With them there is a cube in a cube that turns, and I know why it looks the way it does. It is a small difference, the size of half a hole. Most days it is the one I am after.</p>
-        <p className="sign">Two days late. The drawer is a little fuller.</p>
+        <p>The marks on the struts that nobody reads, a honeycomb finer than the eye can tell, a wave that was tried and taken out again. Not wasted, exactly. Just not for anyone else.</p>
+        <p>The almost is the part I keep. Without the nine tenths there is a cube in a cube that turns. With them there is a cube in a cube that turns, and I know why it looks the way it does. It is a small difference. Most days it is the one I am after.</p>
+        <p className="sign">Two days late. Still, it turns.</p>
       </article>
     </div>
   );
