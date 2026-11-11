@@ -201,6 +201,11 @@ const WHITE_PLASTIC = '#efefeb';
 // the warp at a wall, in world units against a probe some 0.063 across: the glowing band, the dithered band twice it,
 // how much at most thins away there, and the rings' frequency
 const WARP_W = 0.022, WARP_THIN = 0.7, WARP_RINGS = 420;
+const MOUNT_LAT = 22, MOUNT_R = 0.022; // the wings' mount: its hexagon's corners off the back axis (degrees), and its bars' radius
+const mountBar = new THREE.CylinderGeometry(1, 1, 1, 10, 1);
+const screwHead = new THREE.CylinderGeometry(0.03, 0.034, 0.024, 16);
+const screwSocket = new THREE.CylinderGeometry(0.013, 0.013, 0.01, 6);
+const screwDark = new THREE.MeshStandardMaterial({ color: '#0c0c0c', roughness: 0.8 });
 const BACK_K = 0.55; // the back's ring and glow, against their size as made
 const BROW_R = 0.73; // the brows' reach from the middle: on the core (0.7), at its collar (0.72), not hovering off it (0.8 for a moment)
 const BLACK = '#121214'; // the blue, gone to black
@@ -362,6 +367,44 @@ export function device(model: THREE.Object3D, size: number): Device {
     }
   };
   stroke();
+  // the mount: the wings held to the body. On the back of the core round its small ring, a hexagonal frame lying on
+  // its curve, screwed down at its six corners; from it four arms run out along the core and up to the four hinges
+  // (the hinges sat on nothing, for a while)
+  {
+    const bar = (a: THREE.Vector3, b: THREE.Vector3, r = MOUNT_R) => {
+      const d = new THREE.Vector3().subVectors(b, a), L = d.length();
+      const m = new THREE.Mesh(mountBar, W.graphite);
+      m.position.copy(a).addScaledVector(d, 0.5);
+      m.quaternion.setFromUnitVectors(Y, d.normalize());
+      m.scale.set(r, L, r);
+      frame.add(m);
+    };
+    const BACK = new THREE.Vector3(0, 0, 1);
+    const onBack = (deg: number, around: number, r: number) => {
+      const a = (deg * Math.PI) / 180, side = new THREE.Vector3(Math.cos(around), Math.sin(around), 0);
+      return new THREE.Vector3().addScaledVector(BACK, Math.cos(a)).addScaledVector(side, Math.sin(a)).multiplyScalar(r);
+    };
+    const corners = [0, 1, 2, 3, 4, 5].map((k) => onBack(MOUNT_LAT, (k * Math.PI) / 3, 0.715));
+    corners.forEach((c, k) => {
+      bar(c, corners[(k + 1) % 6]);
+      // a screw at each corner: a low head on the curve, facing out, a dark socket in it
+      const n = c.clone().normalize();
+      for (const [geo, mat, out] of [[screwHead, W.steel, 0.012], [screwSocket, screwDark, 0.02]] as const) {
+        const s = new THREE.Mesh(geo, mat);
+        s.position.copy(n).multiplyScalar(0.715 + out);
+        s.quaternion.setFromUnitVectors(Y, n);
+        frame.add(s);
+      }
+    });
+    // the arms: from the frame, straight out each hinge's way, along the core and up into the hinge
+    SIDES.forEach((side) => {
+      const around = Math.atan2(side.y, side.x);
+      const from = onBack(MOUNT_LAT * (Math.abs(Math.sin(3 * around)) > 0.5 ? 0.87 : 1), around, 0.712); // a corner, or an edge's middle
+      const knee = onBack(27, around, 0.735);
+      const hinge = onSphere(side, 150, 0.965);
+      bar(from, knee); bar(knee, hinge.clone().multiplyScalar(0.985));
+    });
+  }
   const leaves = [0, 1, 2, 3, 4, 5, 6, 7].map((i) => { const l = g.getObjectByName(`leaf_${i}`)!; return { o: l, rest: l.rotation.y }; });
   // every material of this copy, gathered once; the tintable ones keep their own emissive as made
   const mats: THREE.Material[] = [], tinted: { m: THREE.MeshStandardMaterial; base: THREE.Color }[] = [];
