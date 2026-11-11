@@ -260,13 +260,13 @@ body.home .stage .corner { top: 10px; right: 10px; }
   /* the top's pills as big as the title beside them (9 px words, a smaller pill, for a while) */
   .modemenu .now, .stage .autot { font-size: 11px; padding: 10px 14px 9px; gap: 10px; }
   .modemenu .now svg { width: 11px; height: 11px; }
-}
-@media (max-width: 400px) {
-  .modemenu .now { letter-spacing: 0.08em; padding: 10px 10px 9px 12px; gap: 7px; } /* narrow: the dropdown tighter, so FOLLOW keeps clear of the bigger title */
   .stage .autot .box { width: 13px; height: 13px; }
   .modemenu .list { min-width: 160px; }
   .modemenu .list button, .settings .list button { font-size: 12px; padding: 13px 14px 12px; }
   body .keys { display: none; } /* the pills give way to the dropdown */
+}
+@media (max-width: 400px) {
+  .modemenu .now { letter-spacing: 0.08em; padding: 10px 10px 9px 12px; gap: 7px; } /* narrow: the dropdown tighter, so FOLLOW keeps clear of the bigger title */
 }
 /* the cheat sheet, an upright phone's home page's: one frosted sheet under the box, two little line drawings
    on it, as an assembly manual draws them, a hairline between and a word under each; folded away with the text (over
