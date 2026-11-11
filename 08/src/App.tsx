@@ -7,9 +7,9 @@ import { Drones } from './Drones';
 import { DroneCam, eyeView, regionsOf, page } from './DroneCam';
 import { Grip, grip, strutAt, strutW, PICK_TOUCH } from './Grip';
 // CellMap (./CellMap.tsx), the cells' little map with their colours, is off the page for now
-import { drone } from './drone';
+import { drone, target } from './drone';
 import { st, rig, orbitBy, crankStart, crankBy, crankEnd, pose, transformNow, turntableNow } from './state';
-import { project } from './tesseract';
+import { project, VERTS } from './tesseract';
 import { dof } from './dof';
 
 const PARAMS = new URLSearchParams(location.search);
@@ -243,7 +243,7 @@ function Rig({ children }: { children: React.ReactNode }) {
     dof.focus.copy(look).lerp(drone.world, rig.chaseK); // chasing, on the probe, not past it
     dof.aperture = THREE.MathUtils.lerp(DOF_WIDE, DOF_FOLLOW, fk);
     dof.skip = !rig.follow && !drone.pilot; // in ORBIT none, whatever the switch: the whole machine sharp (on there too, for a while)
-    if (rig.attract) { dof.skip = attract.kind === 'wide'; dof.focus.copy(drone.world); dof.aperture = attract.kind === 'close' ? DOF_CLOSE : DOF_FOLLOW; } // in ATTRACT on the probe, but for the wide shots
+    if (rig.attract) { dof.skip = attract.kind === 'wide'; dof.focus.copy(attract.focus); dof.aperture = attract.kind === 'follow' ? DOF_FOLLOW : DOF_CLOSE; } // in ATTRACT on what the shot is of, but for the wide shots
   });
   return <group ref={ref}>{children}</group>;
 }
@@ -256,8 +256,9 @@ const DOF_CLOSE = 0.016; // ATTRACT's close-ups: a shallow focus, the probe shar
 // little, so no shot is a still. It runs after the rest of the rig, over whatever the orbit and the follow eased.
 const BEAT = 3; // seconds
 const attract = {
-  on: false, next: 0, t: 0, len: BEAT, kind: 'wide' as 'wide' | 'follow' | 'close',
-  yaw: 0, pitch: 0, dist: 1, view: 0, dir: new THREE.Vector3(), drift: 0, crossings: -1, taken: 0,
+  on: false, next: 0, t: 0, len: BEAT, kind: 'wide' as 'wide' | 'follow' | 'close' | 'ball' | 'smoke' | 'joint',
+  yaw: 0, pitch: 0, dist: 1, view: 0, dir: new THREE.Vector3(), drift: 0, crossings: -1, taken: 0, joint: 0,
+  focus: new THREE.Vector3(), // what the shot is of, for the depth of field
 };
 // the follows: from where round the probe, in its own frame (ahead, to its right, up), and the camera's up its way or
 // the sky's
@@ -273,10 +274,12 @@ const sv = new THREE.Vector3(), pv = new THREE.Vector3();
 const rand = (a: number, b: number) => a + Math.random() * (b - a);
 function nextShot(early: boolean) {
   const a = attract;
-  // a wall or a catch: a close-up; else a wide or a close-up a third of the time each, a follow the rest
+  // a wall or a catch: a close-up; else, by chance: a wide, the probe close, the ball close, the smoke, a joint close
+  // as it moves, or a follow (the ball only while there is one up)
   const r = Math.random();
-  a.kind = early ? 'close' : r < 0.3 ? 'wide' : r < 0.55 ? 'close' : 'follow';
-  a.len = a.kind === 'follow' ? BEAT : BEAT / 2;
+  a.kind = early ? 'close' : r < 0.18 ? 'wide' : r < 0.36 ? 'close' : r < 0.5 ? (target.up ? 'ball' : 'close') : r < 0.64 ? 'smoke' : r < 0.76 ? 'joint' : 'follow';
+  a.len = a.kind === 'follow' ? BEAT : a.kind === 'smoke' ? BEAT * 0.66 : BEAT / 2;
+  a.joint = Math.floor(Math.random() * VERTS.length);
   a.t = 0; a.drift = rand(-1, 1);
   a.yaw = rand(0, Math.PI * 2); a.pitch = rand(-0.35, 0.9); a.dist = rand(0.55, 1.05);
   a.view = Math.floor(Math.random() * FOLLOWS.length);
@@ -300,7 +303,26 @@ function directShot(camera: THREE.Camera, dt: number, sdt: number, phone: boolea
     up.copy(WORLD_UP);
     return;
   }
+  if (a.kind === 'ball' || a.kind === 'joint') {
+    // in close on the piece, or on one of the joints, where it is now: as the machine turns, the camera goes with it
+    if (a.kind === 'ball' && !target.up) { nextShot(false); return; }
+    project(pose(), a.kind === 'ball' ? target.p : VERTS[a.joint], a.focus).applyQuaternion(rig.q);
+    pv.copy(a.dir).applyAxisAngle(WORLD_UP, a.drift * 0.4 * u);
+    camera.position.copy(a.focus).addScaledVector(pv, (a.kind === 'ball' ? CLOSE * 0.7 : CLOSE * 1.3) * (1 - 0.15 * u));
+    look.copy(a.focus);
+    up.copy(WORLD_UP);
+    return;
+  }
   sideV.crossVectors(chaseFwd, chaseUp).normalize();
+  if (a.kind === 'smoke') {
+    // the wake: a point a way back along it, the camera off to its side, looking along the drift of the clouds
+    a.focus.copy(drone.world).addScaledVector(chaseFwd, -SMOKE_BACK);
+    camera.position.copy(a.focus).addScaledVector(sideV, SMOKE_OUT * (a.drift > 0 ? 1 : -1)).addScaledVector(chaseUp, SMOKE_OUT * 0.35).addScaledVector(chaseFwd, -SMOKE_OUT * 0.3 * u);
+    look.copy(a.focus);
+    up.copy(chaseUp);
+    return;
+  }
+  a.focus.copy(drone.world);
   if (a.kind === 'follow') {
     const f = FOLLOWS[a.view], D = rig.zoom * (phone ? FOLLOW_PHONE : FOLLOW) * (1 + 0.15 * a.drift * u);
     sv.set(0, 0, 0).addScaledVector(chaseFwd, f.at[0]).addScaledVector(sideV, f.at[1]).addScaledVector(chaseUp, f.at[2]).normalize();
@@ -317,6 +339,7 @@ function directShot(camera: THREE.Camera, dt: number, sdt: number, phone: boolea
   up.copy(WORLD_UP);
 }
 const CLOSE = 0.42; // world units: a close-up's distance from the probe, about four of its radii
+const SMOKE_BACK = 0.55, SMOKE_OUT = 0.6; // the wake's shot: how far back along it, and how far off to its side
 const look = new THREE.Vector3(), followAt = new THREE.Vector3();
 const part = { x: 0, y: 0, w: 0, h: 0 }; // the machine's part of the window, its middle and size, eased
 const DOF_WIDE = 0.007, DOF_FOLLOW = 0.009; // the blur at twice the focus distance, against the page's height
