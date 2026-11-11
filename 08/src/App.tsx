@@ -388,8 +388,12 @@ const Hand = ({ x, y, a, k = 0.72 }: { x: number; y: number; a: number; k?: numb
     <path className="skin" d={CUFF} />
   </g>
 );
-const Cheat = () => (
-  <div className="cheat" aria-hidden>
+const Cheat = ({ close }: { close: () => void }) => (
+  <div className="cheat">
+    {/* a small round x on its top right corner: away with it, and it stays away on this browser */}
+    <button className="x" aria-label="Dismiss the instructions" tabIndex={-1} onPointerDown={(e) => { e.preventDefault(); e.stopPropagation(); }} onClick={close}>
+      <svg width={7} height={7} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={2.8} strokeLinecap="round" aria-hidden><path d="M3 3l10 10M13 3 3 13" /></svg>
+    </button>
     <figure>
       {/* drawn after Theo's sketch: the cube, its hidden edges dashed, the strut in lime, the two ways it goes, and a
           gloved hand, its finger on the strut's foot (a thin hand and hairlines for a while) */}
@@ -511,6 +515,9 @@ function handUp() { if (hand.on && hand.picked) crankEnd(); hand.on = false; gri
 export function App() {
   const [transform, setTransform] = useState(st.transform);
   const [why, setWhy] = useState(false); // the ? and its note
+  // the instructions bottom right, until dismissed by their x; remembered on this browser if it lets us
+  const [cheat, setCheat] = useState(() => { try { return localStorage.getItem('08-cheat') !== 'off'; } catch { return true; } });
+  const dismissCheat = () => { setCheat(false); try { localStorage.setItem('08-cheat', 'off'); } catch { /* not kept, fine */ } };
   const [grid, setGrid] = useState(st.grid);
   const [maxi, setMaxi] = useState(eyeView.max);
   const [beetle, setBeetle] = useState(drone.on);
@@ -750,7 +757,7 @@ export function App() {
           {/* FREE | BACK | SIDE | TOP, where the follow is from, was here for a while: FREE, round it by the drag, kept */}
         </div>}
         {/* an upright phone's home page: how the hands work, in the box, bottom right (bottom left, and under it, titled INSTRUCTIONS, for a moment) */}
-        {CLEAN ? null : <Cheat />}{/* shown by the page: a phone's home page's box, a desktop's corner away from the controls (style.css) */}
+        {CLEAN || !cheat ? null : <Cheat close={dismissCheat} />}{/* shown by the page: a phone's home page's box, a desktop's corner away from the controls (style.css) */}
       </div>
       {CLEAN ? null : <div className={`plate ${open ? '' : 'folded'} ${beetle ? 'probing' : ''}`}><div className="head"><b>08 Tesseract</b><i><a className="home" href="../">Codevember 2026 <span lang="ja">すべてのプロジェクト</span></a></i></div>{beetle ? null : <div className="curtain"><button tabIndex={-1} aria-label={open ? 'Fold the text away' : 'Unfold the text'} onPointerDown={(e) => e.preventDefault()} onClick={() => setOpen(!open)}><svg width={10} height={10} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round" aria-hidden style={{ transform: open ? 'none' : 'rotate(180deg)' }}><path d="M2.5 10.5 8 5l5.5 5.5" /></svg></button></div>}</div>}
       {/* an upright phone's home page: under the box the probe, a line drawing of it, what it is, and the way in, the
