@@ -33,38 +33,11 @@ if (CLEAN) { eyeView.max = true; page.clean = true; }
 type Mode = 'attract' | 'orbit' | 'follow' | 'probe' | 'pilot';
 // in this order: ORBIT, FOLLOW, PILOT, from the farthest to the controls (follow, pilot, orbit for a moment)
 const MODES: [Mode, string][] = [
-  ['attract', 'Attract'],
+  ['attract', 'Demo'],
   ['orbit', 'Orbit'],
   ['follow', 'Follow'],
-  ['probe', 'Probe'],
   ['pilot', 'Pilot'],
 ];
-
-/** The ?'s note: why this is short, and two days late, plainly (next to Pascal, Kubrick and the rest, then a stamp collector's drawer, for a moment). Frosted, over everything; a tap outside it, the x or Esc closes it. */
-function Note({ close }: { close: () => void }) {
-  useEffect(() => {
-    const key = (e: KeyboardEvent) => { if (e.key === 'Escape') { e.stopPropagation(); close(); } };
-    addEventListener('keydown', key, true);
-    return () => removeEventListener('keydown', key, true);
-  }, []);
-  return (
-    <div className="note-veil" onPointerDown={(e) => { if (e.target === e.currentTarget) close(); }}>
-      <article className="note" role="dialog" aria-label="On cutting short">
-        <button className="x" aria-label="Close" onClick={close}>
-          <svg width={10} height={10} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={2.4} strokeLinecap="round" aria-hidden><path d="M3 3l10 10M13 3 3 13" /></svg>
-        </button>
-        <h3>On cutting short</h3>
-        <p>Thanks for your curiosity. I started writing proper documentation, but quickly realised most of it was either easier to figure out yourself or better left unexplained.</p>
-        <p>Codevember is supposed to be one small thing a day. This one is already two days late.</p>
-        <p>It started as a rotating tesseract. Then I added a little probe, which suddenly had to obey four-dimensional geometry while still looking reasonable in three dimensions. A surprisingly effective way of inventing problems that didn&rsquo;t need solving.</p>
-        <p>The probe needed a view, the view a map, the map a lens. Each addition seemed perfectly reasonable at the time.</p>
-        <p>Eventually I removed about ninety percent of it.</p>
-        <p>What remains is a cube inside a cube that turns. I seem to have a talent for inventing problems, solving them, and removing all evidence they ever existed.</p>
-        <p className="sign">At least the cube turns.</p>
-      </article>
-    </div>
-  );
-}
 
 /** Folds itself away on a tap anywhere outside `ref`, while `open`. */
 function useAway(open: boolean, close: () => void) {
@@ -90,7 +63,6 @@ const Check = ({ on, toggle, children }: { on: boolean; toggle: () => void; chil
 function Settings({ transform, toggle, turntable, toggleTurntable, blur, toggleBlur }: { transform: boolean; toggle: () => void; turntable: boolean; toggleTurntable: () => void; blur: boolean; toggleBlur: () => void }) {
   const [open, setOpen] = useState(false);
   const ref = useAway(open, () => setOpen(false));
-  const [bpm, setBpm] = useState(getTempo);
   return (
     <div ref={ref} className={`settings ${open ? 'open' : ''}`}>
       <button className="wheel" tabIndex={-1} aria-label="Settings" aria-expanded={open} onPointerDown={hold} onClick={() => setOpen(!open)}>
@@ -105,14 +77,6 @@ function Settings({ transform, toggle, turntable, toggleTurntable, blur, toggleB
         <Check on={turntable} toggle={toggleTurntable}>Turntable</Check>
         {/* the depth of field, on to start: off, the machine sharp all through, and cheaper */}
         <Check on={blur} toggle={toggleBlur}>Depth of field</Check>
-        {/* ATTRACT's beat: down, the tempo, up, and TAP to tap it in (the cuts then land on the taps) */}
-        <div className="tempo">
-          <span className="name">Tempo</span>
-          <button tabIndex={-1} aria-label="Slower" onPointerDown={hold} onClick={() => setBpm(setTempo(Math.round(bpm) - 4))}>−</button>
-          <span className="bpm">{bpm.toFixed(bpm % 1 ? 1 : 0)}<i>bpm</i></span>
-          <button tabIndex={-1} aria-label="Faster" onPointerDown={hold} onClick={() => setBpm(setTempo(Math.round(bpm) + 4))}>+</button>
-          <button className="tap" tabIndex={-1} onPointerDown={(e) => { hold(e); setBpm(tapTempo()); }}>Tap</button>
-        </div>
       </div> : null}
     </div>
   );
@@ -127,7 +91,7 @@ function ModeMenu({ mode, pick }: { mode: Mode; pick: (m: Mode) => void }) {
   return (
     <div ref={ref} className={`modemenu ${open ? 'open' : ''}`}>
       <button className="now" tabIndex={-1} aria-haspopup="listbox" aria-expanded={open} onPointerDown={stop} onClick={() => setOpen(!open)}>
-        {MODES.find(([m]) => m === mode)?.[1]}
+        {MODES.find(([m]) => m === mode)?.[1] ?? 'Probe'}
         <svg width={9} height={9} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={2.4} strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M3.5 6 8 10.5 12.5 6" /></svg>
       </button>
       {open ? <div className="list" role="listbox" aria-label="Mode">
@@ -395,21 +359,6 @@ const EDGE_RATE = 0.06, EDGE_IN = 0.62; // along a strut: of its length a second
 const FLOW_FLIP = 0.15; // the chance at a cut that the way round turns about
 // in dev, a shot on demand for scripted checks: __shot('ball')
 if (import.meta.env.DEV) Object.assign(window, { __attract: attract, __shot: (k: typeof attract.kind) => { nextShot(false); attract.kind = k; attract.left = 999; } });
-/** TEMPO: set it, in beats a minute, or tap it in: two taps or more, the beat from their spacing, the beat brought onto
- * the last tap, so the cuts fall on the taps. */
-const TEMPO_MIN = 20, TEMPO_MAX = 180;
-function setTempo(bpm: number, exact = false) { const b = THREE.MathUtils.clamp(bpm, TEMPO_MIN, TEMPO_MAX); attract.bpm = exact ? b : Math.round(b); return attract.bpm; } // a tapped tempo kept to the fraction, so it holds to the music
-const getTempo = () => attract.bpm;
-const taps: number[] = [];
-function tapTempo() {
-  const now = performance.now();
-  if (taps.length && now - taps[taps.length - 1] > 3000) taps.length = 0; // a pause: a new count
-  taps.push(now); if (taps.length > 6) taps.shift();
-  attract.beats = 0; // on the beat, now
-  if (taps.length < 2) return attract.bpm;
-  const gap = (taps[taps.length - 1] - taps[0]) / (taps.length - 1);
-  return setTempo(60000 / gap, true);
-}
 const CLOSE = 0.42; // world units: a close-up's distance from the probe, about four of its radii
 const SMOKE_BACK = 0.55, SMOKE_OUT = 0.6; // the wake's shot: how far back along it, and how far off to its side
 const look = new THREE.Vector3(), followAt = new THREE.Vector3();
@@ -549,70 +498,6 @@ function Pad({ take, shown }: { take: () => void; shown: boolean }) {
 
 /** PILOT's mark on a phone: four arrows out from the middle, the moves the pad gives. */
 
-// The phone's cheat sheet, as an assembly manual draws it: line art, no words but a caption, the hand and the arrows
-// doing the telling. A cube in hairline, the struts out of sight dashed; one finger on a strut, lime, with an arrow
-// along it and one across, the two ways it turns the machine in 4D; two fingers and a sweep over the cube, the orbit.
-const CUBE = (
-  <>
-    <path className="far" d="M26 13V29M12 36L26 29L40 36" />
-    <path d="M12 20L26 13L40 20L26 27ZM12 20V36L26 43L40 36V20M26 27V43" />
-  </>
-);
-/** An arrowhead at (x, y) pointing along angle `a` (degrees, 0 to the right, y down). */
-const Head = ({ x, y, a }: { x: number; y: number; a: number }) => (
-  <path className="head" d="M-3.2 -2.4L0 0L-3.2 2.4" transform={`translate(${x} ${y}) rotate(${a})`} />
-);
-// A hand as a manual draws it, in local units, the fingertip at the origin and the wrist down at y 46, cut by the
-// drawing's edge: one finger out, the others curled, the thumb in; or two out together, for the two-finger turn.
-// the hand as a pointing hand in a manual: the index up, a round tip, the other three folded, their knuckles a row
-// of bumps down the right, the thumb out to the left and curled in, a cuff at the wrist (a thinner hand, the fingers
-// barely folded, for a while)
-const HAND_ONE = 'M-4.5 21V4.5A4.5 4.5 0 0 1 4.5 4.5V17C5 13.5 11.5 13.5 11.5 17.5C12 15 17 15.5 17 19.5C17.5 17.5 21.5 18.5 21 22.5C21 30 19 34 16.5 38H-7.5C-10.5 34 -13 31 -14 27C-15.5 23 -14.5 19 -11.5 18.5C-8.5 18 -6 20 -4.5 21Z';
-const HAND_LINES = 'M4.5 17V22M11.5 17.5V23M17 19.5V24.5M-4.5 21C-6 23 -6.5 26 -6 28';
-const CUFF = 'M-9 38H18V45H-9ZM-4 39.5V43.5M1 39.5V43.5';
-/** A hand coming in from below, its fingertip at (x, y), leaning `a` degrees. */
-const Hand = ({ x, y, a, k = 0.72 }: { x: number; y: number; a: number; k?: number }) => (
-  <g className="hand" transform={`translate(${x} ${y}) rotate(${a}) scale(${k})`}>
-    <path className="skin" d={HAND_ONE} />
-    <path d={HAND_LINES} />
-    <path className="skin" d={CUFF} />
-  </g>
-);
-const Cheat = ({ close }: { close: () => void }) => (
-  <div className="cheat">
-    {/* a small round x on its top right corner: away with it, and it stays away on this browser */}
-    <button className="x" aria-label="Dismiss the instructions" tabIndex={-1} onPointerDown={(e) => { e.preventDefault(); e.stopPropagation(); }} onClick={close}>
-      <svg width={7} height={7} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={2.8} strokeLinecap="round" aria-hidden><path d="M3 3l10 10M13 3 3 13" /></svg>
-    </button>
-    <figure>
-      {/* drawn after Theo's sketch: the cube, its hidden edges dashed, the strut in lime, the two ways it goes, and a
-          gloved hand, its finger on the strut's foot (a thin hand and hairlines for a while) */}
-      <svg className="manual" width={72} height={74} viewBox="250 200 790 820">
-        <path className="far" d="M498 345V560M330 668L495 575M500 575L670 668" />
-        <path className="cube" d="M295 452L498 337L686 448M295 452L498 568L686 452M295 452V688L498 800L686 690V452M498 568V800" />
-        <path className="edge-o" d="M686 452V604" /><path className="edge-i" d="M686 452V604" />
-        <path className="arr" d="M545 272H850M592 240L545 272L592 306M802 238L850 272L802 306" />
-        <path className="arr" d="M848 392V632M814 438L848 392L882 438M814 586L848 632L882 586" />
-        <path className="glove" d="M760 975C742 988 750 1030 790 1034L915 1030C950 1025 955 978 930 965Z" />
-        <path className="glove" d="M682 648C680 602 742 594 762 634L822 770C818 720 882 702 906 770C906 720 982 720 990 820C995 880 975 940 945 965L760 977C730 952 700 928 660 916C610 905 590 860 612 830C642 800 700 815 742 846Z" />
-        <path className="crease" d="M824 880L834 944M870 856L874 940M914 870L902 934" />
-      </svg>
-    </figure>
-    <i className="rule" />
-    <figure>
-      {/* the orbit: a drag on the page off the struts, the same glove, its finger on nothing, a sweep over it and the
-          way the finger goes, both ways */}
-      <svg className="manual" width={72} height={74} viewBox="250 200 790 820">
-        <path className="far" d="M330 470A300 120 0 0 0 930 470" />
-        <path className="arr" d="M330 470A300 120 0 0 1 930 470M300 418L330 470L388 452M872 452L930 470L960 418" />
-        <path className="arr" d="M560 560H880M606 528L560 560L606 594M834 528L880 560L834 594" />
-        <path className="glove" d="M760 975C742 988 750 1030 790 1034L915 1030C950 1025 955 978 930 965Z" />
-        <path className="glove" d="M682 648C680 602 742 594 762 634L822 770C818 720 882 702 906 770C906 720 982 720 990 820C995 880 975 940 945 965L760 977C730 952 700 928 660 916C610 905 590 860 612 830C642 800 700 815 742 846Z" />
-        <path className="crease" d="M824 880L834 944M870 856L874 940M914 870L902 934" />
-      </svg>
-    </figure>
-  </div>
-);
 
 
 const Moves = () => (
@@ -704,7 +589,6 @@ function handUp() { if (hand.on && hand.picked) crankEnd(); hand.on = false; gri
 
 export function App() {
   const [transform, setTransform] = useState(st.transform);
-  const [why, setWhy] = useState(false); // the ? and its note
   // TURNTABLE, in the wheel's card: the camera's slow orbit, off to start; switched on it starts at once
   const [turntable, setTurntable] = useState(rig.spin);
   const [blur, setBlur] = useState(dof.on); // DEPTH OF FIELD, in the wheel's card
@@ -714,8 +598,6 @@ export function App() {
   // (a class on #lock, not React's: DroneCam toggles its `on` there too)
   useEffect(() => { const id = setInterval(() => document.getElementById('lock')?.classList.toggle('can', drone.lockable && drone.pilot && !drone.docking), 100); return () => clearInterval(id); }, []);
   // the instructions bottom right, until dismissed by their x; remembered on this browser if it lets us
-  const [cheat, setCheat] = useState(() => { try { return localStorage.getItem('08-cheat') !== 'off'; } catch { return true; } });
-  const dismissCheat = () => { setCheat(false); try { localStorage.setItem('08-cheat', 'off'); } catch { /* not kept, fine */ } };
   const [grid, setGrid] = useState(st.grid);
   const [maxi, setMaxi] = useState(eyeView.max);
   const [beetle, setBeetle] = useState(drone.on);
@@ -943,7 +825,6 @@ export function App() {
 
   return (
     <>
-      {why ? <Note close={() => setWhy(false)} /> : null}
       <div ref={stage} className={`stage ${locked ? 'locked' : ''}`} {...stageHandlers} onWheel={onWheel}>
         <Canvas camera={{ position: [0, 0, 10.5], fov: 34 }} gl={{ alpha: true, antialias: true, toneMapping: THREE.NeutralToneMapping, toneMappingExposure: 1.0, localClippingEnabled: true }} dpr={[1, 2]}>
           <Suspense fallback={null}>
@@ -975,15 +856,12 @@ export function App() {
           </button>
           {/* and beside it a wheel, the settings: AUTOTRANSFORM in it (on its own under the dropdown, for a while) */}
           <Settings transform={transform} toggle={toggleAuto} turntable={turntable} toggleTurntable={toggleTurntable} blur={blur} toggleBlur={toggleBlur} />
-          {/* a ? that opens a note, on frosted glass: why this is short (beside AUTOTRANSFORM on a desktop, bottom left on a phone) */}
-          <button className="why" tabIndex={-1} aria-label="Why this is short" onPointerDown={(e) => { e.preventDefault(); e.stopPropagation(); }} onClick={() => setWhy(true)}>?</button>
           <button className={`autot ${transform ? 'on' : ''}`} tabIndex={-1} role="checkbox" aria-checked={transform} onPointerDown={(e) => { e.preventDefault(); e.stopPropagation(); }} onClick={toggleAuto}>
           <i className="box" aria-hidden>{transform ? <svg width={8} height={8} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={2.6} strokeLinecap="round" strokeLinejoin="round"><path d="M3 8.5l3.2 3.2L13 4.5" /></svg> : null}</i>Autotransform
         </button>
           {/* FREE | BACK | SIDE | TOP, where the follow is from, was here for a while: FREE, round it by the drag, kept */}
         </div>}
         {/* an upright phone's home page: how the hands work, in the box, bottom right (bottom left, and under it, titled INSTRUCTIONS, for a moment) */}
-        {CLEAN || !cheat ? null : <Cheat close={dismissCheat} />}{/* shown by the page: a phone's home page's box, a desktop's corner away from the controls (style.css) */}
       </div>
       {CLEAN ? null : <div className={`plate ${open ? '' : 'folded'} ${beetle ? 'probing' : ''}`}><div className="head"><b>08 Tesseract</b><i><a className="home" href="../">Codevember 2026 <span lang="ja">すべてのプロジェクト</span></a></i></div>{beetle ? null : <div className="curtain"><button tabIndex={-1} aria-label={open ? 'Fold the text away' : 'Unfold the text'} onPointerDown={(e) => e.preventDefault()} onClick={() => setOpen(!open)}><svg width={10} height={10} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round" aria-hidden style={{ transform: open ? 'none' : 'rotate(180deg)' }}><path d="M2.5 10.5 8 5l5.5 5.5" /></svg></button></div>}</div>}
       {/* an upright phone's home page: under the box the probe, a line drawing of it, what it is, and the way in, the

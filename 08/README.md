@@ -82,6 +82,7 @@ TESSERAKT, a hypercube built for real. A tesseract cannot exist in three dimensi
 - **Lasers**, tried and dropped: beams fixed in the room through the machine, cast against the 24 projected faces and jogged along each wall's projected 4D normal, three layers for a fake bloom, shown in the drone cam too. Handsome in stills, but it fought the machine for the eye. Lives in the history before `08/src/Laser.tsx` was removed.
 - **LEDs** (`Machine.tsx`): six status lights on the balls, each with its own blink: heartbeat, breathe, a flash every five seconds, fast steady, slow square, tick. A pinhead emissive bead in a black collar, a few pixels, no glow.
 - **Light**: drei `Environment` from four `Lightformer`s, no HDR download, plus one directional. `ContactShadows` on a transparent canvas; behind it a soft radial gradient in CSS, light at the machine, darker at the edges. Tone mapping is `NeutralToneMapping` at exposure 1: ACES darkened the sand and greyed the accents, Neutral keeps the paint near its hex values, which is the point of a flat-paint look.
+- **Trimmed**: ATTRACT is called DEMO in the dropdown now (still `attract` in the code); PROBE is out of the dropdown, the round target button its only way in; TEMPO is out of the wheel's card (40 bpm, fixed); the ? and its note and the cheat sheet's drawings are gone. The desktop's fisheye view a third bigger, 253 px wide (190, half the column, for a while).
 
 ## Learned
 
