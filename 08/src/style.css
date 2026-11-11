@@ -245,6 +245,13 @@ body.home .stage .corner { top: 10px; right: 10px; }
 .note p { margin: 0 0 11px; font-size: 13px; line-height: 1.5; color: #3b3b39; }
 .note p.sign { margin: 16px 0 0; font: 700 9px/1.4 "Helvetica Neue", Helvetica, Arial, sans-serif; letter-spacing: 0.14em; text-transform: uppercase; color: var(--ui); }
 .note .x { position: absolute; top: 14px; right: 14px; display: grid; place-items: center; width: 28px; height: 28px; padding: 0; border: 0; border-radius: 50%; cursor: pointer; background: rgba(28, 28, 28, 0.82); color: #fff; }
+/* hover, where there is a pointer to hover with: the top right's buttons lift a shade, the list's rows light up */
+@media (hover: hover) {
+  .modemenu .now, .settings .wheel, .stage .corner > .why, .modemenu .list button, .settings .list button { transition: background-color 0.12s ease, box-shadow 0.12s ease; }
+  .modemenu .now:hover, .settings .wheel:hover, .stage .corner > .why:hover { background: #000; box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.55), 0 4px 12px rgba(0, 0, 0, 0.18); }
+  .modemenu .list button:not(.at):hover, .settings .list button:hover { background: rgba(255, 255, 255, 0.16); }
+  .modemenu .list button.at:hover { background: rgba(0, 0, 0, 0.9); }
+}
 @keyframes veilin { from { opacity: 0; } to { opacity: 1; } }
 @keyframes menuin { from { opacity: 0; transform: translateY(-4px) scale(0.96); } to { opacity: 1; transform: none; } }
 /* the mode and the settings top right, a dropdown and a wheel, on a desktop as on a phone (on a desktop the mode
