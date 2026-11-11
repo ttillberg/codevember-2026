@@ -52,7 +52,7 @@ function Note({ close }: { close: () => void }) {
           <svg width={10} height={10} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={2.4} strokeLinecap="round" aria-hidden><path d="M3 3l10 10M13 3 3 13" /></svg>
         </button>
         <h3>On cutting short</h3>
-        <p>Codevember is one small thing a day. A day is a short form, and the whole point of a short form is that it stays short. This one is two days late.</p>
+        <p>Thanks for your curiosity. I meant to explain what is going on here, and ran out of time, which is more or less the whole story. Codevember is one small thing a day. A day is a short form, and the whole point of a short form is that it stays short. This one is two days late.</p>
         <p>It began as a tesseract that turns. To make the turn readable it needed something living inside it, so a probe; the probe needed a view, the view a map, the map a lens, the walls a honeycomb, the honeycomb a ripple. Each step made sense on its own. In the end I took out nine tenths of it. And the honest part is that most of what is left could have been had without all that work. Almost.</p>
         <p>The marks on the struts that nobody reads, a honeycomb finer than the eye can tell, a wave that was tried and taken out again. Not wasted, exactly. Just not for anyone else.</p>
         <p>The almost is the part I keep. Without the nine tenths there is a cube in a cube that turns. With them there is a cube in a cube that turns, and I know why it looks the way it does. It is a small difference. Most days it is the one I am after.</p>
