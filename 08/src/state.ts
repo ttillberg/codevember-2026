@@ -20,7 +20,7 @@ export const st = {
   cranking: false, // an alt-drag has it: nothing else turns it
   way: 1, // which way it turns, +1 or -1: the last drag, or a flip now and then
   flipIn: 12, // seconds until it turns round on its own
-  breath: 0, // transform's swing, its phase (rad)
+  spinVel: 0, // transform's speed, eased towards SOFT_SPIN * way so a flip is a swing, not a knock
   transform: false, // the transform switch, off to start (on for a while, and off before that), and the play/pause button bottom middle: the machine turns in 4D all the time, evenly and softly, changing plane at each quarter
   grid: true, // the camera grid, on to start: the eye's view behind the machine, or none
   inout: false, // the hand-over at a wall: false, both halves at once, folded at the wall, straight through; true (o), the body goes all the way in, then comes out (on to start for a moment)
@@ -51,7 +51,7 @@ export const rig = {
 // in dev, the state on the page for scripted checks
 if (import.meta.env.DEV) Object.assign(window, { __st: st, __rig: rig });
 
-const BREATH_A = 0.5, BREATH_T = 6; // transform's swing: how far either way of the quarter it stands on (rad), and a whole swing (s)
+const SOFT_SPIN = 0.22; // rad/s, transform's even turn in 4D (it swung to and fro either way of a quarter, breathing, for a while)
 const PITCH_MAX = 1.4; // radians the orbit goes up or down at most
 const TURNTABLE = 0.07; // rad/s, the camera's slow orbit in the attract mode, a revolution in a minute and a half
 const QUARTER = Math.PI / 2;
@@ -112,7 +112,7 @@ export function orbitBy(dy: number, dp: number, dt: number) {
 export function crankStart(plane: number): number {
   handAt = clock;
   glide = null; st.settling = false; st.cranking = true;
-  st.target = st.angle; st.vel = 0;
+  st.target = st.angle; st.vel = 0; st.spinVel = 0;
   if (Math.abs(st.angle - Math.round(st.angle / QUARTER) * QUARTER) < 1e-3) {
     bank();
     st.angle = st.target = 0; st.plane = plane;
@@ -157,17 +157,16 @@ export function tick(dt: number) {
   // transform waits IDLE after the last turn by hand
   if (st.transform && clock - handAt > IDLE) {
     glide = null; st.settling = false;
-    // transform breathes: the turn swings to and fro either way of the quarter it stands on, eased in from where it
-    // is, so the inner cube swells out and draws back in; each time a whole swing is back through rest, another
-    // plane (it turned evenly all the way round for a while)
-    const was = st.breath;
-    st.breath += (dt * Math.PI * 2) / BREATH_T;
-    const want = BREATH_A * Math.sin(st.breath);
-    st.angle = Math.abs(want - st.angle) < 0.03 ? want : st.angle + (want - st.angle) * Math.min(1, dt * 4); // eased in, then on the swing itself, so it is at rest at each turn of the swing
+    // an even turn all the time, turning round now and then; past each quarter it is banked, what little is left
+    // over dropped (a frame's worth at most), and the turn goes on in another plane (it breathed, to and fro either
+    // way of a quarter, for a while)
+    st.spinVel += (SOFT_SPIN * st.way - st.spinVel) * Math.min(1, dt * 1.2);
+    st.angle += st.spinVel * dt;
     st.target = st.angle; st.vel = 0;
-    if (Math.floor(was / (Math.PI * 2)) !== Math.floor(st.breath / (Math.PI * 2)) && Math.abs(st.angle) < 0.08) {
-      st.angle = st.target = 0;
-      st.plane = pick<number>([0, 1, 2].filter((p) => p !== st.plane).map((p) => [p, 1]));
+    if (Math.abs(st.angle) >= QUARTER) {
+      const q = Math.sign(st.angle);
+      st.angle = st.target = q * QUARTER;
+      fold(q); // banked to an exact quarter, so fold moves on to another plane
     }
     return;
   }
