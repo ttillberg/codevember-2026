@@ -32,11 +32,12 @@ if (CLEAN) { eyeView.max = true; page.clean = true; }
 // the beetle; the pilot is at the controls.
 type Mode = 'attract' | 'orbit' | 'follow' | 'probe' | 'pilot';
 // in this order: ORBIT, FOLLOW, PILOT, from the farthest to the controls (follow, pilot, orbit for a moment)
-const MODES: [Mode, string][] = [
+// each its word and, after it, a second the phone's dropdown leaves off at the top (too wide beside the title there)
+const MODES: [Mode, string, string?][] = [
   ['orbit', 'Orbit'],
-  ['follow', 'Follow'],
-  ['pilot', 'Pilot'],
-  ['attract', 'Demo'], // last (first, for a while)
+  ['follow', 'Follow', 'probe'],
+  ['pilot', 'Pilot', 'probe'],
+  ['attract', 'Auto', 'cam'], // last (first, for a while); DEMO, then ATTRACT, for a while
 ];
 
 /** Folds itself away on a tap anywhere outside `ref`, while `open`. */
@@ -91,12 +92,12 @@ function ModeMenu({ mode, pick }: { mode: Mode; pick: (m: Mode) => void }) {
   return (
     <div ref={ref} className={`modemenu ${open ? 'open' : ''}`}>
       <button className="now" tabIndex={-1} aria-haspopup="listbox" aria-expanded={open} onPointerDown={stop} onClick={() => setOpen(!open)}>
-        {MODES.find(([m]) => m === mode)?.[1]}
+        {(([, n, ext]) => <span>{n}{ext ? <span className="ext"> {ext}</span> : null}</span>)(MODES.find(([m]) => m === mode) ?? MODES[0])}
         <svg width={9} height={9} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={2.4} strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M3.5 6 8 10.5 12.5 6" /></svg>
       </button>
       {open ? <div className="list" role="listbox" aria-label="Mode">
-        {MODES.map(([m, name]) => <button key={m} className={mode === m ? 'at' : ''} role="option" aria-selected={mode === m} tabIndex={-1}
-          onPointerDown={stop} onClick={() => { pick(m); setOpen(false); }}>{name}</button>)}
+        {MODES.map(([m, name, ext]) => <button key={m} className={mode === m ? 'at' : ''} role="option" aria-selected={mode === m} tabIndex={-1}
+          onPointerDown={stop} onClick={() => { pick(m); setOpen(false); }}>{name}{ext ? ` ${ext}` : ''}</button>)}
       </div> : null}
     </div>
   );

@@ -318,6 +318,7 @@ body.home .stage .corner { top: 10px; right: 10px; }
   .note h3 { font-size: 20px; }
   body .keys { display: none; } /* no shortcuts either */
 }
+@media (max-width: 640px), (max-height: 500px) { .modemenu .now .ext { display: none; } } /* a phone: FOLLOW, PILOT, AUTO at the top, the whole names in the list */
 @media (max-width: 400px) {
   .modemenu .now { letter-spacing: 0.08em; padding: 10px 10px 9px 12px; gap: 7px; } /* narrow: the dropdown tighter, so FOLLOW keeps clear of the bigger title */
 }

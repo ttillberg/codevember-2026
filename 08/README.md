@@ -93,6 +93,7 @@ TESSERAKT, a hypercube built for real. A tesseract cannot exist in three dimensi
 - **No full screen view**: the fisheye view's maximize button is gone; it stays in its corner (`?clean` still draws it full screen for the screengrab).
 - **ORBIT on a light gradient**: in ORBIT the ground is a studio sweep, white at the top through #f3f4f5 to a cool grey (#d3d7dc) at the foot (#e2e3e4, too near the usual, for a moment), over the usual light; it fades in and out with the mode in 0.6 s (`body.orbit::before`). Millimetre paper there, for a moment.
 - **PILOT's camera, always the same**: at the controls the camera is the chase alone, from the same place on the probe whatever the mode before: the way in a fixed 0.7 s ramp, eased at both ends (eased on and on, for a while, so the last mode's camera stayed in the mix for seconds), and the camera's up the probe's. No drag moves it: a drag on the view steers, off it nothing (it orbited round the probe, for a moment), and shift with the pointer locked no longer orbits.
+- **The modes' names**: ORBIT, FOLLOW PROBE, PILOT PROBE and AUTO CAM in the dropdown (FOLLOW, PILOT and DEMO, for a while); still `follow`, `pilot` and `attract` in the code. On a phone the dropdown says only the first word at the top, FOLLOW, PILOT, AUTO, the whole names in its list (the whole, over the title, for a moment).
 
 ## Learned
 
