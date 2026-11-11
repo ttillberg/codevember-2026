@@ -94,6 +94,7 @@ TESSERAKT, a hypercube built for real. A tesseract cannot exist in three dimensi
 - **ORBIT on a light gradient**: in ORBIT the ground is a studio sweep, white at the top through #f3f4f5 to a cool grey (#d3d7dc) at the foot (#e2e3e4, too near the usual, for a moment), over the usual light; it fades in and out with the mode in 0.6 s (`body.orbit::before`). Millimetre paper there, for a moment.
 - **PILOT's camera, always the same**: at the controls the camera is the chase alone, from the same place on the probe whatever the mode before: the way in a fixed 0.7 s ramp, eased at both ends (eased on and on, for a while, so the last mode's camera stayed in the mix for seconds), and the camera's up the probe's. No drag moves it: a drag on the view steers, off it nothing (it orbited round the probe, for a moment), and shift with the pointer locked no longer orbits.
 - **The modes' names**: ORBIT, FOLLOW PROBE, PILOT PROBE and AUTO CAM in the dropdown (FOLLOW, PILOT and DEMO, for a while); still `follow`, `pilot` and `attract` in the code. On a phone the dropdown says only the first word at the top, FOLLOW, PILOT, AUTO, the whole names in its list (the whole, over the title, for a moment).
+- **The buttons' words back to 11 px**: on a desktop the dropdown and the wheel keep the words they had, 11 px (12 in the cards), with the ABOUT pill's proportions round them: three times the words high, 1.1 of them either side, 33 px high (48 px with 16 px words, for a moment).
 
 ## Learned
 
