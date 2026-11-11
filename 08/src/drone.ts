@@ -59,7 +59,7 @@ export const drone = {
   worldFwd: new THREE.Vector3(0, 0, -1),
   worldUp: new THREE.Vector3(0, 1, 0),
 };
-if (import.meta.env.DEV) Object.assign(window, { __drone: drone }); // for grabs and debugging, as __st, __rig, __grip
+
 
 /** The piece: a small ball of jelly, all one colour, the colour of its cell, glossy and see-through with a brighter
  * core that breathes (a steel ball with six flashing pinhead lamps, for a while). `blink(t)` runs the core. */
@@ -250,6 +250,7 @@ export const target = {
   scale: 0,
   map: null as CellMap | null,
 };
+if (import.meta.env.DEV) Object.assign(window, { __drone: drone, __target: target }); // for grabs and debugging, as __st, __rig, __grip
 
 /** The four joints of the current cell's wall where 4D axis `axis` is `sign`: the held axis and the face's axis
  * fixed, the other two at the corners. */
