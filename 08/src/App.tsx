@@ -209,7 +209,10 @@ function Rig({ children }: { children: React.ReactNode }) {
     // for a while)
     rig.chaseK += ((drone.pilot ? 1 : 0) - rig.chaseK) * Math.min(1, dt * 2);
     if (rig.chaseK > 0.001) {
-      chaseAt.copy(drone.world).addScaledVector(chaseFwd, -CHASE_BACK).addScaledVector(chaseUp, CHASE_UP);
+      // 45 degrees round from straight behind, to its right, so it is seen three-quarters and its way still reads
+      // (straight behind, for a while)
+      sideV.crossVectors(chaseFwd, chaseUp).normalize();
+      chaseAt.copy(drone.world).addScaledVector(chaseFwd, -CHASE_BACK * Math.cos(CHASE_YAW)).addScaledVector(sideV, CHASE_BACK * Math.sin(CHASE_YAW)).addScaledVector(chaseUp, CHASE_UP);
       chaseLook.copy(drone.world).addScaledVector(chaseFwd, CHASE_AHEAD);
       camera.position.lerp(chaseAt, rig.chaseK);
       look.lerp(chaseLook, rig.chaseK);
@@ -243,7 +246,8 @@ const FOLLOW_LAG = 0.35; // how fast the camera itself catches up with it (1/s):
 const LEVEL = 0.87; // radians, about 50 degrees
 const tail = new THREE.Vector3(), lag = new THREE.Vector3(), off = new THREE.Vector3();
 const chaseFwd = new THREE.Vector3(0, 0, -1), chaseUp = new THREE.Vector3(0, 1, 0), chaseAt = new THREE.Vector3(), chaseLook = new THREE.Vector3();
-const CHASE_BACK = 1.7, CHASE_UP = 0.4, CHASE_AHEAD = 2; // world units: behind it, over it, and the look ahead of it (a quarter of these, the probe filling the screen, for a moment)
+const CHASE_YAW = Math.PI / 4; // round from straight behind, to the right
+const CHASE_BACK = 1.7, CHASE_UP = 0.4, CHASE_AHEAD = 1; // world units: behind it, over it, and the look ahead of it (2, straight behind; a quarter of these, the probe filling the screen, for a moment)
 const sideV = new THREE.Vector3(), viewOff = new THREE.Vector3(), camUp = new THREE.Vector3(0, 1, 0), WORLD_UP = new THREE.Vector3(0, 1, 0);
 const CHASE_EASE = 4; // how fast the chase swings round after the probe's turn (1/s)
 const focusAt = new THREE.Vector3();
