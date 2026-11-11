@@ -243,7 +243,7 @@ function Rig({ children }: { children: React.ReactNode }) {
     dof.focus.copy(look).lerp(drone.world, rig.chaseK); // chasing, on the probe, not past it
     dof.aperture = THREE.MathUtils.lerp(DOF_WIDE, DOF_FOLLOW, fk);
     dof.skip = !rig.follow && !drone.pilot; // in ORBIT none, whatever the switch: the whole machine sharp (on there too, for a while)
-    if (rig.attract) { dof.skip = attract.kind === 'wide'; dof.focus.copy(attract.focus); dof.aperture = attract.kind === 'follow' ? DOF_FOLLOW : DOF_CLOSE; } // in ATTRACT on what the shot is of, but for the wide shots
+    if (rig.attract) { dof.skip = attract.kind === 'wide'; dof.focus.copy(attract.focus); dof.aperture = attract.kind === 'follow' ? DOF_FOLLOW : attract.kind === 'ball' ? DOF_FOLLOW * 0.4 : DOF_CLOSE; } // the ball so near, a narrow blur, or it goes soft across its own depth // in ATTRACT on what the shot is of, but for the wide shots
   });
   return <group ref={ref}>{children}</group>;
 }
@@ -308,7 +308,7 @@ function directShot(camera: THREE.Camera, dt: number, sdt: number, phone: boolea
     if (a.kind === 'ball' && !target.up) { nextShot(false); return; }
     project(pose(), a.kind === 'ball' ? target.p : VERTS[a.joint], a.focus).applyQuaternion(rig.q);
     pv.copy(a.dir).applyAxisAngle(WORLD_UP, a.drift * 0.4 * u);
-    camera.position.copy(a.focus).addScaledVector(pv, (a.kind === 'ball' ? CLOSE * 0.7 : CLOSE * 1.3) * (1 - 0.15 * u));
+    camera.position.copy(a.focus).addScaledVector(pv, (a.kind === 'ball' ? CLOSE * 0.32 : CLOSE * 1.3) * (1 - 0.15 * u));
     look.copy(a.focus);
     up.copy(WORLD_UP);
     return;
@@ -338,6 +338,8 @@ function directShot(camera: THREE.Camera, dt: number, sdt: number, phone: boolea
   look.copy(drone.world);
   up.copy(WORLD_UP);
 }
+// in dev, a shot on demand for scripted checks: __shot('ball')
+if (import.meta.env.DEV) Object.assign(window, { __shot: (k: typeof attract.kind) => { nextShot(false); attract.kind = k; attract.len = 30; attract.next = 30; } });
 const CLOSE = 0.42; // world units: a close-up's distance from the probe, about four of its radii
 const SMOKE_BACK = 0.55, SMOKE_OUT = 0.6; // the wake's shot: how far back along it, and how far off to its side
 const look = new THREE.Vector3(), followAt = new THREE.Vector3();
