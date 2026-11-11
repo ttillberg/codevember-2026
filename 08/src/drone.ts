@@ -28,6 +28,9 @@ export const drone = {
   clock: 0,
   /** At the controls, the catch has taken over: the device is docking on the piece. */
   docking: false,
+  /** At the controls, the piece is in the lock: LOCK can be tapped. `catchAsk`, tapped: dock and take it (it docked on its own after half a second in the lock, for a while). */
+  lockable: false,
+  catchAsk: false,
   keys: { thrust: 0, strafe: 0 }, // held, -1 0 1: along the eye, and across it to the right
   /** The look from the trackpad: radians to turn right and up, gathered by the page, spent by the device each frame. */
   turn: [0, 0],

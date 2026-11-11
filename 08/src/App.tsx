@@ -515,6 +515,9 @@ function handUp() { if (hand.on && hand.picked) crankEnd(); hand.on = false; gri
 export function App() {
   const [transform, setTransform] = useState(st.transform);
   const [why, setWhy] = useState(false); // the ? and its note
+  // the piece in the lock, at the controls: LOCK can be tapped (polled, drone.lockable is set each frame)
+  // (a class on #lock, not React's: DroneCam toggles its `on` there too)
+  useEffect(() => { const id = setInterval(() => document.getElementById('lock')?.classList.toggle('can', drone.lockable && drone.pilot && !drone.docking), 100); return () => clearInterval(id); }, []);
   // the instructions bottom right, until dismissed by their x; remembered on this browser if it lets us
   const [cheat, setCheat] = useState(() => { try { return localStorage.getItem('08-cheat') !== 'off'; } catch { return true; } });
   const dismissCheat = () => { setCheat(false); try { localStorage.setItem('08-cheat', 'off'); } catch { /* not kept, fine */ } };
@@ -790,7 +793,11 @@ export function App() {
       </div>}
       {/* split: a hairline between the machine's half and the view's */}
       {CLEAN || !beetle || !grid || maxi ? null : <div className="divider" />}
-      <div id="lock" className="lock"><i /><i /><i /><i /><b>lock</b></div>
+      {/* the lock round the piece in the view, and LOCK under it a button in the piece's colour: tapped, the probe docks
+          and takes it (it docked on its own after half a second in the lock, for a while) */}
+      <div id="lock" className="lock"><i /><i /><i /><i /><button tabIndex={-1} onPointerDown={(e) => { e.preventDefault(); e.stopPropagation(); }} onClick={() => { drone.catchAsk = true; }}>lock</button></div>
+      {/* a little arrow on the view's rim, towards the piece while it is out of sight, in its colour (DroneCam) */}
+      <div id="toball" className="toball" aria-hidden><svg width={22} height={22} viewBox="0 0 16 16"><path d="M3 2.5 14 8 3 13.5 5.5 8Z" /></svg></div>
       {/* bottom left, under the blurb and as wide: mode and settings; the shortcuts bottom right, as wide */}
       {CLEAN ? null : <div className="keys">
         {controls}

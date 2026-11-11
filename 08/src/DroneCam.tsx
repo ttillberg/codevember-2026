@@ -2,7 +2,7 @@ import { useMemo } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import { renderDof } from './dof';
 import * as THREE from 'three';
-import { drone, target, toCell, toCellWith, faceQuad, PIECE_R, SIZE_MAIN, SIZE_CELL, LOCK_RANGE } from './drone';
+import { drone, target, toCell, toCellWith, faceQuad, PIECE_R, SIZE_MAIN, SIZE_CELL, LOCK_RANGE, CELL_HEX, cellIdOf } from './drone';
 import { ringOut } from './device';
 import { GRAPHITE } from './decals';
 import { st } from './state';
@@ -200,6 +200,9 @@ export function DroneCam() {
     const ballMats = [new THREE.MeshBasicMaterial({ color: '#f2f2ef', fog: false }), inkMat(false)];
     const ball = () => { const g = new THREE.Group(); g.add(new THREE.Mesh(ballGeo, ballMats[0]), new THREE.Mesh(ballGeo, ballMats[1])); g.visible = false; cs.add(g); return g; };
     const piece = ball(), grabbed = ball();
+    // the piece in its cell's colour here, the grabbed one paper as before (both paper, for a while)
+    const pieceFill = new THREE.MeshBasicMaterial({ color: '#f2f2ef', fog: false });
+    (piece.children[0] as THREE.Mesh).material = pieceFill;
     // the eye: a cube map rendered from where it is, unwrapped by the fisheye onto a quad that fills the frame
     const rt = new THREE.WebGLCubeRenderTarget(CUBE, { type: THREE.HalfFloatType, generateMipmaps: false, minFilter: THREE.LinearFilter });
     const eye = new THREE.CubeCamera(0.03, 40, rt);
@@ -209,7 +212,7 @@ export function DroneCam() {
     lens.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), FISHEYE));
     const flat = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
     return {
-      cs, tubes, flash, piece, grabbed, eye, lens, flat,
+      cs, tubes, flash, piece, grabbed, eye, lens, flat, pieceFill, ballHex: '', toEl: null as HTMLElement | null, toLast: '',
       q: new THREE.Quaternion(), look: new THREE.Vector3(0, 0, -1), last: [0, 0, 0], crossings: -1, footH: 0,
       pos: new THREE.Vector3(), lockEl: null as HTMLElement | null, eyeX: -1, eyeY: -1, camX: -1, camH: -1, plateEl: null as Element | null, lockLast: '', over: null as number[] | null, // the bracket's last style, written only on change
       grabOf: null as number[] | null, grabLocal: new THREE.Vector3(), // the piece taken, and where it was from the eye then, in its frame
@@ -231,7 +234,7 @@ export function DroneCam() {
     if (footTop !== page.footTop || size.height !== cell.footH) { page.footTop = footTop; cell.footH = size.height; document.documentElement.style.setProperty('--foot-top', `${size.height}px`); } // PILOT from the foot now, the crumbs at the top
     const auto = gl.autoClear;
     // the camera grid off, or no beetle: no eye, no lock bracket, just the page and the machine
-    if (eyeShown(size.width, size.height)) drawEye(); else { setLock(lockEl, 'none'); gl.setRenderTarget(null); gl.clear(); }
+    if (eyeShown(size.width, size.height)) drawEye(); else { setLock(lockEl, 'none'); const te = document.getElementById('toball'); if (te) te.style.display = 'none'; cell.toLast = 'none'; gl.setRenderTarget(null); gl.clear(); }
     gl.autoClear = false;
     // the machine over the lens, through the depth of field, only in its own part, never under the text
     const W = size.width, H = size.height, { main, draw = [main] } = regionsOf(W, H);
@@ -332,6 +335,37 @@ export function DroneCam() {
       if (cell.grabOf !== drone.grab4) { cell.grabOf = drone.grab4; cell.grabLocal.fromArray(toCellWith(drone.grabMap!, drone.grab4)).sub(cell.pos).applyQuaternion(tmp.q.copy(drone.q).invert()); }
       cell.grabbed.position.copy(cell.grabLocal).applyQuaternion(drone.q).add(cell.pos).lerp(ring, drone.grabK);
       cell.grabbed.scale.setScalar(drone.taken);
+    }
+
+    // the piece's colour, the cell it is in: its fill here, LOCK's and the arrow's (--ball)
+    if (target.map) {
+      const hex = CELL_HEX[cellIdOf(target.map)];
+      if (hex !== cell.ballHex) { cell.ballHex = hex; cell.pieceFill.color.set(hex); document.documentElement.style.setProperty('--ball', hex); }
+    }
+    // a little arrow on the view's rim towards the piece, while it is out of sight: its way in the eye's frame, through
+    // the net of rooms, flattened onto the view
+    {
+      let to = 'none';
+      if (target.up && target.map && target.scale > 0.02) {
+        const t3 = toCellWith(target.map, target.p), d = tmp.axis.set(t3[0] - c[0], t3[1] - c[1], t3[2] - c[2]), dist = d.length();
+        if (dist > 1e-6) {
+          d.divideScalar(dist).applyQuaternion(tmp.q.copy(cell.q).invert());
+          const theta = Math.acos(Math.max(-1, Math.min(1, -d.z))), rr = theta / (Math.PI / 2), l = Math.hypot(d.x, d.y) || 1;
+          const ux = d.x / l, uy = -d.y / l; // on the page, y down
+          const vtop = H - y - h, cx = x + w / 2, cy = vtop + h / 2;
+          const bx = cx + rr * ux * w / 2, by = cy + rr * uy * h / 2;
+          const seen = rr < 1 && bx > bx0 + 8 && bx < bx1 - 8 && by > by0 + 8 && by < by1 - 8;
+          if (!seen) {
+            // on the rim: as far out along that way as the view goes, less a margin
+            const hw = S / 2 - 46, hh = (r.round ? S / 2 : SH / 2) - 46; // in from the rim, clear of the pad's arrows
+            const k = r.round ? hw : Math.min(Math.abs(ux) > 1e-6 ? hw / Math.abs(ux) : Infinity, Math.abs(uy) > 1e-6 ? hh / Math.abs(uy) : Infinity);
+            const ax = sx + S / 2 + ux * k, ay = top + SH / 2 + uy * k, deg = (Math.atan2(uy, ux) * 180) / Math.PI;
+            to = `translate(${ax.toFixed(1)}px, ${ay.toFixed(1)}px) translate(-50%, -50%) rotate(${deg.toFixed(1)}deg)`;
+          }
+        }
+      }
+      const el = (cell.toEl ??= document.getElementById('toball'));
+      if (el && to !== cell.toLast) { cell.toLast = to; if (to === 'none') el.style.display = 'none'; else { el.style.display = 'block'; el.style.transform = to; } }
     }
 
     // the lock: at the controls, the piece in this cell and close, a bracket round it in the view, LOCK while

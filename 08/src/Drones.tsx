@@ -126,9 +126,10 @@ const turned = (m: M4, v: number[], out: THREE.Vector4) =>
 // then out, and it is back.)
 const INOUT_GAP = 1.5, INOUT_RISE = 4, INOUT_SET = 3, LINGER = 3;
 const GLOW = 0.9; // the strength of the cell-colour tint on a half in a wall: 0.9 of the tint's own 0.55 is about half
-// at the controls the device docks on its own once the piece has been in the lock this long (seconds): it turns its
-// eye on it and closes to a scoop's reach (device radii, in cell space), and the catch takes over
-const LOCK_HOLD = 0.5, STAND = 2.0;
+// at the controls the device docks once LOCK is tapped with the piece in the lock (half a second in it and it docked
+// on its own, for a while): it turns its eye on it and closes to a scoop's reach (device radii, in cell space), and the
+// catch takes over
+const STAND = 2.0;
 const REACH3 = 1.9; // where the piece should sit when the device stops, in device radii, on screen
 type Phase = 'seek' | 'dock' | 'settle' | 'catch' | 'turn' | 'rest';
 // at the controls: cell-space units per second squared and per second, radians per second
@@ -424,14 +425,17 @@ export function Drones() {
       const vn = -si * ni * cv[i] - sj * nj * cv[j]; // the speed out from the edge; below 0, into it
       if (vn < 0) { cv[i] += vn * si * ni; cv[j] += vn * sj * nj; }
     }
-    // the piece in the lock (in this cell, close, ahead of the eye) for a moment: the device docks on its own
+    // the piece in the lock (in this cell, close, ahead of the eye): LOCK can be tapped, and tapped the device docks
     let locked = false;
     if (target.up && target.map && target.map.held === drone.held && target.map.sign === drone.sign) {
       const t3 = toCell(target.p), dx = t3[0] - c[0], dy = t3[1] - c[1], dz = t3[2] - c[2], dist = Math.hypot(dx, dy, dz);
       locked = dist < LOCK_RANGE && dist > 1e-6 && fwd.x * dx + fwd.y * dy + fwd.z * dz > 0;
     }
     s.lockT = locked ? s.lockT + dt : 0;
-    if (s.lockT > LOCK_HOLD) {
+    drone.lockable = locked;
+    if (!locked) drone.catchAsk = false;
+    if (locked && drone.catchAsk) {
+      drone.catchAsk = false;
       s.phase = 'dock'; s.t = 0; s.lockT = 0;
       cv[0] = cv[1] = cv[2] = 0; k.thrust = 0; drone.turn[0] = drone.turn[1] = 0;
       s.look.copy(fwd); s.cLast = c.slice();
