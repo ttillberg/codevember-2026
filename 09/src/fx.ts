@@ -8,17 +8,20 @@ import type { Ctx, Module } from './state';
 const ARM = 0.13;      // rad, half an arm of the cross
 const ARM_SEGS = 10;   // per arm pair
 const TRAIL_SEGS = 48; // the arc back to where the film was taken hold of
+const DASH = 7;        // px, a dash of the guide line, and the gap after it
+const DASH_SPEED = 42; // px/s, how fast the dashes march
 
 export function createFx(ctx: Ctx): Module {
   const { world, canvas } = ctx;
 
   // ---------------------------------------------------- aim overlay
   const overlay = document.createElement('canvas');
-  overlay.style.cssText = 'position:fixed;left:0;top:0;width:100vw;height:100vh;pointer-events:none;';
+  overlay.style.cssText = 'position:fixed;left:0;top:0;width:100vw;height:100vh;pointer-events:none;mix-blend-mode:difference;';
   canvas.after(overlay);
   const g2 = overlay.getContext('2d');
   let ow = window.innerWidth, oh = window.innerHeight, dpr = 1;
   let overlayDrawn = false;
+  const ink = '#fff'; // blended as a difference: dark over the pale backdrop, pale over the sphere
 
   function line(ax: number, ay: number, bx: number, by: number) {
     g2!.beginPath();
@@ -27,23 +30,29 @@ export function createFx(ctx: Ctx): Module {
     g2!.stroke();
   }
 
-  /** A hairline across the whole screen through the two points, dashed when it cannot cut. */
+  /** A dashed line across the whole screen through the two points, its dashes marching from
+   *  the first point to the second. Faint while it cannot cut. A dot marks the first point. */
   function guide(x0: number, y0: number, x1: number, y1: number, valid: boolean) {
     if (!g2) return;
+    g2.fillStyle = g2.strokeStyle = ink;
+    g2.globalAlpha = valid ? 0.9 : 0.4;
+    g2.beginPath();
+    g2.arc(x0, y0, 2.5, 0, Math.PI * 2);
+    g2.fill();
     let dx = x1 - x0, dy = y1 - y0;
     const len = Math.hypot(dx, dy);
-    if (len < 1) return;
-    dx /= len; dy /= len;
-    const far = (ow + oh) * 2;
-    g2.lineCap = 'butt';
-    g2.lineWidth = 0.75;
-    g2.strokeStyle = '#fff';
-    g2.setLineDash(valid ? [] : [3, 6]);
-    g2.globalAlpha = valid ? 0.35 : 0.2;
-    line(x0 - dx * far, y0 - dy * far, x1 + dx * far, y1 + dy * far);
-    g2.setLineDash([]);
-    g2.globalAlpha = valid ? 0.9 : 0.4;
-    line(x0, y0, x1, y1);
+    if (len >= 1) {
+      dx /= len; dy /= len;
+      const far = (ow + oh) * 2;
+      g2.lineCap = 'butt';
+      g2.lineWidth = 1.25;
+      g2.setLineDash([DASH, DASH]);
+      // the line is drawn from far behind the first point: keep the dashes still against it
+      g2.lineDashOffset = far - ((performance.now() / 1000) * DASH_SPEED) % (DASH * 2);
+      g2.globalAlpha = valid ? 0.85 : 0.25;
+      line(x0 - dx * far, y0 - dy * far, x1 + dx * far, y1 + dy * far);
+      g2.setLineDash([]);
+    }
     g2.globalAlpha = 1;
   }
 

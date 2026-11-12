@@ -135,8 +135,9 @@ const HELP: Array<[string, string, Array<[string, string]>]> = TOUCH ? [
   ['Peel and cut', 'where the finger lands says which', [
     ['Drag an edge', 'peel'],
     ['Drag on the film', 'knife'],
-    ['Drag from outside', 'ruler'],
-    ['Two fingers', 'turn'],
+    ['Drag from outside', 'turn'],
+    ['Two fingers on the film', 'scratch'],
+    ['Two fingers outside', 'ruler'],
   ]],
   ['Tool', '', [
     ['Tap', 'open it'],
@@ -150,9 +151,9 @@ const HELP: Array<[string, string, Array<[string, string]>]> = TOUCH ? [
   ['Peel and cut', 'where the press lands says which', [
     ['Drag an edge', 'peel'],
     ['Drag on the film', 'knife'],
-    ['Drag from outside', 'ruler'],
-    ['[\u21e7] + drag on the film', 'scratch'],
-    [`[${MOD}] + drag`, 'turn'],
+    ['Drag from outside', 'turn'],
+    [`[${MOD}] + drag`, 'ruler'],
+    ['[\u21e7] + drag', 'scratch'],
   ]],
   ['Tools', 'hold T, move, let go', [
     ['[T]', 'tool menu'],

@@ -6,7 +6,7 @@ A frog's eye wrapped in two thin films, one over the other. A cross is cut into 
 
 Five tools, one button in the bar under the sphere (hold T to open it at the cursor, or keys 1 to 5):
 
-- `combo`, the default: where the press lands says what it does. On an edge it peels, anywhere else on the film it is the knife, from off the sphere the ruler. With Shift held it scratches. With Cmd held it only turns the sphere.
+- `combo`, the default: where the press lands says what it does. On an edge it peels, anywhere else on the film it is the knife. Off the sphere a drag turns it. With Cmd held it is the ruler wherever the press lands, with Shift held it scratches, from wherever the drag begins.
 - `peel`: drag from an edge to peel, drag anywhere else to turn the sphere. Let go and the film stays off as far as it got.
 - `knife`: a cut drawn by hand.
 - `ruler`: drag a line, release to cut straight round the whole sphere.
@@ -14,7 +14,7 @@ Five tools, one button in the bar under the sphere (hold T to open it at the cur
 
 The round arrow starts over: every film whole again, no cross.
 
-On a touch screen it is the same combo, and two fingers turn the sphere. The question mark top right lists all of it.
+On a touch screen it is the same combo, and two fingers do the rest: both off the sphere they hold the ruler between them and it cuts when one is lifted, on the film they scratch. The question mark top right lists all of it.
 
 How it works:
 

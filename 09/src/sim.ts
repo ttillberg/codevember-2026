@@ -536,17 +536,48 @@ export function createSim(ctx: Ctx): Module {
       h.layer = grab.layer;
       h.id = grab.piece!.id;
       setCursor('grab');
-    } else setCursor(tool === 'combo' ? 'crosshair' : 'move'); // the combo cuts wherever it does not peel
+    } else if (tool === 'combo') {
+      // on the film it cuts wherever it does not peel; off it a drag turns
+      ray(px, py);
+      setCursor(hit(tW) ? 'crosshair' : 'move');
+    } else setCursor('move');
   }
 
-  // Fingers on the screen, by pointer id, and the turn two of them make together.
+  // Fingers on the screen, by pointer id, and what two of them do together: both off the
+  // sphere they hold a ruler between them, cut when one is lifted; otherwise their middle is
+  // a paw dragged over the film.
   const fingers = new Map<number, { x: number; y: number }>();
-  const two = { on: false, x: 0, y: 0, a: 0 };
-  const zAxis = new Vector3(0, 0, 1);
-  /** Where the two fingers are together: their middle and the angle of the line between them. */
-  function twoAt() {
+  const two = { on: false, ruler: false };
+  function twoBegin() {
     const [p, q] = [...fingers.values()];
-    return { x: (p.x + q.x) / 2, y: (p.y + q.y) / 2, a: Math.atan2(q.y - p.y, q.x - p.x) };
+    qInv.copy(world.rotation).invert();
+    ray(p.x, p.y);
+    const pOn = hit(tW);
+    ray(q.x, q.y);
+    two.on = true;
+    two.ruler = !pOn && !hit(tW);
+    if (two.ruler) world.aim.active = true;
+    else { stroke.on = false; stroke.painted = false; stroke.claws = CLAWS; }
+    twoMove();
+  }
+  function twoMove() {
+    const [p, q] = [...fingers.values()];
+    if (two.ruler) {
+      const a = world.aim;
+      a.x0 = p.x; a.y0 = p.y; a.x1 = q.x; a.y1 = q.y;
+      a.valid = aimValid(a.x0, a.y0, a.x1, a.y1);
+    } else drawTo((p.x + q.x) / 2, (p.y + q.y) / 2);
+  }
+  function twoEnd(cut: boolean) {
+    two.on = false;
+    if (two.ruler) {
+      const a = world.aim;
+      a.active = false; a.valid = false;
+      if (cut) lineCut(a.x0, a.y0, a.x1, a.y1);
+    } else {
+      if (stroke.painted) requestRelabel();
+      stroke.on = false;
+    }
   }
   /** What the first finger began is called off: a second one came down, so it was a turn. */
   function callOff() {
@@ -563,13 +594,13 @@ export function createSim(ctx: Ctx): Module {
     if (e.pointerType !== 'mouse') {
       fingers.set(e.pointerId, { x: e.clientX - left, y: e.clientY - top });
       if (fingers.size === 2 && pid !== -1 && !two.on) {
-        // Two fingers turn the sphere, whatever the first one was about to do.
+        // Two fingers take over, whatever the first one was about to do.
         e.preventDefault();
         callOff();
         try { canvas.setPointerCapture(e.pointerId); } catch { /* fine */ }
         omega.set(0, 0, 0);
         pid = -2; // taken: no other pointer starts anything
-        Object.assign(two, twoAt(), { on: true });
+        twoBegin();
         setCursor('');
         return;
       }
@@ -586,15 +617,16 @@ export function createSim(ctx: Ctx): Module {
     qInv.copy(world.rotation).invert();
     ray(px, py);
     const on = hit(tW);
-    // The combo: where the press lands says what it does, on a mouse as under a finger. Off
-    // the sphere it aims a ruler, on an edge that can be taken hold of it peels, anywhere
-    // else on the film it is a knife. Shift makes it a paw. Cmd (or Ctrl) only turns the
-    // sphere: with every press doing something, turning needs a key (two fingers on touch).
-    let tool = world.tool, turn = false;
+    // The combo: where the press lands says what it does, on a mouse as under a finger. On an
+    // edge that can be taken hold of it peels, anywhere else on the film it is a knife, off
+    // the sphere it turns it. Cmd (or Ctrl) makes it a ruler wherever it lands, Shift a paw.
+    // Two fingers do those two on a touch screen, see twoBegin.
+    let tool = world.tool, turn = false, paw = false; // paw: a scratch that may begin off the sphere
     if (tool === 'combo') {
-      if (e.metaKey || e.ctrlKey) turn = true;
-      else if (e.shiftKey && on) tool = 'scratch';
-      else tool = !on ? 'ruler' : findGrab(px, py) ? 'peel' : 'knife';
+      if (e.metaKey || e.ctrlKey) tool = 'ruler';
+      else if (e.shiftKey) { tool = 'scratch'; paw = true; }
+      else if (!on) turn = true;
+      else tool = findGrab(px, py) ? 'peel' : 'knife';
     }
     if (tool === 'ruler' && !turn) {
       // The sphere holds still while a cut is aimed.
@@ -605,7 +637,7 @@ export function createSim(ctx: Ctx): Module {
       setCursor('crosshair');
       return;
     }
-    if (on && !turn) {
+    if ((on || paw) && !turn) {
       if (tool === 'knife' || tool === 'scratch') {
         omega.set(0, 0, 0);
         drag = 'draw';
@@ -631,21 +663,7 @@ export function createSim(ctx: Ctx): Module {
     const f = fingers.get(e.pointerId);
     if (f) { f.x = e.clientX - left; f.y = e.clientY - top; }
     if (two.on) {
-      if (!f || fingers.size < 2) return;
-      // their middle carried along turns the sphere as one finger off it would; the line
-      // between them turned about itself turns it about the line of sight
-      const now = twoAt();
-      const dx = now.x - two.x, dy = now.y - two.y, len = Math.hypot(dx, dy);
-      if (len > 0) {
-        tA.set(dy / len, dx / len, 0);
-        tQ.setFromAxisAngle(tA, len / rpx);
-        world.rotation.premultiply(tQ);
-      }
-      let da = now.a - two.a;
-      if (da > Math.PI) da -= 2 * Math.PI; else if (da < -Math.PI) da += 2 * Math.PI;
-      tQ.setFromAxisAngle(zAxis, -da);
-      world.rotation.premultiply(tQ).normalize();
-      two.x = now.x; two.y = now.y; two.a = now.a;
+      if (f && fingers.size === 2) twoMove();
       return;
     }
     if (e.pointerId !== pid) {
@@ -681,9 +699,9 @@ export function createSim(ctx: Ctx): Module {
   function onUp(e: PointerEvent) {
     fingers.delete(e.pointerId);
     if (two.on) {
-      // one finger off ends the turn; the other does nothing more until it too is lifted
+      // one finger off ends it; the other does nothing more until it too is lifted
       try { canvas.releasePointerCapture(e.pointerId); } catch { /* fine */ }
-      two.on = false;
+      twoEnd(e.type === 'pointerup');
       pid = -1;
       return;
     }
