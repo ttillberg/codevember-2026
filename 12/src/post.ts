@@ -18,7 +18,8 @@ precision highp float;
 varying vec2 vUv;
 uniform sampler2D tColor;
 uniform sampler2D tDepth;
-uniform vec2 uTexel;     // 1 / size
+uniform vec2 uTexel;     // dpr / size: CoC numbers are in CSS px
+uniform vec2 uSpiral[48]; // (cos, sin) of i * golden angle
 uniform float uNear, uFar;
 uniform float uFocus;    // view-space distance in focus
 uniform float uAperture; // CoC in px for 1/z difference of 1
@@ -42,7 +43,6 @@ vec2 coc(vec2 uv) {
 }
 
 const int TAPS = 48;
-const float GOLDEN = 2.39996323;
 
 void main() {
   vec2 cz0 = coc(vUv);
@@ -54,12 +54,12 @@ void main() {
   float R = max(c0, uMaxCoc * 0.5);
   // rotate the spiral per pixel so a hot speck blurs to a soft disc, not a ring of dots
   float rot = fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233))) * 43758.5453) * 6.2831853;
+  mat2 spin = mat2(cos(rot), sin(rot), -sin(rot), cos(rot));
   float jr = fract(sin(dot(gl_FragCoord.xy, vec2(39.3468, 11.135))) * 24634.6345);
   for (int i = 1; i < TAPS; i++) {
     float fi = float(i);
     float r = sqrt((fi - jr) / float(TAPS)) * R;
-    float a = fi * GOLDEN + rot;
-    vec2 uv = vUv + vec2(cos(a), sin(a)) * r * uTexel;
+    vec2 uv = vUv + spin * uSpiral[i] * r * uTexel;
     vec2 czi = coc(uv);
     // a tap behind us can't blur over us further than our own blur
     float ci = czi.y > cz0.y * 1.02 ? min(czi.x, c0) : czi.x;
@@ -149,6 +149,8 @@ export interface Post {
   grade: Record<string, THREE.IUniform>;
   /** swap the tone mapping curve (the grade pass calls it itself) */
   setToneMapping(t: THREE.ToneMapping): void;
+  /** the loading drawing is over: free its target */
+  endDrawing(): void;
 }
 
 export function createPost(renderer: THREE.WebGLRenderer, opts: { samples: number }): Post {
@@ -178,6 +180,7 @@ export function createPost(renderer: THREE.WebGLRenderer, opts: { samples: numbe
       tColor: { value: sceneRT.texture },
       tDepth: { value: depth },
       uTexel: { value: new THREE.Vector2() },
+      uSpiral: { value: Array.from({ length: 48 }, (_, i) => new THREE.Vector2(Math.cos(i * 2.39996323), Math.sin(i * 2.39996323))) },
       uNear: { value: 0.1 },
       uFar: { value: 100 },
       uFocus: { value: 3.3 },
@@ -206,7 +209,7 @@ export function createPost(renderer: THREE.WebGLRenderer, opts: { samples: numbe
       uGrain: { value: 0.025 },
       uTime: { value: 0 },
       uRes: { value: new THREE.Vector2(1, 1) },
-      tWire: { value: null },
+      tWire: { value: wireRT.texture as THREE.Texture | null },
       uReveal: { value: 1 },
       uDpr: { value: 1 },
     },
@@ -220,11 +223,14 @@ export function createPost(renderer: THREE.WebGLRenderer, opts: { samples: numbe
   const focusWorld = new THREE.Vector3(0, 0.9, 0);
   const tmp = new THREE.Vector3();
   let focusDist = 3.3;
-  let dpr = 1;
 
   return {
     dof: dofMat.uniforms,
     grade: gradeMat.uniforms,
+    endDrawing() {
+      wireRT.dispose();
+      gradeMat.uniforms.tWire.value = null;
+    },
     setToneMapping(t) {
       renderer.toneMapping = t;
       gradeMat.needsUpdate = true;
@@ -233,18 +239,16 @@ export function createPost(renderer: THREE.WebGLRenderer, opts: { samples: numbe
       focusWorld.copy(p);
     },
     setSize(w, h, d) {
-      dpr = d;
       const W = Math.floor(w * d);
       const H = Math.floor(h * d);
       sceneRT.setSize(W, H);
       dofRT.setSize(W, H);
       wireRT.setSize(W, H);
       gradeMat.uniforms.uDpr.value = d;
-      dofMat.uniforms.uTexel.value.set(1 / W, 1 / H);
+      dofMat.uniforms.uTexel.value.set(d / W, d / H);
       gradeMat.uniforms.uRes.value.set(W, H);
     },
     render(scene, camera, t, wire) {
-      gradeMat.uniforms.tWire.value = wireRT.texture;
       if (wire) {
         renderer.getClearColor(clearCol);
         const a = renderer.getClearAlpha();
@@ -260,8 +264,6 @@ export function createPost(renderer: THREE.WebGLRenderer, opts: { samples: numbe
       dofMat.uniforms.uFocus.value = Math.max(focusDist, 0.1);
       dofMat.uniforms.uNear.value = camera.near;
       dofMat.uniforms.uFar.value = camera.far;
-      // CoC numbers are tuned in CSS px; scale to the buffer
-      dofMat.uniforms.uTexel.value.set(1 / sceneRT.width, 1 / sceneRT.height).multiplyScalar(dpr);
       gradeMat.uniforms.uTime.value = t;
 
       // nothing of the picture shows yet: skip it (the drawing is all there is)

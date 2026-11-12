@@ -119,3 +119,18 @@ body.loading .plate { color: #2b3a2c; }
 .plate .loading-label { opacity: 0; transition: opacity 0.6s; }
 body.loading .plate .loading-label { opacity: 0.7; }
 body.loading .fs, body.loading .gear { opacity: 0; pointer-events: none; }
+
+/* phones: no full screen API worth the name; a tilt (gyro) button there instead */
+.gyro { display: none; }
+body.touch .fs { display: none; }
+body.touch .gyro {
+  position: fixed; top: 14px; right: 12px; z-index: 3;
+  display: grid; place-items: center; width: 34px; height: 34px; padding: 0;
+  border: 1px solid rgba(243, 245, 238, 0.45); border-radius: 50%;
+  background: rgba(20, 40, 18, 0.18); color: #f3f5ee; cursor: pointer;
+  -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
+  transition: background 0.2s, color 0.2s;
+}
+body.touch .gyro.on { background: #f3f5ee; color: #1f3a1c; }
+body.loading .gyro { opacity: 0; pointer-events: none; }
+body.clean .gyro { display: none; }
