@@ -21,7 +21,7 @@ export class GazeLayer implements Layer {
   readonly name = 'gaze';
   enabled = true;
   /** widest head turn relative to straight ahead, radians */
-  maxYaw = 118 * DEG;
+  maxYaw = 70 * DEG;
   /** chance that a new fixation concerns the point of interest (scaled up by arousal) */
   interest = 0.5;
   tremor = 1;
