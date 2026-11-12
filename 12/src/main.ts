@@ -99,6 +99,7 @@ const branchLoad = query.has('procbranch')
         disposeTree(branch.group);
         scene.add(b.group);
         usePerch(b.group);
+        useMaskOccluders(b.group);
         branchFuzz = b.fuzz;
         applyFuzz();
       })
@@ -132,6 +133,51 @@ const bird = createBird({ renderer, scene, camera });
 bird.root.position.x = GRIP_X;
 bird.layer<HopLayer>('hop').home = GRIP_X;
 scene.add(bird.root);
+// the fade lifts the bird alone: its meshes also sit on a mask layer, drawn white
+// (feathers through their own shader, so the mask has their exact outline)
+const MASK_LAYER = 5;
+bird.root.traverse((o) => o.layers.enable(MASK_LAYER));
+const maskWhite = new THREE.MeshBasicMaterial({ color: 0xffffff });
+// the twig goes into the mask black, so the bird behind it stays unlifted there
+const maskBlack = new THREE.MeshBasicMaterial({ color: 0x000000 });
+const maskOccluders: THREE.Mesh[] = [];
+function useMaskOccluders(root: THREE.Object3D) {
+  maskOccluders.length = 0;
+  root.traverse((o) => {
+    if ((o as THREE.Mesh).isMesh && /^(perch|shoot|buds|twiglets)$/.test(o.name)) {
+      o.layers.enable(MASK_LAYER);
+      maskOccluders.push(o as THREE.Mesh);
+    }
+  });
+}
+const plumageBase = bird.feathers.contour.material as THREE.MeshStandardMaterial;
+const maskPlumage = plumageBase.clone();
+maskPlumage.onBeforeCompile = (shader, r) => {
+  plumageBase.onBeforeCompile.call(plumageBase, shader, r);
+  shader.fragmentShader = shader.fragmentShader.replace('#include <dithering_fragment>', '#include <dithering_fragment>\n  gl_FragColor = vec4(1.0, 1.0, 1.0, gl_FragColor.a);');
+};
+maskPlumage.customProgramCacheKey = () => 'plumage-mask';
+const maskMeshes: THREE.Mesh[] = [];
+bird.root.traverse((o) => (o as THREE.Mesh).isMesh && maskMeshes.push(o as THREE.Mesh));
+const maskSaved: (THREE.Material | THREE.Material[])[] = [];
+function drawMask() {
+  const feathers: THREE.Object3D[] = [bird.feathers.contour, bird.feathers.flight, bird.feathers.fuzz];
+  maskMeshes.forEach((m, i) => {
+    maskSaved[i] = m.material;
+    m.material = feathers.includes(m) ? maskPlumage : maskWhite;
+  });
+  const occSaved = maskOccluders.map((m) => m.material);
+  maskOccluders.forEach((m) => (m.material = maskBlack));
+  const layers = camera.layers.mask;
+  camera.layers.set(MASK_LAYER);
+  // the shadow map from the main pass is fine as it is
+  renderer.shadowMap.autoUpdate = false;
+  renderer.render(scene, camera);
+  renderer.shadowMap.autoUpdate = true;
+  camera.layers.mask = layers;
+  maskMeshes.forEach((m, i) => (m.material = maskSaved[i]));
+  maskOccluders.forEach((m, i) => (m.material = occSaved[i]));
+}
 const gaze = bird.layer<GazeLayer>('gaze');
 const forage = bird.layer<ForageLayer>('forage');
 const billTip = bird.billTip.bind(bird);
@@ -147,8 +193,12 @@ const plane = new THREE.Plane();
 const toCam = new THREE.Vector3();
 const planeAt = new THREE.Vector3();
 // a plane facing the camera, `ahead` in front of the bird's head
+function toNdc(x: number, y: number) {
+  const r = canvas.getBoundingClientRect();
+  return ndc.set(((x - r.left) / r.width) * 2 - 1, -((y - r.top) / r.height) * 2 + 1);
+}
 function pointerOnPlane(x: number, y: number, ahead: number, out: THREE.Vector3) {
-  ndc.set((x / window.innerWidth) * 2 - 1, -(y / window.innerHeight) * 2 + 1);
+  toNdc(x, y);
   ray.setFromCamera(ndc, camera);
   camera.getWorldDirection(toCam).negate();
   plane.setFromNormalAndCoplanarPoint(toCam, planeAt.set(bird.root.position.x, 0.8, 0).addScaledVector(toCam, ahead));
@@ -178,7 +228,7 @@ canvas.addEventListener('pointerdown', (e) => {
 const capA = new THREE.Vector3();
 const capB = new THREE.Vector3();
 function tapsBird(x: number, y: number) {
-  ndc.set((x / window.innerWidth) * 2 - 1, -(y / window.innerHeight) * 2 + 1);
+  toNdc(x, y);
   ray.setFromCamera(ndc, camera);
   bird.root.getWorldPosition(capA).y += 0.25;
   bird.headPosition(capB);
@@ -284,6 +334,7 @@ function disposeTree(root: THREE.Object3D) {
   });
 }
 usePerch(branch.group);
+useMaskOccluders(branch.group);
 
 // --- another bird: the feathers turn to new colours ----------------------------
 let paletteIndex = 0;
@@ -404,8 +455,9 @@ const settings = createSettings([
 
 // --- loop ---------------------------------------------------------------------
 function resize() {
-  const w = window.innerWidth;
-  const h = window.innerHeight;
+  // the size the canvas is laid out at, not the window's: on a phone they differ while the bars show
+  const w = canvas.clientWidth || window.innerWidth;
+  const h = canvas.clientHeight || window.innerHeight;
   renderer.setSize(w, h, false);
   post.setSize(w, h, renderer.getPixelRatio());
   camera.aspect = w / h;
@@ -414,6 +466,7 @@ function resize() {
   camera.updateProjectionMatrix();
 }
 window.addEventListener('resize', resize);
+new ResizeObserver(resize).observe(canvas);
 resize();
 
 branchLoad.then(() => requestAnimationFrame(() => ready()));
@@ -574,7 +627,7 @@ function render() {
   if (!usePost) return renderer.render(scene, camera);
   post.focusOn(headPos);
   post.grade.uReveal.value = THREE.MathUtils.smoothstep(reveal, 0, 1);
-  post.render(scene, camera, t, revealing && reveal === 1 ? null : drawWire);
+  post.render(scene, camera, t, revealing && reveal === 1 ? null : drawWire, drawMask);
 }
 
 Object.assign(window as unknown as Record<string, unknown>, { __scene: scene, __camera: camera, __renderer: renderer, __controls: controls, __post: post, __frame: frame, __seeds: seeds, __insects: insects });
