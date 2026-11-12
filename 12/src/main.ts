@@ -4,6 +4,7 @@ import { createBackdrop } from './env/backdrop';
 import { createBranch, GRIP_X, loadBranch, perchRadiusAt } from './env/branch';
 import { createBird, type ForageLayer, type GazeLayer, type HopLayer, type MouthLayer, type RuffleLayer } from './bird';
 import type { Food, PerchFrame } from './bird/types';
+import { PALETTES, paletteMatrices } from './bird/palettes';
 import { createPost } from './post';
 import { createSeeds } from './seeds';
 import { createInsects } from './insects';
@@ -63,6 +64,18 @@ scene.add(branch.group);
 const loadLabel = document.querySelector<HTMLElement>('.loading-label span');
 let reveal = 0;
 let revealing = false;
+let firstReveal = true;
+// W: the live drawing (ink wireframe on millimetre paper) instead of the picture
+let drawing = query.has('drawing');
+function setDrawing(on: boolean) {
+  drawing = on;
+  // a cut, not a fade (the title's colour too)
+  document.body.classList.add('snap');
+  document.body.classList.toggle('drawing', on);
+  requestAnimationFrame(() => document.body.classList.remove('snap'));
+  if (revealing && !firstReveal) reveal = on ? 0 : 1;
+}
+setDrawing(drawing);
 function startReveal(instant = false) {
   if (instant) reveal = 1;
   revealing = true;
@@ -191,6 +204,7 @@ canvas.addEventListener('pointerup', (e) => {
 });
 window.addEventListener('keydown', (e) => {
   if (e.code === 'Space') bird.startle(1);
+  if (e.code === 'KeyW' && !e.metaKey && !e.ctrlKey) setDrawing(!drawing);
 });
 
 // --- post: depth of field on the head, colour grade -----------------------------
@@ -259,6 +273,38 @@ function disposeTree(root: THREE.Object3D) {
 }
 usePerch(branch.group);
 
+// --- another bird: the feathers turn to new colours ----------------------------
+let paletteIndex = 0;
+let paletteT = 1;
+let paletteDelay = 0;
+const paletteFrom = bird.plumage.uPal.value.map((m) => m.clone());
+let paletteTo = paletteMatrices(PALETTES[0]);
+function changePalette() {
+  paletteIndex = (paletteIndex + 1) % PALETTES.length;
+  // just the slightest lift of the throat and crown as the colours turn
+  bird.layer<RuffleLayer>('ruffle').trigger(bird.mind, 'throat', 0.25);
+  bird.plumage.uPal.value.forEach((m, i) => paletteFrom[i].copy(m));
+  paletteTo = paletteMatrices(PALETTES[paletteIndex]);
+  paletteDelay = 0.05;
+  paletteT = 0;
+}
+function updatePalette(dt: number) {
+  if (paletteT >= 1) return;
+  if (paletteDelay > 0) {
+    paletteDelay -= dt;
+    return;
+  }
+  paletteT = Math.min(1, paletteT + dt / 0.55);
+  const k = THREE.MathUtils.smoothstep(paletteT, 0, 1);
+  bird.plumage.uPal.value.forEach((m, i) => {
+    for (let e = 0; e < 9; e++) m.elements[e] = paletteFrom[i].elements[e] + (paletteTo[i].elements[e] - paletteFrom[i].elements[e]) * k;
+  });
+}
+document.querySelector('.palette')?.addEventListener('click', changePalette);
+window.addEventListener('keydown', (e) => {
+  if (e.code === 'KeyC' && !e.metaKey && !e.ctrlKey) changePalette();
+});
+
 // --- settings wheel, bottom right ---------------------------------------------
 let followPointer = true;
 let shakeAmt = query.has('still') ? 0 : 1.8;
@@ -303,7 +349,9 @@ const settings = createSettings([
   { kind: 'action', label: 'A gnat', run: () => insects.spawn() },
   { kind: 'action', label: 'Sing', run: () => bird.layer<MouthLayer>('mouth').sing(bird.mind, 2.2) },
   { kind: 'action', label: 'Ruffle', run: () => bird.layer<RuffleLayer>('ruffle').trigger(bird.mind, 'shake') },
+  { kind: 'action', label: 'Another bird (C)', run: changePalette },
   { kind: 'action', label: 'Startle', run: () => bird.startle(1) },
+  { kind: 'action', label: 'Drawing (W)', run: () => setDrawing(!drawing) },
 ]);
 
 // --- loop ---------------------------------------------------------------------
@@ -342,14 +390,18 @@ renderer.setAnimationLoop((now) => {
   gaze.pursuit = recent && performance.now() - pointerAt < 700 ? 1 : 0;
   bird.setAttention(recent ? pointerTarget : camera.position);
   tilt.lerp(tiltOn ? tiltGoal : tiltZero, 1 - Math.exp(-dt * 6));
-  if (revealing && reveal < 1) {
+  // the picture fades in over the drawing once, after loading (W cuts between them after that)
+  if (revealing && firstReveal && !drawing) {
     reveal = Math.min(1, reveal + dt / 1.6);
-    // the drawing's done its job: free its target and material
-    if (reveal === 1) {
-      post.endDrawing();
-      wireMat.dispose();
-    }
+    if (reveal === 1) firstReveal = false;
   }
+  // picture alone: free the drawing's target and material until W asks again
+  if (reveal === 1 && wireLive) {
+    wireLive = false;
+    post.endDrawing();
+    wireMat.dispose();
+  }
+  updatePalette(dt);
   allFood.length = 0;
   allFood.push(...seeds.food(), ...insects.food());
   bird.setFood(allFood);
@@ -452,7 +504,9 @@ const wireMat = new THREE.MeshBasicMaterial({ color: 0xffffff, wireframe: true }
 // the drawing: the bird's skin, bill and eyes and the twig, not the feathers or the sky
 const wireHide = [backdrop.mesh, bird.feathers.contour, bird.feathers.flight, bird.feathers.fuzz];
 const wasVisible: boolean[] = [];
+let wireLive = true;
 function drawWire() {
+  wireLive = true;
   wireHide.forEach((o, i) => {
     wasVisible[i] = o.visible;
     o.visible = false;
@@ -467,7 +521,7 @@ function render() {
   if (!usePost) return renderer.render(scene, camera);
   post.focusOn(headPos);
   post.grade.uReveal.value = THREE.MathUtils.smoothstep(reveal, 0, 1);
-  post.render(scene, camera, t, revealing ? null : drawWire);
+  post.render(scene, camera, t, revealing && reveal === 1 ? null : drawWire);
   if (firstFrame) {
     firstFrame = false;
     canvas.classList.remove('pending');

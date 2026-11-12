@@ -149,7 +149,7 @@ export interface Post {
   grade: Record<string, THREE.IUniform>;
   /** swap the tone mapping curve (the grade pass calls it itself) */
   setToneMapping(t: THREE.ToneMapping): void;
-  /** the loading drawing is over: free its target */
+  /** the drawing is off screen: free its target (it comes back on the next drawing frame) */
   endDrawing(): void;
 }
 
@@ -250,6 +250,7 @@ export function createPost(renderer: THREE.WebGLRenderer, opts: { samples: numbe
     },
     render(scene, camera, t, wire) {
       if (wire) {
+        gradeMat.uniforms.tWire.value = wireRT.texture;
         renderer.getClearColor(clearCol);
         const a = renderer.getClearAlpha();
         renderer.setRenderTarget(wireRT);
