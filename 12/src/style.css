@@ -1,0 +1,105 @@
+html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
+canvas { display: block; width: 100vw; height: 100vh; }
+.back {
+  position: fixed; left: 12px; bottom: 12px;
+  font: 12px ui-monospace, Menlo, monospace; color: #fff; opacity: .5;
+  text-decoration: none;
+}
+.back:hover { opacity: 1; }
+.hint {
+  position: fixed; right: 12px; bottom: 12px; margin: 0;
+  font: 12px ui-monospace, Menlo, monospace; color: #fff; opacity: .4;
+  pointer-events: none; transition: opacity 1.2s;
+}
+.hint.gone { opacity: 0; }
+canvas { touch-action: none; cursor: grab; }
+canvas:active { cursor: grabbing; }
+
+/* title top left, the way 08 does it: the day in Plex Sans, under it the way home */
+.back { display: none; } /* kept for the index's sake; the title links home instead */
+.plate { position: fixed; top: 24px; left: 24px; pointer-events: none; color: #f3f5ee; }
+.plate b {
+  display: block; white-space: nowrap;
+  font-family: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-size: 56px; font-weight: 700; letter-spacing: -0.02em; line-height: 0.9; text-transform: uppercase;
+  text-shadow: 0 1px 24px rgba(10, 30, 8, 0.25);
+}
+.plate .head > i {
+  display: block; margin-top: 6px; font-style: normal;
+  font: 600 14px/1.15 "IBM Plex Sans", system-ui, sans-serif; letter-spacing: 0.12em; text-transform: uppercase;
+}
+.plate .home { color: inherit; text-decoration: none; pointer-events: auto; opacity: 0.85; }
+.plate .home:hover { opacity: 1; }
+.plate .home span[lang="ja"] { font-family: "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Noto Sans JP", "Yu Gothic", sans-serif; letter-spacing: 0.06em; }
+@media (max-width: 640px) {
+  .plate { top: 16px; left: 16px; }
+  .plate b { font-size: 34px; }
+  .plate .head > i { font-size: 10px; }
+}
+
+/* full screen, top right beside the wheel: the page goes clean, the text and the rest away */
+.fs {
+  position: fixed; top: 25px; right: 66px; z-index: 3;
+  display: grid; place-items: center; width: 34px; height: 34px; padding: 0;
+  border: 1px solid rgba(243, 245, 238, 0.45); border-radius: 50%;
+  background: rgba(20, 40, 18, 0.18); color: #f3f5ee; cursor: pointer;
+  -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
+  transition: opacity 0.4s, background 0.2s;
+}
+.fs:hover { background: rgba(20, 40, 18, 0.35); }
+.fs .out { display: none; }
+body.clean .fs .in { display: none; }
+body.clean .fs .out { display: inline; }
+body.clean .plate, body.clean .hint { display: none; }
+/* clean: the button too, until the pointer comes near it */
+body.clean .fs { opacity: 0; }
+body.clean.near .fs, body.clean .fs:focus-visible { opacity: 0.7; }
+/* in real full screen it goes entirely (Esc is the way out); without one (iPhone, ?clean) it comes back near the corner */
+body.clean.fullscreen .fs { display: none; }
+.hint .narrow { display: none; }
+@media (max-width: 640px) {
+  .hint .wide { display: none; }
+  .hint .narrow { display: inline; }
+}
+
+/* settings wheel, top right, and its card */
+.gear {
+  position: fixed; top: 25px; right: 22px; z-index: 3;
+  display: grid; place-items: center; width: 34px; height: 34px; padding: 0;
+  border: 1px solid rgba(243, 245, 238, 0.45); border-radius: 50%;
+  background: rgba(20, 40, 18, 0.18); color: #f3f5ee; cursor: pointer;
+  -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
+  transition: opacity 0.4s, background 0.2s, transform 0.4s;
+}
+.gear:hover, .gear.on { background: rgba(20, 40, 18, 0.4); }
+.gear.on { transform: rotate(60deg); }
+.settings {
+  position: fixed; top: 68px; right: 22px; z-index: 3; width: 240px; max-height: calc(100vh - 100px); overflow: auto;
+  padding: 12px 14px 14px; border-radius: 14px; border: 0.5px solid rgba(243, 245, 238, 0.3);
+  background: rgba(16, 32, 14, 0.55); color: #f3f5ee;
+  -webkit-backdrop-filter: blur(16px) saturate(1.2); backdrop-filter: blur(16px) saturate(1.2);
+  font: 12px/1.3 "IBM Plex Sans", system-ui, sans-serif;
+}
+.settings[hidden] { display: none; }
+.settings h5 {
+  margin: 10px 0 6px; padding-bottom: 5px; border-bottom: 1px solid rgba(243, 245, 238, 0.3);
+  font: 700 10px/1 "Helvetica Neue", Helvetica, Arial, sans-serif; letter-spacing: 0.14em; text-transform: uppercase; opacity: 0.8;
+}
+.settings h5:first-child { margin-top: 0; }
+.settings .row { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 4px 0; cursor: pointer; }
+.settings .row.range { flex-direction: column; align-items: stretch; gap: 4px; }
+.settings input[type="range"] { width: 100%; accent-color: #b9f06a; }
+.settings select { background: rgba(16, 32, 14, 0.6); color: inherit; border: 0.5px solid rgba(243, 245, 238, 0.45); border-radius: 6px; padding: 2px 4px; font: inherit; }
+.settings input[type="checkbox"] { accent-color: #b9f06a; width: 15px; height: 15px; }
+.settings .act {
+  display: inline-block; margin: 4px 6px 0 0; padding: 6px 10px 5px; border: 0.5px solid rgba(243, 245, 238, 0.45); border-radius: 999px;
+  background: none; color: inherit; cursor: pointer; font: 700 9px/1 "Helvetica Neue", Helvetica, Arial, sans-serif; letter-spacing: 0.14em; text-transform: uppercase;
+}
+.settings .act:hover { background: rgba(243, 245, 238, 0.15); }
+.settings .reset { display: block; margin-top: 12px; opacity: 0.7; }
+body.clean .gear, body.clean .settings { display: none; }
+@media (max-width: 640px) {
+  .gear { top: 14px; right: 12px; }
+  .fs { top: 14px; right: 56px; }
+  .settings { top: 56px; right: 12px; width: calc(100vw - 24px - 28px); }
+}
