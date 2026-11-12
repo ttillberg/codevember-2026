@@ -7,6 +7,7 @@ import type { Ctx, Module } from './state';
 import { createWorld, createSim } from './sim';
 import { createMembrane } from './membrane';
 import { createFx } from './fx';
+import { createEye } from './eye';
 
 const canvas = document.querySelector<HTMLCanvasElement>('#c')!;
 const renderer = new WebGLRenderer({ canvas, antialias: true });
@@ -30,7 +31,7 @@ const world = createWorld();
 const ctx: Ctx = { world, renderer, scene, camera, canvas };
 
 // Order matters: sim moves the state, membrane and fx draw it.
-const modules: Module[] = [createSim(ctx), createMembrane(ctx), createFx(ctx)];
+const modules: Module[] = [createSim(ctx), createEye(ctx), createMembrane(ctx), createFx(ctx)];
 
 function resize() {
   const w = window.innerWidth;

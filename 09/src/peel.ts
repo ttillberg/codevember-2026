@@ -38,7 +38,10 @@ export const tune = {
    *  where the film is coming off. */
   lift: 1,
   /** How solid lifted film stays far behind the front (lift.ghost). 0.08 is the look. */
-  ghost: 0.45,
+  ghost: 0.6,
+  /** How much of the lifted film is shown: what is no higher than this over the sphere, in
+   *  radii (lift.band). The rest of what is in the hand is cut off. */
+  height: 2,
   /** How unevenly the film clings from spot to spot: 0 a clean front, 1 a stuttering one. */
   rough: 0.1,
   /** Strength: the film breaks off along the front when the front gets this wide (in units
@@ -65,16 +68,17 @@ const M = LIFT_M;
 const COUNT = 6 * M * M;
 const CELL_RAD = Math.PI / (2 * M);   // a cell's angle at a face centre
 const SUB = 3;                        // times a frame the front may let go: one ring each
-const ITER = 4;
+const SWEEPS = 12;                    // times a frame the loose sheet is pulled taut
+const OVER = 1.5;
 const DEEP = 30;                      // cells behind the front where links stop being worked out
 const DAMP = 0.8;
 const SAG = 6;                        // pull towards the sphere, so the sheet lies on it
 const STACK = 0.12;                   // skins of height gained per cell behind the front
-const SHELL = 1.5;                    // loose film stays within this many finger heights of the sphere
+const SHELL = 1.15;                   // loose film stays within this many finger heights of the sphere
 const SKIN = 0.004 * R;               // loose film rides this far above the sphere
 const SHARE = 40;                     // front particles that double the pull needed at load 1
 const HOLD = 1.7;                     // cells round the grab that the finger holds
-const LIFT_MAX = 1.5 * R;
+const LIFT_MAX = 0.4 * R;                 // as high as the finger ever holds the film: higher, and a big sheet stands out in space like a sail
 const SHEAR_STRETCH = 0.2;            // extra stretch film dragged flat takes, per unit of the shear setting
 const ROUND = 3;                      // passes that round the front off, and rings of film they reach
 const FAIR = 0.6;                     // how much the front evens itself out: a stuck point sticking into loose film gives sooner, a bay later
@@ -89,6 +93,7 @@ const nb = new Int32Array(COUNT * 8).fill(-1);
 const nbLen = new Float32Array(COUNT * 8);
 const jitter = new Float32Array(COUNT);
 const DI = [1, -1, 0, 0, 1, 1, -1, -1], DJ = [0, 0, 1, -1, 1, -1, 1, -1];
+const OPP = [1, 0, 3, 2, 7, 6, 5, 4]; // the neighbour straight across
 const tmp = new Float64Array(3), tmpF = new Float64Array(3);
 
 function cellOf(x: number, y: number, z: number): number {
@@ -168,6 +173,7 @@ export function createPeeler(world: World) {
   const accN = new Uint8Array(COUNT);
   const mask = new Float32Array(COUNT), mask2 = new Float32Array(COUNT);
   const even = new Float32Array(COUNT * 3);
+  const evenFar = new Float32Array(COUNT);
   const inRegion = new Uint8Array(COUNT);
   let region: number[] = [];
   let loose = new Int32Array(1 << 12);
@@ -340,84 +346,51 @@ export function createPeeler(world: World) {
     F.copy(G).applyQuaternion(q).multiplyScalar(R + height);
   }
 
-  /** The loose sheet, one step. */
-  function sheet(h: number) {
+  /** The loose sheet, one step. Not cloth: a film pulled taut between where it is still down
+   *  and the finger, like a soap film. Every loose particle goes to the mean of the particles
+   *  it is joined to (stuck ones where they rest, held ones in the hand), over-relaxed so a
+   *  few sweeps a frame keep up, and never under the sphere: there it lies on the ball and
+   *  leaves it at a tangent. No weight, no speed, no slack to wrinkle. */
+  function sheet() {
     const k1 = 1 + tune.elastic;
-    // held particles ride the finger
     for (let m = 0; m < nLoose; m++) {
       const c = loose[m], o = c * 3;
       if (st[c] !== HELD) continue;
       v.set(rest[o], rest[o + 1], rest[o + 2]).applyQuaternion(q).multiplyScalar((R + height) / R);
-      pos[o] = prev[o] = v.x; pos[o + 1] = prev[o + 1] = v.y; pos[o + 2] = prev[o + 2] = v.z;
+      pos[o] = v.x; pos[o + 1] = v.y; pos[o + 2] = v.z;
     }
-    // verlet
-    for (let m = 0; m < nLoose; m++) {
-      const c = loose[m], o = c * 3;
-      if (st[c] !== LOOSE) continue;
-      const x = pos[o], y = pos[o + 1], z = pos[o + 2];
-      const il = SAG * h * h / Math.hypot(x, y, z);
-      pos[o] = x + (x - prev[o]) * DAMP - x * il;
-      pos[o + 1] = y + (y - prev[o + 1]) * DAMP - y * il;
-      pos[o + 2] = z + (z - prev[o + 2]) * DAMP - z * il;
-      prev[o] = x; prev[o + 1] = y; prev[o + 2] = z;
-    }
-    const Fl = R + height;
-    for (let it = 0; it < ITER; it++) {
-      for (let m = 0; m < nLoose; m++) {
-        const c = loose[m], o = c * 3;
-        const free = st[c] === LOOSE;
-        if (free) {
-          // Tether to its point of the grip, laid over the sphere: its length is the arc between the
-          // two directions and the difference in height. Too long, and the particle comes
-          // in along that same path, round the sphere and never through it.
-          const r3 = root[c] * 3, Fx = pos[r3], Fy = pos[r3 + 1], Fz = pos[r3 + 2];
-          const pl = Math.hypot(pos[o], pos[o + 1], pos[o + 2]);
-          const cs = (pos[o] * Fx + pos[o + 1] * Fy + pos[o + 2] * Fz) / (pl * Fl);
-          const ang = Math.acos(cs > 1 ? 1 : cs < -1 ? -1 : cs);
-          const dr = pl - Fl;
-          const d = Math.hypot(ang * R, dr), max = tether[c] * k1;
-          if (d > max) {
-            const s = max / d, nl = Fl + dr * s;
-            if (ang < 1e-4) { const q = nl / pl; pos[o] *= q; pos[o + 1] *= q; pos[o + 2] *= q; }
-            else {
-              const si = 1 / Math.sin(ang);
-              const wf = (Math.sin((1 - s) * ang) * si * nl) / Fl, wp = (Math.sin(s * ang) * si * nl) / pl;
-              pos[o] = Fx * wf + pos[o] * wp; pos[o + 1] = Fy * wf + pos[o + 1] * wp; pos[o + 2] = Fz * wf + pos[o + 2] * wp;
-            }
-          }
-        }
-        // far behind the front it only follows its tether
-        for (let k = depth[c] > DEEP ? 8 : 0; k < 8; k++) {
+    for (let it = 0; it < SWEEPS; it++) {
+      // there and back, so no side of the sheet lags the other
+      const back = (it & 1) === 1;
+      for (let i = 0; i < nLoose; i++) {
+        const c = loose[back ? nLoose - 1 - i : i], o = c * 3;
+        if (st[c] !== LOOSE) continue;
+        let x = 0, y = 0, z = 0, sum = 0;
+        for (let k = 0; k < 8; k++) {
           if (!link(c, k)) continue;
-          const n = nb[c * 8 + k], p = n * 3, sn = st[n];
-          if (sn !== STUCK && n < c) continue; // that pair was done from the other end
-          const nx = sn === STUCK ? rest[p] : pos[p], ny = sn === STUCK ? rest[p + 1] : pos[p + 1], nz = sn === STUCK ? rest[p + 2] : pos[p + 2];
-          const dx = nx - pos[o], dy = ny - pos[o + 1], dz = nz - pos[o + 2];
-          const d = Math.hypot(dx, dy, dz), r = nbLen[c * 8 + k];
-          if (d <= r) continue; // film does not push
-          const moveN = sn === LOOSE;
-          if (!free && !moveN) continue;
-          const s = ((d - r) / d) * tune.stiff * (free && moveN ? 0.5 : 1);
-          if (free) { pos[o] += dx * s; pos[o + 1] += dy * s; pos[o + 2] += dz * s; }
-          if (moveN) { pos[p] -= dx * s; pos[p + 1] -= dy * s; pos[p + 2] -= dz * s; }
+          const n = nb[c * 8 + k], p = n * 3, w = k < 4 ? 1 : 0.5;
+          if (st[n] === STUCK) { x += rest[p] * w; y += rest[p + 1] * w; z += rest[p + 2] * w; }
+          else { x += pos[p] * w; y += pos[p + 1] * w; z += pos[p + 2] * w; }
+          sum += w;
         }
-        if (free) {
-          const l = Math.hypot(pos[o], pos[o + 1], pos[o + 2]);
-          // Between the sphere and a little over the finger's height: slack film has
-          // nowhere to fly off to, it gathers on the ball.
-          // Film further from the front rides a hair higher: folded back, it lies on top
-          // of the film it came from instead of in it.
-          const floor = R + SKIN * (1 + STACK * Math.min(depth[c], 60));
-          const top = Math.max(floor, R + SKIN + SHELL * height);
-          if (l < floor || l > top) {
-            const s = (l < floor ? floor : top) / l;
-            pos[o] *= s; pos[o + 1] *= s; pos[o + 2] *= s;
-            // and it does not bounce: take the radial speed out
-            const q = o, pl2 = pos[q] * pos[q] + pos[q + 1] * pos[q + 1] + pos[q + 2] * pos[q + 2];
-            const vr = ((pos[q] - prev[q]) * pos[q] + (pos[q + 1] - prev[q + 1]) * pos[q + 1] + (pos[q + 2] - prev[q + 2]) * pos[q + 2]) / pl2;
-            prev[q] += pos[q] * vr; prev[q + 1] += pos[q + 1] * vr; prev[q + 2] += pos[q + 2] * vr;
-          }
-        }
+        if (sum === 0) continue;
+        x = pos[o] + (x / sum - pos[o]) * OVER;
+        y = pos[o + 1] + (y / sum - pos[o + 1]) * OVER;
+        z = pos[o + 2] + (z / sum - pos[o + 2]) * OVER;
+        // Film does not grow: a particle is never further from its point of the grip than
+        // the film between them is long. Without it the mean alone lets a narrow grip draw
+        // a thread out of the sheet while the rest stays behind; with it the pull fans out
+        // from the hand in straight lines.
+        const r3 = root[c] * 3;
+        const tx = x - pos[r3], ty = y - pos[r3 + 1], tz = z - pos[r3 + 2];
+        const td = Math.hypot(tx, ty, tz), max = tether[c] * k1;
+        if (td > max) { const s = max / td; x = pos[r3] + tx * s; y = pos[r3 + 1] + ty * s; z = pos[r3 + 2] + tz * s; }
+        // Film further from the front rides a hair higher: folded back, it lies on top of
+        // the film it came from instead of in it.
+        const floor = R + SKIN * (1 + STACK * Math.min(depth[c], 60));
+        const l = Math.hypot(x, y, z);
+        if (l < floor) { const s = floor / l; x *= s; y *= s; z *= s; }
+        pos[o] = x; pos[o + 1] = y; pos[o + 2] = z;
       }
     }
   }
@@ -740,22 +713,33 @@ export function createPeeler(world: World) {
     // leaves the sphere over a couple of cells instead of in one step at the front.
     for (const c of region) {
       const o = c * 3;
-      let x = 0, y = 0, z = 0, cnt = 1;
-      if (st[c] !== STUCK) { x = pos[o] - rest[o]; y = pos[o + 1] - rest[o + 1]; z = pos[o + 2] - rest[o + 2]; }
+      let x = 0, y = 0, z = 0, cnt = 1, far = 0;
+      if (st[c] !== STUCK) { x = pos[o] - rest[o]; y = pos[o + 1] - rest[o + 1]; z = pos[o + 2] - rest[o + 2]; far = depth[c]; }
       for (let k = 0; k < 8; k++) {
         if (!link(c, k)) continue;
         const n = nb[c * 8 + k], p = n * 3;
         cnt++;
-        if (st[n] !== STUCK) { x += pos[p] - rest[p]; y += pos[p + 1] - rest[p + 1]; z += pos[p + 2] - rest[p + 2]; }
+        if (st[n] !== STUCK) { x += pos[p] - rest[p]; y += pos[p + 1] - rest[p + 1]; z += pos[p + 2] - rest[p + 2]; far += depth[n]; }
       }
+      // and how far from film that is down, evened out the same way: counted in whole
+      // cells it would step along the lattice
+      evenFar[c] = far / cnt;
       even[o] = x / cnt; even[o + 1] = y / cnt; even[o + 2] = z / cnt;
+    }
+    // A taut sheet leaves the sphere steeply, and a front that follows the lattice would
+    // show there as a saw edge. So the sheet comes off along the rounded front instead:
+    // nothing at the 0.5 line of the soft mask, all of it a few cells further in.
+    for (const c of region) {
+      const o = c * 3;
+      const t = st[c] !== STUCK ? Math.min(1, Math.max(0, (mask[c] - 0.5) * 2)) : 0, g = t * t * (3 - 2 * t);
+      even[o] *= g; even[o + 1] *= g; even[o + 2] *= g;
     }
     for (const c of region) {
       const a = cellIndex[c], loosed = st[c] !== STUCK, o = c * 3;
       // w: the soft mask at the front, plus the cells behind it further in
-      const w = mask[c] + (loosed ? depth[c] - 1 : 0);
+      const w = mask[c] + (loosed ? Math.max(0, evenFar[c] - 1) : 0);
       // stuck cells stay on the sphere, so the lifted mesh meets the film that is down
-      const dx = loosed ? even[o] : 0, dy = loosed ? even[o + 1] : 0, dz = loosed ? even[o + 2] : 0;
+      const dx = even[o], dy = even[o + 1], dz = even[o + 2];
       data[a] = dx; data[a + 1] = dy; data[a + 2] = dz; data[a + 3] = w;
       if (!loosed) continue;
       // Cells across a cut from a loose one (no film there, or film this sheet is not
@@ -771,7 +755,12 @@ export function createPeeler(world: World) {
           spill.push(n);
         }
         accN[n]++;
-        acc[n * 4] += dx; acc[n * 4 + 1] += dy; acc[n * 4 + 2] += dz; acc[n * 4 + 3] += w;
+        // carried on in a straight line from the cell behind this one: stretched film is
+        // far from level, and a plain copy would leave a tooth at every cell of the edge
+        const b = nb[c * 8 + OPP[k]];
+        let ex = dx, ey = dy, ez = dz;
+        if (b >= 0 && st[b] !== STUCK && link(c, OPP[k])) { ex += dx - even[b * 3]; ey += dy - even[b * 3 + 1]; ez += dz - even[b * 3 + 2]; }
+        acc[n * 4] += ex; acc[n * 4 + 1] += ey; acc[n * 4 + 2] += ez; acc[n * 4 + 3] += w;
       }
     }
     for (const n of spill) {
@@ -802,7 +791,7 @@ export function createPeeler(world: World) {
     clear,
     step(dt: number) {
       if (!on) return;
-      sheet(Math.min(dt, 1 / 30));
+      sheet();
       buildHull();
       for (let s = 0; s < SUB; s++) release(s === SUB - 1);
       deepen();

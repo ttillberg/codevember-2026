@@ -1,34 +1,56 @@
 // The on-screen controls. Plain DOM, laid out by style.css: a tool switch, undo and redo,
-// bench, and a settings sheet with the finishes and the sliders for the feel. Only the
-// controls take pointers, never the space between them: that belongs to the canvas.
+// bench, and a settings sheet with two tabs: the layers (each film and the sphere, and how
+// each looks) and the feel (sliders for the peel). Only the controls take pointers, never
+// the space between them: that belongs to the canvas.
 
 import type { Tool } from './state';
+import type { LayerEdit } from './layers';
 import { tune } from './peel';
 import type { Tune } from './peel';
 
 /** What a swatch needs of a finish (layers.ts). */
 export interface Finish { name: string; color: number; opacity: number }
 
+/** A layer as the list shows it. Colours are hex numbers (0xrrggbb). */
+export interface LayerView {
+  name: string;
+  color: number; opacity: number; roughness: number; metalness: number;
+  print: 'none' | 'label' | 'net'; ink: number;
+}
+
 export interface UiHandlers {
   tools: readonly Tool[];
-  /** Films, then bases. */
+  /** Film presets, then base presets. */
   finishes: readonly [readonly Finish[], readonly Finish[]];
   /** What is drawn on top (world.show). The toggles write here. */
-  show: { debug: boolean; grid: boolean };
+  show: { debug: boolean; grid: boolean; films: boolean };
   /** Every setting as text, for the copy button. */
   settings(): string;
+  /** The most films there can be. */
+  maxFilms: number;
+  /** The films now, top first. */
+  films(): LayerView[];
+  /** The sphere under them. */
+  base(): LayerView;
+  onAddFilm(): void;
+  onRemoveFilm(index: number): void;
+  /** Change the look of film `index`; -1 is the base. */
+  onEdit(index: number, edit: LayerEdit): void;
+  /** Load preset `variant` (an index into finishes[0], or finishes[1] for the base) into film `index`; -1 is the base. */
+  onPreset(index: number, variant: number): void;
   onTool(t: Tool): void;
-  /** Pick finish `variant` for `index` (0 film, 1 base). */
-  onFinish(index: number, variant: number): void;
   onBench(): void;
+  /** The second test scene, further in. */
+  onBench2(): void;
   onBack(): void;
   onRedo(): void;
 }
 
 export interface Ui {
   setTool(t: Tool): void;
-  /** Mark finish `variant` of `index` (0 film, 1 base) as the one in use. */
-  setFinish(index: number, variant: number): void;
+  /** The stack or a look changed: read films() and base() again and redraw the list. Keep
+   *  the selection if that row still exists. */
+  syncLayers(): void;
   /** Read every slider back from `tune`. */
   syncSliders(): void;
   /** Read the toggles back from `show`. */
@@ -46,6 +68,7 @@ const KNOBS: Array<[keyof Tune, string, number, number, string]> = [
   ['stiff', 'taut', 0.1, 1, 'How tight the loose sheet is. Low is slack, 1 is taut. Looks only.'],
   ['lift', 'lift', 0, 1, 'How the hand pulls. 0 drags the film flat back over itself. 1 lifts it up and away as it goes, so the finger stays over the place where the film comes off.'],
   ['ghost', 'ghost', 0, 1, 'How visible the lifted film stays behind the front. 0 fades out, 1 stays solid. Looks only.'],
+  ['height', 'band', 0, 2, 'How much of the lifted film is shown: it is cut off where it rises higher than this above the sphere (in radii). The rest of what is in the hand is not drawn.'],
   ['rough', 'rough', 0, 1, 'How unevenly the film sticks from spot to spot. 0 gives a clean front, 1 a stuttering one.'],
   ['tear', 'tear', 0, 10, 'Strength. The film breaks off when the peel front gets this wide, sooner on a fast pull. 0 never breaks.'],
   ['edge', 'edge', 0, 1, 'How much more easily the film lets go along a free edge than in the middle. Higher lets the peel run out along a cut, so the front meets it as an arc.'],
@@ -53,11 +76,19 @@ const KNOBS: Array<[keyof Tune, string, number, number, string]> = [
   ['grip', 'grip', 1, 12, 'How wide a strip of the edge the finger holds. Narrow gathers the film to a point, wide pulls it off flat. Takes effect on the next grab.'],
 ];
 
+// The look of a layer: [key, label, what it does]. All 0..1.
+type Look = 'opacity' | 'roughness' | 'metalness';
+const LOOKS: Array<[Look, string, string]> = [
+  ['opacity', 'opacity', 'How much of what is under the film it hides. 0 is clear, 1 opaque.'],
+  ['roughness', 'rough', 'How matte the surface is. 0 is a mirror gloss, 1 dead matte.'],
+  ['metalness', 'metal', '0 a dielectric like film or paper, 1 a metal: its colour is then the colour of its reflections.'],
+];
+const PRINTS = ['none', 'label', 'net'] as const;
+
 const THUMB = 14;       // px, keep in step with the slider thumb in style.css
 const DEAD = 4;         // px a touch moves before it counts as a drag, not a tap
 const INFO_MS = 8000;   // how long a touched setting's text stays up
 const BENCH = 'Reset to the test scene: whole film and three fixed cuts';
-const FINISHES = ['film', 'base'];
 
 // ------------------------------------------------------------------------------- icons
 
@@ -73,6 +104,8 @@ function icon(d: string, extra = ''): SVGSVGElement {
 
 /** A hooked arrow back to the left. Redo is the same, mirrored in CSS. */
 const UNDO = 'M8.5 4.5 4 9l4.5 4.5M4 9h10a5.5 5.5 0 0 1 0 11h-3.5';
+const PLUS = 'M12 6v12M6 12h12';
+const MINUS = 'M7 12h10';
 
 /** Eight teeth round a ring, as one closed outline. */
 function gear(): string {
@@ -111,6 +144,10 @@ function button(cls: string, onPress: () => void, label?: string) {
 
 const hex = (c: number) => '#' + c.toString(16).padStart(6, '0');
 const rgba = (c: number, a: number) => `rgba(${(c >> 16) & 255}, ${(c >> 8) & 255}, ${c & 255}, ${a})`;
+/** A film's colour at its opacity over what it lies on. */
+const over = (c: number, a: number, under: number) => `linear-gradient(${rgba(c, a)}, ${rgba(c, a)}), ${hex(under)}`;
+
+interface KnobSpec { label: string; min: number; max: number; text: string; get(): number; set(v: number): void }
 
 export function createUi(h: UiHandlers): Ui {
   const root = el('div', 'ui');
@@ -150,9 +187,29 @@ export function createUi(h: UiHandlers): Ui {
   gearButton.append(icon(gear(), '<circle cx="12" cy="12" r="3"/>'));
   gearButton.setAttribute('aria-expanded', 'false');
 
+  // The sheet: two tabs over a body that scrolls on its own.
   const sheet = el('div', 'sheet');
+  const tabs = el('div', 'tabs');
+  tabs.setAttribute('role', 'tablist');
   const body = el('div', 'sheet-body');
-  sheet.append(body);
+  sheet.append(tabs, body);
+  const panes = { layers: el('div', 'pane layers'), feel: el('div', 'pane feel') };
+  const tabButtons = (Object.keys(panes) as Array<keyof typeof panes>).map((k) => {
+    const b = button('tab', () => setTab(k));
+    b.textContent = k;
+    b.setAttribute('role', 'tab');
+    tabs.append(b);
+    body.append(panes[k]);
+    return { k, b };
+  });
+  function setTab(k: keyof typeof panes) {
+    for (const t of tabButtons) {
+      t.b.classList.toggle('on', t.k === k);
+      t.b.setAttribute('aria-selected', String(t.k === k));
+      panes[t.k].hidden = t.k !== k;
+    }
+    body.scrollTop = 0;
+  }
 
   // The text for the setting last touched (or hovered), above the sheet.
   const info = el('div', 'info');
@@ -178,77 +235,43 @@ export function createUi(h: UiHandlers): Ui {
   // It never takes a pointer; a press anywhere outside the sheet puts it away.
   window.addEventListener('pointerdown', (e) => { if (!sheet.contains(e.target as Node)) hideInfo(); }, true);
 
-  // Finishes: a row of swatches each, the film shown over the base it lies on.
-  let base = h.finishes[1][0].color;
-  const groups = FINISHES.map((kind, index) => {
-    const group = el('div', `finish ${kind}`);
-    group.setAttribute('role', 'radiogroup');
-    group.setAttribute('aria-label', kind);
-    const head = el('div', 'finish-head');
-    const name = el('span', 'finish-name');
-    head.append(el('span', 'finish-kind', kind), name);
-    const strip = el('div', 'swatches');
-    const swatches = h.finishes[index].map((f, variant) => {
-      const b = button('swatch', () => h.onFinish(index, variant), f.name);
-      b.setAttribute('aria-label', `${kind} ${f.name}`);
-      b.setAttribute('role', 'radio');
-      b.append(el('span', 'chip'));
-      strip.append(b);
-      return b;
-    });
-    group.append(head, strip);
-    body.append(group);
-    return { name, swatches, list: h.finishes[index] };
-  });
-  function paintSwatches() {
-    groups[0].swatches.forEach((b, i) => {
-      const f = groups[0].list[i];
-      (b.firstChild as HTMLElement).style.background =
-        `linear-gradient(${rgba(f.color, f.opacity)}, ${rgba(f.color, f.opacity)}), ${hex(base)}`;
-    });
-    groups[1].swatches.forEach((b, i) => {
-      (b.firstChild as HTMLElement).style.background = hex(groups[1].list[i].color);
-    });
-  }
-
-  const knobs = el('div', 'knobs');
-  body.append(knobs);
-  const sliders = KNOBS.map(([key, label, min, max, text]) => {
+  // A slider cell. The whole cell is the handle, captured so a drag never reaches the canvas
+  // or scrolls. Mouse: the thumb jumps to the press. Touch: a tap only shows what the
+  // setting does, a sideways drag moves the value from where it was.
+  function knob(s: KnobSpec) {
     const cell = el('div', 'knob');
     const value = el('span', 'knob-v');
     const input = el('input', 'knob-in');
     input.type = 'range';
-    input.min = String(min);
-    input.max = String(max);
-    input.step = String((max - min) / 100);
-    input.setAttribute('aria-label', label);
-    input.setAttribute('aria-description', text);
-    const name = el('span', 'knob-k', label);
+    input.min = String(s.min);
+    input.max = String(s.max);
+    input.step = String((s.max - s.min) / 100);
+    input.setAttribute('aria-label', s.label);
+    input.setAttribute('aria-description', s.text);
+    const name = el('span', 'knob-k', s.label);
     name.append(el('i', 'knob-i', 'i'));
     cell.append(name, value, input);
-    knobs.append(cell);
 
     const show = () => {
-      value.textContent = tune[key].toFixed(2);
-      input.style.setProperty('--p', String((tune[key] - min) / (max - min)));
+      const v = s.get();
+      input.value = String(v);
+      value.textContent = v.toFixed(2);
+      input.style.setProperty('--p', String((v - s.min) / (s.max - s.min)));
     };
     const write = (v: number) => {
       input.value = String(v);
-      tune[key] = Number(input.value); // snapped and clamped by the input
+      s.set(Number(input.value)); // snapped and clamped by the input
       show();
     };
     input.addEventListener('input', () => write(Number(input.value)));
-    input.addEventListener('focus', () => showInfo(label, text));
-    input.addEventListener('blur', () => { if (infoKey === label) hideInfo(); });
+    input.addEventListener('focus', () => showInfo(s.label, s.text));
+    input.addEventListener('blur', () => { if (infoKey === s.label) hideInfo(); });
 
-    // The whole cell is the handle, captured so a drag never reaches the canvas or scrolls.
-    // Mouse: the thumb jumps to the press. Touch: a tap only shows what the setting does,
-    // a sideways drag moves the value from where it was.
     let held = -1, touch = false, moved = false, x0 = 0, v0 = 0;
     const span = () => Math.max(1, input.getBoundingClientRect().width - THUMB);
     const at = (x: number) => {
       const r = input.getBoundingClientRect();
-      write(min + Math.min(1, Math.max(0, (x - r.left - THUMB / 2) / span())) * (max - min));
+      write(s.min + Math.min(1, Math.max(0, (x - r.left - THUMB / 2) / span())) * (s.max - s.min));
     };
     cell.addEventListener('pointerdown', (e) => {
       if (held !== -1 || (e.pointerType === 'mouse' && e.button !== 0)) return;
@@ -257,10 +280,10 @@ export function createUi(h: UiHandlers): Ui {
       touch = e.pointerType !== 'mouse';
       moved = false;
       x0 = e.clientX;
-      v0 = tune[key];
+      v0 = s.get();
       try { cell.setPointerCapture(held); } catch { /* fine */ }
       cell.classList.add('held');
-      showInfo(label, text);
+      showInfo(s.label, s.text);
       if (!touch) at(e.clientX);
     });
     cell.addEventListener('pointermove', (e) => {
@@ -269,27 +292,215 @@ export function createUi(h: UiHandlers): Ui {
       const dx = e.clientX - x0;
       if (!moved && Math.abs(dx) < DEAD) return;
       moved = true;
-      write(v0 + (dx / span()) * (max - min));
+      write(v0 + (dx / span()) * (s.max - s.min));
     });
     const release = (e: PointerEvent) => {
       if (e.pointerId !== held) return;
       held = -1;
       cell.classList.remove('held');
-      if (touch) showInfo(label, text, INFO_MS);
+      if (touch) showInfo(s.label, s.text, INFO_MS);
     };
     cell.addEventListener('pointerup', release);
     cell.addEventListener('pointercancel', release);
     // Hover is the tooltip for a mouse.
-    cell.addEventListener('pointerenter', (e) => { if (e.pointerType === 'mouse' && held === -1) showInfo(label, text); });
-    cell.addEventListener('pointerleave', (e) => { if (e.pointerType === 'mouse' && held === -1 && infoKey === label) hideInfo(); });
+    cell.addEventListener('pointerenter', (e) => { if (e.pointerType === 'mouse' && held === -1) showInfo(s.label, s.text); });
+    cell.addEventListener('pointerleave', (e) => { if (e.pointerType === 'mouse' && held === -1 && infoKey === s.label) hideInfo(); });
 
-    return { key, input, show };
+    show();
+    return { cell, show };
+  }
+
+  // A colour well: a dot and a word over a native picker that takes the press.
+  function colourWell(label: string, onPick: (c: number) => void) {
+    const well = el('label', 'well');
+    const dot = el('span', 'well-dot');
+    const input = el('input', '');
+    input.type = 'color';
+    input.setAttribute('aria-label', label);
+    input.addEventListener('input', () => onPick(parseInt(input.value.slice(1), 16)));
+    well.append(dot, el('span', '', label), input);
+    return {
+      well,
+      set(c: number) {
+        const v = hex(c);
+        if (input.value !== v) input.value = v;
+        dot.style.background = v;
+      },
+    };
+  }
+
+  // -------------------------------------------------------------------------- layers
+
+  // One row per film, top first, then the sphere. A tap on a row opens its settings under it.
+  let films: LayerView[] = [];
+  let base: LayerView = { name: '', color: 0, opacity: 1, roughness: 0, metalness: 0, print: 'none', ink: 0 };
+  /** The open row: a film's index, -1 the base, null none. */
+  let sel: number | null = null;
+  let builtCount = -1;
+  let builtSel: number | null = null;
+  const look = (i: number) => (i === -1 ? base : films[i]);
+
+  const head = el('div', 'layers-head');
+  const headName = el('span', 'layers-count');
+  const add = button('btn icon add', () => {
+    if (sel !== null && sel >= 0) sel++; // the new film goes on top, the rest move down
+    h.onAddFilm();
+  }, 'Add a film on top');
+  add.append(icon(PLUS));
+  head.append(headName, add);
+  const list = el('div', 'layer-list');
+  panes.layers.append(head, list);
+
+  interface Row { chip: HTMLElement; name: HTMLElement; meta: HTMLElement; minus: HTMLButtonElement | null }
+  let rows: Row[] = [];
+  let panel: { update(): void } | null = null;
+
+  function row(i: number): Row {
+    const r = el('div', 'layer');
+    r.setAttribute('role', 'button');
+    r.setAttribute('aria-expanded', String(sel === i));
+    r.classList.toggle('on', sel === i);
+    r.addEventListener('click', () => { sel = sel === i ? null : i; syncLayers(); });
+    const chip = el('span', 'chip');
+    const text = el('span', 'layer-text');
+    const name = el('span', 'layer-name');
+    const meta = el('span', 'layer-meta');
+    text.append(name, meta);
+    r.append(chip, text);
+    let minus: HTMLButtonElement | null = null;
+    if (i >= 0) {
+      minus = button('layer-minus', () => {
+        if (sel === i) sel = null;
+        else if (sel !== null && sel > i) sel--;
+        h.onRemoveFilm(i);
+      }, 'Remove this film');
+      minus.append(icon(MINUS));
+      minus.addEventListener('click', (e) => e.stopPropagation());
+      r.append(minus);
+    } else r.append(el('span', 'layer-tag', 'base'));
+    list.append(r);
+    return { chip, name, meta, minus };
+  }
+
+  function paintRows() {
+    headName.textContent = `films ${films.length} / ${h.maxFilms}`;
+    add.disabled = films.length >= h.maxFilms;
+    rows.forEach((r, k) => {
+      const i = k < films.length ? k : -1;
+      const v = look(i);
+      r.chip.style.background = i === -1 ? hex(v.color) : over(v.color, v.opacity, base.color);
+      r.name.textContent = v.name;
+      r.meta.textContent = i === -1
+        ? `rough ${v.roughness.toFixed(2)}`
+        : `${v.opacity.toFixed(2)}${v.print === 'none' ? '' : ' · ' + v.print}`;
+      if (r.minus) r.minus.disabled = films.length <= 1;
+    });
+  }
+
+  // The settings of layer i: presets, colour, the look sliders, and for a film the print.
+  function settings(i: number) {
+    const film = i >= 0;
+    const box = el('div', 'layer-set');
+    const presets = h.finishes[film ? 0 : 1];
+    const strip = el('div', 'swatches');
+    strip.setAttribute('aria-label', 'presets');
+    const swatches = presets.map((f, variant) => {
+      const b = button('swatch', () => h.onPreset(i, variant), f.name);
+      b.append(el('span', 'chip'));
+      strip.append(b);
+      return b;
+    });
+    box.append(strip);
+
+    const sliders = el('div', 'knobs');
+    const knobs = LOOKS.filter(([key]) => film || key !== 'opacity').map(([key, label, text]) =>
+      knob({ label, min: 0, max: 1, text, get: () => look(i)[key], set: (v) => h.onEdit(i, { [key]: v }) }));
+    for (const k of knobs) sliders.append(k.cell);
+    box.append(sliders);
+
+    const line = el('div', 'layer-line');
+    const colour = colourWell('colour', (c) => h.onEdit(i, { color: c }));
+    line.append(colour.well);
+    let print: { pick: HTMLButtonElement[]; ink: ReturnType<typeof colourWell> } | null = null;
+    if (film) {
+      const group = el('div', 'mini-seg');
+      group.setAttribute('role', 'radiogroup');
+      group.setAttribute('aria-label', 'print');
+      const pick = PRINTS.map((p) => {
+        const b = button('mini', () => h.onEdit(i, { print: p }), `print: ${p}`);
+        b.textContent = p;
+        b.setAttribute('role', 'radio');
+        group.append(b);
+        return b;
+      });
+      const ink = colourWell('ink', (c) => h.onEdit(i, { ink: c }));
+      line.append(group, ink.well);
+      print = { pick, ink };
+    }
+    box.append(line);
+
+    return {
+      box,
+      update() {
+        const v = look(i);
+        presets.forEach((f, k) => {
+          (swatches[k].firstChild as HTMLElement).style.background = film ? over(f.color, f.opacity, base.color) : hex(f.color);
+          swatches[k].classList.toggle('on', f.name === v.name);
+        });
+        for (const k of knobs) k.show();
+        colour.set(v.color);
+        if (print) {
+          PRINTS.forEach((p, k) => {
+            print!.pick[k].classList.toggle('on', v.print === p);
+            print!.pick[k].setAttribute('aria-checked', String(v.print === p));
+          });
+          print.ink.set(v.ink);
+          print.ink.well.hidden = v.print === 'none';
+        }
+      },
+    };
+  }
+
+  /** Redraw the rows when their number or the open one changed, otherwise only their values,
+   *  so a slider being dragged stays the same element under the finger. */
+  function syncLayers() {
+    films = h.films();
+    base = h.base();
+    if (sel !== null && sel >= films.length) sel = null;
+    if (films.length !== builtCount || sel !== builtSel) {
+      list.replaceChildren();
+      rows = [];
+      panel = null;
+      for (let k = 0; k <= films.length; k++) {
+        const i = k < films.length ? k : -1;
+        rows.push(row(i));
+        if (sel === i) {
+          const s = settings(i);
+          list.append(s.box);
+          panel = s;
+        }
+      }
+      builtCount = films.length;
+      builtSel = sel;
+    }
+    paintRows();
+    panel?.update();
+  }
+
+  // ---------------------------------------------------------------------------- feel
+
+  const knobs = el('div', 'knobs');
+  panes.feel.append(knobs);
+  const sliders = KNOBS.map(([key, label, min, max, text]) => {
+    const k = knob({ label, min, max, text, get: () => tune[key], set: (v) => { tune[key] = v; } });
+    knobs.append(k.cell);
+    return k;
   });
 
   // Under the sliders: what is drawn on top, and the settings as text.
   const extras = el('div', 'extras');
-  body.append(extras);
-  const toggles = ([['debug', 'debug', 'Outline of what a press would grab, the finger marker and the tension lines'], ['grid', 'grid', 'The millimetre grid on the sphere']] as const)
+  panes.feel.append(extras);
+  const toggles = ([['debug', 'debug', 'Outline of what a press would grab, the finger marker and the tension lines'], ['grid', 'grid', 'The millimetre grid on the sphere'], ['films', 'films', 'The films. Off, they are hidden (not removed) and the bare sphere shows']] as const)
     .map(([key, label, text]) => {
       const b = button('btn chip', () => { h.show[key] = !h.show[key]; paint(); }, text);
       b.textContent = label;
@@ -302,7 +513,7 @@ export function createUi(h: UiHandlers): Ui {
     const text = h.settings();
     const done = (ok: boolean) => {
       copy.textContent = ok ? 'copied' : 'no clipboard';
-      window.setTimeout(() => { copy.textContent = 'copy settings'; }, 1200);
+      window.setTimeout(() => { copy.textContent = 'copy'; }, 1200);
     };
     // The clipboard API needs https or localhost; on a phone over the LAN it is not there.
     const byHand = () => {
@@ -319,8 +530,11 @@ export function createUi(h: UiHandlers): Ui {
     if (navigator.clipboard?.writeText) navigator.clipboard.writeText(text).then(() => done(true), byHand);
     else byHand();
   }, 'Copy every setting as text');
-  copy.textContent = 'copy settings';
+  copy.textContent = 'copy';
   extras.append(copy);
+  const bench2 = button('btn chip', h.onBench2, 'Reset to the second test scene: the top film partly off, the one under it opened (n)');
+  bench2.textContent = 'bench 2';
+  extras.append(bench2);
 
   let open = false;
   function setOpen(o: boolean) {
@@ -332,6 +546,7 @@ export function createUi(h: UiHandlers): Ui {
     if (!o) hideInfo();
   }
   setOpen(false);
+  setTab('layers');
   window.addEventListener('keydown', (e) => { if (e.key === 'Escape' && open) setOpen(false); });
 
   root.append(info, sheet, seg, hist, bench, gearButton);
@@ -346,20 +561,9 @@ export function createUi(h: UiHandlers): Ui {
         b.setAttribute('aria-checked', String(k === i));
       });
     },
-    setFinish(index, variant) {
-      const g = groups[index];
-      g.name.textContent = g.list[variant].name;
-      g.swatches.forEach((b, k) => {
-        b.classList.toggle('on', k === variant);
-        b.setAttribute('aria-checked', String(k === variant));
-      });
-      if (index === 1) base = g.list[variant].color;
-      paintSwatches();
-    },
+    syncLayers,
     syncShow() { for (const paint of toggles) paint(); },
-    syncSliders() {
-      for (const s of sliders) { s.input.value = String(tune[s.key]); s.show(); }
-    },
+    syncSliders() { for (const s of sliders) s.show(); },
     setHistory(n, m) {
       count.textContent = n > 0 ? String(n) : '';
       undo.disabled = n === 0;

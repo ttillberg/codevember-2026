@@ -2,7 +2,7 @@
 
 2026-11-09
 
-A sphere of millimetre paper wrapped in two thin films, one over the other. Cut the film on top, peel it off, then do the same to the one under it.
+A sphere of frosted jelly with an eye inside, wrapped in two thin films, one over the other. Cut the film on top, peel it off, then do the same to the one under it.
 
 Three tools, bottom left or keys 1 / 2 / 3:
 
@@ -11,6 +11,8 @@ Three tools, bottom left or keys 1 / 2 / 3:
 - `free`: draw a cut on the surface.
 
 How it works:
+
+- Under the films the sphere is a jelly: a transmissive material, so three draws the eye inside to a texture first and the jelly samples it blurred by its own roughness. The eye is a painted ball that turns to the pointer. Other spheres (kraft, paper, ...) are solid and have no eye.
 
 - The films are a stack. A cut only goes into the film on top where it lands, never through two; a hairline cut in the upper film is not an opening. Only one film is pulled at a time, and film with another film over it cannot let go: the lower one peels as far as the upper one has been removed, and parts along its edge.
 

@@ -46,10 +46,13 @@ export interface Lift {
   /** How solid lifted film still is far behind the front, 0..1. Low is the look, high is
    *  for seeing what the sheet does. */
   ghost: number;
+  /** How much of the lifted film is shown at all: only what is no higher than this over
+   *  the sphere, in radii. Above that it is cut off. */
+  band: number;
 }
 
 export function createLift(): Lift {
-  return { data: new Float32Array(LIFT_W * LIFT_H * 4), version: 1, layer: 0, id: 0, fade: 1, ghost: 0.45 };
+  return { data: new Float32Array(LIFT_W * LIFT_H * 4), version: 1, layer: 0, id: 0, fade: 1, ghost: 0.6, band: 2 };
 }
 
 /** Index into data (times 4 already) of cell (f, i, j), i and j in -1..LIFT_M. */

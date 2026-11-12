@@ -69,9 +69,12 @@ export interface WorldEvents {
 export type Listener<K extends keyof WorldEvents> = (e: WorldEvents[K]) => void;
 
 export interface World {
-  /** The films, from the one on top down. */
+  /** The films, from the one on top down. Between 1 and FILMS_MAX (layers.ts) of them:
+   *  films can be added on top and taken away while it runs, so the length of this array,
+   *  of layers and of pieces changes (always together, the arrays themselves stay). */
   films: Film[];
-  /** Their looks, in the same order. */
+  /** Their looks, in the same order. An entry is replaced by a new object when its look
+   *  changes, never changed in place. */
   layers: Layer[];
   /** The sphere underneath them all. */
   next: Layer;
@@ -90,10 +93,14 @@ export interface World {
    *  it has carried that to (unit, sphere-local; it rolls on over the back of the sphere past
    *  the silhouette), and how high it holds the film. Drawn as a cross bent round the sphere. */
   finger: { active: boolean; from: Vector3; at: Vector3; height: number };
-  /** What is drawn on top of the piece itself. debug: the outline of the piece a press
-   *  would grab, the finger marker and the tension lines. grid: the millimetre grid on the
-   *  sphere. */
-  show: { debug: boolean; grid: boolean };
+  /** Where the pointer is, in CSS pixels, and whether anyone is there (the mouse over the
+   *  page, or a finger down). The eye inside watches it. */
+  look: { x: number; y: number; on: boolean };
+  /** What is drawn. debug: the outline of the piece a press would grab, the finger marker
+   *  and the tension lines. grid: the millimetre grid on the sphere. films: the films at all;
+   *  off, the bare sphere shows and nothing can be grabbed or cut (the films are still
+   *  there, only hidden). */
+  show: { debug: boolean; grid: boolean; films: boolean };
   /** Debug: where the pull is, as line segments in sphere-local space (two points a
    *  segment, xyz) with a colour a point (rgb). Blue slack, yellow taut, red about to let
    *  go. `count` is the number of points in use this frame. */

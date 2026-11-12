@@ -5,16 +5,18 @@
 // thin, clingy, a little elastic (peel.ts). What comes off is gone for good.
 
 import { Euler, Quaternion, Vector3, Vector4 } from 'three';
-import { FILMS, ROOTS, makeLayer } from './layers';
+import { FILMS, FILMS_MAX, ROOTS, editLayer, makeLayer } from './layers';
+import type { Layer, LayerEdit } from './layers';
 import { createFilm } from './film';
 import { createLift } from './lift';
 import { R } from './state';
 import type { Ctx, Listener, Module, Piece, Tool, World, WorldEvents } from './state';
-import { TEXEL, beginStroke, edgeNormal, endStroke, fillFilm, restoreFilm, idAt, paintArc, paintCircle, relabel } from './filmops';
+import { TEXEL, beginStroke, edgeNormal, endStroke, erasePiece, fillFilm, restoreFilm, idAt, paintArc, paintCircle, relabel } from './filmops';
 import { initPieces, syncPieces } from './pieces';
 import { TENSION_POINTS, createPeeler, tune } from './peel';
 import type { Tune } from './peel';
 import { createUi } from './ui';
+import type { LayerView } from './ui';
 
 // ---------------------------------------------------------------------------------- tuning
 
@@ -24,7 +26,21 @@ const GRAB_PX_TOUCH = 56;
 const GRAZE = 0.97;             // a line's plane must pass closer than this to the centre
 const TEAR_SPEED = 0.5;         // how much a fast pull (rad/s) adds to the load on the front
 const STORE = 'codevember-2026-09-settings';
-const FILMS_DEEP = 2;           // films on the sphere, one over the other
+// What a first visit starts with, in the shape settings are kept in (and `copy` gives):
+// a dull dark metal film over a glossy opaque milk one, on slate.
+const DEFAULTS = {
+  films: [
+    { preset: 'smoke', color: 0x1a1c20, opacity: 1, roughness: 0.58, metalness: 0.59, print: 'label', ink: 0x0a2040 },
+    { preset: 'milk', color: 0xf3f2ec, opacity: 1, roughness: 0, metalness: 0, print: 'label', ink: 0x0a2040 },
+  ],
+  base: { preset: 'slate', color: 0x30343b, opacity: 1, roughness: 0.7, metalness: 0, print: 'label', ink: 0x0a2040 },
+  tune: {
+    elastic: 0.15, adhesion: 1, shear: 5, load: 1, stiff: 0.6, lift: 1, ghost: 0.6, height: 2, rough: 0.1,
+    tear: 3, grip: 4, edge: 0.7, straight: 1,
+  },
+  show: { debug: false, grid: false },
+};
+const FILMS_DEEP = 2;           // films on the sphere to start with, one over the other
 const HISTORY = 5;              // steps back that are kept (a copy of every film each)
 const FADE_TIME = 0.16;         // s, what was lifted fades where it is once let go
 const STEP = 1.2 * TEXEL;       // grab search step, under a groove's width so none is jumped
@@ -48,7 +64,8 @@ export function createWorld(): World {
     tool: 'hand',
     aim: { active: false, x0: 0, y0: 0, x1: 0, y1: 0, valid: false },
     hover: { layer: 0, id: 0, ok: true },
-    show: { debug: true, grid: true },
+    show: { debug: true, grid: true, films: true },
+    look: { x: 0, y: 0, on: false },
     tension: { pos: new Float32Array(TENSION_POINTS * 3), col: new Float32Array(TENSION_POINTS * 3), count: 0 },
     finger: { active: false, from: new Vector3(0, 0, 1), at: new Vector3(0, 0, 1), height: 0 },
     time: 0,
@@ -153,13 +170,13 @@ export function createSim(ctx: Ctx): Module {
   }
 
   // The cover each film had when its pieces were last worked out.
-  const labelled = world.films.map(() => -1);
+  const labelled = new WeakMap<object, number>();
   function relabelNow() {
     relabelDue = false;
     world.films.forEach((film, k) => {
-      if (film.coverVersion === labelled[k]) return;
+      if (film.coverVersion === labelled.get(film)) return;
       syncPieces(world.pieces[k], relabel(film, world.pieces[k].keys()));
-      labelled[k] = film.coverVersion; // relabel may have swept crumbs out of cover itself
+      labelled.set(film, film.coverVersion); // relabel may have swept crumbs out of cover itself
     });
     world.hover.id = 0;
     if (!bare && !hasLive()) { bare = true; world.emit('filmGone', {}); }
@@ -210,6 +227,7 @@ export function createSim(ctx: Ctx): Module {
     peeler.clear();
     fading = 0;
     omega.set(0, 0, 0);
+    if (h.covers.length !== world.films.length) return; // from before a film was added or removed
     world.films.forEach((f, k) => restoreFilm(f, h.covers[k]));
     world.rotation.copy(h.rotation);
     bare = false;
@@ -236,7 +254,7 @@ export function createSim(ctx: Ctx): Module {
   }
 
   function aimValid(x0: number, y0: number, x1: number, y1: number) {
-    return Math.hypot(x1 - x0, y1 - y0) >= MIN_DRAG && hasLive() && planeWorld(x0, y0, x1, y1) < R * GRAZE;
+    return world.show.films && Math.hypot(x1 - x0, y1 - y0) >= MIN_DRAG && hasLive() && planeWorld(x0, y0, x1, y1) < R * GRAZE;
   }
 
   /** The whole circle where the plane through the eye and the line meets the sphere, front
@@ -260,7 +278,7 @@ export function createSim(ctx: Ctx): Module {
    *  sphere's front, otherwise the stroke breaks there. */
   function drawTo(x: number, y: number) {
     ray(x, y);
-    if (!hit(tW)) { stroke.on = false; return; }
+    if (!world.show.films || !hit(tW)) { stroke.on = false; return; }
     tH.copy(tW).applyQuaternion(qInv);
     if (stroke.on) {
       // one stroke from press to release: it stays in the film it started in at each point
@@ -384,7 +402,7 @@ export function createSim(ctx: Ctx): Module {
    */
   function findGrab(x: number, y: number): boolean {
     grab.piece = null;
-    if (relabelDue || peeler.active) return false;
+    if (relabelDue || peeler.active || !world.show.films) return false;
     ray(x, y);
     if (!hit(tW)) return false;
     tH.copy(tW).applyQuaternion(qInv);
@@ -573,16 +591,22 @@ export function createSim(ctx: Ctx): Module {
   // ------------------------------------------------------------------------------ tools
 
   // Finishes to try, one each for the film and the sphere, picked by swatch.
-  const pick = [0, 0];
   const ui = createUi({
     tools: TOOLS,
     finishes: [FILMS, ROOTS],
     show: world.show,
     // every setting as text, to paste somewhere else
-    settings: () => JSON.stringify({ film: world.layers[0].name, base: world.next.name, tune, show: world.show }, null, 2),
+    settings: () => JSON.stringify(settings(), null, 2),
+    maxFilms: FILMS_MAX,
+    films: () => world.layers.map(view),
+    base: () => view(world.next),
+    onAddFilm: addFilm,
+    onRemoveFilm: removeFilm,
+    onEdit: editLook,
+    onPreset: loadPreset,
     onTool: setTool,
-    onFinish: setFinish,
     onBench: bench,
+    onBench2: bench2,
     onBack: back,
     onRedo: redo,
   });
@@ -627,43 +651,201 @@ export function createSim(ctx: Ctx): Module {
     relabelNow();
   }
 
-  function setFinish(index: number, variant: number) {
-    const count = index === 0 ? FILMS.length : ROOTS.length;
-    pick[index] = ((variant % count) + count) % count;
-    if (index === 0) {
-      // the swatch is the film on top; each one under it is the next in the list
-      world.layers = world.films.map((_, k) => makeLayer(0, (pick[0] + k) % count));
-      tune.elastic = world.layers[0].elastic;
-      tune.adhesion = world.layers[0].adhesion;
-      ui.syncSliders();
-    } else world.next = makeLayer(1, pick[1]);
-    ui.setFinish(index, pick[index]);
+  /**
+   * A second bench, further in: the top film cut into bands and wedges and its middle
+   * taken off, the film under it showing there with a hole of its own through to the
+   * sphere and an open cut to start from. Always the same.
+   */
+  function bench2() {
+    remember();
+    peeler.clear();
+    fading = 0;
+    relabelDue = false;
+    omega.set(0, 0, 0);
+    world.rotation.setFromEuler(HOME);
+    qInv.copy(world.rotation).invert();
+    for (const film of world.films) fillFilm(film);
+    // (x, y) as seen from the camera, in sphere radii, to a point on the film
+    const at = (x: number, y: number, out: Vector3) =>
+      out.set(x, y, Math.sqrt(Math.max(0, 1 - x * x - y * y))).applyQuaternion(qInv);
+    /** A cut right round: the plane with normal (nx, ny, 0) as seen, w from the centre. */
+    const round = (nx: number, ny: number, w: number) => {
+      tC.set(nx, ny, 0).normalize().applyQuaternion(qInv);
+      beginStroke();
+      paintCircle(world.films, tC.x, tC.y, tC.z, w);
+    };
+    const stroke = (pts: Array<[number, number]>) => {
+      beginStroke();
+      for (let i = 1; i < pts.length; i++) {
+        at(pts[i - 1][0], pts[i - 1][1], tA);
+        at(pts[i][0], pts[i][1], tB);
+        paintArc(world.films, tA.x, tA.y, tA.z, tB.x, tB.y, tB.z);
+      }
+    };
+    /** Take off the piece of film `k` seen at (x, y). */
+    const lift = (k: number, x: number, y: number) => {
+      at(x, y, tA);
+      const id = idAt(world.films[k], tA.x, tA.y, tA.z);
+      if (id) erasePiece(world.films[k], id);
+    };
+    // the top film: two bands across, two cuts down through them
+    round(0.1, 1, 0.34);
+    round(0.06, 1, -0.4);
+    round(1, 0.45, -0.3);
+    round(1, -0.55, 0.38);
+    relabelNow();
+    // its middle comes off, and one wedge beside it
+    lift(0, 0.05, 0);
+    lift(0, 0.6, 0.05);
+    relabelNow();
+    // the film under it, where it now shows: a closed cut, lifted out, and an open one
+    stroke([[0.22, -0.3], [0.5, -0.24], [0.56, 0.02], [0.36, 0.2], [0.2, 0.02], [0.22, -0.3]]);
+    relabelNow();
+    if (world.films.length > 1) lift(1, 0.38, -0.08);
+    stroke([[-0.2, 0.22], [-0.12, -0.05], [0.02, -0.3]]);
+    bare = false;
+    relabelNow();
   }
+
+  // ----------------------------------------------------------------------------- layers
+
+  /** A layer as the list in the ui shows it. */
+  function view(l: Layer): LayerView {
+    return {
+      name: l.name, color: l.color.getHex(), opacity: l.opacity, roughness: l.roughness, metalness: l.metalness,
+      print: l.print, ink: l.ink.getHex(),
+    };
+  }
+
+  /** The stack changed shape: nothing in the hand, no way back to before, new pieces. */
+  function restack() {
+    peeler.clear();
+    fading = 0;
+    relabelDue = false;
+    history.length = 0;
+    ahead.length = 0;
+    showHistory();
+    bare = false;
+    relabelNow();
+  }
+
+  /** A new whole film on top of the others, in a finish none of them has yet. */
+  function addFilm() {
+    if (world.films.length >= FILMS_MAX) return;
+    let v = 0;
+    while (v < FILMS.length - 1 && world.layers.some((l) => l.preset === v)) v++;
+    const pieces = new Map<number, Piece>();
+    initPieces(pieces);
+    world.films.unshift(createFilm());
+    world.layers.unshift(makeLayer(0, v));
+    world.pieces.unshift(pieces);
+    restack();
+    ui.syncLayers();
+  }
+
+  /** Film `index` goes, whatever is left of it. The last one stays. */
+  function removeFilm(index: number) {
+    if (world.films.length <= 1 || index < 0 || index >= world.films.length) return;
+    world.films.splice(index, 1);
+    world.layers.splice(index, 1);
+    world.pieces.splice(index, 1);
+    restack();
+    ui.syncLayers();
+  }
+
+  /** Change the look of film `index` (-1: the sphere). */
+  function editLook(index: number, e: LayerEdit) {
+    if (index < 0) world.next = editLayer(world.next, e);
+    else if (index < world.layers.length) world.layers[index] = editLayer(world.layers[index], e);
+    ui.syncLayers();
+  }
+
+  /** Load a recipe into film `index` (-1: the sphere). The top film brings its feel with it. */
+  function loadPreset(index: number, variant: number) {
+    if (index < 0) world.next = makeLayer(1, variant);
+    else if (index < world.layers.length) {
+      world.layers[index] = makeLayer(0, variant);
+      if (index === 0) {
+        tune.elastic = world.layers[0].elastic;
+        tune.adhesion = world.layers[0].adhesion;
+        ui.syncSliders();
+      }
+    }
+    ui.syncLayers();
+  }
+
+  /** For capture scripts: recipe `variant` on top and the next ones under it (index 0), or
+   *  the sphere (index 1). */
+  function setFinish(index: number, variant: number) {
+    if (index === 0) for (let k = world.layers.length - 1; k >= 0; k--) loadPreset(k, (variant + k) % FILMS.length);
+    else loadPreset(-1, variant);
+  }
+
   // Settings are kept between visits: the two finishes by name and every slider. A film's
   // own stretch and cling are only copied in when it is picked by hand, so what was saved
   // wins over them here.
-  const saved = loadSettings();
-  setFinish(0, Math.max(0, FILMS.findIndex((f) => f.name === saved?.film)));
-  setFinish(1, Math.max(0, ROOTS.findIndex((f) => f.name === saved?.base)));
+  type Look = { preset?: string } & LayerEdit;
+  const look = (l: Layer): Look => ({ preset: l.name, ...view(l) });
+  const numbers = (o: unknown): LayerEdit => {
+    const e: Record<string, unknown> = {}, src = (o ?? {}) as Record<string, unknown>;
+    for (const k of ['color', 'opacity', 'roughness', 'metalness', 'ink']) if (typeof src[k] === 'number' && Number.isFinite(src[k])) e[k] = src[k];
+    if (src.print === 'none' || src.print === 'label' || src.print === 'net') e.print = src.print;
+    return e as LayerEdit;
+  };
+  const fromLook = (index: number, o: unknown): Layer => {
+    const list = index === 0 ? FILMS : ROOTS;
+    const name = (o as Look | null)?.preset;
+    return editLayer(makeLayer(index, Math.max(0, list.findIndex((r) => r.name === name))), numbers(o));
+  };
+
+  /** Everything kept between visits: the stack of films with their looks, the sphere, every
+   *  slider and the toggles. */
+  function settings() {
+    const { debug, grid } = world.show; // films hidden is a look, not a setting
+    return { films: world.layers.map(look), base: look(world.next), tune, show: { debug, grid } };
+  }
+  function settingsNow(): string {
+    return JSON.stringify(settings());
+  }
+  function loadSettings(): { films?: unknown; base?: unknown; film?: string; tune?: Partial<Record<keyof Tune, unknown>>; show?: { debug?: unknown; grid?: unknown } } | null {
+    try { return JSON.parse(localStorage.getItem(STORE) ?? 'null'); } catch { return null; }
+  }
+
+  const saved: ReturnType<typeof loadSettings> = loadSettings() ?? DEFAULTS;
+  if (Array.isArray(saved?.films) && saved.films.length >= 1) {
+    // the stack as it was left: as many films, each with its look
+    const want = Math.min(FILMS_MAX, saved.films.length);
+    while (world.films.length < want) {
+      const pieces = new Map<number, Piece>();
+      initPieces(pieces);
+      world.films.push(createFilm());
+      world.layers.push(makeLayer(0, 0));
+      world.pieces.push(pieces);
+    }
+    while (world.films.length > want) { world.films.pop(); world.layers.pop(); world.pieces.pop(); }
+    for (let k = 0; k < want; k++) world.layers[k] = fromLook(0, saved.films[k]);
+    relabelNow();
+  } else if (typeof saved?.film === 'string') {
+    // from before the films could be changed one by one: only the name of the top one
+    setFinish(0, Math.max(0, FILMS.findIndex((f) => f.name === saved.film)));
+  }
+  if (saved?.base !== undefined) world.next = typeof saved.base === 'string' ? makeLayer(1, Math.max(0, ROOTS.findIndex((f) => f.name === saved.base))) : fromLook(1, saved.base);
+  tune.elastic = world.layers[0].elastic;
+  tune.adhesion = world.layers[0].adhesion;
   if (saved?.tune) {
     for (const k of Object.keys(tune) as Array<keyof Tune>) {
       const v = saved.tune[k];
       if (typeof v === 'number' && Number.isFinite(v)) tune[k] = v;
     }
-    ui.syncSliders();
   }
+  ui.syncSliders();
+  ui.syncLayers();
   if (typeof saved?.show?.debug === 'boolean') world.show.debug = saved.show.debug;
   if (typeof saved?.show?.grid === 'boolean') world.show.grid = saved.show.grid;
   ui.syncShow();
   let stored = settingsNow();
   let storeIn = 0;
 
-  function settingsNow(): string {
-    return JSON.stringify({ film: world.layers[0].name, base: world.next.name, tune, show: world.show });
-  }
-  function loadSettings(): { film?: string; base?: string; tune?: Partial<Record<keyof Tune, unknown>>; show?: { debug?: unknown; grid?: unknown } } | null {
-    try { return JSON.parse(localStorage.getItem(STORE) ?? 'null'); } catch { return null; }
-  }
   /** Write the settings out if they changed. Storage can be missing or full: then not. */
   function storeSettings() {
     const now = settingsNow();
@@ -686,6 +868,7 @@ export function createSim(ctx: Ctx): Module {
     const i = '123'.indexOf(e.key);
     if (i >= 0) setTool(TOOLS[i]);
     if (e.key === 'b') bench();
+    if (e.key === 'n') bench2();
     if (e.key === 'z') back();
     if (e.key === 'Z' || e.key === 'y') redo();
   });
@@ -697,6 +880,7 @@ export function createSim(ctx: Ctx): Module {
     peel: peeler,
     tune,
     bench,
+    bench2,
     back,
     redo,
     cut: (x0: number, y0: number, x1: number, y1: number) => lineCut(x0, y0, x1, y1),
@@ -731,6 +915,8 @@ export function createSim(ctx: Ctx): Module {
       qInv.copy(world.rotation).invert();
 
       world.lift.ghost = tune.ghost;
+      world.lift.band = tune.height;
+      world.look.x = px; world.look.y = py; world.look.on = mouseIn || pid !== -1;
       if ((storeIn -= dt) <= 0) { storeIn = 0.5; storeSettings(); }
       updatePeel(dt);
       world.finger.active = peeler.active && fading <= 0;
