@@ -135,6 +135,7 @@ const c = [0, 0, 0];
 /** Lower cover around the current curve near one point of it. */
 function stamp(films: Film[], x: number, y: number, z: number) {
   const mark = strokeFilm!;
+  let changed = 0; // bits of the films this stamp lowered
   c[0] = x; c[1] = y; c[2] = z;
   for (let f = 0; f < 6; f++) {
     const m = SGN[f] * c[AX_C[f]];
@@ -184,10 +185,16 @@ function stamp(films: Film[], x: number, y: number, z: number) {
         const cover = films[w - 1].cover;
         if (v < cover[k]) {
           cover[k] = v;
-          if (!(strokeTouched & (1 << (w - 1)))) { strokeTouched |= 1 << (w - 1); films[w - 1].coverVersion++; }
+          changed |= 1 << (w - 1);
         }
       }
     }
+  }
+  // Every stamp that cut something says so: a stroke drawn by hand goes on over many
+  // frames, and each of them has to reach the screen, not only the first.
+  if (changed) {
+    strokeTouched |= changed;
+    for (let q = 0; q < films.length; q++) if (changed & (1 << q)) films[q].coverVersion++;
   }
 }
 

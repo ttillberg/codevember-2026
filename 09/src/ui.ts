@@ -104,6 +104,32 @@ function icon(d: string, extra = ''): SVGSVGElement {
 
 /** A hooked arrow back to the left. Redo is the same, mirrored in CSS. */
 const UNDO = 'M8.5 4.5 4 9l4.5 4.5M4 9h10a5.5 5.5 0 0 1 0 11h-3.5';
+/** The pointing hand of day 08's cheat sheet, as a manual draws it: the index up, the other
+ *  three folded in a row of knuckles, the thumb curled in. In its own units, the fingertip at
+ *  the origin and the wrist at y 38. */
+const HAND = 'M-4.5 21V4.5A4.5 4.5 0 0 1 4.5 4.5V17C5 13.5 11.5 13.5 11.5 17.5C12 15 17 15.5 17 19.5C17.5 17.5 21.5 18.5 21 22.5C21 30 19 34 16.5 38H-7.5C-10.5 34 -13 31 -14 27C-15.5 23 -14.5 19 -11.5 18.5C-8.5 18 -6 20 -4.5 21Z';
+const HAND_LINES = 'M4.5 17V22M11.5 17.5V23M17 19.5V24.5M-4.5 21C-6 23 -6.5 26 -6 28';
+/** The tools: a finger, a blade, a ruler with its ticks, four claw marks. */
+const TOOL_ICON: Record<Tool, string> = {
+  peel: '',
+  knife: 'M4.5 19.5 9 15M9 15l9.5-11.5c1.6 2.6 1.4 6.2-.6 8.8L12.5 18.5z',
+  ruler: 'M3.5 16 16 3.5l4.5 4.5L8 20.5zM7.5 12l2 2M10.5 9l2 2M13.5 6l2 2',
+  scratch: 'M6.5 4c-1.4 5-1.4 11 0 16M10.5 4c-1.4 5-1.4 11 0 16M14.5 4c-1.4 5-1.4 11 0 16M18.5 5.5c-1.2 4.4-1.2 9 0 13',
+};
+/** What a tool's icon has beside its one path (the hand is drawn in its own units, scaled in). */
+const TOOL_EXTRA: Partial<Record<Tool, string>> = {
+  peel: `<g transform="translate(10.4 2.2) scale(0.52)"><path vector-effect="non-scaling-stroke" d="${HAND}"/><path vector-effect="non-scaling-stroke" d="${HAND_LINES}"/></g>`,
+};
+const toolIcon = (t: Tool) => icon(TOOL_ICON[t], TOOL_EXTRA[t] ?? '');
+const TOOL_TIP: Record<Tool, string> = { peel: 'Peel', knife: 'Knife', ruler: 'Ruler', scratch: 'Scratch' };
+/** The modifier that turns peeling into cutting, as this keyboard prints it. */
+const MOD = /Mac|iPhone|iPad/.test(navigator.platform) ? '\u2318' : 'Ctrl';
+/** How a tool is reached without picking it, while peeling. */
+const TOOL_ALSO: Partial<Record<Tool, string>> = {
+  knife: `${MOD} + drag on the sphere`,
+  ruler: `${MOD} + drag from outside`,
+  scratch: '\u21e7 + drag on the sphere',
+};
 const PLUS = 'M12 6v12M6 12h12';
 const MINUS = 'M7 12h10';
 
@@ -154,38 +180,111 @@ export function createUi(h: UiHandlers): Ui {
   // iOS only shows :active with a touch listener somewhere above.
   root.addEventListener('touchstart', () => {}, { passive: true });
 
-  // Tool switch: one segment per tool and a thumb that slides under the active one.
-  const seg = el('div', 'seg');
-  seg.setAttribute('role', 'radiogroup');
-  seg.setAttribute('aria-label', 'Tool');
-  seg.append(el('span', 'seg-thumb'));
-  const toolButtons = h.tools.map((t, i) => {
-    const b = button('seg-btn', () => h.onTool(t));
-    b.textContent = t;
-    b.title = `${t} (${i + 1})`;
-    b.setAttribute('role', 'radio');
-    seg.append(b);
-    return b;
+  // Every control in one frosted pill under the sphere (the bar of day 07): the tools, undo
+  // and redo, and the gear for the settings.
+  const bar = el('div', 'bar');
+  /** What a button is, shown over it on hover, with its key. */
+  const tip = (b: HTMLElement, text: string, ...keys: string[]) => {
+    b.removeAttribute('title');
+    const t = el('span', 'tip', text);
+    for (const key of keys) t.append(el('kbd', '', key));
+    b.append(t);
+  };
+  const sep = () => el('span', 'bar-sep');
+  // The tool: one button showing the one in use. Pressed, the others stack up over it, each
+  // with its name and how it is reached; a press dragged up picks the one it is let go on, a
+  // tap leaves them open to pick from. (The picker of day 07.)
+  const pick = el('div', 'pick');
+  const toolButton = button('tool', () => {}, 'Tool');
+  toolButton.setAttribute('aria-haspopup', 'true');
+  const pop = el('div', 'pick-pop');
+  pick.append(toolButton, pop);
+  bar.append(pick);
+  let current: Tool = h.tools[0];
+  let picking = false, hot: Tool | null = null;
+  const held = { y: 0, moved: false, down: false };
+  const toolRows = new Map<Tool, HTMLButtonElement>();
+  const keysOf = (t: Tool) => { const also = TOOL_ALSO[t]; return [String(h.tools.indexOf(t) + 1), ...(also ? [also] : [])]; };
+  const setHot = (t: Tool | null) => { hot = t; for (const [k, b] of toolRows) b.classList.toggle('on', k === t); };
+  function setPicking(o: boolean) {
+    picking = o;
+    pop.classList.toggle('open', o);
+    pop.inert = !o;
+    toolButton.classList.toggle('on', o);
+    toolButton.setAttribute('aria-expanded', String(o));
+    if (!o) setHot(null);
+  }
+  /** The tool of the row at this height, wherever the pointer is sideways; past the top the
+   *  top one, back down over the button none: letting go there changes nothing. */
+  function rowAt(y: number): Tool | null {
+    let best: Tool | null = null, bestD = Infinity, bottom = -Infinity;
+    for (const [t, b] of toolRows) {
+      const r = b.getBoundingClientRect();
+      bottom = Math.max(bottom, r.bottom);
+      const d = Math.abs(r.top + r.height / 2 - y);
+      if (d < bestD) { bestD = d; best = t; }
+    }
+    return y > bottom + 6 ? null : best;
+  }
+  function choose(t: Tool) { setPicking(false); h.onTool(t); }
+  /** The button shows `t`; the stack lists the others, the first of them nearest the button. */
+  function showTool(t: Tool) {
+    current = t;
+    toolButton.replaceChildren(toolIcon(t));
+    toolButton.setAttribute('aria-label', `Tool: ${TOOL_TIP[t]}`);
+    tip(toolButton, TOOL_TIP[t], ...keysOf(t));
+    toolRows.clear();
+    pop.replaceChildren();
+    for (const o of h.tools) {
+      if (o === t) continue;
+      const b = button('', () => choose(o), TOOL_TIP[o]);
+      b.removeAttribute('title');
+      const label = el('span', 'pick-label', TOOL_TIP[o]);
+      for (const k of keysOf(o)) label.append(el('kbd', '', k));
+      b.append(toolIcon(o), label);
+      toolRows.set(o, b);
+      pop.append(b);
+    }
+  }
+  toolButton.addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+    if (picking) { setPicking(false); return; }
+    held.y = e.clientY; held.moved = false; held.down = true;
+    setPicking(true);
   });
+  window.addEventListener('pointermove', (e) => {
+    if (!picking || !held.down) return;
+    if (Math.abs(e.clientY - held.y) > 6) held.moved = true;
+    if (held.moved) setHot(rowAt(e.clientY));
+  });
+  window.addEventListener('pointerup', (e) => {
+    if (!picking || !held.down) return;
+    held.down = false;
+    if (!held.moved) return; // a tap: the stack stays open
+    const t = rowAt(e.clientY);
+    if (t) choose(t); else setPicking(false);
+  });
+  window.addEventListener('pointercancel', () => { held.down = false; });
+  // a press anywhere else closes it
+  window.addEventListener('pointerdown', (e) => { if (picking && !pick.contains(e.target as Node)) setPicking(false); }, true);
+  window.addEventListener('keydown', (e) => { if (e.key === 'Escape' && picking) setPicking(false); });
+  showTool(current);
+  setPicking(false);
 
-  // Undo and redo, one pill.
-  const hist = el('div', 'hist');
-  const undo = button('btn icon undo', h.onBack, 'Undo (Cmd/Ctrl+Z, or z)');
-  undo.setAttribute('aria-label', 'Undo');
-  const count = el('span', 'count');
-  undo.append(icon(UNDO), count);
-  const redo = button('btn icon redo', h.onRedo, 'Redo (Shift+Cmd/Ctrl+Z, or y)');
-  redo.setAttribute('aria-label', 'Redo');
+  const undo = button('undo', h.onBack, 'Undo');
+  undo.append(icon(UNDO));
+  tip(undo, 'Undo', `${MOD} Z`);
+  const redo = button('redo', h.onRedo, 'Redo');
   redo.append(icon(UNDO));
-  hist.append(undo, redo);
-
-  const bench = button('btn bench', h.onBench, BENCH);
-  bench.textContent = 'bench';
+  tip(redo, 'Redo', `\u21e7 ${MOD} Z`);
 
   // Settings: the gear opens the sheet.
-  const gearButton = button('btn icon gear', () => setOpen(!open), 'Settings');
+  const gearButton = button('gear', () => setOpen(!open), 'Settings');
   gearButton.append(icon(gear(), '<circle cx="12" cy="12" r="3"/>'));
   gearButton.setAttribute('aria-expanded', 'false');
+  tip(gearButton, 'Settings');
+  bar.append(sep(), undo, redo, sep(), gearButton);
+  void current;
 
   // The sheet: two tabs over a body that scrolls on its own.
   const sheet = el('div', 'sheet');
@@ -532,6 +631,9 @@ export function createUi(h: UiHandlers): Ui {
   }, 'Copy every setting as text');
   copy.textContent = 'copy';
   extras.append(copy);
+  const bench = button('btn chip', h.onBench, BENCH + ' (b)');
+  bench.textContent = 'bench';
+  extras.append(bench);
   const bench2 = button('btn chip', h.onBench2, 'Reset to the second test scene: the top film partly off, the one under it opened (n)');
   bench2.textContent = 'bench 2';
   extras.append(bench2);
@@ -549,23 +651,18 @@ export function createUi(h: UiHandlers): Ui {
   setTab('layers');
   window.addEventListener('keydown', (e) => { if (e.key === 'Escape' && open) setOpen(false); });
 
-  root.append(info, sheet, seg, hist, bench, gearButton);
+  root.append(info, sheet, bar);
   document.body.append(root);
 
   return {
     setTool(t) {
-      const i = h.tools.indexOf(t);
-      seg.style.setProperty('--i', String(i));
-      toolButtons.forEach((b, k) => {
-        b.classList.toggle('on', k === i);
-        b.setAttribute('aria-checked', String(k === i));
-      });
+      if (picking) setPicking(false);
+      showTool(t);
     },
     syncLayers,
     syncShow() { for (const paint of toggles) paint(); },
     syncSliders() { for (const s of sliders) s.show(); },
     setHistory(n, m) {
-      count.textContent = n > 0 ? String(n) : '';
       undo.disabled = n === 0;
       redo.disabled = m === 0;
     },

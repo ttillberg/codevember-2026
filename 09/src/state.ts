@@ -40,7 +40,10 @@ export const R = 1;
 
 /** hand: peel from an edge, or turn the sphere. line: a straight cut through the whole
  *  sphere along a dragged line. free: draw a cut on the surface. */
-export type Tool = 'hand' | 'line' | 'free';
+/** peel: take hold of the film and pull (with Cmd or Ctrl held: the knife on the sphere, the
+ *  ruler off it; with Shift held: a scratch). knife: a cut drawn by hand. ruler: a straight cut right round, aimed as a
+ *  line. scratch: a few cuts side by side, like a paw. */
+export type Tool = 'peel' | 'knife' | 'ruler' | 'scratch';
 
 export interface Piece {
   /** Its value in the id atlas, 1..65535. Changes when the film is relabelled. */
@@ -51,7 +54,7 @@ export interface Piece {
   area: number;
 }
 
-/** The line being aimed with the line tool, in CSS pixels, before it cuts. */
+/** The line being aimed with the ruler, in CSS pixels, before it cuts. */
 export interface Aim {
   active: boolean;
   x0: number; y0: number; x1: number; y1: number;
@@ -86,7 +89,7 @@ export interface World {
   rotation: Quaternion;
   tool: Tool;
   aim: Aim;
-  /** The piece a press would grab right now (hand tool): which film, and its id there, 0
+  /** The piece a press would grab right now (peeling): which film, and its id there, 0
    *  when there is none. ok is always true today. Drawn as a debug outline of that piece. */
   hover: { layer: number; id: number; ok: boolean };
   /** Where the finger really is while it pulls: the edge point it took hold of and the point

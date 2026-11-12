@@ -46,7 +46,14 @@ const FADE_TIME = 0.16;         // s, what was lifted fades where it is once let
 const STEP = 1.2 * TEXEL;       // grab search step, under a groove's width so none is jumped
 const DIRS = 24;                // grab search directions
 
-const TOOLS: Tool[] = ['hand', 'line', 'free'];
+const TOOLS: Tool[] = ['peel', 'knife', 'ruler', 'scratch'];
+const CLAWS = 4;                // cuts a scratch leaves, side by side
+const CLAW_GAP = 0.05;          // between them, in radii, give or take
+const CLAW_GAP_VARY = 0.45;     // how much of that gap each claw is off its even place, either way
+const CLAW_FAN = 0.2;           // rad each claw may veer off the stroke, either way
+const CLAW_LATE = 0.05;         // radii of travel by which a claw may come down after the first
+const CLAW_SWAY = 0.012;        // radii each claw wanders sideways as it goes
+const CLAW_STEP = 0.012;        // radii the pointer travels between two points of a scratch
 const HOME = new Euler(0.38, -0.55, 0.12); // how the sphere is turned at the start
 
 
@@ -61,7 +68,7 @@ export function createWorld(): World {
     lift: createLift(),
     pieces: Array.from({ length: FILMS_DEEP }, () => new Map()),
     rotation: new Quaternion().setFromEuler(HOME),
-    tool: 'hand',
+    tool: 'peel',
     aim: { active: false, x0: 0, y0: 0, x1: 0, y1: 0, valid: false },
     hover: { layer: 0, id: 0, ok: true },
     show: { debug: true, grid: true, films: true },
@@ -272,7 +279,37 @@ export function createSim(ctx: Ctx): Module {
 
   // ------------------------------------------------------------------------------- free
 
-  const stroke = { on: false, painted: false, last: new Vector3() };
+  const stroke = {
+    on: false, painted: false, last: new Vector3(),
+    /** A scratch: how many cuts side by side (0: one, the knife), whether they have begun,
+     *  which way is across the stroke, and where each of them has got to. */
+    claws: 0, begun: false, side: new Vector3(),
+    ends: Array.from({ length: CLAWS }, () => new Vector3()),
+    /** No two scratches alike: how far the stroke has gone, and per claw where across the
+     *  stroke it sits, how it veers off as it goes, how late it comes down, whether it is
+     *  down yet, and the phase and pace of its sway. */
+    travel: 0,
+    off: new Float32Array(CLAWS), veer: new Float32Array(CLAWS), late: new Float32Array(CLAWS),
+    down: new Uint8Array(CLAWS), phase: new Float32Array(CLAWS), pace: new Float32Array(CLAWS),
+  };
+  /** Roll a new paw for the scratch that is starting. */
+  function rollClaws() {
+    const n = stroke.claws, vary = () => Math.random() * 2 - 1;
+    stroke.travel = 0;
+    // the whole paw fans out or draws in a little, and each claw has its own mind on top
+    const spread = vary() * CLAW_FAN * 0.6;
+    for (let i = 0; i < n; i++) {
+      const even = i - (n - 1) / 2;
+      stroke.off[i] = (even + vary() * CLAW_GAP_VARY) * CLAW_GAP;
+      stroke.veer[i] = Math.tan(spread * (even / Math.max(1, (n - 1) / 2)) + vary() * CLAW_FAN * 0.5);
+      stroke.late[i] = Math.random() * Math.random() * CLAW_LATE;
+      stroke.down[i] = 0;
+      stroke.phase[i] = Math.random() * Math.PI * 2;
+      stroke.pace[i] = 14 + Math.random() * 18;
+    }
+    stroke.late[(Math.random() * n) | 0] = 0; // one of them is first
+  }
+  const cA = new Vector3(), cB = new Vector3(), cP = new Vector3();
 
   /** Carry the stroke to CSS pixel (x, y): a groove from the last point if both are on the
    *  sphere's front, otherwise the stroke breaks there. */
@@ -280,12 +317,39 @@ export function createSim(ctx: Ctx): Module {
     ray(x, y);
     if (!world.show.films || !hit(tW)) { stroke.on = false; return; }
     tH.copy(tW).applyQuaternion(qInv);
-    if (stroke.on) {
+    if (!stroke.on) stroke.begun = false;
+    if (stroke.on && stroke.claws === 0) {
       // one stroke from press to release: it stays in the film it started in at each point
       if (!stroke.painted) { remember(); beginStroke(); }
       const a = stroke.last;
       paintArc(world.films, a.x, a.y, a.z, tH.x, tH.y, tH.z);
       stroke.painted = true;
+    } else if (stroke.on) {
+      // A scratch: the cuts run side by side across the way the pointer goes, so nothing is
+      // laid until it has gone far enough to tell which way that is.
+      const r = tH.length();
+      cA.subVectors(tH, stroke.last);
+      const step = cA.length() / r;
+      if (step < CLAW_STEP) return;
+      cB.crossVectors(tH, cA).normalize();
+      if (stroke.begun) stroke.side.lerp(cB, 0.35).normalize();
+      else { stroke.side.copy(cB); rollClaws(); }
+      stroke.travel += step;
+      const t = stroke.travel;
+      for (let i = 0; i < stroke.claws; i++) {
+        if (t < stroke.late[i]) continue; // not down yet
+        const across = stroke.off[i] + stroke.veer[i] * t + Math.sin(stroke.phase[i] + t * stroke.pace[i]) * CLAW_SWAY;
+        cP.copy(tH).addScaledVector(stroke.side, across * r).setLength(r);
+        const a = stroke.ends[i];
+        if (stroke.down[i]) {
+          if (!stroke.painted) { remember(); beginStroke(); }
+          paintArc(world.films, a.x, a.y, a.z, cP.x, cP.y, cP.z);
+          stroke.painted = true;
+        }
+        a.copy(cP);
+        stroke.down[i] = 1;
+      }
+      stroke.begun = true;
     }
     stroke.last.copy(tH);
     stroke.on = true;
@@ -474,9 +538,9 @@ export function createSim(ctx: Ctx): Module {
     h.id = 0;
     h.ok = true;
     if (!mouseIn || pid !== -1 || drag !== 'none') return;
-    if (world.tool !== 'hand') {
+    if (world.tool !== 'peel') {
       ray(px, py);
-      setCursor(world.tool === 'free' && !hit(tW) ? 'move' : 'crosshair');
+      setCursor(world.tool !== 'ruler' && !hit(tW) ? 'move' : 'crosshair');
       return;
     }
     if (findGrab(px, py)) {
@@ -486,7 +550,40 @@ export function createSim(ctx: Ctx): Module {
     } else setCursor('move');
   }
 
+  // Fingers on the screen, by pointer id, and the turn two of them make together.
+  const fingers = new Map<number, { x: number; y: number }>();
+  const two = { on: false, x: 0, y: 0, a: 0 };
+  const zAxis = new Vector3(0, 0, 1);
+  /** Where the two fingers are together: their middle and the angle of the line between them. */
+  function twoAt() {
+    const [p, q] = [...fingers.values()];
+    return { x: (p.x + q.x) / 2, y: (p.y + q.y) / 2, a: Math.atan2(q.y - p.y, q.x - p.x) };
+  }
+  /** What the first finger began is called off: a second one came down, so it was a turn. */
+  function callOff() {
+    if (drag === 'aim') { world.aim.active = false; world.aim.valid = false; }
+    else if (drag === 'draw') {
+      stroke.on = false;
+      if (stroke.painted) { const h = history.pop(); if (h) restore(h); showHistory(); }
+    } else if (drag === 'peel') { peeler.clear(); forget(); }
+    drag = 'none';
+  }
+
   function onDown(e: PointerEvent) {
+    if (e.pointerType !== 'mouse') {
+      fingers.set(e.pointerId, { x: e.clientX - left, y: e.clientY - top });
+      if (fingers.size === 2 && (pid !== -1 || two.on) && !two.on) {
+        // Two fingers turn the sphere, whatever the first one was about to do.
+        e.preventDefault();
+        callOff();
+        try { canvas.setPointerCapture(e.pointerId); } catch { /* fine */ }
+        omega.set(0, 0, 0);
+        pid = -2; // taken: no other pointer starts anything
+        Object.assign(two, twoAt(), { on: true });
+        setCursor('');
+        return;
+      }
+    }
     if (pid !== -1) return;
     if (e.pointerType === 'mouse' && e.button !== 0) return;
     e.preventDefault();
@@ -497,8 +594,19 @@ export function createSim(ctx: Ctx): Module {
     lastMoveT = e.timeStamp;
     if (touch) mouseIn = false;
     qInv.copy(world.rotation).invert();
-    const tool = world.tool;
-    if (tool === 'line') {
+    ray(px, py);
+    const on = hit(tW);
+    // Peeling with Cmd (or Ctrl) held is a knife: drawn by hand from a press on the sphere,
+    // along a ruler from a press off it ...
+    let tool = world.tool;
+    // A finger has no keys: while peeling, where it lands says what it does. Off the sphere
+    // it aims a ruler, on an edge that can be taken hold of it peels, anywhere else on the
+    // film it is a knife.
+    if (touch && tool === 'peel') tool = !on ? 'ruler' : findGrab(px, py) ? 'peel' : 'knife';
+    else if (tool === 'peel' && (e.metaKey || e.ctrlKey)) tool = on ? 'knife' : 'ruler';
+    // ... and with Shift held, a paw.
+    else if (tool === 'peel' && e.shiftKey && on) tool = 'scratch';
+    if (tool === 'ruler') {
       // The sphere holds still while a cut is aimed.
       omega.set(0, 0, 0);
       drag = 'aim';
@@ -507,13 +615,13 @@ export function createSim(ctx: Ctx): Module {
       setCursor('crosshair');
       return;
     }
-    ray(px, py);
-    if (hit(tW)) {
-      if (tool === 'free') {
+    if (on) {
+      if (tool === 'knife' || tool === 'scratch') {
         omega.set(0, 0, 0);
         drag = 'draw';
         stroke.on = false;
         stroke.painted = false;
+        stroke.claws = tool === 'scratch' ? CLAWS : 0;
         drawTo(px, py);
         setCursor('crosshair');
         return;
@@ -530,6 +638,26 @@ export function createSim(ctx: Ctx): Module {
   }
 
   function onMove(e: PointerEvent) {
+    const f = fingers.get(e.pointerId);
+    if (f) { f.x = e.clientX - left; f.y = e.clientY - top; }
+    if (two.on) {
+      if (!f || fingers.size < 2) return;
+      // their middle carried along turns the sphere as one finger off it would; the line
+      // between them turned about itself turns it about the line of sight
+      const now = twoAt();
+      const dx = now.x - two.x, dy = now.y - two.y, len = Math.hypot(dx, dy);
+      if (len > 0) {
+        tA.set(dy / len, dx / len, 0);
+        tQ.setFromAxisAngle(tA, len / rpx);
+        world.rotation.premultiply(tQ);
+      }
+      let da = now.a - two.a;
+      if (da > Math.PI) da -= 2 * Math.PI; else if (da < -Math.PI) da += 2 * Math.PI;
+      tQ.setFromAxisAngle(zAxis, -da);
+      world.rotation.premultiply(tQ).normalize();
+      two.x = now.x; two.y = now.y; two.a = now.a;
+      return;
+    }
     if (e.pointerId !== pid) {
       if (pid === -1 && e.pointerType === 'mouse') { px = e.clientX - left; py = e.clientY - top; mouseIn = true; touch = false; }
       return;
@@ -561,6 +689,14 @@ export function createSim(ctx: Ctx): Module {
   }
 
   function onUp(e: PointerEvent) {
+    fingers.delete(e.pointerId);
+    if (two.on) {
+      // one finger off ends the turn; the other does nothing more until it too is lifted
+      try { canvas.releasePointerCapture(e.pointerId); } catch { /* fine */ }
+      two.on = false;
+      pid = -1;
+      return;
+    }
     if (e.pointerId !== pid) return;
     px = e.clientX - left; py = e.clientY - top;
     if (drag === 'aim') {
@@ -865,7 +1001,7 @@ export function createSim(ctx: Ctx): Module {
       return;
     }
     if (e.repeat) return;
-    const i = '123'.indexOf(e.key);
+    const i = '1234'.indexOf(e.key);
     if (i >= 0) setTool(TOOLS[i]);
     if (e.key === 'b') bench();
     if (e.key === 'n') bench2();

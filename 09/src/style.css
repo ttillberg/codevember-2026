@@ -23,17 +23,35 @@ html, body {
 }
 canvas { display: block; width: 100vw; height: 100vh; }
 
-.back {
+/* The title block, as on day 08 (Tesseract): the day in heavy capitals top left, and the way
+   back to all the days under it. Never in the way of a finger: only the link takes a press. */
+.plate {
   position: fixed; z-index: 2;
-  top: calc(var(--pad-t) - 12px); left: calc(var(--pad-l) - 8px);
-  padding: 14px 8px;
-  font: 12px ui-monospace, Menlo, monospace; letter-spacing: 0.02em;
-  color: #000; opacity: 0.45; text-decoration: none;
-  -webkit-tap-highlight-color: transparent;
+  top: max(24px, env(safe-area-inset-top)); left: max(24px, env(safe-area-inset-left));
+  pointer-events: none;
+  color: #1c1c1c;
+  font: 13px/1.4 "Helvetica Neue", Helvetica, Arial, sans-serif;
+  user-select: none; -webkit-user-select: none;
 }
-@media (hover: hover) { .back:hover { opacity: 0.9; } }
+.plate b {
+  display: block; white-space: nowrap;
+  font-family: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-size: 56px; font-weight: 700; letter-spacing: -0.02em; line-height: 0.9;
+  text-transform: uppercase;
+}
+.plate .head > i {
+  display: block; margin-top: 6px;
+  font-style: normal; font-weight: 600; font-size: 14px; line-height: 1.15;
+  letter-spacing: 0.12em; text-transform: uppercase;
+}
+a.home { color: inherit; text-decoration: none; pointer-events: auto; cursor: pointer; -webkit-tap-highlight-color: transparent; }
+a.home span[lang="ja"] { margin-left: 0.4em; font-family: "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Noto Sans JP", "Yu Gothic", sans-serif; letter-spacing: 0.06em; }
+@media (max-width: 640px), (max-height: 500px) {
+  .plate b { font-size: 36px; }
+  .plate .head > i { font-size: 9px; }
+}
+.dark .plate { color: #f4f4f2; }
 .dark, .dark body { background: var(--bg); }
-.dark .back { color: #fff; }
 
 /* ------------------------------------------------------------------ layout */
 
@@ -56,23 +74,16 @@ canvas { display: block; width: 100vw; height: 100vh; }
 
 .info  { grid-column: 1 / -1; grid-row: 1; align-self: end; }
 .sheet { grid-column: 1 / -1; grid-row: 2; }
-.seg   { grid-column: 1; grid-row: 3; }
-.hist  { grid-column: 2; grid-row: 3; }
-.bench { grid-column: 3; grid-row: 3; }
-.gear  { grid-column: 4; grid-row: 3; }
+.bar   { grid-column: 1 / -1; grid-row: 3; justify-self: center; }
 
-/* Landscape and desktop: the sphere owns the middle. Tools down the left, settings on the right. */
+/* Landscape and desktop: the sphere owns the middle. The bar under it, settings on the right. */
 @media (min-aspect-ratio: 1/1) {
   .ui {
     max-width: none;
     grid-template-columns: auto auto 1fr auto;
     grid-template-rows: 1fr auto auto;
   }
-  .hist  { grid-column: 1; grid-row: 2; align-self: end; }
-  .bench { grid-column: 2; grid-row: 2; align-self: end; justify-self: start; }
-  .seg   { grid-column: 1 / span 2; grid-row: 3; }
   .sheet { grid-column: 4; grid-row: 1 / 3; align-self: end; width: 248px; }
-  .gear  { grid-column: 4; grid-row: 3; justify-self: end; }
   /* Short screens: the text sits beside the sheet, over the sphere for a moment. */
   .info  { grid-column: 3; grid-row: 1 / 4; justify-self: end; max-width: 240px; }
   :root { --knob: 40px; --cell: 40px; }
@@ -89,7 +100,7 @@ canvas { display: block; width: 100vw; height: 100vh; }
 
 /* ---------------------------------------------------------------- controls */
 
-.btn, .seg, .hist {
+.btn {
   box-sizing: border-box;
   height: var(--h);
   border: 1px solid var(--line);
@@ -111,62 +122,98 @@ canvas { display: block; width: 100vw; height: 100vh; }
 @media (hover: hover) { .btn:hover:not(:disabled) { background-color: rgba(44, 44, 50, 0.7); } }
 
 .btn.icon { position: relative; width: max(var(--h), 42px); padding: 0; }
-.bench { padding: 0 10px; }
 .btn svg {
   width: 20px; height: 20px;
   fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round;
 }
-.gear.on {
-  color: var(--accent);
-  border-color: rgba(143, 208, 255, 0.35);
-  background-color: rgba(143, 208, 255, 0.14);
-}
-
-/* Undo and redo share one pill, split by a hairline. */
-.hist { display: flex; padding: 0; overflow: hidden; }
-.hist .btn {
-  height: 100%; border: 0; border-radius: 0;
-  background-color: transparent; box-shadow: none;
-  -webkit-backdrop-filter: none; backdrop-filter: none;
-}
-.hist .btn:disabled { opacity: 0.3; }
-.hist .redo { border-left: 1px solid var(--line); }
-.redo svg { transform: scaleX(-1); }
-.undo .count {
-  position: absolute; top: 5px; right: 3px;
-  min-width: 14px; height: 14px; padding: 0 3px; box-sizing: border-box;
-  border-radius: 7px; background: rgba(255, 255, 255, 0.16);
-  font-size: 9px; line-height: 14px; font-weight: 600; text-align: center;
-  font-variant-numeric: tabular-nums;
-}
-.undo .count:empty { display: none; }
-
-/* Tool switch: a light thumb slides under the active segment. */
-.seg {
+/* The bar: icons in a frosted pill under the sphere, as on day 07. A button is a 46px disc
+   round a 24px icon; the picked tool is a black disc. */
+.bar {
   position: relative;
-  display: grid; grid-template-columns: repeat(3, minmax(0, 1fr));
-  padding: 0;
+  display: flex; padding: 6px 8.5px; border-radius: 999px;
+  margin-bottom: 14px;
+  background: linear-gradient(to bottom, rgba(255, 255, 255, 0.55), rgba(255, 255, 255, 0.25));
+  -webkit-backdrop-filter: blur(30px) saturate(1.8) brightness(1.04);
+  backdrop-filter: blur(30px) saturate(1.8) brightness(1.04);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.9), inset 0 0 0 1px rgba(255, 255, 255, 0.5);
 }
-.seg-thumb {
-  position: absolute; top: 3px; bottom: 3px; left: 3px;
-  width: calc(100% / 3 - 6px);
-  border-radius: calc(var(--r) - 3px);
-  background: rgba(255, 255, 255, 0.92);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
-  transform: translateX(calc(var(--i, 0) * (100% + 6px)));
-  transition: transform 0.26s cubic-bezier(0.3, 0.7, 0.2, 1);
-  pointer-events: none;
+.bar button {
+  position: relative;
+  display: flex; align-items: center; justify-content: center;
+  width: 46px; height: 46px; margin: 0; padding: 0; border: 0; border-radius: 50%;
+  background: none; color: #868583; cursor: pointer;
+  transition: background-color 0.1s, color 0.1s, opacity 0.15s;
 }
-.seg-btn {
-  position: relative; z-index: 1;
-  margin: 0; padding: 0; border: 0; background: none;
-  font: inherit; color: var(--mute);
-  cursor: pointer;
-  transition: color 0.2s ease;
+.bar button.on { background: #111; color: #fff; }
+.bar button:disabled { opacity: 0.35; cursor: default; }
+.bar button:active:not(:disabled):not(.on) { color: #111; background: rgba(0, 0, 0, 0.08); }
+@media (hover: hover) { .bar button:hover:not(:disabled):not(.on) { color: #111; background: rgba(0, 0, 0, 0.05); } }
+.bar svg {
+  display: block; width: 24px; height: 24px;
+  fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round;
 }
-.seg-btn.on { color: var(--bg); }
-.seg-btn:active:not(.on) { color: var(--text); }
-@media (hover: hover) { .seg-btn:hover:not(.on) { color: var(--text); } }
+.bar-sep { width: 1px; margin: 10px 8.5px; background: rgba(0, 0, 0, 0.12); }
+.dark .bar button { color: #b9b8b5; }
+.dark .bar button.on { background: #fff; color: #111; }
+.dark .bar-sep { background: rgba(255, 255, 255, 0.2); }
+.dark .bar { background: linear-gradient(to bottom, rgba(255, 255, 255, 0.16), rgba(255, 255, 255, 0.07)); box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.2), inset 0 0 0 1px rgba(255, 255, 255, 0.1); }
+@media (hover: hover) { .dark .bar button:hover:not(:disabled):not(.on) { color: #fff; background: rgba(255, 255, 255, 0.1); } }
+/* a narrow phone: seven buttons still fit */
+@media (max-width: 400px) { .bar button { width: 40px; height: 40px; } .bar-sep { margin: 8px 5px; } }
+
+/* The tool picker: the other tools stacked over the one in use, a name sliding out beside each. */
+.pick { position: relative; display: flex; }
+.pick-pop {
+  position: absolute; left: 50%; bottom: calc(100% + 14px); z-index: 3;
+  display: flex; flex-direction: column-reverse; gap: 2px; padding: 6px; border-radius: 29px;
+  background: rgba(255, 255, 255, 0.78); /* more solid than day 07's: it opens over a dark sphere */
+  -webkit-backdrop-filter: blur(18px) saturate(1.6); backdrop-filter: blur(18px) saturate(1.6);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.6), 0 8px 24px rgba(0, 0, 0, 0.1);
+  opacity: 0; pointer-events: none;
+  transform: translate(-50%, 6px) scale(0.96); transform-origin: 50% 100%;
+  transition: opacity 0.16s ease-out, transform 0.2s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.pick-pop.open { opacity: 1; pointer-events: auto; transform: translate(-50%, 0) scale(1); }
+.pick-label {
+  position: absolute; left: calc(100% + 14px); top: 50%; transform: translate(-4px, -50%);
+  display: flex; align-items: center; gap: 6px; padding: 5px 10px; border-radius: 999px; white-space: nowrap;
+  background: #777673; color: #fff; font: 500 11px/1 var(--font);
+  opacity: 0; pointer-events: none; transition: opacity 0.12s, transform 0.12s;
+}
+.pick-label:has(kbd) { padding-right: 6px; }
+.pick-label kbd {
+  display: inline-flex; align-items: center; justify-content: center; min-width: 16px; height: 16px; padding: 0 4px;
+  box-sizing: border-box; border-radius: 5px; background: #9a9996; color: #fff; font: inherit; font-size: 10px;
+}
+.pick-pop.open button.on .pick-label { opacity: 1; transform: translate(0, -50%); }
+@media (hover: hover) { .pick-pop.open button:hover .pick-label { opacity: 1; transform: translate(0, -50%); } }
+/* keys and modifiers are for a keyboard: a touch screen shows the names alone */
+@media (hover: none), (pointer: coarse) {
+  .tip kbd, .pick-label kbd { display: none; }
+  .tip:has(kbd), .pick-label:has(kbd) { padding-right: 10px; }
+}
+/* open, the stack says it all: no tip over the button under it */
+.bar .tool.on .tip { display: none; }
+.dark .pick-pop { background: rgba(60, 60, 64, 0.6); box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.12), 0 8px 24px rgba(0, 0, 0, 0.3); }
+
+.redo svg { transform: scaleX(-1); }
+
+/* What a button is, over it after a moment's hover, with its key. */
+.tip {
+  position: absolute; left: 50%; bottom: calc(100% + 12px); transform: translate(-50%, 4px); z-index: 2;
+  display: flex; align-items: center; gap: 6px; padding: 5px 10px; border-radius: 999px; white-space: nowrap;
+  background: #777673; color: #fff; font: 500 11px/1 var(--font);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12); pointer-events: none; opacity: 0;
+  transition: opacity 0.12s, transform 0.12s;
+}
+.tip:has(kbd) { padding-right: 6px; }
+.tip kbd {
+  display: inline-flex; align-items: center; justify-content: center; min-width: 16px; height: 16px; padding: 0 4px;
+  box-sizing: border-box; border-radius: 5px; background: #9a9996; color: #fff; font: inherit; font-size: 10px;
+}
+@media (hover: hover) {
+  .bar button:hover .tip { opacity: 1; transform: translate(-50%, 0); transition-delay: 0.35s; }
+}
 
 /* ------------------------------------------------------------------- sheet */
 
