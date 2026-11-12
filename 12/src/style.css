@@ -1,5 +1,8 @@
 html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
-canvas { display: block; width: 100vw; height: 100vh; }
+/* the canvas fills the screen down to its very foot, even under a phone browser's bar
+   (100lvh: with only 100vh a strip of page showed under it in in-app browsers) */
+canvas { display: block; position: fixed; left: 0; top: 0; width: 100vw; height: 100vh; }
+@supports (height: 100lvh) { canvas { height: 100lvh; } }
 .back {
   position: fixed; left: 12px; bottom: 12px;
   font: 12px ui-monospace, Menlo, monospace; color: #fff; opacity: .5;

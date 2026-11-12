@@ -147,8 +147,12 @@ const plane = new THREE.Plane();
 const toCam = new THREE.Vector3();
 const planeAt = new THREE.Vector3();
 // a plane facing the camera, `ahead` in front of the bird's head
+function toNdc(x: number, y: number) {
+  const r = canvas.getBoundingClientRect();
+  return ndc.set(((x - r.left) / r.width) * 2 - 1, -((y - r.top) / r.height) * 2 + 1);
+}
 function pointerOnPlane(x: number, y: number, ahead: number, out: THREE.Vector3) {
-  ndc.set((x / window.innerWidth) * 2 - 1, -(y / window.innerHeight) * 2 + 1);
+  toNdc(x, y);
   ray.setFromCamera(ndc, camera);
   camera.getWorldDirection(toCam).negate();
   plane.setFromNormalAndCoplanarPoint(toCam, planeAt.set(bird.root.position.x, 0.8, 0).addScaledVector(toCam, ahead));
@@ -178,7 +182,7 @@ canvas.addEventListener('pointerdown', (e) => {
 const capA = new THREE.Vector3();
 const capB = new THREE.Vector3();
 function tapsBird(x: number, y: number) {
-  ndc.set((x / window.innerWidth) * 2 - 1, -(y / window.innerHeight) * 2 + 1);
+  toNdc(x, y);
   ray.setFromCamera(ndc, camera);
   bird.root.getWorldPosition(capA).y += 0.25;
   bird.headPosition(capB);
@@ -404,8 +408,9 @@ const settings = createSettings([
 
 // --- loop ---------------------------------------------------------------------
 function resize() {
-  const w = window.innerWidth;
-  const h = window.innerHeight;
+  // the size the canvas is laid out at, not the window's: on a phone they differ while the bars show
+  const w = canvas.clientWidth || window.innerWidth;
+  const h = canvas.clientHeight || window.innerHeight;
   renderer.setSize(w, h, false);
   post.setSize(w, h, renderer.getPixelRatio());
   camera.aspect = w / h;
@@ -414,6 +419,7 @@ function resize() {
   camera.updateProjectionMatrix();
 }
 window.addEventListener('resize', resize);
+new ResizeObserver(resize).observe(canvas);
 resize();
 
 branchLoad.then(() => requestAnimationFrame(() => ready()));
