@@ -1,0 +1,16 @@
+html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
+canvas { display: block; width: 100vw; height: 100vh; }
+.back {
+  position: fixed; left: 12px; bottom: 12px;
+  font: 12px ui-monospace, Menlo, monospace; color: #fff; opacity: .5;
+  text-decoration: none;
+}
+.back:hover { opacity: 1; }
+.hint {
+  position: fixed; right: 12px; bottom: 12px; margin: 0;
+  font: 12px ui-monospace, Menlo, monospace; color: #fff; opacity: .4;
+  pointer-events: none; transition: opacity 1.2s;
+}
+.hint.gone { opacity: 0; }
+canvas { touch-action: none; cursor: grab; }
+canvas:active { cursor: grabbing; }

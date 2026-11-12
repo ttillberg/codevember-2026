@@ -20,7 +20,7 @@ Live: https://ttillberg.github.io/codevember-2026/
 | 09 | Membrane | [View](https://ttillberg.github.io/codevember-2026/09/) | [Code](https://github.com/ttillberg/codevember-2026/tree/main/09) |
 | 10 | Caustic | — | — |
 | 11 | Rust | — | — |
-| 12 | Feather | — | — |
+| 12 | Feather | [View](https://ttillberg.github.io/codevember-2026/12/) | [Code](https://github.com/ttillberg/codevember-2026/tree/main/12) |
 | 13 | Labyrinth | — | — |
 | 14 | Tension | — | — |
 | 15 | Mirage | — | — |

@@ -1,0 +1,30 @@
+# 12 / Feather
+
+2026-11-12
+
+A purple-throated mountain-gem on a mossy twig, built from a few seconds of footage. Rigged, procedurally alive, every feather real geometry. It does not fly yet. It sits, breathes, snaps its head about, blinks, ruffles, flicks its tail, and the gorget goes from dull maroon to a violet blaze the moment the bill turns your way. Drag to orbit, move the pointer and it may look at it, click or space to startle it.
+
+## How
+
+- **Rig** (`bird/rig.ts`): 79 named `THREE.Bone`s. Spine, neck chain, head, bill and jaw, eyes, lids and nictitating membranes, wings down to each primary and secondary, a ten-feather tail fan, legs and toes wrapped round the perch. Wings keep a folded and a spread pose already.
+- **Body** (`bird/loft.ts`): one parametric loft from tail root to bill base, skinned. A throat pull binds the front of the neck to the head so the gorget turns with the bill.
+- **Motion** (`bird/motion/*`, `bird/pose.ts`): layers write a `Pose`, a solver turns it into bones and feather uniforms. Posture, breath, gaze, blink, ruffle, tail, wings, startle. The gaze does min-jerk saccades of 40 to 95 ms, a bit of ringing on arrival, then dead-still holds with micro-tremor, the head held still in world space against the body. A new behaviour is one more layer.
+- **Feathers** (`bird/plumageGeometry.ts`, `bird/plumageMaterial.ts`): about 11k contour feathers plus wing and tail feathers, two skinned meshes, one material. Each feather hinges at its root in the vertex shader, so a ruffle is feathers lifting off the skin in a wave, not a fatter body. Barbs, shaft and combed edges in the fragment shader, alpha to coverage. The gorget and crown flash comes from a narrow lobe round each feather's own platelet normal, art-directed rather than a thin-film model. The shadow pass hinges the same way. Each kind of feather has a `loose` value, from crisp gorget scales to velvety face, loose belly and flank feathers with open barbs, and a down tuft at the wing. Soft ones get jitter, clumps and partings, matte barbs with split vanes, and glitter on single barbs rather than whole feathers. Folded wings are placed by a clearance solve against the body, so they lie on it instead of through it.
+- **Species** (`bird/species.ts`): proportions, tracts, colours and tempo as data, so another bird is a new object.
+- **Perch** (`model/branch.blend` → `public/branch.glb`): modelled in Blender, a 242-node procedural bark (fissures, plates, flakes, lenticels, knots, lichen rosettes, algae film) baked to 4k colour, normal and ORM, 2,400 alpha-card moss tufts, a side shoot with lime buds. It keeps the procedural twig's contract: radius 0.09 and top surface through the origin at the grip, so the toes fit. The procedural one stays as a fallback (`?procbranch`).
+- **Scene** (`main.ts`, `env/*`): an out-of-focus forest on a sphere round the camera, baked into the env map too (at half the saturation) so the feathers reflect the same green without turning green.
+- **Post** (`post.ts`): scene into a 4x MSAA half-float target, a depth-of-field gather focused on the head, then Neutral tone mapping and a grade matched by eye and by sampled colours against the footage: brighter, a touch cool, plum in the shadows, grain and vignette. `?nopost` skips it.
+
+Debug: `?nopost`, `?procbranch`, `?nofuzz`, `?pose=front|profile|up|back|three`, `?gaze=yaw,pitch,roll`, `?quiet`, `?arousal=0..1`, `?fluff=`, `?spread=0..1`, `?fan=0..1`, `?bones`, `?skin`, `?wire`, `?noflash`. `window.__bird` for poking.
+
+## Learned
+
+- The flash is everything. Per-feather normals and a tight lobe read as structural colour. A body-wide tint never did.
+- A perched hummingbird is a still body under a head that teleports. Get the saccade timing right and it is alive before a single feather moves.
+- Folded wings are the weak part: the belly hides most of them from the front.
+
+Built with Fable 5.2 on the bird and the Blender perch, Opus 5.5 on the scene, post and glue.
+
+```sh
+pnpm -C 12 dev
+```
