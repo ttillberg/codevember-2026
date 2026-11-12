@@ -37,9 +37,9 @@ canvas:active { cursor: grabbing; }
   .plate .head > i { font-size: 10px; }
 }
 
-/* full screen, top right beside the wheel: the page goes clean, the text and the rest away */
+/* full screen, top right: the page goes clean, the text and the rest away */
 .fs {
-  position: fixed; top: 25px; right: 66px; z-index: 3;
+  position: fixed; top: 25px; right: 22px; z-index: 3;
   display: grid; place-items: center; width: 34px; height: 34px; padding: 0;
   border: 1px solid rgba(243, 245, 238, 0.45); border-radius: 50%;
   background: rgba(20, 40, 18, 0.18); color: #f3f5ee; cursor: pointer;
@@ -62,9 +62,9 @@ body.clean.fullscreen .fs { display: none; }
   .hint .narrow { display: inline; }
 }
 
-/* settings wheel, top right, and its card */
+/* settings wheel, bottom right, and its card opening upward */
 .gear {
-  position: fixed; top: 25px; right: 22px; z-index: 3;
+  position: fixed; bottom: 22px; right: 22px; z-index: 3;
   display: grid; place-items: center; width: 34px; height: 34px; padding: 0;
   border: 1px solid rgba(243, 245, 238, 0.45); border-radius: 50%;
   background: rgba(20, 40, 18, 0.18); color: #f3f5ee; cursor: pointer;
@@ -74,7 +74,7 @@ body.clean.fullscreen .fs { display: none; }
 .gear:hover, .gear.on { background: rgba(20, 40, 18, 0.4); }
 .gear.on { transform: rotate(60deg); }
 .settings {
-  position: fixed; top: 68px; right: 22px; z-index: 3; width: 240px; max-height: calc(100vh - 100px); overflow: auto;
+  position: fixed; bottom: 66px; right: 22px; z-index: 3; width: 240px; max-height: calc(100vh - 100px); overflow: auto;
   padding: 12px 14px 14px; border-radius: 14px; border: 0.5px solid rgba(243, 245, 238, 0.3);
   background: rgba(16, 32, 14, 0.55); color: #f3f5ee;
   -webkit-backdrop-filter: blur(16px) saturate(1.2); backdrop-filter: blur(16px) saturate(1.2);
@@ -99,7 +99,23 @@ body.clean.fullscreen .fs { display: none; }
 .settings .reset { display: block; margin-top: 12px; opacity: 0.7; }
 body.clean .gear, body.clean .settings { display: none; }
 @media (max-width: 640px) {
-  .gear { top: 14px; right: 12px; }
-  .fs { top: 14px; right: 56px; }
-  .settings { top: 56px; right: 12px; width: calc(100vw - 24px - 28px); }
+  .gear { bottom: 14px; right: 12px; }
+  .fs { top: 14px; right: 12px; }
+  .settings { bottom: 56px; right: 12px; width: calc(100vw - 24px - 28px); }
 }
+
+/* loading: millimetre paper (the shader draws the same sheet), ink title, the picture fades in after */
+body {
+  background-color: #f1f0e8;
+  background-image:
+    linear-gradient(rgba(111, 143, 106, 0.35) 1px, transparent 1px), linear-gradient(90deg, rgba(111, 143, 106, 0.35) 1px, transparent 1px),
+    linear-gradient(rgba(111, 143, 106, 0.22) 1px, transparent 1px), linear-gradient(90deg, rgba(111, 143, 106, 0.22) 1px, transparent 1px),
+    linear-gradient(rgba(111, 143, 106, 0.12) 1px, transparent 1px), linear-gradient(90deg, rgba(111, 143, 106, 0.12) 1px, transparent 1px);
+  background-size: 50px 50px, 50px 50px, 25px 25px, 25px 25px, 5px 5px, 5px 5px;
+}
+canvas.pending { opacity: 0; }
+.plate { transition: color 1.4s ease; }
+body.loading .plate { color: #2b3a2c; }
+.plate .loading-label { opacity: 0; transition: opacity 0.6s; }
+body.loading .plate .loading-label { opacity: 0.7; }
+body.loading .fs, body.loading .gear { opacity: 0; pointer-events: none; }
