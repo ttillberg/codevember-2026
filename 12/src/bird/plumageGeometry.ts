@@ -319,13 +319,29 @@ function addContour(b: Builder, rig: Rig, rng: Rng) {
   const P1 = new THREE.Vector3();
   const plant = (sj: number, a: number) => {
     loft.surface(sj, a, sfc);
-    for (const side of SIDES) if (sfc.p.distanceTo(rig.eyes[side].center) < eyeR * 1.08) return;
+    for (const side of SIDES) if (sfc.p.distanceTo(rig.eyes[side].center) < eyeR * 1.02) return;
     // the folded wings are feathered separately (addRestWing); the coat stops at their edge
     const wuv = loft.wingUV(sj, a);
     if (wuv.u > 0.04 && wuv.u < 0.97 && Math.abs(wuv.v) < 0.9) return;
     // ragged tract borders: look the feather itself up with a little jitter
     const phi = phiOf(a);
-    const { look, width } = sizeAt(sj + (rng() - 0.5) * 0.06, clamp(phi + (rng() - 0.5) * 0.012, 0, 1), rng());
+    const sized = sizeAt(sj + (rng() - 0.5) * 0.06, clamp(phi + (rng() - 0.5) * 0.012, 0, 1), rng());
+    const width = sized.width;
+    // the haircut: on the top and back of the head the dark feathers do not lie on the skull,
+    // they stand up and back, uneven, with the crown scales glinting underneath. Strongest
+    // on the hind crown, fading toward the forehead, the nape and down over the eye.
+    // A gradient from front to back: flat and sleek on the forehead, rising steadily through
+    // the crown, steepest and most ragged at the top-back, then lying down again on the nape.
+    const rise = Math.pow(1 - smoothstep(7.1, 9.0, sj), 1.4);
+    const hair = smoothstep(0.56, 0.86, phi) * rise * smoothstep(6.25, 7.0, sj);
+    const sleek = smoothstep(0.5, 0.8, phi) * smoothstep(8.5, 9.2, sj);
+    // so half of what would be crown scales up there are dark standing feathers instead
+    const look = sized.look === species.looks.crown && sj < 8.5 && rng() < 0.5 * smoothstep(0.7, 0.9, phi) ? species.looks.head : sized.look;
+    const standing = look.fine ? 0 : hair;
+    // and nothing up there is regular: rows broken by gaps, clumps that lean together
+    const unruly = look.fine || look === species.looks.stripe ? 0 : smoothstep(6.0, 6.7, sj) * smoothstep(0.35, 0.6, phi) * (0.35 + 0.65 * rise);
+    const clump = noise1(sj * 11 + phi * 37, 51);
+    if (unruly > 0 && clump > 0.45 && rng() < 0.4 * unruly) return;
     const sh = species.shading;
     const { shade, gold, glit } = toneAt(species, look, sj, phi);
     // tousle: every soft feather is a little off in length, lie and twist, and whole
@@ -334,18 +350,19 @@ function addContour(b: Builder, rig: Rig, rng: Rng) {
     const nA = noise1(sj * 4.3 + phi * 17, 21);
     const nB = noise1(sj * 3.1 - phi * 23, 22);
     const size = 1 + (rng() - 0.5) * lerp(0.26, 0.65, loose);
-    const len = width * look.aspect * size;
+    const len = width * look.aspect * size * (1 + standing * (0.3 + 1.3 * rng() * rng()) + unruly * (rng() - 0.5) * 0.5);
     // a few strays per hundred stand off the coat at an odd angle
-    const stray = rng() < 0.035 * loose ? 1 : 0;
+    const stray = rng() < 0.035 * loose + 0.14 * standing ? 1 : 0;
     let tilt = (look.tilt + (rng() - 0.5) * lerp(6, 17, loose) + nB * 7 * loose + stray * (8 + rng() * 10)) * DEG;
-    const yaw = (rng() - 0.5) * lerp(0.17, 0.72, loose) + nA * 0.4 * loose + stray * (rng() - 0.5) * 0.9;
-    const roll = ((rng() - 0.5) * 0.7 + nB * 0.3) * loose;
+    const yaw = (rng() - 0.5) * lerp(0.17, 0.72, loose) + nA * 0.4 * loose + stray * (rng() - 0.5) * 0.9 + ((rng() - 0.5) * 0.9 + clump * 0.45) * unruly;
+    const roll = ((rng() - 0.5) * 0.7 + nB * 0.3) * loose + ((rng() - 0.5) * 1.1 + clump * 0.5) * unruly;
     // right beside the folded wing the coat lies closer, so the wing is not sunk in a trench
     if (wuv.u > 0 && wuv.u < 1 && Math.abs(wuv.v) < 1.7 && !stray) {
       const near = 1 - smoothstep(0.9, 1.7, Math.abs(wuv.v));
       tilt *= 1 - 0.6 * near;
     }
-    let gain = look.lift;
+    let gain = look.lift + standing * 0.9;
+    tilt = tilt * (1 - 0.55 * sleek) + standing * (14 + 30 * rng() * rng() + 9 * clump) * DEG;
     // lay the feather along the skin: aim it at the surface point under its tip, raised by the
     // tilt, so it rides over bulges and bridges hollows instead of cutting through them
     const local = loft.point(Math.min(sj + 0.01, loft.sMax), a, tmpA).distanceTo(loft.point(Math.max(sj - 0.01, 0), a, tmpB)) / 0.02;
@@ -422,7 +439,7 @@ function addContour(b: Builder, rig: Rig, rng: Rng) {
         while (q + span >= 1) {
           const f = (1 - q) / span;
           const jitterS = ((rng() - 0.5) * 0.25 * width * look.aspect * look.rowStep) / 0.11;
-          const lj = lerp(0.12, 0.5, look.loose ?? 0);
+          const lj = lerp(0.12, 0.5, look.loose ?? 0) * (look.fine ? 1 : 1 + 1.8 * smoothstep(6.0, 6.7, (s0 + s1) / 2));
           plant(clamp(lerp(s0, s1, f) + jitterS * (1 + 2 * (look.loose ?? 0)), 0.02, loft.sMax), lerp(a0, a1, f) + ((rng() - 0.5) * lj * width) / 0.15);
           q -= 1;
         }

@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { mulberry } from './backdrop';
+import { MeshSurfaceSampler } from 'three/examples/jsm/math/MeshSurfaceSampler.js';
 
 // The perch: a mossy twig along X whose top passes through the origin, plus a
 // side shoot with bright lime buds like in the footage.
@@ -193,13 +194,160 @@ export async function loadBranch(url: string) {
         s.alphaToCoverage = true;
         s.alphaTest = 0.35;
       }
-      // the grade lifts exposure: keep the moss from going neon
-      if (/moss/i.test(s.name)) s.color.multiplyScalar(0.95);
-      // the baked felt came out pale straw under the grade: warmer, darker rust
-      if (/^perch$/i.test(s.name)) s.color.setRGB(0.36, 0.25, 0.21);
-      if (/hairs_twig/i.test(s.name) || /fuzz/i.test(s.name)) s.color.multiply(new THREE.Color().setRGB(0.42, 0.3, 0.26));
+      // colour, AO (ORM r) and root-to-tip darkening are all baked in the glb
       s.envMapIntensity = 0.8;
     }
   });
+  // the baked fuzz cards read as straight straw: swap them for shell fuzz
+  // and the moss cards (crisp little fir trees) for the same shells, grown tall where the bark is green
+  for (const n of ['hairs_twig', 'moss']) {
+    const o = group.getObjectByName(n);
+    if (o) o.visible = false;
+  }
+  const perch = group.getObjectByName('perch') as THREE.Mesh | undefined;
+  if (perch) {
+    group.add(fuzzShells(perch));
+    // and the fine pale hairs the flowers have, on the twig too
+    const flowerHairs = group.getObjectByName('hairs') as THREE.Mesh | undefined;
+    if (flowerHairs) group.add(fineHairs(perch, flowerHairs.material as THREE.Material));
+  }
   return { group, radius: PERCH_R };
+}
+
+// Fine hairs, one thin tapered triangle each, scattered over the twig and
+// leaning along it, like the ones on the shoot and flowers (same material).
+function fineHairs(perch: THREE.Mesh, material: THREE.Material) {
+  const COUNT = matchMedia('(pointer: coarse)').matches ? 7000 : 16000;
+  const sampler = new MeshSurfaceSampler(perch).build();
+  const rng = mulberry(31);
+  const p = new THREE.Vector3();
+  const n = new THREE.Vector3();
+  const t = new THREE.Vector3();
+  const b = new THREE.Vector3();
+  const dir = new THREE.Vector3();
+  const pos: number[] = [];
+  const nor: number[] = [];
+  const uv: number[] = [];
+  let made = 0;
+  for (let tries = 0; made < COUNT && tries < COUNT * 4; tries++) {
+    sampler.sample(p, n);
+    // none where the toes grip, few on the old woody end and underneath
+    if (Math.abs(p.x) < 0.17 || p.x < -2.8) continue;
+    if (n.y < -0.3 && rng() < 0.7) continue;
+    t.set(rng() - 0.5, rng() - 0.5, rng() - 0.5).cross(n).normalize();
+    b.crossVectors(n, t);
+    const lean = 0.45 + rng() * 0.5; // 0 = upright, 1 = flat on the bark
+    const len = 0.005 + rng() * rng() * 0.014;
+    dir.copy(n).multiplyScalar(1 - lean).addScaledVector(t, lean).normalize();
+    const w = 0.00045 + rng() * 0.0003;
+    const base = p.addScaledVector(n, -0.001);
+    pos.push(base.x - b.x * w, base.y - b.y * w, base.z - b.z * w, base.x + b.x * w, base.y + b.y * w, base.z + b.z * w,
+      base.x + dir.x * len, base.y + dir.y * len, base.z + dir.z * len);
+    for (let k = 0; k < 3; k++) nor.push(n.x, n.y, n.z);
+    // the flower hairs' gradient texture runs root (v = 0) to tip (v = 1)
+    uv.push(0, 0, 1, 0, 0.5, 1);
+    made++;
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3));
+  g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+  const m = new THREE.Mesh(g, material);
+  m.name = 'twig.hairs';
+  m.position.copy(perch.position);
+  m.quaternion.copy(perch.quaternion);
+  m.scale.copy(perch.scale);
+  m.receiveShadow = true;
+  return m;
+}
+
+// Felt on the twig: N copies of the perch surface pushed out along the normal,
+// each keeping only the strands that reach that high. Strands are cells of 3D
+// noise that wander sideways as they rise, so they curl and tangle instead of
+// standing straight. Colour comes from the bark under it, dark at the root,
+// paler and warmer at the tip. Alpha to coverage softens the fibre edges.
+const SHELLS = matchMedia('(pointer: coarse)').matches ? 7 : 14;
+const FUZZ_H = 0.03; // moss height; the felt only reaches ~0.014 of it
+
+function fuzzShells(perch: THREE.Mesh) {
+  const src = perch.material as THREE.MeshStandardMaterial;
+  const group = new THREE.Group();
+  group.name = 'fuzz';
+  for (let i = 1; i <= SHELLS; i++) {
+    const h = i / SHELLS;
+    const mat = new THREE.MeshStandardMaterial({
+      map: src.map,
+      normalMap: src.normalMap,
+      color: new THREE.Color(1, 1, 1),
+      roughness: 1,
+      metalness: 0,
+      alphaTest: 0.5,
+      alphaToCoverage: true,
+      envMapIntensity: 0.6,
+    });
+    mat.onBeforeCompile = (sh) => {
+      sh.uniforms.uH = { value: h };
+      sh.uniforms.uLen = { value: FUZZ_H };
+      sh.vertexShader = sh.vertexShader
+        .replace('#include <common>', '#include <common>\nuniform float uH; uniform float uLen; varying vec3 vFP; varying float vGrip;')
+        .replace(
+          '#include <begin_vertex>',
+          `#include <begin_vertex>
+           // no felt where the toes grip, and it thins out toward the old woody left end
+           float gx = abs(position.x);
+           vGrip = mix(0.22, 1.0, smoothstep(0.14, 0.24, gx)) * (1.0 - smoothstep(-2.6, -3.2, position.x));
+           transformed += objectNormal * uH * uLen * vGrip;
+           vFP = position;`,
+        );
+      sh.fragmentShader = sh.fragmentShader
+        .replace(
+          '#include <common>',
+          `#include <common>
+           uniform float uH; varying vec3 vFP; varying float vGrip;
+           float fh(vec3 p) { return fract(sin(dot(p, vec3(127.1, 311.7, 74.7))) * 43758.5453); }
+           float fn(vec3 p) { vec3 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
+             return mix(mix(mix(fh(i), fh(i + vec3(1,0,0)), f.x), mix(fh(i + vec3(0,1,0)), fh(i + vec3(1,1,0)), f.x), f.y),
+                        mix(mix(fh(i + vec3(0,0,1)), fh(i + vec3(1,0,1)), f.x), mix(fh(i + vec3(0,1,1)), fh(i + vec3(1,1,1)), f.x), f.y), f.z); }`,
+        )
+        .replace(
+          '#include <alphatest_fragment>',
+          `{
+             // strands wander as they rise, so each one curls
+             vec3 q = vFP * 520.0;
+             q += vec3(fn(vFP * 90.0), fn(vFP * 90.0 + 7.3), fn(vFP * 90.0 + 3.1)) * 3.0 * uH;
+             vec3 c = floor(q);
+             vec3 f = fract(q) - 0.5;
+             // per cell: a strand of random height, thick at the root, tapering
+             // clumps and partings: strand height follows a slow noise
+             float clump = fn(vFP * 14.0) * 0.7 + fn(vFP * 41.0) * 0.5;
+             float tall = fh(c) * (0.25 + 0.9 * clump);
+             // moss where the baked bark is green: cushions, taller, denser
+             float green = smoothstep(0.004, 0.03, diffuseColor.g - max(diffuseColor.r, diffuseColor.b) * 0.9);
+             float cushion = smoothstep(0.2, 0.75, fn(vFP * 22.0) * 0.8 + fn(vFP * 61.0) * 0.4);
+             tall = mix(tall * 0.3, (0.35 + 0.7 * fh(c + 1.7)) * cushion, green);
+             float r = mix(0.42, 0.12, uH) * mix(1.0, 0.8, green);
+             float strand = 1.0 - smoothstep(r * 0.6, r, length(f.xz + f.y * 0.3));
+             float a = strand * step(uH, tall) * vGrip;
+             // a dense low underlayer so it reads as felt, not as stubble
+             a = max(a, (1.0 - smoothstep(0.08, 0.22, uH)) * step(0.55, fn(q * 0.5)) * vGrip);
+             diffuseColor.a = a;
+             // root dark, tips paler and a touch warmer
+             // root dark, tips paler, warmer and greyed where they catch the light
+             vec3 tip = mix(diffuseColor.rgb * vec3(1.35, 1.15, 0.95), vec3(dot(diffuseColor.rgb, vec3(0.33)) * 1.6), 0.25);
+             tip = mix(tip, diffuseColor.rgb * vec3(1.5, 1.6, 0.9), green); // moss tips go yellow-green
+             diffuseColor.rgb = mix(diffuseColor.rgb * 0.45, tip, smoothstep(0.0, 1.0, uH)) * (0.8 + 0.4 * fh(c + 3.0));
+           }
+           #include <alphatest_fragment>`,
+        );
+    };
+    const m = new THREE.Mesh(perch.geometry, mat);
+    m.name = `fuzz.${i}`;
+    m.position.copy(perch.position);
+    m.quaternion.copy(perch.quaternion);
+    m.scale.copy(perch.scale);
+    m.receiveShadow = true;
+    m.renderOrder = i;
+    group.add(m);
+  }
+  return group;
 }

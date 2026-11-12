@@ -21,6 +21,18 @@ export interface Food {
   velocity: THREE.Vector3;
 }
 
+/** Where the perch is at a point along it, world space. */
+export interface PerchFrame {
+  /** top of the perch (where the grip point would sit) */
+  point: THREE.Vector3;
+  /** surface normal at the top, roughly up */
+  up: THREE.Vector3;
+  /** along the perch, toward +x */
+  tangent: THREE.Vector3;
+  /** perch radius there */
+  radius: number;
+}
+
 export interface Bird {
   /** Add this to the scene. Already placed at its perch grip point. */
   root: THREE.Object3D;
@@ -39,9 +51,21 @@ export interface Bird {
    * reaching for and how (IK on the neck so the bill tip meets it).
    */
   setFood?(items: ReadonlyArray<Food>): void;
-  /** Called once when the bill closes on an item. The scene then carries it on billTip and lets it go. */
+  /** Called once when the bill closes on an item. The scene then carries it on billTip until onSwallow. */
   onPick?: ((id: number) => void) | null;
-  /** World-space position of the bill tip. */
+  /** Called once when a carried item has gone down (the scene removes it; it also gives up after 3 s). */
+  onSwallow?: ((id: number) => void) | null;
+  /**
+   * World-space point where a carried item sits: the bill tip at the pick,
+   * then wherever the bird moves it (along the tongue, into the mouth).
+   */
   billTip?(out: THREE.Vector3): THREE.Vector3;
+  /**
+   * The perch, so the bird can hop along it. `at(x)` gives the perch frame at
+   * world x (null where there is no perch); `range` is the x span it may use.
+   * Called again when the perch changes (the Blender twig replacing the
+   * procedural one).
+   */
+  setPerch?(at: (x: number, out: PerchFrame) => PerchFrame | null, range: [number, number]): void;
   dispose(): void;
 }

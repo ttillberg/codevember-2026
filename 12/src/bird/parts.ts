@@ -18,25 +18,30 @@ class PartBuilder {
   idx: number[] = [];
   constructor(private rig: Rig) {}
 
-  /** Add a geometry authored in `bone` space. */
-  /** `pick` may send a vertex to another bone, given its y in the authoring space. */
-  add(g: THREE.BufferGeometry, bone: string, color: THREE.Color, pick?: (y: number) => string) {
+  /**
+   * Add a geometry authored in `bone` space. `pick` may send a vertex to another bone and
+   * `tint` may give it another colour, both from its position in the authoring space.
+   */
+  add(g: THREE.BufferGeometry, bone: string, color: THREE.Color, pick?: ((p: THREE.Vector3) => string) | null, tint?: (p: THREE.Vector3) => THREE.Color | null) {
     const r = this.rig.rest[bone];
     const m = new THREE.Matrix4().compose(r.worldPos, r.worldQuat, new THREE.Vector3(1, 1, 1));
     const gg = g.index ? g.toNonIndexed() : g.clone();
-    const localY = pick ? Float32Array.from({ length: gg.getAttribute('position').count }, (_, i) => gg.getAttribute('position').getY(i)) : null;
+    const lp = gg.getAttribute('position').clone();
     gg.applyMatrix4(m);
     const p = gg.getAttribute('position');
     const n = gg.getAttribute('normal');
     const uv = gg.getAttribute('uv');
     const start = this.pos.length / 3;
     const bi = this.rig.index(bone);
+    const q = new THREE.Vector3();
     for (let i = 0; i < p.count; i++) {
+      q.fromBufferAttribute(lp, i);
+      const c = tint?.(q) ?? color;
       this.pos.push(p.getX(i), p.getY(i), p.getZ(i));
       this.nor.push(n.getX(i), n.getY(i), n.getZ(i));
-      this.col.push(color.r, color.g, color.b);
+      this.col.push(c.r, c.g, c.b);
       this.uv.push(uv ? uv.getX(i) : 0, uv ? uv.getY(i) : 0);
-      this.si.push(pick && localY ? this.rig.index(pick(localY[i])) : bi, 0, 0, 0);
+      this.si.push(pick ? this.rig.index(pick(q)) : bi, 0, 0, 0);
       this.sw.push(1, 0, 0, 0);
       this.idx.push(start + i);
     }
@@ -154,13 +159,64 @@ export function buildParts(rig: Rig): Parts {
 
   // --- skin: loft + lids + orbital ring + legs ---------------------------------
   const skinB = new PartBuilder(rig);
-  const lidCol = new THREE.Color(0x151312);
+  // Eye surround. The opening is not round: it is a lemon, long front to back with pointed
+  // corners (the one toward the bill sharper), cut in a low raised ring of bare slate skin
+  // whose outer edge is beaded with the tiniest feathers. The lids are shells under that
+  // ring, so a blink closes along the same lemon.
+  const lidCol = new THREE.Color(0x24262b);
+  const ringCol = new THREE.Color(0x2e3038);
+  const beadCol = new THREE.Color(0x08080a);
   for (const side of SIDES) {
-    const ring = new THREE.TorusGeometry(R * 0.8, R * 0.11, 8, 28);
-    ring.translate(0, 0, R * 0.64);
-    skinB.add(ring, `eye.${side}`, new THREE.Color(0x0c0b0b));
-    skinB.add(lidShell(R * 1.045, 14 * DEG, 112 * DEG, 78 * DEG), `lidUpper.${side}`, lidCol);
-    skinB.add(lidShell(R * 1.04, -106 * DEG, 20 * DEG, 78 * DEG), `lidLower.${side}`, lidCol);
+    // which way the bill is along the eye's X axis (see buildRig: +X is back on the left eye)
+    const front = side === 'L' ? -1 : 1;
+    const SEG = 96;
+    const RINGS = 7;
+    const pos: number[] = [];
+    const col: number[] = [];
+    const idx: number[] = [];
+    const c = new THREE.Color();
+    for (let i = 0; i <= SEG; i++) {
+      const phi = (i / SEG) * Math.PI * 2;
+      const cx = Math.cos(phi);
+      const sy = Math.sin(phi);
+      // lemon: a superellipse with an exponent under 2, lower still toward the bill
+      const pw = cx * front > 0 ? 1.3 : 1.6;
+      const inner = 1 / Math.pow(Math.pow(Math.abs(cx) / (43 * DEG), pw) + Math.pow(Math.abs(sy) / (29 * DEG), pw), 1 / pw);
+      const outer = 56 * DEG;
+      for (let j = 0; j <= RINGS; j++) {
+        const t = j / RINGS;
+        const th = lerp(inner, outer, t);
+        // a rounded lip at the opening, beads along the outer edge of the bare ring
+        // only a thin lip at the opening is raised and grey; the rest is face-dark skin lying
+        // low, for the face feathers to overlap
+        const lip = Math.sin(Math.PI * Math.min(t / 0.18, 1));
+        const bead = Math.max(0, Math.sin(phi * 38)) * smoothstep(0.12, 0.2, t) * (1 - smoothstep(0.22, 0.32, t));
+        const r = R * (1.05 + 0.012 * lip + 0.004 * bead - 0.035 * smoothstep(0.3, 1, t));
+        pos.push(Math.sin(th) * cx * r, Math.sin(th) * sy * r, Math.cos(th) * r);
+        c.copy(ringCol).multiplyScalar(0.7 + 0.5 * lip).lerp(beadCol, Math.max(bead * 0.6, smoothstep(0.14, 0.3, t)));
+        col.push(c.r, c.g, c.b);
+      }
+    }
+    for (let i = 0; i < SEG; i++) {
+      for (let j = 0; j < RINGS; j++) {
+        const a0 = i * (RINGS + 1) + j;
+        const b0 = a0 + RINGS + 1;
+        idx.push(a0, b0, a0 + 1, b0, b0 + 1, a0 + 1);
+      }
+    }
+    const rim = new THREE.BufferGeometry();
+    rim.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    rim.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+    rim.setIndex(idx);
+    rim.computeVertexNormals();
+    const tintAttr = rim.getAttribute('color');
+    const flat = rim.toNonIndexed();
+    const flatCol = flat.getAttribute('color');
+    let k = 0;
+    skinB.add(flat, `eye.${side}`, ringCol, null, () => c.fromBufferAttribute(flatCol, k++).clone());
+    void tintAttr;
+    skinB.add(lidShell(R * 1.04, 12 * DEG, 112 * DEG, 78 * DEG), `lidUpper.${side}`, lidCol);
+    skinB.add(lidShell(R * 1.036, -106 * DEG, 16 * DEG, 78 * DEG), `lidLower.${side}`, lidCol);
   }
   // legs
   const legCol = new THREE.Color(sp.legs.color);
@@ -214,24 +270,63 @@ export function buildParts(rig: Rig): Parts {
   const billB = new PartBuilder(rig);
   const B = sp.bill;
   const billCol = new THREE.Color(B.color);
-  // one closed needle, slightly decurved. The lower half is weighted to the jaw, so it can
-  // still open, but at rest there is no seam to see.
-  {
+  // Two closed shells, upper on `bill`, lower on `jaw`, meeting along the cutting edge so
+  // that shut they read as one slightly decurved needle and open they come apart cleanly.
+  // The faces that meet are the mouth: dark, a little red. A web of skin joins them at the
+  // gape and stretches as the jaw drops. All authored in bill space.
+  const mouthCol = new THREE.Color(0x260e10);
+  const taperAt = (tt: number) => lerp(1, 0.17, Math.pow(tt, 0.8)) * (tt > 0.95 ? lerp(1, 0.05, (tt - 0.95) / 0.05) : 1);
+  const mandible = (yOff: number, ry: number, rx: number, lenK: number) => {
     const pts: THREE.Vector3[] = [];
     const N = 26;
     for (let k = 0; k <= N; k++) {
-      const z = lerp(-0.07, B.length, k / N);
+      const z = lerp(-0.07, B.length * lenK, k / N);
       const tt = Math.max(z / B.length, 0);
-      pts.push(new THREE.Vector3(0, -B.droop * tt * tt, z));
+      pts.push(new THREE.Vector3(0, yOff * B.radius * taperAt(tt) - B.droop * tt * tt, z));
     }
-    const needle = tube(pts, (t) => {
-      const tt = Math.max((t * (B.length + 0.07) - 0.07) / B.length, 0);
-      const taper = lerp(1, 0.17, Math.pow(tt, 0.8)) * (tt > 0.95 ? lerp(1, 0.05, (tt - 0.95) / 0.05) : 1);
-      return [B.radius * taper, B.radius * 0.94 * taper];
+    return tube(pts, (t) => {
+      const tt = Math.max((t * (B.length * lenK + 0.07) - 0.07) / B.length, 0);
+      return [B.radius * rx * taperAt(tt), B.radius * ry * taperAt(tt)];
     }, up, 12);
-    billB.add(needle, 'bill', billCol, (y) => (y < -B.radius * 0.12 ? 'jaw' : 'bill'));
+  };
+  /** y of the cutting edge at z, in bill space */
+  const seamY = (z: number) => {
+    const tt = Math.max(z / B.length, 0);
+    return -B.droop * tt * tt;
+  };
+  billB.add(mandible(0.4, 0.58, 1, 1), 'bill', billCol, null, (p) => (p.y < seamY(p.z) + 0.1 * B.radius * taperAt(Math.max(p.z / B.length, 0)) ? mouthCol : null));
+  billB.add(mandible(-0.36, 0.5, 0.9, 0.985), 'bill', billCol, () => 'jaw', (p) => (p.y > seamY(p.z) - 0.1 * B.radius * taperAt(Math.max(p.z / B.length, 0)) ? mouthCol : null));
+  // gape web: one quad per side, top edge on the upper mandible, bottom edge on the lower
+  for (const sx of [1, -1]) {
+    const web = new THREE.BufferGeometry();
+    const x0 = sx * B.radius * 0.8;
+    const x1 = sx * B.radius * 0.72;
+    // (upper edge is nudged up a hair so the two edges can be told apart when binding)
+    web.setAttribute('position', new THREE.Float32BufferAttribute([x0, 0.0002, -0.05, x1, 0.0002, 0.09, x0, -0.0002, -0.05, x1, 0.0002, 0.09, x1, -0.0002, 0.09, x0, -0.0002, -0.05], 3));
+    web.setAttribute('normal', new THREE.Float32BufferAttribute([sx, 0, 0, sx, 0, 0, sx, 0, 0, sx, 0, 0, sx, 0, 0, sx, 0, 0], 3));
+    billB.add(web, 'bill', new THREE.Color(0x060203), (p) => (p.y > 0 ? 'bill' : 'jaw'));
   }
-  const billMat = new THREE.MeshStandardMaterial({ color: 0xffffff, vertexColors: true, roughness: 0.68, envMapIntensity: 0.35 });
+  // tongue: long, thin, pale, forked at the tip; lies inside the bill and slides out
+  {
+    const tongueCol = new THREE.Color(0xc98f8c);
+    const z0 = 0.04;
+    const z1 = B.length * 0.8;
+    const seg = (p: THREE.Vector3) => (p.z < B.length * 0.5 ? 'tongue.1' : p.z < B.length * 0.7 ? 'tongue.2' : 'tongue.3');
+    const line = (xa: number, xb: number, za: number, zb: number) => {
+      const pts: THREE.Vector3[] = [];
+      for (let k = 0; k <= 14; k++) {
+        const z = lerp(za, zb, k / 14);
+        const tt = z / B.length;
+        pts.push(new THREE.Vector3(lerp(xa, xb, k / 14), 0.002 * (1 - tt * 0.7) - B.droop * tt * tt, z));
+      }
+      return pts;
+    };
+    billB.add(tube(line(0, 0, z0, z1 - 0.04), (t) => [lerp(0.0042, 0.0022, t), lerp(0.0026, 0.0014, t)], up, 6), 'bill', tongueCol, seg);
+    for (const sx of [1, -1]) {
+      billB.add(tube(line(sx * 0.0008, sx * 0.0034, z1 - 0.045, z1), (t) => [lerp(0.0013, 0.0004, t), lerp(0.0011, 0.0004, t)], up, 5), 'bill', tongueCol.clone().multiplyScalar(1.15), seg);
+    }
+  }
+  const billMat = new THREE.MeshStandardMaterial({ color: 0xffffff, vertexColors: true, roughness: 0.68, envMapIntensity: 0.35, side: THREE.DoubleSide });
   const bill = new THREE.SkinnedMesh(billB.build(), billMat);
   bill.name = 'bird.bill';
 
@@ -244,7 +339,7 @@ export function buildParts(rig: Rig): Parts {
     const p = g.getAttribute('position');
     for (let i = 0; i < p.count; i++) {
       const z = p.getZ(i) / R;
-      const k = 1 + 0.07 * smoothstep(0.55, 1, z);
+      const k = 1 + 0.028 * smoothstep(0.55, 1, z);
       p.setXYZ(i, p.getX(i) * k, p.getY(i) * k, p.getZ(i) * k);
     }
     g.computeVertexNormals();
@@ -255,12 +350,12 @@ export function buildParts(rig: Rig): Parts {
   }
   const eyeMaterial = new THREE.MeshPhysicalMaterial({
     color: 0x000000,
-    roughness: 0.16,
+    roughness: 0.35,
     metalness: 0,
     clearcoat: 1,
-    clearcoatRoughness: 0.035,
-    envMapIntensity: 1.5,
-    specularIntensity: 1,
+    clearcoatRoughness: 0.03,
+    envMapIntensity: 1.1,
+    specularIntensity: 0.12,
     ior: 1.4,
   });
   eyeMaterial.onBeforeCompile = (shader) => {
@@ -273,19 +368,36 @@ export function buildParts(rig: Rig): Parts {
 {
   // a near-black eye: pupil, a very dark umber iris you only catch in strong light, dark limbus
   float iris = smoothstep(0.93, 0.86, vEyeCos) * smoothstep(0.55, 0.7, vEyeCos);
-  diffuseColor.rgb = mix(vec3(0.001), vec3(0.012, 0.006, 0.003), iris);
+  diffuseColor.rgb = mix(vec3(0.0006, 0.0007, 0.0012), vec3(0.003, 0.0035, 0.006), iris);
 }`,
       )
       .replace(
         '#include <aomap_fragment>',
         /* glsl */ `#include <aomap_fragment>
 {
-  // catchlight: the sky as a soft window high in the cornea, always there, like wet eyes have
-  vec3 skyV = normalize((viewMatrix * vec4(-0.25, 1.0, 0.35, 0.0)).xyz);
+  // What a wet black eye shows is the world: mostly the environment map, plus the canopy
+  // overhead as a few pale irregular gaps of sky between leaves (the env map is too soft to
+  // carry those), bent by the cornea. No painted catchlight.
   vec3 R = reflect(-geometryViewDir, normal);
-  float w = smoothstep(0.86, 0.97, dot(R, skyV));
-  float pin = smoothstep(0.985, 0.997, dot(R, normalize(skyV + vec3(0.12, 0.05, 0.0))));
-  totalEmissiveRadiance += vec3(0.75, 0.9, 0.8) * (w * 0.1 + pin * 1.6);
+  vec3 Rw = normalize((vec4(R, 0.0) * viewMatrix).xyz);
+  vec2 q = Rw.xz / (Rw.y + 0.45) * 2.6 + vec2(1.7, 0.4);
+  vec2 qi = floor(q), qf = fract(q);
+  float gaps = 0.0;
+  for (int j = -1; j <= 1; j++) for (int i = -1; i <= 1; i++) {
+    vec2 g = vec2(float(i), float(j));
+    vec2 h = fract(sin(vec2(dot(qi + g, vec2(127.1, 311.7)), dot(qi + g, vec2(269.5, 183.3)))) * 43758.5453);
+    vec2 d = (g + h - qf) * vec2(1.0, 0.6 + 0.8 * h.y);
+    gaps = max(gaps, (1.0 - smoothstep(0.08, 0.3 * h.x + 0.12, length(d))) * step(0.45, h.x));
+  }
+  float up = smoothstep(0.15, 0.6, Rw.y);
+  totalEmissiveRadiance += vec3(0.8, 0.95, 0.85) * gaps * up * 0.55;
+  // a mirror-sharp highlight of the sun is thousands of nits on one pixel; a depth-of-field
+  // pass turns that into a dotted disc. Keep the glints bright but finite.
+  reflectedLight.directSpecular = min(reflectedLight.directSpecular, vec3(1.6));
+  #ifdef USE_CLEARCOAT
+  clearcoatSpecularDirect = min(clearcoatSpecularDirect, vec3(2.2));
+  clearcoatSpecularIndirect = min(clearcoatSpecularIndirect, vec3(2.2));
+  #endif
 }`,
       );
   };
@@ -294,8 +406,8 @@ export function buildParts(rig: Rig): Parts {
 
   // --- nictitating membranes ---------------------------------------------------
   const nictB = new PartBuilder(rig);
-  for (const side of SIDES) nictB.add(lidShell(R * 1.085, -100 * DEG, 100 * DEG, 80 * DEG, true), `nict.${side}`, new THREE.Color(0x8e98a6));
-  const nictMat = new THREE.MeshPhysicalMaterial({ color: 0xffffff, vertexColors: true, roughness: 0.25, transparent: true, opacity: 0.82, clearcoat: 0.6, side: THREE.DoubleSide, depthWrite: false });
+  for (const side of SIDES) nictB.add(lidShell(R * 1.045, -100 * DEG, 100 * DEG, 80 * DEG, true), `nict.${side}`, new THREE.Color(0x8ea4c8));
+  const nictMat = new THREE.MeshPhysicalMaterial({ color: 0xffffff, vertexColors: true, roughness: 0.45, transparent: true, opacity: 0.3, clearcoat: 0.2, side: THREE.DoubleSide, depthWrite: false });
   const nict = new THREE.SkinnedMesh(nictB.build(), nictMat);
   nict.name = 'bird.nict';
   nict.renderOrder = 2;

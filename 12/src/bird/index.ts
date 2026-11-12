@@ -16,6 +16,9 @@ import { TailLayer } from './motion/tail';
 import { WingLayer } from './motion/wings';
 import { StartleLayer } from './motion/startle';
 import { ForageLayer } from './motion/forage';
+import { MouthLayer } from './motion/mouth';
+import { HopLayer, type Ground } from './motion/hop';
+import type { PerchFrame } from './types';
 import type { Food } from './types';
 
 /** The bird plus the handles a UI, a debugger or a new behaviour would want. */
@@ -32,6 +35,8 @@ export interface BirdHandle extends Bird {
   stats: { bones: number; contourFeathers: number; flightFeathers: number; vertices: number; triangles: number };
   setFood(items: ReadonlyArray<Food>): void;
   onPick: ((id: number) => void) | null;
+  onSwallow: ((id: number) => void) | null;
+  setPerch(at: (x: number, out: PerchFrame) => PerchFrame | null, range: [number, number]): void;
   billTip(out: THREE.Vector3): THREE.Vector3;
   /** Hook that runs after the layers and before the solver: last word on the pose. */
   onPose: ((pose: Pose, mind: Mind) => void) | null;
@@ -76,8 +81,11 @@ export function createBird(_ctx: BirdContext, options: BirdOptions = {}): BirdHa
   const solve = createSolver(rig, uniforms);
   const mind = new Mind(species, options.seed ?? species.seed);
   const startle = new StartleLayer(mind);
-  const forage = new ForageLayer(mind, solve, rig.rest.head.worldPos.clone(), (id) => handle.onPick?.(id));
-  const layers: Layer[] = [new PostureLayer(mind), new BreathLayer(), new GazeLayer(mind), new BlinkLayer(mind), new RuffleLayer(mind), new TailLayer(mind), new WingLayer(mind), forage, startle];
+  const ground: Ground = { root, at: null, range: [0, 0], restRadius: species.legs.perchRadius };
+  const hop = new HopLayer(mind, ground);
+  const forage = new ForageLayer(mind, solve, rig.rest.head.worldPos.clone(), (id) => handle.onPick?.(id), (id) => handle.onSwallow?.(id), hop);
+  const mouth = new MouthLayer(mind);
+  const layers: Layer[] = [new PostureLayer(mind), new BreathLayer(), new GazeLayer(mind), new BlinkLayer(mind), new RuffleLayer(mind), new TailLayer(mind), new WingLayer(mind), forage, mouth, hop, startle];
   let food: ReadonlyArray<Food> = [];
   const foodPool: { id: number; pos: THREE.Vector3; vel: THREE.Vector3 }[] = [];
 
@@ -131,9 +139,15 @@ export function createBird(_ctx: BirdContext, options: BirdOptions = {}): BirdHa
     setFood(items) {
       food = items;
     },
+    setPerch(at, range) {
+      ground.at = at;
+      ground.range = range;
+      hop.reseat();
+    },
     onPick: null,
+    onSwallow: null,
     billTip(out) {
-      return out.copy(solve.tip).applyMatrix4(root.matrixWorld);
+      return out.copy(solve.carry).applyMatrix4(root.matrixWorld);
     },
     startle(strength = 1) {
       startle.fire(Math.min(Math.max(strength, 0), 1));
@@ -179,13 +193,32 @@ function installDebug(bird: BirdHandle) {
     bird.mind.pinGaze = [y, p, r];
   }
   if (q.has('quiet')) bird.mind.quiet = true;
+  if (q.has('sing')) {
+    // debug: sing every few seconds
+    const m = bird.layer<MouthLayer>('mouth');
+    const prev = bird.onPose;
+    let next = 1;
+    bird.onPose = (p, mind) => {
+      prev?.(p, mind);
+      if (mind.t > next && !m.singing) {
+        m.sing(mind, 1.8);
+        next = mind.t + 4;
+      }
+    };
+  }
+  const jawOpen = num('jaw');
+  const tongue = num('tongue');
   const arousal = num('arousal');
   const fluff = num('fluff');
   const spread = num('spread');
   const fan = num('fan');
   const blink = num('blink');
-  if (arousal !== null || fluff !== null || spread !== null || fan !== null || blink !== null) {
+  if (arousal !== null || fluff !== null || spread !== null || fan !== null || blink !== null || jawOpen !== null || tongue !== null) {
+    const before = bird.onPose;
     bird.onPose = (p, m) => {
+      before?.(p, m);
+      if (jawOpen !== null) p.jaw = jawOpen;
+      if (tongue !== null) p.tongueOut = tongue;
       if (arousal !== null) m.arousal = m.baseline = arousal;
       if (fluff !== null) p.fluff = fluff;
       if (spread !== null) p.wing.L.spread = p.wing.R.spread = spread;

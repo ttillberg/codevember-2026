@@ -7,23 +7,25 @@ import type { Food } from './bird/types';
 // is gone.
 
 const MAX = 6;
-const PAPPUS_R = 0.065;
-const FIBERS = 56;
+const PAPPUS_R = 0.038;
+const FIBERS = 44;
 
 interface Seed extends Food {
   obj: THREE.Group;
+  fibres: THREE.Object3D;
   age: number;
   spin: number;
   phase: number;
   state: 'drift' | 'carried' | 'gone';
   carryT: number;
+  swallowAt: number;
 }
 
 function seedGeometry() {
   // fibres: from the crown of the beak out and up in an umbrella, each with a
   // couple of side hairs near the tip so the edge reads soft
   const pos: number[] = [];
-  const top = new THREE.Vector3(0, 0.05, 0);
+  const top = new THREE.Vector3(0, 0.03, 0);
   for (let i = 0; i < FIBERS; i++) {
     const a = (i / FIBERS) * Math.PI * 2 + Math.sin(i * 12.7) * 0.05;
     const lift = 0.35 + 0.12 * Math.sin(i * 3.1);
@@ -39,11 +41,11 @@ function seedGeometry() {
   }
   const fibres = new THREE.BufferGeometry();
   fibres.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-  const beak = new THREE.CylinderGeometry(0.0012, 0.0016, 0.05, 5);
-  beak.translate(0, 0.025, 0);
+  const beak = new THREE.CylinderGeometry(0.0008, 0.0011, 0.03, 5);
+  beak.translate(0, 0.015, 0);
   const body = new THREE.SphereGeometry(1, 10, 8);
-  body.scale(0.0055, 0.016, 0.0055);
-  body.translate(0, -0.012, 0);
+  body.scale(0.0035, 0.01, 0.0035);
+  body.translate(0, -0.007, 0);
   return { fibres, beak, body };
 }
 
@@ -55,6 +57,9 @@ export function createSeeds(scene: THREE.Scene) {
   const seeds: Seed[] = [];
   const food: Food[] = [];
   const tip = new THREE.Vector3();
+  const axis = new THREE.Vector3();
+  const up = new THREE.Vector3(0, 1, 0);
+  const qa = new THREE.Quaternion();
   let nextId = 1;
 
   function spawn(at: THREE.Vector3) {
@@ -63,7 +68,8 @@ export function createSeeds(scene: THREE.Scene) {
       if (old) remove(old);
     }
     const obj = new THREE.Group();
-    obj.add(new THREE.LineSegments(g.fibres, fibreMat), new THREE.Mesh(g.beak, beakMat), new THREE.Mesh(g.body, bodyMat));
+    const fibres = new THREE.LineSegments(g.fibres, fibreMat);
+    obj.add(fibres, new THREE.Mesh(g.beak, beakMat), new THREE.Mesh(g.body, bodyMat));
     obj.position.copy(at);
     obj.rotation.set((Math.random() - 0.5) * 0.4, Math.random() * 6.28, (Math.random() - 0.5) * 0.4);
     obj.scale.setScalar(0.01);
@@ -72,6 +78,7 @@ export function createSeeds(scene: THREE.Scene) {
     seeds.push({
       id: nextId++,
       obj,
+      fibres,
       position: obj.position,
       velocity: new THREE.Vector3(),
       age: 0,
@@ -79,6 +86,7 @@ export function createSeeds(scene: THREE.Scene) {
       phase: Math.random() * 100,
       state: 'drift',
       carryT: 0,
+      swallowAt: -1,
     });
   }
 
@@ -87,7 +95,7 @@ export function createSeeds(scene: THREE.Scene) {
     scene.remove(s.obj);
   }
 
-  const stats = { spawned: 0, picked: 0 };
+  const stats = { spawned: 0, picked: 0, swallowed: 0, dropped: 0 };
 
   return {
     spawn,
@@ -99,6 +107,15 @@ export function createSeeds(scene: THREE.Scene) {
         stats.picked++;
         s.state = 'carried';
         s.carryT = 0;
+        s.swallowAt = -1;
+      }
+    },
+    /** the bird got it down */
+    swallowed(id: number) {
+      const s = seeds.find((x) => x.id === id && x.state === 'carried');
+      if (s && s.swallowAt < 0) {
+        s.swallowAt = s.carryT;
+        stats.swallowed++;
       }
     },
     /** drifting seeds, for bird.setFood */
@@ -107,7 +124,7 @@ export function createSeeds(scene: THREE.Scene) {
       for (const s of seeds) if (s.state === 'drift') food.push(s);
       return food;
     },
-    update(dt: number, t: number, billTip: ((out: THREE.Vector3) => THREE.Vector3) | undefined) {
+    update(dt: number, t: number, billTip: ((out: THREE.Vector3) => THREE.Vector3) | undefined, headPos?: THREE.Vector3) {
       for (const s of seeds) {
         if (s.state === 'gone') continue;
         s.age += dt;
@@ -124,11 +141,29 @@ export function createSeeds(scene: THREE.Scene) {
           s.obj.scale.setScalar(Math.min(1, s.obj.scale.x + dt * 4));
           if (s.obj.position.y < -1.4 || s.age > 45) remove(s);
         } else if (s.state === 'carried') {
-          // held in the bill tip, then swallowed
+          // held where the bird says (bill tip, then along the tongue into the
+          // mouth) until it reports the swallow; a timeout in case it never does
           s.carryT += dt;
           if (billTip) s.obj.position.copy(billTip(tip));
-          s.obj.scale.setScalar(Math.max(0, 1 - Math.max(s.carryT - 0.35, 0) * 4));
-          if (s.carryT > 0.6 || !billTip) remove(s);
+          // in the bill: the parachute folds shut and lies along the bill, tufts
+          // pointing back into the mouth, and it shrinks as it is drawn in, so the
+          // bill hides it instead of a fan sticking out sideways
+          if (headPos) {
+            axis.copy(headPos).sub(s.obj.position).normalize();
+            s.obj.quaternion.slerp(qa.setFromUnitVectors(up, axis), 1 - Math.exp(-dt * 30));
+          }
+          const fold = Math.min(1, s.carryT / 0.07);
+          const sink = Math.max(0.2, 1 - s.carryT * 1.6);
+          s.fibres.scale.set(1 - 0.85 * fold, 1 + 0.6 * fold, 1 - 0.85 * fold);
+          s.obj.scale.setScalar(sink);
+          if (s.swallowAt >= 0) {
+            s.obj.scale.setScalar(Math.max(0, 0.2 * (1 - (s.carryT - s.swallowAt) * 10)));
+            if (s.carryT - s.swallowAt > 0.1) remove(s);
+          }
+          if (s.carryT > 3 || !billTip) {
+            if (s.swallowAt < 0) stats.dropped++;
+            remove(s);
+          }
         }
       }
       for (let i = seeds.length - 1; i >= 0; i--) if (seeds[i].state === 'gone') seeds.splice(i, 1);

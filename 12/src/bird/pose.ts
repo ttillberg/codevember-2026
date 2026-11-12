@@ -57,7 +57,20 @@ export class Pose {
   lidUpper = 0;
   lidLower = 0;
   nict = 0;
+  // feet: the perch's slope under them (radians, + = rising to the bird's left), its
+  // thickness relative to the rest perch, and how closed the toes are (1 gripping … 0 open)
+  feetSlope = 0;
+  feetScale = 1;
+  grip = 1;
+
+  /** 0 shut … 1 wide open (about 18 degrees) */
   jaw = 0;
+  /** 0 inside the bill … 1 as far out past the tip as it goes */
+  tongueOut = 0;
+  /** tip curled down (+) or up (−), radians */
+  tongueCurl = 0;
+  /** where a carried item sits along the bill: 1 = at the tip, 0 = at the gape, above 1 = out on the tongue */
+  carryAt = 1;
 
   tailPitch = 0; // + = lifted
   tailYaw = 0;
@@ -77,6 +90,11 @@ export class Pose {
     this.fluff = this.gorget = this.crest = 0;
     this.lift.fill(0);
     this.lidUpper = this.lidLower = this.nict = this.jaw = 0;
+    this.tongueOut = this.tongueCurl = 0;
+    this.feetSlope = 0;
+    this.feetScale = 1;
+    this.grip = 1;
+    this.carryAt = 1;
     this.tailPitch = this.tailYaw = this.tailRoll = this.tailFan = 0;
     for (const s of SIDES) {
       this.wing[s].spread = 0;
@@ -104,6 +122,8 @@ export interface Solver {
   (p: Pose): void;
   /** bill tip after the last solve, root space */
   tip: THREE.Vector3;
+  /** where a carried item sits after the last solve, root space */
+  carry: THREE.Vector3;
   /** distance from head pivot to bill tip */
   billReach: number;
 }
@@ -139,6 +159,9 @@ export function createSolver(rig: Rig, uniforms: PlumageUniforms): Solver {
   const NECK_OUT = 0.34;
   const NECK_IN = 0.24;
   const tip = new THREE.Vector3();
+  const carry = new THREE.Vector3();
+  // the tongue rests with its tip at 0.8 of the bill and can reach 0.45 of a bill past the end
+  const TONGUE_TRAVEL = species.bill.length * 0.65;
   const hWant = new THREE.Vector3();
   const qAim = new THREE.Quaternion();
   const sternumDir = rest.sternum.worldPos.clone().sub(rest.chest.worldPos).setX(0).normalize();
@@ -219,7 +242,17 @@ export function createSolver(rig: Rig, uniforms: PlumageUniforms): Solver {
     // bill tip, root space, for whoever wants to know (picking, carrying)
     tip.add(v2.copy(tipLocal).applyQuaternion(qHead));
 
-    bones.jaw.quaternion.copy(rest.jaw.quat).multiply(qA.setFromAxisAngle(X, p.jaw * 0.11));
+    bones.jaw.quaternion.copy(rest.jaw.quat).multiply(qA.setFromAxisAngle(X, clamp(p.jaw, 0, 1.1) * 0.31));
+    // tongue: slides out along the bill, the two outer segments curl
+    const out = clamp(p.tongueOut, 0, 1);
+    bones['tongue.1'].position.copy(rest['tongue.1'].pos).addScaledVector(Z, out * TONGUE_TRAVEL);
+    qA.setFromAxisAngle(X, p.tongueCurl * 0.5);
+    bones['tongue.2'].quaternion.copy(qA);
+    bones['tongue.3'].quaternion.copy(qA);
+    // where a carried item sits
+    const k = Math.max(p.carryAt, 0);
+    carry.set(0, -species.bill.droop * Math.min(k, 1) * Math.min(k, 1) - (k < 1 ? 0.003 * (1 - k) : 0), k * species.bill.length).applyQuaternion(billRest.worldQuat).add(billRest.worldPos).sub(rest.head.worldPos);
+    carry.applyQuaternion(qHead).add(tip).sub(v2.copy(tipLocal).applyQuaternion(qHead));
 
     // --- eyes -------------------------------------------------------------------
     for (const s of SIDES) {
@@ -261,23 +294,38 @@ export function createSolver(rig: Rig, uniforms: PlumageUniforms): Solver {
     }
 
     // --- legs: feet stay planted, the tarsus reaches for the hip ---------
+    qA.setFromAxisAngle(Z, p.feetSlope);
+    const open = (1 - clamp(p.grip, 0, 1)) * 0.6;
     for (const s of SIDES) {
-      v.copy(rig.hipSocket[s]).applyQuaternion(qHips).add(bones.hips.position);
-      v2.copy(v).sub(rig.ankle[s]);
+      // each foot sits on the twig where it is: along its slope, sized to its thickness
+      const foot = bones[`foot.${s}`];
+      foot.position.copy(rest[`foot.${s}`].pos).applyQuaternion(qA);
+      foot.quaternion.copy(qA);
+      foot.scale.setScalar(p.feetScale);
+      for (let i = 1; i <= 4; i++) bones[`toe.${s}.${i}`].quaternion.setFromAxisAngle(X, i === 4 ? open : -open);
+      // ankle in root space, then the tarsus reaches for the hip (in the foot's frame)
+      v2.copy(rig.ankle[s]).sub(rest[`foot.${s}`].worldPos).multiplyScalar(p.feetScale).applyQuaternion(qA).add(foot.position);
+      v.copy(rig.hipSocket[s]).applyQuaternion(qHips).add(bones.hips.position).sub(v2);
+      const len = v.length();
+      v.applyQuaternion(qB.copy(qA).invert());
       const b = bones[`tarsus.${s}`];
-      basisQuat(v2, X, b.quaternion);
-      b.scale.set(1, 1, v2.length() / rig.tarsusLength);
+      basisQuat(v, X, b.quaternion);
+      b.scale.set(1, 1, len / rig.tarsusLength / p.feetScale);
     }
 
     // --- feathers -----------------------------------------------------------------
     uniforms.uFluff.value = p.fluff;
     uniforms.uLift.value.set(p.lift);
+    // the crest channel also stands the plain head feathers up (they sit at the bill end of the profile)
+    uniforms.uLift.value[0] += p.crest * 0.9;
+    uniforms.uLift.value[1] += p.crest * 0.7;
     uniforms.uGorget.value = p.gorget;
     uniforms.uCrest.value = p.crest;
     uniforms.uWingSpread.value.set(p.wing.L.spread, p.wing.R.spread);
     uniforms.uWingLift.value.set(p.wing.L.lift, p.wing.R.lift);
   } as Solver;
   applyPose.tip = tip;
+  applyPose.carry = carry;
   applyPose.billReach = tipLen;
   return applyPose;
 }

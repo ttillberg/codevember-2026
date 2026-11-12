@@ -31,6 +31,8 @@ export class PostureLayer implements Layer {
     p.headShift.z += lerp(-0.014, 0.012, a);
     p.bodyPitch += lerp(-0.04, 0.05, a);
     p.bodyShift.y += lerp(-0.012, 0.008, a);
+    // alert: the feathers on the crown stand a little higher
+    p.crest += lerp(0, 0.22, a);
     p.wing.L.droop += lerp(0.05, 0, a);
     p.wing.R.droop += lerp(0.05, 0, a);
 

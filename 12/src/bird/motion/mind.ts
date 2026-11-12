@@ -12,6 +12,8 @@ export interface MindEvents {
   fixate: { yaw: number; pitch: number };
   startle: { strength: number };
   ruffle: { kind: string };
+  /** something went down the hatch */
+  ate: { id: number };
 }
 
 type Handler<K extends keyof MindEvents> = (e: MindEvents[K]) => void;
@@ -37,6 +39,8 @@ export class Mind {
   focus: THREE.Vector3 | null = null;
   /** bumps whenever the focus becomes a different thing */
   focusId = 0;
+  /** from the strike until the swallow: mouth and neck are spoken for */
+  eating = false;
   /** the head is busy (a strike): no saccades */
   gazeLock = false;
   /** debug: pin the gaze to [yaw, pitch, roll] degrees */

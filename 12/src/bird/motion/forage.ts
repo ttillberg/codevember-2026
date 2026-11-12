@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import type { Pose, Solver } from '../pose';
-import { clamp, damp, rand, smoothstep } from '../util';
+import { clamp, damp, lerp, rand, smoothstep } from '../util';
+import type { HopLayer } from './hop';
 import type { Layer, Mind } from './mind';
 
 // Picking food out of the air. A seed drifting into view takes over the gaze
@@ -11,7 +12,7 @@ import type { Layer, Mind } from './mind';
 // the way and snapping shut on contact. Then a short hold, the neck folds
 // back, and a gulp with a little toss of the head.
 
-type State = 'idle' | 'watch' | 'windup' | 'strike' | 'hold' | 'retract' | 'swallow';
+type State = 'idle' | 'watch' | 'windup' | 'strike' | 'hold' | 'retract' | 'eat' | 'swallow';
 
 const minJerk = (u: number) => u * u * u * (10 + u * (-15 + 6 * u));
 
@@ -40,15 +41,23 @@ export class ForageLayer implements Layer {
   private yaw = 0;
   private rel = new THREE.Vector3();
   private focus = new THREE.Vector3();
+  private licks = 3;
+  private carried = -1;
+  private hopAt = 0;
+  private moved = new THREE.Vector3();
 
   constructor(
     private mind: Mind,
     private solver: Solver,
     private headRest: THREE.Vector3,
     private pick: (id: number) => void,
+    private swallowed: (id: number) => void,
+    private hop: HopLayer | null = null,
   ) {
     mind.on('startle', () => {
-      // a fright drops everything
+      // a fright drops everything (whatever was in the bill is gone too)
+      if (this.carried >= 0) this.swallowed(this.carried);
+      this.carried = -1;
       this.release(this.mind, 'idle');
       this.readyAt = this.mind.t + 1.5;
     });
@@ -96,6 +105,7 @@ export class ForageLayer implements Layer {
     const t = m.t;
     const u = clamp((t - this.t0) / this.dur, 0, 1);
     let seed = this.seed(m);
+    m.eating = this.state !== 'idle' && this.state !== 'watch';
 
     switch (this.state) {
       case 'idle': {
@@ -130,9 +140,23 @@ export class ForageLayer implements Layer {
           break;
         }
         m.focus = this.focus.copy(seed.pos);
+        if (this.hop?.busy) break; // mid-hop: keep watching, decide after landing
         if (this.slideFor(seed.pos) === null) {
           // out of reach: just watch it go by for a while
           this.decideAt = 0;
+          // unless a sidestep along the perch would bring it in reach: then hop over
+          if (this.hop && m.freeze <= 0) {
+            if (!this.hopAt) this.hopAt = t + rand(m.rng, 0.45, 1.1);
+            if (t >= this.hopAt) {
+              const sp = seed.pos;
+              const x = this.hop.spotFor((move) => this.slideFor(this.moved.copy(sp).sub(move)) !== null);
+              this.hopAt = t + rand(m.rng, 0.5, 0.9);
+              if (x !== null && this.hop.go(m, x)) {
+                this.watchUntil = Math.max(this.watchUntil, t + 3);
+                break;
+              }
+            }
+          }
           if (t > this.watchUntil) {
             this.ignore.set(seed.id, t + rand(m.rng, 4, 8));
             this.release(m, 'idle');
@@ -141,6 +165,7 @@ export class ForageLayer implements Layer {
           break;
         }
         // in reach: size it up for a moment, bill-on, then go
+        this.hopAt = 0;
         if (!this.decideAt) this.decideAt = t + rand(m.rng, 0.35, 1.1);
         if (t >= this.decideAt && !m.saccading && m.freeze <= 0) {
           m.gazeLock = true;
@@ -175,12 +200,13 @@ export class ForageLayer implements Layer {
         // lead it: aim where it will be when the bill gets there
         this.target.copy(seed.pos).addScaledVector(seed.vel, (1 - u) * this.dur);
         this.w = this.wFrom + (1 - this.wFrom) * (1 - Math.pow(1 - u, 3));
-        p.jaw += smoothstep(0.3, 0.75, u) * (1 - smoothstep(0.93, 1, u)) * 0.75;
+        p.jaw += smoothstep(0.2, 0.7, u) * (1 - smoothstep(0.92, 1, u) * 0.88) * 0.95;
         if (u >= 1) {
           if (this.solver.tip.distanceTo(seed.pos) < this.catchRadius) {
             this.pick(seed.id);
+            this.carried = seed.id;
             m.excite(0.1);
-            this.begin(m, 'hold', rand(m.rng, 0.12, 0.22));
+            this.begin(m, 'hold', rand(m.rng, 0.06, 0.1));
           } else if (!this.retried && this.slideFor(seed.pos) !== null) {
             // missed: one quick second stab
             this.retried = true;
@@ -194,25 +220,57 @@ export class ForageLayer implements Layer {
       }
       case 'hold':
         this.w = 1;
-        if (u >= 1) this.begin(m, 'retract', 0.2);
-        break;
-      case 'retract':
-        this.w = this.wFrom * (1 - minJerk(u));
+        p.jaw += 0.1; // the seed is held in the very tip
         if (u >= 1) {
+          // the neck folds back while the tongue is already working the seed in
           m.focus = null;
-          this.begin(m, 'swallow', rand(m.rng, 0.38, 0.48));
+          this.licks = 2;
+          this.begin(m, 'eat', this.licks * 0.13 + 0.04);
         }
         break;
+      case 'retract':
+        // (after a miss: nothing in the bill, just come back)
+        this.w = this.wFrom * (1 - minJerk(u));
+        if (u >= 1) {
+          this.release(m, 'idle');
+          this.readyAt = t + rand(m.rng, 0.3, 0.9);
+        }
+        break;
+      case 'eat': {
+        // two fast licks: each runs out under the seed and draws it half the bill back, the
+        // bill parting for it and closing in a small chew between
+        this.w = this.wFrom * (1 - minJerk(clamp((t - this.t0) / 0.2, 0, 1)));
+        const x = clamp(((t - this.t0) / (this.dur - 0.04)) * this.licks, 0, this.licks);
+        const i = Math.min(Math.floor(x), this.licks - 1);
+        const f = x >= this.licks ? 1 : x - i;
+        const from = 1 - i / this.licks;
+        const to = 1 - (i + 1) / this.licks;
+        const outK = Math.sin(Math.PI * smoothstep(0, 0.55, f));
+        // tongue tip sits at 0.8 of the bill when in; reach just past where the seed is
+        p.tongueOut += clamp(((from - 0.72) / 0.65) * outK + 0.04 * outK, 0, 1);
+        p.carryAt = lerp(from, to + 0.04, smoothstep(0.35, 1, f));
+        p.jaw += 0.12 + 0.3 * Math.sin(Math.PI * smoothstep(0, 0.7, f)) - 0.08 * smoothstep(0.75, 1, f);
+        p.headPitch += 0.03 * Math.sin(Math.PI * f);
+        if (u >= 1) this.begin(m, 'swallow', rand(m.rng, 0.36, 0.44));
+        break;
+      }
       case 'swallow': {
         // gulp: a quick toss of the head, the bill parts and shuts, the throat bobs
         this.w = 0;
+        p.carryAt = 0.04;
         const toss = Math.sin(Math.PI * smoothstep(0, 0.55, u)) * 0.26;
         p.headPitch += toss;
         p.headShift.y += toss * 0.03;
-        p.jaw += Math.sin(Math.PI * smoothstep(0.12, 0.5, u)) * 0.4;
+        p.jaw += Math.sin(Math.PI * smoothstep(0.1, 0.5, u)) * 0.45;
         const bob = Math.sin(Math.PI * smoothstep(0.35, 0.95, u));
         p.gorget += bob * 0.16;
         p.addLift(0.2, 0.12, bob * 0.12);
+        if (u > 0.18 && this.carried >= 0) {
+          // it has gone down
+          this.swallowed(this.carried);
+          m.emit('ate', { id: this.carried });
+          this.carried = -1;
+        }
         if (u >= 1) {
           this.release(m, 'idle');
           this.readyAt = t + rand(m.rng, 0.4, 1.3);

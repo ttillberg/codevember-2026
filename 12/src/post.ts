@@ -84,6 +84,7 @@ uniform sampler2D tColor;
 uniform float uExposure;
 uniform vec3 uWhite;     // white balance multiplier (linear)
 uniform vec3 uLift;      // display space
+uniform float uFade;     // lift the blacks toward a pale haze
 uniform vec3 uGamma;
 uniform vec3 uGain;
 uniform float uSat;
@@ -101,6 +102,7 @@ void main() {
   c = linearToOutputTexel(vec4(c, 1.0)).rgb;
   // lift / gamma / gain in display space
   c = uGain * (c + uLift * (1.0 - c));
+  c = mix(c, vec3(0.78, 0.82, 0.76), uFade * (1.0 - c) * (1.0 - c));
   c = pow(max(c, 0.0), 1.0 / uGamma);
   // soft contrast around mid grey
   c = mix(vec3(0.5), c, uContrast);
@@ -124,6 +126,8 @@ export interface Post {
   focusOn(p: THREE.Vector3): void;
   dof: Record<string, THREE.IUniform>;
   grade: Record<string, THREE.IUniform>;
+  /** swap the tone mapping curve (the grade pass calls it itself) */
+  setToneMapping(t: THREE.ToneMapping): void;
 }
 
 export function createPost(renderer: THREE.WebGLRenderer, opts: { samples: number }): Post {
@@ -170,6 +174,7 @@ export function createPost(renderer: THREE.WebGLRenderer, opts: { samples: numbe
       uExposure: { value: 1.0 },
       uWhite: { value: new THREE.Vector3(1, 1, 1) },
       uLift: { value: new THREE.Vector3(0, 0, 0) },
+      uFade: { value: 0 },
       uGamma: { value: new THREE.Vector3(1, 1, 1) },
       uGain: { value: new THREE.Vector3(1, 1, 1) },
       uSat: { value: 1 },
@@ -194,6 +199,10 @@ export function createPost(renderer: THREE.WebGLRenderer, opts: { samples: numbe
   return {
     dof: dofMat.uniforms,
     grade: gradeMat.uniforms,
+    setToneMapping(t) {
+      renderer.toneMapping = t;
+      gradeMat.needsUpdate = true;
+    },
     focusOn(p) {
       focusWorld.copy(p);
     },

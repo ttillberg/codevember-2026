@@ -7,7 +7,7 @@ import { DEG, lerp } from './util';
 // behaviour (flight, preening) can grab what it needs:
 //
 // root
-// ├─ hips ─ spine ─ chest ─ neck1 ─ neck2 ─ head ─ bill, jaw
+// ├─ hips ─ spine ─ chest ─ neck1 ─ neck2 ─ head ─ bill, jaw ─ tongue.1 ─ tongue.2 ─ tongue.3
 // │   │              │                       ├─ eye.L/R
 // │   │              │                       ├─ lidUpper.L/R, lidLower.L/R, nict.L/R
 // │   │              ├─ sternum (breath)
@@ -134,6 +134,14 @@ export function buildRig(species: Species): Rig {
   const billQ = basisQuat(billDir, new THREE.Vector3(0, 1, 0));
   add('bill', 'head', billBase, billQ);
   add('jaw', 'head', billBase.clone().add(new THREE.Vector3(0, -0.012, -0.04)), billQ);
+  // tongue: three segments along the lower mandible; the first slides out along the bill
+  const billZ = new THREE.Vector3(0, 0, 1).applyQuaternion(billQ);
+  const billY = new THREE.Vector3(0, 1, 0).applyQuaternion(billQ);
+  const BL = species.bill.length;
+  const tongueAt = (k: number) => billBase.clone().addScaledVector(billZ, k * BL).addScaledVector(billY, -0.004 - species.bill.droop * k * k);
+  add('tongue.1', 'jaw', tongueAt(0.06), billQ);
+  add('tongue.2', 'tongue.1', tongueAt(0.5), billQ);
+  add('tongue.3', 'tongue.2', tongueAt(0.7), billQ);
 
   // eyes
   const eyes = {} as Record<Side, EyeRig>;

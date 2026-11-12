@@ -25,6 +25,18 @@ export class GazeLayer implements Layer {
   /** chance that a new fixation concerns the point of interest (scaled up by arousal) */
   interest = 0.5;
   tremor = 1;
+  /** of the fixations on the point of interest, the share made bill-on (the rest turn one eye to it) */
+  billOn = 0.46;
+  /**
+   * 0..1: follow a moving point of interest smoothly between saccades (set by
+   * the scene while the pointer moves). Near the target the head glides after
+   * it with a lag; too far off, it jumps to catch up.
+   */
+  pursuit = 0;
+  /** lowest the bill may point (negative is below horizontal): a glance down, never straight down */
+  minPitch = -22 * DEG;
+  /** for food it may dip a little further */
+  minPitchFood = -30 * DEG;
 
   private cur: Fix;
   private from: Fix;
@@ -86,7 +98,7 @@ export class GazeLayer implements Layer {
       this.seenYaw = this.attYaw;
       this.seenPitch = this.attPitch;
       const mode = forceFrontal ? 0 : r();
-      if (mode < 0.46) {
+      if (mode < this.billOn) {
         // bill-on: both eyes, chin up
         f = { yaw: this.attYaw + rand(r, -5, 5) * DEG, pitch: this.attPitch * 0.8 + up + rand(r, -4, 14) * DEG, roll: r() < 0.25 ? rand(r, -18, 18) * DEG : rand(r, -5, 5) * DEG };
       } else {
@@ -108,7 +120,7 @@ export class GazeLayer implements Layer {
       if (r() < 0.3) this.burst = 1 + Math.floor(r() * 2);
     }
     f.yaw = clamp(f.yaw, -this.maxYaw, this.maxYaw);
-    f.pitch = clamp(f.pitch, -32 * DEG, 52 * DEG);
+    f.pitch = clamp(f.pitch, this.minPitch, 52 * DEG);
     f.roll = clamp(f.roll, -26 * DEG, 26 * DEG);
     return f;
   }
@@ -149,7 +161,7 @@ export class GazeLayer implements Layer {
         this.burst = 0;
         this.begin(m, {
           yaw: clamp(this.attYaw, -this.maxYaw, this.maxYaw),
-          pitch: clamp(this.attPitch + (fresh ? rand(m.rng, -3, 3) * DEG : 0), -50 * DEG, 65 * DEG),
+          pitch: clamp(this.attPitch + (fresh ? rand(m.rng, -3, 3) * DEG : 0), this.minPitchFood, 65 * DEG),
           roll: fresh ? rand(m.rng, -8, 8) * DEG : this.cur.roll * 0.6,
         });
       }
@@ -167,6 +179,34 @@ export class GazeLayer implements Layer {
           this.seenYaw = this.attYaw;
           this.seenPitch = this.attPitch;
         }
+      }
+    }
+
+    if (!this.moving && this.pursuit > 0 && !m.focus && !m.gazeLock && m.freeze <= 0 && this.lookAtAttention(m)) {
+      const up = B.billUp * DEG;
+      const ty = clamp(this.attYaw, -this.maxYaw, this.maxYaw);
+      const tp = clamp(this.attPitch * 0.8 + up * 0.6, this.minPitch, 52 * DEG);
+      const err = Math.hypot((ty - this.cur.yaw) * Math.cos(tp), tp - this.cur.pitch);
+      // a lag that builds up during a fast move gets snapped out now and then
+      const snap = err > 14 * DEG && m.t - this.lastStart > 0.3 && m.rng() < m.dt * 5;
+      if (err < 28 * DEG && !snap) {
+        // smooth pursuit with a lag; the gain wobbles so it isn't robotic
+        const g = 1 - Math.exp(-m.dt * 3.2 * this.pursuit * (0.75 + 0.35 * noise1(m.t * 3.1, 31)));
+        this.cur = {
+          yaw: this.cur.yaw + (ty - this.cur.yaw) * g,
+          pitch: this.cur.pitch + (tp - this.cur.pitch) * g,
+          roll: this.cur.roll * (1 - g * 0.5),
+        };
+        this.from = { ...this.cur };
+        this.to = { ...this.cur };
+        this.seenYaw = this.attYaw;
+        this.seenPitch = this.attPitch;
+        // while following, don't wander off at once; the odd glance away still happens
+        if (err > 3 * DEG) this.nextAt = Math.max(this.nextAt, m.t + 0.25);
+      } else if (snap || (m.t - this.lastStart > 0.16 && m.rng() < m.dt * 10)) {
+        // behind: a catch-up saccade, bill-on
+        this.burst = 0;
+        this.begin(m, this.pick(m, true));
       }
     }
 

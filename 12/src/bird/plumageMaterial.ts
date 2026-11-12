@@ -159,11 +159,11 @@ float fFuzz;`,
     float lodF = clamp(fwidth(vFUv.x) * 1.3, 0.0, 1.0);
     alpha = mix(alpha, density * 0.45, lodF);
     // seen edge-on a shell is a film, not hairs: let it go, the frayed feathers make the outline
-    alpha *= smoothstep(0.1, 0.5, abs(dot(normalize(vNormal), normalize(vViewPosition))));
+    alpha *= smoothstep(0.34, 0.74, abs(dot(normalize(vNormal), normalize(vViewPosition))));
     diffuseColor.rgb = mix(vBase.rgb, vTip.rgb, 0.75) * mix(0.55 + 0.9 * tone, 1.0, lodF);
     // break up the coverage steps with a little screen noise, or they show as dotted bands
     float ign = fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));
-    diffuseColor.a = clamp(alpha + (ign - 0.5) * 0.3 * step(0.02, alpha), 0.0, 1.0);
+    diffuseColor.a = clamp(alpha + (ign - 0.5) * 0.3 * min(alpha * 3.0, 1.0), 0.0, 1.0);
     fBarb = 0.0; fEdge = 0.0; fSoft = 1.0;
     fBarbRand = mix(pick, 0.5, lodF);
     fBarbHue = mix(tone, 0.5, lodF);
@@ -339,7 +339,7 @@ roughnessFactor = clamp((vFData.y > 3.5 ? 0.95 : vFData.y > 2.5 ? 0.8 : vFData.y
 }`,
       );
   };
-  material.customProgramCacheKey = () => 'plumage-v24';
+  material.customProgramCacheKey = () => 'plumage-v26';
   return { material, uniforms };
 }
 
