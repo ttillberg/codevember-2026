@@ -573,7 +573,6 @@ const settings = createSettings([
   { kind: 'action', label: 'A gnat', run: () => insects.spawn() },
   { kind: 'action', label: 'A fly', run: () => ambient.flyBy() },
   { kind: 'action', label: 'Demo (D)', run: () => setDemo(demoT < 0) },
-  { kind: 'action', label: 'Turn around (B)', run: () => turnAround() },
   { kind: 'action', label: 'Sing', run: () => bird.layer<MouthLayer>('mouth').sing(bird.mind, 2.2) },
   { kind: 'action', label: 'Ruffle (R)', run: () => bird.layer<RuffleLayer>('ruffle').trigger(bird.mind, 'shake') },
   { kind: 'action', label: 'Another bird (C)', run: changePalette },
