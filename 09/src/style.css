@@ -45,7 +45,6 @@ canvas { display: block; width: 100vw; height: 100vh; }
   letter-spacing: 0.12em; text-transform: uppercase;
 }
 a.home { color: inherit; text-decoration: none; pointer-events: auto; cursor: pointer; -webkit-tap-highlight-color: transparent; }
-a.home span[lang="ja"] { margin-left: 0.4em; font-family: "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Noto Sans JP", "Yu Gothic", sans-serif; letter-spacing: 0.06em; }
 @media (max-width: 640px), (max-height: 500px) {
   .plate b { font-size: 36px; }
   .plate .head > i { font-size: 9px; }
