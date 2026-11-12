@@ -34,9 +34,9 @@ export class GazeLayer implements Layer {
    */
   pursuit = 0;
   /** lowest the bill may point (negative is below horizontal): a glance down, never straight down */
-  minPitch = -22 * DEG;
+  minPitch = -45 * DEG;
   /** for food it may dip a little further */
-  minPitchFood = -30 * DEG;
+  minPitchFood = -50 * DEG;
 
   private cur: Fix;
   private from: Fix;

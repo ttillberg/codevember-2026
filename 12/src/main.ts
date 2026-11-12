@@ -224,6 +224,15 @@ bird.onSwallow = (id) => (insects.owns(id) ? insects.swallowed(id) : seeds.swall
 // dust, a passing fly, a seed on the breeze, a wisp of down after a ruffle
 const ambient = createAmbient({ scene, camera, renderer, center: new THREE.Vector3(GRIP_X, 0.55, 0), dof: () => post.dof, passSeed: (at, wind) => seeds.spawn(at, wind) });
 let flySeenAt = -1;
+// the bug button (and G): a gnat or a fly, at random
+function letOneIn() {
+  if (Math.random() < 0.5) insects.spawn();
+  else ambient.flyBy();
+}
+document.querySelector('.bug')?.addEventListener('click', letOneIn);
+window.addEventListener('keydown', (e) => {
+  if (e.code === 'KeyG' && !e.metaKey && !e.ctrlKey) letOneIn();
+});
 const shedAt = new THREE.Vector3();
 const shedOut = new THREE.Vector3();
 bird.mind.on('ruffle', (e) => {
@@ -288,6 +297,8 @@ canvas.addEventListener('pointerup', (e) => {
 window.addEventListener('keydown', (e) => {
   if (e.code === 'Space') bird.startle(1);
   if (e.code === 'KeyF' && !e.metaKey && !e.ctrlKey) bird.flee();
+  // R: a ruffle now (the one-a-minute limit is only for the ones it does by itself)
+  if (e.code === 'KeyR' && !e.metaKey && !e.ctrlKey) bird.layer<RuffleLayer>('ruffle').trigger(bird.mind, 'shake');
   if (e.code === 'KeyW' && !e.metaKey && !e.ctrlKey) setDrawing(!drawing);
 });
 
@@ -386,6 +397,48 @@ function updatePalette(dt: number) {
   });
 }
 document.querySelector('.palette')?.addEventListener('click', changePalette);
+
+// --- B: round to the back and again to the front ------------------------------
+// The orbit keeps to a slice in front (or, after the turn, behind): the camera
+// swings round the bird on a slow arc, the limits follow once it is there.
+const FRONT: [number, number] = [-0.45, 0.85];
+const BACK: [number, number] = [Math.PI - 0.6, -Math.PI + 0.55];
+let behind = false;
+let turnT = -1;
+let turnFrom = 0;
+let turnTo = 0;
+const turnSph = new THREE.Spherical();
+const turnOff = new THREE.Vector3();
+function turnAround() {
+  if (turnT >= 0) return;
+  behind = !behind;
+  turnOff.copy(camera.position).sub(controls.target);
+  turnSph.setFromVector3(turnOff);
+  turnFrom = turnSph.theta;
+  // a three-quarter view from behind, the wing tips over the tail; back to the default front
+  const goal = behind ? Math.PI + 0.35 : 0.41;
+  // always round the side where the twig runs on out of frame, never past its cut end
+  const d = THREE.MathUtils.euclideanModulo(goal - turnFrom, Math.PI * 2);
+  turnTo = turnFrom + (behind ? d - Math.PI * 2 : d);
+  controls.minAzimuthAngle = -Infinity;
+  controls.maxAzimuthAngle = Infinity;
+  turnT = 0;
+}
+function updateTurn(dt: number) {
+  if (turnT < 0) return;
+  turnT = Math.min(1, turnT + dt / 1.6);
+  turnOff.copy(camera.position).sub(controls.target);
+  turnSph.setFromVector3(turnOff);
+  turnSph.theta = turnFrom + (turnTo - turnFrom) * THREE.MathUtils.smootherstep(turnT, 0, 1);
+  camera.position.copy(controls.target).add(turnOff.setFromSpherical(turnSph));
+  if (turnT === 1) {
+    turnT = -1;
+    [controls.minAzimuthAngle, controls.maxAzimuthAngle] = behind ? BACK : FRONT;
+  }
+}
+window.addEventListener('keydown', (e) => {
+  if (e.code === 'KeyB' && !e.metaKey && !e.ctrlKey) turnAround();
+});
 window.addEventListener('keydown', (e) => {
   if (e.code === 'KeyC' && !e.metaKey && !e.ctrlKey) changePalette();
 });
@@ -442,6 +495,57 @@ const seedAhead = () => {
   const side = new THREE.Vector3().crossVectors(toCam, camera.up).normalize();
   return new THREE.Vector3(bird.root.position.x, 0.95 + Math.random() * 0.2, 0).addScaledVector(toCam, 0.6).addScaledVector(side, (Math.random() - 0.5) * 0.5);
 };
+// --- D: demo, half a minute of what it does --------------------------------
+// A script on the scene clock (so P pauses it): a ruffle, a gnat that doesn't get
+// away, song, the tongue, a hop each way, a fly past the head, a seed. Steps that
+// can't happen yet (mid-hop, still eating) wait their turn, up to a few seconds.
+type DemoStep = [at: number, run: () => boolean | void];
+const hop = bird.layer<HopLayer>('hop');
+const mouth = bird.layer<MouthLayer>('mouth');
+const ruffle = bird.layer<RuffleLayer>('ruffle');
+const free = () => !hop.busy && forage.state === 'idle' && !bird.away;
+const inReach = () => {
+  bird.headPosition(demoAt);
+  camera.getWorldDirection(toCam).negate();
+  return demoAt.addScaledVector(toCam, 0.24).add(new THREE.Vector3(0, -0.06, 0));
+};
+const demoAt = new THREE.Vector3();
+const DEMO: DemoStep[] = [
+  [0.4, () => ruffle.trigger(bird.mind, 'shake')],
+  [3, () => insects.spawn(inReach(), true)],
+  [10.5, () => free() && (mouth.sing(bird.mind, 2.2), true)],
+  [13.5, () => free() && (mouth.lick(bird.mind, 0.65, 3), true)],
+  [15, () => free() && hop.go(bird.mind, hop.x + 0.26)],
+  [17.5, () => free() && (mouth.sing(bird.mind, 1.6), true)],
+  [20, () => ambient.flyBy(true)],
+  [22.5, () => free() && hop.go(bird.mind, GRIP_X)],
+  [24.5, () => seeds.spawn(seedAhead())],
+  [30, () => free() && (ruffle.trigger(bird.mind, 'puff', 0.6), true)],
+  [32, () => free() && (mouth.sing(bird.mind, 1.4), true)],
+];
+const DEMO_END = 35;
+let demoT = -1;
+let demoNext = 0;
+function setDemo(on: boolean) {
+  demoT = on ? 0 : -1;
+  demoNext = 0;
+  document.body.classList.toggle('demo', on);
+}
+function updateDemo(dt: number) {
+  if (demoT < 0) return;
+  demoT += dt;
+  while (demoNext < DEMO.length && demoT >= DEMO[demoNext][0]) {
+    const [at, run] = DEMO[demoNext];
+    // not now: try again next frame, give up after a few seconds
+    if (run() === false && demoT - at < 4) break;
+    demoNext++;
+  }
+  if (demoT > DEMO_END) setDemo(false);
+}
+window.addEventListener('keydown', (e) => {
+  if (e.code === 'KeyD' && !e.metaKey && !e.ctrlKey) setDemo(demoT < 0);
+});
+
 const TONE: Record<string, THREE.ToneMapping> = {
   Neutral: THREE.NeutralToneMapping,
   AgX: THREE.AgXToneMapping,
@@ -468,8 +572,10 @@ const settings = createSettings([
   { kind: 'action', label: 'Drop a seed', run: () => seeds.spawn(seedAhead()) },
   { kind: 'action', label: 'A gnat', run: () => insects.spawn() },
   { kind: 'action', label: 'A fly', run: () => ambient.flyBy() },
+  { kind: 'action', label: 'Demo (D)', run: () => setDemo(demoT < 0) },
+  { kind: 'action', label: 'Turn around (B)', run: () => turnAround() },
   { kind: 'action', label: 'Sing', run: () => bird.layer<MouthLayer>('mouth').sing(bird.mind, 2.2) },
-  { kind: 'action', label: 'Ruffle', run: () => bird.layer<RuffleLayer>('ruffle').trigger(bird.mind, 'shake') },
+  { kind: 'action', label: 'Ruffle (R)', run: () => bird.layer<RuffleLayer>('ruffle').trigger(bird.mind, 'shake') },
   { kind: 'action', label: 'Another bird (C)', run: changePalette },
   { kind: 'action', label: 'Startle', run: () => bird.startle(1) },
   { kind: 'action', label: 'Fly off (F)', run: () => bird.flee() },
@@ -513,6 +619,8 @@ renderer.setAnimationLoop((now) => {
   const dt = paused ? 0 : Math.min(timer.getDelta(), 1 / 20);
   if (paused) timer.getDelta();
   t += dt;
+  // the turn runs on wall time, so it still swings round while paused
+  updateTurn(paused ? 1 / 60 : dt);
   controls.update();
   backdrop.material.uniforms.uTime.value = t;
   backdrop.mesh.position.copy(camera.position);
@@ -553,6 +661,7 @@ renderer.setAnimationLoop((now) => {
   seeds.update(dt, t, billTip, headPos);
   insects.update(dt, t, billTip, forage.state === 'windup' || forage.state === 'strike');
   ambient.update(dt);
+  updateDemo(dt);
   frame();
 });
 

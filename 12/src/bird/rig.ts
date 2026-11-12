@@ -125,6 +125,11 @@ export function buildRig(species: Species): Rig {
   add('neck2', 'neck1', c(sp.neck2));
   add('head', 'neck2', c(sp.head));
 
+  // the throat sheet (species.throat): its foot on the breast, turning with the head, and its
+  // middle, which the solver places between foot and chin
+  add('throat', 'chest', c(sp.head));
+  add('gular', 'chest', loft.point((species.throat[0] + species.throat[1]) / 2, 0, new THREE.Vector3()));
+
   // leaf bone the breath moves: breast and flanks hang off it
   add('sternum', 'chest', loft.point(sp.spine + 0.4, 0, new THREE.Vector3()));
 

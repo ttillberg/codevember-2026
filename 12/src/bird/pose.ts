@@ -226,6 +226,26 @@ export function createSolver(rig: Rig, uniforms: PlumageUniforms): Solver {
   const mLook = new THREE.Matrix4();
   const lx = new THREE.Vector3();
   const ly = new THREE.Vector3();
+  // the throat sheet at rest: its chin, foot and middle on the front line, from the head's
+  // pivot, the way out of it at the middle, the way down the breast at its foot, and how
+  // far it is from foot to chin
+  const throatRest = (() => {
+    const [t0, t1] = species.throat;
+    const sfc = { p: new THREE.Vector3(), n: new THREE.Vector3(), t: new THREE.Vector3() };
+    const o = rest.head.worldPos;
+    const chin = rig.loft.point(t1, 0, new THREE.Vector3()).sub(o);
+    const rim = rig.loft.point(t0, 0, new THREE.Vector3()).sub(o);
+    const mid = rig.loft.surface((t0 + t1) / 2, 0, sfc).p.clone().sub(o);
+    const out = sfc.n.clone();
+    const down = rig.loft.surface(t0, 0, sfc).t.clone();
+    return { chin, rim, mid, out, down, span: chin.distanceTo(rim), pivot: o.clone().sub(rest.chest.worldPos) };
+  })();
+  const THROAT_POUT = 0.12;
+  const qT = new THREE.Quaternion();
+  const tA = new THREE.Vector3();
+  const tB = new THREE.Vector3();
+  const tN = new THREE.Vector3();
+  const tS = new THREE.Vector3();
   const sternumDir = rest.sternum.worldPos.clone().sub(rest.chest.worldPos).setX(0).normalize();
 
   /** Root-space position of the head bone for a given hips transform and neck rotations. */
@@ -312,6 +332,30 @@ export function createSolver(rig: Rig, uniforms: PlumageUniforms): Solver {
     bones.neck2.position.copy(rest.neck2.pos).add(v2.copy(v).multiplyScalar(0.3).applyQuaternion(qC));
     qC.copy(qChestW).multiply(qA).multiply(qB).invert();
     bones.head.position.copy(rest.head.pos).add(v2.copy(v).multiplyScalar(0.48).applyQuaternion(qC));
+    // --- the throat sheet: foot, middle, chin (all in chest space) -----------------------
+    // its foot stays on the breast and only turns with the head, about the chest's own up
+    qT.set(0, qRel.y, 0, qRel.w);
+    if (qT.lengthSq() < 1e-6) qT.set(0, 0, 0, 1);
+    qT.normalize();
+    bones.throat.quaternion.copy(qT);
+    // and when the chin comes down on it (a deep tuck, the bill driven at the feet) it gives
+    // way down the breast, so the sheet never has less than half its length to lie in
+    v.copy(bones.head.position).applyQuaternion(bones.neck2.quaternion).add(bones.neck2.position).applyQuaternion(bones.neck1.quaternion).add(bones.neck1.position);
+    tA.copy(throatRest.chin).applyQuaternion(qRel).add(v).sub(tB.copy(throatRest.rim).applyQuaternion(qT).add(throatRest.pivot));
+    const short = throatRest.span * 0.5 - tA.length();
+    const slide = 0.5 * (short + Math.sqrt(short * short + 1e-4));
+    tS.copy(throatRest.down).applyQuaternion(qT).multiplyScalar(slide);
+    bones.throat.position.copy(rest.throat.pos).add(tS);
+    // its middle is halfway from there to the head, turn and travel: the three together carry
+    // the sheet round the head's pivot as a fan closing (a nod) or opening, so it keeps its
+    // bow at every pitch instead of cutting straight from chin to breast
+    qC.copy(qT).slerp(qRel, 0.5);
+    bones.gular.quaternion.copy(qC);
+    v2.copy(throatRest.mid).applyQuaternion(qC);
+    // (pressed short it pouts a little, pulled long it flattens)
+    const pout = clamp(THROAT_POUT * (throatRest.span - tA.length()), -0.006, 0.03);
+    tN.copy(throatRest.out).applyQuaternion(qC);
+    bones.gular.position.copy(v).add(throatRest.pivot).add(tS).multiplyScalar(0.5).add(v2).addScaledVector(tN, pout);
     // bill tip, root space, for whoever wants to know (picking, carrying)
     tip.add(v2.copy(tipLocal).applyQuaternion(qHead));
 
@@ -406,9 +450,6 @@ export function createSolver(rig: Rig, uniforms: PlumageUniforms): Solver {
     uniforms.uLift.value[0] += p.crest * 0.9;
     uniforms.uLift.value[1] += p.crest * 0.7;
     uniforms.uGorget.value = p.gorget;
-    // how far the bill points below level, relative to the chest
-    v.set(0, 0, 1).applyQuaternion(qHead).applyQuaternion(qC.copy(qChestW).invert());
-    uniforms.uThroat.value = smoothstep(0.08, 0.75, -v.y);
     uniforms.uCrest.value = p.crest;
     uniforms.uWingSpread.value.set(p.wing.L.spread, p.wing.R.spread);
     uniforms.uWingOut.value.set(p.wing.L.out, p.wing.L.twist, p.wing.R.out, p.wing.R.twist);

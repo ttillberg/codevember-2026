@@ -185,14 +185,16 @@ export function createAmbient(o: AmbientOptions) {
   let flyDur = 2;
   let flyAt = 25 + Math.random() * 40;
   const flyPrev = new THREE.Vector3();
+  let flyYaw = 0;
 
-  function flyBy() {
+  /** close: right past the bird's head (the demo), not somewhere in the frame */
+  function flyBy(close = false) {
     // across the frame, behind or in front of the bird, on a buzzing wavy line;
     // now and then right past it
     const side = Math.random() < 0.5 ? -1 : 1;
     const r = Math.random();
-    const z = r < 0.4 ? -0.7 + Math.random() * 0.5 : r < 0.8 ? -0.15 + Math.random() * 0.55 : 0.8 + Math.random() * 0.6;
-    const y0 = center.y + (Math.random() - 0.4) * 1.0;
+    const z = close ? 0.25 + Math.random() * 0.2 : r < 0.4 ? -0.7 + Math.random() * 0.5 : r < 0.8 ? -0.15 + Math.random() * 0.55 : 0.8 + Math.random() * 0.6;
+    const y0 = close ? center.y + 0.45 : center.y + (Math.random() - 0.4) * 1.0;
     const pts: THREE.Vector3[] = [];
     const n = 6;
     for (let i = 0; i < n; i++) {
@@ -200,6 +202,7 @@ export function createAmbient(o: AmbientOptions) {
       pts.push(new THREE.Vector3(center.x + side * (-2.6 + 5.2 * u), y0 + (Math.random() - 0.5) * 0.35 + Math.sin(u * 5) * 0.08, z + (Math.random() - 0.5) * 0.4));
     }
     flyCurve = new THREE.CatmullRomCurve3(pts);
+    flyYaw = Math.atan2(pts[1].x - pts[0].x, pts[1].z - pts[0].z);
     flyT = 0;
     flyDur = 2.2 + Math.random() * 1.4;
     fly.visible = true;
@@ -349,7 +352,14 @@ export function createAmbient(o: AmbientOptions) {
           // jitter: a fly never flies a clean line
           fly.position.x += Math.sin(time * 37) * 0.006;
           fly.position.y += Math.sin(time * 29 + 1) * 0.008;
-          if (fly.position.distanceToSquared(flyPrev) > 1e-8) fly.lookAt(tmp.copy(fly.position).sub(flyPrev).add(fly.position));
+          // level, turning toward where it's headed; it doesn't roll over with the jitter
+          const vx = fly.position.x - flyPrev.x;
+          const vz = fly.position.z - flyPrev.z;
+          if (vx * vx + vz * vz > 1e-8) {
+            const want = Math.atan2(vx, vz);
+            flyYaw += Math.atan2(Math.sin(want - flyYaw), Math.cos(want - flyYaw)) * (1 - Math.exp(-dt * 6));
+          }
+          fly.rotation.set(THREE.MathUtils.clamp(-(fly.position.y - flyPrev.y) / Math.max(dt, 1e-3) * 0.4, -0.3, 0.3), flyYaw, 0, 'YXZ');
           const beat = Math.sin(time * 210) * 0.7;
           flyWings[0].rotation.z = beat;
           flyWings[1].rotation.z = -beat;

@@ -18,8 +18,6 @@ export interface PlumageUniforms {
   uLift: { value: Float32Array };
   uGorget: { value: number };
   uCrest: { value: number };
-  /** 0 … 1: the head is tucked down onto the breast; the gorget's lower rows ride out over the collar */
-  uThroat: { value: number };
   /** per wing [left, right]: 0 folded (the body-surface wing shows) … 1 spread (the real blades show) */
   uWingSpread: { value: THREE.Vector2 };
   /** per wing: the resting wing's feathers hinged off the body, radians (a flick, a shuffle) */
@@ -47,7 +45,6 @@ export function createPlumageMaterial(): { material: THREE.MeshStandardMaterial;
     uLift: { value: new Float32Array(8) },
     uGorget: { value: 0 },
     uCrest: { value: 0 },
-    uThroat: { value: 0 },
     uWingSpread: { value: new THREE.Vector2() },
     uWingLift: { value: new THREE.Vector2() },
     uWingOut: { value: new THREE.Vector4() },
@@ -78,7 +75,6 @@ uniform float uFluff;
 uniform float uLift[8];
 uniform float uGorget;
 uniform float uCrest;
-uniform float uThroat;
 uniform vec2 uWingSpread;
 uniform vec2 uWingLift;
 uniform mat3 uPal[4];
@@ -110,10 +106,6 @@ float fI = floor(min(fCoord, 6.0));
 float fWave = mix(uLift[int(fI)], uLift[int(fI) + 1], fCoord - fI);
 float fAng = aData.z * (uFluff + fWave) * (0.6 + 0.8 * aData.x);
 fAng += (aData.w > 0.5 && aData.w < 1.5 ? uGorget : 0.0) + (aData.w > 1.5 && aData.w < 2.5 ? uCrest : 0.0);
-// head tucked down: the gorget's lower rows swing out so its rim stays on top, and the collar
-// feathers it has drawn away from stand up into the hollow under it
-if (aData.w > 0.5 && aData.w < 1.5) fAng += uThroat * 0.5 * smoothstep(0.24, 0.4, aData.y);
-else if (aData.w < 0.5 && aData.y < 1.0) fAng += uThroat * 0.45 * smoothstep(0.34, 0.39, aData.y) * (1.0 - smoothstep(0.43, 0.5, aData.y));
 // wings: ids 2/3 = the resting wing on the body (left/right), 4/5 = the real blades
 bool fRest = aData.y > 1.5 && aData.y < 3.5;
 bool fReal = aData.y > 3.5;
@@ -157,7 +149,8 @@ if (fRest) {
   transformed = fPivot + wingSwing(transformed - fPivot, fRight);
   transformed = mix(transformed, aRoot - normal * 0.03, fUnfold);
 }
-if (fReal) transformed = mix(aRoot, transformed, fUnfold * fBeat);`,
+if (fReal) transformed = mix(aRoot, transformed, fUnfold * fBeat);
+`,
       );
 
     shader.fragmentShader = shader.fragmentShader
@@ -424,7 +417,7 @@ roughnessFactor = clamp((vFData.y > 3.5 ? 0.95 : vFData.y > 2.5 ? 0.8 : vFData.y
 }`,
       );
   };
-  material.customProgramCacheKey = () => 'plumage-v42';
+  material.customProgramCacheKey = () => 'plumage-v46';
   return { material, uniforms };
 }
 
