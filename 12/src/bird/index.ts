@@ -101,6 +101,7 @@ export function createBird(_ctx: BirdContext, options: BirdOptions = {}): BirdHa
   const flee = new FleeLayer(mind, rig, root, hop, ruffle, tail);
   const wingLayer = new WingLayer(mind);
   const preen = new PreenLayer(mind, rig, solve.billReach);
+  mouth.blocked = () => flee.active || hop.busy || preen.active;
   preen.blocked = () => flee.active || hop.busy || mind.eating || forage.state !== 'idle';
   preen.onDone = (m) => {
     wingLayer.shuffle(m);

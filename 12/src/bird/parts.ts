@@ -309,9 +309,11 @@ export function buildParts(rig: Rig): Parts {
     web.setAttribute('normal', new THREE.Float32BufferAttribute([sx, 0, 0, sx, 0, 0, sx, 0, 0, sx, 0, 0, sx, 0, 0, sx, 0, 0], 3));
     billB.add(web, 'bill', new THREE.Color(0x060203), (p) => (p.y > 0 ? 'bill' : 'jaw'));
   }
-  // tongue: long, thin, pale, forked at the tip; lies inside the bill and slides out
+  // tongue: a pale, wet ribbon about as wide as the bill is at its tip, split at the end; lies
+  // inside the bill and slides out. Its own mesh: glossy where the bill is matte.
+  const tongueB = new PartBuilder(rig);
   {
-    const tongueCol = new THREE.Color(0xc98f8c);
+    const tongueCol = new THREE.Color(0xf3d3d2);
     const z0 = 0.04;
     const z1 = B.length * 0.8;
     const seg = (p: THREE.Vector3) => (p.z < B.length * 0.5 ? 'tongue.1' : p.z < B.length * 0.7 ? 'tongue.2' : 'tongue.3');
@@ -320,15 +322,21 @@ export function buildParts(rig: Rig): Parts {
       for (let k = 0; k <= 14; k++) {
         const z = lerp(za, zb, k / 14);
         const tt = z / B.length;
-        pts.push(new THREE.Vector3(lerp(xa, xb, k / 14), 0.002 * (1 - tt * 0.7) - B.droop * tt * tt, z));
+        // (the last quarter sags a little: hidden inside the lower mandible at rest, a soft droop when out)
+        const sag = Math.max((tt - 0.55) / 0.25, 0);
+        pts.push(new THREE.Vector3(lerp(xa, xb, k / 14), -0.0008 * (1 - tt * 0.7) - B.droop * tt * tt - 0.0028 * sag * sag, z));
       }
       return pts;
     };
-    billB.add(tube(line(0, 0, z0, z1 - 0.04), (t) => [lerp(0.0042, 0.0022, t), lerp(0.0026, 0.0014, t)], up, 6), 'bill', tongueCol, seg);
+    tongueB.add(tube(line(0, 0, z0, z1 - 0.012), (t) => [lerp(0.0036, 0.0027, t), lerp(0.0024, 0.002, t)], up, 8), 'bill', tongueCol, seg);
+    // the two rounded lobes of the tip
     for (const sx of [1, -1]) {
-      billB.add(tube(line(sx * 0.0008, sx * 0.0034, z1 - 0.045, z1), (t) => [lerp(0.0013, 0.0004, t), lerp(0.0011, 0.0004, t)], up, 5), 'bill', tongueCol.clone().multiplyScalar(1.15), seg);
+      tongueB.add(tube(line(sx * 0.0011, sx * 0.0015, z1 - 0.02, z1), (t) => [0.0015 * Math.sqrt(1 - t * t * 0.92), 0.0014 * Math.sqrt(1 - t * t * 0.92)], up, 6), 'bill', tongueCol, seg);
     }
   }
+  const tongueMat = new THREE.MeshPhysicalMaterial({ color: 0xffffff, vertexColors: true, roughness: 0.22, clearcoat: 1, clearcoatRoughness: 0.12, sheen: 0.4, sheenColor: 0xffe4e0, emissive: 0x4a3634, envMapIntensity: 1.1, side: THREE.DoubleSide });
+  const tongue = new THREE.SkinnedMesh(tongueB.build(), tongueMat);
+  tongue.name = 'bird.tongue';
   const billMat = new THREE.MeshStandardMaterial({ color: 0xffffff, vertexColors: true, roughness: 0.68, envMapIntensity: 0.35, side: THREE.DoubleSide });
   const bill = new THREE.SkinnedMesh(billB.build(), billMat);
   bill.name = 'bird.bill';
@@ -415,7 +423,7 @@ export function buildParts(rig: Rig): Parts {
   nict.name = 'bird.nict';
   nict.renderOrder = 2;
 
-  const meshes = [loftMesh, bare, bill, eyes, nict];
+  const meshes = [loftMesh, bare, bill, tongue, eyes, nict];
   for (const m of meshes) {
     m.frustumCulled = false;
     m.bind(rig.skeleton, new THREE.Matrix4());
