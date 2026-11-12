@@ -6,7 +6,7 @@ import {
 } from 'three';
 import { R, type Ctx, type Module } from './state';
 import { ATLAS_H, ATLAS_W, FILM_GLSL, type Film } from './film';
-import { LIFT_GLSL, LIFT_H, LIFT_W } from './lift';
+import { FAN_MAX, LIFT_GLSL, LIFT_H, LIFT_M, LIFT_W } from './lift';
 import { FILMS_MAX, type Layer } from './layers';
 
 // The sphere and its stack of membranes.
@@ -62,6 +62,7 @@ const NET_WAVE = 34;           // the net's waves per radius: about a dozen vein
 const FINGER_FADE = 0.22 * R;  // round the finger, lifted film thins out to nothing within this
 const FINGER_RISE = 0.9;       // ... but never further than this much of the finger's height: a film just taken hold of is whole
 const FINGER_CLEAR = 0.3;      // the part of that reach, nearest the finger, where there is none at all
+const FAN_EDGE = 2;            // lifted film is drawn this many cells beyond the fan it is pulled in
 const LIFT_GLOSS = 0.85;       // how much of its reflections peeled film keeps, however see-through it is
 const LIFT_NORMAL_STEP = 0.014; // rad between the points the sheet normal is taken from, about a cell // share of the sheet's own facets in its normal
 
@@ -227,6 +228,12 @@ uniform int uLiftId;      // the piece being pulled, 0 none
 uniform float uLiftGhost; // how solid lifted film is
 uniform float uLiftBand;  // height over the sphere (radii) up to which lifted film is shown
 uniform float uLiftFade;  // 1 while held, runs to 0 after letting go
+#define FAN_MAX ${FAN_MAX}
+uniform vec3 uFanC;       // the fan (lift.fan): centre and axes of its flat map,
+uniform vec3 uFanU;
+uniform vec3 uFanV;
+uniform vec2 uFan[FAN_MAX]; // its corners, counter-clockwise,
+uniform int uFanN;        // and how many: 0 no fan, all lifted film is drawn
 uniform vec4 uFinger;      // where the finger holds the film (world, from the sphere's centre), and how far round it the film thins out
 uniform sampler2D uCover; // film.cover: bilinear, film where the filtered value is above 0.5
 #define LIFT_DEPTH
@@ -251,6 +258,22 @@ uniform vec4 uEnv;        // env diffuse, env specular gloss / matte, direct spe
 #define LIFT_FOLD_SHADE ${LIFT_FOLD_SHADE.toFixed(3)}
 #define LIFT_FOLD_NORMAL ${LIFT_FOLD_NORMAL.toFixed(3)}
 #define LIFT_GLOSS ${LIFT_GLOSS.toFixed(3)}
+#define FAN_EDGE ${(FAN_EDGE * Math.PI / (2 * LIFT_M)).toFixed(6)}
+// How far the sphere-local rest point p is outside the fan, in units of its flat map
+// (negative inside). Lifted film is drawn FAN_EDGE beyond it.
+float fanOut(vec3 p) {
+  if (uFanN < 3) return -1.0;
+  float w = dot(p, uFanC) / MR;
+  if (w < 0.2) return 1.0;
+  vec2 q = vec2(dot(p, uFanU), dot(p, uFanV)) / (MR * w);
+  float d = -1e9;
+  for (int i = 0; i < FAN_MAX; i++) {
+    if (i >= uFanN) break;
+    vec2 a = uFan[i], e = normalize(uFan[(i + 1) % uFanN] - a);
+    d = max(d, e.y * (q.x - a.x) - e.x * (q.y - a.y));
+  }
+  return d - FAN_EDGE;
+}
 #define FINGER_CLEAR ${FINGER_CLEAR.toFixed(3)}
 #define NET_WAVE ${NET_WAVE.toFixed(1)}
 #define FILM_BUMP ${FILM_BUMP.toFixed(5)}
@@ -458,7 +481,10 @@ const FRAG_PRE = /* glsl */ `
   #ifdef ROLE_ATTACHED
   cov *= 1.0 - lifted;
   #else
-  cov *= lifted;
+  // only the fan between the hand and the front being pulled: the rest of the loose film
+  // trails from nothing and is left out, along the straight sides of the fan
+  float fanD = fanOut(P);
+  cov *= lifted * (1.0 - clamp(fanD / max(fwidth(fanD), 1e-7) + 0.5, 0.0, 1.0));
   #endif
   if (cov <= 0.0) discard;
 #endif
@@ -696,6 +722,11 @@ export function createMembrane(ctx: Ctx): Module {
     uGrid: { value: 1 },
     uLiftGhost: { value: 0.45 },
     uLiftBand: { value: 0.02 },
+    uFanC: { value: world.lift.fan.c },
+    uFanU: { value: world.lift.fan.u },
+    uFanV: { value: world.lift.fan.v },
+    uFan: { value: world.lift.fan.pts },
+    uFanN: { value: 0 },
     uFinger: { value: new Vector4(0, 0, 0, 0) },
     uHoverOk: { value: 1 },
     uPrint: { value: makePrint(ctx.renderer.capabilities.getMaxAnisotropy()) },
@@ -836,6 +867,7 @@ export function createMembrane(ctx: Ctx): Module {
       shared.uGrid.value = world.show.grid ? 1 : 0;
       shared.uLiftGhost.value = lift.ghost;
       shared.uLiftBand.value = lift.band;
+      shared.uFanN.value = lift.fan.n;
       // kept as it was while a let-go sheet fades out
       if (world.finger.active) {
         const f = world.finger;

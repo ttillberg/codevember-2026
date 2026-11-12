@@ -32,6 +32,9 @@ export const LIFT_H = LIFT_T * 2;
 /** Film texels along a cell. */
 export const CELL = FILM_N / LIFT_M;
 
+/** Most corners the fan polygon has. */
+export const FAN_MAX = 32;
+
 export interface Lift {
   /** LIFT_W * LIFT_H * 4. */
   data: Float32Array;
@@ -49,10 +52,16 @@ export interface Lift {
   /** How much of the lifted film is shown at all: only what is no higher than this over
    *  the sphere, in radii. Above that it is cut off. */
   band: number;
+  /** The fan: the film between the hand and the front being pulled, the only lifted film
+   *  that is drawn. A convex polygon of n corners (counter-clockwise, at most FAN_MAX) in
+   *  the flat map with centre c and axes u, v (unit, sphere-local): a point p maps to
+   *  (p.u, p.v) / (p.c). n = 0: all of the lifted film is drawn. */
+  fan: { c: Float32Array; u: Float32Array; v: Float32Array; pts: Float32Array; n: number };
 }
 
 export function createLift(): Lift {
-  return { data: new Float32Array(LIFT_W * LIFT_H * 4), version: 1, layer: 0, id: 0, fade: 1, ghost: 0.6, band: 2 };
+  return { data: new Float32Array(LIFT_W * LIFT_H * 4), version: 1, layer: 0, id: 0, fade: 1, ghost: 0.6, band: 2,
+    fan: { c: new Float32Array(3), u: new Float32Array(3), v: new Float32Array(3), pts: new Float32Array(FAN_MAX * 2), n: 0 } };
 }
 
 /** Index into data (times 4 already) of cell (f, i, j), i and j in -1..LIFT_M. */

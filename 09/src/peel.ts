@@ -13,7 +13,7 @@
 
 import { Quaternion, Vector3 } from 'three';
 import { FILM_N, dirToFace, faceToDir } from './film';
-import { LIFT_M, CELL, liftIndex, liftRead } from './lift';
+import { FAN_MAX, LIFT_M, CELL, liftIndex, liftRead } from './lift';
 import { TEXEL, coveredOver, eraseFlood, idAt, texelAt } from './filmops';
 import { R } from './state';
 import type { World } from './state';
@@ -68,6 +68,8 @@ const M = LIFT_M;
 const COUNT = 6 * M * M;
 const CELL_RAD = Math.PI / (2 * M);   // a cell's angle at a face centre
 const SUB = 3;                        // times a frame the front may let go: one ring each
+const WEB = 3;                        // debug: a join to film that is down is drawn once it spans this many cells
+const IRON = 3;                       // extra passes that even the drawn sheet out among its loose cells
 const SWEEPS = 12;                    // times a frame the loose sheet is pulled taut
 const OVER = 1.5;
 const DEEP = 30;                      // cells behind the front where links stop being worked out
@@ -173,6 +175,7 @@ export function createPeeler(world: World) {
   const accN = new Uint8Array(COUNT);
   const mask = new Float32Array(COUNT), mask2 = new Float32Array(COUNT);
   const even = new Float32Array(COUNT * 3);
+  const iron = new Float32Array(COUNT * 3);
   const evenFar = new Float32Array(COUNT);
   const inRegion = new Uint8Array(COUNT);
   let region: number[] = [];
@@ -270,6 +273,7 @@ export function createPeeler(world: World) {
     on = false;
     lift.id = 0;
     lift.fade = 1;
+    lift.fan.n = 0;
     lift.data.fill(0);
     lift.version++;
   }
@@ -369,7 +373,10 @@ export function createPeeler(world: World) {
         for (let k = 0; k < 8; k++) {
           if (!link(c, k)) continue;
           const n = nb[c * 8 + k], p = n * 3, w = k < 4 ? 1 : 0.5;
-          if (st[n] === STUCK) { x += rest[p] * w; y += rest[p + 1] * w; z += rest[p + 2] * w; }
+          if (st[n] === STUCK) {
+            if (torn(n)) continue;
+            x += rest[p] * w; y += rest[p + 1] * w; z += rest[p + 2] * w;
+          }
           else { x += pos[p] * w; y += pos[p + 1] * w; z += pos[p + 2] * w; }
           sum += w;
         }
@@ -385,6 +392,21 @@ export function createPeeler(world: World) {
         const tx = x - pos[r3], ty = y - pos[r3 + 1], tz = z - pos[r3 + 2];
         const td = Math.hypot(tx, ty, tz), max = tether[c] * k1;
         if (td > max) { const s = max / td; x = pos[r3] + tx * s; y = pos[r3 + 1] + ty * s; z = pos[r3 + 2] + tz * s; }
+        // And where it still joins film that is down, that wins: the sheet stays within
+        // the film's length of the film it is one with, however far the hand has gone.
+        // The front lets go by its own rule (release), which gives the film more than the
+        // limit above does; until it has, the sheet may not be torn away from it: that
+        // shows as a row of teeth from the sheet back to the film it came from.
+        for (let k = 0; k < 8; k++) {
+          if (!link(c, k)) continue;
+          const n = nb[c * 8 + k], p = n * 3, sn = st[n];
+          if (sn === STUCK && torn(n)) continue;
+          const nx = sn === STUCK ? rest[p] : pos[p], ny = sn === STUCK ? rest[p + 1] : pos[p + 1], nz = sn === STUCK ? rest[p + 2] : pos[p + 2];
+          const dx = nx - x, dy = ny - y, dz = nz - z, d = Math.hypot(dx, dy, dz), r = nbLen[c * 8 + k] * k1;
+          if (d <= r) continue;
+          const f = ((d - r) / d) * (sn === LOOSE ? 0.5 : 1);
+          x += dx * f; y += dy * f; z += dz * f;
+        }
         // Film further from the front rides a hair higher: folded back, it lies on top of
         // the film it came from instead of in it.
         const floor = R + SKIN * (1 + STACK * Math.min(depth[c], 60));
@@ -433,6 +455,30 @@ export function createPeeler(world: World) {
     };
     run(rest[p], rest[p + 1], rest[p + 2], corner[o], corner[o + 1], corner[o + 2]);
     run(corner[o], corner[o + 1], corner[o + 2], pos[r3], pos[r3 + 1], pos[r3 + 2]);
+  }
+
+  /** Is stuck cell n on a front that is not being pulled? The sheet is torn off along
+   *  such a front: what is in the hand no longer hangs from the film left there. Without
+   *  that the sheet, carried on, stays sewn to where it once left the sphere and trails
+   *  a row of teeth back to it. (As of the last findFronts.) */
+  function torn(n: number): boolean {
+    if (frontSeen[n] !== frontGen) return false;
+    const fo = frontOf[n];
+    return fo >= 0 && fo !== liveFront; // a speck left behind too: it would hold one tooth
+  }
+
+  /** Debug: where the lifted sheet is still one film with film that is down. A line from
+   *  the stuck cell n to where its loose neighbour c has been carried, when that is more
+   *  than WEB cells away: magenta on a front that is not being pulled, cyan under the film
+   *  above, white on the front that is. */
+  function web(c: number, n: number) {
+    if (tension.count + 2 > TENSION_POINTS) return;
+    const o = c * 3, p = n * 3;
+    const far = Math.hypot(pos[o] - rest[p], pos[o + 1] - rest[p + 1], pos[o + 2] - rest[p + 2]);
+    if (far < WEB * CELL_RAD * R) return;
+    const cr = pinned(n) ? 0 : 1, cg = pinned(n) || !torn(n) ? 1 : 0, cb = 1;
+    point(rest[p], rest[p + 1], rest[p + 2], R * 1.012, cr, cg, cb);
+    point(pos[o], pos[o + 1], pos[o + 2], Math.hypot(pos[o], pos[o + 1], pos[o + 2]) + R * 0.012, cr, cg, cb);
   }
 
   // Fronts: stretches of stuck film along the loose sheet that hang together. When the
@@ -550,6 +596,77 @@ export function createPeeler(world: World) {
     return true;
   }
 
+  // The fan: the film between the hand and the front that is being pulled. That is the
+  // sheet worth seeing. Loose film outside it hangs from nothing any more (a front left
+  // behind, a free edge) and is not drawn while the pull goes on: it only trails.
+  // The convex hull, in a flat (gnomonic) map, of the cells in the hand and the loose cells
+  // along the live front, handed to the shader (lift.fan), which cuts along it.
+  const fanC = new Vector3(), fanU = new Vector3(), fanV = new Vector3();
+  const fx: number[] = [], fy: number[] = [];
+  let fanCells: number[] = [];
+  function buildFan() {
+    lift.fan.n = 0;
+    fx.length = fy.length = 0;
+    if (liveFront < 0) return;
+    fanCells = [];
+    for (let m = 0; m < nLoose; m++) if (st[loose[m]] === HELD) fanCells.push(loose[m]);
+    const held = fanCells.length;
+    for (let m = 0; m < nEdge; m++) {
+      const c = edge[m];
+      for (let k = 0; k < 8; k++) {
+        if (!link(c, k)) continue;
+        const n = nb[c * 8 + k];
+        if (st[n] === STUCK && frontSeen[n] === frontGen && frontOf[n] === liveFront) { fanCells.push(c); break; }
+      }
+    }
+    const count = fanCells.length;
+    if (count - held < 2) return;
+    let cx = 0, cy = 0, cz = 0;
+    for (const c of fanCells) { cx += rest[c * 3]; cy += rest[c * 3 + 1]; cz += rest[c * 3 + 2]; }
+    fanC.set(cx, cy, cz);
+    if (fanC.lengthSq() < 1e-12) return;
+    fanC.normalize();
+    fanU.set(-fanC.y, fanC.x, 0);
+    if (fanU.lengthSq() < 1e-6) fanU.set(0, -fanC.z, fanC.y);
+    fanU.normalize();
+    fanV.crossVectors(fanC, fanU);
+    const qx = new Float64Array(count), qy = new Float64Array(count);
+    for (let i = 0; i < count; i++) {
+      const o = fanCells[i] * 3;
+      const w = (rest[o] * fanC.x + rest[o + 1] * fanC.y + rest[o + 2] * fanC.z) / R;
+      if (w < 0.2) return; // spread too far round the ball for a flat map: all of it is shown
+      qx[i] = (rest[o] * fanU.x + rest[o + 1] * fanU.y + rest[o + 2] * fanU.z) / (R * w);
+      qy[i] = (rest[o] * fanV.x + rest[o + 1] * fanV.y + rest[o + 2] * fanV.z) / (R * w);
+    }
+    const idx = Array.from({ length: count }, (_, i) => i).sort((a, b) => qx[a] - qx[b] || qy[a] - qy[b]);
+    const turn = (k: number) => {
+      const n = fx.length;
+      return (fx[n - 1] - fx[n - 2]) * (qy[k] - fy[n - 2]) - (fy[n - 1] - fy[n - 2]) * (qx[k] - fx[n - 2]);
+    };
+    for (let i = 0; i < count; i++) {
+      const k = idx[i];
+      while (fx.length >= 2 && turn(k) <= 0) { fx.pop(); fy.pop(); }
+      fx.push(qx[k]); fy.push(qy[k]);
+    }
+    const lower = fx.length + 1;
+    for (let i = count - 2; i >= 0; i--) {
+      const k = idx[i];
+      while (fx.length >= lower && turn(k) <= 0) { fx.pop(); fy.pop(); }
+      fx.push(qx[k]); fy.push(qy[k]);
+    }
+    fx.pop(); fy.pop();
+    const h = fx.length;
+    if (h < 3) { fx.length = fy.length = 0; return; }
+    // for the shader: at most FAN_MAX corners, evenly thinned (the polygon only shrinks by it)
+    const fan = lift.fan, step = Math.max(1, Math.ceil(h / FAN_MAX));
+    let n = 0;
+    for (let i = 0; i < h && n < FAN_MAX; i += step) { fan.pts[n * 2] = fx[i]; fan.pts[n * 2 + 1] = fy[i]; n++; }
+    fan.c[0] = fanC.x; fan.c[1] = fanC.y; fan.c[2] = fanC.z;
+    fan.u[0] = fanU.x; fan.u[1] = fanU.y; fan.u[2] = fanU.z;
+    fan.v[0] = fanV.x; fan.v[1] = fanV.y; fan.v[2] = fanV.z;
+    fan.n = n >= 3 ? n : 0;
+  }
+
   /** `watch`: also write what the front feels to world.tension. */
   function release(watch: boolean) {
     findFronts();
@@ -569,6 +686,7 @@ export function createPeeler(world: World) {
         const n = nb[c * 8 + k];
         if (st[n] !== STUCK) continue;
         left = true;
+        if (watch) web(c, n);
         if (pinned(n)) continue; // under the film above: it stays
         // not the front being pulled (and not just a leftover speck): it stays as it is
         const fo = frontSeen[n] === frontGen ? frontOf[n] : -1;
@@ -695,6 +813,7 @@ export function createPeeler(world: World) {
         for (let k = 0; k < 8; k++) {
           if (!link(c, k)) continue;
           const n = nb[c * 8 + k];
+          if (st[c] !== STUCK && st[n] === STUCK && torn(n)) continue;
           cnt++;
           if (inRegion[n]) sum += a[n];
         }
@@ -708,6 +827,7 @@ export function createPeeler(world: World) {
   function write() {
     const data = lift.data;
     data.fill(0);
+    buildFan();
     soften();
     // Displacement, evened out over each cell and the cells it is linked to: the sheet
     // leaves the sphere over a couple of cells instead of in one step at the front.
@@ -718,6 +838,7 @@ export function createPeeler(world: World) {
       for (let k = 0; k < 8; k++) {
         if (!link(c, k)) continue;
         const n = nb[c * 8 + k], p = n * 3;
+        if (st[n] === STUCK && torn(n)) continue;
         cnt++;
         if (st[n] !== STUCK) { x += pos[p] - rest[p]; y += pos[p + 1] - rest[p + 1]; z += pos[p + 2] - rest[p + 2]; far += depth[n]; }
       }
@@ -726,13 +847,38 @@ export function createPeeler(world: World) {
       evenFar[c] = far / cnt;
       even[o] = x / cnt; even[o + 1] = y / cnt; even[o + 2] = z / cnt;
     }
-    // A taut sheet leaves the sphere steeply, and a front that follows the lattice would
-    // show there as a saw edge. So the sheet comes off along the rounded front instead:
-    // nothing at the 0.5 line of the soft mask, all of it a few cells further in.
+    // Ironed: a few more passes among the loose cells alone. One cell out of line with
+    // the sheet round it (held back by a speck, or just late) is a tooth on its edge.
+    for (let pass = 0; pass < IRON; pass++) {
+      for (const c of region) {
+        if (st[c] === STUCK) continue;
+        const o = c * 3;
+        let x = even[o], y = even[o + 1], z = even[o + 2], cnt = 1, atFront = false;
+        for (let k = 0; k < 8; k++) {
+          if (!link(c, k)) continue;
+          const n = nb[c * 8 + k], p = n * 3;
+          if (st[n] === STUCK) { if (!torn(n)) atFront = true; continue; }
+          cnt++; x += even[p]; y += even[p + 1]; z += even[p + 2];
+        }
+        // not the first row at the front that is pulled: there the film is creased, and
+        // ironing the crease draws it out into teeth of its own
+        if (atFront) { iron[o] = even[o]; iron[o + 1] = even[o + 1]; iron[o + 2] = even[o + 2]; continue; }
+        iron[o] = x / cnt; iron[o + 1] = y / cnt; iron[o + 2] = z / cnt;
+      }
+      for (const c of region) {
+        if (st[c] === STUCK) continue;
+        const o = c * 3;
+        even[o] = iron[o]; even[o + 1] = iron[o + 1]; even[o + 2] = iron[o + 2];
+      }
+    }
+    // Film that is down stays on the sphere, so the lifted mesh meets it there. Loose film is
+    // where it is, right from the first cell: folded back flat over the film still down it
+    // is already cells away there, and easing it in over a few cells would draw those cells
+    // out between the front and the sheet as a row of teeth.
     for (const c of region) {
+      if (st[c] !== STUCK) continue;
       const o = c * 3;
-      const t = st[c] !== STUCK ? Math.min(1, Math.max(0, (mask[c] - 0.5) * 2)) : 0, g = t * t * (3 - 2 * t);
-      even[o] *= g; even[o + 1] *= g; even[o + 2] *= g;
+      even[o] = even[o + 1] = even[o + 2] = 0;
     }
     for (const c of region) {
       const a = cellIndex[c], loosed = st[c] !== STUCK, o = c * 3;
@@ -746,11 +892,14 @@ export function createPeeler(world: World) {
       // joined to) carry its displacement, so the mesh does not sag back over the cut.
       for (let k = 0; k < 8; k++) {
         const n = nb[c * 8 + k];
-        if (n < 0 || st[n] !== STUCK || link(c, k)) continue;
+        if (n < 0 || st[n] !== STUCK) continue;
+        // ... and so do cells of a front the sheet is torn off along
+        const tear = link(c, k);
+        if (tear && !torn(n)) continue;
         if (accN[n] === 0) {
           // not if it sits on the front itself, joined to some other loose cell
           let onFront = false;
-          for (let q = 0; q < 8; q++) if (link(n, q) && st[nb[n * 8 + q]] !== STUCK) { onFront = true; break; }
+          if (!tear && !torn(n)) for (let q = 0; q < 8; q++) if (link(n, q) && st[nb[n * 8 + q]] !== STUCK) { onFront = true; break; }
           if (onFront) continue;
           spill.push(n);
         }
