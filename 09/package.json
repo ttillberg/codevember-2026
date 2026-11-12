@@ -1,7 +1,7 @@
 {
   "name": "day-09",
   "private": true,
-  "description": "Cut and peel a thin film off a gridded sphere",
+  "description": "Cut and peel two thin films off a frog's eye",
   "type": "module",
   "scripts": {
     "dev": "vite",

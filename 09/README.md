@@ -2,31 +2,31 @@
 
 2026-11-09
 
-A sphere of frosted jelly with an eye inside, wrapped in two thin films, one over the other. Cut the film on top, peel it off, then do the same to the one under it.
+A frog's eye wrapped in two thin films, one over the other. A cross is cut into the top one as the page lands. Take hold of an edge and pull: the film comes off under the finger, then the one under it, then the eye is looking at you.
 
-Three tools, bottom left or keys 1 / 2 / 3:
+Four tools, one button in the bar under the sphere (hold T to open it at the cursor, or keys 1 to 4):
 
-- `hand`: drag from an edge to peel. Let go and the film stays peeled as far as it got. Drag anywhere else to turn the sphere.
-- `line`: drag a line, release to cut straight through the whole sphere.
-- `free`: draw a cut on the surface.
+- `peel`: drag from an edge to peel. Let go and the film stays off as far as it got. Drag anywhere else to turn the sphere. With Cmd held it cuts instead: a knife from a press on the sphere, a ruler from a press off it. With Shift held it scratches.
+- `knife`: a cut drawn by hand.
+- `ruler`: drag a line, release to cut straight round the whole sphere.
+- `scratch`: four cuts side by side like a paw, their gaps, directions and timing rolled anew each time.
+
+On a touch screen there are no keys, so where the finger lands says what it does: off the sphere a ruler, on an edge a peel, anywhere else on the film a knife. Two fingers turn the sphere. The question mark top right lists all of it.
 
 How it works:
 
-- Under the films the sphere is a jelly: a transmissive material, so three draws the eye inside to a texture first and the jelly samples it blurred by its own roughness. The eye is a painted ball that turns to the pointer. Other spheres (kraft, paper, ...) are solid and have no eye.
-
 - The films are a stack. A cut only goes into the film on top where it lands, never through two; a hairline cut in the upper film is not an opening. Only one film is pulled at a time, and film with another film over it cannot let go: the lower one peels as far as the upper one has been removed, and parts along its edge.
-
-- The film is a texture on the sphere, unwrapped onto a cube: one atlas says where film is left, one says which piece each texel belongs to. No mesh is ever cut, the fragment shader discards.
-- A cut paints a hairline groove into the first atlas. Pieces are whatever is still connected, found by a flood fill each time something was cut or peeled.
-- A peel is a sheet of particles on a coarse lattice over the same cube. Each one is stuck until the sheet asks too much of it, then it is loose for good. Loose ones are a verlet sheet, linked wherever the film between them is whole, and tied to the finger by a tether as long as the film from the grab to them, times how far the material stretches.
-- A stuck particle lets go when a loose neighbour is linked to it and its tether would be overdrawn by more than the adhesion. Folded back over itself the film comes away easily, dragged flat it holds in shear. The pull is shared by the whole front, so a wide front needs a longer pull.
-- So the front is not placed anywhere: it bends round the finger and hangs on the ends of cuts by itself. A straight open cut lifts as a lens.
+- A film is a texture on the sphere, unwrapped onto a cube: one atlas says where film is left, one says which piece each texel belongs to. No mesh is ever cut, the fragment shader discards. A cut paints a hairline groove into the first atlas. Pieces are whatever is still connected, found by a flood fill each time something was cut or peeled.
+- A peel is a sheet of particles on a coarse lattice over the same cube. Each one is stuck until the sheet asks too much of it, then it is loose for good. A stuck particle lets go when a loose neighbour is linked to it and the film from the grab to it would be overdrawn by more than it clings. Folded back over itself the film comes away easily, dragged flat it holds in shear, and the pull is shared by the whole front. So the front is not placed anywhere: it bends round the finger and hangs on the ends of cuts by itself. Pulled too hard too wide, it tears.
+- The loose film is not cloth. It is pulled taut between where it is still down and the finger, like a soap film: every loose particle goes to the mean of the ones it is joined to, never further from the hand than the film between them is long, never further from film still down than the film reaches, never under the sphere. No weight, no speed, no slack to wrinkle.
+- Only the fan between the hand and the front being pulled is drawn. The rest of the loose film hangs from nothing any more and would trail as teeth and scraps; it is cut away along the fan's straight sides in the shader, and goes for good when the hand lets go. Right at the finger the film thins out to nothing, where a hand would be holding and hiding it.
 - Letting go removes the film that is loose, flooded texel by texel so it never crosses a cut. Peeled film never lies back down.
-- Each film has its own stretch and cling. The gear opens swatches for a few films and a few spheres, and sliders for how the film behaves in the hand (kept between visits). `bench` resets to a fixed test scene, undo and redo step through cuts and pulls.
-- While pulling, a cross bent to the sphere shows where the finger really is, and the front is drawn with what it feels: blue slack, yellow taut, red about to let go.
-- The grid is laid out per cube face with equal angles, so it never pinches at a pole.
+- The eye is all shader: a red-eyed tree frog's, with a net of cells over the iris, a slit pupil that opens and closes, a tear film, and a gaze that follows the pointer in small jumps. Under a jelly base it is a smaller ball inside a transmissive sphere instead.
+- The bar, the tool picker, the help and the title block are those of days 07 and 08, rebuilt here without a framework.
 
-What was tried and dropped: a peel as a page curl along one straight fold line (a straight cut could not lift, and a wide piece just stopped), cuts as planes and pieces as bitmasks of plane sides (fast and exact, but only straight cuts and a hard limit of 16), endless coloured layers with different finishes, a laser with sparks, cast shadows, a wet look on the uncovered surface, and film that rips with a ragged edge (it read as paper). All of it made the film read as something thick. A membrane has no thickness to shade.
+While developing (or with `?settings` in the address) a gear opens the workbench: the stack of films with their looks, the sphere, and sliders for how the film behaves in the hand, kept between visits. Keys `b` and `n` reset to two fixed test scenes. `debug` draws where the finger really is, what the front feels (blue slack, yellow taut, red about to let go) and where the sheet has been torn off a front that is no longer pulled. `?dark` gives the near-black backdrop.
+
+What was tried and dropped: a peel as a page curl along one straight fold line (a straight cut could not lift, and a wide piece just stopped), cuts as planes and pieces as bitmasks of plane sides (fast and exact, but only straight cuts and a hard limit of 16), the loose film as a verlet cloth (it wrinkled, bunched and flew like a sail: it read as fabric, not film), easing the film off the sphere over a few cells at the front (folded back flat, those cells were drawn out into a row of teeth), endless coloured layers, a laser with sparks, cast shadows, a wet look on the uncovered surface, and film that rips with a ragged edge (it read as paper). A membrane has no thickness to shade.
 
 ```sh
 pnpm -C 09 dev
