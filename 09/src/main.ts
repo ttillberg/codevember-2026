@@ -15,7 +15,10 @@ renderer.toneMapping = ACESFilmicToneMapping;
 renderer.outputColorSpace = SRGBColorSpace;
 
 const scene = new Scene();
-scene.background = new Color(0x0b0b0d);
+// A pale backdrop. ?dark: the near-black one instead.
+const light = !new URLSearchParams(location.search).has('dark');
+if (!light) document.documentElement.classList.add('dark');
+scene.background = new Color(light ? 0xe6e6e8 : 0x0b0b0d);
 const pmrem = new PMREMGenerator(renderer);
 scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
 

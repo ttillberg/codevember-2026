@@ -18,7 +18,7 @@
 }
 html, body {
   margin: 0; height: 100%; overflow: hidden;
-  background: var(--bg);
+  background: #e6e6e8; /* the backdrop of the scene (main.ts); --bg is the dark of the controls */
   -webkit-text-size-adjust: 100%;
 }
 canvas { display: block; width: 100vw; height: 100vh; }
@@ -28,10 +28,12 @@ canvas { display: block; width: 100vw; height: 100vh; }
   top: calc(var(--pad-t) - 12px); left: calc(var(--pad-l) - 8px);
   padding: 14px 8px;
   font: 12px ui-monospace, Menlo, monospace; letter-spacing: 0.02em;
-  color: #fff; opacity: 0.45; text-decoration: none;
+  color: #000; opacity: 0.45; text-decoration: none;
   -webkit-tap-highlight-color: transparent;
 }
 @media (hover: hover) { .back:hover { opacity: 0.9; } }
+.dark, .dark body { background: var(--bg); }
+.dark .back { color: #fff; }
 
 /* ------------------------------------------------------------------ layout */
 

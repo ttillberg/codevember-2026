@@ -30,13 +30,13 @@ const STORE = 'codevember-2026-09-settings';
 // a dull dark metal film over a glossy opaque milk one, on slate.
 const DEFAULTS = {
   films: [
-    { preset: 'smoke', color: 0x1a1c20, opacity: 1, roughness: 0.58, metalness: 0.59, print: 'label', ink: 0x0a2040 },
-    { preset: 'milk', color: 0xf3f2ec, opacity: 1, roughness: 0, metalness: 0, print: 'label', ink: 0x0a2040 },
+    { preset: 'smoke', color: 0x1a1c20, opacity: 0.8, roughness: 0.06, metalness: 0, print: 'label', ink: 0x0a2040 },
+    { preset: 'white', color: 0xf6f6f4, opacity: 1, roughness: 0.2, metalness: 0, print: 'label', ink: 0x0a2040 },
   ],
-  base: { preset: 'slate', color: 0x30343b, opacity: 1, roughness: 0.7, metalness: 0, print: 'label', ink: 0x0a2040 },
+  base: { preset: 'eye', color: 0xf3efe8, opacity: 1, roughness: 0.2, metalness: 0, print: 'label', ink: 0x0a2040 },
   tune: {
-    elastic: 0.15, adhesion: 1, shear: 5, load: 1, stiff: 0.6, lift: 1, ghost: 0.6, height: 2, rough: 0.1,
-    tear: 3, grip: 4, edge: 0.7, straight: 1,
+    elastic: 0.036, adhesion: 0, shear: 0.3, load: 0, stiff: 0.478, lift: 0.13, ghost: 1, height: 0.5, rough: 0,
+    tear: 2.3, grip: 4.74, edge: 0.16, straight: 1,
   },
   show: { debug: false, grid: false },
 };
