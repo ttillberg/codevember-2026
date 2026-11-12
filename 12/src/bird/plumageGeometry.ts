@@ -20,8 +20,8 @@ export const WING_REST_L = 2;
 export const WING_REST_R = 3;
 export const WING_REAL_L = 4;
 export const WING_REAL_R = 5;
-/** how many outer primaries stay visible at rest, their tips showing past the rump */
-const FREE_TIPS = 5;
+/** how many real outer primaries stay visible at rest (none: the resting wing carries its own full-length blades) */
+const FREE_TIPS = 0;
 
 interface FeatherSpec {
   root: THREE.Vector3;
@@ -42,6 +42,8 @@ interface FeatherSpec {
   asym: number;
   /** blades: how far along the vane reaches full width (default 0.12) */
   widen?: number;
+  /** a scallop: square at the root, a true semicircle at the free edge (show scales) */
+  scallop?: boolean;
   base: THREE.Color;
   tip: THREE.Color;
   iri: THREE.Color;
@@ -92,20 +94,29 @@ class Builder {
     for (let r = 0; r < rows; r++) {
       const last = r === rows - 1;
       // short cards: quill, widest point, shoulder of the tip, tip. Blades: evenly spaced.
-      const v = rows === 4 ? [0, 0.5, 0.82, 0.965][r] : Math.pow(r / (rows - 1), 0.9);
+      const v = f.scallop ? r / (rows - 1) : rows === 4 ? [0, 0.5, 0.82, 0.965][r] : Math.pow(r / (rows - 1), 0.9);
       // outline: narrow quill, widest at the middle, then a superellipse closes the tip
       const pw = lerp(1.25, 2.1, f.round);
       const tipT = clamp((v - 0.5) / 0.5, 0, 1);
       const close = Math.pow(Math.max(1 - Math.pow(tipT, pw), 0), 1 / pw);
-      const prof = rows === 4 ? lerp(0.5, 1, smoothstep(0, 0.5, v)) * close : lerp(0.4, 1, smoothstep(0, f.widen ?? 0.12, v)) * (last ? 0.42 : Math.pow(Math.max(1 - Math.pow(clamp((v - 0.8) / 0.2, 0, 1), 2.2), 0), 0.45));
+      const prof = f.scallop ? 1 : rows === 4 ? lerp(0.5, 1, smoothstep(0, 0.5, v)) * close : lerp(0.4, 1, smoothstep(0, f.widen ?? 0.12, v)) * (last ? 0.42 : Math.pow(Math.max(1 - Math.pow(clamp((v - 0.8) / 0.2, 0, 1), 2.2), 0), 0.45));
       for (let c = 0; c < cols; c++) {
         const u = cols === 1 ? 0 : (c / (cols - 1)) * 2 - 1;
         const side = u < 0 ? 1 - f.asym : 1 + f.asym;
-        const x = u * hw * prof * side;
+        let x = u * hw * prof * side;
         // the tip row bows forward so the outline reads round
-        const vv = last ? v + (1 - v) * (1 - u * u) : v;
+        const vv = last && !f.scallop ? v + (1 - v) * (1 - u * u) : v;
+        let along = vv * f.length;
+        if (f.scallop) {
+          // lower half a slightly waisted rectangle, upper half swept into a semicircle whose
+          // rim is the last row: the rows above the middle slide from one to the other
+          const k = clamp((v - 0.5) / 0.5, 0, 1);
+          const al = (u * Math.PI) / 2;
+          x = lerp(u * hw * lerp(0.72, 1, Math.min(v / 0.5, 1)), Math.sin(al) * hw, k);
+          along = lerp(Math.min(v, 0.5) * f.length, 0.5 * f.length + Math.cos(al) * 0.5 * f.length, k);
+        }
         const drop = f.cup * hw * (u * prof) * (u * prof) + f.curl * f.length * vv * vv;
-        this.P.copy(f.root).addScaledVector(S, x).addScaledVector(f.dir, vv * f.length).addScaledVector(f.normal, -drop);
+        this.P.copy(f.root).addScaledVector(S, x).addScaledVector(f.dir, along).addScaledVector(f.normal, -drop);
         this.Nv.copy(f.normal).addScaledVector(S, 2 * f.cup * u * prof).addScaledVector(f.dir, 2 * f.curl * vv);
         // the platelet normal follows the curl of the vane, so a scale shades as a little dome
         this.In.copy(f.iriNormal).addScaledVector(S, 0.3 * f.cup * u * prof).addScaledVector(f.dir, 0.1 * (vv - 0.6)).normalize();
@@ -114,7 +125,9 @@ class Builder {
         this.Nv.normalize();
         this.pos.push(this.P.x, this.P.y, this.P.z);
         this.nor.push(this.Nv.x, this.Nv.y, this.Nv.z);
-        this.uv.push(u, vv);
+        // scallops carry their true shape in uv (the shader draws the ridges and the rim from it)
+        if (f.scallop) this.uv.push(x / hw, along / f.length);
+        else this.uv.push(u, vv);
         this.root.push(f.root.x, f.root.y, f.root.z);
         this.hinge.push(H.x, H.y, H.z);
         this.data.push(f.rand, f.coord, f.gain, f.channel);
@@ -203,6 +216,16 @@ export function lookAt(species: Species, s: number, phi: number, rnd = 0.5): Fea
 }
 
 const col = (hex: number) => new THREE.Color(hex);
+
+/** The folded wing stands a little off the body: the coat just under its leading edge (and a touch behind it) sits in its shadow. */
+function wingShadow(loft: Rig['loft'], s: number, a: number) {
+  const { u, v } = loft.wingUV(s, a);
+  if (u < 0.08 || u > 1.05) return 1;
+  const along = smoothstep(0.08, 0.3, u) * (1 - smoothstep(0.9, 1.05, u));
+  const under = smoothstep(-2.0, -1.05, v) * (1 - smoothstep(-0.75, -0.55, v));
+  const behind = smoothstep(1.6, 1.0, v) * (1 - smoothstep(0.7, 0.9, -v + 1.6));
+  return 1 - along * Math.max(0.62 * under, v > 0.8 ? 0.25 * behind : 0);
+}
 
 /** Pigment value, gold wash and glitter strength at a point of the coat. */
 function toneAt(species: Species, look: FeatherLook, sj: number, phi: number) {
@@ -322,7 +345,10 @@ function addContour(b: Builder, rig: Rig, rng: Rng) {
     for (const side of SIDES) if (sfc.p.distanceTo(rig.eyes[side].center) < eyeR * 1.02) return;
     // the folded wings are feathered separately (addRestWing); the coat stops at their edge
     const wuv = loft.wingUV(sj, a);
-    if (wuv.u > 0.04 && wuv.u < 0.97 && Math.abs(wuv.v) < 0.9) return;
+    // (but flank fluff drapes over its bend: soft feathers spill onto the leading edge near the wrist)
+    const inWing = wuv.u > 0.04 && wuv.u < 0.97 && Math.abs(wuv.v) < 0.9;
+    const drape = inWing && wuv.v < -0.3 && wuv.u < 0.5 && 0.5 + 0.5 * noise1(sj * 53 + a * 91, 77) < 0.75 * smoothstep(-0.3, -0.75, wuv.v) * (1 - smoothstep(0.32, 0.5, wuv.u));
+    if (inWing && !drape) return;
     // ragged tract borders: look the feather itself up with a little jitter
     const phi = phiOf(a);
     const sized = sizeAt(sj + (rng() - 0.5) * 0.06, clamp(phi + (rng() - 0.5) * 0.012, 0, 1), rng());
@@ -336,14 +362,23 @@ function addContour(b: Builder, rig: Rig, rng: Rng) {
     const hair = smoothstep(0.56, 0.86, phi) * rise * smoothstep(6.25, 7.0, sj);
     const sleek = smoothstep(0.5, 0.8, phi) * smoothstep(8.5, 9.2, sj);
     // so half of what would be crown scales up there are dark standing feathers instead
-    const look = sized.look === species.looks.crown && sj < 8.5 && rng() < 0.5 * smoothstep(0.7, 0.9, phi) ? species.looks.head : sized.look;
+    const look = drape ? species.looks.flank : sized.look === species.looks.crown && sj < 8.5 && rng() < 0.5 * smoothstep(0.7, 0.9, phi) ? species.looks.head : sized.look;
     const standing = look.fine ? 0 : hair;
     // and nothing up there is regular: rows broken by gaps, clumps that lean together
     const unruly = look.fine || look === species.looks.stripe ? 0 : smoothstep(6.0, 6.7, sj) * smoothstep(0.35, 0.6, phi) * (0.35 + 0.65 * rise);
     const clump = noise1(sj * 11 + phi * 37, 51);
     if (unruly > 0 && clump > 0.45 && rng() < 0.4 * unruly) return;
+    // the gorget is laid out on its own, in arcs around the chin (addGorget)
+    if (look === species.looks.gorget) return;
+    // and nothing beside it leans in over its edge: the feathers right along its sides are left
+    // out, the next ones lie flat, so no green shows inside the purple
+    const G = species.looks.gorget;
+    const beside = sj > 4.6 && sj < 8.2 && phi < 0.5 ? (lookAt(species, sj, Math.max(phi - 0.035, 0)) === G ? 2 : lookAt(species, sj, Math.max(phi - 0.08, 0)) === G ? 1 : 0) : 0;
+    if (beside === 2) return;
     const sh = species.shading;
-    const { shade, gold, glit } = toneAt(species, look, sj, phi);
+    const tone = toneAt(species, look, sj, phi);
+    const { gold, glit } = tone;
+    const shade = tone.shade * wingShadow(loft, sj, a);
     // tousle: every soft feather is a little off in length, lie and twist, and whole
     // patches lean together (slow noise), so there are clumps and partings
     const loose = look.loose ?? 0;
@@ -357,7 +392,9 @@ function addContour(b: Builder, rig: Rig, rng: Rng) {
     const yaw = (rng() - 0.5) * lerp(0.17, 0.72, loose) + nA * 0.4 * loose + stray * (rng() - 0.5) * 0.9 + ((rng() - 0.5) * 0.9 + clump * 0.45) * unruly;
     const roll = ((rng() - 0.5) * 0.7 + nB * 0.3) * loose + ((rng() - 0.5) * 1.1 + clump * 0.5) * unruly;
     // right beside the folded wing the coat lies closer, so the wing is not sunk in a trench
-    if (wuv.u > 0 && wuv.u < 1 && Math.abs(wuv.v) < 1.7 && !stray) {
+    if (beside) tilt *= 0.35;
+    if (drape) tilt += 9 * DEG;
+    else if (wuv.u > 0 && wuv.u < 1 && Math.abs(wuv.v) < 1.7 && !stray) {
       const near = 1 - smoothstep(0.9, 1.7, Math.abs(wuv.v));
       tilt *= 1 - 0.6 * near;
     }
@@ -446,6 +483,153 @@ function addContour(b: Builder, rig: Rig, rng: Rng) {
         q += span;
       }
     }
+  }
+}
+
+/**
+ * The gorget. Its scales are not on the body's rows: they lie in concentric arcs around
+ * the chin, like fish scales radiating from the base of the bill, each pointing straight
+ * away from that centre, small at the chin and growing toward the rim, where the last arc
+ * makes the gorget's scalloped lower edge. Hue runs with the same distance: indigo at the
+ * chin, the look's own violet through the middle, magenta at the rim.
+ */
+function addGorget(b: Builder, rig: Rig, rng: Rng) {
+  const { loft, species } = rig;
+  const look = species.looks.gorget;
+  if (!look) return;
+  const sfc: SurfacePoint = { p: new THREE.Vector3(), n: new THREE.Vector3(), t: new THREE.Vector3() };
+  // the centre: under the base of the bill
+  // Sample the tract and give every sample polar coordinates about the chin, measured on
+  // the throat unrolled flat: distance down the midline from the chin, and distance round
+  // the neck from the midline. (Straight-line distances fold where the chin turns under.)
+  interface Sample { s: number; a: number; x: number; y: number }
+  const samples: Sample[] = [];
+  const d = new THREE.Vector3();
+  const e = new THREE.Vector3();
+  // the arcs' centre sits a little above the top of the tract, on the midline, so the arcs
+  // cross the throat as shallow bows instead of closing into rings round the chin
+  let sTop = loft.sMax;
+  while (sTop > 4.3 && lookAt(species, sTop, 0) !== look) sTop -= 0.02;
+  const sC = Math.min(sTop + 0.5, loft.sMax - 0.3);
+  let rhoMax = 0;
+  let rhoMin = Infinity;
+  const DS = 0.02;
+  const DA = 0.02;
+  // distance down the midline, by section
+  const downAt = new Map<number, number>();
+  {
+    let acc = 0;
+    for (let i = 0; ; i++) {
+      const s = sC - i * DS;
+      if (s < 4.3) break;
+      if (i > 0) acc += loft.point(s, 0, d).distanceTo(loft.point(s + DS, 0, e));
+      downAt.set(i, acc);
+    }
+    acc = 0;
+    for (let i = -1; ; i--) {
+      const s = sC - i * DS;
+      if (s > loft.sMax - 0.05) break;
+      acc -= loft.point(s, 0, d).distanceTo(loft.point(s - DS, 0, e));
+      downAt.set(i, acc);
+    }
+  }
+  for (const [i, y] of downAt) {
+    const s = sC - i * DS;
+    let lat = 0;
+    for (let j = 0; j * DA <= 1.3; j++) {
+      const a = j * DA;
+      if (j > 0) lat += loft.point(s, a, d).distanceTo(loft.point(s, a - DA, e));
+      if (lookAt(species, s, a / Math.PI) !== look) continue;
+      for (const sg of j === 0 ? [1] : [1, -1]) samples.push({ s, a: a * sg, x: lat * sg, y });
+      rhoMax = Math.max(rhoMax, Math.hypot(lat, y));
+      rhoMin = Math.min(rhoMin, Math.hypot(lat, y));
+    }
+  }
+  if (!samples.length) return;
+  const nearest = (x: number, y: number) => {
+    let best = samples[0];
+    let bd = Infinity;
+    for (const q of samples) {
+      const e = (q.x - x) * (q.x - x) + (q.y - y) * (q.y - y);
+      if (e < bd) {
+        bd = e;
+        best = q;
+      }
+    }
+    return { q: best, miss: Math.sqrt(bd) };
+  };
+  const lat = new THREE.Vector3();
+  const root = new THREE.Vector3();
+  const dir = new THREE.Vector3();
+  const nrm = new THREE.Vector3();
+  const iriN = new THREE.Vector3();
+  const aim = new THREE.Vector3();
+  const indigo = new THREE.Color(0x3a34ff);
+  const magenta = new THREE.Color(0xd62cc8);
+  const spacing = look.spacing ?? 0.8;
+  let rho = Math.max(rhoMin, look.width * 0.3);
+  let row = 0;
+  while (rho <= rhoMax + look.width * 0.3) {
+    const t = clamp((rho - rhoMin) / (rhoMax - rhoMin), 0, 1);
+    const w = look.width * lerp(0.6, 1.3, t);
+    const len = w * look.aspect;
+    const n = Math.max(1, Math.round((Math.PI * 2 * rho) / (w * spacing)));
+    for (let j = 0; j < n; j++) {
+      const th = ((j + (row % 2 ? 0.5 : 0)) / n) * Math.PI * 2 - Math.PI + (rng() - 0.5) * 0.12 * (w / Math.max(rho, w));
+      const { q, miss } = nearest(rho * Math.sin(th), rho * Math.cos(th));
+      if (miss > 0.03) continue; // outside the tract
+      // the top of the gorget has no scale lying over it: those show their whole disc
+      const exposed = nearest(rho * Math.sin(th), rho * Math.cos(th) - len * 0.7).miss > 0.02;
+      loft.surface(q.s, q.a, sfc);
+      // down the throat: straight down on the midline, leaning outward toward the sides of
+      // the gorget but never more than ~35 degrees off the fall line (not radially: a scale
+      // beside the chin would point sideways)
+      const thd = Math.sign(th) * Math.min(Math.abs(th) * 0.5, 0.6) + (rng() - 0.5) * 0.14;
+      const tilt = (look.tilt + (rng() - 0.5) * 3) * DEG;
+      root.copy(sfc.p);
+      lat.crossVectors(sfc.n, sfc.t);
+      if (lat.x < 0) lat.multiplyScalar(-1);
+      dir.copy(sfc.t).multiplyScalar(Math.cos(thd)).addScaledVector(lat, Math.sin(thd)).normalize();
+      nrm.copy(sfc.n).multiplyScalar(Math.cos(tilt)).addScaledVector(dir, -Math.sin(tilt));
+      dir.multiplyScalar(Math.cos(tilt)).addScaledVector(sfc.n, Math.sin(tilt));
+      iriN.copy(nrm);
+      if (look.iriAim) iriN.lerp(aim.set(look.iriAim[0], look.iriAim[1], look.iriAim[2]).normalize(), look.iriAlign).normalize();
+      iriN.x += (rng() - 0.5) * look.jitter;
+      iriN.y += (rng() - 0.5) * look.jitter;
+      iriN.z += (rng() - 0.5) * look.jitter;
+      iriN.normalize();
+      const sp = specFromLook(look, rng);
+      // hue by distance from the chin, with a little scatter from scale to scale
+      const h = clamp(t + (rng() - 0.5) * 0.16, 0, 1);
+      if (h < 0.45) sp.iri.lerp(indigo, (1 - h / 0.45) * 0.85);
+      else sp.iri.lerp(magenta, ((h - 0.45) / 0.55) * 0.8);
+      const sk = loft.skin(q.s, q.a);
+      const size = 0.94 + rng() * 0.12;
+      b.add({
+        ...sp,
+        root,
+        dir,
+        normal: nrm,
+        skinNormal: sfc.n,
+        iriNormal: iriN,
+        width: w * size,
+        length: len * size,
+        cols: 9,
+        rows: 6,
+        scallop: true,
+        cup: 0.16,
+        curl: 0.05,
+        asym: 0,
+        bones: sk.bones.map((nm) => rig.index(nm)) as [number, number, number, number],
+        weights: sk.weights,
+        rand: rng(),
+        coord: loft.bodyCoord(q.s) * 0.8,
+        gain: look.lift,
+        cover: exposed ? 0.25 : clamp(1 - look.rowStep, 0.1, 0.9),
+      });
+    }
+    rho += w * look.aspect * look.rowStep;
+    row++;
   }
 }
 
@@ -611,12 +795,12 @@ function addRestWing(b: Builder, rig: Rig, side: Side, rng: Rng) {
   };
 
   // --- coverts: lesser at the shoulder, growing toward the greater coverts
-  const rows = 9;
+  const rows = 7;
   for (let r = 0; r < rows; r++) {
     const f = r / (rows - 1);
-    const u = lerp(0.03, 0.4, f);
-    const w = lerp(0.024, 0.046, f);
-    const len = w * lerp(2.2, 3.0, f);
+    const u = lerp(0.03, 0.3, f * f * 0.4 + f * 0.6);
+    const w = lerp(0.024, 0.05, f);
+    const len = w * lerp(2.2, 3.4, f);
     const half = lerp(W.rest.width[0], W.rest.width[1], smoothstep(0, 0.35, u));
     const n = Math.max(3, Math.round((2 * half) / (w * 0.62)));
     for (let k = 0; k < n; k++) {
@@ -673,21 +857,83 @@ function addRestWing(b: Builder, rig: Rig, side: Side, rng: Rng) {
     }
   }
 
-  // --- remiges: secondaries toward the back edge, primaries toward the belly edge, each a
-  // long blade pressed to the strip. Later ones are planted lower, so inner lies over outer.
-  const blades: { u: number; v: number; len: number; w: number; dv: number }[] = [];
+  // --- remiges: real full-length blades. Each is rooted on the strip under the coverts and
+  // runs straight (a feather does not bend round the body) down and back: the secondaries a
+  // short fan on the back side, the primaries long, the outer ones longest, all converging on
+  // the point over the tail where the two wingtips cross. A straight blade over a rounded
+  // body would cut through it, so each is swung out until it clears the surface: the
+  // wingtip ends up standing off the rump, with a shadowed gap under the wing.
+  const grid: { p: THREE.Vector3; n: THREE.Vector3 }[] = [];
+  for (let i = 0; i <= 26; i++) {
+    for (let j = 0; j <= 14; j++) {
+      at(i / 20, lerp(-2.2, 2.2, j / 14), sfc);
+      grid.push({ p: sfc.p.clone(), n: sfc.n.clone() });
+    }
+  }
+  const P = new THREE.Vector3();
+  const clearance = (pt: THREE.Vector3) => {
+    let best = grid[0];
+    let bd = Infinity;
+    for (const g of grid) {
+      const d = g.p.distanceToSquared(pt);
+      if (d < bd) {
+        bd = d;
+        best = g;
+      }
+    }
+    return P.copy(pt).sub(best.p).dot(best.n);
+  };
+  const T = species.tail;
+  const ta = T.droop * DEG;
+  const tailDir = new THREE.Vector3(0, -Math.sin(ta), -Math.cos(ta));
+  const tailUp = new THREE.Vector3(0, Math.cos(ta), -Math.sin(ta));
+  const meet = loft.center(species.spine.tail, new THREE.Vector3()).addScaledVector(tailDir, T.length[1] * W.rest.cross[0]).addScaledVector(tailUp, 0.035);
+  // (the two wingtips cross over the tail: the left one lies on top)
+  meet.x = W.rest.cross[1] * sg;
+  if (sg > 0) meet.addScaledVector(tailUp, 0.014);
+  const tip = new THREE.Vector3();
+  const out = new THREE.Vector3();
+  const blades: { u: number; v: number; w: number; reach: number; to: THREE.Vector3 | null; len: number; dv: number; asym: number }[] = [];
   for (let j = 0; j < W.secondaries; j++) {
     const f = j / (W.secondaries - 1);
-    blades.push({ u: lerp(0.3, 0.38, f), v: lerp(0.9, 0.34, f), len: lerp(0.2, 0.27, f), w: 0.072, dv: -0.22 });
+    blades.push({ u: lerp(0.2, 0.3, f), v: lerp(0.82, 0.3, f), w: 0.066, reach: 1, to: null, len: lerp(0.19, 0.27, f), dv: -0.3, asym: 0.15 });
   }
   for (let i = 0; i < W.primaries; i++) {
     const f = i / (W.primaries - 1);
-    const u = lerp(0.38, 0.54, f);
-    blades.push({ u, v: lerp(0.3, -0.88, f), len: Math.min(lerp(0.26, 0.5, f), (1.05 - u) * span), w: lerp(0.07, 0.052, f), dv: lerp(-0.1, 0.6, f) });
+    // the outer primaries are the long ones; they also sit a little further down the strip
+    blades.push({ u: lerp(0.3, 0.42, f), v: lerp(0.25, -0.8, f), w: lerp(0.068, 0.05, f), reach: lerp(0.52, 1, Math.pow(f, 0.8)), to: meet.clone().addScaledVector(tailUp, (1 - f) * 0.05).addScaledVector(tailDir, -(1 - f) * 0.02), len: 0, dv: 0, asym: lerp(0.2, 0.45, f) });
   }
   blades.forEach((bl, k) => {
-    const skin = lay(bl.u, bl.v, bl.len, bl.dv, 0.009 - k * 0.0004, 1.5);
-    const j = 0.7 + rng() * 0.6;
+    const q = at(bl.u, bl.v, sfc);
+    const lift = 0.016 - k * 0.0007;
+    root.copy(sfc.p).addScaledVector(sfc.n, lift);
+    out.copy(sfc.n);
+    let len = bl.len;
+    if (bl.to) {
+      tip.copy(bl.to);
+      len = tip.distanceTo(root) * bl.reach;
+    } else {
+      at(bl.u + len / span, bl.v + bl.dv, sfc2);
+      tip.copy(sfc2.p).addScaledVector(sfc2.n, lift);
+      out.add(sfc2.n).normalize();
+    }
+    const curl = 0.035;
+    for (let it = 0; it < 60; it++) {
+      dir.copy(tip).sub(root).normalize();
+      nrm.copy(out).addScaledVector(dir, -out.dot(dir)).normalize();
+      let ok = true;
+      for (const t of [0.25, 0.45, 0.65, 0.85, 1]) {
+        P.copy(root).addScaledVector(dir, t * len).addScaledVector(nrm, -curl * len * t * t);
+        if (clearance(P.clone()) < 0.005 + 0.012 * t - k * 0.0003) {
+          ok = false;
+          break;
+        }
+      }
+      if (ok) break;
+      tip.addScaledVector(out, 0.005);
+    }
+    const sk = loft.skin(clamp(q.s, 0.02, loft.sMax), q.ang);
+    const j = 0.75 + rng() * 0.5;
     b.add({
       root,
       dir,
@@ -695,13 +941,13 @@ function addRestWing(b: Builder, rig: Rig, side: Side, rng: Rng) {
       skinNormal: null,
       iriNormal: nrm,
       width: bl.w,
-      length: bl.len,
+      length: len,
       cols: 3,
       rows: 9,
       round: 0.75,
       cup: 0.1,
-      curl: 0.03,
-      asym: 0.3 * sg,
+      curl,
+      asym: bl.asym * sg,
       base: base.clone().multiplyScalar(j),
       tip: base.clone().multiplyScalar(j * 0.8),
       iri: sheen,
@@ -710,8 +956,9 @@ function addRestWing(b: Builder, rig: Rig, side: Side, rng: Rng) {
       iriPower: 2.5,
       rough: 0.4,
       loose: 0,
-      widen: 0.25,
-      ...skin,
+      widen: 0.2,
+      bones: sk.bones.map((nm) => rig.index(nm)) as [number, number, number, number],
+      weights: sk.weights,
       rand: rng(),
       coord: id,
       gain: 0,
@@ -724,7 +971,7 @@ function addRestWing(b: Builder, rig: Rig, side: Side, rng: Rng) {
 function addTail(b: Builder, rig: Rig, rng: Rng) {
   const T = rig.species.tail;
   const base = col(T.color);
-  const sheen = col(0x2a3a5a);
+  const sheen = col(0x46546c);
   const X = new THREE.Vector3();
   const Y = new THREE.Vector3();
   const Z = new THREE.Vector3();
@@ -741,21 +988,22 @@ function addTail(b: Builder, rig: Rig, rng: Rng) {
       iriNormal: Y,
       width: T.width,
       length: lerp(T.length[0], T.length[1], Math.pow(f, 1.4)),
-      cols: 3,
-      rows: 9,
+      cols: 5,
+      rows: 14,
       round: 1,
-      cup: 0.1,
+      cup: 0.06,
       curl: 0.01,
-      asym: 0.18 * Math.sign(r.k),
+      asym: 0.12 * Math.sign(r.k),
       base: base.clone().multiplyScalar(j),
       tip: base.clone().multiplyScalar(j * 0.8),
-      iri: sheen,
+      // the central pair, uppermost on the closed tail, carries a little of the back's green
+      iri: f < 0.1 ? col(0x1f6a58) : sheen,
       iri2: sheen,
-      iriStrength: 0.2,
+      iriStrength: f < 0.1 ? 0.13 : 0.2,
       iriPower: 3,
       rough: 0.62,
       loose: 0,
-      widen: 0.7,
+      widen: 0.45,
       bones: [rig.index(r.bone.name), 0, 0, 0],
       weights: [1, 0, 0, 0],
       rand: rng(),
@@ -808,7 +1056,9 @@ function buildFuzz(rig: Rig, layers = 3, rings = 120, segs = 80) {
       const j = k % (segs + 1);
       const phi = g.a <= Math.PI ? g.a / Math.PI : (2 * Math.PI - g.a) / Math.PI;
       const look = lookAt(species, g.s, phi);
-      const { shade, gold, glit } = toneAt(species, look, g.s, phi);
+      const tone = toneAt(species, look, g.s, phi);
+      const { gold, glit } = tone;
+      const shade = tone.shade * wingShadow(loft, g.s, g.a);
       let fuzz = look.fuzz ?? Math.min(0.55 + (look.loose ?? 0) * 0.6, 1);
       // keep the eyes and the root of the bill clear
       for (const side of SIDES) fuzz *= smoothstep(species.eye.radius * 1.25, species.eye.radius * 2.1, g.p.distanceTo(rig.eyes[side].center));
@@ -862,6 +1112,7 @@ export function buildPlumageGeometry(rig: Rig): PlumageGeometry {
   const rng = mulberry32(rig.species.seed);
   const contour = new Builder();
   addContour(contour, rig, rng);
+  addGorget(contour, rig, rng);
   const flight = new Builder();
   for (const side of SIDES) {
     addWing(flight, rig, side, rng);
@@ -897,6 +1148,8 @@ export function buildSkinGeometry(rig: Rig, rings = 64, segs = 36, inset = 0.007
       const ang = (j / segs) * Math.PI * 2;
       const sk = loft.skin(s, ang);
       loft.surface(s, ang, sfc);
+      // (deeper under the neck and throat: when the head turns far round, the skin there must not
+      // bulge out between the feathers)
       p.copy(sfc.p).addScaledVector(sfc.n, -inset);
       pos.push(p.x, p.y, p.z);
       si.push(...sk.bones.map((n) => rig.index(n)));
@@ -905,6 +1158,11 @@ export function buildSkinGeometry(rig: Rig, rings = 64, segs = 36, inset = 0.007
   }
   for (let i = 0; i < rings; i++) {
     for (let j = 0; j < segs; j++) {
+      // no skin under the throat and the front of the neck: when the head comes down onto the
+      // breast the feathers there slide over each other, but skin stretched straight from chin
+      // to chest would stand out in front of them as a sheet (the scales there are a closed coat anyway)
+      const sMid = ((i + 0.5) / rings) * loft.sMax;
+      if (sMid > 4.3 && sMid < 9.0 && Math.cos(((j + 0.5) / segs) * Math.PI * 2) > -0.25) continue;
       const a = i * (segs + 1) + j;
       const b = a + segs + 1;
       idx.push(a, a + 1, b, b, a + 1, b + 1);

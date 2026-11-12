@@ -17,6 +17,16 @@ export interface WingPose {
   lift: number;
   /** wingtips lowered, radians */
   droop: number;
+  /** spread wing only: swung forward (+) or back (−) about the body's long axis, and raised (+), radians */
+  sweep: number;
+  raise: number;
+  /**
+   * Folded wing held off the flank (preening under it): out swings the whole resting wing away
+   * from the body about the shoulder (the tip leaves the rump), twist turns its leading edge up
+   * off the flank, radians.
+   */
+  out: number;
+  twist: number;
 }
 
 export class Pose {
@@ -36,6 +46,15 @@ export class Pose {
    */
   reachTarget = new THREE.Vector3();
   reachWeight = 0;
+  /**
+   * Reach along a given line: with reachPin 1 the bill lies along reachDir (unit, root space,
+   * base to tip) with its tip on the target, wherever that puts the head; the neck gives what
+   * it takes. For working the bill into a place it can only enter one way (under a wing).
+   * reachRoll turns the head about the bill, radians.
+   */
+  reachDir = new THREE.Vector3(0, 0, 1);
+  reachPin = 0;
+  reachRoll = 0;
 
   // body (hips)
   bodyYaw = 0;
@@ -77,13 +96,18 @@ export class Pose {
   tailRoll = 0;
   tailFan = 0; // 0 folded … 1 fanned
 
-  wing: Record<Side, WingPose> = { L: { spread: 0, lift: 0, droop: 0 }, R: { spread: 0, lift: 0, droop: 0 } };
+  wing: Record<Side, WingPose> = {
+    L: { spread: 0, lift: 0, droop: 0, sweep: 0, raise: 0, out: 0, twist: 0 },
+    R: { spread: 0, lift: 0, droop: 0, sweep: 0, raise: 0, out: 0, twist: 0 },
+  };
 
   reset() {
     this.headYaw = this.headPitch = this.headRoll = 0;
     this.headShift.set(0, 0, 0);
     this.headStabil = 0.85;
     this.reachWeight = 0;
+    this.reachPin = 0;
+    this.reachRoll = 0;
     this.bodyYaw = this.bodyPitch = this.bodyRoll = this.chestPitch = 0;
     this.bodyShift.set(0, 0, 0);
     this.breath = 0;
@@ -100,6 +124,10 @@ export class Pose {
       this.wing[s].spread = 0;
       this.wing[s].lift = 0;
       this.wing[s].droop = 0;
+      this.wing[s].sweep = 0;
+      this.wing[s].raise = 0;
+      this.wing[s].out = 0;
+      this.wing[s].twist = 0;
     }
   }
 
@@ -151,6 +179,22 @@ export function createSolver(rig: Rig, uniforms: PlumageUniforms): Solver {
     const hq = rest[`hand.${s}`].quat;
     wingAxes[s] = { out: X.clone().applyQuaternion(hq), fan: Y.clone().applyQuaternion(hq) };
   }
+  // the resting wing is feathers on the body: held off the flank, the shader turns them as one
+  // piece about the shoulder end of the strip (left wing's frame; the right is its mirror)
+  {
+    const sfc = { p: new THREE.Vector3(), n: new THREE.Vector3(), t: new THREE.Vector3() };
+    const on = (u: number, vv: number) => {
+      const q = rig.loft.wingAt(u, vv, 1);
+      return rig.loft.surface(q.s, q.ang, sfc);
+    };
+    const pivot = on(0.03, 0.3).p.clone();
+    const span = on(0.95, 0).p.clone().sub(pivot).normalize();
+    const n = on(0.4, 0).n.clone();
+    n.addScaledVector(span, -n.dot(span)).normalize();
+    uniforms.uWingPivot.value.copy(pivot);
+    uniforms.uWingSpan.value.copy(span);
+    uniforms.uWingChord.value.crossVectors(n, span);
+  }
   // the bill tip in head space, and how far the neck may unfold or tuck to carry it somewhere
   const billRest = rest.bill;
   const tipLocal = new THREE.Vector3(0, -species.bill.droop, species.bill.length).applyQuaternion(billRest.worldQuat).add(billRest.worldPos).sub(rest.head.worldPos);
@@ -164,6 +208,9 @@ export function createSolver(rig: Rig, uniforms: PlumageUniforms): Solver {
   const TONGUE_TRAVEL = species.bill.length * 0.65;
   const hWant = new THREE.Vector3();
   const qAim = new THREE.Quaternion();
+  const mLook = new THREE.Matrix4();
+  const lx = new THREE.Vector3();
+  const ly = new THREE.Vector3();
   const sternumDir = rest.sternum.worldPos.clone().sub(rest.chest.worldPos).setX(0).normalize();
 
   /** Root-space position of the head bone for a given hips transform and neck rotations. */
@@ -215,11 +262,22 @@ export function createSolver(rig: Rig, uniforms: PlumageUniforms): Solver {
       const dist = v2.length() || 1e-6;
       const slide = clamp(dist - tipLen, -NECK_IN, NECK_OUT);
       hWant.addScaledVector(v2, slide / dist);
+      const pin = clamp(p.reachPin, 0, 1);
+      if (pin > 0) hWant.lerp(v2.copy(p.reachDir).multiplyScalar(-tipLen).add(p.reachTarget), pin);
       v2.copy(p.reachTarget).sub(hWant).normalize();
       const yaw = clamp(Math.atan2(v2.x, v2.z), -2.2, 2.2);
       const pitch = clamp(Math.asin(clamp(v2.y, -1, 1)) - tipElev, -1.1, 1.25);
       e.set(-pitch, yaw, p.headRoll * (1 - w), 'YXZ');
       qAim.setFromEuler(e);
+      if (pin > 0) {
+        // along a given line the head may be turned right round and tipped steeply: no yaw or
+        // pitch limits, crown kept as near up as the line allows, then rolled about the bill
+        lx.crossVectors(Y, v2).normalize();
+        ly.crossVectors(v2, lx);
+        qB.setFromRotationMatrix(mLook.makeBasis(lx, ly, v2));
+        qB.multiply(qA.setFromAxisAngle(Z, p.reachRoll)).multiply(qA.setFromAxisAngle(X, tipElev));
+        qAim.slerp(qB, pin);
+      }
       qHead.slerp(qAim, w);
       solveNeck();
       headFk(bones.hips.position, qHips, qChestL, qA, qB, pFk);
@@ -283,6 +341,12 @@ export function createSolver(rig: Rig, uniforms: PlumageUniforms): Solver {
       const wp = p.wing[s];
       const k = smoothstep(0, 1, wp.spread);
       for (let i = 0; i < w.bones.length; i++) w.bones[i].quaternion.copy(w.folded[i]).slerp(w.spread[i], k);
+      if (k > 0 && (wp.sweep !== 0 || wp.raise !== 0)) {
+        // the stroke: the whole spread wing swung about the shoulder, in the chest's frame
+        qA.setFromAxisAngle(Y, -sideSign(s) * wp.sweep * k);
+        qB.setFromAxisAngle(Z, sideSign(s) * wp.raise * k);
+        w.bones[0].quaternion.premultiply(qB).premultiply(qA);
+      }
       const fold = 1 - k;
       if (fold > 0) {
         const ax = wingAxes[s];
@@ -320,8 +384,12 @@ export function createSolver(rig: Rig, uniforms: PlumageUniforms): Solver {
     uniforms.uLift.value[0] += p.crest * 0.9;
     uniforms.uLift.value[1] += p.crest * 0.7;
     uniforms.uGorget.value = p.gorget;
+    // how far the bill points below level, relative to the chest
+    v.set(0, 0, 1).applyQuaternion(qHead).applyQuaternion(qC.copy(qChestW).invert());
+    uniforms.uThroat.value = smoothstep(0.08, 0.75, -v.y);
     uniforms.uCrest.value = p.crest;
     uniforms.uWingSpread.value.set(p.wing.L.spread, p.wing.R.spread);
+    uniforms.uWingOut.value.set(p.wing.L.out, p.wing.L.twist, p.wing.R.out, p.wing.R.twist);
     uniforms.uWingLift.value.set(p.wing.L.lift, p.wing.R.lift);
   } as Solver;
   applyPose.tip = tip;

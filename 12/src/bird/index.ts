@@ -18,6 +18,8 @@ import { StartleLayer } from './motion/startle';
 import { ForageLayer } from './motion/forage';
 import { MouthLayer } from './motion/mouth';
 import { HopLayer, type Ground } from './motion/hop';
+import { FleeLayer } from './motion/flee';
+import { PreenLayer } from './motion/preen';
 
 /** The bird plus the handles a UI, a debugger or a new behaviour would want. */
 export interface BirdHandle extends Bird {
@@ -35,6 +37,18 @@ export interface BirdHandle extends Bird {
   feathers: { contour: THREE.SkinnedMesh; flight: THREE.SkinnedMesh; fuzz: THREE.SkinnedMesh };
   /** world-space position of the head bone */
   headPosition(out: THREE.Vector3): THREE.Vector3;
+  /**
+   * Take off and vanish, come back after a few seconds (see motion/flee.ts). Returns false
+   * if it is already off or mid-hop.
+   */
+  flee(): boolean;
+  /** true from the moment it gathers itself to leave until it is back on the perch, wings folded */
+  readonly fleeing: boolean;
+  /** true while it is out of sight */
+  readonly away: boolean;
+  /** Preen under a wing (a random one if not given). Returns false if it is busy. */
+  preen(side?: 'L' | 'R'): boolean;
+  readonly preening: boolean;
   /** Hook that runs after the layers and before the solver: last word on the pose. */
   onPose: ((pose: Pose, mind: Mind) => void) | null;
 }
@@ -82,7 +96,17 @@ export function createBird(_ctx: BirdContext, options: BirdOptions = {}): BirdHa
   const hop = new HopLayer(mind, ground);
   const forage = new ForageLayer(mind, solve, rig.rest.head.worldPos.clone(), (id) => handle.onPick?.(id), (id) => handle.onSwallow?.(id), hop);
   const mouth = new MouthLayer(mind);
-  const layers: Layer[] = [new PostureLayer(mind), new BreathLayer(), new GazeLayer(mind), new BlinkLayer(mind), new RuffleLayer(mind), new TailLayer(mind), new WingLayer(mind), forage, mouth, hop, startle];
+  const ruffle = new RuffleLayer(mind);
+  const tail = new TailLayer(mind);
+  const flee = new FleeLayer(mind, rig, root, hop, ruffle, tail);
+  const wingLayer = new WingLayer(mind);
+  const preen = new PreenLayer(mind, rig, solve.billReach);
+  preen.blocked = () => flee.active || hop.busy || mind.eating || forage.state !== 'idle';
+  preen.onDone = (m) => {
+    wingLayer.shuffle(m);
+    if (m.rng() < 0.5) ruffle.trigger(m, 'puff', 0.35);
+  };
+  const layers: Layer[] = [new PostureLayer(mind), new BreathLayer(), new GazeLayer(mind), new BlinkLayer(mind), ruffle, tail, wingLayer, forage, mouth, preen, hop, startle, flee];
   let food: ReadonlyArray<Food> = [];
   const foodPool: { id: number; pos: THREE.Vector3; vel: THREE.Vector3 }[] = [];
 
@@ -108,13 +132,25 @@ export function createBird(_ctx: BirdContext, options: BirdOptions = {}): BirdHa
     headPosition: (out) => rig.bones.head.getWorldPosition(out),
     stats: { bones: rig.list.length, ...plumageGeo.stats },
     onPose: null,
+    flee: () => flee.start(),
+    preen: (side) => preen.start(mind, side),
+    get preening() {
+      return preen.active;
+    },
+    get fleeing() {
+      return flee.active;
+    },
+    get away() {
+      return flee.gone;
+    },
     update(dt) {
       root.updateWorldMatrix(true, false);
       inv.copy(root.matrixWorld).invert();
       mind.attention = attention ? local.copy(attention).applyMatrix4(inv) : null;
       // food into root space
       mind.food.length = 0;
-      for (let i = 0; i < food.length; i++) {
+      // (off the perch it is not feeding)
+      for (let i = 0; i < (flee.active || preen.active ? 0 : food.length); i++) {
         const f = (foodPool[i] ??= { id: 0, pos: new THREE.Vector3(), vel: new THREE.Vector3() });
         f.id = food[i].id;
         f.pos.copy(food[i].position).applyMatrix4(inv);
@@ -144,7 +180,10 @@ export function createBird(_ctx: BirdContext, options: BirdOptions = {}): BirdHa
       return out.copy(solve.carry).applyMatrix4(root.matrixWorld);
     },
     startle(strength = 1) {
+      if (flee.active) return;
       startle.fire(Math.min(Math.max(strength, 0), 1));
+      // a real fright sometimes sends it off altogether
+      if (strength >= 0.9 && !mind.quiet && mind.rng() < 0.22) flee.start();
     },
     dispose() {
       plumageGeo.contour.dispose();
@@ -152,6 +191,7 @@ export function createBird(_ctx: BirdContext, options: BirdOptions = {}): BirdHa
       plumageGeo.fuzz.dispose();
       plumageMat.dispose();
       plumageDepth.dispose();
+      flee.dispose();
       parts.dispose();
       rig.skeleton.dispose();
       debugCleanup?.();
@@ -255,3 +295,5 @@ export type { MouthLayer } from './motion/mouth';
 export type { RuffleLayer } from './motion/ruffle';
 export type { ForageLayer } from './motion/forage';
 export type { HopLayer } from './motion/hop';
+export type { FleeLayer } from './motion/flee';
+export type { PreenLayer } from './motion/preen';

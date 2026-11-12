@@ -19,6 +19,8 @@ export class RuffleLayer implements Layer {
   private t0 = -100;
   private nextAt: number;
   private amp = 0.6;
+  /** when it last ruffled: the shake-off after a fright waits for the same gap */
+  private last = -1e9;
 
   constructor(mind: Mind) {
     const [a, b] = mind.species.behaviour.ruffleEvery;
@@ -26,7 +28,7 @@ export class RuffleLayer implements Layer {
     mind.on('startle', () => {
       // displacement behaviour: shake it off once the fright has passed
       this.t0 = -100;
-      this.nextAt = mind.t + rand(mind.rng, 2.8, 5);
+      this.nextAt = Math.max(mind.t + rand(mind.rng, 2.8, 5), this.last + mind.species.behaviour.ruffleEvery[0]);
     });
   }
 
@@ -35,6 +37,7 @@ export class RuffleLayer implements Layer {
     const r = m.rng();
     this.kind = kind ?? (r < 0.45 ? 'puff' : r < 0.7 ? 'shake' : 'throat');
     this.t0 = m.t;
+    this.last = m.t;
     this.amp = amp ?? rand(m.rng, 0.45, 0.75);
     const [a, b] = m.species.behaviour.ruffleEvery;
     this.nextAt = m.t + rand(m.rng, a, b);

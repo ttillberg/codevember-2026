@@ -31,6 +31,8 @@ export class HopLayer implements Layer {
   /** where on the perch it likes to sit, and drifts back to */
   home = 0;
 
+  /** something else is moving the bird (it has flown): no hops until released */
+  hold = false;
   /** where on the perch the bird stands (world x) */
   x = 0;
   private phase: 'stand' | 'crouch' | 'air' | 'land' = 'stand';
@@ -59,7 +61,7 @@ export class HopLayer implements Layer {
   ) {
     mind.on('startle', (e) => {
       // a fright can send it a step along the twig
-      if (this.phase !== 'stand' || mind.eating || mind.rng() > 0.55 * e.strength) return;
+      if (this.hold || this.phase !== 'stand' || mind.eating || mind.rng() > 0.55 * e.strength) return;
       const d = rand(mind.rng, 0.1, 0.2) * (mind.rng() < 0.5 ? -1 : 1);
       const x = this.clampX(this.x + d);
       if (Math.abs(x - this.x) > 0.06) this.go(mind, x, 0.05);
@@ -112,9 +114,30 @@ export class HopLayer implements Layer {
     return null;
   }
 
+  /** The bird will come down at world x (clamped): from now on that is where it stands. Returns the x, fills in the point. */
+  place(x: number, out: THREE.Vector3) {
+    this.x = this.clampX(x);
+    this.frame(this.x, this.here);
+    this.slope = Math.atan2(this.here.tangent.y, this.here.tangent.x);
+    this.scale = this.here.radius / this.ground.restRadius;
+    out.copy(this.here.point);
+    return this.x;
+  }
+
+  /** It just touched down from flight: the legs take it. */
+  landed() {
+    this.legs.kick(-1.1);
+    this.follow();
+  }
+
+  /** The root was moved from outside: the head does not lag behind it. */
+  follow() {
+    this.anchor.copy(this.ground.root.position);
+  }
+
   /** Hop to world x on the perch (clamped to the allowed range and to one hop). */
   go(m: Mind, x: number, crouch = rand(m.rng, 0.07, 0.11)) {
-    if (this.phase !== 'stand') return false;
+    if (this.hold || this.phase !== 'stand') return false;
     x = this.clampX(clamp(x, this.x - this.maxHop, this.x + this.maxHop));
     if (Math.abs(x - this.x) < 0.03) return false;
     this.x0 = this.x;
@@ -147,7 +170,7 @@ export class HopLayer implements Layer {
 
     // nothing to eat for a while: drift back toward the middle of the perch
     if (m.food.length) this.lastFood = t;
-    if (this.phase === 'stand' && this.homeAfter[1] > 0 && !m.quiet && !m.eating && m.freeze <= 0 && Math.abs(this.x - this.home) > 0.12 && t - this.lastFood > 4 && t > this.homeAt) {
+    if (this.phase === 'stand' && !this.hold && this.homeAfter[1] > 0 && !m.quiet && !m.eating && m.freeze <= 0 && Math.abs(this.x - this.home) > 0.12 && t - this.lastFood > 4 && t > this.homeAt) {
       this.go(m, this.home + (this.x - this.home) * 0.3);
       this.homeAt = t + rand(m.rng, this.homeAfter[0], this.homeAfter[1]);
     }
