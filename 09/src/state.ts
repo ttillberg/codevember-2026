@@ -41,7 +41,9 @@ export const R = 1;
 
 /** combo: where the press lands says what it does, on a mouse as under a finger. On an edge
  *  that can be taken hold of it peels, anywhere else on the sphere it is the knife, off the
- *  sphere the ruler; with Cmd or Ctrl held it turns the sphere, with Shift held it scratches.
+ *  sphere it turns it. With Cmd or Ctrl held it is the ruler wherever it lands, with Shift
+ *  held it scratches; on a touch screen two fingers off the sphere hold the ruler between
+ *  them, and two on it scratch.
  *  The others do one thing each: peel (pull from an edge, turn the sphere anywhere else),
  *  knife (a cut drawn by hand), ruler (a straight cut right round, aimed as a line), scratch
  *  (a few cuts side by side, like a paw). */
