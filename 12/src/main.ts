@@ -17,7 +17,7 @@ const renderer = new THREE.WebGLRenderer({ canvas, antialias: !usePost, powerPre
 const phone = matchMedia('(pointer: coarse)').matches;
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, phone ? 1.5 : 2));
 renderer.outputColorSpace = THREE.SRGBColorSpace;
-renderer.toneMapping = THREE.NeutralToneMapping;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.0;
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFShadowMap;
@@ -287,11 +287,11 @@ const settings = createSettings([
   { kind: 'heading', label: 'Camera' },
   { kind: 'range', key: 'shake', label: 'Handheld', value: shakeAmt, min: 0, max: 3.5, step: 0.05, set: (v) => (shakeAmt = v) },
   { kind: 'range', key: 'dof', label: 'Depth of field', value: 120, min: 0, max: 260, step: 5, set: (v) => (post.dof.uAperture.value = v) },
-  { kind: 'range', key: 'exposure', label: 'Exposure', value: 1.45, min: 0.8, max: 2.4, step: 0.05, set: (v) => (post.grade.uExposure.value = v) },
+  { kind: 'range', key: 'exposure', label: 'Exposure', value: 1.3, min: 0.8, max: 2.4, step: 0.05, set: (v) => (post.grade.uExposure.value = v) },
   { kind: 'heading', label: 'Look' },
-  { kind: 'select', key: 'tonemap', label: 'Tone mapping', value: 'Neutral', options: Object.keys(TONE), set: (v) => post.setToneMapping(TONE[v]) },
-  { kind: 'range', key: 'contrast', label: 'Contrast', value: 1.06, min: 0.6, max: 1.4, step: 0.01, set: (v) => (post.grade.uContrast.value = v) },
-  { kind: 'range', key: 'sat', label: 'Saturation', value: 0.98, min: 0.3, max: 1.4, step: 0.01, set: (v) => (post.grade.uSat.value = v) },
+  { kind: 'select', key: 'tonemap', label: 'Tone mapping', value: 'ACES', options: Object.keys(TONE), set: (v) => post.setToneMapping(TONE[v]) },
+  { kind: 'range', key: 'contrast', label: 'Contrast', value: 0.98, min: 0.6, max: 1.4, step: 0.01, set: (v) => (post.grade.uContrast.value = v) },
+  { kind: 'range', key: 'sat', label: 'Saturation', value: 1.12, min: 0.3, max: 1.4, step: 0.01, set: (v) => (post.grade.uSat.value = v) },
   { kind: 'range', key: 'fade', label: 'Fade', value: 0, min: 0, max: 0.6, step: 0.01, set: (v) => (post.grade.uFade.value = v) },
   { kind: 'heading', label: 'Bird' },
   { kind: 'toggle', key: 'follow', label: 'Follows the pointer', value: true, set: (v) => (followPointer = v) },
