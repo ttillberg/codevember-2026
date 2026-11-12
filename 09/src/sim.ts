@@ -1,4 +1,4 @@
-// State and input. Owns every change to the world: the tools (hand, line, free), orbiting,
+// State and input. Owns every change to the world: the tools (peel, knife, ruler, scratch), orbiting,
 // grabbing and peeling pieces, and what a peel leaves behind.
 //
 // Feel: a cut is a scalpel, instant and a hairline. The film is the skin of a boiled egg:
@@ -10,7 +10,7 @@ import type { Layer, LayerEdit } from './layers';
 import { createFilm } from './film';
 import { createLift } from './lift';
 import { R } from './state';
-import type { Ctx, Listener, Module, Piece, Tool, World, WorldEvents } from './state';
+import type { Ctx, Module, Piece, Tool, World } from './state';
 import { TEXEL, beginStroke, edgeNormal, endStroke, erasePiece, fillFilm, restoreFilm, idAt, paintArc, paintCircle, relabel } from './filmops';
 import { initPieces, syncPieces } from './pieces';
 import { TENSION_POINTS, createPeeler, tune } from './peel';
@@ -35,7 +35,7 @@ const DEFAULTS = {
   ],
   base: { preset: 'eye', color: 0xf3efe8, opacity: 1, roughness: 0.2, metalness: 0, print: 'label', ink: 0x0a2040 },
   tune: {
-    elastic: 0.036, adhesion: 0, shear: 0.3, load: 0, stiff: 0.478, lift: 0.13, ghost: 1, height: 0.5, rough: 0,
+    elastic: 0.036, adhesion: 0, shear: 0.3, load: 0, lift: 0.13, ghost: 1, height: 0.5, rough: 0,
     tear: 2.3, grip: 4.74, edge: 0.16, straight: 1,
   },
   show: { debug: false, grid: false },
@@ -63,7 +63,6 @@ const HOME = new Euler(0.38, -0.55, 0.12); // how the sphere is turned at the st
 // ----------------------------------------------------------------------------------- world
 
 export function createWorld(): World {
-  const subs = new Map<keyof WorldEvents, Array<(e: unknown) => void>>();
   const world: World = {
     films: Array.from({ length: FILMS_DEEP }, () => createFilm()),
     layers: Array.from({ length: FILMS_DEEP }, (_, k) => makeLayer(0, k)),
@@ -73,21 +72,11 @@ export function createWorld(): World {
     rotation: new Quaternion().setFromEuler(HOME),
     tool: 'peel',
     aim: { active: false, x0: 0, y0: 0, x1: 0, y1: 0, valid: false },
-    hover: { layer: 0, id: 0, ok: true },
+    hover: { layer: 0, id: 0 },
     show: { debug: true, grid: true, films: true },
     look: { x: 0, y: 0, on: false },
     tension: { pos: new Float32Array(TENSION_POINTS * 3), col: new Float32Array(TENSION_POINTS * 3), count: 0 },
     finger: { active: false, from: new Vector3(0, 0, 1), at: new Vector3(0, 0, 1), height: 0 },
-    time: 0,
-    on<K extends keyof WorldEvents>(type: K, fn: Listener<K>) {
-      let l = subs.get(type);
-      if (!l) subs.set(type, (l = []));
-      l.push(fn as unknown as (e: unknown) => void);
-    },
-    emit<K extends keyof WorldEvents>(type: K, e: WorldEvents[K]) {
-      const l = subs.get(type);
-      if (l) for (let i = 0; i < l.length; i++) l[i](e);
-    },
   };
   for (const pieces of world.pieces) initPieces(pieces);
   return world;
@@ -118,7 +107,6 @@ export function createSim(ctx: Ctx): Module {
   const omega = new Vector3();
   /** A cut is waiting for the pieces in motion to settle before it is relabelled. */
   let relabelDue = false;
-  let bare = false;
 
   // ------------------------------------------------------------------------------- view
 
@@ -189,7 +177,6 @@ export function createSim(ctx: Ctx): Module {
       labelled.set(film, film.coverVersion); // relabel may have swept crumbs out of cover itself
     });
     world.hover.id = 0;
-    if (!bare && !hasLive()) { bare = true; world.emit('filmGone', {}); }
   }
 
   // ---------------------------------------------------------------------------- history
@@ -240,14 +227,13 @@ export function createSim(ctx: Ctx): Module {
     if (h.covers.length !== world.films.length) return; // from before a film was added or removed
     world.films.forEach((f, k) => restoreFilm(f, h.covers[k]));
     world.rotation.copy(h.rotation);
-    bare = false;
     relabelNow();
     showHistory();
   }
 
   let showHistory = () => {};
 
-  // ------------------------------------------------------------------------------- line
+  // ------------------------------------------------------------------------------ ruler
 
   /** Plane through the eye and the two pointer rays, world space, into `plane`. Returns
    *  its distance from the centre (Infinity if degenerate). */
@@ -280,7 +266,7 @@ export function createSim(ctx: Ctx): Module {
     return true;
   }
 
-  // ------------------------------------------------------------------------------- free
+  // -------------------------------------------------------------------- knife, scratch
 
   const stroke = {
     on: false, painted: false, last: new Vector3(),
@@ -400,8 +386,8 @@ export function createSim(ctx: Ctx): Module {
     if (fading > 0) {
       fading -= dt;
       world.lift.fade = Math.max(0, fading / FADE_TIME);
-      peeler.step(dt);
-      if (fading <= 0 && peeler.commit()) { relabelNow(); world.emit('peeled', {}); }
+      peeler.step();
+      if (fading <= 0 && peeler.commit()) relabelNow();
       return;
     }
     finger(tH);
@@ -414,7 +400,7 @@ export function createSim(ctx: Ctx): Module {
     pullSpeed += (Math.abs(travel - lastTravel) / dt - pullSpeed) * (1 - Math.exp(-12 * dt));
     lastTravel = travel;
     peeler.carry(rot, travel);
-    peeler.step(dt);
+    peeler.step();
     world.finger.at.copy(world.finger.from).applyQuaternion(rot);
     world.finger.height = peeler.height;
     // Nothing of it is stuck any more: it is off, and there is no use holding on to it.
@@ -539,7 +525,6 @@ export function createSim(ctx: Ctx): Module {
   function updateHover() {
     const h = world.hover;
     h.id = 0;
-    h.ok = true;
     if (!mouseIn || pid !== -1 || drag !== 'none') return;
     if (world.tool !== 'peel') {
       ray(px, py);
@@ -576,7 +561,7 @@ export function createSim(ctx: Ctx): Module {
     drawOpening(1); // a hand on it: the cross is there
     if (e.pointerType !== 'mouse') {
       fingers.set(e.pointerId, { x: e.clientX - left, y: e.clientY - top });
-      if (fingers.size === 2 && (pid !== -1 || two.on) && !two.on) {
+      if (fingers.size === 2 && pid !== -1 && !two.on) {
         // Two fingers turn the sphere, whatever the first one was about to do.
         e.preventDefault();
         callOff();
@@ -805,7 +790,9 @@ export function createSim(ctx: Ctx): Module {
   // A fixed bench to compare feels on: whole film, the sphere turned as at the start, and
   // the same three cuts facing the camera: a line right round, a straight open cut and an
   // open U.
-  function bench() {
+  /** Both benches start from here: whole films, the sphere turned as at the start, nothing
+   *  in the hand. A step to undo. */
+  function resetBench() {
     skipOpening();
     remember();
     peeler.clear();
@@ -815,23 +802,31 @@ export function createSim(ctx: Ctx): Module {
     world.rotation.setFromEuler(HOME);
     qInv.copy(world.rotation).invert();
     for (const film of world.films) fillFilm(film);
-    // (x, y) as seen from the camera, in sphere radii, to a point on the film
-    const at = (x: number, y: number, out: Vector3) =>
-      out.set(x, y, Math.sqrt(Math.max(0, 1 - x * x - y * y))).applyQuaternion(qInv);
-    const stroke = (pts: Array<[number, number]>) => {
-      beginStroke();
-      for (let i = 1; i < pts.length; i++) {
-        at(pts[i - 1][0], pts[i - 1][1], tA);
-        at(pts[i][0], pts[i][1], tB);
-        paintArc(world.films, tA.x, tA.y, tA.z, tB.x, tB.y, tB.z);
-      }
-    };
-    tC.set(0.12, 1, 0).normalize().applyQuaternion(qInv);
+  }
+  /** (x, y) as seen from the camera, in sphere radii, to a point on the film. */
+  const seenAt = (x: number, y: number, out: Vector3) =>
+    out.set(x, y, Math.sqrt(Math.max(0, 1 - x * x - y * y))).applyQuaternion(qInv);
+  /** A cut through the points as seen. */
+  function cutSeen(pts: Array<[number, number]>) {
     beginStroke();
-    paintCircle(world.films, tC.x, tC.y, tC.z, -0.42);
-    stroke([[-0.5, 0.12], [-0.05, 0.12]]);
-    stroke([[0.18, 0.5], [0.18, 0.08], [0.55, 0.08], [0.55, 0.5]]);
-    bare = false;
+    for (let i = 1; i < pts.length; i++) {
+      seenAt(pts[i - 1][0], pts[i - 1][1], tA);
+      seenAt(pts[i][0], pts[i][1], tB);
+      paintArc(world.films, tA.x, tA.y, tA.z, tB.x, tB.y, tB.z);
+    }
+  }
+  /** A cut right round: the plane with normal (nx, ny, 0) as seen, w from the centre. */
+  function cutRound(nx: number, ny: number, w: number) {
+    tC.set(nx, ny, 0).normalize().applyQuaternion(qInv);
+    beginStroke();
+    paintCircle(world.films, tC.x, tC.y, tC.z, w);
+  }
+
+  function bench() {
+    resetBench();
+    cutRound(0.12, 1, -0.42);
+    cutSeen([[-0.5, 0.12], [-0.05, 0.12]]);
+    cutSeen([[0.18, 0.5], [0.18, 0.08], [0.55, 0.08], [0.55, 0.5]]);
     relabelNow();
   }
 
@@ -841,54 +836,28 @@ export function createSim(ctx: Ctx): Module {
    * sphere and an open cut to start from. Always the same.
    */
   function bench2() {
-    skipOpening();
-    remember();
-    peeler.clear();
-    fading = 0;
-    relabelDue = false;
-    omega.set(0, 0, 0);
-    world.rotation.setFromEuler(HOME);
-    qInv.copy(world.rotation).invert();
-    for (const film of world.films) fillFilm(film);
-    // (x, y) as seen from the camera, in sphere radii, to a point on the film
-    const at = (x: number, y: number, out: Vector3) =>
-      out.set(x, y, Math.sqrt(Math.max(0, 1 - x * x - y * y))).applyQuaternion(qInv);
-    /** A cut right round: the plane with normal (nx, ny, 0) as seen, w from the centre. */
-    const round = (nx: number, ny: number, w: number) => {
-      tC.set(nx, ny, 0).normalize().applyQuaternion(qInv);
-      beginStroke();
-      paintCircle(world.films, tC.x, tC.y, tC.z, w);
-    };
-    const stroke = (pts: Array<[number, number]>) => {
-      beginStroke();
-      for (let i = 1; i < pts.length; i++) {
-        at(pts[i - 1][0], pts[i - 1][1], tA);
-        at(pts[i][0], pts[i][1], tB);
-        paintArc(world.films, tA.x, tA.y, tA.z, tB.x, tB.y, tB.z);
-      }
-    };
+    resetBench();
     /** Take off the piece of film `k` seen at (x, y). */
     const lift = (k: number, x: number, y: number) => {
-      at(x, y, tA);
+      seenAt(x, y, tA);
       const id = idAt(world.films[k], tA.x, tA.y, tA.z);
       if (id) erasePiece(world.films[k], id);
     };
     // the top film: two bands across, two cuts down through them
-    round(0.1, 1, 0.34);
-    round(0.06, 1, -0.4);
-    round(1, 0.45, -0.3);
-    round(1, -0.55, 0.38);
+    cutRound(0.1, 1, 0.34);
+    cutRound(0.06, 1, -0.4);
+    cutRound(1, 0.45, -0.3);
+    cutRound(1, -0.55, 0.38);
     relabelNow();
     // its middle comes off, and one wedge beside it
     lift(0, 0.05, 0);
     lift(0, 0.6, 0.05);
     relabelNow();
     // the film under it, where it now shows: a closed cut, lifted out, and an open one
-    stroke([[0.22, -0.3], [0.5, -0.24], [0.56, 0.02], [0.36, 0.2], [0.2, 0.02], [0.22, -0.3]]);
+    cutSeen([[0.22, -0.3], [0.5, -0.24], [0.56, 0.02], [0.36, 0.2], [0.2, 0.02], [0.22, -0.3]]);
     relabelNow();
     if (world.films.length > 1) lift(1, 0.38, -0.08);
-    stroke([[-0.2, 0.22], [-0.12, -0.05], [0.02, -0.3]]);
-    bare = false;
+    cutSeen([[-0.2, 0.22], [-0.12, -0.05], [0.02, -0.3]]);
     relabelNow();
   }
 
@@ -910,7 +879,6 @@ export function createSim(ctx: Ctx): Module {
     history.length = 0;
     ahead.length = 0;
     showHistory();
-    bare = false;
     relabelNow();
   }
 

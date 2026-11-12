@@ -1,12 +1,13 @@
 // The peel: film as a sheet of particles (lattice and atlas in lift.ts).
 //
 // A particle is stuck to the sphere until the sheet pulling on it asks for too much, then
-// it is loose for good. Loose particles are a verlet sheet: links to their neighbours where
-// the film between them is whole (read from the film atlas, so cuts and peeled edges are
-// free edges by themselves), and a tether to the finger no longer than their distance to the
-// grab at rest, times how far the material stretches. A stuck particle lets go when a loose
-// one is linked to it and its own tether would be overdrawn by more than the adhesion. The
-// pull is shared: the more particles sit on the front, the more each one needs.
+// it is loose for good. Particles are linked to their neighbours where the film between
+// them is whole (read from the film atlas, so cuts and peeled edges are free edges by
+// themselves), and each has a tether to the finger as long as the film from the grab to it.
+// A stuck particle lets go when a loose one is linked to it and its own tether would be
+// overdrawn by more than the adhesion (release). The pull is shared: the more particles sit
+// on the front, the more each one needs. Where the loose ones are drawn is a separate
+// matter and only for the eye: a film pulled taut between the front and the hand (sheet).
 //
 // So the front is not a line that is put somewhere. It is wherever the sheet has let go:
 // round the finger, wider where it is free, hung on the ends of cuts.
@@ -30,8 +31,6 @@ export const tune = {
   shear: 5,
   /** How much a long front weighs: 0 not at all, 1 doubles the pull needed every 40 cells of front. */
   load: 1,
-  /** Share of a link's stretch taken back an iteration: low is slack, 1 is taut. */
-  stiff: 0.6,
   /** How the hand pulls: height the finger gains per length it has travelled. 0 drags the
    *  film flat back over itself, so the front follows at half the finger's pace. 1 pulls it
    *  up and away as it goes, the way one peels a sticker: the finger stays over the place
@@ -72,11 +71,7 @@ const WEB = 3;                        // debug: a join to film that is down is d
 const IRON = 3;                       // extra passes that even the drawn sheet out among its loose cells
 const SWEEPS = 12;                    // times a frame the loose sheet is pulled taut
 const OVER = 1.5;
-const DEEP = 30;                      // cells behind the front where links stop being worked out
-const DAMP = 0.8;
-const SAG = 6;                        // pull towards the sphere, so the sheet lies on it
 const STACK = 0.12;                   // skins of height gained per cell behind the front
-const SHELL = 1.15;                   // loose film stays within this many finger heights of the sphere
 const SKIN = 0.004 * R;               // loose film rides this far above the sphere
 const SHARE = 40;                     // front particles that double the pull needed at load 1
 const HOLD = 1.7;                     // cells round the grab that the finger holds
@@ -157,7 +152,6 @@ export function createPeeler(world: World) {
   const linkKnown = new Uint8Array(COUNT);  // bit k: link k looked at
   const linkOk = new Uint8Array(COUNT);     // bit k: film is whole along link k
   const pos = new Float32Array(COUNT * 3);
-  const prev = new Float32Array(COUNT * 3);
   const depth = new Float32Array(COUNT);
   const tether = new Float32Array(COUNT);
   // Where the film to a particle last turns a corner (the grab, or the end of a cut), and
@@ -186,7 +180,7 @@ export function createPeeler(world: World) {
   let nLoose = 0, nHeld = 0, nFront = 0;
   const spill: number[] = [];
   let id = 0;
-  let on = false, dirty = false;
+  let on = false;
   const G = new Vector3(), F = new Vector3(), q = new Quaternion(), v = new Vector3();
   let height = 0;
 
@@ -254,7 +248,7 @@ export function createPeeler(world: World) {
     st[c] = state;
     depth[c] = 1;
     const o = c * 3;
-    pos[o] = prev[o] = rest[o]; pos[o + 1] = prev[o + 1] = rest[o + 1]; pos[o + 2] = prev[o + 2] = rest[o + 2];
+    pos[o] = rest[o]; pos[o + 1] = rest[o + 1]; pos[o + 2] = rest[o + 2];
     tether[c] = through;
     const q = c * 3;
     if (from === -1) { corner[q] = rest[q]; corner[q + 1] = rest[q + 1]; corner[q + 2] = rest[q + 2]; cornerLen[c] = 0; root[c] = c; cornerCell[c] = c; }
@@ -329,7 +323,6 @@ export function createPeeler(world: World) {
     on = true;
     lift.layer = layer;
     lift.id = id;
-    dirty = true;
     return true;
   }
 
@@ -390,7 +383,7 @@ export function createPeeler(world: World) {
         // from the hand in straight lines.
         const r3 = root[c] * 3;
         const tx = x - pos[r3], ty = y - pos[r3 + 1], tz = z - pos[r3 + 2];
-        const td = Math.hypot(tx, ty, tz), max = tether[c] * k1;
+        const td = Math.sqrt(tx * tx + ty * ty + tz * tz), max = tether[c] * k1;
         if (td > max) { const s = max / td; x = pos[r3] + tx * s; y = pos[r3 + 1] + ty * s; z = pos[r3 + 2] + tz * s; }
         // And where it still joins film that is down, that wins: the sheet stays within
         // the film's length of the film it is one with, however far the hand has gone.
@@ -402,7 +395,7 @@ export function createPeeler(world: World) {
           const n = nb[c * 8 + k], p = n * 3, sn = st[n];
           if (sn === STUCK && torn(n)) continue;
           const nx = sn === STUCK ? rest[p] : pos[p], ny = sn === STUCK ? rest[p + 1] : pos[p + 1], nz = sn === STUCK ? rest[p + 2] : pos[p + 2];
-          const dx = nx - x, dy = ny - y, dz = nz - z, d = Math.hypot(dx, dy, dz), r = nbLen[c * 8 + k] * k1;
+          const dx = nx - x, dy = ny - y, dz = nz - z, d = Math.sqrt(dx * dx + dy * dy + dz * dz), r = nbLen[c * 8 + k] * k1;
           if (d <= r) continue;
           const f = ((d - r) / d) * (sn === LOOSE ? 0.5 : 1);
           x += dx * f; y += dy * f; z += dz * f;
@@ -410,7 +403,7 @@ export function createPeeler(world: World) {
         // Film further from the front rides a hair higher: folded back, it lies on top of
         // the film it came from instead of in it.
         const floor = R + SKIN * (1 + STACK * Math.min(depth[c], 60));
-        const l = Math.hypot(x, y, z);
+        const l = Math.sqrt(x * x + y * y + z * z);
         if (l < floor) { const s = floor / l; x *= s; y *= s; z *= s; }
         pos[o] = x; pos[o + 1] = y; pos[o + 2] = z;
       }
@@ -488,7 +481,7 @@ export function createPeeler(world: World) {
   const frontSeen = new Int32Array(COUNT);
   let frontGen = 0, liveFront = -1;
   let frontCells = new Int32Array(1 << 10);
-  const frontSize: number[] = [], frontNear: number[] = [];
+  const frontSize: number[] = [];
   function findFronts() {
     frontGen++;
     let ns = 0;
@@ -524,71 +517,106 @@ export function createPeeler(world: World) {
           if (frontSeen[w] === frontGen && frontOf[w] < 0) { frontOf[w] = count; stack.push(w); }
         }
       }
-      frontSize[count] = size; frontNear[count] = near;
+      frontSize[count] = size;
       if (size >= SPECK && near > best) { best = near; liveFront = count; }
       count++;
     }
   }
 
-  // The taut sheet. Film held up by the finger is flat between where it leaves the sphere,
-  // so the line it comes off along is straight from one free edge to the other: what is
-  // loose is convex. Each frame the convex hull of the loose cells is taken, in a flat
-  // (gnomonic) map where great circles are straight lines, and stuck film inside it lets go.
-  const hullC = new Vector3(), hullU = new Vector3(), hullV = new Vector3();
-  let hx: number[] = [], hy: number[] = [];
-  let px = new Float64Array(1 << 12), py = new Float64Array(1 << 12);
-  let order = new Int32Array(1 << 12);
-  function buildHull() {
-    hx.length = hy.length = 0;
-    if (tune.straight < 0.5 || nLoose < 3 || nLoose > HULL_MAX) return;
+  // ---- a flat map and convex hulls on it, for the taut sheet and for the fan
+
+  /** A flat (gnomonic) map of part of the sphere, where great circles are straight lines:
+   *  its centre and its two axes, unit, sphere-local. */
+  interface Flat { c: Vector3; u: Vector3; v: Vector3 }
+  const flat = (): Flat => ({ c: new Vector3(), u: new Vector3(), v: new Vector3() });
+  /** Centre the map on the middle of cells[0..n). False if they have none. */
+  function centreOn(f: Flat, cells: ArrayLike<number>, n: number): boolean {
     let cx = 0, cy = 0, cz = 0;
-    for (let m = 0; m < nLoose; m++) { const o = loose[m] * 3; cx += rest[o]; cy += rest[o + 1]; cz += rest[o + 2]; }
-    hullC.set(cx, cy, cz);
-    if (hullC.lengthSq() < 1e-12) return;
-    hullC.normalize();
-    hullU.set(-hullC.y, hullC.x, 0);
-    if (hullU.lengthSq() < 1e-6) hullU.set(0, -hullC.z, hullC.y);
-    hullU.normalize();
-    hullV.crossVectors(hullC, hullU);
-    if (px.length < nLoose) { px = new Float64Array(nLoose * 2); py = new Float64Array(nLoose * 2); order = new Int32Array(nLoose * 2); }
-    for (let m = 0; m < nLoose; m++) {
-      const o = loose[m] * 3;
-      const w = (rest[o] * hullC.x + rest[o + 1] * hullC.y + rest[o + 2] * hullC.z) / R;
-      if (w < 0.2) return; // spread too far round the ball for a flat map
-      px[m] = (rest[o] * hullU.x + rest[o + 1] * hullU.y + rest[o + 2] * hullU.z) / (R * w);
-      py[m] = (rest[o] * hullV.x + rest[o + 1] * hullV.y + rest[o + 2] * hullV.z) / (R * w);
-      order[m] = m;
+    for (let m = 0; m < n; m++) { const o = cells[m] * 3; cx += rest[o]; cy += rest[o + 1]; cz += rest[o + 2]; }
+    f.c.set(cx, cy, cz);
+    if (f.c.lengthSq() < 1e-12) return false;
+    f.c.normalize();
+    f.u.set(-f.c.y, f.c.x, 0);
+    if (f.u.lengthSq() < 1e-6) f.u.set(0, -f.c.z, f.c.y);
+    f.u.normalize();
+    f.v.crossVectors(f.c, f.u);
+    return true;
+  }
+  /** Where cell c is on the map, into (mapX, mapY). False if it is too far round the ball
+   *  for a flat map. */
+  let mapX = 0, mapY = 0;
+  function onMap(f: Flat, c: number): boolean {
+    const o = c * 3;
+    const w = (rest[o] * f.c.x + rest[o + 1] * f.c.y + rest[o + 2] * f.c.z) / R;
+    if (w < 0.2) return false;
+    mapX = (rest[o] * f.u.x + rest[o + 1] * f.u.y + rest[o + 2] * f.u.z) / (R * w);
+    mapY = (rest[o] * f.v.x + rest[o + 1] * f.v.y + rest[o + 2] * f.v.z) / (R * w);
+    return true;
+  }
+  let px = new Float64Array(1 << 10), py = new Float64Array(1 << 10);
+  let order = new Int32Array(1 << 10);
+  /** The convex hull of cells[0..n) on the map, counter-clockwise, into (hx, hy). False, and
+   *  nothing in them, if a cell is off the map or there are fewer than three corners. */
+  function hullOf(f: Flat, cells: ArrayLike<number>, n: number, hx: number[], hy: number[]): boolean {
+    hx.length = hy.length = 0;
+    if (px.length < n) { px = new Float64Array(n * 2); py = new Float64Array(n * 2); order = new Int32Array(n * 2); }
+    for (let m = 0; m < n; m++) {
+      if (!onMap(f, cells[m])) return false;
+      px[m] = mapX; py[m] = mapY; order[m] = m;
     }
-    const idx = order.subarray(0, nLoose).sort((a, b) => px[a] - px[b] || py[a] - py[b]);
-    // monotone chain, counter-clockwise
+    const idx = order.subarray(0, n).sort((a, b) => px[a] - px[b] || py[a] - py[b]);
+    // monotone chain
     const turn = (k: number) => {
-      const n = hx.length;
-      return (hx[n - 1] - hx[n - 2]) * (py[k] - hy[n - 2]) - (hy[n - 1] - hy[n - 2]) * (px[k] - hx[n - 2]);
+      const h = hx.length;
+      return (hx[h - 1] - hx[h - 2]) * (py[k] - hy[h - 2]) - (hy[h - 1] - hy[h - 2]) * (px[k] - hx[h - 2]);
     };
-    for (let i = 0; i < nLoose; i++) {
+    for (let i = 0; i < n; i++) {
       const k = idx[i];
       while (hx.length >= 2 && turn(k) <= 0) { hx.pop(); hy.pop(); }
       hx.push(px[k]); hy.push(py[k]);
     }
     const lower = hx.length + 1;
-    for (let i = nLoose - 2; i >= 0; i--) {
+    for (let i = n - 2; i >= 0; i--) {
       const k = idx[i];
       while (hx.length >= lower && turn(k) <= 0) { hx.pop(); hy.pop(); }
       hx.push(px[k]); hy.push(py[k]);
     }
     hx.pop(); hy.pop();
-    if (hx.length < 3) hx.length = hy.length = 0;
+    if (hx.length < 3) { hx.length = hy.length = 0; return false; }
+    return true;
+  }
+
+  // The taut sheet. Film held up by the finger is flat between where it leaves the sphere,
+  // so the line it comes off along is straight from one free edge to the other: what is
+  // loose is convex. Each frame the convex hull of the loose cells is taken, and stuck film
+  // inside it lets go.
+  const hull = flat();
+  const hx: number[] = [], hy: number[] = [];
+  let rim = new Int32Array(1 << 10);
+  function buildHull() {
+    hx.length = hy.length = 0;
+    if (tune.straight < 0.5 || nLoose < 3 || nLoose > HULL_MAX) return;
+    if (!centreOn(hull, loose, nLoose)) return;
+    // Every loose cell has to be on the map, but only the ones on the rim of the loose film
+    // (a neighbour that is not loose) can be a corner of its hull: a few hundred to sort,
+    // not all of them.
+    if (rim.length < nLoose) rim = new Int32Array(nLoose * 2);
+    let nRim = 0;
+    for (let m = 0; m < nLoose; m++) {
+      const c = loose[m];
+      if (!onMap(hull, c)) return; // spread too far round the ball for a flat map
+      for (let k = 0; k < 8; k++) {
+        const n = nb[c * 8 + k];
+        if (n < 0 || st[n] === STUCK) { rim[nRim++] = c; break; }
+      }
+    }
+    hullOf(hull, rim, nRim, hx, hy);
   }
   /** Is stuck cell n under the taut sheet: inside the hull by more than half a cell? */
   function underSheet(n: number): boolean {
     const h = hx.length;
-    if (h === 0) return false;
-    const o = n * 3;
-    const w = (rest[o] * hullC.x + rest[o + 1] * hullC.y + rest[o + 2] * hullC.z) / R;
-    if (w < 0.2) return false;
-    const x = (rest[o] * hullU.x + rest[o + 1] * hullU.y + rest[o + 2] * hullU.z) / (R * w);
-    const y = (rest[o] * hullV.x + rest[o + 1] * hullV.y + rest[o + 2] * hullV.z) / (R * w);
-    const margin = 0.6 * CELL_RAD;
+    if (h === 0 || !onMap(hull, n)) return false;
+    const x = mapX, y = mapY, margin = 0.6 * CELL_RAD;
     for (let i = 0, j = h - 1; i < h; j = i++) {
       const ex = hx[i] - hx[j], ey = hy[i] - hy[j];
       if (ex * (y - hy[j]) - ey * (x - hx[j]) < margin * Math.hypot(ex, ey)) return false;
@@ -599,16 +627,15 @@ export function createPeeler(world: World) {
   // The fan: the film between the hand and the front that is being pulled. That is the
   // sheet worth seeing. Loose film outside it hangs from nothing any more (a front left
   // behind, a free edge) and is not drawn while the pull goes on: it only trails.
-  // The convex hull, in a flat (gnomonic) map, of the cells in the hand and the loose cells
-  // along the live front, handed to the shader (lift.fan), which cuts along it.
-  const fanC = new Vector3(), fanU = new Vector3(), fanV = new Vector3();
+  // The convex hull of the cells in the hand and the loose cells along the live front,
+  // handed to the shader (lift.fan), which cuts along it.
+  const fanMap = flat();
   const fx: number[] = [], fy: number[] = [];
-  let fanCells: number[] = [];
+  const fanCells: number[] = [];
   function buildFan() {
     lift.fan.n = 0;
-    fx.length = fy.length = 0;
     if (liveFront < 0) return;
-    fanCells = [];
+    fanCells.length = 0;
     for (let m = 0; m < nLoose; m++) if (st[loose[m]] === HELD) fanCells.push(loose[m]);
     const held = fanCells.length;
     for (let m = 0; m < nEdge; m++) {
@@ -621,42 +648,9 @@ export function createPeeler(world: World) {
     }
     const count = fanCells.length;
     if (count - held < 2) return;
-    let cx = 0, cy = 0, cz = 0;
-    for (const c of fanCells) { cx += rest[c * 3]; cy += rest[c * 3 + 1]; cz += rest[c * 3 + 2]; }
-    fanC.set(cx, cy, cz);
-    if (fanC.lengthSq() < 1e-12) return;
-    fanC.normalize();
-    fanU.set(-fanC.y, fanC.x, 0);
-    if (fanU.lengthSq() < 1e-6) fanU.set(0, -fanC.z, fanC.y);
-    fanU.normalize();
-    fanV.crossVectors(fanC, fanU);
-    const qx = new Float64Array(count), qy = new Float64Array(count);
-    for (let i = 0; i < count; i++) {
-      const o = fanCells[i] * 3;
-      const w = (rest[o] * fanC.x + rest[o + 1] * fanC.y + rest[o + 2] * fanC.z) / R;
-      if (w < 0.2) return; // spread too far round the ball for a flat map: all of it is shown
-      qx[i] = (rest[o] * fanU.x + rest[o + 1] * fanU.y + rest[o + 2] * fanU.z) / (R * w);
-      qy[i] = (rest[o] * fanV.x + rest[o + 1] * fanV.y + rest[o + 2] * fanV.z) / (R * w);
-    }
-    const idx = Array.from({ length: count }, (_, i) => i).sort((a, b) => qx[a] - qx[b] || qy[a] - qy[b]);
-    const turn = (k: number) => {
-      const n = fx.length;
-      return (fx[n - 1] - fx[n - 2]) * (qy[k] - fy[n - 2]) - (fy[n - 1] - fy[n - 2]) * (qx[k] - fx[n - 2]);
-    };
-    for (let i = 0; i < count; i++) {
-      const k = idx[i];
-      while (fx.length >= 2 && turn(k) <= 0) { fx.pop(); fy.pop(); }
-      fx.push(qx[k]); fy.push(qy[k]);
-    }
-    const lower = fx.length + 1;
-    for (let i = count - 2; i >= 0; i--) {
-      const k = idx[i];
-      while (fx.length >= lower && turn(k) <= 0) { fx.pop(); fy.pop(); }
-      fx.push(qx[k]); fy.push(qy[k]);
-    }
-    fx.pop(); fy.pop();
-    const h = fx.length;
-    if (h < 3) { fx.length = fy.length = 0; return; }
+    // off the map (spread too far round the ball): all of the film is shown
+    if (!centreOn(fanMap, fanCells, count) || !hullOf(fanMap, fanCells, count, fx, fy)) return;
+    const h = fx.length, fanC = fanMap.c, fanU = fanMap.u, fanV = fanMap.v;
     // for the shader: at most FAN_MAX corners, evenly thinned (the polygon only shrinks by it)
     const fan = lift.fan, step = Math.max(1, Math.ceil(h / FAN_MAX));
     let n = 0;
@@ -667,8 +661,10 @@ export function createPeeler(world: World) {
     fan.n = n >= 3 ? n : 0;
   }
 
-  /** `watch`: also write what the front feels to world.tension. */
+  /** `watch`: the pass of the frame that is also drawn. With the debug lines on, it writes
+   *  what the front feels to world.tension. */
   function release(watch: boolean) {
+    const draw = watch && world.show.debug;
     findFronts();
     if (watch) tension.count = 0;
     let spot = 0;
@@ -686,7 +682,7 @@ export function createPeeler(world: World) {
         const n = nb[c * 8 + k];
         if (st[n] !== STUCK) continue;
         left = true;
-        if (watch) web(c, n);
+        if (draw) web(c, n);
         if (pinned(n)) continue; // under the film above: it stays
         // not the front being pulled (and not just a leftover speck): it stays as it is
         const fo = frontSeen[n] === frontGen ? frontOf[n] : -1;
@@ -754,7 +750,7 @@ export function createPeeler(world: World) {
         const may = t * (1 + (tune.elastic + SHEAR_STRETCH * tune.shear * flat * ease) * fair);
         const over = d - may;
         const limit = need * ease * fair * (1 + tune.rough * jitter[n]);
-        if (watch) note(c, n, d / Math.max(may, 1e-9), limit > 1e-9 ? over / limit : 1, spot++ % 3 === 0);
+        if (draw) note(c, n, d / Math.max(may, 1e-9), limit > 1e-9 ? over / limit : 1, spot++ % 3 === 0);
         // under the taut sheet: it comes away whatever it feels itself
         if (under) { loosen(n, LOOSE, t, direct ? c : -2 - c); continue; }
         if (over <= 0) continue;
@@ -938,17 +934,14 @@ export function createPeeler(world: World) {
     rise,
     carry,
     clear,
-    step(dt: number) {
+    step() {
       if (!on) return;
       sheet();
       buildHull();
       for (let s = 0; s < SUB; s++) release(s === SUB - 1);
       deepen();
       write();
-      dirty = false;
     },
-    /** Rewrite the atlas without stepping (after start). */
-    flush() { if (on && dirty) { write(); dirty = false; } },
     /**
      * What has let go leaves the film for good: film texels of the piece reachable from a
      * loose particle without crossing a cut, as far as the peel front (the w = 0.5 line of

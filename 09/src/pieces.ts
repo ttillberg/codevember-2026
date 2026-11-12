@@ -1,11 +1,10 @@
 // Pieces: the connected regions of film, found by relabelling the id atlas (filmops.ts).
 
-import { Vector3 } from 'three';
 import type { Piece } from './state';
 import type { Labels } from './filmops';
 
 export function newPiece(id: number): Piece {
-  return { id, centroid: new Vector3(0, 0, 1), area: 0 };
+  return { id, area: 0 };
 }
 
 /** One whole film, id 1, as createFilm() makes it. */
@@ -26,8 +25,6 @@ export function syncPieces(pieces: Map<number, Piece>, L: Labels): void {
     const parent = old.get(L.old[c]);
     const pc = parent !== undefined && id === parent.id ? parent : newPiece(id);
     pc.area = L.area[c];
-    const cx = L.centroid[c * 3], cy = L.centroid[c * 3 + 1], cz = L.centroid[c * 3 + 2];
-    if (cx * cx + cy * cy + cz * cz > 0.5) pc.centroid.set(cx, cy, cz);
     pieces.set(id, pc);
   }
 }

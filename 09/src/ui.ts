@@ -1,7 +1,8 @@
-// The on-screen controls. Plain DOM, laid out by style.css: a tool switch, undo and redo,
-// bench, and a settings sheet with two tabs: the layers (each film and the sphere, and how
-// each looks) and the feel (sliders for the peel). Only the controls take pointers, never
-// the space between them: that belongs to the canvas.
+// The on-screen controls. Plain DOM, laid out by style.css: a bar under the sphere (the tool
+// picker, undo and redo, and while developing the gear), the help in the top right corner,
+// and the settings sheet the gear opens, with two tabs: the layers (each film and the sphere,
+// and how each looks) and the feel (sliders for the peel). Only the controls take pointers,
+// never the space between them: that belongs to the canvas.
 
 import type { Tool } from './state';
 import type { LayerEdit } from './layers';
@@ -62,7 +63,6 @@ const KNOBS: Array<[keyof Tune, string, number, number, string]> = [
   ['adhesion', 'cling', 0, 6, 'How hard the film sticks. Higher needs a longer pull before each bit lets go.'],
   ['shear', 'shear', 0, 15, 'How much film dragged flat along the surface holds out, compared with film folded back and peeled. Higher keeps the peel a narrow tongue along the pull.'],
   ['load', 'front', 0, 4, 'How much a wide peel front weighs. At 0 width makes no difference. Only matters with cling above 0.'],
-  ['stiff', 'taut', 0.1, 1, 'How tight the loose sheet is. Low is slack, 1 is taut. Looks only.'],
   ['lift', 'lift', 0, 1, 'How the hand pulls. 0 drags the film flat back over itself. 1 lifts it up and away as it goes, so the finger stays over the place where the film comes off.'],
   ['ghost', 'ghost', 0, 1, 'How visible the lifted film stays behind the front. 0 fades out, 1 stays solid. Looks only.'],
   ['height', 'band', 0, 2, 'How much of the lifted film is shown: it is cut off where it rises higher than this above the sphere (in radii). The rest of what is in the hand is not drawn.'],
@@ -192,6 +192,24 @@ function button(cls: string, onPress: () => void, label?: string) {
   return b;
 }
 
+/** A panel that a button opens. Keeps the open state on both, closes on Escape and, when a
+ *  `scope` is given, on a press anywhere outside it. `changed` hears every change. */
+function popover(opener: HTMLElement, panel: HTMLElement, scope: HTMLElement | null, changed?: (open: boolean) => void) {
+  let open = false;
+  const set = (o: boolean) => {
+    open = o;
+    panel.classList.toggle('open', o);
+    panel.inert = !o;
+    opener.classList.toggle('on', o);
+    opener.setAttribute('aria-expanded', String(o));
+    changed?.(o);
+  };
+  window.addEventListener('keydown', (e) => { if (e.key === 'Escape' && open) set(false); });
+  if (scope) window.addEventListener('pointerdown', (e) => { if (open && !scope.contains(e.target as Node)) set(false); }, true);
+  set(false);
+  return { set, get open() { return open; } };
+}
+
 const hex = (c: number) => '#' + c.toString(16).padStart(6, '0');
 const rgba = (c: number, a: number) => `rgba(${(c >> 16) & 255}, ${(c >> 8) & 255}, ${c & 255}, ${a})`;
 /** A film's colour at its opacity over what it lies on. */
@@ -224,23 +242,14 @@ export function createUi(h: UiHandlers): Ui {
   const pop = el('div', 'pick-pop');
   pick.append(toolButton, pop);
   bar.append(pick);
-  let current: Tool = h.tools[0];
-  let picking = false, hot: Tool | null = null;
+  let hot: Tool | null = null;
   /** A press on the button, or the T key held (`key`): then the stack is under the cursor. */
   const held = { y: 0, moved: false, down: false, key: false };
   const mouse = { x: 0, y: 0 };
-  let unplace = 0;
   const toolRows = new Map<Tool, HTMLButtonElement>();
   const keysOf = (t: Tool) => [String(h.tools.indexOf(t) + 1)];
   const setHot = (t: Tool | null) => { hot = t; for (const [k, b] of toolRows) b.classList.toggle('on', k === t); };
-  function setPicking(o: boolean) {
-    picking = o;
-    pop.classList.toggle('open', o);
-    pop.inert = !o;
-    toolButton.classList.toggle('on', o);
-    toolButton.setAttribute('aria-expanded', String(o));
-    if (!o) setHot(null);
-  }
+  const picker = popover(toolButton, pop, pick, (o) => { if (!o) setHot(null); });
   /** The tool of the row at this height, wherever the pointer is sideways; past the top the
    *  top one, back down over the button none: letting go there changes nothing. */
   function rowAt(y: number): Tool | null {
@@ -253,10 +262,9 @@ export function createUi(h: UiHandlers): Ui {
     }
     return y > bottom + 6 ? null : best;
   }
-  function choose(t: Tool) { setPicking(false); h.onTool(t); }
+  function choose(t: Tool) { picker.set(false); h.onTool(t); }
   /** The button shows `t`; the stack lists the others, the first of them nearest the button. */
   function showTool(t: Tool) {
-    current = t;
     toolButton.replaceChildren(toolIcon(t));
     toolButton.setAttribute('aria-label', `Tool: ${TOOL_TIP[t]}`);
     tip(toolButton, TOOL_TIP[t], 'T');
@@ -283,7 +291,6 @@ export function createUi(h: UiHandlers): Ui {
   }
   /** The stack back over its button (after the T key put it under the cursor). */
   function placeHome() {
-    window.clearTimeout(unplace);
     if (!pop.classList.contains('at')) return;
     jump(() => {
       pop.classList.remove('at', 'flip');
@@ -292,10 +299,10 @@ export function createUi(h: UiHandlers): Ui {
   }
   toolButton.addEventListener('pointerdown', (e) => {
     e.preventDefault();
-    if (picking) { setPicking(false); return; }
+    if (picker.open) { picker.set(false); return; }
     placeHome();
     held.y = e.clientY; held.moved = false; held.down = true; held.key = false;
-    setPicking(true);
+    picker.set(true);
   });
   // Held by its key, T, the stack opens just above the cursor, wherever that is, so nothing
   // is picked until the pointer moves up into it; the row under the pointer is picked when
@@ -303,7 +310,6 @@ export function createUi(h: UiHandlers): Ui {
   window.addEventListener('keydown', (e) => {
     if (e.code !== 'KeyT' || e.repeat || e.metaKey || e.ctrlKey || e.altKey) return;
     e.preventDefault();
-    window.clearTimeout(unplace);
     const PAD = 8, w = pop.offsetWidth, hgt = pop.offsetHeight, r = pick.getBoundingClientRect();
     const x = Math.min(window.innerWidth - w - PAD, Math.max(PAD, mouse.x - w / 2));
     const y = Math.min(window.innerHeight - hgt - PAD, Math.max(PAD, mouse.y - (hgt + 16)));
@@ -314,35 +320,30 @@ export function createUi(h: UiHandlers): Ui {
       pop.style.top = `${y - r.top}px`;
     });
     held.y = mouse.y; held.moved = true; held.down = true; held.key = true;
-    setPicking(true);
+    picker.set(true);
     setHot(null);
   });
   window.addEventListener('keyup', (e) => {
     if (e.code !== 'KeyT' || !held.key) return;
     held.key = false; held.down = false;
     const t = hot;
-    if (picking) { if (t) choose(t); else setPicking(false); }
-    unplace = window.setTimeout(() => { if (!held.key && !picking) placeHome(); }, 250); // once it has faded
+    if (picker.open) { if (t) choose(t); else picker.set(false); }
   });
   window.addEventListener('pointermove', (e) => {
     mouse.x = e.clientX; mouse.y = e.clientY;
-    if (!picking || !held.down) return;
+    if (!picker.open || !held.down) return;
     if (Math.abs(e.clientY - held.y) > 6) held.moved = true;
     if (held.moved) setHot(rowAt(e.clientY));
   });
   window.addEventListener('pointerup', (e) => {
-    if (!picking || !held.down || held.key) return;
+    if (!picker.open || !held.down || held.key) return;
     held.down = false;
     if (!held.moved) return; // a tap: the stack stays open
     const t = rowAt(e.clientY);
-    if (t) choose(t); else setPicking(false);
+    if (t) choose(t); else picker.set(false);
   });
   window.addEventListener('pointercancel', () => { held.down = false; });
-  // a press anywhere else closes it
-  window.addEventListener('pointerdown', (e) => { if (picking && !pick.contains(e.target as Node)) setPicking(false); }, true);
-  window.addEventListener('keydown', (e) => { if (e.key === 'Escape' && picking) setPicking(false); });
-  showTool(current);
-  setPicking(false);
+  showTool(h.tools[0]);
 
   const undo = button('undo', h.onBack, 'Undo');
   undo.append(icon(UNDO));
@@ -352,16 +353,14 @@ export function createUi(h: UiHandlers): Ui {
   tip(redo, 'Redo', `\u21e7 ${MOD} Z`);
 
   // Settings: the gear opens the sheet.
-  const gearButton = button('gear', () => setOpen(!open), 'Settings');
+  const gearButton = button('gear', () => sheetPop.set(!sheetPop.open), 'Settings');
   gearButton.append(icon(gear(), '<circle cx="12" cy="12" r="3"/>'));
-  gearButton.setAttribute('aria-expanded', 'false');
   tip(gearButton, 'Settings');
   // The settings are a workbench, not part of the piece: the gear is there while developing
   // (and with ?settings in the address), not on the published page.
   const withSettings = import.meta.env.DEV || new URLSearchParams(location.search).has('settings');
   bar.append(sep(), undo, redo);
   if (withSettings) bar.append(sep(), gearButton);
-  void current;
 
   // The sheet: two tabs over a body that scrolls on its own.
   const sheet = el('div', 'sheet');
@@ -709,25 +708,15 @@ export function createUi(h: UiHandlers): Ui {
   copy.textContent = 'copy';
   extras.append(copy);
 
-  let open = false;
-  function setOpen(o: boolean) {
-    open = o;
-    sheet.classList.toggle('open', o);
-    sheet.inert = !o;
-    gearButton.classList.toggle('on', o);
-    gearButton.setAttribute('aria-expanded', String(o));
-    if (!o) hideInfo();
-  }
-  setOpen(false);
+  // it stays open while peeling: no press outside closes it
+  const sheetPop = popover(gearButton, sheet, null, (o) => { if (!o) hideInfo(); });
   setTab('layers');
-  window.addEventListener('keydown', (e) => { if (e.key === 'Escape' && open) setOpen(false); });
 
   // Help, on its own in the top right corner (as on day 07): a flat question mark, and under
   // it what a drag does where and which keys there are.
   const help = el('div', 'help');
-  const helpButton = button('help-btn', () => setHelp(!helping), 'Help');
+  const helpButton = button('help-btn', () => helper.set(!helper.open), 'Help');
   helpButton.removeAttribute('title');
-  helpButton.setAttribute('aria-expanded', 'false');
   const q = document.createElementNS(SVG, 'svg');
   q.setAttribute('viewBox', '0 0 16 16');
   q.setAttribute('aria-hidden', 'true');
@@ -752,24 +741,14 @@ export function createUi(h: UiHandlers): Ui {
   }
   helpPop.append(dos);
   help.append(helpButton, helpPop);
-  let helping = false;
-  function setHelp(o: boolean) {
-    helping = o;
-    helpPop.classList.toggle('open', o);
-    helpPop.inert = !o;
-    helpButton.classList.toggle('on', o);
-    helpButton.setAttribute('aria-expanded', String(o));
-  }
-  setHelp(false);
-  window.addEventListener('pointerdown', (e) => { if (helping && !help.contains(e.target as Node)) setHelp(false); }, true);
-  window.addEventListener('keydown', (e) => { if (e.key === 'Escape' && helping) setHelp(false); });
+  const helper = popover(helpButton, helpPop, help);
 
   root.append(info, sheet, bar, help);
   document.body.append(root);
 
   return {
     setTool(t) {
-      if (picking) setPicking(false);
+      if (picker.open) picker.set(false);
       showTool(t);
     },
     syncLayers,

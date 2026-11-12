@@ -108,8 +108,6 @@ a.home { color: inherit; text-decoration: none; pointer-events: auto; cursor: po
   -webkit-backdrop-filter: blur(16px) saturate(1.4);
   backdrop-filter: blur(16px) saturate(1.4);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05), 0 6px 20px rgba(0, 0, 0, 0.28);
-}
-.btn {
   display: inline-flex; align-items: center; justify-content: center; gap: 6px;
   padding: 0 12px; margin: 0;
   font: inherit; color: inherit; white-space: nowrap;
@@ -179,17 +177,20 @@ a.home { color: inherit; text-decoration: none; pointer-events: auto; cursor: po
 /* on the right half of the screen the names go to the left, to stay on it */
 .pick-pop.flip .pick-label { left: auto; right: calc(100% + 14px); transform: translate(4px, -50%); }
 .pick-pop.flip.open button.on .pick-label { transform: translate(0, -50%); }
-.pick-label {
-  position: absolute; left: calc(100% + 14px); top: 50%; transform: translate(-4px, -50%);
+/* A grey pill of a name with its keys: over a button of the bar (.tip), beside a row of the
+   stack (.pick-label). Shown by whoever owns it. */
+.tip, .pick-label {
+  position: absolute;
   display: flex; align-items: center; gap: 6px; padding: 5px 10px; border-radius: 999px; white-space: nowrap;
   background: #777673; color: #fff; font: 500 11px/1 var(--font);
   opacity: 0; pointer-events: none; transition: opacity 0.12s, transform 0.12s;
 }
-.pick-label:has(kbd) { padding-right: 6px; }
-.pick-label kbd {
+.tip:has(kbd), .pick-label:has(kbd) { padding-right: 6px; }
+.tip kbd, .pick-label kbd {
   display: inline-flex; align-items: center; justify-content: center; min-width: 16px; height: 16px; padding: 0 4px;
   box-sizing: border-box; border-radius: 5px; background: #9a9996; color: #fff; font: inherit; font-size: 10px;
 }
+.pick-label { left: calc(100% + 14px); top: 50%; transform: translate(-4px, -50%); }
 .pick-pop.open button.on .pick-label { opacity: 1; transform: translate(0, -50%); }
 @media (hover: hover) { .pick-pop.open button:hover .pick-label { opacity: 1; transform: translate(0, -50%); } }
 /* Help: a flat question mark on its own in the top right, its panel opening under it (day 07). */
@@ -245,22 +246,14 @@ a.home { color: inherit; text-decoration: none; pointer-events: auto; cursor: po
 }
 /* open, the stack says it all: no tip over the button under it */
 .bar .tool.on .tip { display: none; }
-.dark .pick-pop { background: rgba(60, 60, 64, 0.6); box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.12), 0 8px 24px rgba(0, 0, 0, 0.3); }
+.dark .pick-pop, .dark .help-pop { background: rgba(60, 60, 64, 0.6); box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.12), 0 8px 24px rgba(0, 0, 0, 0.3); }
 
 .redo svg { transform: scaleX(-1); }
 
 /* What a button is, over it after a moment's hover, with its key. */
 .tip {
-  position: absolute; left: 50%; bottom: calc(100% + 12px); transform: translate(-50%, 4px); z-index: 2;
-  display: flex; align-items: center; gap: 6px; padding: 5px 10px; border-radius: 999px; white-space: nowrap;
-  background: #777673; color: #fff; font: 500 11px/1 var(--font);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12); pointer-events: none; opacity: 0;
-  transition: opacity 0.12s, transform 0.12s;
-}
-.tip:has(kbd) { padding-right: 6px; }
-.tip kbd {
-  display: inline-flex; align-items: center; justify-content: center; min-width: 16px; height: 16px; padding: 0 4px;
-  box-sizing: border-box; border-radius: 5px; background: #9a9996; color: #fff; font: inherit; font-size: 10px;
+  left: 50%; bottom: calc(100% + 12px); transform: translate(-50%, 4px); z-index: 2;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
 }
 @media (hover: hover) {
   .bar button:hover .tip { opacity: 1; transform: translate(-50%, 0); transition-delay: 0.35s; }
@@ -343,7 +336,7 @@ a.home { color: inherit; text-decoration: none; pointer-events: auto; cursor: po
 /* The open layer's settings, under its row. */
 .layer-set { padding: 2px 0 6px; margin-bottom: 4px; border-bottom: 1px solid var(--line); }
 .layer-set .swatches { height: var(--cell); padding-left: 2px; }
-.layer-line { display: flex; gap: 6px; padding: 4px 4px 0; align-items: center; }
+.layer-line { display: flex; flex-wrap: wrap; gap: 6px; padding: 4px 4px 0; align-items: center; }
 .well {
   position: relative; flex: none;
   display: inline-flex; align-items: center; gap: 6px;
@@ -469,14 +462,11 @@ a.home { color: inherit; text-decoration: none; pointer-events: auto; cursor: po
 }
 
 /* Under the sliders: toggles for what is drawn on top, and copy. */
-.extras { display: flex; flex-wrap: wrap; gap: 6px; border-top: 1px solid var(--line); margin-top: 4px; padding-top: 8px; }
-.extras .btn { flex: 1 1 0; min-width: 0; padding: 0 6px; font-size: 12px; white-space: nowrap; }
+.extras { display: flex; flex: none; flex-wrap: wrap; gap: 6px; border-top: 1px solid var(--line); margin-top: 4px; padding: 8px 0 2px; }
+.extras .btn { flex: 1 1 0; min-width: 0; height: 36px; min-height: 36px; padding: 0 6px; border-radius: 10px; font-size: 12px; white-space: nowrap; }
 .extras .btn[role="switch"]:not(.on) { color: rgba(255, 255, 255, 0.45); }
 .extras .btn.on { color: var(--accent); border-color: rgba(143, 208, 255, 0.35); background-color: rgba(143, 208, 255, 0.14); }
-.extras { flex: none; padding-bottom: 2px; }
-.extras .btn { height: 36px; min-height: 36px; border-radius: 10px; }
 .layer-set:last-child { border-bottom: 0; margin-bottom: 0; }
-.layer-line { flex-wrap: wrap; }
 /* A narrow sheet (short landscape): the print choice gets a line of its own. */
 @media (min-aspect-ratio: 1/1) and (max-height: 599px) {
   .mini-seg { order: -1; flex-basis: 100%; }

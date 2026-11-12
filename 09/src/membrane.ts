@@ -45,14 +45,10 @@ const ENV_SPEC_GLOSS = 1.0;
 const ENV_SPEC_MATTE = 0.1;
 const DIRECT_SPEC_MATTE = 0.3;
 
-// Lifted film, in lattice cells behind the peel front: nearly gone after LIFT_FADE_CELLS, lit
-// by its own shape instead of the sphere's after LIFT_NORMAL_CELLS.
-const LIFT_FADE_CELLS = 7.0;
+// Lifted film is lit by its own shape instead of the sphere's from LIFT_NORMAL_CELLS lattice
+// cells behind the peel front on. It is one even material: its own folds only tilt the light
+// part of the way.
 const LIFT_NORMAL_CELLS = 2.0;
-// The film is one even material. Where it is pulled thin a little more shows through, where
-// it bunches it is a touch darker, and its own folds only tilt the light part of the way.
-const LIFT_THIN = 0.3;      // how much stretch thins it: 0 not at all, 1 in full
-const LIFT_FOLD_SHADE = 0.1; // darkening where it is gathered
 const LIFT_FOLD_NORMAL = 0.7;
 // A film has no thickness to draw, but its rim tilts the light a little over a few texels,
 // so it reads as lying on what is under it. Height in radii, width in film texels.
@@ -176,16 +172,6 @@ float hash13(vec3 p3) {
   p3 += dot(p3, p3.zyx + 31.32);
   return fract((p3.x + p3.y) * p3.z);
 }
-float vnoise(vec3 p) {
-  vec3 i = floor(p);
-  vec3 f = fract(p);
-  f = f * f * (3.0 - 2.0 * f);
-  return mix(
-    mix(mix(hash13(i), hash13(i + vec3(1, 0, 0)), f.x),
-        mix(hash13(i + vec3(0, 1, 0)), hash13(i + vec3(1, 1, 0)), f.x), f.y),
-    mix(mix(hash13(i + vec3(0, 0, 1)), hash13(i + vec3(1, 0, 1)), f.x),
-        mix(hash13(i + vec3(0, 1, 1)), hash13(i + vec3(1, 1, 1)), f.x), f.y), f.z);
-}
 vec3 perpTo(vec3 d) {
   vec3 a = abs(d.x) < 0.9 ? vec3(1.0, 0.0, 0.0) : vec3(0.0, 1.0, 0.0);
   return normalize(cross(d, a));
@@ -240,7 +226,6 @@ uniform sampler2D uCover; // film.cover: bilinear, film where the filtered value
 ${LIFT_GLSL}
 
 uniform sampler2D uId;    // film.id: nearest, low and high byte of the piece id
-uniform vec4 uUnder;      // this film's underside rgb, roughness
 uniform vec3 uTop;        // this film's opacity, translucent (0/1), scatter alpha
 uniform sampler2D uPrint; // ink coverage of the print on the film, tiles
 uniform float uPrintOn;   // 1 this film carries the label, 0 not
@@ -252,10 +237,7 @@ uniform float uAboveLift; // 1 the film over this one is being pulled
 uniform float uGrid;      // 1 draws the millimetre grid on the sphere, 0 leaves it plain
 uniform vec4 uEnv;        // env diffuse, env specular gloss / matte, direct specular matte
 
-#define LIFT_FADE_CELLS ${LIFT_FADE_CELLS.toFixed(1)}
 #define LIFT_NORMAL_CELLS ${LIFT_NORMAL_CELLS.toFixed(1)}
-#define LIFT_THIN ${LIFT_THIN.toFixed(3)}
-#define LIFT_FOLD_SHADE ${LIFT_FOLD_SHADE.toFixed(3)}
 #define LIFT_FOLD_NORMAL ${LIFT_FOLD_NORMAL.toFixed(3)}
 #define LIFT_GLOSS ${LIFT_GLOSS.toFixed(3)}
 #define FAN_EDGE ${(FAN_EDGE * Math.PI / (2 * LIFT_M)).toFixed(6)}
@@ -363,7 +345,6 @@ float grooveShade(sampler2D film, vec3 P, float open) {
 
 #ifdef ROLE_ATTACHED
 uniform int uHoverId;     // the piece a press would grab, 0 none
-uniform float uHoverOk;   // 1 it can be pulled, 0 too wide
 
 // Debug outline of the hovered piece: 1 within HOVER_PX pixels of where its film ends.
 #define HOVER_PX 2.5
@@ -454,7 +435,6 @@ const FRAG_PRE = /* glsl */ `
   float fcw = max(fwidth(fc), 1e-4);
   float cov = coverAA(fc, fcw);
   float shade = 1.0;
-  bool backFilm = false;
 #ifdef ROLE_UNDER
   shade = grooveShade(uCover, P, 1.0 - cov);
 #else
@@ -468,11 +448,6 @@ const FRAG_PRE = /* glsl */ `
   // How much of the film above is missing here, for the hairline of its cuts on this one.
   float ac = texture(uAbove, fuv).r;
   float aboveOpen = 1.0 - coverAA(ac, max(fwidth(ac), 1e-4));
-#endif
-#ifdef ROLE_LIFTED
-  vec3 dN = cross(dFdx(vViewPosition), dFdy(vViewPosition));
-  // How much the sheet is stretched here: its area now over its area at rest.
-  float stretch = clamp(length(dN) / max(length(cross(dFdx(vLocal), dFdy(vLocal))), 1e-20), 0.25, 8.0);
 #endif
 #ifndef ROLE_UNDER
   if (cov <= 0.0) discard;
@@ -520,12 +495,10 @@ const FRAG_COLOR = /* glsl */ `
 #ifdef ROLE_UNDER
   diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.2, 0.27, 0.36), 0.7 * uGrid * mmGrid(P)); // grey-blue ink
 #else
-  #ifdef ROLE_LIFTED
-  // Both sides of the film look the same: gathered film turns its facets every which way,
+  // Both sides of lifted film look the same: gathered film turns its facets every which way,
   // and a different underside would show each one.
-  #endif
   // The print: ink on the film, so it travels with every piece and shows mirrored from behind.
-  float ink = uNet > 0.5 ? netVein : texture2D(uPrint, printUV(P)).r * (backFilm ? 0.55 : 1.0) * uPrintOn;
+  float ink = uNet > 0.5 ? netVein : texture2D(uPrint, printUV(P)).r * uPrintOn;
   #ifdef ROLE_LIFTED
   ink = 0.0; // peeled film is plain: its own flat, see-through look, no print
   #endif
@@ -539,7 +512,7 @@ const FRAG_COLOR = /* glsl */ `
   if (uHoverId != 0 && pid == uHoverId) {
     // Debug outline of the piece a press would grab. Magenta: pull it. Grey: too wide, cut it narrower.
     float k = hoverLine(P, dPx, dPy, pid, fcw);
-    diffuseColor.rgb = mix(diffuseColor.rgb, uHoverOk > 0.5 ? vec3(1.0, 0.0, 0.55) : vec3(0.25), k);
+    diffuseColor.rgb = mix(diffuseColor.rgb, vec3(1.0, 0.0, 0.55), k);
     diffuseColor.a = max(diffuseColor.a, k * cov);
   }
   #endif
@@ -565,12 +538,6 @@ const FRAG_COLOR = /* glsl */ `
 #endif
 `;
 
-const FRAG_ROUGH = /* glsl */ `
-#ifdef ROLE_LIFTED
-  if (backFilm) roughnessFactor = clamp(uUnder.a * (0.5 + 1.0 * vnoise(P * 9.0 + 4.0)), 0.05, 1.0);
-#endif
-`;
-
 const FRAG_LIGHTS = /* glsl */ `
   {
     float rk = smoothstep(0.25, 0.85, material.roughness);
@@ -578,17 +545,6 @@ const FRAG_LIGHTS = /* glsl */ `
     reflectedLight.indirectSpecular *= mix(uEnv.y, uEnv.z, rk);
     reflectedLight.directSpecular *= mix(1.0, uEnv.w, rk);
   }
-`;
-
-const FRAG_MATERIAL = /* glsl */ `
-#ifdef ROLE_LIFTED
-  if (backFilm) {
-    #ifdef USE_CLEARCOAT
-      material.clearcoat = 0.5;
-      material.clearcoatRoughness = clamp(0.06 + geometryRoughness, 0.045, 1.0);
-    #endif
-  }
-#endif
 `;
 
 const FRAG_POST = /* glsl */ `
@@ -631,9 +587,6 @@ function makeMaterial(
     side: role === 'lifted' ? DoubleSide : FrontSide,
     transparent: role !== 'under',
     metalness: 0,
-    // Only there so the underside can switch it on in the shader; layers do not use it.
-    clearcoat: 1e-3,
-    clearcoatRoughness: 0.05,
   });
   mat.forceSinglePass = true;
   mat.depthWrite = true;
@@ -648,9 +601,7 @@ function makeMaterial(
     fs = patch(fs, 'void main() {', define + COMMON + FRAG_PARS, true);
     fs = patch(fs, '#include <clipping_planes_fragment>', FRAG_PRE);
     fs = patch(fs, '#include <color_fragment>', FRAG_COLOR);
-    fs = patch(fs, '#include <metalnessmap_fragment>', FRAG_ROUGH);
     fs = patch(fs, '#include <normal_fragment_begin>', FRAG_NORMAL);
-    fs = patch(fs, '#include <lights_physical_fragment>', FRAG_MATERIAL);
     fs = patch(fs, '#include <lights_fragment_end>', FRAG_LIGHTS);
     fs = patch(fs, '#include <opaque_fragment>', FRAG_POST, true);
     shader.fragmentShader = fs;
@@ -728,7 +679,6 @@ export function createMembrane(ctx: Ctx): Module {
     uFan: { value: world.lift.fan.pts },
     uFanN: { value: 0 },
     uFinger: { value: new Vector4(0, 0, 0, 0) },
-    uHoverOk: { value: 1 },
     uPrint: { value: makePrint(ctx.renderer.capabilities.getMaxAnisotropy()) },
     uEnv: { value: new Vector4(ENV_DIFFUSE, ENV_SPEC_GLOSS, ENV_SPEC_MATTE, DIRECT_SPEC_MATTE) },
   };
@@ -739,7 +689,6 @@ export function createMembrane(ctx: Ctx): Module {
     uId: { value: atlases[k].id },
     uLiftId: { value: 0 },  // the pulled piece when this is the film pulled, else 0
     uHoverId: { value: 0 }, // the hovered piece when it is on this film, else 0
-    uUnder: { value: new Vector4(1, 1, 1, 0.25) },
     uTop: { value: new Vector3(1, 0, 1) },
     uPrintOn: { value: 0 }, // 1 this film carries the label
     uNet: { value: 0 },
@@ -790,8 +739,7 @@ export function createMembrane(ctx: Ctx): Module {
       curFilms[k] = world.films[k];
       applyLayer(attached[k].material, layer);
       const u = perFilm[k];
-      const uc = layer.under.color;
-      u.uUnder.value.set(uc.r, uc.g, uc.b, layer.under.roughness);
+
       const op = layer.opacity;
       const translucent = op < 0.999;
       // A milky film: it simply lays its own colour over what is underneath.
@@ -852,7 +800,6 @@ export function createMembrane(ctx: Ctx): Module {
       const p = perFilm[pk];
       liftU.uCover.value = p.uCover.value;
       liftU.uId.value = p.uId.value;
-      liftU.uUnder.value = p.uUnder.value;
       liftU.uTop.value = p.uTop.value;
       liftU.uLiftId.value = lift.id;
       lifted.scale.setScalar(filmScale(pk));
@@ -862,7 +809,6 @@ export function createMembrane(ctx: Ctx): Module {
       underU.uId.value = b.uId.value;
       underU.uLiftId.value = b.uLiftId.value;
 
-      shared.uHoverOk.value = hover.ok ? 1 : 0;
       shared.uLiftFade.value = lift.fade;
       shared.uGrid.value = world.show.grid ? 1 : 0;
       shared.uLiftGhost.value = lift.ghost;

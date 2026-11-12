@@ -12,8 +12,6 @@ export interface Layer {
   roughness: number;
   /** 1 opaque. Below 1 a milky film: its colour is laid over what is underneath. */
   opacity: number;
-  /** The back of the film once it is lifted. */
-  under: { color: Color; roughness: number };
   /** In the hand (film only): how far it stretches before it passes the pull on (0 none,
    *  0.3 rubbery), and how hard it clings, in particle cells of overdrawn pull. */
   elastic: number;
@@ -76,7 +74,6 @@ export function makeLayer(index: number, variant = 0): Layer {
     color: new Color(r.color),
     roughness: r.roughness,
     opacity: r.opacity,
-    under: { color: new Color(r.color), roughness: 0.4 },
     elastic: r.elastic ?? 0.1,
     adhesion: r.adhesion ?? 1,
     eye: r.eye === true,
@@ -104,7 +101,6 @@ export function editLayer(layer: Layer, e: LayerEdit): Layer {
   return {
     ...layer,
     color,
-    under: { color: color.clone(), roughness: layer.under.roughness },
     opacity: e.opacity ?? layer.opacity,
     roughness: e.roughness ?? layer.roughness,
     metalness: e.metalness ?? layer.metalness,

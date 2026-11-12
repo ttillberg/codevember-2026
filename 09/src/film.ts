@@ -78,8 +78,7 @@ export function faceToDir(face: number, x: number, y: number, out: Float64Array 
 }
 
 /** The same mapping for the shaders. filmUV(p) is the atlas uv of a sphere-local point,
- *  kept half a texel inside its face so bilinear filtering never bleeds a neighbour in.
- *  filmTexel(p) is the integer atlas texel, for texelFetch on the id atlas. */
+ *  kept half a texel inside its face so bilinear filtering never bleeds a neighbour in. */
 export const FILM_GLSL = /* glsl */ `
 #define FILM_N ${FILM_N}.0
 void filmFace(vec3 p, out float face, out vec2 uv) {
@@ -95,11 +94,5 @@ vec2 filmUV(vec3 p) {
   filmFace(p, face, uv);
   uv = clamp(uv, 0.5 / FILM_N, 1.0 - 0.5 / FILM_N);
   return (vec2(mod(face, 3.0), floor(face / 3.0)) + uv) / vec2(3.0, 2.0);
-}
-ivec2 filmTexel(vec3 p) {
-  float face; vec2 uv;
-  filmFace(p, face, uv);
-  vec2 t = min(floor(uv * FILM_N), FILM_N - 1.0);
-  return ivec2(vec2(mod(face, 3.0), floor(face / 3.0)) * FILM_N + t);
 }
 `;

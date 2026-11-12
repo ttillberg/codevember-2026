@@ -105,13 +105,6 @@ export function coveredOver(films: Film[], layer: number, x: number, y: number, 
   return coveredAt(films, layer, tmp[0], Math.min(N - 1, tmp[1] | 0), Math.min(N - 1, tmp[2] | 0));
 }
 
-/** The film on top at a direction: its index in films, -1 where the sphere is bare. */
-export function topFilm(films: Film[], x: number, y: number, z: number): number {
-  const k = texelAt(x, y, z);
-  for (let q = 0; q < films.length; q++) if (films[q].cover[k] >= 128) return q;
-  return -1;
-}
-
 // A cut only goes into the film on top where it lands, never through two. Which film that
 // is for a texel is settled the first time a stroke touches it and kept for the rest of the
 // stroke: otherwise the next stamp, finding the top film already cut there, would carry on
@@ -269,35 +262,6 @@ export function fillFilm(film: Film): void {
 
 // ---------------------------------------------------------------------------- removing
 
-/** Film of piece `id` with p·d < sinF goes, with a one-texel ramp across the fold line.
- *  Returns how many texels changed. Relabel afterwards. */
-export function removeBehind(film: Film, id: number, dx: number, dy: number, dz: number, sinF: number): number {
-  const cover = film.cover, ids = ids16(film);
-  const inv = 1 / (Math.max(0.05, Math.sqrt(Math.max(0, 1 - sinF * sinF))) * TEXEL);
-  const d = [dx, dy, dz];
-  let n = 0;
-  for (let f = 0; f < 6; f++) {
-    bounds(film, id, f);
-    const vc = SGN[f] * d[AX_C[f]], va = d[AX_A[f]], vb = d[AX_B[f]];
-    for (let j = bb[2]; j < bb[3]; j++) {
-      const b = TC[j], b2 = 1 + b * b;
-      const row = texelIndex(f, 0, j);
-      for (let i = bb[0]; i < bb[1]; i++) {
-        const k = row + i;
-        if (ids[k] !== id) continue;
-        const a = TC[i];
-        // 0.5 on the fold line, in texels of angle past it
-        const t = ((vc + a * va + b * vb) / Math.sqrt(b2 + a * a) - sinF) * inv + 0.5;
-        if (t >= 1) continue;
-        const v = t <= 0 ? 0 : (t * 255 + 0.5) | 0;
-        if (v < cover[k]) { cover[k] = v; n++; }
-      }
-    }
-  }
-  if (n) film.coverVersion++;
-  return n;
-}
-
 /** All film of piece `id` goes. Returns how many texels changed. Relabel afterwards. */
 export function erasePiece(film: Film, id: number): number {
   const cover = film.cover, ids = ids16(film);
@@ -410,23 +374,15 @@ export interface Labels {
   old: Int32Array;
   /** Fraction of the sphere. */
   area: Float64Array;
-  /** Unit centroid, xyz; 0 when the piece is too even to have one (the whole sphere). */
-  centroid: Float64Array;
-  /** Boundary texel directions, xyz, piece c at [bStart[c], bStart[c] + bCount[c]). */
-  bStart: Int32Array;
-  bCount: Int32Array;
-  bnd: Float32Array;
 }
 
 const out: Labels = {
   n: 0,
   id: new Int32Array(MAX_ID), old: new Int32Array(MAX_ID),
-  area: new Float64Array(MAX_ID), centroid: new Float64Array(MAX_ID * 3),
-  bStart: new Int32Array(MAX_ID), bCount: new Int32Array(MAX_ID),
-  bnd: new Float32Array(0),
+  area: new Float64Array(MAX_ID),
 };
 const size = new Int32Array(MAX_ID);
-const acc = new Float64Array(MAX_ID * 4);
+const acc = new Float64Array(MAX_ID);
 
 // Texel bounds of each piece on each face from the last relabel, i0, i1, j0, j1 (ends
 // exclusive) at (id * 6 + f) * 4. Ids only change in a relabel, so they stay exact. An id
@@ -479,41 +435,13 @@ function runAt(r: number, i: number): number {
   return -1;
 }
 
-// Boundary texels found during the pass: piece index, row, column.
-let bCap = 1 << 14;
-let bC = new Int32Array(bCap), bR = new Int32Array(bCap), bI = new Int32Array(bCap);
-let bN = 0;
-function pushB(c: number, r: number, i: number) {
-  if (bN === bCap) {
-    bCap *= 2;
-    const g = (a: Int32Array) => { const b = new Int32Array(bCap); b.set(a); return b; };
-    bC = g(bC); bR = g(bR); bI = g(bI);
-  }
-  bC[bN] = c; bR[bN] = r; bI[bN] = i; bN++;
-}
-/** Texels of [s, e) in row r with no film in row rn next to them go on the boundary. */
-function gaps(c: number, r: number, s: number, e: number, rn: number, from: number): number {
-  const end = rowRun[rn + 1];
-  let n = from;
-  while (n < end && rE[n] <= s) n++;
-  const keep = n;
-  let pos = s;
-  for (; n < end && rS[n] < e; n++) {
-    for (let i = pos; i < rS[n]; i++) pushB(c, r, i);
-    if (rE[n] > pos) pos = rE[n];
-  }
-  for (let i = pos; i < e; i++) pushB(c, r, i);
-  return keep;
-}
-
-// Per-row prefix sums of texel solid angle, of solid angle / |p| and of a · that (the
-// in-face pieces of ∫ p dΩ), the same on every face.
-let COM: Float64Array | null = null, COMIL: Float64Array | null = null, CAOMIL: Float64Array | null = null;
+// Per-row prefix sums of texel solid angle, the same on every face.
+let COM: Float64Array | null = null;
 let OM_TOTAL = 0;
 function tables() {
   if (COM) return;
   const M = N + 1;
-  COM = new Float64Array(N * M); COMIL = new Float64Array(N * M); CAOMIL = new Float64Array(N * M);
+  COM = new Float64Array(N * M);
   const da = Math.PI / (2 * N);
   let tot = 0;
   for (let j = 0; j < N; j++) {
@@ -522,8 +450,6 @@ function tables() {
       const a = TC[i], l2 = 1 + a * a + b * b, l = Math.sqrt(l2);
       const om = ((1 + a * a) * (1 + b * b) * da * da) / (l2 * l);
       COM[o + i + 1] = COM[o + i] + om;
-      COMIL[o + i + 1] = COMIL[o + i] + om / l;
-      CAOMIL[o + i + 1] = CAOMIL[o + i] + (a * om) / l;
     }
     tot += COM[o + N];
   }
@@ -638,23 +564,20 @@ export function relabel(film: Film, reserved: Iterable<number>): Labels {
   }
   for (let c = 0; c < n; c++) best[out.old[c]] = -1;
 
-  // Pass 2: write ids, sum solid angle and centroid, find boundary texels, erase crumbs.
+  // Pass 2: write ids, sum solid angle, erase crumbs.
   ids.fill(0);
-  acc.fill(0, 0, n * 4);
-  const pid = out.id, com = COM!, comil = COMIL!, caomil = CAOMIL!, M = N + 1;
+  acc.fill(0, 0, n);
+  const pid = out.id, com = COM!, M = N + 1;
   gen++;
   boxFilm = film;
   for (let c = 0; c < n; c++) {
     boxGen[pid[c]] = gen;
     for (let q = pid[c] * 24, end = q + 24; q < end; q += 4) { BOX[q] = N; BOX[q + 1] = 0; BOX[q + 2] = N; BOX[q + 3] = 0; }
   }
-  bN = 0;
   let erased = 0;
   for (let r = 0; r < 6 * N; r++) {
     const f = (r / N) | 0, j = r - f * N;
-    const row = texelIndex(f, 0, j), b = TC[j], o = j * M;
-    const ci = 1 + AX_C[f], ai = 1 + AX_A[f], bi = 1 + AX_B[f], sg = SGN[f];
-    let below = j > 0 ? rowRun[r - 1] : 0, above = j < N - 1 ? rowRun[r + 1] : 0;
+    const row = texelIndex(f, 0, j), o = j * M;
     for (let m = rowRun[r]; m < rowRun[r + 1]; m++) {
       const s = rS[m], e = rE[m], c = cmp[m];
       if (c < 0) { cover.fill(0, row + s, row + e); erased++; continue; }
@@ -664,49 +587,10 @@ export function relabel(film: Film, reserved: Iterable<number>): Labels {
       if (e > BOX[bq + 1]) BOX[bq + 1] = e;
       if (j < BOX[bq + 2]) BOX[bq + 2] = j;
       if (j + 1 > BOX[bq + 3]) BOX[bq + 3] = j + 1;
-      const w = comil[o + e] - comil[o + s], q = c * 4;
-      acc[q] += com[o + e] - com[o + s];
-      acc[q + ci] += sg * w;
-      acc[q + ai] += caomil[o + e] - caomil[o + s];
-      acc[q + bi] += b * w;
-      if (s > 0) pushB(c, r, s);
-      if (e < N) pushB(c, r, e - 1);
-      if (j > 0) below = gaps(c, r, s, e, r - 1, below);
-      if (j < N - 1) above = gaps(c, r, s, e, r + 1, above);
+      acc[c] += com[o + e] - com[o + s];
     }
   }
-  for (let e = 0; e < E.length; e += 4) {
-    const a = runAt(E[e], E[e + 1]);
-    if (a >= 0 && cmp[a] >= 0 && runAt(E[e + 2], E[e + 3]) < 0) pushB(cmp[a], E[e], E[e + 1]);
-  }
-
-  // Boundary texels grouped by piece, as directions.
-  const bs = out.bStart, bc = out.bCount;
-  bc.fill(0, 0, n);
-  for (let m = 0; m < bN; m++) bc[bC[m]]++;
-  let start = 0;
-  for (let c = 0; c < n; c++) { bs[c] = start; start += bc[c]; bc[c] = 0; }
-  if (out.bnd.length < start * 3) out.bnd = new Float32Array(Math.max(start * 3, out.bnd.length * 2));
-  const bnd = out.bnd;
-  for (let m = 0; m < bN; m++) {
-    const c = bC[m], r = bR[m];
-    const f = (r / N) | 0;
-    const a = TC[bI[m]], b = TC[r - f * N];
-    const il = 1 / Math.sqrt(1 + a * a + b * b);
-    const o = (bs[c] + bc[c]++) * 3;
-    bnd[o + AX_C[f]] = SGN[f] * il;
-    bnd[o + AX_A[f]] = a * il;
-    bnd[o + AX_B[f]] = b * il;
-  }
-
-  for (let c = 0; c < n; c++) {
-    const q = c * 4;
-    out.area[c] = acc[q] / OM_TOTAL;
-    const cx = acc[q + 1], cy = acc[q + 2], cz = acc[q + 3];
-    const l = Math.hypot(cx, cy, cz);
-    const k = l > 1e-4 * acc[q] ? 1 / l : 0;
-    out.centroid[c * 3] = cx * k; out.centroid[c * 3 + 1] = cy * k; out.centroid[c * 3 + 2] = cz * k;
-  }
+  for (let c = 0; c < n; c++) out.area[c] = acc[c] / OM_TOTAL;
   out.n = n;
   film.idVersion++;
   if (erased) film.coverVersion++;

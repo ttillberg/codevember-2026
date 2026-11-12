@@ -28,8 +28,9 @@
 // Peeling (peel.ts simulates it, membrane.ts draws it, lift.ts is their contract)
 //   The film round a grab is a lattice of particles. Each one is stuck to the sphere until
 //   the film pulling on it is stretched too far, then it lets go for good. Loose particles
-//   are a little elastic sheet tied to the finger. The peel front is wherever loose meets
-//   stuck: it bends round the finger and hangs on the ends of cuts by itself.
+//   are drawn as a film pulled taut between the front and the finger. The peel front is
+//   wherever loose meets stuck: it bends round the finger and hangs on the ends of cuts by
+//   itself.
 
 import { Quaternion, Vector3 } from 'three';
 import type { Layer } from './layers';
@@ -38,18 +39,15 @@ import type { Lift } from './lift';
 
 export const R = 1;
 
-/** hand: peel from an edge, or turn the sphere. line: a straight cut through the whole
- *  sphere along a dragged line. free: draw a cut on the surface. */
-/** peel: take hold of the film and pull (with Cmd or Ctrl held: the knife on the sphere, the
- *  ruler off it; with Shift held: a scratch). knife: a cut drawn by hand. ruler: a straight cut right round, aimed as a
- *  line. scratch: a few cuts side by side, like a paw. */
+/** peel: take hold of the film and pull, or turn the sphere (with Cmd or Ctrl held: the
+ *  knife on the sphere, the ruler off it; with Shift held: a scratch). knife: a cut drawn
+ *  by hand. ruler: a straight cut right round, aimed as a line. scratch: a few cuts side by
+ *  side, like a paw. */
 export type Tool = 'peel' | 'knife' | 'ruler' | 'scratch';
 
 export interface Piece {
   /** Its value in the id atlas, 1..65535. Changes when the film is relabelled. */
   id: number;
-  /** Unit vector, roughly the middle of the piece. */
-  centroid: Vector3;
   /** Fraction of the sphere this piece covers, 0..1. */
   area: number;
 }
@@ -61,15 +59,6 @@ export interface Aim {
   /** false when the line misses the sphere. */
   valid: boolean;
 }
-
-export interface WorldEvents {
-  /** Film was peeled away. */
-  peeled: {};
-  /** No film is left. */
-  filmGone: {};
-}
-
-export type Listener<K extends keyof WorldEvents> = (e: WorldEvents[K]) => void;
 
 export interface World {
   /** The films, from the one on top down. Between 1 and FILMS_MAX (layers.ts) of them:
@@ -90,8 +79,8 @@ export interface World {
   tool: Tool;
   aim: Aim;
   /** The piece a press would grab right now (peeling): which film, and its id there, 0
-   *  when there is none. ok is always true today. Drawn as a debug outline of that piece. */
-  hover: { layer: number; id: number; ok: boolean };
+   *  when there is none. Drawn as a debug outline of that piece. */
+  hover: { layer: number; id: number };
   /** Where the finger really is while it pulls: the edge point it took hold of and the point
    *  it has carried that to (unit, sphere-local; it rolls on over the back of the sphere past
    *  the silhouette), and how high it holds the film. Drawn as a cross bent round the sphere. */
@@ -108,10 +97,6 @@ export interface World {
    *  segment, xyz) with a colour a point (rgb). Blue slack, yellow taut, red about to let
    *  go. `count` is the number of points in use this frame. */
   tension: { pos: Float32Array; col: Float32Array; count: number };
-  /** Seconds. */
-  time: number;
-  on<K extends keyof WorldEvents>(type: K, fn: Listener<K>): void;
-  emit<K extends keyof WorldEvents>(type: K, e: WorldEvents[K]): void;
 }
 
 /** Everything a module gets at creation. */

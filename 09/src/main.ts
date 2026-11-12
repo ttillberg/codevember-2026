@@ -52,7 +52,6 @@ let last = performance.now();
 function frame(now: number) {
   const dt = Math.min((now - last) / 1000, 1 / 20);
   last = now;
-  world.time += dt;
   for (const m of modules) m.update(dt);
   renderer.render(scene, camera);
   requestAnimationFrame(frame);
