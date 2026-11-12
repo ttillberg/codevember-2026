@@ -174,6 +174,16 @@ canvas.addEventListener('pointerdown', (e) => {
   downX = e.clientX;
   downY = e.clientY;
 });
+// is the bird under this point? A capsule from the belly to the head is plenty
+const capA = new THREE.Vector3();
+const capB = new THREE.Vector3();
+function tapsBird(x: number, y: number) {
+  ndc.set((x / window.innerWidth) * 2 - 1, -(y / window.innerHeight) * 2 + 1);
+  ray.setFromCamera(ndc, camera);
+  bird.root.getWorldPosition(capA).y += 0.25;
+  bird.headPosition(capB);
+  return ray.ray.distanceSqToSegment(capA, capB) < 0.22 * 0.22;
+}
 // full screen + clean: no title, no hint, the bird alone (?clean starts there, without full screen)
 const fsButton = document.querySelector<HTMLButtonElement>('.fs');
 const setClean = (on: boolean) => document.body.classList.toggle('clean', on);
@@ -199,7 +209,9 @@ canvas.addEventListener('pointerup', (e) => {
   if (settings.isOpen()) return settings.open(false);
   // a click, not a drag
   if (performance.now() - downAt < 250 && Math.hypot(e.clientX - downX, e.clientY - downY) < 6) {
-    if (pointerOnPlane(e.clientX, e.clientY, 0.6, seedAt)) seeds.spawn(seedAt);
+    // on a phone, a tap on the bird turns it into another bird; anywhere else drops a seed
+    if (phone && tapsBird(e.clientX, e.clientY)) changePalette();
+    else if (pointerOnPlane(e.clientX, e.clientY, 0.6, seedAt)) seeds.spawn(seedAt);
   }
 });
 window.addEventListener('keydown', (e) => {
@@ -305,6 +317,41 @@ window.addEventListener('keydown', (e) => {
   if (e.code === 'KeyC' && !e.metaKey && !e.ctrlKey) changePalette();
 });
 
+// --- H: the head alone as a wireframe, the bird and the scene as they are -----
+// A plane across the neck, following the head bone: above it the feathers are
+// cut away and the skin, bill and eyes draw as lines; below it all is as usual.
+renderer.localClippingEnabled = true;
+let headWire = false;
+const keepBody = new THREE.Plane(); // keeps what's below the cut
+const keepHead = new THREE.Plane(); // keeps what's above it
+const neckAt = new THREE.Vector3();
+const headAt = new THREE.Vector3();
+const cutN = new THREE.Vector3();
+const headWireMat = new THREE.MeshBasicMaterial({ color: 0xeef3e8, wireframe: true, transparent: true, opacity: 0.8, clippingPlanes: [keepHead] });
+const headParts = ['bird.skin', 'bird.bare', 'bird.bill', 'bird.eyes', 'bird.nict']
+  .map((n) => bird.root.getObjectByName(n) as THREE.Mesh | undefined)
+  .filter((m): m is THREE.Mesh => !!m);
+const headPartMats = headParts.map((m) => m.material);
+const plumageMat = bird.feathers.contour.material as THREE.Material;
+function setHeadWire(on: boolean) {
+  headWire = on;
+  plumageMat.clippingPlanes = on ? [keepBody] : null;
+  plumageMat.needsUpdate = true;
+  headParts.forEach((m, i) => (m.material = on ? headWireMat : headPartMats[i]));
+}
+function updateHeadCut() {
+  if (!headWire) return;
+  bird.rig.bones.neck2.getWorldPosition(neckAt);
+  bird.rig.bones.head.getWorldPosition(headAt);
+  cutN.copy(headAt).sub(neckAt).normalize();
+  neckAt.lerp(headAt, 0.35);
+  keepHead.setFromNormalAndCoplanarPoint(cutN, neckAt);
+  keepBody.copy(keepHead).negate();
+}
+window.addEventListener('keydown', (e) => {
+  if (e.code === 'KeyH' && !e.metaKey && !e.ctrlKey) setHeadWire(!headWire);
+});
+
 // --- settings wheel, bottom right ---------------------------------------------
 let followPointer = true;
 let shakeAmt = query.has('still') ? 0 : 1.8;
@@ -352,6 +399,7 @@ const settings = createSettings([
   { kind: 'action', label: 'Another bird (C)', run: changePalette },
   { kind: 'action', label: 'Startle', run: () => bird.startle(1) },
   { kind: 'action', label: 'Drawing (W)', run: () => setDrawing(!drawing) },
+  { kind: 'action', label: 'Head wireframe (H)', run: () => setHeadWire(!headWire) },
 ]);
 
 // --- loop ---------------------------------------------------------------------
@@ -407,6 +455,7 @@ renderer.setAnimationLoop((now) => {
   bird.setFood(allFood);
   bird.update(dt, t);
   bird.headPosition(headPos);
+  updateHeadCut();
   seeds.update(dt, t, billTip, headPos);
   insects.update(dt, t, billTip, forage.state === 'windup' || forage.state === 'strike');
   frame();
@@ -518,14 +567,14 @@ function drawWire() {
 }
 let firstFrame = true;
 function render() {
-  if (!usePost) return renderer.render(scene, camera);
-  post.focusOn(headPos);
-  post.grade.uReveal.value = THREE.MathUtils.smoothstep(reveal, 0, 1);
-  post.render(scene, camera, t, revealing && reveal === 1 ? null : drawWire);
   if (firstFrame) {
     firstFrame = false;
     canvas.classList.remove('pending');
   }
+  if (!usePost) return renderer.render(scene, camera);
+  post.focusOn(headPos);
+  post.grade.uReveal.value = THREE.MathUtils.smoothstep(reveal, 0, 1);
+  post.render(scene, camera, t, revealing && reveal === 1 ? null : drawWire);
 }
 
 Object.assign(window as unknown as Record<string, unknown>, { __scene: scene, __camera: camera, __renderer: renderer, __controls: controls, __post: post, __frame: frame, __seeds: seeds, __insects: insects });
