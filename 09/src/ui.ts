@@ -120,12 +120,40 @@ const toolIcon = (t: Tool) => icon(TOOL_ICON[t], TOOL_EXTRA[t] ?? '');
 const TOOL_TIP: Record<Tool, string> = { peel: 'Peel', knife: 'Knife', ruler: 'Ruler', scratch: 'Scratch' };
 /** The modifier that turns peeling into cutting, as this keyboard prints it. */
 const MOD = /Mac|iPhone|iPad/.test(navigator.platform) ? '\u2318' : 'Ctrl';
-/** How a tool is reached without picking it, while peeling. */
-const TOOL_ALSO: Partial<Record<Tool, string>> = {
-  knife: `${MOD} + drag on the sphere`,
-  ruler: `${MOD} + drag from outside`,
-  scratch: '\u21e7 + drag on the sphere',
-};
+/** No keys under a finger: a touch screen gets its gestures and no shortcuts. */
+const TOUCH = typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches;
+/** The help, in sections (as on day 07): the gesture or keys, then what it does. A string in
+ *  [brackets] is drawn as a key cap. */
+const HELP: Array<[string, string, Array<[string, string]>]> = TOUCH ? [
+  ['Peel and cut', 'where the finger lands says which', [
+    ['Drag an edge', 'peel'],
+    ['Drag on the film', 'knife'],
+    ['Drag from outside', 'ruler'],
+    ['Two fingers', 'turn'],
+  ]],
+  ['Tool', '', [
+    ['Tap', 'open it'],
+    ['Hold + drag', 'pick'],
+  ]],
+] : [
+  ['Peel', '', [
+    ['Drag an edge', 'peel'],
+    ['Drag anywhere else', 'turn'],
+  ]],
+  ['Cut', 'while peeling', [
+    [`[${MOD}] + drag on the sphere`, 'knife'],
+    [`[${MOD}] + drag from outside`, 'ruler'],
+    ['[\u21e7] + drag on the sphere', 'scratch'],
+  ]],
+  ['Tools', 'hold T, move, let go', [
+    ['[T]', 'tool menu'],
+    ['[1] [2] [3] [4]', 'pick a tool'],
+  ]],
+  ['History', '', [
+    [`[${MOD}] [Z]`, 'undo'],
+    [`[\u21e7] [${MOD}] [Z]`, 'redo'],
+  ]],
+];
 const PLUS = 'M12 6v12M6 12h12';
 const MINUS = 'M7 12h10';
 
@@ -198,9 +226,12 @@ export function createUi(h: UiHandlers): Ui {
   bar.append(pick);
   let current: Tool = h.tools[0];
   let picking = false, hot: Tool | null = null;
-  const held = { y: 0, moved: false, down: false };
+  /** A press on the button, or the T key held (`key`): then the stack is under the cursor. */
+  const held = { y: 0, moved: false, down: false, key: false };
+  const mouse = { x: 0, y: 0 };
+  let unplace = 0;
   const toolRows = new Map<Tool, HTMLButtonElement>();
-  const keysOf = (t: Tool) => { const also = TOOL_ALSO[t]; return [String(h.tools.indexOf(t) + 1), ...(also ? [also] : [])]; };
+  const keysOf = (t: Tool) => [String(h.tools.indexOf(t) + 1)];
   const setHot = (t: Tool | null) => { hot = t; for (const [k, b] of toolRows) b.classList.toggle('on', k === t); };
   function setPicking(o: boolean) {
     picking = o;
@@ -228,7 +259,7 @@ export function createUi(h: UiHandlers): Ui {
     current = t;
     toolButton.replaceChildren(toolIcon(t));
     toolButton.setAttribute('aria-label', `Tool: ${TOOL_TIP[t]}`);
-    tip(toolButton, TOOL_TIP[t], ...keysOf(t));
+    tip(toolButton, TOOL_TIP[t], 'T');
     toolRows.clear();
     pop.replaceChildren();
     for (const o of h.tools) {
@@ -242,19 +273,65 @@ export function createUi(h: UiHandlers): Ui {
       pop.append(b);
     }
   }
+  /** Move the closed stack somewhere else at once: without this its opening transition would
+   *  also carry it there, and it would glide in from where it last was. */
+  function jump(place: () => void) {
+    pop.style.transition = 'none';
+    place();
+    void pop.offsetWidth; // the new place is taken in before the transition is back
+    pop.style.transition = '';
+  }
+  /** The stack back over its button (after the T key put it under the cursor). */
+  function placeHome() {
+    window.clearTimeout(unplace);
+    if (!pop.classList.contains('at')) return;
+    jump(() => {
+      pop.classList.remove('at', 'flip');
+      pop.style.left = pop.style.top = '';
+    });
+  }
   toolButton.addEventListener('pointerdown', (e) => {
     e.preventDefault();
     if (picking) { setPicking(false); return; }
-    held.y = e.clientY; held.moved = false; held.down = true;
+    placeHome();
+    held.y = e.clientY; held.moved = false; held.down = true; held.key = false;
     setPicking(true);
   });
+  // Held by its key, T, the stack opens just above the cursor, wherever that is, so nothing
+  // is picked until the pointer moves up into it; the row under the pointer is picked when
+  // the key is let go, and letting go off the stack changes nothing. (As on day 07.)
+  window.addEventListener('keydown', (e) => {
+    if (e.code !== 'KeyT' || e.repeat || e.metaKey || e.ctrlKey || e.altKey) return;
+    e.preventDefault();
+    window.clearTimeout(unplace);
+    const PAD = 8, w = pop.offsetWidth, hgt = pop.offsetHeight, r = pick.getBoundingClientRect();
+    const x = Math.min(window.innerWidth - w - PAD, Math.max(PAD, mouse.x - w / 2));
+    const y = Math.min(window.innerHeight - hgt - PAD, Math.max(PAD, mouse.y - (hgt + 16)));
+    jump(() => {
+      pop.classList.add('at');
+      pop.classList.toggle('flip', mouse.x > window.innerWidth / 2); // the names on the side there is room
+      pop.style.left = `${x - r.left}px`;
+      pop.style.top = `${y - r.top}px`;
+    });
+    held.y = mouse.y; held.moved = true; held.down = true; held.key = true;
+    setPicking(true);
+    setHot(null);
+  });
+  window.addEventListener('keyup', (e) => {
+    if (e.code !== 'KeyT' || !held.key) return;
+    held.key = false; held.down = false;
+    const t = hot;
+    if (picking) { if (t) choose(t); else setPicking(false); }
+    unplace = window.setTimeout(() => { if (!held.key && !picking) placeHome(); }, 250); // once it has faded
+  });
   window.addEventListener('pointermove', (e) => {
+    mouse.x = e.clientX; mouse.y = e.clientY;
     if (!picking || !held.down) return;
     if (Math.abs(e.clientY - held.y) > 6) held.moved = true;
     if (held.moved) setHot(rowAt(e.clientY));
   });
   window.addEventListener('pointerup', (e) => {
-    if (!picking || !held.down) return;
+    if (!picking || !held.down || held.key) return;
     held.down = false;
     if (!held.moved) return; // a tap: the stack stays open
     const t = rowAt(e.clientY);
@@ -279,7 +356,11 @@ export function createUi(h: UiHandlers): Ui {
   gearButton.append(icon(gear(), '<circle cx="12" cy="12" r="3"/>'));
   gearButton.setAttribute('aria-expanded', 'false');
   tip(gearButton, 'Settings');
-  bar.append(sep(), undo, redo, sep(), gearButton);
+  // The settings are a workbench, not part of the piece: the gear is there while developing
+  // (and with ?settings in the address), not on the published page.
+  const withSettings = import.meta.env.DEV || new URLSearchParams(location.search).has('settings');
+  bar.append(sep(), undo, redo);
+  if (withSettings) bar.append(sep(), gearButton);
   void current;
 
   // The sheet: two tabs over a body that scrolls on its own.
@@ -641,7 +722,49 @@ export function createUi(h: UiHandlers): Ui {
   setTab('layers');
   window.addEventListener('keydown', (e) => { if (e.key === 'Escape' && open) setOpen(false); });
 
-  root.append(info, sheet, bar);
+  // Help, on its own in the top right corner (as on day 07): a flat question mark, and under
+  // it what a drag does where and which keys there are.
+  const help = el('div', 'help');
+  const helpButton = button('help-btn', () => setHelp(!helping), 'Help');
+  helpButton.removeAttribute('title');
+  helpButton.setAttribute('aria-expanded', 'false');
+  const q = document.createElementNS(SVG, 'svg');
+  q.setAttribute('viewBox', '0 0 16 16');
+  q.setAttribute('aria-hidden', 'true');
+  q.innerHTML = '<circle cx="8" cy="8" r="6"/><path d="M6.25 6.4a1.8 1.8 0 1 1 2.6 1.6c-.55.28-.85.65-.85 1.2v.3"/><circle class="dot" cx="8" cy="11.25" r="0.65"/>';
+  helpButton.append(q);
+  const helpPop = el('div', 'help-pop');
+  const dos = el('div', 'dos');
+  for (const [name, note, rows] of HELP) {
+    const head = el('h5', '', name);
+    if (note) head.append(el('span', '', note));
+    dos.append(head);
+    for (const [how, what] of rows) {
+      const a = el('span', 'how');
+      // [x] is a key cap, the rest plain words
+      for (const part of how.split(/(\[[^\]]+\])/)) {
+        if (!part) continue;
+        if (part.startsWith('[')) a.append(el('kbd', 'key', part.slice(1, -1)));
+        else a.append(part);
+      }
+      dos.append(a, el('span', 'what', what));
+    }
+  }
+  helpPop.append(dos);
+  help.append(helpButton, helpPop);
+  let helping = false;
+  function setHelp(o: boolean) {
+    helping = o;
+    helpPop.classList.toggle('open', o);
+    helpPop.inert = !o;
+    helpButton.classList.toggle('on', o);
+    helpButton.setAttribute('aria-expanded', String(o));
+  }
+  setHelp(false);
+  window.addEventListener('pointerdown', (e) => { if (helping && !help.contains(e.target as Node)) setHelp(false); }, true);
+  window.addEventListener('keydown', (e) => { if (e.key === 'Escape' && helping) setHelp(false); });
+
+  root.append(info, sheet, bar, help);
   document.body.append(root);
 
   return {
