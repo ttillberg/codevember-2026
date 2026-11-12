@@ -17,11 +17,13 @@
   --pad-l: max(12px, env(safe-area-inset-left));
 }
 html, body {
-  margin: 0; height: 100%; overflow: hidden;
+  margin: 0; height: 100%; overflow: hidden; overscroll-behavior: none;
   background: #e6e6e8; /* the backdrop of the scene (main.ts); --bg is the dark of the controls */
   -webkit-text-size-adjust: 100%;
 }
-canvas { display: block; width: 100vw; height: 100vh; }
+/* The canvas fills what is actually seen (dvh: a phone's bars in or out), and every touch on
+   it is the piece's: the browser never scrolls, zooms or pulls to refresh with it. */
+canvas { display: block; width: 100vw; height: 100vh; height: 100dvh; touch-action: none; }
 
 /* The title block, as on day 08 (Tesseract): the day in heavy capitals top left, and the way
    back to all the days under it. Never in the way of a finger: only the link takes a press. */

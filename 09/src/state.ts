@@ -39,11 +39,13 @@ import type { Lift } from './lift';
 
 export const R = 1;
 
-/** peel: take hold of the film and pull, or turn the sphere (with Cmd or Ctrl held: the
- *  knife on the sphere, the ruler off it; with Shift held: a scratch). knife: a cut drawn
- *  by hand. ruler: a straight cut right round, aimed as a line. scratch: a few cuts side by
- *  side, like a paw. */
-export type Tool = 'peel' | 'knife' | 'ruler' | 'scratch';
+/** combo: where the press lands says what it does, on a mouse as under a finger. On an edge
+ *  that can be taken hold of it peels, anywhere else on the sphere it is the knife, off the
+ *  sphere the ruler; with Cmd or Ctrl held it turns the sphere, with Shift held it scratches.
+ *  The others do one thing each: peel (pull from an edge, turn the sphere anywhere else),
+ *  knife (a cut drawn by hand), ruler (a straight cut right round, aimed as a line), scratch
+ *  (a few cuts side by side, like a paw). */
+export type Tool = 'combo' | 'peel' | 'knife' | 'ruler' | 'scratch';
 
 export interface Piece {
   /** Its value in the id atlas, 1..65535. Changes when the film is relabelled. */

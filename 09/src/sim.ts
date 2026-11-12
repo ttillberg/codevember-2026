@@ -22,7 +22,7 @@ import type { LayerView } from './ui';
 
 const MIN_DRAG = 28;            // px, a shorter line does not cut
 const GRAB_PX_MOUSE = 40;       // px from an edge to grab it
-const GRAB_PX_TOUCH = 56;
+const GRAB_PX_TOUCH = 28;       // a finger: closer than a mouse, since on touch the same press off an edge is a knife
 const GRAZE = 0.97;             // a line's plane must pass closer than this to the centre
 const TEAR_SPEED = 0.5;         // how much a fast pull (rad/s) adds to the load on the front
 const STORE = 'codevember-2026-09-settings';
@@ -46,7 +46,7 @@ const FADE_TIME = 0.16;         // s, what was lifted fades where it is once let
 const STEP = 1.2 * TEXEL;       // grab search step, under a groove's width so none is jumped
 const DIRS = 24;                // grab search directions
 
-const TOOLS: Tool[] = ['peel', 'knife', 'ruler', 'scratch'];
+const TOOLS: Tool[] = ['combo', 'peel', 'knife', 'ruler', 'scratch'];
 const OPEN_WAIT = 0.25;         // s after landing before the opening cross is begun
 const OPEN_TIME = 0.75;         // s it takes to draw, both strokes
 const OPEN_POINTS = 28;         // points along each of its strokes
@@ -70,7 +70,7 @@ export function createWorld(): World {
     lift: createLift(),
     pieces: Array.from({ length: FILMS_DEEP }, () => new Map()),
     rotation: new Quaternion().setFromEuler(HOME),
-    tool: 'peel',
+    tool: 'combo',
     aim: { active: false, x0: 0, y0: 0, x1: 0, y1: 0, valid: false },
     hover: { layer: 0, id: 0 },
     show: { debug: true, grid: true, films: true },
@@ -526,16 +526,17 @@ export function createSim(ctx: Ctx): Module {
     const h = world.hover;
     h.id = 0;
     if (!mouseIn || pid !== -1 || drag !== 'none') return;
-    if (world.tool !== 'peel') {
+    const tool = world.tool;
+    if (tool !== 'peel' && tool !== 'combo') {
       ray(px, py);
-      setCursor(world.tool !== 'ruler' && !hit(tW) ? 'move' : 'crosshair');
+      setCursor(tool !== 'ruler' && !hit(tW) ? 'move' : 'crosshair');
       return;
     }
     if (findGrab(px, py)) {
       h.layer = grab.layer;
       h.id = grab.piece!.id;
       setCursor('grab');
-    } else setCursor('move');
+    } else setCursor(tool === 'combo' ? 'crosshair' : 'move'); // the combo cuts wherever it does not peel
   }
 
   // Fingers on the screen, by pointer id, and the turn two of them make together.
@@ -585,17 +586,17 @@ export function createSim(ctx: Ctx): Module {
     qInv.copy(world.rotation).invert();
     ray(px, py);
     const on = hit(tW);
-    // Peeling with Cmd (or Ctrl) held is a knife: drawn by hand from a press on the sphere,
-    // along a ruler from a press off it ...
-    let tool = world.tool;
-    // A finger has no keys: while peeling, where it lands says what it does. Off the sphere
-    // it aims a ruler, on an edge that can be taken hold of it peels, anywhere else on the
-    // film it is a knife.
-    if (touch && tool === 'peel') tool = !on ? 'ruler' : findGrab(px, py) ? 'peel' : 'knife';
-    else if (tool === 'peel' && (e.metaKey || e.ctrlKey)) tool = on ? 'knife' : 'ruler';
-    // ... and with Shift held, a paw.
-    else if (tool === 'peel' && e.shiftKey && on) tool = 'scratch';
-    if (tool === 'ruler') {
+    // The combo: where the press lands says what it does, on a mouse as under a finger. Off
+    // the sphere it aims a ruler, on an edge that can be taken hold of it peels, anywhere
+    // else on the film it is a knife. Shift makes it a paw. Cmd (or Ctrl) only turns the
+    // sphere: with every press doing something, turning needs a key (two fingers on touch).
+    let tool = world.tool, turn = false;
+    if (tool === 'combo') {
+      if (e.metaKey || e.ctrlKey) turn = true;
+      else if (e.shiftKey && on) tool = 'scratch';
+      else tool = !on ? 'ruler' : findGrab(px, py) ? 'peel' : 'knife';
+    }
+    if (tool === 'ruler' && !turn) {
       // The sphere holds still while a cut is aimed.
       omega.set(0, 0, 0);
       drag = 'aim';
@@ -604,7 +605,7 @@ export function createSim(ctx: Ctx): Module {
       setCursor('crosshair');
       return;
     }
-    if (on) {
+    if (on && !turn) {
       if (tool === 'knife' || tool === 'scratch') {
         omega.set(0, 0, 0);
         drag = 'draw';
@@ -732,6 +733,7 @@ export function createSim(ctx: Ctx): Module {
     onTool: setTool,
     onBack: back,
     onRedo: redo,
+    onReset: reset,
   });
   showHistory = () => ui.setHistory(history.length, ahead.length);
   showHistory();
@@ -802,6 +804,12 @@ export function createSim(ctx: Ctx): Module {
     world.rotation.setFromEuler(HOME);
     qInv.copy(world.rotation).invert();
     for (const film of world.films) fillFilm(film);
+  }
+  /** Start over: every film whole again and the sphere turned as at the start. No cross this
+   *  time, that is only how the piece opens. A step to undo, so nothing is lost by it. */
+  function reset() {
+    resetBench();
+    relabelNow();
   }
   /** (x, y) as seen from the camera, in sphere radii, to a point on the film. */
   const seenAt = (x: number, y: number, out: Vector3) =>
@@ -1018,8 +1026,9 @@ export function createSim(ctx: Ctx): Module {
       return;
     }
     if (e.repeat) return;
-    const i = '1234'.indexOf(e.key);
+    const i = '12345'.indexOf(e.key);
     if (i >= 0) setTool(TOOLS[i]);
+    if (e.key === 'r') reset();
     if (e.key === 'b') bench();
     if (e.key === 'n') bench2();
     if (e.key === 'z') back();

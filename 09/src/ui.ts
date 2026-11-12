@@ -42,6 +42,8 @@ export interface UiHandlers {
   onTool(t: Tool): void;
   onBack(): void;
   onRedo(): void;
+  /** Every film whole again. */
+  onReset(): void;
 }
 
 export interface Ui {
@@ -105,19 +107,24 @@ const UNDO = 'M8.5 4.5 4 9l4.5 4.5M4 9h10a5.5 5.5 0 0 1 0 11h-3.5';
  *  the origin and the wrist at y 38. */
 const HAND = 'M-4.5 21V4.5A4.5 4.5 0 0 1 4.5 4.5V17C5 13.5 11.5 13.5 11.5 17.5C12 15 17 15.5 17 19.5C17.5 17.5 21.5 18.5 21 22.5C21 30 19 34 16.5 38H-7.5C-10.5 34 -13 31 -14 27C-15.5 23 -14.5 19 -11.5 18.5C-8.5 18 -6 20 -4.5 21Z';
 const HAND_LINES = 'M4.5 17V22M11.5 17.5V23M17 19.5V24.5M-4.5 21C-6 23 -6.5 26 -6 28';
-/** The tools: a finger, a blade, a ruler with its ticks, four claw marks. */
+/** The tools: a finger with a blade beside it, a finger, a blade, a ruler with its ticks,
+ *  four claw marks. */
+const KNIFE = 'M4.5 19.5 9 15M9 15l9.5-11.5c1.6 2.6 1.4 6.2-.6 8.8L12.5 18.5z';
+const hand = (at: string) => `<g transform="${at}"><path vector-effect="non-scaling-stroke" d="${HAND}"/><path vector-effect="non-scaling-stroke" d="${HAND_LINES}"/></g>`;
 const TOOL_ICON: Record<Tool, string> = {
+  combo: '',
   peel: '',
-  knife: 'M4.5 19.5 9 15M9 15l9.5-11.5c1.6 2.6 1.4 6.2-.6 8.8L12.5 18.5z',
+  knife: KNIFE,
   ruler: 'M3.5 16 16 3.5l4.5 4.5L8 20.5zM7.5 12l2 2M10.5 9l2 2M13.5 6l2 2',
   scratch: 'M6.5 4c-1.4 5-1.4 11 0 16M10.5 4c-1.4 5-1.4 11 0 16M14.5 4c-1.4 5-1.4 11 0 16M18.5 5.5c-1.2 4.4-1.2 9 0 13',
 };
 /** What a tool's icon has beside its one path (the hand is drawn in its own units, scaled in). */
 const TOOL_EXTRA: Partial<Record<Tool, string>> = {
-  peel: `<g transform="translate(10.4 2.2) scale(0.52)"><path vector-effect="non-scaling-stroke" d="${HAND}"/><path vector-effect="non-scaling-stroke" d="${HAND_LINES}"/></g>`,
+  combo: hand('translate(7.4 6.2) scale(0.42)') + `<path vector-effect="non-scaling-stroke" transform="translate(11.6 0.6) scale(0.56)" d="${KNIFE}"/>`,
+  peel: hand('translate(10.4 2.2) scale(0.52)'),
 };
 const toolIcon = (t: Tool) => icon(TOOL_ICON[t], TOOL_EXTRA[t] ?? '');
-const TOOL_TIP: Record<Tool, string> = { peel: 'Peel', knife: 'Knife', ruler: 'Ruler', scratch: 'Scratch' };
+const TOOL_TIP: Record<Tool, string> = { combo: 'Peel and cut', peel: 'Peel', knife: 'Knife', ruler: 'Ruler', scratch: 'Scratch' };
 /** The modifier that turns peeling into cutting, as this keyboard prints it. */
 const MOD = /Mac|iPhone|iPad/.test(navigator.platform) ? '\u2318' : 'Ctrl';
 /** No keys under a finger: a touch screen gets its gestures and no shortcuts. */
@@ -135,25 +142,30 @@ const HELP: Array<[string, string, Array<[string, string]>]> = TOUCH ? [
     ['Tap', 'open it'],
     ['Hold + drag', 'pick'],
   ]],
-] : [
-  ['Peel', '', [
-    ['Drag an edge', 'peel'],
-    ['Drag anywhere else', 'turn'],
+  ['History', '', [
+    ['The arrows', 'undo, redo'],
+    ['The round arrow', 'start over'],
   ]],
-  ['Cut', 'while peeling', [
-    [`[${MOD}] + drag on the sphere`, 'knife'],
-    [`[${MOD}] + drag from outside`, 'ruler'],
-    ['[\u21e7] + drag on the sphere', 'scratch'],
+] : [
+  ['Peel and cut', 'where the press lands says which', [
+    ['Drag an edge', 'peel'],
+    ['Drag on the film', 'knife'],
+    ['Drag from outside', 'ruler'],
+    ['[\u21e7] + drag on the film', 'scratch'],
+    [`[${MOD}] + drag`, 'turn'],
   ]],
   ['Tools', 'hold T, move, let go', [
     ['[T]', 'tool menu'],
-    ['[1] [2] [3] [4]', 'pick a tool'],
+    ['[1] [2] [3] [4] [5]', 'pick a tool'],
   ]],
   ['History', '', [
     [`[${MOD}] [Z]`, 'undo'],
     [`[\u21e7] [${MOD}] [Z]`, 'redo'],
+    ['[R]', 'start over'],
   ]],
 ];
+/** An arrow round on itself: start over. */
+const RESET = 'M19.5 12a7.5 7.5 0 1 1-2.2-5.3M19.5 4.5v4.2h-4.2';
 const PLUS = 'M12 6v12M6 12h12';
 const MINUS = 'M7 12h10';
 
@@ -351,6 +363,9 @@ export function createUi(h: UiHandlers): Ui {
   const redo = button('redo', h.onRedo, 'Redo');
   redo.append(icon(UNDO));
   tip(redo, 'Redo', `\u21e7 ${MOD} Z`);
+  const reset = button('reset', h.onReset, 'Start over');
+  reset.append(icon(RESET));
+  tip(reset, 'Start over', 'R');
 
   // Settings: the gear opens the sheet.
   const gearButton = button('gear', () => sheetPop.set(!sheetPop.open), 'Settings');
@@ -359,7 +374,7 @@ export function createUi(h: UiHandlers): Ui {
   // The settings are a workbench, not part of the piece: the gear is there while developing
   // (and with ?settings in the address), not on the published page.
   const withSettings = import.meta.env.DEV || new URLSearchParams(location.search).has('settings');
-  bar.append(sep(), undo, redo);
+  bar.append(sep(), undo, redo, reset);
   if (withSettings) bar.append(sep(), gearButton);
 
   // The sheet: two tabs over a body that scrolls on its own.
