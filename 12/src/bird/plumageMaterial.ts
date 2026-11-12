@@ -25,6 +25,12 @@ export interface PlumageUniforms {
   uFlash: { value: number };
   uGlint: { value: number };
   uSheen: { value: number };
+  /**
+   * Colour of the plumage, as four 3x3 colour matrices (hue turned round the
+   * grey axis, saturation, value): gorget sheen, crown sheen, body pigment,
+   * body sheen. Identity = the species' own colours. See palettes.ts.
+   */
+  uPal: { value: THREE.Matrix3[] };
 }
 
 export function createPlumageMaterial(): { material: THREE.MeshStandardMaterial; uniforms: PlumageUniforms } {
@@ -38,6 +44,7 @@ export function createPlumageMaterial(): { material: THREE.MeshStandardMaterial;
     uFlash: { value: 1 },
     uGlint: { value: 1 },
     uSheen: { value: 1 },
+    uPal: { value: [new THREE.Matrix3(), new THREE.Matrix3(), new THREE.Matrix3(), new THREE.Matrix3()] },
   };
   const material = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.6, metalness: 0, side: THREE.DoubleSide, alphaToCoverage: true });
   material.onBeforeCompile = (shader) => {
@@ -60,6 +67,7 @@ uniform float uGorget;
 uniform float uCrest;
 uniform vec2 uWingSpread;
 uniform vec2 uWingLift;
+uniform mat3 uPal[4];
 varying vec2 vFUv;
 varying vec3 vFData;
 varying vec4 vBase;
@@ -87,7 +95,17 @@ float fC = cos(fAng), fS = sin(fAng);
 vec3 objectNormal = rotAxis(normal, aHinge, fC, fS);
 vec3 fIriN = rotAxis(aIriN, aHinge, fC, fS);
 vFUv = uv; vFData = vec3(aData.x, aData.w, fAng);
-vBase = aBase; vTip = aTip; vIri = aIri; vIri2 = aIri2;`,
+vBase = aBase; vTip = aTip; vIri = aIri; vIri2 = aIri2;
+// the palette: per vertex, so it costs nothing in the fragment shader
+if (aData.w > 0.5 && aData.w < 2.5) {
+  mat3 m = aData.w < 1.5 ? uPal[0] : uPal[1];
+  vIri.rgb = max(m * vIri.rgb, 0.0); vIri2.rgb = max(m * vIri2.rgb, 0.0);
+  vBase.rgb = max(m * vBase.rgb, 0.0); vTip.rgb = max(m * vTip.rgb, 0.0);
+}
+else {
+  vBase.rgb = max(uPal[2] * vBase.rgb, 0.0); vTip.rgb = max(uPal[2] * vTip.rgb, 0.0);
+  vIri.rgb = max(uPal[3] * vIri.rgb, 0.0); vIri2.rgb = max(uPal[3] * vIri2.rgb, 0.0);
+}`,
       )
       .replace(
         '#include <skinnormal_vertex>',

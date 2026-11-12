@@ -30,11 +30,12 @@ export class RuffleLayer implements Layer {
     });
   }
 
-  trigger(m: Mind, kind?: RuffleKind) {
+  /** amp: how hard, 0..1 (random 0.45..0.75 when left out) */
+  trigger(m: Mind, kind?: RuffleKind, amp?: number) {
     const r = m.rng();
     this.kind = kind ?? (r < 0.45 ? 'puff' : r < 0.7 ? 'shake' : 'throat');
     this.t0 = m.t;
-    this.amp = rand(m.rng, 0.45, 0.75);
+    this.amp = amp ?? rand(m.rng, 0.45, 0.75);
     const [a, b] = m.species.behaviour.ruffleEvery;
     this.nextAt = m.t + rand(m.rng, a, b);
     m.emit('ruffle', { kind: this.kind });
