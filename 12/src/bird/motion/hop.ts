@@ -28,6 +28,8 @@ export class HopLayer implements Layer {
   maxHop = 0.35;
   /** after this long with nothing to eat, wander back toward the middle (0 = never) */
   homeAfter: [number, number] = [14, 30];
+  /** where on the perch it likes to sit, and drifts back to */
+  home = 0;
 
   /** where on the perch the bird stands (world x) */
   x = 0;
@@ -145,8 +147,8 @@ export class HopLayer implements Layer {
 
     // nothing to eat for a while: drift back toward the middle of the perch
     if (m.food.length) this.lastFood = t;
-    if (this.phase === 'stand' && this.homeAfter[1] > 0 && !m.quiet && !m.eating && m.freeze <= 0 && Math.abs(this.x) > 0.12 && t - this.lastFood > 4 && t > this.homeAt) {
-      this.go(m, this.x * 0.3);
+    if (this.phase === 'stand' && this.homeAfter[1] > 0 && !m.quiet && !m.eating && m.freeze <= 0 && Math.abs(this.x - this.home) > 0.12 && t - this.lastFood > 4 && t > this.homeAt) {
+      this.go(m, this.home + (this.x - this.home) * 0.3);
       this.homeAt = t + rand(m.rng, this.homeAfter[0], this.homeAfter[1]);
     }
 

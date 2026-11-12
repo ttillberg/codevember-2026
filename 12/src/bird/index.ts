@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import type { Bird, BirdContext } from './types';
+import type { Bird, BirdContext, Food } from './types';
 import { MOUNTAIN_GEM, type Species } from './species';
 import { buildRig, type Rig } from './rig';
 import { buildPlumageGeometry } from './plumageGeometry';
@@ -18,8 +18,6 @@ import { StartleLayer } from './motion/startle';
 import { ForageLayer } from './motion/forage';
 import { MouthLayer } from './motion/mouth';
 import { HopLayer, type Ground } from './motion/hop';
-import type { PerchFrame } from './types';
-import type { Food } from './types';
 
 /** The bird plus the handles a UI, a debugger or a new behaviour would want. */
 export interface BirdHandle extends Bird {
@@ -33,11 +31,10 @@ export interface BirdHandle extends Bird {
   /** Feather shader uniforms: uFlash, uGlint, uSheen are free to tune. */
   plumage: PlumageUniforms;
   stats: { bones: number; contourFeathers: number; flightFeathers: number; vertices: number; triangles: number };
-  setFood(items: ReadonlyArray<Food>): void;
-  onPick: ((id: number) => void) | null;
-  onSwallow: ((id: number) => void) | null;
-  setPerch(at: (x: number, out: PerchFrame) => PerchFrame | null, range: [number, number]): void;
-  billTip(out: THREE.Vector3): THREE.Vector3;
+  /** the feather meshes, for the scene's quality and drawing switches */
+  feathers: { contour: THREE.SkinnedMesh; flight: THREE.SkinnedMesh; fuzz: THREE.SkinnedMesh };
+  /** world-space position of the head bone */
+  headPosition(out: THREE.Vector3): THREE.Vector3;
   /** Hook that runs after the layers and before the solver: last word on the pose. */
   onPose: ((pose: Pose, mind: Mind) => void) | null;
 }
@@ -107,18 +104,15 @@ export function createBird(_ctx: BirdContext, options: BirdOptions = {}): BirdHa
       return l as T;
     },
     plumage: uniforms,
+    feathers: { contour, flight, fuzz },
+    headPosition: (out) => rig.bones.head.getWorldPosition(out),
     stats: { bones: rig.list.length, ...plumageGeo.stats },
     onPose: null,
     update(dt) {
-      if (attention) {
-        root.updateWorldMatrix(true, false);
-        mind.attention = local.copy(attention).applyMatrix4(inv.copy(root.matrixWorld).invert());
-      } else {
-        mind.attention = null;
-      }
-      // food into root space
       root.updateWorldMatrix(true, false);
       inv.copy(root.matrixWorld).invert();
+      mind.attention = attention ? local.copy(attention).applyMatrix4(inv) : null;
+      // food into root space
       mind.food.length = 0;
       for (let i = 0; i < food.length; i++) {
         const f = (foodPool[i] ??= { id: 0, pos: new THREE.Vector3(), vel: new THREE.Vector3() });
@@ -256,3 +250,8 @@ export type { Species } from './species';
 export { MOUNTAIN_GEM } from './species';
 export { Pose } from './pose';
 export type { Layer, Mind } from './motion/mind';
+export type { GazeLayer } from './motion/gaze';
+export type { MouthLayer } from './motion/mouth';
+export type { RuffleLayer } from './motion/ruffle';
+export type { ForageLayer } from './motion/forage';
+export type { HopLayer } from './motion/hop';

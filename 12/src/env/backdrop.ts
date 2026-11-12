@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { mulberry32 } from '../bird/util';
 
 // Out-of-focus forest. A sphere around the camera, coloured per view direction,
 // so it parallaxes for free when the camera orbits. The same sphere is baked
@@ -20,6 +21,7 @@ uniform float uTime;
 uniform float uEnv;      // 1 when baking the env map: brighter top, no grain
 uniform vec3 uBlobs[48];  // xyz dir
 uniform vec2 uBlobR[48];  // radius, brightness
+uniform float uBlobCos[48]; // cos(radius): outside it a disc adds nothing
 
 float hash(vec3 p) { return fract(sin(dot(p, vec3(12.9898, 78.233, 37.719))) * 43758.5453); }
 float noise(vec3 p) {
@@ -44,8 +46,10 @@ void main() {
   // Bokeh discs
   for (int i = 0; i < 48; i++) {
     vec3 b = uBlobs[i];
+    float cd = dot(d, b);
+    if (cd < uBlobCos[i]) continue;
     float r = uBlobR[i].x;
-    float a = acos(clamp(dot(d, b), -1.0, 1.0));
+    float a = acos(clamp(cd, -1.0, 1.0));
     float disc = 1.0 - smoothstep(r * 0.82, r, a);
     float rim = smoothstep(r * 0.6, r * 0.95, a) * disc;
     col += (lite * 0.5 + vec3(0.06, 0.08, 0.0)) * uBlobR[i].y * (disc * 0.35 + rim * 0.25);
@@ -67,11 +71,11 @@ void main() {
 `;
 
 export function createBackdrop() {
-  const rng = mulberry(7);
+  const rng = mulberry32(7);
   const blobs: THREE.Vector3[] = [];
   const blobR: THREE.Vector2[] = [];
   for (let i = 0; i < 48; i++) {
-    // mostly behind the bird (−Z from the default camera's view is +Z world? camera sits at +Z looking −Z)
+    // mostly behind the bird, as seen from the camera in front of it
     const az = (rng() - 0.5) * Math.PI * 2;
     const el = (rng() - 0.35) * 1.2;
     blobs.push(new THREE.Vector3(Math.sin(az) * Math.cos(el), Math.sin(el), -Math.cos(az) * Math.cos(el)).normalize());
@@ -85,22 +89,14 @@ export function createBackdrop() {
       uEnv: { value: 0 },
       uBlobs: { value: blobs },
       uBlobR: { value: blobR },
+      uBlobCos: { value: blobR.map((v) => Math.cos(v.x)) },
     },
     side: THREE.BackSide,
     depthWrite: false,
   });
   const mesh = new THREE.Mesh(new THREE.SphereGeometry(50, 64, 32), material);
   mesh.frustumCulled = false;
-  mesh.renderOrder = -1;
+  // last among the opaques: it sits on the far plane, so early-z skips what the bird and twig cover
+  mesh.renderOrder = 1000;
   return { mesh, material };
-}
-
-export function mulberry(seed: number) {
-  return () => {
-    seed |= 0;
-    seed = (seed + 0x6d2b79f5) | 0;
-    let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
 }

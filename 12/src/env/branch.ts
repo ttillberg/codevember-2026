@@ -1,19 +1,27 @@
 import * as THREE from 'three';
-import { mulberry } from './backdrop';
 import { MeshSurfaceSampler } from 'three/examples/jsm/math/MeshSurfaceSampler.js';
+import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import { mulberry32 } from '../bird/util';
 
 // The perch: a mossy twig along X whose top passes through the origin, plus a
 // side shoot with bright lime buds like in the footage.
 
 const PERCH_R = 0.09;
 
+/** Where on the twig the bird sits (a little right of its middle, so more of the twig shows to the left). */
+export const GRIP_X = 0.2;
+
+/** The twig's radius at world x: PERCH_R at the grip (the toes are built for it), thicker to the left. */
+export function perchRadiusAt(x: number) {
+  return PERCH_R * Math.min(1 - 0.18 * x, 2.2);
+}
+
 function tube(curve: THREE.Curve<THREE.Vector3>, radius: (u: number) => number, segs: number, radial: number, bumpSeed: number) {
   const frames = curve.computeFrenetFrames(segs, false);
   const pos: number[] = [];
-  const nor: number[] = [];
   const uv: number[] = [];
   const idx: number[] = [];
-  const rng = mulberry(bumpSeed);
+  const rng = mulberry32(bumpSeed);
   const knots = Array.from({ length: 6 }, () => ({ u: rng(), a: rng() * Math.PI * 2, s: 0.25 + rng() * 0.35 }));
   const p = new THREE.Vector3();
   const n = new THREE.Vector3();
@@ -34,7 +42,6 @@ function tube(curve: THREE.Curve<THREE.Vector3>, radius: (u: number) => number, 
         r *= 1 + k.s * Math.exp(-du * du) * Math.max(da, 0) ** 3;
       }
       pos.push(p.x + n.x * r, p.y + n.y * r, p.z + n.z * r);
-      nor.push(n.x, n.y, n.z);
       uv.push(u, j / radial);
     }
   }
@@ -47,7 +54,6 @@ function tube(curve: THREE.Curve<THREE.Vector3>, radius: (u: number) => number, 
   }
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-  g.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3));
   g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
   g.setIndex(idx);
   g.computeVertexNormals();
@@ -108,19 +114,18 @@ export function createBranch() {
     new THREE.Vector3(0.9, 0.08, 0.12),
     new THREE.Vector3(1.8, 0.34, 0.05),
   ]);
-  // nudge so the top surface sits exactly at the origin
   const len = perch.getLength();
   const bark = barkMaterial(len);
-  // radius is exactly PERCH_R at x = 0 (the toes assume it), thicker to the left
   const tmp = new THREE.Vector3();
   const gPerch = tube(
     perch,
-    (u) => PERCH_R * Math.min(1 - 0.18 * perch.getPointAt(u, tmp).x, 2.2) * (u > 0.97 ? 1 - (u - 0.97) * 20 : 1),
+    (u) => perchRadiusAt(perch.getPointAt(u, tmp).x) * (u > 0.97 ? 1 - (u - 0.97) * 20 : 1),
     320,
     28,
     3,
   );
   const mPerch = new THREE.Mesh(gPerch, bark);
+  mPerch.name = 'perch';
   mPerch.receiveShadow = true; // no self-shadow: it banded at the shadow frustum edge
   group.add(mPerch);
 
@@ -146,7 +151,7 @@ export function createBranch() {
   const budGeo = new THREE.SphereGeometry(1, 16, 12);
   const stemGeo = new THREE.CylinderGeometry(0.006, 0.008, 1, 6);
   stemGeo.translate(0, 0.5, 0);
-  const rng = mulberry(21);
+  const rng = mulberry32(21);
   const p = new THREE.Vector3();
   const t = new THREE.Vector3();
   for (let i = 0; i < 9; i++) {
@@ -171,14 +176,13 @@ export function createBranch() {
     }
   }
 
-  return { group, radius: PERCH_R };
+  return { group };
 }
 
 // The Blender perch (model/branch.blend → public/branch.glb), with baked bark,
 // moss and buds. Same contract as the procedural one: radius PERCH_R at x = 0,
 // top surface through the origin.
 export async function loadBranch(url: string, onProgress?: (e: ProgressEvent) => void) {
-  const { GLTFLoader } = await import('three/examples/jsm/loaders/GLTFLoader.js');
   const gltf = await new GLTFLoader().loadAsync(url, onProgress);
   const group = gltf.scene;
   group.traverse((o) => {
@@ -189,29 +193,21 @@ export async function loadBranch(url: string, onProgress?: (e: ProgressEvent) =>
     m.castShadow = !/perch|hairs/i.test(m.name);
     for (const mat of Array.isArray(m.material) ? m.material : [m.material]) {
       const s = mat as THREE.MeshStandardMaterial;
-      // moss cards are alpha-tested: let the MSAA resolve their edges
-      if (s.alphaTest > 0) {
-        s.alphaToCoverage = true;
-        s.alphaTest = 0.35;
-      }
       // colour, AO (ORM r) and root-to-tip darkening are all baked in the glb
       s.envMapIntensity = 0.8;
     }
   });
-  // the baked fuzz cards read as straight straw: swap them for shell fuzz
-  // and the moss cards (crisp little fir trees) for the same shells, grown tall where the bark is green
-  for (const n of ['hairs_twig', 'moss']) {
-    const o = group.getObjectByName(n);
-    if (o) o.visible = false;
-  }
+  // the twig's felt, moss and fine hairs are made here, not in the glb (baked cards read as straw and fir trees)
   const perch = group.getObjectByName('perch') as THREE.Mesh | undefined;
+  let fuzz: THREE.Object3D | null = null;
   if (perch) {
-    group.add(fuzzShells(perch));
+    fuzz = fuzzShells(perch);
+    group.add(fuzz);
     // and the fine pale hairs the flowers have, on the twig too
     const flowerHairs = group.getObjectByName('hairs') as THREE.Mesh | undefined;
     if (flowerHairs) group.add(fineHairs(perch, flowerHairs.material as THREE.Material));
   }
-  return { group, radius: PERCH_R };
+  return { group, fuzz };
 }
 
 // Fine hairs, one thin tapered triangle each, scattered over the twig and
@@ -219,7 +215,7 @@ export async function loadBranch(url: string, onProgress?: (e: ProgressEvent) =>
 function fineHairs(perch: THREE.Mesh, material: THREE.Material) {
   const COUNT = matchMedia('(pointer: coarse)').matches ? 7000 : 16000;
   const sampler = new MeshSurfaceSampler(perch).build();
-  const rng = mulberry(31);
+  const rng = mulberry32(31);
   const p = new THREE.Vector3();
   const n = new THREE.Vector3();
   const t = new THREE.Vector3();
@@ -232,7 +228,7 @@ function fineHairs(perch: THREE.Mesh, material: THREE.Material) {
   for (let tries = 0; made < COUNT && tries < COUNT * 4; tries++) {
     sampler.sample(p, n);
     // none where the toes grip, few on the old woody end and underneath
-    if (Math.abs(p.x) < 0.17 || p.x < -2.8) continue;
+    if (Math.abs(p.x - GRIP_X) < 0.17 || p.x < -2.8) continue;
     if (n.y < -0.3 && rng() < 0.7) continue;
     t.set(rng() - 0.5, rng() - 0.5, rng() - 0.5).cross(n).normalize();
     b.crossVectors(n, t);
@@ -288,13 +284,14 @@ function fuzzShells(perch: THREE.Mesh) {
     mat.onBeforeCompile = (sh) => {
       sh.uniforms.uH = { value: h };
       sh.uniforms.uLen = { value: FUZZ_H };
+      sh.uniforms.uGrip = { value: GRIP_X };
       sh.vertexShader = sh.vertexShader
-        .replace('#include <common>', '#include <common>\nuniform float uH; uniform float uLen; varying vec3 vFP; varying float vGrip;')
+        .replace('#include <common>', '#include <common>\nuniform float uH; uniform float uLen; uniform float uGrip; varying vec3 vFP; varying float vGrip;')
         .replace(
           '#include <begin_vertex>',
           `#include <begin_vertex>
            // no felt where the toes grip, and it thins out toward the old woody left end
-           float gx = abs(position.x);
+           float gx = abs(position.x - uGrip);
            vGrip = mix(0.22, 1.0, smoothstep(0.14, 0.24, gx)) * (1.0 - smoothstep(-2.6, -3.2, position.x));
            transformed += objectNormal * uH * uLen * vGrip;
            vFP = position;`,
@@ -329,9 +326,8 @@ function fuzzShells(perch: THREE.Mesh) {
              float strand = 1.0 - smoothstep(r * 0.6, r, length(f.xz + f.y * 0.3));
              float a = strand * step(uH, tall) * vGrip;
              // a dense low underlayer so it reads as felt, not as stubble
-             a = max(a, (1.0 - smoothstep(0.08, 0.22, uH)) * step(0.55, fn(q * 0.5)) * vGrip);
+             if (uH < 0.22) a = max(a, (1.0 - smoothstep(0.08, 0.22, uH)) * step(0.55, fn(q * 0.5)) * vGrip);
              diffuseColor.a = a;
-             // root dark, tips paler and a touch warmer
              // root dark, tips paler, warmer and greyed where they catch the light
              vec3 tip = mix(diffuseColor.rgb * vec3(1.35, 1.15, 0.95), vec3(dot(diffuseColor.rgb, vec3(0.33)) * 1.6), 0.25);
              tip = mix(tip, diffuseColor.rgb * vec3(1.5, 1.6, 0.9), green); // moss tips go yellow-green

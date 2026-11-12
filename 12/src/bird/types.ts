@@ -50,22 +50,22 @@ export interface Bird {
    * scene owns and moves the objects; the bird decides whether one is worth
    * reaching for and how (IK on the neck so the bill tip meets it).
    */
-  setFood?(items: ReadonlyArray<Food>): void;
+  setFood(items: ReadonlyArray<Food>): void;
   /** Called once when the bill closes on an item. The scene then carries it on billTip until onSwallow. */
-  onPick?: ((id: number) => void) | null;
+  onPick: ((id: number) => void) | null;
   /** Called once when a carried item has gone down (the scene removes it; it also gives up after 3 s). */
-  onSwallow?: ((id: number) => void) | null;
+  onSwallow: ((id: number) => void) | null;
   /**
    * World-space point where a carried item sits: the bill tip at the pick,
    * then wherever the bird moves it (along the tongue, into the mouth).
    */
-  billTip?(out: THREE.Vector3): THREE.Vector3;
+  billTip(out: THREE.Vector3): THREE.Vector3;
   /**
    * The perch, so the bird can hop along it. `at(x)` gives the perch frame at
    * world x (null where there is no perch); `range` is the x span it may use.
    * Called again when the perch changes (the Blender twig replacing the
    * procedural one).
    */
-  setPerch?(at: (x: number, out: PerchFrame) => PerchFrame | null, range: [number, number]): void;
+  setPerch(at: (x: number, out: PerchFrame) => PerchFrame | null, range: [number, number]): void;
   dispose(): void;
 }
