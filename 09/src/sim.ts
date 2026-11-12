@@ -47,6 +47,9 @@ const STEP = 1.2 * TEXEL;       // grab search step, under a groove's width so n
 const DIRS = 24;                // grab search directions
 
 const TOOLS: Tool[] = ['peel', 'knife', 'ruler', 'scratch'];
+const OPEN_WAIT = 0.25;         // s after landing before the opening cross is begun
+const OPEN_TIME = 0.75;         // s it takes to draw, both strokes
+const OPEN_POINTS = 28;         // points along each of its strokes
 const CLAWS = 4;                // cuts a scratch leaves, side by side
 const CLAW_GAP = 0.05;          // between them, in radii, give or take
 const CLAW_GAP_VARY = 0.45;     // how much of that gap each claw is off its even place, either way
@@ -570,6 +573,7 @@ export function createSim(ctx: Ctx): Module {
   }
 
   function onDown(e: PointerEvent) {
+    drawOpening(1); // a hand on it: the cross is there
     if (e.pointerType !== 'mouse') {
       fingers.set(e.pointerId, { x: e.clientX - left, y: e.clientY - top });
       if (fingers.size === 2 && (pid !== -1 || two.on) && !two.on) {
@@ -741,8 +745,6 @@ export function createSim(ctx: Ctx): Module {
     onEdit: editLook,
     onPreset: loadPreset,
     onTool: setTool,
-    onBench: bench,
-    onBench2: bench2,
     onBack: back,
     onRedo: redo,
   });
@@ -755,10 +757,56 @@ export function createSim(ctx: Ctx): Module {
   }
   setTool(world.tool);
 
+  // The opening: the film is whole on landing, and within a second a cross is cut into it
+  // by a hand nobody sees, two strokes that are never quite straight and never twice the
+  // same. Somewhere to take hold, without a word of how. Not a step to undo: it is where
+  // the piece starts. A press before it is done finishes it at once.
+  const opening = { t: 0, done: false, begun: false, laid: [0, 0], paths: [[], []] as Vector3[][] };
+  {
+    const q = new Quaternion().copy(world.rotation).invert();
+    const vary = () => Math.random() * 2 - 1;
+    // each stroke from one end to the other as seen from the camera, in sphere radii, bowed
+    // a little to one side and wavering as a hand does
+    const ends: Array<[number, number, number, number]> = [
+      [-0.3 + vary() * 0.04, 0.33 + vary() * 0.04, 0.34 + vary() * 0.04, -0.3 + vary() * 0.04],
+      [0.36 + vary() * 0.04, 0.3 + vary() * 0.04, -0.28 + vary() * 0.04, -0.27 + vary() * 0.04],
+    ];
+    ends.forEach(([x0, y0, x1, y1], k) => {
+      const nx = -(y1 - y0), ny = x1 - x0, nl = Math.hypot(nx, ny);
+      const bow = vary() * 0.035, wave = 0.006 + Math.random() * 0.008, f = 2 + Math.random() * 2, ph = Math.random() * 6.28;
+      for (let i = 0; i < OPEN_POINTS; i++) {
+        const t = i / (OPEN_POINTS - 1);
+        const off = bow * Math.sin(t * Math.PI) + wave * Math.sin(ph + t * f * Math.PI);
+        const x = x0 + (x1 - x0) * t + (nx / nl) * off, y = y0 + (y1 - y0) * t + (ny / nl) * off;
+        opening.paths[k].push(new Vector3(x, y, Math.sqrt(Math.max(0, 1 - x * x - y * y))).applyQuaternion(q));
+      }
+    });
+  }
+  /** Carry the opening on to `p` of the way (0..1); the first stroke takes the first half
+   *  of it, the second the last, a beat between them. */
+  function drawOpening(p: number) {
+    if (opening.done) return;
+    const ease = (u: number) => u * u * (3 - 2 * u);
+    for (let k = 0; k < 2; k++) {
+      const u = Math.min(1, Math.max(0, (p - k * 0.55) / 0.45));
+      const upTo = Math.round(ease(u) * (OPEN_POINTS - 1));
+      const path = opening.paths[k];
+      for (let i = opening.laid[k]; i < upTo; i++) {
+        if (!opening.begun) { beginStroke(); opening.begun = true; }
+        paintArc(world.films, path[i].x, path[i].y, path[i].z, path[i + 1].x, path[i + 1].y, path[i + 1].z);
+      }
+      opening.laid[k] = Math.max(opening.laid[k], upTo);
+    }
+    if (p >= 1) { opening.done = true; if (opening.begun) requestRelabel(); }
+  }
+  /** Whatever comes instead of the opening (a bench, a step back) does without it. */
+  const skipOpening = () => { opening.done = true; };
+
   // A fixed bench to compare feels on: whole film, the sphere turned as at the start, and
   // the same three cuts facing the camera: a line right round, a straight open cut and an
   // open U.
   function bench() {
+    skipOpening();
     remember();
     peeler.clear();
     fading = 0;
@@ -793,6 +841,7 @@ export function createSim(ctx: Ctx): Module {
    * sphere and an open cut to start from. Always the same.
    */
   function bench2() {
+    skipOpening();
     remember();
     peeler.clear();
     fading = 0;
@@ -1049,6 +1098,8 @@ export function createSim(ctx: Ctx): Module {
         omega.multiplyScalar(Math.exp(-3.5 * dt));
       } else omega.set(0, 0, 0);
       qInv.copy(world.rotation).invert();
+
+      if (!opening.done) drawOpening(((opening.t += dt) - OPEN_WAIT) / OPEN_TIME);
 
       world.lift.ghost = tune.ghost;
       world.lift.band = tune.height;

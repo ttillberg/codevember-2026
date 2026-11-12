@@ -39,9 +39,6 @@ export interface UiHandlers {
   /** Load preset `variant` (an index into finishes[0], or finishes[1] for the base) into film `index`; -1 is the base. */
   onPreset(index: number, variant: number): void;
   onTool(t: Tool): void;
-  onBench(): void;
-  /** The second test scene, further in. */
-  onBench2(): void;
   onBack(): void;
   onRedo(): void;
 }
@@ -88,7 +85,6 @@ const PRINTS = ['none', 'label', 'net'] as const;
 const THUMB = 14;       // px, keep in step with the slider thumb in style.css
 const DEAD = 4;         // px a touch moves before it counts as a drag, not a tap
 const INFO_MS = 8000;   // how long a touched setting's text stays up
-const BENCH = 'Reset to the test scene: whole film and three fixed cuts';
 
 // ------------------------------------------------------------------------------- icons
 
@@ -631,12 +627,6 @@ export function createUi(h: UiHandlers): Ui {
   }, 'Copy every setting as text');
   copy.textContent = 'copy';
   extras.append(copy);
-  const bench = button('btn chip', h.onBench, BENCH + ' (b)');
-  bench.textContent = 'bench';
-  extras.append(bench);
-  const bench2 = button('btn chip', h.onBench2, 'Reset to the second test scene: the top film partly off, the one under it opened (n)');
-  bench2.textContent = 'bench 2';
-  extras.append(bench2);
 
   let open = false;
   function setOpen(o: boolean) {
