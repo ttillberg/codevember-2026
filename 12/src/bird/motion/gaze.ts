@@ -41,6 +41,8 @@ export class GazeLayer implements Layer {
   private seenYaw = 0;
   private seenPitch = 0;
   private lastStart = -10;
+  private focusSeen = -1;
+  private focusAt = 0;
   private head = new THREE.Vector3(0, 0.9, 0.05);
   private d = new THREE.Vector3();
 
@@ -62,8 +64,9 @@ export class GazeLayer implements Layer {
   }
 
   private lookAtAttention(m: Mind) {
-    if (!m.attention) return false;
-    this.d.copy(m.attention).sub(this.head);
+    const at = m.focus ?? m.attention;
+    if (!at) return false;
+    this.d.copy(at).sub(this.head);
     this.attYaw = Math.atan2(this.d.x, this.d.z);
     this.attPitch = Math.atan2(this.d.y, Math.hypot(this.d.x, this.d.z));
     return true;
@@ -135,7 +138,22 @@ export class GazeLayer implements Layer {
       return;
     }
 
-    if (!this.moving && !m.quiet) {
+    if (m.focus && !this.moving && !m.gazeLock && this.lookAtAttention(m)) {
+      // something to keep the bill on (food): go to it, then follow with small re-fixations
+      const off = Math.hypot((this.attYaw - this.cur.yaw) * Math.cos(this.attPitch), this.attPitch - this.cur.pitch);
+      const fresh = this.focusSeen !== m.focusId;
+      if (fresh && !this.focusAt) this.focusAt = m.t + rand(m.rng, 0.09, 0.24);
+      if ((fresh && m.t >= this.focusAt) || (!fresh && off > 6 * DEG && m.t - this.lastStart > 0.16 && m.rng() < m.dt * 9)) {
+        this.focusSeen = m.focusId;
+        this.focusAt = 0;
+        this.burst = 0;
+        this.begin(m, {
+          yaw: clamp(this.attYaw, -this.maxYaw, this.maxYaw),
+          pitch: clamp(this.attPitch + (fresh ? rand(m.rng, -3, 3) * DEG : 0), -50 * DEG, 65 * DEG),
+          roll: fresh ? rand(m.rng, -8, 8) * DEG : this.cur.roll * 0.6,
+        });
+      }
+    } else if (!this.moving && !m.quiet && !m.focus && !m.gazeLock) {
       if (m.t >= this.nextAt && (m.freeze <= 0 || this.burst < 0)) {
         const startle = this.burst < 0;
         if (startle) this.burst = 0;

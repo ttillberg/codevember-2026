@@ -66,8 +66,6 @@ export interface Rig {
   skeleton: THREE.Skeleton;
   index(name: string): number;
   wings: Record<Side, WingRig>;
-  /** left wing, folded: wrist and the point over the tail where the tips meet (mirror x for the right) */
-  wingLine: [THREE.Vector3, THREE.Vector3];
   rectrices: RectrixRig[];
   eyes: Record<Side, EyeRig>;
   /** hip sockets in hips-bone space, and ankles in root space */
@@ -162,67 +160,30 @@ export function buildRig(species: Species): Rig {
   // wings
   const W = species.wing;
   const wings = {} as Record<Side, WingRig>;
-  const wingA = new THREE.Vector3();
-  const wingB = new THREE.Vector3();
   {
-    // Folded pose, left wing. The wing is laid ON the body: the wrist sits on the flank,
-    // every remex is a straight blade from there toward the point over the tail where the
-    // wingtips meet, and each is swung outward until its whole length clears the skin by
-    // enough to ride above the contour feathers. Inner feathers lie on top of outer ones.
+    // Folded pose, left wing. At rest the wing you see is a feathered strip of the body
+    // (see Loft.wingAt); the real arm and blades sit just under it, ready to unfold. Each
+    // blade simply aims at the point over the tail where the wingtips meet. Only the outer
+    // primaries are shown at rest: they run inside the strip and their tips come out past
+    // the rump. Everything else on these bones stays hidden until the wing spreads.
     const S = V(W.shoulder);
     const sfc: SurfacePoint = { p: new THREE.Vector3(), n: new THREE.Vector3(), t: new THREE.Vector3() };
-    const tmpN = new THREE.Vector3();
-    const P = new THREE.Vector3();
-    const onSkin = (s: number, deg: number, lift: number) => {
-      loft.surface(s, deg * DEG, sfc);
-      return sfc.p.clone().addScaledVector(sfc.n, lift);
+    const under = (u: number, v: number, depth: number) => {
+      const q = loft.wingAt(u, v, 1);
+      loft.surface(q.s, q.ang, sfc);
+      return sfc.p.clone().addScaledVector(sfc.n, -depth);
     };
     const ta = species.tail.droop * DEG;
     const tailDir = new THREE.Vector3(0, -Math.sin(ta), -Math.cos(ta));
     const tailUp = new THREE.Vector3(0, Math.cos(ta), -Math.sin(ta));
-    const meet = c(sp.tail).addScaledVector(tailDir, species.tail.length[1] * W.foldCross[0]).addScaledVector(tailUp, 0.03);
-    meet.x = W.foldCross[1];
-    const wrist = onSkin(W.foldAt[0], W.foldAt[1], W.foldClear);
+    const meet = c(sp.tail).addScaledVector(tailDir, species.tail.length[1] * W.rest.cross[0]).addScaledVector(tailUp, 0.03);
+    meet.x = W.rest.cross[1];
+    const E = under(0.03, 0.4, 0.02);
+    const wrist = under(0.2, -0.35, 0.014);
     const N = sfc.n.clone();
-    const E = onSkin(W.foldAt[0] + 0.85, W.foldAt[1] + 24, W.foldClear * 0.7);
     const hd = meet.clone().sub(wrist).normalize();
     N.addScaledVector(hd, -N.dot(hd)).normalize();
     const trail = new THREE.Vector3().crossVectors(N, hd);
-    /** Push a point out until it clears the skin by `clear`. */
-    const lift = (p: THREE.Vector3, clear: number) => {
-      for (let k = 0; k < 4; k++) {
-        const d = loft.clearance(p, tmpN);
-        if (d >= clear) break;
-        p.addScaledVector(tmpN, clear - d + 0.001);
-      }
-      return p;
-    };
-    /** Swing a blade about its base until all of it clears; returns its direction and surface normal. */
-    const lay = (base: THREE.Vector3, aim: THREE.Vector3, len: number, clear: number) => {
-      const tip = base.clone().addScaledVector(aim.clone().sub(base).normalize(), len);
-      for (let it = 0; it < 30; it++) {
-        let worst = 0;
-        let wf = 1;
-        const wn = new THREE.Vector3();
-        for (let f = 0.12; f <= 1.001; f += 0.11) {
-          P.copy(base).lerp(tip, f);
-          const d = loft.clearance(P, tmpN) - clear;
-          if (d < worst) {
-            worst = d;
-            wf = f;
-            wn.copy(tmpN);
-          }
-        }
-        if (worst >= -0.0005) break;
-        tip.addScaledVector(wn, (-worst / wf) * 1.05);
-        // keep the length
-        tip.sub(base).setLength(len).add(base);
-      }
-      const dir = tip.sub(base).normalize();
-      loft.clearance(P.copy(base).addScaledVector(dir, len * 0.3), tmpN);
-      const n = tmpN.clone().addScaledVector(dir, -tmpN.dot(dir)).normalize();
-      return { dir, n };
-    };
 
     // spread pose directions (left wing): out along +X, trailing edge toward the tail
     const caudal = loft.axis(sp.spine, new THREE.Vector3()).multiplyScalar(-1);
@@ -239,24 +200,17 @@ export function buildRig(species: Species): Rig {
     const np = W.primaries;
     for (let i = 0; i < np; i++) {
       const f = i / (np - 1);
-      const clear = W.foldClear + (1 - f) * 0.008;
-      const base = lift(wrist.clone().addScaledVector(hd, (W.hand * (i + 0.4)) / np).addScaledVector(trail, (1 - f) * 0.05), clear);
-      const len = lerp(W.primaryLen[0], W.primaryLen[1], Math.pow(f, 0.75));
-      const { dir, n } = lay(base, meet.clone().addScaledVector(trail, (1 - f) * 0.045), len, clear);
-      specs.push({ name: `primary#${i + 1}`, parent: 'hand', pos: base, dir, n, sDir: rotIn(X, dorsal, lerp(74, -6, f) * DEG) });
+      const base = wrist.clone().addScaledVector(hd, (W.hand * (i + 0.4)) / np).addScaledVector(trail, (1 - f) * 0.04).addScaledVector(N, (1 - f) * 0.004);
+      const dir = meet.clone().addScaledVector(trail, (1 - f) * 0.05).sub(base).normalize();
+      specs.push({ name: `primary#${i + 1}`, parent: 'hand', pos: base, dir, n: N, sDir: rotIn(X, dorsal, lerp(74, -6, f) * DEG) });
     }
     const ns = W.secondaries;
     for (let j = 0; j < ns; j++) {
       const f = j / (ns - 1);
-      const clear = W.foldClear + 0.01 + f * 0.004;
-      const base = lift(wrist.clone().lerp(E, (j + 0.7) / (ns + 0.4)).addScaledVector(trail, 0.045 + f * 0.02), clear);
-      const len = lerp(W.secondaryLen[0], W.secondaryLen[1], f);
-      const { dir, n } = lay(base, base.clone().add(rotIn(hd, N, lerp(7, 16, f) * DEG)), len, clear);
-      specs.push({ name: `secondary#${j + 1}`, parent: 'forearm', pos: base, dir, n, sDir: rotIn(X, dorsal, lerp(82, 97, f) * DEG) });
+      const base = wrist.clone().lerp(E, (j + 0.7) / (ns + 0.4)).addScaledVector(trail, 0.03 + f * 0.015);
+      specs.push({ name: `secondary#${j + 1}`, parent: 'forearm', pos: base, dir: rotIn(hd, N, lerp(7, 16, f) * DEG), n: N, sDir: rotIn(X, dorsal, lerp(82, 97, f) * DEG) });
     }
 
-    wingA.copy(wrist);
-    wingB.copy(meet);
     for (const side of SIDES) {
       const sg = sideSign(side);
       const nm = (n: string) => (n.includes('#') ? n.replace('#', `.${side}.`) : `${n}.${side}`);
@@ -336,7 +290,6 @@ export function buildRig(species: Species): Rig {
       return i;
     },
     wings,
-    wingLine: [wingA, wingB],
     rectrices,
     eyes,
     hipSocket,

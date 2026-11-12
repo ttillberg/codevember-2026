@@ -15,6 +15,8 @@ import { RuffleLayer } from './motion/ruffle';
 import { TailLayer } from './motion/tail';
 import { WingLayer } from './motion/wings';
 import { StartleLayer } from './motion/startle';
+import { ForageLayer } from './motion/forage';
+import type { Food } from './types';
 
 /** The bird plus the handles a UI, a debugger or a new behaviour would want. */
 export interface BirdHandle extends Bird {
@@ -28,6 +30,9 @@ export interface BirdHandle extends Bird {
   /** Feather shader uniforms: uFlash, uGlint, uSheen are free to tune. */
   plumage: PlumageUniforms;
   stats: { bones: number; contourFeathers: number; flightFeathers: number; vertices: number; triangles: number };
+  setFood(items: ReadonlyArray<Food>): void;
+  onPick: ((id: number) => void) | null;
+  billTip(out: THREE.Vector3): THREE.Vector3;
   /** Hook that runs after the layers and before the solver: last word on the pose. */
   onPose: ((pose: Pose, mind: Mind) => void) | null;
 }
@@ -71,7 +76,10 @@ export function createBird(_ctx: BirdContext, options: BirdOptions = {}): BirdHa
   const solve = createSolver(rig, uniforms);
   const mind = new Mind(species, options.seed ?? species.seed);
   const startle = new StartleLayer(mind);
-  const layers: Layer[] = [new PostureLayer(mind), new BreathLayer(), new GazeLayer(mind), new BlinkLayer(mind), new RuffleLayer(mind), new TailLayer(mind), new WingLayer(mind), startle];
+  const forage = new ForageLayer(mind, solve, rig.rest.head.worldPos.clone(), (id) => handle.onPick?.(id));
+  const layers: Layer[] = [new PostureLayer(mind), new BreathLayer(), new GazeLayer(mind), new BlinkLayer(mind), new RuffleLayer(mind), new TailLayer(mind), new WingLayer(mind), forage, startle];
+  let food: ReadonlyArray<Food> = [];
+  const foodPool: { id: number; pos: THREE.Vector3; vel: THREE.Vector3 }[] = [];
 
   const headRest = rig.rest.head.worldPos.clone();
   const local = new THREE.Vector3();
@@ -100,6 +108,17 @@ export function createBird(_ctx: BirdContext, options: BirdOptions = {}): BirdHa
       } else {
         mind.attention = null;
       }
+      // food into root space
+      root.updateWorldMatrix(true, false);
+      inv.copy(root.matrixWorld).invert();
+      mind.food.length = 0;
+      for (let i = 0; i < food.length; i++) {
+        const f = (foodPool[i] ??= { id: 0, pos: new THREE.Vector3(), vel: new THREE.Vector3() });
+        f.id = food[i].id;
+        f.pos.copy(food[i].position).applyMatrix4(inv);
+        f.vel.copy(food[i].velocity).transformDirection(inv).multiplyScalar(food[i].velocity.length());
+        mind.food.push(f);
+      }
       mind.step(dt, headRest);
       pose.reset();
       for (const l of layers) if (l.enabled) l.update(mind, pose);
@@ -108,6 +127,13 @@ export function createBird(_ctx: BirdContext, options: BirdOptions = {}): BirdHa
     },
     setAttention(target) {
       attention = target;
+    },
+    setFood(items) {
+      food = items;
+    },
+    onPick: null,
+    billTip(out) {
+      return out.copy(solve.tip).applyMatrix4(root.matrixWorld);
     },
     startle(strength = 1) {
       startle.fire(Math.min(Math.max(strength, 0), 1));

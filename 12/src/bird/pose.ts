@@ -29,6 +29,14 @@ export class Pose {
   /** 1 = head position fully held against body motion */
   headStabil = 0.85;
 
+  /**
+   * Reach: put the bill TIP on this root-space point. weight 0 = ignore, 1 = exactly there.
+   * The solver aims the head so the bill points along the line to the target and slides the
+   * head along that line (unfolding or tucking the neck) until the tip arrives.
+   */
+  reachTarget = new THREE.Vector3();
+  reachWeight = 0;
+
   // body (hips)
   bodyYaw = 0;
   bodyPitch = 0; // + = lean forward
@@ -62,6 +70,7 @@ export class Pose {
     this.headYaw = this.headPitch = this.headRoll = 0;
     this.headShift.set(0, 0, 0);
     this.headStabil = 0.85;
+    this.reachWeight = 0;
     this.bodyYaw = this.bodyPitch = this.bodyRoll = this.chestPitch = 0;
     this.bodyShift.set(0, 0, 0);
     this.breath = 0;
@@ -90,7 +99,16 @@ const Y = new THREE.Vector3(0, 1, 0);
 const Z = new THREE.Vector3(0, 0, 1);
 const I = new THREE.Quaternion();
 
-export function createSolver(rig: Rig, uniforms: PlumageUniforms) {
+/** applyPose plus what the solve found out. */
+export interface Solver {
+  (p: Pose): void;
+  /** bill tip after the last solve, root space */
+  tip: THREE.Vector3;
+  /** distance from head pivot to bill tip */
+  billReach: number;
+}
+
+export function createSolver(rig: Rig, uniforms: PlumageUniforms): Solver {
   const { bones, rest, species } = rig;
   const e = new THREE.Euler();
   const qHips = new THREE.Quaternion();
@@ -113,6 +131,16 @@ export function createSolver(rig: Rig, uniforms: PlumageUniforms) {
     const hq = rest[`hand.${s}`].quat;
     wingAxes[s] = { out: X.clone().applyQuaternion(hq), fan: Y.clone().applyQuaternion(hq) };
   }
+  // the bill tip in head space, and how far the neck may unfold or tuck to carry it somewhere
+  const billRest = rest.bill;
+  const tipLocal = new THREE.Vector3(0, -species.bill.droop, species.bill.length).applyQuaternion(billRest.worldQuat).add(billRest.worldPos).sub(rest.head.worldPos);
+  const tipLen = tipLocal.length();
+  const tipElev = Math.atan2(tipLocal.y, tipLocal.z);
+  const NECK_OUT = 0.34;
+  const NECK_IN = 0.24;
+  const tip = new THREE.Vector3();
+  const hWant = new THREE.Vector3();
+  const qAim = new THREE.Quaternion();
   const sternumDir = rest.sternum.worldPos.clone().sub(rest.chest.worldPos).setX(0).normalize();
 
   /** Root-space position of the head bone for a given hips transform and neck rotations. */
@@ -126,7 +154,7 @@ export function createSolver(rig: Rig, uniforms: PlumageUniforms) {
     return out;
   }
 
-  return function applyPose(p: Pose) {
+  const applyPose = function applyPose(p: Pose) {
     // --- body -------------------------------------------------------------------
     e.set(p.bodyPitch, p.bodyYaw, p.bodyRoll, 'YXZ');
     qHips.setFromEuler(e);
@@ -140,27 +168,58 @@ export function createSolver(rig: Rig, uniforms: PlumageUniforms) {
     bones.sternum.position.copy(rest.sternum.pos).addScaledVector(sternumDir, p.breath * 0.011);
     bones.sternum.scale.set(1 + p.breath * 0.028, 1, 1 + p.breath * 0.012);
 
-    // --- neck and head: world-stabilised gaze -------------------------------
+    // --- neck and head: world-stabilised gaze, optionally reaching with the bill ----------
     e.set(-p.headPitch, p.headYaw, p.headRoll, 'YXZ');
     qHead.setFromEuler(e);
-    qRel.copy(qChestW).invert().multiply(qHead);
-    qA.copy(I).slerp(qRel, n1);
-    qB.copy(I).slerp(qRel, n2);
+    const solveNeck = () => {
+      qRel.copy(qChestW).invert().multiply(qHead);
+      qA.copy(I).slerp(qRel, n1);
+      qB.copy(I).slerp(qRel, n2);
+    };
+    solveNeck();
+    // where the head sits with the body's motion taken out (held still in space) and the
+    // layers' own shifts added
+    headFk(bones.hips.position, qHips, qChestL, qA, qB, pFk);
+    headFk(rest.hips.pos, I, I, qA, qB, pStill);
+    v.copy(pStill).sub(pFk).multiplyScalar(clamp(p.headStabil, 0, 1)).add(p.headShift);
+    const w = clamp(p.reachWeight, 0, 1);
+    if (w > 0) {
+      // IK for the bill tip. The head pivot must end up exactly one bill-length from the
+      // target, on the line from where it is now: slide it along that line, within what the
+      // neck can give, then turn the head so the tip lies on the target.
+      hWant.copy(pFk).add(v);
+      v2.copy(p.reachTarget).sub(hWant);
+      const dist = v2.length() || 1e-6;
+      const slide = clamp(dist - tipLen, -NECK_IN, NECK_OUT);
+      hWant.addScaledVector(v2, slide / dist);
+      v2.copy(p.reachTarget).sub(hWant).normalize();
+      const yaw = clamp(Math.atan2(v2.x, v2.z), -2.2, 2.2);
+      const pitch = clamp(Math.asin(clamp(v2.y, -1, 1)) - tipElev, -1.1, 1.25);
+      e.set(-pitch, yaw, p.headRoll * (1 - w), 'YXZ');
+      qAim.setFromEuler(e);
+      qHead.slerp(qAim, w);
+      solveNeck();
+      headFk(bones.hips.position, qHips, qChestL, qA, qB, pFk);
+      v.lerp(hWant.sub(pFk), w);
+    }
     bones.neck1.quaternion.copy(qA);
     bones.neck2.quaternion.copy(qB);
     // whatever the neck did not do, the head does: world orientation is exact
     qC.copy(qA).multiply(qB).invert().multiply(qRel);
     bones.head.quaternion.copy(qC);
-    // hold the head still in space while the body breathes and shifts under it
-    headFk(bones.hips.position, qHips, qChestL, qA, qB, pFk);
-    headFk(rest.hips.pos, I, I, qA, qB, pStill);
-    v.copy(pStill).sub(pFk).multiplyScalar(clamp(p.headStabil, 0, 1)).add(p.headShift);
-    // into the head's parent space
+    // the head's translation is shared down the neck (a bird's neck is a folded S under the
+    // feathers: reaching is that S unfolding), each bone taking its part in its parent's frame
+    tip.copy(pFk).add(v);
+    qC.copy(qChestW).invert();
+    bones.neck1.position.copy(rest.neck1.pos).add(v2.copy(v).multiplyScalar(0.22).applyQuaternion(qC));
+    qC.copy(qChestW).multiply(qA).invert();
+    bones.neck2.position.copy(rest.neck2.pos).add(v2.copy(v).multiplyScalar(0.3).applyQuaternion(qC));
     qC.copy(qChestW).multiply(qA).multiply(qB).invert();
-    v.applyQuaternion(qC);
-    bones.head.position.copy(rest.head.pos).add(v);
+    bones.head.position.copy(rest.head.pos).add(v2.copy(v).multiplyScalar(0.48).applyQuaternion(qC));
+    // bill tip, root space, for whoever wants to know (picking, carrying)
+    tip.add(v2.copy(tipLocal).applyQuaternion(qHead));
 
-    bones.jaw.quaternion.copy(rest.jaw.quat).multiply(qA.setFromAxisAngle(X, p.jaw * 0.35));
+    bones.jaw.quaternion.copy(rest.jaw.quat).multiply(qA.setFromAxisAngle(X, p.jaw * 0.11));
 
     // --- eyes -------------------------------------------------------------------
     for (const s of SIDES) {
@@ -195,7 +254,8 @@ export function createSolver(rig: Rig, uniforms: PlumageUniforms) {
       if (fold > 0) {
         const ax = wingAxes[s];
         const fore = w.bones[1];
-        fore.quaternion.multiply(qA.setFromAxisAngle(ax.out, -wp.lift * fold));
+        // (the free tips follow a flick only a little: most of it is the resting wing's feathers lifting)
+        fore.quaternion.multiply(qA.setFromAxisAngle(ax.out, -wp.lift * 0.3 * fold));
         fore.quaternion.multiply(qA.setFromAxisAngle(ax.fan, -sideSign(s) * wp.droop * fold));
       }
     }
@@ -214,7 +274,12 @@ export function createSolver(rig: Rig, uniforms: PlumageUniforms) {
     uniforms.uLift.value.set(p.lift);
     uniforms.uGorget.value = p.gorget;
     uniforms.uCrest.value = p.crest;
-  };
+    uniforms.uWingSpread.value.set(p.wing.L.spread, p.wing.R.spread);
+    uniforms.uWingLift.value.set(p.wing.L.lift, p.wing.R.lift);
+  } as Solver;
+  applyPose.tip = tip;
+  applyPose.billReach = tipLen;
+  return applyPose;
 }
 
 export { Z as FORWARD };

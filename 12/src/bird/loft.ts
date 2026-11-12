@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import type { Species } from './species';
-import { catmull, clamp, DEG, smoothstep } from './util';
+import { catmull, clamp, DEG, lerp, smoothstep } from './util';
 
 // The body is one lofted surface from the tail root (s = 0) to the base of the
 // bill (s = sections - 1). Everything that lives on the skin (feathers, the eye
@@ -64,7 +64,16 @@ export class Loft {
     // slightly squared-off cross-section: fuller flanks, like a real bird
     const k = 1 + 0.06 * Math.sin(ang * 2) ** 2;
     const d = -ca * (ca > 0 ? rv : rd) * k;
-    out.set(sa * w * k, catmull(this.ys, s) + Math.cos(a) * d, catmull(this.zs, s) - Math.sin(a) * d);
+    const cy = catmull(this.ys, s);
+    const cz = catmull(this.zs, s);
+    out.set(sa * w * k, cy + Math.cos(a) * d, cz - Math.sin(a) * d);
+    // the folded wings: pushed straight out from the axis
+    const h = this.wingBulge(s, ang);
+    if (h > 0) {
+      const l = Math.hypot(out.x, out.y - cy, out.z - cz) || 1;
+      const f = 1 + h / l;
+      out.set(out.x * f, cy + (out.y - cy) * f, cz + (out.z - cz) * f);
+    }
     return out;
   }
 
@@ -83,43 +92,46 @@ export class Loft {
     return out;
   }
 
-  /**
-   * How far a root-space point stands outside the skin of the trunk (negative = inside),
-   * good enough to lay wing feathers on the body. Writes the skin normal there into `n`.
-   * Points past the tail root count as clear.
-   */
-  clearance(P: THREE.Vector3, n?: THREE.Vector3, sLimit = 5.6): number {
-    const c = new THREE.Vector3();
-    const ax = new THREE.Vector3();
-    let best = 0;
-    let bestV = Infinity;
-    const N = 90;
-    for (let k = 0; k <= N; k++) {
-      const s = (k / N) * sLimit;
-      this.center(s, c);
-      this.axis(s, ax);
-      const v = Math.abs((P.x - c.x) * ax.x + (P.y - c.y) * ax.y + (P.z - c.z) * ax.z);
-      if (v < bestV) {
-        bestV = v;
-        best = s;
-      }
-    }
-    this.center(best, c);
-    this.axis(best, ax);
-    if (best === 0 && (P.y - c.y) * ax.y + (P.z - c.z) * ax.z < -0.01) {
-      n?.set(Math.sign(P.x) * 0.5, 0.4, -0.75).normalize();
-      return 1;
-    }
-    const a = catmull(this.as, best);
-    const dcoord = (P.y - c.y) * Math.cos(a) - (P.z - c.z) * Math.sin(a);
-    const w = Math.max(catmull(this.ws, best), 0.004);
-    const r = Math.max(dcoord > 0 ? catmull(this.rds, best) : catmull(this.rvs, best), 0.004);
-    const ang = Math.atan2(P.x / w, -dcoord / r);
-    const rel = Math.hypot(P.x - c.x, P.y - c.y, P.z - c.z);
-    const cc = c;
-    const sp: SurfacePoint = { p: new THREE.Vector3(), n: n ?? new THREE.Vector3(), t: new THREE.Vector3() };
-    this.surface(best, ang, sp);
-    return rel - sp.p.distanceTo(cc);
+  // --- the folded wing, as a strip of the body ------------------------------------------
+  // Wing space: u runs 0 at the shoulder to 1 at the rump end of the strip, v runs -1 at
+  // its leading (belly-side) edge to +1 at its trailing (back-side) edge.
+
+  private wingHalfWidth(u: number) {
+    const [w0, w1, w2] = this.species.wing.rest.width;
+    return u < 0.35 ? lerp(w0, w1, smoothstep(0, 0.35, u)) : lerp(w1, w2, smoothstep(0.35, 1, u));
+  }
+
+  /** Half-width of the strip as an angle round the body at s. */
+  private wingHalfAngle(s: number, u: number) {
+    const r = (catmull(this.ws, s) + (catmull(this.rds, s) + catmull(this.rvs, s)) / 2) / 2;
+    return this.wingHalfWidth(u) / Math.max(r, 0.03);
+  }
+
+  /** Where a point of the loft sits in wing space (either side). v is unbounded. */
+  wingUV(s: number, ang: number) {
+    const R = this.species.wing.rest;
+    const TAU = Math.PI * 2;
+    let a = ((ang % TAU) + TAU) % TAU;
+    if (a > Math.PI) a = TAU - a;
+    const u = (R.from[0] - s) / (R.from[0] - R.to[0]);
+    const uc = clamp(u, 0, 1);
+    const centre = lerp(R.from[1], R.to[1], uc) * DEG;
+    return { u, v: (a - centre) / this.wingHalfAngle(s, uc) };
+  }
+
+  /** The loft coordinates of a wing-space point; sign +1 = left wing, -1 = right. */
+  wingAt(u: number, v: number, sign: number) {
+    const R = this.species.wing.rest;
+    const s = lerp(R.from[0], R.to[0], u);
+    const a = lerp(R.from[1], R.to[1], clamp(u, 0, 1)) * DEG + v * this.wingHalfAngle(clamp(s, 0, this.sMax), clamp(u, 0, 1));
+    return { s, ang: sign > 0 ? a : Math.PI * 2 - a };
+  }
+
+  private wingBulge(s: number, ang: number) {
+    const { u, v } = this.wingUV(s, ang);
+    if (u <= 0 || u >= 1 || Math.abs(v) >= 1) return 0;
+    const k = 1 - v * v;
+    return this.species.wing.rest.height * smoothstep(0, 0.1, u) * (1 - smoothstep(0.8, 1, u)) * k * k;
   }
 
   /** Up to two spine bones and their weights for a point at s. */

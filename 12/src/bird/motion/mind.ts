@@ -31,6 +31,14 @@ export class Mind {
   freeze = 0;
   /** true while the head is mid-saccade */
   saccading = false;
+  /** food in the air, root-local, refreshed every frame by the bird */
+  food: { id: number; pos: THREE.Vector3; vel: THREE.Vector3 }[] = [];
+  /** something that outranks the general point of interest: the gaze goes bill-on and keeps re-fixating it */
+  focus: THREE.Vector3 | null = null;
+  /** bumps whenever the focus becomes a different thing */
+  focusId = 0;
+  /** the head is busy (a strike): no saccades */
+  gazeLock = false;
   /** debug: pin the gaze to [yaw, pitch, roll] degrees */
   pinGaze: [number, number, number] | null = null;
   /** debug: silence the spontaneous behaviours */

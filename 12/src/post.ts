@@ -35,7 +35,10 @@ vec2 coc(vec2 uv) {
   float d = texture2D(tDepth, uv).x;
   if (d >= 0.99999) return vec2(uFarCoc, 1e4);
   float z = viewZ(d);
-  return vec2(min(uAperture * abs(1.0 / uFocus - 1.0 / z), uMaxCoc), z);
+  // a real lens gets shallower up close; scale that back so a macro look at
+  // the eye isn't a smear (blur grows with distance from focus, not 1/f^2)
+  float k = uFocus / 3.3;
+  return vec2(min(uAperture * abs(1.0 / uFocus - 1.0 / z) * k, uMaxCoc), z);
 }
 
 const int TAPS = 48;
@@ -49,10 +52,13 @@ void main() {
   float wsum = 1.0;
   // big enough to catch blurry foreground spilling over a sharp pixel
   float R = max(c0, uMaxCoc * 0.5);
+  // rotate the spiral per pixel so a hot speck blurs to a soft disc, not a ring of dots
+  float rot = fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233))) * 43758.5453) * 6.2831853;
+  float jr = fract(sin(dot(gl_FragCoord.xy, vec2(39.3468, 11.135))) * 24634.6345);
   for (int i = 1; i < TAPS; i++) {
     float fi = float(i);
-    float r = sqrt(fi / float(TAPS)) * R;
-    float a = fi * GOLDEN;
+    float r = sqrt((fi - jr) / float(TAPS)) * R;
+    float a = fi * GOLDEN + rot;
     vec2 uv = vUv + vec2(cos(a), sin(a)) * r * uTexel;
     vec2 czi = coc(uv);
     // a tap behind us can't blur over us further than our own blur
@@ -63,7 +69,7 @@ void main() {
     if (any(isnan(s)) || any(isinf(s))) continue;
     s = min(s, vec3(32.0));
     // out-of-focus highlights bloom into discs a little
-    w *= 1.0 + 0.6 * smoothstep(0.6, 1.6, dot(s, vec3(0.333)));
+    w *= 1.0 + 0.25 * smoothstep(0.6, 1.6, dot(s, vec3(0.333)));
     acc += s * w;
     wsum += w;
   }

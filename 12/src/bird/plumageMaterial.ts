@@ -18,6 +18,10 @@ export interface PlumageUniforms {
   uLift: { value: Float32Array };
   uGorget: { value: number };
   uCrest: { value: number };
+  /** per wing [left, right]: 0 folded (the body-surface wing shows) … 1 spread (the real blades show) */
+  uWingSpread: { value: THREE.Vector2 };
+  /** per wing: the resting wing's feathers hinged off the body, radians (a flick, a shuffle) */
+  uWingLift: { value: THREE.Vector2 };
   uFlash: { value: number };
   uGlint: { value: number };
   uSheen: { value: number };
@@ -29,6 +33,8 @@ export function createPlumageMaterial(): { material: THREE.MeshStandardMaterial;
     uLift: { value: new Float32Array(8) },
     uGorget: { value: 0 },
     uCrest: { value: 0 },
+    uWingSpread: { value: new THREE.Vector2() },
+    uWingLift: { value: new THREE.Vector2() },
     uFlash: { value: 1 },
     uGlint: { value: 1 },
     uSheen: { value: 1 },
@@ -52,6 +58,8 @@ uniform float uFluff;
 uniform float uLift[8];
 uniform float uGorget;
 uniform float uCrest;
+uniform vec2 uWingSpread;
+uniform vec2 uWingLift;
 varying vec2 vFUv;
 varying vec3 vFData;
 varying vec4 vBase;
@@ -69,6 +77,12 @@ float fI = floor(min(fCoord, 6.0));
 float fWave = mix(uLift[int(fI)], uLift[int(fI) + 1], fCoord - fI);
 float fAng = aData.z * (uFluff + fWave) * (0.6 + 0.8 * aData.x);
 fAng += (aData.w > 0.5 && aData.w < 1.5 ? uGorget : 0.0) + (aData.w > 1.5 && aData.w < 2.5 ? uCrest : 0.0);
+// wings: ids 2/3 = the resting wing on the body (left/right), 4/5 = the real blades
+bool fRest = aData.y > 1.5 && aData.y < 3.5;
+bool fReal = aData.y > 3.5;
+bool fRight = aData.y > 2.5 && aData.y < 3.5 || aData.y > 4.5;
+float fUnfold = smoothstep(0.03, 0.35, fRight ? uWingSpread.y : uWingSpread.x);
+if (fRest) fAng += (fRight ? uWingLift.y : uWingLift.x) * (0.5 + aData.x);
 float fC = cos(fAng), fS = sin(fAng);
 vec3 objectNormal = rotAxis(normal, aHinge, fC, fS);
 vec3 fIriN = rotAxis(aIriN, aHinge, fC, fS);
@@ -83,7 +97,13 @@ vBase = aBase; vTip = aTip; vIri = aIri; vIri2 = aIri2;`,
 #endif
 vIriN = normalize(normalMatrix * fIriN);`,
       )
-      .replace('#include <begin_vertex>', /* glsl */ `vec3 transformed = aData.w > 3.5 ? position + normal * max(fAng, -0.1) * 0.05 : aRoot + rotAxis(position - aRoot, aHinge, fC, fS);`);
+      .replace(
+        '#include <begin_vertex>',
+        /* glsl */ `vec3 transformed = aData.w > 3.5 ? position + normal * max(fAng, -0.1) * 0.05 : aRoot + rotAxis(position - aRoot, aHinge, fC, fS);
+// as the wing spreads the resting wing sinks into the body and the real blades grow out of it
+if (fRest) transformed = mix(transformed, aRoot - normal * 0.03, fUnfold);
+if (fReal) transformed = mix(aRoot, transformed, fUnfold);`,
+      );
 
     shader.fragmentShader = shader.fragmentShader
       .replace(
@@ -103,6 +123,7 @@ float fIriMask;
 float fBarb;
 float fEdge;
 float fBarbRand;
+float fBarbHue;
 float fSoft;
 float fFuzz;`,
       )
@@ -124,7 +145,7 @@ float fFuzz;`,
       float cx = (vFUv.x + sway) * (1.0 + 0.63 * fo) + fo * 17.3 + layer * 5.7;
       float colId = floor(cx);
       float hc = fract(sin(colId * 12.9898 + fo * 4.1 + layer * 9.7) * 43758.5453);
-      float len = mix(0.03, 0.075, hc);
+      float len = mix(0.018, 0.045, hc);
       float sy = vFUv.y / len + hc * 13.0;
       float seg = floor(sy), fy = fract(sy);
       float hs = fract(sin((colId + seg * 57.0) * 78.233 + fo * 1.7) * 24634.6345);
@@ -145,6 +166,7 @@ float fFuzz;`,
     diffuseColor.a = clamp(alpha + (ign - 0.5) * 0.3 * step(0.02, alpha), 0.0, 1.0);
     fBarb = 0.0; fEdge = 0.0; fSoft = 1.0;
     fBarbRand = mix(pick, 0.5, lodF);
+    fBarbHue = mix(tone, 0.5, lodF);
     // glints are short dashes on some hairs, not tiles
     fIriMask = mix(step(0.62, pick) * dash * 2.6, 0.4, lodF);
   } else {
@@ -155,12 +177,18 @@ float fFuzz;`,
   float loose = flight ? 0.0 : vTip.a;
   fEdge = 0.0;
   fBarbRand = 0.5;
-  // barbs: chevrons off the shaft. One barb per 2 PI of arg.
-  float bf = flight ? 520.0 : scale ? 84.0 : mix(120.0, 76.0, loose);
-  float arg = v * bf - au * bf * (flight ? 0.073 : scale ? 0.3 : 0.045) + rnd * 6.28;
+  // barbs, one per 2 PI of arg. On a blade they run diagonally off the shaft. On contour
+  // feathers and scales they are a fan: fine parallel strands that splay from behind the
+  // root, like the teeth of a comb or the ribs of a scallop, the outer ones running off
+  // the side of the vane before the tip.
+  float outline = mix(0.5, 1.0, smoothstep(0.0, 0.5, v)) * pow(max(1.0 - pow(clamp((v - 0.5) / 0.5, 0.0, 1.0), 1.9), 0.0), 0.53);
+  float fanX = u * outline / (v + 0.4) * 1.4;
+  float arg = flight ? v * 520.0 - au * 38.0 + rnd * 6.28 : fanX * (scale ? 12.0 : mix(8.5, 6.5, loose)) * 6.2832 + rnd * 6.28;
   float fw = fwidth(arg);
-  float lod = clamp(fw * 0.32, 0.0, 1.0); // 0 = barbs resolved, 1 = sub-pixel
-  float id = floor(arg / 6.2832);
+  float lod = smoothstep(1.2, 3.0, fw); // 0 = barbs resolved, 1 = sub-pixel
+  float id = floor(arg / 6.2832 + 0.5);
+  // a thin bright strand with a dark gap either side
+  float strand = smoothstep(0.3, 0.78, 0.5 + 0.5 * cos(arg));
   float h = fract(sin(id * 12.9898 + rnd * 78.233) * 43758.5453);
   float h2 = fract(sin(id * 39.3468 + rnd * 11.135) * 24634.6345);
   float ridge = 0.5 + 0.5 * cos(arg); // 1 on the barb, 0 in the gap between two
@@ -176,8 +204,10 @@ float fFuzz;`,
   float edge = max(au, (v - 0.55) / 0.45);
   // scales carry a paler fringe on the free edge; soft feathers just vary barb by barb
   float rim = scale ? smoothstep(0.72, 1.0, edge) * 0.4 : 0.0;
-  pig *= occ * (1.0 + (flight ? 0.26 : scale ? 0.14 : 0.14) * fBarb) * (1.0 + rim);
-  if (!flight && !scale) pig *= 0.88 + 0.24 * mix(h, 0.5, lod);
+  pig *= occ * (1.0 + (flight ? 0.26 : scale ? 0.16 : 0.0) * fBarb) * (1.0 + rim);
+  // soft feathers: the strands carry the colour, between them it is nearly dark
+  if (!flight && !scale) pig *= mix(mix(0.3, 1.3, strand), 0.86, lod) * (0.88 + 0.24 * mix(h, 0.5, lod));
+  fBarbHue = flight || scale ? 0.5 : mix(0.55 * fract(rnd * 5.31) + 0.45 * fract(h2 * 3.7 + h), 0.5, lod * 0.6);
   if (!flight && !scale) {
     // per feather, subtle: a touch warmer or cooler, lighter or darker,
     // and now and then a worn pale tip
@@ -208,6 +238,24 @@ float fFuzz;`,
     fEdge = (smoothstep(0.8, 0.97, lead) + 0.35 * smoothstep(0.9, 1.0, au)) * (gl_FrontFacing ? 0.3 : 1.0);
   } else {
     pig *= mix(1.0, 0.72, shaft * 0.7);
+    if (!scale) {
+      // dust: on a few feathers a white speck, a short thread of lint lying any which way,
+      // or a wisp of pale down; commoner on the dark upper parts. Each fades out before it
+      // gets thinner than a pixel, so it never sparkles.
+      float dark = 1.0 - smoothstep(0.004, 0.02, dot(vBase.rgb, vec3(0.3, 0.5, 0.2)));
+      float pick = fract(rnd * 91.7);
+      float px = fwidth(v) + 1e-5;
+      vec2 sc = vec2(fract(rnd * 13.3) * 1.1 - 0.55, 0.45 + 0.4 * fract(rnd * 29.1));
+      vec2 d = vec2((u - sc.x) * 0.55, v - sc.y);
+      float speck = step(1.0 - mix(0.006, 0.02, dark), pick) * (1.0 - smoothstep(0.035, 0.085, length(d))) * clamp(0.06 / px - 0.4, 0.0, 1.0);
+      float la = fract(rnd * 47.3) * 3.1416;
+      vec2 ld = vec2(cos(la), sin(la));
+      float along = dot(d, ld), across = dot(d, vec2(-ld.y, ld.x)) + 0.05 * sin(along * 9.0 + rnd * 20.0);
+      float lint = step(pick, mix(0.004, 0.016, dark)) * (1.0 - smoothstep(0.012, 0.03, abs(across))) * (1.0 - smoothstep(0.2, 0.3, abs(along))) * clamp(0.022 / px - 0.4, 0.0, 1.0);
+      float tuft = step(0.5, pick) * step(pick, 0.5 + mix(0.001, 0.004, dark)) * (1.0 - smoothstep(0.1, 0.3, length(d))) * (0.4 + 0.6 * strand) * clamp(0.15 / px - 0.4, 0.0, 1.0);
+      pig = mix(pig, vec3(0.5, 0.5, 0.48), max(speck, lint) * 0.9);
+      pig = mix(pig, vec3(0.3, 0.27, 0.27), tuft * 0.8);
+    }
   }
   diffuseColor.rgb = pig;
   #ifdef ALPHA_TO_COVERAGE
@@ -217,8 +265,8 @@ float fFuzz;`,
     float cut = mix(scale ? 0.7 : mix(0.62, 0.45, loose), 1.03, h * h) - (h2 < 0.05 + 0.1 * loose ? 0.45 : 0.0);
     float alive = 1.0 - smoothstep(cut - aa, cut + aa, edge);
     // toward the edge of a soft feather the barbs stand apart: you see between them
-    float open = smoothstep(mix(0.8, 0.12, loose), 1.0, edge) * min(loose * 1.6, 1.0);
-    float gap = smoothstep(0.62, 0.3, ridge) * open;
+    float open = scale ? 0.0 : smoothstep(mix(0.55, 0.1, loose), mix(0.95, 0.7, loose), max(edge, v * 0.9)) * mix(0.75, 1.0, loose);
+    float gap = (1.0 - strand) * open;
     float fine = alive * (1.0 - gap);
     // too far to resolve barbs: the same thing on average, a soft feathered outline
     float far = 1.0 - smoothstep(mix(0.82, 0.5, loose), 1.06, edge) * mix(0.35, 0.8, loose);
@@ -231,8 +279,10 @@ float fFuzz;`,
   #endif
   // structural colour: on scales the whole exposed disc; on soft feathers it sits on the
   // barbs, so it glitters in streaks rather than tiling
-  float streak = mix(smoothstep(0.45, 0.8, h) * (0.4 + 0.6 * ridge) * 2.2, 0.55, lod);
-  fIriMask = flight ? 1.0 : scale ? bare * (0.72 + 0.28 * fBarb) * (1.0 - 0.35 * shaft) : bare * streak;
+  // every strand shines, some much more than others; too far to tell them apart, their
+  // average, with the odd single-feather sparkle so velvet still glints
+  float streak = mix(strand * (0.25 + 2.3 * h * h), 0.55 * (1.0 + 1.6 * step(0.9, fract(rnd * 3.77))), lod);
+  fIriMask = flight ? 1.0 : scale ? bare * mix(0.5 + 0.62 * strand, 0.8, lod) * (1.0 - 0.3 * shaft) : bare * streak;
   fSoft = (flight || scale) ? 0.0 : 1.0;
   }
 }`,
@@ -254,6 +304,11 @@ roughnessFactor = clamp((vFData.y > 3.5 ? 0.95 : vFData.y > 2.5 ? 0.8 : vFData.y
   float strength = vBase.a * 4.0;
   // hue slides with the angle of incidence
   vec3 colV = mix(vIri2.rgb, vIri.rgb, smoothstep(0.3, 0.8, c));
+  // strand by strand the green leans gold or teal
+  float fGold = fSoft * clamp((0.4 - fBarbHue) / 0.4, 0.0, 1.0) * 0.85;
+  float fTeal = fSoft * clamp((fBarbHue - 0.68) / 0.32, 0.0, 1.0) * 0.6;
+  colV = mix(colV, vec3(colV.g * 1.15, colV.g * 1.05, colV.b * 0.25), fGold);
+  colV = mix(colV, vec3(colV.r * 0.5, colV.g * 0.95, colV.g * 0.95), fTeal);
   float lobeV = pow(c, power);
   vec3 ambient = (irradiance + iblIrradiance) * RECIPROCAL_PI;
   vec3 flash = colV * lobeV * (ambient * 2.2 + 0.05) * uFlash;
@@ -263,6 +318,8 @@ roughnessFactor = clamp((vFData.y > 3.5 ? 0.95 : vFData.y > 2.5 ? 0.8 : vFData.y
     float nh = max(dot(nI, H), 0.0);
     float cl = max(dot(nI, directionalLights[i].direction), 0.0);
     vec3 colL = mix(vIri2.rgb, vIri.rgb, smoothstep(0.3, 0.8, nh));
+    colL = mix(colL, vec3(colL.g * 1.15, colL.g * 1.05, colL.b * 0.25), fGold);
+    colL = mix(colL, vec3(colL.r * 0.5, colL.g * 0.95, colL.g * 0.95), fTeal);
     flash += colL * pow(nh, power * 8.0) * cl * directionalLights[i].color * 0.35 * uGlint;
   }
   #endif
@@ -282,7 +339,7 @@ roughnessFactor = clamp((vFData.y > 3.5 ? 0.95 : vFData.y > 2.5 ? 0.8 : vFData.y
 }`,
       );
   };
-  material.customProgramCacheKey = () => 'plumage-v20';
+  material.customProgramCacheKey = () => 'plumage-v24';
   return { material, uniforms };
 }
 
@@ -297,6 +354,8 @@ export function createPlumageDepthMaterial(uniforms: PlumageUniforms) {
     shader.uniforms.uLift = uniforms.uLift;
     shader.uniforms.uGorget = uniforms.uGorget;
     shader.uniforms.uCrest = uniforms.uCrest;
+    shader.uniforms.uWingSpread = uniforms.uWingSpread;
+    shader.uniforms.uWingLift = uniforms.uWingLift;
     shader.vertexShader = shader.vertexShader
       .replace(
         '#include <common>',
@@ -308,6 +367,8 @@ uniform float uFluff;
 uniform float uLift[8];
 uniform float uGorget;
 uniform float uCrest;
+uniform vec2 uWingSpread;
+uniform vec2 uWingLift;
 vec3 rotAxis(vec3 v, vec3 k, float c, float s) { return v * c + cross(k, v) * s + k * dot(k, v) * (1.0 - c); }`,
       )
       .replace(
@@ -318,9 +379,17 @@ float fI = floor(min(fCoord, 6.0));
 float fWave = mix(uLift[int(fI)], uLift[int(fI) + 1], fCoord - fI);
 float fAng = aData.z * (uFluff + fWave) * (0.6 + 0.8 * aData.x);
 fAng += (aData.w > 0.5 && aData.w < 1.5 ? uGorget : 0.0) + (aData.w > 1.5 && aData.w < 2.5 ? uCrest : 0.0);
-vec3 transformed = aRoot + rotAxis(position - aRoot, aHinge, cos(fAng), sin(fAng));`,
+// wings: ids 2/3 = the resting wing on the body (left/right), 4/5 = the real blades
+bool fRest = aData.y > 1.5 && aData.y < 3.5;
+bool fReal = aData.y > 3.5;
+bool fRight = aData.y > 2.5 && aData.y < 3.5 || aData.y > 4.5;
+float fUnfold = smoothstep(0.03, 0.35, fRight ? uWingSpread.y : uWingSpread.x);
+if (fRest) fAng += (fRight ? uWingLift.y : uWingLift.x) * (0.5 + aData.x);
+vec3 transformed = aRoot + rotAxis(position - aRoot, aHinge, cos(fAng), sin(fAng));
+if (fRest) transformed = mix(transformed, aRoot - normal * 0.03, fUnfold);
+if (fReal) transformed = mix(aRoot, transformed, fUnfold);`,
       );
   };
-  m.customProgramCacheKey = () => 'plumage-depth-v1';
+  m.customProgramCacheKey = () => 'plumage-depth-v2';
   return m;
 }

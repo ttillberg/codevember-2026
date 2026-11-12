@@ -4,6 +4,7 @@ import { createBackdrop } from './env/backdrop';
 import { createBranch, loadBranch } from './env/branch';
 import { createBird } from './bird';
 import { createPost } from './post';
+import { createSeeds } from './seeds';
 
 const canvas = document.querySelector<HTMLCanvasElement>('#c')!;
 const query = new URLSearchParams(location.search);
@@ -85,6 +86,7 @@ scene.add(rim, rim.target);
 // --- bird ---------------------------------------------------------------------
 const bird = createBird({ renderer, scene, camera });
 scene.add(bird.root);
+const gaze = bird.layer<{ interest: number } & import('./bird').Layer>('gaze');
 // on phones the contour feathers skip the shadow pass (most of its triangles)
 if (phone) bird.root.traverse((o) => o.name === 'bird.contour' && (o.castShadow = false));
 
@@ -94,14 +96,22 @@ const ndc = new THREE.Vector2();
 const pointerTarget = new THREE.Vector3();
 let pointerAt = -1e9;
 const plane = new THREE.Plane();
-window.addEventListener('pointermove', (e) => {
-  ndc.set((e.clientX / window.innerWidth) * 2 - 1, -(e.clientY / window.innerHeight) * 2 + 1);
+// a plane facing the camera, `ahead` in front of the bird's head
+function pointerOnPlane(x: number, y: number, ahead: number, out: THREE.Vector3) {
+  ndc.set((x / window.innerWidth) * 2 - 1, -(y / window.innerHeight) * 2 + 1);
   ray.setFromCamera(ndc, camera);
-  // a plane through the bird, facing the camera, a bit in front of it
   const n = camera.getWorldDirection(new THREE.Vector3()).negate();
-  plane.setFromNormalAndCoplanarPoint(n, new THREE.Vector3(0, 0.7, 0).addScaledVector(n, 0.8));
-  if (ray.ray.intersectPlane(plane, pointerTarget)) pointerAt = performance.now();
+  plane.setFromNormalAndCoplanarPoint(n, new THREE.Vector3(0, 0.8, 0).addScaledVector(n, ahead));
+  return ray.ray.intersectPlane(plane, out);
+}
+window.addEventListener('pointermove', (e) => {
+  if (pointerOnPlane(e.clientX, e.clientY, 0.8, pointerTarget)) pointerAt = performance.now();
 });
+
+// seeds: click drops one in the air in front of the bird
+const seeds = createSeeds(scene);
+bird.onPick = (id) => seeds.pick(id);
+const seedAt = new THREE.Vector3();
 let downAt = 0;
 let downX = 0;
 let downY = 0;
@@ -115,7 +125,9 @@ setTimeout(() => hint?.classList.add('gone'), 9000);
 canvas.addEventListener('pointerup', (e) => {
   hint?.classList.add('gone');
   // a click, not a drag
-  if (performance.now() - downAt < 250 && Math.hypot(e.clientX - downX, e.clientY - downY) < 6) bird.startle(1);
+  if (performance.now() - downAt < 250 && Math.hypot(e.clientX - downX, e.clientY - downY) < 6) {
+    if (pointerOnPlane(e.clientX, e.clientY, 0.6, seedAt)) seeds.spawn(seedAt);
+  }
 });
 window.addEventListener('keydown', (e) => {
   if (e.code === 'Space') bird.startle(1);
@@ -162,9 +174,14 @@ renderer.setAnimationLoop((now) => {
   controls.update();
   backdrop.material.uniforms.uTime.value = t;
   backdrop.mesh.position.copy(camera.position);
-  const recent = performance.now() - pointerAt < 2500;
+  // the pointer is interesting while it moves; 2 s of stillness and the bird
+  // goes back to its own business (the camera now and then, so the gorget still flashes)
+  const recent = performance.now() - pointerAt < 2000;
+  gaze.interest = recent ? 0.95 : 0.5;
   bird.setAttention(recent ? pointerTarget : camera.position);
+  bird.setFood?.(seeds.food());
   bird.update(dt, t);
+  seeds.update(dt, t, bird.billTip?.bind(bird));
   frame();
 });
 
@@ -174,4 +191,4 @@ function frame() {
   post.render(scene, camera, t);
 }
 
-Object.assign(window as unknown as Record<string, unknown>, { __scene: scene, __camera: camera, __renderer: renderer, __controls: controls, __post: post, __frame: frame });
+Object.assign(window as unknown as Record<string, unknown>, { __scene: scene, __camera: camera, __renderer: renderer, __controls: controls, __post: post, __frame: frame, __seeds: seeds });

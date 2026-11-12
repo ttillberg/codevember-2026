@@ -39,8 +39,6 @@ export class StartleLayer implements Layer {
     const flick = Math.exp(-tau / 0.09) * Math.min(tau / 0.03, 1);
     p.wing.L.lift += flick * 0.42 * s;
     p.wing.R.lift += flick * 0.42 * s;
-    p.wing.L.spread += flick * 0.1 * s;
-    p.wing.R.spread += flick * 0.1 * s;
     // eyes wide
     p.lidUpper -= 0.2 * sleek;
     p.lidLower -= 0.2 * sleek;

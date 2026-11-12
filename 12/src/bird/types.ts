@@ -13,6 +13,14 @@ export interface BirdContext {
   camera: THREE.PerspectiveCamera;
 }
 
+export interface Food {
+  id: number;
+  /** world space, live (the scene moves it) */
+  position: THREE.Vector3;
+  /** world-space velocity, so the bird can lead a drifting seed */
+  velocity: THREE.Vector3;
+}
+
 export interface Bird {
   /** Add this to the scene. Already placed at its perch grip point. */
   root: THREE.Object3D;
@@ -25,5 +33,15 @@ export interface Bird {
   setAttention(target: THREE.Vector3 | null): void;
   /** Something sudden happened near the bird (click, key). */
   startle(strength?: number): void;
+  /**
+   * Food floating in the air (seeds), world space, refreshed every frame. The
+   * scene owns and moves the objects; the bird decides whether one is worth
+   * reaching for and how (IK on the neck so the bill tip meets it).
+   */
+  setFood?(items: ReadonlyArray<Food>): void;
+  /** Called once when the bill closes on an item. The scene then carries it on billTip and lets it go. */
+  onPick?: ((id: number) => void) | null;
+  /** World-space position of the bill tip. */
+  billTip?(out: THREE.Vector3): THREE.Vector3;
   dispose(): void;
 }

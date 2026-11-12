@@ -15,6 +15,13 @@ export const CH_GORGET = 1;
 export const CH_CROWN = 2;
 export const CH_FLIGHT = 3;
 export const CH_FUZZ = 4;
+// wing ids, stored in the body-coordinate slot (anything above 1 samples the lift profile at its end)
+export const WING_REST_L = 2;
+export const WING_REST_R = 3;
+export const WING_REAL_L = 4;
+export const WING_REAL_R = 5;
+/** how many outer primaries stay visible at rest, their tips showing past the rump */
+const FREE_TIPS = 5;
 
 interface FeatherSpec {
   root: THREE.Vector3;
@@ -101,7 +108,7 @@ class Builder {
         this.P.copy(f.root).addScaledVector(S, x).addScaledVector(f.dir, vv * f.length).addScaledVector(f.normal, -drop);
         this.Nv.copy(f.normal).addScaledVector(S, 2 * f.cup * u * prof).addScaledVector(f.dir, 2 * f.curl * vv);
         // the platelet normal follows the curl of the vane, so a scale shades as a little dome
-        this.In.copy(f.iriNormal).addScaledVector(S, 0.55 * f.cup * u * prof).addScaledVector(f.dir, 0.16 * (vv - 0.6)).normalize();
+        this.In.copy(f.iriNormal).addScaledVector(S, 0.3 * f.cup * u * prof).addScaledVector(f.dir, 0.1 * (vv - 0.6)).normalize();
         // soft feathers shade as one coat, not as separate plates
         if (f.skinNormal) this.Nv.normalize().lerp(f.skinNormal, lerp(0.45, 0.8, Math.min(f.loose * 2, 1)));
         this.Nv.normalize();
@@ -313,6 +320,9 @@ function addContour(b: Builder, rig: Rig, rng: Rng) {
   const plant = (sj: number, a: number) => {
     loft.surface(sj, a, sfc);
     for (const side of SIDES) if (sfc.p.distanceTo(rig.eyes[side].center) < eyeR * 1.08) return;
+    // the folded wings are feathered separately (addRestWing); the coat stops at their edge
+    const wuv = loft.wingUV(sj, a);
+    if (wuv.u > 0.04 && wuv.u < 0.97 && Math.abs(wuv.v) < 0.9) return;
     // ragged tract borders: look the feather itself up with a little jitter
     const phi = phiOf(a);
     const { look, width } = sizeAt(sj + (rng() - 0.5) * 0.06, clamp(phi + (rng() - 0.5) * 0.012, 0, 1), rng());
@@ -330,18 +340,12 @@ function addContour(b: Builder, rig: Rig, rng: Rng) {
     let tilt = (look.tilt + (rng() - 0.5) * lerp(6, 17, loose) + nB * 7 * loose + stray * (8 + rng() * 10)) * DEG;
     const yaw = (rng() - 0.5) * lerp(0.17, 0.72, loose) + nA * 0.4 * loose + stray * (rng() - 0.5) * 0.9;
     const roll = ((rng() - 0.5) * 0.7 + nB * 0.3) * loose;
-    let gain = look.lift;
-    // under the folded wing the coat is pressed flat
-    tmpA.set(Math.abs(sfc.p.x), sfc.p.y, sfc.p.z);
-    tmpB.copy(rig.wingLine[1]).sub(rig.wingLine[0]);
-    const wt = clamp(tmpA.clone().sub(rig.wingLine[0]).dot(tmpB) / tmpB.lengthSq(), 0, 1);
-    const wd = tmpA.distanceTo(tmpB.multiplyScalar(wt).add(rig.wingLine[0]));
-    // (but at the wing root the flank and shoulder feathers stay full, and bury the bend)
-    // and the long scapulars are left to drape over the inner wing
-    if (wd < 0.06 && wt > 0.13 && look !== species.looks.scapular) {
-      tilt = Math.min(tilt, 3 * DEG);
-      gain *= 0.12;
+    // right beside the folded wing the coat lies closer, so the wing is not sunk in a trench
+    if (wuv.u > 0 && wuv.u < 1 && Math.abs(wuv.v) < 1.7 && !stray) {
+      const near = 1 - smoothstep(0.9, 1.7, Math.abs(wuv.v));
+      tilt *= 1 - 0.6 * near;
     }
+    let gain = look.lift;
     // lay the feather along the skin: aim it at the surface point under its tip, raised by the
     // tilt, so it rides over bulges and bridges hollows instead of cutting through them
     const local = loft.point(Math.min(sj + 0.01, loft.sMax), a, tmpA).distanceTo(loft.point(Math.max(sj - 0.01, 0), a, tmpB)) / 0.02;
@@ -438,7 +442,7 @@ function addWing(b: Builder, rig: Rig, side: Side, rng: Rng) {
   const X = new THREE.Vector3();
   const Y = new THREE.Vector3();
   const Z = new THREE.Vector3();
-  const blade = (bone: THREE.Bone, length: number, width: number, asym: number) => {
+  const blade = (bone: THREE.Bone, length: number, width: number, asym: number, shown: boolean) => {
     const r = rig.rest[bone.name];
     new THREE.Matrix4().makeRotationFromQuaternion(r.worldQuat).extractBasis(X, Y, Z);
     // no two blades lie quite alike
@@ -473,7 +477,9 @@ function addWing(b: Builder, rig: Rig, side: Side, rng: Rng) {
       bones: [i, 0, 0, 0],
       weights: [1, 0, 0, 0],
       rand: rng(),
-      coord: 0.55,
+      // coord doubles as a wing id for the shader: REAL_L/REAL_R blades stay folded away
+      // inside the body until the wing spreads; 0.55 = always shown
+      coord: shown ? 0.55 : sg > 0 ? WING_REAL_L : WING_REAL_R,
       gain: 0,
       // for blades the cover slot says which edge is the leading one
       cover: sg > 0 ? 0.2 : 0.8,
@@ -482,56 +488,42 @@ function addWing(b: Builder, rig: Rig, side: Side, rng: Rng) {
   };
   wr.primaries.forEach((bone, i) => {
     const f = i / (wr.primaries.length - 1);
-    blade(bone, lerp(W.primaryLen[0], W.primaryLen[1], Math.pow(f, 0.75)), W.primaryWidth * lerp(1.15, 0.8, f), lerp(0.2, 0.5, f));
+    blade(bone, lerp(W.primaryLen[0], W.primaryLen[1], Math.pow(f, 0.75)), W.primaryWidth * lerp(1.15, 0.8, f), lerp(0.2, 0.5, f), i >= wr.primaries.length - FREE_TIPS);
   });
   wr.secondaries.forEach((bone, j) => {
     const f = j / (wr.secondaries.length - 1);
-    blade(bone, lerp(W.secondaryLen[0], W.secondaryLen[1], f), W.secondaryWidth, 0.15);
+    blade(bone, lerp(W.secondaryLen[0], W.secondaryLen[1], f), W.secondaryWidth, 0.15, false);
   });
 
-  // coverts: rows of small feathers shingled over the remex bases, riding the arm bones
+  // coverts on the arm bones, for the spread wing only: rows shingled over the remex bases
   const look = rig.species.looks.covert;
   const hand = rig.rest[`hand.${side}`];
   const fore = rig.rest[`forearm.${side}`];
-  const upper = rig.rest[`shoulder.${side}`];
   new THREE.Matrix4().makeRotationFromQuaternion(hand.worldQuat).extractBasis(X, Y, Z);
-  // world-space trailing direction regardless of side
-  const trail = X.clone().multiplyScalar(sg);
+  const trail = X.clone().multiplyScalar(sg); // world-space trailing direction, either side
   const N = Y.clone();
-  // (in world space the mirrored wing's clearance test works on the mirrored point)
   const hd = Z.clone();
   const tipOfHand = hand.worldPos.clone().addScaledVector(hd, W.hand);
-  // coverts: rows of loose feathers shingled over the remex bases and the wing bend,
-  // each pushed out until it rides above the blades under it
   const rowsDef = [
-    { off: -0.02, len: 0.075, w: 0.034, lift: 0.016, n: 15 },
-    { off: 0.0, len: 0.1, w: 0.04, lift: 0.02, n: 14 },
-    { off: 0.024, len: 0.13, w: 0.046, lift: 0.027, n: 14 },
-    { off: 0.05, len: 0.17, w: 0.05, lift: 0.031, n: 14 },
-    { off: 0.078, len: 0.2, w: 0.05, lift: 0.034, n: 13 },
+    { off: -0.02, len: 0.075, w: 0.034, lift: 0.006, n: 15 },
+    { off: 0.0, len: 0.1, w: 0.04, lift: 0.008, n: 14 },
+    { off: 0.024, len: 0.13, w: 0.046, lift: 0.01, n: 14 },
+    { off: 0.05, len: 0.17, w: 0.05, lift: 0.012, n: 13 },
   ];
   const p = new THREE.Vector3();
   const dir = new THREE.Vector3();
   const nrm = new THREE.Vector3();
-  const sn = new THREE.Vector3();
-  const clear = rig.species.wing.foldClear;
   for (const rw of rowsDef) {
     for (let k = 0; k < rw.n; k++) {
       // a runs elbow(−0.5) → wrist(0) → along the hand(1)
       const a = lerp(-0.55, 0.9, (k + rng() * 0.7) / rw.n);
       if (a < 0) p.copy(hand.worldPos).lerp(fore.worldPos, -a / 0.5);
       else p.copy(hand.worldPos).lerp(tipOfHand, a);
-      p.addScaledVector(trail, rw.off + (rng() - 0.5) * 0.016);
-      for (let it = 0; it < 3; it++) {
-        const d = rig.loft.clearance(p, sn);
-        if (d < clear + rw.lift) p.addScaledVector(sn, clear + rw.lift - d);
-      }
-      N.copy(sn);
-      const tilt = 0.08 + rng() * 0.1;
-      dir.copy(hd).addScaledVector(N, -hd.dot(N)).normalize().applyAxisAngle(N, sg * (0.1 + rng() * 0.3 + (a < 0 ? 0.25 : 0)));
+      p.addScaledVector(trail, rw.off + (rng() - 0.5) * 0.016).addScaledVector(N, rw.lift);
+      const tilt = 0.06 + rng() * 0.08;
+      dir.copy(hd).applyAxisAngle(N, sg * (0.1 + rng() * 0.3 + (a < 0 ? 0.25 : 0)));
       nrm.copy(N).multiplyScalar(Math.cos(tilt)).addScaledVector(dir, -Math.sin(tilt));
       dir.multiplyScalar(Math.cos(tilt)).addScaledVector(N, Math.sin(tilt));
-      nrm.applyAxisAngle(dir, (rng() - 0.5) * 0.4);
       const bi = rig.index(a < 0 ? `forearm.${side}` : `hand.${side}`);
       const size = 0.8 + rng() * 0.4;
       b.add({
@@ -540,7 +532,7 @@ function addWing(b: Builder, rig: Rig, side: Side, rng: Rng) {
         dir,
         normal: nrm,
         skinNormal: N,
-        iriNormal: nrm.clone().add(new THREE.Vector3((rng() - 0.5) * 0.4, (rng() - 0.5) * 0.4, (rng() - 0.5) * 0.4)).normalize(),
+        iriNormal: nrm,
         width: rw.w * size,
         length: rw.len * size,
         cols: 3,
@@ -550,12 +542,166 @@ function addWing(b: Builder, rig: Rig, side: Side, rng: Rng) {
         bones: [bi, 0, 0, 0],
         weights: [1, 0, 0, 0],
         rand: rng(),
-        coord: 0.5,
-        gain: 0.25,
+        coord: sg > 0 ? WING_REAL_L : WING_REAL_R,
+        gain: 0,
         cover: 0.55,
       });
     }
   }
+}
+
+/**
+ * The wing you see at rest. It is not on the wing bones at all: it is a set of tracts
+ * planted on the wing strip of the body and skinned to the spine like every contour
+ * feather, so it cannot come away from the body from any angle. From the shoulder down:
+ * rows of coverts (lesser, median, greater), then the remiges as long blades lying flat,
+ * inner over outer, their tips running off the end of the strip where the free primary
+ * tips (real blades, on the hand bone) take over. The shader lifts these feathers a
+ * little for a wing flick and folds them away as the real wing spreads.
+ */
+function addRestWing(b: Builder, rig: Rig, side: Side, rng: Rng) {
+  const { loft, species } = rig;
+  const W = species.wing;
+  const sg = sideSign(side);
+  const id = sg > 0 ? WING_REST_L : WING_REST_R;
+  const sfc: SurfacePoint = { p: new THREE.Vector3(), n: new THREE.Vector3(), t: new THREE.Vector3() };
+  const sfc2: SurfacePoint = { p: new THREE.Vector3(), n: new THREE.Vector3(), t: new THREE.Vector3() };
+  const at = (u: number, v: number, out: SurfacePoint) => {
+    const q = loft.wingAt(u, v, sg);
+    loft.surface(clamp(q.s, 0.02, loft.sMax), q.ang, out);
+    return q;
+  };
+  // length of the strip, to turn feather lengths into steps of u
+  at(0, 0, sfc);
+  at(1, 0, sfc2);
+  const span = sfc.p.distanceTo(sfc2.p);
+  const root = new THREE.Vector3();
+  const dir = new THREE.Vector3();
+  const nrm = new THREE.Vector3();
+  const base = col(W.color);
+  const sheen = col(W.sheen);
+  const covert = species.looks.wingCovert;
+
+  /** Plant one feather at (u, v) lying along the strip; v drifts by dv over its length. */
+  const lay = (u: number, v: number, len: number, dv: number, lift: number, tiltDeg: number) => {
+    const q = at(u, v, sfc);
+    at(u + len / span, v + dv, sfc2);
+    root.copy(sfc.p).addScaledVector(sfc.n, lift);
+    dir.copy(sfc2.p).addScaledVector(sfc2.n, lift + len * Math.sin(tiltDeg * DEG)).sub(root).normalize();
+    nrm.copy(sfc.n).add(sfc2.n).addScaledVector(dir, -sfc.n.dot(dir) - sfc2.n.dot(dir)).normalize();
+    const sk = loft.skin(clamp(q.s, 0.02, loft.sMax), q.ang);
+    return { bones: sk.bones.map((nm) => rig.index(nm)) as [number, number, number, number], weights: sk.weights };
+  };
+
+  // --- coverts: lesser at the shoulder, growing toward the greater coverts
+  const rows = 9;
+  for (let r = 0; r < rows; r++) {
+    const f = r / (rows - 1);
+    const u = lerp(0.03, 0.4, f);
+    const w = lerp(0.024, 0.046, f);
+    const len = w * lerp(2.2, 3.0, f);
+    const half = lerp(W.rest.width[0], W.rest.width[1], smoothstep(0, 0.35, u));
+    const n = Math.max(3, Math.round((2 * half) / (w * 0.62)));
+    for (let k = 0; k < n; k++) {
+      const v = clamp(-0.98 + (2 * (k + (r % 2 ? 0.5 : 0) + (rng() - 0.5) * 0.3)) / n, -1.02, 1.02);
+      const size = 0.85 + rng() * 0.3;
+      const skin = lay(u + (rng() - 0.5) * 0.012, v, len * size, -v * 0.12 + (rng() - 0.5) * 0.1, 0.004 + f * 0.004, 7 + rng() * 5);
+      b.add({
+        ...specFromLook(covert, rng, 0.8 + 0.4 * rng()),
+        root,
+        dir,
+        normal: nrm,
+        skinNormal: sfc.n,
+        iriNormal: nrm,
+        width: w * size,
+        length: len * size,
+        cols: 3,
+        rows: 4,
+        curl: 0.05 + rng() * 0.08,
+        asym: 0,
+        ...skin,
+        rand: rng(),
+        coord: id,
+        gain: 0,
+        cover: clamp(1 - covert.rowStep, 0.1, 0.9),
+      });
+    }
+  }
+
+  // --- a few plain dark feathers along the lower strip, under the blades, so no skin shows
+  // beside them near the rump
+  for (let u = 0.42; u < 0.98; u += 0.04) {
+    for (const v0 of [-0.82, -0.3, 0.3, 0.82]) {
+      const size = 0.85 + rng() * 0.3;
+      const skin = lay(u + (rng() - 0.5) * 0.02, v0 + (rng() - 0.5) * 0.2, 0.085 * size, -v0 * 0.1, 0.002, 4);
+      b.add({
+        ...specFromLook(covert, rng, 0.7 + 0.3 * rng()),
+        root,
+        dir,
+        normal: nrm,
+        skinNormal: sfc.n,
+        iriNormal: nrm,
+        width: 0.05 * size,
+        length: 0.085 * size,
+        cols: 3,
+        rows: 4,
+        curl: 0.04,
+        asym: 0,
+        ...skin,
+        rand: rng(),
+        coord: id,
+        gain: 0,
+        cover: 0.5,
+      });
+    }
+  }
+
+  // --- remiges: secondaries toward the back edge, primaries toward the belly edge, each a
+  // long blade pressed to the strip. Later ones are planted lower, so inner lies over outer.
+  const blades: { u: number; v: number; len: number; w: number; dv: number }[] = [];
+  for (let j = 0; j < W.secondaries; j++) {
+    const f = j / (W.secondaries - 1);
+    blades.push({ u: lerp(0.3, 0.38, f), v: lerp(0.9, 0.34, f), len: lerp(0.2, 0.27, f), w: 0.072, dv: -0.22 });
+  }
+  for (let i = 0; i < W.primaries; i++) {
+    const f = i / (W.primaries - 1);
+    const u = lerp(0.38, 0.54, f);
+    blades.push({ u, v: lerp(0.3, -0.88, f), len: Math.min(lerp(0.26, 0.5, f), (1.05 - u) * span), w: lerp(0.07, 0.052, f), dv: lerp(-0.1, 0.6, f) });
+  }
+  blades.forEach((bl, k) => {
+    const skin = lay(bl.u, bl.v, bl.len, bl.dv, 0.009 - k * 0.0004, 1.5);
+    const j = 0.7 + rng() * 0.6;
+    b.add({
+      root,
+      dir,
+      normal: nrm,
+      skinNormal: null,
+      iriNormal: nrm,
+      width: bl.w,
+      length: bl.len,
+      cols: 3,
+      rows: 9,
+      round: 0.75,
+      cup: 0.1,
+      curl: 0.03,
+      asym: 0.3 * sg,
+      base: base.clone().multiplyScalar(j),
+      tip: base.clone().multiplyScalar(j * 0.8),
+      iri: sheen,
+      iri2: sheen,
+      iriStrength: 0.22,
+      iriPower: 2.5,
+      rough: 0.4,
+      loose: 0,
+      widen: 0.25,
+      ...skin,
+      rand: rng(),
+      coord: id,
+      gain: 0,
+      cover: sg > 0 ? 0.2 : 0.8,
+      channel: CH_FLIGHT,
+    });
+  });
 }
 
 function addTail(b: Builder, rig: Rig, rng: Rng) {
@@ -650,13 +796,10 @@ function buildFuzz(rig: Rig, layers = 3, rings = 120, segs = 80) {
       // keep the eyes and the root of the bill clear
       for (const side of SIDES) fuzz *= smoothstep(species.eye.radius * 1.25, species.eye.radius * 2.1, g.p.distanceTo(rig.eyes[side].center));
       fuzz *= 1 - smoothstep(loft.sMax - 0.7, loft.sMax - 0.2, g.s);
-      // no body fuzz growing through the folded blades (the wing root keeps it)
+      // no body fuzz on the folded wings
       {
-        const q = new THREE.Vector3(Math.abs(g.p.x), g.p.y, g.p.z);
-        const ab = rig.wingLine[1].clone().sub(rig.wingLine[0]);
-        const wt = clamp(q.clone().sub(rig.wingLine[0]).dot(ab) / ab.lengthSq(), 0, 1);
-        const wd = q.distanceTo(ab.multiplyScalar(wt).add(rig.wingLine[0]));
-        if (wt > 0.13) fuzz *= smoothstep(0.035, 0.085, wd);
+        const wuv = loft.wingUV(g.s, g.a);
+        if (wuv.u > 0.02 && wuv.u < 0.99) fuzz *= smoothstep(0.85, 1.15, Math.abs(wuv.v));
       }
       const sp = specFromLook(look, rng, shade, gold, species.shading.gold, glit);
       iriN.copy(g.n);
@@ -703,7 +846,10 @@ export function buildPlumageGeometry(rig: Rig): PlumageGeometry {
   const contour = new Builder();
   addContour(contour, rig, rng);
   const flight = new Builder();
-  for (const side of SIDES) addWing(flight, rig, side, rng);
+  for (const side of SIDES) {
+    addWing(flight, rig, side, rng);
+    addRestWing(flight, rig, side, rng);
+  }
   addTail(flight, rig, rng);
   const fuzz = buildFuzz(rig);
   return {

@@ -185,16 +185,19 @@ export async function loadBranch(url: string) {
     if (!m.isMesh) return;
     m.receiveShadow = true;
     // the big twig self-shadowed into bands at the shadow frustum edge; small parts cast
-    m.castShadow = !/perch/i.test(m.name);
+    m.castShadow = !/perch|hairs/i.test(m.name);
     for (const mat of Array.isArray(m.material) ? m.material : [m.material]) {
       const s = mat as THREE.MeshStandardMaterial;
       // moss cards are alpha-tested: let the MSAA resolve their edges
       if (s.alphaTest > 0) {
         s.alphaToCoverage = true;
-        s.alphaTest = 0.4;
+        s.alphaTest = 0.35;
       }
       // the grade lifts exposure: keep the moss from going neon
       if (/moss/i.test(s.name)) s.color.multiplyScalar(0.95);
+      // the baked felt came out pale straw under the grade: warmer, darker rust
+      if (/^perch$/i.test(s.name)) s.color.setRGB(0.36, 0.25, 0.21);
+      if (/hairs_twig/i.test(s.name) || /fuzz/i.test(s.name)) s.color.multiply(new THREE.Color().setRGB(0.42, 0.3, 0.26));
       s.envMapIntensity = 0.8;
     }
   });

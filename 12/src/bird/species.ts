@@ -90,12 +90,13 @@ export interface WingDef {
   secondaryLen: [number, number];
   primaryWidth: number;
   secondaryWidth: number;
-  /** folded pose (left wing): where on the loft the wrist sits [section, degrees round from the belly line] */
-  foldAt: [number, number];
-  /** how far the remiges ride above the skin, so they clear the contour feathers */
-  foldClear: number;
-  /** the wingtips meet over the tail this far along it (fraction of tail length) and this far off the midline */
-  foldCross: [number, number];
+  /**
+   * At rest the folded wing is part of the body: a raised strip of the loft, feathered with
+   * its own tracts. from/to = [section, degrees round from the belly line] of the shoulder
+   * and rump ends, width = half-widths at shoulder / widest point / rump end, height = bulge.
+   * cross = where the free primary tips meet over the tail [fraction of tail length, x].
+   */
+  rest: { from: [number, number]; to: [number, number]; width: [number, number, number]; height: number; cross: [number, number] };
   color: number;
   sheen: number;
 }
@@ -165,9 +166,9 @@ export const MOUNTAIN_GEM: Species = {
     { y: 0.52, z: -0.035, a: 76, w: 0.258, rd: 0.185, rv: 0.245 }, // 4 chest
     { y: 0.67, z: -0.005, a: 84, w: 0.236, rd: 0.185, rv: 0.212 }, // 5 shoulders
     { y: 0.775, z: 0.008, a: 80, w: 0.205, rd: 0.182, rv: 0.19 }, // 6 neck
-    { y: 0.887, z: 0.052, a: 62, w: 0.18, rd: 0.17, rv: 0.17 }, // 7 head
-    { y: 0.926, z: 0.116, a: 38, w: 0.142, rd: 0.14, rv: 0.14 }, // 8 crown / chin
-    { y: 0.925, z: 0.195, a: 18, w: 0.08, rd: 0.09, rv: 0.07 }, // 9 forehead / face
+    { y: 0.887, z: 0.052, a: 62, w: 0.15, rd: 0.17, rv: 0.17 }, // 7 head
+    { y: 0.926, z: 0.116, a: 38, w: 0.117, rd: 0.14, rv: 0.14 }, // 8 crown / chin
+    { y: 0.925, z: 0.195, a: 18, w: 0.066, rd: 0.09, rv: 0.07 }, // 9 forehead / face
     { y: 0.905, z: 0.245, a: 8, w: 0.03, rd: 0.032, rv: 0.028 }, // 10 bill base
   ],
   throatPull: 1.6,
@@ -179,7 +180,7 @@ export const MOUNTAIN_GEM: Species = {
   looks: {
     // --- soft contour feathers: fibrous, matte, a little unruly ---------------------------
     body: {
-      width: 0.03, aspect: 2.1, rowStep: 0.3, tilt: 13, lift: 1, cup: 0.3, round: 0.7, loose: 0.55,
+      width: 0.03, aspect: 2.1, rowStep: 0.3, tilt: 13, lift: 1, cup: 0.3, round: 0.7, loose: 0.55, fuzz: 0.3,
       base: 0x201c24, tip: 0x4f4656, iri: 0x4a8a2c, iriGraze: 0x8a6a1c, iriStrength: 0.12, iriPower: 6,
       iriAlign: 0, jitter: 0.5, rough: 0.85, sparkle: 0.6,
     },
@@ -199,32 +200,33 @@ export const MOUNTAIN_GEM: Species = {
       iriAlign: 0, jitter: 0.3, rough: 0.95,
     },
     back: {
-      width: 0.03, aspect: 2.0, rowStep: 0.31, tilt: 11, lift: 0.9, cup: 0.35, round: 0.75, loose: 0.45,
+      width: 0.03, aspect: 2.0, rowStep: 0.31, tilt: 11, lift: 0.9, cup: 0.35, round: 0.75, loose: 0.45, fuzz: 0.3,
       base: 0x1f1d26, tip: 0x4a4655, iri: 0x3a9a3a, iriGraze: 0x8a6a18, iriStrength: 0.24, iriPower: 7,
       iriAlign: 0, jitter: 0.5, rough: 0.8, sparkle: 0.45,
     },
     scapular: {
-      width: 0.042, aspect: 3.3, rowStep: 0.24, tilt: 21, lift: 0.8, cup: 0.3, round: 0.6, loose: 0.6,
+      width: 0.042, aspect: 3.3, rowStep: 0.24, tilt: 21, lift: 0.8, cup: 0.3, round: 0.6, loose: 0.6, fuzz: 0.4,
       base: 0x211e28, tip: 0x514c5c, iri: 0x3a8a3a, iriGraze: 0x8a6a18, iriStrength: 0.2, iriPower: 6,
       iriAlign: 0, jitter: 0.5, rough: 0.8, sparkle: 0.5,
     },
     collar: {
-      width: 0.025, aspect: 1.9, rowStep: 0.3, tilt: 13, lift: 0.8, cup: 0.35, round: 0.85, loose: 0.4, spacing: 0.62,
+      // small rounded fans in neat staggered rows, each a comb of bright strands
+      width: 0.027, aspect: 1.45, rowStep: 0.36, tilt: 12, lift: 0.8, cup: 0.35, round: 1, loose: 0.3, spacing: 0.7, fuzz: 0.12,
       base: 0x121318, tip: 0x24282c, iri: 0x1fa060, iriGraze: 0x0a5a5a, iriStrength: 0.32, iriPower: 12,
       iriAlign: 0.3, iriAim: [0, 0.1, 1], jitter: 0.55, rough: 0.6, sparkle: 0.6,
     },
     head: {
-      width: 0.017, aspect: 1.8, rowStep: 0.34, tilt: 12, lift: 0.45, cup: 0.35, round: 0.9, loose: 0.4,
+      width: 0.017, aspect: 1.8, rowStep: 0.34, tilt: 12, lift: 0.45, cup: 0.35, round: 0.9, loose: 0.4, fuzz: 0.22,
       base: 0x121217, tip: 0x2a2a33, iri: 0x1c7a50, iriGraze: 0x50501a, iriStrength: 0.28, iriPower: 7,
       iriAlign: 0, jitter: 0.45, rough: 0.8, sparkle: 0.4,
     },
     mask: {
-      width: 0.012, aspect: 1.7, rowStep: 0.36, tilt: 10, lift: 0.2, cup: 0.3, round: 0.9, loose: 0.35,
+      width: 0.012, aspect: 1.7, rowStep: 0.36, tilt: 10, lift: 0.2, cup: 0.3, round: 0.9, loose: 0.35, fuzz: 0.25,
       base: 0x040405, tip: 0x0c0c0d, iri: 0x101820, iriGraze: 0x000000, iriStrength: 0.04, iriPower: 4,
       iriAlign: 0, jitter: 0.2, rough: 0.85,
     },
     stripe: {
-      width: 0.016, aspect: 1.7, rowStep: 0.3, tilt: 16, lift: 0.3, cup: 0.3, round: 0.9, loose: 0.5,
+      width: 0.016, aspect: 1.7, rowStep: 0.3, tilt: 16, lift: 0.3, cup: 0.3, round: 0.9, loose: 0.5, fuzz: 0.2,
       base: 0xa9a69e, tip: 0xf6f4ee, iri: 0xffffff, iriGraze: 0xffffff, iriStrength: 0.0, iriPower: 2,
       iriAlign: 0, jitter: 0.2, rough: 0.9,
     },
@@ -232,6 +234,11 @@ export const MOUNTAIN_GEM: Species = {
       width: 0.046, aspect: 2.6, rowStep: 0.33, tilt: 9, lift: 0.7, cup: 0.3, round: 0.7, loose: 0.4,
       base: 0x211d27, tip: 0x4e4658, iri: 0x3a7a50, iriGraze: 0x5a4a2a, iriStrength: 0.18, iriPower: 6,
       iriAlign: 0, jitter: 0.4, rough: 0.75, sparkle: 0.5,
+    },
+    wingCovert: {
+      width: 0.03, aspect: 2.3, rowStep: 0.4, tilt: 7, lift: 0, cup: 0.3, round: 0.8, loose: 0.22, fuzz: 0,
+      base: 0x15141a, tip: 0x2e2b37, iri: 0x3a7a50, iriGraze: 0x5a4a3a, iriStrength: 0.12, iriPower: 6,
+      iriAlign: 0, jitter: 0.4, rough: 0.8, sparkle: 0.6,
     },
     // --- show scales: crisp, closed, glossy ------------------------------------------------
     gorget: {
@@ -273,9 +280,7 @@ export const MOUNTAIN_GEM: Species = {
     secondaryLen: [0.27, 0.2],
     primaryWidth: 0.075,
     secondaryWidth: 0.064,
-    foldAt: [4.6, 114],
-    foldClear: 0.013,
-    foldCross: [0.62, 0.035],
+    rest: { from: [5.1, 102], to: [0.6, 152], width: [0.05, 0.105, 0.04], height: 0.034, cross: [0.6, 0.04] },
     color: 0x34293a,
     sheen: 0x6a5a80,
   },

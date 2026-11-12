@@ -36,7 +36,6 @@ export class WingLayer implements Layer {
       const jig = Math.sin(x * 12 * Math.PI * 2) * smoothstep(0.05, 0.1, x) * (1 - smoothstep(0.2, 0.42, x));
       p.wing[side].lift += (env * 0.2 + jig * 0.06) * this.amp;
       p.wing[side].droop += env * 0.1 * this.amp;
-      p.wing[side].spread += env * 0.035 * this.amp;
     }
     const b = smoothstep(0, 0.08, tau) * (1 - smoothstep(0.15, 0.5, tau));
     p.bodyShift.y += b * 0.006;
