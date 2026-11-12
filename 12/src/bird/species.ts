@@ -135,8 +135,13 @@ export interface Species {
   seed: number;
   sections: Section[];
   /** where each spine bone sits along the loft (section index) */
-  /** how far (in sections) the skin on the front of the neck is bound above its own level */
-  throatPull: number;
+  /**
+   * The front of the neck is one sheet of skin from the breast to the chin, not a stack of
+   * neck joints: between these two sections it runs from the throat bone (the chest, turned
+   * with the head) through the gular bone to the head, so a nod is shared out over its whole
+   * length instead of creasing at a joint. See Loft.skin and the solver.
+   */
+  throat: [number, number];
   spine: { tail: number; hips: number; spine: number; chest: number; neck1: number; neck2: number; head: number };
   eye: { s: number; phi: number; radius: number; inset: number };
   bill: { length: number; radius: number; droop: number; color: number };
@@ -171,7 +176,7 @@ export const MOUNTAIN_GEM: Species = {
     { y: 0.925, z: 0.195, a: 18, w: 0.066, rd: 0.09, rv: 0.07 }, // 9 forehead / face
     { y: 0.905, z: 0.245, a: 8, w: 0.03, rd: 0.032, rv: 0.028 }, // 10 bill base
   ],
-  throatPull: 1.6,
+  throat: [4.5, 7.3],
   spine: { tail: 0.3, hips: 1.9, spine: 3.0, chest: 4.1, neck1: 5.3, neck2: 5.95, head: 6.55 },
   eye: { s: 7.8, phi: 0.535, radius: 0.037, inset: 0.84 },
   bill: { length: 0.44, radius: 0.02, droop: 0.022, color: 0x070707 },

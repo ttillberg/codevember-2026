@@ -157,3 +157,18 @@ body.loading .palette, body.clean .palette { opacity: 0; pointer-events: none; }
 body.drawing .palette { color: #2b3a2c; border-color: rgba(43, 58, 44, 0.45); background: rgba(241, 240, 232, 0.5); }
 @media (max-width: 640px) { .palette { bottom: 14px; right: 56px; } }
 body:not(.loading) .plate .loading-label { display: none; }
+
+
+/* let a gnat or a fly in: left of the palette button */
+.bug {
+  position: fixed; bottom: 22px; right: 110px; z-index: 3;
+  display: grid; place-items: center; width: 34px; height: 34px; padding: 0;
+  border: 1px solid rgba(243, 245, 238, 0.45); border-radius: 50%;
+  background: rgba(20, 40, 18, 0.18); color: #f3f5ee; cursor: pointer;
+  -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
+  transition: background 0.2s, opacity 0.4s;
+}
+.bug:hover { background: rgba(20, 40, 18, 0.4); }
+body.loading .bug, body.clean .bug { opacity: 0; pointer-events: none; }
+body.drawing .bug { color: #2b3a2c; border-color: rgba(43, 58, 44, 0.45); background: rgba(241, 240, 232, 0.5); }
+@media (max-width: 640px) { .bug { bottom: 14px; right: 100px; } }

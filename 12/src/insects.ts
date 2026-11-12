@@ -21,6 +21,10 @@ interface Gnat extends Food {
   swallowAt: number;
   /** most of them see the bill coming: out of reach (not food) until then */
   dodgedUntil: number;
+  /** demo: it doesn't see the bill coming */
+  tame: boolean;
+  /** heading, smoothed: the body stays level and turns, it doesn't tumble with every jink */
+  yaw: number;
 }
 
 export function createInsects(scene: THREE.Scene, around: () => THREE.Vector3) {
@@ -40,9 +44,10 @@ export function createInsects(scene: THREE.Scene, around: () => THREE.Vector3) {
   let nextAt = 20 + Math.random() * 35;
   let wasStriking = false;
 
-  function spawn() {
+  /** at: where it hovers (default: somewhere in front of the bird); tame: it won't dodge */
+  function spawn(at?: THREE.Vector3, tame = false) {
     const c = around();
-    const home = c.clone().add(new THREE.Vector3((Math.random() - 0.5) * 0.9, 0.05 + Math.random() * 0.3, 0.45 + Math.random() * 0.35));
+    const home = at ? at.clone() : c.clone().add(new THREE.Vector3((Math.random() - 0.5) * 0.9, 0.05 + Math.random() * 0.3, 0.45 + Math.random() * 0.35));
     // come in from off to one side
     const from = home.clone().add(new THREE.Vector3(Math.sign(Math.random() - 0.5) * 2.2, 0.6, -0.4));
     const obj = new THREE.Group();
@@ -61,13 +66,15 @@ export function createInsects(scene: THREE.Scene, around: () => THREE.Vector3) {
       home,
       goal: home.clone(),
       age: 0,
-      life: 6 + Math.random() * 8,
+      life: tame ? 16 : 6 + Math.random() * 8,
       dartAt: 0.8,
       phase: Math.random() * 100,
       state: 'fly',
       carryT: 0,
       swallowAt: -1,
       dodgedUntil: 0,
+      tame,
+      yaw: 0,
     });
   }
 
@@ -123,12 +130,13 @@ export function createInsects(scene: THREE.Scene, around: () => THREE.Vector3) {
             g.state = 'leave';
             g.goal.copy(g.position).add(new THREE.Vector3(Math.sign(g.position.x - g.home.x || 1) * 3, 1.2, -0.5));
           } else if (g.age > g.dartAt) {
-            g.goal.copy(g.home).add(new THREE.Vector3((Math.random() - 0.5) * 0.4, (Math.random() - 0.5) * 0.25, (Math.random() - 0.5) * 0.3));
+            const k = g.tame ? 0.15 : 1;
+            g.goal.copy(g.home).add(new THREE.Vector3((Math.random() - 0.5) * 0.4 * k, (Math.random() - 0.5) * 0.25 * k, (Math.random() - 0.5) * 0.3 * k));
             g.dartAt = g.age + 0.6 + Math.random() * 1.8;
           }
         }
         // the bird gathers itself to strike: most gnats are gone before the bill gets there
-        if (g.state === 'fly' && g.age > g.dodgedUntil && strikeStarts && billTip && billTip(tip).distanceTo(g.position) < 0.7 && Math.random() < 0.75) {
+        if (g.state === 'fly' && !g.tame && g.age > g.dodgedUntil && strikeStarts && billTip && billTip(tip).distanceTo(g.position) < 0.7 && Math.random() < 0.75) {
           // gone from the bird's list for a moment, so the strike hits air
           g.dodgedUntil = g.age + 1.5;
           tmp.copy(g.position).sub(tip).normalize();
@@ -142,8 +150,12 @@ export function createInsects(scene: THREE.Scene, around: () => THREE.Vector3) {
         tmp.addScaledVector(tmp.clone().copy(g.goal).sub(g.position), g.state === 'leave' ? 2.5 : 6);
         g.velocity.lerp(tmp, 1 - Math.exp(-dt * 8));
         g.obj.position.addScaledVector(g.velocity, dt);
-        // face where it flies, wings a-blur
-        if (g.velocity.lengthSq() > 1e-6) g.obj.lookAt(tmp.copy(g.obj.position).add(g.velocity));
+        // level, nose roughly where it's going (a gnat hovers and darts sideways without turning much)
+        if (g.velocity.x * g.velocity.x + g.velocity.z * g.velocity.z > 0.01) {
+          const want = Math.atan2(g.velocity.x, g.velocity.z);
+          g.yaw += Math.atan2(Math.sin(want - g.yaw), Math.cos(want - g.yaw)) * (1 - Math.exp(-dt * 4));
+        }
+        g.obj.rotation.set(THREE.MathUtils.clamp(-g.velocity.y * 0.6, -0.35, 0.35), g.yaw, 0, 'YXZ');
         const beat = Math.sin(t * 190 + g.phase) * 0.9;
         g.wings[0].rotation.z = beat;
         g.wings[1].rotation.z = -beat;

@@ -134,6 +134,38 @@ export class Loft {
     return this.species.wing.rest.height * smoothstep(0, 0.1, u) * (1 - smoothstep(0.8, 1, u)) * k * k;
   }
 
+  private front: number[] | null = null;
+  /**
+   * Distance along the belly line from the tail to s. (Sections are not evenly spaced on the
+   * skin: under the chin a whole one fits in a few millimetres.)
+   */
+  frontLength(s: number) {
+    const N = 20;
+    if (!this.front) {
+      this.front = [0];
+      for (let i = 1; i <= this.sMax * N; i++) this.front.push(this.front[i - 1] + this.point(i / N, 0, this.a).distanceTo(this.point((i - 1) / N, 0, this.b)));
+    }
+    const x = clamp(s, 0, this.sMax) * N;
+    const i = Math.min(Math.floor(x), this.front.length - 2);
+    return lerp(this.front[i], this.front[i + 1], x - i);
+  }
+
+  /** The s that lies `length` along the belly line: the inverse of frontLength. */
+  frontAt(length: number) {
+    this.frontLength(0);
+    const f = this.front!;
+    let lo = 0;
+    let hi = f.length - 1;
+    if (length <= 0) return 0;
+    if (length >= f[hi]) return this.sMax;
+    while (hi - lo > 1) {
+      const m = (lo + hi) >> 1;
+      if (f[m] <= length) lo = m;
+      else hi = m;
+    }
+    return (lo + (length - f[lo]) / Math.max(f[hi] - f[lo], 1e-9)) / 20;
+  }
+
   /** Up to two spine bones and their weights for a point at s. */
   weights(s: number): [SpineBone, number, SpineBone, number] {
     const sp = this.species.spine;
@@ -155,12 +187,29 @@ export class Loft {
   skin(s: number, ang: number): { bones: [string, string, string, string]; weights: [number, number, number, number] } {
     const sp = this.species.spine;
     const belly = 0.5 + 0.5 * Math.cos(ang);
-    // the throat hangs off the head: skin on the front of the neck follows the bones above it
-    const throat = belly * belly * this.species.throatPull * smoothstep(sp.chest - 0.2, sp.neck1 - 0.3, s) * (1 - smoothstep(sp.head, sp.head + 0.6, s));
-    const w = this.weights(s + throat);
+    const w = this.weights(s);
     const along = smoothstep(sp.hips - 0.4, sp.spine, s) * (1 - smoothstep(sp.chest + 0.2, sp.neck1 + 0.3, s));
     const st = 0.6 * along * (0.35 + 0.65 * belly);
-    return { bones: [w[0], w[2], 'sternum', 'root'], weights: [w[1] * (1 - st), w[3] * (1 - st), st, 0] };
+    // the throat is a sheet from the breast to the chin (species.throat) with three handles:
+    // its foot (the throat bone), its middle (gular) and the head, weighted like the points of
+    // a curve by distance along it, whatever the neck joints behind it do. Round the sides of the neck that gives
+    // way to the spine's own binding, below its foot to the chest.
+    const [t0, t1] = this.species.throat;
+    const front = smoothstep(0.25, 0.85, belly) * smoothstep(t0 - 0.9, t0, s);
+    const k = clamp((this.frontLength(s) - this.frontLength(t0)) / (this.frontLength(t1) - this.frontLength(t0)), 0, 1);
+    const acc = new Map<string, number>();
+    const put = (bone: string, weight: number) => acc.set(bone, (acc.get(bone) ?? 0) + weight);
+    put(w[0], w[1] * (1 - st) * (1 - front));
+    put(w[2], w[3] * (1 - st) * (1 - front));
+    put('sternum', st * (1 - front * k * (2 - k)));
+    put('throat', (1 - st) * front * (1 - k) * (1 - k));
+    put('gular', front * 2 * k * (1 - k));
+    put('head', front * k * k);
+    // four bones a vertex: the smallest share of a fifth is dropped
+    const top = [...acc].sort((p, q) => q[1] - p[1]).slice(0, 4);
+    while (top.length < 4) top.push(['root', 0]);
+    const sum = top.reduce((n, e) => n + e[1], 0);
+    return { bones: top.map((e) => e[0]) as [string, string, string, string], weights: top.map((e) => e[1] / sum) as [number, number, number, number] };
   }
 
   /** 0 at the bill, 1 at the tail root: the coordinate the ruffle wave travels along. */

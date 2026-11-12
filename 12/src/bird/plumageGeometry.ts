@@ -57,6 +57,11 @@ interface FeatherSpec {
   cover: number;
   bones: [number, number, number, number];
   weights: [number, number, number, number];
+  /**
+   * Bind every vertex where it lies instead of the whole feather at its root: the feather
+   * then bends and slides with the skin under it (the gorget, on a throat that folds).
+   */
+  skinAt?: (p: THREE.Vector3) => { bones: [number, number, number, number]; weights: [number, number, number, number] };
   rand: number;
   coord: number;
   gain: number;
@@ -136,8 +141,9 @@ class Builder {
         this.cTip.push(f.tip.r, f.tip.g, f.tip.b, f.loose);
         this.cIri.push(f.iri.r, f.iri.g, f.iri.b, f.iriPower / 32);
         this.cIri2.push(f.iri2.r, f.iri2.g, f.iri2.b, f.cover);
-        this.si.push(...f.bones);
-        this.sw.push(...f.weights);
+        const sk = f.skinAt ? f.skinAt(this.P) : f;
+        this.si.push(...sk.bones);
+        this.sw.push(...sk.weights);
       }
     }
     for (let r = 0; r < rows - 1; r++) {
@@ -262,6 +268,38 @@ function specFromLook(look: FeatherLook, rng: Rng, shade = 1, gold = 0, goldHex 
   };
 }
 
+const sheetS = new THREE.Vector3();
+const sheetA = new THREE.Vector3();
+const sheetD = new THREE.Vector3();
+/**
+ * On the throat sheet (Loft.skin) a feather is bound vertex by vertex, each where it lies on
+ * the skin, not as a whole at its root: when the head comes down the sheet shortens and
+ * everything on it shortens with it, rows closing up over each other in the order they lie
+ * in. No scale turns into the ones below it, lifts off them or sinks under the next tract.
+ * Returns nothing off the sheet.
+ */
+function sheetSkin(rig: Rig, s: number, a: number, root: THREE.Vector3): FeatherSpec['skinAt'] {
+  const { loft } = rig;
+  if (s < loft.species.throat[0] - 1.1 || Math.cos(a) < -0.5) return undefined;
+  const s1 = Math.min(s + 0.02, loft.sMax);
+  loft.point(s1, a, sheetS).sub(loft.point(s - 0.02, a, sheetD)).multiplyScalar(1 / (s1 - s + 0.02));
+  loft.point(s, a + 0.02, sheetA).sub(loft.point(s, a - 0.02, sheetD)).multiplyScalar(1 / 0.04);
+  const dS = sheetS.clone().multiplyScalar(1 / sheetS.lengthSq());
+  const dA = sheetA.clone().multiplyScalar(1 / sheetA.lengthSq());
+  const from = root.clone();
+  const up = sheetS.clone().normalize();
+  const l0 = loft.frontLength(s);
+  return (p) => {
+    sheetD.copy(p).sub(from);
+    // how far along the body the vertex is from the root: by the skin here or, where the
+    // sections crowd together (under the chin), by plain distance down the throat
+    const here = sheetD.dot(dS);
+    const plain = loft.frontAt(l0 + sheetD.dot(up)) - s;
+    const sk = loft.skin(clamp(s + (Math.abs(plain) < Math.abs(here) ? plain : here), 0, loft.sMax), a + sheetD.dot(dA));
+    return { bones: sk.bones.map((nm) => rig.index(nm)) as [number, number, number, number], weights: sk.weights };
+  };
+}
+
 /**
  * Contour feathers and scales over the whole loft.
  *
@@ -375,6 +413,9 @@ function addContour(b: Builder, rig: Rig, rng: Rng) {
     const G = species.looks.gorget;
     const beside = sj > 4.6 && sj < 8.2 && phi < 0.5 ? (lookAt(species, sj, Math.max(phi - 0.035, 0)) === G ? 2 : lookAt(species, sj, Math.max(phi - 0.08, 0)) === G ? 1 : 0) : 0;
     if (beside === 2) return;
+    // nor does anything under its lower rim stand up through it: the collar feathers the last
+    // rows of scales lie on are pressed flat
+    const under = beside === 0 && sj > 4.2 && sj < 5.6 && phi < 0.4 && lookAt(species, sj + 0.5, phi) === G;
     const sh = species.shading;
     const tone = toneAt(species, look, sj, phi);
     const { gold, glit } = tone;
@@ -392,7 +433,7 @@ function addContour(b: Builder, rig: Rig, rng: Rng) {
     const yaw = (rng() - 0.5) * lerp(0.17, 0.72, loose) + nA * 0.4 * loose + stray * (rng() - 0.5) * 0.9 + ((rng() - 0.5) * 0.9 + clump * 0.45) * unruly;
     const roll = ((rng() - 0.5) * 0.7 + nB * 0.3) * loose + ((rng() - 0.5) * 1.1 + clump * 0.5) * unruly;
     // right beside the folded wing the coat lies closer, so the wing is not sunk in a trench
-    if (beside) tilt *= 0.35;
+    if (beside || under) tilt *= 0.35;
     if (drape) tilt += 9 * DEG;
     else if (wuv.u > 0 && wuv.u < 1 && Math.abs(wuv.v) < 1.7 && !stray) {
       const near = 1 - smoothstep(0.9, 1.7, Math.abs(wuv.v));
@@ -440,6 +481,7 @@ function addContour(b: Builder, rig: Rig, rng: Rng) {
       asym: 0,
       bones: sk.bones.map((nm) => rig.index(nm)) as [number, number, number, number],
       weights: sk.weights,
+      skinAt: sheetSkin(rig, sj, a, root),
       rand: rng(),
       coord: loft.bodyCoord(sj) * 0.8,
       gain,
@@ -564,6 +606,7 @@ function addGorget(b: Builder, rig: Rig, rng: Rng) {
   const nrm = new THREE.Vector3();
   const iriN = new THREE.Vector3();
   const aim = new THREE.Vector3();
+
   const indigo = new THREE.Color(0x3a34ff);
   const magenta = new THREE.Color(0xd62cc8);
   const spacing = look.spacing ?? 0.8;
@@ -603,6 +646,7 @@ function addGorget(b: Builder, rig: Rig, rng: Rng) {
       const h = clamp(t + (rng() - 0.5) * 0.16, 0, 1);
       if (h < 0.45) sp.iri.lerp(indigo, (1 - h / 0.45) * 0.85);
       else sp.iri.lerp(magenta, ((h - 0.45) / 0.55) * 0.8);
+      const skinAt = sheetSkin(rig, q.s, q.a, root);
       const sk = loft.skin(q.s, q.a);
       const size = 0.94 + rng() * 0.12;
       b.add({
@@ -622,6 +666,7 @@ function addGorget(b: Builder, rig: Rig, rng: Rng) {
         asym: 0,
         bones: sk.bones.map((nm) => rig.index(nm)) as [number, number, number, number],
         weights: sk.weights,
+        skinAt,
         rand: rng(),
         coord: loft.bodyCoord(q.s) * 0.8,
         gain: look.lift,
