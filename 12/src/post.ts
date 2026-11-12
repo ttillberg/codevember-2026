@@ -93,6 +93,9 @@ uniform float uVignette;
 uniform float uGrain;
 uniform float uTime;
 uniform vec2 uRes;
+uniform sampler2D tWire;  // the loading drawing: ink where alpha
+uniform float uReveal;   // 0 = the drawing on millimetre paper, 1 = the picture
+uniform float uDpr;
 
 float hash(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
 
@@ -115,12 +118,30 @@ void main() {
   // grain, luminance-weighted, a touch stronger in the mids
   float g = hash(vUv * uRes + fract(uTime) * 91.7) - 0.5;
   c += g * uGrain * (0.4 + 0.6 * (1.0 - abs(l - 0.5) * 2.0));
-  gl_FragColor = vec4(clamp(c, 0.0, 1.0), 1.0);
+  c = clamp(c, 0.0, 1.0);
+  if (uReveal < 1.0) {
+    // millimetre paper, in CSS px from the top left so it lines up with the page's own
+    vec2 px = vec2(gl_FragCoord.x, uRes.y - gl_FragCoord.y) / uDpr;
+    float line = 0.0;
+    vec3 lines = vec3(1.0 / 5.0, 1.0 / 25.0, 1.0 / 50.0);
+    vec3 alpha = vec3(0.12, 0.22, 0.35);
+    for (int i = 0; i < 3; i++) {
+      vec2 f = fract(px * lines[i]);
+      float on = max(step(f.x, lines[i] * 1.0), step(f.y, lines[i] * 1.0));
+      line = max(line, on * alpha[i]);
+    }
+    vec3 paper = mix(vec3(0.945, 0.941, 0.910), vec3(0.435, 0.561, 0.416), line);
+    float ink = texture2D(tWire, vUv).a;
+    paper = mix(paper, vec3(0.17, 0.23, 0.17), ink * 0.85);
+    c = mix(paper, c, uReveal);
+  }
+  gl_FragColor = vec4(c, 1.0);
 }
 `;
 
 export interface Post {
-  render(scene: THREE.Scene, camera: THREE.PerspectiveCamera, t: number): void;
+  /** wire: while loading, draws the drawing (into its own target); null once revealing */
+  render(scene: THREE.Scene, camera: THREE.PerspectiveCamera, t: number, wire?: (() => void) | null): void;
   setSize(w: number, h: number, dpr: number): void;
   /** world-space point to keep in focus */
   focusOn(p: THREE.Vector3): void;
@@ -141,6 +162,8 @@ export function createPost(renderer: THREE.WebGLRenderer, opts: { samples: numbe
   });
   sceneRT.texture.colorSpace = THREE.LinearSRGBColorSpace;
   const dofRT = new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType, depthBuffer: false });
+  const wireRT = new THREE.WebGLRenderTarget(1, 1, { samples: opts.samples });
+  const clearCol = new THREE.Color();
 
   const quad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2));
   quad.frustumCulled = false;
@@ -183,6 +206,9 @@ export function createPost(renderer: THREE.WebGLRenderer, opts: { samples: numbe
       uGrain: { value: 0.025 },
       uTime: { value: 0 },
       uRes: { value: new THREE.Vector2(1, 1) },
+      tWire: { value: null },
+      uReveal: { value: 1 },
+      uDpr: { value: 1 },
     },
     depthTest: false,
     depthWrite: false,
@@ -212,10 +238,22 @@ export function createPost(renderer: THREE.WebGLRenderer, opts: { samples: numbe
       const H = Math.floor(h * d);
       sceneRT.setSize(W, H);
       dofRT.setSize(W, H);
+      wireRT.setSize(W, H);
+      gradeMat.uniforms.uDpr.value = d;
       dofMat.uniforms.uTexel.value.set(1 / W, 1 / H);
       gradeMat.uniforms.uRes.value.set(W, H);
     },
-    render(scene, camera, t) {
+    render(scene, camera, t, wire) {
+      gradeMat.uniforms.tWire.value = wireRT.texture;
+      if (wire) {
+        renderer.getClearColor(clearCol);
+        const a = renderer.getClearAlpha();
+        renderer.setRenderTarget(wireRT);
+        renderer.setClearColor(0x000000, 0);
+        renderer.clear();
+        wire();
+        renderer.setClearColor(clearCol, a);
+      }
       // focus distance along the view axis, eased so saccades don't pump the focus
       tmp.copy(focusWorld).applyMatrix4(camera.matrixWorldInverse);
       focusDist += (-tmp.z - focusDist) * 0.15;
@@ -226,11 +264,14 @@ export function createPost(renderer: THREE.WebGLRenderer, opts: { samples: numbe
       dofMat.uniforms.uTexel.value.set(1 / sceneRT.width, 1 / sceneRT.height).multiplyScalar(dpr);
       gradeMat.uniforms.uTime.value = t;
 
-      renderer.setRenderTarget(sceneRT);
-      renderer.render(scene, camera);
-      quad.material = dofMat;
-      renderer.setRenderTarget(dofRT);
-      renderer.render(fsScene, fsCam);
+      // nothing of the picture shows yet: skip it (the drawing is all there is)
+      if (gradeMat.uniforms.uReveal.value > 0) {
+        renderer.setRenderTarget(sceneRT);
+        renderer.render(scene, camera);
+        quad.material = dofMat;
+        renderer.setRenderTarget(dofRT);
+        renderer.render(fsScene, fsCam);
+      }
       quad.material = gradeMat;
       renderer.setRenderTarget(null);
       renderer.render(fsScene, fsCam);

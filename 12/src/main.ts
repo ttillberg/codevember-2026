@@ -53,19 +53,35 @@ scene.add(backdrop.mesh);
 // procedural twig first, swapped for the Blender one once it's in
 const branch = createBranch();
 scene.add(branch.group);
-if (!query.has('procbranch')) {
-  loadBranch(`${import.meta.env.BASE_URL}branch.glb`)
-    .then((b) => {
-      scene.remove(branch.group);
-      scene.add(b.group);
-      usePerch(b.group);
-      // the felt arrives after the settings: give it the fuzz choice
-      b.group.traverse((o) => o.name === 'fuzz' && (o.visible = fuzzVisible));
-    })
-    .catch(() => {
-      /* no glb yet: keep the procedural twig */
-    });
+// loading: the bird and the procedural twig drawn in ink on millimetre paper
+// while the Blender twig comes down; then the picture fades in over it
+const loadLabel = document.querySelector<HTMLElement>('.loading-label span');
+let reveal = 0;
+let revealing = false;
+async function ready() {
+  try {
+    await renderer.compileAsync(scene, camera);
+  } catch {
+    /* compile on first draw then */
+  }
+  revealing = true;
+  document.body.classList.remove('loading');
 }
+const branchLoad = query.has('procbranch')
+  ? Promise.resolve()
+  : loadBranch(`${import.meta.env.BASE_URL}branch.glb`, (e) => {
+      if (loadLabel && e.lengthComputable) loadLabel.textContent = `${Math.round((e.loaded / e.total) * 100)}%`;
+    })
+      .then((b) => {
+        scene.remove(branch.group);
+        scene.add(b.group);
+        usePerch(b.group);
+        // the felt arrives after the settings: give it the fuzz choice
+        b.group.traverse((o) => o.name === 'fuzz' && (o.visible = fuzzVisible));
+      })
+      .catch(() => {
+        /* no glb: keep the procedural twig */
+      });
 
 const hemi = new THREE.HemisphereLight(0xeef2e6, 0x3a3826, 0.6);
 scene.add(hemi);
@@ -267,6 +283,12 @@ function resize() {
 window.addEventListener('resize', resize);
 resize();
 
+branchLoad.then(() => requestAnimationFrame(() => ready()));
+if (!usePost) {
+  reveal = 1;
+  revealing = true;
+  document.body.classList.remove('loading');
+}
 const timer = new THREE.Timer();
 timer.connect(document);
 let t = 0;
@@ -286,6 +308,7 @@ renderer.setAnimationLoop((now) => {
   // and follows it, a mix of gliding after it and snapping to catch up
   gaze.pursuit = recent && performance.now() - pointerAt < 700 ? 1 : 0;
   bird.setAttention(recent ? pointerTarget : camera.position);
+  if (revealing && reveal < 1) reveal = Math.min(1, reveal + dt / 1.6);
   bird.setFood?.(seeds.food());
   bird.update(dt, t);
   seeds.update(dt, t, bird.billTip?.bind(bird), head?.getWorldPosition(headPos));
@@ -331,10 +354,29 @@ function frame() {
     camera.updateMatrixWorld();
   }
 }
+const wireMat = new THREE.MeshBasicMaterial({ color: 0xffffff, wireframe: true });
+const wireHide = ['bird.contour', 'bird.flight', 'bird.fuzz'];
+function drawWire() {
+  const hidden: THREE.Object3D[] = [];
+  backdrop.mesh.visible = false;
+  scene.traverse((o) => {
+    if (o.visible && wireHide.includes(o.name)) {
+      o.visible = false;
+      hidden.push(o);
+    }
+  });
+  scene.overrideMaterial = wireMat;
+  renderer.render(scene, camera);
+  scene.overrideMaterial = null;
+  backdrop.mesh.visible = true;
+  for (const o of hidden) o.visible = true;
+}
 function render() {
   if (!usePost) return renderer.render(scene, camera);
   if (head) post.focusOn(head.getWorldPosition(headPos));
-  post.render(scene, camera, t);
+  post.grade.uReveal.value = reveal * reveal * (3 - 2 * reveal);
+  post.render(scene, camera, t, revealing ? null : drawWire);
+  if (canvas.classList.contains('pending')) canvas.classList.remove('pending');
 }
 
 Object.assign(window as unknown as Record<string, unknown>, { __scene: scene, __camera: camera, __renderer: renderer, __controls: controls, __post: post, __frame: frame, __seeds: seeds });

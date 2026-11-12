@@ -18,10 +18,10 @@
     <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@600;700&display=swap" />
     <link rel="stylesheet" href="./src/style.css" />
   </head>
-  <body>
-    <canvas id="c"></canvas>
+  <body class="loading">
+    <canvas id="c" class="pending"></canvas>
     <a class="back" href="../">12 / Feather</a>
-    <div class="plate"><div class="head"><b>12 Feather</b><i><a class="home" href="../">Codevember 2026 <span lang="ja">羽根</span></a></i></div></div>
+    <div class="plate"><div class="head"><b>12 Feather</b><i><a class="home" href="../">Codevember 2026 <span lang="ja">羽根</span></a></i><i class="loading-label">Loading <span>…</span></i></div></div>
     <button class="fs" type="button" aria-label="Full screen, no text"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path class="in" d="M1.5 5.5v-4h4M10.5 1.5h4v4M14.5 10.5v4h-4M5.5 14.5h-4v-4" /><path class="out" d="M5.5 1.5v4h-4M14.5 5.5h-4v-4M10.5 14.5v-4h4M1.5 10.5h4v4" /></svg></button>
     <script type="module" src="./src/main.ts"></script>
   </body>

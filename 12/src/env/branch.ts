@@ -177,9 +177,9 @@ export function createBranch() {
 // The Blender perch (model/branch.blend → public/branch.glb), with baked bark,
 // moss and buds. Same contract as the procedural one: radius PERCH_R at x = 0,
 // top surface through the origin.
-export async function loadBranch(url: string) {
+export async function loadBranch(url: string, onProgress?: (e: ProgressEvent) => void) {
   const { GLTFLoader } = await import('three/examples/jsm/loaders/GLTFLoader.js');
-  const gltf = await new GLTFLoader().loadAsync(url);
+  const gltf = await new GLTFLoader().loadAsync(url, onProgress);
   const group = gltf.scene;
   group.traverse((o) => {
     const m = o as THREE.Mesh;
