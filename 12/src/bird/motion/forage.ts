@@ -115,7 +115,9 @@ export class ForageLayer implements Layer {
         let best = null as (typeof m.food)[number] | null;
         let bestD = Infinity;
         for (const f of m.food) {
-          if ((this.ignore.get(f.id) ?? 0) > t || !this.inView(f.pos)) continue;
+          if (!this.inView(f.pos)) continue;
+          // seen it already: only worth another look once it comes within reach
+          if ((this.ignore.get(f.id) ?? 0) > t && this.slideFor(f.pos) === null) continue;
           const d = f.pos.distanceTo(this.headRest) - (this.slideFor(f.pos) !== null ? 1 : 0);
           if (d < bestD) {
             bestD = d;
@@ -126,7 +128,8 @@ export class ForageLayer implements Layer {
           this.id = best.id;
           this.state = 'watch';
           this.decideAt = 0;
-          this.watchUntil = t + rand(m.rng, 3, 6);
+          // a look, not a stare: out of reach it gets a glance and the bird goes on with its business
+          this.watchUntil = t + rand(m.rng, 0.7, 1.5);
           m.focus = this.focus.copy(best.pos);
           m.focusId++;
           m.excite(0.25);
@@ -158,7 +161,7 @@ export class ForageLayer implements Layer {
             }
           }
           if (t > this.watchUntil) {
-            this.ignore.set(seed.id, t + rand(m.rng, 4, 8));
+            this.ignore.set(seed.id, t + rand(m.rng, 25, 45));
             this.release(m, 'idle');
             this.readyAt = t + rand(m.rng, 0.3, 1);
           }

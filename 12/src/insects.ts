@@ -30,13 +30,14 @@ export function createInsects(scene: THREE.Scene, around: () => THREE.Vector3) {
   wingGeo.translate(0.008, 0, 0);
   const bodyMat = new THREE.MeshStandardMaterial({ color: 0x1a1612, roughness: 0.6 });
   // a beating wing is a blur, not a blade
-  const wingMat = new THREE.MeshBasicMaterial({ color: 0xe8efe6, transparent: true, opacity: 0.35, side: THREE.DoubleSide, depthWrite: false });
+  const wingMat = new THREE.MeshBasicMaterial({ color: 0xdde4dc, transparent: true, opacity: 0.2, side: THREE.DoubleSide, depthWrite: false });
   const gnats: Gnat[] = [];
   const food: Food[] = [];
   const tip = new THREE.Vector3();
   const tmp = new THREE.Vector3();
   let nextId = ID0;
-  let nextAt = 18 + Math.random() * 30;
+  // rare: one some time in the first minute, then one every 45–90 s
+  let nextAt = 20 + Math.random() * 35;
   let wasStriking = false;
 
   function spawn() {
@@ -102,7 +103,7 @@ export function createInsects(scene: THREE.Scene, around: () => THREE.Vector3) {
       wasStriking = striking;
       if (t > nextAt && gnats.length === 0) {
         spawn();
-        nextAt = t + 25 + Math.random() * 45;
+        nextAt = t + 45 + Math.random() * 45;
       }
       for (const g of gnats) {
         if (g.state === 'gone') continue;

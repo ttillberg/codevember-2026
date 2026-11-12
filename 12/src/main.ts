@@ -8,6 +8,7 @@ import { PALETTES, paletteMatrices } from './bird/palettes';
 import { createPost } from './post';
 import { createSeeds } from './seeds';
 import { createInsects } from './insects';
+import { createAmbient } from './ambient';
 import { createSettings } from './settings';
 
 const canvas = document.querySelector<HTMLCanvasElement>('#c')!;
@@ -220,6 +221,19 @@ const seeds = createSeeds(scene);
 const insects = createInsects(scene, () => bird.root.getWorldPosition(new THREE.Vector3()).add(new THREE.Vector3(0, 0.85, 0)));
 bird.onPick = (id) => (insects.owns(id) ? insects.pick(id) : seeds.pick(id));
 bird.onSwallow = (id) => (insects.owns(id) ? insects.swallowed(id) : seeds.swallowed(id));
+// dust, a passing fly, a seed on the breeze, a wisp of down after a ruffle
+const ambient = createAmbient({ scene, camera, renderer, center: new THREE.Vector3(GRIP_X, 0.55, 0), dof: () => post.dof, passSeed: (at, wind) => seeds.spawn(at, wind) });
+let flySeenAt = -1;
+const shedAt = new THREE.Vector3();
+const shedOut = new THREE.Vector3();
+bird.mind.on('ruffle', (e) => {
+  if (e.kind === 'throat' || bird.away) return;
+  // off a flank, out to one side as we see it, so it floats clear of the bird
+  const a = Math.atan2(camera.position.x - bird.root.position.x, camera.position.z - bird.root.position.z) + (Math.random() < 0.5 ? -1 : 1) * (0.9 + Math.random() * 0.6);
+  shedOut.set(Math.sin(a), 0, Math.cos(a));
+  bird.root.getWorldPosition(shedAt).addScaledVector(shedOut, 0.16).y += 0.22 + Math.random() * 0.2;
+  ambient.shed(shedAt, shedOut, Math.random() < 0.45);
+});
 const allFood: Food[] = [];
 const seedAt = new THREE.Vector3();
 let downAt = 0;
@@ -453,6 +467,7 @@ const settings = createSettings([
   { kind: 'heading', label: 'Do' },
   { kind: 'action', label: 'Drop a seed', run: () => seeds.spawn(seedAhead()) },
   { kind: 'action', label: 'A gnat', run: () => insects.spawn() },
+  { kind: 'action', label: 'A fly', run: () => ambient.flyBy() },
   { kind: 'action', label: 'Sing', run: () => bird.layer<MouthLayer>('mouth').sing(bird.mind, 2.2) },
   { kind: 'action', label: 'Ruffle', run: () => bird.layer<RuffleLayer>('ruffle').trigger(bird.mind, 'shake') },
   { kind: 'action', label: 'Another bird (C)', run: changePalette },
@@ -509,7 +524,13 @@ renderer.setAnimationLoop((now) => {
   gaze.billOn = recent ? 0.8 : 0.46;
   // and follows it, a mix of gliding after it and snapping to catch up
   gaze.pursuit = recent && performance.now() - pointerAt < 700 ? 1 : 0;
-  bird.setAttention(recent ? pointerTarget : camera.position);
+  // a fly zipping past close by gets a look (one, not a stare)
+  const near = recent ? null : ambient.flyNear(headPos, 1.1);
+  if (!near) flySeenAt = -1;
+  else if (flySeenAt < 0) flySeenAt = t;
+  const fly = near && t - flySeenAt < 0.8 ? near : null;
+  if (fly) gaze.interest = 0.95;
+  bird.setAttention(recent ? pointerTarget : (fly ?? camera.position));
   tilt.lerp(tiltOn ? tiltGoal : tiltZero, 1 - Math.exp(-dt * 6));
   // the picture fades in over the drawing once, after loading (W cuts between them after that)
   if (revealing && firstReveal && !drawing) {
@@ -531,6 +552,7 @@ renderer.setAnimationLoop((now) => {
   updateHeadCut();
   seeds.update(dt, t, billTip, headPos);
   insects.update(dt, t, billTip, forage.state === 'windup' || forage.state === 'strike');
+  ambient.update(dt);
   frame();
 });
 
@@ -624,7 +646,7 @@ function frame() {
 }
 const wireMat = new THREE.MeshBasicMaterial({ color: 0xffffff, wireframe: true });
 // the drawing: the bird's skin, bill and eyes and the twig, not the feathers or the sky
-const wireHide = [backdrop.mesh, bird.feathers.contour, bird.feathers.flight, bird.feathers.fuzz];
+const wireHide = [backdrop.mesh, ambient.group, bird.feathers.contour, bird.feathers.flight, bird.feathers.fuzz];
 const wasVisible: boolean[] = [];
 let wireLive = true;
 function drawWire() {
@@ -650,4 +672,4 @@ function render() {
   post.render(scene, camera, t, revealing && reveal === 1 ? null : drawWire, drawMask);
 }
 
-Object.assign(window as unknown as Record<string, unknown>, { __scene: scene, __camera: camera, __renderer: renderer, __controls: controls, __post: post, __frame: frame, __seeds: seeds, __insects: insects });
+Object.assign(window as unknown as Record<string, unknown>, { __scene: scene, __camera: camera, __renderer: renderer, __controls: controls, __post: post, __frame: frame, __seeds: seeds, __insects: insects, __ambient: ambient });

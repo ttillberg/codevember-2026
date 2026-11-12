@@ -206,6 +206,21 @@ export function createSolver(rig: Rig, uniforms: PlumageUniforms): Solver {
   const carry = new THREE.Vector3();
   // the tongue rests with its tip at 0.8 of the bill and can reach 0.45 of a bill past the end
   const TONGUE_TRAVEL = species.bill.length * 0.65;
+  // the three tongue bones ride the bill's centre line: y = -droop (z/L)^2, straight beyond the tip
+  const TONGUE = ['tongue.1', 'tongue.2', 'tongue.3'] as const;
+  const TONGUE_AT = [0.06, 0.5, 0.7].map((k) => k * species.bill.length);
+  const TONGUE_CURL = [0, 0.3, 0.7];
+  /** point on that line at z (bill space) into `out`; returns the angle the line dips there */
+  const tonguePath = (z: number, out: THREE.Vector3) => {
+    const L = species.bill.length;
+    const zc = Math.min(z, L);
+    const slope = (-2 * species.bill.droop * zc) / (L * L);
+    out.set(0, -species.bill.droop * (zc / L) * (zc / L) + slope * (z - zc), z);
+    return -Math.atan(slope);
+  };
+  const tongueRest = TONGUE_AT.map(() => new THREE.Vector3());
+  const tongueNow = TONGUE_AT.map(() => new THREE.Vector3());
+  const tongueRestA = TONGUE_AT.map((z, i) => tonguePath(z, tongueRest[i]));
   const hWant = new THREE.Vector3();
   const qAim = new THREE.Quaternion();
   const mLook = new THREE.Matrix4();
@@ -301,12 +316,19 @@ export function createSolver(rig: Rig, uniforms: PlumageUniforms): Solver {
     tip.add(v2.copy(tipLocal).applyQuaternion(qHead));
 
     bones.jaw.quaternion.copy(rest.jaw.quat).multiply(qA.setFromAxisAngle(X, clamp(p.jaw, 0, 1.1) * 0.31));
-    // tongue: slides out along the bill, the two outer segments curl
-    const out = clamp(p.tongueOut, 0, 1);
-    bones['tongue.1'].position.copy(rest['tongue.1'].pos).addScaledVector(Z, out * TONGUE_TRAVEL);
-    qA.setFromAxisAngle(X, p.tongueCurl * 0.5);
-    bones['tongue.2'].quaternion.copy(qA);
-    bones['tongue.3'].quaternion.copy(qA);
+    // tongue: slides out along the bill's own curve (so it stays between the mandibles) and
+    // carries on straight past the tip; the two outer segments can curl
+    const out = clamp(p.tongueOut, 0, 1) * TONGUE_TRAVEL;
+    let prevA = 0;
+    for (let i = 0; i < 3; i++) {
+      // a: the turn that keeps this segment on the line; the curl comes on top, most of it at the tip
+      const a = tonguePath(TONGUE_AT[i] + out, tongueNow[i]) - tongueRestA[i];
+      const b = bones[TONGUE[i]];
+      b.quaternion.setFromAxisAngle(X, a - prevA + p.tongueCurl * TONGUE_CURL[i]);
+      if (i === 0) b.position.copy(rest[TONGUE[0]].pos).add(tongueNow[0]).sub(tongueRest[0]);
+      else b.position.copy(tongueNow[i]).sub(tongueNow[i - 1]).sub(tongueRest[i]).add(tongueRest[i - 1]).add(rest[TONGUE[i]].pos).applyQuaternion(qA.setFromAxisAngle(X, -prevA));
+      prevA = a;
+    }
     // where a carried item sits
     const k = Math.max(p.carryAt, 0);
     carry.set(0, -species.bill.droop * Math.min(k, 1) * Math.min(k, 1) - (k < 1 ? 0.003 * (1 - k) : 0), k * species.bill.length).applyQuaternion(billRest.worldQuat).add(billRest.worldPos).sub(rest.head.worldPos);

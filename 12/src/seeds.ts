@@ -19,6 +19,8 @@ interface Seed extends Food {
   state: 'drift' | 'carried' | 'gone';
   carryT: number;
   swallowAt: number;
+  /** a seed passing through on the breeze, not dropped: carried across */
+  wind: THREE.Vector3 | null;
 }
 
 function seedGeometry() {
@@ -62,7 +64,7 @@ export function createSeeds(scene: THREE.Scene) {
   const qa = new THREE.Quaternion();
   let nextId = 1;
 
-  function spawn(at: THREE.Vector3) {
+  function spawn(at: THREE.Vector3, wind: THREE.Vector3 | null = null) {
     if (seeds.filter((s) => s.state === 'drift').length >= MAX) {
       const old = seeds.find((s) => s.state === 'drift');
       if (old) remove(old);
@@ -87,6 +89,7 @@ export function createSeeds(scene: THREE.Scene) {
       state: 'drift',
       carryT: 0,
       swallowAt: -1,
+      wind,
     });
   }
 
@@ -133,13 +136,14 @@ export function createSeeds(scene: THREE.Scene) {
           const k = t * 0.6 + s.phase;
           const wind = new THREE.Vector3(Math.sin(k * 0.9) * 0.05 + Math.sin(k * 2.3) * 0.02, Math.sin(k * 1.7) * 0.02, Math.cos(k * 0.7) * 0.03);
           const target = wind.add(new THREE.Vector3(0, -0.035, 0));
+          if (s.wind) target.add(s.wind);
           s.velocity.lerp(target, 1 - Math.exp(-dt * 1.5));
           s.obj.position.addScaledVector(s.velocity, dt);
           s.obj.rotation.y += s.spin * dt;
           s.obj.rotation.x = Math.sin(k * 1.3) * 0.12;
           s.obj.rotation.z = Math.cos(k * 1.1) * 0.12;
           s.obj.scale.setScalar(Math.min(1, s.obj.scale.x + dt * 4));
-          if (s.obj.position.y < -1.4 || s.age > 45) remove(s);
+          if (s.obj.position.y < -1.4 || s.age > (s.wind ? 90 : 45) || Math.abs(s.obj.position.x) > 3.2) remove(s);
         } else if (s.state === 'carried') {
           // held where the bird says (bill tip, then along the tongue into the
           // mouth) until it reports the swallow; a timeout in case it never does
