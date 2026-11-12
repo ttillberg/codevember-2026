@@ -341,6 +341,7 @@ renderer.setAnimationLoop((now) => {
   // and follows it, a mix of gliding after it and snapping to catch up
   gaze.pursuit = recent && performance.now() - pointerAt < 700 ? 1 : 0;
   bird.setAttention(recent ? pointerTarget : camera.position);
+  tilt.lerp(tiltOn ? tiltGoal : tiltZero, 1 - Math.exp(-dt * 6));
   if (revealing && reveal < 1) {
     reveal = Math.min(1, reveal + dt / 1.6);
     // the drawing's done its job: free its target and material
@@ -384,18 +385,68 @@ function shakeAngles(t: number, dt: number) {
   return shakeE.set(pitch, yaw, roll, 'YXZ');
 }
 
+// tilt parallax (phones): leaning the phone swings the camera a little round
+// the bird, so it stays put and the twig and the bokeh slide behind it
+const gyroButton = document.querySelector<HTMLButtonElement>('.gyro');
+if (phone) document.body.classList.add('touch');
+let tiltOn = false;
+let tiltBase: { x: number; y: number } | null = null;
+const tiltGoal = new THREE.Vector2(); // yaw, pitch in radians
+const tilt = new THREE.Vector2();
+const tiltZero = new THREE.Vector2();
+function onTilt(e: DeviceOrientationEvent) {
+  if (e.beta === null || e.gamma === null) return;
+  // in the screen's terms: x left/right, y toward/away, whichever way the phone is turned
+  const angle = screen.orientation?.angle ?? 0;
+  const [x, y] = angle === 90 ? [e.beta, -e.gamma] : angle === 270 ? [-e.beta, e.gamma] : angle === 180 ? [-e.gamma, -e.beta] : [e.gamma, e.beta];
+  // however it's held when switched on is the rest pose
+  tiltBase ??= { x, y };
+  const D = THREE.MathUtils.DEG2RAD;
+  tiltGoal.set(THREE.MathUtils.clamp((x - tiltBase.x) * 0.5, -12, 12) * D, THREE.MathUtils.clamp((y - tiltBase.y) * 0.4, -8, 8) * D);
+}
+gyroButton?.addEventListener('click', async () => {
+  if (tiltOn) {
+    window.removeEventListener('deviceorientation', onTilt);
+    tiltOn = false;
+  } else {
+    // iOS asks, and only from a tap
+    const ask = (DeviceOrientationEvent as unknown as { requestPermission?: () => Promise<string> }).requestPermission;
+    if (ask) {
+      try {
+        if ((await ask()) !== 'granted') return;
+      } catch {
+        return;
+      }
+    }
+    tiltBase = null;
+    window.addEventListener('deviceorientation', onTilt);
+    tiltOn = true;
+  }
+  if (!tiltOn) tiltGoal.set(0, 0);
+  gyroButton.classList.toggle('on', tiltOn);
+  gyroButton.setAttribute('aria-pressed', String(tiltOn));
+});
+
+const restPos = new THREE.Vector3();
+const orbit = new THREE.Vector3();
+const right = new THREE.Vector3();
 function frame() {
-  const shake = shakeAmt > 0;
-  if (shake) {
-    restQ.copy(camera.quaternion);
-    camera.quaternion.multiply(shakeQ.setFromEuler(shakeAngles(t, 1 / 60)));
-    camera.updateMatrixWorld();
+  restPos.copy(camera.position);
+  restQ.copy(camera.quaternion);
+  if (tilt.lengthSq() > 1e-8) {
+    orbit.copy(camera.position).sub(controls.target);
+    orbit.applyAxisAngle(camera.up, -tilt.x);
+    right.crossVectors(camera.up, orbit).normalize();
+    orbit.applyAxisAngle(right, tilt.y);
+    camera.position.copy(controls.target).add(orbit);
+    camera.lookAt(controls.target);
   }
+  if (shakeAmt > 0) camera.quaternion.multiply(shakeQ.setFromEuler(shakeAngles(t, 1 / 60)));
+  camera.updateMatrixWorld();
   render();
-  if (shake) {
-    camera.quaternion.copy(restQ);
-    camera.updateMatrixWorld();
-  }
+  camera.position.copy(restPos);
+  camera.quaternion.copy(restQ);
+  camera.updateMatrixWorld();
 }
 const wireMat = new THREE.MeshBasicMaterial({ color: 0xffffff, wireframe: true });
 // the drawing: the bird's skin, bill and eyes and the twig, not the feathers or the sky
