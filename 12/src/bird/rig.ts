@@ -210,7 +210,7 @@ export function buildRig(species: Species): Rig {
       const f = i / (np - 1);
       const base = wrist.clone().addScaledVector(hd, (W.hand * (i + 0.4)) / np).addScaledVector(trail, (1 - f) * 0.04).addScaledVector(N, (1 - f) * 0.004);
       const dir = meet.clone().addScaledVector(trail, (1 - f) * 0.05).sub(base).normalize();
-      specs.push({ name: `primary#${i + 1}`, parent: 'hand', pos: base, dir, n: N, sDir: rotIn(X, dorsal, lerp(74, -6, f) * DEG) });
+      specs.push({ name: `primary#${i + 1}`, parent: 'hand', pos: base, dir, n: N, sDir: rotIn(X, dorsal, lerp(58, -4, Math.pow(f, 0.62)) * DEG) });
     }
     const ns = W.secondaries;
     for (let j = 0; j < ns; j++) {
@@ -256,7 +256,8 @@ export function buildRig(species: Species): Rig {
       for (let i = 0; i < T.rectrices; i++) {
         // bone +X is the bird's right, so left feathers sit at negative k
         const k = (i + 0.5) * (side === 'L' ? -1 : 1);
-        const pos = base.clone().addScaledVector(right, k * 0.013).addScaledVector(up, -i * 0.005 - (side === 'L' ? 0.002 : 0)).addScaledVector(dir, 0.02);
+        // closed, the rectrices lie stacked almost on top of each other, the central pair uppermost
+        const pos = base.clone().addScaledVector(right, k * 0.006).addScaledVector(up, -i * 0.004 - (side === 'L' ? 0.002 : 0)).addScaledVector(dir, 0.02);
         const qk = q.clone().multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), k * T.restFan * DEG));
         rectrices.push({ bone: add(`rectrix.${side}.${i + 1}`, 'tail', pos, qk), k });
       }

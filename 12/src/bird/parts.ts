@@ -164,7 +164,7 @@ export function buildParts(rig: Rig): Parts {
   // whose outer edge is beaded with the tiniest feathers. The lids are shells under that
   // ring, so a blink closes along the same lemon.
   const lidCol = new THREE.Color(0x24262b);
-  const ringCol = new THREE.Color(0x2e3038);
+  const ringCol = new THREE.Color(0x77777c);
   const beadCol = new THREE.Color(0x08080a);
   for (const side of SIDES) {
     // which way the bill is along the eye's X axis (see buildRig: +X is back on the left eye)
@@ -189,11 +189,12 @@ export function buildParts(rig: Rig): Parts {
         // a rounded lip at the opening, beads along the outer edge of the bare ring
         // only a thin lip at the opening is raised and grey; the rest is face-dark skin lying
         // low, for the face feathers to overlap
-        const lip = Math.sin(Math.PI * Math.min(t / 0.18, 1));
+        // (the lip is pale grey and wide enough to outline the dark eye against the dark face)
+        const lip = Math.pow(Math.sin(Math.PI * Math.min(t / 0.5, 1)), 0.6);
         const bead = Math.max(0, Math.sin(phi * 38)) * smoothstep(0.12, 0.2, t) * (1 - smoothstep(0.22, 0.32, t));
-        const r = R * (1.05 + 0.012 * lip + 0.004 * bead - 0.035 * smoothstep(0.3, 1, t));
+        const r = R * (1.05 + 0.02 * lip + 0.004 * bead - 0.035 * smoothstep(0.5, 1, t));
         pos.push(Math.sin(th) * cx * r, Math.sin(th) * sy * r, Math.cos(th) * r);
-        c.copy(ringCol).multiplyScalar(0.7 + 0.5 * lip).lerp(beadCol, Math.max(bead * 0.6, smoothstep(0.14, 0.3, t)));
+        c.copy(ringCol).multiplyScalar(0.55 + 0.5 * lip).lerp(beadCol, Math.max(bead * 0.35, smoothstep(0.4, 0.6, t)));
         col.push(c.r, c.g, c.b);
       }
     }
@@ -260,7 +261,9 @@ export function buildParts(rig: Rig): Parts {
   }
   const loftGeo = buildSkinGeometry(rig);
   const skinMat = new THREE.MeshStandardMaterial({ color: 0xffffff, vertexColors: true, roughness: 0.9, envMapIntensity: 0.4, side: THREE.DoubleSide });
-  const loftMat = new THREE.MeshStandardMaterial({ color: skinCol, roughness: 0.95 });
+  // (the body under the feathers: nearly black and dead matte, so wherever the coat parts it reads as the shadow between feathers, not as a surface)
+  // (both faces: with the head turned right round to preen, the skin of the neck is wrung like a cloth and shows its inside)
+  const loftMat = new THREE.MeshStandardMaterial({ color: skinCol.clone().multiplyScalar(0.5), roughness: 1, envMapIntensity: 0.15, side: THREE.DoubleSide });
   const loftMesh = new THREE.SkinnedMesh(loftGeo, loftMat);
   loftMesh.name = 'bird.skin';
   const bare = new THREE.SkinnedMesh(skinB.build(), skinMat);

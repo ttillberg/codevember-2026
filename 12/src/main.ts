@@ -157,10 +157,16 @@ maskPlumage.onBeforeCompile = (shader, r) => {
   shader.fragmentShader = shader.fragmentShader.replace('#include <dithering_fragment>', '#include <dithering_fragment>\n  gl_FragColor = vec4(1.0, 1.0, 1.0, gl_FragColor.a);');
 };
 maskPlumage.customProgramCacheKey = () => 'plumage-mask';
+// collected each time: the flight's wing blur is only made on the first flight
 const maskMeshes: THREE.Mesh[] = [];
-bird.root.traverse((o) => (o as THREE.Mesh).isMesh && maskMeshes.push(o as THREE.Mesh));
 const maskSaved: (THREE.Material | THREE.Material[])[] = [];
 function drawMask() {
+  maskMeshes.length = 0;
+  bird.root.traverse((o) => {
+    if (!(o as THREE.Mesh).isMesh) return;
+    o.layers.enable(MASK_LAYER);
+    maskMeshes.push(o as THREE.Mesh);
+  });
   const feathers: THREE.Object3D[] = [bird.feathers.contour, bird.feathers.flight, bird.feathers.fuzz];
   maskMeshes.forEach((m, i) => {
     maskSaved[i] = m.material;
@@ -228,6 +234,7 @@ canvas.addEventListener('pointerdown', (e) => {
 const capA = new THREE.Vector3();
 const capB = new THREE.Vector3();
 function tapsBird(x: number, y: number) {
+  if (bird.away) return false;
   toNdc(x, y);
   ray.setFromCamera(ndc, camera);
   bird.root.getWorldPosition(capA).y += 0.25;
@@ -266,6 +273,7 @@ canvas.addEventListener('pointerup', (e) => {
 });
 window.addEventListener('keydown', (e) => {
   if (e.code === 'Space') bird.startle(1);
+  if (e.code === 'KeyF' && !e.metaKey && !e.ctrlKey) bird.flee();
   if (e.code === 'KeyW' && !e.metaKey && !e.ctrlKey) setDrawing(!drawing);
 });
 
@@ -405,7 +413,7 @@ window.addEventListener('keydown', (e) => {
 
 // --- settings wheel, bottom right ---------------------------------------------
 let followPointer = true;
-let shakeAmt = query.has('still') ? 0 : 1.8;
+let shakeAmt = query.has('still') ? 0 : 2.1;
 let fuzzVisible = true;
 let branchFuzz: THREE.Object3D | null = null;
 function applyFuzz() {
@@ -430,16 +438,16 @@ const TONE: Record<string, THREE.ToneMapping> = {
 const settings = createSettings([
   { kind: 'heading', label: 'Camera' },
   { kind: 'range', key: 'shake', label: 'Handheld', value: shakeAmt, min: 0, max: 3.5, step: 0.05, set: (v) => (shakeAmt = v) },
-  { kind: 'range', key: 'dof', label: 'Depth of field', value: 120, min: 0, max: 260, step: 5, set: (v) => (post.dof.uAperture.value = v) },
-  { kind: 'range', key: 'exposure', label: 'Exposure', value: 1.3, min: 0.8, max: 2.4, step: 0.05, set: (v) => (post.grade.uExposure.value = v) },
+  { kind: 'range', key: 'dof', label: 'Depth of field', value: 100, min: 0, max: 260, step: 5, set: (v) => (post.dof.uAperture.value = v) },
+  { kind: 'range', key: 'exposure', label: 'Exposure', value: 1.15, min: 0.8, max: 2.4, step: 0.05, set: (v) => (post.grade.uExposure.value = v) },
   { kind: 'heading', label: 'Look' },
-  { kind: 'select', key: 'tonemap', label: 'Tone mapping', value: 'ACES', options: Object.keys(TONE), set: (v) => post.setToneMapping(TONE[v]) },
-  { kind: 'range', key: 'contrast', label: 'Contrast', value: 0.98, min: 0.6, max: 1.4, step: 0.01, set: (v) => (post.grade.uContrast.value = v) },
-  { kind: 'range', key: 'sat', label: 'Saturation', value: 1.12, min: 0.3, max: 1.4, step: 0.01, set: (v) => (post.grade.uSat.value = v) },
-  { kind: 'range', key: 'fade', label: 'Fade', value: 0, min: 0, max: 0.6, step: 0.01, set: (v) => (post.grade.uFade.value = v) },
+  { kind: 'select', key: 'tonemap', label: 'Tone mapping', value: 'Neutral', options: Object.keys(TONE), set: (v) => post.setToneMapping(TONE[v]) },
+  { kind: 'range', key: 'contrast', label: 'Contrast', value: 0.95, min: 0.6, max: 1.4, step: 0.01, set: (v) => (post.grade.uContrast.value = v) },
+  { kind: 'range', key: 'sat', label: 'Saturation', value: 1.0, min: 0.3, max: 1.4, step: 0.01, set: (v) => (post.grade.uSat.value = v) },
+  { kind: 'range', key: 'fade', label: 'Fade', value: 0.06, min: 0, max: 0.6, step: 0.01, set: (v) => (post.grade.uFade.value = v) },
   { kind: 'heading', label: 'Bird' },
   { kind: 'toggle', key: 'follow', label: 'Follows the pointer', value: true, set: (v) => (followPointer = v) },
-  { kind: 'range', key: 'mood', label: 'Calm · alert', value: bird.mind.baseline, min: 0, max: 1, step: 0.01, set: (v) => (bird.mind.baseline = v) },
+  { kind: 'range', key: 'mood', label: 'Calm · alert', value: 0.32, min: 0, max: 1, step: 0.01, set: (v) => (bird.mind.baseline = v) },
   { kind: 'range', key: 'flash', label: 'Gorget flash', value: 1, min: 0, max: 2, step: 0.05, set: (v) => { bird.plumage.uFlash.value = flash0 * v; bird.plumage.uGlint.value = glint0 * v; } },
   { kind: 'toggle', key: 'fuzz', label: 'Down and felt', value: true, set: (v) => { fuzzVisible = v; applyFuzz(); } },
   { kind: 'heading', label: 'Do' },
@@ -449,6 +457,8 @@ const settings = createSettings([
   { kind: 'action', label: 'Ruffle', run: () => bird.layer<RuffleLayer>('ruffle').trigger(bird.mind, 'shake') },
   { kind: 'action', label: 'Another bird (C)', run: changePalette },
   { kind: 'action', label: 'Startle', run: () => bird.startle(1) },
+  { kind: 'action', label: 'Fly off (F)', run: () => bird.flee() },
+  { kind: 'action', label: 'Pause (P)', run: () => setPaused(!paused) },
   { kind: 'action', label: 'Drawing (W)', run: () => setDrawing(!drawing) },
   { kind: 'action', label: 'Head wireframe (H)', run: () => setHeadWire(!headWire) },
 ]);
@@ -471,12 +481,22 @@ resize();
 
 branchLoad.then(() => requestAnimationFrame(() => ready()));
 if (!usePost) startReveal(true);
+let paused = false;
+function setPaused(on: boolean) {
+  paused = on;
+  document.body.classList.toggle('paused', on);
+}
+window.addEventListener('keydown', (e) => {
+  if (e.code === 'KeyP' && !e.metaKey && !e.ctrlKey) setPaused(!paused);
+});
 const timer = new THREE.Timer();
 timer.connect(document);
 let t = 0;
 renderer.setAnimationLoop((now) => {
   timer.update(now);
-  const dt = Math.min(timer.getDelta(), 1 / 20);
+  // P: time stands still (the bird, the seeds, the camera's hands); the view can still be turned
+  const dt = paused ? 0 : Math.min(timer.getDelta(), 1 / 20);
+  if (paused) timer.getDelta();
   t += dt;
   controls.update();
   backdrop.material.uniforms.uTime.value = t;

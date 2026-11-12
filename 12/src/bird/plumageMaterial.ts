@@ -18,10 +18,18 @@ export interface PlumageUniforms {
   uLift: { value: Float32Array };
   uGorget: { value: number };
   uCrest: { value: number };
+  /** 0 … 1: the head is tucked down onto the breast; the gorget's lower rows ride out over the collar */
+  uThroat: { value: number };
   /** per wing [left, right]: 0 folded (the body-surface wing shows) … 1 spread (the real blades show) */
   uWingSpread: { value: THREE.Vector2 };
   /** per wing: the resting wing's feathers hinged off the body, radians (a flick, a shuffle) */
   uWingLift: { value: THREE.Vector2 };
+  /** the resting wing held off the flank as one piece: [left out, left twist, right out, right twist], radians */
+  uWingOut: { value: THREE.Vector4 };
+  /** where it turns (shoulder end of the strip) and about what, object space, left wing; set by the solver */
+  uWingPivot: { value: THREE.Vector3 };
+  uWingSpan: { value: THREE.Vector3 };
+  uWingChord: { value: THREE.Vector3 };
   uFlash: { value: number };
   uGlint: { value: number };
   uSheen: { value: number };
@@ -39,8 +47,13 @@ export function createPlumageMaterial(): { material: THREE.MeshStandardMaterial;
     uLift: { value: new Float32Array(8) },
     uGorget: { value: 0 },
     uCrest: { value: 0 },
+    uThroat: { value: 0 },
     uWingSpread: { value: new THREE.Vector2() },
     uWingLift: { value: new THREE.Vector2() },
+    uWingOut: { value: new THREE.Vector4() },
+    uWingPivot: { value: new THREE.Vector3() },
+    uWingSpan: { value: new THREE.Vector3(0, 0, -1) },
+    uWingChord: { value: new THREE.Vector3(0, 1, 0) },
     uFlash: { value: 1 },
     uGlint: { value: 1 },
     uSheen: { value: 1 },
@@ -65,6 +78,7 @@ uniform float uFluff;
 uniform float uLift[8];
 uniform float uGorget;
 uniform float uCrest;
+uniform float uThroat;
 uniform vec2 uWingSpread;
 uniform vec2 uWingLift;
 uniform mat3 uPal[4];
@@ -75,7 +89,18 @@ varying vec4 vTip;
 varying vec4 vIri;
 varying vec4 vIri2;
 varying vec3 vIriN;
-vec3 rotAxis(vec3 v, vec3 k, float c, float s) { return v * c + cross(k, v) * s + k * dot(k, v) * (1.0 - c); }`,
+uniform vec4 uWingOut;
+uniform vec3 uWingPivot;
+uniform vec3 uWingSpan;
+uniform vec3 uWingChord;
+vec3 rotAxis(vec3 v, vec3 k, float c, float s) { return v * c + cross(k, v) * s + k * dot(k, v) * (1.0 - c); }
+// the resting wing swung off the flank: twist about its length, then out about its chord
+vec3 wingSwing(vec3 v, bool right) {
+  vec2 a = right ? vec2(uWingOut.z, -uWingOut.w) : vec2(-uWingOut.x, uWingOut.y);
+  vec3 m = vec3(right ? -1.0 : 1.0, 1.0, 1.0);
+  v = rotAxis(v, uWingSpan * m, cos(a.y), sin(a.y));
+  return rotAxis(v, uWingChord * m, cos(a.x), sin(a.x));
+}`,
       )
       .replace(
         '#include <beginnormal_vertex>',
@@ -85,15 +110,23 @@ float fI = floor(min(fCoord, 6.0));
 float fWave = mix(uLift[int(fI)], uLift[int(fI) + 1], fCoord - fI);
 float fAng = aData.z * (uFluff + fWave) * (0.6 + 0.8 * aData.x);
 fAng += (aData.w > 0.5 && aData.w < 1.5 ? uGorget : 0.0) + (aData.w > 1.5 && aData.w < 2.5 ? uCrest : 0.0);
+// head tucked down: the gorget's lower rows swing out so its rim stays on top, and the collar
+// feathers it has drawn away from stand up into the hollow under it
+if (aData.w > 0.5 && aData.w < 1.5) fAng += uThroat * 0.5 * smoothstep(0.24, 0.4, aData.y);
+else if (aData.w < 0.5 && aData.y < 1.0) fAng += uThroat * 0.45 * smoothstep(0.34, 0.39, aData.y) * (1.0 - smoothstep(0.43, 0.5, aData.y));
 // wings: ids 2/3 = the resting wing on the body (left/right), 4/5 = the real blades
 bool fRest = aData.y > 1.5 && aData.y < 3.5;
 bool fReal = aData.y > 3.5;
 bool fRight = aData.y > 2.5 && aData.y < 3.5 || aData.y > 4.5;
-float fUnfold = smoothstep(0.03, 0.35, fRight ? uWingSpread.y : uWingSpread.x);
+float fSpread = fRight ? uWingSpread.y : uWingSpread.x;
+float fUnfold = smoothstep(0.03, 0.35, fSpread);
+// past fully spread the wing is beating too fast to see: the blades go, a blur fan stands in
+float fBeat = 1.0 - smoothstep(1.2, 1.6, fSpread);
 if (fRest) fAng += (fRight ? uWingLift.y : uWingLift.x) * (0.5 + aData.x);
 float fC = cos(fAng), fS = sin(fAng);
 vec3 objectNormal = rotAxis(normal, aHinge, fC, fS);
 vec3 fIriN = rotAxis(aIriN, aHinge, fC, fS);
+if (fRest) { objectNormal = wingSwing(objectNormal, fRight); fIriN = wingSwing(fIriN, fRight); }
 vFUv = uv; vFData = vec3(aData.x, aData.w, fAng);
 vBase = aBase; vTip = aTip; vIri = aIri; vIri2 = aIri2;
 // the palette: per vertex, so it costs nothing in the fragment shader
@@ -119,8 +152,12 @@ vIriN = normalize(normalMatrix * fIriN);`,
         '#include <begin_vertex>',
         /* glsl */ `vec3 transformed = aData.w > 3.5 ? position + normal * max(fAng, -0.1) * 0.05 : aRoot + rotAxis(position - aRoot, aHinge, fC, fS);
 // as the wing spreads the resting wing sinks into the body and the real blades grow out of it
-if (fRest) transformed = mix(transformed, aRoot - normal * 0.03, fUnfold);
-if (fReal) transformed = mix(aRoot, transformed, fUnfold);`,
+if (fRest) {
+  vec3 fPivot = vec3(fRight ? -uWingPivot.x : uWingPivot.x, uWingPivot.yz);
+  transformed = fPivot + wingSwing(transformed - fPivot, fRight);
+  transformed = mix(transformed, aRoot - normal * 0.03, fUnfold);
+}
+if (fReal) transformed = mix(aRoot, transformed, fUnfold * fBeat);`,
       );
 
     shader.fragmentShader = shader.fragmentShader
@@ -143,6 +180,7 @@ float fEdge;
 float fBarbRand;
 float fBarbHue;
 float fSoft;
+float fTilt;
 float fFuzz;`,
       )
       .replace(
@@ -158,6 +196,8 @@ float fFuzz;`,
     // hairs wander together in slow waves, so the coat has locks, not a comb pattern
     float sway = sin(vFUv.y * 11.0 + floor(vFUv.x * 0.07) * 2.1) * 1.3 + sin(vFUv.y * 4.3 + vFUv.x * 0.021) * 2.2;
     float alpha = 0.0, tone = 0.5, dash = 0.0, pick = 0.5;
+    // the plushest tracts (belly, flanks, the velvet face): hairs nearly of one tone
+    float plush = smoothstep(0.82, 1.0, vTip.a);
     for (int o = 0; o < 2; o++) {
       float fo = float(o);
       float cx = (vFUv.x + sway) * (1.0 + 0.63 * fo) + fo * 17.3 + layer * 5.7;
@@ -178,11 +218,11 @@ float fFuzz;`,
     alpha = mix(alpha, density * 0.45, lodF);
     // seen edge-on a shell is a film, not hairs: let it go, the frayed feathers make the outline
     alpha *= smoothstep(0.34, 0.74, abs(dot(normalize(vNormal), normalize(vViewPosition))));
-    diffuseColor.rgb = mix(vBase.rgb, vTip.rgb, 0.75) * mix(0.55 + 0.9 * tone, 1.0, lodF);
+    diffuseColor.rgb = mix(vBase.rgb, vTip.rgb, 0.75) * mix(mix(0.55, 0.75, plush) + mix(0.9, 0.4, plush) * tone, mix(1.0, 0.95, plush), lodF);
     // break up the coverage steps with a little screen noise, or they show as dotted bands
     float ign = fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));
     diffuseColor.a = clamp(alpha + (ign - 0.5) * 0.3 * min(alpha * 3.0, 1.0), 0.0, 1.0);
-    fBarb = 0.0; fEdge = 0.0; fSoft = 1.0;
+    fBarb = 0.0; fEdge = 0.0; fSoft = 1.0; fTilt = 0.35;
     fBarbRand = mix(pick, 0.5, lodF);
     fBarbHue = mix(tone, 0.5, lodF);
     // glints are short dashes on some hairs, not tiles
@@ -192,7 +232,12 @@ float fFuzz;`,
   float rnd = vFData.x;
   bool flight = vFData.y > 2.5;
   bool scale = vFData.y > 0.5 && !flight; // gorget, crown: crisp closed vanes
+  // gorget scales are scallops whose uv is their true shape: u across, v along, the free
+  // edge a semicircle of radius 1 about (0, 0.5)
+  bool scallop = scale && vFData.y < 1.5;
   float loose = flight ? 0.0 : vTip.a;
+  // the plush underparts (belly, flanks, down): one soft surface, the feathers only just told apart
+  float plush = scale ? 0.0 : smoothstep(0.62, 0.85, loose);
   fEdge = 0.0;
   fBarbRand = 0.5;
   // barbs, one per 2 PI of arg. On a blade they run diagonally off the shaft. On contour
@@ -201,30 +246,37 @@ float fFuzz;`,
   // the side of the vane before the tip.
   float outline = mix(0.5, 1.0, smoothstep(0.0, 0.5, v)) * pow(max(1.0 - pow(clamp((v - 0.5) / 0.5, 0.0, 1.0), 1.9), 0.0), 0.53);
   float fanX = u * outline / (v + 0.4) * 1.4;
-  float arg = flight ? v * 520.0 - au * 38.0 + rnd * 6.28 : fanX * (scale ? 12.0 : mix(8.5, 6.5, loose)) * 6.2832 + rnd * 6.28;
+  // a scallop's ridges are its barbs: they fan out a little from the root, the whole comb
+  // bends to one side, the spacing is uneven and every scale has its own count
+  float sFan = u / (0.5 + 0.6 * v);
+  sFan += (fract(rnd * 23.7) - 0.5) * 0.5 * v * v;
+  sFan += 0.035 * sin(sFan * 9.0 + rnd * 40.0 + v * 2.5) + 0.018 * sin(sFan * 23.0 + rnd * 91.0 - v * 4.0);
+  float arg = scallop ? sFan * mix(8.0, 12.5, fract(rnd * 57.3)) * 6.2832 + rnd * 6.28 : flight ? v * 520.0 - au * 38.0 + rnd * 6.28 : fanX * (scale ? 7.0 : mix(8.5, 6.5, loose)) * 6.2832 + rnd * 6.28;
   float fw = fwidth(arg);
   float lod = smoothstep(1.2, 3.0, fw); // 0 = barbs resolved, 1 = sub-pixel
   float id = floor(arg / 6.2832 + 0.5);
   // a thin bright strand with a dark gap either side
-  float strand = smoothstep(0.3, 0.78, 0.5 + 0.5 * cos(arg));
   float h = fract(sin(id * 12.9898 + rnd * 78.233) * 43758.5453);
   float h2 = fract(sin(id * 39.3468 + rnd * 11.135) * 24634.6345);
+  // on a scallop the barbs are broad with a thin groove between, each a little wider or narrower
+  float strand = scallop ? smoothstep(0.03 + 0.14 * h, 0.3 + 0.3 * h, 0.5 + 0.5 * cos(arg)) : smoothstep(0.3, 0.78, 0.5 + 0.5 * cos(arg));
   float ridge = 0.5 + 0.5 * cos(arg); // 1 on the barb, 0 in the gap between two
   fBarb = (ridge * 2.0 - 1.0) * (1.0 - lod);
   fBarbRand = mix(h2, 0.5, lod);
   float shaft = 1.0 - smoothstep(0.0, flight ? 0.07 : 0.09, au);
-  vec3 pig = mix(vBase.rgb, vTip.rgb, flight ? 0.5 : smoothstep(0.3, 1.0, v));
+  vec3 pig = mix(vBase.rgb, vTip.rgb, flight ? 0.5 : mix(smoothstep(0.3, 1.0, v), 0.62 + 0.3 * v, plush));
   // overlap shadow at the root, where the next feather up covers this one
   // (a lifted feather shows more of itself)
   float cover = vIri2.a * (1.0 - clamp(vFData.z * 1.6, 0.0, 0.8));
   float bare = smoothstep(cover - 0.3, cover + 0.12, v + 0.1 * (1.0 - au));
-  float occ = flight ? mix(0.5, 1.0, smoothstep(0.0, 0.25, v)) : mix(scale ? 0.42 : 0.74, 1.0, bare);
-  float edge = max(au, (v - 0.55) / 0.45);
+  float occ = flight ? mix(0.5, 1.0, smoothstep(0.0, 0.25, v)) : mix(scale ? 0.42 : mix(0.74, 0.96, plush), 1.0, bare);
+  float edge = scallop ? (v > 0.5 ? length(vec2(u, (v - 0.5) * 2.0)) : au * 0.85) : max(au, (v - 0.55) / 0.45);
   // scales carry a paler fringe on the free edge; soft feathers just vary barb by barb
-  float rim = scale ? smoothstep(0.72, 1.0, edge) * 0.4 : 0.0;
-  pig *= occ * (1.0 + (flight ? 0.26 : scale ? 0.16 : 0.0) * fBarb) * (1.0 + rim);
+  float rim = scale ? -smoothstep(0.8, 1.0, edge) * 0.45 : 0.0;
+  pig *= occ * (1.0 + (flight ? 0.26 : scale ? 0.35 : 0.0) * fBarb) * (1.0 + rim);
   // soft feathers: the strands carry the colour, between them it is nearly dark
-  if (!flight && !scale) pig *= mix(mix(0.3, 1.3, strand), 0.86, lod) * (0.88 + 0.24 * mix(h, 0.5, lod));
+  // (plush feathers: hardly darker between the strands, so no row of them casts a line)
+  if (!flight && !scale) pig *= mix(mix(mix(0.3, 0.74, plush), mix(1.3, 1.08, plush), strand), 0.86, lod) * (0.88 + 0.24 * mix(h, 0.5, lod));
   fBarbHue = flight || scale ? 0.5 : mix(0.55 * fract(rnd * 5.31) + 0.45 * fract(h2 * 3.7 + h), 0.5, lod * 0.6);
   if (!flight && !scale) {
     // per feather, subtle: a touch warmer or cooler, lighter or darker,
@@ -232,7 +284,7 @@ float fFuzz;`,
     float r1 = fract(rnd * 17.13);
     float r2 = fract(rnd * 41.71);
     pig *= mix(vec3(1.05, 0.98, 0.93), vec3(0.95, 0.98, 1.06), r1);
-    pig *= 0.87 + 0.26 * r2;
+    pig *= mix(0.87 + 0.26 * r2, 0.76 + 0.08 * r2, plush);
     pig *= 1.0 + 0.2 * step(0.95, fract(rnd * 7.73)) * smoothstep(0.6, 1.0, v);
   }
   if (flight) {
@@ -255,7 +307,7 @@ float fFuzz;`,
     if (!gl_FrontFacing) pig = pig * 2.0 + vec3(0.006, 0.006, 0.008) * (0.4 + strip);
     fEdge = (smoothstep(0.8, 0.97, lead) + 0.35 * smoothstep(0.9, 1.0, au)) * (gl_FrontFacing ? 0.3 : 1.0);
   } else {
-    pig *= mix(1.0, 0.72, shaft * 0.7);
+    pig *= mix(1.0, 0.72, shaft * (scallop ? 0.0 : 0.7 - 0.5 * plush));
     if (!scale) {
       // dust: on a few feathers a white speck, a short thread of lint lying any which way,
       // or a wisp of pale down; commoner on the dark upper parts. Each fades out before it
@@ -281,7 +333,10 @@ float fFuzz;`,
     float aa = max(fwidth(edge), 1e-4);
     // every barb ends at its own length, and now and then the vane splits
     float cut = mix(scale ? 0.7 : mix(0.62, 0.45, loose), 1.03, h * h) - (h2 < 0.05 + 0.1 * loose ? 0.45 : 0.0);
+    // a scallop's rim is a comb: each barb stops at its own length, the grooves open between them
+    if (scallop) cut = 1.0 - 0.13 * h2 * h2 - (h < 0.07 ? 0.12 : 0.0);
     float alive = 1.0 - smoothstep(cut - aa, cut + aa, edge);
+    if (scallop) alive *= 1.0 - (1.0 - strand) * smoothstep(0.78, 0.93, edge);
     // toward the edge of a soft feather the barbs stand apart: you see between them
     float open = scale ? 0.0 : smoothstep(mix(0.55, 0.1, loose), mix(0.95, 0.7, loose), max(edge, v * 0.9)) * mix(0.75, 1.0, loose);
     float gap = (1.0 - strand) * open;
@@ -300,8 +355,14 @@ float fFuzz;`,
   // every strand shines, some much more than others; too far to tell them apart, their
   // average, with the odd single-feather sparkle so velvet still glints
   float streak = mix(strand * (0.25 + 2.3 * h * h), 0.55 * (1.0 + 1.6 * step(0.9, fract(rnd * 3.77))), lod);
-  fIriMask = flight ? 1.0 : scale ? bare * mix(0.5 + 0.62 * strand, 0.8, lod) * (1.0 - 0.3 * shaft) : bare * streak;
+  // scales: the flash runs in fine ridges with dark lines between, still a hint of them when tiny,
+  // and a dark line where the scale's free edge lies over the next
+  float scaleEdge = 1.0 - 0.6 * smoothstep(0.8, 1.0, edge);
+  // (a scallop's covered root still glows a little, so a gap in the row above is not a black hole)
+  fIriMask = flight ? 1.0 : scale ? (scallop ? mix(0.3, 1.0, bare) : bare) * mix((0.3 + 0.95 * strand) * (scallop ? 0.62 + 0.85 * h * h : 1.0), 0.62 + 0.18 * ridge, lod) * (1.0 - (scallop ? 0.0 : 0.3) * shaft) * scaleEdge : bare * streak;
   fSoft = (flight || scale) ? 0.0 : 1.0;
+  // every barb of a scallop is its own little mirror too, if a steadier one
+  fTilt = scallop ? 0.16 : fSoft * 0.35;
   }
 }`,
       )
@@ -317,7 +378,7 @@ roughnessFactor = clamp((vFData.y > 3.5 ? 0.95 : vFData.y > 2.5 ? 0.8 : vFData.y
   vec3 nI = normalize(vIriN + vec3(0.0, 0.0, 1e-5));
   vec3 V = geometryViewDir;
   // on soft feathers every barb is its own little mirror, tilted a bit differently
-  float c = clamp(dot(nI, V) + (fBarbRand - 0.5) * 0.35 * fSoft, 0.0, 1.0);
+  float c = clamp(dot(nI, V) + (fBarbRand - 0.5) * fTilt, 0.0, 1.0);
   float power = vIri.a * 32.0;
   float strength = vBase.a * 4.0;
   // hue slides with the angle of incidence
@@ -341,7 +402,13 @@ roughnessFactor = clamp((vFData.y > 3.5 ? 0.95 : vFData.y > 2.5 ? 0.8 : vFData.y
     flash += colL * pow(nh, power * 8.0) * cl * directionalLights[i].color * 0.35 * uGlint;
   }
   #endif
-  totalEmissiveRadiance += max(flash * strength * fIriMask, vec3(0.0));
+  // structural colour saturates, it never goes white: a soft ceiling on the
+  // brightest channel, all three scaled alike so the hue holds
+  // (the ceiling on the flash itself, the ridge and edge mask after it, so the ridges keep their contrast)
+  vec3 fl = max(flash * strength, vec3(0.0));
+  float fm = max(max(fl.r, fl.g), fl.b);
+  fl *= 1.0 / (1.0 + fm / 0.55);
+  totalEmissiveRadiance += fl * fIriMask;
   // the free edge of a blade is thin and a little translucent: it picks up the sky
   totalEmissiveRadiance += vec3(0.55, 0.6, 0.75) * fEdge * (ambient * 0.22 + 0.003);
   // downy edge light: thin barbs scatter at grazing angles
@@ -357,7 +424,7 @@ roughnessFactor = clamp((vFData.y > 3.5 ? 0.95 : vFData.y > 2.5 ? 0.8 : vFData.y
 }`,
       );
   };
-  material.customProgramCacheKey = () => 'plumage-v26';
+  material.customProgramCacheKey = () => 'plumage-v42';
   return { material, uniforms };
 }
 
@@ -374,6 +441,10 @@ export function createPlumageDepthMaterial(uniforms: PlumageUniforms) {
     shader.uniforms.uCrest = uniforms.uCrest;
     shader.uniforms.uWingSpread = uniforms.uWingSpread;
     shader.uniforms.uWingLift = uniforms.uWingLift;
+    shader.uniforms.uWingOut = uniforms.uWingOut;
+    shader.uniforms.uWingPivot = uniforms.uWingPivot;
+    shader.uniforms.uWingSpan = uniforms.uWingSpan;
+    shader.uniforms.uWingChord = uniforms.uWingChord;
     shader.vertexShader = shader.vertexShader
       .replace(
         '#include <common>',
@@ -387,7 +458,18 @@ uniform float uGorget;
 uniform float uCrest;
 uniform vec2 uWingSpread;
 uniform vec2 uWingLift;
-vec3 rotAxis(vec3 v, vec3 k, float c, float s) { return v * c + cross(k, v) * s + k * dot(k, v) * (1.0 - c); }`,
+uniform vec4 uWingOut;
+uniform vec3 uWingPivot;
+uniform vec3 uWingSpan;
+uniform vec3 uWingChord;
+vec3 rotAxis(vec3 v, vec3 k, float c, float s) { return v * c + cross(k, v) * s + k * dot(k, v) * (1.0 - c); }
+// the resting wing swung off the flank: twist about its length, then out about its chord
+vec3 wingSwing(vec3 v, bool right) {
+  vec2 a = right ? vec2(uWingOut.z, -uWingOut.w) : vec2(-uWingOut.x, uWingOut.y);
+  vec3 m = vec3(right ? -1.0 : 1.0, 1.0, 1.0);
+  v = rotAxis(v, uWingSpan * m, cos(a.y), sin(a.y));
+  return rotAxis(v, uWingChord * m, cos(a.x), sin(a.x));
+}`,
       )
       .replace(
         '#include <begin_vertex>',
@@ -401,13 +483,19 @@ fAng += (aData.w > 0.5 && aData.w < 1.5 ? uGorget : 0.0) + (aData.w > 1.5 && aDa
 bool fRest = aData.y > 1.5 && aData.y < 3.5;
 bool fReal = aData.y > 3.5;
 bool fRight = aData.y > 2.5 && aData.y < 3.5 || aData.y > 4.5;
-float fUnfold = smoothstep(0.03, 0.35, fRight ? uWingSpread.y : uWingSpread.x);
+float fSpread = fRight ? uWingSpread.y : uWingSpread.x;
+float fUnfold = smoothstep(0.03, 0.35, fSpread);
+float fBeat = 1.0 - smoothstep(1.2, 1.6, fSpread);
 if (fRest) fAng += (fRight ? uWingLift.y : uWingLift.x) * (0.5 + aData.x);
 vec3 transformed = aRoot + rotAxis(position - aRoot, aHinge, cos(fAng), sin(fAng));
-if (fRest) transformed = mix(transformed, aRoot - normal * 0.03, fUnfold);
-if (fReal) transformed = mix(aRoot, transformed, fUnfold);`,
+if (fRest) {
+  vec3 fPivot = vec3(fRight ? -uWingPivot.x : uWingPivot.x, uWingPivot.yz);
+  transformed = fPivot + wingSwing(transformed - fPivot, fRight);
+  transformed = mix(transformed, aRoot - normal * 0.03, fUnfold);
+}
+if (fReal) transformed = mix(aRoot, transformed, fUnfold * fBeat);`,
       );
   };
-  m.customProgramCacheKey = () => 'plumage-depth-v2';
+  m.customProgramCacheKey = () => 'plumage-depth-v4';
   return m;
 }
