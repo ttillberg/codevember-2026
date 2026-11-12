@@ -17,7 +17,7 @@ Live: https://ttillberg.github.io/codevember-2026/
 | 06 | Orrery | [View](https://ttillberg.github.io/codevember-2026/06/) | [Code](https://github.com/ttillberg/codevember-2026/tree/main/06) |
 | 07 | Hollow | [View](https://ttillberg.github.io/codevember-2026/07/) | [Code](https://github.com/ttillberg/codevember-2026/tree/main/07) |
 | 08 | Tesseract | [View](https://ttillberg.github.io/codevember-2026/08/) | [Code](https://github.com/ttillberg/codevember-2026/tree/main/08) |
-| 09 | Membrane | — | — |
+| 09 | Membrane | [View](https://ttillberg.github.io/codevember-2026/09/) | [Code](https://github.com/ttillberg/codevember-2026/tree/main/09) |
 | 10 | Caustic | — | — |
 | 11 | Rust | — | — |
 | 12 | Feather | — | — |

@@ -230,7 +230,7 @@ importers:
         version: 0.187.0
       '@vitejs/plugin-react':
         specifier: ^6.2.1
-        version: 6.2.1(vite@8.3.5)
+        version: 6.2.1(vite@8.3.5(esbuild@0.28.2))
       typescript:
         specifier: ^5.9.3
         version: 5.9.3
@@ -267,7 +267,7 @@ importers:
         version: 0.187.0
       '@vitejs/plugin-react':
         specifier: ^6.2.1
-        version: 6.2.1(vite@8.3.5)
+        version: 6.2.1(vite@8.3.5(esbuild@0.28.2))
       typescript:
         specifier: ^5.9.3
         version: 5.9.3
@@ -304,13 +304,29 @@ importers:
         version: 0.187.0
       '@vitejs/plugin-react':
         specifier: ^6.2.1
-        version: 6.2.1(vite@8.3.5)
+        version: 6.2.1(vite@8.3.5(esbuild@0.28.2))
       typescript:
         specifier: ^5.9.3
         version: 5.9.3
       vite:
         specifier: ^8.3.5
         version: 8.3.5(esbuild@0.28.2)
+
+  '09':
+    dependencies:
+      three:
+        specifier: ^0.187.0
+        version: 0.187.0
+    devDependencies:
+      '@types/three':
+        specifier: ^0.187.0
+        version: 0.187.0
+      typescript:
+        specifier: ^5.9.3
+        version: 5.9.3
+      vite:
+        specifier: ^7.3.1
+        version: 7.3.7(lightningcss@1.33.0)
 
 packages:
 
@@ -1628,7 +1644,7 @@ snapshots:
       '@use-gesture/core': 10.3.1
       react: 19.3.1
 
-  '@vitejs/plugin-react@6.2.1(vite@8.3.5)':
+  '@vitejs/plugin-react@6.2.1(vite@8.3.5(esbuild@0.28.2))':
     dependencies:
       '@rolldown/pluginutils': 1.0.1
       vite: 8.3.5(esbuild@0.28.2)

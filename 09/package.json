@@ -1,0 +1,24 @@
+{
+  "name": "day-09",
+  "private": true,
+  "description": "Cut and peel two thin films off a frog's eye",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "devDependencies": {
+    "@types/three": "^0.187.0",
+    "typescript": "^5.9.3",
+    "vite": "^7.3.1"
+  },
+  "codevember": {
+    "day": 9,
+    "word": "Membrane",
+    "date": "2026-11-09"
+  },
+  "dependencies": {
+    "three": "^0.187.0"
+  }
+}

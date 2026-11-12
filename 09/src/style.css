@@ -1,0 +1,473 @@
+:root {
+  --bg: #0b0b0d;
+  --glass: rgba(26, 26, 30, 0.55);
+  --glass-hi: rgba(255, 255, 255, 0.12);
+  --line: rgba(255, 255, 255, 0.09);
+  --text: rgba(255, 255, 255, 0.92);
+  --mute: rgba(255, 255, 255, 0.5);
+  --accent: #8fd0ff;
+  --font: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --h: 44px;      /* control height, a thumb's width */
+  --knob: 44px;   /* slider cell height */
+  --cell: 44px;   /* swatch cell */
+  --r: 14px;
+  --pad-t: max(12px, env(safe-area-inset-top));
+  --pad-r: max(12px, env(safe-area-inset-right));
+  --pad-b: max(12px, env(safe-area-inset-bottom));
+  --pad-l: max(12px, env(safe-area-inset-left));
+}
+html, body {
+  margin: 0; height: 100%; overflow: hidden;
+  background: #e6e6e8; /* the backdrop of the scene (main.ts); --bg is the dark of the controls */
+  -webkit-text-size-adjust: 100%;
+}
+canvas { display: block; width: 100vw; height: 100vh; }
+
+/* The title block, as on day 08 (Tesseract): the day in heavy capitals top left, and the way
+   back to all the days under it. Never in the way of a finger: only the link takes a press. */
+.plate {
+  position: fixed; z-index: 2;
+  top: max(24px, env(safe-area-inset-top)); left: max(24px, env(safe-area-inset-left));
+  pointer-events: none;
+  color: #1c1c1c;
+  font: 13px/1.4 "Helvetica Neue", Helvetica, Arial, sans-serif;
+  user-select: none; -webkit-user-select: none;
+}
+.plate b {
+  display: block; white-space: nowrap;
+  font-family: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-size: 56px; font-weight: 700; letter-spacing: -0.02em; line-height: 0.9;
+  text-transform: uppercase;
+}
+.plate .head > i {
+  display: block; margin-top: 6px;
+  font-style: normal; font-weight: 600; font-size: 14px; line-height: 1.15;
+  letter-spacing: 0.12em; text-transform: uppercase;
+}
+a.home { color: inherit; text-decoration: none; pointer-events: auto; cursor: pointer; -webkit-tap-highlight-color: transparent; }
+@media (max-width: 640px), (max-height: 500px) {
+  .plate b { font-size: 36px; }
+  .plate .head > i { font-size: 9px; }
+}
+.dark .plate { color: #f4f4f2; }
+.dark, .dark body { background: var(--bg); }
+
+/* ------------------------------------------------------------------ layout */
+
+/* A grid over the whole screen. It never takes a pointer: only the controls in it do. */
+.ui {
+  position: fixed; inset: 0;
+  max-width: 440px; margin: 0 auto;
+  display: grid; gap: 8px 6px;
+  padding: var(--pad-t) var(--pad-r) var(--pad-b) var(--pad-l);
+  /* Phone portrait: one row at the thumb, the sheet just above it, its text above that. */
+  grid-template-columns: minmax(0, 1fr) auto auto auto;
+  grid-template-rows: 1fr auto auto;
+  pointer-events: none;
+  font: 500 14px/1 var(--font);
+  color: var(--text);
+  user-select: none; -webkit-user-select: none; -webkit-touch-callout: none;
+}
+.ui * { -webkit-tap-highlight-color: transparent; }
+.ui > * { pointer-events: auto; touch-action: none; min-width: 0; }
+
+.info  { grid-column: 1 / -1; grid-row: 1; align-self: end; }
+.sheet { grid-column: 1 / -1; grid-row: 2; }
+.bar   { grid-column: 1 / -1; grid-row: 3; justify-self: center; }
+
+/* Landscape and desktop: the sphere owns the middle. The bar under it, settings on the right. */
+@media (min-aspect-ratio: 1/1) {
+  .ui {
+    max-width: none;
+    grid-template-columns: auto auto 1fr auto;
+    grid-template-rows: 1fr auto auto;
+  }
+  .sheet { grid-column: 4; grid-row: 1 / 3; align-self: end; width: 248px; }
+  /* Short screens: the text sits beside the sheet, over the sphere for a moment. */
+  .info  { grid-column: 3; grid-row: 1 / 4; justify-self: end; max-width: 240px; }
+  :root { --knob: 40px; --cell: 40px; }
+}
+@media (min-aspect-ratio: 1/1) and (min-height: 600px) {
+  :root { --knob: 44px; --cell: 44px; }
+  .sheet { grid-row: 2; width: 288px; }
+  .info  { grid-column: 4; grid-row: 1; justify-self: stretch; max-width: none; width: 288px; box-sizing: border-box; }
+}
+@media (pointer: fine) {
+  :root { --h: 38px; --knob: 36px; --cell: 34px; --r: 12px; }
+  .ui { font-size: 13px; }
+}
+
+/* ---------------------------------------------------------------- controls */
+
+.btn {
+  box-sizing: border-box;
+  height: var(--h);
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  background: var(--glass);
+  -webkit-backdrop-filter: blur(16px) saturate(1.4);
+  backdrop-filter: blur(16px) saturate(1.4);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05), 0 6px 20px rgba(0, 0, 0, 0.28);
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  padding: 0 12px; margin: 0;
+  font: inherit; color: inherit; white-space: nowrap;
+  cursor: pointer;
+  transition: transform 0.12s ease, background-color 0.15s ease, color 0.15s ease, opacity 0.15s ease, border-color 0.15s ease;
+}
+.btn:active:not(:disabled) { transform: scale(0.96); background-color: var(--glass-hi); }
+.btn:disabled { opacity: 0.35; cursor: default; }
+@media (hover: hover) { .btn:hover:not(:disabled) { background-color: rgba(44, 44, 50, 0.7); } }
+
+.btn.icon { position: relative; width: max(var(--h), 42px); padding: 0; }
+.btn svg {
+  width: 20px; height: 20px;
+  fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round;
+}
+/* The bar: icons in a frosted pill under the sphere, as on day 07. A button is a 46px disc
+   round a 24px icon; the picked tool is a black disc. */
+.bar {
+  position: relative;
+  display: flex; padding: 6px 8.5px; border-radius: 999px;
+  margin-bottom: 14px;
+  background: linear-gradient(to bottom, rgba(255, 255, 255, 0.55), rgba(255, 255, 255, 0.25));
+  -webkit-backdrop-filter: blur(30px) saturate(1.8) brightness(1.04);
+  backdrop-filter: blur(30px) saturate(1.8) brightness(1.04);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.9), inset 0 0 0 1px rgba(255, 255, 255, 0.5);
+}
+.bar button {
+  position: relative;
+  display: flex; align-items: center; justify-content: center;
+  width: 46px; height: 46px; margin: 0; padding: 0; border: 0; border-radius: 50%;
+  background: none; color: #868583; cursor: pointer;
+  transition: background-color 0.1s, color 0.1s, opacity 0.15s;
+}
+.bar button.on { background: #111; color: #fff; }
+.bar button:disabled { opacity: 0.35; cursor: default; }
+.bar button:active:not(:disabled):not(.on) { color: #111; background: rgba(0, 0, 0, 0.08); }
+@media (hover: hover) { .bar button:hover:not(:disabled):not(.on) { color: #111; background: rgba(0, 0, 0, 0.05); } }
+.bar svg {
+  display: block; width: 24px; height: 24px;
+  fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round;
+}
+.bar-sep { width: 1px; margin: 10px 8.5px; background: rgba(0, 0, 0, 0.12); }
+.dark .bar button { color: #b9b8b5; }
+.dark .bar button.on { background: #fff; color: #111; }
+.dark .bar-sep { background: rgba(255, 255, 255, 0.2); }
+.dark .bar { background: linear-gradient(to bottom, rgba(255, 255, 255, 0.16), rgba(255, 255, 255, 0.07)); box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.2), inset 0 0 0 1px rgba(255, 255, 255, 0.1); }
+@media (hover: hover) { .dark .bar button:hover:not(:disabled):not(.on) { color: #fff; background: rgba(255, 255, 255, 0.1); } }
+/* a narrow phone: seven buttons still fit */
+@media (max-width: 400px) { .bar button { width: 40px; height: 40px; } .bar-sep { margin: 8px 5px; } }
+
+/* The tool picker: the other tools stacked over the one in use, a name sliding out beside each. */
+.pick { position: relative; display: flex; }
+.pick-pop {
+  position: absolute; left: 50%; bottom: calc(100% + 14px); z-index: 3;
+  display: flex; flex-direction: column-reverse; gap: 2px; padding: 6px; border-radius: 29px;
+  background: rgba(255, 255, 255, 0.78); /* more solid than day 07's: it opens over a dark sphere */
+  -webkit-backdrop-filter: blur(18px) saturate(1.6); backdrop-filter: blur(18px) saturate(1.6);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.6), 0 8px 24px rgba(0, 0, 0, 0.1);
+  opacity: 0; pointer-events: none;
+  transform: translate(-50%, 6px) scale(0.96); transform-origin: 50% 100%;
+  transition: opacity 0.16s ease-out, transform 0.2s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.pick-pop.open { opacity: 1; pointer-events: auto; transform: translate(-50%, 0) scale(1); }
+/* opened by its key: where the cursor is (left and top set from the script), not over the button */
+.pick-pop.at { bottom: auto; transform: translate(0, 6px) scale(0.96); }
+.pick-pop.at.open { transform: translate(0, 0) scale(1); }
+/* on the right half of the screen the names go to the left, to stay on it */
+.pick-pop.flip .pick-label { left: auto; right: calc(100% + 14px); transform: translate(4px, -50%); }
+.pick-pop.flip.open button.on .pick-label { transform: translate(0, -50%); }
+/* A grey pill of a name with its keys: over a button of the bar (.tip), beside a row of the
+   stack (.pick-label). Shown by whoever owns it. */
+.tip, .pick-label {
+  position: absolute;
+  display: flex; align-items: center; gap: 6px; padding: 5px 10px; border-radius: 999px; white-space: nowrap;
+  background: #777673; color: #fff; font: 500 11px/1 var(--font);
+  opacity: 0; pointer-events: none; transition: opacity 0.12s, transform 0.12s;
+}
+.tip:has(kbd), .pick-label:has(kbd) { padding-right: 6px; }
+.tip kbd, .pick-label kbd {
+  display: inline-flex; align-items: center; justify-content: center; min-width: 16px; height: 16px; padding: 0 4px;
+  box-sizing: border-box; border-radius: 5px; background: #9a9996; color: #fff; font: inherit; font-size: 10px;
+}
+.pick-label { left: calc(100% + 14px); top: 50%; transform: translate(-4px, -50%); }
+.pick-pop.open button.on .pick-label { opacity: 1; transform: translate(0, -50%); }
+@media (hover: hover) { .pick-pop.open button:hover .pick-label { opacity: 1; transform: translate(0, -50%); } }
+/* Help: a flat question mark on its own in the top right, its panel opening under it (day 07). */
+.help { position: fixed; z-index: 4; top: max(16px, env(safe-area-inset-top)); right: max(16px, env(safe-area-inset-right)); }
+.help-btn {
+  display: flex; align-items: center; justify-content: center;
+  width: 46px; height: 46px; margin: 0; padding: 0; border: 0; border-radius: 50%;
+  background: none; color: #868583; cursor: pointer; transition: color 0.1s, background-color 0.1s;
+}
+.help-btn svg { display: block; width: 30px; height: 30px; fill: none; stroke: currentColor; stroke-width: 1.2; stroke-linecap: round; stroke-linejoin: round; }
+.help-btn svg .dot { fill: currentColor; stroke: none; }
+.help-btn.on { color: #111; }
+@media (hover: hover) { .help-btn:hover { color: #111; } }
+.help-pop {
+  position: absolute; right: 0; top: calc(100% + 6px);
+  box-sizing: border-box; width: max-content; max-width: min(340px, calc(100vw - 24px));
+  padding: 12px 14px; border-radius: 20px;
+  background: rgba(255, 255, 255, 0.78);
+  -webkit-backdrop-filter: blur(18px) saturate(1.6); backdrop-filter: blur(18px) saturate(1.6);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.6), 0 8px 24px rgba(0, 0, 0, 0.1);
+  font: 12px/16px var(--font); color: rgba(0, 0, 0, 0.45);
+  opacity: 0; pointer-events: none;
+  transform: translateY(-6px) scale(0.96); transform-origin: 100% 0;
+  transition: opacity 0.16s ease-out, transform 0.2s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.help-pop.open { opacity: 1; pointer-events: auto; transform: none; }
+/* Rows: the gesture or keys, then what it does in small caps. */
+.dos { display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 7px 14px; }
+.dos .how { color: #555; display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
+.dos .what { font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase; color: rgba(0, 0, 0, 0.45); }
+/* Keys: flat light grey caps. */
+.dos .key {
+  display: inline-flex; align-items: center; justify-content: center; min-width: 18px; height: 18px; padding: 0 5px;
+  box-sizing: border-box; border: 0; border-radius: 5px;
+  font: 500 11px/1 var(--font); color: #111; background: #e2e1de;
+}
+/* Section names: black small caps, a hairline running on to the edge. */
+.dos h5 {
+  grid-column: 1 / -1; display: flex; align-items: center; gap: 8px; margin: 10px 0 1px;
+  font: 400 10px/1 var(--font); letter-spacing: 0.08em; text-transform: uppercase; color: #111;
+}
+.dos h5:first-child { margin-top: 0; }
+.dos h5::after { content: ''; flex: 1; height: 1px; background: rgba(0, 0, 0, 0.12); }
+.dos h5 span { margin-left: -2px; font-size: 11px; letter-spacing: 0; text-transform: none; color: rgba(0, 0, 0, 0.45); }
+.dark .help-btn { color: #b9b8b5; }
+.dark .help-btn.on { color: #fff; }
+@media (hover: hover) { .dark .help-btn:hover { color: #fff; } }
+
+/* keys and modifiers are for a keyboard: a touch screen shows the names alone */
+@media (hover: none), (pointer: coarse) {
+  .tip kbd, .pick-label kbd { display: none; }
+  .tip:has(kbd), .pick-label:has(kbd) { padding-right: 10px; }
+}
+/* open, the stack says it all: no tip over the button under it */
+.bar .tool.on .tip { display: none; }
+.dark .pick-pop, .dark .help-pop { background: rgba(60, 60, 64, 0.6); box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.12), 0 8px 24px rgba(0, 0, 0, 0.3); }
+
+.redo svg { transform: scaleX(-1); }
+
+/* What a button is, over it after a moment's hover, with its key. */
+.tip {
+  left: 50%; bottom: calc(100% + 12px); transform: translate(-50%, 4px); z-index: 2;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
+}
+@media (hover: hover) {
+  .bar button:hover .tip { opacity: 1; transform: translate(-50%, 0); transition-delay: 0.35s; }
+}
+
+/* ------------------------------------------------------------------- sheet */
+
+/* Thin enough to see the sphere through, kept open while peeling. */
+.sheet, .info {
+  border: 1px solid var(--line);
+  border-radius: calc(var(--r) + 4px);
+  background: rgba(16, 16, 20, 0.38);
+  -webkit-backdrop-filter: blur(20px) saturate(1.3);
+  backdrop-filter: blur(20px) saturate(1.3);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+  transition: opacity 0.18s ease, transform 0.18s ease, visibility 0s linear 0.18s;
+}
+/* Never taller than the screen: the tabs stay, the body under them scrolls. */
+.sheet {
+  box-sizing: border-box; overflow: hidden;
+  display: flex; flex-direction: column;
+  max-height: min(66vh, calc(100vh - var(--pad-t) - var(--pad-b) - var(--h) - 56px));
+}
+.sheet-body {
+  flex: 1 1 auto; min-height: 0;
+  padding: 4px;
+  overflow-y: auto; overscroll-behavior: contain;
+  touch-action: pan-y;
+}
+@media (min-aspect-ratio: 1/1) {
+  .sheet { max-height: calc(100vh - var(--pad-t) - var(--pad-b) - var(--h) - 8px); }
+}
+.pane[hidden] { display: none; }
+
+/* Tabs: layers, feel. */
+.tabs { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; padding: 4px 4px 0; flex: none; }
+.tab {
+  height: 36px; margin: 0; padding: 0; border: 0; border-radius: 10px;
+  background: none; color: var(--mute);
+  font: inherit; font-size: 13px; cursor: pointer;
+  touch-action: manipulation;
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+@media (pointer: coarse) { .tab { height: 44px; } }
+.tab.on { background: rgba(255, 255, 255, 0.1); color: var(--text); }
+
+/* The layer list: a head with +, a row per film and one for the sphere. */
+.layers-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding-left: 10px; margin-bottom: 4px;
+  font-size: 11px; color: var(--mute); font-weight: 400;
+}
+.layers-head .btn { height: var(--h); }
+.layer {
+  display: grid; grid-template-columns: 36px minmax(0, 1fr) auto; align-items: center;
+  height: 48px; padding: 0 0 0 6px;
+  border-radius: 12px;
+  cursor: pointer; touch-action: pan-y;
+  transition: background-color 0.15s ease;
+}
+@media (pointer: fine) { .layer { height: 40px; } }
+.layer.on { background: rgba(255, 255, 255, 0.08); }
+@media (hover: hover) { .layer:hover:not(.on) { background: rgba(255, 255, 255, 0.04); } }
+.layer-text { display: grid; gap: 3px; min-width: 0; }
+.layer-name { font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.layer-meta { font-size: 11px; color: var(--mute); font-weight: 400; font-variant-numeric: tabular-nums; }
+.layer-tag { font-size: 11px; color: var(--mute); font-weight: 400; padding-right: 14px; }
+.layer-minus {
+  width: 44px; height: 44px; margin: 0; padding: 0; border: 0; background: none;
+  display: grid; place-items: center; color: var(--text); cursor: pointer;
+}
+.layer-minus svg {
+  width: 26px; height: 26px; box-sizing: border-box; padding: 4px;
+  border: 1px solid var(--line); border-radius: 50%; background: rgba(255, 255, 255, 0.06);
+  fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round;
+}
+.layer-minus:active:not(:disabled) svg { background: var(--glass-hi); }
+.layer-minus:disabled { opacity: 0.3; cursor: default; }
+
+/* The open layer's settings, under its row. */
+.layer-set { padding: 2px 0 6px; margin-bottom: 4px; border-bottom: 1px solid var(--line); }
+.layer-set .swatches { height: var(--cell); padding-left: 2px; }
+.layer-line { display: flex; flex-wrap: wrap; gap: 6px; padding: 4px 4px 0; align-items: center; }
+.well {
+  position: relative; flex: none;
+  display: inline-flex; align-items: center; gap: 6px;
+  height: var(--h); padding: 0 10px; box-sizing: border-box;
+  border: 1px solid var(--line); border-radius: 12px;
+  font-size: 12px; cursor: pointer;
+}
+.well[hidden] { display: none; }
+.well-dot { width: 16px; height: 16px; border-radius: 50%; box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.25); }
+.well input {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  margin: 0; padding: 0; border: 0; opacity: 0; cursor: pointer;
+}
+.mini-seg {
+  flex: 1 1 auto; min-width: 0;
+  display: grid; grid-template-columns: repeat(3, minmax(0, 1fr));
+  height: var(--h); box-sizing: border-box;
+  border: 1px solid var(--line); border-radius: 12px; overflow: hidden;
+}
+.mini {
+  margin: 0; padding: 0; border: 0; background: none;
+  font: inherit; font-size: 12px; color: var(--mute); cursor: pointer;
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+.mini.on { background: rgba(255, 255, 255, 0.9); color: var(--bg); }
+.sheet:not(.open), .info:not(.show) { opacity: 0; visibility: hidden; transform: translateY(6px); pointer-events: none; }
+.sheet.open, .info.show { transition-delay: 0s; }
+
+/* What the last touched setting does. */
+.info {
+  padding: 10px 12px;
+  font-size: 13px; line-height: 1.4; font-weight: 400;
+  color: rgba(255, 255, 255, 0.78);
+  pointer-events: none;
+}
+.info b { color: var(--text); font-weight: 600; margin-right: 6px; }
+
+/* Swatches: a strip that scrolls sideways if it must. */
+.swatches {
+  display: flex; height: 100%;
+  overflow-x: auto; overscroll-behavior: contain; scrollbar-width: none;
+  touch-action: pan-x;
+}
+.swatches::-webkit-scrollbar { display: none; }
+.swatch {
+  flex: 0 0 44px; height: 100%;
+  display: grid; place-items: center;
+  margin: 0; padding: 0; border: 0; background: none;
+  cursor: pointer;
+}
+@media (pointer: fine) { .swatch { flex-basis: 32px; } }
+.swatch .chip, .layer .chip {
+  width: 24px; height: 24px; border-radius: 50%;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.2);
+  transition: transform 0.12s ease, box-shadow 0.15s ease;
+}
+.swatch.on .chip {
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.2), 0 0 0 2px rgba(12, 12, 14, 0.9), 0 0 0 3.5px #fff;
+}
+.swatch:active .chip { transform: scale(0.88); }
+@media (hover: hover) { .swatch:hover:not(.on) .chip { transform: scale(1.1); } }
+
+.knobs { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 2px 4px; }
+@media (min-aspect-ratio: 1/1) { .knobs { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (min-aspect-ratio: 1/1) and (min-height: 600px) { .knobs { grid-template-columns: 1fr; } }
+
+.knob {
+  box-sizing: border-box;
+  height: var(--knob);
+  display: grid; grid-template-columns: 1fr auto; grid-template-rows: auto 1fr; align-items: center;
+  padding: 7px 8px 0;
+  border-radius: 12px;
+  font-size: 11px;
+  touch-action: none; cursor: pointer;
+  transition: background-color 0.15s ease;
+}
+.knob.held { background-color: rgba(255, 255, 255, 0.07); }
+.knob-k { color: var(--mute); font-weight: 400; letter-spacing: 0.02em; white-space: nowrap; }
+.knob-i {
+  display: inline-grid; place-items: center;
+  width: 10px; height: 10px; margin-left: 4px; vertical-align: 0;
+  border: 1px solid currentColor; border-radius: 50%;
+  font: 600 7px/1 var(--font); font-style: normal;
+  opacity: 0.6;
+}
+.knob-v { color: var(--text); font-variant-numeric: tabular-nums; }
+.knob.held .knob-v { color: var(--accent); }
+@media (min-aspect-ratio: 1/1) and (min-height: 600px) {
+  /* One column: name, slider, value on a line. */
+  .knob { grid-template-columns: 60px 1fr 36px; grid-template-rows: 1fr; padding: 0 8px; gap: 8px; }
+  .knob-v { order: 3; text-align: right; }
+}
+
+/* The range input draws; the cell takes the pointer (ui.ts). Thumb is 14px, see THUMB. */
+.knob-in {
+  grid-column: 1 / -1;
+  width: 100%; height: 18px; margin: 0;
+  background: none; pointer-events: none;
+  -webkit-appearance: none; appearance: none;
+}
+@media (min-aspect-ratio: 1/1) and (min-height: 600px) { .knob-in { grid-column: auto; } }
+.knob-in:focus { outline: none; }
+.knob-in::-webkit-slider-runnable-track {
+  height: 3px; border-radius: 2px;
+  background: linear-gradient(to right, var(--accent) calc(7px + var(--p, 0) * (100% - 14px)), rgba(255, 255, 255, 0.16) 0);
+}
+.knob-in::-webkit-slider-thumb {
+  -webkit-appearance: none; appearance: none;
+  width: 14px; height: 14px; margin-top: -5.5px;
+  border: 0; border-radius: 50%;
+  background: #f3f5f7;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.5);
+  transition: transform 0.12s ease;
+}
+.knob.held .knob-in::-webkit-slider-thumb { transform: scale(1.25); }
+.knob-in:focus-visible::-webkit-slider-thumb { box-shadow: 0 0 0 3px rgba(143, 208, 255, 0.5); }
+.knob-in::-moz-range-track { height: 3px; border-radius: 2px; background: rgba(255, 255, 255, 0.16); }
+.knob-in::-moz-range-progress { height: 3px; border-radius: 2px; background: var(--accent); }
+.knob-in::-moz-range-thumb { width: 14px; height: 14px; border: 0; border-radius: 50%; background: #f3f5f7; box-shadow: 0 1px 4px rgba(0, 0, 0, 0.5); }
+
+@media (prefers-reduced-motion: reduce) {
+  .ui *, .ui { transition: none !important; }
+}
+
+/* Under the sliders: toggles for what is drawn on top, and copy. */
+.extras { display: flex; flex: none; flex-wrap: wrap; gap: 6px; border-top: 1px solid var(--line); margin-top: 4px; padding: 8px 0 2px; }
+.extras .btn { flex: 1 1 0; min-width: 0; height: 36px; min-height: 36px; padding: 0 6px; border-radius: 10px; font-size: 12px; white-space: nowrap; }
+.extras .btn[role="switch"]:not(.on) { color: rgba(255, 255, 255, 0.45); }
+.extras .btn.on { color: var(--accent); border-color: rgba(143, 208, 255, 0.35); background-color: rgba(143, 208, 255, 0.14); }
+.layer-set:last-child { border-bottom: 0; margin-bottom: 0; }
+/* A narrow sheet (short landscape): the print choice gets a line of its own. */
+@media (min-aspect-ratio: 1/1) and (max-height: 599px) {
+  .mini-seg { order: -1; flex-basis: 100%; }
+}
