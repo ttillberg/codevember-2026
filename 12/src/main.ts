@@ -99,6 +99,7 @@ const branchLoad = query.has('procbranch')
         disposeTree(branch.group);
         scene.add(b.group);
         usePerch(b.group);
+        useMaskOccluders(b.group);
         branchFuzz = b.fuzz;
         applyFuzz();
       })
@@ -132,6 +133,51 @@ const bird = createBird({ renderer, scene, camera });
 bird.root.position.x = GRIP_X;
 bird.layer<HopLayer>('hop').home = GRIP_X;
 scene.add(bird.root);
+// the fade lifts the bird alone: its meshes also sit on a mask layer, drawn white
+// (feathers through their own shader, so the mask has their exact outline)
+const MASK_LAYER = 5;
+bird.root.traverse((o) => o.layers.enable(MASK_LAYER));
+const maskWhite = new THREE.MeshBasicMaterial({ color: 0xffffff });
+// the twig goes into the mask black, so the bird behind it stays unlifted there
+const maskBlack = new THREE.MeshBasicMaterial({ color: 0x000000 });
+const maskOccluders: THREE.Mesh[] = [];
+function useMaskOccluders(root: THREE.Object3D) {
+  maskOccluders.length = 0;
+  root.traverse((o) => {
+    if ((o as THREE.Mesh).isMesh && /^(perch|shoot|buds|twiglets)$/.test(o.name)) {
+      o.layers.enable(MASK_LAYER);
+      maskOccluders.push(o as THREE.Mesh);
+    }
+  });
+}
+const plumageBase = bird.feathers.contour.material as THREE.MeshStandardMaterial;
+const maskPlumage = plumageBase.clone();
+maskPlumage.onBeforeCompile = (shader, r) => {
+  plumageBase.onBeforeCompile.call(plumageBase, shader, r);
+  shader.fragmentShader = shader.fragmentShader.replace('#include <dithering_fragment>', '#include <dithering_fragment>\n  gl_FragColor = vec4(1.0, 1.0, 1.0, gl_FragColor.a);');
+};
+maskPlumage.customProgramCacheKey = () => 'plumage-mask';
+const maskMeshes: THREE.Mesh[] = [];
+bird.root.traverse((o) => (o as THREE.Mesh).isMesh && maskMeshes.push(o as THREE.Mesh));
+const maskSaved: (THREE.Material | THREE.Material[])[] = [];
+function drawMask() {
+  const feathers: THREE.Object3D[] = [bird.feathers.contour, bird.feathers.flight, bird.feathers.fuzz];
+  maskMeshes.forEach((m, i) => {
+    maskSaved[i] = m.material;
+    m.material = feathers.includes(m) ? maskPlumage : maskWhite;
+  });
+  const occSaved = maskOccluders.map((m) => m.material);
+  maskOccluders.forEach((m) => (m.material = maskBlack));
+  const layers = camera.layers.mask;
+  camera.layers.set(MASK_LAYER);
+  // the shadow map from the main pass is fine as it is
+  renderer.shadowMap.autoUpdate = false;
+  renderer.render(scene, camera);
+  renderer.shadowMap.autoUpdate = true;
+  camera.layers.mask = layers;
+  maskMeshes.forEach((m, i) => (m.material = maskSaved[i]));
+  maskOccluders.forEach((m, i) => (m.material = occSaved[i]));
+}
 const gaze = bird.layer<GazeLayer>('gaze');
 const forage = bird.layer<ForageLayer>('forage');
 const billTip = bird.billTip.bind(bird);
@@ -288,6 +334,7 @@ function disposeTree(root: THREE.Object3D) {
   });
 }
 usePerch(branch.group);
+useMaskOccluders(branch.group);
 
 // --- another bird: the feathers turn to new colours ----------------------------
 let paletteIndex = 0;
@@ -580,7 +627,7 @@ function render() {
   if (!usePost) return renderer.render(scene, camera);
   post.focusOn(headPos);
   post.grade.uReveal.value = THREE.MathUtils.smoothstep(reveal, 0, 1);
-  post.render(scene, camera, t, revealing && reveal === 1 ? null : drawWire);
+  post.render(scene, camera, t, revealing && reveal === 1 ? null : drawWire, drawMask);
 }
 
 Object.assign(window as unknown as Record<string, unknown>, { __scene: scene, __camera: camera, __renderer: renderer, __controls: controls, __post: post, __frame: frame, __seeds: seeds, __insects: insects });

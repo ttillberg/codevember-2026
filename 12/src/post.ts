@@ -84,7 +84,8 @@ uniform sampler2D tColor;
 uniform float uExposure;
 uniform vec3 uWhite;     // white balance multiplier (linear)
 uniform vec3 uLift;      // display space
-uniform float uFade;     // lift the blacks toward a pale haze
+uniform float uFade;     // lift the blacks toward a pale haze (the bird only)
+uniform sampler2D tMask; // white where the bird is
 uniform vec3 uGamma;
 uniform vec3 uGain;
 uniform float uSat;
@@ -105,7 +106,8 @@ void main() {
   c = linearToOutputTexel(vec4(c, 1.0)).rgb;
   // lift / gamma / gain in display space
   c = uGain * (c + uLift * (1.0 - c));
-  c = mix(c, vec3(0.78, 0.82, 0.76), uFade * (1.0 - c) * (1.0 - c));
+  float fade = uFade > 0.0 ? uFade * texture2D(tMask, vUv).r : 0.0;
+  c = mix(c, vec3(0.78, 0.82, 0.76), fade * (1.0 - c) * (1.0 - c));
   c = pow(max(c, 0.0), 1.0 / uGamma);
   // soft contrast around mid grey
   c = mix(vec3(0.5), c, uContrast);
@@ -141,7 +143,7 @@ void main() {
 
 export interface Post {
   /** wire: while loading, draws the drawing (into its own target); null once revealing */
-  render(scene: THREE.Scene, camera: THREE.PerspectiveCamera, t: number, wire?: (() => void) | null): void;
+  render(scene: THREE.Scene, camera: THREE.PerspectiveCamera, t: number, wire?: (() => void) | null, mask?: (() => void) | null): void;
   setSize(w: number, h: number, dpr: number): void;
   /** world-space point to keep in focus */
   focusOn(p: THREE.Vector3): void;
@@ -165,6 +167,8 @@ export function createPost(renderer: THREE.WebGLRenderer, opts: { samples: numbe
   sceneRT.texture.colorSpace = THREE.LinearSRGBColorSpace;
   const dofRT = new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType, depthBuffer: false });
   const wireRT = new THREE.WebGLRenderTarget(1, 1, { samples: opts.samples });
+  // the bird alone, white on black: the fade only lifts the bird, not the twig or the sky
+  const maskRT = new THREE.WebGLRenderTarget(1, 1, { depthBuffer: true, samples: opts.samples });
   const clearCol = new THREE.Color();
 
   const quad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2));
@@ -201,6 +205,7 @@ export function createPost(renderer: THREE.WebGLRenderer, opts: { samples: numbe
       uWhite: { value: new THREE.Vector3(1, 1, 1) },
       uLift: { value: new THREE.Vector3(0, 0, 0) },
       uFade: { value: 0 },
+      tMask: { value: maskRT.texture },
       uGamma: { value: new THREE.Vector3(1, 1, 1) },
       uGain: { value: new THREE.Vector3(1, 1, 1) },
       uSat: { value: 1 },
@@ -244,11 +249,12 @@ export function createPost(renderer: THREE.WebGLRenderer, opts: { samples: numbe
       sceneRT.setSize(W, H);
       dofRT.setSize(W, H);
       wireRT.setSize(W, H);
+      maskRT.setSize(W, H);
       gradeMat.uniforms.uDpr.value = d;
       dofMat.uniforms.uTexel.value.set(d / W, d / H);
       gradeMat.uniforms.uRes.value.set(W, H);
     },
-    render(scene, camera, t, wire) {
+    render(scene, camera, t, wire, mask) {
       if (wire) {
         gradeMat.uniforms.tWire.value = wireRT.texture;
         renderer.getClearColor(clearCol);
@@ -269,6 +275,15 @@ export function createPost(renderer: THREE.WebGLRenderer, opts: { samples: numbe
 
       // nothing of the picture shows yet: skip it (the drawing is all there is)
       if (gradeMat.uniforms.uReveal.value > 0) {
+        if (gradeMat.uniforms.uFade.value > 0 && mask) {
+          renderer.getClearColor(clearCol);
+          const a = renderer.getClearAlpha();
+          renderer.setRenderTarget(maskRT);
+          renderer.setClearColor(0x000000, 1);
+          renderer.clear();
+          mask();
+          renderer.setClearColor(clearCol, a);
+        }
         renderer.setRenderTarget(sceneRT);
         renderer.render(scene, camera);
         quad.material = dofMat;
