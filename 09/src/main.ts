@@ -37,8 +37,10 @@ const ctx: Ctx = { world, renderer, scene, camera, canvas };
 const modules: Module[] = [createSim(ctx), createEye(ctx), createMembrane(ctx), createFx(ctx)];
 
 function resize() {
-  const w = window.innerWidth;
-  const h = window.innerHeight;
+  // The size the canvas is laid out at, not the window's: on a phone the two differ while
+  // the browser's bars are showing, and drawing at one size into the other stretches it.
+  const w = canvas.clientWidth || window.innerWidth;
+  const h = canvas.clientHeight || window.innerHeight;
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
   renderer.setSize(w, h, false);
   camera.aspect = w / h;
@@ -58,6 +60,7 @@ function frame(now: number) {
 }
 
 window.addEventListener('resize', resize);
+new ResizeObserver(resize).observe(canvas); // the bars sliding in or out resize it without a window resize
 resize();
 requestAnimationFrame(frame);
 
