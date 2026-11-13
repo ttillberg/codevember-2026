@@ -4,12 +4,29 @@ html, body, #root { margin: 0; height: 100%; background: #e9e6e0; overflow: hidd
 html, body { user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent; }
 canvas { display: block; touch-action: none; cursor: grab; }
 canvas.grabbing { cursor: grabbing; }
-.back {
-  position: fixed; left: 12px; bottom: 12px;
-  font: 12px ui-monospace, Menlo, monospace; color: #111; opacity: .5;
-  text-decoration: none;
+/* The title plate (docs/DESIGN.md): top left, the only way home. */
+.plate {
+  position: fixed; z-index: 2;
+  top: max(24px, env(safe-area-inset-top)); left: max(24px, env(safe-area-inset-left));
+  pointer-events: none; color: #1c1c1c;
+  font: 13px/1.4 var(--ui-font);
 }
-.back:hover { opacity: 1; }
+.plate b {
+  display: block; white-space: nowrap;
+  font: 700 56px/0.9 "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  letter-spacing: -0.02em; text-transform: uppercase;
+}
+.plate .head > i {
+  display: block; margin-top: 6px; font-style: normal;
+  font-weight: 600; font-size: 14px; line-height: 1.15; letter-spacing: 0.12em; text-transform: uppercase;
+}
+.plate .home { color: inherit; text-decoration: none; pointer-events: auto; }
+.plate .home span[lang="ja"] { font-family: "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Noto Sans JP", "Yu Gothic", sans-serif; letter-spacing: 0.06em; }
+@media (max-width: 640px) {
+  .plate { top: max(16px, env(safe-area-inset-top)); left: max(16px, env(safe-area-inset-left)); }
+  .plate b { font-size: 36px; }
+  .plate .head > i { font-size: 10px; }
+}
 
 /* The brush: a ring at the centre of the screen, as wide as the brush on the balloon. */
 .reticle {
@@ -233,7 +250,7 @@ canvas.grabbing { cursor: grabbing; }
 /* Dark mode: the same pieces, the greys turned over. Icons stay a plain grey; the picked and pressed go light. */
 :root[data-theme='dark'] { color-scheme: dark; }
 [data-theme='dark'] body, [data-theme='dark'] #root, :root[data-theme='dark'] { background: #000; }
-[data-theme='dark'] .back { color: #eee; }
+[data-theme='dark'] .plate { color: #f4f4f2; }
 [data-theme='dark'] .reticle { box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.45), inset 0 0 0 1px rgba(0, 0, 0, 0.45); }
 [data-theme='dark'] .ft-media {
   background: linear-gradient(to bottom, rgba(52, 51, 49, 0.62), rgba(34, 34, 32, 0.4));
