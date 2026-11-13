@@ -778,6 +778,35 @@ function render() {
   post.focusOn(headPos);
   post.grade.uReveal.value = THREE.MathUtils.smoothstep(reveal, 0, 1);
   post.render(scene, camera, t, revealing && reveal === 1 ? null : drawWire, drawMask);
+  if (edgeDue && reveal === 1 && !drawing) sampleEdge();
 }
+
+// Phone browsers draw their bars over the page and, depending on the browser, show the
+// page's own background below the canvas. Paint it the colour of the picture's bottom
+// edge so it reads as more of the scene: read the bottom row once the picture is up,
+// and again after a resize.
+let edgeDue = true;
+const edgePx = new Uint8Array(4);
+const themeMeta = document.querySelector('meta[name="theme-color"]');
+function sampleEdge() {
+  edgeDue = false;
+  const gl = renderer.getContext();
+  renderer.setRenderTarget(null);
+  const w = gl.drawingBufferWidth;
+  let r = 0, g = 0, b = 0;
+  const n = 9;
+  for (let i = 0; i < n; i++) {
+    gl.readPixels(Math.round(((i + 0.5) / n) * (w - 1)), 1, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, edgePx);
+    r += edgePx[0]; g += edgePx[1]; b += edgePx[2];
+  }
+  const col = `rgb(${Math.round(r / n)}, ${Math.round(g / n)}, ${Math.round(b / n)})`;
+  document.documentElement.style.background = col;
+  themeMeta?.setAttribute('content', col);
+}
+let edgeTimer = 0;
+window.addEventListener('resize', () => {
+  clearTimeout(edgeTimer);
+  edgeTimer = window.setTimeout(() => (edgeDue = true), 400);
+});
 
 Object.assign(window as unknown as Record<string, unknown>, { __scene: scene, __camera: camera, __renderer: renderer, __controls: controls, __post: post, __frame: frame, __seeds: seeds, __insects: insects, __ambient: ambient });
