@@ -65,6 +65,7 @@ html:not(:has(body.home)) { overflow: hidden; }
 }
 .plate .head > i { /* the plate's own lines, not the i inside the beetle switch */
   display: block;
+  font-family: Inter, "Helvetica Neue", Helvetica, Arial, sans-serif;
   margin-top: 6px;
   font-style: normal;
   font-weight: 600;
