@@ -7,7 +7,8 @@ import * as THREE from 'three';
 // golden-angle spiral of taps, each tap weighted by its own CoC so a sharp
 // bird doesn't smear into the background and the background doesn't bleed
 // over the bird's edge. A pack pass first puts colour and 1/z in one target,
-// so a tap is a single fetch.
+// so a tap is a single fetch. Tiles hold the biggest CoC around, so the gather
+// only reaches as far (and taps as often) as something near can blur.
 
 const fsVert = /* glsl */ `
 varying vec2 vUv;
@@ -51,10 +52,50 @@ void main() {
 }
 `;
 
+// Biggest CoC in each tile, then over the tile and its 8 neighbours: what could
+// blur over a pixel, a blurry foreground next to a sharp one included.
+// A tile is no smaller than the gather's reach (TILE below).
+const tileFrag = /* glsl */ `
+precision highp float;
+uniform sampler2D tPack;
+uniform int uTile; // device px
+uniform float uFocus, uAperture, uMaxCoc;
+${lensGlsl}
+void main() {
+  ivec2 last = textureSize(tPack, 0) - 1;
+  ivec2 base = ivec2(gl_FragCoord.xy) * uTile;
+  // the CoC grows with |1/focus - 1/z|: the tile's two ends of 1/z are enough
+  float lo = 1e9, hi = -1e9;
+  for (int y = 0; y < uTile; y++) {
+    for (int x = 0; x < uTile; x++) {
+      float invZ = texelFetch(tPack, min(base + ivec2(x, y), last), 0).a;
+      lo = min(lo, invZ);
+      hi = max(hi, invZ);
+    }
+  }
+  gl_FragColor = vec4(max(lensCoc(lo, uFocus, uAperture, uMaxCoc), lensCoc(hi, uFocus, uAperture, uMaxCoc)));
+}
+`;
+const dilateFrag = /* glsl */ `
+precision highp float;
+uniform sampler2D tTile;
+void main() {
+  ivec2 last = textureSize(tTile, 0) - 1;
+  ivec2 p = ivec2(gl_FragCoord.xy);
+  float m = 0.0;
+  for (int y = -1; y <= 1; y++) {
+    for (int x = -1; x <= 1; x++) m = max(m, texelFetch(tTile, clamp(p + ivec2(x, y), ivec2(0), last), 0).r);
+  }
+  gl_FragColor = vec4(m);
+}
+`;
+
 const dofFrag = /* glsl */ `
 precision highp float;
 varying vec2 vUv;
 uniform sampler2D tPack; // rgb colour, a = 1 / view distance
+uniform sampler2D tTile; // biggest CoC near here
+uniform int uTile;
 uniform vec2 uTexel;     // dpr / size: CoC numbers are in CSS px
 uniform vec2 uSpiral[48]; // (cos, sin) of i * golden angle
 uniform float uFocus;
@@ -62,6 +103,7 @@ uniform float uAperture;
 uniform float uMaxCoc;   // px
 ${lensGlsl}
 const int TAPS = 48;
+const int MIN_TAPS = 8;
 
 void main() {
   vec4 p0 = texture2D(tPack, vUv);
@@ -69,20 +111,28 @@ void main() {
   vec3 acc = p0.rgb;
   if (any(isnan(acc)) || any(isinf(acc))) acc = vec3(0.0);
   float wsum = 1.0;
-  // big enough to catch blurry foreground spilling over a sharp pixel
-  float R = max(c0, uMaxCoc * 0.5);
+  // the full reach: big enough to catch blurry foreground spilling over a sharp pixel
+  float R0 = max(c0, uMaxCoc * 0.5);
+  // nothing near blurs further than the tile says (+1: the weight's soft edge),
+  // so look no further, with as many taps as keeps them as dense as on the full
+  // disc. Even in focus a few stay: the full disc's innermost taps soften the
+  // picture a little, and it should look the same.
+  float R = min(R0, texelFetch(tTile, ivec2(gl_FragCoord.xy) / uTile, 0).r + 1.0);
+  float area = (R * R) / (R0 * R0);
+  int taps = clamp(int(ceil(float(TAPS) * area)), MIN_TAPS, TAPS);
+  float dense = float(TAPS) * area / float(taps); // 1 unless MIN_TAPS packs them tighter
   // rotate the spiral per pixel so a hot speck blurs to a soft disc, not a ring of dots
   float rot = fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233))) * 43758.5453) * 6.2831853;
   mat2 spin = mat2(cos(rot), sin(rot), -sin(rot), cos(rot));
   float jr = fract(sin(dot(gl_FragCoord.xy, vec2(39.3468, 11.135))) * 24634.6345);
-  for (int i = 1; i < TAPS; i++) {
+  for (int i = 1; i < taps; i++) {
     float fi = float(i);
-    float r = sqrt((fi - jr) / float(TAPS)) * R;
+    float r = sqrt((fi - jr) / float(taps)) * R;
     vec4 p = texture2D(tPack, vUv + spin * uSpiral[i] * r * uTexel);
     float ci = lensCoc(p.a, uFocus, uAperture, uMaxCoc);
     // a tap behind us can't blur over us further than our own blur
     if (p.a * 1.02 < p0.a) ci = min(ci, c0);
-    float w = smoothstep(r - 1.0, r + 1.0, ci);
+    float w = smoothstep(r - 1.0, r + 1.0, ci) * dense;
     vec3 s = p.rgb;
     // one NaN pixel would smear into a dotted disc: drop it
     if (any(isnan(s)) || any(isinf(s))) continue;
@@ -160,6 +210,8 @@ void main() {
 }
 `;
 
+const TILE = 8;
+
 export interface Post {
   /** wire: while loading, draws the drawing (into its own target); null once revealing */
   render(scene: THREE.Scene, camera: THREE.PerspectiveCamera, t: number, wire?: (() => void) | null, mask?: (() => void) | null): void;
@@ -185,6 +237,9 @@ export function createPost(renderer: THREE.WebGLRenderer, opts: { samples: numbe
   });
   sceneRT.texture.colorSpace = THREE.LinearSRGBColorSpace;
   const packRT = new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType, depthBuffer: false });
+  const tileOpts = { type: THREE.HalfFloatType, depthBuffer: false, minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter };
+  const tileRT = new THREE.WebGLRenderTarget(1, 1, tileOpts);
+  const tileMaxRT = new THREE.WebGLRenderTarget(1, 1, tileOpts);
   const dofRT = new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType, depthBuffer: false });
   const wireRT = new THREE.WebGLRenderTarget(1, 1, { samples: opts.samples });
   // the bird alone, white on black: the fade only lifts the bird, not the twig or the sky
@@ -215,11 +270,30 @@ export function createPost(renderer: THREE.WebGLRenderer, opts: { samples: numbe
     depthWrite: false,
     toneMapped: false,
   });
+  const uTile = { value: 16 };
+  const tileMat = new THREE.ShaderMaterial({
+    vertexShader: fsVert,
+    fragmentShader: tileFrag,
+    uniforms: { tPack: { value: packRT.texture }, uTile, ...lens },
+    depthTest: false,
+    depthWrite: false,
+    toneMapped: false,
+  });
+  const dilateMat = new THREE.ShaderMaterial({
+    vertexShader: fsVert,
+    fragmentShader: dilateFrag,
+    uniforms: { tTile: { value: tileRT.texture } },
+    depthTest: false,
+    depthWrite: false,
+    toneMapped: false,
+  });
   const dofMat = new THREE.ShaderMaterial({
     vertexShader: fsVert,
     fragmentShader: dofFrag,
     uniforms: {
       tPack: { value: packRT.texture },
+      tTile: { value: tileMaxRT.texture },
+      uTile,
       uTexel: { value: new THREE.Vector2() },
       uSpiral: { value: Array.from({ length: 48 }, (_, i) => new THREE.Vector2(Math.cos(i * 2.39996323), Math.sin(i * 2.39996323))) },
       ...lens,
@@ -280,6 +354,10 @@ export function createPost(renderer: THREE.WebGLRenderer, opts: { samples: numbe
       const H = Math.floor(h * d);
       sceneRT.setSize(W, H);
       packRT.setSize(W, H);
+      // TILE css px a side: no less than the gather's reach past a sharp pixel (uMaxCoc / 2, + 1)
+      uTile.value = Math.ceil(TILE * d);
+      tileRT.setSize(Math.ceil(W / uTile.value), Math.ceil(H / uTile.value));
+      tileMaxRT.setSize(tileRT.width, tileRT.height);
       dofRT.setSize(W, H);
       wireRT.setSize(W, H);
       maskRT.setSize(W, H);
@@ -321,6 +399,12 @@ export function createPost(renderer: THREE.WebGLRenderer, opts: { samples: numbe
         renderer.render(scene, camera);
         quad.material = packMat;
         renderer.setRenderTarget(packRT);
+        renderer.render(fsScene, fsCam);
+        quad.material = tileMat;
+        renderer.setRenderTarget(tileRT);
+        renderer.render(fsScene, fsCam);
+        quad.material = dilateMat;
+        renderer.setRenderTarget(tileMaxRT);
         renderer.render(fsScene, fsCam);
         quad.material = dofMat;
         renderer.setRenderTarget(dofRT);
