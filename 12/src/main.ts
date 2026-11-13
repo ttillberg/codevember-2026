@@ -306,18 +306,16 @@ canvas.addEventListener('pointerdown', (e) => {
   downY = e.clientY;
 });
 // the feet: a pointer at them and the bird steps away along the twig, the other way.
-// Not every time: a hop at most every 3 s, and after a few it stops minding for a while
+// Not every time: a hop at most every 3 s
 const feetA = new THREE.Vector3();
 const feetB = new THREE.Vector3();
 const feetHit = new THREE.Vector3();
 const FEET_EVERY = 3;
 let feetNext = 0;
-let feetHops = 0;
-let feetCalm = 0;
 function nearFeet(r: THREE.Ray) {
   if (bird.away || bird.fleeing) return;
   const now = performance.now() / 1000;
-  if (now < feetNext || now < feetCalm) return;
+  if (now < feetNext) return;
   bird.root.getWorldPosition(feetA);
   feetB.copy(feetA);
   feetA.x -= 0.06;
@@ -327,14 +325,7 @@ function nearFeet(r: THREE.Ray) {
   // away from the side the pointer came in on (where on the feet it is now)
   const away = feetHit.x < (feetA.x + feetB.x) / 2 ? 1 : -1;
   const d = 0.12 + Math.random() * 0.1;
-  if (!bird.hopBy(away * d) && !bird.hopBy(-away * d)) return;
-  // (a run of hops close together counts up; a quiet spell starts the count over)
-  feetHops = now - feetNext < 20 ? feetHops + 1 : 1;
-  feetNext = now + FEET_EVERY;
-  if (feetHops >= 3) {
-    feetHops = 0;
-    feetCalm = now + 30;
-  }
+  if (bird.hopBy(away * d) || bird.hopBy(-away * d)) feetNext = now + FEET_EVERY;
 }
 // the flowers: a pointer passing over them brushes them, barely
 const brushPlane = new THREE.Plane();
