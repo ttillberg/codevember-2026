@@ -20,8 +20,6 @@ export const WING_REST_L = 2;
 export const WING_REST_R = 3;
 export const WING_REAL_L = 4;
 export const WING_REAL_R = 5;
-/** how many real outer primaries stay visible at rest (none: the resting wing carries its own full-length blades) */
-const FREE_TIPS = 0;
 
 interface FeatherSpec {
   root: THREE.Vector3;
@@ -50,7 +48,6 @@ interface FeatherSpec {
   iri2: THREE.Color;
   iriStrength: number;
   iriPower: number;
-  rough: number;
   /** 0 crisp vane … 1 down */
   loose: number;
   /** fraction of the length hidden under the row above */
@@ -83,7 +80,6 @@ class Builder {
   si: number[] = [];
   sw: number[] = [];
   idx: number[] = [];
-  feathers = 0;
   private S = new THREE.Vector3();
   private H = new THREE.Vector3();
   private P = new THREE.Vector3();
@@ -153,7 +149,6 @@ class Builder {
         this.idx.push(a, b, a + 1, b, b + 1, a + 1);
       }
     }
-    this.feathers++;
   }
 
   build() {
@@ -223,6 +218,21 @@ export function lookAt(species: Species, s: number, phi: number, rnd = 0.5): Fea
 
 const col = (hex: number) => new THREE.Color(hex);
 
+/** bone names (Loft.skin) to skeleton indices */
+const skinIdx = (rig: Rig, bones: readonly string[]) => bones.map((nm) => rig.index(nm)) as [number, number, number, number];
+
+const aimV = new THREE.Vector3();
+/** Platelet normal: n pulled toward the look's aim, plus per-feather noise when rng is given. */
+function iriNormal(out: THREE.Vector3, n: THREE.Vector3, look: FeatherLook, rng?: Rng) {
+  out.copy(n);
+  if (look.iriAim) out.lerp(aimV.set(look.iriAim[0], look.iriAim[1], look.iriAim[2]).normalize(), look.iriAlign).normalize();
+  if (!rng) return out;
+  out.x += (rng() - 0.5) * look.jitter;
+  out.y += (rng() - 0.5) * look.jitter;
+  out.z += (rng() - 0.5) * look.jitter;
+  return out.normalize();
+}
+
 /** The folded wing stands a little off the body: the coat just under its leading edge (and a touch behind it) sits in its shadow. */
 function wingShadow(loft: Rig['loft'], s: number, a: number) {
   const { u, v } = loft.wingUV(s, a);
@@ -260,7 +270,6 @@ function specFromLook(look: FeatherLook, rng: Rng, shade = 1, gold = 0, goldHex 
     iri2: col(look.iriGraze),
     iriStrength: look.iriStrength * lerp(0.75 + rng() * 0.5, 2.6 * Math.pow(rng(), 2.5), look.sparkle ?? 0) * (1 + gold * 1.5) * glit,
     iriPower: look.iriPower * (0.8 + rng() * 0.5),
-    rough: look.rough,
     loose: look.loose ?? 0,
     round: look.round,
     cup: look.cup,
@@ -296,7 +305,7 @@ function sheetSkin(rig: Rig, s: number, a: number, root: THREE.Vector3): Feather
     const here = sheetD.dot(dS);
     const plain = loft.frontAt(l0 + sheetD.dot(up)) - s;
     const sk = loft.skin(clamp(s + (Math.abs(plain) < Math.abs(here) ? plain : here), 0, loft.sMax), a + sheetD.dot(dA));
-    return { bones: sk.bones.map((nm) => rig.index(nm)) as [number, number, number, number], weights: sk.weights };
+    return { bones: skinIdx(rig, sk.bones), weights: sk.weights };
   };
 }
 
@@ -455,15 +464,7 @@ function addContour(b: Builder, rig: Rig, rng: Rng) {
     nrm.applyAxisAngle(dir, roll);
 
     // platelet normal: skin-following, pulled toward the tract's aim, plus per-feather noise
-    iriN.copy(nrm);
-    if (look.iriAim) {
-      tmpA.set(look.iriAim[0], look.iriAim[1], look.iriAim[2]).normalize();
-      iriN.lerp(tmpA, look.iriAlign).normalize();
-    }
-    iriN.x += (rng() - 0.5) * look.jitter;
-    iriN.y += (rng() - 0.5) * look.jitter;
-    iriN.z += (rng() - 0.5) * look.jitter;
-    iriN.normalize();
+    iriNormal(iriN, nrm, look, rng);
 
     const sk = loft.skin(sj, a);
     b.add({
@@ -479,7 +480,7 @@ function addContour(b: Builder, rig: Rig, rng: Rng) {
       rows: 4,
       curl: lerp(0.1, 0.02 + rng() * 0.22, loose),
       asym: 0,
-      bones: sk.bones.map((nm) => rig.index(nm)) as [number, number, number, number],
+      bones: skinIdx(rig, sk.bones),
       weights: sk.weights,
       skinAt: sheetSkin(rig, sj, a, root),
       rand: rng(),
@@ -605,7 +606,6 @@ function addGorget(b: Builder, rig: Rig, rng: Rng) {
   const dir = new THREE.Vector3();
   const nrm = new THREE.Vector3();
   const iriN = new THREE.Vector3();
-  const aim = new THREE.Vector3();
 
   const indigo = new THREE.Color(0x3a34ff);
   const magenta = new THREE.Color(0xd62cc8);
@@ -635,12 +635,7 @@ function addGorget(b: Builder, rig: Rig, rng: Rng) {
       dir.copy(sfc.t).multiplyScalar(Math.cos(thd)).addScaledVector(lat, Math.sin(thd)).normalize();
       nrm.copy(sfc.n).multiplyScalar(Math.cos(tilt)).addScaledVector(dir, -Math.sin(tilt));
       dir.multiplyScalar(Math.cos(tilt)).addScaledVector(sfc.n, Math.sin(tilt));
-      iriN.copy(nrm);
-      if (look.iriAim) iriN.lerp(aim.set(look.iriAim[0], look.iriAim[1], look.iriAim[2]).normalize(), look.iriAlign).normalize();
-      iriN.x += (rng() - 0.5) * look.jitter;
-      iriN.y += (rng() - 0.5) * look.jitter;
-      iriN.z += (rng() - 0.5) * look.jitter;
-      iriN.normalize();
+      iriNormal(iriN, nrm, look, rng);
       const sp = specFromLook(look, rng);
       // hue by distance from the chin, with a little scatter from scale to scale
       const h = clamp(t + (rng() - 0.5) * 0.16, 0, 1);
@@ -664,7 +659,7 @@ function addGorget(b: Builder, rig: Rig, rng: Rng) {
         cup: 0.16,
         curl: 0.05,
         asym: 0,
-        bones: sk.bones.map((nm) => rig.index(nm)) as [number, number, number, number],
+        bones: skinIdx(rig, sk.bones),
         weights: sk.weights,
         skinAt,
         rand: rng(),
@@ -688,7 +683,7 @@ function addWing(b: Builder, rig: Rig, side: Side, rng: Rng) {
   const X = new THREE.Vector3();
   const Y = new THREE.Vector3();
   const Z = new THREE.Vector3();
-  const blade = (bone: THREE.Bone, length: number, width: number, asym: number, shown: boolean) => {
+  const blade = (bone: THREE.Bone, length: number, width: number, asym: number) => {
     const r = rig.rest[bone.name];
     new THREE.Matrix4().makeRotationFromQuaternion(r.worldQuat).extractBasis(X, Y, Z);
     // no two blades lie quite alike
@@ -717,15 +712,14 @@ function addWing(b: Builder, rig: Rig, side: Side, rng: Rng) {
       iri2: sheen,
       iriStrength: 0.22,
       iriPower: 2.5,
-      rough: 0.4,
       loose: 0,
       widen: 0.3,
       bones: [i, 0, 0, 0],
       weights: [1, 0, 0, 0],
       rand: rng(),
       // coord doubles as a wing id for the shader: REAL_L/REAL_R blades stay folded away
-      // inside the body until the wing spreads; 0.55 = always shown
-      coord: shown ? 0.55 : sg > 0 ? WING_REAL_L : WING_REAL_R,
+      // inside the body until the wing spreads
+      coord: sg > 0 ? WING_REAL_L : WING_REAL_R,
       gain: 0,
       // for blades the cover slot says which edge is the leading one
       cover: sg > 0 ? 0.2 : 0.8,
@@ -734,11 +728,11 @@ function addWing(b: Builder, rig: Rig, side: Side, rng: Rng) {
   };
   wr.primaries.forEach((bone, i) => {
     const f = i / (wr.primaries.length - 1);
-    blade(bone, lerp(W.primaryLen[0], W.primaryLen[1], Math.pow(f, 0.75)), W.primaryWidth * lerp(1.15, 0.8, f), lerp(0.2, 0.5, f), i >= wr.primaries.length - FREE_TIPS);
+    blade(bone, lerp(W.primaryLen[0], W.primaryLen[1], Math.pow(f, 0.75)), W.primaryWidth * lerp(1.15, 0.8, f), lerp(0.2, 0.5, f));
   });
   wr.secondaries.forEach((bone, j) => {
     const f = j / (wr.secondaries.length - 1);
-    blade(bone, lerp(W.secondaryLen[0], W.secondaryLen[1], f), W.secondaryWidth, 0.15, false);
+    blade(bone, lerp(W.secondaryLen[0], W.secondaryLen[1], f), W.secondaryWidth, 0.15);
   });
 
   // coverts on the arm bones, for the spread wing only: rows shingled over the remex bases
@@ -801,9 +795,8 @@ function addWing(b: Builder, rig: Rig, side: Side, rng: Rng) {
  * planted on the wing strip of the body and skinned to the spine like every contour
  * feather, so it cannot come away from the body from any angle. From the shoulder down:
  * rows of coverts (lesser, median, greater), then the remiges as long blades lying flat,
- * inner over outer, their tips running off the end of the strip where the free primary
- * tips (real blades, on the hand bone) take over. The shader lifts these feathers a
- * little for a wing flick and folds them away as the real wing spreads.
+ * inner over outer, the two wingtips crossing over the tail. The shader lifts these
+ * feathers a little for a wing flick and folds them away as the real wing spreads.
  */
 function addRestWing(b: Builder, rig: Rig, side: Side, rng: Rng) {
   const { loft, species } = rig;
@@ -836,7 +829,7 @@ function addRestWing(b: Builder, rig: Rig, side: Side, rng: Rng) {
     dir.copy(sfc2.p).addScaledVector(sfc2.n, lift + len * Math.sin(tiltDeg * DEG)).sub(root).normalize();
     nrm.copy(sfc.n).add(sfc2.n).addScaledVector(dir, -sfc.n.dot(dir) - sfc2.n.dot(dir)).normalize();
     const sk = loft.skin(clamp(q.s, 0.02, loft.sMax), q.ang);
-    return { bones: sk.bones.map((nm) => rig.index(nm)) as [number, number, number, number], weights: sk.weights };
+    return { bones: skinIdx(rig, sk.bones), weights: sk.weights };
   };
 
   // --- coverts: lesser at the shoulder, growing toward the greater coverts
@@ -999,10 +992,9 @@ function addRestWing(b: Builder, rig: Rig, side: Side, rng: Rng) {
       iri2: sheen,
       iriStrength: 0.22,
       iriPower: 2.5,
-      rough: 0.4,
       loose: 0,
       widen: 0.2,
-      bones: sk.bones.map((nm) => rig.index(nm)) as [number, number, number, number],
+      bones: skinIdx(rig, sk.bones),
       weights: sk.weights,
       rand: rng(),
       coord: id,
@@ -1046,7 +1038,6 @@ function addTail(b: Builder, rig: Rig, rng: Rng) {
       iri2: sheen,
       iriStrength: f < 0.1 ? 0.13 : 0.2,
       iriPower: 3,
-      rough: 0.62,
       loose: 0,
       widen: 0.45,
       bones: [rig.index(r.bone.name), 0, 0, 0],
@@ -1076,7 +1067,6 @@ function buildFuzz(rig: Rig, layers = 3, rings = 120, segs = 80) {
   const prev = new Float32Array(segs + 1);
   const pts: THREE.Vector3[] = Array.from({ length: segs + 1 }, () => new THREE.Vector3());
   const iriN = new THREE.Vector3();
-  const aim = new THREE.Vector3();
   const rng = mulberry32(species.seed + 99);
   const COLUMNS = 560;
   const sTop = loft.sMax - 0.12;
@@ -1114,8 +1104,7 @@ function buildFuzz(rig: Rig, layers = 3, rings = 120, segs = 80) {
         if (wuv.u > 0.02 && wuv.u < 0.99) fuzz *= smoothstep(0.85, 1.15, Math.abs(wuv.v));
       }
       const sp = specFromLook(look, rng, shade, gold, species.shading.gold, glit);
-      iriN.copy(g.n);
-      if (look.iriAim) iriN.lerp(aim.set(look.iriAim[0], look.iriAim[1], look.iriAim[2]).normalize(), look.iriAlign).normalize();
+      iriNormal(iriN, g.n, look);
       // small feathers, short fuzz: the head must not wear a halo
       P.copy(g.p).addScaledVector(g.n, height * (0.5 + 0.5 * Math.min(fuzz * 2, 1)) * clamp(look.width / 0.03, 0.4, 1));
       const sk = loft.skin(g.s, g.a);
@@ -1131,7 +1120,7 @@ function buildFuzz(rig: Rig, layers = 3, rings = 120, segs = 80) {
       b.cTip.push(sp.tip.r, sp.tip.g, sp.tip.b, fuzz);
       b.cIri.push(sp.iri.r, sp.iri.g, sp.iri.b, look.iriPower / 32);
       b.cIri2.push(sp.iri2.r, sp.iri2.g, sp.iri2.b, lf);
-      b.si.push(...sk.bones.map((nm) => rig.index(nm)));
+      b.si.push(...skinIdx(rig, sk.bones));
       b.sw.push(...sk.weights);
     }
     for (let i = 0; i < rings; i++) {
@@ -1150,7 +1139,6 @@ export interface PlumageGeometry {
   contour: THREE.BufferGeometry;
   flight: THREE.BufferGeometry;
   fuzz: THREE.BufferGeometry;
-  stats: { contourFeathers: number; flightFeathers: number; vertices: number; triangles: number };
 }
 
 export function buildPlumageGeometry(rig: Rig): PlumageGeometry {
@@ -1169,12 +1157,6 @@ export function buildPlumageGeometry(rig: Rig): PlumageGeometry {
     contour: contour.build(),
     flight: flight.build(),
     fuzz: fuzz.build(),
-    stats: {
-      contourFeathers: contour.feathers,
-      flightFeathers: flight.feathers,
-      vertices: (contour.pos.length + flight.pos.length + fuzz.pos.length) / 3,
-      triangles: (contour.idx.length + flight.idx.length + fuzz.idx.length) / 3,
-    },
   };
 }
 
@@ -1197,7 +1179,7 @@ export function buildSkinGeometry(rig: Rig, rings = 64, segs = 36, inset = 0.007
       // bulge out between the feathers)
       p.copy(sfc.p).addScaledVector(sfc.n, -inset);
       pos.push(p.x, p.y, p.z);
-      si.push(...sk.bones.map((n) => rig.index(n)));
+      si.push(...skinIdx(rig, sk.bones));
       sw.push(...sk.weights);
     }
   }

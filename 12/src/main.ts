@@ -1,10 +1,10 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { createBackdrop } from './env/backdrop';
-import { createBranch, GRIP_X, loadBranch, perchRadiusAt } from './env/branch';
+import { createBranch, GRIP_X, loadBranch, PERCH_RANGE, perchFrames } from './env/branch';
 import { createSway } from './env/sway';
-import { createBird, type FleeLayer, type ForageLayer, type GazeLayer, type HopLayer, type MouthLayer, type RuffleLayer } from './bird';
-import type { Food, PerchFrame } from './bird/types';
+import { createBird, type GazeLayer, type HopLayer } from './bird';
+import type { Food } from './bird/types';
 import { PALETTES, paletteMatrices } from './bird/palettes';
 import { createPost } from './post';
 import { createSeeds } from './seeds';
@@ -21,7 +21,6 @@ const usePost = !query.has('nopost');
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: !usePost, powerPreference: 'high-performance' });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, phone ? 1.5 : 2));
 renderer.outputColorSpace = THREE.SRGBColorSpace;
-renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.0;
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFShadowMap;
@@ -91,13 +90,53 @@ function startReveal(instant = false) {
   revealing = true;
   document.body.classList.remove('loading');
 }
+const nextFrame = () => new Promise((r) => requestAnimationFrame(r));
+// the picture's first frames shouldn't stall on shaders or uploads: it all happens here, a
+// piece a frame, while the drawing still shows. The scene, then what isn't in it yet (a
+// seed, a gnat, a wisp of down), then the textures, one a frame,
+// then one frame of the picture itself
 async function ready() {
+  const compile = usePost ? post.compile : (jobs: () => Promise<unknown>[]) => Promise.all(jobs());
   try {
-    await renderer.compileAsync(scene, camera);
+    await compile(() => [renderer.compileAsync(scene, camera)]);
+    await nextFrame();
+    await compile(() => [renderer.compileAsync(warm, camera, scene)]);
+    await nextFrame();
+    // three asks the GPU about a program the first time it draws with it, a round trip that
+    // waits on the frame in flight (up to 100 ms): ask now, for the ones not drawn yet (the
+    // hidden wing blur)
+    for (const m of materialsIn([scene, warm])) {
+      const programs = (renderer.properties.get(m) as { programs?: Map<string, THREE.WebGLProgram> }).programs;
+      programs?.forEach((p) => p.getUniforms());
+    }
+    for (const tex of texturesIn([scene, warm])) {
+      await nextFrame();
+      renderer.initTexture(tex);
+    }
+    // and one picture, unseen: the shadow pass only meets the feathers here (the drawing hides them)
+    await nextFrame();
+    if (usePost) post.prerender(scene, camera);
   } catch {
     /* compile on first draw then */
   }
   startReveal();
+}
+function materialsIn(roots: THREE.Object3D[]) {
+  const out = new Set<THREE.Material>();
+  for (const root of roots) {
+    root.traverse((o) => {
+      const mat = (o as THREE.Mesh).material;
+      if (mat) for (const m of Array.isArray(mat) ? mat : [mat]) out.add(m);
+    });
+  }
+  return out;
+}
+function texturesIn(roots: THREE.Object3D[]) {
+  const out = new Set<THREE.Texture>();
+  for (const m of materialsIn(roots)) {
+    for (const v of Object.values(m)) if ((v as THREE.Texture)?.isTexture && !(v as THREE.Texture).isRenderTargetTexture) out.add(v);
+  }
+  return out;
 }
 const branchLoad = query.has('procbranch')
   ? Promise.resolve()
@@ -111,7 +150,6 @@ const branchLoad = query.has('procbranch')
         scene.add(b.group);
         sway.use(b.group);
         usePerch(b.group);
-        useMaskOccluders(b.group);
         branchFuzz = b.fuzz;
         applyFuzz();
       })
@@ -133,6 +171,12 @@ key.shadow.bias = -0.0015;
 key.shadow.normalBias = 0.025;
 key.shadow.radius = 4;
 key.target.position.set(0, 0.5, 0);
+if (phone) {
+  // a quarter of the map, its box drawn in round what casts and catches the shadows that show:
+  // the bird anywhere along its stretch of twig, the twig under it, the flowers
+  key.shadow.mapSize.set(1024, 1024);
+  Object.assign(key.shadow.camera, { left: -0.85, right: 1.42, bottom: -1.0, top: 1.15 });
+}
 scene.add(key, key.target);
 const rim = new THREE.DirectionalLight(0xf2fae8, 1.4);
 rim.position.set(1.5, 1.8, -2.5);
@@ -140,14 +184,10 @@ rim.target.position.set(0, 0.5, 0);
 scene.add(rim, rim.target);
 
 // --- bird ---------------------------------------------------------------------
-const bird = createBird({ renderer, scene, camera });
+const bird = createBird();
 // it sits a little right of the twig's middle and drifts back there
 bird.root.position.x = GRIP_X;
-const hop = bird.layer<HopLayer>('hop');
-const mouth = bird.layer<MouthLayer>('mouth');
-const ruffle = bird.layer<RuffleLayer>('ruffle');
-const flight = bird.layer<FleeLayer>('flee');
-hop.home = GRIP_X;
+bird.layer<HopLayer>('hop').home = GRIP_X;
 // (the bird stands in a rider that moves with the twig under its feet)
 const rider = new THREE.Group();
 rider.add(bird.root);
@@ -166,7 +206,7 @@ const focusAt = new THREE.Vector3();
 const focusHold = new THREE.Vector3();
 let focusSet = false;
 function updateFocus(dt: number) {
-  if (flight.perched || !focusSet) focusHold.copy(headPos);
+  if (bird.perched || !focusSet) focusHold.copy(headPos);
   if (!focusSet) focusAt.copy(focusHold);
   focusSet = true;
   focusAt.lerp(focusHold, 1 - Math.exp(-dt * 8));
@@ -174,64 +214,11 @@ function updateFocus(dt: number) {
 function updateSway(dt: number) {
   sway.update(dt);
   // on the twig (also gathering itself to go, and landing) it moves with it; in the air it doesn't
-  ride = damp(ride, flight.perched ? 1 : 0, 25, dt);
+  ride = damp(ride, bird.perched ? 1 : 0, 25, dt);
   sway.at(bird.root.position.x, rideAt);
   rider.position.copy(rideAt).multiplyScalar(ride);
 }
-// the fade lifts the bird alone: its meshes also sit on a mask layer, drawn white
-// (feathers through their own shader, so the mask has their exact outline)
-const MASK_LAYER = 5;
-bird.root.traverse((o) => o.layers.enable(MASK_LAYER));
-const maskWhite = new THREE.MeshBasicMaterial({ color: 0xffffff });
-// the twig goes into the mask black, so the bird behind it stays unlifted there
-const maskBlack = new THREE.MeshBasicMaterial({ color: 0x000000 });
-sway.patch(maskBlack);
-const maskOccluders: THREE.Mesh[] = [];
-function useMaskOccluders(root: THREE.Object3D) {
-  maskOccluders.length = 0;
-  root.traverse((o) => {
-    if ((o as THREE.Mesh).isMesh && /^(perch|shoot|buds|twiglets)$/.test(o.name)) {
-      o.layers.enable(MASK_LAYER);
-      maskOccluders.push(o as THREE.Mesh);
-    }
-  });
-}
-const plumageBase = bird.feathers.contour.material as THREE.MeshStandardMaterial;
-const maskPlumage = plumageBase.clone();
-maskPlumage.onBeforeCompile = (shader, r) => {
-  plumageBase.onBeforeCompile.call(plumageBase, shader, r);
-  shader.fragmentShader = shader.fragmentShader.replace('#include <dithering_fragment>', '#include <dithering_fragment>\n  gl_FragColor = vec4(1.0, 1.0, 1.0, gl_FragColor.a);');
-};
-maskPlumage.customProgramCacheKey = () => 'plumage-mask';
-// collected each time: the flight's wing blur is only made on the first flight
-const maskMeshes: THREE.Mesh[] = [];
-const maskSaved: (THREE.Material | THREE.Material[])[] = [];
-function drawMask() {
-  maskMeshes.length = 0;
-  bird.root.traverse((o) => {
-    if (!(o as THREE.Mesh).isMesh) return;
-    o.layers.enable(MASK_LAYER);
-    maskMeshes.push(o as THREE.Mesh);
-  });
-  const feathers: THREE.Object3D[] = [bird.feathers.contour, bird.feathers.flight, bird.feathers.fuzz];
-  maskMeshes.forEach((m, i) => {
-    maskSaved[i] = m.material;
-    m.material = feathers.includes(m) ? maskPlumage : maskWhite;
-  });
-  const occSaved = maskOccluders.map((m) => m.material);
-  maskOccluders.forEach((m) => (m.material = maskBlack));
-  const layers = camera.layers.mask;
-  camera.layers.set(MASK_LAYER);
-  // the shadow map from the main pass is fine as it is
-  renderer.shadowMap.autoUpdate = false;
-  renderer.render(scene, camera);
-  renderer.shadowMap.autoUpdate = true;
-  camera.layers.mask = layers;
-  maskMeshes.forEach((m, i) => (m.material = maskSaved[i]));
-  maskOccluders.forEach((m, i) => (m.material = occSaved[i]));
-}
 const gaze = bird.layer<GazeLayer>('gaze');
-const forage = bird.layer<ForageLayer>('forage');
 const billTip = bird.billTip.bind(bird);
 // on phones the contour feathers skip the shadow pass (most of its triangles)
 if (phone) bird.feathers.contour.castShadow = false;
@@ -280,8 +267,13 @@ const seeds = createSeeds(scene);
 const insects = createInsects(scene, () => bird.root.getWorldPosition(new THREE.Vector3()).add(new THREE.Vector3(0, 0.85, 0)));
 bird.onPick = (id) => (insects.owns(id) ? insects.pick(id) : seeds.pick(id));
 bird.onSwallow = (id) => (insects.owns(id) ? insects.swallowed(id) : seeds.swallowed(id));
+// it winds up to strike: the gnats near the bill may see it coming
+bird.mind.on('strike', () => insects.strike());
 // dust, a passing fly, a seed on the breeze, a wisp of down after a ruffle
 const ambient = createAmbient({ scene, camera, renderer, center: new THREE.Vector3(GRIP_X, 0.55, 0), dof: () => post.dof, passSeed: (at, wind) => seeds.spawn(at, wind) });
+// what only comes into the scene later, for compiling while loading (never drawn)
+const warm = new THREE.Group();
+warm.add(...seeds.warm, ...insects.warm, ...ambient.warm);
 let flySeenAt = -1;
 const flyLast = new THREE.Vector3();
 // the bug button (and G): a gnat or a fly, at random
@@ -290,9 +282,6 @@ function letOneIn() {
   else ambient.flyBy();
 }
 document.querySelector('.bug')?.addEventListener('click', letOneIn);
-window.addEventListener('keydown', (e) => {
-  if (e.code === 'KeyG' && !e.metaKey && !e.ctrlKey) letOneIn();
-});
 const shedAt = new THREE.Vector3();
 const shedOut = new THREE.Vector3();
 bird.mind.on('ruffle', (e) => {
@@ -304,6 +293,9 @@ bird.mind.on('ruffle', (e) => {
   ambient.shed(shedAt, shedOut, Math.random() < 0.45);
 });
 const allFood: Food[] = [];
+function pushAll(out: Food[], items: ReadonlyArray<Food>) {
+  for (let i = 0; i < items.length; i++) out.push(items[i]);
+}
 const seedAt = new THREE.Vector3();
 let downAt = 0;
 let downX = 0;
@@ -314,18 +306,16 @@ canvas.addEventListener('pointerdown', (e) => {
   downY = e.clientY;
 });
 // the feet: a pointer at them and the bird steps away along the twig, the other way.
-// Not every time: a hop at most every 3 s, and after a few it stops minding for a while
+// Not every time: a hop at most every 3 s
 const feetA = new THREE.Vector3();
 const feetB = new THREE.Vector3();
 const feetHit = new THREE.Vector3();
 const FEET_EVERY = 3;
 let feetNext = 0;
-let feetHops = 0;
-let feetCalm = 0;
 function nearFeet(r: THREE.Ray) {
   if (bird.away || bird.fleeing) return;
   const now = performance.now() / 1000;
-  if (now < feetNext || now < feetCalm) return;
+  if (now < feetNext) return;
   bird.root.getWorldPosition(feetA);
   feetB.copy(feetA);
   feetA.x -= 0.06;
@@ -335,14 +325,7 @@ function nearFeet(r: THREE.Ray) {
   // away from the side the pointer came in on (where on the feet it is now)
   const away = feetHit.x < (feetA.x + feetB.x) / 2 ? 1 : -1;
   const d = 0.12 + Math.random() * 0.1;
-  if (!hop.go(bird.mind, hop.x + away * d) && !hop.go(bird.mind, hop.x - away * d)) return;
-  // (a run of hops close together counts up; a quiet spell starts the count over)
-  feetHops = now - feetNext < 20 ? feetHops + 1 : 1;
-  feetNext = now + FEET_EVERY;
-  if (feetHops >= 3) {
-    feetHops = 0;
-    feetCalm = now + 30;
-  }
+  if (bird.hopBy(away * d) || bird.hopBy(-away * d)) feetNext = now + FEET_EVERY;
 }
 // the flowers: a pointer passing over them brushes them, barely
 const brushPlane = new THREE.Plane();
@@ -370,7 +353,7 @@ window.addEventListener('pointermove', (e) => {
   const onCanvas = e.target === canvas;
   const r = pointerRay(e.clientX, e.clientY);
   const bill = onCanvas && nearBill(r);
-  if (bill && !atBill && !mouth.singing && !mouth.blocked()) mouth.sing(bird.mind, 1.6);
+  if (bill && !atBill && !bird.singing) bird.sing(1.6);
   atBill = bill;
   if (onCanvas) {
     nearFeet(r);
@@ -416,13 +399,6 @@ canvas.addEventListener('pointerup', (e) => {
     else if (pointerOnPlane(e.clientX, e.clientY, 0.6, seedAt)) seeds.spawn(seedAt);
   }
 });
-window.addEventListener('keydown', (e) => {
-  if (e.code === 'Space') bird.startle(1);
-  if (e.code === 'KeyF' && !e.metaKey && !e.ctrlKey) bird.flee();
-  // R: a ruffle now (the one-a-minute limit is only for the ones it does by itself)
-  if (e.code === 'KeyR' && !e.metaKey && !e.ctrlKey) ruffle.trigger(bird.mind, 'shake');
-  if (e.code === 'KeyW' && !e.metaKey && !e.ctrlKey) setDrawing(!drawing);
-});
 
 // --- post: depth of field on the head, colour grade -----------------------------
 const post = createPost(renderer, { samples: 4 });
@@ -437,73 +413,9 @@ const headPos = new THREE.Vector3();
   g.uVignette.value = 0.22;
 }
 
-// --- the perch, for hopping along it -------------------------------------------
-// a ray straight down at world x finds the top of the twig; the tangent and
-// up come from two neighbours. The twig never moves, so each x is cast once:
-// the hop's search asks the same handful of spots over and over.
-const perchRay = new THREE.Raycaster();
-perchRay.ray.direction.set(0, -1, 0);
-const perchHits: THREE.Intersection[] = [];
-let perchMesh: THREE.Mesh | null = null;
-const perchCache = new Map<number, PerchFrame | null>();
-const pa = new THREE.Vector3();
-const pb = new THREE.Vector3();
-function perchTop(x: number, out: THREE.Vector3) {
-  if (!perchMesh) return null;
-  perchRay.ray.origin.set(x, 2, 0);
-  perchHits.length = 0;
-  perchRay.intersectObject(perchMesh, false, perchHits);
-  const h = perchHits[0];
-  return h ? out.copy(h.point) : null;
-}
-function perchAt(x: number, out: PerchFrame) {
-  const key = Math.round(x * 1000);
-  let f = perchCache.get(key);
-  if (f === undefined) {
-    f = { point: new THREE.Vector3(), up: new THREE.Vector3(), tangent: new THREE.Vector3(), radius: perchRadiusAt(x) };
-    if (perchTop(x, f.point) && perchTop(x - 0.03, pa) && perchTop(x + 0.03, pb)) {
-      f.tangent.copy(pb).sub(pa).normalize();
-      f.up.set(0, 1, 0).addScaledVector(f.tangent, -f.tangent.y).normalize();
-    } else f = null;
-    perchCache.set(key, f);
-  }
-  if (!f) return null;
-  out.point.copy(f.point);
-  out.up.copy(f.up);
-  out.tangent.copy(f.tangent);
-  out.radius = f.radius;
-  return out;
-}
-const PERCH_RANGE: [number, number] = [GRIP_X - 0.45, GRIP_X + 0.45];
+// --- the perch, for hopping along it (the rays are in env/branch.ts) -----------
 function usePerch(root: THREE.Object3D) {
-  root.updateMatrixWorld(true);
-  const mesh = root.getObjectByName('perch') as THREE.Mesh | undefined;
-  perchMesh?.geometry.dispose();
-  perchMesh = mesh ? cropPerch(mesh, PERCH_RANGE[0] - 0.1, PERCH_RANGE[1] + 0.1) : null;
-  perchCache.clear();
-  bird.setPerch(perchAt, PERCH_RANGE);
-}
-// just the stretch of twig the bird can stand on, for the rays: the whole glb is ~50k
-// triangles, and a hop's search casts a hundred rays at once
-function cropPerch(mesh: THREE.Mesh, x0: number, x1: number) {
-  const g = mesh.geometry;
-  const pos = g.getAttribute('position');
-  const n = g.index ? g.index.count : pos.count;
-  const at = (i: number) => (g.index ? g.index.getX(i) : i);
-  const out: number[] = [];
-  for (let t = 0; t < n; t += 3) {
-    const a = at(t), b = at(t + 1), c = at(t + 2);
-    const lo = Math.min(pos.getX(a), pos.getX(b), pos.getX(c));
-    const hi = Math.max(pos.getX(a), pos.getX(b), pos.getX(c));
-    if (hi < x0 || lo > x1) continue;
-    for (const k of [a, b, c]) out.push(pos.getX(k), pos.getY(k), pos.getZ(k));
-  }
-  const geo = new THREE.BufferGeometry();
-  geo.setAttribute('position', new THREE.Float32BufferAttribute(out, 3));
-  const m = new THREE.Mesh(geo, mesh.material);
-  m.matrixAutoUpdate = false;
-  m.matrixWorld.copy(mesh.matrixWorld);
-  return m;
+  bird.setPerch(perchFrames(root), PERCH_RANGE);
 }
 function disposeTree(root: THREE.Object3D) {
   root.traverse((o) => {
@@ -514,7 +426,6 @@ function disposeTree(root: THREE.Object3D) {
   });
 }
 usePerch(branch.group);
-useMaskOccluders(branch.group);
 
 // --- another bird: the feathers turn to new colours ----------------------------
 let paletteIndex = 0;
@@ -525,7 +436,7 @@ let paletteTo = paletteMatrices(PALETTES[0]);
 function changePalette() {
   paletteIndex = (paletteIndex + 1) % PALETTES.length;
   // just the slightest lift of the throat and crown as the colours turn
-  ruffle.trigger(bird.mind, 'throat', 0.25);
+  bird.ruffle('throat', 0.25);
   bird.plumage.uPal.value.forEach((m, i) => paletteFrom[i].copy(m));
   paletteTo = paletteMatrices(PALETTES[paletteIndex]);
   paletteDelay = 0.05;
@@ -583,12 +494,6 @@ function updateTurn(dt: number) {
     [controls.minAzimuthAngle, controls.maxAzimuthAngle] = behind ? BACK : FRONT;
   }
 }
-window.addEventListener('keydown', (e) => {
-  if (e.code === 'KeyB' && !e.metaKey && !e.ctrlKey) turnAround();
-});
-window.addEventListener('keydown', (e) => {
-  if (e.code === 'KeyC' && !e.metaKey && !e.ctrlKey) changePalette();
-});
 
 // --- H: the head alone as a wireframe, the bird and the scene as they are -----
 // A plane across the neck, following the head bone: above it the feathers are
@@ -621,18 +526,18 @@ function updateHeadCut() {
   keepHead.setFromNormalAndCoplanarPoint(cutN, neckAt);
   keepBody.copy(keepHead).negate();
 }
-window.addEventListener('keydown', (e) => {
-  if (e.code === 'KeyH' && !e.metaKey && !e.ctrlKey) setHeadWire(!headWire);
-});
 
 // --- settings wheel, bottom right ---------------------------------------------
 let followPointer = true;
 let wasRecent = false;
-let shakeAmt = query.has('still') ? 0 : 2.1;
+// (set from the settings list below: its values are the defaults)
+let shakeAmt = 0;
 let fuzzVisible = true;
 let branchFuzz: THREE.Object3D | null = null;
+// ?nofuzz and ?skin (bird/index.ts) take the bird's down off: the setting doesn't put it back
+const birdFuzz = !query.has('nofuzz') && !query.has('skin');
 function applyFuzz() {
-  bird.feathers.fuzz.visible = fuzzVisible;
+  bird.feathers.fuzz.visible = fuzzVisible && birdFuzz;
   if (branchFuzz) branchFuzz.visible = fuzzVisible;
 }
 const flash0 = bird.plumage.uFlash.value;
@@ -646,9 +551,9 @@ const seedAhead = () => {
 // --- D: demo, half a minute of what it does --------------------------------
 // A script on the scene clock (so P pauses it): a ruffle, a gnat that doesn't get
 // away, song, the tongue, a hop each way, a fly past the head, a seed. Steps that
-// can't happen yet (mid-hop, still eating) wait their turn, up to a few seconds.
+// can't happen yet (the bird's verbs say no: mid-hop, still eating) wait their turn,
+// up to a few seconds.
 type DemoStep = [at: number, run: () => boolean | void];
-const free = () => !hop.busy && forage.state === 'idle' && !bird.away;
 const inReach = () => {
   bird.headPosition(demoAt);
   camera.getWorldDirection(toCam).negate();
@@ -656,17 +561,17 @@ const inReach = () => {
 };
 const demoAt = new THREE.Vector3();
 const DEMO: DemoStep[] = [
-  [0.4, () => ruffle.trigger(bird.mind, 'shake')],
+  [0.4, () => bird.ruffle('shake')],
   [3, () => insects.spawn(inReach(), true)],
-  [10.5, () => free() && (mouth.sing(bird.mind, 2.2), true)],
-  [13.5, () => free() && (mouth.lick(bird.mind, 0.65, 3), true)],
-  [15, () => free() && hop.go(bird.mind, hop.x + 0.26)],
-  [17.5, () => free() && (mouth.sing(bird.mind, 1.6), true)],
+  [10.5, () => bird.sing(2.2)],
+  [13.5, () => bird.lick(0.65, 3)],
+  [15, () => bird.hopBy(0.26)],
+  [17.5, () => bird.sing(1.6)],
   [20, () => ambient.flyBy(true)],
-  [22.5, () => free() && hop.go(bird.mind, GRIP_X)],
+  [22.5, () => bird.hopTo(GRIP_X)],
   [24.5, () => seeds.spawn(seedAhead())],
-  [30, () => free() && (ruffle.trigger(bird.mind, 'puff', 0.6), true)],
-  [32, () => free() && (mouth.sing(bird.mind, 1.4), true)],
+  [30, () => !bird.busy && (bird.ruffle('puff', 0.6), true)],
+  [32, () => bird.sing(1.4)],
 ];
 const DEMO_END = 35;
 let demoT = -1;
@@ -687,9 +592,6 @@ function updateDemo(dt: number) {
   }
   if (demoT > DEMO_END) setDemo(false);
 }
-window.addEventListener('keydown', (e) => {
-  if (e.code === 'KeyD' && !e.metaKey && !e.ctrlKey) setDemo(demoT < 0);
-});
 
 const TONE: Record<string, THREE.ToneMapping> = {
   Neutral: THREE.NeutralToneMapping,
@@ -700,14 +602,14 @@ const TONE: Record<string, THREE.ToneMapping> = {
 };
 const settings = createSettings([
   { kind: 'heading', label: 'Camera' },
-  { kind: 'range', key: 'shake', label: 'Handheld', value: shakeAmt, min: 0, max: 3.5, step: 0.05, set: (v) => (shakeAmt = v) },
-  { kind: 'range', key: 'dof', label: 'Depth of field', value: 100, min: 0, max: 260, step: 5, set: (v) => (post.dof.uAperture.value = v) },
+  { kind: 'range', key: 'shake', label: 'Handheld', value: 2.05, min: 0, max: 3.5, step: 0.05, set: (v) => (shakeAmt = v) },
+  { kind: 'range', key: 'dof', label: 'Depth of field', value: 85, min: 0, max: 260, step: 5, set: (v) => (post.dof.uAperture.value = v) },
   { kind: 'range', key: 'exposure', label: 'Exposure', value: 1.15, min: 0.8, max: 2.4, step: 0.05, set: (v) => (post.grade.uExposure.value = v) },
   { kind: 'heading', label: 'Look' },
+  // (also the renderer's tone mapping, with or without the post pass)
   { kind: 'select', key: 'tonemap', label: 'Tone mapping', value: 'Neutral', options: Object.keys(TONE), set: (v) => post.setToneMapping(TONE[v]) },
-  { kind: 'range', key: 'contrast', label: 'Contrast', value: 0.95, min: 0.6, max: 1.4, step: 0.01, set: (v) => (post.grade.uContrast.value = v) },
-  { kind: 'range', key: 'sat', label: 'Saturation', value: 1.0, min: 0.3, max: 1.4, step: 0.01, set: (v) => (post.grade.uSat.value = v) },
-  { kind: 'range', key: 'fade', label: 'Fade', value: 0.06, min: 0, max: 0.6, step: 0.01, set: (v) => (post.grade.uFade.value = v) },
+  { kind: 'range', key: 'contrast', label: 'Contrast', value: 0.87, min: 0.6, max: 1.4, step: 0.01, set: (v) => (post.grade.uContrast.value = v) },
+  { kind: 'range', key: 'sat', label: 'Saturation', value: 0.97, min: 0.3, max: 1.4, step: 0.01, set: (v) => (post.grade.uSat.value = v) },
   { kind: 'heading', label: 'Bird' },
   { kind: 'toggle', key: 'follow', label: 'Follows the pointer', value: true, set: (v) => (followPointer = v) },
   { kind: 'range', key: 'mood', label: 'Calm · alert', value: 0.32, min: 0, max: 1, step: 0.01, set: (v) => (bird.mind.baseline = v) },
@@ -719,15 +621,35 @@ const settings = createSettings([
   { kind: 'action', label: 'A gnat', run: () => insects.spawn() },
   { kind: 'action', label: 'A fly', run: () => ambient.flyBy() },
   { kind: 'action', label: 'Demo (D)', run: () => setDemo(demoT < 0) },
-  { kind: 'action', label: 'Sing', run: () => mouth.sing(bird.mind, 2.2) },
-  { kind: 'action', label: 'Ruffle (R)', run: () => bird.layer<RuffleLayer>('ruffle').trigger(bird.mind, 'shake') },
+  { kind: 'action', label: 'Sing', run: () => bird.sing(2.2) },
+  { kind: 'action', label: 'Ruffle (R)', run: () => bird.ruffle('shake') },
   { kind: 'action', label: 'Another bird (C)', run: changePalette },
   { kind: 'action', label: 'Startle', run: () => bird.startle(1) },
   { kind: 'action', label: 'Fly off (F)', run: () => bird.flee() },
   { kind: 'action', label: 'Pause (P)', run: () => setPaused(!paused) },
   { kind: 'action', label: 'Drawing (W)', run: () => setDrawing(!drawing) },
   { kind: 'action', label: 'Head wireframe (H)', run: () => setHeadWire(!headWire) },
-]);
+  // URL flags win over what was saved: ?still is a camera on a tripod even if Handheld was turned up
+], query.has('still') ? { shake: 0 } : {});
+
+// --- keys ---------------------------------------------------------------------
+const KEYS: Record<string, () => void> = {
+  KeyF: () => bird.flee(),
+  // a ruffle now (the one-a-minute limit is only for the ones it does by itself)
+  KeyR: () => bird.ruffle('shake'),
+  KeyB: turnAround,
+  KeyC: changePalette,
+  KeyG: letOneIn,
+  KeyD: () => setDemo(demoT < 0),
+  KeyH: () => setHeadWire(!headWire),
+  KeyP: () => setPaused(!paused),
+  KeyW: () => setDrawing(!drawing),
+};
+window.addEventListener('keydown', (e) => {
+  // Space startles, modifiers or not; the letters leave the browser's shortcuts (cmd-R, ctrl-W) alone
+  if (e.code === 'Space') bird.startle(1);
+  else if (!e.metaKey && !e.ctrlKey) KEYS[e.code]?.();
+});
 
 // --- loop ---------------------------------------------------------------------
 function resize() {
@@ -752,9 +674,6 @@ function setPaused(on: boolean) {
   paused = on;
   document.body.classList.toggle('paused', on);
 }
-window.addEventListener('keydown', (e) => {
-  if (e.code === 'KeyP' && !e.metaKey && !e.ctrlKey) setPaused(!paused);
-});
 const timer = new THREE.Timer();
 timer.connect(document);
 let t = 0;
@@ -806,16 +725,18 @@ renderer.setAnimationLoop((now) => {
     wireMat.dispose();
   }
   updatePalette(dt);
+  // (filled in place: no arrays spread every frame)
   allFood.length = 0;
-  allFood.push(...seeds.food(), ...insects.food());
+  pushAll(allFood, seeds.food());
+  pushAll(allFood, insects.food());
   bird.setFood(allFood);
   updateSway(dt);
-  bird.update(dt, t);
+  bird.update(dt);
   bird.headPosition(headPos);
   updateFocus(dt);
   updateHeadCut();
   seeds.update(dt, t, billTip, headPos);
-  insects.update(dt, t, billTip, forage.state === 'windup' || forage.state === 'strike');
+  insects.update(dt, t, billTip);
   ambient.update(dt);
   updateDemo(dt);
   frame();
@@ -934,7 +855,7 @@ function render() {
   if (!usePost) return renderer.render(scene, camera);
   post.focusOn(focusAt);
   post.grade.uReveal.value = THREE.MathUtils.smoothstep(reveal, 0, 1);
-  post.render(scene, camera, t, revealing && reveal === 1 ? null : drawWire, drawMask);
+  post.render(scene, camera, t, revealing && reveal === 1 ? null : drawWire);
   if (edgeDue && reveal === 1 && !drawing) sampleEdge();
 }
 
@@ -944,20 +865,48 @@ function render() {
 // and again after a resize.
 let edgeDue = true;
 let edgePx = new Uint8Array(4);
+let edgeBuf: WebGLBuffer | null = null;
+let edgeSync: WebGLSync | null = null;
 const themeMeta = document.querySelector('meta[name="theme-color"]');
 function sampleEdge() {
+  // (still waiting on the last one: ask again next frame)
+  if (edgeSync) return;
   edgeDue = false;
-  const gl = renderer.getContext();
+  const gl = renderer.getContext() as WebGL2RenderingContext;
   renderer.setRenderTarget(null);
   const w = gl.drawingBufferWidth;
-  // (one read of the whole row: each readPixels stalls for the GPU)
+  // one read of the whole row, into a buffer, picked up once the GPU is past it: a plain
+  // readPixels waits for the frame to finish, a long stall the moment the picture is up
   if (edgePx.length !== w * 4) edgePx = new Uint8Array(w * 4);
-  gl.readPixels(0, 1, w, 1, gl.RGBA, gl.UNSIGNED_BYTE, edgePx);
+  edgeBuf ??= gl.createBuffer();
+  gl.bindBuffer(gl.PIXEL_PACK_BUFFER, edgeBuf);
+  gl.bufferData(gl.PIXEL_PACK_BUFFER, edgePx.byteLength, gl.STREAM_READ);
+  gl.readPixels(0, 1, w, 1, gl.RGBA, gl.UNSIGNED_BYTE, 0);
+  gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null);
+  const sync = gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0);
+  if (!sync) return;
+  edgeSync = sync;
+  gl.flush();
+  const px = edgePx;
+  const poll = () => {
+    const s = gl.clientWaitSync(sync, 0, 0);
+    if (s === gl.TIMEOUT_EXPIRED) return void setTimeout(poll, 8);
+    gl.deleteSync(sync);
+    edgeSync = null;
+    if (s === gl.WAIT_FAILED) return;
+    gl.bindBuffer(gl.PIXEL_PACK_BUFFER, edgeBuf);
+    gl.getBufferSubData(gl.PIXEL_PACK_BUFFER, 0, px);
+    gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null);
+    paintEdge(px, w);
+  };
+  setTimeout(poll, 8);
+}
+function paintEdge(px: Uint8Array, w: number) {
   let r = 0, g = 0, b = 0;
   const n = 9;
   for (let i = 0; i < n; i++) {
     const k = Math.round(((i + 0.5) / n) * (w - 1)) * 4;
-    r += edgePx[k]; g += edgePx[k + 1]; b += edgePx[k + 2];
+    r += px[k]; g += px[k + 1]; b += px[k + 2];
   }
   const col = `rgb(${Math.round(r / n)}, ${Math.round(g / n)}, ${Math.round(b / n)})`;
   document.documentElement.style.background = col;

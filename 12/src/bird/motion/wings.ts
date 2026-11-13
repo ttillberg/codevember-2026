@@ -6,7 +6,6 @@ import type { Layer, Mind } from './mind';
 // one a beat behind the other.
 export class WingLayer implements Layer {
   readonly name = 'wings';
-  enabled = true;
   private t0 = -100;
   private nextAt: number;
   private lead = 1;

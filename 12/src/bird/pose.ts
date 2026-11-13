@@ -29,6 +29,8 @@ export interface WingPose {
   twist: number;
 }
 
+const REST_WING: WingPose = { spread: 0, lift: 0, droop: 0, sweep: 0, raise: 0, out: 0, twist: 0 };
+
 export class Pose {
   // gaze: where the bill points, in root space. yaw + = bird's left, pitch + = up.
   headYaw = 0;
@@ -97,38 +99,17 @@ export class Pose {
   tailFan = 0; // 0 folded … 1 fanned
 
   wing: Record<Side, WingPose> = {
-    L: { spread: 0, lift: 0, droop: 0, sweep: 0, raise: 0, out: 0, twist: 0 },
-    R: { spread: 0, lift: 0, droop: 0, sweep: 0, raise: 0, out: 0, twist: 0 },
+    L: { ...REST_WING },
+    R: { ...REST_WING },
   };
 
+  /** Back to rest, every frame. (reachTarget and reachDir keep theirs: they only count while reachWeight is up.) */
   reset() {
-    this.headYaw = this.headPitch = this.headRoll = 0;
+    Object.assign(this, REST);
     this.headShift.set(0, 0, 0);
-    this.headStabil = 0.85;
-    this.reachWeight = 0;
-    this.reachPin = 0;
-    this.reachRoll = 0;
-    this.bodyYaw = this.bodyPitch = this.bodyRoll = this.chestPitch = 0;
     this.bodyShift.set(0, 0, 0);
-    this.breath = 0;
-    this.fluff = this.gorget = this.crest = 0;
     this.lift.fill(0);
-    this.lidUpper = this.lidLower = this.nict = this.jaw = 0;
-    this.tongueOut = this.tongueCurl = 0;
-    this.feetSlope = 0;
-    this.feetScale = 1;
-    this.grip = 1;
-    this.carryAt = 1;
-    this.tailPitch = this.tailYaw = this.tailRoll = this.tailFan = 0;
-    for (const s of SIDES) {
-      this.wing[s].spread = 0;
-      this.wing[s].lift = 0;
-      this.wing[s].droop = 0;
-      this.wing[s].sweep = 0;
-      this.wing[s].raise = 0;
-      this.wing[s].out = 0;
-      this.wing[s].twist = 0;
-    }
+    for (const s of SIDES) Object.assign(this.wing[s], REST_WING);
   }
 
   /** Add a bump to the lift profile centred at body coordinate c (0 bill … 1 tail). */
@@ -139,6 +120,9 @@ export class Pose {
     }
   }
 }
+
+/** every scalar channel at its initial value, so the defaults above are written once */
+const REST = Object.fromEntries(Object.entries(new Pose()).filter(([, v]) => typeof v === 'number')) as Partial<Pose>;
 
 const X = new THREE.Vector3(1, 0, 0);
 const Y = new THREE.Vector3(0, 1, 0);
@@ -247,6 +231,20 @@ export function createSolver(rig: Rig, uniforms: PlumageUniforms): Solver {
   const tN = new THREE.Vector3();
   const tS = new THREE.Vector3();
   const sternumDir = rest.sternum.worldPos.clone().sub(rest.chest.worldPos).setX(0).normalize();
+  // each leg's bones, looked up once (not by name every frame)
+  const legs = SIDES.map((s) => ({
+    s,
+    foot: bones[`foot.${s}`],
+    footRest: rest[`foot.${s}`],
+    toes: [1, 2, 3, 4].map((i) => bones[`toe.${s}.${i}`]),
+    tarsus: bones[`tarsus.${s}`],
+  }));
+  // the neck's share of the head's turn relative to the chest
+  const solveNeck = () => {
+    qRel.copy(qChestW).invert().multiply(qHead);
+    qA.copy(I).slerp(qRel, n1);
+    qB.copy(I).slerp(qRel, n2);
+  };
 
   /** Root-space position of the head bone for a given hips transform and neck rotations. */
   function headFk(hipsPos: THREE.Vector3, hipsQ: THREE.Quaternion, chestL: THREE.Quaternion, neckA: THREE.Quaternion, neckB: THREE.Quaternion, out: THREE.Vector3) {
@@ -276,11 +274,6 @@ export function createSolver(rig: Rig, uniforms: PlumageUniforms): Solver {
     // --- neck and head: world-stabilised gaze, optionally reaching with the bill ----------
     e.set(-p.headPitch, p.headYaw, p.headRoll, 'YXZ');
     qHead.setFromEuler(e);
-    const solveNeck = () => {
-      qRel.copy(qChestW).invert().multiply(qHead);
-      qA.copy(I).slerp(qRel, n1);
-      qB.copy(I).slerp(qRel, n2);
-    };
     solveNeck();
     // where the head sits with the body's motion taken out (held still in space) and the
     // layers' own shifts added
@@ -426,19 +419,17 @@ export function createSolver(rig: Rig, uniforms: PlumageUniforms): Solver {
     // --- legs: feet stay planted, the tarsus reaches for the hip ---------
     qA.setFromAxisAngle(Z, p.feetSlope);
     const open = (1 - clamp(p.grip, 0, 1)) * 0.6;
-    for (const s of SIDES) {
+    for (const { s, foot, footRest, toes, tarsus: b } of legs) {
       // each foot sits on the twig where it is: along its slope, sized to its thickness
-      const foot = bones[`foot.${s}`];
-      foot.position.copy(rest[`foot.${s}`].pos).applyQuaternion(qA);
+      foot.position.copy(footRest.pos).applyQuaternion(qA);
       foot.quaternion.copy(qA);
       foot.scale.setScalar(p.feetScale);
-      for (let i = 1; i <= 4; i++) bones[`toe.${s}.${i}`].quaternion.setFromAxisAngle(X, i === 4 ? open : -open);
+      for (let i = 0; i < 4; i++) toes[i].quaternion.setFromAxisAngle(X, i === 3 ? open : -open);
       // ankle in root space, then the tarsus reaches for the hip (in the foot's frame)
-      v2.copy(rig.ankle[s]).sub(rest[`foot.${s}`].worldPos).multiplyScalar(p.feetScale).applyQuaternion(qA).add(foot.position);
+      v2.copy(rig.ankle[s]).sub(footRest.worldPos).multiplyScalar(p.feetScale).applyQuaternion(qA).add(foot.position);
       v.copy(rig.hipSocket[s]).applyQuaternion(qHips).add(bones.hips.position).sub(v2);
       const len = v.length();
       v.applyQuaternion(qB.copy(qA).invert());
-      const b = bones[`tarsus.${s}`];
       basisQuat(v, X, b.quaternion);
       b.scale.set(1, 1, len / rig.tarsusLength / p.feetScale);
     }
@@ -460,5 +451,3 @@ export function createSolver(rig: Rig, uniforms: PlumageUniforms): Solver {
   applyPose.billReach = tipLen;
   return applyPose;
 }
-
-export { Z as FORWARD };

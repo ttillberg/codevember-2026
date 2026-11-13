@@ -30,7 +30,6 @@ export interface PlumageUniforms {
   uWingChord: { value: THREE.Vector3 };
   uFlash: { value: number };
   uGlint: { value: number };
-  uSheen: { value: number };
   /**
    * Colour of the plumage, as four 3x3 colour matrices (hue turned round the
    * grey axis, saturation, value): gorget sheen, crown sheen, body pigment,
@@ -38,6 +37,61 @@ export interface PlumageUniforms {
    */
   uPal: { value: THREE.Matrix3[] };
 }
+
+// The feather hinge, shared by the visible and the shadow pass so a ruffled bird casts
+// a ruffled shadow that matches it exactly.
+const DEFORM_DECL = /* glsl */ `
+attribute vec3 aRoot;
+attribute vec3 aHinge;
+attribute vec4 aData; // rand, body coord, lift gain, channel
+uniform float uFluff;
+uniform float uLift[8];
+uniform float uGorget;
+uniform float uCrest;
+uniform vec2 uWingSpread;
+uniform vec2 uWingLift;
+uniform vec4 uWingOut;
+uniform vec3 uWingPivot;
+uniform vec3 uWingSpan;
+uniform vec3 uWingChord;
+vec3 rotAxis(vec3 v, vec3 k, float c, float s) { return v * c + cross(k, v) * s + k * dot(k, v) * (1.0 - c); }
+// the resting wing swung off the flank: twist about its length, then out about its chord
+vec3 wingSwing(vec3 v, bool right) {
+  vec2 a = right ? vec2(uWingOut.z, -uWingOut.w) : vec2(-uWingOut.x, uWingOut.y);
+  vec3 m = vec3(right ? -1.0 : 1.0, 1.0, 1.0);
+  v = rotAxis(v, uWingSpan * m, cos(a.y), sin(a.y));
+  return rotAxis(v, uWingChord * m, cos(a.x), sin(a.x));
+}`;
+
+// the lift angle and the wing state, before the normals (the visible pass turns them too)
+const DEFORM_BODY = /* glsl */ `
+float fCoord = clamp(aData.y, 0.0, 1.0) * 7.0;
+float fI = floor(min(fCoord, 6.0));
+float fWave = mix(uLift[int(fI)], uLift[int(fI) + 1], fCoord - fI);
+float fAng = aData.z * (uFluff + fWave) * (0.6 + 0.8 * aData.x);
+fAng += (aData.w > 0.5 && aData.w < 1.5 ? uGorget : 0.0) + (aData.w > 1.5 && aData.w < 2.5 ? uCrest : 0.0);
+// wings: ids 2/3 = the resting wing on the body (left/right), 4/5 = the real blades
+bool fRest = aData.y > 1.5 && aData.y < 3.5;
+bool fReal = aData.y > 3.5;
+bool fRight = aData.y > 2.5 && aData.y < 3.5 || aData.y > 4.5;
+float fSpread = fRight ? uWingSpread.y : uWingSpread.x;
+float fUnfold = smoothstep(0.03, 0.35, fSpread);
+// past fully spread the wing is beating too fast to see: the blades go, a blur fan stands in
+float fBeat = 1.0 - smoothstep(1.2, 1.6, fSpread);
+if (fRest) fAng += (fRight ? uWingLift.y : uWingLift.x) * (0.5 + aData.x);
+float fC = cos(fAng), fS = sin(fAng);`;
+
+// replaces begin_vertex: fuzz shells stand off along the normal, feathers hinge about their root
+const DEFORM_WING = /* glsl */ `
+vec3 transformed = aData.w > 3.5 ? position + normal * max(fAng, -0.1) * 0.05 : aRoot + rotAxis(position - aRoot, aHinge, fC, fS);
+// as the wing spreads the resting wing sinks into the body and the real blades grow out of it
+if (fRest) {
+  vec3 fPivot = vec3(fRight ? -uWingPivot.x : uWingPivot.x, uWingPivot.yz);
+  transformed = fPivot + wingSwing(transformed - fPivot, fRight);
+  transformed = mix(transformed, aRoot - normal * 0.03, fUnfold);
+}
+if (fReal) transformed = mix(aRoot, transformed, fUnfold * fBeat);
+`;
 
 export function createPlumageMaterial(): { material: THREE.MeshStandardMaterial; uniforms: PlumageUniforms } {
   const uniforms: PlumageUniforms = {
@@ -53,7 +107,6 @@ export function createPlumageMaterial(): { material: THREE.MeshStandardMaterial;
     uWingChord: { value: new THREE.Vector3(0, 1, 0) },
     uFlash: { value: 1 },
     uGlint: { value: 1 },
-    uSheen: { value: 1 },
     uPal: { value: [new THREE.Matrix3(), new THREE.Matrix3(), new THREE.Matrix3(), new THREE.Matrix3()] },
   };
   const material = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.6, metalness: 0, side: THREE.DoubleSide, alphaToCoverage: true });
@@ -63,20 +116,12 @@ export function createPlumageMaterial(): { material: THREE.MeshStandardMaterial;
       .replace(
         '#include <common>',
         /* glsl */ `#include <common>
-attribute vec3 aRoot;
-attribute vec3 aHinge;
-attribute vec4 aData; // rand, body coord, lift gain, channel
+${DEFORM_DECL}
 attribute vec3 aIriN;
 attribute vec4 aBase;
 attribute vec4 aTip;
 attribute vec4 aIri;
 attribute vec4 aIri2;
-uniform float uFluff;
-uniform float uLift[8];
-uniform float uGorget;
-uniform float uCrest;
-uniform vec2 uWingSpread;
-uniform vec2 uWingLift;
 uniform mat3 uPal[4];
 varying vec2 vFUv;
 varying vec3 vFData;
@@ -84,38 +129,11 @@ varying vec4 vBase;
 varying vec4 vTip;
 varying vec4 vIri;
 varying vec4 vIri2;
-varying vec3 vIriN;
-uniform vec4 uWingOut;
-uniform vec3 uWingPivot;
-uniform vec3 uWingSpan;
-uniform vec3 uWingChord;
-vec3 rotAxis(vec3 v, vec3 k, float c, float s) { return v * c + cross(k, v) * s + k * dot(k, v) * (1.0 - c); }
-// the resting wing swung off the flank: twist about its length, then out about its chord
-vec3 wingSwing(vec3 v, bool right) {
-  vec2 a = right ? vec2(uWingOut.z, -uWingOut.w) : vec2(-uWingOut.x, uWingOut.y);
-  vec3 m = vec3(right ? -1.0 : 1.0, 1.0, 1.0);
-  v = rotAxis(v, uWingSpan * m, cos(a.y), sin(a.y));
-  return rotAxis(v, uWingChord * m, cos(a.x), sin(a.x));
-}`,
+varying vec3 vIriN;`,
       )
       .replace(
         '#include <beginnormal_vertex>',
-        /* glsl */ `
-float fCoord = clamp(aData.y, 0.0, 1.0) * 7.0;
-float fI = floor(min(fCoord, 6.0));
-float fWave = mix(uLift[int(fI)], uLift[int(fI) + 1], fCoord - fI);
-float fAng = aData.z * (uFluff + fWave) * (0.6 + 0.8 * aData.x);
-fAng += (aData.w > 0.5 && aData.w < 1.5 ? uGorget : 0.0) + (aData.w > 1.5 && aData.w < 2.5 ? uCrest : 0.0);
-// wings: ids 2/3 = the resting wing on the body (left/right), 4/5 = the real blades
-bool fRest = aData.y > 1.5 && aData.y < 3.5;
-bool fReal = aData.y > 3.5;
-bool fRight = aData.y > 2.5 && aData.y < 3.5 || aData.y > 4.5;
-float fSpread = fRight ? uWingSpread.y : uWingSpread.x;
-float fUnfold = smoothstep(0.03, 0.35, fSpread);
-// past fully spread the wing is beating too fast to see: the blades go, a blur fan stands in
-float fBeat = 1.0 - smoothstep(1.2, 1.6, fSpread);
-if (fRest) fAng += (fRight ? uWingLift.y : uWingLift.x) * (0.5 + aData.x);
-float fC = cos(fAng), fS = sin(fAng);
+        /* glsl */ `${DEFORM_BODY}
 vec3 objectNormal = rotAxis(normal, aHinge, fC, fS);
 vec3 fIriN = rotAxis(aIriN, aHinge, fC, fS);
 if (fRest) { objectNormal = wingSwing(objectNormal, fRight); fIriN = wingSwing(fIriN, fRight); }
@@ -140,18 +158,7 @@ else {
 #endif
 vIriN = normalize(normalMatrix * fIriN);`,
       )
-      .replace(
-        '#include <begin_vertex>',
-        /* glsl */ `vec3 transformed = aData.w > 3.5 ? position + normal * max(fAng, -0.1) * 0.05 : aRoot + rotAxis(position - aRoot, aHinge, fC, fS);
-// as the wing spreads the resting wing sinks into the body and the real blades grow out of it
-if (fRest) {
-  vec3 fPivot = vec3(fRight ? -uWingPivot.x : uWingPivot.x, uWingPivot.yz);
-  transformed = fPivot + wingSwing(transformed - fPivot, fRight);
-  transformed = mix(transformed, aRoot - normal * 0.03, fUnfold);
-}
-if (fReal) transformed = mix(aRoot, transformed, fUnfold * fBeat);
-`,
-      );
+      .replace('#include <begin_vertex>', DEFORM_WING);
 
     shader.fragmentShader = shader.fragmentShader
       .replace(
@@ -159,7 +166,6 @@ if (fReal) transformed = mix(aRoot, transformed, fUnfold * fBeat);
         /* glsl */ `#include <common>
 uniform float uFlash;
 uniform float uGlint;
-uniform float uSheen;
 varying vec2 vFUv;
 varying vec3 vFData;
 varying vec4 vBase;
@@ -408,7 +414,7 @@ roughnessFactor = clamp((vFData.y > 3.5 ? 0.95 : vFData.y > 2.5 ? 0.8 : vFData.y
   // (clamped: a dot product a hair over 1 would feed pow a negative base, and one NaN
   // pixel becomes a dotted disc once a depth-of-field pass smears it)
   float fres = pow(clamp(1.0 - dot(normal, V), 0.0, 1.0), 3.0);
-  reflectedLight.indirectDiffuse += diffuseColor.rgb * ambient * fres * mix(2.5, 1.6, fSoft) * uSheen;
+  reflectedLight.indirectDiffuse += diffuseColor.rgb * ambient * fres * mix(2.5, 1.6, fSoft);
   // matte coat: soft feathers keep almost no mirror highlight
   bool blade = vFData.y > 2.5 && vFData.y < 3.5;
   // even the show scales only flash through their structural colour, not as mirrors
@@ -417,7 +423,7 @@ roughnessFactor = clamp((vFData.y > 3.5 ? 0.95 : vFData.y > 2.5 ? 0.8 : vFData.y
 }`,
       );
   };
-  material.customProgramCacheKey = () => 'plumage-v46';
+  material.customProgramCacheKey = () => 'plumage-v47';
   return { material, uniforms };
 }
 
@@ -430,56 +436,10 @@ export function createPlumageDepthMaterial(uniforms: PlumageUniforms) {
   m.onBeforeCompile = (shader) => {
     Object.assign(shader.uniforms, uniforms);
     shader.vertexShader = shader.vertexShader
-      .replace(
-        '#include <common>',
-        /* glsl */ `#include <common>
-attribute vec3 aRoot;
-attribute vec3 aHinge;
-attribute vec4 aData;
-uniform float uFluff;
-uniform float uLift[8];
-uniform float uGorget;
-uniform float uCrest;
-uniform vec2 uWingSpread;
-uniform vec2 uWingLift;
-uniform vec4 uWingOut;
-uniform vec3 uWingPivot;
-uniform vec3 uWingSpan;
-uniform vec3 uWingChord;
-vec3 rotAxis(vec3 v, vec3 k, float c, float s) { return v * c + cross(k, v) * s + k * dot(k, v) * (1.0 - c); }
-// the resting wing swung off the flank: twist about its length, then out about its chord
-vec3 wingSwing(vec3 v, bool right) {
-  vec2 a = right ? vec2(uWingOut.z, -uWingOut.w) : vec2(-uWingOut.x, uWingOut.y);
-  vec3 m = vec3(right ? -1.0 : 1.0, 1.0, 1.0);
-  v = rotAxis(v, uWingSpan * m, cos(a.y), sin(a.y));
-  return rotAxis(v, uWingChord * m, cos(a.x), sin(a.x));
-}`,
-      )
-      .replace(
-        '#include <begin_vertex>',
-        /* glsl */ `
-float fCoord = clamp(aData.y, 0.0, 1.0) * 7.0;
-float fI = floor(min(fCoord, 6.0));
-float fWave = mix(uLift[int(fI)], uLift[int(fI) + 1], fCoord - fI);
-float fAng = aData.z * (uFluff + fWave) * (0.6 + 0.8 * aData.x);
-fAng += (aData.w > 0.5 && aData.w < 1.5 ? uGorget : 0.0) + (aData.w > 1.5 && aData.w < 2.5 ? uCrest : 0.0);
-// wings: ids 2/3 = the resting wing on the body (left/right), 4/5 = the real blades
-bool fRest = aData.y > 1.5 && aData.y < 3.5;
-bool fReal = aData.y > 3.5;
-bool fRight = aData.y > 2.5 && aData.y < 3.5 || aData.y > 4.5;
-float fSpread = fRight ? uWingSpread.y : uWingSpread.x;
-float fUnfold = smoothstep(0.03, 0.35, fSpread);
-float fBeat = 1.0 - smoothstep(1.2, 1.6, fSpread);
-if (fRest) fAng += (fRight ? uWingLift.y : uWingLift.x) * (0.5 + aData.x);
-vec3 transformed = aRoot + rotAxis(position - aRoot, aHinge, cos(fAng), sin(fAng));
-if (fRest) {
-  vec3 fPivot = vec3(fRight ? -uWingPivot.x : uWingPivot.x, uWingPivot.yz);
-  transformed = fPivot + wingSwing(transformed - fPivot, fRight);
-  transformed = mix(transformed, aRoot - normal * 0.03, fUnfold);
-}
-if (fReal) transformed = mix(aRoot, transformed, fUnfold * fBeat);`,
-      );
+      .replace('#include <common>', `#include <common>${DEFORM_DECL}`)
+      // (beginnormal_vertex only runs here with a displacement map, so the lift goes in front)
+      .replace('#include <begin_vertex>', DEFORM_BODY + DEFORM_WING);
   };
-  m.customProgramCacheKey = () => 'plumage-depth-v4';
+  m.customProgramCacheKey = () => 'plumage-depth-v5';
   return m;
 }

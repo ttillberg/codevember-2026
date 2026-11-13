@@ -15,7 +15,7 @@ const XT = 1.8;
 const INV = 1 / (XT - XA);
 
 /** cantilever shape: 0 at the hold, 1 at the tip */
-export function phi(x: number) {
+function phi(x: number) {
   const s = Math.max(0, (x - XA) * INV);
   return s * s;
 }

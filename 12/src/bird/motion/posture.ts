@@ -7,7 +7,6 @@ import type { Layer, Mind } from './mind';
 // animal balancing on a twig, and the body's reaction to its own head snaps.
 export class PostureLayer implements Layer {
   readonly name = 'posture';
-  enabled = true;
   private a = 0.3;
   private yaw = new Spring(3.2, 0.5);
   private follow = 0;

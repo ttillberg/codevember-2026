@@ -8,7 +8,6 @@ import type { Layer, Mind } from './mind';
 // lid-closing blinks are rarer and slower.
 export class BlinkLayer implements Layer {
   readonly name = 'blink';
-  enabled = true;
   private t0 = -10;
   private full = false;
   private nextAt = 1.5;

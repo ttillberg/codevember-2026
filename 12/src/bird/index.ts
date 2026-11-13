@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import type { Bird, BirdContext, Food } from './types';
+import type { Bird, Food } from './types';
 import { MOUNTAIN_GEM, type Species } from './species';
 import { buildRig, type Rig } from './rig';
 import { buildPlumageGeometry } from './plumageGeometry';
@@ -11,7 +11,7 @@ import { PostureLayer } from './motion/posture';
 import { BreathLayer } from './motion/breath';
 import { GazeLayer } from './motion/gaze';
 import { BlinkLayer } from './motion/blink';
-import { RuffleLayer } from './motion/ruffle';
+import { RuffleLayer, type RuffleKind } from './motion/ruffle';
 import { TailLayer } from './motion/tail';
 import { WingLayer } from './motion/wings';
 import { StartleLayer } from './motion/startle';
@@ -30,9 +30,8 @@ export interface BirdHandle extends Bird {
   /** Behaviour layers, run in order every frame. Push your own. */
   layers: Layer[];
   layer<T extends Layer>(name: string): T;
-  /** Feather shader uniforms: uFlash, uGlint, uSheen are free to tune. */
+  /** Feather shader uniforms: uFlash and uGlint are free to tune. */
   plumage: PlumageUniforms;
-  stats: { bones: number; contourFeathers: number; flightFeathers: number; vertices: number; triangles: number };
   /** the feather meshes, for the scene's quality and drawing switches */
   feathers: { contour: THREE.SkinnedMesh; flight: THREE.SkinnedMesh; fuzz: THREE.SkinnedMesh };
   /** world-space position of the head bone */
@@ -46,9 +45,25 @@ export interface BirdHandle extends Bird {
   readonly fleeing: boolean;
   /** true while it is out of sight */
   readonly away: boolean;
+  /** on the twig: not off it in the air (gathering itself to go and settling after landing count) */
+  readonly perched: boolean;
   /** Preen under a wing (a random one if not given). Returns false if it is busy. */
   preen(side?: 'L' | 'R'): boolean;
   readonly preening: boolean;
+  /** off the perch, mid-hop, preening, or after food (watching it, striking, eating) */
+  readonly busy: boolean;
+  // The verbs below return false, and do nothing, while the bird is busy (ruffle aside).
+  /** Sing for about this long (starts over if it already is). */
+  sing(seconds?: number): boolean;
+  readonly singing: boolean;
+  /** Flick the tongue: `count` flicks, the first reaching `amount` (random when left out). */
+  lick(amount?: number, count?: number): boolean;
+  /** Hop to world x on the perch (clamped to its range and to one hop). */
+  hopTo(x: number): boolean;
+  /** Hop this far along the perch from where it stands. */
+  hopBy(dx: number): boolean;
+  /** Ruffle now, whatever it is doing, `amount` 0..1 (random when left out). Its own one-a-minute limit doesn't apply. */
+  ruffle(kind: RuffleKind, amount?: number): void;
   /** Hook that runs after the layers and before the solver: last word on the pose. */
   onPose: ((pose: Pose, mind: Mind) => void) | null;
 }
@@ -58,7 +73,7 @@ export interface BirdOptions {
   seed?: number;
 }
 
-export function createBird(_ctx: BirdContext, options: BirdOptions = {}): BirdHandle {
+export function createBird(options: BirdOptions = {}): BirdHandle {
   const species = options.species ?? MOUNTAIN_GEM;
   const root = new THREE.Group();
   root.name = 'bird';
@@ -102,6 +117,8 @@ export function createBird(_ctx: BirdContext, options: BirdOptions = {}): BirdHa
   const wingLayer = new WingLayer(mind);
   const preen = new PreenLayer(mind, rig, solve.billReach);
   mouth.blocked = () => flee.active || hop.busy || preen.active;
+  // what the verbs wait for: the mouth's own block, and food (as the preen's)
+  const busy = () => mouth.blocked() || forage.state !== 'idle';
   preen.blocked = () => flee.active || hop.busy || mind.eating || forage.state !== 'idle';
   preen.onDone = (m) => {
     wingLayer.shuffle(m);
@@ -131,7 +148,6 @@ export function createBird(_ctx: BirdContext, options: BirdOptions = {}): BirdHa
     plumage: uniforms,
     feathers: { contour, flight, fuzz },
     headPosition: (out) => rig.bones.head.getWorldPosition(out),
-    stats: { bones: rig.list.length, ...plumageGeo.stats },
     onPose: null,
     flee: () => flee.start(),
     preen: (side) => preen.start(mind, side),
@@ -144,6 +160,21 @@ export function createBird(_ctx: BirdContext, options: BirdOptions = {}): BirdHa
     get away() {
       return flee.gone;
     },
+    get perched() {
+      return flee.perched;
+    },
+    sing: (seconds) => !busy() && (mouth.sing(mind, seconds), true),
+    get singing() {
+      return mouth.singing;
+    },
+    lick: (amount, count) => !busy() && (mouth.lick(mind, amount, count), true),
+    hopTo: (x) => !busy() && hop.go(mind, x),
+    hopBy: (dx) => handle.hopTo(hop.x + dx),
+    get busy() {
+      return busy();
+    },
+    // (feathers can lift over anything else it is doing: no busy check)
+    ruffle: (kind, amount) => ruffle.trigger(mind, kind, amount),
     update(dt) {
       root.updateWorldMatrix(true, false);
       inv.copy(root.matrixWorld).invert();
@@ -160,7 +191,7 @@ export function createBird(_ctx: BirdContext, options: BirdOptions = {}): BirdHa
       }
       mind.step(dt, headRest);
       pose.reset();
-      for (const l of layers) if (l.enabled) l.update(mind, pose);
+      for (const l of layers) l.update(mind, pose);
       handle.onPose?.(pose, mind);
       solve(pose);
     },
@@ -201,7 +232,7 @@ export function createBird(_ctx: BirdContext, options: BirdOptions = {}): BirdHa
 
   const debugCleanup = installDebug(handle);
   // settle into the first pose so frame 0 is not the bind pose
-  handle.update(0, 0);
+  handle.update(0);
   return handle;
 }
 
@@ -230,15 +261,11 @@ function installDebug(bird: BirdHandle) {
   if (q.has('quiet')) bird.mind.quiet = true;
   if (q.has('sing')) {
     // debug: sing every few seconds
-    const m = bird.layer<MouthLayer>('mouth');
     const prev = bird.onPose;
     let next = 1;
     bird.onPose = (p, mind) => {
       prev?.(p, mind);
-      if (mind.t > next && !m.singing) {
-        m.sing(mind, 1.8);
-        next = mind.t + 4;
-      }
+      if (mind.t > next && !bird.singing && bird.sing(1.8)) next = mind.t + 4;
     };
   }
   const jawOpen = num('jaw');
@@ -286,14 +313,14 @@ function installDebug(bird: BirdHandle) {
   };
 }
 
-export type { Bird, BirdContext } from './types';
+export type { Bird } from './types';
 export type { Species } from './species';
 export { MOUNTAIN_GEM } from './species';
 export { Pose } from './pose';
 export type { Layer, Mind } from './motion/mind';
 export type { GazeLayer } from './motion/gaze';
 export type { MouthLayer } from './motion/mouth';
-export type { RuffleLayer } from './motion/ruffle';
+export type { RuffleLayer, RuffleKind } from './motion/ruffle';
 export type { ForageLayer } from './motion/forage';
 export type { HopLayer } from './motion/hop';
 export type { FleeLayer } from './motion/flee';

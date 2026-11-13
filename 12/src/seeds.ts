@@ -77,7 +77,6 @@ export function createSeeds(scene: THREE.Scene) {
     obj.rotation.set((Math.random() - 0.5) * 0.4, Math.random() * 6.28, (Math.random() - 0.5) * 0.4);
     obj.scale.setScalar(0.01);
     scene.add(obj);
-    stats.spawned++;
     seeds.push({
       id: nextId++,
       obj,
@@ -99,16 +98,14 @@ export function createSeeds(scene: THREE.Scene) {
     scene.remove(s.obj);
   }
 
-  const stats = { spawned: 0, picked: 0, swallowed: 0, dropped: 0 };
-
   return {
     spawn,
-    stats,
+    /** one of each part, never in the scene: for compiling the shaders while loading, not on the first seed */
+    warm: [new THREE.LineSegments(g.fibres, fibreMat), new THREE.Mesh(g.beak, beakMat), new THREE.Mesh(g.body, bodyMat)] as THREE.Object3D[],
     /** the bird took this one */
     pick(id: number) {
       const s = seeds.find((x) => x.id === id && x.state === 'drift');
       if (s) {
-        stats.picked++;
         s.state = 'carried';
         s.carryT = 0;
         s.swallowAt = -1;
@@ -119,7 +116,6 @@ export function createSeeds(scene: THREE.Scene) {
       const s = seeds.find((x) => x.id === id && x.state === 'carried');
       if (s && s.swallowAt < 0) {
         s.swallowAt = s.carryT;
-        stats.swallowed++;
       }
     },
     /** drifting seeds, for bird.setFood */
@@ -165,10 +161,7 @@ export function createSeeds(scene: THREE.Scene) {
             s.obj.scale.setScalar(Math.max(0, 0.2 * (1 - (s.carryT - s.swallowAt) * 10)));
             if (s.carryT - s.swallowAt > 0.1) remove(s);
           }
-          if (s.carryT > 3 || !billTip) {
-            if (s.swallowAt < 0) stats.dropped++;
-            remove(s);
-          }
+          if (s.carryT > 3 || !billTip) remove(s);
         }
       }
       for (let i = seeds.length - 1; i >= 0; i--) if (seeds[i].state === 'gone') seeds.splice(i, 1);

@@ -12,6 +12,8 @@ export interface MindEvents {
   fixate: { yaw: number; pitch: number };
   startle: { strength: number };
   ruffle: { kind: string };
+  /** it winds up to strike at a food item (once per windup: a quick second stab after a miss is the same strike) */
+  strike: { id: number };
   /** something went down the hatch */
   ate: { id: number };
   /** the feet press on the twig at world x, a push-off or a landing (push ~1 for a flight); on: standing on it after */
@@ -26,7 +28,7 @@ export class Mind {
   rng: Rng;
   /** 0 drowsy … 1 on high alert */
   arousal = 0.3;
-  baseline = 0.25;
+  baseline = 0.32;
   /** root-local point of interest, or null */
   attention: THREE.Vector3 | null = null;
   /** how fast the point of interest sweeps across the bird's view, rad/s, smoothed */
@@ -95,6 +97,5 @@ export class Mind {
 
 export interface Layer {
   readonly name: string;
-  enabled: boolean;
   update(mind: Mind, pose: Pose): void;
 }

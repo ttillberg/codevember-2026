@@ -21,7 +21,6 @@ const STILL = 0.06;
 
 export class ForageLayer implements Layer {
   readonly name = 'forage';
-  enabled = true;
   /** how far the neck will unfold / tuck to bring the bill tip onto a seed */
   reachOut = 0.3;
   reachIn = 0.2;
@@ -181,6 +180,7 @@ export class ForageLayer implements Layer {
           m.gazeLock = true;
           this.retried = false;
           this.begin(m, 'windup', rand(m.rng, 0.09, 0.13));
+          m.emit('strike', { id: seed.id });
         }
         break;
       }

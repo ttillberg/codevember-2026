@@ -23,7 +23,6 @@ const BLUR = 2; // pose.wing.spread value that hides the blades (the blur fan st
 
 export class FleeLayer implements Layer {
   readonly name = 'flee';
-  enabled = true;
   /** seconds it stays away */
   awayFor: [number, number] = [2, 5];
   /** seconds between leaving of its own accord (it rarely does) */
@@ -39,7 +38,8 @@ export class FleeLayer implements Layer {
   private far = new THREE.Vector3();
   private landX = 0;
   private nextAt: number;
-  private blur: WingBlur | null = null;
+  // made up front, hidden: its shader compiles with the rest while loading, not on the first flight
+  private blur: WingBlur;
   private shakeAt = -1;
 
   constructor(
@@ -51,6 +51,7 @@ export class FleeLayer implements Layer {
     private tail: TailLayer,
   ) {
     this.nextAt = rand(mind.rng, this.every[0], this.every[1]);
+    this.blur = createWingBlur(rig);
   }
 
   /** off the perch, or about to be */
@@ -236,11 +237,11 @@ export class FleeLayer implements Layer {
       }
     }
     p.wing.L.spread = p.wing.R.spread = spread;
-    if (blur > 0 || this.blur) (this.blur ??= createWingBlur(this.rig)).set(blur, tilt);
+    this.blur.set(blur, tilt);
     this.hop.follow();
   }
 
   dispose() {
-    this.blur?.dispose();
+    this.blur.dispose();
   }
 }

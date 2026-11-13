@@ -6,7 +6,6 @@ import type { Layer, Mind } from './mind';
 // its wings half-open, then freezes, staring, before it starts scanning again.
 export class StartleLayer implements Layer {
   readonly name = 'startle';
-  enabled = true;
   private crouch = new Spring(4.2, 0.42);
   private t0 = -100;
   private strength = 0;

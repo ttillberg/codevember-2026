@@ -19,12 +19,10 @@ const minJerk = (u: number) => u * u * u * (10 + u * (-15 + 6 * u));
 
 export class GazeLayer implements Layer {
   readonly name = 'gaze';
-  enabled = true;
   /** widest head turn relative to straight ahead, radians */
   maxYaw = 70 * DEG;
   /** chance that a new fixation concerns the point of interest (scaled up by arousal) */
   interest = 0.5;
-  tremor = 1;
   /** of the fixations on the point of interest, the share made bill-on (the rest turn one eye to it) */
   billOn = 0.46;
   /**
@@ -74,11 +72,6 @@ export class GazeLayer implements Layer {
   moveOn(m: Mind) {
     this.burst = 0;
     this.nextAt = Math.min(this.nextAt, m.t + rand(m.rng, 0.12, 0.4));
-  }
-
-  /** The fixation the head is resting on (or heading to). */
-  get target(): Readonly<Fix> {
-    return this.to;
   }
 
   private lookAtAttention(m: Mind) {
@@ -249,10 +242,9 @@ export class GazeLayer implements Layer {
     }
 
     // held still: only tremor and the slowest drift remain
-    const k = this.tremor;
-    yaw += (noise1(m.t * 11, 11) * 0.0028 + noise1(m.t * 0.6, 12) * 0.008) * k;
-    pitch += (noise1(m.t * 12, 13) * 0.0028 + noise1(m.t * 0.5, 14) * 0.007) * k;
-    roll += noise1(m.t * 0.7, 15) * 0.008 * k;
+    yaw += noise1(m.t * 11, 11) * 0.0028 + noise1(m.t * 0.6, 12) * 0.008;
+    pitch += noise1(m.t * 12, 13) * 0.0028 + noise1(m.t * 0.5, 14) * 0.007;
+    roll += noise1(m.t * 0.7, 15) * 0.008;
 
     p.headYaw += yaw;
     p.headPitch += pitch;

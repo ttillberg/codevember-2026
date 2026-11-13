@@ -8,16 +8,18 @@ export type Setting =
   | { kind: 'action'; label: string; run(): void }
   | { kind: 'heading'; label: string };
 
+type Value = number | boolean | string;
+
 const STORE = 'codevember-12-settings';
 
-function load(): Record<string, number | boolean | string> {
+function load(): Record<string, Value> {
   try {
     return JSON.parse(localStorage.getItem(STORE) ?? '{}');
   } catch {
     return {};
   }
 }
-function save(v: Record<string, number | boolean | string>) {
+function save(v: Record<string, Value>) {
   try {
     localStorage.setItem(STORE, JSON.stringify(v));
   } catch {
@@ -27,9 +29,13 @@ function save(v: Record<string, number | boolean | string>) {
 
 const gear = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3.2"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>`;
 
-export function createSettings(items: Setting[]) {
+/**
+ * overrides: values that win over the stored ones for this visit (URL flags such as ?still).
+ * They are not saved unless the control itself is touched.
+ */
+export function createSettings(items: Setting[], overrides: Record<string, Value> = {}) {
   const stored = load();
-  const values: Record<string, number | boolean | string> = {};
+  const values: Record<string, Value> = {};
 
   const button = document.createElement('button');
   button.className = 'gear';
@@ -41,6 +47,21 @@ export function createSettings(items: Setting[]) {
   const panel = document.createElement('div');
   panel.className = 'settings';
   panel.hidden = true;
+
+  // stored (or the default) → the control → the scene; then every change back the same way, and saved
+  function bind<T extends Value>(key: string, def: T, valid: (v: Value) => boolean, el: HTMLElement, event: string, read: () => T, write: (v: T) => void, set: (v: T) => void) {
+    const keep = key in stored && valid(stored[key]) ? (stored[key] as T) : def;
+    const v = key in overrides ? (overrides[key] as T) : keep;
+    values[key] = keep;
+    write(v);
+    set(v);
+    el.addEventListener(event, () => {
+      const v = read();
+      values[key] = v;
+      set(v);
+      save(values);
+    });
+  }
 
   for (const it of items) {
     if (it.kind === 'heading') {
@@ -58,57 +79,27 @@ export function createSettings(items: Setting[]) {
       panel.append(b);
       continue;
     }
-    if (it.kind === 'select') {
-      const row = document.createElement('label');
-      row.className = 'row select';
-      const name = document.createElement('span');
-      name.textContent = it.label;
-      const sel = document.createElement('select');
-      for (const o of it.options) sel.append(new Option(o, o));
-      const v = typeof stored[it.key] === 'string' && it.options.includes(stored[it.key] as string) ? (stored[it.key] as string) : it.value;
-      sel.value = v;
-      values[it.key] = v;
-      it.set(v);
-      sel.addEventListener('change', () => {
-        values[it.key] = sel.value;
-        it.set(sel.value);
-        save(values);
-      });
-      row.append(name, sel);
-      panel.append(row);
-      continue;
-    }
     const row = document.createElement('label');
     row.className = `row ${it.kind}`;
     const name = document.createElement('span');
     name.textContent = it.label;
-    const input = document.createElement('input');
-    if (it.kind === 'toggle') {
-      input.type = 'checkbox';
-      const v = typeof stored[it.key] === 'boolean' ? (stored[it.key] as boolean) : it.value;
-      input.checked = v;
-      values[it.key] = v;
-      it.set(v);
-      input.addEventListener('change', () => {
-        values[it.key] = input.checked;
-        it.set(input.checked);
-        save(values);
-      });
-      row.append(name, input);
+    if (it.kind === 'select') {
+      const sel = document.createElement('select');
+      for (const o of it.options) sel.append(new Option(o, o));
+      bind(it.key, it.value, (v) => typeof v === 'string' && it.options.includes(v), sel, 'change', () => sel.value, (v) => (sel.value = v), it.set);
+      row.append(name, sel);
     } else {
-      input.type = 'range';
-      input.min = String(it.min);
-      input.max = String(it.max);
-      input.step = String(it.step);
-      const v = typeof stored[it.key] === 'number' ? (stored[it.key] as number) : it.value;
-      input.value = String(v);
-      values[it.key] = v;
-      it.set(v);
-      input.addEventListener('input', () => {
-        values[it.key] = Number(input.value);
-        it.set(Number(input.value));
-        save(values);
-      });
+      const input = document.createElement('input');
+      if (it.kind === 'toggle') {
+        input.type = 'checkbox';
+        bind(it.key, it.value, (v) => typeof v === 'boolean', input, 'change', () => input.checked, (v) => (input.checked = v), it.set);
+      } else {
+        input.type = 'range';
+        input.min = String(it.min);
+        input.max = String(it.max);
+        input.step = String(it.step);
+        bind(it.key, it.value, (v) => typeof v === 'number', input, 'input', () => Number(input.value), (v) => (input.value = String(v)), it.set);
+      }
       row.append(name, input);
     }
     panel.append(row);

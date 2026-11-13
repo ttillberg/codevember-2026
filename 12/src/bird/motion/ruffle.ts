@@ -13,8 +13,6 @@ export type RuffleKind = 'puff' | 'shake' | 'throat';
 
 export class RuffleLayer implements Layer {
   readonly name = 'ruffle';
-  enabled = true;
-  strength = 1;
   private kind: RuffleKind = 'puff';
   private t0 = -100;
   private nextAt: number;
@@ -51,7 +49,7 @@ export class RuffleLayer implements Layer {
     }
     const tau = m.t - this.t0;
     if (tau < 0 || tau > 3) return;
-    const A = this.amp * this.strength;
+    const A = this.amp;
 
     if (this.kind === 'throat') {
       const env = smoothstep(0, 0.12, tau) * (1 - smoothstep(0.7, 1.25, tau));
