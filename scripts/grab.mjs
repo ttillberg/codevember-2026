@@ -6,6 +6,11 @@
 //   pnpm grab 08 --url http://localhost:5174/ --wait 3000 --size 1280x800
 //   pnpm grab 08 --next png         only print the next file path (to save a shot taken elsewhere)
 //   pnpm grab 08 --timelapse        stitch every png in process/ into NN-timelapse.mp4
+//
+// Show-off videos are something else, played by NN/about/demo.md, see clip.mjs:
+//   pnpm grab 08 --clip             NN/about/screengrab.mp4, the 10 s index loop, from the live site
+//   pnpm grab 08 --clip --url http://localhost:5173/ --still    from the dev server, and a new screengrab.png
+//   pnpm grab 08 --x                NN/about/x.mp4, 60 s, 1080 square, for X (gitignored)
 import { existsSync, mkdirSync, readdirSync, renameSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -14,15 +19,23 @@ import { ROOT } from './lib.mjs';
 const args = process.argv.slice(2);
 const day = Number(args[0]);
 if (!Number.isInteger(day) || day < 1 || day > 30) {
-  console.error('usage: pnpm grab <01-30> [--video s] [--url u] [--wait ms] [--size WxH] [--next ext] [--timelapse]');
+  console.error('usage: pnpm grab <01-30> [--video s] [--url u] [--wait ms] [--size WxH] [--next ext] [--timelapse] [--clip [--still] | --x]');
   process.exit(1);
 }
+const flag = (name) => args.includes(`--${name}`);
 const opt = (name, fallback) => {
   const i = args.indexOf(`--${name}`);
-  return i < 0 ? fallback : (args[i + 1] ?? true);
+  const v = args[i + 1];
+  return i < 0 ? fallback : v === undefined || v.startsWith('--') ? true : v;
 };
 
 const dir = String(day).padStart(2, '0');
+
+if (flag('clip') || flag('x')) {
+  const { clip } = await import('./clip.mjs');
+  await clip(dir, { mode: flag('x') ? 'x' : 'clip', base: opt('url', undefined), still: flag('still') });
+  process.exit(0);
+}
 const out = join(ROOT, dir, 'process');
 mkdirSync(out, { recursive: true });
 

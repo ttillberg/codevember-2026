@@ -31,7 +31,7 @@ pkg.codevember = { day, word, date };
 writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + '\n');
 
 // Fill in README + index.html placeholders
-for (const file of ['README.md', 'index.html']) {
+for (const file of ['README.md', 'index.html', 'about/demo.md']) {
   const p = join(dest, file);
   const txt = readFileSync(p, 'utf8')
     .replaceAll('{{DAY}}', dir)

@@ -5,3 +5,5 @@ dist/
 .vite/
 .playwright-mcp/
 */process/
+*/about/x.mp4
+.claude/worktrees/
