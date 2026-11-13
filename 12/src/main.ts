@@ -21,7 +21,6 @@ const usePost = !query.has('nopost');
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: !usePost, powerPreference: 'high-performance' });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, phone ? 1.5 : 2));
 renderer.outputColorSpace = THREE.SRGBColorSpace;
-renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.0;
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFShadowMap;
@@ -286,9 +285,6 @@ function letOneIn() {
   else ambient.flyBy();
 }
 document.querySelector('.bug')?.addEventListener('click', letOneIn);
-window.addEventListener('keydown', (e) => {
-  if (e.code === 'KeyG' && !e.metaKey && !e.ctrlKey) letOneIn();
-});
 const shedAt = new THREE.Vector3();
 const shedOut = new THREE.Vector3();
 bird.mind.on('ruffle', (e) => {
@@ -414,13 +410,6 @@ canvas.addEventListener('pointerup', (e) => {
     if (phone && tapsBird(e.clientX, e.clientY)) changePalette();
     else if (pointerOnPlane(e.clientX, e.clientY, 0.6, seedAt)) seeds.spawn(seedAt);
   }
-});
-window.addEventListener('keydown', (e) => {
-  if (e.code === 'Space') bird.startle(1);
-  if (e.code === 'KeyF' && !e.metaKey && !e.ctrlKey) bird.flee();
-  // R: a ruffle now (the one-a-minute limit is only for the ones it does by itself)
-  if (e.code === 'KeyR' && !e.metaKey && !e.ctrlKey) ruffle.trigger(bird.mind, 'shake');
-  if (e.code === 'KeyW' && !e.metaKey && !e.ctrlKey) setDrawing(!drawing);
 });
 
 // --- post: depth of field on the head, colour grade -----------------------------
@@ -581,12 +570,6 @@ function updateTurn(dt: number) {
     [controls.minAzimuthAngle, controls.maxAzimuthAngle] = behind ? BACK : FRONT;
   }
 }
-window.addEventListener('keydown', (e) => {
-  if (e.code === 'KeyB' && !e.metaKey && !e.ctrlKey) turnAround();
-});
-window.addEventListener('keydown', (e) => {
-  if (e.code === 'KeyC' && !e.metaKey && !e.ctrlKey) changePalette();
-});
 
 // --- H: the head alone as a wireframe, the bird and the scene as they are -----
 // A plane across the neck, following the head bone: above it the feathers are
@@ -619,18 +602,18 @@ function updateHeadCut() {
   keepHead.setFromNormalAndCoplanarPoint(cutN, neckAt);
   keepBody.copy(keepHead).negate();
 }
-window.addEventListener('keydown', (e) => {
-  if (e.code === 'KeyH' && !e.metaKey && !e.ctrlKey) setHeadWire(!headWire);
-});
 
 // --- settings wheel, bottom right ---------------------------------------------
 let followPointer = true;
 let wasRecent = false;
-let shakeAmt = query.has('still') ? 0 : 2.1;
+// (set from the settings list below: its values are the defaults)
+let shakeAmt = 0;
 let fuzzVisible = true;
 let branchFuzz: THREE.Object3D | null = null;
+// ?nofuzz and ?skin (bird/index.ts) take the bird's down off: the setting doesn't put it back
+const birdFuzz = !query.has('nofuzz') && !query.has('skin');
 function applyFuzz() {
-  bird.feathers.fuzz.visible = fuzzVisible;
+  bird.feathers.fuzz.visible = fuzzVisible && birdFuzz;
   if (branchFuzz) branchFuzz.visible = fuzzVisible;
 }
 const flash0 = bird.plumage.uFlash.value;
@@ -685,9 +668,6 @@ function updateDemo(dt: number) {
   }
   if (demoT > DEMO_END) setDemo(false);
 }
-window.addEventListener('keydown', (e) => {
-  if (e.code === 'KeyD' && !e.metaKey && !e.ctrlKey) setDemo(demoT < 0);
-});
 
 const TONE: Record<string, THREE.ToneMapping> = {
   Neutral: THREE.NeutralToneMapping,
@@ -698,10 +678,11 @@ const TONE: Record<string, THREE.ToneMapping> = {
 };
 const settings = createSettings([
   { kind: 'heading', label: 'Camera' },
-  { kind: 'range', key: 'shake', label: 'Handheld', value: shakeAmt, min: 0, max: 3.5, step: 0.05, set: (v) => (shakeAmt = v) },
+  { kind: 'range', key: 'shake', label: 'Handheld', value: 2.1, min: 0, max: 3.5, step: 0.05, set: (v) => (shakeAmt = v) },
   { kind: 'range', key: 'dof', label: 'Depth of field', value: 100, min: 0, max: 260, step: 5, set: (v) => (post.dof.uAperture.value = v) },
   { kind: 'range', key: 'exposure', label: 'Exposure', value: 1.15, min: 0.8, max: 2.4, step: 0.05, set: (v) => (post.grade.uExposure.value = v) },
   { kind: 'heading', label: 'Look' },
+  // (also the renderer's tone mapping, with or without the post pass)
   { kind: 'select', key: 'tonemap', label: 'Tone mapping', value: 'Neutral', options: Object.keys(TONE), set: (v) => post.setToneMapping(TONE[v]) },
   { kind: 'range', key: 'contrast', label: 'Contrast', value: 0.95, min: 0.6, max: 1.4, step: 0.01, set: (v) => (post.grade.uContrast.value = v) },
   { kind: 'range', key: 'sat', label: 'Saturation', value: 1.0, min: 0.3, max: 1.4, step: 0.01, set: (v) => (post.grade.uSat.value = v) },
@@ -724,7 +705,27 @@ const settings = createSettings([
   { kind: 'action', label: 'Pause (P)', run: () => setPaused(!paused) },
   { kind: 'action', label: 'Drawing (W)', run: () => setDrawing(!drawing) },
   { kind: 'action', label: 'Head wireframe (H)', run: () => setHeadWire(!headWire) },
-]);
+  // URL flags win over what was saved: ?still is a camera on a tripod even if Handheld was turned up
+], query.has('still') ? { shake: 0 } : {});
+
+// --- keys ---------------------------------------------------------------------
+const KEYS: Record<string, () => void> = {
+  KeyF: () => bird.flee(),
+  // a ruffle now (the one-a-minute limit is only for the ones it does by itself)
+  KeyR: () => ruffle.trigger(bird.mind, 'shake'),
+  KeyB: turnAround,
+  KeyC: changePalette,
+  KeyG: letOneIn,
+  KeyD: () => setDemo(demoT < 0),
+  KeyH: () => setHeadWire(!headWire),
+  KeyP: () => setPaused(!paused),
+  KeyW: () => setDrawing(!drawing),
+};
+window.addEventListener('keydown', (e) => {
+  // Space startles, modifiers or not; the letters leave the browser's shortcuts (cmd-R, ctrl-W) alone
+  if (e.code === 'Space') bird.startle(1);
+  else if (!e.metaKey && !e.ctrlKey) KEYS[e.code]?.();
+});
 
 // --- loop ---------------------------------------------------------------------
 function resize() {
@@ -749,9 +750,6 @@ function setPaused(on: boolean) {
   paused = on;
   document.body.classList.toggle('paused', on);
 }
-window.addEventListener('keydown', (e) => {
-  if (e.code === 'KeyP' && !e.metaKey && !e.ctrlKey) setPaused(!paused);
-});
 const timer = new THREE.Timer();
 timer.connect(document);
 let t = 0;

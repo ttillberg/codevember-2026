@@ -26,7 +26,7 @@ export class Mind {
   rng: Rng;
   /** 0 drowsy … 1 on high alert */
   arousal = 0.3;
-  baseline = 0.25;
+  baseline = 0.32;
   /** root-local point of interest, or null */
   attention: THREE.Vector3 | null = null;
   /** how fast the point of interest sweeps across the bird's view, rad/s, smoothed */
