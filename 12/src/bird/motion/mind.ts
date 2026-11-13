@@ -97,6 +97,5 @@ export class Mind {
 
 export interface Layer {
   readonly name: string;
-  enabled: boolean;
   update(mind: Mind, pose: Pose): void;
 }

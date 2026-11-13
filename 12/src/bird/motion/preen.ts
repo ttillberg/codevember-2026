@@ -23,7 +23,6 @@ const SPOTS: [number, number][] = [
 
 export class PreenLayer implements Layer {
   readonly name = 'preen';
-  enabled = true;
   /** spontaneous bouts: off until it has been looked at */
   auto = false;
   /** seconds between bouts when calm */

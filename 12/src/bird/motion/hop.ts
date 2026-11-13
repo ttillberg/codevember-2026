@@ -24,7 +24,6 @@ const newFrame = (): PerchFrame => ({ point: new THREE.Vector3(), up: new THREE.
 
 export class HopLayer implements Layer {
   readonly name = 'hop';
-  enabled = true;
   /** longest single hop along the perch */
   maxHop = 0.35;
   /** after this long with nothing to eat, wander back toward the middle (0 = never) */

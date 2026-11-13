@@ -30,7 +30,7 @@ export interface BirdHandle extends Bird {
   /** Behaviour layers, run in order every frame. Push your own. */
   layers: Layer[];
   layer<T extends Layer>(name: string): T;
-  /** Feather shader uniforms: uFlash, uGlint, uSheen are free to tune. */
+  /** Feather shader uniforms: uFlash and uGlint are free to tune. */
   plumage: PlumageUniforms;
   /** the feather meshes, for the scene's quality and drawing switches */
   feathers: { contour: THREE.SkinnedMesh; flight: THREE.SkinnedMesh; fuzz: THREE.SkinnedMesh };
@@ -191,7 +191,7 @@ export function createBird(options: BirdOptions = {}): BirdHandle {
       }
       mind.step(dt, headRest);
       pose.reset();
-      for (const l of layers) if (l.enabled) l.update(mind, pose);
+      for (const l of layers) l.update(mind, pose);
       handle.onPose?.(pose, mind);
       solve(pose);
     },

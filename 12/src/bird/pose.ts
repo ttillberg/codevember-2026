@@ -29,6 +29,8 @@ export interface WingPose {
   twist: number;
 }
 
+const REST_WING: WingPose = { spread: 0, lift: 0, droop: 0, sweep: 0, raise: 0, out: 0, twist: 0 };
+
 export class Pose {
   // gaze: where the bill points, in root space. yaw + = bird's left, pitch + = up.
   headYaw = 0;
@@ -97,38 +99,17 @@ export class Pose {
   tailFan = 0; // 0 folded … 1 fanned
 
   wing: Record<Side, WingPose> = {
-    L: { spread: 0, lift: 0, droop: 0, sweep: 0, raise: 0, out: 0, twist: 0 },
-    R: { spread: 0, lift: 0, droop: 0, sweep: 0, raise: 0, out: 0, twist: 0 },
+    L: { ...REST_WING },
+    R: { ...REST_WING },
   };
 
+  /** Back to rest, every frame. (reachTarget and reachDir keep theirs: they only count while reachWeight is up.) */
   reset() {
-    this.headYaw = this.headPitch = this.headRoll = 0;
+    Object.assign(this, REST);
     this.headShift.set(0, 0, 0);
-    this.headStabil = 0.85;
-    this.reachWeight = 0;
-    this.reachPin = 0;
-    this.reachRoll = 0;
-    this.bodyYaw = this.bodyPitch = this.bodyRoll = this.chestPitch = 0;
     this.bodyShift.set(0, 0, 0);
-    this.breath = 0;
-    this.fluff = this.gorget = this.crest = 0;
     this.lift.fill(0);
-    this.lidUpper = this.lidLower = this.nict = this.jaw = 0;
-    this.tongueOut = this.tongueCurl = 0;
-    this.feetSlope = 0;
-    this.feetScale = 1;
-    this.grip = 1;
-    this.carryAt = 1;
-    this.tailPitch = this.tailYaw = this.tailRoll = this.tailFan = 0;
-    for (const s of SIDES) {
-      this.wing[s].spread = 0;
-      this.wing[s].lift = 0;
-      this.wing[s].droop = 0;
-      this.wing[s].sweep = 0;
-      this.wing[s].raise = 0;
-      this.wing[s].out = 0;
-      this.wing[s].twist = 0;
-    }
+    for (const s of SIDES) Object.assign(this.wing[s], REST_WING);
   }
 
   /** Add a bump to the lift profile centred at body coordinate c (0 bill … 1 tail). */
@@ -139,6 +120,9 @@ export class Pose {
     }
   }
 }
+
+/** every scalar channel at its initial value, so the defaults above are written once */
+const REST = Object.fromEntries(Object.entries(new Pose()).filter(([, v]) => typeof v === 'number')) as Partial<Pose>;
 
 const X = new THREE.Vector3(1, 0, 0);
 const Y = new THREE.Vector3(0, 1, 0);

@@ -209,12 +209,10 @@ export function buildParts(rig: Rig): Parts {
     rim.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
     rim.setIndex(idx);
     rim.computeVertexNormals();
-    const tintAttr = rim.getAttribute('color');
     const flat = rim.toNonIndexed();
     const flatCol = flat.getAttribute('color');
     let k = 0;
     skinB.add(flat, `eye.${side}`, ringCol, null, () => c.fromBufferAttribute(flatCol, k++).clone());
-    void tintAttr;
     skinB.add(lidShell(R * 1.04, 12 * DEG, 112 * DEG, 78 * DEG), `lidUpper.${side}`, lidCol);
     skinB.add(lidShell(R * 1.036, -106 * DEG, 16 * DEG, 78 * DEG), `lidLower.${side}`, lidCol);
   }
@@ -249,7 +247,8 @@ export function buildParts(rig: Rig): Parts {
           return [rt * taper, rt * taper * 0.9];
         }, new THREE.Vector3(1, 0, 0), 7),
         `toe.${side}.${i}`,
-        t3(legCol, i),
+        // every other toe a shade darker
+        legCol.clone().multiplyScalar(1 - (i % 2) * 0.12),
       );
     };
     const fwd = sp.legs.toe / (Rp + rt);
@@ -441,8 +440,4 @@ export function buildParts(rig: Rig): Parts {
       }
     },
   };
-}
-
-function t3(c: THREE.Color, i: number) {
-  return c.clone().multiplyScalar(1 - (i % 2) * 0.12);
 }

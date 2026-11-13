@@ -30,7 +30,6 @@ export interface PlumageUniforms {
   uWingChord: { value: THREE.Vector3 };
   uFlash: { value: number };
   uGlint: { value: number };
-  uSheen: { value: number };
   /**
    * Colour of the plumage, as four 3x3 colour matrices (hue turned round the
    * grey axis, saturation, value): gorget sheen, crown sheen, body pigment,
@@ -108,7 +107,6 @@ export function createPlumageMaterial(): { material: THREE.MeshStandardMaterial;
     uWingChord: { value: new THREE.Vector3(0, 1, 0) },
     uFlash: { value: 1 },
     uGlint: { value: 1 },
-    uSheen: { value: 1 },
     uPal: { value: [new THREE.Matrix3(), new THREE.Matrix3(), new THREE.Matrix3(), new THREE.Matrix3()] },
   };
   const material = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.6, metalness: 0, side: THREE.DoubleSide, alphaToCoverage: true });
@@ -168,7 +166,6 @@ vIriN = normalize(normalMatrix * fIriN);`,
         /* glsl */ `#include <common>
 uniform float uFlash;
 uniform float uGlint;
-uniform float uSheen;
 varying vec2 vFUv;
 varying vec3 vFData;
 varying vec4 vBase;
@@ -417,7 +414,7 @@ roughnessFactor = clamp((vFData.y > 3.5 ? 0.95 : vFData.y > 2.5 ? 0.8 : vFData.y
   // (clamped: a dot product a hair over 1 would feed pow a negative base, and one NaN
   // pixel becomes a dotted disc once a depth-of-field pass smears it)
   float fres = pow(clamp(1.0 - dot(normal, V), 0.0, 1.0), 3.0);
-  reflectedLight.indirectDiffuse += diffuseColor.rgb * ambient * fres * mix(2.5, 1.6, fSoft) * uSheen;
+  reflectedLight.indirectDiffuse += diffuseColor.rgb * ambient * fres * mix(2.5, 1.6, fSoft);
   // matte coat: soft feathers keep almost no mirror highlight
   bool blade = vFData.y > 2.5 && vFData.y < 3.5;
   // even the show scales only flash through their structural colour, not as mirrors

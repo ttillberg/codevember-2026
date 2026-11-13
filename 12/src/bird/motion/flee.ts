@@ -23,7 +23,6 @@ const BLUR = 2; // pose.wing.spread value that hides the blades (the blur fan st
 
 export class FleeLayer implements Layer {
   readonly name = 'flee';
-  enabled = true;
   /** seconds it stays away */
   awayFor: [number, number] = [2, 5];
   /** seconds between leaving of its own accord (it rarely does) */

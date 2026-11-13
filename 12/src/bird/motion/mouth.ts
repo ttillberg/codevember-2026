@@ -25,7 +25,6 @@ interface Burst {
 
 export class MouthLayer implements Layer {
   readonly name = 'mouth';
-  enabled = true;
   /** seconds between idle tongue flicks, min and max */
   lickEvery: [number, number] = [14, 36];
   /** seconds between songs of its own, min and max */

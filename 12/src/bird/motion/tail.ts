@@ -6,7 +6,6 @@ import type { Layer, Mind } from './mind';
 // spring, the rectrices fanning for an instant.
 export class TailLayer implements Layer {
   readonly name = 'tail';
-  enabled = true;
   private pitch = new Spring(6.5, 0.28);
   private fan = new Spring(4.5, 0.5);
   private yaw = new Spring(5, 0.4);
