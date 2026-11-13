@@ -1,11 +1,32 @@
 html, body, #root { margin: 0; height: 100%; background: #0b0c0f; overflow: hidden; }
 canvas { display: block; }
-.back {
-  position: fixed; left: 12px; bottom: 12px;
-  font: 12px ui-monospace, Menlo, monospace; color: #111; opacity: .5;
-  text-decoration: none;
+/* The title plate (docs/DESIGN.md): top left, the only way home. Only the link takes a press. */
+.plate {
+  position: fixed; z-index: 2;
+  top: max(24px, env(safe-area-inset-top)); left: max(24px, env(safe-area-inset-left));
+  pointer-events: none;
+  color: #f4f4f2;
+  font: 13px/1.4 Inter, "Helvetica Neue", Helvetica, Arial, sans-serif;
+  user-select: none; -webkit-user-select: none;
 }
-.back:hover { opacity: 1; }
+.plate b {
+  display: block; white-space: nowrap;
+  font-family: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-size: 56px; font-weight: 700; letter-spacing: -0.02em; line-height: 0.9;
+  text-transform: uppercase;
+}
+.plate .head > i {
+  display: block; margin-top: 6px;
+  font-style: normal; font-weight: 600; font-size: 14px; line-height: 1.15;
+  letter-spacing: 0.12em; text-transform: uppercase;
+}
+.plate .home span[lang="ja"] { font-family: "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Noto Sans JP", "Yu Gothic", sans-serif; letter-spacing: 0.06em; }
+a.home { color: inherit; text-decoration: none; pointer-events: auto; cursor: pointer; -webkit-tap-highlight-color: transparent; }
+@media (max-width: 640px) {
+  .plate { left: max(16px, env(safe-area-inset-left)); top: max(16px, env(safe-area-inset-top)); }
+  .plate b { font-size: 36px; }
+  .plate .head > i { font-size: 10px; }
+}
 
 
 .info {
@@ -33,7 +54,6 @@ body[data-theme="dark"] .info { color: #f2f2f2; }
 
 /* Dark room: the page and its text follow the scene's background. */
 body[data-theme="dark"], body[data-theme="dark"] #root { background: #0b0c0f; }
-body[data-theme="dark"] .back { color: #f2f2f2; }
 
 /* The planet list down the left: bold Helvetica, the picked one full strength. */
 .planets {
@@ -49,7 +69,7 @@ body[data-theme="dark"] .back { color: #f2f2f2; }
 .planets button { font-size: 22px; letter-spacing: -0.02em; line-height: 1.1; }
 body[data-theme="dark"] .planets button { color: #f2f2f2; }
 @media (max-width: 640px) {
-  .planets { left: 16px; top: 16px; transform: none; max-width: 60vw; }
+  .planets { left: 16px; top: 88px; transform: none; max-width: 60vw; } /* under the title block */
   .planets button { font-size: 15px; }
 }
 
@@ -76,5 +96,5 @@ body[data-theme="dark"] .planets button { color: #f2f2f2; }
 
 
 /* The opening: the list and the time controls come in as the sun lights up. */
-.planets, .transport { transition: opacity 2s ease 3s; }
-body:not(.lit) .planets, body:not(.lit) .transport { opacity: 0; pointer-events: none; }
+.plate, .planets, .transport { transition: opacity 2s ease 3s; }
+body:not(.lit) .plate, body:not(.lit) .planets, body:not(.lit) .transport { opacity: 0; pointer-events: none; }
