@@ -142,24 +142,6 @@ canvas { display: block; width: 100vw; height: 100vh; touch-action: none; }
 .letter-pop { grid-template-columns: repeat(6, 44px); }
 .letter-pop button { width: 44px; height: 44px; }
 
-/* debug panel: lighting toggles, collapsed by default */
-.debug {
-  position: fixed; top: 12px; right: 12px; z-index: 5;
-  padding: 6px 10px;
-  font: 11px ui-monospace, Menlo, monospace; color: #333;
-  background: rgba(240, 240, 236, .9); border-radius: 8px; box-shadow: 0 2px 10px rgba(0, 0, 0, .08);
-}
-.debug[hidden] { display: none; }
-/* collapsed by default: just a small "debug" tab until opened */
-.debug summary { cursor: pointer; user-select: none; list-style: none; color: #666; }
-.debug summary::-webkit-details-marker { display: none; }
-.debug summary::before { content: '▸ '; }
-.debug[open] summary::before { content: '▾ '; }
-.debug-body { display: flex; flex-direction: column; gap: 4px; margin-top: 6px; }
-.debug label { display: flex; align-items: center; gap: 6px; cursor: pointer; user-select: none; }
-.debug select { font: inherit; padding: 1px 2px; }
-.debug button { font: inherit; padding: 2px 8px; border: 1px solid #bbb; border-radius: 4px; background: #fff; cursor: pointer; }
-@media (pointer: coarse), (max-width: 640px) { .debug { right: auto; } } /* placed under the plate, see the plate section */
 
 /* the title plate, top left (docs/DESIGN.md): a light day, ink #1c1c1c */
 .plate {
@@ -185,13 +167,64 @@ canvas { display: block; width: 100vw; height: 100vh; touch-action: none; }
   .plate b { font-size: 36px; }
   .plate .head > i { font-size: 10px; }
 }
-/* phones: the object picker top right, the scraper under it, settings under the plate */
+/* phones: one column top right, settings, object, scraper */
 @media (max-width: 640px), (pointer: coarse) {
-  .letter-btn { top: max(8px, env(safe-area-inset-top)); left: auto; right: max(6px, env(safe-area-inset-right)); }
-  .letter-pop { top: 80px; left: auto; right: 10px; }
-  .scrape-btn { top: 80px; }
-  .debug { top: 108px; left: 18px; }
+  .letter-btn { top: 76px; left: auto; right: 6px; }
+  .letter-pop { top: 144px; left: auto; right: 10px; }
+  .scrape-btn { top: 144px; right: 6px; }
 }
-@media (max-width: 640px) { .debug { top: 76px; left: 10px; } }
 /* ?clean: the scene alone */
-.clean .plate, .clean .swatches, .clean .letter-btn, .clean .letter-pop, .clean .touch-hint, .clean .size-ring, .clean .scrape-btn, .clean .debug { display: none !important; }
+.clean .plate, .clean .swatches, .clean .letter-btn, .clean .letter-pop, .clean .touch-hint, .clean .size-ring, .clean .scrape-btn, .clean .settings { display: none !important; }
+
+/* settings: a gear top right, the size of the object picker, its menu a frosted panel under it (07 Hollow's) */
+.settings { position: fixed; z-index: 11; top: max(8px, env(safe-area-inset-top)); right: max(6px, env(safe-area-inset-right)); }
+.gear {
+  display: flex; align-items: center; justify-content: center; width: 64px; height: 64px; padding: 0; border: 0;
+  border-radius: 50%; background: none; color: #868583; cursor: pointer; -webkit-tap-highlight-color: transparent;
+  transition: color .12s, background .12s;
+}
+.gear svg { width: 30px; height: 30px; display: block; transition: transform .3s cubic-bezier(.2, .8, .2, 1); }
+.gear:hover { color: #1c1c1c; }
+.gear.on { color: #1c1c1c; background: rgba(0, 0, 0, .06); }
+.gear.on svg { transform: rotate(30deg); }
+.settings .menu {
+  position: absolute; right: 4px; top: calc(100% + 6px);
+  display: flex; flex-direction: column; min-width: 220px; padding: 6px; border-radius: 20px; box-sizing: border-box;
+  font: 12px/16px Inter, "Helvetica Neue", Helvetica, Arial, sans-serif; color: #111; user-select: none; -webkit-user-select: none;
+  /* frosted glass: a heavy blur, a pale sheen from the top, a bright rim */
+  background: linear-gradient(to bottom, rgba(255, 255, 255, .7), rgba(255, 255, 255, .45));
+  backdrop-filter: blur(30px) saturate(1.8) brightness(1.04); -webkit-backdrop-filter: blur(30px) saturate(1.8) brightness(1.04);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .9), inset 0 0 0 1px rgba(255, 255, 255, .5), 0 8px 24px rgba(0, 0, 0, .1);
+  transform-origin: calc(100% - 28px) 0; animation: menu-in .2s cubic-bezier(.2, .8, .2, 1);
+}
+.settings .menu[hidden] { display: none; }
+@keyframes menu-in { from { opacity: 0; transform: translateY(-6px) scale(.96); } }
+.settings .row {
+  display: flex; align-items: center; gap: 8px; width: 100%; height: 34px; padding: 0 10px; border: 0; border-radius: 14px;
+  background: none; font: inherit; color: inherit; cursor: pointer; text-align: left; box-sizing: border-box;
+}
+.settings .row:hover { background: rgba(0, 0, 0, .05); }
+.settings .row span { flex: 1; }
+.settings .switch { position: relative; width: 28px; height: 16px; border-radius: 999px; background: rgba(0, 0, 0, .14); transition: background .15s; }
+.settings .switch::after {
+  content: ''; position: absolute; left: 2px; top: 2px; width: 12px; height: 12px; border-radius: 50%; background: #fff;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, .25); transition: transform .18s cubic-bezier(.3, 1.4, .5, 1);
+}
+.settings [aria-pressed="true"] .switch { background: #111; }
+.settings [aria-pressed="true"] .switch::after { transform: translateX(12px); }
+.settings .select { cursor: default; }
+.settings .select:hover { background: none; }
+.settings select {
+  appearance: none; -webkit-appearance: none; border: 0; border-radius: 999px; height: 24px; padding: 0 24px 0 10px;
+  background: #e6e5e2 url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%23868583' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") no-repeat right 9px center;
+  color: #111; font: 500 11px/1 Inter, "Helvetica Neue", Helvetica, Arial, sans-serif; cursor: pointer; outline: none;
+}
+.settings select:hover { background-color: #dcdbd8; }
+.settings hr { width: calc(100% - 20px); margin: 4px auto; border: 0; height: 1px; background: rgba(0, 0, 0, .1); }
+.settings .actions { display: flex; flex-direction: column; gap: 4px; padding: 4px; }
+.settings .actions button {
+  display: flex; align-items: center; gap: 8px; width: 100%; height: 32px; padding: 0 12px; border: 0; border-radius: 999px;
+  background: #e6e5e2; color: #111; font: 500 12px/1 Inter, "Helvetica Neue", Helvetica, Arial, sans-serif; cursor: pointer; white-space: nowrap;
+}
+.settings .actions button:hover { background: #111; color: #fff; }
+.settings .actions svg { flex: none; }

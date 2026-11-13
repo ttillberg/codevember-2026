@@ -202,7 +202,7 @@ function createWorld(text: string, kind: 'word' | 'rock' = 'word'): World {
   const shells = new THREE.InstancedMesh(geo, shellMat, SHELLS);
   shells.frustumCulled = false;
   const fronds = buildFronds(geo, surface.fertility, coarse ? 40000 : 140000);
-  // the fronds share the lighting uniform objects with the shells: the debug panel, the shadow pass and the
+  // the fronds share the lighting uniform objects with the shells: the settings menu, the shadow pass and the
   // back light drive both, nothing has to be copied across
   const fu = (fronds.mesh.material as THREE.ShaderMaterial).uniforms;
   for (const k of SHARED_UNIFORMS) fu[k] = shellMat.uniforms[k];
@@ -386,27 +386,44 @@ function fillAll() {
   dirty = true;
 }
 
-// ---- debug panel: lighting toggles and a fill button, collapsed by default
+// ---- settings: a gear top right, its menu holds the lighting toggles, tone mapping and a fill button
 {
-  const panel = document.querySelector<HTMLDetailsElement>('.debug')!;
-  panel.hidden = false; // on everywhere, production too; it starts collapsed
-  panel.querySelectorAll<HTMLInputElement>('input[data-uniform]').forEach((box) => {
-    box.addEventListener('change', () => { shellMat.uniforms[box.dataset.uniform!].value = box.checked ? 1 : 0; });
+  const box = document.querySelector<HTMLElement>('.settings')!;
+  const gear = box.querySelector<HTMLButtonElement>('.gear')!;
+  const menu = box.querySelector<HTMLElement>('.menu')!;
+  const setOpen = (open: boolean) => {
+    menu.hidden = !open;
+    gear.classList.toggle('on', open);
+    gear.setAttribute('aria-expanded', String(open));
+  };
+  gear.addEventListener('pointerdown', (e) => e.preventDefault()); // keep focus off it, keys stay the brush's
+  gear.addEventListener('click', () => setOpen(menu.hidden));
+  addEventListener('pointerdown', (e) => { if (!menu.hidden && !box.contains(e.target as Node)) setOpen(false); });
+  addEventListener('keydown', (e) => { if (e.key === 'Escape') setOpen(false); });
+  // a row is a switch: aria-pressed holds its state
+  const toggle = (row: HTMLElement, on: boolean) => row.setAttribute('aria-pressed', String(on));
+  menu.querySelectorAll<HTMLButtonElement>('[data-uniform]').forEach((row) => {
+    row.addEventListener('click', () => {
+      const on = row.getAttribute('aria-pressed') !== 'true';
+      toggle(row, on);
+      shellMat.uniforms[row.dataset.uniform!].value = on ? 1 : 0;
+    });
   });
-  panel.querySelector('[data-action="fill"]')!.addEventListener('click', fillAll);
+  menu.querySelector('[data-action="fill"]')!.addEventListener('click', () => { fillAll(); setOpen(false); });
   // tone mapping: each mode gets its own exposure, AgX and ACES darken differently
   const TONE_EXPOSURE = [1, 1.5, 1.1, 1.15];
-  const toneSel = panel.querySelector<HTMLSelectElement>('select[data-tone]')!;
+  const toneSel = menu.querySelector<HTMLSelectElement>('select[data-tone]')!;
   toneSel.addEventListener('change', () => {
     const k = Number(toneSel.value);
     shellMat.uniforms.uTone.value = k;
     shellMat.uniforms.uExposure.value = TONE_EXPOSURE[k];
   });
-  // AO: the SSAO pass and the baked darkening of moss in hollows, on when checked. Remembered across visits.
-  const aoBox = panel.querySelector<HTMLInputElement>('input[data-toggle="ao"]')!;
-  aoBox.checked = !aoOff;
-  aoBox.addEventListener('change', () => {
-    setAO(aoBox.checked);
+  // AO: the SSAO pass and the baked darkening of moss in hollows. Remembered across visits.
+  const aoRow = menu.querySelector<HTMLButtonElement>('[data-toggle="ao"]')!;
+  toggle(aoRow, !aoOff);
+  aoRow.addEventListener('click', () => {
+    setAO(aoOff);
+    toggle(aoRow, !aoOff);
     try { localStorage.setItem(AO_KEY, aoOff ? '1' : '0'); } catch { /* private mode: just not remembered */ }
   });
 }
@@ -858,7 +875,7 @@ function blendSpecies(dt: number) {
 // ---- SSAO: three's own GTAO, so it always matches the three version. It does not re-render the scene with
 // its own normal material (that would drop the shells' and fronds' vertex shaders): it gets our depth and
 // rebuilds normals from it. The scene renders into a multisampled target first, so MSAA stays.
-// Switchable in the debug panel; off, the canvas renders directly.
+// Switchable in the settings menu; off, the canvas renders directly.
 const beautyRT = new THREE.WebGLRenderTarget(1, 1, {
   type: THREE.HalfFloatType,
   samples: 4,
