@@ -104,6 +104,8 @@ export function createSeeds(scene: THREE.Scene) {
   return {
     spawn,
     stats,
+    /** one of each part, never in the scene: for compiling the shaders while loading, not on the first seed */
+    warm: [new THREE.LineSegments(g.fibres, fibreMat), new THREE.Mesh(g.beak, beakMat), new THREE.Mesh(g.body, bodyMat)] as THREE.Object3D[],
     /** the bird took this one */
     pick(id: number) {
       const s = seeds.find((x) => x.id === id && x.state === 'drift');

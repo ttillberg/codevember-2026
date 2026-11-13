@@ -235,6 +235,8 @@ export function createAmbient(o: AmbientOptions) {
 
   return {
     group,
+    /** a wisp of down, never in the scene: for compiling its shader and uploading its texture while loading */
+    warm: [new THREE.Mesh(downGeo, downMat)] as THREE.Object3D[],
     /** a ruffle: dust off the plumage, and sometimes a wisp of down. at: a spot on the body; out: away from it */
     shed(at: THREE.Vector3, out: THREE.Vector3, feather: boolean) {
       const n = 2 + Math.floor(Math.random() * 2);

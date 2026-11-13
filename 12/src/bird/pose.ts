@@ -247,6 +247,20 @@ export function createSolver(rig: Rig, uniforms: PlumageUniforms): Solver {
   const tN = new THREE.Vector3();
   const tS = new THREE.Vector3();
   const sternumDir = rest.sternum.worldPos.clone().sub(rest.chest.worldPos).setX(0).normalize();
+  // each leg's bones, looked up once (not by name every frame)
+  const legs = SIDES.map((s) => ({
+    s,
+    foot: bones[`foot.${s}`],
+    footRest: rest[`foot.${s}`],
+    toes: [1, 2, 3, 4].map((i) => bones[`toe.${s}.${i}`]),
+    tarsus: bones[`tarsus.${s}`],
+  }));
+  // the neck's share of the head's turn relative to the chest
+  const solveNeck = () => {
+    qRel.copy(qChestW).invert().multiply(qHead);
+    qA.copy(I).slerp(qRel, n1);
+    qB.copy(I).slerp(qRel, n2);
+  };
 
   /** Root-space position of the head bone for a given hips transform and neck rotations. */
   function headFk(hipsPos: THREE.Vector3, hipsQ: THREE.Quaternion, chestL: THREE.Quaternion, neckA: THREE.Quaternion, neckB: THREE.Quaternion, out: THREE.Vector3) {
@@ -276,11 +290,6 @@ export function createSolver(rig: Rig, uniforms: PlumageUniforms): Solver {
     // --- neck and head: world-stabilised gaze, optionally reaching with the bill ----------
     e.set(-p.headPitch, p.headYaw, p.headRoll, 'YXZ');
     qHead.setFromEuler(e);
-    const solveNeck = () => {
-      qRel.copy(qChestW).invert().multiply(qHead);
-      qA.copy(I).slerp(qRel, n1);
-      qB.copy(I).slerp(qRel, n2);
-    };
     solveNeck();
     // where the head sits with the body's motion taken out (held still in space) and the
     // layers' own shifts added
@@ -426,19 +435,17 @@ export function createSolver(rig: Rig, uniforms: PlumageUniforms): Solver {
     // --- legs: feet stay planted, the tarsus reaches for the hip ---------
     qA.setFromAxisAngle(Z, p.feetSlope);
     const open = (1 - clamp(p.grip, 0, 1)) * 0.6;
-    for (const s of SIDES) {
+    for (const { s, foot, footRest, toes, tarsus: b } of legs) {
       // each foot sits on the twig where it is: along its slope, sized to its thickness
-      const foot = bones[`foot.${s}`];
-      foot.position.copy(rest[`foot.${s}`].pos).applyQuaternion(qA);
+      foot.position.copy(footRest.pos).applyQuaternion(qA);
       foot.quaternion.copy(qA);
       foot.scale.setScalar(p.feetScale);
-      for (let i = 1; i <= 4; i++) bones[`toe.${s}.${i}`].quaternion.setFromAxisAngle(X, i === 4 ? open : -open);
+      for (let i = 0; i < 4; i++) toes[i].quaternion.setFromAxisAngle(X, i === 3 ? open : -open);
       // ankle in root space, then the tarsus reaches for the hip (in the foot's frame)
-      v2.copy(rig.ankle[s]).sub(rest[`foot.${s}`].worldPos).multiplyScalar(p.feetScale).applyQuaternion(qA).add(foot.position);
+      v2.copy(rig.ankle[s]).sub(footRest.worldPos).multiplyScalar(p.feetScale).applyQuaternion(qA).add(foot.position);
       v.copy(rig.hipSocket[s]).applyQuaternion(qHips).add(bones.hips.position).sub(v2);
       const len = v.length();
       v.applyQuaternion(qB.copy(qA).invert());
-      const b = bones[`tarsus.${s}`];
       basisQuat(v, X, b.quaternion);
       b.scale.set(1, 1, len / rig.tarsusLength / p.feetScale);
     }

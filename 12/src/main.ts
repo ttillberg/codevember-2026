@@ -91,13 +91,53 @@ function startReveal(instant = false) {
   revealing = true;
   document.body.classList.remove('loading');
 }
+const nextFrame = () => new Promise((r) => requestAnimationFrame(r));
+// the picture's first frames shouldn't stall on shaders or uploads: it all happens here, a
+// piece a frame, while the drawing still shows. The scene, then what isn't in it yet (a
+// seed, a gnat, a wisp of down), then the textures, one a frame,
+// then one frame of the picture itself
 async function ready() {
+  const compile = usePost ? post.compile : (jobs: () => Promise<unknown>[]) => Promise.all(jobs());
   try {
-    await renderer.compileAsync(scene, camera);
+    await compile(() => [renderer.compileAsync(scene, camera)]);
+    await nextFrame();
+    await compile(() => [renderer.compileAsync(warm, camera, scene)]);
+    await nextFrame();
+    // three asks the GPU about a program the first time it draws with it, a round trip that
+    // waits on the frame in flight (up to 100 ms): ask now, for the ones not drawn yet (the
+    // hidden wing blur)
+    for (const m of materialsIn([scene, warm])) {
+      const programs = (renderer.properties.get(m) as { programs?: Map<string, THREE.WebGLProgram> }).programs;
+      programs?.forEach((p) => p.getUniforms());
+    }
+    for (const tex of texturesIn([scene, warm])) {
+      await nextFrame();
+      renderer.initTexture(tex);
+    }
+    // and one picture, unseen: the shadow pass only meets the feathers here (the drawing hides them)
+    await nextFrame();
+    if (usePost) post.prerender(scene, camera);
   } catch {
     /* compile on first draw then */
   }
   startReveal();
+}
+function materialsIn(roots: THREE.Object3D[]) {
+  const out = new Set<THREE.Material>();
+  for (const root of roots) {
+    root.traverse((o) => {
+      const mat = (o as THREE.Mesh).material;
+      if (mat) for (const m of Array.isArray(mat) ? mat : [mat]) out.add(m);
+    });
+  }
+  return out;
+}
+function texturesIn(roots: THREE.Object3D[]) {
+  const out = new Set<THREE.Texture>();
+  for (const m of materialsIn(roots)) {
+    for (const v of Object.values(m)) if ((v as THREE.Texture)?.isTexture && !(v as THREE.Texture).isRenderTargetTexture) out.add(v);
+  }
+  return out;
 }
 const branchLoad = query.has('procbranch')
   ? Promise.resolve()
@@ -132,6 +172,12 @@ key.shadow.bias = -0.0015;
 key.shadow.normalBias = 0.025;
 key.shadow.radius = 4;
 key.target.position.set(0, 0.5, 0);
+if (phone) {
+  // a quarter of the map, its box drawn in round what casts and catches the shadows that show:
+  // the bird anywhere along its stretch of twig, the twig under it, the flowers
+  key.shadow.mapSize.set(1024, 1024);
+  Object.assign(key.shadow.camera, { left: -0.85, right: 1.42, bottom: -1.0, top: 1.15 });
+}
 scene.add(key, key.target);
 const rim = new THREE.DirectionalLight(0xf2fae8, 1.4);
 rim.position.set(1.5, 1.8, -2.5);
@@ -229,6 +275,9 @@ bird.onPick = (id) => (insects.owns(id) ? insects.pick(id) : seeds.pick(id));
 bird.onSwallow = (id) => (insects.owns(id) ? insects.swallowed(id) : seeds.swallowed(id));
 // dust, a passing fly, a seed on the breeze, a wisp of down after a ruffle
 const ambient = createAmbient({ scene, camera, renderer, center: new THREE.Vector3(GRIP_X, 0.55, 0), dof: () => post.dof, passSeed: (at, wind) => seeds.spawn(at, wind) });
+// what only comes into the scene later, for compiling while loading (never drawn)
+const warm = new THREE.Group();
+warm.add(...seeds.warm, ...insects.warm, ...ambient.warm);
 let flySeenAt = -1;
 const flyLast = new THREE.Vector3();
 // the bug button (and G): a gnat or a fly, at random
@@ -251,6 +300,9 @@ bird.mind.on('ruffle', (e) => {
   ambient.shed(shedAt, shedOut, Math.random() < 0.45);
 });
 const allFood: Food[] = [];
+function pushAll(out: Food[], items: ReadonlyArray<Food>) {
+  for (let i = 0; i < items.length; i++) out.push(items[i]);
+}
 const seedAt = new THREE.Vector3();
 let downAt = 0;
 let downX = 0;
@@ -751,8 +803,10 @@ renderer.setAnimationLoop((now) => {
     wireMat.dispose();
   }
   updatePalette(dt);
+  // (filled in place: no arrays spread every frame)
   allFood.length = 0;
-  allFood.push(...seeds.food(), ...insects.food());
+  pushAll(allFood, seeds.food());
+  pushAll(allFood, insects.food());
   bird.setFood(allFood);
   updateSway(dt);
   bird.update(dt, t);
@@ -889,20 +943,48 @@ function render() {
 // and again after a resize.
 let edgeDue = true;
 let edgePx = new Uint8Array(4);
+let edgeBuf: WebGLBuffer | null = null;
+let edgeSync: WebGLSync | null = null;
 const themeMeta = document.querySelector('meta[name="theme-color"]');
 function sampleEdge() {
+  // (still waiting on the last one: ask again next frame)
+  if (edgeSync) return;
   edgeDue = false;
-  const gl = renderer.getContext();
+  const gl = renderer.getContext() as WebGL2RenderingContext;
   renderer.setRenderTarget(null);
   const w = gl.drawingBufferWidth;
-  // (one read of the whole row: each readPixels stalls for the GPU)
+  // one read of the whole row, into a buffer, picked up once the GPU is past it: a plain
+  // readPixels waits for the frame to finish, a long stall the moment the picture is up
   if (edgePx.length !== w * 4) edgePx = new Uint8Array(w * 4);
-  gl.readPixels(0, 1, w, 1, gl.RGBA, gl.UNSIGNED_BYTE, edgePx);
+  edgeBuf ??= gl.createBuffer();
+  gl.bindBuffer(gl.PIXEL_PACK_BUFFER, edgeBuf);
+  gl.bufferData(gl.PIXEL_PACK_BUFFER, edgePx.byteLength, gl.STREAM_READ);
+  gl.readPixels(0, 1, w, 1, gl.RGBA, gl.UNSIGNED_BYTE, 0);
+  gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null);
+  const sync = gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0);
+  if (!sync) return;
+  edgeSync = sync;
+  gl.flush();
+  const px = edgePx;
+  const poll = () => {
+    const s = gl.clientWaitSync(sync, 0, 0);
+    if (s === gl.TIMEOUT_EXPIRED) return void setTimeout(poll, 8);
+    gl.deleteSync(sync);
+    edgeSync = null;
+    if (s === gl.WAIT_FAILED) return;
+    gl.bindBuffer(gl.PIXEL_PACK_BUFFER, edgeBuf);
+    gl.getBufferSubData(gl.PIXEL_PACK_BUFFER, 0, px);
+    gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null);
+    paintEdge(px, w);
+  };
+  setTimeout(poll, 8);
+}
+function paintEdge(px: Uint8Array, w: number) {
   let r = 0, g = 0, b = 0;
   const n = 9;
   for (let i = 0; i < n; i++) {
     const k = Math.round(((i + 0.5) / n) * (w - 1)) * 4;
-    r += edgePx[k]; g += edgePx[k + 1]; b += edgePx[k + 2];
+    r += px[k]; g += px[k + 1]; b += px[k + 2];
   }
   const col = `rgb(${Math.round(r / n)}, ${Math.round(g / n)}, ${Math.round(b / n)})`;
   document.documentElement.style.background = col;

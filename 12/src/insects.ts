@@ -88,6 +88,8 @@ export function createInsects(scene: THREE.Scene, around: () => THREE.Vector3) {
   return {
     /** let one in now (debug, settings) */
     spawn,
+    /** one of each part, never in the scene: for compiling the shaders while loading, not on the first gnat */
+    warm: [new THREE.Mesh(bodyGeo, bodyMat), new THREE.Mesh(wingGeo, wingMat)] as THREE.Object3D[],
     owns: (id: number) => id >= ID0,
     pick(id: number) {
       const g = gnats.find((x) => x.id === id && (x.state === 'fly' || x.state === 'leave'));

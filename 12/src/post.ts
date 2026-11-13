@@ -278,6 +278,14 @@ export interface Post {
   setToneMapping(t: THREE.ToneMapping): void;
   /** the drawing is off screen: free its target (it comes back on the next drawing frame) */
   endDrawing(): void;
+  /**
+   * Compile what the picture will draw, while the drawing still shows: `jobs` runs with the
+   * scene target bound (its compileAsync calls get the programs that pass uses), then the lens.
+   * Resolves once they are all ready.
+   */
+  compile(jobs: () => Promise<unknown>[]): Promise<unknown>;
+  /** draw the picture once into its targets, unseen: whatever compile can't reach (the shadow pass) is done then */
+  prerender(scene: THREE.Scene, camera: THREE.PerspectiveCamera): void;
 }
 
 export function createPost(renderer: THREE.WebGLRenderer, opts: { samples: number }): Post {
@@ -393,6 +401,19 @@ export function createPost(renderer: THREE.WebGLRenderer, opts: { samples: numbe
     [dilateMat, tileMaxRT],
     [dofMat, dofRT],
   ];
+  // the scene, then the lens, each into its target
+  function drawPicture(scene: THREE.Scene, camera: THREE.PerspectiveCamera) {
+    renderer.setRenderTarget(sceneRT);
+    renderer.render(scene, camera);
+    // lens wide shut: nothing to blur, the grade reads the scene as it is
+    gradeMat.uniforms.uDof.value = lens.uAperture.value > 0 ? 1 : 0;
+    if (!gradeMat.uniforms.uDof.value) return;
+    for (const [mat, rt] of dofPasses) {
+      quad.material = mat;
+      renderer.setRenderTarget(rt);
+      renderer.render(fsScene, fsCam);
+    }
+  }
 
   const focusWorld = new THREE.Vector3(0, 0.9, 0);
   const tmp = new THREE.Vector3();
@@ -404,6 +425,28 @@ export function createPost(renderer: THREE.WebGLRenderer, opts: { samples: numbe
     endDrawing() {
       wireRT.dispose();
       gradeMat.uniforms.tWire.value = null;
+    },
+    compile(jobs) {
+      const prev = renderer.getRenderTarget();
+      // into a float target three compiles linear, untone-mapped programs: compiled against the
+      // screen they would be the wrong ones, and the picture would compile its own on its first frame.
+      // (binding the targets also allocates them, so that isn't left to the first frame either)
+      renderer.setRenderTarget(sceneRT);
+      const all = jobs();
+      for (const [mat, rt] of dofPasses) {
+        renderer.setRenderTarget(rt);
+        quad.material = mat;
+        all.push(renderer.compileAsync(quad, fsCam, fsScene));
+      }
+      quad.material = gradeMat;
+      renderer.setRenderTarget(prev);
+      return Promise.all(all);
+    },
+    prerender(scene, camera) {
+      const prev = renderer.getRenderTarget();
+      drawPicture(scene, camera);
+      quad.material = gradeMat;
+      renderer.setRenderTarget(prev);
     },
     setToneMapping(t) {
       renderer.toneMapping = t;
@@ -448,19 +491,7 @@ export function createPost(renderer: THREE.WebGLRenderer, opts: { samples: numbe
 
       gradeMat.uniforms.uDof.value = 0;
       // nothing of the picture shows yet: skip it (the drawing is all there is)
-      if (gradeMat.uniforms.uReveal.value > 0) {
-        renderer.setRenderTarget(sceneRT);
-        renderer.render(scene, camera);
-        // lens wide shut: nothing to blur, the grade reads the scene as it is
-        if (lens.uAperture.value > 0) {
-          gradeMat.uniforms.uDof.value = 1;
-          for (const [mat, rt] of dofPasses) {
-            quad.material = mat;
-            renderer.setRenderTarget(rt);
-            renderer.render(fsScene, fsCam);
-          }
-        }
-      }
+      if (gradeMat.uniforms.uReveal.value > 0) drawPicture(scene, camera);
       quad.material = gradeMat;
       renderer.setRenderTarget(null);
       renderer.render(fsScene, fsCam);
