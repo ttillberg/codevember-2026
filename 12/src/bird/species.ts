@@ -45,7 +45,6 @@ export interface FeatherLook {
   iriAim?: [number, number, number];
   /** per-feather tilt noise of the platelet, radians-ish */
   jitter: number;
-  rough: number;
   /** extra ruffle channel this tract listens to */
   channel?: 'gorget' | 'crown';
   /** sideways pitch between neighbours as a fraction of width (default 0.6) */
@@ -187,88 +186,88 @@ export const MOUNTAIN_GEM: Species = {
     body: {
       width: 0.03, aspect: 2.1, rowStep: 0.3, tilt: 13, lift: 1, cup: 0.3, round: 0.7, loose: 0.55, fuzz: 0.3,
       base: 0x201c24, tip: 0x4f4656, iri: 0x4a8a2c, iriGraze: 0x8a6a1c, iriStrength: 0.12, iriPower: 6,
-      iriAlign: 0, jitter: 0.5, rough: 0.85, sparkle: 0.6,
+      iriAlign: 0, jitter: 0.5, sparkle: 0.6,
     },
     belly: {
       width: 0.033, aspect: 2.5, rowStep: 0.24, tilt: 11, lift: 1.2, cup: 0.25, round: 0.65, loose: 0.75,
       base: 0x28222f, tip: 0x6a5c75, iri: 0x6a8a2a, iriGraze: 0x8a6a2a, iriStrength: 0.10, iriPower: 5,
-      iriAlign: 0, jitter: 0.5, rough: 0.9, sparkle: 0.6,
+      iriAlign: 0, jitter: 0.5, sparkle: 0.6,
     },
     flank: {
       width: 0.036, aspect: 2.8, rowStep: 0.24, tilt: 12, lift: 1.3, cup: 0.2, round: 0.55, loose: 0.9,
       base: 0x231d2a, tip: 0x60546a, iri: 0x5a6a3a, iriGraze: 0x6a4a2a, iriStrength: 0.06, iriPower: 4,
-      iriAlign: 0, jitter: 0.5, rough: 0.92, sparkle: 0.7,
+      iriAlign: 0, jitter: 0.5, sparkle: 0.7,
     },
     down: {
       width: 0.04, aspect: 2.6, rowStep: 0.24, tilt: 26, lift: 1.4, cup: 0.15, round: 0.5, loose: 1,
       base: 0x1c1618, tip: 0x40353a, iri: 0xffffff, iriGraze: 0xffffff, iriStrength: 0, iriPower: 2,
-      iriAlign: 0, jitter: 0.3, rough: 0.95,
+      iriAlign: 0, jitter: 0.3,
     },
     back: {
       width: 0.03, aspect: 2.0, rowStep: 0.31, tilt: 11, lift: 0.9, cup: 0.35, round: 0.75, loose: 0.45, fuzz: 0.3,
       base: 0x1f1d26, tip: 0x4a4655, iri: 0x3a9a3a, iriGraze: 0x8a6a18, iriStrength: 0.24, iriPower: 7,
-      iriAlign: 0, jitter: 0.5, rough: 0.8, sparkle: 0.45,
+      iriAlign: 0, jitter: 0.5, sparkle: 0.45,
     },
     scapular: {
       width: 0.042, aspect: 3.3, rowStep: 0.24, tilt: 21, lift: 0.8, cup: 0.3, round: 0.6, loose: 0.6, fuzz: 0.4,
       base: 0x211e28, tip: 0x514c5c, iri: 0x3a8a3a, iriGraze: 0x8a6a18, iriStrength: 0.2, iriPower: 6,
-      iriAlign: 0, jitter: 0.5, rough: 0.8, sparkle: 0.5,
+      iriAlign: 0, jitter: 0.5, sparkle: 0.5,
     },
     collar: {
       // small rounded fans in neat staggered rows, each a comb of bright strands
       width: 0.027, aspect: 1.45, rowStep: 0.36, tilt: 12, lift: 0.8, cup: 0.35, round: 1, loose: 0.3, spacing: 0.7, fuzz: 0.12,
       base: 0x121318, tip: 0x24282c, iri: 0x1fa060, iriGraze: 0x0a5a5a, iriStrength: 0.32, iriPower: 12,
-      iriAlign: 0.3, iriAim: [0, 0.1, 1], jitter: 0.55, rough: 0.6, sparkle: 0.6,
+      iriAlign: 0.3, iriAim: [0, 0.1, 1], jitter: 0.55, sparkle: 0.6,
     },
     head: {
       width: 0.017, aspect: 1.8, rowStep: 0.34, tilt: 12, lift: 0.45, cup: 0.35, round: 0.9, loose: 0.4, fuzz: 0.22,
       base: 0x121217, tip: 0x2a2a33, iri: 0x1c7a50, iriGraze: 0x50501a, iriStrength: 0.28, iriPower: 7,
-      iriAlign: 0, jitter: 0.45, rough: 0.8, sparkle: 0.4,
+      iriAlign: 0, jitter: 0.45, sparkle: 0.4,
     },
     mask: {
       width: 0.012, aspect: 1.7, rowStep: 0.36, tilt: 10, lift: 0.2, cup: 0.3, round: 0.9, loose: 0.35, fuzz: 0.25,
       base: 0x040405, tip: 0x0c0c0d, iri: 0x101820, iriGraze: 0x000000, iriStrength: 0.04, iriPower: 4,
-      iriAlign: 0, jitter: 0.2, rough: 0.85,
+      iriAlign: 0, jitter: 0.2,
     },
     velvet: {
       // the dark face: short, soft, matte down between the gorget and the bill and eyes
       width: 0.015, aspect: 1.6, rowStep: 0.28, tilt: 6, lift: 0.15, cup: 0.2, round: 0.7, loose: 0.8, fuzz: 0.7,
       base: 0x040303, tip: 0x0f0b09, iri: 0x000000, iriGraze: 0x000000, iriStrength: 0, iriPower: 2,
-      iriAlign: 0, jitter: 0.2, rough: 0.97,
+      iriAlign: 0, jitter: 0.2,
     },
     stripe: {
       // white down, short and soft, lying flush with the cheek
       width: 0.012, aspect: 2.6, rowStep: 0.24, tilt: 6, lift: 0.2, cup: 0.15, round: 0.5, loose: 0.95, fuzz: 1,
       base: 0xb4b1aa, tip: 0xecebe5, iri: 0xffffff, iriGraze: 0xffffff, iriStrength: 0.0, iriPower: 2,
-      iriAlign: 0, jitter: 0.2, rough: 0.9,
+      iriAlign: 0, jitter: 0.2,
     },
     covert: {
       width: 0.046, aspect: 2.6, rowStep: 0.33, tilt: 9, lift: 0.7, cup: 0.3, round: 0.7, loose: 0.4,
       base: 0x211d27, tip: 0x4e4658, iri: 0x3a7a50, iriGraze: 0x5a4a2a, iriStrength: 0.18, iriPower: 6,
-      iriAlign: 0, jitter: 0.4, rough: 0.75, sparkle: 0.5,
+      iriAlign: 0, jitter: 0.4, sparkle: 0.5,
     },
     undertail: {
       // pale undertail coverts: soft, off-white, lying down over the base of the tail
       width: 0.04, aspect: 2.9, rowStep: 0.26, tilt: 10, lift: 0.8, cup: 0.2, round: 0.6, loose: 0.8,
       base: 0x77706c, tip: 0xcfc8be, iri: 0xffffff, iriGraze: 0xffffff, iriStrength: 0, iriPower: 2,
-      iriAlign: 0, jitter: 0.3, rough: 0.95,
+      iriAlign: 0, jitter: 0.3,
     },
     wingCovert: {
       width: 0.03, aspect: 2.3, rowStep: 0.4, tilt: 7, lift: 0, cup: 0.3, round: 0.8, loose: 0.22, fuzz: 0,
       base: 0x17151c, tip: 0x3d3848, iri: 0x4a5a78, iriGraze: 0x5a4a3a, iriStrength: 0.06, iriPower: 6,
-      iriAlign: 0, jitter: 0.4, rough: 0.8, sparkle: 0.6,
+      iriAlign: 0, jitter: 0.4, sparkle: 0.6,
     },
     // --- show scales: crisp, closed, glossy ------------------------------------------------
     gorget: {
       ...scale, width: 0.052, aspect: 1.0, rowStep: 0.3, tilt: 8, lift: 0.5, spacing: 0.6,
       base: 0x1a0a0e, tip: 0x45171c, iri: 0x7a30ff, iriGraze: 0xc0308a, iriStrength: 2.0, iriPower: 4.2,
-      iriAlign: 0.74, iriAim: [0, -0.5, 0.87], jitter: 0.34, rough: 0.38, channel: 'gorget',
+      iriAlign: 0.74, iriAim: [0, -0.5, 0.87], jitter: 0.34, channel: 'gorget',
     },
     crown: {
       // small, a little ragged, and uneven: a scatter of glints more than a cap
       ...scale, width: 0.019, aspect: 1.3, rowStep: 0.34, tilt: 10, lift: 0.4, fuzz: 0.45, sparkle: 0.5, loose: 0.12,
       base: 0x050b0b, tip: 0x0a1c1a, iri: 0x14e2c4, iriGraze: 0x1a58d8, iriStrength: 2.3, iriPower: 5,
-      iriAlign: 0.8, iriAim: [0, -0.24, 1], jitter: 0.55, rough: 0.36, channel: 'crown',
+      iriAlign: 0.8, iriAim: [0, -0.24, 1], jitter: 0.55, channel: 'crown',
     },
   },
   // later entries win
