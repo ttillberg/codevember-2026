@@ -6,7 +6,8 @@ import { mulberry32 } from '../bird/util';
 // The perch: a mossy twig along X whose top passes through the origin, plus a
 // side shoot with bright lime buds like in the footage.
 
-const PERCH_R = 0.09;
+// (thinned to 0.45 of the first model, see model/thin.py)
+const PERCH_R = 0.09 * 0.45;
 
 /** Where on the twig the bird sits (a little right of its middle, so more of the twig shows to the left). */
 export const GRIP_X = 0.2;

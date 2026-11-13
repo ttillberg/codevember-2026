@@ -2,7 +2,8 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { createBackdrop } from './env/backdrop';
 import { createBranch, GRIP_X, loadBranch, perchRadiusAt } from './env/branch';
-import { createBird, type ForageLayer, type GazeLayer, type HopLayer, type MouthLayer, type RuffleLayer } from './bird';
+import { createSway } from './env/sway';
+import { createBird, type FleeLayer, type ForageLayer, type GazeLayer, type HopLayer, type MouthLayer, type RuffleLayer } from './bird';
 import type { Food, PerchFrame } from './bird/types';
 import { PALETTES, paletteMatrices } from './bird/palettes';
 import { createPost } from './post';
@@ -60,6 +61,10 @@ scene.add(backdrop.mesh);
 // procedural twig first, swapped for the Blender one once it's in
 const branch = createBranch();
 scene.add(branch.group);
+// the twig gives under the bird: it bends in the vertex shader, the bird rides along
+const sway = createSway();
+sway.use(branch.group);
+(window as unknown as { __sway: typeof sway }).__sway = sway;
 // loading: the bird and the procedural twig drawn in ink on millimetre paper
 // while the Blender twig comes down; then the picture fades in over it
 const loadLabel = document.querySelector<HTMLElement>('.loading-label span');
@@ -99,6 +104,7 @@ const branchLoad = query.has('procbranch')
         scene.remove(branch.group);
         disposeTree(branch.group);
         scene.add(b.group);
+        sway.use(b.group);
         usePerch(b.group);
         useMaskOccluders(b.group);
         branchFuzz = b.fuzz;
@@ -133,7 +139,41 @@ const bird = createBird({ renderer, scene, camera });
 // it sits a little right of the twig's middle and drifts back there
 bird.root.position.x = GRIP_X;
 bird.layer<HopLayer>('hop').home = GRIP_X;
-scene.add(bird.root);
+// (the bird stands in a rider that moves with the twig under its feet)
+const rider = new THREE.Group();
+rider.add(bird.root);
+scene.add(rider);
+const flight = bird.layer<FleeLayer>('flee');
+let ride = 1;
+const rideAt = new THREE.Vector3();
+bird.mind.on('perch', (e) => {
+  sway.push(e.x, e.push, e.side);
+  sway.load(e.on ? e.x : null);
+});
+sway.load(GRIP_X);
+sway.settle();
+function onTwig() {
+  return flight.phase === 'idle' || flight.phase === 'ready' || flight.phase === 'land';
+}
+// the lens focuses on the head, but stays on the twig while the bird is off it:
+// a photographer doesn't rack focus to the sky after it, the flowers stay sharp
+const focusAt = new THREE.Vector3();
+const focusHold = new THREE.Vector3();
+let focusSet = false;
+function updateFocus(dt: number) {
+  if (onTwig() || !focusSet) focusHold.copy(headPos);
+  if (!focusSet) focusAt.copy(focusHold);
+  focusSet = true;
+  focusAt.lerp(focusHold, 1 - Math.exp(-dt * 8));
+}
+function updateSway(dt: number) {
+  sway.update(dt);
+  // on the twig (also gathering itself to go, and landing) it moves with it; in the air it doesn't
+  const on = onTwig();
+  ride += ((on ? 1 : 0) - ride) * (1 - Math.exp(-dt * 25));
+  sway.at(bird.root.position.x, rideAt);
+  rider.position.copy(rideAt).multiplyScalar(ride);
+}
 // the fade lifts the bird alone: its meshes also sit on a mask layer, drawn white
 // (feathers through their own shader, so the mask has their exact outline)
 const MASK_LAYER = 5;
@@ -141,6 +181,7 @@ bird.root.traverse((o) => o.layers.enable(MASK_LAYER));
 const maskWhite = new THREE.MeshBasicMaterial({ color: 0xffffff });
 // the twig goes into the mask black, so the bird behind it stays unlifted there
 const maskBlack = new THREE.MeshBasicMaterial({ color: 0x000000 });
+sway.patch(maskBlack);
 const maskOccluders: THREE.Mesh[] = [];
 function useMaskOccluders(root: THREE.Object3D) {
   maskOccluders.length = 0;
@@ -568,6 +609,7 @@ const settings = createSettings([
   { kind: 'range', key: 'mood', label: 'Calm · alert', value: 0.32, min: 0, max: 1, step: 0.01, set: (v) => (bird.mind.baseline = v) },
   { kind: 'range', key: 'flash', label: 'Gorget flash', value: 1, min: 0, max: 2, step: 0.05, set: (v) => { bird.plumage.uFlash.value = flash0 * v; bird.plumage.uGlint.value = glint0 * v; } },
   { kind: 'toggle', key: 'fuzz', label: 'Down and felt', value: true, set: (v) => { fuzzVisible = v; applyFuzz(); } },
+  { kind: 'range', key: 'give', label: 'Twig give', value: 1, min: 0, max: 3, step: 0.05, set: (v) => (sway.give = v) },
   { kind: 'heading', label: 'Do' },
   { kind: 'action', label: 'Drop a seed', run: () => seeds.spawn(seedAhead()) },
   { kind: 'action', label: 'A gnat', run: () => insects.spawn() },
@@ -654,8 +696,10 @@ renderer.setAnimationLoop((now) => {
   allFood.length = 0;
   allFood.push(...seeds.food(), ...insects.food());
   bird.setFood(allFood);
+  updateSway(dt);
   bird.update(dt, t);
   bird.headPosition(headPos);
+  updateFocus(dt);
   updateHeadCut();
   seeds.update(dt, t, billTip, headPos);
   insects.update(dt, t, billTip, forage.state === 'windup' || forage.state === 'strike');
@@ -775,7 +819,7 @@ function render() {
     canvas.classList.remove('pending');
   }
   if (!usePost) return renderer.render(scene, camera);
-  post.focusOn(headPos);
+  post.focusOn(focusAt);
   post.grade.uReveal.value = THREE.MathUtils.smoothstep(reveal, 0, 1);
   post.render(scene, camera, t, revealing && reveal === 1 ? null : drawWire, drawMask);
   if (edgeDue && reveal === 1 && !drawing) sampleEdge();
