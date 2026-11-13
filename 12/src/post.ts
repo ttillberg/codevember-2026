@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { phone } from './device';
 
 // Scene → 4x MSAA HalfFloat target (alpha-to-coverage on the feathers needs the
 // samples) with a depth texture → depth of field → tone map + grade → screen.
@@ -97,13 +98,13 @@ uniform sampler2D tPack; // rgb colour, a = 1 / view distance
 uniform sampler2D tTile; // biggest CoC near here
 uniform int uTile;
 uniform vec2 uTexel;     // dpr / size: CoC numbers are in CSS px
-uniform vec2 uSpiral[48]; // (cos, sin) of i * golden angle
+uniform vec2 uSpiral[TAPS]; // (cos, sin) of i * golden angle
 uniform float uFocus;
 uniform float uAperture;
 uniform float uMaxCoc;   // px
 ${lensGlsl}
-const int TAPS = 48;
 const int MIN_TAPS = 8;
+const float FULL = 48.0; // the look was set with 48 taps: fewer each weigh more
 
 void main() {
   vec4 p0 = texture2D(tPack, vUv);
@@ -120,7 +121,7 @@ void main() {
   float R = min(R0, texelFetch(tTile, ivec2(gl_FragCoord.xy) / uTile, 0).r + 1.0);
   float area = (R * R) / (R0 * R0);
   int taps = clamp(int(ceil(float(TAPS) * area)), MIN_TAPS, TAPS);
-  float dense = float(TAPS) * area / float(taps); // 1 unless MIN_TAPS packs them tighter
+  float dense = FULL * area / float(taps);
   // rotate the spiral per pixel so a hot speck blurs to a soft disc, not a ring of dots
   float rot = fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233))) * 43758.5453) * 6.2831853;
   mat2 spin = mat2(cos(rot), sin(rot), -sin(rot), cos(rot));
@@ -170,7 +171,10 @@ uniform float uDpr;
 float hash(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
 
 void main() {
-  vec3 c = texture2D(tColor, vUv).rgb * uExposure * uWhite;
+  vec3 c = texture2D(tColor, vUv).rgb;
+  // the gather drops NaNs; with the lens shut this is the first to see them
+  if (any(isnan(c)) || any(isinf(c))) c = vec3(0.0);
+  c *= uExposure * uWhite;
   c = toneMapping(c);
   c = linearToOutputTexel(vec4(c, 1.0)).rgb;
   // lift / gamma / gain in display space
@@ -211,6 +215,8 @@ void main() {
 `;
 
 const TILE = 8;
+// a phone's pixels are small and its GPU smaller: half the taps, a little more noise
+const TAPS = phone ? 24 : 48;
 
 export interface Post {
   /** wire: while loading, draws the drawing (into its own target); null once revealing */
@@ -295,9 +301,10 @@ export function createPost(renderer: THREE.WebGLRenderer, opts: { samples: numbe
       tTile: { value: tileMaxRT.texture },
       uTile,
       uTexel: { value: new THREE.Vector2() },
-      uSpiral: { value: Array.from({ length: 48 }, (_, i) => new THREE.Vector2(Math.cos(i * 2.39996323), Math.sin(i * 2.39996323))) },
+      uSpiral: { value: Array.from({ length: TAPS }, (_, i) => new THREE.Vector2(Math.cos(i * 2.39996323), Math.sin(i * 2.39996323))) },
       ...lens,
     },
+    defines: { TAPS },
     depthTest: false,
     depthWrite: false,
     toneMapped: false,
@@ -330,6 +337,13 @@ export function createPost(renderer: THREE.WebGLRenderer, opts: { samples: numbe
     // shader calls it itself, before the grade
     toneMapped: true,
   });
+
+  const dofPasses: [THREE.Material, THREE.WebGLRenderTarget][] = [
+    [packMat, packRT],
+    [tileMat, tileRT],
+    [dilateMat, tileMaxRT],
+    [dofMat, dofRT],
+  ];
 
   const focusWorld = new THREE.Vector3(0, 0.9, 0);
   const tmp = new THREE.Vector3();
@@ -397,18 +411,16 @@ export function createPost(renderer: THREE.WebGLRenderer, opts: { samples: numbe
         }
         renderer.setRenderTarget(sceneRT);
         renderer.render(scene, camera);
-        quad.material = packMat;
-        renderer.setRenderTarget(packRT);
-        renderer.render(fsScene, fsCam);
-        quad.material = tileMat;
-        renderer.setRenderTarget(tileRT);
-        renderer.render(fsScene, fsCam);
-        quad.material = dilateMat;
-        renderer.setRenderTarget(tileMaxRT);
-        renderer.render(fsScene, fsCam);
-        quad.material = dofMat;
-        renderer.setRenderTarget(dofRT);
-        renderer.render(fsScene, fsCam);
+        // lens wide shut: nothing to blur, the grade reads the scene as it is
+        const blur = lens.uAperture.value > 0;
+        gradeMat.uniforms.tColor.value = blur ? dofRT.texture : sceneRT.texture;
+        if (blur) {
+          for (const [mat, rt] of dofPasses) {
+            quad.material = mat;
+            renderer.setRenderTarget(rt);
+            renderer.render(fsScene, fsCam);
+          }
+        }
       }
       quad.material = gradeMat;
       renderer.setRenderTarget(null);
