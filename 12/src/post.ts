@@ -3,51 +3,70 @@ import * as THREE from 'three';
 // Scene → 4x MSAA HalfFloat target (alpha-to-coverage on the feathers needs the
 // samples) with a depth texture → depth of field → tone map + grade → screen.
 //
-// DOF is a single gather pass: per-pixel circle of confusion from real depth,
-// a golden-angle spiral of taps, each tap weighted by its own CoC so a sharp
+// DOF is a gather: per-pixel circle of confusion from real depth, a
+// golden-angle spiral of taps, each tap weighted by its own CoC so a sharp
 // bird doesn't smear into the background and the background doesn't bleed
-// over the bird's edge. Cheap and good enough at this scale.
+// over the bird's edge. A pack pass first puts colour and 1/z in one target,
+// so a tap is a single fetch.
 
 const fsVert = /* glsl */ `
 varying vec2 vUv;
 void main() { vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }
 `;
 
-const dofFrag = /* glsl */ `
+/** The lens: blur circle radius (CSS px) at 1 / view distance. The motes in ambient.ts draw their discs by it too. */
+export const lensGlsl = /* glsl */ `
+float lensCoc(float invZ, float focus, float aperture, float maxCoc) {
+  // a real lens gets shallower up close; scale that back so a macro look at
+  // the eye isn't a smear (blur grows with distance from focus, not 1/f^2)
+  float k = focus / 3.3;
+  return min(aperture * abs(1.0 / focus - invZ) * k, maxCoc);
+}
+`;
+
+// colour + 1/z (view distance) in one HalfFloat texel: the gather reads nothing else
+const packFrag = /* glsl */ `
 precision highp float;
 varying vec2 vUv;
 uniform sampler2D tColor;
 uniform sampler2D tDepth;
-uniform vec2 uTexel;     // dpr / size: CoC numbers are in CSS px
-uniform vec2 uSpiral[48]; // (cos, sin) of i * golden angle
 uniform float uNear, uFar;
 uniform float uFocus;    // view-space distance in focus
 uniform float uAperture; // CoC in px for 1/z difference of 1
-uniform float uMaxCoc;   // px
 uniform float uFarCoc;   // px for the sky sphere / cleared depth
 
-float viewZ(float d) {
-  // perspective depth → positive view distance
-  float z = d * 2.0 - 1.0;
-  return 2.0 * uNear * uFar / (uFar + uNear - z * (uFar - uNear));
+void main() {
+  float d = texture2D(tDepth, vUv).x;
+  float invZ;
+  if (d >= 0.99999) {
+    // the sky: the 1/z, past infinity, whose blur circle is uFarCoc
+    invZ = max(1.0 / uFocus - uFarCoc * 3.3 / (max(uAperture, 1e-3) * uFocus), -1e4);
+  } else {
+    // perspective depth → 1 / positive view distance
+    float z = d * 2.0 - 1.0;
+    invZ = (uFar + uNear - z * (uFar - uNear)) / (2.0 * uNear * uFar);
+  }
+  // NaNs go through as they are: the gather drops them
+  gl_FragColor = vec4(texture2D(tColor, vUv).rgb, invZ);
 }
-// x = CoC px, y = view distance
-vec2 coc(vec2 uv) {
-  float d = texture2D(tDepth, uv).x;
-  if (d >= 0.99999) return vec2(uFarCoc, 1e4);
-  float z = viewZ(d);
-  // a real lens gets shallower up close; scale that back so a macro look at
-  // the eye isn't a smear (blur grows with distance from focus, not 1/f^2)
-  float k = uFocus / 3.3;
-  return vec2(min(uAperture * abs(1.0 / uFocus - 1.0 / z) * k, uMaxCoc), z);
-}
+`;
 
+const dofFrag = /* glsl */ `
+precision highp float;
+varying vec2 vUv;
+uniform sampler2D tPack; // rgb colour, a = 1 / view distance
+uniform vec2 uTexel;     // dpr / size: CoC numbers are in CSS px
+uniform vec2 uSpiral[48]; // (cos, sin) of i * golden angle
+uniform float uFocus;
+uniform float uAperture;
+uniform float uMaxCoc;   // px
+${lensGlsl}
 const int TAPS = 48;
 
 void main() {
-  vec2 cz0 = coc(vUv);
-  float c0 = cz0.x;
-  vec3 acc = texture2D(tColor, vUv).rgb;
+  vec4 p0 = texture2D(tPack, vUv);
+  float c0 = lensCoc(p0.a, uFocus, uAperture, uMaxCoc);
+  vec3 acc = p0.rgb;
   if (any(isnan(acc)) || any(isinf(acc))) acc = vec3(0.0);
   float wsum = 1.0;
   // big enough to catch blurry foreground spilling over a sharp pixel
@@ -59,12 +78,12 @@ void main() {
   for (int i = 1; i < TAPS; i++) {
     float fi = float(i);
     float r = sqrt((fi - jr) / float(TAPS)) * R;
-    vec2 uv = vUv + spin * uSpiral[i] * r * uTexel;
-    vec2 czi = coc(uv);
+    vec4 p = texture2D(tPack, vUv + spin * uSpiral[i] * r * uTexel);
+    float ci = lensCoc(p.a, uFocus, uAperture, uMaxCoc);
     // a tap behind us can't blur over us further than our own blur
-    float ci = czi.y > cz0.y * 1.02 ? min(czi.x, c0) : czi.x;
+    if (p.a * 1.02 < p0.a) ci = min(ci, c0);
     float w = smoothstep(r - 1.0, r + 1.0, ci);
-    vec3 s = texture2D(tColor, uv).rgb;
+    vec3 s = p.rgb;
     // one NaN pixel would smear into a dotted disc: drop it
     if (any(isnan(s)) || any(isinf(s))) continue;
     s = min(s, vec3(32.0));
@@ -165,6 +184,7 @@ export function createPost(renderer: THREE.WebGLRenderer, opts: { samples: numbe
     depthBuffer: true,
   });
   sceneRT.texture.colorSpace = THREE.LinearSRGBColorSpace;
+  const packRT = new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType, depthBuffer: false });
   const dofRT = new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType, depthBuffer: false });
   const wireRT = new THREE.WebGLRenderTarget(1, 1, { samples: opts.samples });
   // the bird alone, white on black: the fade only lifts the bird, not the twig or the sky
@@ -177,20 +197,32 @@ export function createPost(renderer: THREE.WebGLRenderer, opts: { samples: numbe
   fsScene.add(quad);
   const fsCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
 
+  // one lens for both passes (and the motes, through `dof`)
+  const lens = { uFocus: { value: 3.3 }, uAperture: { value: 90 }, uMaxCoc: { value: 14 } };
+  const packMat = new THREE.ShaderMaterial({
+    vertexShader: fsVert,
+    fragmentShader: packFrag,
+    uniforms: {
+      tColor: { value: sceneRT.texture },
+      tDepth: { value: depth },
+      uNear: { value: 0.1 },
+      uFar: { value: 100 },
+      uFarCoc: { value: 6 },
+      uFocus: lens.uFocus,
+      uAperture: lens.uAperture,
+    },
+    depthTest: false,
+    depthWrite: false,
+    toneMapped: false,
+  });
   const dofMat = new THREE.ShaderMaterial({
     vertexShader: fsVert,
     fragmentShader: dofFrag,
     uniforms: {
-      tColor: { value: sceneRT.texture },
-      tDepth: { value: depth },
+      tPack: { value: packRT.texture },
       uTexel: { value: new THREE.Vector2() },
       uSpiral: { value: Array.from({ length: 48 }, (_, i) => new THREE.Vector2(Math.cos(i * 2.39996323), Math.sin(i * 2.39996323))) },
-      uNear: { value: 0.1 },
-      uFar: { value: 100 },
-      uFocus: { value: 3.3 },
-      uAperture: { value: 90 },
-      uMaxCoc: { value: 14 },
-      uFarCoc: { value: 6 },
+      ...lens,
     },
     depthTest: false,
     depthWrite: false,
@@ -247,6 +279,7 @@ export function createPost(renderer: THREE.WebGLRenderer, opts: { samples: numbe
       const W = Math.floor(w * d);
       const H = Math.floor(h * d);
       sceneRT.setSize(W, H);
+      packRT.setSize(W, H);
       dofRT.setSize(W, H);
       wireRT.setSize(W, H);
       maskRT.setSize(W, H);
@@ -268,9 +301,9 @@ export function createPost(renderer: THREE.WebGLRenderer, opts: { samples: numbe
       // focus distance along the view axis, eased so saccades don't pump the focus
       tmp.copy(focusWorld).applyMatrix4(camera.matrixWorldInverse);
       focusDist += (-tmp.z - focusDist) * 0.15;
-      dofMat.uniforms.uFocus.value = Math.max(focusDist, 0.1);
-      dofMat.uniforms.uNear.value = camera.near;
-      dofMat.uniforms.uFar.value = camera.far;
+      lens.uFocus.value = Math.max(focusDist, 0.1);
+      packMat.uniforms.uNear.value = camera.near;
+      packMat.uniforms.uFar.value = camera.far;
       gradeMat.uniforms.uTime.value = t;
 
       // nothing of the picture shows yet: skip it (the drawing is all there is)
@@ -286,6 +319,9 @@ export function createPost(renderer: THREE.WebGLRenderer, opts: { samples: numbe
         }
         renderer.setRenderTarget(sceneRT);
         renderer.render(scene, camera);
+        quad.material = packMat;
+        renderer.setRenderTarget(packRT);
+        renderer.render(fsScene, fsCam);
         quad.material = dofMat;
         renderer.setRenderTarget(dofRT);
         renderer.render(fsScene, fsCam);

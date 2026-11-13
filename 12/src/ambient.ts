@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { dampAngle } from './bird/util';
+import { lensGlsl } from './post';
 
 // What else is in the air, all of it sparse and quiet:
 //   motes – specks of dust drifting on a slow breeze, catching the light as they turn
@@ -102,13 +103,14 @@ export function createAmbient(o: AmbientOptions) {
       attribute float aSeed;
       uniform float uScale, uMinPx, uTime, uFocus, uAperture, uMaxCoc, uDpr;
       varying float vGlint, vCov;
+      ${lensGlsl}
       void main() {
         vec4 mv = modelViewMatrix * vec4(position, 1.0);
         gl_Position = projectionMatrix * mv;
         float z = -mv.z;
         float px = aSize * uScale / z;
         // the lens's blur circle here, as post works it out (CSS px radius)
-        float coc = min(uAperture * abs(1.0 / uFocus - 1.0 / z) * (uFocus / 3.3), uMaxCoc) * uDpr;
+        float coc = lensCoc(1.0 / z, uFocus, uAperture, uMaxCoc) * uDpr;
         float sharp = max(px, uMinPx);
         float d = max(sharp, coc * 1.6);
         // the same light spread over a bigger disc, kept from vanishing entirely
