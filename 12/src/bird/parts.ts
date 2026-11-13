@@ -140,7 +140,6 @@ function lidShell(r: number, a0: number, a1: number, beta: number, aboutY = fals
 
 export interface Parts {
   meshes: THREE.SkinnedMesh[];
-  eyeMaterial: THREE.MeshPhysicalMaterial;
   dispose(): void;
 }
 
@@ -435,7 +434,6 @@ export function buildParts(rig: Rig): Parts {
   bill.receiveShadow = true;
   return {
     meshes,
-    eyeMaterial,
     dispose() {
       for (const m of meshes) {
         m.geometry.dispose();

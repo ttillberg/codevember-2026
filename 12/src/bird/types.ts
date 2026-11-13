@@ -7,12 +7,6 @@ import type * as THREE from 'three';
 // hummingbird is about 1.1 units from feet to crown, the tail hangs below.
 // The scene puts the perch so that its top surface passes through the origin.
 
-export interface BirdContext {
-  renderer: THREE.WebGLRenderer;
-  scene: THREE.Scene;
-  camera: THREE.PerspectiveCamera;
-}
-
 export interface Food {
   id: number;
   /** world space, live (the scene moves it) */
@@ -36,8 +30,8 @@ export interface PerchFrame {
 export interface Bird {
   /** Add this to the scene. Already placed at its perch grip point. */
   root: THREE.Object3D;
-  /** dt in seconds (clamped by the caller to ≤ 1/20), t in seconds since start. */
-  update(dt: number, t: number): void;
+  /** dt in seconds (clamped by the caller to ≤ 1/20) */
+  update(dt: number): void;
   /**
    * World-space point the bird may pay attention to (the camera, the pointer).
    * null = nothing in particular. The bird decides when and how to look.

@@ -80,7 +80,6 @@ class Builder {
   si: number[] = [];
   sw: number[] = [];
   idx: number[] = [];
-  feathers = 0;
   private S = new THREE.Vector3();
   private H = new THREE.Vector3();
   private P = new THREE.Vector3();
@@ -150,7 +149,6 @@ class Builder {
         this.idx.push(a, b, a + 1, b, b + 1, a + 1);
       }
     }
-    this.feathers++;
   }
 
   build() {
@@ -1141,7 +1139,6 @@ export interface PlumageGeometry {
   contour: THREE.BufferGeometry;
   flight: THREE.BufferGeometry;
   fuzz: THREE.BufferGeometry;
-  stats: { contourFeathers: number; flightFeathers: number; vertices: number; triangles: number };
 }
 
 export function buildPlumageGeometry(rig: Rig): PlumageGeometry {
@@ -1160,12 +1157,6 @@ export function buildPlumageGeometry(rig: Rig): PlumageGeometry {
     contour: contour.build(),
     flight: flight.build(),
     fuzz: fuzz.build(),
-    stats: {
-      contourFeathers: contour.feathers,
-      flightFeathers: flight.feathers,
-      vertices: (contour.pos.length + flight.pos.length + fuzz.pos.length) / 3,
-      triangles: (contour.idx.length + flight.idx.length + fuzz.idx.length) / 3,
-    },
   };
 }
 

@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import type { Bird, BirdContext, Food } from './types';
+import type { Bird, Food } from './types';
 import { MOUNTAIN_GEM, type Species } from './species';
 import { buildRig, type Rig } from './rig';
 import { buildPlumageGeometry } from './plumageGeometry';
@@ -32,7 +32,6 @@ export interface BirdHandle extends Bird {
   layer<T extends Layer>(name: string): T;
   /** Feather shader uniforms: uFlash, uGlint, uSheen are free to tune. */
   plumage: PlumageUniforms;
-  stats: { bones: number; contourFeathers: number; flightFeathers: number; vertices: number; triangles: number };
   /** the feather meshes, for the scene's quality and drawing switches */
   feathers: { contour: THREE.SkinnedMesh; flight: THREE.SkinnedMesh; fuzz: THREE.SkinnedMesh };
   /** world-space position of the head bone */
@@ -74,7 +73,7 @@ export interface BirdOptions {
   seed?: number;
 }
 
-export function createBird(_ctx: BirdContext, options: BirdOptions = {}): BirdHandle {
+export function createBird(options: BirdOptions = {}): BirdHandle {
   const species = options.species ?? MOUNTAIN_GEM;
   const root = new THREE.Group();
   root.name = 'bird';
@@ -149,7 +148,6 @@ export function createBird(_ctx: BirdContext, options: BirdOptions = {}): BirdHa
     plumage: uniforms,
     feathers: { contour, flight, fuzz },
     headPosition: (out) => rig.bones.head.getWorldPosition(out),
-    stats: { bones: rig.list.length, ...plumageGeo.stats },
     onPose: null,
     flee: () => flee.start(),
     preen: (side) => preen.start(mind, side),
@@ -234,7 +232,7 @@ export function createBird(_ctx: BirdContext, options: BirdOptions = {}): BirdHa
 
   const debugCleanup = installDebug(handle);
   // settle into the first pose so frame 0 is not the bind pose
-  handle.update(0, 0);
+  handle.update(0);
   return handle;
 }
 
@@ -315,7 +313,7 @@ function installDebug(bird: BirdHandle) {
   };
 }
 
-export type { Bird, BirdContext } from './types';
+export type { Bird } from './types';
 export type { Species } from './species';
 export { MOUNTAIN_GEM } from './species';
 export { Pose } from './pose';

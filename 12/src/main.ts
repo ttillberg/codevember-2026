@@ -184,7 +184,7 @@ rim.target.position.set(0, 0.5, 0);
 scene.add(rim, rim.target);
 
 // --- bird ---------------------------------------------------------------------
-const bird = createBird({ renderer, scene, camera });
+const bird = createBird();
 // it sits a little right of the twig's middle and drifts back there
 bird.root.position.x = GRIP_X;
 bird.layer<HopLayer>('hop').home = GRIP_X;
@@ -740,7 +740,7 @@ renderer.setAnimationLoop((now) => {
   pushAll(allFood, insects.food());
   bird.setFood(allFood);
   updateSway(dt);
-  bird.update(dt, t);
+  bird.update(dt);
   bird.headPosition(headPos);
   updateFocus(dt);
   updateHeadCut();

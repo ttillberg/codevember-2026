@@ -467,5 +467,3 @@ export function createSolver(rig: Rig, uniforms: PlumageUniforms): Solver {
   applyPose.billReach = tipLen;
   return applyPose;
 }
-
-export { Z as FORWARD };
