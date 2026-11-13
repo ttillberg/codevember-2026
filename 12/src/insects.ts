@@ -42,8 +42,8 @@ export function createInsects(scene: THREE.Scene, around: () => THREE.Vector3) {
   const tmp = new THREE.Vector3();
   const toGoal = new THREE.Vector3();
   let nextId = ID0;
-  // rare: one some time in the first minute, then one every 45–90 s
-  let nextAt = 20 + Math.random() * 35;
+  // the first some 10 s in, then one every 20–40 s (never two at once; the bird mostly misses them)
+  let nextAt = 10 + Math.random() * 3;
   /** the bird has just wound up to strike (the 'strike' event): roll the dodge on the next update */
   let strikeDue = false;
 
@@ -118,7 +118,7 @@ export function createInsects(scene: THREE.Scene, around: () => THREE.Vector3) {
       strikeDue = false;
       if (t > nextAt && gnats.length === 0) {
         spawn();
-        nextAt = t + 45 + Math.random() * 45;
+        nextAt = t + 20 + Math.random() * 20;
       }
       for (const g of gnats) {
         if (g.state === 'gone') continue;
