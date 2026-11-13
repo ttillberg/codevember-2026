@@ -26,24 +26,37 @@ export const PERCH_RANGE: [number, number] = [GRIP_X - 0.45, GRIP_X + 0.45];
 
 /**
  * The perch frame at world x on this twig (its 'perch' mesh), for bird.setPerch.
- * A ray straight down at x finds the top of the twig; the tangent and up come from
- * two neighbours. The twig never moves, so each x is cast once: the hop's search
- * asks the same handful of spots over and over.
+ * A ray straight down over the twig's middle at x finds its top; the tangent and up
+ * come from two neighbours. The twig never moves, so each x is cast once: the hop's
+ * search asks the same handful of spots over and over.
  */
 export function perchFrames(root: THREE.Object3D, range = PERCH_RANGE) {
   root.updateMatrixWorld(true);
   const src = root.getObjectByName('perch') as THREE.Mesh | undefined;
   // (only ever cast at, never drawn: nothing on the GPU to free when the twig is swapped)
   const mesh = src ? cropPerch(src, range[0] - 0.1, range[1] + 0.1) : null;
+  // its vertices in world space, to find the middle of a slice across it
+  const pts = mesh ? (mesh.geometry.getAttribute('position').clone().applyMatrix4(mesh.matrixWorld).array as Float32Array) : new Float32Array();
   const ray = new THREE.Raycaster();
   ray.ray.direction.set(0, -1, 0);
   const hits: THREE.Intersection[] = [];
   const cache = new Map<number, PerchFrame | null>();
   const pa = new THREE.Vector3();
   const pb = new THREE.Vector3();
+  /** the twig doesn't run along z = 0: it wanders back and forth, a few cm by the grip */
+  function midZ(x: number) {
+    let lo = Infinity;
+    let hi = -Infinity;
+    for (let i = 0; i < pts.length; i += 3) {
+      if (Math.abs(pts[i] - x) > 0.006) continue;
+      lo = Math.min(lo, pts[i + 2]);
+      hi = Math.max(hi, pts[i + 2]);
+    }
+    return lo <= hi ? (lo + hi) / 2 : 0;
+  }
   function top(x: number, out: THREE.Vector3) {
     if (!mesh) return null;
-    ray.ray.origin.set(x, 2, 0);
+    ray.ray.origin.set(x, 2, midZ(x));
     hits.length = 0;
     ray.intersectObject(mesh, false, hits);
     const h = hits[0];
