@@ -2,7 +2,8 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#e6e6e3" />
     <title>05 · Moss · Codevember 2026</title>
     <meta name="description" content="Paint five real mosses and lichens onto a rock or a letter" />
     <!-- share image: 05/about/screengrab.png, copied next to the build by scripts/build.mjs -->
@@ -12,10 +13,15 @@
     <meta property="og:image:width" content="1200" />
     <meta property="og:image:height" content="1200" />
     <meta name="twitter:card" content="summary_large_image" />
+    <link rel="icon" href="data:," />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@700&family=Inter:wght@400;600&display=swap" />
     <link rel="stylesheet" href="./src/style.css" />
   </head>
   <body>
     <canvas id="c"></canvas>
+    <div class="plate"><div class="head"><b>05 Moss</b><i><a class="home" href="../">Codevember 2026 <span lang="ja">苔</span></a></i></div></div>
     <div class="swatches" role="toolbar" aria-label="brush">
       <button class="sw" data-species="0" aria-label="feather moss, Hylocomium splendens" data-latin="Hylocomium splendens" data-common="glittering wood-moss"><i class="feather"></i><span>feather</span></button>
       <button class="sw" data-species="1" aria-label="star moss, Polytrichum commune" data-latin="Polytrichum commune" data-common="common haircap"><i class="star"></i><span>star</span></button>

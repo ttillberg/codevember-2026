@@ -13,6 +13,9 @@ import { GTAOPass } from 'three/addons/postprocessing/GTAOPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { renderSwatches, renderEraser } from './swatches';
 import { setupCarousel, type Carousel } from './carousel';
+
+// ?clean: the scene alone, no furniture (docs/DESIGN.md)
+if (new URLSearchParams(location.search).has('clean')) document.documentElement.classList.add('clean');
 import { renderGlyphThumbs } from './glyphthumbs';
 import { renderToDataURL } from './render';
 
