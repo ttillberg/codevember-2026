@@ -219,6 +219,12 @@ export async function loadBranch(url: string, onProgress?: (e: ProgressEvent) =>
   return { group, fuzz };
 }
 
+function put(a: Float32Array, i: number, x: number, y: number, z: number) {
+  a[i] = x;
+  a[i + 1] = y;
+  a[i + 2] = z;
+}
+
 // Fine hairs, one thin tapered triangle each, scattered over the twig and
 // leaning along it, like the ones on the shoot and flowers (same material).
 function fineHairs(perch: THREE.Mesh, material: THREE.Material) {
@@ -230,9 +236,10 @@ function fineHairs(perch: THREE.Mesh, material: THREE.Material) {
   const t = new THREE.Vector3();
   const b = new THREE.Vector3();
   const dir = new THREE.Vector3();
-  const pos: number[] = [];
-  const nor: number[] = [];
-  const uv: number[] = [];
+  // filled in place and trimmed after: growing arrays of a hundred thousand numbers held up the loader
+  const pos = new Float32Array(COUNT * 9);
+  const nor = new Float32Array(COUNT * 9);
+  const uv = new Float32Array(COUNT * 6);
   let made = 0;
   for (let tries = 0; made < COUNT && tries < COUNT * 4; tries++) {
     sampler.sample(p, n);
@@ -246,17 +253,21 @@ function fineHairs(perch: THREE.Mesh, material: THREE.Material) {
     dir.copy(n).multiplyScalar(1 - lean).addScaledVector(t, lean).normalize();
     const w = 0.00045 + rng() * 0.0003;
     const base = p.addScaledVector(n, -0.001);
-    pos.push(base.x - b.x * w, base.y - b.y * w, base.z - b.z * w, base.x + b.x * w, base.y + b.y * w, base.z + b.z * w,
-      base.x + dir.x * len, base.y + dir.y * len, base.z + dir.z * len);
-    for (let k = 0; k < 3; k++) nor.push(n.x, n.y, n.z);
-    // the flower hairs' gradient texture runs root (v = 0) to tip (v = 1)
-    uv.push(0, 0, 1, 0, 0.5, 1);
+    const o = made * 9;
+    put(pos, o, base.x - b.x * w, base.y - b.y * w, base.z - b.z * w);
+    put(pos, o + 3, base.x + b.x * w, base.y + b.y * w, base.z + b.z * w);
+    put(pos, o + 6, base.x + dir.x * len, base.y + dir.y * len, base.z + dir.z * len);
+    for (let k = 0; k < 9; k += 3) put(nor, o + k, n.x, n.y, n.z);
+    // the flower hairs' gradient texture runs root (v = 0) to tip (v = 1): (0, 0) (1, 0) (0.5, 1), zeros already there
+    uv[made * 6 + 2] = 1;
+    uv[made * 6 + 4] = 0.5;
+    uv[made * 6 + 5] = 1;
     made++;
   }
   const g = new THREE.BufferGeometry();
-  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-  g.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3));
-  g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+  g.setAttribute('position', new THREE.BufferAttribute(pos.slice(0, made * 9), 3));
+  g.setAttribute('normal', new THREE.BufferAttribute(nor.slice(0, made * 9), 3));
+  g.setAttribute('uv', new THREE.BufferAttribute(uv.slice(0, made * 6), 2));
   const m = new THREE.Mesh(g, material);
   m.name = 'twig.hairs';
   m.position.copy(perch.position);
@@ -273,9 +284,33 @@ function fineHairs(perch: THREE.Mesh, material: THREE.Material) {
 // paler and warmer at the tip. Alpha to coverage softens the fibre edges.
 const SHELLS = phone ? 7 : 14;
 const FUZZ_H = 0.03; // moss height; the felt only reaches ~0.014 of it
+/** left of this the felt is gone (vGrip is 0 from x = -3.2), so no shell draws there */
+const FELT_X0 = -3.25;
+
+// The shells' own perch: only the triangles the felt can reach. The rest were drawn
+// SHELLS times over only to be thrown away. Same vertex buffers, a shorter index.
+function feltGeometry(src: THREE.BufferGeometry) {
+  const pos = src.getAttribute('position');
+  const n = src.index ? src.index.count : pos.count;
+  const at = (i: number) => (src.index ? src.index.getX(i) : i);
+  const idx = new Uint32Array(n);
+  let k = 0;
+  for (let t = 0; t < n; t += 3) {
+    const a = at(t), b = at(t + 1), c = at(t + 2);
+    if (Math.max(pos.getX(a), pos.getX(b), pos.getX(c)) <= FELT_X0) continue;
+    idx[k++] = a;
+    idx[k++] = b;
+    idx[k++] = c;
+  }
+  const g = new THREE.BufferGeometry();
+  for (const name in src.attributes) g.setAttribute(name, src.attributes[name]);
+  g.setIndex(new THREE.BufferAttribute(pos.count > 65535 ? idx.slice(0, k) : Uint16Array.from(idx.subarray(0, k)), 1));
+  return g;
+}
 
 function fuzzShells(perch: THREE.Mesh) {
   const src = perch.material as THREE.MeshStandardMaterial;
+  const geo = feltGeometry(perch.geometry);
   const group = new THREE.Group();
   group.name = 'fuzz';
   for (let i = 1; i <= SHELLS; i++) {
@@ -323,29 +358,38 @@ function fuzzShells(perch: THREE.Mesh) {
              q += vec3(fn(vFP * 90.0), fn(vFP * 90.0 + 7.3), fn(vFP * 90.0 + 3.1)) * 3.0 * uH;
              vec3 c = floor(q);
              vec3 f = fract(q) - 0.5;
-             // per cell: a strand of random height, thick at the root, tapering
-             // clumps and partings: strand height follows a slow noise
-             float clump = fn(vFP * 14.0) * 0.7 + fn(vFP * 41.0) * 0.5;
-             float tall = fh(c) * (0.25 + 0.9 * clump);
              // moss where the baked bark is green: cushions, taller, denser
              float green = smoothstep(0.004, 0.03, diffuseColor.g - max(diffuseColor.r, diffuseColor.b) * 0.9);
-             float cushion = smoothstep(0.2, 0.75, fn(vFP * 22.0) * 0.8 + fn(vFP * 61.0) * 0.4);
-             tall = mix(tall * 0.3, (0.35 + 0.7 * fh(c + 1.7)) * cushion, green);
              float r = mix(0.42, 0.12, uH) * mix(1.0, 0.8, green);
              float strand = 1.0 - smoothstep(r * 0.6, r, length(f.xz + f.y * 0.3));
-             float a = strand * step(uH, tall) * vGrip;
+             float a = 0.0;
+             // (the height noise only matters inside a strand, the cushions only on moss)
+             if (strand > 0.0) {
+               // per cell: a strand of random height, thick at the root, tapering
+               // clumps and partings: strand height follows a slow noise
+               float clump = fn(vFP * 14.0) * 0.7 + fn(vFP * 41.0) * 0.5;
+               float tall = fh(c) * (0.25 + 0.9 * clump) * 0.3;
+               if (green > 0.0) {
+                 float cushion = smoothstep(0.2, 0.75, fn(vFP * 22.0) * 0.8 + fn(vFP * 61.0) * 0.4);
+                 tall = mix(tall, (0.35 + 0.7 * fh(c + 1.7)) * cushion, green);
+               }
+               a = strand * step(uH, tall) * vGrip;
+             }
              // a dense low underlayer so it reads as felt, not as stubble
              if (uH < 0.22) a = max(a, (1.0 - smoothstep(0.08, 0.22, uH)) * step(0.55, fn(q * 0.5)) * vGrip);
              diffuseColor.a = a;
-             // root dark, tips paler, warmer and greyed where they catch the light
-             vec3 tip = mix(diffuseColor.rgb * vec3(1.35, 1.15, 0.95), vec3(dot(diffuseColor.rgb, vec3(0.33)) * 1.6), 0.25);
-             tip = mix(tip, diffuseColor.rgb * vec3(1.5, 1.6, 0.9), green); // moss tips go yellow-green
-             diffuseColor.rgb = mix(diffuseColor.rgb * 0.45, tip, smoothstep(0.0, 1.0, uH)) * (0.8 + 0.4 * fh(c + 3.0));
+             // (no colour for what the alpha test throws away)
+             if (a > 0.0) {
+               // root dark, tips paler, warmer and greyed where they catch the light
+               vec3 tip = mix(diffuseColor.rgb * vec3(1.35, 1.15, 0.95), vec3(dot(diffuseColor.rgb, vec3(0.33)) * 1.6), 0.25);
+               tip = mix(tip, diffuseColor.rgb * vec3(1.5, 1.6, 0.9), green); // moss tips go yellow-green
+               diffuseColor.rgb = mix(diffuseColor.rgb * 0.45, tip, smoothstep(0.0, 1.0, uH)) * (0.8 + 0.4 * fh(c + 3.0));
+             }
            }
            #include <alphatest_fragment>`,
         );
     };
-    const m = new THREE.Mesh(perch.geometry, mat);
+    const m = new THREE.Mesh(geo, mat);
     m.name = `fuzz.${i}`;
     m.position.copy(perch.position);
     m.quaternion.copy(perch.quaternion);
