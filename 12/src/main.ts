@@ -111,7 +111,6 @@ const branchLoad = query.has('procbranch')
         scene.add(b.group);
         sway.use(b.group);
         usePerch(b.group);
-        useMaskOccluders(b.group);
         branchFuzz = b.fuzz;
         applyFuzz();
       })
@@ -177,58 +176,6 @@ function updateSway(dt: number) {
   ride = damp(ride, flight.perched ? 1 : 0, 25, dt);
   sway.at(bird.root.position.x, rideAt);
   rider.position.copy(rideAt).multiplyScalar(ride);
-}
-// the fade lifts the bird alone: its meshes also sit on a mask layer, drawn white
-// (feathers through their own shader, so the mask has their exact outline)
-const MASK_LAYER = 5;
-bird.root.traverse((o) => o.layers.enable(MASK_LAYER));
-const maskWhite = new THREE.MeshBasicMaterial({ color: 0xffffff });
-// the twig goes into the mask black, so the bird behind it stays unlifted there
-const maskBlack = new THREE.MeshBasicMaterial({ color: 0x000000 });
-sway.patch(maskBlack);
-const maskOccluders: THREE.Mesh[] = [];
-function useMaskOccluders(root: THREE.Object3D) {
-  maskOccluders.length = 0;
-  root.traverse((o) => {
-    if ((o as THREE.Mesh).isMesh && /^(perch|shoot|buds|twiglets)$/.test(o.name)) {
-      o.layers.enable(MASK_LAYER);
-      maskOccluders.push(o as THREE.Mesh);
-    }
-  });
-}
-const plumageBase = bird.feathers.contour.material as THREE.MeshStandardMaterial;
-const maskPlumage = plumageBase.clone();
-maskPlumage.onBeforeCompile = (shader, r) => {
-  plumageBase.onBeforeCompile.call(plumageBase, shader, r);
-  shader.fragmentShader = shader.fragmentShader.replace('#include <dithering_fragment>', '#include <dithering_fragment>\n  gl_FragColor = vec4(1.0, 1.0, 1.0, gl_FragColor.a);');
-};
-maskPlumage.customProgramCacheKey = () => 'plumage-mask';
-// collected each time: the flight's wing blur is only made on the first flight
-const maskMeshes: THREE.Mesh[] = [];
-const maskSaved: (THREE.Material | THREE.Material[])[] = [];
-function drawMask() {
-  maskMeshes.length = 0;
-  bird.root.traverse((o) => {
-    if (!(o as THREE.Mesh).isMesh) return;
-    o.layers.enable(MASK_LAYER);
-    maskMeshes.push(o as THREE.Mesh);
-  });
-  const feathers: THREE.Object3D[] = [bird.feathers.contour, bird.feathers.flight, bird.feathers.fuzz];
-  maskMeshes.forEach((m, i) => {
-    maskSaved[i] = m.material;
-    m.material = feathers.includes(m) ? maskPlumage : maskWhite;
-  });
-  const occSaved = maskOccluders.map((m) => m.material);
-  maskOccluders.forEach((m) => (m.material = maskBlack));
-  const layers = camera.layers.mask;
-  camera.layers.set(MASK_LAYER);
-  // the shadow map from the main pass is fine as it is
-  renderer.shadowMap.autoUpdate = false;
-  renderer.render(scene, camera);
-  renderer.shadowMap.autoUpdate = true;
-  camera.layers.mask = layers;
-  maskMeshes.forEach((m, i) => (m.material = maskSaved[i]));
-  maskOccluders.forEach((m, i) => (m.material = occSaved[i]));
 }
 const gaze = bird.layer<GazeLayer>('gaze');
 const forage = bird.layer<ForageLayer>('forage');
@@ -514,7 +461,6 @@ function disposeTree(root: THREE.Object3D) {
   });
 }
 usePerch(branch.group);
-useMaskOccluders(branch.group);
 
 // --- another bird: the feathers turn to new colours ----------------------------
 let paletteIndex = 0;
@@ -707,7 +653,6 @@ const settings = createSettings([
   { kind: 'select', key: 'tonemap', label: 'Tone mapping', value: 'Neutral', options: Object.keys(TONE), set: (v) => post.setToneMapping(TONE[v]) },
   { kind: 'range', key: 'contrast', label: 'Contrast', value: 0.95, min: 0.6, max: 1.4, step: 0.01, set: (v) => (post.grade.uContrast.value = v) },
   { kind: 'range', key: 'sat', label: 'Saturation', value: 1.0, min: 0.3, max: 1.4, step: 0.01, set: (v) => (post.grade.uSat.value = v) },
-  { kind: 'range', key: 'fade', label: 'Fade', value: 0.06, min: 0, max: 0.6, step: 0.01, set: (v) => (post.grade.uFade.value = v) },
   { kind: 'heading', label: 'Bird' },
   { kind: 'toggle', key: 'follow', label: 'Follows the pointer', value: true, set: (v) => (followPointer = v) },
   { kind: 'range', key: 'mood', label: 'Calm · alert', value: 0.32, min: 0, max: 1, step: 0.01, set: (v) => (bird.mind.baseline = v) },
@@ -934,7 +879,7 @@ function render() {
   if (!usePost) return renderer.render(scene, camera);
   post.focusOn(focusAt);
   post.grade.uReveal.value = THREE.MathUtils.smoothstep(reveal, 0, 1);
-  post.render(scene, camera, t, revealing && reveal === 1 ? null : drawWire, drawMask);
+  post.render(scene, camera, t, revealing && reveal === 1 ? null : drawWire);
   if (edgeDue && reveal === 1 && !drawing) sampleEdge();
 }
 
