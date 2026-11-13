@@ -71,7 +71,7 @@ canvas { display: block; width: 100vw; height: 100vh; touch-action: none; }
 
 /* object / letter picker */
 .letter-btn {
-  position: fixed; top: 108px; left: 14px; width: 64px; height: 64px; padding: 0;
+  position: fixed; top: max(8px, env(safe-area-inset-top)); right: max(6px, env(safe-area-inset-right)); width: 64px; height: 64px; padding: 0;
   background: transparent; border: 0; border-radius: 10px; cursor: pointer; opacity: .92;
   -webkit-tap-highlight-color: transparent; transition: transform .12s ease, background .12s ease;
 }
@@ -79,7 +79,7 @@ canvas { display: block; width: 100vw; height: 100vh; touch-action: none; }
 .letter-btn:hover { transform: scale(1.06); }
 .letter-btn[aria-expanded="true"] { background: rgba(0, 0, 0, .06); opacity: 1; }
 .letter-pop {
-  position: fixed; top: 176px; left: 18px; z-index: 10;
+  position: fixed; top: 76px; right: 10px; z-index: 10;
   display: grid; grid-template-columns: repeat(6, 40px); gap: 4px; padding: 8px;
   background: rgba(240, 240, 236, .96); border-radius: 10px; box-shadow: 0 6px 24px rgba(0, 0, 0, .14);
 }
@@ -169,15 +169,16 @@ canvas { display: block; width: 100vw; height: 100vh; touch-action: none; }
 }
 /* phones: one column top right, settings, object, scraper */
 @media (max-width: 640px), (pointer: coarse) {
-  .letter-btn { top: 76px; left: auto; right: 6px; }
-  .letter-pop { top: 144px; left: auto; right: 10px; }
+  .letter-btn { top: 76px; right: 6px; }
+  .letter-pop { top: 144px; right: 10px; }
   .scrape-btn { top: 144px; right: 6px; }
 }
 /* ?clean: the scene alone */
 .clean .plate, .clean .swatches, .clean .letter-btn, .clean .letter-pop, .clean .touch-hint, .clean .size-ring, .clean .scrape-btn, .clean .settings { display: none !important; }
 
-/* settings: a gear top right, the size of the object picker, its menu a frosted panel under it (07 Hollow's) */
-.settings { position: fixed; z-index: 11; top: max(8px, env(safe-area-inset-top)); right: max(6px, env(safe-area-inset-right)); }
+/* settings: a gear top right, left of the object picker (on phones above it), its size, its menu a frosted panel under it (07 Hollow's) */
+.settings { position: fixed; z-index: 11; top: max(8px, env(safe-area-inset-top)); right: calc(max(6px, env(safe-area-inset-right)) + 68px); }
+@media (max-width: 640px), (pointer: coarse) { .settings { right: max(6px, env(safe-area-inset-right)); } }
 .gear {
   display: flex; align-items: center; justify-content: center; width: 64px; height: 64px; padding: 0; border: 0;
   border-radius: 50%; background: none; color: #868583; cursor: pointer; -webkit-tap-highlight-color: transparent;
