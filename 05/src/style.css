@@ -71,7 +71,7 @@ canvas { display: block; width: 100vw; height: 100vh; touch-action: none; }
 
 /* object / letter picker */
 .letter-btn {
-  position: fixed; top: 8px; left: 8px; width: 64px; height: 64px; padding: 0;
+  position: fixed; top: 108px; left: 14px; width: 64px; height: 64px; padding: 0;
   background: transparent; border: 0; border-radius: 10px; cursor: pointer; opacity: .92;
   -webkit-tap-highlight-color: transparent; transition: transform .12s ease, background .12s ease;
 }
@@ -79,7 +79,7 @@ canvas { display: block; width: 100vw; height: 100vh; touch-action: none; }
 .letter-btn:hover { transform: scale(1.06); }
 .letter-btn[aria-expanded="true"] { background: rgba(0, 0, 0, .06); opacity: 1; }
 .letter-pop {
-  position: fixed; top: 76px; left: 12px; z-index: 10;
+  position: fixed; top: 176px; left: 18px; z-index: 10;
   display: grid; grid-template-columns: repeat(6, 40px); gap: 4px; padding: 8px;
   background: rgba(240, 240, 236, .96); border-radius: 10px; box-shadow: 0 6px 24px rgba(0, 0, 0, .14);
 }
@@ -159,4 +159,39 @@ canvas { display: block; width: 100vw; height: 100vh; touch-action: none; }
 .debug label { display: flex; align-items: center; gap: 6px; cursor: pointer; user-select: none; }
 .debug select { font: inherit; padding: 1px 2px; }
 .debug button { font: inherit; padding: 2px 8px; border: 1px solid #bbb; border-radius: 4px; background: #fff; cursor: pointer; }
-@media (pointer: coarse), (max-width: 640px) { .debug { top: 78px; left: 8px; right: auto; } } /* under the object miniature, same left edge */
+@media (pointer: coarse), (max-width: 640px) { .debug { right: auto; } } /* placed under the plate, see the plate section */
+
+/* the title plate, top left (docs/DESIGN.md): a light day, ink #1c1c1c */
+.plate {
+  position: fixed; z-index: 2;
+  top: max(24px, env(safe-area-inset-top)); left: max(24px, env(safe-area-inset-left));
+  pointer-events: none; user-select: none; -webkit-user-select: none;
+  color: #1c1c1c;
+  font: 13px/1.4 Inter, "Helvetica Neue", Helvetica, Arial, sans-serif;
+}
+.plate b {
+  display: block; white-space: nowrap;
+  font: 700 56px/0.9 "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  letter-spacing: -0.02em; text-transform: uppercase;
+}
+.plate .head > i {
+  display: block; margin-top: 6px; font-style: normal;
+  font-weight: 600; font-size: 14px; line-height: 1.15; letter-spacing: 0.12em; text-transform: uppercase;
+}
+.plate .home { color: inherit; text-decoration: none; pointer-events: auto; }
+.plate .home span[lang="ja"] { font-family: "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Noto Sans JP", "Yu Gothic", sans-serif; letter-spacing: 0.06em; }
+@media (max-width: 640px) {
+  .plate { top: max(16px, env(safe-area-inset-top)); left: max(16px, env(safe-area-inset-left)); }
+  .plate b { font-size: 36px; }
+  .plate .head > i { font-size: 10px; }
+}
+/* phones: the object picker top right, the scraper under it, settings under the plate */
+@media (max-width: 640px), (pointer: coarse) {
+  .letter-btn { top: max(8px, env(safe-area-inset-top)); left: auto; right: max(6px, env(safe-area-inset-right)); }
+  .letter-pop { top: 80px; left: auto; right: 10px; }
+  .scrape-btn { top: 80px; }
+  .debug { top: 108px; left: 18px; }
+}
+@media (max-width: 640px) { .debug { top: 76px; left: 10px; } }
+/* ?clean: the scene alone */
+.clean .plate, .clean .swatches, .clean .letter-btn, .clean .letter-pop, .clean .touch-hint, .clean .size-ring, .clean .scrape-btn, .clean .debug { display: none !important; }

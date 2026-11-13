@@ -4,8 +4,26 @@
     {
       "name": "index",
       "runtimeExecutable": "pnpm",
-      "runtimeArgs": ["preview", "--port", "4174", "--strictPort"],
+      "runtimeArgs": [
+        "preview",
+        "--port",
+        "4174",
+        "--strictPort"
+      ],
       "port": 4174
+    },
+    {
+      "name": "05",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": [
+        "-C",
+        "05",
+        "dev",
+        "--port",
+        "5105",
+        "--strictPort"
+      ],
+      "port": 5105
     }
   ]
 }
