@@ -313,7 +313,7 @@ export function createPost(renderer: THREE.WebGLRenderer, opts: { samples: numbe
   const fsCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
 
   // one lens for every pass (and the motes, through `dof`)
-  const lens = { uFocus: { value: 3.3 }, uAperture: { value: 100 }, uMaxCoc: { value: 14 } };
+  const lens = { uFocus: { value: 3.3 }, uAperture: { value: 85 }, uMaxCoc: { value: 14 } };
   const packMat = new THREE.ShaderMaterial({
     vertexShader: fsVert,
     fragmentShader: packFrag,

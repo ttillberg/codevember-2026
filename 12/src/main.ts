@@ -611,14 +611,14 @@ const TONE: Record<string, THREE.ToneMapping> = {
 };
 const settings = createSettings([
   { kind: 'heading', label: 'Camera' },
-  { kind: 'range', key: 'shake', label: 'Handheld', value: 2.1, min: 0, max: 3.5, step: 0.05, set: (v) => (shakeAmt = v) },
-  { kind: 'range', key: 'dof', label: 'Depth of field', value: 100, min: 0, max: 260, step: 5, set: (v) => (post.dof.uAperture.value = v) },
+  { kind: 'range', key: 'shake', label: 'Handheld', value: 2.05, min: 0, max: 3.5, step: 0.05, set: (v) => (shakeAmt = v) },
+  { kind: 'range', key: 'dof', label: 'Depth of field', value: 85, min: 0, max: 260, step: 5, set: (v) => (post.dof.uAperture.value = v) },
   { kind: 'range', key: 'exposure', label: 'Exposure', value: 1.15, min: 0.8, max: 2.4, step: 0.05, set: (v) => (post.grade.uExposure.value = v) },
   { kind: 'heading', label: 'Look' },
   // (also the renderer's tone mapping, with or without the post pass)
   { kind: 'select', key: 'tonemap', label: 'Tone mapping', value: 'Neutral', options: Object.keys(TONE), set: (v) => post.setToneMapping(TONE[v]) },
-  { kind: 'range', key: 'contrast', label: 'Contrast', value: 0.95, min: 0.6, max: 1.4, step: 0.01, set: (v) => (post.grade.uContrast.value = v) },
-  { kind: 'range', key: 'sat', label: 'Saturation', value: 1.0, min: 0.3, max: 1.4, step: 0.01, set: (v) => (post.grade.uSat.value = v) },
+  { kind: 'range', key: 'contrast', label: 'Contrast', value: 0.87, min: 0.6, max: 1.4, step: 0.01, set: (v) => (post.grade.uContrast.value = v) },
+  { kind: 'range', key: 'sat', label: 'Saturation', value: 0.97, min: 0.3, max: 1.4, step: 0.01, set: (v) => (post.grade.uSat.value = v) },
   { kind: 'heading', label: 'Bird' },
   { kind: 'toggle', key: 'follow', label: 'Follows the pointer', value: true, set: (v) => (followPointer = v) },
   { kind: 'range', key: 'mood', label: 'Calm · alert', value: 0.32, min: 0, max: 1, step: 0.01, set: (v) => (bird.mind.baseline = v) },
