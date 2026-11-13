@@ -9,7 +9,8 @@ import { phone } from './device';
 // bird doesn't smear into the background and the background doesn't bleed
 // over the bird's edge. A pack pass first puts colour and 1/z in one target,
 // so a tap is a single fetch. Tiles hold the biggest CoC around, so the gather
-// only reaches as far (and taps as often) as something near can blur.
+// only reaches as far (and taps as often) as something near can blur. What is
+// blurry anyway is gathered at half size; near focus the grade gathers at full.
 
 const fsVert = /* glsl */ `
 varying vec2 vUv;
@@ -91,9 +92,9 @@ void main() {
 }
 `;
 
-const dofFrag = /* glsl */ `
-precision highp float;
-varying vec2 vUv;
+// the gather itself, shared: the half size pass runs it for the blurry lot, the
+// grade for the pixels near focus
+const gatherGlsl = /* glsl */ `
 uniform sampler2D tPack; // rgb colour, a = 1 / view distance
 uniform sampler2D tTile; // biggest CoC near here
 uniform int uTile;
@@ -106,9 +107,8 @@ ${lensGlsl}
 const int MIN_TAPS = 8;
 const float FULL = 48.0; // the look was set with 48 taps: fewer each weigh more
 
-void main() {
-  vec4 p0 = texture2D(tPack, vUv);
-  float c0 = lensCoc(p0.a, uFocus, uAperture, uMaxCoc);
+// p0: the pack's texel at uv, c0: its CoC, seed: a pixel's own two numbers
+vec3 gather(vec2 uv, vec4 p0, float c0, vec2 seed) {
   vec3 acc = p0.rgb;
   if (any(isnan(acc)) || any(isinf(acc))) acc = vec3(0.0);
   float wsum = 1.0;
@@ -118,18 +118,18 @@ void main() {
   // so look no further, with as many taps as keeps them as dense as on the full
   // disc. Even in focus a few stay: the full disc's innermost taps soften the
   // picture a little, and it should look the same.
-  float R = min(R0, texelFetch(tTile, ivec2(gl_FragCoord.xy) / uTile, 0).r + 1.0);
+  float R = min(R0, texelFetch(tTile, ivec2(uv * vec2(textureSize(tPack, 0))) / uTile, 0).r + 1.0);
   float area = (R * R) / (R0 * R0);
   int taps = clamp(int(ceil(float(TAPS) * area)), MIN_TAPS, TAPS);
   float dense = FULL * area / float(taps);
   // rotate the spiral per pixel so a hot speck blurs to a soft disc, not a ring of dots
-  float rot = fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233))) * 43758.5453) * 6.2831853;
+  float rot = fract(sin(dot(seed, vec2(12.9898, 78.233))) * 43758.5453) * 6.2831853;
   mat2 spin = mat2(cos(rot), sin(rot), -sin(rot), cos(rot));
-  float jr = fract(sin(dot(gl_FragCoord.xy, vec2(39.3468, 11.135))) * 24634.6345);
+  float jr = fract(sin(dot(seed, vec2(39.3468, 11.135))) * 24634.6345);
   for (int i = 1; i < taps; i++) {
     float fi = float(i);
     float r = sqrt((fi - jr) / float(taps)) * R;
-    vec4 p = texture2D(tPack, vUv + spin * uSpiral[i] * r * uTexel);
+    vec4 p = texture2D(tPack, uv + spin * uSpiral[i] * r * uTexel);
     float ci = lensCoc(p.a, uFocus, uAperture, uMaxCoc);
     // a tap behind us can't blur over us further than our own blur
     if (p.a * 1.02 < p0.a) ci = min(ci, c0);
@@ -143,7 +143,22 @@ void main() {
     acc += s * w;
     wsum += w;
   }
-  gl_FragColor = vec4(acc / wsum, c0 / uMaxCoc);
+  return acc / wsum;
+}
+`;
+
+// Half size, a quarter of the work: each texel is the blur of one real pixel
+// (not of four averaged: its CoC has to be a true one), with that CoC in alpha
+// for the grade to pick its neighbours by.
+const dofFrag = /* glsl */ `
+precision highp float;
+${gatherGlsl}
+void main() {
+  vec2 size = vec2(textureSize(tPack, 0));
+  vec2 uv = (min(floor(gl_FragCoord.xy) * 2.0 + 1.0, size - 1.0) + 0.5) / size;
+  vec4 p0 = texture2D(tPack, uv);
+  float c0 = lensCoc(p0.a, uFocus, uAperture, uMaxCoc);
+  gl_FragColor = vec4(gather(uv, p0, c0, gl_FragCoord.xy), c0);
 }
 `;
 
@@ -151,6 +166,9 @@ const gradeFrag = /* glsl */ `
 precision highp float;
 varying vec2 vUv;
 uniform sampler2D tColor;
+uniform sampler2D tDof;  // half size: blurred colour, a = the CoC it was blurred by
+uniform float uDof;      // 0 with the lens shut
+${gatherGlsl}
 uniform float uExposure;
 uniform vec3 uWhite;     // white balance multiplier (linear)
 uniform vec3 uLift;      // display space
@@ -170,10 +188,44 @@ uniform float uDpr;
 
 float hash(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
 
+// Half size blur is fine where the picture is blurry anyway. Near focus (the
+// bird, its feathers) the gather runs here, at full size, as it always did.
+const float NEAR = 2.0; // CoC px: below, all full size
+const float FAR = 4.0;  // above, all half size
+vec3 lens() {
+  vec4 p0 = texture2D(tPack, vUv);
+  float c0 = lensCoc(p0.a, uFocus, uAperture, uMaxCoc);
+  vec3 sharp = vec3(0.0);
+  if (c0 < FAR) {
+    sharp = gather(vUv, p0, c0, gl_FragCoord.xy);
+    if (c0 <= NEAR) return sharp;
+  }
+  // the four half size texels around, each by how close its sharpness is to
+  // ours: a blurry background doesn't take the bird's crisp edge in
+  ivec2 last = textureSize(tDof, 0) - 1;
+  vec2 q = gl_FragCoord.xy * 0.5 - 0.75; // a texel stands for the odd pixel of its four
+  ivec2 i = ivec2(floor(q));
+  vec2 f = q - floor(q);
+  vec4 soft = vec4(0.0);
+  for (int k = 0; k < 4; k++) {
+    ivec2 o = ivec2(k & 1, k >> 1);
+    vec4 t = texelFetch(tDof, clamp(i + o, ivec2(0), last), 0);
+    float d = min(t.a, FAR) - min(c0, FAR); // past FAR blurry is blurry: plain bilinear
+    vec2 b = mix(1.0 - f, f, vec2(o));
+    soft += vec4(t.rgb, 1.0) * (b.x * b.y + 0.01) / (0.25 + d * d);
+  }
+  return mix(sharp, soft.rgb / soft.a, smoothstep(NEAR, FAR, c0));
+}
+
 void main() {
-  vec3 c = texture2D(tColor, vUv).rgb;
-  // the gather drops NaNs; with the lens shut this is the first to see them
-  if (any(isnan(c)) || any(isinf(c))) c = vec3(0.0);
+  vec3 c;
+  if (uDof > 0.0) {
+    c = lens();
+  } else {
+    c = texture2D(tColor, vUv).rgb;
+    // the gather drops NaNs; with the lens shut this is the first to see them
+    if (any(isnan(c)) || any(isinf(c))) c = vec3(0.0);
+  }
   c *= uExposure * uWhite;
   c = toneMapping(c);
   c = linearToOutputTexel(vec4(c, 1.0)).rgb;
@@ -246,7 +298,7 @@ export function createPost(renderer: THREE.WebGLRenderer, opts: { samples: numbe
   const tileOpts = { type: THREE.HalfFloatType, depthBuffer: false, minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter };
   const tileRT = new THREE.WebGLRenderTarget(1, 1, tileOpts);
   const tileMaxRT = new THREE.WebGLRenderTarget(1, 1, tileOpts);
-  const dofRT = new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType, depthBuffer: false });
+  const dofRT = new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType, depthBuffer: false, minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter });
   const wireRT = new THREE.WebGLRenderTarget(1, 1, { samples: opts.samples });
   // the bird alone, white on black: the fade only lifts the bird, not the twig or the sky
   const maskRT = new THREE.WebGLRenderTarget(1, 1, { depthBuffer: true, samples: opts.samples });
@@ -258,7 +310,7 @@ export function createPost(renderer: THREE.WebGLRenderer, opts: { samples: numbe
   fsScene.add(quad);
   const fsCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
 
-  // one lens for both passes (and the motes, through `dof`)
+  // one lens for every pass (and the motes, through `dof`)
   const lens = { uFocus: { value: 3.3 }, uAperture: { value: 90 }, uMaxCoc: { value: 14 } };
   const packMat = new THREE.ShaderMaterial({
     vertexShader: fsVert,
@@ -293,17 +345,18 @@ export function createPost(renderer: THREE.WebGLRenderer, opts: { samples: numbe
     depthWrite: false,
     toneMapped: false,
   });
+  const gather = {
+    tPack: { value: packRT.texture },
+    tTile: { value: tileMaxRT.texture },
+    uTile,
+    uTexel: { value: new THREE.Vector2() },
+    uSpiral: { value: Array.from({ length: TAPS }, (_, i) => new THREE.Vector2(Math.cos(i * 2.39996323), Math.sin(i * 2.39996323))) },
+    ...lens,
+  };
   const dofMat = new THREE.ShaderMaterial({
     vertexShader: fsVert,
     fragmentShader: dofFrag,
-    uniforms: {
-      tPack: { value: packRT.texture },
-      tTile: { value: tileMaxRT.texture },
-      uTile,
-      uTexel: { value: new THREE.Vector2() },
-      uSpiral: { value: Array.from({ length: TAPS }, (_, i) => new THREE.Vector2(Math.cos(i * 2.39996323), Math.sin(i * 2.39996323))) },
-      ...lens,
-    },
+    uniforms: gather,
     defines: { TAPS },
     depthTest: false,
     depthWrite: false,
@@ -313,7 +366,10 @@ export function createPost(renderer: THREE.WebGLRenderer, opts: { samples: numbe
     vertexShader: fsVert,
     fragmentShader: gradeFrag,
     uniforms: {
-      tColor: { value: dofRT.texture },
+      tColor: { value: sceneRT.texture },
+      tDof: { value: dofRT.texture },
+      uDof: { value: 1 },
+      ...gather,
       uExposure: { value: 1.0 },
       uWhite: { value: new THREE.Vector3(1, 1, 1) },
       uLift: { value: new THREE.Vector3(0, 0, 0) },
@@ -333,6 +389,7 @@ export function createPost(renderer: THREE.WebGLRenderer, opts: { samples: numbe
     },
     depthTest: false,
     depthWrite: false,
+    defines: { TAPS },
     // keep toneMapped so three defines toneMapping() for the screen pass; the
     // shader calls it itself, before the grade
     toneMapped: true,
@@ -372,11 +429,11 @@ export function createPost(renderer: THREE.WebGLRenderer, opts: { samples: numbe
       uTile.value = Math.ceil(TILE * d);
       tileRT.setSize(Math.ceil(W / uTile.value), Math.ceil(H / uTile.value));
       tileMaxRT.setSize(tileRT.width, tileRT.height);
-      dofRT.setSize(W, H);
+      dofRT.setSize(Math.ceil(W / 2), Math.ceil(H / 2));
       wireRT.setSize(W, H);
       maskRT.setSize(W, H);
       gradeMat.uniforms.uDpr.value = d;
-      dofMat.uniforms.uTexel.value.set(d / W, d / H);
+      gather.uTexel.value.set(d / W, d / H);
       gradeMat.uniforms.uRes.value.set(W, H);
     },
     render(scene, camera, t, wire, mask) {
@@ -398,6 +455,7 @@ export function createPost(renderer: THREE.WebGLRenderer, opts: { samples: numbe
       packMat.uniforms.uFar.value = camera.far;
       gradeMat.uniforms.uTime.value = t;
 
+      gradeMat.uniforms.uDof.value = 0;
       // nothing of the picture shows yet: skip it (the drawing is all there is)
       if (gradeMat.uniforms.uReveal.value > 0) {
         if (gradeMat.uniforms.uFade.value > 0 && mask) {
@@ -412,9 +470,8 @@ export function createPost(renderer: THREE.WebGLRenderer, opts: { samples: numbe
         renderer.setRenderTarget(sceneRT);
         renderer.render(scene, camera);
         // lens wide shut: nothing to blur, the grade reads the scene as it is
-        const blur = lens.uAperture.value > 0;
-        gradeMat.uniforms.tColor.value = blur ? dofRT.texture : sceneRT.texture;
-        if (blur) {
+        if (lens.uAperture.value > 0) {
+          gradeMat.uniforms.uDof.value = 1;
           for (const [mat, rt] of dofPasses) {
             quad.material = mat;
             renderer.setRenderTarget(rt);
