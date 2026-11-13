@@ -11,13 +11,14 @@ import { createSeeds } from './seeds';
 import { createInsects } from './insects';
 import { createAmbient } from './ambient';
 import { createSettings } from './settings';
+import { damp } from './bird/util';
+import { phone } from './device';
 
 const canvas = document.querySelector<HTMLCanvasElement>('#c')!;
 const query = new URLSearchParams(location.search);
 const usePost = !query.has('nopost');
 // with the post pass the MSAA lives in the scene target, not the canvas
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: !usePost, powerPreference: 'high-performance' });
-const phone = matchMedia('(pointer: coarse)').matches;
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, phone ? 1.5 : 2));
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -68,7 +69,6 @@ scene.add(branch.group);
 // the twig gives under the bird: it bends in the vertex shader, the bird rides along
 const sway = createSway();
 sway.use(branch.group);
-(window as unknown as { __sway: typeof sway }).__sway = sway;
 // loading: the bird and the procedural twig drawn in ink on millimetre paper
 // while the Blender twig comes down; then the picture fades in over it
 const loadLabel = document.querySelector<HTMLElement>('.loading-label span');
@@ -143,12 +143,15 @@ scene.add(rim, rim.target);
 const bird = createBird({ renderer, scene, camera });
 // it sits a little right of the twig's middle and drifts back there
 bird.root.position.x = GRIP_X;
-bird.layer<HopLayer>('hop').home = GRIP_X;
+const hop = bird.layer<HopLayer>('hop');
+const mouth = bird.layer<MouthLayer>('mouth');
+const ruffle = bird.layer<RuffleLayer>('ruffle');
+const flight = bird.layer<FleeLayer>('flee');
+hop.home = GRIP_X;
 // (the bird stands in a rider that moves with the twig under its feet)
 const rider = new THREE.Group();
 rider.add(bird.root);
 scene.add(rider);
-const flight = bird.layer<FleeLayer>('flee');
 let ride = 1;
 const rideAt = new THREE.Vector3();
 bird.mind.on('perch', (e) => {
@@ -157,16 +160,13 @@ bird.mind.on('perch', (e) => {
 });
 sway.load(GRIP_X);
 sway.settle();
-function onTwig() {
-  return flight.phase === 'idle' || flight.phase === 'ready' || flight.phase === 'land';
-}
 // the lens focuses on the head, but stays on the twig while the bird is off it:
 // a photographer doesn't rack focus to the sky after it, the flowers stay sharp
 const focusAt = new THREE.Vector3();
 const focusHold = new THREE.Vector3();
 let focusSet = false;
 function updateFocus(dt: number) {
-  if (onTwig() || !focusSet) focusHold.copy(headPos);
+  if (flight.perched || !focusSet) focusHold.copy(headPos);
   if (!focusSet) focusAt.copy(focusHold);
   focusSet = true;
   focusAt.lerp(focusHold, 1 - Math.exp(-dt * 8));
@@ -174,8 +174,7 @@ function updateFocus(dt: number) {
 function updateSway(dt: number) {
   sway.update(dt);
   // on the twig (also gathering itself to go, and landing) it moves with it; in the air it doesn't
-  const on = onTwig();
-  ride += ((on ? 1 : 0) - ride) * (1 - Math.exp(-dt * 25));
+  ride = damp(ride, flight.perched ? 1 : 0, 25, dt);
   sway.at(bird.root.position.x, rideAt);
   rider.position.copy(rideAt).multiplyScalar(ride);
 }
@@ -250,9 +249,13 @@ function toNdc(x: number, y: number) {
   const r = canvas.getBoundingClientRect();
   return ndc.set(((x - r.left) / r.width) * 2 - 1, -((y - r.top) / r.height) * 2 + 1);
 }
+/** the pointer's ray into the scene */
+function pointerRay(x: number, y: number) {
+  ray.setFromCamera(toNdc(x, y), camera);
+  return ray.ray;
+}
 function pointerOnPlane(x: number, y: number, ahead: number, out: THREE.Vector3) {
-  toNdc(x, y);
-  ray.setFromCamera(ndc, camera);
+  pointerRay(x, y);
   camera.getWorldDirection(toCam).negate();
   plane.setFromNormalAndCoplanarPoint(toCam, planeAt.set(bird.root.position.x, 0.8, 0).addScaledVector(toCam, ahead));
   return ray.ray.intersectPlane(plane, out);
@@ -262,27 +265,14 @@ function pointerOnPlane(x: number, y: number, ahead: number, out: THREE.Vector3)
 // patch around the face, not the far bill tip
 const billA = new THREE.Vector3();
 let atBill = false;
-function nearBill(x: number, y: number) {
+function nearBill(r: THREE.Ray) {
   if (bird.away || bird.fleeing) return false;
-  toNdc(x, y);
-  ray.setFromCamera(ndc, camera);
   // (centred a little below the head, over the throat)
   bird.headPosition(billA).y -= 0.05;
   // (a wider ring to leave than to enter, so the edge doesn't flicker it on and off)
-  const r = atBill ? 0.46 : 0.4;
-  return ray.ray.distanceSqToPoint(billA) < r * r;
+  const d = atBill ? 0.46 : 0.4;
+  return r.distanceSqToPoint(billA) < d * d;
 }
-window.addEventListener('pointermove', (e) => {
-  const now = performance.now();
-  const bill = e.target === canvas && nearBill(e.clientX, e.clientY);
-  if (bill && !atBill) {
-    const mouth = bird.layer<MouthLayer>('mouth');
-    if (!mouth.singing) mouth.sing(bird.mind, 1.6);
-  }
-  atBill = bill;
-  // (at the bill it looks out at the camera instead)
-  if (!bill && pointerOnPlane(e.clientX, e.clientY, 0.8, pointerTarget)) pointerAt = now;
-});
 
 // seeds: click drops one in the air in front of the bird
 const seeds = createSeeds(scene);
@@ -332,23 +322,20 @@ const FEET_EVERY = 3;
 let feetNext = 0;
 let feetHops = 0;
 let feetCalm = 0;
-window.addEventListener('pointermove', (e) => {
-  if (e.target !== canvas || bird.away || bird.fleeing) return;
+function nearFeet(r: THREE.Ray) {
+  if (bird.away || bird.fleeing) return;
   const now = performance.now() / 1000;
   if (now < feetNext || now < feetCalm) return;
-  toNdc(e.clientX, e.clientY);
-  ray.setFromCamera(ndc, camera);
   bird.root.getWorldPosition(feetA);
   feetB.copy(feetA);
   feetA.x -= 0.06;
   feetB.x += 0.06;
   feetA.y = feetB.y = feetA.y + 0.02;
-  if (ray.ray.distanceSqToSegment(feetA, feetB, undefined, feetHit) > 0.07 * 0.07) return;
+  if (r.distanceSqToSegment(feetA, feetB, undefined, feetHit) > 0.07 * 0.07) return;
   // away from the side the pointer came in on (where on the feet it is now)
-  const hopper = bird.layer<HopLayer>('hop');
   const away = feetHit.x < (feetA.x + feetB.x) / 2 ? 1 : -1;
   const d = 0.12 + Math.random() * 0.1;
-  if (!hopper.go(bird.mind, hopper.x + away * d) && !hopper.go(bird.mind, hopper.x - away * d)) return;
+  if (!hop.go(bird.mind, hop.x + away * d) && !hop.go(bird.mind, hop.x - away * d)) return;
   // (a run of hops close together counts up; a quiet spell starts the count over)
   feetHops = now - feetNext < 20 ? feetHops + 1 : 1;
   feetNext = now + FEET_EVERY;
@@ -356,7 +343,7 @@ window.addEventListener('pointermove', (e) => {
     feetHops = 0;
     feetCalm = now + 30;
   }
-});
+}
 // the flowers: a pointer passing over them brushes them, barely
 const brushPlane = new THREE.Plane();
 const brushOn = new THREE.Vector3();
@@ -364,31 +351,41 @@ const brushAt = new THREE.Vector3();
 const brushPrev = new THREE.Vector3();
 const brushV = new THREE.Vector3();
 let brushT = -1;
-window.addEventListener('pointermove', (e) => {
-  if (e.target !== canvas) return;
-  toNdc(e.clientX, e.clientY);
-  ray.setFromCamera(ndc, camera);
+function brushFlowers(r: THREE.Ray) {
   const now = performance.now();
-  if (!sway.reach(ray.ray, brushOn)) return void (brushT = -1);
+  if (!sway.reach(r, brushOn)) return void (brushT = -1);
   // how fast the pointer moves, there, across the view
   camera.getWorldDirection(toCam).negate();
   brushPlane.setFromNormalAndCoplanarPoint(toCam, brushOn);
-  if (!ray.ray.intersectPlane(brushPlane, brushAt)) return;
+  if (!r.intersectPlane(brushPlane, brushAt)) return;
   const dt = (now - brushT) / 1000;
   if (brushT > 0 && dt < 0.1) sway.brush(brushOn, brushV.copy(brushAt).sub(brushPrev).divideScalar(Math.max(dt, 1 / 240)), dt);
   brushPrev.copy(brushAt);
   brushT = now;
+}
+// the pointer over the scene: one ray for all of it. At the head the bird sings and looks
+// out at the camera; anywhere else it is what the bird follows
+window.addEventListener('pointermove', (e) => {
+  document.body.classList.toggle('near', e.clientX > window.innerWidth - 140 && e.clientY < 120);
+  const onCanvas = e.target === canvas;
+  const r = pointerRay(e.clientX, e.clientY);
+  const bill = onCanvas && nearBill(r);
+  if (bill && !atBill && !mouth.singing && !mouth.blocked()) mouth.sing(bird.mind, 1.6);
+  atBill = bill;
+  if (onCanvas) {
+    nearFeet(r);
+    brushFlowers(r);
+  }
+  if (!bill && pointerOnPlane(e.clientX, e.clientY, 0.8, pointerTarget)) pointerAt = performance.now();
 });
 // is the bird under this point? A capsule from the belly to the head is plenty
 const capA = new THREE.Vector3();
 const capB = new THREE.Vector3();
 function tapsBird(x: number, y: number) {
   if (bird.away) return false;
-  toNdc(x, y);
-  ray.setFromCamera(ndc, camera);
   bird.root.getWorldPosition(capA).y += 0.25;
   bird.headPosition(capB);
-  return ray.ray.distanceSqToSegment(capA, capB) < 0.22 * 0.22;
+  return pointerRay(x, y).distanceSqToSegment(capA, capB) < 0.22 * 0.22;
 }
 // full screen + clean: no title, no hint, the bird alone (?clean starts there, without full screen)
 const fsButton = document.querySelector<HTMLButtonElement>('.fs');
@@ -410,7 +407,6 @@ document.addEventListener('fullscreenchange', () => {
   document.body.classList.toggle('fullscreen', !!document.fullscreenElement);
   if (!document.fullscreenElement) setClean(false);
 });
-window.addEventListener('pointermove', (e) => document.body.classList.toggle('near', e.clientX > window.innerWidth - 140 && e.clientY < 120));
 canvas.addEventListener('pointerup', (e) => {
   if (settings.isOpen()) return settings.open(false);
   // a click, not a drag
@@ -424,7 +420,7 @@ window.addEventListener('keydown', (e) => {
   if (e.code === 'Space') bird.startle(1);
   if (e.code === 'KeyF' && !e.metaKey && !e.ctrlKey) bird.flee();
   // R: a ruffle now (the one-a-minute limit is only for the ones it does by itself)
-  if (e.code === 'KeyR' && !e.metaKey && !e.ctrlKey) bird.layer<RuffleLayer>('ruffle').trigger(bird.mind, 'shake');
+  if (e.code === 'KeyR' && !e.metaKey && !e.ctrlKey) ruffle.trigger(bird.mind, 'shake');
   if (e.code === 'KeyW' && !e.metaKey && !e.ctrlKey) setDrawing(!drawing);
 });
 
@@ -448,7 +444,7 @@ const headPos = new THREE.Vector3();
 const perchRay = new THREE.Raycaster();
 perchRay.ray.direction.set(0, -1, 0);
 const perchHits: THREE.Intersection[] = [];
-let perchMesh: THREE.Object3D | null = null;
+let perchMesh: THREE.Mesh | null = null;
 const perchCache = new Map<number, PerchFrame | null>();
 const pa = new THREE.Vector3();
 const pb = new THREE.Vector3();
@@ -478,11 +474,36 @@ function perchAt(x: number, out: PerchFrame) {
   out.radius = f.radius;
   return out;
 }
+const PERCH_RANGE: [number, number] = [GRIP_X - 0.45, GRIP_X + 0.45];
 function usePerch(root: THREE.Object3D) {
   root.updateMatrixWorld(true);
-  perchMesh = root.getObjectByName('perch') ?? null;
+  const mesh = root.getObjectByName('perch') as THREE.Mesh | undefined;
+  perchMesh?.geometry.dispose();
+  perchMesh = mesh ? cropPerch(mesh, PERCH_RANGE[0] - 0.1, PERCH_RANGE[1] + 0.1) : null;
   perchCache.clear();
-  bird.setPerch(perchAt, [GRIP_X - 0.45, GRIP_X + 0.45]);
+  bird.setPerch(perchAt, PERCH_RANGE);
+}
+// just the stretch of twig the bird can stand on, for the rays: the whole glb is ~50k
+// triangles, and a hop's search casts a hundred rays at once
+function cropPerch(mesh: THREE.Mesh, x0: number, x1: number) {
+  const g = mesh.geometry;
+  const pos = g.getAttribute('position');
+  const n = g.index ? g.index.count : pos.count;
+  const at = (i: number) => (g.index ? g.index.getX(i) : i);
+  const out: number[] = [];
+  for (let t = 0; t < n; t += 3) {
+    const a = at(t), b = at(t + 1), c = at(t + 2);
+    const lo = Math.min(pos.getX(a), pos.getX(b), pos.getX(c));
+    const hi = Math.max(pos.getX(a), pos.getX(b), pos.getX(c));
+    if (hi < x0 || lo > x1) continue;
+    for (const k of [a, b, c]) out.push(pos.getX(k), pos.getY(k), pos.getZ(k));
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(out, 3));
+  const m = new THREE.Mesh(geo, mesh.material);
+  m.matrixAutoUpdate = false;
+  m.matrixWorld.copy(mesh.matrixWorld);
+  return m;
 }
 function disposeTree(root: THREE.Object3D) {
   root.traverse((o) => {
@@ -504,7 +525,7 @@ let paletteTo = paletteMatrices(PALETTES[0]);
 function changePalette() {
   paletteIndex = (paletteIndex + 1) % PALETTES.length;
   // just the slightest lift of the throat and crown as the colours turn
-  bird.layer<RuffleLayer>('ruffle').trigger(bird.mind, 'throat', 0.25);
+  ruffle.trigger(bird.mind, 'throat', 0.25);
   bird.plumage.uPal.value.forEach((m, i) => paletteFrom[i].copy(m));
   paletteTo = paletteMatrices(PALETTES[paletteIndex]);
   paletteDelay = 0.05;
@@ -627,9 +648,6 @@ const seedAhead = () => {
 // away, song, the tongue, a hop each way, a fly past the head, a seed. Steps that
 // can't happen yet (mid-hop, still eating) wait their turn, up to a few seconds.
 type DemoStep = [at: number, run: () => boolean | void];
-const hop = bird.layer<HopLayer>('hop');
-const mouth = bird.layer<MouthLayer>('mouth');
-const ruffle = bird.layer<RuffleLayer>('ruffle');
 const free = () => !hop.busy && forage.state === 'idle' && !bird.away;
 const inReach = () => {
   bird.headPosition(demoAt);
@@ -701,7 +719,7 @@ const settings = createSettings([
   { kind: 'action', label: 'A gnat', run: () => insects.spawn() },
   { kind: 'action', label: 'A fly', run: () => ambient.flyBy() },
   { kind: 'action', label: 'Demo (D)', run: () => setDemo(demoT < 0) },
-  { kind: 'action', label: 'Sing', run: () => bird.layer<MouthLayer>('mouth').sing(bird.mind, 2.2) },
+  { kind: 'action', label: 'Sing', run: () => mouth.sing(bird.mind, 2.2) },
   { kind: 'action', label: 'Ruffle (R)', run: () => bird.layer<RuffleLayer>('ruffle').trigger(bird.mind, 'shake') },
   { kind: 'action', label: 'Another bird (C)', run: changePalette },
   { kind: 'action', label: 'Startle', run: () => bird.startle(1) },
@@ -925,18 +943,21 @@ function render() {
 // edge so it reads as more of the scene: read the bottom row once the picture is up,
 // and again after a resize.
 let edgeDue = true;
-const edgePx = new Uint8Array(4);
+let edgePx = new Uint8Array(4);
 const themeMeta = document.querySelector('meta[name="theme-color"]');
 function sampleEdge() {
   edgeDue = false;
   const gl = renderer.getContext();
   renderer.setRenderTarget(null);
   const w = gl.drawingBufferWidth;
+  // (one read of the whole row: each readPixels stalls for the GPU)
+  if (edgePx.length !== w * 4) edgePx = new Uint8Array(w * 4);
+  gl.readPixels(0, 1, w, 1, gl.RGBA, gl.UNSIGNED_BYTE, edgePx);
   let r = 0, g = 0, b = 0;
   const n = 9;
   for (let i = 0; i < n; i++) {
-    gl.readPixels(Math.round(((i + 0.5) / n) * (w - 1)), 1, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, edgePx);
-    r += edgePx[0]; g += edgePx[1]; b += edgePx[2];
+    const k = Math.round(((i + 0.5) / n) * (w - 1)) * 4;
+    r += edgePx[k]; g += edgePx[k + 1]; b += edgePx[k + 2];
   }
   const col = `rgb(${Math.round(r / n)}, ${Math.round(g / n)}, ${Math.round(b / n)})`;
   document.documentElement.style.background = col;
@@ -948,4 +969,4 @@ window.addEventListener('resize', () => {
   edgeTimer = window.setTimeout(() => (edgeDue = true), 400);
 });
 
-Object.assign(window as unknown as Record<string, unknown>, { __scene: scene, __camera: camera, __renderer: renderer, __controls: controls, __post: post, __frame: frame, __seeds: seeds, __insects: insects, __ambient: ambient });
+Object.assign(window as unknown as Record<string, unknown>, { __scene: scene, __camera: camera, __renderer: renderer, __controls: controls, __post: post, __frame: frame, __seeds: seeds, __insects: insects, __ambient: ambient, __sway: sway });

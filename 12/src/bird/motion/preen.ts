@@ -84,7 +84,8 @@ export class PreenLayer implements Layer {
     this.hips = rig.rest.hips.worldPos.clone();
     this.headRest = rig.rest.head.worldPos.clone();
     mind.on('startle', () => {
-      // a fright ends it there and then
+      // a fright ends it there and then (and lets the eyes go: don't count on another layer to)
+      if (this.active) mind.gazeLock = false;
       this.active = false;
     });
   }

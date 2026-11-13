@@ -59,6 +59,11 @@ export class FleeLayer implements Layer {
   }
 
   /** not there to be seen or fed */
+  /** on the twig: not off it in the air (gathering itself to go and settling after landing count) */
+  get perched() {
+    return this.phase === 'idle' || this.phase === 'ready' || this.phase === 'land';
+  }
+
   get gone() {
     return this.phase === 'away';
   }

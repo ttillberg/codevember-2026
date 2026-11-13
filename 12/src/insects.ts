@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import type { Food } from './bird/types';
+import { dampAngle } from './bird/util';
 
 // Now and then a gnat drifts into view: it hovers in front of the bird, darts,
 // hovers again, and after a while leaves. It is food like a seed, so the bird
@@ -39,6 +40,7 @@ export function createInsects(scene: THREE.Scene, around: () => THREE.Vector3) {
   const food: Food[] = [];
   const tip = new THREE.Vector3();
   const tmp = new THREE.Vector3();
+  const toGoal = new THREE.Vector3();
   let nextId = ID0;
   // rare: one some time in the first minute, then one every 45–90 s
   let nextAt = 20 + Math.random() * 35;
@@ -147,13 +149,13 @@ export function createInsects(scene: THREE.Scene, around: () => THREE.Vector3) {
         const k = t * 3 + g.phase;
         // jitter: gnats never hold still
         tmp.set(Math.sin(k * 5.1) + Math.sin(k * 11.7) * 0.5, Math.sin(k * 6.3 + 1) + Math.sin(k * 13.1) * 0.4, Math.sin(k * 4.7 + 2)).multiplyScalar(0.08);
-        tmp.addScaledVector(tmp.clone().copy(g.goal).sub(g.position), g.state === 'leave' ? 2.5 : 6);
+        tmp.addScaledVector(toGoal.copy(g.goal).sub(g.position), g.state === 'leave' ? 2.5 : 6);
         g.velocity.lerp(tmp, 1 - Math.exp(-dt * 8));
         g.obj.position.addScaledVector(g.velocity, dt);
         // level, nose roughly where it's going (a gnat hovers and darts sideways without turning much)
         if (g.velocity.x * g.velocity.x + g.velocity.z * g.velocity.z > 0.01) {
           const want = Math.atan2(g.velocity.x, g.velocity.z);
-          g.yaw += Math.atan2(Math.sin(want - g.yaw), Math.cos(want - g.yaw)) * (1 - Math.exp(-dt * 4));
+          g.yaw = dampAngle(g.yaw, want, 4, dt);
         }
         g.obj.rotation.set(THREE.MathUtils.clamp(-g.velocity.y * 0.6, -0.35, 0.35), g.yaw, 0, 'YXZ');
         const beat = Math.sin(t * 190 + g.phase) * 0.9;

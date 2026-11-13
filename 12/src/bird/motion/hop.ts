@@ -19,7 +19,7 @@ export interface Ground {
   restRadius: number;
 }
 
-const newFrame = (): PerchFrame => ({ point: new THREE.Vector3(), up: new THREE.Vector3(0, 1, 0), tangent: new THREE.Vector3(1, 0, 0), radius: 0.09 });
+const newFrame = (): PerchFrame => ({ point: new THREE.Vector3(), up: new THREE.Vector3(0, 1, 0), tangent: new THREE.Vector3(1, 0, 0), radius: 0.0405 });
 
 export class HopLayer implements Layer {
   readonly name = 'hop';
