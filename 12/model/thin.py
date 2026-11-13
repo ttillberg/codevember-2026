@@ -40,13 +40,12 @@ for _ in range(12):
 
 old = [v.co.copy() for v in bm.verts]
 move = [center[i] + (old[i] - center[i]) * THIN - old[i] for i in range(len(old))]
-old_bvh = BVHTree.FromBMesh(bm)
 faces = [[v.index for v in f.verts] for f in bm.faces]
 
 
 def move_at(p):
     """how far the bark nearest p moves"""
-    loc, _, fi, _ = old_bvh.find_nearest(p)
+    _, _, fi, _ = bvh.find_nearest(p)
     vs = faces[fi]
     return sum((move[i] for i in vs), Vector()) / len(vs)
 
@@ -73,7 +72,7 @@ for v0 in tb.verts:
             if o.index not in seen:
                 seen.add(o.index)
                 stack.append(o)
-    root = min(island, key=lambda v: (old_bvh.find_nearest(v.co)[3]))
+    root = min(island, key=lambda v: (bvh.find_nearest(v.co)[3]))
     d = move_at(root.co)
     for v in island:
         v.co += d
@@ -82,7 +81,7 @@ tb.free()
 
 # the shoot, its buds and hairs: all move with the bark under the shoot's root
 sh = bpy.data.objects['shoot']
-root = min(sh.data.vertices, key=lambda v: old_bvh.find_nearest(v.co)[3])
+root = min(sh.data.vertices, key=lambda v: bvh.find_nearest(v.co)[3])
 d = move_at(root.co.copy())
 for name in ('shoot', 'buds', 'hairs'):
     for v in bpy.data.objects[name].data.vertices:

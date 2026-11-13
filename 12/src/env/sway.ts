@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { Spring } from '../bird/util';
+import { GRIP_X } from './branch';
 
 // The twig gives a little under the bird. It is held off-screen to the left and bends as
 // one mode, a cantilever: a point at x moves phi(x) times the tip's motion, up-down and
@@ -17,6 +18,10 @@ const INV = 1 / (XT - XA);
 export function phi(x: number) {
   const s = Math.max(0, (x - XA) * INV);
   return s * s;
+}
+/** its slope, d phi / dx */
+function dphi(x: number) {
+  return 2 * Math.max(0, (x - XA) * INV) * INV;
 }
 
 export interface Sway {
@@ -130,6 +135,8 @@ export function createSway(): Sway {
   };
   // how far the twig sags under the bird at the grip, and how hard one full push kicks it
   const SAG = 0.005;
+  /** where the tip rests under the bird's weight (sag at x is this times phi(x): SAG at the grip) */
+  const sagTarget = () => (loadX === null ? 0 : (-SAG * sway.give * phi(loadX)) / phi(GRIP_X) ** 2);
   const KICK = 1.0;
 
   const patched = new WeakSet<THREE.Material>();
@@ -176,7 +183,7 @@ export function createSway(): Sway {
       loadX = x;
     },
     settle() {
-      up.x = loadX === null ? 0 : (-SAG * sway.give * phi(loadX)) / phi(0.2) ** 2;
+      up.x = sagTarget();
       up.v = side.x = side.v = 0;
       first = true;
     },
@@ -194,9 +201,9 @@ export function createSway(): Sway {
         for (const mat of Array.isArray(m.material) ? m.material : [m.material]) patch(mat);
         if (/^(shoot|buds|hairs)$/.test(m.name)) shootMeshes.push(m);
       });
-      hasShoot = shootMeshes.some((m) => m.name === 'shoot');
       // the shoot: root at its lowest end, axis up to its highest
       const shoot = shootMeshes.find((m) => m.name === 'shoot');
+      hasShoot = !!shoot;
       if (shoot) {
         const pos = shoot.geometry.getAttribute('position') as THREE.BufferAttribute;
         shoot.geometry.computeBoundingBox();
@@ -224,22 +231,19 @@ export function createSway(): Sway {
     },
     update(dt) {
       if (dt <= 0) return;
-      const g = sway.give;
-      // (sag at x is target * phi(x): SAG at the grip)
-      const target = loadX === null ? 0 : (-SAG * g * phi(loadX)) / phi(0.2) ** 2;
-      up.step(target, dt);
+      up.step(sagTarget(), dt);
       side.step(0, dt);
       uniforms.uSway.value.set(up.x, side.x);
       // the shoot turns with the twig's slope at its root, carried rigidly
       const root = uniforms.uShootRoot.value;
       const axis = uniforms.uShootAxis.value;
-      const s = Math.max(0, (root.x - XA) * INV);
-      const slope = 2 * s * INV; // d phi / dx
+      const slope = dphi(root.x);
+      const ride = phi(root.x);
       const mv = uniforms.uShootMove.value.set(0, -slope * side.x, slope * up.x);
       // where its tip would be if it were stiff, and a soft tip that follows on a spring
       carried.copy(axis).add(tmp.crossVectors(mv, axis));
-      carried.y += s * s * up.x;
-      carried.z += s * s * side.x;
+      carried.y += ride * up.x;
+      carried.z += ride * side.x;
       if (first) {
         first = false;
         stem.reset(carried);

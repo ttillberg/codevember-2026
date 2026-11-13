@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { dampAngle } from './bird/util';
 
 // What else is in the air, all of it sparse and quiet:
 //   motes – specks of dust drifting on a slow breeze, catching the light as they turn
@@ -357,7 +358,7 @@ export function createAmbient(o: AmbientOptions) {
           const vz = fly.position.z - flyPrev.z;
           if (vx * vx + vz * vz > 1e-8) {
             const want = Math.atan2(vx, vz);
-            flyYaw += Math.atan2(Math.sin(want - flyYaw), Math.cos(want - flyYaw)) * (1 - Math.exp(-dt * 6));
+            flyYaw = dampAngle(flyYaw, want, 6, dt);
           }
           fly.rotation.set(THREE.MathUtils.clamp(-(fly.position.y - flyPrev.y) / Math.max(dt, 1e-3) * 0.4, -0.3, 0.3), flyYaw, 0, 'YXZ');
           const beat = Math.sin(time * 210) * 0.7;

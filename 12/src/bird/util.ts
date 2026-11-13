@@ -41,6 +41,11 @@ export function damp(current: number, target: number, lambda: number, dt: number
   return lerp(current, target, 1 - Math.exp(-lambda * dt));
 }
 
+/** damp for an angle, radians: turns the short way round */
+export function dampAngle(current: number, target: number, lambda: number, dt: number) {
+  return current + Math.atan2(Math.sin(target - current), Math.cos(target - current)) * (1 - Math.exp(-lambda * dt));
+}
+
 function hash1(i: number, seed: number) {
   let h = (i * 374761393 + seed * 668265263) | 0;
   h = Math.imul(h ^ (h >>> 13), 1274126177);

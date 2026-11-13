@@ -57,6 +57,7 @@ export function createSeeds(scene: THREE.Scene) {
   const beakMat = new THREE.MeshStandardMaterial({ color: 0xcfc8b4, roughness: 0.7 });
   const bodyMat = new THREE.MeshStandardMaterial({ color: 0x3a2a1c, roughness: 0.8 });
   const seeds: Seed[] = [];
+  const drift = new THREE.Vector3();
   const food: Food[] = [];
   const tip = new THREE.Vector3();
   const axis = new THREE.Vector3();
@@ -134,8 +135,8 @@ export function createSeeds(scene: THREE.Scene) {
         if (s.state === 'drift') {
           // sink slowly, wander on a breeze, a little lift now and then
           const k = t * 0.6 + s.phase;
-          const wind = new THREE.Vector3(Math.sin(k * 0.9) * 0.05 + Math.sin(k * 2.3) * 0.02, Math.sin(k * 1.7) * 0.02, Math.cos(k * 0.7) * 0.03);
-          const target = wind.add(new THREE.Vector3(0, -0.035, 0));
+          // a breeze, and the slow sink
+          const target = drift.set(Math.sin(k * 0.9) * 0.05 + Math.sin(k * 2.3) * 0.02, Math.sin(k * 1.7) * 0.02 - 0.035, Math.cos(k * 0.7) * 0.03);
           if (s.wind) target.add(s.wind);
           s.velocity.lerp(target, 1 - Math.exp(-dt * 1.5));
           s.obj.position.addScaledVector(s.velocity, dt);

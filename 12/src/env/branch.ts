@@ -2,17 +2,20 @@ import * as THREE from 'three';
 import { MeshSurfaceSampler } from 'three/examples/jsm/math/MeshSurfaceSampler.js';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { mulberry32 } from '../bird/util';
+import { MOUNTAIN_GEM } from '../bird/species';
+import { phone } from '../device';
 
 // The perch: a mossy twig along X whose top passes through the origin, plus a
 // side shoot with bright lime buds like in the footage.
 
-// (thinned to 0.45 of the first model, see model/thin.py)
-const PERCH_R = 0.09 * 0.45;
+// the twig's radius at x = 0: what the toes are built for (thinned to 0.45 of the first
+// model, see model/thin.py)
+const PERCH_R = MOUNTAIN_GEM.legs.perchRadius;
 
 /** Where on the twig the bird sits (a little right of its middle, so more of the twig shows to the left). */
 export const GRIP_X = 0.2;
 
-/** The twig's radius at world x: PERCH_R at the grip (the toes are built for it: species legs.perchRadius), thicker to the left. */
+/** The twig's radius at world x: PERCH_R at x = 0, thicker to the left. */
 export function perchRadiusAt(x: number) {
   return PERCH_R * Math.min(1 - 0.18 * x, 2.2);
 }
@@ -219,7 +222,7 @@ export async function loadBranch(url: string, onProgress?: (e: ProgressEvent) =>
 // Fine hairs, one thin tapered triangle each, scattered over the twig and
 // leaning along it, like the ones on the shoot and flowers (same material).
 function fineHairs(perch: THREE.Mesh, material: THREE.Material) {
-  const COUNT = matchMedia('(pointer: coarse)').matches ? 7000 : 16000;
+  const COUNT = phone ? 7000 : 16000;
   const sampler = new MeshSurfaceSampler(perch).build();
   const rng = mulberry32(31);
   const p = new THREE.Vector3();
@@ -268,7 +271,7 @@ function fineHairs(perch: THREE.Mesh, material: THREE.Material) {
 // noise that wander sideways as they rise, so they curl and tangle instead of
 // standing straight. Colour comes from the bark under it, dark at the root,
 // paler and warmer at the tip. Alpha to coverage softens the fibre edges.
-const SHELLS = matchMedia('(pointer: coarse)').matches ? 7 : 14;
+const SHELLS = phone ? 7 : 14;
 const FUZZ_H = 0.03; // moss height; the felt only reaches ~0.014 of it
 
 function fuzzShells(perch: THREE.Mesh) {

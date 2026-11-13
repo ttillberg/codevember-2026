@@ -77,11 +77,15 @@ export interface Rig {
 const V = (a: readonly number[]) => new THREE.Vector3(a[0], a[1], a[2]);
 
 /** Quaternion whose +Z is `dir` and whose +Y leans toward `up`. */
+const bx = new THREE.Vector3();
+const by = new THREE.Vector3();
+const bz = new THREE.Vector3();
+const bm = new THREE.Matrix4();
 export function basisQuat(dir: THREE.Vector3, up: THREE.Vector3, out = new THREE.Quaternion()) {
-  const z = dir.clone().normalize();
-  const x = new THREE.Vector3().crossVectors(up, z).normalize();
-  const y = new THREE.Vector3().crossVectors(z, x);
-  return out.setFromRotationMatrix(new THREE.Matrix4().makeBasis(x, y, z));
+  bz.copy(dir).normalize();
+  bx.crossVectors(up, bz).normalize();
+  by.crossVectors(bz, bx);
+  return out.setFromRotationMatrix(bm.makeBasis(bx, by, bz));
 }
 
 const mirror = (v: THREE.Vector3, sign: number) => new THREE.Vector3(v.x * sign, v.y, v.z);

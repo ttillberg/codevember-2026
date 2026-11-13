@@ -428,16 +428,7 @@ roughnessFactor = clamp((vFData.y > 3.5 ? 0.95 : vFData.y > 2.5 ? 0.8 : vFData.y
 export function createPlumageDepthMaterial(uniforms: PlumageUniforms) {
   const m = new THREE.MeshDepthMaterial({ side: THREE.DoubleSide });
   m.onBeforeCompile = (shader) => {
-    shader.uniforms.uFluff = uniforms.uFluff;
-    shader.uniforms.uLift = uniforms.uLift;
-    shader.uniforms.uGorget = uniforms.uGorget;
-    shader.uniforms.uCrest = uniforms.uCrest;
-    shader.uniforms.uWingSpread = uniforms.uWingSpread;
-    shader.uniforms.uWingLift = uniforms.uWingLift;
-    shader.uniforms.uWingOut = uniforms.uWingOut;
-    shader.uniforms.uWingPivot = uniforms.uWingPivot;
-    shader.uniforms.uWingSpan = uniforms.uWingSpan;
-    shader.uniforms.uWingChord = uniforms.uWingChord;
+    Object.assign(shader.uniforms, uniforms);
     shader.vertexShader = shader.vertexShader
       .replace(
         '#include <common>',
