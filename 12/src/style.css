@@ -112,7 +112,9 @@ body.clean .gear, body.clean .settings { display: none; }
 }
 
 /* loading: millimetre paper (the shader draws the same sheet), ink title, the picture fades in after */
-body {
+/* the paper only while loading (and under the W drawing); after that the page is the
+   colour of the picture's foot (main.ts samples it), for whatever shows below the canvas */
+body.loading, body.drawing {
   background-color: #f1f0e8;
   background-image:
     linear-gradient(rgba(111, 143, 106, 0.35) 1px, transparent 1px), linear-gradient(90deg, rgba(111, 143, 106, 0.35) 1px, transparent 1px),
