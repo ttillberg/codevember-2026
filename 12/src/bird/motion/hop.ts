@@ -183,6 +183,7 @@ export class HopLayer implements Layer {
         p.wing.L.lift += 0.1 * k;
         p.wing.R.lift += 0.1 * k;
         if (u >= 1) {
+          m.emit('perch', { x: this.x0, push: 0.45, on: false, side: 0 });
           this.phase = 'air';
           this.t0 = t;
           this.dur = clamp(0.12 + this.from.point.distanceTo(this.to.point) * 0.38, 0.12, 0.25);
@@ -217,6 +218,7 @@ export class HopLayer implements Layer {
           this.t0 = t;
           this.dur = 0.28;
           this.legs.kick(-0.75);
+          m.emit('perch', { x: this.x1, push: 0.55, on: true, side: 0 });
         }
         break;
       }

@@ -121,6 +121,7 @@ export class FleeLayer implements Layer {
         if (u >= 1) {
           this.from.copy(root.position);
           this.out.set(this.side * 0.55, 1, 0.12).normalize();
+          m.emit('perch', { x: this.from.x, push: 1, on: false, side: 0.4 });
           this.go('takeoff', 0.27);
         }
         break;
@@ -193,6 +194,7 @@ export class FleeLayer implements Layer {
         if (u >= 1) {
           root.position.copy(this.landAt);
           this.hop.landed();
+          m.emit('perch', { x: this.landAt.x, push: 0.85, on: true, side: rand(m.rng, -1, 1) });
           this.tail.flick(m, 1.2);
           this.go('land', 0.5);
         }

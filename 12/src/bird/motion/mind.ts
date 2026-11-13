@@ -14,6 +14,8 @@ export interface MindEvents {
   ruffle: { kind: string };
   /** something went down the hatch */
   ate: { id: number };
+  /** the feet press on the twig at world x, a push-off or a landing (push ~1 for a flight); on: standing on it after */
+  perch: { x: number; push: number; on: boolean; side: number };
 }
 
 type Handler<K extends keyof MindEvents> = (e: MindEvents[K]) => void;

@@ -70,6 +70,12 @@ export class GazeLayer implements Layer {
     });
   }
 
+  /** Done with what it was looking at: on to something else shortly. */
+  moveOn(m: Mind) {
+    this.burst = 0;
+    this.nextAt = Math.min(this.nextAt, m.t + rand(m.rng, 0.12, 0.4));
+  }
+
   /** The fixation the head is resting on (or heading to). */
   get target(): Readonly<Fix> {
     return this.to;
@@ -223,7 +229,7 @@ export class GazeLayer implements Layer {
         const frontal = Math.abs(this.cur.yaw - this.attYaw) < 15 * DEG;
         const [h0, h1] = [lerp(B.holdCalm[0], B.holdAlert[0], m.arousal), lerp(B.holdCalm[1], B.holdAlert[1], m.arousal)];
         // a fright that landed mid-saccade still gets its snap toward the threat
-        this.nextAt = m.t + (this.burst < 0 ? 0.05 : this.burst > 0 ? rand(m.rng, 0.14, 0.42) : randSkew(m.rng, h0, h1, 1.8) * (frontal ? 1.35 : 1));
+        this.nextAt = m.t + (this.burst < 0 ? 0.05 : this.burst > 0 ? rand(m.rng, 0.14, 0.42) : randSkew(m.rng, h0, h1, 1.8) * (frontal ? 1.15 : 1));
         m.emit('fixate', { yaw: this.cur.yaw, pitch: this.cur.pitch });
       }
       const e = minJerk(clamp(u, 0, 1));
