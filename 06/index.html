@@ -21,6 +21,16 @@
   <body>
     <div id="root"></div>
     <div class="plate"><div class="head"><b>06 Orrery</b><i><a class="home" href="../">Codevember 2026 <span lang="ja">太陽系儀</span></a></i></div></div>
+    <!-- the loader: a small solar system turning while the scene loads; gone once the sun lights -->
+    <div class="loader" aria-hidden="true">
+      <svg viewBox="0 0 120 120" width="96" height="96">
+        <circle class="ring" cx="60" cy="60" r="20" /><circle class="ring" cx="60" cy="60" r="35" /><circle class="ring" cx="60" cy="60" r="52" />
+        <circle class="sun" cx="60" cy="60" r="7" />
+        <g class="orbit o1"><circle cx="80" cy="60" r="2.6" /></g>
+        <g class="orbit o2"><circle cx="95" cy="60" r="3.6" /></g>
+        <g class="orbit o3"><circle cx="112" cy="60" r="3" /></g>
+      </svg>
+    </div>
     <script type="module" src="./src/main.tsx"></script>
   </body>
 </html>

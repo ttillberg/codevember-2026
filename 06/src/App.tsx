@@ -18,7 +18,7 @@ import { ORBIT_Y } from './scale';
 import { dateFromJd, jdFromDate } from './kepler';
 import { typing } from './selection';
 import { watchCursor } from './cursor';
-import { intro, INTRO_TIME, roomLight } from './intro';
+import { HOLD_LOADER, intro, INTRO_TIME, roomLight } from './intro';
 
 // Mounted first, so it advances time before the band reads it.
 function Tick() {
@@ -39,7 +39,7 @@ const SMOOTH_FRAMES = 10, SMOOTH_DT = 1 / 40, WAIT_AT_MOST = 6; // frames, secon
 function Ready() {
   const s = useRef({ smooth: 0, since: 0 });
   useFrame((_, dt) => {
-    if (intro.ready) return;
+    if (intro.ready || HOLD_LOADER) return;
     s.current.since += dt;
     s.current.smooth = dt < SMOOTH_DT ? s.current.smooth + 1 : 0;
     if (s.current.smooth < SMOOTH_FRAMES && s.current.since < WAIT_AT_MOST) return;

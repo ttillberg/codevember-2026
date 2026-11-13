@@ -1,8 +1,10 @@
 // The opening: everything dark until the scene has loaded and runs smoothly, then the sun lights up and its light
 // spreads out over the planets. `ready` is when it started (0 until then); `value` runs 0 to 1 from then.
 export const intro = { ready: 0, value: 0 };
+// ?loader holds the page at the loader, dark, for looking at it (or filming it); the intro never starts.
+export const HOLD_LOADER = new URLSearchParams(location.search).has('loader');
 // In dev it's skipped: everything shows as it is straight away.
-if (import.meta.env.DEV) {
+if (import.meta.env.DEV && !HOLD_LOADER) {
   intro.ready = intro.value = 1;
   document.body.classList.add('lit'); // before the first paint, so the controls don't fade in either
 }
