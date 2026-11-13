@@ -42,6 +42,10 @@ export interface Sway {
   use(root: THREE.Object3D): void;
   /** make one material bend with the twig (a mask material drawn over the branch meshes) */
   patch(mat: THREE.Material): void;
+  /** is this ray among the flowers? fills in the nearest point on the stem */
+  reach(ray: THREE.Ray, out: THREE.Vector3): boolean;
+  /** the pointer brushes past the shoot at this point on the stem, moving this fast, for dt seconds */
+  brush(at: THREE.Vector3, velocity: THREE.Vector3, dt: number): void;
   update(dt: number): void;
 }
 
@@ -100,6 +104,17 @@ export function createSway(): Sway {
   const heads = new Lag(2.6, 0.3);
   /** how much of their lag shows: the shoot only answers the twig a little */
   const SHOOT = 0.5;
+  // the pointer brushing past: a nudge to the stem, which springs back
+  const hand = new Lag(4.2, 0.38);
+  const rest = new THREE.Vector3();
+  /** how much a passing pointer gives the stem, and the most the stem takes */
+  const BRUSH = 20;
+  const BRUSH_MAX = 0.4;
+  /** how far from the stem the flowers reach */
+  const REACH = 0.11;
+  let hasShoot = false;
+  const tipAt = new THREE.Vector3();
+  const onRay = new THREE.Vector3();
   const carried = new THREE.Vector3();
   const stemAt = new THREE.Vector3();
   const tmp = new THREE.Vector3();
@@ -135,6 +150,23 @@ export function createSway(): Sway {
   const sway: Sway = {
     uniforms,
     patch,
+    reach(ray, out) {
+      if (!hasShoot) return false;
+      const root = uniforms.uShootRoot.value;
+      tipAt.copy(root).add(uniforms.uShootAxis.value);
+      // (the flowers sit along the upper part of the stem)
+      return ray.distanceSqToSegment(tmp.copy(root).lerp(tipAt, 0.15), tipAt, onRay, out) < REACH * REACH;
+    },
+    brush(at, v, dt) {
+      // touched near the tip it gives more than down by the root
+      const ax = uniforms.uShootAxis.value;
+      const u = THREE.MathUtils.clamp(tmp.copy(at).sub(uniforms.uShootRoot.value).dot(ax) / ax.lengthSq(), 0, 1);
+      // across the stem only (it bends, it doesn't stretch); a quick pass gives more than a slow one
+      const dir = tmp.copy(ax).normalize();
+      const speed = THREE.MathUtils.clamp(v.length(), 0.3, 2);
+      hand.v.addScaledVector(v, BRUSH * dt * speed * (0.3 + u)).addScaledVector(dir, -hand.v.dot(dir) * 0.8);
+      if (hand.v.length() > BRUSH_MAX) hand.v.setLength(BRUSH_MAX);
+    },
     give: 1,
     at(x, out) {
       const f = phi(x);
@@ -162,6 +194,7 @@ export function createSway(): Sway {
         for (const mat of Array.isArray(m.material) ? m.material : [m.material]) patch(mat);
         if (/^(shoot|buds|hairs)$/.test(m.name)) shootMeshes.push(m);
       });
+      hasShoot = shootMeshes.some((m) => m.name === 'shoot');
       // the shoot: root at its lowest end, axis up to its highest
       const shoot = shootMeshes.find((m) => m.name === 'shoot');
       if (shoot) {
@@ -211,10 +244,12 @@ export function createSway(): Sway {
         first = false;
         stem.reset(carried);
         heads.reset(carried);
+        hand.reset(rest);
       }
-      // the stem lags the carried tip, the heads lag the stem
+      // the stem lags the carried tip (and whatever a finger does to it), the heads lag the stem
       stem.step(carried, dt);
-      stemAt.copy(carried).lerp(stem.p, SHOOT);
+      hand.step(rest, dt);
+      stemAt.copy(carried).lerp(stem.p, SHOOT).add(hand.p);
       heads.step(stemAt, dt);
       uniforms.uShootBend.value.copy(stemAt).sub(carried);
       uniforms.uBudBend.value.copy(heads.p).sub(stemAt).multiplyScalar(SHOOT);

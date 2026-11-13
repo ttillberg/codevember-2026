@@ -16,6 +16,9 @@ type State = 'idle' | 'watch' | 'windup' | 'strike' | 'hold' | 'retract' | 'eat'
 
 const minJerk = (u: number) => u * u * u * (10 + u * (-15 + 6 * u));
 
+/** slower than this (per second) and a thing out of reach counts as keeping still */
+const STILL = 0.06;
+
 export class ForageLayer implements Layer {
   readonly name = 'forage';
   enabled = true;
@@ -118,6 +121,8 @@ export class ForageLayer implements Layer {
           if (!this.inView(f.pos)) continue;
           // seen it already: only worth another look once it comes within reach
           if ((this.ignore.get(f.id) ?? 0) > t && this.slideFor(f.pos) === null) continue;
+          // out of reach, a thing that keeps still doesn't catch the eye: only motion does
+          if (f.vel.lengthSq() < STILL * STILL && this.slideFor(f.pos) === null) continue;
           const d = f.pos.distanceTo(this.headRest) - (this.slideFor(f.pos) !== null ? 1 : 0);
           if (d < bestD) {
             bestD = d;
@@ -160,6 +165,8 @@ export class ForageLayer implements Layer {
               }
             }
           }
+          // it stopped moving out there: done with it soon
+          if (seed.vel.lengthSq() < STILL * STILL) this.watchUntil = Math.min(this.watchUntil, t + 0.25);
           if (t > this.watchUntil) {
             this.ignore.set(seed.id, t + rand(m.rng, 25, 45));
             this.release(m, 'idle');

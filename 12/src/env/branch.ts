@@ -12,7 +12,7 @@ const PERCH_R = 0.09 * 0.45;
 /** Where on the twig the bird sits (a little right of its middle, so more of the twig shows to the left). */
 export const GRIP_X = 0.2;
 
-/** The twig's radius at world x: PERCH_R at the grip (the toes are built for it), thicker to the left. */
+/** The twig's radius at world x: PERCH_R at the grip (the toes are built for it: species legs.perchRadius), thicker to the left. */
 export function perchRadiusAt(x: number) {
   return PERCH_R * Math.min(1 - 0.18 * x, 2.2);
 }

@@ -305,10 +305,10 @@ export const MOUNTAIN_GEM: Species = {
     sheen: 0x7a6672,
   },
   tail: { rectrices: 5, length: [0.61, 0.66], width: 0.13, droop: 62, restFan: 0.35, maxFan: 11, color: 0x1d222c },
-  legs: { spread: 0.075, hip: [0.085, 0.11, -0.05], toe: 0.085, perchRadius: 0.09, color: 0x16110f },
+  legs: { spread: 0.075, hip: [0.085, 0.11, -0.05], toe: 0.085, perchRadius: 0.0405, color: 0x16110f },
   behaviour: {
     breathHz: [3.4, 5.2],
-    holdCalm: [0.45, 2.4],
+    holdCalm: [0.4, 1.8],
     holdAlert: [0.22, 0.9],
     saccade: [0.038, 0.00042],
     neckShare: [0.22, 0.3],
