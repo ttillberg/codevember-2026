@@ -50,7 +50,8 @@ function tube(curve: THREE.Curve<THREE.Vector3>, radius: (u: number) => number, 
     for (let j = 0; j < radial; j++) {
       const a = i * (radial + 1) + j;
       const b = a + radial + 1;
-      idx.push(a, b, a + 1, b, b + 1, a + 1);
+      // (wound so the faces look out: the perch raycast and the normals need it)
+      idx.push(a, a + 1, b, b, a + 1, b + 1);
     }
   }
   const g = new THREE.BufferGeometry();
@@ -106,14 +107,18 @@ float fbm(vec3 p){ float a=.5, s=0.; for(int i=0;i<5;i++){ s+=a*n3(p); p*=2.03; 
 
 export function createBranch() {
   const group = new THREE.Group();
-  // main perch, rising to the right like the footage
+  // main perch, rising to the right like the footage. Its axis follows the glb's (measured
+  // from it), so nothing jumps when the glb takes over from this one after loading
   const perch = new THREE.CatmullRomCurve3([
-    new THREE.Vector3(-6.0, -1.5, -0.9),
-    new THREE.Vector3(-3.2, -0.75, -0.35),
-    new THREE.Vector3(-1.4, -0.36, -0.1),
-    new THREE.Vector3(0, -PERCH_R, 0),
-    new THREE.Vector3(0.9, 0.08, 0.12),
-    new THREE.Vector3(1.8, 0.34, 0.05),
+    new THREE.Vector3(-6.0, -1.414, -0.927),
+    new THREE.Vector3(-3.2, -0.709, -0.364),
+    new THREE.Vector3(-1.4, -0.312, -0.11),
+    new THREE.Vector3(-0.7, -0.199, -0.039),
+    new THREE.Vector3(0, -0.041, 0),
+    new THREE.Vector3(0.5, 0.059, 0.072),
+    new THREE.Vector3(0.9, 0.142, 0.113),
+    new THREE.Vector3(1.3, 0.193, 0.077),
+    new THREE.Vector3(1.8, 0.24, 0.04),
   ]);
   const len = perch.getLength();
   const bark = barkMaterial(len);
@@ -132,10 +137,10 @@ export function createBranch() {
 
   // side shoot with buds, off the right end, in front of the tail
   const shoot = new THREE.CatmullRomCurve3([
-    new THREE.Vector3(0.95, 0.07, 0.1),
-    new THREE.Vector3(1.15, 0.25, 0.22),
-    new THREE.Vector3(1.25, 0.5, 0.18),
-    new THREE.Vector3(1.4, 0.68, 0.1),
+    new THREE.Vector3(1.07, 0.11, 0.26),
+    new THREE.Vector3(1.18, 0.3, 0.28),
+    new THREE.Vector3(1.28, 0.5, 0.2),
+    new THREE.Vector3(1.41, 0.7, 0.09),
   ]);
   const shootMat = new THREE.MeshStandardMaterial({ color: 0x4f7a18, roughness: 0.65 });
   const mShoot = new THREE.Mesh(tube(shoot, (u) => 0.022 * (1 - u * 0.6), 60, 10, 9), shootMat);
