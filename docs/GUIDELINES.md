@@ -5,7 +5,7 @@
 ```
 01/ … 30/        one folder per day, two-digit, zero-padded
 template/        copied by `pnpm new NN`, never built or deployed
-scripts/         new.mjs (scaffold), build.mjs (build all + index + README), words.mjs (prompt list)
+scripts/         new.mjs (scaffold), build.mjs (build all + index + README), grab.mjs + clip.mjs (captures), words.mjs (prompt list)
 docs/            this
 dist/            build output, gitignored
 .github/         deploy workflow
@@ -39,7 +39,29 @@ Lives in each day's `package.json`:
 
 Each day also has a short `README.md`: what it is, what was tried, what was learned. The build does not read it.
 
-Optional `NN/screengrab.png`: a square shot of the experiment, no UI, 1200 × 1200. The build copies it to `dist/NN/screengrab.png`, the index shows it in the day's square, and the day's `index.html` can point `og:image` at `https://ttillberg.github.io/codevember-2026/NN/screengrab.png`.
+## About: demo, screengrab, clip
+
+Each day has an `NN/about/` folder for how it is shown off:
+
+```
+NN/about/demo.md          the recipe: what ten seconds of this day should show, and the steps to play it
+NN/about/screengrab.png   a square shot, no UI, 1200 × 1200: the share image and the index square's poster
+NN/about/screengrab.mp4   a 10 s loop, 480 × 480, played in the index square
+NN/about/x.mp4            a 60 s video, 1080 × 1080, for X (gitignored, never committed)
+```
+
+All optional, whichever is there is used. The build copies them to `dist/NN/screengrab.*`, so the day's `index.html` can point `og:image` at `https://ttillberg.github.io/codevember-2026/NN/screengrab.png`.
+
+```sh
+pnpm grab 08 --clip                                     # screengrab.mp4 from the live site, played by demo.md
+pnpm grab 08 --clip --url http://localhost:5173/        # from the dev server instead
+pnpm grab 08 --clip --still                             # and a new screengrab.png (the last frame), else only if missing
+pnpm grab 08 --x                                        # x.mp4, the 60 s video
+```
+
+`demo.md` is frontmatter (`query` added to the url, `warmup` ms, `seconds`, `xseconds`, `ink: white` for a dark day so its title on the index is white), a few lines for people, then blocks of steps: ` ```setup ` (played before the clip starts) and ` ```steps ` (during it) for the index clip, ` ```x-setup ` and ` ```x ` for the X video. Steps are `drag x,y x,y … 450ms [meta|shift|alt|control]`, `move x,y`, `key Space`, `wait 1500`, in a 1200 × 1200 viewport with everything but the canvas hidden. A day with its own clean mode (`?clean`) and its own motion needs only the frontmatter. The format is documented at the top of `scripts/clip.mjs`.
+
+Grab the clip once the day is done: every change to the day dates it. The `demo` skill (`.claude/skills/demo/`) picks what to show with you and writes `demo.md`.
 
 ## Process captures
 
@@ -64,7 +86,7 @@ pnpm build
 Runs, in order:
 
 1. `vite build` in each `NN/` with `CODEVEMBER_BASE=/codevember-2026/NN/`, copied to `dist/NN/`
-2. generates `dist/index.html`: a white page with a square per day of the month, linked once built, showing its screengrab
+2. generates `dist/index.html`: a white page with a square per day of the month, linked once built, playing its clip or showing its screengrab
 3. rewrites the table in the root `README.md` between `<!-- days:start -->` and `<!-- days:end -->`
 
 Commit the README change. CI runs the same command on push to `main` and deploys `dist/` to GitHub Pages via Actions. One day failing to build fails the whole deploy, on purpose.
@@ -77,4 +99,4 @@ Live: https://ttillberg.github.io/codevember-2026/
 - Commits: `feat: day 07 hollow`, `fix: 03 resize on mobile`. Lowercase, imperative, short.
 - No typecheck in CI. Vite only transpiles. Run `pnpm -C 07 exec tsc` yourself if you care.
 - Vite config per day is deliberately duplicated. Don't centralise it.
-- Keep the `.back` link in `index.html` so every day links back to the index.
+- Every day has the title plate, its link the way back to the index. Look, type, black or white, furniture: `docs/DESIGN.md`.

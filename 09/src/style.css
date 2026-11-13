@@ -42,6 +42,7 @@ canvas { display: block; width: 100vw; height: 100vh; height: 100dvh; touch-acti
   text-transform: uppercase;
 }
 .plate .head > i {
+  font-family: Inter, "Helvetica Neue", Helvetica, Arial, sans-serif;
   display: block; margin-top: 6px;
   font-style: normal; font-weight: 600; font-size: 14px; line-height: 1.15;
   letter-spacing: 0.12em; text-transform: uppercase;

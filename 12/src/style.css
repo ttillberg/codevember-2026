@@ -33,7 +33,7 @@ canvas:active { cursor: grabbing; }
 }
 .plate .head > i {
   display: block; margin-top: 6px; font-style: normal;
-  font: 600 14px/1.15 "IBM Plex Sans", system-ui, sans-serif; letter-spacing: 0.12em; text-transform: uppercase;
+  font: 600 14px/1.15 Inter, "Helvetica Neue", Helvetica, Arial, sans-serif; letter-spacing: 0.12em; text-transform: uppercase;
 }
 .plate .home { color: inherit; text-decoration: none; pointer-events: auto; opacity: 0.85; }
 .plate .home:hover { opacity: 1; }
