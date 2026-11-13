@@ -42,6 +42,10 @@ controls.minAzimuthAngle = -0.45;
 controls.maxAzimuthAngle = 0.85;
 controls.enablePan = false;
 controls.rotateSpeed = 0.6;
+// on a touch screen a finger is the pointer: it brushes the flowers, steps the bird along,
+// catches its eye, as a mouse does by hovering. It never drags the camera round (pinch
+// still zooms, and the tilt button moves the camera)
+controls.touches.ONE = null;
 
 // --- environment --------------------------------------------------------------
 const backdrop = createBackdrop();
