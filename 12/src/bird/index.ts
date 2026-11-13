@@ -11,7 +11,7 @@ import { PostureLayer } from './motion/posture';
 import { BreathLayer } from './motion/breath';
 import { GazeLayer } from './motion/gaze';
 import { BlinkLayer } from './motion/blink';
-import { RuffleLayer } from './motion/ruffle';
+import { RuffleLayer, type RuffleKind } from './motion/ruffle';
 import { TailLayer } from './motion/tail';
 import { WingLayer } from './motion/wings';
 import { StartleLayer } from './motion/startle';
@@ -46,9 +46,24 @@ export interface BirdHandle extends Bird {
   readonly fleeing: boolean;
   /** true while it is out of sight */
   readonly away: boolean;
+  /** on the twig: not off it in the air (gathering itself to go and settling after landing count) */
+  readonly perched: boolean;
   /** Preen under a wing (a random one if not given). Returns false if it is busy. */
   preen(side?: 'L' | 'R'): boolean;
   readonly preening: boolean;
+  // The verbs below return false, and do nothing, while the bird is busy: off the perch,
+  // mid-hop, preening, or after food (watching it, striking, eating).
+  /** Sing for about this long (starts over if it already is). */
+  sing(seconds?: number): boolean;
+  readonly singing: boolean;
+  /** Flick the tongue: `count` flicks, the first reaching `amount` (random when left out). */
+  lick(amount?: number, count?: number): boolean;
+  /** Hop to world x on the perch (clamped to its range and to one hop). */
+  hopTo(x: number): boolean;
+  /** Hop this far along the perch from where it stands. */
+  hopBy(dx: number): boolean;
+  /** Ruffle now, `amount` 0..1 (random when left out). Its own one-a-minute limit doesn't apply. */
+  ruffle(kind: RuffleKind, amount?: number): boolean;
   /** Hook that runs after the layers and before the solver: last word on the pose. */
   onPose: ((pose: Pose, mind: Mind) => void) | null;
 }
@@ -102,6 +117,8 @@ export function createBird(_ctx: BirdContext, options: BirdOptions = {}): BirdHa
   const wingLayer = new WingLayer(mind);
   const preen = new PreenLayer(mind, rig, solve.billReach);
   mouth.blocked = () => flee.active || hop.busy || preen.active;
+  // what the verbs wait for: the mouth's own block, and food (as the preen's)
+  const busy = () => mouth.blocked() || forage.state !== 'idle';
   preen.blocked = () => flee.active || hop.busy || mind.eating || forage.state !== 'idle';
   preen.onDone = (m) => {
     wingLayer.shuffle(m);
@@ -144,6 +161,17 @@ export function createBird(_ctx: BirdContext, options: BirdOptions = {}): BirdHa
     get away() {
       return flee.gone;
     },
+    get perched() {
+      return flee.perched;
+    },
+    sing: (seconds) => !busy() && (mouth.sing(mind, seconds), true),
+    get singing() {
+      return mouth.singing;
+    },
+    lick: (amount, count) => !busy() && (mouth.lick(mind, amount, count), true),
+    hopTo: (x) => !busy() && hop.go(mind, x),
+    hopBy: (dx) => handle.hopTo(hop.x + dx),
+    ruffle: (kind, amount) => !busy() && (ruffle.trigger(mind, kind, amount), true),
     update(dt) {
       root.updateWorldMatrix(true, false);
       inv.copy(root.matrixWorld).invert();
@@ -230,15 +258,11 @@ function installDebug(bird: BirdHandle) {
   if (q.has('quiet')) bird.mind.quiet = true;
   if (q.has('sing')) {
     // debug: sing every few seconds
-    const m = bird.layer<MouthLayer>('mouth');
     const prev = bird.onPose;
     let next = 1;
     bird.onPose = (p, mind) => {
       prev?.(p, mind);
-      if (mind.t > next && !m.singing) {
-        m.sing(mind, 1.8);
-        next = mind.t + 4;
-      }
+      if (mind.t > next && !bird.singing && bird.sing(1.8)) next = mind.t + 4;
     };
   }
   const jawOpen = num('jaw');
@@ -293,7 +317,7 @@ export { Pose } from './pose';
 export type { Layer, Mind } from './motion/mind';
 export type { GazeLayer } from './motion/gaze';
 export type { MouthLayer } from './motion/mouth';
-export type { RuffleLayer } from './motion/ruffle';
+export type { RuffleLayer, RuffleKind } from './motion/ruffle';
 export type { ForageLayer } from './motion/forage';
 export type { HopLayer } from './motion/hop';
 export type { FleeLayer } from './motion/flee';

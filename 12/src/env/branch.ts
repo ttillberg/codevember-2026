@@ -4,6 +4,7 @@ import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { mulberry32 } from '../bird/util';
 import { MOUNTAIN_GEM } from '../bird/species';
 import { phone } from '../device';
+import type { PerchFrame } from '../bird/types';
 
 // The perch: a mossy twig along X whose top passes through the origin, plus a
 // side shoot with bright lime buds like in the footage.
@@ -18,6 +19,77 @@ export const GRIP_X = 0.2;
 /** The twig's radius at world x: PERCH_R at x = 0, thicker to the left. */
 export function perchRadiusAt(x: number) {
   return PERCH_R * Math.min(1 - 0.18 * x, 2.2);
+}
+
+/** The stretch of twig, world x, the bird may hop along. */
+export const PERCH_RANGE: [number, number] = [GRIP_X - 0.45, GRIP_X + 0.45];
+
+/**
+ * The perch frame at world x on this twig (its 'perch' mesh), for bird.setPerch.
+ * A ray straight down at x finds the top of the twig; the tangent and up come from
+ * two neighbours. The twig never moves, so each x is cast once: the hop's search
+ * asks the same handful of spots over and over.
+ */
+export function perchFrames(root: THREE.Object3D, range = PERCH_RANGE) {
+  root.updateMatrixWorld(true);
+  const src = root.getObjectByName('perch') as THREE.Mesh | undefined;
+  // (only ever cast at, never drawn: nothing on the GPU to free when the twig is swapped)
+  const mesh = src ? cropPerch(src, range[0] - 0.1, range[1] + 0.1) : null;
+  const ray = new THREE.Raycaster();
+  ray.ray.direction.set(0, -1, 0);
+  const hits: THREE.Intersection[] = [];
+  const cache = new Map<number, PerchFrame | null>();
+  const pa = new THREE.Vector3();
+  const pb = new THREE.Vector3();
+  function top(x: number, out: THREE.Vector3) {
+    if (!mesh) return null;
+    ray.ray.origin.set(x, 2, 0);
+    hits.length = 0;
+    ray.intersectObject(mesh, false, hits);
+    const h = hits[0];
+    return h ? out.copy(h.point) : null;
+  }
+  return (x: number, out: PerchFrame) => {
+    const key = Math.round(x * 1000);
+    let f = cache.get(key);
+    if (f === undefined) {
+      f = { point: new THREE.Vector3(), up: new THREE.Vector3(), tangent: new THREE.Vector3(), radius: perchRadiusAt(x) };
+      if (top(x, f.point) && top(x - 0.03, pa) && top(x + 0.03, pb)) {
+        f.tangent.copy(pb).sub(pa).normalize();
+        f.up.set(0, 1, 0).addScaledVector(f.tangent, -f.tangent.y).normalize();
+      } else f = null;
+      cache.set(key, f);
+    }
+    if (!f) return null;
+    out.point.copy(f.point);
+    out.up.copy(f.up);
+    out.tangent.copy(f.tangent);
+    out.radius = f.radius;
+    return out;
+  };
+}
+
+// just the stretch of twig the bird can stand on, for the rays: the whole glb is ~50k
+// triangles, and a hop's search casts a hundred rays at once
+function cropPerch(mesh: THREE.Mesh, x0: number, x1: number) {
+  const g = mesh.geometry;
+  const pos = g.getAttribute('position');
+  const n = g.index ? g.index.count : pos.count;
+  const at = (i: number) => (g.index ? g.index.getX(i) : i);
+  const out: number[] = [];
+  for (let t = 0; t < n; t += 3) {
+    const a = at(t), b = at(t + 1), c = at(t + 2);
+    const lo = Math.min(pos.getX(a), pos.getX(b), pos.getX(c));
+    const hi = Math.max(pos.getX(a), pos.getX(b), pos.getX(c));
+    if (hi < x0 || lo > x1) continue;
+    for (const k of [a, b, c]) out.push(pos.getX(k), pos.getY(k), pos.getZ(k));
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(out, 3));
+  const m = new THREE.Mesh(geo, mesh.material);
+  m.matrixAutoUpdate = false;
+  m.matrixWorld.copy(mesh.matrixWorld);
+  return m;
 }
 
 function tube(curve: THREE.Curve<THREE.Vector3>, radius: (u: number) => number, segs: number, radial: number, bumpSeed: number) {

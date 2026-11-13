@@ -1,10 +1,10 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { createBackdrop } from './env/backdrop';
-import { createBranch, GRIP_X, loadBranch, perchRadiusAt } from './env/branch';
+import { createBranch, GRIP_X, loadBranch, PERCH_RANGE, perchFrames } from './env/branch';
 import { createSway } from './env/sway';
-import { createBird, type FleeLayer, type ForageLayer, type GazeLayer, type HopLayer, type MouthLayer, type RuffleLayer } from './bird';
-import type { Food, PerchFrame } from './bird/types';
+import { createBird, type GazeLayer, type HopLayer } from './bird';
+import type { Food } from './bird/types';
 import { PALETTES, paletteMatrices } from './bird/palettes';
 import { createPost } from './post';
 import { createSeeds } from './seeds';
@@ -187,11 +187,7 @@ scene.add(rim, rim.target);
 const bird = createBird({ renderer, scene, camera });
 // it sits a little right of the twig's middle and drifts back there
 bird.root.position.x = GRIP_X;
-const hop = bird.layer<HopLayer>('hop');
-const mouth = bird.layer<MouthLayer>('mouth');
-const ruffle = bird.layer<RuffleLayer>('ruffle');
-const flight = bird.layer<FleeLayer>('flee');
-hop.home = GRIP_X;
+bird.layer<HopLayer>('hop').home = GRIP_X;
 // (the bird stands in a rider that moves with the twig under its feet)
 const rider = new THREE.Group();
 rider.add(bird.root);
@@ -210,7 +206,7 @@ const focusAt = new THREE.Vector3();
 const focusHold = new THREE.Vector3();
 let focusSet = false;
 function updateFocus(dt: number) {
-  if (flight.perched || !focusSet) focusHold.copy(headPos);
+  if (bird.perched || !focusSet) focusHold.copy(headPos);
   if (!focusSet) focusAt.copy(focusHold);
   focusSet = true;
   focusAt.lerp(focusHold, 1 - Math.exp(-dt * 8));
@@ -218,12 +214,11 @@ function updateFocus(dt: number) {
 function updateSway(dt: number) {
   sway.update(dt);
   // on the twig (also gathering itself to go, and landing) it moves with it; in the air it doesn't
-  ride = damp(ride, flight.perched ? 1 : 0, 25, dt);
+  ride = damp(ride, bird.perched ? 1 : 0, 25, dt);
   sway.at(bird.root.position.x, rideAt);
   rider.position.copy(rideAt).multiplyScalar(ride);
 }
 const gaze = bird.layer<GazeLayer>('gaze');
-const forage = bird.layer<ForageLayer>('forage');
 const billTip = bird.billTip.bind(bird);
 // on phones the contour feathers skip the shadow pass (most of its triangles)
 if (phone) bird.feathers.contour.castShadow = false;
@@ -272,6 +267,8 @@ const seeds = createSeeds(scene);
 const insects = createInsects(scene, () => bird.root.getWorldPosition(new THREE.Vector3()).add(new THREE.Vector3(0, 0.85, 0)));
 bird.onPick = (id) => (insects.owns(id) ? insects.pick(id) : seeds.pick(id));
 bird.onSwallow = (id) => (insects.owns(id) ? insects.swallowed(id) : seeds.swallowed(id));
+// it winds up to strike: the gnats near the bill may see it coming
+bird.mind.on('strike', () => insects.strike());
 // dust, a passing fly, a seed on the breeze, a wisp of down after a ruffle
 const ambient = createAmbient({ scene, camera, renderer, center: new THREE.Vector3(GRIP_X, 0.55, 0), dof: () => post.dof, passSeed: (at, wind) => seeds.spawn(at, wind) });
 // what only comes into the scene later, for compiling while loading (never drawn)
@@ -330,7 +327,7 @@ function nearFeet(r: THREE.Ray) {
   // away from the side the pointer came in on (where on the feet it is now)
   const away = feetHit.x < (feetA.x + feetB.x) / 2 ? 1 : -1;
   const d = 0.12 + Math.random() * 0.1;
-  if (!hop.go(bird.mind, hop.x + away * d) && !hop.go(bird.mind, hop.x - away * d)) return;
+  if (!bird.hopBy(away * d) && !bird.hopBy(-away * d)) return;
   // (a run of hops close together counts up; a quiet spell starts the count over)
   feetHops = now - feetNext < 20 ? feetHops + 1 : 1;
   feetNext = now + FEET_EVERY;
@@ -365,7 +362,7 @@ window.addEventListener('pointermove', (e) => {
   const onCanvas = e.target === canvas;
   const r = pointerRay(e.clientX, e.clientY);
   const bill = onCanvas && nearBill(r);
-  if (bill && !atBill && !mouth.singing && !mouth.blocked()) mouth.sing(bird.mind, 1.6);
+  if (bill && !atBill && !bird.singing) bird.sing(1.6);
   atBill = bill;
   if (onCanvas) {
     nearFeet(r);
@@ -425,73 +422,9 @@ const headPos = new THREE.Vector3();
   g.uVignette.value = 0.22;
 }
 
-// --- the perch, for hopping along it -------------------------------------------
-// a ray straight down at world x finds the top of the twig; the tangent and
-// up come from two neighbours. The twig never moves, so each x is cast once:
-// the hop's search asks the same handful of spots over and over.
-const perchRay = new THREE.Raycaster();
-perchRay.ray.direction.set(0, -1, 0);
-const perchHits: THREE.Intersection[] = [];
-let perchMesh: THREE.Mesh | null = null;
-const perchCache = new Map<number, PerchFrame | null>();
-const pa = new THREE.Vector3();
-const pb = new THREE.Vector3();
-function perchTop(x: number, out: THREE.Vector3) {
-  if (!perchMesh) return null;
-  perchRay.ray.origin.set(x, 2, 0);
-  perchHits.length = 0;
-  perchRay.intersectObject(perchMesh, false, perchHits);
-  const h = perchHits[0];
-  return h ? out.copy(h.point) : null;
-}
-function perchAt(x: number, out: PerchFrame) {
-  const key = Math.round(x * 1000);
-  let f = perchCache.get(key);
-  if (f === undefined) {
-    f = { point: new THREE.Vector3(), up: new THREE.Vector3(), tangent: new THREE.Vector3(), radius: perchRadiusAt(x) };
-    if (perchTop(x, f.point) && perchTop(x - 0.03, pa) && perchTop(x + 0.03, pb)) {
-      f.tangent.copy(pb).sub(pa).normalize();
-      f.up.set(0, 1, 0).addScaledVector(f.tangent, -f.tangent.y).normalize();
-    } else f = null;
-    perchCache.set(key, f);
-  }
-  if (!f) return null;
-  out.point.copy(f.point);
-  out.up.copy(f.up);
-  out.tangent.copy(f.tangent);
-  out.radius = f.radius;
-  return out;
-}
-const PERCH_RANGE: [number, number] = [GRIP_X - 0.45, GRIP_X + 0.45];
+// --- the perch, for hopping along it (the rays are in env/branch.ts) -----------
 function usePerch(root: THREE.Object3D) {
-  root.updateMatrixWorld(true);
-  const mesh = root.getObjectByName('perch') as THREE.Mesh | undefined;
-  perchMesh?.geometry.dispose();
-  perchMesh = mesh ? cropPerch(mesh, PERCH_RANGE[0] - 0.1, PERCH_RANGE[1] + 0.1) : null;
-  perchCache.clear();
-  bird.setPerch(perchAt, PERCH_RANGE);
-}
-// just the stretch of twig the bird can stand on, for the rays: the whole glb is ~50k
-// triangles, and a hop's search casts a hundred rays at once
-function cropPerch(mesh: THREE.Mesh, x0: number, x1: number) {
-  const g = mesh.geometry;
-  const pos = g.getAttribute('position');
-  const n = g.index ? g.index.count : pos.count;
-  const at = (i: number) => (g.index ? g.index.getX(i) : i);
-  const out: number[] = [];
-  for (let t = 0; t < n; t += 3) {
-    const a = at(t), b = at(t + 1), c = at(t + 2);
-    const lo = Math.min(pos.getX(a), pos.getX(b), pos.getX(c));
-    const hi = Math.max(pos.getX(a), pos.getX(b), pos.getX(c));
-    if (hi < x0 || lo > x1) continue;
-    for (const k of [a, b, c]) out.push(pos.getX(k), pos.getY(k), pos.getZ(k));
-  }
-  const geo = new THREE.BufferGeometry();
-  geo.setAttribute('position', new THREE.Float32BufferAttribute(out, 3));
-  const m = new THREE.Mesh(geo, mesh.material);
-  m.matrixAutoUpdate = false;
-  m.matrixWorld.copy(mesh.matrixWorld);
-  return m;
+  bird.setPerch(perchFrames(root), PERCH_RANGE);
 }
 function disposeTree(root: THREE.Object3D) {
   root.traverse((o) => {
@@ -512,7 +445,7 @@ let paletteTo = paletteMatrices(PALETTES[0]);
 function changePalette() {
   paletteIndex = (paletteIndex + 1) % PALETTES.length;
   // just the slightest lift of the throat and crown as the colours turn
-  ruffle.trigger(bird.mind, 'throat', 0.25);
+  bird.ruffle('throat', 0.25);
   bird.plumage.uPal.value.forEach((m, i) => paletteFrom[i].copy(m));
   paletteTo = paletteMatrices(PALETTES[paletteIndex]);
   paletteDelay = 0.05;
@@ -627,9 +560,9 @@ const seedAhead = () => {
 // --- D: demo, half a minute of what it does --------------------------------
 // A script on the scene clock (so P pauses it): a ruffle, a gnat that doesn't get
 // away, song, the tongue, a hop each way, a fly past the head, a seed. Steps that
-// can't happen yet (mid-hop, still eating) wait their turn, up to a few seconds.
+// can't happen yet (the bird's verbs say no: mid-hop, still eating) wait their turn,
+// up to a few seconds.
 type DemoStep = [at: number, run: () => boolean | void];
-const free = () => !hop.busy && forage.state === 'idle' && !bird.away;
 const inReach = () => {
   bird.headPosition(demoAt);
   camera.getWorldDirection(toCam).negate();
@@ -637,17 +570,17 @@ const inReach = () => {
 };
 const demoAt = new THREE.Vector3();
 const DEMO: DemoStep[] = [
-  [0.4, () => ruffle.trigger(bird.mind, 'shake')],
+  [0.4, () => bird.ruffle('shake')],
   [3, () => insects.spawn(inReach(), true)],
-  [10.5, () => free() && (mouth.sing(bird.mind, 2.2), true)],
-  [13.5, () => free() && (mouth.lick(bird.mind, 0.65, 3), true)],
-  [15, () => free() && hop.go(bird.mind, hop.x + 0.26)],
-  [17.5, () => free() && (mouth.sing(bird.mind, 1.6), true)],
+  [10.5, () => bird.sing(2.2)],
+  [13.5, () => bird.lick(0.65, 3)],
+  [15, () => bird.hopBy(0.26)],
+  [17.5, () => bird.sing(1.6)],
   [20, () => ambient.flyBy(true)],
-  [22.5, () => free() && hop.go(bird.mind, GRIP_X)],
+  [22.5, () => bird.hopTo(GRIP_X)],
   [24.5, () => seeds.spawn(seedAhead())],
-  [30, () => free() && (ruffle.trigger(bird.mind, 'puff', 0.6), true)],
-  [32, () => free() && (mouth.sing(bird.mind, 1.4), true)],
+  [30, () => bird.ruffle('puff', 0.6)],
+  [32, () => bird.sing(1.4)],
 ];
 const DEMO_END = 35;
 let demoT = -1;
@@ -697,8 +630,8 @@ const settings = createSettings([
   { kind: 'action', label: 'A gnat', run: () => insects.spawn() },
   { kind: 'action', label: 'A fly', run: () => ambient.flyBy() },
   { kind: 'action', label: 'Demo (D)', run: () => setDemo(demoT < 0) },
-  { kind: 'action', label: 'Sing', run: () => mouth.sing(bird.mind, 2.2) },
-  { kind: 'action', label: 'Ruffle (R)', run: () => bird.layer<RuffleLayer>('ruffle').trigger(bird.mind, 'shake') },
+  { kind: 'action', label: 'Sing', run: () => bird.sing(2.2) },
+  { kind: 'action', label: 'Ruffle (R)', run: () => bird.ruffle('shake') },
   { kind: 'action', label: 'Another bird (C)', run: changePalette },
   { kind: 'action', label: 'Startle', run: () => bird.startle(1) },
   { kind: 'action', label: 'Fly off (F)', run: () => bird.flee() },
@@ -712,7 +645,7 @@ const settings = createSettings([
 const KEYS: Record<string, () => void> = {
   KeyF: () => bird.flee(),
   // a ruffle now (the one-a-minute limit is only for the ones it does by itself)
-  KeyR: () => ruffle.trigger(bird.mind, 'shake'),
+  KeyR: () => bird.ruffle('shake'),
   KeyB: turnAround,
   KeyC: changePalette,
   KeyG: letOneIn,
@@ -812,7 +745,7 @@ renderer.setAnimationLoop((now) => {
   updateFocus(dt);
   updateHeadCut();
   seeds.update(dt, t, billTip, headPos);
-  insects.update(dt, t, billTip, forage.state === 'windup' || forage.state === 'strike');
+  insects.update(dt, t, billTip);
   ambient.update(dt);
   updateDemo(dt);
   frame();

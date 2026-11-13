@@ -44,7 +44,8 @@ export function createInsects(scene: THREE.Scene, around: () => THREE.Vector3) {
   let nextId = ID0;
   // rare: one some time in the first minute, then one every 45–90 s
   let nextAt = 20 + Math.random() * 35;
-  let wasStriking = false;
+  /** the bird has just wound up to strike (the 'strike' event): roll the dodge on the next update */
+  let strikeDue = false;
 
   /** at: where it hovers (default: somewhere in front of the bird); tame: it won't dodge */
   function spawn(at?: THREE.Vector3, tame = false) {
@@ -91,6 +92,10 @@ export function createInsects(scene: THREE.Scene, around: () => THREE.Vector3) {
     /** one of each part, never in the scene: for compiling the shaders while loading, not on the first gnat */
     warm: [new THREE.Mesh(bodyGeo, bodyMat), new THREE.Mesh(wingGeo, wingMat)] as THREE.Object3D[],
     owns: (id: number) => id >= ID0,
+    /** the bird winds up to strike: the gnats near the bill may see it coming */
+    strike() {
+      strikeDue = true;
+    },
     pick(id: number) {
       const g = gnats.find((x) => x.id === id && (x.state === 'fly' || x.state === 'leave'));
       if (g) {
@@ -107,11 +112,10 @@ export function createInsects(scene: THREE.Scene, around: () => THREE.Vector3) {
       for (const g of gnats) if (g.state === 'fly' && g.age > g.dodgedUntil) food.push(g);
       return food;
     },
-    /** striking: the bird is winding up or striking right now */
-    update(dt: number, t: number, billTip: ((out: THREE.Vector3) => THREE.Vector3) | undefined, striking = false) {
+    update(dt: number, t: number, billTip?: (out: THREE.Vector3) => THREE.Vector3) {
       // one roll per strike, as it starts
-      const strikeStarts = striking && !wasStriking;
-      wasStriking = striking;
+      const strikeStarts = strikeDue;
+      strikeDue = false;
       if (t > nextAt && gnats.length === 0) {
         spawn();
         nextAt = t + 45 + Math.random() * 45;

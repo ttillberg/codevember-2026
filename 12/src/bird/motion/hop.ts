@@ -4,12 +4,13 @@ import type { PerchFrame } from '../types';
 import { clamp, damp, lerp, rand, smoothstep, Spring } from '../util';
 import type { Layer, Mind } from './mind';
 
-// Sidestepping along the perch. The bird's root is moved here, nowhere else:
-// a hop is a crouch, a short ballistic arc to another spot on the twig with
-// the wings flicked off the body and the toes open, and a landing the legs
-// soak up. The feet are re-set to the twig's local slope and thickness. The
-// head is held back against the jump (the bird keeps looking at whatever it
-// was looking at) and catches up after landing.
+// Sidestepping along the perch. The bird's root is moved here while it is on the
+// twig, and in flee.ts while it is off it (the hop on hold till it lands): a hop
+// is a crouch, a short ballistic arc to another spot on the twig with the wings
+// flicked off the body and the toes open, and a landing the legs soak up. The
+// feet are re-set to the twig's local slope and thickness. The head is held back
+// against the jump (the bird keeps looking at whatever it was looking at) and
+// catches up after landing.
 
 /** Where the bird stands: owned by createBird, fed by setPerch. */
 export interface Ground {

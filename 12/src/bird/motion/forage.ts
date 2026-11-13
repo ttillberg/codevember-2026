@@ -181,6 +181,7 @@ export class ForageLayer implements Layer {
           m.gazeLock = true;
           this.retried = false;
           this.begin(m, 'windup', rand(m.rng, 0.09, 0.13));
+          m.emit('strike', { id: seed.id });
         }
         break;
       }

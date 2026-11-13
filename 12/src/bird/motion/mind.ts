@@ -12,6 +12,8 @@ export interface MindEvents {
   fixate: { yaw: number; pitch: number };
   startle: { strength: number };
   ruffle: { kind: string };
+  /** it winds up to strike at a food item (once per windup: a quick second stab after a miss is the same strike) */
+  strike: { id: number };
   /** something went down the hatch */
   ate: { id: number };
   /** the feet press on the twig at world x, a push-off or a landing (push ~1 for a flight); on: standing on it after */
