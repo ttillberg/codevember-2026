@@ -579,7 +579,7 @@ const DEMO: DemoStep[] = [
   [20, () => ambient.flyBy(true)],
   [22.5, () => bird.hopTo(GRIP_X)],
   [24.5, () => seeds.spawn(seedAhead())],
-  [30, () => bird.ruffle('puff', 0.6)],
+  [30, () => !bird.busy && (bird.ruffle('puff', 0.6), true)],
   [32, () => bird.sing(1.4)],
 ];
 const DEMO_END = 35;

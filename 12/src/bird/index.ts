@@ -51,8 +51,9 @@ export interface BirdHandle extends Bird {
   /** Preen under a wing (a random one if not given). Returns false if it is busy. */
   preen(side?: 'L' | 'R'): boolean;
   readonly preening: boolean;
-  // The verbs below return false, and do nothing, while the bird is busy: off the perch,
-  // mid-hop, preening, or after food (watching it, striking, eating).
+  /** off the perch, mid-hop, preening, or after food (watching it, striking, eating) */
+  readonly busy: boolean;
+  // The verbs below return false, and do nothing, while the bird is busy (ruffle aside).
   /** Sing for about this long (starts over if it already is). */
   sing(seconds?: number): boolean;
   readonly singing: boolean;
@@ -62,8 +63,8 @@ export interface BirdHandle extends Bird {
   hopTo(x: number): boolean;
   /** Hop this far along the perch from where it stands. */
   hopBy(dx: number): boolean;
-  /** Ruffle now, `amount` 0..1 (random when left out). Its own one-a-minute limit doesn't apply. */
-  ruffle(kind: RuffleKind, amount?: number): boolean;
+  /** Ruffle now, whatever it is doing, `amount` 0..1 (random when left out). Its own one-a-minute limit doesn't apply. */
+  ruffle(kind: RuffleKind, amount?: number): void;
   /** Hook that runs after the layers and before the solver: last word on the pose. */
   onPose: ((pose: Pose, mind: Mind) => void) | null;
 }
@@ -171,7 +172,11 @@ export function createBird(_ctx: BirdContext, options: BirdOptions = {}): BirdHa
     lick: (amount, count) => !busy() && (mouth.lick(mind, amount, count), true),
     hopTo: (x) => !busy() && hop.go(mind, x),
     hopBy: (dx) => handle.hopTo(hop.x + dx),
-    ruffle: (kind, amount) => !busy() && (ruffle.trigger(mind, kind, amount), true),
+    get busy() {
+      return busy();
+    },
+    // (feathers can lift over anything else it is doing: no busy check)
+    ruffle: (kind, amount) => ruffle.trigger(mind, kind, amount),
     update(dt) {
       root.updateWorldMatrix(true, false);
       inv.copy(root.matrixWorld).invert();
