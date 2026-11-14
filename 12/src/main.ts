@@ -10,6 +10,7 @@ import { createPost } from './post';
 import { createSeeds } from './seeds';
 import { createInsects } from './insects';
 import { createAmbient } from './ambient';
+import { createActionMenu, ICONS } from './actions';
 import { createSettings } from './settings';
 import { damp } from './bird/util';
 import { phone } from './device';
@@ -276,12 +277,11 @@ const warm = new THREE.Group();
 warm.add(...seeds.warm, ...insects.warm, ...ambient.warm);
 let flySeenAt = -1;
 const flyLast = new THREE.Vector3();
-// the bug button (and G): a gnat or a fly, at random
+// G (and the gnat in the action menu): a gnat or a fly, at random
 function letOneIn() {
   if (Math.random() < 0.5) insects.spawn();
   else ambient.flyBy();
 }
-document.querySelector('.bug')?.addEventListener('click', letOneIn);
 const shedAt = new THREE.Vector3();
 const shedOut = new THREE.Vector3();
 bird.mind.on('ruffle', (e) => {
@@ -392,6 +392,7 @@ document.addEventListener('fullscreenchange', () => {
 });
 canvas.addEventListener('pointerup', (e) => {
   if (settings.isOpen()) return settings.open(false);
+  if (actions.swallows(e)) return;
   // a click, not a drag
   if (performance.now() - downAt < 250 && Math.hypot(e.clientX - downX, e.clientY - downY) < 6) {
     // on a phone, a tap on the bird turns it into another bird; anywhere else drops a seed
@@ -454,7 +455,6 @@ function updatePalette(dt: number) {
     for (let e = 0; e < 9; e++) m.elements[e] = paletteFrom[i].elements[e] + (paletteTo[i].elements[e] - paletteFrom[i].elements[e]) * k;
   });
 }
-document.querySelector('.palette')?.addEventListener('click', changePalette);
 
 // --- B: round to the back and again to the front ------------------------------
 // The orbit keeps to a slice in front (or, after the turn, behind): the camera
@@ -616,21 +616,25 @@ const settings = createSettings([
   { kind: 'range', key: 'flash', label: 'Gorget flash', value: 1, min: 0, max: 2, step: 0.05, set: (v) => { bird.plumage.uFlash.value = flash0 * v; bird.plumage.uGlint.value = glint0 * v; } },
   { kind: 'toggle', key: 'fuzz', label: 'Down and felt', value: true, set: (v) => { fuzzVisible = v; applyFuzz(); } },
   { kind: 'range', key: 'give', label: 'Twig give', value: 1, min: 0, max: 3, step: 0.05, set: (v) => (sway.give = v) },
-  { kind: 'heading', label: 'Do' },
-  { kind: 'action', label: 'Drop a seed', run: () => seeds.spawn(seedAhead()) },
-  { kind: 'action', label: 'A gnat', run: () => insects.spawn() },
-  { kind: 'action', label: 'A fly', run: () => ambient.flyBy() },
-  { kind: 'action', label: 'Demo (D)', run: () => setDemo(demoT < 0) },
-  { kind: 'action', label: 'Sing', run: () => bird.sing(2.2) },
-  { kind: 'action', label: 'Ruffle (R)', run: () => bird.ruffle('shake') },
-  { kind: 'action', label: 'Another bird (C)', run: changePalette },
-  { kind: 'action', label: 'Startle', run: () => bird.startle(1) },
-  { kind: 'action', label: 'Fly off (F)', run: () => bird.flee() },
-  { kind: 'action', label: 'Pause (P)', run: () => setPaused(!paused) },
-  { kind: 'action', label: 'Drawing (W)', run: () => setDrawing(!drawing) },
-  { kind: 'action', label: 'Head wireframe (H)', run: () => setHeadWire(!headWire) },
+  { kind: 'heading', label: 'Workbench' },
+  { kind: 'action', label: 'Demo', key: 'D', run: () => setDemo(demoT < 0) },
+  { kind: 'action', label: 'Pause', key: 'P', run: () => setPaused(!paused) },
+  { kind: 'action', label: 'Drawing', key: 'W', run: () => setDrawing(!drawing) },
+  { kind: 'action', label: 'Head wire', key: 'H', run: () => setHeadWire(!headWire) },
   // URL flags win over what was saved: ?still is a camera on a tripod even if Handheld was turned up
 ], query.has('still') ? { shake: 0 } : {});
+
+// --- the action menu: one round button, bottom right (the settings beside it) ---
+const actions = createActionMenu([
+  { id: 'food', label: 'Drop a seed', icon: ICONS.food, run: () => seeds.spawn(seedAhead()) },
+  { id: 'gnat', label: 'Let a bug in', key: 'G', icon: ICONS.gnat, run: letOneIn },
+  { id: 'sing', label: 'Sing', icon: ICONS.sing, run: () => bird.sing(2.2) },
+  { id: 'ruffle', label: 'Ruffle', key: 'R', icon: ICONS.ruffle, run: () => bird.ruffle('shake') },
+  { id: 'fly', label: 'Fly off', key: 'F', icon: ICONS.fly, run: () => bird.flee() },
+  { id: 'palette', label: 'Color', key: 'C', icon: ICONS.palette, run: changePalette },
+]);
+// one card at a time: reaching for the actions puts the settings away
+actions.root.addEventListener('pointerdown', () => settings.open(false), true);
 
 // --- keys ---------------------------------------------------------------------
 const KEYS: Record<string, () => void> = {
@@ -667,6 +671,21 @@ window.addEventListener('resize', resize);
 new ResizeObserver(resize).observe(canvas);
 resize();
 
+// On a phone the settings are a sheet over the lower part of the screen: the picture slides
+// up by half of it (the camera's frame, not the camera), so the bird stays in sight above it
+// while things are tried. The pointer still lands where it should: the rays use the same frame.
+const sheetQuery = matchMedia('(max-width: 640px)');
+let lift = 0;
+function updateLift(dt: number) {
+  const want = settings.isOpen() && sheetQuery.matches ? settings.panel.offsetHeight * 0.5 : 0;
+  lift = damp(lift, want, 9, dt);
+  if (lift > 0.5) {
+    const w = canvas.clientWidth || window.innerWidth;
+    const h = canvas.clientHeight || window.innerHeight;
+    camera.setViewOffset(w, h, 0, lift, w, h);
+  } else if (camera.view?.enabled) camera.clearViewOffset();
+}
+
 branchLoad.then(() => requestAnimationFrame(() => ready()));
 if (!usePost) startReveal(true);
 let paused = false;
@@ -685,6 +704,7 @@ renderer.setAnimationLoop((now) => {
   t += dt;
   // the turn runs on wall time, so it still swings round while paused
   updateTurn(paused ? 1 / 60 : dt);
+  updateLift(paused ? 1 / 60 : dt);
   controls.update();
   backdrop.material.uniforms.uTime.value = t;
   backdrop.mesh.position.copy(camera.position);
