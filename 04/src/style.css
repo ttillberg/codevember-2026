@@ -1,0 +1,47 @@
+/* a dark day: the backdrop is the grass, ink #f4f4f2 (docs/DESIGN.md) */
+html, body { margin: 0; height: 100%; background: #5a6b34; overflow: hidden; }
+#root { position: fixed; inset: 0; }
+canvas { display: block; touch-action: none; }
+
+/* the title plate, top left: the day in Plex capitals, the way home under it */
+.plate {
+  position: fixed; z-index: 2;
+  top: max(24px, env(safe-area-inset-top)); left: max(24px, env(safe-area-inset-left));
+  pointer-events: none; user-select: none; -webkit-user-select: none;
+  color: #f4f4f2;
+  font: 13px/1.4 Inter, "Helvetica Neue", Helvetica, Arial, sans-serif;
+}
+.plate b {
+  display: block; white-space: nowrap;
+  font: 700 56px/0.9 "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  letter-spacing: -0.02em; text-transform: uppercase;
+}
+.plate .head > i {
+  display: block; margin-top: 6px; font-style: normal;
+  font-weight: 600; font-size: 14px; line-height: 1.15; letter-spacing: 0.12em; text-transform: uppercase;
+}
+.plate .home { color: inherit; text-decoration: none; pointer-events: auto; }
+.plate .home span[lang="ja"] { font-family: "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Noto Sans JP", "Yu Gothic", sans-serif; letter-spacing: 0.06em; }
+@media (max-width: 640px) {
+  .plate { top: max(16px, env(safe-area-inset-top)); left: max(16px, env(safe-area-inset-left)); }
+  .plate b { font-size: 36px; }
+  .plate .head > i { font-size: 10px; }
+}
+/* ?clean: the scene alone */
+.clean .plate { display: none; }
+
+/* the brush: what a drag does. Bottom centre, in the plate's small caps */
+.tools {
+  position: fixed; z-index: 2; left: 50%; transform: translateX(-50%);
+  bottom: max(20px, env(safe-area-inset-bottom));
+  display: flex; gap: 4px; padding: 4px; border-radius: 999px;
+  background: rgba(20, 22, 18, 0.55); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+}
+.tools button {
+  appearance: none; border: 0; background: none; color: #f4f4f2; cursor: pointer;
+  font: 600 11px/1 Inter, "Helvetica Neue", Helvetica, Arial, sans-serif; letter-spacing: 0.12em; text-transform: uppercase;
+  padding: 11px 14px; border-radius: 999px; -webkit-tap-highlight-color: transparent;
+}
+.tools button.on { background: #f4f4f2; color: #1c1c1c; }
+.tools button:disabled { opacity: 0.35; cursor: default; }
+.clean .tools { display: none; }
