@@ -57,7 +57,10 @@ export function addStroke(intent: Intent, stroke: V[], bridge: boolean, houses: 
   const next: Intent = [...intent, { pts, w: 2, paint: true, bridge: bridge || undefined, ring: ring || undefined }];
   // it has to change something: a new road, or a bigger one
   const sig = (sp: Spec) => sp.map((r) => r.kind.rank + ':' + r.raw.length + ':' + r.raw[0].x.toFixed(1) + ':' + r.raw[0].y.toFixed(1)).join();
-  return sig(derive(next, houses)) === sig(derive(intent, houses)) ? null : next;
+  const made = derive(next, houses);
+  // a bridge that found no way past the houses is no bridge, whatever else its ends stirred up
+  if (bridge && !made.some((r) => r.bridge && r.stroke === next.length - 1)) return null;
+  return sig(made) === sig(derive(intent, houses)) ? null : next;
 }
 
 // ---------- smearing: push the paint that is there ----------

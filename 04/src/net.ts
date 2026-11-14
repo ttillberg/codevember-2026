@@ -128,7 +128,8 @@ export const KINDS = [AISLE, DRIVE, CROSS, ART];
 export const ringKind = (lanes: number): RoadKind => ({ lanes, lw: 3.8, speed: 9, rank: 4 });
 /** half the width of a road of this kind */
 export const halfWidth = (k: RoadKind, ring?: boolean) => (ring ? (k.lanes * k.lw) / 2 : k.lanes * k.lw);
-export const BRIDGE_H = 7.5;
+/** as high as a long bridge gets; a short one has no room to climb that far */
+export const BRIDGE_H = 11;
 
 /** Out in the haze, where a road is out of sight: traffic comes and goes there, and nowhere else. */
 export const far = (p: V) => Math.hypot(p.x - 10, p.y + 10) > 400;
@@ -285,12 +286,16 @@ const BUILDINGS: Building[] = [
   { x0: 270, y0: -100, x1: 340, y1: -50, h: 6, wall: 0xa7a59f, roof: 0xc8c5bd },
 ];
 
+/** Height of a bridge deck len metres long, d metres along it: up a ramp, level, down a ramp. */
+export function deckAt(len: number, d: number) {
+  const R = Math.min(80, len / 2);
+  const t = Math.max(0, Math.min(1, Math.min(d, len - d) / R));
+  return Math.min(BRIDGE_H, R * 0.14) * t * t * (3 - 2 * t);
+}
+
 /** Height of a bridge deck, d metres along its road. */
 export function deck(r: Road, d: number) {
-  if (!r.bridge) return 0;
-  const R = Math.min(55, r.len / 2);
-  const t = Math.max(0, Math.min(1, Math.min(d, r.len - d) / R));
-  return BRIDGE_H * t * t * (3 - 2 * t);
+  return r.bridge ? deckAt(r.len, d) : 0;
 }
 
 /** How far from its middle a junction keeps its roads back. A dead end keeps nothing back. */

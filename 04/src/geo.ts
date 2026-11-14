@@ -121,20 +121,46 @@ function buildDecks(net: Net) {
       const j = i + 1;
       quad([L[i].x, h[i] - SLAB, L[i].y], [L[j].x, h[j] - SLAB, L[j].y], [R[j].x, h[j] - SLAB, R[j].y], [R[i].x, h[i] - SLAB, R[i].y]);
     }
-    // piers: a wall across under the deck, where there is ground to stand it on
-    for (let d = 16; d < r.len - 12; d += 24) {
-      const top = deck(r, d) - SLAB;
-      if (top < 1.5) continue;
+    // the ramps are filled in down to the ground; past them the deck is in the air
+    const FILL = 2;
+    for (const O of [L, R]) {
+      for (let i = 0; i < D.length - 1; i++) {
+        const j = i + 1, ui = h[i] - SLAB, uj = h[j] - SLAB;
+        if (Math.max(ui, uj) <= 0 || Math.min(ui, uj) > FILL) continue;
+        quad([O[i].x, 0, O[i].y], [O[j].x, 0, O[j].y], [O[j].x, Math.max(0, uj), O[j].y], [O[i].x, Math.max(0, ui), O[i].y]);
+      }
+    }
+    // and stands on piers: a column under each edge, where they show from the air, and a beam across their heads.
+    // A column does not stand in a road; the pier moves along until it has ground, or stands on one leg
+    const COL = 0.9, BEAM = 1.1;
+    const at = (d: number) => {
       const c = pointOn(D, cum, d), c2 = pointOn(D, cum, d + 1);
-      if (onRoad(net, c.x, c.y, r, 2)) continue;
       const tl = Math.hypot(c2.x - c.x, c2.y - c.y) || 1;
-      const tx = (c2.x - c.x) / tl, ty = (c2.y - c.y) / tl;
-      const nx = -ty * w * 0.72, ny = tx * w * 0.72, ax = tx * 0.8, ay = ty * 0.8;
+      const tx = (c2.x - c.x) / tl, ty = (c2.y - c.y) / tl, e = w + CAP - COL;
+      const legs = [-1, 1].map((k) => ({ x: c.x - ty * e * k, y: c.y + tx * e * k })).filter((q) => !onRoad(net, q.x, q.y, r, COL + 0.6));
+      return { d, c, tx, ty, legs };
+    };
+    const box = (c: V, tx: number, ty: number, along: number, across: number, y0: number, y1: number) => {
+      const ax = tx * along, ay = ty * along, nx = -ty * across, ny = tx * across;
       const P = [[c.x - nx - ax, c.y - ny - ay], [c.x + nx - ax, c.y + ny - ay], [c.x + nx + ax, c.y + ny + ay], [c.x - nx + ax, c.y - ny + ay]];
       for (let k = 0; k < 4; k++) {
         const p = P[k], q = P[(k + 1) % 4];
-        quad([p[0], 0, p[1]], [q[0], 0, q[1]], [q[0], top, q[1]], [p[0], top, p[1]]);
+        quad([p[0], y0, p[1]], [q[0], y0, q[1]], [q[0], y1, q[1]], [p[0], y1, p[1]]);
       }
+      quad([P[0][0], y0, P[0][1]], [P[3][0], y0, P[3][1]], [P[2][0], y0, P[2][1]], [P[1][0], y0, P[1][1]]);
+    };
+    for (let d = 10; d < r.len - 8; d += 17) {
+      if (deck(r, d) - SLAB < FILL) continue;
+      let best = at(d);
+      for (const o of [4, -4, 8, -8]) {
+        if (best.legs.length === 2) break;
+        const t = at(d + o);
+        if (t.legs.length > best.legs.length && deck(r, d + o) - SLAB >= FILL) best = t;
+      }
+      if (!best.legs.length) continue;
+      const top = deck(r, best.d) - SLAB;
+      for (const q of best.legs) box(q, best.tx, best.ty, COL, COL, 0, top - BEAM);
+      box(best.c, best.tx, best.ty, COL + 0.2, w + CAP, top - BEAM, top);
     }
   }
   const g = new BufferGeometry();

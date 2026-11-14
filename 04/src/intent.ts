@@ -2,7 +2,7 @@
 // The strokes are the only thing kept. Every time they change the network is derived again from nothing:
 // each stroke is walked from node to node, sharing the nodes that are already near, and each run of
 // edges between junctions gets a road style.
-import { cumLen, far, halfWidth, junctionTrim, KINDS, pointOn, ringKind, type Rect, type Spec, type SpecRoad, type V } from './net';
+import { cumLen, deckAt, far, halfWidth, junctionTrim, KINDS, pointOn, ringKind, type Rect, type Spec, type SpecRoad, type V } from './net';
 
 export interface Stroke {
   pts: V[];
@@ -60,9 +60,9 @@ export function nearest(pts: V[], p: V) {
  * where there is room and squeezes between two: a road, a roundabout, a bridge. Only a parking lot stays as it is.
  */
 function dodge(s: Stroke, houses: Rect[]): Stroke {
+  if (s.bridge) return span(s, houses);
   if (s.lot || !houses.length) return s;
-  // a bridge is wider than its road, and should not shave a wall
-  const m = half(s) + (s.bridge ? 4.5 : 2.5);
+  const m = half(s) + 2.5;
   const hit = houses.filter((h) => s.pts.some((p, i) => i > 0 && segNear(s.pts[i - 1], p, h, m)));
   if (!hit.length) return s;
   const cum = cumLen(s.pts);
@@ -89,6 +89,35 @@ function dodge(s: Stroke, houses: Rect[]): Stroke {
   }
   // and whatever the easing still left inside is put out, just
   return { ...s, pts: pts.map((p) => push(p, m)) };
+}
+
+/**
+ * A bridge is a beam, not a hose: straight from end to end however the hand shook, or one even arc
+ * where a house stands in the line. What is low enough it goes over. If no arc gets past, there is no bridge.
+ */
+function span(s: Stroke, houses: (Rect & { h?: number })[]): Stroke {
+  const a = s.pts[0], b = s.pts[s.pts.length - 1];
+  const L = Math.hypot(b.x - a.x, b.y - a.y) || 1;
+  const nx = -(b.y - a.y) / L, ny = (b.x - a.x) / L;
+  // a bridge is wider than its road, and should not shave a wall
+  const m = half(s) + 4.5;
+  // the side the hand leaned to is tried first
+  const cum = cumLen(s.pts);
+  const mid = pointOn(s.pts, cum, cum[cum.length - 1] / 2);
+  const lean = (mid.x - (a.x + b.x) / 2) * nx + (mid.y - (a.y + b.y) / 2) * ny < 0 ? -1 : 1;
+  for (const k of [0, 0.05, -0.05, 0.1, -0.1, 0.16, -0.16, 0.23, -0.23, 0.31, -0.31, 0.4, -0.4]) {
+    const pts: V[] = [];
+    const n = Math.max(16, Math.ceil(L / 10));
+    for (let i = 0; i <= n; i++) {
+      const t = i / n, bow = 4 * t * (1 - t) * k * lean * L;
+      pts.push({ x: a.x + (b.x - a.x) * t + nx * bow, y: a.y + (b.y - a.y) * t + ny * bow });
+    }
+    const len = L * (1 + 2.6 * k * k);
+    // clear under the slab, with a metre to spare
+    const over = (h: number | undefined, i: number) => h !== undefined && h + 2.5 < Math.min(deckAt(len, (len * (i - 1)) / n), deckAt(len, (len * i) / n));
+    if (!houses.some((h) => pts.some((p, i) => i > 0 && segNear(pts[i - 1], p, h, m) && !over(h.h, i)))) return { ...s, pts };
+  }
+  return { ...s, pts: [a, { x: a.x + 0.01, y: a.y }] };
 }
 
 function segNear(a: V, b: V, h: Rect, m: number) {
@@ -479,6 +508,12 @@ export function baseIntent(): Intent {
   // both run on out of sight, into the haze
   out.push({ pts: P(-600, 0, 600, 0), w: 3 });
   out.push({ pts: P(0, -600, 0, 600), w: 2 });
+
+  // back streets either side of the arterial, and two lanes that tie them together: the place is a net, not a cross
+  out.push({ pts: P(-600, -240, -300, -215, 0, -205, 300, -215, 600, -245), w: 2 });
+  out.push({ pts: P(-600, 260, -300, 240, 0, 235, 300, 245, 600, 265), w: 2 });
+  out.push({ pts: P(-300, -215, -290, 0, -300, 240), w: 1 });
+  out.push({ pts: P(300, -215, 295, 0, 300, 245), w: 1 });
 
   // big box store lot, north-east
   lot([170, 152.5, 135], -28, -100);

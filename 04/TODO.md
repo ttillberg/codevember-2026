@@ -8,7 +8,8 @@ Reference: drone pictures of the Huangjuewan interchange, Chongqing. First pass 
 - Signs at night: they are the light of the place. No night yet.
 - Much denser green: the reference is nearly all canopy. Needs a cheaper tree, or it costs frames on a phone.
 - The road map is still an American stroad, with smaller parking lots now. Give the place its own base strokes.
-- Bridges: thick slab, parapets and wall piers are in. Still to do: abutments where the deck meets the ground, and a deck that can cross a house if it is high enough.
+- Bridges are one straight span or one arc, on piers, with filled ramps, and go over houses that are low enough. Left: a stroke that finds no way past the tall houses is refused without a word (3 of 9 in a test); abutment walls at the ramp foot; a bridge that follows the hand in two or three clean arcs.
+- Facades: five drawn sheets in `facade.ts` (gallery slab, painted estate, striped tower, banded block, low house). Left: a ground floor of shops, window cages and awnings, lit rooms at night, a roughness map so glass shines.
 - Terraced plots and construction sites in the open ground.
 - Ground is flat. The reference is all hillside.
 - A yard's parking can run into the wall of the house that stopped the road.

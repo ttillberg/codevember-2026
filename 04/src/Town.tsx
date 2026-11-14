@@ -1,7 +1,8 @@
 // Where people live: compounds of slab blocks in rows, a few towers at the edges, and the concrete between them.
 // Planted once, from the place as it stood. Nothing takes them down: roads go round.
 import { useEffect, useLayoutEffect, useMemo, useRef } from 'react';
-import { Color, InstancedMesh, MeshStandardMaterial, Object3D } from 'three';
+import { Color, InstancedBufferAttribute, InstancedMesh, MeshStandardMaterial, Object3D } from 'three';
+import { BANDED, BAY, CELLS, FLOOR, GALLERY, LOW, PAINTED, STRIPED, facades } from './facade';
 import { pavingGeometry, rectClear } from './geo';
 import { rng, type Net, type Rect, type V } from './net';
 
@@ -9,11 +10,15 @@ export interface Block extends Rect {
   h: number;
   wall: number;
   roof: number;
+  /** which face it wears, see facade.ts */
+  style: number;
   /** the footpath from its door to the next block, or out to the road */
   path: V[];
 }
 
 const WALLS = [0xd8d4c8, 0xcfc9b8, 0xd9cfc4, 0xc4c9cc, 0xe0dcd2, 0xd2c3b4, 0xbfc6c2];
+/** the strong paints of an estate, faded by the sun */
+const PAINTS = [0xe391a6, 0xc9534a, 0xe3bf5c, 0x8fc7b3, 0x86abd1, 0xdf9257, 0xd9a3a0, 0xa6c48a];
 const ROOFS = [0x6f8fb0, 0x5f7f9f, 0xb9b6ae, 0xa9a69e, 0x8d6a58, 0x7d93a8];
 
 /** Is this block still standing on this network? A bridge may pass over it. */
@@ -21,6 +26,9 @@ export const stands = (net: Net, b: Rect, margin = 0) => rectClear(net, b, margi
 
 export function plantTown(net: Net): Block[] {
   const r = rng(41);
+  // the looks have their own dice, so the town stands where it stood
+  const q = rng(77);
+  const look = (style: number, wall: number) => ({ style, wall: style === GALLERY || (style === LOW && q() < 0.6) ? wall : PAINTS[(q() * PAINTS.length) | 0] });
   const out: Block[] = [];
   const free = (b: Rect, gap = 10) => stands(net, b, 5) && !out.some((o) => b.x0 < o.x1 + gap && b.x1 > o.x0 - gap && b.y0 < o.y1 + gap && b.y1 > o.y0 - gap);
   /** the nearest point of any road, for the way out */
@@ -40,18 +48,20 @@ export function plantTown(net: Net): Block[] {
   };
 
   // compounds: rows of slabs, all facing the same way, as they are built
-  for (let tries = 0; tries < 1600 && out.length < 60; tries++) {
+  for (let tries = 0; tries < 1600 && out.length < 34; tries++) {
     // the middle fills first, then the edges
     const reach = tries < 800 ? 0.72 : 1;
     const ox = (r() - 0.5) * 700 * reach, oy = (r() - 0.5) * 640 * reach;
     const cols = 1 + ((r() * 2) | 0), rows = 2 + ((r() * 3) | 0);
     const w = 32 + r() * 14, d = 11 + r() * 2.5, floors = 6 + ((r() * 4) | 0);
-    const wall = WALLS[(r() * WALLS.length) | 0], roof = ROOFS[(r() * ROOFS.length) | 0];
+    const pale = WALLS[(r() * WALLS.length) | 0], roof = ROOFS[(r() * ROOFS.length) | 0];
+    const k = q();
+    const { style, wall } = look(k < 0.4 ? GALLERY : k < 0.65 ? PAINTED : k < 0.87 ? BANDED : STRIPED, pale);
     const made: Block[] = [];
     for (let c = 0; c < cols; c++) {
       for (let k = 0; k < rows; k++) {
         const x0 = ox + c * (w + 12), y0 = oy + k * (d + 17);
-        const b: Block = { x0, y0, x1: x0 + w, y1: y0 + d, h: floors * 3 + (r() < 0.3 ? 3 : 0), wall, roof, path: [] };
+        const b: Block = { x0, y0, x1: x0 + w, y1: y0 + d, h: floors * 3 + (r() < 0.3 ? 3 : 0), wall, roof, style, path: [] };
         if (free(b)) made.push(b);
       }
     }
@@ -65,10 +75,10 @@ export function plantTown(net: Net): Block[] {
     out.push(...made);
   }
   // and the odd ones: shops, workshops, a house someone built where there was room
-  for (let tries = 0, made = 0; tries < 900 && made < 50; tries++) {
+  for (let tries = 0, made = 0; tries < 900 && made < 28; tries++) {
     const x = (r() - 0.5) * 680, y = (r() - 0.5) * 620;
     const w = 9 + r() * 12, d = 8 + r() * 8;
-    const b: Block = { x0: x, y0: y, x1: x + w, y1: y + d, h: (1 + ((r() * 4) | 0)) * 3.2, wall: WALLS[(r() * WALLS.length) | 0], roof: ROOFS[(r() * ROOFS.length) | 0], path: [] };
+    const b: Block = { x0: x, y0: y, x1: x + w, y1: y + d, h: (1 + ((r() * 4) | 0)) * 3.2, roof: ROOFS[(r() * ROOFS.length) | 0], ...look(LOW, WALLS[(r() * WALLS.length) | 0]), path: [] };
     if (!free(b, 3)) continue;
     const door = { x: (b.x0 + b.x1) / 2, y: b.y1 };
     const g = gate(door);
@@ -77,11 +87,11 @@ export function plantTown(net: Net): Block[] {
     made++;
   }
   // a few towers further out, pale in the haze
-  for (let tries = 0; tries < 200 && out.length < 122; tries++) {
+  for (let tries = 0, cap = out.length + 12; tries < 200 && out.length < cap; tries++) {
     const x = (r() - 0.5) * 780, y = (r() - 0.5) * 720;
     if (Math.abs(x) < 230 && Math.abs(y) < 200) continue;
     const s = 17 + r() * 5;
-    const b: Block = { x0: x, y0: y, x1: x + s, y1: y + s * (0.8 + r() * 0.4), h: 36 + r() * 18, wall: WALLS[(r() * WALLS.length) | 0], roof: 0xb9b6ae, path: [] };
+    const b: Block = { x0: x, y0: y, x1: x + s, y1: y + s * (0.8 + r() * 0.4), h: 36 + r() * 18, roof: 0xb9b6ae, ...look(q() < 0.6 ? STRIPED : PAINTED, WALLS[(r() * WALLS.length) | 0]), path: [] };
     if (!free(b)) continue;
     const door = { x: (b.x0 + b.x1) / 2, y: b.y1 };
     b.path = [door, gate(door)];
@@ -92,32 +102,40 @@ export function plantTown(net: Net): Block[] {
 
 const HASH = /* glsl */ `float wh(vec2 p){ p = fract(p * vec2(123.34, 456.21)); p += dot(p, p + 45.32); return fract(p.x * p.y); }`;
 
-/** Walls with rows of windows, sized in metres whatever the box is scaled to. */
+/** Walls that wear a sheet from facade.ts: whole bays and whole floors, whatever the box is scaled to. */
 function walls() {
   const m = new MeshStandardMaterial({ roughness: 0.85 });
   m.onBeforeCompile = (s) => {
+    s.uniforms.uFacade = { value: facades() };
     s.vertexShader = s.vertexShader
-      .replace('#include <common>', '#include <common>\nvarying vec3 vLp; varying vec3 vSz; varying vec3 vOn;')
+      .replace('#include <common>', '#include <common>\nattribute float aStyle; varying float vStyle; varying vec3 vLp; varying vec3 vSz; varying vec3 vOn;')
       .replace('#include <begin_vertex>', `#include <begin_vertex>
         vSz = vec3(1.0);
         #ifdef USE_INSTANCING
           vSz = vec3(length(instanceMatrix[0].xyz), length(instanceMatrix[1].xyz), length(instanceMatrix[2].xyz));
         #endif
-        vLp = position * vSz; vOn = normal;`);
+        vLp = position * vSz; vOn = normal; vStyle = aStyle;`);
     s.fragmentShader = s.fragmentShader
-      .replace('#include <common>', '#include <common>\nvarying vec3 vLp; varying vec3 vSz; varying vec3 vOn;\n' + HASH)
+      .replace('#include <common>', '#include <common>\nuniform sampler2DArray uFacade; varying float vStyle; varying vec3 vLp; varying vec3 vSz; varying vec3 vOn;\n' + HASH)
       .replace('#include <color_fragment>', `#include <color_fragment>
         if (abs(vOn.y) < 0.5) {
-          float u = abs(vOn.x) > 0.5 ? vLp.z : vLp.x;
-          float v = vLp.y + vSz.y * 0.5;
-          vec2 cell = vec2(u / 3.1, v / 3.0), f = fract(cell), id = floor(cell);
-          float win = step(0.2, f.x) * step(f.x, 0.8) * step(0.28, f.y) * step(f.y, 0.74) * step(v, vSz.y - 0.6);
-          float lit = wh(id + vSz.xz);
-          vec3 glass = mix(vec3(0.16, 0.2, 0.25), vec3(0.5, 0.56, 0.6), step(0.72, lit));
-          // the floor slab shows as a line under each row, and the rain has run down the wall
-          diffuseColor.rgb *= 1.0 - 0.1 * step(f.y, 0.08);
-          diffuseColor.rgb *= 0.9 + 0.1 * wh(vec2(id.x, 3.0) + vSz.xz);
-          diffuseColor.rgb = mix(diffuseColor.rgb, glass, win * 0.8);
+          bool side = abs(vOn.x) > 0.5;
+          float len = side ? vSz.z : vSz.x;
+          float u = (side ? vLp.z : vLp.x) / len + 0.5, v = vLp.y / vSz.y + 0.5;
+          float seed = wh(vSz.xz);
+          vec3 paint = diffuseColor.rgb;
+          if (side && vSz.x > vSz.z * 1.8) {
+            // the end of a slab is a blank wall, with the rain run down it
+            diffuseColor.rgb = paint * (0.8 + 0.14 * wh(vec2(floor(u * len / 0.8), seed)));
+            diffuseColor.rgb *= 1.0 - 0.12 * step(fract(v * vSz.y / ${FLOOR.toFixed(1)}), 0.07);
+          } else {
+            vec2 n = max(vec2(1.0), floor(vec2(len / ${BAY.toFixed(1)}, vSz.y / ${FLOOR.toFixed(1)}) + 0.5));
+            vec2 st = (vec2(u, v) * n + floor(vec2(seed, fract(seed * 7.3)) * ${CELLS.toFixed(1)})) / ${CELLS.toFixed(1)};
+            vec4 t = texture(uFacade, vec3(st, vStyle));
+            diffuseColor.rgb = t.rgb * mix(vec3(1.0), paint, t.a);
+          }
+          // no two stretches of wall have weathered alike
+          diffuseColor.rgb *= 0.9 + 0.1 * wh(vec2(floor(u * len / 6.4), floor(v * vSz.y / 6.0)) + vSz.xz);
         }`);
   };
   m.customProgramCacheKey = () => 'walls';
@@ -148,6 +166,7 @@ export function Town({ net, blocks, paving }: { net: Net; blocks: Block[]; pavin
   useLayoutEffect(() => {
     const o = new Object3D(), c = new Color(), r = rng(9);
     let k = 0;
+    body.current!.geometry.setAttribute('aStyle', new InstancedBufferAttribute(Float32Array.from(up, (b) => b.style), 1));
     up.forEach((b, i) => {
       const w = b.x1 - b.x0, d = b.y1 - b.y0, cx = (b.x0 + b.x1) / 2, cz = (b.y0 + b.y1) / 2;
       o.position.set(cx, b.h / 2, cz); o.scale.set(w, b.h, d); o.updateMatrix();

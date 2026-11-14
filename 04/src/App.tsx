@@ -41,6 +41,21 @@ const touch = typeof matchMedia !== 'undefined' && matchMedia('(pointer: coarse)
 function Drone() {
   const { camera, size } = useThree();
   const key = size.width < size.height ? 'p' : 'l';
+  // The drone stays over the place: it cannot wander off into the haze.
+  // One function for good: the controls take themselves apart and together again whenever this one changes,
+  // and if that happens while a finger is lifting they never hear that it left.
+  const fence = useCallback((e?: { target: unknown }) => {
+    const c = e!.target as { target: { x: number; z: number }; object: { position: { x: number; z: number } }; getDistance(): number };
+    const t = c.target, cam = c.object.position;
+    const d = Math.hypot(t.x - TARGET[0], t.z - TARGET[2]);
+    // the closer it flies, the further out it may go: up close there is no haze in the frame to hide
+    const reach = Math.min(360, 130 + Math.max(0, 800 - c.getDistance()) * 0.45);
+    if (d > reach) {
+      // the camera is held back with what it looks at, or it would swing round and change height at the fence
+      const bx = TARGET[0] + ((t.x - TARGET[0]) * reach) / d - t.x, bz = TARGET[2] + ((t.z - TARGET[2]) * reach) / d - t.z;
+      t.x += bx; t.z += bz; cam.x += bx; cam.z += bz;
+    }
+  }, []);
   useMemo(() => {
     const portrait = key === 'p';
     const az = ((portrait ? 62 : 18) * Math.PI) / 180, el = ((portrait ? 44 : 40) * Math.PI) / 180;
@@ -54,17 +69,12 @@ function Drone() {
     <MapControls
       key={key}
       target={TARGET}
-      minDistance={250}
+      minDistance={70}
       maxDistance={1250}
       minPolarAngle={0.25}
       maxPolarAngle={1.05}
       enableDamping
-      // the drone stays over the place: it cannot wander off into the haze
-      onChange={(e) => {
-        const t = (e!.target as unknown as { target: { x: number; z: number } }).target;
-        const d = Math.hypot(t.x - TARGET[0], t.z - TARGET[2]);
-        if (d > 130) { t.x = TARGET[0] + ((t.x - TARGET[0]) * 130) / d; t.z = TARGET[2] + ((t.z - TARGET[2]) * 130) / d; }
-      }}
+      onChange={fence}
       dampingFactor={0.12}
       zoomSpeed={0.7}
       // one finger and the left button paint; two fingers, the right button and the wheel move the drone
