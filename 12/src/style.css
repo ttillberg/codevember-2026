@@ -178,11 +178,9 @@ body.loading .actions, body.clean .actions { opacity: 0; pointer-events: none; }
   background: rgba(243, 245, 238, 0.16); font: 600 9px/1 var(--ui); letter-spacing: 0;
 }
 .act-item.lit .act-label { opacity: 1; transform: translate(0, -50%); }
+/* on touch the icons stand alone: no labels */
 @media (hover: none) {
-  .act-label kbd { display: none; }
-  /* on touch there's no hover to ask with: open, every icon says what it is */
-  .actions.open .act-label { opacity: 1; transform: translate(0, -50%); transition-delay: calc(var(--i) * 22ms + 60ms); }
-  .act-item.lit .act-label { background: var(--ink); color: #1a3018; }
+  .act-label { display: none; }
 }
 /* the settings: its own round button top right, left of full screen (or the tilt) */
 .set-btn {
