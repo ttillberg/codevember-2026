@@ -32,15 +32,21 @@ export interface Road extends RoadKind {
   bridge: boolean;
   len: number;
   look: number; // the rank it is drawn as; rank itself is who yields
+  feeds: boolean;
+  ring: boolean; // one way, anticlockwise: a piece of a roundabout
+  hw: number; // half its width
 }
 
-/** What the network is built from: a list of roads. Shared end points become junctions. */
+/** What the network is built from: a list of roads, derived from the strokes. Shared end points become junctions. */
 export interface SpecRoad {
   raw: V[];
   kind: RoadKind;
   stalls: boolean[]; // per segment of raw
   bridge?: boolean;
   demote?: number; // steps of priority taken away: it yields where it used to go first
+  stroke: number; // the stroke it was derived from
+  feeds?: boolean; // leads to a parking lot: wants a signal where it meets a big road
+  ring?: boolean; // a piece of a roundabout: one way, from the first point to the last
 }
 export type Spec = SpecRoad[];
 
@@ -116,12 +122,13 @@ export const ART: RoadKind = { lanes: 3, lw: 3.3, speed: 16, rank: 3 };
 export const CROSS: RoadKind = { lanes: 2, lw: 3.3, speed: 13, rank: 2 };
 export const DRIVE: RoadKind = { lanes: 1, lw: 3.2, speed: 7, rank: 1 };
 export const AISLE: RoadKind = { lanes: 1, lw: 3, speed: 4, rank: 0 };
-/** what the brush lays down */
-export const PAINTED: RoadKind = { lanes: 2, lw: 3.3, speed: 13, rank: 2 };
+/** the building blocks, smallest first */
+export const KINDS = [AISLE, DRIVE, CROSS, ART];
+/** the carriageway of a roundabout: it outranks everything that joins it */
+export const ringKind = (lanes: number): RoadKind => ({ lanes, lw: 3.8, speed: 9, rank: 4 });
+/** half the width of a road of this kind */
+export const halfWidth = (k: RoadKind, ring?: boolean) => (ring ? (k.lanes * k.lw) / 2 : k.lanes * k.lw);
 export const BRIDGE_H = 7.5;
-
-// the big lots get their own signal on the arterial, as they do
-const SIGNALS = [[170, 0], [-170, 0]];
 
 export const STALL_W = 2.7;
 export const STALL_D = 5.5;
@@ -275,58 +282,38 @@ const BUILDINGS: Building[] = [
   { x0: 270, y0: -100, x1: 340, y1: -50, h: 6, wall: 0xa7a59f, roof: 0xc8c5bd },
 ];
 
-export function baseSpec(): Spec {
-  const spec: Spec = [];
-  const N = (x: number, y: number): V => ({ x, y });
-  const R = (a: V, b: V, kind: RoadKind, via: V[] = [], stallSegs: number[] = []) => {
-    const raw = [a, ...via, b];
-    spec.push({ raw, kind, stalls: raw.slice(1).map((_, i) => stallSegs.includes(i)) });
-  };
-  const chain = (ns: V[], kind: RoadKind) => {
-    for (let i = 0; i < ns.length - 1; i++) R(ns[i], ns[i + 1], kind);
-  };
-  /** A parking lot is one road snaking through its aisles: no junctions inside, so nothing to lock up. */
-  const lot = (xs: number[], y0: number, y1: number) => {
-    const via: V[] = [];
-    const segs: number[] = [];
-    xs.forEach((x, i) => {
-      const [ya, yb] = i % 2 ? [y1, y0] : [y0, y1];
-      if (i > 0) via.push({ x, y: ya });
-      if (i < xs.length - 1) via.push({ x, y: yb });
-      segs.push(i * 2);
-    });
-    const last = xs.length % 2 ? y1 : y0;
-    R(N(xs[0], y0), N(xs[xs.length - 1], last), AISLE, via, segs);
-  };
-
-  // the arterial (east–west) and the cross street
-  chain([N(-460, 0), N(-170, 0), N(-90, 0), N(0, 0), N(90, 0), N(170, 0), N(250, 0), N(460, 0)], ART);
-  chain([N(0, -420), N(0, -140), N(0, -70), N(0, 0), N(0, 90), N(0, 420)], CROSS);
-
-  // big box store lot, north-east
-  lot([170, 152.5, 135, 117.5, 100], -28, -140);
-  R(N(170, 0), N(170, -28), DRIVE);
-  R(N(0, -140), N(100, -140), DRIVE);
-
-  // strip mall lot, south-west
-  lot([-170, -152.5, -135, -117.5, -100], 28, 90);
-  R(N(-170, 0), N(-170, 28), DRIVE);
-  R(N(-100, 90), N(0, 90), DRIVE);
-
-  // gas station cut-through, north-west
-  R(N(-90, 0), N(0, -70), DRIVE, [{ x: -90, y: -70 }]);
-
-  // fast food loop, south-east
-  R(N(90, 0), N(250, 0), DRIVE, [{ x: 90, y: 60 }, { x: 250, y: 60 }], [1]);
-  return spec;
-}
-
 /** Height of a bridge deck, d metres along its road. */
 export function deck(r: Road, d: number) {
   if (!r.bridge) return 0;
   const R = Math.min(45, r.len / 2);
   const t = Math.max(0, Math.min(1, Math.min(d, r.len - d) / R));
   return BRIDGE_H * t * t * (3 - 2 * t);
+}
+
+/** How far from its middle a junction keeps its roads back. A dead end keeps nothing back. */
+export function junctionTrim(p: V, roads: { raw: V[]; hw: number; ring?: boolean }[]): number {
+  if (roads.length < 2) return 0;
+  // where an arm meets a roundabout it only has to clear the ring
+  if (roads.some((r) => r.ring)) return Math.max(4, ...roads.filter((r) => !r.ring).map((r) => r.hw)) + 3;
+  const hw = Math.max(...roads.map((r) => r.hw));
+  let t = hw + (hw > 5 ? 5 : 2.5);
+  if (roads.length < 3) return t;
+  // arms that leave at a flat angle need longer before they are clear of each other
+  const arms = roads.map((r) => {
+    const at0 = dist(r.raw[0], p) <= dist(r.raw[r.raw.length - 1], p);
+    const [a, q] = at0 ? [r.raw[0], r.raw[1]] : [r.raw[r.raw.length - 1], r.raw[r.raw.length - 2]];
+    const d = dist(a, q) || 1;
+    return { x: (q.x - a.x) / d, y: (q.y - a.y) / d, w: r.hw };
+  });
+  for (let i = 0; i < arms.length; i++) {
+    for (let j = i + 1; j < arms.length; j++) {
+      const cos = arms[i].x * arms[j].x + arms[i].y * arms[j].y;
+      if (cos < 0.17) continue;
+      const sin = Math.sqrt(Math.max(0.01, 1 - cos * cos));
+      t = Math.max(t, Math.min(26, (Math.min(arms[i].w, arms[j].w) + Math.max(arms[i].w, arms[j].w) * cos) / sin + 2));
+    }
+  }
+  return t;
 }
 
 export function buildNet(spec: Spec): Net {
@@ -348,7 +335,7 @@ export function buildNet(spec: Spec): Net {
     const stallSegs: number[] = [];
     sr.stalls.forEach((on, i) => on && stallSegs.push(i));
     const cum = cumLen(pts);
-    const r: Road = { ...sr.kind, rank: sr.kind.rank - (sr.demote ?? 0), look: sr.kind.rank, id: roads.length, a, b, raw: sr.raw, pts, base: [], stallSegs, bridge: !!sr.bridge, len: cum[cum.length - 1] };
+    const r: Road = { ...sr.kind, rank: sr.kind.rank - (sr.demote ?? 0), look: sr.kind.rank, id: roads.length, a, b, raw: sr.raw, pts, base: [], stallSegs, bridge: !!sr.bridge, feeds: !!sr.feeds, ring: !!sr.ring, hw: halfWidth(sr.kind, sr.ring), len: cum[cum.length - 1] };
     roads.push(r);
     a.roads.push(r);
     b.roads.push(r);
@@ -359,10 +346,17 @@ export function buildNet(spec: Spec): Net {
     n.stub = n.roads.length === 1;
     // traffic comes and goes only at the far ends of the map, not at a painted dead end
     n.edge = n.stub && (Math.abs(n.p.x) > 400 || Math.abs(n.p.y) > 380);
-    const hw = Math.max(...n.roads.map((r) => r.lanes * r.lw));
-    n.trim = n.stub ? 0 : hw + (hw > 5 ? 5 : 2.5);
-    n.signal = (n.roads.length >= 4 && n.roads.every((r) => r.look >= 2)) || SIGNALS.some(([x, y]) => x === n.p.x && y === n.p.y);
+    n.trim = junctionTrim(n.p, n.roads.map((r) => ({ raw: r.raw, hw: r.hw, ring: r.ring })));
+    const top = Math.max(...n.roads.map((r) => r.look));
+    n.signal = !n.roads.some((r) => r.ring) && ((n.roads.length >= 4 && n.roads.every((r) => r.look >= 2)) || (n.roads.length >= 3 && top >= 3 && n.roads.some((r) => r.feeds)));
     n.sigOff = Math.abs(n.p.x) / 14;
+  }
+  // signals come one to a block: the bigger junction keeps its lights, the next one along gives way
+  const size = (n: Node) => n.roads.reduce((a, r) => a + r.look, 0);
+  const lit: Node[] = [];
+  for (const n of nodes.filter((n) => n.signal).sort((a, b) => size(b) - size(a) || a.id - b.id)) {
+    if (lit.some((m) => dist(m.p, n.p) < 75)) n.signal = false;
+    else lit.push(n);
   }
 
   const mkLane = (pts: V[], speed: number, road: Road | null, dir: 1 | -1, idx: number, from: Node, to: Node): Lane => {
@@ -374,11 +368,11 @@ export function buildNet(spec: Spec): Net {
 
   for (const r of roads) {
     r.base = trim(r.pts, r.a.trim, r.b.trim);
-    for (const dir of [1, -1] as const) {
+    for (const dir of (r.ring ? [1] : [1, -1]) as (1 | -1)[]) {
       const src = dir === 1 ? r.base : [...r.base].reverse();
       const group: Lane[] = [];
       for (let i = 0; i < r.lanes; i++) {
-        group.push(mkLane(offset(src, (i + 0.5) * r.lw), r.speed, r, dir, i, dir === 1 ? r.a : r.b, dir === 1 ? r.b : r.a));
+        group.push(mkLane(offset(src, (i + 0.5) * r.lw - (r.ring ? r.hw : 0)), r.speed, r, dir, i, dir === 1 ? r.a : r.b, dir === 1 ? r.b : r.a));
       }
       for (let i = 0; i < group.length; i++) {
         if (i > 0) group[i].sib.push(group[i - 1]);
@@ -438,9 +432,14 @@ export function buildNet(spec: Spec): Net {
         const m = g.length;
         const d1 = startDir(g[0]);
         const ang = Math.atan2(d0.x * d1.y - d0.y * d1.x, d0.x * d1.x + d0.y * d1.y);
-        const turn: Conn['turn'] = node.roads.length === 2 || Math.abs(ang) < 0.87 ? 'T' : ang > 0 ? 'R' : 'L';
+        const turn: Conn['turn'] = node.roads.length === 2 || (src.road!.ring && g[0].road!.ring) || Math.abs(ang) < 0.87 ? 'T' : ang > 0 ? 'R' : 'L';
         const pick = turn === 'R' ? g[m - 1] : turn === 'L' ? g[0] : g[Math.min(src.idx, m - 1)];
         if (!fallback || Math.abs(ang) < fallback.a) fallback = { dst: pick, a: Math.abs(ang) };
+        // on and off a roundabout every lane has its own way: the outer to the outer, the inner beside it
+        if (src.road!.ring !== g[0].road!.ring) {
+          made.push(connect(src, g[Math.max(0, m - 1 - (n - 1 - src.idx))], turn, node));
+          continue;
+        }
         if (turn === 'L' && src.idx !== 0) continue;
         if (turn === 'R' && src.idx !== n - 1) continue;
         made.push(connect(src, pick, turn, node));
@@ -465,7 +464,7 @@ export function buildNet(spec: Spec): Net {
   for (const r of roads) {
     const laneF = roadLanes.find((l) => l.road === r && l.dir === 1 && l.idx === 0)!;
     const laneB = roadLanes.find((l) => l.road === r && l.dir === -1 && l.idx === 0)!;
-    const hw = r.lanes * r.lw;
+    const hw = r.hw;
     for (const si of r.stallSegs) {
       const a = r.raw[si], b = r.raw[si + 1];
       const L = dist(a, b);

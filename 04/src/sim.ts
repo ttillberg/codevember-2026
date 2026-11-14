@@ -437,7 +437,9 @@ export class Sim {
       for (const o of k.conn!.reserved as Car[]) used += o.len + 2.5;
     }
     // a lane shorter than a car takes one at a time
-    if (dst.len <= 14 ? used > 0 : used + c.len + 2.5 > dst.len - 1) return this.no(c, 'box');
+    // but whoever is on a roundabout keeps going round: if each waited for room ahead, a full ring would never move again
+    const round = info.src.road!.ring && dst.road!.ring;
+    if (!round && (dst.len <= 14 ? used > 0 : used + c.len + 2.5 > dst.len - 1)) return this.no(c, 'box');
     for (const k of info.conflicts) {
       const D = k.o, di = D.conn!;
       if (di.reserved.length) return this.no(c, 'reserved by ' + (di.reserved[0] as Car).id);

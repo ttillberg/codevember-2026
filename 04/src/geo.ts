@@ -12,12 +12,16 @@ class Flat {
     this.pos.push(p.x, this.y + (this.hf ? this.hf(p) : 0), p.y);
     return this.pos.length / 3 - 1;
   }
-  quad(a: V, b: V, c: V, d: V) {
-    // wind it to face up
-    if ((b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x) > 0) { const t = b; b = d; d = t; }
+  /** Wound to face up on its own, so a folded quad cannot show its dark side. */
+  tri(a: V, b: V, c: V) {
+    if ((b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x) > 0) { const t = b; b = c; c = t; }
     const i = this.v(a);
-    this.v(b); this.v(c); this.v(d);
-    this.idx.push(i, i + 1, i + 2, i, i + 2, i + 3);
+    this.v(b); this.v(c);
+    this.idx.push(i, i + 1, i + 2);
+  }
+  quad(a: V, b: V, c: V, d: V) {
+    this.tri(a, b, c);
+    this.tri(a, c, d);
   }
   ribbon(pts: V[], o0: number, o1: number) {
     const l = offset(pts, o0), r = offset(pts, o1);
@@ -99,7 +103,7 @@ function buildDecks(net: Net) {
     if (!r.bridge) continue;
     const D = dense(r.pts, 4);
     const cum = cumLen(D);
-    const w = r.lanes * r.lw + 0.9;
+    const w = r.hw + 0.9;
     const L = offset(D, -w), R = offset(D, w);
     const h = cum.map((d) => deck(r, d));
     for (let i = 0; i < D.length - 1; i++) {
@@ -145,7 +149,7 @@ export function buildGround(net: Net) {
 
   const flats = [kerb, pad, road, white, yellow];
   for (const r of net.roads) {
-    const hw = r.lanes * r.lw;
+    const hw = r.hw;
     const target = r.look >= 1 ? road : pad;
     // a bridge is laid along a finer line, so its ribbons can climb
     const pts = r.bridge ? dense(r.pts, 4) : r.pts;
@@ -156,7 +160,11 @@ export function buildGround(net: Net) {
     }
     target.ribbon(pts, -(hw + SH), hw + SH);
     if (r.look >= 1 && !r.bridge) kerb.ribbon(pts, -(hw + SH + 0.5), hw + SH + 0.5);
-    if (r.look >= 2) {
+    if (r.ring) {
+      white.ribbon(base, hw - 0.14, hw);
+      white.ribbon(base, -hw, -hw + 0.14);
+      for (let i = 1; i < r.lanes; i++) white.dashed(base, i * r.lw - hw, 0.13, 2, 4);
+    } else if (r.look >= 2) {
       yellow.ribbon(base, -0.28, -0.14);
       yellow.ribbon(base, 0.14, 0.28);
       white.ribbon(base, hw - 0.14, hw);
@@ -198,7 +206,7 @@ export function buildGround(net: Net) {
     const pts: V[] = [];
     const top = Math.max(...n.roads.map((q) => q.look));
     for (const r of n.roads) {
-      const hw = r.lanes * r.lw + SH;
+      const hw = r.hw + SH;
       const b = r.base;
       const p = r.a === n ? b[0] : b[b.length - 1];
       const q = r.a === n ? b[1] : b[b.length - 2];
@@ -228,7 +236,7 @@ export function buildGround(net: Net) {
 export function clearOf(net: Net, x: number, y: number, margin: number) {
   for (const r of [...net.pads, ...net.buildings]) if (x > r.x0 - margin && x < r.x1 + margin && y > r.y0 - margin && y < r.y1 + margin) return false;
   for (const r of net.roads) {
-    const m = r.lanes * r.lw + margin + 1;
+    const m = r.hw + margin + 1;
     for (let i = 0; i < r.pts.length - 1; i++) {
       const a = r.pts[i], b = r.pts[i + 1];
       const dx = b.x - a.x, dy = b.y - a.y;

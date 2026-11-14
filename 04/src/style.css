@@ -44,4 +44,14 @@ canvas { display: block; touch-action: none; }
 }
 .tools button.on { background: #f4f4f2; color: #1c1c1c; }
 .tools button:disabled { opacity: 0.35; cursor: default; }
+/* how fast time goes: top right, out of the brush's way */
+.tools.speed {
+  left: auto; transform: none; bottom: auto;
+  top: max(20px, env(safe-area-inset-top)); right: max(20px, env(safe-area-inset-right));
+}
+@media (max-width: 640px) {
+  /* under the plate on a phone, where there is no room beside it */
+  .tools.speed { top: calc(max(16px, env(safe-area-inset-top)) + 64px); right: auto; left: max(16px, env(safe-area-inset-left)); }
+  .tools.speed button { padding: 8px 10px; font-size: 10px; }
+}
 .clean .tools { display: none; }

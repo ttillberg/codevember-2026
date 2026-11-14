@@ -5,11 +5,12 @@ import { MapControls } from '@react-three/drei';
 import { EffectComposer, Noise, TiltShift2, ToneMapping, Vignette } from '@react-three/postprocessing';
 import { ToneMappingMode } from 'postprocessing';
 import { DirectionalLight, HemisphereLight, MOUSE, PerspectiveCamera, TOUCH } from 'three';
-import { Cars } from './Cars';
+import { Cars, TIMELAPSE } from './Cars';
 import { World } from './World';
 import { Painter, type Tool } from './Painter';
-import { baseSpec, buildNet, type Spec, type V } from './net';
-import { addStroke, findRoad, smear, smearStart } from './paint';
+import { buildNet, type V } from './net';
+import { baseIntent, derive, type Intent } from './intent';
+import { addStroke, findStroke, smear, smearStart } from './paint';
 
 const TARGET: [number, number, number] = [10, 0, -10];
 const DAY = 150; // seconds of ours for nine to five of theirs
@@ -47,11 +48,14 @@ function Drone() {
 }
 
 /** The sun crosses from east to west; at five the tape cuts back to morning. */
-function Sun() {
+function Sun({ speed }: { speed: number }) {
+  // the day runs with the traffic: slower at life size, stopped in a still
+  const day = useRef(0);
   const sun = useRef<DirectionalLight>(null);
   const sky = useRef<HemisphereLight>(null);
-  useFrame(({ clock }) => {
-    const t = (clock.elapsedTime / DAY + 0.3) % 1;
+  useFrame((_, delta) => {
+    day.current += (Math.min(delta, 0.1) * speed) / TIMELAPSE;
+    const t = (day.current / DAY + 0.3) % 1;
     const phi = (t - 0.5) * 2.5; // radians either side of south
     const el = 0.38 + 0.6 * Math.cos(phi * 0.62);
     const s = sun.current!;
@@ -74,17 +78,21 @@ function Sun() {
   );
 }
 
+const SPEEDS: [number, string][] = [[TIMELAPSE, 'Timelapse'], [1, 'Normal'], [0, 'Pause']];
 const TOOLS: [Tool, string][] = [['road', 'Road'], ['bridge', 'Bridge'], ['smear', 'Smear'], ['yield', 'Yield']];
 
 export function App() {
-  // every state of the roads so far, so a stroke can be taken back
-  const [history, setHistory] = useState<Spec[]>(() => [baseSpec()]);
+  // every state of the painting so far, so a stroke can be taken back
+  const [history, setHistory] = useState<Intent[]>(() => [baseIntent()]);
   const [tool, setTool] = useState<Tool>('road');
-  // a smear in progress: the roads as they are being pushed, not yet in the history
-  const [live, setLive] = useState<Spec | null>(null);
-  const grab = useRef<{ base: Spec; from: V } | null>(null);
-  const spec = live ?? history[history.length - 1];
-  const net = useMemo(() => buildNet(spec), [spec]);
+  const [speed, setSpeed] = useState(TIMELAPSE);
+  const before = useRef(TIMELAPSE);
+  // a smear in progress: the paint as it is being pushed, not yet in the history
+  const [live, setLive] = useState<Intent | null>(null);
+  const grab = useRef<{ base: Intent; from: V } | null>(null);
+  const intent = live ?? history[history.length - 1];
+  // the roads are never edited: they are what the rules make of the strokes
+  const net = useMemo(() => buildNet(derive(intent)), [intent]);
 
   const onStroke = useCallback((pts: V[], bridge: boolean) => {
     setHistory((h) => {
@@ -95,11 +103,11 @@ export function App() {
   const onYield = useCallback((p: V) => {
     setHistory((h) => {
       const cur = h[h.length - 1];
-      const i = findRoad(cur, p);
+      const i = findStroke(cur, p);
       if (i < 0) return h;
       // one step down each time; past the bottom it gets its priority back
       const d = ((cur[i].demote ?? 0) + 1) % 4;
-      return [...h, cur.map((r, k) => (k === i ? { ...r, demote: d } : r))];
+      return [...h, cur.map((s, k) => (k === i ? { ...s, demote: d } : s))];
     });
   }, []);
   const top = useRef(history[history.length - 1]);
@@ -116,10 +124,17 @@ export function App() {
       if (done) setHistory((h) => [...h, done]);
     }
   }, []);
+  // for trying strokes from the console
+  useEffect(() => { (window as any).paint = onStroke; }, [onStroke]);
   const undo = useCallback(() => setHistory((h) => (h.length > 1 ? h.slice(0, -1) : h)), []);
   useEffect(() => {
     const key = (e: KeyboardEvent) => {
       if (e.key === 'z' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); undo(); }
+      // space holds the frame, and lets go of it again
+      if (e.key === ' ') {
+        e.preventDefault();
+        setSpeed((s) => { if (s) before.current = s; return s ? 0 : before.current; });
+      }
     };
     addEventListener('keydown', key);
     return () => removeEventListener('keydown', key);
@@ -135,9 +150,9 @@ export function App() {
       >
         <color attach="background" args={[0x5a6b34]} />
         <Drone />
-        <Sun />
+        <Sun speed={speed} />
         <World net={net} />
-        <Cars net={net} />
+        <Cars net={net} speed={speed} />
         <Painter tool={tool} onStroke={onStroke} onYield={onYield} onSmear={onSmear} />
         <EffectComposer multisampling={touch ? 2 : 4}>
           <TiltShift2 blur={0.1} taper={0.55} start={[0, 0.52]} end={[1, 0.48]} samples={touch ? 6 : 10} />
@@ -146,6 +161,11 @@ export function App() {
           <Vignette offset={0.25} darkness={0.55} />
         </EffectComposer>
       </Canvas>
+      <div className="tools speed">
+        {SPEEDS.map(([s, label]) => (
+          <button key={label} className={s === speed ? 'on' : ''} onClick={() => setSpeed(s)}>{label}</button>
+        ))}
+      </div>
       <div className="tools">
         {TOOLS.map(([t, label]) => (
           <button key={t} className={t === tool ? 'on' : ''} onClick={() => setTool(t)}>{label}</button>

@@ -3,7 +3,7 @@ import { useRef } from 'react';
 import type { ThreeEvent } from '@react-three/fiber';
 import { Mesh } from 'three';
 import { strokeGeometry } from './geo';
-import { PAINTED, type V } from './net';
+import { CROSS, type V } from './net';
 
 export type Tool = 'road' | 'bridge' | 'smear' | 'yield';
 
@@ -22,7 +22,7 @@ export function Painter({ tool, onStroke, onYield, onSmear }: Props) {
   const show = (pts: V[]) => {
     const m = preview.current!;
     m.geometry.dispose();
-    m.geometry = strokeGeometry(pts, PAINTED.lanes * PAINTED.lw + 0.45);
+    m.geometry = strokeGeometry(pts, CROSS.lanes * CROSS.lw + 0.45);
     m.visible = pts.length > 1;
   };
   const cancel = () => {

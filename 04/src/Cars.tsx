@@ -6,13 +6,16 @@ import type { Net } from './net';
 import { PARKED, Sim, signal } from './sim';
 import { makeTypes } from './vehicles';
 
-/** How much faster than life the traffic runs. */
-export const TIMELAPSE = 3;
+/** How much faster than life the traffic runs, as a timelapse. */
+export const TIMELAPSE = 12;
 
 const tmp = new Color();
 const SIG = { G: new Color(0x2dff7a), Y: new Color(0xffc21a), R: new Color(0xff2a1a) };
 
-export function Cars({ net }: { net: Net }) {
+/** `speed` is how fast time goes: TIMELAPSE, 1 for life size, 0 for a still. */
+export function Cars({ net, speed }: { net: Net; speed: number }) {
+  const rate = useRef(speed);
+  rate.current = speed;
   const types = useMemo(makeTypes, []);
   // one simulation for the life of the page: when the roads change, the traffic moves over to them
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -56,8 +59,8 @@ export function Cars({ net }: { net: Net }) {
   }, [heads]);
 
   useFrame((_, delta) => {
-    const dt = Math.min(delta, 0.05) * TIMELAPSE;
-    const n = Math.max(1, Math.ceil(dt / 0.1));
+    const dt = Math.min(delta, 0.05) * rate.current;
+    const n = Math.ceil(dt / 0.1);
     for (let i = 0; i < n; i++) sim.step(dt / n);
 
     const ms = meshes.current;
