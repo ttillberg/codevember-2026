@@ -130,6 +130,9 @@ export const ringKind = (lanes: number): RoadKind => ({ lanes, lw: 3.8, speed: 9
 export const halfWidth = (k: RoadKind, ring?: boolean) => (ring ? (k.lanes * k.lw) / 2 : k.lanes * k.lw);
 export const BRIDGE_H = 7.5;
 
+/** Out in the haze, where a road is out of sight: traffic comes and goes there, and nowhere else. */
+export const far = (p: V) => Math.hypot(p.x - 10, p.y + 10) > 400;
+
 export const STALL_W = 2.7;
 export const STALL_D = 5.5;
 
@@ -264,18 +267,18 @@ function crossing(a: Lane, b: Lane): { sa: number; sb: number } | null {
 // ---------- the place: a stroad junction outside an American town ----------
 
 const PADS: Rect[] = [
-  { x0: 88, y0: -151, x1: 182, y1: -19 },
-  { x0: -182, y0: 19, x1: -88, y1: 101 },
+  { x0: 123, y0: -111, x1: 182, y1: -19 },
+  { x0: -182, y0: 19, x1: -123, y1: 91 },
   { x0: -102, y0: -86, x1: -12, y1: -15 },
-  { x0: 78, y0: 17, x1: 262, y1: 74 },
+  { x0: 88, y0: 12, x1: 242, y1: 62 },
 ];
 const BUILDINGS: Building[] = [
-  { x0: 70, y0: -228, x1: 202, y1: -160, h: 9, wall: 0xb9b2a4, roof: 0xd9d8d2 },
-  { x0: -196, y0: 108, x1: -98, y1: 136, h: 6, wall: 0xa9907a, roof: 0xbfbdb6 },
+  { x0: 118, y0: -172, x1: 200, y1: -122, h: 9, wall: 0xb9b2a4, roof: 0xd9d8d2 },
+  { x0: -190, y0: 98, x1: -122, y1: 122, h: 6, wall: 0xa9907a, roof: 0xbfbdb6 },
   { x0: -76, y0: -38, x1: -46, y1: -22, h: 5.5, wall: 0xc9c9c9, roof: 0xe6e4de, canopy: true },
   { x0: -48, y0: -60, x1: -20, y1: -44, h: 4.5, wall: 0x9c9488, roof: 0x8f8f8c },
-  { x0: 128, y0: 82, x1: 160, y1: 100, h: 5, wall: 0xb85c44, roof: 0x9b9a96 },
-  { x0: 196, y0: 84, x1: 228, y1: 102, h: 5, wall: 0xc7b89a, roof: 0xcfcdc6 },
+  { x0: 118, y0: 70, x1: 146, y1: 86, h: 5, wall: 0xb85c44, roof: 0x9b9a96 },
+  { x0: 186, y0: 70, x1: 214, y1: 86, h: 5, wall: 0xc7b89a, roof: 0xcfcdc6 },
   { x0: 50, y0: 150, x1: 150, y1: 215, h: 8, wall: 0x8f9499, roof: 0xb7b9ba },
   { x0: -250, y0: -160, x1: -150, y1: -95, h: 8, wall: 0xb0a898, roof: 0xdad7cf },
   { x0: -110, y0: -260, x1: -40, y1: -210, h: 6, wall: 0x99897a, roof: 0x77736c },
@@ -285,7 +288,7 @@ const BUILDINGS: Building[] = [
 /** Height of a bridge deck, d metres along its road. */
 export function deck(r: Road, d: number) {
   if (!r.bridge) return 0;
-  const R = Math.min(45, r.len / 2);
+  const R = Math.min(55, r.len / 2);
   const t = Math.max(0, Math.min(1, Math.min(d, r.len - d) / R));
   return BRIDGE_H * t * t * (3 - 2 * t);
 }
@@ -345,7 +348,7 @@ export function buildNet(spec: Spec): Net {
   for (const n of nodes) {
     n.stub = n.roads.length === 1;
     // traffic comes and goes only at the far ends of the map, not at a painted dead end
-    n.edge = n.stub && (Math.abs(n.p.x) > 400 || Math.abs(n.p.y) > 380);
+    n.edge = n.stub && far(n.p);
     n.trim = junctionTrim(n.p, n.roads.map((r) => ({ raw: r.raw, hw: r.hw, ring: r.ring })));
     const top = Math.max(...n.roads.map((r) => r.look));
     n.signal = !n.roads.some((r) => r.ring) && ((n.roads.length >= 4 && n.roads.every((r) => r.look >= 2)) || (n.roads.length >= 3 && top >= 3 && n.roads.some((r) => r.feeds)));

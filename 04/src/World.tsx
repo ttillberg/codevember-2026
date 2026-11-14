@@ -1,8 +1,9 @@
 // Everything that stands still: grass, asphalt, paint, buildings, trees.
 import { useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import { Color, DoubleSide, InstancedMesh, Matrix4, MeshStandardMaterial, Object3D } from 'three';
-import { buildGround, clearOf } from './geo';
-import { rng, type Net } from './net';
+import { buildGround, clearOf, onRoad, WALK } from './geo';
+import { cumLen, offset, pointOn, rng, type Net } from './net';
+import { Town, type Block } from './Town';
 
 const NOISE = /* glsl */ `
 float h21(vec2 p){ p = fract(p * vec2(123.34, 456.21)); p += dot(p, p + 45.32); return fract(p.x * p.y); }
@@ -28,11 +29,12 @@ function grained(color: number, body: string, key: string, roughness = 0.95) {
 
 const GRASS = `
   float big = fbm(p * 0.012), mid = fbm(p * 0.09 + 31.0), fine = vn(p * 2.1);
-  vec3 dry = vec3(0.50, 0.46, 0.27);
-  diffuseColor.rgb = mix(diffuseColor.rgb, dry, smoothstep(0.45, 0.75, big) * 0.35);
-  diffuseColor.rgb *= 0.82 + 0.3 * mid + 0.12 * fine;
-  // mower stripes, barely
-  diffuseColor.rgb *= 1.0 + 0.025 * sin(p.x * 0.9 + p.y * 0.35);
+  // rough ground, not a lawn: scrub, dry patches, and red earth where it has been dug
+  vec3 dry = vec3(0.47, 0.45, 0.28);
+  diffuseColor.rgb = mix(diffuseColor.rgb, dry, smoothstep(0.45, 0.75, big) * 0.3);
+  diffuseColor.rgb *= 0.72 + 0.42 * mid + 0.14 * fine;
+  float dug = smoothstep(0.66, 0.72, fbm(p * 0.018 + 70.0)) * smoothstep(0.35, 0.6, fbm(p * 0.11 + 5.0));
+  diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.50, 0.36, 0.26) * (0.85 + 0.3 * fine), dug * 0.85);
 `;
 const ASPHALT = `
   float wear = fbm(p * 0.07), fine = vn(p * 3.0), patchy = smoothstep(0.55, 0.6, fbm(p * 0.035 + 9.0));
@@ -49,31 +51,42 @@ const PAINT = `
   diffuseColor.rgb *= 0.78 + 0.3 * worn;
   diffuseColor.a = 1.0;
 `;
+const SLAB = `
+  float w = fbm(p * 0.06 + 11.0), f = vn(p * 1.7);
+  diffuseColor.rgb *= 0.84 + 0.22 * w + 0.08 * f;
+  // joints, and where the rain collects
+  diffuseColor.rgb *= 1.0 - 0.07 * step(0.94, fract(p.x / 4.0)) - 0.07 * step(0.94, fract(p.y / 4.0));
+  diffuseColor.rgb *= 1.0 - 0.18 * smoothstep(0.6, 0.75, fbm(p * 0.25 + 40.0));
+`;
 const ROOF = `
   float w = fbm(p * 0.08), f = vn(p * 1.3);
   diffuseColor.rgb *= 0.86 + 0.2 * w + 0.06 * f;
 `;
 
-export function World({ net }: { net: Net }) {
+export function World({ net, blocks }: { net: Net; blocks: Block[] }) {
   const ground = useMemo(() => buildGround(net), [net]);
   const mats = useMemo(
     () => ({
-      grass: grained(0x4f6a2c, GRASS, 'grass', 1),
-      kerb: grained(0x9f9c94, ROOF, 'kerb'),
-      pad: grained(0x5b5c5e, LOT, 'lot'),
-      road: grained(0x3b3c3f, ASPHALT, 'asphalt', 0.9),
-      white: grained(0xd9d8d0, PAINT, 'paint', 0.7),
-      yellow: grained(0xc79d1f, PAINT, 'paint', 0.7),
+      grass: grained(0x466029, GRASS, 'grass', 1),
+      walk: grained(0xa5a39b, SLAB, 'slab'),
+      kerb: grained(0xb3b0a8, ROOF, 'kerb'),
+      pad: grained(0x787a79, LOT, 'lot'),
+      // sun-bleached, the way a road looks from the air
+      road: grained(0x6b6d6f, ASPHALT, 'asphalt', 0.9),
+      white: grained(0xe6e5de, PAINT, 'paint', 0.7),
+      yellow: grained(0xcfae4a, PAINT, 'paint', 0.7),
     }),
     [],
   );
   useEffect(() => () => Object.values(ground).forEach((g) => g.dispose()), [ground]);
+
 
   return (
     <group>
       <mesh rotation-x={-Math.PI / 2} receiveShadow material={mats.grass}>
         <planeGeometry args={[5000, 5000]} />
       </mesh>
+      <mesh geometry={ground.walk} material={mats.walk} receiveShadow />
       <mesh geometry={ground.kerb} material={mats.kerb} receiveShadow />
       <mesh geometry={ground.pad} material={mats.pad} receiveShadow />
       <mesh geometry={ground.road} material={mats.road} receiveShadow />
@@ -81,7 +94,8 @@ export function World({ net }: { net: Net }) {
       <mesh geometry={ground.yellow} material={mats.yellow} receiveShadow />
       <mesh geometry={ground.decks} material={mats.kerb} castShadow receiveShadow />
       <Buildings net={net} />
-      <Trees net={net} />
+      <Town net={net} blocks={blocks} paving={mats.walk} />
+      <Trees net={net} blocks={blocks} />
     </group>
   );
 }
@@ -156,56 +170,99 @@ function Buildings({ net }: { net: Net }) {
   );
 }
 
-function Trees({ net }: { net: Net }) {
-  const ref = useRef<InstancedMesh>(null);
-  // the wood is planted once; a road painted through it only fells what is in its way
+function Trees({ net, blocks }: { net: Net; blocks: Block[] }) {
+  const ref = useRef<InstancedMesh>(null), firs = useRef<InstancedMesh>(null);
+  // everything is planted once; a road painted through only fells what is in its way
   const wood = useMemo(() => {
     const r = rng(23);
-    const out: { x: number; y: number; blobs: { m: Matrix4; c: Color }[] }[] = [];
+    const out: { x: number; y: number; blobs: { m: Matrix4; c: Color }[]; fir: boolean }[] = [];
     const o = new Object3D();
     const clump = (x: number, y: number) => 0.5 + 0.5 * Math.sin(x * 0.013 + 1.7) * Math.cos(y * 0.017 - 0.4) + 0.3 * Math.sin((x + y) * 0.041);
-    for (let i = 0; i < 9000; i++) {
-      const x = (r() - 0.5) * 1100, y = (r() - 0.5) * 1000;
-      const keep = r() <= clump(x, y) * 0.55;
-      const size = 2.2 + r() * 3;
-      const hue = new Color().setHSL(0.24 + r() * 0.08, 0.32 + r() * 0.2, 0.13 + r() * 0.09);
-      const n = 2 + ((r() * 3) | 0);
+    // where the dark, pointed trees stand together
+    const stand = (x: number, y: number) => Math.sin(x * 0.006 + 2) * Math.cos(y * 0.008 + 1) > 0.3;
+    for (let i = 0; i < 10000; i++) {
+      const x = (r() - 0.5) * 900, y = (r() - 0.5) * 860;
+      const keep = r() <= 0.2 + clump(x, y) * 0.65;
+      const kind = r();
+      const fir = kind > 0.3 && r() < (stand(x, y) ? 0.7 : 0.08);
+      const bush = kind <= 0.3;
+      const size = bush ? 0.9 + r() * 1.1 : fir ? 2 + r() * 1.4 : 2.4 + r() * 3.2;
+      const hue = fir
+        ? new Color().setHSL(0.36 + r() * 0.06, 0.3 + r() * 0.15, 0.09 + r() * 0.05)
+        : new Color().setHSL(0.22 + r() * 0.11, 0.3 + r() * 0.25, (r() < 0.12 ? 0.22 : 0.11) + r() * 0.08);
       const blobs: { m: Matrix4; c: Color }[] = [];
-      for (let k = 0; k < n; k++) {
-        const s = size * (0.6 + r() * 0.5);
-        o.position.set(x + (r() - 0.5) * size * 0.9, size * 0.9 + r() * size * 0.5, y + (r() - 0.5) * size * 0.9);
-        o.scale.set(s, s * (0.75 + r() * 0.3), s);
-        o.rotation.set(r() * 3, r() * 3, r() * 3);
+      if (fir) {
+        const h = size * (2.8 + r() * 1.4);
+        o.position.set(x, h / 2 + 0.6, y); o.scale.set(size, h, size); o.rotation.set(0, r() * 6, 0);
         o.updateMatrix();
-        blobs.push({ m: o.matrix.clone(), c: hue.clone().offsetHSL(0, 0, (r() - 0.5) * 0.04) });
+        blobs.push({ m: o.matrix.clone(), c: hue });
+      } else {
+        const n = bush ? 1 + ((r() * 2) | 0) : 2 + ((r() * 3) | 0);
+        for (let k = 0; k < n; k++) {
+          const s = size * (0.6 + r() * 0.5);
+          o.position.set(x + (r() - 0.5) * size * 0.9, (bush ? 0.5 : 0.9) * size + r() * size * 0.5, y + (r() - 0.5) * size * 0.9);
+          o.scale.set(s, s * (0.75 + r() * 0.3), s);
+          o.rotation.set(r() * 3, r() * 3, r() * 3);
+          o.updateMatrix();
+          blobs.push({ m: o.matrix.clone(), c: hue.clone().offsetHSL(0, 0, (r() - 0.5) * 0.04) });
+        }
       }
-      if (keep) out.push({ x, y, blobs });
+      if (keep) out.push({ x, y, blobs, fir });
     }
     return out;
   }, []);
-  const CAP = 3200;
+  const CAP = 5200, FIRS = 1500;
 
   useLayoutEffect(() => {
-    const m = ref.current!;
-    let i = 0;
+    const m = ref.current!, f = firs.current!;
+    const up = blocks;
+    let i = 0, j = 0;
     for (const t of wood) {
-      if (i + t.blobs.length > CAP) break;
-      if (!clearOf(net, t.x, t.y, 7)) continue;
-      for (const b of t.blobs) {
-        m.setMatrixAt(i, b.m);
-        m.setColorAt(i, b.c);
-        i++;
+      if (!clearOf(net, t.x, t.y, 6)) continue;
+      if (up.some((b) => t.x > b.x0 - 5 && t.x < b.x1 + 5 && t.y > b.y0 - 5 && t.y < b.y1 + 5)) continue;
+      if (t.fir) {
+        if (j < FIRS) { f.setMatrixAt(j, t.blobs[0].m); f.setColorAt(j++, t.blobs[0].c); }
+      } else if (i + t.blobs.length <= CAP - 600) {
+        for (const b of t.blobs) { m.setMatrixAt(i, b.m); m.setColorAt(i++, b.c); }
       }
     }
-    m.count = i;
-    m.instanceMatrix.needsUpdate = true;
-    if (m.instanceColor) m.instanceColor.needsUpdate = true;
-  }, [wood, net]);
+    // street trees: a row down each side of every proper road, in the outer strip of the sidewalk
+    const o = new Object3D(), c = new Color();
+    const blocked = (x: number, y: number) => [...net.pads, ...net.buildings].some((q) => x > q.x0 - 2 && x < q.x1 + 2 && y > q.y0 - 2 && y < q.y1 + 2);
+    for (const r of net.roads) {
+      if (r.look < 2 || r.bridge || r.ring) continue;
+      for (const side of [-1, 1]) {
+        const line = offset(r.base, side * (r.hw + WALK - 0.2));
+        const cum = cumLen(line);
+        for (let d = 9; d < cum[cum.length - 1] - 8 && i < CAP; d += 15) {
+          const p = pointOn(line, cum, d);
+          if (blocked(p.x, p.y) || onRoad(net, p.x, p.y, r, 1.5)) continue;
+          const k = Math.abs(Math.sin(p.x * 12.9898 + p.y * 78.233) * 43758.5453) % 1;
+          const s = 2.3 + k * 1.1;
+          o.position.set(p.x, s * 1.25, p.y); o.scale.set(s, s * 0.9, s); o.rotation.set(k * 3, k * 5, 0);
+          o.updateMatrix();
+          m.setMatrixAt(i, o.matrix);
+          m.setColorAt(i++, c.setHSL(0.27 + k * 0.04, 0.4, 0.13 + k * 0.05));
+        }
+      }
+    }
+    m.count = i; f.count = j;
+    for (const q of [m, f]) {
+      q.instanceMatrix.needsUpdate = true;
+      if (q.instanceColor) q.instanceColor.needsUpdate = true;
+    }
+  }, [wood, net, blocks]);
 
   return (
-    <instancedMesh ref={ref} args={[undefined, undefined, CAP]} castShadow receiveShadow frustumCulled={false}>
-      <icosahedronGeometry args={[1, 1]} />
-      <meshStandardMaterial roughness={1} flatShading />
-    </instancedMesh>
+    <>
+      <instancedMesh ref={ref} args={[undefined, undefined, CAP]} castShadow receiveShadow frustumCulled={false}>
+        <icosahedronGeometry args={[1, 1]} />
+        <meshStandardMaterial roughness={1} flatShading />
+      </instancedMesh>
+      <instancedMesh ref={firs} args={[undefined, undefined, FIRS]} castShadow receiveShadow frustumCulled={false}>
+        <coneGeometry args={[1, 1, 7]} />
+        <meshStandardMaterial roughness={1} flatShading />
+      </instancedMesh>
+    </>
   );
 }

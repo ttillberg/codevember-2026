@@ -1,5 +1,5 @@
 /* a dark day: the backdrop is the grass, ink #f4f4f2 (docs/DESIGN.md) */
-html, body { margin: 0; height: 100%; background: #5a6b34; overflow: hidden; }
+html, body { margin: 0; height: 100%; background: #a3adb3; overflow: hidden; }
 #root { position: fixed; inset: 0; }
 canvas { display: block; touch-action: none; }
 

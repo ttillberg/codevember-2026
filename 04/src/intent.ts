@@ -2,7 +2,7 @@
 // The strokes are the only thing kept. Every time they change the network is derived again from nothing:
 // each stroke is walked from node to node, sharing the nodes that are already near, and each run of
 // edges between junctions gets a road style.
-import { cumLen, halfWidth, junctionTrim, KINDS, pointOn, ringKind, type Spec, type SpecRoad, type V } from './net';
+import { cumLen, far, halfWidth, junctionTrim, KINDS, pointOn, ringKind, type Rect, type Spec, type SpecRoad, type V } from './net';
 
 export interface Stroke {
   pts: V[];
@@ -16,6 +16,8 @@ export interface Stroke {
   demote?: number;
   /** closes on itself: a roundabout, one way round */
   ring?: boolean;
+  /** laid by the brush, after the houses were there */
+  paint?: boolean;
 }
 export type Intent = Stroke[];
 
@@ -27,8 +29,7 @@ const LOT = 14; // but a parking lot only takes in what comes right up to it
 const STEP = 6; // how finely a stroke is walked
 
 const dist = (a: V, b: V) => Math.hypot(b.x - a.x, b.y - a.y);
-/** the far ends of the map, where traffic comes and goes */
-export const far = (p: V) => Math.abs(p.x) > 400 || Math.abs(p.y) > 380;
+export { far };
 const half = (s: Stroke) => KINDS[s.w].lanes * KINDS[s.w].lw;
 
 export function length(pts: V[]) {
@@ -54,8 +55,55 @@ export function nearest(pts: V[], p: V) {
   return best;
 }
 
+/**
+ * Houses are in the way, and nothing takes them down. Whatever is painted or pushed towards one bends round it
+ * where there is room and squeezes between two: a road, a roundabout, a bridge. Only a parking lot stays as it is.
+ */
+function dodge(s: Stroke, houses: Rect[]): Stroke {
+  if (s.lot || !houses.length) return s;
+  // a bridge is wider than its road, and should not shave a wall
+  const m = half(s) + (s.bridge ? 4.5 : 2.5);
+  const hit = houses.filter((h) => s.pts.some((p, i) => i > 0 && segNear(s.pts[i - 1], p, h, m)));
+  if (!hit.length) return s;
+  const cum = cumLen(s.pts);
+  const len = cum[cum.length - 1];
+  const n = Math.max(2, Math.ceil(len / 5));
+  let pts: V[] = [];
+  for (let k = 0; k <= n; k++) pts.push(pointOn(s.pts, cum, (len * k) / n));
+  const push = (p: V, m: number): V => {
+    for (let it = 0; it < 4; it++) {
+      const h = hit.find((q) => p.x > q.x0 - m && p.x < q.x1 + m && p.y > q.y0 - m && p.y < q.y1 + m);
+      if (!h) return p;
+      // out through the nearest wall
+      const dl = p.x - (h.x0 - m), dr = h.x1 + m - p.x, du = p.y - (h.y0 - m), dd = h.y1 + m - p.y;
+      const d = Math.min(dl, dr, du, dd);
+      p = d === dl ? { x: h.x0 - m - 0.1, y: p.y } : d === dr ? { x: h.x1 + m + 0.1, y: p.y } : d === du ? { x: p.x, y: h.y0 - m - 0.1 } : { x: p.x, y: h.y1 + m + 0.1 };
+    }
+    return p;
+  };
+  // pushed well clear, then eased: the easing pulls the line back in, so it is given room to do it.
+  // What comes out takes the house in a wide curve, not round its corners
+  for (let pass = 0; pass < 6; pass++) {
+    pts = pts.map((p) => push(p, m + 7));
+    for (let e = 0; e < 4; e++) pts = pts.map((p, i) => (i === 0 || i === n ? p : { x: (pts[i - 1].x + 2 * p.x + pts[i + 1].x) / 4, y: (pts[i - 1].y + 2 * p.y + pts[i + 1].y) / 4 }));
+  }
+  // and whatever the easing still left inside is put out, just
+  return { ...s, pts: pts.map((p) => push(p, m)) };
+}
+
+function segNear(a: V, b: V, h: Rect, m: number) {
+  const x0 = h.x0 - m, x1 = h.x1 + m, y0 = h.y0 - m, y1 = h.y1 + m;
+  if (Math.max(a.x, b.x) < x0 || Math.min(a.x, b.x) > x1 || Math.max(a.y, b.y) < y0 || Math.min(a.y, b.y) > y1) return false;
+  for (let k = 0; k <= 8; k++) {
+    const x = a.x + ((b.x - a.x) * k) / 8, y = a.y + ((b.y - a.y) * k) / 8;
+    if (x > x0 && x < x1 && y > y0 && y < y1) return true;
+  }
+  return false;
+}
+
 /** The rules: strokes in, roads between junctions out. Same strokes, same town. */
-export function derive(intent: Intent): Spec {
+export function derive(intent: Intent, houses: Rect[] = []): Spec {
+  intent = intent.map((s) => dodge(s, houses));
   const cums = intent.map((s) => cumLen(s.pts));
   const lens = cums.map((c) => c[c.length - 1]);
 
@@ -83,7 +131,9 @@ export function derive(intent: Intent): Spec {
     x0: Math.min(...s.pts.map((p) => p.x)) + 1, x1: Math.max(...s.pts.map((p) => p.x)) - 1,
     y0: Math.min(...s.pts.map((p) => p.y)) + 1, y1: Math.max(...s.pts.map((p) => p.y)) - 1,
   }));
-  const inLot = (p: V) => lots.some((l) => p.x > l.x0 && p.x < l.x1 && p.y > l.y0 && p.y < l.y1);
+  // nor through a house: where it could not get round one, it ends
+  const inHouse = (p: V) => houses.some((l) => p.x > l.x0 - 1 && p.x < l.x1 + 1 && p.y > l.y0 - 1 && p.y < l.y1 + 1);
+  const inLot = (p: V) => inHouse(p) || lots.some((l) => p.x > l.x0 && p.x < l.x1 && p.y > l.y0 && p.y < l.y1);
   /** where a stroke has to pass: its ends, its crossings, its corners */
   const pins: { s: number; k: number }[][] = intent.map(() => []);
 
@@ -146,7 +196,10 @@ export function derive(intent: Intent): Spec {
   // ---------- edges: walk every stroke from node to node ----------
   interface Edge { a: number; b: number; by: number[]; lot: boolean; bridge?: V[]; ring?: boolean; fwd?: boolean }
   const edges = new Map<string, Edge>();
-  intent.forEach((s, i) => {
+  // roundabouts are walked first: they keep their shape, and everything else comes to them
+  const order = intent.map((_, i) => i).sort((a, b) => Number(!!intent[b].ring) - Number(!!intent[a].ring) || a - b);
+  order.forEach((i) => {
+    const s = intent[i];
     const ps = pins[i].slice().sort((a, b) => a.s - b.s);
     if (s.bridge) {
       if (ps.length === 2 && ps[0].k !== ps[1].k) edges.set('b' + i, { a: ps[0].k, b: ps[1].k, by: [i], lot: false, bridge: s.pts });
@@ -161,7 +214,8 @@ export function derive(intent: Intent): Spec {
         for (; n < ps.length && ps[n].s <= at; n++) seq.push(ps[n].k);
         const p = pointOn(s.pts, cums[i], at);
         // a ring keeps the shape it was drawn in: it gives way to nothing, the rest comes to it
-        seq.push(s.ring ? node(p, RING) : inLot(p) ? -1 : node(p, ROOM));
+        // a ring lies over a parking lot, but not over a house
+        seq.push((s.ring ? inHouse(p) : inLot(p)) ? -1 : node(p, s.ring ? RING : ROOM));
         if (at >= lens[i]) break;
       }
     }
@@ -253,7 +307,7 @@ export function derive(intent: Intent): Spec {
   for (let k = 0; k < nodes.length; k++) if (!through(k)) for (const e of around[k]) if (!used.has(e)) walk(k, e);
   // what is left are rings with no junction on them
   for (const e of edges.values()) if (!used.has(e)) walk(e.a, e);
-  return roundabouts(settle(spec));
+  return courts(roundabouts(settle(spec)));
 }
 
 /**
@@ -279,7 +333,8 @@ function settle(spec: Spec): Spec {
       const ka = key(r.raw[0]), kb = key(r.raw[r.raw.length - 1]);
       if (at.get(ka)!.roads.length < 2 || at.get(kb)!.roads.length < 2) continue;
       // nor one that would drag a parking lot along
-      if (fixed(at.get(ka)!) || fixed(at.get(kb)!)) continue;
+      // a roundabout or a parking lot does not move, but it can take in what crowds it. Two of them stay two
+      if (fixed(at.get(ka)!) && fixed(at.get(kb)!)) continue;
       // a junction can only take so many arms
       if (at.get(ka)!.roads.length + at.get(kb)!.roads.length - 2 > 8) continue;
       const d = trim.get(ka)! + trim.get(kb)! + 6 - length(r.raw);
@@ -289,7 +344,7 @@ function settle(spec: Spec): Spec {
     const gone = worst;
     const A = at.get(key(gone.raw[0]))!, B = at.get(key(gone.raw[gone.raw.length - 1]))!;
     // the busier junction stays where it is
-    const [keep, lose] = B.roads.length > A.roads.length ? [B, A] : [A, B];
+    const [keep, lose] = fixed(B) || (!fixed(A) && B.roads.length > A.roads.length) ? [B, A] : [A, B];
 
     const clear = Math.max(10, trim.get(key(keep.p))!);
     const next: Spec = [];
@@ -313,6 +368,33 @@ function settle(spec: Spec): Spec {
     spec = next;
   }
   return spec;
+}
+
+/**
+ * A road does not just stop. Where one ends in the open there is a small yard: room to turn, and to park.
+ */
+function courts(spec: Spec): Spec {
+  const key = (p: V) => p.x.toFixed(2) + ':' + p.y.toFixed(2);
+  const deg = new Map<string, number>();
+  for (const r of spec) for (const p of [r.raw[0], r.raw[r.raw.length - 1]]) deg.set(key(p), (deg.get(key(p)) ?? 0) + 1);
+  return spec.map((r) => {
+    if (r.bridge || r.ring || r.kind.rank < 1 || r.stalls.some(Boolean)) return r;
+    let raw = r.raw, stalls = r.stalls;
+    for (const end of [0, 1]) {
+      const p = end ? raw[raw.length - 1] : raw[0];
+      if (deg.get(key(p)) !== 1 || far(p)) continue;
+      // the last stretch, cut to the length of a yard
+      const o = end ? raw.slice().reverse() : raw.slice();
+      const os = end ? stalls.slice().reverse() : stalls.slice();
+      const L = dist(o[0], o[1]);
+      if (L < 16) continue;
+      if (L > 46) { o.splice(1, 0, { x: o[0].x + ((o[1].x - o[0].x) * 38) / L, y: o[0].y + ((o[1].y - o[0].y) * 38) / L }); os.splice(1, 0, false); }
+      os[0] = true;
+      raw = end ? o.reverse() : o;
+      stalls = end ? os.reverse() : os;
+    }
+    return raw === r.raw ? r : { ...r, raw, stalls };
+  });
 }
 
 /**
@@ -394,23 +476,24 @@ export function baseIntent(): Intent {
   };
 
   // the arterial (east–west) and the cross street
-  out.push({ pts: P(-460, 0, 460, 0), w: 3 });
-  out.push({ pts: P(0, -420, 0, 420), w: 2 });
+  // both run on out of sight, into the haze
+  out.push({ pts: P(-600, 0, 600, 0), w: 3 });
+  out.push({ pts: P(0, -600, 0, 600), w: 2 });
 
   // big box store lot, north-east
-  lot([170, 152.5, 135, 117.5, 100], -28, -140);
+  lot([170, 152.5, 135], -28, -100);
   out.push({ pts: P(170, 0, 170, -28), w: 1 });
-  out.push({ pts: P(0, -140, 100, -140), w: 1 });
+  out.push({ pts: P(0, -100, 135, -100), w: 1 });
 
   // strip mall lot, south-west
-  lot([-170, -152.5, -135, -117.5, -100], 28, 90);
+  lot([-170, -152.5, -135], 28, 80);
   out.push({ pts: P(-170, 0, -170, 28), w: 1 });
-  out.push({ pts: P(-100, 90, 0, 90), w: 1 });
+  out.push({ pts: P(-135, 80, 0, 80), w: 1 });
 
   // gas station cut-through, north-west
   out.push({ pts: P(-90, 0, -90, -70, 0, -70), w: 1 });
 
   // fast food loop, south-east
-  out.push({ pts: P(90, 0, 90, 60, 250, 60, 250, 0), w: 1, lot: true });
+  out.push({ pts: P(100, 0, 100, 48, 230, 48, 230, 0), w: 1, lot: true });
   return out;
 }

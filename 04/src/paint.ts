@@ -1,6 +1,6 @@
 // The tools. Each one only changes the strokes; what the roads become is up to the rules in intent.ts.
 import { derive, far, length, nearest, type Intent } from './intent';
-import { halfWidth, type Spec } from './net';
+import { halfWidth, type Rect, type Spec } from './net';
 import type { V } from './net';
 
 const dist = (a: V, b: V) => Math.hypot(b.x - a.x, b.y - a.y);
@@ -38,9 +38,9 @@ function smooth(pts: V[]): V[] {
 }
 
 /** The stroke whose road is under a point, or -1. */
-export function findStroke(intent: Intent, p: V): number {
+export function findStroke(intent: Intent, p: V, houses: Rect[]): number {
   let best = -1, bd = Infinity;
-  for (const r of derive(intent)) {
+  for (const r of derive(intent, houses)) {
     const d = nearest(r.raw, p).d - halfWidth(r.kind, r.ring);
     if (d < 4 && d < bd) { bd = d; best = r.stroke; }
   }
@@ -48,16 +48,16 @@ export function findStroke(intent: Intent, p: V): number {
 }
 
 /** Lay a stroke down. Null if the rules make nothing of it: too short, or a bridge that does not land. */
-export function addStroke(intent: Intent, stroke: V[], bridge: boolean): Intent | null {
+export function addStroke(intent: Intent, stroke: V[], bridge: boolean, houses: Rect[] = []): Intent | null {
   const pts = smooth(stroke.map((p) => ({ x: p.x, y: p.y })));
   if (length(pts) < (bridge ? 50 : 18)) return null;
   // a stroke that comes back to where it began is a roundabout, as big as it was drawn
   const ring = !bridge && dist(pts[0], pts[pts.length - 1]) < 45 && length(pts) > 170;
   if (ring) pts[pts.length - 1] = { x: pts[0].x, y: pts[0].y };
-  const next: Intent = [...intent, { pts, w: 2, bridge: bridge || undefined, ring: ring || undefined }];
+  const next: Intent = [...intent, { pts, w: 2, paint: true, bridge: bridge || undefined, ring: ring || undefined }];
   // it has to change something: a new road, or a bigger one
   const sig = (sp: Spec) => sp.map((r) => r.kind.rank + ':' + r.raw.length + ':' + r.raw[0].x.toFixed(1) + ':' + r.raw[0].y.toFixed(1)).join();
-  return sig(derive(next)) === sig(derive(intent)) ? null : next;
+  return sig(derive(next, houses)) === sig(derive(intent, houses)) ? null : next;
 }
 
 // ---------- smearing: push the paint that is there ----------
