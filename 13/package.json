@@ -1,0 +1,24 @@
+{
+  "name": "day-13",
+  "private": true,
+  "description": "红色背景中的白梅与水墨喜鹊",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "codevember": {
+    "day": 13,
+    "word": "Labyrinth",
+    "date": "2026-11-13"
+  },
+  "devDependencies": {
+    "@types/three": "^0.187.0",
+    "typescript": "^5.9.3",
+    "vite": "^7.3.1"
+  },
+  "dependencies": {
+    "three": "^0.187.0"
+  }
+}

@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#8d2f2a" />
+    <title>丹墙 · 白梅喜鹊</title>
+    <meta name="description" content="红色背景中的白梅与水墨喜鹊" />
+    <!-- share image: 13/about/screengrab.png, copied next to the build by scripts/build.mjs -->
+    <meta property="og:title" content="13 · 丹墙 · 白梅喜鹊" />
+    <meta property="og:description" content="红色背景中的白梅与水墨喜鹊" />
+    <meta property="og:image" content="https://ttillberg.github.io/codevember-2026/13/screengrab.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="1200" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <link rel="icon" href="data:," />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@600;700&family=Inter:wght@400;500;600&display=swap" />
+    <link rel="stylesheet" href="./src/style.css" />
+  </head>
+  <body class="loading ink">
+    <canvas id="c" class="pending"></canvas>
+    <a class="back" href="../">13 / Labyrinth</a>
+    <div class="plate"><div class="head"><b>丹墙 · 白梅</b><i><a class="home" href="../">Codevember 2026 <span lang="zh">白梅</span></a></i><i class="loading-label">加载中 <span>…</span></i></div></div>
+    <div class="colophon" aria-hidden="true" lang="zh"><span class="verse">丹墙</span><span class="seal">白梅</span></div>
+    <button class="fs" type="button" aria-label="全屏"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path class="in" d="M1.5 5.5v-4h4M10.5 1.5h4v4M14.5 10.5v4h-4M5.5 14.5h-4v-4" /><path class="out" d="M5.5 1.5v4h-4M14.5 5.5h-4v-4M10.5 14.5v-4h4M1.5 10.5h4v4" /></svg></button>
+    <button class="gyro" type="button" aria-label="倾斜手机环顾" aria-pressed="false"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="8" y="3.5" width="8" height="17" rx="2" transform="rotate(-18 12 12)" /><path d="M3 8.5a10 10 0 0 0 0 7M21 8.5a10 10 0 0 1 0 7" /></svg></button>
+    <script type="module" src="./src/main.ts"></script>
+  </body>
+</html>
