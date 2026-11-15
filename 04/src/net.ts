@@ -12,6 +12,8 @@ export interface Node {
   stub: boolean; // a dead end
   sigOff: number; // seconds this signal runs ahead of the cycle
   edge: boolean;
+  /** how high it is: a junction on a bridge is up in the air */
+  z: number;
 }
 
 export interface RoadKind {
@@ -30,6 +32,8 @@ export interface Road extends RoadKind {
   base: V[]; // centreline trimmed at both junctions
   stallSegs: number[];
   bridge: boolean;
+  /** the profile of its deck, if it is a bridge */
+  deck?: Deck;
   len: number;
   look: number; // the rank it is drawn as; rank itself is who yields
   feeds: boolean;
@@ -43,6 +47,11 @@ export interface SpecRoad {
   kind: RoadKind;
   stalls: boolean[]; // per segment of raw
   bridge?: boolean;
+  /** which piece of its stroke's bridge it is, counted from the start */
+  part?: number;
+  /** whether its first and last point hang on another bridge, up in the air */
+  air?: [boolean, boolean];
+  deck?: Deck;
   demote?: number; // steps of priority taken away: it yields where it used to go first
   stroke: number; // the stroke it was derived from
   feeds?: boolean; // leads to a parking lot: wants a signal where it meets a big road
@@ -268,34 +277,53 @@ function crossing(a: Lane, b: Lane): { sa: number; sb: number } | null {
 // ---------- the place: a stroad junction outside an American town ----------
 
 const PADS: Rect[] = [
-  { x0: 123, y0: -111, x1: 182, y1: -19 },
   { x0: -182, y0: 19, x1: -123, y1: 91 },
   { x0: -102, y0: -86, x1: -12, y1: -15 },
-  { x0: 88, y0: 12, x1: 242, y1: 62 },
 ];
 const BUILDINGS: Building[] = [
-  { x0: 118, y0: -172, x1: 200, y1: -122, h: 9, wall: 0xb9b2a4, roof: 0xd9d8d2 },
   { x0: -190, y0: 98, x1: -122, y1: 122, h: 6, wall: 0xa9907a, roof: 0xbfbdb6 },
   { x0: -76, y0: -38, x1: -46, y1: -22, h: 5.5, wall: 0xc9c9c9, roof: 0xe6e4de, canopy: true },
   { x0: -48, y0: -60, x1: -20, y1: -44, h: 4.5, wall: 0x9c9488, roof: 0x8f8f8c },
-  { x0: 118, y0: 70, x1: 146, y1: 86, h: 5, wall: 0xb85c44, roof: 0x9b9a96 },
-  { x0: 186, y0: 70, x1: 214, y1: 86, h: 5, wall: 0xc7b89a, roof: 0xcfcdc6 },
-  { x0: 50, y0: 150, x1: 150, y1: 215, h: 8, wall: 0x8f9499, roof: 0xb7b9ba },
   { x0: -250, y0: -160, x1: -150, y1: -95, h: 8, wall: 0xb0a898, roof: 0xdad7cf },
   { x0: -110, y0: -260, x1: -40, y1: -210, h: 6, wall: 0x99897a, roof: 0x77736c },
-  { x0: 270, y0: -100, x1: 340, y1: -50, h: 6, wall: 0xa7a59f, roof: 0xc8c5bd },
 ];
 
-/** Height of a bridge deck len metres long, d metres along it: up a ramp, level, down a ramp. */
+/**
+ * The profile of one painted bridge, end to end: from z0 up (or down) a ramp to `top`, level, and a ramp to z1.
+ * An end on the ground is at 0; one that hangs on another bridge is as high as that bridge is there.
+ * A road that is a piece of the bridge starts `off` metres along it.
+ */
+export interface Deck { len: number; z0: number; z1: number; top: number; off: number }
+
+/** How steep a ramp is by choice, and how steep it may get when it has to clear something. */
+const SLOPE = 0.1375, STEEP = 0.22;
+
+/** Fit a profile: as high as wanted if the ramps have room, lower if not. `must` is for a bridge with something to clear. */
+export function shape(len: number, z0: number, z1: number, want: number, must = false): Deck {
+  const fit = ((must ? STEEP : SLOPE) * len + z0 + z1) / 2;
+  return { len, z0, z1, top: Math.max(z0, z1, Math.min(want, fit)), off: 0 };
+}
+
+/** Height of a deck s metres along the whole bridge. */
+export function heightAt(k: Deck, s: number) {
+  const d0 = k.top - k.z0, d1 = k.top - k.z1;
+  let R0 = d0 / SLOPE, R1 = d1 / SLOPE;
+  const f = Math.min(1, k.len / (R0 + R1 || 1));
+  R0 *= f; R1 *= f;
+  const ss = (t: number) => t * t * (3 - 2 * t);
+  if (s < R0) return k.z0 + d0 * ss(Math.max(0, s) / R0);
+  if (s > k.len - R1) return k.z1 + d1 * ss(Math.max(0, k.len - s) / R1);
+  return k.top;
+}
+
+/** Height of a plain bridge from ground to ground, len metres long, d metres along it. */
 export function deckAt(len: number, d: number) {
-  const R = Math.min(80, len / 2);
-  const t = Math.max(0, Math.min(1, Math.min(d, len - d) / R));
-  return Math.min(BRIDGE_H, R * 0.14) * t * t * (3 - 2 * t);
+  return heightAt(shape(len, 0, 0, BRIDGE_H), d);
 }
 
 /** Height of a bridge deck, d metres along its road. */
 export function deck(r: Road, d: number) {
-  return r.bridge ? deckAt(r.len, d) : 0;
+  return r.deck ? heightAt(r.deck, r.deck.off + d) : 0;
 }
 
 /** How far from its middle a junction keeps its roads back. A dead end keeps nothing back. */
@@ -331,19 +359,22 @@ export function buildNet(spec: Spec): Net {
   const stalls: Stall[] = [];
   const pads = PADS, buildings = BUILDINGS;
 
-  const N = (p: V): Node => {
-    for (const n of nodes) if (Math.abs(n.p.x - p.x) < 0.1 && Math.abs(n.p.y - p.y) < 0.1) return n;
-    const n: Node = { id: nodes.length, p: { x: p.x, y: p.y }, roads: [], trim: 0, signal: false, stub: false, sigOff: 0, edge: false };
+  // a junction up on a bridge is not the one on the ground under it, even at the very same spot
+  const air = new Set<Node>();
+  const N = (p: V, up = false): Node => {
+    for (const n of nodes) if (air.has(n) === up && Math.abs(n.p.x - p.x) < 0.1 && Math.abs(n.p.y - p.y) < 0.1) return n;
+    const n: Node = { id: nodes.length, p: { x: p.x, y: p.y }, roads: [], trim: 0, signal: false, stub: false, sigOff: 0, edge: false, z: 0 };
+    if (up) air.add(n);
     nodes.push(n);
     return n;
   };
   for (const sr of spec) {
-    const a = N(sr.raw[0]), b = N(sr.raw[sr.raw.length - 1]);
+    const a = N(sr.raw[0], !!sr.air?.[0]), b = N(sr.raw[sr.raw.length - 1], !!sr.air?.[1]);
     const pts = fillet(sr.raw, 7);
     const stallSegs: number[] = [];
     sr.stalls.forEach((on, i) => on && stallSegs.push(i));
     const cum = cumLen(pts);
-    const r: Road = { ...sr.kind, rank: sr.kind.rank - (sr.demote ?? 0), look: sr.kind.rank, id: roads.length, a, b, raw: sr.raw, pts, base: [], stallSegs, bridge: !!sr.bridge, feeds: !!sr.feeds, ring: !!sr.ring, hw: halfWidth(sr.kind, sr.ring), len: cum[cum.length - 1] };
+    const r: Road = { ...sr.kind, rank: sr.kind.rank - (sr.demote ?? 0), look: sr.kind.rank, id: roads.length, a, b, raw: sr.raw, pts, base: [], stallSegs, bridge: !!sr.bridge, deck: sr.bridge ? sr.deck ?? shape(cum[cum.length - 1], 0, 0, BRIDGE_H) : undefined, feeds: !!sr.feeds, ring: !!sr.ring, hw: halfWidth(sr.kind, sr.ring), len: cum[cum.length - 1] };
     roads.push(r);
     a.roads.push(r);
     b.roads.push(r);
@@ -352,11 +383,13 @@ export function buildNet(spec: Spec): Net {
   // ---------- junctions ----------
   for (const n of nodes) {
     n.stub = n.roads.length === 1;
+    // where only bridges meet, the junction is as high as they are there
+    if (n.roads.every((r) => r.bridge)) n.z = Math.max(0, ...n.roads.map((r) => deck(r, r.a === n ? 0 : r.len)));
     // traffic comes and goes only at the far ends of the map, not at a painted dead end
     n.edge = n.stub && far(n.p);
     n.trim = junctionTrim(n.p, n.roads.map((r) => ({ raw: r.raw, hw: r.hw, ring: r.ring })));
     const top = Math.max(...n.roads.map((r) => r.look));
-    n.signal = !n.roads.some((r) => r.ring) && ((n.roads.length >= 4 && n.roads.every((r) => r.look >= 2)) || (n.roads.length >= 3 && top >= 3 && n.roads.some((r) => r.feeds)));
+    n.signal = n.z === 0 && !n.roads.some((r) => r.ring) && ((n.roads.length >= 4 && n.roads.every((r) => r.look >= 2)) || (n.roads.length >= 3 && top >= 3 && n.roads.some((r) => r.feeds)));
     n.sigOff = Math.abs(n.p.x) / 14;
   }
   // signals come one to a block: the bigger junction keeps its lights, the next one along gives way

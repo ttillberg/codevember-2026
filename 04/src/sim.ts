@@ -572,7 +572,10 @@ export class Sim {
       ang += Math.sign(c.lat) * -0.1 * Math.sin(Math.PI * c.latT);
     }
     c.x = x; c.y = y; c.ang = ang;
-    c.h = L.road && L.road.bridge ? deck(L.road, c.s - c.len / 2 + L.from.trim) : 0;
+    // through a junction it is as high as the junction; on a road, as high as the deck where it is.
+    // A lane the other way runs from the far end of its road
+    const d = c.s - c.len / 2 + L.from.trim;
+    c.h = !L.road ? L.from.z : L.road.bridge ? deck(L.road, L.dir === 1 ? d : L.road.len - d) : 0;
   }
 }
 

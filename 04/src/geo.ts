@@ -106,10 +106,24 @@ function buildDecks(net: Net) {
     const cum = cumLen(D);
     const w = r.hw + 0.5;
     const h = cum.map((d) => deck(r, d));
+    // no parapet across the mouth of a road that joins it, on the ground or in the air
+    const joins = [...r.a.roads, ...r.b.roads].filter((q) => q !== r);
+    const mouth = (p: V, q: V) => {
+      const m = { x: (p.x + q.x) / 2, y: (p.y + q.y) / 2 };
+      return joins.some((t) => {
+        for (let n = 1; n < t.pts.length; n++) {
+          const a = t.pts[n - 1], b = t.pts[n], dx = b.x - a.x, dy = b.y - a.y;
+          const u = Math.max(0, Math.min(1, ((m.x - a.x) * dx + (m.y - a.y) * dy) / (dx * dx + dy * dy || 1)));
+          if (Math.hypot(a.x + dx * u - m.x, a.y + dy * u - m.y) < t.hw + 0.45) return true;
+        }
+        return false;
+      });
+    };
     for (const side of [-1, 1]) {
       const I = offset(D, side * w), O = offset(D, side * (w + CAP));
       for (let i = 0; i < D.length - 1; i++) {
         const j = i + 1;
+        if (mouth(I[i], I[j])) continue;
         // the parapet: inner face, its top, and the outer face that runs down past the slab
         quad([I[i].x, h[i], I[i].y], [I[j].x, h[j], I[j].y], [I[j].x, h[j] + RAIL, I[j].y], [I[i].x, h[i] + RAIL, I[i].y]);
         quad([I[i].x, h[i] + RAIL, I[i].y], [I[j].x, h[j] + RAIL, I[j].y], [O[j].x, h[j] + RAIL, O[j].y], [O[i].x, h[i] + RAIL, O[i].y]);
@@ -235,7 +249,6 @@ export function buildGround(net: Net) {
         white.dashed(base, -i * r.lw, 0.13, 3, 9);
       }
     } else if (r.look === 1) yellow.dashed(base, 0, 0.12, 2, 4);
-    for (const f of flats) f.hf = null;
     // a yard at a dead end: parking either side of the last stretch
     if (r.look >= 1) {
       for (const si of r.stallSegs) {
@@ -268,6 +281,7 @@ export function buildGround(net: Net) {
         }
       }
     }
+    for (const f of flats) f.hf = null;
   }
 
   // and room to turn where a road ends
@@ -296,7 +310,10 @@ export function buildGround(net: Net) {
       const ww = hw + 0.5 + WALK;
       wide.push({ x: p.x + nx * ww, y: p.y + ny * ww }, { x: p.x - nx * ww, y: p.y - ny * ww });
     }
+    // a junction on a bridge is laid at its height
+    road.hf = pad.hf = n.z ? () => n.z : null;
     (top >= 1 ? road : pad).poly(hull(pts));
+    road.hf = pad.hf = null;
     if (top >= 1 && !n.roads.some((q) => q.bridge)) walk.poly(hull(wide));
   }
 

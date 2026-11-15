@@ -136,9 +136,9 @@ export function App() {
   const walls = useMemo(() => [...blocks, ...first.buildings], [blocks, first]);
   const net = useMemo(() => buildNet(derive(intent, walls)), [intent, walls]);
 
-  const onStroke = useCallback((pts: V[], bridge: boolean) => {
+  const onStroke = useCallback((pts: V[], bridge: boolean, air?: [boolean, boolean]) => {
     setHistory((h) => {
-      const next = addStroke(h[h.length - 1], pts, bridge, walls);
+      const next = addStroke(h[h.length - 1], pts, bridge, walls, air);
       return next ? [...h, next] : h;
     });
   }, []);
@@ -199,7 +199,7 @@ export function App() {
         <People net={net} blocks={blocks} speed={speed} />
         <Signs net={net} blocks={blocks} />
         <Street net={net} blocks={blocks} speed={speed} />
-        <Painter tool={tool} onStroke={onStroke} onYield={onYield} onSmear={onSmear} />
+        <Painter net={net} tool={tool} onStroke={onStroke} onYield={onYield} onSmear={onSmear} />
         <EffectComposer multisampling={touch ? 2 : 4}>
           <TiltShift2 blur={0.1} taper={0.55} start={[0, 0.52]} end={[1, 0.48]} samples={touch ? 6 : 10} />
           <ToneMapping mode={ToneMappingMode.ACES_FILMIC} />

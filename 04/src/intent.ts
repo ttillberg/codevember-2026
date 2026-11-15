@@ -2,7 +2,7 @@
 // The strokes are the only thing kept. Every time they change the network is derived again from nothing:
 // each stroke is walked from node to node, sharing the nodes that are already near, and each run of
 // edges between junctions gets a road style.
-import { cumLen, deckAt, far, halfWidth, junctionTrim, KINDS, pointOn, ringKind, type Rect, type Spec, type SpecRoad, type V } from './net';
+import { BRIDGE_H, cumLen, deckAt, far, heightAt, shape, type Deck, halfWidth, junctionTrim, KINDS, pointOn, ringKind, type Rect, type Spec, type SpecRoad, type V } from './net';
 
 export interface Stroke {
   pts: V[];
@@ -12,6 +12,8 @@ export interface Stroke {
   lot?: boolean;
   /** flies over what it crosses and only lands at its two ends */
   bridge?: boolean;
+  /** a bridge whose start or end hangs on another bridge instead of landing: a ramp, or a link between two decks */
+  air?: [boolean, boolean];
   /** steps of priority taken away */
   demote?: number;
   /** closes on itself: a roundabout, one way round */
@@ -130,6 +132,63 @@ function segNear(a: V, b: V, h: Rect, m: number) {
   return false;
 }
 
+/**
+ * How high every bridge is. Each painted bridge is one profile, however many pieces it was cut into where others join it.
+ * An end that hangs on an earlier bridge is as high as that one is there; and a bridge that crosses an earlier one
+ * keeps clear of it, over or under. Read off the finished roads, since that is where the ends really are.
+ */
+function layers(spec: Spec): Spec {
+  // the slab, room for a lorry under it, and a little for where the road is cut back at its junctions
+  const CLEAR = 7.5;
+  const by = new Map<number, SpecRoad[]>();
+  for (const r of spec) if (r.bridge) (by.get(r.stroke) ?? by.set(r.stroke, []).get(r.stroke)!).push(r);
+  const done: { pts: V[]; cum: number[]; k: Deck }[] = [];
+  for (const [, parts] of [...by].sort((a, b) => a[0] - b[0])) {
+    parts.sort((a, b) => (a.part ?? 0) - (b.part ?? 0));
+    const pts = parts.flatMap((r, i) => (i ? r.raw.slice(1) : r.raw));
+    const cum = cumLen(pts), len = cum[cum.length - 1];
+    /** how high the deck is that this end hangs on */
+    const hung = (p: V) => {
+      let z = 0, bd = 3;
+      for (const t of done) {
+        const n = nearest(t.pts, p);
+        if (n.d < bd) { bd = n.d; z = heightAt(t.k, n.s); }
+      }
+      return z;
+    };
+    const air = [!!parts[0].air?.[0], !!parts[parts.length - 1].air?.[1]];
+    const z0 = air[0] ? hung(pts[0]) : 0, z1 = air[1] ? hung(pts[pts.length - 1]) : 0;
+    const cross: { d: number; h: number }[] = [];
+    for (const t of done) {
+      for (let m = 1; m < pts.length; m++) {
+        for (let n = 1; n < t.pts.length; n++) {
+          const a = pts[m - 1], b = pts[m], c = t.pts[n - 1], e = t.pts[n];
+          const den = (b.x - a.x) * (e.y - c.y) - (b.y - a.y) * (e.x - c.x);
+          if (Math.abs(den) < 1e-9) continue;
+          const u = ((c.x - a.x) * (e.y - c.y) - (c.y - a.y) * (e.x - c.x)) / den, v = ((c.x - a.x) * (b.y - a.y) - (c.y - a.y) * (b.x - a.x)) / den;
+          if (u < 0 || u > 1 || v < 0 || v > 1) continue;
+          const d = cum[m - 1] + u * (cum[m] - cum[m - 1]);
+          // where it joins a deck it does not have to clear it
+          if ((air[0] && d < 20) || (air[1] && d > len - 20)) continue;
+          cross.push({ d, h: heightAt(t.k, t.cum[n - 1] + v * (t.cum[n] - t.cum[n - 1])) });
+        }
+      }
+    }
+    // a bridge from ground to ground humps; one that hangs on another only goes as high as its ends
+    let want = air[0] || air[1] ? Math.max(z0, z1) : BRIDGE_H;
+    let k = shape(len, z0, z1, want);
+    const clear = () => cross.every((q) => Math.abs(heightAt(k, q.d) - q.h) >= CLEAR);
+    while (!clear() && want < 45) k = shape(len, z0, z1, (want += 1.5), true);
+    let off = 0;
+    for (const r of parts) {
+      r.deck = { ...k, off };
+      off += length(r.raw);
+    }
+    done.push({ pts, cum, k });
+  }
+  return spec;
+}
+
 /** The rules: strokes in, roads between junctions out. Same strokes, same town. */
 export function derive(intent: Intent, houses: Rect[] = []): Spec {
   intent = intent.map((s) => dodge(s, houses));
@@ -140,12 +199,13 @@ export function derive(intent: Intent, houses: Rect[] = []): Spec {
   // A stroke takes the node that is already near, and only makes a new one where there is room.
   // That one rule keeps roads from lying on each other, makes paint on paint the same road,
   // and keeps the arms of a junction well apart.
-  const nodes: (V & { lot: boolean })[] = [];
-  const near = (p: V, r: number) => {
+  const nodes: (V & { lot: boolean; air?: boolean })[] = [];
+  // a node up on a bridge and one on the ground are never the same node, however close on the map
+  const near = (p: V, r: number, air = false) => {
     let best = -1, bd = Infinity;
     for (let k = 0; k < nodes.length; k++) {
       const d = dist(nodes[k], p);
-      if (d < (nodes[k].lot ? Math.min(r, LOT) : r) && d < bd) { bd = d; best = k; }
+      if (!!nodes[k].air === air && d < (nodes[k].lot ? Math.min(r, LOT) : r) && d < bd) { bd = d; best = k; }
     }
     return best;
   };
@@ -166,6 +226,8 @@ export function derive(intent: Intent, houses: Rect[] = []): Spec {
   /** where a stroke has to pass: its ends, its crossings, its corners */
   const pins: { s: number; k: number }[][] = intent.map(() => []);
 
+  /** how many of its two ends found something to stand on */
+  const landed = intent.map(() => 0);
   // an end reaches for the nearest road
   intent.forEach((s, i) => {
     if (s.ring) {
@@ -176,6 +238,23 @@ export function derive(intent: Intent, houses: Rect[] = []): Spec {
     }
     for (const e of [0, 1]) {
       const p = e ? s.pts[s.pts.length - 1] : s.pts[0];
+      if (s.bridge && s.air?.[e]) {
+        // an end that was put on a deck hangs on the nearest bridge painted before this one, clear of its ramps' feet
+        let up: { j: number; n: ReturnType<typeof nearest> } | null = null;
+        for (let j = 0; j < i; j++) {
+          if (!intent[j].bridge || landed[j] !== 2) continue;
+          const n = nearest(intent[j].pts, p);
+          if (n.d < SNAP && n.s > 15 && n.s < lens[j] - 15 && (!up || n.d < up.n.d)) up = { j, n };
+        }
+        if (up) {
+          let k = near(up.n.q, 14, true);
+          if (k < 0) k = nodes.push({ x: up.n.q.x, y: up.n.q.y, lot: false, air: true }) - 1;
+          pins[i].push({ s: e ? lens[i] : 0, k });
+          pins[up.j].push({ s: up.n.s, k });
+          landed[i]++;
+          continue;
+        }
+      }
       let bd = SNAP, bj = -1, bn: ReturnType<typeof nearest> | null = null;
       intent.forEach((t, j) => {
         if (j === i || t.bridge) return;
@@ -185,7 +264,7 @@ export function derive(intent: Intent, houses: Rect[] = []): Spec {
       const hit = bn as ReturnType<typeof nearest> | null;
       const k = node(hit ? hit.q : p);
       pins[i].push({ s: e ? lens[i] : 0, k });
-      if (hit) pins[bj].push({ s: hit.s, k });
+      if (hit) { pins[bj].push({ s: hit.s, k }); landed[i]++; }
       else if (s.bridge) pins[i].pop(); // a bridge that does not land
     }
   });
@@ -223,7 +302,7 @@ export function derive(intent: Intent, houses: Rect[] = []): Spec {
   });
 
   // ---------- edges: walk every stroke from node to node ----------
-  interface Edge { a: number; b: number; by: number[]; lot: boolean; bridge?: V[]; ring?: boolean; fwd?: boolean }
+  interface Edge { a: number; b: number; by: number[]; lot: boolean; bridge?: V[]; part?: number; ring?: boolean; fwd?: boolean }
   const edges = new Map<string, Edge>();
   // roundabouts are walked first: they keep their shape, and everything else comes to them
   const order = intent.map((_, i) => i).sort((a, b) => Number(!!intent[b].ring) - Number(!!intent[a].ring) || a - b);
@@ -231,7 +310,14 @@ export function derive(intent: Intent, houses: Rect[] = []): Spec {
     const s = intent[i];
     const ps = pins[i].slice().sort((a, b) => a.s - b.s);
     if (s.bridge) {
-      if (ps.length === 2 && ps[0].k !== ps[1].k) edges.set('b' + i, { a: ps[0].k, b: ps[1].k, by: [i], lot: false, bridge: s.pts });
+      if (landed[i] !== 2) return;
+      // one piece between each two places something joins it
+      const at = ps.filter((p, n) => n === 0 || p.k !== ps[n - 1].k);
+      for (let n = 0; n < at.length - 1; n++) {
+        const a = at[n], b = at[n + 1];
+        const cut = [pointOn(s.pts, cums[i], a.s), ...s.pts.filter((_, m) => cums[i][m] > a.s + 1 && cums[i][m] < b.s - 1), pointOn(s.pts, cums[i], b.s)];
+        edges.set('b' + i + ':' + n, { a: a.k, b: b.k, by: [i], lot: false, bridge: cut, part: n });
+      }
       return;
     }
     let seq: number[] = [];
@@ -292,7 +378,12 @@ export function derive(intent: Intent, houses: Rect[] = []): Spec {
       if ((first.a === ks[0]) !== first.fwd) ks = ks.slice().reverse();
     }
     let raw = e.bridge ? e.bridge.map((p) => ({ x: p.x, y: p.y })) : ks.map((k) => ({ x: nodes[k].x, y: nodes[k].y }));
-    if (e.bridge) { raw[0] = { ...nodes[e.a] }; raw[raw.length - 1] = { ...nodes[e.b] }; }
+    if (e.bridge) {
+      raw[0] = { ...nodes[e.a] }; raw[raw.length - 1] = { ...nodes[e.b] };
+      // an end pulled onto its node can land on the next point of the span: two points in one place break the ribbon
+      const last = raw[raw.length - 1];
+      raw = raw.filter((p, i) => i === 0 || i === raw.length - 1 || (Math.hypot(p.x - raw[i - 1].x, p.y - raw[i - 1].y) > 1 && Math.hypot(p.x - last.x, p.y - last.y) > 1));
+    }
     else if (!e.lot) {
       // the nodes in between are only there to give it its shape: ease them
       for (let it = 0; it < 2; it++) raw = raw.map((p, n) => (n === 0 || n === raw.length - 1 ? p : { x: (raw[n - 1].x + 2 * p.x + raw[n + 1].x) / 4, y: (raw[n - 1].y + 2 * p.y + raw[n + 1].y) / 4 }));
@@ -313,7 +404,7 @@ export function derive(intent: Intent, houses: Rect[] = []): Spec {
       const seg = nearest(s.pts, { x: (raw[n].x + q.x) / 2, y: (raw[n].y + q.y) / 2 }).seg;
       return cum[seg + 1] - cum[seg] >= longest / 2;
     });
-    spec.push({ raw, kind, stalls, bridge: !!e.bridge, demote: demote(e), stroke: e.by[0], feeds: e.by.some((i) => feeds[i]), ring: e.ring });
+    spec.push({ raw, kind, stalls, bridge: !!e.bridge, part: e.part, air: e.bridge ? [!!nodes[e.a].air, !!nodes[e.b].air] : undefined, demote: demote(e), stroke: e.by[0], feeds: e.by.some((i) => feeds[i]), ring: e.ring });
   };
   const walk = (k: number, e: Edge) => {
     const ks = [k];
@@ -336,7 +427,7 @@ export function derive(intent: Intent, houses: Rect[] = []): Spec {
   for (let k = 0; k < nodes.length; k++) if (!through(k)) for (const e of around[k]) if (!used.has(e)) walk(k, e);
   // what is left are rings with no junction on them
   for (const e of edges.values()) if (!used.has(e)) walk(e.a, e);
-  return courts(roundabouts(settle(spec)));
+  return layers(courts(roundabouts(settle(spec))));
 }
 
 /**
@@ -442,7 +533,8 @@ function roundabouts(spec: Spec): Spec {
   const raws = new Map<SpecRoad, V[]>(spec.map((r) => [r, r.raw]));
   const rings: Spec = [];
   for (const n of at.values()) {
-    if (n.ends.length < 5 || n.ends.some((a) => a.r.ring || a.r.stalls.some(Boolean))) continue;
+    // nor where bridges meet: that is up in the air
+    if (n.ends.length < 5 || n.ends.filter((a) => a.r.bridge).length > 1 || n.ends.some((a) => a.r.ring || a.r.stalls.some(Boolean))) continue;
     const c = n.p;
     // each arm, seen from the middle outwards
     const arms = n.ends.map(({ r, e }) => {
@@ -515,11 +607,6 @@ export function baseIntent(): Intent {
   out.push({ pts: P(-300, -215, -290, 0, -300, 240), w: 1 });
   out.push({ pts: P(300, -215, 295, 0, 300, 245), w: 1 });
 
-  // big box store lot, north-east
-  lot([170, 152.5, 135], -28, -100);
-  out.push({ pts: P(170, 0, 170, -28), w: 1 });
-  out.push({ pts: P(0, -100, 135, -100), w: 1 });
-
   // strip mall lot, south-west
   lot([-170, -152.5, -135], 28, 80);
   out.push({ pts: P(-170, 0, -170, 28), w: 1 });
@@ -528,7 +615,27 @@ export function baseIntent(): Intent {
   // gas station cut-through, north-west
   out.push({ pts: P(-90, 0, -90, -70, 0, -70), w: 1 });
 
-  // fast food loop, south-east
-  out.push({ pts: P(100, 0, 100, 48, 230, 48, 230, 0), w: 1, lot: true });
+  // Inside the blocks it is lanes, as in Xinpaifang, Chongqing: they wind between the houses, meet at odd angles,
+  // loop back on the street they left and stop at somebody's door. This is where the tangle starts.
+  const lane = (...c: number[]) => out.push({ pts: P(...c), w: 1 });
+  // north-east
+  lane(0, -120, 70, -130, 130, -165, 190, -150, 215, -100, 297, -95);
+  lane(130, -165, 120, -110, 150, -60, 150, 0);
+  lane(215, -100, 235, -55, 205, -30);
+  lane(70, -130, 62, -70, 95, -45);
+  // south-east
+  lane(0, 110, 60, 95, 120, 120, 170, 90, 230, 110, 296, 100);
+  lane(120, 120, 108, 180, 150, 240);
+  lane(170, 90, 176, 40, 150, 0);
+  lane(230, 110, 242, 165, 205, 200);
+  // north-west, round the warehouse and behind the gas station
+  lane(-292, -60, -225, -72, -185, -40, -170, 0);
+  lane(0, -150, -55, -138, -105, -165, -135, -212);
+  // south-west, behind the strip mall
+  lane(-294, 140, -235, 150, -180, 185, -110, 168, -55, 190, 0, 170);
+  lane(-180, 185, -172, 239);
+  // and loops hung on the back streets, out towards the haze
+  lane(100, -213, 108, -270, 175, -292, 238, -262, 250, -216);
+  lane(-200, 241, -192, 300, -125, 322, -62, 292, -60, 236);
   return out;
 }

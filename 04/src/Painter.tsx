@@ -1,23 +1,47 @@
 // The brush. Drag on the ground and a road follows; let go and it is built.
 import { useRef } from 'react';
 import type { ThreeEvent } from '@react-three/fiber';
-import { Mesh } from 'three';
+import { Mesh, Vector3, type Ray } from 'three';
 import { strokeGeometry } from './geo';
-import { CROSS, type V } from './net';
+import { CROSS, cumLen, deck, pointOn, type Net, type V } from './net';
 
 export type Tool = 'road' | 'bridge' | 'smear' | 'yield';
 
+const AT = new Vector3();
+
+/**
+ * The point of a bridge deck under the finger, if there is one. The brush paints on the ground,
+ * and a deck is not where its ground is: seen from the drone it stands well off to one side.
+ */
+function onDeck(net: Net, ray: Ray): V | null {
+  let best: V | null = null, bd = Infinity;
+  for (const r of net.roads) {
+    if (!r.bridge) continue;
+    const cum = cumLen(r.pts);
+    for (let d = 0; d <= r.len; d += 3) {
+      const h = deck(r, d);
+      if (h < 3) continue;
+      const p = pointOn(r.pts, cum, d);
+      const far = ray.distanceSqToPoint(AT.set(p.x, h, p.y));
+      if (far < (r.hw + 1.5) ** 2 && far < bd) { bd = far; best = p; }
+    }
+  }
+  return best;
+}
+
 interface Props {
+  net: Net;
   tool: Tool;
-  onStroke: (pts: V[], bridge: boolean) => void;
+  /** air: whether the stroke began and ended on a bridge deck */
+  onStroke: (pts: V[], bridge: boolean, air?: [boolean, boolean]) => void;
   onYield: (p: V) => void;
   /** start, every move, and the end of a smear; null ends it */
   onSmear: (phase: 'start' | 'move' | 'end', p: V) => void;
 }
 
-export function Painter({ tool, onStroke, onYield, onSmear }: Props) {
+export function Painter({ net, tool, onStroke, onYield, onSmear }: Props) {
   const preview = useRef<Mesh>(null);
-  const draw = useRef<{ id: number; pts: V[]; bridge: boolean; smear: boolean } | null>(null);
+  const draw = useRef<{ id: number; pts: V[]; bridge: boolean; smear: boolean; up: boolean } | null>(null);
 
   const show = (pts: V[]) => {
     const m = preview.current!;
@@ -40,7 +64,9 @@ export function Painter({ tool, onStroke, onYield, onSmear }: Props) {
     if (tool === 'yield' || e.altKey) return onYield(p);
     (e.target as Element).setPointerCapture?.(e.pointerId);
     const smear = tool === 'smear' || e.shiftKey;
-    draw.current = { id: e.pointerId, pts: [p], bridge: !smear && (tool === 'bridge' || e.metaKey || e.ctrlKey), smear };
+    // a stroke that starts on a deck starts up there
+    const top = smear ? null : onDeck(net, e.ray);
+    draw.current = { id: e.pointerId, pts: [top ?? p], bridge: !smear && (tool === 'bridge' || e.metaKey || e.ctrlKey), smear, up: !!top };
     if (smear) onSmear('start', p);
   };
   const move = (e: ThreeEvent<PointerEvent>) => {
@@ -61,7 +87,11 @@ export function Painter({ tool, onStroke, onYield, onSmear }: Props) {
     if (!d || d.id !== e.pointerId) return;
     (e.target as Element).releasePointerCapture?.(e.pointerId);
     cancel();
-    if (!d.smear && d.pts.length > 1) onStroke(d.pts, d.bridge);
+    if (d.smear) return;
+    // and one that is let go over a deck ends on it
+    const top = onDeck(net, e.ray);
+    if (top && Math.hypot(top.x - d.pts[0].x, top.y - d.pts[0].y) > 25) d.pts.push(top);
+    if (d.pts.length > 1) onStroke(d.pts, d.bridge, [d.up, !!top && d.pts[d.pts.length - 1] === top]);
   };
 
   return (

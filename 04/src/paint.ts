@@ -48,13 +48,16 @@ export function findStroke(intent: Intent, p: V, houses: Rect[]): number {
 }
 
 /** Lay a stroke down. Null if the rules make nothing of it: too short, or a bridge that does not land. */
-export function addStroke(intent: Intent, stroke: V[], bridge: boolean, houses: Rect[] = []): Intent | null {
+export function addStroke(intent: Intent, stroke: V[], bridge: boolean, houses: Rect[] = [], air: [boolean, boolean] = [false, false]): Intent | null {
   const pts = smooth(stroke.map((p) => ({ x: p.x, y: p.y })));
-  if (length(pts) < (bridge ? 50 : 18)) return null;
+  // whatever starts or ends up on a deck is a bridge itself: a ramp down, or a link across
+  const hung = air[0] || air[1];
+  bridge ||= hung;
+  if (length(pts) < (hung ? 30 : bridge ? 50 : 18)) return null;
   // a stroke that comes back to where it began is a roundabout, as big as it was drawn
   const ring = !bridge && dist(pts[0], pts[pts.length - 1]) < 45 && length(pts) > 170;
   if (ring) pts[pts.length - 1] = { x: pts[0].x, y: pts[0].y };
-  const next: Intent = [...intent, { pts, w: 2, paint: true, bridge: bridge || undefined, ring: ring || undefined }];
+  const next: Intent = [...intent, { pts, w: 2, paint: true, bridge: bridge || undefined, air: hung ? air : undefined, ring: ring || undefined }];
   // it has to change something: a new road, or a bigger one
   const sig = (sp: Spec) => sp.map((r) => r.kind.rank + ':' + r.raw.length + ':' + r.raw[0].x.toFixed(1) + ':' + r.raw[0].y.toFixed(1)).join();
   const made = derive(next, houses);

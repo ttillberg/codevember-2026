@@ -1,6 +1,6 @@
 # 04 · Tangle
 
-A drone parked over a junction at the edge of a big city: an arterial, a cross street, a big box lot, a strip mall, a gas station, a drive-through, and the housing compounds around them. Daylight through haze, running at twelve times life.
+A drone parked over a junction at the edge of a big city: an arterial, a cross street, two back streets, a strip mall, a gas station, and blocks of housing with lanes winding through them, after Xinpaifang in Chongqing. Daylight through haze, running at twelve times life.
 
 The look is taken from drone pictures of the Huangjuewan interchange in Chongqing: sun-bleached concrete, scrub and red earth, pale slab blocks with blue roofs, everything flattened by the haze.
 
@@ -8,7 +8,7 @@ Drag on the ground and paint follows the brush. Only the strokes are kept. Every
 
 - **Road** (drag): a four-lane road. It joins what its ends touch and makes a junction of what it crosses. Paint along a road that is there and it grows a size instead. One that ends in the open is a two-lane cul-de-sac with a yard at its end: room to turn, parking either side, and paving up to the houses beside it. One painted out into the haze is a way in: traffic starts coming down it. None goes through a parking lot. Houses are in the way and nothing takes them down: the road bends round them and squeezes between them, and where it cannot, it ends.
 - **Roundabout**: draw a circle with the road brush, back to where it began. It is as big as it was drawn, one way round, and everything it crosses joins it. A junction that ends up with five arms or more turns into a roundabout by itself.
-- **Bridge** (cmd or ctrl + drag): lands only at its two ends and flies over roads and parking. It still goes round houses.
+- **Bridge** (cmd or ctrl + drag): one straight span, or one even arc where a house is in the line, on piers. It lands only at its two ends and flies over roads, parking and low houses. One that crosses an earlier bridge goes over it. Start or end a stroke on a deck, with either brush, and it hangs on that bridge there: a ramp down to the ground, or a link from one level to another, with a junction up in the air.
 - **Smear** (shift + drag): push the roads that are there, like wet paint. Everything within reach goes along, junctions and traffic included, less the further away it is. Parking lots and the far ends of the map stay put.
 - **Yield** (alt + click): take a step of priority from a stroke, the whole length of it, so it gives way where it went first. A fourth click gives it back.
 - **Undo** (cmd + Z).
