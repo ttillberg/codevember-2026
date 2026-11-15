@@ -2,7 +2,8 @@
 import { useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
 import { Color, InstancedMesh, MeshStandardMaterial, Object3D } from 'three';
-import type { Net } from './net';
+import type { Net, V } from './net';
+import { Heat, Journeys } from './Traffic';
 import { PARKED, Sim, signal } from './sim';
 import { makeTypes } from './vehicles';
 
@@ -13,7 +14,16 @@ const tmp = new Color();
 const SIG = { G: new Color(0x2dff7a), Y: new Color(0xffc21a), R: new Color(0xff2a1a) };
 
 /** `speed` is how fast time goes: TIMELAPSE, 1 for life size, 0 for a still. */
-export function Cars({ net, speed }: { net: Net; speed: number }) {
+export function Cars({ net, speed, target = null, heat = false, trace = null, onCount, onNote }: {
+  net: Net; speed: number;
+  /** roughly how many vehicles to keep on the roads */
+  target?: number | null;
+  heat?: boolean;
+  /** a point on the stretch whose traffic is being followed */
+  trace?: V | null;
+  onCount?: (n: number) => void;
+  onNote?: (text: string) => void;
+}) {
   const rate = useRef(speed);
   rate.current = speed;
   const types = useMemo(makeTypes, []);
@@ -21,6 +31,8 @@ export function Cars({ net, speed }: { net: Net; speed: number }) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const sim = useMemo(() => new Sim(net, types), [types]);
   useLayoutEffect(() => sim.setNet(net), [sim, net]);
+  useEffect(() => { sim.target = target; }, [sim, target]);
+  const told = useRef(0);
   const meshes = useRef<(InstancedMesh | null)[]>([]);
   const paint = useMemo(() => new MeshStandardMaterial({ vertexColors: true, roughness: 0.38, metalness: 0.25 }), []);
 
@@ -62,6 +74,7 @@ export function Cars({ net, speed }: { net: Net; speed: number }) {
     const dt = Math.min(delta, 0.05) * rate.current;
     const n = Math.ceil(dt / 0.1);
     for (let i = 0; i < n; i++) sim.step(dt / n);
+    if (onCount && (told.current += delta) > 0.5) { told.current = 0; onCount(sim.moving); }
 
     const ms = meshes.current;
     for (const f of sim.freed) {
@@ -107,6 +120,8 @@ export function Cars({ net, speed }: { net: Net; speed: number }) {
           frustumCulled={false}
         />
       ))}
+      {heat && <Heat sim={sim} net={net} speed={speed} />}
+      {trace && <Journeys sim={sim} net={net} at={trace} note={onNote} />}
       <instancedMesh ref={headMesh} args={[undefined, undefined, heads.length]} frustumCulled={false}>
         <boxGeometry args={[0.9, 0.9, 0.9]} />
         <meshBasicMaterial toneMapped={false} />

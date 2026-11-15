@@ -73,6 +73,10 @@ export class Sim {
   cars: Car[] = [];
   time = 0;
   freed: { type: number; slot: number }[] = [];
+  /** roughly how many vehicles should be out on the roads; null leaves it to the place */
+  target: number | null = null;
+  /** how many are out on the roads now, the parked ones not counted */
+  moving = 0;
   private rand: () => number;
   private nextId = 1;
   private slots: number[][];
@@ -286,8 +290,13 @@ export class Sim {
     this.time += dt;
     const r = this.rand;
 
+    let out = 0;
+    for (const c of this.cars) if (c.state !== PARKED) out++;
+    this.moving = out;
+    // asked for a number, the ways in open up or shut until about that many are out
+    const flow = this.target == null ? 1 : out >= this.target ? 0 : Math.min(8, 0.4 + 10 * (1 - out / this.target));
     for (const src of this.sources) {
-      src.acc += src.rate * dt * (0.75 + 0.5 * Math.sin(this.time * 0.021 + src.node.id));
+      src.acc += flow * src.rate * dt * (0.75 + 0.5 * Math.sin(this.time * 0.021 + src.node.id));
       if (src.acc < 1) continue;
       const lane = src.lanes[(r() * src.lanes.length) | 0];
       let clear = true;

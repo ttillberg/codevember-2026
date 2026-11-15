@@ -201,7 +201,17 @@ export function standing<T extends Rect>(intent: Intent, houses: T[]): T[] {
   return left.length === houses.length ? houses : left;
 }
 
+// The same strokes among the same houses are asked for several times when a stroke is laid: answer once.
+const made = new WeakMap<Intent, { houses: Rect[]; spec: Spec }>();
 export function derive(intent: Intent, houses: Rect[] = []): Spec {
+  const was = made.get(intent);
+  if (was && was.houses === houses) return was.spec;
+  const spec = rules(intent, houses);
+  made.set(intent, { houses, spec });
+  return spec;
+}
+
+function rules(intent: Intent, houses: Rect[]): Spec {
   houses = standing(intent, houses);
   intent = intent.map((s) => dodge(s, houses));
   const cums = intent.map((s) => cumLen(s.pts));

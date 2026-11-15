@@ -1,13 +1,13 @@
 // A drone parked over a stroad junction, on a clear day, running fast.
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { startTransition, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { MapControls } from '@react-three/drei';
 import { EffectComposer, Noise, TiltShift2, ToneMapping, Vignette, wrapEffect } from '@react-three/postprocessing';
 import { BlendFunction, Effect, ToneMappingMode } from 'postprocessing';
-import { DirectionalLight, HemisphereLight, MOUSE, PerspectiveCamera, TOUCH } from 'three';
+import { DirectionalLight, HemisphereLight, MOUSE, PerspectiveCamera, TOUCH, Uniform } from 'three';
 import { HAZE, HAZE_FROM, HAZE_TO } from './haze';
 import { Cars, TIMELAPSE } from './Cars';
-import { World } from './World';
+import { SEASONS, World, type Season } from './World';
 import { plantTown, type Block } from './Town';
 import { People, Signs, Street } from './Life';
 import { Painter, type Tool } from './Painter';
@@ -17,20 +17,21 @@ import { addStroke, findStroke, smear, smearStart } from './paint';
 
 /** The look of a drone clip shot through city haze: flat, pale, a little cool in the shadows. */
 class FadeEffect extends Effect {
-  constructor() {
+  constructor({ warm = 0.4 }: { warm?: number } = {}) {
     super('Fade', /* glsl */ `
+      uniform float keep;
       void mainImage(const in vec4 inputColor, const in vec2 uv, out vec4 outputColor) {
         vec3 c = inputColor.rgb;
         float l = dot(c, vec3(0.2126, 0.7152, 0.0722));
         // autumn: what is warm keeps its colour, the rest fades
         float warm = smoothstep(0.02, 0.3, c.r - c.b);
-        c = mix(vec3(l), c, 0.8 + 0.4 * warm);
+        c = mix(vec3(l), c, 0.8 + keep * warm);
         c = mix(c, c * vec3(0.9, 1.0, 1.12), 1.0 - smoothstep(0.0, 0.35, l));
         c = c * 0.92 + 0.012;
         // the haze thickens with distance: up the frame
         c = mix(c, vec3(0.62, 0.68, 0.74), 0.03 + 0.1 * uv.y * uv.y);
         outputColor = vec4(c, inputColor.a);
-      }`, { blendFunction: BlendFunction.NORMAL });
+      }`, { blendFunction: BlendFunction.NORMAL, uniforms: new Map([['keep', new Uniform(warm)]]) });
   }
 }
 const Fade = wrapEffect(FadeEffect);
@@ -117,11 +118,26 @@ function Sun({ speed }: { speed: number }) {
   );
 }
 
+/**
+ * The same value, a few frames late. When the roads change, the ground is laid first and what stands and moves
+ * on it follows over the next frames, each in a frame of its own, so that no single frame has to carry it all.
+ */
+function useLater<T>(value: T, frames: number): T {
+  const [late, setLate] = useState(value);
+  useEffect(() => {
+    let n = frames, id = 0;
+    const tick = () => { if (--n <= 0) setLate(value); else id = requestAnimationFrame(tick); };
+    id = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(id);
+  }, [value, frames]);
+  return late;
+}
+
 const NONE: Block[] = [];
 // what to leave out of the place, from the address
 const NO = (typeof location !== 'undefined' ? new URLSearchParams(location.search).get('no') ?? '' : '').toLowerCase().split(',');
 const SPEEDS: [number, string][] = [[TIMELAPSE, 'Timelapse'], [1, 'Normal'], [0, 'Pause']];
-const TOOLS: [Tool, string][] = [['road', 'Road'], ['bridge', 'Bridge'], ['smear', 'Smear'], ['yield', 'Yield']];
+const TOOLS: [Tool, string][] = [['road', 'Road'], ['bridge', 'Bridge'], ['smear', 'Smear'], ['yield', 'Yield'], ['trace', 'Trace']];
 
 export function App() {
   // every state of the painting so far, so a stroke can be taken back
@@ -129,6 +145,18 @@ export function App() {
   const [tool, setTool] = useState<Tool>('road');
   const [speed, setSpeed] = useState(TIMELAPSE);
   const before = useRef(TIMELAPSE);
+  // reading the traffic: how many there should be, where it stands, and where one stretch's cars are going
+  const [target, setTarget] = useState<number | null>(null);
+  const [heat, setHeat] = useState(false);
+  // the time of year, from ?season= or the button
+  const [season, setSeason] = useState<Season>(() => {
+    const q = new URLSearchParams(location.search).get('season') as Season | null;
+    return q && SEASONS.includes(q) ? q : 'autumn';
+  });
+  const [trace, setTrace] = useState<V | null>(null);
+  const countBox = useRef<HTMLInputElement>(null), noteBox = useRef<HTMLDivElement>(null);
+  const onCount = useCallback((n: number) => { if (countBox.current) countBox.current.placeholder = String(n); }, []);
+  const onNote = useCallback((t: string) => { if (noteBox.current) noteBox.current.textContent = t; }, []);
   // ?no=houses,trees: without the houses nothing is in the way of a road; the trees are only put out of sight
   const houses = !NO.some((w) => w.startsWith('house')), trees = !NO.some((w) => w.startsWith('tree'));
   // a smear in progress: the paint as it is being pushed, not yet in the history
@@ -151,12 +179,21 @@ export function App() {
     return houses ? n : { ...n, buildings: [] };
   }, [intent, walls, houses]);
 
-  const onStroke = useCallback((pts: V[], bridge: boolean, air?: [boolean, boolean]) => {
-    setHistory((h) => {
-      const next = addStroke(h[h.length - 1], pts, bridge, walls, air);
-      return next ? [...h, next] : h;
-    });
+  // The stroke is not built the moment the hand lets go: the brush leaves a ghost of it, the frame is shown,
+  // and then the rules are run and the town rebuilt, as something that may be interrupted.
+  // the ground first, then the trees, then the traffic, then the people and the signs
+  const place = useMemo(() => ({ net, blocks }), [net, blocks]);
+  const wood = useLater(place, 1), roads = useLater(net, 2), life = useLater(place, 3);
+
+  const onStroke = useCallback((pts: V[], bridge: boolean, air?: [boolean, boolean], done?: (ok: boolean) => void) => {
+    requestAnimationFrame(() => setTimeout(() => {
+      const next = addStroke(top.current, pts, bridge, walls, air);
+      done?.(!!next);
+      if (next) startTransition(() => setHistory((h) => [...h, next]));
+    }, 0));
   }, [walls]);
+  const top = useRef(history[history.length - 1]);
+  top.current = history[history.length - 1];
   const onYield = useCallback((p: V) => {
     setHistory((h) => {
       const cur = h[h.length - 1];
@@ -167,8 +204,6 @@ export function App() {
       return [...h, cur.map((s, k) => (k === i ? { ...s, demote: d } : s))];
     });
   }, [walls]);
-  const top = useRef(history[history.length - 1]);
-  top.current = history[history.length - 1];
   const liveRef = useRef(live);
   liveRef.current = live;
   const onSmear = useCallback((phase: 'start' | 'move' | 'end', p: V) => {
@@ -209,16 +244,16 @@ export function App() {
         <fog attach="fog" args={[HAZE, HAZE_FROM, HAZE_TO]} />
         <Drone />
         <Sun speed={speed} />
-        <World net={net} blocks={blocks} trees={trees} />
-        <Cars net={net} speed={speed} />
-        <People net={net} blocks={blocks} speed={speed} />
-        <Signs net={net} blocks={blocks} />
-        <Street net={net} blocks={blocks} speed={speed} />
-        <Painter net={net} tool={tool} onStroke={onStroke} onYield={onYield} onSmear={onSmear} />
+        <World net={net} blocks={blocks} wood={wood} trees={trees} season={season} />
+        <Cars net={roads} speed={speed} target={target} heat={heat} trace={tool === 'trace' ? trace : null} onCount={onCount} onNote={onNote} />
+        <People net={life.net} blocks={life.blocks} speed={speed} />
+        <Signs net={life.net} blocks={life.blocks} />
+        <Street net={life.net} blocks={life.blocks} speed={speed} />
+        <Painter net={net} tool={tool} onStroke={onStroke} onYield={onYield} onSmear={onSmear} onTrace={setTrace} />
         <EffectComposer multisampling={touch ? 2 : 4}>
           <TiltShift2 blur={0.1} taper={0.55} start={[0, 0.52]} end={[1, 0.48]} samples={touch ? 6 : 10} />
           <ToneMapping mode={ToneMappingMode.ACES_FILMIC} />
-          <Fade />
+          <Fade warm={season === 'autumn' ? 0.4 : season === 'spring' ? 0.2 : 0} />
           <Noise opacity={0.06} />
           <Vignette offset={0.25} darkness={0.4} />
         </EffectComposer>
@@ -228,6 +263,18 @@ export function App() {
           <button key={label} className={s === speed ? 'on' : ''} onClick={() => setSpeed(s)}>{label}</button>
         ))}
       </div>
+      <div className="tools traffic">
+        <button onClick={() => setSeason((v) => SEASONS[(SEASONS.indexOf(v) + 1) % 4])}>{season}</button>
+        <button className={heat ? 'on' : ''} onClick={() => setHeat((v) => !v)}>Heat</button>
+        <label>
+          Vehicles
+          <input
+            ref={countBox} type="number" inputMode="numeric" min={0} max={1500} step={10} value={target ?? ''}
+            onChange={(e) => setTarget(e.target.value === '' ? null : Math.max(0, Math.min(1500, Math.round(+e.target.value) || 0)))}
+          />
+        </label>
+      </div>
+      {tool === 'trace' && <div className="note" ref={noteBox}>{trace ? '' : 'click a road'}</div>}
       <div className="tools">
         {TOOLS.map(([t, label]) => (
           <button key={t} className={t === tool ? 'on' : ''} onClick={() => setTool(t)}>{label}</button>

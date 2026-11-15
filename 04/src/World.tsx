@@ -31,13 +31,15 @@ const GRASS = `
   float big = fbm(p * 0.012), mid = fbm(p * 0.09 + 31.0), fine = vn(p * 2.1);
   // rough ground, not a lawn: scrub, dry patches, and red earth where it has been dug
   vec3 dry = vec3(0.52, 0.44, 0.24);
-  diffuseColor.rgb = mix(diffuseColor.rgb, dry, smoothstep(0.35, 0.7, big) * 0.55);
-  // autumn: what has come down lies in drifts, yellow and rust
+  diffuseColor.rgb = mix(diffuseColor.rgb, dry, smoothstep(0.35, 0.7, big) * DRY);
+  // what has come down lies in drifts: leaves in autumn, petals in spring
   float drift = smoothstep(0.5, 0.72, fbm(p * 0.05 + 23.0)) * smoothstep(0.35, 0.7, vn(p * 1.6 + 4.0));
-  diffuseColor.rgb = mix(diffuseColor.rgb, mix(vec3(0.78, 0.46, 0.06), vec3(0.6, 0.16, 0.04), vn(p * 0.3 + 9.0)), drift * 0.75);
+  diffuseColor.rgb = mix(diffuseColor.rgb, mix(DRIFT_A, DRIFT_B, vn(p * 0.3 + 9.0)), drift * DRIFT_K);
   diffuseColor.rgb *= 0.72 + 0.42 * mid + 0.14 * fine;
   float dug = smoothstep(0.66, 0.72, fbm(p * 0.018 + 70.0)) * smoothstep(0.35, 0.6, fbm(p * 0.11 + 5.0));
   diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.50, 0.36, 0.26) * (0.85 + 0.3 * fine), dug * 0.85);
+  // winter: snow where nobody walks
+  diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.9, 0.92, 0.96) * (0.9 + 0.1 * fine), SNOW * smoothstep(0.22, 0.5, fbm(p * 0.035 + 3.0)));
 `;
 const ASPHALT = `
   float wear = fbm(p * 0.07), fine = vn(p * 3.0), patchy = smoothstep(0.55, 0.6, fbm(p * 0.035 + 9.0));
@@ -71,7 +73,8 @@ const SLAB = `
   diffuseColor.rgb *= 1.0 - 0.18 * smoothstep(0.6, 0.75, fbm(p * 0.25 + 40.0));
   // leaves swept by the wind into the low places
   float lf = smoothstep(0.42, 0.62, fbm(p * 0.12 + 51.0)) * smoothstep(0.45, 0.75, vn(p * 2.4));
-  diffuseColor.rgb = mix(diffuseColor.rgb, mix(vec3(0.85, 0.52, 0.06), vec3(0.62, 0.2, 0.05), vn(p * 0.5 + 2.0)), lf * 0.7);
+  diffuseColor.rgb = mix(diffuseColor.rgb, mix(DRIFT_A, DRIFT_B, vn(p * 0.5 + 2.0)), lf * DRIFT_K);
+  diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.88, 0.9, 0.94), SNOW * 0.6 * smoothstep(0.4, 0.62, fbm(p * 0.09 + 8.0)));
 `;
 const ROOF = `
   float w = fbm(p * 0.08), f = vn(p * 1.3);
@@ -90,12 +93,31 @@ const FELT = `
   diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.3, 0.33, 0.16), smoothstep(0.55, 0.8, fbm(p * 0.3 + 5.0)) * 0.3);
 `;
 
-export function World({ net, blocks, trees = true }: { net: Net; blocks: Block[]; trees?: boolean }) {
+export type Season = 'spring' | 'summer' | 'autumn' | 'winter';
+export const SEASONS: Season[] = ['spring', 'summer', 'autumn', 'winter'];
+/** what the ground wears: the grass, how dry it is, what lies in drifts on it and how much, and the snow */
+const GROUND: Record<Season, { grass: number; dry: number; a: string; b: string; k: number; snow: number }> = {
+  spring: { grass: 0x5f7c30, dry: 0.2, a: 'vec3(0.95, 0.72, 0.8)', b: 'vec3(0.98, 0.95, 0.9)', k: 0.4, snow: 0 },
+  summer: { grass: 0x4d6a2a, dry: 0.4, a: 'vec3(0.6, 0.55, 0.3)', b: 'vec3(0.5, 0.45, 0.25)', k: 0.15, snow: 0 },
+  autumn: { grass: 0x56602b, dry: 0.55, a: 'vec3(0.78, 0.46, 0.06)', b: 'vec3(0.6, 0.16, 0.04)', k: 0.75, snow: 0 },
+  winter: { grass: 0x6f7257, dry: 0.6, a: 'vec3(0.4, 0.3, 0.2)', b: 'vec3(0.3, 0.24, 0.18)', k: 0.3, snow: 0.92 },
+};
+const worn = (body: string, s: Season) => {
+  const g = GROUND[s];
+  return body.replaceAll('DRIFT_A', g.a).replaceAll('DRIFT_B', g.b).replaceAll('DRIFT_K', g.k.toFixed(2)).replaceAll('DRY', g.dry.toFixed(2)).replaceAll('SNOW', g.snow.toFixed(2));
+};
+
+export function World({ net, blocks, wood, trees = true, season = 'autumn' }: {
+  net: Net; blocks: Block[];
+  /** the place as the trees know it: a frame behind the ground, so that felling them is not part of laying a road */
+  wood?: { net: Net; blocks: Block[] };
+  trees?: boolean; season?: Season;
+}) {
   const ground = useMemo(() => buildGround(net), [net]);
   const mats = useMemo(
     () => ({
-      grass: grained(0x56602b, GRASS, 'grass', 1),
-      walk: grained(0xa5a39b, SLAB, 'slab'),
+      grass: grained(GROUND[season].grass, worn(GRASS, season), 'grass' + season, 1),
+      walk: grained(0xa5a39b, worn(SLAB, season), 'slab' + season),
       felt: grained(0xffffff, FELT, 'felt', 0.85),
       kerb: grained(0xb3b0a8, ROOF, 'kerb'),
       pad: grained(0x787a79, LOT, 'lot'),
@@ -105,7 +127,7 @@ export function World({ net, blocks, trees = true }: { net: Net; blocks: Block[]
       yellow: grained(0xcfae4a, PAINT, 'paint', 0.7),
       guide: grained(0xd08c00, PAINT, 'paint', 0.9),
     }),
-    [],
+    [season],
   );
   useEffect(() => () => Object.values(ground).forEach((g) => g.dispose()), [ground]);
 
@@ -126,7 +148,7 @@ export function World({ net, blocks, trees = true }: { net: Net; blocks: Block[]
       <Buildings net={net} />
       <Town net={net} blocks={blocks} paving={mats.walk} roofing={mats.felt} />
       <group visible={trees}>
-        <Trees net={net} blocks={blocks} />
+        <Trees net={(wood ?? { net }).net} blocks={(wood ?? { blocks }).blocks} season={season} />
       </group>
     </group>
   );
@@ -202,9 +224,14 @@ function Buildings({ net }: { net: Net }) {
   );
 }
 
-/** What a leaf tree wears in November: some still green, most gone yellow, a few on fire. */
-function leaf(k: number, v: number, bush = false) {
+/** What a leaf tree wears. In November: some still green, most gone yellow, a few on fire. */
+function leaf(k: number, v: number, bush = false, season: Season = 'autumn') {
   const c = new Color();
+  // spring: new leaves, and one tree in five in blossom, pink or white
+  if (season === 'spring') return k < 0.12 && !bush ? c.setHSL(0.93 + v * 0.05, 0.7, 0.66) : k < 0.2 && !bush ? c.setHSL(0.12, 0.35, 0.8) : c.setHSL(0.22 + v * 0.07, 0.6, 0.22 + v * 0.1);
+  if (season === 'summer') return c.setHSL(0.25 + v * 0.09, 0.42 + v * 0.15, 0.13 + v * 0.08);
+  // winter: twigs, and the odd bush that keeps its green
+  if (season === 'winter') return bush && k < 0.4 ? c.setHSL(0.3, 0.3, 0.12) : c.setHSL(0.06 + v * 0.03, 0.2, 0.1 + v * 0.05);
   if (k < (bush ? 0.45 : 0.14)) return c.setHSL(0.2 + v * 0.08, 0.3 + v * 0.15, 0.12 + v * 0.07);
   if (k < 0.5) return c.setHSL(0.095 + v * 0.03, 0.85, 0.25 + v * 0.07);
   if (k < 0.76) return c.setHSL(0.05 + v * 0.03, 1, 0.27 + v * 0.07);
@@ -267,9 +294,11 @@ function fallen() {
   return m;
 }
 
-function Trees({ net, blocks }: { net: Net; blocks: Block[] }) {
+function Trees({ net, blocks, season }: { net: Net; blocks: Block[]; season: Season }) {
   const ref = useRef<InstancedMesh>(null), firs = useRef<InstancedMesh>(null), floor = useRef<InstancedMesh>(null), stems = useRef<InstancedMesh>(null);
   const crown = useMemo(tuft, []);
+  // in winter most of the leaves are gone: only a third of the cards are drawn
+  useLayoutEffect(() => { crown.setDrawRange(0, season === 'winter' ? Math.floor(crown.index!.count / 18) * 6 : Infinity); }, [crown, season]);
   const litter = useMemo(fallen, []);
   // everything is planted once; a road painted through only fells what is in its way
   const wood = useMemo(() => {
@@ -287,8 +316,8 @@ function Trees({ net, blocks }: { net: Net; blocks: Block[] }) {
       const bush = kind <= 0.3;
       const size = bush ? 0.9 + r() * 1.1 : fir ? 2 + r() * 1.4 : 2.4 + r() * 3.2;
       const hue = fir
-        ? new Color().setHSL(0.36 + r() * 0.06, 0.3 + r() * 0.15, 0.09 + r() * 0.05)
-        : leaf(r(), r(), bush);
+        ? new Color().setHSL(0.36 + r() * 0.06, 0.3 + r() * 0.15, (0.09 + r() * 0.05) * (season === 'winter' ? 1.9 : 1))
+        : leaf(r(), r(), bush, season);
       const blobs: { m: Matrix4; c: Color }[] = [];
       if (fir) {
         const h = size * (2.8 + r() * 1.4);
@@ -309,12 +338,14 @@ function Trees({ net, blocks }: { net: Net; blocks: Block[] }) {
       if (keep) out.push({ x, y, blobs, fir, size: bush ? 0 : size });
     }
     return out;
-  }, []);
+  }, [season]);
   const CAP = 5200, FIRS = 1500, LITTER = 2600, STEMS = 3200;
 
   useLayoutEffect(() => {
     const m = ref.current!, f = firs.current!, fl = floor.current!, st = stems.current!;
     const up = blocks;
+    // leaves come down in autumn, petals in spring
+    const lets = season === 'autumn' || season === 'spring';
     let i = 0, j = 0, l = 0, e = 0;
     const bark = new Color(0x3a3229);
     const stem = (x: number, y: number, h: number, w: number) => {
@@ -342,7 +373,7 @@ function Trees({ net, blocks }: { net: Net; blocks: Block[] }) {
         for (const b of t.blobs) { m.setMatrixAt(i, b.m); m.setColorAt(i++, b.c); }
         // the green ones have not let go yet
         if (t.size) stem(t.x, t.y, t.size * 1.3, t.size * 0.09);
-        if (t.size && t.blobs[0].c.g < t.blobs[0].c.r * 1.05) drop(t.x, t.y, t.size * 1.9, t.blobs[0].c);
+        if (lets && t.size && t.blobs[0].c.g < t.blobs[0].c.r * 1.05) drop(t.x, t.y, t.size * 1.9, t.blobs[0].c);
       }
     }
     // street trees: a row down each side of every proper road, in the outer strip of the sidewalk
@@ -362,9 +393,10 @@ function Trees({ net, blocks }: { net: Net; blocks: Block[] }) {
           o.updateMatrix();
           m.setMatrixAt(i, o.matrix);
           // ginkgos, planted all at once: the whole street turns the same week
-          const hue = k < 0.12 ? c.setHSL(0.2, 0.4, 0.15) : c.setHSL(0.105 + k * 0.02, 0.82, 0.27 + k * 0.06);
+          const hue = season === 'spring' ? c.setHSL(0.21 + k * 0.03, 0.6, 0.26 + k * 0.06) : season === 'summer' ? c.setHSL(0.25 + k * 0.03, 0.5, 0.17 + k * 0.05)
+            : season === 'winter' ? c.setHSL(0.07, 0.2, 0.12 + k * 0.04) : k < 0.12 ? c.setHSL(0.2, 0.4, 0.15) : c.setHSL(0.105 + k * 0.02, 0.82, 0.27 + k * 0.06);
           m.setColorAt(i++, hue);
-          if (k >= 0.12) drop(p.x, p.y, s * 1.7, hue);
+          if (season === 'autumn' && k >= 0.12) drop(p.x, p.y, s * 1.7, hue);
         }
       }
     }
@@ -373,7 +405,7 @@ function Trees({ net, blocks }: { net: Net; blocks: Block[] }) {
       q.instanceMatrix.needsUpdate = true;
       if (q.instanceColor) q.instanceColor.needsUpdate = true;
     }
-  }, [wood, net, blocks]);
+  }, [wood, net, blocks, season]);
 
   return (
     <>

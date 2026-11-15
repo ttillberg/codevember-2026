@@ -17,6 +17,23 @@ Reference: drone pictures of the Huangjuewan interchange, Chongqing. First pass 
 - Ground is flat. The reference is all hillside.
 - A yard's parking can run into the wall of the house that stopped the road.
 
+## Reading the traffic
+
+In: a field for roughly how many vehicles are out (the ways in open and shut, `Sim.target`), a heat map of every lane (`Heat` in `Traffic.tsx`), the Trace brush that shows the whole journey of every vehicle on the stretch that was clicked (`Journeys`), and four seasons from a button or `?season=`.
+
+- Asking for fewer only shuts the ways in: the ones already out have to drive home first.
+- The heat map restarts whenever the roads change.
+- Trace shows who is on the stretch now, not who has been; what a car drove before the roads last changed is lost.
+- Winter has no snow on roofs or roads, and the same sun as autumn.
+- None of it tried on a phone; the top right is getting crowded there.
+
+## Letting go of a stroke
+
+Laying a stroke froze the frame for about 200 ms on a desktop. Now the brush leaves a ghost, the rules run after the frame is shown, and the ground, the trees, the traffic and the people are rebuilt in a frame each (`useLater` in `App.tsx`); routes are planned with a heap and `derive()` answers the same question once. Longest task measured after: about 130 ms.
+
+- What the 130 ms is has not been found. Not measured on a phone.
+- The rules still run on the main thread. A worker would take `derive` and `buildNet` off it, but the network is full of object references and would have to be rebuilt on this side.
+
 ## Squeezing
 
 Smearing roads together is where the tangle comes from. It should come out dense but whole. Counted in a headless squeeze test (two rounds of dragging eight points towards the middle): about 16 of 71 roads end up too short for their junctions, and 7 pairs lie partly on each other.

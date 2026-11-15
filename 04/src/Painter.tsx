@@ -1,11 +1,11 @@
 // The brush. Drag on the ground and a road follows; let go and it is built.
-import { useRef } from 'react';
+import { useEffect, useRef } from 'react';
 import type { ThreeEvent } from '@react-three/fiber';
-import { Mesh, Vector3, type Ray } from 'three';
+import { Mesh, MeshBasicMaterial, Vector3, type Ray } from 'three';
 import { strokeGeometry } from './geo';
 import { CROSS, cumLen, deck, pointOn, type Net, type V } from './net';
 
-export type Tool = 'road' | 'bridge' | 'smear' | 'yield';
+export type Tool = 'road' | 'bridge' | 'smear' | 'yield' | 'trace';
 
 const AT = new Vector3();
 
@@ -33,22 +33,35 @@ interface Props {
   net: Net;
   tool: Tool;
   /** air: whether the stroke began and ended on a bridge deck */
-  onStroke: (pts: V[], bridge: boolean, air?: [boolean, boolean]) => void;
+  onStroke: (pts: V[], bridge: boolean, air?: [boolean, boolean], done?: (ok: boolean) => void) => void;
   onYield: (p: V) => void;
   /** start, every move, and the end of a smear; null ends it */
   onSmear: (phase: 'start' | 'move' | 'end', p: V) => void;
+  /** a stretch was pointed at, to follow its traffic */
+  onTrace: (p: V) => void;
 }
 
-export function Painter({ net, tool, onStroke, onYield, onSmear }: Props) {
+export function Painter({ net, tool, onStroke, onYield, onSmear, onTrace }: Props) {
   const preview = useRef<Mesh>(null);
   const draw = useRef<{ id: number; pts: V[]; bridge: boolean; smear: boolean; up: boolean } | null>(null);
 
-  const show = (pts: V[]) => {
-    const m = preview.current!;
+  const mesh = useRef<Mesh>(null);
+  /** `ghost`: the stroke has been let go and is waiting to be built: a pale mesh where the road will be */
+  const show = (pts: V[], ghost = false) => {
+    const m = preview.current!, g = mesh.current!;
     m.geometry.dispose();
-    m.geometry = strokeGeometry(pts, CROSS.lanes * CROSS.lw + 0.45);
+    m.geometry = g.geometry = strokeGeometry(pts, CROSS.lanes * CROSS.lw + 0.45);
     m.visible = pts.length > 1;
+    g.visible = m.visible && ghost;
+    const mat = m.material as MeshBasicMaterial;
+    mat.color.setHex(ghost ? 0xf4f4f2 : 0x1d1e21);
+    mat.opacity = ghost ? 0.3 : 0.85;
   };
+  // the ghost stays until the road it stands for is there
+  const waiting = useRef(false);
+  useEffect(() => {
+    if (waiting.current && !draw.current) { waiting.current = false; show([]); }
+  }, [net]);
   const cancel = () => {
     const d = draw.current;
     if (d && d.smear) onSmear('end', d.pts[d.pts.length - 1]);
@@ -61,6 +74,7 @@ export function Painter({ net, tool, onStroke, onYield, onSmear }: Props) {
     if (draw.current) return cancel();
     if (e.pointerType === 'mouse' && e.button !== 0) return;
     const p = { x: e.point.x, y: e.point.z };
+    if (tool === 'trace') return onTrace(onDeck(net, e.ray) ?? p);
     if (tool === 'yield' || e.altKey) return onYield(p);
     (e.target as Element).setPointerCapture?.(e.pointerId);
     const smear = tool === 'smear' || e.shiftKey;
@@ -91,7 +105,13 @@ export function Painter({ net, tool, onStroke, onYield, onSmear }: Props) {
     // and one that is let go over a deck ends on it
     const top = onDeck(net, e.ray);
     if (top && Math.hypot(top.x - d.pts[0].x, top.y - d.pts[0].y) > 25) d.pts.push(top);
-    if (d.pts.length > 1) onStroke(d.pts, d.bridge, [d.up, !!top && d.pts[d.pts.length - 1] === top]);
+    if (d.pts.length < 2) return;
+    show(d.pts, true);
+    waiting.current = true;
+    // nothing came of it: the ghost goes at once
+    onStroke(d.pts, d.bridge, [d.up, !!top && d.pts[d.pts.length - 1] === top], (ok) => {
+      if (!ok && !draw.current) { waiting.current = false; show([]); }
+    });
   };
 
   return (
@@ -103,6 +123,10 @@ export function Painter({ net, tool, onStroke, onYield, onSmear }: Props) {
       <mesh ref={preview} visible={false} raycast={() => null}>
         <bufferGeometry />
         <meshBasicMaterial color={0x1d1e21} transparent opacity={0.85} depthWrite={false} />
+      </mesh>
+      <mesh ref={mesh} visible={false} raycast={() => null}>
+        <bufferGeometry />
+        <meshBasicMaterial color={0xffffff} wireframe transparent opacity={0.8} depthWrite={false} toneMapped={false} />
       </mesh>
     </>
   );

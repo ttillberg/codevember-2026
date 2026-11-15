@@ -551,10 +551,39 @@ export function plan(net: Net, from: Lane, goals: Lane[], seed: number, noChange
   const goal = new Uint8Array(n);
   for (const g of goals) goal[g.id] = 1;
   d[from.id] = 0;
+  // the nearest lane not yet settled comes off a heap: every car plans again whenever the roads change
+  const heap: number[] = [from.id], key: number[] = [0];
+  const push = (id: number, c: number) => {
+    let i = heap.length;
+    heap.push(id); key.push(c);
+    while (i > 0) {
+      const p = (i - 1) >> 1;
+      if (key[p] <= c) break;
+      heap[i] = heap[p]; key[i] = key[p]; i = p;
+    }
+    heap[i] = id; key[i] = c;
+  };
+  const pop = () => {
+    const top = heap[0], id = heap.pop()!, c = key.pop()!;
+    const m = heap.length;
+    if (m) {
+      let i = 0;
+      for (;;) {
+        let k = 2 * i + 1;
+        if (k >= m) break;
+        if (k + 1 < m && key[k + 1] < key[k]) k++;
+        if (key[k] >= c) break;
+        heap[i] = heap[k]; key[i] = key[k]; i = k;
+      }
+      heap[i] = id; key[i] = c;
+    }
+    return top;
+  };
   for (;;) {
-    let u = -1, best = Infinity;
-    for (let i = 0; i < n; i++) if (!done[i] && d[i] < best) { best = d[i]; u = i; }
+    let u = -1;
+    while (heap.length) { const k = pop(); if (!done[k]) { u = k; break; } }
     if (u < 0) return null;
+    const best = d[u];
     if (goal[u] && u !== from.id) {
       const path: Lane[] = [];
       for (let k = u; k >= 0; k = prev[k]) path.push(net.lanes[k]);
@@ -564,12 +593,12 @@ export function plan(net: Net, from: Lane, goals: Lane[], seed: number, noChange
     const l = net.lanes[u];
     for (const m of l.next) {
       const c = best + (m.len / m.speed) * jit(m.id, seed) + (m.conn && m.conn.turn === 'L' ? 5 : 0);
-      if (c < d[m.id]) { d[m.id] = c; prev[m.id] = u; }
+      if (c < d[m.id]) { d[m.id] = c; prev[m.id] = u; push(m.id, c); }
     }
     if (!(noChange && l === from)) {
       for (const m of l.sib) {
         const c = best + (3 + 90 / l.len) * jit(m.id, seed);
-        if (c < d[m.id]) { d[m.id] = c; prev[m.id] = u; }
+        if (c < d[m.id]) { d[m.id] = c; prev[m.id] = u; push(m.id, c); }
       }
     }
   }
