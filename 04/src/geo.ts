@@ -206,7 +206,7 @@ export function buildGround(net: Net) {
   // what stands on the ground stands on concrete
   for (const b of net.buildings) walk.rect(b.x0 - 4, b.y0 - 4, b.x1 + 4, b.y1 + 4);
   for (const r of net.pads) walk.rect(r.x0 - 3, r.y0 - 3, r.x1 + 3, r.y1 + 3);
-  const kerb = new Flat(0.02), pad = new Flat(0.035), road = new Flat(0.05), white = new Flat(0.07), yellow = new Flat(0.07);
+  const kerb = new Flat(0.02), pad = new Flat(0.035), road = new Flat(0.05), white = new Flat(0.07), yellow = new Flat(0.07), guide = new Flat(0.06);
   const SH = 0.45; // shoulder
 
   for (const r of net.pads) {
@@ -225,13 +225,15 @@ export function buildGround(net: Net) {
       const cum = cumLen(r.pts);
       for (const f of flats) f.hf = (p) => deck(r, along(r, cum, p));
     }
-    target.ribbon(pts, -(hw + SH), hw + SH);
     // what is left of it between its two junctions. On a stub there is no room for paint: lines there are only clutter
     const run = cumLen(r.base).pop()!;
     const lined = run >= 20;
+    target.ribbon(pts, -(hw + SH), hw + SH);
     if (r.look >= 1 && !r.bridge) {
       kerb.ribbon(pts, -(hw + SH + 0.5), hw + SH + 0.5);
       walk.ribbon(pts, -(hw + SH + 0.5 + WALK), hw + SH + 0.5 + WALK);
+      // the yellow line of studded tiles that every sidewalk here has, for those who walk by touch
+      if (lined) for (const side of [-1, 1]) guide.ribbon(base, side * (hw + SH + 1.8), side * (hw + SH + 2.3));
     }
     if (!lined) {
       // bare
@@ -273,7 +275,27 @@ export function buildGround(net: Net) {
       const nx = -ty, ny = tx; // right of travel
       const a0 = { x: p.x + nx * 0.25, y: p.y + ny * 0.25 }, a1 = { x: p.x + nx * hw, y: p.y + ny * hw };
       white.quad(a0, a1, { x: a1.x - tx * 0.5, y: a1.y - ty * 0.5 }, { x: a0.x - tx * 0.5, y: a0.y - ty * 0.5 });
-      if (node.signal && run >= 20) {
+      // which way each lane may go, painted on it before the line
+      if (r.look >= 2 && r.lanes > 1 && run >= 45 && !r.ring) {
+        for (let i = 0; i < r.lanes; i++) {
+          const turn = i === 0 ? -1 : i === r.lanes - 1 ? 1 : 0;
+          // a point given along the lane (u, towards the junction) and across it (v, to the right)
+          const at = (u: number, v: number) => ({ x: p.x + nx * ((i + 0.5) * r.lw + v) - tx * (9 - u), y: p.y + ny * ((i + 0.5) * r.lw + v) - ty * (9 - u) });
+          const head = (u: number, v: number, du: number, dv: number) => {
+            // a triangle pointing along (du, dv)
+            const wu = -dv * 0.45, wv = du * 0.45;
+            white.tri(at(u + wu, v + wv), at(u - wu, v - wv), at(u + du * 1.5, v + dv * 1.5));
+          };
+          white.quad(at(-3, -0.09), at(-3, 0.09), at(turn && r.lanes > 2 ? -0.4 : 0.6, 0.09), at(turn && r.lanes > 2 ? -0.4 : 0.6, -0.09));
+          // the outer lanes of a wide road only turn; on a narrow one they also go straight on
+          if (!turn || r.lanes <= 2) head(0.6, 0, 1, 0);
+          if (turn) {
+            white.quad(at(-0.5, 0), at(-0.32, 0), at(-0.32, turn * 0.75), at(-0.5, turn * 0.75));
+            head(-0.41, turn * 0.7, 0, turn);
+          }
+        }
+      }
+      if ((node.signal || r.look >= 1) && run >= 20) {
         // a zebra behind the line
         for (let k = -hw + 0.4; k < hw - 0.5; k += 1.2) {
           const c = { x: p.x + nx * k + tx * 1.2, y: p.y + ny * k + ty * 1.2 };
@@ -329,7 +351,7 @@ export function buildGround(net: Net) {
     }
   }
 
-  return { walk: walk.build(), kerb: kerb.build(), pad: pad.build(), road: road.build(), white: white.build(), yellow: yellow.build(), decks: buildDecks(net) };
+  return { walk: walk.build(), kerb: kerb.build(), pad: pad.build(), road: road.build(), white: white.build(), yellow: yellow.build(), guide: guide.build(), decks: buildDecks(net) };
 }
 
 /** Is this point clear of roads, lots and buildings? For planting trees. */

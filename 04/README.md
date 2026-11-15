@@ -26,7 +26,7 @@ Drag on the ground and paint follows the brush. Only the strokes are kept. Every
 - `World.tsx`, `geo.ts`: scrub, asphalt, sidewalks, paint, buildings, trees, built from the network. Street trees follow whatever roads there are.
 - `Life.tsx`: people on the sidewalks and footpaths, bikes along the kerb, and signs on everything: hoardings on roofs and on poles by the road, banners down the ends of the blocks, shop fronts. The writing is made up in the shader. Lamp posts stand down both sides of every proper road, and video screens at the big junctions and along the arterial, each running its own adverts.
 - `facade.ts`: the faces of sixties housing, drawn on a canvas: four bays by four floors a sheet, one layer a style.
-- `Town.tsx`: slab blocks in rows and a few towers, each wearing a sheet from `facade.ts` in its own paint, their concrete and footpaths. Planted once, and in the way of everything painted or smeared after.
+- `Town.tsx`: slab blocks in rows and a few towers, each wearing a sheet from `facade.ts` in its own paint, their concrete and footpaths, and what people keep on a roof. Planted once, and in the way of everything painted or smeared after.
 
 ## Learned
 

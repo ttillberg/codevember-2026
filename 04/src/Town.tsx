@@ -142,8 +142,8 @@ function walls() {
   return m;
 }
 
-export function Town({ net, blocks, paving }: { net: Net; blocks: Block[]; paving: MeshStandardMaterial }) {
-  const body = useRef<InstancedMesh>(null), cap = useRef<InstancedMesh>(null), kit = useRef<InstancedMesh>(null);
+export function Town({ net, blocks, paving, roofing }: { net: Net; blocks: Block[]; paving: MeshStandardMaterial; roofing: MeshStandardMaterial }) {
+  const body = useRef<InstancedMesh>(null), cap = useRef<InstancedMesh>(null), kit = useRef<InstancedMesh>(null), tank = useRef<InstancedMesh>(null);
   const wall = useMemo(walls, []);
   // every house stays up: the roads are the ones that give way
   const up = blocks;
@@ -165,26 +165,64 @@ export function Town({ net, blocks, paving }: { net: Net; blocks: Block[]; pavin
 
   useLayoutEffect(() => {
     const o = new Object3D(), c = new Color(), r = rng(9);
-    let k = 0;
+    let k = 0, t = 0;
     body.current!.geometry.setAttribute('aStyle', new InstancedBufferAttribute(Float32Array.from(up, (b) => b.style), 1));
     up.forEach((b, i) => {
       const w = b.x1 - b.x0, d = b.y1 - b.y0, cx = (b.x0 + b.x1) / 2, cz = (b.y0 + b.y1) / 2;
       o.position.set(cx, b.h / 2, cz); o.scale.set(w, b.h, d); o.updateMatrix();
       body.current!.setMatrixAt(i, o.matrix);
       body.current!.setColorAt(i, c.setHex(b.wall));
-      // the roof sits inside a low parapet
-      o.position.set(cx, b.h + 0.25, cz); o.scale.set(w - 1, 0.5, d - 1); o.updateMatrix();
+      // the roof deck, down inside its parapet
+      o.position.set(cx, b.h + 0.05, cz); o.scale.set(w - 0.6, 0.1, d - 0.6); o.updateMatrix();
       cap.current!.setMatrixAt(i, o.matrix);
       cap.current!.setColorAt(i, c.setHex(b.roof));
-      // stair heads and water tanks
-      for (let n = 0; n < 4; n++) {
-        const s = 1.6 + r() * 2.2;
-        o.position.set(b.x0 + 3 + r() * (w - 6), b.h + 0.5 + s * 0.4, b.y0 + 2.5 + r() * (d - 5));
-        o.scale.set(s * 1.3, s * 0.8, s); o.updateMatrix();
+      const put = (x: number, y: number, z: number, sx: number, sy: number, sz: number, col: number, tilt = 0) => {
+        o.position.set(x, b.h + y + sy / 2, z); o.scale.set(sx, sy, sz); o.rotation.set(tilt, 0, 0); o.updateMatrix();
         kit.current!.setMatrixAt(k, o.matrix);
-        kit.current!.setColorAt(k++, c.setHex(r() < 0.35 ? 0x7f9fc0 : 0xcfd0cc));
+        kit.current!.setColorAt(k++, c.setHex(col));
+        o.rotation.set(0, 0, 0);
+      };
+      const rim = 0xd9d7cf;
+      put(cx, 0, b.y0 + 0.2, w, 0.9, 0.4, rim); put(cx, 0, b.y1 - 0.2, w, 0.9, 0.4, rim);
+      put(b.x0 + 0.2, 0, cz, 0.4, 0.9, d - 0.8, rim); put(b.x1 - 0.2, 0, cz, 0.4, 0.9, d - 0.8, rim);
+      // how much there is room for
+      const room = Math.min(1, (w * d) / 380);
+      const at = (mx: number, mz: number) => [b.x0 + mx + r() * Math.max(0, w - 2 * mx), b.y0 + mz + r() * Math.max(0, d - 2 * mz)];
+      // stair heads
+      for (let n = 0; n < (w > 24 ? 2 : 1); n++) {
+        const [x, z] = at(3, 2.6);
+        put(x, 0, z, 3.4, 2.5 + r() * 0.5, 3.8, r() < 0.5 ? 0xd4d1c6 : 0xbdb9ae);
+      }
+      // a room somebody added, under a roof of blue tin
+      if (r() < 0.75 * room + 0.1) {
+        const [x, z] = at(5, 3);
+        const sx = 4 + r() * 6 * room, sz = 3 + r() * 2.5;
+        put(x, 0, z, sx, 2.2, sz, 0xcfcabd);
+        put(x, 2.2, z, sx + 0.8, 0.18, sz + 0.8, [0x3f74b5, 0x3f74b5, 0x4a86c6, 0x9a4a35, 0x3d7a66, 0xb9bcc0][(r() * 6) | 0]);
+      }
+      // tubs of earth: greens, and a tree gone yellow
+      for (let n = (r() * 4 * room) | 0; n > 0; n--) {
+        const [x, z] = at(2, 2);
+        put(x, 0, z, 1.5 + r() * 4, 0.5 + r() * 0.5, 1.2 + r() * 1.6, [0x4f6a2c, 0x5d7430, 0x3f5a2a, 0xb08a2a, 0x8a5a2a][(r() * 5) | 0]);
+      }
+      // sun heaters: a rack of dark tubes leaning south, each with its tank
+      for (let n = (r() * 5 * room) | 0; n > 0; n--) {
+        const [x, z] = at(2.5, 2.5);
+        put(x, 0.5, z, 2 + r() * 0.8, 0.12, 2.2, 0x1c2640, -0.55);
+        o.position.set(x, b.h + 1.75, z - 1); o.scale.set(0.42, 2.2 + r() * 0.6, 0.42); o.rotation.set(0, 0, Math.PI / 2); o.updateMatrix();
+        tank.current!.setMatrixAt(t++, o.matrix);
+        o.rotation.set(0, 0, 0);
+      }
+      // and water kept on the roof, in steel
+      for (let n = r() < 0.7 ? 1 + ((r() * 2 * room) | 0) : 0; n > 0; n--) {
+        const [x, z] = at(2.5, 2.5);
+        const s = 1 + r() * 0.6;
+        o.position.set(x, b.h + 0.6 + s, z); o.scale.set(s, s * 2, s); o.updateMatrix();
+        tank.current!.setMatrixAt(t++, o.matrix);
       }
     });
+    tank.current!.count = t;
+    tank.current!.instanceMatrix.needsUpdate = true;
     for (const m of [body.current!, cap.current!, kit.current!]) {
       m.count = m === kit.current ? k : up.length;
       m.instanceMatrix.needsUpdate = true;
@@ -199,13 +237,16 @@ export function Town({ net, blocks, paving }: { net: Net; blocks: Block[]; pavin
       <instancedMesh ref={body} args={[undefined, undefined, n]} material={wall} castShadow receiveShadow frustumCulled={false}>
         <boxGeometry />
       </instancedMesh>
-      <instancedMesh ref={cap} args={[undefined, undefined, n]} castShadow receiveShadow frustumCulled={false}>
+      <instancedMesh ref={cap} args={[undefined, undefined, n]} material={roofing} receiveShadow frustumCulled={false}>
         <boxGeometry />
-        <meshStandardMaterial roughness={0.8} />
       </instancedMesh>
-      <instancedMesh ref={kit} args={[undefined, undefined, n * 4]} castShadow receiveShadow frustumCulled={false}>
+      <instancedMesh ref={kit} args={[undefined, undefined, n * 18]} castShadow receiveShadow frustumCulled={false}>
         <boxGeometry />
-        <meshStandardMaterial roughness={0.6} metalness={0.2} />
+        <meshStandardMaterial roughness={0.7} metalness={0.1} />
+      </instancedMesh>
+      <instancedMesh ref={tank} args={[undefined, undefined, n * 8]} castShadow receiveShadow frustumCulled={false}>
+        <cylinderGeometry args={[1, 1, 1, 12]} />
+        <meshStandardMaterial color={0xc9cdd0} roughness={0.35} metalness={0.7} />
       </instancedMesh>
     </group>
   );

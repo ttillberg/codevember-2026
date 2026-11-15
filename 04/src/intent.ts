@@ -190,7 +190,19 @@ function layers(spec: Spec): Spec {
 }
 
 /** The rules: strokes in, roads between junctions out. Same strokes, same town. */
+/**
+ * A bridge is not stopped by the housing: what stands in its line comes down. Only the houses of the town;
+ * the sheds on the lots belong to the roads and stay.
+ */
+export function standing<T extends Rect>(intent: Intent, houses: T[]): T[] {
+  const spans = intent.filter((s) => s.bridge && s.pts.length > 1);
+  if (!spans.length) return houses;
+  const left = houses.filter((h) => !('path' in h) || !spans.some((s) => segNear(s.pts[0], s.pts[s.pts.length - 1], h, half(s) + 4.5)));
+  return left.length === houses.length ? houses : left;
+}
+
 export function derive(intent: Intent, houses: Rect[] = []): Spec {
+  houses = standing(intent, houses);
   intent = intent.map((s) => dodge(s, houses));
   const cums = intent.map((s) => cumLen(s.pts));
   const lens = cums.map((c) => c[c.length - 1]);

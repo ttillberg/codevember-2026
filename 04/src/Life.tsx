@@ -210,7 +210,7 @@ export function Signs({ net, blocks }: { net: Net; blocks: Block[] }) {
       if (!b.canopy && r() < 0.7) out.push({ x: b.x0 + 4 + r() * (w - 8), y: b.h + 4, z: (b.y0 + b.y1) / 2, sx: 9 + r() * 6, sy: 4.5, sz: 0.4, rot: 0, ink: ink() });
     }
     // along the roads: hoardings on poles, facing the traffic
-    const taken = (x: number, y: number) => [...net.pads, ...net.buildings, ...blocks].some((q) => x > q.x0 - 3 && x < q.x1 + 3 && y > q.y0 - 3 && y < q.y1 + 3);
+    const taken = (x: number, y: number, m = 3) => [...net.pads, ...net.buildings, ...blocks].some((q) => x > q.x0 - m && x < q.x1 + m && y > q.y0 - m && y < q.y1 + m);
     for (const road of net.roads) {
       if (road.look < 2 || road.bridge || road.ring) continue;
       for (const side of [1, -1]) {
@@ -224,6 +224,39 @@ export function Signs({ net, blocks }: { net: Net; blocks: Block[] }) {
           const W = 5 + h * 5, H = 2.6 + h * 2;
           out.push({ x: p.x, y: 6.5 + H / 2, z: p.y, sx: W, sy: H, sz: 0.3, rot: -(ang + Math.PI / 2), ink: INKS[(h * 97) % INKS.length | 0] });
           out.push({ x: p.x, y: 3.3, z: p.y, sx: 0.35, sy: 6.6, sz: 0.35, rot: 0, ink: 0x6d7074 });
+        }
+      }
+    }
+    // road signs: a blue board over the lanes before every signal, a red one where a road gives way
+    for (const road of net.roads) {
+      if (road.look < 1 || road.bridge || road.ring || road.base.length < 2) continue;
+      const cum = cumLen(road.base), run = cum[cum.length - 1];
+      for (const end of [0, 1]) {
+        const node = end ? road.b : road.a;
+        if (node.stub) continue;
+        const top = Math.max(...node.roads.map((q) => q.rank));
+        // the frame of the approach: p on the centreline, t towards the junction, n to the right of travel
+        const frame = (back: number) => {
+          const d = end ? run - back : back;
+          const p = pointOn(road.base, cum, d), p2 = pointOn(road.base, cum, end ? d - 1 : d + 1);
+          const tx = p.x - p2.x, ty = p.y - p2.y;
+          return { p, tx, ty, nx: -ty, ny: tx, rot: -(Math.atan2(ty, tx) + Math.PI / 2) };
+        };
+        if (node.signal && road.look >= 2 && run >= 50) {
+          const f = frame(Math.min(34, run * 0.42)), reach = road.hw + 1.6;
+          const post = { x: f.p.x + f.nx * reach, y: f.p.y + f.ny * reach };
+          if (!taken(post.x, post.y) && !onRoad(net, post.x, post.y, road)) {
+            out.push({ x: post.x, y: 3.9, z: post.y, sx: 0.4, sy: 7.8, sz: 0.4, rot: f.rot, ink: 0x6d7074 });
+            out.push({ x: f.p.x + f.nx * reach / 2, y: 7.6, z: f.p.y + f.ny * reach / 2, sx: reach, sy: 0.28, sz: 0.28, rot: f.rot, ink: 0x6d7074 });
+            out.push({ x: f.p.x + f.nx * road.hw * 0.5 - f.tx * 0.3, y: 7.3, z: f.p.y + f.ny * road.hw * 0.5 - f.ty * 0.3, sx: road.hw * 0.86, sy: 2.5, sz: 0.2, rot: f.rot, ink: road.look >= 3 ? 0x1a6a44 : 0x1a4f9e });
+          }
+        } else if (!node.signal && road.rank < top && run >= 20) {
+          const f = frame(3), reach = road.hw + 1.3;
+          const x = f.p.x + f.nx * reach, y = f.p.y + f.ny * reach;
+          if (!taken(x, y, 0) && !onRoad(net, x, y, road)) {
+            out.push({ x, y: 1.3, z: y, sx: 0.14, sy: 2.6, sz: 0.14, rot: f.rot, ink: 0x6d7074 });
+            out.push({ x: x - f.tx * 0.12, y: 2.9, z: y - f.ty * 0.12, sx: 0.95, sy: 0.95, sz: 0.1, rot: f.rot, ink: 0xd42a20 });
+          }
         }
       }
     }

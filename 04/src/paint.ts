@@ -47,8 +47,77 @@ export function findStroke(intent: Intent, p: V, houses: Rect[]): number {
   return best;
 }
 
+/** The piece of a line between two distances along it. */
+function piece(pts: V[], cum: number[], d0: number, d1: number): V[] {
+  const at = (d: number) => {
+    let i = 1;
+    while (i < pts.length - 1 && cum[i] < d) i++;
+    const t = (d - cum[i - 1]) / (cum[i] - cum[i - 1] || 1);
+    return { x: pts[i - 1].x + (pts[i].x - pts[i - 1].x) * t, y: pts[i - 1].y + (pts[i].y - pts[i - 1].y) * t };
+  };
+  return [at(d0), ...pts.filter((_, i) => cum[i] > d0 + 1 && cum[i] < d1 - 1), at(d1)];
+}
+
+/**
+ * A road drawn across a big road, across two roads or more, or across a bridge does not cut through them:
+ * it goes over. Where it only begins or ends on a road it joins it, as before.
+ * Returns the stretch that has to be up in the air, as distances along the stroke.
+ */
+function goesOver(intent: Intent, pts: V[], cum: number[], houses: Rect[]): [number, number] | null {
+  const END = 25, len = cum[cum.length - 1];
+  const must: number[] = [], may: number[] = [];
+  const over = new Set<number>();
+  for (const r of derive(intent, houses)) {
+    // parking aisles and yard lanes are not worth a bridge
+    if (r.kind.rank < 2 && !r.bridge) continue;
+    for (let m = 1; m < pts.length; m++) {
+      for (let n = 1; n < r.raw.length; n++) {
+        const a = pts[m - 1], b = pts[m], c = r.raw[n - 1], e = r.raw[n];
+        const den = (b.x - a.x) * (e.y - c.y) - (b.y - a.y) * (e.x - c.x);
+        if (Math.abs(den) < 1e-9) continue;
+        const u = ((c.x - a.x) * (e.y - c.y) - (c.y - a.y) * (e.x - c.x)) / den, v = ((c.x - a.x) * (b.y - a.y) - (c.y - a.y) * (b.x - a.x)) / den;
+        if (u < 0 || u > 1 || v < 0 || v > 1) continue;
+        const d = cum[m - 1] + u * (cum[m] - cum[m - 1]);
+        if (d < END || d > len - END) continue;
+        if (r.bridge || r.kind.rank >= 3) must.push(d);
+        else { may.push(d); over.add(r.stroke); }
+      }
+    }
+  }
+  const ds = over.size >= 2 ? [...must, ...may] : must;
+  if (!ds.length) return null;
+  // room for the ramps either side; a stub of road too short to be one is bridge as well
+  const RAMP = 55;
+  let d0 = Math.min(...ds) - RAMP, d1 = Math.max(...ds) + RAMP;
+  if (d0 < 22) d0 = 0;
+  if (d1 > len - 22) d1 = len;
+  return [d0, d1];
+}
+
 /** Lay a stroke down. Null if the rules make nothing of it: too short, or a bridge that does not land. */
 export function addStroke(intent: Intent, stroke: V[], bridge: boolean, houses: Rect[] = [], air: [boolean, boolean] = [false, false]): Intent | null {
+  if (!bridge && !air[0] && !air[1]) {
+    const pts = smooth(stroke.map((p) => ({ x: p.x, y: p.y })));
+    const cum = [0];
+    for (let i = 1; i < pts.length; i++) cum.push(cum[i - 1] + dist(pts[i - 1], pts[i]));
+    const len = cum[cum.length - 1];
+    const ring = dist(pts[0], pts[pts.length - 1]) < 45 && len > 170;
+    const up = ring ? null : goesOver(intent, pts, cum, houses);
+    if (up) {
+      // the road comes up to the bridge on the ground at either end, and the bridge stands on those two
+      const next: Intent = [...intent];
+      if (up[0] > 0) next.push({ pts: piece(pts, cum, 0, up[0]), w: 2, paint: true });
+      if (up[1] < len) next.push({ pts: piece(pts, cum, up[1], len), w: 2, paint: true });
+      next.push({ pts: piece(pts, cum, up[0], up[1]), w: 2, paint: true, bridge: true });
+      const done = derive(next, houses).some((r) => r.bridge && r.stroke === next.length - 1) ? next : null;
+      // if no span gets past the houses it is a road on the ground after all
+      if (done) return done;
+    }
+  }
+  return lay(intent, stroke, bridge, houses, air);
+}
+
+function lay(intent: Intent, stroke: V[], bridge: boolean, houses: Rect[] = [], air: [boolean, boolean] = [false, false]): Intent | null {
   const pts = smooth(stroke.map((p) => ({ x: p.x, y: p.y })));
   // whatever starts or ends up on a deck is a bridge itself: a ramp down, or a link across
   const hung = air[0] || air[1];

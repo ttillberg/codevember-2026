@@ -8,11 +8,11 @@ import { DirectionalLight, HemisphereLight, MOUSE, PerspectiveCamera, TOUCH } fr
 import { HAZE, HAZE_FROM, HAZE_TO } from './haze';
 import { Cars, TIMELAPSE } from './Cars';
 import { World } from './World';
-import { plantTown } from './Town';
+import { plantTown, type Block } from './Town';
 import { People, Signs, Street } from './Life';
 import { Painter, type Tool } from './Painter';
 import { buildNet, type V } from './net';
-import { baseIntent, derive, type Intent } from './intent';
+import { baseIntent, derive, standing, type Intent } from './intent';
 import { addStroke, findStroke, smear, smearStart } from './paint';
 
 /** The look of a drone clip shot through city haze: flat, pale, a little cool in the shadows. */
@@ -22,7 +22,9 @@ class FadeEffect extends Effect {
       void mainImage(const in vec4 inputColor, const in vec2 uv, out vec4 outputColor) {
         vec3 c = inputColor.rgb;
         float l = dot(c, vec3(0.2126, 0.7152, 0.0722));
-        c = mix(vec3(l), c, 0.8);
+        // autumn: what is warm keeps its colour, the rest fades
+        float warm = smoothstep(0.02, 0.3, c.r - c.b);
+        c = mix(vec3(l), c, 0.8 + 0.4 * warm);
         c = mix(c, c * vec3(0.9, 1.0, 1.12), 1.0 - smoothstep(0.0, 0.35, l));
         c = c * 0.92 + 0.012;
         // the haze thickens with distance: up the frame
@@ -115,6 +117,9 @@ function Sun({ speed }: { speed: number }) {
   );
 }
 
+const NONE: Block[] = [];
+// what to leave out of the place, from the address
+const NO = (typeof location !== 'undefined' ? new URLSearchParams(location.search).get('no') ?? '' : '').toLowerCase().split(',');
 const SPEEDS: [number, string][] = [[TIMELAPSE, 'Timelapse'], [1, 'Normal'], [0, 'Pause']];
 const TOOLS: [Tool, string][] = [['road', 'Road'], ['bridge', 'Bridge'], ['smear', 'Smear'], ['yield', 'Yield']];
 
@@ -124,6 +129,8 @@ export function App() {
   const [tool, setTool] = useState<Tool>('road');
   const [speed, setSpeed] = useState(TIMELAPSE);
   const before = useRef(TIMELAPSE);
+  // ?no=houses,trees: without the houses nothing is in the way of a road; the trees are only put out of sight
+  const houses = !NO.some((w) => w.startsWith('house')), trees = !NO.some((w) => w.startsWith('tree'));
   // a smear in progress: the paint as it is being pushed, not yet in the history
   const [live, setLive] = useState<Intent | null>(null);
   const grab = useRef<{ base: Intent; from: V } | null>(null);
@@ -131,17 +138,25 @@ export function App() {
   // the roads are never edited: they are what the rules make of the strokes
   // the housing is planted once, on the place as it first stood, and is in the way from then on
   const first = useMemo(() => buildNet(derive(baseIntent())), []);
-  const blocks = useMemo(() => plantTown(first), [first]);
+  const town = useMemo(() => plantTown(first), [first]);
+  // a bridge takes down the houses in its line; the same list for as long as the same ones stand
+  const left = houses ? standing(intent, town) : NONE;
+  const kept = useRef(left);
+  if (kept.current.length !== left.length || kept.current.some((b, i) => b !== left[i])) kept.current = left;
+  const blocks = kept.current;
   // everything with walls is in the way: the housing, and the sheds that were there from the start
-  const walls = useMemo(() => [...blocks, ...first.buildings], [blocks, first]);
-  const net = useMemo(() => buildNet(derive(intent, walls)), [intent, walls]);
+  const walls = useMemo(() => (houses ? [...town, ...first.buildings] : NONE), [houses, town, first]);
+  const net = useMemo(() => {
+    const n = buildNet(derive(intent, walls));
+    return houses ? n : { ...n, buildings: [] };
+  }, [intent, walls, houses]);
 
   const onStroke = useCallback((pts: V[], bridge: boolean, air?: [boolean, boolean]) => {
     setHistory((h) => {
       const next = addStroke(h[h.length - 1], pts, bridge, walls, air);
       return next ? [...h, next] : h;
     });
-  }, []);
+  }, [walls]);
   const onYield = useCallback((p: V) => {
     setHistory((h) => {
       const cur = h[h.length - 1];
@@ -151,7 +166,7 @@ export function App() {
       const d = ((cur[i].demote ?? 0) + 1) % 4;
       return [...h, cur.map((s, k) => (k === i ? { ...s, demote: d } : s))];
     });
-  }, []);
+  }, [walls]);
   const top = useRef(history[history.length - 1]);
   top.current = history[history.length - 1];
   const liveRef = useRef(live);
@@ -194,7 +209,7 @@ export function App() {
         <fog attach="fog" args={[HAZE, HAZE_FROM, HAZE_TO]} />
         <Drone />
         <Sun speed={speed} />
-        <World net={net} blocks={blocks} />
+        <World net={net} blocks={blocks} trees={trees} />
         <Cars net={net} speed={speed} />
         <People net={net} blocks={blocks} speed={speed} />
         <Signs net={net} blocks={blocks} />
