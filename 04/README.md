@@ -13,6 +13,8 @@ Drag on the ground and paint follows the brush. Only the strokes are kept. Every
 - **Undo** (cmd + Z).
 - **P** (or space) pauses. It is always a timelapse, sixty times life. Painting works in a still too.
 - Two fingers and the right button move the drone. It keeps its height: there is no zoom.
+- The drone is never quite still: it glides, swings a few degrees and bobs in the wind.
+- `?debug` opens a pane: the shot (angle, distance, lens, tilt shift), the drone's own motion, the grade, pixels and frames per second, what smooths the edges, and what can be switched off. Copy puts all of it on the clipboard as JSON; Copy map and Paste map do the same for the painting. `?debug` starts on the map in `map.ts`.
 
 ## What is there
 
@@ -20,6 +22,7 @@ Drag on the ground and paint follows the brush. Only the strokes are kept. Every
 - `sim.ts`: the traffic. Cars follow lanes, keep distance with IDM, obey signals, yield by road rank and turn, take the gaps their driver accepts, change lanes, park and leave. Seeded, so the same day replays.
 - `vehicles.ts`: seven body types from tapered boxes, instanced, in the colours cars actually come in.
 - `intent.ts`: the strokes, and the rules that derive roads between junctions from them. The base map lives here as strokes.
+- `map.ts`: a painting saved from `?debug`, where `?debug` starts.
 - `paint.ts`, `Painter.tsx`: the tools. They only add, move or mark strokes.
 - `haze.ts`: the place fades out with distance from its middle, not from the camera, so its edges are lost from every angle. Cars come and go only out there.
 - `World.tsx`, `geo.ts`: scrub, asphalt, sidewalks, paint, buildings, trees, built from the network. Street trees follow whatever roads there are.

@@ -23,7 +23,7 @@ function line(pts: V[]): Line {
   return { pts, cum, len: cum[cum.length - 1] };
 }
 
-export function People({ net, blocks, speed }: { net: Net; blocks: Block[]; speed: number }) {
+export function People({ net, blocks, speed, shade = true }: { net: Net; blocks: Block[]; speed: number; shade?: boolean }) {
   const rate = useRef(speed);
   rate.current = speed;
   const walkMesh = useRef<InstancedMesh>(null), rideMesh = useRef<InstancedMesh>(null);
@@ -118,11 +118,11 @@ export function People({ net, blocks, speed }: { net: Net; blocks: Block[]; spee
 
   return (
     <>
-      <instancedMesh ref={walkMesh} args={[undefined, undefined, WALKERS]} castShadow frustumCulled={false}>
+      <instancedMesh ref={walkMesh} args={[undefined, undefined, WALKERS]} castShadow={shade} frustumCulled={false}>
         <boxGeometry />
         <meshStandardMaterial roughness={0.9} />
       </instancedMesh>
-      <instancedMesh ref={rideMesh} args={[undefined, undefined, RIDERS]} castShadow frustumCulled={false}>
+      <instancedMesh ref={rideMesh} args={[undefined, undefined, RIDERS]} castShadow={shade} frustumCulled={false}>
         <boxGeometry />
         <meshStandardMaterial roughness={0.7} />
       </instancedMesh>

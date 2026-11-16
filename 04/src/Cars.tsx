@@ -14,7 +14,9 @@ const tmp = new Color();
 const SIG = { G: new Color(0x2dff7a), Y: new Color(0xffc21a), R: new Color(0xff2a1a) };
 
 /** `speed` is how fast time goes: TIMELAPSE, or 0 for a still. */
-export function Cars({ net, speed, target, heat = false, trace = null, onNote }: {
+export function Cars({ net, speed, target, heat = false, trace = null, shade = true, onNote }: {
+  /** do they cast shadows: not when the shadows are only drawn now and then, where theirs would trail behind */
+  shade?: boolean;
   net: Net; speed: number;
   /** roughly how many vehicles to keep on the roads */
   target: number;
@@ -112,7 +114,7 @@ export function Cars({ net, speed, target, heat = false, trace = null, onNote }:
           key={t.name}
           ref={(m) => { meshes.current[i] = m; }}
           args={[t.geo, paint, t.cap]}
-          castShadow
+          castShadow={shade}
           receiveShadow
           frustumCulled={false}
         />

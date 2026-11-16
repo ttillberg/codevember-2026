@@ -33,6 +33,17 @@ In: a set number of vehicles out, 60 on a phone and 180 on a desk (the ways in o
 - Winter has no snow on roofs or roads, and the same sun as autumn.
 - None of it tried on a phone; the top right is getting crowded there.
 
+## Heat
+
+The fan was on. Measured in Chrome on an M2 Pro: the page is bound by pixels, not by triangles or script (the main thread idles nine tenths of the time). Now: thirty frames a second (`Pace` in `App.tsx`), the shadow map drawn every sixth frame with nothing that moves casting a shadow (`SHADOW_EVERY`), two samples of multisampling. `?debug` has the switches, and `window.three` to measure with.
+
+- Still two canvas pixels to a point on a desk: about 13 to 15 ms a frame. A point and a quarter was 6.
+- Not measured on a phone; a phone keeps 1.75 pixels to a point.
+- Thirty frames a second while the drone is dragged has not been judged.
+- Painting while the drone glides is not tried.
+- The portrait shot is the old one; only the landscape shot was set by hand.
+- The share image and the index clip still show the old shot and grade.
+
 ## Letting go of a stroke
 
 Laying a stroke froze the frame for about 200 ms on a desktop. Now the brush leaves a ghost, the rules run after the frame is shown, and the ground, the trees, the traffic and the people are rebuilt in a frame each (`useLater` in `App.tsx`); routes are planned with a heap and `derive()` answers the same question once. Longest task measured after: about 130 ms.

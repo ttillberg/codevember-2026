@@ -2,7 +2,7 @@
 import { startTransition, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { MapControls } from '@react-three/drei';
-import { Bloom, ChromaticAberration, EffectComposer, TiltShift2, ToneMapping, Vignette, wrapEffect } from '@react-three/postprocessing';
+import { Bloom, ChromaticAberration, EffectComposer, SMAA, TiltShift2, ToneMapping, Vignette, wrapEffect } from '@react-three/postprocessing';
 import { BlendFunction, Effect, ToneMappingMode } from 'postprocessing';
 import { DirectionalLight, HemisphereLight, MOUSE, PerspectiveCamera, TOUCH, Uniform, Vector2 } from 'three';
 import { HAZE } from './haze';
@@ -12,16 +12,21 @@ import { plantTown, turnSome, type Block } from './Town';
 import { People, Signs, Street } from './Life';
 import { Painter, type Tool } from './Painter';
 import { buildNet, type V } from './net';
+import { MAP } from './map';
 import { baseIntent, derive, no, standing, type Intent } from './intent';
 import { addStroke, smear, smearStart } from './paint';
 
+/** The grade: exposure, warmth, bite, how much colour is left, how grey the blacks are, and what the stock and the glass add. */
+type Grade = { gain: number; temp: number; bite: number; sat: number; lift: number; grain: number; bloom: number; dark: number; soft: number };
+const GRADE: Grade = { gain: 1, temp: 0, bite: 0.4, sat: 0.78, lift: 1, grain: 0, bloom: 0.55, dark: 0, soft: no('soft') ? 0 : 0.3 };
+
 /** The look of a drone clip shot through city haze: flat, pale, a little cool in the shadows. */
 class FadeEffect extends Effect {
-  constructor({ warm = 0.4 }: { warm?: number } = {}) {
+  constructor({ warm = 0.4, gain = 1, temp = 0, bite = 0.4, sat = 0.78, lift = 1 }: Partial<Grade> & { warm?: number } = {}) {
     super('Fade', /* glsl */ `
-      uniform float keep;
+      uniform float keep, gain, temp, bite, sat, lift;
       void mainImage(const in vec4 inputColor, const in vec2 uv, out vec4 outputColor) {
-        vec3 c = inputColor.rgb;
+        vec3 c = inputColor.rgb * gain * vec3(1.0 + 0.1 * temp, 1.0, 1.0 - 0.1 * temp);
         float l = dot(c, vec3(0.2126, 0.7152, 0.0722));
         // autumn: what is warm keeps its colour, the rest fades
         float warm = smoothstep(0.02, 0.3, c.r - c.b);
@@ -29,21 +34,22 @@ class FadeEffect extends Effect {
         c = mix(c, c * vec3(0.9, 1.0, 1.12), 1.0 - smoothstep(0.0, 0.35, l));
         c = c * 0.92 + 0.012;
         // the grade, bleak: some bite, cold shadows, lights that barely warm, colour drained, blacks lifted to grey
-        c = mix(c, c * c * (3.0 - 2.0 * c), 0.4);
+        c = mix(c, c * c * (3.0 - 2.0 * c), bite);
         float g = dot(c, vec3(0.2126, 0.7152, 0.0722));
         c += vec3(-0.03, 0.008, 0.035) * (1.0 - smoothstep(0.0, 0.5, g)) + vec3(0.02, 0.012, -0.015) * smoothstep(0.45, 1.0, g);
-        c = mix(vec3(g), c, 0.78);
-        c = clamp(c * 0.94 + vec3(0.03, 0.034, 0.04), 0.0, 1.0);
+        c = mix(vec3(g), c, sat);
+        c = clamp(c * 0.94 + vec3(0.03, 0.034, 0.04) * lift, 0.0, 1.0);
         outputColor = vec4(c, inputColor.a);
-      }`, { blendFunction: BlendFunction.NORMAL, uniforms: new Map([['keep', new Uniform(warm)]]) });
+      }`, { blendFunction: BlendFunction.NORMAL, uniforms: new Map(Object.entries({ keep: warm, gain, temp, bite, sat, lift }).map(([k, v]) => [k, new Uniform(v)])) });
   }
 }
 const Fade = wrapEffect(FadeEffect);
 
 /** What the stock does to the picture: grain that sits in the shadows and thins out in the lights, and lights that go pale. */
 class FilmEffect extends Effect {
-  constructor() {
+  constructor({ grain = 1 }: { grain?: number } = {}) {
     super('Film', /* glsl */ `
+      uniform float grain;
       float fh(vec2 p){ p = fract(p * vec2(443.897, 441.423)); p += dot(p, p.yx + 19.19); return fract((p.x + p.y) * p.x); }
       void mainImage(const in vec4 inputColor, const in vec2 uv, out vec4 outputColor) {
         vec3 c = inputColor.rgb;
@@ -55,18 +61,52 @@ class FilmEffect extends Effect {
         float t = floor(time * 24.0);
         vec3 n = vec3(fh(px + t * 1.7), fh(px + t * 2.3 + 41.0), fh(px + t * 3.1 + 97.0)) - 0.5;
         n = mix(vec3(n.x), n, 0.3);
-        c += n * 0.035 * (1.0 - smoothstep(0.1, 0.95, l)) + n * 0.008;
+        c += grain * (n * 0.035 * (1.0 - smoothstep(0.1, 0.95, l)) + n * 0.008);
         outputColor = vec4(clamp(c, 0.0, 1.0), inputColor.a);
-      }`, { blendFunction: BlendFunction.NORMAL });
+      }`, { blendFunction: BlendFunction.NORMAL, uniforms: new Map([['grain', new Uniform(grain)]]) });
   }
 }
 const Film = wrapEffect(FilmEffect);
 
 const FRINGE = new Vector2(0.0012, 0.0008);
 const TARGET: [number, number, number] = [10, 0, -10];
-const DAY = 150; // seconds of ours for nine to five of theirs
 const touch = typeof matchMedia !== 'undefined' && matchMedia('(pointer: coarse)').matches;
-/** The place as it starts: the streets, and a few flyovers laid over them the way a hand would paint them. */
+/** Where the drone hangs and what its lens does: degrees round and up, metres away, the point on the ground it looks at. */
+type Shot = { az: number; el: number; dist: number; fov: number; x: number; z: number; blur: number; taper: number; lean: number; focus: number };
+const SHOTS: Record<'p' | 'l', Shot> = {
+  p: { az: 62, el: 44, dist: 1150, fov: 19, x: TARGET[0], z: TARGET[2], blur: 0.28, taper: 0.56, lean: -2.3, focus: 0.5 },
+  l: { az: 22, el: 69.5, dist: 800, fov: 27.5, x: -1, z: -10, blur: 0.45, taper: 0.98, lean: -2.3, focus: 0.38 },
+};
+const upright = () => innerWidth < innerHeight;
+/** ?debug: sliders for the shot, and a button that copies it. */
+const debug = new URLSearchParams(location.search).has('debug');
+const SLIDERS: [keyof Shot, string, number, number, number][] = [
+  ['az', 'Turn', -180, 180, 0.5], ['el', 'Tilt', 30, 75, 0.5], ['dist', 'Away', 200, 2000, 5], ['fov', 'Lens', 8, 50, 0.5],
+  ['x', 'X', -360, 360, 1], ['z', 'Z', -360, 360, 1], ['blur', 'Blur', 0, 0.6, 0.01], ['taper', 'Taper', 0.1, 1, 0.01],
+  ['lean', 'Lean', -90, 90, 0.5], ['focus', 'Focus', 0, 1, 0.01],
+];
+const GRADES: [keyof Grade, string, number, number, number][] = [
+  ['gain', 'Expose', 0.5, 1.6, 0.01], ['temp', 'Warm', -2, 2, 0.05], ['bite', 'Bite', 0, 1, 0.01], ['sat', 'Colour', 0, 1.5, 0.01],
+  ['lift', 'Lift', 0, 3, 0.05], ['grain', 'Grain', 0, 4, 0.05], ['bloom', 'Bloom', 0, 2, 0.01], ['dark', 'Corners', 0, 1, 0.01],
+  ['soft', 'Soft', 0, 3, 0.05],
+];
+/** What can be switched off to see what it costs; ?no=msaa,tilt,bloom,shadow,lazy,soft starts without them. */
+/** How edges are smoothed: the card's own multisampling, four samples or two, a pass over the finished picture, or not at all. */
+const AAS = ['msaa4', 'msaa2', 'smaa', 'none'] as const;
+type Fx = { aa: (typeof AAS)[number]; tilt: boolean; bloom: boolean; shadow: boolean; lazy: boolean };
+const FX: Fx = { aa: no('msaa') ? 'none' : 'msaa2', tilt: !no('tilt'), bloom: !no('bloom'), shadow: !no('shadow'), lazy: !no('lazy') };
+const SWITCHES: [Exclude<keyof Fx, 'aa'>, string][] = [['tilt', 'Tilt shift'], ['bloom', 'Bloom'], ['shadow', 'Shadows'], ['lazy', 'Lazy shadows']];
+const DPR = touch ? 1.75 : 2;
+/** How the drone moves by itself: metres it glides to either side, degrees it swings round, metres it bobs in the wind, metres it shakes, seconds for a round. */
+type Move = { drift: number; orbit: number; hover: number; shake: number; period: number };
+const MOVE: Move = { drift: 19, orbit: 3, hover: 1.3, shake: 0, period: 45 };
+const MOVES: [keyof Move, string, number, number, number][] = [
+  ['drift', 'Glide', 0, 80, 1], ['orbit', 'Swing', 0, 30, 0.5], ['hover', 'Bob', 0, 6, 0.1], ['shake', 'Shake', 0, 3, 0.05], ['period', 'Round', 10, 120, 1],
+];
+const FPS = 30;
+const RAD = Math.PI / 180;
+const DAY = 150; // seconds of ours for nine to five of theirs
+/** The place as it starts: the streets, and a few flyovers laid over them the way a hand would paint them. ?debug starts on `MAP`. */
 const BASE: Intent = [
   [[-232, -68], [-150, 0], [-60, 82]],
   [[215, -100], [245, 0], [230, 110]],
@@ -77,10 +117,54 @@ const KEEP = 3;
 /** Roughly how many vehicles are out: what a phone can carry, and what a desk can. */
 const VEHICLES = touch ? 60 : 180;
 
+/** So many frames a second and no more: a timelapse does not need them, and the graphics card rests in between. */
+function Pace({ fps }: { fps: number }) {
+  const get = useThree((s) => s.get);
+  useEffect(() => {
+    let id = 0, last = 0;
+    const tick = (t: number) => {
+      id = requestAnimationFrame(tick);
+      // four milliseconds short of a frame: a screen is never on time to the millisecond, and would drop frames
+      if (t - last < 1000 / fps - 4) return;
+      // the first frame starts the clock: it has no time behind it
+      if (!last) get().clock.elapsedTime = t / 1000;
+      last = t;
+      get().advance(t / 1000);
+    };
+    id = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(id);
+  }, [get, fps]);
+  return null;
+}
+
 /** Mobile first: a phone held upright looks down the arterial, a wide screen across it. */
-function Drone() {
-  const { camera, size } = useThree();
+function Drone({ shot, move, set, onShot }: {
+  shot: Shot | null; move: Move;
+  /** goes up when a slider has moved the shot: only then is the drone put where the shot says */
+  set: number;
+  onShot?: (s: Partial<Shot>) => void;
+}) {
+  const { camera, size, gl, scene, advance } = useThree();
+  // ?debug: the renderer, the scene and the frame itself on the window, to be measured from outside
+  if (debug) (window as any).three = { gl, scene, advance, camera };
   const key = size.width < size.height ? 'p' : 'l';
+  const s = shot ?? SHOTS[key];
+  // where the controls start looking; after that the point is moved by hand, by a slider or by the drone, never by this
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const target = useMemo<[number, number, number]>(() => [s.x, 0, s.z], [key]);
+  // what the drone's own motion has added to the shot so far, to be taken off again before the next step
+  const own = useRef({ x: 0, z: 0, hx: 0, hy: 0, hz: 0, turn: 0 });
+  // a hand on the drone: only then, and while it coasts to a stop, do the sliders follow it
+  const held = useRef(0);
+  const controls = useRef<{ target: { x: number; z: number } }>(null);
+  /** The shot as it stands, less what the drone did by itself. */
+  const read = useCallback((): Pick<Shot, 'az' | 'el' | 'dist' | 'x' | 'z'> | null => {
+    const c = controls.current, m = own.current, p = camera.position;
+    if (!c) return null;
+    const dx = p.x - m.hx - c.target.x, dy = p.y - m.hy, dz = p.z - m.hz - c.target.z, dist = Math.hypot(dx, dy, dz);
+    const r1 = (v: number) => Math.round(v * 10) / 10;
+    return { az: r1((Math.atan2(dx, dz) - m.turn) / RAD), el: r1(Math.asin(dy / dist) / RAD), dist: Math.round(dist), x: r1(c.target.x - m.x), z: r1(c.target.z - m.z) };
+  }, [camera]);
   // The drone stays over the place: it cannot wander off into the haze.
   // One function for good: the controls take themselves apart and together again whenever this one changes,
   // and if that happens while a finger is lifting they never hear that it left.
@@ -95,22 +179,55 @@ function Drone() {
       const bx = TARGET[0] + ((t.x - TARGET[0]) * reach) / d - t.x, bz = TARGET[2] + ((t.z - TARGET[2]) * reach) / d - t.z;
       t.x += bx; t.z += bz; cam.x += bx; cam.z += bz;
     }
-  }, []);
+    if (!onShot || performance.now() > held.current) return;
+    // a hand on the drone moves the sliders with it
+    const now = read();
+    if (now) onShot(now);
+  }, [onShot, read]);
+  // the drone holds its place the way a drone does: gliding a little, swinging a little, bobbing in the wind
+  const at = useRef(0);
+  const fly = useRef((_t: number) => {});
+  fly.current = (t: number) => {
+    const c = controls.current;
+    if (!c) return;
+    at.current = t;
+    const w = (2 * Math.PI) / move.period, m = own.current, p = camera.position;
+    const x = move.drift * Math.sin(w * t), z = move.drift * 0.6 * Math.sin(w * t * 0.73 + 1.3);
+    const turn = move.orbit * RAD * Math.sin(w * t * 0.5 + 0.7);
+    // the shake is the same thing faster: gusts and motors, three sines that never line up
+    const k = move.shake;
+    const hx = move.hover * (Math.sin(t * 0.83) + 0.4 * Math.sin(t * 2.1 + 1)) + k * (Math.sin(t * 9.1) + 0.6 * Math.sin(t * 14.3 + 2) + 0.3 * Math.sin(t * 23.7 + 4));
+    const hz = move.hover * (Math.sin(t * 0.67 + 2) + 0.4 * Math.sin(t * 1.7)) + k * (Math.sin(t * 10.7 + 1) + 0.6 * Math.sin(t * 16.9) + 0.3 * Math.sin(t * 21.1 + 3));
+    const hy = move.hover * 0.6 * Math.sin(t * 1.13 + 0.5) + k * 0.5 * Math.sin(t * 12.3 + 5);
+    // off with the last bob, round the point it looks at, along with the glide, on with the new bob
+    const dx = p.x - m.hx - c.target.x, dz = p.z - m.hz - c.target.z, a = turn - m.turn, cos = Math.cos(a), sin = Math.sin(a);
+    c.target.x += x - m.x; c.target.z += z - m.z;
+    p.set(c.target.x + dx * cos + dz * sin + hx, p.y - m.hy + hy, c.target.z - dx * sin + dz * cos + hz);
+    own.current = { x, z, hx, hy, hz, turn };
+  };
   useMemo(() => {
-    const portrait = key === 'p';
-    const az = ((portrait ? 62 : 18) * Math.PI) / 180, el = ((portrait ? 44 : 40) * Math.PI) / 180;
-    const d = portrait ? 1150 : 800;
-    camera.position.set(TARGET[0] + d * Math.sin(az) * Math.cos(el), d * Math.sin(el), TARGET[2] + d * Math.cos(az) * Math.cos(el));
-    (camera as PerspectiveCamera).fov = portrait ? 19 : 20;
-    camera.lookAt(...TARGET);
+    (camera as PerspectiveCamera).fov = s.fov;
     camera.updateProjectionMatrix();
-  }, [camera, key]);
+    const az = s.az * RAD, el = s.el * RAD;
+    camera.position.set(s.x + s.dist * Math.sin(az) * Math.cos(el), s.dist * Math.sin(el), s.z + s.dist * Math.cos(az) * Math.cos(el));
+    camera.lookAt(s.x, 0, s.z);
+    if (controls.current) { controls.current.target.x = s.x; controls.current.target.z = s.z; }
+    // and straight back to where its own motion had it, so a slider does not make it jump
+    own.current = { x: 0, z: 0, hx: 0, hy: 0, hz: 0, turn: 0 };
+    fly.current(at.current);
+    // not when the shot only followed a hand: that one is flown already
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [camera, key, set]);
+  useFrame(({ clock }) => fly.current(clock.elapsedTime));
   return (
     <MapControls
+      ref={controls as never}
       key={key}
-      target={TARGET}
+      onStart={() => { held.current = Infinity; }}
+      onEnd={() => { held.current = performance.now() + 900; }}
+      target={target}
       minDistance={70}
-      maxDistance={1250}
+      maxDistance={debug ? 2000 : 1250}
       minPolarAngle={0.25}
       maxPolarAngle={1.05}
       enableDamping
@@ -126,12 +243,22 @@ function Drone() {
 }
 
 /** The sun crosses from east to west; at five the tape cuts back to morning. */
-function Sun({ speed }: { speed: number }) {
+/** Lazy shadows are drawn again only every so many frames: the sun is slow, and what moves fast casts none then. */
+const SHADOW_EVERY = 6;
+
+function Sun({ speed, shadow, lazy }: { speed: number; shadow: boolean; lazy: boolean }) {
+  const gl = useThree((s) => s.gl);
+  const frame = useRef(0);
+  useEffect(() => {
+    gl.shadowMap.autoUpdate = !lazy;
+    return () => { gl.shadowMap.autoUpdate = true; };
+  }, [gl, lazy]);
   // the day runs with the traffic: slower at life size, stopped in a still
   const day = useRef(0);
   const sun = useRef<DirectionalLight>(null);
   const sky = useRef<HemisphereLight>(null);
   useFrame((_, delta) => {
+    if (lazy && frame.current++ % SHADOW_EVERY === 0) gl.shadowMap.needsUpdate = true;
     day.current += (Math.min(delta, 0.1) * speed) / TIMELAPSE;
     const t = (day.current / DAY + 0.3) % 1;
     const phi = (t - 0.5) * 2.5; // radians either side of south
@@ -148,7 +275,7 @@ function Sun({ speed }: { speed: number }) {
   return (
     <>
       <hemisphereLight ref={sky} args={[0xbcd4ff, 0x6b6a52, 0.95]} />
-      <directionalLight ref={sun} castShadow shadow-mapSize={[res, res]} shadow-bias={-0.0004} shadow-normalBias={0.25}>
+      <directionalLight ref={sun} castShadow={shadow} shadow-mapSize={[res, res]} shadow-bias={-0.0004} shadow-normalBias={0.25}>
         <orthographicCamera attach="shadow-camera" args={[-430, 430, 330, -330, 100, 1900]} />
         <object3D attach="target" position={TARGET} />
       </directionalLight>
@@ -183,7 +310,7 @@ const TOOLS: [Tool, string][] = [['road', 'Road'], ['bridge', 'Bridge'], ['smear
 
 export function App() {
   // every state of the painting so far, so a stroke can be taken back
-  const [history, setHistory] = useState<Intent[]>(() => [BASE]);
+  const [history, setHistory] = useState<Intent[]>(() => [debug ? MAP : BASE]);
   const [tool, setTool] = useState<Tool>('road');
   // always a timelapse, sixty times life; P or space stops it
   const [paused, setPaused] = useState(false);
@@ -191,6 +318,45 @@ export function App() {
   // reading the traffic: where it stands, and where one stretch's cars are going
   const [heat, setHeat] = useState(false);
   const [trace, setTrace] = useState<V | null>(null);
+  // ?debug: the shot under the sliders; without it the drone keeps its own
+  const [shot, setShot] = useState<Shot | null>(() => (debug ? SHOTS[upright() ? 'p' : 'l'] : null));
+  const [grade, setGrade] = useState(GRADE);
+  const [fx, setFx] = useState(FX);
+  // canvas pixels to a screen point, at most
+  const [dpr, setDpr] = useState(DPR);
+  const [fps, setFps] = useState(FPS);
+  const [move, setMove] = useState(MOVE);
+  // the last softness is the browser's: a blur on the canvas itself, so many pixels wide
+  useEffect(() => { document.documentElement.style.setProperty('--soft', grade.soft + 'px'); }, [grade.soft]);
+  const [set, setSet] = useState(0);
+  const [copied, setCopied] = useState('');
+  const copy = (what: string, v: unknown) => {
+    navigator.clipboard.writeText(JSON.stringify(v));
+    setCopied(what);
+    setTimeout(() => setCopied(''), 1200);
+  };
+  // the painting off the clipboard: it goes on the history like a stroke, so Undo takes it back
+  const pasteMap = async () => {
+    try {
+      const map = JSON.parse(await navigator.clipboard.readText().catch(() => prompt('Map JSON') ?? '')) as Intent;
+      if (!Array.isArray(map) || !map.every((s) => Array.isArray(s?.pts))) throw 0;
+      setHistory((h) => [...h, map]);
+      setCopied('pasted');
+    } catch {
+      setCopied('bad');
+    }
+    setTimeout(() => setCopied(''), 1200);
+  };
+  const onShot = useCallback((p: Partial<Shot>) => setShot((s) => {
+    if (!s) return s;
+    return (Object.keys(p) as (keyof Shot)[]).every((k) => Math.abs(s[k] - p[k]!) < 0.05) ? s : { ...s, ...p };
+  }), []);
+  const lens = shot ?? SHOTS[upright() ? 'p' : 'l'];
+  // the line that stays sharp: through the middle of the frame at `focus` up it, leaning `lean` degrees
+  const [start, end] = useMemo<[[number, number], [number, number]]>(() => {
+    const cx = 0.5 * Math.cos(lens.lean * RAD), cy = 0.5 * Math.sin(lens.lean * RAD);
+    return [[0.5 - cx, lens.focus - cy], [0.5 + cx, lens.focus + cy]];
+  }, [lens.lean, lens.focus]);
   const noteBox = useRef<HTMLDivElement>(null);
   const onNote = useCallback((t: string) => { if (noteBox.current) noteBox.current.textContent = t; }, []);
   // ?no=houses,trees: without the houses nothing is in the way of a road; the trees are only put out of sight
@@ -262,34 +428,94 @@ export function App() {
     <>
       <Canvas
         shadows
-        dpr={[1, touch ? 1.75 : 2]}
+        // the picture is soft on purpose: more pixels than this only heat the machine
+        dpr={Math.min(devicePixelRatio, dpr)}
+        frameloop="never"
         camera={{ fov: 20, near: 60, far: 4000 }}
         gl={{ antialias: false, powerPreference: 'high-performance' }}
       >
         <color attach="background" args={[HAZE]} />
-        <Drone />
-        <Sun speed={speed} />
+        <Pace fps={fps} />
+        <Drone shot={shot} move={move} set={set} onShot={debug ? onShot : undefined} />
+        <Sun speed={speed} shadow={fx.shadow} lazy={fx.lazy} />
         <World net={net} blocks={blocks} wood={wood} trees={trees} season={season} />
-        <Cars net={roads} speed={speed} target={VEHICLES} heat={heat} trace={tool === 'trace' ? trace : null} onNote={onNote} />
-        <People net={life.net} blocks={life.blocks} speed={speed} />
+        <Cars net={roads} speed={speed} target={VEHICLES} shade={!fx.lazy} heat={heat} trace={tool === 'trace' ? trace : null} onNote={onNote} />
+        <People net={life.net} blocks={life.blocks} speed={speed} shade={!fx.lazy} />
         <Signs net={life.net} blocks={life.blocks} />
         <Street net={life.net} blocks={life.blocks} speed={speed} />
         <Painter net={net} tool={tool} onStroke={onStroke} onSmear={onSmear} onTrace={setTrace} />
-        <EffectComposer multisampling={touch ? 2 : 4}>
-          <TiltShift2 blur={0.28} taper={0.56} start={[0, 0.52]} end={[1, 0.48]} samples={touch ? 10 : 18} />
+        <EffectComposer multisampling={fx.aa === 'msaa4' ? 4 : fx.aa === 'msaa2' ? 2 : 0}>
+          {fx.tilt && <TiltShift2 blur={lens.blur} taper={lens.taper} start={start} end={end} samples={touch ? 10 : 18} />}
           {/* the lights bleed into what is beside them, as they do through glass */}
-          <Bloom mipmapBlur luminanceThreshold={0.72} luminanceSmoothing={0.2} intensity={0.55} radius={0.75} />
+          {fx.bloom && <Bloom mipmapBlur luminanceThreshold={0.72} luminanceSmoothing={0.2} intensity={grade.bloom} radius={0.75} />}
           <ToneMapping mode={ToneMappingMode.ACES_FILMIC} />
-          <Fade warm={season === 'autumn' ? 0.4 : season === 'spring' ? 0.2 : 0} />
+          <Fade warm={season === 'autumn' ? 0.4 : season === 'spring' ? 0.2 : 0} gain={grade.gain} temp={grade.temp} bite={grade.bite} sat={grade.sat} lift={grade.lift} />
           {/* the lens and the stock: colours part a little towards the corners, grain, dark corners */}
           <ChromaticAberration offset={FRINGE} radialModulation modulationOffset={0.35} />
-          <Film />
-          <Vignette offset={0.22} darkness={0.52} />
+          <Film grain={grade.grain} />
+          <Vignette offset={0.22} darkness={grade.dark} />
+          {fx.aa === 'smaa' ? <SMAA /> : <></>}
         </EffectComposer>
       </Canvas>
       <div className="tools side">
         <button className={heat ? 'on' : ''} onClick={() => setHeat((v) => !v)}>Heat</button>
       </div>
+      {shot && (
+        <div className="pane">
+          {SLIDERS.map(([k, label, min, max, step]) => (
+            <label key={k}>
+              <span>{label}</span>
+              <input type="range" min={min} max={max} step={step} value={shot[k]} onChange={(e) => { onShot({ [k]: +e.target.value }); setSet((n) => n + 1); }} />
+              <output>{shot[k]}</output>
+            </label>
+          ))}
+          <hr />
+          {MOVES.map(([k, label, min, max, step]) => (
+            <label key={k}>
+              <span>{label}</span>
+              <input type="range" min={min} max={max} step={step} value={move[k]} onChange={(e) => setMove((m) => ({ ...m, [k]: +e.target.value }))} />
+              <output>{move[k]}</output>
+            </label>
+          ))}
+          <hr />
+          {GRADES.map(([k, label, min, max, step]) => (
+            <label key={k}>
+              <span>{label}</span>
+              <input type="range" min={min} max={max} step={step} value={grade[k]} onChange={(e) => setGrade((g) => ({ ...g, [k]: +e.target.value }))} />
+              <output>{grade[k]}</output>
+            </label>
+          ))}
+          <hr />
+          <label>
+            <span>Pixels</span>
+            <select value={dpr} onChange={(e) => setDpr(+e.target.value)}>
+              {[0.75, 1, 1.25, 1.5, 1.75, 2].map((d) => <option key={d}>{d}</option>)}
+            </select>
+          </label>
+          <label>
+            <span>Frames</span>
+            <select value={fps} onChange={(e) => setFps(+e.target.value)}>
+              {[30, 60].map((f) => <option key={f}>{f}</option>)}
+            </select>
+          </label>
+          <label>
+            <span>Edges</span>
+            <select value={fx.aa} onChange={(e) => setFx((f) => ({ ...f, aa: e.target.value as Fx['aa'] }))}>
+              {AAS.map((a) => <option key={a}>{a}</option>)}
+            </select>
+          </label>
+          {SWITCHES.map(([k, label]) => (
+            <label key={k} className="check">
+              <input type="checkbox" checked={fx[k]} onChange={(e) => setFx((f) => ({ ...f, [k]: e.target.checked }))} />
+              <span>{label}</span>
+            </label>
+          ))}
+          <button onClick={() => copy('shot', { ...shot, ...grade, dpr, fps, move, fx })}>{copied === 'shot' ? 'Copied' : 'Copy'}</button>
+          <button onClick={() => { setShot(SHOTS[upright() ? 'p' : 'l']); setSet((n) => n + 1); setGrade(GRADE); setFx(FX); setDpr(DPR); setFps(FPS); setMove(MOVE); }}>Reset</button>
+          <button onClick={() => copy('map', intent)}>{copied === 'map' ? 'Copied' : 'Copy map'}</button>
+          <button onClick={pasteMap}>{copied === 'pasted' ? 'Pasted' : copied === 'bad' ? 'Not a map' : 'Paste map'}</button>
+        </div>
+      )}
       {tool === 'trace' && <div className="note" ref={noteBox}>{trace ? '' : 'click a road'}</div>}
       <div className="tools">
         {TOOLS.map(([t, label]) => (
