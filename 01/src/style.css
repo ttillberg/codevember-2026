@@ -1,0 +1,74 @@
+/* a dark day: the cutting mat, ink #f4f4f2 (docs/DESIGN.md) */
+html, body { margin: 0; height: 100%; background: #2b5546; overflow: hidden; }
+/* a toy, not a page: nothing to select, no long-press callout, no tap flash, no page zoom */
+html, body {
+  -webkit-user-select: none; user-select: none; -webkit-touch-callout: none;
+  -webkit-tap-highlight-color: transparent; touch-action: none;
+}
+/* exactly the visible area: on a phone 100vh runs under the browser's bars and every touch lands off.
+   R3F sizes its canvas to this box */
+#root { position: fixed; inset: 0; }
+canvas { display: block; touch-action: none; cursor: crosshair; }
+
+/* the title plate, top left: the day in Plex capitals, the way home under it */
+.plate {
+  position: fixed; z-index: 2;
+  top: max(24px, env(safe-area-inset-top)); left: max(24px, env(safe-area-inset-left));
+  pointer-events: none; user-select: none; -webkit-user-select: none;
+  color: #f4f4f2;
+  font: 13px/1.4 Inter, "Helvetica Neue", Helvetica, Arial, sans-serif;
+}
+.plate b {
+  display: block; white-space: nowrap;
+  font: 700 56px/0.9 "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  letter-spacing: -0.02em; text-transform: uppercase;
+}
+.plate .head > i {
+  display: block; margin-top: 6px; font-style: normal;
+  font-weight: 600; font-size: 14px; line-height: 1.15; letter-spacing: 0.12em; text-transform: uppercase;
+}
+.plate .home { color: inherit; text-decoration: none; pointer-events: auto; }
+.plate .home span[lang="ja"] { font-family: "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Noto Sans JP", "Yu Gothic", sans-serif; letter-spacing: 0.06em; }
+@media (max-width: 640px) {
+  .plate { top: max(16px, env(safe-area-inset-top)); left: max(16px, env(safe-area-inset-left)); }
+  .plate b { font-size: 36px; }
+  .plate .head > i { font-size: 10px; }
+}
+/* ?clean: the scene alone */
+.clean .plate { display: none; }
+
+/* what to do now, under the plate */
+.plate .head > i.hint { margin-top: 14px; opacity: 0.85; }
+
+/* top right: start over, and left of it turn the card over */
+.again, .flip {
+  position: fixed; z-index: 3;
+  top: max(24px, env(safe-area-inset-top)); right: max(22px, env(safe-area-inset-right));
+  display: grid; place-items: center; width: 34px; height: 34px; padding: 0;
+  border: 1px solid rgba(244, 244, 242, 0.45); border-radius: 50%;
+  background: rgba(20, 40, 30, 0.2); color: #f4f4f2; cursor: pointer;
+  -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
+}
+.flip { right: calc(max(22px, env(safe-area-inset-right)) + 44px); }
+.again:hover, .flip:hover { background: rgba(20, 40, 30, 0.4); }
+@media (max-width: 640px) {
+  .again, .flip { top: max(16px, env(safe-area-inset-top)); right: max(16px, env(safe-area-inset-right)); }
+  .flip { right: calc(max(16px, env(safe-area-inset-right)) + 44px); }
+}
+.clean .again, .clean .flip { display: none; }
+
+/* bottom centre: undo, redo */
+.tools {
+  position: fixed; z-index: 3; left: 50%; transform: translateX(-50%);
+  bottom: max(22px, env(safe-area-inset-bottom)); display: flex; gap: 10px;
+}
+.tools button {
+  display: grid; place-items: center; width: 40px; height: 40px; padding: 0;
+  border: 1px solid rgba(244, 244, 242, 0.45); border-radius: 50%;
+  background: rgba(20, 40, 30, 0.2); color: #f4f4f2; cursor: pointer;
+  -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
+  transition: opacity 0.2s, background 0.2s;
+}
+.tools button:hover { background: rgba(20, 40, 30, 0.4); }
+.tools button:disabled { opacity: 0.3; cursor: default; }
+.clean .tools { display: none; }
