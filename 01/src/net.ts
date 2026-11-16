@@ -2,14 +2,15 @@
 // joined by hinges into a tree rooted at the base, plus the glue tabs that close it.
 
 export type V2 = [number, number];
-export type Kind = 'base' | 'wall' | 'gable' | 'roof' | 'tab';
-export type Face = 'front' | 'back' | 'side' | 'roof' | 'base' | 'tab';
+export type Kind = 'base' | 'wall' | 'gable' | 'roof' | 'tab' | 'part';
+export type Face = 'front' | 'back' | 'side' | 'roof' | 'base' | 'tab' | 'part';
 
 export interface Panel {
   id: string;
   kind: Kind;
   face: Face;
   poly: V2[]; // counter-clockwise
+  parts?: V2[][]; // a concave panel: convex pieces that cover it (for the overlap check)
   parent: string | null;
   hinge: [V2, V2] | null; // the edge shared with the parent
   fold: number; // degrees at rest, + folds the panel behind the printed side
@@ -17,7 +18,12 @@ export interface Panel {
   origin: V2; // the panel's own corner, for its print
 }
 
-export interface House {
+// Any net: panels in a tree rooted at the base.
+export interface Net {
+  panels: Panel[];
+}
+
+export interface House extends Net {
   W: number; // street front
   D: number; // depth
   H: number; // eaves height
@@ -28,11 +34,9 @@ export interface House {
   panels: Panel[];
 }
 
-const DEG = 180 / Math.PI;
-
 // A trapezoid glue tab on the outer side of edge a→b (the right side, since polys are CCW).
 // ta, tb: taper angles at a and b, measured from the edge.
-function tab(a: V2, b: V2, depth: number, ta = 45, tb = 45): V2[] {
+export function tab(a: V2, b: V2, depth: number, ta = 45, tb = 45): V2[] {
   const dx = b[0] - a[0];
   const dy = b[1] - a[1];
   const len = Math.hypot(dx, dy);
@@ -50,7 +54,7 @@ function tab(a: V2, b: V2, depth: number, ta = 45, tb = 45): V2[] {
   ];
 }
 
-const rect = (x: number, y: number, w: number, h: number): V2[] => [
+export const rect = (x: number, y: number, w: number, h: number): V2[] => [
   [x, y], [x + w, y], [x + w, y + h], [x, y + h],
 ];
 
@@ -120,17 +124,19 @@ const sameEdge = (a: V2, b: V2, c: V2, d: V2, e = 1e-6) =>
   (Math.hypot(a[0] - d[0], a[1] - d[1]) < e && Math.hypot(b[0] - c[0], b[1] - c[1]) < e);
 
 // Is edge a→b of a panel a fold (a hinge to its parent or a child) or a cut?
-export function isFold(house: House, panel: Panel, a: V2, b: V2) {
+export function isFold(house: Net, panel: Panel, a: V2, b: V2) {
   if (panel.hinge && sameEdge(a, b, ...panel.hinge)) return true;
   return house.panels.some((c) => c.parent === panel.id && c.hinge && sameEdge(a, b, ...c.hinge));
 }
 
 // Pieces of a sheet must not overlap: separating axis test on the convex panels.
-export function overlaps(house: House, eps = 1e-3): [string, string][] {
+export function overlaps(house: Net, eps = 1e-3): [string, string][] {
   const out: [string, string][] = [];
   const ps = house.panels;
   for (let i = 0; i < ps.length; i++) for (let j = i + 1; j < ps.length; j++) {
-    if (!separated(ps[i].poly, ps[j].poly, eps)) out.push([ps[i].id, ps[j].id]);
+    const A = ps[i].parts ?? [ps[i].poly];
+    const B = ps[j].parts ?? [ps[j].poly];
+    if (A.some((a) => B.some((b) => !separated(a, b, eps)))) out.push([ps[i].id, ps[j].id]);
   }
   return out;
 }
@@ -151,7 +157,7 @@ function separated(A: V2[], B: V2[], eps: number) {
 }
 
 // The cut line: every edge that is not a fold, chained into one counter-clockwise loop.
-export function outline(house: House): V2[] {
+export function outline(house: Net): V2[] {
   const edges: [V2, V2][] = [];
   for (const p of house.panels) for (let i = 0; i < p.poly.length; i++) {
     const a = p.poly[i];
@@ -180,8 +186,20 @@ export function outline(house: House): V2[] {
 }
 
 // The sheet of card the net is printed on.
-export function sheetOf(house: House, margin = 8) {
+export function sheetOf(house: Net, margin = 8) {
   const b = bounds(house.panels.map((p) => p.poly));
   return { x: b.x0 - margin, y: b.y0 - margin, w: b.w + 2 * margin, h: b.h + 2 * margin };
 }
 export type Sheet = ReturnType<typeof sheetOf>;
+
+// shared by the nets
+export const DEG = 180 / Math.PI;
+export const ccw = (poly: V2[]): V2[] => {
+  let a = 0;
+  for (let i = 0; i < poly.length; i++) {
+    const [x0, y0] = poly[i];
+    const [x1, y1] = poly[(i + 1) % poly.length];
+    a += x0 * y1 - x1 * y0;
+  }
+  return a < 0 ? [...poly].reverse() : poly;
+};

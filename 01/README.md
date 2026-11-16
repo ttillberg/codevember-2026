@@ -2,11 +2,18 @@
 
 2026-11-01
 
-Cut out a Scandinavian townhouse (Nyhavn, Gamla stan, Västra Hamnen) and fold it up. One piece: base, a strip of four walls, two roof slopes, nine glue tabs.
+Cut out a Malmö building and fold it up. Pick a sheet first, simplest first:
 
-- `src/net.ts` the net: panels in sheet mm, hinged into a tree from the base, each with its rest fold angle. Tabs glue behind a named panel.
+- **Korsvirkeshus, Lilla torg**: half-timbered, gable to the square. Base, a strip of four walls, two roof slopes, nine tabs.
+- **Bo01, Västra Hamnen**: a tall box under one zinc slope, rust render on the street, glass balconies. Base, four walls (two of them trapezoids), the roof off the back wall, seven tabs.
+- **Slottsmöllan**: a smock mill. An octagonal base, eight sides leaning in, a cap facet over each, sails on a shaft. 34 pieces: the folds come from the faces' normals (the sides' lean, the bends between neighbours), the front's cap facet hangs off its neighbour so the shaft can have the front's top edge, the sails hang print to the tower with their canvas printed on the back.
+
+Each sheet keeps where it was left while another is on the mat.
+
+- `src/net.ts` any net: panels in sheet mm, hinged into a tree from the base, each with its rest fold angle. Tabs glue behind a named panel. A concave panel (the sails) lists convex parts for the overlap check. `makeHouse` makes a gabled house.
+- `src/models/` the buildings: each a net, its print (`art`, and `backArt` for the blank side) and a name for its card. `tabOff` puts a tab on the outside of an edge whichever way it runs; `foldOrder` is tabs first, then from the base out.
 - `src/fold.ts` folds the tree into world matrices; `checkGlue` proves every tab lands flat inside its panel.
-- `src/art.ts` the print: flat colour, ink outlines, rasterised once into the sheet's texture.
+- `src/art.ts` shared print pieces (windows, doors, tiles, tabs, a panel's own frame) and the sheet as one SVG, rasterised once into the texture. The picker shows the same SVG small.
 - React Three Fiber. `src/App.tsx` the canvas, the card and the page around it; `src/Desk.tsx` the cutting mat and the sun; `src/Effects.tsx` GTAO over a 4x MSAA target; `src/rig.ts` the orthographic iso camera, fitted, with the hand's zoom, pan and turn.
 - `src/game.ts` the card and the hands on it (popping, seams, folding, turning, undo), plain three. On a hot update the scene asks the old game what it is (`save`), makes a new one with the new code and puts it back (`load`): an edit anywhere keeps the card where it was, history included. A full reload goes through `src/keep.ts` (session storage) to the same end. `src/hud.ts` is the zustand store the page reads: hint, undo, redo, the buttons' doings.
 - `src/paper.ts` the card: extruded 0.35 mm, a printed skin on top; one group per panel, the waste is the sheet with the net as a hole. Panels and frame stop short of the cut line by a 1 mm groove.
@@ -28,7 +35,7 @@ Pointer moves are coalesced per frame: read `getCoalescedEvents()` or a fast sli
 Gable tabs that meet the roof hinge at a corner taper at `90 - pitch` so they never lean over the roof on the flat sheet.
 
 ```sh
-pnpm -C 01 test   # vitest: the net, glue, borders, folding, pinning
+pnpm -C 01 test   # vitest: the gabled net in depth (glue, borders, folding, pinning), and every building: lies flat, closes, one cut line, stands, prints, folds up
 pnpm -C 01 dev
 ngrok http 5173   # to play it on a phone anywhere; the dev server allows ngrok hosts
 ```

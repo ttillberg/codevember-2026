@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { foldMatrices, centroid } from './fold';
-import type { House } from './net';
+import type { Net } from './net';
 import { THICK, type Paper } from './paper';
 
 // Folding by hand. Every hinge has an amount, 0 flat to 1 at its rest fold. Grab a panel
@@ -14,7 +14,7 @@ const PEEK = 5; // degrees a foldable panel gives when a pointer comes over it
 // held(id): the panel, or something it carries, still hangs in the sheet. It bends a little, no more.
 // view: screen ↔ ndc for the canvas (the stage's)
 export function makeFolding(
-  house: House, paper: Paper, camera: THREE.Camera,
+  house: Net, paper: Paper, camera: THREE.Camera,
   view: { ndc(cx: number, cy: number): THREE.Vector2; screen(p: THREE.Vector3): THREE.Vector2 },
   onShut: (id: string) => void, held: (id: string) => boolean, onHeld: (id: string) => void,
   onPinned: (id: string, stuck: string) => void = () => {},

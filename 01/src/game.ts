@@ -1,5 +1,6 @@
 import * as THREE from 'three';
-import { makeHouse, overlaps, outline, sheetOf, type V2 } from './net';
+import { overlaps, outline, sheetOf, type V2 } from './net';
+import { foldOrder, type Model } from './models';
 import { checkGlue } from './fold';
 import { makePaper, printTexture } from './paper';
 import { makeBorders, borderAt, bearing, tint, distance, type Border } from './cut';
@@ -13,6 +14,7 @@ import * as sound from './sound';
 // what it is (`save`), makes a fresh one and puts it back (`load`).
 
 export interface Saved {
+  model: string;
   done: boolean[];
   folds: Record<string, number>;
   rest: number[];
@@ -22,20 +24,19 @@ export interface Saved {
 }
 interface SavedSnap { done: boolean[]; folds: Record<string, number>; rest: number[] }
 
-const house = makeHouse();
-if (import.meta.env.DEV) {
-  const o = overlaps(house);
-  const g = checkGlue(house);
-  if (o.length) console.warn('net overlaps', o);
-  if (g.length) console.warn('glue problems', g);
-}
-const sheet = sheetOf(house);
-const loop = outline(house);
-
-export function createGame(camera: THREE.OrthographicCamera, canvas: HTMLCanvasElement, renderer: THREE.WebGLRenderer, rig: Rig) {
+export function createGame(model: Model, camera: THREE.OrthographicCamera, canvas: HTMLCanvasElement, renderer: THREE.WebGLRenderer, rig: Rig) {
+  const house = model.net;
+  if (import.meta.env.DEV) {
+    const o = overlaps(house);
+    const g = checkGlue(house);
+    if (o.length) console.warn('net overlaps', o);
+    if (g.length) console.warn('glue problems', g);
+  }
+  const sheet = sheetOf(house);
+  const loop = outline(house);
   const world = new THREE.Group();
-  const tex = printTexture(house, sheet, renderer);
-  const back = printTexture(house, sheet, renderer, true);
+  const tex = printTexture(house, model.art, sheet, renderer);
+  const back = printTexture(house, model.art, sheet, renderer, true, model.backArt);
   const paper = makePaper(house, sheet, loop, tex, back);
   world.add(paper.root);
   const hud = useHud.setState;
@@ -660,10 +661,7 @@ export function createGame(camera: THREE.OrthographicCamera, canvas: HTMLCanvasE
   }
 
   // --- keys: c pops everything, f folds it all up, space flips (dev and demos), r starts over ---
-  const ORDER = [
-    'tab-base-left', 'tab-base-back', 'tab-base-right', 'tab-front-r', 'tab-front-l', 'tab-back-r', 'tab-back-l',
-    'tab-eave', 'tab-seam', 'front', 'right', 'back', 'left', 'roof1', 'roof2',
-  ];
+  const ORDER = foldOrder(house);
   function popAll() {
     sound.unlock();
     gestureSaved = false;
@@ -673,7 +671,8 @@ export function createGame(camera: THREE.OrthographicCamera, canvas: HTMLCanvasE
     gestureSaved = false;
   }
   function foldAll() {
-    ORDER.forEach((id, i) => timers.push(window.setTimeout(() => folding.shut(id), 250 + i * 260)));
+    const gap = Math.min(260, 5000 / ORDER.length);
+    ORDER.forEach((id, i) => timers.push(window.setTimeout(() => folding.shut(id), 250 + i * gap)));
   }
   function key(e: KeyboardEvent) {
     // cmd-z undoes, shift-cmd-z (or ctrl-y) redoes; nothing else with a modifier
@@ -724,6 +723,7 @@ export function createGame(camera: THREE.OrthographicCamera, canvas: HTMLCanvasE
     const s = snap();
     const v = rig.view;
     return {
+      model: model.id,
       ...pack(s),
       view: { zoom: v.zoom, panX: v.panX, panY: v.panY, azimuth: v.azimuth },
       undos: undos.map(pack),
@@ -732,7 +732,7 @@ export function createGame(camera: THREE.OrthographicCamera, canvas: HTMLCanvasE
   }
   // put back as it was, at once, no animation
   function load(s: Saved) {
-    if (s.done.length !== borders.length) return;
+    if (s.model !== model.id || s.done.length !== borders.length) return;
     setBorders(s.done);
     if (s.done.every(Boolean)) { freed = true; freedAt = -1e9; paper.waste.visible = false; }
     folding.jump(s.folds);

@@ -40,8 +40,8 @@ canvas { display: block; touch-action: none; cursor: crosshair; }
 /* what to do now, under the plate */
 .plate .head > i.hint { margin-top: 14px; opacity: 0.85; }
 
-/* top right: start over, and left of it turn the card over */
-.again, .flip {
+/* top right: start over, left of it turn the card over, left of that back to the sheets */
+.again, .flip, .sheets {
   position: fixed; z-index: 3;
   top: max(24px, env(safe-area-inset-top)); right: max(22px, env(safe-area-inset-right));
   display: grid; place-items: center; width: 34px; height: 34px; padding: 0;
@@ -50,12 +50,44 @@ canvas { display: block; touch-action: none; cursor: crosshair; }
   -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
 }
 .flip { right: calc(max(22px, env(safe-area-inset-right)) + 44px); }
-.again:hover, .flip:hover { background: rgba(20, 40, 30, 0.4); }
+.sheets { right: calc(max(22px, env(safe-area-inset-right)) + 88px); }
+.again:hover, .flip:hover, .sheets:hover { background: rgba(20, 40, 30, 0.4); }
 @media (max-width: 640px) {
-  .again, .flip { top: max(16px, env(safe-area-inset-top)); right: max(16px, env(safe-area-inset-right)); }
+  .again, .flip, .sheets { top: max(16px, env(safe-area-inset-top)); right: max(16px, env(safe-area-inset-right)); }
   .flip { right: calc(max(16px, env(safe-area-inset-right)) + 44px); }
+  .sheets { right: calc(max(16px, env(safe-area-inset-right)) + 88px); }
 }
-.clean .again, .clean .flip { display: none; }
+.clean .again, .clean .flip, .clean .sheets { display: none; }
+
+/* the sheets to pick from, laid on the mat like cards; a column you scroll on a phone */
+.picker {
+  position: fixed; z-index: 2; inset: 0;
+  display: flex; align-items: center; justify-content: center; gap: 28px;
+  padding: 150px 24px 40px; box-sizing: border-box;
+}
+.picker .sheet {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 2px;
+  width: min(250px, 27vw); padding: 0; border: 0; background: none; cursor: pointer;
+  color: #f4f4f2; text-align: left; font: inherit;
+  transform: rotate(var(--tilt)); transition: transform 0.25s cubic-bezier(.3,1.4,.5,1);
+}
+.picker .sheet:hover, .picker .sheet:focus-visible { transform: rotate(0deg) translateY(-6px) scale(1.03); outline: none; }
+.picker .sheet:active { transform: rotate(0deg) scale(0.98); }
+.picker .print {
+  display: grid; place-items: center; width: 100%; aspect-ratio: 1; margin-bottom: 10px;
+  background: #fbf9f4; border-radius: 2px;
+  box-shadow: 0 1px 0 rgba(0,0,0,0.08), 0 14px 26px -10px rgba(0,0,0,0.45);
+}
+.picker .print img { width: 92%; height: 92%; object-fit: contain; pointer-events: none; }
+.picker b { font: 700 18px/1.1 "IBM Plex Sans", system-ui, sans-serif; letter-spacing: -0.01em; text-transform: uppercase; }
+.picker i { font: 600 11px/1.3 Inter, "Helvetica Neue", Arial, sans-serif; font-style: normal; letter-spacing: 0.12em; text-transform: uppercase; opacity: 0.75; }
+@media (max-width: 640px) {
+  .picker {
+    flex-direction: column; justify-content: flex-start; gap: 26px;
+    padding: 140px 16px 40px; overflow-y: auto; touch-action: pan-y;
+  }
+  .picker .sheet { width: min(300px, 78vw); }
+}
 
 /* bottom centre: undo, redo */
 .tools {

@@ -1,14 +1,21 @@
 import { useEffect, useMemo, useRef } from 'react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
-import type * as THREE from 'three';
+import * as THREE from 'three';
 import { Desk } from './Desk';
 import { Effects } from './Effects';
-import { createGame, type Game } from './game';
+import { createGame, type Game, type Saved } from './game';
 import { makeRig } from './rig';
 import { useHud } from './hud';
-import { keep, kept } from './keep';
+import { forget, keep, kept } from './keep';
+import { MODELS, modelById, type Model } from './models';
+import { sheetSvg } from './art';
+import { sheetOf } from './net';
+
+// where each card was left, to pick up again when it comes back to the mat
+const left = new Map<string, Saved>();
 
 export function App() {
+  const model = modelById(useHud((s) => s.model));
   return (
     <>
       <Canvas
@@ -20,46 +27,97 @@ export function App() {
         gl={{ antialias: false, powerPreference: 'high-performance' }}
       >
         <Desk />
-        <Card />
+        {model ? <Card key={model.id} model={model} /> : <Idle />}
         <Effects />
       </Canvas>
-      <Hud />
+      {model ? <Hud /> : <Picker />}
     </>
   );
 }
 
 // The card. On a hot update this runs again with the new code: the old game says what it is,
 // a new one is made and told, the old one is let go once the new one is in.
-function Card() {
+function Card({ model }: { model: Model }) {
   const camera = useThree((s) => s.camera) as THREE.OrthographicCamera;
   const gl = useThree((s) => s.gl);
   const last = useRef<Game | null>(null);
   const game = useMemo(() => {
-    const saved = last.current?.save() ?? kept();
-    const g = createGame(camera, gl.domElement, gl, makeRig(camera, gl.domElement));
+    const k = kept();
+    const saved = last.current?.save() ?? (k?.model === model.id ? k : null) ?? left.get(model.id);
+    forget();
+    const g = createGame(model, camera, gl.domElement, gl, makeRig(camera, gl.domElement));
     if (saved) g.load(saved);
     last.current = g;
     keep(g.save);
     return g;
-  }, [camera, gl]);
-  useEffect(() => () => game.dispose(), [game]);
+  }, [camera, gl, model]);
+  useEffect(() => () => {
+    left.set(model.id, game.save());
+    game.dispose();
+  }, [game, model]);
   useFrame((_, dt) => game.animate(performance.now(), Math.min(0.05, dt)));
   return <primitive object={game.world} />;
 }
 
-// The page around the scene: the plate with what to do now, start over and turn over top right,
-// undo and redo bottom centre.
+// no card yet: the bare mat, seen the usual way
+function Idle() {
+  const camera = useThree((s) => s.camera) as THREE.OrthographicCamera;
+  const gl = useThree((s) => s.gl);
+  const rig = useMemo(() => makeRig(camera, gl.domElement), [camera, gl]);
+  useFrame(() => rig.fit(new THREE.Box3(new THREE.Vector3(-110, 0, -110), new THREE.Vector3(110, 10, 110))));
+  return null;
+}
+
+// a card's face: its printed sheet, small
+const faces = new Map<string, string>();
+function face(m: Model) {
+  if (!faces.has(m.id)) {
+    const { svg } = sheetSvg(m.net, m.art, sheetOf(m.net), 3);
+    faces.set(m.id, 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg));
+  }
+  return faces.get(m.id)!;
+}
+
+// Pick a card: the sheets laid out, Malmö, simplest first
+function Picker() {
+  return (
+    <>
+      <Plate hint="Pick a sheet to cut out" />
+      <div className="picker">
+        {MODELS.map((m, i) => (
+          <button key={m.id} type="button" className="sheet" style={{ ['--tilt' as string]: `${(i - 1) * 2.2}deg` }} onClick={() => useHud.setState({ model: m.id, hint: '' })}>
+            <span className="print"><img src={face(m)} alt="" draggable={false} /></span>
+            <b>{m.name}</b>
+            <i>{m.where}</i>
+          </button>
+        ))}
+      </div>
+    </>
+  );
+}
+
+function Plate({ hint }: { hint: string }) {
+  return (
+    <div className="plate">
+      <div className="head">
+        <b>01 Fold</b>
+        <i><a className="home" href="../">Codevember 2026 <span lang="ja">折る</span></a></i>
+        <i className="hint">{hint}</i>
+      </div>
+    </div>
+  );
+}
+
+// The page around the scene: the plate with what to do now; top right back to the sheets, turn
+// over, start over; undo and redo bottom centre.
 function Hud() {
   const { hint, canUndo, canRedo, actions } = useHud();
   return (
     <>
-      <div className="plate">
-        <div className="head">
-          <b>01 Fold</b>
-          <i><a className="home" href="../">Codevember 2026 <span lang="ja">折る</span></a></i>
-          <i className="hint">{hint}</i>
-        </div>
-      </div>
+      <Plate hint={hint} />
+      <button className="sheets" type="button" aria-label="Pick another sheet" onClick={() => useHud.setState({ model: null })}>
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="3.5" y="6.5" width="11" height="14" rx="1" /><path d="M8 3.5h11.5a1 1 0 0 1 1 1V17" /></svg>
+      </button>
       <button className="flip" type="button" aria-label="Turn the card over" onClick={actions.flip}>
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M4 15.5 12 19l8-3.5" /><path d="M4 8.5 12 5l8 3.5" /><path d="M18.5 12a6.5 3.2 0 1 1-2-2.3" /><path d="M16.2 7.6l.4 2.2-2.2.4" /></svg>
       </button>
