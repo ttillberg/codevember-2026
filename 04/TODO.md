@@ -21,6 +21,7 @@ Reference: drone pictures of the Huangjuewan interchange, Chongqing. First pass 
 - One house in three is kept and a quarter of those stand at an angle (`KEEP` in `App.tsx`, `turnSome()` in `Town.tsx`). A turned house is in the way as the straight box around it, so a road stops short of corners that look free; trees and lamps keep out of that box too; footpaths still lead to houses that are gone.
 - The base map starts with three flyovers, laid through `addStroke` like painted ones (`BASE` in `App.tsx`). Left: where the west one lands on the north back street the junction is a big blob; two of them are out of the first frame; traffic over them is not measured.
 - Roundabouts are harder to get: six arms, not five, and a painted circle has to close within 22 m and be 220 m round (`RING_ARMS` in `intent.ts`, `lay()` in `paint.ts`).
+- Common ground is in (`Park.tsx`): a park with trodden walks and a cycle way, a pitch, a school, hedges round the little houses, scrub at the edge of the woods, and trees right up to the little houses (`World.tsx`). Nine draw calls, about 2450 instances (2200 of them bushes), no measurable frame cost (11.0 ms without, 11.2 with, in the noise). Left: the sites are three rectangles found by hand on the first map (`PARK`, `PITCH`, `SCHOOL`) and nothing is planted where they are no longer free; the pitch and school are at the left edge of the opening shot and the wide open ground north and south-east is out of it; on the `?debug` map the school is gone, a painted road runs through it; a road through the park that grows a parking court leaves the lawn under the court's paving but a tree or two beside the stalls; the park's own walkers turn round at its ends for ever and its bikes ride the cycle way up and down; players and children are boxes that run loops in the shader, cast no shadow and go home at dusk; the school is dark at night; the floodlights are on all night; bushes are faceted balls, not the leaf cards of the trees, and do not change with `?season=`; the hall's teal roof can read as a pool; not looked at on a phone.
 - Terraced plots and construction sites in the open ground.
 - Ground is flat. The reference is all hillside.
 - A yard's parking can run into the wall of the house that stopped the road.
@@ -37,6 +38,20 @@ Done: lane arrows drawn from the turns each lane has (`arrow()` in `geo.ts`), an
 - More ramps: a road that goes over by itself (`goesOver()` in `paint.ts`) has no way between the levels. It could hang two one-way ramps off its deck on each side of the road it crosses, the same pieces `forked()` makes, with air junctions on the deck. Not done: the traffic over air junctions is not measured yet.
 - No yield triangles at roundabouts, no bike lanes or bike crossings.
 - The signal lamps are a pixel wide from 800 m; whether they need to be bigger there has not been judged by eye in motion.
+
+## Perks
+
+In: emergency vehicles and road works (`sim.ts`, `Works.tsx`, the flashing in `Cars.tsx`, blue trails in both kinds of lights). Measured without a browser, twelve seeds, an hour of traffic time, 180 vehicles: vehicles through on the base map 2262 with neither, 2236 with emergency vehicles, 2296 with works, 2168 with both; on the `?debug` map 2307, 2381, 2394, 2321. One seed differs from the next by about 150, so none of it is a difference. The traffic costs about a tenth more to step (0.34 to 0.37 ms a second of its time); a frame costs what it did.
+
+- An emergency vehicle is on screen for a second or two, one every 15 to 45 s (`CALL`). Whether that is too often has to be judged by watching, not from stills.
+- Nobody pulls over. The signal goes its way (`rush` on a lane) and whoever would cross waits; it overtakes by changing lane. On one lane behind a queue it waits. The signal heads still show red while it drives through.
+- In a jam it takes three times as long to cross (about 90 s of its time when the roads flow, 180 when they do not).
+- Only back streets are closed (`roadOk`, rank 1): few vehicles have to go round, so the deviation is seldom seen. With the cross streets allowed too the `?debug` map lost a quarter of its traffic in three seeds of twelve, and choosing the busiest back street did the same. A closed road that shows needs the clog fixed first.
+- A site whose road is painted over or smeared too far is dropped, not moved; undo does not bring it back, a new one opens in time.
+- Lane closures are only on the kerb lane, on the ground, on stretches of 95 m and more with no parking. Nothing on bridges or roundabouts.
+- People and bikes walk through the works.
+- The beam of the head lamps in the WebGPU lights is one cone to a vehicle to a note (`REACH`, `SHINE` in `Glow.tsx`): about 2.7 million texels more to blend in a frame, not seen in the frame time (13.4 ms with or without, at night, M2 Pro). With the strips the WebGL beam is the old wedge, only longer.
+- Not looked at on a phone.
 
 ## Reading the traffic
 

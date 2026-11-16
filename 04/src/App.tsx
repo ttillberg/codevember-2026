@@ -7,10 +7,12 @@ import { BlendFunction, Effect, ToneMappingMode } from 'postprocessing';
 import { Color, DirectionalLight, HemisphereLight, MOUSE, OrthographicCamera, PerspectiveCamera, TOUCH, Uniform, Vector2 } from 'three';
 import { HAZE, MOOD, NIGHT, RICH, hoursPerSecond, skyAt } from './haze';
 import { Cars, TIMELAPSE } from './Cars';
+import type { Sim } from './sim';
 import { gpu } from './Glow';
 import { SEASONS, World, type Season } from './World';
-import { plantTown, turnSome, type Block } from './Town';
+import { plantSmall, plantTown, turnSome, type Block } from './Town';
 import { People, Signs, Street } from './Life';
+import { Commons, plantCommons, standingCommons } from './Park';
 import { Painter, type Tool } from './Painter';
 import { buildNet, type V } from './net';
 import { MAP } from './map';
@@ -19,7 +21,7 @@ import { addStroke, smear, smearStart } from './paint';
 
 /** The grade: exposure, warmth, bite, how much colour is left, how grey the blacks are, and what the stock and the glass add. */
 type Grade = { gain: number; temp: number; bite: number; sat: number; lift: number; grain: number; bloom: number; dark: number; soft: number };
-const GRADE: Grade = { gain: 1, temp: 0, bite: 0.4, sat: 0.78, lift: 1, grain: 0, bloom: 0.55, dark: 0, soft: no('soft') ? 0 : 0.3 };
+const GRADE: Grade = { gain: 1, temp: -0.55, bite: 0.35, sat: 0.81, lift: 0, grain: 0, bloom: 0.55, dark: 0, soft: no('soft') ? 0 : 0.5 };
 
 /** The look of a drone clip shot through city haze: flat, pale, a little cool in the shadows. */
 class FadeEffect extends Effect {
@@ -100,6 +102,8 @@ const AAS = ['msaa4', 'msaa2', 'smaa', 'none'] as const;
 type Fx = { aa: (typeof AAS)[number]; tilt: boolean; bloom: boolean; shadow: boolean; lazy: boolean };
 const FX: Fx = { aa: no('msaa') ? 'none' : 'msaa2', tilt: !no('tilt'), bloom: !no('bloom'), shadow: !no('shadow'), lazy: !no('lazy') };
 const SWITCHES: [Exclude<keyof Fx, 'aa'>, string][] = [['tilt', 'Tilt shift'], ['bloom', 'Bloom'], ['shadow', 'Shadows'], ['lazy', 'Lazy shadows']];
+/** What can be asked of the traffic without waiting for it: an emergency vehicle sent now, a works site opened now near the middle. */
+const PERKS: [string, (sim: Sim) => void][] = [['Send ambulance', (s) => s.dispatch()], ['Dig', (s) => s.dig()]];
 const DPR = touch ? 1.75 : 2;
 /** How the drone moves by itself: metres it glides to either side, degrees it swings round, metres it bobs in the wind, metres it shakes, seconds for a round. */
 type Move = { drift: number; orbit: number; hover: number; shake: number; period: number };
@@ -128,7 +132,7 @@ const BASE: Intent = [
   [[-110, 168], [0, 140], [108, 180]],
 ].reduce((it, line) => addStroke(it, line.map(([x, y]) => ({ x, y })), true) ?? it, baseIntent());
 /** One house in this many is left standing. */
-const KEEP = 3;
+const KEEP = 2;
 /** Roughly how many vehicles are out: what a phone can carry, and what a desk can. */
 const VEHICLES = touch ? 60 : 180;
 
@@ -403,6 +407,9 @@ export function App() {
     const cx = 0.5 * Math.cos(lens.lean * RAD), cy = 0.5 * Math.sin(lens.lean * RAD);
     return [[0.5 - cx, lens.focus - cy], [0.5 + cx, lens.focus + cy]];
   }, [lens.lean, lens.focus]);
+  // ?debug: the traffic itself, for the buttons that ask something of it
+  const traffic = useRef<Sim | null>(null);
+  const onSim = useCallback((s: Sim) => { traffic.current = s; }, []);
   const noteBox = useRef<HTMLDivElement>(null);
   const onNote = useCallback((t: string) => { if (noteBox.current) noteBox.current.textContent = t; }, []);
   // ?no=houses,trees: without the houses nothing is in the way of a road; the trees are only put out of sight
@@ -414,23 +421,34 @@ export function App() {
   // the housing is planted once, on the place as it first stood, and is in the way from then on
   const first = useMemo(() => buildNet(derive(BASE)), []);
   // only a few of them are kept, and a quarter of those turned: the roads are what is looked at
-  const town = useMemo(() => turnSome(first, plantTown(first).filter((_, i) => i % KEEP === 0)), [first]);
+  const town = useMemo(() => {
+    const big = turnSome(first, plantTown(first).filter((_, i) => i % KEEP === 0));
+    // and between them the little ones, along the roads
+    return [...big, ...plantSmall(first, big)];
+  }, [first]);
   // a bridge takes down the houses in its line; the same list for as long as the same ones stand
   const left = houses ? standing(intent, town) : NONE;
   const kept = useRef(left);
   if (kept.current.length !== left.length || kept.current.some((b, i) => b !== left[i])) kept.current = left;
   const blocks = kept.current;
   // everything with walls is in the way: the housing, and the sheds that were there from the start
-  const walls = useMemo(() => (houses ? [...town, ...first.buildings] : NONE), [houses, town, first]);
+  // the little ones are not: a road goes through them
+  const walls = useMemo(() => (houses ? [...town.filter((b) => !b.small), ...first.buildings] : NONE), [houses, town, first]);
   const net = useMemo(() => {
     const n = buildNet(derive(intent, walls));
-    return houses ? n : { ...n, buildings: [] };
-  }, [intent, walls, houses]);
+    if (!houses) return { ...n, buildings: [] };
+    // the filling stations that still stand bring their roofs and their yards
+    const fuel = blocks.filter((b) => b.pumps);
+    return fuel.length ? { ...n, buildings: [...n.buildings, ...fuel.map((b) => b.pumps!)], pads: [...n.pads, ...fuel.map((b) => b.pad!)] } : n;
+  }, [intent, walls, houses, blocks]);
 
   // The stroke is not built the moment the hand lets go: the brush leaves a ghost of it, the frame is shown,
   // and then the rules are run and the town rebuilt, as something that may be interrupted.
   // the ground first, then the trees, then the traffic, then the people and the signs
-  const place = useMemo(() => ({ net, blocks }), [net, blocks]);
+  // what is common ground: the park, the pitch, the school and the hedges, planted once like the housing,
+  // and whatever of it the roads as they are now have left
+  const commons = useMemo(() => plantCommons(first, town), [first, town]);
+  const place = useMemo(() => ({ net, blocks, green: standingCommons(commons, net, blocks) }), [net, blocks, commons]);
   const wood = useLater(place, 1), roads = useLater(net, 2), life = useLater(place, 3);
   // what the WebGPU lights cannot be seen through
   const hides = useMemo(() => [...life.blocks, ...life.net.buildings], [life]);
@@ -487,8 +505,9 @@ export function App() {
         <Drone shot={shot} move={move} set={set} onShot={debug ? onShot : undefined} />
         <Sun speed={speed} shadow={fx.shadow} lazy={fx.lazy} clock={clock} scrub={scrub} onHour={debug ? onHour : undefined} />
         <World net={net} blocks={blocks} wood={wood} trees={trees} season={season} />
-        <Cars net={roads} speed={speed} target={VEHICLES} trail={lights === 'off' ? 0 : clock.trail} glow={lights === 'webgpu'} walls={hides} onGlowFail={noGpu} shade={!fx.lazy} heat={heat} trace={tool === 'trace' ? trace : null} onNote={onNote} />
-        <People net={life.net} blocks={life.blocks} speed={speed} shade={!fx.lazy} />
+        <Cars net={roads} speed={speed} target={VEHICLES} trail={lights === 'off' ? 0 : clock.trail} glow={lights === 'webgpu'} walls={hides} onGlowFail={noGpu} shade={!fx.lazy} heat={heat} trace={tool === 'trace' ? trace : null} onNote={onNote} onSim={onSim} />
+        <Commons green={place.green} speed={speed} />
+        <People net={life.net} blocks={life.blocks} walks={life.green.walks} rides={life.green.rides} speed={speed} shade={!fx.lazy} />
         <Signs net={life.net} blocks={life.blocks} />
         <Street net={life.net} blocks={life.blocks} speed={speed} />
         <Painter net={net} tool={tool} onStroke={onStroke} onSmear={onSmear} onTrace={setTrace} />
@@ -580,6 +599,7 @@ export function App() {
           <button onClick={() => { setShot(SHOTS[upright() ? 'p' : 'l']); setSet((n) => n + 1); setGrade(GRADE); setFx(FX); setDpr(DPR); setFps(FPS); setMove(MOVE); setClock(CLOCK); setScrub((n) => n + 1); }}>Reset</button>
           <button onClick={() => copy('map', intent)}>{copied === 'map' ? 'Copied' : 'Copy map'}</button>
           <button onClick={pasteMap}>{copied === 'pasted' ? 'Pasted' : copied === 'bad' ? 'Not a map' : 'Paste map'}</button>
+          {PERKS.map(([label, ask]) => <button key={label} onClick={() => traffic.current && ask(traffic.current)}>{label}</button>)}
         </div>
       )}
       {tool === 'trace' && <div className="note" ref={noteBox}>{trace ? '' : 'click a road'}</div>}

@@ -91,6 +91,19 @@ export interface Lane {
   sib: Lane[];
   cars: any[];
   conn?: Conn;
+  /** when an emergency vehicle last drove up it, in the traffic's time: its signal lets it through and the cross traffic waits */
+  rush?: number;
+  /** road works along it, for as long as they last */
+  dig?: Dig | null;
+  /** its whole road is closed for works: no route goes in */
+  shut?: boolean;
+}
+
+/** A stretch of a lane beside or under road works: coned off, so that nobody drives in it, or only slow past the cones. */
+export interface Dig {
+  s0: number;
+  s1: number;
+  closed: boolean;
 }
 
 export interface Stall {
@@ -601,11 +614,13 @@ export function plan(net: Net, from: Lane, goals: Lane[], seed: number, noChange
     done[u] = 1;
     const l = net.lanes[u];
     for (const m of l.next) {
+      if (m.shut) continue;
       const c = best + (m.len / m.speed) * jit(m.id, seed) + (m.conn && m.conn.turn === 'L' ? 5 : 0);
       if (c < d[m.id]) { d[m.id] = c; prev[m.id] = u; push(m.id, c); }
     }
     if (!(noChange && l === from)) {
       for (const m of l.sib) {
+        if (m.shut) continue;
         const c = best + (3 + 90 / l.len) * jit(m.id, seed);
         if (c < d[m.id]) { d[m.id] = c; prev[m.id] = u; push(m.id, c); }
       }

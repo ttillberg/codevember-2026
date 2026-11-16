@@ -1,13 +1,18 @@
 // Vehicle bodies, built from a few tapered boxes. Seen from a drone, that is all a car is.
 // Long axis +x (front), up +y. Vertex colour is a shade multiplied by the instance paint.
 // `glow` is the light a part gives off after dark: nothing, but for the lamps at either end.
-import { BoxGeometry, BufferAttribute, BufferGeometry } from 'three';
+// `flash` marks the lamps on the roof of an emergency vehicle, which blink by day as well: 1 and 2 take turns.
+import { BoxGeometry, BufferAttribute, BufferGeometry, Color } from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 
 const GLASS = 0.07;
 const TYRE = 0.04;
 
-function box(L: number, y0: number, y1: number, W: number, cx: number, shade: number, tx = 1, tz = 1, glow: [number, number, number] = [0, 0, 0]) {
+type RGB = [number, number, number];
+/** A paint of its own on a part, where the whole vehicle is not one colour: the instance is then left white. */
+const tint = (hex: number): RGB => new Color(hex).toArray() as RGB;
+
+function box(L: number, y0: number, y1: number, W: number, cx: number, shade: number | RGB, tx = 1, tz = 1, glow: RGB = [0, 0, 0], flash = 0) {
   const g = new BoxGeometry(L, y1 - y0, W);
   const p = g.attributes.position;
   for (let i = 0; i < p.count; i++) {
@@ -15,8 +20,9 @@ function box(L: number, y0: number, y1: number, W: number, cx: number, shade: nu
   }
   g.translate(cx, (y0 + y1) / 2, 0);
   g.computeVertexNormals();
-  const c = new Float32Array(p.count * 3).fill(shade);
+  const c = typeof shade === 'number' ? new Float32Array(p.count * 3).fill(shade) : Float32Array.from({ length: p.count * 3 }, (_, i) => shade[i % 3]);
   g.setAttribute('color', new BufferAttribute(c, 3));
+  g.setAttribute('flash', new BufferAttribute(new Float32Array(p.count).fill(flash), 1));
   g.setAttribute('glow', new BufferAttribute(Float32Array.from({ length: p.count * 3 }, (_, i) => glow[i % 3]), 3));
   return g;
 }
@@ -47,6 +53,8 @@ export interface VType {
   heavy: boolean;
   geo: BufferGeometry;
   cap: number;
+  /** an emergency vehicle: never part of the ordinary traffic, sent out now and then */
+  siren?: boolean;
 }
 
 function car(L: number, W: number, H: number, belt: number, cabL: number, cabX: number, taper: number) {
@@ -108,8 +116,65 @@ function bus() {
   ])!;
 }
 
+const BLUE: RGB = [0.1, 0.45, 7], RED: RGB = [7, 0.12, 0.06];
+const WHITE = tint(0xf2f2ee), FIRE = tint(0xc4160f), NAVY = tint(0x0d1830);
+
+/** The lamps on the roof: a bar across it, blue on one side and red on the other, flashing in turn. Bigger than life, to be seen from the drone. */
+function bar(x: number, y: number, W: number, long = 0.8) {
+  return [
+    box(long, y, y + 0.34, W * 0.44, x, tint(0x2548c8), 1, 1, BLUE, 1).translate(0, 0, -W * 0.23),
+    box(long, y, y + 0.34, W * 0.44, x, tint(0xc8261c), 1, 1, RED, 2).translate(0, 0, W * 0.23),
+  ];
+}
+
+/** White box on a van, a red band round it and red on the roof. */
+function ambulance() {
+  const L = 6.4, W = 2.25;
+  return mergeGeometries([
+    box(L, 0.3, 2.55, W, 0, WHITE, 0.98, 0.95),
+    box(L * 0.1, 1.3, 2.0, W * 0.88, 0.455 * L, GLASS),
+    box(L * 0.72, 1.05, 1.5, W + 0.05, -0.1 * L, FIRE),
+    box(L * 0.16, 2.55, 2.6, W * 0.9, -0.12 * L, FIRE),
+    box(L * 0.5, 2.55, 2.6, W * 0.3, -0.12 * L, FIRE),
+    ...bar(0.3 * L, 2.55, W),
+    ...bar(-0.44 * L, 2.55, W, 0.5),
+    ...lamps(L + 0.3, W, 1.0),
+    ...wheels(L, W, 0.38),
+  ])!;
+}
+
+/** Red all over, a white cab roof and a ladder down its back. */
+function engine() {
+  const L = 8.6, W = 2.5;
+  return mergeGeometries([
+    box(L, 0.5, 3.0, W, 0, FIRE, 0.99, 0.96),
+    box(L * 0.04, 1.6, 2.5, W * 0.86, 0.485 * L, GLASS),
+    box(L * 0.2, 3.0, 3.06, W * 0.9, 0.36 * L, WHITE),
+    box(L * 0.66, 3.0, 3.3, W * 0.34, -0.12 * L, tint(0xc9ccd0)),
+    box(L * 0.7, 0.5, 0.95, W + 0.04, -0.1 * L, tint(0xd8d8d2)),
+    ...bar(0.4 * L, 3.06, W, 0.9),
+    ...bar(-0.46 * L, 3.0, W, 0.5),
+    ...lamps(L + 0.3, W, 1.1),
+    ...wheels(L, W, 0.5, 0.36, -0.3),
+  ])!;
+}
+
+/** Dark at both ends and white in the middle, as a patrol car is the world over. */
+function police() {
+  const L = 4.95, W = 1.9;
+  return mergeGeometries([
+    box(L, 0.24, 0.84, W, 0, NAVY, 0.97, 0.94),
+    box(L * 0.4, 0.26, 0.86, W + 0.03, -0.03 * L, WHITE),
+    box(L * 0.54, 0.84, 1.42, W * 0.9, -0.04 * L, GLASS, 0.66, 0.84),
+    box(L * 0.32, 1.4, 1.46, W * 0.76, -0.04 * L, WHITE),
+    ...bar(-0.04 * L, 1.46, W, 0.7),
+    ...lamps(L, W, 0.84),
+    ...wheels(L, W),
+  ])!;
+}
+
 /** The road ahead in the head lamps: a flat fan on the ground in front of the nose, wider the further it goes. `uv` is along and across it. */
-export function beam(L: number, W: number, reach = 22) {
+export function beam(L: number, W: number, reach = 40) {
   const g = new BufferGeometry(), x0 = L / 2 - 0.2, x1 = L / 2 + reach, w0 = W * 0.45, w1 = W * 0.5 + reach * 0.2;
   g.setAttribute('position', new BufferAttribute(Float32Array.from([x0, 0.3, -w0, x0, 0.3, w0, x1, 0.3, w1, x1, 0.3, -w1]), 3));
   g.setAttribute('uv', new BufferAttribute(Float32Array.from([0, -1, 0, 1, 1, 1, 1, -1]), 2));
@@ -126,6 +191,10 @@ export function makeTypes(): VType[] {
     { name: 'van', len: 5.4, wid: 2.02, weight: 0.07, parks: true, heavy: false, geo: van(), cap: 160 },
     { name: 'truck', len: 7.6, wid: 2.4, weight: 0.045, parks: false, heavy: true, geo: truck(), cap: 80 },
     { name: 'bus', len: 12, wid: 2.55, weight: 0.015, parks: false, heavy: true, geo: bus(), cap: 40 },
+    // no weight: these are never drawn by lot, they are sent
+    { name: 'ambulance', len: 6.4, wid: 2.25, weight: 0, parks: false, heavy: false, geo: ambulance(), cap: 6, siren: true },
+    { name: 'engine', len: 8.6, wid: 2.5, weight: 0, parks: false, heavy: false, geo: engine(), cap: 6, siren: true },
+    { name: 'police', len: 4.95, wid: 1.9, weight: 0, parks: false, heavy: false, geo: police(), cap: 6, siren: true },
   ];
 }
 

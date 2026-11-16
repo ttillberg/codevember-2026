@@ -6,6 +6,8 @@ export const HAZE = 0xa3adb3;
 
 /** How much of the night is here: 0 by day, 1 in the dark. One number, read by every lamp, sign, window and headlight. */
 export const NIGHT = new Uniform(0);
+/** Seconds of our own time, for whatever blinks: the lamps of an emergency vehicle, the lamps at road works. */
+export const NOW = new Uniform(0);
 /** What the hour does to the grade: the balance of the colours, and how much more of them there is in low sun. */
 export const MOOD = new Uniform(new Vector3(1, 1, 1));
 export const RICH = new Uniform(0);
@@ -34,6 +36,9 @@ export function sunAt(hour: number) {
 
 /** The lamps come on as the sun touches the roofs and the dark is whole a little after it has gone. */
 const nightAt = (el: number) => 1 - step(-6, 2, el);
+
+/** How much the lights are on: people do not wait for the dark, they switch on while the sun is still a hand above the horizon. */
+const litAt = (el: number) => 1 - step(-2, 9, el);
 
 /** How much of the low, warm light there is: most just over the horizon, gone when the sun is well up or well down. */
 const goldAt = (el: number) => step(-4, 3, el) * (1 - step(9, 28, el));
@@ -93,7 +98,8 @@ export function skyAt(hour: number, out = SKY): Sky {
   out.fill = 0.3 + 0.65 * step(-7, 3, el) + 0.3 * step(3, 28, el);
   out.back.copy(BACK.night).lerp(BACK.dusk, step(-9, -2, el)).lerp(BACK.gold, step(-3, 4, el)).lerp(BACK.day, step(5, 24, el));
   out.night = night;
-  NIGHT.value = night;
+  // what shines goes by the lights, which are ahead of the dark
+  NIGHT.value = litAt(el);
   // low sun: warmer and with more colour in it; night: cold
   const gold = goldAt(el);
   MOOD.value.set(1 + 0.1 * gold - 0.1 * night, 1 + 0.01 * gold - 0.03 * night, 1 - 0.12 * gold + 0.1 * night);

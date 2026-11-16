@@ -5,9 +5,10 @@ import { AdditiveBlending, BufferAttribute, BufferGeometry, Color, InstancedBuff
 import type { Lane, Net, V } from './net';
 import { Heat, Journeys } from './Traffic';
 import { PARKED, Sim, signal } from './sim';
-import { NIGHT } from './haze';
+import { NIGHT, NOW } from './haze';
 import { beam, makeTypes } from './vehicles';
 import { Glow, type GlowHandle, type Wall } from './Glow';
+import { Works } from './Works';
 
 /** How much faster than life the traffic runs, as a timelapse. */
 export const TIMELAPSE = 60;
@@ -18,17 +19,28 @@ const SIG = { G: new Color(0x2dff7a), Y: new Color(0xffc21a), R: new Color(0xff2
 const OUT = new Color(0x0d0e10);
 const LAMPS = ['R', 'Y', 'G'] as const;
 
-/** Body paint, and after dark the lamps at either end: on for whoever is driving, off for whoever is parked. */
+/** How the lamps of an emergency vehicle flash: side 1 three times, then side 2 three times, so many rounds a second. GLSL, `t` in seconds. */
+const FLASH = /* glsl */ `
+  float blink(float side, float t) {
+    float ph = fract(t * 1.7 + side * 0.5);
+    return step(ph, 0.5) * step(0.35, fract(ph * 6.0));
+  }`;
+
+/**
+ * Body paint, and after dark the lamps at either end: on for whoever is driving, off for whoever is parked.
+ * The lamps on the roof of an emergency vehicle flash, and by day as well.
+ */
 function bodywork() {
   const m = new MeshStandardMaterial({ vertexColors: true, roughness: 0.38, metalness: 0.25 });
   m.onBeforeCompile = (s) => {
     s.uniforms.uNight = NIGHT;
+    s.uniforms.uNow = NOW;
     s.vertexShader = s.vertexShader
-      .replace('#include <common>', '#include <common>\nattribute vec3 glow; attribute float aLit; varying vec3 vGlow;')
-      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvGlow = glow * aLit;');
+      .replace('#include <common>', '#include <common>\nattribute vec3 glow; attribute float aLit, flash; uniform float uNow; varying vec3 vGlow, vFlash;' + FLASH)
+      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvGlow = flash > 0.5 ? vec3(0.0) : glow * aLit; vFlash = flash > 0.5 ? glow * blink(flash - 1.0, uNow) : vec3(0.0);');
     s.fragmentShader = s.fragmentShader
-      .replace('#include <common>', '#include <common>\nuniform float uNight; varying vec3 vGlow;')
-      .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\ntotalEmissiveRadiance += vGlow * uNight;');
+      .replace('#include <common>', '#include <common>\nuniform float uNight; varying vec3 vGlow, vFlash;')
+      .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\ntotalEmissiveRadiance += vGlow * uNight + vFlash * (0.45 + 0.55 * uNight);');
   };
   m.customProgramCacheKey = () => 'bodywork';
   return m;
@@ -54,6 +66,32 @@ function headlight() {
   });
 }
 
+/**
+ * What the flashing lamps throw around an emergency vehicle: blue to one side and red to the other, in turn.
+ * No light, a glow hung over its roof, so that it is seen from the drone by day too.
+ */
+function siren() {
+  return new ShaderMaterial({
+    uniforms: { uNight: NIGHT, uNow: NOW },
+    vertexShader: /* glsl */ `
+      varying vec2 vUv;
+      void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * instanceMatrix * vec4(position, 1.0); }`,
+    fragmentShader: /* glsl */ `
+      uniform float uNight, uNow;
+      varying vec2 vUv;
+      ${FLASH}
+      void main() {
+        float a = length(vUv - vec2(0.0, -0.3)), b = length(vUv - vec2(0.0, 0.3));
+        vec3 c = vec3(0.08, 0.3, 1.0) * exp(-a * a * 9.0) * blink(0.0, uNow) + vec3(1.0, 0.06, 0.03) * exp(-b * b * 9.0) * blink(1.0, uNow);
+        gl_FragColor = vec4(c * (1.0 - smoothstep(0.7, 1.0, length(vUv))) * mix(HALO_DAY, HALO_NIGHT, uNight), 1.0);
+      }`,
+    defines: { HALO_DAY: '1.1', HALO_NIGHT: '1.0' },
+    blending: AdditiveBlending, transparent: true, depthWrite: false,
+  });
+}
+/** How wide that glow is, metres, and how many emergency vehicles can be out at once. */
+const HALO = 20, SIRENS = 18;
+
 /** How many stretches of its way a vehicle's lights are drawn over, and how many stretches there are for all of them. */
 const TRAIL = 8, STREAKS = 2400;
 
@@ -65,15 +103,17 @@ function streak() {
   return new ShaderMaterial({
     uniforms: { uNight: NIGHT },
     vertexShader: /* glsl */ `
-      attribute vec2 aAge;
-      varying vec2 vUv; varying float vK;
-      void main() { vUv = uv; vK = mix(aAge.x, aAge.y, uv.x); gl_Position = projectionMatrix * modelViewMatrix * instanceMatrix * vec4(position, 1.0); }`,
+      attribute vec2 aAge; attribute float aHue;
+      varying vec2 vUv; varying float vK, vHue;
+      void main() { vUv = uv; vHue = aHue; vK = mix(aAge.x, aAge.y, uv.x); gl_Position = projectionMatrix * modelViewMatrix * instanceMatrix * vec4(position, 1.0); }`,
     fragmentShader: /* glsl */ `
       uniform float uNight;
-      varying vec2 vUv; varying float vK;
+      varying vec2 vUv; varying float vK, vHue;
       void main() {
         float y = abs(vUv.y), lamp = smoothstep(0.35, 0.7, y) * (1.0 - smoothstep(0.8, 1.0, y)), mid = 1.0 - smoothstep(0.0, 0.6, y);
         vec3 c = vec3(1.0, 0.1, 0.04) * lamp * 1.5 + vec3(1.0, 0.72, 0.4) * mid * 0.55;
+        // an emergency vehicle leaves its flashes behind: a stretch of blue, a stretch of red
+        if (vHue > 0.5) c = (vHue > 1.5 ? vec3(1.0, 0.08, 0.04) : vec3(0.1, 0.35, 1.0)) * (1.0 - y * y) * 2.4;
         gl_FragColor = vec4(c * vK * vK * uNight * STREAK, 1.0);
       }`,
     defines: { STREAK: '0.9' },
@@ -90,10 +130,21 @@ function strip() {
   return g;
 }
 
+/** A flat square, a metre to every side of the middle. */
+function pad() {
+  const g = new BufferGeometry();
+  g.setAttribute('position', new BufferAttribute(Float32Array.from([-1, 0, -1, -1, 0, 1, 1, 0, 1, 1, 0, -1]), 3));
+  g.setAttribute('uv', new BufferAttribute(Float32Array.from([-1, -1, -1, 1, 1, 1, 1, -1]), 2));
+  g.setIndex([0, 1, 2, 0, 2, 3]);
+  return g;
+}
+
 const NO_WALLS: Wall[] = [];
 
 /** `speed` is how fast time goes: TIMELAPSE, or 0 for a still. */
-export function Cars({ net, speed, target, trail = 0, glow = false, walls = NO_WALLS, onGlowFail, heat = false, trace = null, shade = true, onNote }: {
+export function Cars({ net, speed, target, trail = 0, glow = false, walls = NO_WALLS, onGlowFail, heat = false, trace = null, shade = true, onNote, onSim }: {
+  /** told which simulation this is, for the buttons of ?debug */
+  onSim?: (sim: Sim) => void;
   /** the same lights as a long exposure on a WebGPU canvas of its own (Glow.tsx) instead of as strips here, and what hides them */
   glow?: boolean;
   walls?: Wall[];
@@ -146,21 +197,27 @@ export function Cars({ net, speed, target, trail = 0, glow = false, walls = NO_W
       for (const c of sim.cars) if (meshes.current[c.type] === m) c.fresh = c.dirty = true;
     }
     (window as any).sim = sim;
-  }, [sim]);
+    onSim?.(sim);
+  }, [sim, onSim]);
 
   // where each vehicle under way has been these last frames: x, height, y and the time, newest first
   const trails = useMemo(() => {
-    const geo = strip(), age = new InstancedBufferAttribute(new Float32Array(STREAKS * 2), 2);
+    const geo = strip(), age = new InstancedBufferAttribute(new Float32Array(STREAKS * 2), 2), hue = new InstancedBufferAttribute(new Float32Array(STREAKS), 1);
     geo.setAttribute('aAge', age);
-    return { geo, age, mat: streak(), past: new WeakMap<object, Float32Array>() };
+    geo.setAttribute('aHue', hue);
+    return { geo, age, hue, mat: streak(), past: new WeakMap<object, Float32Array>() };
   }, []);
   const streaks = useRef<InstancedMesh>(null);
+  const halo = useMemo(() => ({ mat: siren(), geo: pad() }), []);
+  const halos = useRef<InstancedMesh>(null);
   const exposure = useRef(trail);
   // the strips are not drawn while the other layer shows the same lights
   exposure.current = glow ? 0 : trail;
   const layer = useRef<GlowHandle>(null);
   const stay = useRef(trail);
   stay.current = trail;
+  const exposed = useRef(false);
+  exposed.current = glow && trail > 0;
 
   // The signals. Where a road comes to the lights a mast stands on its right at the stop line, with an arm out over the lanes,
   // and over each lane hangs a head: a dark box on its side with three lamps in a row, one of them lit
@@ -215,7 +272,8 @@ export function Cars({ net, speed, target, trail = 0, glow = false, walls = NO_W
     steelMesh.current!.instanceMatrix.needsUpdate = true;
   }, [lights, heads]);
 
-  useFrame(({ camera }, delta) => {
+  useFrame(({ camera, clock }, delta) => {
+    NOW.value = clock.elapsedTime;
     const dt = Math.min(delta, 0.05) * rate.current;
     const n = Math.ceil(dt / 0.1);
     for (let i = 0; i < n; i++) {
@@ -251,13 +309,14 @@ export function Cars({ net, speed, target, trail = 0, glow = false, walls = NO_W
     }
     for (const m of ms) if (m) m.instanceMatrix.needsUpdate = true;
     const dark = NIGHT.value > 0.01;
-    for (const b of beams.current) if (b) b.visible = dark;
+    // where the lights are a long exposure the beams are part of it (Glow.tsx), and are not drawn here as well
+    for (const b of beams.current) if (b) b.visible = dark && !exposed.current;
 
     // the trails: every frame each vehicle under way notes where it is, and after dark its way so far is drawn
     const sm = streaks.current, T = exposure.current;
     if (sm) sm.visible = dark && T > 0;
     if (sm && T > 0) {
-      const a = sm.instanceMatrix.array, age = trails.age.array;
+      const a = sm.instanceMatrix.array, age = trails.age.array, hue = trails.hue.array;
       let k = 0;
       for (const c of sim.cars) {
         if (c.state === PARKED) continue;
@@ -281,6 +340,8 @@ export function Cars({ net, speed, target, trail = 0, glow = false, walls = NO_W
           a[o + 8] = -dy * w; a[o + 9] = 0; a[o + 10] = dx * w; a[o + 11] = 0;
           a[o + 12] = h[p]; a[o + 13] = h[p + 1] + 0.4; a[o + 14] = h[p + 2]; a[o + 15] = 1;
           age[k * 2] = young; age[k * 2 + 1] = Math.max(0, old);
+          // which flash it was at when it drove this stretch: mostly blue, which nothing else on the road is, and red now and then
+          hue[k] = c.siren ? (Math.floor(h[p + 3] * 2) & 3 ? 1 : 2) : 0;
           k++;
         }
       }
@@ -288,7 +349,26 @@ export function Cars({ net, speed, target, trail = 0, glow = false, walls = NO_W
         sm.count = k;
         sm.instanceMatrix.needsUpdate = true;
         trails.age.needsUpdate = true;
+        trails.hue.needsUpdate = true;
       }
+    }
+
+    // the glow over every emergency vehicle that is out
+    const hl = halos.current;
+    if (hl) {
+      const a = hl.instanceMatrix.array;
+      let k = 0;
+      for (const c of sim.cars) {
+        if (!c.siren || k >= SIRENS) continue;
+        const o = k++ * 16, cs = Math.cos(c.ang) * HALO * 0.5, sn = Math.sin(c.ang) * HALO * 0.5;
+        a[o] = cs; a[o + 1] = 0; a[o + 2] = sn; a[o + 3] = 0;
+        a[o + 4] = 0; a[o + 5] = 1; a[o + 6] = 0; a[o + 7] = 0;
+        a[o + 8] = -sn; a[o + 9] = 0; a[o + 10] = cs; a[o + 11] = 0;
+        a[o + 12] = c.x; a[o + 13] = c.h + 4; a[o + 14] = c.y; a[o + 15] = 1;
+      }
+      hl.count = k;
+      hl.visible = k > 0;
+      hl.instanceMatrix.needsUpdate = true;
     }
 
     const hm = headMesh.current;
@@ -314,6 +394,8 @@ export function Cars({ net, speed, target, trail = 0, glow = false, walls = NO_W
         <instancedMesh key={t.name} ref={(m) => { beams.current[i] = m; }} args={[light.geo[i], light.mat, t.cap]} frustumCulled={false} />
       ))}
       <instancedMesh ref={streaks} args={[trails.geo, trails.mat, STREAKS]} frustumCulled={false} />
+      <instancedMesh ref={halos} args={[halo.geo, halo.mat, SIRENS]} frustumCulled={false} />
+      <Works sim={sim} net={net} />
       {glow && trail > 0 && <Glow ref={layer} walls={walls} onFail={onGlowFail} />}
       {heat && <Heat sim={sim} net={net} speed={speed} />}
       {trace && <Journeys sim={sim} net={net} at={trace} note={onNote} />}

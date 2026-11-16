@@ -239,8 +239,11 @@ function layers(spec: Spec): Spec {
  */
 export function standing<T extends Rect>(intent: Intent, houses: T[]): T[] {
   const spans = intent.filter((s) => s.bridge && s.pts.length > 1).map((s) => ({ m: half(s) + 4.5, pts: sweep(s) }));
-  if (!spans.length) return houses;
-  const left = houses.filter((h) => !('path' in h) || !spans.some((s) => s.pts.some((p, i) => i > 0 && segNear(s.pts[i - 1], p, h, s.m))));
+  // the little ones by the road come down for any road that is painted through them, not only for a bridge
+  const roads = intent.filter((s) => s.paint && !s.bridge && s.pts.length > 1).map((s) => ({ m: half(s) + 3, pts: s.pts }));
+  if (!spans.length && !roads.length) return houses;
+  const hit = (list: typeof spans, h: Rect) => list.some((s) => s.pts.some((p, i) => i > 0 && segNear(s.pts[i - 1], p, h, s.m)));
+  const left = houses.filter((h) => !('path' in h) || !(hit(spans, h) || ('small' in h && h.small && hit(roads, h))));
   return left.length === houses.length ? houses : left;
 }
 

@@ -9,13 +9,19 @@ import { turned, type Block } from './Town';
 
 // ---------- people and bikes ----------
 
+const NO_WAYS: V[][] = [];
+
 interface Line {
   pts: V[];
   cum: number[];
   len: number;
+  /** a walk or the cycle way of the park */
+  park?: boolean;
 }
 
 const WALKERS = 460, RIDERS = 130;
+/** How many of them never leave the park: they turn round at its ends. The rest come through it as they come through anywhere. */
+const STROLLERS = 34, PARK_RIDERS = 7;
 const CLOTHES = [0x22252b, 0x2c3340, 0xe9e6de, 0xd9d4c8, 0xb8322a, 0x2f5fa8, 0xe0b23a, 0x4a6b4a, 0x8a8d92, 0xd98aa0];
 const RIDES = [0x1e2126, 0xc23a2a, 0x2a5ea0, 0xe8e5dc, 0xe2b33a, 0x3a7a5a];
 
@@ -24,7 +30,37 @@ function line(pts: V[]): Line {
   return { pts, cum, len: cum[cum.length - 1] };
 }
 
-export function People({ net, blocks, speed, shade = true }: { net: Net; blocks: Block[]; speed: number; shade?: boolean }) {
+/**
+ * Cut the line that passes nearest to p, there, so that something can begin or end at that point:
+ * people only change lines where a line ends. Returns the point, or null if nothing passes within reach.
+ */
+function cut(lines: Line[], p: V, reach: number): V | null {
+  let best = reach, li = -1, at = 0, q = p;
+  lines.forEach((l, i) => {
+    for (let k = 0; k < l.pts.length - 1; k++) {
+      const a = l.pts[k], b = l.pts[k + 1], dx = b.x - a.x, dy = b.y - a.y;
+      const t = Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / (dx * dx + dy * dy || 1)));
+      const x = a.x + dx * t, y = a.y + dy * t, d = Math.hypot(x - p.x, y - p.y);
+      if (d < best) { best = d; li = i; at = k; q = { x, y }; }
+    }
+  });
+  if (li < 0) return null;
+  const pts = lines[li].pts;
+  lines.splice(li, 1, line([...pts.slice(0, at + 1), q]), line([q, ...pts.slice(at + 1)]));
+  return q;
+}
+
+/** A way through the park, tied at both ends to whatever passes there: the sidewalk for a walk, the kerb for the cycle way. */
+function tied(lines: Line[], pts: V[], reach: number): Line {
+  const a = cut(lines, pts[0], reach), b = cut(lines, pts[pts.length - 1], reach);
+  return { ...line([...(a ? [a] : []), ...pts, ...(b ? [b] : [])]), park: true };
+}
+
+export function People({ net, blocks, speed, shade = true, walks = NO_WAYS, rides = NO_WAYS }: {
+  net: Net; blocks: Block[]; speed: number; shade?: boolean;
+  /** the walks of the park, and its cycle way once in each direction */
+  walks?: V[][]; rides?: V[][];
+}) {
   const rate = useRef(speed);
   rate.current = speed;
   const walkMesh = useRef<InstancedMesh>(null), rideMesh = useRef<InstancedMesh>(null);
@@ -43,6 +79,8 @@ export function People({ net, blocks, speed, shade = true }: { net: Net; blocks:
       }
     }
     for (const b of blocks) if (b.path.length > 1) walk.push(line(b.path));
+    // the park's own ways begin and end on these
+    const strolls = walks.map((w) => tied(walk, w, 6)), spins = rides.map((w) => tied(ride, w, 9));
     // and from one sidewalk to the next, so that nobody has to vanish at a kerb: over the zebra where an arm has one,
     // and round the corner to the arm beside it
     const link: Line[] = [];
@@ -62,8 +100,8 @@ export function People({ net, blocks, speed, shade = true }: { net: Net; blocks:
         if (b !== a && afoot(b.r) && Math.hypot(b.down.x - a.up.x, b.down.y - a.up.y) < 70) link.push(line([a.up, b.down]));
       });
     }
-    return { walk: [...walk.filter((l) => l.len > 6), ...link.filter((l) => l.len > 0.5)], ride: ride.filter((l) => l.len > 6) };
-  }, [net, blocks]);
+    return { walk: [...walk.filter((l) => l.len > 6), ...link.filter((l) => l.len > 0.5), ...strolls], ride: [...ride.filter((l) => l.len > 6), ...spins] };
+  }, [net, blocks, walks, rides]);
 
   // each one: which line, how far along, which way, how fast
   const who = useMemo(() => {
@@ -77,11 +115,18 @@ export function People({ net, blocks, speed, shade = true }: { net: Net; blocks:
     const r = rng(91);
     for (const [list, lines] of [[who.walk, ways.walk], [who.ride, ways.ride]] as const) {
       const total = lines.reduce((a, l) => a + l.len, 0);
-      for (const p of list) {
+      // the first few belong to the park, if there is one
+      const fond = lines === ways.ride ? PARK_RIDERS : STROLLERS;
+      const park = lines.flatMap((q, k) => (q.park ? [k] : [])), green = park.reduce((a, k) => a + lines[k].len, 0);
+      list.forEach((p, i) => {
         let at = r() * total, l = 0;
-        while (l < lines.length - 1 && at > lines[l].len) at -= lines[l++].len;
+        if (i < fond && park.length) {
+          let n = 0;
+          for (at = (at / total) * green; n < park.length - 1 && at > lines[park[n]].len; n++) at -= lines[park[n]].len;
+          l = park[n];
+        } else while (l < lines.length - 1 && at > lines[l].len) at -= lines[l++].len;
         p.l = l; p.s = Math.min(at, lines[l]?.len ?? 0); p.dir = lines === ways.ride || r() < 0.5 ? 1 : -1;
-      }
+      });
     }
     const c = new Color();
     who.walk.forEach((p, i) => walkMesh.current!.setColorAt(i, c.setHex(CLOTHES[(p.k * CLOTHES.length) | 0])));
@@ -93,7 +138,7 @@ export function People({ net, blocks, speed, shade = true }: { net: Net; blocks:
   useFrame((_, delta) => {
     const dt = Math.min(delta, 0.05) * rate.current;
     const move = (list: typeof who.walk, lines: Line[], mesh: InstancedMesh, oneWay: boolean, sx: number, sy: number, sz: number) => {
-      const a = mesh.instanceMatrix.array;
+      const a = mesh.instanceMatrix.array, fond = oneWay ? PARK_RIDERS : STROLLERS;
       list.forEach((p, i) => {
         const L = lines[p.l];
         const o = i * 16;
@@ -108,6 +153,8 @@ export function People({ net, blocks, speed, shade = true }: { net: Net; blocks:
             for (let k = 0; k < lines.length; k++) {
               if (k === p.l) continue;
               const M = lines[k];
+              // whoever belongs to the park stays on its ways
+              if (i < fond && L.park && !M.park) continue;
               for (const e of oneWay ? [0] : [0, 1]) {
                 const q = e ? M.pts[M.pts.length - 1] : M.pts[0];
                 if (Math.abs(q.x - end.x) + Math.abs(q.y - end.y) > near) continue;

@@ -19,7 +19,11 @@ const MID = [0, 0], SPAN = 1200, SIZE = 2048;
 /** Sixteen-bit floats: they blend and filter without any optional feature, and a fading light never sticks at a grey as it does in bytes. */
 const FORMAT: GPUTextureFormat = 'rgba16float';
 /** Stretches of light drawn in one frame at most, and the numbers kept for each. */
-const SEGS = 4096, REC = 12;
+const SEGS = 8192, REC = 12;
+/** What a stretch is the light of: a head lamp, a tail lamp, the blue or the red flash of an emergency vehicle, or the beam on the road ahead. */
+const HEAD = 0, TAIL = 1, FLASH = 2, BEAM = 4;
+/** How far ahead of a vehicle its head lamps show the road, metres, and how bright that is beside the lamps themselves. */
+const REACH = 46, SHINE = 0.085;
 /** Seconds of their time between two notes of where a vehicle is: short enough that a turn through a junction stays a curve. */
 const EVERY = 0.35;
 /** How high a lamp sits on a vehicle, metres. */
@@ -40,11 +44,15 @@ const SPLAT = /* wgsl */ `
 struct Out { @builtin(position) pos: vec4f, @location(0) at: vec2f, @location(1) len: f32, @location(2) @interpolate(flat) lamp: vec2f, @location(3) age: vec2f };
 const HALF = 4.5; // metres either side of the way that the light reaches
 const CAP = 1.2;  // metres over which one stretch hands over to the next
+const FAN = 12.0; // metres either side of a vehicle's heading that its beam reaches, at its far end
 @vertex fn vs(@builtin(vertex_index) i: u32, @location(0) ab: vec4f, @location(1) k: vec4f) -> Out {
   let a = ab.xy; let b = ab.zw; let d = b - a; let len = length(d);
   let along = select(vec2f(1.0, 0.0), d / max(len, 1e-4), len > 1e-3);
   let across = vec2f(-along.y, along.x);
-  let s = mix(-CAP, len + CAP, f32(i & 1u)); let v = mix(-HALF, HALF, f32(i >> 1u));
+  // a beam is not a stretch of the way but a cone ahead of the vehicle: wider, and with no ends to hand over
+  let beam = k.z > 3.5;
+  let cap = select(CAP, 0.0, beam); let half = select(HALF, FAN, beam);
+  let s = mix(-cap, len + cap, f32(i & 1u)); let v = mix(-half, half, f32(i >> 1u));
   let p = (a + along * s + across * v - vec2f(${MID[0]}, ${MID[1]})) / ${SPAN / 2}.0;
   var o: Out;
   o.pos = vec4f(p.x, -p.y, 0.0, 1.0);
@@ -53,6 +61,21 @@ const CAP = 1.2;  // metres over which one stretch hands over to the next
 }
 @fragment fn fs(o: Out) -> @location(0) vec4f {
   let s = o.at.x; let v = o.at.y;
+  if (o.lamp.x > 3.5) {
+    // the beam: narrow and bright at the nose, wider and fainter the further it goes. One of these is laid down for every
+    // note of where the vehicle is, so through a bend they add up to a fan on the outside of it
+    let t = clamp(s / max(o.len, 1e-3), 0.0, 1.0);
+    let wide = 1.1 + 7.5 * t; let x = v / wide;
+    let far = (1.0 - t) * (1.0 - t) * smoothstep(0.0, 0.05, t);
+    return vec4f(vec3f(1.0, 0.86, 0.64) * exp(-x * x) * far / wide * o.lamp.y * o.age.x, 1.0);
+  }
+  if (o.lamp.x > 1.5) {
+    // the flashes of an emergency vehicle: one colour to a stretch, wide as the road
+    let age = mix(o.age.x, o.age.y, clamp(s / max(o.len, 1e-3), 0.0, 1.0));
+    let ends = clamp((s + CAP) / (2.0 * CAP), 0.0, 1.0) * clamp((o.len + CAP - s) / (2.0 * CAP), 0.0, 1.0);
+    let w = v / 2.2;
+    return vec4f(mix(vec3f(0.08, 0.3, 1.0), vec3f(1.0, 0.06, 0.03), o.lamp.x - 2.0) * exp(-w * w) * ends * age * o.lamp.y, 1.0);
+  }
   // each stretch fades in over the end of the one before, so a straight way is one even line and not a string of beads
   let ends = clamp((s + CAP) / (2.0 * CAP), 0.0, 1.0) * clamp((o.len + CAP - s) / (2.0 * CAP), 0.0, 1.0);
   // older towards where it came from
@@ -148,6 +171,8 @@ class Layer {
   /** where the lamps of each vehicle were when last noted: head x y, tail x y, height, when */
   private last = new WeakMap<object, Float32Array>();
   private noted = -1e9; private drawn = -1; private blank = true; private lit = false;
+  /** how many notes have been taken: the flashes of an emergency vehicle take turns by it */
+  private notes = 0;
   private dead = false;
 
   constructor(private device: GPUDevice, host: HTMLElement) {
@@ -212,6 +237,7 @@ class Layer {
   sample(cars: Car[], time: number, now = false) {
     if (NIGHT.value <= 0.01 || (!now && time - this.noted < EVERY) || time === this.noted) return;
     this.noted = time;
+    this.notes++;
     const rec = this.rec;
     for (const c of cars) {
       if (c.state === PARKED) continue;
@@ -222,15 +248,27 @@ class Layer {
       const hx = c.x + fx * half, hy = c.y + fy * half, tx = c.x - fx * half, ty = c.y - fy * half;
       // a jump is not a journey: whoever was moved with the roads, or was not followed for a while, starts again
       const gap = time - l[5];
+      let moved = 0;
       if (!fresh && gap < 3 && Math.hypot(hx - l[0], hy - l[1]) < 40 * Math.max(gap, 0.1) + 4) {
+        moved = Math.hypot(hx - l[0], hy - l[1]);
         // a lamp that stands still would add up to a sun; one that moves is as bright per metre however fast it goes
-        const w = Math.min(1, 0.1 + Math.hypot(hx - l[0], hy - l[1]) / 3);
-        for (let tail = 0; tail < 2 && this.n < SEGS; tail++) {
-          const o = this.n++ * REC, p = tail * 2;
+        const w = Math.min(1, 0.1 + moved / 3);
+        // the head lamps, the tail lamps, and for an emergency vehicle its flash, with its own lamps turned down under it:
+        // mostly blue, the one colour nothing else on the road has, and red now and then
+        for (let k = 0, n = c.siren ? 3 : 2; k < n && this.n < SEGS; k++) {
+          const o = this.n++ * REC, tail = k === 1, p = tail ? 2 : 0;
           rec[o] = l[p]; rec[o + 1] = l[4]; rec[o + 2] = l[p + 1];
           rec[o + 3] = tail ? tx : hx; rec[o + 4] = c.h; rec[o + 5] = tail ? ty : hy;
-          rec[o + 6] = l[5]; rec[o + 7] = time; rec[o + 8] = tail; rec[o + 9] = w; rec[o + 10] = fx; rec[o + 11] = fy;
+          rec[o + 6] = l[5]; rec[o + 7] = time; rec[o + 8] = k < 2 ? k : FLASH + (this.notes & 3 ? 0 : 1); rec[o + 9] = k < 2 ? (c.siren ? 0.3 * w : w) : 1.1 * w; rec[o + 10] = fx; rec[o + 11] = fy;
         }
+      }
+      // The beam on the road ahead, as it lies at this moment: it is exposed like the rest, and by how far the vehicle
+      // has come since the last note, so that a fast one does not lay less light on a metre of road than a slow one
+      if (this.n < SEGS) {
+        const o = this.n++ * REC, y = c.h - LAMP;
+        rec[o] = hx; rec[o + 1] = y; rec[o + 2] = hy;
+        rec[o + 3] = hx + fx * REACH; rec[o + 4] = y; rec[o + 5] = hy + fy * REACH;
+        rec[o + 6] = time; rec[o + 7] = time; rec[o + 8] = BEAM; rec[o + 9] = SHINE * (0.05 + moved); rec[o + 10] = fx; rec[o + 11] = fy;
       }
       l[0] = hx; l[1] = hy; l[2] = tx; l[3] = ty; l[4] = c.h; l[5] = time;
     }
@@ -265,8 +303,10 @@ class Layer {
       out[q + 4] = Math.exp(-(time - rec[o + 6]) / tau); out[q + 5] = Math.exp(-(time - rec[o + 7]) / tau);
       // head lamps show to whoever they come towards, tail lamps to whoever they leave: lanes turn white or red by which way they run
       const dx = C.x - bx, dy = C.z - by, d = Math.hypot(dx, dy) || 1, toward = (rec[o + 10] * dx + rec[o + 11] * dy) / d;
-      out[q + 6] = rec[o + 8];
-      out[q + 7] = rec[o + 9] * (0.12 + 0.88 * step(-0.4, 0.6, rec[o + 8] ? -toward : toward));
+      const kind = rec[o + 8];
+      out[q + 6] = kind;
+      // a flash shows all round; a beam is on the road for anyone to see, but less from behind, or every lane would be white
+      out[q + 7] = rec[o + 9] * (kind === HEAD || kind === TAIL ? 0.12 + 0.88 * step(-0.4, 0.6, kind === TAIL ? -toward : toward) : kind === BEAM ? 0.15 + 0.85 * step(-0.4, 0.6, toward) : 1);
     }
     const n = this.n;
     this.n = 0;
