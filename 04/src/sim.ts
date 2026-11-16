@@ -340,7 +340,7 @@ export class Sim {
   private setRoute(c: Car, from: Lane, toStall: boolean): boolean {
     let goals: Lane[] = [];
     let st: Stall | null = null;
-    if (toStall) {
+    if (toStall && this.net.stalls.length) {
       const free = this.net.stalls;
       for (let k = 0; k < 12 && !st; k++) {
         const s = free[(this.rand() * free.length) | 0];

@@ -20,6 +20,7 @@ import { buildNet, type Net, type V } from './net';
 import { MAP } from './map';
 import { baseIntent, derive, no, standing, type Intent } from './intent';
 import { addStroke, erase, smear, smearStart } from './paint';
+import { tileAsked, tileStrokes } from './tiles';
 import { laid, madeAt, wetStart } from './wet';
 
 /** The grade: exposure, warmth, bite, how much colour is left, how grey the blacks are, and what the stock and the glass add. */
@@ -132,11 +133,13 @@ const asked = new URLSearchParams(location.search), dayAsked = parseFloat(asked.
 const CLOCK: Clock = { hour: hourAsked >= 0 && hourAsked < 24 ? hourAsked : nowHour(), hold: asked.has('hold'), day: dayAsked >= 20 ? dayAsked : 240, trail: 8, lights: new URLSearchParams(location.search).has('gpu') || (!touch && !no('gpu')) ? 'webgpu' : 'geometry' };
 const CLOCKS: [Exclude<keyof Clock, 'hold' | 'lights'>, string, number, number, number][] = [['hour', 'Time', 0, 24, 0.05], ['day', 'Day', 30, 600, 10], ['trail', 'Trails', 0, 16, 0.5]];
 /** The place as it starts: the streets, and a few flyovers laid over them the way a hand would paint them. ?debug starts on `MAP`. */
-const BASE: Intent = [
+// ?tile=i,j starts on a generated tile of the endless grid instead (see tiles.ts); the flyovers belong to the hand-drawn one
+const TILE = tileAsked();
+const BASE: Intent = (TILE ? [] : [
   [[-232, -68], [-150, 0], [-60, 82]],
   [[215, -100], [245, 0], [230, 110]],
   [[-110, 168], [0, 140], [108, 180]],
-].reduce((it, line) => addStroke(it, line.map(([x, y]) => ({ x, y })), true) ?? it, baseIntent());
+]).reduce((it, line) => addStroke(it, line.map(([x, y]) => ({ x, y })), true) ?? it, TILE ? tileStrokes(TILE.i, TILE.j, TILE.detail) : baseIntent());
 /** One house in this many is left standing. */
 const KEEP = 2;
 /** Milliseconds a smear has to be held still before the ground is made of it for real. */

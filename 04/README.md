@@ -22,6 +22,7 @@ Drag on the ground and paint follows the brush. Only the strokes are kept. Every
 - Now and then a stretch of road is dug up for a good part of a day: a lane coned off, where the traffic merges into the lane beside it and goes past slowly, or a back street closed with barriers, where it finds another way. One or two sites at a time.
 - The drone is never quite still: it glides, swings a few degrees and bobs in the wind.
 - `?debug` opens a pane: the shot (angle, distance, lens, tilt shift), the drone's own motion, the hour (Time, Hold time to stay there, Day for how long a day takes, Trails for how long the lights of the traffic stay on the picture, Lights for how they are drawn: `geometry`, `webgpu` or `off`), the grade, pixels and frames per second, what smooths the edges, and what can be switched off. Copy puts all of it on the clipboard as JSON; Copy map and Paste map do the same for the painting. Send ambulance sends an emergency vehicle across the town now, and Dig opens a works site near the middle, a coned-off lane and a closed road in turn. `?debug` starts on the map in `map.ts`.
+- `?tile=i,j` starts on a generated tile of the endless grid instead of the hand-drawn map: column `i` east, row `j` south, so `?tile=0,-1` is the tile to the north. `&detail=0` shows only its grid of big roads, `&detail=1` the streets too.
 
 ## What is there
 
@@ -30,6 +31,7 @@ Drag on the ground and paint follows the brush. Only the strokes are kept. Every
 - `vehicles.ts`: seven body types from tapered boxes, instanced, in the colours cars actually come in.
 - `intent.ts`: the strokes, and the rules that derive roads between junctions from them. The base map lives here as strokes.
 - `map.ts`: a painting saved from `?debug`, where `?debug` starts.
+- `tiles.ts`: the place without an end. `tileStrokes(i, j, detail)` gives the strokes of any tile of an endless grid, from a seed: the arterial and the cross street where the hand-drawn map has them in every tile, back streets and side streets whose crossing of a border is a function of that border (so two neighbours agree), and inside them a parking lot or two and lanes that grow out of the roads that are there. Tile 0, 0 is the hand-drawn map. Nothing moves the drone from tile to tile yet.
 - `paint.ts`, `Painter.tsx`: the tools. They only add, move or mark strokes.
 - `wet.ts`: a smear while it is dragged. The grab and the hand are two uniforms; every material on the roads is pushed in its vertex shader by the falloff `smear()` gives the strokes (the street trees by instance number, the WebGPU lights by going back through the push), each layer until it has been made again from the paint.
 - `haze.ts`: the air and the hour. `skyAt(hour)` says where the sun or the moon is, what colour and how strong, what the sky adds, and how much of the night is here (`NIGHT`). Nothing at night is a light: lamp heads, signs, rooms and vehicle lamps are surfaces that shine by `NIGHT` and bloom, and what they throw on the ground is a glow laid over it.
@@ -52,6 +54,7 @@ Drag on the ground and paint follows the brush. Only the strokes are kept. Every
 - A parking lot as a grid of tiny junctions gridlocks at once. One road snaking through the aisles cannot.
 - "Don't block the box" has to be a promise of room in the lane beyond, not a look at whether its last car is moving.
 - Cutting strokes where they cross and merging what is near does not survive a scribble: flat angles and stacked roads. Walking strokes over shared nodes with a minimum distance does, with far less code.
+- Strokes made by a generator come through the rules whole if they keep further from each other than the rules' own ROOM, join squarely (measured against the road a node's length either way, not only where they touch), and never end or turn sharply within reach of another road: a corner or an end is a node before anything is walked, and the road beside it is pulled over to it. The hand-drawn map has two such places: the arterial detours 30 m to the lane end at 205, -30, and the south back street 42 m to the one at 205, 200.
 
 ## Not yet
 
@@ -64,3 +67,4 @@ Drag on the ground and paint follows the brush. Only the strokes are kept. Every
 - A painted roundabout ignores parking lots and lies straight over them.
 - A roundabout made from a crowded junction locks up when the roads leaving it are full. On an open one the traffic keeps going round.
 - Size reads little from the network: only dead ends. No attribute layer.
+- The tiles are only looked at one at a time (`?tile=`). The treadmill that moves from one to the next, and houses, trees and the fixed buildings per tile, are not there: every tile wears the hand-drawn map's warehouse, strip mall and gas station, mostly on top of its own roads.

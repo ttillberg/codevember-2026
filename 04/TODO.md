@@ -101,6 +101,19 @@ Smearing roads together is where the tangle comes from. It should come out dense
 - Bridges land in the middle of crowded junctions and are still low there.
 - A twist and a pinch brush.
 
+## Endless: tiles
+
+`tiles.ts` makes the strokes of any tile of an endless grid from a seed; `?tile=i,j&detail=0|1|2` looks at one. Counted headless over 9 x 9, 25 x 25 and 41 x 41 tiles: every border crossing agrees with the neighbour's, nothing merges, no road is pulled off its stroke, grown a size or too short for its junctions, every lane is reached from the ways in and reaches a way out, 0.6 ms a tile.
+
+- The treadmill: a window of tiles round the drone, shifted back to the origin as it moves. It needs the strokes of several tiles laid together (each offset by `TILE`), and then `far()` in `net.ts` no longer says where the ways in are: it is a circle of 400 m round the middle of one tile. The generator avoids it by never letting a lane stop outside that circle; with a moving window the ways in are where a stroke leaves the window.
+- A stroke that crosses a border is two strokes, one in each tile, that end on the same point. Laid together they have to be joined into one (same point, same `w`), or the rules see two ends meeting, which also works but pins a node there.
+- Houses, trees, parks and the fixed buildings per tile. `BUILDINGS` and `PADS` in `net.ts` stand in every tile: in 9 x 9, 77 of 81 tiles have a road through at least one of them (median 2 of the 7). The planting runs on whatever is loaded, so a tile planted at detail 1 and again at 2 gets other houses.
+- Detail: a tile further off is asked for with less. The levels nest (the strokes of 0 are the first of 1, and so on), so the big roads do not move; but a lane that joins a street puts a junction on it, so the street's own nodes shift a little when the level goes up.
+- The lanes are tidier than the hand-drawn ones: every one meets its road squarely and keeps 50 m from the next, because that is what is known to come through the rules. Twice as many, doubling back, is the reference; that needs ROOM to be less than 44 first.
+- All tiles are alike in the middle: the same crossing of the same two roads. The roundabout is only ever on a street corner, because a ring laid over a road that is already there (the grid is at the level below) keeps that road as a chord through its middle.
+- Traffic, 180 vehicles for an hour on each of the 80 tiles round the hand-drawn one, two seeds: 2,520 through at the median against 1,925 and 2,214 on the hand-drawn map, and every way in is used. But the woods tiles clog: half of their runs end with a vehicle that has stood five minutes, 6 of 22 with ten or more, 2 locked solid (-4,-3 and 3,-3; -4,-3 already with only its streets). 180 is too many for 4 to 6 km of road: the count should follow the length of road in the window.
+- A map with no parking at all crashed the traffic (`setRoute` picked from an empty list): guarded, one line in `sim.ts`.
+
 ## Model
 
 Done: strokes are the only state, `derive()` in `intent.ts` walks them over shared nodes and picks the styles, the base map is strokes. Paint on paint thickens per stretch. Lots are obstacles. Signals one to a block.
