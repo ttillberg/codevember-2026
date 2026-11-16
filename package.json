@@ -2,6 +2,7 @@
   "name": "codevember-2026",
   "private": true,
   "description": "One mini project per day during Codevember 2026",
+  "author": "Theo Tillberg (https://x.com/theo_t)",
   "homepage": "https://ttillberg.github.io/codevember-2026/",
   "repository": "github:ttillberg/codevember-2026",
   "license": "MIT",
