@@ -17,7 +17,8 @@ import { SOAK, WET } from './wet';
  * screen point and a half in the default shot: a lamp's light on a road is wider than that. 4096 would be four times
  * the pixels to fade every frame, for an edge nobody sees.
  */
-const MID = [0, 0], SPAN = 1200, SIZE = 2048;
+// half the map on a phone: a quarter of the memory, and the light is soft enough not to show it
+const MID = [0, 0], SPAN = 1200, SIZE = typeof matchMedia !== 'undefined' && matchMedia('(pointer: coarse)').matches ? 1024 : 2048;
 /** Sixteen-bit floats: they blend and filter without any optional feature, and a fading light never sticks at a grey as it does in bytes. */
 const FORMAT: GPUTextureFormat = 'rgba16float';
 /** Stretches of light drawn in one frame at most, and the numbers kept for each. */

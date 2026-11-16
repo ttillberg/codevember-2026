@@ -249,6 +249,9 @@ importers:
       '@types/three':
         specifier: ^0.187.0
         version: 0.187.0
+      '@vitejs/plugin-basic-ssl':
+        specifier: ^2.3.0
+        version: 2.3.0(vite@8.3.5(esbuild@0.28.2))
       '@vitejs/plugin-react':
         specifier: ^6.2.1
         version: 6.2.1(vite@8.3.5(esbuild@0.28.2))
@@ -1916,6 +1919,10 @@ snapshots:
   '@vitejs/plugin-basic-ssl@2.3.0(vite@7.3.7(lightningcss@1.33.0))':
     dependencies:
       vite: 7.3.7(lightningcss@1.33.0)
+
+  '@vitejs/plugin-basic-ssl@2.3.0(vite@8.3.5(esbuild@0.28.2))':
+    dependencies:
+      vite: 8.3.5(esbuild@0.28.2)
 
   '@vitejs/plugin-react@6.2.1(vite@8.3.5(esbuild@0.28.2))':
     dependencies:

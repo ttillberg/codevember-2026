@@ -25,7 +25,9 @@ import { laid, madeAt, wetStart } from './wet';
 
 /** The grade: exposure, warmth, bite, how much colour is left, how grey the blacks are, and what the stock and the glass add. */
 type Grade = { gain: number; temp: number; bite: number; sat: number; lift: number; grain: number; bloom: number; dark: number; soft: number };
-const GRADE: Grade = { gain: 1, temp: -0.55, bite: 0.35, sat: 0.81, lift: 0, grain: 0, bloom: 0.55, dark: 0, soft: no('soft') ? 0 : 0.5 };
+/** A finger and no mouse: a phone or a tablet. */
+const touch = typeof matchMedia !== 'undefined' && matchMedia('(pointer: coarse)').matches;
+const GRADE: Grade = { gain: 1, temp: -0.55, bite: 0.35, sat: 0.81, lift: 0, grain: 0, bloom: 0.55, dark: 0, soft: no('soft') || touch ? 0 : 0.5 };
 
 /** The look of a drone clip shot through city haze: flat, pale, a little cool in the shadows. */
 class FadeEffect extends Effect {
@@ -80,11 +82,11 @@ const Film = wrapEffect(FilmEffect);
 
 const FRINGE = new Vector2(0.0012, 0.0008);
 const TARGET: [number, number, number] = [10, 0, -10];
-const touch = typeof matchMedia !== 'undefined' && matchMedia('(pointer: coarse)').matches;
 /** Where the drone hangs and what its lens does: degrees round and up, metres away, the point on the ground it looks at. */
 type Shot = { az: number; el: number; dist: number; fov: number; x: number; z: number; blur: number; taper: number; lean: number; focus: number };
 const SHOTS: Record<'p' | 'l', Shot> = {
-  p: { az: 62, el: 44, dist: 1150, fov: 19, x: TARGET[0], z: TARGET[2], blur: 0.28, taper: 0.56, lean: -2.3, focus: 0.5 },
+  // upright, the same drone a little higher: the screen is narrow, and a blur that is right on a desk drowns a phone
+  p: { az: 22, el: 69.5, dist: 950, fov: 27.5, x: -1, z: -10, blur: 0.22, taper: 0.98, lean: -2.3, focus: 0.42 },
   l: { az: 22, el: 69.5, dist: 800, fov: 27.5, x: -1, z: -10, blur: 0.45, taper: 0.98, lean: -2.3, focus: 0.38 },
 };
 const upright = () => innerWidth < innerHeight;
@@ -108,7 +110,8 @@ const FX: Fx = { aa: no('msaa') ? 'none' : 'msaa2', tilt: !no('tilt'), bloom: !n
 const SWITCHES: [Exclude<keyof Fx, 'aa'>, string][] = [['tilt', 'Tilt shift'], ['bloom', 'Bloom'], ['shadow', 'Shadows'], ['lazy', 'Lazy shadows']];
 /** What can be asked of the traffic without waiting for it: an emergency vehicle sent now, a works site opened now near the middle. */
 const PERKS: [string, (sim: Sim) => void][] = [['Send ambulance', (s) => s.dispatch()], ['Dig', (s) => s.dig()]];
-const DPR = touch ? 1.75 : 2;
+// a phone has three pixels to a point and holds it a hand away: anything much under that is seen as soft
+const DPR = touch ? 2.5 : 2;
 /** How the drone moves by itself: metres it glides to either side, degrees it swings round, metres it bobs in the wind, metres it shakes, seconds for a round. */
 type Move = { drift: number; orbit: number; hover: number; shake: number; period: number };
 const MOVE: Move = { drift: 19, orbit: 3, hover: 1.3, shake: 0, period: 45 };
@@ -122,7 +125,7 @@ const RAD = Math.PI / 180;
  * of theirs the lights of the traffic stay on the picture after dark. It opens in the low sun of the afternoon.
  */
 type Clock = { hour: number; hold: boolean; day: number; trail: number; lights: (typeof LIGHTS)[number] };
-/** How those lights are drawn: strips behind each vehicle, a long exposure on a WebGPU canvas over the picture (Glow.tsx), or not. The second where there is a WebGPU, on a desk; ?gpu asks for it on a phone too, ?no=gpu for the strips. */
+/** How those lights are drawn: strips behind each vehicle, a long exposure on a WebGPU canvas over the picture (Glow.tsx), or not. The second wherever there is a WebGPU, phones too; ?no=gpu for the strips. */
 const LIGHTS = ['geometry', 'webgpu', 'off'] as const;
 // ?hour=19 starts at seven in the evening instead
 const hourAsked = parseFloat(new URLSearchParams(location.search).get('hour') ?? '');
@@ -130,7 +133,7 @@ const hourAsked = parseFloat(new URLSearchParams(location.search).get('hour') ??
 const nowHour = () => { const d = new Date(); return d.getHours() + d.getMinutes() / 60; };
 // ?hold starts with the clock held at its hour, ?day= says how many seconds a whole day takes: both for filming
 const asked = new URLSearchParams(location.search), dayAsked = parseFloat(asked.get('day') ?? '');
-const CLOCK: Clock = { hour: hourAsked >= 0 && hourAsked < 24 ? hourAsked : nowHour(), hold: asked.has('hold'), day: dayAsked >= 20 ? dayAsked : 240, trail: 8, lights: new URLSearchParams(location.search).has('gpu') || (!touch && !no('gpu')) ? 'webgpu' : 'geometry' };
+const CLOCK: Clock = { hour: hourAsked >= 0 && hourAsked < 24 ? hourAsked : nowHour(), hold: asked.has('hold'), day: dayAsked >= 20 ? dayAsked : 240, trail: 8, lights: no('gpu') ? 'geometry' : 'webgpu' };
 const CLOCKS: [Exclude<keyof Clock, 'hold' | 'lights'>, string, number, number, number][] = [['hour', 'Time', 0, 24, 0.05], ['day', 'Day', 30, 600, 10], ['trail', 'Trails', 0, 16, 0.5]];
 /** The place as it starts: the streets, and a few flyovers laid over them the way a hand would paint them. ?debug starts on `MAP`. */
 // ?tile=i,j starts on a generated tile of the endless grid instead (see tiles.ts); the flyovers belong to the hand-drawn one
@@ -168,6 +171,9 @@ function Pace({ fps }: { fps: number }) {
 }
 
 /** Mobile first: a phone held upright looks down the arterial, a wide screen across it. */
+/** How much nearer or further a pinch or the wheel may take the drone, as a share of its distance. */
+const ZOOM = 0.3;
+
 function Drone({ shot, move, set, onShot }: {
   shot: Shot | null; move: Move;
   /** goes up when a slider has moved the shot: only then is the drone put where the shot says */
@@ -179,6 +185,8 @@ function Drone({ shot, move, set, onShot }: {
   if (debug) (window as any).three = { gl, scene, advance, camera };
   const key = size.width < size.height ? 'p' : 'l';
   const s = shot ?? SHOTS[key];
+  // how far off it hangs when nobody has pinched: the middle of what a pinch or the wheel can reach
+  const base = SHOTS[key].dist;
   // where the controls start looking; after that the point is moved by hand, by a slider or by the drone, never by this
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const target = useMemo<[number, number, number]>(() => [s.x, 0, s.z], [key]);
@@ -249,6 +257,41 @@ function Drone({ shot, move, set, onShot }: {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [camera, key, set]);
   useFrame(({ clock }) => fly.current(clock.elapsedTime));
+  // Two fingers that turn about each other turn the drone about the point it looks at: the place follows the fingers.
+  // The controls already move it with the same two fingers; this only adds the turn they leave out.
+  useEffect(() => {
+    const el = gl.domElement, down = new Map<number, { x: number; y: number }>();
+    let was: number | null = null;
+    const angle = () => { const [a, b] = [...down.values()]; return Math.atan2(b.y - a.y, b.x - a.x); };
+    const press = (e: PointerEvent) => { if (e.pointerType === 'touch') { down.set(e.pointerId, { x: e.clientX, y: e.clientY }); was = down.size === 2 ? angle() : null; } };
+    const lift = (e: PointerEvent) => { down.delete(e.pointerId); was = null; };
+    const move = (e: PointerEvent) => {
+      const at = down.get(e.pointerId);
+      if (!at) return;
+      at.x = e.clientX; at.y = e.clientY;
+      const c = controls.current;
+      if (down.size !== 2 || !c) return;
+      const now = angle();
+      if (was !== null) {
+        // the short way round, whichever side of the turn the fingers crossed
+        let a = now - was;
+        if (a > Math.PI) a -= 2 * Math.PI; else if (a < -Math.PI) a += 2 * Math.PI;
+        const p = camera.position, dx = p.x - c.target.x, dz = p.z - c.target.z, cos = Math.cos(a), sin = Math.sin(a);
+        p.x = c.target.x + dx * cos + dz * sin;
+        p.z = c.target.z - dx * sin + dz * cos;
+        held.current = performance.now() + 900;
+      }
+      was = now;
+    };
+    el.addEventListener('pointerdown', press);
+    el.addEventListener('pointermove', move);
+    for (const k of ['pointerup', 'pointercancel', 'pointerleave'] as const) el.addEventListener(k, lift);
+    return () => {
+      el.removeEventListener('pointerdown', press);
+      el.removeEventListener('pointermove', move);
+      for (const k of ['pointerup', 'pointercancel', 'pointerleave'] as const) el.removeEventListener(k, lift);
+    };
+  }, [gl, camera]);
   return (
     <MapControls
       ref={controls as never}
@@ -256,15 +299,15 @@ function Drone({ shot, move, set, onShot }: {
       onStart={() => { held.current = Infinity; }}
       onEnd={() => { held.current = performance.now() + 900; }}
       target={target}
-      minDistance={70}
-      maxDistance={debug ? 2000 : 1250}
+      // a little nearer and a little further than where it hangs, no more: it is a drone, not a satellite
+      minDistance={debug ? 70 : base * (1 - ZOOM)}
+      maxDistance={debug ? 2000 : base * (1 + ZOOM)}
       minPolarAngle={0.25}
       maxPolarAngle={1.05}
       enableDamping
       onChange={fence}
       dampingFactor={0.12}
-      // the drone keeps its height: it pans and turns, it does not come down
-      enableZoom={false}
+      zoomSpeed={0.6}
       // one finger and the left button paint; two fingers and the right button move the drone
       mouseButtons={{ LEFT: -1 as unknown as MOUSE, MIDDLE: MOUSE.DOLLY, RIGHT: MOUSE.PAN }}
       touches={{ ONE: -1 as unknown as TOUCH, TWO: TOUCH.DOLLY_PAN }}
@@ -716,7 +759,7 @@ export function App() {
           <label>
             <span>Pixels</span>
             <select value={dpr} onChange={(e) => setDpr(+e.target.value)}>
-              {[0.75, 1, 1.25, 1.5, 1.75, 2].map((d) => <option key={d}>{d}</option>)}
+              {[0.75, 1, 1.25, 1.5, 1.75, 2, 2.5, 3].map((d) => <option key={d}>{d}</option>)}
             </select>
           </label>
           <label>

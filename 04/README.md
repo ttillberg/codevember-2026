@@ -16,7 +16,7 @@ Drag on the ground and paint follows the brush. Only the strokes are kept. Every
 - **P** (or space) pauses. It is always a timelapse, sixty times life. Painting works in a still too.
 - **T** takes up the next brush (Road, Bridge, Smear, Erase), shift + T the one before.
 - **R** reads the traffic of a road (Trace); R again takes the brush back up.
-- Two fingers and the right button move the drone. It keeps its height: there is no zoom.
+- Two fingers and the right button move the drone, and two fingers turned about each other turn it. A pinch or the wheel brings it a little nearer or takes it a little further off, a third either way.
 - The day runs by itself, four minutes for a day and its night. It opens in the low sun of the afternoon: long shadows, warm light, the sky cool against it. Then the lamps come on, the rooms and the signs light up, and the traffic is head lamps and trails of red. The night goes by three times as fast as the day. `?hour=19` starts at seven in the evening; without it the day starts at the visitor's own time. The time shows top right: drag it sideways (about an hour per 40 px) to set it, and it holds; the clock button holds or runs it again. The heat map is the overlay button beside it.
 - Now and then an ambulance, a fire engine or a police car crosses the town in a hurry, flashing blue and red, and leaves a blue trail after dark. The lights let it through, the traffic that would cross its way waits, and it pulls out round whoever is slow.
 - Now and then a stretch of road is dug up for a good part of a day: a lane coned off, where the traffic merges into the lane beside it and goes past slowly, or a back street closed with barriers, where it finds another way. One or two sites at a time.
