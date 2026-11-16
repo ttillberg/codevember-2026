@@ -1,6 +1,6 @@
 # Codevember 2026
 
-One mini project per day during November 2026. Not every day, and that's fine.
+One mini project per day during November 2026, by [Theo Tillberg](https://x.com/theo_t). Not every day, and that's fine.
 
 Following the prompt list shared by [@thespite](https://x.com/thespite/status/2116974998212772095).
 
