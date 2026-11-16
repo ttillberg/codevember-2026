@@ -132,6 +132,13 @@ canvas.glow { position: absolute; inset: 0; width: 100%; height: 100%; pointer-e
   background: #f4f4f2; color: #1c1c1c; font: inherit;
 }
 .pane button:nth-of-type(even) { background: rgba(244, 244, 242, 0.16); color: #f4f4f2; }
+/* the watch on the traffic: only there when it has something to say */
+.alarm {
+  position: fixed; z-index: 5; left: 16px; bottom: 90px; margin: 0; max-width: min(520px, calc(100vw - 32px)); max-height: 60vh; overflow: auto;
+  padding: 10px 12px; border-radius: 10px; background: rgba(120, 20, 16, 0.92); color: #fff; user-select: text; -webkit-user-select: text;
+  font: 11px/1.35 ui-monospace, Menlo, monospace; white-space: pre-wrap;
+}
+.alarm:empty { display: none; }
 .clean .corner, .clean .bar, .clean .note, .clean .pane { display: none; }
 @media (max-width: 640px) {
   /* the pane sits under the time and the overlays on a phone */

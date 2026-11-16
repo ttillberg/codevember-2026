@@ -305,7 +305,8 @@ function Sun({ speed, shadow, lazy, clock, scrub, onHour, live, readout }: {
   useFrame((_, delta) => {
     const n = frame.current++;
     if (!clock.hold && speed > 0) {
-      hour.current = (hour.current + Math.min(delta, 0.1) * (speed / TIMELAPSE) * hoursPerSecond(hour.current, clock.day)) % 24;
+      // never backwards, and never out of the day: a clock that jumps must not leave an hour that is no hour
+      hour.current = (((hour.current + Math.min(Math.max(delta, 0), 0.1) * (speed / TIMELAPSE) * hoursPerSecond(hour.current, clock.day)) % 24) + 24) % 24;
       if (onHour && n % 8 === 0) onHour(hour.current);
     }
     live.current = hour.current;
@@ -446,6 +447,36 @@ export function App() {
   // what is on the roads is pushed in the shaders (wet.ts), and the paint is laid when the hand lets go
   const grab = useRef<{ base: Intent; from: V; to?: V; rest?: { intent: Intent; at: V } } | null>(null);
   const still = useRef(0);
+  // A watch on the traffic. It has been seen to drain away, with nobody coming in, and never where it could be looked
+  // at: so when the roads have stood empty for a while with the traffic running, what the sim says of itself is put on
+  // the page, to be read off or sent on. Gone again when the traffic is back.
+  const alarm = useRef<HTMLPreElement>(null);
+  useEffect(() => {
+    let since = 0, seen = { sent: 0, blocked: 0, none: 0, lost: 0 }, hid = 0;
+    const vis = () => { if (document.hidden) hid++; };
+    document.addEventListener('visibilitychange', vis);
+    const id = setInterval(() => {
+      const sim = (window as any).sim;
+      if (!sim || !alarm.current) return;
+      let out = 0, parked = 0;
+      const kinds: Record<string, number> = {};
+      for (const c of sim.cars) { if (c.state === 2) parked++; else { out++; const k = sim.types?.[c.type]?.name ?? c.type; kinds[k] = (kinds[k] ?? 0) + 1; } }
+      const t = sim.tally;
+      if (t) { for (const k of Object.keys(seen) as (keyof typeof seen)[]) seen[k] += t[k]; sim.tally = { sent: 0, blocked: 0, none: 0, lost: 0 }; }
+      if (out > 8) { since = sim.time; seen = { sent: 0, blocked: 0, none: 0, lost: 0 }; alarm.current.textContent = ''; return; }
+      if (!since) since = sim.time;
+      // five minutes of their time, a few seconds of ours
+      if (sim.time - since < 300) return;
+      const lanes = sim.net?.lanes ?? [];
+      alarm.current.textContent = 'TRAFFIC GONE - please send this to the session\n' + JSON.stringify({
+        out, parked, kinds, target: sim.target, quiet: sim.quiet, hour: +hourNow.current.toFixed(2), simTime: Math.round(sim.time), emptyFor: Math.round(sim.time - since),
+        tries: seen, sources: (sim.sources ?? []).map((x: any) => ({ acc: x.acc, rate: x.rate, lanes: x.lanes.length, rank: x.lanes[0]?.road?.rank, waiting: x.lanes[0]?.cars?.length })),
+        lanes: lanes.length, shut: lanes.filter((l: any) => l.shut).length, rush: lanes.filter((l: any) => l.rush).length,
+        works: sim.works?.length, cars: sim.cars.length, hiddenTimes: hid, hiddenNow: document.hidden,
+      }, null, 1);
+    }, 1000);
+    return () => { clearInterval(id); document.removeEventListener('visibilitychange', vis); };
+  }, []);
   // ?debug: how the traffic stands, read off the sim a couple of times a second, to see at a glance when it has gone wrong
   const gauge = useRef<HTMLOutputElement>(null);
   useEffect(() => {
@@ -633,6 +664,7 @@ export function App() {
         <TimeControl now={hourNow} readout={readout} first={firstTime} hold={clock.hold} onHold={() => setClock((c) => ({ ...c, hold: !c.hold }))} onSet={setHour} />
         <Overlays items={[{ id: 'heat', label: 'Heat map', icon: <HeatIcon />, on: heat, toggle: () => setHeat((v) => !v) }]} />
       </div>
+      <pre className="alarm" ref={alarm} />
       {shot && (
         <div className="pane">
           <output className="gauge" ref={gauge} />

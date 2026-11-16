@@ -114,6 +114,8 @@ export class Sim {
   target = 0;
   /** How much of the night's quiet there is, 0 by day and 1 from nine at night to half past five: the big roads stay busy, the small ones empty. */
   quiet = 0;
+  /** What became of every try to send someone in, since the count was last read: in, way in not clear, no vehicle to be had, no way through. */
+  tally = { sent: 0, blocked: 0, none: 0, lost: 0 };
   /** how many are out on the roads now, the parked ones not counted */
   private rand: () => number;
   private nextId = 1;
@@ -386,12 +388,13 @@ export class Sim {
       const lane = src.lanes[(r() * src.lanes.length) | 0];
       let clear = true;
       for (const o of lane.cars) if (o.s - o.len < 12) clear = false;
-      if (!clear) { src.acc = Math.min(src.acc, 3); continue; }
+      if (!clear) { src.acc = Math.min(src.acc, 3); this.tally.blocked++; continue; }
       const c = this.make(false);
-      if (!c) continue;
+      if (!c) { this.tally.none++; continue; }
       src.acc -= 1;
       const wantsStall = this.types[c.type].parks && r() < 0.18;
-      if (!this.setRoute(c, lane, wantsStall)) { this.remove(c); continue; }
+      if (!this.setRoute(c, lane, wantsStall)) { this.remove(c); this.tally.lost++; continue; }
+      this.tally.sent++;
       c.lane = lane; lane.cars.push(c);
       c.s = c.len; c.v = lane.speed * 0.8; c.lcAt = 8 + r() * 40;
     }
