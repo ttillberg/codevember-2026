@@ -23,6 +23,8 @@ pnpm -C 07 dev     # http://localhost:5173
 
 Add deps per day: `pnpm -C 07 add three`.
 
+The dev server listens on the local network too (`server.host: true` in every day's `vite.config.ts`, the template included): Vite prints a `Network` url, open it on a phone on the same wifi. Keep it when a day changes its config.
+
 ## Metadata
 
 Lives in each day's `package.json`:
