@@ -269,8 +269,9 @@ export function App() {
         <label>
           Vehicles
           <input
-            ref={countBox} type="number" inputMode="numeric" min={0} max={1500} step={10} value={target ?? ''}
-            onChange={(e) => setTarget(e.target.value === '' ? null : Math.max(0, Math.min(1500, Math.round(+e.target.value) || 0)))}
+            ref={countBox} type="number" inputMode="numeric" min={0} max={1500} step={10}
+            // the field keeps what was typed: the count is read from it, never written back into it
+            onChange={(e) => { const v = e.target.value.trim(), n = Math.round(+v); setTarget(v === '' || !isFinite(n) ? null : Math.max(0, Math.min(1500, n))); }}
           />
         </label>
       </div>

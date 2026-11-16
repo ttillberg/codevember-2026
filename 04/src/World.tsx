@@ -241,6 +241,46 @@ function leaf(k: number, v: number, bush = false, season: Season = 'autumn') {
 
 const phone = typeof matchMedia !== 'undefined' && matchMedia('(pointer: coarse)').matches;
 
+/**
+ * A pine, in the box a cone would fill: a stem and six skirts of boughs, each ragged at the hem and drooping,
+ * the lower ones wide, dark where they tuck in under the one above and paler at the tips.
+ */
+function pine() {
+  const r = rng(53), T = 6, N = 7;
+  const pos: number[] = [], col: number[] = [], idx: number[] = [];
+  const v = (x: number, y: number, z: number, cr: number, cg: number, cb: number) => { pos.push(x, y, z); col.push(cr, cg, cb); return pos.length / 3 - 1; };
+  // the stem: brown against the green every tree is tinted with
+  for (let i = 0; i < 5; i++) {
+    const a0 = (i / 5) * Math.PI * 2, a1 = ((i + 1) / 5) * Math.PI * 2;
+    const p = [v(Math.cos(a0) * 0.07, -0.75, Math.sin(a0) * 0.07, 2.4, 1, 0.6), v(Math.cos(a1) * 0.07, -0.75, Math.sin(a1) * 0.07, 2.4, 1, 0.6), v(Math.cos(a1) * 0.05, 0, Math.sin(a1) * 0.05, 2, 0.9, 0.5), v(Math.cos(a0) * 0.05, 0, Math.sin(a0) * 0.05, 2, 0.9, 0.5)];
+    idx.push(p[0], p[2], p[1], p[0], p[3], p[2]);
+  }
+  for (let k = 0; k < T; k++) {
+    const f = k / T, rad = 0.1 + 0.9 * Math.pow(1 - f, 0.85);
+    const bot = -0.34 + 0.72 * f, top = k === T - 1 ? 0.5 : bot + 0.3;
+    const turn = r() * 6;
+    const rim: number[] = [];
+    for (let i = 0; i < N * 2; i++) {
+      const a = turn + (i / (N * 2)) * Math.PI * 2, tip = i % 2 === 0;
+      // a bough reaches out and hangs; between two the hem is drawn in and up
+      const d = rad * (tip ? 0.85 + r() * 0.3 : 0.5 + r() * 0.15), y = bot + (tip ? -r() * 0.05 : 0.07 + r() * 0.03);
+      const g = tip ? 1.1 + r() * 0.35 : 0.6;
+      rim.push(v(Math.cos(a) * d, y, Math.sin(a) * d, g * (tip ? 1.05 : 1), g, g * 0.9));
+    }
+    for (let i = 0; i < N * 2; i++) {
+      // each face its own point at the top, so the shade under the skirt above does not smear round
+      const apex = v(0, top, 0, 0.5, 0.5, 0.5);
+      idx.push(apex, rim[(i + 1) % (N * 2)], rim[i]);
+    }
+  }
+  const geo = new BufferGeometry();
+  geo.setAttribute('position', new Float32BufferAttribute(pos, 3));
+  geo.setAttribute('color', new Float32BufferAttribute(col, 3));
+  geo.setIndex(idx);
+  geo.computeVertexNormals();
+  return geo;
+}
+
 /** A crown is a few of these: a loose ball of leaves, each its own small card, darker towards the middle. */
 function tuft() {
   const r = rng(71), n = phone ? 40 : 72;
@@ -297,6 +337,7 @@ function fallen() {
 function Trees({ net, blocks, season }: { net: Net; blocks: Block[]; season: Season }) {
   const ref = useRef<InstancedMesh>(null), firs = useRef<InstancedMesh>(null), floor = useRef<InstancedMesh>(null), stems = useRef<InstancedMesh>(null);
   const crown = useMemo(tuft, []);
+  const PINE = useMemo(pine, []);
   // in winter most of the leaves are gone: only a third of the cards are drawn
   useLayoutEffect(() => { crown.setDrawRange(0, season === 'winter' ? Math.floor(crown.index!.count / 18) * 6 : Infinity); }, [crown, season]);
   const litter = useMemo(fallen, []);
@@ -419,9 +460,8 @@ function Trees({ net, blocks, season }: { net: Net; blocks: Block[]; season: Sea
       <instancedMesh ref={floor} args={[undefined, undefined, LITTER]} material={litter} receiveShadow frustumCulled={false}>
         <circleGeometry args={[1, 14]} />
       </instancedMesh>
-      <instancedMesh ref={firs} args={[undefined, undefined, FIRS]} castShadow receiveShadow frustumCulled={false}>
-        <coneGeometry args={[1, 1, 7]} />
-        <meshStandardMaterial roughness={1} flatShading />
+      <instancedMesh ref={firs} args={[PINE, undefined, FIRS]} castShadow receiveShadow frustumCulled={false}>
+        <meshStandardMaterial roughness={1} flatShading vertexColors side={DoubleSide} />
       </instancedMesh>
     </>
   );

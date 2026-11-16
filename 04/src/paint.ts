@@ -1,5 +1,5 @@
 // The tools. Each one only changes the strokes; what the roads become is up to the rules in intent.ts.
-import { derive, far, length, nearest, type Intent } from './intent';
+import { arc, derive, RINGS, far, length, nearest, type Intent, type Stroke } from './intent';
 import { halfWidth, type Rect, type Spec } from './net';
 import type { V } from './net';
 
@@ -87,7 +87,7 @@ function goesOver(intent: Intent, pts: V[], cum: number[], houses: Rect[]): [num
   const ds = over.size >= 2 ? [...must, ...may] : must;
   if (!ds.length) return null;
   // room for the ramps either side; a stub of road too short to be one is bridge as well
-  const RAMP = 55;
+  const RAMP = 70;
   let d0 = Math.min(...ds) - RAMP, d1 = Math.max(...ds) + RAMP;
   if (d0 < 22) d0 = 0;
   if (d1 > len - 22) d1 = len;
@@ -101,7 +101,7 @@ export function addStroke(intent: Intent, stroke: V[], bridge: boolean, houses: 
     const cum = [0];
     for (let i = 1; i < pts.length; i++) cum.push(cum[i - 1] + dist(pts[i - 1], pts[i]));
     const len = cum[cum.length - 1];
-    const ring = dist(pts[0], pts[pts.length - 1]) < 45 && len > 170;
+    const ring = RINGS && dist(pts[0], pts[pts.length - 1]) < 45 && len > 170;
     const up = ring ? null : goesOver(intent, pts, cum, houses);
     if (up) {
       // the road comes up to the bridge on the ground at either end, and the bridge stands on those two
@@ -117,6 +117,57 @@ export function addStroke(intent: Intent, stroke: V[], bridge: boolean, houses: 
   return lay(intent, stroke, bridge, houses, air);
 }
 
+/**
+ * A bridge that comes down on the side of a road does not ram into it. It stops short, up in the air, and two ramps
+ * leave it there, one way each: the one on the right goes down and joins the road the way it runs, the other comes
+ * up from it. Returns the strokes to lay instead of the one bridge, or null where an end has no road to fork onto.
+ */
+function forked(intent: Intent, pts: V[], air: [boolean, boolean], houses: Rect[]): Stroke[] | null {
+  const BACK = 32, OUT = 30;
+  let a = pts[0], b = pts[pts.length - 1];
+  const open: [boolean, boolean] = [false, false];
+  const ramps: Stroke[] = [];
+  const ends = derive(intent, houses).filter((r) => !r.bridge).flatMap((r) => [r.raw[0], r.raw[r.raw.length - 1]]);
+  for (const e of [0, 1]) {
+    if (air[e]) continue;
+    const p = e ? b : a, o = e ? a : b;
+    let best: { t: Stroke; n: ReturnType<typeof nearest> } | null = null, bd = 18;
+    for (const t of intent) {
+      if (t.bridge || t.lot || t.ring) continue;
+      const n = nearest(t.pts, p);
+      if (n.d < bd) { bd = n.d; best = { t, n }; }
+    }
+    if (!best) continue;
+    const { t, n } = best, tl = length(t.pts);
+    // where the road ends the bridge just carries it on
+    if (n.s < OUT + 12 || n.s > tl - OUT - 12) continue;
+    const q0 = t.pts[n.seg], q1 = t.pts[n.seg + 1], ql = dist(q0, q1) || 1;
+    let tx = (q1.x - q0.x) / ql, ty = (q1.y - q0.y) / ql;
+    const dl = dist(o, n.q) || 1, dx = (n.q.x - o.x) / dl, dy = (n.q.y - o.y) / dl;
+    // one that comes in along the road already joins it well enough
+    if (Math.abs(dx * tx + dy * ty) > 0.75) continue;
+    // traffic keeps right: the way down is on the right of the bridge as it arrives
+    if (-dy * tx + dx * ty < 0) { tx = -tx; ty = -ty; }
+    const f = { x: n.q.x - dx * BACK, y: n.q.y - dy * BACK };
+    const cum = [0];
+    for (let i = 1; i < t.pts.length; i++) cum.push(cum[i - 1] + dist(t.pts[i - 1], t.pts[i]));
+    const along = (d: number) => piece(t.pts, cum, Math.max(0, Math.min(tl, d)), Math.max(0, Math.min(tl, d)) + 0.01)[0];
+    const fwd = (q1.x - q0.x) * tx + (q1.y - q0.y) * ty > 0 ? 1 : -1;
+    const down = along(n.s + fwd * OUT), up = along(n.s - fwd * OUT);
+    // each bows towards the corner it cuts
+    const side = (u: V, v: V) => (-(v.y - u.y) * (n.q.x - u.x) + (v.x - u.x) * (n.q.y - u.y) > 0 ? 1 : -1);
+    const mk = (u: V, v: V, hang: [boolean, boolean]): Stroke => ({ pts: arc(u, v, 0.1 * side(u, v)), w: 1, paint: true, bridge: true, one: true, air: hang });
+    // a ramp needs a clear stretch of road to join: next to a junction it would only make a knot of it
+    if (ends.some((q) => dist(q, down) < 28 || dist(q, up) < 28)) continue;
+    ramps.push(mk(f, down, [true, false]), mk(up, f, [false, true]));
+    open[e] = true;
+    if (e) b = f; else a = f;
+  }
+  if (!ramps.length || dist(a, b) < 50) return null;
+  const main = pts.filter((q) => dist(q, pts[0]) > (open[0] ? BACK : -1) && dist(q, pts[pts.length - 1]) > (open[1] ? BACK : -1));
+  return [{ pts: [a, ...main.slice(1, -1), b], w: 2, paint: true, bridge: true, air: air[0] || air[1] ? air : undefined, open }, ...ramps];
+}
+
 function lay(intent: Intent, stroke: V[], bridge: boolean, houses: Rect[] = [], air: [boolean, boolean] = [false, false]): Intent | null {
   const pts = smooth(stroke.map((p) => ({ x: p.x, y: p.y })));
   // whatever starts or ends up on a deck is a bridge itself: a ramp down, or a link across
@@ -124,8 +175,31 @@ function lay(intent: Intent, stroke: V[], bridge: boolean, houses: Rect[] = [], 
   bridge ||= hung;
   if (length(pts) < (hung ? 30 : bridge ? 50 : 18)) return null;
   // a stroke that comes back to where it began is a roundabout, as big as it was drawn
-  const ring = !bridge && dist(pts[0], pts[pts.length - 1]) < 45 && length(pts) > 170;
+  const ring = RINGS && !bridge && dist(pts[0], pts[pts.length - 1]) < 45 && length(pts) > 170;
   if (ring) pts[pts.length - 1] = { x: pts[0].x, y: pts[0].y };
+  if (bridge) {
+    const fork = forked(intent, pts, air, houses);
+    if (fork) {
+      const next: Intent = [...intent, ...fork];
+      const made = derive(next, houses);
+      // every piece has to stand, or it is the plain bridge after all
+      if (fork.every((_, i) => made.some((r) => r.bridge && r.stroke === intent.length + i))) return next;
+    }
+  }
+  if (bridge) {
+    // a bridge does not come down into a junction: it lands on a stretch of plain road of its own, and that goes to the junction
+    const FOOT = 34;
+    const cum = [0];
+    for (let i = 1; i < pts.length; i++) cum.push(cum[i - 1] + dist(pts[i - 1], pts[i]));
+    const len = cum[cum.length - 1], d0 = air[0] ? 0 : FOOT, d1 = air[1] ? len : len - FOOT;
+    if (d1 - d0 >= 50) {
+      const next: Intent = [...intent];
+      if (d0 > 0) next.push({ pts: piece(pts, cum, 0, d0), w: 2, paint: true });
+      if (d1 < len) next.push({ pts: piece(pts, cum, d1, len), w: 2, paint: true });
+      next.push({ pts: piece(pts, cum, d0, d1), w: 2, paint: true, bridge: true, air: hung ? air : undefined });
+      if (derive(next, houses).some((r) => r.bridge && r.stroke === next.length - 1)) return next;
+    }
+  }
   const next: Intent = [...intent, { pts, w: 2, paint: true, bridge: bridge || undefined, air: hung ? air : undefined, ring: ring || undefined }];
   // it has to change something: a new road, or a bigger one
   const sig = (sp: Spec) => sp.map((r) => r.kind.rank + ':' + r.raw.length + ':' + r.raw[0].x.toFixed(1) + ':' + r.raw[0].y.toFixed(1)).join();

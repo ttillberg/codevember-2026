@@ -38,6 +38,7 @@ export interface Road extends RoadKind {
   look: number; // the rank it is drawn as; rank itself is who yields
   feeds: boolean;
   ring: boolean; // one way, anticlockwise: a piece of a roundabout
+  one: boolean; // one way, a to b: a ramp
   hw: number; // half its width
 }
 
@@ -56,6 +57,7 @@ export interface SpecRoad {
   stroke: number; // the stroke it was derived from
   feeds?: boolean; // leads to a parking lot: wants a signal where it meets a big road
   ring?: boolean; // a piece of a roundabout: one way, from the first point to the last
+  one?: boolean; // a ramp: one way, from the first point to the last
 }
 export type Spec = SpecRoad[];
 
@@ -296,7 +298,7 @@ const BUILDINGS: Building[] = [
 export interface Deck { len: number; z0: number; z1: number; top: number; off: number }
 
 /** How steep a ramp is by choice, and how steep it may get when it has to clear something. */
-const SLOPE = 0.1375, STEEP = 0.22;
+const SLOPE = 0.2, STEEP = 0.3;
 
 /** Fit a profile: as high as wanted if the ramps have room, lower if not. `must` is for a bridge with something to clear. */
 export function shape(len: number, z0: number, z1: number, want: number, must = false): Deck {
@@ -329,7 +331,7 @@ export function deck(r: Road, d: number) {
 /** How far from its middle a junction keeps its roads back. A dead end keeps nothing back. */
 export function junctionTrim(p: V, roads: { raw: V[]; hw: number; ring?: boolean }[]): number {
   if (roads.length < 2) return 0;
-  // where an arm meets a roundabout it only has to clear the ring
+  // where an arm meets a roundabout it only has to clear the ring; and a ramp slides onto its road, it needs no square
   if (roads.some((r) => r.ring)) return Math.max(4, ...roads.filter((r) => !r.ring).map((r) => r.hw)) + 3;
   const hw = Math.max(...roads.map((r) => r.hw));
   let t = hw + (hw > 5 ? 5 : 2.5);
@@ -374,7 +376,7 @@ export function buildNet(spec: Spec): Net {
     const stallSegs: number[] = [];
     sr.stalls.forEach((on, i) => on && stallSegs.push(i));
     const cum = cumLen(pts);
-    const r: Road = { ...sr.kind, rank: sr.kind.rank - (sr.demote ?? 0), look: sr.kind.rank, id: roads.length, a, b, raw: sr.raw, pts, base: [], stallSegs, bridge: !!sr.bridge, deck: sr.bridge ? sr.deck ?? shape(cum[cum.length - 1], 0, 0, BRIDGE_H) : undefined, feeds: !!sr.feeds, ring: !!sr.ring, hw: halfWidth(sr.kind, sr.ring), len: cum[cum.length - 1] };
+    const r: Road = { ...sr.kind, rank: sr.kind.rank - (sr.demote ?? 0), look: sr.kind.rank, id: roads.length, a, b, raw: sr.raw, pts, base: [], stallSegs, bridge: !!sr.bridge, deck: sr.bridge ? sr.deck ?? shape(cum[cum.length - 1], 0, 0, BRIDGE_H) : undefined, feeds: !!sr.feeds, ring: !!sr.ring, one: !!sr.one, hw: halfWidth(sr.kind, sr.ring || sr.one), len: cum[cum.length - 1] };
     roads.push(r);
     a.roads.push(r);
     b.roads.push(r);
@@ -387,7 +389,7 @@ export function buildNet(spec: Spec): Net {
     if (n.roads.every((r) => r.bridge)) n.z = Math.max(0, ...n.roads.map((r) => deck(r, r.a === n ? 0 : r.len)));
     // traffic comes and goes only at the far ends of the map, not at a painted dead end
     n.edge = n.stub && far(n.p);
-    n.trim = junctionTrim(n.p, n.roads.map((r) => ({ raw: r.raw, hw: r.hw, ring: r.ring })));
+    n.trim = junctionTrim(n.p, n.roads.map((r) => ({ raw: r.raw, hw: r.hw, ring: r.ring || r.one })));
     const top = Math.max(...n.roads.map((r) => r.look));
     n.signal = n.z === 0 && !n.roads.some((r) => r.ring) && ((n.roads.length >= 4 && n.roads.every((r) => r.look >= 2)) || (n.roads.length >= 3 && top >= 3 && n.roads.some((r) => r.feeds)));
     n.sigOff = Math.abs(n.p.x) / 14;
@@ -409,11 +411,12 @@ export function buildNet(spec: Spec): Net {
 
   for (const r of roads) {
     r.base = trim(r.pts, r.a.trim, r.b.trim);
-    for (const dir of (r.ring ? [1] : [1, -1]) as (1 | -1)[]) {
+    const single = r.ring || r.one;
+    for (const dir of (single ? [1] : [1, -1]) as (1 | -1)[]) {
       const src = dir === 1 ? r.base : [...r.base].reverse();
       const group: Lane[] = [];
       for (let i = 0; i < r.lanes; i++) {
-        group.push(mkLane(offset(src, (i + 0.5) * r.lw - (r.ring ? r.hw : 0)), r.speed, r, dir, i, dir === 1 ? r.a : r.b, dir === 1 ? r.b : r.a));
+        group.push(mkLane(offset(src, (i + 0.5) * r.lw - (single ? r.hw : 0)), r.speed, r, dir, i, dir === 1 ? r.a : r.b, dir === 1 ? r.b : r.a));
       }
       for (let i = 0; i < group.length; i++) {
         if (i > 0) group[i].sib.push(group[i - 1]);
@@ -473,10 +476,18 @@ export function buildNet(spec: Spec): Net {
         const m = g.length;
         const d1 = startDir(g[0]);
         const ang = Math.atan2(d0.x * d1.y - d0.y * d1.x, d0.x * d1.x + d0.y * d1.y);
+        // a ramp is left and joined the way it points: nobody doubles back onto one or off it
+        const ramp = src.road!.one !== g[0].road!.one;
+        if ((src.road!.one || g[0].road!.one) && Math.abs(ang) > 1.9) continue;
         const turn: Conn['turn'] = node.roads.length === 2 || (src.road!.ring && g[0].road!.ring) || Math.abs(ang) < 0.87 ? 'T' : ang > 0 ? 'R' : 'L';
         const pick = turn === 'R' ? g[m - 1] : turn === 'L' ? g[0] : g[Math.min(src.idx, m - 1)];
         if (!fallback || Math.abs(ang) < fallback.a) fallback = { dst: pick, a: Math.abs(ang) };
         // on and off a roundabout every lane has its own way: the outer to the outer, the inner beside it
+        if (ramp && node.z === 0) {
+          // on the ground a ramp takes from the outer lane and gives to it
+          if (g[0].road!.one ? src.idx === n - 1 : true) made.push(connect(src, g[0].road!.one ? g[Math.min(src.idx, m - 1)] : g[m - 1], 'T', node));
+          continue;
+        }
         if (src.road!.ring !== g[0].road!.ring) {
           made.push(connect(src, g[Math.max(0, m - 1 - (n - 1 - src.idx))], turn, node));
           continue;

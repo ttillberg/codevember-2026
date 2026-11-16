@@ -237,7 +237,7 @@ export function buildGround(net: Net) {
     }
     if (!lined) {
       // bare
-    } else if (r.ring) {
+    } else if (r.ring || r.one) {
       white.ribbon(base, hw - 0.14, hw);
       white.ribbon(base, -hw, -hw + 0.14);
       for (let i = 1; i < r.lanes; i++) white.dashed(base, i * r.lw - hw, 0.13, 2, 4);

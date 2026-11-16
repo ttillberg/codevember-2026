@@ -14,6 +14,10 @@ export interface Stroke {
   bridge?: boolean;
   /** a bridge whose start or end hangs on another bridge instead of landing: a ramp, or a link between two decks */
   air?: [boolean, boolean];
+  /** a bridge whose start or end stops up in the air, where its ramps leave it */
+  open?: [boolean, boolean];
+  /** one way, from the first point to the last: a ramp */
+  one?: boolean;
   /** steps of priority taken away */
   demote?: number;
   /** closes on itself: a roundabout, one way round */
@@ -22,6 +26,9 @@ export interface Stroke {
   paint?: boolean;
 }
 export type Intent = Stroke[];
+
+/** ?no=roundabout: junctions stay junctions however many arms they have, and a closed stroke is just a road */
+export const RINGS = !(typeof location !== 'undefined' ? new URLSearchParams(location.search).get('no') ?? '' : '').toLowerCase().split(',').some((w) => w.startsWith('round'));
 
 const SNAP = 18; // an end this close to a road joins it
 const R = 26; // junctions closer than this are one
@@ -93,28 +100,63 @@ function dodge(s: Stroke, houses: Rect[]): Stroke {
   return { ...s, pts: pts.map((p) => push(p, m)) };
 }
 
-/**
- * A bridge is a beam, not a hose: straight from end to end however the hand shook, or one even arc
- * where a house stands in the line. What is low enough it goes over. If no arc gets past, there is no bridge.
- */
-function span(s: Stroke, houses: (Rect & { h?: number })[]): Stroke {
+/** A circular arc from a to b that bulges `bow` times the chord to the left of it. 0 is a straight line. */
+export function arc(a: V, b: V, bow: number): V[] {
+  const L = Math.hypot(b.x - a.x, b.y - a.y) || 1;
+  const ex = (b.x - a.x) / L, ey = (b.y - a.y) / L;
+  const n = Math.max(16, Math.ceil((L * (1 + 2.6 * bow * bow)) / 8));
+  const pts: V[] = [];
+  if (Math.abs(bow) < 0.01) {
+    for (let i = 0; i <= n; i++) pts.push({ x: a.x + ((b.x - a.x) * i) / n, y: a.y + ((b.y - a.y) * i) / n });
+    return pts;
+  }
+  const h = bow * L, sg = Math.sign(h), R = (L * L / 4 + h * h) / (2 * Math.abs(h));
+  const ux = -ey * sg, uy = ex * sg;
+  const cx = (a.x + b.x) / 2 + ux * (Math.abs(h) - R), cy = (a.y + b.y) / 2 + uy * (Math.abs(h) - R);
+  const th = Math.atan2(L / 2, R - Math.abs(h));
+  for (let i = 0; i <= n; i++) {
+    const f = -th + (2 * th * i) / n, c = R * Math.cos(f), q = R * Math.sin(f);
+    pts.push({ x: cx + ux * c + ex * q, y: cy + uy * c + ey * q });
+  }
+  pts[0] = a; pts[n] = b;
+  return pts;
+}
+
+/** How far the hand bowed out from the straight line between its ends, as a share of that line. Left is positive. */
+function bowOf(s: Stroke) {
   const a = s.pts[0], b = s.pts[s.pts.length - 1];
   const L = Math.hypot(b.x - a.x, b.y - a.y) || 1;
   const nx = -(b.y - a.y) / L, ny = (b.x - a.x) / L;
+  let h = 0;
+  for (const p of s.pts) {
+    const d = (p.x - a.x) * nx + (p.y - a.y) * ny;
+    if (Math.abs(d) > Math.abs(h)) h = d;
+  }
+  // a shaky line is a straight one; and no more than half a circle
+  const k = h / L;
+  return Math.abs(k) < 0.06 ? 0 : Math.max(-0.5, Math.min(0.5, k));
+}
+
+/** The line a bridge is asked to take before anything is in its way: one arc of a circle, as the hand bowed. */
+function sweep(s: Stroke): V[] {
+  return arc(s.pts[0], s.pts[s.pts.length - 1], bowOf(s));
+}
+
+/**
+ * A bridge is a beam, not a hose: one arc of a circle from end to end, bowed as the hand bowed, straight if it did not.
+ * Where a house still stands in the line the arc is opened or closed until it gets past; what is low enough it goes over.
+ * If no arc gets past, there is no bridge.
+ */
+function span(s: Stroke, houses: (Rect & { h?: number })[]): Stroke {
+  const a = s.pts[0], b = s.pts[s.pts.length - 1];
   // a bridge is wider than its road, and should not shave a wall
   const m = half(s) + 4.5;
-  // the side the hand leaned to is tried first
-  const cum = cumLen(s.pts);
-  const mid = pointOn(s.pts, cum, cum[cum.length - 1] / 2);
-  const lean = (mid.x - (a.x + b.x) / 2) * nx + (mid.y - (a.y + b.y) / 2) * ny < 0 ? -1 : 1;
-  for (const k of [0, 0.05, -0.05, 0.1, -0.1, 0.16, -0.16, 0.23, -0.23, 0.31, -0.31, 0.4, -0.4]) {
-    const pts: V[] = [];
-    const n = Math.max(16, Math.ceil(L / 10));
-    for (let i = 0; i <= n; i++) {
-      const t = i / n, bow = 4 * t * (1 - t) * k * lean * L;
-      pts.push({ x: a.x + (b.x - a.x) * t + nx * bow, y: a.y + (b.y - a.y) * t + ny * bow });
-    }
-    const len = L * (1 + 2.6 * k * k);
+  const k0 = bowOf(s);
+  for (const dk of [0, 0.05, -0.05, 0.1, -0.1, 0.16, -0.16, 0.23, -0.23, 0.31, -0.31, 0.4, -0.4]) {
+    const k = k0 + dk * (k0 < 0 ? -1 : 1);
+    if (Math.abs(k) > 0.5) continue;
+    const pts = arc(a, b, k), n = pts.length - 1;
+    const len = length(pts);
     // clear under the slab, with a metre to spare
     const over = (h: number | undefined, i: number) => h !== undefined && h + 2.5 < Math.min(deckAt(len, (len * (i - 1)) / n), deckAt(len, (len * i) / n));
     if (!houses.some((h) => pts.some((p, i) => i > 0 && segNear(pts[i - 1], p, h, m) && !over(h.h, i)))) return { ...s, pts };
@@ -139,17 +181,17 @@ function segNear(a: V, b: V, h: Rect, m: number) {
  */
 function layers(spec: Spec): Spec {
   // the slab, room for a lorry under it, and a little for where the road is cut back at its junctions
-  const CLEAR = 7.5;
+  const CLEAR = 7.5, FORK = 8.5;
   const by = new Map<number, SpecRoad[]>();
   for (const r of spec) if (r.bridge) (by.get(r.stroke) ?? by.set(r.stroke, []).get(r.stroke)!).push(r);
-  const done: { pts: V[]; cum: number[]; k: Deck }[] = [];
+  const done: { pts: V[]; cum: number[]; k: Deck; hw: number }[] = [];
   for (const [, parts] of [...by].sort((a, b) => a[0] - b[0])) {
     parts.sort((a, b) => (a.part ?? 0) - (b.part ?? 0));
     const pts = parts.flatMap((r, i) => (i ? r.raw.slice(1) : r.raw));
     const cum = cumLen(pts), len = cum[cum.length - 1];
     /** how high the deck is that this end hangs on */
     const hung = (p: V) => {
-      let z = 0, bd = 3;
+      let z = -1, bd = 3;
       for (const t of done) {
         const n = nearest(t.pts, p);
         if (n.d < bd) { bd = n.d; z = heightAt(t.k, n.s); }
@@ -157,21 +199,19 @@ function layers(spec: Spec): Spec {
       return z;
     };
     const air = [!!parts[0].air?.[0], !!parts[parts.length - 1].air?.[1]];
-    const z0 = air[0] ? hung(pts[0]) : 0, z1 = air[1] ? hung(pts[pts.length - 1]) : 0;
+    // an end that hangs on nothing is where the bridge forks into its ramps: not as high as a bridge gets, so they are short
+    const up = (p: V) => { const z = hung(p); return z < 0 ? FORK : z; };
+    const z0 = air[0] ? up(pts[0]) : 0, z1 = air[1] ? up(pts[pts.length - 1]) : 0;
+    // wherever the two decks lie over each other, not only where their middles cross: sampled along this one
+    const hw = Math.max(...parts.map((r) => halfWidth(r.kind, r.one)));
     const cross: { d: number; h: number }[] = [];
     for (const t of done) {
-      for (let m = 1; m < pts.length; m++) {
-        for (let n = 1; n < t.pts.length; n++) {
-          const a = pts[m - 1], b = pts[m], c = t.pts[n - 1], e = t.pts[n];
-          const den = (b.x - a.x) * (e.y - c.y) - (b.y - a.y) * (e.x - c.x);
-          if (Math.abs(den) < 1e-9) continue;
-          const u = ((c.x - a.x) * (e.y - c.y) - (c.y - a.y) * (e.x - c.x)) / den, v = ((c.x - a.x) * (b.y - a.y) - (c.y - a.y) * (b.x - a.x)) / den;
-          if (u < 0 || u > 1 || v < 0 || v > 1) continue;
-          const d = cum[m - 1] + u * (cum[m] - cum[m - 1]);
-          // where it joins a deck it does not have to clear it
-          if ((air[0] && d < 20) || (air[1] && d > len - 20)) continue;
-          cross.push({ d, h: heightAt(t.k, t.cum[n - 1] + v * (t.cum[n] - t.cum[n - 1])) });
-        }
+      for (let d = 0; d <= len; d += 5) {
+        // where it joins a deck it does not have to clear it;
+        // nor at its feet, where no height of the deck would lift it clear
+        if (d < 25 || d > len - 25 || (air[0] && d < 32) || (air[1] && d > len - 32)) continue;
+        const n = nearest(t.pts, pointOn(pts, cum, d));
+        if (n.d < hw + t.hw + 1) cross.push({ d, h: heightAt(t.k, n.s) });
       }
     }
     // a bridge from ground to ground humps; one that hangs on another only goes as high as its ends
@@ -184,7 +224,7 @@ function layers(spec: Spec): Spec {
       r.deck = { ...k, off };
       off += length(r.raw);
     }
-    done.push({ pts, cum, k });
+    done.push({ pts, cum, k, hw });
   }
   return spec;
 }
@@ -195,9 +235,9 @@ function layers(spec: Spec): Spec {
  * the sheds on the lots belong to the roads and stay.
  */
 export function standing<T extends Rect>(intent: Intent, houses: T[]): T[] {
-  const spans = intent.filter((s) => s.bridge && s.pts.length > 1);
+  const spans = intent.filter((s) => s.bridge && s.pts.length > 1).map((s) => ({ m: half(s) + 4.5, pts: sweep(s) }));
   if (!spans.length) return houses;
-  const left = houses.filter((h) => !('path' in h) || !spans.some((s) => segNear(s.pts[0], s.pts[s.pts.length - 1], h, half(s) + 4.5)));
+  const left = houses.filter((h) => !('path' in h) || !spans.some((s) => s.pts.some((p, i) => i > 0 && segNear(s.pts[i - 1], p, h, s.m))));
   return left.length === houses.length ? houses : left;
 }
 
@@ -260,16 +300,26 @@ function rules(intent: Intent, houses: Rect[]): Spec {
     }
     for (const e of [0, 1]) {
       const p = e ? s.pts[s.pts.length - 1] : s.pts[0];
+      if (s.bridge && s.open?.[e]) {
+        // it stops in the air: its ramps come to it there
+        let k = near(p, 3, true);
+        if (k < 0) k = nodes.push({ x: p.x, y: p.y, lot: false, air: true }) - 1;
+        pins[i].push({ s: e ? lens[i] : 0, k });
+        landed[i]++;
+        continue;
+      }
       if (s.bridge && s.air?.[e]) {
         // an end that was put on a deck hangs on the nearest bridge painted before this one, clear of its ramps' feet
         let up: { j: number; n: ReturnType<typeof nearest> } | null = null;
         for (let j = 0; j < i; j++) {
           if (!intent[j].bridge || landed[j] !== 2) continue;
           const n = nearest(intent[j].pts, p);
-          if (n.d < SNAP && n.s > 15 && n.s < lens[j] - 15 && (!up || n.d < up.n.d)) up = { j, n };
+          // or right on its end, if that end is open for ramps
+          const mid = n.s > 15 && n.s < lens[j] - 15, tip = (intent[j].open?.[0] && n.s < 3) || (intent[j].open?.[1] && n.s > lens[j] - 3);
+          if (n.d < SNAP && (mid || tip) && (!up || n.d < up.n.d)) up = { j, n };
         }
         if (up) {
-          let k = near(up.n.q, 14, true);
+          let k = near(up.n.q, intent[up.j].open ? 3 : 14, true);
           if (k < 0) k = nodes.push({ x: up.n.q.x, y: up.n.q.y, lot: false, air: true }) - 1;
           pins[i].push({ s: e ? lens[i] : 0, k });
           pins[up.j].push({ s: up.n.s, k });
@@ -426,7 +476,7 @@ function rules(intent: Intent, houses: Rect[]): Spec {
       const seg = nearest(s.pts, { x: (raw[n].x + q.x) / 2, y: (raw[n].y + q.y) / 2 }).seg;
       return cum[seg + 1] - cum[seg] >= longest / 2;
     });
-    spec.push({ raw, kind, stalls, bridge: !!e.bridge, part: e.part, air: e.bridge ? [!!nodes[e.a].air, !!nodes[e.b].air] : undefined, demote: demote(e), stroke: e.by[0], feeds: e.by.some((i) => feeds[i]), ring: e.ring });
+    spec.push({ raw, kind, stalls, bridge: !!e.bridge, part: e.part, air: e.bridge ? [!!nodes[e.a].air, !!nodes[e.b].air] : undefined, demote: demote(e), stroke: e.by[0], feeds: e.by.some((i) => feeds[i]), ring: e.ring, one: !!(e.bridge && s.one) });
   };
   const walk = (k: number, e: Edge) => {
     const ks = [k];
@@ -467,7 +517,7 @@ function settle(spec: Spec): Spec {
       }
     }
     const trim = new Map<string, number>();
-    for (const [k, n] of at) trim.set(k, junctionTrim(n.p, n.roads.map((r) => ({ raw: r.raw, hw: halfWidth(r.kind, r.ring), ring: r.ring }))));
+    for (const [k, n] of at) trim.set(k, junctionTrim(n.p, n.roads.map((r) => ({ raw: r.raw, hw: halfWidth(r.kind, r.ring || r.one), ring: r.ring || r.one }))));
     const fixed = (n: { roads: SpecRoad[] }) => n.roads.some((r) => r.ring || r.stalls.some(Boolean));
     let worst: SpecRoad | null = null, lack = 0;
     for (const r of spec) {
@@ -556,7 +606,7 @@ function roundabouts(spec: Spec): Spec {
   const rings: Spec = [];
   for (const n of at.values()) {
     // nor where bridges meet: that is up in the air
-    if (n.ends.length < 5 || n.ends.filter((a) => a.r.bridge).length > 1 || n.ends.some((a) => a.r.ring || a.r.stalls.some(Boolean))) continue;
+    if (!RINGS || n.ends.length < 5 || n.ends.filter((a) => a.r.bridge).length > 1 || n.ends.some((a) => a.r.ring || a.r.stalls.some(Boolean))) continue;
     const c = n.p;
     // each arm, seen from the middle outwards
     const arms = n.ends.map(({ r, e }) => {
