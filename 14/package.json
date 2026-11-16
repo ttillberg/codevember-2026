@@ -1,0 +1,21 @@
+{
+  "name": "day-14",
+  "private": true,
+  "description": "One string the height of the screen, a live instrument always on the scale: pluck it, strum it, slide it",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-basic-ssl": "^2.3.0",
+    "typescript": "^5.9.3",
+    "vite": "^7.3.1"
+  },
+  "codevember": {
+    "day": 14,
+    "word": "Tension",
+    "date": "2026-11-14"
+  }
+}

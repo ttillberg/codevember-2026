@@ -50,6 +50,20 @@
         "--strictPort"
       ],
       "port": 5101
+    },
+    {
+      "name": "04",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": [
+        "-C",
+        "04",
+        "dev",
+        "--port",
+        "5104",
+        "--strictPort",
+        "--host"
+      ],
+      "port": 5104
     }
   ]
 }

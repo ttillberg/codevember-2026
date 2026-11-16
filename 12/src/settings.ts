@@ -1,12 +1,14 @@
-// The settings wheel, top right: a frosted card of switches, sliders and a few
-// actions. Values are remembered per viewer (localStorage, best effort).
+// The settings: a frosted card of switches and sliders (and a few workbench buttons),
+// behind its own round button top right. Values are remembered per viewer (localStorage, best effort).
 
 export type Setting =
   | { kind: 'toggle'; key: string; label: string; value: boolean; set(v: boolean): void }
   | { kind: 'range'; key: string; label: string; value: number; min: number; max: number; step: number; set(v: number): void }
   | { kind: 'select'; key: string; label: string; value: string; options: string[]; set(v: string): void }
-  | { kind: 'action'; label: string; run(): void }
+  | { kind: 'action'; label: string; key?: string; run(): void }
   | { kind: 'heading'; label: string };
+
+import { ICONS } from './actions';
 
 type Value = number | boolean | string;
 
@@ -27,8 +29,6 @@ function save(v: Record<string, Value>) {
   }
 }
 
-const gear = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3.2"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>`;
-
 /**
  * overrides: values that win over the stored ones for this visit (URL flags such as ?still).
  * They are not saved unless the control itself is touched.
@@ -38,15 +38,33 @@ export function createSettings(items: Setting[], overrides: Record<string, Value
   const values: Record<string, Value> = {};
 
   const button = document.createElement('button');
-  button.className = 'gear';
   button.type = 'button';
+  button.className = 'set-btn';
   button.setAttribute('aria-label', 'Settings');
   button.setAttribute('aria-expanded', 'false');
-  button.innerHTML = gear;
+  button.innerHTML = ICONS.settings;
 
   const panel = document.createElement('div');
   panel.className = 'settings';
   panel.hidden = true;
+  panel.setAttribute('role', 'dialog');
+  panel.setAttribute('aria-label', 'Settings');
+  const head = document.createElement('div');
+  head.className = 'set-head';
+  head.innerHTML = '<b>Settings</b>';
+  const close = document.createElement('button');
+  close.type = 'button';
+  close.className = 'set-close';
+  close.setAttribute('aria-label', 'Close settings');
+  close.innerHTML = '<svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M3 3l8 8M11 3l-8 8"/></svg>';
+  close.addEventListener('click', () => open(false));
+  head.append(close);
+  // the heading stays, what's under it scrolls
+  const body = document.createElement('div');
+  body.className = 'set-body';
+  panel.append(head, body);
+  // the workbench buttons in a row of pills
+  let acts: HTMLElement | null = null;
 
   // stored (or the default) → the control → the scene; then every change back the same way, and saved
   function bind<T extends Value>(key: string, def: T, valid: (v: Value) => boolean, el: HTMLElement, event: string, read: () => T, write: (v: T) => void, set: (v: T) => void) {
@@ -64,10 +82,11 @@ export function createSettings(items: Setting[], overrides: Record<string, Value
   }
 
   for (const it of items) {
+    if (it.kind !== 'action') acts = null;
     if (it.kind === 'heading') {
       const h = document.createElement('h5');
       h.textContent = it.label;
-      panel.append(h);
+      body.append(h);
       continue;
     }
     if (it.kind === 'action') {
@@ -75,8 +94,19 @@ export function createSettings(items: Setting[], overrides: Record<string, Value
       b.type = 'button';
       b.className = 'act';
       b.textContent = it.label;
+      // its key, where there is a keyboard
+      if (it.key) {
+        const k = document.createElement('kbd');
+        k.textContent = it.key;
+        b.append(k);
+      }
       b.addEventListener('click', () => it.run());
-      panel.append(b);
+      if (!acts) {
+        acts = document.createElement('div');
+        acts.className = 'acts';
+        body.append(acts);
+      }
+      acts.append(b);
       continue;
     }
     const row = document.createElement('label');
@@ -98,32 +128,42 @@ export function createSettings(items: Setting[], overrides: Record<string, Value
         input.min = String(it.min);
         input.max = String(it.max);
         input.step = String(it.step);
-        bind(it.key, it.value, (v) => typeof v === 'number', input, 'input', () => Number(input.value), (v) => (input.value = String(v)), it.set);
+        const out = document.createElement('output');
+        const digits = Math.max(0, -Math.floor(Math.log10(it.step) + 1e-9));
+        // the readout, and how far along the track is filled
+        const show = (v: number) => {
+          out.textContent = v.toFixed(digits);
+          input.style.setProperty('--p', `${((v - it.min) / (it.max - it.min)) * 100}%`);
+        };
+        bind(it.key, it.value, (v) => typeof v === 'number', input, 'input', () => Number(input.value), (v) => (input.value = String(v)), (v) => (show(v), it.set(v)));
+        name.append(out);
       }
       row.append(name, input);
     }
-    panel.append(row);
+    body.append(row);
   }
 
+  // reset: a full button right under the last control (the workbench comes after it)
   const reset = document.createElement('button');
   reset.type = 'button';
-  reset.className = 'act reset';
-  reset.textContent = 'Reset';
+  reset.className = 'reset';
+  reset.textContent = 'Reset to defaults';
   reset.addEventListener('click', () => {
     save({});
     location.reload();
   });
-  panel.append(reset);
+  const rows = body.querySelectorAll('.row');
+  const last = rows[rows.length - 1];
+  if (last) last.after(reset);
+  else body.prepend(reset);
 
-  const open = (on: boolean) => {
+  function open(on: boolean) {
     panel.hidden = !on;
-    button.setAttribute('aria-expanded', String(on));
     button.classList.toggle('on', on);
-  };
-  button.addEventListener('click', (e) => {
-    e.stopPropagation();
-    open(panel.hidden);
-  });
+    button.setAttribute('aria-expanded', String(on));
+  }
+  button.addEventListener('pointerdown', (e) => e.stopPropagation());
+  button.addEventListener('click', () => open(panel.hidden));
   // clicks inside the card stay inside; a click on the scene closes it
   panel.addEventListener('pointerdown', (e) => e.stopPropagation());
   panel.addEventListener('pointerup', (e) => e.stopPropagation());

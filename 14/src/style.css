@@ -1,0 +1,230 @@
+/* a dark day: backdrop #0b0b0d, ink #f4f4f2 (docs/DESIGN.md) */
+:root {
+  --ink: #f4f4f2;
+  --ground: #0b0b0d;
+  --glass: rgba(41, 41, 41, 0.55);
+  --glass-blur: blur(8px);
+  --rim: inset 0 0 0 1px rgba(255, 255, 255, 0.1);
+  --edge: 24px;
+  --ui: Inter, "Helvetica Neue", Helvetica, Arial, sans-serif;
+}
+html, body { margin: 0; height: 100%; background: var(--ground); overflow: hidden; }
+body { -webkit-user-select: none; user-select: none; -webkit-tap-highlight-color: transparent; }
+canvas { display: block; position: fixed; left: 0; top: 0; width: 100%; height: 100%; touch-action: none; cursor: grab; }
+canvas:active { cursor: grabbing; }
+#nacre { pointer-events: none; }
+
+/* the title plate, top left: the day in Plex capitals, the way home under it */
+.plate {
+  position: fixed; z-index: 2;
+  top: max(var(--edge), env(safe-area-inset-top)); left: max(var(--edge), env(safe-area-inset-left));
+  pointer-events: none; user-select: none; -webkit-user-select: none;
+  color: var(--ink);
+  font: 13px/1.4 var(--ui);
+}
+.plate b {
+  display: block; white-space: nowrap;
+  font: 700 56px/0.9 "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  letter-spacing: -0.02em; text-transform: uppercase;
+}
+.plate .head > i, .plate .hint {
+  display: block; margin-top: 6px; font-style: normal;
+  font-weight: 600; font-size: 13px; line-height: 1.15; letter-spacing: 0.12em; text-transform: uppercase;
+}
+.plate .hint { margin-top: 14px; font-size: 11px; transition: opacity 1.2s; }
+.plate .hint.gone { opacity: 0; }
+.plate .home { color: inherit; text-decoration: none; pointer-events: auto; }
+.plate .home span[lang="ja"] { font-family: "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Noto Sans JP", "Yu Gothic", sans-serif; letter-spacing: 0.06em; }
+@media (max-width: 640px) {
+  :root { --edge: 16px; }
+  .plate b { font-size: 36px; }
+  .plate .head > i { font-size: 10px; }
+  .plate .hint { font-size: 9px; margin-top: 10px; }
+}
+
+/* round buttons on frosted glass, in the ink */
+.round {
+  display: grid; place-items: center; width: 34px; height: 34px; padding: 0; border: 0; border-radius: 50%;
+  background: var(--glass); color: var(--ink); cursor: pointer;
+  -webkit-backdrop-filter: var(--glass-blur); backdrop-filter: var(--glass-blur);
+  box-shadow: var(--rim);
+  transition: background 0.2s, color 0.2s, transform 0.2s cubic-bezier(0.3, 1.4, 0.5, 1);
+}
+.round:hover { background: rgba(72, 72, 72, 0.6); }
+.round:active { transform: scale(0.93); }
+.round.on { background: var(--ink); color: var(--ground); }
+
+/* bottom centre: the bar, as on day 07. Icons in a frosted pill, one unit (17px) between
+   them; a button is its icon plus half a unit either side, its hover and pressed disc a 46px
+   circle drawn behind it. */
+button { touch-action: manipulation; }
+/* the dock: the bar, and the mixer on its own beside it */
+.dock {
+  position: fixed; z-index: 3; left: 50%; transform: translateX(-50%);
+  bottom: max(var(--edge), env(safe-area-inset-bottom));
+  display: flex; align-items: center; gap: 8px;
+}
+.bar, .solo {
+  display: flex; align-items: center; padding: 6px 8.5px; border-radius: 999px; user-select: none; -webkit-user-select: none;
+  background: rgba(46, 46, 46, 0.5);
+  -webkit-backdrop-filter: blur(24px) saturate(1.6); backdrop-filter: blur(24px) saturate(1.6);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.07), 0 10px 30px rgba(0, 0, 0, 0.45);
+}
+.solo { padding: 6px; }
+.knob { position: relative; display: flex; }
+.knob > button {
+  position: relative; isolation: isolate; display: flex; align-items: center; justify-content: center;
+  min-width: 41px; height: 46px; padding: 0 8.5px; border: 0; background: none; color: rgba(244, 244, 242, 0.55);
+  cursor: pointer; touch-action: none; -webkit-tap-highlight-color: transparent;
+}
+.knob > button::before {
+  content: ''; position: absolute; left: 50%; top: 50%; width: 46px; height: 46px; margin: -23px 0 0 -23px;
+  border-radius: 50%; z-index: -1; transition: background 0.1s;
+}
+.knob > button svg, .knob .face { display: block; }
+@media (hover: hover) {
+  .knob > button:hover { color: var(--ink); }
+  .knob > button:hover::before { background: rgba(255, 255, 255, 0.07); }
+}
+.knob > button.on { color: var(--ground); }
+.knob > button.on::before { background: var(--ink); }
+
+/* the popover over a button: a gauge, or a picker's stack of choices */
+.gauge {
+  position: absolute; left: 50%; bottom: calc(100% + 14px); padding: 6px; border-radius: 999px; pointer-events: none;
+  background: rgba(41, 41, 41, 0.72); -webkit-backdrop-filter: blur(18px) saturate(1.6); backdrop-filter: blur(18px) saturate(1.6);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08), 0 8px 24px rgba(0, 0, 0, 0.4);
+  opacity: 0; transform: translate(calc(-50% + var(--dx, 0px)), 6px) scale(0.96); transform-origin: calc(50% - var(--dx, 0px)) 100%;
+  transition: opacity 0.16s ease-out, transform 0.2s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.gauge.open { opacity: 1; transform: translate(calc(-50% + var(--dx, 0px)), 0) scale(1); }
+.gauge.pick.open { pointer-events: auto; }
+
+/* every knob's name, over it, outside the bar (gone while its popover is up) */
+.knob.named .lbl {
+  position: absolute; left: 50%; bottom: calc(100% + 13px); transform: translateX(-50%); pointer-events: none; white-space: nowrap;
+  font: 600 7.5px/1 var(--ui); letter-spacing: 0.06em; text-transform: uppercase; color: rgba(244, 244, 242, 0.6);
+  text-shadow: 0 1px 6px rgba(0, 0, 0, 0.6); transition: opacity 0.12s;
+}
+.knob.named.open .lbl { opacity: 0; }
+/* with a mouse the names are hover tips instead */
+@media (hover: hover) and (pointer: fine) { .knob.named .lbl { display: none; } }
+.knob.named > button { min-width: 46px; padding: 0 4px; }
+@media (max-width: 400px) { .knob.named > button { min-width: 44px; padding: 0 3px; } }
+/* the mixer: four sliders over its button, one under the other, a name left and a number right */
+.gauge.mix { display: flex; flex-direction: column; gap: 6px; width: 236px; padding: 8px; border-radius: 22px; }
+.gauge.mix.open { pointer-events: auto; }
+.hs {
+  position: relative; height: 34px; border-radius: 999px; overflow: hidden; cursor: ew-resize; outline: none;
+  touch-action: none; user-select: none; -webkit-user-select: none; -webkit-tap-highlight-color: transparent;
+  background: rgba(255, 255, 255, 0.07); box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.06);
+}
+.hs .fill {
+  position: absolute; left: 0; top: 0; bottom: 0; width: calc(16px + var(--t) * (100% - 16px)); border-radius: 999px;
+  background: rgba(244, 244, 242, 0.22); transition: background 0.15s;
+}
+.hs.on .fill, .hs:focus-visible .fill { background: rgba(244, 244, 242, 0.36); }
+.hs .name, .hs b {
+  position: absolute; top: 50%; transform: translateY(-50%); pointer-events: none;
+  font: 600 10px/1 var(--ui); letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink);
+}
+.hs .name { left: 13px; }
+.hs b { right: 13px; font-weight: 500; letter-spacing: 0; font-variant-numeric: tabular-nums; color: rgba(244, 244, 242, 0.6); }
+.pick { display: flex; flex-direction: column-reverse; gap: 2px; border-radius: 29px; }
+.pick .row {
+  position: relative; display: flex; align-items: center; justify-content: center; width: 46px; height: 46px; padding: 0; border: 0;
+  border-radius: 50%; background: none; color: rgba(244, 244, 242, 0.55); cursor: pointer; touch-action: none;
+  transition: background 0.1s, color 0.1s; -webkit-tap-highlight-color: transparent;
+}
+.pick .row.on { background: var(--ink); color: var(--ground); }
+@media (hover: hover) { .pick .row:hover:not(.on) { background: rgba(255, 255, 255, 0.07); color: var(--ink); } }
+.pick .row .name {
+  position: absolute; left: calc(100% + 14px); top: 50%; transform: translate(-4px, -50%); opacity: 0; pointer-events: none;
+  font: 600 10px/1 var(--ui); letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink); white-space: nowrap;
+  text-shadow: 0 1px 6px rgba(0, 0, 0, 0.8); transition: opacity 0.12s, transform 0.12s;
+}
+.pick .row.on .name { opacity: 1; transform: translate(0, -50%); }
+@media (hover: hover) { .pick .row:hover .name { opacity: 1; transform: translate(0, -50%); } }
+.pick.flip .row .name { left: auto; right: calc(100% + 14px); transform: translate(4px, -50%); }
+.pick.flip .row.on .name { transform: translate(0, -50%); }
+
+/* a pointer's tooltip: the name and its key */
+.tip {
+  position: absolute; left: 50%; bottom: calc(100% + 12px); transform: translate(-50%, 4px); z-index: 2;
+  display: flex; align-items: center; gap: 6px; padding: 5px 6px 5px 10px; border-radius: 999px; white-space: nowrap;
+  background: rgba(72, 72, 72, 0.92); color: var(--ink); font: 500 11px/1 var(--ui);
+  pointer-events: none; opacity: 0; transition: opacity 0.12s, transform 0.12s;
+}
+.tip:not(:has(kbd)) { padding-right: 10px; }
+.tip kbd {
+  display: inline-flex; align-items: center; justify-content: center; min-width: 16px; height: 16px; padding: 0 4px;
+  box-sizing: border-box; border-radius: 5px; background: rgba(255, 255, 255, 0.16); font: inherit; font-size: 10px;
+}
+@media (hover: hover) { .knob > button:hover:not(.on) .tip { opacity: 1; transform: translate(-50%, 0); transition-delay: 0.35s; } }
+@media (max-width: 400px) {
+  .bar { padding: 4px 5px; }
+  .knob > button { min-width: 36px; padding: 0 6px; }
+}
+
+/* the browser kept the sound locked: one tap here opens it */
+.start {
+  position: fixed; z-index: 6; left: 50%; top: 50%; transform: translate(-50%, -50%) scale(0.96);
+  display: inline-flex; align-items: center; gap: 10px; height: 52px; padding: 0 22px 0 18px; border: 0; border-radius: 999px;
+  background: var(--ink); color: var(--ground); cursor: pointer; -webkit-tap-highlight-color: transparent;
+  font: 600 11px/1 var(--ui); letter-spacing: 0.14em; text-transform: uppercase;
+  box-shadow: 0 0 0 10px rgba(244, 244, 242, 0.08), 0 14px 40px rgba(0, 0, 0, 0.5);
+  opacity: 0; pointer-events: none; transition: opacity 0.2s, transform 0.25s cubic-bezier(0.3, 1.4, 0.5, 1);
+}
+.start.show { opacity: 1; pointer-events: auto; transform: translate(-50%, -50%); }
+.start:active { transform: translate(-50%, -50%) scale(0.95); }
+.clean .start { display: none; }
+
+/* bottom right: the workbench, dev only (or ?settings) */
+.set-btn {
+  position: fixed; z-index: 4;
+  right: max(var(--edge), env(safe-area-inset-right)); bottom: max(var(--edge), env(safe-area-inset-bottom));
+}
+.settings {
+  position: fixed; z-index: 5;
+  right: max(var(--edge), env(safe-area-inset-right)); bottom: calc(max(var(--edge), env(safe-area-inset-bottom)) + 46px);
+  box-sizing: border-box; width: 280px; max-height: calc(100vh - 140px); overflow: auto;
+  padding: 14px 16px 16px; border-radius: 18px;
+  background: rgba(33, 33, 33, 0.78); -webkit-backdrop-filter: blur(16px); backdrop-filter: blur(16px);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.1), 0 10px 30px rgba(0, 0, 0, 0.4);
+  color: var(--ink); font: 400 12px/1.3 var(--ui);
+}
+.settings[hidden] { display: none; }
+.set-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 8px; }
+.set-head b { font: 600 10px/1 var(--ui); letter-spacing: 0.12em; text-transform: uppercase; }
+.set-head output { font: 400 11px/1 var(--ui); color: rgba(244, 244, 242, 0.55); font-variant-numeric: tabular-nums; }
+.settings .row { display: block; padding: 5px 0; cursor: pointer; }
+.settings .row > span { display: flex; justify-content: space-between; margin-bottom: 4px; }
+.settings .row output { font-variant-numeric: tabular-nums; color: rgba(244, 244, 242, 0.6); }
+.settings input[type="range"] { width: 100%; margin: 0; accent-color: var(--ink); }
+.settings .reset {
+  width: 100%; margin-top: 10px; padding: 8px; border: 0; border-radius: 999px; cursor: pointer;
+  background: rgba(244, 244, 242, 0.1); color: var(--ink); font: 600 10px/1 var(--ui); letter-spacing: 0.12em; text-transform: uppercase;
+}
+.settings .reset:hover { background: rgba(244, 244, 242, 0.18); }
+@media (max-width: 640px) {
+  .set-btn { bottom: calc(max(var(--edge), env(safe-area-inset-bottom)) + 74px); }
+  .settings { left: 12px; right: 12px; width: auto; bottom: calc(max(var(--edge), env(safe-area-inset-bottom)) + 120px); }
+}
+
+/* ?clean: the scene alone */
+.clean .plate, .clean .dock, .clean .set-btn, .clean .settings { display: none; }
+
+/* a word in the middle for a moment: a snapshot saved or recalled */
+.toast {
+  position: fixed; z-index: 6; left: 50%; top: 42%; transform: translate(-50%, -50%); pointer-events: none; white-space: nowrap;
+  padding: 9px 16px; border-radius: 999px; background: rgba(41, 41, 41, 0.78);
+  -webkit-backdrop-filter: blur(18px); backdrop-filter: blur(18px); box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+  font: 600 10px/1 var(--ui); letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink); opacity: 0;
+}
+.toast.show { animation: toast 1.4s ease-out forwards; }
+@keyframes toast { 0% { opacity: 0; } 10% { opacity: 1; } 70% { opacity: 1; } 100% { opacity: 0; } }
+
+/* on a wide screen with a mouse, the bar sits bottom right, out of the string's way */
+@media (min-width: 900px) and (hover: hover) and (pointer: fine) {
+  .dock { left: auto; right: max(var(--edge), env(safe-area-inset-right)); transform: none; }
+}

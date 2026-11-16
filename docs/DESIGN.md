@@ -21,16 +21,16 @@ No greys for text that matters, no colour for the furniture: colour belongs to t
 
 ## The title plate
 
-Top left, `max(24px, safe-area)` from the corner (16 px on a phone). The day in heavy capitals, the way home under it, the prompt word in Japanese after it.
+Top left, `max(24px, safe-area)` from the corner (16 px on a phone). Two lines: the day in heavy capitals, then the way home, the prompt word in Japanese and the author's handle after it.
 
 ```html
-<div class="plate"><div class="head"><b>12 Feather</b><i><a class="home" href="../">Codevember 2026 <span lang="ja">羽根</span></a></i></div></div>
+<div class="plate"><div class="head"><b>12 Feather</b><i><a class="home" href="https://ttillberg.github.io/codevember-2026/">Codevember 2026 <span lang="ja">羽根</span></a> · <a class="home" href="https://x.com/theo_t">@theo_t</a></i></div></div>
 ```
 
 - `b`: IBM Plex Sans 700, 56 px, line height 0.9, letter spacing −0.02em, uppercase. 34–36 px on a phone (`max-width: 640px`).
 - `i`: Inter 600, 14 px, letter spacing 0.12em, uppercase, 6 px under the title. 9–10 px on a phone.
-- The `ja` span: Hiragino Sans, Hiragino Kaku Gothic ProN, Noto Sans JP, Yu Gothic; letter spacing 0.06em.
-- The plate never takes a press (`pointer-events: none`), only the link does. It is the only way back to the index: no `.back` link.
+- The plate never takes a press (`pointer-events: none`), only the links do. It is the only way back to the index: no `.back` link.
+- The way home is the absolute URL of the index, never `../`, so a copy of the day still leads back to the month. The handle after the dot links to X. `<meta name="author">` says the same in the head.
 - Under the plate, a day may add one or two lines of what it is, in the same caps.
 
 ## Type

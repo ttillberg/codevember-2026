@@ -1,0 +1,61 @@
+# 04 · Tangle
+
+A drone parked over a junction at the edge of a big city: an arterial, a cross street, two back streets, a strip mall, a gas station, and blocks of housing with lanes winding through them, after Xinpaifang in Chongqing. A day and a night of autumn through haze, running at sixty times life.
+
+The look is taken from drone pictures of the Huangjuewan interchange in Chongqing: sun-bleached concrete, scrub and red earth, pale slab blocks with blue roofs, everything flattened by the haze.
+
+Drag on the ground and paint follows the brush. Only the strokes are kept. Every time they change, rules make the town again from nothing. Each stroke is walked in small steps and takes the node that is already near, or lays a new one where there is room. So two roads never lie on each other, paint on paint is the same road again, and the arms of a junction stay well apart. Then each run between junctions gets its road style, stop lines, stalls or signal. The place itself is nine strokes painted in advance. The traffic moves over to the new network and thinks again.
+
+- **Road** (drag): a four-lane road. It joins what its ends touch and makes a junction of what it crosses. Paint along a road that is there and it grows a size instead. One that ends in the open is a two-lane cul-de-sac with a yard at its end: room to turn, parking either side, and paving up to the houses beside it. One painted out into the haze is a way in: traffic starts coming down it. None goes through a parking lot. Houses are in the way and nothing takes them down: the road bends round them and squeezes between them, and where it cannot, it ends.
+- **Roundabout**: draw a circle with the road brush, back to where it began. It has to close on itself and be big enough to be meant. It is as big as it was drawn, one way round, and everything it crosses joins it. A junction that ends up with six arms or more turns into a roundabout by itself.
+- **Bridge** (cmd or ctrl + drag): one straight span, or one even arc where a house is in the line, on piers. It lands only at its two ends and flies over roads, parking and low houses. One that crosses an earlier bridge goes over it. Start or end a stroke on a deck, with either brush, and it hangs on that bridge there: a ramp down to the ground, or a link from one level to another, with a junction up in the air.
+- **Smear** (shift + drag): push the roads that are there, like wet paint. Everything within reach goes along, junctions and traffic included, less the further away it is. Parking lots and the far ends of the map stay put.
+- **Undo** (cmd + Z).
+- **P** (or space) pauses. It is always a timelapse, sixty times life. Painting works in a still too.
+- Two fingers and the right button move the drone. It keeps its height: there is no zoom.
+- The day runs by itself, four minutes for a day and its night. It opens in the low sun of the afternoon: long shadows, warm light, the sky cool against it. Then the lamps come on, the rooms and the signs light up, and the traffic is head lamps and trails of red. The night goes by three times as fast as the day. `?hour=19` starts at seven in the evening.
+- Now and then an ambulance, a fire engine or a police car crosses the town in a hurry, flashing blue and red, and leaves a blue trail after dark. The lights let it through, the traffic that would cross its way waits, and it pulls out round whoever is slow.
+- Now and then a stretch of road is dug up for a good part of a day: a lane coned off, where the traffic merges into the lane beside it and goes past slowly, or a back street closed with barriers, where it finds another way. One or two sites at a time.
+- The drone is never quite still: it glides, swings a few degrees and bobs in the wind.
+- `?debug` opens a pane: the shot (angle, distance, lens, tilt shift), the drone's own motion, the hour (Time, Hold time to stay there, Day for how long a day takes, Trails for how long the lights of the traffic stay on the picture, Lights for how they are drawn: `geometry`, `webgpu` or `off`), the grade, pixels and frames per second, what smooths the edges, and what can be switched off. Copy puts all of it on the clipboard as JSON; Copy map and Paste map do the same for the painting. Send ambulance sends an emergency vehicle across the town now, and Dig opens a works site near the middle, a coned-off lane and a closed road in turn. `?debug` starts on the map in `map.ts`.
+
+## What is there
+
+- `net.ts`: the road network. Roads become lanes, junctions get connector lanes and their conflict points, lots get stalls. Lane-level Dijkstra for routes.
+- `sim.ts`: the traffic. Cars follow lanes, keep distance with IDM, obey signals, yield by road rank and turn, take the gaps their driver accepts, change lanes, park and leave. Seeded, so the same day replays. Emergency vehicles (`dispatch()`) and road works (`Site`, `dig()`), with lots of their own, so the ordinary traffic draws the same ones with or without them.
+- `vehicles.ts`: seven body types from tapered boxes, instanced, in the colours cars actually come in.
+- `intent.ts`: the strokes, and the rules that derive roads between junctions from them. The base map lives here as strokes.
+- `map.ts`: a painting saved from `?debug`, where `?debug` starts.
+- `paint.ts`, `Painter.tsx`: the tools. They only add, move or mark strokes.
+- `haze.ts`: the air and the hour. `skyAt(hour)` says where the sun or the moon is, what colour and how strong, what the sky adds, and how much of the night is here (`NIGHT`). Nothing at night is a light: lamp heads, signs, rooms and vehicle lamps are surfaces that shine by `NIGHT` and bloom, and what they throw on the ground is a glow laid over it.
+- `Glow.tsx`: how the lights of the traffic are drawn where there is a WebGPU, on a desk (`?gpu` asks for it on a phone, `?no=gpu` for the strips in `Cars.tsx`, Lights in the pane switches). The lights of the traffic as a real long exposure, on a WebGPU canvas of its own over the picture: a float map of the ground that fades every frame and that every vehicle under way draws its last stretch into, laid on the ground with the camera of the scene and added to the picture by the page (`mix-blend-mode: plus-lighter`). Lanes come out white or red by which way they run. Houses are drawn over it as black boxes, since it knows no depth. Without WebGPU the strips are drawn and the pane says so. The beam of the head lamps is exposed with them: a cone laid on the map at every note of where a vehicle is, so through a bend it adds up to a fan; the WebGL beam is only drawn with the strips.
+- `World.tsx`, `geo.ts`: scrub, asphalt, sidewalks, paint, buildings, trees, built from the network. Street trees follow whatever roads there are. The arrow in a lane shows the turns the traffic in it really has; a roundabout and a ramp carry an arrow that says which way they run. A junction whose arms leave at flat angles is not paved from mouth to mouth: it is laid as its turns, a slip road each, and a gap between them that is big enough stays as an island.
+- `Cars.tsx`: draws the traffic, and the signals: a mast at the stop line with an arm over the lanes, and a head with three lamps over each lane. The lamps on an emergency vehicle and the glow over it flash in the shader, by `NOW` in `haze.ts`.
+- `Works.tsx`: the road works, drawn from what the traffic knows of them: cones, barriers, a patch of earth with a trench, a truck and a digger, amber lamps that blink, all boxes in one instanced mesh.
+- `Life.tsx`: people on the sidewalks and footpaths, who cross on the zebras and walk round the corners, bikes along the kerb, and signs on everything: hoardings on roofs and on poles by the road, banners down the ends of the blocks, shop fronts. The writing is made up in the shader. Lamp posts stand down both sides of every proper road, and video screens at the big junctions and along the arterial, each running its own adverts.
+- `facade.ts`: the faces of sixties housing, drawn on a canvas: four bays by four floors a sheet, one layer a style.
+- `Town.tsx`: slab blocks in rows and a few towers, each wearing a sheet from `facade.ts` in its own paint, their concrete and footpaths, and what people keep on a roof. Planted once, and in the way of everything painted or smeared after.
+- `Park.tsx`: common ground, planted once like the housing (`plantCommons`) in the open ground the first map leaves: a park south-east of the middle junction (a mown lawn, three walks and a cycle way that nobody laid out: each is the first wandering line from one sidewalk to another that gets past the houses; benches, lamps, trees along them), a football pitch of 60 by 40 m west of the strip mall's lot with goals, floodlights and two sides playing, a school north of it (a long house, a hall, a yard with a painted court and a hopscotch, a fence with a gate to the arterial, bike racks, children), and hedges and bushes round the little houses. None of it is in the way of the brush (`standingCommons`): the pitch and the school go whole when a road touches them, in the park each thing goes by itself and a walk is cut where the road crosses, and the flat parts lie under every road and sidewalk. The walks are lines for `People` in `Life.tsx`, tied to the sidewalk or the kerb at their ends; 34 walkers and 7 bikes never leave the park, the rest come through. Lamps and floodlights shine by `NIGHT` and throw a glow on the ground, like the street lamps.
+
+## Learned
+
+- Flat ground takes almost nothing of a low sun. The sun has to be turned up as it sinks, as a camera would open up, and kept from coming in flatter than ten degrees: under that it only fades.
+- A vehicle that keeps the junction for itself while the one in front of it has lost it locks the junction for good: whoever is behind a vehicle that changes lane or is sent another way has to ask again.
+- A long exposure does not need a pass over the picture. A strip for each of the last few frames of each vehicle's way does it, and costs nothing that can be measured.
+- It does not need one, but a map of the light kept on the ground does it better: the trails are curves through a junction where the strips are a few straight pieces, they cross and add up, and they stay on the road however the drone moves, which light kept on the picture would not. On a second canvas in WebGPU it costs about half a millisecond of a frame of nineteen.
+- A roundabout needs no code of its own in the traffic: it is one-way roads that outrank their arms. The one exception is the box rule, which must not hold cars already on the ring, or a full ring never moves again.
+- A parking lot as a grid of tiny junctions gridlocks at once. One road snaking through the aisles cannot.
+- "Don't block the box" has to be a promise of room in the lane beyond, not a look at whether its last car is moving.
+- Cutting strokes where they cross and merging what is near does not survive a scribble: flat angles and stacked roads. Walking strokes over shared nodes with a minimum distance does, with far less code.
+
+## Not yet
+
+- Crash physics: a car whose lane is painted away just disappears.
+- People and bikes are set dressing. People cross on the zebras now, but on red as well, the cars do not see them, and nobody goes anywhere in particular. Where a sidewalk ends with no zebra and no corner to turn (a footpath, a dead end, beside a bridge or a roundabout) they still hop to the nearest one. Bikes still hop across every junction.
+- The network still clogs after some minutes of traffic, with or without help.
+- Nobody pulls over for a siren: the lights and the cross traffic give way, the vehicle itself overtakes. Stuck in a jam on one lane it waits like everyone else.
+- Only back streets are closed for works, so few have to go round. Closing a bigger street sends its traffic down lanes that cannot take it.
+- A road cannot be painted closer than 44 m to another: it becomes that road. Coarse, but it is what keeps a scribble from turning into shards.
+- A painted roundabout ignores parking lots and lies straight over them.
+- A roundabout made from a crowded junction locks up when the roads leaving it are full. On an open one the traffic keeps going round.
+- Size reads little from the network: only dead ends. No attribute layer.

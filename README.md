@@ -1,6 +1,6 @@
 # Codevember 2026
 
-One mini project per day during November 2026. Not every day, and that's fine.
+One mini project per day during November 2026, by [Theo Tillberg](https://x.com/theo_t). Not every day, and that's fine.
 
 Following the prompt list shared by [@thespite](https://x.com/thespite/status/2116974998212772095).
 
@@ -12,7 +12,7 @@ Live: https://ttillberg.github.io/codevember-2026/
 | 01 | Fold | — | — |
 | 02 | Shatter | — | — |
 | 03 | Melt | — | — |
-| 04 | Tangle | — | — |
+| 04 | Tangle | [View](https://ttillberg.github.io/codevember-2026/04/) | [Code](https://github.com/ttillberg/codevember-2026/tree/main/04) |
 | 05 | Moss | [View](https://ttillberg.github.io/codevember-2026/05/) | [Code](https://github.com/ttillberg/codevember-2026/tree/main/05) |
 | 06 | Orrery | [View](https://ttillberg.github.io/codevember-2026/06/) | [Code](https://github.com/ttillberg/codevember-2026/tree/main/06) |
 | 07 | Hollow | [View](https://ttillberg.github.io/codevember-2026/07/) | [Code](https://github.com/ttillberg/codevember-2026/tree/main/07) |
@@ -22,7 +22,7 @@ Live: https://ttillberg.github.io/codevember-2026/
 | 11 | Rust | — | — |
 | 12 | Feather | [View](https://ttillberg.github.io/codevember-2026/12/) | [Code](https://github.com/ttillberg/codevember-2026/tree/main/12) |
 | 13 | Labyrinth | — | — |
-| 14 | Tension | — | — |
+| 14 | Tension | [View](https://ttillberg.github.io/codevember-2026/14/) | [Code](https://github.com/ttillberg/codevember-2026/tree/main/14) |
 | 15 | Mirage | — | — |
 | 16 | Spore | — | — |
 | 17 | Kelp | — | — |

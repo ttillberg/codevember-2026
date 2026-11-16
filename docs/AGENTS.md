@@ -2,6 +2,7 @@
 
 This repo is 30 small, independent experiments. Your job is usually one of them.
 
+0. Name the session, the worktree and the branch `day-NN-word`, e.g. `day-12-feather` (see `CLAUDE.md`).
 1. Read `docs/GUIDELINES.md`, and `docs/DESIGN.md` for how a day looks.
 2. Scaffold with `pnpm new NN`, never by hand or by copying another day.
 3. Work only inside `NN/`. Do not touch other days, `template/`, `scripts/` or the workflow unless asked.
