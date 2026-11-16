@@ -2,7 +2,8 @@
 //
 //   --clip   the index clip: NN/about/screengrab.mp4, 10 s, 480 square, committed. Also NN/about/screengrab.png
 //            (1200 square, the last frame) if there is none yet, or always with --still.
-//   --x      the post for X: NN/about/x.mp4, 60 s, 1080 square, gitignored.
+//   --x      the post for X: NN/about/x.mp4, 60 s, 1080 square, gitignored, with the page's sound (whatever
+//            a Web Audio graph sends to the speakers, recorded in the page and laid under the frames).
 //
 // demo.md: frontmatter, then prose for people, then the blocks the recorder plays.
 //
@@ -61,6 +62,45 @@ export function readDemo(dir) {
 }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// The page's sound, for --x: everything connected to an AudioContext's speakers is also sent to a recorder.
+// The context is often made on the first gesture, after the recording started: the recorder starts then,
+// and remembers how late, so the sound is laid in at the right time.
+const AUDIO_TAP = `(() => {
+  const connect = AudioNode.prototype.connect;
+  const grab = (window.__grabAudio = { on: false, t0: 0, rec: null, chunks: [], late: 0, taps: [] });
+  const start = (tap) => {
+    if (!grab.on || grab.rec) return;
+    const rec = new MediaRecorder(tap.stream, { mimeType: 'audio/webm;codecs=opus', audioBitsPerSecond: 192000 });
+    rec.ondataavailable = (e) => e.data.size && grab.chunks.push(e.data);
+    rec.start(250);
+    grab.rec = rec;
+    grab.late = (performance.now() - grab.t0) / 1000;
+  };
+  grab.begin = () => { grab.on = true; grab.t0 = performance.now(); if (grab.taps[0]) start(grab.taps[0]); };
+  AudioNode.prototype.connect = function (dest, ...rest) {
+    const r = connect.call(this, dest, ...rest);
+    if (typeof AudioDestinationNode !== 'undefined' && dest instanceof AudioDestinationNode && this.context instanceof AudioContext) {
+      let tap = grab.taps.find((x) => x.context === this.context);
+      if (!tap) { tap = this.context.createMediaStreamDestination(); grab.taps.push(tap); start(tap); }
+      connect.call(this, tap);
+    }
+    return r;
+  };
+})();`;
+
+/** stop the page's recorder and hand back its sound (webm) and how late into the video it started */
+async function takeAudio(page) {
+  return page.evaluate(async () => {
+    const g = window.__grabAudio;
+    if (!g?.rec) return null;
+    await new Promise((r) => { g.rec.onstop = r; g.rec.stop(); });
+    const buf = new Uint8Array(await new Blob(g.chunks, { type: 'audio/webm' }).arrayBuffer());
+    let bin = '';
+    for (let i = 0; i < buf.length; i += 0x8000) bin += String.fromCharCode(...buf.subarray(i, i + 0x8000));
+    return { b64: btoa(bin), late: g.late };
+  });
+}
 const KEYS = { meta: 'Meta', shift: 'Shift', alt: 'Alt', control: 'Control' };
 
 export async function play(page, line) {
@@ -81,11 +121,13 @@ export async function play(page, line) {
   }
   for (let i = 1; i < pts.length; i++) {
     const [ax, ay] = pts[i - 1] ?? pts[i], [bx, by] = pts[i];
-    const n = Math.max(2, Math.round(ms / 16));
+    const n = Math.max(2, Math.round(ms / 40)); // (a move can take a frame or two on a heavy page)
+    const t0 = Date.now();
     for (let k = 1; k <= n; k++) {
       const t = k / n, e = t * t * (3 - 2 * t); // eased, like a hand
       await page.mouse.move(ax + (bx - ax) * e, ay + (by - ay) * e);
-      await sleep(ms / n);
+      // on the clock: a slow move doesn't stretch the leg
+      await sleep(Math.max(0, t0 + ms * t - Date.now()));
     }
   }
   if (cmd === 'drag') await page.mouse.up();
@@ -112,6 +154,7 @@ export async function clip(dir, { mode = 'clip', base, still = false } = {}) {
   });
   const ctx = await browser.newContext({ viewport: { width: SIZE, height: SIZE }, deviceScaleFactor: 1 });
   const page = await ctx.newPage();
+  if (mode === 'x') await page.addInitScript(AUDIO_TAP);
   if (demo.blocks.init) await page.addInitScript(demo.blocks.init[0]);
   console.log(`▶ ${url} (${mode}, ${secs} s)`);
   await page.goto(url, { waitUntil: 'load' });
@@ -130,11 +173,13 @@ export async function clip(dir, { mode = 'clip', base, still = false } = {}) {
   });
   await cdp.send('Page.startScreencast', { format: 'jpeg', quality: 92, maxWidth: SIZE, maxHeight: SIZE });
   const t0 = Date.now() / 1000;
+  if (mode === 'x') await page.evaluate(() => window.__grabAudio?.begin());
   const end = sleep(secs * 1000);
   for (const s of steps) await play(page, s);
   await end;
   const t1 = Date.now() / 1000;
   await cdp.send('Page.stopScreencast');
+  const audio = mode === 'x' ? await takeAudio(page) : null;
   if (mode === 'clip' && (still || !existsSync(png))) {
     await page.screenshot({ path: png });
     console.log(png);
@@ -154,7 +199,23 @@ export async function clip(dir, { mode = 'clip', base, still = false } = {}) {
     '-vf', `fps=30,scale=${m.out}:${m.out}:flags=lanczos`,
     '-c:v', 'libx264', '-preset', 'slow', '-crf', String(m.crf), '-pix_fmt', 'yuv420p', '-movflags', '+faststart', '-an', mp4,
   ], { stdio: 'inherit' });
+  if (r.status !== 0) {
+    rmSync(tmp, { recursive: true, force: true });
+    throw new Error('ffmpeg failed');
+  }
+  // the sound under it, from when the page started making it
+  if (audio) {
+    const webm = join(tmp, 'sound.webm');
+    const silent = join(tmp, 'silent.mp4');
+    writeFileSync(webm, Buffer.from(audio.b64, 'base64'));
+    spawnSync('mv', [mp4, silent]);
+    const a = spawnSync('ffmpeg', [
+      '-y', '-loglevel', 'error', '-i', silent, '-itsoffset', audio.late.toFixed(3), '-i', webm,
+      '-map', '0:v', '-map', '1:a', '-c:v', 'copy', '-c:a', 'aac', '-b:a', '192k', '-af', 'apad', '-t', String(secs), '-movflags', '+faststart', mp4,
+    ], { stdio: 'inherit' });
+    if (a.status !== 0) spawnSync('mv', [silent, mp4]);
+    console.log(a.status === 0 ? `sound from ${audio.late.toFixed(2)} s` : 'no sound: muxing failed, kept the silent video');
+  } else if (mode === 'x') console.log('no sound: the page made none');
   rmSync(tmp, { recursive: true, force: true });
-  if (r.status !== 0) throw new Error('ffmpeg failed');
   console.log(mp4);
 }
