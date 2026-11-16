@@ -20,7 +20,6 @@ canvas.grabbing { cursor: grabbing; }
   display: block; margin-top: 6px; font-style: normal;
   font-weight: 600; font-size: 14px; line-height: 1.15; letter-spacing: 0.12em; text-transform: uppercase;
 }
-.plate .head > i.by + i { margin-top: 2px; } /* the way home, close under the byline */
 .plate .home { color: inherit; text-decoration: none; pointer-events: auto; }
 .plate .home span[lang="ja"] { font-family: "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Noto Sans JP", "Yu Gothic", sans-serif; letter-spacing: 0.06em; }
 @media (max-width: 640px) {
