@@ -1,6 +1,7 @@
 // The faces of sixties housing: slab blocks with open galleries, painted estates, striped towers.
 // Drawn once on a canvas, four bays by four floors a sheet, and tiled over the walls.
 // Alpha says how much of the building's own paint shows through.
+// A second sheet of each says what shines after dark: the rooms behind the glass, each with its own lamp.
 import { DataArrayTexture, LinearFilter, LinearMipmapLinearFilter, RepeatWrapping, SRGBColorSpace } from 'three';
 import { rng } from './net';
 
@@ -11,6 +12,8 @@ export const CELLS = 4;
 export const GALLERY = 0, PAINTED = 1, STRIPED = 2, BANDED = 3, LOW = 4;
 
 const C = 128, S = C * CELLS;
+// the lamps people have: mostly warm bulbs, some cold tubes, a television
+const LAMPS = ['#ffd596', '#ffd596', '#ffc97a', '#ffe2b4', '#e4ecff', '#d2e6ff', '#fff0d0', '#9fc0ff'];
 const CLOTH = ['#f4f1ea', '#f4f1ea', '#e9e2d0', '#c7473f', '#2f5fa8', '#2c2f36', '#e3b23c', '#e58fa6', '#3d9a86', '#7fb0d8'];
 
 interface Pen {
@@ -19,6 +22,8 @@ interface Pen {
   box(x: number, y: number, w: number, h: number, fill: string, tint?: number): void;
   /** darken from top to bottom, for the shade under a slab and the dirt on a wall */
   shade(x: number, y: number, w: number, h: number, top: number, bottom: number): void;
+  /** what shines here at night, and black where something stands in front of it */
+  lit(x: number, y: number, w: number, h: number, fill: string): void;
 }
 
 const pick = <T>(p: Pen, a: T[]) => a[(p.r() * a.length) | 0];
@@ -49,6 +54,8 @@ function pane(p: Pen, x: number, y: number, w: number, h: number, frame = '#d7d5
     // most are dark, some have a curtain drawn or the light on
     const glass = k < 0.6 ? '#2f3a41' : k < 0.75 ? '#4e5b62' : k < 0.88 ? pick(p, ['#b9a98a', '#8fa39b', '#c9c2b4', '#a8848a']) : '#d9c98f';
     p.box(x + 3 + i * pw, y + 3, pw - 3, h - 6, glass);
+    // behind a drawn curtain the lamp is the colour of the curtain
+    p.lit(x + 3 + i * pw, y + 3, pw - 3, h - 6, k >= 0.75 && k < 0.88 ? glass : LAMPS[((k * 977) | 0) % LAMPS.length]);
     if (p.r() < 0.5) p.box(x + 3 + i * pw, y + 3 + (h - 6) * 0.45, pw - 3, 2, frame);
   }
 }
@@ -58,9 +65,12 @@ function gallery(p: Pen) {
   p.box(0, 0, C, C, '#33393d');
   // the back wall of the gallery, in the shade of the floor above
   p.box(0, 26, C, 92, '#a7a69c', 0.5);
+  // one bulb for the whole gallery: its back wall glows a little
+  p.lit(0, 26, C, 58, '#4a3a22');
   const door = pick(p, ['#2f8f7c', '#2f8f7c', '#3a7f96', '#6f8f5a']);
   const dx = 16 + p.r() * 14;
   p.box(dx, 34, 34, 84, door);
+  p.lit(dx, 34, 34, 50, '#20180e');
   for (let y = 38; y < 116; y += 5) p.box(dx + 2, y, 30, 1.5, '#1f5f54');
   p.box(dx + 16.5, 34, 1.5, 84, '#1f5f54');
   if (p.r() < 0.8) pane(p, dx + 44, 44, 40, 42, door);
@@ -149,18 +159,19 @@ function low(p: Pen) {
 }
 
 const STYLES = [gallery, painted, striped, banded, low];
+/** The layer where a style's lights are: this many after its paint. */
+export const GLOW = STYLES.length;
 
-/** One sheet as paint and as mask, for looking at. */
+/** One sheet as paint, as mask and as lights, for looking at. */
 export function sheet(style: number) {
   const make = () => {
     const c = document.createElement('canvas');
     c.width = c.height = S;
     return c;
   };
-  const col = make(), mask = make();
-  const a = col.getContext('2d')!, b = mask.getContext('2d')!;
-  b.fillStyle = '#000';
-  b.fillRect(0, 0, S, S);
+  const col = make(), mask = make(), glow = make();
+  const a = col.getContext('2d')!, b = mask.getContext('2d')!, g = glow.getContext('2d')!;
+  for (const c of [b, g]) { c.fillStyle = '#000'; c.fillRect(0, 0, S, S); }
   const p: Pen = {
     r: rng(100 + style * 17),
     box(x, y, w, h, fill, tint = 0) {
@@ -168,6 +179,7 @@ export function sheet(style: number) {
       const g = Math.round(tint * 255);
       b.fillStyle = `rgb(${g},${g},${g})`; b.fillRect(x, y, w, h);
     },
+    lit(x, y, w, h, fill) { g.fillStyle = fill; g.fillRect(x, y, w, h); },
     shade(x, y, w, h, top, bottom) {
       const g = a.createLinearGradient(0, y, 0, y + h);
       g.addColorStop(0, `rgba(20,24,28,${top})`);
@@ -177,31 +189,34 @@ export function sheet(style: number) {
   };
   for (let j = 0; j < CELLS; j++) {
     for (let i = 0; i < CELLS; i++) {
-      for (const c of [a, b]) c.setTransform(1, 0, 0, 1, i * C, j * C);
+      for (const c of [a, b, g]) c.setTransform(1, 0, 0, 1, i * C, j * C);
       STYLES[style](p);
     }
   }
-  return { col, mask };
+  return { col, mask, glow };
 }
 
 let made: DataArrayTexture | null = null;
 
-/** All the sheets as layers of one texture. */
+/** All the sheets as layers of one texture: the paint of every style, then the lights of every style. */
 export function facades(): DataArrayTexture {
   if (made) return made;
-  const data = new Uint8Array(S * S * 4 * STYLES.length);
+  const data = new Uint8Array(S * S * 4 * STYLES.length * 2);
   STYLES.forEach((_, k) => {
-    const { col, mask } = sheet(k);
+    const { col, mask, glow } = sheet(k);
     const a = col.getContext('2d')!.getImageData(0, 0, S, S).data, b = mask.getContext('2d')!.getImageData(0, 0, S, S).data;
+    const c = glow.getContext('2d')!.getImageData(0, 0, S, S).data;
     // the canvas counts rows from the top, the texture from the ground
     for (let y = 0; y < S; y++) {
       for (let x = 0; x < S; x++) {
         const from = (y * S + x) * 4, to = k * S * S * 4 + ((S - 1 - y) * S + x) * 4;
         data[to] = a[from]; data[to + 1] = a[from + 1]; data[to + 2] = a[from + 2]; data[to + 3] = b[from];
+        const lit = to + GLOW * S * S * 4;
+        data[lit] = c[from]; data[lit + 1] = c[from + 1]; data[lit + 2] = c[from + 2]; data[lit + 3] = 255;
       }
     }
   });
-  const t = new DataArrayTexture(data, S, S, STYLES.length);
+  const t = new DataArrayTexture(data, S, S, STYLES.length * 2);
   t.colorSpace = SRGBColorSpace;
   t.wrapS = t.wrapT = RepeatWrapping;
   t.generateMipmaps = true;

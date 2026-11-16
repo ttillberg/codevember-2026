@@ -2,7 +2,8 @@
 // Planted once, from the place as it stood. Nothing takes them down: roads go round.
 import { useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import { Color, InstancedBufferAttribute, InstancedMesh, Matrix4, MeshStandardMaterial, Object3D } from 'three';
-import { BANDED, BAY, CELLS, FLOOR, GALLERY, LOW, PAINTED, STRIPED, facades } from './facade';
+import { BANDED, BAY, CELLS, FLOOR, GALLERY, GLOW, LOW, PAINTED, STRIPED, facades } from './facade';
+import { NIGHT } from './haze';
 import { pavingGeometry, rectClear } from './geo';
 import { rng, type Net, type Rect, type V } from './net';
 
@@ -136,11 +137,12 @@ export function plantTown(net: Net): Block[] {
 
 const HASH = /* glsl */ `float wh(vec2 p){ p = fract(p * vec2(123.34, 456.21)); p += dot(p, p + 45.32); return fract(p.x * p.y); }`;
 
-/** Walls that wear a sheet from facade.ts: whole bays and whole floors, whatever the box is scaled to. */
+/** Walls that wear a sheet from facade.ts: whole bays and whole floors, whatever the box is scaled to. After dark some of the rooms are lit. */
 function walls() {
   const m = new MeshStandardMaterial({ roughness: 0.85 });
   m.onBeforeCompile = (s) => {
     s.uniforms.uFacade = { value: facades() };
+    s.uniforms.uNight = NIGHT;
     s.vertexShader = s.vertexShader
       .replace('#include <common>', '#include <common>\nattribute float aStyle; varying float vStyle; varying vec3 vLp; varying vec3 vSz; varying vec3 vOn;')
       .replace('#include <begin_vertex>', `#include <begin_vertex>
@@ -150,8 +152,9 @@ function walls() {
         #endif
         vLp = position * vSz; vOn = normal; vStyle = aStyle;`);
     s.fragmentShader = s.fragmentShader
-      .replace('#include <common>', '#include <common>\nuniform sampler2DArray uFacade; varying float vStyle; varying vec3 vLp; varying vec3 vSz; varying vec3 vOn;\n' + HASH)
+      .replace('#include <common>', '#include <common>\nuniform sampler2DArray uFacade; uniform float uNight; varying float vStyle; varying vec3 vLp; varying vec3 vSz; varying vec3 vOn;\n' + HASH)
       .replace('#include <color_fragment>', `#include <color_fragment>
+        vec3 rooms = vec3(0.0);
         if (abs(vOn.y) < 0.5) {
           bool side = abs(vOn.x) > 0.5;
           float len = side ? vSz.z : vSz.x;
@@ -167,12 +170,18 @@ function walls() {
             vec2 st = (vec2(u, v) * n + floor(vec2(seed, fract(seed * 7.3)) * ${CELLS.toFixed(1)})) / ${CELLS.toFixed(1)};
             vec4 t = texture(uFacade, vec3(st, vStyle));
             diffuseColor.rgb = t.rgb * mix(vec3(1.0), paint, t.a);
+            if (uNight > 0.0) {
+              // somebody is home in half of the rooms, and they do not all reach for the switch at once
+              float home = wh(floor(vec2(u, v) * n) * 1.7 + vSz.xz + 3.0) / 0.5;
+              rooms = texture(uFacade, vec3(st, vStyle + ${GLOW.toFixed(1)})).rgb * step(home, 1.0) * smoothstep(home * 0.7, home * 0.7 + 0.3, uNight) * 2.4;
+            }
           }
           // no two stretches of wall have weathered alike
           diffuseColor.rgb *= 0.9 + 0.1 * wh(vec2(floor(u * len / 6.4), floor(v * vSz.y / 6.0)) + vSz.xz);
-        }`);
+        }`)
+      .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\ntotalEmissiveRadiance += rooms;');
   };
-  m.customProgramCacheKey = () => 'walls';
+  m.customProgramCacheKey = () => 'walls-lit';
   return m;
 }
 

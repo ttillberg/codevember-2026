@@ -1,12 +1,13 @@
 // Vehicle bodies, built from a few tapered boxes. Seen from a drone, that is all a car is.
 // Long axis +x (front), up +y. Vertex colour is a shade multiplied by the instance paint.
+// `glow` is the light a part gives off after dark: nothing, but for the lamps at either end.
 import { BoxGeometry, BufferAttribute, BufferGeometry } from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 
 const GLASS = 0.07;
 const TYRE = 0.04;
 
-function box(L: number, y0: number, y1: number, W: number, cx: number, shade: number, tx = 1, tz = 1) {
+function box(L: number, y0: number, y1: number, W: number, cx: number, shade: number, tx = 1, tz = 1, glow: [number, number, number] = [0, 0, 0]) {
   const g = new BoxGeometry(L, y1 - y0, W);
   const p = g.attributes.position;
   for (let i = 0; i < p.count; i++) {
@@ -16,7 +17,16 @@ function box(L: number, y0: number, y1: number, W: number, cx: number, shade: nu
   g.computeVertexNormals();
   const c = new Float32Array(p.count * 3).fill(shade);
   g.setAttribute('color', new BufferAttribute(c, 3));
+  g.setAttribute('glow', new BufferAttribute(Float32Array.from({ length: p.count * 3 }, (_, i) => glow[i % 3]), 3));
   return g;
+}
+
+/** Head lamps and tail lamps: a bar across each end, standing just proud of the body so the drone sees it from above. `top` is how high the nose is. */
+function lamps(L: number, W: number, top: number) {
+  return [
+    box(0.34, top - 0.3, top + 0.03, W * 0.88, L / 2 - 0.1, 1.1, 1, 1, [9, 8, 6]),
+    box(0.3, top - 0.3, top + 0.03, W * 0.88, -L / 2 + 0.09, 0.45, 1, 1, [5, 0.25, 0.1]),
+  ];
 }
 
 function wheels(L: number, W: number, r = 0.34, front = 0.3, rear = -0.31) {
@@ -44,6 +54,7 @@ function car(L: number, W: number, H: number, belt: number, cabL: number, cabX: 
     box(L, 0.24, belt, W, 0, 1, 0.97, 0.94),
     box(L * cabL, belt, H - 0.04, W * 0.9, cabX * L, GLASS, taper, 0.84),
     box(L * cabL * taper * 0.9, H - 0.05, H, W * 0.74, cabX * L, 1),
+    ...lamps(L, W, belt),
     ...wheels(L, W),
   ])!;
 }
@@ -59,6 +70,7 @@ function pickup() {
     box(L * 0.3, 1.06, 1.82, W * 0.9, 0.06 * L, GLASS, 0.78, 0.86),
     box(L * 0.22, 1.8, 1.86, W * 0.76, 0.06 * L, 1),
     box(L * 0.33, 1.02, 1.08, W * 0.8, -0.31 * L, 0.3),
+    ...lamps(L, W, 1.06),
     ...wheels(L, W, 0.4),
   ])!;
 }
@@ -68,6 +80,7 @@ function van() {
   return mergeGeometries([
     box(L, 0.3, 2.2, W, 0, 1, 0.97, 0.93),
     box(L * 0.1, 1.25, 1.9, W * 0.88, 0.455 * L, GLASS),
+    ...lamps(L + 0.3, W, 1.0),
     ...wheels(L, W, 0.36),
   ])!;
 }
@@ -79,6 +92,7 @@ function truck() {
     box(L * 0.03, 1.5, 2.2, W * 0.84, 0.485 * L, GLASS),
     box(L * 0.74, 0.95, 3.25, W, -0.12 * L, 1.15),
     box(L * 0.9, 0.5, 0.95, W * 0.5, -0.03 * L, 0.12),
+    ...lamps(L + 0.3, W, 1.1),
     ...wheels(L, W, 0.48, 0.38, -0.3),
   ])!;
 }
@@ -89,8 +103,18 @@ function bus() {
     box(L, 0.36, 3.05, W, 0, 1, 0.99, 0.94),
     box(L * 0.93, 1.45, 2.35, W + 0.03, 0, GLASS),
     box(L * 0.2, 3.05, 3.3, W * 0.6, -0.2 * L, 0.8),
+    ...lamps(L + 0.3, W, 1.1),
     ...wheels(L, W, 0.5, 0.36, -0.3),
   ])!;
+}
+
+/** The road ahead in the head lamps: a flat fan on the ground in front of the nose, wider the further it goes. `uv` is along and across it. */
+export function beam(L: number, W: number, reach = 22) {
+  const g = new BufferGeometry(), x0 = L / 2 - 0.2, x1 = L / 2 + reach, w0 = W * 0.45, w1 = W * 0.5 + reach * 0.2;
+  g.setAttribute('position', new BufferAttribute(Float32Array.from([x0, 0.3, -w0, x0, 0.3, w0, x1, 0.3, w1, x1, 0.3, -w1]), 3));
+  g.setAttribute('uv', new BufferAttribute(Float32Array.from([0, -1, 0, 1, 1, 1, 1, -1]), 2));
+  g.setIndex([0, 1, 2, 0, 2, 3]);
+  return g;
 }
 
 export function makeTypes(): VType[] {

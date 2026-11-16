@@ -1,6 +1,6 @@
 # 04 · Tangle
 
-A drone parked over a junction at the edge of a big city: an arterial, a cross street, two back streets, a strip mall, a gas station, and blocks of housing with lanes winding through them, after Xinpaifang in Chongqing. Daylight through haze, running at sixty times life.
+A drone parked over a junction at the edge of a big city: an arterial, a cross street, two back streets, a strip mall, a gas station, and blocks of housing with lanes winding through them, after Xinpaifang in Chongqing. A day and a night of autumn through haze, running at sixty times life.
 
 The look is taken from drone pictures of the Huangjuewan interchange in Chongqing: sun-bleached concrete, scrub and red earth, pale slab blocks with blue roofs, everything flattened by the haze.
 
@@ -13,8 +13,9 @@ Drag on the ground and paint follows the brush. Only the strokes are kept. Every
 - **Undo** (cmd + Z).
 - **P** (or space) pauses. It is always a timelapse, sixty times life. Painting works in a still too.
 - Two fingers and the right button move the drone. It keeps its height: there is no zoom.
+- The day runs by itself, four minutes for a day and its night. It opens in the low sun of the afternoon: long shadows, warm light, the sky cool against it. Then the lamps come on, the rooms and the signs light up, and the traffic is head lamps and trails of red. The night goes by three times as fast as the day. `?hour=19` starts at seven in the evening.
 - The drone is never quite still: it glides, swings a few degrees and bobs in the wind.
-- `?debug` opens a pane: the shot (angle, distance, lens, tilt shift), the drone's own motion, the grade, pixels and frames per second, what smooths the edges, and what can be switched off. Copy puts all of it on the clipboard as JSON; Copy map and Paste map do the same for the painting. `?debug` starts on the map in `map.ts`.
+- `?debug` opens a pane: the shot (angle, distance, lens, tilt shift), the drone's own motion, the hour (Time, Hold time to stay there, Day for how long a day takes, Trails for how long the lights of the traffic stay on the picture), the grade, pixels and frames per second, what smooths the edges, and what can be switched off. Copy puts all of it on the clipboard as JSON; Copy map and Paste map do the same for the painting. `?debug` starts on the map in `map.ts`.
 
 ## What is there
 
@@ -24,7 +25,7 @@ Drag on the ground and paint follows the brush. Only the strokes are kept. Every
 - `intent.ts`: the strokes, and the rules that derive roads between junctions from them. The base map lives here as strokes.
 - `map.ts`: a painting saved from `?debug`, where `?debug` starts.
 - `paint.ts`, `Painter.tsx`: the tools. They only add, move or mark strokes.
-- `haze.ts`: the place fades out with distance from its middle, not from the camera, so its edges are lost from every angle. Cars come and go only out there.
+- `haze.ts`: the air and the hour. `skyAt(hour)` says where the sun or the moon is, what colour and how strong, what the sky adds, and how much of the night is here (`NIGHT`). Nothing at night is a light: lamp heads, signs, rooms and vehicle lamps are surfaces that shine by `NIGHT` and bloom, and what they throw on the ground is a glow laid over it.
 - `World.tsx`, `geo.ts`: scrub, asphalt, sidewalks, paint, buildings, trees, built from the network. Street trees follow whatever roads there are.
 - `Life.tsx`: people on the sidewalks and footpaths, bikes along the kerb, and signs on everything: hoardings on roofs and on poles by the road, banners down the ends of the blocks, shop fronts. The writing is made up in the shader. Lamp posts stand down both sides of every proper road, and video screens at the big junctions and along the arterial, each running its own adverts.
 - `facade.ts`: the faces of sixties housing, drawn on a canvas: four bays by four floors a sheet, one layer a style.
@@ -32,6 +33,8 @@ Drag on the ground and paint follows the brush. Only the strokes are kept. Every
 
 ## Learned
 
+- Flat ground takes almost nothing of a low sun. The sun has to be turned up as it sinks, as a camera would open up, and kept from coming in flatter than ten degrees: under that it only fades.
+- A long exposure does not need a pass over the picture. A strip for each of the last few frames of each vehicle's way does it, and costs nothing that can be measured.
 - A roundabout needs no code of its own in the traffic: it is one-way roads that outrank their arms. The one exception is the box rule, which must not hold cars already on the ring, or a full ring never moves again.
 - A parking lot as a grid of tiny junctions gridlocks at once. One road snaking through the aisles cannot.
 - "Don't block the box" has to be a promise of room in the lane beyond, not a look at whether its last car is moving.

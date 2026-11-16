@@ -1,8 +1,9 @@
 // What makes it a city and not a model of one: people on the sidewalks, bikes along the kerb, and signs on everything.
 import { useLayoutEffect, useMemo, useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
-import { Color, InstancedMesh, MeshStandardMaterial, Object3D } from 'three';
+import { AdditiveBlending, Color, InstancedMesh, MeshStandardMaterial, Object3D, ShaderMaterial } from 'three';
 import { onRoad, WALK } from './geo';
+import { NIGHT } from './haze';
 import { cumLen, deck, offset, pointOn, rng, type Net, type V } from './net';
 import { turned, type Block } from './Town';
 
@@ -134,10 +135,11 @@ export function People({ net, blocks, speed, shade = true }: { net: Net; blocks:
 
 const INKS = [0xd42a20, 0xd42a20, 0xc81e1e, 0xf0c020, 0xf0c020, 0x1d5fbd, 0x1a8a4c, 0xf2efe6, 0xf2efe6, 0xee7a1c, 0xc8206e];
 
-/** A board with writing on it: rows of made-up characters on its two faces, a little brighter than the day. */
+/** A board with writing on it: rows of made-up characters on its two faces, a little brighter than the day. At night most of them are lit from inside. */
 function board() {
   const m = new MeshStandardMaterial({ roughness: 0.6 });
   m.onBeforeCompile = (s) => {
+    s.uniforms.uNight = NIGHT;
     s.vertexShader = s.vertexShader
       .replace('#include <common>', '#include <common>\nvarying vec3 vLp; varying vec3 vSz; varying vec3 vOn;')
       .replace('#include <begin_vertex>', `#include <begin_vertex>
@@ -148,10 +150,12 @@ function board() {
         vLp = position * vSz; vOn = normal;`);
     s.fragmentShader = s.fragmentShader
       .replace('#include <common>', `#include <common>
+        uniform float uNight;
         varying vec3 vLp; varying vec3 vSz; varying vec3 vOn;
         float sh(vec2 p){ p = fract(p * vec2(123.34, 456.21)); p += dot(p, p + 45.32); return fract(p.x * p.y); }`)
       .replace('#include <color_fragment>', `#include <color_fragment>
         bool flatX = vSz.x < vSz.z;
+        float lamp = 0.0;
         if (flatX ? abs(vOn.x) > 0.5 : abs(vOn.z) > 0.5) {
           float W = max(vSz.x, vSz.z), H = vSz.y;
           vec2 q = vec2((flatX ? vLp.z : vLp.x) + W * 0.5, vLp.y + H * 0.5);
@@ -163,10 +167,13 @@ function board() {
           float pale = step(0.5, dot(diffuseColor.rgb, vec3(0.3, 0.6, 0.1)));
           vec3 ink = mix(vec3(0.97, 0.94, 0.84), vec3(0.72, 0.09, 0.07), pale);
           diffuseColor.rgb = mix(diffuseColor.rgb, ink, stroke * inside * step(1.2, cell));
+          // three boards in four have a light in them, each a little stronger or weaker; a post has none
+          float k = sh(vSz.xy + 1.0);
+          lamp = step(0.9, cell) * step(k, 0.75) * (1.6 + 1.6 * k);
         } else diffuseColor.rgb *= 0.45;`)
-      .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\ntotalEmissiveRadiance += diffuseColor.rgb * 0.32;');
+      .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\ntotalEmissiveRadiance += diffuseColor.rgb * (0.32 + lamp * uNight);');
   };
-  m.customProgramCacheKey = () => 'board';
+  m.customProgramCacheKey = () => 'board-lit';
   return m;
 }
 
@@ -289,6 +296,8 @@ export function Signs({ net, blocks }: { net: Net; blocks: Block[] }) {
 
 // ---------- street lights and screens ----------
 
+const LAMP_DAY = new Color(0xffe9c0), LAMP_NIGHT = new Color(0xffb062);
+
 /** A screen showing whatever screens show: blocks of colour that keep changing, on a grid of lamps. */
 function screen() {
   const m = new MeshStandardMaterial({ roughness: 0.4, color: 0x0c0d10 });
@@ -340,15 +349,38 @@ function screen() {
   return m;
 }
 
+/** The light a street lamp throws on the ground: no light at all, only a round glow laid over the road, there when it is dark. */
+function pool() {
+  return new ShaderMaterial({
+    uniforms: { uNight: NIGHT },
+    vertexShader: /* glsl */ `
+      varying vec2 vP;
+      void main() { vP = position.xy; gl_Position = projectionMatrix * modelViewMatrix * instanceMatrix * vec4(position, 1.0); }`,
+    fragmentShader: /* glsl */ `
+      uniform float uNight;
+      varying vec2 vP;
+      void main() {
+        float a = max(0.0, 1.0 - length(vP));
+        gl_FragColor = vec4(vec3(1.0, 0.6, 0.26) * a * a * (0.25 + 0.75 * a) * uNight * POOL, 1.0);
+      }`,
+    defines: { POOL: '0.34' },
+    blending: AdditiveBlending, transparent: true, depthWrite: false,
+  });
+}
+
 /** Lamp posts down every proper road, and screens where the most people will see them: big junctions, big roads. */
 export function Street({ net, blocks, speed }: { net: Net; blocks: Block[]; speed: number }) {
-  const posts = useRef<InstancedMesh>(null), lamps = useRef<InstancedMesh>(null), tv = useRef<InstancedMesh>(null);
+  const posts = useRef<InstancedMesh>(null), lamps = useRef<InstancedMesh>(null), pools = useRef<InstancedMesh>(null), tv = useRef<InstancedMesh>(null);
+  const head = useRef<MeshStandardMaterial>(null);
+  const shine = useMemo(pool, []);
   const glass = useMemo(screen, []);
   const POSTS = 6400, TVS = 90;
 
   const plan = useMemo(() => {
     const post: { x: number; y: number; z: number; sx: number; sy: number; sz: number; rot: number }[] = [];
     const lamp: typeof post = [];
+    // what each lamp lights: a round of ground under its head
+    const lit: typeof post = [];
     const tvs: (typeof post[number] & { seed: number })[] = [];
     const solid = [...net.pads, ...net.buildings, ...blocks];
     const taken = (x: number, y: number, m = 2) => solid.some((q) => x > q.x0 - m && x < q.x1 + m && y > q.y0 - m && y < q.y1 + m);
@@ -378,6 +410,7 @@ export function Street({ net, blocks, speed }: { net: Net; blocks: Block[]; spee
           post.push({ x: p.x, y: z + H / 2, z: p.y, sx: 0.55, sy: H, sz: 0.55, rot: 0 });
           post.push({ x: p.x + nx * 1.3, y: z + H, z: p.y + ny * 1.3, sx: 2.6, sy: 0.3, sz: 0.36, rot: -Math.atan2(ny, nx) });
           lamp.push({ x: p.x + nx * 2.5, y: z + H - 0.1, z: p.y + ny * 2.5, sx: 2.3, sy: 0.4, sz: 1.0, rot: -Math.atan2(ny, nx) });
+          lit.push({ x: p.x + nx * 2.5, y: z + 0.22, z: p.y + ny * 2.5, sx: H * 1.6, sy: H * 1.6, sz: 1, rot: 0 });
         }
       }
       // screens along the biggest roads
@@ -413,14 +446,14 @@ export function Street({ net, blocks, speed }: { net: Net; blocks: Block[]; spee
         placed++;
       }
     }
-    return { post: post.slice(0, POSTS), lamp: lamp.slice(0, POSTS / 2), tvs: tvs.slice(0, TVS) };
+    return { post: post.slice(0, POSTS), lamp: lamp.slice(0, POSTS / 2), lit: lit.slice(0, POSTS / 2), tvs: tvs.slice(0, TVS) };
   }, [net, blocks]);
 
   useLayoutEffect(() => {
     const o = new Object3D(), c = new Color();
-    const put = (m: InstancedMesh, list: typeof plan.post) => {
+    const put = (m: InstancedMesh, list: typeof plan.post, flat = false) => {
       list.forEach((s, i) => {
-        o.position.set(s.x, s.y, s.z); o.scale.set(s.sx, s.sy, s.sz); o.rotation.set(0, s.rot, 0);
+        o.position.set(s.x, s.y, s.z); o.scale.set(s.sx, s.sy, s.sz); o.rotation.set(flat ? -Math.PI / 2 : 0, s.rot, 0);
         o.updateMatrix();
         m.setMatrixAt(i, o.matrix);
       });
@@ -429,6 +462,7 @@ export function Street({ net, blocks, speed }: { net: Net; blocks: Block[]; spee
     };
     put(posts.current!, plan.post);
     put(lamps.current!, plan.lamp);
+    put(pools.current!, plan.lit, true);
     put(tv.current!, plan.tvs);
     // each screen runs its own programme
     plan.tvs.forEach((s, i) => tv.current!.setColorAt(i, c.setRGB(s.seed, (s.seed * 7.3) % 1, (s.seed * 3.1) % 1)));
@@ -436,7 +470,14 @@ export function Street({ net, blocks, speed }: { net: Net; blocks: Block[]; spee
   }, [plan]);
 
   // the screens run at their own pace, not the timelapse's, and hold still in a still
-  useFrame((_, delta) => { if (speed > 0) glass.userData.time.value += Math.min(delta, 0.1); });
+  useFrame((_, delta) => {
+    if (speed > 0) glass.userData.time.value += Math.min(delta, 0.1);
+    // the lamps: hardly a light of their own by day, sodium at night, and then the ground under them shows it
+    const n = NIGHT.value;
+    head.current!.emissiveIntensity = 0.2 + 7 * n;
+    head.current!.emissive.copy(LAMP_DAY).lerp(LAMP_NIGHT, n);
+    pools.current!.visible = n > 0.01;
+  });
 
   return (
     <>
@@ -447,7 +488,10 @@ export function Street({ net, blocks, speed }: { net: Net; blocks: Block[]; spee
       <instancedMesh ref={lamps} args={[undefined, undefined, POSTS / 2]} frustumCulled={false}>
         <boxGeometry />
         {/* the heads are pale, with only a little light of their own: enough to be found, not to shine */}
-        <meshStandardMaterial color={0xe8e6dc} emissive={0xffe9c0} emissiveIntensity={0.2} roughness={0.4} />
+        <meshStandardMaterial ref={head} color={0xe8e6dc} emissive={0xffe9c0} emissiveIntensity={0.2} roughness={0.4} />
+      </instancedMesh>
+      <instancedMesh ref={pools} args={[undefined, undefined, POSTS / 2]} material={shine} frustumCulled={false}>
+        <circleGeometry args={[1, 12]} />
       </instancedMesh>
       <instancedMesh ref={tv} args={[undefined, undefined, TVS]} material={glass} castShadow frustumCulled={false}>
         <boxGeometry />

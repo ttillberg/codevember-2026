@@ -1,11 +1,11 @@
-// A drone parked over a stroad junction, on a clear day, running fast.
+// A drone parked over a stroad junction, through a day and a night of autumn, running fast.
 import { startTransition, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { MapControls } from '@react-three/drei';
 import { Bloom, ChromaticAberration, EffectComposer, SMAA, TiltShift2, ToneMapping, Vignette, wrapEffect } from '@react-three/postprocessing';
 import { BlendFunction, Effect, ToneMappingMode } from 'postprocessing';
-import { DirectionalLight, HemisphereLight, MOUSE, PerspectiveCamera, TOUCH, Uniform, Vector2 } from 'three';
-import { HAZE } from './haze';
+import { Color, DirectionalLight, HemisphereLight, MOUSE, OrthographicCamera, PerspectiveCamera, TOUCH, Uniform, Vector2 } from 'three';
+import { HAZE, MOOD, NIGHT, RICH, hoursPerSecond, skyAt } from './haze';
 import { Cars, TIMELAPSE } from './Cars';
 import { SEASONS, World, type Season } from './World';
 import { plantTown, turnSome, type Block } from './Town';
@@ -24,9 +24,11 @@ const GRADE: Grade = { gain: 1, temp: 0, bite: 0.4, sat: 0.78, lift: 1, grain: 0
 class FadeEffect extends Effect {
   constructor({ warm = 0.4, gain = 1, temp = 0, bite = 0.4, sat = 0.78, lift = 1 }: Partial<Grade> & { warm?: number } = {}) {
     super('Fade', /* glsl */ `
-      uniform float keep, gain, temp, bite, sat, lift;
+      uniform float keep, gain, temp, bite, sat, lift, rich, night;
+      uniform vec3 mood;
       void mainImage(const in vec4 inputColor, const in vec2 uv, out vec4 outputColor) {
-        vec3 c = inputColor.rgb * gain * vec3(1.0 + 0.1 * temp, 1.0, 1.0 - 0.1 * temp);
+        // the hour has its own balance, under the one that was set by hand
+        vec3 c = inputColor.rgb * gain * mood * vec3(1.0 + 0.1 * temp, 1.0, 1.0 - 0.1 * temp);
         float l = dot(c, vec3(0.2126, 0.7152, 0.0722));
         // autumn: what is warm keeps its colour, the rest fades
         float warm = smoothstep(0.02, 0.3, c.r - c.b);
@@ -37,10 +39,11 @@ class FadeEffect extends Effect {
         c = mix(c, c * c * (3.0 - 2.0 * c), bite);
         float g = dot(c, vec3(0.2126, 0.7152, 0.0722));
         c += vec3(-0.03, 0.008, 0.035) * (1.0 - smoothstep(0.0, 0.5, g)) + vec3(0.02, 0.012, -0.015) * smoothstep(0.45, 1.0, g);
-        c = mix(vec3(g), c, sat);
-        c = clamp(c * 0.94 + vec3(0.03, 0.034, 0.04) * lift, 0.0, 1.0);
+        c = mix(vec3(g), c, sat + rich);
+        // at night the blacks are let down again, or the dark is milk
+        c = clamp(c * 0.94 + vec3(0.03, 0.034, 0.04) * lift * (1.0 - 0.6 * night), 0.0, 1.0);
         outputColor = vec4(c, inputColor.a);
-      }`, { blendFunction: BlendFunction.NORMAL, uniforms: new Map(Object.entries({ keep: warm, gain, temp, bite, sat, lift }).map(([k, v]) => [k, new Uniform(v)])) });
+      }`, { blendFunction: BlendFunction.NORMAL, uniforms: new Map<string, Uniform>([...Object.entries({ keep: warm, gain, temp, bite, sat, lift }).map(([k, v]): [string, Uniform] => [k, new Uniform(v)]), ['mood', MOOD], ['rich', RICH], ['night', NIGHT]]) });
   }
 }
 const Fade = wrapEffect(FadeEffect);
@@ -105,7 +108,16 @@ const MOVES: [keyof Move, string, number, number, number][] = [
 ];
 const FPS = 30;
 const RAD = Math.PI / 180;
-const DAY = 150; // seconds of ours for nine to five of theirs
+/**
+ * The hour it is, whether it stands still there, how many seconds of ours a day and its night take, and how many seconds
+ * of theirs the lights of the traffic stay on the picture after dark. It opens in the low sun of the afternoon.
+ */
+type Clock = { hour: number; hold: boolean; day: number; trail: number };
+// ?hour=19 starts at seven in the evening instead
+const hourAsked = parseFloat(new URLSearchParams(location.search).get('hour') ?? '');
+const CLOCK: Clock = { hour: hourAsked >= 0 && hourAsked < 24 ? hourAsked : 15.3, hold: false, day: 240, trail: 8 };
+const CLOCKS: [Exclude<keyof Clock, 'hold'>, string, number, number, number][] = [['hour', 'Time', 0, 24, 0.05], ['day', 'Day', 30, 600, 10], ['trail', 'Trails', 0, 16, 0.5]];
+const hhmm = (h: number) => `${Math.floor(h)}:${String(Math.floor((h % 1) * 60)).padStart(2, '0')}`;
 /** The place as it starts: the streets, and a few flyovers laid over them the way a hand would paint them. ?debug starts on `MAP`. */
 const BASE: Intent = [
   [[-232, -68], [-150, 0], [-60, 82]],
@@ -242,41 +254,63 @@ function Drone({ shot, move, set, onShot }: {
   );
 }
 
-/** The sun crosses from east to west; at five the tape cuts back to morning. */
-/** Lazy shadows are drawn again only every so many frames: the sun is slow, and what moves fast casts none then. */
-const SHADOW_EVERY = 6;
+/**
+ * Lazy shadows are drawn again only every so many frames: the sun is slow, and what moves fast casts none then.
+ * A low sun is not slow on the ground, where the end of a long shadow runs: under LOW_SUN radians they are drawn twice as often.
+ */
+const SHADOW_EVERY = 6, LOW_SUN = 0.35;
+/** Metres from the middle that the shadows reach, and how far up anything stands that casts one. */
+const SHADE = { wide: 430, far: 400, tall: 70 };
 
-function Sun({ speed, shadow, lazy }: { speed: number; shadow: boolean; lazy: boolean }) {
+/** The sun, the sky and the moon: one light that casts shadows and one that fills them, moved and coloured by the hour. */
+function Sun({ speed, shadow, lazy, clock, scrub, onHour }: {
+  speed: number; shadow: boolean; lazy: boolean; clock: Clock;
+  /** goes up when the hour was set by hand: only then does the clock jump to it */
+  scrub: number;
+  /** ?debug: told the hour now and then, so the slider runs with it */
+  onHour?: (h: number) => void;
+}) {
   const gl = useThree((s) => s.gl);
+  const scene = useThree((s) => s.scene);
   const frame = useRef(0);
   useEffect(() => {
     gl.shadowMap.autoUpdate = !lazy;
     return () => { gl.shadowMap.autoUpdate = true; };
   }, [gl, lazy]);
-  // the day runs with the traffic: slower at life size, stopped in a still
-  const day = useRef(0);
+  // the day runs with the traffic: stopped in a still
+  const hour = useRef(clock.hour);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { hour.current = clock.hour; }, [scrub]);
   const sun = useRef<DirectionalLight>(null);
   const sky = useRef<HemisphereLight>(null);
   useFrame((_, delta) => {
-    if (lazy && frame.current++ % SHADOW_EVERY === 0) gl.shadowMap.needsUpdate = true;
-    day.current += (Math.min(delta, 0.1) * speed) / TIMELAPSE;
-    const t = (day.current / DAY + 0.3) % 1;
-    const phi = (t - 0.5) * 2.5; // radians either side of south
-    const el = 0.38 + 0.6 * Math.cos(phi * 0.62);
-    const s = sun.current!;
-    s.position.set(TARGET[0] - Math.sin(phi) * Math.cos(el) * 900, Math.sin(el) * 900, TARGET[2] + Math.cos(phi) * Math.cos(el) * 900);
-    const cut = Math.min(1, Math.min(t, 1 - t) * DAY * 1.2);
-    const warm = 1 - Math.cos(phi * 0.62);
-    s.intensity = 2.6 * cut * (1 - warm * 0.25);
-    s.color.setRGB(1, 0.96 - warm * 0.22, 0.9 - warm * 0.5);
-    sky.current!.intensity = 1.25 * cut;
+    const n = frame.current++;
+    if (!clock.hold && speed > 0) {
+      hour.current = (hour.current + Math.min(delta, 0.1) * (speed / TIMELAPSE) * hoursPerSecond(hour.current, clock.day)) % 24;
+      if (onHour && n % 8 === 0) onHour(hour.current);
+    }
+    const k = skyAt(hour.current);
+    if (lazy && n % (k.el < LOW_SUN ? SHADOW_EVERY / 2 : SHADOW_EVERY) === 0) gl.shadowMap.needsUpdate = true;
+    const s = sun.current!, cos = Math.cos(k.el), sin = Math.sin(k.el);
+    s.position.set(TARGET[0] - Math.sin(k.phi) * cos * 900, sin * 900, TARGET[2] + Math.cos(k.phi) * cos * 900);
+    s.intensity = k.power;
+    s.color.copy(k.sun);
+    // a low sun sees the ground edge on: the shadow map is drawn only as tall as that, and its pixels go further
+    const cam = s.shadow.camera as OrthographicCamera;
+    cam.top = Math.min(330, SHADE.far * sin + SHADE.tall * cos);
+    cam.bottom = -Math.min(330, SHADE.far * sin + 8);
+    cam.updateProjectionMatrix();
+    sky.current!.intensity = k.fill;
+    sky.current!.color.copy(k.air);
+    sky.current!.groundColor.copy(k.earth);
+    (scene.background as Color).copy(k.back);
   });
   const res = touch ? 2048 : 4096;
   return (
     <>
       <hemisphereLight ref={sky} args={[0xbcd4ff, 0x6b6a52, 0.95]} />
       <directionalLight ref={sun} castShadow={shadow} shadow-mapSize={[res, res]} shadow-bias={-0.0004} shadow-normalBias={0.25}>
-        <orthographicCamera attach="shadow-camera" args={[-430, 430, 330, -330, 100, 1900]} />
+        <orthographicCamera attach="shadow-camera" args={[-SHADE.wide, SHADE.wide, 330, -330, 100, 1900]} />
         <object3D attach="target" position={TARGET} />
       </directionalLight>
     </>
@@ -326,6 +360,9 @@ export function App() {
   const [dpr, setDpr] = useState(DPR);
   const [fps, setFps] = useState(FPS);
   const [move, setMove] = useState(MOVE);
+  const [clock, setClock] = useState(CLOCK);
+  const [scrub, setScrub] = useState(0);
+  const onHour = useCallback((h: number) => setClock((c) => ({ ...c, hour: Math.round(h * 100) / 100 })), []);
   // the last softness is the browser's: a blur on the canvas itself, so many pixels wide
   useEffect(() => { document.documentElement.style.setProperty('--soft', grade.soft + 'px'); }, [grade.soft]);
   const [set, setSet] = useState(0);
@@ -437,9 +474,9 @@ export function App() {
         <color attach="background" args={[HAZE]} />
         <Pace fps={fps} />
         <Drone shot={shot} move={move} set={set} onShot={debug ? onShot : undefined} />
-        <Sun speed={speed} shadow={fx.shadow} lazy={fx.lazy} />
+        <Sun speed={speed} shadow={fx.shadow} lazy={fx.lazy} clock={clock} scrub={scrub} onHour={debug ? onHour : undefined} />
         <World net={net} blocks={blocks} wood={wood} trees={trees} season={season} />
-        <Cars net={roads} speed={speed} target={VEHICLES} shade={!fx.lazy} heat={heat} trace={tool === 'trace' ? trace : null} onNote={onNote} />
+        <Cars net={roads} speed={speed} target={VEHICLES} trail={clock.trail} shade={!fx.lazy} heat={heat} trace={tool === 'trace' ? trace : null} onNote={onNote} />
         <People net={life.net} blocks={life.blocks} speed={speed} shade={!fx.lazy} />
         <Signs net={life.net} blocks={life.blocks} />
         <Street net={life.net} blocks={life.blocks} speed={speed} />
@@ -478,6 +515,18 @@ export function App() {
             </label>
           ))}
           <hr />
+          {CLOCKS.map(([k, label, min, max, step]) => (
+            <label key={k}>
+              <span>{label}</span>
+              <input type="range" min={min} max={max} step={step} value={clock[k]} onChange={(e) => { setClock((c) => ({ ...c, [k]: +e.target.value })); if (k === 'hour') setScrub((n) => n + 1); }} />
+              <output>{k === 'hour' ? hhmm(clock.hour) : clock[k]}</output>
+            </label>
+          ))}
+          <label className="check">
+            <input type="checkbox" checked={clock.hold} onChange={(e) => setClock((c) => ({ ...c, hold: e.target.checked }))} />
+            <span>Hold time</span>
+          </label>
+          <hr />
           {GRADES.map(([k, label, min, max, step]) => (
             <label key={k}>
               <span>{label}</span>
@@ -510,8 +559,8 @@ export function App() {
               <span>{label}</span>
             </label>
           ))}
-          <button onClick={() => copy('shot', { ...shot, ...grade, dpr, fps, move, fx })}>{copied === 'shot' ? 'Copied' : 'Copy'}</button>
-          <button onClick={() => { setShot(SHOTS[upright() ? 'p' : 'l']); setSet((n) => n + 1); setGrade(GRADE); setFx(FX); setDpr(DPR); setFps(FPS); setMove(MOVE); }}>Reset</button>
+          <button onClick={() => copy('shot', { ...shot, ...grade, dpr, fps, move, fx, clock })}>{copied === 'shot' ? 'Copied' : 'Copy'}</button>
+          <button onClick={() => { setShot(SHOTS[upright() ? 'p' : 'l']); setSet((n) => n + 1); setGrade(GRADE); setFx(FX); setDpr(DPR); setFps(FPS); setMove(MOVE); setClock(CLOCK); setScrub((n) => n + 1); }}>Reset</button>
           <button onClick={() => copy('map', intent)}>{copied === 'map' ? 'Copied' : 'Copy map'}</button>
           <button onClick={pasteMap}>{copied === 'pasted' ? 'Pasted' : copied === 'bad' ? 'Not a map' : 'Paste map'}</button>
         </div>
