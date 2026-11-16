@@ -6,6 +6,7 @@ import { BoxGeometry, Color, InstancedBufferAttribute, InstancedMesh, MeshStanda
 import { at, cumLen, type Lane, type Net } from './net';
 import { NIGHT, NOW } from './haze';
 import type { Sim, Site } from './sim';
+import { wet } from './wet';
 
 /** How many boxes all the sites together may be made of. */
 const CAP = 480;
@@ -131,7 +132,7 @@ export function Works({ sim, net }: { sim: Sim; net: Net }) {
   const made = useMemo(() => {
     const geo = new BoxGeometry(1, 1, 1), lamp = new InstancedBufferAttribute(new Float32Array(CAP * 4), 4);
     geo.setAttribute('aLamp', lamp);
-    return { geo, lamp, mat: paint() };
+    return { geo, lamp, mat: wet(paint(), 'traffic') };
   }, []);
   useEffect(() => () => { made.geo.dispose(); made.mat.dispose(); }, [made]);
   const rev = useRef(-1);

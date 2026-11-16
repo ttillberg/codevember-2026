@@ -5,6 +5,8 @@ import { useThree } from '@react-three/fiber';
 import { Matrix4, type Camera } from 'three';
 import { NIGHT } from './haze';
 import { PARKED, type Car } from './sim';
+import { SMEAR_R } from './paint';
+import { SOAK, WET } from './wet';
 
 /**
  * The light is not kept on the picture, where the drone's own motion would smear it, but on the ground: one float texture
@@ -89,7 +91,7 @@ const FAN = 12.0; // metres either side of a vehicle's heading that its beam rea
 }`;
 
 const SHOW = /* wgsl */ `
-struct U { vp: mat4x4f, k: vec4f };
+struct U { vp: mat4x4f, k: vec4f, wet: vec4f, soak: vec4f };
 @group(0) @binding(0) var<uniform> u: U;
 @group(0) @binding(1) var map: texture_2d<f32>;
 @group(0) @binding(2) var smp: sampler;
@@ -103,8 +105,19 @@ struct Out { @builtin(position) pos: vec4f, @location(0) uv: vec2f };
   var o: Out; o.pos = p; o.uv = uv;
   return o;
 }
+fn fall(p: vec2f) -> f32 {
+  let d = p - u.wet.xy;
+  let q = dot(d, d) / ${(SMEAR_R * SMEAR_R).toFixed(1)};
+  return select(0.0, (1.0 - q) * (1.0 - q), q < 1.0);
+}
 @fragment fn fs(o: Out) -> @location(0) vec4f {
-  let c = textureSampleLevel(map, smp, o.uv, 0.0).rgb * u.k.x;
+  // while a smear is dragged the light goes with the traffic, pushed as the roads are (wet.ts): this point of the
+  // ground shows what was drawn where it was pushed from. Found by going back a few times, close enough for a short push
+  let x = (o.uv - 0.5) * ${SPAN}.0 + vec2f(${MID[0]}, ${MID[1]});
+  let push = (u.wet.zw - u.soak.xy) * u.soak.z;
+  var w = x;
+  for (var i = 0; i < 3; i++) { w = x - push * fall(w); }
+  let c = textureSampleLevel(map, smp, (w - vec2f(${MID[0]}, ${MID[1]})) / ${SPAN}.0 + 0.5, 0.0).rgb * u.k.x;
   // a shoulder, as film has: a lamp that stands still burns out to white instead of clipping to its colour
   let lit = 1.0 - exp(-c);
   // a little noise, or the faint end of a trail shows its steps
@@ -167,7 +180,7 @@ class Layer {
   private rec = new Float32Array(SEGS * REC);
   private n = 0;
   private out = new Float32Array(SEGS * 8);
-  private u = new Float32Array(20);
+  private u = new Float32Array(28);
   /** where the lamps of each vehicle were when last noted: head x y, tail x y, height, when */
   private last = new WeakMap<object, Float32Array>();
   private noted = -1e9; private drawn = -1; private blank = true; private lit = false;
@@ -316,6 +329,8 @@ class Layer {
     vp.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
     this.u.set(vp.elements);
     this.u[16] = GAIN * night; this.u[17] = (time * 7.3) % 61;
+    WET.value.toArray(this.u, 20);
+    SOAK.traffic.value.toArray(this.u, 24);
 
     const { device } = this;
     let view: GPUTextureView;

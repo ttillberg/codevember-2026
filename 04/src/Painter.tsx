@@ -1,9 +1,53 @@
 // The brush. Drag on the ground and a road follows; let go and it is built.
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, type MutableRefObject } from 'react';
 import type { ThreeEvent } from '@react-three/fiber';
-import { Group, Mesh, MeshBasicMaterial, Vector3, type Ray } from 'three';
+import { BufferAttribute, BufferGeometry, Group, Mesh, MeshBasicMaterial, Vector3, type LineSegments, type Points, type Ray } from 'three';
 import { strokeGeometry } from './geo';
 import { CROSS, cumLen, deck, pointOn, type Net, type Road, type V } from './net';
+
+/** How many points of strokes the sketch of a smear can hold. */
+const SKETCH = 6000;
+
+/**
+ * What a smear shows while it is dragged: not the town pushed about, only the strokes it has moved, as thin lines
+ * with a dot at every point. The town itself is made again when the hand lets go. `api` is given a function that
+ * takes the moved strokes, or nothing to wipe it.
+ */
+export function Sketch({ api }: { api: MutableRefObject<(strokes: { pts: V[] }[] | null) => void> }) {
+  const lines = useRef<LineSegments>(null), dots = useRef<Points>(null);
+  useEffect(() => {
+    const seg = new Float32Array(SKETCH * 6), dot = new Float32Array(SKETCH * 3);
+    const lg = new BufferGeometry(), dg = new BufferGeometry();
+    lg.setAttribute('position', new BufferAttribute(seg, 3));
+    dg.setAttribute('position', new BufferAttribute(dot, 3));
+    lines.current!.geometry = lg;
+    dots.current!.geometry = dg;
+    api.current = (strokes) => {
+      let n = 0, d = 0;
+      for (const s of strokes ?? []) {
+        for (let i = 0; i < s.pts.length && d < SKETCH; i++) {
+          const p = s.pts[i];
+          dot.set([p.x, 0.9, p.y], d++ * 3);
+          if (i && n < SKETCH) { const q = s.pts[i - 1]; seg.set([q.x, 0.9, q.y, p.x, 0.9, p.y], n++ * 6); }
+        }
+      }
+      lg.setDrawRange(0, n * 2); dg.setDrawRange(0, d);
+      lg.attributes.position.needsUpdate = dg.attributes.position.needsUpdate = true;
+      lines.current!.visible = dots.current!.visible = n > 0;
+    };
+    return () => { api.current = () => {}; lg.dispose(); dg.dispose(); };
+  }, [api]);
+  return (
+    <>
+      <lineSegments ref={lines} visible={false} frustumCulled={false} renderOrder={21}>
+        <lineBasicMaterial color={0xf4f4f2} transparent opacity={0.9} depthTest={false} depthWrite={false} toneMapped={false} />
+      </lineSegments>
+      <points ref={dots} visible={false} frustumCulled={false} renderOrder={22}>
+        <pointsMaterial color={0xffb23e} size={7} sizeAttenuation={false} transparent depthTest={false} depthWrite={false} toneMapped={false} />
+      </points>
+    </>
+  );
+}
 
 export type Tool = 'road' | 'bridge' | 'smear' | 'erase' | 'trace';
 /** the tools that paint or push: what the brush is when trace is not on */

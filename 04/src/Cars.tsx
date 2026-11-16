@@ -9,6 +9,7 @@ import { HOUR, NIGHT, NOW } from './haze';
 import { beam, makeTypes } from './vehicles';
 import { Glow, type GlowHandle, type Wall } from './Glow';
 import { Works } from './Works';
+import { settle, SOAKED, wet } from './wet';
 
 /** How much faster than life the traffic runs, as a timelapse. */
 export const TIMELAPSE = 60;
@@ -167,14 +168,15 @@ export function Cars({ net, speed, target, trail = 0, glow = false, walls = NO_W
   // one simulation for the life of the page: when the roads change, the traffic moves over to them
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const sim = useMemo(() => new Sim(net, types), [types]);
-  useLayoutEffect(() => sim.setNet(net), [sim, net]);
+  // and while a smear is dragged it is drawn pushed with the road under it, until it has moved over
+  useLayoutEffect(() => { sim.setNet(net); settle('traffic', net); }, [sim, net]);
   useEffect(() => { sim.target = target; }, [sim, target]);
   const meshes = useRef<(InstancedMesh | null)[]>([]);
-  const paint = useMemo(bodywork, []);
+  const paint = useMemo(() => wet(bodywork(), 'traffic'), []);
   // the head lamps on the road: a fan to a vehicle, drawn from the same instances as the vehicle itself
   const beams = useRef<(InstancedMesh | null)[]>([]);
   const light = useMemo(() => ({
-    mat: headlight(),
+    mat: wet(headlight(), 'traffic'),
     geo: types.map((t) => beam(t.len, t.wid)),
     // which of them are under way, and so have their lamps on
     on: types.map((t) => new InstancedBufferAttribute(new Float32Array(t.cap), 1)),
@@ -205,10 +207,10 @@ export function Cars({ net, speed, target, trail = 0, glow = false, walls = NO_W
     const geo = strip(), age = new InstancedBufferAttribute(new Float32Array(STREAKS * 2), 2), hue = new InstancedBufferAttribute(new Float32Array(STREAKS), 1);
     geo.setAttribute('aAge', age);
     geo.setAttribute('aHue', hue);
-    return { geo, age, hue, mat: streak(), past: new WeakMap<object, Float32Array>() };
+    return { geo, age, hue, mat: wet(streak(), 'traffic'), past: new WeakMap<object, Float32Array>() };
   }, []);
   const streaks = useRef<InstancedMesh>(null);
-  const halo = useMemo(() => ({ mat: siren(), geo: pad() }), []);
+  const halo = useMemo(() => ({ mat: wet(siren(), 'traffic'), geo: pad() }), []);
   const halos = useRef<InstancedMesh>(null);
   const exposure = useRef(trail);
   // the strips are not drawn while the other layer shows the same lights
@@ -276,7 +278,9 @@ export function Cars({ net, speed, target, trail = 0, glow = false, walls = NO_W
     NOW.value = clock.elapsedTime;
     // the night's quiet: it comes on over the hour before nine and lifts over the half hour before half past five
     const h = HOUR.value, ease = (a: number, b: number) => { const t = Math.min(1, Math.max(0, (h - a) / (b - a))); return t * t * (3 - 2 * t); };
-    sim.quiet = h >= 12 ? ease(20, 21) : 1 - ease(5, 5.5);
+    const quiet = h >= 12 ? ease(20, 21) : 1 - ease(5, 5.5);
+    // never anything but a number: the ways in would shut for good on one that is not
+    sim.quiet = quiet >= 0 && quiet <= 1 ? quiet : 0;
     const dt = Math.min(delta, 0.05) * rate.current;
     const n = Math.ceil(dt / 0.1);
     for (let i = 0; i < n; i++) {
@@ -404,11 +408,11 @@ export function Cars({ net, speed, target, trail = 0, glow = false, walls = NO_W
       {trace && <Journeys sim={sim} net={net} at={trace} note={onNote} />}
       <instancedMesh ref={headMesh} args={[undefined, undefined, heads.length]} frustumCulled={false}>
         <boxGeometry args={[0.58, 0.72, 0.6]} />
-        <meshBasicMaterial toneMapped={false} />
+        <meshBasicMaterial toneMapped={false} {...SOAKED.traffic} />
       </instancedMesh>
       <instancedMesh ref={steelMesh} args={[undefined, undefined, lights.steel.length]} castShadow frustumCulled={false}>
         <boxGeometry />
-        <meshStandardMaterial color={0x2e3136} roughness={0.7} metalness={0.3} />
+        <meshStandardMaterial color={0x2e3136} roughness={0.7} metalness={0.3} {...SOAKED.traffic} />
       </instancedMesh>
     </group>
   );

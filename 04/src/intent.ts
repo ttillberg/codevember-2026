@@ -242,7 +242,16 @@ export function standing<T extends Rect>(intent: Intent, houses: T[]): T[] {
   // the little ones by the road come down for any road that is painted through them, not only for a bridge
   const roads = intent.filter((s) => s.paint && !s.bridge && s.pts.length > 1).map((s) => ({ m: half(s) + 3, pts: s.pts }));
   if (!spans.length && !roads.length) return houses;
-  const hit = (list: typeof spans, h: Rect) => list.some((s) => s.pts.some((p, i) => i > 0 && segNear(s.pts[i - 1], p, h, s.m)));
+  // the box round each stroke: a house outside it, by its margin, is near none of its stretches
+  const box = new Map((spans as { m: number; pts: V[] }[]).concat(roads).map((s) => {
+    const xs = s.pts.map((p) => p.x), ys = s.pts.map((p) => p.y);
+    return [s, { x0: Math.min(...xs) - s.m, y0: Math.min(...ys) - s.m, x1: Math.max(...xs) + s.m, y1: Math.max(...ys) + s.m }];
+  }));
+  const hit = (list: typeof spans, h: Rect) => list.some((s) => {
+    const b = box.get(s)!;
+    if (b.x1 < h.x0 || b.x0 > h.x1 || b.y1 < h.y0 || b.y0 > h.y1) return false;
+    return s.pts.some((p, i) => i > 0 && segNear(s.pts[i - 1], p, h, s.m));
+  });
   const left = houses.filter((h) => !('path' in h) || !(hit(spans, h) || ('small' in h && h.small && hit(roads, h))));
   return left.length === houses.length ? houses : left;
 }

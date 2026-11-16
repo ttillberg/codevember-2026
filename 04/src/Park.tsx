@@ -449,6 +449,11 @@ export function standingCommons(c: Commons, net: Net, blocks: Block[]): Green {
   if (c.park) off.push(PARK);
   if (pitch) off.push(grown(field, 2.5));
   if (school) off.push(grown(SCHOOL, 2.5));
+  // the box round each walk, as far out as it keeps the trees: a tree outside it is not near that walk
+  const boxes = trails.map((t) => {
+    const m = t.hw + 2.2, xs = t.pts.map((p) => p.x), ys = t.pts.map((p) => p.y);
+    return { x0: Math.min(...xs) - m, y0: Math.min(...ys) - m, x1: Math.max(...xs) + m, y1: Math.max(...ys) + m };
+  });
   return {
     park: c.park, pitch, school,
     lawn: c.lawn,
@@ -463,7 +468,10 @@ export function standingCommons(c: Commons, net: Net, blocks: Block[]): Green {
     trees: c.trees,
     keep: (x, y) => {
       for (const q of off) if (inside(q, x, y)) return false;
-      for (const t of trails) if (away(t.pts, x, y) < t.hw + 2.2) return false;
+      for (let i = 0; i < trails.length; i++) {
+        const b = boxes[i], t = trails[i];
+        if (x > b.x0 && x < b.x1 && y > b.y0 && y < b.y1 && away(t.pts, x, y) < t.hw + 2.2) return false;
+      }
       return true;
     },
   };
@@ -667,8 +675,10 @@ function playing(clock: { value: number }) {
           float small = sc.y > 1.6 ? 1.0 : 0.5;
           float amp = (role < 0.5 ? 1.5 : role < 1.5 ? 0.7 : role < 2.5 ? 0.14 : 0.0) * small;
           float roam = (role < 0.5 ? 5.0 : role < 1.5 ? 1.2 : 0.0) * small;
-          vec2 at = vec2(fidget(uPlay * 1.4, sd), fidget(uPlay * 1.4, sd + 17.0)) * amp * 2.0
-                  + vec2(fidget(uPlay * 0.06, sd + 3.0), fidget(uPlay * 0.06, sd + 29.0)) * roam * 2.0;
+          // at sixty times life nobody is seen to move: they are somewhere else every frame, and the spot they keep to
+          // is itself across the pitch and back in a second
+          vec2 at = vec2(fidget(uPlay * 9.0, sd), fidget(uPlay * 9.0, sd + 17.0)) * amp * 2.0
+                  + vec2(fidget(uPlay * 1.1, sd + 3.0), fidget(uPlay * 1.1, sd + 29.0)) * roam * 2.0;
           // on the way in and out: along the line from the gate, with a little of the jitter
           vec2 off = mix(aWho.yz - instanceMatrix[3].xz + at * 0.2, at, here);
           transformed.xz += off / sc.xz;

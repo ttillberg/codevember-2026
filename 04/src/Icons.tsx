@@ -2,7 +2,7 @@
 import type { ReactNode } from 'react';
 
 const Svg = ({ children }: { children: ReactNode }) => (
-  <svg width={22} height={22} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+  <svg width={24} height={24} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
     {children}
   </svg>
 );

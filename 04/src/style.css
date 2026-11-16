@@ -59,41 +59,49 @@ canvas.glow { position: absolute; inset: 0; width: 100%; height: 100%; pointer-e
   font: 600 14px/1 Inter, "Helvetica Neue", Helvetica, Arial, sans-serif; letter-spacing: 0.04em; font-variant-numeric: tabular-nums;
 }
 
-/* bottom centre: the brush with its menu, trace, then undo and redo */
+/* bottom centre: the brush with the others above it, trace, then undo and redo. One measure all through: 6 px round
+   the edge of the pill and 6 px between one 46 px disc and the next, the separator standing in a gap of its own */
 .bar {
   position: fixed; z-index: 2; left: 50%; transform: translateX(-50%);
   bottom: max(20px, env(safe-area-inset-bottom));
+  gap: 6px; padding: 6px;
 }
-.bar .sep { width: 1px; height: 22px; margin: 0 6px; background: rgba(244, 244, 242, 0.25); }
+.bar .sep { width: 1px; align-self: stretch; margin: 10px 0; background: rgba(244, 244, 242, 0.25); }
 .knob { position: relative; display: flex; }
-/* the other brushes stand up above the one in hand: round buttons, icons only, the same size as the bar's */
+.bar > button, .bar .knob > button { position: relative; width: 46px; height: 46px; }
+/* the other brushes stand up above the one in hand: round buttons, icons only */
 .picks {
-  position: absolute; left: 50%; bottom: calc(100% + 14px); display: flex; flex-direction: column-reverse; gap: 2px;
-  padding: 4px; border-radius: 24px;
+  position: absolute; left: 50%; bottom: calc(100% + 12px); display: flex; flex-direction: column-reverse; gap: 6px;
+  padding: 6px; border-radius: 29px;
   background: rgba(20, 22, 18, 0.72); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
   opacity: 0; pointer-events: none; transform: translate(-50%, 6px) scale(0.96); transform-origin: 50% 100%;
   transition: opacity 0.16s ease-out, transform 0.2s cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 .picks.open { opacity: 1; pointer-events: auto; transform: translate(-50%, 0); }
-.picks button { position: relative; }
-/* a name beside a brush, and over a button of the bar: only under the pointer */
+.picks button { position: relative; width: 46px; height: 46px; }
+/* a name beside a brush, and over a button of the bar, with its key in a chip: only under the pointer */
 .picks button span, .bar .tip {
-  position: absolute; pointer-events: none; white-space: nowrap; padding: 6px 9px; border-radius: 999px;
-  background: rgba(20, 22, 18, 0.8); color: #f4f4f2; opacity: 0; transition: opacity 0.12s, transform 0.12s;
-  font: 600 10px/1 Inter, "Helvetica Neue", Helvetica, Arial, sans-serif; letter-spacing: 0.12em; text-transform: uppercase;
+  position: absolute; z-index: 2; pointer-events: none; white-space: nowrap; display: flex; align-items: center; gap: 6px;
+  padding: 5px 10px; border-radius: 999px;
+  background: rgba(20, 22, 18, 0.82); color: #f4f4f2; opacity: 0; transition: opacity 0.12s, transform 0.12s;
+  font: 500 11px/1 Inter, "Helvetica Neue", Helvetica, Arial, sans-serif;
 }
-.picks button span { left: calc(100% + 12px); top: 50%; transform: translate(-4px, -50%); }
+.picks button span:has(kbd), .bar .tip:has(kbd) { padding-right: 6px; }
+.bar kbd {
+  display: inline-flex; align-items: center; justify-content: center; min-width: 16px; height: 16px; padding: 0 4px;
+  box-sizing: border-box; border-radius: 5px; background: rgba(244, 244, 242, 0.22); color: #f4f4f2; font: inherit; font-size: 10px;
+}
+.picks button span { left: calc(100% + 14px); top: 50%; transform: translate(-4px, -50%); }
 .picks button.on span, .picks button:hover span { opacity: 1; transform: translate(0, -50%); }
 .bar .tip { left: 50%; bottom: calc(100% + 12px); transform: translate(-50%, 4px); }
-.bar button { position: relative; }
 @media (hover: hover) {
-  .bar > button:hover .tip, .bar .knob > button:hover .tip { opacity: 1; transform: translate(-50%, 0); transition-delay: 0.35s; }
+  .bar > button:hover:not(:disabled) .tip, .bar .knob > button:hover .tip { opacity: 1; transform: translate(-50%, 0); transition-delay: 0.35s; }
 }
 .picking .note { opacity: 0; }
 
 /* what the trace found: over the bar */
 .note {
-  position: fixed; z-index: 2; left: 50%; transform: translateX(-50%); bottom: calc(max(20px, env(safe-area-inset-bottom)) + 60px);
+  position: fixed; z-index: 2; left: 50%; transform: translateX(-50%); bottom: calc(max(20px, env(safe-area-inset-bottom)) + 72px);
   padding: 7px 12px; border-radius: 999px; background: rgba(20, 22, 18, 0.55); color: #f4f4f2; pointer-events: none;
   font: 600 10px/1 Inter, "Helvetica Neue", Helvetica, Arial, sans-serif; letter-spacing: 0.12em; text-transform: uppercase;
 }
@@ -111,6 +119,7 @@ canvas.glow { position: absolute; inset: 0; width: 100%; height: 100%; pointer-e
   background: rgba(20, 22, 18, 0.55); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); color: #f4f4f2;
   font: 600 10px/1 Inter, "Helvetica Neue", Helvetica, Arial, sans-serif; letter-spacing: 0.12em; text-transform: uppercase;
 }
+.pane .gauge { grid-column: 1 / -1; text-align: left; text-transform: none; letter-spacing: 0.02em; font-weight: 500; line-height: 1.4; opacity: 0.85; }
 .pane hr { grid-column: 1 / -1; width: 100%; border: 0; border-top: 1px solid rgba(244, 244, 242, 0.2); margin: 2px 0; }
 .pane label { grid-column: 1 / -1; display: grid; grid-template-columns: 58px 1fr 40px; align-items: center; gap: 8px; }
 .pane label.check { grid-column: auto; display: flex; gap: 8px; padding: 3px 0; cursor: pointer; }

@@ -64,12 +64,16 @@ export function Overlays({ items }: { items: { id: string; label: string; icon: 
   );
 }
 
-const BRUSHES: [Brush, string, () => ReactNode][] = [
+/** Each brush, its name, its icon, and how else to reach it than through the bar. */
+const BRUSHES: [Brush, string, () => ReactNode, string?][] = [
   ['road', 'Road', RoadIcon],
-  ['bridge', 'Bridge', BridgeIcon],
-  ['smear', 'Smear', SmearIcon],
+  ['bridge', 'Bridge', BridgeIcon, '⌘ drag'],
+  ['smear', 'Smear', SmearIcon, '⇧ drag'],
   ['erase', 'Erase', EraseIcon],
 ];
+
+/** What a button is, over it after a short hover: its name, and its key in a chip. As on day 07. */
+const Tip = ({ tip, keys }: { tip: string; keys?: string }) => <span className="tip" aria-hidden>{tip}{keys && <kbd>{keys}</kbd>}</span>;
 
 /**
  * The bar at the bottom: the brush, trace beside it, then undo and redo. Icons only.
@@ -143,24 +147,24 @@ export function Bar({ tool, brush, onTool, onBrush, canUndo, canRedo, onUndo, on
           }}
         >
           {current[2]()}
-          {!open && <span className="tip">{current[1]}</span>}
+          {!open && <Tip tip={current[1]} keys="T" />}
         </button>
         <div className={`picks${open ? ' open' : ''}`} role="menu">
-          {BRUSHES.filter(([b]) => b !== brush).map(([b, label, Icon]) => (
+          {BRUSHES.filter(([b]) => b !== brush).map(([b, label, Icon, keys]) => (
             <button key={b} data-item={b} role="menuitem" aria-label={label} className={hot === b ? 'on' : ''} onClick={() => pick(b)}>
               <Icon />
-              <span>{label}</span>
+              <span>{label}{keys && <kbd>{keys}</kbd>}</span>
             </button>
           ))}
         </div>
       </div>
       <button className={painting ? '' : 'on'} aria-label="Trace" aria-pressed={!painting} onClick={() => onTool(painting ? 'trace' : brush)}>
         <TraceIcon />
-        <span className="tip">Trace</span>
+        <Tip tip="Trace" keys="R" />
       </button>
       <span className="sep" />
-      <button aria-label="Undo" disabled={!canUndo} onClick={onUndo}><UndoIcon /><span className="tip">Undo</span></button>
-      <button aria-label="Redo" disabled={!canRedo} onClick={onRedo}><RedoIcon /><span className="tip">Redo</span></button>
+      <button aria-label="Undo" disabled={!canUndo} onClick={onUndo}><UndoIcon /><Tip tip="Undo" keys="⌘Z" /></button>
+      <button aria-label="Redo" disabled={!canRedo} onClick={onRedo}><RedoIcon /><Tip tip="Redo" keys="⇧⌘Z" /></button>
     </div>
   );
 }

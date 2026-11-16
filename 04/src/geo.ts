@@ -2,6 +2,9 @@
 import { BufferGeometry, Float32BufferAttribute } from 'three';
 import { cumLen, deck, offset, pointOn, STALL_D, STALL_W, trim, type Lane, type Net, type Node, type Road, type V } from './net';
 
+/** Metres: no piece of a ribbon is longer than this, so the ground can bend under a smear (wet.ts). */
+const BEND = 6;
+
 class Flat {
   pos: number[] = [];
   idx: number[] = [];
@@ -25,7 +28,13 @@ class Flat {
   }
   ribbon(pts: V[], o0: number, o1: number) {
     const l = offset(pts, o0), r = offset(pts, o1);
-    for (let i = 0; i < pts.length - 1; i++) this.quad(l[i], l[i + 1], r[i + 1], r[i]);
+    for (let i = 0; i < pts.length - 1; i++) {
+      // a long straight stretch is laid in short pieces: a smear being dragged bends the ground in the shader, at its corners
+      const n = this.hf ? 1 : Math.ceil(Math.max(Math.hypot(l[i + 1].x - l[i].x, l[i + 1].y - l[i].y), Math.hypot(r[i + 1].x - r[i].x, r[i + 1].y - r[i].y)) / BEND);
+      if (n <= 1) { this.quad(l[i], l[i + 1], r[i + 1], r[i]); continue; }
+      const on = (a: V, b: V, t: number) => ({ x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t });
+      for (let k = 0; k < n; k++) this.quad(on(l[i], l[i + 1], k / n), on(l[i], l[i + 1], (k + 1) / n), on(r[i], r[i + 1], (k + 1) / n), on(r[i], r[i + 1], k / n));
+    }
   }
   /** A ribbon `w` to either side at its two ends and `more` wider than that in its middle. */
   swell(pts: V[], w: number, more: number) {
@@ -100,15 +109,35 @@ function dense(pts: V[], step: number): V[] {
   return out;
 }
 
+/** The box round each stretch of a road's centreline, and the stretch the last point asked about was nearest to. */
+const stretches = new WeakMap<Road, { box: Float64Array; last: number }>();
 /** Distance along a road's centreline of the point nearest p. */
 function along(r: Road, cum: number[], p: V) {
-  let best = 0, bd = Infinity;
-  for (let i = 0; i < r.pts.length - 1; i++) {
+  const n = r.pts.length - 1;
+  let sb = stretches.get(r);
+  if (!sb) {
+    const box = new Float64Array(n * 4);
+    for (let i = 0; i < n; i++) {
+      const a = r.pts[i], b = r.pts[i + 1];
+      box.set([Math.min(a.x, b.x), Math.min(a.y, b.y), Math.max(a.x, b.x), Math.max(a.y, b.y)], i * 4);
+    }
+    stretches.set(r, (sb = { box, last: 0 }));
+  }
+  const dist = (i: number) => {
     const a = r.pts[i], b = r.pts[i + 1];
     const seg = cum[i + 1] - cum[i] || 1;
     const t = Math.max(0, Math.min(1, ((p.x - a.x) * (b.x - a.x) + (p.y - a.y) * (b.y - a.y)) / (seg * seg)));
-    const d = Math.hypot(a.x + (b.x - a.x) * t - p.x, a.y + (b.y - a.y) * t - p.y);
-    if (d < bd) { bd = d; best = cum[i] + t * seg; }
+    return { d: Math.hypot(a.x + (b.x - a.x) * t - p.x, a.y + (b.y - a.y) * t - p.y), s: cum[i] + t * seg };
+  };
+  // points are asked about in order along the deck: the stretch of the last one is near, and rules out the far ones
+  const ub = sb.last < n ? dist(sb.last).d : Infinity;
+  const box = sb.box;
+  let best = 0, bd = Infinity;
+  for (let i = 0; i < n; i++) {
+    const bx = Math.max(box[i * 4] - p.x, p.x - box[i * 4 + 2], 0), by = Math.max(box[i * 4 + 1] - p.y, p.y - box[i * 4 + 3], 0);
+    if (Math.hypot(bx, by) > ub) continue;
+    const { d, s } = dist(i);
+    if (d < bd) { bd = d; best = s; sb.last = i; }
   }
   return best;
 }
@@ -281,16 +310,18 @@ export const WALK = 3.4;
 
 export function buildGround(net: Net) {
   const walk = new Flat(0.012);
-  // what stands on the ground stands on concrete
-  for (const b of net.buildings) walk.rect(b.x0 - 4, b.y0 - 4, b.x1 + 4, b.y1 + 4);
-  for (const r of net.pads) walk.rect(r.x0 - 3, r.y0 - 3, r.x1 + 3, r.y1 + 3);
+  // what stands on the ground stands on concrete. It is kept apart from the sidewalks, with the kerb round a lot:
+  // the lots and the sheds stay put while a smear is dragged, and what lies along the roads goes with them
+  const yard = new Flat(0.012), rim = new Flat(0.028);
+  for (const b of net.buildings) yard.rect(b.x0 - 4, b.y0 - 4, b.x1 + 4, b.y1 + 4);
+  for (const r of net.pads) yard.rect(r.x0 - 3, r.y0 - 3, r.x1 + 3, r.y1 + 3);
   // from the ground up: slabs, the studded strip, kerbs, lots, asphalt, paint. Whatever lies higher hides what it crosses,
   // so a sidewalk that runs into another road goes under it, strip and all
   const guide = new Flat(0.02), kerb = new Flat(0.028), pad = new Flat(0.037), road = new Flat(0.05), white = new Flat(0.07), yellow = new Flat(0.07);
   const SH = 0.45; // shoulder
 
   for (const r of net.pads) {
-    kerb.rect(r.x0 - 0.5, r.y0 - 0.5, r.x1 + 0.5, r.y1 + 0.5);
+    rim.rect(r.x0 - 0.5, r.y0 - 0.5, r.x1 + 0.5, r.y1 + 0.5);
     pad.rect(r.x0, r.y0, r.x1, r.y1);
   }
 
@@ -522,12 +553,54 @@ export function buildGround(net: Net) {
     }
   }
 
-  return { walk: walk.build(), kerb: kerb.build(), pad: pad.build(), road: road.build(), white: white.build(), yellow: yellow.build(), guide: guide.build(), decks: buildDecks(net) };
+  return { walk: walk.build(), yard: yard.build(), kerb: kerb.build(), rim: rim.build(), pad: pad.build(), road: road.build(), white: white.build(), yellow: yellow.build(), guide: guide.build(), decks: buildDecks(net) };
 }
+
+/**
+ * The stretches of every road filed by the square of a grid they come near, so that a question about one point
+ * only looks at the roads around it. Asked thousands of times for every tree and bush whenever the roads change.
+ */
+const CELL = 16;
+/** how far beyond its edge a stretch is filed: the grid answers for margins up to this */
+const FILED = 8;
+type Cells = Map<number, { r: Road; i: number }[]>;
+const grids = new WeakMap<Road[], Cells>();
+const cellKey = (i: number, j: number) => (i + 4096) * 8192 + (j + 4096);
+function cells(roads: Road[]): Cells {
+  let g = grids.get(roads);
+  if (g) return g;
+  g = new Map();
+  for (const r of roads) {
+    const m = r.hw + FILED + 1;
+    for (let i = 0; i < r.pts.length - 1; i++) {
+      const a = r.pts[i], b = r.pts[i + 1];
+      const i0 = Math.floor((Math.min(a.x, b.x) - m) / CELL), i1 = Math.floor((Math.max(a.x, b.x) + m) / CELL);
+      const j0 = Math.floor((Math.min(a.y, b.y) - m) / CELL), j1 = Math.floor((Math.max(a.y, b.y) + m) / CELL);
+      for (let ci = i0; ci <= i1; ci++) for (let cj = j0; cj <= j1; cj++) {
+        const k = cellKey(ci, cj);
+        (g.get(k) ?? g.set(k, []).get(k)!).push({ r, i });
+      }
+    }
+  }
+  grids.set(roads, g);
+  return g;
+}
+const NOTHING: { r: Road; i: number }[] = [];
+/** The stretches of road that may lie within FILED metres of their edge from a point. */
+const filed = (net: Net, x: number, y: number) => cells(net.roads).get(cellKey(Math.floor(x / CELL), Math.floor(y / CELL))) ?? NOTHING;
 
 /** Is this point clear of roads, lots and buildings? For planting trees. */
 export function clearOf(net: Net, x: number, y: number, margin: number) {
   for (const list of [net.pads, net.buildings]) for (const r of list) if (x > r.x0 - margin && x < r.x1 + margin && y > r.y0 - margin && y < r.y1 + margin) return false;
+  if (margin <= FILED) {
+    for (const { r, i } of filed(net, x, y)) {
+      const a = r.pts[i], b = r.pts[i + 1];
+      const dx = b.x - a.x, dy = b.y - a.y;
+      const t = Math.max(0, Math.min(1, ((x - a.x) * dx + (y - a.y) * dy) / (dx * dx + dy * dy || 1)));
+      if (Math.hypot(a.x + dx * t - x, a.y + dy * t - y) < r.hw + margin + 1) return false;
+    }
+    return true;
+  }
   for (const r of net.roads) {
     const m = r.hw + margin + 1;
     for (let i = 0; i < r.pts.length - 1; i++) {
@@ -563,6 +636,16 @@ export function rectClear(net: Net, b: { x0: number; y0: number; x1: number; y1:
 /** Is this point on the tarmac of a road or inside a junction? `skip` is the road it belongs to. For what stands beside a road. */
 export function onRoad(net: Net, x: number, y: number, skip?: Road, pad = 0.6) {
   for (const n of net.nodes) if (!n.stub && Math.hypot(n.p.x - x, n.p.y - y) < n.trim + pad) return true;
+  if (pad <= FILED) {
+    for (const { r, i } of filed(net, x, y)) {
+      if (r === skip || r.bridge) continue;
+      const a = r.pts[i], b = r.pts[i + 1];
+      const dx = b.x - a.x, dy = b.y - a.y;
+      const t = Math.max(0, Math.min(1, ((x - a.x) * dx + (y - a.y) * dy) / (dx * dx + dy * dy || 1)));
+      if (Math.hypot(a.x + dx * t - x, a.y + dy * t - y) < r.hw + pad) return true;
+    }
+    return false;
+  }
   for (const r of net.roads) {
     if (r === skip || r.bridge) continue;
     const m = r.hw + pad;

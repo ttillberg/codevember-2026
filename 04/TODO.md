@@ -75,10 +75,23 @@ The fan was on. Measured in Chrome on an M2 Pro: the page is bound by pixels, no
 
 ## Letting go of a stroke
 
-Laying a stroke froze the frame for about 200 ms on a desktop. Now the brush leaves a ghost, the rules run after the frame is shown, and the ground, the trees, the traffic and the people are rebuilt in a frame each (`useLater` in `App.tsx`); routes are planned with a heap and `derive()` answers the same question once. Longest task measured after: about 130 ms.
+Laying a stroke froze the frame for about 200 ms on a desktop. Then the brush left a ghost, the rules ran after the frame was shown, and the town was rebuilt a piece a frame (`useLater` in `App.tsx`). The town grew and that was 300 to 360 ms again. Now: the rules in a task of their own, then the ground, the trees, the traffic and the people two frames apart; trees, bushes, lamps and walks ask a grid of the road stretches near them instead of every road (`clearOf`, `onRoad` in `geo.ts`), the traffic only looks for lanes within reach when the roads change (`setNet` in `sim.ts`), and the deck height of a bridge starts from the stretch it found last (`along` in `geo.ts`). All give the same answers as before. Longest task after a road or a bridge is laid, M2 Pro, headless Chrome, dev server: none over 50 ms on either map (it was 314 ms on the first map and 357 on `?debug`).
 
-- What the 130 ms is has not been found. Not measured on a phone.
-- The rules still run on the main thread. A worker would take `derive` and `buildNet` off it, but the network is full of object references and would have to be rebuilt on this side.
+- The longest piece left is the rules themselves, about 35 ms of the 60 on `?debug`, and the ground at about 45. A worker would take `derive` and `buildNet` off the main thread, but the network is full of object references and would have to be rebuilt on this side; `buildGround` gives back plain arrays and could go with them.
+- Not measured on a phone.
+
+## Smearing
+
+A smear rebuilt the whole town at every move of the hand: about 400 ms each, two pictures a second at best (measured in a headless drag: 9.6 s of long tasks for 20 moves on `?debug`). Two thirds of it was the trees asking every road whether they stood clear of it, then the common ground, the traffic moving over, and the ground.
+
+Now nothing is built while the hand moves (`wet.ts`). The grab and the hand are uniforms, and everything that lies on the roads is pushed in its vertex shader by the falloff `smear()` gives the strokes: the ground (its ribbons are laid in pieces of 6 m so they can bend), the traffic, the signals, the works, the street trees, the lamps, the people, and the WebGPU lights. Houses, lots, the woods and the park stay, as they do when the smear is laid. When the hand rests for 140 ms the ground is made of the paint where it is, so what merges shows, and only what the hand did since is pushed. When it lets go the town is made again as for a stroke; until each piece is, it stays pushed. The painting that is laid is the same as before. Measured on the M2 Pro, 40 moves in two seconds: the picture changes with every move (about 20 a second, as fast as the moves came, at 30 frames a second) on both maps, where it was about 2 a second; the longest task after letting go is 51 ms on the first map and 59 on `?debug` (it was about 300 and 330), and none at all when the hand rested before letting go.
+
+- The push is not the rules: a road pushed onto another merges only when the hand rests or lets go. Measured over the road within reach of a junction pushed 15, 30, 60 and 100 m, the preview is off from the road that is laid by 1, 2, 4 and 5 m at the median, 5, 8, 15 and 22 m for one point in ten; more where roads merge, dodge a house or are dropped.
+- Roads are pushed over the houses and lots, and dodge them only when they are made again.
+- Pushed further than about 40 m the falloff folds over itself: the paint overlaps itself like real paint, and the WebGPU lights, which go back through the push, smudge there.
+- The signs and hoardings (`Signs` in `Life.tsx`), the park and its bushes stay put and are put up again on release.
+- Shadows are not pushed: the ground under a pushed road keeps its shadows, a pushed street tree leaves its own behind until the next shadow update.
+- Not tried by hand with a mouse or a finger, only with a headless drag; not tried on a phone.
 
 ## Squeezing
 

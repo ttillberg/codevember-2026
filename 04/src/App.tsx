@@ -13,13 +13,14 @@ import { SEASONS, World, type Season } from './World';
 import { plantSmall, plantTown, turnSome, type Block } from './Town';
 import { People, Signs, Street } from './Life';
 import { Commons, plantCommons, standingCommons } from './Park';
-import { Painter, type Brush, type Tool } from './Painter';
+import { Painter, Sketch, type Brush, type Tool } from './Painter';
 import { Bar, Overlays, TimeControl, hhmm } from './Controls';
 import { HeatIcon } from './Icons';
-import { buildNet, type V } from './net';
+import { buildNet, type Net, type V } from './net';
 import { MAP } from './map';
 import { baseIntent, derive, no, standing, type Intent } from './intent';
 import { addStroke, erase, smear, smearStart } from './paint';
+import { laid, madeAt, wetStart } from './wet';
 
 /** The grade: exposure, warmth, bite, how much colour is left, how grey the blacks are, and what the stock and the glass add. */
 type Grade = { gain: number; temp: number; bite: number; sat: number; lift: number; grain: number; bloom: number; dark: number; soft: number };
@@ -126,7 +127,9 @@ const LIGHTS = ['geometry', 'webgpu', 'off'] as const;
 const hourAsked = parseFloat(new URLSearchParams(location.search).get('hour') ?? '');
 // the visitor's own time of day, unless ?hour= says otherwise
 const nowHour = () => { const d = new Date(); return d.getHours() + d.getMinutes() / 60; };
-const CLOCK: Clock = { hour: hourAsked >= 0 && hourAsked < 24 ? hourAsked : nowHour(), hold: false, day: 240, trail: 8, lights: new URLSearchParams(location.search).has('gpu') || (!touch && !no('gpu')) ? 'webgpu' : 'geometry' };
+// ?hold starts with the clock held at its hour, ?day= says how many seconds a whole day takes: both for filming
+const asked = new URLSearchParams(location.search), dayAsked = parseFloat(asked.get('day') ?? '');
+const CLOCK: Clock = { hour: hourAsked >= 0 && hourAsked < 24 ? hourAsked : nowHour(), hold: asked.has('hold'), day: dayAsked >= 20 ? dayAsked : 240, trail: 8, lights: new URLSearchParams(location.search).has('gpu') || (!touch && !no('gpu')) ? 'webgpu' : 'geometry' };
 const CLOCKS: [Exclude<keyof Clock, 'hold' | 'lights'>, string, number, number, number][] = [['hour', 'Time', 0, 24, 0.05], ['day', 'Day', 30, 600, 10], ['trail', 'Trails', 0, 16, 0.5]];
 /** The place as it starts: the streets, and a few flyovers laid over them the way a hand would paint them. ?debug starts on `MAP`. */
 const BASE: Intent = [
@@ -136,6 +139,8 @@ const BASE: Intent = [
 ].reduce((it, line) => addStroke(it, line.map(([x, y]) => ({ x, y })), true) ?? it, baseIntent());
 /** One house in this many is left standing. */
 const KEEP = 2;
+/** Milliseconds a smear has to be held still before the ground is made of it for real. */
+const REST = 140;
 /** Roughly how many vehicles are out: what a phone can carry, and what a desk can. */
 const VEHICLES = touch ? 60 : 180;
 
@@ -363,6 +368,8 @@ export function App() {
   const [tool, setTool] = useState<Tool>('road');
   // the brush that is picked when trace is off
   const [brush, setBrush] = useState<Brush>('road');
+  const brushNow = useRef(brush);
+  brushNow.current = brush;
   // always a timelapse, sixty times life; P or space stops it
   const [paused, setPaused] = useState(false);
   const speed = paused ? 0 : TIMELAPSE;
@@ -435,10 +442,25 @@ export function App() {
   const noteBox = useRef<HTMLDivElement>(null);
   const onNote = useCallback((t: string) => { if (noteBox.current) noteBox.current.textContent = t; }, []);
   // ?no=houses,trees: without the houses nothing is in the way of a road; the trees are only put out of sight
-  // a smear in progress: the paint as it is being pushed, not yet in the history
-  const [live, setLive] = useState<Intent | null>(null);
-  const grab = useRef<{ base: Intent; from: V } | null>(null);
-  const intent = live ?? history[history.length - 1];
+  // a smear in progress: what it took hold of, and where the hand is now. Nothing is built while it is dragged:
+  // what is on the roads is pushed in the shaders (wet.ts), and the paint is laid when the hand lets go
+  const grab = useRef<{ base: Intent; from: V; to?: V; rest?: { intent: Intent; at: V } } | null>(null);
+  const still = useRef(0);
+  // ?debug: how the traffic stands, read off the sim a couple of times a second, to see at a glance when it has gone wrong
+  const gauge = useRef<HTMLOutputElement>(null);
+  useEffect(() => {
+    if (!debug) return;
+    const id = setInterval(() => {
+      const sim = (window as any).sim as { cars: { state: number; v: number }[]; quiet: number; target: number; time: number } | undefined;
+      if (!sim || !gauge.current) return;
+      let out = 0, moving = 0, parked = 0;
+      for (const c of sim.cars) { if (c.state === 2) parked++; else { out++; if (c.v > 1) moving++; } }
+      gauge.current.textContent = `cars ${out} out, ${moving} moving, ${parked} parked · ask ${Math.round(sim.target)} · quiet ${Number(sim.quiet).toFixed(2)} · ${Math.round(sim.time)} s`;
+    }, 500);
+    return () => clearInterval(id);
+  }, []);
+  const sketch = useRef<(strokes: { pts: V[] }[] | null) => void>(() => {});
+  const intent = history[history.length - 1];
   // the roads are never edited: they are what the rules make of the strokes
   // the housing is planted once, on the place as it first stood, and is in the way from then on
   const first = useMemo(() => buildNet(derive(BASE)), []);
@@ -456,22 +478,39 @@ export function App() {
   // everything with walls is in the way: the housing, and the sheds that were there from the start
   // the little ones are not: a road goes through them
   const walls = useMemo(() => (houses ? [...town.filter((b) => !b.small), ...first.buildings] : NONE), [houses, town, first]);
-  const net = useMemo(() => {
-    const n = buildNet(derive(intent, walls));
-    if (!houses) return { ...n, buildings: [] };
+  // what the rules make of a painting, made once for each: a smear let go where the hand last rested is not made again
+  const nets = useRef(new WeakMap<Intent, Net>());
+  const roadsOf = useCallback((it: Intent, up: Block[]) => {
+    const made = nets.current.get(it);
+    if (made) return made;
+    let n = buildNet(derive(it, walls));
+    if (!houses) n = { ...n, buildings: [] };
     // the filling stations that still stand bring their roofs and their yards
-    const fuel = blocks.filter((b) => b.pumps);
-    return fuel.length ? { ...n, buildings: [...n.buildings, ...fuel.map((b) => b.pumps!)], pads: [...n.pads, ...fuel.map((b) => b.pad!)] } : n;
-  }, [intent, walls, houses, blocks]);
+    const fuel = up.filter((b) => b.pumps);
+    if (houses && fuel.length) n = { ...n, buildings: [...n.buildings, ...fuel.map((b) => b.pumps!)], pads: [...n.pads, ...fuel.map((b) => b.pad!)] };
+    nets.current.set(it, n);
+    return n;
+  }, [walls, houses]);
+  const net = useMemo(() => roadsOf(intent, blocks), [roadsOf, intent, blocks]);
+  // a smear held still for a moment: the ground is made of it for real, all the rest waits for the hand to let go
+  const [rest, setRest] = useState<{ intent: Intent; at: V } | null>(null);
+  const restNet = useMemo(() => {
+    if (!rest) return null;
+    const n = roadsOf(rest.intent, houses ? standing(rest.intent, town) : NONE);
+    madeAt(n, rest.at);
+    return n;
+  }, [roadsOf, rest, town]);
 
   // The stroke is not built the moment the hand lets go: the brush leaves a ghost of it, the frame is shown,
   // and then the rules are run and the town rebuilt, as something that may be interrupted.
-  // the ground first, then the trees, then the traffic, then the people and the signs
+  // the rules in a frame of their own, then the ground, then the trees, then the traffic, then the people and the signs.
+  // Until each is made again, what it showed before is still pushed by a smear that was let go (wet.ts)
   // what is common ground: the park, the pitch, the school and the hedges, planted once like the housing,
   // and whatever of it the roads as they are now have left
   const commons = useMemo(() => plantCommons(first, town), [first, town]);
   const place = useMemo(() => ({ net, blocks, green: standingCommons(commons, net, blocks) }), [net, blocks, commons]);
-  const wood = useLater(place, 1), roads = useLater(net, 2), life = useLater(place, 3);
+  const ground = useLater(restNet ?? net, 1);
+  const wood = useLater(place, 3), roads = useLater(net, 5), life = useLater(place, 7);
   // what the WebGPU lights cannot be seen through
   const hides = useMemo(() => [...life.blocks, ...life.net.buildings], [life]);
 
@@ -491,16 +530,29 @@ export function App() {
   }, []);
   const top = useRef(history[history.length - 1]);
   top.current = history[history.length - 1];
-  const liveRef = useRef(live);
-  liveRef.current = live;
   const onSmear = useCallback((phase: 'start' | 'move' | 'end', p: V) => {
-    if (phase === 'start') grab.current = { base: smearStart(top.current, p), from: p };
-    else if (phase === 'move' && grab.current) setLive(smear(grab.current.base, grab.current.from, p));
-    else if (phase === 'end') {
-      const done = liveRef.current;
+    const g = grab.current;
+    clearTimeout(still.current);
+    if (phase === 'start') {
+      grab.current = { base: smearStart(top.current, p), from: p };
+      wetStart(p);
+    } else if (phase === 'move' && g) {
+      g.to = p;
+      // the town is not pushed about under the hand: only the strokes that move are shown, as lines and dots,
+      // and the town is made again when the hand lets go
+      const now = smear(g.base, g.from, p);
+      sketch.current(now.filter((s, i) => s !== g.base[i]));
+    } else if (phase === 'end') {
       grab.current = null;
-      setLive(null);
-      if (done) { setHistory((h) => [...h, done]); setRedos([]); }
+      sketch.current(null);
+      setRest(null);
+      if (g?.to) {
+        const done = g.rest?.at === g.to ? g.rest.intent : smear(g.base, g.from, g.to);
+        const made = nets.current.get(done);
+        if (made) laid(made);
+        setHistory((h) => [...h, done]);
+        setRedos([]);
+      }
     }
   }, []);
   // for trying strokes from the console
@@ -525,6 +577,8 @@ export function App() {
         e.preventDefault();
         setPaused((v) => !v);
       }
+      // R reads the traffic of a road (trace), and R again takes the brush back up
+      if ((e.key === 'r' || e.key === 'R') && !e.metaKey && !e.ctrlKey && !e.altKey) setTool((t) => (t === 'trace' ? brushNow.current : 'trace'));
       // T takes up the next brush, shift and T the one before
       if ((e.key === 't' || e.key === 'T') && !e.metaKey && !e.ctrlKey && !e.altKey) {
         const order: Brush[] = ['road', 'bridge', 'smear', 'erase'];
@@ -553,13 +607,14 @@ export function App() {
         <Pace fps={fps} />
         <Drone shot={shot} move={move} set={set} onShot={debug ? onShot : undefined} />
         <Sun speed={speed} shadow={fx.shadow} lazy={fx.lazy} clock={clock} scrub={scrub} onHour={debug ? onHour : undefined} live={hourNow} readout={readout} />
-        <World net={net} blocks={blocks} wood={wood} trees={trees} season={season} />
+        <World net={ground} blocks={blocks} wood={wood} trees={trees} season={season} />
         <Cars net={roads} speed={speed} target={VEHICLES} trail={lights === 'off' ? 0 : clock.trail} glow={lights === 'webgpu'} walls={hides} onGlowFail={noGpu} shade={!fx.lazy} heat={heat} trace={tool === 'trace' ? trace : null} onNote={onNote} onSim={onSim} />
         <Commons green={place.green} speed={speed} />
         <People net={life.net} blocks={life.blocks} walks={life.green.walks} rides={life.green.rides} speed={speed} shade={!fx.lazy} />
         <Signs net={life.net} blocks={life.blocks} />
         <Street net={life.net} blocks={life.blocks} speed={speed} />
-        <Painter net={net} tool={tool} onStroke={onStroke} onSmear={onSmear} onTrace={setTrace} onErase={onErase} />
+        <Sketch api={sketch} />
+        <Painter net={ground} tool={tool} onStroke={onStroke} onSmear={onSmear} onTrace={setTrace} onErase={onErase} />
         <EffectComposer multisampling={fx.aa === 'msaa4' ? 4 : fx.aa === 'msaa2' ? 2 : 0}>
           {fx.tilt && <TiltShift2 blur={lens.blur} taper={lens.taper} start={start} end={end} samples={touch ? 10 : 18} />}
           {/* the lights bleed into what is beside them, as they do through glass */}
@@ -580,6 +635,7 @@ export function App() {
       </div>
       {shot && (
         <div className="pane">
+          <output className="gauge" ref={gauge} />
           {SLIDERS.map(([k, label, min, max, step]) => (
             <label key={k}>
               <span>{label}</span>

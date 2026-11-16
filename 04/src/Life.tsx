@@ -3,9 +3,10 @@ import { useLayoutEffect, useMemo, useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
 import { AdditiveBlending, Color, InstancedMesh, MeshStandardMaterial, Object3D, ShaderMaterial } from 'three';
 import { onRoad, WALK, zebraAt } from './geo';
-import { NIGHT, bakeGlow, type Spot } from './haze';
+import { HOUR, NIGHT, bakeGlow, type Spot } from './haze';
 import { cumLen, deck, offset, pointOn, rng, type Net, type V } from './net';
 import { turned, type Block } from './Town';
+import { settle, SOAKED, wet } from './wet';
 
 // ---------- people and bikes ----------
 
@@ -22,6 +23,16 @@ interface Line {
 const WALKERS = 460, RIDERS = 130;
 /** How many of them never leave the park: they turn round at its ends. The rest come through it as they come through anywhere. */
 const STROLLERS = 34, PARK_RIDERS = 7;
+
+/** How many of the people are out at this hour, of all there are: everyone by day, a third in the evening, next to no one at night. */
+const ABROAD: [number, number][] = [[0, 0.03], [5, 0.03], [7.5, 1], [17, 1], [19, 0.45], [21, 0.25], [23, 0.03], [24, 0.03]];
+function abroad(h: number) {
+  for (let i = 1; i < ABROAD.length; i++) {
+    const [h0, v0] = ABROAD[i - 1], [h1, v1] = ABROAD[i];
+    if (h <= h1) return v0 + ((v1 - v0) * (h - h0)) / (h1 - h0);
+  }
+  return ABROAD[0][1];
+}
 const CLOTHES = [0x22252b, 0x2c3340, 0xe9e6de, 0xd9d4c8, 0xb8322a, 0x2f5fa8, 0xe0b23a, 0x4a6b4a, 0x8a8d92, 0xd98aa0];
 const RIDES = [0x1e2126, 0xc23a2a, 0x2a5ea0, 0xe8e5dc, 0xe2b33a, 0x3a7a5a];
 
@@ -110,6 +121,8 @@ export function People({ net, blocks, speed, shade = true, walks = NO_WAYS, ride
     return { walk: mk(WALKERS, 1.0, 1.7), ride: mk(RIDERS, 4.5, 8) };
   }, []);
 
+  // what is shown now stands on these roads: nobody is pushed with a smear any further than the hand has moved since
+  useLayoutEffect(() => settle('street', net), [ways, net]);
   // when the roads change, everyone is set down again on what is there now
   useLayoutEffect(() => {
     const r = rng(91);
@@ -137,12 +150,14 @@ export function People({ net, blocks, speed, shade = true, walks = NO_WAYS, ride
 
   useFrame((_, delta) => {
     const dt = Math.min(delta, 0.05) * rate.current;
+    const out = abroad(HOUR.value);
     const move = (list: typeof who.walk, lines: Line[], mesh: InstancedMesh, oneWay: boolean, sx: number, sy: number, sz: number) => {
       const a = mesh.instanceMatrix.array, fond = oneWay ? PARK_RIDERS : STROLLERS;
       list.forEach((p, i) => {
         const L = lines[p.l];
         const o = i * 16;
-        if (!L) { a.fill(0, o, o + 16); return; }
+        // each has an hour to go in at, spread evenly over them all: whoever is past it is not there
+        if (!L || (i * 0.618034) % 1 > out) { a.fill(0, o, o + 16); return; }
         p.s += p.dir * p.v * dt;
         if (p.s > L.len || p.s < 0) {
           // at the end of the block: carry on along whatever starts nearby, or turn back
@@ -191,11 +206,11 @@ export function People({ net, blocks, speed, shade = true, walks = NO_WAYS, ride
     <>
       <instancedMesh ref={walkMesh} args={[undefined, undefined, WALKERS]} castShadow={shade} frustumCulled={false}>
         <boxGeometry />
-        <meshStandardMaterial roughness={0.9} />
+        <meshStandardMaterial roughness={0.9} {...SOAKED.street} />
       </instancedMesh>
       <instancedMesh ref={rideMesh} args={[undefined, undefined, RIDERS]} castShadow={shade} frustumCulled={false}>
         <boxGeometry />
-        <meshStandardMaterial roughness={0.7} />
+        <meshStandardMaterial roughness={0.7} {...SOAKED.street} />
       </instancedMesh>
     </>
   );
@@ -442,8 +457,8 @@ function pool() {
 export function Street({ net, blocks, speed }: { net: Net; blocks: Block[]; speed: number }) {
   const posts = useRef<InstancedMesh>(null), lamps = useRef<InstancedMesh>(null), pools = useRef<InstancedMesh>(null), tv = useRef<InstancedMesh>(null);
   const head = useRef<MeshStandardMaterial>(null);
-  const shine = useMemo(pool, []);
-  const glass = useMemo(screen, []);
+  const shine = useMemo(() => wet(pool(), 'street'), []);
+  const glass = useMemo(() => wet(screen(), 'street'), []);
   const POSTS = 6400, TVS = 90;
 
   const plan = useMemo(() => {
@@ -518,6 +533,7 @@ export function Street({ net, blocks, speed }: { net: Net; blocks: Block[]; spee
     }
     return { post: post.slice(0, POSTS), lamp: lamp.slice(0, POSTS / 2), lit: lit.slice(0, POSTS / 2), tvs: tvs.slice(0, TVS) };
   }, [net, blocks]);
+  useLayoutEffect(() => settle('street', net), [plan, net]);
 
   useLayoutEffect(() => {
     const o = new Object3D(), c = new Color();
@@ -561,12 +577,12 @@ export function Street({ net, blocks, speed }: { net: Net; blocks: Block[]; spee
     <>
       <instancedMesh ref={posts} args={[undefined, undefined, POSTS]} castShadow frustumCulled={false}>
         <boxGeometry />
-        <meshStandardMaterial color={0x4a4e54} roughness={0.6} metalness={0.4} />
+        <meshStandardMaterial color={0x4a4e54} roughness={0.6} metalness={0.4} {...SOAKED.street} />
       </instancedMesh>
       <instancedMesh ref={lamps} args={[undefined, undefined, POSTS / 2]} frustumCulled={false}>
         <boxGeometry />
         {/* the heads are pale, with only a little light of their own: enough to be found, not to shine */}
-        <meshStandardMaterial ref={head} color={0xe8e6dc} emissive={0xffe9c0} emissiveIntensity={0.2} roughness={0.4} />
+        <meshStandardMaterial ref={head} color={0xe8e6dc} emissive={0xffe9c0} emissiveIntensity={0.2} roughness={0.4} {...SOAKED.street} />
       </instancedMesh>
       <instancedMesh ref={pools} args={[undefined, undefined, POSTS / 2]} material={shine} frustumCulled={false}>
         <circleGeometry args={[1, 12]} />
