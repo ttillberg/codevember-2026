@@ -5,7 +5,7 @@ import { AdditiveBlending, BufferAttribute, BufferGeometry, Color, InstancedBuff
 import type { Lane, Net, V } from './net';
 import { Heat, Journeys } from './Traffic';
 import { PARKED, Sim, signal } from './sim';
-import { NIGHT, NOW } from './haze';
+import { HOUR, NIGHT, NOW } from './haze';
 import { beam, makeTypes } from './vehicles';
 import { Glow, type GlowHandle, type Wall } from './Glow';
 import { Works } from './Works';
@@ -274,6 +274,9 @@ export function Cars({ net, speed, target, trail = 0, glow = false, walls = NO_W
 
   useFrame(({ camera, clock }, delta) => {
     NOW.value = clock.elapsedTime;
+    // the night's quiet: it comes on over the hour before nine and lifts over the half hour before half past five
+    const h = HOUR.value, ease = (a: number, b: number) => { const t = Math.min(1, Math.max(0, (h - a) / (b - a))); return t * t * (3 - 2 * t); };
+    sim.quiet = h >= 12 ? ease(20, 21) : 1 - ease(5, 5.5);
     const dt = Math.min(delta, 0.05) * rate.current;
     const n = Math.ceil(dt / 0.1);
     for (let i = 0; i < n; i++) {

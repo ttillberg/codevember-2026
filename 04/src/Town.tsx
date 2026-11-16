@@ -3,7 +3,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import { Color, InstancedBufferAttribute, InstancedMesh, Matrix4, MeshStandardMaterial, Object3D } from 'three';
 import { BANDED, BAY, CELLS, FLOOR, GALLERY, GLOW, LOW, PAINTED, STRIPED, facades } from './facade';
-import { NIGHT } from './haze';
+import { NIGHT, glowing } from './haze';
 import { pavingGeometry, rectClear } from './geo';
 import { rng, type Building, type Net, type Rect, type V } from './net';
 
@@ -246,7 +246,7 @@ function walls() {
       .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\ntotalEmissiveRadiance += rooms;');
   };
   m.customProgramCacheKey = () => 'walls-lit';
-  return m;
+  return glowing(m);
 }
 
 export function Town({ net, blocks, paving, roofing }: { net: Net; blocks: Block[]; paving: MeshStandardMaterial; roofing: MeshStandardMaterial }) {

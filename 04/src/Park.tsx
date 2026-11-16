@@ -3,10 +3,10 @@
 // None of it is in the way of the brush: a road painted through takes away what it hits.
 import { useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
-import { AdditiveBlending, BufferGeometry, Color, Float32BufferAttribute, IcosahedronGeometry, InstancedMesh, MeshStandardMaterial, Object3D, ShaderMaterial } from 'three';
+import { AdditiveBlending, BufferGeometry, Color, Float32BufferAttribute, IcosahedronGeometry, InstancedBufferAttribute, InstancedMesh, MeshStandardMaterial, Object3D, ShaderMaterial } from 'three';
 import { TIMELAPSE } from './Cars';
 import { clearOf, onRoad, rectClear, WALK } from './geo';
-import { NIGHT } from './haze';
+import { FLOOD, HOUR, NIGHT } from './haze';
 import { cumLen, offset, pointOn, rng, type Net, type Rect, type V } from './net';
 import type { Block } from './Town';
 import { grained } from './World';
@@ -36,7 +36,12 @@ type Part = 'park' | 'pitch' | 'school' | 'hedge';
 interface Thing { x: number; y: number; z: number; sx: number; sy: number; sz: number; rot: number; ink: number; part: Part }
 interface Bush { x: number; z: number; s: number; h: number; ink: number; part: Part; home?: Block }
 interface Glow { x: number; z: number; r: number; ink: [number, number, number]; part: Part }
-interface Figure { x: number; z: number; h: number; ink: number; part: Part }
+/**
+ * Somebody on the pitch or in the yard. `role`: 0 runs about, 1 keeps to a spot (a goalkeeper), 2 stands and shifts
+ * (someone watching), 3 does not move at all (someone on a phone). `gate` is where they come in and go out,
+ * `when` the hours they are there: two spells, each from and to.
+ */
+interface Figure { x: number; z: number; h: number; ink: number; part: Part; role: number; gate: V; when: [number, number, number, number] }
 export interface Sapling { x: number; y: number; s: number; k: number }
 interface Trail { pts: V[]; hw: number; ink: number; ride: boolean; part: Part }
 
@@ -277,10 +282,21 @@ export function plantCommons(net: Net, town: Block[]): Commons {
     }
     rail('pitch', { x: field.x0, y: field.y1 }, { x: field.x1, y: field.y1 }, 0.1, 0.12, 0xd8d8d2, 1);
     for (let x = field.x0; x <= field.x1 + 0.1; x += (field.x1 - field.x0) / 12) box('pitch', x, field.y1, 0.1, 1, 0.1, 0xd8d8d2);
-    // eleven a side would crowd it: seven each, and one in black
-    const KIT = [0xc8322c, 0x2b5fb0];
-    for (let i = 0; i < 15; i++) {
-      c.figures.push({ x: PITCH.x0 + 7 + r() * (PITCH.x1 - PITCH.x0 - 14), z: PITCH.y0 + 7 + r() * (PITCH.y1 - PITCH.y0 - 14), h: 1.75, ink: i === 14 ? 0x1c1c1e : KIT[i % 2], part: 'pitch' });
+    // eleven a side would crowd it: six each and a keeper in either goal, one in black, and a few along the line who watch.
+    // A game before noon and one into the evening, under the lights; nobody arrives or leaves on the same minute
+    const KIT = [0xc8322c, 0x2b5fb0], way: V = { x: (PITCH.x0 + PITCH.x1) / 2, y: PITCH.y0 - 1 };
+    const game = (late = 0): Figure['when'] => [10 + r() * 0.35 + late, 11.7 - r() * 0.3, 15.6 + r() * 0.4 + late, 20.4 - r() * 0.4];
+    const mid = (PITCH.y0 + PITCH.y1) / 2;
+    for (let i = 0; i < 12; i++) {
+      c.figures.push({ x: PITCH.x0 + 9 + r() * (PITCH.x1 - PITCH.x0 - 18), z: PITCH.y0 + 7 + r() * (PITCH.y1 - PITCH.y0 - 14), h: 1.75, ink: KIT[i % 2], part: 'pitch', role: 0, gate: way, when: game() });
+    }
+    [field.x0 + 2.5, field.x1 - 2.5].forEach((x, i) => c.figures.push({ x, z: mid, h: 1.8, ink: i ? 0xe3c21f : 0x37a05a, part: 'pitch', role: 1, gate: way, when: game() }));
+    c.figures.push({ x: (PITCH.x0 + PITCH.x1) / 2 + 4, z: mid + 3, h: 1.75, ink: 0x1c1c1e, part: 'pitch', role: 0, gate: way, when: game() });
+    const COATS = [0x2c3340, 0x6b5b4a, 0x8a2f2a, 0xd9d6cf, 0x3d5a45, 0x24406b];
+    for (let i = 0; i < 10; i++) {
+      // most of them watch; three have found something better on a phone, a little apart
+      const phone = i >= 7;
+      c.figures.push({ x: field.x0 + 6 + r() * (field.x1 - field.x0 - 12), z: field.y0 - (phone ? 2.6 + r() * 1.5 : 1.2 + r() * 0.5), h: 1.6 + r() * 0.2, ink: COATS[(r() * COATS.length) | 0], part: 'pitch', role: phone ? 3 : 2, gate: way, when: game(0.15 + r() * 0.3) });
     }
     // a hedge behind each goal, where the ball goes
     const ok = (x: number, y: number) => !housed(x, y, 1.5) && clearOf(net, x, y, 1.5);
@@ -362,9 +378,16 @@ export function plantCommons(net: Net, town: Block[]): Commons {
     if (gate) lamp('school', gx + 3.2, SCHOOL.y0 + 1.5);
     // the children, out between lessons
     const WEAR = [0xd23a2e, 0x2f5fa8, 0xe0b23a, 0xe9e6de, 0x3a8a5a, 0xd98aa0, 0x2c3340, 0xee7a1c];
+    // out at the two breaks and back in at the bell, through the door of the long house
+    const door: V = { x: (BAR.x0 + BAR.x1) / 2, y: BAR.y0 };
+    const breaks = (): Figure['when'] => [9.6 + r() * 0.12, 10.2 - r() * 0.1, 12 + r() * 0.2, 13 - r() * 0.15];
     for (let i = 0; i < 26; i++) {
-      c.figures.push({ x: YARD.x0 + 20 + r() * (YARD.x1 - YARD.x0 - 26), z: YARD.y0 + 5 + r() * (YARD.y1 - YARD.y0 - 10), h: 1.25 + r() * 0.25, ink: WEAR[(r() * WEAR.length) | 0], part: 'school' });
+      // a few stand by the fence with a phone, or just stand
+      const still = i >= 21;
+      c.figures.push({ x: YARD.x0 + 20 + r() * (YARD.x1 - YARD.x0 - 26), z: YARD.y0 + 5 + r() * (YARD.y1 - YARD.y0 - 10), h: 1.25 + r() * 0.25, ink: WEAR[(r() * WEAR.length) | 0], part: 'school', role: still ? (i % 2 ? 3 : 2) : 0, gate: door, when: breaks() });
     }
+    // and two grown-ups who watch them
+    for (let i = 0; i < 2; i++) c.figures.push({ x: door.x - 6 + i * 12, z: BAR.y0 - 3, h: 1.75, ink: 0x2c3340, part: 'school', role: 2, gate: door, when: [9.55, 10.25, 11.95, 13.05] });
   }
 
   // ---------- hedges and bushes round the little houses ----------
@@ -571,9 +594,18 @@ function shining() {
   const m = new MeshStandardMaterial({ roughness: 0.4 });
   m.onBeforeCompile = (s) => {
     s.uniforms.uNight = NIGHT;
+    s.uniforms.uFlood = FLOOD;
+    // the high ones are the floodlights, and those go out at eleven
+    s.vertexShader = s.vertexShader
+      .replace('#include <common>', '#include <common>\nvarying float vFlood;')
+      .replace('#include <begin_vertex>', `#include <begin_vertex>
+        vFlood = 0.0;
+        #ifdef USE_INSTANCING
+          vFlood = step(10.0, instanceMatrix[3].y);
+        #endif`);
     s.fragmentShader = s.fragmentShader
-      .replace('#include <common>', '#include <common>\nuniform float uNight;')
-      .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\ntotalEmissiveRadiance += diffuseColor.rgb * (0.2 + 6.5 * uNight);');
+      .replace('#include <common>', '#include <common>\nuniform float uNight; uniform float uFlood; varying float vFlood;')
+      .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\ntotalEmissiveRadiance += diffuseColor.rgb * (0.2 + 6.5 * uNight * mix(1.0, uFlood, vFlood));');
   };
   m.customProgramCacheKey = () => 'commons-head';
   return m;
@@ -582,13 +614,18 @@ function shining() {
 /** What a lamp throws on the ground: no light, a round glow laid over it in the lamp's colour, there when it is dark. */
 function thrown() {
   return new ShaderMaterial({
-    uniforms: { uNight: NIGHT },
+    uniforms: { uNight: NIGHT, uFlood: FLOOD },
     vertexShader: /* glsl */ `
+      uniform float uFlood;
       varying vec2 vP; varying vec3 vInk;
       void main() {
         vP = position.xy; vInk = vec3(1.0);
         #ifdef USE_INSTANCING_COLOR
           vInk = instanceColor;
+        #endif
+        // the wide ones are what the floodlights throw, and those go out at eleven
+        #ifdef USE_INSTANCING
+          vInk *= mix(1.0, uFlood, step(15.0, length(instanceMatrix[0].xyz)));
         #endif
         gl_Position = projectionMatrix * modelViewMatrix * instanceMatrix * vec4(position, 1.0);
       }`,
@@ -604,32 +641,45 @@ function thrown() {
 }
 
 /**
- * Players and children: nobody steers them. Each runs its own loop round the spot it was put on, in the shader,
- * as fast as the timelapse makes everyone, and goes home when it gets dark.
+ * Players, children and whoever watches: nobody steers them, it is all in the shader. They walk in from their gate when their
+ * hour comes and out again when it is over. In between, seen at sixty times life, they hardly go anywhere: a player is a
+ * jitter round a spot that drifts, a keeper a jitter in his goal, someone watching shifts a little, someone on a phone not at all.
  */
 function playing(clock: { value: number }) {
   const m = new MeshStandardMaterial({ roughness: 0.9 });
   m.onBeforeCompile = (s) => {
-    s.uniforms.uNight = NIGHT;
+    s.uniforms.uHour = HOUR;
     s.uniforms.uPlay = clock;
     s.vertexShader = s.vertexShader
-      .replace('#include <common>', '#include <common>\nuniform float uNight; uniform float uPlay;')
+      .replace('#include <common>', `#include <common>
+        uniform float uHour; uniform float uPlay;
+        attribute vec4 aWho; attribute vec4 aWhen;
+        float there(vec2 w) { return smoothstep(w.x, w.x + 0.22, uHour) * (1.0 - smoothstep(w.y - 0.22, w.y, uHour)); }
+        // a value that changes smoothly from one step of time to the next
+        float fidget(float t, float s) { float i = floor(t), f = fract(t); f = f * f * (3.0 - 2.0 * f);
+          return mix(fract(sin((i + s) * 91.7) * 43758.5), fract(sin((i + 1.0 + s) * 91.7) * 43758.5), f) - 0.5; }`)
       .replace('#include <begin_vertex>', `#include <begin_vertex>
         #ifdef USE_INSTANCING
           vec3 sc = vec3(length(instanceMatrix[0].xyz), length(instanceMatrix[1].xyz), length(instanceMatrix[2].xyz));
-          float sd = fract(instanceMatrix[3].x * 0.371 + instanceMatrix[3].z * 0.737) * 6.283;
-          // the tall ones are the players: they cover more ground
-          float reach = sc.y > 1.6 ? 5.0 : 2.4;
-          vec2 run = vec2(sin(uPlay * (0.7 + 0.5 * sin(sd * 3.0)) + sd) + 0.5 * sin(uPlay * 1.9 + sd * 2.0), cos(uPlay * (0.8 + 0.4 * cos(sd * 5.0)) + sd * 1.7) + 0.5 * sin(uPlay * 2.3 + sd)) * reach / 1.5;
-          transformed.xz += run / sc.xz;
-          transformed *= step(uNight, 0.45);
+          float role = aWho.x, sd = aWho.w;
+          float here = max(there(aWhen.xy), there(aWhen.zw));
+          // how far the jitter goes, and how far the spot itself wanders; the small ones keep closer
+          float small = sc.y > 1.6 ? 1.0 : 0.5;
+          float amp = (role < 0.5 ? 1.5 : role < 1.5 ? 0.7 : role < 2.5 ? 0.14 : 0.0) * small;
+          float roam = (role < 0.5 ? 5.0 : role < 1.5 ? 1.2 : 0.0) * small;
+          vec2 at = vec2(fidget(uPlay * 1.4, sd), fidget(uPlay * 1.4, sd + 17.0)) * amp * 2.0
+                  + vec2(fidget(uPlay * 0.06, sd + 3.0), fidget(uPlay * 0.06, sd + 29.0)) * roam * 2.0;
+          // on the way in and out: along the line from the gate, with a little of the jitter
+          vec2 off = mix(aWho.yz - instanceMatrix[3].xz + at * 0.2, at, here);
+          transformed.xz += off / sc.xz;
+          transformed *= step(0.03, here);
         #endif`);
   };
   m.customProgramCacheKey = () => 'commons-play';
   return m;
 }
 
-const THINGS = 900, HEADS = 64, POOLS = 64, BUSHES = 3200, FIGURES = 48;
+const THINGS = 900, HEADS = 64, POOLS = 64, BUSHES = 3200, FIGURES = 72;
 
 export function Commons({ green, speed }: { green: Green; speed: number }) {
   const things = useRef<InstancedMesh>(null), heads = useRef<InstancedMesh>(null), pools = useRef<InstancedMesh>(null), bushes = useRef<InstancedMesh>(null), figures = useRef<InstancedMesh>(null);
@@ -639,7 +689,7 @@ export function Commons({ green, speed }: { green: Green; speed: number }) {
     trod.vertexColors = true;
     return {
       lawn: grained(0x577f2b, LAWN, 'lawn', 1),
-      turf: grained(0xffffff, TURF, 'turf', 1, 0.3),
+      turf: grained(0xffffff, TURF, 'turf', 1),
       play: grained(0x8f9092, PLAY, 'play', 0.95, 0.12),
       trod,
       head: shining(), pool: thrown(), figure: playing(clock),
@@ -685,12 +735,18 @@ export function Commons({ green, speed }: { green: Green; speed: number }) {
       bushes.current!.setColorAt(i, c.setHex(b.ink));
     });
     bushes.current!.count = Math.min(BUSHES, green.bushes.length);
+    const who = new Float32Array(FIGURES * 4), when = new Float32Array(FIGURES * 4);
     green.figures.slice(0, FIGURES).forEach((f, i) => {
       o.position.set(f.x, f.h / 2 + 0.05, f.z); o.scale.set(0.5, f.h, 0.5); o.rotation.set(0, 0, 0);
       o.updateMatrix();
       figures.current!.setMatrixAt(i, o.matrix);
       figures.current!.setColorAt(i, c.setHex(f.ink));
+      who.set([f.role, f.gate.x, f.gate.y, (f.x * 0.371 + f.z * 0.737) % 97], i * 4);
+      when.set(f.when, i * 4);
     });
+    const fg = figures.current!.geometry;
+    fg.setAttribute('aWho', new InstancedBufferAttribute(who, 4));
+    fg.setAttribute('aWhen', new InstancedBufferAttribute(when, 4));
     figures.current!.count = Math.min(FIGURES, green.figures.length);
     for (const m of [things.current!, heads.current!, pools.current!, bushes.current!, figures.current!]) {
       m.instanceMatrix.needsUpdate = true;

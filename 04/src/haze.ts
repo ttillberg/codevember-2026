@@ -1,11 +1,82 @@
 // The air the place sits in: its colour behind everything, and what comes through it over a day in autumn.
-import { Color, Uniform, Vector3 } from 'three';
+import { Color, DataTexture, DataUtils, HalfFloatType, LinearFilter, RGBAFormat, Uniform, Vector3, type Material } from 'three';
 
 /** The sky behind everything, by day. */
 export const HAZE = 0xa3adb3;
 
 /** How much of the night is here: 0 by day, 1 in the dark. One number, read by every lamp, sign, window and headlight. */
 export const NIGHT = new Uniform(0);
+/** The hour of the day, 0 to 24, for whoever keeps hours: the children, the players. */
+export const HOUR = new Uniform(12);
+/** How dark it really is: later than the lamps come on, and gone sooner. What the place takes of its own light goes by this, since in half light the map of it shows its edges. */
+export const DARK = new Uniform(0);
+/** Whether the floodlights of the pitch are on: from the afternoon until eleven at night, and not again before the next day. */
+export const FLOOD = new Uniform(1);
+/**
+ * The light of the place itself at night, as a map of the ground seen from above: where the lamps stand and the houses are lit
+ * it is bright, and everything near takes some of that light, walls and trees as well as the ground. Not a light: a picture
+ * of where light is, baked whenever the lamps move, and read by every material that asks.
+ */
+const GLOW_SIZE = 256, GLOW_SPAN = 1200;
+const glowData = new Uint16Array(GLOW_SIZE * GLOW_SIZE * 4);
+const glowMap = new DataTexture(glowData, GLOW_SIZE, GLOW_SIZE, RGBAFormat, HalfFloatType);
+glowMap.minFilter = glowMap.magFilter = LinearFilter;
+export const GLOW = new Uniform(glowMap);
+
+/** A lamp or a lit house for the map: where, how far its light reaches in metres, and its colour and strength. */
+export interface Spot { x: number; z: number; r: number; c: [number, number, number] }
+
+export function bakeGlow(spots: Spot[]) {
+  const acc = new Float32Array(GLOW_SIZE * GLOW_SIZE * 3), px = GLOW_SIZE / GLOW_SPAN;
+  for (const s of spots) {
+    const cx = (s.x / GLOW_SPAN + 0.5) * GLOW_SIZE, cy = (s.z / GLOW_SPAN + 0.5) * GLOW_SIZE, r = s.r * px;
+    const x0 = Math.max(0, Math.floor(cx - r)), x1 = Math.min(GLOW_SIZE - 1, Math.ceil(cx + r));
+    const y0 = Math.max(0, Math.floor(cy - r)), y1 = Math.min(GLOW_SIZE - 1, Math.ceil(cy + r));
+    for (let y = y0; y <= y1; y++) {
+      for (let x = x0; x <= x1; x++) {
+        const d = Math.hypot(x + 0.5 - cx, y + 0.5 - cy) / r;
+        if (d >= 1) continue;
+        // bright under the lamp, and a long soft skirt
+        const k = (1 - d) * (1 - d), i = (y * GLOW_SIZE + x) * 3;
+        acc[i] += s.c[0] * k; acc[i + 1] += s.c[1] * k; acc[i + 2] += s.c[2] * k;
+      }
+    }
+  }
+  for (let i = 0, n = GLOW_SIZE * GLOW_SIZE; i < n; i++) {
+    // many lamps close together do not add up for ever
+    for (let k = 0; k < 3; k++) glowData[i * 4 + k] = DataUtils.toHalfFloat(1 - Math.exp(-acc[i * 3 + k]));
+    glowData[i * 4 + 3] = DataUtils.toHalfFloat(1);
+  }
+  glowMap.needsUpdate = true;
+}
+
+/** Let a material take the light of the place at night: what it shows of its own colour where the map is bright. */
+export function glowing<T extends Material>(m: T, much = 1): T {
+  if (m.userData.glow) return m;
+  m.userData.glow = true;
+  const before = m.onBeforeCompile, key = m.customProgramCacheKey;
+  m.onBeforeCompile = (s, r) => {
+    before.call(m, s, r);
+    s.uniforms.uGlow = GLOW;
+    s.uniforms.uGlowNight = DARK;
+    s.vertexShader = s.vertexShader
+      .replace('#include <common>', '#include <common>\nvarying vec3 vGlowAt;')
+      .replace('#include <project_vertex>', `{ vec4 gw = vec4(transformed, 1.0);
+        #ifdef USE_INSTANCING
+          gw = instanceMatrix * gw;
+        #endif
+        vGlowAt = (modelMatrix * gw).xyz; }
+        #include <project_vertex>`);
+    s.fragmentShader = s.fragmentShader
+      .replace('#include <common>', '#include <common>\nuniform sampler2D uGlow; uniform float uGlowNight; varying vec3 vGlowAt;')
+      // less of it the higher up: the lamps hang low
+      .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
+        totalEmissiveRadiance += diffuseColor.rgb * texture2D(uGlow, vGlowAt.xz / ${GLOW_SPAN.toFixed(1)} + 0.5).rgb * (uGlowNight * ${much.toFixed(3)} / (1.0 + max(vGlowAt.y - 5.0, 0.0) * 0.07));`);
+  };
+  m.customProgramCacheKey = () => key.call(m) + 'glow' + much;
+  return m;
+}
+
 /** Seconds of our own time, for whatever blinks: the lamps of an emergency vehicle, the lamps at road works. */
 export const NOW = new Uniform(0);
 /** What the hour does to the grade: the balance of the colours, and how much more of them there is in low sun. */
@@ -57,10 +128,10 @@ const hex = (h: number) => new Color(h);
 // the sun: orange on the horizon, nearly white when it is up; and the moon
 const LOW = new Color(1, 0.46, 0.17), HIGH = new Color(1, 0.95, 0.87), MOON = new Color(0.5, 0.64, 1);
 // the light of the sky itself, from above and from the ground: always cooler than the sun, and blue once it is gone
-const AIR = { day: hex(0xbcd4ff), low: hex(0xa4b4ee), night: hex(0x3c55a8) };
-const EARTH = { day: hex(0x6b6a52), night: hex(0x1a2033) };
+const AIR = { day: hex(0xbcd4ff), low: hex(0xa4b4ee), night: hex(0x26324f) };
+const EARTH = { day: hex(0x6b6a52), night: hex(0x0f121a) };
 // the haze behind everything
-const BACK = { day: hex(HAZE), gold: hex(0xc9a48a), dusk: hex(0x6a6382), night: hex(0x0b111d) };
+const BACK = { day: hex(HAZE), gold: hex(0xc9a48a), dusk: hex(0x6a6382), night: hex(0x05070c) };
 
 /** Everything the hour decides. One of these is kept and written over every frame. */
 export interface Sky {
@@ -78,6 +149,9 @@ export function skyAt(hour: number, out = SKY): Sky {
   const h = ((hour % 24) + 24) % 24;
   const el = sunAt(h);
   const night = nightAt(el);
+  HOUR.value = h;
+  DARK.value = 1 - step(-7, -1.5, el);
+  FLOOD.value = h < 12 ? 0 : 1 - step(22.9, 23, h);
   if (el > -2.5) {
     // the sun crosses from the east, over the south, to the west
     out.phi = ((h - 12) / ((SET - RISE) / 2)) * 1.35;
@@ -91,11 +165,11 @@ export function skyAt(hour: number, out = SKY): Sky {
     out.phi = (n - 0.5) * 1.5;
     out.el = (44 + 12 * Math.sin(Math.PI * n)) * RAD;
     out.sun.copy(MOON);
-    out.power = 0.42 * step(4, 10, -el);
+    out.power = 0.2 * step(4, 10, -el);
   }
   out.air.copy(AIR.night).lerp(AIR.low, step(-8, 0, el)).lerp(AIR.day, step(2, 26, el));
   out.earth.copy(EARTH.night).lerp(EARTH.day, step(-6, 6, el));
-  out.fill = 0.3 + 0.65 * step(-7, 3, el) + 0.3 * step(3, 28, el);
+  out.fill = 0.14 + 0.81 * step(-7, 3, el) + 0.3 * step(3, 28, el);
   out.back.copy(BACK.night).lerp(BACK.dusk, step(-9, -2, el)).lerp(BACK.gold, step(-3, 4, el)).lerp(BACK.day, step(5, 24, el));
   out.night = night;
   // what shines goes by the lights, which are ahead of the dark

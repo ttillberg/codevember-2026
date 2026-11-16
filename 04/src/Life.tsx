@@ -3,7 +3,7 @@ import { useLayoutEffect, useMemo, useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
 import { AdditiveBlending, Color, InstancedMesh, MeshStandardMaterial, Object3D, ShaderMaterial } from 'three';
 import { onRoad, WALK, zebraAt } from './geo';
-import { NIGHT } from './haze';
+import { NIGHT, bakeGlow, type Spot } from './haze';
 import { cumLen, deck, offset, pointOn, rng, type Net, type V } from './net';
 import { turned, type Block } from './Town';
 
@@ -534,10 +534,18 @@ export function Street({ net, blocks, speed }: { net: Net; blocks: Block[]; spee
     put(lamps.current!, plan.lamp);
     put(pools.current!, plan.lit, true);
     put(tv.current!, plan.tvs);
+    // the map of where light is: every lamp, every house with lit rooms, every screen
+    const spots: Spot[] = plan.lit.map((l) => ({ x: l.x, z: l.z, r: 30, c: [0.62, 0.4, 0.2] }));
+    for (const b of blocks) spots.push({ x: (b.x0 + b.x1) / 2, z: (b.y0 + b.y1) / 2, r: Math.hypot(b.x1 - b.x0, b.y1 - b.y0) / 2 + 14, c: [0.3, 0.25, 0.17] });
+    for (const t of plan.tvs) spots.push({ x: t.x, z: t.z, r: 34, c: [0.3, 0.34, 0.42] });
+    // where roads meet there is always more light than along them, and a car park is lit from end to end
+    for (const n of net.nodes) if (n.roads.length >= 3 && n.z < 1) spots.push({ x: n.p.x, z: n.p.y, r: 30 + 5 * n.roads.length, c: [0.6, 0.42, 0.24] });
+    net.stalls.forEach((st, i) => { if (i % 5 === 0) spots.push({ x: st.p.x, z: st.p.y, r: 24, c: [0.3, 0.27, 0.22] }); });
+    bakeGlow(spots);
     // each screen runs its own programme
     plan.tvs.forEach((s, i) => tv.current!.setColorAt(i, c.setRGB(s.seed, (s.seed * 7.3) % 1, (s.seed * 3.1) % 1)));
     if (tv.current!.instanceColor) tv.current!.instanceColor.needsUpdate = true;
-  }, [plan]);
+  }, [plan, blocks, net]);
 
   // the screens run at their own pace, not the timelapse's, and hold still in a still
   useFrame((_, delta) => {

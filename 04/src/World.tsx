@@ -1,6 +1,6 @@
 // Everything that stands still: grass, asphalt, paint, buildings, trees.
 import { useEffect, useLayoutEffect, useMemo, useRef } from 'react';
-import { NIGHT } from './haze';
+import { NIGHT, glowing } from './haze';
 import { BufferGeometry, Color, DoubleSide, Float32BufferAttribute, InstancedMesh, Matrix4, MeshStandardMaterial, Object3D, Vector3 } from 'three';
 import { buildGround, clearOf, onRoad, WALK } from './geo';
 import { cumLen, offset, pointOn, rng, type Net } from './net';
@@ -15,6 +15,9 @@ float fbm(vec2 p){ float a = 0.5, s = 0.0; for(int i=0;i<4;i++){ s += a*vn(p); p
 
 /** How much of the street lamps' sodium light a road gives back after dark, so a road reads as a road and not as a row of dots. */
 const LIT = 'vec3(1.0, 0.6, 0.28)';
+
+/** For a material made in the markup: it takes the light of the place at night too. */
+const lit = (m: MeshStandardMaterial | null) => { if (m) glowing(m); };
 
 /** World-space grain on a material, so a flat colour reads as a surface. `lit` is what it gives back of the lamps at night. */
 export function grained(color: number, body: string, key: string, roughness = 0.95, lit = 0) {
@@ -34,7 +37,7 @@ export function grained(color: number, body: string, key: string, roughness = 0.
     }
   };
   m.customProgramCacheKey = () => key + (lit ? 'lit' + lit : '');
-  return m;
+  return glowing(m);
 }
 
 const GRASS = `
@@ -137,9 +140,9 @@ export function World({ net, blocks, wood, trees = true, season = 'autumn' }: {
       kerb: grained(0xb3b0a8, ROOF, 'kerb'),
       pad: grained(0x787a79, LOT, 'lot'),
       // sun-bleached, the way a road looks from the air
-      road: grained(0x6b6d6f, ASPHALT, 'asphalt', 0.9, 0.35),
-      white: grained(0xe6e5de, PAINT, 'paint', 0.7, 0.55),
-      yellow: grained(0xcfae4a, PAINT, 'paint', 0.7, 0.55),
+      road: grained(0x6b6d6f, ASPHALT, 'asphalt', 0.9, 0.12),
+      white: grained(0xe6e5de, PAINT, 'paint', 0.7, 0.3),
+      yellow: grained(0xcfae4a, PAINT, 'paint', 0.7, 0.3),
       guide: grained(0xd08c00, PAINT, 'paint', 0.9),
     }),
     [season],
@@ -496,7 +499,7 @@ function Trees({ net, blocks, glade, season }: { net: Net; blocks: Block[]; glad
   return (
     <>
       <instancedMesh ref={ref} args={[crown, undefined, CAP]} castShadow receiveShadow frustumCulled={false}>
-        <meshStandardMaterial roughness={1} vertexColors side={DoubleSide} />
+        <meshStandardMaterial ref={lit} roughness={1} vertexColors side={DoubleSide} />
       </instancedMesh>
       <instancedMesh ref={stems} args={[undefined, undefined, STEMS]} castShadow frustumCulled={false}>
         <cylinderGeometry args={[0.6, 1, 1, 5]} />
@@ -506,7 +509,7 @@ function Trees({ net, blocks, glade, season }: { net: Net; blocks: Block[]; glad
         <circleGeometry args={[1, 14]} />
       </instancedMesh>
       <instancedMesh ref={firs} args={[PINE, undefined, FIRS]} castShadow receiveShadow frustumCulled={false}>
-        <meshStandardMaterial roughness={1} flatShading vertexColors side={DoubleSide} />
+        <meshStandardMaterial ref={lit} roughness={1} flatShading vertexColors side={DoubleSide} />
       </instancedMesh>
     </>
   );

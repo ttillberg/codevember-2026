@@ -234,3 +234,50 @@ export function smear(base: Intent, from: V, to: V): Intent {
     return moved ? { ...s, pts } : s;
   });
 }
+
+// ---------- erasing: one size off what the drag passes over ----------
+
+/**
+ * One drag takes one size off the road it passes over, along the stretch it passes: an arterial becomes a street,
+ * a street a driveway, and a driveway goes. Each stroke is cut where the drag starts and stops over it, so only that
+ * stretch changes. Bridges go whole on the first drag; a roundabout goes a size whole. Parking lots stay.
+ * Each sample is tested once per drag, so a drag that doubles back still takes one size. Same array if nothing is hit.
+ */
+export function erase(intent: Intent, drag: V[], reach: number): Intent {
+  if (drag.length < 2) return intent;
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (const p of drag) { x0 = Math.min(x0, p.x); y0 = Math.min(y0, p.y); x1 = Math.max(x1, p.x); y1 = Math.max(y1, p.y); }
+  let changed = false;
+  const out: Intent = [];
+  for (const s of intent) {
+    // a lot stays, and so does anything well away from the drag
+    let sx0 = Infinity, sy0 = Infinity, sx1 = -Infinity, sy1 = -Infinity;
+    for (const p of s.pts) { sx0 = Math.min(sx0, p.x); sy0 = Math.min(sy0, p.y); sx1 = Math.max(sx1, p.x); sy1 = Math.max(sy1, p.y); }
+    if (s.lot || sx0 > x1 + reach || sx1 < x0 - reach || sy0 > y1 + reach || sy1 < y0 - reach) { out.push(s); continue; }
+    const cum = cumLen(s.pts);
+    const len = cum[cum.length - 1];
+    // a sample every two units along the stroke, and whether the drag is within reach of it
+    const N = Math.max(1, Math.ceil(len / 2));
+    const on = Array.from({ length: N + 1 }, (_, k) => nearest(drag, pointOn(s.pts, cum, (len * k) / N)).d < reach);
+    if (!on.some(Boolean)) { out.push(s); continue; }
+    changed = true;
+    // a bridge is taken whole, and a ring is one road: it cannot be cut
+    if (s.bridge) continue;
+    if (s.ring) {
+      if (s.w - 1 >= 1) out.push({ ...s, w: s.w - 1 });
+      continue;
+    }
+    // the stretches the drag passes over, and the ones it does not
+    let k0 = 0;
+    for (let k = 1; k <= N; k++) {
+      if (k < N && on[k] === on[k0]) continue;
+      const a = (len * k0) / N, b = (len * k) / N;
+      if (on[k0]) {
+        // one size off this stretch; a driveway is taken altogether
+        if (s.w - 1 >= 1 && b - a > 1) out.push({ ...s, pts: piece(s.pts, cum, a, b), w: s.w - 1 });
+      } else if (b - a > 1) out.push({ ...s, pts: piece(s.pts, cum, a, b) });
+      k0 = k;
+    }
+  }
+  return changed ? out : intent;
+}

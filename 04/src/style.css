@@ -33,39 +33,76 @@ canvas.glow { position: absolute; inset: 0; width: 100%; height: 100%; pointer-e
 /* ?clean: the scene alone */
 .clean .plate { display: none; }
 
-/* the brush: what a drag does. Bottom centre, in the plate's small caps */
-.tools {
-  position: fixed; z-index: 2; left: 50%; transform: translateX(-50%);
-  bottom: max(20px, env(safe-area-inset-bottom));
-  display: flex; gap: 4px; padding: 4px; border-radius: 999px;
+/* the controls: frosted pills in the day's dark translucent family; round buttons, 40 px at least to press */
+.pill {
+  position: relative; display: flex; align-items: center; gap: 2px; padding: 4px; border-radius: 999px;
   background: rgba(20, 22, 18, 0.55); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
 }
-.tools button {
-  appearance: none; border: 0; background: none; color: #f4f4f2; cursor: pointer;
-  font: 600 11px/1 Inter, "Helvetica Neue", Helvetica, Arial, sans-serif; letter-spacing: 0.12em; text-transform: uppercase;
-  padding: 11px 14px; border-radius: 999px; -webkit-tap-highlight-color: transparent;
+.pill button {
+  appearance: none; border: 0; background: none; color: #f4f4f2; cursor: pointer; flex: none;
+  display: flex; align-items: center; justify-content: center; width: 40px; height: 40px; padding: 0; margin: 0;
+  border-radius: 50%; -webkit-tap-highlight-color: transparent;
 }
-.tools button.on { background: #f4f4f2; color: #1c1c1c; }
-.tools button:disabled { opacity: 0.35; cursor: default; }
-/* the heat map: top right, out of the brush's way */
-.tools.side {
-  left: auto; transform: none; bottom: auto;
-  top: max(20px, env(safe-area-inset-top)); right: max(20px, env(safe-area-inset-right));
+.pill button:hover:not(.on):not(:disabled) { background: rgba(244, 244, 242, 0.12); }
+.pill button.on { background: #f4f4f2; color: #1c1c1c; }
+.pill button:disabled { opacity: 0.35; cursor: default; }
+.pill svg { display: block; }
+
+/* top right: the time, then the overlays */
+.corner {
+  position: fixed; z-index: 2; top: max(20px, env(safe-area-inset-top)); right: max(20px, env(safe-area-inset-right));
+  display: flex; align-items: center; gap: 8px;
 }
-@media (max-width: 640px) {
-  /* under the plate on a phone, where there is no room beside it */
-  .tools.side { top: calc(max(16px, env(safe-area-inset-top)) + 64px); right: auto; left: max(16px, env(safe-area-inset-left)); }
-  .tools.side button { padding: 8px 10px; font-size: 10px; }
+.corner .time {
+  height: 40px; padding: 0 10px 0 6px; display: flex; align-items: center; cursor: ew-resize;
+  touch-action: none; user-select: none; -webkit-user-select: none; color: #f4f4f2;
+  font: 600 14px/1 Inter, "Helvetica Neue", Helvetica, Arial, sans-serif; letter-spacing: 0.04em; font-variant-numeric: tabular-nums;
 }
-/* what the trace found: over the brushes */
+
+/* bottom centre: the brush with its menu, trace, then undo and redo */
+.bar {
+  position: fixed; z-index: 2; left: 50%; transform: translateX(-50%);
+  bottom: max(20px, env(safe-area-inset-bottom));
+}
+.bar .sep { width: 1px; height: 22px; margin: 0 6px; background: rgba(244, 244, 242, 0.25); }
+.knob { position: relative; display: flex; }
+/* the other brushes stand up above the one in hand: round buttons, icons only, the same size as the bar's */
+.picks {
+  position: absolute; left: 50%; bottom: calc(100% + 14px); display: flex; flex-direction: column-reverse; gap: 2px;
+  padding: 4px; border-radius: 24px;
+  background: rgba(20, 22, 18, 0.72); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+  opacity: 0; pointer-events: none; transform: translate(-50%, 6px) scale(0.96); transform-origin: 50% 100%;
+  transition: opacity 0.16s ease-out, transform 0.2s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.picks.open { opacity: 1; pointer-events: auto; transform: translate(-50%, 0); }
+.picks button { position: relative; }
+/* a name beside a brush, and over a button of the bar: only under the pointer */
+.picks button span, .bar .tip {
+  position: absolute; pointer-events: none; white-space: nowrap; padding: 6px 9px; border-radius: 999px;
+  background: rgba(20, 22, 18, 0.8); color: #f4f4f2; opacity: 0; transition: opacity 0.12s, transform 0.12s;
+  font: 600 10px/1 Inter, "Helvetica Neue", Helvetica, Arial, sans-serif; letter-spacing: 0.12em; text-transform: uppercase;
+}
+.picks button span { left: calc(100% + 12px); top: 50%; transform: translate(-4px, -50%); }
+.picks button.on span, .picks button:hover span { opacity: 1; transform: translate(0, -50%); }
+.bar .tip { left: 50%; bottom: calc(100% + 12px); transform: translate(-50%, 4px); }
+.bar button { position: relative; }
+@media (hover: hover) {
+  .bar > button:hover .tip, .bar .knob > button:hover .tip { opacity: 1; transform: translate(-50%, 0); transition-delay: 0.35s; }
+}
+.picking .note { opacity: 0; }
+
+/* what the trace found: over the bar */
 .note {
-  position: fixed; z-index: 2; left: 50%; transform: translateX(-50%); bottom: calc(max(20px, env(safe-area-inset-bottom)) + 52px);
+  position: fixed; z-index: 2; left: 50%; transform: translateX(-50%); bottom: calc(max(20px, env(safe-area-inset-bottom)) + 60px);
   padding: 7px 12px; border-radius: 999px; background: rgba(20, 22, 18, 0.55); color: #f4f4f2; pointer-events: none;
   font: 600 10px/1 Inter, "Helvetica Neue", Helvetica, Arial, sans-serif; letter-spacing: 0.12em; text-transform: uppercase;
 }
 .note:empty { display: none; }
+
 @media (max-width: 640px) {
-  .tools button { padding: 11px 10px; }
+  /* on a phone the time and the overlays go under the plate, on the right */
+  .corner { top: calc(max(16px, env(safe-area-inset-top)) + 76px); right: max(16px, env(safe-area-inset-right)); }
+  .corner .time { padding-right: 8px; }
 }
 /* ?debug: the shot, slider by slider */
 .pane {
@@ -86,4 +123,8 @@ canvas.glow { position: absolute; inset: 0; width: 100%; height: 100%; pointer-e
   background: #f4f4f2; color: #1c1c1c; font: inherit;
 }
 .pane button:nth-of-type(even) { background: rgba(244, 244, 242, 0.16); color: #f4f4f2; }
-.clean .tools, .clean .note, .clean .pane { display: none; }
+.clean .corner, .clean .bar, .clean .note, .clean .pane { display: none; }
+@media (max-width: 640px) {
+  /* the pane sits under the time and the overlays on a phone */
+  .pane { top: calc(max(16px, env(safe-area-inset-top)) + 124px); right: max(16px, env(safe-area-inset-right)); max-height: calc(100vh - 150px); }
+}
