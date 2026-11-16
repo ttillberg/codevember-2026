@@ -90,8 +90,13 @@ function showStart(on: boolean) {
   startBtn.classList.toggle('show', on);
 }
 // On a desktop, a frosted card first: headphones recommended. A click anywhere takes it away
-// (and, being a click, starts the sound); that click plucks nothing.
-if (!params.has('clean') && matchMedia('(hover: hover) and (pointer: fine)').matches) {
+// (and, being a click, starts the sound); that click plucks nothing. Once seen, it's remembered.
+const SEEN = 'codevember-14-headphones';
+let seen = false;
+try {
+  seen = localStorage.getItem(SEEN) === '1';
+} catch {}
+if (!seen && !params.has('clean') && matchMedia('(hover: hover) and (pointer: fine)').matches) {
   const veil = document.createElement('div');
   veil.className = 'veil';
   veil.innerHTML =
@@ -101,6 +106,9 @@ if (!params.has('clean') && matchMedia('(hover: hover) and (pointer: fine)').mat
   veil.addEventListener('pointerdown', (e) => e.stopPropagation());
   veil.addEventListener('click', () => {
     veil.classList.add('gone');
+    try {
+      localStorage.setItem(SEEN, '1');
+    } catch {}
     window.setTimeout(() => veil.remove(), 500);
   }, { once: true });
   document.body.append(veil);
