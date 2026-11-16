@@ -344,6 +344,18 @@ importers:
         specifier: ^7.3.1
         version: 7.3.7(lightningcss@1.33.0)
 
+  '14':
+    devDependencies:
+      '@vitejs/plugin-basic-ssl':
+        specifier: ^2.3.0
+        version: 2.3.0(vite@7.3.7(lightningcss@1.33.0))
+      typescript:
+        specifier: ^5.9.3
+        version: 5.9.3
+      vite:
+        specifier: ^7.3.1
+        version: 7.3.7(lightningcss@1.33.0)
+
 packages:
 
   '@babel/runtime@7.29.13':
@@ -857,6 +869,12 @@ packages:
     resolution: {integrity: sha512-Yy19y6O2GJq8f7CHf7L0nxL8bf4PZCPaVOCgJrusOeFHY1LvHgYXnmnXg6N5iwAnbgbZCDjo60SiM6IPJi9C5g==}
     peerDependencies:
       react: '>= 16.8.0'
+
+  '@vitejs/plugin-basic-ssl@2.3.0':
+    resolution: {integrity: sha512-bdyo8rB3NnQbikdMpHaML9Z1OZPBu6fFOBo+OtxsBlvMJtysWskmBcnbIDhUqgC8tcxNv/a+BcV5U+2nQMm1OQ==}
+    engines: {node: ^18.0.0 || ^20.0.0 || >=22.0.0}
+    peerDependencies:
+      vite: ^6.0.0 || ^7.0.0 || ^8.0.0
 
   '@vitejs/plugin-react@6.2.1':
     resolution: {integrity: sha512-9KyWCij3r0+qLG3Q62vBmv0VyevmYibAtxaCIVK9o0k6CXgaajZRIe8tpfchQcdZArJ5b/7OrIz4W3b2uxVRDA==}
@@ -1659,6 +1677,10 @@ snapshots:
     dependencies:
       '@use-gesture/core': 10.3.1
       react: 19.3.1
+
+  '@vitejs/plugin-basic-ssl@2.3.0(vite@7.3.7(lightningcss@1.33.0))':
+    dependencies:
+      vite: 7.3.7(lightningcss@1.33.0)
 
   '@vitejs/plugin-react@6.2.1(vite@8.3.5(esbuild@0.28.2))':
     dependencies:
