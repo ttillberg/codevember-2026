@@ -51,7 +51,12 @@ export function bakeGlow(spots: Spot[]) {
 }
 
 /** Let a material take the light of the place at night: what it shows of its own colour where the map is bright. */
-export function glowing<T extends Material>(m: T, much = 1): T {
+/**
+ * `sided`: only the side that faces where the light comes from takes it, as a tree by a road is lit on its road side and
+ * dark behind. Where the light is, is read off the map itself: it comes from where the map gets brighter.
+ * `aloft`: it carries its own lamps wherever it is, as a bridge deck does, so its height does not matter.
+ */
+export function glowing<T extends Material>(m: T, much = 1, sided = false, aloft = false): T {
   if (m.userData.glow) return m;
   m.userData.glow = true;
   const before = m.onBeforeCompile, key = m.customProgramCacheKey;
@@ -69,11 +74,25 @@ export function glowing<T extends Material>(m: T, much = 1): T {
         #include <project_vertex>`);
     s.fragmentShader = s.fragmentShader
       .replace('#include <common>', '#include <common>\nuniform sampler2D uGlow; uniform float uGlowNight; varying vec3 vGlowAt;')
-      // less of it the higher up: the lamps hang low
+      // the lamps hang low and shine down: the foot of a wall takes their light, what is above them takes none,
+      // and a roof stays dark however bright the car park beside it
       .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
-        totalEmissiveRadiance += diffuseColor.rgb * texture2D(uGlow, vGlowAt.xz / ${GLOW_SPAN.toFixed(1)} + 0.5).rgb * (uGlowNight * ${much.toFixed(3)} / (1.0 + max(vGlowAt.y - 5.0, 0.0) * 0.07));`);
+        {
+          vec2 gu = vGlowAt.xz / ${GLOW_SPAN.toFixed(1)} + 0.5;
+          float turned = 1.0;
+          ${sided ? `
+          // which way the light lies: uphill on the map, two texels either side
+          float ge = ${(2 / GLOW_SIZE).toFixed(6)};
+          vec2 up = vec2(texture2D(uGlow, gu + vec2(ge, 0.0)).g - texture2D(uGlow, gu - vec2(ge, 0.0)).g, texture2D(uGlow, gu + vec2(0.0, ge)).g - texture2D(uGlow, gu - vec2(0.0, ge)).g);
+          vec3 nw = inverseTransformDirection(normal, viewMatrix);
+          float flat_ = length(nw.xz), steep = length(up);
+          float facing = clamp(dot(nw.xz / max(flat_, 1e-4), up / max(steep, 1e-5)) * 0.75 + 0.25, 0.0, 1.0);
+          // a face that looks up takes little; where the light is all round, every side takes some
+          turned = mix(0.18, mix(0.5, facing, smoothstep(0.004, 0.03, steep)), flat_);` : ''}
+          totalEmissiveRadiance += diffuseColor.rgb * texture2D(uGlow, gu).rgb * (turned * uGlowNight * ${much.toFixed(3)}${aloft ? '' : ' * (1.0 - smoothstep(2.5, 9.0, vGlowAt.y))'});
+        }`);
   };
-  m.customProgramCacheKey = () => key.call(m) + 'glow' + much;
+  m.customProgramCacheKey = () => key.call(m) + 'glow' + much + (sided ? 'sided' : '') + (aloft ? 'aloft' : '');
   return m;
 }
 
@@ -126,12 +145,12 @@ export const hoursPerSecond = (hour: number, day: number) => (24 * MEAN) / (day 
 
 const hex = (h: number) => new Color(h);
 // the sun: orange on the horizon, nearly white when it is up; and the moon
-const LOW = new Color(1, 0.46, 0.17), HIGH = new Color(1, 0.95, 0.87), MOON = new Color(0.5, 0.64, 1);
+const LOW = new Color(1, 0.46, 0.17), HIGH = new Color(1, 0.95, 0.87), MOON = new Color(0.62, 0.68, 0.82);
 // the light of the sky itself, from above and from the ground: always cooler than the sun, and blue once it is gone
-const AIR = { day: hex(0xbcd4ff), low: hex(0xa4b4ee), night: hex(0x26324f) };
-const EARTH = { day: hex(0x6b6a52), night: hex(0x0f121a) };
+const AIR = { day: hex(0xbcd4ff), low: hex(0xa4b4ee), night: hex(0x0d0f14) };
+const EARTH = { day: hex(0x6b6a52), night: hex(0x060708) };
 // the haze behind everything
-const BACK = { day: hex(HAZE), gold: hex(0xc9a48a), dusk: hex(0x6a6382), night: hex(0x05070c) };
+const BACK = { day: hex(HAZE), gold: hex(0xc9a48a), dusk: hex(0x6a6382), night: hex(0x020203) };
 
 /** Everything the hour decides. One of these is kept and written over every frame. */
 export interface Sky {
@@ -165,18 +184,20 @@ export function skyAt(hour: number, out = SKY): Sky {
     out.phi = (n - 0.5) * 1.5;
     out.el = (44 + 12 * Math.sin(Math.PI * n)) * RAD;
     out.sun.copy(MOON);
-    out.power = 0.2 * step(4, 10, -el);
+    // next to nothing: at night the place is lit by itself, and what it does not light is black
+    out.power = 0.07 * step(4, 10, -el);
   }
   out.air.copy(AIR.night).lerp(AIR.low, step(-8, 0, el)).lerp(AIR.day, step(2, 26, el));
   out.earth.copy(EARTH.night).lerp(EARTH.day, step(-6, 6, el));
-  out.fill = 0.14 + 0.81 * step(-7, 3, el) + 0.3 * step(3, 28, el);
+  out.fill = 0.05 + 0.9 * step(-7, 3, el) + 0.3 * step(3, 28, el);
   out.back.copy(BACK.night).lerp(BACK.dusk, step(-9, -2, el)).lerp(BACK.gold, step(-3, 4, el)).lerp(BACK.day, step(5, 24, el));
   out.night = night;
   // what shines goes by the lights, which are ahead of the dark
   NIGHT.value = litAt(el);
   // low sun: warmer and with more colour in it; night: cold
   const gold = goldAt(el);
-  MOOD.value.set(1 + 0.1 * gold - 0.1 * night, 1 + 0.01 * gold - 0.03 * night, 1 - 0.12 * gold + 0.1 * night);
-  RICH.value = 0.28 * gold;
+  // and not cold: a night under sodium lamps is amber, and the grade leans that way with it
+  MOOD.value.set(1 + 0.1 * gold + 0.06 * night, 1 + 0.01 * gold, 1 - 0.12 * gold - 0.1 * night);
+  RICH.value = 0.28 * gold + 0.3 * night;
   return out;
 }

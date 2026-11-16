@@ -141,8 +141,9 @@ export function plantCommons(net: Net, town: Block[]): Commons {
   /** a lamp on a low post, and the ground it lights */
   const lamp = (part: Part, x: number, z: number) => {
     box(part, x, z, 0.22, 4.4, 0.22, 0x3c4146);
-    c.heads.push({ x, y: 4.55, z, sx: 0.75, sy: 0.3, sz: 0.75, rot: 0, ink: 0xffb46a, part });
-    c.pools.push({ x, z, r: 9, ink: [1.7, 1.05, 0.5], part });
+    // white lamps in the park, greenish on the grass: not the amber of the streets
+    c.heads.push({ x, y: 4.55, z, sx: 0.75, sy: 0.3, sz: 0.75, rot: 0, ink: 0xe6f3e0, part });
+    c.pools.push({ x, z, r: 9, ink: [1.0, 1.3, 0.95], part });
   };
   const bench = (part: Part, x: number, z: number, rot: number) => {
     box(part, x, z, 2.1, 0.12, 0.6, 0x9b7a52, rot, 0.42);

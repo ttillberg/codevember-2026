@@ -17,11 +17,11 @@ float fbm(vec2 p){ float a = 0.5, s = 0.0; for(int i=0;i<4;i++){ s += a*vn(p); p
 /** How much of the street lamps' sodium light a road gives back after dark, so a road reads as a road and not as a row of dots. */
 const LIT = 'vec3(1.0, 0.6, 0.28)';
 
-/** For a material made in the markup: it takes the light of the place at night too. */
-const lit = (m: MeshStandardMaterial | null) => { if (m) glowing(m); };
+/** For the trees, whose materials are made in the markup: they take the light of the place at night, on the side that faces it. */
+const lit = (m: MeshStandardMaterial | null) => { if (m) glowing(m, 0.8, true); };
 
 /** World-space grain on a material, so a flat colour reads as a surface. `lit` is what it gives back of the lamps at night. */
-export function grained(color: number, body: string, key: string, roughness = 0.95, lit = 0) {
+export function grained(color: number, body: string, key: string, roughness = 0.95, lit = 0, takes = 1, aloft = false) {
   const m = new MeshStandardMaterial({ color, roughness, metalness: 0, side: DoubleSide });
   m.onBeforeCompile = (s) => {
     s.vertexShader = s.vertexShader
@@ -38,7 +38,8 @@ export function grained(color: number, body: string, key: string, roughness = 0.
     }
   };
   m.customProgramCacheKey = () => key + (lit ? 'lit' + lit : '');
-  return glowing(m);
+  // `takes`: how much of the lamps' light it gives back at night. Asphalt and paint most: the road is what the lamps are for
+  return glowing(m, takes, false, aloft);
 }
 
 const GRASS = `
@@ -135,18 +136,18 @@ export function World({ net, blocks, wood, trees = true, season = 'autumn' }: {
   const ground = useMemo(() => buildGround(net), [net]);
   const mats = useMemo(
     () => ({
-      grass: grained(GROUND[season].grass, worn(GRASS, season), 'grass' + season, 1),
+      grass: grained(GROUND[season].grass, worn(GRASS, season), 'grass' + season, 1, 0, 0.5),
       // what lies along the roads goes with them while a smear is dragged; the lots and the concrete of the houses stay
-      walk: wet(grained(0xa5a39b, worn(SLAB, season), 'slab' + season), 'ground'),
+      walk: wet(grained(0xa5a39b, worn(SLAB, season), 'slab' + season, 0.95, 0, 1, true), 'ground'),
       paving: grained(0xa5a39b, worn(SLAB, season), 'slab' + season),
       felt: grained(0xffffff, FELT, 'felt', 0.85),
-      kerb: wet(grained(0xb3b0a8, ROOF, 'kerb'), 'ground'),
+      kerb: wet(grained(0xb3b0a8, ROOF, 'kerb', 0.95, 0, 1, true), 'ground'),
       rim: grained(0xb3b0a8, ROOF, 'kerb'),
-      pad: grained(0x787a79, LOT, 'lot'),
+      pad: grained(0x787a79, LOT, 'lot', 0.95, 0, 2),
       // sun-bleached, the way a road looks from the air
-      road: wet(grained(0x6b6d6f, ASPHALT, 'asphalt', 0.9, 0.12), 'ground'),
-      white: wet(grained(0xe6e5de, PAINT, 'paint', 0.7, 0.3), 'ground'),
-      yellow: wet(grained(0xcfae4a, PAINT, 'paint', 0.7, 0.3), 'ground'),
+      road: wet(grained(0x6b6d6f, ASPHALT, 'asphalt', 0.9, 0.06, 2.6, true), 'ground'),
+      white: wet(grained(0xe6e5de, PAINT, 'paint', 0.7, 0.12, 2.2, true), 'ground'),
+      yellow: wet(grained(0xcfae4a, PAINT, 'paint', 0.7, 0.12, 2.2, true), 'ground'),
       guide: wet(grained(0xd08c00, PAINT, 'paint', 0.9), 'ground'),
     }),
     [season],

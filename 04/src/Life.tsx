@@ -381,7 +381,7 @@ export function Signs({ net, blocks }: { net: Net; blocks: Block[] }) {
 
 // ---------- street lights and screens ----------
 
-const LAMP_DAY = new Color(0xffe9c0), LAMP_NIGHT = new Color(0xffb062);
+const LAMP_DAY = new Color(0xffe9c0), LAMP_NIGHT = new Color(0xff9a3c);
 
 /** A screen showing whatever screens show: blocks of colour that keep changing, on a grid of lamps. */
 function screen() {
@@ -439,14 +439,20 @@ function pool() {
   return new ShaderMaterial({
     uniforms: { uNight: NIGHT },
     vertexShader: /* glsl */ `
-      varying vec2 vP;
-      void main() { vP = position.xy; gl_Position = projectionMatrix * modelViewMatrix * instanceMatrix * vec4(position, 1.0); }`,
+      varying vec2 vP; varying vec3 vInk;
+      void main() {
+        vP = position.xy; vInk = vec3(1.0, 0.5, 0.13);
+        #ifdef USE_INSTANCING_COLOR
+          vInk = instanceColor;
+        #endif
+        gl_Position = projectionMatrix * modelViewMatrix * instanceMatrix * vec4(position, 1.0);
+      }`,
     fragmentShader: /* glsl */ `
       uniform float uNight;
-      varying vec2 vP;
+      varying vec2 vP; varying vec3 vInk;
       void main() {
         float a = max(0.0, 1.0 - length(vP));
-        gl_FragColor = vec4(vec3(1.0, 0.6, 0.26) * a * a * (0.25 + 0.75 * a) * uNight * POOL, 1.0);
+        gl_FragColor = vec4(vInk * a * a * (0.25 + 0.75 * a) * uNight * POOL, 1.0);
       }`,
     defines: { POOL: '0.34' },
     blending: AdditiveBlending, transparent: true, depthWrite: false,
@@ -465,7 +471,12 @@ export function Street({ net, blocks, speed }: { net: Net; blocks: Block[]; spee
     const post: { x: number; y: number; z: number; sx: number; sy: number; sz: number; rot: number }[] = [];
     const lamp: typeof post = [];
     // what each lamp lights: a round of ground under its head
-    const lit: typeof post = [];
+    const lit: (typeof post[number] & { ink: [number, number, number] })[] = [];
+    /** No two lamps are the same lamp: most are deep sodium, some paler with age, and now and then one has been changed for a white one. */
+    const warmth = (x: number, y: number): [number, number, number] => {
+      const k = hash(x * 1.7 + 3, y * 0.9 - 5), t = hash(x, y) ** 2;
+      return k < 0.06 ? [0.78, 0.86, 0.95] : [1, 0.4 + 0.3 * t, 0.06 + 0.3 * t];
+    };
     const tvs: (typeof post[number] & { seed: number })[] = [];
     const solid = [...net.pads, ...net.buildings, ...blocks];
     const taken = (x: number, y: number, m = 2) => solid.some((q) => x > q.x0 - m && x < q.x1 + m && y > q.y0 - m && y < q.y1 + m);
@@ -479,13 +490,14 @@ export function Street({ net, blocks, speed }: { net: Net; blocks: Block[]; spee
 
     for (const r of net.roads) {
       if (r.base.length < 2) continue;
-      // lamp posts on every road: both sides, staggered, the arm reaching in over the road; a lane has a lower one, on one side
-      const small = r.rank < 2 && !r.ring, H = small ? 6.4 : 9.2;
+      // lamp posts on every road: both sides, staggered, the arm reaching in over the road; a lane has a lower one, on one side.
+      // The bigger the road the closer they stand: an arterial is lit from end to end, a lane has a lamp now and then
+      const small = r.rank < 2 && !r.ring, H = small ? 6.4 : 9.2, apart = small ? 46 : r.rank < 3 && !r.ring ? 40 : 26;
       for (const side of r.ring || small ? [1] : [1, -1]) {
         // on a bridge they stand on the edge of the deck
         const ln = offset(r.base, side * (r.bridge ? r.hw - 0.3 : r.hw + 1.3));
         const cum = cumLen(ln);
-        for (let d = side > 0 ? 8 : 20; d < cum[cum.length - 1] - 4; d += small ? 22 : 24) {
+        for (let d = side > 0 ? 8 : 8 + apart / 2; d < cum[cum.length - 1] - 4; d += apart) {
           const p = pointOn(ln, cum, d), p2 = pointOn(ln, cum, d + 1);
           const ang = Math.atan2(p2.y - p.y, p2.x - p.x);
           if (!r.bridge && (taken(p.x, p.y, 0) || onRoad(net, p.x, p.y, r))) continue;
@@ -494,8 +506,9 @@ export function Street({ net, blocks, speed }: { net: Net; blocks: Block[]; spee
           const nx = Math.sin(ang) * side, ny = -Math.cos(ang) * side;
           post.push({ x: p.x, y: z + H / 2, z: p.y, sx: 0.55, sy: H, sz: 0.55, rot: 0 });
           post.push({ x: p.x + nx * 1.3, y: z + H, z: p.y + ny * 1.3, sx: 2.6, sy: 0.3, sz: 0.36, rot: -Math.atan2(ny, nx) });
-          lamp.push({ x: p.x + nx * 2.5, y: z + H - 0.1, z: p.y + ny * 2.5, sx: 2.3, sy: 0.4, sz: 1.0, rot: -Math.atan2(ny, nx) });
-          lit.push({ x: p.x + nx * 2.5, y: z + 0.22, z: p.y + ny * 2.5, sx: H * 1.6, sy: H * 1.6, sz: 1, rot: 0 });
+          // the lamp itself: a small round source at the end of the arm, not a slab
+          lamp.push({ x: p.x + nx * 2.5, y: z + H - 0.25, z: p.y + ny * 2.5, sx: 0.95, sy: 0.7, sz: 0.95, rot: 0 });
+          lit.push({ x: p.x + nx * 2.5, y: z + 0.22, z: p.y + ny * 2.5, sx: H * 1.6, sy: H * 1.6, sz: 1, rot: 0, ink: warmth(p.x, p.y) });
         }
       }
       // screens along the biggest roads
@@ -531,6 +544,29 @@ export function Street({ net, blocks, speed }: { net: Net; blocks: Block[]; spee
         placed++;
       }
     }
+    // And the small lights nobody planned: one by a door here and there, and a few out in the green, by a path, in a yard,
+    // at the back of a shed. Low, weak, each its own colour.
+    const small = (x: number, y: number, up: number, reach: number, ink: [number, number, number]) => {
+      lamp.push({ x, y: up, z: y, sx: 0.5, sy: 0.4, sz: 0.5, rot: 0 });
+      lit.push({ x, y: 0.2, z: y, sx: reach, sy: reach, sz: 1, rot: 0, ink });
+    };
+    for (const b of blocks) {
+      const door = b.path[0], k = hash(b.x0 * 0.31, b.y0 * 0.47);
+      if (!door || k > 0.45) continue;
+      const t = hash(b.y1, b.x1);
+      small(door.x, door.y, Math.min(b.h, 2.6), 5 + 3 * t, [0.75, 0.42 + 0.3 * t, 0.12 + 0.3 * t]);
+    }
+    for (let gx = -420; gx < 420; gx += 34) {
+      for (let gy = -400; gy < 400; gy += 34) {
+        const k = hash(gx * 0.173 + 9, gy * 0.291 - 4);
+        if (k > 0.2) continue;
+        const x = gx + hash(gx, gy + 1) * 30, y = gy + hash(gx + 1, gy) * 30;
+        if (taken(x, y, 2) || onRoad(net, x, y)) continue;
+        // out here a lamp is as likely white or greenish as warm
+        const t = hash(x, y), c = hash(y, x);
+        small(x, y, 1.2 + 2 * t, 6 + 5 * t, c < 0.35 ? [0.5, 0.62, 0.55] : c < 0.6 ? [0.6, 0.6, 0.5] : [0.8, 0.45 + 0.2 * t, 0.15]);
+      }
+    }
     return { post: post.slice(0, POSTS), lamp: lamp.slice(0, POSTS / 2), lit: lit.slice(0, POSTS / 2), tvs: tvs.slice(0, TVS) };
   }, [net, blocks]);
   useLayoutEffect(() => settle('street', net), [plan, net]);
@@ -549,14 +585,18 @@ export function Street({ net, blocks, speed }: { net: Net; blocks: Block[]; spee
     put(posts.current!, plan.post);
     put(lamps.current!, plan.lamp);
     put(pools.current!, plan.lit, true);
+    plan.lit.forEach((l, i) => pools.current!.setColorAt(i, c.setRGB(...l.ink)));
+    if (pools.current!.instanceColor) pools.current!.instanceColor.needsUpdate = true;
     put(tv.current!, plan.tvs);
     // the map of where light is: every lamp, every house with lit rooms, every screen
-    const spots: Spot[] = plan.lit.map((l) => ({ x: l.x, z: l.z, r: 30, c: [0.62, 0.4, 0.2] }));
-    for (const b of blocks) spots.push({ x: (b.x0 + b.x1) / 2, z: (b.y0 + b.y1) / 2, r: Math.hypot(b.x1 - b.x0, b.y1 - b.y0) / 2 + 14, c: [0.3, 0.25, 0.17] });
+    // sodium along the roads: deep amber, strong under the lamp and gone a few steps off the road
+    const spots: Spot[] = plan.lit.map((l) => ({ x: l.x, z: l.z, r: l.sx * 1.65, c: [l.ink[0], l.ink[1] * 1.05, l.ink[2] * 0.9] }));
+    for (const b of blocks) spots.push({ x: (b.x0 + b.x1) / 2, z: (b.y0 + b.y1) / 2, r: Math.hypot(b.x1 - b.x0, b.y1 - b.y0) / 2 + 8, c: [0.2, 0.16, 0.1] });
     for (const t of plan.tvs) spots.push({ x: t.x, z: t.z, r: 34, c: [0.3, 0.34, 0.42] });
     // where roads meet there is always more light than along them, and a car park is lit from end to end
-    for (const n of net.nodes) if (n.roads.length >= 3 && n.z < 1) spots.push({ x: n.p.x, z: n.p.y, r: 30 + 5 * n.roads.length, c: [0.6, 0.42, 0.24] });
-    net.stalls.forEach((st, i) => { if (i % 5 === 0) spots.push({ x: st.p.x, z: st.p.y, r: 24, c: [0.3, 0.27, 0.22] }); });
+    for (const n of net.nodes) if (n.roads.length >= 3 && n.z < 1) spots.push({ x: n.p.x, z: n.p.y, r: 26 + 5 * n.roads.length, c: [0.85, 0.42, 0.1] });
+    // a car park is lit white, as they are now: cold beside the amber of the streets
+    net.stalls.forEach((st, i) => { if (i % 5 === 0) spots.push({ x: st.p.x, z: st.p.y, r: 22, c: [0.3, 0.36, 0.4] }); });
     bakeGlow(spots);
     // each screen runs its own programme
     plan.tvs.forEach((s, i) => tv.current!.setColorAt(i, c.setRGB(s.seed, (s.seed * 7.3) % 1, (s.seed * 3.1) % 1)));
@@ -580,7 +620,7 @@ export function Street({ net, blocks, speed }: { net: Net; blocks: Block[]; spee
         <meshStandardMaterial color={0x4a4e54} roughness={0.6} metalness={0.4} {...SOAKED.street} />
       </instancedMesh>
       <instancedMesh ref={lamps} args={[undefined, undefined, POSTS / 2]} frustumCulled={false}>
-        <boxGeometry />
+        <sphereGeometry args={[0.5, 10, 6]} />
         {/* the heads are pale, with only a little light of their own: enough to be found, not to shine */}
         <meshStandardMaterial ref={head} color={0xe8e6dc} emissive={0xffe9c0} emissiveIntensity={0.2} roughness={0.4} {...SOAKED.street} />
       </instancedMesh>

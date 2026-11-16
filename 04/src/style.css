@@ -1,5 +1,7 @@
 /* a dark day: the backdrop is the grass, ink #f4f4f2 (docs/DESIGN.md) */
 html, body { margin: 0; height: 100%; background: #a3adb3; overflow: hidden; }
+/* nothing here is text to take away: a finger held on the picture paints, it does not select or call up a menu */
+html, body { user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
 #root { position: fixed; inset: 0; }
 /* a little soft all over, as through a lens that is not quite a good one */
 canvas { display: block; touch-action: none; filter: blur(var(--soft, 0.5px)); }
@@ -112,7 +114,8 @@ canvas.glow { position: absolute; inset: 0; width: 100%; height: 100%; pointer-e
 
 @media (max-width: 640px) {
   /* on a phone the time and the overlays go under the plate, on the right */
-  .corner { top: calc(max(16px, env(safe-area-inset-top)) + 76px); right: max(16px, env(safe-area-inset-right)); }
+  /* on a phone the time sits top right beside the plate, and the overlays hang under it */
+  .corner { top: max(16px, env(safe-area-inset-top)); right: max(16px, env(safe-area-inset-right)); flex-direction: column; align-items: flex-end; }
   .corner .time { padding-right: 8px; }
 }
 /* ?debug: the shot, slider by slider */

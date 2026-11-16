@@ -47,7 +47,8 @@ class FadeEffect extends Effect {
         // the grade, bleak: some bite, cold shadows, lights that barely warm, colour drained, blacks lifted to grey
         c = mix(c, c * c * (3.0 - 2.0 * c), bite);
         float g = dot(c, vec3(0.2126, 0.7152, 0.0722));
-        c += vec3(-0.03, 0.008, 0.035) * (1.0 - smoothstep(0.0, 0.5, g)) + vec3(0.02, 0.012, -0.015) * smoothstep(0.45, 1.0, g);
+        // the cold in the shadows is the day's: at night what is not lit is black, not blue
+        c += vec3(-0.03, 0.008, 0.035) * (1.0 - smoothstep(0.0, 0.5, g)) * (1.0 - 0.9 * night) + vec3(0.02, 0.012, -0.015) * smoothstep(0.45, 1.0, g);
         c = mix(vec3(g), c, sat + rich);
         // at night the blacks are let down again, or the dark is milk
         c = clamp(c * 0.94 + vec3(0.03, 0.034, 0.04) * lift * (1.0 - 0.6 * night), 0.0, 1.0);

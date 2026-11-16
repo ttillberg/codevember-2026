@@ -83,12 +83,18 @@ const FAN = 12.0; // metres either side of a vehicle's heading that its beam rea
   let ends = clamp((s + CAP) / (2.0 * CAP), 0.0, 1.0) * clamp((o.len + CAP - s) / (2.0 * CAP), 0.0, 1.0);
   // older towards where it came from
   let age = mix(o.age.x, o.age.y, clamp(s / max(o.len, 1e-3), 0.0, 1.0));
-  // two lamps, and what the road gives back of them
-  let e = (abs(v) - 0.7) / 0.55; let lamps = exp(-e * e);
-  let w = v / 2.4; let wash = exp(-w * w);
-  let head = vec3f(1.0, 0.84, 0.6) * (0.9 * lamps + 0.3 * wash);
-  let tail = vec3f(1.0, 0.07, 0.03) * (1.0 * lamps + 0.1 * wash);
-  return vec4f(mix(head, tail, o.lamp.x) * o.lamp.y * ends * age, 1.0);
+  // Two lamps, one at either side, and a little of what the road gives back between them: a pair of lines, not a band.
+  // How far apart they sit is the vehicle's own (the fraction of its kind): wide on a lorry, close on a small car,
+  // and now and then only one line, a motorbike or a lamp that is out.
+  let own = fract(o.lamp.x) / 0.45; let tailed = floor(o.lamp.x);
+  let off = mix(0.75, 1.3, own);
+  let e = (abs(v) - off) / 0.36; let pair = exp(-e * e);
+  let m = v / 0.5; let one = exp(-m * m);
+  let lamps = select(pair, one, own < 0.12);
+  let w = v / 2.2; let wash = exp(-w * w);
+  let head = vec3f(1.0, 0.84, 0.6) * (1.25 * lamps + 0.14 * wash);
+  let tail = vec3f(1.0, 0.07, 0.03) * (1.35 * lamps + 0.05 * wash);
+  return vec4f(mix(head, tail, tailed) * o.lamp.y * ends * age, 1.0);
 }`;
 
 const SHOW = /* wgsl */ `
@@ -257,7 +263,8 @@ class Layer {
       if (c.state === PARKED) continue;
       let l = this.last.get(c);
       const fresh = !l;
-      if (!l) this.last.set(c, l = new Float32Array(6));
+      // (the seventh is the vehicle's own: how far apart its lamps sit, drawn once)
+      if (!l) { this.last.set(c, l = new Float32Array(7)); l[6] = c.len > 7 ? 0.8 + Math.random() * 0.2 : Math.random() * 0.75; }
       const fx = Math.cos(c.ang), fy = Math.sin(c.ang), half = c.len / 2 - 0.2;
       const hx = c.x + fx * half, hy = c.y + fy * half, tx = c.x - fx * half, ty = c.y - fy * half;
       // a jump is not a journey: whoever was moved with the roads, or was not followed for a while, starts again
@@ -273,7 +280,7 @@ class Layer {
           const o = this.n++ * REC, tail = k === 1, p = tail ? 2 : 0;
           rec[o] = l[p]; rec[o + 1] = l[4]; rec[o + 2] = l[p + 1];
           rec[o + 3] = tail ? tx : hx; rec[o + 4] = c.h; rec[o + 5] = tail ? ty : hy;
-          rec[o + 6] = l[5]; rec[o + 7] = time; rec[o + 8] = k < 2 ? k : FLASH + (this.notes & 3 ? 0 : 1); rec[o + 9] = k < 2 ? (c.siren ? 0.3 * w : w) : 1.1 * w; rec[o + 10] = fx; rec[o + 11] = fy;
+          rec[o + 6] = l[5]; rec[o + 7] = time; rec[o + 8] = k < 2 ? k + 0.45 * l[6] : FLASH + (this.notes & 3 ? 0 : 1); rec[o + 9] = k < 2 ? (c.siren ? 0.3 * w : w) : 1.1 * w; rec[o + 10] = fx; rec[o + 11] = fy;
         }
       }
       // The beam on the road ahead, as it lies at this moment: it is exposed like the rest, and by how far the vehicle
@@ -317,8 +324,9 @@ class Layer {
       out[q + 4] = Math.exp(-(time - rec[o + 6]) / tau); out[q + 5] = Math.exp(-(time - rec[o + 7]) / tau);
       // head lamps show to whoever they come towards, tail lamps to whoever they leave: lanes turn white or red by which way they run
       const dx = C.x - bx, dy = C.z - by, d = Math.hypot(dx, dy) || 1, toward = (rec[o + 10] * dx + rec[o + 11] * dy) / d;
-      const kind = rec[o + 8];
-      out[q + 6] = kind;
+      // (a head or tail lamp carries the vehicle's own spread as a fraction: the kind is the whole of it)
+      const kind = Math.floor(rec[o + 8]);
+      out[q + 6] = rec[o + 8];
       // a flash shows all round; a beam is on the road for anyone to see, but less from behind, or every lane would be white
       out[q + 7] = rec[o + 9] * (kind === HEAD || kind === TAIL ? 0.12 + 0.88 * step(-0.4, 0.6, kind === TAIL ? -toward : toward) : kind === BEAM ? 0.15 + 0.85 * step(-0.4, 0.6, toward) : 1);
     }
