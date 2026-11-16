@@ -2,7 +2,7 @@
 import { useLayoutEffect, useMemo, useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
 import { AdditiveBlending, Color, InstancedMesh, MeshStandardMaterial, Object3D, ShaderMaterial } from 'three';
-import { onRoad, WALK } from './geo';
+import { onRoad, WALK, zebraAt } from './geo';
 import { NIGHT } from './haze';
 import { cumLen, deck, offset, pointOn, rng, type Net, type V } from './net';
 import { turned, type Block } from './Town';
@@ -43,7 +43,26 @@ export function People({ net, blocks, speed, shade = true }: { net: Net; blocks:
       }
     }
     for (const b of blocks) if (b.path.length > 1) walk.push(line(b.path));
-    return { walk: walk.filter((l) => l.len > 6), ride: ride.filter((l) => l.len > 6) };
+    // and from one sidewalk to the next, so that nobody has to vanish at a kerb: over the zebra where an arm has one,
+    // and round the corner to the arm beside it
+    const link: Line[] = [];
+    const afoot = (r: (typeof net.roads)[number]) => r.rank >= 1 && !r.bridge && !r.ring && r.base.length > 1;
+    for (const n of net.nodes) {
+      if (n.stub) continue;
+      const arms = n.roads.map((r) => {
+        const b = r.base, end = r.a === n ? 0 : 1, p = end ? b[b.length - 1] : b[0], q = end ? b[b.length - 2] : b[1];
+        const d = Math.hypot(p.x - q.x, p.y - q.y) || 1, tx = (p.x - q.x) / d, ty = (p.y - q.y) / d, w = r.hw + 0.95 + WALK / 2;
+        // the two ends of its sidewalks here: the one on the side the angles grow towards, and the other
+        return { r, end, tx, ty, ang: Math.atan2(-ty, -tx), up: { x: p.x + ty * w, y: p.y - tx * w }, down: { x: p.x - ty * w, y: p.y + tx * w } };
+      }).sort((a, b) => a.ang - b.ang);
+      arms.forEach((a, i) => {
+        if (!afoot(a.r)) return;
+        if (zebraAt(a.r, a.end)) link.push(line([a.up, { x: a.up.x + a.tx * 2.7, y: a.up.y + a.ty * 2.7 }, { x: a.down.x + a.tx * 2.7, y: a.down.y + a.ty * 2.7 }, a.down]));
+        const b = arms[(i + 1) % arms.length];
+        if (b !== a && afoot(b.r) && Math.hypot(b.down.x - a.up.x, b.down.y - a.up.y) < 70) link.push(line([a.up, b.down]));
+      });
+    }
+    return { walk: [...walk.filter((l) => l.len > 6), ...link.filter((l) => l.len > 0.5)], ride: ride.filter((l) => l.len > 6) };
   }, [net, blocks]);
 
   // each one: which line, how far along, which way, how fast
@@ -84,16 +103,20 @@ export function People({ net, blocks, speed, shade = true }: { net: Net; blocks:
           // at the end of the block: carry on along whatever starts nearby, or turn back
           const end = p.s > L.len ? L.pts[L.pts.length - 1] : L.pts[0];
           let pick = -1, pe = 0, seen = 0;
-          for (let k = 0; k < lines.length; k++) {
-            if (k === p.l) continue;
-            const M = lines[k];
-            for (const e of oneWay ? [0] : [0, 1]) {
-              const q = e ? M.pts[M.pts.length - 1] : M.pts[0];
-              if (Math.abs(q.x - end.x) + Math.abs(q.y - end.y) > 34) continue;
-              // one of them, by a fair draw that needs no dice
-              seen++;
-              if (((i * 7 + seen * 13 + ((p.s * 3) | 0)) % seen) === 0) { pick = k; pe = e; }
+          // first whatever begins right here, a crossing or a corner; only failing that a hop to something close by
+          for (const near of oneWay ? [34] : [1.5, 34]) {
+            for (let k = 0; k < lines.length; k++) {
+              if (k === p.l) continue;
+              const M = lines[k];
+              for (const e of oneWay ? [0] : [0, 1]) {
+                const q = e ? M.pts[M.pts.length - 1] : M.pts[0];
+                if (Math.abs(q.x - end.x) + Math.abs(q.y - end.y) > near) continue;
+                // one of them, by a fair draw that needs no dice
+                seen++;
+                if (((i * 7 + seen * 13 + ((p.s * 3) | 0)) % seen) === 0) { pick = k; pe = e; }
+              }
             }
+            if (pick >= 0) break;
           }
           if (pick >= 0) { p.l = pick; p.dir = pe ? -1 : 1; p.s = pe ? lines[pick].len : 0; }
           else if (oneWay) p.s = 0;

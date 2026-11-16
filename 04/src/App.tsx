@@ -7,6 +7,7 @@ import { BlendFunction, Effect, ToneMappingMode } from 'postprocessing';
 import { Color, DirectionalLight, HemisphereLight, MOUSE, OrthographicCamera, PerspectiveCamera, TOUCH, Uniform, Vector2 } from 'three';
 import { HAZE, MOOD, NIGHT, RICH, hoursPerSecond, skyAt } from './haze';
 import { Cars, TIMELAPSE } from './Cars';
+import { gpu } from './Glow';
 import { SEASONS, World, type Season } from './World';
 import { plantTown, turnSome, type Block } from './Town';
 import { People, Signs, Street } from './Life';
@@ -112,11 +113,13 @@ const RAD = Math.PI / 180;
  * The hour it is, whether it stands still there, how many seconds of ours a day and its night take, and how many seconds
  * of theirs the lights of the traffic stay on the picture after dark. It opens in the low sun of the afternoon.
  */
-type Clock = { hour: number; hold: boolean; day: number; trail: number };
+type Clock = { hour: number; hold: boolean; day: number; trail: number; lights: (typeof LIGHTS)[number] };
+/** How those lights are drawn: strips behind each vehicle, a long exposure on a WebGPU canvas over the picture (Glow.tsx), or not. The second where there is a WebGPU, on a desk; ?gpu asks for it on a phone too, ?no=gpu for the strips. */
+const LIGHTS = ['geometry', 'webgpu', 'off'] as const;
 // ?hour=19 starts at seven in the evening instead
 const hourAsked = parseFloat(new URLSearchParams(location.search).get('hour') ?? '');
-const CLOCK: Clock = { hour: hourAsked >= 0 && hourAsked < 24 ? hourAsked : 15.3, hold: false, day: 240, trail: 8 };
-const CLOCKS: [Exclude<keyof Clock, 'hold'>, string, number, number, number][] = [['hour', 'Time', 0, 24, 0.05], ['day', 'Day', 30, 600, 10], ['trail', 'Trails', 0, 16, 0.5]];
+const CLOCK: Clock = { hour: hourAsked >= 0 && hourAsked < 24 ? hourAsked : 15.3, hold: false, day: 240, trail: 8, lights: new URLSearchParams(location.search).has('gpu') || (!touch && !no('gpu')) ? 'webgpu' : 'geometry' };
+const CLOCKS: [Exclude<keyof Clock, 'hold' | 'lights'>, string, number, number, number][] = [['hour', 'Time', 0, 24, 0.05], ['day', 'Day', 30, 600, 10], ['trail', 'Trails', 0, 16, 0.5]];
 const hhmm = (h: number) => `${Math.floor(h)}:${String(Math.floor((h % 1) * 60)).padStart(2, '0')}`;
 /** The place as it starts: the streets, and a few flyovers laid over them the way a hand would paint them. ?debug starts on `MAP`. */
 const BASE: Intent = [
@@ -362,6 +365,12 @@ export function App() {
   const [move, setMove] = useState(MOVE);
   const [clock, setClock] = useState(CLOCK);
   const [scrub, setScrub] = useState(0);
+  // is there a WebGPU to draw the lights with: not known until it is asked, and only asked where it matters
+  const [gpuOk, setGpuOk] = useState<boolean | null>(null);
+  useEffect(() => { if (gpuOk === null && (debug || clock.lights === 'webgpu')) gpu().then((d) => setGpuOk(!!d)); }, [gpuOk, clock.lights]);
+  const noGpu = useCallback(() => setGpuOk(false), []);
+  // without it the strips are drawn, and nothing is said
+  const lights = clock.lights === 'webgpu' && gpuOk === false ? 'geometry' : clock.lights;
   const onHour = useCallback((h: number) => setClock((c) => ({ ...c, hour: Math.round(h * 100) / 100 })), []);
   // the last softness is the browser's: a blur on the canvas itself, so many pixels wide
   useEffect(() => { document.documentElement.style.setProperty('--soft', grade.soft + 'px'); }, [grade.soft]);
@@ -423,6 +432,8 @@ export function App() {
   // the ground first, then the trees, then the traffic, then the people and the signs
   const place = useMemo(() => ({ net, blocks }), [net, blocks]);
   const wood = useLater(place, 1), roads = useLater(net, 2), life = useLater(place, 3);
+  // what the WebGPU lights cannot be seen through
+  const hides = useMemo(() => [...life.blocks, ...life.net.buildings], [life]);
 
   const onStroke = useCallback((pts: V[], bridge: boolean, air?: [boolean, boolean], done?: (ok: boolean) => void) => {
     requestAnimationFrame(() => setTimeout(() => {
@@ -476,7 +487,7 @@ export function App() {
         <Drone shot={shot} move={move} set={set} onShot={debug ? onShot : undefined} />
         <Sun speed={speed} shadow={fx.shadow} lazy={fx.lazy} clock={clock} scrub={scrub} onHour={debug ? onHour : undefined} />
         <World net={net} blocks={blocks} wood={wood} trees={trees} season={season} />
-        <Cars net={roads} speed={speed} target={VEHICLES} trail={clock.trail} shade={!fx.lazy} heat={heat} trace={tool === 'trace' ? trace : null} onNote={onNote} />
+        <Cars net={roads} speed={speed} target={VEHICLES} trail={lights === 'off' ? 0 : clock.trail} glow={lights === 'webgpu'} walls={hides} onGlowFail={noGpu} shade={!fx.lazy} heat={heat} trace={tool === 'trace' ? trace : null} onNote={onNote} />
         <People net={life.net} blocks={life.blocks} speed={speed} shade={!fx.lazy} />
         <Signs net={life.net} blocks={life.blocks} />
         <Street net={life.net} blocks={life.blocks} speed={speed} />
@@ -522,6 +533,12 @@ export function App() {
               <output>{k === 'hour' ? hhmm(clock.hour) : clock[k]}</output>
             </label>
           ))}
+          <label>
+            <span>Lights</span>
+            <select value={lights} onChange={(e) => setClock((c) => ({ ...c, lights: e.target.value as Clock['lights'] }))}>
+              {LIGHTS.map((l) => <option key={l} value={l} disabled={l === 'webgpu' && gpuOk === false}>{l === 'webgpu' && gpuOk === false ? 'webgpu (not here)' : l}</option>)}
+            </select>
+          </label>
           <label className="check">
             <input type="checkbox" checked={clock.hold} onChange={(e) => setClock((c) => ({ ...c, hold: e.target.checked }))} />
             <span>Hold time</span>

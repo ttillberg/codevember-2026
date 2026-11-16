@@ -1,6 +1,6 @@
 // Flat geometry for the ground plan: asphalt, kerbs, paint. Built from the network.
 import { BufferGeometry, Float32BufferAttribute } from 'three';
-import { cumLen, deck, offset, pointOn, STALL_D, STALL_W, type Net, type Road, type V } from './net';
+import { cumLen, deck, offset, pointOn, STALL_D, STALL_W, trim, type Lane, type Net, type Node, type Road, type V } from './net';
 
 class Flat {
   pos: number[] = [];
@@ -27,12 +27,30 @@ class Flat {
     const l = offset(pts, o0), r = offset(pts, o1);
     for (let i = 0; i < pts.length - 1; i++) this.quad(l[i], l[i + 1], r[i + 1], r[i]);
   }
+  /** A ribbon `w` to either side at its two ends and `more` wider than that in its middle. */
+  swell(pts: V[], w: number, more: number) {
+    const u = offset(pts, 1), n = pts.length - 1;
+    const edge = (s: number) => {
+      const e = pts.map((p, i) => {
+        const k = s * (w + more * Math.sin((Math.PI * i) / n));
+        return { x: p.x + (u[i].x - p.x) * k, y: p.y + (u[i].y - p.y) * k };
+      });
+      // on the inside of a bend tighter than the ribbon is wide the edge would run backwards: it waits there instead
+      for (let i = 1; i <= n; i++) if ((e[i].x - e[i - 1].x) * (pts[i].x - pts[i - 1].x) + (e[i].y - e[i - 1].y) * (pts[i].y - pts[i - 1].y) < 0) e[i] = e[i - 1];
+      return e;
+    };
+    const l = edge(-1), r = edge(1);
+    for (let i = 0; i < n; i++) this.quad(l[i], l[i + 1], r[i + 1], r[i]);
+  }
   dashed(pts: V[], off: number, w: number, on: number, gap: number) {
     const line = offset(pts, off);
     const cum = cumLen(line);
     const len = cum[cum.length - 1];
     for (let s = gap / 2; s + on < len; s += on + gap) {
-      const seg = [pointOn(line, cum, s), pointOn(line, cum, s + on)];
+      // a dash bends with its line, and on a bridge climbs with it
+      const seg = [pointOn(line, cum, s)];
+      for (let i = 1; i < line.length - 1; i++) if (cum[i] > s + 0.05 && cum[i] < s + on - 0.05) seg.push(line[i]);
+      seg.push(pointOn(line, cum, s + on));
       this.ribbon(seg, -w / 2, w / 2);
     }
   }
@@ -95,6 +113,30 @@ function along(r: Road, cum: number[], p: V) {
   return best;
 }
 
+/** How far a point is from a polyline. */
+function away(pts: V[], p: V) {
+  let best = Infinity;
+  for (let i = 0; i < pts.length - 1; i++) {
+    const a = pts[i], b = pts[i + 1], dx = b.x - a.x, dy = b.y - a.y;
+    const t = Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / (dx * dx + dy * dy || 1)));
+    best = Math.min(best, Math.hypot(a.x + dx * t - p.x, a.y + dy * t - p.y));
+  }
+  return best;
+}
+
+/** Is p inside a convex outline, whichever way round it is given? */
+function within(poly: V[], p: V) {
+  let sign = 0;
+  for (let i = 0; i < poly.length; i++) {
+    const a = poly[i], b = poly[(i + 1) % poly.length];
+    const c = (b.x - a.x) * (p.y - a.y) - (b.y - a.y) * (p.x - a.x);
+    if (Math.abs(c) < 1e-9) continue;
+    if (sign && Math.sign(c) !== sign) return false;
+    sign = Math.sign(c);
+  }
+  return true;
+}
+
 /** The concrete of a bridge: a thick slab, a parapet with a top you can see from the air, and piers under it. */
 function buildDecks(net: Net) {
   const pos: number[] = [];
@@ -124,6 +166,9 @@ function buildDecks(net: Net) {
       for (let i = 0; i < D.length - 1; i++) {
         const j = i + 1;
         if (mouth(I[i], I[j])) continue;
+        // nor inside the junction it lands in
+        const mid = (cum[i] + cum[j]) / 2;
+        if ((!r.a.z && r.a.roads.length > 2 && mid < r.a.trim) || (!r.b.z && r.b.roads.length > 2 && mid > r.len - r.b.trim)) continue;
         // the parapet: inner face, its top, and the outer face that runs down past the slab
         quad([I[i].x, h[i], I[i].y], [I[j].x, h[j], I[j].y], [I[j].x, h[j] + RAIL, I[j].y], [I[i].x, h[i] + RAIL, I[i].y]);
         quad([I[i].x, h[i] + RAIL, I[i].y], [I[j].x, h[j] + RAIL, I[j].y], [O[j].x, h[j] + RAIL, O[j].y], [O[i].x, h[i] + RAIL, O[i].y]);
@@ -198,6 +243,39 @@ export function pavingGeometry(rects: { x0: number; y0: number; x1: number; y1: 
   return f.build();
 }
 
+/**
+ * A lane arrow, as long as a car: its tail at o, t along the lane and n to its right. Straight on, with a branch
+ * that bends off to either side, or only the bend. Laid in short pieces, so that it follows a ramp.
+ */
+function arrow(f: Flat, o: V, t: V, n: V, left: boolean, on: boolean, right: boolean) {
+  const at = (u: number, v: number) => ({ x: o.x + t.x * u + n.x * v, y: o.y + t.y * u + n.y * v });
+  const head = (u: number, v: number, du: number, dv: number, half: number, len: number) => {
+    const l = Math.hypot(du, dv);
+    du /= l; dv /= l;
+    f.tri(at(u - dv * half, v + du * half), at(u + dv * half, v - du * half), at(u + du * len, v + dv * len));
+  };
+  const sides = [left ? -1 : 0, right ? 1 : 0].filter((s) => s);
+  // a stem that turns one way only stands to the other side of its lane, so the bend has room
+  const v0 = sides.length === 1 ? -sides[0] * (on ? 0.3 : 0.45) : 0;
+  const fork = on ? 1.3 : 3.1, top = on ? 3.5 : fork;
+  const stem: V[] = [];
+  for (let u = 0; u < top; u++) stem.push(at(u, v0));
+  stem.push(at(top, v0));
+  f.ribbon(stem, -0.18, 0.18);
+  if (on) head(3.4, v0, 1, 0, 0.65, 2);
+  for (const s of sides) {
+    f.ribbon([at(fork - 0.18, v0), at(fork + 0.75, v0 + s * 0.5), at(fork + 0.95, v0 + s * 0.8)], -0.18, 0.18);
+    head(fork + 0.9, v0 + s * 0.7, 0.22, s, 0.6, 1.15);
+  }
+}
+
+/** Is there a zebra across this end of a road? Where it gives way or meets the lights; not up on a deck or across a ramp, where nobody walks. */
+export function zebraAt(r: Road, end: number) {
+  const node = end ? r.b : r.a;
+  if (node.stub || r.bridge || r.ring || r.one || r.rank < 1) return false;
+  return (node.signal || r.rank < Math.max(...node.roads.map((q) => q.rank))) && cumLen(r.base).pop()! >= 20;
+}
+
 /** How far a sidewalk reaches beyond the kerb. */
 export const WALK = 3.4;
 
@@ -206,7 +284,9 @@ export function buildGround(net: Net) {
   // what stands on the ground stands on concrete
   for (const b of net.buildings) walk.rect(b.x0 - 4, b.y0 - 4, b.x1 + 4, b.y1 + 4);
   for (const r of net.pads) walk.rect(r.x0 - 3, r.y0 - 3, r.x1 + 3, r.y1 + 3);
-  const kerb = new Flat(0.02), pad = new Flat(0.035), road = new Flat(0.05), white = new Flat(0.07), yellow = new Flat(0.07), guide = new Flat(0.06);
+  // from the ground up: slabs, the studded strip, kerbs, lots, asphalt, paint. Whatever lies higher hides what it crosses,
+  // so a sidewalk that runs into another road goes under it, strip and all
+  const guide = new Flat(0.02), kerb = new Flat(0.028), pad = new Flat(0.037), road = new Flat(0.05), white = new Flat(0.07), yellow = new Flat(0.07);
   const SH = 0.45; // shoulder
 
   for (const r of net.pads) {
@@ -214,43 +294,95 @@ export function buildGround(net: Net) {
     pad.rect(r.x0, r.y0, r.x1, r.y1);
   }
 
+  // the lanes of each road, and the turns through each junction
+  const lanesOf = new Map<Road, Lane[]>(), turnsAt = new Map<Node, Lane[]>();
+  for (const l of net.lanes) {
+    if (l.road) (lanesOf.get(l.road) ?? lanesOf.set(l.road, []).get(l.road)!).push(l);
+    else if (l.conn) (turnsAt.get(l.conn.node) ?? turnsAt.set(l.conn.node, []).get(l.conn.node)!).push(l);
+  }
+  /** Half the width of the asphalt under one turn. */
+  const reach = (l: Lane) => Math.max(l.conn!.src.road!.lw, l.conn!.dst.road!.lw) / 2 + SH;
+  /** The two corners of every arm's mouth, `more` metres beyond the shoulder. */
+  const mouths = (n: Node, more = 0) => n.roads.flatMap((r) => {
+    const b = r.base, p = r.a === n ? b[0] : b[b.length - 1], q = r.a === n ? b[1] : b[b.length - 2];
+    const L = Math.hypot(p.x - q.x, p.y - q.y) || 1, w = r.hw + SH + more;
+    const nx = (-(p.y - q.y) / L) * w, ny = ((p.x - q.x) / L) * w;
+    return [{ x: p.x + nx, y: p.y + ny }, { x: p.x - nx, y: p.y - ny }];
+  });
+  // A junction whose arms leave at flat angles keeps them far back from its middle. Paved from mouth to mouth that is
+  // a field of asphalt. It is laid as its turns instead, a slip road each, and what no turn crosses is left as an island
+  const loose = new Set(net.nodes.filter((n) => !n.stub && n.z === 0 && n.roads.length >= 3 && turnsAt.has(n)
+    && !n.roads.some((q) => q.ring || q.rank < 1) && n.trim >= Math.max(...n.roads.map((q) => q.hw)) + 8));
+  const aprons = new Map<Node, V[]>();
+  for (const n of net.nodes) if (!n.stub && !loose.has(n)) aprons.set(n, hull(mouths(n)));
+  /** Is there junction under this point? */
+  const paved = (n: Node, p: V) => (loose.has(n) ? turnsAt.get(n)!.some((l) => away(l.pts, p) < reach(l)) : within(aprons.get(n)!, p));
+
   const flats = [kerb, pad, road, white, yellow];
   for (const r of net.roads) {
     const hw = r.hw;
     const target = r.rank >= 1 ? road : pad;
+    const single = r.ring || r.one;
+    // an arm runs on to the middle of its junction, but stops at its mouth where the junction is laid as slip roads
+    const fit = Math.min(1, (r.len - 1) / (r.a.trim + r.b.trim || 1));
+    // (a bridge keeps its deck under it all the way)
+    const body = r.bridge ? r.pts : trim(r.pts, loose.has(r.a) ? r.a.trim * fit : 0, loose.has(r.b) ? r.b.trim * fit : 0);
+    // what is left of it between its two junctions. On a stub there is no room for paint: lines there are only clutter
+    const run = cumLen(r.base).pop()!;
+    // and where another arm of the same junction still lies on it there is none either: the lines begin where the roads part
+    const L = offset(r.base, -hw), R = offset(r.base, hw), cl = cumLen(L), cr = cumLen(R);
+    const shared = [r.a, r.b].map((n, end) => {
+      const others = n.roads.filter((q) => q !== r && q.bridge === r.bridge);
+      let s = 0;
+      for (; s < Math.min(40, run / 2); s += 2) {
+        const ends = [pointOn(L, cl, end ? cl[cl.length - 1] - s : s), pointOn(R, cr, end ? cr[cr.length - 1] - s : s)];
+        if (!ends.some((p) => others.some((q) => away(q.base, p) < q.hw + SH - 0.3))) break;
+      }
+      return s;
+    });
+    const marked = run - shared[0] - shared[1];
+    const lined = marked >= 20;
     // a bridge is laid along a finer line, so its ribbons can climb
-    const pts = r.bridge ? dense(r.pts, 4) : r.pts;
+    const pts = r.bridge ? dense(body, 4) : body;
     const base = r.bridge ? dense(r.base, 4) : r.base;
+    const mark = shared[0] || shared[1] ? trim(base, shared[0], shared[1]) : base;
     if (r.bridge) {
       const cum = cumLen(r.pts);
       for (const f of flats) f.hf = (p) => deck(r, along(r, cum, p));
+      // paint lies a little proud of a deck: the deck is flat between its own points, the paint between others
+      white.hf = yellow.hf = (p) => deck(r, along(r, cum, p)) + 0.07;
     }
-    // what is left of it between its two junctions. On a stub there is no room for paint: lines there are only clutter
-    const run = cumLen(r.base).pop()!;
-    const lined = run >= 20;
     target.ribbon(pts, -(hw + SH), hw + SH);
     if (r.rank >= 1 && !r.bridge) {
       kerb.ribbon(pts, -(hw + SH + 0.5), hw + SH + 0.5);
       walk.ribbon(pts, -(hw + SH + 0.5 + WALK), hw + SH + 0.5 + WALK);
       // the yellow line of studded tiles that every sidewalk here has, for those who walk by touch
-      if (lined) for (const side of [-1, 1]) guide.ribbon(base, side * (hw + SH + 1.8), side * (hw + SH + 2.3));
+      if (run >= 20) for (const side of [-1, 1]) guide.ribbon(base, side * (hw + SH + 1.8), side * (hw + SH + 2.3));
     }
     if (!lined) {
       // bare
-    } else if (r.ring || r.one) {
-      white.ribbon(base, hw - 0.14, hw);
-      white.ribbon(base, -hw, -hw + 0.14);
-      for (let i = 1; i < r.lanes; i++) white.dashed(base, i * r.lw - hw, 0.13, 2, 4);
-    } else if (r.rank >= 2) {
-      yellow.ribbon(base, -0.28, -0.14);
-      yellow.ribbon(base, 0.14, 0.28);
-      white.ribbon(base, hw - 0.14, hw);
-      white.ribbon(base, -hw, -hw + 0.14);
-      for (let i = 1; i < r.lanes; i++) {
-        white.dashed(base, i * r.lw, 0.13, 3, 9);
-        white.dashed(base, -i * r.lw, 0.13, 3, 9);
+    } else if (single) {
+      white.ribbon(mark, hw - 0.14, hw);
+      white.ribbon(mark, -hw, -hw + 0.14);
+      for (let i = 1; i < r.lanes; i++) white.dashed(mark, i * r.lw - hw, 0.13, 2, 4);
+      // one way: an arrow in every lane says which
+      const cum = cumLen(mark), at = cum[cum.length - 1] / 2 - 2.7;
+      const o = pointOn(mark, cum, at), o2 = pointOn(mark, cum, at + 2.7);
+      const d = Math.hypot(o2.x - o.x, o2.y - o.y) || 1, t = { x: (o2.x - o.x) / d, y: (o2.y - o.y) / d }, n = { x: -t.y, y: t.x };
+      for (let i = 0; i < r.lanes; i++) {
+        const v = (i + 0.5) * r.lw - hw;
+        arrow(white, { x: o.x + n.x * v, y: o.y + n.y * v }, t, n, false, true, false);
       }
-    } else if (r.rank === 1) yellow.dashed(base, 0, 0.12, 2, 4);
+    } else if (r.rank >= 2) {
+      yellow.ribbon(mark, -0.28, -0.14);
+      yellow.ribbon(mark, 0.14, 0.28);
+      white.ribbon(mark, hw - 0.14, hw);
+      white.ribbon(mark, -hw, -hw + 0.14);
+      for (let i = 1; i < r.lanes; i++) {
+        white.dashed(mark, i * r.lw, 0.13, 3, 9);
+        white.dashed(mark, -i * r.lw, 0.13, 3, 9);
+      }
+    } else if (r.rank === 1) yellow.dashed(mark, 0, 0.12, 2, 4);
     // a yard at a dead end: parking either side of the last stretch
     if (r.rank >= 1) {
       for (const si of r.stallSegs) {
@@ -265,42 +397,45 @@ export function buildGround(net: Net) {
     for (const end of [0, 1]) {
       const node = end ? r.b : r.a;
       if (node.stub || run < 12) continue;
+      // nobody arrives at the start of a one-way road
+      if (single && !end) continue;
       const top = Math.max(...node.roads.map((q) => q.rank));
       if (!(node.signal || (r.rank < top && r.rank >= 1))) continue;
-      const b = r.base;
+      const b = mark;
       const p = end ? b[b.length - 1] : b[0];
       const q = end ? b[b.length - 2] : b[1];
       const L = Math.hypot(p.x - q.x, p.y - q.y) || 1;
       const tx = (p.x - q.x) / L, ty = (p.y - q.y) / L; // towards the junction
       const nx = -ty, ny = tx; // right of travel
-      const a0 = { x: p.x + nx * 0.25, y: p.y + ny * 0.25 }, a1 = { x: p.x + nx * hw, y: p.y + ny * hw };
+      // the line lies across the lanes that arrive: the right half of a road, all of a ramp
+      const from = single ? -hw : 0.25;
+      const a0 = { x: p.x + nx * from, y: p.y + ny * from }, a1 = { x: p.x + nx * hw, y: p.y + ny * hw };
       white.quad(a0, a1, { x: a1.x - tx * 0.5, y: a1.y - ty * 0.5 }, { x: a0.x - tx * 0.5, y: a0.y - ty * 0.5 });
-      // which way each lane may go, painted on it before the line
-      if (r.rank >= 2 && r.lanes > 1 && run >= 45 && !r.ring) {
-        for (let i = 0; i < r.lanes; i++) {
-          const turn = i === 0 ? -1 : i === r.lanes - 1 ? 1 : 0;
-          // a point given along the lane (u, towards the junction) and across it (v, to the right)
-          const at = (u: number, v: number) => ({ x: p.x + nx * ((i + 0.5) * r.lw + v) - tx * (9 - u), y: p.y + ny * ((i + 0.5) * r.lw + v) - ty * (9 - u) });
-          const head = (u: number, v: number, du: number, dv: number) => {
-            // a triangle pointing along (du, dv)
-            const wu = -dv * 0.45, wv = du * 0.45;
-            white.tri(at(u + wu, v + wv), at(u - wu, v - wv), at(u + du * 1.5, v + dv * 1.5));
-          };
-          white.quad(at(-3, -0.09), at(-3, 0.09), at(turn && r.lanes > 2 ? -0.4 : 0.6, 0.09), at(turn && r.lanes > 2 ? -0.4 : 0.6, -0.09));
-          // the outer lanes of a wide road only turn; on a narrow one they also go straight on
-          if (!turn || r.lanes <= 2) head(0.6, 0, 1, 0);
-          if (turn) {
-            white.quad(at(-0.5, 0), at(-0.32, 0), at(-0.32, turn * 0.75), at(-0.5, turn * 0.75));
-            head(-0.41, turn * 0.7, 0, turn);
-          }
+      // which way each lane may go, painted on it before the line: the turns the traffic in it really has
+      if (r.rank >= 2 && marked >= 45) {
+        for (const l of lanesOf.get(r) ?? []) {
+          if (l.to !== node || !l.next.length) continue;
+          const ways = new Set(l.next.map((c) => c.conn!.turn));
+          const v = (single ? -hw : 0) + (l.idx + 0.5) * r.lw;
+          arrow(white, { x: p.x + nx * v - tx * 11.5, y: p.y + ny * v - ty * 11.5 }, { x: tx, y: ty }, { x: nx, y: ny }, ways.has('L'), ways.has('T'), ways.has('R'));
         }
       }
-      if ((node.signal || r.rank >= 1) && run >= 20) {
-        // a zebra behind the line
-        for (let k = -hw + 0.4; k < hw - 0.5; k += 1.2) {
+      // a zebra beyond the line, as wide as the road; not where the lines stopped short of the junction
+      if (zebraAt(r, end) && !shared[end]) {
+        // an arm of a roundabout has only so much room before the ring
+        const ring = node.roads.find((k) => k.ring);
+        const deep = ring ? Math.min(3, node.trim - ring.hw - 1.6) : 3;
+        const n = Math.floor((2 * hw + 0.2) / 1.2);
+        const stripes: V[][] = [];
+        for (let i = 0; i < n && deep >= 1.5; i++) {
+          const k = i * 1.2 - (n * 1.2 - 0.6) / 2;
           const c = { x: p.x + nx * k + tx * 1.2, y: p.y + ny * k + ty * 1.2 };
-          white.quad(c, { x: c.x + nx * 0.6, y: c.y + ny * 0.6 }, { x: c.x + nx * 0.6 + tx * 3, y: c.y + ny * 0.6 + ty * 3 }, { x: c.x + tx * 3, y: c.y + ty * 3 });
+          const f0 = { x: c.x + tx * deep, y: c.y + ty * deep }, f1 = { x: f0.x + nx * 0.6, y: f0.y + ny * 0.6 };
+          // a stripe that would end on the kerb or the grass is left out
+          if (paved(node, f0) && paved(node, f1)) stripes.push([c, { x: c.x + nx * 0.6, y: c.y + ny * 0.6 }, f1, f0]);
         }
+        // and a zebra that would not reach across is no zebra
+        if (stripes.length >= n - 1) for (const q of stripes) white.quad(q[0], q[1], q[2], q[3]);
       }
     }
     for (const f of flats) f.hf = null;
@@ -319,24 +454,60 @@ export function buildGround(net: Net) {
   // junction aprons
   for (const n of net.nodes) {
     if (n.stub) continue;
-    const pts: V[] = [], wide: V[] = [];
-    const top = Math.max(...n.roads.map((q) => q.rank));
-    for (const r of n.roads) {
-      const hw = r.hw + SH;
-      const b = r.base;
-      const p = r.a === n ? b[0] : b[b.length - 1];
-      const q = r.a === n ? b[1] : b[b.length - 2];
-      const L = Math.hypot(p.x - q.x, p.y - q.y) || 1;
-      const nx = -(p.y - q.y) / L, ny = (p.x - q.x) / L;
-      pts.push({ x: p.x + nx * hw, y: p.y + ny * hw }, { x: p.x - nx * hw, y: p.y - ny * hw });
-      const ww = hw + 0.5 + WALK;
-      wide.push({ x: p.x + nx * ww, y: p.y + ny * ww }, { x: p.x - nx * ww, y: p.y - ny * ww });
+    if (loose.has(n)) {
+      const turns = turnsAt.get(n)!;
+      for (const l of turns) {
+        // a little wider in the bend, as a slip road is, which also closes the hairline between two turns side by side
+        const w = reach(l), more = 0.5;
+        road.swell(l.pts, w, more);
+        // a turn onto or off a bridge has the deck's own edge, not a kerb
+        if (l.conn!.src.road!.bridge || l.conn!.dst.road!.bridge) continue;
+        kerb.swell(l.pts, w + 0.5, more);
+        walk.swell(l.pts, w + 0.5 + WALK, more);
+      }
+      // What the turns leave open between them, on a grid of one metre: every turn stamps the squares under it, whatever
+      // the open ground outside can reach is outside, and the rest are the gaps. A gap with some body to it stays,
+      // as an island; slivers and specks are paved over
+      const R = n.trim + 8, N = Math.ceil(2 * R) + 2, x0 = n.p.x - R - 1, y0 = n.p.y - R - 1;
+      const cell = new Uint8Array(N * N);
+      for (const l of turns) {
+        const w = reach(l);
+        for (let d = 0; d <= l.len; d += 0.5) {
+          const p = pointOn(l.pts, l.cum, d);
+          for (let j = Math.max(0, Math.floor(p.y - w - y0)); j <= Math.min(N - 1, Math.ceil(p.y + w - y0)); j++) {
+            for (let i = Math.max(0, Math.floor(p.x - w - x0)); i <= Math.min(N - 1, Math.ceil(p.x + w - x0)); i++) {
+              if (Math.hypot(x0 + i + 0.5 - p.x, y0 + j + 0.5 - p.y) <= w) cell[j * N + i] = 1;
+            }
+          }
+        }
+      }
+      const flood = (from: number, mark: number) => {
+        const got = [from];
+        cell[from] = mark;
+        for (let k = 0; k < got.length; k++) {
+          const c = got[k], i = c % N;
+          for (const q of [i > 0 ? c - 1 : -1, i < N - 1 ? c + 1 : -1, c - N, c + N]) if (q >= 0 && q < N * N && !cell[q]) { cell[q] = mark; got.push(q); }
+        }
+        return got;
+      };
+      flood(0, 2);
+      for (let c = 0; c < N * N; c++) {
+        if (cell[c]) continue;
+        const gap = flood(c, 3);
+        // body: squares with gap on all four sides of them
+        const body = gap.filter((q) => cell[q - 1] === 3 && cell[q + 1] === 3 && cell[q - N] === 3 && cell[q + N] === 3).length;
+        for (const q of gap) cell[q] = 4;
+        if (gap.length >= 14 && body >= 3) continue;
+        for (const q of gap) road.rect(x0 + (q % N) - 0.4, y0 + Math.floor(q / N) - 0.4, x0 + (q % N) + 1.4, y0 + Math.floor(q / N) + 1.4);
+      }
+      continue;
     }
+    const top = Math.max(...n.roads.map((q) => q.rank));
     // a junction on a bridge is laid at its height
     road.hf = pad.hf = n.z ? () => n.z : null;
-    (top >= 1 ? road : pad).poly(hull(pts));
+    (top >= 1 ? road : pad).poly(aprons.get(n)!);
     road.hf = pad.hf = null;
-    if (top >= 1 && !n.roads.some((q) => q.bridge)) walk.poly(hull(wide));
+    if (top >= 1 && !n.roads.some((q) => q.bridge)) walk.poly(hull(mouths(n, 0.5 + WALK)));
   }
 
   // stall lines

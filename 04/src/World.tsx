@@ -1,5 +1,6 @@
 // Everything that stands still: grass, asphalt, paint, buildings, trees.
 import { useEffect, useLayoutEffect, useMemo, useRef } from 'react';
+import { NIGHT } from './haze';
 import { BufferGeometry, Color, DoubleSide, Float32BufferAttribute, InstancedMesh, Matrix4, MeshStandardMaterial, Object3D, Vector3 } from 'three';
 import { buildGround, clearOf, onRoad, WALK } from './geo';
 import { cumLen, offset, pointOn, rng, type Net } from './net';
@@ -12,8 +13,11 @@ float vn(vec2 p){ vec2 i = floor(p), f = fract(p); f = f*f*(3.0-2.0*f);
 float fbm(vec2 p){ float a = 0.5, s = 0.0; for(int i=0;i<4;i++){ s += a*vn(p); p = p*2.03 + 17.1; a *= 0.5; } return s; }
 `;
 
-/** World-space grain on a material, so a flat colour reads as a surface. */
-export function grained(color: number, body: string, key: string, roughness = 0.95) {
+/** How much of the street lamps' sodium light a road gives back after dark, so a road reads as a road and not as a row of dots. */
+const LIT = 'vec3(1.0, 0.6, 0.28)';
+
+/** World-space grain on a material, so a flat colour reads as a surface. `lit` is what it gives back of the lamps at night. */
+export function grained(color: number, body: string, key: string, roughness = 0.95, lit = 0) {
   const m = new MeshStandardMaterial({ color, roughness, metalness: 0, side: DoubleSide });
   m.onBeforeCompile = (s) => {
     s.vertexShader = s.vertexShader
@@ -22,8 +26,14 @@ export function grained(color: number, body: string, key: string, roughness = 0.
     s.fragmentShader = s.fragmentShader
       .replace('#include <common>', '#include <common>\nvarying vec3 vWp;\n' + NOISE)
       .replace('#include <color_fragment>', '#include <color_fragment>\n{ vec2 p = vWp.xz; ' + body + ' }');
+    if (lit) {
+      s.uniforms.uNight = NIGHT;
+      s.fragmentShader = s.fragmentShader
+        .replace('#include <common>', '#include <common>\nuniform float uNight;')
+        .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>\ntotalEmissiveRadiance += diffuseColor.rgb * ${LIT} * ${lit.toFixed(3)} * uNight;`);
+    }
   };
-  m.customProgramCacheKey = () => key;
+  m.customProgramCacheKey = () => key + (lit ? 'lit' + lit : '');
   return m;
 }
 
@@ -124,9 +134,9 @@ export function World({ net, blocks, wood, trees = true, season = 'autumn' }: {
       kerb: grained(0xb3b0a8, ROOF, 'kerb'),
       pad: grained(0x787a79, LOT, 'lot'),
       // sun-bleached, the way a road looks from the air
-      road: grained(0x6b6d6f, ASPHALT, 'asphalt', 0.9),
-      white: grained(0xe6e5de, PAINT, 'paint', 0.7),
-      yellow: grained(0xcfae4a, PAINT, 'paint', 0.7),
+      road: grained(0x6b6d6f, ASPHALT, 'asphalt', 0.9, 0.35),
+      white: grained(0xe6e5de, PAINT, 'paint', 0.7, 0.55),
+      yellow: grained(0xcfae4a, PAINT, 'paint', 0.7, 0.55),
       guide: grained(0xd08c00, PAINT, 'paint', 0.9),
     }),
     [season],

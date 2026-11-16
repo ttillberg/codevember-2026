@@ -15,7 +15,7 @@ Drag on the ground and paint follows the brush. Only the strokes are kept. Every
 - Two fingers and the right button move the drone. It keeps its height: there is no zoom.
 - The day runs by itself, four minutes for a day and its night. It opens in the low sun of the afternoon: long shadows, warm light, the sky cool against it. Then the lamps come on, the rooms and the signs light up, and the traffic is head lamps and trails of red. The night goes by three times as fast as the day. `?hour=19` starts at seven in the evening.
 - The drone is never quite still: it glides, swings a few degrees and bobs in the wind.
-- `?debug` opens a pane: the shot (angle, distance, lens, tilt shift), the drone's own motion, the hour (Time, Hold time to stay there, Day for how long a day takes, Trails for how long the lights of the traffic stay on the picture), the grade, pixels and frames per second, what smooths the edges, and what can be switched off. Copy puts all of it on the clipboard as JSON; Copy map and Paste map do the same for the painting. `?debug` starts on the map in `map.ts`.
+- `?debug` opens a pane: the shot (angle, distance, lens, tilt shift), the drone's own motion, the hour (Time, Hold time to stay there, Day for how long a day takes, Trails for how long the lights of the traffic stay on the picture, Lights for how they are drawn: `geometry`, `webgpu` or `off`), the grade, pixels and frames per second, what smooths the edges, and what can be switched off. Copy puts all of it on the clipboard as JSON; Copy map and Paste map do the same for the painting. `?debug` starts on the map in `map.ts`.
 
 ## What is there
 
@@ -26,8 +26,10 @@ Drag on the ground and paint follows the brush. Only the strokes are kept. Every
 - `map.ts`: a painting saved from `?debug`, where `?debug` starts.
 - `paint.ts`, `Painter.tsx`: the tools. They only add, move or mark strokes.
 - `haze.ts`: the air and the hour. `skyAt(hour)` says where the sun or the moon is, what colour and how strong, what the sky adds, and how much of the night is here (`NIGHT`). Nothing at night is a light: lamp heads, signs, rooms and vehicle lamps are surfaces that shine by `NIGHT` and bloom, and what they throw on the ground is a glow laid over it.
-- `World.tsx`, `geo.ts`: scrub, asphalt, sidewalks, paint, buildings, trees, built from the network. Street trees follow whatever roads there are.
-- `Life.tsx`: people on the sidewalks and footpaths, bikes along the kerb, and signs on everything: hoardings on roofs and on poles by the road, banners down the ends of the blocks, shop fronts. The writing is made up in the shader. Lamp posts stand down both sides of every proper road, and video screens at the big junctions and along the arterial, each running its own adverts.
+- `Glow.tsx`: how the lights of the traffic are drawn where there is a WebGPU, on a desk (`?gpu` asks for it on a phone, `?no=gpu` for the strips in `Cars.tsx`, Lights in the pane switches). The lights of the traffic as a real long exposure, on a WebGPU canvas of its own over the picture: a float map of the ground that fades every frame and that every vehicle under way draws its last stretch into, laid on the ground with the camera of the scene and added to the picture by the page (`mix-blend-mode: plus-lighter`). Lanes come out white or red by which way they run. Houses are drawn over it as black boxes, since it knows no depth. Without WebGPU the strips are drawn and the pane says so.
+- `World.tsx`, `geo.ts`: scrub, asphalt, sidewalks, paint, buildings, trees, built from the network. Street trees follow whatever roads there are. The arrow in a lane shows the turns the traffic in it really has; a roundabout and a ramp carry an arrow that says which way they run. A junction whose arms leave at flat angles is not paved from mouth to mouth: it is laid as its turns, a slip road each, and a gap between them that is big enough stays as an island.
+- `Cars.tsx`: draws the traffic, and the signals: a mast at the stop line with an arm over the lanes, and a head with three lamps over each lane.
+- `Life.tsx`: people on the sidewalks and footpaths, who cross on the zebras and walk round the corners, bikes along the kerb, and signs on everything: hoardings on roofs and on poles by the road, banners down the ends of the blocks, shop fronts. The writing is made up in the shader. Lamp posts stand down both sides of every proper road, and video screens at the big junctions and along the arterial, each running its own adverts.
 - `facade.ts`: the faces of sixties housing, drawn on a canvas: four bays by four floors a sheet, one layer a style.
 - `Town.tsx`: slab blocks in rows and a few towers, each wearing a sheet from `facade.ts` in its own paint, their concrete and footpaths, and what people keep on a roof. Planted once, and in the way of everything painted or smeared after.
 
@@ -35,6 +37,7 @@ Drag on the ground and paint follows the brush. Only the strokes are kept. Every
 
 - Flat ground takes almost nothing of a low sun. The sun has to be turned up as it sinks, as a camera would open up, and kept from coming in flatter than ten degrees: under that it only fades.
 - A long exposure does not need a pass over the picture. A strip for each of the last few frames of each vehicle's way does it, and costs nothing that can be measured.
+- It does not need one, but a map of the light kept on the ground does it better: the trails are curves through a junction where the strips are a few straight pieces, they cross and add up, and they stay on the road however the drone moves, which light kept on the picture would not. On a second canvas in WebGPU it costs about half a millisecond of a frame of nineteen.
 - A roundabout needs no code of its own in the traffic: it is one-way roads that outrank their arms. The one exception is the box rule, which must not hold cars already on the ring, or a full ring never moves again.
 - A parking lot as a grid of tiny junctions gridlocks at once. One road snaking through the aisles cannot.
 - "Don't block the box" has to be a promise of room in the lane beyond, not a look at whether its last car is moving.
@@ -43,7 +46,7 @@ Drag on the ground and paint follows the brush. Only the strokes are kept. Every
 ## Not yet
 
 - Crash physics: a car whose lane is painted away just disappears.
-- People and bikes are set dressing. They cross on red, the cars do not see them, and nobody goes anywhere in particular.
+- People and bikes are set dressing. People cross on the zebras now, but on red as well, the cars do not see them, and nobody goes anywhere in particular. Where a sidewalk ends with no zebra and no corner to turn (a footpath, a dead end, beside a bridge or a roundabout) they still hop to the nearest one. Bikes still hop across every junction.
 - The network still clogs after some minutes of traffic, with or without help.
 - A road cannot be painted closer than 44 m to another: it becomes that road. Coarse, but it is what keeps a scribble from turning into shards.
 - A painted roundabout ignores parking lots and lies straight over them.

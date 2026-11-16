@@ -2,17 +2,21 @@
 import { useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
 import { AdditiveBlending, BufferAttribute, BufferGeometry, Color, InstancedBufferAttribute, InstancedMesh, MeshStandardMaterial, Object3D, ShaderMaterial } from 'three';
-import type { Net, V } from './net';
+import type { Lane, Net, V } from './net';
 import { Heat, Journeys } from './Traffic';
 import { PARKED, Sim, signal } from './sim';
 import { NIGHT } from './haze';
 import { beam, makeTypes } from './vehicles';
+import { Glow, type GlowHandle, type Wall } from './Glow';
 
 /** How much faster than life the traffic runs, as a timelapse. */
 export const TIMELAPSE = 60;
 
 const tmp = new Color();
 const SIG = { G: new Color(0x2dff7a), Y: new Color(0xffc21a), R: new Color(0xff2a1a) };
+/** a lamp that is not lit */
+const OUT = new Color(0x0d0e10);
+const LAMPS = ['R', 'Y', 'G'] as const;
 
 /** Body paint, and after dark the lamps at either end: on for whoever is driving, off for whoever is parked. */
 function bodywork() {
@@ -86,8 +90,14 @@ function strip() {
   return g;
 }
 
+const NO_WALLS: Wall[] = [];
+
 /** `speed` is how fast time goes: TIMELAPSE, or 0 for a still. */
-export function Cars({ net, speed, target, trail = 0, heat = false, trace = null, shade = true, onNote }: {
+export function Cars({ net, speed, target, trail = 0, glow = false, walls = NO_WALLS, onGlowFail, heat = false, trace = null, shade = true, onNote }: {
+  /** the same lights as a long exposure on a WebGPU canvas of its own (Glow.tsx) instead of as strips here, and what hides them */
+  glow?: boolean;
+  walls?: Wall[];
+  onGlowFail?: () => void;
   /** seconds of their time the lights stay on the picture at night, as in a long exposure; 0 for none */
   trail?: number;
   /** do they cast shadows: not when the shadows are only drawn now and then, where theirs would trail behind */
@@ -146,35 +156,73 @@ export function Cars({ net, speed, target, trail = 0, heat = false, trace = null
   }, []);
   const streaks = useRef<InstancedMesh>(null);
   const exposure = useRef(trail);
-  exposure.current = trail;
+  // the strips are not drawn while the other layer shows the same lights
+  exposure.current = glow ? 0 : trail;
+  const layer = useRef<GlowHandle>(null);
+  const stay = useRef(trail);
+  stay.current = trail;
 
-  const heads = useMemo(() => {
-    const out: { x: number; y: number; z: number; phase: number; off: number }[] = [];
+  // The signals. Where a road comes to the lights a mast stands on its right at the stop line, with an arm out over the lanes,
+  // and over each lane hangs a head: a dark box on its side with three lamps in a row, one of them lit
+  const lights = useMemo(() => {
+    const steel: { x: number; y: number; z: number; sx: number; sy: number; sz: number; rot: number }[] = [];
+    const heads: { x: number; y: number; z: number; rot: number; phase: number; off: number; lamp: (typeof LAMPS)[number] }[] = [];
+    const arms = new Map<string, Lane[]>();
     for (const l of net.lanes) {
       if (!l.road || !l.to.signal || !l.next.length) continue;
-      const a = l.pts[l.pts.length - 2], b = l.pts[l.pts.length - 1];
-      const d = Math.hypot(b.x - a.x, b.y - a.y) || 1;
-      const k = l.to.trim * 2 + 1;
-      out.push({ x: b.x + ((b.x - a.x) / d) * k, y: 6.4, z: b.y + ((b.y - a.y) / d) * k, phase: l.next[0].conn!.phase, off: l.to.sigOff });
+      const k = l.road.id + ':' + l.dir;
+      (arms.get(k) ?? arms.set(k, []).get(k)!).push(l);
     }
-    return out;
+    for (const lanes of arms.values()) {
+      lanes.sort((p, q) => p.idx - q.idx);
+      const lw = lanes[0].road!.lw;
+      let rot = 0, post = { x: 0, y: 0 }, first = { x: 0, y: 0 };
+      lanes.forEach((l, i) => {
+        const a = l.pts[l.pts.length - 2], b = l.pts[l.pts.length - 1];
+        const d = Math.hypot(b.x - a.x, b.y - a.y) || 1;
+        const tx = (b.x - a.x) / d, ty = (b.y - a.y) / d, nx = -ty, ny = tx;
+        rot = -Math.atan2(ny, nx);
+        if (!i) first = b;
+        // the mast on the sidewalk, to the right of the outermost lane
+        post = { x: b.x + nx * (lw / 2 + 1.7), y: b.y + ny * (lw / 2 + 1.7) };
+        steel.push({ x: b.x, y: 6.05, z: b.y, sx: 2.5, sy: 0.75, sz: 0.6, rot });
+        // the lamps face the traffic that waits, and stand a little proud of their box so they show from above
+        LAMPS.forEach((lamp, j) => heads.push({ x: b.x + nx * (j - 1) * 0.76 - tx * 0.1, y: 6.1, z: b.y + ny * (j - 1) * 0.76 - ty * 0.1, rot, phase: l.next[0].conn!.phase, off: l.to.sigOff, lamp }));
+      });
+      const reach = Math.hypot(post.x - first.x, post.y - first.y) + 1.2;
+      const k = (reach / 2 - 0.2) / (reach - 1.2 || 1);
+      steel.push({ x: post.x, y: 3.5, z: post.y, sx: 0.5, sy: 7, sz: 0.5, rot });
+      steel.push({ x: post.x + (first.x - post.x) * k, y: 6.7, z: post.y + (first.y - post.y) * k, sx: reach, sy: 0.3, sz: 0.3, rot });
+    }
+    return { steel, heads };
   }, [net]);
-  const headMesh = useRef<InstancedMesh>(null);
+  const heads = lights.heads;
+  const headMesh = useRef<InstancedMesh>(null), steelMesh = useRef<InstancedMesh>(null);
   useEffect(() => {
     const o = new Object3D();
     heads.forEach((h, i) => {
-      o.position.set(h.x, h.y, h.z);
+      o.position.set(h.x, h.y, h.z); o.rotation.set(0, h.rot, 0);
       o.updateMatrix();
       headMesh.current!.setMatrixAt(i, o.matrix);
-      headMesh.current!.setColorAt(i, SIG.R);
+      headMesh.current!.setColorAt(i, h.lamp === 'R' ? SIG.R : OUT);
     });
     headMesh.current!.instanceMatrix.needsUpdate = true;
-  }, [heads]);
+    lights.steel.forEach((s, i) => {
+      o.position.set(s.x, s.y, s.z); o.scale.set(s.sx, s.sy, s.sz); o.rotation.set(0, s.rot, 0);
+      o.updateMatrix();
+      steelMesh.current!.setMatrixAt(i, o.matrix);
+    });
+    steelMesh.current!.instanceMatrix.needsUpdate = true;
+  }, [lights, heads]);
 
-  useFrame((_, delta) => {
+  useFrame(({ camera }, delta) => {
     const dt = Math.min(delta, 0.05) * rate.current;
     const n = Math.ceil(dt / 0.1);
-    for (let i = 0; i < n; i++) sim.step(dt / n);
+    for (let i = 0; i < n; i++) {
+      sim.step(dt / n);
+      layer.current?.sample(sim.cars, sim.time);
+    }
+    layer.current?.draw(sim.cars, sim.time, camera, stay.current);
 
     const ms = meshes.current;
     for (const f of sim.freed) {
@@ -245,7 +293,7 @@ export function Cars({ net, speed, target, trail = 0, heat = false, trace = null
 
     const hm = headMesh.current;
     if (hm && hm.instanceColor) {
-      heads.forEach((h, i) => hm.setColorAt(i, SIG[signal(sim.time + h.off, h.phase)]));
+      heads.forEach((h, i) => hm.setColorAt(i, signal(sim.time + h.off, h.phase) === h.lamp ? SIG[h.lamp] : OUT));
       hm.instanceColor.needsUpdate = true;
     }
   });
@@ -266,11 +314,16 @@ export function Cars({ net, speed, target, trail = 0, heat = false, trace = null
         <instancedMesh key={t.name} ref={(m) => { beams.current[i] = m; }} args={[light.geo[i], light.mat, t.cap]} frustumCulled={false} />
       ))}
       <instancedMesh ref={streaks} args={[trails.geo, trails.mat, STREAKS]} frustumCulled={false} />
+      {glow && trail > 0 && <Glow ref={layer} walls={walls} onFail={onGlowFail} />}
       {heat && <Heat sim={sim} net={net} speed={speed} />}
       {trace && <Journeys sim={sim} net={net} at={trace} note={onNote} />}
       <instancedMesh ref={headMesh} args={[undefined, undefined, heads.length]} frustumCulled={false}>
-        <boxGeometry args={[0.9, 0.9, 0.9]} />
+        <boxGeometry args={[0.58, 0.72, 0.6]} />
         <meshBasicMaterial toneMapped={false} />
+      </instancedMesh>
+      <instancedMesh ref={steelMesh} args={[undefined, undefined, lights.steel.length]} castShadow frustumCulled={false}>
+        <boxGeometry />
+        <meshStandardMaterial color={0x2e3136} roughness={0.7} metalness={0.3} />
       </instancedMesh>
     </group>
   );
