@@ -2,18 +2,18 @@
 import { startTransition, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { MapControls } from '@react-three/drei';
-import { EffectComposer, Noise, TiltShift2, ToneMapping, Vignette, wrapEffect } from '@react-three/postprocessing';
+import { Bloom, ChromaticAberration, EffectComposer, TiltShift2, ToneMapping, Vignette, wrapEffect } from '@react-three/postprocessing';
 import { BlendFunction, Effect, ToneMappingMode } from 'postprocessing';
-import { DirectionalLight, HemisphereLight, MOUSE, PerspectiveCamera, TOUCH, Uniform } from 'three';
-import { HAZE, HAZE_FROM, HAZE_TO } from './haze';
+import { DirectionalLight, HemisphereLight, MOUSE, PerspectiveCamera, TOUCH, Uniform, Vector2 } from 'three';
+import { HAZE } from './haze';
 import { Cars, TIMELAPSE } from './Cars';
 import { SEASONS, World, type Season } from './World';
-import { plantTown, type Block } from './Town';
+import { plantTown, turnSome, type Block } from './Town';
 import { People, Signs, Street } from './Life';
 import { Painter, type Tool } from './Painter';
 import { buildNet, type V } from './net';
 import { baseIntent, derive, standing, type Intent } from './intent';
-import { addStroke, findStroke, smear, smearStart } from './paint';
+import { addStroke, smear, smearStart } from './paint';
 
 /** The look of a drone clip shot through city haze: flat, pale, a little cool in the shadows. */
 class FadeEffect extends Effect {
@@ -28,17 +28,48 @@ class FadeEffect extends Effect {
         c = mix(vec3(l), c, 0.8 + keep * warm);
         c = mix(c, c * vec3(0.9, 1.0, 1.12), 1.0 - smoothstep(0.0, 0.35, l));
         c = c * 0.92 + 0.012;
-        // the haze thickens with distance: up the frame
-        c = mix(c, vec3(0.62, 0.68, 0.74), 0.03 + 0.1 * uv.y * uv.y);
+        // the grade, bleak: some bite, cold shadows, lights that barely warm, colour drained, blacks lifted to grey
+        c = mix(c, c * c * (3.0 - 2.0 * c), 0.4);
+        float g = dot(c, vec3(0.2126, 0.7152, 0.0722));
+        c += vec3(-0.03, 0.008, 0.035) * (1.0 - smoothstep(0.0, 0.5, g)) + vec3(0.02, 0.012, -0.015) * smoothstep(0.45, 1.0, g);
+        c = mix(vec3(g), c, 0.78);
+        c = clamp(c * 0.94 + vec3(0.03, 0.034, 0.04), 0.0, 1.0);
         outputColor = vec4(c, inputColor.a);
       }`, { blendFunction: BlendFunction.NORMAL, uniforms: new Map([['keep', new Uniform(warm)]]) });
   }
 }
 const Fade = wrapEffect(FadeEffect);
 
+/** What the stock does to the picture: grain that sits in the shadows and thins out in the lights, and lights that go pale. */
+class FilmEffect extends Effect {
+  constructor() {
+    super('Film', /* glsl */ `
+      float fh(vec2 p){ p = fract(p * vec2(443.897, 441.423)); p += dot(p, p.yx + 19.19); return fract((p.x + p.y) * p.x); }
+      void mainImage(const in vec4 inputColor, const in vec2 uv, out vec4 outputColor) {
+        vec3 c = inputColor.rgb;
+        float l = dot(c, vec3(0.2126, 0.7152, 0.0722));
+        // the lights lose their colour before they burn out
+        c = mix(c, vec3(l), 0.45 * smoothstep(0.62, 1.0, l));
+        // grain a pixel and a half across, new every frame, a little of it in colour
+        vec2 px = floor(uv * resolution / 1.5);
+        float t = floor(time * 24.0);
+        vec3 n = vec3(fh(px + t * 1.7), fh(px + t * 2.3 + 41.0), fh(px + t * 3.1 + 97.0)) - 0.5;
+        n = mix(vec3(n.x), n, 0.3);
+        c += n * 0.035 * (1.0 - smoothstep(0.1, 0.95, l)) + n * 0.008;
+        outputColor = vec4(clamp(c, 0.0, 1.0), inputColor.a);
+      }`, { blendFunction: BlendFunction.NORMAL });
+  }
+}
+const Film = wrapEffect(FilmEffect);
+
+const FRINGE = new Vector2(0.0012, 0.0008);
 const TARGET: [number, number, number] = [10, 0, -10];
 const DAY = 150; // seconds of ours for nine to five of theirs
 const touch = typeof matchMedia !== 'undefined' && matchMedia('(pointer: coarse)').matches;
+/** One house in this many is left standing. */
+const KEEP = 5;
+/** Roughly how many vehicles are out: what a phone can carry, and what a desk can. */
+const VEHICLES = touch ? 60 : 180;
 
 /** Mobile first: a phone held upright looks down the arterial, a wide screen across it. */
 function Drone() {
@@ -79,8 +110,9 @@ function Drone() {
       enableDamping
       onChange={fence}
       dampingFactor={0.12}
-      zoomSpeed={0.7}
-      // one finger and the left button paint; two fingers, the right button and the wheel move the drone
+      // the drone keeps its height: it pans and turns, it does not come down
+      enableZoom={false}
+      // one finger and the left button paint; two fingers and the right button move the drone
       mouseButtons={{ LEFT: -1 as unknown as MOUSE, MIDDLE: MOUSE.DOLLY, RIGHT: MOUSE.PAN }}
       touches={{ ONE: -1 as unknown as TOUCH, TWO: TOUCH.DOLLY_PAN }}
     />
@@ -136,26 +168,24 @@ function useLater<T>(value: T, frames: number): T {
 const NONE: Block[] = [];
 // what to leave out of the place, from the address
 const NO = (typeof location !== 'undefined' ? new URLSearchParams(location.search).get('no') ?? '' : '').toLowerCase().split(',');
-const SPEEDS: [number, string][] = [[TIMELAPSE, 'Timelapse'], [1, 'Normal'], [0, 'Pause']];
-const TOOLS: [Tool, string][] = [['road', 'Road'], ['bridge', 'Bridge'], ['smear', 'Smear'], ['yield', 'Yield'], ['trace', 'Trace']];
+const TOOLS: [Tool, string][] = [['road', 'Road'], ['bridge', 'Bridge'], ['smear', 'Smear'], ['trace', 'Trace']];
 
 export function App() {
   // every state of the painting so far, so a stroke can be taken back
   const [history, setHistory] = useState<Intent[]>(() => [baseIntent()]);
   const [tool, setTool] = useState<Tool>('road');
-  const [speed, setSpeed] = useState(TIMELAPSE);
-  const before = useRef(TIMELAPSE);
-  // reading the traffic: how many there should be, where it stands, and where one stretch's cars are going
-  const [target, setTarget] = useState<number | null>(null);
+  // always a timelapse, sixty times life; P or space stops it
+  const [paused, setPaused] = useState(false);
+  const speed = paused ? 0 : TIMELAPSE;
+  // reading the traffic: where it stands, and where one stretch's cars are going
   const [heat, setHeat] = useState(false);
-  // the time of year, from ?season= or the button
-  const [season, setSeason] = useState<Season>(() => {
+  // the time of year: autumn, or what ?season= says
+  const [season] = useState<Season>(() => {
     const q = new URLSearchParams(location.search).get('season') as Season | null;
     return q && SEASONS.includes(q) ? q : 'autumn';
   });
   const [trace, setTrace] = useState<V | null>(null);
-  const countBox = useRef<HTMLInputElement>(null), noteBox = useRef<HTMLDivElement>(null);
-  const onCount = useCallback((n: number) => { if (countBox.current) countBox.current.placeholder = String(n); }, []);
+  const noteBox = useRef<HTMLDivElement>(null);
   const onNote = useCallback((t: string) => { if (noteBox.current) noteBox.current.textContent = t; }, []);
   // ?no=houses,trees: without the houses nothing is in the way of a road; the trees are only put out of sight
   const houses = !NO.some((w) => w.startsWith('house')), trees = !NO.some((w) => w.startsWith('tree'));
@@ -166,7 +196,8 @@ export function App() {
   // the roads are never edited: they are what the rules make of the strokes
   // the housing is planted once, on the place as it first stood, and is in the way from then on
   const first = useMemo(() => buildNet(derive(baseIntent())), []);
-  const town = useMemo(() => plantTown(first), [first]);
+  // only a few of them are kept, and a quarter of those turned: the roads are what is looked at
+  const town = useMemo(() => turnSome(first, plantTown(first).filter((_, i) => i % KEEP === 0)), [first]);
   // a bridge takes down the houses in its line; the same list for as long as the same ones stand
   const left = houses ? standing(intent, town) : NONE;
   const kept = useRef(left);
@@ -194,16 +225,6 @@ export function App() {
   }, [walls]);
   const top = useRef(history[history.length - 1]);
   top.current = history[history.length - 1];
-  const onYield = useCallback((p: V) => {
-    setHistory((h) => {
-      const cur = h[h.length - 1];
-      const i = findStroke(cur, p, walls);
-      if (i < 0) return h;
-      // one step down each time; past the bottom it gets its priority back
-      const d = ((cur[i].demote ?? 0) + 1) % 4;
-      return [...h, cur.map((s, k) => (k === i ? { ...s, demote: d } : s))];
-    });
-  }, [walls]);
   const liveRef = useRef(live);
   liveRef.current = live;
   const onSmear = useCallback((phase: 'start' | 'move' | 'end', p: V) => {
@@ -222,10 +243,10 @@ export function App() {
   useEffect(() => {
     const key = (e: KeyboardEvent) => {
       if (e.key === 'z' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); undo(); }
-      // space holds the frame, and lets go of it again
-      if (e.key === ' ') {
+      // P or space holds the frame, and lets go of it again
+      if (e.key === ' ' || e.key === 'p' || e.key === 'P') {
         e.preventDefault();
-        setSpeed((s) => { if (s) before.current = s; return s ? 0 : before.current; });
+        setPaused((v) => !v);
       }
     };
     addEventListener('keydown', key);
@@ -241,39 +262,28 @@ export function App() {
         gl={{ antialias: false, powerPreference: 'high-performance' }}
       >
         <color attach="background" args={[HAZE]} />
-        <fog attach="fog" args={[HAZE, HAZE_FROM, HAZE_TO]} />
         <Drone />
         <Sun speed={speed} />
         <World net={net} blocks={blocks} wood={wood} trees={trees} season={season} />
-        <Cars net={roads} speed={speed} target={target} heat={heat} trace={tool === 'trace' ? trace : null} onCount={onCount} onNote={onNote} />
+        <Cars net={roads} speed={speed} target={VEHICLES} heat={heat} trace={tool === 'trace' ? trace : null} onNote={onNote} />
         <People net={life.net} blocks={life.blocks} speed={speed} />
         <Signs net={life.net} blocks={life.blocks} />
         <Street net={life.net} blocks={life.blocks} speed={speed} />
-        <Painter net={net} tool={tool} onStroke={onStroke} onYield={onYield} onSmear={onSmear} onTrace={setTrace} />
+        <Painter net={net} tool={tool} onStroke={onStroke} onSmear={onSmear} onTrace={setTrace} />
         <EffectComposer multisampling={touch ? 2 : 4}>
-          <TiltShift2 blur={0.1} taper={0.55} start={[0, 0.52]} end={[1, 0.48]} samples={touch ? 6 : 10} />
+          <TiltShift2 blur={0.28} taper={0.56} start={[0, 0.52]} end={[1, 0.48]} samples={touch ? 10 : 18} />
+          {/* the lights bleed into what is beside them, as they do through glass */}
+          <Bloom mipmapBlur luminanceThreshold={0.72} luminanceSmoothing={0.2} intensity={0.55} radius={0.75} />
           <ToneMapping mode={ToneMappingMode.ACES_FILMIC} />
           <Fade warm={season === 'autumn' ? 0.4 : season === 'spring' ? 0.2 : 0} />
-          <Noise opacity={0.06} />
-          <Vignette offset={0.25} darkness={0.4} />
+          {/* the lens and the stock: colours part a little towards the corners, grain, dark corners */}
+          <ChromaticAberration offset={FRINGE} radialModulation modulationOffset={0.35} />
+          <Film />
+          <Vignette offset={0.22} darkness={0.52} />
         </EffectComposer>
       </Canvas>
       <div className="tools speed">
-        {SPEEDS.map(([s, label]) => (
-          <button key={label} className={s === speed ? 'on' : ''} onClick={() => setSpeed(s)}>{label}</button>
-        ))}
-      </div>
-      <div className="tools traffic">
-        <button onClick={() => setSeason((v) => SEASONS[(SEASONS.indexOf(v) + 1) % 4])}>{season}</button>
         <button className={heat ? 'on' : ''} onClick={() => setHeat((v) => !v)}>Heat</button>
-        <label>
-          Vehicles
-          <input
-            ref={countBox} type="number" inputMode="numeric" min={0} max={1500} step={10}
-            // the field keeps what was typed: the count is read from it, never written back into it
-            onChange={(e) => { const v = e.target.value.trim(), n = Math.round(+v); setTarget(v === '' || !isFinite(n) ? null : Math.max(0, Math.min(1500, n))); }}
-          />
-        </label>
       </div>
       {tool === 'trace' && <div className="note" ref={noteBox}>{trace ? '' : 'click a road'}</div>}
       <div className="tools">

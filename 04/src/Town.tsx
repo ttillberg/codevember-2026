@@ -1,7 +1,7 @@
 // Where people live: compounds of slab blocks in rows, a few towers at the edges, and the concrete between them.
 // Planted once, from the place as it stood. Nothing takes them down: roads go round.
 import { useEffect, useLayoutEffect, useMemo, useRef } from 'react';
-import { Color, InstancedBufferAttribute, InstancedMesh, MeshStandardMaterial, Object3D } from 'three';
+import { Color, InstancedBufferAttribute, InstancedMesh, Matrix4, MeshStandardMaterial, Object3D } from 'three';
 import { BANDED, BAY, CELLS, FLOOR, GALLERY, LOW, PAINTED, STRIPED, facades } from './facade';
 import { pavingGeometry, rectClear } from './geo';
 import { rng, type Net, type Rect, type V } from './net';
@@ -14,6 +14,40 @@ export interface Block extends Rect {
   style: number;
   /** the footpath from its door to the next block, or out to the road */
   path: V[];
+  /** turned out of the grid: radians about its middle. Its own rect is then what it covers, and `inner` the house */
+  turn?: number;
+  inner?: Rect;
+}
+
+/** A point of a house, turned with it. */
+export function turned(b: Block, x: number, y: number): [number, number] {
+  if (!b.turn) return [x, y];
+  const cx = (b.x0 + b.x1) / 2, cy = (b.y0 + b.y1) / 2, c = Math.cos(b.turn), n = Math.sin(b.turn);
+  return [cx + (x - cx) * c + (y - cy) * n, cy - (x - cx) * n + (y - cy) * c];
+}
+
+/** A quarter of the houses stand at an angle, where there is room to: nothing is built to one grid. */
+export function turnSome(net: Net, blocks: Block[], share = 0.25): Block[] {
+  const r = rng(53), out = [...blocks];
+  const order = out.map((_, i) => i).sort(() => r() - 0.5);
+  let left = Math.round(out.length * share);
+  for (const i of order) {
+    if (left <= 0) break;
+    const b = out[i], w = b.x1 - b.x0, d = b.y1 - b.y0, cx = (b.x0 + b.x1) / 2, cy = (b.y0 + b.y1) / 2;
+    for (let tries = 0; tries < 4; tries++) {
+      const turn = (r() < 0.5 ? -1 : 1) * (0.26 + r() * 0.52);
+      const c = Math.abs(Math.cos(turn)), n = Math.abs(Math.sin(turn));
+      const hx = (w * c + d * n) / 2, hy = (w * n + d * c) / 2;
+      const box = { x0: cx - hx, y0: cy - hy, x1: cx + hx, y1: cy + hy };
+      if (!stands(net, box, 5) || out.some((o, k) => k !== i && box.x0 < o.x1 + 6 && box.x1 > o.x0 - 6 && box.y0 < o.y1 + 6 && box.y1 > o.y0 - 6)) continue;
+      const t: Block = { ...b, ...box, turn, inner: { x0: b.x0, y0: b.y0, x1: b.x1, y1: b.y1 } };
+      if (b.path.length) { const [x, y] = turned(t, b.path[0].x, b.path[0].y); t.path = [{ x, y }, ...b.path.slice(1)]; }
+      out[i] = t;
+      left--;
+      break;
+    }
+  }
+  return out;
 }
 
 const WALLS = [0xd8d4c8, 0xcfc9b8, 0xd9cfc4, 0xc4c9cc, 0xe0dcd2, 0xd2c3b4, 0xbfc6c2];
@@ -164,30 +198,38 @@ export function Town({ net, blocks, paving, roofing }: { net: Net; blocks: Block
   useEffect(() => () => ground.dispose(), [ground]);
 
   useLayoutEffect(() => {
-    const o = new Object3D(), c = new Color(), r = rng(9);
+    const o = new Object3D(), c = new Color(), r = rng(9), spin = new Matrix4();
     let k = 0, t = 0;
     body.current!.geometry.setAttribute('aStyle', new InstancedBufferAttribute(Float32Array.from(up, (b) => b.style), 1));
     up.forEach((b, i) => {
-      const w = b.x1 - b.x0, d = b.y1 - b.y0, cx = (b.x0 + b.x1) / 2, cz = (b.y0 + b.y1) / 2;
-      o.position.set(cx, b.h / 2, cz); o.scale.set(w, b.h, d); o.updateMatrix();
+      // a turned house is laid out straight and then swung round its middle
+      const q = b.inner ?? b;
+      const fix = () => {
+        o.updateMatrix();
+        if (!b.turn) return;
+        const c = Math.cos(b.turn), n = Math.sin(b.turn), mx = (q.x0 + q.x1) / 2, mz = (q.y0 + q.y1) / 2;
+        o.matrix.premultiply(spin.makeRotationY(b.turn).setPosition(mx - (mx * c + mz * n), 0, mz - (-mx * n + mz * c)));
+      };
+      const w = q.x1 - q.x0, d = q.y1 - q.y0, cx = (q.x0 + q.x1) / 2, cz = (q.y0 + q.y1) / 2;
+      o.position.set(cx, b.h / 2, cz); o.scale.set(w, b.h, d); fix();
       body.current!.setMatrixAt(i, o.matrix);
       body.current!.setColorAt(i, c.setHex(b.wall));
       // the roof deck, down inside its parapet
-      o.position.set(cx, b.h + 0.05, cz); o.scale.set(w - 0.6, 0.1, d - 0.6); o.updateMatrix();
+      o.position.set(cx, b.h + 0.05, cz); o.scale.set(w - 0.6, 0.1, d - 0.6); fix();
       cap.current!.setMatrixAt(i, o.matrix);
       cap.current!.setColorAt(i, c.setHex(b.roof));
       const put = (x: number, y: number, z: number, sx: number, sy: number, sz: number, col: number, tilt = 0) => {
-        o.position.set(x, b.h + y + sy / 2, z); o.scale.set(sx, sy, sz); o.rotation.set(tilt, 0, 0); o.updateMatrix();
+        o.position.set(x, b.h + y + sy / 2, z); o.scale.set(sx, sy, sz); o.rotation.set(tilt, 0, 0); fix();
         kit.current!.setMatrixAt(k, o.matrix);
         kit.current!.setColorAt(k++, c.setHex(col));
         o.rotation.set(0, 0, 0);
       };
       const rim = 0xd9d7cf;
-      put(cx, 0, b.y0 + 0.2, w, 0.9, 0.4, rim); put(cx, 0, b.y1 - 0.2, w, 0.9, 0.4, rim);
-      put(b.x0 + 0.2, 0, cz, 0.4, 0.9, d - 0.8, rim); put(b.x1 - 0.2, 0, cz, 0.4, 0.9, d - 0.8, rim);
+      put(cx, 0, q.y0 + 0.2, w, 0.9, 0.4, rim); put(cx, 0, q.y1 - 0.2, w, 0.9, 0.4, rim);
+      put(q.x0 + 0.2, 0, cz, 0.4, 0.9, d - 0.8, rim); put(q.x1 - 0.2, 0, cz, 0.4, 0.9, d - 0.8, rim);
       // how much there is room for
       const room = Math.min(1, (w * d) / 380);
-      const at = (mx: number, mz: number) => [b.x0 + mx + r() * Math.max(0, w - 2 * mx), b.y0 + mz + r() * Math.max(0, d - 2 * mz)];
+      const at = (mx: number, mz: number) => [q.x0 + mx + r() * Math.max(0, w - 2 * mx), q.y0 + mz + r() * Math.max(0, d - 2 * mz)];
       // stair heads
       for (let n = 0; n < (w > 24 ? 2 : 1); n++) {
         const [x, z] = at(3, 2.6);
@@ -209,7 +251,7 @@ export function Town({ net, blocks, paving, roofing }: { net: Net; blocks: Block
       for (let n = (r() * 5 * room) | 0; n > 0; n--) {
         const [x, z] = at(2.5, 2.5);
         put(x, 0.5, z, 2 + r() * 0.8, 0.12, 2.2, 0x1c2640, -0.55);
-        o.position.set(x, b.h + 1.75, z - 1); o.scale.set(0.42, 2.2 + r() * 0.6, 0.42); o.rotation.set(0, 0, Math.PI / 2); o.updateMatrix();
+        o.position.set(x, b.h + 1.75, z - 1); o.scale.set(0.42, 2.2 + r() * 0.6, 0.42); o.rotation.set(0, 0, Math.PI / 2); fix();
         tank.current!.setMatrixAt(t++, o.matrix);
         o.rotation.set(0, 0, 0);
       }
@@ -217,7 +259,7 @@ export function Town({ net, blocks, paving, roofing }: { net: Net; blocks: Block
       for (let n = r() < 0.7 ? 1 + ((r() * 2 * room) | 0) : 0; n > 0; n--) {
         const [x, z] = at(2.5, 2.5);
         const s = 1 + r() * 0.6;
-        o.position.set(x, b.h + 0.6 + s, z); o.scale.set(s, s * 2, s); o.updateMatrix();
+        o.position.set(x, b.h + 0.6 + s, z); o.scale.set(s, s * 2, s); fix();
         tank.current!.setMatrixAt(t++, o.matrix);
       }
     });

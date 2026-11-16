@@ -53,7 +53,6 @@ export interface SpecRoad {
   /** whether its first and last point hang on another bridge, up in the air */
   air?: [boolean, boolean];
   deck?: Deck;
-  demote?: number; // steps of priority taken away: it yields where it used to go first
   stroke: number; // the stroke it was derived from
   feeds?: boolean; // leads to a parking lot: wants a signal where it meets a big road
   ring?: boolean; // a piece of a roundabout: one way, from the first point to the last
@@ -376,7 +375,7 @@ export function buildNet(spec: Spec): Net {
     const stallSegs: number[] = [];
     sr.stalls.forEach((on, i) => on && stallSegs.push(i));
     const cum = cumLen(pts);
-    const r: Road = { ...sr.kind, rank: sr.kind.rank - (sr.demote ?? 0), look: sr.kind.rank, id: roads.length, a, b, raw: sr.raw, pts, base: [], stallSegs, bridge: !!sr.bridge, deck: sr.bridge ? sr.deck ?? shape(cum[cum.length - 1], 0, 0, BRIDGE_H) : undefined, feeds: !!sr.feeds, ring: !!sr.ring, one: !!sr.one, hw: halfWidth(sr.kind, sr.ring || sr.one), len: cum[cum.length - 1] };
+    const r: Road = { ...sr.kind, look: sr.kind.rank, id: roads.length, a, b, raw: sr.raw, pts, base: [], stallSegs, bridge: !!sr.bridge, deck: sr.bridge ? sr.deck ?? shape(cum[cum.length - 1], 0, 0, BRIDGE_H) : undefined, feeds: !!sr.feeds, ring: !!sr.ring, one: !!sr.one, hw: halfWidth(sr.kind, sr.ring || sr.one), len: cum[cum.length - 1] };
     roads.push(r);
     a.roads.push(r);
     b.roads.push(r);

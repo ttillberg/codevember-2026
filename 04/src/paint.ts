@@ -37,16 +37,6 @@ function smooth(pts: V[]): V[] {
   return simplify(out, 0.4);
 }
 
-/** The stroke whose road is under a point, or -1. */
-export function findStroke(intent: Intent, p: V, houses: Rect[]): number {
-  let best = -1, bd = Infinity;
-  for (const r of derive(intent, houses)) {
-    const d = nearest(r.raw, p).d - halfWidth(r.kind, r.ring);
-    if (d < 4 && d < bd) { bd = d; best = r.stroke; }
-  }
-  return best;
-}
-
 /** The piece of a line between two distances along it. */
 function piece(pts: V[], cum: number[], d0: number, d1: number): V[] {
   const at = (d: number) => {

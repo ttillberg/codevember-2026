@@ -8,7 +8,7 @@ import { PARKED, Sim, signal } from './sim';
 import { makeTypes } from './vehicles';
 
 /** How much faster than life the traffic runs, as a timelapse. */
-export const TIMELAPSE = 12;
+export const TIMELAPSE = 60;
 
 const tmp = new Color();
 const SIG = { G: new Color(0x2dff7a), Y: new Color(0xffc21a), R: new Color(0xff2a1a) };

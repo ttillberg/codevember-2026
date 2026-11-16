@@ -3,8 +3,8 @@ import { useLayoutEffect, useMemo, useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
 import { Color, InstancedMesh, MeshStandardMaterial, Object3D } from 'three';
 import { onRoad, WALK } from './geo';
-import { cumLen, offset, pointOn, rng, type Net, type V } from './net';
-import type { Block } from './Town';
+import { cumLen, deck, offset, pointOn, rng, type Net, type V } from './net';
+import { turned, type Block } from './Town';
 
 // ---------- people and bikes ----------
 
@@ -183,9 +183,10 @@ export function Signs({ net, blocks }: { net: Net; blocks: Block[] }) {
     const ink = () => INKS[(r() * INKS.length) | 0];
     // on the houses: a hoarding on the roof, banners down the ends, a shop front where it is low enough to have a shop
     for (const b of blocks) {
-      const w = b.x1 - b.x0, d = b.y1 - b.y0, cx = (b.x0 + b.x1) / 2;
-      for (const z of [b.y1 - 0.5, b.y0 + 0.5]) {
-        if (r() > (z > b.y0 + 1 ? 0.85 : 0.45)) continue;
+      const q = b.inner ?? b, from = out.length;
+      const w = q.x1 - q.x0, d = q.y1 - q.y0, cx = (q.x0 + q.x1) / 2;
+      for (const z of [q.y1 - 0.5, q.y0 + 0.5]) {
+        if (r() > (z > q.y0 + 1 ? 0.85 : 0.45)) continue;
         const W = w * (0.4 + r() * 0.45), H = 2.6 + r() * 2.8;
         out.push({ x: cx + (r() - 0.5) * (w - W), y: b.h + 1.2 + H / 2, z, sx: W, sy: H, sz: 0.35, rot: 0, ink: ink() });
       }
@@ -193,15 +194,17 @@ export function Signs({ net, blocks }: { net: Net; blocks: Block[] }) {
         const n = r() < 0.85 ? 1 + ((r() * 3) | 0) : 0;
         for (let k = 0; k < n; k++) {
           const H = Math.min(b.h * 0.7, 4 + r() * 8);
-          out.push({ x: side ? b.x1 + 0.45 : b.x0 - 0.45, y: Math.max(H / 2 + 2.6, b.h * (0.4 + r() * 0.25)), z: b.y0 + d * (0.2 + r() * 0.6), sx: 0.35, sy: H, sz: 1.3 + r() * 0.6, rot: 0, ink: ink() });
+          out.push({ x: side ? q.x1 + 0.45 : q.x0 - 0.45, y: Math.max(H / 2 + 2.6, b.h * (0.4 + r() * 0.25)), z: q.y0 + d * (0.2 + r() * 0.6), sx: 0.35, sy: H, sz: 1.3 + r() * 0.6, rot: 0, ink: ink() });
         }
       }
       // the ground floor is shops
       const n = Math.max(1, Math.floor(w / 9));
       for (let k = 0; k < n; k++) {
         if (r() < 0.25) continue;
-        out.push({ x: b.x0 + (w * (k + 0.5)) / n, y: 3.3, z: b.y1 + 0.2, sx: (w / n) * 0.86, sy: 1.1, sz: 0.25, rot: 0, ink: ink() });
+        out.push({ x: q.x0 + (w * (k + 0.5)) / n, y: 3.3, z: q.y1 + 0.2, sx: (w / n) * 0.86, sy: 1.1, sz: 0.25, rot: 0, ink: ink() });
       }
+      // a turned house takes its signs round with it
+      if (b.turn) for (let k = from; k < out.length; k++) { [out[k].x, out[k].z] = turned(b, out[k].x, out[k].z); out[k].rot = b.turn; }
     }
     // on the big sheds: the name across the front, twice
     for (const b of net.buildings) {
@@ -340,7 +343,7 @@ function screen() {
 export function Street({ net, blocks, speed }: { net: Net; blocks: Block[]; speed: number }) {
   const posts = useRef<InstancedMesh>(null), lamps = useRef<InstancedMesh>(null), tv = useRef<InstancedMesh>(null);
   const glass = useMemo(screen, []);
-  const POSTS = 2600, TVS = 90;
+  const POSTS = 6400, TVS = 90;
 
   const plan = useMemo(() => {
     const post: { x: number; y: number; z: number; sx: number; sy: number; sz: number; rot: number }[] = [];
@@ -356,21 +359,23 @@ export function Street({ net, blocks, speed }: { net: Net; blocks: Block[]; spee
     };
 
     for (const r of net.roads) {
-      if ((r.look < 2 && !r.ring) || r.base.length < 2) continue;
-      // lamp posts: both sides, staggered, the arm reaching in over the road
-      for (const side of r.ring ? [1] : [1, -1]) {
-        const ln = offset(r.base, side * (r.hw + 1.3));
+      if (r.base.length < 2) continue;
+      // lamp posts on every road: both sides, staggered, the arm reaching in over the road; a lane has a lower one, on one side
+      const small = r.look < 2 && !r.ring, H = small ? 6.4 : 9.2;
+      for (const side of r.ring || small ? [1] : [1, -1]) {
+        // on a bridge they stand on the edge of the deck
+        const ln = offset(r.base, side * (r.bridge ? r.hw - 0.3 : r.hw + 1.3));
         const cum = cumLen(ln);
-        for (let d = side > 0 ? 10 : 26; d < cum[cum.length - 1] - 4; d += 32) {
+        for (let d = side > 0 ? 8 : 20; d < cum[cum.length - 1] - 4; d += small ? 22 : 24) {
           const p = pointOn(ln, cum, d), p2 = pointOn(ln, cum, d + 1);
           const ang = Math.atan2(p2.y - p.y, p2.x - p.x);
-          // not on a bridge: its deck is up in the air
-          if (r.bridge || taken(p.x, p.y, 0) || onRoad(net, p.x, p.y, r)) continue;
+          if (!r.bridge && (taken(p.x, p.y, 0) || onRoad(net, p.x, p.y, r))) continue;
+          const z = r.bridge ? deck(r, d) : 0;
           // the arm points across the road: to the left of travel on the right side, and the other way round
           const nx = Math.sin(ang) * side, ny = -Math.cos(ang) * side;
-          post.push({ x: p.x, y: 4.6, z: p.y, sx: 0.42, sy: 9.2, sz: 0.42, rot: 0 });
-          post.push({ x: p.x + nx * 1.3, y: 9.2, z: p.y + ny * 1.3, sx: 2.6, sy: 0.24, sz: 0.3, rot: -Math.atan2(ny, nx) });
-          lamp.push({ x: p.x + nx * 2.5, y: 9.1, z: p.y + ny * 2.5, sx: 1.7, sy: 0.3, sz: 0.75, rot: -Math.atan2(ny, nx) });
+          post.push({ x: p.x, y: z + H / 2, z: p.y, sx: 0.55, sy: H, sz: 0.55, rot: 0 });
+          post.push({ x: p.x + nx * 1.3, y: z + H, z: p.y + ny * 1.3, sx: 2.6, sy: 0.3, sz: 0.36, rot: -Math.atan2(ny, nx) });
+          lamp.push({ x: p.x + nx * 2.5, y: z + H - 0.1, z: p.y + ny * 2.5, sx: 2.3, sy: 0.4, sz: 1.0, rot: -Math.atan2(ny, nx) });
         }
       }
       // screens along the biggest roads
@@ -435,11 +440,12 @@ export function Street({ net, blocks, speed }: { net: Net; blocks: Block[]; spee
     <>
       <instancedMesh ref={posts} args={[undefined, undefined, POSTS]} castShadow frustumCulled={false}>
         <boxGeometry />
-        <meshStandardMaterial color={0x6a6e73} roughness={0.6} metalness={0.4} />
+        <meshStandardMaterial color={0x4a4e54} roughness={0.6} metalness={0.4} />
       </instancedMesh>
       <instancedMesh ref={lamps} args={[undefined, undefined, POSTS / 2]} frustumCulled={false}>
         <boxGeometry />
-        <meshStandardMaterial color={0xe8e6dc} roughness={0.4} />
+        {/* the heads are pale, with only a little light of their own: enough to be found, not to shine */}
+        <meshStandardMaterial color={0xe8e6dc} emissive={0xffe9c0} emissiveIntensity={0.2} roughness={0.4} />
       </instancedMesh>
       <instancedMesh ref={tv} args={[undefined, undefined, TVS]} material={glass} castShadow frustumCulled={false}>
         <boxGeometry />

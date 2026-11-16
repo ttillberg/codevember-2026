@@ -5,7 +5,7 @@ import { Mesh, MeshBasicMaterial, Vector3, type Ray } from 'three';
 import { strokeGeometry } from './geo';
 import { CROSS, cumLen, deck, pointOn, type Net, type V } from './net';
 
-export type Tool = 'road' | 'bridge' | 'smear' | 'yield' | 'trace';
+export type Tool = 'road' | 'bridge' | 'smear' | 'trace';
 
 const AT = new Vector3();
 
@@ -34,14 +34,13 @@ interface Props {
   tool: Tool;
   /** air: whether the stroke began and ended on a bridge deck */
   onStroke: (pts: V[], bridge: boolean, air?: [boolean, boolean], done?: (ok: boolean) => void) => void;
-  onYield: (p: V) => void;
   /** start, every move, and the end of a smear; null ends it */
   onSmear: (phase: 'start' | 'move' | 'end', p: V) => void;
   /** a stretch was pointed at, to follow its traffic */
   onTrace: (p: V) => void;
 }
 
-export function Painter({ net, tool, onStroke, onYield, onSmear, onTrace }: Props) {
+export function Painter({ net, tool, onStroke, onSmear, onTrace }: Props) {
   const preview = useRef<Mesh>(null);
   const draw = useRef<{ id: number; pts: V[]; bridge: boolean; smear: boolean; up: boolean } | null>(null);
 
@@ -75,7 +74,6 @@ export function Painter({ net, tool, onStroke, onYield, onSmear, onTrace }: Prop
     if (e.pointerType === 'mouse' && e.button !== 0) return;
     const p = { x: e.point.x, y: e.point.z };
     if (tool === 'trace') return onTrace(onDeck(net, e.ray) ?? p);
-    if (tool === 'yield' || e.altKey) return onYield(p);
     (e.target as Element).setPointerCapture?.(e.pointerId);
     const smear = tool === 'smear' || e.shiftKey;
     // a stroke that starts on a deck starts up there

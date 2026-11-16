@@ -1,7 +1,8 @@
 /* a dark day: the backdrop is the grass, ink #f4f4f2 (docs/DESIGN.md) */
 html, body { margin: 0; height: 100%; background: #a3adb3; overflow: hidden; }
 #root { position: fixed; inset: 0; }
-canvas { display: block; touch-action: none; }
+/* a little soft all over, as through a lens that is not quite a good one */
+canvas { display: block; touch-action: none; filter: blur(0.8px); }
 
 /* the title plate, top left: the day in Plex capitals, the way home under it */
 .plate {
@@ -44,7 +45,7 @@ canvas { display: block; touch-action: none; }
 }
 .tools button.on { background: #f4f4f2; color: #1c1c1c; }
 .tools button:disabled { opacity: 0.35; cursor: default; }
-/* how fast time goes: top right, out of the brush's way */
+/* time, season and heat: top right, out of the brush's way */
 .tools.speed {
   left: auto; transform: none; bottom: auto;
   top: max(20px, env(safe-area-inset-top)); right: max(20px, env(safe-area-inset-right));
@@ -54,24 +55,6 @@ canvas { display: block; touch-action: none; }
   .tools.speed { top: calc(max(16px, env(safe-area-inset-top)) + 64px); right: auto; left: max(16px, env(safe-area-inset-left)); }
   .tools.speed button { padding: 8px 10px; font-size: 10px; }
 }
-/* the traffic: under the clock */
-.tools.traffic {
-  left: auto; transform: none; bottom: auto; align-items: center;
-  top: calc(max(20px, env(safe-area-inset-top)) + 48px); right: max(20px, env(safe-area-inset-right));
-}
-.tools.traffic label {
-  display: flex; align-items: center; gap: 8px; padding: 0 4px 0 10px; color: #f4f4f2;
-  font: 600 11px/1 Inter, "Helvetica Neue", Helvetica, Arial, sans-serif; letter-spacing: 0.12em; text-transform: uppercase;
-}
-.tools.traffic input {
-  width: 64px; padding: 8px 10px; border: 0; border-radius: 999px; background: rgba(244, 244, 242, 0.14); color: #f4f4f2;
-  font: 600 12px/1 Inter, "Helvetica Neue", Helvetica, Arial, sans-serif; text-align: right; outline: none;
-  -moz-appearance: textfield; appearance: textfield;
-  /* typed in, whatever the page around it says about selecting */
-  user-select: text; -webkit-user-select: text; touch-action: manipulation;
-}
-.tools.traffic input::-webkit-inner-spin-button { display: none; }
-.tools.traffic input::placeholder { color: rgba(244, 244, 242, 0.6); }
 /* what the trace found: over the brushes */
 .note {
   position: fixed; z-index: 2; left: 50%; transform: translateX(-50%); bottom: calc(max(20px, env(safe-area-inset-bottom)) + 52px);
@@ -80,8 +63,6 @@ canvas { display: block; touch-action: none; }
 }
 .note:empty { display: none; }
 @media (max-width: 640px) {
-  .tools.traffic { top: calc(max(16px, env(safe-area-inset-top)) + 104px); right: auto; left: max(16px, env(safe-area-inset-left)); }
-  .tools.traffic button { padding: 8px 10px; font-size: 10px; }
   .tools button { padding: 11px 10px; }
 }
 .clean .tools, .clean .note { display: none; }

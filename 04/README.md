@@ -1,6 +1,6 @@
 # 04 · Tangle
 
-A drone parked over a junction at the edge of a big city: an arterial, a cross street, two back streets, a strip mall, a gas station, and blocks of housing with lanes winding through them, after Xinpaifang in Chongqing. Daylight through haze, running at twelve times life.
+A drone parked over a junction at the edge of a big city: an arterial, a cross street, two back streets, a strip mall, a gas station, and blocks of housing with lanes winding through them, after Xinpaifang in Chongqing. Daylight through haze, running at sixty times life.
 
 The look is taken from drone pictures of the Huangjuewan interchange in Chongqing: sun-bleached concrete, scrub and red earth, pale slab blocks with blue roofs, everything flattened by the haze.
 
@@ -10,10 +10,9 @@ Drag on the ground and paint follows the brush. Only the strokes are kept. Every
 - **Roundabout**: draw a circle with the road brush, back to where it began. It is as big as it was drawn, one way round, and everything it crosses joins it. A junction that ends up with five arms or more turns into a roundabout by itself.
 - **Bridge** (cmd or ctrl + drag): one straight span, or one even arc where a house is in the line, on piers. It lands only at its two ends and flies over roads, parking and low houses. One that crosses an earlier bridge goes over it. Start or end a stroke on a deck, with either brush, and it hangs on that bridge there: a ramp down to the ground, or a link from one level to another, with a junction up in the air.
 - **Smear** (shift + drag): push the roads that are there, like wet paint. Everything within reach goes along, junctions and traffic included, less the further away it is. Parking lots and the far ends of the map stay put.
-- **Yield** (alt + click): take a step of priority from a stroke, the whole length of it, so it gives way where it went first. A fourth click gives it back.
 - **Undo** (cmd + Z).
-- **Timelapse / Normal / Pause** (space pauses): twelve times life, life size, or a still. The sun keeps the same pace. Painting works in all three.
-- Two fingers, the right button and the wheel move the drone.
+- **P** (or space) pauses. It is always a timelapse, sixty times life. Painting works in a still too.
+- Two fingers and the right button move the drone. It keeps its height: there is no zoom.
 
 ## What is there
 
@@ -40,7 +39,6 @@ Drag on the ground and paint follows the brush. Only the strokes are kept. Every
 - Crash physics: a car whose lane is painted away just disappears.
 - People and bikes are set dressing. They cross on red, the cars do not see them, and nobody goes anywhere in particular.
 - The network still clogs after some minutes of traffic, with or without help.
-- A yielding road shows only by its stop lines.
 - A road cannot be painted closer than 44 m to another: it becomes that road. Coarse, but it is what keeps a scribble from turning into shards.
 - A painted roundabout ignores parking lots and lies straight over them.
 - A roundabout made from a crowded junction locks up when the roads leaving it are full. On an open one the traffic keeps going round.

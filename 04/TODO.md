@@ -6,7 +6,7 @@ Reference: drone pictures of the Huangjuewan interchange, Chongqing. First pass 
 
 - People and bikes that obey the lights and the cars, and go somewhere: bus stops, shop doors, the yards.
 - Signs at night: they are the light of the place. No night yet.
-- Much denser green: the reference is nearly all canopy. Needs a cheaper tree, or it costs frames on a phone.
+- Trees stand as thick woods with open ground between them (`forest()` in `World.tsx`), up to 12000 crowns. Left: the reference is nearly all canopy; what the woods cost on a phone is not measured; a wood ends at a road as if cut with a knife.
 - Base map follows Xinpaifang, Chongqing (maps in `process/ref-chongqing-*.jpg`): a few straight streets and lanes winding inside the blocks. Left: lanes are all the same width and too tidy; the reference has twice as many, doubling back on themselves. ROOM (44 m) is what stops them sitting closer. Traffic on the lanes is not measured.
 - Bridges stack and join: one that crosses an earlier bridge keeps clear of it, and a stroke that starts or ends on a deck hangs on it there, as a ramp or a link between levels (`layers()` in `intent.ts`, `onDeck()` in `Painter.tsx`). Left: traffic over the air junctions is not measured; no kerb or parapet fillet at an air junction; picking the deck under the finger is not tried on a phone; a short bridge that cannot get clear still cuts through the other; where bridges land, five arms turn the junction into a big roundabout.
 - A road drawn with the road brush goes over by itself where it would cut a big road, two streets or more, or a bridge: the stroke is laid as road, bridge, road (`goesOver()` in `paint.ts`). A bridge takes down the town houses in its straight line (`standing()` in `intent.ts`); the sheds on the lots still stop it. Left: a house comes down even where the deck would clear it; the deck over one road is only about 7 m up; the stubs at either end grow parking courts; not tried by hand or on a phone.
@@ -17,15 +17,15 @@ Reference: drone pictures of the Huangjuewan interchange, Chongqing. First pass 
 - Autumn and street detail: leaf trees in yellow, orange and rust with their leaves under them, ginkgo rows along the streets, drifts of leaves in the ground shaders; roofs with parapets, stair heads, tin-roofed rooms, tubs, sun heaters and steel tanks; lane arrows before the stop lines, zebras on side roads, the yellow studded strip down every sidewalk; blue boards over the lanes before signals, a red sign where a road gives way. Left: bare trees, leaves blowing, bus stops and railings, signs on the bridges, a lower sun, and none of it measured on a phone.
 - Firs are pines now: a stem and six ragged skirts of boughs, one instanced mesh (`pine()` in `World.tsx`). Not looked at on a phone.
 - `?no=roundabout` keeps every junction a junction and a closed stroke a road; beside `?no=house,trees`. Not in the README.
+- One house in five is kept and a quarter of those stand at an angle (`KEEP` in `App.tsx`, `turnSome()` in `Town.tsx`). A turned house is in the way as the straight box around it, so a road stops short of corners that look free; trees and lamps keep out of that box too; footpaths still lead to houses that are gone.
 - Terraced plots and construction sites in the open ground.
 - Ground is flat. The reference is all hillside.
 - A yard's parking can run into the wall of the house that stopped the road.
 
 ## Reading the traffic
 
-In: a field for roughly how many vehicles are out (the ways in open and shut, `Sim.target`), a heat map of every lane (`Heat` in `Traffic.tsx`), the Trace brush that shows the whole journey of every vehicle on the stretch that was clicked (`Journeys`), and four seasons from a button or `?season=`.
+In: a set number of vehicles out, 60 on a phone and 180 on a desk (the ways in open and shut, `Sim.target`; the numbers are guesses), a heat map of every lane (`Heat` in `Traffic.tsx`), the Trace brush that shows the whole journey of every vehicle on the stretch that was clicked (`Journeys`), and four seasons from `?season=` (autumn unless it says otherwise).
 
-- Asking for fewer only shuts the ways in: the ones already out have to drive home first.
 - The heat map restarts whenever the roads change.
 - Trace shows who is on the stretch now, not who has been; what a car drove before the roads last changed is lost.
 - Winter has no snow on roofs or roads, and the same sun as autumn.

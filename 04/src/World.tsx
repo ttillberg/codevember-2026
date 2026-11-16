@@ -31,11 +31,13 @@ const GRASS = `
   float big = fbm(p * 0.012), mid = fbm(p * 0.09 + 31.0), fine = vn(p * 2.1);
   // rough ground, not a lawn: scrub, dry patches, and red earth where it has been dug
   vec3 dry = vec3(0.52, 0.44, 0.24);
-  diffuseColor.rgb = mix(diffuseColor.rgb, dry, smoothstep(0.35, 0.7, big) * DRY);
+  // evenly dry: in big patches it read as the shadows of clouds
+  diffuseColor.rgb = mix(diffuseColor.rgb, dry, (0.4 + 0.2 * big) * DRY);
   // what has come down lies in drifts: leaves in autumn, petals in spring
   float drift = smoothstep(0.5, 0.72, fbm(p * 0.05 + 23.0)) * smoothstep(0.35, 0.7, vn(p * 1.6 + 4.0));
   diffuseColor.rgb = mix(diffuseColor.rgb, mix(DRIFT_A, DRIFT_B, vn(p * 0.3 + 9.0)), drift * DRIFT_K);
-  diffuseColor.rgb *= 0.72 + 0.42 * mid + 0.14 * fine;
+  // only a little light and dark across it: more reads as the shadows of clouds
+  diffuseColor.rgb *= 0.88 + 0.1 * mid + 0.14 * fine;
   float dug = smoothstep(0.66, 0.72, fbm(p * 0.018 + 70.0)) * smoothstep(0.35, 0.6, fbm(p * 0.11 + 5.0));
   diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.50, 0.36, 0.26) * (0.85 + 0.3 * fine), dug * 0.85);
   // winter: snow where nobody walks
@@ -344,15 +346,25 @@ function Trees({ net, blocks, season }: { net: Net; blocks: Block[]; season: Sea
   // everything is planted once; a road painted through only fells what is in its way
   const wood = useMemo(() => {
     const r = rng(23);
-    const out: { x: number; y: number; blobs: { m: Matrix4; c: Color }[]; fir: boolean; size: number }[] = [];
+    const out: { x: number; y: number; blobs: { m: Matrix4; c: Color }[]; fir: boolean; size: number; deep: boolean }[] = [];
     const o = new Object3D();
     const clump = (x: number, y: number) => 0.5 + 0.5 * Math.sin(x * 0.013 + 1.7) * Math.cos(y * 0.017 - 0.4) + 0.3 * Math.sin((x + y) * 0.041);
     // where the dark, pointed trees stand together
     const stand = (x: number, y: number) => Math.sin(x * 0.006 + 2) * Math.cos(y * 0.008 + 1) > 0.3;
-    for (let i = 0; i < 10000; i++) {
+    const at = (i: number, j: number) => Math.abs(Math.sin(i * 127.1 + j * 311.7) * 43758.5453) % 1;
+    // and where it is forest: thick stands with open ground between them, not trees dotted evenly over everything
+    const forest = (x: number, y: number) => Math.sin(x * 0.011 + 0.6) * Math.cos(y * 0.013 - 1.1) + 0.5 * Math.sin((x - y) * 0.023 + 2) + 0.25 * Math.sin(x * 0.05) * Math.sin(y * 0.047);
+    for (let i = 0; i < 22000; i++) {
       const x = (r() - 0.5) * 900, y = (r() - 0.5) * 860;
-      const keep = r() <= 0.2 + clump(x, y) * 0.65;
-      const kind = r();
+      const deep = forest(x, y);
+      // the edge of a wood thins out over a few metres
+      // out in the open they stand a few together: one spot in a cell here and there, and whatever falls within reach of it
+      const gx = Math.floor(x / 30), gy = Math.floor(y / 30);
+      const spot = at(gx, gy) < 0.3 + clump(x, y) * 0.25
+        && Math.hypot(x - (gx + 0.25 + 0.5 * at(gx + 7, gy)) * 30, y - (gy + 0.25 + 0.5 * at(gx, gy + 13)) * 30) < 5 + 5 * at(gx + 3, gy + 5);
+      const keep = spot || r() <= Math.min(1, (deep - 0.25) * 5);
+      // under the trees there is little room for bushes
+      const kind = deep > 0.45 ? 0.3 + r() * 0.7 : r();
       const fir = kind > 0.3 && r() < (stand(x, y) ? 0.7 : 0.08);
       const bush = kind <= 0.3;
       const size = bush ? 0.9 + r() * 1.1 : fir ? 2 + r() * 1.4 : 2.4 + r() * 3.2;
@@ -376,11 +388,11 @@ function Trees({ net, blocks, season }: { net: Net; blocks: Block[]; season: Sea
           blobs.push({ m: o.matrix.clone(), c: hue.clone().offsetHSL(0, 0, (r() - 0.5) * 0.04) });
         }
       }
-      if (keep) out.push({ x, y, blobs, fir, size: bush ? 0 : size });
+      if (keep) out.push({ x, y, blobs, fir, size: bush ? 0 : size, deep: !spot });
     }
     return out;
   }, [season]);
-  const CAP = 5200, FIRS = 1500, LITTER = 2600, STEMS = 3200;
+  const CAP = 12000, FIRS = 3000, LITTER = 4500, STEMS = 6000;
 
   useLayoutEffect(() => {
     const m = ref.current!, f = firs.current!, fl = floor.current!, st = stems.current!;
@@ -407,7 +419,9 @@ function Trees({ net, blocks, season }: { net: Net; blocks: Block[]; season: Sea
     };
     for (const t of wood) {
       if (!clearOf(net, t.x, t.y, 6)) continue;
-      if (up.some((b) => t.x > b.x0 - 5 && t.x < b.x1 + 5 && t.y > b.y0 - 5 && t.y < b.y1 + 5)) continue;
+      // a wood keeps its distance from a house: a yard's width of open ground
+      const gap = t.deep ? 18 : 5;
+      if (up.some((b) => t.x > b.x0 - gap && t.x < b.x1 + gap && t.y > b.y0 - gap && t.y < b.y1 + gap)) continue;
       if (t.fir) {
         if (j < FIRS) { f.setMatrixAt(j, t.blobs[0].m); f.setColorAt(j++, t.blobs[0].c); }
       } else if (i + t.blobs.length <= CAP - 600) {

@@ -18,8 +18,6 @@ export interface Stroke {
   open?: [boolean, boolean];
   /** one way, from the first point to the last: a ramp */
   one?: boolean;
-  /** steps of priority taken away */
-  demote?: number;
   /** closes on itself: a roundabout, one way round */
   ring?: boolean;
   /** laid by the brush, after the houses were there */
@@ -433,8 +431,7 @@ function rules(intent: Intent, houses: Rect[]): Spec {
   });
   // how big: the biggest stroke that went this way, and a size up for every time it was painted over
   const level = (e: Edge) => Math.min(3, Math.max(...e.by.map((i) => intent[i].w)) + e.by.length - 1);
-  const demote = (e: Edge) => Math.max(...e.by.map((i) => intent[i].demote ?? 0));
-  const alike = (a: Edge, b: Edge) => !a.bridge && !b.bridge && level(a) === level(b) && a.lot === b.lot && !!a.ring === !!b.ring && demote(a) === demote(b) && a.by[0] === b.by[0];
+  const alike = (a: Edge, b: Edge) => !a.bridge && !b.bridge && level(a) === level(b) && a.lot === b.lot && !!a.ring === !!b.ring && a.by[0] === b.by[0];
 
   const around: Edge[][] = nodes.map(() => []);
   for (const e of edges.values()) { around[e.a].push(e); around[e.b].push(e); }
@@ -476,7 +473,7 @@ function rules(intent: Intent, houses: Rect[]): Spec {
       const seg = nearest(s.pts, { x: (raw[n].x + q.x) / 2, y: (raw[n].y + q.y) / 2 }).seg;
       return cum[seg + 1] - cum[seg] >= longest / 2;
     });
-    spec.push({ raw, kind, stalls, bridge: !!e.bridge, part: e.part, air: e.bridge ? [!!nodes[e.a].air, !!nodes[e.b].air] : undefined, demote: demote(e), stroke: e.by[0], feeds: e.by.some((i) => feeds[i]), ring: e.ring, one: !!(e.bridge && s.one) });
+    spec.push({ raw, kind, stalls, bridge: !!e.bridge, part: e.part, air: e.bridge ? [!!nodes[e.a].air, !!nodes[e.b].air] : undefined, stroke: e.by[0], feeds: e.by.some((i) => feeds[i]), ring: e.ring, one: !!(e.bridge && s.one) });
   };
   const walk = (k: number, e: Edge) => {
     const ks = [k];
