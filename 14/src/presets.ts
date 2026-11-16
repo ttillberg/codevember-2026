@@ -189,7 +189,7 @@ export function partialsFor(pr: Preset, f0: number, p: number, kind: 'pluck' | '
  * One key for every string (A, in different octaves) and one scale for all of them, so
  * switching strings or scales while the pad, the groove and the tails ring never leaves
  * anything out of tune. Every scale keeps the root and the fifth (the pad leans
- * on them). The first is the sad one Tension was made in; it starts on hijaz (main.ts).
+ * on them). The first is the sad one Tension was made in; it's the default (main.ts).
  */
 /** each scale has its own dark ground the page turns to (the ink stays the same white) */
 /** `roots`: the dots' four chords, in semitones over the key (the first the scale has from each group), when not the usual i, VI, v, III */
@@ -200,6 +200,9 @@ export const SCALES: Array<{ id: string; label: string; notes: number[]; ground:
   { id: 'major', label: 'Major pent', notes: [0, 2, 4, 7, 9], ground: '#262012' },
   { id: 'aeolian', label: 'Aeolian', notes: [0, 2, 3, 5, 7, 8, 10], ground: '#0c2224' },
   { id: 'hijaz', label: 'Hijaz', notes: [0, 1, 4, 5, 7, 8, 10], ground: '#2a150b' },
+  // Aphex Twin's Avril 14th: natural minor, its three chords all minor (i, iv, v), and the VI
+  // for a fourth; on A like everything else (the piece is in F minor); a warm, dim grey
+  { id: 'avril', label: 'April', notes: [0, 2, 3, 5, 7, 8, 10], ground: '#1d1b19', roots: [[0], [5], [7], [8]] },
 ];
 
 const OWN = PRESETS.map((p) => ({ symNotes: p.symNotes }));

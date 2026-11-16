@@ -39,8 +39,8 @@ pnpm -C 14 dev                       # HTTPS=1 for a phone on the LAN (AudioWork
   the string from the background, a strum.
 - **A tap on the background** does nothing (it used to change the scale, then the string: both
   are in the bar).
-- **The scale** (its picker in the bar, or S): for every string at once: Tension (1 2 b3 5 b6), minor pentatonic, kumoi,
-  major pentatonic, aeolian, hijaz (the default), April (after Aphex Twin's Avril 14th: natural minor like
+- **The scale** (its picker in the bar, or S; Tension to start with): for every string at once: Tension (1 2 b3 5 b6), minor pentatonic, kumoi,
+  major pentatonic, aeolian, hijaz, April (after Aphex Twin's Avril 14th: natural minor like
   aeolian, but its dots are the piece's chords, all minor, i, iv, v, and a VI). The dots glide to their new chords.
 - **Before the first pluck** the string sways a little and a ring pulses on it, as if a finger
   were testing it: an invitation. Gone with the first note.
@@ -61,8 +61,9 @@ pnpm -C 14 dev                       # HTTPS=1 for a phone on the LAN (AudioWork
 - **S**: the next scale. **Shift and a digit** (0 to 9) saves a snapshot of everything the bar
   sets (the string, the scale, the delay, the arp, the four levels) under it; **the digit
   alone** brings it back, its name in the middle for a moment. Remembered per viewer.
-- **Cmd (or ctrl, or alt) and 1 to 5**: the strings (0 the last). A browser may keep cmd and a
-  digit for its own tabs; alt always works.
+- **Cmd+C** (ctrl+C; when no text is selected) copies the same settings as JSON to the
+  clipboard; **cmd+P** (or a plain paste, cmd+V) applies JSON settings from it: the string, the
+  scale, the arp, the five levels; anything missing stays as it is.
 - **No sound?** Browsers keep it locked until a tap they accept. If a gesture didn't open it
   (or iOS locked it again after a call), a *Tap for sound* button comes up; one tap and it plays.
 
@@ -75,19 +76,17 @@ choices stack up over it, the name beside the one under your finger: slide up to
 go, or tap and tap one. (The coin and the rattle, latched modifiers for a step up and a
 choked buzz, are gone: one less thing to wonder about.)
 
-Beside the bar, a button of its own, Mix (three faders): tap it and four sliders open over it,
+Beside the bar, a button of its own, Mix (three faders): tap it and five sliders open over it,
 one under the other, a name on the left and the number on the right: sustain, reverb, the pad
-(off to start with) and the harmonics (the flageolets' level: none at the bottom, their own in
-the middle, twice at the top). Press anywhere on one and it goes there and follows the finger;
-tap Mix again, or anywhere else, and they close. All four are remembered.
-
-Left of the arp, Delay (or D, each press the next step), a picker like it: Off, Light (to start with), Medium, Deep, the icon a
-pluck and its fading echoes. The string's own echo in the arp's time: dotted eighths at 90 BPM
-bouncing left and right, more of the string going in and more feeding back the deeper it is.
-The arp keeps its own echo, untouched.
+(a whisper to start with), the harmonics (the flageolets' level: none at the bottom, their own in
+the middle, twice at the top) and the delay (the string's own echo in the arp's time, dotted
+eighths at 90 BPM bouncing left and right, more of the string going in and more feeding back
+the higher it is; half way to start with; the arp keeps its own echo, untouched; D steps it
+off, light, medium, deep). Press anywhere on one and it goes there and follows the finger; tap
+Mix again, or anywhere else, and they close. All five are remembered.
 
 On a phone every button in the bar has its name written over it, outside the bar (String,
-Scale, Delay, Arp, Mix), gone while its popover is up; with a mouse the names are hover tips. (The levels were knobs first, then labelled sliders
+Scale, Arp, Mix), gone while its popover is up; with a mouse the names are hover tips. (The levels were knobs first, then labelled sliders
 over the bar, then upright faders in it, then four Hollow-style knobs with tall gauges: one
 button that opens them all keeps the bar short.)
 
@@ -107,7 +106,8 @@ on a desktop too) the sound stops at once and the audio is paused; back, it come
 
 ## The dots
 
-Like constellations: six chords (the four, and a iv and a VII or so where the scale has them),
+They show only while the string is held aside (in quickly, out slowly after you let go): the
+dark stays empty until you play. Like constellations: six chords (the four, and a iv and a VII or so where the scale has them),
 every dot at its note's height, but scattered sideways like stars, near to far, left and right
 in turn, faintly joined chord by chord (the same scatter for the same chord and note, so they
 don't jump). On a wide screen they stay within reach of a pull, not out at the edges. When the
@@ -195,7 +195,7 @@ pull) and springs back to the note in a fifth of a second, then wobbles around i
   pentatonic (1 2 b3 5 b6), sympathetic strings, a dark saw pad following the note.
 - **Glass**: luminous. Bell partials (not harmonic, every one a consonant interval), high,
   an airy triangle pad and a long bright hall.
-- **Wood**, the default (in hijaz): warm gut plucked with a finger, a round body (140 and 320 Hz), a small room.
+- **Wood**, the default: warm gut plucked with a finger, a round body (140 and 320 Hz), a small room.
 - **Square**: synthetic. A square wave, odd harmonics only, the same wherever along the string
   it's taken, two copies wide apart (9 cents) and a sine an octave under. How hard you pull is
   the filter: a soft pull is round and closed, a hard one opens up to 7 kHz. A2, a mid room.

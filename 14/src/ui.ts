@@ -32,7 +32,7 @@ const HELP: Array<[string, string, Rows]> = TOUCH
       ['The bar', '', [
         ['Up or down the background', 'a wah'],
         ['A string, a scale, an arp', 'press, slide up to one, let go'],
-        ['Mix', 'sustain, reverb, pad, harmonics'],
+        ['Mix', 'sustain, reverb, pad, harmonics, delay'],
       ]],
     ]
   : [
@@ -52,11 +52,11 @@ const HELP: Array<[string, string, Rows]> = TOUCH
       ]],
       ['The bar', '', [
         ['[0] \u2013 [9]', 'recall a snapshot; with shift, save one'],
-        ['\u2318 / alt [1] \u2013 [5]', 'the strings'],
+        ['\u2318C / \u2318P', 'copy the settings as JSON / apply them'],
         ['[S]', 'the next scale (or click the background)'],
         ['[A]', 'a groove: on, next pattern, off'],
         ['[P]', 'the pad, on or off'],
-        ['Mix, in the bar', 'sustain, reverb, pad, harmonics'],
+        ['Mix, in the bar', 'sustain, reverb, pad, harmonics, delay'],
       ]],
     ];
 
@@ -152,22 +152,13 @@ function grooveIcon(vel: string | null) {
   return svg(b);
 }
 
-/** the delay's steps: off, then echoes, fewer or more, fading */
+/** the delay's steps for D: off, then echoes, fewer or more */
 export const DELAYS = [
   { label: 'Off', t: 0 },
   { label: 'Light', t: 0.25 },
   { label: 'Medium', t: 0.5 },
   { label: 'Deep', t: 0.85 },
 ];
-/** a delay as a pluck and its echoes, as many and as loud as it repeats */
-function delayIcon(t: number) {
-  if (!t) return svg('<circle cx="5" cy="12" r="2.2" fill="currentColor" stroke="none"/>');
-  let b = '<circle cx="5" cy="12" r="2.2" fill="currentColor" stroke="none"/>';
-  const n = t < 0.4 ? 1 : t < 0.7 ? 2 : 3;
-  for (let i = 1; i <= n; i++) b += `<circle cx="${5 + i * 5}" cy="12" r="${(2.2 - i * 0.35).toFixed(2)}" fill="currentColor" stroke="none" opacity="${(1 - i * 0.24).toFixed(2)}"/>`;
-  return svg(b);
-}
-
 /** popovers slide sideways to stay this far inside the screen */
 const EDGE = 8;
 /** a piece of the bar: its button and the popover over it */
@@ -438,23 +429,20 @@ export function createUi(h: UiHandlers, init: BarInit) {
     label: 'Scale', key: 'S', items: init.scales, name: (s) => s.label, icon: (s) => scaleIcon(s.notes), pick: (i) => h.scale(i),
   });
   const arpItems: Array<{ label: string; vel: string | null }> = [{ label: 'Off', vel: null }, ...init.patterns];
-  let curDelay = init.delay;
-  const delay = picker({
-    label: 'Delay', key: 'D', items: DELAYS, name: (d) => d.label, icon: (d) => delayIcon(d.t), pick: (i) => (h.delay(DELAYS[i].t), delay.set(i), (curDelay = DELAYS[i].t)),
-  });
-  delay.set(DELAYS.reduce((best, d, i) => (Math.abs(d.t - init.delay) < Math.abs(DELAYS[best].t - init.delay) ? i : best), 0));
   const arp = picker({
     label: 'Arp', key: 'A', items: arpItems, name: (a) => a.label, icon: (a) => grooveIcon(a.vel), pick: (i) => h.arp(i - 1),
   });
-  // the levels: one button, four sliders over it
+  // the levels: one button, five sliders over it
   const mix = mixer([
     { label: 'Sustain', value: init.sustain, put: (t) => h.sustain(t) },
     { label: 'Reverb', value: init.room, put: (t) => h.room(t) },
     { label: 'Pad', value: init.pad, put: (t) => h.pad(t) },
     { label: 'Harmonics', value: init.harm, put: (t) => h.harm(t) },
+    { label: 'Delay', value: init.delay, put: (t) => h.delay(t) },
   ]);
+  const delay = mix.sliders[4];
   const pad = mix.sliders[2];
-  bar.append(instrument.box, scale.box, delay.box, arp.box);
+  bar.append(instrument.box, scale.box, arp.box);
   // the mixer on its own, beside the bar
   const solo = el('div', 'solo');
   solo.append(mix.box);
@@ -475,22 +463,15 @@ export function createUi(h: UiHandlers, init: BarInit) {
     },
     setScale: (i: number) => scale.set(i),
     setArp: (mode: number) => arp.set(mode + 1),
-    /** D: the next delay step */
+    /** D: the delay's next step (off, light, medium, deep) */
     nextDelay() {
-      const cur = DELAYS.reduce((best, d, j) => (Math.abs(d.t - curDelay) < Math.abs(DELAYS[best].t - curDelay) ? j : best), 0);
+      const cur = DELAYS.reduce((best, d, j) => (Math.abs(d.t - delay.get()) < Math.abs(DELAYS[best].t - delay.get()) ? j : best), 0);
       const i = (cur + 1) % DELAYS.length;
-      delay.set(i);
-      h.delay(DELAYS[i].t);
-      curDelay = DELAYS[i].t;
+      delay.set(DELAYS[i].t);
       return DELAYS[i].label;
     },
-    /** a recalled snapshot: the delay's step nearest `t`, and the four levels (each one's handler runs) */
-    setDelay(t: number) {
-      const i = DELAYS.reduce((best, d, j) => (Math.abs(d.t - t) < Math.abs(DELAYS[best].t - t) ? j : best), 0);
-      delay.set(i);
-      h.delay(DELAYS[i].t);
-      curDelay = DELAYS[i].t;
-    },
+    /** a recalled snapshot: the delay, and the four levels (each one's handler runs) */
+    setDelay: (t: number) => delay.set(t),
     setLevels(v: { sustain: number; room: number; pad: number; harm: number }) {
       mix.sliders[0].set(v.sustain);
       mix.sliders[1].set(v.room);

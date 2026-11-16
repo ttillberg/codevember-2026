@@ -307,10 +307,12 @@ const barStored = (() => {
     return {};
   }
 })();
-let padLevel = barStored.pad ?? 0;
+/** the defaults (wood, tension, no arp): sustain a bit long, a big room, a whisper of pad, the
+ * flageolets up, the delay half way; what a viewer sets is remembered over them */
+let padLevel = barStored.pad ?? 0.18;
 /** the reverb knob, 0..1: the level (none at the bottom, the preset's own in the middle, two and
  * a half times at the top) and the length of the room (half to one and a half times) */
-let roomT = barStored.room ?? 0.5;
+let roomT = barStored.room ?? 0.86;
 function setRoom(t: number) {
   roomT = t;
   tune.wet = t <= 0.5 ? 2 * t : 1 + (t - 0.5) * 3;
@@ -319,14 +321,14 @@ function setRoom(t: number) {
 setRoom(roomT);
 let roomTimer = 0;
 /** the sustain knob, 0..1: a quarter of each string's ring time at the bottom, four times at the top, its own in the middle */
-let sustainT = barStored.sustain ?? 0.5;
+let sustainT = barStored.sustain ?? 0.675;
 const setSustain = (t: number) => (decay.sustain = Math.pow(4, 2 * t - 1));
 setSustain(sustainT);
 /** the flageolets' knob, 0..1: none at the bottom, their own level in the middle, twice at the top */
-let harmT = barStored.harm ?? 0.5;
+let harmT = barStored.harm ?? 0.77;
 tune.harm = 2 * harmT;
-/** the delay knob, 0..1: a little to start with */
-let delayT = barStored.delay ?? 0.25;
+/** the delay knob, 0..1 (half way to start with) */
+let delayT = barStored.delay ?? 0.5;
 function barSave() {
   try {
     localStorage.setItem(BAR, JSON.stringify({ pad: padLevel, room: roomT, sustain: sustainT, harm: harmT, delay: delayT }));
@@ -1058,6 +1060,17 @@ window.addEventListener('touchcancel', lifted, { passive: true });
 // ------------------------------------------------------------------ keys
 
 window.addEventListener('keydown', (e) => {
+  if ((e.metaKey || e.ctrlKey) && e.code === 'KeyC' && !String(getSelection() ?? '')) {
+    e.preventDefault();
+    void copySettings();
+    return;
+  }
+  if ((e.metaKey || e.ctrlKey) && e.code === 'KeyP') {
+    e.preventDefault();
+    navigator.clipboard?.readText().then(pasteSettings, () => ui?.toast('Paste with cmd+V'));
+    return;
+  }
+  if (e.metaKey || e.ctrlKey) return;
   if (e.code === 'Space') {
     e.preventDefault();
     if (e.repeat) return;
@@ -1074,13 +1087,9 @@ window.addEventListener('keydown', (e) => {
     else if (engine) (padLevel = padLevel > 0 ? 0 : 0.5), applyPad(engine);
   } else if (/^Digit[0-9]$/.test(e.code)) {
     const n = Number(e.code.slice(5));
-    // with cmd (or ctrl, or alt: a browser may keep cmd and a digit for its tabs): the strings,
-    // 1 to 5 (0 the last); with shift: save a snapshot; alone: recall one
-    if (e.metaKey || e.ctrlKey || e.altKey) {
-      e.preventDefault();
-      setPreset((n === 0 ? PRESETS.length : n) - 1);
-      ui?.toast(preset().label);
-    } else if (e.shiftKey) saveSlot(n);
+    // with shift: save a snapshot; alone: recall one (with cmd, ctrl or alt: the browser's)
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
+    if (e.shiftKey) saveSlot(n);
     else recallSlot(n);
   } else return;
   audio();
@@ -1161,9 +1170,11 @@ function slots(): Record<string, Snapshot> {
     return {};
   }
 }
+/** everything the bar and the mix set, now */
+const snapshot = (): Snapshot => ({ preset: preset().id, scale: SCALES[scaleIdx].id, arp: groove.mode, delay: delayT, sustain: sustainT, room: roomT, pad: padLevel, harm: harmT });
 function saveSlot(n: number) {
   const all = slots();
-  all[n] = { preset: preset().id, scale: SCALES[scaleIdx].id, arp: groove.mode, delay: delayT, sustain: sustainT, room: roomT, pad: padLevel, harm: harmT };
+  all[n] = snapshot();
   try {
     localStorage.setItem(SLOTS, JSON.stringify(all));
   } catch {
@@ -1174,6 +1185,10 @@ function saveSlot(n: number) {
 function recallSlot(n: number) {
   const s = slots()[n];
   if (!s) return void ui?.toast(`${n} is empty`);
+  applySnapshot(s);
+  ui?.toast(`${n} · ${preset().label} · ${SCALES[scaleIdx].label}`);
+}
+function applySnapshot(s: Snapshot) {
   const pi = PRESETS.findIndex((p) => p.id === s.preset);
   if (pi >= 0) setPreset(pi);
   const si = SCALES.findIndex((x) => x.id === s.scale);
@@ -1181,8 +1196,41 @@ function recallSlot(n: number) {
   setArp(Math.max(-1, Math.min(PATTERNS.length - 1, s.arp)));
   ui?.setDelay(s.delay);
   ui?.setLevels(s);
-  ui?.toast(`${n} · ${preset().label} · ${SCALES[scaleIdx].label}`);
 }
+
+/** cmd+C: the settings as JSON on the clipboard (unless text is selected); cmd+P (or a paste): back */
+async function copySettings() {
+  try {
+    await navigator.clipboard.writeText(JSON.stringify(snapshot(), null, 2));
+    ui?.toast('Settings copied');
+  } catch {
+    ui?.toast('Could not copy');
+  }
+}
+function pasteSettings(text: string) {
+  try {
+    const v = JSON.parse(text) as Partial<Snapshot>;
+    const num = (x: unknown, d: number) => (typeof x === 'number' && Number.isFinite(x) ? Math.min(1, Math.max(0, x)) : d);
+    if (typeof v !== 'object' || !v || (!v.preset && !v.scale)) throw new Error('not settings');
+    applySnapshot({
+      preset: String(v.preset ?? preset().id),
+      scale: String(v.scale ?? SCALES[scaleIdx].id),
+      arp: typeof v.arp === 'number' ? Math.round(v.arp) : groove.mode,
+      delay: num(v.delay, delayT),
+      sustain: num(v.sustain, sustainT),
+      room: num(v.room, roomT),
+      pad: num(v.pad, padLevel),
+      harm: num(v.harm, harmT),
+    });
+    ui?.toast(`Settings applied · ${preset().label} · ${SCALES[scaleIdx].label}`);
+  } catch {
+    ui?.toast('No settings on the clipboard');
+  }
+}
+window.addEventListener('paste', (e) => {
+  const text = e.clipboardData?.getData('text') ?? '';
+  if (text.trim().startsWith('{')) pasteSettings(text);
+});
 
 function arpCycle() {
   setArp(groove.mode >= PATTERNS.length - 1 ? -1 : groove.mode + 1);
@@ -1263,6 +1311,9 @@ function step(tms: number) {
   else grab.d = 0;
   residue *= Math.exp(-dt / 0.07);
   updateDots(dt, t);
+  // the dots show only while the string is held aside (in quickly, out slowly after)
+  const dotsWant = grab.on || [...extras.values()].some((x) => x.mode === 'pull') ? 1 : 0;
+  dotsShow += (dotsWant - dotsShow) * (1 - Math.exp(-dt / (dotsWant ? 0.12 : 0.6)));
   arpTick();
 
   ctx.clearRect(0, 0, w, h);
@@ -1346,7 +1397,11 @@ function step(tms: number) {
   nacre.pulse += ((groove.playing ? 1 : 0.3) - nacre.pulse) * (1 - Math.exp(-dt / 0.5));
   nacre.render(t, A.x, w, h, ys, reach, NACRE_INK);
   drawMarks();
-  drawDots(t);
+  if (dotsShow > 0.01) {
+    ctx.globalAlpha = dotsShow;
+    drawDots(t);
+    ctx.globalAlpha = 1;
+  }
   drawWire(glow, tint);
   if (grab.on && !grab.auto) drawFinger();
   if (mod.on) drawMod(t);
@@ -1384,6 +1439,9 @@ function drawMarks() {
     }
   }
 }
+
+/** how much the dots show, 0..1: only while the string is held */
+let dotsShow = 0;
 
 function drawDots(t: number) {
   // each chord's dots, faintly joined: a constellation
@@ -1671,7 +1729,7 @@ function pick<T extends { id: string }>(list: T[], id: string | null, dflt: stri
   return i >= 0 ? i : Math.max(0, list.findIndex((x) => x.id === dflt));
 }
 setPreset(pick(PRESETS, params.get('preset'), 'wood'));
-setScale(pick(SCALES, params.get('scale'), 'hijaz'));
+setScale(pick(SCALES, params.get('scale'), 'tension'));
 placeDots(true);
 requestAnimationFrame(frame);
 // ?auto plays by itself: the sound too, where the browser lets it start without a tap (a
