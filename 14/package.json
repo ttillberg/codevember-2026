@@ -1,7 +1,7 @@
 {
   "name": "day-14",
   "private": true,
-  "description": "A string hangs from the ceiling: take it, stretch it, play it, live modal synthesis",
+  "description": "One string the height of the screen, a live instrument always on the scale: pluck it, strum it, slide it",
   "type": "module",
   "scripts": {
     "dev": "vite",
