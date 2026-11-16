@@ -33,12 +33,11 @@ canvas:active { cursor: grabbing; }
 }
 .plate .head > i {
   display: block; margin-top: 6px; font-style: normal;
-  font: 600 14px/1.15 Inter, "Helvetica Neue", Helvetica, Arial, sans-serif; letter-spacing: 0.12em; text-transform: uppercase;
+  font: 600 13px/1.15 Inter, "Helvetica Neue", Helvetica, Arial, sans-serif; letter-spacing: 0.12em; text-transform: uppercase;
 }
 .plate .home { color: inherit; text-decoration: none; pointer-events: auto; opacity: 0.85; }
 .plate .home:hover { opacity: 1; }
 .plate .home span[lang="ja"] { font-family: "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Noto Sans JP", "Yu Gothic", sans-serif; letter-spacing: 0.06em; }
-.plate .home .ico { width: 0.8em; height: 0.8em; margin-right: 0.4em; vertical-align: -0.05em; fill: currentColor; } /* the month as a little grid, before VIEW ALL */
 @media (max-width: 640px) {
   .plate { top: max(16px, env(safe-area-inset-top)); left: max(16px, env(safe-area-inset-left)); }
   .plate b { font-size: 34px; }
