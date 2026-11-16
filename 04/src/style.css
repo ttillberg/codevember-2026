@@ -59,6 +59,9 @@ canvas.glow { position: absolute; inset: 0; width: 100%; height: 100%; pointer-e
   font: 600 14px/1 Inter, "Helvetica Neue", Helvetica, Arial, sans-serif; letter-spacing: 0.04em; font-variant-numeric: tabular-nums;
 }
 
+/* the time keeps its width whatever the digits: every figure as wide as the next, in a box that fits five of them */
+.corner .time span { display: inline-block; width: 5ch; text-align: center; font-variant-numeric: tabular-nums; font-feature-settings: "tnum" 1; }
+
 /* bottom centre: the brush with the others above it, trace, then undo and redo. One measure all through: 6 px round
    the edge of the pill and 6 px between one 46 px disc and the next, the separator standing in a gap of its own */
 .bar {
