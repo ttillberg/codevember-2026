@@ -15,7 +15,7 @@ float fbm(vec2 p){ float a = 0.5, s = 0.0; for(int i=0;i<4;i++){ s += a*vn(p); p
 `;
 
 /** How much of the street lamps' sodium light a road gives back after dark, so a road reads as a road and not as a row of dots. */
-const LIT = 'vec3(1.0, 0.6, 0.28)';
+const LIT = 'vec3(1.0, 0.52, 0.14)';
 
 /** For the trees, whose materials are made in the markup: they take the light of the place at night, on the side that faces it. */
 const lit = (m: MeshStandardMaterial | null) => { if (m) glowing(m, 0.8, true); };
@@ -138,16 +138,17 @@ export function World({ net, blocks, wood, trees = true, season = 'autumn' }: {
     () => ({
       grass: grained(GROUND[season].grass, worn(GRASS, season), 'grass' + season, 1, 0, 0.5),
       // what lies along the roads goes with them while a smear is dragged; the lots and the concrete of the houses stay
-      walk: wet(grained(0xa5a39b, worn(SLAB, season), 'slab' + season, 0.95, 0, 1, true), 'ground'),
+      walk: wet(grained(0xa5a39b, worn(SLAB, season), 'slab' + season, 0.95, 0.1, 1, true), 'ground'),
       paving: grained(0xa5a39b, worn(SLAB, season), 'slab' + season),
       felt: grained(0xffffff, FELT, 'felt', 0.85),
       kerb: wet(grained(0xb3b0a8, ROOF, 'kerb', 0.95, 0, 1, true), 'ground'),
       rim: grained(0xb3b0a8, ROOF, 'kerb'),
       pad: grained(0x787a79, LOT, 'lot', 0.95, 0, 2),
-      // sun-bleached, the way a road looks from the air
-      road: wet(grained(0x6b6d6f, ASPHALT, 'asphalt', 0.9, 0.06, 2.6, true), 'ground'),
-      white: wet(grained(0xe6e5de, PAINT, 'paint', 0.7, 0.12, 2.2, true), 'ground'),
-      yellow: wet(grained(0xcfae4a, PAINT, 'paint', 0.7, 0.12, 2.2, true), 'ground'),
+      // sun-bleached, the way a road looks from the air. After dark every road shines a little by itself, lamp or no lamp:
+      // a cheat, so that no stretch of road is ever lost in the dark. The lamps are there to be looked at, and add to it
+      road: wet(grained(0x6b6d6f, ASPHALT, 'asphalt', 0.9, 0.5, 1.5, true), 'ground'),
+      white: wet(grained(0xe6e5de, PAINT, 'paint', 0.7, 0.55, 1.4, true), 'ground'),
+      yellow: wet(grained(0xcfae4a, PAINT, 'paint', 0.7, 0.55, 1.4, true), 'ground'),
       guide: wet(grained(0xd08c00, PAINT, 'paint', 0.9), 'ground'),
     }),
     [season],

@@ -14,8 +14,8 @@ import { plantSmall, plantTown, turnSome, type Block } from './Town';
 import { People, Signs, Street } from './Life';
 import { Commons, plantCommons, standingCommons } from './Park';
 import { Painter, Sketch, type Brush, type Tool } from './Painter';
-import { Bar, Overlays, TimeControl, hhmm } from './Controls';
-import { HeatIcon } from './Icons';
+import { Brushes, History, Overlays, TimeControl, hhmm } from './Controls';
+import { HeatIcon, TraceIcon } from './Icons';
 import { buildNet, type Net, type V } from './net';
 import { MAP } from './map';
 import { baseIntent, derive, no, standing, type Intent } from './intent';
@@ -709,7 +709,11 @@ export function App() {
       {/* top right: the time and its hold, then the overlays; a second overlay is one more entry */}
       <div className="corner">
         <TimeControl now={hourNow} readout={readout} first={firstTime} hold={clock.hold} onHold={() => setClock((c) => ({ ...c, hold: !c.hold }))} onSet={setHour} />
-        <Overlays items={[{ id: 'heat', label: 'Heat map', icon: <HeatIcon />, on: heat, toggle: () => setHeat((v) => !v) }]} />
+        {/* the two ways of reading the traffic: where it stands, and where one stretch's cars are going */}
+        <Overlays items={[
+          { id: 'heat', label: 'Heat map', icon: <HeatIcon />, on: heat, toggle: () => setHeat((v) => !v) },
+          { id: 'trace', label: 'Trace', keys: 'R', icon: <TraceIcon />, on: tool === 'trace', toggle: () => setTool((t) => (t === 'trace' ? brush : 'trace')) },
+        ]} />
       </div>
       <pre className="alarm" ref={alarm} />
       {shot && (
@@ -789,11 +793,8 @@ export function App() {
         </div>
       )}
       {tool === 'trace' && <div className="note" ref={noteBox}>{trace ? '' : 'click a road'}</div>}
-      <Bar
-        tool={tool} brush={brush}
-        onTool={setTool} onBrush={setBrush}
-        canUndo={history.length > 1} canRedo={redos.length > 0} onUndo={undo} onRedo={redo}
-      />
+      <Brushes tool={tool} onPick={(b) => { setBrush(b); setTool(b); }} />
+      <History canUndo={history.length > 1} canRedo={redos.length > 0} onUndo={undo} onRedo={redo} />
     </>
   );
 }

@@ -43,7 +43,7 @@ export function Sketch({ api }: { api: MutableRefObject<(strokes: { pts: V[] }[]
         <lineBasicMaterial color={0xf4f4f2} transparent opacity={0.9} depthTest={false} depthWrite={false} toneMapped={false} />
       </lineSegments>
       <points ref={dots} visible={false} frustumCulled={false} renderOrder={22}>
-        <pointsMaterial color={0xffb23e} size={7} sizeAttenuation={false} transparent depthTest={false} depthWrite={false} toneMapped={false} />
+        <pointsMaterial color={NEON} size={7} sizeAttenuation={false} transparent depthTest={false} depthWrite={false} toneMapped={false} />
       </points>
     </>
   );
@@ -104,8 +104,8 @@ function under(net: Net, ray: Ray, ground: V): Hold | null {
   return best;
 }
 
-/** On the ground the marks are pale; up on a deck they are amber, and stand on a stem so the height shows. */
-const PALE = 0xf4f4f2, AMBER = 0xffb23e;
+/** On the ground the marks are pale; up on a deck, and for a bridge, they are a green no lamp has, and stand on a stem so the height shows. What is rubbed out is red. */
+const PALE = 0xf4f4f2, NEON = 0x39ff14, RED = 0xff2d2d;
 
 interface Props {
   net: Net;
@@ -126,15 +126,53 @@ export function Painter({ net, tool, onStroke, onSmear, onTrace, onErase }: Prop
 
   const mesh = useRef<Mesh>(null);
   /** `ghost`: the stroke has been let go and is waiting to be built: a pale mesh where the road will be. `erase`: the drag, in red */
-  const show = (pts: V[], mode: 'paint' | 'ghost' | 'erase' = 'paint') => {
-    const m = preview.current!, g = mesh.current!;
+  // The stroke as it is drawn has to be seen by day and after dark: a bright ribbon, the colour of the brush, in a wider
+  // faint one. It is not toned down with the picture, so at night it is the brightest thing in it.
+  const halo = useRef<Mesh>(null);
+  const show = (pts: V[], mode: 'paint' | 'bridge' | 'ghost' | 'erase' = 'paint') => {
+    const m = preview.current!, g = mesh.current!, h = halo.current!;
+    h.geometry.dispose();
+    h.geometry = strokeGeometry(pts, CROSS.lanes * CROSS.lw + 4.5);
+    h.visible = pts.length > 1 && mode !== 'ghost';
+    // whatever is being laid is green, road or bridge; what is rubbed out is red; the ghost left waiting is pale
+    const ink = mode === 'erase' ? RED : mode === 'ghost' ? PALE : NEON;
+    (h.material as MeshBasicMaterial).color.setHex(ink);
     m.geometry.dispose();
     m.geometry = g.geometry = strokeGeometry(pts, CROSS.lanes * CROSS.lw + 0.45);
     m.visible = pts.length > 1;
     g.visible = m.visible && mode === 'ghost';
     const mat = m.material as MeshBasicMaterial;
-    mat.color.setHex(mode === 'ghost' ? 0xf4f4f2 : mode === 'erase' ? 0xd2402a : 0x1d1e21);
-    mat.opacity = mode === 'ghost' ? 0.3 : mode === 'erase' ? 0.6 : 0.85;
+    mat.color.setHex(ink);
+    mat.opacity = mode === 'ghost' ? 0.3 : 0.7;
+    if (pts.length < 2) link(null);
+  };
+  // What the stroke joins: every road it has touched on its way lit up from end to end (a bridge only touches what it
+  // starts and ends on). Up to a dozen, each its own ribbon at its own height.
+  const links = useRef<Group>(null);
+  const joined = useRef(new Set<Road>());
+  const link = (p: V | null, bridge = false, first = false) => {
+    const set = joined.current, g = links.current!;
+    if (!p) { if (set.size) { set.clear(); g.children.forEach((c) => { c.visible = false; }); } return; }
+    // a bridge in the air touches nothing: only its first point counts here, its last is added when it is let go over a road
+    if (bridge && !first) return;
+    let grew = false;
+    for (const r of net.roads) {
+      if (set.has(r) || set.size >= g.children.length) continue;
+      const cum = cumLen(r.pts);
+      for (let d = 0; d <= r.len; d += 4) {
+        const q = pointOn(r.pts, cum, d);
+        if (Math.hypot(q.x - p.x, q.y - p.y) < r.hw + 5) { set.add(r); grew = true; break; }
+      }
+    }
+    if (!grew) return;
+    [...set].forEach((r, i) => {
+      const c = g.children[i] as Mesh, up = r.bridge ? deck(r, r.len / 2) : 0;
+      c.geometry.dispose();
+      c.geometry = strokeGeometry(r.pts, r.hw + 0.8);
+      c.position.y = up + 0.3;
+      (c.material as MeshBasicMaterial).color.setHex(up > 0 ? NEON : PALE);
+      c.visible = true;
+    });
   };
   // Where the brush is and what it would take hold of: a ring under the finger, the stretch of road it is on lit up,
   // and while a stroke is drawn another ring left standing where it began
@@ -143,7 +181,7 @@ export function Painter({ net, tool, onStroke, onSmear, onTrace, onErase }: Prop
     g.visible = !!p;
     if (!p) return;
     g.position.set(p.x, 0, p.y);
-    const [ring, stem] = g.children as Mesh[], color = h > 0 ? AMBER : PALE;
+    const [ring, stem] = g.children as Mesh[], color = h > 0 ? NEON : PALE;
     ring.position.y = h + 0.5;
     stem.visible = h > 0;
     stem.position.y = h / 2;
@@ -165,7 +203,7 @@ export function Painter({ net, tool, onStroke, onSmear, onTrace, onErase }: Prop
     n.geometry.dispose();
     n.geometry = strokeGeometry(pts, hold.road.hw + 0.6);
     n.position.y = hold.h + 0.25;
-    (n.material as MeshBasicMaterial).color.setHex(hold.h > 0 ? AMBER : PALE);
+    (n.material as MeshBasicMaterial).color.setHex(hold.h > 0 ? NEON : PALE);
   };
   const leave = () => { if (!draw.current) { mark(here.current!, null); near.current!.visible = false; } };
   // the road it was on may be gone when the roads change
@@ -201,6 +239,7 @@ export function Painter({ net, tool, onStroke, onSmear, onTrace, onErase }: Prop
     // where it began stays marked for as long as it is drawn
     const hold = smear || erase ? null : under(net, e.ray, p);
     mark(from.current!, top ?? hold?.p ?? p, top && hold ? hold.h : 0);
+    if (!smear && !erase) link(top ?? p, tool === 'bridge' || e.metaKey || e.ctrlKey, true);
     point(e);
   };
   const move = (e: ThreeEvent<PointerEvent>) => {
@@ -215,7 +254,8 @@ export function Painter({ net, tool, onStroke, onSmear, onTrace, onErase }: Prop
     const last = d.pts[d.pts.length - 1];
     if (Math.hypot(p.x - last.x, p.y - last.y) < 5) return;
     d.pts.push(p);
-    show(d.pts, d.erase ? 'erase' : 'paint');
+    show(d.pts, d.erase ? 'erase' : d.bridge ? 'bridge' : 'paint');
+    if (!d.erase) link(p, d.bridge);
   };
   const up = (e: ThreeEvent<PointerEvent>) => {
     const d = draw.current;
@@ -242,10 +282,22 @@ export function Painter({ net, tool, onStroke, onSmear, onTrace, onErase }: Prop
         <planeGeometry args={[5000, 5000]} />
         <meshBasicMaterial transparent opacity={0} depthWrite={false} />
       </mesh>
-      <mesh ref={preview} visible={false} raycast={() => null}>
+      <mesh ref={halo} visible={false} raycast={() => null} renderOrder={17}>
         <bufferGeometry />
-        <meshBasicMaterial color={0x1d1e21} transparent opacity={0.85} depthWrite={false} />
+        <meshBasicMaterial transparent opacity={0.22} depthTest={false} depthWrite={false} toneMapped={false} />
       </mesh>
+      <mesh ref={preview} visible={false} raycast={() => null} renderOrder={18}>
+        <bufferGeometry />
+        <meshBasicMaterial color={PALE} transparent opacity={0.9} depthTest={false} depthWrite={false} toneMapped={false} />
+      </mesh>
+      <group ref={links}>
+        {Array.from({ length: 12 }, (_, i) => (
+          <mesh key={i} visible={false} raycast={() => null} renderOrder={16}>
+            <bufferGeometry />
+            <meshBasicMaterial transparent opacity={0.3} depthTest={false} depthWrite={false} toneMapped={false} />
+          </mesh>
+        ))}
+      </group>
       {[here, from].map((ref, i) => (
         <group key={i} ref={ref} visible={false}>
           <mesh rotation-x={-Math.PI / 2} raycast={() => null} renderOrder={20}>

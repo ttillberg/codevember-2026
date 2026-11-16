@@ -488,6 +488,9 @@ export function Street({ net, blocks, speed }: { net: Net; blocks: Block[]; spee
       tvs.push({ x, y: up + H / 2, z, sx: W, sy: H, sz: 0.5, rot, seed: hash(x, z) });
     };
 
+    // A lamp on a bridge throws half as much, and they stand as close as on the ground: where decks lie over each other
+    // and over a road their light adds up, and fewer lamps would leave dark stretches where a deck is alone
+    const dim = (c: [number, number, number], k: number): [number, number, number] => [c[0] * k, c[1] * k, c[2] * k];
     for (const r of net.roads) {
       if (r.base.length < 2) continue;
       // lamp posts on every road: both sides, staggered, the arm reaching in over the road; a lane has a lower one, on one side.
@@ -508,7 +511,7 @@ export function Street({ net, blocks, speed }: { net: Net; blocks: Block[]; spee
           post.push({ x: p.x + nx * 1.3, y: z + H, z: p.y + ny * 1.3, sx: 2.6, sy: 0.3, sz: 0.36, rot: -Math.atan2(ny, nx) });
           // the lamp itself: a small round source at the end of the arm, not a slab
           lamp.push({ x: p.x + nx * 2.5, y: z + H - 0.25, z: p.y + ny * 2.5, sx: 0.95, sy: 0.7, sz: 0.95, rot: 0 });
-          lit.push({ x: p.x + nx * 2.5, y: z + 0.22, z: p.y + ny * 2.5, sx: H * 1.6, sy: H * 1.6, sz: 1, rot: 0, ink: warmth(p.x, p.y) });
+          lit.push({ x: p.x + nx * 2.5, y: z + 0.22, z: p.y + ny * 2.5, sx: H * 1.6, sy: H * 1.6, sz: 1, rot: 0, ink: dim(warmth(p.x, p.y), r.bridge ? 0.5 : 1) });
         }
       }
       // screens along the biggest roads

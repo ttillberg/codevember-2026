@@ -64,45 +64,36 @@ canvas.glow { position: absolute; inset: 0; width: 100%; height: 100%; pointer-e
 /* the time keeps its width whatever the digits: every figure as wide as the next, in a box that fits five of them */
 .corner .time span { display: inline-block; width: 5ch; text-align: center; font-variant-numeric: tabular-nums; font-feature-settings: "tnum" 1; }
 
-/* bottom centre: the brush with the others above it, trace, then undo and redo. One measure all through: 6 px round
-   the edge of the pill and 6 px between one 46 px disc and the next, the separator standing in a gap of its own */
-.bar {
-  position: fixed; z-index: 2; left: 50%; transform: translateX(-50%);
-  bottom: max(20px, env(safe-area-inset-bottom));
-  gap: 6px; padding: 6px;
-}
-.bar .sep { width: 1px; align-self: stretch; margin: 10px 0; background: rgba(244, 244, 242, 0.25); }
-.knob { position: relative; display: flex; }
-.bar > button, .bar .knob > button { position: relative; width: 46px; height: 46px; }
-/* the other brushes stand up above the one in hand: round buttons, icons only */
-.picks {
-  position: absolute; left: 50%; bottom: calc(100% + 12px); display: flex; flex-direction: column-reverse; gap: 6px;
-  padding: 6px; border-radius: 29px;
-  background: rgba(20, 22, 18, 0.72); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
-  opacity: 0; pointer-events: none; transform: translate(-50%, 6px) scale(0.96); transform-origin: 50% 100%;
-  transition: opacity 0.16s ease-out, transform 0.2s cubic-bezier(0.2, 0.8, 0.2, 1);
-}
-.picks.open { opacity: 1; pointer-events: auto; transform: translate(-50%, 0); }
-.picks button { position: relative; width: 46px; height: 46px; }
-/* a name beside a brush, and over a button of the bar, with its key in a chip: only under the pointer */
-.picks button span, .bar .tip {
+/* the brushes, all in sight, along the bottom; undo and redo bottom right. One measure all through: 6 px round the
+   edge of a pill and 6 px between one 46 px disc and the next */
+.brushes, .history { position: fixed; z-index: 2; bottom: max(20px, env(safe-area-inset-bottom)); gap: 6px; padding: 6px; }
+.brushes { left: 50%; transform: translateX(-50%); }
+.history { right: max(20px, env(safe-area-inset-right)); }
+.brushes button, .history button { position: relative; width: 46px; height: 46px; }
+/* what a button is, over it after a short hover: its name, and its key in a chip */
+.tip {
   position: absolute; z-index: 2; pointer-events: none; white-space: nowrap; display: flex; align-items: center; gap: 6px;
+  left: 50%; bottom: calc(100% + 12px); transform: translate(-50%, 4px);
   padding: 5px 10px; border-radius: 999px;
   background: rgba(20, 22, 18, 0.82); color: #f4f4f2; opacity: 0; transition: opacity 0.12s, transform 0.12s;
   font: 500 11px/1 Inter, "Helvetica Neue", Helvetica, Arial, sans-serif;
 }
-.picks button span:has(kbd), .bar .tip:has(kbd) { padding-right: 6px; }
-.bar kbd {
+.tip:has(kbd) { padding-right: 6px; }
+.tip kbd {
   display: inline-flex; align-items: center; justify-content: center; min-width: 16px; height: 16px; padding: 0 4px;
   box-sizing: border-box; border-radius: 5px; background: rgba(244, 244, 242, 0.22); color: #f4f4f2; font: inherit; font-size: 10px;
 }
-.picks button span { left: calc(100% + 14px); top: 50%; transform: translate(-4px, -50%); }
-.picks button.on span, .picks button:hover span { opacity: 1; transform: translate(0, -50%); }
-.bar .tip { left: 50%; bottom: calc(100% + 12px); transform: translate(-50%, 4px); }
+/* the last of a row keeps its name inside the screen */
+.history .tip { left: auto; right: 0; transform: translate(0, 4px); }
 @media (hover: hover) {
-  .bar > button:hover:not(:disabled) .tip, .bar .knob > button:hover .tip { opacity: 1; transform: translate(-50%, 0); transition-delay: 0.35s; }
+  .pill button:hover:not(:disabled) .tip { opacity: 1; transform: translate(-50%, 0); transition-delay: 0.35s; }
+  .history button:hover:not(:disabled) .tip { transform: translate(0, 0); }
 }
-.picking .note { opacity: 0; }
+@media (max-width: 640px) {
+  /* on a phone the brushes lie along the bottom from the left, and undo and redo keep the right corner */
+  .brushes { left: max(16px, env(safe-area-inset-left)); transform: none; }
+  .history { right: max(16px, env(safe-area-inset-right)); }
+}
 
 /* what the trace found: over the bar */
 .note {
@@ -145,7 +136,7 @@ canvas.glow { position: absolute; inset: 0; width: 100%; height: 100%; pointer-e
   font: 11px/1.35 ui-monospace, Menlo, monospace; white-space: pre-wrap;
 }
 .alarm:empty { display: none; }
-.clean .corner, .clean .bar, .clean .note, .clean .pane { display: none; }
+.clean .corner, .clean .brushes, .clean .history, .clean .note, .clean .pane { display: none; }
 @media (max-width: 640px) {
   /* the pane sits under the time and the overlays on a phone */
   .pane { top: calc(max(16px, env(safe-area-inset-top)) + 124px); right: max(16px, env(safe-area-inset-right)); max-height: calc(100vh - 150px); }
