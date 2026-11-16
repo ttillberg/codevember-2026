@@ -176,8 +176,8 @@ button { touch-action: manipulation; }
   display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px;
   width: 240px; height: 240px; border-radius: 36px; box-sizing: border-box; padding: 24px;
   color: var(--ink); text-align: center; font-family: var(--ui);
-  background: rgba(58, 58, 60, 0.38);
-  -webkit-backdrop-filter: blur(30px) saturate(1.8); backdrop-filter: blur(30px) saturate(1.8);
+  background: rgba(58, 58, 60, 0.2);
+  -webkit-backdrop-filter: blur(6px) saturate(1.8); backdrop-filter: blur(6px) saturate(1.8);
   box-shadow: 0 24px 60px rgba(0, 0, 0, 0.5);
   animation: card-in 0.7s 0.25s cubic-bezier(0.2, 0.8, 0.2, 1) backwards;
   transition: transform 0.45s cubic-bezier(0.4, 0, 0.2, 1);
