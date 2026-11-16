@@ -13,6 +13,7 @@
 //   seconds: 10          length of the index clip
 //   xseconds: 60         length of the X video
 //   ink: white           the title over the index square: black (default) or white on a dark day
+//   crop: 600            the index clip shows only the middle of the viewport, this many px square (zoomed in)
 //   ---
 //   ```init              JavaScript run in the page before it loads (localStorage, a fixed seed...)
 //   ```setup             played after the warmup, before the index clip starts: what it should open on
@@ -199,7 +200,7 @@ export async function clip(dir, { mode = 'clip', base, still = false } = {}) {
     const silent = audio ? join(tmp, 'silent.mp4') : mp4;
     const r = spawnSync('ffmpeg', [
       '-y', '-loglevel', 'error', '-f', 'concat', '-safe', '0', '-i', join(tmp, 'list.txt'), '-t', String(secs),
-      '-vf', `fps=30,scale=${m.out}:${m.out}:flags=lanczos`,
+      '-vf', `fps=30,${mode === 'clip' && demo.crop ? `crop=${demo.crop}:${demo.crop},` : ''}scale=${m.out}:${m.out}:flags=lanczos`,
       '-c:v', 'libx264', '-preset', 'slow', '-crf', String(m.crf), '-pix_fmt', 'yuv420p', '-movflags', '+faststart', '-an', silent,
     ], { stdio: 'inherit' });
     if (r.status !== 0) throw new Error('ffmpeg failed');

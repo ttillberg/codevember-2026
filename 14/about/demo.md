@@ -1,5 +1,6 @@
 ---
 ink: white
+crop: 600
 query: ?clean
 warmup: 6000
 seconds: 10
@@ -7,9 +8,9 @@ xseconds: 60
 ---
 # 14 / Tension, demo
 
-`?clean`: the string alone, top to bottom, in the dark. The clip: a hand pulls the string far aside
-through the constellation of dots, they light up and catch it one by one, the light swells out from
-each, and it rings; then the same the other way. The X video (with its sound): that pull as the hook,
+`?clean`: the string alone, top to bottom, in the dark. The clip, zoomed in on the middle 600 px: a mouse brushes over the string
+without a click, at different heights and both ways, slow and fast: each crossing plucks it, soft or
+hard, and the light runs out from it. The X video (with its sound): that pull as the hook,
 plucks climbing the scale, a pluck and a magnetic slide with its flageolets, the arp following the
 plucks with the delay behind, and Doom, heavy, to end on.
 
@@ -32,13 +33,28 @@ wait 1800
 ```
 
 ```steps
-wait 500
-# far aside to the right, through the dots, and let go
-drag 600,560 700,550 860,535 1010,520 367ms
-wait 3300
-# the other way, a little lower
-drag 600,690 500,680 340,665 190,650 367ms
-wait 3000
+# zoomed in on the middle (crop: 600, so x and y 300 to 900 are what shows): a mouse brushing
+# over the string, no click; each crossing plucks it, as hard as the brush was fast (slow drifts
+# soft, flicks hard), at different heights, both ways
+wait 300
+move 520,380 680,395 220ms
+wait 650
+move 690,560 510,545 120ms
+wait 600
+move 500,780 700,795 300ms
+wait 750
+move 700,450 500,465 90ms
+wait 400
+move 500,490 700,475 110ms
+wait 850
+move 530,660 670,675 260ms
+wait 650
+move 690,340 510,355 100ms
+wait 800
+move 500,840 700,825 140ms
+wait 700
+move 700,600 500,615 200ms
+wait 600
 ```
 
 ```x-setup
