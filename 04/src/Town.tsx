@@ -207,8 +207,9 @@ export function Town({ net, blocks, paving, roofing }: { net: Net; blocks: Block
       const fix = () => {
         o.updateMatrix();
         if (!b.turn) return;
-        const c = Math.cos(b.turn), n = Math.sin(b.turn), mx = (q.x0 + q.x1) / 2, mz = (q.y0 + q.y1) / 2;
-        o.matrix.premultiply(spin.makeRotationY(b.turn).setPosition(mx - (mx * c + mz * n), 0, mz - (-mx * n + mz * c)));
+        // where the turn leaves the origin is all the shift there is
+        const [tx, tz] = turned(b, 0, 0);
+        o.matrix.premultiply(spin.makeRotationY(b.turn).setPosition(tx, 0, tz));
       };
       const w = q.x1 - q.x0, d = q.y1 - q.y0, cx = (q.x0 + q.x1) / 2, cz = (q.y0 + q.y1) / 2;
       o.position.set(cx, b.h / 2, cz); o.scale.set(w, b.h, d); fix();

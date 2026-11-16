@@ -32,7 +32,7 @@ export function People({ net, blocks, speed }: { net: Net; blocks: Block[]; spee
   const ways = useMemo(() => {
     const walk: Line[] = [], ride: Line[] = [];
     for (const r of net.roads) {
-      if (r.look < 1 || r.bridge || r.base.length < 2) continue;
+      if (r.rank < 1 || r.bridge || r.base.length < 2) continue;
       for (const side of [1, -1]) {
         if (!r.ring) walk.push(line(offset(r.base, side * (r.hw + 0.95 + WALK / 2))));
         if (r.ring && side < 0) continue;
@@ -213,9 +213,10 @@ export function Signs({ net, blocks }: { net: Net; blocks: Block[] }) {
       if (!b.canopy && r() < 0.7) out.push({ x: b.x0 + 4 + r() * (w - 8), y: b.h + 4, z: (b.y0 + b.y1) / 2, sx: 9 + r() * 6, sy: 4.5, sz: 0.4, rot: 0, ink: ink() });
     }
     // along the roads: hoardings on poles, facing the traffic
-    const taken = (x: number, y: number, m = 3) => [...net.pads, ...net.buildings, ...blocks].some((q) => x > q.x0 - m && x < q.x1 + m && y > q.y0 - m && y < q.y1 + m);
+    const solid = [...net.pads, ...net.buildings, ...blocks];
+    const taken = (x: number, y: number, m = 3) => solid.some((q) => x > q.x0 - m && x < q.x1 + m && y > q.y0 - m && y < q.y1 + m);
     for (const road of net.roads) {
-      if (road.look < 2 || road.bridge || road.ring) continue;
+      if (road.rank < 2 || road.bridge || road.ring) continue;
       for (const side of [1, -1]) {
         const ln = offset(road.base, side * (road.hw + WALK + 3));
         const cum = cumLen(ln);
@@ -232,7 +233,7 @@ export function Signs({ net, blocks }: { net: Net; blocks: Block[] }) {
     }
     // road signs: a blue board over the lanes before every signal, a red one where a road gives way
     for (const road of net.roads) {
-      if (road.look < 1 || road.bridge || road.ring || road.base.length < 2) continue;
+      if (road.rank < 1 || road.bridge || road.ring || road.base.length < 2) continue;
       const cum = cumLen(road.base), run = cum[cum.length - 1];
       for (const end of [0, 1]) {
         const node = end ? road.b : road.a;
@@ -245,13 +246,13 @@ export function Signs({ net, blocks }: { net: Net; blocks: Block[] }) {
           const tx = p.x - p2.x, ty = p.y - p2.y;
           return { p, tx, ty, nx: -ty, ny: tx, rot: -(Math.atan2(ty, tx) + Math.PI / 2) };
         };
-        if (node.signal && road.look >= 2 && run >= 50) {
+        if (node.signal && road.rank >= 2 && run >= 50) {
           const f = frame(Math.min(34, run * 0.42)), reach = road.hw + 1.6;
           const post = { x: f.p.x + f.nx * reach, y: f.p.y + f.ny * reach };
           if (!taken(post.x, post.y) && !onRoad(net, post.x, post.y, road)) {
             out.push({ x: post.x, y: 3.9, z: post.y, sx: 0.4, sy: 7.8, sz: 0.4, rot: f.rot, ink: 0x6d7074 });
             out.push({ x: f.p.x + f.nx * reach / 2, y: 7.6, z: f.p.y + f.ny * reach / 2, sx: reach, sy: 0.28, sz: 0.28, rot: f.rot, ink: 0x6d7074 });
-            out.push({ x: f.p.x + f.nx * road.hw * 0.5 - f.tx * 0.3, y: 7.3, z: f.p.y + f.ny * road.hw * 0.5 - f.ty * 0.3, sx: road.hw * 0.86, sy: 2.5, sz: 0.2, rot: f.rot, ink: road.look >= 3 ? 0x1a6a44 : 0x1a4f9e });
+            out.push({ x: f.p.x + f.nx * road.hw * 0.5 - f.tx * 0.3, y: 7.3, z: f.p.y + f.ny * road.hw * 0.5 - f.ty * 0.3, sx: road.hw * 0.86, sy: 2.5, sz: 0.2, rot: f.rot, ink: road.rank >= 3 ? 0x1a6a44 : 0x1a4f9e });
           }
         } else if (!node.signal && road.rank < top && run >= 20) {
           const f = frame(3), reach = road.hw + 1.3;
@@ -349,7 +350,8 @@ export function Street({ net, blocks, speed }: { net: Net; blocks: Block[]; spee
     const post: { x: number; y: number; z: number; sx: number; sy: number; sz: number; rot: number }[] = [];
     const lamp: typeof post = [];
     const tvs: (typeof post[number] & { seed: number })[] = [];
-    const taken = (x: number, y: number, m = 2) => [...net.pads, ...net.buildings, ...blocks].some((q) => x > q.x0 - m && x < q.x1 + m && y > q.y0 - m && y < q.y1 + m);
+    const solid = [...net.pads, ...net.buildings, ...blocks];
+    const taken = (x: number, y: number, m = 2) => solid.some((q) => x > q.x0 - m && x < q.x1 + m && y > q.y0 - m && y < q.y1 + m);
     const hash = (x: number, y: number) => Math.abs(Math.sin(x * 12.9898 + y * 78.233) * 43758.5453) % 1;
     const stand = (x: number, z: number, W: number, H: number, rot: number, up: number) => {
       // two legs and the screen on top of them
@@ -361,7 +363,7 @@ export function Street({ net, blocks, speed }: { net: Net; blocks: Block[]; spee
     for (const r of net.roads) {
       if (r.base.length < 2) continue;
       // lamp posts on every road: both sides, staggered, the arm reaching in over the road; a lane has a lower one, on one side
-      const small = r.look < 2 && !r.ring, H = small ? 6.4 : 9.2;
+      const small = r.rank < 2 && !r.ring, H = small ? 6.4 : 9.2;
       for (const side of r.ring || small ? [1] : [1, -1]) {
         // on a bridge they stand on the edge of the deck
         const ln = offset(r.base, side * (r.bridge ? r.hw - 0.3 : r.hw + 1.3));
@@ -379,7 +381,7 @@ export function Street({ net, blocks, speed }: { net: Net; blocks: Block[]; spee
         }
       }
       // screens along the biggest roads
-      if (r.look >= 3 && !r.bridge) {
+      if (r.rank >= 3 && !r.bridge) {
         const side = hash(r.base[0].x, r.base[0].y) < 0.5 ? 1 : -1;
         const ln = offset(r.base, side * (r.hw + WALK + 7));
         const cum = cumLen(ln);
@@ -392,7 +394,7 @@ export function Street({ net, blocks, speed }: { net: Net; blocks: Block[]; spee
     }
     // and at the crossings: in a corner between two arms, turned to face the middle
     for (const n of net.nodes) {
-      const top = Math.max(...n.roads.map((q) => q.look));
+      const top = Math.max(...n.roads.map((q) => q.rank));
       if (n.stub || n.roads.length < 3 || top < 2 || n.roads.some((q) => q.ring || q.bridge)) continue;
       if (!n.signal && top < 3) continue;
       const angs = n.roads.map((q) => {

@@ -35,7 +35,6 @@ export interface Road extends RoadKind {
   /** the profile of its deck, if it is a bridge */
   deck?: Deck;
   len: number;
-  look: number; // the rank it is drawn as; rank itself is who yields
   feeds: boolean;
   ring: boolean; // one way, anticlockwise: a piece of a roundabout
   one: boolean; // one way, a to b: a ramp
@@ -375,7 +374,7 @@ export function buildNet(spec: Spec): Net {
     const stallSegs: number[] = [];
     sr.stalls.forEach((on, i) => on && stallSegs.push(i));
     const cum = cumLen(pts);
-    const r: Road = { ...sr.kind, look: sr.kind.rank, id: roads.length, a, b, raw: sr.raw, pts, base: [], stallSegs, bridge: !!sr.bridge, deck: sr.bridge ? sr.deck ?? shape(cum[cum.length - 1], 0, 0, BRIDGE_H) : undefined, feeds: !!sr.feeds, ring: !!sr.ring, one: !!sr.one, hw: halfWidth(sr.kind, sr.ring || sr.one), len: cum[cum.length - 1] };
+    const r: Road = { ...sr.kind, id: roads.length, a, b, raw: sr.raw, pts, base: [], stallSegs, bridge: !!sr.bridge, deck: sr.bridge ? sr.deck ?? shape(cum[cum.length - 1], 0, 0, BRIDGE_H) : undefined, feeds: !!sr.feeds, ring: !!sr.ring, one: !!sr.one, hw: halfWidth(sr.kind, sr.ring || sr.one), len: cum[cum.length - 1] };
     roads.push(r);
     a.roads.push(r);
     b.roads.push(r);
@@ -389,12 +388,12 @@ export function buildNet(spec: Spec): Net {
     // traffic comes and goes only at the far ends of the map, not at a painted dead end
     n.edge = n.stub && far(n.p);
     n.trim = junctionTrim(n.p, n.roads.map((r) => ({ raw: r.raw, hw: r.hw, ring: r.ring || r.one })));
-    const top = Math.max(...n.roads.map((r) => r.look));
-    n.signal = n.z === 0 && !n.roads.some((r) => r.ring) && ((n.roads.length >= 4 && n.roads.every((r) => r.look >= 2)) || (n.roads.length >= 3 && top >= 3 && n.roads.some((r) => r.feeds)));
+    const top = Math.max(...n.roads.map((r) => r.rank));
+    n.signal = n.z === 0 && !n.roads.some((r) => r.ring) && ((n.roads.length >= 4 && n.roads.every((r) => r.rank >= 2)) || (n.roads.length >= 3 && top >= 3 && n.roads.some((r) => r.feeds)));
     n.sigOff = Math.abs(n.p.x) / 14;
   }
   // signals come one to a block: the bigger junction keeps its lights, the next one along gives way
-  const size = (n: Node) => n.roads.reduce((a, r) => a + r.look, 0);
+  const size = (n: Node) => n.roads.reduce((a, r) => a + r.rank, 0);
   const lit: Node[] = [];
   for (const n of nodes.filter((n) => n.signal).sort((a, b) => size(b) - size(a) || a.id - b.id)) {
     if (lit.some((m) => dist(m.p, n.p) < 75)) n.signal = false;

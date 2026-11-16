@@ -26,7 +26,12 @@ export interface Stroke {
 export type Intent = Stroke[];
 
 /** ?no=roundabout: junctions stay junctions however many arms they have, and a closed stroke is just a road */
-export const RINGS = !(typeof location !== 'undefined' ? new URLSearchParams(location.search).get('no') ?? '' : '').toLowerCase().split(',').some((w) => w.startsWith('round'));
+/** A junction turns into a roundabout by itself only with this many arms. */
+export const RING_ARMS = 6;
+/** Is this left out of the place? From ?no=house,trees,roundabout in the address; a word counts by how it starts. */
+const NO = (typeof location !== 'undefined' ? new URLSearchParams(location.search).get('no') ?? '' : '').toLowerCase().split(',');
+export const no = (word: string) => NO.some((w) => w.startsWith(word));
+export const RINGS = !no('round');
 
 const SNAP = 18; // an end this close to a road joins it
 const R = 26; // junctions closer than this are one
@@ -241,7 +246,9 @@ export function standing<T extends Rect>(intent: Intent, houses: T[]): T[] {
 
 // The same strokes among the same houses are asked for several times when a stroke is laid: answer once.
 const made = new WeakMap<Intent, { houses: Rect[]; spec: Spec }>();
-export function derive(intent: Intent, houses: Rect[] = []): Spec {
+// one list for "no houses", so that asking twice without any is asking the same thing
+export const NO_HOUSES: Rect[] = [];
+export function derive(intent: Intent, houses: Rect[] = NO_HOUSES): Spec {
   const was = made.get(intent);
   if (was && was.houses === houses) return was.spec;
   const spec = rules(intent, houses);
@@ -587,7 +594,7 @@ function courts(spec: Spec): Spec {
 }
 
 /**
- * A junction with five arms or more is a roundabout: a ring, one way, and every arm meets it on its own.
+ * A junction with six arms or more is a roundabout: a ring, one way, and every arm meets it on its own.
  * The more arms and the wider they are, the bigger the ring.
  */
 function roundabouts(spec: Spec): Spec {
@@ -603,7 +610,7 @@ function roundabouts(spec: Spec): Spec {
   const rings: Spec = [];
   for (const n of at.values()) {
     // nor where bridges meet: that is up in the air
-    if (!RINGS || n.ends.length < 5 || n.ends.filter((a) => a.r.bridge).length > 1 || n.ends.some((a) => a.r.ring || a.r.stalls.some(Boolean))) continue;
+    if (!RINGS || n.ends.length < RING_ARMS || n.ends.filter((a) => a.r.bridge).length > 1 || n.ends.some((a) => a.r.ring || a.r.stalls.some(Boolean))) continue;
     const c = n.p;
     // each arm, seen from the middle outwards
     const arms = n.ends.map(({ r, e }) => {

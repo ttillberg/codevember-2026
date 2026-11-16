@@ -17,7 +17,9 @@ Reference: drone pictures of the Huangjuewan interchange, Chongqing. First pass 
 - Autumn and street detail: leaf trees in yellow, orange and rust with their leaves under them, ginkgo rows along the streets, drifts of leaves in the ground shaders; roofs with parapets, stair heads, tin-roofed rooms, tubs, sun heaters and steel tanks; lane arrows before the stop lines, zebras on side roads, the yellow studded strip down every sidewalk; blue boards over the lanes before signals, a red sign where a road gives way. Left: bare trees, leaves blowing, bus stops and railings, signs on the bridges, a lower sun, and none of it measured on a phone.
 - Firs are pines now: a stem and six ragged skirts of boughs, one instanced mesh (`pine()` in `World.tsx`). Not looked at on a phone.
 - `?no=roundabout` keeps every junction a junction and a closed stroke a road; beside `?no=house,trees`. Not in the README.
-- One house in five is kept and a quarter of those stand at an angle (`KEEP` in `App.tsx`, `turnSome()` in `Town.tsx`). A turned house is in the way as the straight box around it, so a road stops short of corners that look free; trees and lamps keep out of that box too; footpaths still lead to houses that are gone.
+- One house in three is kept and a quarter of those stand at an angle (`KEEP` in `App.tsx`, `turnSome()` in `Town.tsx`). A turned house is in the way as the straight box around it, so a road stops short of corners that look free; trees and lamps keep out of that box too; footpaths still lead to houses that are gone.
+- The base map starts with three flyovers, laid through `addStroke` like painted ones (`BASE` in `App.tsx`). Left: where the west one lands on the north back street the junction is a big blob; two of them are out of the first frame; traffic over them is not measured.
+- Roundabouts are harder to get: six arms, not five, and a painted circle has to close within 22 m and be 220 m round (`RING_ARMS` in `intent.ts`, `lay()` in `paint.ts`).
 - Terraced plots and construction sites in the open ground.
 - Ground is flat. The reference is all hillside.
 - A yard's parking can run into the wall of the house that stopped the road.

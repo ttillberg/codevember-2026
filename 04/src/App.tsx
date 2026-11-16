@@ -12,7 +12,7 @@ import { plantTown, turnSome, type Block } from './Town';
 import { People, Signs, Street } from './Life';
 import { Painter, type Tool } from './Painter';
 import { buildNet, type V } from './net';
-import { baseIntent, derive, standing, type Intent } from './intent';
+import { baseIntent, derive, no, standing, type Intent } from './intent';
 import { addStroke, smear, smearStart } from './paint';
 
 /** The look of a drone clip shot through city haze: flat, pale, a little cool in the shadows. */
@@ -66,8 +66,14 @@ const FRINGE = new Vector2(0.0012, 0.0008);
 const TARGET: [number, number, number] = [10, 0, -10];
 const DAY = 150; // seconds of ours for nine to five of theirs
 const touch = typeof matchMedia !== 'undefined' && matchMedia('(pointer: coarse)').matches;
+/** The place as it starts: the streets, and a few flyovers laid over them the way a hand would paint them. */
+const BASE: Intent = [
+  [[-232, -68], [-150, 0], [-60, 82]],
+  [[215, -100], [245, 0], [230, 110]],
+  [[-110, 168], [0, 140], [108, 180]],
+].reduce((it, line) => addStroke(it, line.map(([x, y]) => ({ x, y })), true) ?? it, baseIntent());
 /** One house in this many is left standing. */
-const KEEP = 5;
+const KEEP = 3;
 /** Roughly how many vehicles are out: what a phone can carry, and what a desk can. */
 const VEHICLES = touch ? 60 : 180;
 
@@ -167,35 +173,34 @@ function useLater<T>(value: T, frames: number): T {
 
 const NONE: Block[] = [];
 // what to leave out of the place, from the address
-const NO = (typeof location !== 'undefined' ? new URLSearchParams(location.search).get('no') ?? '' : '').toLowerCase().split(',');
+const houses = !no('house'), trees = !no('tree');
+// the time of year: autumn, or what ?season= says
+const season: Season = (() => {
+  const q = new URLSearchParams(location.search).get('season') as Season | null;
+  return q && SEASONS.includes(q) ? q : 'autumn';
+})();
 const TOOLS: [Tool, string][] = [['road', 'Road'], ['bridge', 'Bridge'], ['smear', 'Smear'], ['trace', 'Trace']];
 
 export function App() {
   // every state of the painting so far, so a stroke can be taken back
-  const [history, setHistory] = useState<Intent[]>(() => [baseIntent()]);
+  const [history, setHistory] = useState<Intent[]>(() => [BASE]);
   const [tool, setTool] = useState<Tool>('road');
   // always a timelapse, sixty times life; P or space stops it
   const [paused, setPaused] = useState(false);
   const speed = paused ? 0 : TIMELAPSE;
   // reading the traffic: where it stands, and where one stretch's cars are going
   const [heat, setHeat] = useState(false);
-  // the time of year: autumn, or what ?season= says
-  const [season] = useState<Season>(() => {
-    const q = new URLSearchParams(location.search).get('season') as Season | null;
-    return q && SEASONS.includes(q) ? q : 'autumn';
-  });
   const [trace, setTrace] = useState<V | null>(null);
   const noteBox = useRef<HTMLDivElement>(null);
   const onNote = useCallback((t: string) => { if (noteBox.current) noteBox.current.textContent = t; }, []);
   // ?no=houses,trees: without the houses nothing is in the way of a road; the trees are only put out of sight
-  const houses = !NO.some((w) => w.startsWith('house')), trees = !NO.some((w) => w.startsWith('tree'));
   // a smear in progress: the paint as it is being pushed, not yet in the history
   const [live, setLive] = useState<Intent | null>(null);
   const grab = useRef<{ base: Intent; from: V } | null>(null);
   const intent = live ?? history[history.length - 1];
   // the roads are never edited: they are what the rules make of the strokes
   // the housing is planted once, on the place as it first stood, and is in the way from then on
-  const first = useMemo(() => buildNet(derive(baseIntent())), []);
+  const first = useMemo(() => buildNet(derive(BASE)), []);
   // only a few of them are kept, and a quarter of those turned: the roads are what is looked at
   const town = useMemo(() => turnSome(first, plantTown(first).filter((_, i) => i % KEEP === 0)), [first]);
   // a bridge takes down the houses in its line; the same list for as long as the same ones stand
@@ -282,7 +287,7 @@ export function App() {
           <Vignette offset={0.22} darkness={0.52} />
         </EffectComposer>
       </Canvas>
-      <div className="tools speed">
+      <div className="tools side">
         <button className={heat ? 'on' : ''} onClick={() => setHeat((v) => !v)}>Heat</button>
       </div>
       {tool === 'trace' && <div className="note" ref={noteBox}>{trace ? '' : 'click a road'}</div>}

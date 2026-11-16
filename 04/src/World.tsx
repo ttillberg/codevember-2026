@@ -432,9 +432,10 @@ function Trees({ net, blocks, season }: { net: Net; blocks: Block[]; season: Sea
       }
     }
     // street trees: a row down each side of every proper road, in the outer strip of the sidewalk
-    const blocked = (x: number, y: number) => [...net.pads, ...net.buildings].some((q) => x > q.x0 - 2 && x < q.x1 + 2 && y > q.y0 - 2 && y < q.y1 + 2);
+    const solid = [...net.pads, ...net.buildings];
+    const blocked = (x: number, y: number) => solid.some((q) => x > q.x0 - 2 && x < q.x1 + 2 && y > q.y0 - 2 && y < q.y1 + 2);
     for (const r of net.roads) {
-      if (r.look < 2 || r.bridge || r.ring) continue;
+      if (r.rank < 2 || r.bridge || r.ring) continue;
       for (const side of [-1, 1]) {
         const line = offset(r.base, side * (r.hw + WALK - 0.2));
         const cum = cumLen(line);

@@ -13,15 +13,14 @@ export const TIMELAPSE = 60;
 const tmp = new Color();
 const SIG = { G: new Color(0x2dff7a), Y: new Color(0xffc21a), R: new Color(0xff2a1a) };
 
-/** `speed` is how fast time goes: TIMELAPSE, 1 for life size, 0 for a still. */
-export function Cars({ net, speed, target = null, heat = false, trace = null, onCount, onNote }: {
+/** `speed` is how fast time goes: TIMELAPSE, or 0 for a still. */
+export function Cars({ net, speed, target, heat = false, trace = null, onNote }: {
   net: Net; speed: number;
   /** roughly how many vehicles to keep on the roads */
-  target?: number | null;
+  target: number;
   heat?: boolean;
   /** a point on the stretch whose traffic is being followed */
   trace?: V | null;
-  onCount?: (n: number) => void;
   onNote?: (text: string) => void;
 }) {
   const rate = useRef(speed);
@@ -32,7 +31,6 @@ export function Cars({ net, speed, target = null, heat = false, trace = null, on
   const sim = useMemo(() => new Sim(net, types), [types]);
   useLayoutEffect(() => sim.setNet(net), [sim, net]);
   useEffect(() => { sim.target = target; }, [sim, target]);
-  const told = useRef(0);
   const meshes = useRef<(InstancedMesh | null)[]>([]);
   const paint = useMemo(() => new MeshStandardMaterial({ vertexColors: true, roughness: 0.38, metalness: 0.25 }), []);
 
@@ -74,7 +72,6 @@ export function Cars({ net, speed, target = null, heat = false, trace = null, on
     const dt = Math.min(delta, 0.05) * rate.current;
     const n = Math.ceil(dt / 0.1);
     for (let i = 0; i < n; i++) sim.step(dt / n);
-    if (onCount && (told.current += delta) > 0.5) { told.current = 0; onCount(sim.moving); }
 
     const ms = meshes.current;
     for (const f of sim.freed) {

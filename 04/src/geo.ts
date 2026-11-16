@@ -217,7 +217,7 @@ export function buildGround(net: Net) {
   const flats = [kerb, pad, road, white, yellow];
   for (const r of net.roads) {
     const hw = r.hw;
-    const target = r.look >= 1 ? road : pad;
+    const target = r.rank >= 1 ? road : pad;
     // a bridge is laid along a finer line, so its ribbons can climb
     const pts = r.bridge ? dense(r.pts, 4) : r.pts;
     const base = r.bridge ? dense(r.base, 4) : r.base;
@@ -229,7 +229,7 @@ export function buildGround(net: Net) {
     const run = cumLen(r.base).pop()!;
     const lined = run >= 20;
     target.ribbon(pts, -(hw + SH), hw + SH);
-    if (r.look >= 1 && !r.bridge) {
+    if (r.rank >= 1 && !r.bridge) {
       kerb.ribbon(pts, -(hw + SH + 0.5), hw + SH + 0.5);
       walk.ribbon(pts, -(hw + SH + 0.5 + WALK), hw + SH + 0.5 + WALK);
       // the yellow line of studded tiles that every sidewalk here has, for those who walk by touch
@@ -241,7 +241,7 @@ export function buildGround(net: Net) {
       white.ribbon(base, hw - 0.14, hw);
       white.ribbon(base, -hw, -hw + 0.14);
       for (let i = 1; i < r.lanes; i++) white.dashed(base, i * r.lw - hw, 0.13, 2, 4);
-    } else if (r.look >= 2) {
+    } else if (r.rank >= 2) {
       yellow.ribbon(base, -0.28, -0.14);
       yellow.ribbon(base, 0.14, 0.28);
       white.ribbon(base, hw - 0.14, hw);
@@ -250,9 +250,9 @@ export function buildGround(net: Net) {
         white.dashed(base, i * r.lw, 0.13, 3, 9);
         white.dashed(base, -i * r.lw, 0.13, 3, 9);
       }
-    } else if (r.look === 1) yellow.dashed(base, 0, 0.12, 2, 4);
+    } else if (r.rank === 1) yellow.dashed(base, 0, 0.12, 2, 4);
     // a yard at a dead end: parking either side of the last stretch
-    if (r.look >= 1) {
+    if (r.rank >= 1) {
       for (const si of r.stallSegs) {
         const seg = [r.raw[si], r.raw[si + 1]], w = hw + 0.4 + STALL_D + 0.6;
         pad.ribbon(seg, -w, w);
@@ -266,7 +266,7 @@ export function buildGround(net: Net) {
       const node = end ? r.b : r.a;
       if (node.stub || run < 12) continue;
       const top = Math.max(...node.roads.map((q) => q.rank));
-      if (!(node.signal || (r.rank < top && r.look >= 1))) continue;
+      if (!(node.signal || (r.rank < top && r.rank >= 1))) continue;
       const b = r.base;
       const p = end ? b[b.length - 1] : b[0];
       const q = end ? b[b.length - 2] : b[1];
@@ -276,7 +276,7 @@ export function buildGround(net: Net) {
       const a0 = { x: p.x + nx * 0.25, y: p.y + ny * 0.25 }, a1 = { x: p.x + nx * hw, y: p.y + ny * hw };
       white.quad(a0, a1, { x: a1.x - tx * 0.5, y: a1.y - ty * 0.5 }, { x: a0.x - tx * 0.5, y: a0.y - ty * 0.5 });
       // which way each lane may go, painted on it before the line
-      if (r.look >= 2 && r.lanes > 1 && run >= 45 && !r.ring) {
+      if (r.rank >= 2 && r.lanes > 1 && run >= 45 && !r.ring) {
         for (let i = 0; i < r.lanes; i++) {
           const turn = i === 0 ? -1 : i === r.lanes - 1 ? 1 : 0;
           // a point given along the lane (u, towards the junction) and across it (v, to the right)
@@ -295,7 +295,7 @@ export function buildGround(net: Net) {
           }
         }
       }
-      if ((node.signal || r.look >= 1) && run >= 20) {
+      if ((node.signal || r.rank >= 1) && run >= 20) {
         // a zebra behind the line
         for (let k = -hw + 0.4; k < hw - 0.5; k += 1.2) {
           const c = { x: p.x + nx * k + tx * 1.2, y: p.y + ny * k + ty * 1.2 };
@@ -310,7 +310,7 @@ export function buildGround(net: Net) {
   const round = (p: V, R: number) => Array.from({ length: 18 }, (_, k) => ({ x: p.x + R * Math.cos((k / 18) * 6.2832), y: p.y + R * Math.sin((k / 18) * 6.2832) }));
   for (const n of net.nodes) {
     const r = n.roads[0];
-    if (!n.stub || n.edge || r.look < 1 || r.bridge) continue;
+    if (!n.stub || n.edge || r.rank < 1 || r.bridge) continue;
     road.poly(round(n.p, r.hw + 5));
     kerb.poly(round(n.p, r.hw + 5.5));
     walk.poly(round(n.p, r.hw + 8.5));
@@ -320,7 +320,7 @@ export function buildGround(net: Net) {
   for (const n of net.nodes) {
     if (n.stub) continue;
     const pts: V[] = [], wide: V[] = [];
-    const top = Math.max(...n.roads.map((q) => q.look));
+    const top = Math.max(...n.roads.map((q) => q.rank));
     for (const r of n.roads) {
       const hw = r.hw + SH;
       const b = r.base;
@@ -356,7 +356,7 @@ export function buildGround(net: Net) {
 
 /** Is this point clear of roads, lots and buildings? For planting trees. */
 export function clearOf(net: Net, x: number, y: number, margin: number) {
-  for (const r of [...net.pads, ...net.buildings]) if (x > r.x0 - margin && x < r.x1 + margin && y > r.y0 - margin && y < r.y1 + margin) return false;
+  for (const list of [net.pads, net.buildings]) for (const r of list) if (x > r.x0 - margin && x < r.x1 + margin && y > r.y0 - margin && y < r.y1 + margin) return false;
   for (const r of net.roads) {
     const m = r.hw + margin + 1;
     for (let i = 0; i < r.pts.length - 1; i++) {

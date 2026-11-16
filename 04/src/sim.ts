@@ -74,9 +74,8 @@ export class Sim {
   time = 0;
   freed: { type: number; slot: number }[] = [];
   /** roughly how many vehicles should be out on the roads; null leaves it to the place */
-  target: number | null = null;
+  target = 0;
   /** how many are out on the roads now, the parked ones not counted */
-  moving = 0;
   private rand: () => number;
   private nextId = 1;
   private slots: number[][];
@@ -107,7 +106,7 @@ export class Sim {
       const out = this.net.lanes.filter((l) => l.road && l.from === n);
       const inn = this.net.lanes.filter((l) => l.road && l.to === n);
       const was = old.find((o) => o.node.p.x === n.p.x && o.node.p.y === n.p.y);
-      this.sources.push({ node: n, lanes: out, rate: out[0].road!.look >= 3 ? 0.3 : 0.13, acc: was ? was.acc : this.rand() });
+      this.sources.push({ node: n, lanes: out, rate: out[0].road!.rank >= 3 ? 0.3 : 0.13, acc: was ? was.acc : this.rand() });
       this.sinks.set(n, inn);
     }
   }
@@ -266,7 +265,7 @@ export class Sim {
     else {
       const ends = this.net.edges.filter((n) => n !== from.from);
       // most traffic stays on the arterial
-      const w = ends.map((n) => (n.roads[0].look >= 3 ? 3 : 1));
+      const w = ends.map((n) => (n.roads[0].rank >= 3 ? 3 : 1));
       let x = this.rand() * w.reduce((a, b) => a + b, 0), i = 0;
       for (; i < ends.length - 1; i++) if ((x -= w[i]) <= 0) break;
       goals = this.sinks.get(ends[i])!;
@@ -292,9 +291,8 @@ export class Sim {
 
     let out = 0;
     for (const c of this.cars) if (c.state !== PARKED) out++;
-    this.moving = out;
     // asked for a number, the ways in open up or shut until about that many are out
-    const flow = this.target == null ? 1 : out >= this.target ? 0 : Math.min(8, 0.4 + 10 * (1 - out / this.target));
+    const flow = out >= this.target ? 0 : Math.min(8, 0.4 + 10 * (1 - out / this.target));
     for (const src of this.sources) {
       src.acc += flow * src.rate * dt * (0.75 + 0.5 * Math.sin(this.time * 0.021 + src.node.id));
       if (src.acc < 1) continue;
