@@ -41,14 +41,46 @@ export interface PluckOpts {
   kind: 'pluck' | 'strike';
   /** 0..1, how hard */
   force: number;
-  /** the coin touching lightly: a damped buzz */
-  chiado: boolean;
-  /**
-   * how the playing hand plays it: 'harm' a flageolet (a finger touching the middle: only the
-   * even partials, an octave up, ringing long), 'snap' pulled hard against the wire (bright,
-   * buzzing, a big pitch drop at the start); none, a plain pluck
-   */
-  tech?: 'harm' | 'snap';
+}
+
+/**
+ * Where it's plucked is a big part of the sound: across the plain middle it goes from thin and
+ * glassy up by the top to round and hollow down by the bottom (the extra tilt and roll-off for
+ * partialsFor). And pulled from far, it rings longer and louder, up to half as much again.
+ */
+const toneAt = (pos: number) => {
+  const x = Math.min(1, Math.max(0, (pos - 0.22) / 0.5));
+  return { x, tilt: -0.75 + 1.6 * x, roll: 2 - 1.55 * x };
+};
+const farFrom = (force: number) => 1 + 0.5 * Math.pow(force, 1.5);
+/** the first `n` partials of a set, as a pluck message wants them */
+const head = (p: Partials, n: number) => ({ freqs: p.freqs.slice(0, n), amps: p.amps.slice(0, n), sigmas: p.sigmas.slice(0, n) });
+
+/**
+ * An echo bouncing left and right: dark (a band from 160 Hz to `lpHz`), `time` apart each way,
+ * a quarter fed back to start with. In at `input`, out (stereo) at `out`.
+ */
+function pingPong(ctx: BaseAudioContext, lpHz: number, time: number) {
+  const input = ctx.createGain();
+  const hp = ctx.createBiquadFilter();
+  hp.type = 'highpass';
+  hp.frequency.value = 160;
+  const lp = ctx.createBiquadFilter();
+  lp.type = 'lowpass';
+  lp.frequency.value = lpHz;
+  const l = ctx.createDelay(2);
+  l.delayTime.value = time;
+  const r = ctx.createDelay(2);
+  r.delayTime.value = time;
+  const fb = ctx.createGain();
+  fb.gain.value = 0.25;
+  const out = ctx.createChannelMerger(2);
+  input.connect(hp).connect(lp).connect(l);
+  l.connect(r);
+  r.connect(fb).connect(l);
+  l.connect(out, 0, 0);
+  r.connect(out, 0, 1);
+  return { input, fb, out };
 }
 
 /**
@@ -135,9 +167,11 @@ export class Engine {
   peak = 0;
   pad: Pad;
 
-  private constructor(ctx: BaseAudioContext, node: AudioWorkletNode) {
+  private constructor(ctx: BaseAudioContext, node: AudioWorkletNode, preset: Preset) {
     this.ctx = ctx;
     this.node = node;
+    // (the string it starts on: its room is the only one made at the start)
+    this.preset = preset;
     const hp = ctx.createBiquadFilter();
     hp.type = 'highpass';
     hp.frequency.value = 24;
@@ -218,56 +252,23 @@ export class Engine {
     this.room(this.roomSeconds(), true);
     // the arpeggio's delay: dotted eighths at the arp's tempo, bouncing left and right, dark,
     // a quarter fed back. Only the arpeggio goes in (the worklet's second output)
-    const dIn = ctx.createGain();
-    dIn.gain.value = 0.55;
-    const dHp = ctx.createBiquadFilter();
-    dHp.type = 'highpass';
-    dHp.frequency.value = 160;
-    const dLp = ctx.createBiquadFilter();
-    dLp.type = 'lowpass';
-    dLp.frequency.value = 1700;
     const time = (60 / ARP_BPM) * 0.75;
-    const dL = ctx.createDelay(2);
-    dL.delayTime.value = time;
-    const dR = ctx.createDelay(2);
-    dR.delayTime.value = time;
-    const fb = ctx.createGain();
-    fb.gain.value = 0.25;
-    const merge = ctx.createChannelMerger(2);
-    node.connect(dIn, 1);
-    dIn.connect(dHp).connect(dLp).connect(dL);
-    dL.connect(dR);
-    dR.connect(fb).connect(dL);
-    dL.connect(merge, 0, 0);
-    dR.connect(merge, 0, 1);
-    // (a gain after it, to clear old echoes when the scale changes)
+    const arpEcho = pingPong(ctx, 1700, time);
+    arpEcho.input.gain.value = 0.55;
+    node.connect(arpEcho.input, 1);
+    // (a gain after them, to clear old echoes when the scale changes)
     this.echo = ctx.createGain();
-    merge.connect(this.echo);
+    arpEcho.out.connect(this.echo);
     this.echo.connect(bus);
     this.echo.connect(send);
     // the string's own delay (the Mix's): the same dotted eighths, bouncing the same way, apart
     // from the arpeggio's, as much in and as long as the knob says
-    this.delaySend = ctx.createGain();
+    const own = pingPong(ctx, 2200, time);
+    this.delaySend = own.input;
     this.delaySend.gain.value = 0;
-    const sHp = ctx.createBiquadFilter();
-    sHp.type = 'highpass';
-    sHp.frequency.value = 160;
-    const sLp = ctx.createBiquadFilter();
-    sLp.type = 'lowpass';
-    sLp.frequency.value = 2200;
-    const sL = ctx.createDelay(2);
-    sL.delayTime.value = time;
-    const sR = ctx.createDelay(2);
-    sR.delayTime.value = time;
-    this.delayFb = ctx.createGain();
-    this.delayFb.gain.value = 0.25;
-    const sMerge = ctx.createChannelMerger(2);
-    this.wahTrim.connect(this.delaySend).connect(sHp).connect(sLp).connect(sL);
-    sL.connect(sR);
-    sR.connect(this.delayFb).connect(sL);
-    sL.connect(sMerge, 0, 0);
-    sR.connect(sMerge, 0, 1);
-    sMerge.connect(this.echo);
+    this.delayFb = own.fb;
+    this.wahTrim.connect(own.input);
+    own.out.connect(this.echo);
     // the flageolets: deep in the room, far more than the string (the worklet's third output)
     const harmSend = ctx.createGain();
     harmSend.gain.value = 3.5;
@@ -320,10 +321,10 @@ export class Engine {
     this.setPreset(this.preset);
   }
 
-  static async create(ctx: BaseAudioContext) {
+  static async create(ctx: BaseAudioContext, preset: Preset = PRESETS[0]) {
     await ctx.audioWorklet.addModule(workletUrl);
     const node = new AudioWorkletNode(ctx, 'wire', { numberOfInputs: 0, numberOfOutputs: 3, outputChannelCount: [2, 2, 2] });
-    return new Engine(ctx, node);
+    return new Engine(ctx, node, preset);
   }
 
   private post(m: WireMsg) {
@@ -370,6 +371,13 @@ export class Engine {
       cur.gain.gain.setTargetAtTime(0, t, 0.6);
     }
     this.verbOn = 1 - this.verbOn;
+    // once it has faded, the old room stops convolving (silent, it still cost a long convolution)
+    const idle = 1 - this.verbOn;
+    setTimeout(() => {
+      if (this.verbOn === idle) return;
+      this.verbs[idle].conv.buffer = null;
+      this.verbs[idle].seconds = 0;
+    }, now ? 0 : 4500);
   }
 
   applyMix() {
@@ -440,7 +448,7 @@ export class Engine {
       type: 'pluck', group: 'harm', freqs, amps, sigmas,
       // soft: the low ones a little louder, the high ones a glint
       gain: 0.02 * tune.harm * (0.55 + 0.45 * f) * Math.min(1, 1.5 / Math.sqrt(n)),
-      glide: 0, boing: 0, wobble: 0, buzz: 0, gap: 1, attack: 0.014, bloom: 0, detune: 0.02,
+      glide: 0, boing: 0, wobble: 0, buzz: 0, gap: 1, attack: 0.014, bloom: 0, detune: 0,
     });
   }
 
@@ -448,24 +456,19 @@ export class Engine {
   chordNote(note: number, force: number, pos: number, when: number) {
     const p = this.preset;
     const f = Math.min(1, Math.max(0, force));
-    const x = Math.min(1, Math.max(0, (pos - 0.22) / 0.5));
-    const parts = partialsFor(p, midiHz(note), pos, 'pluck', f, -0.75 + 1.6 * x, 2 - 1.55 * x);
-    const n = Math.min(32, parts.freqs.length);
+    const tone = toneAt(pos);
+    const parts = partialsFor(p, midiHz(note), pos, 'pluck', f, tone.tilt, tone.roll);
+    const h = head(parts, 32);
     // (pulled from far, louder and longer, like the string's own pluck)
-    const far = 1 + 0.5 * Math.pow(f, 1.5);
+    const far = farFrom(f);
     this.post({
       type: 'pluck', group: 'chord',
-      freqs: parts.freqs.slice(0, n), amps: parts.amps.slice(0, n), sigmas: parts.sigmas.slice(0, n).map((s) => s / far),
+      ...h, sigmas: h.sigmas.map((s) => s / far),
       gain: 0.062 * (0.45 + 0.55 * f) * far, glide: p.glide * tune.glide * f * f * 0.5,
       boing: tune.elastic * (0.01 + 0.03 * f * f), wobble: tune.elastic * (0.002 + 0.004 * f),
       buzz: p.buzz * tune.buzz * 0.5, gap: p.gap, attack: 0.002, bloom: 0.02 * tune.bloom,
       detune: p.detune * tune.detune, when,
     });
-  }
-
-  /** a second finger pressing the string aside: what rings on it bent by `semis` (0: let go) */
-  bend(semis: number) {
-    this.post({ type: 'bend', ratio: Math.pow(2, semis / 12) });
   }
 
   /**
@@ -498,7 +501,7 @@ export class Engine {
     const t = this.ctx.currentTime;
     this.master.gain.cancelScheduledValues(t);
     this.master.gain.setTargetAtTime(0, t, 0.015);
-    for (const group of ['main', 'tick', 'sym', 'arp', 'chord', 'harm'] as const) this.post({ type: 'damp', group, time: 0.03 });
+    this.post({ type: 'damp', group: 'all', time: 0.03 });
   }
 
   /** back: the master comes up again, softly */
@@ -523,40 +526,15 @@ export class Engine {
   pluck(o: PluckOpts): Partials {
     const p = this.preset;
     const f0 = midiHz(o.note);
-    const harm = o.tech === 'harm';
-    const snapped = o.tech === 'snap';
-    const force = Math.min(1, Math.max(0, o.force + (snapped ? 0.35 : 0)));
-    // where it's plucked is a big part of the sound: across the plain middle it goes from thin
-    // and glassy up by the snap zone to round and hollow down by the harmonic one; the snap is
-    // all edge, the harmonic all bell
-    const x = Math.min(1, Math.max(0, (o.pos - 0.22) / 0.5));
-    const tiltAdd = snapped ? -0.9 : harm ? 0.5 : -0.75 + 1.6 * x;
-    const rollMul = snapped ? 2.2 : harm ? 0.8 : 2 - 1.55 * x;
+    const force = Math.min(1, Math.max(0, o.force));
+    const tone = toneAt(o.pos);
     // a harder pull is a brighter spectrum, not only a louder one; a strike is a touch brighter
-    let parts = partialsFor(p, f0, snapped ? 0.06 : harm ? 0.25 : o.pos, o.kind, o.kind === 'strike' ? Math.min(1, force + 0.15) : force, tiltAdd, rollMul);
-    if (harm) parts = flageolet(parts);
-    let sigmas = parts.sigmas;
-    // the snap rings shorter and harder; the round middle a little longer
-    if (snapped) sigmas = sigmas.map((s, i) => s * (1.3 + 0.04 * i));
-    else if (!harm) sigmas = sigmas.map((s) => s * (1.15 - 0.3 * x));
-    // pulled from far, it rings longer and louder: up to half as much again (by the string, as before)
-    const far = 1 + 0.5 * Math.pow(force, 1.5);
-    sigmas = sigmas.map((s) => s / far);
-    let buzz = p.buzz * tune.buzz;
-    let gap = p.gap;
-    if (snapped) {
-      // against the wire: it rattles while the swing is wide
-      buzz = Math.max(buzz, 0.9);
-      gap = 0.25;
-    }
-    if (o.chiado) {
-      // the coin only touching: most of the ring is choked, and what's left rattles
-      sigmas = sigmas.map((s) => s * 5 + 5);
-      buzz = 1;
-      gap = 0.12;
-    }
+    const parts = partialsFor(p, f0, o.pos, o.kind, o.kind === 'strike' ? Math.min(1, force + 0.15) : force, tone.tilt, tone.roll);
+    // the round middle rings a little longer; pulled from far, longer still
+    const far = farFrom(force);
+    const sigmas = parts.sigmas.map((s) => (s * (1.15 - 0.3 * tone.x)) / far);
     // the sub: a sine an octave under, dying three times as fast as the fundamental
-    const sub = p.sub * tune.sub * (o.chiado ? 0.3 : 1) * (harm ? 0 : 1);
+    const sub = p.sub * tune.sub;
     const freqs = [...parts.freqs];
     const amps = [...parts.amps];
     const sig = [...sigmas];
@@ -566,24 +544,22 @@ export class Engine {
       sig.push(sigmas[0] * 3 + 0.4);
     }
     // the level only moves inside a pleasant window
-    const gain = 0.1 * (0.45 + 0.55 * Math.pow(force, 0.9)) * far * (o.kind === 'strike' ? 0.85 : 1) * (harm ? 0.8 : 1);
-    const m: PluckMsg = {
+    const gain = 0.1 * (0.45 + 0.55 * Math.pow(force, 0.9)) * far * (o.kind === 'strike' ? 0.85 : 1);
+    this.post({
       type: 'pluck', group: 'main',
       freqs, amps, sigmas: sig, gain,
-      glide: p.glide * tune.glide * force * force * (snapped ? 3 : harm ? 0.3 : 1),
+      glide: p.glide * tune.glide * force * force,
       // elastic: let go, it springs back from sharp (up to about a semitone on a hard pull)
       // and wobbles a little around the note before it settles
-      boing: tune.elastic * (0.012 + 0.05 * force * force) * (snapped ? 1.4 : harm ? 0.4 : 1),
-      wobble: tune.elastic * (0.002 + 0.007 * force) * (harm ? 0.5 : 1),
-      buzz: buzz * (0.4 + 0.6 * force), gap, attack: 0,
+      boing: tune.elastic * (0.012 + 0.05 * force * force),
+      wobble: tune.elastic * (0.002 + 0.007 * force),
+      buzz: p.buzz * tune.buzz * (0.4 + 0.6 * force), gap: p.gap, attack: 0,
       // a soft pull blooms slower
-      bloom: 0.025 * tune.bloom * (1.4 - 0.8 * force) * (harm ? 1.8 : snapped ? 0.4 : 1),
+      bloom: 0.025 * tune.bloom * (1.4 - 0.8 * force),
       detune: p.detune * tune.detune,
-    };
-    this.post(m);
-    if (!o.chiado) this.sympathy(parts, gain);
-    // (a pitch between the notes: the pad goes to the nearest one)
-    this.pad.played(snap(p, Math.round(o.note)));
+    });
+    this.sympathy(parts, gain);
+    this.pad.played(snap(p, o.note));
     return { ...parts, sigmas };
   }
 
@@ -607,10 +583,10 @@ export class Engine {
       }
       if (c < 0.04) continue;
       const sp = partialsFor(p, fs, 0.27, 'pluck', 0.45);
-      const n = Math.min(8, sp.freqs.length);
+      const h = head(sp, 8);
       this.post({
         type: 'pluck', group: 'sym',
-        freqs: sp.freqs.slice(0, n), amps: sp.amps.slice(0, n), sigmas: sp.sigmas.slice(0, n).map((x) => x * 0.7),
+        ...h, sigmas: h.sigmas.map((x) => x * 0.7),
         gain: gain * 0.8 * amount * Math.min(1, c), glide: 0, buzz: 0, gap: 1,
         attack: 0.45, bloom: 0.05, detune: 0,
       });
@@ -625,10 +601,9 @@ export class Engine {
     const p = this.preset;
     const f = Math.min(1, Math.max(0, force));
     const parts = partialsFor(p, midiHz(note), pos, 'pluck', f);
-    const n = Math.min(28, parts.freqs.length);
     this.post({
       type: 'pluck', group: 'arp',
-      freqs: parts.freqs.slice(0, n), amps: parts.amps.slice(0, n), sigmas: parts.sigmas.slice(0, n),
+      ...head(parts, 28),
       gain: 0.07 * (0.4 + 0.6 * f), glide: p.glide * tune.glide * 0.3 * f * f,
       boing: tune.elastic * 0.015 * f, wobble: tune.elastic * 0.002 * f,
       buzz: p.buzz * tune.buzz * 0.6, gap: p.gap, attack: 0.002, bloom: 0.015 * tune.bloom,
@@ -637,54 +612,7 @@ export class Engine {
     return parts;
   }
 
-  /**
-   * A slack rope knocked: a dull, pitchless thump. A handful of low partials that belong to no
-   * note, choked within a tenth of a second, falling a little as they go.
-   */
-  thump(force: number) {
-    const f = Math.min(1, Math.max(0, force));
-    const base = [52, 83, 127, 181, 259];
-    const freqs = base.map((x) => x * (0.92 + Math.random() * 0.16));
-    const raw = [1, 0.6, 0.38, 0.22, 0.12];
-    const n = Math.hypot(...raw);
-    this.post({
-      type: 'pluck', group: 'tick',
-      freqs, amps: raw.map((a) => a / n), sigmas: [16, 22, 30, 38, 48],
-      gain: 0.09 * (0.35 + 0.65 * f), glide: 0.12, buzz: 0, gap: 1, attack: 0.004, bloom: 0, detune: 0,
-    });
-  }
-
-  /** the ratchet of the tension, one soft tick per step: the note it will be */
-  tick(note: number) {
-    const f0 = midiHz(note);
-    const parts = partialsFor(this.preset, f0, 0.3, 'pluck', 0.4);
-    const n = Math.min(6, parts.freqs.length);
-    this.post({
-      type: 'pluck', group: 'tick',
-      freqs: parts.freqs.slice(0, n), amps: parts.amps.slice(0, n), sigmas: parts.sigmas.slice(0, n).map((s) => s + 14),
-      gain: 0.03, glide: 0, buzz: 0, gap: 1, attack: 0.002, bloom: 0, detune: 0,
-    });
-  }
-
   askLevel() {
     this.post({ type: 'level' });
   }
-}
-
-/** a flageolet: a finger lightly at the middle keeps only the even partials, which ring longer */
-function flageolet(parts: Partials): Partials {
-  const out: Partials = { freqs: [], amps: [], sigmas: [], modes: [] };
-  parts.modes.forEach((k, i) => {
-    if (k % 2) return;
-    out.freqs.push(parts.freqs[i]);
-    // a bell: the first few of them, the rest falling away fast, ringing long
-    out.amps.push(parts.amps[i] * Math.exp(-(k / 2 - 1) / 2.2));
-    out.sigmas.push(parts.sigmas[i] * 0.55);
-    out.modes.push(k / 2);
-  });
-  let e = 0;
-  for (const a of out.amps) e += a * a;
-  const n = e > 1e-12 ? 1 / Math.sqrt(e) : 0;
-  for (let i = 0; i < out.amps.length; i++) out.amps[i] *= n;
-  return out.freqs.length ? out : parts;
 }

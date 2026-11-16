@@ -362,7 +362,7 @@ setting maxed gives no NaN and stays at full scale.
 - Offline renders of messages sent to a worklet are racy: a few came in late and made a
   sympathetic string look silent. Checking how many voices were live caught it.
 
-Settings (the gear, only with `?settings`, in dev too): volume, transpose, buzz,
+Settings (the gear, only with `?settings`, in dev too): volume, buzz,
 sympathetic strings, pitch glide, body, sub, chorus, bloom, pad level and the speed of
 the drawn vibration. `?auto` plays it by itself (a virtual finger takes the string at a height and pulls it, now and then far through a chord of dots: for clips), `?preset=glass` starts on a
 preset, `?scale=tension` on a scale, `?clean` hides the furniture.

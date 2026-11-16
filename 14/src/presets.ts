@@ -118,13 +118,6 @@ export const PRESETS: Preset[] = [
 
 export const midiHz = (m: number) => 440 * Math.pow(2, (m - 69) / 12);
 
-/** the semitones above the root of scale degree `d` (0, 1, 2 … across octaves) */
-export function degreeSemis(p: Preset, d: number) {
-  const n = p.scale.length;
-  const o = Math.floor(d / n);
-  return p.scale[((d % n) + n) % n] + 12 * o;
-}
-
 export interface Partials {
   freqs: number[];
   amps: number[];
@@ -191,18 +184,17 @@ export function partialsFor(pr: Preset, f0: number, p: number, kind: 'pluck' | '
  * anything out of tune. Every scale keeps the root and the fifth (the pad leans
  * on them). The first is the sad one Tension was made in; it's the default (main.ts).
  */
-/** each scale has its own dark ground the page turns to (the ink stays the same white) */
 /** `roots`: the dots' four chords, in semitones over the key (the first the scale has from each group), when not the usual i, VI, v, III */
-export const SCALES: Array<{ id: string; label: string; notes: number[]; ground: string; roots?: number[][] }> = [
-  { id: 'tension', label: 'Tension', notes: [0, 2, 3, 7, 8], ground: '#0b0b0d' },
-  { id: 'minor', label: 'Minor pent', notes: [0, 3, 5, 7, 10], ground: '#10142a' },
-  { id: 'kumoi', label: 'Kumoi', notes: [0, 2, 3, 7, 9], ground: '#24111a' },
-  { id: 'major', label: 'Major pent', notes: [0, 2, 4, 7, 9], ground: '#262012' },
-  { id: 'aeolian', label: 'Aeolian', notes: [0, 2, 3, 5, 7, 8, 10], ground: '#0c2224' },
-  { id: 'hijaz', label: 'Hijaz', notes: [0, 1, 4, 5, 7, 8, 10], ground: '#2a150b' },
+export const SCALES: Array<{ id: string; label: string; notes: number[]; roots?: number[][] }> = [
+  { id: 'tension', label: 'Tension', notes: [0, 2, 3, 7, 8] },
+  { id: 'minor', label: 'Minor pent', notes: [0, 3, 5, 7, 10] },
+  { id: 'kumoi', label: 'Kumoi', notes: [0, 2, 3, 7, 9] },
+  { id: 'major', label: 'Major pent', notes: [0, 2, 4, 7, 9] },
+  { id: 'aeolian', label: 'Aeolian', notes: [0, 2, 3, 5, 7, 8, 10] },
+  { id: 'hijaz', label: 'Hijaz', notes: [0, 1, 4, 5, 7, 8, 10] },
   // Aphex Twin's Avril 14th: natural minor, its three chords all minor (i, iv, v), and the VI
-  // for a fourth; on A like everything else (the piece is in F minor); a warm, dim grey
-  { id: 'avril', label: 'April', notes: [0, 2, 3, 5, 7, 8, 10], ground: '#1d1b19', roots: [[0], [5], [7], [8]] },
+  // for a fourth; on A like everything else (the piece is in F minor)
+  { id: 'avril', label: 'April', notes: [0, 2, 3, 5, 7, 8, 10], roots: [[0], [5], [7], [8]] },
 ];
 
 const OWN = PRESETS.map((p) => ({ symNotes: p.symNotes }));
@@ -212,16 +204,22 @@ export function applyScale(i: number) {
   const notes = SCALES[i].notes;
   PRESETS.forEach((p, j) => {
     p.scale = notes;
-    p.symNotes = OWN[j].symNotes.filter((n) => notes.includes(((n % 12) + 12) % 12));
+    p.symNotes = OWN[j].symNotes.filter((n) => notes.includes(pc(n)));
   });
 }
 
-/** the nearest note of `p`'s scale to `note` (midi); a tie goes down, the sadder way */
+/** the pitch class of midi `m` over `root`, 0..11 */
+export const pc = (m: number, root = 0) => (((m - root) % 12) + 12) % 12;
+/** is midi `m` a note of `p`'s scale */
+export const inScale = (p: Preset, m: number) => p.scale.includes(pc(m, p.root));
+
+/** the nearest note of `p`'s scale to `note` (midi, rounded first); a tie goes down, the sadder way */
 export function snap(p: Preset, note: number) {
+  const r = Math.round(note);
   for (let k = 0; k <= 6; k++) {
-    for (const m of [note - k, note + k]) if (p.scale.includes((((m - p.root) % 12) + 12) % 12)) return m;
+    for (const m of [r - k, r + k]) if (inScale(p, m)) return m;
   }
-  return note;
+  return r;
 }
 
 applyScale(0);

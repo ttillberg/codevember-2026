@@ -11,7 +11,7 @@
 // slides. A run of quick notes doesn't churn them: the note has to stay the last one for a
 // moment. It all swells a little with a pull.
 
-import { midiHz, type Preset } from './presets';
+import { inScale, midiHz, pc, type Preset } from './presets';
 
 /** the colour's voices over the bass */
 const VOICES = 3;
@@ -136,10 +136,8 @@ export class Pad {
   /** the colour over a note (midi): its fifth (or fourth), its octave, and a ninth or third on top */
   private voicing(note: number) {
     const p = this.preset;
-    const pc = (((note - p.root) % 12) + 12) % 12;
-    const base = p.root + p.pad.oct + pc;
-    const inScale = (m: number) => p.scale.includes((((m - p.root) % 12) + 12) % 12);
-    const first = (ivs: number[]) => base + (ivs.find((iv) => inScale(base + iv)) ?? 12);
+    const base = p.root + p.pad.oct + pc(note, p.root);
+    const first = (ivs: number[]) => base + (ivs.find((iv) => inScale(p, base + iv)) ?? 12);
     return [first([7, 5]), base + 12, first([14, 15, 16, 17, 19])];
   }
 

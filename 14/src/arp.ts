@@ -118,6 +118,8 @@ export class Groove {
       // (unless the pluck that woke it has just set where it goes on from)
       if (this.offset + this.nextStep * STEP < now) this.nextStep = Math.ceil((now + 0.02 - this.offset) / BEAT) * 4;
     }
+    // nothing due this frame (most frames): nothing to work out
+    if (this.offset + this.nextStep * STEP >= now + ahead) return;
     const notes = this.pool(voicing, low);
     const newest = this.memory[this.memory.length - 1];
     const nearest = (target: number) => notes.reduce((a, b) => (Math.abs(b - target) < Math.abs(a - target) ? b : a));

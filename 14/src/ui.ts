@@ -1,64 +1,9 @@
-// The furniture: the tool bar of presets bottom centre (the help is built but hidden for now). Settings live in settings.ts.
+// The furniture: the bar (the string, the scale, the arp) and the mixer beside it, bottom centre
+// (bottom right with a mouse), and a word in the middle now and then. Settings live in settings.ts.
 
 import { PRESETS } from './presets';
 
 export const TOUCH = typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches;
-
-/** [how, what]; [x] is drawn as a key cap */
-type Rows = Array<[string, string]>;
-const HELP: Array<[string, string, Rows]> = TOUCH
-  ? [
-      ['The string', 'top to bottom', [
-        ['Take it anywhere', 'where along it is the pitch: no frets, low at the bottom'],
-        ['Pull it aside, let go', 'a pluck: further is louder, brighter'],
-        ['Up or down while holding', 'the pitch glides, flageolets at the nodes'],
-        ['Tap it', 'strike it'],
-        ['Pull it back over', 'a pluck each crossing, still held: then slide it'],
-        ['Sweep across it', 'a strum: faster is harder'],
-      ]],
-      ['The dots', 'four chords', [
-        ['Drag the string through', 'each dot catches it, lets go: its note'],
-        ['Further', 'on into the next chord'],
-        ['Take it higher or lower', 'the dots go to that note\'s chords'],
-      ]],
-      ['More fingers', 'while the first is down', [
-        ['Pull aside, let go', 'another note: they ring together'],
-        ['A tap', 'a strike, its own note'],
-        ['Along the string', 'a slide: what rings goes with it'],
-        ['One finger along the string', 'no frets: what rings goes along'],
-        ['Then aside', 'it takes the string: a pull'],
-        ['Past a node (½, ⅓, ¼ …)', 'a flageolet over it'],
-      ]],
-      ['The bar', '', [
-        ['Up or down the background', 'a wah'],
-        ['A string, a scale, an arp', 'press, slide up to one, let go'],
-        ['Mix', 'sustain, reverb, pad, harmonics, delay'],
-      ]],
-    ]
-  : [
-      ['The string', 'top to bottom', [
-        ['Drag it anywhere', 'where along it is the pitch: no frets, low at the bottom'],
-        ['Pull it aside, let go', 'a pluck: further is louder, brighter'],
-        ['Click it', 'strike it'],
-        ['Drag it back over', 'a pluck each crossing, still held: then slide it'],
-        ['Sweep across from off it', 'a strum: faster is harder'],
-        ['Drag along it', 'no frets, flageolets at the nodes'],
-        ['[Space]', 'strike the last note again'],
-      ]],
-      ['The dots', 'four chords', [
-        ['Drag the string through', 'each dot catches it, lets go: its note'],
-        ['Further', 'on into the next chord'],
-        ['Take it higher or lower', 'the dots go to that note\'s chords'],
-      ]],
-      ['The bar', '', [
-        ['[0] \u2013 [9]', 'recall a snapshot; with shift, save one'],
-        ['\u2318C / \u2318P', 'copy the settings as JSON / apply them'],
-        ['[S]', 'the next scale (or click the background)'],
-        ['[A]', 'a groove: on, next pattern, off'],
-        ['[P]', 'the pad, on or off'],
-        ['Mix, in the bar', 'sustain, reverb, pad, harmonics, delay'],
-      ]],
-    ];
 
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls: string, text?: string) {
   const e = document.createElement(tag);
@@ -152,13 +97,6 @@ function grooveIcon(vel: string | null) {
   return svg(b);
 }
 
-/** the delay's steps for D: off, then echoes, fewer or more */
-export const DELAYS = [
-  { label: 'Off', t: 0 },
-  { label: 'Light', t: 0.25 },
-  { label: 'Medium', t: 0.5 },
-  { label: 'Deep', t: 0.85 },
-];
 /** popovers slide sideways to stay this far inside the screen */
 const EDGE = 8;
 /** a piece of the bar: its button and the popover over it */
@@ -223,7 +161,10 @@ function picker<T>(o: { label: string; key?: string; items: T[]; name(v: T): str
   };
   const choose = (i: number) => {
     setOpen(false);
-    if (i !== cur) o.pick(i);
+    if (i === cur) return;
+    // (it shows what was picked itself; `set` from outside is only for changes made elsewhere)
+    set(i);
+    o.pick(i);
   };
   // the row at this height, wherever the finger is sideways; past the top, the top one; back
   // down over the button, none
@@ -297,13 +238,13 @@ function hslider(o: { label: string; value: number; put(t: number): void }) {
     o.put(t);
     draw();
   };
-  const at = (e: PointerEvent) => {
-    const r = row.getBoundingClientRect();
-    to((e.clientX - r.left - 8) / (r.width - 16));
-  };
+  // (measured once a press, not on every move: the draw would force a layout each time)
+  let r = row.getBoundingClientRect();
+  const at = (e: PointerEvent) => to((e.clientX - r.left - 8) / (r.width - 16));
   row.addEventListener('pointerdown', (e) => {
     e.stopPropagation();
     id = e.pointerId;
+    r = row.getBoundingClientRect();
     row.setPointerCapture?.(e.pointerId);
     row.classList.add('on');
     at(e);
@@ -326,7 +267,8 @@ function hslider(o: { label: string; value: number; put(t: number): void }) {
     e.stopPropagation();
   });
   draw();
-  return { row, set: (v: number) => to(v), get: () => t };
+  /** `show`: changed elsewhere, only drawn (the handler isn't run again) */
+  return { row, show: (v: number) => ((t = Math.min(1, Math.max(0, v))), draw()) };
 }
 
 /** the mixer's button: three faders */
@@ -335,8 +277,8 @@ const ICON_MIX =
   '<path d="M3 6h18M3 12h18M3 18h18" opacity="0.45"/><circle cx="8" cy="6" r="2.2" fill="currentColor"/><circle cx="15" cy="12" r="2.2" fill="currentColor"/><circle cx="11" cy="18" r="2.2" fill="currentColor"/></svg>';
 
 /**
- * The mixer: one button in the bar; tap it and four sliders open over it, one under the other
- * (sustain, reverb, pad, harmonics). Tap it again, or press anywhere else, and they close.
+ * The mixer: one button beside the bar; tap it and its sliders open over it, one under the other
+ * (sustain, reverb, pad, harmonics, delay). Tap it again, or press anywhere else, and they close.
  */
 function mixer(rows: Array<{ label: string; value: number; put(t: number): void }>) {
   const { box, b, pop, place } = knobBox('Mix');
@@ -359,18 +301,20 @@ function mixer(rows: Array<{ label: string; value: number; put(t: number): void 
   return { box, sliders };
 }
 
+/** the mixer's levels, 0..1 each, in its order */
+export const LEVELS = [
+  ['sustain', 'Sustain'],
+  ['room', 'Reverb'],
+  ['pad', 'Pad'],
+  ['harm', 'Harmonics'],
+  ['delay', 'Delay'],
+] as const;
+export type LevelKey = (typeof LEVELS)[number][0];
+
 export interface UiHandlers {
   preset(i: number): void;
-  /** the pad's level, 0..1: 0 is off */
-  pad(t: number): void;
-  /** the reverb, 0..1: its level and its length */
-  room(t: number): void;
-  /** how long it rings, 0..1 (the middle is the string's own) */
-  sustain(t: number): void;
-  /** the flageolets' level, 0..1 (the middle is their own) */
-  harm(t: number): void;
-  /** the delay, 0..1: none at the bottom */
-  delay(t: number): void;
+  /** a level moved (the mixer shows it already) */
+  level(key: LevelKey, t: number): void;
   /** -1 off, else the pattern */
   arp(mode: number): void;
   scale(i: number): void;
@@ -379,47 +323,10 @@ export interface UiHandlers {
 export interface BarInit {
   scales: Array<{ label: string; notes: number[] }>;
   patterns: ReadonlyArray<{ label: string; vel: string }>;
-  pad: number;
-  room: number;
-  sustain: number;
-  harm: number;
-  delay: number;
+  levels: Record<LevelKey, number>;
 }
 
 export function createUi(h: UiHandlers, init: BarInit) {
-  // top right: help, full screen
-  const corner = el('div', 'corner');
-  const help = button('round help-btn', 'Help', '<svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M5.8 5.9a2.2 2.2 0 1 1 3.1 2c-.6.3-.9.8-.9 1.4v.4"/><circle cx="8" cy="12.3" r=".5" fill="currentColor" stroke="none"/></svg>');
-  const pop = el('div', 'help-pop');
-  const dos = el('div', 'dos');
-  for (const [name, note, rows] of HELP) {
-    const head = el('h5', '', name);
-    if (note) head.append(el('span', '', note));
-    dos.append(head);
-    for (const [how, what] of rows) {
-      const a = el('span', 'how');
-      for (const part of how.split(/(\[[^\]]+\])/)) {
-        if (!part) continue;
-        if (part.startsWith('[')) a.append(el('kbd', 'key', part.slice(1, -1)));
-        else a.append(part);
-      }
-      dos.append(a, el('span', 'what', what));
-    }
-  }
-  pop.append(dos);
-  corner.append(help, pop);
-  let helpOpen = false;
-  const setHelp = (on: boolean) => {
-    helpOpen = on;
-    pop.classList.toggle('open', on);
-    help.classList.toggle('on', on);
-    help.setAttribute('aria-expanded', String(on));
-  };
-  onTap(help, () => setHelp(!helpOpen));
-  pop.addEventListener('pointerdown', (e) => e.stopPropagation());
-  window.addEventListener('pointerdown', () => helpOpen && setHelp(false));
-  window.addEventListener('keydown', (e) => e.key === 'Escape' && setHelp(false));
-
   // bottom centre: the string and its scale | the groove
   const bar = el('div', 'bar');
   const instrument = picker({
@@ -432,16 +339,8 @@ export function createUi(h: UiHandlers, init: BarInit) {
   const arp = picker({
     label: 'Arp', key: 'A', items: arpItems, name: (a) => a.label, icon: (a) => grooveIcon(a.vel), pick: (i) => h.arp(i - 1),
   });
-  // the levels: one button, five sliders over it
-  const mix = mixer([
-    { label: 'Sustain', value: init.sustain, put: (t) => h.sustain(t) },
-    { label: 'Reverb', value: init.room, put: (t) => h.room(t) },
-    { label: 'Pad', value: init.pad, put: (t) => h.pad(t) },
-    { label: 'Harmonics', value: init.harm, put: (t) => h.harm(t) },
-    { label: 'Delay', value: init.delay, put: (t) => h.delay(t) },
-  ]);
-  const delay = mix.sliders[4];
-  const pad = mix.sliders[2];
+  // the levels: one button, a slider each over it
+  const mix = mixer(LEVELS.map(([key, label]) => ({ label, value: init.levels[key], put: (t: number) => h.level(key, t) })));
   bar.append(instrument.box, scale.box, arp.box);
   // the mixer on its own, beside the bar
   const solo = el('div', 'solo');
@@ -449,35 +348,14 @@ export function createUi(h: UiHandlers, init: BarInit) {
   const dock = el('div', 'dock');
   dock.append(bar, solo);
 
-  // (the help is built but not shown, for now: the bar's names say enough)
-  void corner;
   const toastEl = el('div', 'toast');
   document.body.append(dock, toastEl);
-  // P: the pad off, or back on where it was
-  let padWas = init.pad || 0.5;
+  // (changes made elsewhere, a key or a snapshot: only shown)
   return {
     setPreset: (i: number) => instrument.set(i),
-    togglePad() {
-      if (pad.get() > 0) (padWas = pad.get()), pad.set(0);
-      else pad.set(padWas);
-    },
     setScale: (i: number) => scale.set(i),
     setArp: (mode: number) => arp.set(mode + 1),
-    /** D: the delay's next step (off, light, medium, deep) */
-    nextDelay() {
-      const cur = DELAYS.reduce((best, d, j) => (Math.abs(d.t - delay.get()) < Math.abs(DELAYS[best].t - delay.get()) ? j : best), 0);
-      const i = (cur + 1) % DELAYS.length;
-      delay.set(DELAYS[i].t);
-      return DELAYS[i].label;
-    },
-    /** a recalled snapshot: the delay, and the four levels (each one's handler runs) */
-    setDelay: (t: number) => delay.set(t),
-    setLevels(v: { sustain: number; room: number; pad: number; harm: number }) {
-      mix.sliders[0].set(v.sustain);
-      mix.sliders[1].set(v.room);
-      mix.sliders[2].set(v.pad);
-      mix.sliders[3].set(v.harm);
-    },
+    showLevel: (key: LevelKey, t: number) => mix.sliders[LEVELS.findIndex(([k]) => k === key)].show(t),
     /** a word in the middle of the screen for a moment */
     toast(text: string) {
       toastEl.textContent = text;

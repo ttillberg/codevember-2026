@@ -7,9 +7,8 @@
   --rim: inset 0 0 0 1px rgba(255, 255, 255, 0.1);
   --edge: 24px;
   --ui: Inter, "Helvetica Neue", Helvetica, Arial, sans-serif;
-  --tint: 236, 236, 234;
 }
-html, body { margin: 0; height: 100%; background: var(--ground); overflow: hidden; transition: background-color 0.9s ease; }
+html, body { margin: 0; height: 100%; background: var(--ground); overflow: hidden; }
 body { -webkit-user-select: none; user-select: none; -webkit-tap-highlight-color: transparent; }
 canvas { display: block; position: fixed; left: 0; top: 0; width: 100%; height: 100%; touch-action: none; cursor: grab; }
 canvas:active { cursor: grabbing; }
@@ -55,40 +54,6 @@ canvas:active { cursor: grabbing; }
 .round:active { transform: scale(0.93); }
 .round.on { background: var(--ink); color: var(--ground); }
 
-/* top right: help */
-.corner {
-  position: fixed; z-index: 4; display: flex; gap: 8px;
-  top: max(var(--edge), env(safe-area-inset-top)); right: max(var(--edge), env(safe-area-inset-right));
-}
-.help-pop {
-  position: absolute; right: 0; top: calc(100% + 10px);
-  box-sizing: border-box; width: max-content; max-width: min(360px, calc(100vw - 32px));
-  padding: 14px 16px; border-radius: 18px;
-  background: rgba(33, 33, 33, 0.72);
-  -webkit-backdrop-filter: blur(16px) saturate(1.4); backdrop-filter: blur(16px) saturate(1.4);
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.1), 0 10px 30px rgba(0, 0, 0, 0.4);
-  font: 400 13px/16px var(--ui); color: rgba(244, 244, 242, 0.6);
-  opacity: 0; pointer-events: none;
-  transform: translateY(-6px) scale(0.97); transform-origin: 100% 0;
-  transition: opacity 0.16s ease-out, transform 0.2s cubic-bezier(0.2, 0.8, 0.2, 1);
-}
-.help-pop.open { opacity: 1; pointer-events: auto; transform: none; }
-.dos { display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 8px 16px; }
-.dos .how { color: var(--ink); display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
-.dos .what { font: 600 10px/1.2 var(--ui); letter-spacing: 0.12em; text-transform: uppercase; color: rgba(244, 244, 242, 0.6); }
-.dos .key {
-  display: inline-flex; align-items: center; justify-content: center; min-width: 20px; height: 20px; padding: 0 6px;
-  box-sizing: border-box; border-radius: 5px;
-  font: 600 11px/1 var(--ui); color: var(--ground); background: var(--ink);
-}
-.dos h5 {
-  grid-column: 1 / -1; display: flex; align-items: center; gap: 8px; margin: 12px 0 0;
-  font: 600 10px/1 var(--ui); letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink);
-}
-.dos h5:first-child { margin-top: 0; }
-.dos h5::after { content: ''; flex: 1; height: 1px; background: rgba(244, 244, 242, 0.14); }
-.dos h5 span { font: 400 11px/1 var(--ui); letter-spacing: 0; text-transform: none; color: rgba(244, 244, 242, 0.55); }
-
 /* bottom centre: the bar, as on day 07. Icons in a frosted pill, one unit (17px) between
    them; a button is its icon plus half a unit either side, its hover and pressed disc a 46px
    circle drawn behind it. */
@@ -105,6 +70,7 @@ button { touch-action: manipulation; }
   -webkit-backdrop-filter: blur(24px) saturate(1.6); backdrop-filter: blur(24px) saturate(1.6);
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.07), 0 10px 30px rgba(0, 0, 0, 0.45);
 }
+.solo { padding: 6px; }
 .knob { position: relative; display: flex; }
 .knob > button {
   position: relative; isolation: isolate; display: flex; align-items: center; justify-content: center;
@@ -246,7 +212,7 @@ button { touch-action: manipulation; }
 }
 
 /* ?clean: the scene alone */
-.clean .plate, .clean .corner, .clean .dock, .clean .set-btn, .clean .settings { display: none; }
+.clean .plate, .clean .dock, .clean .set-btn, .clean .settings { display: none; }
 
 /* a word in the middle for a moment: a snapshot saved or recalled */
 .toast {
@@ -262,4 +228,3 @@ button { touch-action: manipulation; }
 @media (min-width: 900px) and (hover: hover) and (pointer: fine) {
   .dock { left: auto; right: max(var(--edge), env(safe-area-inset-right)); transform: none; }
 }
-.solo { padding: 6px; }

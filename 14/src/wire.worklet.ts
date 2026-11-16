@@ -40,19 +40,17 @@ export interface PluckMsg {
   boing?: number;
   wobble?: number;
 }
-export type Group = 'main' | 'tick' | 'sym' | 'arp' | 'chord' | 'harm';
+export type Group = 'main' | 'sym' | 'arp' | 'chord' | 'harm';
 export type WireMsg =
   | PluckMsg
   | { type: 'damp'; group: Group | 'all'; time: number }
   | { type: 'slide'; ratio: number; time: number }
-  /** a finger pressing the string aside: everything on it (the wire, the dots' notes) bent */
-  | { type: 'bend'; ratio: number }
   | { type: 'level' };
 
 const MAX_PARTIALS = 64;
 const SLOTS = 36;
 /** voices of each kind allowed to sound at once: past it, the quietest fades out */
-const CAP: Record<Group, number> = { main: 2, tick: 2, sym: 12, arp: 8, chord: 8, harm: 18 };
+const CAP: Record<Group, number> = { main: 2, sym: 12, arp: 8, chord: 8, harm: 18 };
 const TAU = Math.PI * 2;
 /** how loud the buzz is against what makes it */
 const BUZZ = 11;
@@ -67,6 +65,7 @@ class Voice {
   copies = 1;
   freq = new Float64Array(MAX_PARTIALS);
   sig = new Float64Array(MAX_PARTIALS);
+  r = new Float64Array(MAX_PARTIALS);
   /** per copy states: copy c, partial i at c * MAX + i */
   re = new Float64Array(MAX_PARTIALS * 2);
   im = new Float64Array(MAX_PARTIALS * 2);
@@ -116,6 +115,8 @@ class Voice {
     for (let i = 0; i < this.n; i++) {
       this.freq[i] = m.freqs[i];
       this.sig[i] = m.sigmas[i];
+      // (each partial's decay per sample: fixed for the voice's life)
+      this.r[i] = Math.exp(-m.sigmas[i] / sampleRate);
       for (let c = 0; c < 2; c++) {
         this.re[c * MAX_PARTIALS + i] = m.amps[i];
         this.im[c * MAX_PARTIALS + i] = 0;
@@ -160,9 +161,6 @@ class WireProcessor extends AudioWorkletProcessor {
   peakOut = 0;
   bufA = new Float64Array(128);
   bufB = new Float64Array(128);
-  /** the bend now and where it goes (a quick one-pole: a finger, no spring) */
-  bendR = 1;
-  bendTo = 1;
 
   constructor() {
     super();
@@ -189,12 +187,10 @@ class WireProcessor extends AudioWorkletProcessor {
           v.pitchTime = Math.max(0.02, m.time);
         }
       }
-    } else if (m.type === 'bend') {
-      this.bendTo = m.ratio;
     } else if (m.type === 'damp') {
       for (const v of this.voices) if (v.on && (m.group === 'all' || v.group === m.group)) v.release(m.time);
     } else if (m.type === 'level') {
-      this.port.postMessage({ type: 'level', peak: this.peakOut, live: this.voices.filter((v) => v.on).length });
+      this.port.postMessage({ type: 'level', peak: this.peakOut });
       this.peakOut = 0;
     }
   }
@@ -220,7 +216,6 @@ class WireProcessor extends AudioWorkletProcessor {
     if (AR && AR !== AL) AR.fill(0);
     const A = this.bufA;
     const B = this.bufB;
-    this.bendR += (this.bendTo - this.bendR) * (1 - Math.exp(-N / sampleRate / 0.025));
 
     for (const v of this.voices) {
       if (!v.on) continue;
@@ -246,11 +241,11 @@ class WireProcessor extends AudioWorkletProcessor {
       }
       // elastic: the snap back from sharp, and the wobble after it
       const elastic = v.boing * Math.exp(-t / 0.2) + v.wobble * Math.exp(-t / 0.7) * Math.sin(TAU * 5.2 * t) * Math.min(1, t / 0.08);
-      const bend = (1 + v.glide * env * env + elastic) * v.pitch * (v.group === 'main' || v.group === 'chord' ? this.bendR : 1);
+      const bend = (1 + v.glide * env * env + elastic) * v.pitch;
       A.fill(0);
       B.fill(0);
       for (let i = 0; i < v.n; i++) {
-        const r = Math.exp(-v.sig[i] / sampleRate);
+        const r = v.r[i];
         // the bloom: this partial's fade in, linear across the block
         const e0 = v.inEnv[i];
         const e1 = e0 + (1 - e0) * v.inRate[i];
@@ -276,6 +271,15 @@ class WireProcessor extends AudioWorkletProcessor {
           v.re[k] = re;
           v.im[k] = im;
         }
+      }
+      // the top partials die long before the fundamental: past hearing, they stop being run
+      // (they're in order of frequency, and the higher, the faster they die)
+      while (v.n > 1) {
+        const k = v.n - 1;
+        const k2 = MAX_PARTIALS + k;
+        const e2 = v.re[k] * v.re[k] + v.im[k] * v.im[k] + (v.copies === 2 ? v.re[k2] * v.re[k2] + v.im[k2] * v.im[k2] : 0);
+        if (e2 > 1e-12 || v.inEnv[k] < 0.99) break;
+        v.n--;
       }
       const two = v.copies === 2;
       const gap = v.gap * v.peak;

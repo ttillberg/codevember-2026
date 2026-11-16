@@ -33,7 +33,6 @@ uniform float aspect;
 uniform float time;
 uniform float level;
 uniform float amount;
-uniform vec3 tint;
 uniform float detail;
 uniform float beat;
 uniform float pulse;
@@ -62,7 +61,6 @@ void main() {
   float dx = (v.x - sx) * 2.0;           // -1..1 across, 0 at the string
   float d = abs(dx);
   float y = v.y;
-  vec2 p = vec2(dx * aspect, y);
   // a slow warp: the light runs along curved layers
   float warp = fbm(vec2(d * aspect, y) * vec2(1.4, 1.6) + vec2(time * 0.025, -time * 0.018));
   float yw = y + (warp - 0.5) * 0.12;
@@ -84,7 +82,7 @@ void main() {
   float thick = field * 3.0 + y * 0.5 + (e * (0.8 + 0.4 * rip) + eb * 0.7) * 0.9 - sh * 1.4 + time * 0.01;
   // black and white: each layer a little lighter or deeper by its thickness
   float shade = 0.8 + 0.2 * cos(6.28318 * thick * 1.3);
-  vec3 pearl = tint * shade;
+  vec3 pearl = vec3(0.78) * shade;
   // two ways to draw the layers, and anything between (detail): fine, the layers' contour
   // lines, a pixel wide wherever they are (a little wider where the sound passes); soft, almost a
   // gradient, the broad shading of the film alone
@@ -175,7 +173,7 @@ export class Nacre {
     const loc = gl.getAttribLocation(prog, 'p');
     gl.enableVertexAttribArray(loc);
     gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
-    for (const k of ['hist', 'shape', 'head', 'sx', 'aspect', 'time', 'level', 'amount', 'tint', 'detail', 'beat', 'pulse']) this.u[k] = gl.getUniformLocation(prog, k);
+    for (const k of ['hist', 'shape', 'head', 'sx', 'aspect', 'time', 'level', 'amount', 'detail', 'beat', 'pulse']) this.u[k] = gl.getUniformLocation(prog, k);
     const tex = (w: number, h: number, wrap: number) => {
       const t = gl.createTexture()!;
       gl.bindTexture(gl.TEXTURE_2D, t);
@@ -238,22 +236,32 @@ export class Nacre {
     if (this.pokes.length > 24) this.pokes.shift();
   }
   private pokes: Array<{ u: number; s: number; t: number }> = [];
+  private touch = new Float32Array(H);
 
-  render(t: number, sx: number, w: number, h: number, ys: Float32Array, reach: number, tint: number[]) {
+  render(t: number, sx: number, w: number, h: number, ys: Float32Array, reach: number) {
     const gl = this.gl;
     if (!gl || !this.prog) return;
-    this.pokes = this.pokes.filter((p) => t - p.t < 0.8);
+    // the touches still alive, kept in place; each one's swell, laid in only near its height
+    // (past ±0.08 a gaussian this narrow is nothing)
+    let live = 0;
+    for (const p of this.pokes) if (t - p.t < 0.8) this.pokes[live++] = p;
+    this.pokes.length = live;
+    this.touch.fill(0);
+    for (const p of this.pokes) {
+      const a = p.s * Math.exp(-(t - p.t) / 0.22);
+      const lo = Math.max(0, Math.floor((p.u - 0.08) * (H - 1)));
+      const hi = Math.min(H - 1, Math.ceil((p.u + 0.08) * (H - 1)));
+      for (let i = lo; i <= hi; i++) {
+        const dy = i / (H - 1) - p.u;
+        this.touch[i] += a * Math.exp(-(dy * dy) / (2 * 0.018 * 0.018));
+      }
+    }
     let sum = 0;
     for (let i = 0; i < H; i++) {
-      // blurred up and down: a swell of light, not a comb
+      // blurred up and down: a swell of light, not a comb; and the touches over it
       let s = 0;
       for (let k = -3; k <= 3; k++) s += this.spec[Math.max(0, Math.min(H - 1, i + k))] * BLUR[k + 3];
-      s *= 1.6;
-      // and the touches: the dots the string catches on, a swell at their heights
-      for (const p of this.pokes) {
-        const dy = i / (H - 1) - p.u;
-        s += p.s * Math.exp(-(t - p.t) / 0.22) * Math.exp(-(dy * dy) / (2 * 0.018 * 0.018));
-      }
+      s = s * 1.6 + this.touch[i];
       this.col[i] = Math.round(Math.min(1, s) * 255);
       sum += s;
       const y = ys[Math.round((i / (H - 1)) * (ys.length - 1))] / Math.max(1, reach);
@@ -266,7 +274,6 @@ export class Nacre {
     gl.activeTexture(gl.TEXTURE1);
     gl.bindTexture(gl.TEXTURE_2D, this.shape);
     gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, 1, H, gl.LUMINANCE, gl.UNSIGNED_BYTE, this.shp);
-    const [r, g, b] = tint;
     gl.uniform1f(this.u.head, (this.head + 0.5) / M);
     gl.uniform1f(this.u.sx, sx / w);
     gl.uniform1f(this.u.aspect, w / h);
@@ -279,7 +286,6 @@ export class Nacre {
     gl.uniform1f(this.u.detail, this.detailV);
     gl.uniform1f(this.u.beat, this.beat);
     gl.uniform1f(this.u.pulse, this.pulse);
-    gl.uniform3f(this.u.tint, r, g, b);
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
   }
 }

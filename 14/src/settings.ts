@@ -79,7 +79,6 @@ export function createSettings(items: Range[], readout?: () => string) {
     const v0 = typeof stored[it.key] === 'number' ? stored[it.key] : it.value;
     const apply = (v: number) => {
       out.textContent = v.toFixed(digits);
-      input.style.setProperty('--p', `${((v - it.min) / (it.max - it.min)) * 100}%`);
       it.set(v);
     };
     input.value = String(v0);
@@ -116,5 +115,5 @@ export function createSettings(items: Range[], readout?: () => string) {
   if (readout) setInterval(() => !panel.hidden && (read.textContent = readout()), 250);
 
   document.body.append(button, panel);
-  return { open };
+
 }

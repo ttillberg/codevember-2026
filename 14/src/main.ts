@@ -7,10 +7,10 @@
 // its own modes, dying with the sound.
 
 import { Engine, tune } from './audio';
-import { PRESETS, SCALES, applyScale, midiHz, ring as decay, snap, type Partials } from './presets';
+import { PRESETS, SCALES, applyScale, inScale as inScaleOf, midiHz, pc, ring as decay, snap, type Partials } from './presets';
 import { createSettings } from './settings';
 import { Groove, PATTERNS, type Hit } from './arp';
-import { createUi, TOUCH } from './ui';
+import { createUi, LEVELS, TOUCH, type LevelKey } from './ui';
 import { Nacre } from './nacre';
 
 const params = new URLSearchParams(location.search);
@@ -24,7 +24,7 @@ const ctx = canvas.getContext('2d')!;
 const hint = document.querySelector<HTMLElement>('.hint');
 
 /** what the drawing is allowed to tweak (settings) */
-const look = { transpose: 0, speed: 1 };
+const look = { speed: 1 };
 
 let presetIdx = 0;
 const preset = () => PRESETS[presetIdx];
@@ -51,11 +51,10 @@ function audio(): Promise<Engine | null> {
       // running: the button goes; locked again later (a call, the lock screen): it comes back
       // with the next gesture
       ac.addEventListener('statechange', () => ac?.state === 'running' && showStart(false));
-      const e = await Engine.create(ac);
+      const e = await Engine.create(ac, preset());
       e.setPreset(preset());
       applyPad(e);
-      e.setDelay(delayT);
-      e.applyMix();
+      e.setDelay(level.delay);
       engine = e;
       return e;
     } catch (err) {
@@ -164,11 +163,8 @@ function resize() {
   A.y = 0;
   L = h;
   // the notes stop over the bar (a finger there is on a control)
-  const tops = ['.bar']
-    .map((q) => document.querySelector(q)?.getBoundingClientRect())
-    .filter((r) => r && r.height > 0)
-    .map((r) => r!.top);
-  const floor = tops.length ? Math.min(...tops) - 28 : h * 0.95;
+  const bar = document.querySelector('.bar')?.getBoundingClientRect();
+  const floor = bar && bar.height > 0 ? bar.top - 28 : h * 0.95;
   lowU = Math.min(0.95, Math.max(0.6, floor / h));
   const side = Math.min(A.x, w - A.x);
   maxPull = Math.min(w * 0.3, h * 0.26, side * 0.6);
@@ -195,7 +191,7 @@ const OCTAVES = 4;
  * on the root.
  */
 const BELOW = 12;
-const bottom = () => preset().root + look.transpose - BELOW;
+const bottom = () => preset().root - BELOW;
 /** the highest note sits a little under the top, the lowest just over the bar (set in resize) */
 const TOP = 0.05;
 let lowU = 0.95;
@@ -210,11 +206,7 @@ function semisAt(u: number) {
 const uAt = (semis: number) => lowU - (semis / SPAN) * (lowU - TOP);
 
 /** the note of the scale nearest midi `m` (a tie goes down, the sadder way) */
-function scaleNear(m: number) {
-  const r = Math.round(m);
-  for (let k = 0; k <= 6; k++) for (const c of [r - k, r + k]) if (inScale(c)) return c;
-  return r;
-}
+const scaleNear = (m: number) => snap(preset(), m);
 /** the next note of the scale above midi note `m` */
 function stepUp(m: number) {
   let u = Math.floor(m) + 1;
@@ -252,10 +244,7 @@ function nearestScale(semis: number) {
   return scaleNear(base + semis) - base;
 }
 
-const inScale = (m: number) => {
-  const p = preset();
-  return p.scale.includes((((m - p.root - look.transpose) % 12) + 12) % 12);
-};
+const inScale = (m: number) => inScaleOf(preset(), m);
 
 /**
  * An open chord over `note`, all in the scale: a perfect fifth (or a fourth where the scale has
@@ -293,53 +282,87 @@ let ring: { modes: Mode[]; t0: number; buzz: number; hushed?: number } | null = 
 /** the dots' notes and the groove's: light ripples on the drawn string, over your own */
 let ripple: { modes: Mode[]; t0: number } | null = null;
 /** the note it was plucked at, where a slide has taken it since, and the last pitch played (the keys strike that) */
-let sounding = { note: 0, at: 0, slid: 0 };
+let sounding = { note: 0, slid: 0 };
 let lastPitch = 0;
 /** what was ringing when the finger came, fading under it */
 let residue = 0;
 let lastT = 0;
-// the bar's two levels, remembered per viewer (best effort): the pad (off to start) and the room
-const BAR = 'codevember-14-bar';
-const barStored = (() => {
+/** a JSON value in localStorage, best effort (private mode, blocked storage: the default) */
+function stored<T>(key: string, dflt: T): T {
   try {
-    return JSON.parse(localStorage.getItem(BAR) ?? '{}') as { pad?: number; room?: number; sustain?: number; harm?: number; delay?: number };
+    return (JSON.parse(localStorage.getItem(key) ?? 'null') as T) ?? dflt;
   } catch {
-    return {};
+    return dflt;
   }
-})();
-/** the defaults (wood, tension, no arp): sustain a bit long, a big room, a whisper of pad, the
- * flageolets up, the delay half way; what a viewer sets is remembered over them */
-let padLevel = barStored.pad ?? 0.18;
-/** the reverb knob, 0..1: the level (none at the bottom, the preset's own in the middle, two and
- * a half times at the top) and the length of the room (half to one and a half times) */
-let roomT = barStored.room ?? 0.86;
-function setRoom(t: number) {
-  roomT = t;
-  tune.wet = t <= 0.5 ? 2 * t : 1 + (t - 0.5) * 3;
-  tune.size = 0.5 + t;
 }
-setRoom(roomT);
-let roomTimer = 0;
-/** the sustain knob, 0..1: a quarter of each string's ring time at the bottom, four times at the top, its own in the middle */
-let sustainT = barStored.sustain ?? 0.675;
-const setSustain = (t: number) => (decay.sustain = Math.pow(4, 2 * t - 1));
-setSustain(sustainT);
-/** the flageolets' knob, 0..1: none at the bottom, their own level in the middle, twice at the top */
-let harmT = barStored.harm ?? 0.77;
-tune.harm = 2 * harmT;
-/** the delay knob, 0..1 (half way to start with) */
-let delayT = barStored.delay ?? 0.5;
-function barSave() {
+function store(key: string, v: unknown) {
   try {
-    localStorage.setItem(BAR, JSON.stringify({ pad: padLevel, room: roomT, sustain: sustainT, harm: harmT, delay: delayT }));
+    localStorage.setItem(key, JSON.stringify(v));
   } catch {
-    /* private mode: fine */
+    /* private mode: kept for nothing */
   }
+}
+
+/**
+ * The mixer's levels, 0..1 each, remembered per viewer. The defaults (with wood, tension, no
+ * arp): sustain a bit long, a big room, a whisper of pad, the flageolets up, the delay half way.
+ * - sustain: a quarter of each string's ring time at the bottom, four times at the top
+ * - room: the reverb's level (none at the bottom, the preset's own in the middle, two and a half
+ *   times at the top) and the length of the room (half to one and a half times)
+ * - pad: 0 is off; half way is its own level
+ * - harm: the flageolets, none at the bottom, their own level in the middle, twice at the top
+ * - delay: the string's own echo, none at the bottom
+ */
+const LEVELS_KEY = 'codevember-14-bar';
+const level: Record<LevelKey, number> = { sustain: 0.675, room: 0.86, pad: 0.18, harm: 0.77, delay: 0.5, ...stored(LEVELS_KEY, {}) };
+let roomTimer = 0;
+let saveTimer = 0;
+const applyLevel: Record<LevelKey, (t: number) => void> = {
+  sustain: (t) => (decay.sustain = Math.pow(4, 2 * t - 1)),
+  room: (t) => {
+    tune.wet = t <= 0.5 ? 2 * t : 1 + (t - 0.5) * 3;
+    tune.size = 0.5 + t;
+    engine?.applyMix();
+    // a new length once the knob rests a moment (a room is a few seconds of noise to make)
+    clearTimeout(roomTimer);
+    roomTimer = window.setTimeout(() => engine?.resizeRoom(), 250);
+  },
+  pad: () => engine && applyPad(engine),
+  harm: (t) => (tune.harm = 2 * t),
+  delay: (t) => engine?.setDelay(t),
+};
+/** a level set: applied, remembered (once it rests), and shown on the mixer unless it came from there */
+function setLevel(key: LevelKey, t: number, fromMixer = false) {
+  level[key] = Math.min(1, Math.max(0, t));
+  applyLevel[key](level[key]);
+  clearTimeout(saveTimer);
+  saveTimer = window.setTimeout(() => store(LEVELS_KEY, level), 300);
+  if (!fromMixer) ui?.showLevel(key, level[key]);
+}
+for (const key of Object.keys(applyLevel) as LevelKey[]) applyLevel[key](level[key]);
+/** P: the pad off, or back where it was */
+let padWas = level.pad || 0.5;
+function togglePad() {
+  if (level.pad > 0) (padWas = level.pad), setLevel('pad', 0);
+  else setLevel('pad', padWas);
+}
+/** D: the delay's next step: off, then echoes, fewer or more */
+const DELAYS = [
+  { label: 'Off', t: 0 },
+  { label: 'Light', t: 0.25 },
+  { label: 'Medium', t: 0.5 },
+  { label: 'Deep', t: 0.85 },
+];
+function nextDelay() {
+  const near = DELAYS.reduce((best, d, j) => (Math.abs(d.t - level.delay) < Math.abs(DELAYS[best].t - level.delay) ? j : best), 0);
+  const next = DELAYS[(near + 1) % DELAYS.length];
+  setLevel('delay', next.t);
+  return next.label;
 }
 /** 0 is off; half way is its own level */
 function applyPad(e: Engine) {
-  e.pad.amount = padLevel * 2 * tune.pad;
-  e.pad.setOn(padLevel > 0);
+  e.pad.amount = level.pad * 2 * tune.pad;
+  e.pad.setOn(level.pad > 0);
 }
 /** a strike's light, a moment after it */
 let stick: { u: number; t: number } | null = null;
@@ -364,12 +387,16 @@ function modesFrom(parts: Partials, shape: (k: number) => number, sine: boolean)
 function pluck(s: number, d: number, deg: number, force: number) {
   const note = noteFor(deg);
   s = clampS(s);
-  const parts = engine?.pluck({ note, pos: s, kind: 'pluck', force, chiado: false }) ?? localPartials(note);
+  const parts = engine?.pluck({ note, pos: s, kind: 'pluck', force }) ?? localPartials(note);
   // a triangle let go: its Fourier sine series (the drawing swings no wider than the reach)
   const dd = Math.sign(d) * Math.min(Math.abs(d), reach * 1.5);
-  const modes = modesFrom(parts, (k) => (2 * dd * Math.sin(k * Math.PI * s)) / (k * k * Math.PI * Math.PI * s * (1 - s)), false);
+  rang(note, deg, force, s, modesFrom(parts, (k) => (2 * dd * Math.sin(k * Math.PI * s)) / (k * k * Math.PI * Math.PI * s * (1 - s)), false));
+}
+
+/** the string rang: what the drawing shows, what sounds now, the groove fed, the hint gone */
+function rang(note: number, deg: number, force: number, s: number, modes: Mode[]) {
   ring = { modes, t0: performance.now() / 1000, buzz: preset().buzz * tune.buzz };
-  sounding = { note, at: performance.now(), slid: 0 };
+  sounding = { note, slid: 0 };
   lastPitch = deg;
   played(note, force, s);
   hideHint();
@@ -378,18 +405,13 @@ function pluck(s: number, d: number, deg: number, force: number) {
 function strike(s: number, deg: number, force = 0.65) {
   const note = noteFor(deg);
   s = clampS(s);
-  const parts = engine?.pluck({ note, pos: s, kind: 'strike', force, chiado: false }) ?? localPartials(note);
+  const parts = engine?.pluck({ note, pos: s, kind: 'strike', force }) ?? localPartials(note);
   const amp = reach * 0.45 * (0.4 + 0.6 * force);
   const raw = (k: number) => (Math.sin(k * Math.PI * s) * Math.exp(-k / 9)) / k;
   let n = 0;
   for (let k = 1; k <= 14; k++) n += Math.abs(raw(k));
-  const modes = modesFrom(parts, (k) => (amp * raw(k)) / (n || 1), true);
-  ring = { modes, t0: performance.now() / 1000, buzz: preset().buzz * tune.buzz };
   stick = { u: s, t: performance.now() / 1000 };
-  sounding = { note, at: performance.now(), slid: 0 };
-  lastPitch = deg;
-  played(note, force, s);
-  hideHint();
+  rang(note, deg, force, s, modesFrom(parts, (k) => (amp * raw(k)) / (n || 1), true));
 }
 
 /** a light re-pluck of the drawn string (a dot's note, the groove's), on top of your own */
@@ -405,7 +427,7 @@ function rippleAt(s: number, parts: Partials, f: number, scale = 0.1) {
 function played(note: number, force: number, s: number) {
   lastPos = s;
   // (it remembers notes of the scale: a pitch between them goes to the nearest)
-  if (engine) groove.feed(snap(preset(), Math.round(note)), force, engine.ctx.currentTime);
+  if (engine) groove.feed(snap(preset(), note), force, engine.ctx.currentTime);
 }
 
 /** before the sound is up (or without it): the same partials, for the drawing alone */
@@ -425,13 +447,15 @@ function localPartials(note: number): Partials {
 }
 
 let hinted = false;
-/** where the call to action sits on the string, before the first pluck */
+/** where the call to action sits on the string, before the first pluck, and how far it sways (px) */
 const CTA_U = 0.55;
+const ctaSway = (t: number) => 5 * Math.sin(t * 1.7) * Math.min(1, t / 1.5);
+/** a string held aside at `s`: how far along the way it is at `x` (two straight lines, 1 at `s`) */
+const tri = (x: number, s: number) => (x < s ? x / s : (1 - x) / (1 - s));
 /** before the first pluck: a ring pulsing on the string where it sways, an invitation to take it */
 function drawCta(t: number) {
   if (grab.on || pend.on) return;
-  const sway = 5 * Math.sin(t * 1.7) * Math.min(1, t / 1.5);
-  const p = toScreen(CTA_U, sway);
+  const p = toScreen(CTA_U, ctaSway(t));
   const k = (t * 0.7) % 1;
   ctx.lineWidth = 1;
   ctx.strokeStyle = `rgba(244, 244, 242, ${0.55 * (1 - k)})`;
@@ -470,7 +494,6 @@ interface Dot {
   state: 0 | 1 | 2;
   /** the string's place against it last frame: + beyond it, − not there yet (NaN: no string) */
   rel: number;
-  side: number;
   flash: number;
 }
 const dots: Dot[] = [];
@@ -524,7 +547,7 @@ function vary(d: Dot) {
     return m;
   };
   const others = tones.filter((o) => o !== d.note);
-  const rubs = (m: number) => others.some((o) => [0, 1, 11].includes((((o - m) % 12) + 12) % 12));
+  const rubs = (m: number) => others.some((o) => [0, 1, 11].includes(pc(o - m)));
   return [step(d.note, 1), step(d.note, -1), step(d.note, 2)].find((m) => !rubs(m) && m > tones[0]) ?? d.note;
 }
 
@@ -532,7 +555,7 @@ function placeDots(jump = false) {
   if (!w) return;
   // (on a wide screen they stay near the string, within reach of a pull, not out at the edges)
   const half = Math.min(A.x, w - A.x, 340) - 20;
-  const out: Omit<Dot, 'state' | 'rel' | 'side' | 'flash' | 'x' | 'y'>[] = [];
+  const out: Omit<Dot, 'state' | 'rel' | 'flash' | 'x' | 'y'>[] = [];
   const used: number[] = [];
   const p = preset();
   const low = bottom();
@@ -562,7 +585,7 @@ function placeDots(jump = false) {
   // the same dots move to their new places; a new count starts over
   if (out.length !== dots.length) {
     dots.length = 0;
-    for (const o of out) dots.push({ ...o, x: o.tx, y: o.ty, state: 0, rel: NaN, side: 0, flash: -10 });
+    for (const o of out) dots.push({ ...o, x: o.tx, y: o.ty, state: 0, rel: NaN, flash: -10 });
     return;
   }
   out.forEach((o, i) => {
@@ -575,7 +598,7 @@ function placeDots(jump = false) {
 }
 
 /** the held string's place (aside) at `u`: two straight lines to the finger */
-const triAt = (u: number) => (grab.on ? grab.d * (u < grab.s ? u / grab.s : (1 - u) / (1 - grab.s)) : 0);
+const triAt = (u: number) => (grab.on ? grab.d * tri(u, grab.s) : 0);
 
 function updateDots(dt: number, t: number) {
   const k = 1 - Math.exp(-dt / 0.35);
@@ -612,7 +635,7 @@ function updateDots(dt: number, t: number) {
           e.chordNote(note, force, clampS(u), e.ctx.currentTime);
           rippleAt(clampS(u), localPartials(note), force, 0.16);
         });
-        sounding = { note, at: performance.now(), slid: 0 };
+        sounding = { note, slid: 0 };
         played(note, force, u);
         navigator.vibrate?.(5);
       }
@@ -634,19 +657,21 @@ function updateDots(dt: number, t: number) {
 const grab = { on: false, s: 0.5, d: 0, want: 0, raw: 0, deg: 0, crossed: false, id: -1, t0: 0, x0: 0, y0: 0, fx: 0, fy: 0, moved: 0, auto: false, peak: 0, lastS: 0.5, lastT: 0 };
 /** a press on the string waits to see which way it goes: aside a pull, along a slide, nowhere a tap */
 const pend = { on: false, id: -1, x0: 0, y0: 0, u: 0, v: 0, t0: 0, muted: false };
+/** how far aside a sliding finger goes before it takes the string */
+const SIDE = 16;
 /** how long a finger rests still on the string before it stops what rings (a tap is quicker) */
 const MUTE_MS = 260;
 /** a press off the string: a tap there is the next scale, a sweep across it a strum */
-const away = { on: false, id: -1, x0: 0, y0: 0, t0: 0, v: NaN, u: 0, t: 0, wah: false, fy: 0 };
+const away = { on: false, id: -1, x0: 0, y0: 0, v: NaN, u: 0, t: 0, wah: false, fy: 0 };
 /** a finger sliding along the string (what rings goes with it, flageolets at the nodes) */
-const mod = { on: false, id: -1, x0: 0, y0: 0, fx: 0, fy: 0, mode: 'wait' as 'wait' | 'slide', lastS: 0.5, glint: -10, solo: false };
+const mod = { on: false, id: -1, fx: 0, fy: 0, lastS: 0.5, glint: -10, solo: false };
 /**
  * More fingers, down while another one is: each its own player. Aside and let go, a pluck; a
  * tap, a strike; back over the string, a pluck there. Each note rings on its own (with the
  * others, and with what the first finger plays): chords with two hands. Along the string, a
  * finger slides what rings instead.
  */
-const extras = new Map<number, { x0: number; y0: number; u: number; v: number; side: number; peak: number; mode: 'wait' | 'pull'; fx: number; fy: number }>();
+const extras = new Map<number, { x0: number; y0: number; u: number; v: number; peak: number; mode: 'wait' | 'pull'; fx: number; fy: number }>();
 const ringing = () => !!ring && !!sounding.note;
 
 canvas.addEventListener('pointerdown', (e) => {
@@ -657,13 +682,13 @@ canvas.addEventListener('pointerdown', (e) => {
   if (e.pointerType !== 'mouse' && (busy || mod.on)) {
     // another finger: a player of its own
     canvas.setPointerCapture(e.pointerId);
-    extras.set(e.pointerId, { x0: e.clientX, y0: e.clientY, u, v, side: Math.sign(v) || 1, peak: Math.abs(v), mode: 'wait', fx: e.clientX, fy: e.clientY });
+    extras.set(e.pointerId, { x0: e.clientX, y0: e.clientY, u, v, peak: Math.abs(v), mode: 'wait', fx: e.clientX, fy: e.clientY });
     return;
   }
   if (grab.on || pend.on || away.on) return;
   canvas.setPointerCapture(e.pointerId);
   if (Math.abs(v) > HIT()) {
-    Object.assign(away, { on: true, id: e.pointerId, x0: e.clientX, y0: e.clientY, t0: performance.now(), v, u, t: performance.now(), wah: false, fy: e.clientY });
+    Object.assign(away, { on: true, id: e.pointerId, x0: e.clientX, y0: e.clientY, v, u, t: performance.now(), wah: false, fy: e.clientY });
     return;
   }
   // a finger on the string makes no sound yet: it waits to see which way it goes (aside a pull,
@@ -723,10 +748,7 @@ window.addEventListener('pointermove', (e) => {
     if (Math.abs(dy) > 14 && Math.abs(dy) > 1.4 * Math.abs(dx)) {
       // along the string: a slide (what rings goes with the finger, flageolets at the nodes)
       pend.on = false;
-      Object.assign(mod, { on: true, id: e.pointerId, x0: pend.x0, y0: pend.y0, fx: e.clientX, fy: e.clientY, mode: 'slide', semis: 0, lastS: clampS(pend.u), solo: true });
-      lastSlideT = e.timeStamp;
-      lastNode = -1;
-      moveMod(e);
+      startSlide(e, pend.u, true);
     } else if (Math.abs(dx) > 8) {
       // aside: a new pull, from where the finger came down
       pend.on = false;
@@ -771,15 +793,14 @@ function moveGrab(e: PointerEvent) {
     grab.lastS = grab.s;
     grab.lastT = now;
   }
-  if (grab.peak > 12 && q.v !== 0 && Math.sign(q.v) !== Math.sign(grab.raw)) {
+  const uc = grab.peak > 12 ? crossAt(grab.s, grab.raw, q.u, q.v) : null;
+  if (uc != null) {
     // pulled, then back over the string: it slips off the finger, a pluck right there, and the
     // finger keeps it: it's pulled the other way now, and every crossing after plucks again
-    const k = grab.raw / (grab.raw - q.v);
-    const u = clampS(grab.s + (q.u - grab.s) * k);
-    const force = Math.min(1, Math.max(0.2, grab.peak / maxPull));
+    const force = pullForce(grab.peak, 0.2);
     const sgn = Math.sign(grab.raw);
     const deg = grab.deg;
-    audio().then(() => pluck(u, sgn * reach * (0.25 + 0.5 * force), deg, force));
+    audio().then(() => pluckAt(clampS(uc), sgn, force, deg));
     navigator.vibrate?.(4);
     grab.crossed = true;
     grab.peak = Math.abs(q.v);
@@ -794,21 +815,16 @@ function moveGrab(e: PointerEvent) {
 function strum(e: PointerEvent) {
   const q = fromScreen(e.clientX, e.clientY);
   const now = performance.now();
-  if (!Number.isNaN(away.v) && Math.sign(q.v) !== Math.sign(away.v) && q.v !== 0) {
-    const k = away.v / (away.v - q.v);
-    const uc = away.u + (q.u - away.u) * k;
-    if (uc > 0.01 && uc < 0.99) {
-      const u = clampS(uc);
-      const speed = Math.abs(q.v - away.v) / Math.max(4, now - away.t);
-      const force = Math.min(1, Math.max(0.15, speed / 1.6));
-      const sgn = Math.sign(away.v);
-      const deg = semisAt(u);
-      audio().then(() => {
-        pluck(u, sgn * reach * (0.25 + 0.5 * force), deg, force);
-        engine?.pad.pull(0);
-      });
-      navigator.vibrate?.(4);
-    }
+  const uc = crossAt(away.u, away.v, q.u, q.v);
+  if (uc != null && uc > 0.01 && uc < 0.99) {
+    const speed = Math.abs(q.v - away.v) / Math.max(4, now - away.t);
+    const force = Math.min(1, Math.max(0.15, speed / 1.6));
+    const sgn = Math.sign(away.v);
+    audio().then(() => {
+      pluckAt(clampS(uc), sgn, force);
+      engine?.pad.pull(0);
+    });
+    navigator.vibrate?.(4);
   }
   away.v = q.v;
   away.u = q.u;
@@ -824,16 +840,11 @@ function hoverStrum(e: PointerEvent) {
   const q = fromScreen(e.clientX, e.clientY);
   const now = performance.now();
   const over = e.target === canvas && !grab.on && !away.on && !pend.on && engine && ac?.state === 'running';
-  if (over && !Number.isNaN(hover.v) && now - hover.t < 120 && Math.sign(q.v) !== Math.sign(hover.v) && q.v !== 0) {
-    const k = hover.v / (hover.v - q.v);
-    const uc = hover.u + (q.u - hover.u) * k;
-    if (uc > 0.01 && uc < lowU + 0.01) {
-      const u = clampS(uc);
-      // px per ms: a slow drift is a soft touch, a flick a hard pluck
-      const speed = Math.abs(q.v - hover.v) / Math.max(4, now - hover.t);
-      const force = Math.min(1, Math.max(0.12, speed / 2.2));
-      pluck(u, Math.sign(hover.v) * reach * (0.25 + 0.5 * force), semisAt(u), force);
-    }
+  const uc = over && now - hover.t < 120 ? crossAt(hover.u, hover.v, q.u, q.v) : null;
+  if (uc != null && uc > 0.01 && uc < lowU + 0.01) {
+    // px per ms: a slow drift is a soft touch, a flick a hard pluck
+    const speed = Math.abs(q.v - hover.v) / Math.max(4, now - hover.t);
+    pluckAt(clampS(uc), Math.sign(hover.v), Math.min(1, Math.max(0.12, speed / 2.2)));
   }
   hover.v = over ? q.v : NaN;
   hover.u = q.u;
@@ -851,19 +862,16 @@ function moveExtra(e: PointerEvent) {
   if (x.mode === 'wait') {
     if (!mod.on && Math.abs(dy) > 14 && Math.abs(dy) > 1.6 * Math.abs(dx) && Math.abs(q.v) < HIT() * 1.6) {
       extras.delete(e.pointerId);
-      Object.assign(mod, { on: true, id: e.pointerId, x0: x.x0, y0: x.y0, fx: e.clientX, fy: e.clientY, mode: 'slide', lastS: clampS(x.u), solo: false });
-      lastSlideT = e.timeStamp;
-      lastNode = -1;
-      moveMod(e);
+      startSlide(e, x.u, false);
       return;
     }
     if (Math.abs(dx) > 8) x.mode = 'pull';
   }
   if (x.mode !== 'pull') return;
-  if (x.peak > 12 && q.v !== 0 && Math.sign(q.v) !== Math.sign(x.v) && x.v !== 0) {
+  const uc = x.peak > 12 ? crossAt(x.u, x.v, q.u, q.v) : null;
+  if (uc != null) {
     // back over the string: a pluck right there, and it keeps going
-    const k = x.v / (x.v - q.v);
-    extraNote(clampS(x.u + (q.u - x.u) * k), Math.min(1, Math.max(0.2, x.peak / maxPull)));
+    extraNote(clampS(uc), pullForce(x.peak, 0.2));
     x.peak = 0;
   }
   x.v = q.v;
@@ -887,21 +895,35 @@ function moveMod(e: PointerEvent) {
   mod.fx = e.clientX;
   mod.fy = e.clientY;
   const q = fromScreen(mod.fx, mod.fy);
-  if (mod.mode === 'slide') {
-    if (mod.solo && !grab.on && Math.abs(q.v) > SIDE) {
-      // sliding, then aside: it takes the string there, a pull (let go and it plucks)
-      const id = mod.id;
-      endMod();
-      startGrab(clampS(q.u), q.v, id, false);
-      grab.x0 = grab.fx = e.clientX;
-      grab.y0 = grab.fy = e.clientY;
-      return;
-    }
-    slide(clampS(q.u), e.timeStamp);
+  if (mod.solo && !grab.on && Math.abs(q.v) > SIDE) {
+    // sliding, then aside: it takes the string there, a pull (let go and it plucks)
+    const id = mod.id;
+    endMod();
+    startGrab(clampS(q.u), q.v, id, false);
+    grab.x0 = grab.fx = e.clientX;
+    grab.y0 = grab.fy = e.clientY;
+    return;
   }
+  slide(clampS(q.u), e.timeStamp);
 }
-/** how far aside a sliding finger goes before it takes the string */
-const SIDE = 16;
+
+/** a finger starts sliding along the string at `u` (solo: the only one, so aside it takes the string) */
+function startSlide(e: PointerEvent, u: number, solo: boolean) {
+  Object.assign(mod, { on: true, id: e.pointerId, fx: e.clientX, fy: e.clientY, lastS: clampS(u), solo });
+  lastSlideT = e.timeStamp;
+  lastNode = -1;
+  moveMod(e);
+}
+
+/** where a move from (u0, v0) to (u1, v1) crossed the string (v changed side), along it; else null */
+function crossAt(u0: number, v0: number, u1: number, v1: number) {
+  if (!v0 || !v1 || Math.sign(v0) === Math.sign(v1)) return null;
+  return u0 + (u1 - u0) * (v0 / (v0 - v1));
+}
+/** a pluck at `u`, let go from side `sgn`, as hard as `force` (at the pitch `deg`, by default the place's) */
+const pluckAt = (u: number, sgn: number, force: number, deg = semisAt(u)) => pluck(u, sgn * reach * (0.25 + 0.5 * force), deg, force);
+/** a pull of `px` aside as a force, never under `min` */
+const pullForce = (px: number, min = 0) => Math.min(1, Math.max(min, Math.abs(px) / maxPull));
 
 /**
  * The harmonic nodes along the string: k/n for n up to 5 (k and n with no common factor): the
@@ -974,10 +996,16 @@ function passNodes(was: number, s: number, speed: number) {
 }
 
 function endMod() {
-  if (mod.mode === 'slide') settle();
+  settle();
   mod.on = false;
   mod.id = -1;
-  mod.mode = 'wait';
+}
+
+/** the held string let go of (no pluck: that's the caller's) */
+function releaseGrab() {
+  grab.on = false;
+  grab.id = -1;
+  engine?.pad.pull(0);
 }
 
 function endPointer(e: PointerEvent, cancel: boolean) {
@@ -992,18 +1020,15 @@ function endPointer(e: PointerEvent, cancel: boolean) {
     // pulled and let go: a pluck, as hard as it was pulled (just past a crossing, barely pulled,
     // the crossing's note rings on); never moved: a strike
     if (x.mode === 'pull') {
-      if (x.peak > 14) extraNote(clampS(x.u), Math.min(1, Math.max(0.2, Math.abs(x.v) / maxPull)));
+      if (x.peak > 14) extraNote(clampS(x.u), pullForce(x.v, 0.2));
     } else if (Math.abs(x.v) < HIT() * 1.6) extraNote(clampS(x.u), 0.55);
     return;
   }
   if (away.on && e.pointerId === away.id) {
     away.on = false;
-    if (away.wah) {
-      away.wah = false;
-      engine?.wah(null);
-      return;
-    }
     // (a tap on the background does nothing: the string and the scale are in the bar)
+    if (away.wah) engine?.wah(null);
+    away.wah = false;
     return;
   }
   if (pend.on && e.pointerId === pend.id) {
@@ -1016,9 +1041,7 @@ function endPointer(e: PointerEvent, cancel: boolean) {
     return;
   }
   if (!grab.on || grab.auto || e.pointerId !== grab.id) return;
-  grab.on = false;
-  grab.id = -1;
-  engine?.pad.pull(0);
+  releaseGrab();
   if (cancel) return;
   const quick = performance.now() - grab.t0 < 230 && grab.moved < 8;
   const { s, d, raw, deg } = grab;
@@ -1027,7 +1050,7 @@ function endPointer(e: PointerEvent, cancel: boolean) {
   // (the very first press waits for the sound to come up: a few ms)
   audio().then(() => {
     if (quick) strike(s, deg, 0.6);
-    else pluck(s, d, deg, Math.min(1, Math.abs(raw) / maxPull));
+    else pluck(s, d, deg, pullForce(raw));
   });
 }
 window.addEventListener('pointerup', (e) => endPointer(e, false));
@@ -1047,11 +1070,7 @@ const lifted = (e: TouchEvent) => {
     away.on = away.wah = pend.on = false;
     if (mod.on) endMod();
     extras.clear();
-    if (grab.on && !grab.auto) {
-      grab.on = false;
-      grab.id = -1;
-      engine?.pad.pull(0);
-    }
+    if (grab.on && !grab.auto) releaseGrab();
   }, 120);
 };
 window.addEventListener('touchend', lifted, { passive: true });
@@ -1078,13 +1097,11 @@ window.addEventListener('keydown', (e) => {
   } else if (e.code === 'KeyA') {
     arpCycle();
   } else if (e.code === 'KeyD') {
-    const name = ui?.nextDelay();
-    if (name) ui?.toast(`Delay ${name}`);
+    ui?.toast(`Delay ${nextDelay()}`);
   } else if (e.code === 'KeyS') {
     scaleCycle();
   } else if (e.code === 'KeyP') {
-    if (ui) ui.togglePad();
-    else if (engine) (padLevel = padLevel > 0 ? 0 : 0.5), applyPad(engine);
+    togglePad();
   } else if (/^Digit[0-9]$/.test(e.code)) {
     const n = Number(e.code.slice(5));
     // with shift: save a snapshot; alone: recall one (with cmd, ctrl or alt: the browser's)
@@ -1103,7 +1120,6 @@ function setPreset(i: number) {
   if (shift) groove.retune((n) => n + shift);
   engine?.setPreset(preset());
   ui?.setPreset(presetIdx);
-  document.documentElement.style.setProperty('--tint', TINTS[presetIdx]);
   placeDots();
 }
 
@@ -1115,17 +1131,6 @@ let lastPos = 0.3;
 /** the groove's notes waiting for their time, to re-pluck the drawn wire */
 const hits: { t: number; parts: Partials; f: number }[] = [];
 
-/** the page's ground, and the phone's bar with it */
-/** the nacre is black and white: a light grey on the dark */
-const NACRE_INK = [0.78, 0.78, 0.78];
-/** black and white: one near-black ground for every scale (the scales' own grounds are kept, unused) */
-const GROUND = '#0b0b0d';
-function setGround(_c: string) {
-  const c = GROUND;
-  document.documentElement.style.setProperty('--ground', c);
-  document.querySelector('meta[name="theme-color"]')?.setAttribute('content', c);
-}
-
 let scaleIdx = 0;
 function scaleCycle() {
   setScale((scaleIdx + 1) % SCALES.length);
@@ -1134,7 +1139,6 @@ function setScale(i: number) {
   scaleIdx = i;
   applyScale(scaleIdx);
   ui?.setScale(scaleIdx);
-  setGround(SCALES[scaleIdx].ground);
   // everything moves into the new scale: the groove's notes, the pad, the dots (they glide to
   // their new chords); what still rings in the old one lets go softly
   groove.retune((n) => snap(preset(), n));
@@ -1152,34 +1156,13 @@ function setScale(i: number) {
  * the arp, the four levels) under that digit; the digit alone brings it back. Remembered per
  * viewer.
  */
-interface Snapshot {
-  preset: string;
-  scale: string;
-  arp: number;
-  delay: number;
-  sustain: number;
-  room: number;
-  pad: number;
-  harm: number;
-}
+type Snapshot = { preset: string; scale: string; arp: number } & Record<LevelKey, number>;
 const SLOTS = 'codevember-14-slots';
-function slots(): Record<string, Snapshot> {
-  try {
-    return JSON.parse(localStorage.getItem(SLOTS) ?? '{}');
-  } catch {
-    return {};
-  }
-}
+const slots = () => stored<Record<string, Snapshot>>(SLOTS, {});
 /** everything the bar and the mix set, now */
-const snapshot = (): Snapshot => ({ preset: preset().id, scale: SCALES[scaleIdx].id, arp: groove.mode, delay: delayT, sustain: sustainT, room: roomT, pad: padLevel, harm: harmT });
+const snapshot = (): Snapshot => ({ preset: preset().id, scale: SCALES[scaleIdx].id, arp: groove.mode, ...level });
 function saveSlot(n: number) {
-  const all = slots();
-  all[n] = snapshot();
-  try {
-    localStorage.setItem(SLOTS, JSON.stringify(all));
-  } catch {
-    /* private mode: kept for nothing */
-  }
+  store(SLOTS, { ...slots(), [n]: snapshot() });
   ui?.toast(`Saved ${n}`);
 }
 function recallSlot(n: number) {
@@ -1194,8 +1177,7 @@ function applySnapshot(s: Snapshot) {
   const si = SCALES.findIndex((x) => x.id === s.scale);
   if (si >= 0) setScale(si);
   setArp(Math.max(-1, Math.min(PATTERNS.length - 1, s.arp)));
-  ui?.setDelay(s.delay);
-  ui?.setLevels(s);
+  for (const [key] of LEVELS) setLevel(key, s[key]);
 }
 
 /** cmd+C: the settings as JSON on the clipboard (unless text is selected); cmd+P (or a paste): back */
@@ -1212,15 +1194,12 @@ function pasteSettings(text: string) {
     const v = JSON.parse(text) as Partial<Snapshot>;
     const num = (x: unknown, d: number) => (typeof x === 'number' && Number.isFinite(x) ? Math.min(1, Math.max(0, x)) : d);
     if (typeof v !== 'object' || !v || (!v.preset && !v.scale)) throw new Error('not settings');
+    const levels = Object.fromEntries(LEVELS.map(([key]) => [key, num(v[key], level[key])])) as Record<LevelKey, number>;
     applySnapshot({
       preset: String(v.preset ?? preset().id),
       scale: String(v.scale ?? SCALES[scaleIdx].id),
       arp: typeof v.arp === 'number' ? Math.round(v.arp) : groove.mode,
-      delay: num(v.delay, delayT),
-      sustain: num(v.sustain, sustainT),
-      room: num(v.room, roomT),
-      pad: num(v.pad, padLevel),
-      harm: num(v.harm, harmT),
+      ...levels,
     });
     ui?.toast(`Settings applied · ${preset().label} · ${SCALES[scaleIdx].label}`);
   } catch {
@@ -1251,7 +1230,7 @@ function arpTick() {
     rippleAt(lastPos, hh.parts, hh.f);
   }
   // (scheduled only a little ahead: a pluck re-times what comes after it)
-  groove.tick(now, 0.05, e.pad.notes, preset().root + look.transpose, (hit: Hit) => {
+  groove.tick(now, 0.05, e.pad.notes, preset().root, (hit: Hit) => {
     // whatever happened since, it only ever plays in the scale
     const note = snap(preset(), hit.note);
     hits.push({ t: hit.when, parts: e.arpNote(note, hit.force, lastPos, hit.when), f: hit.force });
@@ -1260,9 +1239,8 @@ function arpTick() {
 
 // ------------------------------------------------------------------ drawing
 
-/** each string has its own light (the scene's only colour) */
-/** black and white: every string glows the same light grey */
-const TINTS = PRESETS.map(() => '236, 236, 234');
+/** black and white: the string's light, the same light grey whatever it is */
+const TINT = '236, 236, 234';
 const N = 160;
 const ys = new Float32Array(N + 1);
 const env = new Float32Array(N + 1);
@@ -1312,12 +1290,12 @@ function step(tms: number) {
   residue *= Math.exp(-dt / 0.07);
   updateDots(dt, t);
   // the dots show only while the string is held aside (in quickly, out slowly after)
-  const dotsWant = grab.on || [...extras.values()].some((x) => x.mode === 'pull') ? 1 : 0;
+  let dotsWant = grab.on ? 1 : 0;
+  for (const x of extras.values()) if (x.mode === 'pull') dotsWant = 1;
   dotsShow += (dotsWant - dotsShow) * (1 - Math.exp(-dt / (dotsWant ? 0.12 : 0.6)));
   arpTick();
 
   ctx.clearRect(0, 0, w, h);
-  const tint = TINTS[presetIdx];
 
   let energy = 0;
   ys.fill(0);
@@ -1377,11 +1355,8 @@ function step(tms: number) {
   }
   // before the first pluck: the string sways a little, as if a finger were testing it
   if (!hinted && !grab.on) {
-    const a = 5 * Math.sin(t * 1.7) * Math.min(1, t / 1.5);
-    for (let i = 0; i <= N; i++) {
-      const x = i / N;
-      held[i] += a * (x < CTA_U ? x / CTA_U : (1 - x) / (1 - CTA_U));
-    }
+    const a = ctaSway(t);
+    for (let i = 0; i <= N; i++) held[i] += a * tri(i / N, CTA_U);
   }
   for (let i = 0; i <= N; i++) ys[i] += held[i];
   const glow = Math.min(1, Math.sqrt(energy) / (reach * 0.5));
@@ -1395,14 +1370,14 @@ function step(tms: number) {
   const at = engine?.ctx.currentTime ?? t;
   nacre.beat = groove.phase(at);
   nacre.pulse += ((groove.playing ? 1 : 0.3) - nacre.pulse) * (1 - Math.exp(-dt / 0.5));
-  nacre.render(t, A.x, w, h, ys, reach, NACRE_INK);
+  nacre.render(t, A.x, w, h, ys, reach);
   drawMarks();
   if (dotsShow > 0.01) {
     ctx.globalAlpha = dotsShow;
     drawDots(t);
     ctx.globalAlpha = 1;
   }
-  drawWire(glow, tint);
+  drawWire(glow);
   if (grab.on && !grab.auto) drawFinger();
   if (mod.on) drawMod(t);
   drawExtras();
@@ -1417,7 +1392,7 @@ function step(tms: number) {
  */
 function drawMarks() {
   const base = bottom();
-  const at = grab.on ? grab.deg : mod.on && mod.mode === 'slide' ? semisAt(mod.lastS) : -99;
+  const at = grab.on ? grab.deg : mod.on ? semisAt(mod.lastS) : -99;
   for (let k = 0; k <= SPAN; k++) {
     if (!inScale(base + k)) continue;
     const y = uAt(k) * h;
@@ -1447,13 +1422,10 @@ function drawDots(t: number) {
   // each chord's dots, faintly joined: a constellation
   ctx.lineWidth = 1;
   ctx.strokeStyle = 'rgba(244, 244, 242, 0.06)';
-  for (let c = 0; c < ROOTS.length; c++) {
-    const g = dots.filter((d) => d.chord === c);
-    if (g.length < 2) continue;
-    ctx.beginPath();
-    g.forEach((d, i) => (i ? ctx.lineTo(d.x, d.y) : ctx.moveTo(d.x, d.y)));
-    ctx.stroke();
-  }
+  // (the dots are in chord order: one path, a new subpath at each chord)
+  ctx.beginPath();
+  dots.forEach((d, i) => (i && dots[i - 1].chord === d.chord ? ctx.lineTo(d.x, d.y) : ctx.moveTo(d.x, d.y)));
+  ctx.stroke();
   for (const d of dots) {
     const caught = d.state === 1;
     const age = t - d.flash;
@@ -1471,7 +1443,8 @@ function drawDots(t: number) {
   }
 }
 
-function drawWire(glow: number, tint: string) {
+function drawWire(glow: number) {
+  const tint = TINT;
   const sg = (i: number, v: number) => toScreen(i / N, v);
   // what the eye would see of a real one: a blur as wide as the swing
   if (ring) {
@@ -1529,18 +1502,23 @@ function drawFinger() {
 }
 
 /** the wah: a level line across the screen at the finger, and its word */
+let wahLine: { w: number; g: CanvasGradient } | null = null;
 function drawWah() {
   const y = away.fy;
-  const g = ctx.createLinearGradient(0, 0, w, 0);
-  g.addColorStop(0, 'rgba(244, 244, 242, 0)');
-  g.addColorStop(0.5, 'rgba(244, 244, 242, 0.35)');
-  g.addColorStop(1, 'rgba(244, 244, 242, 0)');
-  ctx.fillStyle = g;
+  // (the line's gradient only changes with the width)
+  if (wahLine?.w !== w) {
+    const g = ctx.createLinearGradient(0, 0, w, 0);
+    g.addColorStop(0, 'rgba(244, 244, 242, 0)');
+    g.addColorStop(0.5, 'rgba(244, 244, 242, 0.35)');
+    g.addColorStop(1, 'rgba(244, 244, 242, 0)');
+    wahLine = { w, g };
+  }
+  ctx.fillStyle = wahLine.g;
   ctx.fillRect(0, y - 0.5, w, 1);
   ctx.fillStyle = 'rgba(244, 244, 242, 0.75)';
-  ctx.font = '600 10px Inter, "Helvetica Neue", Helvetica, Arial, sans-serif';
+  ctx.font = LABEL_FONT;
   ctx.textAlign = 'center';
-  ctx.fillText('W\u200aA\u200aH', away.x0, y - 14);
+  ctx.fillText(WAH, away.x0, y - 14);
 }
 
 /** the other fingers: a ring where each one is, a thread to the string while it pulls */
@@ -1563,30 +1541,30 @@ function drawExtras() {
 
 /** a sliding finger: a light on the string that flares at a node */
 function drawMod(t: number) {
-  const font = '600 10px Inter, "Helvetica Neue", Helvetica, Arial, sans-serif';
-  const spaced = (s: string) => s.toUpperCase().split('').join(String.fromCharCode(8202));
-  if (mod.mode === 'slide') {
-    const u = clampS(fromScreen(mod.fx, mod.fy).u);
-    const p = toScreen(u, 0);
-    const f = Math.max(0, 1 - (t - mod.glint) / 0.35);
-    const r = 10 + 14 * f;
-    const g = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, r);
-    g.addColorStop(0, `rgba(244, 244, 242, ${0.35 + 0.5 * f})`);
-    g.addColorStop(1, 'rgba(244, 244, 242, 0)');
-    ctx.fillStyle = g;
-    ctx.beginPath();
-    ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
-    ctx.fill();
-    if (f > 0) {
-      ctx.fillStyle = `rgba(244, 244, 242, ${0.8 * f})`;
-      ctx.font = font;
-      ctx.textAlign = 'center';
-      const lp = toScreen(u, 24);
-      ctx.fillText(spaced('Harmonic'), lp.x, lp.y);
-    }
-    return;
+  const u = clampS(fromScreen(mod.fx, mod.fy).u);
+  const p = toScreen(u, 0);
+  const f = Math.max(0, 1 - (t - mod.glint) / 0.35);
+  const r = 10 + 14 * f;
+  const g = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, r);
+  g.addColorStop(0, `rgba(244, 244, 242, ${0.35 + 0.5 * f})`);
+  g.addColorStop(1, 'rgba(244, 244, 242, 0)');
+  ctx.fillStyle = g;
+  ctx.beginPath();
+  ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
+  ctx.fill();
+  if (f > 0) {
+    ctx.fillStyle = `rgba(244, 244, 242, ${0.8 * f})`;
+    ctx.font = LABEL_FONT;
+    ctx.textAlign = 'center';
+    const lp = toScreen(u, 24);
+    ctx.fillText(HARMONIC, lp.x, lp.y);
   }
 }
+/** the small labels on the canvas: spaced capitals */
+const LABEL_FONT = '600 10px Inter, "Helvetica Neue", Helvetica, Arial, sans-serif';
+const spaced = (s: string) => s.toUpperCase().split('').join(String.fromCharCode(8202));
+const HARMONIC = spaced('Harmonic');
+const WAH = spaced('Wah');
 
 function drawStick(t: number) {
   if (!stick) return;
@@ -1598,7 +1576,7 @@ function drawStick(t: number) {
   // where it was hit: a small light that opens and fades
   const a = 1 - age / 0.35;
   const p = toScreen(stick.u, 0);
-  const tint = TINTS[presetIdx];
+  const tint = TINT;
   const g = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, 6 + 26 * (1 - a));
   g.addColorStop(0, `rgba(${tint}, ${0.7 * a})`);
   g.addColorStop(1, `rgba(${tint}, 0)`);
@@ -1663,41 +1641,16 @@ if (!params.has('clean')) {
       audio();
       setScale(i);
     },
-    pad: (v) => {
-      padLevel = v;
-      barSave();
-      audio().then((e) => e && applyPad(e));
+    level: (key, t) => {
+      audio();
+      setLevel(key, t, true);
     },
-    room: (v) => {
-      setRoom(v);
-      barSave();
-      engine?.applyMix();
-      // a new length once the knob rests a moment (a room is a few seconds of noise to make)
-      clearTimeout(roomTimer);
-      roomTimer = window.setTimeout(() => engine?.resizeRoom(), 250);
-    },
-    sustain: (v) => {
-      sustainT = v;
-      setSustain(v);
-      barSave();
-    },
-    harm: (v) => {
-      harmT = v;
-      tune.harm = 2 * v;
-      barSave();
-    },
-    delay: (v) => {
-      delayT = v;
-      engine?.setDelay(v);
-      barSave();
-    },
-  }, { scales: SCALES, patterns: PATTERNS, pad: padLevel, room: roomT, sustain: sustainT, harm: harmT, delay: delayT });
+  }, { scales: SCALES, patterns: PATTERNS, levels: level });
   // (only with ?settings, in dev too: the wheel stays out of the way)
   if (params.has('settings')) {
     createSettings(
       [
         { key: 'volume', label: 'Volume', value: 0.8, min: 0, max: 1, step: 0.01, set: (v) => ((tune.volume = v), engine?.applyMix()) },
-        { key: 'transpose', label: 'Transpose', value: 0, min: -12, max: 12, step: 1, set: (v) => ((look.transpose = v), placeDots()) },
         { key: 'elastic', label: 'Elastic', value: 0.5, min: 0, max: 2.5, step: 0.01, set: (v) => (tune.elastic = v) },
         { key: 'buzz', label: 'Buzz', value: 1, min: 0, max: 2, step: 0.01, set: (v) => (tune.buzz = v) },
         { key: 'sym', label: 'Sympathetic strings', value: 1, min: 0, max: 2.5, step: 0.01, set: (v) => (tune.sym = v) },
@@ -1745,7 +1698,7 @@ if (import.meta.env.DEV) {
     get state() {
       return {
         grab: { on: grab.on, s: grab.s, d: grab.d, want: grab.want, raw: grab.raw, id: grab.id, auto: grab.auto, pitch: grab.deg, note: grab.on ? noteFor(grab.deg) : null },
-        mod: { on: mod.on, mode: mod.mode },
+        mod: { on: mod.on },
         dots: dots.map((d) => ({ x: Math.round(d.x), y: Math.round(d.y), note: d.note, chord: d.chord, state: d.state })),
         sounding,
         string: { x: A.x, h },

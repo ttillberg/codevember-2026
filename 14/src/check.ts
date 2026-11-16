@@ -1,18 +1,24 @@
-// Dev only: render a storm of plucks through the whole graph offline, every preset, every
-// modifier, an arpeggio, and report what came out: peaks, loudness, anything not a number. Run in the
+// Dev only: render a storm of plucks through the whole graph offline, every preset, with dot
+// chords, flageolets, slides, the delay and an arpeggio, and report what came out: peaks, loudness, anything not a number. Run in the
 // console: await __tension.offline()
 
 import { Engine } from './audio';
 import { Groove, PATTERNS } from './arp';
-import { PRESETS, degreeSemis } from './presets';
+import { PRESETS, type Preset } from './presets';
+
+/** the semitones above the root of scale degree `d` (0, 1, 2 … across octaves) */
+function degreeSemis(p: Preset, d: number) {
+  const n = p.scale.length;
+  return p.scale[((d % n) + n) % n] + 12 * Math.floor(d / n);
+}
 
 export async function offlineCheck(seconds = 12, wav = false) {
   const sr = 48000;
   const report: Record<string, unknown>[] = [];
   for (const p of PRESETS) {
     const ctx = new OfflineAudioContext(2, sr * seconds, sr);
-    const e = await Engine.create(ctx);
-    e.setPreset(p);
+    const e = await Engine.create(ctx, p);
+    e.setDelay(0.5);
     e.pad.setOn(true);
     // the messages go over a port, so they are timed by suspending the render
     const events: Array<[number, () => void]> = [];
@@ -24,9 +30,10 @@ export async function offlineCheck(seconds = 12, wav = false) {
         const kind = i % 5 === 0 ? 'strike' : 'pluck';
         const note = p.root + degreeSemis(p, deg + (i % 7 === 0 ? 1 : 0));
         groove.feed(note, 0.8, ctx.currentTime);
-        e.pluck({ note, pos: ((i * 0.37) % 0.94) + 0.03, kind, force: i % 3 === 0 ? 1 : 0.4 + (i % 4) * 0.15, chiado: i % 9 === 0 });
-        if (i % 4 === 0) e.tick(p.root + degreeSemis(p, deg));
-        if (i % 11 === 0) e.thump(1);
+        e.pluck({ note, pos: ((i * 0.37) % 0.94) + 0.03, kind, force: i % 3 === 0 ? 1 : 0.4 + (i % 4) * 0.15 });
+        if (i % 4 === 0) e.chordNote(p.root + 12 + degreeSemis(p, deg + 2), 0.6, 0.4, ctx.currentTime);
+        if (i % 5 === 2) e.harmonic(note, 2 + (i % 4), 0.7);
+        if (i % 9 === 4) e.slide(i % 2 ? 2 : -3, 0.05);
       }]);
     }
     // the groove on (a different pattern per preset), fed by every pluck above, played by the
