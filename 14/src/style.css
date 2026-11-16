@@ -167,6 +167,43 @@ button { touch-action: manipulation; }
 }
 
 /* the browser kept the sound locked: one tap here opens it */
+/* desktop, first: a frosted square in the middle, headphones recommended; a click and it goes */
+.veil {
+  position: fixed; inset: 0; z-index: 5; display: grid; place-items: center; cursor: pointer;
+  transition: opacity 0.45s ease-out;
+}
+.veil .card {
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px;
+  width: 240px; height: 240px; border-radius: 36px; box-sizing: border-box; padding: 24px;
+  color: var(--ink); text-align: center; font-family: var(--ui);
+  background: rgba(58, 58, 60, 0.38);
+  -webkit-backdrop-filter: blur(30px) saturate(1.8); backdrop-filter: blur(30px) saturate(1.8);
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.5);
+  animation: card-in 0.7s 0.25s cubic-bezier(0.2, 0.8, 0.2, 1) backwards;
+  transition: transform 0.45s cubic-bezier(0.4, 0, 0.2, 1);
+}
+/* the x tucked into the corner, close to its curve */
+.veil .card { position: relative; }
+/* Apple's continuous corners where the browser has them (a squircle needs a larger radius to read
+   as round as a circle's) */
+@supports (corner-shape: squircle) { .veil .card { corner-shape: squircle; border-radius: 56px; } }
+.veil .card > svg { margin-bottom: 4px; opacity: 0.95; }
+.veil .x {
+  position: absolute; top: 12px; right: 12px; display: grid; place-items: center;
+  width: 36px; height: 36px; padding: 0; border: 0; border-radius: 50%; cursor: pointer;
+  background: rgba(255, 255, 255, 0.12); color: rgba(244, 244, 242, 0.75);
+  transition: background 0.2s, color 0.2s;
+}
+.veil .x:hover { background: rgba(255, 255, 255, 0.2); color: var(--ink); }
+.veil .card b { font-weight: 600; font-size: 15px; letter-spacing: -0.01em; }
+.veil .card i {
+  font-style: normal; font-size: 12px; letter-spacing: 0.08em; opacity: 0.55;
+  font-family: "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Noto Sans JP", "Yu Gothic", sans-serif;
+}
+.veil.gone { opacity: 0; pointer-events: none; }
+.veil.gone .card { transform: scale(0.94); }
+@keyframes card-in { from { opacity: 0; transform: translateY(10px) scale(0.96); } }
+
 .start {
   position: fixed; z-index: 6; left: 50%; top: 50%; transform: translate(-50%, -50%) scale(0.96);
   display: inline-flex; align-items: center; gap: 10px; height: 52px; padding: 0 22px 0 18px; border: 0; border-radius: 999px;

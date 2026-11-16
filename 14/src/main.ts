@@ -89,6 +89,23 @@ document.body.append(startBtn);
 function showStart(on: boolean) {
   startBtn.classList.toggle('show', on);
 }
+// On a desktop, a frosted card first: headphones recommended. A click anywhere takes it away
+// (and, being a click, starts the sound); that click plucks nothing.
+if (!params.has('clean') && matchMedia('(hover: hover) and (pointer: fine)').matches) {
+  const veil = document.createElement('div');
+  veil.className = 'veil';
+  veil.innerHTML =
+    '<div class="card"><svg width="72" height="72" viewBox="0 0 24 24" aria-hidden="true"><path d="M4.5 13.6V11.6a7.5 7.5 0 0 1 15 0v2" fill="none" stroke="currentColor" stroke-width="0.8" stroke-linecap="round"/><g fill="currentColor"><rect x="3" y="13.2" width="3.1" height="6.6" rx="1.55"/><rect x="5.2" y="12.4" width="2.7" height="8.6" rx="1.35"/><rect x="17.9" y="13.2" width="3.1" height="6.6" rx="1.55"/><rect x="16.1" y="12.4" width="2.7" height="8.6" rx="1.35"/></g></svg>' +
+    '<button type="button" class="x" aria-label="Close"><svg width="14" height="14" viewBox="0 0 12 12" aria-hidden="true"><path d="M2.5 2.5l7 7M9.5 2.5l-7 7" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg></button>' +
+    '<b>Headphones recommended</b><i lang="ja">ヘッドホン推奨</i></div>';
+  veil.addEventListener('pointerdown', (e) => e.stopPropagation());
+  veil.addEventListener('click', () => {
+    veil.classList.add('gone');
+    window.setTimeout(() => veil.remove(), 500);
+  }, { once: true });
+  document.body.append(veil);
+}
+
 let checkT = 0;
 /** a moment after a gesture: is it playing? */
 function checkAudio() {
