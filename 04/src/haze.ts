@@ -1,5 +1,6 @@
 // The air the place sits in: its colour behind everything, and what comes through it over a day in autumn.
-import { Color, DataTexture, DataUtils, HalfFloatType, LinearFilter, RGBAFormat, Uniform, Vector3, type Material } from 'three';
+import { place } from './net';
+import { Color, DataTexture, DataUtils, HalfFloatType, LinearFilter, RGBAFormat, Uniform, Vector2, Vector3, type Material } from 'three';
 
 /** The sky behind everything, by day. */
 export const HAZE = 0xa3adb3;
@@ -17,7 +18,10 @@ export const FLOOD = new Uniform(1);
  * it is bright, and everything near takes some of that light, walls and trees as well as the ground. Not a light: a picture
  * of where light is, baked whenever the lamps move, and read by every material that asks.
  */
-const GLOW_SIZE = 256, GLOW_SPAN = 1200;
+// over four tiles the same map lies over all of them, with as many more texels
+const GLOW_SIZE = place.on ? 512 : 256, GLOW_SPAN = place.on ? 2 * place.half : 1200;
+/** Where the middle of the map lies: it is baked over the window of tiles as it is then. */
+const GLOW_MID = new Uniform(new Vector2(place.x, place.y));
 const glowData = new Uint16Array(GLOW_SIZE * GLOW_SIZE * 4);
 const glowMap = new DataTexture(glowData, GLOW_SIZE, GLOW_SIZE, RGBAFormat, HalfFloatType);
 glowMap.minFilter = glowMap.magFilter = LinearFilter;
@@ -27,9 +31,10 @@ export const GLOW = new Uniform(glowMap);
 export interface Spot { x: number; z: number; r: number; c: [number, number, number] }
 
 export function bakeGlow(spots: Spot[]) {
-  const acc = new Float32Array(GLOW_SIZE * GLOW_SIZE * 3), px = GLOW_SIZE / GLOW_SPAN;
+  const acc = new Float32Array(GLOW_SIZE * GLOW_SIZE * 3), px = GLOW_SIZE / GLOW_SPAN, GX = place.x, GZ = place.y;
+  GLOW_MID.value.set(GX, GZ);
   for (const s of spots) {
-    const cx = (s.x / GLOW_SPAN + 0.5) * GLOW_SIZE, cy = (s.z / GLOW_SPAN + 0.5) * GLOW_SIZE, r = s.r * px;
+    const cx = ((s.x - GX) / GLOW_SPAN + 0.5) * GLOW_SIZE, cy = ((s.z - GZ) / GLOW_SPAN + 0.5) * GLOW_SIZE, r = s.r * px;
     const x0 = Math.max(0, Math.floor(cx - r)), x1 = Math.min(GLOW_SIZE - 1, Math.ceil(cx + r));
     const y0 = Math.max(0, Math.floor(cy - r)), y1 = Math.min(GLOW_SIZE - 1, Math.ceil(cy + r));
     for (let y = y0; y <= y1; y++) {
@@ -63,6 +68,7 @@ export function glowing<T extends Material>(m: T, much = 1, sided = false, aloft
   m.onBeforeCompile = (s, r) => {
     before.call(m, s, r);
     s.uniforms.uGlow = GLOW;
+    s.uniforms.uGlowMid = GLOW_MID;
     s.uniforms.uGlowNight = DARK;
     s.vertexShader = s.vertexShader
       .replace('#include <common>', '#include <common>\nvarying vec3 vGlowAt;')
@@ -73,12 +79,12 @@ export function glowing<T extends Material>(m: T, much = 1, sided = false, aloft
         vGlowAt = (modelMatrix * gw).xyz; }
         #include <project_vertex>`);
     s.fragmentShader = s.fragmentShader
-      .replace('#include <common>', '#include <common>\nuniform sampler2D uGlow; uniform float uGlowNight; varying vec3 vGlowAt;')
+      .replace('#include <common>', '#include <common>\nuniform sampler2D uGlow; uniform vec2 uGlowMid; uniform float uGlowNight; varying vec3 vGlowAt;')
       // the lamps hang low and shine down: the foot of a wall takes their light, what is above them takes none,
       // and a roof stays dark however bright the car park beside it
       .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
         {
-          vec2 gu = vGlowAt.xz / ${GLOW_SPAN.toFixed(1)} + 0.5;
+          vec2 gu = (vGlowAt.xz - uGlowMid) / ${GLOW_SPAN.toFixed(1)} + 0.5;
           float turned = 1.0;
           ${sided ? `
           // which way the light lies: uphill on the map, two texels either side

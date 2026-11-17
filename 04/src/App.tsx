@@ -4,13 +4,13 @@ import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { MapControls } from '@react-three/drei';
 import { Bloom, ChromaticAberration, EffectComposer, SMAA, TiltShift2, ToneMapping, Vignette, wrapEffect } from '@react-three/postprocessing';
 import { BlendFunction, Effect, ToneMappingMode } from 'postprocessing';
-import { Color, DirectionalLight, HemisphereLight, MOUSE, OrthographicCamera, PerspectiveCamera, TOUCH, Uniform, Vector2 } from 'three';
+import { Color, DirectionalLight, HemisphereLight, MOUSE, OrthographicCamera, PerspectiveCamera, TOUCH, Uniform, Vector2, type Vector3 } from 'three';
 import { HAZE, MOOD, NIGHT, RICH, hoursPerSecond, skyAt } from './haze';
 import { Cars, TIMELAPSE } from './Cars';
 import type { Sim } from './sim';
 import { gpu } from './Glow';
 import { SEASONS, World, type Season } from './World';
-import { plantSmall, plantTown, turnSome, type Block } from './Town';
+import { plantSmall, plantTown, shifted, turnSome, type Block } from './Town';
 import { People, Signs, Street } from './Life';
 import { Commons, plantCommons, standingCommons } from './Park';
 import { Painter, Sketch, type Brush, type Tool } from './Painter';
@@ -20,7 +20,8 @@ import { buildNet, type Net, type V } from './net';
 import { MAP } from './map';
 import { baseIntent, derive, no, standing, type Intent } from './intent';
 import { addStroke, erase, smear, smearStart } from './paint';
-import { tileAsked, tileStrokes } from './tiles';
+import { holdStrokes, tileAsked, tileStrokes, windowStrokes } from './tiles';
+import { TILE as SIDE, alone, movePlace, place as LAND, saltOf, tilesNow } from './net';
 import { laid, madeAt, wetStart } from './wet';
 
 /** The grade: exposure, warmth, bite, how much colour is left, how grey the blacks are, and what the stock and the glass add. */
@@ -139,17 +140,21 @@ const CLOCKS: [Exclude<keyof Clock, 'hold' | 'lights'>, string, number, number, 
 /** The place as it starts: the streets, and a few flyovers laid over them the way a hand would paint them. ?debug starts on `MAP`. */
 // ?tile=i,j starts on a generated tile of the endless grid instead (see tiles.ts); the flyovers belong to the hand-drawn one
 const TILE = tileAsked();
-const BASE: Intent = (TILE ? [] : [
+const HAND: Intent = alone(true, () => (TILE ? [] : [
   [[-232, -68], [-150, 0], [-60, 82]],
   [[215, -100], [245, 0], [230, 110]],
   [[-110, 168], [0, 140], [108, 180]],
-]).reduce((it, line) => addStroke(it, line.map(([x, y]) => ({ x, y })), true) ?? it, TILE ? tileStrokes(TILE.i, TILE.j, TILE.detail) : baseIntent());
+]).reduce((it, line) => addStroke(it, line.map(([x, y]) => ({ x, y })), true) ?? it, TILE ? tileStrokes(TILE.i, TILE.j, TILE.detail) : baseIntent()));
+// ?endless lays four tiles together, each where it lies in the grid, the hand-drawn one among them (see `place` in net.ts)
+const BASE: Intent = LAND.on && !TILE ? windowStrokes(HAND) : HAND;
+/** What the drone looks at now, for the shadows to follow it over a place bigger than they reach. */
+const LOOK = { x: 10, z: -10 };
 /** One house in this many is left standing. */
 const KEEP = 2;
 /** Milliseconds a smear has to be held still before the ground is made of it for real. */
 const REST = 140;
 /** Roughly how many vehicles are out: what a phone can carry, and what a desk can. */
-const VEHICLES = touch ? 60 : 180;
+const VEHICLES = (touch ? 60 : 180) * (LAND.on ? 3 : 1);
 
 /** So many frames a second and no more: a timelapse does not need them, and the graphics card rests in between. */
 function Pace({ fps }: { fps: number }) {
@@ -175,8 +180,10 @@ function Pace({ fps }: { fps: number }) {
 /** How much nearer or further a pinch or the wheel may take the drone, as a share of its distance. */
 const ZOOM = 0.3;
 
-function Drone({ shot, move, set, onShot }: {
+function Drone({ shot, move, set, onShot, onWindow }: {
   shot: Shot | null; move: Move;
+  /** ?endless: the drone has flown past the middle of a tile, and the window of tiles is to move on with it */
+  onWindow?: (i: number, j: number) => void;
   /** goes up when a slider has moved the shot: only then is the drone put where the shot says */
   set: number;
   onShot?: (s: Partial<Shot>) => void;
@@ -210,7 +217,11 @@ function Drone({ shot, move, set, onShot }: {
   const fence = useCallback((e?: { target: unknown }) => {
     const c = e!.target as { target: { x: number; z: number }; object: { position: { x: number; z: number } }; getDistance(): number };
     const t = c.target, cam = c.object.position;
-    const d = Math.hypot(t.x - TARGET[0], t.z - TARGET[2]);
+    if (LAND.on) {
+      // over the endless grid nothing holds it: the tiles follow it (see `Drone`), and so do the shadows
+      LOOK.x = Math.round(t.x / 24) * 24; LOOK.z = Math.round(t.z / 24) * 24;
+    }
+    const d = LAND.on ? 0 : Math.hypot(t.x - TARGET[0], t.z - TARGET[2]);
     // the closer it flies, the further out it may go: up close there is no haze in the frame to hide
     const reach = Math.min(360, 130 + Math.max(0, 800 - c.getDistance()) * 0.45);
     if (d > reach) {
@@ -257,7 +268,29 @@ function Drone({ shot, move, set, onShot }: {
     // not when the shot only followed a hand: that one is flown already
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [camera, key, set]);
-  useFrame(({ clock }) => fly.current(clock.elapsedTime));
+  useFrame(({ clock }) => {
+    fly.current(clock.elapsedTime);
+    const c = controls.current as unknown as { target: Vector3 } | null;
+    if (!LAND.on || !c || !onWindow) return;
+    // The window is the two tiles by two whose middles the drone is between: when it passes a middle, the two tiles
+    // behind it are let go and two are laid ahead, all of them further off than the frame reaches. A little past, so
+    // that it does not go back and forth on the line
+    let { i, j } = LAND;
+    if (c.target.x > (i + 1) * SIDE + 60) i++; else if (c.target.x < i * SIDE - 60) i--;
+    if (c.target.z > (j + 1) * SIDE + 60) j++; else if (c.target.z < j * SIDE - 60) j--;
+    if (i !== LAND.i || j !== LAND.j) onWindow(i, j);
+  });
+  // for flying it from the console: over this point of the map, and this many times as far away
+  useEffect(() => {
+    (window as any).goto = (x: number, z: number, away = 1) => {
+      const c = controls.current as unknown as { target: Vector3; update(): void } | null;
+      if (!c) return;
+      camera.position.sub(c.target).multiplyScalar(away).add(c.target);
+      const dx = x - c.target.x, dz = z - c.target.z;
+      c.target.x += dx; c.target.z += dz; camera.position.x += dx; camera.position.z += dz;
+      c.update();
+    };
+  }, [camera]);
   // Two fingers that turn about each other turn the drone about the point it looks at: the place follows the fingers.
   // The controls already move it with the same two fingers; this only adds the turn they leave out.
   useEffect(() => {
@@ -361,7 +394,8 @@ function Sun({ speed, shadow, lazy, clock, scrub, onHour, live, readout }: {
     const k = skyAt(hour.current);
     if (lazy && n % (k.el < LOW_SUN ? SHADOW_EVERY / 2 : SHADOW_EVERY) === 0) gl.shadowMap.needsUpdate = true;
     const s = sun.current!, cos = Math.cos(k.el), sin = Math.sin(k.el);
-    s.position.set(TARGET[0] - Math.sin(k.phi) * cos * 900, sin * 900, TARGET[2] + Math.cos(k.phi) * cos * 900);
+    s.position.set(LOOK.x - Math.sin(k.phi) * cos * 900, sin * 900, LOOK.z + Math.cos(k.phi) * cos * 900);
+    if (s.target.position.x !== LOOK.x || s.target.position.z !== LOOK.z) { s.target.position.set(LOOK.x, 0, LOOK.z); s.target.updateMatrixWorld(); }
     s.intensity = k.power;
     s.color.copy(k.sun);
     // a low sun sees the ground edge on: the shadow map is drawn only as tall as that, and its pixels go further
@@ -411,8 +445,21 @@ const season: Season = (() => {
 })();
 export function App() {
   // every state of the painting so far, so a stroke can be taken back; and the ones taken back, so they can come again
-  const [history, setHistory] = useState<Intent[]>(() => [debug ? MAP : BASE]);
+  const [history, setHistory] = useState<Intent[]>(() => [debug && !LAND.on ? MAP : BASE]);
   const [redos, setRedos] = useState<Intent[]>([]);
+  // ?endless: goes up when the window of tiles moves on. The strokes of the tiles left behind are put away, those of
+  // the tiles ahead are made or taken out again, and the painting starts over from there: undo does not reach back past it
+  const [win, setWin] = useState(0);
+  const onWindow = useCallback((i: number, j: number) => {
+    holdStrokes(top.current);
+    movePlace(i, j);
+    const next = windowStrokes(HAND);
+    top.current = next;
+    setWin((n) => n + 1);
+    setHistory([next]);
+    setRedos([]);
+  }, []);
+  const planted = useRef(new Map<string, Block[]>());
   const [tool, setTool] = useState<Tool>('road');
   // the brush that is picked when trace is off
   const [brush, setBrush] = useState<Brush>('road');
@@ -541,13 +588,35 @@ export function App() {
   const intent = history[history.length - 1];
   // the roads are never edited: they are what the rules make of the strokes
   // the housing is planted once, on the place as it first stood, and is in the way from then on
-  const first = useMemo(() => buildNet(derive(BASE)), []);
+  const first = useMemo(() => alone(true, () => buildNet(derive(HAND))), []);
   // only a few of them are kept, and a quarter of those turned: the roads are what is looked at
   const town = useMemo(() => {
-    const big = turnSome(first, plantTown(first).filter((_, i) => i % KEEP === 0));
-    // and between them the little ones, along the roads
-    return [...big, ...plantSmall(first, big)];
-  }, [first]);
+    if (!LAND.on) {
+      const big = turnSome(first, plantTown(first).filter((_, i) => i % KEEP === 0));
+      // and between them the little ones, along the roads
+      return [...big, ...plantSmall(first, big)];
+    }
+    // every tile is planted on its own roads alone, round 0, 0, by its own number, and set down where it lies:
+    // what stands in a tile is the same whichever tiles lie beside it
+    return tilesNow().flatMap((t) => {
+      // a tile that was in the window before stands as it stood: the same houses, not ones like them
+      const key = t.i + ',' + t.j, was = planted.current.get(key);
+      if (was) return was;
+      const hand = t.i === 0 && t.j === 0, salt = saltOf(t.i, t.j);
+      const net = hand ? first : alone(false, () => buildNet(derive(tileStrokes(t.i, t.j))));
+      // the middle as the place on its own has it, then the ground out to the tile's edge, which that leaves bare
+      const rim = (b: Block) => Math.abs((b.x0 + b.x1) / 2) > 350 || Math.abs((b.y0 + b.y1) / 2) > 320;
+      const meets = (b: Block, all: Block[], gap: number) => all.some((o) => b.x0 < o.x1 + gap && b.x1 > o.x0 - gap && b.y0 < o.y1 + gap && b.y1 > o.y0 - gap);
+      const big = turnSome(net, plantTown(net, salt).filter((_, i) => i % KEEP === 0), 0.25, salt);
+      for (const b of plantTown(net, salt + 7, true).filter((_, i) => i % KEEP === 0)) if (rim(b) && !meets(b, big, 10)) big.push(b);
+      const small = plantSmall(net, big, 210, salt);
+      for (const b of plantSmall(net, [...big, ...small], 210, salt + 7, true)) if ((Math.abs((b.x0 + b.x1) / 2) > 400 || Math.abs((b.y0 + b.y1) / 2) > 380) && !meets(b, small, 2)) small.push(b);
+      const all = [...big, ...small].map((b) => shifted(b, t.x, t.y));
+      planted.current.set(key, all);
+      return all;
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [first, win]);
   // a bridge takes down the houses in its line; the same list for as long as the same ones stand
   const left = houses ? standing(intent, town) : NONE;
   const kept = useRef(left);
@@ -555,7 +624,7 @@ export function App() {
   const blocks = kept.current;
   // everything with walls is in the way: the housing, and the sheds that were there from the start
   // the little ones are not: a road goes through them
-  const walls = useMemo(() => (houses ? [...town.filter((b) => !b.small), ...first.buildings] : NONE), [houses, town, first]);
+  const walls = useMemo(() => (houses ? [...town.filter((b) => !b.small), ...(LAND.sheds ? first.buildings : [])] : NONE), [houses, town, first]);
   // what the rules make of a painting, made once for each: a smear let go where the hand last rested is not made again
   const nets = useRef(new WeakMap<Intent, Net>());
   const roadsOf = useCallback((it: Intent, up: Block[]) => {
@@ -585,7 +654,8 @@ export function App() {
   // Until each is made again, what it showed before is still pushed by a smear that was let go (wet.ts)
   // what is common ground: the park, the pitch, the school and the hedges, planted once like the housing,
   // and whatever of it the roads as they are now have left
-  const commons = useMemo(() => plantCommons(first, town), [first, town]);
+  // (among other tiles it is the hand-drawn tile's own houses that are in its way, and those stay the same list)
+  const commons = useMemo(() => plantCommons(first, LAND.on ? planted.current.get('0,0') ?? NONE : town), [first, LAND.on ? planted.current.get('0,0') : town]);
   const place = useMemo(() => ({ net, blocks, green: standingCommons(commons, net, blocks) }), [net, blocks, commons]);
   const ground = useLater(restNet ?? net, 1);
   const wood = useLater(place, 3), roads = useLater(net, 5), life = useLater(place, 7);
@@ -683,7 +753,7 @@ export function App() {
       >
         <color attach="background" args={[HAZE]} />
         <Pace fps={fps} />
-        <Drone shot={shot} move={move} set={set} onShot={debug ? onShot : undefined} />
+        <Drone shot={shot} move={move} set={set} onShot={debug ? onShot : undefined} onWindow={onWindow} />
         <Sun speed={speed} shadow={fx.shadow} lazy={fx.lazy} clock={clock} scrub={scrub} onHour={debug ? onHour : undefined} live={hourNow} readout={readout} />
         <World net={ground} blocks={blocks} wood={wood} trees={trees} season={season} />
         <Cars net={roads} speed={speed} target={VEHICLES} trail={lights === 'off' ? 0 : clock.trail} glow={lights === 'webgpu'} walls={hides} onGlowFail={noGpu} shade={!fx.lazy} heat={heat} trace={tool === 'trace' ? trace : null} onNote={onNote} onSim={onSim} />

@@ -2,7 +2,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
 import { AdditiveBlending, BufferAttribute, BufferGeometry, Color, InstancedBufferAttribute, InstancedMesh, MeshStandardMaterial, Object3D, ShaderMaterial } from 'three';
-import type { Lane, Net, V } from './net';
+import { place, type Lane, type Net, type V } from './net';
 import { Heat, Journeys } from './Traffic';
 import { PARKED, Sim, signal } from './sim';
 import { HOUR, NIGHT, NOW } from './haze';
@@ -94,7 +94,7 @@ function siren() {
 const HALO = 20, SIRENS = 18;
 
 /** How many stretches of its way a vehicle's lights are drawn over, and how many stretches there are for all of them. */
-const TRAIL = 8, STREAKS = 2400;
+const TRAIL = 8, STREAKS = 2400 * (place.on ? 3 : 1);
 
 /**
  * A long exposure: the lamps drawn out along the way the vehicle came, red at the edges and warm between, fading with age.
@@ -169,7 +169,18 @@ export function Cars({ net, speed, target, trail = 0, glow = false, walls = NO_W
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const sim = useMemo(() => new Sim(net, types), [types]);
   // and while a smear is dragged it is drawn pushed with the road under it, until it has moved over
-  useLayoutEffect(() => { sim.setNet(net); settle('traffic', net); }, [sim, net]);
+  // where the window of tiles lay when the traffic was last put on its roads
+  const lay = useRef({ x: place.x, y: place.y });
+  useLayoutEffect(() => {
+    sim.setNet(net);
+    const was = lay.current;
+    if (place.on && (was.x !== place.x || was.y !== place.y)) {
+      // the tiles that have come into the window are not left empty until someone drives in
+      sim.fill((p) => Math.abs(p.x - was.x) > place.half || Math.abs(p.y - was.y) > place.half);
+      lay.current = { x: place.x, y: place.y };
+    }
+    settle('traffic', net);
+  }, [sim, net]);
   useEffect(() => { sim.target = target; }, [sim, target]);
   const meshes = useRef<(InstancedMesh | null)[]>([]);
   const paint = useMemo(() => wet(bodywork(), 'traffic'), []);

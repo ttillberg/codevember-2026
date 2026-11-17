@@ -154,7 +154,37 @@ export const halfWidth = (k: RoadKind, ring?: boolean) => (ring ? (k.lanes * k.l
 export const BRIDGE_H = 11;
 
 /** Out in the haze, where a road is out of sight: traffic comes and goes there, and nowhere else. */
-export const far = (p: V) => Math.hypot(p.x - 10, p.y + 10) > 400;
+export const far = (p: V) => (place.half ? Math.max(Math.abs(p.x - place.x), Math.abs(p.y - place.y)) > place.half - 30 : Math.hypot(p.x - 10, p.y + 10) > 400);
+
+/** How wide and deep a tile of the endless grid is, in metres: as big as the hand-drawn map. */
+export const TILE = 1200;
+/**
+ * What is laid out: one tile round the middle, as the page always was (`half` 0), or with ?endless a window of two
+ * tiles by two, each where it lies in the grid. ?endless=i,j names the north-west one of the four; without, the
+ * hand-drawn tile is the south-west one. `sheds` is whether the hand-drawn tile's own sheds and yards stand.
+ */
+export const place = (() => {
+  const q = typeof location === 'undefined' ? null : new URLSearchParams(location.search);
+  const t = (q?.get('endless') ?? '').split(',').map((n) => parseInt(n, 10));
+  const on = !!q?.has('endless'), i = Number.isFinite(t[0]) ? t[0] : 0, j = Number.isFinite(t[1]) ? t[1] : -1;
+  return { on, i, j, x: on ? (i + 0.5) * TILE : 0, y: on ? (j + 0.5) * TILE : 0, half: on ? TILE : 0, sheds: !on || (i >= -1 && i <= 0 && j >= -1 && j <= 0) };
+})();
+/** The window moves on over the grid: (i, j) is its north-west tile from now on. */
+export function movePlace(i: number, j: number) {
+  place.i = i; place.j = j; place.x = (i + 0.5) * TILE; place.y = (j + 0.5) * TILE;
+  place.sheds = i >= -1 && i <= 0 && j >= -1 && j <= 0;
+}
+/** The tiles of the window, and where each one's middle lies. */
+export const tilesNow = (): { i: number; j: number; x: number; y: number }[] =>
+  place.on ? [0, 1].flatMap((b) => [0, 1].map((a) => ({ i: place.i + a, j: place.j + b, x: (place.i + a) * TILE, y: (place.j + b) * TILE }))) : [{ i: 0, j: 0, x: 0, y: 0 }];
+/** One tile on its own, as if it were the whole place: what is planted in a tile is planted on this, so it never depends on its neighbours. */
+export function alone<T>(sheds: boolean, make: () => T): T {
+  const was = { half: place.half, sheds: place.sheds };
+  place.half = 0; place.sheds = sheds;
+  try { return make(); } finally { place.half = was.half; place.sheds = was.sheds; }
+}
+/** A number of a tile's own, to plant it by: 0 for the hand-drawn one, so that it stands as it always did. */
+export const saltOf = (i: number, j: number) => (i === 0 && j === 0 ? 0 : ((Math.imul(i, 73856093) ^ Math.imul(j, 19349663)) >>> 0) % 100000 + 1);
 
 export const STALL_W = 2.7;
 export const STALL_D = 5.5;
@@ -370,7 +400,7 @@ export function buildNet(spec: Spec): Net {
   const roads: Road[] = [];
   const lanes: Lane[] = [];
   const stalls: Stall[] = [];
-  const pads = PADS, buildings = BUILDINGS;
+  const pads = place.sheds ? PADS : [], buildings = place.sheds ? BUILDINGS : [];
 
   // a junction up on a bridge is not the one on the ground under it, even at the very same spot
   const air = new Set<Node>();

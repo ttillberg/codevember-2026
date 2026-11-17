@@ -4,6 +4,7 @@ import { useEffect, useImperativeHandle, useRef, type Ref } from 'react';
 import { useThree } from '@react-three/fiber';
 import { Matrix4, type Camera } from 'three';
 import { NIGHT } from './haze';
+import { place } from './net';
 import { PARKED, type Car } from './sim';
 import { SMEAR_R } from './paint';
 import { SOAK, WET } from './wet';
@@ -18,7 +19,7 @@ import { SOAK, WET } from './wet';
  * the pixels to fade every frame, for an edge nobody sees.
  */
 // half the map on a phone: a quarter of the memory, and the light is soft enough not to show it
-const MID = [0, 0], SPAN = 1200, SIZE = typeof matchMedia !== 'undefined' && matchMedia('(pointer: coarse)').matches ? 1024 : 2048;
+const MID = [place.x, place.y], SPAN = place.on ? 2 * place.half : 1200, SIZE = typeof matchMedia !== 'undefined' && matchMedia('(pointer: coarse)').matches ? 1024 : 2048;
 /** Sixteen-bit floats: they blend and filter without any optional feature, and a fading light never sticks at a grey as it does in bytes. */
 const FORMAT: GPUTextureFormat = 'rgba16float';
 /** Stretches of light drawn in one frame at most, and the numbers kept for each. */
@@ -105,7 +106,8 @@ struct U { vp: mat4x4f, k: vec4f, wet: vec4f, soak: vec4f };
 struct Out { @builtin(position) pos: vec4f, @location(0) uv: vec2f };
 @vertex fn vs(@builtin(vertex_index) i: u32) -> Out {
   let uv = vec2f(f32(i & 1u), f32(i >> 1u));
-  let w = (uv - 0.5) * ${SPAN}.0 + vec2f(${MID[0]}, ${MID[1]});
+  // (k.zw is how far the window of tiles has moved since the map was made: the map goes with it)
+  let w = (uv - 0.5) * ${SPAN}.0 + vec2f(${MID[0]}, ${MID[1]}) + u.k.zw;
   var p = u.vp * vec4f(w.x, 0.0, w.y, 1.0);
   // the matrix is the WebGL one, with its depth from -1 to 1: there is no depth here, any that is inside will do
   p.z = 0.5 * p.w;
@@ -188,6 +190,7 @@ class Layer {
   private n = 0;
   private out = new Float32Array(SEGS * 8);
   private u = new Float32Array(28);
+  private ox = 0; private oy = 0;
   /** where the lamps of each vehicle were when last noted: head x y, tail x y, height, when */
   private last = new WeakMap<object, Float32Array>();
   private noted = -1e9; private drawn = -1; private blank = true; private lit = false;
@@ -314,6 +317,9 @@ class Layer {
     // A lamp is above the ground and the map is flat, so each point is put where the camera sees it on the ground.
     // That also puts the traffic on a bridge where the bridge is in the picture, as long as the drone has not flown far since.
     const C = camera.position, rec = this.rec, out = this.out;
+    // the map lies over the window of tiles as it is now: when that moves on, the map moves with it and starts empty
+    const ox = place.x - MID[0], oy = place.y - MID[1];
+    if (ox !== this.ox || oy !== this.oy) { this.ox = ox; this.oy = oy; this.blank = true; }
     for (let i = 0; i < this.n; i++) {
       const o = i * REC, q = i * 8;
       const ka = C.y / (C.y - rec[o + 1] - LAMP), kb = C.y / (C.y - rec[o + 4] - LAMP);
@@ -321,6 +327,7 @@ class Layer {
       out[q] = C.x + (rec[o] - C.x) * ka; out[q + 1] = C.z + (rec[o + 2] - C.z) * ka; out[q + 2] = bx; out[q + 3] = by;
       // a vehicle that stands still has no way to draw along: a hair's breadth along its heading gives its lamps their sides
       if (Math.abs(bx - out[q]) + Math.abs(by - out[q + 1]) < 0.01) { out[q] = bx - rec[o + 10] * 0.01; out[q + 1] = by - rec[o + 11] * 0.01; }
+      out[q] -= ox; out[q + 1] -= oy; out[q + 2] -= ox; out[q + 3] -= oy;
       out[q + 4] = Math.exp(-(time - rec[o + 6]) / tau); out[q + 5] = Math.exp(-(time - rec[o + 7]) / tau);
       // head lamps show to whoever they come towards, tail lamps to whoever they leave: lanes turn white or red by which way they run
       const dx = C.x - bx, dy = C.z - by, d = Math.hypot(dx, dy) || 1, toward = (rec[o + 10] * dx + rec[o + 11] * dy) / d;
@@ -337,7 +344,7 @@ class Layer {
     camera.updateMatrixWorld();
     vp.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
     this.u.set(vp.elements);
-    this.u[16] = GAIN * night; this.u[17] = (time * 7.3) % 61;
+    this.u[16] = GAIN * night; this.u[17] = (time * 7.3) % 61; this.u[18] = ox; this.u[19] = oy;
     WET.value.toArray(this.u, 20);
     SOAK.traffic.value.toArray(this.u, 24);
 

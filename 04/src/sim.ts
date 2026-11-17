@@ -158,6 +158,17 @@ export class Sim {
     }
   }
 
+  /** Ground that was not there before (the window of tiles moved on): its lots start half full, as the first ones did. */
+  fill(fresh: (p: { x: number; y: number }) => boolean) {
+    for (const st of this.net.stalls) {
+      if (st.car || st.res || !fresh(st.p) || this.rand() > 0.42) continue;
+      const c = this.make(true);
+      if (!c) continue;
+      this.park(c, st);
+      c.dwell = this.rand() * 1800;
+    }
+  }
+
   private wire() {
     const old = this.sources;
     this.sources = [];

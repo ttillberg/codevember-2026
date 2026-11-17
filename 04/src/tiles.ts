@@ -11,10 +11,9 @@
 // - everything smaller is grown inside the tile and kept well clear of every other stroke, further than the rules'
 //   own ROOM, except where it joins one, squarely. So no two roads merge that were not meant to.
 import { baseIntent, nearest, type Intent, type Stroke } from './intent';
-import { cumLen, pointOn, rng, type V } from './net';
+import { TILE, cumLen, place, pointOn, rng, tilesNow, type V } from './net';
 
-/** How wide and deep a tile is, in metres. */
-export const TILE = 1200;
+export { TILE };
 /** The seed of the whole world. Another seed is another world; the grid of big roads is the same in all of them. */
 export const WORLD = 2026;
 /** How much of a tile is asked for: 0 the grid of big roads, 1 the streets too, 2 everything. */
@@ -409,4 +408,23 @@ export function tileAsked(): { i: number; j: number; detail: Detail } | null {
   // the hand-drawn tile, whole, is the page as it always was
   if (t[0] === 0 && t[1] === 0 && detail === 2) return null;
   return { i: t[0], j: t[1], detail };
+}
+
+/** The strokes of every tile of the window, each moved to where its tile lies. `hand` is what the hand-drawn tile is, if it is one of them. */
+export function windowStrokes(hand: Intent): Intent {
+  return tilesNow().flatMap((t) => held.get(t.i + ',' + t.j) ?? (t.i === 0 && t.j === 0 ? hand : tileStrokes(t.i, t.j).map((s) => ({ ...s, pts: s.pts.map((p) => ({ x: p.x + t.x, y: p.y + t.y })) }))));
+}
+
+// what each tile's strokes were when the window last left it: whatever was painted there is there when it comes back
+const held = new Map<string, Intent>();
+/** Before the window moves on: every stroke is put away with the tile its middle lies in. */
+export function holdStrokes(intent: Intent) {
+  for (const t of tilesNow()) held.set(t.i + ',' + t.j, []);
+  for (const s of intent) {
+    // (the middle of all its points: one point of it may lie on a border, and a stroke of two has no other)
+    let x = 0, y = 0;
+    for (const p of s.pts) { x += p.x; y += p.y; }
+    const i = Math.min(place.i + 1, Math.max(place.i, Math.round(x / s.pts.length / TILE))), j = Math.min(place.j + 1, Math.max(place.j, Math.round(y / s.pts.length / TILE)));
+    held.get(i + ',' + j)!.push(s);
+  }
 }

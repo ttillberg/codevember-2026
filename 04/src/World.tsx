@@ -3,7 +3,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import { NIGHT, glowing } from './haze';
 import { BufferGeometry, Color, DoubleSide, Float32BufferAttribute, InstancedMesh, Matrix4, MeshStandardMaterial, Object3D, Uniform, Vector3 } from 'three';
 import { buildGround, clearOf, onRoad, WALK } from './geo';
-import { cumLen, offset, pointOn, rng, type Net } from './net';
+import { cumLen, offset, place, pointOn, rng, saltOf, tilesNow, type Net } from './net';
 import { Town, type Block } from './Town';
 import { settle, soaked, wet } from './wet';
 
@@ -186,6 +186,10 @@ function Buildings({ net }: { net: Net }) {
   const units = useRef<InstancedMesh>(null);
   const roofs = useMemo(() => new Map<number, MeshStandardMaterial>(), []);
   const roof = (c: number) => roofs.get(c) ?? roofs.set(c, grained(c, FELT, 'felt')).get(c)!;
+  // the walls keep the material they were first given: the sheds come and go with their tile, and one made anew at
+  // night came out white
+  const wallsOf = useMemo(() => new Map<number, MeshStandardMaterial>(), []);
+  const wall = (c: number) => wallsOf.get(c) ?? wallsOf.set(c, new MeshStandardMaterial({ color: c, roughness: 0.9 })).get(c)!;
 
   // rooftop units: what makes a big box read as a big box from above
   const boxes = useMemo(() => {
@@ -220,25 +224,23 @@ function Buildings({ net }: { net: Net }) {
         if (b.canopy)
           return (
             <group key={i}>
-              <mesh position={[cx, b.h, cz]} castShadow receiveShadow material={roof(b.roof)}>
+              <mesh position={[cx, b.h, cz]} castShadow receiveShadow material={roof(b.roof)} dispose={null}>
                 <boxGeometry args={[w, 0.7, d]} />
               </mesh>
               {[-1, 1].map((s) => (
-                <mesh key={s} position={[cx + (s * w) / 3, b.h / 2, cz]} castShadow>
+                <mesh key={s} position={[cx + (s * w) / 3, b.h / 2, cz]} castShadow material={wall(b.wall)} dispose={null}>
                   <boxGeometry args={[0.5, b.h, 0.5]} />
-                  <meshStandardMaterial color={b.wall} />
                 </mesh>
               ))}
             </group>
           );
         return (
           <group key={i}>
-            <mesh position={[cx, b.h / 2, cz]} castShadow receiveShadow>
+            <mesh position={[cx, b.h / 2, cz]} castShadow receiveShadow material={wall(b.wall)} dispose={null}>
               <boxGeometry args={[w, b.h, d]} />
-              <meshStandardMaterial color={b.wall} roughness={0.9} />
             </mesh>
             {/* the roof deck, inside a rim of wall */}
-            <mesh position={[cx, b.h + 0.03, cz]} rotation-x={-Math.PI / 2} receiveShadow material={roof(b.roof)}>
+            <mesh position={[cx, b.h + 0.03, cz]} rotation-x={-Math.PI / 2} receiveShadow material={roof(b.roof)} dispose={null}>
               <planeGeometry args={[w - 1, d - 1]} />
             </mesh>
           </group>
@@ -362,6 +364,9 @@ function fallen() {
   return m;
 }
 
+// the woods of every tile planted so far, by season and tile
+const WOODS = new Map<string, { x: number; y: number; blobs: { m: Matrix4; c: Color }[]; fir: boolean; size: number; deep: boolean }[]>();
+
 function Trees({ net, blocks, glade, season }: { net: Net; blocks: Block[]; glade?: Glade; season: Season }) {
   const ref = useRef<InstancedMesh>(null), firs = useRef<InstancedMesh>(null), floor = useRef<InstancedMesh>(null), stems = useRef<InstancedMesh>(null);
   const crown = useMemo(tuft, []);
@@ -374,7 +379,7 @@ function Trees({ net, blocks, glade, season }: { net: Net; blocks: Block[]; glad
   const soak = useMemo(() => ({ crown: soaked('trees', first.crown), stem: soaked('trees', first.stem) }), [first]);
   // everything is planted once; a road painted through only fells what is in its way
   const wood = useMemo(() => {
-    const r = rng(23);
+    let r = rng(23);
     const out: { x: number; y: number; blobs: { m: Matrix4; c: Color }[]; fir: boolean; size: number; deep: boolean }[] = [];
     const o = new Object3D();
     const clump = (x: number, y: number) => 0.5 + 0.5 * Math.sin(x * 0.013 + 1.7) * Math.cos(y * 0.017 - 0.4) + 0.3 * Math.sin((x + y) * 0.041);
@@ -383,8 +388,20 @@ function Trees({ net, blocks, glade, season }: { net: Net; blocks: Block[]; glad
     const at = (i: number, j: number) => Math.abs(Math.sin(i * 127.1 + j * 311.7) * 43758.5453) % 1;
     // and where it is forest: thick stands with open ground between them, not trees dotted evenly over everything
     const forest = (x: number, y: number) => Math.sin(x * 0.011 + 0.6) * Math.cos(y * 0.013 - 1.1) + 0.5 * Math.sin((x - y) * 0.023 + 2) + 0.25 * Math.sin(x * 0.05) * Math.sin(y * 0.047);
-    for (let i = 0; i < 22000; i++) {
-      const x = (r() - 0.5) * 900, y = (r() - 0.5) * 860;
+    // every tile is planted by its own number: first the middle, as the place on its own has it, then, when it
+    // lies among others, the rim that leaves bare
+    for (const t of tilesNow()) {
+    // (a tile that was in the window before keeps the trees it had)
+    const key = season + ':' + t.i + ',' + t.j, was = WOODS.get(key);
+    if (was) { for (const w of was) out.push(w); continue; }
+    const part: typeof out = [];
+    if (place.on) WOODS.set(key, part);
+    for (const rim of place.on ? [0, 1] : [0])
+    for (let i = 0, n = rim ? 41000 : 22000; i < n; i++) {
+      if (i === 0) r = rng(23 + saltOf(t.i, t.j) + rim * 7);
+      const lx = (r() - 0.5) * (rim ? 1200 : 900), ly = (r() - 0.5) * (rim ? 1200 : 860);
+      if (rim && Math.abs(lx) < 450 && Math.abs(ly) < 430) continue;
+      const x = lx + t.x, y = ly + t.y;
       const deep = forest(x, y);
       // the edge of a wood thins out over a few metres
       // out in the open they stand a few together: one spot in a cell here and there, and whatever falls within reach of it
@@ -419,11 +436,14 @@ function Trees({ net, blocks, glade, season }: { net: Net; blocks: Block[]; glad
           blobs.push({ m: o.matrix.clone(), c: hue.clone().offsetHSL(0, 0, (r() - 0.5) * 0.04) });
         }
       }
-      if (keep) out.push({ x, y, blobs, fir, size: bush ? 0 : size, deep: !spot });
+      if (keep) part.push({ x, y, blobs, fir, size: bush ? 0 : size, deep: !spot });
+    }
+    for (const w of part) out.push(w);
     }
     return out;
-  }, [season]);
-  const CAP = 12000, FIRS = 3000, LITTER = 4500, STEMS = 6000;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [season, place.i, place.j]);
+  const MORE = place.on ? 4 : 1, CAP = 12000 * MORE, FIRS = 3000 * MORE, LITTER = 4500 * MORE, STEMS = 6000 * MORE;
 
   useLayoutEffect(() => {
     const m = ref.current!, f = firs.current!, fl = floor.current!, st = stems.current!;
@@ -448,11 +468,21 @@ function Trees({ net, blocks, glade, season }: { net: Net; blocks: Block[]; glad
       fl.setMatrixAt(l, o.matrix);
       fl.setColorAt(l++, c.copy(hue).offsetHSL(0, 0, 0.03));
     };
+    // the houses by where they stand, a square of 64 m at a time: a tree asks only those beside it
+    const near = new Map<string, typeof up>();
+    for (const b of up) {
+      for (let gx = Math.floor((b.x0 - 18) / 64); gx <= Math.floor((b.x1 + 18) / 64); gx++) {
+        for (let gy = Math.floor((b.y0 - 18) / 64); gy <= Math.floor((b.y1 + 18) / 64); gy++) {
+          const k = gx + ':' + gy, l = near.get(k);
+          if (l) l.push(b); else near.set(k, [b]);
+        }
+      }
+    }
     for (const t of wood) {
       if (!clearOf(net, t.x, t.y, 6)) continue;
       // a wood keeps its distance from a house: a yard's width of open ground. A little house stands in among the trees
       const gap = t.deep ? 18 : 5;
-      if (up.some((b) => { const g = b.small ? (t.size ? 4.5 : 3.6) : gap; return t.x > b.x0 - g && t.x < b.x1 + g && t.y > b.y0 - g && t.y < b.y1 + g; })) continue;
+      if (near.get(Math.floor(t.x / 64) + ':' + Math.floor(t.y / 64))?.some((b) => { const g = b.small ? (t.size ? 4.5 : 3.6) : gap; return t.x > b.x0 - g && t.x < b.x1 + g && t.y > b.y0 - g && t.y < b.y1 + g; })) continue;
       // and none of it on the pitch, in the school yard or on a walk of the park
       if (glade && !glade.keep(t.x, t.y)) continue;
       if (t.fir) {

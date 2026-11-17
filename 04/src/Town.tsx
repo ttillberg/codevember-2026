@@ -45,8 +45,11 @@ const SMALL = {
  * The little ones: houses, and along the bigger roads a burger place, a coffee place, a filling station. Each stands by a road,
  * square to it, wherever the big ones and the roads have left room. `taken` is what stands already.
  */
-export function plantSmall(net: Net, taken: Block[], many = 210): Block[] {
-  const r = rng(91), out: Block[] = [];
+export function plantSmall(net: Net, taken: Block[], many = 210, salt = 0, wide = false): Block[] {
+  const r = rng(91 + salt), out: Block[] = [];
+  // a tile among others is built on to its edge; the place on its own thins out into the haze
+  const fx = wide ? 590 : 400, fy = wide ? 590 : 380;
+  if (wide) many = Math.round(many * 2.2);
   const roads = net.roads.filter((o) => !o.bridge && !o.ring && o.rank >= 1 && o.len > 30);
   if (!roads.length) return out;
   const clash = (b: Rect, gap: number) => [...taken, ...out].some((o) => b.x0 < o.x1 + gap && b.x1 > o.x0 - gap && b.y0 < o.y1 + gap && b.y1 > o.y0 - gap);
@@ -56,7 +59,7 @@ export function plantSmall(net: Net, taken: Block[], many = 210): Block[] {
     if (len < 1) continue;
     const dx = (b.x - a.x) / len, dy = (b.y - a.y) / len, side = r() < 0.5 ? -1 : 1;
     const px = a.x + (b.x - a.x) * t, py = a.y + (b.y - a.y) * t;
-    if (Math.abs(px) > 400 || Math.abs(py) > 380) continue;
+    if (Math.abs(px) > fx || Math.abs(py) > fy) continue;
     const k = r(), square = Math.abs(dx) > 0.985 || Math.abs(dy) > 0.985;
     // trade wants a road with traffic on it; a filling station is only built square to the map, since its roof cannot be turned
     const kind = road.rank < 2 || k > 0.3 ? 'house' : k < 0.1 && square ? 'fuel' : k < 0.2 ? 'food' : 'coffee';
@@ -92,8 +95,8 @@ export function plantSmall(net: Net, taken: Block[], many = 210): Block[] {
 }
 
 /** A quarter of the houses stand at an angle, where there is room to: nothing is built to one grid. */
-export function turnSome(net: Net, blocks: Block[], share = 0.25): Block[] {
-  const r = rng(53), out = [...blocks];
+export function turnSome(net: Net, blocks: Block[], share = 0.25, salt = 0): Block[] {
+  const r = rng(53 + salt), out = [...blocks];
   const order = out.map((_, i) => i).sort(() => r() - 0.5);
   let left = Math.round(out.length * share);
   for (const i of order) {
@@ -123,10 +126,12 @@ const ROOFS = [0x6f8fb0, 0x5f7f9f, 0xb9b6ae, 0xa9a69e, 0x8d6a58, 0x7d93a8];
 /** Is this block still standing on this network? A bridge may pass over it. */
 export const stands = (net: Net, b: Rect, margin = 0) => rectClear(net, b, margin);
 
-export function plantTown(net: Net): Block[] {
-  const r = rng(41);
+export function plantTown(net: Net, salt = 0, wide = false): Block[] {
+  const r = rng(41 + salt);
   // the looks have their own dice, so the town stands where it stood
-  const q = rng(77);
+  const q = rng(77 + salt);
+  // a tile among others is built on to its edge, with as many more houses as there is more ground
+  const W = wide ? 1.62 : 1, N = wide ? 2.6 : 1;
   const look = (style: number, wall: number) => ({ style, wall: style === GALLERY || (style === LOW && q() < 0.6) ? wall : PAINTS[(q() * PAINTS.length) | 0] });
   const out: Block[] = [];
   const free = (b: Rect, gap = 10) => stands(net, b, 5) && !out.some((o) => b.x0 < o.x1 + gap && b.x1 > o.x0 - gap && b.y0 < o.y1 + gap && b.y1 > o.y0 - gap);
@@ -147,9 +152,9 @@ export function plantTown(net: Net): Block[] {
   };
 
   // compounds: rows of slabs, all facing the same way, as they are built
-  for (let tries = 0; tries < 1600 && out.length < 34; tries++) {
+  for (let tries = 0; tries < 1600 * N && out.length < 34 * N; tries++) {
     // the middle fills first, then the edges
-    const reach = tries < 800 ? 0.72 : 1;
+    const reach = (tries < 800 ? 0.72 : 1) * W;
     const ox = (r() - 0.5) * 700 * reach, oy = (r() - 0.5) * 640 * reach;
     const cols = 1 + ((r() * 2) | 0), rows = 2 + ((r() * 3) | 0);
     const w = 32 + r() * 14, d = 11 + r() * 2.5, floors = 6 + ((r() * 4) | 0);
@@ -174,8 +179,8 @@ export function plantTown(net: Net): Block[] {
     out.push(...made);
   }
   // and the odd ones: shops, workshops, a house someone built where there was room
-  for (let tries = 0, made = 0; tries < 900 && made < 28; tries++) {
-    const x = (r() - 0.5) * 680, y = (r() - 0.5) * 620;
+  for (let tries = 0, made = 0; tries < 900 * N && made < 28 * N; tries++) {
+    const x = (r() - 0.5) * 680 * W, y = (r() - 0.5) * 620 * W;
     const w = 9 + r() * 12, d = 8 + r() * 8;
     const b: Block = { x0: x, y0: y, x1: x + w, y1: y + d, h: (1 + ((r() * 4) | 0)) * 3.2, roof: ROOFS[(r() * ROOFS.length) | 0], ...look(LOW, WALLS[(r() * WALLS.length) | 0]), path: [] };
     if (!free(b, 3)) continue;
@@ -186,8 +191,8 @@ export function plantTown(net: Net): Block[] {
     made++;
   }
   // a few towers further out, pale in the haze
-  for (let tries = 0, cap = out.length + 12; tries < 200 && out.length < cap; tries++) {
-    const x = (r() - 0.5) * 780, y = (r() - 0.5) * 720;
+  for (let tries = 0, cap = out.length + 12 * N; tries < 200 * N && out.length < cap; tries++) {
+    const x = (r() - 0.5) * 780 * (wide ? 1.45 : 1), y = (r() - 0.5) * 720 * (wide ? 1.55 : 1);
     if (Math.abs(x) < 230 && Math.abs(y) < 200) continue;
     const s = 17 + r() * 5;
     const b: Block = { x0: x, y0: y, x1: x + s, y1: y + s * (0.8 + r() * 0.4), h: 36 + r() * 18, roof: 0xb9b6ae, ...look(q() < 0.6 ? STRIPED : PAINTED, WALLS[(r() * WALLS.length) | 0]), path: [] };
@@ -367,4 +372,11 @@ export function Town({ net, blocks, paving, roofing }: { net: Net; blocks: Block
       </instancedMesh>
     </group>
   );
+}
+
+/** A house and all that belongs to it, moved: a tile's town is planted round 0, 0 and set down where the tile lies. */
+export function shifted(b: Block, dx: number, dy: number): Block {
+  if (!dx && !dy) return b;
+  const box = <T extends Rect>(q: T): T => ({ ...q, x0: q.x0 + dx, y0: q.y0 + dy, x1: q.x1 + dx, y1: q.y1 + dy });
+  return { ...box(b), path: b.path.map((p) => ({ x: p.x + dx, y: p.y + dy })), inner: b.inner && box(b.inner), pumps: b.pumps && box(b.pumps), pad: b.pad && box(b.pad) };
 }

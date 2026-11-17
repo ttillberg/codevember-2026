@@ -4,7 +4,7 @@ import { useFrame } from '@react-three/fiber';
 import { AdditiveBlending, Color, InstancedMesh, MeshStandardMaterial, Object3D, ShaderMaterial } from 'three';
 import { onRoad, WALK, zebraAt } from './geo';
 import { HOUR, NIGHT, bakeGlow, type Spot } from './haze';
-import { cumLen, deck, offset, pointOn, rng, type Net, type V } from './net';
+import { cumLen, deck, offset, place, pointOn, rng, type Net, type V } from './net';
 import { turned, type Block } from './Town';
 import { settle, SOAKED, wet } from './wet';
 
@@ -20,7 +20,8 @@ interface Line {
   park?: boolean;
 }
 
-const WALKERS = 460, RIDERS = 130;
+const MORE = place.on ? 4 : 1;
+const WALKERS = 460 * MORE, RIDERS = 130 * MORE;
 /** How many of them never leave the park: they turn round at its ends. The rest come through it as they come through anywhere. */
 const STROLLERS = 34, PARK_RIDERS = 7;
 
@@ -267,7 +268,7 @@ interface Sign { x: number; y: number; z: number; sx: number; sy: number; sz: nu
 export function Signs({ net, blocks }: { net: Net; blocks: Block[] }) {
   const ref = useRef<InstancedMesh>(null);
   const mat = useMemo(board, []);
-  const CAP = 2000;
+  const CAP = 2000 * MORE;
 
   const signs = useMemo(() => {
     const out: Sign[] = [];
@@ -465,7 +466,7 @@ export function Street({ net, blocks, speed }: { net: Net; blocks: Block[]; spee
   const head = useRef<MeshStandardMaterial>(null);
   const shine = useMemo(() => wet(pool(), 'street'), []);
   const glass = useMemo(() => wet(screen(), 'street'), []);
-  const POSTS = 6400, TVS = 90;
+  const POSTS = 6400 * MORE, TVS = 90 * MORE;
 
   const plan = useMemo(() => {
     const post: { x: number; y: number; z: number; sx: number; sy: number; sz: number; rot: number }[] = [];
@@ -559,8 +560,11 @@ export function Street({ net, blocks, speed }: { net: Net; blocks: Block[]; spee
       const t = hash(b.y1, b.x1);
       small(door.x, door.y, Math.min(b.h, 2.6), 5 + 3 * t, [0.75, 0.42 + 0.3 * t, 0.12 + 0.3 * t]);
     }
-    for (let gx = -420; gx < 420; gx += 34) {
-      for (let gy = -400; gy < 400; gy += 34) {
+    // the same lattice however far the place reaches, so a light stands where it stood
+    const lo = (from: number, min: number) => (place.on ? from + 34 * Math.ceil((min - from) / 34) : from);
+    const X0 = lo(-420, place.x - place.half), X1 = place.on ? place.x + place.half : 420, Y0 = lo(-400, place.y - place.half), Y1 = place.on ? place.y + place.half : 400;
+    for (let gx = X0; gx < X1; gx += 34) {
+      for (let gy = Y0; gy < Y1; gy += 34) {
         const k = hash(gx * 0.173 + 9, gy * 0.291 - 4);
         if (k > 0.2) continue;
         const x = gx + hash(gx, gy + 1) * 30, y = gy + hash(gx + 1, gy) * 30;
