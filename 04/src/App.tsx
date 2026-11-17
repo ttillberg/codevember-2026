@@ -29,7 +29,7 @@ import { laid, madeAt, wetStart } from './wet';
 type Grade = { gain: number; temp: number; bite: number; sat: number; lift: number; grain: number; bloom: number; dark: number; soft: number };
 /** A finger and no mouse: a phone or a tablet. */
 const touch = typeof matchMedia !== 'undefined' && matchMedia('(pointer: coarse)').matches;
-const GRADE: Grade = { gain: 1, temp: -0.55, bite: 0.35, sat: 0.81, lift: 0, grain: 0, bloom: 0.55, dark: 0, soft: no('soft') || touch ? 0 : 0.5 };
+const GRADE: Grade = { gain: 1, temp: 0.6, bite: 0.35, sat: 0.78, lift: 0, grain: 0, bloom: 0.55, dark: 0.57, soft: no('soft') || touch ? 0 : 0.5 };
 
 /** The look of a drone clip shot through city haze: flat, pale, a little cool in the shadows. */
 class FadeEffect extends Effect {
@@ -90,7 +90,7 @@ type Shot = { az: number; el: number; dist: number; fov: number; x: number; z: n
 const SHOTS: Record<'p' | 'l', Shot> = {
   // upright, the same drone a little higher: the screen is narrow, and a blur that is right on a desk drowns a phone
   p: { az: 22, el: 69.5, dist: 950, fov: 27.5, x: -1, z: -10, blur: 0.22, taper: 0.98, lean: -2.3, focus: 0.42 },
-  l: { az: 22, el: 69.5, dist: 800, fov: 27.5, x: -1, z: -10, blur: 0.45, taper: 0.98, lean: -2.3, focus: 0.38 },
+  l: { az: 22.2, el: 69.5, dist: 927, fov: 27.5, x: -1, z: -10, blur: 0.45, taper: 0.98, lean: -2.3, focus: 0.38 },
 };
 const upright = () => innerWidth < innerHeight;
 /** ?debug: sliders for the shot, and a button that copies it. */
@@ -117,11 +117,11 @@ const PERKS: [string, (sim: Sim) => void][] = [['Send ambulance', (s) => s.dispa
 const DPR = touch ? 2.5 : 2;
 /** How the drone moves by itself: metres it glides to either side, degrees it swings round, metres it bobs in the wind, metres it shakes, seconds for a round, and with ?endless how many metres a second it flies north. */
 type Move = { drift: number; orbit: number; hover: number; shake: number; period: number; north: number };
-const MOVE: Move = { drift: 19, orbit: 3, hover: 1.3, shake: 0, period: 45, north: 5 };
+const MOVE: Move = { drift: 19, orbit: 3, hover: 1.3, shake: 0, period: 60, north: 5 };
 const MOVES: [keyof Move, string, number, number, number][] = [
   ['drift', 'Glide', 0, 80, 1], ['orbit', 'Swing', 0, 30, 0.5], ['hover', 'Bob', 0, 6, 0.1], ['shake', 'Shake', 0, 3, 0.05], ['period', 'Round', 10, 120, 1], ['north', 'North', 0, 40, 0.5],
 ];
-const FPS = 30;
+const FPS = 60;
 const RAD = Math.PI / 180;
 /**
  * The hour it is, whether it stands still there, how many seconds of ours a day and its night take, and how many seconds

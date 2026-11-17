@@ -117,6 +117,14 @@ Smearing roads together is where the tangle comes from. It should come out dense
 - Traffic, 180 vehicles for an hour on each of the 80 tiles round the hand-drawn one, two seeds: 2,520 through at the median against 1,925 and 2,214 on the hand-drawn map, and every way in is used. But the woods tiles clog: half of their runs end with a vehicle that has stood five minutes, 6 of 22 with ten or more, 2 locked solid (-4,-3 and 3,-3; -4,-3 already with only its streets). 180 is too many for 4 to 6 km of road: the count should follow the length of road in the window.
 - A map with no parking at all crashed the traffic (`setRoute` picked from an empty list): guarded, one line in `sim.ts`.
 
+## Speed
+
+Measured, not worked on (headless Chrome, M2 Pro, noon, 1400 × 900 at two pixels to one). A frame is 1.6 ms on the first map and 5 ms on `?endless`; up after 0.6 s and 1.3 s; 254 vehicles and 817. Over 8 s the day's own code runs 0.8 s and 1.6 s: the page rests four fifths of the time.
+
+- On `?endless` the traffic step is about 0.9 s of the 1.6 (`drive`, `lanePose`, `plan`, `gapAhead`), the people about 0.35 (`move` in `Life.tsx`), the rest is drawing the cars, and at night the lights (`sample` and `draw` in `Glow.tsx`, about 0.2).
+- What shows is not the frame: a move of the window on `?endless` is 3 to 5 long tasks of 55 to 176 ms, and a stroke there one of about 130 ms.
+- Not measured on a phone, where all of it is four to six times slower: the traffic and the people are what would count there.
+
 ## Model
 
 Done: strokes are the only state, `derive()` in `intent.ts` walks them over shared nodes and picks the styles, the base map is strokes. Paint on paint thickens per stretch. Lots are obstacles. Signals one to a block.
