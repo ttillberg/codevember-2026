@@ -6,8 +6,7 @@ import { Matrix4, type Camera } from 'three';
 import { NIGHT } from './haze';
 import { place } from './net';
 import { PARKED, type Car } from './sim';
-import { SMEAR_R } from './paint';
-import { SOAK, WET } from './wet';
+import { FALL, SOAK, WET } from './wet';
 
 /**
  * The light is not kept on the picture, where the drone's own motion would smear it, but on the ground: one float texture
@@ -99,7 +98,7 @@ const FAN = 12.0; // metres either side of a vehicle's heading that its beam rea
 }`;
 
 const SHOW = /* wgsl */ `
-struct U { vp: mat4x4f, k: vec4f, wet: vec4f, soak: vec4f };
+struct U { vp: mat4x4f, k: vec4f, wet: vec4f, soak: vec4f, fall: vec4f };
 @group(0) @binding(0) var<uniform> u: U;
 @group(0) @binding(1) var map: texture_2d<f32>;
 @group(0) @binding(2) var smp: sampler;
@@ -116,8 +115,8 @@ struct Out { @builtin(position) pos: vec4f, @location(0) uv: vec2f };
 }
 fn fall(p: vec2f) -> f32 {
   let d = p - u.wet.xy;
-  let q = dot(d, d) / ${(SMEAR_R * SMEAR_R).toFixed(1)};
-  return select(0.0, (1.0 - q) * (1.0 - q), q < 1.0);
+  let q = dot(d, d) / u.fall.x;
+  return select(0.0, pow(max(1.0 - q, 0.0), u.fall.y), q < 1.0);
 }
 @fragment fn fs(o: Out) -> @location(0) vec4f {
   // while a smear is dragged the light goes with the traffic, pushed as the roads are (wet.ts): this point of the
@@ -189,7 +188,7 @@ class Layer {
   private rec = new Float32Array(SEGS * REC);
   private n = 0;
   private out = new Float32Array(SEGS * 8);
-  private u = new Float32Array(28);
+  private u = new Float32Array(32);
   private ox = 0; private oy = 0;
   /** where the lamps of each vehicle were when last noted: head x y, tail x y, height, when */
   private last = new WeakMap<object, Float32Array>();
@@ -347,6 +346,7 @@ class Layer {
     this.u[16] = GAIN * night; this.u[17] = (time * 7.3) % 61; this.u[18] = ox; this.u[19] = oy;
     WET.value.toArray(this.u, 20);
     SOAK.traffic.value.toArray(this.u, 24);
+    FALL.value.toArray(this.u, 28);
 
     const { device } = this;
     let view: GPUTextureView;

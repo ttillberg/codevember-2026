@@ -67,7 +67,10 @@ export function TimeControl({ now, readout, hold, onHold, onSet }: {
 }
 
 /** What is shown on the picture: an eye that opens a short list, each line a thing to show or not. */
-export function ViewMenu({ items, onReset }: { items: { id: string; label: string; on: boolean; toggle: () => void }[]; onReset?: () => void }) {
+/** One thing in the eye's list with more than two ways to be: its name, the ways, the one it is, and how to set another. */
+export interface Choice { id: string; label: string; options: readonly (readonly [string, string])[]; value: string; set: (v: string) => void }
+
+export function ViewMenu({ items, choices = [], onReset }: { items: { id: string; label: string; on: boolean; toggle: () => void }[]; choices?: Choice[]; onReset?: () => void }) {
   const [open, setOpen] = useState(false);
   const box = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -90,6 +93,16 @@ export function ViewMenu({ items, onReset }: { items: { id: string; label: strin
               <input type="checkbox" checked={o.on} onChange={o.toggle} />
               <span>{o.label}</span>
             </label>
+          ))}
+          {choices.map((c) => (
+            <div key={c.id} className="choice" role="radiogroup" aria-label={c.label}>
+              <span>{c.label}</span>
+              <div>
+                {c.options.map(([v, name]) => (
+                  <button key={v} role="radio" aria-checked={c.value === v} className={c.value === v ? 'on' : ''} onClick={() => c.set(v)}>{name}</button>
+                ))}
+              </div>
+            </div>
           ))}
           {onReset && <button className="reset" onClick={onReset}>Reset to defaults</button>}
         </div>
@@ -158,16 +171,70 @@ function SizeBrush({ on, grow, onPick, onGrow }: { on: boolean; grow: boolean; o
   );
 }
 
-export function Brushes({ tool, sized, grow, onPick, onGrow }: { tool: Tool; sized?: boolean; grow: boolean; onPick: (b: Brush) => void; onGrow: (bigger: boolean) => void }) {
+/** How far the smear reaches, metres, by name. */
+export const SMEAR_SIZES = [[35, 'S'], [65, 'M'], [110, 'L']] as const;
+/** How its pull falls off, as the power of the curve (paint.ts), each with the curve drawn: a peak, a bell, a dome. */
+export const SMEAR_FALLS = [[4, 'Sharp', 'M2 13.5c5 0 6.5-11 8-11s3 11 8 11'], [2, 'Soft', 'M2 13.5c3.5 0 5-11 8-11s4.5 11 8 11'], [1, 'Broad', 'M2 13.5c1.5-6 4-11 8-11s6.5 5 8 11']] as const;
+
+/**
+ * The smear brush: a press takes it up and opens what it is set to over it: how far it reaches, and the curve its
+ * pull falls off by from the grab to the edge of that reach.
+ */
+function SmearBrush({ on, reach, fall, onPick, onSet }: { on: boolean; reach: number; fall: number; onPick: () => void; onSet: (reach: number, fall: number) => void }) {
+  const [open, setOpen] = useState(false);
+  const box = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const away = (e: PointerEvent) => { if (!box.current?.contains(e.target as Node)) setOpen(false); };
+    const esc = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false); };
+    addEventListener('pointerdown', away, true);
+    addEventListener('keydown', esc);
+    return () => { removeEventListener('pointerdown', away, true); removeEventListener('keydown', esc); };
+  }, [open]);
+  return (
+    <div className="pick" ref={box}>
+      <button className={on ? 'on' : ''} aria-label="Smear" aria-pressed={on} aria-haspopup="true" aria-expanded={open} onClick={() => { onPick(); setOpen((v) => !v); }}>
+        <SmearIcon />
+        {!open && <Tip tip="Smear" keys="⌥ drag" />}
+      </button>
+      {open && (
+        <div className="menu over" role="group" aria-label="Smear">
+          <div className="choice" role="radiogroup" aria-label="Size">
+            <span>Size</span>
+            <div>
+              {SMEAR_SIZES.map(([r, name]) => (
+                <button key={r} role="radio" aria-checked={reach === r} aria-label={`Size ${name}`} className={reach === r ? 'on' : ''} onClick={() => onSet(r, fall)}>{name}</button>
+              ))}
+            </div>
+          </div>
+          <div className="choice" role="radiogroup" aria-label="Falloff">
+            <span>Falloff</span>
+            <div>
+              {SMEAR_FALLS.map(([k, name, d]) => (
+                <button key={k} role="radio" aria-checked={fall === k} aria-label={name} title={name} className={fall === k ? 'on' : ''} onClick={() => onSet(reach, k)}>
+                  <svg width={20} height={16} viewBox="0 0 20 16" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d={d} /></svg>
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+export function Brushes({ tool, sized, grow, reach, fall, onPick, onGrow, onSmear }: { tool: Tool; sized?: boolean; grow: boolean; reach: number; fall: number; onPick: (b: Brush) => void; onGrow: (bigger: boolean) => void; onSmear: (reach: number, fall: number) => void }) {
   return (
     <div className="pill brushes" role="toolbar" aria-label="Brushes">
       {BRUSHES.map(([b, label, Icon, keys]) => (
         <Fragment key={b}>
           {sized && b === 'erase' && <SizeBrush on={tool === 'size'} grow={grow} onPick={() => onPick('size')} onGrow={onGrow} />}
-          <button className={tool === b ? 'on' : ''} aria-label={label} aria-pressed={tool === b} onClick={() => onPick(b)}>
-            <Icon />
-            <Tip tip={label} keys={keys ?? 'T'} />
-          </button>
+          {b === 'smear' ? <SmearBrush on={tool === b} reach={reach} fall={fall} onPick={() => onPick(b)} onSet={onSmear} /> : (
+            <button className={tool === b ? 'on' : ''} aria-label={label} aria-pressed={tool === b} onClick={() => onPick(b)}>
+              <Icon />
+              <Tip tip={label} keys={keys ?? 'T'} />
+            </button>
+          )}
         </Fragment>
       ))}
     </div>

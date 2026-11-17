@@ -1,11 +1,20 @@
 // Wet paint. While a smear is being dragged the town is not built again: what lies on the roads is pushed in the
 // vertex shader by the same falloff the smear gives the strokes, and the town is made again when the hand lets go.
-import { Uniform, Vector3, Vector4, type Material, type WebGLProgramParametersWithUniforms } from 'three';
-import { SMEAR_R } from './paint';
+import { Uniform, Vector2, Vector3, Vector4, type Material, type WebGLProgramParametersWithUniforms } from 'three';
+import { SMEAR } from './paint';
 import type { V } from './net';
 
 /** Where the smear took hold (x, y on the ground) and where the hand is now (x, y). */
 export const WET = new Uniform(new Vector4());
+
+/** The smear's reach, squared, and the power of its falloff: what `SMEAR` in paint.ts says, for the shaders. */
+export const FALL = new Uniform(new Vector2(SMEAR.r * SMEAR.r, SMEAR.fall));
+/** Set how far the smear reaches (metres) and how its pull falls off (1 broad, 2 soft, 4 sharp), for the strokes and the shaders alike. */
+export function smearSet(r: number, fall: number) {
+  SMEAR.r = r;
+  SMEAR.fall = fall;
+  FALL.value.set(r * r, fall);
+}
 
 /**
  * What is rebuilt by itself when the roads change: the ground, the trees, the traffic, the street. For each, where the
@@ -45,14 +54,15 @@ export function settle(layer: Layer, net: object) {
 const PUSH = /* glsl */ `
 uniform vec4 uWet;
 uniform vec3 uSoak;
+uniform vec2 uWetFall;
 #ifdef WET_FIRST
 uniform float uWetFirst;
 #endif
 // as smear() in paint.ts moves a point of a stroke: all the way at the grab, nothing at the edge of its reach
 float wetFall(vec2 p) {
   vec2 d = p - uWet.xy;
-  float q = dot(d, d) / ${(SMEAR_R * SMEAR_R).toFixed(1)};
-  return q < 1.0 ? (1.0 - q) * (1.0 - q) : 0.0;
+  float q = dot(d, d) / uWetFall.x;
+  return q < 1.0 ? pow(1.0 - q, uWetFall.y) : 0.0;
 }
 vec4 wetAt(vec4 w) {
   float k = uSoak.z;
@@ -85,6 +95,7 @@ const PLAIN = 'projectionMatrix * modelViewMatrix * instanceMatrix * vec4(positi
 function soakShader(s: WebGLProgramParametersWithUniforms, layer: Layer, first?: Uniform<number>) {
   s.uniforms.uWet = WET;
   s.uniforms.uSoak = SOAK[layer];
+  s.uniforms.uWetFall = FALL;
   const head = (first ? '#define WET_FIRST\n' : '') + PUSH;
   if (first) s.uniforms.uWetFirst = first;
   if (s.vertexShader.includes('#include <project_vertex>')) {

@@ -24,7 +24,7 @@ import { Nodes } from './Nodes';
 import { addStroke, erase, resize, smear, smearStart, tangled, tidy } from './paint';
 import { holdStrokes, tileAsked, tileStrokes, windowStrokes } from './tiles';
 import { TILE as SIDE, alone, movePlace, place as LAND, saltOf, splitNet, tilesNow } from './net';
-import { laid, madeAt, wetStart } from './wet';
+import { laid, madeAt, wetStart, smearSet } from './wet';
 
 /** The grade: exposure, warmth, bite, how much colour is left, how grey the blacks are, and what the stock and the glass add. */
 type Grade = { gain: number; temp: number; bite: number; sat: number; lift: number; grain: number; bloom: number; dark: number; soft: number; lamp: number };
@@ -109,6 +109,8 @@ const GRADES: [keyof Grade, string, number, number, number][] = [
 /** What can be switched off to see what it costs; ?no=msaa,tilt,bloom,shadow,lazy,soft starts without them. */
 /** How edges are smoothed: the card's own multisampling, four samples or two, a pass over the finished picture, or not at all. */
 const AAS = ['msaa4', 'msaa2', 'smaa', 'none'] as const;
+/** What they are called in the eye's list. */
+const AA_NAMES = [['none', 'Off'], ['smaa', 'SMAA'], ['msaa2', 'MSAA 2'], ['msaa4', 'MSAA 4']] as const;
 type Fx = { aa: (typeof AAS)[number]; tilt: boolean; bloom: boolean; shadow: boolean; lazy: boolean };
 const FX: Fx = { aa: no('msaa') ? 'none' : 'msaa2', tilt: !no('tilt'), bloom: !no('bloom'), shadow: !no('shadow'), lazy: !no('lazy') };
 const SWITCHES: [Exclude<keyof Fx, 'aa'>, string][] = [['tilt', 'Tilt shift'], ['bloom', 'Bloom'], ['shadow', 'Shadows'], ['lazy', 'Lazy shadows']];
@@ -776,6 +778,9 @@ export function App() {
     startTransition(() => setHistory((h) => [...h, next]));
     setRedos([]);
   }, []);
+  /** how far the smear reaches, metres, and the power of its falloff */
+  const [smearing, setSmearing] = useState({ reach: 65, fall: 2 });
+  useEffect(() => smearSet(smearing.reach, smearing.fall), [smearing]);
   /** whether the size brush makes roads bigger, or smaller */
   const [grow, setGrow] = useState(true);
   const growNow = useRef(grow);
@@ -883,7 +888,7 @@ export function App() {
         {air && <Air />}
         {nodes && <Nodes net={roads} />}
         <Sketch api={sketch} />
-        <Painter net={ground} tool={tool} onStroke={onStroke} onSmear={onSmear} onTrace={setTrace} onErase={onErase} onSize={onSize} shrink={!grow} />
+        <Painter net={ground} tool={tool} onStroke={onStroke} onSmear={onSmear} onTrace={setTrace} onErase={onErase} onSize={onSize} shrink={!grow} reach={smearing.reach} />
         <EffectComposer multisampling={fx.aa === 'msaa4' ? 4 : fx.aa === 'msaa2' ? 2 : 0}>
           {fx.tilt && <TiltShift2 blur={lens.blur} taper={lens.taper} start={start} end={end} samples={touch ? 10 : 18} />}
           {/* the lights bleed into what is beside them, as they do through glass */}
@@ -900,7 +905,7 @@ export function App() {
       {/* top right: the time and its hold, then the overlays; a second overlay is one more entry */}
       <div className="corner">
         {/* the clock, and beside it the two ways of reading the traffic: where it stands, and where one stretch's cars are going */}
-        <Overlays tail={<ViewMenu onReset={() => { setAir(false); setHeat(false); setFx((f) => ({ ...f, tilt: FX.tilt })); }} items={[{ id: 'air', label: 'Atmospherics', on: air, toggle: () => setAir((v) => !v) }, { id: 'tilt', label: 'Tilt shift', on: fx.tilt, toggle: () => setFx((f) => ({ ...f, tilt: !f.tilt })) }, { id: 'heat', label: 'Heat map', on: heat, toggle: () => setHeat((v) => !v) }]} />} lead={<TimeControl now={hourNow} readout={readout} hold={clock.hold} onHold={() => setClock((c) => ({ ...c, hold: !c.hold }))} onSet={setHour} />} items={[
+        <Overlays tail={<ViewMenu onReset={() => { setAir(false); setHeat(false); setFx((f) => ({ ...f, tilt: FX.tilt, aa: FX.aa })); }} choices={[{ id: 'aa', label: 'Antialiasing', options: AA_NAMES, value: fx.aa, set: (v) => setFx((f) => ({ ...f, aa: v as Fx['aa'] })) }]} items={[{ id: 'air', label: 'Atmospherics', on: air, toggle: () => setAir((v) => !v) }, { id: 'tilt', label: 'Tilt shift', on: fx.tilt, toggle: () => setFx((f) => ({ ...f, tilt: !f.tilt })) }, { id: 'heat', label: 'Heat map', on: heat, toggle: () => setHeat((v) => !v) }]} />} lead={<TimeControl now={hourNow} readout={readout} hold={clock.hold} onHold={() => setClock((c) => ({ ...c, hold: !c.hold }))} onSet={setHour} />} items={[
           { id: 'trace', label: 'Trace', keys: 'R', icon: <TraceIcon />, on: tool === 'trace', toggle: () => setTool((t) => (t === 'trace' ? brush : 'trace')) },
         ]} />
       </div>
@@ -986,7 +991,7 @@ export function App() {
         </div>
       )}
       {tool === 'trace' && <div className="note" ref={noteBox}>{trace ? '' : 'click a road'}</div>}
-      <Brushes tool={tool} sized={SIZED} grow={grow} onGrow={setGrow} onPick={(b) => { setBrush(b); setTool(b); }} />
+      <Brushes tool={tool} sized={SIZED} grow={grow} reach={smearing.reach} fall={smearing.fall} onSmear={(reach, fall) => setSmearing({ reach, fall })} onGrow={setGrow} onPick={(b) => { setBrush(b); setTool(b); }} />
       <History canUndo={history.length > 1} canRedo={redos.length > 0} onUndo={undo} onRedo={redo} />
     </>
   );

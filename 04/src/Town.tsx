@@ -3,7 +3,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import { Color, InstancedBufferAttribute, InstancedMesh, Matrix4, MeshStandardMaterial, Object3D } from 'three';
 import { BANDED, BAY, CELLS, FLOOR, GALLERY, GLOW, LOW, PAINTED, STRIPED, facades } from './facade';
-import { NIGHT, glowing } from './haze';
+import { NIGHT, glowing, LATE } from './haze';
 import { pavingGeometry, rectClear } from './geo';
 import { rng, type Building, type Net, type Rect, type V } from './net';
 
@@ -213,6 +213,7 @@ function walls() {
   m.onBeforeCompile = (s) => {
     s.uniforms.uFacade = { value: facades() };
     s.uniforms.uNight = NIGHT;
+    s.uniforms.uLate = LATE;
     s.vertexShader = s.vertexShader
       .replace('#include <common>', '#include <common>\nattribute float aStyle; varying float vStyle; varying vec3 vLp; varying vec3 vSz; varying vec3 vOn;')
       .replace('#include <begin_vertex>', `#include <begin_vertex>
@@ -222,7 +223,7 @@ function walls() {
         #endif
         vLp = position * vSz; vOn = normal; vStyle = aStyle;`);
     s.fragmentShader = s.fragmentShader
-      .replace('#include <common>', '#include <common>\nuniform sampler2DArray uFacade; uniform float uNight; varying float vStyle; varying vec3 vLp; varying vec3 vSz; varying vec3 vOn;\n' + HASH)
+      .replace('#include <common>', '#include <common>\nuniform sampler2DArray uFacade; uniform float uNight, uLate; varying float vStyle; varying vec3 vLp; varying vec3 vSz; varying vec3 vOn;\n' + HASH)
       .replace('#include <color_fragment>', `#include <color_fragment>
         vec3 rooms = vec3(0.0);
         if (abs(vOn.y) < 0.5) {
@@ -244,6 +245,14 @@ function walls() {
               // somebody is home in half of the rooms, and they do not all reach for the switch at once
               float home = wh(floor(vec2(u, v) * n) * 1.7 + vSz.xz + 3.0) / 0.5;
               rooms = texture(uFacade, vec3(st, vStyle + ${GLOW.toFixed(1)})).rgb * step(home, 1.0) * smoothstep(home * 0.7, home * 0.7 + 0.3, uNight) * 2.4;
+              // and they do not all go to bed at once. A few are up all night; one house in five is a place of work
+              // where most of the lights are left on, and in a third of them the ground floor is a shop that stays lit
+              vec2 room = floor(vec2(u, v) * n);
+              float bed = wh(room * 3.1 + vSz.zx + 7.0);
+              float keep = wh(vSz.zx * 1.3 + 5.0) < 0.2 ? 0.75 : 0.1;
+              float shop = step(room.y, 0.5) * step(wh(vSz.xz * 0.7 + 9.0), 0.35);
+              float at = 0.06 + 0.88 * (bed - keep) / (1.0 - keep);
+              rooms *= max(max(shop, step(bed, keep)), 1.0 - smoothstep(at - 0.05, at + 0.05, uLate));
             }
           }
           // no two stretches of wall have weathered alike
@@ -251,7 +260,7 @@ function walls() {
         }`)
       .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\ntotalEmissiveRadiance += rooms;');
   };
-  m.customProgramCacheKey = () => 'walls-lit';
+  m.customProgramCacheKey = () => 'walls-lit-late';
   return glowing(m);
 }
 

@@ -197,16 +197,25 @@ function lay(intent: Intent, stroke: V[], bridge: boolean, houses: Rect[] = NO_H
 
 // ---------- smearing: push the paint that is there ----------
 
-export const SMEAR_R = 65;
+/**
+ * The smear as it is set: how far it reaches in metres, and how its pull falls off from the grab to the edge of that
+ * reach: the power the curve is raised to, 1 a broad dome, 2 a soft bell, 4 a sharp peak. Set through `smearSet` in wet.ts,
+ * which keeps the shaders with it.
+ */
+export const SMEAR = { r: 65, fall: 2 };
+/** How much of the pull is left this far from the grab. */
+export const smearFall = (d: number) => (d >= SMEAR.r ? 0 : (1 - (d / SMEAR.r) ** 2) ** SMEAR.fall);
 
 /** Give the strokes near p enough points to bend. Parking aisles stay as they are: their stalls need straight rows. */
 export function smearStart(intent: Intent, p: V): Intent {
   return intent.map((s) => {
-    if (s.lot || nearest(s.pts, p).d > SMEAR_R) return s;
+    if (s.lot || nearest(s.pts, p).d > SMEAR.r) return s;
+    // a point every few metres, more of them the smaller the smear: it bends as finely as it is narrow
+    const every = Math.max(5, Math.min(9, SMEAR.r / 8));
     const pts: V[] = [s.pts[0]];
     for (let i = 1; i < s.pts.length; i++) {
       const a = s.pts[i - 1], b = s.pts[i];
-      const n = Math.max(1, Math.ceil(dist(a, b) / 12));
+      const n = Math.max(1, Math.ceil(dist(a, b) / every));
       for (let k = 1; k <= n; k++) pts.push(k === n ? b : { x: a.x + ((b.x - a.x) * k) / n, y: a.y + ((b.y - a.y) * k) / n });
     }
     return { ...s, pts };
@@ -226,8 +235,8 @@ export function smear(base: Intent, from: V, to: V): Intent {
     let moved = false;
     const pts = s.pts.map((p) => {
       const d = dist(p, from);
-      if (d >= SMEAR_R || far(p) || held(p)) return p;
-      const w = (1 - (d / SMEAR_R) ** 2) ** 2;
+      if (d >= SMEAR.r || far(p) || held(p)) return p;
+      const w = smearFall(d);
       moved = true;
       return { x: p.x + dx * w, y: p.y + dy * w };
     });

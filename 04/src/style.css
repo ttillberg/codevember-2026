@@ -66,6 +66,15 @@ canvas.glow { position: absolute; inset: 0; width: 100%; height: 100%; pointer-e
 .menu label { display: flex; align-items: center; gap: 10px; min-height: 36px; padding: 0 10px 0 8px; border-radius: 9px; cursor: pointer; }
 .menu label:hover { background: rgba(244, 244, 242, 0.12); }
 .menu input { margin: 0; width: 15px; height: 15px; accent-color: #f4f4f2; }
+/* a line with more than two ways to be: its name over a row of small keys, the one it is lit */
+.menu .choice { display: grid; gap: 7px; padding: 8px 8px 6px; }
+.menu .choice > div { display: flex; gap: 4px; }
+.pill .menu .choice button {
+  width: auto; height: 28px; padding: 0 9px; border-radius: 8px; font: inherit; letter-spacing: 0.08em; text-transform: inherit;
+  background: rgba(244, 244, 242, 0.12);
+}
+.pill .menu .choice button:hover:not(.on) { background: rgba(244, 244, 242, 0.24); }
+.pill .menu .choice button.on { background: #f4f4f2; color: #1c1c1c; }
 /* the way back to how it opened: a plain line under the list, not a round button like the bar's */
 .pill .menu button.reset {
   width: auto; height: 32px; margin-top: 6px; padding: 0 12px; border-radius: 9px; font: inherit; letter-spacing: inherit; text-transform: inherit;
@@ -88,6 +97,9 @@ canvas.glow { position: absolute; inset: 0; width: 100%; height: 100%; pointer-e
 /* the size brush and the two it opens over itself */
 .pick { position: relative; display: flex; }
 .pill.choices { position: absolute; left: 50%; bottom: calc(100% + 14px); transform: translateX(-50%); gap: 6px; padding: 6px; }
+/* a list that opens over a brush, not under the bar */
+.menu.over { top: auto; right: auto; bottom: calc(100% + 14px); left: 50%; transform: translateX(-50%); }
+.pill .menu .choice button svg { display: block; }
 /* what a button is, over it after a short hover: its name, and its key in a chip */
 .tip {
   position: absolute; z-index: 2; pointer-events: none; white-space: nowrap; display: flex; align-items: center; gap: 6px;

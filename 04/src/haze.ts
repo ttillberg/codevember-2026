@@ -11,6 +11,8 @@ export const NIGHT = new Uniform(0);
 export const HOUR = new Uniform(12);
 /** How dark it really is: later than the lamps come on, and gone sooner. What the place takes of its own light goes by this, since in half light the map of it shows its edges. */
 export const DARK = new Uniform(0);
+/** How far the town has gone to bed: 0 in the evening, 1 from half past one, and back to 0 as it gets up before seven. A room with a bedtime under this is dark. */
+export const LATE = new Uniform(0);
 /** Whether the floodlights of the pitch are on: from the afternoon until eleven at night, and not again before the next day. */
 export const FLOOD = new Uniform(1);
 /**
@@ -200,6 +202,8 @@ export function skyAt(hour: number, out = SKY): Sky {
   // unlit between the day and the night; much earlier, and the map of it shows its edges in daylight
   DARK.value = 1 - step(-5, 2.5, el);
   FLOOD.value = h < 12 ? 0 : 1 - step(22.9, 23, h);
+  // the windows go out one by one from nine in the evening, and come on again from five
+  LATE.value = h >= 12 ? step(21, 25.5, h) : step(21, 25.5, h + 24) * (1 - step(5, 6.75, h));
   if (el > -2.5) {
     // the sun crosses from the east, over the south, to the west
     out.phi = ((h - 12) / ((SET - RISE) / 2)) * 1.35;

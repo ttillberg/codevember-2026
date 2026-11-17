@@ -1,7 +1,7 @@
 // The brush. Drag on the ground and a road follows; let go and it is built.
-import { useEffect, useRef, type MutableRefObject } from 'react';
+import { useEffect, useMemo, useRef, type MutableRefObject } from 'react';
 import { useFrame, type ThreeEvent } from '@react-three/fiber';
-import { BufferAttribute, BufferGeometry, Group, Mesh, MeshBasicMaterial, Vector3, type LineSegments, type Points, type Ray } from 'three';
+import { BufferAttribute, BufferGeometry, Color, DoubleSide, Group, Mesh, MeshBasicMaterial, ShaderMaterial, Vector3, type Points, type Ray } from 'three';
 import { strokeGeometry } from './geo';
 import { CROSS, cumLen, deck, pointOn, type Net, type Road, type V } from './net';
 
@@ -14,15 +14,19 @@ const SINK = 520;
 /** How many points of strokes the sketch of a smear can hold. */
 const SKETCH = 6000;
 
+/** How wide the lines of the sketch are, metres, and how big the rings at its joints, pixels. */
+const LINE = 1.5, JOINT = 11;
+
 /**
- * What a smear shows while it is dragged: not the town pushed about, only the strokes it has moved, as thin lines
- * with a dot at every point. The town itself is made again when the hand lets go. `api` is given a function that
- * takes the moved strokes, or nothing to wipe it.
+ * What a smear shows while it is dragged: not the town pushed about, only the strokes it has moved, as lines in the
+ * brush's colour with a small ring where each one ends, which is where they join. The town itself is made again when
+ * the hand lets go. `api` is given a function that takes the moved strokes, or nothing to wipe it.
  */
 export function Sketch({ api }: { api: MutableRefObject<(strokes: { pts: V[] }[] | null) => void> }) {
-  const lines = useRef<LineSegments>(null), dots = useRef<Points>(null);
+  const lines = useRef<Mesh>(null), dots = useRef<Points>(null);
   useEffect(() => {
-    const seg = new Float32Array(SKETCH * 6), dot = new Float32Array(SKETCH * 3);
+    // a line is a flat strip, two triangles to a stretch: a line of one pixel is lost on the picture
+    const seg = new Float32Array(SKETCH * 18), dot = new Float32Array(SKETCH * 3);
     const lg = new BufferGeometry(), dg = new BufferGeometry();
     lg.setAttribute('position', new BufferAttribute(seg, 3));
     dg.setAttribute('position', new BufferAttribute(dot, 3));
@@ -31,30 +35,42 @@ export function Sketch({ api }: { api: MutableRefObject<(strokes: { pts: V[] }[]
     api.current = (strokes) => {
       let n = 0, d = 0;
       for (const s of strokes ?? []) {
-        for (let i = 0; i < s.pts.length && d < SKETCH; i++) {
-          const p = s.pts[i];
-          dot.set([p.x, 0.9, p.y], d++ * 3);
-          if (i && n < SKETCH) { const q = s.pts[i - 1]; seg.set([q.x, 0.9, q.y, p.x, 0.9, p.y], n++ * 6); }
+        const last = s.pts.length - 1;
+        if (last < 1) continue;
+        for (const e of [s.pts[0], s.pts[last]]) if (d < SKETCH) dot.set([e.x, 0.95, e.y], d++ * 3);
+        for (let i = 1; i <= last && n < SKETCH; i++) {
+          const a = s.pts[i - 1], b = s.pts[i], l = Math.hypot(b.x - a.x, b.y - a.y) || 1;
+          const nx = ((a.y - b.y) / l) * (LINE / 2), ny = ((b.x - a.x) / l) * (LINE / 2);
+          seg.set([a.x - nx, 0.9, a.y - ny, a.x + nx, 0.9, a.y + ny, b.x + nx, 0.9, b.y + ny, a.x - nx, 0.9, a.y - ny, b.x + nx, 0.9, b.y + ny, b.x - nx, 0.9, b.y - ny], n++ * 18);
         }
       }
-      lg.setDrawRange(0, n * 2); dg.setDrawRange(0, d);
+      lg.setDrawRange(0, n * 6); dg.setDrawRange(0, d);
       lg.attributes.position.needsUpdate = dg.attributes.position.needsUpdate = true;
       lines.current!.visible = dots.current!.visible = n > 0;
     };
     return () => { api.current = () => {}; lg.dispose(); dg.dispose(); };
   }, [api]);
+  // a ring, not a square: the points are cut round and hollow in the shader
+  const ring = useMemo(() => new ShaderMaterial({
+    uniforms: { uSize: { value: JOINT * Math.min(2, typeof devicePixelRatio === 'number' ? devicePixelRatio : 1) }, uInk: { value: new Color(NEON) } },
+    vertexShader: /* glsl */ `uniform float uSize; void main() { gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); gl_PointSize = uSize; }`,
+    fragmentShader: /* glsl */ `uniform vec3 uInk; void main() {
+      float r = length(gl_PointCoord - 0.5) * 2.0;
+      if (r > 1.0) discard;
+      // the ring in the brush's colour, and a dark middle so it reads on a pale roof as well
+      gl_FragColor = r > 0.62 ? vec4(uInk, 1.0) : vec4(0.05, 0.06, 0.05, 0.55);
+    }`,
+    transparent: true, depthTest: false, depthWrite: false, toneMapped: false,
+  }), []);
   return (
     <>
-      <lineSegments ref={lines} visible={false} frustumCulled={false} renderOrder={21}>
-        <lineBasicMaterial color={0xf4f4f2} transparent opacity={0.9} depthTest={false} depthWrite={false} toneMapped={false} />
-      </lineSegments>
-      <points ref={dots} visible={false} frustumCulled={false} renderOrder={22}>
-        <pointsMaterial color={NEON} size={7} sizeAttenuation={false} transparent depthTest={false} depthWrite={false} toneMapped={false} />
-      </points>
+      <mesh ref={lines} visible={false} frustumCulled={false} raycast={() => null} renderOrder={21}>
+        <meshBasicMaterial color={NEON} transparent opacity={0.9} depthTest={false} depthWrite={false} toneMapped={false} side={DoubleSide} />
+      </mesh>
+      <points ref={dots} visible={false} frustumCulled={false} renderOrder={22} material={ring} />
     </>
   );
 }
-
 export type Tool = 'road' | 'bridge' | 'smear' | 'size' | 'erase' | 'trace';
 /** the tools that paint or push: what the brush is when trace is not on */
 export type Brush = Exclude<Tool, 'trace'>;
@@ -128,9 +144,11 @@ interface Props {
   onSize: (road: Road) => void;
   /** the size brush makes roads smaller: the road it would take is lit in the eraser's colour */
   shrink?: boolean;
+  /** how far the smear reaches, metres: a ring that wide goes with the pointer while the smear is held */
+  reach: number;
 }
 
-export function Painter({ net, tool, onStroke, onSmear, onTrace, onErase, onSize, shrink }: Props) {
+export function Painter({ net, tool, onStroke, onSmear, onTrace, onErase, onSize, shrink, reach }: Props) {
   const preview = useRef<Mesh>(null);
   const draw = useRef<{ id: number; pts: V[]; bridge: boolean; smear: boolean; erase: boolean; up: boolean } | null>(null);
 
@@ -190,6 +208,7 @@ export function Painter({ net, tool, onStroke, onSmear, onTrace, onErase, onSize
   // Where the brush is and what it would take hold of: a ring under the finger, the stretch of road it is on lit up,
   // and while a stroke is drawn another ring left standing where it began
   const here = useRef<Group>(null), from = useRef<Group>(null), near = useRef<Mesh>(null);
+  const wide = useRef<Mesh>(null);
   const mark = (g: Group, p: V | null, h = 0) => {
     g.visible = !!p;
     if (!p) return;
@@ -207,6 +226,10 @@ export function Painter({ net, tool, onStroke, onSmear, onTrace, onErase, onSize
     // the brushes that push or rub out work on the ground as it lies: they take hold of nothing
     const hold = tool === 'smear' || tool === 'erase' || draw.current?.smear || draw.current?.erase ? null : under(net, e.ray, ground);
     mark(here.current!, hold ? hold.p : ground, hold ? hold.h : 0);
+    // the smear shows how far it reaches; while it is dragged the ring stays where it took hold
+    const w = wide.current!;
+    w.visible = tool === 'smear' || !!draw.current?.smear;
+    if (w.visible && !draw.current) { w.position.set(ground.x, 0.6, ground.y); w.scale.setScalar(reach); }
     const n = near.current!;
     n.visible = !!hold;
     if (!hold) return;
@@ -218,7 +241,7 @@ export function Painter({ net, tool, onStroke, onSmear, onTrace, onErase, onSize
     n.position.y = hold.h + 0.25;
     (n.material as MeshBasicMaterial).color.setHex(whole ? (shrink ? RED : NEON) : hold.h > 0 ? NEON : PALE);
   };
-  const leave = () => { if (!draw.current) { mark(here.current!, null); near.current!.visible = false; } };
+  const leave = () => { if (!draw.current) { mark(here.current!, null); near.current!.visible = false; wide.current!.visible = false; } };
   // the road it was on may be gone when the roads change
   useEffect(() => { if (near.current) near.current.visible = false; }, [net]);
 
@@ -341,6 +364,10 @@ export function Painter({ net, tool, onStroke, onSmear, onTrace, onErase, onSize
           </mesh>
         </group>
       ))}
+      <mesh ref={wide} visible={false} rotation-x={-Math.PI / 2} raycast={() => null} renderOrder={20}>
+        <ringGeometry args={[0.985, 1, 96]} />
+        <meshBasicMaterial color={PALE} transparent opacity={0.55} depthTest={false} depthWrite={false} toneMapped={false} />
+      </mesh>
       <mesh ref={near} visible={false} raycast={() => null} renderOrder={19}>
         <bufferGeometry />
         <meshBasicMaterial transparent opacity={0.28} depthTest={false} depthWrite={false} toneMapped={false} />
