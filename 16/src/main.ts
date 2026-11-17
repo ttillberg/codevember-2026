@@ -353,7 +353,8 @@ const release = (e: PointerEvent) => {
   down = false; holding = false; dragging = false; charging = false;
   target.classList.remove('charge');
   if (fling) throwAt();
-  else if (tap && e.type === 'pointerup') throwNear(); // a pinch dropped just in front of you
+  // a pinch sown where you clicked (locked, there is no pointer: at the sight)
+  else if (tap && e.type === 'pointerup') { if (locked()) throwNear(); else throwNear(e.clientX, e.clientY); }
 };
 canvas.addEventListener('pointerup', release);
 canvas.addEventListener('pointercancel', release);
@@ -449,11 +450,18 @@ function aimAt(far = 2.2) {
   const x = camera.position.x + (d.x / l) * far, z = camera.position.z + (d.z / l) * far;
   return new THREE.Vector3(x, groundHeight(x, z), z);
 }
-/** A pinch of spores dropped in front of you, half a metre or so, a little to either side. */
-function throwNear() {
-  const fx = -Math.sin(look.yaw), fz = -Math.cos(look.yaw), sx = -fz, sz = fx;
-  const d = 0.55 + 0.2 * Math.random(), s = (Math.random() - 0.5) * 0.16; // far enough to stay in focus as they grow
-  const x = camera.position.x + fx * d + sx * s, z = camera.position.z + fz * d + sz * s;
+/** A pinch of spores sown where you click or tap: where that point's ray meets the moss, so they come up right
+ * there; but never nearer than 45 cm (closer, they grew up out of focus) nor further than 1.6 m (not across the
+ * forest): pulled in or pushed out along the same line of sight, so they stay under the pointer on screen. Into
+ * the air it goes 1.6 m that way. */
+function throwNear(cx = innerWidth / 2, cy = innerHeight / 2) {
+  const hit = groundAt(cx, cy);
+  const o = camera.position, r = rc.ray.direction; // groundAt aimed the ray through the point
+  const h = Math.hypot(r.x, r.z) || 1;
+  // how far along the line of sight, measured flat
+  const d = hit ? Math.hypot(hit.x - o.x, hit.z - o.z) : Infinity;
+  const D = THREE.MathUtils.clamp(d, 0.45, 1.6);
+  const x = o.x + (r.x / h) * D, z = o.z + (r.z / h) * D;
   throwTo(new THREE.Vector3(x, groundHeight(x, z), z), false);
 }
 /** Flung at the sight, arcing over the moss like a grenade. */
