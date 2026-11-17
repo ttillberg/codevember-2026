@@ -296,8 +296,9 @@ const target = document.querySelector<HTMLElement>('.target')!;
 let down = false, dragging = false;
 let downAt = 0, downX = 0, downY = 0, lastX = 0, lastY = 0;
 let holdTimer = 0;
+let charging = false; // a mouse held down: a throw wound up
 // the pointer lock (desktop, the pill bottom right or L): the mouse itself is the look, no drag; click throws,
-// hold the button to crawl
+// hold the button to fling at the sight
 const locked = () => document.pointerLockElement === canvas;
 const lockPill = document.querySelector<HTMLButtonElement>('.lockpill')!;
 const lock = () => { if (!fungarium.isOpen) canvas.requestPointerLock?.(); };
@@ -311,8 +312,12 @@ canvas.addEventListener('pointerdown', (e) => {
   down = true; dragging = false;
   downAt = performance.now(); downX = lastX = e.clientX; downY = lastY = e.clientY;
   clearTimeout(holdTimer);
-  // held without sliding: crawl
-  holdTimer = window.setTimeout(() => { if (down && !dragging) holding = true; }, 220);
+  // held without sliding: a finger crawls; a mouse winds up a throw at the sight, let go to fling it (the keys crawl)
+  const mouse = e.pointerType === 'mouse';
+  holdTimer = window.setTimeout(() => {
+    if (!down || dragging) return;
+    if (mouse) { charging = true; target.classList.add('charge'); } else holding = true;
+  }, 220);
 });
 canvas.addEventListener('pointermove', (e) => {
   if (locked()) {
@@ -336,9 +341,17 @@ canvas.addEventListener('pointermove', (e) => {
 });
 const release = (e: PointerEvent) => {
   clearTimeout(holdTimer);
-  const tap = !holding && !dragging && performance.now() - downAt < 350;
-  down = false; holding = false; dragging = false;
-  if (tap && e.type === 'pointerup') throwAt();
+  const tap = !holding && !dragging && !charging && performance.now() - downAt < 350;
+  const fling = charging && e.type === 'pointerup';
+  down = false; holding = false; dragging = false; charging = false;
+  target.classList.remove('charge');
+  if (fling) throwAt();
+  else if (tap && e.type === 'pointerup') {
+    // a tap on the sight itself flings at it (a finger has no long press to spare: that crawls); anywhere else
+    // a pinch drops just in front of you
+    const onSight = e.pointerType !== 'mouse' && !locked() && Math.hypot(e.clientX - innerWidth / 2, e.clientY - innerHeight / 2) < 36;
+    if (onSight) throwAt(); else throwNear();
+  }
 };
 canvas.addEventListener('pointerup', release);
 canvas.addEventListener('pointercancel', release);
@@ -434,11 +447,21 @@ function aimAt(far = 2.2) {
   const x = camera.position.x + (d.x / l) * far, z = camera.position.z + (d.z / l) * far;
   return new THREE.Vector3(x, groundHeight(x, z), z);
 }
-function throwAt() {
-  const hit = aimAt();
-  target.classList.remove('fire');
-  void target.offsetWidth; // restart the pulse
-  target.classList.add('fire');
+/** A pinch of spores dropped just in front of you, a hand's length or two, a little to either side. */
+function throwNear() {
+  const fx = -Math.sin(look.yaw), fz = -Math.cos(look.yaw), sx = -fz, sz = fx;
+  const d = 0.3 + 0.15 * Math.random(), s = (Math.random() - 0.5) * 0.12;
+  const x = camera.position.x + fx * d + sx * s, z = camera.position.z + fz * d + sz * s;
+  throwTo(new THREE.Vector3(x, groundHeight(x, z), z), false);
+}
+/** Flung at the sight, arcing over the moss like a grenade. */
+function throwAt() { throwTo(aimAt(), true); }
+function throwTo(hit: THREE.Vector3, far: boolean) {
+  if (far) {
+    target.classList.remove('fire');
+    void target.offsetWidth; // restart the pulse
+    target.classList.add('fire');
+  }
   // tapping a ripe puffball presses it, and it puffs its spores, instead of throwing
   const pressed = fungi.press(hit.x, hit.z, 0.03);
   if (pressed) { spores.puff(pressed); return; }

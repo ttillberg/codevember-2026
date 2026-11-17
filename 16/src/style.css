@@ -46,6 +46,11 @@ canvas:active { cursor: grabbing; }
 .target i::before { width: 1.5px; height: 44px; margin: -22px 0 0 -0.75px; background: linear-gradient(#f4f4f2 0 18%, transparent 18% 82%, #f4f4f2 82%); }
 .target i::after { width: 44px; height: 1.5px; margin: -0.75px 0 0 -22px; background: linear-gradient(90deg, #f4f4f2 0 18%, transparent 18% 82%, #f4f4f2 82%); }
 .target.fire i { animation: fire 0.45s ease-out; }
+/* a mouse held down: the throw winds up, the ring opens out */
+.target i { transition: transform 0.5s cubic-bezier(0.2, 0.8, 0.3, 1); }
+.target.charge i { transform: scale(1.45); }
+/* the hints for a finger or a mouse */
+body.touch .mouseonly, body:not(.touch) .touchonly { display: none; }
 @keyframes fire { 0% { transform: scale(0.6); } 40% { transform: scale(1.35); } 100% { transform: scale(1); } }
 .clean .target { display: none; }
 /* top right, phones only: turn the phone to look around */
