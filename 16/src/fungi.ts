@@ -896,13 +896,16 @@ void main() {
   float diff = max(dot(N, L), 0.0);
   float wrap = max(dot(N, L) * 0.5 + 0.5, 0.0);
   float spec = pow(max(dot(reflect(-L, Nw), V), 0.0), 140.0) * 2.2 + pow(max(dot(reflect(-L, Nw), V), 0.0), 18.0) * 0.25;
-  float sheen = pow(1.0 - max(dot(Nw, V), 0.0), 4.0) * 0.35;
+  float sheen = pow(1.0 - max(dot(Nw, V), 0.0), 4.0) * 0.35 * mix(0.3, 1.0, shadow); // the wet sheen is the sky's: dim in the shade, as all else
   float thru = pow(max(dot(-V, L), 0.0), 2.5) * thin;
-  vec3 lit = col * (0.25 * skyTint(N, 1.0) + 1.3 * diff * shadow + 0.15 * wrap)
+  // the fill is dimmer in the shade, as on the moss: a white stem in a shadow had stood out as if lit
+  vec3 lit = col * (mix(0.12, 0.25, shadow) * skyTint(N, 1.0) + 1.3 * diff * shadow + 0.15 * wrap * mix(0.35, 1.0, shadow))
            + col * vec3(1.5, 1.1, 0.6) * thru * max(shadow, 0.3)
            + vec3(1.0, 0.9, 0.75) * spec * shadow
            + vec3(0.6, 0.62, 0.66) * sheen;
   lit += rimLight(N, V) * col * 2.0;
+  // with the sun at your back, a gold catch on the side turned to it, as the moss and ferns get
+  lit += SUN_GLOW * 0.6 * pow(max(dot(N, L) * 0.5 + 0.5, 0.0), 3.0) * withSun(V, L) * sunCatch(vWorldPos, shadow);
   // the foot down in the moss is dark
   lit *= mix(0.35, 1.0, smoothstep(0.0, 0.12, along));
   gl_FragColor = vec4(tonemap(grade(lit)), 1.0);

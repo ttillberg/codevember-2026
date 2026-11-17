@@ -299,6 +299,8 @@ void main() {
   float spec = pow(max(dot(reflect(-L, N), V), 0.0), 60.0) * 0.9; // wet: a sharp sheen
   vec3 lit = col * (0.2 * skyTint(N, 1.0) + 1.3 * diff * shadow) + col * vec3(1.5, 1.15, 0.55) * thru * shadow + vec3(1.0, 0.85, 0.6) * spec * shadow;
   lit += rimLight(N, V) * col * 2.0;
+  // with the sun behind you, the pinnae turned to it catch it: the counterpart of the glow through them
+  lit += (SUN_GLOW * 0.8 + col * 0.6) * pow(max(dot(N, L) * 0.5 + 0.5, 0.0), 2.0) * withSun(V, L) * sunCatch(vWorldPos, shadow) * (pinna ? 1.0 : 0.4);
   // the crown sits in the moss: dark at the foot
   lit *= mix(0.4, 1.0, smoothstep(0.0, 0.12, vFrond.z));
   gl_FragColor = vec4(tonemap(grade(lit)), 1.0);

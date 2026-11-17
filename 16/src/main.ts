@@ -64,7 +64,7 @@ const shellMat = new THREE.ShaderMaterial({
     uShadowMap: { value: null },
     uShadowMatrix: { value: new THREE.Matrix4() },
     uShadowOn: { value: 0 },
-    uShadowFloor: { value: 0.14 },
+    uShadowFloor: { value: 0.2 },
     uTime: { value: 0 },
   },
 });

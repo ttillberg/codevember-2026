@@ -487,6 +487,10 @@ void main() {
   lit += vec3(1.0, 0.85, 0.6) * pow(max(dot(reflect(-L, N), V), 0.0), 50.0) * 0.5 * shadow * ao;
   lit *= skyTint(normalize(vSurfN), 1.0 - 0.6 * wrap);
   lit += rimLight(normalize(vSurfN), V) * (col * 2.6 + tip * 0.6) * (0.2 + 0.8 * vT) * mix(1.0, 0.3, vCavity);
+  // the other way round: with the sun behind you, the leaves turned to it catch it, gold-green; the backlit glow's
+  // counterpart, so looking away from the sun is not a black carpet
+  float face = pow(max(dot(N, L) * 0.5 + 0.5, 0.0), 2.0);
+  lit += (SUN_GLOW + tip * 0.4) * face * withSun(V, L) * sunCatch(vWorldPos, shadow) * ao * (0.25 + 0.75 * vT) * 1.1;
   gl_FragColor = vec4(tonemap(grade(lit)), 1.0);
   #include <colorspace_fragment>
 }

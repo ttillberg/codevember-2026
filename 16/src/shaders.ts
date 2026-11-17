@@ -114,8 +114,24 @@ float canopyAt(vec3 wp) {
   // big pools of light, broken up by leaves into smaller spots
   float big = cNoise(q * 0.9 + 3.0);
   float n = cNoise(q * 3.2 + sway) * 0.5 + cNoise(q * 7.5 - sway * 1.7 + 9.0) * 0.32 + cNoise(q * 19.0 + sway * 3.0 + 4.0) * 0.18;
-  return smoothstep(0.52, 0.62, n + (big - 0.5) * 0.45);
+  // (more of it lets the sun through than at first: looking away from the sun the floor was nearly all in shade)
+  return smoothstep(0.45, 0.58, n + (big - 0.5) * 0.45);
 }
+
+// A cheat for looking away from the sun: things turned to it catch a warm glow, not their own (very dark) colour
+// lit, and even in the long shadows a few flecks get through the fern lace. 'withSun' is 1 with the sun at your
+// back, 0 looking into it, where the glow through things and the rims carry the light instead.
+float withSun(vec3 V, vec3 L) { return smoothstep(-0.1, 0.8, dot(normalize(V.xz + 1e-5), normalize(L.xz + 1e-5))); }
+float sunCatch(vec3 wp, float shadow) {
+  vec3 L = normalize(uLightDirC);
+  vec3 a = normalize(cross(L, vec3(0.0, 0.0, 1.0)));
+  vec3 b = cross(L, a);
+  vec2 q = vec2(dot(wp, a), dot(wp, b));
+  float fleck = smoothstep(0.5, 0.66, cNoise(q * 9.0 + 5.0) * 0.6 + cNoise(q * 23.0 + 1.0) * 0.4);
+  float lit = clamp((shadow - uShadowFloor) / max(1.0 - uShadowFloor, 1e-3), 0.0, 1.0);
+  return max(lit, fleck * 0.75);
+}
+const vec3 SUN_GLOW = vec3(1.4, 0.98, 0.3); // the gold a low sun leaves on whatever faces it
 
 // soft shadow from a depth map rendered from the light: 16 Poisson taps. 1 = lit, 0.45 = fully shadowed.
 float shadowAt(vec3 worldPos, vec3 n) {
@@ -393,6 +409,8 @@ void main() {
     velvet *= mix(1.0, mix(0.65, 1.0, vDome), w.w); // dark crevice between cushion clumps  // valleys a touch darker, the mounds carry the shape not the colour
     velvet *= skyTint(N, 1.0 - 0.6 * wrap);
     velvet += rimLight(N, V) * lime * 2.2;
+    // the velvet seen with the sun at your back: the same gold catch as the strands over it
+    velvet += SUN_GLOW * 0.6 * withSun(V, L) * sunCatch(vWorldPos, shadow) * (0.3 + 0.7 * bump);
     vec3 ground = mix(vec3(0.03, 0.025, 0.012), velvet, (dot(w, kBase) + w5 * kBase5));
     vec3 lit = mix(rock, tonemap(grade(ground)), max(humus * 0.92, mature * (dot(w, kBase) + w5 * kBase5)));
     lit *= mix(1.0, 0.45, vCavity * mature * uCavityAO); // moss in a hollow sits in the dark
@@ -403,6 +421,10 @@ void main() {
 
   // ---- fuzz: coloured strands, dense at the root and thinning upward
   vec3 col = mix(deep, lime, pow(uu, 1.2) * (0.12 + 0.88 * wrap)) + lime * sheen * uu;
+  // the strands stand up, so a low sun lights their sides, not the carpet's top: where it gets through (the
+  // canopy's pools, out of the shadows) the tips light up gold-green, most with the sun behind you, where the
+  // lit sides face you. Without it, looking away from the sun the moss was black even in the sunlit pools.
+  col += SUN_GLOW * withSun(V, L) * sunCatch(vWorldPos, shadow) * pow(uu, 1.6) * 0.9 * (1.0 - 0.6 * vCavity);
   // young sparse moss at a patch edge reads as light specks, not dirt
   col = mix(col, lime * 0.8, (1.0 - smoothstep(0.1, 0.5, age)) * 0.7);
   col *= mix(mix(0.85, 0.96, w.w), 1.0, pillow) * (0.8 + 0.2 * hemi) * mix(0.6, 1.0, shadow);
