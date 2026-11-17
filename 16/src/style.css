@@ -133,3 +133,29 @@ body.touch .book { right: calc(max(24px, env(safe-area-inset-right)) + 44px); }
 .fungarium .back { border: 0; padding: 0; margin-bottom: 4px; }
 /* ?clean: the scene alone */
 .clean .plate { display: none; }
+/* the pouch in hand: a kraft-paper packet of spores at the bottom centre, its label the specimen you throw */
+.pouch {
+  position: fixed; z-index: 3; left: 50%; bottom: -14px; width: 120px; height: 160px; margin-left: -60px;
+  pointer-events: none;
+}
+.pouch .hold {
+  position: absolute; inset: 0; padding: 0; border: 0; background: none; cursor: pointer; pointer-events: auto;
+  transform-origin: 50% 100%; filter: drop-shadow(0 6px 14px rgba(0, 0, 0, 0.45)); -webkit-tap-highlight-color: transparent;
+}
+.pouch .paper { position: absolute; inset: 0; width: 100%; height: 100%; }
+.pouch .label {
+  position: absolute; left: 17px; right: 15px; top: 50px; padding: 6px 6px 7px; box-sizing: border-box;
+  display: grid; justify-items: center; gap: 2px; transform: rotate(-1.5deg);
+  background-color: #f1ead8;
+  background-image: linear-gradient(rgba(70, 110, 160, 0.16) 1px, transparent 1px), linear-gradient(90deg, rgba(70, 110, 160, 0.16) 1px, transparent 1px);
+  background-size: 8px 8px; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+  color: #1c1c1c; font-family: Inter, "Helvetica Neue", Helvetica, Arial, sans-serif; text-align: center;
+}
+.pouch .pic { width: 58px; height: 58px; background: center / 120% no-repeat; }
+.pouch .label b { font-weight: 600; font-size: 8px; letter-spacing: 0.12em; text-transform: uppercase; line-height: 1.2; }
+.pouch .label i { font-size: 7.5px; line-height: 1.2; opacity: 0.7; }
+.pouch kbd { position: absolute; left: 5px; top: 4px; font: 600 8px/1 Inter, "Helvetica Neue", Helvetica, Arial, sans-serif; opacity: 0.55; }
+body.touch .pouch kbd { display: none; }
+@media (max-width: 640px) { .pouch { transform: scale(0.85); transform-origin: 50% 100%; } }
+.clean .pouch { display: none; }
+@media (min-width: 900px) and (min-height: 600px) { .pouch { transform: scale(1.45); transform-origin: 50% 100%; } }

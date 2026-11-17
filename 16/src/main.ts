@@ -16,7 +16,8 @@ import { makeDewMaterial } from './dew';
 import { makeAtmosPass, makeLensPass } from './post';
 import { Fungi, type FungusKind } from './fungi';
 import { Spores } from './spores';
-import { Fungarium } from './fungarium';
+import { Fungarium, type Species } from './fungarium';
+import { Pouch } from './pouch';
 import { mulberry32 } from './noise';
 
 // ?clean: the scene alone, no furniture (docs/DESIGN.md)
@@ -378,7 +379,18 @@ function groundAt(cx: number, cy: number) {
 
 // the fungarium: pick what your spores grow, and watch it grow up close (the button top right, or F)
 let throwKind: FungusKind = 'funnel';
-const fungarium = new Fungarium((kind) => { throwKind = kind; });
+const fungarium = new Fungarium((kind) => { throwKind = kind; pouch.pick(kind, false); });
+// the pouch in hand: the same choice, with number keys, the wheel or a tap on it; shift and a number plants one
+const pouch = new Pouch((kind) => { throwKind = kind; fungarium.select(kind); }, plantAt, () => fungarium.isOpen);
+// the specimens are drawn once things have settled, on the fungarium's own little renderer
+setTimeout(() => pouch.setThumbs(fungarium.drawThumbs()), 1500);
+/** Shift and a number: that species' specimen pushes up where you aim (the middle of the screen without a mouse). */
+function plantAt(s: Species) {
+  const hit = aimAt(0.45);
+  pouch.pick(s.kind, true);
+  fungi.spawn(s.kind, hit.x, fungusFoot(hit.x, hit.z), hit.z, { seed: s.seed, scale: s.scale });
+  dropOldest();
+}
 function dropOldest() {
   // only so many: the oldest thrown ones go
   const thrown = fungi.list.filter((c) => !c.key);
@@ -414,6 +426,7 @@ function throwAt() {
     hit.set(camera.position.x + fromCam.x, 0, camera.position.z + fromCam.z);
     hit.y = groundHeight(hit.x, hit.z);
   }
+  pouch.kick();
   const from = camera.position.clone().add(new THREE.Vector3(0, -0.03, 0)).addScaledVector(camera.getWorldDirection(new THREE.Vector3()), 0.15);
   const kind = throwKind;
   spores.throw(from, hit, (p) => {
@@ -498,6 +511,7 @@ renderer.setAnimationLoop(() => {
   const dt = Math.min(clock.getDelta(), 0.05);
   shellMat.uniforms.uTime.value = clock.elapsedTime;
   const { fx, fz } = crawl(dt);
+  pouch.update(dt, me.bob, Math.min(1, Math.abs(me.speed) / 0.2));
   fungi.update(dt, clock.elapsedTime);
   spores.update(dt, clock.elapsedTime);
   world.update(me.x, me.z, fx, fz, 1);
