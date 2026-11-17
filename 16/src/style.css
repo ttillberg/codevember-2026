@@ -30,7 +30,6 @@ canvas { display: block; width: 100vw; height: 100vh; }
 }
 /* what you can do, under the plate */
 .plate .sub { margin-top: 14px; font-weight: 600; font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; }
-@media (pointer: coarse) { .plate .sub .keys { display: none; } }
 canvas { touch-action: none; cursor: grab; }
 canvas:active { cursor: grabbing; }
 /* the sight: a small ring with ticks locked in the middle of the screen, pulses on a throw */
@@ -197,3 +196,22 @@ body.locked .lockpill { display: none; }
 body.locked .unlock { display: inline-flex; }
 body.locked canvas, body.locked canvas:active { cursor: none; }
 body.touch .lockpill, body.touch .unlock, .clean .lockpill, .clean .unlock { display: none; }
+
+/* desktop: the keys, bottom left; thin outlined caps, small and dim until hovered. None on a phone */
+.keymap {
+  position: fixed; z-index: 2; left: max(24px, env(safe-area-inset-left)); bottom: max(22px, env(safe-area-inset-bottom));
+  display: flex; flex-wrap: wrap; gap: 6px 14px; max-width: calc(50% - 140px);
+  color: #f4f4f2; opacity: 0.55; transition: opacity 0.25s; user-select: none; -webkit-user-select: none;
+  font: 600 9px/1 Inter, "Helvetica Neue", Helvetica, Arial, sans-serif; letter-spacing: 0.12em; text-transform: uppercase;
+}
+.keymap:hover { opacity: 0.95; }
+.keymap span { display: inline-flex; align-items: center; gap: 3px; white-space: nowrap; }
+.keymap kbd {
+  display: inline-flex; align-items: center; justify-content: center; min-width: 15px; height: 15px; padding: 0 4px; box-sizing: border-box;
+  border: 0.75px solid rgba(244, 244, 242, 0.6); border-radius: 4px; background: rgba(20, 16, 10, 0.18);
+  font: 600 8px/1 Inter, "Helvetica Neue", Helvetica, Arial, sans-serif; letter-spacing: 0.04em;
+}
+.keymap kbd:last-of-type { margin-right: 4px; }
+.keymap kbd.wide { padding: 0 6px; }
+body.touch .keymap, .clean .keymap { display: none; }
+@media (max-width: 899px) { .keymap { display: none; } }
