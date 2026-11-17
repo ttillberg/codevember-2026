@@ -21,6 +21,21 @@ interface Line {
 }
 
 const MORE = place.on ? 4 : 1;
+const NO_ENDS: number[] = [];
+// where every line begins and ends, by squares of 34 m: line number twice over, and one more for its far end
+const ENDS = new WeakMap<object, Map<string, number[]>>();
+function endsOf(lines: { pts: V[] }[]) {
+  let g = ENDS.get(lines);
+  if (g) return g;
+  ENDS.set(lines, (g = new Map()));
+  lines.forEach((l, k) => {
+    for (const e of [0, 1]) {
+      const q = e ? l.pts[l.pts.length - 1] : l.pts[0], key = Math.floor(q.x / 34) + ':' + Math.floor(q.y / 34), at = g!.get(key);
+      if (at) at.push(k * 2 + e); else g!.set(key, [k * 2 + e]);
+    }
+  });
+  return g;
+}
 const WALKERS = 460 * MORE, RIDERS = 130 * MORE;
 /** How many of them never leave the park: they turn round at its ends. The rest come through it as they come through anywhere. */
 const STROLLERS = 34, PARK_RIDERS = 7;
@@ -153,7 +168,7 @@ export function People({ net, blocks, speed, shade = true, walks = NO_WAYS, ride
     const dt = Math.min(delta, 0.05) * rate.current;
     const out = abroad(HOUR.value);
     const move = (list: typeof who.walk, lines: Line[], mesh: InstancedMesh, oneWay: boolean, sx: number, sy: number, sz: number) => {
-      const a = mesh.instanceMatrix.array, fond = oneWay ? PARK_RIDERS : STROLLERS;
+      const a = mesh.instanceMatrix.array, fond = oneWay ? PARK_RIDERS : STROLLERS, grid = endsOf(lines);
       list.forEach((p, i) => {
         const L = lines[p.l];
         const o = i * 16;
@@ -166,18 +181,19 @@ export function People({ net, blocks, speed, shade = true, walks = NO_WAYS, ride
           let pick = -1, pe = 0, seen = 0;
           // first whatever begins right here, a crossing or a corner; only failing that a hop to something close by
           for (const near of oneWay ? [34] : [1.5, 34]) {
-            for (let k = 0; k < lines.length; k++) {
-              if (k === p.l) continue;
+            // (only the ends that lie in the squares round this one are asked, not every line there is)
+            const gx = Math.floor(end.x / 34), gy = Math.floor(end.y / 34);
+            for (let cx = gx - 1; cx <= gx + 1; cx++) for (let cy = gy - 1; cy <= gy + 1; cy++) for (const ke of grid.get(cx + ':' + cy) ?? NO_ENDS) {
+              const k = ke >> 1, e = ke & 1;
+              if (k === p.l || (oneWay && e)) continue;
               const M = lines[k];
               // whoever belongs to the park stays on its ways
               if (i < fond && L.park && !M.park) continue;
-              for (const e of oneWay ? [0] : [0, 1]) {
-                const q = e ? M.pts[M.pts.length - 1] : M.pts[0];
-                if (Math.abs(q.x - end.x) + Math.abs(q.y - end.y) > near) continue;
-                // one of them, by a fair draw that needs no dice
-                seen++;
-                if (((i * 7 + seen * 13 + ((p.s * 3) | 0)) % seen) === 0) { pick = k; pe = e; }
-              }
+              const q = e ? M.pts[M.pts.length - 1] : M.pts[0];
+              if (Math.abs(q.x - end.x) + Math.abs(q.y - end.y) > near) continue;
+              // one of them, by a fair draw that needs no dice
+              seen++;
+              if (((i * 7 + seen * 13 + ((p.s * 3) | 0)) % seen) === 0) { pick = k; pe = e; }
             }
             if (pick >= 0) break;
           }

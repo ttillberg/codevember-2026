@@ -14,7 +14,7 @@ import { plantSmall, plantTown, shifted, turnSome, type Block } from './Town';
 import { People, Signs, Street } from './Life';
 import { Commons, plantCommons, standingCommons } from './Park';
 import { Painter, Sketch, type Brush, type Tool } from './Painter';
-import { Brushes, History, Overlays, TimeControl, hhmm } from './Controls';
+import { Brushes, History, Overlays, TimeControl, hhmm, showTime } from './Controls';
 import { HeatIcon, TraceIcon } from './Icons';
 import { buildNet, type Net, type V } from './net';
 import { MAP } from './map';
@@ -367,7 +367,7 @@ function Sun({ speed, shadow, lazy, clock, scrub, onHour, live, readout }: {
   /** the hour as it is now, for a drag on the time to start from */
   live: MutableRefObject<number>;
   /** the time on the screen, written as text a few times a second */
-  readout: RefObject<HTMLSpanElement | null>;
+  readout: RefObject<HTMLButtonElement | null>;
 }) {
   const gl = useThree((s) => s.gl);
   const scene = useThree((s) => s.scene);
@@ -390,7 +390,7 @@ function Sun({ speed, shadow, lazy, clock, scrub, onHour, live, readout }: {
       if (onHour && n % 8 === 0) onHour(hour.current);
     }
     live.current = hour.current;
-    if (n % 8 === 0 && readout.current) readout.current.textContent = hhmm(hour.current);
+    if (n % 2 === 0) showTime(readout.current, hour.current);
     const k = skyAt(hour.current);
     if (lazy && n % (k.el < LOW_SUN ? SHADOW_EVERY / 2 : SHADOW_EVERY) === 0) gl.shadowMap.needsUpdate = true;
     const s = sun.current!, cos = Math.cos(k.el), sin = Math.sin(k.el);
@@ -483,12 +483,11 @@ export function App() {
   const [scrub, setScrub] = useState(0);
   // the hour as the sky has it, and the text that shows it: Sun writes both, so a running clock does not re-render the page
   const hourNow = useRef(clock.hour);
-  const readout = useRef<HTMLSpanElement>(null);
-  const [firstTime] = useState(() => hhmm(clock.hour));
+  const readout = useRef<HTMLButtonElement>(null);
   // a drag on the time: the hour is set and held, the scene follows it
   const setHour = useCallback((h: number) => {
     hourNow.current = h;
-    if (readout.current) readout.current.textContent = hhmm(h);
+    showTime(readout.current, h);
     setClock((c) => ({ ...c, hour: h, hold: true }));
     setScrub((n) => n + 1);
   }, []);
@@ -778,9 +777,8 @@ export function App() {
       </Canvas>
       {/* top right: the time and its hold, then the overlays; a second overlay is one more entry */}
       <div className="corner">
-        <TimeControl now={hourNow} readout={readout} first={firstTime} hold={clock.hold} onHold={() => setClock((c) => ({ ...c, hold: !c.hold }))} onSet={setHour} />
-        {/* the two ways of reading the traffic: where it stands, and where one stretch's cars are going */}
-        <Overlays items={[
+        {/* the clock, and beside it the two ways of reading the traffic: where it stands, and where one stretch's cars are going */}
+        <Overlays lead={<TimeControl now={hourNow} readout={readout} hold={clock.hold} onHold={() => setClock((c) => ({ ...c, hold: !c.hold }))} onSet={setHour} />} items={[
           { id: 'heat', label: 'Heat map', icon: <HeatIcon />, on: heat, toggle: () => setHeat((v) => !v) },
           { id: 'trace', label: 'Trace', keys: 'R', icon: <TraceIcon />, on: tool === 'trace', toggle: () => setTool((t) => (t === 'trace' ? brush : 'trace')) },
         ]} />

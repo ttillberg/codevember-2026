@@ -273,6 +273,8 @@ function rules(intent: Intent, houses: Rect[]): Spec {
   intent = intent.map((s) => dodge(s, houses));
   const cums = intent.map((s) => cumLen(s.pts));
   const lens = cums.map((c) => c[c.length - 1]);
+  // the box round every stroke: two that are nowhere near each other need not be asked point by point
+  const boxes = intent.map((t) => { let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity; for (const q of t.pts) { x0 = Math.min(x0, q.x); y0 = Math.min(y0, q.y); x1 = Math.max(x1, q.x); y1 = Math.max(y1, q.y); } return { x0, y0, x1, y1 }; });
 
   // ---------- nodes: the places roads can go through ----------
   // A stroke takes the node that is already near, and only makes a new one where there is room.
@@ -347,6 +349,8 @@ function rules(intent: Intent, houses: Rect[]): Spec {
       let bd = SNAP, bj = -1, bn: ReturnType<typeof nearest> | null = null;
       intent.forEach((t, j) => {
         if (j === i || t.bridge) return;
+        const B = boxes[j];
+        if (Math.hypot(Math.max(B.x0 - p.x, p.x - B.x1, 0), Math.max(B.y0 - p.y, p.y - B.y1, 0)) - half(t) >= bd) return;
         const n = nearest(t.pts, p);
         if (n.d - half(t) < bd) { bd = n.d - half(t); bj = j; bn = n; }
       });
@@ -362,6 +366,7 @@ function rules(intent: Intent, houses: Rect[]): Spec {
     if (intent[i].bridge) continue;
     for (let j = i; j < intent.length; j++) {
       if (intent[j].bridge || intent[i].lot || intent[j].lot) continue;
+      if (boxes[i].x0 > boxes[j].x1 + 1 || boxes[j].x0 > boxes[i].x1 + 1 || boxes[i].y0 > boxes[j].y1 + 1 || boxes[j].y0 > boxes[i].y1 + 1) continue;
       const A = intent[i].pts, B = intent[j].pts;
       for (let a = 0; a < A.length - 1; a++) {
         const p = A[a], rx = A[a + 1].x - p.x, ry = A[a + 1].y - p.y;

@@ -19,8 +19,7 @@ export const EraseIcon = () => <Svg><path d="M4.2 14.3 12.3 6.2a2 2 0 0 1 2.8 0l
 export const TraceIcon = () => <Svg><path d="M3 18c4 0 4.5-9 9-9s5 3.5 9-7" /><circle cx="3" cy="18" r="1.2" fill="currentColor" stroke="none" /><circle cx="21" cy="2" r="1.2" fill="currentColor" stroke="none" /></Svg>;
 export const UndoIcon = () => <Svg><path d="M9 14 4.5 9.5 9 5" /><path d="M4.5 9.5H14a5.5 5.5 0 0 1 0 11h-3" /></Svg>;
 export const RedoIcon = () => <Svg><path d="M15 14l4.5-4.5L15 5" /><path d="M19.5 9.5H10a5.5 5.5 0 0 0 0 11h3" /></Svg>;
-export const ClockIcon = () => <Svg><circle cx="12" cy="12" r="8.5" /><path d="M12 7.5V12l3 2" /></Svg>;
-// the clock with a cross through it: the time is held
-export const ClockOffIcon = () => <Svg><circle cx="12" cy="12" r="8.5" /><path d="M12 7.5V12l3 2" /><path d="M4.5 4.5l15 15" /></Svg>;
+// a clock that goes: each hand is turned to the time by the style of the button it is on (--hour, --minute)
+export const ClockIcon = () => <Svg><circle cx="12" cy="12" r="8.5" /><path className="hand hour" d="M12 12V8.2" /><path className="hand minute" d="M12 12V5.8" /></Svg>;
 // a flame: the heat map
 export const HeatIcon = () => <Svg><path d="M12 3c1 3.5 5 5.5 5 10.5a5 5 0 0 1-10 0c0-2.2 1-3.8 2.2-5 0 2 .8 3.2 2 3.5C11 8 10.6 5.6 12 3z" /></Svg>;

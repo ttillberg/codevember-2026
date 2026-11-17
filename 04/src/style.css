@@ -56,14 +56,12 @@ canvas.glow { position: absolute; inset: 0; width: 100%; height: 100%; pointer-e
   position: fixed; z-index: 2; top: max(20px, env(safe-area-inset-top)); right: max(20px, env(safe-area-inset-right));
   display: flex; align-items: center; gap: 8px;
 }
-.corner .time {
-  height: 40px; padding: 0 10px 0 6px; display: flex; align-items: center; cursor: ew-resize;
-  touch-action: none; user-select: none; -webkit-user-select: none; color: #f4f4f2;
-  font: 600 14px/1 Inter, "Helvetica Neue", Helvetica, Arial, sans-serif; letter-spacing: 0.04em; font-variant-numeric: tabular-nums;
-}
-
-/* the time keeps its width whatever the digits: every figure as wide as the next, in a box that fits five of them */
-.corner .time span { display: inline-block; width: 5ch; text-align: center; font-variant-numeric: tabular-nums; font-feature-settings: "tnum" 1; }
+/* the clock: its hands show the time, a drag on it winds them */
+.pill button.clock { cursor: grab; touch-action: none; user-select: none; -webkit-user-select: none; }
+.pill button.clock:active { cursor: grabbing; }
+.clock .hand { transform-box: view-box; transform-origin: 12px 12px; }
+.clock .hour { transform: rotate(var(--hour, 0deg)); stroke-width: 2; }
+.clock .minute { transform: rotate(var(--minute, 0deg)); }
 
 /* the brushes, all in sight, along the bottom; undo and redo bottom right. One measure all through: 6 px round the
    edge of a pill and 6 px between one 46 px disc and the next */
@@ -108,7 +106,6 @@ canvas.glow { position: absolute; inset: 0; width: 100%; height: 100%; pointer-e
   /* on a phone the time and the overlays go under the plate, on the right */
   /* on a phone the time sits top right beside the plate, and the overlays hang under it */
   .corner { top: max(16px, env(safe-area-inset-top)); right: max(16px, env(safe-area-inset-right)); flex-direction: column; align-items: flex-end; }
-  .corner .time { padding-right: 8px; }
 }
 /* ?debug: the shot, slider by slider */
 .pane {
