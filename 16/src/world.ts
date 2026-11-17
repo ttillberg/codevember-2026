@@ -12,13 +12,13 @@ import { mulberry32 } from './noise';
 export const SPECIES = 5; // feather, star, lichen, cushion, coral
 export const CHUNK = 1.0; // world units per chunk side
 
-// The spruce trunks (trees.ts draws them): one in about half the cells of a coarse grid, by hash. Here so the
+// The spruce trunks (trees.ts draws them): one in about seven of ten cells of a coarse grid, by hash (it was under half; more of them give layer behind layer going off into the fog). Here so the
 // ground can know where they stand.
 export const TREE_CELL = 3.6;
 export interface Trunk { x: number; z: number; r: number; turn: number; key: string }
 export function trunkInCell(ix: number, iz: number): Trunk | null {
   const r = mulberry32((Math.imul(ix, 0x5bd1e995) ^ Math.imul(iz, 0x1b873593) ^ 0x7ee5) >>> 0);
-  if (r() > 0.45) return null;
+  if (r() > 0.7) return null;
   const x = (ix + 0.15 + 0.7 * r()) * TREE_CELL, z = (iz + 0.15 + 0.7 * r()) * TREE_CELL;
   return { x, z, r: 0.3 + 0.32 * r(), turn: r() * Math.PI * 2, key: `${ix},${iz}` };
 }

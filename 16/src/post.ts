@@ -45,19 +45,12 @@ export function makeAtmosPass(depth: THREE.DepthTexture, coarse = false) {
       varying vec2 vUv;
 
       float h2(vec2 p) { p = fract(p * vec2(123.34, 456.21)); p += dot(p, p + 45.32); return fract(p.x * p.y); }
-      float n2(vec2 p) {
-        vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
-        return mix(mix(h2(i), h2(i + vec2(1, 0)), f.x), mix(h2(i + vec2(0, 1)), h2(i + vec2(1, 1)), f.x), f.y);
-      }
-      // what is behind everything: the canopy, dark leaves with bright gaps where the sky and the sun come
-      // through. The DOF gathers these into soft discs.
+      // what is behind everything: plain golden air, a broad glow all round the sun's side and brighter towards it
+      // (bright canopy gaps were here once, but between the trunks they read as patches cut out of paper)
       vec3 sky(vec3 r) {
-        vec2 q = r.xz / max(r.y, 0.05) * 3.0 + vec2(uTime * 0.02, 0.0);
-        float gaps = smoothstep(0.62, 0.8, n2(q) * 0.6 + n2(q * 2.7 + 5.0) * 0.4);
         float s = max(dot(r, uSunDir), 0.0);
-        // the gaps glow through yellow birch and orange aspen leaves
-        vec3 light = mix(mix(vec3(0.95, 0.62, 0.18), vec3(0.85, 0.32, 0.08), n2(q * 0.7 + 3.0)), uSunCol * 3.0, pow(s, 6.0));
-        return mix(uHaze * 1.6 * vec3(1.2, 0.9, 0.5), light, gaps * smoothstep(0.0, 0.35, r.y));
+        vec3 gold = vec3(1.0, 0.68, 0.24);
+        return uHaze * 1.7 * vec3(1.35, 0.95, 0.42) + gold * (0.12 + 0.3 * s * s) * smoothstep(-0.1, 0.4, r.y) + uSunCol * pow(s, 6.0) * 0.7;
       }
       // the air between: thicker low down, lit warm towards the sun
       vec3 haze(vec3 r) {
@@ -70,7 +63,9 @@ export function makeAtmosPass(depth: THREE.DepthTexture, coarse = false) {
         vec4 v = uInvProj * vec4(vUv * 2.0 - 1.0, 1.0, 1.0);
         vec3 r = normalize(mat3(uCamWorld) * (v.xyz / v.w));
         vec3 c = texture2D(tDiffuse, vUv).rgb;
-        if (z > cameraFar * 0.99) c = mix(sky(r), haze(r), 0.35);
+        // the background, and what the fog fades everything into: the same colour, so far trunks melt into it
+        vec3 bg = mix(sky(r), haze(r), 0.35);
+        if (z > cameraFar * 0.99) c = bg;
         else {
           // ground mist: a layer lying on the moss, thick at the bottom and thinning out a metre up; the light in
           // it is the haze's, so it glows towards the sun. Integrated along the ray through an exponential layer.
@@ -82,8 +77,14 @@ export function makeAtmosPass(depth: THREE.DepthTexture, coarse = false) {
           // clear right around you: the mist only starts a little way off, easing in
           float zm = max(z - uMistStart, 0.0) * smoothstep(uMistStart, uMistStart * 2.5, z);
           float mist = 1.0 - exp(-zm * uMist * layer);
-          float f = 1.0 - (1.0 - mist) * exp(-max(z - 1.2, 0.0) * uFog);
-          c = mix(c, haze(r) * 1.15, f);
+          // a cheat: what the sun lights brighter than the air shows through it a little further (a trunk's sunny
+          // side a few steps off was lost in the haze like its shaded one): thinner air for it, so it still goes
+          // in the end (a share of it kept at any distance left far trunks standing out of the fog)
+          vec3 hz = bg;
+          float lum = dot(c, vec3(0.3, 0.55, 0.15)), hl = dot(hz, vec3(0.3, 0.55, 0.15));
+          float thin = 1.0 - 0.4 * smoothstep(1.0, 2.5, lum / max(hl, 1e-3));
+          float f = 1.0 - (1.0 - mist) * exp(-max(z - 1.2, 0.0) * uFog * thin);
+          c = mix(c, hz, f);
         }
         // light shafts: march towards the sun on screen and count how much of the way is open sky or far,
         // hazy air. Grass, stalks, stems and trunks in between cut dark wedges out of the glow.

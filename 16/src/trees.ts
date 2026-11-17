@@ -292,6 +292,11 @@ void main() {
   // down the gaps the scales either side shade it: no sun in there, so the walls do not shine
   diff *= mix(smoothstep(0.1, 0.7, furrow), 1.0, 1.0 - near);
   vec3 c = col * (0.4 * skyTint(N, 1.0) + 2.0 * diff * shadow);
+  // the bark is nearly black, so the low sun on it barely showed: where it reaches, the trunk's side catches the
+  // warm gold, through its own pattern so the scales still read. Smooth, not broken by the canopy's spots: in spots
+  // it came out as white flakes, a birch's bark, and the haze let only the bright ones through
+  float sway = 0.7 + 0.3 * n21(vec2(vBark.y * 0.15, vWorldPos.x * 0.3 + vWorldPos.z * 0.7));
+  c += vec3(1.25, 0.56, 0.15) * (col * 3.0 + 0.008) * diff * sway;
   // the low sun behind a trunk lights its edge
   // (only off the plates, broken by their roughness: a smooth even rim was what read as plastic)
   c += col * pow(1.0 - max(dot(N, V), 0.0), 4.0) * max(dot(-V, L), 0.0) * 1.4 * furrow * (0.4 + 0.6 * n21(vBark * vec2(30.0, 12.0)));

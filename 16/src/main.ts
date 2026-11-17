@@ -256,7 +256,7 @@ const atmosMat = makeAtmosPass(beautyRT.depthTexture!, coarse);
 atmosMat.uniforms.cameraNear.value = camera.near;
 atmosMat.uniforms.uSunDir.value = lightDir;
 // thick forest air: a worm cannot see far anyway
-atmosMat.uniforms.uFog.value = 0.3; // the air: trunks fade out a few steps away
+atmosMat.uniforms.uFog.value = 0.22; // the air: trunks fade out a few steps away, into the colour of the sky
 atmosMat.uniforms.uMist.value = 0.9; // and a mist lying on the moss, glowing towards the sun
 const atmos = new ShaderPass(atmosMat);
 composer.addPass(atmos);
