@@ -63,25 +63,21 @@ canvas:active { cursor: grabbing; }
 body.touch .gyro { display: grid; }
 @media (max-width: 640px) { .gyro { top: max(16px, env(safe-area-inset-top)); right: max(16px, env(safe-area-inset-right)); } }
 .clean .gyro { display: none; }
-/* the fungarium button: top right, left of the gyro on phones */
+/* the fungarium: a little field notebook lying bottom left, olive cloth, a label, an elastic band */
 .book {
-  position: fixed; z-index: 3; display: grid;
-  top: max(24px, env(safe-area-inset-top)); right: max(24px, env(safe-area-inset-right));
-  place-items: center; width: 34px; height: 34px; padding: 0; border: 0; border-radius: 50%;
-  background: rgba(20, 16, 10, 0.35); color: #f4f4f2; cursor: pointer;
-  -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
-  box-shadow: inset 0 0 0 1px rgba(244, 244, 242, 0.35);
-  transition: transform 0.25s cubic-bezier(0.3, 1.4, 0.5, 1);
+  position: fixed; z-index: 3; display: block;
+  left: max(20px, env(safe-area-inset-left)); bottom: max(18px, env(safe-area-inset-bottom));
+  width: 44px; height: 58px; padding: 0; border: 0; background: none; cursor: pointer;
+  filter: drop-shadow(0 4px 6px rgba(0, 0, 0, 0.45));
+  transform: rotate(-7deg); transition: transform 0.25s cubic-bezier(0.3, 1.4, 0.5, 1);
 }
-.book:active { transform: scale(0.94); }
-body.touch .book { right: calc(max(24px, env(safe-area-inset-right)) + 44px); }
-@media (max-width: 640px) {
-  .book { top: max(16px, env(safe-area-inset-top)); right: max(16px, env(safe-area-inset-right)); }
-  body.touch .book { right: calc(max(16px, env(safe-area-inset-right)) + 44px); }
-}
+.book svg { display: block; }
+.book:hover { transform: rotate(-3deg) translateY(-4px); }
+.book:active { transform: rotate(-5deg) scale(0.94); }
+@media (min-width: 900px) { .book { transform: rotate(-7deg) scale(1.3); transform-origin: left bottom; } .book:hover { transform: rotate(-3deg) translateY(-4px) scale(1.3); } }
 .clean .book { display: none; }
 
-/* the fungarium: a sheet of field-book paper over the forest */
+/* the fungarium opened: the little notebook comes up from its corner, olive cloth cover round a paper page */
 .fungarium [hidden] { display: none !important; }
 .fungarium {
   position: fixed; inset: 0; z-index: 5; display: grid; place-items: center;
@@ -91,36 +87,54 @@ body.touch .book { right: calc(max(24px, env(safe-area-inset-right)) + 44px); }
 }
 .fungarium.open { opacity: 1; pointer-events: auto; }
 .fungarium .sheet {
-  position: relative; width: min(560px, 100%); max-height: 100%; overflow: auto; box-sizing: border-box;
-  padding: 28px 28px 24px; color: #1c1c1c;
-  /* paper: warm, a faint grid of pale blue lines like a field book, a soft darker edge */
-  background:
-    linear-gradient(rgba(70, 110, 150, 0.12) 1px, transparent 1px) 0 0 / 22px 22px,
-    linear-gradient(90deg, rgba(70, 110, 150, 0.12) 1px, transparent 1px) 0 0 / 22px 22px,
-    radial-gradient(120% 90% at 50% 40%, #f1e9d6 60%, #e2d5b8 100%);
-  box-shadow: 0 30px 80px rgba(0, 0, 0, 0.45), inset 0 0 0 1px rgba(80, 60, 30, 0.15);
-  border-radius: 3px;
-  transform: translateY(12px) rotate(-0.6deg); transition: transform 0.35s cubic-bezier(0.3, 1.3, 0.5, 1);
+  position: relative; width: min(430px, calc(100vw - 32px)); max-height: 100%; display: flex; box-sizing: border-box;
+  padding: 7px 16px 9px 12px; border-radius: 4px 9px 9px 4px;
+  background: linear-gradient(90deg, #41432b 0 12px, #56593a 12px); /* the cover, darker over the spine */
+  box-shadow: 0 30px 80px rgba(0, 0, 0, 0.5), inset 0 0 0 1px rgba(0, 0, 0, 0.25);
+  transform: translate(calc(-50vw + 90px), calc(50vh - 80px)) scale(0.12) rotate(-8deg);
+  transition: transform 0.4s cubic-bezier(0.3, 1.15, 0.5, 1);
 }
 .fungarium.open .sheet { transform: none; }
-.fungarium header b { display: block; font: 700 40px/0.9 "IBM Plex Sans", system-ui, sans-serif; letter-spacing: -0.02em; text-transform: uppercase; }
-.fungarium header i { display: block; margin-top: 8px; font: 400 13px/1.4 Inter, "Helvetica Neue", Arial, sans-serif; font-style: normal; }
+/* the elastic band, down the cover past the page's edge */
+.fungarium .sheet::after { content: ""; position: absolute; top: -3px; bottom: -3px; right: 5px; width: 5px; border-radius: 2px; background: #1d1b15; }
+.fungarium .page {
+  position: relative; flex: 1; min-width: 0; overflow: auto; box-sizing: border-box;
+  padding: 20px 20px 18px 24px; color: #1c1c1c; border-radius: 2px 4px 4px 2px;
+  /* paper: warm, a faint grid of pale blue lines like a field book, shaded into the binding on the left */
+  background:
+    linear-gradient(90deg, rgba(60, 40, 10, 0.22), transparent 14px),
+    linear-gradient(rgba(70, 110, 150, 0.12) 1px, transparent 1px) 0 0 / 18px 18px,
+    linear-gradient(90deg, rgba(70, 110, 150, 0.12) 1px, transparent 1px) 0 0 / 18px 18px,
+    radial-gradient(120% 90% at 50% 40%, #f1e9d6 60%, #e2d5b8 100%);
+  box-shadow: 2px 2px 0 #e4d9bd, 3px 3px 0 #cfc1a0; /* the pages under it */
+}
+.fungarium header b { display: block; font: 700 30px/0.9 "IBM Plex Sans", system-ui, sans-serif; letter-spacing: -0.02em; text-transform: uppercase; }
+.fungarium header i { display: block; margin-top: 6px; padding-right: 24px; font: 400 12px/1.4 Inter, "Helvetica Neue", Arial, sans-serif; font-style: normal; }
 .fungarium .close {
-  position: absolute; top: 12px; right: 12px; width: 32px; height: 32px; border: 0; border-radius: 50%;
+  position: absolute; top: 6px; right: 6px; width: 32px; height: 32px; border: 0; border-radius: 50%;
   background: transparent; color: #1c1c1c; font: 400 26px/1 Inter, sans-serif; cursor: pointer;
 }
-.fungarium .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 0; margin-top: 22px; border-top: 1px solid rgba(28, 28, 28, 0.35); border-left: 1px solid rgba(28, 28, 28, 0.35); }
-.fungarium .cell {
-  display: flex; flex-direction: column; align-items: flex-start; gap: 2px; padding: 10px 12px 14px; text-align: left;
-  border: 0; border-right: 1px solid rgba(28, 28, 28, 0.35); border-bottom: 1px solid rgba(28, 28, 28, 0.35);
-  background: transparent; color: #1c1c1c; cursor: pointer; font: inherit;
+.fungarium .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); gap: 0; margin-top: 16px; border-top: 1px solid rgba(28, 28, 28, 0.35); border-left: 1px solid rgba(28, 28, 28, 0.35); }
+.fungarium .cell { position: relative; border-right: 1px solid rgba(28, 28, 28, 0.35); border-bottom: 1px solid rgba(28, 28, 28, 0.35); }
+.fungarium .take {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 2px; width: 100%; height: 100%; box-sizing: border-box;
+  padding: 8px 10px 12px; text-align: left; border: 0; background: transparent; color: #1c1c1c; cursor: pointer; font: inherit;
 }
-.fungarium .cell:hover { background: rgba(255, 255, 255, 0.35); }
+.fungarium .take:hover { background: rgba(255, 255, 255, 0.35); }
+/* the key that takes it, as on the packet; no keys on a phone */
+.fungarium .take kbd { position: absolute; left: 6px; top: 5px; font: 600 9px/1 Inter, sans-serif; opacity: 0.5; }
+body.touch .fungarium .take kbd { display: none; }
+/* the small mark in the corner: turn the page to watch it grow */
+.fungarium .look {
+  position: absolute; top: 4px; right: 4px; display: grid; place-items: center; width: 28px; height: 28px; padding: 0;
+  border: 0; border-radius: 50%; background: transparent; color: #1c1c1c; opacity: 0.55; cursor: pointer;
+}
+.fungarium .look:hover { opacity: 1; background: rgba(255, 255, 255, 0.5); }
 .fungarium .cell .pic { width: 100%; aspect-ratio: 1; background: center / contain no-repeat; margin-bottom: 6px; }
-.fungarium .cell b, .fungarium .names b { font: 600 11px/1.3 Inter, sans-serif; letter-spacing: 0.12em; text-transform: uppercase; }
-.fungarium .cell i, .fungarium .names i { font: 400 13px/1.3 Inter, sans-serif; font-style: italic; }
-.fungarium .cell.on { box-shadow: inset 0 0 0 2px #1c1c1c; }
-.fungarium .detail canvas { display: block; margin: 6px auto 10px; }
+.fungarium .cell b, .fungarium .names b { font: 600 10px/1.3 Inter, sans-serif; letter-spacing: 0.12em; text-transform: uppercase; }
+.fungarium .cell i, .fungarium .names i { font: 400 12px/1.3 Inter, sans-serif; font-style: italic; }
+.fungarium .cell.on .take { box-shadow: inset 0 0 0 2px #1c1c1c; }
+.fungarium .detail canvas { display: block; max-width: 100%; margin: 6px auto 10px; }
 .fungarium .names { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; }
 .fungarium .names em { font: 400 13px/1.3 Inter, sans-serif; font-style: normal; opacity: 0.8; }
 .fungarium .detail p { margin: 8px 0 16px; font: 400 13px/1.45 Inter, sans-serif; }

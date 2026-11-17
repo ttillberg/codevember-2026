@@ -1,6 +1,7 @@
-// The fungarium: a sheet of field-book paper with a grid, one cell per species, each with a little rendered
-// specimen and its names. Open a cell for the specimen large, turning slowly, growing up out of nothing:
-// "Grow again" replays it (handy for tuning the growth), "Throw these" makes it what your spores grow.
+// The fungarium: a little field notebook, kept bottom left. Opened, its first page is a grid, one cell per
+// species, each with a little rendered specimen and its names: tap one and that is what your spores grow. The
+// small grow mark in a cell's corner turns the page to the specimen large, turning slowly, growing up out of
+// nothing: "Grow again" replays it (handy for tuning the growth), "Throw these" makes it what your spores grow.
 // It has its own small renderer and scene, lit like the forest at dusk but with no shadow map.
 import * as THREE from 'three';
 import { Fungi, type FungusKind } from './fungi';
@@ -60,9 +61,9 @@ export class Fungarium {
     this.el = document.createElement('div');
     this.el.className = 'fungarium';
     this.el.innerHTML = `
-      <div class="sheet">
+      <div class="sheet"><div class="page">
         <button class="close" type="button" aria-label="Close">×</button>
-        <header><b>Fungarium</b><i>What your spores can grow. Pick one to see it grow, and to throw it.</i></header>
+        <header><b>Fungarium</b><i>What your spores can grow. Tap one to throw it; the corner mark watches it grow.</i></header>
         <div class="grid"></div>
         <div class="detail" hidden>
           <button class="back" type="button">← All</button>
@@ -71,7 +72,7 @@ export class Fungarium {
           <p></p>
           <div class="acts"><button class="regrow" type="button">Grow again</button><button class="pick" type="button">Throw these</button></div>
         </div>
-      </div>`;
+      </div></div>`;
     document.body.appendChild(this.el);
     this.grid = this.el.querySelector('.grid')!;
     this.detail = this.el.querySelector('.detail')!;
@@ -85,15 +86,21 @@ export class Fungarium {
       this.onSelect(this.selected);
       this.close();
     });
-    for (const s of SPECIES) {
-      const cell = document.createElement('button');
-      cell.type = 'button';
+    SPECIES.forEach((s, n) => {
+      // the cell takes it straight away; the mark in its corner opens the page where it grows
+      const cell = document.createElement('div');
       cell.className = 'cell';
       cell.dataset.kind = s.kind;
-      cell.innerHTML = `<span class="pic"></span><b>${s.sv}</b><i>${s.latin}</i>`;
-      cell.addEventListener('click', () => this.showDetail(s));
+      cell.innerHTML = `<button class="take" type="button"><span class="pic"></span><b>${s.sv}</b><i>${s.latin}</i><kbd>${(n + 1) % 10}</kbd></button>
+        <button class="look" type="button" aria-label="Watch ${s.en.toLowerCase()} grow"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6" /><path d="M15 15l5 5M10.5 8v5M8 10.5h5" /></svg></button>`;
+      cell.querySelector('.take')!.addEventListener('click', () => {
+        this.select(s.kind);
+        this.onSelect(s.kind);
+        this.close();
+      });
+      cell.querySelector('.look')!.addEventListener('click', () => this.showDetail(s));
       this.grid.appendChild(cell);
-    }
+    });
     this.markSelected();
   }
 
