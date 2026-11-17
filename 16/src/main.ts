@@ -449,10 +449,10 @@ function aimAt(far = 2.2) {
   const x = camera.position.x + (d.x / l) * far, z = camera.position.z + (d.z / l) * far;
   return new THREE.Vector3(x, groundHeight(x, z), z);
 }
-/** A pinch of spores dropped just in front of you, a hand's length or two, a little to either side. */
+/** A pinch of spores dropped in front of you, half a metre or so, a little to either side. */
 function throwNear() {
   const fx = -Math.sin(look.yaw), fz = -Math.cos(look.yaw), sx = -fz, sz = fx;
-  const d = 0.3 + 0.15 * Math.random(), s = (Math.random() - 0.5) * 0.12;
+  const d = 0.55 + 0.2 * Math.random(), s = (Math.random() - 0.5) * 0.16; // far enough to stay in focus as they grow
   const x = camera.position.x + fx * d + sx * s, z = camera.position.z + fz * d + sz * s;
   throwTo(new THREE.Vector3(x, groundHeight(x, z), z), false);
 }
