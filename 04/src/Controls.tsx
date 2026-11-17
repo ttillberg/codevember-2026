@@ -84,7 +84,7 @@ export function Overlays({ lead, items }: { lead?: ReactNode; items: { id: strin
 const BRUSHES: [Brush, string, () => ReactNode, string?][] = [
   ['road', 'Road', RoadIcon],
   ['bridge', 'Bridge', BridgeIcon, '⌘ drag'],
-  ['smear', 'Smear', SmearIcon, '⇧ drag'],
+  ['smear', 'Smear', SmearIcon, '⌥ drag'],
   ['erase', 'Erase', EraseIcon],
 ];
 

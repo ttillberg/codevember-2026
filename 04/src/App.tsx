@@ -5,7 +5,7 @@ import { MapControls } from '@react-three/drei';
 import { Bloom, ChromaticAberration, EffectComposer, SMAA, TiltShift2, ToneMapping, Vignette, wrapEffect } from '@react-three/postprocessing';
 import { BlendFunction, Effect, ToneMappingMode } from 'postprocessing';
 import { Color, DirectionalLight, HemisphereLight, MOUSE, OrthographicCamera, PerspectiveCamera, TOUCH, Uniform, Vector2, type Vector3 } from 'three';
-import { HAZE, MOOD, NIGHT, RICH, hoursPerSecond, skyAt } from './haze';
+import { HAZE, MOOD, NIGHT, RICH, hoursPerSecond, skyAt, lampWarmth } from './haze';
 import { Cars, TIMELAPSE } from './Cars';
 import type { Sim } from './sim';
 import { gpu } from './Glow';
@@ -26,10 +26,10 @@ import { TILE as SIDE, alone, movePlace, place as LAND, saltOf, splitNet, tilesN
 import { laid, madeAt, wetStart } from './wet';
 
 /** The grade: exposure, warmth, bite, how much colour is left, how grey the blacks are, and what the stock and the glass add. */
-type Grade = { gain: number; temp: number; bite: number; sat: number; lift: number; grain: number; bloom: number; dark: number; soft: number };
+type Grade = { gain: number; temp: number; bite: number; sat: number; lift: number; grain: number; bloom: number; dark: number; soft: number; lamp: number };
 /** A finger and no mouse: a phone or a tablet. */
 const touch = typeof matchMedia !== 'undefined' && matchMedia('(pointer: coarse)').matches;
-const GRADE: Grade = { gain: 1, temp: 0.6, bite: 0.35, sat: 0.78, lift: 0, grain: 0, bloom: 0.55, dark: 0.57, soft: no('soft') || touch ? 0 : 0.5 };
+const GRADE: Grade = { gain: 1, temp: 0.6, bite: 0.35, sat: 0.78, lift: 0, grain: 0, bloom: 0.55, dark: 0.57, soft: no('soft') || touch ? 0 : 0.5, lamp: 0 };
 
 /** The look of a drone clip shot through city haze: flat, pale, a little cool in the shadows. */
 class FadeEffect extends Effect {
@@ -102,7 +102,7 @@ const SLIDERS: [keyof Shot, string, number, number, number][] = [
 ];
 const GRADES: [keyof Grade, string, number, number, number][] = [
   ['gain', 'Expose', 0.5, 1.6, 0.01], ['temp', 'Warm', -2, 2, 0.05], ['bite', 'Bite', 0, 1, 0.01], ['sat', 'Colour', 0, 1.5, 0.01],
-  ['lift', 'Lift', 0, 3, 0.05], ['grain', 'Grain', 0, 4, 0.05], ['bloom', 'Bloom', 0, 2, 0.01], ['dark', 'Corners', 0, 1, 0.01],
+  ['lift', 'Lift', 0, 3, 0.05], ['grain', 'Grain', 0, 4, 0.05], ['bloom', 'Bloom', 0, 2, 0.01], ['dark', 'Corners', 0, 1, 0.01], ['lamp', 'Lamps', -1, 1, 0.05],
   ['soft', 'Soft', 0, 3, 0.05],
 ];
 /** What can be switched off to see what it costs; ?no=msaa,tilt,bloom,shadow,lazy,soft starts without them. */
@@ -563,6 +563,7 @@ export function App() {
   const onHour = useCallback((h: number) => setClock((c) => ({ ...c, hour: Math.round(h * 100) / 100 })), []);
   // the last softness is the browser's: a blur on the canvas itself, so many pixels wide
   useEffect(() => { document.documentElement.style.setProperty('--soft', grade.soft + 'px'); }, [grade.soft]);
+  useEffect(() => lampWarmth(grade.lamp), [grade.lamp]);
   const [set, setSet] = useState(0);
   const [copied, setCopied] = useState('');
   const copy = (what: string, v: unknown) => {

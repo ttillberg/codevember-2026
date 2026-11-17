@@ -27,6 +27,15 @@ const glowMap = new DataTexture(glowData, GLOW_SIZE, GLOW_SIZE, RGBAFormat, Half
 glowMap.minFilter = glowMap.magFilter = LinearFilter;
 export const GLOW = new Uniform(glowMap);
 
+/** What the lamps of the streets are tinted by, and all the light they leave on the place: set by `lampWarmth`. */
+export const LAMPS = new Uniform(new Vector3(1, 1, 1));
+/** How warm the street lights are: 0 as they are, sodium; up to 1 deeper and redder, down to -1 towards white. */
+export function lampWarmth(w: number) {
+  const c = Math.max(0, -w);
+  w = Math.max(0, w);
+  LAMPS.value.set(1 - 0.3 * c, 1 - 0.35 * w + 0.25 * c, 1 - 0.7 * w + 2.5 * c);
+}
+
 /** A lamp or a lit house for the map: where, how far its light reaches in metres, and its colour and strength. */
 export interface Spot { x: number; z: number; r: number; c: [number, number, number] }
 
@@ -81,6 +90,7 @@ export function glowing<T extends Material>(m: T, much = 1, sided = false, aloft
     s.uniforms.uGlow = GLOW;
     s.uniforms.uGlowMid = GLOW_MID;
     s.uniforms.uGlowNight = DARK;
+    s.uniforms.uLamps = LAMPS;
     s.vertexShader = s.vertexShader
       .replace('#include <common>', '#include <common>\nvarying vec3 vGlowAt;')
       .replace('#include <project_vertex>', `{ vec4 gw = vec4(transformed, 1.0);
@@ -90,7 +100,7 @@ export function glowing<T extends Material>(m: T, much = 1, sided = false, aloft
         vGlowAt = (modelMatrix * gw).xyz; }
         #include <project_vertex>`);
     s.fragmentShader = s.fragmentShader
-      .replace('#include <common>', '#include <common>\nuniform sampler2D uGlow; uniform vec2 uGlowMid; uniform float uGlowNight; varying vec3 vGlowAt;')
+      .replace('#include <common>', '#include <common>\nuniform sampler2D uGlow; uniform vec2 uGlowMid; uniform float uGlowNight; uniform vec3 uLamps; varying vec3 vGlowAt;')
       // the lamps hang low and shine down: the foot of a wall takes their light, what is above them takes none,
       // and a roof stays dark however bright the car park beside it
       .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
@@ -106,7 +116,7 @@ export function glowing<T extends Material>(m: T, much = 1, sided = false, aloft
           float facing = clamp(dot(nw.xz / max(flat_, 1e-4), up / max(steep, 1e-5)) * 0.75 + 0.25, 0.0, 1.0);
           // a face that looks up takes little; where the light is all round, every side takes some
           turned = mix(0.18, mix(0.5, facing, smoothstep(0.004, 0.03, steep)), flat_);` : ''}
-          totalEmissiveRadiance += diffuseColor.rgb * texture2D(uGlow, gu).rgb * (turned * uGlowNight * ${much.toFixed(3)}${aloft ? '' : ' * (1.0 - smoothstep(2.5, 9.0, vGlowAt.y))'});
+          totalEmissiveRadiance += diffuseColor.rgb * texture2D(uGlow, gu).rgb * uLamps * (turned * uGlowNight * ${much.toFixed(3)}${aloft ? '' : ' * (1.0 - smoothstep(2.5, 9.0, vGlowAt.y))'});
         }`);
   };
   m.customProgramCacheKey = () => key.call(m) + 'glow' + much + (sided ? 'sided' : '') + (aloft ? 'aloft' : '');

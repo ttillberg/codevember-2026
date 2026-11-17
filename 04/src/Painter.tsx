@@ -231,7 +231,7 @@ export function Painter({ net, tool, onStroke, onSmear, onTrace, onErase }: Prop
     (e.target as Element).setPointerCapture?.(e.pointerId);
     // erase works on the ground under the drag, so it never starts on a deck
     const erase = tool === 'erase';
-    const smear = !erase && (tool === 'smear' || e.shiftKey);
+    const smear = !erase && (tool === 'smear' || e.altKey);
     // a stroke that starts on a deck starts up there
     const top = smear || erase ? null : onDeck(net, e.ray);
     draw.current = { id: e.pointerId, pts: [top ?? p], bridge: !smear && !erase && (tool === 'bridge' || e.metaKey || e.ctrlKey), smear, erase, up: !!top };

@@ -3,7 +3,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
 import { AdditiveBlending, Color, InstancedMesh, MeshStandardMaterial, Object3D, ShaderMaterial } from 'three';
 import { boxed, onRoad, WALK, zebraAt } from './geo';
-import { HOUR, NIGHT, glowOf, type Spot } from './haze';
+import { HOUR, LAMPS, NIGHT, glowOf, type Spot } from './haze';
 
 const HOME = { i: 0, j: 0, x: 0, y: 0 };
 import { TILE, cumLen, deck, offset, place, pointOn, rng, type Net, type V } from './net';
@@ -457,7 +457,7 @@ function screen() {
 /** The light a street lamp throws on the ground: no light at all, only a round glow laid over the road, there when it is dark. */
 function pool() {
   return new ShaderMaterial({
-    uniforms: { uNight: NIGHT },
+    uniforms: { uNight: NIGHT, uLamps: LAMPS },
     vertexShader: /* glsl */ `
       varying vec2 vP; varying vec3 vInk;
       void main() {
@@ -468,11 +468,11 @@ function pool() {
         gl_Position = projectionMatrix * modelViewMatrix * instanceMatrix * vec4(position, 1.0);
       }`,
     fragmentShader: /* glsl */ `
-      uniform float uNight;
+      uniform float uNight; uniform vec3 uLamps;
       varying vec2 vP; varying vec3 vInk;
       void main() {
         float a = max(0.0, 1.0 - length(vP));
-        gl_FragColor = vec4(vInk * a * a * (0.25 + 0.75 * a) * uNight * POOL, 1.0);
+        gl_FragColor = vec4(vInk * uLamps * a * a * (0.25 + 0.75 * a) * uNight * POOL, 1.0);
       }`,
     defines: { POOL: '0.34' },
     blending: AdditiveBlending, transparent: true, depthWrite: false,
@@ -638,6 +638,8 @@ export function Street({ net, blocks, speed, tile = HOME }: { net: Net; blocks: 
     const n = NIGHT.value;
     head.current!.emissiveIntensity = 0.2 + 7 * n;
     head.current!.emissive.copy(LAMP_DAY).lerp(LAMP_NIGHT, n);
+    const e = head.current!.emissive, w = LAMPS.value;
+    e.setRGB(e.r * w.x, e.g * w.y, e.b * w.z);
     pools.current!.visible = n > 0.01;
   });
 
