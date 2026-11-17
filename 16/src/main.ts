@@ -292,8 +292,18 @@ const target = document.querySelector<HTMLElement>('.target')!;
 let down = false, dragging = false;
 let downAt = 0, downX = 0, downY = 0, lastX = 0, lastY = 0;
 let holdTimer = 0;
+// the pointer lock (desktop, the pill bottom right or L): the mouse itself is the look, no drag; click throws,
+// hold the button to crawl
+const locked = () => document.pointerLockElement === canvas;
+const lockPill = document.querySelector<HTMLButtonElement>('.lockpill')!;
+const lock = () => { if (!fungarium.isOpen) canvas.requestPointerLock?.(); };
+lockPill.addEventListener('click', lock);
+document.addEventListener('pointerlockchange', () => document.body.classList.toggle('locked', locked()));
+// turning: a screen height of drag turns about twice the field of view; held and dragged off the spot where the
+// finger went down, you also keep turning that way, faster the further out, so a hairpin needs no second swipe
+const DRAG_TURN = 2.2, STEER_RATE = 2.4, STEER_DEAD = 14;
 canvas.addEventListener('pointerdown', (e) => {
-  canvas.setPointerCapture(e.pointerId);
+  if (!locked()) canvas.setPointerCapture(e.pointerId);
   down = true; dragging = false;
   downAt = performance.now(); downX = lastX = e.clientX; downY = lastY = e.clientY;
   clearTimeout(holdTimer);
@@ -301,11 +311,17 @@ canvas.addEventListener('pointerdown', (e) => {
   holdTimer = window.setTimeout(() => { if (down && !dragging) holding = true; }, 220);
 });
 canvas.addEventListener('pointermove', (e) => {
+  if (locked()) {
+    // locked: mouse right looks right, up looks up, as in a shooter
+    const k = THREE.MathUtils.degToRad(camera.fov) / innerHeight * 1.6;
+    look.tYaw -= e.movementX * k;
+    look.tPitch = THREE.MathUtils.clamp(look.tPitch - e.movementY * k, PITCH_MIN, PITCH_MAX);
+    return;
+  }
   if (!down) return;
   if (!dragging && Math.hypot(e.clientX - downX, e.clientY - downY) > 8) dragging = true;
   if (dragging) {
-    // turn the head: about a screen height of drag for a field of view of turn
-    const k = THREE.MathUtils.degToRad(camera.fov) / innerHeight * 1.2;
+    const k = THREE.MathUtils.degToRad(camera.fov) / innerHeight * DRAG_TURN;
     // just looking you drag the world round; crawling you steer, so drag left and you turn left
     look.tYaw += (e.clientX - lastX) * k * (holding ? -1 : 1);
     look.tPitch = THREE.MathUtils.clamp(look.tPitch + (e.clientY - lastY) * k, PITCH_MIN, PITCH_MAX);
@@ -398,7 +414,8 @@ function dropOldest() {
 }
 document.querySelector('.book')!.addEventListener('click', () => { keys.clear(); fungarium.toggle(); });
 addEventListener('keydown', (e) => {
-  if (e.code === 'KeyF') { keys.clear(); fungarium.toggle(); }
+  if (e.code === 'KeyF') { keys.clear(); if (locked()) document.exitPointerLock(); fungarium.toggle(); }
+  if (e.code === 'KeyL' && !fungarium.isOpen && !coarse) { if (locked()) document.exitPointerLock(); else lock(); }
   if (e.code === 'Space' && !fungarium.isOpen && !e.repeat) { e.preventDefault(); throwAt(); }
   if (e.code === 'Escape' && fungarium.isOpen) fungarium.close();
 });
@@ -455,7 +472,12 @@ function focusDistance() {
 function crawl(dt: number) {
   const fwd = (keys.has('KeyW') || keys.has('ArrowUp') || holding || autoWalk ? 1 : 0) - (keys.has('KeyS') || keys.has('ArrowDown') ? 0.5 : 0);
   const turn = (keys.has('KeyA') || keys.has('ArrowLeft') ? 1 : 0) - (keys.has('KeyD') || keys.has('ArrowRight') ? 1 : 0);
-  look.tYaw += turn * dt * 1.1;
+  look.tYaw += turn * dt * 2.2;
+  // held and dragged out sideways: keep turning that way, like a stick
+  if (holding && !locked()) {
+    const off = lastX - downX, out = Math.max(0, Math.abs(off) - STEER_DEAD) / (Math.min(innerWidth, innerHeight) * 0.3);
+    look.tYaw -= Math.sign(off) * Math.min(1, out) * STEER_RATE * dt;
+  }
   me.speed += (fwd * 0.36 - me.speed) * Math.min(1, dt * 4);
   const fx = -Math.sin(look.yaw), fz = -Math.cos(look.yaw); // you crawl where you look
   // six legs, three down at a time (a tripod gait): no lumbering, a quick even patter, each set of three
