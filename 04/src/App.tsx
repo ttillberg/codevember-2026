@@ -109,6 +109,19 @@ const GRADES: [keyof Grade, string, number, number, number][] = [
 /** What can be switched off to see what it costs; ?no=msaa,tilt,bloom,shadow,lazy,soft starts without them. */
 /** How edges are smoothed: the card's own multisampling, four samples or two, a pass over the finished picture, or not at all. */
 const AAS = ['msaa4', 'msaa2', 'smaa', 'none'] as const;
+/** What the eye's list was left at, kept in this browser from one visit to the next. What the address asks for comes first. */
+const VIEW_KEY = 'codevember-04-view';
+type View = { air: boolean; tilt: boolean; heat: boolean; aa: Fx['aa'] };
+function viewKept(): Partial<View> {
+  try {
+    const v = JSON.parse(localStorage.getItem(VIEW_KEY) ?? '{}');
+    return v && typeof v === 'object' ? { air: v.air === true ? true : v.air === false ? false : undefined, tilt: typeof v.tilt === 'boolean' ? v.tilt : undefined, heat: typeof v.heat === 'boolean' ? v.heat : undefined, aa: AAS.includes(v.aa) ? v.aa : undefined } : {};
+  } catch { return {}; }
+}
+function keepView(v: View | null) {
+  try { if (v) localStorage.setItem(VIEW_KEY, JSON.stringify(v)); else localStorage.removeItem(VIEW_KEY); } catch { /* a browser that keeps nothing */ }
+}
+const KEPT = typeof localStorage !== 'undefined' ? viewKept() : {};
 /** What they are called in the eye's list. */
 const AA_NAMES = [['none', 'Off'], ['smaa', 'SMAA'], ['msaa2', 'MSAA 2'], ['msaa4', 'MSAA 4']] as const;
 type Fx = { aa: (typeof AAS)[number]; tilt: boolean; bloom: boolean; shadow: boolean; lazy: boolean };
@@ -545,14 +558,19 @@ export function App() {
   const [paused, setPaused] = useState(false);
   const speed = paused ? 0 : TIMELAPSE;
   // reading the traffic: where it stands, and where one stretch's cars are going
-  const [heat, setHeat] = useState(false);
+  const [heat, setHeat] = useState(() => KEPT.heat ?? false);
   // the mist and the clouds: off until asked for, in the eye's list or with ?air
-  const [air, setAir] = useState(() => new URLSearchParams(location.search).has('air'));
+  const [air, setAir] = useState(() => new URLSearchParams(location.search).has('air') || (KEPT.air ?? false));
   const [trace, setTrace] = useState<V | null>(null);
   // ?debug: the shot under the sliders; without it the drone keeps its own
   const [shot, setShot] = useState<Shot | null>(() => (debug ? SHOTS[upright() ? 'p' : 'l'] : null));
   const [grade, setGrade] = useState(GRADE);
-  const [fx, setFx] = useState(FX);
+  const [fx, setFx] = useState(() => ({ ...FX, tilt: no('tilt') ? false : KEPT.tilt ?? FX.tilt, aa: no('msaa') ? FX.aa : KEPT.aa ?? FX.aa }));
+  // what the eye's list is set to is kept; back at how it opens, nothing is
+  useEffect(() => {
+    const v = { air, tilt: fx.tilt, heat, aa: fx.aa };
+    keepView(!v.air && !v.heat && v.tilt === FX.tilt && v.aa === FX.aa ? null : v);
+  }, [air, heat, fx.tilt, fx.aa]);
   const [nodes, setNodes] = useState(() => new URLSearchParams(location.search).has('nodes'));
   // canvas pixels to a screen point, at most
   const [dpr, setDpr] = useState(DPR);

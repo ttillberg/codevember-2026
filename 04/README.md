@@ -15,7 +15,7 @@ Drag on the ground and paint follows the brush. Only the strokes are kept. Every
 - **Trace** (top right, beside the clock, or C): on, a click on a road follows its traffic; off, the brush comes back.
 - **Undo** (cmd + Z), **redo** (shift + cmd + Z). Each drag or stroke is one step.
 - **P** (or space) pauses. It is always a timelapse, sixty times life. Painting works in a still too.
-- The **eye**, top right, opens what is shown: Atmospherics (mist on the ground in the morning, a few clouds and their shadows drifting over, in the colour of the sun; off at first, `?air` starts with them), Tilt shift, the Heat map and the antialiasing (off, SMAA, MSAA 2 or 4). Nothing of it is kept between visits.
+- The **eye**, top right, opens what is shown: Atmospherics (mist on the ground in the morning, a few clouds and their shadows drifting over, in the colour of the sun; off at first, `?air` starts with them), Tilt shift, the Heat map and the antialiasing (off, SMAA, MSAA 2 or 4). What it is set to is kept in the browser for the next visit; Reset to defaults forgets it.
 - **D** draws the network over the picture: every road and every node with what the rules know of it.
 - **T** takes up the next brush (Road, Bridge, Smear, Erase), shift + T the one before.
 - **R** takes up the Road brush, **B** the Bridge, **S** the Smear, **E** the Eraser.
