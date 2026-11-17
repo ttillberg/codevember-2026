@@ -7,13 +7,14 @@ import { mulberry32 } from './noise';
 import { mossLighting } from './shaders';
 import { buildDew } from './dew';
 
-export type FungusKind = 'funnel' | 'finger' | 'chanterelle' | 'puffball';
+export type FungusKind = 'funnel' | 'finger' | 'chanterelle' | 'puffball' | 'agaric';
 
 const ease = (t: number) => t * t * (3 - 2 * t);
 const clamp01 = (t: number) => Math.min(1, Math.max(0, t));
 
 // ---------------------------------------------------------------------------------------------------------
-// geometry buffers: position, part (0 stem, 1 funnel underside, 2 funnel inside, 3 finger), along, around, tint
+// geometry buffers: position, part (0 stem, 1 underside, 2 funnel inside or cap top, 3 finger, 4 puffball,
+// 5 fly agaric's cap), along, around, tint
 // drops: beads of water on fresh growth, (x, y, z, radius), drawn with the dew
 interface Buf { pos: number[]; part: number[]; uvf: number[]; tint: number[]; idx: number[]; drops: number[] }
 const newBuf = (): Buf => ({ pos: [], part: [], uvf: [], tint: [], idx: [], drops: [] });
@@ -403,6 +404,116 @@ function buildPuffball(b: Buf, p: Puff, age: number) {
   }
 }
 
+// ---- fly agaric -----------------------------------------------------------------------------------------
+interface Agaric {
+  base: THREE.Vector3;
+  H: number; R: number; rs: number;
+  lean: [number, number];
+  delay: number; dur: number; phase: number;
+  red: [number, number, number];
+}
+const AS = 40; // around a fly agaric
+
+/** One ring of a lathe at radius r and height y, around the axis (ax, az), into the buffer. */
+function ring(b: Buf, n: number, cx: number, cy: number, cz: number, r: number, part: number, along: number, t: number[]) {
+  for (let k = 0; k < n; k++) {
+    const a = (k / n) * Math.PI * 2;
+    b.pos.push(cx + Math.cos(a) * r, cy, cz + Math.sin(a) * r);
+    b.part.push(part);
+    b.uvf.push(along, k / n);
+    b.tint.push(t[0], t[1], t[2]);
+  }
+}
+function stitch(b: Buf, start: number, rings: number, n: number) {
+  for (let i = 0; i < rings - 1; i++) for (let k = 0; k < n; k++) {
+    const a = start + i * n + k, c = start + i * n + ((k + 1) % n);
+    b.idx.push(a, a + n, c, c, a + n, c + n);
+  }
+}
+
+/**
+ * A fly agaric at growth g. It comes up as a white egg: the universal veil wrapped round a domed cap pressed
+ * down on a bulb. The stem stretches and the red cap breaks through the veil, which stays on it as white warts
+ * (part 5, the veil's cover carried in the part number) that spread apart as the cap grows. The cap opens from a
+ * dome to nearly flat; the partial veil over the gills tears from the rim and hangs as a skirt on the stem.
+ */
+function buildAgaric(b: Buf, m: Agaric, age: number) {
+  const g = clamp01((age - m.delay) / m.dur);
+  if (g <= 0) return;
+  const gg = clamp01(g + 0.02 * Math.sin(g * 11 + m.phase));
+  const pin = ease(clamp01(gg / 0.18)), stretch = ease(clamp01((gg - 0.1) / 0.5)), open = ease(clamp01((gg - 0.45) / 0.55));
+  const veil = 1 - THREE.MathUtils.smoothstep(gg, 0.1, 0.45); // 1: all white egg, 0: only the warts left
+  const H = m.H * (0.06 + 0.14 * pin + 0.8 * stretch) * (1 - 0.3 * ROT);
+  const rs = m.rs * (0.6 + 0.4 * stretch);
+  const R = Math.max(rs * 1.5, m.R * (0.35 + 0.65 * open) * (0.5 + 0.5 * pin));
+  // the cap is a piece of a sphere: theta past a right angle is a dome with its rim tucked under, near zero flat
+  const th = 1.7 - 1.2 * open + 0.6 * ROT; // withering, the rim curls down again
+  const Rc = R / Math.sin(th);
+  const thick = R * 0.22;
+  const sink = (1 - pin) * R * 0.9 + ROT * ROT * H * 0.3;
+  const fall = ROT * ROT, fx = Math.cos(m.phase * 2.3), fz = Math.sin(m.phase * 2.3);
+  const at = (y: number) => {
+    const yy = Math.max(0, y);
+    const keel = fall * yy * yy / Math.max(H, 1e-3) * 1.1;
+    return [m.base.x + m.lean[0] * yy + fx * keel, m.base.y + y - sink - keel * 0.4 * fall, m.base.z + m.lean[1] * yy + fz * keel];
+  };
+  const white = rotTint([0.9, 0.87, 0.8]), gill = rotTint([0.93, 0.9, 0.82]), red = rotTint(m.red);
+  // the cap's top surface, from the centre (t = 0) to the rim (t = 1), and its underside a little below
+  const capY = (t: number) => H - Rc * (1 - Math.cos(t * th));
+  const capR = (t: number) => Rc * Math.sin(t * th);
+  const tS = Math.min(1, Math.asin(Math.min(1, rs / Rc)) / th); // where the underside meets the stem
+  const stemTop = capY(tS) - thick;
+  // stem and bulb, the cap's underside out to the rim, over the rim and across the top to the centre
+  const P: [number, number, number, number, number[]][] = [];
+  const bulbH = rs * 2.2;
+  for (let i = 0; i <= 12; i++) {
+    const u = i / 12, y = -0.006 + (stemTop + 0.006) * u;
+    const bulb = Math.exp(-Math.max(0, y) / bulbH);
+    // the bulb, with ragged rings of the veil round it
+    const rag = 1 + 0.07 * bulb * Math.max(0, Math.sin(y / bulbH * 9 + m.phase));
+    P.push([rs * (1.0 - 0.08 * u + 0.75 * bulb) * rag, y, 0, u * 0.6, white]);
+  }
+  for (let i = 1; i <= 8; i++) {
+    const t = tS + (1 - tS) * (i / 8);
+    P.push([capR(t), capY(t) - thick * (1 - 0.7 * t), 1, 0.6 + 0.2 * (i / 8), gill]);
+  }
+  for (let i = 0; i <= 12; i++) {
+    const t = 1 - i / 12;
+    P.push([capR(t) + (i === 0 ? thick * 0.15 : 0), capY(t), 5 + 0.9 * veil, t, red]);
+  }
+  const start = b.pos.length / 3;
+  for (const [r, y, part, along, t] of P) {
+    const [cx, cy, cz] = at(y);
+    ring(b, AS, cx, cy, cz, r, part, along, t);
+  }
+  stitch(b, start, P.length, AS);
+  // the skirt: the partial veil, first spread from the stem to the rim over the gills, then torn and hanging
+  const tear = THREE.MathUtils.smoothstep(open, 0.25, 0.6);
+  if (pin > 0.5) {
+    const yr = stemTop - (stemTop - bulbH) * 0.18;
+    const rimR = capR(1) * 0.96, rimY = capY(1) - thick * 0.3;
+    const hangR = rs * 1.9, hangY = yr - H * 0.1;
+    const ex = rimR + (hangR - rimR) * tear, ey = rimY + (hangY - rimY) * tear;
+    const s0 = b.pos.length / 3;
+    for (let i = 0; i <= 4; i++) {
+      const u = i / 4;
+      const r = rs * 1.02 + (ex - rs * 1.02) * u;
+      const y = yr + (ey - yr) * u - Math.sin(u * Math.PI) * H * 0.03 * tear; // it sags
+      const [cx, cy, cz] = at(y);
+      ring(b, AS, cx, cy, cz, r, 0, 0.62, white);
+    }
+    stitch(b, s0, 5, AS);
+  }
+  // a bead or two on the cap
+  for (let j = 0; j < 2; j++) {
+    const h = frac(m.phase * (2.7 + j * 1.3));
+    if (j === 1 && h > 0.5) break;
+    const t = 0.35 + 0.4 * h, a = h * Math.PI * 2, dr = 0.0012 + 0.001 * h;
+    const [cx, cy, cz] = at(capY(t));
+    bead(b, cx + Math.cos(a) * capR(t), cy + dr * 0.6, cz + Math.sin(a) * capR(t), dr, g, 0.6 + 0.25 * h);
+  }
+}
+
 /**
  * Lay out funnel-shaped fungi (funnel chanterelles, chanterelles) one by one, each tried against the ones
  * already there, layer by layer; when one would grow into another it leans away from it, goes taller or
@@ -441,6 +552,7 @@ export interface Cluster {
   fingers: Finger[];
   funnels: Funnel[];
   puffs: Puff[];
+  agarics: Agaric[];
   age: number;
   end: number; // age at which the last one is done
   grown: boolean;
@@ -463,12 +575,14 @@ export class Fungi {
     setup(this.material);
   }
 
-  /** A cluster at (x, y, z). Thrown ones grow; found ones (grown) are there already. */
-  /** `wither`: seconds after it has grown before it starts to wither away (never, without it). */
+  /**
+   * A cluster at (x, y, z). Thrown ones grow; found ones (grown) are there already. `wither`: seconds after it
+   * has grown before it starts to wither away (never, without it).
+   */
   spawn(kind: FungusKind, x: number, y: number, z: number, opts: { grown?: boolean; key?: string; seed?: number; scale?: number; wither?: number } = {}) {
     const r = mulberry32(opts.seed ?? Math.floor(Math.random() * 1e9));
     const sc = opts.scale ?? 0.8 + 0.5 * r();
-    const fingers: Finger[] = [], funnels: Funnel[] = [], puffs: Puff[] = [];
+    const fingers: Finger[] = [], funnels: Funnel[] = [], puffs: Puff[] = [], agarics: Agaric[] = [];
     let end = 0, height = 0, radius = 0.03 * sc;
     if (kind === 'finger') {
       // a colour per cluster: white crested coral, golden spindles, orange clubs
@@ -529,6 +643,26 @@ export class Fungi {
         };
       }));
       radius = 0.09 * sc;
+    } else if (kind === 'agaric') {
+      // fly agarics: one or two, sometimes three, big, standing apart
+      const n = 1 + Math.floor(r() * r() * 3);
+      for (let i = 0; i < n; i++) {
+        for (let attempt = 0; attempt < 20; attempt++) {
+          const a = r() * Math.PI * 2, d = i === 0 ? 0 : (0.05 + 0.04 * r()) * sc;
+          const R = (0.04 + 0.03 * r()) * sc;
+          const x = Math.cos(a) * d, z = Math.sin(a) * d;
+          if (agarics.some((m) => Math.hypot(m.base.x - x, m.base.z - z) < (m.R + R) * 0.9)) continue;
+          const k = 0.9 + 0.2 * r(), out0 = 0.04 + 0.1 * r();
+          agarics.push({
+            base: new THREE.Vector3(x, 0, z), H: R * (1.7 + 0.6 * r()), R, rs: R * (0.12 + 0.04 * r()),
+            lean: [Math.cos(a) * out0, Math.sin(a) * out0],
+            delay: r() * 2 + i * 2.5, dur: 12 + 6 * r(), phase: r() * 6.28,
+            red: [0.7 * k, 0.04 * k + 0.03 * r(), 0.025],
+          });
+          break;
+        }
+      }
+      radius = 0.08 * sc;
     } else {
       // puffballs: a few pears close together, set out so they do not overlap
       const n = 2 + Math.floor(r() * 5);
@@ -557,11 +691,15 @@ export class Fungi {
       end = Math.max(end, p.delay + p.dur);
       height = Math.max(height, p.H);
     }
+    for (const m of agarics) {
+      end = Math.max(end, m.delay + m.dur);
+      height = Math.max(height, m.H);
+    }
     const mesh = new THREE.Mesh(new THREE.BufferGeometry(), this.material);
     mesh.position.set(x, y, z);
     mesh.frustumCulled = false;
     this.group.add(mesh);
-    const c: Cluster = { kind, x, y, z, mesh, fingers, funnels, puffs, age: opts.grown ? end : 0, end, grown: false, key: opts.key, height, radius, rot: 0, wither: opts.wither === undefined ? undefined : end + opts.wither };
+    const c: Cluster = { kind, x, y, z, mesh, fingers, funnels, puffs, agarics, age: opts.grown ? end : 0, end, grown: false, key: opts.key, height, radius, rot: 0, wither: opts.wither === undefined ? undefined : end + opts.wither };
     this.list.push(c);
     this.rebuild(c, 0);
     if (opts.grown) c.grown = true;
@@ -582,6 +720,7 @@ export class Fungi {
     ROT = c.rot;
     if (c.kind === 'finger') buildFingerCluster(b, c.fingers, c.age, time);
     else if (c.kind === 'puffball') for (const p of c.puffs) buildPuffball(b, p, c.age);
+    else if (c.kind === 'agaric') for (const m of c.agarics) buildAgaric(b, m, c.age);
     else for (const f of c.funnels) buildFunnel(b, f, c.age, time);
     ROT = 0;
     const g = new THREE.BufferGeometry();
@@ -707,7 +846,7 @@ void main() {
     // finger fungi: smooth, a little darker toward the base, translucent tips
     col *= mix(0.75, 1.0, smoothstep(0.0, 0.4, along));
     thin = 0.9;
-  } else {
+  } else if (vPart < 4.5) {
     // puffball: covered in little warts (pale cones, some rubbed off to brown spots), a smoother stem,
     // and a pore at the top once ripe
     vec2 q = vec2(around * 40.0, along * 22.0);
@@ -727,6 +866,25 @@ void main() {
     float ripe = 1.0 - smoothstep(0.66, 0.78, vTint.r);
     col *= mix(1.0, 0.25, smoothstep(0.965, 0.995, along) * ripe);
     thin = 0.3;
+  } else {
+    // fly agaric's cap: red, under the white veil while it is an egg; as it breaks, the veil stays as warts that
+    // spread apart with the growing cap. How much veil is left rides in the part number (5 .. 5.9).
+    float veil = clamp((vPart - 5.0) / 0.9, 0.0, 1.0);
+    vec2 disc = vec2(cos(around * 6.2831), sin(around * 6.2831)) * along * 9.0; // flat over the cap
+    vec2 i = floor(disc), fq = fract(disc) - 0.5;
+    vec2 o = vec2(h31(vec3(i, 7.0)), h31(vec3(i, 8.0))) - 0.5;
+    vec2 d = fq - o * 0.55;
+    float r0 = mix(0.12 + 0.12 * h31(vec3(i, 9.0)), 1.0, veil) * (1.0 - 0.35 * along * (1.0 - veil));
+    float wart = (1.0 - smoothstep(r0, r0 + 0.07, length(d))) * step(0.2, h31(vec3(i, 10.0)) + veil);
+    // the red: deeper in the middle, more orange to the rim, faintly striate at the very edge
+    col = vTint * mix(0.8, 1.12, smoothstep(0.0, 0.9, along));
+    col *= 1.0 - 0.1 * smoothstep(0.85, 1.0, along) * abs(sin(around * 6.2831 * 60.0));
+    // the warts: chalky white, darkened as the rest is when it withers; little raised lumps
+    float k = clamp(vTint.r / 0.7, 0.15, 1.0);
+    vec3 T = normalize(cross(N, vec3(0.0, 1.0, 0.0)) + 1e-4), B = cross(N, T);
+    N = normalize(N + (T * d.x + B * d.y) * wart * (1.0 - veil) * 1.6);
+    col = mix(col, vec3(0.9, 0.87, 0.78) * k * (0.9 + 0.15 * n3(vWorldPos * 900.0)), wart);
+    thin = 0.35;
   }
   // slime: a film of water that glistens and slowly moves; the colour deeper where it is wet
   vec3 q = vWorldPos * 380.0 + vec3(0.0, uTime * 0.25, 0.0);

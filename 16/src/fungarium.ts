@@ -24,6 +24,10 @@ export const SPECIES: Species[] = [
     kind: 'puffball', sv: 'Vårtig röksvamp', en: 'Common puffball', latin: 'Lycoperdon perlatum', seed: 3, scale: 1.0,
     note: 'Little white pears covered in warts, in moss and needle litter. Ripe, they brown and open a pore at the top: in the forest, tap one or crawl into it and it puffs out a cloud of spores.',
   },
+  {
+    kind: 'agaric', sv: 'Röd flugsvamp', en: 'Fly agaric', latin: 'Amanita muscaria', seed: 4, scale: 1.0,
+    note: 'In mossy birch and spruce forest, late summer into autumn. It comes up as a white egg; the red cap breaks through the veil, which stays on it as white warts, and leaves a skirt hanging on the stem. Poisonous.',
+  },
 ];
 
 export class Fungarium {

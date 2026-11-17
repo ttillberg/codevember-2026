@@ -25,7 +25,7 @@ export class Props {
     const n = r() < 0.6 ? 1 + Math.floor(r() * 2) : 0;
     for (let i = 0; i < n; i++) {
       const k = r();
-      const kind: FungusKind = k < 0.3 ? 'funnel' : k < 0.55 ? 'finger' : k < 0.8 ? 'chanterelle' : 'puffball';
+      const kind: FungusKind = k < 0.28 ? 'funnel' : k < 0.5 ? 'finger' : k < 0.72 ? 'chanterelle' : k < 0.9 ? 'puffball' : 'agaric';
       const x = (ix + 0.1 + 0.8 * r()) * CELL, z = (iz + 0.1 + 0.8 * r()) * CELL;
       const seed = Math.floor(r() * 1e9), scale = 0.8 + 0.5 * r();
       if (Math.hypot(x, z) < 0.6) continue; // the start has its own
