@@ -15,7 +15,6 @@ import { People, Signs, Street } from './Life';
 import { Commons, plantCommons, standingCommons, type Green } from './Park';
 import { Painter, Sketch, type Brush, type Tool, jolt } from './Painter';
 import { Brushes, History, Overlays, TimeControl, ViewMenu, hhmm, showTime } from './Controls';
-import { TraceIcon } from './Icons';
 import { Air } from './Air';
 import { buildNet, type Net, type V, type Road } from './net';
 import { MAP } from './map';
@@ -111,11 +110,11 @@ const GRADES: [keyof Grade, string, number, number, number][] = [
 const AAS = ['msaa4', 'msaa2', 'smaa', 'none'] as const;
 /** What the eye's list was left at, kept in this browser from one visit to the next. What the address asks for comes first. */
 const VIEW_KEY = 'codevember-04-view';
-type View = { air: boolean; tilt: boolean; heat: boolean; aa: Fx['aa'] };
+type View = { air: boolean; tilt: boolean; heat: boolean; trace: boolean; aa: Fx['aa'] };
 function viewKept(): Partial<View> {
   try {
     const v = JSON.parse(localStorage.getItem(VIEW_KEY) ?? '{}');
-    return v && typeof v === 'object' ? { air: v.air === true ? true : v.air === false ? false : undefined, tilt: typeof v.tilt === 'boolean' ? v.tilt : undefined, heat: typeof v.heat === 'boolean' ? v.heat : undefined, aa: AAS.includes(v.aa) ? v.aa : undefined } : {};
+    return v && typeof v === 'object' ? { air: v.air === true ? true : v.air === false ? false : undefined, tilt: typeof v.tilt === 'boolean' ? v.tilt : undefined, heat: typeof v.heat === 'boolean' ? v.heat : undefined, trace: typeof v.trace === 'boolean' ? v.trace : undefined, aa: AAS.includes(v.aa) ? v.aa : undefined } : {};
   } catch { return {}; }
 }
 function keepView(v: View | null) {
@@ -562,15 +561,18 @@ export function App() {
   // the mist and the clouds: off until asked for, in the eye's list or with ?air
   const [air, setAir] = useState(() => new URLSearchParams(location.search).has('air') || (KEPT.air ?? false));
   const [trace, setTrace] = useState<V | null>(null);
+  // the journeys: with them shown, the road under the pointer says where its traffic is going
+  const [tracing, setTracing] = useState(() => KEPT.trace ?? false);
+  useEffect(() => { if (!tracing) setTrace(null); }, [tracing]);
   // ?debug: the shot under the sliders; without it the drone keeps its own
   const [shot, setShot] = useState<Shot | null>(() => (debug ? SHOTS[upright() ? 'p' : 'l'] : null));
   const [grade, setGrade] = useState(GRADE);
   const [fx, setFx] = useState(() => ({ ...FX, tilt: no('tilt') ? false : KEPT.tilt ?? FX.tilt, aa: no('msaa') ? FX.aa : KEPT.aa ?? FX.aa }));
   // what the eye's list is set to is kept; back at how it opens, nothing is
   useEffect(() => {
-    const v = { air, tilt: fx.tilt, heat, aa: fx.aa };
-    keepView(!v.air && !v.heat && v.tilt === FX.tilt && v.aa === FX.aa ? null : v);
-  }, [air, heat, fx.tilt, fx.aa]);
+    const v = { air, tilt: fx.tilt, heat, trace: tracing, aa: fx.aa };
+    keepView(!v.air && !v.heat && !v.trace && v.tilt === FX.tilt && v.aa === FX.aa ? null : v);
+  }, [air, heat, tracing, fx.tilt, fx.aa]);
   const [nodes, setNodes] = useState(() => new URLSearchParams(location.search).has('nodes'));
   // canvas pixels to a screen point, at most
   const [dpr, setDpr] = useState(DPR);
@@ -878,8 +880,8 @@ export function App() {
       }
       // H shows the heat map, and H again takes it away
       if ((e.key === 'h' || e.key === 'H') && !e.metaKey && !e.ctrlKey && !e.altKey) setHeat((v) => !v);
-      // C reads the traffic of a road (trace), and C again takes the brush back up
-      if ((e.key === 'c' || e.key === 'C') && !e.metaKey && !e.ctrlKey && !e.altKey) setTool((t) => (t === 'trace' ? brushNow.current : 'trace'));
+      // C shows the journeys of the road under the pointer, and C again takes them away
+      if ((e.key === 'c' || e.key === 'C') && !e.metaKey && !e.ctrlKey && !e.altKey) setTracing((v) => !v);
       // R takes up the road brush, B the bridge, S the smear, E the eraser
       const pick = ({ r: 'road', b: 'bridge', s: 'smear', e: 'erase' } as Record<string, Brush>)[e.key.toLowerCase()];
       if (pick && !e.metaKey && !e.ctrlKey && !e.altKey) { setBrush(pick); setTool(pick); }
@@ -917,12 +919,12 @@ export function App() {
           const key = t.i + ',' + t.j, part = views.get(key);
           return part && <TileView key={key} tile={t} net={part} blocks={blocksOf(key)} green={key === '0,0' ? green : undefined} trees={trees} season={season} speed={speed} shade={!fx.lazy} wait={Math.abs(t.i + t.j) % 2} />;
         })}
-        <Cars net={roads} speed={speed} target={VEHICLES} trail={lights === 'off' ? 0 : clock.trail} glow={lights === 'webgpu'} walls={hides} onGlowFail={noGpu} shade={!fx.lazy} heat={heat} trace={tool === 'trace' ? trace : null} onNote={onNote} onSim={onSim} />
+        <Cars net={roads} speed={speed} target={VEHICLES} trail={lights === 'off' ? 0 : clock.trail} glow={lights === 'webgpu'} walls={hides} onGlowFail={noGpu} shade={!fx.lazy} heat={heat} trace={tracing ? trace : null} onNote={onNote} onSim={onSim} />
         <Commons green={place.green} speed={speed} />
         {air && <Air />}
         {nodes && <Nodes net={roads} />}
         <Sketch api={sketch} />
-        <Painter net={ground} tool={tool} onStroke={onStroke} onSmear={onSmear} onTrace={setTrace} onErase={onErase} onSize={onSize} shrink={!grow} reach={reach} rub={rub} />
+        <Painter net={ground} tool={tool} onStroke={onStroke} onSmear={onSmear} onTrace={setTrace} onErase={onErase} onSize={onSize} shrink={!grow} reach={reach} rub={rub} tracing={tracing} />
         <EffectComposer multisampling={fx.aa === 'msaa4' ? 4 : fx.aa === 'msaa2' ? 2 : 0}>
           {fx.tilt && <TiltShift2 blur={lens.blur} taper={lens.taper} start={start} end={end} samples={touch ? 10 : 18} />}
           {/* the lights bleed into what is beside them, as they do through glass */}
@@ -938,9 +940,10 @@ export function App() {
       </Canvas>
       {/* top right: the time and its hold, then the overlays; a second overlay is one more entry */}
       <div className="corner">
+        {/* the hour in figures, to the left of the bar: written by showTime as the hands are */}
+        <output className="time" aria-label="Time">{hhmm(clock.hour)}</output>
         {/* the clock, and beside it the two ways of reading the traffic: where it stands, and where one stretch's cars are going */}
-        <Overlays tail={<ViewMenu onReset={() => { setAir(false); setHeat(false); setFx((f) => ({ ...f, tilt: FX.tilt, aa: FX.aa })); }} choices={[{ id: 'aa', label: 'Antialiasing', options: AA_NAMES, value: fx.aa, set: (v) => setFx((f) => ({ ...f, aa: v as Fx['aa'] })) }]} items={[{ id: 'air', label: 'Atmospherics', on: air, toggle: () => setAir((v) => !v) }, { id: 'tilt', label: 'Tilt shift', on: fx.tilt, toggle: () => setFx((f) => ({ ...f, tilt: !f.tilt })) }, { id: 'heat', label: 'Heat map', on: heat, toggle: () => setHeat((v) => !v) }]} />} lead={<TimeControl now={hourNow} readout={readout} hold={clock.hold} onHold={() => setClock((c) => ({ ...c, hold: !c.hold }))} onSet={setHour} />} items={[
-          { id: 'trace', label: 'Trace', keys: 'C', icon: <TraceIcon />, on: tool === 'trace', toggle: () => setTool((t) => (t === 'trace' ? brush : 'trace')) },
+        <Overlays tail={<ViewMenu onReset={() => { setAir(false); setHeat(false); setTracing(false); setFx((f) => ({ ...f, tilt: FX.tilt, aa: FX.aa })); }} choices={[{ id: 'aa', label: 'Antialiasing', options: AA_NAMES, value: fx.aa, set: (v) => setFx((f) => ({ ...f, aa: v as Fx['aa'] })) }]} items={[{ id: 'air', label: 'Atmospherics', on: air, toggle: () => setAir((v) => !v) }, { id: 'tilt', label: 'Tilt shift', on: fx.tilt, toggle: () => setFx((f) => ({ ...f, tilt: !f.tilt })) }, { id: 'heat', label: 'Heat map', on: heat, toggle: () => setHeat((v) => !v) }, { id: 'trace', label: 'Traces', on: tracing, toggle: () => setTracing((v) => !v) }]} />} lead={<TimeControl now={hourNow} readout={readout} hold={clock.hold} onHold={() => setClock((c) => ({ ...c, hold: !c.hold }))} onSet={setHour} />} items={[
         ]} />
       </div>
       <pre className="alarm" ref={alarm} />
@@ -1024,7 +1027,7 @@ export function App() {
           {PERKS.map(([label, ask]) => <button key={label} onClick={() => traffic.current && ask(traffic.current)}>{label}</button>)}
         </div>
       )}
-      {tool === 'trace' && <div className="note" ref={noteBox}>{trace ? '' : 'click a road'}</div>}
+      {tracing && <div className="note" ref={noteBox}>{trace ? '' : 'point at a road'}</div>}
       <Brushes tool={tool} sized={SIZED} grow={grow} reach={reach} onSmear={setReach} rub={rub} onRub={setRub} onGrow={setGrow} onPick={(b) => { setBrush(b); setTool(b); }} />
       <History canUndo={history.length > 1} canRedo={redos.length > 0} onUndo={undo} onRedo={redo} />
     </>

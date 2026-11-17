@@ -73,9 +73,9 @@ export function Sketch({ api }: { api: MutableRefObject<(strokes: { pts: V[] }[]
     </>
   );
 }
-export type Tool = 'road' | 'bridge' | 'smear' | 'size' | 'erase' | 'trace';
+export type Tool = 'road' | 'bridge' | 'smear' | 'size' | 'erase';
 /** the tools that paint or push: what the brush is when trace is not on */
-export type Brush = Exclude<Tool, 'trace'>;
+export type Brush = Tool;
 
 const AT = new Vector3();
 
@@ -150,9 +150,11 @@ interface Props {
   reach: number;
   /** how wide the eraser rubs to either side, metres: its ring and its drag are that wide */
   rub: number;
+  /** the journeys are shown: the road under the pointer is read as it passes, whatever brush is held */
+  tracing?: boolean;
 }
 
-export function Painter({ net, tool, onStroke, onSmear, onTrace, onErase, onSize, shrink, reach, rub }: Props) {
+export function Painter({ net, tool, onStroke, onSmear, onTrace, onErase, onSize, shrink, reach, rub, tracing }: Props) {
   const preview = useRef<Mesh>(null);
   const draw = useRef<{ id: number; pts: V[]; bridge: boolean; smear: boolean; erase: boolean; up: boolean } | null>(null);
 
@@ -215,6 +217,8 @@ export function Painter({ net, tool, onStroke, onSmear, onTrace, onErase, onSize
   // and while a stroke is drawn another ring left standing where it began
   const here = useRef<Group>(null), from = useRef<Group>(null), near = useRef<Mesh>(null);
   const wide = useRef<Mesh>(null);
+  /** where the trace last read a road */
+  const traced = useRef<V | null>(null);
   const mark = (g: Group, p: V | null, h = 0) => {
     g.visible = !!p;
     if (!p) return;
@@ -237,6 +241,12 @@ export function Painter({ net, tool, onStroke, onSmear, onTrace, onErase, onSize
     const rubbing = tool === 'erase' || !!draw.current?.erase;
     w.visible = rubbing || tool === 'smear' || !!draw.current?.smear;
     if (w.visible && (rubbing || !draw.current)) { w.position.set(ground.x, 0.6, ground.y); w.scale.setScalar(rubbing ? rub : reach); }
+    // with the journeys shown, the road under the pointer is read as it passes, with no press and whatever brush is held:
+    // asked again every few metres along it, and what it read last stays while the pointer is over the grass
+    if (tracing && !draw.current) {
+      const on = (hold ?? under(net, e.ray, ground))?.p, was = traced.current;
+      if (on && (!was || Math.hypot(on.x - was.x, on.y - was.y) > 6)) { traced.current = on; onTrace(on); }
+    }
     const n = near.current!;
     n.visible = !!hold;
     if (!hold) return;
@@ -284,7 +294,6 @@ export function Painter({ net, tool, onStroke, onSmear, onTrace, onErase, onSize
     if (draw.current) return cancel();
     if (e.pointerType === 'mouse' && e.button !== 0) return;
     const p = { x: e.point.x, y: e.point.z };
-    if (tool === 'trace') return onTrace(onDeck(net, e.ray) ?? p);
     (e.target as Element).setPointerCapture?.(e.pointerId);
     // erase works on the ground under the drag, so it never starts on a deck
     // the size brush draws nothing: a press on a road changes that road, and the hover has shown which

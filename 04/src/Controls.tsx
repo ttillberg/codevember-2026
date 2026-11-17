@@ -14,11 +14,15 @@ const wrap = (h: number) => ((h % 24) + 24) % 24;
 /** What a button is, over it after a short hover: its name, and its key in a chip. As on day 07. */
 const Tip = ({ tip, keys }: { tip: string; keys?: string }) => <span className="tip" aria-hidden>{tip}{keys && <kbd>{keys}</kbd>}</span>;
 
-/** Turn the hands of the clock to this hour: written straight onto the button, so the running time does not re-render the page. */
+/** Turn the hands of the clock to this hour, and write it in figures beside the bar: straight onto the page, so the running time does not re-render it. */
 export function showTime(el: HTMLElement | null, h: number) {
   if (!el) return;
   el.style.setProperty('--hour', `${((h % 12) / 12) * 360}deg`);
   el.style.setProperty('--minute', `${(h % 1) * 360}deg`);
+  // and the same in figures, beside the bar: only written when the minute turns
+  const text = el.closest('.corner')?.querySelector('.time');
+  const now = hhmm(h);
+  if (text && text.textContent !== now) text.textContent = now;
 }
 
 /**

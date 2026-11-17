@@ -200,8 +200,8 @@ export function Journeys({ sim, net, at, note }: { sim: Sim; net: Net; at: V; no
       }
     }
     lines.geo.setDrawRange(0, n * 6);
-    lines.pos.needsUpdate = true;
-    lines.col.needsUpdate = true;
+    // only what is drawn is sent to the card, not the whole of a buffer made for the worst case
+    for (const a of [lines.pos, lines.col]) { a.clearUpdateRanges(); a.addUpdateRange(0, Math.max(12, n * 12)); a.needsUpdate = true; }
     const text = road ? `${cars} on this stretch` : 'no road there';
     if (note && text !== said.current) note((said.current = text));
   });

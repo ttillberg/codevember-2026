@@ -15,8 +15,6 @@ export const BridgeIcon = () => <Svg><path fill="currentColor" stroke="none" d="
 export const SmearIcon = () => <Svg><path d="M10.2 13.5V7.6a1.35 1.35 0 0 1 2.7 0v4.2h1.9a2.3 2.3 0 0 1 2.3 2.3v1.6a4.6 4.2 0 0 1-9.2 0c0-1.6.8-2.8 2.3-3.4" /><path d="M5.2 5.4c1.4 1.7 3 2.2 5 2M12.9 7c2.4-.5 4.6-.6 5.9.5.9.8.9 1.9.3 2.9" /></Svg>;
 // a rubber, half rubbed
 export const EraseIcon = () => <Svg><path d="M4.2 14.3 12.3 6.2a2 2 0 0 1 2.8 0l3 3a2 2 0 0 1 0 2.8L14.2 18.2H8.5z" /><path d="M9.8 10.5l5.2 5.2M14.2 18.2H20" /></Svg>;
-// a line you follow, dotted where the traffic runs
-export const TraceIcon = () => <Svg><path d="M3 18c4 0 4.5-9 9-9s5 3.5 9-7" /><circle cx="3" cy="18" r="1.2" fill="currentColor" stroke="none" /><circle cx="21" cy="2" r="1.2" fill="currentColor" stroke="none" /></Svg>;
 export const UndoIcon = () => <Svg><path d="M9 14 4.5 9.5 9 5" /><path d="M4.5 9.5H14a5.5 5.5 0 0 1 0 11h-3" /></Svg>;
 export const RedoIcon = () => <Svg><path d="M15 14l4.5-4.5L15 5" /><path d="M19.5 9.5H10a5.5 5.5 0 0 0 0 11h3" /></Svg>;
 // a clock that goes: each hand is turned to the time by the style of the button it is on (--hour, --minute)
