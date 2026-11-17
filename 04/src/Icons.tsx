@@ -24,3 +24,5 @@ export const EyeIcon = () => <Svg><path d="M2.5 12c2.4-4.2 5.6-6.3 9.5-6.3s7.1 2
 // a road that swells in the middle, and one that is pinched: the size brush makes roads bigger, or smaller
 export const GrowIcon = () => <Svg><path d="M9 3v5.5c-3.4 1.7-3.4 5.3 0 7V21M15 3v5.5c3.4 1.7 3.4 5.3 0 7V21" /></Svg>;
 export const ShrinkIcon = () => <Svg><path d="M7.5 3v5.5c3.2 1.7 3.2 5.3 0 7V21M16.5 3v5.5c-3.2 1.7-3.2 5.3 0 7V21" /></Svg>;
+// an arrow down onto a line: the picture as a file
+export const DownloadIcon = () => <Svg><path d="M12 4v11M7.5 10.5 12 15l4.5-4.5M5 19.5h14" /></Svg>;

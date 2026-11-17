@@ -2,7 +2,7 @@
 // They are plain DOM over the canvas, so a press on them never reaches the ground.
 import { Fragment, useRef, type MutableRefObject, type ReactNode, type RefObject, useEffect, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react';
 import type { Brush, Tool } from './Painter';
-import { BridgeIcon, ClockIcon, EraseIcon, RedoIcon, RoadIcon, SmearIcon, UndoIcon, EyeIcon, GrowIcon, ShrinkIcon } from './Icons';
+import { BridgeIcon, ClockIcon, EraseIcon, RedoIcon, RoadIcon, SmearIcon, UndoIcon, EyeIcon, GrowIcon, ShrinkIcon, DownloadIcon } from './Icons';
 
 /** How far a drag on the time has to go for an hour: px per hour. And how far before it is a drag and not a tap. */
 const PX_PER_HOUR = 40, TAP = 5;
@@ -176,7 +176,9 @@ function SizeBrush({ on, grow, onPick, onGrow }: { on: boolean; grow: boolean; o
 }
 
 /** How far the smear can reach, and how wide the eraser can rub, metres; and how far a drag on a brush goes for the whole of a range, px. */
-export const SMEAR_MIN = 25, SMEAR_MAX = 140, ERASE_MIN = 3, ERASE_MAX = 40;
+export const SMEAR_MIN = 25, SMEAR_MAX = 140, ERASE_MIN = 5, ERASE_MAX = 45;
+/** Both open in the middle of their range. */
+export const SMEAR_MID = Math.round((SMEAR_MIN + SMEAR_MAX) / 2), ERASE_MID = (ERASE_MIN + ERASE_MAX) / 2;
 const TRAVEL = 140;
 
 /**
@@ -273,11 +275,19 @@ export function Brushes({ tool, sized, grow, reach, rub, onPick, onGrow, onSmear
 }
 
 /** Undo and redo, bottom right, out of the way of the brushes. */
-export function History({ canUndo, canRedo, onUndo, onRedo }: { canUndo: boolean; canRedo: boolean; onUndo: () => void; onRedo: () => void }) {
+export function History({ canUndo, canRedo, onUndo, onRedo, onSave }: { canUndo: boolean; canRedo: boolean; onUndo: () => void; onRedo: () => void; onSave?: () => void }) {
   return (
-    <div className="pill history">
-      <button aria-label="Undo" disabled={!canUndo} onClick={onUndo}><UndoIcon /><Tip tip="Undo" keys="⌘Z" /></button>
-      <button aria-label="Redo" disabled={!canRedo} onClick={onRedo}><RedoIcon /><Tip tip="Redo" keys="⇧⌘Z" /></button>
-    </div>
+    <>
+      <div className={`pill history${onSave ? ' beside' : ''}`}>
+        <button aria-label="Undo" disabled={!canUndo} onClick={onUndo}><UndoIcon /><Tip tip="Undo" keys="⌘Z" /></button>
+        <button aria-label="Redo" disabled={!canRedo} onClick={onRedo}><RedoIcon /><Tip tip="Redo" keys="⇧⌘Z" /></button>
+      </div>
+      {/* the picture as a file, an island of its own in the corner: on a desk only, a phone has its own way of taking one */}
+      {onSave && (
+        <div className="pill save">
+          <button aria-label="Download picture" onClick={onSave}><DownloadIcon /><Tip tip="Download" /></button>
+        </div>
+      )}
+    </>
   );
 }

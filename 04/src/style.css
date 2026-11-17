@@ -115,6 +115,21 @@ canvas.glow { position: absolute; inset: 0; width: 100%; height: 100%; pointer-e
   position: absolute; left: 0; right: 0; bottom: 8px; text-align: center; color: #f4f4f2; mix-blend-mode: difference;
   font: 600 11px/1 Inter, "Helvetica Neue", Helvetica, Arial, sans-serif; font-variant-numeric: tabular-nums;
 }
+/* the download is an island of its own, right of undo and redo, which move over for it. It is for a desk: where there
+   is no hover, or the screen is narrow, it is left out and they keep the corner */
+.save { position: fixed; z-index: 2; bottom: max(20px, env(safe-area-inset-bottom)); right: max(20px, env(safe-area-inset-right)); padding: 6px; }
+.save button { position: relative; width: 46px; height: 46px; }
+.save .tip { left: auto; right: 0; transform: translate(0, 4px); }
+.history.beside { right: calc(max(20px, env(safe-area-inset-right)) + 66px); }
+.history.beside .tip { left: 50%; right: auto; transform: translate(-50%, 4px); }
+@media (hover: hover) {
+  .save button:hover .tip { transform: translate(0, 0); }
+  .history.beside button:hover:not(:disabled) .tip { transform: translate(-50%, 0); }
+}
+@media (hover: none), (max-width: 640px) {
+  .save { display: none; }
+  .history.beside { right: max(16px, env(safe-area-inset-right)); }
+}
 /* what a button is, over it after a short hover: its name, and its key in a chip */
 .tip {
   position: absolute; z-index: 2; pointer-events: none; white-space: nowrap; display: flex; align-items: center; gap: 6px;
@@ -154,8 +169,8 @@ canvas.glow { position: absolute; inset: 0; width: 100%; height: 100%; pointer-e
   /* on a phone the time and the overlays go under the plate, on the right */
   /* on a phone the time sits top right beside the plate, and the overlays hang under it */
   .corner { top: max(16px, env(safe-area-inset-top)); right: max(16px, env(safe-area-inset-right)); flex-direction: column; align-items: flex-end; }
-  /* there the figures go under the bar, out of the way of the plate */
-  .corner .time { order: 1; margin-right: 8px; }
+  /* there is no room for the figures there: the hands of the clock say it */
+  .corner .time { display: none; }
 }
 /* ?debug: the shot, slider by slider */
 .pane {
@@ -184,7 +199,7 @@ canvas.glow { position: absolute; inset: 0; width: 100%; height: 100%; pointer-e
   font: 11px/1.35 ui-monospace, Menlo, monospace; white-space: pre-wrap;
 }
 .alarm:empty { display: none; }
-.clean .corner, .clean .brushes, .clean .history, .clean .note, .clean .pane { display: none; }
+.clean .corner, .clean .brushes, .clean .history, .clean .save, .clean .note, .clean .pane { display: none; }
 @media (max-width: 640px) {
   /* the pane sits under the time and the overlays on a phone */
   .pane { top: calc(max(16px, env(safe-area-inset-top)) + 124px); right: max(16px, env(safe-area-inset-right)); max-height: calc(100vh - 150px); }

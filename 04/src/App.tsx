@@ -14,8 +14,9 @@ import { plantSmall, plantTown, shifted, turnSome, type Block } from './Town';
 import { People, Signs, Street } from './Life';
 import { Commons, plantCommons, standingCommons, type Green } from './Park';
 import { Painter, Sketch, type Brush, type Tool, jolt } from './Painter';
-import { Brushes, History, Overlays, TimeControl, ViewMenu, hhmm, showTime } from './Controls';
+import { Brushes, History, Overlays, TimeControl, ViewMenu, hhmm, showTime, ERASE_MID, SMEAR_MID } from './Controls';
 import { Air } from './Air';
+import { Snapshot, downloadPng } from './snapshot';
 import { buildNet, type Net, type V, type Road } from './net';
 import { MAP } from './map';
 import { baseIntent, derive, no, standing, type Intent } from './intent';
@@ -342,41 +343,6 @@ function Drone({ shot, move, set, onShot, onWindow, onAhead }: {
       c.update();
     };
   }, [camera]);
-  // Two fingers that turn about each other turn the drone about the point it looks at: the place follows the fingers.
-  // The controls already move it with the same two fingers; this only adds the turn they leave out.
-  useEffect(() => {
-    const el = gl.domElement, down = new Map<number, { x: number; y: number }>();
-    let was: number | null = null;
-    const angle = () => { const [a, b] = [...down.values()]; return Math.atan2(b.y - a.y, b.x - a.x); };
-    const press = (e: PointerEvent) => { if (e.pointerType === 'touch') { down.set(e.pointerId, { x: e.clientX, y: e.clientY }); was = down.size === 2 ? angle() : null; } };
-    const lift = (e: PointerEvent) => { down.delete(e.pointerId); was = null; };
-    const move = (e: PointerEvent) => {
-      const at = down.get(e.pointerId);
-      if (!at) return;
-      at.x = e.clientX; at.y = e.clientY;
-      const c = controls.current;
-      if (down.size !== 2 || !c) return;
-      const now = angle();
-      if (was !== null) {
-        // the short way round, whichever side of the turn the fingers crossed
-        let a = now - was;
-        if (a > Math.PI) a -= 2 * Math.PI; else if (a < -Math.PI) a += 2 * Math.PI;
-        const p = camera.position, dx = p.x - c.target.x, dz = p.z - c.target.z, cos = Math.cos(a), sin = Math.sin(a);
-        p.x = c.target.x + dx * cos + dz * sin;
-        p.z = c.target.z - dx * sin + dz * cos;
-        held.current = performance.now() + 900;
-      }
-      was = now;
-    };
-    el.addEventListener('pointerdown', press);
-    el.addEventListener('pointermove', move);
-    for (const k of ['pointerup', 'pointercancel', 'pointerleave'] as const) el.addEventListener(k, lift);
-    return () => {
-      el.removeEventListener('pointerdown', press);
-      el.removeEventListener('pointermove', move);
-      for (const k of ['pointerup', 'pointercancel', 'pointerleave'] as const) el.removeEventListener(k, lift);
-    };
-  }, [gl, camera]);
   return (
     <MapControls
       ref={controls as never}
@@ -393,7 +359,8 @@ function Drone({ shot, move, set, onShot, onWindow, onAhead }: {
       onChange={fence}
       dampingFactor={0.12}
       zoomSpeed={0.6}
-      // one finger and the left button paint; two fingers and the right button move the drone
+      // one finger and the left button paint; two fingers and the right button move the drone, nearer, further and
+      // sideways: they do not turn it, so a pinch that is not quite straight leaves the picture the way it stood
       mouseButtons={{ LEFT: -1 as unknown as MOUSE, MIDDLE: MOUSE.DOLLY, RIGHT: MOUSE.PAN }}
       touches={{ ONE: -1 as unknown as TOUCH, TWO: TOUCH.DOLLY_PAN }}
     />
@@ -804,11 +771,11 @@ export function App() {
     setRedos([]);
   }, []);
   /** how wide the eraser rubs to either side of the drag, metres */
-  const [rub, setRub] = useState(6);
+  const [rub, setRub] = useState(ERASE_MID);
   const rubNow = useRef(rub);
   rubNow.current = rub;
   /** how far the smear reaches, metres; its pull always falls off by the one soft curve */
-  const [reach, setReach] = useState(65);
+  const [reach, setReach] = useState(SMEAR_MID);
   useEffect(() => smearSet(reach, 2), [reach]);
   /** whether the size brush makes roads bigger, or smaller */
   const [grow, setGrow] = useState(true);
@@ -922,6 +889,7 @@ export function App() {
         <Cars net={roads} speed={speed} target={VEHICLES} trail={lights === 'off' ? 0 : clock.trail} glow={lights === 'webgpu'} walls={hides} onGlowFail={noGpu} shade={!fx.lazy} heat={heat} trace={tracing ? trace : null} onNote={onNote} onSim={onSim} />
         <Commons green={place.green} speed={speed} />
         {air && <Air />}
+        <Snapshot />
         {nodes && <Nodes net={roads} />}
         <Sketch api={sketch} />
         <Painter net={ground} tool={tool} onStroke={onStroke} onSmear={onSmear} onTrace={setTrace} onErase={onErase} onSize={onSize} shrink={!grow} reach={reach} rub={rub} tracing={tracing} />
@@ -1029,7 +997,7 @@ export function App() {
       )}
       {tracing && <div className="note" ref={noteBox}>{trace ? '' : 'point at a road'}</div>}
       <Brushes tool={tool} sized={SIZED} grow={grow} reach={reach} onSmear={setReach} rub={rub} onRub={setRub} onGrow={setGrow} onPick={(b) => { setBrush(b); setTool(b); }} />
-      <History canUndo={history.length > 1} canRedo={redos.length > 0} onUndo={undo} onRedo={redo} />
+      <History canUndo={history.length > 1} canRedo={redos.length > 0} onUndo={undo} onRedo={redo} onSave={downloadPng} />
     </>
   );
 }

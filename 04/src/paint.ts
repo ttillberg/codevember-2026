@@ -202,7 +202,7 @@ function lay(intent: Intent, stroke: V[], bridge: boolean, houses: Rect[] = NO_H
  * reach: the power the curve is raised to, 1 a broad dome, 2 a soft bell, 4 a sharp peak. Set through `smearSet` in wet.ts,
  * which keeps the shaders with it.
  */
-export const SMEAR = { r: 65, fall: 2 };
+export const SMEAR = { r: 82, fall: 2 };
 /** How much of the pull is left this far from the grab. */
 export const smearFall = (d: number) => (d >= SMEAR.r ? 0 : (1 - (d / SMEAR.r) ** 2) ** SMEAR.fall);
 
