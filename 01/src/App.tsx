@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useMemo, useRef, type PointerEvent as ReactPointerEvent } from 'react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import { Desk } from './Desk';
@@ -7,14 +7,13 @@ import { createGame, type Game, type Saved } from './game';
 import { createBoard, placeNew } from './board';
 import { makeRig } from './rig';
 import { useHud } from './hud';
-import { forget, keep, kept } from './keep';
+import { card, dropCard, putCard, watch } from './store';
 import { MODELS, modelById, type Model } from './models';
 import { sheetSvg } from './art';
 import { sheetOf } from './net';
 
-// where each card was left, to pick up again when it comes back to the mat; one that went on
-// the board starts afresh
-const left = new Map<string, Saved>();
+// where each card was left is kept (see store), to pick up again when it comes back to the
+// mat; one that went on the board starts afresh
 const placed = new Set<string>();
 
 // the built one goes on the board, the sheet starts over
@@ -55,18 +54,17 @@ function Card({ model }: { model: Model }) {
   const gl = useThree((s) => s.gl);
   const last = useRef<Game | null>(null);
   const game = useMemo(() => {
-    const k = kept();
-    const saved = last.current?.save() ?? (k?.model === model.id ? k : null) ?? left.get(model.id);
-    forget();
+    const saved: Saved | null = last.current?.save() ?? card(model.id);
     const g = createGame(model, camera, gl.domElement, gl, makeRig(camera, gl.domElement));
     if (saved) g.load(saved);
     last.current = g;
-    keep(g.save);
+    watch(g.save);
     return g;
   }, [camera, gl, model]);
   useEffect(() => () => {
-    if (placed.delete(model.id)) left.delete(model.id);
-    else left.set(model.id, game.save());
+    watch(null);
+    if (placed.delete(model.id)) dropCard(model.id);
+    else putCard(game.save());
     game.dispose();
   }, [game, model]);
   useFrame((_, dt) => game.animate(performance.now(), Math.min(0.05, dt)));
@@ -138,11 +136,77 @@ function BoardHud() {
   const n = useHud((s) => s.town.length);
   return (
     <>
-      <Plate hint={n ? 'Drag to move, tap to turn, off the edge to take away' : 'Build something and put it here'} />
+      <Plate hint={n ? 'Tap one to turn it, drag to move, off the edge to take away' : 'Build something and put it here'} />
       <button className="sheets" type="button" aria-label="Back to the sheets" onClick={() => useHud.setState({ board: false })}>
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="3.5" y="6.5" width="11" height="14" rx="1" /><path d="M8 3.5h11.5a1 1 0 0 1 1 1V17" /></svg>
       </button>
     </>
+  );
+}
+
+// A turn button: a tap turns clockwise, a drag turns the way it goes. `step`: a long drag turns
+// again every so many px (0: once per press)
+function useTurn(tap: () => void, drag: (dx: number, dy: number) => void, step = 0) {
+  const at = useRef<{ x: number; y: number; fired: boolean } | null>(null);
+  return {
+    onPointerDown(e: ReactPointerEvent<HTMLElement>) {
+      e.currentTarget.setPointerCapture(e.pointerId);
+      at.current = { x: e.clientX, y: e.clientY, fired: false };
+    },
+    onPointerMove(e: ReactPointerEvent<HTMLElement>) {
+      const a = at.current;
+      if (!a || (a.fired && !step)) return;
+      const dx = e.clientX - a.x, dy = e.clientY - a.y;
+      if (Math.hypot(dx, dy) < (a.fired ? step : 14)) return;
+      drag(dx, dy);
+      Object.assign(a, { x: e.clientX, y: e.clientY, fired: true });
+    },
+    onPointerUp() {
+      if (at.current && !at.current.fired) tap();
+      at.current = null;
+    },
+    onPointerCancel() { at.current = null; },
+    onKeyDown(e: React.KeyboardEvent) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); tap(); } },
+  };
+}
+
+// the view's turn: an arc along the bottom. Clockwise seen from above is the near side going
+// left, so a tap turns the way a drag to the left does
+function Dial() {
+  const turnView = useHud((s) => s.turnView);
+  const h = useTurn(() => turnView(-1), (dx, dy) => { if (Math.abs(dx) > Math.abs(dy)) turnView(Math.sign(dx)); }, 90);
+  return (
+    <button className="dial" type="button" aria-label="Turn the view" {...h}>
+      <svg viewBox="0 0 240 60" aria-hidden="true">
+        <path className="rim" d="M26 16 Q120 70 214 16" />
+        <path className="track" d="M26 16 Q120 70 214 16" />
+        <path className="line" d="M30 19 Q120 66 210 19" />
+        <path className="line" d="M30 19l2 13M30 19l12.5 -4" />
+        <path className="line" d="M210 19l-2 13M210 19l-12.5 -4" />
+      </svg>
+    </button>
+  );
+}
+
+// the piece's turns: about up, and over
+function Turns() {
+  const { spin, tip } = useHud((s) => s.actions);
+  const a = useTurn(() => spin(-1), (dx, dy) => { if (Math.abs(dx) > Math.abs(dy)) spin(Math.sign(dx)); });
+  const b = useTurn(() => tip(1, 0), (dx, dy) => tip(dx, dy));
+  const cube = <><path d="M12 8.2 15.6 10v4L12 15.8 8.4 14v-4z" /><path d="M8.4 10 12 11.8 15.6 10M12 11.8v4" /></>;
+  return (
+    <div className="turns">
+      <button type="button" aria-label="Turn it round" {...a}>
+        <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          {cube}<path d="M5.2 9.6C2.4 10.6 2 12.6 3.6 14c2.7 2.5 13.7 2.5 16.6 0 1.6-1.4 1.2-3.4-1.6-4.4" /><path d="m18.6 7.4 1 2.2-2.3.8" />
+        </svg>
+      </button>
+      <button type="button" aria-label="Tip it over" {...b}>
+        <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          {cube}<path d="M9.4 19.6C5.4 17.4 4.2 10.8 6.4 6.6 8.2 3.4 13 2.6 16 4.8" /><path d="m14.2 3.2 2 1.6-1.4 2.2" />
+        </svg>
+      </button>
+    </div>
   );
 }
 
@@ -159,7 +223,8 @@ function Plate({ hint }: { hint: string }) {
 }
 
 // The page around the scene: the plate with what to do now; top right back to the sheets, turn
-// over, start over; undo and redo bottom centre.
+// over, start over; undo and redo bottom left, the view's arc bottom centre, the piece's turns
+// bottom right.
 function Hud() {
   const { hint, canUndo, canRedo, ready, actions } = useHud();
   return (
@@ -175,6 +240,8 @@ function Hud() {
         <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M2.5 8a5.5 5.5 0 1 0 1.7-4M2.5 1.8v2.6h2.6" /></svg>
       </button>
       {ready && <button className="put" type="button" onClick={put}>Put it on the board</button>}
+      <Dial />
+      <Turns />
       <div className="tools">
         <button className="undo" type="button" aria-label="Undo" disabled={!canUndo} onClick={actions.undo}>
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M9 14 4 9l5-5" /><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11" /></svg>

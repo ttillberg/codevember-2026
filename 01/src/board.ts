@@ -9,8 +9,10 @@ import * as sound from './sound';
 import { drawMap, MAP, OPEN, PARK, SQUARE } from './town';
 
 // The board: a sheet of cardboard on the mat where what was built stands, folded and glued.
-// Drag one to move it, tap it to turn it a quarter, drag it off the edge to take it away. A
-// sideways drag on the mat takes the view round a quarter, pinch and wheel zoom.
+// Drag one to move it, drag it off the edge to take it away. Tap one and a little cube of
+// corners comes round it with a ring on the board: drag the ring to turn it, any way (it
+// settles square when close). A sideways drag on the mat takes the view round a quarter, pinch
+// and wheel zoom.
 
 export const BOARD = { w: MAP.w, d: MAP.d, t: 4 };
 const V = (x: number, y: number, z: number) => new THREE.Vector3(x, y, z);
@@ -35,13 +37,70 @@ function standing(model: Model) {
   return s;
 }
 
-// a building's footprint on the board, turned
+// a building's footprint on the board, turned (turn in quarters, any part of one): the box
+// round it, square to the board
 function footprint(p: Pick<Placed, 'id' | 'x' | 'z' | 'turn'>) {
   const { box } = standing(modelById(p.id)!);
-  const odd = p.turn % 2 !== 0;
-  const hx = (odd ? box.max.z - box.min.z : box.max.x - box.min.x) / 2;
-  const hz = (odd ? box.max.x - box.min.x : box.max.z - box.min.z) / 2;
+  const a = (p.turn * Math.PI) / 2;
+  const c = Math.abs(Math.cos(a)), s = Math.abs(Math.sin(a));
+  const w = box.max.x - box.min.x, d = box.max.z - box.min.z;
+  const hx = (c * w + s * d) / 2, hz = (s * w + c * d) / 2;
   return { x0: p.x - hx, x1: p.x + hx, z0: p.z - hz, z1: p.z + hz, hx, hz };
+}
+
+// the focus round a picked building, in its holder's frame: a bracket at each corner of the
+// box round it, and on the board a ring to turn it by, a knob at its front, arrows either side
+// drawn with depth: the corners behind the building stay hidden behind it
+const LIT = new THREE.MeshBasicMaterial({ color: '#f4f4f2', side: THREE.DoubleSide });
+const DARK = new THREE.MeshBasicMaterial({ color: '#20352c', side: THREE.DoubleSide });
+function focus(model: Model) {
+  const { box } = standing(model);
+  const g = new THREE.Group();
+  const m = 2.5;
+  const x0 = box.min.x - m, x1 = box.max.x + m, z0 = box.min.z - m, z1 = box.max.z + m, y0 = 0, y1 = box.max.y - box.min.y + m;
+  const L = Math.min(8, 0.3 * Math.min(x1 - x0, y1 - y0, z1 - z0));
+  const T = 0.7;
+  // a bar from a to b (a box along z, turned to face b; no parent yet, so that is in g's frame)
+  const bar = (a: THREE.Vector3, b: THREE.Vector3) => {
+    const mesh = new THREE.Mesh(new THREE.BoxGeometry(T, T, a.distanceTo(b) + T), LIT);
+    mesh.position.copy(a).add(b).multiplyScalar(0.5);
+    mesh.lookAt(b);
+    mesh.renderOrder = 10;
+    return mesh;
+  };
+  for (const x of [x0, x1]) for (const y of [y0, y1]) for (const z of [z0, z1]) {
+    const c = V(x, y, z);
+    const dx = x === x0 ? 1 : -1, dy = y === y0 ? 1 : -1, dz = z === z0 ? 1 : -1;
+    for (const d of [V(dx * L, 0, 0), V(0, dy * L, 0), V(0, 0, dz * L)]) g.add(bar(c, c.clone().add(d)));
+  }
+  // the ring, round the turning point (the base's middle, the holder's origin)
+  const R = Math.max(...[[x0, z0], [x0, z1], [x1, z0], [x1, z1]].map(([x, z]) => Math.hypot(x, z))) + 6;
+  const ring = new THREE.Mesh(new THREE.RingGeometry(R - 0.6, R + 0.6, 128), LIT);
+  const flat = (o: THREE.Object3D) => { o.rotation.x = -Math.PI / 2; o.position.y = 0.4; o.renderOrder = 10; return o; };
+  g.add(flat(ring));
+  // the knob, at the front (+z), and an arrow along the ring either side of it
+  const knob = new THREE.Group();
+  knob.add(new THREE.Mesh(new THREE.CircleGeometry(6.5, 40), LIT));
+  const dot = new THREE.Mesh(new THREE.CircleGeometry(2.6, 24), DARK);
+  dot.position.z = 0.05;
+  dot.renderOrder = 11;
+  knob.add(dot);
+  flat(knob);
+  knob.position.set(0, 0.4, R);
+  for (const c of knob.children) c.renderOrder = 11;
+  g.add(knob);
+  for (const side of [-1, 1]) {
+    const a = side * (10 / R); // past the knob
+    const tip = side * (17 / R);
+    const tri = new THREE.Shape();
+    // laid flat face up, shape y runs to board -z: the front (+z) is shape -y
+    const at = (ang: number, r: number) => [Math.sin(ang) * r, -Math.cos(ang) * r] as const;
+    tri.moveTo(...at(tip, R));
+    tri.lineTo(...at(a, R + 3.6));
+    tri.lineTo(...at(a, R - 3.6));
+    g.add(flat(new THREE.Mesh(new THREE.ShapeGeometry(tri), LIT)));
+  }
+  return { group: g, R };
 }
 
 // put a new one on the board: round the square, by the streets, clear of the others, the
@@ -90,7 +149,7 @@ export function createBoard(camera: THREE.OrthographicCamera, canvas: HTMLCanvas
     return p;
   };
 
-  interface Sprite { key: string; holder: THREE.Group; pos: THREE.Vector3; rot: number; lift: number; fall?: { at: number; v: THREE.Vector3 } }
+  interface Sprite { key: string; id: string; holder: THREE.Group; pos: THREE.Vector3; rot: number; lift: number; fall?: { at: number; v: THREE.Vector3 } }
   const sprites = new Map<string, Sprite>();
   const leaving: Sprite[] = [];
 
@@ -113,10 +172,11 @@ export function createBoard(camera: THREE.OrthographicCamera, canvas: HTMLCanvas
     holder.position.set(p.x, top, p.z);
     holder.rotation.y = -p.turn * Math.PI / 2;
     world.add(holder);
-    return { key: p.key, holder, pos: holder.position.clone(), rot: holder.rotation.y, lift: 0 };
+    return { key: p.key, id: p.id, holder, pos: holder.position.clone(), rot: holder.rotation.y, lift: 0 };
   }
 
   function drop(s: Sprite) {
+    if (lit?.s === s) unpick();
     s.holder.traverse((o) => {
       if (o instanceof THREE.Mesh) {
         o.geometry.dispose();
@@ -124,6 +184,21 @@ export function createBoard(camera: THREE.OrthographicCamera, canvas: HTMLCanvas
       }
     });
     world.remove(s.holder);
+  }
+
+  // the picked one, its focus round it
+  let lit: { s: Sprite; group: THREE.Group; R: number } | null = null;
+  function unpick() {
+    if (!lit) return;
+    lit.s.holder.remove(lit.group);
+    lit.group.traverse((o) => { if (o instanceof THREE.Mesh) o.geometry.dispose(); });
+    lit = null;
+  }
+  function pickOne(s: Sprite) {
+    unpick();
+    const f = focus(modelById(s.id)!);
+    s.holder.add(f.group);
+    lit = { s, ...f };
   }
 
   // the store says what stands where; sprites follow it
@@ -158,8 +233,30 @@ export function createBoard(camera: THREE.OrthographicCamera, canvas: HTMLCanvas
   const placedOf = (key: string) => useHud.getState().town.find((p) => p.key === key)!;
   const onBoard = (x: number, z: number) => Math.abs(x) < BOARD.w / 2 && Math.abs(z) < BOARD.d / 2;
 
-  let press: { x: number; y: number; touch: boolean; s: Sprite | null; off: THREE.Vector3 | null; moved: boolean; spent: boolean } | null = null;
+  let press: { x: number; y: number; touch: boolean; s: Sprite | null; off: THREE.Vector3 | null; moved: boolean; spent: boolean; ring?: { a: number } } | null = null;
   let spin: { from: number; to: number; at: number } | null = null;
+  // the view a quarter round: +1 the way a drag to the right takes the board
+  function turnView(dir: number) {
+    const from = spin ? spin.to : rig.view.azimuth;
+    spin = { from: rig.view.azimuth, to: from - dir * 90, at: performance.now() };
+    sound.unlock();
+    sound.flip();
+  }
+  // the picked one's ring under the pointer: the angle round its middle there
+  function onRing(cx: number, cy: number, touch: boolean) {
+    if (!lit) return null;
+    const p = at(cx, cy);
+    if (!p) return null;
+    const c = lit.s.holder.position;
+    const r = Math.hypot(p.x - c.x, p.z - c.z);
+    const reach = Math.max(5, (touch ? 22 : 12) * rig.mmPerPx);
+    return Math.abs(r - lit.R) < reach ? Math.atan2(p.z - c.z, p.x - c.x) : null;
+  }
+  // settles square when within a few degrees of it
+  const settle = (rot: number) => {
+    const q = Math.round(rot / (Math.PI / 2)) * (Math.PI / 2);
+    return Math.abs(rot - q) < THREE.MathUtils.degToRad(4) ? q : rot;
+  };
   const touches = new Map<number, { x: number; y: number }>();
   let pinch: { d: number; x: number; y: number; a: number } | null = null;
   const two = () => {
@@ -171,9 +268,17 @@ export function createBoard(camera: THREE.OrthographicCamera, canvas: HTMLCanvas
     sound.unlock();
     if (e.pointerType === 'touch') touches.set(e.pointerId, { x: e.clientX, y: e.clientY });
     if (touches.size >= 2) { cancel(); pinch = two(); return; }
+    const touch = e.pointerType === 'touch';
+    const a = onRing(e.clientX, e.clientY, touch);
+    if (a !== null && lit) {
+      press = { x: e.clientX, y: e.clientY, touch, s: lit.s, off: null, moved: true, spent: false, ring: { a } };
+      canvas.style.cursor = 'grabbing';
+      sound.snap(0.3);
+      return;
+    }
     const s = pick(e.clientX, e.clientY);
     const p = s && at(e.clientX, e.clientY);
-    press = { x: e.clientX, y: e.clientY, touch: e.pointerType === 'touch', s, off: p ? p.sub(s!.pos) : null, moved: false, spent: false };
+    press = { x: e.clientX, y: e.clientY, touch, s, off: p ? p.sub(s!.pos) : null, moved: false, spent: false };
     if (s) canvas.style.cursor = 'grabbing';
   }
   function cancel() {
@@ -195,15 +300,26 @@ export function createBoard(camera: THREE.OrthographicCamera, canvas: HTMLCanvas
         return;
       }
     }
-    if (!press) { canvas.style.cursor = pick(e.clientX, e.clientY) ? 'grab' : ''; return; }
+    if (!press) { canvas.style.cursor = onRing(e.clientX, e.clientY, false) !== null || pick(e.clientX, e.clientY) ? 'grab' : ''; return; }
+    if (press.ring && press.s) {
+      // round the ring: the building follows the pointer's angle round its middle
+      const p = at(e.clientX, e.clientY);
+      if (!p) return;
+      const c = press.s.holder.position;
+      const a = Math.atan2(p.z - c.z, p.x - c.x);
+      let da = a - press.ring.a;
+      if (da > Math.PI) da -= 2 * Math.PI;
+      if (da < -Math.PI) da += 2 * Math.PI;
+      press.ring.a = a;
+      press.s.rot -= da; // rotation about up runs from +x towards -z
+      return;
+    }
     if (press.spent) return;
     const dx = e.clientX - press.x, dy = e.clientY - press.y;
     if (!press.s) {
       // the bare mat: a sideways drag takes the view a quarter round
       if (Math.abs(dx) > (press.touch ? 30 : 20) && Math.abs(dx) > 1.5 * Math.abs(dy)) {
-        const from = spin ? spin.to : rig.view.azimuth;
-        spin = { from: rig.view.azimuth, to: from - Math.sign(dx) * 90, at: performance.now() };
-        sound.flip();
+        turnView(Math.sign(dx));
         press.spent = true;
       }
       return;
@@ -218,14 +334,26 @@ export function createBoard(camera: THREE.OrthographicCamera, canvas: HTMLCanvas
     touches.delete(e.pointerId);
     if (touches.size < 2) pinch = null;
     if (!press) return;
-    const { s, moved } = press;
+    const { s, moved, ring, spent } = press;
     press = null;
     canvas.style.cursor = '';
-    if (!s) return;
+    if (ring && s) {
+      s.rot = settle(s.rot);
+      const turn = Math.round((-s.rot / (Math.PI / 2)) * 1000) / 1000;
+      setTown((t) => t.map((p) => (p.key === s.key ? { ...p, turn } : p)));
+      sound.land();
+      return;
+    }
+    if (!s) {
+      // a tap on the board lets the picked one go
+      if (!spent) unpick();
+      return;
+    }
     if (!moved) {
-      // a tap: a quarter turn
-      setTown((t) => t.map((p) => (p.key === s.key ? { ...p, turn: p.turn + 1 } : p)));
-      sound.flip();
+      // a tap: picked, or let go
+      if (lit?.s === s) unpick();
+      else pickOne(s);
+      sound.snap(0.5);
       return;
     }
     s.lift = 0;
@@ -266,7 +394,7 @@ export function createBoard(camera: THREE.OrthographicCamera, canvas: HTMLCanvas
     const want = new THREE.Box3(V(Math.min(SQUARE.x0, PARK.x0) - 30, 0, Math.min(SQUARE.z0, PARK.z0) - 30), V(Math.max(SQUARE.x1, PARK.x1) + 30, 40, Math.max(SQUARE.z1, PARK.z1) + 30));
     for (const sp of sprites.values()) {
       const p = useHud.getState().town.find((q) => q.key === sp.key);
-      if (!p || (press?.s === sp && press.moved)) continue;
+      if (!p || (press?.s === sp && press.moved && !press.ring)) continue;
       const f = footprint(p);
       const st = standing(modelById(p.id)!);
       want.expandByPoint(V(f.x0 - 12, 0, f.z0 - 12)).expandByPoint(V(f.x1 + 12, st.box.max.y - st.box.min.y + top, f.z1 + 12));
@@ -280,11 +408,13 @@ export function createBoard(camera: THREE.OrthographicCamera, canvas: HTMLCanvas
     for (const s of sprites.values()) {
       const p = useHud.getState().town.find((q) => q.key === s.key);
       if (!p) continue;
-      const dragging = press?.s === s && press.moved;
+      const dragging = press?.s === s && press.moved && !press.ring;
       if (!dragging) s.pos.lerp(V(p.x, top, p.z), k);
-      // the shortest way round to where it is turned
-      const want = -p.turn * Math.PI / 2;
-      s.rot += (want - s.rot) * k;
+      // eased round to where it is turned, unless the ring has it
+      if (!(press?.ring && press.s === s)) {
+        const want = -p.turn * Math.PI / 2;
+        s.rot += (want - s.rot) * k;
+      }
       s.holder.position.set(s.pos.x, s.pos.y + THREE.MathUtils.lerp(s.holder.position.y - s.pos.y, s.lift, k), s.pos.z);
       s.holder.rotation.y = s.rot;
     }
@@ -298,6 +428,7 @@ export function createBoard(camera: THREE.OrthographicCamera, canvas: HTMLCanvas
   }
 
   function dispose() {
+    unpick();
     unsub();
     canvas.removeEventListener('pointerdown', down);
     canvas.removeEventListener('pointermove', move);
@@ -314,6 +445,15 @@ export function createBoard(camera: THREE.OrthographicCamera, canvas: HTMLCanvas
   if (import.meta.env.DEV) {
     Object.assign(window as any, {
       __town: () => useHud.getState().town,
+      // the picked one's knob on screen, and at an angle further round the ring
+      __knob: (turn = 0) => {
+        if (!lit) return null;
+        world.updateMatrixWorld(true);
+        const a = -turn; // radians, the way the building turns
+        const p = V(Math.sin(a) * lit.R, 0.4, Math.cos(a) * lit.R).applyMatrix4(lit.s.holder.matrixWorld).project(camera);
+        const q = rig.screen(p);
+        return [q.x, q.y];
+      },
       __where: (key: string) => {
         world.updateMatrixWorld(true);
         const s = sprites.get(key)!;

@@ -262,6 +262,20 @@ export function createGame(model: Model, camera: THREE.OrthographicCamera, canva
   }
   const flip = () => turn(new THREE.Vector3(1, 0, 0), Math.PI);
 
+  // the view a quarter round the card: +1 the way a drag to the right takes the mat
+  function turnView(dir: number) {
+    const from = spin ? spin.to : rig.view.azimuth;
+    spin = { from: rig.view.azimuth, to: from - dir * 90, at: performance.now() };
+    sound.unlock();
+    sound.flip();
+  }
+  // the piece a quarter round about up, the near side going right for +1 (the buttons)
+  function spinBy(dir: number) {
+    gestureSaved = false;
+    byHand = true;
+    turn(new THREE.Vector3(0, 1, 0), (dir * Math.PI) / 2);
+  }
+
   // fold a free panel, from a tap or the start of a drag. Print up, a fold would go into the
   // mat and leave the base on top: so it turns over first, base down, and folds up from there
   function fold(id: string) {
@@ -454,10 +468,7 @@ export function createGame(model: Model, camera: THREE.OrthographicCamera, canva
     if (!press.card && press.mode === 'thumb') {
       const dx = e.clientX - press.x, dy = e.clientY - press.y;
       if (Math.abs(dx) > (press.touch ? 30 : 20) && Math.abs(dx) > 1.5 * Math.abs(dy)) {
-        const from = spin ? spin.to : rig.view.azimuth;
-        spin = { from: rig.view.azimuth, to: from - Math.sign(dx) * 90, at: performance.now() };
-        sound.unlock();
-        sound.flip();
+        turnView(Math.sign(dx));
         press.mode = 'spent';
       }
       return;
@@ -782,7 +793,11 @@ export function createGame(model: Model, camera: THREE.OrthographicCamera, canva
   canvas.addEventListener('wheel', wheel, { passive: false });
   document.addEventListener('gesturestart', noGesture);
   addEventListener('keydown', key);
-  hud({ ready: false, actions: { undo, redo, flip: () => { gestureSaved = false; byHand = true; flip(); }, reset } });
+  hud({
+    ready: false,
+    turnView,
+    actions: { undo, redo, flip: () => { gestureSaved = false; byHand = true; flip(); }, reset, spin: spinBy, tip: (dx, dy) => { gestureSaved = false; tip(dx, dy); } },
+  });
 
   reset();
   // ?cut: start with the piece already out (debug, demos)
