@@ -415,11 +415,12 @@ function groundAt(cx: number, cy: number) {
   return null;
 }
 
-// the fungarium: pick what your spores grow, and watch it grow up close (the button top right, or F)
+// the fungarium: pick what your spores grow, and watch it grow up close (tap the packet, or F)
 let throwKind: FungusKind = 'funnel';
 const fungarium = new Fungarium((kind) => { throwKind = kind; pouch.pick(kind, false); });
 // the pouch in hand: the same choice, with number keys, the wheel or a tap on it; shift and a number plants one
-const pouch = new Pouch((kind) => { throwKind = kind; fungarium.select(kind); }, plantAt, () => fungarium.isOpen);
+// tapped, the packet opens the fungarium (a little notebook sat bottom left for that, for a while)
+const pouch = new Pouch((kind) => { throwKind = kind; fungarium.select(kind); }, plantAt, () => fungarium.isOpen, () => { keys.clear(); fungarium.toggle(); });
 // the specimens are drawn once things have settled, on the fungarium's own little renderer
 setTimeout(() => pouch.setThumbs(fungarium.drawThumbs()), 1500);
 /** Shift and a number: that species' specimen pushes up where you aim (the middle of the screen without a mouse). */
@@ -434,7 +435,6 @@ function dropOldest() {
   const thrown = fungi.list.filter((c) => !c.key);
   for (const c of thrown.slice(0, Math.max(0, thrown.length - 24))) fungi.remove(c);
 }
-document.querySelector('.book')!.addEventListener('click', () => { keys.clear(); fungarium.toggle(); });
 addEventListener('keydown', (e) => {
   if (e.code === 'KeyF') { keys.clear(); if (locked()) document.exitPointerLock(); fungarium.toggle(); }
   if (e.code === 'KeyL' && !fungarium.isOpen && !coarse) { if (locked()) document.exitPointerLock(); else lock(); }

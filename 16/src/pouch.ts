@@ -1,7 +1,7 @@
 // The pouch you hold: a little kraft-paper packet of spores at the bottom of the screen, with the specimen
 // you throw on its label, held like a shooter's weapon. Only the one in hand shows. Swapping (1 to 9 and 0,
-// the wheel, or tapping the packet) drops it out of view and brings the next one up, as in Quake; it bobs
-// while you crawl and jerks up when you throw. Shift and a number plants that species' specimen at the sight.
+// or the wheel) drops it out of view and brings the next one up, as in Quake; it bobs
+// while you crawl and jerks up when you throw. Shift and a number plants that species' specimen at the sight. Tapping the packet opens the fungarium.
 import type { FungusKind } from './fungi';
 import { SPECIES, type Species } from './fungarium';
 
@@ -19,12 +19,12 @@ export class Pouch {
   private kickT = 0;
   selected: FungusKind = 'funnel';
 
-  constructor(private onSelect: (kind: FungusKind) => void, private onPlant: (s: Species) => void, private blocked: () => boolean) {
+  constructor(private onSelect: (kind: FungusKind) => void, private onPlant: (s: Species) => void, private blocked: () => boolean, private onOpen: () => void) {
     this.shown = this.selected;
     this.el = document.createElement('div');
     this.el.className = 'pouch';
     this.el.innerHTML = `
-      <button class="hold" type="button" aria-label="Spores in hand; tap for the next kind">
+      <button class="hold" type="button" aria-label="Spores in hand; tap for the fungarium, to pick another kind">
         <svg class="paper" viewBox="0 0 120 160" aria-hidden="true">
           <defs>
             <linearGradient id="kraft" x1="0" y1="0" x2="1" y2="1">
@@ -41,7 +41,7 @@ export class Pouch {
     this.hold = this.el.querySelector('.hold')!;
     this.pic = this.el.querySelector('.pic')!;
     this.label = this.el.querySelector('.label')!;
-    this.hold.addEventListener('click', () => this.cycle(1));
+    this.hold.addEventListener('click', () => this.onOpen()); // the packet opens the fungarium, to pick another
     document.body.appendChild(this.el);
     this.paint();
 

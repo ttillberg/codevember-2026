@@ -68,21 +68,8 @@ body.touch .mouseonly, body:not(.touch) .touchonly { display: none; }
 body.touch .gyro { display: grid; }
 @media (max-width: 640px) { .gyro { top: max(16px, env(safe-area-inset-top)); right: max(16px, env(safe-area-inset-right)); } }
 .clean .gyro { display: none; }
-/* the fungarium: a little field notebook lying bottom left, olive cloth, a label, an elastic band */
-.book {
-  position: fixed; z-index: 3; display: block;
-  left: max(20px, env(safe-area-inset-left)); bottom: max(18px, env(safe-area-inset-bottom));
-  width: 44px; height: 58px; padding: 0; border: 0; background: none; cursor: pointer;
-  filter: drop-shadow(0 4px 6px rgba(0, 0, 0, 0.45));
-  transform: rotate(-7deg); transition: transform 0.25s cubic-bezier(0.3, 1.4, 0.5, 1);
-}
-.book svg { display: block; }
-.book:hover { transform: rotate(-3deg) translateY(-4px); }
-.book:active { transform: rotate(-5deg) scale(0.94); }
-@media (min-width: 900px) { .book { transform: rotate(-7deg) scale(1.3); transform-origin: left bottom; } .book:hover { transform: rotate(-3deg) translateY(-4px) scale(1.3); } }
-.clean .book { display: none; }
 
-/* the fungarium opened: the little notebook comes up from its corner, olive cloth cover round a paper page */
+/* the fungarium: a little notebook that comes up out of the packet, olive cloth cover round a paper page */
 .fungarium [hidden] { display: none !important; }
 .fungarium {
   position: fixed; inset: 0; z-index: 5; display: grid; place-items: center;
@@ -96,7 +83,7 @@ body.touch .gyro { display: grid; }
   padding: 7px 16px 9px 12px; border-radius: 4px 9px 9px 4px;
   background: linear-gradient(90deg, #41432b 0 12px, #56593a 12px); /* the cover, darker over the spine */
   box-shadow: 0 30px 80px rgba(0, 0, 0, 0.5), inset 0 0 0 1px rgba(0, 0, 0, 0.25);
-  transform: translate(calc(-50vw + 90px), calc(50vh - 80px)) scale(0.12) rotate(-8deg);
+  transform: translate(0, calc(50vh - 80px)) scale(0.12) rotate(-4deg); /* closed: down at the packet */
   transition: transform 0.4s cubic-bezier(0.3, 1.15, 0.5, 1);
 }
 .fungarium.open .sheet { transform: none; }
