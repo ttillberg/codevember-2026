@@ -371,20 +371,28 @@ const gyroButton = document.querySelector<HTMLButtonElement>('.gyro')!;
 if (coarse) document.body.classList.add('touch');
 let gyroOn = false;
 let gyroLast: { yaw: number; pitch: number } | null = null;
+// The phone's orientation as a quaternion (as three's old DeviceOrientationControls did), then the way its back
+// camera points, and the heading and tilt of that. Read straight off the angles instead, the compass heading
+// swung back and forth when the phone was held upright (gimbal lock), turning the view to and fro by itself.
+const gyroEuler = new THREE.Euler(), gyroQ = new THREE.Quaternion(), gyroTurn = new THREE.Quaternion();
+const GYRO_BACK = new THREE.Quaternion(-Math.sqrt(0.5), 0, 0, Math.sqrt(0.5)); // the camera looks out of the back, not the top
+const gyroF = new THREE.Vector3();
 function onTilt(e: DeviceOrientationEvent) {
   if (e.alpha === null || e.beta === null || e.gamma === null) return;
-  // pitch in the screen's terms, whichever way the phone is turned; yaw from the compass heading
-  const angle = screen.orientation?.angle ?? 0;
-  const pitch = angle === 90 ? -e.gamma : angle === 270 ? e.gamma : angle === 180 ? -e.beta : e.beta;
-  const yaw = e.alpha;
+  const D = THREE.MathUtils.DEG2RAD;
+  gyroEuler.set(e.beta * D, e.alpha * D, -e.gamma * D, 'YXZ');
+  gyroQ.setFromEuler(gyroEuler).multiply(GYRO_BACK);
+  gyroQ.multiply(gyroTurn.setFromAxisAngle(new THREE.Vector3(0, 0, 1), -(screen.orientation?.angle ?? 0) * D));
+  gyroF.set(0, 0, -1).applyQuaternion(gyroQ);
+  const pitch = Math.asin(THREE.MathUtils.clamp(gyroF.y, -1, 1));
+  const yaw = Math.atan2(-gyroF.x, -gyroF.z); // as look.yaw: forward is (-sin, -cos)
   if (gyroLast) {
     let dYaw = yaw - gyroLast.yaw;
-    if (dYaw > 180) dYaw -= 360;
-    if (dYaw < -180) dYaw += 360;
-    let dPitch = pitch - gyroLast.pitch;
-    if (Math.abs(dPitch) > 90) dPitch = 0; // a flip through the vertical, not a real move
-    look.tYaw += dYaw * THREE.MathUtils.DEG2RAD;
-    look.tPitch = clampPitch(look.tPitch + dPitch * THREE.MathUtils.DEG2RAD);
+    if (dYaw > Math.PI) dYaw -= Math.PI * 2;
+    if (dYaw < -Math.PI) dYaw += Math.PI * 2;
+    // looking near straight up or down the heading is undefined: let it go there
+    if (Math.abs(pitch) < 1.35) look.tYaw += dYaw;
+    look.tPitch = clampPitch(look.tPitch + (pitch - gyroLast.pitch));
   }
   gyroLast = { yaw, pitch };
 }
