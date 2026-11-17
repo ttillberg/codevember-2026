@@ -18,6 +18,7 @@ import { Fungi, type FungusKind } from './fungi';
 import { Spores } from './spores';
 import { Fungarium, type Species } from './fungarium';
 import { Pouch } from './pouch';
+import { Sound } from './sound';
 import { Ants } from './ants';
 import { mulberry32 } from './noise';
 
@@ -105,6 +106,8 @@ const fungi = new Fungi(share, dewMaterial);
 scene.add(fungi.group);
 // the spore smoke is drawn after the atmosphere, in a scene of its own (see the render chain)
 const spores = new Spores(share);
+// a whoosh when you fling, a puff where it lands and where you sow
+const sound = new Sound(camera);
 const fxScene = new THREE.Scene();
 fxScene.add(spores.mesh);
 // where a cluster stands: its foot down in the moss, stems coming up through it
@@ -490,7 +493,7 @@ function throwTo(hit: THREE.Vector3, far: boolean) {
   }
   // tapping a ripe puffball presses it, and it puffs its spores, instead of throwing
   const pressed = fungi.press(hit.x, hit.z, 0.03);
-  if (pressed) { spores.puff(pressed); return; }
+  if (pressed) { spores.puff(pressed); sound.puff(pressed, 0.6); return; }
   // not right at your own feet
   const fromCam = new THREE.Vector3(hit.x - camera.position.x, 0, hit.z - camera.position.z);
   if (fromCam.length() < 0.22) {
@@ -501,7 +504,8 @@ function throwTo(hit: THREE.Vector3, far: boolean) {
   pouch.kick();
   const from = camera.position.clone().add(new THREE.Vector3(0, -0.03, 0)).addScaledVector(camera.getWorldDirection(new THREE.Vector3()), 0.15);
   const kind = throwKind;
-  const land = (p: THREE.Vector3) => {
+  const land = (p: THREE.Vector3, size: number) => {
+    sound.puff(p, size);
     // the cloud settles first; then, one after another, they push up
     setTimeout(() => {
       // a minute or two after it has grown, it withers away again; the ones found in the forest stay
@@ -510,12 +514,15 @@ function throwTo(hit: THREE.Vector3, far: boolean) {
     }, 1200);
   };
   // sown: no throw, just a cloud let go there; flung: an arc over the moss and a burst where it lands
-  if (far) spores.throw(from, hit, land);
+  if (far) {
+    spores.throw(from, hit, (p) => land(p, 1));
+    sound.whoosh(0.5 + from.distanceTo(hit) * 0.3); // as long as the flight
+  }
   else {
     // the cloud is let go over the moss's top, not in it: down among the fronds it was hidden
     const g = groundHeight(hit.x, hit.z);
     spores.sow(new THREE.Vector3(hit.x, g + 0.055 * mossAt(hit.x, g, hit.z) + 0.035, hit.z));
-    land(hit);
+    land(hit, 0.45);
   }
 }
 
@@ -574,7 +581,7 @@ function walk(dt: number, fx: number, fz: number, v: number) {
   // the tight bunch of stipes at a fern's crown is solid; the fronds you crawl under; small fungi you crawl over,
   // and a puffball you crawl into puffs
   const bumped = fungi.press(me.x + fx * 0.06, me.z + fz * 0.06, 0.02);
-  if (bumped) spores.puff(bumped);
+  if (bumped) { spores.puff(bumped); sound.puff(bumped, 0.6); }
   const [cx, cz] = trees.collide(me.x, me.z, 0.05);
   if (v > 0.05 && (cx !== me.x || cz !== me.z)) {
     // pushed off a trunk while crawling at it head on: start up it
@@ -639,7 +646,7 @@ const sunScreen = new THREE.Vector3();
 const camDir = new THREE.Vector3();
 let focus = 1;
 // dev: tuning handles in the console
-if (import.meta.env.DEV) Object.assign(window, { trees, ants, ferns, props, fungi, fungarium, spores, throwAt, shellMat, lensMat, atmosMat, camera, aoPass, lens, atmos, beautyRT, scene, renderer, composer, world, me, look });
+if (import.meta.env.DEV) Object.assign(window, { sound, trees, ants, ferns, props, fungi, fungarium, spores, throwAt, shellMat, lensMat, atmosMat, camera, aoPass, lens, atmos, beautyRT, scene, renderer, composer, world, me, look });
 renderer.setAnimationLoop(() => {
   const dt = Math.min(clock.getDelta(), 0.05);
   shellMat.uniforms.uTime.value = clock.elapsedTime;
