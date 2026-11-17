@@ -100,7 +100,7 @@ const world = new World(hooks, coarse);
 scene.add(world.root);
 
 // ---- small fungi, thrown or found, and the spores that make them
-const fungi = new Fungi(share);
+const fungi = new Fungi(share, dewMaterial);
 scene.add(fungi.group);
 // the spore smoke is drawn after the atmosphere, in a scene of its own (see the render chain)
 const spores = new Spores(share);

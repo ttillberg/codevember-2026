@@ -5,6 +5,7 @@
 import * as THREE from 'three';
 import { mulberry32 } from './noise';
 import { mossLighting } from './shaders';
+import { buildDew } from './dew';
 
 export type FungusKind = 'funnel' | 'finger' | 'chanterelle' | 'puffball';
 
@@ -13,8 +14,15 @@ const clamp01 = (t: number) => Math.min(1, Math.max(0, t));
 
 // ---------------------------------------------------------------------------------------------------------
 // geometry buffers: position, part (0 stem, 1 funnel underside, 2 funnel inside, 3 finger), along, around, tint
-interface Buf { pos: number[]; part: number[]; uvf: number[]; tint: number[]; idx: number[] }
-const newBuf = (): Buf => ({ pos: [], part: [], uvf: [], tint: [], idx: [] });
+// drops: beads of water on fresh growth, (x, y, z, radius), drawn with the dew
+interface Buf { pos: number[]; part: number[]; uvf: number[]; tint: number[]; idx: number[]; drops: number[] }
+const newBuf = (): Buf => ({ pos: [], part: [], uvf: [], tint: [], idx: [], drops: [] });
+/** A bead of water that comes out while it grows (after `at`, 0..1 of its growth) and stays. */
+function bead(b: Buf, x: number, y: number, z: number, r: number, g: number, at: number) {
+  const k = THREE.MathUtils.smoothstep(g, at, at + 0.15);
+  if (k > 0.02) b.drops.push(x, y, z, r * (0.4 + 0.6 * k));
+}
+const frac = (x: number) => x - Math.floor(x);
 
 // ---- finger fungi -----------------------------------------------------------------------------------------
 interface Finger {
@@ -109,7 +117,15 @@ function buildFingerCluster(b: Buf, fingers: Finger[], age: number, time: number
     const el0 = Math.PI / 2 - f.tilt;
     const rad = (lenNow: number) => (s: number) => {
       const sl = (s * lenNow) / f.L;
-      return f.r * (0.65 + 0.35 * THREE.MathUtils.smoothstep(sl, 0, 0.12)) * (1 - 0.5 * sl) * (1 + 0.12 * Math.sin(sl * 13 + f.phase)) * (0.6 + 0.4 * Math.min(1, gl * 3));
+      // the growing tip swells a little, a soft club that is still pushing out
+      const club = 1 + 0.35 * (1 - g) * THREE.MathUtils.smoothstep(s, 0.7, 1);
+      return f.r * club * (0.65 + 0.35 * THREE.MathUtils.smoothstep(sl, 0, 0.12)) * (1 - 0.5 * sl) * (1 + 0.12 * Math.sin(sl * 13 + f.phase)) * (0.6 + 0.4 * Math.min(1, gl * 3));
+    };
+    // a bead of water on the side, a little below the tip, on about half of them
+    const drop = (pts: THREE.Vector3[], r: number) => {
+      if (frac(f.phase * 3.7) > 0.5 || pts.length < 5) return;
+      const q = pts[pts.length - 4], a = f.phase * 5.1;
+      bead(b, q.x + Math.cos(a) * r * 1.3, q.y, q.z + Math.sin(a) * r * 1.3, r * 0.9, g, 0.35 + 0.3 * frac(f.phase * 2.3));
     };
     if (f.fork > 0 && gl > f.fork) {
       // split: the trunk up to the fork, then two arms going on from there, thinner, apart
@@ -122,11 +138,13 @@ function buildFingerCluster(b: Buf, fingers: Finger[], age: number, time: number
       for (const side of [-1, 1]) {
         const arm: Finger = { ...f, r: f.r * 0.72, phase: f.phase + side * 2.1 };
         const pts = fingerPath(arm, g, time, tip, { az: f.az + side * 0.55, el: el0 - f.bend * f.fork * f.fork - 0.15 }, armLen, 8);
-        tube(b, pts, (s) => arm.r * (1 - 0.5 * f.fork) * (1 - 0.45 * s * armG), true, f.tint, f.fork, f.fork + (1 - f.fork) * armG, 1 - g);
+        tube(b, pts, (s) => arm.r * (1 - 0.5 * f.fork) * (1 - 0.45 * s * armG) * (1 + 0.35 * (1 - g) * THREE.MathUtils.smoothstep(s, 0.7, 1)), true, f.tint, f.fork, f.fork + (1 - f.fork) * armG, 1 - g);
+        if (side > 0) drop(pts, arm.r * 0.6);
       }
     } else {
       const pts = fingerPath(f, g, time, f.base, { az: f.az, el: el0 }, len, 14);
       tube(b, pts, rad(len), true, f.tint, 0, gl, 1 - g);
+      drop(pts, f.r * 0.6);
     }
   }
 }
@@ -262,29 +280,42 @@ function buildFunnel(b: Buf, f: Funnel, age: number, time: number) {
   const growing = 1 - g;
   const start = b.pos.length / 3;
   const n = P.length;
+  // where profile point i lands at angle a: the rim waves, more as it opens; a sinuous stem, and while growing
+  // the top sways round feeling for the light
+  const vert = (i: number, a: number) => {
+    const [r0, y] = P[i];
+    const rimW = THREE.MathUtils.smoothstep(r0, R * 0.55, R) * open;
+    const wave = 0.16 * Math.sin(3 * a + f.wave[0]) + 0.09 * Math.sin(5 * a + f.wave[1]) + 0.06 * Math.sin(2 * a + f.wave[2]);
+    const r = r0 * (1 + wave * rimW);
+    const yy = y + Math.sin(2 * a + f.wave[1] + 1.3) * R * 0.2 * rimW + wave * R * 0.15 * rimW;
+    const h = Math.max(0, yy) / Math.max(H, 1e-3);
+    const [ax, az] = funnelAxis(f, yy, H);
+    const sx = ax + Math.sin(time * 0.7 + f.phase) * 0.004 * growing * h * h;
+    const sz = az + Math.cos(time * 0.55 + f.phase) * 0.004 * growing * h * h;
+    return [f.base.x + Math.cos(a) * r + sx, f.base.y + yy, f.base.z + Math.sin(a) * r + sz];
+  };
   for (let i = 0; i < n; i++) {
-    const [r0, y, part, along] = P[i];
+    const [, , part, along] = P[i];
     for (let k = 0; k < FS; k++) {
-      const a = (k / FS) * Math.PI * 2;
-      // the rim waves, more as it opens
-      const rimW = THREE.MathUtils.smoothstep(r0, R * 0.55, R) * open;
-      const wave = 0.16 * Math.sin(3 * a + f.wave[0]) + 0.09 * Math.sin(5 * a + f.wave[1]) + 0.06 * Math.sin(2 * a + f.wave[2]);
-      const r = r0 * (1 + wave * rimW);
-      const yy = y + Math.sin(2 * a + f.wave[1] + 1.3) * R * 0.2 * rimW + wave * R * 0.15 * rimW;
-      // a sinuous stem, and while growing the top sways round feeling for the light
-      const h = Math.max(0, yy) / Math.max(H, 1e-3);
-      const [ax, az] = funnelAxis(f, yy, H);
-      const sx = ax + Math.sin(time * 0.7 + f.phase) * 0.004 * growing * h * h;
-      const sz = az + Math.cos(time * 0.55 + f.phase) * 0.004 * growing * h * h;
-      b.pos.push(f.base.x + Math.cos(a) * r + sx, f.base.y + yy, f.base.z + Math.sin(a) * r + sz);
+      const [x, y, z] = vert(i, (k / FS) * Math.PI * 2);
+      b.pos.push(x, y, z);
       b.part.push(part);
       b.uvf.push(along, k / FS);
-      // each part its own colour; the fresh flesh paler
+      // each part its own colour; pins come up pale, nearly white, and colour in as they grow
       const t = part === 0 ? f.stemTint : part === 1 ? f.underTint : f.tint;
-      // pins come up pale, nearly white, and colour in as they grow
       const fresh = 0.6 * (1 - THREE.MathUtils.smoothstep(g, 0.05, 0.75));
       b.tint.push(t[0] + (0.8 - t[0]) * fresh, t[1] + (0.74 - t[1]) * fresh, t[2] + (0.6 - t[2]) * fresh);
     }
+  }
+  // beads of water: one or two sitting on the cap (a funnel's rim, a chanterelle's top), out as it opens
+  const rim = P.findIndex((p) => p[2] === 2); // the first point over the rim
+  for (let j = 0; j < 2; j++) {
+    const h = frac(f.phase * (3.1 + j * 1.7));
+    if (j === 1 && h > 0.5) break;
+    const i = f.solid ? Math.min(n - 1, rim + 3 + Math.floor(h * 4)) : rim;
+    const [x, y, z] = vert(i, h * Math.PI * 2);
+    const r = 0.0012 + 0.0012 * frac(h * 7.3);
+    bead(b, x, y + r * 0.6, z, r, g, 0.55 + 0.25 * h);
   }
   for (let i = 0; i < n - 1; i++) for (let k = 0; k < FS; k++) {
     const a = start + i * FS + k, c = start + i * FS + ((k + 1) % FS);
@@ -342,6 +373,13 @@ function buildPuffball(b: Buf, p: Puff, age: number) {
       const fresh = (1 - g) * 0.5;
       b.tint.push(tint[0] + (0.95 - tint[0]) * fresh, tint[1] + (0.93 - tint[1]) * fresh, tint[2] + (0.88 - tint[2]) * fresh);
     }
+  }
+  // a bead or two of water on the head, up on its shoulder
+  for (let j = 0; j < 2; j++) {
+    const h = frac(p.phase * (2.3 + j * 1.9));
+    if (j === 1 && h > 0.45) break;
+    const [r, y] = prof[Math.floor(N * (0.72 + 0.12 * h))], a = h * Math.PI * 2, dr = R * (0.07 + 0.05 * h);
+    bead(b, p.base.x + Math.cos(a) * (r + dr * 0.4), p.base.y + y - sink + dr * 0.3, p.base.z + Math.sin(a) * (r + dr * 0.4), dr, g, 0.5 + 0.3 * h);
   }
   for (let i = 0; i < prof.length - 1; i++) for (let k = 0; k < PS; k++) {
     const a = start + i * PS + k, c = start + i * PS + ((k + 1) % PS);
@@ -401,7 +439,8 @@ export class Fungi {
   changed = false;
   readonly material: THREE.ShaderMaterial;
 
-  constructor(setup: (m: THREE.ShaderMaterial) => void) {
+  /** `dew`: the moss's dew material, to draw the beads of water on fresh growth (none without it). */
+  constructor(setup: (m: THREE.ShaderMaterial) => void, private dew?: THREE.Material) {
     this.material = new THREE.ShaderMaterial({ vertexShader, fragmentShader, side: THREE.DoubleSide, uniforms: {} });
     setup(this.material);
   }
@@ -514,6 +553,7 @@ export class Fungi {
   remove(c: Cluster) {
     this.group.remove(c.mesh);
     c.mesh.geometry.dispose();
+    for (const d of c.mesh.children) (d as THREE.Mesh).geometry.dispose();
     this.list.splice(this.list.indexOf(c), 1);
     this.changed = true;
   }
@@ -534,6 +574,10 @@ export class Fungi {
     }
     c.mesh.geometry.dispose();
     c.mesh.geometry = g;
+    // the beads: a child of the cluster's mesh, built again with it
+    const old = c.mesh.children[0] as THREE.Mesh | undefined;
+    if (old) { c.mesh.remove(old); old.geometry.dispose(); }
+    if (this.dew && b.drops.length) c.mesh.add(buildDew(b.drops, this.dew));
   }
 
   update(dt: number, time: number) {
