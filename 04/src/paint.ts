@@ -1,5 +1,5 @@
 // The tools. Each one only changes the strokes; what the roads become is up to the rules in intent.ts.
-import { arc, derive, NO_HOUSES, RINGS, far, length, nearest, type Intent, type Stroke } from './intent';
+import { arc, derive, NO_HOUSES, plan, RINGS, far, length, nearest, type Intent, type Stroke } from './intent';
 import { cumLen, pointOn, type Rect, type Spec, type V } from './net';
 
 const dist = (a: V, b: V) => Math.hypot(b.x - a.x, b.y - a.y);
@@ -233,6 +233,68 @@ export function smear(base: Intent, from: V, to: V): Intent {
     });
     return moved ? { ...s, pts } : s;
   });
+}
+
+// ---------- tidying: a smear that made a mess of the paint is laid again as the roads it became ----------
+
+/** A stroke the rules treat as plain road: not a lot, a bridge, a ramp or a roundabout. */
+const plain = (s: Stroke) => !s.lot && !s.bridge && !s.ring && !s.one && !s.air && !s.open;
+
+const crosses = (a: V, b: V, c: V, d: V) => {
+  const o = (p: V, q: V, r: V) => Math.sign((q.x - p.x) * (r.y - p.y) - (q.y - p.y) * (r.x - p.x));
+  return o(a, b, c) !== o(a, b, d) && o(c, d, a) !== o(c, d, b);
+};
+
+/**
+ * Did the smear leave any of the strokes it moved in a knot: crossing itself, folded back along itself, or lying
+ * on another for a stretch? A stroke that was only bent is not one.
+ */
+export function tangled(intent: Intent, moved: number[]): boolean {
+  const LIE = 14, RUN = 45;
+  for (const i of moved) {
+    const s = intent[i];
+    if (!plain(s) || s.pts.length < 2) continue;
+    const cum = cumLen(s.pts), n = s.pts.length;
+    for (let a = 1; a < n; a++) {
+      for (let b = a + 2; b < n; b++) {
+        // the last piece of a closed stroke meets the first, and that is no knot
+        if (crosses(s.pts[a - 1], s.pts[a], s.pts[b - 1], s.pts[b]) && !(a === 1 && b === n - 1 && dist(s.pts[0], s.pts[n - 1]) < 1)) return true;
+        if (cum[b] - cum[a] > 80 && dist(s.pts[a], s.pts[b]) < LIE && !(cum[a] < 20 && cum[n - 1] - cum[b] < 20)) return true;
+      }
+    }
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (const p of s.pts) { x0 = Math.min(x0, p.x); y0 = Math.min(y0, p.y); x1 = Math.max(x1, p.x); y1 = Math.max(y1, p.y); }
+    for (let j = 0; j < intent.length; j++) {
+      const t = intent[j];
+      if (j === i || !plain(t) || t.pts.every((p) => p.x < x0 - LIE || p.x > x1 + LIE) || t.pts.every((p) => p.y < y0 - LIE || p.y > y1 + LIE)) continue;
+      let run = 0;
+      for (let a = 0; a < n; a++) {
+        if (nearest(t.pts, s.pts[a]).d < LIE) { if (a) run += cum[a] - cum[a - 1]; if (run > RUN) return true; }
+        else run = 0;
+      }
+    }
+  }
+  return false;
+}
+
+/**
+ * Lay the strokes a smear moved again, as the roads the rules made of them: one stroke from junction to junction,
+ * evened out, where there was a knot. What lay on itself is one road, what was too short to be a road is gone.
+ * Everything the smear did not touch is left as it was painted.
+ */
+export function tidy(intent: Intent, moved: number[], houses: Rect[] = NO_HOUSES): Intent {
+  const mine = new Set(moved.filter((i) => plain(intent[i])));
+  if (!mine.size) return intent;
+  const out = intent.filter((_, i) => !mine.has(i));
+  for (const r of plan(intent, houses)) {
+    const by = r.by ?? [r.stroke];
+    const ins = by.filter((i) => mine.has(i));
+    if (!ins.length || r.bridge || r.ring || r.stalls.some(Boolean) || r.raw.length < 2) continue;
+    // as big as it came out: the strokes that still lie along it each add a size of their own
+    const w = Math.max(0, Math.min(3, r.kind.rank - (by.length - ins.length)));
+    out.push({ pts: smooth(r.raw), w, ...(ins.some((i) => intent[i].paint) ? { paint: true } : {}) });
+  }
+  return out;
 }
 
 // ---------- erasing: one size off what the drag passes over ----------

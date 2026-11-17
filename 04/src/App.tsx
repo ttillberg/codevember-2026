@@ -19,7 +19,7 @@ import { HeatIcon, TraceIcon } from './Icons';
 import { buildNet, type Net, type V } from './net';
 import { MAP } from './map';
 import { baseIntent, derive, no, standing, type Intent } from './intent';
-import { addStroke, erase, smear, smearStart } from './paint';
+import { addStroke, erase, smear, smearStart, tangled, tidy } from './paint';
 import { holdStrokes, tileAsked, tileStrokes, windowStrokes } from './tiles';
 import { TILE as SIDE, alone, movePlace, place as LAND, saltOf, splitNet, tilesNow } from './net';
 import { laid, madeAt, wetStart } from './wet';
@@ -764,6 +764,8 @@ export function App() {
     setRedos([]);
   }, []);
   const top = useRef(history[history.length - 1]);
+  const wallsNow = useRef(walls);
+  wallsNow.current = walls;
   top.current = history[history.length - 1];
   const onSmear = useCallback((phase: 'start' | 'move' | 'end', p: V) => {
     const g = grab.current;
@@ -782,7 +784,10 @@ export function App() {
       sketch.current(null);
       setRest(null);
       if (g?.to) {
-        const done = g.rest?.at === g.to ? g.rest.intent : smear(g.base, g.from, g.to);
+        let done = g.rest?.at === g.to ? g.rest.intent : smear(g.base, g.from, g.to);
+        // a smear that left the paint in a knot is laid again as the roads it became
+        const moved = done.flatMap((s, i) => (s !== g.base[i] ? [i] : []));
+        if (!no('tidy') && tangled(done, moved)) done = tidy(done, moved, wallsNow.current);
         const made = nets.current.get(done);
         if (made) laid(made);
         setHistory((h) => [...h, done]);

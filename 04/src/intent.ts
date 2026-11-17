@@ -265,10 +265,13 @@ const NO_NODES: number[] = [];
 export function derive(intent: Intent, houses: Rect[] = NO_HOUSES): Spec {
   const was = made.get(intent);
   if (was && was.houses === houses) return was.spec;
-  const spec = rules(intent, houses);
+  const spec = layers(courts(roundabouts(rules(intent, houses))));
   made.set(intent, { houses, spec });
   return spec;
 }
+
+/** The roads as they lie between their junctions, before the yards, the roundabouts and the heights are put on them. */
+export const plan = (intent: Intent, houses: Rect[] = NO_HOUSES): Spec => rules(intent, houses);
 
 function rules(intent: Intent, houses: Rect[]): Spec {
   houses = standing(intent, houses);
@@ -511,7 +514,7 @@ function rules(intent: Intent, houses: Rect[]): Spec {
       const seg = nearest(s.pts, { x: (raw[n].x + q.x) / 2, y: (raw[n].y + q.y) / 2 }).seg;
       return cum[seg + 1] - cum[seg] >= longest / 2;
     });
-    spec.push({ raw, kind, stalls, bridge: !!e.bridge, part: e.part, air: e.bridge ? [!!nodes[e.a].air, !!nodes[e.b].air] : undefined, stroke: e.by[0], feeds: e.by.some((i) => feeds[i]), ring: e.ring, one: !!(e.bridge && s.one) });
+    spec.push({ raw, kind, stalls, bridge: !!e.bridge, part: e.part, air: e.bridge ? [!!nodes[e.a].air, !!nodes[e.b].air] : undefined, stroke: e.by[0], by: e.by, feeds: e.by.some((i) => feeds[i]), ring: e.ring, one: !!(e.bridge && s.one) });
   };
   const walk = (k: number, e: Edge) => {
     const ks = [k];
@@ -534,7 +537,7 @@ function rules(intent: Intent, houses: Rect[]): Spec {
   for (let k = 0; k < nodes.length; k++) if (!through(k)) for (const e of around[k]) if (!used.has(e)) walk(k, e);
   // what is left are rings with no junction on them
   for (const e of edges.values()) if (!used.has(e)) walk(e.a, e);
-  return layers(courts(roundabouts(settle(spec))));
+  return settle(spec);
 }
 
 /**

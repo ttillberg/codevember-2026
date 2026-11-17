@@ -97,6 +97,7 @@ Now nothing is built while the hand moves (`wet.ts`). The grab and the hand are 
 
 Smearing roads together is where the tangle comes from. It should come out dense but whole. Counted in a headless squeeze test (two rounds of dragging eight points towards the middle): about 16 of 71 roads end up too short for their junctions, and 7 pairs lie partly on each other.
 
+- A smear that leaves a knot is tidied when the hand lets go (`tangled` and `tidy` in `paint.ts`): if a stroke it moved crosses itself, folds back along itself or lies on another for 45 m, the strokes it moved are laid again as the roads the rules made of them (`plan` in `intent.ts`: after the short ones are taken up, before the yards and the roundabouts), one stroke from junction to junction, evened out. A smear that only bends is kept as painted. `?no=tidy` leaves it out. Tried only with a headless squeeze (16 drags towards the middle and one loop): no errors, 135 cars moving where the untidied town has 90. Left: the squeeze count above is not taken again; a tidied road that ended in the grass stays a driveway; not tried by hand.
 - The too-short ones are mostly at roundabouts and parking lots, which do not merge with each other.
 - Bridges land in the middle of crowded junctions and are still low there.
 - A twist and a pinch brush.

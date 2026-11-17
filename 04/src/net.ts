@@ -53,6 +53,8 @@ export interface SpecRoad {
   air?: [boolean, boolean];
   deck?: Deck;
   stroke: number; // the stroke it was derived from
+  /** every stroke that went this way, the first of them `stroke` */
+  by?: number[];
   feeds?: boolean; // leads to a parking lot: wants a signal where it meets a big road
   ring?: boolean; // a piece of a roundabout: one way, from the first point to the last
   one?: boolean; // a ramp: one way, from the first point to the last
