@@ -12,6 +12,9 @@ import * as THREE from 'three';
 import { mossLighting } from './shaders';
 
 const MAX = 9000;
+// a phone draws a little over half the particles: the soft puffs are big on screen near you, and their overdraw
+// slowed it for as long as the smoke lingered
+const Q = matchMedia('(pointer: coarse)').matches ? 0.5 : 1;
 
 interface Shot { from: THREE.Vector3; to: THREE.Vector3; t: number; dur: number; peak: number; onLand: (p: THREE.Vector3) => void }
 
@@ -92,19 +95,19 @@ export class Spores {
     q.y += 0.015;
     const r = Math.random;
     // a small explosion: puffs thrown out and up fast, slowing, swelling into a low dome of smoke
-    for (let k = 0; k < 110; k++) {
+    for (let k = 0; k < 110 * Q; k++) {
       const a = r() * Math.PI * 2, up = r(), sp = 0.12 + r() * 0.45;
       this.emit(q, Math.cos(a) * sp * (1 - 0.6 * up), 0.05 + up * 0.45, Math.sin(a) * sp * (1 - 0.6 * up), 2 + r() * 2.5, 0.012 + r() * 0.014, 0, 3 + r() * 4, 0.02, 1.2);
     }
     // the spores themselves, flung out with it: a glitter through the cloud
-    for (let k = 0; k < 1600; k++) {
+    for (let k = 0; k < 1600 * Q; k++) {
       const a = r() * Math.PI * 2, up = r(), sp = r() * 0.6;
       this.emit(q, Math.cos(a) * sp, 0.05 + up * 0.5, Math.sin(a) * sp, 1.5 + r() * 3, 0.0006 + r() * 0.0008, 1);
     }
     // what is left: a pale band of smoke lying low over the moss, wide and flat, that drifts off, lifts a
     // little and fades away. It fades in as the burst clears.
     const along = r() * Math.PI;
-    for (let k = 0; k < 46; k++) {
+    for (let k = 0; k < 46 * Q; k++) {
       // an elongated patch, longer one way than the other
       const u = (r() - 0.5) * 2, v = (r() - 0.5) * 2;
       const x = q.x + Math.cos(along) * u * 0.28 - Math.sin(along) * v * 0.08;
@@ -120,17 +123,17 @@ export class Spores {
   sow(p: THREE.Vector3) {
     const r = Math.random;
     const q = p.clone();
-    for (let k = 0; k < 40; k++) {
+    for (let k = 0; k < 40 * Q; k++) {
       const a = r() * Math.PI * 2, sp = 0.02 + r() * 0.08;
       this.emit(q, Math.cos(a) * sp, 0.01 + r() * 0.08, Math.sin(a) * sp, 2.5 + r() * 2.5, 0.026 + r() * 0.018, 0, 1.4 + r() * 0.6, 0.01, 1.0);
     }
-    for (let k = 0; k < 700; k++) {
+    for (let k = 0; k < 700 * Q; k++) {
       const a = r() * Math.PI * 2, sp = r() * 0.15;
       this.emit(q, Math.cos(a) * sp, -0.05 + r() * 0.15, Math.sin(a) * sp, 1.5 + r() * 2.5, 0.0006 + r() * 0.0006, 1);
     }
     // what is left lying on the moss: a few wide, faint puffs that linger and drift
     const tmp0 = new THREE.Vector3();
-    for (let k = 0; k < 12; k++) {
+    for (let k = 0; k < 12 * Q; k++) {
       tmp0.set(p.x + (r() - 0.5) * 0.16, p.y - 0.01 + r() * 0.03, p.z + (r() - 0.5) * 0.16);
       this.emit(tmp0, (r() - 0.5) * 0.008, 0.003, (r() - 0.5) * 0.008, 7 + r() * 5, 0.03 + r() * 0.015, 0, 1.4 + r() * 0.5, 0.004, 0.45);
     }
@@ -139,16 +142,16 @@ export class Spores {
   /** A puffball pressed: a jet of spore smoke out of its pore, up and over, settling around it. */
   puff(p: THREE.Vector3) {
     const r = Math.random;
-    for (let k = 0; k < 50; k++) {
+    for (let k = 0; k < 50 * Q; k++) {
       const a = r() * Math.PI * 2, sp = r() * 0.06;
       this.emit(p, Math.cos(a) * sp, 0.12 + r() * 0.28, Math.sin(a) * sp, 2 + r() * 2.5, 0.006 + r() * 0.008, 0, 3 + r() * 4, 0.01, 1.2);
     }
-    for (let k = 0; k < 600; k++) {
+    for (let k = 0; k < 600 * Q; k++) {
       const a = r() * Math.PI * 2, sp = r() * 0.1;
       this.emit(p, Math.cos(a) * sp, 0.1 + r() * 0.35, Math.sin(a) * sp, 1.5 + r() * 2.5, 0.0006 + r() * 0.0006, 1);
     }
     const tmp0 = new THREE.Vector3();
-    for (let k = 0; k < 14; k++) {
+    for (let k = 0; k < 14 * Q; k++) {
       tmp0.set(p.x + (r() - 0.5) * 0.12, p.y - 0.02 + r() * 0.03, p.z + (r() - 0.5) * 0.12);
       this.emit(tmp0, (r() - 0.5) * 0.01, 0.004, (r() - 0.5) * 0.01, 10 + r() * 8, 0.015 + r() * 0.012, 2, 2 + r(), 0.005, 0.4);
     }

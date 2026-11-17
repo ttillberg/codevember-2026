@@ -561,7 +561,10 @@ export interface Cluster {
   radius: number; // roughly how far it reaches out, for the autofocus
   wither?: number; // age at which it starts to wither (thrown ones; found ones stay)
   rot: number; // how far it has withered, 0..1
+  built?: number; // when it was last rebuilt, on the update's clock
 }
+
+const BUILD_EVERY = matchMedia('(pointer: coarse)').matches ? 1 / 12 : 1 / 30; // seconds between rebuilds of a growing one
 
 export class Fungi {
   readonly group = new THREE.Group();
@@ -752,9 +755,16 @@ export class Fungi {
       c.rot = c.wither === undefined ? 0 : clamp01((c.age - c.wither) / WITHER);
       if (c.rot >= 1) { this.remove(c); continue; }
       if (c.grown && c.rot <= 0 && !squashing) continue;
+      // growing and withering are slow: rebuilt a few dozen times a second, not every frame (each build is a
+      // lathe and its beads; on a phone, every frame of it stuttered), the last step always
+      const done = !c.grown && c.age >= c.end;
+      if (!squashing && !done && c.built !== undefined && time - c.built < BUILD_EVERY) continue;
       this.rebuild(c, time);
-      if (c.age >= c.end) c.grown = true;
-      this.changed = true;
+      c.built = time;
+      if (done) {
+        c.grown = true;
+        this.changed = true; // the shadow map is drawn again for the grown shape, not for every step of growing
+      }
     }
   }
 
