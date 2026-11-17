@@ -2,7 +2,7 @@
 import { useLayoutEffect, useMemo, useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
 import { AdditiveBlending, Color, InstancedMesh, MeshStandardMaterial, Object3D, ShaderMaterial } from 'three';
-import { onRoad, WALK, zebraAt } from './geo';
+import { boxed, onRoad, WALK, zebraAt } from './geo';
 import { HOUR, NIGHT, bakeGlow, type Spot } from './haze';
 import { cumLen, deck, offset, place, pointOn, rng, type Net, type V } from './net';
 import { turned, type Block } from './Town';
@@ -323,7 +323,7 @@ export function Signs({ net, blocks }: { net: Net; blocks: Block[] }) {
     }
     // along the roads: hoardings on poles, facing the traffic
     const solid = [...net.pads, ...net.buildings, ...blocks];
-    const taken = (x: number, y: number, m = 3) => solid.some((q) => x > q.x0 - m && x < q.x1 + m && y > q.y0 - m && y < q.y1 + m);
+    const inBox = boxed(solid), taken = (x: number, y: number, m = 3) => inBox(x, y, m);
     for (const road of net.roads) {
       if (road.rank < 2 || road.bridge || road.ring) continue;
       for (const side of [1, -1]) {
@@ -496,7 +496,7 @@ export function Street({ net, blocks, speed }: { net: Net; blocks: Block[]; spee
     };
     const tvs: (typeof post[number] & { seed: number })[] = [];
     const solid = [...net.pads, ...net.buildings, ...blocks];
-    const taken = (x: number, y: number, m = 2) => solid.some((q) => x > q.x0 - m && x < q.x1 + m && y > q.y0 - m && y < q.y1 + m);
+    const inBox = boxed(solid), taken = (x: number, y: number, m = 2) => inBox(x, y, m);
     const hash = (x: number, y: number) => Math.abs(Math.sin(x * 12.9898 + y * 78.233) * 43758.5453) % 1;
     const stand = (x: number, z: number, W: number, H: number, rot: number, up: number) => {
       // two legs and the screen on top of them

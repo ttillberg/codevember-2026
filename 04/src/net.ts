@@ -657,3 +657,26 @@ export function plan(net: Net, from: Lane, goals: Lane[], seed: number, noChange
     }
   }
 }
+
+/**
+ * Is a point inside any of these boxes, or within `m` of one? Asked of many boxes many times: they are put in squares
+ * of 64 m once, and a point asks only the boxes of its own square. `reach` is the widest margin that will be asked.
+ */
+export function boxed(rects: { x0: number; y0: number; x1: number; y1: number }[], reach = 8) {
+  const grid = new Map<number, typeof rects>();
+  const key = (gx: number, gy: number) => gx * 100003 + gy;
+  for (const q of rects) {
+    for (let gx = Math.floor((q.x0 - reach) / 64); gx <= Math.floor((q.x1 + reach) / 64); gx++) {
+      for (let gy = Math.floor((q.y0 - reach) / 64); gy <= Math.floor((q.y1 + reach) / 64); gy++) {
+        const k = key(gx, gy), l = grid.get(k);
+        if (l) l.push(q); else grid.set(k, [q]);
+      }
+    }
+  }
+  return (x: number, y: number, m: number) => {
+    const l = grid.get(key(Math.floor(x / 64), Math.floor(y / 64)));
+    if (!l) return false;
+    for (const q of l) if (x > q.x0 - m && x < q.x1 + m && y > q.y0 - m && y < q.y1 + m) return true;
+    return false;
+  };
+}

@@ -52,7 +52,8 @@ export function plantSmall(net: Net, taken: Block[], many = 210, salt = 0, wide 
   if (wide) many = Math.round(many * 2.2);
   const roads = net.roads.filter((o) => !o.bridge && !o.ring && o.rank >= 1 && o.len > 30);
   if (!roads.length) return out;
-  const clash = (b: Rect, gap: number) => [...taken, ...out].some((o) => b.x0 < o.x1 + gap && b.x1 > o.x0 - gap && b.y0 < o.y1 + gap && b.y1 > o.y0 - gap);
+  const hits = (o: Rect, b: Rect, gap: number) => b.x0 < o.x1 + gap && b.x1 > o.x0 - gap && b.y0 < o.y1 + gap && b.y1 > o.y0 - gap;
+  const clash = (b: Rect, gap: number) => taken.some((o) => hits(o, b, gap)) || out.some((o) => hits(o, b, gap));
   for (let tries = 0; tries < many * 30 && out.length < many; tries++) {
     const road = roads[(r() * roads.length) | 0], i = (r() * (road.pts.length - 1)) | 0, t = r();
     const a = road.pts[i], b = road.pts[i + 1], len = Math.hypot(b.x - a.x, b.y - a.y);

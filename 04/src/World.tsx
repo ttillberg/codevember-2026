@@ -2,7 +2,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import { NIGHT, glowing } from './haze';
 import { BufferGeometry, Color, DoubleSide, Float32BufferAttribute, InstancedMesh, Matrix4, MeshStandardMaterial, Object3D, Uniform, Vector3 } from 'three';
-import { buildGround, clearOf, onRoad, WALK } from './geo';
+import { boxed, buildGround, clearOf, onRoad, WALK } from './geo';
 import { cumLen, offset, place, pointOn, rng, saltOf, tilesNow, type Net } from './net';
 import { Town, type Block } from './Town';
 import { settle, soaked, wet } from './wet';
@@ -497,7 +497,7 @@ function Trees({ net, blocks, glade, season }: { net: Net; blocks: Block[]; glad
     // street trees: a row down each side of every proper road, in the outer strip of the sidewalk
     first.crown.value = i; first.stem.value = e; first.litter.value = l;
     const solid = [...net.pads, ...net.buildings];
-    const blocked = (x: number, y: number) => solid.some((q) => x > q.x0 - 2 && x < q.x1 + 2 && y > q.y0 - 2 && y < q.y1 + 2);
+    const inBox = boxed(solid), blocked = (x: number, y: number) => inBox(x, y, 2);
     // the trees of the park, planted along its walks: each on its own, a clean stem and a round crown
     for (const t of glade?.trees ?? []) {
       if (i + 2 > CAP - 600 || !clearOf(net, t.x, t.y, 3)) continue;

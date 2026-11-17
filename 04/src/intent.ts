@@ -2,7 +2,7 @@
 // The strokes are the only thing kept. Every time they change the network is derived again from nothing:
 // each stroke is walked from node to node, sharing the nodes that are already near, and each run of
 // edges between junctions gets a road style.
-import { BRIDGE_H, cumLen, deckAt, far, heightAt, shape, type Deck, halfWidth, junctionTrim, KINDS, pointOn, ringKind, type Rect, type Spec, type SpecRoad, type V } from './net';
+import { BRIDGE_H, boxed, cumLen, deckAt, far, heightAt, shape, type Deck, halfWidth, junctionTrim, KINDS, pointOn, ringKind, type Rect, type Spec, type SpecRoad, type V } from './net';
 
 export interface Stroke {
   pts: V[];
@@ -260,6 +260,8 @@ export function standing<T extends Rect>(intent: Intent, houses: T[]): T[] {
 const made = new WeakMap<Intent, { houses: Rect[]; spec: Spec }>();
 // one list for "no houses", so that asking twice without any is asking the same thing
 export const NO_HOUSES: Rect[] = [];
+const NO_NODES: number[] = [];
+
 export function derive(intent: Intent, houses: Rect[] = NO_HOUSES): Spec {
   const was = made.get(intent);
   if (was && was.houses === houses) return was.spec;
@@ -282,11 +284,23 @@ function rules(intent: Intent, houses: Rect[]): Spec {
   // and keeps the arms of a junction well apart.
   const nodes: (V & { lot: boolean; air?: boolean })[] = [];
   // a node up on a bridge and one on the ground are never the same node, however close on the map
+  // (the nodes lie in squares of 64 m, put there as they are made: a point asks the squares it can reach, not every node)
+  const cells = new Map<number, number[]>();
+  let celled = 0;
   const near = (p: V, r: number, air = false) => {
+    for (; celled < nodes.length; celled++) {
+      const c = Math.floor(nodes[celled].x / 64) * 100003 + Math.floor(nodes[celled].y / 64), l = cells.get(c);
+      if (l) l.push(celled); else cells.set(c, [celled]);
+    }
     let best = -1, bd = Infinity;
-    for (let k = 0; k < nodes.length; k++) {
-      const d = dist(nodes[k], p);
-      if (!!nodes[k].air === air && d < (nodes[k].lot ? Math.min(r, LOT) : r) && d < bd) { bd = d; best = k; }
+    for (let gx = Math.floor((p.x - r) / 64); gx <= Math.floor((p.x + r) / 64); gx++) {
+      for (let gy = Math.floor((p.y - r) / 64); gy <= Math.floor((p.y + r) / 64); gy++) {
+        for (const k of cells.get(gx * 100003 + gy) ?? NO_NODES) {
+          const d = dist(nodes[k], p);
+          // the nearest, and of two as near the one made first, as when every node was asked in turn
+          if (!!nodes[k].air === air && d < (nodes[k].lot ? Math.min(r, LOT) : r) && (d < bd || (d === bd && k < best))) { bd = d; best = k; }
+        }
+      }
     }
     return best;
   };
@@ -302,7 +316,7 @@ function rules(intent: Intent, houses: Rect[]): Spec {
     y0: Math.min(...s.pts.map((p) => p.y)) + 1, y1: Math.max(...s.pts.map((p) => p.y)) - 1,
   }));
   // nor through a house: where it could not get round one, it ends
-  const inHouse = (p: V) => houses.some((l) => p.x > l.x0 - 1 && p.x < l.x1 + 1 && p.y > l.y0 - 1 && p.y < l.y1 + 1);
+  const housed = boxed(houses, 2), inHouse = (p: V) => housed(p.x, p.y, 1);
   const inLot = (p: V) => inHouse(p) || lots.some((l) => p.x > l.x0 && p.x < l.x1 && p.y > l.y0 && p.y < l.y1);
   /** where a stroke has to pass: its ends, its crossings, its corners */
   const pins: { s: number; k: number }[][] = intent.map(() => []);

@@ -658,3 +658,5 @@ export function onRoad(net: Net, x: number, y: number, skip?: Road, pad = 0.6) {
   }
   return false;
 }
+
+export { boxed } from './net';
