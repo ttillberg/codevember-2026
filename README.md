@@ -52,6 +52,24 @@ pnpm build           # build every day into dist/, regenerate index + this table
 
 See [docs/GUIDELINES.md](docs/GUIDELINES.md).
 
+### Before and after
+
+A change you can see should show itself in its pull request: one picture, before on the left and after on the right. As well as it can be done, and only where it tells something. It must cost next to nothing and never bend the code or the way of working to get it.
+
+The cheap way is to take the first picture early. Once you know what is going to change, and before changing it, grab the view that shows it (`pnpm grab NN`, into `NN/process/`). Then work towards the result, grabbing as you go as the guidelines already ask. When it is done, the first grab and the last are the two references, for free: same view, same size.
+
+```sh
+ffmpeg -i NN/process/<first>.png -i NN/process/<last>.png -filter_complex hstack -q:v 4 NN/about/before-after.jpg
+```
+
+Commit that one file (it is written over each time, and the build does not ship it) and put it in the pull request body by its address at the commit:
+
+```md
+![before and after](https://raw.githubusercontent.com/ttillberg/codevember-2026/<commit>/NN/about/before-after.jpg)
+```
+
+Leave it out when there is nothing to see (logic, performance, docs), when the change is motion that a still does not show (a clip in `NN/process/` is enough, say so in the text), or when getting the same view twice would take real work.
+
 ## License
 
 MIT
