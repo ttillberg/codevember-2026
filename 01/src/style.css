@@ -59,38 +59,74 @@ canvas { display: block; touch-action: none; cursor: crosshair; }
 }
 .clean .again, .clean .flip, .clean .sheets { display: none; }
 
-/* the sheets to pick from, laid on the mat like cards; a column you scroll on a phone */
-.picker {
-  position: fixed; z-index: 2; inset: 0;
-  display: flex; flex-wrap: wrap; align-content: flex-start; align-items: flex-start; justify-content: center; gap: 30px 26px;
-  padding: 150px 24px 40px; box-sizing: border-box; overflow-y: auto; touch-action: pan-y;
+/* the sheets to pick from: a folder, its pages turning on a spine with rings. On a wide screen
+   it sits left of the middle, the board's island to its right; on a phone the spine is near the
+   left edge (the turned pages go off to the left) and the island sits below */
+.folder {
+  --page: min(340px, 28vw); --tall: min(520px, calc(100dvh - 230px)); --spine: 36vw; --mid: calc(50% + 40px);
+  position: fixed; z-index: 2; inset: 0; perspective: 2200px; pointer-events: none;
+  user-select: none; -webkit-user-select: none;
 }
-.picker .sheet {
-  display: flex; flex-direction: column; align-items: flex-start; gap: 2px;
-  width: clamp(150px, 18vw, 210px); padding: 0; border: 0; background: none; cursor: pointer;
-  color: #f4f4f2; text-align: left; font: inherit;
-  transform: rotate(var(--tilt)); transition: transform 0.25s cubic-bezier(.3,1.4,.5,1);
+.folder .book {
+  position: absolute; pointer-events: auto; touch-action: none; cursor: grab;
+  left: calc(var(--spine) - var(--page) - 14px); width: calc(2 * var(--page) + 28px);
+  top: calc(var(--mid) - var(--tall) / 2 - 11px); height: calc(var(--tall) + 22px);
+  transform-style: preserve-3d;
 }
-.picker .sheet:hover, .picker .sheet:focus-visible { transform: rotate(0deg) translateY(-6px) scale(1.03); outline: none; }
-.picker .sheet:active { transform: rotate(0deg) scale(0.98); }
-.picker .print {
-  display: grid; place-items: center; width: 100%; aspect-ratio: 1; margin-bottom: 10px;
-  background: #fbf9f4; border-radius: 2px;
-  box-shadow: 0 1px 0 rgba(0,0,0,0.08), 0 14px 26px -10px rgba(0,0,0,0.45);
+.folder.dragging .book { cursor: grabbing; }
+.folder .cover {
+  position: absolute; top: 0; height: 100%; width: calc(var(--page) + 14px);
+  background: #b98d58 radial-gradient(circle at 30% 20%, rgba(255,240,210,0.22), transparent 60%);
+  box-shadow: 0 1px 0 rgba(0,0,0,0.1), 0 24px 40px -18px rgba(0,0,0,0.6);
 }
-.picker .print img { width: 92%; height: 92%; object-fit: contain; pointer-events: none; }
-.picker b { font: 700 18px/1.1 "IBM Plex Sans", system-ui, sans-serif; letter-spacing: -0.01em; text-transform: uppercase; }
-.picker i { font: 600 11px/1.3 Inter, "Helvetica Neue", Arial, sans-serif; font-style: normal; letter-spacing: 0.12em; text-transform: uppercase; opacity: 0.75; }
+.folder .cover.right { left: calc(var(--page) + 14px); border-radius: 0 8px 8px 0; }
+.folder .cover.left { left: 0; border-radius: 8px 0 0 8px; background-color: #ad8250; }
+.folder .leaves { position: absolute; left: calc(var(--page) + 14px); top: 11px; width: var(--page); height: var(--tall); transform-style: preserve-3d; }
+.folder .leaf {
+  position: absolute; inset: 0; transform-origin: left center; transform-style: preserve-3d;
+  transition: transform 0.5s cubic-bezier(.25,.8,.3,1);
+}
+.folder.dragging .leaf { transition: none; }
+.folder .front, .folder .back {
+  position: absolute; inset: 0; backface-visibility: hidden; -webkit-backface-visibility: hidden;
+  background: #fbf9f4; border-radius: 2px 5px 5px 2px;
+  box-shadow: inset 10px 0 14px -12px rgba(0,0,0,0.35), 0 1px 2px rgba(0,0,0,0.15);
+}
+.folder .front {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 3px;
+  padding: 22px 22px 20px 34px; box-sizing: border-box; color: #20352c;
+}
+.folder .back { transform: rotateY(180deg); border-radius: 5px 2px 2px 5px; box-shadow: inset -10px 0 14px -12px rgba(0,0,0,0.35); }
+.folder .back span {
+  position: absolute; left: 18px; bottom: 14px; color: rgba(32,53,44,0.35);
+  font: 700 12px/1 "IBM Plex Sans", system-ui, sans-serif; letter-spacing: 0.1em;
+}
+.folder .print { display: grid; place-items: center; width: 100%; flex: 1; min-height: 0; margin-bottom: 12px; }
+.folder .print img { max-width: 100%; max-height: 100%; object-fit: contain; pointer-events: none; }
+.folder b { font: 700 20px/1.1 "IBM Plex Sans", system-ui, sans-serif; letter-spacing: -0.01em; text-transform: uppercase; }
+.folder i { font: 600 11px/1.3 Inter, "Helvetica Neue", Arial, sans-serif; font-style: normal; letter-spacing: 0.12em; text-transform: uppercase; opacity: 0.6; }
+/* punched holes down the spine, rings through them */
+.folder .holes {
+  position: absolute; left: 10px; top: 0; bottom: 0; width: 9px;
+  background: radial-gradient(circle, #2c4a3c 3.2px, transparent 3.8px) center / 9px 25% repeat-y;
+  opacity: 0.85;
+}
+.folder .rings {
+  position: absolute; left: -7px; top: 0; bottom: 0; width: 26px; z-index: 999; pointer-events: none;
+  transform: translateZ(1px);
+  background: radial-gradient(ellipse 13px 5px at 50% 50%, transparent 8px, #d9d6cf 8.5px, #9b978e 11px, transparent 12px) center / 26px 25% repeat-y;
+}
+.folder .count {
+  position: absolute; left: var(--spine); top: calc(var(--mid) + var(--tall) / 2 + 24px); transform: translateX(-50%);
+  color: #f4f4f2; font: 700 12px/1 "IBM Plex Sans", system-ui, sans-serif; letter-spacing: 0.16em; opacity: 0.75;
+}
 @media (max-width: 640px) {
-  /* two columns, scrolling down */
-  .picker {
-    display: grid; grid-template-columns: 1fr 1fr; align-content: start; gap: 26px 18px;
-    padding: 132px 18px 40px; overflow-y: auto; touch-action: pan-y;
-  }
-  .picker .sheet { width: 100%; }
-  .picker b { font-size: 15px; }
-  .picker i { font-size: 10px; }
+  .folder { --page: calc(100vw - 58px); --tall: min(420px, calc(56dvh - 120px)); --spine: 38px; --mid: calc(120px + var(--tall) / 2 + 24px); }
+  .folder .front { padding: 16px 16px 14px 30px; }
+  .folder b { font-size: 17px; }
+  .folder .count { left: 50%; }
 }
+.clean .folder .count { display: none; }
 
 /* bottom centre: undo, redo */
 .tools {

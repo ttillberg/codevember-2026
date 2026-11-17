@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, type PointerEvent as ReactPointerEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import { Desk } from './Desk';
@@ -81,13 +81,14 @@ function Board() {
   return <primitive object={b.world} />;
 }
 
-// no card yet: the bare mat, seen the usual way
+// picking: the board as a little island on the table beside the folder, a tap on it opens it
 function Idle() {
   const camera = useThree((s) => s.camera) as THREE.OrthographicCamera;
   const gl = useThree((s) => s.gl);
-  const rig = useMemo(() => makeRig(camera, gl.domElement), [camera, gl]);
-  useFrame(() => rig.fit(new THREE.Box3(new THREE.Vector3(-110, 0, -110), new THREE.Vector3(110, 10, 110))));
-  return null;
+  const b = useMemo(() => createBoard(camera, gl.domElement, gl, makeRig(camera, gl.domElement), { open: () => useHud.setState({ board: true }) }), [camera, gl]);
+  useEffect(() => () => b.dispose(), [b]);
+  useFrame((_, dt) => b.animate(performance.now(), Math.min(0.05, dt)));
+  return <primitive object={b.world} />;
 }
 
 // a card's face: its printed sheet, small
@@ -100,34 +101,133 @@ function face(m: Model) {
   return faces.get(m.id)!;
 }
 
-// Pick a card: the sheets laid out, Malmö, simplest first
+// Pick a card: the sheets in a folder, Malmö, simplest first (the board is the island on the
+// table beside it, see Idle). A page
+// turns over on its spine by finger or pointer: drag it across and it follows, let go and it
+// settles on the nearer page (a flick goes on). A tap on the open page picks it, one on the
+// left-hand side turns back; arrow keys and a wheel turn too.
+let leaf = 0; // the open page, kept while you are away
 function Picker() {
+  const n = MODELS.length;
+  const [at, setAt] = useState(leaf);
+  const drag = useRef<{ x: number; at: number; w: number; moved: boolean; t: number; v: number } | null>(null);
+  const [dragging, setDragging] = useState(false);
+  const go = (i: number) => {
+    const j = Math.max(0, Math.min(n - 1, i));
+    leaf = j;
+    setAt(j);
+  };
+  const open = (i: number) => {
+    leaf = i;
+    useHud.setState({ model: MODELS[i].id, hint: '' });
+  };
+  useEffect(() => {
+    const key = (e: KeyboardEvent) => {
+      if (e.key === 'ArrowRight') go(Math.round(leaf) + 1);
+      if (e.key === 'ArrowLeft') go(Math.round(leaf) - 1);
+      if (e.key === 'Enter') open(Math.round(leaf));
+    };
+    addEventListener('keydown', key);
+    return () => removeEventListener('keydown', key);
+  }, []);
+  const wheelAt = useRef(0);
   return (
     <>
-      <Plate hint="Pick a sheet to cut out" />
-      <div className="picker">
-        {MODELS.map((m, i) => (
-          <button key={m.id} type="button" className="sheet" style={{ ['--tilt' as string]: `${(((i * 7) % 5) - 2) * 1.1}deg` }} onClick={() => useHud.setState({ model: m.id, hint: '' })}>
-            <span className="print"><img src={face(m)} alt="" draggable={false} /></span>
-            <b>{m.name}</b>
-            <i>{m.where}</i>
-          </button>
-        ))}
-        <BoardCard />
+      <Plate hint="Flip through, tap a sheet to cut it out, or the board to visit" />
+      <div className={`folder${dragging ? ' dragging' : ''}`}>
+      <div
+        className="book"
+        onPointerDown={(e) => {
+          const book = e.currentTarget.querySelector('.leaves')!.getBoundingClientRect();
+          e.currentTarget.setPointerCapture(e.pointerId);
+          drag.current = { x: e.clientX, at, w: book.width, moved: false, t: performance.now(), v: 0 };
+        }}
+        onPointerMove={(e) => {
+          const d = drag.current;
+          if (!d) return;
+          const dx = e.clientX - d.x;
+          if (!d.moved && Math.abs(dx) < 6) return;
+          if (!d.moved) { d.moved = true; setDragging(true); }
+          const now = performance.now();
+          const next = Math.max(-0.15, Math.min(n - 0.85, d.at - dx / d.w));
+          d.v = (next - at) / Math.max(1, now - d.t);
+          d.t = now;
+          setAt(next);
+        }}
+        onPointerUp={(e) => {
+          const d = drag.current;
+          drag.current = null;
+          setDragging(false);
+          if (!d) return;
+          if (d.moved) {
+            // a flick carries on to the next page, else the nearer one
+            const fling = Math.abs(d.v) > 0.002 ? Math.sign(d.v) * 0.5 : 0;
+            go(Math.round(at + fling));
+            return;
+          }
+          const spine = e.currentTarget.querySelector('.leaves')!.getBoundingClientRect().left;
+          if (e.clientX < spine) go(Math.round(at) - 1);
+          else open(Math.round(at));
+        }}
+        onPointerCancel={() => { drag.current = null; setDragging(false); go(Math.round(at)); }}
+        onWheel={(e) => {
+          const now = performance.now();
+          if (now - wheelAt.current < 350) return;
+          const d = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY;
+          if (Math.abs(d) < 8) return;
+          wheelAt.current = now;
+          go(Math.round(at) + Math.sign(d));
+        }}
+      >
+        <div className="cover left" />
+        <div className="cover right" />
+        <div className="leaves">
+          {MODELS.map((m, i) => {
+            const turn = Math.max(0, Math.min(1, at - i));
+            const near = Math.abs(i - at) < 2.5;
+            return (
+              <div
+                key={m.id}
+                className="leaf"
+                style={{
+                  transform: `rotateY(${-180 * turn}deg)`,
+                  zIndex: turn > 0.5 ? i : n - i,
+                  visibility: near ? 'visible' : 'hidden',
+                }}
+              >
+                <div className="front">
+                  <Sheet m={m} />
+                  <span className="holes" />
+                </div>
+                <div className="back"><span>{i + 1}</span></div>
+              </div>
+            );
+          })}
+          <span className="rings" />
+        </div>
+      </div>
+        <div className="count">{Math.round(at) + 1} / {n}</div>
       </div>
     </>
   );
 }
 
-// the last card: the board, with what stands on it
-function BoardCard() {
-  const n = useHud((s) => s.town.length);
+// the folder, small: two covers open on a spine, a sheet in it
+function FolderIcon() {
   return (
-    <button type="button" className="sheet" style={{ ['--tilt' as string]: '1.6deg' }} onClick={() => useHud.setState({ board: true })}>
-      <span className="print kraft"><span>{n || ''}</span></span>
-      <b>The board</b>
-      <i>{n ? `${n} standing` : 'Nothing on it yet'}</i>
-    </button>
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M12 6.5 3 5v13l9 1.5 9-1.5V5z" /><path d="M12 6.5v13" /><path d="M14.5 8.2 18.5 7.6v8l-4 .6z" />
+    </svg>
+  );
+}
+
+function Sheet({ m }: { m: Model }) {
+  return (
+    <>
+      <span className="print"><img src={face(m)} alt="" draggable={false} /></span>
+      <b>{m.name}</b>
+      <i>{m.where}</i>
+    </>
   );
 }
 
@@ -138,7 +238,7 @@ function BoardHud() {
     <>
       <Plate hint={n ? 'Tap one to turn it, drag to move, off the edge to take away' : 'Build something and put it here'} />
       <button className="sheets" type="button" aria-label="Back to the sheets" onClick={() => useHud.setState({ board: false })}>
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="3.5" y="6.5" width="11" height="14" rx="1" /><path d="M8 3.5h11.5a1 1 0 0 1 1 1V17" /></svg>
+        <FolderIcon />
       </button>
       <Zoom />
     </>
@@ -245,7 +345,7 @@ function Hud() {
     <>
       <Plate hint={hint} />
       <button className="sheets" type="button" aria-label="Pick another sheet" onClick={() => useHud.setState({ model: null })}>
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="3.5" y="6.5" width="11" height="14" rx="1" /><path d="M8 3.5h11.5a1 1 0 0 1 1 1V17" /></svg>
+        <FolderIcon />
       </button>
       <button className="flip" type="button" aria-label="Turn the card over" onClick={actions.flip}>
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M4 15.5 12 19l8-3.5" /><path d="M4 8.5 12 5l8 3.5" /><path d="M18.5 12a6.5 3.2 0 1 1-2-2.3" /><path d="M16.2 7.6l.4 2.2-2.2.4" /></svg>

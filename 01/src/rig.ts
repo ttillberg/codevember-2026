@@ -4,7 +4,8 @@ import * as THREE from 'three';
 // turn. World units are millimetres, y up. Sizes are read from the canvas as it really is.
 
 export function makeRig(camera: THREE.OrthographicCamera, canvas: HTMLCanvasElement) {
-  const view = { elevation: 30, azimuth: 36, room: 1.12, zoom: 1, panX: 0, panY: 0, target: new THREE.Vector3() };
+  // offX, offY: where the fitted box sits on screen, as a share of the half width and height
+  const view = { elevation: 30, azimuth: 36, room: 1.12, zoom: 1, panX: 0, panY: 0, offX: 0, offY: 0, target: new THREE.Vector3() };
   let fitBox = new THREE.Box3(new THREE.Vector3(-100, 0, -100), new THREE.Vector3(100, 10, 100));
   let mmPerPx = 1;
   let width = 1, height = 1;
@@ -29,7 +30,8 @@ export function makeRig(camera: THREE.OrthographicCamera, canvas: HTMLCanvasElem
     const el = THREE.MathUtils.degToRad(view.elevation);
     const az = THREE.MathUtils.degToRad(view.azimuth);
     const dir = new THREE.Vector3(Math.sin(az) * Math.cos(el), Math.sin(el), Math.cos(az) * Math.cos(el));
-    camera.position.copy(view.target).addScaledVector(dir, 1500);
+    // far back: an orthographic camera sees the same from anywhere, and nothing near it gets cut
+    camera.position.copy(view.target).addScaledVector(dir, 12000);
     camera.lookAt(view.target);
     camera.updateMatrixWorld();
 
@@ -47,13 +49,13 @@ export function makeRig(camera: THREE.OrthographicCamera, canvas: HTMLCanvasElem
     // the hand's zoom and pan, inside the fitted frame: zoomed out all the way there is no pan
     clampPan();
     const half = fitHalf / view.zoom;
-    const cx = (x0 + x1) / 2 + view.panX;
+    const cx = (x0 + x1) / 2 + view.panX - view.offX * half * aspect;
     // phones: room for the plate on top
-    const cy = (y0 + y1) / 2 + (phone ? fitHalf * 0.06 : 0) + view.panY;
+    const cy = (y0 + y1) / 2 + (phone ? fitHalf * 0.06 : 0) + view.panY - view.offY * half;
     camera.left = cx - half * aspect; camera.right = cx + half * aspect;
     camera.top = cy + half; camera.bottom = cy - half;
     camera.near = 10;
-    camera.far = 4000;
+    camera.far = 30000;
     camera.updateProjectionMatrix();
     mmPerPx = (2 * half) / height;
   }

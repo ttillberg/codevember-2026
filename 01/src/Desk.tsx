@@ -53,7 +53,8 @@ function makeMat() {
   const tex = new THREE.CanvasTexture(c);
   tex.colorSpace = THREE.SRGBColorSpace;
   tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
-  const size = 3000;
+  // far past anything the camera takes in, the board's island seen whole included
+  const size = 40000;
   tex.repeat.set(size / 50, size / 50);
   tex.anisotropy = 8;
   const mat = new THREE.Mesh(

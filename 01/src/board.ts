@@ -127,7 +127,9 @@ export function placeNew(id: string) {
   setTown((t) => [...t, { key: `${id}-${Date.now().toString(36)}`, id, x: Math.round(x), z: Math.round(z), turn: 0 }]);
 }
 
-export function createBoard(camera: THREE.OrthographicCamera, canvas: HTMLCanvasElement, renderer: THREE.WebGLRenderer, rig: Rig) {
+// preview: the board small, an island on the table beside the folder of sheets; nothing on it
+// moves, a tap on it opens it
+export function createBoard(camera: THREE.OrthographicCamera, canvas: HTMLCanvasElement, renderer: THREE.WebGLRenderer, rig: Rig, preview?: { open(): void }) {
   const world = new THREE.Group();
   const top = BOARD.t;
 
@@ -375,11 +377,36 @@ export function createBoard(camera: THREE.OrthographicCamera, canvas: HTMLCanvas
     rig.zoomAt(Math.exp(-e.deltaY * (e.ctrlKey ? 0.012 : 0.0015)), e.clientX, e.clientY);
   }
   const noGesture = (e: Event) => e.preventDefault();
-  canvas.addEventListener('pointerdown', down);
-  canvas.addEventListener('pointermove', move);
-  canvas.addEventListener('pointerup', up);
-  canvas.addEventListener('pointercancel', up);
-  canvas.addEventListener('wheel', wheel, { passive: false });
+  // the preview's own hand: a tap on the island opens it
+  let tapAt: { x: number; y: number } | null = null;
+  const onIsland = (cx: number, cy: number) => {
+    ray.setFromCamera(rig.ndc(cx, cy), camera);
+    world.updateMatrixWorld(true);
+    return ray.intersectObject(world, true).length > 0;
+  };
+  const tapDown = (e: PointerEvent) => { tapAt = { x: e.clientX, y: e.clientY }; };
+  const tapMove = (e: PointerEvent) => { canvas.style.cursor = onIsland(e.clientX, e.clientY) ? 'pointer' : ''; };
+  const tapUp = (e: PointerEvent) => {
+    const t = tapAt;
+    tapAt = null;
+    if (t && Math.hypot(e.clientX - t.x, e.clientY - t.y) < 10 && onIsland(e.clientX, e.clientY)) {
+      sound.unlock();
+      sound.snap(0.5);
+      canvas.style.cursor = '';
+      preview!.open();
+    }
+  };
+  if (preview) {
+    canvas.addEventListener('pointerdown', tapDown);
+    canvas.addEventListener('pointermove', tapMove);
+    canvas.addEventListener('pointerup', tapUp);
+  } else {
+    canvas.addEventListener('pointerdown', down);
+    canvas.addEventListener('pointermove', move);
+    canvas.addEventListener('pointerup', up);
+    canvas.addEventListener('pointercancel', up);
+    canvas.addEventListener('wheel', wheel, { passive: false });
+  }
   document.addEventListener('gesturestart', noGesture);
 
   const frame = new THREE.Box3(V(SQUARE.x0 - 30, 0, SQUARE.z0 - 30), V(SQUARE.x1 + 30, 40, SQUARE.z1 + 30));
@@ -404,6 +431,12 @@ export function createBoard(camera: THREE.OrthographicCamera, canvas: HTMLCanvas
     frame.min.lerp(want.min, k4);
     frame.max.lerp(want.max, k4);
     rig.view.room = 1.05;
+    if (preview) {
+      // the whole board, small, to the right of the folder (below it on a phone)
+      const phone = canvas.clientWidth < 640;
+      frame.set(V(-BOARD.w / 2, 0, -BOARD.d / 2), V(BOARD.w / 2, 60, BOARD.d / 2));
+      Object.assign(rig.view, phone ? { room: 1.3, offX: 0, offY: -0.6 } : { room: 2.15, offX: 0.62, offY: -0.08 });
+    }
     rig.fit(frame);
     rig.tick(dt);
     const k = 1 - Math.exp(-dt * 14);
@@ -432,6 +465,10 @@ export function createBoard(camera: THREE.OrthographicCamera, canvas: HTMLCanvas
   function dispose() {
     unpick();
     unsub();
+    canvas.removeEventListener('pointerdown', tapDown);
+    canvas.removeEventListener('pointermove', tapMove);
+    canvas.removeEventListener('pointerup', tapUp);
+    canvas.style.cursor = '';
     canvas.removeEventListener('pointerdown', down);
     canvas.removeEventListener('pointermove', move);
     canvas.removeEventListener('pointerup', up);
