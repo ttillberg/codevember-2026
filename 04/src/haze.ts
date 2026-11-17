@@ -30,7 +30,18 @@ export const GLOW = new Uniform(glowMap);
 /** A lamp or a lit house for the map: where, how far its light reaches in metres, and its colour and strength. */
 export interface Spot { x: number; z: number; r: number; c: [number, number, number] }
 
-export function bakeGlow(spots: Spot[]) {
+// the lights of every tile of the grid, by tile: the one map is baked of all of them, once, after any of them changed
+const lit = new Map<string, Spot[]>();
+let baking = 0;
+/** These are the lights of this tile now; null when the tile is gone. */
+export function glowOf(key: string, spots: Spot[] | null) {
+  if (spots) lit.set(key, spots); else lit.delete(key);
+  if (typeof requestAnimationFrame === 'undefined') return bakeGlow([...lit.values()].flat());
+  cancelAnimationFrame(baking);
+  baking = requestAnimationFrame(() => bakeGlow([...lit.values()].flat()));
+}
+
+function bakeGlow(spots: Spot[]) {
   const acc = new Float32Array(GLOW_SIZE * GLOW_SIZE * 3), px = GLOW_SIZE / GLOW_SPAN, GX = place.x, GZ = place.y;
   GLOW_MID.value.set(GX, GZ);
   for (const s of spots) {

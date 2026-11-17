@@ -1,5 +1,5 @@
 // A drone parked over a stroad junction, through a day and a night of autumn, running fast.
-import { startTransition, useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject, type RefObject } from 'react';
+import { memo, startTransition, useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject, type RefObject } from 'react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { MapControls } from '@react-three/drei';
 import { Bloom, ChromaticAberration, EffectComposer, SMAA, TiltShift2, ToneMapping, Vignette, wrapEffect } from '@react-three/postprocessing';
@@ -9,10 +9,10 @@ import { HAZE, MOOD, NIGHT, RICH, hoursPerSecond, skyAt } from './haze';
 import { Cars, TIMELAPSE } from './Cars';
 import type { Sim } from './sim';
 import { gpu } from './Glow';
-import { SEASONS, World, type Season } from './World';
+import { SEASONS, World, type Season, type Tile } from './World';
 import { plantSmall, plantTown, shifted, turnSome, type Block } from './Town';
 import { People, Signs, Street } from './Life';
-import { Commons, plantCommons, standingCommons } from './Park';
+import { Commons, plantCommons, standingCommons, type Green } from './Park';
 import { Painter, Sketch, type Brush, type Tool } from './Painter';
 import { Brushes, History, Overlays, TimeControl, hhmm, showTime } from './Controls';
 import { HeatIcon, TraceIcon } from './Icons';
@@ -21,7 +21,7 @@ import { MAP } from './map';
 import { baseIntent, derive, no, standing, type Intent } from './intent';
 import { addStroke, erase, smear, smearStart } from './paint';
 import { holdStrokes, tileAsked, tileStrokes, windowStrokes } from './tiles';
-import { TILE as SIDE, alone, movePlace, place as LAND, saltOf, tilesNow } from './net';
+import { TILE as SIDE, alone, movePlace, place as LAND, saltOf, splitNet, tilesNow } from './net';
 import { laid, madeAt, wetStart } from './wet';
 
 /** The grade: exposure, warmth, bite, how much colour is left, how grey the blacks are, and what the stock and the glass add. */
@@ -180,15 +180,18 @@ function Pace({ fps }: { fps: number }) {
 /** How much nearer or further a pinch or the wheel may take the drone, as a share of its distance. */
 const ZOOM = 0.3;
 
-function Drone({ shot, move, set, onShot, onWindow }: {
+function Drone({ shot, move, set, onShot, onWindow, onAhead }: {
   shot: Shot | null; move: Move;
   /** ?endless: the drone has flown past the middle of a tile, and the window of tiles is to move on with it */
   onWindow?: (i: number, j: number) => void;
+  /** and before that: it is on its way towards the window that starts at this tile */
+  onAhead?: (i: number, j: number) => void;
   /** goes up when a slider has moved the shot: only then is the drone put where the shot says */
   set: number;
   onShot?: (s: Partial<Shot>) => void;
 }) {
   const { camera, size, gl, scene, advance } = useThree();
+  const ahead = useRef('');
   // ?debug: the renderer, the scene and the frame itself on the window, to be measured from outside
   if (debug) (window as any).three = { gl, scene, advance, camera };
   const key = size.width < size.height ? 'p' : 'l';
@@ -278,7 +281,11 @@ function Drone({ shot, move, set, onShot, onWindow }: {
     let { i, j } = LAND;
     if (c.target.x > (i + 1) * SIDE + 60) i++; else if (c.target.x < i * SIDE - 60) i--;
     if (c.target.z > (j + 1) * SIDE + 60) j++; else if (c.target.z < j * SIDE - 60) j--;
-    if (i !== LAND.i || j !== LAND.j) onWindow(i, j);
+    if (i !== LAND.i || j !== LAND.j) return onWindow(i, j);
+    // and well before that, word of where it is heading
+    const ai = c.target.x > (i + 1) * SIDE - 350 ? i + 1 : c.target.x < i * SIDE + 350 ? i - 1 : i, aj = c.target.z > (j + 1) * SIDE - 350 ? j + 1 : c.target.z < j * SIDE + 350 ? j - 1 : j;
+    const key = ai + ',' + aj;
+    if ((ai !== i || aj !== j) && key !== ahead.current) { ahead.current = key; onAhead?.(ai, aj); }
   });
   // for flying it from the console: over this point of the map, and this many times as far away
   useEffect(() => {
@@ -436,6 +443,42 @@ function useLater<T>(value: T, frames: number): T {
 }
 
 const NONE: Block[] = [];
+
+/**
+ * One tile of the grid: its ground, its trees, its people, signs and lamps, made from its own part of the network.
+ * Nothing in it is made again while that part, its houses and its green are the same objects, so a road laid in
+ * another tile, or the window of tiles moving on, leaves it alone. Without ?endless there is one, the whole place.
+ */
+/** Has the page stood up? What is mounted after that is put up a piece at a time. */
+let booted = false;
+
+const TileView = memo(function TileView({ tile, net, blocks, green, trees, season, speed, shade, wait = 0 }: {
+  /** how many tiles are put up before this one */
+  wait?: number;
+  tile: Tile; net: Net; blocks: Block[]; green?: Green; trees: boolean; season: Season; speed: number; shade: boolean;
+}) {
+  const all = useMemo(() => ({ net, blocks, green }), [net, blocks, green]);
+  // the ground first, then what stands and moves on it, each in a frame of its own
+  const ground = useLater(net, 1), wood = useLater(all, 3), life = useLater(all, 7);
+  // A tile that comes into the window while the page runs is out of sight: it is put up a piece at a time, a few
+  // frames apart, and the second of two after the first. The tiles the page starts with stand at once
+  const [step, setStep] = useState(booted ? 0 : 9);
+  useEffect(() => {
+    if (step >= 9) return;
+    let n = step === 0 ? 2 + wait * 14 : 3, id = 0;
+    const tick = () => { if (--n <= 0) setStep((s) => s + 1); else id = requestAnimationFrame(tick); };
+    id = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(id);
+  }, [step, wait]);
+  return (
+    <>
+      {step >= 1 && <World net={ground} blocks={blocks} wood={wood} trees={trees && step >= 2} season={season} tile={tile} />}
+      {step >= 3 && <People net={life.net} blocks={life.blocks} walks={life.green?.walks} rides={life.green?.rides} speed={speed} shade={shade} />}
+      {step >= 4 && <Signs net={life.net} blocks={life.blocks} />}
+      {step >= 5 && <Street net={life.net} blocks={life.blocks} speed={speed} tile={tile} />}
+    </>
+  );
+});
 // what to leave out of the place, from the address
 const houses = !no('house'), trees = !no('tree');
 // the time of year: autumn, or what ?season= says
@@ -460,6 +503,7 @@ export function App() {
     setRedos([]);
   }, []);
   const planted = useRef(new Map<string, Block[]>());
+  useEffect(() => { const id = setTimeout(() => { booted = true; }, 1500); return () => clearTimeout(id); }, []);
   const [tool, setTool] = useState<Tool>('road');
   // the brush that is picked when trace is off
   const [brush, setBrush] = useState<Brush>('road');
@@ -589,15 +633,7 @@ export function App() {
   // the housing is planted once, on the place as it first stood, and is in the way from then on
   const first = useMemo(() => alone(true, () => buildNet(derive(HAND))), []);
   // only a few of them are kept, and a quarter of those turned: the roads are what is looked at
-  const town = useMemo(() => {
-    if (!LAND.on) {
-      const big = turnSome(first, plantTown(first).filter((_, i) => i % KEEP === 0));
-      // and between them the little ones, along the roads
-      return [...big, ...plantSmall(first, big)];
-    }
-    // every tile is planted on its own roads alone, round 0, 0, by its own number, and set down where it lies:
-    // what stands in a tile is the same whichever tiles lie beside it
-    return tilesNow().flatMap((t) => {
+  const plantTile = useCallback((t: Tile): Block[] => {
       // a tile that was in the window before stands as it stood: the same houses, not ones like them
       const key = t.i + ',' + t.j, was = planted.current.get(key);
       if (was) return was;
@@ -613,9 +649,26 @@ export function App() {
       const all = [...big, ...small].map((b) => shifted(b, t.x, t.y));
       planted.current.set(key, all);
       return all;
-    });
+  }, [first]);
+  // ?endless: the drone is nearing the middle of a tile: the houses of the tiles that come next are planted now, one
+  // tile at a time when there is nothing else to do, and not all at once when the window moves on
+  const onAhead = useCallback((i: number, j: number) => {
+    const todo = [0, 1].flatMap((b) => [0, 1].map((a) => ({ i: i + a, j: j + b, x: (i + a) * SIDE, y: (j + b) * SIDE }))).filter((t) => !planted.current.has(t.i + ',' + t.j));
+    const idle = (window as { requestIdleCallback?: (f: () => void) => void }).requestIdleCallback ?? ((f: () => void) => setTimeout(f, 60));
+    const next = () => { const t = todo.shift(); if (t) { plantTile(t); idle(next); } };
+    idle(next);
+  }, [plantTile]);
+  const town = useMemo(() => {
+    if (!LAND.on) {
+      const big = turnSome(first, plantTown(first).filter((_, i) => i % KEEP === 0));
+      // and between them the little ones, along the roads
+      return [...big, ...plantSmall(first, big)];
+    }
+    // every tile is planted on its own roads alone, round 0, 0, by its own number, and set down where it lies:
+    // what stands in a tile is the same whichever tiles lie beside it
+    return tilesNow().flatMap(plantTile);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [first, win]);
+  }, [first, win, plantTile]);
   // a bridge takes down the houses in its line; the same list for as long as the same ones stand
   const left = houses ? standing(intent, town) : NONE;
   const kept = useRef(left);
@@ -655,9 +708,27 @@ export function App() {
   // and whatever of it the roads as they are now have left
   // (among other tiles it is the hand-drawn tile's own houses that are in its way, and those stay the same list)
   const commons = useMemo(() => plantCommons(first, LAND.on ? planted.current.get('0,0') ?? NONE : town), [first, LAND.on ? planted.current.get('0,0') : town]);
-  const place = useMemo(() => ({ net, blocks, green: standingCommons(commons, net, blocks) }), [net, blocks, commons]);
+  // the network a tile at a time, and each tile's houses: the same objects for as long as nothing in the tile changed
+  const views = useMemo(() => splitNet(net), [net]);
+  const up = useMemo(() => new Set(blocks), [blocks]);
+  const stood = useRef(new Map<string, { sig: string; list: Block[] }>());
+  const blocksOf = (key: string) => {
+    if (!LAND.on) return blocks;
+    const all = planted.current.get(key) ?? NONE;
+    let sig = '';
+    const list = all.filter((b, i) => up.has(b) || ((sig += i + ','), false));
+    if (!sig) return all;
+    const was = stood.current.get(key);
+    if (was && was.sig === sig) return was.list;
+    stood.current.set(key, { sig, list });
+    return list;
+  };
+  // the common ground lies in the hand-drawn tile, and is asked of that tile's roads and houses alone
+  const homeNet = views.get('0,0') ?? first, homeBlocks = blocksOf('0,0');
+  const green = useMemo(() => standingCommons(commons, homeNet, homeBlocks), [commons, homeNet, homeBlocks]);
+  const place = useMemo(() => ({ net, blocks, green }), [net, blocks, green]);
   const ground = useLater(restNet ?? net, 1);
-  const wood = useLater(place, 3), roads = useLater(net, 5), life = useLater(place, 7);
+  const roads = useLater(net, 5), life = useLater(place, 7);
   // what the WebGPU lights cannot be seen through
   const hides = useMemo(() => [...life.blocks, ...life.net.buildings], [life]);
 
@@ -752,14 +823,14 @@ export function App() {
       >
         <color attach="background" args={[HAZE]} />
         <Pace fps={fps} />
-        <Drone shot={shot} move={move} set={set} onShot={debug ? onShot : undefined} onWindow={onWindow} />
+        <Drone shot={shot} move={move} set={set} onShot={debug ? onShot : undefined} onWindow={onWindow} onAhead={onAhead} />
         <Sun speed={speed} shadow={fx.shadow} lazy={fx.lazy} clock={clock} scrub={scrub} onHour={debug ? onHour : undefined} live={hourNow} readout={readout} />
-        <World net={ground} blocks={blocks} wood={wood} trees={trees} season={season} />
+        {tilesNow().map((t) => {
+          const key = t.i + ',' + t.j, part = views.get(key);
+          return part && <TileView key={key} tile={t} net={part} blocks={blocksOf(key)} green={key === '0,0' ? green : undefined} trees={trees} season={season} speed={speed} shade={!fx.lazy} wait={Math.abs(t.i + t.j) % 2} />;
+        })}
         <Cars net={roads} speed={speed} target={VEHICLES} trail={lights === 'off' ? 0 : clock.trail} glow={lights === 'webgpu'} walls={hides} onGlowFail={noGpu} shade={!fx.lazy} heat={heat} trace={tool === 'trace' ? trace : null} onNote={onNote} onSim={onSim} />
         <Commons green={place.green} speed={speed} />
-        <People net={life.net} blocks={life.blocks} walks={life.green.walks} rides={life.green.rides} speed={speed} shade={!fx.lazy} />
-        <Signs net={life.net} blocks={life.blocks} />
-        <Street net={life.net} blocks={life.blocks} speed={speed} />
         <Sketch api={sketch} />
         <Painter net={ground} tool={tool} onStroke={onStroke} onSmear={onSmear} onTrace={setTrace} onErase={onErase} />
         <EffectComposer multisampling={fx.aa === 'msaa4' ? 4 : fx.aa === 'msaa2' ? 2 : 0}>

@@ -1,10 +1,12 @@
 // What makes it a city and not a model of one: people on the sidewalks, bikes along the kerb, and signs on everything.
-import { useLayoutEffect, useMemo, useRef } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
 import { AdditiveBlending, Color, InstancedMesh, MeshStandardMaterial, Object3D, ShaderMaterial } from 'three';
 import { boxed, onRoad, WALK, zebraAt } from './geo';
-import { HOUR, NIGHT, bakeGlow, type Spot } from './haze';
-import { cumLen, deck, offset, place, pointOn, rng, type Net, type V } from './net';
+import { HOUR, NIGHT, glowOf, type Spot } from './haze';
+
+const HOME = { i: 0, j: 0, x: 0, y: 0 };
+import { TILE, cumLen, deck, offset, place, pointOn, rng, type Net, type V } from './net';
 import { turned, type Block } from './Town';
 import { settle, SOAKED, wet } from './wet';
 
@@ -20,7 +22,8 @@ interface Line {
   park?: boolean;
 }
 
-const MORE = place.on ? 4 : 1;
+// (every tile of the grid has its own people, signs and lamps: the numbers are for one tile)
+const MORE = 1;
 const NO_ENDS: number[] = [];
 // where every line begins and ends, by squares of 34 m: line number twice over, and one more for its far end
 const ENDS = new WeakMap<object, Map<string, number[]>>();
@@ -477,7 +480,7 @@ function pool() {
 }
 
 /** Lamp posts down every proper road, and screens where the most people will see them: big junctions, big roads. */
-export function Street({ net, blocks, speed }: { net: Net; blocks: Block[]; speed: number }) {
+export function Street({ net, blocks, speed, tile = HOME }: { net: Net; blocks: Block[]; speed: number; tile?: { i: number; j: number; x: number; y: number } }) {
   const posts = useRef<InstancedMesh>(null), lamps = useRef<InstancedMesh>(null), pools = useRef<InstancedMesh>(null), tv = useRef<InstancedMesh>(null);
   const head = useRef<MeshStandardMaterial>(null);
   const shine = useMemo(() => wet(pool(), 'street'), []);
@@ -578,7 +581,7 @@ export function Street({ net, blocks, speed }: { net: Net; blocks: Block[]; spee
     }
     // the same lattice however far the place reaches, so a light stands where it stood
     const lo = (from: number, min: number) => (place.on ? from + 34 * Math.ceil((min - from) / 34) : from);
-    const X0 = lo(-420, place.x - place.half), X1 = place.on ? place.x + place.half : 420, Y0 = lo(-400, place.y - place.half), Y1 = place.on ? place.y + place.half : 400;
+    const X0 = lo(-420, tile.x - TILE / 2), X1 = place.on ? tile.x + TILE / 2 : 420, Y0 = lo(-400, tile.y - TILE / 2), Y1 = place.on ? tile.y + TILE / 2 : 400;
     for (let gx = X0; gx < X1; gx += 34) {
       for (let gy = Y0; gy < Y1; gy += 34) {
         const k = hash(gx * 0.173 + 9, gy * 0.291 - 4);
@@ -620,11 +623,13 @@ export function Street({ net, blocks, speed }: { net: Net; blocks: Block[]; spee
     for (const n of net.nodes) if (n.roads.length >= 3 && n.z < 1) spots.push({ x: n.p.x, z: n.p.y, r: 26 + 5 * n.roads.length, c: [0.85, 0.42, 0.1] });
     // a car park is lit white, as they are now: cold beside the amber of the streets
     net.stalls.forEach((st, i) => { if (i % 5 === 0) spots.push({ x: st.p.x, z: st.p.y, r: 22, c: [0.3, 0.36, 0.4] }); });
-    bakeGlow(spots);
+    glowOf(tile.i + ',' + tile.j, spots);
     // each screen runs its own programme
     plan.tvs.forEach((s, i) => tv.current!.setColorAt(i, c.setRGB(s.seed, (s.seed * 7.3) % 1, (s.seed * 3.1) % 1)));
     if (tv.current!.instanceColor) tv.current!.instanceColor.needsUpdate = true;
   }, [plan, blocks, net]);
+  // a tile that leaves the window takes its lights off the map
+  useEffect(() => () => glowOf(tile.i + ',' + tile.j, null), [tile.i, tile.j]);
 
   // the screens run at their own pace, not the timelapse's, and hold still in a still
   useFrame((_, delta) => {

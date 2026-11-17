@@ -3,7 +3,11 @@ import { useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import { NIGHT, glowing } from './haze';
 import { BufferGeometry, Color, DoubleSide, Float32BufferAttribute, InstancedMesh, Matrix4, MeshStandardMaterial, Object3D, Uniform, Vector3 } from 'three';
 import { boxed, buildGround, clearOf, onRoad, WALK } from './geo';
-import { cumLen, offset, place, pointOn, rng, saltOf, tilesNow, type Net } from './net';
+import { cumLen, offset, place, pointOn, rng, saltOf, type Net } from './net';
+
+/** A tile of the grid, and where its middle lies. */
+export interface Tile { i: number; j: number; x: number; y: number }
+const HOME: Tile = { i: 0, j: 0, x: 0, y: 0 };
 import { Town, type Block } from './Town';
 import { settle, soaked, wet } from './wet';
 
@@ -127,8 +131,10 @@ const worn = (body: string, s: Season) => {
 /** What the park, the pitch and the school ask of the trees: where none of the woods may stand, and the ones planted along the walks. */
 export interface Glade { keep: (x: number, y: number) => boolean; trees: { x: number; y: number; s: number; k: number }[] }
 
-export function World({ net, blocks, wood, trees = true, season = 'autumn' }: {
+export function World({ net, blocks, wood, trees = true, season = 'autumn', tile = HOME }: {
   net: Net; blocks: Block[];
+  /** which tile of the grid this is the ground of: each has its own, made from its part of the network */
+  tile?: Tile;
   /** the place as the trees know it: a frame behind the ground, so that felling them is not part of laying a road */
   wood?: { net: Net; blocks: Block[]; green?: Glade };
   trees?: boolean; season?: Season;
@@ -176,7 +182,7 @@ export function World({ net, blocks, wood, trees = true, season = 'autumn' }: {
       <Buildings net={net} />
       <Town net={net} blocks={blocks} paving={mats.paving} roofing={mats.felt} />
       <group visible={trees}>
-        <Trees net={(wood ?? { net }).net} blocks={(wood ?? { blocks }).blocks} glade={wood?.green} season={season} />
+        <Trees net={(wood ?? { net }).net} blocks={(wood ?? { blocks }).blocks} glade={wood?.green} season={season} tile={tile} />
       </group>
     </group>
   );
@@ -367,7 +373,7 @@ function fallen() {
 // the woods of every tile planted so far, by season and tile
 const WOODS = new Map<string, { x: number; y: number; blobs: { m: Matrix4; c: Color }[]; fir: boolean; size: number; deep: boolean }[]>();
 
-function Trees({ net, blocks, glade, season }: { net: Net; blocks: Block[]; glade?: Glade; season: Season }) {
+function Trees({ net, blocks, glade, season, tile }: { net: Net; blocks: Block[]; glade?: Glade; season: Season; tile: Tile }) {
   const ref = useRef<InstancedMesh>(null), firs = useRef<InstancedMesh>(null), floor = useRef<InstancedMesh>(null), stems = useRef<InstancedMesh>(null);
   const crown = useMemo(tuft, []);
   const PINE = useMemo(pine, []);
@@ -390,7 +396,7 @@ function Trees({ net, blocks, glade, season }: { net: Net; blocks: Block[]; glad
     const forest = (x: number, y: number) => Math.sin(x * 0.011 + 0.6) * Math.cos(y * 0.013 - 1.1) + 0.5 * Math.sin((x - y) * 0.023 + 2) + 0.25 * Math.sin(x * 0.05) * Math.sin(y * 0.047);
     // every tile is planted by its own number: first the middle, as the place on its own has it, then, when it
     // lies among others, the rim that leaves bare
-    for (const t of tilesNow()) {
+    for (const t of [tile]) {
     // (a tile that was in the window before keeps the trees it had)
     const key = season + ':' + t.i + ',' + t.j, was = WOODS.get(key);
     if (was) { for (const w of was) out.push(w); continue; }
@@ -442,8 +448,8 @@ function Trees({ net, blocks, glade, season }: { net: Net; blocks: Block[]; glad
     }
     return out;
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [season, place.i, place.j]);
-  const MORE = place.on ? 4 : 1, CAP = 12000 * MORE, FIRS = 3000 * MORE, LITTER = 4500 * MORE, STEMS = 6000 * MORE;
+  }, [season, tile.i, tile.j]);
+  const MORE = place.on ? 2 : 1, CAP = 12000 * MORE, FIRS = 3000 * MORE, LITTER = 4500 * MORE, STEMS = 6000 * MORE;
 
   useLayoutEffect(() => {
     const m = ref.current!, f = firs.current!, fl = floor.current!, st = stems.current!;

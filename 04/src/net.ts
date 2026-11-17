@@ -680,3 +680,43 @@ export function boxed(rects: { x0: number; y0: number; x1: number; y1: number }[
     return false;
   };
 }
+
+// the part of the network in each tile, as it was last made, and what it was made of
+const parts = new Map<string, { sig: string; net: Net }>();
+/**
+ * The network a tile at a time: what is drawn and planted is made for each tile on its own, from its part alone.
+ * A part whose roads and junctions are the same as last time is the very same object as last time, so whoever
+ * drew it has nothing to do: when the window of tiles moves on, or a road is laid in another tile, it stays as it is.
+ * The traffic takes the whole network, not these. Without ?endless there is one part, the whole.
+ */
+export function splitNet(net: Net): Map<string, Net> {
+  const out = new Map<string, Net>();
+  if (!place.on) return out.set('0,0', net);
+  const of = (p: V) => Math.round(p.x / TILE) + ',' + Math.round(p.y / TILE);
+  const mid = (pts: V[]) => pts[pts.length >> 1];
+  const part = new Map<string, Net>(tilesNow().map((t) => [t.i + ',' + t.j, { nodes: [], roads: [], lanes: [], stalls: [], pads: [], buildings: [], edges: [] }]));
+  // (whatever lies outside the window, a hair over its edge, goes with the first tile: it has to be drawn somewhere)
+  const at = (p: V) => part.get(of(p)) ?? part.values().next().value!;
+  for (const r of net.roads) at(r.pts.length > 2 ? mid(r.pts) : { x: (r.pts[0].x + r.pts[r.pts.length - 1].x) / 2, y: (r.pts[0].y + r.pts[r.pts.length - 1].y) / 2 }).roads.push(r);
+  for (const n of net.nodes) { const t = at(n.p); t.nodes.push(n); if (n.edge) t.edges.push(n); }
+  for (const l of net.lanes) at(l.road ? mid(l.road.pts) : l.from.p).lanes.push(l);
+  for (const s of net.stalls) at(s.p).stalls.push(s);
+  for (const q of net.pads) at({ x: (q.x0 + q.x1) / 2, y: (q.y0 + q.y1) / 2 }).pads.push(q);
+  for (const q of net.buildings) at({ x: (q.x0 + q.x1) / 2, y: (q.y0 + q.y1) / 2 }).buildings.push(q);
+  const f = (v: number) => v.toFixed(1);
+  for (const [key, n] of part) {
+    let sig = '';
+    for (const r of n.roads) {
+      sig += `r${r.lanes}${r.rank}${+r.bridge}${+r.ring}${+r.one}${f(r.hw)}:${r.stallSegs.join('.')}:${f(r.a.z)}${f(r.b.z)}`;
+      for (const p of r.pts) sig += f(p.x) + ',' + f(p.y) + ';';
+    }
+    // a junction is drawn from its arms, and some of those may lie in the next tile
+    for (const k of n.nodes) sig += `n${f(k.p.x)},${f(k.p.y)},${f(k.trim)}${+k.signal}${+k.edge}${k.roads.map((r) => f(r.hw) + r.rank).join('')}`;
+    sig += `s${n.stalls.length}b${n.buildings.length}p${n.pads.length}`;
+    const was = parts.get(key);
+    if (was && was.sig === sig) out.set(key, was.net);
+    else { parts.set(key, { sig, net: n }); out.set(key, n); }
+  }
+  if (parts.size > 60) for (const k of parts.keys()) if (!out.has(k)) parts.delete(k);
+  return out;
+}
