@@ -448,13 +448,15 @@ setTimeout(() => pouch.setThumbs(fungarium.drawThumbs()), 1500);
 function plantAt(s: Species) {
   const hit = aimAt(0.45);
   pouch.pick(s.kind, true);
-  fungi.spawn(s.kind, hit.x, fungusFoot(hit.x, hit.z), hit.z, { seed: s.seed, scale: s.scale, wither: 70 + 50 * Math.random() });
+  fungi.spawn(s.kind, hit.x, fungusFoot(hit.x, hit.z), hit.z, { seed: s.seed, scale: s.scale });
   dropOldest();
 }
+// What you grow stays, up to so many; past that the oldest withers away (back into the moss over sixteen seconds),
+// one for each new one. (They withered on a timer for a while, a minute or two after growing.)
+const KEEP = coarse ? 100 : 300;
 function dropOldest() {
-  // only so many: the oldest thrown ones go
-  const thrown = fungi.list.filter((c) => !c.key);
-  for (const c of thrown.slice(0, Math.max(0, thrown.length - 24))) fungi.remove(c);
+  const standing = fungi.list.filter((c) => !c.key && c.wither === undefined);
+  for (const c of standing.slice(0, Math.max(0, standing.length - KEEP))) c.wither = c.age;
 }
 addEventListener('keydown', (e) => {
   if (e.code === 'KeyF') { keys.clear(); if (locked()) document.exitPointerLock(); fungarium.toggle(); }
@@ -507,8 +509,7 @@ function throwTo(hit: THREE.Vector3, far: boolean) {
     sound.puff(p, size);
     // the cloud settles first; then, one after another, they push up
     setTimeout(() => {
-      // a minute or two after it has grown, it withers away again; the ones found in the forest stay
-      fungi.spawn(kind, p.x, fungusFoot(p.x, p.z), p.z, { wither: 70 + 50 * Math.random() });
+      fungi.spawn(kind, p.x, fungusFoot(p.x, p.z), p.z);
       dropOldest();
     }, 1200);
   };
@@ -652,7 +653,7 @@ renderer.setAnimationLoop(() => {
   shellMat.uniforms.uTime.value = clock.elapsedTime;
   const { fx, fz } = crawl(dt);
   pouch.update(dt, me.bob, Math.min(1, Math.abs(me.speed) / 0.2));
-  fungi.update(dt, clock.elapsedTime);
+  fungi.update(dt, clock.elapsedTime, me.x, me.z);
   // the ones growing near you creak now and then, each kind in its own voice
   // (unevenly: each waits a random while, long or short, and now and then two or three come in a run)
   const tNow = clock.elapsedTime;

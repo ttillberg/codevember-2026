@@ -749,6 +749,7 @@ export interface Cluster {
   built?: number; // when it was last rebuilt, on the update's clock
 }
 
+const SEE = 9; // fungi further than this are hidden (and their growing not built) when Fungi.update is told where you are
 const BUILD_EVERY = matchMedia('(pointer: coarse)').matches ? 1 / 12 : 1 / 30; // seconds between rebuilds of a growing one
 
 export class Fungi {
@@ -1020,8 +1021,16 @@ export class Fungi {
     if (this.dew && b.drops.length) c.mesh.add(buildDew(b.drops, this.dew));
   }
 
-  update(dt: number, time: number) {
+  /**
+   * Every frame: age, grow and wither them. With (px, pz), the ones further than SEE are hidden and not rebuilt
+   * while they grow (they are caught up when they come back into view): hundreds can stand about.
+   */
+  update(dt: number, time: number, px?: number, pz?: number) {
     for (const c of [...this.list]) {
+      if (px !== undefined && pz !== undefined) {
+        const seen = Math.hypot(c.x - px, c.z - pz) < SEE + c.radius;
+        if (seen !== c.mesh.visible) { c.mesh.visible = seen; if (seen) c.built = undefined; }
+      }
       // a pressed puffball springs back
       let squashing = false;
       for (const p of c.puffs) if (p.squash > 0) { p.squash = Math.max(0, p.squash - dt * 1.6); squashing = true; }
@@ -1033,6 +1042,7 @@ export class Fungi {
       // growing and withering are slow: rebuilt a few dozen times a second, not every frame (each build is a
       // lathe and its beads; on a phone, every frame of it stuttered), the last step always
       const done = !c.grown && c.age >= c.end;
+      if (!c.mesh.visible && !done) continue; // out of sight: built again when it comes back
       if (!squashing && !done && c.built !== undefined && time - c.built < BUILD_EVERY) continue;
       this.rebuild(c, time);
       c.built = time;
