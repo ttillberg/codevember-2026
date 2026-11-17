@@ -114,6 +114,26 @@ export class Spores {
     }
   }
 
+  /** A pinch sown just in front of you: no throw, a soft cloud let go just over the moss, settling there. */
+  sow(p: THREE.Vector3) {
+    const r = Math.random;
+    const q = p.clone();
+    q.y += 0.04;
+    for (let k = 0; k < 40; k++) {
+      const a = r() * Math.PI * 2, sp = 0.02 + r() * 0.08;
+      this.emit(q, Math.cos(a) * sp, -0.02 + r() * 0.08, Math.sin(a) * sp, 2 + r() * 2.5, 0.008 + r() * 0.01, 0, 2.5 + r() * 3, 0.01, 1.0);
+    }
+    for (let k = 0; k < 700; k++) {
+      const a = r() * Math.PI * 2, sp = r() * 0.15;
+      this.emit(q, Math.cos(a) * sp, -0.05 + r() * 0.15, Math.sin(a) * sp, 1.5 + r() * 2.5, 0.0006 + r() * 0.0006, 1);
+    }
+    const tmp0 = new THREE.Vector3();
+    for (let k = 0; k < 18; k++) {
+      tmp0.set(p.x + (r() - 0.5) * 0.18, p.y + 0.02 + r() * 0.04, p.z + (r() - 0.5) * 0.18);
+      this.emit(tmp0, (r() - 0.5) * 0.01, 0.004, (r() - 0.5) * 0.01, 12 + r() * 8, 0.018 + r() * 0.014, 2, 2 + r(), 0.005, 0.45);
+    }
+  }
+
   /** A puffball pressed: a jet of spore smoke out of its pore, up and over, settling around it. */
   puff(p: THREE.Vector3) {
     const r = Math.random;

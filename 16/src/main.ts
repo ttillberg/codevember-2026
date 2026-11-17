@@ -297,6 +297,7 @@ let down = false, dragging = false;
 let downAt = 0, downX = 0, downY = 0, lastX = 0, lastY = 0;
 let holdTimer = 0;
 let charging = false; // a mouse held down: a throw wound up
+let look0 = { yaw: 0, pitch: 0 }; // where you looked when the finger went down: a flick up gives the look back
 // the pointer lock (desktop, the pill bottom right or L): the mouse itself is the look, no drag; click throws,
 // hold the button to fling at the sight
 const locked = () => document.pointerLockElement === canvas;
@@ -308,9 +309,10 @@ document.addEventListener('pointerlockchange', () => document.body.classList.tog
 // finger went down, you also keep turning that way, faster the further out, so a hairpin needs no second swipe
 const DRAG_TURN = 2.2, STEER_RATE = 2.4, STEER_DEAD = 14;
 canvas.addEventListener('pointerdown', (e) => {
-  if (!locked()) canvas.setPointerCapture(e.pointerId);
+  if (!locked()) try { canvas.setPointerCapture(e.pointerId); } catch { /* a synthetic pointer */ }
   down = true; dragging = false;
   downAt = performance.now(); downX = lastX = e.clientX; downY = lastY = e.clientY;
+  look0 = { yaw: look.tYaw, pitch: look.tPitch };
   clearTimeout(holdTimer);
   // held without sliding: a finger crawls; a mouse winds up a throw at the sight, let go to fling it (the keys crawl)
   const mouse = e.pointerType === 'mouse';
@@ -341,17 +343,17 @@ canvas.addEventListener('pointermove', (e) => {
 });
 const release = (e: PointerEvent) => {
   clearTimeout(holdTimer);
-  const tap = !holding && !dragging && !charging && performance.now() - downAt < 350;
-  const fling = charging && e.type === 'pointerup';
+  const quick = performance.now() - downAt < 350;
+  const tap = !holding && !dragging && !charging && quick;
+  // a finger flicked up, quick and mostly straight: fling at the sight (and the look it dragged goes back)
+  const dx = e.clientX - downX, dy = e.clientY - downY;
+  const flick = e.pointerType !== 'mouse' && !holding && quick && dy < -40 && -dy > 1.5 * Math.abs(dx);
+  if (flick) { look.tYaw = look0.yaw; look.tPitch = look0.pitch; }
+  const fling = (charging || flick) && e.type === 'pointerup';
   down = false; holding = false; dragging = false; charging = false;
   target.classList.remove('charge');
   if (fling) throwAt();
-  else if (tap && e.type === 'pointerup') {
-    // a tap on the sight itself flings at it (a finger has no long press to spare: that crawls); anywhere else
-    // a pinch drops just in front of you
-    const onSight = e.pointerType !== 'mouse' && !locked() && Math.hypot(e.clientX - innerWidth / 2, e.clientY - innerHeight / 2) < 36;
-    if (onSight) throwAt(); else throwNear();
-  }
+  else if (tap && e.type === 'pointerup') throwNear(); // a pinch dropped just in front of you
 };
 canvas.addEventListener('pointerup', release);
 canvas.addEventListener('pointercancel', release);
@@ -475,14 +477,17 @@ function throwTo(hit: THREE.Vector3, far: boolean) {
   pouch.kick();
   const from = camera.position.clone().add(new THREE.Vector3(0, -0.03, 0)).addScaledVector(camera.getWorldDirection(new THREE.Vector3()), 0.15);
   const kind = throwKind;
-  spores.throw(from, hit, (p) => {
+  const land = (p: THREE.Vector3) => {
     // the cloud settles first; then, one after another, they push up
     setTimeout(() => {
       // a minute or two after it has grown, it withers away again; the ones found in the forest stay
       fungi.spawn(kind, p.x, fungusFoot(p.x, p.z), p.z, { wither: 70 + 50 * Math.random() });
       dropOldest();
     }, 1200);
-  });
+  };
+  // sown: no throw, just a cloud let go there; flung: an arc over the moss and a burst where it lands
+  if (far) spores.throw(from, hit, land);
+  else { spores.sow(hit); land(hit); }
 }
 
 /** Distance to the first thing the view ray hits: the moss or a mushroom. The lens focuses there. */
