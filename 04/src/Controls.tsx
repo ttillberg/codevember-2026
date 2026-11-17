@@ -1,6 +1,6 @@
 // The controls on the picture: the time and its hold, the ways of reading the traffic, the brushes, and undo and redo.
 // They are plain DOM over the canvas, so a press on them never reaches the ground.
-import { Fragment, useRef, type MutableRefObject, type ReactNode, type RefObject, useEffect, useState } from 'react';
+import { Fragment, useRef, type MutableRefObject, type ReactNode, type RefObject, useEffect, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react';
 import type { Brush, Tool } from './Painter';
 import { BridgeIcon, ClockIcon, EraseIcon, RedoIcon, RoadIcon, SmearIcon, UndoIcon, EyeIcon, GrowIcon, ShrinkIcon } from './Icons';
 
@@ -171,51 +171,77 @@ function SizeBrush({ on, grow, onPick, onGrow }: { on: boolean; grow: boolean; o
   );
 }
 
-/** How far the smear reaches, metres, by name. */
-export const SMEAR_SIZES = [[35, 'S'], [65, 'M'], [110, 'L']] as const;
-/** How its pull falls off, as the power of the curve (paint.ts), each with the curve drawn: a peak, a bell, a dome. */
-export const SMEAR_FALLS = [[4, 'Sharp', 'M2 13.5c5 0 6.5-11 8-11s3 11 8 11'], [2, 'Soft', 'M2 13.5c3.5 0 5-11 8-11s4.5 11 8 11'], [1, 'Broad', 'M2 13.5c1.5-6 4-11 8-11s6.5 5 8 11']] as const;
+/** How far the smear can reach, metres, and how far a drag on its brush goes for the whole of that range, px. */
+export const SMEAR_MIN = 25, SMEAR_MAX = 140;
+const TRAVEL = 140;
 
 /**
- * The smear brush: a press takes it up and opens what it is set to over it: how far it reaches, and the curve its
- * pull falls off by from the grab to the edge of that reach.
+ * The smear brush is a knob, as the brushes of day 07 are: a press takes it up, and a drag on it, up or to the right,
+ * sets how far it reaches, with a gauge over it while it is held. A tap pins the gauge open, to drag on the gauge itself;
+ * a press elsewhere or escape closes it.
  */
-function SmearBrush({ on, reach, fall, onPick, onSet }: { on: boolean; reach: number; fall: number; onPick: () => void; onSet: (reach: number, fall: number) => void }) {
-  const [open, setOpen] = useState(false);
+function SmearBrush({ on, reach, onPick, onSet }: { on: boolean; reach: number; onPick: () => void; onSet: (reach: number) => void }) {
+  const [held, setHeld] = useState(false);
+  const [pinned, setPinned] = useState(false);
   const box = useRef<HTMLDivElement>(null);
+  const start = useRef({ x: 0, y: 0, t: 0, moved: false, wasPinned: false });
+  const t = (reach - SMEAR_MIN) / (SMEAR_MAX - SMEAR_MIN);
+  const to = (v: number) => onSet(Math.round(SMEAR_MIN + Math.min(1, Math.max(0, v)) * (SMEAR_MAX - SMEAR_MIN)));
+  // let go anywhere ends the hold, even if the capture got lost on the way; a tap pins the gauge
   useEffect(() => {
-    if (!open) return;
-    const away = (e: PointerEvent) => { if (!box.current?.contains(e.target as Node)) setOpen(false); };
-    const esc = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false); };
+    if (!held) return;
+    const up = () => { setHeld(false); setPinned(!start.current.moved && !start.current.wasPinned); };
+    addEventListener('pointerup', up);
+    addEventListener('pointercancel', up);
+    return () => { removeEventListener('pointerup', up); removeEventListener('pointercancel', up); };
+  }, [held]);
+  useEffect(() => {
+    if (!pinned) return;
+    const away = (e: PointerEvent) => { if (!box.current?.contains(e.target as Node)) setPinned(false); };
+    const esc = (e: KeyboardEvent) => { if (e.key === 'Escape') setPinned(false); };
     addEventListener('pointerdown', away, true);
     addEventListener('keydown', esc);
     return () => { removeEventListener('pointerdown', away, true); removeEventListener('keydown', esc); };
-  }, [open]);
+  }, [pinned]);
+  const at = (e: ReactPointerEvent<HTMLElement>) => {
+    const r = e.currentTarget.getBoundingClientRect();
+    to(1 - (e.clientY - r.top) / r.height);
+  };
+  const open = held || pinned;
   return (
     <div className="pick" ref={box}>
-      <button className={on ? 'on' : ''} aria-label="Smear" aria-pressed={on} aria-haspopup="true" aria-expanded={open} onClick={() => { onPick(); setOpen((v) => !v); }}>
+      <button
+        className={on ? 'on' : ''} aria-label={`Smear, ${reach} m`} aria-pressed={on} style={{ touchAction: 'none' }}
+        onPointerDown={(e) => {
+          e.currentTarget.setPointerCapture(e.pointerId);
+          start.current = { x: e.clientX, y: e.clientY, t, moved: false, wasPinned: pinned };
+          onPick();
+          setHeld(true);
+        }}
+        onPointerMove={(e) => {
+          if (!held) return;
+          const dx = e.clientX - start.current.x, dy = e.clientY - start.current.y;
+          if (Math.abs(dx) + Math.abs(dy) > 4) start.current.moved = true;
+          // up or to the right is wider
+          if (start.current.moved) to(start.current.t + (dx - dy) / TRAVEL);
+        }}
+        onWheel={(e) => to(t - Math.sign(e.deltaY) * 0.03)}
+        onKeyDown={(e) => { if (e.key === 'ArrowUp' || e.key === 'ArrowRight') to(t + 0.05); if (e.key === 'ArrowDown' || e.key === 'ArrowLeft') to(t - 0.05); }}
+        // the keyboard has no pointer: Enter and space come as a click with no press before it
+        onClick={(e) => { if (e.detail === 0) { onPick(); setPinned((v) => !v); } }}
+      >
         <SmearIcon />
-        {!open && <Tip tip="Smear" keys="⌥ drag" />}
+        {!open && <Tip tip="Smear" keys="drag for size" />}
       </button>
       {open && (
-        <div className="menu over" role="group" aria-label="Smear">
-          <div className="choice" role="radiogroup" aria-label="Size">
-            <span>Size</span>
-            <div>
-              {SMEAR_SIZES.map(([r, name]) => (
-                <button key={r} role="radio" aria-checked={reach === r} aria-label={`Size ${name}`} className={reach === r ? 'on' : ''} onClick={() => onSet(r, fall)}>{name}</button>
-              ))}
-            </div>
-          </div>
-          <div className="choice" role="radiogroup" aria-label="Falloff">
-            <span>Falloff</span>
-            <div>
-              {SMEAR_FALLS.map(([k, name, d]) => (
-                <button key={k} role="radio" aria-checked={fall === k} aria-label={name} title={name} className={fall === k ? 'on' : ''} onClick={() => onSet(reach, k)}>
-                  <svg width={20} height={16} viewBox="0 0 20 16" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d={d} /></svg>
-                </button>
-              ))}
-            </div>
+        <div className={`gauge${pinned ? ' pinned' : ''}`}>
+          <div
+            className="track" style={{ '--t': t } as CSSProperties}
+            onPointerDown={(e) => { e.currentTarget.setPointerCapture(e.pointerId); at(e); }}
+            onPointerMove={(e) => { if (e.currentTarget.hasPointerCapture(e.pointerId)) at(e); }}
+          >
+            <span className="fill" />
+            <b>{reach}</b>
           </div>
         </div>
       )}
@@ -223,13 +249,13 @@ function SmearBrush({ on, reach, fall, onPick, onSet }: { on: boolean; reach: nu
   );
 }
 
-export function Brushes({ tool, sized, grow, reach, fall, onPick, onGrow, onSmear }: { tool: Tool; sized?: boolean; grow: boolean; reach: number; fall: number; onPick: (b: Brush) => void; onGrow: (bigger: boolean) => void; onSmear: (reach: number, fall: number) => void }) {
+export function Brushes({ tool, sized, grow, reach, onPick, onGrow, onSmear }: { tool: Tool; sized?: boolean; grow: boolean; reach: number; onPick: (b: Brush) => void; onGrow: (bigger: boolean) => void; onSmear: (reach: number) => void }) {
   return (
     <div className="pill brushes" role="toolbar" aria-label="Brushes">
       {BRUSHES.map(([b, label, Icon, keys]) => (
         <Fragment key={b}>
           {sized && b === 'erase' && <SizeBrush on={tool === 'size'} grow={grow} onPick={() => onPick('size')} onGrow={onGrow} />}
-          {b === 'smear' ? <SmearBrush on={tool === b} reach={reach} fall={fall} onPick={() => onPick(b)} onSet={onSmear} /> : (
+          {b === 'smear' ? <SmearBrush on={tool === b} reach={reach} onPick={() => onPick(b)} onSet={onSmear} /> : (
             <button className={tool === b ? 'on' : ''} aria-label={label} aria-pressed={tool === b} onClick={() => onPick(b)}>
               <Icon />
               <Tip tip={label} keys={keys ?? 'T'} />

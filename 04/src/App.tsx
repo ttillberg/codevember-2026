@@ -778,9 +778,9 @@ export function App() {
     startTransition(() => setHistory((h) => [...h, next]));
     setRedos([]);
   }, []);
-  /** how far the smear reaches, metres, and the power of its falloff */
-  const [smearing, setSmearing] = useState({ reach: 65, fall: 2 });
-  useEffect(() => smearSet(smearing.reach, smearing.fall), [smearing]);
+  /** how far the smear reaches, metres; its pull always falls off by the one soft curve */
+  const [reach, setReach] = useState(65);
+  useEffect(() => smearSet(reach, 2), [reach]);
   /** whether the size brush makes roads bigger, or smaller */
   const [grow, setGrow] = useState(true);
   const growNow = useRef(grow);
@@ -888,7 +888,7 @@ export function App() {
         {air && <Air />}
         {nodes && <Nodes net={roads} />}
         <Sketch api={sketch} />
-        <Painter net={ground} tool={tool} onStroke={onStroke} onSmear={onSmear} onTrace={setTrace} onErase={onErase} onSize={onSize} shrink={!grow} reach={smearing.reach} />
+        <Painter net={ground} tool={tool} onStroke={onStroke} onSmear={onSmear} onTrace={setTrace} onErase={onErase} onSize={onSize} shrink={!grow} reach={reach} />
         <EffectComposer multisampling={fx.aa === 'msaa4' ? 4 : fx.aa === 'msaa2' ? 2 : 0}>
           {fx.tilt && <TiltShift2 blur={lens.blur} taper={lens.taper} start={start} end={end} samples={touch ? 10 : 18} />}
           {/* the lights bleed into what is beside them, as they do through glass */}
@@ -991,7 +991,7 @@ export function App() {
         </div>
       )}
       {tool === 'trace' && <div className="note" ref={noteBox}>{trace ? '' : 'click a road'}</div>}
-      <Brushes tool={tool} sized={SIZED} grow={grow} reach={smearing.reach} fall={smearing.fall} onSmear={(reach, fall) => setSmearing({ reach, fall })} onGrow={setGrow} onPick={(b) => { setBrush(b); setTool(b); }} />
+      <Brushes tool={tool} sized={SIZED} grow={grow} reach={reach} onSmear={setReach} onGrow={setGrow} onPick={(b) => { setBrush(b); setTool(b); }} />
       <History canUndo={history.length > 1} canRedo={redos.length > 0} onUndo={undo} onRedo={redo} />
     </>
   );
