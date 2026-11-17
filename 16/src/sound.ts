@@ -109,73 +109,78 @@ export class Sound {
   }
 
   /**
-   * A fungus growing creaks: a run of little clicks (a sawtooth, its rate gliding down) rung through a narrow band,
-   * the way a wooden thing creaks under strain. Each kind its own voice; a pop for a puffball, a dry crackle for a
-   * morel, a wet squelch for a slimy one.
+   * A fungus growing creaks the way a stalk does when it bends: stick-slip, a run of sharp little ticks, uneven
+   * in spacing and strength, the gaps closing as the strain builds and opening as it lets go, each tick rung
+   * through a couple of narrow bands, the body of the thing. Written sample by sample into a short buffer. Each kind
+   * its own voice; a puffball a single soft pop, a morel a dry scatter of crackles, a slippery jack wetter.
    */
   creak(p: THREE.Vector3, kind: string) {
     const ctx = this.ctx;
-    if (!ctx || !this.noise || !this.out) return;
+    if (!ctx || !this.out) return;
     const { gain, pan } = this.place(p);
     if (gain < 0.25) return; // too far to hear
     const v = CREAK[kind] ?? CREAK.funnel;
-    const t = ctx.currentTime, j = 0.85 + 0.3 * Math.random(); // never twice the same
+    const sr = ctx.sampleRate, j = 0.85 + 0.3 * Math.random(); // never twice the same
     const len = v.len * (0.7 + 0.6 * Math.random());
+    const n = Math.ceil(len * sr) + Math.ceil(0.03 * sr);
+    const buf = ctx.createBuffer(1, n, sr);
+    const d = buf.getChannelData(0);
+    // the ticks: each a sharp edge decaying in a millisecond or two
+    const tick = (at: number, amp: number) => {
+      const i0 = Math.floor(at * sr), dec = v.decay * sr;
+      for (let i = 0; i < dec * 5 && i0 + i < n; i++) d[i0 + i] += amp * Math.exp(-i / dec) * (i < 2 ? 1 : 0.6 + 0.8 * (Math.random() - 0.5));
+    };
+    if (v.scatter) {
+      // a crackle or a pop: ticks at random in the span
+      for (let k = 0; k < v.scatter; k++) tick(Math.random() * len, 0.4 + 0.6 * Math.random());
+    } else {
+      // stick-slip: the gap from rate to rateEnd and back a little, jittered
+      let at = 0, k = 0;
+      while (at < len) {
+        const u = at / len;
+        const rate = v.rate * j * (u < 0.6 ? 1 + (v.rateEnd - 1) * (u / 0.6) : v.rateEnd + (1 - v.rateEnd) * 0.4 * ((u - 0.6) / 0.4));
+        const swell = Math.sin(Math.PI * Math.min(1, u * 1.15)); // grows, then fades
+        tick(at, (0.35 + 0.65 * Math.random()) * (0.3 + 0.7 * swell) * (k % 7 === 3 ? 1.6 : 1)); // now and then a harder catch
+        at += (1 / rate) * (0.65 + 0.7 * Math.random());
+        k++;
+      }
+    }
+    const src = ctx.createBufferSource();
+    src.buffer = buf;
     const panner = ctx.createStereoPanner();
     panner.pan.value = pan;
-    panner.connect(this.out);
-    const bp = ctx.createBiquadFilter();
-    bp.type = 'bandpass';
-    bp.Q.value = v.q;
-    bp.frequency.setValueAtTime(v.band * j, t);
-    bp.frequency.exponentialRampToValueAtTime(v.band * j * v.bandEnd, t + len);
     const g = ctx.createGain();
-    g.gain.setValueAtTime(0.0001, t);
-    g.gain.exponentialRampToValueAtTime(v.vol * gain, t + Math.min(0.03, len * 0.2));
-    // a creak is uneven: the strain catches and lets go
-    for (let k = 1; k < 4; k++) g.gain.setValueAtTime(v.vol * gain * (0.5 + 0.5 * Math.random()), t + (len * k) / 4);
-    g.gain.exponentialRampToValueAtTime(0.0001, t + len);
-    bp.connect(g).connect(panner);
-    if (v.rate > 0) {
-      const o = ctx.createOscillator();
-      o.type = 'sawtooth';
-      o.frequency.setValueAtTime(v.rate * j, t);
-      o.frequency.exponentialRampToValueAtTime(v.rate * j * v.rateEnd, t + len);
-      o.connect(bp);
-      o.start(t);
-      o.stop(t + len + 0.05);
+    g.gain.value = v.vol * gain;
+    g.connect(panner).connect(this.out);
+    // the body: two resonances, the second higher and weaker; and a little of the dry tick itself
+    for (const [f, q, w] of [[v.band * j, v.q, 1], [v.band * j * v.band2, v.q * 0.8, 0.5]] as const) {
+      const bp = ctx.createBiquadFilter();
+      bp.type = 'bandpass';
+      bp.frequency.value = f;
+      bp.Q.value = q;
+      const bg = ctx.createGain();
+      bg.gain.value = w * (v.q / 4);
+      src.connect(bp).connect(bg).connect(g);
     }
-    if (v.hiss > 0) {
-      // noise through the same band: a pop, a squelch, a crackle (chopped into specks for that)
-      const s = this.source(ctx);
-      const ng = ctx.createGain();
-      ng.gain.value = v.hiss;
-      if (v.crackle) {
-        ng.gain.setValueAtTime(0, t);
-        for (let k = 0; k < 9; k++) {
-          const at = t + Math.random() * len;
-          ng.gain.setValueAtTime(v.hiss, at);
-          ng.gain.setValueAtTime(0, at + 0.004 + Math.random() * 0.006);
-        }
-      }
-      s.connect(ng).connect(bp);
-      s.start(t, Math.random() * 1.5);
-      s.stop(t + len + 0.05);
-    }
+    const dry = ctx.createGain();
+    dry.gain.value = v.dry;
+    src.connect(dry).connect(g);
+    src.start(ctx.currentTime);
   }
 }
 
-interface CreakVoice { rate: number; rateEnd: number; band: number; bandEnd: number; q: number; len: number; vol: number; hiss: number; crackle?: boolean }
-// a voice per kind: click rate (Hz) and where it glides to, the band that rings and where it goes, how narrow,
-// how long, how loud, how much noise
+interface CreakVoice { rate: number; rateEnd: number; band: number; band2: number; q: number; len: number; vol: number; decay: number; dry: number; scatter?: number }
+// a voice per kind (slower and much lower than at first, which crackled like static rather than creaked): ticks a second at the start and how far that closes up; the band that rings, a second one (times
+// the first), how narrow; how long, how loud; how fast a tick dies (seconds); how much of the bare tick; or a
+// scatter of so many ticks at random instead of stick-slip
 const CREAK: Record<string, CreakVoice> = {
-  funnel: { rate: 42, rateEnd: 0.6, band: 950, bandEnd: 0.8, q: 9, len: 0.2, vol: 0.5, hiss: 0 }, // a thin squeak
-  finger: { rate: 95, rateEnd: 0.7, band: 2600, bandEnd: 1.1, q: 6, len: 0.07, vol: 0.35, hiss: 0 }, // tiny ticks
-  chanterelle: { rate: 30, rateEnd: 0.65, band: 650, bandEnd: 0.8, q: 7, len: 0.26, vol: 0.5, hiss: 0 }, // a soft creak
-  puffball: { rate: 0, rateEnd: 1, band: 520, bandEnd: 0.6, q: 2, len: 0.06, vol: 0.7, hiss: 1 }, // a little pop
-  agaric: { rate: 22, rateEnd: 0.6, band: 420, bandEnd: 0.75, q: 10, len: 0.34, vol: 0.55, hiss: 0 }, // a deep creak
-  porcini: { rate: 16, rateEnd: 0.6, band: 300, bandEnd: 0.8, q: 11, len: 0.38, vol: 0.6, hiss: 0.15 }, // woody
-  slippery: { rate: 12, rateEnd: 1.4, band: 750, bandEnd: 1.6, q: 4, len: 0.16, vol: 0.45, hiss: 0.8 }, // a wet squelch
-  morel: { rate: 0, rateEnd: 1, band: 3200, bandEnd: 0.8, q: 3, len: 0.22, vol: 0.5, hiss: 1, crackle: true }, // dry crackle
-  waxcap: { rate: 55, rateEnd: 0.65, band: 1350, bandEnd: 0.85, q: 8, len: 0.13, vol: 0.45, hiss: 0 }, // a high creak
+  funnel: { rate: 35, rateEnd: 1.8, band: 440, band2: 2.3, q: 9, len: 0.374, vol: 0.5, decay: 0.00144, dry: 0.15 }, // a thin creak
+  finger: { rate: 60, rateEnd: 1.5, band: 1040, band2: 1.9, q: 6, len: 0.153, vol: 0.4, decay: 0.0009, dry: 0.2 }, // tiny ticks
+  chanterelle: { rate: 22.5, rateEnd: 2.0, band: 280, band2: 2.1, q: 8, len: 0.51, vol: 0.55, decay: 0.0018, dry: 0.12 }, // a soft creak
+  puffball: { rate: 0, rateEnd: 1, band: 168, band2: 2.6, q: 3, len: 0.065, vol: 0.9, decay: 0.0072, dry: 0.4, scatter: 1 }, // a pop
+  agaric: { rate: 16, rateEnd: 2.2, band: 192, band2: 2.4, q: 10, len: 0.68, vol: 0.6, decay: 0.00252, dry: 0.1 }, // a deep creak
+  porcini: { rate: 12, rateEnd: 2.4, band: 136, band2: 2.7, q: 11, len: 0.765, vol: 0.65, decay: 0.00324, dry: 0.12 }, // woody
+  slippery: { rate: 19, rateEnd: 1.6, band: 248, band2: 1.7, q: 4, len: 0.34, vol: 0.55, decay: 0.0054, dry: 0.3 }, // wet, soft-edged
+  morel: { rate: 0, rateEnd: 1, band: 1200, band2: 1.6, q: 3, len: 0.325, vol: 0.55, decay: 0.00072, dry: 0.5, scatter: 14 }, // dry crackle
+  waxcap: { rate: 42.5, rateEnd: 1.7, band: 600, band2: 2.2, q: 8, len: 0.255, vol: 0.45, decay: 0.00126, dry: 0.15 }, // a high creak
 };
