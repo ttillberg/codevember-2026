@@ -1,9 +1,15 @@
 // The brush. Drag on the ground and a road follows; let go and it is built.
 import { useEffect, useRef, type MutableRefObject } from 'react';
-import type { ThreeEvent } from '@react-three/fiber';
+import { useFrame, type ThreeEvent } from '@react-three/fiber';
 import { BufferAttribute, BufferGeometry, Group, Mesh, MeshBasicMaterial, Vector3, type LineSegments, type Points, type Ray } from 'three';
 import { strokeGeometry } from './geo';
 import { CROSS, cumLen, deck, pointOn, type Net, type Road, type V } from './net';
+
+/** The jolt the drone feels when a road is laid: when it came (ms) and how many metres it is at its start. Read in App.tsx. */
+export const jolt = { since: -1e9, by: 0 };
+const CALM = typeof matchMedia !== 'undefined' && matchMedia('(prefers-reduced-motion: reduce)').matches;
+/** How long the ghost of a stroke takes to sink into the road that has just been made under it, ms. */
+const SINK = 520;
 
 /** How many points of strokes the sketch of a smear can hold. */
 const SKETCH = 6000;
@@ -49,7 +55,7 @@ export function Sketch({ api }: { api: MutableRefObject<(strokes: { pts: V[] }[]
   );
 }
 
-export type Tool = 'road' | 'bridge' | 'smear' | 'erase' | 'trace';
+export type Tool = 'road' | 'bridge' | 'smear' | 'size' | 'erase' | 'trace';
 /** the tools that paint or push: what the brush is when trace is not on */
 export type Brush = Exclude<Tool, 'trace'>;
 
@@ -118,19 +124,26 @@ interface Props {
   onTrace: (p: V) => void;
   /** the ground an erase drag passed over; it takes a size off what is there */
   onErase: (pts: V[]) => void;
+  /** the road the size brush was pressed on: it goes a size up, or down */
+  onSize: (road: Road) => void;
+  /** the size brush makes roads smaller: the road it would take is lit in the eraser's colour */
+  shrink?: boolean;
 }
 
-export function Painter({ net, tool, onStroke, onSmear, onTrace, onErase }: Props) {
+export function Painter({ net, tool, onStroke, onSmear, onTrace, onErase, onSize, shrink }: Props) {
   const preview = useRef<Mesh>(null);
   const draw = useRef<{ id: number; pts: V[]; bridge: boolean; smear: boolean; erase: boolean; up: boolean } | null>(null);
 
   const mesh = useRef<Mesh>(null);
+  /** when the road under the ghost was made (ms), while the ghost is still sinking into it; 0 otherwise */
+  const sinking = useRef(0);
   /** `ghost`: the stroke has been let go and is waiting to be built: a pale mesh where the road will be. `erase`: the drag, in red */
   // The stroke as it is drawn has to be seen by day and after dark: a bright ribbon, the colour of the brush, in a wider
   // faint one. It is not toned down with the picture, so at night it is the brightest thing in it.
   const halo = useRef<Mesh>(null);
   const show = (pts: V[], mode: 'paint' | 'bridge' | 'ghost' | 'erase' = 'paint') => {
     const m = preview.current!, g = mesh.current!, h = halo.current!;
+    sinking.current = 0;
     h.geometry.dispose();
     h.geometry = strokeGeometry(pts, CROSS.lanes * CROSS.lw + 4.5);
     h.visible = pts.length > 1 && mode !== 'ghost';
@@ -197,13 +210,13 @@ export function Painter({ net, tool, onStroke, onSmear, onTrace, onErase }: Prop
     const n = near.current!;
     n.visible = !!hold;
     if (!hold) return;
-    // the stretch it is on: a few metres either way, laid over the road at its height
-    const cum = cumLen(hold.road.pts), pts: V[] = [];
-    for (let d = Math.max(0, hold.d - 14); d <= Math.min(hold.road.len, hold.d + 14); d += 3.5) pts.push(pointOn(hold.road.pts, cum, d));
+    // the stretch it is on: a few metres either way, laid over the road at its height; the size brush takes the whole road
+    const cum = cumLen(hold.road.pts), pts: V[] = [], whole = tool === 'size';
+    for (let d = whole ? 0 : Math.max(0, hold.d - 14); d <= (whole ? hold.road.len : Math.min(hold.road.len, hold.d + 14)); d += 3.5) pts.push(pointOn(hold.road.pts, cum, d));
     n.geometry.dispose();
     n.geometry = strokeGeometry(pts, hold.road.hw + 0.6);
     n.position.y = hold.h + 0.25;
-    (n.material as MeshBasicMaterial).color.setHex(hold.h > 0 ? NEON : PALE);
+    (n.material as MeshBasicMaterial).color.setHex(whole ? (shrink ? RED : NEON) : hold.h > 0 ? NEON : PALE);
   };
   const leave = () => { if (!draw.current) { mark(here.current!, null); near.current!.visible = false; } };
   // the road it was on may be gone when the roads change
@@ -212,8 +225,20 @@ export function Painter({ net, tool, onStroke, onSmear, onTrace, onErase }: Prop
   // the ghost stays until the road it stands for is there
   const waiting = useRef(false);
   useEffect(() => {
-    if (waiting.current && !draw.current) { waiting.current = false; show([]); }
+    if (!waiting.current || draw.current) return;
+    waiting.current = false;
+    // the road is there: the ghost flares once and sinks into it, and the drone feels it land
+    sinking.current = performance.now();
+    mesh.current!.visible = false;
+    if (!CALM) { jolt.since = sinking.current; jolt.by = 1.6; }
   }, [net]);
+  useFrame(() => {
+    if (!sinking.current) return;
+    const k = (performance.now() - sinking.current) / SINK;
+    if (k >= 1) return show([]);
+    // bright for a moment, then gone the way wet paint dries: fast at first
+    (preview.current!.material as MeshBasicMaterial).opacity = 0.62 * (1 - k) ** 2.2;
+  });
   const cancel = () => {
     const d = draw.current;
     if (d && d.smear) onSmear('end', d.pts[d.pts.length - 1]);
@@ -230,6 +255,12 @@ export function Painter({ net, tool, onStroke, onSmear, onTrace, onErase }: Prop
     if (tool === 'trace') return onTrace(onDeck(net, e.ray) ?? p);
     (e.target as Element).setPointerCapture?.(e.pointerId);
     // erase works on the ground under the drag, so it never starts on a deck
+    // the size brush draws nothing: a press on a road changes that road, and the hover has shown which
+    if (tool === 'size') {
+      const road = under(net, e.ray, p)?.road;
+      if (road) onSize(road);
+      return;
+    }
     const erase = tool === 'erase';
     const smear = !erase && (tool === 'smear' || e.altKey);
     // a stroke that starts on a deck starts up there

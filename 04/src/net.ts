@@ -29,6 +29,8 @@ export interface Road extends RoadKind {
   b: Node;
   raw: V[];
   pts: V[]; // centreline a→b, corners filleted
+  /** the strokes it was made of, by their place in the painting */
+  by: number[];
   base: V[]; // centreline trimmed at both junctions
   stallSegs: number[];
   bridge: boolean;
@@ -421,7 +423,7 @@ export function buildNet(spec: Spec): Net {
     const stallSegs: number[] = [];
     sr.stalls.forEach((on, i) => on && stallSegs.push(i));
     const cum = cumLen(pts);
-    const r: Road = { ...sr.kind, id: roads.length, a, b, raw: sr.raw, pts, base: [], stallSegs, bridge: !!sr.bridge, deck: sr.bridge ? sr.deck ?? shape(cum[cum.length - 1], 0, 0, BRIDGE_H) : undefined, feeds: !!sr.feeds, ring: !!sr.ring, one: !!sr.one, hw: halfWidth(sr.kind, sr.ring || sr.one), len: cum[cum.length - 1] };
+    const r: Road = { ...sr.kind, id: roads.length, a, b, raw: sr.raw, pts, by: sr.by ?? [sr.stroke], base: [], stallSegs, bridge: !!sr.bridge, deck: sr.bridge ? sr.deck ?? shape(cum[cum.length - 1], 0, 0, BRIDGE_H) : undefined, feeds: !!sr.feeds, ring: !!sr.ring, one: !!sr.one, hw: halfWidth(sr.kind, sr.ring || sr.one), len: cum[cum.length - 1] };
     roads.push(r);
     a.roads.push(r);
     b.roads.push(r);

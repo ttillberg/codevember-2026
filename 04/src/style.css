@@ -56,6 +56,22 @@ canvas.glow { position: absolute; inset: 0; width: 100%; height: 100%; pointer-e
   position: fixed; z-index: 2; top: max(20px, env(safe-area-inset-top)); right: max(20px, env(safe-area-inset-right));
   display: flex; align-items: center; gap: 8px;
 }
+/* the eye, and the list it opens under the bar: what is shown on the picture */
+.view { position: relative; display: flex; }
+.menu {
+  position: absolute; top: calc(100% + 12px); right: -4px; display: grid; gap: 2px; padding: 8px; border-radius: 14px; white-space: nowrap;
+  background: rgba(20, 22, 18, 0.72); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); color: #f4f4f2;
+  font: 600 10px/1 Inter, "Helvetica Neue", Helvetica, Arial, sans-serif; letter-spacing: 0.12em; text-transform: uppercase;
+}
+.menu label { display: flex; align-items: center; gap: 10px; min-height: 36px; padding: 0 10px 0 8px; border-radius: 9px; cursor: pointer; }
+.menu label:hover { background: rgba(244, 244, 242, 0.12); }
+.menu input { margin: 0; width: 15px; height: 15px; accent-color: #f4f4f2; }
+/* the way back to how it opened: a plain line under the list, not a round button like the bar's */
+.pill .menu button.reset {
+  width: auto; height: 32px; margin-top: 6px; padding: 0 12px; border-radius: 9px; font: inherit; letter-spacing: inherit; text-transform: inherit;
+  background: rgba(244, 244, 242, 0.14);
+}
+.pill .menu button.reset:hover { background: rgba(244, 244, 242, 0.26); }
 /* the clock: its hands show the time, a drag on it winds them */
 .pill button.clock { cursor: grab; touch-action: none; user-select: none; -webkit-user-select: none; }
 .pill button.clock:active { cursor: grabbing; }
@@ -69,6 +85,9 @@ canvas.glow { position: absolute; inset: 0; width: 100%; height: 100%; pointer-e
 .brushes { left: 50%; transform: translateX(-50%); }
 .history { right: max(20px, env(safe-area-inset-right)); }
 .brushes button, .history button { position: relative; width: 46px; height: 46px; }
+/* the size brush and the two it opens over itself */
+.pick { position: relative; display: flex; }
+.pill.choices { position: absolute; left: 50%; bottom: calc(100% + 14px); transform: translateX(-50%); gap: 6px; padding: 6px; }
 /* what a button is, over it after a short hover: its name, and its key in a chip */
 .tip {
   position: absolute; z-index: 2; pointer-events: none; white-space: nowrap; display: flex; align-items: center; gap: 6px;
@@ -82,6 +101,8 @@ canvas.glow { position: absolute; inset: 0; width: 100%; height: 100%; pointer-e
   display: inline-flex; align-items: center; justify-content: center; min-width: 16px; height: 16px; padding: 0 4px;
   box-sizing: border-box; border-radius: 5px; background: rgba(244, 244, 242, 0.22); color: #f4f4f2; font: inherit; font-size: 10px;
 }
+/* up in the corner there is no room over a button: its name goes under it */
+.corner .tip { bottom: auto; top: calc(100% + 12px); transform: translate(-50%, -4px); }
 /* the last of a row keeps its name inside the screen */
 .history .tip { left: auto; right: 0; transform: translate(0, 4px); }
 @media (hover: hover) {

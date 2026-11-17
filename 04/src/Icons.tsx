@@ -21,5 +21,8 @@ export const UndoIcon = () => <Svg><path d="M9 14 4.5 9.5 9 5" /><path d="M4.5 9
 export const RedoIcon = () => <Svg><path d="M15 14l4.5-4.5L15 5" /><path d="M19.5 9.5H10a5.5 5.5 0 0 0 0 11h3" /></Svg>;
 // a clock that goes: each hand is turned to the time by the style of the button it is on (--hour, --minute)
 export const ClockIcon = () => <Svg><circle cx="12" cy="12" r="8.5" /><path className="hand hour" d="M12 12V8.2" /><path className="hand minute" d="M12 12V5.8" /></Svg>;
-// a flame: the heat map
-export const HeatIcon = () => <Svg><path d="M12 3c1 3.5 5 5.5 5 10.5a5 5 0 0 1-10 0c0-2.2 1-3.8 2.2-5 0 2 .8 3.2 2 3.5C11 8 10.6 5.6 12 3z" /></Svg>;
+// an eye: what is shown on the picture
+export const EyeIcon = () => <Svg><path d="M2.5 12c2.4-4.2 5.6-6.3 9.5-6.3s7.1 2.1 9.5 6.3c-2.4 4.2-5.6 6.3-9.5 6.3S4.900 16.2 2.5 12z" /><circle cx="12" cy="12" r="2.8" /></Svg>;
+// a road that swells in the middle, and one that is pinched: the size brush makes roads bigger, or smaller
+export const GrowIcon = () => <Svg><path d="M9 3v5.5c-3.4 1.7-3.4 5.3 0 7V21M15 3v5.5c3.4 1.7 3.4 5.3 0 7V21" /></Svg>;
+export const ShrinkIcon = () => <Svg><path d="M7.5 3v5.5c3.2 1.7 3.2 5.3 0 7V21M16.5 3v5.5c-3.2 1.7-3.2 5.3 0 7V21" /></Svg>;

@@ -13,14 +13,15 @@ import { SEASONS, World, type Season, type Tile } from './World';
 import { plantSmall, plantTown, shifted, turnSome, type Block } from './Town';
 import { People, Signs, Street } from './Life';
 import { Commons, plantCommons, standingCommons, type Green } from './Park';
-import { Painter, Sketch, type Brush, type Tool } from './Painter';
-import { Brushes, History, Overlays, TimeControl, hhmm, showTime } from './Controls';
-import { HeatIcon, TraceIcon } from './Icons';
-import { buildNet, type Net, type V } from './net';
+import { Painter, Sketch, type Brush, type Tool, jolt } from './Painter';
+import { Brushes, History, Overlays, TimeControl, ViewMenu, hhmm, showTime } from './Controls';
+import { TraceIcon } from './Icons';
+import { Air } from './Air';
+import { buildNet, type Net, type V, type Road } from './net';
 import { MAP } from './map';
 import { baseIntent, derive, no, standing, type Intent } from './intent';
 import { Nodes } from './Nodes';
-import { addStroke, erase, smear, smearStart, tangled, tidy } from './paint';
+import { addStroke, erase, resize, smear, smearStart, tangled, tidy } from './paint';
 import { holdStrokes, tileAsked, tileStrokes, windowStrokes } from './tiles';
 import { TILE as SIDE, alone, movePlace, place as LAND, saltOf, splitNet, tilesNow } from './net';
 import { laid, madeAt, wetStart } from './wet';
@@ -122,6 +123,8 @@ const MOVES: [keyof Move, string, number, number, number][] = [
   ['drift', 'Glide', 0, 80, 1], ['orbit', 'Swing', 0, 30, 0.5], ['hover', 'Bob', 0, 6, 0.1], ['shake', 'Shake', 0, 3, 0.05], ['period', 'Round', 10, 120, 1], ['north', 'North', 0, 40, 0.5],
 ];
 const FPS = 60;
+/** The size brush is put away for now: ?size brings it into the bar. */
+const SIZED = typeof location !== 'undefined' && new URLSearchParams(location.search).has('size');
 const RAD = Math.PI / 180;
 /**
  * The hour it is, whether it stands still there, how many seconds of ours a day and its night take, and how many seconds
@@ -260,9 +263,12 @@ function Drone({ shot, move, set, onShot, onWindow, onAhead }: {
     const turn = move.orbit * RAD * Math.sin(w * t * 0.5 + 0.7);
     // the shake is the same thing faster: gusts and motors, three sines that never line up
     const k = move.shake;
-    const hx = move.hover * (Math.sin(t * 0.83) + 0.4 * Math.sin(t * 2.1 + 1)) + k * (Math.sin(t * 9.1) + 0.6 * Math.sin(t * 14.3 + 2) + 0.3 * Math.sin(t * 23.7 + 4));
-    const hz = move.hover * (Math.sin(t * 0.67 + 2) + 0.4 * Math.sin(t * 1.7)) + k * (Math.sin(t * 10.7 + 1) + 0.6 * Math.sin(t * 16.9) + 0.3 * Math.sin(t * 21.1 + 3));
-    const hy = move.hover * 0.6 * Math.sin(t * 1.13 + 0.5) + k * 0.5 * Math.sin(t * 12.3 + 5);
+    const hx0 = move.hover * (Math.sin(t * 0.83) + 0.4 * Math.sin(t * 2.1 + 1)) + k * (Math.sin(t * 9.1) + 0.6 * Math.sin(t * 14.3 + 2) + 0.3 * Math.sin(t * 23.7 + 4));
+    const hz0 = move.hover * (Math.sin(t * 0.67 + 2) + 0.4 * Math.sin(t * 1.7)) + k * (Math.sin(t * 10.7 + 1) + 0.6 * Math.sin(t * 16.9) + 0.3 * Math.sin(t * 21.1 + 3));
+    // a road that lands is felt for a moment: a quick rattle that dies in a third of a second
+    const age = (performance.now() - jolt.since) / 1000, j = age < 0.6 ? jolt.by * Math.exp(-age * 9) : 0;
+    const hx = hx0 + j * Math.sin(age * 58), hz = hz0 + j * 0.7 * Math.sin(age * 71 + 1.3);
+    const hy = move.hover * 0.6 * Math.sin(t * 1.13 + 0.5) + k * 0.5 * Math.sin(t * 12.3 + 5) + j * 0.5 * Math.sin(age * 49 + 2);
     // off with the last bob, round the point it looks at, along with the glide, on with the new bob
     const dx = p.x - m.hx - c.target.x, dz = p.z - m.hz - c.target.z, a = turn - m.turn, cos = Math.cos(a), sin = Math.sin(a);
     c.target.x += x - m.x; c.target.z += z - m.z;
@@ -532,6 +538,8 @@ export function App() {
   const speed = paused ? 0 : TIMELAPSE;
   // reading the traffic: where it stands, and where one stretch's cars are going
   const [heat, setHeat] = useState(false);
+  // the mist and the clouds: off until asked for, in the eye's list or with ?air
+  const [air, setAir] = useState(() => new URLSearchParams(location.search).has('air'));
   const [trace, setTrace] = useState<V | null>(null);
   // ?debug: the shot under the sliders; without it the drone keeps its own
   const [shot, setShot] = useState<Shot | null>(() => (debug ? SHOTS[upright() ? 'p' : 'l'] : null));
@@ -766,6 +774,18 @@ export function App() {
     startTransition(() => setHistory((h) => [...h, next]));
     setRedos([]);
   }, []);
+  /** whether the size brush makes roads bigger, or smaller */
+  const [grow, setGrow] = useState(true);
+  const growNow = useRef(grow);
+  growNow.current = grow;
+  // the size brush pressed on a road: the strokes it was made of go a size up or down along it, and nothing goes; one entry in the history
+  const onSize = useCallback((road: Road) => {
+    const by = growNow.current ? 1 : -1;
+    const next = resize(top.current, road.pts, 8, (w) => w + by, true, new Set(road.by));
+    if (next === top.current) return;
+    startTransition(() => setHistory((h) => [...h, next]));
+    setRedos([]);
+  }, []);
   const top = useRef(history[history.length - 1]);
   const wallsNow = useRef(walls);
   wallsNow.current = walls;
@@ -826,7 +846,7 @@ export function App() {
       if ((e.key === 'd' || e.key === 'D') && !e.metaKey && !e.ctrlKey && !e.altKey) setNodes((v) => !v);
       // T takes up the next brush, shift and T the one before
       if ((e.key === 't' || e.key === 'T') && !e.metaKey && !e.ctrlKey && !e.altKey) {
-        const order: Brush[] = ['road', 'bridge', 'smear', 'erase'];
+        const order: Brush[] = SIZED ? ['road', 'bridge', 'smear', 'size', 'erase'] : ['road', 'bridge', 'smear', 'erase'];
         setBrush((b) => {
           const next = order[(order.indexOf(b) + (e.shiftKey ? order.length - 1 : 1)) % order.length];
           setTool(next);
@@ -858,9 +878,10 @@ export function App() {
         })}
         <Cars net={roads} speed={speed} target={VEHICLES} trail={lights === 'off' ? 0 : clock.trail} glow={lights === 'webgpu'} walls={hides} onGlowFail={noGpu} shade={!fx.lazy} heat={heat} trace={tool === 'trace' ? trace : null} onNote={onNote} onSim={onSim} />
         <Commons green={place.green} speed={speed} />
+        {air && <Air />}
         {nodes && <Nodes net={roads} />}
         <Sketch api={sketch} />
-        <Painter net={ground} tool={tool} onStroke={onStroke} onSmear={onSmear} onTrace={setTrace} onErase={onErase} />
+        <Painter net={ground} tool={tool} onStroke={onStroke} onSmear={onSmear} onTrace={setTrace} onErase={onErase} onSize={onSize} shrink={!grow} />
         <EffectComposer multisampling={fx.aa === 'msaa4' ? 4 : fx.aa === 'msaa2' ? 2 : 0}>
           {fx.tilt && <TiltShift2 blur={lens.blur} taper={lens.taper} start={start} end={end} samples={touch ? 10 : 18} />}
           {/* the lights bleed into what is beside them, as they do through glass */}
@@ -877,8 +898,7 @@ export function App() {
       {/* top right: the time and its hold, then the overlays; a second overlay is one more entry */}
       <div className="corner">
         {/* the clock, and beside it the two ways of reading the traffic: where it stands, and where one stretch's cars are going */}
-        <Overlays lead={<TimeControl now={hourNow} readout={readout} hold={clock.hold} onHold={() => setClock((c) => ({ ...c, hold: !c.hold }))} onSet={setHour} />} items={[
-          { id: 'heat', label: 'Heat map', icon: <HeatIcon />, on: heat, toggle: () => setHeat((v) => !v) },
+        <Overlays tail={<ViewMenu onReset={() => { setAir(false); setHeat(false); setFx((f) => ({ ...f, tilt: FX.tilt })); }} items={[{ id: 'air', label: 'Atmospherics', on: air, toggle: () => setAir((v) => !v) }, { id: 'tilt', label: 'Tilt shift', on: fx.tilt, toggle: () => setFx((f) => ({ ...f, tilt: !f.tilt })) }, { id: 'heat', label: 'Heat map', on: heat, toggle: () => setHeat((v) => !v) }]} />} lead={<TimeControl now={hourNow} readout={readout} hold={clock.hold} onHold={() => setClock((c) => ({ ...c, hold: !c.hold }))} onSet={setHour} />} items={[
           { id: 'trace', label: 'Trace', keys: 'R', icon: <TraceIcon />, on: tool === 'trace', toggle: () => setTool((t) => (t === 'trace' ? brush : 'trace')) },
         ]} />
       </div>
@@ -964,7 +984,7 @@ export function App() {
         </div>
       )}
       {tool === 'trace' && <div className="note" ref={noteBox}>{trace ? '' : 'click a road'}</div>}
-      <Brushes tool={tool} onPick={(b) => { setBrush(b); setTool(b); }} />
+      <Brushes tool={tool} sized={SIZED} grow={grow} onGrow={setGrow} onPick={(b) => { setBrush(b); setTool(b); }} />
       <History canUndo={history.length > 1} canRedo={redos.length > 0} onUndo={undo} onRedo={redo} />
     </>
   );
