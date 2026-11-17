@@ -33,6 +33,10 @@ export const SPECIES: Species[] = [
     kind: 'porcini', sv: 'Karljohan', en: 'Porcini', latin: 'Boletus edulis', seed: 8, scale: 1.0,
     note: 'Under spruce and birch, late summer into autumn: the king of the forest floor. A thick brown bun of a cap on a fat, club-shaped stem with a fine white net at the top; no gills but a sponge of pores underneath, white when young, olive yellow later.',
   },
+  {
+    kind: 'slippery', sv: 'Smörsopp', en: 'Slippery jack', latin: 'Suillus luteus', seed: 6, scale: 1.0,
+    note: 'Under pine, in groups, late summer into autumn. A chestnut cap with a low hump, coated in slime that shines when wet; bright yellow pores; a pale yellow stem dotted brown above a ring, the torn skin that covered the pores when it was young.',
+  },
 ];
 
 export class Fungarium {

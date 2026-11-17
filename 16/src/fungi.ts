@@ -7,14 +7,14 @@ import { mulberry32 } from './noise';
 import { mossLighting } from './shaders';
 import { buildDew } from './dew';
 
-export type FungusKind = 'funnel' | 'finger' | 'chanterelle' | 'puffball' | 'agaric' | 'porcini';
+export type FungusKind = 'funnel' | 'finger' | 'chanterelle' | 'puffball' | 'agaric' | 'porcini' | 'slippery';
 
 const ease = (t: number) => t * t * (3 - 2 * t);
 const clamp01 = (t: number) => Math.min(1, Math.max(0, t));
 
 // ---------------------------------------------------------------------------------------------------------
 // geometry buffers: position, part (0 stem, 0.2 a netted stem, 1 underside, 2 funnel inside or cap top, 3 finger,
-// 4 puffball, 5 fly agaric's cap, 6 a bolete's cap, 7 pores), along, around, tint
+// 4 puffball, 5 fly agaric's cap, 6 a bolete's cap (6.3 slimy), 7 pores; 0.4 a dotted stem), along, around, tint
 // drops: beads of water on fresh growth, (x, y, z, radius), drawn with the dew
 interface Buf { pos: number[]; part: number[]; uvf: number[]; tint: number[]; idx: number[]; drops: number[] }
 const newBuf = (): Buf => ({ pos: [], part: [], uvf: [], tint: [], idx: [], drops: [] });
@@ -524,6 +524,8 @@ interface CapStyle {
   thick: number; // the cap's flesh, times R
   th0: number; th1: number; // the cap's sphere angle shut and open
   bulb: number; bulbAt: number; // the stem swells by this much about this far up (0..1)
+  umbo?: number; // a low hump in the middle of the cap, times R
+  ring?: number[]; // a partial veil over the pores that tears into a ring on the stem, this colour
 }
 interface Capped {
   base: THREE.Vector3;
@@ -536,6 +538,9 @@ interface Capped {
 // karljohan (Boletus edulis): a fat barrel of a stem, netted white at the top, under a thick brown bun of a cap,
 // white pores going olive-yellow
 const PORCINI: CapStyle = { capPart: 6, underPart: 7, stemPart: 0.2, thick: 0.42, th0: 1.75, th1: 1.12, bulb: 1.05, bulbAt: 0.18 };
+// smörsopp (Suillus luteus): a slimy chestnut cap with a low hump, opening flatter, yellow pores under a pale veil
+// that tears into a ring, a yellowish stem dotted brown above it
+const SLIPPERY: CapStyle = { capPart: 6.3, underPart: 7, stemPart: 0.4, thick: 0.36, th0: 1.6, th1: 1.0, bulb: 0.2, bulbAt: 0.1, umbo: 0.07, ring: [0.58, 0.5, 0.56] };
 
 /**
  * A capped fungus at growth g: a knob that pushes up (a young bolete is all stem, a cork with a small cap
@@ -561,7 +566,7 @@ function buildCapped(b: Buf, m: Capped, age: number) {
     return [m.base.x + m.lean[0] * yy + fx * keel, m.base.y + y - sink - keel * 0.4 * fall, m.base.z + m.lean[1] * yy + fz * keel];
   };
   const capC = rotTint(m.cap), stemC = rotTint(m.stem), underC = rotTint(m.under);
-  const capY = (t: number) => H - Rc * (1 - Math.cos(t * th));
+  const capY = (t: number) => H - Rc * (1 - Math.cos(t * th)) + (st.umbo ?? 0) * R * open * (1 - THREE.MathUtils.smoothstep(t, 0, 0.45));
   const capR = (t: number) => Rc * Math.sin(t * th);
   const tS = Math.min(1, Math.asin(Math.min(1, rs / Rc)) / th);
   const stemTop = capY(tS) - thick;
@@ -589,6 +594,24 @@ function buildCapped(b: Buf, m: Capped, age: number) {
     ring(b, AS, cx, cy, cz, r, part, along, t);
   }
   stitch(b, start, P.length, AS);
+  // the partial veil: first a skin from the stem to the rim over the pores, then torn and hanging as a ring
+  if (st.ring && pin > 0.5) {
+    const tear = THREE.MathUtils.smoothstep(open, 0.15, 0.5);
+    const yr = Math.min(stemTop * 0.72, capY(1) - thick * 1.2); // below the rim, or the rim hides it
+    const rimR = capR(1) * 0.94, rimY = capY(1) - thick * 0.6;
+    const hangR = rs * 1.55, hangY = yr - H * 0.16;
+    const ex = rimR + (hangR - rimR) * tear, ey = rimY + (hangY - rimY) * tear;
+    const ringC = rotTint(st.ring);
+    const s0 = b.pos.length / 3;
+    for (let i = 0; i <= 3; i++) {
+      const u = i / 3;
+      const r = rs * 1.03 + (ex - rs * 1.03) * u;
+      const y = yr + (ey - yr) * u - Math.sin(u * Math.PI) * H * 0.02 * tear;
+      const [cx, cy, cz] = at(y);
+      ring(b, AS, cx, cy, cz, r, 0, 0.5, ringC);
+    }
+    stitch(b, s0, 4, AS);
+  }
   // a bead or two on the cap
   for (let j = 0; j < 2; j++) {
     const h = frac(m.phase * (2.3 + j * 1.7));
@@ -774,6 +797,26 @@ export class Fungi {
         }
       }
       radius = 0.1 * sc;
+    } else if (kind === 'slippery') {
+      // smörsopp: two to five, under pine, caps 5 to 11 cm, standing close
+      const n = 2 + Math.floor(r() * 4);
+      for (let i = 0; i < n; i++) {
+        for (let attempt = 0; attempt < 20; attempt++) {
+          const a = r() * Math.PI * 2, d = i === 0 ? 0 : (0.04 + 0.06 * r()) * sc;
+          const R = (0.026 + 0.03 * r()) * sc;
+          const x = Math.cos(a) * d, z = Math.sin(a) * d;
+          if (capped.some((m) => Math.hypot(m.base.x - x, m.base.z - z) < (m.R + R) * 0.85)) continue;
+          const k = 0.85 + 0.3 * r(), out0 = 0.05 + 0.1 * r();
+          capped.push({
+            base: new THREE.Vector3(x, 0, z), H: R * (1.3 + 0.4 * r()), R, rs: R * (0.24 + 0.05 * r()),
+            lean: [Math.cos(a) * out0, Math.sin(a) * out0],
+            delay: r() * 3 + i * 1.4, dur: 11 + 5 * r(), phase: r() * 6.28, style: SLIPPERY,
+            cap: [0.3 * k, 0.15 * k, 0.06 * k], stem: [0.78, 0.7, 0.42], under: [0.8, 0.66, 0.2],
+          });
+          break;
+        }
+      }
+      radius = 0.08 * sc;
     } else {
       // puffballs: a few pears close together, set out so they do not overlap
       const n = 2 + Math.floor(r() * 5);
@@ -950,6 +993,7 @@ void main() {
   float along = vUvf.x, around = vUvf.y;
   vec3 col = vTint;
   float thin = 0.4;
+  float wet = 1.0; // how glossy: a slippery jack's cap is all slime
   if (vPart < 0.5) {
     // stem: fine lengthwise fibres, white mycelium at the foot where it comes out of the moss
     col *= 0.94 + 0.06 * sin(around * 6.2831 * 11.0 + n3(vWorldPos * 300.0) * 5.0) + 0.06 * (n3(vWorldPos * 500.0) - 0.5);
@@ -965,7 +1009,11 @@ void main() {
         e = min(e, length((c - f) * vec2(1.0, 0.7)));
       }
       float net = (1.0 - smoothstep(0.32, 0.42, e)) * smoothstep(0.15, 0.5, along);
-      col = mix(col * 0.82, vec3(0.86, 0.84, 0.78), net * 0.8);
+      if (vPart > 0.3) {
+        // a slippery jack's stem: not a net but little brown glandular dots, above the ring
+        float dot1 = (1.0 - smoothstep(0.12, 0.2, e)) * smoothstep(0.44, 0.5, along);
+        col = mix(col, vec3(0.32, 0.2, 0.1), dot1 * 0.8);
+      } else col = mix(col * 0.82, vec3(0.86, 0.84, 0.78), net * 0.8);
     }
   } else if (vPart < 1.5) {
     // the funnel's underside: pale grey false gills, forking veins running down onto the stem
@@ -1014,6 +1062,11 @@ void main() {
     col *= mix(0.88, 1.15, smoothstep(0.7, 1.0, along));
     col *= 0.9 + 0.2 * n3(vWorldPos * 140.0) + 0.08 * (n3(vWorldPos * 600.0) - 0.5);
     thin = 0.2;
+    if (vPart > 6.2) {
+      // slimy: a smooth glossy skin, darker in the middle, streaked where the slime has run
+      col = vTint * mix(0.75, 1.1, smoothstep(0.0, 0.9, along)) * (0.96 + 0.05 * sin(around * 6.2831 * 23.0 + n3(vWorldPos * 80.0) * 4.0));
+      wet = 3.0;
+    }
   } else {
     // fly agaric's cap: red, under the white veil while it is an egg; as it breaks, the veil stays as warts that
     // spread apart with the growing cap. How much veil is left rides in the part number (5 .. 5.9).
@@ -1043,8 +1096,8 @@ void main() {
   float shadow = clamp((shadowAt(vWorldPos, N) - uShadowFloor) / max(1.0 - uShadowFloor, 1e-3), 0.0, 1.0);
   float diff = max(dot(N, L), 0.0);
   float wrap = max(dot(N, L) * 0.5 + 0.5, 0.0);
-  float spec = pow(max(dot(reflect(-L, Nw), V), 0.0), 140.0) * 2.2 + pow(max(dot(reflect(-L, Nw), V), 0.0), 18.0) * 0.25;
-  float sheen = pow(1.0 - max(dot(Nw, V), 0.0), 4.0) * 0.35 * mix(0.3, 1.0, shadow); // the wet sheen is the sky's: dim in the shade, as all else
+  float spec = (pow(max(dot(reflect(-L, Nw), V), 0.0), 140.0) * 2.2 + pow(max(dot(reflect(-L, Nw), V), 0.0), 18.0) * 0.25) * wet;
+  float sheen = pow(1.0 - max(dot(Nw, V), 0.0), 4.0) * 0.35 * mix(0.3, 1.0, shadow) * mix(1.0, wet, 0.5); // the wet sheen is the sky's: dim in the shade, as all else
   float thru = pow(max(dot(-V, L), 0.0), 2.5) * thin;
   // the fill is dimmer in the shade, as on the moss: a white stem in a shadow had stood out as if lit
   vec3 lit = col * (mix(0.09, 0.25, shadow) * skyTint(N, 1.0) + 1.3 * diff * shadow + 0.15 * wrap * mix(0.35, 1.0, shadow))
