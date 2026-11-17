@@ -2,7 +2,8 @@
 // Three levels of detail, each an instanced mesh sharing one material: near trunks have their root flare in
 // fine geometry, mid ones a coarser version, far ones are octagonal columns. Trunks are sorted into the
 // levels as you move. The bark is a shader: long plates and deep wandering furrows, flaking in layers, bump-mapped
-// by finite differences, algae and crust lichen, and moss climbing the foot.
+// by finite differences, algae and crust lichen; up close fibres and papery scales on the plates, and a
+// cushion of moss round the foot, swelling the outline, its shoots fuzzy and lime at the tips.
 import * as THREE from 'three';
 import { mulberry32 } from './noise';
 import { mossLighting } from './shaders';
@@ -120,7 +121,12 @@ export class Trees {
 
   /** Is the point inside a trunk? For the autofocus. */
   hit(x: number, y: number, z: number) {
-    for (const t of this.trunks) if (Math.hypot(x - t.x, z - t.z) < t.r * (y < 0.4 ? 1.6 : 1.0)) return true;
+    // the root flare, about its average: the full buttress was too wide, and standing by a trunk the focus fell
+    // in the air in front of it
+    for (const t of this.trunks) {
+      const dy = Math.max(0, y - groundHeight(t.x, t.z));
+      if (Math.hypot(x - t.x, z - t.z) < t.r * (1.02 + 0.5 * Math.exp(-dy / 0.28))) return true;
+    }
     return false;
   }
 
@@ -134,7 +140,23 @@ export class Trees {
   }
 }
 
+// shared by both stages: noise, and where the moss on the foot reaches (higher on the shaded side, a ragged line)
+const common = /* glsl */ `
+float h21(vec2 p) { p = fract(p * vec2(123.34, 456.21)); p += dot(p, p + 45.32); return fract(p.x * p.y); }
+float n21(vec2 p) {
+  vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
+  return mix(mix(h21(i), h21(i + vec2(1, 0)), f.x), mix(h21(i + vec2(0, 1)), h21(i + vec2(1, 1)), f.x), f.y);
+}
+// 0 bare .. 1 deep in the moss: a skirt all round the foot, climbing the shaded side, its top edge ragged
+float mossCover(vec2 b, float side) {
+  float line = 0.18 + 0.25 * side * side + 0.12 * n21(b * vec2(1.6, 1.0)) + 0.07 * n21(b * vec2(7.0, 3.0)) + 0.04 * n21(b * vec2(26.0, 11.0));
+  return 1.0 - smoothstep(line - 0.08, line, b.y);
+}
+`;
+
 const vertexShader = /* glsl */ `
+uniform vec3 uLightDir;
+${common}
 varying vec3 vWorldPos;
 varying vec3 vNormal;
 varying vec2 vBark; // around (in units of circumference at the trunk's radius), height
@@ -150,9 +172,14 @@ void main() {
   float r = 1.0;
   #endif
   vec4 wp = modelMatrix * lp;
-  vWorldPos = wp.xyz;
   vNormal = normalize(mat3(modelMatrix) * ln);
   vBark = vec2(uv.x * 6.2831853 * r, uv.y);
+  // the moss on the foot is a cushion a couple of centimetres thick, swelling in clumps: the outline bulges
+  vec3 L = normalize(uLightDir);
+  float side = 0.5 + 0.5 * dot(normalize(vec3(vNormal.x, 0.0, vNormal.z) + 1e-4), normalize(vec3(-L.x, 0.0, -L.z)));
+  float cover = mossCover(vBark, side);
+  wp.xyz += vNormal * cover * (0.012 + 0.016 * n21(vBark * vec2(14.0, 10.0)));
+  vWorldPos = wp.xyz;
   vR = r;
   gl_Position = projectionMatrix * viewMatrix * wp;
 }
@@ -166,10 +193,29 @@ varying vec3 vWorldPos;
 varying vec3 vNormal;
 varying vec2 vBark;
 varying float vR;
-float h21(vec2 p) { p = fract(p * vec2(123.34, 456.21)); p += dot(p, p + 45.32); return fract(p.x * p.y); }
-float n21(vec2 p) {
-  vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
-  return mix(mix(h21(i), h21(i + vec2(1, 0)), f.x), mix(h21(i + vec2(0, 1)), h21(i + vec2(1, 1)), f.x), f.y);
+${common}
+// Up close, the grain on a plate: fibres running up the trunk a few millimetres apart, and the outer bark
+// peeling in small papery scales, each a little step. In metres along the bark.
+float grain(vec2 b) {
+  float fib = n21(b * vec2(220.0, 45.0)) * 0.55 + n21(b * vec2(520.0, 110.0)) * 0.45;
+  float fl = n21(b * vec2(55.0, 34.0) + n21(b * vec2(9.0, 5.0)) * 2.0) * 3.0;
+  float scale = (floor(fl) + smoothstep(0.42, 0.58, fract(fl))) / 3.0;
+  float crumb = n21(b * vec2(110.0, 80.0));
+  return fib * 0.35 + scale * 0.4 + crumb * 0.25;
+}
+// moss strands: a fine fuzz of little shoots, bright where their tips catch the light
+float fuzz(vec2 b) { return n21(b * vec2(90.0, 70.0)) * 0.5 + n21(b * vec2(260.0, 200.0)) * 0.5; }
+// the shoots' tips: a scatter of small points, one per cell at most, glinting like the moss on the ground
+float tips(vec2 b) {
+  float t = 0.0;
+  for (int k = 0; k < 2; k++) {
+    vec2 q = b * (k == 0 ? vec2(150.0, 120.0) : vec2(320.0, 260.0)) + float(k) * 7.7;
+    vec2 i = floor(q), f = fract(q);
+    vec2 pt = 0.25 + 0.5 * vec2(h21(i), h21(i + 5.1));
+    float on = step(0.45, h21(i + 9.3));
+    t = max(t, on * smoothstep(0.32, 0.0, length((f - pt) * vec2(1.0, 0.7))) * (0.6 + 0.4 * h21(i + 2.2)));
+  }
+  return t;
 }
 // Pine-like bark: long plates running up the trunk, split by deep wandering furrows that join and part, with
 // fewer cracks across; each plate flaking off in layers, grey on top, red-brown where a flake has come away.
@@ -234,6 +280,27 @@ void main() {
     vec3 T = normalize(cross(N, vec3(0.0, 1.0, 0.0)) + 1e-5), B = cross(T, N);
     N = normalize(N - (T * (hx - h) + B * (hy - h)) / e * 0.022 * near);
   }
+  vec3 N0 = normalize(vNormal);
+  vec3 T0 = normalize(cross(N0, vec3(0.0, 1.0, 0.0)) + 1e-5), B0 = cross(T0, N0);
+  float side = 0.5 + 0.5 * dot(normalize(vec3(N0.x, 0.0, N0.z) + 1e-4), normalize(vec3(-L.x, 0.0, -L.z)));
+  float cover = mossCover(vBark, side);
+  // the moss fills the furrows first and lies over the plates where it is deep
+  float moss = smoothstep(0.35, 0.6, cover + 0.6 * (1.0 - h) * smoothstep(0.0, 0.3, cover + 0.15) + 0.25 * (n21(vBark * vec2(11.0, 8.0)) - 0.5));
+  // the fine detail only once it is bigger than a pixel or so: the grain, and the moss's fuzz
+  float fineFade = 1.0 - smoothstep(0.35, 1.1, length(fwidth(vBark)) * 260.0);
+  float g = 0.5, fz = 0.5;
+  if (fineFade > 0.01) {
+    float e = 0.0012;
+    g = grain(vBark);
+    float gk = 0.0016 * fineFade * bv.y * (1.0 - moss);
+    if (gk > 0.0) N = normalize(N - (T0 * (grain(vBark + vec2(e, 0.0)) - g) + B0 * (grain(vBark + vec2(0.0, e)) - g)) / e * gk);
+    if (moss > 0.0) {
+      fz = fuzz(vBark);
+      vec3 Nm = normalize(N0 - (T0 * (fuzz(vBark + vec2(e, 0.0)) - fz) + B0 * (fuzz(vBark + vec2(0.0, e)) - fz)) / e * 0.0005 * fineFade);
+      N = normalize(mix(N, Nm, moss));
+    }
+  }
+  if (moss > 0.0 && fineFade <= 0.01) N = normalize(mix(N, N0, moss));
 
   float furrow = bv.y, layers = bv.z, cell = bv.w;
   // grey weathered tops, red-brown where flakes came away, near black down the furrows
@@ -241,19 +308,26 @@ void main() {
   vec3 under = mix(vec3(0.135, 0.085, 0.06), vec3(0.17, 0.10, 0.07), cell);
   vec3 col = mix(under, top, 0.25 + 0.75 * smoothstep(0.2, 0.9, layers));
   col *= 0.85 + 0.3 * n21(vBark * vec2(40.0, 14.0));
+  // the grain: darker between the fibres, the scales' edges catching a little pale
+  col *= mix(1.0, 0.55 + 0.9 * g, fineFade * furrow);
+  col = mix(col, vec3(0.2, 0.18, 0.16), smoothstep(0.62, 0.8, g) * 0.35 * fineFade * furrow);
   col = mix(vec3(0.016, 0.012, 0.009), col, mix(0.6, 1.0, near) * furrow + (1.0 - near) * 0.5 * (1.0 - furrow));
   col = mix(vec3(0.13, 0.105, 0.085), col, mix(0.5, 1.0, near)); // far: the average
   // green algae on the shaded side, crust lichen in pale patches on the plates
-  float side = 0.5 + 0.5 * dot(normalize(vec3(N.x, 0.0, N.z) + 1e-4), normalize(vec3(-L.x, 0.0, -L.z)));
   col = mix(col, vec3(0.10, 0.13, 0.06), smoothstep(0.45, 0.75, n21(vBark * vec2(1.2, 0.5) + 3.0) * side + 0.15 * side) * 0.6 * furrow);
   col = mix(col, vec3(0.32, 0.34, 0.27), smoothstep(0.66, 0.72, n21(vBark * vec2(2.2, 1.4) + 7.0)) * h * 0.7);
-  // moss climbing the foot, higher on the shaded side, into the furrows first
-  float mossLine = 0.08 + 0.5 * side + 0.25 * n21(vBark * vec2(1.5, 2.0));
-  float moss = (1.0 - smoothstep(mossLine - 0.15, mossLine, vBark.y)) * (0.5 + 0.5 * (1.0 - h)) * smoothstep(0.3, 0.6, n21(vBark * 6.0) + 0.3 * (1.0 - h));
-  col = mix(col, mix(vec3(0.012, 0.035, 0.008), vec3(0.03, 0.07, 0.012), n21(vBark * 9.0)), moss);
+  // the moss on the foot: dark down in it, green, the tips of the shoots lime and catching the light; deeper
+  // in the cushion it is fuller and brighter, browner and thinner where it peters out up the trunk
+  float body = mix(n21(vBark * 9.0), fz, fineFade);
+  vec3 mossCol = mix(vec3(0.004, 0.011, 0.003), vec3(0.016, 0.045, 0.007), smoothstep(0.25, 0.85, body));
+  if (moss > 0.0 && fineFade > 0.01) mossCol += vec3(0.07, 0.1, 0.022) * tips(vBark) * fineFade;
+  else mossCol += vec3(0.01, 0.015, 0.003); // far: the glints on average
+  mossCol = mix(mossCol * vec3(1.3, 0.9, 0.7), mossCol, smoothstep(0.2, 0.8, cover));
+  col = mix(col, mossCol, moss);
 
   float shadow = shadowAt(vWorldPos, N);
-  float diff = max(dot(N, L), 0.0);
+  // moss lets light through and round: a softer, wrapped diffuse
+  float diff = mix(max(dot(N, L), 0.0), max(dot(N, L) + 0.35, 0.0) / 1.35, moss);
   vec3 c = col * (0.4 * skyTint(N, 1.0) + 2.0 * diff * shadow);
   // the low sun behind a trunk lights its edge
   c += col * pow(1.0 - max(dot(N, V), 0.0), 4.0) * max(dot(-V, L), 0.0) * 3.0;
