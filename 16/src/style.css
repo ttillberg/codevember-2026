@@ -148,13 +148,17 @@ body.touch .fungarium .take kbd { display: none; }
 }
 .pouch .hold {
   position: absolute; inset: 0; padding: 0; border: 0; background: none; cursor: pointer; pointer-events: auto;
-  transform-origin: 50% 100%; filter: drop-shadow(0 6px 14px rgba(0, 0, 0, 0.45)); -webkit-tap-highlight-color: transparent;
+  transform-origin: 50% 100%; -webkit-tap-highlight-color: transparent;
+  /* graded with the scene: dimmer, warmer, less clean than paper on a screen, so it is held in the dusk */
+  filter: drop-shadow(0 6px 14px rgba(0, 0, 0, 0.5)) sepia(0.22) saturate(0.85) brightness(0.74) contrast(0.95);
 }
 .pouch .paper { position: absolute; inset: 0; width: 100%; height: 100%; }
+.pouch .hold::after { content: ""; position: absolute; inset: 20px 2px 0 4px; pointer-events: none; border-radius: 2px;
+  background: linear-gradient(160deg, rgba(255, 196, 120, 0.22), transparent 45%, rgba(20, 12, 4, 0.4)); mix-blend-mode: soft-light; }
 .pouch .label {
   position: absolute; left: 17px; right: 15px; top: 50px; padding: 6px 6px 7px; box-sizing: border-box;
   display: grid; justify-items: center; gap: 2px; transform: rotate(-1.5deg);
-  background-color: #f1ead8;
+  background-color: #e8dcc0;
   background-image: linear-gradient(rgba(70, 110, 160, 0.16) 1px, transparent 1px), linear-gradient(90deg, rgba(70, 110, 160, 0.16) 1px, transparent 1px);
   background-size: 8px 8px; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
   color: #1c1c1c; font-family: Inter, "Helvetica Neue", Helvetica, Arial, sans-serif; text-align: center;

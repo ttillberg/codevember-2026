@@ -153,10 +153,23 @@ export function makeLensPass(coarse = false) {
         }
         vec3 col = acc / wsum;
 
-        // grade: cool, green-teal shadows, warm highlights, a soft vignette
+        // grade, one look over everything: an autumn dusk on film
         float l = dot(col, vec3(0.2126, 0.7152, 0.0722));
-        col = mix(col * vec3(0.9, 0.98, 1.0), col * vec3(1.1, 0.98, 0.84), smoothstep(0.02, 0.5, l)); // warm highlights
-        col += vec3(0.004, 0.008, 0.008); // lifted blacks, like a lens in haze
+        // greens pulled towards olive and calmed: the moss was a loud lime next to the golden ferns
+        float green = max(col.g - max(col.r, col.b), 0.0);
+        col.r += green * 0.45;
+        col = mix(vec3(l), col, 1.0 - 0.45 * smoothstep(0.0, 0.12, green));
+        // the grey haze warmed: unsaturated midtones lean amber instead of sitting a flat green-grey
+        float sat = max(col.r, max(col.g, col.b)) - min(col.r, min(col.g, col.b));
+        col = mix(col, l * vec3(1.14, 1.0, 0.74), (1.0 - smoothstep(0.03, 0.16, sat)) * smoothstep(0.04, 0.3, l) * 0.65);
+        // split toning: shadows a deep blue-teal, highlights a cream gold
+        col = mix(col * vec3(0.86, 0.95, 1.06), col * vec3(1.08, 0.99, 0.86), smoothstep(0.03, 0.45, l));
+        // a soft S: deeper shadows, a rounded shoulder so the sunlit fronds do not burn out to white
+        l = dot(col, vec3(0.2126, 0.7152, 0.0722));
+        float lc = l < 0.5 ? 2.0 * l * l * (1.5 - l) + l * 0.25 : l;
+        lc = mix(lc, 0.82 + 0.18 * (1.0 - exp(-(l - 0.72) * 4.0)), step(0.72, l));
+        col *= mix(1.0, lc / max(l, 1e-4), 0.55);
+        col += vec3(0.005, 0.007, 0.009); // lifted blacks, like a lens in haze
         vec2 v = (vUv - 0.5) * vec2(uRes.x / uRes.y, 1.0);
         col *= mix(1.0, 0.55, smoothstep(0.35, 1.05, length(v)));
         gl_FragColor = vec4(col, 1.0);
