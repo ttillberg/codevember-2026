@@ -18,6 +18,7 @@ import { Fungi, type FungusKind } from './fungi';
 import { Spores } from './spores';
 import { Fungarium, type Species } from './fungarium';
 import { Pouch } from './pouch';
+import { Ants } from './ants';
 import { mulberry32 } from './noise';
 
 // ?clean: the scene alone, no furniture (docs/DESIGN.md)
@@ -153,6 +154,9 @@ scene.add(ferns.root);
 // spruce trunks, three levels of detail
 const trees = new Trees(share);
 scene.add(trees.root);
+// wood ants on trails from a nest in the moss up the trunks
+const ants = new Ants(share);
+scene.add(ants.mesh);
 
 // the floor beyond the chunks: a big plane a hair under the moss, following the swells, recentred as you go
 const farGeo = new THREE.PlaneGeometry(60, 60, 90, 90);
@@ -207,6 +211,7 @@ function renderShadow(centre: THREE.Vector3) {
   world.forShadow(true, centre.x, centre.z, 4.3);
   ferns.forShadow(true, centre.x, centre.z, 6);
   farFloor.visible = false;
+  ants.mesh.visible = false; // too small to cast anything worth the map
   renderer.setRenderTarget(shadowRT);
   renderer.clear();
   renderer.render(scene, lightCam);
@@ -214,6 +219,7 @@ function renderShadow(centre: THREE.Vector3) {
   world.forShadow(false);
   ferns.forShadow(false);
   farFloor.visible = true;
+  ants.mesh.visible = true;
   u.uShadowMap.value = shadowRT.depthTexture;
   u.uShadowMatrix.value.multiplyMatrices(lightCam.projectionMatrix, lightCam.matrixWorldInverse);
   u.uShadowOn.value = 1;
@@ -619,7 +625,7 @@ const sunScreen = new THREE.Vector3();
 const camDir = new THREE.Vector3();
 let focus = 1;
 // dev: tuning handles in the console
-if (import.meta.env.DEV) Object.assign(window, { trees, ferns, props, fungi, fungarium, spores, throwAt, shellMat, lensMat, atmosMat, camera, aoPass, lens, atmos, beautyRT, scene, renderer, composer, world, me, look });
+if (import.meta.env.DEV) Object.assign(window, { trees, ants, ferns, props, fungi, fungarium, spores, throwAt, shellMat, lensMat, atmosMat, camera, aoPass, lens, atmos, beautyRT, scene, renderer, composer, world, me, look });
 renderer.setAnimationLoop(() => {
   const dt = Math.min(clock.getDelta(), 0.05);
   shellMat.uniforms.uTime.value = clock.elapsedTime;
@@ -631,6 +637,7 @@ renderer.setAnimationLoop(() => {
   props.update(me.x, me.z);
   ferns.update(me.x, me.z);
   trees.update(me.x, me.z);
+  ants.update(dt, me.x, me.z, trees.trunks);
   placeFarFloor(me.x, me.z);
   // the shadow map follows a point ahead of you
   const centre = new THREE.Vector3(me.x + fx * 1.4, me.y, me.z + fz * 1.4);
