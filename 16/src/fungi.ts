@@ -7,14 +7,15 @@ import { mulberry32 } from './noise';
 import { mossLighting } from './shaders';
 import { buildDew } from './dew';
 
-export type FungusKind = 'funnel' | 'finger' | 'chanterelle' | 'puffball' | 'agaric' | 'porcini' | 'slippery';
+export type FungusKind = 'funnel' | 'finger' | 'chanterelle' | 'puffball' | 'agaric' | 'porcini' | 'slippery' | 'morel';
 
 const ease = (t: number) => t * t * (3 - 2 * t);
 const clamp01 = (t: number) => Math.min(1, Math.max(0, t));
 
 // ---------------------------------------------------------------------------------------------------------
 // geometry buffers: position, part (0 stem, 0.2 a netted stem, 1 underside, 2 funnel inside or cap top, 3 finger,
-// 4 puffball, 5 fly agaric's cap, 6 a bolete's cap (6.3 slimy), 7 pores; 0.4 a dotted stem), along, around, tint
+// 4 puffball, 5 fly agaric's cap, 6 a bolete's cap (6.3 slimy), 7 pores, 8 a morel's honeycomb; 0.4 a dotted
+// stem), along, around, tint
 // drops: beads of water on fresh growth, (x, y, z, radius), drawn with the dew
 interface Buf { pos: number[]; part: number[]; uvf: number[]; tint: number[]; idx: number[]; drops: number[] }
 const newBuf = (): Buf => ({ pos: [], part: [], uvf: [], tint: [], idx: [], drops: [] });
@@ -622,6 +623,66 @@ function buildCapped(b: Buf, m: Capped, age: number) {
   }
 }
 
+// ---- morels ----------------------------------------------------------------------------------------------
+interface Morel {
+  base: THREE.Vector3;
+  H: number; R: number; rs: number; capH: number; // all of it; the cap's radius at its foot; the stem; the cap's height
+  lean: [number, number];
+  delay: number; dur: number; phase: number;
+  cap: number[]; stem: number[];
+}
+/**
+ * Toppmurkla (Morchella elata) at growth g: a tall cone of honeycomb (part 8: pits between dark ridges, in the
+ * shader) set straight on a pale hollow stem, with a little groove where they meet. It comes up a small dark cone
+ * on almost no stem; the stem stretches under it as it grows.
+ */
+function buildMorel(b: Buf, m: Morel, age: number) {
+  const g = clamp01((age - m.delay) / m.dur);
+  if (g <= 0) return;
+  const gg = clamp01(g + 0.02 * Math.sin(g * 11 + m.phase));
+  const pin = ease(clamp01(gg / 0.25)), stretch = ease(clamp01((gg - 0.15) / 0.85));
+  const capH = m.capH * (0.35 + 0.65 * (0.4 * pin + 0.6 * stretch)) * (1 - 0.25 * ROT);
+  const R = m.R * (0.45 + 0.55 * (0.5 * pin + 0.5 * stretch)) * (1 - 0.15 * ROT);
+  const stemH = (m.H - m.capH) * (0.1 + 0.9 * stretch) * (1 - 0.35 * ROT);
+  const rs = m.rs * (0.6 + 0.4 * stretch);
+  const H = stemH + capH;
+  const sink = (1 - pin) * H * 0.7 + ROT * ROT * H * 0.25;
+  const fall = ROT * ROT, fx = Math.cos(m.phase * 2.3), fz = Math.sin(m.phase * 2.3);
+  const at = (y: number) => {
+    const yy = Math.max(0, y);
+    const keel = fall * yy * yy / Math.max(H, 1e-3) * 1.0;
+    return [m.base.x + m.lean[0] * yy + fx * keel, m.base.y + y - sink - keel * 0.4 * fall, m.base.z + m.lean[1] * yy + fz * keel];
+  };
+  const capC = rotTint(m.cap), stemC = rotTint(m.stem);
+  const P: [number, number, number, number, number[]][] = [];
+  // the stem: wider and furrowed at the foot, the groove at the top where the cap sits on it
+  for (let i = 0; i <= 10; i++) {
+    const u = i / 10, y = -0.006 + (stemH + 0.006) * u;
+    P.push([rs * (1 + 0.45 * Math.exp(-u / 0.22)) * (1 - 0.06 * u), y, 0, u * 0.5, stemC]);
+  }
+  P.push([rs * 0.95, stemH + capH * 0.02, 0, 0.5, stemC]);
+  // the cap: from its foot, a hair out over the stem, up the cone to a blunt point
+  for (let i = 0; i <= 16; i++) {
+    const t = i / 16;
+    const r = R * Math.pow(1 - t, 0.62) * (1 + 0.04 * Math.sin(t * 9 + m.phase)) * (i === 0 ? 0.97 : 1);
+    P.push([Math.max(r, 0.0004), stemH + capH * (i === 0 ? 0.0 : t), 8, t, capC]);
+  }
+  const start = b.pos.length / 3;
+  for (const [r, y, part, along, t] of P) {
+    const [cx, cy, cz] = at(y);
+    ring(b, AS, cx, cy, cz, r, part, along, t);
+  }
+  stitch(b, start, P.length, AS);
+  // a bead caught in a pit or two
+  for (let j = 0; j < 2; j++) {
+    const h = frac(m.phase * (3.1 + j * 1.9));
+    const t = 0.2 + 0.5 * h, a = h * Math.PI * 2, dr = 0.001 + 0.0008 * h;
+    const [cx, cy, cz] = at(stemH + capH * t);
+    const r = R * Math.pow(1 - t, 0.62);
+    bead(b, cx + Math.cos(a) * r, cy, cz + Math.sin(a) * r, dr, g, 0.55 + 0.3 * h);
+  }
+}
+
 /**
  * Lay out funnel-shaped fungi (funnel chanterelles, chanterelles) one by one, each tried against the ones
  * already there, layer by layer; when one would grow into another it leans away from it, goes taller or
@@ -662,6 +723,7 @@ export interface Cluster {
   puffs: Puff[];
   agarics: Agaric[];
   capped: Capped[];
+  morels: Morel[];
   age: number;
   end: number; // age at which the last one is done
   grown: boolean;
@@ -694,7 +756,7 @@ export class Fungi {
   spawn(kind: FungusKind, x: number, y: number, z: number, opts: { grown?: boolean; key?: string; seed?: number; scale?: number; wither?: number } = {}) {
     const r = mulberry32(opts.seed ?? Math.floor(Math.random() * 1e9));
     const sc = opts.scale ?? 0.8 + 0.5 * r();
-    const fingers: Finger[] = [], funnels: Funnel[] = [], puffs: Puff[] = [], agarics: Agaric[] = [], capped: Capped[] = [];
+    const fingers: Finger[] = [], funnels: Funnel[] = [], puffs: Puff[] = [], agarics: Agaric[] = [], capped: Capped[] = [], morels: Morel[] = [];
     let end = 0, height = 0, radius = 0.03 * sc;
     if (kind === 'finger') {
       // a colour per cluster: white crested coral, golden spindles, orange clubs
@@ -817,6 +879,26 @@ export class Fungi {
         }
       }
       radius = 0.08 * sc;
+    } else if (kind === 'morel') {
+      // toppmurklor: one to four, a hand's height, standing a little apart
+      const n = 1 + Math.floor(r() * 4);
+      for (let i = 0; i < n; i++) {
+        for (let attempt = 0; attempt < 20; attempt++) {
+          const a = r() * Math.PI * 2, d = i === 0 ? 0 : (0.03 + 0.05 * r()) * sc;
+          const R = (0.011 + 0.008 * r()) * sc;
+          const x = Math.cos(a) * d, z = Math.sin(a) * d;
+          if (morels.some((m) => Math.hypot(m.base.x - x, m.base.z - z) < (m.R + R) * 1.2)) continue;
+          const k = 0.85 + 0.3 * r(), out0 = 0.03 + 0.08 * r(), capH = R * (2.4 + 1.0 * r());
+          morels.push({
+            base: new THREE.Vector3(x, 0, z), H: capH * (1.5 + 0.5 * r()), R, rs: R * (0.5 + 0.1 * r()), capH,
+            lean: [Math.cos(a) * out0, Math.sin(a) * out0],
+            delay: r() * 3 + i * 1.5, dur: 12 + 6 * r(), phase: r() * 6.28,
+            cap: [0.3 * k, 0.24 * k, 0.15 * k], stem: [0.8, 0.76, 0.66],
+          });
+          break;
+        }
+      }
+      radius = 0.05 * sc;
     } else {
       // puffballs: a few pears close together, set out so they do not overlap
       const n = 2 + Math.floor(r() * 5);
@@ -853,11 +935,15 @@ export class Fungi {
       end = Math.max(end, m.delay + m.dur);
       height = Math.max(height, m.H);
     }
+    for (const m of morels) {
+      end = Math.max(end, m.delay + m.dur);
+      height = Math.max(height, m.H);
+    }
     const mesh = new THREE.Mesh(new THREE.BufferGeometry(), this.material);
     mesh.position.set(x, y, z);
     mesh.frustumCulled = false;
     this.group.add(mesh);
-    const c: Cluster = { kind, x, y, z, mesh, fingers, funnels, puffs, agarics, capped, age: opts.grown ? end : 0, end, grown: false, key: opts.key, height, radius, rot: 0, wither: opts.wither === undefined ? undefined : end + opts.wither };
+    const c: Cluster = { kind, x, y, z, mesh, fingers, funnels, puffs, agarics, capped, morels, age: opts.grown ? end : 0, end, grown: false, key: opts.key, height, radius, rot: 0, wither: opts.wither === undefined ? undefined : end + opts.wither };
     this.list.push(c);
     this.rebuild(c, 0);
     if (opts.grown) c.grown = true;
@@ -880,6 +966,7 @@ export class Fungi {
     else if (c.kind === 'puffball') for (const p of c.puffs) buildPuffball(b, p, c.age);
     else if (c.kind === 'agaric') for (const m of c.agarics) buildAgaric(b, m, c.age);
     else if (c.capped.length) for (const m of c.capped) buildCapped(b, m, c.age);
+    else if (c.morels.length) for (const m of c.morels) buildMorel(b, m, c.age);
     else for (const f of c.funnels) buildFunnel(b, f, c.age, time);
     ROT = 0;
     const g = new THREE.BufferGeometry();
@@ -1050,6 +1137,29 @@ void main() {
     float ripe = 1.0 - smoothstep(0.66, 0.78, vTint.r);
     col *= mix(1.0, 0.25, smoothstep(0.965, 0.995, along) * ripe);
     thin = 0.3;
+  } else if (vPart > 7.5) {
+    // a morel's cap: a honeycomb of pits between ridges, the long ridges running up the cone, dark, the pits
+    // olive brown and sunk in; cells stretched upward, finer towards the tip
+    vec2 q = vec2(around * 11.0, along * 5.5 * (1.0 + 0.5 * along));
+    vec2 i = floor(q), f = fract(q);
+    float f1 = 9.0, f2 = 9.0; vec2 c1 = vec2(0.0), c2 = vec2(0.0);
+    for (int y = -1; y <= 1; y++) for (int x = -1; x <= 1; x++) {
+      vec2 o = vec2(float(x), float(y));
+      vec2 cc = o + 0.2 + 0.6 * vec2(h31(vec3(mod(i.x + o.x, 11.0), i.y + o.y, 11.0)), h31(vec3(mod(i.x + o.x, 11.0), i.y + o.y, 12.0)));
+      float l = length((cc - f) * vec2(1.0, 0.45));
+      if (l < f1) { f2 = f1; c2 = c1; f1 = l; c1 = cc; } else if (l < f2) { f2 = l; c2 = cc; }
+    }
+    float edge = f2 - f1;
+    vec2 dc = c2 - c1;
+    float upright = smoothstep(0.3, 0.8, abs(dc.x) / (length(dc) + 1e-4)); // an edge between side-by-side cells runs up
+    float ridge = 1.0 - smoothstep(0.04, mix(0.1, 0.18, upright), edge);
+    float pit = 1.0 - ridge;
+    col = mix(vTint * (0.75 + 0.35 * n3(vWorldPos * 400.0)) * mix(0.7, 1.0, smoothstep(0.0, 0.5, f1)), vec3(0.07, 0.055, 0.045), ridge * 0.9);
+    // the pits sunk in: tilt the normal down into each one, away from its middle
+    vec3 T = normalize(cross(N, vec3(0.0, 1.0, 0.0)) + 1e-4), B = cross(N, T);
+    vec2 dd = (f - c1) * vec2(1.0, 0.45);
+    N = normalize(N - (T * dd.x + B * dd.y) * pit * 1.4);
+    thin = 0.15;
   } else if (vPart > 6.5) {
     // pores: a sponge of tiny round mouths, white when young, olive yellow later (in the tint)
     vec2 q = vec2(around * 260.0, along * 70.0);

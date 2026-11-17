@@ -37,6 +37,10 @@ export const SPECIES: Species[] = [
     kind: 'slippery', sv: 'Smörsopp', en: 'Slippery jack', latin: 'Suillus luteus', seed: 6, scale: 1.0,
     note: 'Under pine, in groups, late summer into autumn. A chestnut cap with a low hump, coated in slime that shines when wet; bright yellow pores; a pale yellow stem dotted brown above a ring, the torn skin that covered the pores when it was young.',
   },
+  {
+    kind: 'morel', sv: 'Toppmurkla', en: 'Black morel', latin: 'Morchella elata', seed: 9, scale: 1.0,
+    note: 'In spring, on burnt ground, bark and the disturbed edges of conifer forest. A tall cone of honeycomb: olive brown pits between dark ridges that run up its length, set straight on a pale, hollow, granular stem with a little groove where they meet.',
+  },
 ];
 
 export class Fungarium {
