@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
-import { isFold, type House, type V2 } from './net';
+import { isFold, type Net, type V2 } from './net';
 import { GAP, THICK } from './paper';
 
 // Press-out card. The cut line is split into borders: each panel's unbroken stretch of
@@ -31,7 +31,7 @@ const run = (a: V2, b: V2): Run => {
 const PAPER = new THREE.Color('#d8d0bf');
 const STRAINED = new THREE.Color('#5a5446');
 
-export function makeBorders(house: House) {
+export function makeBorders(house: Net) {
   const borders: Border[] = [];
   const group = new THREE.Group();
   for (const p of house.panels) {

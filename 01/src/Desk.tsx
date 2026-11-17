@@ -17,10 +17,10 @@ export function Desk() {
         position={[-160, 420, 260]}
         castShadow
         shadow-mapSize={[2048, 2048]}
-        shadow-camera-left={-170}
-        shadow-camera-right={170}
-        shadow-camera-top={170}
-        shadow-camera-bottom={-170}
+        shadow-camera-left={-280}
+        shadow-camera-right={280}
+        shadow-camera-top={280}
+        shadow-camera-bottom={-280}
         shadow-camera-near={50}
         shadow-camera-far={1200}
         shadow-bias={-0.0004}

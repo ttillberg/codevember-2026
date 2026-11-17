@@ -40,8 +40,8 @@ canvas { display: block; touch-action: none; cursor: crosshair; }
 /* what to do now, under the plate */
 .plate .head > i.hint { margin-top: 14px; opacity: 0.85; }
 
-/* top right: start over, and left of it turn the card over */
-.again, .flip {
+/* top right: start over, left of it turn the card over, left of that back to the sheets */
+.again, .flip, .sheets {
   position: fixed; z-index: 3;
   top: max(24px, env(safe-area-inset-top)); right: max(22px, env(safe-area-inset-right));
   display: grid; place-items: center; width: 34px; height: 34px; padding: 0;
@@ -50,12 +50,47 @@ canvas { display: block; touch-action: none; cursor: crosshair; }
   -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
 }
 .flip { right: calc(max(22px, env(safe-area-inset-right)) + 44px); }
-.again:hover, .flip:hover { background: rgba(20, 40, 30, 0.4); }
+.sheets { right: calc(max(22px, env(safe-area-inset-right)) + 88px); }
+.again:hover, .flip:hover, .sheets:hover { background: rgba(20, 40, 30, 0.4); }
 @media (max-width: 640px) {
-  .again, .flip { top: max(16px, env(safe-area-inset-top)); right: max(16px, env(safe-area-inset-right)); }
+  .again, .flip, .sheets { top: max(16px, env(safe-area-inset-top)); right: max(16px, env(safe-area-inset-right)); }
   .flip { right: calc(max(16px, env(safe-area-inset-right)) + 44px); }
+  .sheets { right: calc(max(16px, env(safe-area-inset-right)) + 88px); }
 }
-.clean .again, .clean .flip { display: none; }
+.clean .again, .clean .flip, .clean .sheets { display: none; }
+
+/* the sheets to pick from, laid on the mat like cards; a column you scroll on a phone */
+.picker {
+  position: fixed; z-index: 2; inset: 0;
+  display: flex; flex-wrap: wrap; align-content: flex-start; align-items: flex-start; justify-content: center; gap: 30px 26px;
+  padding: 150px 24px 40px; box-sizing: border-box; overflow-y: auto; touch-action: pan-y;
+}
+.picker .sheet {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 2px;
+  width: clamp(150px, 18vw, 210px); padding: 0; border: 0; background: none; cursor: pointer;
+  color: #f4f4f2; text-align: left; font: inherit;
+  transform: rotate(var(--tilt)); transition: transform 0.25s cubic-bezier(.3,1.4,.5,1);
+}
+.picker .sheet:hover, .picker .sheet:focus-visible { transform: rotate(0deg) translateY(-6px) scale(1.03); outline: none; }
+.picker .sheet:active { transform: rotate(0deg) scale(0.98); }
+.picker .print {
+  display: grid; place-items: center; width: 100%; aspect-ratio: 1; margin-bottom: 10px;
+  background: #fbf9f4; border-radius: 2px;
+  box-shadow: 0 1px 0 rgba(0,0,0,0.08), 0 14px 26px -10px rgba(0,0,0,0.45);
+}
+.picker .print img { width: 92%; height: 92%; object-fit: contain; pointer-events: none; }
+.picker b { font: 700 18px/1.1 "IBM Plex Sans", system-ui, sans-serif; letter-spacing: -0.01em; text-transform: uppercase; }
+.picker i { font: 600 11px/1.3 Inter, "Helvetica Neue", Arial, sans-serif; font-style: normal; letter-spacing: 0.12em; text-transform: uppercase; opacity: 0.75; }
+@media (max-width: 640px) {
+  /* two columns, scrolling down */
+  .picker {
+    display: grid; grid-template-columns: 1fr 1fr; align-content: start; gap: 26px 18px;
+    padding: 132px 18px 40px; overflow-y: auto; touch-action: pan-y;
+  }
+  .picker .sheet { width: 100%; }
+  .picker b { font-size: 15px; }
+  .picker i { font-size: 10px; }
+}
 
 /* bottom centre: undo, redo */
 .tools {
@@ -72,3 +107,23 @@ canvas { display: block; touch-action: none; cursor: crosshair; }
 .tools button:hover { background: rgba(20, 40, 30, 0.4); }
 .tools button:disabled { opacity: 0.3; cursor: default; }
 .clean .tools { display: none; }
+
+/* the board's card in the picker: plain kraft, how many stand on it */
+.picker .print.kraft {
+  background: #c8a678 radial-gradient(circle at 30% 20%, rgba(255,240,210,0.25), transparent 60%);
+  color: rgba(70, 48, 24, 0.55); font: 700 64px/1 "IBM Plex Sans", system-ui, sans-serif;
+}
+
+/* built and standing: onto the board */
+.put {
+  position: fixed; z-index: 3; left: 50%; transform: translateX(-50%);
+  bottom: calc(max(22px, env(safe-area-inset-bottom)) + 56px);
+  padding: 11px 20px; border: 0; border-radius: 22px; cursor: pointer;
+  background: #f4f4f2; color: #20352c;
+  font: 700 13px/1 "IBM Plex Sans", system-ui, sans-serif; letter-spacing: 0.08em; text-transform: uppercase;
+  box-shadow: 0 10px 24px -10px rgba(0,0,0,0.5);
+  animation: put-in 0.35s cubic-bezier(.3,1.5,.5,1);
+}
+.put:active { transform: translateX(-50%) scale(0.96); }
+@keyframes put-in { from { opacity: 0; transform: translateX(-50%) translateY(10px) scale(0.9); } }
+.clean .put { display: none; }

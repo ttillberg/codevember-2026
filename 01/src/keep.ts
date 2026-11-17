@@ -17,7 +17,8 @@ if (import.meta.hot) {
   });
 }
 
-export function kept(): Saved | null {
+// read once on load, handed out until the first game has taken it
+let first: Saved | null = (() => {
   if (!import.meta.hot) return null;
   try {
     const s = sessionStorage.getItem(KEY);
@@ -26,4 +27,7 @@ export function kept(): Saved | null {
   } catch {
     return null;
   }
-}
+})();
+
+export const kept = () => first;
+export const forget = () => { first = null; };

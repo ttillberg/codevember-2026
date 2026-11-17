@@ -1,7 +1,8 @@
 import * as THREE from 'three';
-import { makeHouse, overlaps, outline, sheetOf, type V2 } from './net';
+import { overlaps, outline, sheetOf, type V2 } from './net';
+import { foldOrder, type Model } from './models';
 import { checkGlue } from './fold';
-import { makePaper, printTexture } from './paper';
+import { makePaper, printTexture, THICK } from './paper';
 import { makeBorders, borderAt, bearing, tint, distance, type Border } from './cut';
 import { makeFolding } from './folding';
 import type { Rig } from './rig';
@@ -13,6 +14,8 @@ import * as sound from './sound';
 // what it is (`save`), makes a fresh one and puts it back (`load`).
 
 export interface Saved {
+  model: string;
+  byHand?: boolean;
   done: boolean[];
   folds: Record<string, number>;
   rest: number[];
@@ -22,20 +25,19 @@ export interface Saved {
 }
 interface SavedSnap { done: boolean[]; folds: Record<string, number>; rest: number[] }
 
-const house = makeHouse();
-if (import.meta.env.DEV) {
-  const o = overlaps(house);
-  const g = checkGlue(house);
-  if (o.length) console.warn('net overlaps', o);
-  if (g.length) console.warn('glue problems', g);
-}
-const sheet = sheetOf(house);
-const loop = outline(house);
-
-export function createGame(camera: THREE.OrthographicCamera, canvas: HTMLCanvasElement, renderer: THREE.WebGLRenderer, rig: Rig) {
+export function createGame(model: Model, camera: THREE.OrthographicCamera, canvas: HTMLCanvasElement, renderer: THREE.WebGLRenderer, rig: Rig) {
+  const house = model.net;
+  if (import.meta.env.DEV) {
+    const o = overlaps(house);
+    const g = checkGlue(house);
+    if (o.length) console.warn('net overlaps', o);
+    if (g.length) console.warn('glue problems', g);
+  }
+  const sheet = sheetOf(house);
+  const loop = outline(house);
   const world = new THREE.Group();
-  const tex = printTexture(house, sheet, renderer);
-  const back = printTexture(house, sheet, renderer, true);
+  const tex = printTexture(house, model.art, sheet, renderer);
+  const back = printTexture(house, model.art, sheet, renderer, true, model.backArt);
   const paper = makePaper(house, sheet, loop, tex, back);
   world.add(paper.root);
   const hud = useHud.setState;
@@ -46,6 +48,7 @@ export function createGame(camera: THREE.OrthographicCamera, canvas: HTMLCanvasE
   const carried = (id: string): string[] => [id, ...(children.get(id) ?? []).flatMap(carried)];
 
   let borders: Border[] = [];
+  let near = new Map<Border, Border[]>();
   let membranes = new THREE.Group();
   // a panel still hangs in the sheet while a border of it, or of anything it carries, holds
   const held = (id: string) => {
@@ -71,6 +74,7 @@ export function createGame(camera: THREE.OrthographicCamera, canvas: HTMLCanvasE
   let poppedAt = -1e9;
   let freed = false; // the frame has let go
   let freedAt = 0;
+  let byHand = false; // turned by hand since it came free: then it is left the way it is
   let built = false;
   // turning the whole thing over or round: about an axis through the middle of what is there
   let turning: { at: number; pivot: THREE.Vector3; axis: THREE.Vector3; angle: number; height: number; dur: number } | null = null;
@@ -108,6 +112,8 @@ export function createGame(camera: THREE.OrthographicCamera, canvas: HTMLCanvasE
     setBorders(s.done);
     poppedAt = performance.now();
     if (s.done.every(Boolean) && !freed) free();
+    // going back through history is a hand on it: it stays the way it is put
+    byHand = true;
     folding.restore(s.folds);
     restTween = { from: paper.getRest(), to: s.rest.clone(), at: performance.now() };
     built = false;
@@ -148,6 +154,7 @@ export function createGame(camera: THREE.OrthographicCamera, canvas: HTMLCanvasE
   }
 
   function reset() {
+    byHand = false;
     rig.unzoom();
     undos = [];
     redos = [];
@@ -159,6 +166,7 @@ export function createGame(camera: THREE.OrthographicCamera, canvas: HTMLCanvasE
     const made = makeBorders(house);
     borders = made.borders;
     membranes = made.group;
+    near = neighbours(borders);
     paper.root.add(membranes);
     lift = 0;
     poppedAt = -1e9;
@@ -179,23 +187,37 @@ export function createGame(camera: THREE.OrthographicCamera, canvas: HTMLCanvasE
   }
 
   let said = '';
+  let ready = false;
   function say() {
     const n = borders.filter((b) => b.done).length;
     let t;
-    if (built) t = printUp() ? 'Built, upside down. Flip it' : 'Built';
+    if (built) t = printUp() ? 'Built, upside down. Flip it' : 'Built. Put it on the board';
     else if (!n) t = 'Press along the borders to pop them';
     else if (!freed) t = `${n} / ${borders.length} popped. Tap a fold line to fold what is free`;
     else t = 'Tap a fold line to fold. Drag a face to tip it over';
     // every frame: cheap when nothing changed
     if (t !== said) hud({ hint: (said = t) });
+    // built and standing: it can go on the board
+    const ok = built && !printUp();
+    if (ok !== ready) hud({ ready: (ready = ok) });
   }
 
+  // A pop takes the borders either side of it along with it, a quick run of snaps; and once
+  // only a few are left (two, or 15% of a big sheet), they go too. All one step for undo.
   function pop(b: Border) {
     if (b.done) return;
     save();
-    b.done = true;
-    b.pressure = 1;
+    const go = [b, ...(near.get(b) ?? []).filter((x) => !x.done)];
+    for (const x of go) { x.done = true; x.pressure = 1; }
+    const left = borders.filter((x) => !x.done);
+    if (left.length <= Math.max(2, Math.round(borders.length * 0.15))) for (const x of left) { x.done = true; x.pressure = 1; go.push(x); }
     b.mesh.visible = false;
+    go.slice(1).forEach((x, i) => timers.push(window.setTimeout(() => {
+      // undone meanwhile: leave it be
+      if (!x.done) return;
+      x.mesh.visible = false;
+      sound.snap(0.4 + 0.5 * Math.random());
+    }, 70 * (i + 1))));
     const n = borders.filter((x) => x.done).length;
     lift = LIFT * (0.25 + 0.75 * (n / borders.length));
     poppedAt = performance.now();
@@ -204,10 +226,24 @@ export function createGame(camera: THREE.OrthographicCamera, canvas: HTMLCanvasE
     say();
   }
 
-  // the last one: the frame lets go, lifts and slides off
+  // borders that meet end to end
+  function neighbours(list: Border[]) {
+    const ends = (b: Border) => b.runs.flatMap((r) => [r.a, [r.a[0] + r.dx * r.len, r.a[1] + r.dy * r.len] as V2]);
+    const m = new Map<Border, Border[]>();
+    for (const b of list) {
+      const eb = ends(b);
+      m.set(b, list.filter((o) => o !== b && ends(o).some((p) => eb.some((q) => Math.hypot(p[0] - q[0], p[1] - q[1]) < 0.05))));
+    }
+    return m;
+  }
+
+  // the last one: the frame lets go, lifts and slides off; then the piece turns over by itself
+  // so it lies base down, everything to fold standing up from there (see animate). Until it is
+  // turned by hand: after that it turns when it is turned.
   function free() {
     freed = true;
     freedAt = performance.now();
+    byHand = false;
     sound.pop();
   }
 
@@ -246,6 +282,7 @@ export function createGame(camera: THREE.OrthographicCamera, canvas: HTMLCanvasE
     const targets = [...paper.panels.values(), ...(paper.waste.visible ? [paper.waste] : [])];
     const h = ray.intersectObjects(targets, true)[0];
     if (!h?.face) return;
+    byHand = true;
     const n = h.face.normal.clone().transformDirection(h.object.matrixWorld);
     const a = Math.abs(n.x) > Math.abs(n.y) ? (Math.abs(n.x) > Math.abs(n.z) ? 'x' : 'z') : Math.abs(n.y) > Math.abs(n.z) ? 'y' : 'z';
     const axis = NEXT[a].clone();
@@ -262,6 +299,7 @@ export function createGame(camera: THREE.OrthographicCamera, canvas: HTMLCanvasE
     const d = right.multiplyScalar(dx).addScaledVector(away, -dy);
     const dir = Math.abs(d.x) > Math.abs(d.z) ? new THREE.Vector3(Math.sign(d.x), 0, 0) : new THREE.Vector3(0, 0, Math.sign(d.z));
     // about up × dir: up goes to dir, the top falls the way it is pushed
+    byHand = true;
     turn(new THREE.Vector3(0, 1, 0).cross(dir), Math.PI / 2);
   }
 
@@ -340,7 +378,7 @@ export function createGame(camera: THREE.OrthographicCamera, canvas: HTMLCanvasE
     return { seam: seam?.id ?? null, border: seam ? null : b, p, pinned: !!seam?.pinned };
   }
 
-  let press: { x: number; y: number; touch: boolean; p: V2 | null; at: number; mode: 'thumb' | 'seam' | 'fold' | 'spent'; seam: string | null; card: boolean } | null = null;
+  let press: { x: number; y: number; touch: boolean; p: V2 | null; at: number; mode: 'thumb' | 'seam' | 'fold' | 'spent'; seam: string | null; card: boolean; free: boolean } | null = null;
   let hovered: Border | null = null;
   const touches = new Map<number, { x: number; y: number }>();
   // two fingers: pinch zooms, together they pan, a twist turns the scene about the vertical; a
@@ -375,7 +413,7 @@ export function createGame(camera: THREE.OrthographicCamera, canvas: HTMLCanvasE
     if (e.metaKey || e.ctrlKey) { turnAt(e.clientX, e.clientY); return; }
     const n = nearest(e.clientX, e.clientY, touch);
     // press is set before any pop, so the whole gesture saves as one step
-    press = { x: e.clientX, y: e.clientY, touch, p: n.p, at: performance.now(), mode: n.seam ? 'seam' : 'thumb', seam: n.seam, card: !!n.seam || onCard(e.clientX, e.clientY) };
+    press = { x: e.clientX, y: e.clientY, touch, p: n.p, at: performance.now(), mode: n.seam ? 'seam' : 'thumb', seam: n.seam, card: !!n.seam || onCard(e.clientX, e.clientY), free: freed && performance.now() - freedAt > 900 };
     if (n.seam) {
       lit = { id: n.seam, pressed: true, pinned: n.pinned };
       peekSeam(n.seam);
@@ -443,8 +481,10 @@ export function createGame(camera: THREE.OrthographicCamera, canvas: HTMLCanvasE
       return;
     }
     // free of the sheet, a face dragged a little way tips the piece over that way
+    // (only a press that began on the piece once it was free and settled, and only once it has
+    // something folded: the thumb still sliding from the last pop mustn't stand a flat sheet up)
     if (freed) {
-      if (Math.hypot(e.clientX - press.x, e.clientY - press.y) > (press.touch ? 24 : 14)) {
+      if (press.free && folding.folded() && Math.hypot(e.clientX - press.x, e.clientY - press.y) > (press.touch ? 24 : 14)) {
         tip(e.clientX - press.x, e.clientY - press.y);
         press.mode = 'spent';
       }
@@ -559,8 +599,40 @@ export function createGame(camera: THREE.OrthographicCamera, canvas: HTMLCanvasE
     }
   }
 
+  // debug (?debug or d): every border drawn, blue still standing, green popped
+  let debug = new URLSearchParams(location.search).has('debug');
+  const debugLines = new THREE.Group();
+  debugLines.renderOrder = 5;
+  paper.root.add(debugLines);
+  const BLUE = new THREE.Color('#2f7cff');
+  const GREEN = new THREE.Color('#2fd36b');
+  function drawDebug() {
+    debugLines.visible = debug && !freed;
+    if (!debugLines.visible) return;
+    if (debugLines.userData.for !== borders) {
+      debugLines.traverse((c) => { if (c instanceof THREE.Mesh) { c.geometry.dispose(); (c.material as THREE.Material).dispose(); } });
+      debugLines.clear();
+      // a wide strip along each border, flat over the print, one material per border
+      for (const b of borders) {
+        const g = new THREE.Group();
+        const mat = new THREE.MeshBasicMaterial({ depthTest: false, transparent: true, opacity: 0.9 });
+        for (const r of b.runs) {
+          const m = new THREE.Mesh(new THREE.PlaneGeometry(r.len, 3.5), mat);
+          m.rotation.z = Math.atan2(r.dy, r.dx);
+          m.position.set(r.a[0] + (r.dx * r.len) / 2, r.a[1] + (r.dy * r.len) / 2, THICK);
+          m.renderOrder = 5;
+          g.add(m);
+        }
+        debugLines.add(g);
+      }
+      debugLines.userData.for = borders;
+    }
+    borders.forEach((b, i) => (((debugLines.children[i] as THREE.Group).children[0] as THREE.Mesh).material as THREE.MeshBasicMaterial).color.copy(b.done ? GREEN : BLUE));
+  }
+
   function animate(now: number, dt: number) {
     pressure(now, dt);
+    drawDebug();
     drawSeam(now);
     folding.update(dt);
 
@@ -619,6 +691,11 @@ export function createGame(camera: THREE.OrthographicCamera, canvas: HTMLCanvasE
       if (t >= 1) restTween = null;
     }
 
+    // free and never turned by hand: it keeps to its base
+    if (freed && !byHand && !turning && !press && !paper.waste.visible && printUp() && now - freedAt > 650) {
+      gestureSaved = false;
+      flip();
+    }
     if (spin) {
       const t = Math.min(1, (now - spin.at) / 550);
       rig.view.azimuth = spin.from + (spin.to - spin.from) * easeInOut(t);
@@ -659,11 +736,9 @@ export function createGame(camera: THREE.OrthographicCamera, canvas: HTMLCanvasE
     say();
   }
 
-  // --- keys: c pops everything, f folds it all up, space flips (dev and demos), r starts over ---
-  const ORDER = [
-    'tab-base-left', 'tab-base-back', 'tab-base-right', 'tab-front-r', 'tab-front-l', 'tab-back-r', 'tab-back-l',
-    'tab-eave', 'tab-seam', 'front', 'right', 'back', 'left', 'roof1', 'roof2',
-  ];
+  // --- keys: c pops everything, f folds it all up, space flips (dev and demos), r starts over,
+  // d shows the borders (blue standing, green popped) ---
+  const ORDER = foldOrder(house);
   function popAll() {
     sound.unlock();
     gestureSaved = false;
@@ -673,7 +748,8 @@ export function createGame(camera: THREE.OrthographicCamera, canvas: HTMLCanvasE
     gestureSaved = false;
   }
   function foldAll() {
-    ORDER.forEach((id, i) => timers.push(window.setTimeout(() => folding.shut(id), 250 + i * 260)));
+    const gap = Math.min(260, 5000 / ORDER.length);
+    ORDER.forEach((id, i) => timers.push(window.setTimeout(() => folding.shut(id), 250 + i * gap)));
   }
   function key(e: KeyboardEvent) {
     // cmd-z undoes, shift-cmd-z (or ctrl-y) redoes; nothing else with a modifier
@@ -684,8 +760,9 @@ export function createGame(camera: THREE.OrthographicCamera, canvas: HTMLCanvasE
       return;
     }
     if (e.key === 'r') reset();
+    if (e.key === 'd') debug = !debug;
     if (e.key === 'c') popAll();
-    if (e.key === ' ') { e.preventDefault(); gestureSaved = false; flip(); }
+    if (e.key === ' ') { e.preventDefault(); gestureSaved = false; byHand = true; flip(); }
     if (e.key === 'f') {
       if (!freed) popAll();
       gestureSaved = false;
@@ -705,7 +782,7 @@ export function createGame(camera: THREE.OrthographicCamera, canvas: HTMLCanvasE
   canvas.addEventListener('wheel', wheel, { passive: false });
   document.addEventListener('gesturestart', noGesture);
   addEventListener('keydown', key);
-  hud({ actions: { undo, redo, flip: () => { gestureSaved = false; flip(); }, reset } });
+  hud({ ready: false, actions: { undo, redo, flip: () => { gestureSaved = false; byHand = true; flip(); }, reset } });
 
   reset();
   // ?cut: start with the piece already out (debug, demos)
@@ -715,6 +792,10 @@ export function createGame(camera: THREE.OrthographicCamera, canvas: HTMLCanvasE
     freedAt = -1e9;
     paper.waste.visible = false;
     say();
+    // base down, as when it pops out
+    flip();
+    undos = [];
+    showHistory();
   }
 
   // --- what it is, to carry over a hot update or a reload ---
@@ -724,6 +805,8 @@ export function createGame(camera: THREE.OrthographicCamera, canvas: HTMLCanvasE
     const s = snap();
     const v = rig.view;
     return {
+      model: model.id,
+      byHand,
       ...pack(s),
       view: { zoom: v.zoom, panX: v.panX, panY: v.panY, azimuth: v.azimuth },
       undos: undos.map(pack),
@@ -732,12 +815,14 @@ export function createGame(camera: THREE.OrthographicCamera, canvas: HTMLCanvasE
   }
   // put back as it was, at once, no animation
   function load(s: Saved) {
-    if (s.done.length !== borders.length) return;
+    if (s.model !== model.id || s.done.length !== borders.length) return;
     setBorders(s.done);
     if (s.done.every(Boolean)) { freed = true; freedAt = -1e9; paper.waste.visible = false; }
     folding.jump(s.folds);
     paper.setRest(new THREE.Matrix4().fromArray(s.rest));
     Object.assign(rig.view, s.view);
+    // older saves never said: count it as not turned, so it keeps to its base
+    byHand = s.byHand ?? false;
     undos = s.undos.map(unpack);
     redos = s.redos.map(unpack);
     framed.makeEmpty();
@@ -786,6 +871,15 @@ export function createGame(camera: THREE.OrthographicCamera, canvas: HTMLCanvasE
         const box = new THREE.Box3().setFromObject(paper.panels.get(id)!);
         return screen(box.getCenter(new THREE.Vector3()));
       },
+      __left: () => borders.map((b, i) => (b.done ? -1 : i)).filter((i) => i >= 0),
+      __heights: () => {
+        paper.root.updateMatrixWorld(true);
+        const out: Record<string, number> = {};
+        for (const [id, g] of paper.panels) out[id] = +new THREE.Box3().setFromObject(g, true).min.y.toFixed(2);
+        return { ground: +ground.toFixed(2), lift, low: Math.min(...Object.values(out)), base: out.base, worst: Object.entries(out).sort((a, b) => a[1] - b[1]).slice(0, 3) };
+      },
+      __save: () => saveAll(),
+      __load: (x: Saved) => load(x),
       __foldAll: foldAll,
       __undo: undo,
       __redo: redo,

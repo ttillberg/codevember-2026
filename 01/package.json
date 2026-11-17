@@ -1,7 +1,7 @@
 {
   "name": "day-01",
   "private": true,
-  "description": "Cut out a Copenhagen townhouse and fold it up",
+  "description": "Cut out a Malmö building and fold it up",
   "type": "module",
   "scripts": {
     "dev": "vite",

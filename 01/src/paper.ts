@@ -1,6 +1,6 @@
 import * as THREE from 'three';
-import { isFold, type House, type Sheet, type V2 } from './net';
-import { sheetSvg } from './art';
+import { isFold, type Net, type Sheet, type V2 } from './net';
+import { sheetSvg, type Art } from './art';
 
 // The card in 3D. Everything lives in sheet space (mm, y up, print on +z) under one root,
 // which lays the sheet face up on the mat. Each panel is its own group so it can fold;
@@ -39,10 +39,10 @@ const shape = (poly: V2[]) => new THREE.Shape(poly.map(([x, y]) => new THREE.Vec
 
 // back: the blank side, only its fold lines scored in, for whoever folds it.
 // Returned at once, drawn when the SVG has decoded (a frame or two).
-export function printTexture(house: House, sheet: Sheet, renderer: THREE.WebGLRenderer, back = false) {
+export function printTexture(house: Net, art: Art, sheet: Sheet, renderer: THREE.WebGLRenderer, back = false, backArt?: Art) {
   const max = renderer.capabilities.maxTextureSize;
   const pxPerMm = Math.min(back ? 6 : 12, max / Math.max(sheet.w, sheet.h));
-  const { svg, W, H } = sheetSvg(house, sheet, pxPerMm, back);
+  const { svg, W, H } = sheetSvg(house, art, sheet, pxPerMm, back, backArt);
   const c = document.createElement('canvas');
   c.width = W;
   c.height = H;
@@ -61,7 +61,7 @@ export function printTexture(house: House, sheet: Sheet, renderer: THREE.WebGLRe
   return tex;
 }
 
-export function makePaper(house: House, sheet: Sheet, loop: V2[], tex: THREE.Texture, backTex: THREE.Texture) {
+export function makePaper(house: Net, sheet: Sheet, loop: V2[], tex: THREE.Texture, backTex: THREE.Texture) {
   // extrude groups: 0 the caps (the top one is under the print, so: the back), 1 the cut edges
   const body = [
     new THREE.MeshStandardMaterial({ map: backTex, roughness: 0.92 }),

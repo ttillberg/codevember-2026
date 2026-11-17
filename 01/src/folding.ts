@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { foldMatrices, centroid } from './fold';
-import type { House } from './net';
+import type { Net } from './net';
 import { THICK, type Paper } from './paper';
 
 // Folding by hand. Every hinge has an amount, 0 flat to 1 at its rest fold. Grab a panel
@@ -14,7 +14,7 @@ const PEEK = 5; // degrees a foldable panel gives when a pointer comes over it
 // held(id): the panel, or something it carries, still hangs in the sheet. It bends a little, no more.
 // view: screen ↔ ndc for the canvas (the stage's)
 export function makeFolding(
-  house: House, paper: Paper, camera: THREE.Camera,
+  house: Net, paper: Paper, camera: THREE.Camera,
   view: { ndc(cx: number, cy: number): THREE.Vector2; screen(p: THREE.Vector3): THREE.Vector2 },
   onShut: (id: string) => void, held: (id: string) => boolean, onHeld: (id: string) => void,
   onPinned: (id: string, stuck: string) => void = () => {},
@@ -108,6 +108,7 @@ export function makeFolding(
   // outline) and would move into it as P opens. A tab glued behind its wall is pinned; so is the
   // gable carrying a tab tucked under the roof. The wall over a tab is not: it opens away.
   const polyOf = new Map(house.panels.map((p) => [p.id, p.poly]));
+  const partsOf = new Map(house.panels.map((p) => [p.id, p.parts ?? [p.poly]]));
   const kids = new Map<string, string[]>();
   for (const p of house.panels) if (p.parent) kids.set(p.parent, [...(kids.get(p.parent) ?? []), p.id]);
   const carried = (id: string): string[] => [id, ...(kids.get(id) ?? []).flatMap(carried)];
@@ -138,7 +139,7 @@ export function makeFolding(
         const gap = onB.sub(here).dot(nb);
         if (Math.abs(gap) > 1.5) continue;
         const local = g.worldToLocal(here.clone());
-        if (!inside(polyOf.get(b)!, local.x, local.y)) continue;
+        if (!partsOf.get(b)!.some((q) => inside(q, local.x, local.y))) continue;
         // pushing in, not sliding along: a tab drawn out sideways from behind a wall is free
         const towards = step.dot(nb);
         if (Math.sign(towards) === Math.sign(gap) && Math.abs(towards) > 0.3 * step.length()) return { stuck: a, into: b };
