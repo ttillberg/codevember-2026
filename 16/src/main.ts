@@ -108,6 +108,7 @@ scene.add(fungi.group);
 const spores = new Spores(share);
 // a whoosh when you fling, a puff where it lands and where you sow
 const sound = new Sound(camera);
+const creakAt = new THREE.Vector3();
 const fxScene = new THREE.Scene();
 fxScene.add(spores.mesh);
 // where a cluster stands: its foot down in the moss, stems coming up through it
@@ -653,6 +654,14 @@ renderer.setAnimationLoop(() => {
   const { fx, fz } = crawl(dt);
   pouch.update(dt, me.bob, Math.min(1, Math.abs(me.speed) / 0.2));
   fungi.update(dt, clock.elapsedTime);
+  // the ones growing near you creak now and then, each kind in its own voice
+  for (const c of fungi.list) {
+    if (c.grown || c.age <= 0) continue;
+    const g = c.age / c.end;
+    if (g < 0.03 || g > 0.97 || Math.random() > dt * 0.9) continue;
+    creakAt.set(c.x, c.y + c.height * 0.5, c.z);
+    sound.creak(creakAt, c.kind);
+  }
   spores.update(dt, clock.elapsedTime);
   world.update(me.x, me.z, fx, fz, 1);
   props.update(me.x, me.z);
