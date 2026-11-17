@@ -4,6 +4,15 @@
 import { mulberry32 } from './noise';
 import type { Fungi, FungusKind } from './fungi';
 
+// how often each kind stands about in the forest, by weight
+const MIX: [FungusKind, number][] = [['funnel', 0.24], ['finger', 0.2], ['chanterelle', 0.18], ['puffball', 0.16], ['agaric', 0.1], ['porcini', 0.12]];
+const MIX_SUM = MIX.reduce((a, [, w]) => a + w, 0);
+function pickKind(k: number): FungusKind {
+  let acc = 0;
+  for (const [kind, w] of MIX) { acc += w / MIX_SUM; if (k < acc) return kind; }
+  return MIX[MIX.length - 1][0];
+}
+
 const CELL = 1.6;
 const RANGE = 5; // cells whose centre is this close are placed
 const DROP = 7; // and taken away past this
@@ -25,7 +34,7 @@ export class Props {
     const n = r() < 0.6 ? 1 + Math.floor(r() * 2) : 0;
     for (let i = 0; i < n; i++) {
       const k = r();
-      const kind: FungusKind = k < 0.28 ? 'funnel' : k < 0.5 ? 'finger' : k < 0.72 ? 'chanterelle' : k < 0.9 ? 'puffball' : 'agaric';
+      const kind = pickKind(k);
       const x = (ix + 0.1 + 0.8 * r()) * CELL, z = (iz + 0.1 + 0.8 * r()) * CELL;
       const seed = Math.floor(r() * 1e9), scale = 0.8 + 0.5 * r();
       if (Math.hypot(x, z) < 0.6) continue; // the start has its own

@@ -29,6 +29,10 @@ export const SPECIES: Species[] = [
     kind: 'agaric', sv: 'Röd flugsvamp', en: 'Fly agaric', latin: 'Amanita muscaria', seed: 4, scale: 1.0,
     note: 'In mossy birch and spruce forest, late summer into autumn. It comes up as a white egg; the red cap breaks through the veil, which stays on it as white warts, and leaves a skirt hanging on the stem. Poisonous.',
   },
+  {
+    kind: 'porcini', sv: 'Karljohan', en: 'Porcini', latin: 'Boletus edulis', seed: 8, scale: 1.0,
+    note: 'Under spruce and birch, late summer into autumn: the king of the forest floor. A thick brown bun of a cap on a fat, club-shaped stem with a fine white net at the top; no gills but a sponge of pores underneath, white when young, olive yellow later.',
+  },
 ];
 
 export class Fungarium {
