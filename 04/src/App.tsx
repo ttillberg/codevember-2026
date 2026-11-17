@@ -19,6 +19,7 @@ import { HeatIcon, TraceIcon } from './Icons';
 import { buildNet, type Net, type V } from './net';
 import { MAP } from './map';
 import { baseIntent, derive, no, standing, type Intent } from './intent';
+import { Nodes } from './Nodes';
 import { addStroke, erase, smear, smearStart, tangled, tidy } from './paint';
 import { holdStrokes, tileAsked, tileStrokes, windowStrokes } from './tiles';
 import { TILE as SIDE, alone, movePlace, place as LAND, saltOf, splitNet, tilesNow } from './net';
@@ -536,6 +537,7 @@ export function App() {
   const [shot, setShot] = useState<Shot | null>(() => (debug ? SHOTS[upright() ? 'p' : 'l'] : null));
   const [grade, setGrade] = useState(GRADE);
   const [fx, setFx] = useState(FX);
+  const [nodes, setNodes] = useState(() => new URLSearchParams(location.search).has('nodes'));
   // canvas pixels to a screen point, at most
   const [dpr, setDpr] = useState(DPR);
   const [fps, setFps] = useState(FPS);
@@ -819,6 +821,8 @@ export function App() {
       }
       // R reads the traffic of a road (trace), and R again takes the brush back up
       if ((e.key === 'r' || e.key === 'R') && !e.metaKey && !e.ctrlKey && !e.altKey) setTool((t) => (t === 'trace' ? brushNow.current : 'trace'));
+      // D draws the network over the picture, and D again takes it away
+      if ((e.key === 'd' || e.key === 'D') && !e.metaKey && !e.ctrlKey && !e.altKey) setNodes((v) => !v);
       // T takes up the next brush, shift and T the one before
       if ((e.key === 't' || e.key === 'T') && !e.metaKey && !e.ctrlKey && !e.altKey) {
         const order: Brush[] = ['road', 'bridge', 'smear', 'erase'];
@@ -853,6 +857,7 @@ export function App() {
         })}
         <Cars net={roads} speed={speed} target={VEHICLES} trail={lights === 'off' ? 0 : clock.trail} glow={lights === 'webgpu'} walls={hides} onGlowFail={noGpu} shade={!fx.lazy} heat={heat} trace={tool === 'trace' ? trace : null} onNote={onNote} onSim={onSim} />
         <Commons green={place.green} speed={speed} />
+        {nodes && <Nodes net={roads} />}
         <Sketch api={sketch} />
         <Painter net={ground} tool={tool} onStroke={onStroke} onSmear={onSmear} onTrace={setTrace} onErase={onErase} />
         <EffectComposer multisampling={fx.aa === 'msaa4' ? 4 : fx.aa === 'msaa2' ? 2 : 0}>
@@ -946,6 +951,10 @@ export function App() {
               <span>{label}</span>
             </label>
           ))}
+          <label className="check">
+            <input type="checkbox" checked={nodes} onChange={(e) => setNodes(e.target.checked)} />
+            <span>Network</span>
+          </label>
           <button onClick={() => copy('shot', { ...shot, ...grade, dpr, fps, move, fx, clock })}>{copied === 'shot' ? 'Copied' : 'Copy'}</button>
           <button onClick={() => { setShot(SHOTS[upright() ? 'p' : 'l']); setSet((n) => n + 1); setGrade(GRADE); setFx(FX); setDpr(DPR); setFps(FPS); setMove(MOVE); setClock(CLOCK); setScrub((n) => n + 1); }}>Reset</button>
           <button onClick={() => copy('map', intent)}>{copied === 'map' ? 'Copied' : 'Copy map'}</button>
