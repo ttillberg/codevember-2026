@@ -7,15 +7,15 @@ import { mulberry32 } from './noise';
 import { mossLighting } from './shaders';
 import { buildDew } from './dew';
 
-export type FungusKind = 'funnel' | 'finger' | 'chanterelle' | 'puffball' | 'agaric' | 'porcini' | 'slippery' | 'morel';
+export type FungusKind = 'funnel' | 'finger' | 'chanterelle' | 'puffball' | 'agaric' | 'porcini' | 'slippery' | 'morel' | 'waxcap';
 
 const ease = (t: number) => t * t * (3 - 2 * t);
 const clamp01 = (t: number) => Math.min(1, Math.max(0, t));
 
 // ---------------------------------------------------------------------------------------------------------
 // geometry buffers: position, part (0 stem, 0.2 a netted stem, 1 underside, 2 funnel inside or cap top, 3 finger,
-// 4 puffball, 5 fly agaric's cap, 6 a bolete's cap (6.3 slimy), 7 pores, 8 a morel's honeycomb; 0.4 a dotted
-// stem), along, around, tint
+// 4 puffball, 5 fly agaric's cap, 6 a bolete's cap (6.3 slimy, 6.45 a waxcap's), 7 pores (7.3 gills), 8 a
+// morel's honeycomb; 0.4 a dotted stem), along, around, tint
 // drops: beads of water on fresh growth, (x, y, z, radius), drawn with the dew
 interface Buf { pos: number[]; part: number[]; uvf: number[]; tint: number[]; idx: number[]; drops: number[] }
 const newBuf = (): Buf => ({ pos: [], part: [], uvf: [], tint: [], idx: [], drops: [] });
@@ -527,6 +527,7 @@ interface CapStyle {
   bulb: number; bulbAt: number; // the stem swells by this much about this far up (0..1)
   umbo?: number; // a low hump in the middle of the cap, times R
   ring?: number[]; // a partial veil over the pores that tears into a ring on the stem, this colour
+  decurrent?: number; // gills that run down the stem this far, times H
 }
 interface Capped {
   base: THREE.Vector3;
@@ -541,6 +542,9 @@ interface Capped {
 const PORCINI: CapStyle = { capPart: 6, underPart: 7, stemPart: 0.2, thick: 0.42, th0: 1.75, th1: 1.12, bulb: 1.05, bulbAt: 0.18 };
 // smörsopp (Suillus luteus): a slimy chestnut cap with a low hump, opening flatter, yellow pores under a pale veil
 // that tears into a ring, a yellowish stem dotted brown above it
+// sotvaxskivling (Hygrophorus camarophyllus): a sooty grey-brown cap streaked with fibres, opening flat round a
+// broad hump; thick, far-apart waxy white gills running down a white stem
+const WAXCAP: CapStyle = { capPart: 6.45, underPart: 7.3, stemPart: 0, thick: 0.22, th0: 1.55, th1: 0.72, bulb: 0, bulbAt: 0.5, umbo: 0.12, decurrent: 0.16 };
 const SLIPPERY: CapStyle = { capPart: 6.3, underPart: 7, stemPart: 0.4, thick: 0.36, th0: 1.6, th1: 1.0, bulb: 0.2, bulbAt: 0.1, umbo: 0.07, ring: [0.58, 0.5, 0.56] };
 
 /**
@@ -570,18 +574,28 @@ function buildCapped(b: Buf, m: Capped, age: number) {
   const capY = (t: number) => H - Rc * (1 - Math.cos(t * th)) + (st.umbo ?? 0) * R * open * (1 - THREE.MathUtils.smoothstep(t, 0, 0.45));
   const capR = (t: number) => Rc * Math.sin(t * th);
   const tS = Math.min(1, Math.asin(Math.min(1, rs / Rc)) / th);
-  const stemTop = capY(tS) - thick;
+  const dec = (st.decurrent ?? 0) * H * open; // gills running down the stem: the stem ends that much lower
+  const stemTop = capY(tS) - thick - dec;
   const P: [number, number, number, number, number[]][] = [];
   for (let i = 0; i <= 14; i++) {
     const u = i / 14, y = -0.006 + (stemTop + 0.006) * u;
     const swell = st.bulb * Math.exp(-Math.pow((u - st.bulbAt) / 0.38, 2)) * (0.6 + 0.4 * (1 - open));
     P.push([rs * (1 + swell) * (1 - 0.1 * u), y, st.stemPart, u * 0.6, stemC]);
   }
-  // under the cap: the pore layer, thick and nearly flat, from the stem out to just inside the rim
-  for (let i = 1; i <= 8; i++) {
-    const t = tS + (1 - tS) * (i / 8);
-    const flat = capY(1) - thick * 0.85;
-    P.push([capR(t) * (0.98 - 0.05 * (i / 8)), Math.min(capY(t) - thick, flat + (capY(tS) - thick - flat) * (1 - i / 8)), st.underPart, 0.6 + 0.2 * (i / 8), underC]);
+  if (st.decurrent) {
+    // gills: from down on the stem, flaring out under the cap to just inside the rim
+    const y1 = capY(1) - thick * 0.45;
+    for (let i = 1; i <= 9; i++) {
+      const u = i / 9, e = 1 - (1 - u) * (1 - u);
+      P.push([rs + (capR(1) * 0.97 - rs) * Math.pow(u, 0.8), stemTop + (y1 - stemTop) * e, st.underPart, 0.6 + 0.2 * u, underC]);
+    }
+  } else {
+    // under the cap: the pore layer, thick and nearly flat, from the stem out to just inside the rim
+    for (let i = 1; i <= 8; i++) {
+      const t = tS + (1 - tS) * (i / 8);
+      const flat = capY(1) - thick * 0.85;
+      P.push([capR(t) * (0.98 - 0.05 * (i / 8)), Math.min(capY(t) - thick, flat + (capY(tS) - thick - flat) * (1 - i / 8)), st.underPart, 0.6 + 0.2 * (i / 8), underC]);
+    }
   }
   // over the rim, rounded, and across the top to the middle
   for (let i = 0; i <= 14; i++) {
@@ -879,6 +893,26 @@ export class Fungi {
         }
       }
       radius = 0.08 * sc;
+    } else if (kind === 'waxcap') {
+      // sotvaxskivlingar: two to five under spruce, caps 4 to 10 cm on white stems
+      const n = 2 + Math.floor(r() * 4);
+      for (let i = 0; i < n; i++) {
+        for (let attempt = 0; attempt < 20; attempt++) {
+          const a = r() * Math.PI * 2, d = i === 0 ? 0 : (0.04 + 0.06 * r()) * sc;
+          const R = (0.022 + 0.026 * r()) * sc;
+          const x = Math.cos(a) * d, z = Math.sin(a) * d;
+          if (capped.some((m) => Math.hypot(m.base.x - x, m.base.z - z) < (m.R + R) * 0.8)) continue;
+          const k = 0.85 + 0.3 * r(), out0 = 0.06 + 0.12 * r();
+          capped.push({
+            base: new THREE.Vector3(x, 0, z), H: R * (1.7 + 0.6 * r()), R, rs: R * (0.2 + 0.05 * r()),
+            lean: [Math.cos(a) * out0, Math.sin(a) * out0],
+            delay: r() * 3 + i * 1.3, dur: 11 + 5 * r(), phase: r() * 6.28, style: WAXCAP,
+            cap: [0.2 * k, 0.17 * k, 0.15 * k], stem: [0.8, 0.79, 0.76], under: [0.86, 0.85, 0.8],
+          });
+          break;
+        }
+      }
+      radius = 0.07 * sc;
     } else if (kind === 'morel') {
       // toppmurklor: one to four, a hand's height, standing a little apart
       const n = 1 + Math.floor(r() * 4);
@@ -1160,6 +1194,15 @@ void main() {
     vec2 dd = (f - c1) * vec2(1.0, 0.45);
     N = normalize(N - (T * dd.x + B * dd.y) * pit * 1.4);
     thin = 0.15;
+  } else if (vPart > 7.2) {
+    // a waxcap's gills: thick, far apart, waxy white, running down the stem; dark gaps between, a soft gloss
+    float gl = abs(fract(around * 34.0) - 0.5) * 2.0; // 0 on a gill's edge .. 1 midway between
+    float gap = smoothstep(0.55, 0.9, gl);
+    col *= mix(1.0, 0.35, gap);
+    vec3 T = normalize(cross(N, vec3(0.0, 1.0, 0.0)) + 1e-4);
+    N = normalize(N + T * (fract(around * 34.0) - 0.5) * 1.2 * (1.0 - gap));
+    wet = 1.6;
+    thin = 0.5;
   } else if (vPart > 6.5) {
     // pores: a sponge of tiny round mouths, white when young, olive yellow later (in the tint)
     vec2 q = vec2(around * 260.0, along * 70.0);
@@ -1172,7 +1215,13 @@ void main() {
     col *= mix(0.88, 1.15, smoothstep(0.7, 1.0, along));
     col *= 0.9 + 0.2 * n3(vWorldPos * 140.0) + 0.08 * (n3(vWorldPos * 600.0) - 0.5);
     thin = 0.2;
-    if (vPart > 6.2) {
+    if (vPart > 6.4) {
+      // a waxcap's cap: sooty grey-brown, darker over the hump, streaked with fine dark fibres running out, greasy
+      col = vTint * mix(0.7, 1.15, smoothstep(0.0, 0.85, along));
+      col *= 0.85 + 0.18 * sin(around * 6.2831 * 110.0 + n3(vWorldPos * 60.0) * 6.0) * smoothstep(0.15, 0.6, along);
+      col *= 0.92 + 0.12 * n3(vWorldPos * 200.0);
+      wet = 1.5;
+    } else if (vPart > 6.2) {
       // slimy: a smooth glossy skin, darker in the middle, streaked where the slime has run
       col = vTint * mix(0.75, 1.1, smoothstep(0.0, 0.9, along)) * (0.96 + 0.05 * sin(around * 6.2831 * 23.0 + n3(vWorldPos * 80.0) * 4.0));
       wet = 3.0;

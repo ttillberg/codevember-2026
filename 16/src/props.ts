@@ -5,7 +5,7 @@ import { mulberry32 } from './noise';
 import type { Fungi, FungusKind } from './fungi';
 
 // how often each kind stands about in the forest, by weight
-const MIX: [FungusKind, number][] = [['funnel', 0.24], ['finger', 0.2], ['chanterelle', 0.18], ['puffball', 0.16], ['agaric', 0.1], ['porcini', 0.12], ['slippery', 0.1], ['morel', 0.06]];
+const MIX: [FungusKind, number][] = [['funnel', 0.24], ['finger', 0.2], ['chanterelle', 0.18], ['puffball', 0.16], ['agaric', 0.1], ['porcini', 0.12], ['slippery', 0.1], ['morel', 0.06], ['waxcap', 0.1]];
 const MIX_SUM = MIX.reduce((a, [, w]) => a + w, 0);
 function pickKind(k: number): FungusKind {
   let acc = 0;
