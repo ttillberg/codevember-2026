@@ -29,6 +29,8 @@ const HEAD = 0, TAIL = 1, FLASH = 2, BEAM = 4;
 const REACH = 46, SHINE = 0.085;
 /** Seconds of their time between two notes of where a vehicle is: short enough that a turn through a junction stays a curve. */
 const EVERY = 0.35;
+/** From this height a vehicle is up on a bridge, and so is a deck: metres. Under it both are on the ground. */
+export const UP = 1.5;
 /** How high a lamp sits on a vehicle, metres. */
 const LAMP = 0.6;
 /** Canvas pixels to a screen point. The light is soft: one is enough, and a quarter of the pixels of the picture under it. */
@@ -180,14 +182,17 @@ class Layer {
   readonly canvas = document.createElement('canvas');
   private ctx: GPUCanvasContext;
   private map: GPUTexture;
-  private fade: GPURenderPipeline; private splat: GPURenderPipeline; private show: GPURenderPipeline; private walls: GPURenderPipeline;
-  private segs: GPUBuffer; private uni: GPUBuffer; private boxes: GPUBuffer | null = null;
-  private bind: GPUBindGroup; private bindWalls: GPUBindGroup;
-  private nBoxes = 0;
+  /** a second map, for the light of what is up on a bridge: it is laid on after the decks have hidden the ground under them */
+  private map2: GPUTexture;
+  private fade: GPURenderPipeline; private splat: GPURenderPipeline; private show: GPURenderPipeline; private showMore: GPURenderPipeline; private walls: GPURenderPipeline;
+  private segs: GPUBuffer; private segs2: GPUBuffer; private uni: GPUBuffer; private boxes: GPUBuffer | null = null; private decks: GPUBuffer | null = null;
+  private bind: GPUBindGroup; private bind2: GPUBindGroup; private bindWalls: GPUBindGroup;
+  private nBoxes = 0; private nDecks = 0;
   /** stretches noted since the last frame: from, to (x, height, y each), when at either end, head or tail, how strong, heading */
   private rec = new Float32Array(SEGS * REC);
   private n = 0;
   private out = new Float32Array(SEGS * 8);
+  private out2 = new Float32Array(SEGS * 8);
   private u = new Float32Array(32);
   private ox = 0; private oy = 0;
   /** where the lamps of each vehicle were when last noted: head x y, tail x y, height, when */
@@ -206,6 +211,7 @@ class Layer {
     // opaque black where there is no light: the page adds it to the picture under it (mix-blend-mode in style.css)
     this.ctx.configure({ device, format, alphaMode: 'opaque' });
     this.map = device.createTexture({ size: [SIZE, SIZE], format: FORMAT, usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING });
+    this.map2 = device.createTexture({ size: [SIZE / 2, SIZE / 2], format: FORMAT, usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING });
     const mod = (code: string) => device.createShaderModule({ code });
     const make = (code: string, target: GPUColorTargetState, buffers: GPUVertexBufferLayout[] = [], topology: GPUPrimitiveTopology = 'triangle-strip') => {
       const module = mod(code);
@@ -219,11 +225,14 @@ class Layer {
       attributes: [{ shaderLocation: 0, offset: 0, format: 'float32x4' }, { shaderLocation: 1, offset: 16, format: 'float32x4' }],
     }]);
     this.show = make(SHOW, { format });
+    this.showMore = make(SHOW, { format, blend: { color: plus, alpha: plus } });
     this.walls = make(WALLS, { format }, [{ arrayStride: 12, attributes: [{ shaderLocation: 0, offset: 0, format: 'float32x3' }] }], 'triangle-list');
     this.segs = device.createBuffer({ size: this.out.byteLength, usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST });
+    this.segs2 = device.createBuffer({ size: this.out2.byteLength, usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST });
     this.uni = device.createBuffer({ size: this.u.byteLength, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
     const smp = device.createSampler({ magFilter: 'linear', minFilter: 'linear' });
     this.bind = device.createBindGroup({ layout: this.show.getBindGroupLayout(0), entries: [{ binding: 0, resource: { buffer: this.uni } }, { binding: 1, resource: this.map.createView() }, { binding: 2, resource: smp }] });
+    this.bind2 = device.createBindGroup({ layout: this.showMore.getBindGroupLayout(0), entries: [{ binding: 0, resource: { buffer: this.uni } }, { binding: 1, resource: this.map2.createView() }, { binding: 2, resource: smp }] });
     this.bindWalls = device.createBindGroup({ layout: this.walls.getBindGroupLayout(0), entries: [{ binding: 0, resource: { buffer: this.uni } }] });
   }
 
@@ -233,6 +242,19 @@ class Layer {
   }
 
   /** Whatever stands between the camera and the ground, as black boxes: the layer knows no depth, so they are drawn over the light. */
+  /**
+   * The decks of the bridges, as triangles in the air (x, height, y): drawn black over the light of the ground, so a trail
+   * goes under a bridge, before the light of what drives on the decks is laid over them from its own map.
+   */
+  setDecks(tris: Float32Array<ArrayBuffer>) {
+    this.decks?.destroy();
+    this.decks = null;
+    this.nDecks = tris.length / 3;
+    if (!this.nDecks) return;
+    this.decks = this.device.createBuffer({ size: tris.byteLength, usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST });
+    this.device.queue.writeBuffer(this.decks, 0, tris);
+  }
+
   setWalls(list: Wall[]) {
     this.boxes?.destroy();
     this.boxes = null;
@@ -315,12 +337,15 @@ class Layer {
 
     // A lamp is above the ground and the map is flat, so each point is put where the camera sees it on the ground.
     // That also puts the traffic on a bridge where the bridge is in the picture, as long as the drone has not flown far since.
-    const C = camera.position, rec = this.rec, out = this.out;
+    const C = camera.position, rec = this.rec;
     // the map lies over the window of tiles as it is now: when that moves on, the map moves with it and starts empty
     const ox = place.x - MID[0], oy = place.y - MID[1];
     if (ox !== this.ox || oy !== this.oy) { this.ox = ox; this.oy = oy; this.blank = true; }
+    const out2 = this.out2;
+    let n1 = 0, n2 = 0;
     for (let i = 0; i < this.n; i++) {
-      const o = i * REC, q = i * 8;
+      // what is up on a bridge goes to the map of the decks, the rest to the ground's
+      const o = i * REC, up = Math.max(rec[o + 1], rec[o + 4]) >= UP, out = up ? out2 : this.out, q = (up ? n2++ : n1++) * 8;
       const ka = C.y / (C.y - rec[o + 1] - LAMP), kb = C.y / (C.y - rec[o + 4] - LAMP);
       const bx = C.x + (rec[o + 3] - C.x) * kb, by = C.z + (rec[o + 5] - C.z) * kb;
       out[q] = C.x + (rec[o] - C.x) * ka; out[q + 1] = C.z + (rec[o + 2] - C.z) * ka; out[q + 2] = bx; out[q + 3] = by;
@@ -336,7 +361,6 @@ class Layer {
       // a flash shows all round; a beam is on the road for anyone to see, but less from behind, or every lane would be white
       out[q + 7] = rec[o + 9] * (kind === HEAD || kind === TAIL ? 0.12 + 0.88 * step(-0.4, 0.6, kind === TAIL ? -toward : toward) : kind === BEAM ? 0.15 + 0.85 * step(-0.4, 0.6, toward) : 1);
     }
-    const n = this.n;
     this.n = 0;
 
     // the camera as the WebGL scene is about to use it: the drone has moved it this frame, its matrices follow only when it is drawn
@@ -355,22 +379,26 @@ class Layer {
     } catch {
       return;
     }
-    if (n) device.queue.writeBuffer(this.segs, 0, out, 0, n * 8);
+    if (n1) device.queue.writeBuffer(this.segs, 0, this.out, 0, n1 * 8);
+    if (n2) device.queue.writeBuffer(this.segs2, 0, out2, 0, n2 * 8);
     device.queue.writeBuffer(this.uni, 0, this.u);
     const enc = device.createCommandEncoder();
-    const a = enc.beginRenderPass({ colorAttachments: [{ view: this.map.createView(), loadOp: this.blank ? 'clear' : 'load', clearValue: [0, 0, 0, 1], storeOp: 'store' }] });
+    // each map fades a little and takes the stretches driven since the last frame: the ground's, then the decks'
+    for (const [map, segs, n] of [[this.map, this.segs, n1], [this.map2, this.segs2, n2]] as const) {
+      const a = enc.beginRenderPass({ colorAttachments: [{ view: map.createView(), loadOp: this.blank ? 'clear' : 'load', clearValue: [0, 0, 0, 1], storeOp: 'store' }] });
+      if (keep < 1) {
+        a.setPipeline(this.fade);
+        a.setBlendConstant([keep, keep, keep, 1]);
+        a.draw(3);
+      }
+      if (n) {
+        a.setPipeline(this.splat);
+        a.setVertexBuffer(0, segs);
+        a.draw(4, n);
+      }
+      a.end();
+    }
     this.blank = false;
-    if (keep < 1) {
-      a.setPipeline(this.fade);
-      a.setBlendConstant([keep, keep, keep, 1]);
-      a.draw(3);
-    }
-    if (n) {
-      a.setPipeline(this.splat);
-      a.setVertexBuffer(0, this.segs);
-      a.draw(4, n);
-    }
-    a.end();
     const b = enc.beginRenderPass({ colorAttachments: [{ view, loadOp: 'clear', clearValue: [0, 0, 0, 1], storeOp: 'store' }] });
     b.setPipeline(this.show);
     b.setBindGroup(0, this.bind);
@@ -381,6 +409,16 @@ class Layer {
       b.setVertexBuffer(0, this.boxes);
       b.draw(this.nBoxes);
     }
+    // the decks hide the ground under them, and then carry their own traffic's light
+    if (this.decks) {
+      b.setPipeline(this.walls);
+      b.setBindGroup(0, this.bindWalls);
+      b.setVertexBuffer(0, this.decks);
+      b.draw(this.nDecks);
+    }
+    b.setPipeline(this.showMore);
+    b.setBindGroup(0, this.bind2);
+    b.draw(4);
     b.end();
     device.queue.submit([enc.finish()]);
   }
@@ -389,7 +427,7 @@ class Layer {
     this.dead = true;
     this.canvas.remove();
     this.ctx.unconfigure();
-    this.map.destroy(); this.segs.destroy(); this.uni.destroy(); this.boxes?.destroy();
+    this.map.destroy(); this.map2.destroy(); this.segs.destroy(); this.segs2.destroy(); this.uni.destroy(); this.boxes?.destroy(); this.decks?.destroy();
   }
 }
 
@@ -400,17 +438,19 @@ export type GlowHandle = Pick<Layer, 'sample' | 'draw'>;
  * The layer, mounted inside the WebGL canvas's own React tree so that it lives and dies with it, but drawing on a canvas of its own.
  * It draws nothing by itself: Cars drives it from the same frame as the scene, after the drone and the traffic have moved.
  */
-export function Glow({ ref, walls, onFail }: {
+export function Glow({ ref, walls, decks, onFail }: {
   ref: Ref<GlowHandle | null>;
   walls: Wall[];
+  /** the bridge decks as triangles in the air: x, height, y for each corner */
+  decks: Float32Array<ArrayBuffer>;
   /** no WebGPU after all, or the device was lost */
   onFail?: () => void;
 }) {
   const gl = useThree((s) => s.gl);
   const size = useThree((s) => s.size);
   const layer = useRef<Layer | null>(null);
-  const now = useRef({ size, walls, onFail });
-  now.current = { size, walls, onFail };
+  const now = useRef({ size, walls, decks, onFail });
+  now.current = { size, walls, decks, onFail };
   useImperativeHandle(ref, () => ({
     sample: (cars, time, force) => layer.current?.sample(cars, time, force),
     draw: (cars, time, camera, stay) => layer.current?.draw(cars, time, camera, stay),
@@ -425,6 +465,7 @@ export function Glow({ ref, walls, onFail }: {
         const l = new Layer(device, host);
         l.resize(now.current.size.width, now.current.size.height);
         l.setWalls(now.current.walls);
+        l.setDecks(now.current.decks);
         layer.current = l;
         device.lost.then(() => { if (!gone) now.current.onFail?.(); });
       } catch (e) {
@@ -436,5 +477,6 @@ export function Glow({ ref, walls, onFail }: {
   }, [gl]);
   useEffect(() => layer.current?.resize(size.width, size.height), [size]);
   useEffect(() => layer.current?.setWalls(walls), [walls]);
+  useEffect(() => layer.current?.setDecks(decks), [decks]);
   return null;
 }

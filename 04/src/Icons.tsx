@@ -26,3 +26,5 @@ export const GrowIcon = () => <Svg><path d="M9 3v5.5c-3.4 1.7-3.4 5.3 0 7V21M15 
 export const ShrinkIcon = () => <Svg><path d="M7.5 3v5.5c3.2 1.7 3.2 5.3 0 7V21M16.5 3v5.5c-3.2 1.7-3.2 5.3 0 7V21" /></Svg>;
 // an arrow down onto a line: the picture as a file
 export const DownloadIcon = () => <Svg><path d="M12 4v11M7.5 10.5 12 15l4.5-4.5M5 19.5h14" /></Svg>;
+// three sliders: the pane of ?debug
+export const DebugIcon = () => <Svg><path d="M4 7h9M17 7h3M4 12h3M11 12h9M4 17h11M19 17h1" /><circle cx="15" cy="7" r="2" /><circle cx="9" cy="12" r="2" /><circle cx="17" cy="17" r="2" /></Svg>;

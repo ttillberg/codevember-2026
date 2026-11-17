@@ -2,12 +2,12 @@
 import { useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
 import { AdditiveBlending, BufferAttribute, BufferGeometry, Color, InstancedBufferAttribute, InstancedMesh, MeshStandardMaterial, Object3D, ShaderMaterial } from 'three';
-import { place, type Lane, type Net, type V } from './net';
+import { cumLen, deck, place, pointOn, type Lane, type Net, type V } from './net';
 import { Heat, Journeys } from './Traffic';
 import { PARKED, Sim, signal } from './sim';
 import { HOUR, NIGHT, NOW } from './haze';
 import { beam, makeTypes } from './vehicles';
-import { Glow, type GlowHandle, type Wall } from './Glow';
+import { Glow, UP, type GlowHandle, type Wall } from './Glow';
 import { Works } from './Works';
 import { settle, SOAKED, wet } from './wet';
 
@@ -396,6 +396,27 @@ export function Cars({ net, speed, target, trail = 0, glow = false, walls = NO_W
     }
   });
 
+  // the bridge decks as the lights need them: a strip of triangles along each, as wide as the deck, wherever it is up in the air
+  const decks = useMemo(() => {
+    const v: number[] = [];
+    for (const r of net.roads) {
+      if (!r.bridge) continue;
+      const cum = cumLen(r.pts), w = r.hw + 0.8;
+      const at = (d: number) => {
+        const p = pointOn(r.pts, cum, d), q = pointOn(r.pts, cum, Math.min(r.len, d + 0.5)), b = pointOn(r.pts, cum, Math.max(0, d - 0.5));
+        const dx = q.x - b.x, dy = q.y - b.y, l = Math.hypot(dx, dy) || 1, h = deck(r, d);
+        return { h, l: [p.x - (dy / l) * w, h, p.y + (dx / l) * w], r: [p.x + (dy / l) * w, h, p.y - (dx / l) * w] };
+      };
+      const n = Math.max(1, Math.ceil(r.len / 3));
+      let a = at(0);
+      for (let i = 1; i <= n; i++) {
+        const b = at((r.len * i) / n);
+        if (a.h >= UP && b.h >= UP) v.push(...a.l, ...a.r, ...b.r, ...a.l, ...b.r, ...b.l);
+        a = b;
+      }
+    }
+    return new Float32Array(v);
+  }, [net]);
   return (
     <group>
       {types.map((t, i) => (
@@ -414,7 +435,7 @@ export function Cars({ net, speed, target, trail = 0, glow = false, walls = NO_W
       <instancedMesh ref={streaks} args={[trails.geo, trails.mat, STREAKS]} frustumCulled={false} />
       <instancedMesh ref={halos} args={[halo.geo, halo.mat, SIRENS]} frustumCulled={false} />
       <Works sim={sim} net={net} />
-      {glow && trail > 0 && <Glow ref={layer} walls={walls} onFail={onGlowFail} />}
+      {glow && trail > 0 && <Glow ref={layer} walls={walls} decks={decks} onFail={onGlowFail} />}
       {heat && <Heat sim={sim} net={net} speed={speed} />}
       {trace && <Journeys sim={sim} net={net} at={trace} note={onNote} />}
       <instancedMesh ref={headMesh} args={[undefined, undefined, heads.length]} frustumCulled={false}>

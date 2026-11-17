@@ -4,7 +4,9 @@ html, body { margin: 0; height: 100%; background: #a3adb3; overflow: hidden; }
 html, body { user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
 #root { position: fixed; inset: 0; }
 /* a little soft all over, as through a lens that is not quite a good one */
-canvas { display: block; touch-action: none; filter: blur(var(--soft, 0.5px)); }
+/* (its touches are the page's own, always: the camera controls write touch-action back to auto on the canvas whenever they are made
+   again, and then the browser takes a sideways drag of two fingers for itself) */
+canvas { display: block; touch-action: none !important; filter: blur(var(--soft, 0.5px)); }
 /* the lights of the traffic on a WebGPU canvas of their own (Glow.tsx), added to the picture under it; screen where plus-lighter is not known */
 canvas.glow { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; mix-blend-mode: screen; mix-blend-mode: plus-lighter; }
 
@@ -175,7 +177,7 @@ canvas.glow { position: absolute; inset: 0; width: 100%; height: 100%; pointer-e
 /* ?debug: the shot, slider by slider */
 .pane {
   position: fixed; z-index: 2; top: calc(max(20px, env(safe-area-inset-top)) + 56px); right: max(20px, env(safe-area-inset-right));
-  display: grid; grid-template-columns: 1fr 1fr; gap: 4px 4px; width: 264px; max-height: calc(100vh - 170px); overflow-y: auto; padding: 12px; border-radius: 14px;
+  display: grid; grid-template-columns: 1fr 1fr; gap: 4px 4px; width: 264px; box-sizing: content-box; max-height: calc(100vh - 194px); max-height: calc(100dvh - 194px); overflow-y: auto; padding: 12px; border-radius: 14px;
   background: rgba(20, 22, 18, 0.55); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); color: #f4f4f2;
   font: 600 10px/1 Inter, "Helvetica Neue", Helvetica, Arial, sans-serif; letter-spacing: 0.12em; text-transform: uppercase;
 }
@@ -201,6 +203,7 @@ canvas.glow { position: absolute; inset: 0; width: 100%; height: 100%; pointer-e
 .alarm:empty { display: none; }
 .clean .corner, .clean .brushes, .clean .history, .clean .save, .clean .note, .clean .pane { display: none; }
 @media (max-width: 640px) {
-  /* the pane sits under the time and the overlays on a phone */
-  .pane { top: calc(max(16px, env(safe-area-inset-top)) + 124px); right: max(16px, env(safe-area-inset-right)); max-height: calc(100vh - 150px); }
+  /* the pane sits under the bar on a phone */
+  /* and it stops well over the brushes along the bottom */
+  .pane { top: calc(max(16px, env(safe-area-inset-top)) + 60px); right: max(16px, env(safe-area-inset-right)); max-height: calc(100vh - 194px); max-height: calc(100dvh - 158px - max(16px, env(safe-area-inset-top)) - max(20px, env(safe-area-inset-bottom))); }
 }

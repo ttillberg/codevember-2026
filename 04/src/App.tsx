@@ -15,6 +15,7 @@ import { People, Signs, Street } from './Life';
 import { Commons, plantCommons, standingCommons, type Green } from './Park';
 import { Painter, Sketch, type Brush, type Tool, jolt } from './Painter';
 import { Brushes, History, Overlays, TimeControl, ViewMenu, hhmm, showTime, ERASE_MID, SMEAR_MID } from './Controls';
+import { DebugIcon } from './Icons';
 import { Air } from './Air';
 import { Snapshot, downloadPng } from './snapshot';
 import { buildNet, type Net, type V, type Road } from './net';
@@ -223,7 +224,7 @@ function Drone({ shot, move, set, onShot, onWindow, onAhead }: {
     return () => { el.removeEventListener('pointerdown', down); removeEventListener('pointerup', up); removeEventListener('pointercancel', up); };
   }, [gl]);
   // ?debug: the renderer, the scene and the frame itself on the window, to be measured from outside
-  if (debug) (window as any).three = { gl, scene, advance, camera };
+  if (debug) (window as any).three = { gl, scene, advance, camera, get controls() { return controls.current; } };
   const key = size.width < size.height ? 'p' : 'l';
   const s = shot ?? SHOTS[key];
   // how far off it hangs when nobody has pinched: the middle of what a pinch or the wheel can reach
@@ -267,6 +268,10 @@ function Drone({ shot, move, set, onShot, onWindow, onAhead }: {
     const now = read();
     if (now) onShot(now);
   }, [onShot, read]);
+  // a hand takes the drone and lets it go: the same two functions for good, as `fence` is, or every time the page is drawn
+  // again in the middle of a drag the controls come apart and the rest of the drag is lost
+  const grip = useCallback(() => { held.current = Infinity; }, []);
+  const drop = useCallback(() => { held.current = performance.now() + 900; }, []);
   // the drone holds its place the way a drone does: gliding a little, swinging a little, bobbing in the wind
   const at = useRef(0);
   const fly = useRef((_t: number) => {});
@@ -347,8 +352,8 @@ function Drone({ shot, move, set, onShot, onWindow, onAhead }: {
     <MapControls
       ref={controls as never}
       key={key}
-      onStart={() => { held.current = Infinity; }}
-      onEnd={() => { held.current = performance.now() + 900; }}
+      onStart={grip}
+      onEnd={drop}
       target={target}
       // a little nearer and a little further than where it hangs, no more: it is a drone, not a satellite
       minDistance={debug ? 70 : base * (1 - ZOOM)}
@@ -524,6 +529,8 @@ export function App() {
   const [paused, setPaused] = useState(false);
   const speed = paused ? 0 : TIMELAPSE;
   // reading the traffic: where it stands, and where one stretch's cars are going
+  // ?debug: the pane can be folded away with the button beside the eye, to see the picture
+  const [paneOpen, setPaneOpen] = useState(true);
   const [heat, setHeat] = useState(() => KEPT.heat ?? false);
   // the mist and the clouds: off until asked for, in the eye's list or with ?air
   const [air, setAir] = useState(() => new URLSearchParams(location.search).has('air') || (KEPT.air ?? false));
@@ -913,11 +920,12 @@ export function App() {
         {/* the hour in figures, to the left of the bar: written by showTime as the hands are */}
         <output className="time" aria-label="Time">{hhmm(clock.hour)}</output>
         {/* the clock, and beside it the two ways of reading the traffic: where it stands, and where one stretch's cars are going */}
-        <Overlays tail={<ViewMenu onReset={() => { setAir(false); setHeat(false); setTracing(false); setFx((f) => ({ ...f, tilt: FX.tilt, aa: FX.aa })); }} choices={[{ id: 'aa', label: 'Antialiasing', options: AA_NAMES, value: fx.aa, set: (v) => setFx((f) => ({ ...f, aa: v as Fx['aa'] })) }]} items={[{ id: 'air', label: 'Atmospherics', on: air, toggle: () => setAir((v) => !v) }, { id: 'tilt', label: 'Tilt shift', on: fx.tilt, toggle: () => setFx((f) => ({ ...f, tilt: !f.tilt })) }, { id: 'heat', label: 'Heat map', on: heat, toggle: () => setHeat((v) => !v) }, { id: 'trace', label: 'Traces', on: tracing, toggle: () => setTracing((v) => !v) }]} />} lead={<TimeControl now={hourNow} readout={readout} hold={clock.hold} onHold={() => setClock((c) => ({ ...c, hold: !c.hold }))} onSet={setHour} />} items={[
-        ]} />
+        <Overlays tail={<ViewMenu onReset={() => { setAir(false); setHeat(false); setTracing(false); setFx((f) => ({ ...f, tilt: FX.tilt, aa: FX.aa })); }} choices={[{ id: 'aa', label: 'Antialiasing', options: AA_NAMES, value: fx.aa, set: (v) => setFx((f) => ({ ...f, aa: v as Fx['aa'] })) }]} items={[{ id: 'air', label: 'Atmospherics', on: air, toggle: () => setAir((v) => !v) }, { id: 'tilt', label: 'Tilt shift', on: fx.tilt, toggle: () => setFx((f) => ({ ...f, tilt: !f.tilt })) }, { id: 'heat', label: 'Heat map', on: heat, toggle: () => setHeat((v) => !v) }, { id: 'trace', label: 'Traces', on: tracing, toggle: () => setTracing((v) => !v) }]} />} lead={<TimeControl now={hourNow} readout={readout} hold={clock.hold} onHold={() => setClock((c) => ({ ...c, hold: !c.hold }))} onSet={setHour} />} items={debug ? [
+          { id: 'debug', label: paneOpen ? 'Hide the debug pane' : 'Show the debug pane', icon: <DebugIcon />, on: paneOpen, toggle: () => setPaneOpen((v) => !v) },
+        ] : []} />
       </div>
       <pre className="alarm" ref={alarm} />
-      {shot && (
+      {shot && paneOpen && (
         <div className="pane">
           <output className="gauge" ref={gauge} />
           {SLIDERS.map(([k, label, min, max, step]) => (
