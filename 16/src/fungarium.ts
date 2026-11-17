@@ -63,7 +63,7 @@ export class Fungarium {
     this.el.innerHTML = `
       <div class="sheet"><div class="page">
         <button class="close" type="button" aria-label="Close">×</button>
-        <header><b>Fungarium</b><i>What your spores can grow. Tap one to throw it; the corner mark watches it grow.</i></header>
+        <header><b>Fungarium</b><i>What your spores can grow. Tap one to throw it; the corner mark watches it grow.<span class="keys"> Keys: <kbd>1</kbd>–<kbd>5</kbd> take one, <kbd>←</kbd> <kbd>→</kbd> turn the pages.</span></i></header>
         <div class="grid"></div>
         <div class="detail" hidden>
           <button class="back" type="button">← All</button>
@@ -93,15 +93,37 @@ export class Fungarium {
       cell.dataset.kind = s.kind;
       cell.innerHTML = `<button class="take" type="button"><span class="pic"></span><b>${s.sv}</b><i>${s.latin}</i><kbd>${(n + 1) % 10}</kbd></button>
         <button class="look" type="button" aria-label="Watch ${s.en.toLowerCase()} grow"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6" /><path d="M15 15l5 5M10.5 8v5M8 10.5h5" /></svg></button>`;
-      cell.querySelector('.take')!.addEventListener('click', () => {
-        this.select(s.kind);
-        this.onSelect(s.kind);
-        this.close();
-      });
+      cell.querySelector('.take')!.addEventListener('click', () => this.take(s));
       cell.querySelector('.look')!.addEventListener('click', () => this.showDetail(s));
       this.grid.appendChild(cell);
     });
     this.markSelected();
+
+    // keys, while it is open: a number takes that species (1 the first, 0 the tenth) and shuts it; the side
+    // arrows turn the pages, the grid first and then a page for each species, as far as there are pages
+    addEventListener('keydown', (e) => {
+      if (!this.isOpen || e.metaKey || e.ctrlKey || e.altKey || e.shiftKey) return;
+      const m = /^Digit(\d)$/.exec(e.code);
+      if (m) {
+        const sp = SPECIES[(Number(m[1]) + 9) % 10];
+        if (sp) { e.preventDefault(); this.take(sp); }
+        return;
+      }
+      if (e.code !== 'ArrowLeft' && e.code !== 'ArrowRight') return;
+      e.preventDefault();
+      const page = this.detail.hidden || !this.current ? 0 : SPECIES.indexOf(this.current) + 1;
+      const next = page + (e.code === 'ArrowRight' ? 1 : -1);
+      if (next < 0 || next > SPECIES.length) return; // no page there
+      if (next === 0) this.showGrid();
+      else this.showDetail(SPECIES[next - 1]);
+    });
+  }
+
+  /** This species is what your spores grow: marked, told, and the book shut. */
+  private take(s: Species) {
+    this.select(s.kind);
+    this.onSelect(s.kind);
+    this.close();
   }
 
   /** Draw the specimens now (they are otherwise drawn the first time the sheet opens). */
