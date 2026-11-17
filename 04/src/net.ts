@@ -138,6 +138,8 @@ export interface Net {
   pads: Rect[];
   buildings: Building[];
   edges: Node[];
+  /** when this is one tile's part of a network: the roads of the tiles beside it that come within a few metres of its edge */
+  around?: Road[];
 }
 
 export const ART: RoadKind = { lanes: 3, lw: 3.3, speed: 16, rank: 3 };
@@ -697,15 +699,20 @@ export function splitNet(net: Net): Map<string, Net> {
   const part = new Map<string, Net>(tilesNow().map((t) => [t.i + ',' + t.j, { nodes: [], roads: [], lanes: [], stalls: [], pads: [], buildings: [], edges: [] }]));
   // (whatever lies outside the window, a hair over its edge, goes with the first tile: it has to be drawn somewhere)
   const at = (p: V) => part.get(of(p)) ?? part.values().next().value!;
-  for (const r of net.roads) at(r.pts.length > 2 ? mid(r.pts) : { x: (r.pts[0].x + r.pts[r.pts.length - 1].x) / 2, y: (r.pts[0].y + r.pts[r.pts.length - 1].y) / 2 }).roads.push(r);
+  // (a road and its lanes go to the same tile: by the middle of the road, which for one of two points lies between them)
+  const where = (r: Road) => (r.pts.length > 2 ? mid(r.pts) : { x: (r.pts[0].x + r.pts[r.pts.length - 1].x) / 2, y: (r.pts[0].y + r.pts[r.pts.length - 1].y) / 2 });
+  for (const r of net.roads) at(where(r)).roads.push(r);
   for (const n of net.nodes) { const t = at(n.p); t.nodes.push(n); if (n.edge) t.edges.push(n); }
-  for (const l of net.lanes) at(l.road ? mid(l.road.pts) : l.from.p).lanes.push(l);
+  for (const l of net.lanes) at(l.road ? where(l.road) : l.from.p).lanes.push(l);
   for (const s of net.stalls) at(s.p).stalls.push(s);
   for (const q of net.pads) at({ x: (q.x0 + q.x1) / 2, y: (q.y0 + q.y1) / 2 }).pads.push(q);
   for (const q of net.buildings) at({ x: (q.x0 + q.x1) / 2, y: (q.y0 + q.y1) / 2 }).buildings.push(q);
   const f = (v: number) => v.toFixed(1);
   for (const [key, n] of part) {
+    const [ti, tj] = key.split(',').map(Number), cx = ti * TILE, cy = tj * TILE, reach = TILE / 2 + 25;
+    n.around = net.roads.filter((r) => at(where(r)) !== n && r.pts.some((p) => Math.abs(p.x - cx) < reach && Math.abs(p.y - cy) < reach));
     let sig = '';
+    for (const r of n.around) { sig += `a${f(r.hw)}`; for (const p of r.pts) sig += f(p.x) + ',' + f(p.y) + ';'; }
     for (const r of n.roads) {
       sig += `r${r.lanes}${r.rank}${+r.bridge}${+r.ring}${+r.one}${f(r.hw)}:${r.stallSegs.join('.')}:${f(r.a.z)}${f(r.b.z)}`;
       for (const p of r.pts) sig += f(p.x) + ',' + f(p.y) + ';';

@@ -153,6 +153,7 @@ function away(pts: V[], p: V) {
   return best;
 }
 
+const NO_APRON: V[] = [];
 /** Is p inside a convex outline, whichever way round it is given? */
 function within(poly: V[], p: V) {
   let sign = 0;
@@ -345,9 +346,10 @@ export function buildGround(net: Net) {
   const loose = new Set(net.nodes.filter((n) => !n.stub && n.z === 0 && n.roads.length >= 3 && turnsAt.has(n)
     && !n.roads.some((q) => q.ring || q.rank < 1) && n.trim >= Math.max(...n.roads.map((q) => q.hw)) + 8));
   const aprons = new Map<Node, V[]>();
-  for (const n of net.nodes) if (!n.stub && !loose.has(n)) aprons.set(n, hull(mouths(n)));
+  // (a road of this tile may end at a junction that belongs to the next: its outline is asked for too, though it is not drawn here)
+  for (const n of new Set([...net.nodes, ...net.roads.flatMap((r) => [r.a, r.b])])) if (!n.stub && !loose.has(n)) aprons.set(n, hull(mouths(n)));
   /** Is there junction under this point? */
-  const paved = (n: Node, p: V) => (loose.has(n) ? turnsAt.get(n)!.some((l) => away(l.pts, p) < reach(l)) : within(aprons.get(n)!, p));
+  const paved = (n: Node, p: V) => (loose.has(n) ? turnsAt.get(n)!.some((l) => away(l.pts, p) < reach(l)) : within(aprons.get(n) ?? NO_APRON, p));
 
   const flats = [kerb, pad, road, white, yellow];
   for (const r of net.roads) {
@@ -566,11 +568,12 @@ const FILED = 8;
 type Cells = Map<number, { r: Road; i: number }[]>;
 const grids = new WeakMap<Road[], Cells>();
 const cellKey = (i: number, j: number) => (i + 4096) * 8192 + (j + 4096);
-function cells(roads: Road[]): Cells {
+function cells(roads: Road[], around?: Road[]): Cells {
   let g = grids.get(roads);
   if (g) return g;
   g = new Map();
-  for (const r of roads) {
+  // (and the roads of the next tiles that run along this one's edge: a tree here keeps clear of them too)
+  for (const r of around ? [...roads, ...around] : roads) {
     const m = r.hw + FILED + 1;
     for (let i = 0; i < r.pts.length - 1; i++) {
       const a = r.pts[i], b = r.pts[i + 1];
@@ -587,7 +590,7 @@ function cells(roads: Road[]): Cells {
 }
 const NOTHING: { r: Road; i: number }[] = [];
 /** The stretches of road that may lie within FILED metres of their edge from a point. */
-const filed = (net: Net, x: number, y: number) => cells(net.roads).get(cellKey(Math.floor(x / CELL), Math.floor(y / CELL))) ?? NOTHING;
+const filed = (net: Net, x: number, y: number) => cells(net.roads, net.around).get(cellKey(Math.floor(x / CELL), Math.floor(y / CELL))) ?? NOTHING;
 
 /** Is this point clear of roads, lots and buildings? For planting trees. */
 export function clearOf(net: Net, x: number, y: number, margin: number) {
