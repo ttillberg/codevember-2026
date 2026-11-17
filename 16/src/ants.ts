@@ -20,6 +20,37 @@ const CLIMB = 1.8; // how far up the trunk the trail goes
 interface Ant { s: number; dir: number; speed: number; lane: number; phase: number; rest: number }
 interface Trail { key: string; pts: Float32Array; ups: Float32Array; n: number; ants: Ant[] }
 
+// over the moss's top, where the frond tips are, so they show (down in it they were lost)
+const ground = (x: number, z: number) => { const g = groundHeight(x, z); return g + 0.068 * mossAt(x, g, z) + 0.006; };
+function groundUp(x: number, z: number, ups: number[]) {
+  const e = 0.02, gx = ground(x + e, z) - ground(x - e, z), gz = ground(x, z + e) - ground(x, z - e);
+  const nl = Math.hypot(gx, 2 * e, gz);
+  ups.push(-gx / nl, (2 * e) / nl, -gz / nl);
+}
+
+/**
+ * A lone ant crossing in front of you, a scout off its trail: a wandering line over the moss from one side of
+ * the view to the other, a hand or two ahead, walked once.
+ */
+function makeStray(cam: THREE.Camera): Trail {
+  const f = cam.getWorldDirection(new THREE.Vector3()).setY(0).normalize();
+  const sx = -f.z, sz = f.x;
+  const d = 0.25 + Math.random() * 0.15, half = 0.15 + d * 0.4, slant = (Math.random() - 0.5) * 0.6;
+  const dir = Math.random() < 0.5 ? 1 : -1;
+  const w = Math.random() * 6.28, k = 2 + Math.random() * 3;
+  const pts: number[] = [], ups: number[] = [];
+  const steps = Math.ceil((2 * half) / STEP);
+  for (let i = 0; i <= steps; i++) {
+    const u = i / steps, t = (u * 2 - 1) * half * dir;
+    const ahead = d + t * slant + 0.03 * Math.sin(u * k * Math.PI + w);
+    const x = cam.position.x + f.x * ahead + sx * t, z = cam.position.z + f.z * ahead + sz * t;
+    pts.push(x, ground(x, z), z);
+    groundUp(x, z, ups);
+  }
+  const n = pts.length / 3;
+  return { key: 'stray', pts: new Float32Array(pts), ups: new Float32Array(ups), n, ants: [{ s: 0, dir: 1, speed: 0.035 + 0.02 * Math.random(), lane: 0, phase: Math.random() * 100, rest: 0 }] };
+}
+
 /** A trail for this trunk, or null (half have none). */
 function makeTrail(t: Trunk): Trail | null {
   const r = mulberry32((Math.imul(Math.round(t.x * 100), 0x2c1b3c6d) ^ Math.imul(Math.round(t.z * 100), 0x297a2d39) ^ 0xa17) >>> 0);
@@ -28,8 +59,6 @@ function makeTrail(t: Trunk): Trail | null {
   const far = t.r * 1.5 + 1.4 + 1.6 * r();
   const nx = t.x + Math.cos(a) * far, nz = t.z + Math.sin(a) * far;
   const pts: number[] = [], ups: number[] = [];
-  // over the moss's top, where the frond tips are, so they show (down in it they were lost)
-  const ground = (x: number, z: number) => { const g = groundHeight(x, z); return g + 0.068 * mossAt(x, g, z) + 0.006; };
   // over the moss: from the nest to the bark, wandering a little either side of the straight line
   const ex = Math.cos(a), ez = Math.sin(a), px = -ez, pz = ex;
   const w1 = r() * 6.28, w2 = r() * 6.28, k1 = 2 + r() * 2, k2 = 5 + r() * 4;
@@ -44,10 +73,7 @@ function makeTrail(t: Trunk): Trail | null {
     const y = ground(x, z);
     if (Math.hypot(x - t.x, z - t.z) <= trunkRadius(t, phi, Math.max(0, y - trunkFoot(t))) + 0.003) break;
     pts.push(x, y, z);
-    // the ground's normal, from its slope
-    const e = 0.02, gx = ground(x + e, z) - ground(x - e, z), gz = ground(x, z + e) - ground(x, z - e);
-    const nl = Math.hypot(gx, 2 * e, gz);
-    ups.push(-gx / nl, (2 * e) / nl, -gz / nl);
+    groundUp(x, z, ups); // the ground's normal, from its slope
     lx = x; lz = z;
   }
   if (pts.length < 30) return null;
@@ -204,8 +230,10 @@ export class Ants {
   private phase: THREE.InstancedBufferAttribute;
   private walk: THREE.InstancedBufferAttribute;
   private m = new THREE.Matrix4();
+  private stray: Trail | null = null;
+  private strayIn = 4 + Math.random() * 6; // seconds to the next one crossing in front of you
 
-  constructor(setup: (m: THREE.ShaderMaterial) => void) {
+  constructor(setup: (m: THREE.ShaderMaterial) => void, private camera: THREE.Camera) {
     const mat = new THREE.ShaderMaterial({ vertexShader, fragmentShader, uniforms: {} });
     setup(mat);
     const g = antGeometry();
@@ -232,11 +260,19 @@ export class Ants {
       if (Math.hypot(x - px, z - pz) > NEAR + 2) this.trails.delete(key);
       void tr;
     }
+    // now and then a lone one comes by in front of you; gone when it has crossed
+    if (this.stray && this.stray.ants[0].s >= (this.stray.n - 1) * STEP) this.stray = null;
+    if (!this.stray && (this.strayIn -= dt) <= 0) {
+      this.stray = makeStray(this.camera);
+      this.strayIn = 10 + Math.random() * 25;
+    }
     const ph = this.phase.array as Float32Array, wk = this.walk.array as Float32Array;
     const f = new THREE.Vector3(), up = new THREE.Vector3(), side = new THREE.Vector3(), p = new THREE.Vector3();
     let count = 0;
-    for (const tr of this.trails.values()) {
+    const all = this.stray ? [...this.trails.values(), this.stray] : this.trails.values();
+    for (const tr of all) {
       if (!tr.n) continue;
+      const stray = tr === this.stray;
       const L = (tr.n - 1) * STEP;
       for (const a of tr.ants) {
         // now and then one stops a moment, as when two meet
@@ -245,6 +281,7 @@ export class Ants {
           a.s += a.dir * a.speed * dt;
           if (Math.random() < dt * 0.08) a.rest = 0.3 + Math.random() * 0.9;
         }
+        if (stray && a.s >= L) continue;
         if (a.s > L) { a.s = L; a.dir = -1; }
         if (a.s < 0) { a.s = 0; a.dir = 1; }
         const walking = a.rest > 0 ? 0 : 1;
@@ -261,7 +298,8 @@ export class Ants {
         // its own lane, wandering a few millimetres
         p.addScaledVector(side, a.lane + 0.003 * Math.sin(a.phase * 0.013 + a.lane * 300));
         // a big worker, about 14 mm
-        this.m.makeBasis(side.multiplyScalar(1.55), up.multiplyScalar(1.55), f.multiplyScalar(1.55)).setPosition(p);
+        const sc = stray ? 3.1 : 1.55; // the one crossing in front of you twice the size, a cheat that does not show
+        this.m.makeBasis(side.multiplyScalar(sc), up.multiplyScalar(sc), f.multiplyScalar(sc)).setPosition(p);
         this.mesh.setMatrixAt(count, this.m);
         ph[count] = a.phase;
         wk[count] = walking;

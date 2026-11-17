@@ -155,7 +155,7 @@ scene.add(ferns.root);
 const trees = new Trees(share);
 scene.add(trees.root);
 // wood ants on trails from a nest in the moss up the trunks
-const ants = new Ants(share);
+const ants = new Ants(share, camera);
 scene.add(ants.mesh);
 
 // the floor beyond the chunks: a big plane a hair under the moss, following the swells, recentred as you go
