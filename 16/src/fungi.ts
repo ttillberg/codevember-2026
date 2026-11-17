@@ -892,14 +892,16 @@ void main() {
   vec3 q = vWorldPos * 380.0 + vec3(0.0, uTime * 0.25, 0.0);
   vec3 Nw = normalize(N + (vec3(n3(q), n3(q + 17.0), n3(q + 31.0)) - 0.5) * 0.35);
   col *= 0.82;
-  float shadow = shadowAt(vWorldPos, N);
+  // in the shade no direct sun at all: the floor that lets a little through is for the dark moss, and on a white
+  // stem or a red cap it read as lit; the sky's fill does the shade
+  float shadow = clamp((shadowAt(vWorldPos, N) - uShadowFloor) / max(1.0 - uShadowFloor, 1e-3), 0.0, 1.0);
   float diff = max(dot(N, L), 0.0);
   float wrap = max(dot(N, L) * 0.5 + 0.5, 0.0);
   float spec = pow(max(dot(reflect(-L, Nw), V), 0.0), 140.0) * 2.2 + pow(max(dot(reflect(-L, Nw), V), 0.0), 18.0) * 0.25;
   float sheen = pow(1.0 - max(dot(Nw, V), 0.0), 4.0) * 0.35 * mix(0.3, 1.0, shadow); // the wet sheen is the sky's: dim in the shade, as all else
   float thru = pow(max(dot(-V, L), 0.0), 2.5) * thin;
   // the fill is dimmer in the shade, as on the moss: a white stem in a shadow had stood out as if lit
-  vec3 lit = col * (mix(0.12, 0.25, shadow) * skyTint(N, 1.0) + 1.3 * diff * shadow + 0.15 * wrap * mix(0.35, 1.0, shadow))
+  vec3 lit = col * (mix(0.09, 0.25, shadow) * skyTint(N, 1.0) + 1.3 * diff * shadow + 0.15 * wrap * mix(0.35, 1.0, shadow))
            + col * vec3(1.5, 1.1, 0.6) * thru * max(shadow, 0.3)
            + vec3(1.0, 0.9, 0.75) * spec * shadow
            + vec3(0.6, 0.62, 0.66) * sheen;
