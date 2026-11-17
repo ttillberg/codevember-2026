@@ -31,4 +31,4 @@ function art(p: Panel) {
   return glass(b.x0, b.w, H, p.id === 'front' || p.id === 'right');
 }
 
-export const bibliotek: Model = { id: 'bibliotek', name: 'Stadsbiblioteket', where: 'Slottsparken', net: makeShed(W, D, H, H, 7), art };
+export const bibliotek: Model = { id: 'bibliotek', name: 'Ljusets kalender', where: 'Stadsbiblioteket', net: makeShed(W, D, H, H, 7), art };
