@@ -258,13 +258,14 @@ export function Town({ net, blocks, paving, roofing }: { net: Net; blocks: Block
   const ground = useMemo(
     () => pavingGeometry(
       [
-        ...up.map((b) => ({ x0: b.x0 - 3.5, y0: b.y0 - 3.5, x1: b.x1 + 3.5, y1: b.y1 + 3.5 })),
+        // the big ones stand on a slab of concrete; a little one stands on the grass, with only its path to the road
+        ...up.filter((b) => !b.small).map((b) => ({ x0: b.x0 - 3.5, y0: b.y0 - 3.5, x1: b.x1 + 3.5, y1: b.y1 + 3.5 })),
         // where a road ends at a building, the ground between them is paved: a forecourt
         ...net.nodes.filter((n) => n.stub && !n.edge).flatMap((n) =>
-          up.filter((b) => Math.hypot(Math.max(b.x0 - n.p.x, 0, n.p.x - b.x1), Math.max(b.y0 - n.p.y, 0, n.p.y - b.y1)) < 34)
+          up.filter((b) => !b.small && Math.hypot(Math.max(b.x0 - n.p.x, 0, n.p.x - b.x1), Math.max(b.y0 - n.p.y, 0, n.p.y - b.y1)) < 34)
             .map((b) => ({ x0: Math.min(b.x0 - 3.5, n.p.x - 9), y0: Math.min(b.y0 - 3.5, n.p.y - 9), x1: Math.max(b.x1 + 3.5, n.p.x + 9), y1: Math.max(b.y1 + 3.5, n.p.y + 9) }))),
       ],
-      up.filter((b) => b.path.length > 1).map((b) => ({ pts: b.path, hw: 1.3 })),
+      up.filter((b) => b.path.length > 1).map((b) => ({ pts: b.path, hw: b.small ? 0.8 : 1.3 })),
     ),
     [up, net],
   );
