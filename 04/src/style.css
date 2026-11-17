@@ -15,6 +15,7 @@ canvas.glow { position: absolute; inset: 0; width: 100%; height: 100%; pointer-e
   pointer-events: none; user-select: none; -webkit-user-select: none;
   color: #f4f4f2;
   font: 13px/1.4 Inter, "Helvetica Neue", Helvetica, Arial, sans-serif;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.45), 0 0 14px rgba(0, 0, 0, 0.35); /* white on a busy aerial photo: a soft shade so the small line reads */
 }
 .plate b {
   display: block; white-space: nowrap;

@@ -29,7 +29,7 @@ canvas:active { cursor: grabbing; }
 }
 .plate .head > i, .plate .hint {
   display: block; margin-top: 6px; font-style: normal;
-  font-weight: 600; font-size: 13px; line-height: 1.15; letter-spacing: 0.12em; text-transform: uppercase;
+  font-weight: 600; font-size: 14px; line-height: 1.15; letter-spacing: 0.12em; text-transform: uppercase;
 }
 .plate .hint { margin-top: 14px; font-size: 11px; transition: opacity 1.2s; }
 .plate .hint.gone { opacity: 0; }

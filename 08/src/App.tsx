@@ -857,7 +857,7 @@ export function App() {
       {/* an upright phone with the probe in: no text, a footer instead, where it is (08 TESSERACT, and / PILOT at the controls; a PROBE between them for a while) and BACK, one up */}
       {CLEAN || !beetle ? null : <nav className="crumbs" aria-label="Where you are">
         {/* the title alone: the mode pills at the foot are the way between the modes (08 TESSERACT / PILOT and BACK in a footer, then BACK alone up here, for a while) */}
-        <span className="trail title"><span className="at">08 Tesseract</span><a className="home" href="https://ttillberg.github.io/codevember-2026/">Codevember 2026 <span lang="ja">超立方体</span></a><a className="home by" href="https://x.com/theo_t">by Theo Tillberg</a></span>
+        <span className="trail title"><span className="at">08 Tesseract</span><small className="line"><a className="home" href="https://ttillberg.github.io/codevember-2026/">Codevember 2026 <span lang="ja">超立方体</span></a> · <a className="home" href="https://x.com/theo_t">@theo_t</a></small></span>
       </nav>}
       {/* the first person view's corner, top right: hide or show it, and, shown, maximize or
           minimize it, the corner the only way to them */}

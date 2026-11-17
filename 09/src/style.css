@@ -50,8 +50,9 @@ canvas { display: block; width: 100vw; height: 100vh; height: 100dvh; touch-acti
 .plate .home span[lang="ja"] { font-family: "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Noto Sans JP", "Yu Gothic", sans-serif; letter-spacing: 0.06em; }
 a.home { color: inherit; text-decoration: none; pointer-events: auto; cursor: pointer; -webkit-tap-highlight-color: transparent; }
 @media (max-width: 640px), (max-height: 500px) {
+  .plate { top: max(16px, env(safe-area-inset-top)); left: max(16px, env(safe-area-inset-left)); }
   .plate b { font-size: 36px; }
-  .plate .head > i { font-size: 9px; }
+  .plate .head > i { font-size: 10px; }
 }
 .dark .plate { color: #f4f4f2; }
 .dark, .dark body { background: var(--bg); }
@@ -199,6 +200,8 @@ a.home { color: inherit; text-decoration: none; pointer-events: auto; cursor: po
 @media (hover: hover) { .pick-pop.open button:hover .pick-label { opacity: 1; transform: translate(0, -50%); } }
 /* Help: a flat question mark on its own in the top right, its panel opening under it (day 07). */
 .help { position: fixed; z-index: 4; top: max(16px, env(safe-area-inset-top)); right: max(16px, env(safe-area-inset-right)); }
+/* a phone: its icon 8 px inside, so on the 16 px corner with the plate */
+@media (max-width: 640px), (max-height: 500px) { .help { top: max(8px, env(safe-area-inset-top)); right: max(8px, env(safe-area-inset-right)); } }
 .help-btn {
   display: flex; align-items: center; justify-content: center;
   width: 46px; height: 46px; margin: 0; padding: 0; border: 0; border-radius: 50%;

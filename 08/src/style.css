@@ -412,6 +412,8 @@ a.home span[lang="ja"] { margin-left: 0.4em; font-family: "Hiragino Sans", "Hira
 .crumbs .trail .home, .crumbs .trail .home span { font: 700 6px/1 "Helvetica Neue", Helvetica, Arial, sans-serif; letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink); }
 .crumbs .trail .home span[lang="ja"] { font-family: "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Noto Sans JP", "Yu Gothic", sans-serif; letter-spacing: 0.06em; }
 .crumbs .trail .at { color: var(--ink); cursor: default; }
+/* the way home and the handle on one line, the dot between them in the same small caps */
+.crumbs .trail .line { display: block; font: 700 6px/1 "Helvetica Neue", Helvetica, Arial, sans-serif; letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink); white-space: nowrap; }
 /* BACK there the small pill, its pad hanging out over and under the line so the line keeps the capitals' height (a
    bare word for a moment) */
 .crumbs .probe.off { margin: -9.5px 0; }

@@ -151,7 +151,7 @@ function Plate({ hint }: { hint: string }) {
     <div className="plate">
       <div className="head">
         <b>01 Fold</b>
-        <i><a className="home" href="../">Codevember 2026 <span lang="ja">折る</span></a></i>
+        <i><a className="home" href="https://ttillberg.github.io/codevember-2026/">Codevember 2026 <span lang="ja">折る</span></a> · <a className="home" href="https://x.com/theo_t">@theo_t</a></i>
         <i className="hint">{hint}</i>
       </div>
     </div>
