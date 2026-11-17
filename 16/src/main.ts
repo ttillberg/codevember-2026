@@ -289,7 +289,7 @@ resize();
 // to steer; crawl straight into a trunk and you climb it), tap anywhere to throw spores at the sight in the middle of the screen. Space throws too. Keys: W or up crawls (shift runs), S or down backs off, A D or left right
 // turn your head.
 // climbing: the trunk you are on, the angle round it (atan2 of z, x) and the height over its foot
-const me = { x: 0, z: 0, y: 0, speed: 0, bob: 0, climb: null as null | { t: Trunk; phi: number; h: number } };
+const me = { x: 0, z: 0, y: 0, speed: 0, side: 0, bob: 0, climb: null as null | { t: Trunk; phi: number; h: number } };
 const CLIMB_MAX = 2; // a bit up the trunk: high enough to look down on the moss and the ferns, not into the haze
 const look = { yaw: 0, pitch: 0.12, tYaw: 0, tPitch: 0.12 }; // a little up: the fern over you
 const PITCH_MIN = -0.6, PITCH_MAX = 0.85; // up far enough to see under a cap, not past it
@@ -535,7 +535,9 @@ function focusDistance() {
 function crawl(dt: number) {
   const fwd = (keys.has('KeyW') || keys.has('ArrowUp') || (holding && !backing) || autoWalk ? 1 : 0) - (keys.has('KeyS') || keys.has('ArrowDown') || (holding && backing) ? 0.5 : 0);
   const turn = (keys.has('KeyA') || keys.has('ArrowLeft') ? 1 : 0) - (keys.has('KeyD') || keys.has('ArrowRight') ? 1 : 0);
-  look.tYaw += turn * dt * 2.2;
+  // with the pointer locked the mouse turns, so A and D (and the side arrows) step sideways, as in a shooter
+  const strafe = locked() && !me.climb ? -turn : 0;
+  if (!strafe && !locked()) look.tYaw += turn * dt * 2.2;
   // held and dragged out sideways: keep turning that way, like a stick
   if (holding && !locked()) {
     const off = lastX - downX, out = Math.max(0, Math.abs(off) - STEER_DEAD) / (Math.min(innerWidth, innerHeight) * 0.3);
@@ -544,11 +546,13 @@ function crawl(dt: number) {
   // shift held: run, twice the pace (the six legs patter faster with it)
   const run = keys.has('ShiftLeft') || keys.has('ShiftRight') ? 2 : 1;
   me.speed += (fwd * 0.36 * run - me.speed) * Math.min(1, dt * 4);
+  me.side += (strafe * 0.26 * run - me.side) * Math.min(1, dt * 4);
   const fx = -Math.sin(look.yaw), fz = -Math.cos(look.yaw); // you crawl where you look
   // six legs, three down at a time (a tripod gait): no lumbering, a quick even patter, each set of three
   // giving a little shove forward as it pushes off
-  const walking = Math.min(1, Math.abs(me.speed) / 0.2);
-  me.bob += dt * (5 + 30 * Math.abs(me.speed));
+  const pace = Math.hypot(me.speed, me.side);
+  const walking = Math.min(1, pace / 0.2);
+  me.bob += dt * (5 + 30 * pace);
   const shove = 1 + 0.35 * Math.sin(me.bob * 2) * walking;
   if (me.climb) climb(dt, fx, fz, me.speed * shove);
   else walk(dt, fx, fz, me.speed * shove);
@@ -565,8 +569,8 @@ function crawl(dt: number) {
 
 /** On the ground: over the moss, round the stipes, and up a trunk if you crawl straight into one. */
 function walk(dt: number, fx: number, fz: number, v: number) {
-  me.x += fx * v * dt;
-  me.z += fz * v * dt;
+  me.x += fx * v * dt - fz * me.side * dt;
+  me.z += fz * v * dt + fx * me.side * dt;
   // the tight bunch of stipes at a fern's crown is solid; the fronds you crawl under; small fungi you crawl over,
   // and a puffball you crawl into puffs
   const bumped = fungi.press(me.x + fx * 0.06, me.z + fz * 0.06, 0.02);
