@@ -905,7 +905,8 @@ void main() {
            + vec3(0.6, 0.62, 0.66) * sheen;
   lit += rimLight(N, V) * col * 2.0;
   // with the sun at your back, a gold catch on the side turned to it, as the moss and ferns get
-  lit += SUN_GLOW * 0.6 * pow(max(dot(N, L) * 0.5 + 0.5, 0.0), 3.0) * withSun(V, L) * sunCatch(vWorldPos, shadow);
+  // (their own colour lit warm, not the moss's flat gold added: that washed a red cap out to cream)
+  lit += col * vec3(1.5, 1.15, 0.7) * pow(max(dot(N, L) * 0.5 + 0.5, 0.0), 3.0) * withSun(V, L) * sunCatch(vWorldPos, shadow) * 0.7;
   // the foot down in the moss is dark
   lit *= mix(0.35, 1.0, smoothstep(0.0, 0.12, along));
   gl_FragColor = vec4(tonemap(grade(lit)), 1.0);
