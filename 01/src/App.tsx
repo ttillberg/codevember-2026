@@ -140,6 +140,7 @@ function BoardHud() {
       <button className="sheets" type="button" aria-label="Back to the sheets" onClick={() => useHud.setState({ board: false })}>
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="3.5" y="6.5" width="11" height="14" rx="1" /><path d="M8 3.5h11.5a1 1 0 0 1 1 1V17" /></svg>
       </button>
+      <Zoom />
     </>
   );
 }
@@ -178,13 +179,26 @@ function Dial() {
   return (
     <button className="dial" type="button" aria-label="Turn the view" {...h}>
       <svg viewBox="0 0 240 60" aria-hidden="true">
-        <path className="rim" d="M26 16 Q120 70 214 16" />
-        <path className="track" d="M26 16 Q120 70 214 16" />
-        <path className="line" d="M30 19 Q120 66 210 19" />
-        <path className="line" d="M30 19l2 13M30 19l12.5 -4" />
-        <path className="line" d="M210 19l-2 13M210 19l-12.5 -4" />
+        <path className="arc" d="M36 20 Q120 64 204 20" />
+        <path className="head" d="M30 13l7 8-10.5 1.5" />
+        <path className="head" d="M210 13l-7 8 10.5 1.5" />
       </svg>
     </button>
+  );
+}
+
+// zoom in and out, the fit being as far out as it goes
+function Zoom() {
+  const zoom = useHud((s) => s.zoom);
+  return (
+    <div className="zoom">
+      <button type="button" aria-label="Zoom in" onClick={() => zoom(1.4)}>
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>
+      </button>
+      <button type="button" aria-label="Zoom out" onClick={() => zoom(1 / 1.4)}>
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true"><path d="M5 12h14" /></svg>
+      </button>
+    </div>
   );
 }
 
@@ -242,6 +256,7 @@ function Hud() {
       {ready && <button className="put" type="button" onClick={put}>Put it on the board</button>}
       <Dial />
       <Turns />
+      <Zoom />
       <div className="tools">
         <button className="undo" type="button" aria-label="Undo" disabled={!canUndo} onClick={actions.undo}>
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M9 14 4 9l5-5" /><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11" /></svg>

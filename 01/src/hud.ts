@@ -18,6 +18,8 @@ export interface Hud {
   town: Placed[];
   // a quarter turn of the view about what is on the mat: +1 the way a drag to the right goes
   turnView(dir: number): void;
+  // the buttons' zoom: in by a factor, out below 1 (never past the fit)
+  zoom(f: number): void;
   // spin: a quarter turn about up, +1 the near side going right; tip: a quarter turn over,
   // the top falling the way of the screen drag (dx, dy)
   actions: { undo(): void; redo(): void; flip(): void; reset(): void; spin(dir: number): void; tip(dx: number, dy: number): void };
@@ -40,6 +42,7 @@ export const useHud = create<Hud>(() => ({
   ready: false,
   town: saved.town,
   turnView: nothing,
+  zoom: nothing,
   actions: { undo: nothing, redo: nothing, flip: nothing, reset: nothing, spin: nothing, tip: nothing },
 }));
 

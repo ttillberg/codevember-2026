@@ -72,6 +72,23 @@ export function makeRig(camera: THREE.OrthographicCamera, canvas: HTMLCanvasElem
     aim();
   }
 
+  // the buttons' zoom: eased towards a goal (see tick), about a point that stays put: what
+  // `about` says is the thing looked at (client px), else the canvas's middle
+  let goal: number | null = null;
+  let about: (() => [number, number]) | null = null;
+  function zoomBy(f: number, at?: () => [number, number]) {
+    goal = Math.max(1, Math.min(3, (goal ?? view.zoom) * f));
+    about = at ?? null;
+  }
+  function tick(dt: number) {
+    if (goal === null) return;
+    const r = canvas.getBoundingClientRect();
+    const [x, y] = about?.() ?? [r.left + r.width / 2, r.top + r.height / 2];
+    const z = view.zoom + (goal - view.zoom) * (1 - Math.exp(-dt * 12));
+    zoomAt(z / view.zoom, x, y);
+    if (Math.abs(goal - view.zoom) < 0.002) goal = null;
+  }
+
   // drag the view by screen pixels
   function panBy(dx: number, dy: number) {
     view.panX -= dx * mmPerPx;
@@ -84,8 +101,10 @@ export function makeRig(camera: THREE.OrthographicCamera, canvas: HTMLCanvasElem
     aim,
     fit(box: THREE.Box3) { fitBox = box; aim(); },
     zoomAt,
+    zoomBy,
+    tick,
     panBy,
-    unzoom() { view.zoom = 1; view.panX = view.panY = 0; view.azimuth = 36; aim(); },
+    unzoom() { goal = null; view.zoom = 1; view.panX = view.panY = 0; view.azimuth = 36; aim(); },
     // screen (client px) ↔ normalised device coordinates, from the canvas as it really is
     ndc(cx: number, cy: number) {
       const r = canvas.getBoundingClientRect();

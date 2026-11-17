@@ -725,18 +725,24 @@ export function createGame(model: Model, camera: THREE.OrthographicCamera, canva
     ground = want > ground ? want : ground + (want - ground) * (1 - Math.exp(-dt * 14));
     paper.place(theta, pivot, arc + ground, axis);
 
-    // the camera eases to hold what there is, still while a hand is on it
+    // the camera holds the whole sheet laid flat, its longer side across the mat, about
+    // where the card is now: one size from the first press to the last fold, so nothing jumps
+    // as it folds; it eases after the card's middle, still while a hand is on it
     if (press?.mode !== 'fold') {
       const box = folding.unpeeked(panelsBox);
-      box.min.y = Math.min(box.min.y, 0);
-      if (framed.isEmpty()) framed.copy(box);
+      if (paper.waste.visible) box.expandByObject(paper.waste, true);
+      const c = box.getCenter(new THREE.Vector3());
+      const half = Math.max(sheet.w, sheet.h) / 2;
+      const want = new THREE.Box3(new THREE.Vector3(c.x - half, 0, c.z - half), new THREE.Vector3(c.x + half, 0, c.z + half));
+      if (framed.isEmpty()) framed.copy(want);
       const k = 1 - Math.exp(-dt * 2.5);
-      framed.min.lerp(box.min, k);
-      framed.max.lerp(box.max, k);
-      // the taller it stands, the more air around it
-      rig.view.room = 1.12 + 0.28 * Math.min(1, Math.max(0, (framed.max.y - framed.min.y) / 80));
+      framed.min.lerp(want.min, k);
+      framed.max.lerp(want.max, k);
+      // a little air round it (the rig pads a phone less: its screen is narrow)
+      rig.view.room = canvas.clientWidth < 640 ? 1.1 : 0.86;
       rig.fit(framed);
     }
+    rig.tick(dt);
 
     if (!built && freed && !paper.waste.visible && folding.allShut()) {
       built = true;
@@ -796,6 +802,11 @@ export function createGame(model: Model, camera: THREE.OrthographicCamera, canva
   hud({
     ready: false,
     turnView,
+    // about the card's middle, so a tall one stays in sight
+    zoom: (f) => rig.zoomBy(f, () => {
+      const q = rig.screen(folding.unpeeked(panelsBox).getCenter(new THREE.Vector3()).project(camera));
+      return [q.x, q.y];
+    }),
     actions: { undo, redo, flip: () => { gestureSaved = false; byHand = true; flip(); }, reset, spin: spinBy, tip: (dx, dy) => { gestureSaved = false; tip(dx, dy); } },
   });
 

@@ -257,6 +257,7 @@ export function createBoard(camera: THREE.OrthographicCamera, canvas: HTMLCanvas
     const q = Math.round(rot / (Math.PI / 2)) * (Math.PI / 2);
     return Math.abs(rot - q) < THREE.MathUtils.degToRad(4) ? q : rot;
   };
+  useHud.setState({ zoom: (f) => rig.zoomBy(f) });
   const touches = new Map<number, { x: number; y: number }>();
   let pinch: { d: number; x: number; y: number; a: number } | null = null;
   const two = () => {
@@ -404,6 +405,7 @@ export function createBoard(camera: THREE.OrthographicCamera, canvas: HTMLCanvas
     frame.max.lerp(want.max, k4);
     rig.view.room = 1.05;
     rig.fit(frame);
+    rig.tick(dt);
     const k = 1 - Math.exp(-dt * 14);
     for (const s of sprites.values()) {
       const p = useHud.getState().town.find((q) => q.key === s.key);
