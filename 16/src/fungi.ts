@@ -197,13 +197,22 @@ function funnelOverlap(a: ReturnType<typeof funnelLayers>, b: ReturnType<typeof 
   return worst;
 }
 
-/** The funnel's profile at growth g: (r, y, part, along). */
+/**
+ * The funnel's profile at growth g: (r, y, part, along). Three phases, as in a timelapse: a pale knob pushes up
+ * out of the moss (the pin), the stem stretches with the cap still shut over it like a domed button, then the cap
+ * opens, its rim unrolling, the dome sinking into a dip (a chanterelle) or a funnel (a yellowfoot).
+ */
 function funnelProfile(f: Funnel, g: number) {
-  const stemG = ease(clamp01(g / 0.6));
-  const open = ease(clamp01((g - 0.3) / 0.7));
-  const H = f.H * (0.15 + 0.85 * stemG);
-  const rs = f.rs * (0.55 + 0.45 * stemG);
-  const R = f.R * (0.3 + 0.7 * open);
+  const pin = ease(clamp01(g / 0.15));
+  const stretch = ease(clamp01((g - 0.08) / 0.55));
+  const open = ease(clamp01((g - 0.42) / 0.58));
+  // a yellowfoot's slender stem shoots up before it opens; a chanterelle's grows with its cap
+  const up = f.solid ? 0.45 * stretch + 0.55 * open : stretch;
+  const H = f.H * (0.03 + 0.12 * pin + 0.85 * up);
+  const rs = f.rs * (0.5 + 0.2 * pin + 0.3 * stretch);
+  // shut, the cap is a button a little wider than the stem; open, it spreads to its full width
+  const R = Math.max(rs * 1.3, f.R * (0.3 + 0.7 * open) * (0.45 + 0.55 * pin));
+  const dome = Math.pow(1 - open, 1.5) * R * (f.solid ? 0.75 : 0.6); // how high the shut cap bulges
   const D = H * (f.solid ? 0.07 : 0.3) * open; // how deep the funnel goes; a chanterelle only dips
   const rimLift = f.R * (f.solid ? 0.12 : 0.25) * open;
   const curl = 1 - open; // young rims roll in
@@ -229,17 +238,19 @@ function funnelProfile(f: Funnel, g: number) {
     // the top of a chanterelle's cap: from the rim in and gently down to a shallow dip in the middle
     for (let i = 1; i <= 9; i++) {
       const t = i / 9;
-      P.push([R * (1 - t), rimY + th - (rimY + th - (H + th - D)) * Math.pow(t, 0.6), 2, 0.8 + 0.08 * t]);
+      P.push([R * (1 - t), rimY + th - (rimY + th - (H + th - D)) * Math.pow(t, 0.6) + dome * Math.sqrt(Math.max(0, 1 - (1 - t) * (1 - t))), 2, 0.8 + 0.08 * t]);
     }
     return { P, H, R, open };
   }
   // the inside of the funnel, down into the hollow stem
   for (let i = 0; i <= 8; i++) {
     const t = i / 8;
-    P.push([R - (R - rs * 0.45) * Math.pow(t, 0.8), rimY + th - (rimY + th - (H - D)) * Math.pow(t, 1.3), 2, 0.8 + 0.2 * t]);
+    // shut, this is the domed top of the button; the dome sinks as it opens into a funnel
+    const r = R - (R - rs * 0.45 * open) * Math.pow(t, 0.8);
+    P.push([r, rimY + th - (rimY + th - (H - D)) * Math.pow(t, 1.3) + dome * Math.sqrt(Math.max(0, 1 - (1 - t) * (1 - t))), 2, 0.8 + 0.2 * t]);
   }
-  P.push([rs * 0.25, H - D - 0.004, 2, 1]);
-  P.push([0, H - D - 0.006, 2, 1]);
+  P.push([rs * 0.25 * open, H - D - 0.004 * open + dome, 2, 1]);
+  P.push([0, H - D - 0.006 * open + dome, 2, 1]);
   return { P, H, R, open };
 }
 
@@ -270,8 +281,9 @@ function buildFunnel(b: Buf, f: Funnel, age: number, time: number) {
       b.uvf.push(along, k / FS);
       // each part its own colour; the fresh flesh paler
       const t = part === 0 ? f.stemTint : part === 1 ? f.underTint : f.tint;
-      const fresh = (1 - g) * 0.35;
-      b.tint.push(t[0] + (0.7 - t[0]) * fresh, t[1] + (0.6 - t[1]) * fresh, t[2] + (0.4 - t[2]) * fresh);
+      // pins come up pale, nearly white, and colour in as they grow
+      const fresh = 0.6 * (1 - THREE.MathUtils.smoothstep(g, 0.05, 0.75));
+      b.tint.push(t[0] + (0.8 - t[0]) * fresh, t[1] + (0.74 - t[1]) * fresh, t[2] + (0.6 - t[2]) * fresh);
     }
   }
   for (let i = 0; i < n - 1; i++) for (let k = 0; k < FS; k++) {
@@ -294,10 +306,14 @@ const PS = 36; // around a puffball
 function buildPuffball(b: Buf, p: Puff, age: number) {
   const g = clamp01((age - p.delay) / p.dur);
   if (g <= 0) return;
-  const gr = ease(clamp01(g + 0.02 * Math.sin(g * 13 + p.phase)));
+  // a white knob pushes up out of the moss, swells into a ball, and last the foot lifts it on a short stem
+  const gg = clamp01(g + 0.02 * Math.sin(g * 13 + p.phase));
+  const pin = ease(clamp01(gg / 0.2)), swell = ease(clamp01((gg - 0.1) / 0.6)), lift = ease(clamp01((gg - 0.45) / 0.55));
   const sq = p.squash * p.squash;
-  const H = p.H * (0.18 + 0.82 * gr) * (1 - 0.22 * sq);
-  const R = p.R * (0.35 + 0.65 * gr) * (1 + 0.1 * sq);
+  const R0 = p.R * (0.25 + 0.15 * pin + 0.6 * swell);
+  const H = (R0 * 1.7 + (p.H - p.R * 1.7) * lift) * (1 - 0.22 * sq);
+  const R = R0 * (1 + 0.1 * sq);
+  const sink = (1 - pin) * R * 1.6 + (1 - lift) * R * 0.7; // under the moss, the foot too until it lifts
   // a round head on a stout foot that narrows down into the moss, with a little point on top
   const prof: number[][] = [];
   const N = 26;
@@ -320,7 +336,7 @@ function buildPuffball(b: Buf, p: Puff, age: number) {
   for (const [r, y, along] of prof) {
     for (let k = 0; k < PS; k++) {
       const a = (k / PS) * Math.PI * 2;
-      b.pos.push(p.base.x + Math.cos(a) * r, p.base.y + y, p.base.z + Math.sin(a) * r);
+      b.pos.push(p.base.x + Math.cos(a) * r, p.base.y + y - sink, p.base.z + Math.sin(a) * r);
       b.part.push(4);
       b.uvf.push(along, k / PS);
       const fresh = (1 - g) * 0.5;
