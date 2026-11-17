@@ -45,8 +45,8 @@ export function TimeControl({ now, readout, hold, onHold, onSet }: {
       onPointerMove={(e) => {
         const d = drag.current;
         if (!d) return;
-        // any way the hand goes: to the right and up is later, to the left and down earlier
-        const by = e.clientX - d.x - (e.clientY - d.y);
+        // any way the hand goes: to the right and down is later, to the left and up earlier
+        const by = e.clientX - d.x + (e.clientY - d.y);
         if (!d.moved && Math.hypot(e.clientX - d.x, e.clientY - d.y) < TAP) return;
         d.moved = true;
         onSet(wrap(d.h + by / PX_PER_HOUR));
