@@ -342,8 +342,9 @@ canvas.addEventListener('pointermove', (e) => {
     const k = THREE.MathUtils.degToRad(camera.fov) / innerHeight * DRAG_TURN;
     // just looking you drag the world round; crawling you steer, so drag left and you turn left
     look.tYaw += (e.clientX - lastX) * k * (holding ? -1 : 1);
-    // up and down: a finger drags the world (up looks down), a mouse points (up looks up)
-    const tilt = e.pointerType === 'mouse' ? -1 : 1;
+    // up and down: a finger just looking drags the world (up looks down), a mouse points (up looks up)
+    // crawling, a finger steers the same way: up looks up, as left turns left
+    const tilt = e.pointerType === 'mouse' || holding ? -1 : 1;
     look.tPitch = clampPitch(look.tPitch + (e.clientY - lastY) * k * tilt);
   }
   lastX = e.clientX; lastY = e.clientY;
