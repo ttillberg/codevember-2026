@@ -148,9 +148,11 @@ interface Props {
   shrink?: boolean;
   /** how far the smear reaches, metres: a ring that wide goes with the pointer while the smear is held */
   reach: number;
+  /** how wide the eraser rubs to either side, metres: its ring and its drag are that wide */
+  rub: number;
 }
 
-export function Painter({ net, tool, onStroke, onSmear, onTrace, onErase, onSize, shrink, reach }: Props) {
+export function Painter({ net, tool, onStroke, onSmear, onTrace, onErase, onSize, shrink, reach, rub }: Props) {
   const preview = useRef<Mesh>(null);
   const draw = useRef<{ id: number; pts: V[]; bridge: boolean; smear: boolean; erase: boolean; up: boolean } | null>(null);
 
@@ -165,13 +167,15 @@ export function Painter({ net, tool, onStroke, onSmear, onTrace, onErase, onSize
     const m = preview.current!, g = mesh.current!, h = halo.current!;
     sinking.current = 0;
     h.geometry.dispose();
-    h.geometry = strokeGeometry(pts, CROSS.lanes * CROSS.lw + 4.5);
+    // what is rubbed out is shown as wide as the eraser is
+    const half = mode === 'erase' ? rub : CROSS.lanes * CROSS.lw;
+    h.geometry = strokeGeometry(pts, half + 4.5);
     h.visible = pts.length > 1 && mode !== 'ghost';
     // whatever is being laid is green, road or bridge; what is rubbed out is red; the ghost left waiting is pale
     const ink = mode === 'erase' ? RED : mode === 'ghost' ? PALE : NEON;
     (h.material as MeshBasicMaterial).color.setHex(ink);
     m.geometry.dispose();
-    m.geometry = g.geometry = strokeGeometry(pts, CROSS.lanes * CROSS.lw + 0.45);
+    m.geometry = g.geometry = strokeGeometry(pts, half + 0.45);
     m.visible = pts.length > 1;
     g.visible = m.visible && mode === 'ghost';
     const mat = m.material as MeshBasicMaterial;
@@ -230,8 +234,9 @@ export function Painter({ net, tool, onStroke, onSmear, onTrace, onErase, onSize
     mark(here.current!, hold ? hold.p : ground, hold ? hold.h : 0);
     // the smear shows how far it reaches; while it is dragged the ring stays where it took hold
     const w = wide.current!;
-    w.visible = tool === 'smear' || !!draw.current?.smear;
-    if (w.visible && !draw.current) { w.position.set(ground.x, 0.6, ground.y); w.scale.setScalar(reach); }
+    const rubbing = tool === 'erase' || !!draw.current?.erase;
+    w.visible = rubbing || tool === 'smear' || !!draw.current?.smear;
+    if (w.visible && (rubbing || !draw.current)) { w.position.set(ground.x, 0.6, ground.y); w.scale.setScalar(rubbing ? rub : reach); }
     const n = near.current!;
     n.visible = !!hold;
     if (!hold) return;

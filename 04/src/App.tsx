@@ -778,11 +778,15 @@ export function App() {
   }, [walls]);
   // an erase drag: one entry in the history, so Undo gives the size back
   const onErase = useCallback((pts: V[]) => {
-    const next = erase(top.current, pts, 6);
+    const next = erase(top.current, pts, rubNow.current);
     if (next === top.current) return;
     startTransition(() => setHistory((h) => [...h, next]));
     setRedos([]);
   }, []);
+  /** how wide the eraser rubs to either side of the drag, metres */
+  const [rub, setRub] = useState(6);
+  const rubNow = useRef(rub);
+  rubNow.current = rub;
   /** how far the smear reaches, metres; its pull always falls off by the one soft curve */
   const [reach, setReach] = useState(65);
   useEffect(() => smearSet(reach, 2), [reach]);
@@ -847,15 +851,19 @@ export function App() {
     const key = (e: KeyboardEvent) => {
       // cmd or ctrl with Z undoes; with shift as well, it redoes
       if (e.key.toLowerCase() === 'z' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); if (e.shiftKey) redo(); else undo(); }
+      // shift and P holds the time where it is, and lets it run again; the traffic goes on
+      if (e.shiftKey && e.key.toLowerCase() === 'p' && !e.metaKey && !e.ctrlKey && !e.altKey) setClock((c) => ({ ...c, hold: !c.hold }));
       // P or space holds the frame, and lets go of it again
-      if (e.key === ' ' || e.key === 'p' || e.key === 'P') {
+      else if (e.key === ' ' || e.key === 'p' || e.key === 'P') {
         e.preventDefault();
         setPaused((v) => !v);
       }
-      // I reads the traffic of a road (trace), and I again takes the brush back up
-      if ((e.key === 'i' || e.key === 'I') && !e.metaKey && !e.ctrlKey && !e.altKey) setTool((t) => (t === 'trace' ? brushNow.current : 'trace'));
-      // R takes up the road brush, B the bridge, S the smear
-      const pick = ({ r: 'road', b: 'bridge', s: 'smear' } as Record<string, Brush>)[e.key.toLowerCase()];
+      // H shows the heat map, and H again takes it away
+      if ((e.key === 'h' || e.key === 'H') && !e.metaKey && !e.ctrlKey && !e.altKey) setHeat((v) => !v);
+      // C reads the traffic of a road (trace), and C again takes the brush back up
+      if ((e.key === 'c' || e.key === 'C') && !e.metaKey && !e.ctrlKey && !e.altKey) setTool((t) => (t === 'trace' ? brushNow.current : 'trace'));
+      // R takes up the road brush, B the bridge, S the smear, E the eraser
+      const pick = ({ r: 'road', b: 'bridge', s: 'smear', e: 'erase' } as Record<string, Brush>)[e.key.toLowerCase()];
       if (pick && !e.metaKey && !e.ctrlKey && !e.altKey) { setBrush(pick); setTool(pick); }
       // D draws the network over the picture, and D again takes it away
       if ((e.key === 'd' || e.key === 'D') && !e.metaKey && !e.ctrlKey && !e.altKey) setNodes((v) => !v);
@@ -896,7 +904,7 @@ export function App() {
         {air && <Air />}
         {nodes && <Nodes net={roads} />}
         <Sketch api={sketch} />
-        <Painter net={ground} tool={tool} onStroke={onStroke} onSmear={onSmear} onTrace={setTrace} onErase={onErase} onSize={onSize} shrink={!grow} reach={reach} />
+        <Painter net={ground} tool={tool} onStroke={onStroke} onSmear={onSmear} onTrace={setTrace} onErase={onErase} onSize={onSize} shrink={!grow} reach={reach} rub={rub} />
         <EffectComposer multisampling={fx.aa === 'msaa4' ? 4 : fx.aa === 'msaa2' ? 2 : 0}>
           {fx.tilt && <TiltShift2 blur={lens.blur} taper={lens.taper} start={start} end={end} samples={touch ? 10 : 18} />}
           {/* the lights bleed into what is beside them, as they do through glass */}
@@ -914,7 +922,7 @@ export function App() {
       <div className="corner">
         {/* the clock, and beside it the two ways of reading the traffic: where it stands, and where one stretch's cars are going */}
         <Overlays tail={<ViewMenu onReset={() => { setAir(false); setHeat(false); setFx((f) => ({ ...f, tilt: FX.tilt, aa: FX.aa })); }} choices={[{ id: 'aa', label: 'Antialiasing', options: AA_NAMES, value: fx.aa, set: (v) => setFx((f) => ({ ...f, aa: v as Fx['aa'] })) }]} items={[{ id: 'air', label: 'Atmospherics', on: air, toggle: () => setAir((v) => !v) }, { id: 'tilt', label: 'Tilt shift', on: fx.tilt, toggle: () => setFx((f) => ({ ...f, tilt: !f.tilt })) }, { id: 'heat', label: 'Heat map', on: heat, toggle: () => setHeat((v) => !v) }]} />} lead={<TimeControl now={hourNow} readout={readout} hold={clock.hold} onHold={() => setClock((c) => ({ ...c, hold: !c.hold }))} onSet={setHour} />} items={[
-          { id: 'trace', label: 'Trace', keys: 'I', icon: <TraceIcon />, on: tool === 'trace', toggle: () => setTool((t) => (t === 'trace' ? brush : 'trace')) },
+          { id: 'trace', label: 'Trace', keys: 'C', icon: <TraceIcon />, on: tool === 'trace', toggle: () => setTool((t) => (t === 'trace' ? brush : 'trace')) },
         ]} />
       </div>
       <pre className="alarm" ref={alarm} />
@@ -999,7 +1007,7 @@ export function App() {
         </div>
       )}
       {tool === 'trace' && <div className="note" ref={noteBox}>{trace ? '' : 'click a road'}</div>}
-      <Brushes tool={tool} sized={SIZED} grow={grow} reach={reach} onSmear={setReach} onGrow={setGrow} onPick={(b) => { setBrush(b); setTool(b); }} />
+      <Brushes tool={tool} sized={SIZED} grow={grow} reach={reach} onSmear={setReach} rub={rub} onRub={setRub} onGrow={setGrow} onPick={(b) => { setBrush(b); setTool(b); }} />
       <History canUndo={history.length > 1} canRedo={redos.length > 0} onUndo={undo} onRedo={redo} />
     </>
   );

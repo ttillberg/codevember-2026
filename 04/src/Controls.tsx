@@ -171,22 +171,22 @@ function SizeBrush({ on, grow, onPick, onGrow }: { on: boolean; grow: boolean; o
   );
 }
 
-/** How far the smear can reach, metres, and how far a drag on its brush goes for the whole of that range, px. */
-export const SMEAR_MIN = 25, SMEAR_MAX = 140;
+/** How far the smear can reach, and how wide the eraser can rub, metres; and how far a drag on a brush goes for the whole of a range, px. */
+export const SMEAR_MIN = 25, SMEAR_MAX = 140, ERASE_MIN = 3, ERASE_MAX = 40;
 const TRAVEL = 140;
 
 /**
- * The smear brush is a knob, as the brushes of day 07 are: a press takes it up, and a drag on it, up or to the right,
- * sets how far it reaches, with a gauge over it while it is held. A tap pins the gauge open, to drag on the gauge itself;
+ * A brush that is a knob, as the brushes of day 07 are: a press takes it up, and a drag on it, up or to the right,
+ * sets its size, with a gauge over it while it is held. A tap pins the gauge open, to drag on the gauge itself;
  * a press elsewhere or escape closes it.
  */
-function SmearBrush({ on, reach, onPick, onSet }: { on: boolean; reach: number; onPick: () => void; onSet: (reach: number) => void }) {
+function KnobBrush({ name, hotkey, icon, min, max, on, reach, onPick, onSet }: { name: string; hotkey: string; icon: ReactNode; min: number; max: number; on: boolean; reach: number; onPick: () => void; onSet: (reach: number) => void }) {
   const [held, setHeld] = useState(false);
   const [pinned, setPinned] = useState(false);
   const box = useRef<HTMLDivElement>(null);
   const start = useRef({ x: 0, y: 0, t: 0, moved: false, wasPinned: false });
-  const t = (reach - SMEAR_MIN) / (SMEAR_MAX - SMEAR_MIN);
-  const to = (v: number) => onSet(Math.round(SMEAR_MIN + Math.min(1, Math.max(0, v)) * (SMEAR_MAX - SMEAR_MIN)));
+  const t = (reach - min) / (max - min);
+  const to = (v: number) => onSet(Math.round(min + Math.min(1, Math.max(0, v)) * (max - min)));
   // let go anywhere ends the hold, even if the capture got lost on the way; a tap pins the gauge
   useEffect(() => {
     if (!held) return;
@@ -211,7 +211,7 @@ function SmearBrush({ on, reach, onPick, onSet }: { on: boolean; reach: number; 
   return (
     <div className="pick" ref={box}>
       <button
-        className={on ? 'on' : ''} aria-label={`Smear, ${reach} m`} aria-pressed={on} style={{ touchAction: 'none' }}
+        className={on ? 'on' : ''} aria-label={`${name}, ${reach} m`} aria-pressed={on} style={{ touchAction: 'none' }}
         onPointerDown={(e) => {
           e.currentTarget.setPointerCapture(e.pointerId);
           start.current = { x: e.clientX, y: e.clientY, t, moved: false, wasPinned: pinned };
@@ -230,8 +230,8 @@ function SmearBrush({ on, reach, onPick, onSet }: { on: boolean; reach: number; 
         // the keyboard has no pointer: Enter and space come as a click with no press before it
         onClick={(e) => { if (e.detail === 0) { onPick(); setPinned((v) => !v); } }}
       >
-        <SmearIcon />
-        {!open && <Tip tip="Smear" keys="S" />}
+        {icon}
+        {!open && <Tip tip={name} keys={hotkey} />}
       </button>
       {open && (
         <div className={`gauge${pinned ? ' pinned' : ''}`}>
@@ -249,13 +249,14 @@ function SmearBrush({ on, reach, onPick, onSet }: { on: boolean; reach: number; 
   );
 }
 
-export function Brushes({ tool, sized, grow, reach, onPick, onGrow, onSmear }: { tool: Tool; sized?: boolean; grow: boolean; reach: number; onPick: (b: Brush) => void; onGrow: (bigger: boolean) => void; onSmear: (reach: number) => void }) {
+export function Brushes({ tool, sized, grow, reach, rub, onPick, onGrow, onSmear, onRub }: { tool: Tool; sized?: boolean; grow: boolean; reach: number; rub: number; onPick: (b: Brush) => void; onGrow: (bigger: boolean) => void; onSmear: (reach: number) => void; onRub: (reach: number) => void }) {
   return (
     <div className="pill brushes" role="toolbar" aria-label="Brushes">
       {BRUSHES.map(([b, label, Icon, keys]) => (
         <Fragment key={b}>
           {sized && b === 'erase' && <SizeBrush on={tool === 'size'} grow={grow} onPick={() => onPick('size')} onGrow={onGrow} />}
-          {b === 'smear' ? <SmearBrush on={tool === b} reach={reach} onPick={() => onPick(b)} onSet={onSmear} /> : (
+          {b === 'smear' ? <KnobBrush name="Smear" hotkey="S" icon={<SmearIcon />} min={SMEAR_MIN} max={SMEAR_MAX} on={tool === b} reach={reach} onPick={() => onPick(b)} onSet={onSmear} />
+            : b === 'erase' ? <KnobBrush name="Erase" hotkey="E" icon={<EraseIcon />} min={ERASE_MIN} max={ERASE_MAX} on={tool === b} reach={rub} onPick={() => onPick(b)} onSet={onRub} /> : (
             <button className={tool === b ? 'on' : ''} aria-label={label} aria-pressed={tool === b} onClick={() => onPick(b)}>
               <Icon />
               <Tip tip={label} keys={keys ?? 'T'} />
