@@ -134,7 +134,7 @@ const PERKS: [string, (sim: Sim) => void][] = [['Send ambulance', (s) => s.dispa
 const DPR = touch ? 2.5 : 2;
 /** How the drone moves by itself: metres it glides to either side, degrees it swings round, metres it bobs in the wind, metres it shakes, seconds for a round, and with ?endless how many metres a second it flies north. */
 type Move = { drift: number; orbit: number; hover: number; shake: number; period: number; north: number };
-const MOVE: Move = { drift: 19, orbit: 3, hover: 1.3, shake: 0, period: 60, north: 5 };
+const MOVE: Move = { drift: 19, orbit: 3, hover: 0, shake: 0, period: 30, north: 5 };
 const MOVES: [keyof Move, string, number, number, number][] = [
   ['drift', 'Glide', 0, 80, 1], ['orbit', 'Swing', 0, 30, 0.5], ['hover', 'Bob', 0, 6, 0.1], ['shake', 'Shake', 0, 3, 0.05], ['period', 'Round', 10, 120, 1], ['north', 'North', 0, 40, 0.5],
 ];
