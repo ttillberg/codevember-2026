@@ -1,8 +1,8 @@
 // Spruce trunks, columns rising out of the moss into the haze. One per cell of a coarse grid, by hash.
 // Three levels of detail, each an instanced mesh sharing one material: near trunks have their root flare in
 // fine geometry, mid ones a coarser version, far ones are octagonal columns. Trunks are sorted into the
-// levels as you move. The bark is a shader: plates and deep vertical furrows bump-mapped from screen-space
-// derivatives, crust lichen, and moss climbing the foot.
+// levels as you move. The bark is a shader: long plates and deep wandering furrows, flaking in layers, bump-mapped
+// by finite differences, algae and crust lichen, and moss climbing the foot.
 import * as THREE from 'three';
 import { mulberry32 } from './noise';
 import { mossLighting } from './shaders';
@@ -171,44 +171,83 @@ float n21(vec2 p) {
   vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
   return mix(mix(h21(i), h21(i + vec2(1, 0)), f.x), mix(h21(i + vec2(0, 1)), h21(i + vec2(1, 1)), f.x), f.y);
 }
-// bark height: irregular scales (a cell noise, stretched a little up the trunk), the cracks between them
-// deeper where the cells' edges run up and down, as the trunk has grown wider
-float barkH(vec2 b) {
-  vec2 p = vec2(b.x * 17.0, b.y * 11.0);
-  p.x += 0.6 * n21(p * 0.35);
+// Pine-like bark: long plates running up the trunk, split by deep wandering furrows that join and part, with
+// fewer cracks across; each plate flaking off in layers, grey on top, red-brown where a flake has come away.
+// A cell noise stretched up the trunk, with a whole number of cells around so it wraps without a seam, and
+// its coordinates warped by sines of the angle (which wrap too) so the furrows wander.
+float AROUND; // cells around this trunk
+const float PER_Y = 6.5; // cells per unit up
+vec4 barkV(vec2 b) {
+  float ang = b.x / (6.2831853 * vR); // 0..1 around
+  vec2 p = vec2(ang * AROUND, b.y * PER_Y);
+  float a = ang * 6.2831853;
+  p.x += 0.45 * sin(a * 3.0 + b.y * 1.3) + 0.3 * sin(a * 7.0 - b.y * 2.9) + 0.18 * sin(a * 13.0 + b.y * 5.3);
+  p.y += 0.25 * sin(a * 5.0 + b.y * 0.7);
   vec2 i = floor(p), f = fract(p);
   float f1 = 9.0, f2 = 9.0;
-  vec2 d1 = vec2(0.0);
+  vec2 id = vec2(0.0), q1 = vec2(0.0), q2 = vec2(0.0);
   for (int y = -1; y <= 1; y++) for (int x = -1; x <= 1; x++) {
     vec2 o = vec2(float(x), float(y));
-    vec2 c = o + vec2(h21(i + o), h21(i + o + 17.3)) * 0.85 + 0.075;
-    vec2 d = c - f;
+    vec2 c = i + o;
+    c.x = mod(c.x, AROUND);
+    vec2 pt = o + vec2(h21(c), h21(c + 17.3)) * vec2(0.8, 0.9) + vec2(0.1, 0.05);
+    vec2 d = (pt - f) * vec2(1.0, 0.55); // distance counted short up the trunk: plates come out long
     float l = length(d);
-    if (l < f1) { f2 = f1; f1 = l; d1 = d; } else if (l < f2) f2 = l;
+    if (l < f1) { f2 = f1; q2 = q1; f1 = l; q1 = pt; id = c; } else if (l < f2) { f2 = l; q2 = pt; }
   }
   float edge = f2 - f1;
-  float crack = smoothstep(0.0, 0.3, edge);
-  float dome = 1.0 - 0.35 * f1; // each scale a little rounded
-  return crack * dome * (0.8 + 0.2 * n21(p * 1.7));
+  // the furrow: a deep narrow V, its floor broken
+  // ragged: the edge eaten into at two scales, so a furrow's walls are broken, not drawn
+  float rag = (n21(p * vec2(5.0, 2.5)) - 0.5) * 0.12 + (n21(p * vec2(14.0, 7.0)) - 0.5) * 0.06;
+  // an edge between cells side by side runs up the trunk: a deep, wide furrow; one between cells one over
+  // the other runs across: a narrow shallow crack, so the plates read as long strips and not a net
+  vec2 dq = (q2 - q1) * vec2(1.0, 0.55);
+  float upright = smoothstep(0.35, 0.8, abs(dq.x) / (length(dq) + 1e-4));
+  float furrow = smoothstep(0.02, mix(0.1, 0.32, upright), edge + rag);
+  furrow = sqrt(furrow); // steep walls, a rounded shoulder
+  furrow = mix(1.0 - 0.45 * (1.0 - furrow), furrow, upright);
+  // the plate: flat-topped, flaking in two or three layers, the steps wandering across it
+  float fl = n21(p * vec2(2.6, 1.3) + id * 7.31) * 0.75 + n21(p * vec2(6.0, 3.0) + id * 3.7) * 0.25;
+  float t = fl * 2.6;
+  float layers = (floor(t) + smoothstep(0.35, 0.55, fract(t))) / 2.6;
+  // the plate's own surface: rough, with fine cracks across it where the outer scales split
+  float rough = n21(p * vec2(16.0, 9.0)) * 0.6 + n21(p * vec2(37.0, 21.0)) * 0.4;
+  float scaleCrack = smoothstep(0.06, 0.0, abs(fract(p.y * 3.0 + 0.6 * n21(p * vec2(4.0, 1.0) + id)) - 0.5) - 0.44) * smoothstep(0.55, 0.75, n21(p * 2.0 + id)) * n21(p * vec2(9.0, 3.0));
+  float h = furrow * (0.6 + 0.3 * layers + 0.12 * rough - 0.06 * scaleCrack);
+  return vec4(h, furrow, layers, h21(id + 3.1));
 }
 void main() {
   vec3 N = normalize(vNormal);
   vec3 L = normalize(uLightDir);
   vec3 V = normalize(cameraPosition - vWorldPos);
-  float h = barkH(vBark);
-  // bump from screen-space derivatives of the bark height
-  vec3 dpdx = dFdx(vWorldPos), dpdy = dFdy(vWorldPos);
-  float dhx = dFdx(h), dhy = dFdy(h);
-  vec3 r1 = cross(dpdy, N), r2 = cross(N, dpdx);
-  float det = dot(dpdx, r1);
-  vec3 grad = sign(det) * (dhx * r1 + dhy * r2);
-  N = normalize(abs(det) * N - grad * 0.02);
+  AROUND = max(6.0, floor(6.2831853 * vR * 17.0 + 0.5));
+  vec4 bv = barkV(vBark);
+  float h = bv.x;
+  // far away the cells are smaller than a pixel: ease the relief and the contrast out instead of shimmering
+  float px = length(fwidth(vBark)) * PER_Y * 1.6;
+  float near = 1.0 - smoothstep(0.25, 0.9, px);
+  // the normal from the height's slope along the bark, around and up (finite differences, so it is the same
+  // up close as far away), tilted by a furrow a few centimetres deep
+  if (near > 0.01) {
+    float e = 0.004;
+    float hx = barkV(vBark + vec2(e, 0.0)).x, hy = barkV(vBark + vec2(0.0, e)).x;
+    vec3 T = normalize(cross(N, vec3(0.0, 1.0, 0.0)) + 1e-5), B = cross(T, N);
+    N = normalize(N - (T * (hx - h) + B * (hy - h)) / e * 0.022 * near);
+  }
 
-  vec3 col = mix(vec3(0.015, 0.011, 0.008), mix(vec3(0.10, 0.075, 0.058), vec3(0.18, 0.15, 0.12), n21(vBark * vec2(3.0, 1.0))), h);
-  // crust lichen in pale patches on the plates
-  col = mix(col, vec3(0.32, 0.34, 0.27), smoothstep(0.62, 0.7, n21(vBark * vec2(2.2, 1.4) + 7.0)) * h * 0.8);
-  // moss climbing the foot, higher on the shaded side, into the furrows first
+  float furrow = bv.y, layers = bv.z, cell = bv.w;
+  // grey weathered tops, red-brown where flakes came away, near black down the furrows
+  vec3 top = mix(vec3(0.12, 0.105, 0.09), vec3(0.155, 0.14, 0.125), cell);
+  vec3 under = mix(vec3(0.135, 0.085, 0.06), vec3(0.17, 0.10, 0.07), cell);
+  vec3 col = mix(under, top, 0.25 + 0.75 * smoothstep(0.2, 0.9, layers));
+  col *= 0.85 + 0.3 * n21(vBark * vec2(40.0, 14.0));
+  col = mix(vec3(0.016, 0.012, 0.009), col, mix(0.6, 1.0, near) * furrow + (1.0 - near) * 0.5 * (1.0 - furrow));
+  col = mix(vec3(0.13, 0.105, 0.085), col, mix(0.5, 1.0, near)); // far: the average
+  // green algae on the shaded side, crust lichen in pale patches on the plates
   float side = 0.5 + 0.5 * dot(normalize(vec3(N.x, 0.0, N.z) + 1e-4), normalize(vec3(-L.x, 0.0, -L.z)));
+  col = mix(col, vec3(0.10, 0.13, 0.06), smoothstep(0.45, 0.75, n21(vBark * vec2(1.2, 0.5) + 3.0) * side + 0.15 * side) * 0.6 * furrow);
+  col = mix(col, vec3(0.32, 0.34, 0.27), smoothstep(0.66, 0.72, n21(vBark * vec2(2.2, 1.4) + 7.0)) * h * 0.7);
+  // moss climbing the foot, higher on the shaded side, into the furrows first
   float mossLine = 0.08 + 0.5 * side + 0.25 * n21(vBark * vec2(1.5, 2.0));
   float moss = (1.0 - smoothstep(mossLine - 0.15, mossLine, vBark.y)) * (0.5 + 0.5 * (1.0 - h)) * smoothstep(0.3, 0.6, n21(vBark * 6.0) + 0.3 * (1.0 - h));
   col = mix(col, mix(vec3(0.012, 0.035, 0.008), vec3(0.03, 0.07, 0.012), n21(vBark * 9.0)), moss);
