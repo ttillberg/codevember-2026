@@ -259,7 +259,8 @@ vec4 barkV(vec2 b) {
   // the plate's own surface: rough, with fine cracks across it where the outer scales split
   float rough = n21(p * vec2(16.0, 9.0)) * 0.6 + n21(p * vec2(37.0, 21.0)) * 0.4;
   float scaleCrack = smoothstep(0.06, 0.0, abs(fract(p.y * 3.0 + 0.6 * n21(p * vec2(4.0, 1.0) + id)) - 0.5) - 0.44) * smoothstep(0.55, 0.75, n21(p * 2.0 + id)) * n21(p * vec2(9.0, 3.0));
-  float h = furrow * (0.6 + 0.3 * layers + 0.12 * rough - 0.06 * scaleCrack);
+  // rough enough to break the light up at arm's length, so the plates do not shade smooth like plastic
+  float h = furrow * (0.6 + 0.3 * layers + 0.26 * rough - 0.1 * scaleCrack);
   return vec4(h, furrow, layers, h21(id + 3.1));
 }
 void main() {
@@ -315,7 +316,10 @@ void main() {
   col = mix(vec3(0.13, 0.105, 0.085), col, mix(0.5, 1.0, near)); // far: the average
   // green algae on the shaded side, crust lichen in pale patches on the plates
   col = mix(col, vec3(0.10, 0.13, 0.06), smoothstep(0.45, 0.75, n21(vBark * vec2(1.2, 0.5) + 3.0) * side + 0.15 * side) * 0.6 * furrow);
-  col = mix(col, vec3(0.32, 0.34, 0.27), smoothstep(0.66, 0.72, n21(vBark * vec2(2.2, 1.4) + 7.0)) * h * 0.7);
+  // lichen in specks, not a smooth wash; and mottling, dark and pale blotches across the plates
+  float speck = smoothstep(0.35, 0.75, n21(vBark * vec2(60.0, 45.0) + 3.0));
+  col = mix(col, vec3(0.30, 0.31, 0.25), smoothstep(0.62, 0.72, n21(vBark * vec2(2.2, 1.4) + 7.0)) * h * 0.65 * speck);
+  col *= 0.75 + 0.5 * n21(vBark * vec2(14.0, 6.0) + 11.0);
   // the moss on the foot: dark down in it, green, the tips of the shoots lime and catching the light; deeper
   // in the cushion it is fuller and brighter, browner and thinner where it peters out up the trunk
   float body = mix(n21(vBark * 9.0), fz, fineFade);
@@ -328,9 +332,12 @@ void main() {
   float shadow = shadowAt(vWorldPos, N);
   // moss lets light through and round: a softer, wrapped diffuse
   float diff = mix(max(dot(N, L), 0.0), max(dot(N, L) + 0.35, 0.0) / 1.35, moss);
+  // down a furrow's walls the plates either side shade it: no sun in there, so the walls do not shine
+  diff *= mix(smoothstep(0.25, 0.85, furrow), 1.0, max(moss, 1.0 - near));
   vec3 c = col * (0.4 * skyTint(N, 1.0) + 2.0 * diff * shadow);
   // the low sun behind a trunk lights its edge
-  c += col * pow(1.0 - max(dot(N, V), 0.0), 4.0) * max(dot(-V, L), 0.0) * 3.0;
+  // (only off the plates, broken by their roughness: a smooth even rim was what read as plastic)
+  c += col * pow(1.0 - max(dot(N, V), 0.0), 4.0) * max(dot(-V, L), 0.0) * 1.4 * furrow * (0.4 + 0.6 * n21(vBark * vec2(30.0, 12.0)));
   c *= mix(0.45, 1.0, smoothstep(-0.2, 0.25, vBark.y)); // dark where it goes into the moss
   gl_FragColor = vec4(tonemap(grade(c)), 1.0);
   #include <colorspace_fragment>
