@@ -169,7 +169,9 @@ export function skyAt(hour: number, out = SKY): Sky {
   const el = sunAt(h);
   const night = nightAt(el);
   HOUR.value = h;
-  DARK.value = 1 - step(-7, -1.5, el);
+  // it comes in as the sun reaches the horizon and is all there soon after: later, and the place stands grey and
+  // unlit between the day and the night; much earlier, and the map of it shows its edges in daylight
+  DARK.value = 1 - step(-5, 2.5, el);
   FLOOD.value = h < 12 ? 0 : 1 - step(22.9, 23, h);
   if (el > -2.5) {
     // the sun crosses from the east, over the south, to the west
@@ -177,7 +179,9 @@ export function skyAt(hour: number, out = SKY): Sky {
     out.el = Math.max(GRAZE, el) * RAD;
     out.sun.copy(LOW).lerp(HIGH, step(3, 30, el));
     // flat ground takes little of a low sun, so the sun is turned up as it sinks, as a camera would open up: the walls that face it burn
-    out.power = (step(-1.5, 6, el) * (1.4 + 0.1 * step(8, 30, el))) / Math.sin(out.el);
+    // it keeps its strength right down to the horizon and goes in the few degrees under it, as an afterglow: fading
+    // any sooner leaves an hour that is neither sunlit nor lamplit
+    out.power = (step(-3, 2.5, el) * (1.4 + 0.1 * step(8, 30, el))) / Math.sin(out.el);
   } else {
     // once it is well down the same light is the moon, high in the south and in no hurry. Neither shines while they change places.
     const n = ((h - SET + 24) % 24) / (24 - SET + RISE);
@@ -189,7 +193,7 @@ export function skyAt(hour: number, out = SKY): Sky {
   }
   out.air.copy(AIR.night).lerp(AIR.low, step(-8, 0, el)).lerp(AIR.day, step(2, 26, el));
   out.earth.copy(EARTH.night).lerp(EARTH.day, step(-6, 6, el));
-  out.fill = 0.05 + 0.9 * step(-7, 3, el) + 0.3 * step(3, 28, el);
+  out.fill = 0.05 + 0.9 * step(-4, 3, el) + 0.3 * step(3, 28, el);
   out.back.copy(BACK.night).lerp(BACK.dusk, step(-9, -2, el)).lerp(BACK.gold, step(-3, 4, el)).lerp(BACK.day, step(5, 24, el));
   out.night = night;
   // what shines goes by the lights, which are ahead of the dark
