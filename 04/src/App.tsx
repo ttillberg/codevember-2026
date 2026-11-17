@@ -114,11 +114,11 @@ const SWITCHES: [Exclude<keyof Fx, 'aa'>, string][] = [['tilt', 'Tilt shift'], [
 const PERKS: [string, (sim: Sim) => void][] = [['Send ambulance', (s) => s.dispatch()], ['Dig', (s) => s.dig()]];
 // a phone has three pixels to a point and holds it a hand away: anything much under that is seen as soft
 const DPR = touch ? 2.5 : 2;
-/** How the drone moves by itself: metres it glides to either side, degrees it swings round, metres it bobs in the wind, metres it shakes, seconds for a round. */
-type Move = { drift: number; orbit: number; hover: number; shake: number; period: number };
-const MOVE: Move = { drift: 19, orbit: 3, hover: 1.3, shake: 0, period: 45 };
+/** How the drone moves by itself: metres it glides to either side, degrees it swings round, metres it bobs in the wind, metres it shakes, seconds for a round, and with ?endless how many metres a second it flies north. */
+type Move = { drift: number; orbit: number; hover: number; shake: number; period: number; north: number };
+const MOVE: Move = { drift: 19, orbit: 3, hover: 1.3, shake: 0, period: 45, north: 5 };
 const MOVES: [keyof Move, string, number, number, number][] = [
-  ['drift', 'Glide', 0, 80, 1], ['orbit', 'Swing', 0, 30, 0.5], ['hover', 'Bob', 0, 6, 0.1], ['shake', 'Shake', 0, 3, 0.05], ['period', 'Round', 10, 120, 1],
+  ['drift', 'Glide', 0, 80, 1], ['orbit', 'Swing', 0, 30, 0.5], ['hover', 'Bob', 0, 6, 0.1], ['shake', 'Shake', 0, 3, 0.05], ['period', 'Round', 10, 120, 1], ['north', 'North', 0, 40, 0.5],
 ];
 const FPS = 30;
 const RAD = Math.PI / 180;
@@ -192,6 +192,16 @@ function Drone({ shot, move, set, onShot, onWindow, onAhead }: {
 }) {
   const { camera, size, gl, scene, advance } = useThree();
   const ahead = useRef('');
+  // a finger or the mouse is down on the picture: painting, or about to
+  const pressed = useRef(false);
+  useEffect(() => {
+    const el = gl.domElement;
+    const down = () => { pressed.current = true; }, up = () => { pressed.current = false; held.current = Math.max(held.current === Infinity ? 0 : held.current, performance.now() + 900); };
+    el.addEventListener('pointerdown', down);
+    addEventListener('pointerup', up);
+    addEventListener('pointercancel', up);
+    return () => { el.removeEventListener('pointerdown', down); removeEventListener('pointerup', up); removeEventListener('pointercancel', up); };
+  }, [gl]);
   // ?debug: the renderer, the scene and the frame itself on the window, to be measured from outside
   if (debug) (window as any).three = { gl, scene, advance, camera };
   const key = size.width < size.height ? 'p' : 'l';
@@ -271,10 +281,17 @@ function Drone({ shot, move, set, onShot, onWindow, onAhead }: {
     // not when the shot only followed a hand: that one is flown already
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [camera, key, set]);
-  useFrame(({ clock }) => {
+  useFrame(({ clock }, delta) => {
     fly.current(clock.elapsedTime);
     const c = controls.current as unknown as { target: Vector3 } | null;
     if (!LAND.on || !c || !onWindow) return;
+    // Over the endless grid it flies north, slowly, for as long as nobody holds it: not while a hand is on the drone
+    // or on the ground, and not for a moment after
+    if (move.north && performance.now() > held.current && !pressed.current) {
+      const d = move.north * Math.min(Math.max(delta, 0), 0.1);
+      c.target.z -= d; camera.position.z -= d;
+    }
+    LOOK.x = Math.round(c.target.x / 24) * 24; LOOK.z = Math.round(c.target.z / 24) * 24;
     // The window is the two tiles by two whose middles the drone is between: when it passes a middle, the two tiles
     // behind it are let go and two are laid ahead, all of them further off than the frame reaches. A little past, so
     // that it does not go back and forth on the line
