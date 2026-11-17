@@ -487,7 +487,12 @@ function throwTo(hit: THREE.Vector3, far: boolean) {
   };
   // sown: no throw, just a cloud let go there; flung: an arc over the moss and a burst where it lands
   if (far) spores.throw(from, hit, land);
-  else { spores.sow(hit); land(hit); }
+  else {
+    // the cloud is let go over the moss's top, not in it: down among the fronds it was hidden
+    const g = groundHeight(hit.x, hit.z);
+    spores.sow(new THREE.Vector3(hit.x, g + 0.055 * mossAt(hit.x, g, hit.z) + 0.035, hit.z));
+    land(hit);
+  }
 }
 
 /** Distance to the first thing the view ray hits: the moss or a mushroom. The lens focuses there. */

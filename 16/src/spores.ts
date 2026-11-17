@@ -114,16 +114,15 @@ export class Spores {
     }
   }
 
-  /** A pinch sown just in front of you: no throw, a soft cloud let go just over the moss, settling there. It is
+  /** A pinch sown: no throw, a soft cloud let go over the moss's top (`p`), rising a little and settling. It is
    * there at once: puffs that start near full size (the burst's start small and swell, which read as a second's
    * wait with no arc before them), and no slow band fading in. */
   sow(p: THREE.Vector3) {
     const r = Math.random;
     const q = p.clone();
-    q.y += 0.04;
-    for (let k = 0; k < 36; k++) {
-      const a = r() * Math.PI * 2, sp = 0.02 + r() * 0.07;
-      this.emit(q, Math.cos(a) * sp, -0.01 + r() * 0.06, Math.sin(a) * sp, 2.5 + r() * 2.5, 0.022 + r() * 0.016, 0, 1.4 + r() * 0.6, 0.008, 0.9);
+    for (let k = 0; k < 40; k++) {
+      const a = r() * Math.PI * 2, sp = 0.02 + r() * 0.08;
+      this.emit(q, Math.cos(a) * sp, 0.01 + r() * 0.08, Math.sin(a) * sp, 2.5 + r() * 2.5, 0.026 + r() * 0.018, 0, 1.4 + r() * 0.6, 0.01, 1.0);
     }
     for (let k = 0; k < 700; k++) {
       const a = r() * Math.PI * 2, sp = r() * 0.15;
@@ -132,7 +131,7 @@ export class Spores {
     // what is left lying on the moss: a few wide, faint puffs that linger and drift
     const tmp0 = new THREE.Vector3();
     for (let k = 0; k < 12; k++) {
-      tmp0.set(p.x + (r() - 0.5) * 0.16, p.y + 0.02 + r() * 0.03, p.z + (r() - 0.5) * 0.16);
+      tmp0.set(p.x + (r() - 0.5) * 0.16, p.y - 0.01 + r() * 0.03, p.z + (r() - 0.5) * 0.16);
       this.emit(tmp0, (r() - 0.5) * 0.008, 0.003, (r() - 0.5) * 0.008, 7 + r() * 5, 0.03 + r() * 0.015, 0, 1.4 + r() * 0.5, 0.004, 0.45);
     }
   }
