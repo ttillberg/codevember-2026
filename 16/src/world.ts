@@ -12,9 +12,50 @@ import { mulberry32 } from './noise';
 export const SPECIES = 5; // feather, star, lichen, cushion, coral
 export const CHUNK = 1.0; // world units per chunk side
 
+// The spruce trunks (trees.ts draws them): one in about half the cells of a coarse grid, by hash. Here so the
+// ground can know where they stand.
+export const TREE_CELL = 3.6;
+export interface Trunk { x: number; z: number; r: number; turn: number; key: string }
+export function trunkInCell(ix: number, iz: number): Trunk | null {
+  const r = mulberry32((Math.imul(ix, 0x5bd1e995) ^ Math.imul(iz, 0x1b873593) ^ 0x7ee5) >>> 0);
+  if (r() > 0.45) return null;
+  const x = (ix + 0.15 + 0.7 * r()) * TREE_CELL, z = (iz + 0.15 + 0.7 * r()) * TREE_CELL;
+  return { x, z, r: 0.3 + 0.32 * r(), turn: r() * Math.PI * 2, key: `${ix},${iz}` };
+}
+const trunkCache = new Map<number, Trunk | null>();
+function cachedTrunk(ix: number, iz: number) {
+  const k = ix * 100003 + iz;
+  let t = trunkCache.get(k);
+  if (t === undefined) {
+    if (trunkCache.size > 4096) trunkCache.clear();
+    t = trunkInCell(ix, iz);
+    if (t && Math.hypot(t.x, t.z) < 1.6) t = null; // none right where you start (trees.ts skips it too)
+    trunkCache.set(k, t);
+  }
+  return t;
+}
+const MOUND_OUT = 0.9; // how far past the bark the hill reaches
+
+/** A little hill where a trunk stands: the moss heaped up over its roots, so it climbs the foot a little. */
+function mound(x: number, z: number) {
+  const ix = Math.floor(x / TREE_CELL), iz = Math.floor(z / TREE_CELL);
+  let h = 0;
+  for (let dz = -1; dz <= 1; dz++) for (let dx = -1; dx <= 1; dx++) {
+    const t = cachedTrunk(ix + dx, iz + dz);
+    if (!t) continue;
+    const d = Math.hypot(x - t.x, z - t.z);
+    const reach = t.r + MOUND_OUT;
+    if (d >= reach) continue;
+    // rounded, steepest near the bark; a bit over ten centimetres at the foot of a big one
+    const u = 1 - d / reach;
+    h = Math.max(h, (0.07 + 0.12 * t.r) * u * u * (3 - 2 * u));
+  }
+  return h;
+}
+
 export function groundHeight(x: number, z: number) {
-  // broad swells plus hummocks: moss carpets are never flat
-  return fbm3(x * 0.6, 0, z * 0.6, 3, 11) * 0.12 + fbm3(x * 2.2, 1, z * 2.2, 3, 12) * 0.045;
+  // broad swells plus hummocks: moss carpets are never flat; and a hill at the foot of each trunk
+  return fbm3(x * 0.6, 0, z * 0.6, 3, 11) * 0.12 + fbm3(x * 2.2, 1, z * 2.2, 3, 12) * 0.045 + mound(x, z);
 }
 
 const ss = THREE.MathUtils.smoothstep;
