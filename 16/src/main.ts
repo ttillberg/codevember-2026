@@ -280,7 +280,7 @@ addEventListener('resize', resize);
 resize();
 
 // ---- crawling and looking. Drag to turn your head, hold still to crawl where you look (drag while holding
-// to steer), tap anywhere to throw spores at the sight in the middle of the screen. Space throws too. Keys: W or up crawls, S or down backs off, A D or left right
+// to steer), tap anywhere to throw spores at the sight in the middle of the screen. Space throws too. Keys: W or up crawls (shift runs), S or down backs off, A D or left right
 // turn your head.
 const me = { x: 0, z: 0, y: 0, speed: 0, bob: 0 };
 const look = { yaw: 0, pitch: 0.12, tYaw: 0, tPitch: 0.12 }; // a little up: the fern over you
@@ -480,7 +480,9 @@ function crawl(dt: number) {
     const off = lastX - downX, out = Math.max(0, Math.abs(off) - STEER_DEAD) / (Math.min(innerWidth, innerHeight) * 0.3);
     look.tYaw -= Math.sign(off) * Math.min(1, out) * STEER_RATE * dt;
   }
-  me.speed += (fwd * 0.36 - me.speed) * Math.min(1, dt * 4);
+  // shift held: run, twice the pace (the six legs patter faster with it)
+  const run = keys.has('ShiftLeft') || keys.has('ShiftRight') ? 2 : 1;
+  me.speed += (fwd * 0.36 * run - me.speed) * Math.min(1, dt * 4);
   const fx = -Math.sin(look.yaw), fz = -Math.cos(look.yaw); // you crawl where you look
   // six legs, three down at a time (a tripod gait): no lumbering, a quick even patter, each set of three
   // giving a little shove forward as it pushes off
