@@ -213,6 +213,16 @@ body.touch .lockpill, body.touch .unlock, .clean .lockpill, .clean .unlock { dis
 }
 .keymap kbd:last-of-type { margin-right: 4px; }
 .keymap kbd.wide { padding: 0 6px; }
+/* W over S, A S D in a row, as on the keyboard */
+.keymap .wasd { display: inline-grid; grid-template-columns: repeat(3, 15px); grid-template-areas: ". w ." "a s d"; gap: 2px; margin-right: 4px; font-style: normal; }
+.keymap .wasd kbd { margin: 0; }
+.keymap .wasd kbd:nth-child(1) { grid-area: w; }
+.keymap .wasd kbd:nth-child(2) { grid-area: a; }
+.keymap .wasd kbd:nth-child(3) { grid-area: s; }
+.keymap .wasd kbd:nth-child(4) { grid-area: d; }
+.keymap { align-items: flex-end; }
+.keymap span:has(.wasd) { align-items: flex-end; }
+.keymap em { font-style: normal; line-height: 15px; } /* on the A S D row */
 body.touch .keymap, .clean .keymap { display: none; }
 @media (max-width: 899px) { .keymap { display: none; } }
 
