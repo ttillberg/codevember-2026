@@ -1,7 +1,7 @@
 // The board's print: a cobbled town square with streets running out of it, lanes round the
-// blocks about it, a lawn in one of them, at the houses' own scale (a stone about 3 mm, a
+// blocks about it, one block of green card, at the houses' own scale (a stone about 3 mm, a
 // street a house wide), so what stands on it looks at home. Board mm, the board's middle at
-// 0,0. Buildings stand round the square, not on it, nor on the streets or the lawn.
+// 0,0. Buildings stand round the square, not on it, nor on the streets or the green.
 
 export const MAP = { w: 1200, d: 900 };
 
@@ -24,9 +24,10 @@ export const STREETS: R[] = [
   box(-RING.x - LN, -MAP.d / 2, -RING.x + LN, MAP.d / 2),
   box(RING.x - LN, -MAP.d / 2, RING.x + LN, MAP.d / 2),
 ];
-// a little green: a lawn in the block north-east of the square
+// a little green: the whole block north-east of the square, a sheet of green card laid on it
 const PAVE = 7, CURB = 1.6;
-export const PARK = box(70, -170, 190, -60);
+const EDGE = PAVE + CURB;
+export const PARK = box(ST + 20 + EDGE, -RING.z + LN + EDGE, RING.x - LN - EDGE, -ST - EDGE);
 export const OPEN = [SQUARE, ...STREETS, PARK];
 
 const C = {
@@ -68,6 +69,28 @@ export function drawMap(g: CanvasRenderingContext2D, px: number) {
     g.restore();
   };
   const joints = (r: R) => { g.fillStyle = C.joint; g.fillRect(X(r.x0), Z(r.z0), (r.x1 - r.x0) * px, (r.z1 - r.z0) * px); };
+
+  // the green: card, its fibres, faint flutes showing through, a darker cut edge (the
+  // square's pavement runs over its corner)
+  {
+    const P = PARK;
+    const x = X(P.x0), z = Z(P.z0), w = (P.x1 - P.x0) * px, d = (P.z1 - P.z0) * px;
+    g.fillStyle = 'rgba(60, 50, 30, 0.25)';
+    g.fillRect(x + 0.8 * px, z + 0.8 * px, w, d);
+    g.fillStyle = '#8f9f6a';
+    g.fillRect(x, z, w, d);
+    for (let fz = P.z0 + 2; fz < P.z1; fz += 4) {
+      g.fillStyle = 'rgba(255, 255, 230, 0.05)';
+      g.fillRect(x, Z(fz), w, 2 * px);
+    }
+    for (let i = 0; i < (P.x1 - P.x0) * (P.z1 - P.z0) * 0.25; i++) {
+      g.fillStyle = rnd() < 0.5 ? 'rgba(50, 60, 30, 0.16)' : 'rgba(235, 240, 200, 0.16)';
+      g.fillRect(x + rnd() * w, z + rnd() * d, (0.5 + rnd() * 1.5) * px, 0.3 * px);
+    }
+    g.strokeStyle = '#6d7c4c';
+    g.lineWidth = 0.8 * px;
+    g.strokeRect(x, z, w, d);
+  }
 
   // pavements of flagstones along each street, a granite curb between
   const pavement = (r: R, alongX: boolean) => {
@@ -127,20 +150,6 @@ export function drawMap(g: CanvasRenderingContext2D, px: number) {
     }
   }
 
-
-  // the lawn: muted green, a clipped edge, a row of trees along its south side
-  {
-    const P = PARK;
-    g.fillStyle = '#a3ab7c';
-    g.beginPath(); g.roundRect(X(P.x0), Z(P.z0), (P.x1 - P.x0) * px, (P.z1 - P.z0) * px, 3 * px); g.fill();
-    g.strokeStyle = '#8b9468'; g.lineWidth = 1.2 * px; g.stroke();
-    for (let i = 0; i < 6; i++) {
-      const x = P.x0 + 12 + (i * (P.x1 - P.x0 - 24)) / 5, z = P.z1 - 12;
-      g.fillStyle = 'rgba(60, 60, 40, 0.18)'; g.beginPath(); g.ellipse(X(x + 3), Z(z + 2.5), 7 * px, 5.5 * px, 0, 0, Math.PI * 2); g.fill();
-      g.fillStyle = '#6f7d52'; g.beginPath(); g.arc(X(x), Z(z), 6.5 * px, 0, Math.PI * 2); g.fill();
-      g.fillStyle = 'rgba(200, 210, 160, 0.3)'; g.beginPath(); g.arc(X(x - 2), Z(z - 2), 3 * px, 0, Math.PI * 2); g.fill();
-    }
-  }
 
   // the square: cobbles laid in fans, rows of arcs across it
   joints(SQUARE);
