@@ -20,14 +20,20 @@ export { TREE_CELL, trunkInCell, type Trunk } from './world';
  * A unit trunk (radius 1 at breast height, HEIGHT tall) with its root flare: buttresses spreading out low down
  * and sinking into the ground. Rings are packed towards the foot, where the detail is.
  */
+const buttress = (a: number) => Math.pow(Math.abs(Math.sin(a * 2.5 + 0.7)), 3) * 0.7 + Math.pow(Math.abs(Math.sin(a * 1.5 + 2.1)), 4) * 0.5;
+/** The unit trunk's radius at an angle (its own) and a height over its foot. */
+const radius = (a: number, y: number) => {
+  const flare = Math.exp(-Math.max(y, 0) / 0.28) * (0.15 + 0.7 * buttress(a)) + Math.exp(-Math.max(y, 0) / 2.5) * 0.1;
+  const taper = 1 - 0.65 * (y / HEIGHT);
+  return taper * (1 + flare);
+};
+/** Where a trunk's foot is: the bottom of the unit trunk, a little into the ground. */
+export const trunkFoot = (t: Trunk) => groundHeight(t.x, t.z) - 0.03;
+/** A trunk's bark, from its middle, at a world angle round it (atan2 of z, x) and a height over its foot. */
+export const trunkRadius = (t: Trunk, phi: number, y: number) => t.r * radius(phi + t.turn, y);
+
 function trunkGeometry(radial: number, rings: number) {
   const pos: number[] = [], nrm: number[] = [], uvs: number[] = [], idx: number[] = [];
-  const buttress = (a: number) => Math.pow(Math.abs(Math.sin(a * 2.5 + 0.7)), 3) * 0.7 + Math.pow(Math.abs(Math.sin(a * 1.5 + 2.1)), 4) * 0.5;
-  const radius = (a: number, y: number) => {
-    const flare = Math.exp(-Math.max(y, 0) / 0.28) * (0.15 + 0.7 * buttress(a)) + Math.exp(-Math.max(y, 0) / 2.5) * 0.1;
-    const taper = 1 - 0.65 * (y / HEIGHT);
-    return taper * (1 + flare);
-  };
   const ys: number[] = [];
   for (let j = 0; j <= rings; j++) ys.push(-0.25 + (HEIGHT + 0.25) * Math.pow(j / rings, 2.6));
   for (let j = 0; j <= rings; j++) {
@@ -104,7 +110,7 @@ export class Trees {
       if (counts[lod] >= MAX) continue;
       q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), t.turn);
       s.set(t.r, 1, t.r);
-      p.set(t.x, groundHeight(t.x, t.z) - 0.03, t.z);
+      p.set(t.x, trunkFoot(t), t.z);
       lvl.setMatrixAt(counts[lod]++, m.compose(p, q, s));
     }
     this.levels.forEach((l, i) => { l.count = counts[i]; l.instanceMatrix.needsUpdate = true; });
