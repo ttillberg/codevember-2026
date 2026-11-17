@@ -219,10 +219,10 @@ function Drone({ shot, move, set, onShot, onWindow, onAhead }: {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const target = useMemo<[number, number, number]>(() => [s.x, 0, s.z], [key]);
   // what the drone's own motion has added to the shot so far, to be taken off again before the next step
-  const own = useRef({ x: 0, z: 0, hx: 0, hy: 0, hz: 0, turn: 0 });
+  const own = useRef({ x: 0, z: 0, hx: 0, hy: 0, hz: 0, turn: 0, jx: 0, jy: 0, jz: 0 });
   // a hand on the drone: only then, and while it coasts to a stop, do the sliders follow it
   const held = useRef(0);
-  const controls = useRef<{ target: { x: number; z: number } }>(null);
+  const controls = useRef<{ target: { x: number; y: number; z: number } }>(null);
   /** The shot as it stands, less what the drone did by itself. */
   const read = useCallback((): Pick<Shot, 'az' | 'el' | 'dist' | 'x' | 'z'> | null => {
     const c = controls.current, m = own.current, p = camera.position;
@@ -266,17 +266,22 @@ function Drone({ shot, move, set, onShot, onWindow, onAhead }: {
     const turn = move.orbit * RAD * Math.sin(w * t * 0.5 + 0.7);
     // the shake is the same thing faster: gusts and motors, three sines that never line up
     const k = move.shake;
-    const hx0 = move.hover * (Math.sin(t * 0.83) + 0.4 * Math.sin(t * 2.1 + 1)) + k * (Math.sin(t * 9.1) + 0.6 * Math.sin(t * 14.3 + 2) + 0.3 * Math.sin(t * 23.7 + 4));
-    const hz0 = move.hover * (Math.sin(t * 0.67 + 2) + 0.4 * Math.sin(t * 1.7)) + k * (Math.sin(t * 10.7 + 1) + 0.6 * Math.sin(t * 16.9) + 0.3 * Math.sin(t * 21.1 + 3));
-    // a road that lands is felt for a moment: a quick rattle that dies in a third of a second
-    const age = (performance.now() - jolt.since) / 1000, j = age < 0.6 ? jolt.by * Math.exp(-age * 9) : 0;
-    const hx = hx0 + j * Math.sin(age * 58), hz = hz0 + j * 0.7 * Math.sin(age * 71 + 1.3);
-    const hy = move.hover * 0.6 * Math.sin(t * 1.13 + 0.5) + k * 0.5 * Math.sin(t * 12.3 + 5) + j * 0.5 * Math.sin(age * 49 + 2);
+    const hx = move.hover * (Math.sin(t * 0.83) + 0.4 * Math.sin(t * 2.1 + 1)) + k * (Math.sin(t * 9.1) + 0.6 * Math.sin(t * 14.3 + 2) + 0.3 * Math.sin(t * 23.7 + 4));
+    const hz = move.hover * (Math.sin(t * 0.67 + 2) + 0.4 * Math.sin(t * 1.7)) + k * (Math.sin(t * 10.7 + 1) + 0.6 * Math.sin(t * 16.9) + 0.3 * Math.sin(t * 21.1 + 3));
+    const hy = move.hover * 0.6 * Math.sin(t * 1.13 + 0.5) + k * 0.5 * Math.sin(t * 12.3 + 5);
+    // a road that lands is felt for a moment: the picture knocks up and down and is still again in a third of a second.
+    // Not a tilt: the drone and what it looks at move together, along the picture's own upright
+    const age = (performance.now() - jolt.since) / 1000, j = age < 0.6 ? jolt.by * Math.exp(-age * 9) * Math.sin(age * 52) : 0;
+    const e = camera.matrixWorld.elements, jx = e[4] * j, jy = e[5] * j, jz = e[6] * j;
+    p.x -= m.jx; p.y -= m.jy; p.z -= m.jz;
+    c.target.x -= m.jx; c.target.y -= m.jy; c.target.z -= m.jz;
     // off with the last bob, round the point it looks at, along with the glide, on with the new bob
     const dx = p.x - m.hx - c.target.x, dz = p.z - m.hz - c.target.z, a = turn - m.turn, cos = Math.cos(a), sin = Math.sin(a);
     c.target.x += x - m.x; c.target.z += z - m.z;
     p.set(c.target.x + dx * cos + dz * sin + hx, p.y - m.hy + hy, c.target.z - dx * sin + dz * cos + hz);
-    own.current = { x, z, hx, hy, hz, turn };
+    p.x += jx; p.y += jy; p.z += jz;
+    c.target.x += jx; c.target.y += jy; c.target.z += jz;
+    own.current = { x, z, hx, hy, hz, turn, jx, jy, jz };
   };
   useMemo(() => {
     (camera as PerspectiveCamera).fov = s.fov;
@@ -286,7 +291,7 @@ function Drone({ shot, move, set, onShot, onWindow, onAhead }: {
     camera.lookAt(s.x, 0, s.z);
     if (controls.current) { controls.current.target.x = s.x; controls.current.target.z = s.z; }
     // and straight back to where its own motion had it, so a slider does not make it jump
-    own.current = { x: 0, z: 0, hx: 0, hy: 0, hz: 0, turn: 0 };
+    own.current = { x: 0, z: 0, hx: 0, hy: 0, hz: 0, turn: 0, jx: 0, jy: 0, jz: 0 };
     fly.current(at.current);
     // not when the shot only followed a hand: that one is flown already
     // eslint-disable-next-line react-hooks/exhaustive-deps

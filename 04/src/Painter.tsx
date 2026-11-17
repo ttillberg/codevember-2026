@@ -7,6 +7,8 @@ import { CROSS, cumLen, deck, pointOn, type Net, type Road, type V } from './net
 
 /** The jolt the drone feels when a road is laid: when it came (ms) and how many metres it is at its start. Read in App.tsx. */
 export const jolt = { since: -1e9, by: 0 };
+/** The jolt of the longest road, metres, and the length of road that gives all of it. A shorter road gives its share, and never less than a fifth. */
+const JOLT = 1.6, FULL = 300;
 const CALM = typeof matchMedia !== 'undefined' && matchMedia('(prefers-reduced-motion: reduce)').matches;
 /** How long the ghost of a stroke takes to sink into the road that has just been made under it, ms. */
 const SINK = 520;
@@ -247,13 +249,15 @@ export function Painter({ net, tool, onStroke, onSmear, onTrace, onErase, onSize
 
   // the ghost stays until the road it stands for is there
   const waiting = useRef(false);
+  /** how long the stroke that is waiting to be built is, metres */
+  const laid = useRef(0);
   useEffect(() => {
     if (!waiting.current || draw.current) return;
     waiting.current = false;
     // the road is there: the ghost flares once and sinks into it, and the drone feels it land
     sinking.current = performance.now();
     mesh.current!.visible = false;
-    if (!CALM) { jolt.since = sinking.current; jolt.by = 1.6; }
+    if (!CALM) { jolt.since = sinking.current; jolt.by = JOLT * Math.max(0.2, Math.min(1, laid.current / FULL)); }
   }, [net]);
   useFrame(() => {
     if (!sinking.current) return;
@@ -324,6 +328,7 @@ export function Painter({ net, tool, onStroke, onSmear, onTrace, onErase, onSize
     if (d.pts.length < 2) return;
     show(d.pts, 'ghost');
     waiting.current = true;
+    laid.current = cumLen(d.pts)[d.pts.length - 1];
     // nothing came of it: the ghost goes at once
     onStroke(d.pts, d.bridge, [d.up, !!top && d.pts[d.pts.length - 1] === top], (ok) => {
       if (!ok && !draw.current) { waiting.current = false; show([]); }
