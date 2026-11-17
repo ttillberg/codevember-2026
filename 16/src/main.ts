@@ -388,7 +388,7 @@ setTimeout(() => pouch.setThumbs(fungarium.drawThumbs()), 1500);
 function plantAt(s: Species) {
   const hit = aimAt(0.45);
   pouch.pick(s.kind, true);
-  fungi.spawn(s.kind, hit.x, fungusFoot(hit.x, hit.z), hit.z, { seed: s.seed, scale: s.scale });
+  fungi.spawn(s.kind, hit.x, fungusFoot(hit.x, hit.z), hit.z, { seed: s.seed, scale: s.scale, wither: 70 + 50 * Math.random() });
   dropOldest();
 }
 function dropOldest() {
@@ -432,7 +432,8 @@ function throwAt() {
   spores.throw(from, hit, (p) => {
     // the cloud settles first; then, one after another, they push up
     setTimeout(() => {
-      fungi.spawn(kind, p.x, fungusFoot(p.x, p.z), p.z);
+      // a minute or two after it has grown, it withers away again; the ones found in the forest stay
+      fungi.spawn(kind, p.x, fungusFoot(p.x, p.z), p.z, { wither: 70 + 50 * Math.random() });
       dropOldest();
     }, 1200);
   });

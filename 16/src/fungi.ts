@@ -19,10 +19,20 @@ interface Buf { pos: number[]; part: number[]; uvf: number[]; tint: number[]; id
 const newBuf = (): Buf => ({ pos: [], part: [], uvf: [], tint: [], idx: [], drops: [] });
 /** A bead of water that comes out while it grows (after `at`, 0..1 of its growth) and stays. */
 function bead(b: Buf, x: number, y: number, z: number, r: number, g: number, at: number) {
-  const k = THREE.MathUtils.smoothstep(g, at, at + 0.15);
+  const k = THREE.MathUtils.smoothstep(g, at, at + 0.15) * (1 - THREE.MathUtils.smoothstep(ROT, 0, 0.3)); // dry up first
   if (k > 0.02) b.drops.push(x, y, z, r * (0.4 + 0.6 * k));
 }
 const frac = (x: number) => x - Math.floor(x);
+
+// Withering: how far the cluster being built has gone (0 fresh .. 1 gone), set by Fungi.rebuild around a build.
+// The build functions read it: colours go dark brown, caps droop and roll in, stems keel over, fingers sag,
+// puffballs go slack, and it all sinks into the moss.
+let ROT = 0;
+const WITHER = 16; // seconds from the first browning to gone
+function rotTint(t: number[]) {
+  const k = Math.pow(ROT, 0.7) * 0.85;
+  return [t[0] + (0.1 - t[0]) * k, t[1] + (0.07 - t[1]) * k, t[2] + (0.045 - t[2]) * k];
+}
 
 // ---- finger fungi -----------------------------------------------------------------------------------------
 interface Finger {
@@ -108,7 +118,9 @@ function tube(b: Buf, pts: THREE.Vector3[], rad: (s: number) => number, cap: boo
 }
 
 function buildFingerCluster(b: Buf, fingers: Finger[], age: number, time: number) {
-  for (const f of fingers) {
+  for (const f0 of fingers) {
+    // withering: they sag over, darken, and sink
+    const f = ROT > 0 ? { ...f0, bend: f0.bend + ROT * 2.2, tint: rotTint(f0.tint) as [number, number, number], base: f0.base.clone().setY(f0.base.y - ROT * ROT * f0.L * 0.4) } : f0;
     const g = clamp01((age - f.delay) / f.dur);
     if (g <= 0) continue;
     // a speed that varies a little as it goes: growth comes in pulses
@@ -220,20 +232,20 @@ function funnelOverlap(a: ReturnType<typeof funnelLayers>, b: ReturnType<typeof 
  * out of the moss (the pin), the stem stretches with the cap still shut over it like a domed button, then the cap
  * opens, its rim unrolling, the dome sinking into a dip (a chanterelle) or a funnel (a yellowfoot).
  */
-function funnelProfile(f: Funnel, g: number) {
+function funnelProfile(f: Funnel, g: number, rot = 0) {
   const pin = ease(clamp01(g / 0.15));
   const stretch = ease(clamp01((g - 0.08) / 0.55));
   const open = ease(clamp01((g - 0.42) / 0.58));
   // a yellowfoot's slender stem shoots up before it opens; a chanterelle's grows with its cap
   const up = f.solid ? 0.45 * stretch + 0.55 * open : stretch;
-  const H = f.H * (0.03 + 0.12 * pin + 0.85 * up);
+  const H = f.H * (0.03 + 0.12 * pin + 0.85 * up) * (1 - 0.3 * rot); // withering, it slumps
   const rs = f.rs * (0.5 + 0.2 * pin + 0.3 * stretch);
   // shut, the cap is a button a little wider than the stem; open, it spreads to its full width
   const R = Math.max(rs * 1.3, f.R * (0.3 + 0.7 * open) * (0.45 + 0.55 * pin));
   const dome = Math.pow(1 - open, 1.5) * R * (f.solid ? 0.75 : 0.6); // how high the shut cap bulges
   const D = H * (f.solid ? 0.07 : 0.3) * open; // how deep the funnel goes; a chanterelle only dips
-  const rimLift = f.R * (f.solid ? 0.12 : 0.25) * open;
-  const curl = 1 - open; // young rims roll in
+  const rimLift = f.R * (f.solid ? 0.12 : 0.25) * open * (1 - rot);
+  const curl = 1 - open + 0.9 * rot; // young rims roll in, and old ones roll in again as they wither
   const P: number[][] = [];
   // a chanterelle's ridges run a long way down the stem
   const top = H - (f.solid ? 0.5 : 0.2) * H * open;
@@ -276,7 +288,9 @@ function buildFunnel(b: Buf, f: Funnel, age: number, time: number) {
   const g = clamp01((age - f.delay) / f.dur);
   if (g <= 0) return;
   const gg = clamp01(g + 0.02 * Math.sin(g * 15 + f.phase));
-  const { P, H, R, open } = funnelProfile(f, gg);
+  const { P, H, R, open } = funnelProfile(f, gg, ROT);
+  // withering, it keels over its own way and sinks
+  const fall = ROT * ROT, fx = Math.cos(f.phase * 2.3), fz = Math.sin(f.phase * 2.3);
   const growing = 1 - g;
   const start = b.pos.length / 3;
   const n = P.length;
@@ -292,7 +306,8 @@ function buildFunnel(b: Buf, f: Funnel, age: number, time: number) {
     const [ax, az] = funnelAxis(f, yy, H);
     const sx = ax + Math.sin(time * 0.7 + f.phase) * 0.004 * growing * h * h;
     const sz = az + Math.cos(time * 0.55 + f.phase) * 0.004 * growing * h * h;
-    return [f.base.x + Math.cos(a) * r + sx, f.base.y + yy, f.base.z + Math.sin(a) * r + sz];
+    const keel = fall * Math.max(0, yy) * Math.max(0, yy) / Math.max(H, 1e-3) * 1.1; // the stem bends over, more towards the top
+    return [f.base.x + Math.cos(a) * r + sx + fx * keel, f.base.y + yy - fall * (H * 0.35 + keel * 0.4), f.base.z + Math.sin(a) * r + sz + fz * keel];
   };
   for (let i = 0; i < n; i++) {
     const [, , part, along] = P[i];
@@ -302,7 +317,7 @@ function buildFunnel(b: Buf, f: Funnel, age: number, time: number) {
       b.part.push(part);
       b.uvf.push(along, k / FS);
       // each part its own colour; pins come up pale, nearly white, and colour in as they grow
-      const t = part === 0 ? f.stemTint : part === 1 ? f.underTint : f.tint;
+      const t = rotTint(part === 0 ? f.stemTint : part === 1 ? f.underTint : f.tint);
       const fresh = 0.6 * (1 - THREE.MathUtils.smoothstep(g, 0.05, 0.75));
       b.tint.push(t[0] + (0.8 - t[0]) * fresh, t[1] + (0.74 - t[1]) * fresh, t[2] + (0.6 - t[2]) * fresh);
     }
@@ -342,9 +357,10 @@ function buildPuffball(b: Buf, p: Puff, age: number) {
   const pin = ease(clamp01(gg / 0.2)), swell = ease(clamp01((gg - 0.1) / 0.6)), lift = ease(clamp01((gg - 0.45) / 0.55));
   const sq = p.squash * p.squash;
   const R0 = p.R * (0.25 + 0.15 * pin + 0.6 * swell);
-  const H = (R0 * 1.7 + (p.H - p.R * 1.7) * lift) * (1 - 0.22 * sq);
-  const R = R0 * (1 + 0.1 * sq);
-  const sink = (1 - pin) * R * 1.6 + (1 - lift) * R * 0.7; // under the moss, the foot too until it lifts
+  // withering, it goes slack and flattens, and sinks
+  const H = (R0 * 1.7 + (p.H - p.R * 1.7) * lift) * (1 - 0.22 * sq) * (1 - 0.45 * ROT);
+  const R = R0 * (1 + 0.1 * sq) * (1 + 0.12 * ROT);
+  const sink = (1 - pin) * R * 1.6 + (1 - lift) * R * 0.7 + ROT * ROT * R * 0.8; // under the moss, the foot too until it lifts
   // a round head on a stout foot that narrows down into the moss, with a little point on top
   const prof: number[][] = [];
   const N = 26;
@@ -363,7 +379,7 @@ function buildPuffball(b: Buf, p: Puff, age: number) {
     prof.push([r, y, t]);
   }
   const start = b.pos.length / 3;
-  const tint = [0.86 - 0.3 * p.age, 0.82 - 0.34 * p.age, 0.72 - 0.38 * p.age];
+  const tint = rotTint([0.86 - 0.3 * p.age, 0.82 - 0.34 * p.age, 0.72 - 0.38 * p.age]);
   for (const [r, y, along] of prof) {
     for (let k = 0; k < PS; k++) {
       const a = (k / PS) * Math.PI * 2;
@@ -431,6 +447,8 @@ export interface Cluster {
   key?: string;
   height: number;
   radius: number; // roughly how far it reaches out, for the autofocus
+  wither?: number; // age at which it starts to wither (thrown ones; found ones stay)
+  rot: number; // how far it has withered, 0..1
 }
 
 export class Fungi {
@@ -446,7 +464,8 @@ export class Fungi {
   }
 
   /** A cluster at (x, y, z). Thrown ones grow; found ones (grown) are there already. */
-  spawn(kind: FungusKind, x: number, y: number, z: number, opts: { grown?: boolean; key?: string; seed?: number; scale?: number } = {}) {
+  /** `wither`: seconds after it has grown before it starts to wither away (never, without it). */
+  spawn(kind: FungusKind, x: number, y: number, z: number, opts: { grown?: boolean; key?: string; seed?: number; scale?: number; wither?: number } = {}) {
     const r = mulberry32(opts.seed ?? Math.floor(Math.random() * 1e9));
     const sc = opts.scale ?? 0.8 + 0.5 * r();
     const fingers: Finger[] = [], funnels: Funnel[] = [], puffs: Puff[] = [];
@@ -542,7 +561,7 @@ export class Fungi {
     mesh.position.set(x, y, z);
     mesh.frustumCulled = false;
     this.group.add(mesh);
-    const c: Cluster = { kind, x, y, z, mesh, fingers, funnels, puffs, age: opts.grown ? end : 0, end, grown: false, key: opts.key, height, radius };
+    const c: Cluster = { kind, x, y, z, mesh, fingers, funnels, puffs, age: opts.grown ? end : 0, end, grown: false, key: opts.key, height, radius, rot: 0, wither: opts.wither === undefined ? undefined : end + opts.wither };
     this.list.push(c);
     this.rebuild(c, 0);
     if (opts.grown) c.grown = true;
@@ -560,9 +579,11 @@ export class Fungi {
 
   private rebuild(c: Cluster, time: number) {
     const b = newBuf();
+    ROT = c.rot;
     if (c.kind === 'finger') buildFingerCluster(b, c.fingers, c.age, time);
     else if (c.kind === 'puffball') for (const p of c.puffs) buildPuffball(b, p, c.age);
     else for (const f of c.funnels) buildFunnel(b, f, c.age, time);
+    ROT = 0;
     const g = new THREE.BufferGeometry();
     if (b.idx.length) {
       g.setAttribute('position', new THREE.Float32BufferAttribute(b.pos, 3));
@@ -581,13 +602,15 @@ export class Fungi {
   }
 
   update(dt: number, time: number) {
-    for (const c of this.list) {
+    for (const c of [...this.list]) {
       // a pressed puffball springs back
       let squashing = false;
       for (const p of c.puffs) if (p.squash > 0) { p.squash = Math.max(0, p.squash - dt * 1.6); squashing = true; }
-      if (squashing && c.grown) { this.rebuild(c, time); continue; }
-      if (c.grown) continue;
-      c.age += dt;
+      // a thrown one, grown, keeps ageing until it withers away
+      if (!c.grown || c.wither !== undefined) c.age += dt;
+      c.rot = c.wither === undefined ? 0 : clamp01((c.age - c.wither) / WITHER);
+      if (c.rot >= 1) { this.remove(c); continue; }
+      if (c.grown && c.rot <= 0 && !squashing) continue;
       this.rebuild(c, time);
       if (c.age >= c.end) c.grown = true;
       this.changed = true;
