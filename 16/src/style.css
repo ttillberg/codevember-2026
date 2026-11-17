@@ -79,17 +79,17 @@ body.touch .gyro { display: grid; }
 .fungarium.open { opacity: 1; pointer-events: auto; }
 .fungarium .sheet {
   position: relative; width: min(430px, calc(100vw - 32px)); max-height: 100%; display: flex; box-sizing: border-box;
-  padding: 7px 16px 9px 12px; border-radius: 4px 9px 9px 4px;
+  padding: 7px 9px 9px 12px; border-radius: 4px 9px 9px 4px;
   background: linear-gradient(90deg, #41432b 0 12px, #56593a 12px); /* the cover, darker over the spine */
   box-shadow: 0 30px 80px rgba(0, 0, 0, 0.5), inset 0 0 0 1px rgba(0, 0, 0, 0.25);
   transform: translate(0, calc(50vh - 80px)) scale(0.12) rotate(-4deg); /* closed: down at the packet */
   transition: transform 0.4s cubic-bezier(0.3, 1.15, 0.5, 1);
 }
 .fungarium.open .sheet { transform: none; }
-/* the elastic band, down the cover past the page's edge */
-.fungarium .sheet::after { content: ""; position: absolute; top: -3px; bottom: -3px; right: 5px; width: 5px; border-radius: 2px; background: #1d1b15; }
+.fungarium .page::-webkit-scrollbar { display: none; }
 .fungarium .page {
   position: relative; flex: 1; min-width: 0; overflow: auto; box-sizing: border-box;
+  scrollbar-width: none; /* it scrolls on a short screen, but no bar: the elastic band down the side read as one, and went too */
   padding: 20px 20px 18px 24px; color: #1c1c1c; border-radius: 2px 4px 4px 2px;
   /* paper: warm, a faint grid of pale blue lines like a field book, shaded into the binding on the left */
   background:
