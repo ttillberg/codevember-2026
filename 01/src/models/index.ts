@@ -15,10 +15,11 @@ import { liveConcert, liveCongress, liveHotel } from './live';
 import { kallbad } from './kallbad';
 import { bibliotek } from './bibliotek';
 import { gertrud } from './gertrud';
+import { slottet } from './slottet';
 import { skola } from './skola';
 import type { Model } from './model';
 
 // The cards, Malmö, simplest first.
-export const MODELS: Model[] = [kiosk, lillatorg, vaster, radhus, mazetti, torget, gertrud, bibliotek, skola, bo01, hoddor, kallbad, petri, mollan, liveConcert, liveCongress, liveHotel, malmohus, mill, torso];
+export const MODELS: Model[] = [kiosk, lillatorg, vaster, radhus, mazetti, torget, gertrud, slottet, bibliotek, skola, bo01, hoddor, kallbad, petri, mollan, liveConcert, liveCongress, liveHotel, malmohus, mill, torso];
 export const modelById = (id: string | null | undefined) => MODELS.find((m) => m.id === id) ?? null;
 export { foldOrder, type Model } from './model';
