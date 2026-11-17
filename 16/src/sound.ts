@@ -120,8 +120,8 @@ export class Sound {
     const { gain, pan } = this.place(p);
     if (gain < 0.25) return; // too far to hear
     const v = CREAK[kind] ?? CREAK.funnel;
-    const sr = ctx.sampleRate, j = 0.85 + 0.3 * Math.random(); // never twice the same
-    const len = v.len * (0.7 + 0.6 * Math.random());
+    const sr = ctx.sampleRate, j = 0.7 + 0.6 * Math.random(); // never twice the same
+    const len = v.len * (0.4 + 1.2 * Math.random());
     const n = Math.ceil(len * sr) + Math.ceil(0.03 * sr);
     const buf = ctx.createBuffer(1, n, sr);
     const d = buf.getChannelData(0);
@@ -134,15 +134,20 @@ export class Sound {
       // a crackle or a pop: ticks at random in the span
       for (let k = 0; k < v.scatter; k++) tick(Math.random() * len, 0.4 + 0.6 * Math.random());
     } else {
-      // stick-slip: the gap from rate to rateEnd and back a little, jittered
-      let at = 0, k = 0;
+      // stick-slip, and very uneven: the gap from rate to rateEnd and back a little, but each one drawn wide (a
+      // log-normal spread), now and then the strain holds and there is a pause, now and then it slips twice at once
+      let at = 0;
       while (at < len) {
         const u = at / len;
         const rate = v.rate * j * (u < 0.6 ? 1 + (v.rateEnd - 1) * (u / 0.6) : v.rateEnd + (1 - v.rateEnd) * 0.4 * ((u - 0.6) / 0.4));
         const swell = Math.sin(Math.PI * Math.min(1, u * 1.15)); // grows, then fades
-        tick(at, (0.35 + 0.65 * Math.random()) * (0.3 + 0.7 * swell) * (k % 7 === 3 ? 1.6 : 1)); // now and then a harder catch
-        at += (1 / rate) * (0.65 + 0.7 * Math.random());
-        k++;
+        const amp = Math.pow(Math.random(), 1.8) * (0.25 + 0.75 * swell) * (Math.random() < 0.12 ? 2.2 : 1); // a harder catch now and then
+        tick(at, amp);
+        if (Math.random() < 0.18) tick(at + (0.002 + 0.006 * Math.random()), amp * (0.4 + 0.6 * Math.random())); // a double
+        const gauss = Math.sqrt(-2 * Math.log(1 - Math.random())) * Math.cos(Math.PI * 2 * Math.random());
+        let gap = (1 / rate) * Math.exp(gauss * 0.7);
+        if (Math.random() < 0.14) gap *= 2.5 + 4 * Math.random(); // it holds
+        at += gap;
       }
     }
     const src = ctx.createBufferSource();
