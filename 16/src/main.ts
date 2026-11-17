@@ -296,6 +296,7 @@ const PITCH_MIN = -0.6, PITCH_MAX = 0.85; // up far enough to see under a cap, n
 // on a trunk you can look straight down past your feet
 const clampPitch = (v: number) => THREE.MathUtils.clamp(v, me.climb ? -1.45 : PITCH_MIN, PITCH_MAX);
 let holding = false;
+let backing = false; // a finger held low on the screen: crawl backwards
 const autoWalk = params.has('walk'); // ?walk: crawls by itself, for clips
 const keys = new Set<string>();
 const target = document.querySelector<HTMLElement>('.target')!;
@@ -324,7 +325,7 @@ canvas.addEventListener('pointerdown', (e) => {
   const mouse = e.pointerType === 'mouse';
   holdTimer = window.setTimeout(() => {
     if (!down || dragging) return;
-    if (mouse) { charging = true; target.classList.add('charge'); } else holding = true;
+    if (mouse) { charging = true; target.classList.add('charge'); } else { holding = true; backing = downY > innerHeight * 0.78; }
   }, 220);
 });
 canvas.addEventListener('pointermove', (e) => {
@@ -523,7 +524,7 @@ function focusDistance() {
 }
 
 function crawl(dt: number) {
-  const fwd = (keys.has('KeyW') || keys.has('ArrowUp') || holding || autoWalk ? 1 : 0) - (keys.has('KeyS') || keys.has('ArrowDown') ? 0.5 : 0);
+  const fwd = (keys.has('KeyW') || keys.has('ArrowUp') || (holding && !backing) || autoWalk ? 1 : 0) - (keys.has('KeyS') || keys.has('ArrowDown') || (holding && backing) ? 0.5 : 0);
   const turn = (keys.has('KeyA') || keys.has('ArrowLeft') ? 1 : 0) - (keys.has('KeyD') || keys.has('ArrowRight') ? 1 : 0);
   look.tYaw += turn * dt * 2.2;
   // held and dragged out sideways: keep turning that way, like a stick
