@@ -136,12 +136,14 @@ body.touch .fungarium .take kbd { display: none; }
 }
 .fungarium .look:hover { opacity: 1; background: rgba(255, 255, 255, 0.5); }
 .fungarium .cell .pic { width: 100%; aspect-ratio: 1; background: center / contain no-repeat; margin-bottom: 6px; }
-.fungarium .cell b, .fungarium .names b { font: 600 10px/1.3 Inter, sans-serif; letter-spacing: 0.12em; text-transform: uppercase; }
-.fungarium .cell i, .fungarium .names i { font: 400 12px/1.3 Inter, sans-serif; font-style: italic; }
+/* the names as in day 05's moss: the Swedish in small monospace, the Latin in an italic serif; long ones break */
+.fungarium .cell b, .fungarium .names b { font: 600 10px/1.35 ui-monospace, Menlo, monospace; letter-spacing: 0.02em; }
+.fungarium .cell i, .fungarium .names i { font: italic 500 13px/1.25 Georgia, "Times New Roman", serif; }
+.fungarium .cell b, .fungarium .cell i { display: block; max-width: 100%; overflow-wrap: anywhere; }
 .fungarium .cell.on .take { box-shadow: inset 0 0 0 2px #1c1c1c; }
 .fungarium .detail canvas { display: block; max-width: 100%; margin: 6px auto 10px; }
 .fungarium .names { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; }
-.fungarium .names em { font: 400 13px/1.3 Inter, sans-serif; font-style: normal; opacity: 0.8; }
+.fungarium .names em { font: 10px/1.3 ui-monospace, Menlo, monospace; font-style: normal; opacity: 0.7; }
 .fungarium .detail p { margin: 8px 0 16px; font: 400 13px/1.45 Inter, sans-serif; }
 .fungarium .acts { display: flex; gap: 10px; }
 .fungarium .acts button, .fungarium .back {
