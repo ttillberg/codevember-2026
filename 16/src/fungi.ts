@@ -594,7 +594,8 @@ export class Fungi {
         const a = r() * Math.PI * 2, d = Math.sqrt(r()) * 0.008 * sc;
         const f: Finger = {
           base: new THREE.Vector3(Math.cos(a) * d, 0, Math.sin(a) * d),
-          L: (0.03 + 0.08 * r() * r() + 0.02) * sc, r: (0.0016 + 0.0018 * r()) * sc,
+          // a few centimetres: crested coral stands 2 to 6 cm, rarely 8
+          L: (0.022 + 0.05 * r() * r()) * sc, r: (0.0013 + 0.0015 * r()) * sc,
           az: a + (r() - 0.5) * 1.2, tilt: 0.15 + 0.6 * r(),
           bend: (r() - 0.2) * 1.4,
           wob: [0.45 + 0.6 * r(), 4 + 6 * r(), 0.2 + 0.3 * r(), 3 + 6 * r()],
@@ -614,7 +615,7 @@ export class Fungi {
         const out0 = (0.08 + 0.12 * r()) * (d / (0.022 * sc)); // outer ones lean out as the cluster opens
         return {
           base: new THREE.Vector3(Math.cos(a) * d, 0, Math.sin(a) * d),
-          H: (0.04 + 0.05 * r()) * sc, rs: (0.0035 + 0.0025 * r()) * sc, R: (0.012 + 0.012 * r()) * sc,
+          H: (0.032 + 0.04 * r()) * sc, rs: (0.0035 + 0.0025 * r()) * sc, R: (0.012 + 0.012 * r()) * sc,
           wave: [r() * 6.28, r() * 6.28, r() * 6.28],
           sway: [(r() - 0.5) * 0.3, r() * 6.28, (r() - 0.5) * 0.3, r() * 6.28],
           lean: [Math.cos(a) * out0, Math.sin(a) * out0],
@@ -633,7 +634,7 @@ export class Fungi {
         const k = 0.92 + 0.16 * r();
         return {
           base: new THREE.Vector3(Math.cos(a) * d, 0, Math.sin(a) * d),
-          H: (0.045 + 0.035 * r()) * sc, rs: (0.010 + 0.005 * r()) * sc, R: (0.032 + 0.02 * r()) * sc,
+          H: (0.036 + 0.03 * r()) * sc, rs: (0.010 + 0.005 * r()) * sc, R: (0.032 + 0.02 * r()) * sc,
           wave: [r() * 6.28, r() * 6.28, r() * 6.28],
           sway: [(r() - 0.5) * 0.15, r() * 6.28, (r() - 0.5) * 0.15, r() * 6.28],
           lean: [Math.cos(a) * out0, Math.sin(a) * out0],
@@ -648,13 +649,14 @@ export class Fungi {
       const n = 1 + Math.floor(r() * r() * 3);
       for (let i = 0; i < n; i++) {
         for (let attempt = 0; attempt < 20; attempt++) {
-          const a = r() * Math.PI * 2, d = i === 0 ? 0 : (0.05 + 0.04 * r()) * sc;
-          const R = (0.04 + 0.03 * r()) * sc;
+          // the biggest thing on the floor: a cap 10 to 17 cm across on a stem as tall or taller
+          const a = r() * Math.PI * 2, d = i === 0 ? 0 : (0.08 + 0.05 * r()) * sc;
+          const R = (0.05 + 0.035 * r()) * sc;
           const x = Math.cos(a) * d, z = Math.sin(a) * d;
           if (agarics.some((m) => Math.hypot(m.base.x - x, m.base.z - z) < (m.R + R) * 0.9)) continue;
           const k = 0.9 + 0.2 * r(), out0 = 0.04 + 0.1 * r();
           agarics.push({
-            base: new THREE.Vector3(x, 0, z), H: R * (1.7 + 0.6 * r()), R, rs: R * (0.12 + 0.04 * r()),
+            base: new THREE.Vector3(x, 0, z), H: R * (2.2 + 0.7 * r()), R, rs: R * (0.12 + 0.04 * r()),
             lean: [Math.cos(a) * out0, Math.sin(a) * out0],
             delay: r() * 2 + i * 2.5, dur: 12 + 6 * r(), phase: r() * 6.28,
             red: [0.7 * k, 0.04 * k + 0.03 * r(), 0.025],
@@ -662,7 +664,7 @@ export class Fungi {
           break;
         }
       }
-      radius = 0.08 * sc;
+      radius = 0.11 * sc;
     } else {
       // puffballs: a few pears close together, set out so they do not overlap
       const n = 2 + Math.floor(r() * 5);
