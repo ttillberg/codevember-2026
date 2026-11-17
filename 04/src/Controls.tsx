@@ -128,8 +128,8 @@ export function Overlays({ lead, tail, items }: { lead?: ReactNode; tail?: React
 
 /** Each brush, its name, its icon, and how else to reach it than through the bar. */
 const BRUSHES: [Brush, string, () => ReactNode, string?][] = [
-  ['road', 'Road', RoadIcon],
-  ['bridge', 'Bridge', BridgeIcon, '⌘ drag'],
+  ['road', 'Road', RoadIcon, 'R'],
+  ['bridge', 'Bridge', BridgeIcon, 'B'],
   ['smear', 'Smear', SmearIcon, '⌥ drag'],
   ['erase', 'Erase', EraseIcon],
 ];
@@ -231,7 +231,7 @@ function SmearBrush({ on, reach, onPick, onSet }: { on: boolean; reach: number; 
         onClick={(e) => { if (e.detail === 0) { onPick(); setPinned((v) => !v); } }}
       >
         <SmearIcon />
-        {!open && <Tip tip="Smear" keys="drag for size" />}
+        {!open && <Tip tip="Smear" keys="S" />}
       </button>
       {open && (
         <div className={`gauge${pinned ? ' pinned' : ''}`}>

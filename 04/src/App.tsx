@@ -852,8 +852,11 @@ export function App() {
         e.preventDefault();
         setPaused((v) => !v);
       }
-      // R reads the traffic of a road (trace), and R again takes the brush back up
-      if ((e.key === 'r' || e.key === 'R') && !e.metaKey && !e.ctrlKey && !e.altKey) setTool((t) => (t === 'trace' ? brushNow.current : 'trace'));
+      // I reads the traffic of a road (trace), and I again takes the brush back up
+      if ((e.key === 'i' || e.key === 'I') && !e.metaKey && !e.ctrlKey && !e.altKey) setTool((t) => (t === 'trace' ? brushNow.current : 'trace'));
+      // R takes up the road brush, B the bridge, S the smear
+      const pick = ({ r: 'road', b: 'bridge', s: 'smear' } as Record<string, Brush>)[e.key.toLowerCase()];
+      if (pick && !e.metaKey && !e.ctrlKey && !e.altKey) { setBrush(pick); setTool(pick); }
       // D draws the network over the picture, and D again takes it away
       if ((e.key === 'd' || e.key === 'D') && !e.metaKey && !e.ctrlKey && !e.altKey) setNodes((v) => !v);
       // T takes up the next brush, shift and T the one before
@@ -911,7 +914,7 @@ export function App() {
       <div className="corner">
         {/* the clock, and beside it the two ways of reading the traffic: where it stands, and where one stretch's cars are going */}
         <Overlays tail={<ViewMenu onReset={() => { setAir(false); setHeat(false); setFx((f) => ({ ...f, tilt: FX.tilt, aa: FX.aa })); }} choices={[{ id: 'aa', label: 'Antialiasing', options: AA_NAMES, value: fx.aa, set: (v) => setFx((f) => ({ ...f, aa: v as Fx['aa'] })) }]} items={[{ id: 'air', label: 'Atmospherics', on: air, toggle: () => setAir((v) => !v) }, { id: 'tilt', label: 'Tilt shift', on: fx.tilt, toggle: () => setFx((f) => ({ ...f, tilt: !f.tilt })) }, { id: 'heat', label: 'Heat map', on: heat, toggle: () => setHeat((v) => !v) }]} />} lead={<TimeControl now={hourNow} readout={readout} hold={clock.hold} onHold={() => setClock((c) => ({ ...c, hold: !c.hold }))} onSet={setHour} />} items={[
-          { id: 'trace', label: 'Trace', keys: 'R', icon: <TraceIcon />, on: tool === 'trace', toggle: () => setTool((t) => (t === 'trace' ? brush : 'trace')) },
+          { id: 'trace', label: 'Trace', keys: 'I', icon: <TraceIcon />, on: tool === 'trace', toggle: () => setTool((t) => (t === 'trace' ? brush : 'trace')) },
         ]} />
       </div>
       <pre className="alarm" ref={alarm} />
