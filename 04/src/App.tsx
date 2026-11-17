@@ -893,7 +893,9 @@ export function App() {
         {nodes && <Nodes net={roads} />}
         <Sketch api={sketch} />
         <Painter net={ground} tool={tool} onStroke={onStroke} onSmear={onSmear} onTrace={setTrace} onErase={onErase} onSize={onSize} shrink={!grow} reach={reach} rub={rub} tracing={tracing} />
-        <EffectComposer multisampling={fx.aa === 'msaa4' ? 4 : fx.aa === 'msaa2' ? 2 : 0}>
+        {/* made again whenever an effect comes or goes: one that is put back alone lands last in the chain, after the
+            grade, where the tilt shift blurs nothing and only tints the picture */}
+        <EffectComposer key={`${fx.tilt}:${fx.bloom}:${fx.aa === 'smaa'}`} multisampling={fx.aa === 'msaa4' ? 4 : fx.aa === 'msaa2' ? 2 : 0}>
           {fx.tilt && <TiltShift2 blur={lens.blur} taper={lens.taper} start={start} end={end} samples={touch ? 10 : 18} />}
           {/* the lights bleed into what is beside them, as they do through glass */}
           {fx.bloom && <Bloom mipmapBlur luminanceThreshold={0.72} luminanceSmoothing={0.2} intensity={grade.bloom} radius={0.75} />}
