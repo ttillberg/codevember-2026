@@ -123,6 +123,16 @@ function keepView(v: View | null) {
   try { if (v) localStorage.setItem(VIEW_KEY, JSON.stringify(v)); else localStorage.removeItem(VIEW_KEY); } catch { /* a browser that keeps nothing */ }
 }
 const KEPT = typeof localStorage !== 'undefined' ? viewKept() : {};
+/**
+ * The endless town is laid when the page opens, from the address: switching it on or off opens the page again with
+ * `endless` in the address or without it. The painting is not carried over.
+ */
+function endless() {
+  const q = new URLSearchParams(location.search);
+  if (LAND.on) q.delete('endless'); else q.set('endless', '');
+  const text = q.toString().replace(/=(&|$)/g, '$1');
+  location.search = text ? '?' + text : '';
+}
 /** What they are called in the eye's list. */
 const AA_NAMES = [['none', 'Off'], ['smaa', 'SMAA'], ['msaa2', 'MSAA 2'], ['msaa4', 'MSAA 4']] as const;
 type Fx = { aa: (typeof AAS)[number]; tilt: boolean; bloom: boolean; shadow: boolean; lazy: boolean };
@@ -364,6 +374,8 @@ function Drone({ shot, move, set, onShot, onWindow, onAhead }: {
       onChange={fence}
       dampingFactor={0.12}
       zoomSpeed={0.6}
+      // on a phone two fingers move the drone and nothing else: a pinch does not bring it nearer or take it further
+      enableZoom={!touch}
       // one finger and the left button paint; two fingers and the right button move the drone, nearer, further and
       // sideways: they do not turn it, so a pinch that is not quite straight leaves the picture the way it stood
       mouseButtons={{ LEFT: -1 as unknown as MOUSE, MIDDLE: MOUSE.DOLLY, RIGHT: MOUSE.PAN }}
@@ -920,7 +932,7 @@ export function App() {
         {/* the hour in figures, to the left of the bar: written by showTime as the hands are */}
         <output className="time" aria-label="Time">{hhmm(clock.hour)}</output>
         {/* the clock, and beside it the two ways of reading the traffic: where it stands, and where one stretch's cars are going */}
-        <Overlays tail={<ViewMenu onReset={() => { setAir(false); setHeat(false); setTracing(false); setFx((f) => ({ ...f, tilt: FX.tilt, aa: FX.aa })); }} choices={[{ id: 'aa', label: 'Antialiasing', options: AA_NAMES, value: fx.aa, set: (v) => setFx((f) => ({ ...f, aa: v as Fx['aa'] })) }]} items={[{ id: 'air', label: 'Atmospherics', on: air, toggle: () => setAir((v) => !v) }, { id: 'tilt', label: 'Tilt shift', on: fx.tilt, toggle: () => setFx((f) => ({ ...f, tilt: !f.tilt })) }, { id: 'heat', label: 'Heat map', on: heat, toggle: () => setHeat((v) => !v) }, { id: 'trace', label: 'Traces', on: tracing, toggle: () => setTracing((v) => !v) }]} />} lead={<TimeControl now={hourNow} readout={readout} hold={clock.hold} onHold={() => setClock((c) => ({ ...c, hold: !c.hold }))} onSet={setHour} />} items={debug ? [
+        <Overlays tail={<ViewMenu onReset={() => { setAir(false); setHeat(false); setTracing(false); setFx((f) => ({ ...f, tilt: FX.tilt, aa: FX.aa })); }} choices={[{ id: 'aa', label: 'Antialiasing', options: AA_NAMES, value: fx.aa, set: (v) => setFx((f) => ({ ...f, aa: v as Fx['aa'] })) }]} items={[{ id: 'air', label: 'Atmospherics', on: air, toggle: () => setAir((v) => !v) }, { id: 'tilt', label: 'Tilt shift', on: fx.tilt, toggle: () => setFx((f) => ({ ...f, tilt: !f.tilt })) }, { id: 'heat', label: 'Heat map', on: heat, toggle: () => setHeat((v) => !v) }, { id: 'trace', label: 'Traces', on: tracing, toggle: () => setTracing((v) => !v) }, { id: 'endless', label: 'Endless', on: LAND.on, toggle: endless }]} />} lead={<TimeControl now={hourNow} readout={readout} hold={clock.hold} onHold={() => setClock((c) => ({ ...c, hold: !c.hold }))} onSet={setHour} />} items={debug ? [
           { id: 'debug', label: paneOpen ? 'Hide the debug pane' : 'Show the debug pane', icon: <DebugIcon />, on: paneOpen, toggle: () => setPaneOpen((v) => !v) },
         ] : []} />
       </div>

@@ -3,7 +3,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import { NIGHT, glowing } from './haze';
 import { BufferGeometry, Color, DoubleSide, Float32BufferAttribute, InstancedMesh, Matrix4, MeshStandardMaterial, Object3D, Uniform, Vector3 } from 'three';
 import { boxed, buildGround, clearOf, onRoad, WALK } from './geo';
-import { cumLen, offset, place, pointOn, rng, saltOf, type Net } from './net';
+import { TILE, cumLen, offset, place, pointOn, rng, saltOf, type Net } from './net';
 
 /** A tile of the grid, and where its middle lies. */
 export interface Tile { i: number; j: number; x: number; y: number }
@@ -166,8 +166,10 @@ export function World({ net, blocks, wood, trees = true, season = 'autumn', tile
 
   return (
     <group>
-      <mesh rotation-x={-Math.PI / 2} receiveShadow material={mats.grass}>
-        <planeGeometry args={[5000, 5000]} />
+      {/* the grass: on the endless grid each tile lays its own square of it, a hair over its neighbours', so there is
+          grass however far the drone flies; the place on its own has one sheet out into the haze */}
+      <mesh rotation-x={-Math.PI / 2} position-x={place.on ? tile.x : 0} position-z={place.on ? tile.y : 0} receiveShadow material={mats.grass}>
+        <planeGeometry args={place.on ? [TILE + 1, TILE + 1] : [5000, 5000]} />
       </mesh>
       <mesh geometry={ground.walk} material={mats.walk} receiveShadow />
       <mesh geometry={ground.yard} material={mats.paving} receiveShadow />

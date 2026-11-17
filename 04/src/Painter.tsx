@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef, type MutableRefObject } from 'react';
 import { useFrame, type ThreeEvent } from '@react-three/fiber';
 import { BufferAttribute, BufferGeometry, Color, DoubleSide, Group, Mesh, MeshBasicMaterial, ShaderMaterial, Vector3, type Points, type Ray } from 'three';
 import { strokeGeometry } from './geo';
-import { CROSS, cumLen, deck, pointOn, type Net, type Road, type V } from './net';
+import { CROSS, cumLen, deck, place, pointOn, type Net, type Road, type V } from './net';
 
 /** The jolt the drone feels when a road is laid: when it came (ms) and how many metres it is at its start. Read in App.tsx. */
 export const jolt = { since: -1e9, by: 0 };
@@ -351,7 +351,8 @@ export function Painter({ net, tool, onStroke, onSmear, onTrace, onErase, onSize
 
   return (
     <>
-      <mesh rotation-x={-Math.PI / 2} position-y={0.01} onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={cancel} onPointerLeave={leave}>
+      {/* what the pointer lands on: a sheet over the whole place, and on the endless grid over the window of tiles as it is now */}
+      <mesh rotation-x={-Math.PI / 2} position-x={place.on ? place.x : 0} position-z={place.on ? place.y : 0} position-y={0.01} onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={cancel} onPointerLeave={leave}>
         <planeGeometry args={[5000, 5000]} />
         <meshBasicMaterial transparent opacity={0} depthWrite={false} />
       </mesh>
