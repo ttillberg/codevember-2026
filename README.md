@@ -9,7 +9,7 @@ Live: https://ttillberg.github.io/codevember-2026/
 <!-- days:start -->
 | Day | Word | Experiment | Source |
 | --- | --- | --- | --- |
-| 01 | Fold | — | — |
+| 01 | Fold | [View](https://ttillberg.github.io/codevember-2026/01/) | [Code](https://github.com/ttillberg/codevember-2026/tree/main/01) |
 | 02 | Shatter | — | — |
 | 03 | Melt | — | — |
 | 04 | Tangle | [View](https://ttillberg.github.io/codevember-2026/04/) | [Code](https://github.com/ttillberg/codevember-2026/tree/main/04) |
@@ -24,7 +24,7 @@ Live: https://ttillberg.github.io/codevember-2026/
 | 13 | Labyrinth | — | — |
 | 14 | Tension | [View](https://ttillberg.github.io/codevember-2026/14/) | [Code](https://github.com/ttillberg/codevember-2026/tree/main/14) |
 | 15 | Mirage | — | — |
-| 16 | Spore | — | — |
+| 16 | Spore | [View](https://ttillberg.github.io/codevember-2026/16/) | [Code](https://github.com/ttillberg/codevember-2026/tree/main/16) |
 | 17 | Kelp | — | — |
 | 18 | Pendulum | — | — |
 | 19 | Erosion | — | — |

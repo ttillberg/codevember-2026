@@ -77,6 +77,35 @@
         "--strictPort"
       ],
       "port": 4014
+    },
+    {
+      "name": "16",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": [
+        "-C",
+        "16",
+        "dev",
+        "--port",
+        "5116",
+        "--strictPort"
+      ],
+      "port": 5116
+    },
+    {
+      "name": "16-https",
+      "runtimeExecutable": "env",
+      "runtimeArgs": [
+        "HTTPS=1",
+        "pnpm",
+        "-C",
+        "16",
+        "dev",
+        "--port",
+        "5117",
+        "--strictPort"
+      ],
+      "port": 5117,
+      "url": "https://localhost:5117"
     }
   ]
 }
