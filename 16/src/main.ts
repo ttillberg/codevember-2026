@@ -493,9 +493,6 @@ function throwTo(hit: THREE.Vector3, far: boolean) {
     void target.offsetWidth; // restart the pulse
     target.classList.add('fire');
   }
-  // tapping a ripe puffball presses it, and it puffs its spores, instead of throwing
-  const pressed = fungi.press(hit.x, hit.z, 0.03);
-  if (pressed) { spores.puff(pressed); sound.puff(pressed, 0.6); return; }
   // not right at your own feet
   const fromCam = new THREE.Vector3(hit.x - camera.position.x, 0, hit.z - camera.position.z);
   if (fromCam.length() < 0.22) {
@@ -530,13 +527,17 @@ function throwTo(hit: THREE.Vector3, far: boolean) {
 
 /** Distance to the first thing the view ray hits: the moss or a mushroom. The lens focuses there. */
 const ray = new THREE.Vector3();
+const FOCUS_FUNGI = 3; // only fungi this near are tried: past that the moss or a trunk is found anyway, and with
+// hundreds sown, trying them all at every step of the ray was the cost
 function focusDistance() {
   camera.getWorldDirection(ray);
   const o = camera.position;
+  const nearFungi = fungi.list.filter((c) => Math.hypot(c.x - o.x, c.z - o.z) < FOCUS_FUNGI + c.radius);
+  const nearTrunks = trees.trunks.filter((t) => Math.hypot(t.x - o.x, t.z - o.z) < 8 + t.r * 1.6);
   for (let t = 0.03; t < 8; t += t < 1 ? 0.01 : 0.04) {
     const x = o.x + ray.x * t, y = o.y + ray.y * t, z = o.z + ray.z * t;
     if (y < groundHeight(x, z) + 0.05) return t;
-    if (fungi.hit(x, y, z) || trees.hit(x, y, z)) return t;
+    if ((t < FOCUS_FUNGI && fungi.hit(x, y, z, nearFungi)) || trees.hit(x, y, z, nearTrunks)) return t;
   }
   return 8;
 }
@@ -580,10 +581,7 @@ function crawl(dt: number) {
 function walk(dt: number, fx: number, fz: number, v: number) {
   me.x += fx * v * dt - fz * me.side * dt;
   me.z += fz * v * dt + fx * me.side * dt;
-  // the tight bunch of stipes at a fern's crown is solid; the fronds you crawl under; small fungi you crawl over,
-  // and a puffball you crawl into puffs
-  const bumped = fungi.press(me.x + fx * 0.06, me.z + fz * 0.06, 0.02);
-  if (bumped) { spores.puff(bumped); sound.puff(bumped, 0.6); }
+  // the tight bunch of stipes at a fern's crown is solid; the fronds you crawl under; small fungi you crawl over
   const [cx, cz] = trees.collide(me.x, me.z, 0.05);
   if (v > 0.05 && (cx !== me.x || cz !== me.z)) {
     // pushed off a trunk while crawling at it head on: start up it

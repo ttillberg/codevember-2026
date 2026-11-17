@@ -1043,31 +1043,12 @@ export class Fungi {
     }
   }
 
-  /** Inside a cluster's rough cylinder? For the autofocus. */
-  hit(x: number, y: number, z: number) {
-    for (const c of this.list) if (y > c.y - 0.01 && y < c.y + c.height && Math.hypot(x - c.x, z - c.z) < c.radius * 0.6) return true;
+  /** Inside a cluster's rough cylinder? For the autofocus; `among` the ones near enough to matter. */
+  hit(x: number, y: number, z: number, among: Cluster[] = this.list) {
+    for (const c of among) if (y > c.y - 0.01 && y < c.y + c.height && Math.hypot(x - c.x, z - c.z) < c.radius * 0.6) return true;
     return false;
   }
 
-  /**
-   * Press the grown puffball nearest (x, z), if one is within `reach` and not just pressed: it squashes, and the
-   * world position of its top comes back, for the spores to puff out of. Null if there is none.
-   */
-  press(x: number, z: number, reach: number) {
-    let best: { c: Cluster; p: Puff; d: number } | null = null;
-    for (const c of this.list) {
-      if (c.kind !== 'puffball') continue;
-      for (const p of c.puffs) {
-        if (c.age < p.delay + p.dur || p.squash > 0.05) continue;
-        const d = Math.hypot(c.x + p.base.x - x, c.z + p.base.z - z) - p.R;
-        if (d < reach && (!best || d < best.d)) best = { c, p, d };
-      }
-    }
-    if (!best) return null;
-    best.p.squash = 1;
-    best.p.age = Math.min(1, best.p.age + 0.15); // emptying, it browns
-    return new THREE.Vector3(best.c.x + best.p.base.x, best.c.y + best.p.H * 0.95, best.c.z + best.p.base.z);
-  }
 }
 
 const vertexShader = /* glsl */ `

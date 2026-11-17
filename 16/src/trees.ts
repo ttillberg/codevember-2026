@@ -118,10 +118,10 @@ export class Trees {
   }
 
   /** Is the point inside a trunk? For the autofocus. */
-  hit(x: number, y: number, z: number) {
+  hit(x: number, y: number, z: number, among: Trunk[] = this.trunks) {
     // the root flare, about its average: the full buttress was too wide, and standing by a trunk the focus fell
     // in the air in front of it
-    for (const t of this.trunks) {
+    for (const t of among) {
       const dy = Math.max(0, y - groundHeight(t.x, t.z));
       if (Math.hypot(x - t.x, z - t.z) < t.r * (1.02 + 0.5 * Math.exp(-dy / 0.28))) return true;
     }

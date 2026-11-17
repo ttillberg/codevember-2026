@@ -1,5 +1,5 @@
 // Sounds, made on the spot with Web Audio (no files): a whoosh when you fling a pinch of spores, a soft puff where
-// it lands, where you sow, and out of a pressed puffball, and the creaks of fungi growing, a voice per kind. All noise, filtered: a band sweeping up and down for the
+// it lands and where you sow, and the creaks of fungi growing, a voice per kind. All noise, filtered: a band sweeping up and down for the
 // whoosh, a muffled low burst with a little thump under it for the puff. Quieter further off and panned to where
 // it happens. The browser lets sound start only after a tap or a key, so the context is made on the first one.
 import * as THREE from 'three';
@@ -71,7 +71,7 @@ export class Sound {
     s.stop(t + len + 0.05);
   }
 
-  /** A soft puff of spores at p (landing, sowing, a pressed puffball): `size` 0..1, a burst bigger than a sowing. */
+  /** A soft puff of spores at p (landing, sowing): `size` 0..1, a burst bigger than a sowing. */
   puff(p?: THREE.Vector3, size = 1) {
     const ctx = this.ctx;
     if (!ctx || !this.noise || !this.out) return;
