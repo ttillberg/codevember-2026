@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { overlaps, outline, sheetOf, type V2 } from './net';
 import { foldOrder, type Model } from './models';
-import { checkGlue } from './fold';
+import { centroid, checkGlue } from './fold';
 import { makePaper, printTexture, THICK } from './paper';
 import { makeBorders, borderAt, bearing, tint, distance, type Border } from './cut';
 import { makeFolding } from './folding';
@@ -34,6 +34,9 @@ export function createGame(model: Model, camera: THREE.OrthographicCamera, canva
     if (g.length) console.warn('glue problems', g);
   }
   const sheet = sheetOf(house);
+  const baseP = house.panels.find((p) => !p.parent)!;
+  const baseId = baseP.id;
+  const baseMid = centroid(baseP.poly);
   const loop = outline(house);
   const world = new THREE.Group();
   const tex = printTexture(house, model.art, sheet, renderer);
@@ -729,9 +732,13 @@ export function createGame(model: Model, camera: THREE.OrthographicCamera, canva
     // where the card is now: one size from the first press to the last fold, so nothing jumps
     // as it folds; it eases after the card's middle, still while a hand is on it
     if (press?.mode !== 'fold') {
-      const box = folding.unpeeked(panelsBox);
-      if (paper.waste.visible) box.expandByObject(paper.waste, true);
-      const c = box.getCenter(new THREE.Vector3());
+      // the middle: the whole sheet's while it is there, then the base's, so the base stays put
+      // in the middle of the screen however far the rest swings out
+      const c = folding.unpeeked(() => {
+        if (!freed) return new THREE.Box3().expandByObject(paper.waste, true).getCenter(new THREE.Vector3());
+        paper.root.updateMatrixWorld(true);
+        return paper.panels.get(baseId)!.localToWorld(new THREE.Vector3(baseMid[0], baseMid[1], 0));
+      });
       const half = Math.max(sheet.w, sheet.h) / 2;
       const want = new THREE.Box3(new THREE.Vector3(c.x - half, 0, c.z - half), new THREE.Vector3(c.x + half, 0, c.z + half));
       if (framed.isEmpty()) framed.copy(want);
