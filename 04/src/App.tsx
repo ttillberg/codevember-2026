@@ -128,7 +128,7 @@ const SIZED = typeof location !== 'undefined' && new URLSearchParams(location.se
 const RAD = Math.PI / 180;
 /**
  * The hour it is, whether it stands still there, how many seconds of ours a day and its night take, and how many seconds
- * of theirs the lights of the traffic stay on the picture after dark. It opens in the low sun of the afternoon.
+ * of theirs the lights of the traffic stay on the picture after dark. It opens in the morning.
  */
 type Clock = { hour: number; hold: boolean; day: number; trail: number; lights: (typeof LIGHTS)[number] };
 /** How those lights are drawn: strips behind each vehicle, a long exposure on a WebGPU canvas over the picture (Glow.tsx), or not. The second wherever there is a WebGPU, phones too; ?no=gpu for the strips. */
@@ -136,10 +136,11 @@ const LIGHTS = ['geometry', 'webgpu', 'off'] as const;
 // ?hour=19 starts at seven in the evening instead
 const hourAsked = parseFloat(new URLSearchParams(location.search).get('hour') ?? '');
 // the visitor's own time of day, unless ?hour= says otherwise
-const nowHour = () => { const d = new Date(); return d.getHours() + d.getMinutes() / 60; };
+/** The hour it opens on: a quarter to eight, the sun just up and the streets filling. */
+const START = 7.75;
 // ?hold starts with the clock held at its hour, ?day= says how many seconds a whole day takes: both for filming
 const asked = new URLSearchParams(location.search), dayAsked = parseFloat(asked.get('day') ?? '');
-const CLOCK: Clock = { hour: hourAsked >= 0 && hourAsked < 24 ? hourAsked : nowHour(), hold: asked.has('hold'), day: dayAsked >= 20 ? dayAsked : 240, trail: 8, lights: no('gpu') ? 'geometry' : 'webgpu' };
+const CLOCK: Clock = { hour: hourAsked >= 0 && hourAsked < 24 ? hourAsked : START, hold: asked.has('hold'), day: dayAsked >= 20 ? dayAsked : 240, trail: 8, lights: no('gpu') ? 'geometry' : 'webgpu' };
 const CLOCKS: [Exclude<keyof Clock, 'hold' | 'lights'>, string, number, number, number][] = [['hour', 'Time', 0, 24, 0.05], ['day', 'Day', 30, 600, 10], ['trail', 'Trails', 0, 16, 0.5]];
 /** The place as it starts: the streets, and a few flyovers laid over them the way a hand would paint them. ?debug starts on `MAP`. */
 // ?tile=i,j starts on a generated tile of the endless grid instead (see tiles.ts); the flyovers belong to the hand-drawn one
@@ -559,7 +560,8 @@ export function App() {
   const setHour = useCallback((h: number) => {
     hourNow.current = h;
     showTime(readout.current, h);
-    setClock((c) => ({ ...c, hour: h, hold: true }));
+    // the clock goes on from where it is put: only a tap on it holds the time
+    setClock((c) => ({ ...c, hour: h }));
     setScrub((n) => n + 1);
   }, []);
   // is there a WebGPU to draw the lights with: not known until it is asked, and only asked where it matters
