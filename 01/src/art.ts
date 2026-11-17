@@ -133,3 +133,25 @@ export function sheetSvg(
 </svg>`,
   };
 }
+
+// draw in a hinged panel's own frame: origin the middle of its hinge, x along it, y into it
+export function onPanel(p: Panel, art: string) {
+  const [a, b] = p.hinge!;
+  const m: V2 = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+  const len = Math.hypot(b[0] - a[0], b[1] - a[1]);
+  let u: V2 = [(b[0] - a[0]) / len, (b[1] - a[1]) / len];
+  // y (x turned left) must point into the panel
+  const c = p.poly.reduce<V2>((s, q) => [s[0] + q[0] / p.poly.length, s[1] + q[1] / p.poly.length], [0, 0]);
+  if ((c[0] - m[0]) * -u[1] + (c[1] - m[1]) * u[0] < 0) u = [-u[0], -u[1]];
+  return framed(m, u, art);
+}
+
+// rows of shingles or slates: courses with staggered joints
+export function shingles(x0: number, x1: number, y0: number, y1: number, fill: string, dark: string, course = 2.4) {
+  let s = r(x0, y0, x1 - x0, y1 - y0, fill);
+  for (let i = 0, y = y0 + course; y < y1; i++, y += course) {
+    s += line(x0, y, x1, y, dark, 0.35);
+    for (let x = x0 + (i % 2 ? course / 2 : 0); x < x1; x += course) s += line(x, y - course, x, y, dark, 0.2);
+  }
+  return s;
+}

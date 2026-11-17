@@ -48,7 +48,7 @@ export function checkGlue(house: Net, eps = 1e-3) {
     for (const [x, y] of t.poly) {
       const v = new Vector3(x, y, 0).applyMatrix4(mats.get(t.id)!).applyMatrix4(inv);
       if (Math.abs(v.z) > eps) problems.push(`${t.id} floats ${v.z.toFixed(2)}mm off ${target.id}`);
-      else if (!inside(target.poly, [v.x, v.y], eps)) problems.push(`${t.id} sticks out of ${target.id} at ${v.x.toFixed(1)},${v.y.toFixed(1)}`);
+      else if (!(target.parts ?? [target.poly]).some((q) => inside(q, [v.x, v.y], eps))) problems.push(`${t.id} sticks out of ${target.id} at ${v.x.toFixed(1)},${v.y.toFixed(1)}`);
     }
   }
   return problems;
