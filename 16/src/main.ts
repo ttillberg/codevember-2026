@@ -8,7 +8,7 @@ import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { shellVertex, shellFragment, mossLighting } from './shaders';
-import { World, groundHeight, mossAt, type WorldHooks } from './world';
+import { World, groundHeight, baseHeight, mossAt, type WorldHooks } from './world';
 import { Props } from './props';
 import { Ferns } from './ferns';
 import { Trees, trunkFoot, trunkRadius, type Trunk } from './trees';
@@ -173,7 +173,7 @@ function placeFarFloor(px: number, pz: number) {
   const p = farGeo.attributes.position as THREE.BufferAttribute;
   for (let i = 0; i < p.count; i++) {
     const x = farBase[i * 3] + sx, z = farBase[i * 3 + 2] + sz;
-    p.setXYZ(i, x, groundHeight(x, z) - 0.03, z);
+    p.setXYZ(i, x, baseHeight(x, z) - 0.03, z); // not the hills at the trunks: on this coarse grid they were tents through the trunks' feet
   }
   p.needsUpdate = true;
   farGeo.computeVertexNormals();

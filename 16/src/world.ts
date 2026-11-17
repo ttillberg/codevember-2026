@@ -53,9 +53,16 @@ function mound(x: number, z: number) {
   return h;
 }
 
+/** The ground without the hills at the trunks: for the far floor, whose coarse grid made tents of them that cut
+ * into the trunks' feet. */
+export function baseHeight(x: number, z: number) {
+  // broad swells plus hummocks: moss carpets are never flat
+  return fbm3(x * 0.6, 0, z * 0.6, 3, 11) * 0.12 + fbm3(x * 2.2, 1, z * 2.2, 3, 12) * 0.045;
+}
+
 export function groundHeight(x: number, z: number) {
-  // broad swells plus hummocks: moss carpets are never flat; and a hill at the foot of each trunk
-  return fbm3(x * 0.6, 0, z * 0.6, 3, 11) * 0.12 + fbm3(x * 2.2, 1, z * 2.2, 3, 12) * 0.045 + mound(x, z);
+  // and a hill at the foot of each trunk
+  return baseHeight(x, z) + mound(x, z);
 }
 
 const ss = THREE.MathUtils.smoothstep;
