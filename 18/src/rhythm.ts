@@ -17,6 +17,8 @@ export interface Arm {
   vol: number;
   /** how heavy its joint is, when the chain has weight (physics.ts): only against the others' does it count */
   mass: number;
+  /** what its joint crosses to sound */
+  mode: Mode;
 }
 
 /**
@@ -56,17 +58,17 @@ export function place(arms: Arm[], angles: ArrayLike<number>, out: number[] = []
 }
 
 /** what joint k crosses zero with */
-export function signal(arms: Arm[], k: number, phi: number, mode: Mode): number {
-  if (mode === 'each') return arms[k].len * Math.sin(angle(arms[k], phi));
+export function signal(arms: Arm[], k: number, phi: number): number {
+  if (arms[k].mode === 'each') return arms[k].len * Math.sin(angle(arms[k], phi));
   let x = 0;
   for (let j = 0; j <= k; j++) x += arms[j].len * Math.sin(angle(arms[j], phi));
   return x;
 }
 
 /** the fastest joint k's signal can change, per bar */
-export function topSpeed(arms: Arm[], k: number, mode: Mode): number {
+export function topSpeed(arms: Arm[], k: number): number {
   let s = 0;
-  for (let j = mode === 'each' ? k : 0; j <= k; j++) s += arms[j].len * arms[j].swing * TAU * arms[j].n;
+  for (let j = arms[k].mode === 'each' ? k : 0; j <= k; j++) s += arms[j].len * arms[j].swing * TAU * arms[j].n;
   return s;
 }
 
@@ -74,7 +76,7 @@ export function topSpeed(arms: Arm[], k: number, mode: Mode): number {
  * Every crossing in (from, to], found by stepping and then bisecting, so a hit lands where it
  * is, not on a frame: the motion is a formula, the future is known.
  */
-export function crossings(arms: Arm[], mode: Mode, from: number, to: number, out: Hit[] = []): Hit[] {
+export function crossings(arms: Arm[], from: number, to: number, out: Hit[] = []): Hit[] {
   if (!(to > from)) return out;
   let maxN = 1;
   for (const a of arms) maxN = Math.max(maxN, a.n);
@@ -82,24 +84,24 @@ export function crossings(arms: Arm[], mode: Mode, from: number, to: number, out
   const d = (to - from) / steps;
   const h = 1e-4 / maxN;
   for (let k = 0; k < arms.length; k++) {
-    const top = topSpeed(arms, k, mode);
+    const top = topSpeed(arms, k);
     if (!(top > 0)) continue;
     let p0 = from;
-    let s0 = signal(arms, k, p0, mode);
+    let s0 = signal(arms, k, p0);
     for (let i = 1; i <= steps; i++) {
       const p1 = i === steps ? to : from + i * d;
-      const s1 = signal(arms, k, p1, mode);
+      const s1 = signal(arms, k, p1);
       const up = s0 < 0 && s1 >= 0;
       if (up || (s0 > 0 && s1 <= 0)) {
         let a = p0;
         let b = p1;
         for (let it = 0; it < 22; it++) {
           const m = (a + b) / 2;
-          if (signal(arms, k, m, mode) < 0 === s0 < 0) a = m;
+          if (signal(arms, k, m) < 0 === s0 < 0) a = m;
           else b = m;
         }
         const p = (a + b) / 2;
-        const v = Math.abs(signal(arms, k, p + h, mode) - signal(arms, k, p - h, mode)) / (2 * h);
+        const v = Math.abs(signal(arms, k, p + h) - signal(arms, k, p - h)) / (2 * h);
         out.push({ k, phase: p, dir: up ? 1 : -1, vel: Math.min(1, v / top) });
       }
       p0 = p1;

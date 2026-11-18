@@ -39,7 +39,6 @@ interface State {
   arms: Arm[];
   /** four beats to the bar: the first arm at ×1 ticks on 1 and tocks on 3 */
   bpm: number;
-  mode: Mode;
   /** off the formula; on, the arms are real swings with the weights they have (physics.ts) */
   physics: boolean;
   /** 0..1, how hard every swing is pushed in time, and how thick the air is */
@@ -51,13 +50,12 @@ const rad = (deg: number) => (deg * Math.PI) / 180;
 /** what the page opens with, and what 0 brings back: four short arms, two of them half a swing late */
 const fresh = (): State => ({
   arms: [
-    { n: 2, swing: rad(35), len: 0.38, phase: rad(175), vol: 0.54, mass: 1 },
-    { n: 2, swing: rad(36), len: 0.26, phase: 0, vol: 0.15, mass: 0.5 },
-    { n: 4, swing: 0.9, len: 0.37, phase: 0, vol: 1, mass: 0.25 },
-    { n: 5, swing: rad(125), len: 0.17, phase: rad(176), vol: 1, mass: 0.12 },
+    { n: 2, swing: rad(35), len: 0.38, phase: rad(175), vol: 0.54, mass: 1, mode: 'sum' },
+    { n: 2, swing: rad(36), len: 0.26, phase: 0, vol: 0.15, mass: 0.5, mode: 'sum' },
+    { n: 4, swing: 0.9, len: 0.37, phase: 0, vol: 1, mass: 0.25, mode: 'sum' },
+    { n: 5, swing: rad(125), len: 0.17, phase: rad(176), vol: 1, mass: 0.12, mode: 'sum' },
   ],
   bpm: 120,
-  mode: 'sum',
   physics: false,
   push: 1,
 });
@@ -68,40 +66,41 @@ const unit01 = (v: number, or: number) => (Number.isFinite(v) ? Math.min(1, Math
  * A joint's weight where none was given: half the one above. And for a setup from when one
  * knob set them all (`weight`, each joint that many times the one above), what it gave.
  */
-const massFor = (mass: number | undefined, k: number, weight = 0) => (Number.isFinite(mass) ? Math.min(1, Math.max(0.05, mass!)) : Math.max(0.05, Math.pow(weight > 0 ? Math.min(1, weight) : 0.5, k)));
+const massFor = (mass: number | undefined, k: number, weight = 0) => (Number.isFinite(mass) ? Math.min(1, Math.max(0, mass!)) : Math.pow(weight > 0 ? Math.min(1, weight) : 0.5, k));
 
 /** a setup read back from storage, made safe; null if it is not one */
 function sane(given: State | null | undefined): State | null {
-  const s = given as (State & { weight?: number }) | null | undefined;
+  // `weight` and one `mode` for all: how setups were kept before each arm had its own
+  const s = given as (State & { weight?: number; mode?: Mode }) | null | undefined;
   if (!s || !Array.isArray(s.arms) || !s.arms.length || !s.arms.every((a) => a && [a.n, a.swing, a.len, a.phase].every(Number.isFinite))) return null;
   return {
-    arms: s.arms.slice(0, MAX_ARMS).map((a, k) => ({ n: Math.min(MAX_N, Math.max(1, Math.round(a.n))), swing: a.swing, len: a.len, phase: a.phase, vol: unit01(a.vol, 1), mass: massFor(a.mass, k, s.weight) })),
+    arms: s.arms.slice(0, MAX_ARMS).map((a, k) => ({ n: Math.min(MAX_N, Math.max(1, Math.round(a.n))), swing: a.swing, len: a.len, phase: a.phase, vol: unit01(a.vol, 1), mass: massFor(a.mass, k, s.weight), mode: (a.mode ?? s.mode) === 'each' ? 'each' : 'sum' })),
     bpm: s.bpm >= 40 && s.bpm <= 220 ? s.bpm : 120,
-    mode: s.mode === 'each' ? 'each' : 'sum',
     physics: typeof s.physics === 'boolean' ? s.physics : s.weight! > 0,
     push: unit01(s.push, 0.3),
   };
 }
 
 /**
- * ?arms=1-34-1,2-52-0.62-90-50-30 (swings, swing in degrees, length, then if any the phase in
- * degrees, the volume and the weight in percent), &bpm=, &mode=each, &physics=1, &push=0.3: a
- * pattern in a link, for clips too. &weight=0.3 is the old way to say physics, each joint that
- * many times the one above.
+ * ?arms=1-34-1,2-52-0.62-90-50-30-1 (swings, swing in degrees, length, then if any the phase
+ * in degrees, the volume and the weight in percent, and 1 for each or 0 for sum), &bpm=,
+ * &mode=each (for every arm that does not say), &physics=1, &push=0.3: a pattern in a link, for
+ * clips too. &weight=0.3 is the old way to say physics, each joint that many times the one above.
  */
 function fromQuery(): State | null {
   const q = query.get('arms');
   if (!q) return null;
   const weight = Number(query.get('weight')) || 0;
+  const all = query.get('mode') === 'each' ? 1 : 0;
   const arms = q
     .split(',')
     .map((a) => a.split('-').map(Number))
     .filter((a) => a.length >= 3 && a.every(Number.isFinite))
-    .map(([n, deg, len, phase = 0, vol = 100, mass], k) => ({ n: Math.min(MAX_N, Math.max(1, Math.round(n))), swing: (Math.min(180, Math.max(0, deg)) * Math.PI) / 180, len: Math.min(1.5, Math.max(0.1, len)), phase: (((phase % 360) + 360) % 360) * (Math.PI / 180), vol: unit01(vol / 100, 1), mass: massFor(mass === undefined ? undefined : mass / 100, k, weight) }));
+    .map(([n, deg, len, phase = 0, vol = 100, mass, each = all], k): Arm => ({ n: Math.min(MAX_N, Math.max(1, Math.round(n))), swing: (Math.min(180, Math.max(0, deg)) * Math.PI) / 180, len: Math.min(1.5, Math.max(0.1, len)), phase: (((phase % 360) + 360) % 360) * (Math.PI / 180), vol: unit01(vol / 100, 1), mass: massFor(mass === undefined ? undefined : mass / 100, k, weight), mode: each ? 'each' : 'sum' }));
   if (!arms.length) return null;
   const bpm = Number(query.get('bpm'));
   const push = Number(query.get('push'));
-  return { arms: arms.slice(0, MAX_ARMS), bpm: bpm >= 40 && bpm <= 220 ? bpm : 120, mode: query.get('mode') === 'each' ? 'each' : 'sum', physics: query.has('physics') ? query.get('physics') !== '0' : weight > 0, push: query.has('push') ? unit01(push, 0.3) : 0.3 };
+  return { arms: arms.slice(0, MAX_ARMS), bpm: bpm >= 40 && bpm <= 220 ? bpm : 120, physics: query.has('physics') ? query.get('physics') !== '0' : weight > 0, push: query.has('push') ? unit01(push, 0.3) : 0.3 };
 }
 
 function load(): State {
@@ -141,15 +140,17 @@ let orbits: Float32Array[] = [];
 let waves: Float32Array[] = [];
 let waveTop: number[] = [];
 
-/** `keep` false when nothing was set by hand: a pattern opened from a link does not write over the one remembered */
-function changed(keep = true) {
-  bar = crossings(state.arms, state.mode, -1e-6, 1 - 1e-6);
+/** a pattern opened from a link is a visit: it never writes over the one remembered (presets and names still keep it) */
+const linked = query.has('arms');
+
+function changed() {
+  bar = crossings(state.arms, -1e-6, 1 - 1e-6);
   const tmp: number[] = [];
   orbits = state.arms.map(() => new Float32Array((ORBIT + 1) * 2));
   waves = state.arms.map(() => new Float32Array(WAVE + 1));
   waveTop = state.arms.map((_, k) => {
     let top = 0;
-    for (let i = 0; i <= WAVE; i++) top = Math.max(top, Math.abs((waves[k][i] = signal(state.arms, k, i / WAVE, state.mode))));
+    for (let i = 0; i <= WAVE; i++) top = Math.max(top, Math.abs((waves[k][i] = signal(state.arms, k, i / WAVE))));
     return top;
   });
   for (let i = 0; i <= ORBIT; i++) {
@@ -159,7 +160,7 @@ function changed(keep = true) {
       orbits[k][2 * i + 1] = tmp[2 * k + 1];
     }
   }
-  if (!keep) return;
+  if (linked) return;
   try {
     localStorage.setItem(KEY, JSON.stringify(state));
   } catch {
@@ -246,11 +247,11 @@ function schedule() {
   if (state.physics) {
     // run the weighted chain on to there; from the formula if it is new, or was left far behind
     if (!sim.live || sim.phi < here - 0.25) sim.reset(state.arms, scanned);
-    sim.advance(state.arms, state.mode, pushOf(), end, scanned, hits);
+    sim.advance(state.arms, pushOf(), end, scanned, hits);
     scanned = Math.max(end, sim.phi);
   } else {
     sim.live = false;
-    crossings(state.arms, state.mode, scanned, end, hits);
+    crossings(state.arms, scanned, end, hits);
     scanned = end;
   }
   for (const h of hits) {
@@ -285,24 +286,24 @@ function build() {
   const many = state.arms.length > 1;
   panel.classList.toggle('weightless', !state.physics);
   panel.innerHTML = `
-    <div class="cols"><span>Swings</span><span>Swing</span><span>Length</span><span>Phase</span><span>Volume</span><span>Weight</span></div>
+    <div class="cols"><span>Swings</span><span>Sum</span><span>Swing</span><span>Length</span><span>Phase</span><span>Volume</span><span>Weight</span></div>
     ${state.arms
       .map(
         (a, k) => `
     <div class="arm" data-k="${k}" style="--arm: rgb(${PALETTE[k % PALETTE.length]})">
       <button data-act="dn" data-tip="swings" aria-label="Fewer swings per bar">−</button><output data-tip="swings">×${a.n}</output><button data-act="up" data-tip="swings" aria-label="More swings per bar">+</button>
+      <button data-act="own" data-tip="mode" aria-pressed="${a.mode === 'sum'}" aria-label="Arm ${k + 1} sounds on the sum">Σ</button>
       <input type="range" data-p="swing" data-tip="swing" min="0" max="180" step="1" value="${Math.round((a.swing * 180) / Math.PI)}" aria-label="Swing of arm ${k + 1}" />
       <input type="range" data-p="len" data-tip="len" min="0.1" max="1.5" step="0.01" value="${a.len}" aria-label="Length of arm ${k + 1}" />
       <input type="range" data-p="phase" data-tip="phase" min="0" max="360" step="1" value="${Math.round((a.phase * 180) / Math.PI)}" aria-label="Phase of arm ${k + 1}" />
       <input type="range" data-p="vol" data-tip="vol" min="0" max="100" step="1" value="${Math.round(a.vol * 100)}" aria-label="Volume of arm ${k + 1}, 0 is muted" />
-      <input type="range" data-p="mass" data-tip="mass" min="5" max="100" step="1" value="${Math.round(a.mass * 100)}" aria-label="Weight of arm ${k + 1}" />
+      <input type="range" data-p="mass" data-tip="mass" min="0" max="100" step="1" value="${Math.round(a.mass * 100)}" aria-label="Weight of arm ${k + 1}" />
       <button data-act="rm" data-tip="rm" aria-label="Remove arm ${k + 1}" ${many ? '' : 'disabled'}>✕</button>
     </div>`,
       )
       .join('')}
     <div class="globals">
       <button data-act="add" data-tip="add" ${state.arms.length < MAX_ARMS ? '' : 'disabled'}>+ Arm</button>
-      <button data-act="mode" data-tip="mode">${state.mode}</button>
       <button data-act="physics" data-tip="physics" aria-pressed="${state.physics}">${state.physics ? 'Physics' : 'Formula'}</button>
       <button data-act="restart" data-tip="restart">Restart</button>
       <button data-act="play" data-tip="play">${playing ? 'Pause' : 'Play'}</button>
@@ -323,11 +324,11 @@ const TIPS: Record<string, [string, string]> = {
   vol: ['Volume', 'How loud this joint is. All the way down is muted: the arm still swings and still moves the ones under it.'],
   rm: ['Remove', 'Takes this arm away.'],
   add: ['+ Arm', 'Hangs a new arm on the end, one harmonic up. Keys: + and −.'],
-  mode: ['Sum / Each', 'What a joint crosses to sound. Sum: the centre line under the pivot, every arm above it added up. Each: the vertical under its own origin, its arm alone. Key: S.'],
+  mode: ['Sum / Each', 'What this joint crosses to sound. Lit, the sum: the centre line under the pivot, every arm above it added up. Not lit, each: the vertical under its own origin, its arm alone. Key: S, for all of them.'],
   restart: ['Restart', 'The motion from the top, the setup as it is. With physics on, the same setup plays the same again. Key: R.'],
   play: ['Pause / Play', 'Stops the motion where it is, and lets it go on. Key: space.'],
   mute: ['Sound', 'All sound on or off. Key: M.'],
-  mass: ['Weight', 'How heavy this joint is, with physics on. Only against the others does it count: a light arm rides the one above and is shaken by it, a heavy one throws it about.'],
+  mass: ['Weight', 'How hard this link pulls on what it hangs from, with physics on. At the bottom it rides the arm above and is shaken by it, and the arm above never knows. At the top it weighs as much as the arm it hangs from, and throws it about.'],
   physics: ['Formula / Physics', 'Formula: every arm goes exactly as it is set. Physics: every arm is a real swing hung in the swing above, with its weight, kept going by the push. Key: W.'],
   push: ['Push', 'What keeps a swing going: a push in time with its own rhythm, and the air against it. From about 30 the bar comes round; lower and the swings drift; 0 lets go.'],
   tempo: ['Tempo', 'Beats a minute, four to the bar.'],
@@ -383,7 +384,7 @@ window.addEventListener('pointerdown', (e) => {
 function addArm() {
   if (state.arms.length >= MAX_ARMS) return;
   const last = state.arms[state.arms.length - 1];
-  state.arms.push({ n: Math.min(MAX_N, last.n + 1), swing: 0.9, len: Math.max(0.2, +(last.len * 0.62).toFixed(2)), phase: 0, vol: 1, mass: Math.max(0.05, +(last.mass / 2).toFixed(2)) });
+  state.arms.push({ n: Math.min(MAX_N, last.n + 1), swing: 0.9, len: Math.max(0.2, +(last.len * 0.62).toFixed(2)), phase: 0, vol: 1, mass: +(last.mass / 2).toFixed(2), mode: last.mode });
   if (sim.live) sim.added(state.arms);
 }
 function removeArm(k = state.arms.length - 1) {
@@ -392,7 +393,11 @@ function removeArm(k = state.arms.length - 1) {
   if (sim.live) sim.removed(k);
 }
 function toggle(what: 'mode' | 'play' | 'mute' | 'physics') {
-  if (what === 'mode') state.mode = state.mode === 'sum' ? 'each' : 'sum';
+  if (what === 'mode') {
+    // all of them: to each if any is on the sum, else back to the sum
+    const to: Mode = state.arms.some((a) => a.mode === 'sum') ? 'each' : 'sum';
+    for (const a of state.arms) a.mode = to;
+  }
   if (what === 'physics') state.physics = !state.physics;
   if (what === 'play') {
     anchor();
@@ -411,6 +416,7 @@ panel.addEventListener('click', (e) => {
   const k = Number(b.closest<HTMLElement>('.arm')?.dataset.k);
   if (act === 'up') state.arms[k].n = Math.min(MAX_N, state.arms[k].n + 1);
   else if (act === 'dn') state.arms[k].n = Math.max(1, state.arms[k].n - 1);
+  else if (act === 'own') state.arms[k].mode = state.arms[k].mode === 'sum' ? 'each' : 'sum';
   else if (act === 'rm') removeArm(k);
   else if (act === 'add') addArm();
   else if (act === 'restart') restart();
@@ -684,14 +690,18 @@ function frame() {
   ctx.clearRect(0, 0, w, h);
 
   // where things go: the workbench along the bottom, the chain in the middle of what is over
-  // it, and the bar on one line right under the chain
+  // it. Where the rows have no curves beside them (a phone, or no workbench at all) the hits
+  // go on one line right under the chain instead.
   const wide = w > 760;
   const edge = wide ? 24 : 16;
   let total = 0;
   for (const a of arms) total += a.len;
+  const cx0 = rowsRight + 28;
+  const cw = w - edge - cx0;
+  const curves = !clean && wide && cw > 120 && rowBoxes.length >= n;
   const px = w / 2;
   const py = Math.max(wide ? 150 : 112, h * 0.24);
-  const reach = Math.max(40, Math.min(px - edge, (clean ? h - 30 : panelRect.top - 18) - 80 - py));
+  const reach = Math.max(40, Math.min(px - edge, (clean ? h - 30 : panelRect.top - 18) - (curves ? 30 : 80) - py));
   const tlY = py + reach + 44;
   const tlX0 = px - reach;
   const tlX1 = px + reach;
@@ -704,8 +714,9 @@ function frame() {
   pose(phi, now);
 
   // what a joint has to cross: the centre line, or its own vertical
-  if (state.mode === 'sum') line(px, py - 14, px, Y(total) + 14, 0.22);
-  else for (let k = 0; k < n; k++) {
+  if (arms.some((a) => a.mode === 'sum')) line(px, py - 14, px, Y(total) + 14, 0.22);
+  for (let k = 0; k < n; k++) {
+    if (arms[k].mode !== 'each') continue;
     const ox = k ? X(now[2 * k - 2]) : px;
     const oy = k ? Y(now[2 * k - 1]) : py;
     line(ox, oy, ox, oy + arms[k].len * unit, 0.35, 1, k);
@@ -771,30 +782,30 @@ function frame() {
   // as it is hard; hits that fall together stand on each other
   const tlW = tlX1 - tlX0;
   const at = phi - Math.floor(phi);
-  line(tlX0, tlY, tlX1, tlY, 0.25);
-  for (let q = 0; q <= 4; q++) line(tlX0 + (tlW * q) / 4, tlY - 2, tlX0 + (tlW * q) / 4, tlY + 2, 0.35);
   // with weight no bar is the next one: the hits as they fell, the playhead writing over the bar before
   if (played.length && played[0].phase < phi - 1.5) played = played.filter((b) => b.phase > phi - 1);
-  const stood = new Map<number, number>();
-  for (const b of weighted ? played : bar) {
-    const since = weighted ? phi - b.phase : (at - b.phase + 1) % 1;
-    if (since < 0 || since >= 1 || b.k >= n) continue;
-    const x = tlX0 + (b.phase - Math.floor(b.phase)) * tlW;
-    const glow = since < 0.03 ? 1 - since / 0.03 : 0;
-    const key = (Math.round(x) + 1) * b.dir;
-    const from = stood.get(key) ?? 2;
-    const tall = 2.5 + 5 * b.vel + 2 * glow;
-    stood.set(key, from + tall + 2);
-    line(x, tlY - b.dir * from, x, tlY - b.dir * (from + tall), ((weighted ? 0.9 - 0.6 * since : 0.8) + 0.2 * glow) * (0.2 + 0.8 * arms[b.k].vol), 1.5, b.k);
+  if (!curves) {
+    line(tlX0, tlY, tlX1, tlY, 0.25);
+    for (let q = 0; q <= 4; q++) line(tlX0 + (tlW * q) / 4, tlY - 2, tlX0 + (tlW * q) / 4, tlY + 2, 0.35);
+    const stood = new Map<number, number>();
+    for (const b of weighted ? played : bar) {
+      const since = weighted ? phi - b.phase : (at - b.phase + 1) % 1;
+      if (since < 0 || since >= 1 || b.k >= n) continue;
+      const x = tlX0 + (b.phase - Math.floor(b.phase)) * tlW;
+      const glow = since < 0.03 ? 1 - since / 0.03 : 0;
+      const key = (Math.round(x) + 1) * b.dir;
+      const from = stood.get(key) ?? 2;
+      const tall = 2.5 + 5 * b.vel + 2 * glow;
+      stood.set(key, from + tall + 2);
+      line(x, tlY - b.dir * from, x, tlY - b.dir * (from + tall), ((weighted ? 0.9 - 0.6 * since : 0.8) + 0.2 * glow) * (0.2 + 0.8 * arms[b.k].vol), 1.5, b.k);
+    }
+    line(tlX0 + at * tlW, tlY - 14, tlX0 + at * tlW, tlY + 14, 0.5);
   }
-  line(tlX0 + at * tlW, tlY - 14, tlX0 + at * tlW, tlY + 14, 0.5);
 
   // Beside each link's row, its curve: what its joint crosses zero with, over the bar (in sum
   // every arm above it added up, in each its own swing). A hit is where the curve crosses the
   // line. With physics it is the bar behind, as it went, wrapping at the playhead.
-  const cx0 = rowsRight + 28;
-  const cw = w - edge - cx0;
-  if (!clean && wide && cw > 120 && rowBoxes.length >= n) {
+  if (curves) {
     for (let k = 0; k < n; k++) {
       const { y, h: rh } = rowBoxes[k];
       const amp = rh / 2 + 3;
@@ -803,7 +814,7 @@ function frame() {
       ctx.lineWidth = 1.25;
       ctx.beginPath();
       if (weighted) {
-        const own = state.mode === 'each' && k > 0;
+        const own = arms[k].mode === 'each' && k > 0;
         const val = (i: number) => trail[(i * MAX_ARMS + k) * 2] - (own ? trail[(i * MAX_ARMS + k - 1) * 2] : 0);
         // as tall as the row whatever it does, but never blown up from next to nothing
         let top = 0.05 * arms[k].len;
@@ -845,7 +856,7 @@ function frame() {
 if (import.meta.env.DEV) Object.assign(window, { __pendulum: { state, sim, energy: () => sim.energy(state.arms), sound: () => sound, bar: () => bar, played: () => played } });
 
 window.addEventListener('resize', resize);
-changed(!query.has('arms'));
+changed();
 build();
 resize();
 requestAnimationFrame(frame);
