@@ -301,6 +301,9 @@ void main() {
   if (a < 0.002) discard;
   vec3 col = mix(vec3(0.85, 0.74, 0.58), vec3(1.0, 0.72, 0.36), clamp(fwd * 2.0, 0.0, 1.0)) * light;
   col = tonemap(grade(col));
+  // pale dust with green in it, more in some grains than others (moss spores and all); after the tone map,
+  // since a dense cloud is bright enough there to go white whatever its colour
+  col *= mix(vec3(1.0), vec3(0.78, 1.0, 0.68), 0.3 + 0.6 * fract(vSeed * 7.13));
   col = mix(col, uHazeCol * 3.0, haze * 0.5);
   gl_FragColor = vec4(col * a, a);
 }

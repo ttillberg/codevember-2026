@@ -1,5 +1,6 @@
-// A slingshot in hand, as a shooter's weapon: a forked hazel twig, gnome-sized, held out low in the middle,
-// two bands of red rubber to a leather pouch with the pinch of spores in it. Hold and the pouch is drawn back at
+// A slingshot in hand, as a shooter's weapon: a forked hazel twig, gnome-sized, carried low at the right and
+// leaning, as a hand holds it, out of the way (a quick shot goes from there); held to draw, it comes up straight
+// in the middle, under the sight. Two bands of red rubber to a leather pouch with the pinch of spores in it. Hold and the pouch is drawn back at
 // you, the bands stretching; let go and it snaps out past the fork, the bands quivering as it settles, and the
 // fork kicks. It bobs with your steps and lags a little behind the turn of your head.
 //
@@ -12,10 +13,10 @@ const WOOD = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.8
 const CORD = new THREE.MeshStandardMaterial({ color: 0x3e2a1a, roughness: 0.7 }); // the leather thong of the grip
 const RUBBER = new THREE.MeshStandardMaterial({ color: 0x7a1c12, roughness: 0.55 });
 const LEATHER = new THREE.MeshStandardMaterial({ color: 0x7a5434, roughness: 0.75 });
-const LOAD = new THREE.MeshStandardMaterial({ color: 0xb4a482, roughness: 1, emissive: 0x8a6a3a, emissiveIntensity: 0.4 });
+const LOAD = new THREE.MeshStandardMaterial({ color: 0xa8ac7e, roughness: 1, emissive: 0x7a7a3c, emissiveIntensity: 0.4 }); // pale, a little green
 
 // where the fork stands in the eye's space (metres; the eye is a gnome's, the slingshot a gnome's toy)
-const AT = new THREE.Vector3(0, -0.049, -0.175); // centred, under the sight
+const AT = new THREE.Vector3(0, -0.049, -0.175); // raised to draw: centred, under the sight
 const PULL = 0.055; // how far back the pouch comes at full draw
 
 // ---- the wood, whittled: each piece a tube swept along a curve whose radius is carved point by point, so the cuts
@@ -112,6 +113,9 @@ export class Slingshot {
   private going = false;
   private downFor = 0;
   private reloadIn = -1;
+  private up = 0; // carried low at the right (0) .. raised straight to draw (1)
+  private halfW = 0.1; // half the view's width and height where the fork stands
+  private halfH = 0.064;
   private lagYaw = 0;
   private lagPitch = 0;
   private lastYaw = 0;
@@ -218,6 +222,8 @@ export class Slingshot {
     this.cam.fov = fov;
     this.cam.aspect = aspect;
     this.cam.updateProjectionMatrix();
+    this.halfH = Math.tan(THREE.MathUtils.degToRad(fov) / 2) * -AT.z;
+    this.halfW = this.halfH * aspect;
   }
 
   /** Where the pouch is in the world now, for the shot to leave from. */
@@ -263,6 +269,13 @@ export class Slingshot {
       }
     } else this.lower = Math.max(0, this.lower - dt / 0.15);
     const e = this.lower * this.lower * (3 - 2 * this.lower);
+    // straightened as it is drawn, as far as it is drawn (half a draw, half way up); down again a little slower
+    if (this.draw > this.up) this.up = this.draw;
+    else this.up += (this.draw - this.up) * Math.min(1, dt * 6);
+    // and never all the way: three quarters up and still leaning a little at full draw
+    const u = 0.75 * this.up * this.up * (3 - 2 * this.up);
+    // carried: low, right of the middle, only the tips over the bottom edge, leaning, turned in a little
+    const lowX = this.halfW > 0.07 ? 0.035 : -0.012, lowY = -1.14 * this.halfH; // clear of the pouch at the right (a phone: left of the middle, the pouch is close)
     // lags behind the head: turning right, it trails left, and catches up
     const dy = yaw - this.lastYaw, dp = pitch - this.lastPitch;
     this.lastYaw = yaw; this.lastPitch = pitch;
@@ -270,8 +283,9 @@ export class Slingshot {
     this.lagPitch = (this.lagPitch + dp * 0.6) * Math.exp(-dt * 9);
     // held out, bobbing with the steps
     const bx = Math.sin(bob) * 0.003 * walking, by = -Math.abs(Math.cos(bob)) * 0.003 * walking;
-    this.rig.position.set(AT.x + bx + this.lagYaw * 0.05, AT.y + by - this.lagPitch * 0.05 + 0.006 * this.draw - 0.075 * e, AT.z);
-    this.rig.rotation.set(-0.12 + this.kick * 0.25 - 0.6 * e, this.lagYaw * 0.4, -0.04 + Math.sin(bob) * 0.03 * walking);
+    const px = lowX + (AT.x - lowX) * u, py = lowY + (AT.y - lowY) * u;
+    this.rig.position.set(px + bx + this.lagYaw * 0.05, py + by - this.lagPitch * 0.05 + 0.006 * this.draw - 0.075 * e, AT.z + 0.008 * (1 - u));
+    this.rig.rotation.set(-0.12 - 0.12 * (1 - u) + this.kick * 0.25 - 0.6 * e, this.lagYaw * 0.4 + 0.22 * (1 - u), -0.04 + 0.42 * (1 - u) + Math.sin(bob) * 0.03 * walking);
     this.fork.position.z = this.kick * 0.006;
     // the pouch: between the tips, drawn back along the shot (toward the eye: +z in the rig), a little down
     const mid = this.tips[0].clone().add(this.tips[1]).multiplyScalar(0.5);
