@@ -106,6 +106,19 @@
       ],
       "port": 5117,
       "url": "https://localhost:5117"
+    },
+    {
+      "name": "18",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": [
+        "-C",
+        "18",
+        "dev",
+        "--port",
+        "5118",
+        "--strictPort"
+      ],
+      "port": 5118
     }
   ]
 }

@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#0b0b0d" />
+    <title>18 · Pendulum · Codevember 2026</title>
+    <meta name="description" content="A chain of swinging arms as a drum machine: every joint ticks where it crosses the centre line, a Fourier sum heard as rhythm" />
+    <meta name="author" content="Theo Tillberg" />
+    <!-- share image: 18/about/screengrab.png, copied next to the build by scripts/build.mjs -->
+    <meta property="og:title" content="18 · Pendulum · Codevember 2026" />
+    <meta property="og:description" content="A chain of swinging arms as a drum machine: every joint ticks where it crosses the centre line, a Fourier sum heard as rhythm" />
+    <meta property="og:image" content="https://ttillberg.github.io/codevember-2026/18/screengrab.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="1200" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <link rel="icon" href="data:," />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@700&family=Inter:wght@400;600&display=swap" />
+    <link rel="stylesheet" href="./src/style.css" />
+  </head>
+  <body>
+    <canvas id="c"></canvas>
+    <div class="plate"><div class="head"><b>18 Pendulum</b><i><a class="home" href="https://ttillberg.github.io/codevember-2026/">Codevember 2026 <span lang="ja">振り子</span></a> · <a class="home" href="https://x.com/theo_t">@theo_t</a></i></div><i id="hint" class="hint"></i></div>
+    <!-- the workbench: arms, tempo, what a joint crosses -->
+    <div id="panel" class="panel"></div>
+    <script type="module" src="./src/main.ts"></script>
+  </body>
+</html>

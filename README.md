@@ -26,7 +26,7 @@ Live: https://ttillberg.github.io/codevember-2026/
 | 15 | Mirage | — | — |
 | 16 | Spore | [View](https://ttillberg.github.io/codevember-2026/16/) | [Code](https://github.com/ttillberg/codevember-2026/tree/main/16) |
 | 17 | Kelp | — | — |
-| 18 | Pendulum | — | — |
+| 18 | Pendulum | [View](https://ttillberg.github.io/codevember-2026/18/) | [Code](https://github.com/ttillberg/codevember-2026/tree/main/18) |
 | 19 | Erosion | — | — |
 | 20 | Cocoon | — | — |
 | 21 | Bolt | — | — |
