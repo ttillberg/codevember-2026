@@ -2,7 +2,9 @@
 
 2026-11-18
 
-A pendulum as a drum machine, drawn in lines. Take it down to one arm swinging once a bar: a
+A pendulum as a drum machine, drawn in lines, a colour a link: magenta, pink, neon green, and
+the same three again down the chain, deeper, paler, yellower. An arm and the joint at its end,
+its path, its rings, its row in the bar and its row in the workbench are all that colour. Take it down to one arm swinging once a bar: a
 tick where it crosses the centre line going right, a tock going left. A binary rhythm. Then more
 arms, each hung from the end of the one before and swinging its own number of times a bar, and
 every joint is a voice that sounds where *it* crosses the centre line.
@@ -21,11 +23,17 @@ pnpm -C 18 dev
 
 ## How it plays
 
-- **The workbench**, bottom right: a row an arm. `− ×n +` is how many swings it makes in a bar
+- **The workbench**, along the bottom: a row a link on the left, and beside each row, drawn to
+  the right edge, **its curve**: what its joint crosses zero with, over the bar. In sum that
+  is every arm above it added up, the partial sums of the series, each row one term more; in
+  each it is the arm's own swing. A dot is a hit: where the curve crosses its line. With
+  physics it is the bar behind as it went, wrapping at the playhead. Under the rows, one line
+  of everything else. (On a phone there is no room beside the rows: no curves.) In a row: `− ×n +` is how many swings it makes in a bar
   (the harmonic), then how far it swings (0 to 180°), how long it is, and its phase: where in
   its swing it is when the bar starts (0° it crosses going right, 90° it is out at the right),
-  and how loud its joint's voice is: all the way down is muted, the arm still swings and still
-  moves the ones under it, its row and its rings go dim.
+  how loud its joint's voice is (all the way down is muted, the arm still swings and still
+  moves the ones under it, its row and its rings go dim), and how heavy its joint is, which
+  counts only with physics on.
   `✕` takes it away.
 - **+ Arm** (or `+`, `-` takes the last one away): a new arm on the end, one harmonic up.
 - **Sum / Each** (`S`): what a joint crosses to sound. *Sum* is the centre line under the pivot:
@@ -35,9 +43,12 @@ pnpm -C 18 dev
   weight the chain is put back on the formula: the same chaos again, from the start.
 - **Pause** (space), **Sound** (`M`), **Tempo**: four beats to the bar, so ×1 ticks on 1 and
   tocks on 3.
-- **Weight**: 0 is the formula. Over it every arm is a real swing hung in the swing above, a
-  weight at each joint, and the knob is how heavy each joint is against the one above it. Light
-  ones ride the swing over them and are shaken by it; heavy ones throw it about.
+- **Formula / Physics** (`W`): with the formula every arm goes exactly as it is set. With
+  physics every arm is a real swing hung in the swing above, a weight at its joint, the joint
+  drawn as big as it is heavy. Only how the weights compare counts: a light arm rides the one
+  above and is shaken by it; a heavy one throws it about. (It was one knob first, each joint
+  so many times the one above it. A weight an arm lets the heavy one be anywhere: at the end,
+  like a hammer, or in the middle.)
 - **Push**: what keeps a swing going, the force you give a swing: a push along the way it
   should be moving, in its own rhythm, and the air against the way it is. Nothing holds it in
   place. High and the rhythm is kept close to the formula; around 30 the bar still comes
@@ -55,11 +66,17 @@ pnpm -C 18 dev
 - **Tips** (the `?` top right, or the `?` key): what the control under the pointer does, in a
   box of its own over the workbench (under the title on a phone, where it shows for the
   control you press). On to start with, remembered.
-- **The bar** along the bottom: a row a joint, a tick a hit, up for tick and down for tock, as
-  tall as it is hard. With weight it shows what was played, the playhead writing over the bar
-  before, and the paths become the trail of the last bar.
-- `?arms=1-34-1,2-52-0.62-90-50` is a pattern in a link (swings, swing in degrees, length, and
-  if any the phase in degrees and the volume in percent; `&bpm=`, `&mode=each`, `&weight=0.3`, `&push=0.4`). Without it, the last pattern is remembered; a
+- **The bar**, one line right under the chain: a tick a hit in its link's colour, up for tick
+  and down for tock, as tall as it is hard; hits that fall together stand on each other. With
+  physics it shows what was played, the playhead writing over the bar before, and the paths
+  become the trail of the last bar. (It was a row a joint along the bottom of the screen; with
+  a colour a link one line says it all, and it sits where the eye already is.)
+- The chain takes the middle of what is over the workbench. (The workbench was a block
+  bottom right first, the chain beside it; along the bottom, the rows have their curves and
+  the chain has the width.)
+- `?arms=1-34-1,2-52-0.62-90-50-30` is a pattern in a link (swings, swing in degrees, length,
+  and if any the phase in degrees, the volume and the weight in percent; `&bpm=`,
+  `&mode=each`, `&physics=1`, `&push=0.4`). Without it, the last pattern is remembered; a
   pattern opened from a link is not, until something in it is changed. `?clean` hides the furniture.
 
 ## How it works
@@ -81,14 +98,19 @@ pnpm -C 18 dev
 - It runs in bars, not seconds, so tempo only says how fast a bar goes by. And it runs ahead
   of what is seen, as far as the formula's crossings are looked up, so the hits are still
   known before they are heard; the drawing reads the kept states behind it.
-- Checked: with nothing pushing the energy stays put to six digits over 16 bars at any
-  weight; an arm alone at 34° takes 1.023 of its own period, ×1 and ×3 alike. With the default
-  three arms, bar 10 is bar 11 from push 30 up at every weight, and never under it; at weight
-  30 the arms are within 20°, 29° and 76° of the formula at push 30, and 6°, 13°, 14° at 100.
+- Checked: with nothing pushing the energy stays put to four digits over 16 bars for three
+  arms at any weights, the lightest a twentieth of the heaviest (no joint is lighter than that:
+  the lighter one is against its neighbours, the smaller the steps it needs). Eight arms wide
+  open with every other one that light lose energy as they go, like air, when nothing pushes; an arm alone at 34° takes 1.023 of its own period, ×1 and ×3 alike. With three arms
+  (×1, ×2, ×3), bar 10 is bar 11 from push 30 up at every set of weights tried, and never under
+  it; with weights 1, 0.3, 0.09 the arms are within 20°, 29° and 76° of the formula at push 30,
+  and 6°, 13°, 14° at 100; with the heavy one at the end, 40°, 52°, 56° at push 30.
 - Tried first: one knob that blended the physical acceleration with a pull to the formula,
   gravity fading in as the pull faded out. Neither one thing nor the other: half way it was
   the formula with a limp, at the top chaos with no pulse. Weight that is always there, and a
   push, is a thing you can picture.
+- It was black and white, lines only. The colour is not decoration: with five arms, which row
+  is which joint was a count from the top every time.
 - The voices are plain Web Audio nodes: a sine with a falling pitch, one partial over it, a
   click of noise. Low for the first joint and higher down the chain, the tock a fourth under
   the tick, harder hits brighter. A short room, a compressor.

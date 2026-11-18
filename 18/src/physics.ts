@@ -7,9 +7,9 @@
 //   a bar whatever its length (g = (2π n)² L). So the formula's motion is what every swing
 //   does by itself, and the push is in time with that: (θ'* - θ') ω / Q, the formula's speed
 //   against its own. On the formula the push is nothing at all.
-// - Weight. The mass at each joint is `weight` times the one above it. Light children ride
-//   the swing above and are shaken by it; heavy ones throw it about, and the motor at a joint
-//   pushes back on the arm above as hard as it pushes its own.
+// - Weight. Every joint has a mass of its own (only how they compare counts). A light arm
+//   rides the swing above and is shaken by it; a heavy one throws it about, and the motor at
+//   a joint pushes back on the arm above as hard as it pushes its own.
 // - What bends the rhythm is then only what is real: a wide swing is slower than a small one,
 //   the joint an arm hangs from is moving, and the arms under it pull.
 //
@@ -21,6 +21,9 @@ import { topSpeed, type Arm, type Hit, type Mode } from './rhythm';
 
 const TAU = Math.PI * 2;
 const MAX = 8;
+/** no joint weighs nothing: the weight under an arm is divided by */
+const LIGHTEST = 0.05;
+const massOf = (a: Arm) => Math.max(LIGHTEST, a.mass);
 /** steps to a bar (RK4) */
 export const STEPS = 4096;
 /** every so many steps the angles are kept, for drawing */
@@ -119,7 +122,7 @@ export class Sim {
   }
 
   /** every arm's angular acceleration, per bar², into out */
-  private accel(arms: Arm[], push: number, weight: number, phi: number, th: Float64Array, om: Float64Array, out: Float64Array) {
+  private accel(arms: Arm[], push: number, phi: number, th: Float64Array, om: Float64Array, out: Float64Array) {
     const n = arms.length;
     const { A, b, mu, tq } = this;
     // the weight hanging under every arm, and each arm's push, as an acceleration of its own
@@ -128,7 +131,7 @@ export class Sim {
     for (let i = n - 1; i >= 0; i--) {
       const a = arms[i];
       const wn = TAU * a.n;
-      mu[i] = mu[i + 1] + Math.pow(weight, i);
+      mu[i] = mu[i + 1] + massOf(a);
       tq[i] = push * wn * (a.swing * wn * Math.cos(wn * phi + a.phase) - om[i]);
     }
     // A θ" = b, every row over the weight under its arm and over its length
@@ -168,29 +171,29 @@ export class Sim {
     }
   }
 
-  private step(arms: Arm[], push: number, weight: number) {
+  private step(arms: Arm[], push: number) {
     const n = arms.length;
     const h = 1 / STEPS;
     const phi = this.i / STEPS;
     const { th, om, ts } = this;
     const [k1, k2, k3, k4] = this.k;
     const [o2, o3, o4] = this.os;
-    this.accel(arms, push, weight, phi, th, om, k1);
+    this.accel(arms, push, phi, th, om, k1);
     for (let j = 0; j < n; j++) {
       ts[j] = th[j] + (h / 2) * om[j];
       o2[j] = om[j] + (h / 2) * k1[j];
     }
-    this.accel(arms, push, weight, phi + h / 2, ts, o2, k2);
+    this.accel(arms, push, phi + h / 2, ts, o2, k2);
     for (let j = 0; j < n; j++) {
       ts[j] = th[j] + (h / 2) * o2[j];
       o3[j] = om[j] + (h / 2) * k2[j];
     }
-    this.accel(arms, push, weight, phi + h / 2, ts, o3, k3);
+    this.accel(arms, push, phi + h / 2, ts, o3, k3);
     for (let j = 0; j < n; j++) {
       ts[j] = th[j] + h * o3[j];
       o4[j] = om[j] + h * k3[j];
     }
-    this.accel(arms, push, weight, phi + h, ts, o4, k4);
+    this.accel(arms, push, phi + h, ts, o4, k4);
     for (let j = 0; j < n; j++) {
       th[j] += (h / 6) * (om[j] + 2 * o2[j] + 2 * o3[j] + o4[j]);
       om[j] += (h / 6) * (k1[j] + 2 * k2[j] + 2 * k3[j] + k4[j]);
@@ -208,7 +211,7 @@ export class Sim {
   }
 
   /** run on to φ = to, and say where every joint crossed on the way (those at or after `since`) */
-  advance(arms: Arm[], mode: Mode, push: number, weight: number, to: number, since: number, out: Hit[]) {
+  advance(arms: Arm[], mode: Mode, push: number, to: number, since: number, out: Hit[]) {
     const n = arms.length;
     if (this.prevMode !== mode) {
       this.signals(arms, mode, this.prev);
@@ -216,7 +219,7 @@ export class Sim {
     }
     const sig = new Float64Array(MAX);
     while (this.i < to * STEPS) {
-      this.step(arms, push, weight);
+      this.step(arms, push);
       this.signals(arms, mode, sig);
       for (let k = 0; k < n; k++) {
         const s0 = this.prev[k];
@@ -235,15 +238,15 @@ export class Sim {
   }
 
   /** for the dev console: kinetic and potential energy of the weights, per bar² (constant when nothing pushes) */
-  energy(arms: Arm[], weight: number): number {
+  energy(arms: Arm[]): number {
     const n = arms.length;
     let vx = 0;
     let vy = 0;
     let e = 0;
     let under = 0;
-    for (let j = 0; j < n; j++) under += Math.pow(weight, j);
+    for (let j = 0; j < n; j++) under += massOf(arms[j]);
     for (let j = 0; j < n; j++) {
-      const m = Math.pow(weight, j);
+      const m = massOf(arms[j]);
       vx += arms[j].len * Math.cos(this.th[j]) * this.om[j];
       vy -= arms[j].len * Math.sin(this.th[j]) * this.om[j];
       e += 0.5 * m * (vx * vx + vy * vy) - under * (TAU * arms[j].n * arms[j].len) ** 2 * Math.cos(this.th[j]);

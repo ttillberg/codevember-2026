@@ -1,6 +1,6 @@
 import { Sound } from './audio';
 import { Sim } from './physics';
-import { angle, crossings, place, type Arm, type Hit, type Mode } from './rhythm';
+import { angle, crossings, place, signal, type Arm, type Hit, type Mode } from './rhythm';
 
 // ?clean: no page furniture, the scene alone (screengrabs, clips)
 const query = new URLSearchParams(location.search);
@@ -16,6 +16,8 @@ const tipsButton = document.querySelector<HTMLButtonElement>('#tips')!;
 
 const INK = '244, 244, 242';
 const BACK = '#0b0b0d';
+/** a colour a link, down the chain: magenta, pink, neon green, then the same three again, deeper, paler, yellower */
+const PALETTE = ['255, 43, 209', '255, 158, 196', '57, 255, 20', '214, 0, 170', '255, 200, 228', '182, 255, 58', '255, 79, 154', '45, 255, 160'];
 const MAX_ARMS = 8;
 const MAX_N = 16;
 /**
@@ -28,6 +30,8 @@ const LOOK = 0.12;
 const ORBIT = 720;
 /** and along its trail, the bar behind it, when it has weight */
 const TRAIL = 288;
+/** points along a link's curve */
+const WAVE = 480;
 
 // --- what is set ---
 
@@ -36,8 +40,8 @@ interface State {
   /** four beats to the bar: the first arm at ×1 ticks on 1 and tocks on 3 */
   bpm: number;
   mode: Mode;
-  /** 0 the formula. Over it the arms are real swings, and this is how heavy each joint is against the one above (physics.ts) */
-  weight: number;
+  /** off the formula; on, the arms are real swings with the weights they have (physics.ts) */
+  physics: boolean;
   /** 0..1, how hard every swing is pushed in time, and how thick the air is */
   push: number;
 }
@@ -47,45 +51,57 @@ const rad = (deg: number) => (deg * Math.PI) / 180;
 /** what the page opens with, and what 0 brings back: four short arms, two of them half a swing late */
 const fresh = (): State => ({
   arms: [
-    { n: 2, swing: rad(35), len: 0.38, phase: rad(175), vol: 0.54 },
-    { n: 2, swing: rad(36), len: 0.26, phase: 0, vol: 0.15 },
-    { n: 4, swing: 0.9, len: 0.37, phase: 0, vol: 1 },
-    { n: 5, swing: rad(125), len: 0.17, phase: rad(176), vol: 1 },
+    { n: 2, swing: rad(35), len: 0.38, phase: rad(175), vol: 0.54, mass: 1 },
+    { n: 2, swing: rad(36), len: 0.26, phase: 0, vol: 0.15, mass: 0.5 },
+    { n: 4, swing: 0.9, len: 0.37, phase: 0, vol: 1, mass: 0.25 },
+    { n: 5, swing: rad(125), len: 0.17, phase: rad(176), vol: 1, mass: 0.12 },
   ],
   bpm: 120,
   mode: 'sum',
-  weight: 0,
+  physics: false,
   push: 1,
 });
 
 const unit01 = (v: number, or: number) => (Number.isFinite(v) ? Math.min(1, Math.max(0, v)) : or);
 
+/**
+ * A joint's weight where none was given: half the one above. And for a setup from when one
+ * knob set them all (`weight`, each joint that many times the one above), what it gave.
+ */
+const massFor = (mass: number | undefined, k: number, weight = 0) => (Number.isFinite(mass) ? Math.min(1, Math.max(0.05, mass!)) : Math.max(0.05, Math.pow(weight > 0 ? Math.min(1, weight) : 0.5, k)));
+
 /** a setup read back from storage, made safe; null if it is not one */
-function sane(s: State | null | undefined): State | null {
+function sane(given: State | null | undefined): State | null {
+  const s = given as (State & { weight?: number }) | null | undefined;
   if (!s || !Array.isArray(s.arms) || !s.arms.length || !s.arms.every((a) => a && [a.n, a.swing, a.len, a.phase].every(Number.isFinite))) return null;
   return {
-    arms: s.arms.slice(0, MAX_ARMS).map((a) => ({ n: Math.min(MAX_N, Math.max(1, Math.round(a.n))), swing: a.swing, len: a.len, phase: a.phase, vol: unit01(a.vol, 1) })),
+    arms: s.arms.slice(0, MAX_ARMS).map((a, k) => ({ n: Math.min(MAX_N, Math.max(1, Math.round(a.n))), swing: a.swing, len: a.len, phase: a.phase, vol: unit01(a.vol, 1), mass: massFor(a.mass, k, s.weight) })),
     bpm: s.bpm >= 40 && s.bpm <= 220 ? s.bpm : 120,
     mode: s.mode === 'each' ? 'each' : 'sum',
-    weight: unit01(s.weight, 0),
+    physics: typeof s.physics === 'boolean' ? s.physics : s.weight! > 0,
     push: unit01(s.push, 0.3),
   };
 }
 
-/** ?arms=1-34-1,2-52-0.62-90-50 (swings, swing in degrees, length, then if any the phase in degrees and the volume in percent), &bpm=, &mode=each, &weight=0.3, &push=0.3: a pattern in a link, for clips too */
+/**
+ * ?arms=1-34-1,2-52-0.62-90-50-30 (swings, swing in degrees, length, then if any the phase in
+ * degrees, the volume and the weight in percent), &bpm=, &mode=each, &physics=1, &push=0.3: a
+ * pattern in a link, for clips too. &weight=0.3 is the old way to say physics, each joint that
+ * many times the one above.
+ */
 function fromQuery(): State | null {
   const q = query.get('arms');
   if (!q) return null;
+  const weight = Number(query.get('weight')) || 0;
   const arms = q
     .split(',')
     .map((a) => a.split('-').map(Number))
     .filter((a) => a.length >= 3 && a.every(Number.isFinite))
-    .map(([n, deg, len, phase = 0, vol = 100]) => ({ n: Math.min(MAX_N, Math.max(1, Math.round(n))), swing: (Math.min(180, Math.max(0, deg)) * Math.PI) / 180, len: Math.min(1.5, Math.max(0.1, len)), phase: (((phase % 360) + 360) % 360) * (Math.PI / 180), vol: unit01(vol / 100, 1) }));
+    .map(([n, deg, len, phase = 0, vol = 100, mass], k) => ({ n: Math.min(MAX_N, Math.max(1, Math.round(n))), swing: (Math.min(180, Math.max(0, deg)) * Math.PI) / 180, len: Math.min(1.5, Math.max(0.1, len)), phase: (((phase % 360) + 360) % 360) * (Math.PI / 180), vol: unit01(vol / 100, 1), mass: massFor(mass === undefined ? undefined : mass / 100, k, weight) }));
   if (!arms.length) return null;
   const bpm = Number(query.get('bpm'));
-  const weight = Number(query.get('weight'));
   const push = Number(query.get('push'));
-  return { arms: arms.slice(0, MAX_ARMS), bpm: bpm >= 40 && bpm <= 220 ? bpm : 120, mode: query.get('mode') === 'each' ? 'each' : 'sum', weight: unit01(weight, 0), push: query.has('push') ? unit01(push, 0.3) : 0.3 };
+  return { arms: arms.slice(0, MAX_ARMS), bpm: bpm >= 40 && bpm <= 220 ? bpm : 120, mode: query.get('mode') === 'each' ? 'each' : 'sum', physics: query.has('physics') ? query.get('physics') !== '0' : weight > 0, push: query.has('push') ? unit01(push, 0.3) : 0.3 };
 }
 
 function load(): State {
@@ -121,12 +137,21 @@ function anchor() {
 
 let bar: Hit[] = [];
 let orbits: Float32Array[] = [];
+/** what each joint crosses zero with, over the bar, and the furthest it gets from zero */
+let waves: Float32Array[] = [];
+let waveTop: number[] = [];
 
 /** `keep` false when nothing was set by hand: a pattern opened from a link does not write over the one remembered */
 function changed(keep = true) {
   bar = crossings(state.arms, state.mode, -1e-6, 1 - 1e-6);
   const tmp: number[] = [];
   orbits = state.arms.map(() => new Float32Array((ORBIT + 1) * 2));
+  waves = state.arms.map(() => new Float32Array(WAVE + 1));
+  waveTop = state.arms.map((_, k) => {
+    let top = 0;
+    for (let i = 0; i <= WAVE; i++) top = Math.max(top, Math.abs((waves[k][i] = signal(state.arms, k, i / WAVE, state.mode))));
+    return top;
+  });
   for (let i = 0; i <= ORBIT; i++) {
     place(state.arms, state.arms.map((a) => angle(a, i / ORBIT)), tmp);
     for (let k = 0; k < orbits.length; k++) {
@@ -180,7 +205,7 @@ const pushOf = () => 4 * state.push * state.push;
 const angles: number[] = [];
 function pose(phi: number, out: number[]): number[] {
   const arms = state.arms;
-  if (!(state.weight > 0 && sim.sample(phi, arms.length, angles))) {
+  if (!(state.physics && sim.sample(phi, arms.length, angles))) {
     for (let k = 0; k < arms.length; k++) angles[k] = angle(arms[k], phi);
     angles.length = arms.length;
   }
@@ -202,7 +227,7 @@ function restart() {
   phi0 = Math.min(SEED, -lookahead() / barSeconds());
   t0 = clock();
   scanned = SEED;
-  if (state.weight > 0) sim.reset(state.arms, SEED);
+  if (state.physics) sim.reset(state.arms, SEED);
   else sim.live = false;
   flashes.length = 0;
   played = [];
@@ -218,10 +243,10 @@ function schedule() {
   if (!(end > scanned)) return;
   sound?.sync();
   const hits: Hit[] = [];
-  if (state.weight > 0) {
+  if (state.physics) {
     // run the weighted chain on to there; from the formula if it is new, or was left far behind
     if (!sim.live || sim.phi < here - 0.25) sim.reset(state.arms, scanned);
-    sim.advance(state.arms, state.mode, pushOf(), state.weight, end, scanned, hits);
+    sim.advance(state.arms, state.mode, pushOf(), end, scanned, hits);
     scanned = Math.max(end, sim.phi);
   } else {
     sim.live = false;
@@ -241,56 +266,69 @@ window.setInterval(schedule, 25);
 // --- the workbench ---
 
 let panelRect = { left: 0, top: 0 };
+/** where each link's row is, and where the rows end: its curve is drawn beside it */
+let rowBoxes: { y: number; h: number }[] = [];
+let rowsRight = 0;
+
+function measure() {
+  const r = panel.getBoundingClientRect();
+  panelRect = { left: r.left, top: r.top };
+  rowBoxes = [...panel.querySelectorAll('.arm')].map((row) => {
+    const b = row.getBoundingClientRect();
+    rowsRight = b.right;
+    return { y: b.top + b.height / 2, h: b.height };
+  });
+  placeTip();
+}
 
 function build() {
   const many = state.arms.length > 1;
+  panel.classList.toggle('weightless', !state.physics);
   panel.innerHTML = `
-    <div class="cols"><span>Swings</span><span>Swing</span><span>Length</span><span>Phase</span><span>Volume</span></div>
+    <div class="cols"><span>Swings</span><span>Swing</span><span>Length</span><span>Phase</span><span>Volume</span><span>Weight</span></div>
     ${state.arms
       .map(
         (a, k) => `
-    <div class="arm" data-k="${k}">
+    <div class="arm" data-k="${k}" style="--arm: rgb(${PALETTE[k % PALETTE.length]})">
       <button data-act="dn" data-tip="swings" aria-label="Fewer swings per bar">−</button><output data-tip="swings">×${a.n}</output><button data-act="up" data-tip="swings" aria-label="More swings per bar">+</button>
       <input type="range" data-p="swing" data-tip="swing" min="0" max="180" step="1" value="${Math.round((a.swing * 180) / Math.PI)}" aria-label="Swing of arm ${k + 1}" />
       <input type="range" data-p="len" data-tip="len" min="0.1" max="1.5" step="0.01" value="${a.len}" aria-label="Length of arm ${k + 1}" />
       <input type="range" data-p="phase" data-tip="phase" min="0" max="360" step="1" value="${Math.round((a.phase * 180) / Math.PI)}" aria-label="Phase of arm ${k + 1}" />
       <input type="range" data-p="vol" data-tip="vol" min="0" max="100" step="1" value="${Math.round(a.vol * 100)}" aria-label="Volume of arm ${k + 1}, 0 is muted" />
+      <input type="range" data-p="mass" data-tip="mass" min="5" max="100" step="1" value="${Math.round(a.mass * 100)}" aria-label="Weight of arm ${k + 1}" />
       <button data-act="rm" data-tip="rm" aria-label="Remove arm ${k + 1}" ${many ? '' : 'disabled'}>✕</button>
     </div>`,
       )
       .join('')}
-    <div class="row">
+    <div class="globals">
       <button data-act="add" data-tip="add" ${state.arms.length < MAX_ARMS ? '' : 'disabled'}>+ Arm</button>
       <button data-act="mode" data-tip="mode">${state.mode}</button>
-    </div>
-    <div class="row">
+      <button data-act="physics" data-tip="physics" aria-pressed="${state.physics}">${state.physics ? 'Physics' : 'Formula'}</button>
       <button data-act="restart" data-tip="restart">Restart</button>
       <button data-act="play" data-tip="play">${playing ? 'Pause' : 'Play'}</button>
       <button data-act="mute" data-tip="mute">${muted ? 'Muted' : 'Sound'}</button>
-    </div>
-    <label class="row" data-tip="weight"><span>Weight</span><input type="range" data-p="weight" min="0" max="100" step="1" value="${Math.round(state.weight * 100)}" /><output id="weight">${Math.round(state.weight * 100)}</output></label>
-    <label class="row" data-tip="push"><span>Push</span><input type="range" data-p="push" min="0" max="100" step="1" value="${Math.round(state.push * 100)}" /><output id="push">${Math.round(state.push * 100)}</output></label>
-    <label class="row" data-tip="tempo"><span>Tempo</span><input type="range" data-p="bpm" min="40" max="220" step="1" value="${state.bpm}" /><output id="bpm">${state.bpm}</output></label>`;
-  const r = panel.getBoundingClientRect();
-  panelRect = { left: r.left, top: r.top };
-  placeTip();
+      <label class="row" data-tip="push"><span>Push</span><input type="range" data-p="push" min="0" max="100" step="1" value="${Math.round(state.push * 100)}" /><output id="push">${Math.round(state.push * 100)}</output></label>
+      <label class="row" data-tip="tempo"><span>Tempo</span><input type="range" data-p="bpm" min="40" max="220" step="1" value="${state.bpm}" /><output id="bpm">${state.bpm}</output></label>
+    </div>`;
+  measure();
 }
 
 // --- tips: what the control under the pointer does, in a box of its own over the workbench ---
 
 const TIPS: Record<string, [string, string]> = {
   swings: ['Swings', 'How many times the arm swings in a bar: its harmonic. ×1 crosses the line twice a bar, ×2 four times.'],
-  swing: ['Swing', 'How far the arm swings to each side, 0 to 180°. Wider and it counts for more in the sum; with weight, wider is also slower.'],
+  swing: ['Swing', 'How far the arm swings to each side, 0 to 180°. Wider and it counts for more in the sum; with physics on, wider is also slower.'],
   len: ['Length', 'How long the arm is: how far it carries the joints under it.'],
   phase: ['Phase', 'Where in its swing the arm is when the bar starts. 0° it crosses going right, 90° it is out at the right.'],
   vol: ['Volume', 'How loud this joint is. All the way down is muted: the arm still swings and still moves the ones under it.'],
   rm: ['Remove', 'Takes this arm away.'],
   add: ['+ Arm', 'Hangs a new arm on the end, one harmonic up. Keys: + and −.'],
   mode: ['Sum / Each', 'What a joint crosses to sound. Sum: the centre line under the pivot, every arm above it added up. Each: the vertical under its own origin, its arm alone. Key: S.'],
-  restart: ['Restart', 'The motion from the top, the setup as it is. With weight, the same setup plays the same again. Key: R.'],
+  restart: ['Restart', 'The motion from the top, the setup as it is. With physics on, the same setup plays the same again. Key: R.'],
   play: ['Pause / Play', 'Stops the motion where it is, and lets it go on. Key: space.'],
   mute: ['Sound', 'All sound on or off. Key: M.'],
-  weight: ['Weight', '0 is the formula. Over it every arm is a real swing hung in the swing above, and this is how heavy each joint is against the one above it.'],
+  mass: ['Weight', 'How heavy this joint is, with physics on. Only against the others does it count: a light arm rides the one above and is shaken by it, a heavy one throws it about.'],
+  physics: ['Formula / Physics', 'Formula: every arm goes exactly as it is set. Physics: every arm is a real swing hung in the swing above, with its weight, kept going by the push. Key: W.'],
   push: ['Push', 'What keeps a swing going: a push in time with its own rhythm, and the air against it. From about 30 the bar comes round; lower and the swings drift; 0 lets go.'],
   tempo: ['Tempo', 'Beats a minute, four to the bar.'],
   tips: ['Tips', 'These boxes, on or off. Key: ?'],
@@ -308,10 +346,12 @@ function showTip(key: string | undefined) {
   const t = tipsOn && key ? TIPS[key] : undefined;
   tip.hidden = !t;
   if (!t) return;
-  tip.replaceChildren(Object.assign(document.createElement('b'), { textContent: t[0] }), Object.assign(document.createElement('span'), { textContent: t[1] }));
+  // faded while the formula runs: say why, and what turns it on
+  const off = key === 'mass' && !state.physics ? ' Off now: the formula is running. Press Formula (or W) for physics.' : '';
+  tip.replaceChildren(Object.assign(document.createElement('b'), { textContent: t[0] }), Object.assign(document.createElement('span'), { textContent: t[1] + off }));
 }
 
-/** over the workbench on a wide screen; on a phone the stylesheet puts it under the title */
+/** over the workbench's rows on a wide screen; on a phone the stylesheet puts it under the title */
 function placeTip() {
   tip.style.bottom = window.innerWidth > 760 ? `${window.innerHeight - panelRect.top + 12}px` : '';
 }
@@ -343,7 +383,7 @@ window.addEventListener('pointerdown', (e) => {
 function addArm() {
   if (state.arms.length >= MAX_ARMS) return;
   const last = state.arms[state.arms.length - 1];
-  state.arms.push({ n: Math.min(MAX_N, last.n + 1), swing: 0.9, len: Math.max(0.2, +(last.len * 0.62).toFixed(2)), phase: 0, vol: 1 });
+  state.arms.push({ n: Math.min(MAX_N, last.n + 1), swing: 0.9, len: Math.max(0.2, +(last.len * 0.62).toFixed(2)), phase: 0, vol: 1, mass: Math.max(0.05, +(last.mass / 2).toFixed(2)) });
   if (sim.live) sim.added(state.arms);
 }
 function removeArm(k = state.arms.length - 1) {
@@ -351,8 +391,9 @@ function removeArm(k = state.arms.length - 1) {
   state.arms.splice(k, 1);
   if (sim.live) sim.removed(k);
 }
-function toggle(what: 'mode' | 'play' | 'mute') {
+function toggle(what: 'mode' | 'play' | 'mute' | 'physics') {
   if (what === 'mode') state.mode = state.mode === 'sum' ? 'each' : 'sum';
+  if (what === 'physics') state.physics = !state.physics;
   if (what === 'play') {
     anchor();
     playing = !playing;
@@ -373,7 +414,7 @@ panel.addEventListener('click', (e) => {
   else if (act === 'rm') removeArm(k);
   else if (act === 'add') addArm();
   else if (act === 'restart') restart();
-  else toggle(act as 'mode' | 'play' | 'mute');
+  else toggle(act as 'mode' | 'play' | 'mute' | 'physics');
   changed();
   build();
 });
@@ -385,14 +426,15 @@ panel.addEventListener('input', (e) => {
     anchor();
     state.bpm = v;
     panel.querySelector('#bpm')!.textContent = String(v);
-  } else if (r.dataset.p === 'weight' || r.dataset.p === 'push') {
-    state[r.dataset.p] = v / 100;
-    panel.querySelector('#' + r.dataset.p)!.textContent = String(v);
+  } else if (r.dataset.p === 'push') {
+    state.push = v / 100;
+    panel.querySelector('#push')!.textContent = String(v);
   } else {
     const a = state.arms[Number(r.closest<HTMLElement>('.arm')!.dataset.k)];
     if (r.dataset.p === 'swing') a.swing = (v * Math.PI) / 180;
     else if (r.dataset.p === 'phase') a.phase = (v * Math.PI) / 180;
     else if (r.dataset.p === 'vol') a.vol = v / 100;
+    else if (r.dataset.p === 'mass') a.mass = v / 100;
     else a.len = v;
   }
   changed();
@@ -590,6 +632,7 @@ window.addEventListener('keydown', (e) => {
   else if (e.key === 'r') restart();
   else if (e.key === '?') setTips(!tipsOn);
   else if (e.key === 's') toggle('mode');
+  else if (e.key === 'w') toggle('physics');
   else return;
   e.preventDefault();
   changed();
@@ -611,14 +654,15 @@ function resize() {
   canvas.width = w * dpr;
   canvas.height = h * dpr;
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  const r = panel.getBoundingClientRect();
-  panelRect = { left: r.left, top: r.top };
-  placeTip();
+  measure();
 }
 
 const ink = (a: number) => `rgba(${INK}, ${a})`;
-function line(x0: number, y0: number, x1: number, y1: number, a: number, width = 1) {
-  ctx.strokeStyle = ink(a);
+/** link k's colour: the arm and the joint at its end, its path, its rings, its row in the bar and in the workbench */
+const tint = (k: number, a: number) => `rgba(${PALETTE[k % PALETTE.length]}, ${a})`;
+/** a line in the ink, or in link k's colour */
+function line(x0: number, y0: number, x1: number, y1: number, a: number, width = 1, k = -1) {
+  ctx.strokeStyle = k < 0 ? ink(a) : tint(k, a);
   ctx.lineWidth = width;
   ctx.beginPath();
   ctx.moveTo(x0, y0);
@@ -639,20 +683,18 @@ function frame() {
   const n = arms.length;
   ctx.clearRect(0, 0, w, h);
 
-  // where things go: the timeline along the bottom (over the workbench on a phone), the chain over it
+  // where things go: the workbench along the bottom, the chain in the middle of what is over
+  // it, and the bar on one line right under the chain
   const wide = w > 760;
   const edge = wide ? 24 : 16;
-  const rowH = 18;
-  const tlX0 = edge;
-  const tlX1 = clean || !wide ? w - edge : panelRect.left - 32;
-  const tlBottom = clean || wide ? h - 30 : panelRect.top - 18;
-  const tlTop = tlBottom - n * rowH;
-
   let total = 0;
   for (const a of arms) total += a.len;
   const px = w / 2;
   const py = Math.max(wide ? 150 : 112, h * 0.24);
-  const reach = Math.max(40, Math.min(w * 0.46, tlTop - 40 - py));
+  const reach = Math.max(40, Math.min(px - edge, (clean ? h - 30 : panelRect.top - 18) - 80 - py));
+  const tlY = py + reach + 44;
+  const tlX0 = px - reach;
+  const tlX1 = px + reach;
   const target = reach / Math.max(1, total);
   unit = unit ? unit + (target - unit) * (1 - Math.exp(-(t - drawn) * 8)) : target;
   drawn = t;
@@ -666,19 +708,19 @@ function frame() {
   else for (let k = 0; k < n; k++) {
     const ox = k ? X(now[2 * k - 2]) : px;
     const oy = k ? Y(now[2 * k - 1]) : py;
-    line(ox, oy, ox, oy + arms[k].len * unit, 0.2);
+    line(ox, oy, ox, oy + arms[k].len * unit, 0.35, 1, k);
   }
 
   // every joint's path over the bar, the last one's a little brighter: the picture the swings add up to
   // With weight there is no such closed path: the bar behind it instead, a trail.
-  const weighted = state.weight > 0;
+  const weighted = state.physics;
   ctx.lineWidth = 1;
   if (weighted) {
     for (let i = 0; i <= TRAIL; i++) trail.set(pose(phi - 1 + i / TRAIL, then), i * 2 * MAX_ARMS);
   }
   for (let k = 0; k < n; k++) {
     const o = orbits[k];
-    ctx.strokeStyle = ink(k === n - 1 ? 0.3 : 0.1);
+    ctx.strokeStyle = tint(k, k === n - 1 ? 0.5 : 0.22);
     ctx.beginPath();
     if (weighted) for (let i = 0; i <= TRAIL; i++) ctx.lineTo(X(trail[(i * MAX_ARMS + k) * 2]), Y(trail[(i * MAX_ARMS + k) * 2 + 1]));
     else for (let i = 0; i <= ORBIT; i++) ctx.lineTo(X(o[2 * i]), Y(o[2 * i + 1]));
@@ -697,7 +739,7 @@ function frame() {
     }
     lit[f.k] = Math.max(lit[f.k], 1 - age / 0.14);
     pose(f.phase, then);
-    ctx.strokeStyle = ink((1 - age / 0.4) ** 2 * (0.25 + 0.75 * f.vel) * (0.15 + 0.85 * arms[f.k].vol));
+    ctx.strokeStyle = tint(f.k, (1 - age / 0.4) ** 2 * (0.25 + 0.75 * f.vel) * (0.15 + 0.85 * arms[f.k].vol));
     ctx.lineWidth = 1;
     ctx.beginPath();
     ctx.arc(X(then[2 * f.k]), Y(then[2 * f.k + 1]), 5 + age * (40 + 80 * f.vel), 0, Math.PI * 2);
@@ -705,48 +747,93 @@ function frame() {
   }
 
   // the chain
-  ctx.strokeStyle = ink(0.95);
-  ctx.lineWidth = 1.5;
-  ctx.lineJoin = 'round';
-  ctx.beginPath();
-  ctx.moveTo(px, py);
-  for (let k = 0; k < n; k++) ctx.lineTo(X(now[2 * k]), Y(now[2 * k + 1]));
-  ctx.stroke();
+  ctx.lineCap = 'round';
+  // a link is all one colour: the arm and the joint at its end
+  for (let k = 0; k < n; k++) line(k ? X(now[2 * k - 2]) : px, k ? Y(now[2 * k - 1]) : py, X(now[2 * k]), Y(now[2 * k + 1]), 1, 2, k);
   ctx.fillStyle = ink(0.95);
   ctx.beginPath();
   ctx.arc(px, py, 2.5, 0, Math.PI * 2);
   ctx.fill();
   for (let k = 0; k < n; k++) {
+    // all its colour, as big as it is heavy with physics on; when it sounds it swells and goes white for a moment
+    const hit = Math.max(0, lit[k]);
     ctx.beginPath();
-    ctx.arc(X(now[2 * k]), Y(now[2 * k + 1]), 4.5, 0, Math.PI * 2);
-    ctx.fillStyle = BACK;
+    ctx.arc(X(now[2 * k]), Y(now[2 * k + 1]), (state.physics ? 2.5 + 4.5 * Math.sqrt(arms[k].mass) : 5) * (1 + 0.5 * hit), 0, Math.PI * 2);
+    ctx.fillStyle = `rgb(${PALETTE[k % PALETTE.length]})`;
     ctx.fill();
-    if (lit[k] > 0) {
-      ctx.fillStyle = ink(lit[k]);
+    if (hit > 0) {
+      ctx.fillStyle = ink(0.85 * hit);
       ctx.fill();
     }
-    ctx.stroke();
   }
 
-  // the bar: a row a joint, a tick a hit, up for tick and down for tock, as tall as it is hard
+  // the bar, one line: a tick a hit in its link's colour, up for tick and down for tock, as tall
+  // as it is hard; hits that fall together stand on each other
   const tlW = tlX1 - tlX0;
   const at = phi - Math.floor(phi);
-  for (let q = 0; q <= 4; q++) line(tlX0 + (tlW * q) / 4, tlBottom + 3, tlX0 + (tlW * q) / 4, tlBottom + 7, 0.35);
-  for (let k = 0; k < n; k++) {
-    const y = tlTop + k * rowH + rowH / 2;
-    line(tlX0, y, tlX1, y, 0.05 + 0.11 * arms[k].vol);
-  }
+  line(tlX0, tlY, tlX1, tlY, 0.25);
+  for (let q = 0; q <= 4; q++) line(tlX0 + (tlW * q) / 4, tlY - 2, tlX0 + (tlW * q) / 4, tlY + 2, 0.35);
   // with weight no bar is the next one: the hits as they fell, the playhead writing over the bar before
   if (played.length && played[0].phase < phi - 1.5) played = played.filter((b) => b.phase > phi - 1);
+  const stood = new Map<number, number>();
   for (const b of weighted ? played : bar) {
     const since = weighted ? phi - b.phase : (at - b.phase + 1) % 1;
     if (since < 0 || since >= 1 || b.k >= n) continue;
     const x = tlX0 + (b.phase - Math.floor(b.phase)) * tlW;
-    const y = tlTop + b.k * rowH + rowH / 2;
     const glow = since < 0.03 ? 1 - since / 0.03 : 0;
-    line(x, y, x, y - b.dir * (2.5 + 5.5 * b.vel + 2 * glow), ((weighted ? 0.75 - 0.6 * since : 0.55) + 0.45 * glow) * (0.2 + 0.8 * arms[b.k].vol), 1.5);
+    const key = (Math.round(x) + 1) * b.dir;
+    const from = stood.get(key) ?? 2;
+    const tall = 2.5 + 5 * b.vel + 2 * glow;
+    stood.set(key, from + tall + 2);
+    line(x, tlY - b.dir * from, x, tlY - b.dir * (from + tall), ((weighted ? 0.9 - 0.6 * since : 0.8) + 0.2 * glow) * (0.2 + 0.8 * arms[b.k].vol), 1.5, b.k);
   }
-  line(tlX0 + at * tlW, tlTop - 4, tlX0 + at * tlW, tlBottom + 2, 0.5);
+  line(tlX0 + at * tlW, tlY - 14, tlX0 + at * tlW, tlY + 14, 0.5);
+
+  // Beside each link's row, its curve: what its joint crosses zero with, over the bar (in sum
+  // every arm above it added up, in each its own swing). A hit is where the curve crosses the
+  // line. With physics it is the bar behind, as it went, wrapping at the playhead.
+  const cx0 = rowsRight + 28;
+  const cw = w - edge - cx0;
+  if (!clean && wide && cw > 120 && rowBoxes.length >= n) {
+    for (let k = 0; k < n; k++) {
+      const { y, h: rh } = rowBoxes[k];
+      const amp = rh / 2 + 3;
+      line(cx0, y, cx0 + cw, y, 0.2, 1, k);
+      ctx.strokeStyle = tint(k, 0.35 + 0.6 * arms[k].vol);
+      ctx.lineWidth = 1.25;
+      ctx.beginPath();
+      if (weighted) {
+        const own = state.mode === 'each' && k > 0;
+        const val = (i: number) => trail[(i * MAX_ARMS + k) * 2] - (own ? trail[(i * MAX_ARMS + k - 1) * 2] : 0);
+        // as tall as the row whatever it does, but never blown up from next to nothing
+        let top = 0.05 * arms[k].len;
+        for (let i = 0; i <= TRAIL; i++) top = Math.max(top, Math.abs(val(i)));
+        let last = -1;
+        for (let i = 0; i <= TRAIL; i++) {
+          const p = phi - 1 + i / TRAIL;
+          const f = p - Math.floor(p);
+          const v = val(i);
+          if (f < last) ctx.moveTo(cx0 + f * cw, y - (v / top) * amp);
+          else ctx.lineTo(cx0 + f * cw, y - (v / top) * amp);
+          last = f;
+        }
+      } else {
+        const top = waveTop[k] || 1;
+        for (let i = 0; i <= WAVE; i++) ctx.lineTo(cx0 + (i / WAVE) * cw, y - (waves[k][i] / top) * amp);
+      }
+      ctx.stroke();
+    }
+    for (const b of weighted ? played : bar) {
+      const since = weighted ? phi - b.phase : (at - b.phase + 1) % 1;
+      if (since < 0 || since >= 1 || b.k >= n) continue;
+      const glow = since < 0.03 ? 1 - since / 0.03 : 0;
+      ctx.fillStyle = tint(b.k, (0.25 + 0.75 * arms[b.k].vol) * (weighted ? 1 - 0.6 * since : 1));
+      ctx.beginPath();
+      ctx.arc(cx0 + (b.phase - Math.floor(b.phase)) * cw, rowBoxes[b.k].y, 1.5 + 1.5 * b.vel + 2 * glow, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    line(cx0 + at * cw, rowBoxes[0].y - rowBoxes[0].h / 2 - 2, cx0 + at * cw, rowBoxes[n - 1].y + rowBoxes[n - 1].h / 2 + 2, 0.5);
+  }
 
   const say = t < notedUntil ? noted : sound?.running ? '' : 'Tap for sound';
   if (say !== hinted) hint.textContent = hinted = say;
@@ -755,7 +842,7 @@ function frame() {
 }
 
 // the dev console: __pendulum.sound()?.stats says how many hits went out and how far ahead
-if (import.meta.env.DEV) Object.assign(window, { __pendulum: { state, sim, energy: () => sim.energy(state.arms, state.weight), sound: () => sound, bar: () => bar, played: () => played } });
+if (import.meta.env.DEV) Object.assign(window, { __pendulum: { state, sim, energy: () => sim.energy(state.arms), sound: () => sound, bar: () => bar, played: () => played } });
 
 window.addEventListener('resize', resize);
 changed(!query.has('arms'));

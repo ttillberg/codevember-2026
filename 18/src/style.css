@@ -35,23 +35,34 @@ canvas { display: block; width: 100vw; height: 100vh; }
   font-weight: 600; font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase;
 }
 
-/* the workbench, bottom right: a row an arm (swings per bar, swing, length), then the transport */
+/* the workbench, along the bottom: a row a link on the left (its curve is drawn beside it, on the canvas), then one line of everything else */
 .panel {
   position: fixed; z-index: 2;
-  right: max(24px, env(safe-area-inset-right)); bottom: max(24px, env(safe-area-inset-bottom));
-  width: 420px; display: grid; gap: 6px;
+  left: max(24px, env(safe-area-inset-left)); right: max(24px, env(safe-area-inset-right)); bottom: max(24px, env(safe-area-inset-bottom));
+  display: grid; gap: 6px;
   color: #f4f4f2;
   font: 600 10px/1 Inter, "Helvetica Neue", Helvetica, Arial, sans-serif;
   letter-spacing: 0.12em; text-transform: uppercase;
   user-select: none; -webkit-user-select: none; touch-action: manipulation;
 }
-.panel .cols, .panel .arm { display: grid; grid-template-columns: 22px 30px 22px 1fr 1fr 1fr 1fr 22px; gap: 6px; align-items: center; }
+.panel .cols, .panel .arm { width: 480px; max-width: 100%; display: grid; grid-template-columns: 22px 30px 22px 1fr 1fr 1fr 1fr 1fr 22px; gap: 6px; align-items: center; }
 .panel .cols { opacity: 0.5; }
+/* a heading never widens its column: the rows under it would stick out of the screen */
+.panel .cols span { min-width: 0; overflow: hidden; white-space: nowrap; }
+/* a row is in its arm's colour: the count and the thumbs */
+.panel .arm output { color: var(--arm); }
+.panel .arm input[type="range"]::-webkit-slider-thumb { background: var(--arm); }
+.panel .arm input[type="range"]::-moz-range-thumb { background: var(--arm); }
+/* the weights count for nothing while the formula runs: dim, still there to set */
+.panel.weightless .cols span:last-child { opacity: 0.4; }
+.panel.weightless input[data-p="mass"] { opacity: 0.3; }
+.panel button[aria-pressed="true"] { background: #f4f4f2; border-color: #f4f4f2; color: #0b0b0d; }
 .panel .cols span:first-child { grid-column: 1 / 4; }
 .panel output { text-align: center; font-variant-numeric: tabular-nums; }
-.panel .row { display: flex; gap: 6px; align-items: center; margin-top: 4px; }
-.panel .row > button { flex: 1; }
-.panel label.row span { width: 58px; }
+.panel .globals { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 6px; }
+.panel .globals button { flex: none; min-width: 76px; padding: 0 12px; }
+.panel .row { display: flex; gap: 6px; align-items: center; flex: 1 1 220px; max-width: 360px; margin-left: 12px; }
+.panel label.row span { flex: none; }
 .panel label.row input { flex: 1; }
 .panel label.row output { width: 30px; text-align: right; }
 .panel button {
@@ -67,8 +78,14 @@ canvas { display: block; width: 100vw; height: 100vh; }
 .panel input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; width: 9px; height: 9px; margin-top: -4px; border-radius: 50%; background: #f4f4f2; }
 .panel input[type="range"]::-moz-range-thumb { width: 9px; height: 9px; border: 0; border-radius: 50%; background: #f4f4f2; }
 @media (max-width: 760px) {
-  .panel { left: max(16px, env(safe-area-inset-left)); right: max(16px, env(safe-area-inset-right)); bottom: max(16px, env(safe-area-inset-bottom)); width: auto; }
+  .panel { left: max(16px, env(safe-area-inset-left)); right: max(16px, env(safe-area-inset-right)); bottom: max(16px, env(safe-area-inset-bottom)); }
+  .panel .cols, .panel .arm { width: auto; }
+  .panel .globals button { flex: 1 1 30%; }
+  .panel .row { flex: 1 1 100%; max-width: none; margin-left: 0; }
+  .panel label.row span { width: 58px; }
   .panel button, .panel input[type="range"] { height: 28px; }
+  .panel .cols { font-size: 8px; letter-spacing: 0.06em; }
+  .panel .cols, .panel .arm { gap: 4px; }
   .panel button { border-radius: 14px; }
 }
 .clean .panel { display: none; }
@@ -86,7 +103,7 @@ canvas { display: block; width: 100vw; height: 100vh; }
 /* the tip: what the control under the pointer does, in a box of its own over the workbench */
 .tip {
   position: fixed; z-index: 3; pointer-events: none;
-  right: max(24px, env(safe-area-inset-right)); width: 420px; box-sizing: border-box;
+  left: max(24px, env(safe-area-inset-left)); width: 480px; box-sizing: border-box;
   padding: 10px 12px 11px; border: 1px solid rgba(244, 244, 242, 0.35); border-radius: 10px;
   background: rgba(11, 11, 13, 0.6); -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
   color: #f4f4f2; font: 400 13px/1.4 Inter, "Helvetica Neue", Helvetica, Arial, sans-serif;
