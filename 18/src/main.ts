@@ -458,6 +458,24 @@ try {
 } catch {
   // no storage: the ink
 }
+// --- the two panels, each put away or out: down to its name, behind the eye in its corner; remembered ---
+
+const FOLD_KEY = 'codevember-2026-18-panels';
+const folded: Record<string, boolean> = { voice: false, tracks: false };
+try {
+  Object.assign(folded, JSON.parse(localStorage.getItem(FOLD_KEY) ?? '{}'));
+} catch {
+  // no storage, or not ours: both out
+}
+function fold(id: string) {
+  folded[id] = !folded[id];
+  try {
+    localStorage.setItem(FOLD_KEY, JSON.stringify(folded));
+  } catch {
+    // nothing kept
+  }
+}
+
 function setColour(on: boolean) {
   colour = on;
   try {
@@ -532,6 +550,8 @@ const ICONS = {
   sound: icon('<path d="M1.8 5.2h2.3l2.9-2.5v8.6L4.1 8.8H1.8z"/><path class="s" d="M9 5.2a2.6 2.6 0 0 1 0 3.6M10.7 3.5a5 5 0 0 1 0 7"/>'),
   muted: icon('<path d="M1.8 5.2h2.3l2.9-2.5v8.6L4.1 8.8H1.8z"/><path class="s" d="M9.3 5.3l3.2 3.4M12.5 5.3L9.3 8.7"/>'),
   menu: icon('<path class="s" d="M2.5 4h9M2.5 7h9M2.5 10h9"/>'),
+  eye: icon('<path class="s" d="M1.4 7s2.1-3.7 5.6-3.7S12.6 7 12.6 7s-2.1 3.7-5.6 3.7S1.4 7 1.4 7z"/><circle cx="7" cy="7" r="1.7"/>'),
+  eyeShut: icon('<path class="s" d="M1.4 6c1.3 1.8 3.2 2.9 5.6 2.9s4.3-1.1 5.6-2.9"/><path class="s" d="M3.4 8.2l-1 1.5M7 8.9v1.9M10.6 8.2l1 1.5"/>'),
   warn: icon('<path class="s" d="M7 2L12.6 11.6H1.4z"/><path class="s" d="M7 5.8v2.6"/><circle cx="7" cy="10" r="0.75"/>'),
   // the size of a knob: it stands under the volume knobs
   plus: '<svg viewBox="0 0 22 22" width="22" height="22" aria-hidden="true"><circle class="s ring" cx="11" cy="11" r="10.5"/><path class="s" d="M11 7.2v7.6M7.2 11h7.6"/></svg>',
@@ -572,8 +592,15 @@ function build() {
   const mix = (p: string, name: string, v: number, label = '') => (label ? cell(label, knob(p, pct(v), 0, 100, 1, name)) : knob(p, pct(v), 0, 100, 1, name));
   // Along the bottom, two panels side by side, as tall as each other: the instrument over the
   // mix, each in sections under their labels, and the tracks, a row a link.
+  /** the eye in a panel's corner: open while the panel is out, shut while it is put away */
+  const eye = (id: string, name: string) =>
+    `<button class="eye" data-act="fold" data-id="${id}" data-tip="fold" aria-expanded="${!folded[id]}" aria-label="${folded[id] ? 'Show' : 'Hide'} ${name}">${folded[id] ? ICONS.eyeShut : ICONS.eye}</button>`;
   panel.innerHTML = `
-    <div class="voice">
+    ${
+      folded.voice
+        ? `<div class="voice shut"><h3>Instrument</h3>${eye('voice', 'the instrument panel')}</div>`
+        : `<div class="voice">
+      ${eye('voice', 'the instrument panel')}
       <div class="group" role="group" aria-label="Instrument">
         ${part(
           'Instrument',
@@ -603,8 +630,13 @@ function build() {
         ${part('Delay', mix('delay', 'Delay', state.delay))}
         ${part('Distortion', mix('dist', 'Distortion', state.dist))}
       </div>
-    </div>
-    <div class="tracks" role="group" aria-label="Tracks">
+    </div>`
+    }
+    ${
+      folded.tracks
+        ? `<div class="tracks shut"><h3>Tracks</h3>${eye('tracks', 'the tracks')}</div>`
+        : `<div class="tracks" role="group" aria-label="Tracks">
+    ${eye('tracks', 'the tracks')}
     <h3>Tracks</h3>
     <div class="cols"><span></span><span>Solo</span><span>Mute</span><span>Volume</span><span>Sum</span>${bySound ? '<span class="snd">Sound</span>' : ''}<span>Swings</span><span></span><span>Swing</span><span>Length</span><span>Phase</span>${state.physics ? '<span>Weight</span><span>Push</span>' : ''}<span></span></div>
     ${state.arms
@@ -627,7 +659,8 @@ function build() {
       )
       .join('')}
     <button class="add" data-act="add" data-tip="add" ${state.arms.length < MAX_ARMS ? '' : 'disabled'}>${ICONS.plus}<span>Add track</span></button>
-    </div>`;
+    </div>`
+    }`;
   // The bar, top right: the transport, and behind the ≡ what is set once (what is shown, the
   // tips, the setups).
   const flip = (act: string, label: string, on: boolean, key = '') =>
@@ -728,6 +761,7 @@ const TIPS: Record<string, [string, string]> = {
   harm: ['Harmonics', 'The overtone over every note: none at the bottom (plain, round), each link\'s own in the middle, twice that at the top (bright).'],
   tempo: ['Tempo', 'Beats a minute, four to the bar.'],
   menu: ['Menu', 'What is shown, these tips, the setups, and Reset.'],
+  fold: ['Hide / Show', 'Puts this panel away, down to its name, and brings it back. With both away the chain has the page.'],
   reset: ['Reset', 'A new piece from scratch: one arm swinging once a bar, and the instrument, the notes, the mix and the tempo as they start. What is saved by name and on the digits is kept. No key for it.'],
   volume: ['Volume', 'How loud it all is.'],
   damp: ['Damping', 'How much of the room\'s top is taken off as it comes back: open at the bottom, a room hung with blankets at the top.'],
@@ -756,7 +790,7 @@ function showTip(key: string | undefined, from?: HTMLElement | null) {
   const t = tipsOn && key && openPop !== 'instrument' && openPop !== 'scale' ? TIPS[key] : undefined;
   tip.hidden = !t;
   if (!t) return;
-  tipHost = from?.closest<HTMLElement>('.voice, .tracks, .bar') ?? topBar;
+  tipHost = from?.closest<HTMLElement>('.pop.menu, .voice, .tracks, .bar') ?? topBar;
   // faded while the formula runs: say why, and what turns it on
   const off = (key === 'mass' || key === 'push') && !state.physics ? ' Off now: the formula is running. Pick Physics under Pendulum mode.' : '';
   tip.replaceChildren(Object.assign(document.createElement('b'), { textContent: t[0] }), Object.assign(document.createElement('span'), { textContent: t[1] + off }));
@@ -764,37 +798,33 @@ function showTip(key: string | undefined, from?: HTMLElement | null) {
 }
 
 /**
- * Beside its panel: left of the instrument's, right of the tracks', standing on the same line
- * as the panel and as wide as the room there (a narrow column of text where that is little).
- * Where there is no room beside it at all, over it, as wide as the panel. The bar's hang
- * under the bar. On a phone the stylesheet puts it under the title.
+ * With its panel: over the instrument's for the instrument's controls, over the tracks' for
+ * theirs, as wide as the panel. The bar's hang under the bar, and the menu's rows' stand to the
+ * left of the menu. On a phone the stylesheet puts it under the title.
  */
 function placeTip() {
   const st = tip.style;
   st.left = st.right = st.top = st.bottom = st.width = '';
-  tip.classList.remove('slim');
   if (window.innerWidth <= 760 || !tipHost?.isConnected) return;
   const r = tipHost.getBoundingClientRect();
   const gap = 12;
+  // a row of the menu: beside the menu, to its left, never over it
+  if (tipHost.classList.contains('pop')) {
+    st.top = `${r.top}px`;
+    st.right = `${window.innerWidth - r.left + gap}px`;
+    st.width = `${Math.max(180, Math.min(320, r.left - gap - 24))}px`;
+    return;
+  }
   if (tipHost === topBar) {
     st.top = `${r.bottom + gap}px`;
     st.right = `${window.innerWidth - r.right}px`;
     st.width = '320px';
     return;
   }
-  const left = tipHost.classList.contains('voice');
-  const room = (left ? r.left : window.innerWidth - r.right) - 24 - gap;
-  if (room >= 190) {
-    const wide = Math.min(320, room);
-    tip.classList.toggle('slim', wide < 280);
-    st.width = `${wide}px`;
-    st.left = `${left ? r.left - gap - wide : r.right + gap}px`;
-    st.bottom = `${window.innerHeight - r.bottom}px`;
-  } else {
-    st.left = `${r.left}px`;
-    st.width = `${r.width}px`;
-    st.bottom = `${window.innerHeight - r.top + gap}px`;
-  }
+  // a panel's: over that panel, as wide as it is
+  st.left = `${r.left}px`;
+  st.width = `${Math.max(280, r.width)}px`;
+  st.bottom = `${window.innerHeight - r.top + gap}px`;
 }
 
 function setTips(on: boolean) {
@@ -874,6 +904,11 @@ const onClick = (e: Event) => {
     if (act === 'timeline') setTimeline(!timeline);
     else if (act === 'colour') setColour(!colour);
     else setTips(!tipsOn);
+    build();
+    return;
+  }
+  if (act === 'fold') {
+    fold(b.dataset.id!);
     build();
     return;
   }

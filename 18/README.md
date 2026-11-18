@@ -41,12 +41,14 @@ pnpm -C 18 dev
     of a knob, under the volume knobs (a row's remove is a minus in a ring too; it was
     `+ Arm`, a button in the middle under the rows). The row the pointer is on is a band of its colour from
     edge to edge of the panel.
-  - The two stand side by side in the middle along the bottom, as tall as each other, a
-    generous gap between them and the centre line running down the middle of it, the scene
-    over them. The space under the last row
-    of each is the space over its first label: the taller one sets the height, and in the
-    other the rows spread out (the instrument's) or Add track stays at the foot (the
-    tracks'). Where the window is not wide enough for both (and on a phone) the instrument's
+  - The two stand side by side in the middle along the bottom, on the same line, a generous
+    gap between them and the centre line running down the middle of it, the scene over
+    them. The tracks' panel is only as tall as its rows (one track is a short panel, not a
+    tall one with a hole in it); the instrument's grows to it when it is the taller, its
+    rows spread out. The space under the last row of each is the space over its first label.
+  - **An eye** in each panel's corner puts that panel away, down to its name in a pill, and
+    brings it back: each on its own, remembered. With both away the chain has the page down
+    to the foot. Where the window is not wide enough for both (and on a phone) the instrument's
     panel stands on the tracks'. (They were two pills over the tracks first, every track a
     pill of its own: seven pieces where two say the same. And for a moment a column up the
     left side with the chain the height of the page, swinging behind them: more chain, but
@@ -138,9 +140,8 @@ pnpm -C 18 dev
   arm made a row 640 pixels wide, mostly track. Then knobs with their number said under the
   title while they turned, a long way from the hand.)
 - **Tips** (in the menu, or the `?` key): what the control under the pointer does, in a card
-  of its own beside the panel that control is in: left of the instrument's, right of the
-  tracks', under the bar for the bar's (over the panel where there is no room beside it;
-  under the title on a phone, where it shows for the control you
+  of its own over the panel that control is in, as wide as the panel; under the bar for the
+  bar's, and beside the menu for its rows (under the title on a phone, where it shows for the control you
   press). Frosted like the card the page opens with: grey glass, no outline, a deep shadow;
   the control's name at that card's size, what it does under it, a little softer. On to
   start with, remembered. (It was a dark box with a border, its name in small caps.)
