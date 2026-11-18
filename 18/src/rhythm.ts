@@ -50,7 +50,9 @@ export interface Hit {
   pos: number;
 }
 
-const TAU = Math.PI * 2;
+/** a whole turn; and the most arms a chain has: the model, the weighted chain and the page all go by these */
+export const TAU = Math.PI * 2;
+export const MAX_ARMS = 8;
 
 export const angle = (a: Arm, phi: number) => a.swing * Math.sin(TAU * a.n * phi + a.phase);
 

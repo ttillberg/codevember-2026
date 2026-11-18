@@ -20,12 +20,12 @@ export const SCALES: Array<{ id: string; label: string; notes: number[] }> = [
   { id: 'hijaz', label: 'Hijaz', notes: [0, 1, 4, 5, 7, 8, 10] },
 ];
 /** the note at the top of the ruler (A1), how many semitones it spans, and how long it is, in arm lengths */
-export const LOWEST = 33;
+const LOWEST = 33;
 export const SPAN = 48;
 export const RULER = 2;
 
 /** the nearest note of the scale to a pitch (midi); a tie goes down */
-export function snap(notes: number[], pitch: number): number {
+function snap(notes: number[], pitch: number): number {
   const r = Math.round(pitch);
   for (let k = 0; k <= 6; k++) {
     for (const m of [r - k, r + k]) if (notes.includes((((m - LOWEST) % 12) + 12) % 12)) return m;
@@ -34,7 +34,7 @@ export function snap(notes: number[], pitch: number): number {
 }
 /** the note at pos (0 the top of the ruler, 1 its bottom), midi */
 export const noteAt = (notes: number[], pos: number) => snap(notes, LOWEST + Math.min(1, Math.max(0, pos)) * SPAN);
-export const hertz = (midi: number) => 440 * Math.pow(2, (midi - 69) / 12);
+const hertz = (midi: number) => 440 * Math.pow(2, (midi - 69) / 12);
 
 /**
  * The instruments: what every hit is made of. Tine and square sound the note asked for; the
@@ -171,6 +171,8 @@ export class Sound {
   /** how loud the overtone over every note is: 1 as designed, 0 none (plain sines), 2 twice */
   private harm = 1;
   private instrument = 'tine';
+  /** the mix as it was last set, to know when there is nothing new */
+  private said = '';
   /** for the dev console: how many hits, and how late the latest one had to start (seconds, 0 is on time) */
   stats = { hits: 0, late: 0, lead: 0 };
 
@@ -257,11 +259,15 @@ export class Sound {
    * much of it comes round again; harmonics is the overtone over every note, none at 0, as
    * designed in the middle, twice at the top.
    */
-  set(mix: { reverb: number; room: number; delay: number; harm: number; bpm: number; instrument?: string; volume?: number; dist?: number; damp?: number }) {
-    if (mix.instrument) this.instrument = mix.instrument;
+  set(mix: { reverb: number; room: number; delay: number; harm: number; bpm: number; instrument: string; volume: number; dist: number; damp: number }) {
+    // told again with nothing new (a track's knob being turned says so a hundred times a second): nothing to do
+    const said = [mix.reverb, mix.room, mix.delay, mix.harm, mix.bpm, mix.instrument, mix.volume, mix.dist, mix.damp].join();
+    if (said === this.said) return;
+    this.said = said;
+    this.instrument = mix.instrument;
     const now = this.ac.currentTime;
     // the volume of it all: 80 is where it was before there was a knob
-    const level = VOLUME_TOP * Math.pow(mix.volume ?? 0.8, 1.5);
+    const level = VOLUME_TOP * Math.pow(mix.volume, 1.5);
     if (level !== this.level) {
       this.level = level;
       if (!this.quiet) this.out.gain.setTargetAtTime(level, now, 0.02);
@@ -269,12 +275,12 @@ export class Sound {
     // The distortion: how hard everything is driven into the clipper, from next to nothing (clean)
     // to a fuzz. What comes out is brought back to about the level it had, a little under at the
     // top, where every tail is as loud as its note.
-    const dist = mix.dist ?? 0;
+    const dist = mix.dist;
     const drive = DRIVE_MIN * Math.pow(DRIVE_MAX / DRIVE_MIN, dist);
     this.pre.gain.setTargetAtTime(drive / CLIP, now, 0.03);
     this.post.gain.setTargetAtTime(((0.5 / Math.tanh(drive * 0.5)) * (1 - 0.6 * dist * dist)), now, 0.03);
     // the damping: from open down to a room hung with blankets
-    this.damp.frequency.setTargetAtTime(DAMP_OPEN * Math.pow(DAMP_SHUT / DAMP_OPEN, mix.damp ?? 0), now, 0.03);
+    this.damp.frequency.setTargetAtTime(DAMP_OPEN * Math.pow(DAMP_SHUT / DAMP_OPEN, mix.damp), now, 0.03);
     // a mix, not a send: as the room comes up the notes themselves go down, and at the top there is only the room
     const wet = 4 * Math.pow(Math.sin((mix.reverb * Math.PI) / 2), 2);
     this.wet.gain.setTargetAtTime(wet, now, 0.03);
@@ -322,14 +328,14 @@ export class Sound {
    * over it that dies sooner, a click for the strike. The pitch does not move, but for the
    * very lowest, which get a thump.
    */
-  hit(hue: number, dir: number, vel: number, t: number, vol = 1, midi = 57, step = 0) {
+  hit(hue: number, dir: number, vel: number, t: number, vol: number, midi: number, step: number) {
     const ac = this.ac;
     if (!this.running || !Number.isFinite(this.off) || !(vol > 0)) return;
     const when = Math.max(ac.currentTime + 0.002, t + this.off);
     this.stats = { hits: this.stats.hits + 1, late: when - (t + this.off), lead: when - ac.currentTime };
     const f = hertz(midi);
-    const v = TIMBRES[hue % TIMBRES.length];
     const which = hue % TIMBRES.length;
+    const v = TIMBRES[which];
     // how hard, as a level: its volume, and how fast it crossed
     const dyn = vol * vol * (0.18 + 0.82 * Math.pow(vel, 1.6));
     // and a note's own loudness: low ones need more of it to be heard as loud
@@ -339,9 +345,8 @@ export class Sound {
     pan.pan.value = dir * Math.min(0.25, f / 1200);
     pan.connect(this.bus);
 
-    const ring = (freq: number, from: number, amp: number, long: number, type: OscillatorType = 'sine') => {
+    const ring = (freq: number, from: number, amp: number, long: number) => {
       const o = ac.createOscillator();
-      o.type = type;
       o.frequency.setValueAtTime(freq * from, when);
       if (from !== 1) o.frequency.exponentialRampToValueAtTime(freq, when + 0.03);
       const g = ac.createGain();

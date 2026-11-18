@@ -20,10 +20,8 @@
 // phase that stands still. And it runs ahead of what is seen, like the formula's crossings:
 // the hits are known before they are heard.
 
-import { reach, topSpeed, type Arm, type Hit } from './rhythm';
+import { MAX_ARMS as MAX, TAU, reach, topSpeed, type Arm, type Hit } from './rhythm';
 
-const TAU = Math.PI * 2;
-const MAX = 8;
 /** an arm let go from the very top passes the bottom at twice its own rate; past this many times it, the air goes thick */
 const TOO_FAST = 3;
 const THICK = 8;
@@ -43,7 +41,7 @@ function pushOn(a: Arm, phi: number, om: number): number {
 /** what a joint weighs to the arms above it */
 const massOf = (a: Arm) => Math.min(1, Math.max(0, a.mass));
 /** steps to a bar (RK4) */
-export const STEPS = 4096;
+const STEPS = 4096;
 /** every so many steps the angles are kept, for drawing */
 const KEEP = 8;
 const RATE = STEPS / KEEP;
