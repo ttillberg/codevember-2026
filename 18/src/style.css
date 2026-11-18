@@ -35,125 +35,265 @@ canvas { display: block; width: 100vw; height: 100vh; }
   font-weight: 600; font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase;
 }
 
-/* what the workbench and the drawer share: the small caps, the buttons, the sliders */
+/* what the panel and the bar share: the small caps */
 .ui {
   color: #f4f4f2;
   font: 600 10px/1 Inter, "Helvetica Neue", Helvetica, Arial, sans-serif;
   letter-spacing: 0.12em; text-transform: uppercase;
   user-select: none; -webkit-user-select: none; touch-action: manipulation;
 }
-/* the workbench, along the bottom: a row a link on the left (its curve is drawn beside it, on the canvas) */
+
+/* Pills, as on day 07 but in this day's dark: the shapes and the manners of that glass, but black with a white outline (it was frosted glass here too, with a sheen, then one flat grey tone). The glass is a
+   layer behind the pill, not the pill itself, so a list that opens out of it can frost what is
+   under it too. */
+.pill, .voice, .tracks, .arm, .pop, .gauge { position: relative; isolation: isolate; }
+.pill::before, .voice::before, .tracks::before, .pop::before, .gauge::before {
+  content: ""; position: absolute; z-index: -1; inset: 0; border-radius: inherit; pointer-events: none;
+  /* a hairline: half a pixel where the screen has them */
+  background: #0b0b0d; box-sizing: border-box; border: 0.5px solid rgba(244, 244, 242, 0.2);
+}
+.pill { border-radius: 999px; }
+/* what stands over the scene to be read: a shadow under it too */
+.pop::before, .gauge::before { box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5); }
+
+/* a button in a pill: no border, a soft disc under the pointer, the ink when it is on */
+.ui button {
+  display: inline-flex; align-items: center; justify-content: center; gap: 5px; box-sizing: border-box;
+  height: 26px; min-width: 26px; padding: 0 9px; border: 0; border-radius: 13px; white-space: nowrap;
+  background: none; color: rgba(244, 244, 242, 0.62); font: inherit; letter-spacing: inherit; text-transform: inherit; cursor: pointer;
+}
+.ui button:hover, .ui button.at { color: #f4f4f2; background: rgba(244, 244, 242, 0.09); }
+.ui button[aria-pressed="true"], .ui button[aria-selected="true"] { background: #f4f4f2; color: #0b0b0d; }
+.ui button:disabled { opacity: 0.25; cursor: default; background: none; }
+.ui button:focus-visible, .knob:focus-visible { outline: 1px solid rgba(244, 244, 242, 0.6); outline-offset: 1px; }
+.ui svg { display: block; flex: none; fill: currentColor; }
+.ui svg .s { fill: none; stroke: currentColor; stroke-width: 1.4; stroke-linecap: round; stroke-linejoin: round; }
+.ui output { text-align: center; font-variant-numeric: tabular-nums; }
+.sep { flex: none; width: 1px; height: 14px; margin: 0 5px; background: rgba(244, 244, 242, 0.14); }
+
+/* Along the bottom, from the left: the instrument's panel and the tracks' side by side, as tall
+   as each other; one over the other where there is no room for that (.over, main.ts). Only
+   the panels take the pointer: beside them it goes through to the scene. */
 .panel {
   position: fixed; z-index: 2;
   left: max(24px, env(safe-area-inset-left)); right: max(24px, env(safe-area-inset-right)); bottom: max(24px, env(safe-area-inset-bottom));
-  display: grid; gap: 6px;
+  display: flex; justify-content: flex-start; align-items: stretch; gap: 10px; pointer-events: none;
 }
-/* the drawer, right: everything that is not a link's own, a section each */
-.drawer {
-  position: fixed; z-index: 2; box-sizing: border-box;
-  top: calc(max(24px, env(safe-area-inset-top)) + 44px); right: max(24px, env(safe-area-inset-right));
-  width: 236px; max-height: calc(100vh - 100px); overflow: auto;
-  padding: 14px; border: 1px solid rgba(244, 244, 242, 0.2); border-radius: 12px;
-  background: rgba(11, 11, 13, 0.6); -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
-  display: grid; gap: 12px;
+.panel > * { flex: none; pointer-events: auto; max-width: 100%; box-sizing: border-box; }
+.panel.over { flex-direction: column; align-items: center; gap: 6px; }
+
+/* The instrument and the mix: one panel, a row each with a line between, each row in sections
+   under their labels with a line between those too. Over the tracks, the two rows are side by
+   side instead. */
+.voice { display: flex; flex-direction: column; align-items: stretch; padding: 18px 20px 16px; border-radius: 22px; }
+.voice .group + .group { margin-top: 9px; padding-top: 11px; border-top: 1px solid rgba(244, 244, 242, 0.12); }
+.panel.over .voice { flex-direction: row; flex-wrap: wrap; justify-content: center; align-items: flex-start; gap: 12px 0; }
+.panel.over .voice .group + .group { margin-top: 0; padding-top: 0; border-top: 0; }
+.group { display: flex; align-items: stretch; }
+.group section { display: grid; align-content: start; gap: 8px; padding: 0 9px; border-left: 1px solid rgba(244, 244, 242, 0.12); }
+.voice:not(.x) .group:first-child section:first-child, .panel:not(.over) .group section:first-child { padding-left: 0; border-left: 0; }
+.group section:last-child { padding-right: 0; }
+.panel.over .voice .group:first-child section:last-child { padding-right: 9px; }
+.group h3, .tracks h3 { margin: 0; font: inherit; font-size: 9px; white-space: nowrap; }
+.ctl { display: flex; align-items: flex-start; gap: 2px; }
+/* a list is a pill of its own, so it reads as something to press */
+.ctl { gap: 4px; }
+.ui .ctl > .pick > .cur { padding: 0 9px 0 11px; background: rgba(244, 244, 242, 0.1); color: #f4f4f2; }
+.ui .ctl > .pick > .cur:hover, .ui .ctl > .pick > .cur[aria-expanded="true"] { background: rgba(244, 244, 242, 0.2); }
+.ctl > .knob { margin: 2px 0; }
+/* a knob over its name: tiny, in the middle under it */
+.cell { display: grid; justify-items: center; gap: 5px; min-width: 34px; }
+.cell > .knob { margin-top: 2px; }
+.cell > i, .cols { font-style: normal; font-size: 8px; letter-spacing: 0.06em; white-space: nowrap; }
+.cell > i { font-size: 6.5px; line-height: 7px; letter-spacing: 0.05em; opacity: 0.36; }
+.seg { display: flex; gap: 2px; }
+/* Physics is on: its button is orange, and what that means is said beside it in the same orange */
+.ui .seg button[data-id="physics"][aria-pressed="true"] { background: #ff9500; color: #0b0b0d; }
+.warning { display: flex; align-items: center; gap: 6px; height: 26px; margin-left: 10px; color: #ff9500; font-size: 8px; letter-spacing: 0.06em; white-space: nowrap; }
+
+/* a list: what is picked, and pressed, the rest standing over it */
+.pick { position: relative; display: flex; }
+.pick > .cur svg { opacity: 0.6; }
+.pop {
+  position: absolute; z-index: 5; left: 50%; bottom: calc(100% + 12px); transform: translateX(-50%);
+  display: flex; flex-direction: column; gap: 2px; padding: 5px; border-radius: 18px;
 }
-.drawer[hidden] { display: none; }
-.drawer section { display: grid; gap: 7px; }
-.drawer section + section { border-top: 1px solid rgba(244, 244, 242, 0.14); padding-top: 12px; }
-.drawer h2 { margin: 0; font: inherit; opacity: 0.5; }
-.drawer .pair { display: flex; gap: 6px; }
-.drawer .pair button { flex: 1 1 auto; min-width: 0; padding: 0 4px; white-space: nowrap; }
-.drawer label.row span { width: 74px; }
-.panel .cols, .panel .arm { width: 640px; max-width: 100%; margin: 0 auto; display: grid; grid-template-columns: 14px 22px 30px 22px 28px 34px 1fr 1fr 1fr 1fr 1fr 1fr 22px; gap: 6px; align-items: center; }
-.panel .cols { opacity: 0.5; }
+.pop[hidden] { display: none; }
+.pop button { width: 100%; justify-content: flex-start; padding: 0 12px; }
+/* the menu: rows with a switch or a key, hanging under the bar */
+.pop.menu { left: auto; right: -6px; bottom: auto; top: calc(100% + 11px); transform: none; min-width: 188px; }
+.pop hr { width: calc(100% - 20px); margin: 3px auto; border: 0; height: 1px; background: rgba(244, 244, 242, 0.12); }
+.pop .row { height: 30px; gap: 10px; border-radius: 13px; color: #f4f4f2; }
+.row span { flex: 1; text-align: left; }
+.row kbd { font: inherit; letter-spacing: 0.04em; opacity: 0.45; }
+.switch { position: relative; flex: none; width: 24px; height: 14px; border-radius: 999px; background: rgba(244, 244, 242, 0.18); transition: background 0.15s; }
+.switch::after {
+  content: ""; position: absolute; left: 2px; top: 2px; width: 10px; height: 10px; border-radius: 50%; background: #f4f4f2;
+  transition: transform 0.18s cubic-bezier(0.3, 1.4, 0.5, 1), background 0.15s;
+}
+.switch.on { background: #f4f4f2; }
+.switch.on::after { transform: translateX(10px); background: #0b0b0d; }
+
+/* the tracks: one panel of glass under its label, the columns' names, then a row a link */
+.tracks { --pad: 14px; display: grid; gap: 3px; justify-items: center; align-content: start; padding: 18px var(--pad) 12px; border-radius: 22px; }
+.tracks h3 { justify-self: start; margin: 0 8px 9px; }
+.cols, .arm { display: grid; grid-template-columns: var(--cols); gap: 4px; align-items: center; justify-items: center; padding: 0 8px; }
+/* the columns' names: as small and as dim as the knobs' in the other panel */
+.cols { height: 10px; font-size: 6.5px; line-height: 7px; letter-spacing: 0.05em; opacity: 0.36; }
 /* a heading never widens its column: the rows under it would stick out of the screen */
-.panel .cols span { min-width: 0; overflow: hidden; white-space: nowrap; }
-/* a row is in its arm's colour: the count and the thumbs */
-/* the link the pointer is on, here or on the chain: its row in a soft rounded bar of its colour */
-.panel .arm { border-radius: 14px; }
-.panel .arm.hot { background: color-mix(in srgb, var(--arm) 18%, transparent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--arm) 18%, transparent); }
-.panel .arm output { color: var(--arm); }
+.cols span { min-width: 0; overflow: hidden; justify-self: stretch; text-align: center; }
+.cols span:first-child { grid-column: 2 / 5; }
+.arm { padding: 3px 8px; border-radius: 999px; }
+/* the link the pointer is on, here or on the chain: its row in its colour, from edge to edge of the panel */
+.arm::before { content: ""; position: absolute; z-index: -1; inset: -1px calc(1px - var(--pad)) -2px; pointer-events: none; }
+/* a hairline between one track and the next */
+.arm + .arm::after { content: ""; position: absolute; left: 8px; right: 8px; top: -2px; height: 1px; background: rgba(244, 244, 242, 0.1); pointer-events: none; }
+.arm.hot::before { background: color-mix(in srgb, var(--arm) 22%, transparent); }
+.arm output { color: var(--arm); justify-self: stretch; }
+.arm button { padding: 0; justify-self: stretch; }
+.arm button[aria-pressed="true"] { background: var(--arm); color: #0b0b0d; }
 /* an arm's sound: a drum to press through, or the note where it rests (to read, not to press) */
-.panel .arm .snd { padding: 0; font-size: 9px; letter-spacing: 0.04em; }
-.panel .arm .snd:disabled { opacity: 0.55; border-color: transparent; }
-.panel .arm button[aria-pressed="true"] { background: var(--arm); border-color: var(--arm); color: #0b0b0d; }
-.panel .arm button[aria-pressed="false"] { color: var(--arm); }
-.panel .arm input[type="range"]::-webkit-slider-thumb { background: var(--arm); }
-.panel .arm input[type="range"]::-moz-range-thumb { background: var(--arm); }
-/* weight and push count for nothing while the formula runs: dim, still there to set */
-.panel.weightless .cols span:nth-last-child(-n + 2) { opacity: 0.4; }
-.panel.weightless input[data-p="mass"], .panel.weightless input[data-p="push"] { opacity: 0.3; }
-.ui button[aria-pressed="true"] { background: #f4f4f2; border-color: #f4f4f2; color: #0b0b0d; }
-.panel .cols span:first-child { grid-column: 2 / 5; }
+.arm .snd { font-size: 9px; letter-spacing: 0.04em; color: var(--arm); }
+.arm .snd:disabled { opacity: 0.55; }
 /* the grip: drag it to move the link along the chain */
-.panel .grip { color: var(--arm); opacity: 0.6; font-size: 12px; letter-spacing: -0.2em; text-align: center; cursor: grab; touch-action: none; line-height: 22px; }
-.panel .grip:hover { opacity: 1; }
+.grip { color: var(--arm); opacity: 0.6; font-size: 12px; letter-spacing: -0.2em; text-align: center; cursor: grab; touch-action: none; line-height: 26px; }
+.grip:hover { opacity: 1; }
 .panel.moving, .panel.moving .grip { cursor: grabbing; }
-.ui output { text-align: center; font-variant-numeric: tabular-nums; }
-/* the instruments, right under the chain: one of them is on */
-.panel .picker { display: flex; gap: 6px; justify-content: center; margin-bottom: 10px; }
-.panel .picker button { min-width: 76px; padding: 0 12px; }
-.panel .globals { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; justify-content: center; margin-top: 6px; }
-.panel .globals button { flex: none; min-width: 76px; padding: 0 12px; }
-.ui .row { display: flex; gap: 6px; align-items: center; }
-.ui label.row span { flex: none; }
-.ui label.row input { flex: 1; }
-.ui label.row output { width: 30px; text-align: right; }
-.ui button {
-  height: 22px; padding: 0 6px; border: 1px solid rgba(244, 244, 242, 0.35); border-radius: 11px;
-  background: none; color: inherit; font: inherit; letter-spacing: inherit; text-transform: inherit; cursor: pointer;
+/* + Arm: the plus in a ring */
+.ui button.add { gap: 7px; padding: 0 12px 0 4px; margin-top: 3px; }
+.ui svg .s.ring { stroke-width: 1; opacity: 0.6; }
+.ui button:hover svg .ring { opacity: 1; }
+/* and a track's remove: a minus in the same ring, no disc behind it */
+.arm button[data-act="rm"]:hover { background: none; }
+
+/* A knob: a ring and a hand, from seven o'clock round to five. Pressed and dragged it turns,
+   and it is lit while it is held (its gauge is over it then). */
+.knob {
+  position: relative; display: block; box-sizing: border-box; width: 22px; height: 22px;
+  border: 1px solid rgba(244, 244, 242, 0.45); border-radius: 50%;
+  cursor: ns-resize; touch-action: none; outline: none;
 }
-.panel .arm button { padding: 0; }
-.ui button:hover { border-color: #f4f4f2; }
-.ui button:disabled { opacity: 0.25; cursor: default; }
-.ui input[type="range"] { -webkit-appearance: none; appearance: none; width: 100%; min-width: 0; height: 22px; margin: 0; background: none; cursor: pointer; }
-.ui input[type="range"]::-webkit-slider-runnable-track { height: 1px; background: rgba(244, 244, 242, 0.45); }
-.ui input[type="range"]::-moz-range-track { height: 1px; background: rgba(244, 244, 242, 0.45); }
-.ui input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; width: 9px; height: 9px; margin-top: -4px; border-radius: 50%; background: #f4f4f2; }
-.ui input[type="range"]::-moz-range-thumb { width: 9px; height: 9px; border: 0; border-radius: 50%; background: #f4f4f2; }
+.knob::after {
+  content: ""; position: absolute; left: 50%; top: 5%; width: 2px; height: 40%; margin-left: -1px; border-radius: 1px;
+  background: var(--arm, #f4f4f2); transform-origin: 50% 112.5%; transform: rotate(var(--turn, 0deg));
+}
+.knob:hover, .knob:focus { border-color: #f4f4f2; }
+.knob.on { background: var(--arm, #f4f4f2); border-color: var(--arm, #f4f4f2); }
+.knob.on::after { background: #0b0b0d; }
+/* a knob that is its number: the tempo */
+.knob.num {
+  display: flex; align-items: center; justify-content: center; width: auto; min-width: 36px; height: 26px; padding: 0 6px;
+  border: 0; border-radius: 13px; color: rgba(244, 244, 242, 0.62); font-variant-numeric: tabular-nums; letter-spacing: 0.04em;
+}
+.knob.num::after { display: none; }
+.knob.num:hover { color: #f4f4f2; background: rgba(244, 244, 242, 0.09); }
+.knob.num.on { color: #0b0b0d; background: #f4f4f2; }
+
+/* The gauge: a tall pill over the knob that is held, filled as far as the knob is turned, its
+   number at the foot. It grows out of its knob. Left open by a click, it is dragged on. */
+.gauge {
+  position: fixed; z-index: 6; padding: 5px; border-radius: 999px; pointer-events: none;
+  opacity: 0; transform: translate(-50%, calc(-100% + 6px)) scale(0.96); transform-origin: 50% 100%;
+  transition: opacity 0.16s ease-out, transform 0.2s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.gauge.below { transform: translate(-50%, -6px) scale(0.96); transform-origin: 50% 0; }
+.gauge.open { opacity: 1; transform: translate(-50%, -100%) scale(1); }
+.gauge.below.open { transform: translate(-50%, 0) scale(1); }
+.gauge .track { position: relative; width: 32px; height: 140px; border-radius: 999px; overflow: hidden; background: rgba(244, 244, 242, 0.1); }
+.gauge .fill { position: absolute; left: 0; right: 0; bottom: 0; height: calc(18px + var(--t, 0) * (100% - 18px)); border-radius: 999px; background: var(--arm, #f4f4f2); }
+.gauge b {
+  position: absolute; left: 0; right: 0; bottom: 5px; text-align: center; color: #0b0b0d;
+  font: 600 9px/1 Inter, "Helvetica Neue", Helvetica, Arial, sans-serif; font-variant-numeric: tabular-nums;
+}
+.gauge.pinned { pointer-events: auto; }
+.gauge.pinned .track { cursor: ns-resize; touch-action: none; }
+
+/* the bar, top right: the transport in icons, the tempo as its number, and the menu */
+.bar {
+  position: fixed; z-index: 3;
+  top: max(24px, env(safe-area-inset-top)); right: max(24px, env(safe-area-inset-right));
+  display: flex; align-items: center; gap: 2px; padding: 3px 6px;
+}
+.bar button { padding: 0; }
+
+.bar .pop button { padding: 0 10px 0 12px; }
+
 @media (max-width: 760px) {
   .panel { left: max(16px, env(safe-area-inset-left)); right: max(16px, env(safe-area-inset-right)); bottom: max(16px, env(safe-area-inset-bottom)); }
-  .panel .cols, .panel .arm { width: auto; grid-template-columns: 14px 22px 30px 22px 28px 1fr 1fr 1fr 1fr 1fr 1fr 22px; }
+  .tracks { --pad: 10px; width: 100%; padding-top: 16px; }
+  .cols, .arm { width: 100%; box-sizing: border-box; grid-template-columns: var(--cols-phone); }
   /* no room for an arm's sound on a phone: it keeps the one it has */
-  .panel .snd { display: none; }
-  .panel .globals button { flex: 1 1 30%; }
-  .ui button, .ui input[type="range"] { height: 28px; }
-  /* on a phone the drawer lies over the scene, shut until asked for */
-  .drawer { top: calc(max(16px, env(safe-area-inset-top)) + 44px); right: max(16px, env(safe-area-inset-right)); width: min(280px, calc(100vw - 32px)); max-height: calc(100vh - 80px); z-index: 5; background: rgba(11, 11, 13, 0.92); }
-  .panel .cols { font-size: 8px; letter-spacing: 0.06em; }
-  .panel .cols, .panel .arm { gap: 4px; }
-  .ui button { border-radius: 14px; }
+  .arm .snd, .cols .snd { display: none; }
+  /* and the instrument over the mix as on a wide screen, not side by side: the full width, a line between */
+  .panel.over .voice { flex-direction: column; flex-wrap: nowrap; align-items: stretch; gap: 0; width: 100%; box-sizing: border-box; }
+  .panel.over .voice .group + .group { margin-top: 9px; padding-top: 11px; border-top: 1px solid rgba(244, 244, 242, 0.12); }
+  .panel.over .voice .group section:first-child { padding-left: 0; border-left: 0; }
+  .panel.over .voice .group:first-child section:last-child { padding-right: 0; }
+  .cols { letter-spacing: 0.02em; }
+  .cell { min-width: 32px; }
+  .voice { padding: 16px 16px 14px; }
+  .group section { padding: 0 8px; }
+  .group h3 { font-size: 8px; }
+  .arm .knob { width: 100%; max-width: 24px; height: auto; aspect-ratio: 1; }
+  .bar { top: max(16px, env(safe-area-inset-top)); right: max(16px, env(safe-area-inset-right)); }
 }
-.clean .panel, .clean .drawer { display: none; }
+.clean .panel, .clean .bar, .clean .gauge { display: none; }
 
-/* top right: tips on or off. Round, frosted, in the ink; filled while they are on */
-.round {
-  position: fixed; z-index: 2;
-  top: max(24px, env(safe-area-inset-top)); right: max(24px, env(safe-area-inset-right));
-  width: 32px; height: 32px; padding: 0; border: 1px solid rgba(244, 244, 242, 0.5); border-radius: 50%;
-  background: rgba(11, 11, 13, 0.4); -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
-  color: #f4f4f2; font: 600 14px/1 Inter, "Helvetica Neue", Helvetica, Arial, sans-serif; cursor: pointer;
-}
-.round[aria-pressed="true"] { background: #f4f4f2; border-color: #f4f4f2; color: #0b0b0d; }
-/* the second one in: the drawer, open or shut */
-.round.second { right: calc(max(24px, env(safe-area-inset-right)) + 40px); }
-
-/* the tip: what the control under the pointer does, in a box of its own over the workbench */
+/* The tip: what the control under the pointer does, in a card of its own over the panels.
+   Frosted like the card the page opens with: grey glass, no outline, a deep shadow. Its name
+   the size of that card's line, what it does under it, a little softer, with room to read. */
 .tip {
   position: fixed; z-index: 3; pointer-events: none;
-  left: max(24px, env(safe-area-inset-left)); width: 640px; box-sizing: border-box;
-  padding: 10px 12px 11px; border: 1px solid rgba(244, 244, 242, 0.35); border-radius: 10px;
-  background: rgba(11, 11, 13, 0.6); -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
-  color: #f4f4f2; font: 400 13px/1.4 Inter, "Helvetica Neue", Helvetica, Arial, sans-serif;
+  left: max(24px, env(safe-area-inset-left)); width: 440px; box-sizing: border-box;
+  padding: 17px 22px 19px; border-radius: 26px;
+  background: rgba(58, 58, 60, 0.3);
+  -webkit-backdrop-filter: blur(12px) saturate(1.8); backdrop-filter: blur(12px) saturate(1.8);
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.5);
+  color: #f4f4f2; font: 400 13px/1.55 Inter, "Helvetica Neue", Helvetica, Arial, sans-serif;
 }
+@supports (corner-shape: squircle) { .tip { corner-shape: squircle; border-radius: 40px; } }
 .tip[hidden] { display: none; }
-.tip b { display: block; margin-bottom: 4px; font-weight: 600; font-size: 10px; line-height: 1; letter-spacing: 0.12em; text-transform: uppercase; }
+.tip b { display: block; margin-bottom: 5px; font-weight: 600; font-size: 15px; line-height: 1.25; letter-spacing: -0.01em; }
+.tip span { color: rgba(244, 244, 242, 0.8); }
 @media (max-width: 760px) {
-  .round { top: max(16px, env(safe-area-inset-top)); right: max(16px, env(safe-area-inset-right)); }
-  .round.second { right: calc(max(16px, env(safe-area-inset-right)) + 40px); }
-  .tip { top: calc(max(16px, env(safe-area-inset-top)) + 84px); left: max(16px, env(safe-area-inset-left)); right: max(16px, env(safe-area-inset-right)); width: auto; }
+  .tip { top: calc(max(16px, env(safe-area-inset-top)) + 116px); left: max(16px, env(safe-area-inset-left)); right: max(16px, env(safe-area-inset-right)); width: auto; }
 }
-.clean .round, .clean .tip { display: none; }
+.clean .tip { display: none; }
+
+/* First, as on day 14: a frosted square in the middle, headphones recommended; a click and it goes. */
+.veil {
+  position: fixed; inset: 0; z-index: 7; display: grid; place-items: center; cursor: pointer;
+  transition: opacity 0.45s ease-out;
+}
+.veil .card {
+  position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px;
+  width: 240px; height: 240px; border-radius: 36px; box-sizing: border-box; padding: 24px;
+  color: #f4f4f2; text-align: center; font-family: Inter, "Helvetica Neue", Helvetica, Arial, sans-serif;
+  background: rgba(58, 58, 60, 0.2);
+  -webkit-backdrop-filter: blur(6px) saturate(1.8); backdrop-filter: blur(6px) saturate(1.8);
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.5);
+  animation: card-in 0.7s 0.25s cubic-bezier(0.2, 0.8, 0.2, 1) backwards;
+  transition: transform 0.45s cubic-bezier(0.4, 0, 0.2, 1);
+}
+/* Apple's continuous corners where the browser has them (a squircle needs a larger radius to read as round as a circle's) */
+@supports (corner-shape: squircle) { .veil .card { corner-shape: squircle; border-radius: 56px; } }
+.veil .card > svg { margin-bottom: 4px; opacity: 0.95; }
+/* the x tucked into the corner, close to its curve */
+.veil .x {
+  position: absolute; top: 12px; right: 12px; display: grid; place-items: center;
+  width: 36px; height: 36px; padding: 0; border: 0; border-radius: 50%; cursor: pointer;
+  background: rgba(255, 255, 255, 0.12); color: rgba(244, 244, 242, 0.75);
+  transition: background 0.2s, color 0.2s;
+}
+.veil .x:hover { background: rgba(255, 255, 255, 0.2); color: #f4f4f2; }
+.veil .card b { font-weight: 600; font-size: 15px; letter-spacing: -0.01em; }
+.veil .card i {
+  font-style: normal; font-size: 12px; letter-spacing: 0.08em; opacity: 0.55;
+  font-family: "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Noto Sans JP", "Yu Gothic", sans-serif;
+}
+.veil.gone { opacity: 0; pointer-events: none; }
+.veil.gone .card { transform: scale(0.94); }
+@keyframes card-in { from { opacity: 0; transform: translateY(10px) scale(0.96); } }
 
 /* a sheet in the middle: a name being asked for (cmd+shift+S), or everything saved (cmd+O) */
 .sheet {

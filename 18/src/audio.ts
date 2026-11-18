@@ -131,6 +131,17 @@ function room(ac: AudioContext, size: number): AudioBuffer {
   return buf;
 }
 
+/** the clipper's curve is tanh(CLIP·x) over -1..1: how hard it is driven is the gain before it times this */
+const CLIP = 4;
+/** the drive at the bottom of the distortion knob (on the straight part of the curve: clean) and at its top (a fuzz) */
+const DRIVE_MIN = 0.06;
+const DRIVE_MAX = 24;
+/** the low pass on the room, Hz: with no damping and with all of it */
+const DAMP_OPEN = 16000;
+const DAMP_SHUT = 500;
+/** the level at the top of the volume knob: 80 on it is 0.8, where it was before there was a knob */
+const VOLUME_TOP = 0.8 / Math.pow(0.8, 1.5);
+
 export class Sound {
   readonly ac: AudioContext;
   private bus: GainNode;
@@ -141,6 +152,12 @@ export class Sound {
   /** seconds between a sound being started and being heard */
   latency = 0;
   private level = 0.8;
+  private quiet = false;
+  /** the distortion, before the room and the echo: how hard it is driven, and brought back down after */
+  private pre: GainNode;
+  private post: GainNode;
+  /** the room's damping: a low pass on what comes back from it */
+  private damp: BiquadFilterNode;
   /** the room's level, and the echo: what goes into it, what comes round again, and its two taps */
   private dry: GainNode;
   private wet: GainNode;
@@ -174,8 +191,26 @@ export class Sound {
     this.out = ac.createGain();
     this.out.gain.value = this.level;
     this.dry = ac.createGain();
-    this.bus.connect(this.dry).connect(comp);
-    this.bus.connect(conv).connect(this.wet).connect(comp);
+    // The distortion: everything through one soft clipper (tanh). The curve never changes: the
+    // knob is how hard it is driven into it. At the bottom it is driven so little that it is on
+    // the straight part (clean), and the gain after it brings the level back to what it was.
+    this.pre = ac.createGain();
+    this.pre.gain.value = DRIVE_MIN / CLIP;
+    const clip = ac.createWaveShaper();
+    const curve = new Float32Array(4097);
+    for (let i = 0; i < curve.length; i++) curve[i] = Math.tanh(CLIP * ((2 * i) / (curve.length - 1) - 1));
+    clip.curve = curve;
+    clip.oversample = '2x';
+    this.post = ac.createGain();
+    this.post.gain.value = 1 / DRIVE_MIN;
+    this.bus.connect(this.pre).connect(clip).connect(this.post);
+    // the damping: the room's top taken off as it comes back, open to start with
+    this.damp = ac.createBiquadFilter();
+    this.damp.type = 'lowpass';
+    this.damp.Q.value = 0.5;
+    this.damp.frequency.value = DAMP_OPEN;
+    this.post.connect(this.dry).connect(comp);
+    this.post.connect(conv).connect(this.damp).connect(this.wet).connect(comp);
     comp.connect(this.out).connect(ac.destination);
 
     // The echo, as on day 14: a dotted eighth apart, bouncing left then right, dark (a band from
@@ -192,7 +227,7 @@ export class Sound {
     high.frequency.value = 2800;
     this.taps = [ac.createDelay(2.5), ac.createDelay(2.5)];
     const echo = ac.createGain();
-    this.bus.connect(this.send).connect(low).connect(high).connect(this.taps[0]).connect(this.taps[1]).connect(this.again).connect(this.taps[0]);
+    this.post.connect(this.send).connect(low).connect(high).connect(this.taps[0]).connect(this.taps[1]).connect(this.again).connect(this.taps[0]);
     this.taps.forEach((tap, i) => {
       const side = ac.createStereoPanner();
       side.pan.value = i ? 0.7 : -0.7;
@@ -212,18 +247,34 @@ export class Sound {
   }
 
   set muted(m: boolean) {
+    this.quiet = m;
     this.out.gain.setTargetAtTime(m ? 0 : this.level, this.ac.currentTime, 0.015);
   }
 
   /**
-   * The mix: reverb, room, delay and harmonics, each 0..1, and the tempo the echo keeps (a
+   * The mix: volume, distortion, reverb, room, damping, delay and harmonics, each 0..1, and the tempo the echo keeps (a
    * dotted eighth of it). Reverb is how much of what is heard is the room (at the top, only the room) and room its size; delay is how much goes into the echo and how
    * much of it comes round again; harmonics is the overtone over every note, none at 0, as
    * designed in the middle, twice at the top.
    */
-  set(mix: { reverb: number; room: number; delay: number; harm: number; bpm: number; instrument?: string }) {
+  set(mix: { reverb: number; room: number; delay: number; harm: number; bpm: number; instrument?: string; volume?: number; dist?: number; damp?: number }) {
     if (mix.instrument) this.instrument = mix.instrument;
     const now = this.ac.currentTime;
+    // the volume of it all: 80 is where it was before there was a knob
+    const level = VOLUME_TOP * Math.pow(mix.volume ?? 0.8, 1.5);
+    if (level !== this.level) {
+      this.level = level;
+      if (!this.quiet) this.out.gain.setTargetAtTime(level, now, 0.02);
+    }
+    // The distortion: how hard everything is driven into the clipper, from next to nothing (clean)
+    // to a fuzz. What comes out is brought back to about the level it had, a little under at the
+    // top, where every tail is as loud as its note.
+    const dist = mix.dist ?? 0;
+    const drive = DRIVE_MIN * Math.pow(DRIVE_MAX / DRIVE_MIN, dist);
+    this.pre.gain.setTargetAtTime(drive / CLIP, now, 0.03);
+    this.post.gain.setTargetAtTime(((0.5 / Math.tanh(drive * 0.5)) * (1 - 0.6 * dist * dist)), now, 0.03);
+    // the damping: from open down to a room hung with blankets
+    this.damp.frequency.setTargetAtTime(DAMP_OPEN * Math.pow(DAMP_SHUT / DAMP_OPEN, mix.damp ?? 0), now, 0.03);
     // a mix, not a send: as the room comes up the notes themselves go down, and at the top there is only the room
     const wet = 4 * Math.pow(Math.sin((mix.reverb * Math.PI) / 2), 2);
     this.wet.gain.setTargetAtTime(wet, now, 0.03);

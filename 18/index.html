@@ -23,14 +23,12 @@
   <body>
     <canvas id="c"></canvas>
     <div class="plate"><div class="head"><b>18 Pendulum</b><i><a class="home" href="https://ttillberg.github.io/codevember-2026/">Codevember 2026 <span lang="ja">振り子</span></a> · <a class="home" href="https://x.com/theo_t">@theo_t</a></i></div><i id="hint" class="hint"></i></div>
-    <!-- the workbench, along the bottom: a row a link -->
+    <!-- one panel along the bottom: the instrument and the mix in pills over the tracks, a pill a link -->
     <div id="panel" class="panel ui"></div>
-    <!-- the drawer, right: play and tempo, physics, the scale, the mix, the setups, a section each -->
-    <aside id="drawer" class="drawer ui" aria-label="Controls"></aside>
-    <!-- what the control under the pointer does, in a box of its own; the ? turns it on and off -->
+    <!-- the bar, top right: the transport, and a menu for what is set once -->
+    <nav id="bar" class="bar pill ui" aria-label="Transport"></nav>
+    <!-- what the control under the pointer does, in a box of its own; turned on and off in the menu -->
     <div id="tip" class="tip" role="status" hidden></div>
-    <button id="tips" class="round" data-tip="tips" aria-label="Tips" aria-pressed="true">?</button>
-    <button id="drawerToggle" class="round second" data-tip="drawer" aria-label="Controls" aria-pressed="true">≡</button>
     <script type="module" src="./src/main.ts"></script>
   </body>
 </html>

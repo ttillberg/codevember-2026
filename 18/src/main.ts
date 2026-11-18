@@ -10,11 +10,9 @@ if (clean) document.body.classList.add('clean');
 const canvas = document.querySelector<HTMLCanvasElement>('#c')!;
 const ctx = canvas.getContext('2d')!;
 const panel = document.querySelector<HTMLElement>('#panel')!;
-const drawer = document.querySelector<HTMLElement>('#drawer')!;
-const drawerToggle = document.querySelector<HTMLButtonElement>('#drawerToggle')!;
+const topBar = document.querySelector<HTMLElement>('#bar')!;
 const hint = document.querySelector<HTMLElement>('#hint')!;
 const tip = document.querySelector<HTMLElement>('#tip')!;
-const tipsButton = document.querySelector<HTMLButtonElement>('#tips')!;
 
 const INK = '244, 244, 242';
 const BACK = '#0b0b0d';
@@ -32,8 +30,9 @@ const LOOK = 0.12;
 const ORBIT = 720;
 /** and along its trail, the bar behind it, when it has weight */
 const TRAIL = 288;
-/** the pieces a path is drawn in, each fainter than the one before: both counts above divide by it */
+/** the pieces a path is drawn in, each fainter than the one before, and how much of a bar the path is: both counts above, times that, divide by the pieces */
 const PIECES = 36;
+const TAIL = 0.25;
 /** points along a link's curve */
 const WAVE = 480;
 
@@ -63,6 +62,12 @@ interface State {
   room: number;
   delay: number;
   harm: number;
+  /** the volume of it all, 0..1: 0.8 is where it was before there was a knob */
+  volume: number;
+  /** the distortion on everything, before the room: 0 is clean */
+  dist: number;
+  /** the room's damping, 0..1: how much of its top is taken off */
+  damp: number;
   /** 2 since the push knob has its lock point in the middle: older setups have theirs moved to where it does the same */
   v?: number;
 }
@@ -87,6 +92,9 @@ const fresh = (): State => ({
   room: 0.7,
   delay: 0.2,
   harm: 0.5,
+  volume: 0.8,
+  dist: 0,
+  damp: 0,
   v: 2,
 });
 
@@ -128,14 +136,20 @@ function sane(given: State | null | undefined): State | null {
     room: unit01(s.room, 0.7),
     delay: unit01(s.delay, 0.2),
     harm: unit01(s.harm, 0.5),
+    volume: unit01(s.volume, 0.8),
+    dist: unit01(s.dist, 0),
+    damp: unit01(s.damp, 0),
     v: 2,
   };
 }
 
+/** the drums: a sound an arm, not a note */
+const kit = (id: string | null) => id === '808' || id === 'bones';
+
 /**
  * ?arms=1-34-1,2-52-0.62-90-50-30-1-40 (swings, swing in degrees, length, then if any the phase
  * in degrees, the volume and the weight in percent, 1 for each or 0 for sum, and the push in
- * percent), &bpm=, &physics=1, &scale=kumoi, &instrument=bones, &by=arm, &root=0.4, &reverb= &room= &delay= &harmonics= (0 to 1), and for every arm that does not say: &mode=each, &push=0.5. A
+ * percent), &bpm=, &physics=1, &scale=kumoi, &instrument=bones, &by=arm, &root=0.4, &reverb= &room= &damping= &delay= &distortion= &harmonics= &volume= (0 to 1), and for every arm that does not say: &mode=each, &push=0.5. A
  * pattern in a link, for clips too. &weight=0.3 is the old way to say physics, each joint that
  * many times the one above.
  */
@@ -153,7 +167,7 @@ function fromQuery(): State | null {
     .map(([n, deg, len, phase = 0, vol = 100, mass, each = all, push = pushAll], k): Arm => ({ n: Math.min(MAX_N, Math.max(1, Math.round(n))), swing: (Math.min(180, Math.max(0, deg)) * Math.PI) / 180, len: Math.min(1.5, Math.max(0.1, len)), phase: (((phase % 360) + 360) % 360) * (Math.PI / 180), vol: unit01(vol / 100, 1), mass: massFor(mass === undefined ? undefined : mass / 100, k, weight), mode: each ? 'each' : 'sum', push: unit01(push / 100, 0.5), hue: k, sound: FIRST_SOUND[k % FIRST_SOUND.length] }));
   if (!arms.length) return null;
   const bpm = Number(query.get('bpm'));
-  return { arms: arms.slice(0, MAX_ARMS), bpm: bpm >= 40 && bpm <= 220 ? bpm : 120, physics: query.has('physics') ? query.get('physics') !== '0' : weight > 0, scale: SCALES.find((c) => c.id === query.get('scale'))?.id ?? 'tension', instrument: INSTRUMENTS.find((c) => c.id === query.get('instrument'))?.id ?? 'tine', by: query.get('by') === 'arm' ? 'arm' : 'hit', root: rootIn(query.has('root') ? Number(query.get('root')) : undefined), reverb: fx('reverb', 0.25), room: fx('room', 0.7), delay: fx('delay', 0.2), harm: fx('harmonics', 0.5), v: 2 };
+  return { arms: arms.slice(0, MAX_ARMS), bpm: bpm >= 40 && bpm <= 220 ? bpm : 120, physics: query.has('physics') ? query.get('physics') !== '0' : weight > 0, scale: SCALES.find((c) => c.id === query.get('scale'))?.id ?? 'tension', instrument: INSTRUMENTS.find((c) => c.id === query.get('instrument'))?.id ?? 'tine', by: query.has('by') ? (query.get('by') === 'arm' ? 'arm' : 'hit') : kit(query.get('instrument')) ? 'arm' : 'hit', root: rootIn(query.has('root') ? Number(query.get('root')) : undefined), reverb: fx('reverb', 0.25), room: fx('room', 0.7), delay: fx('delay', 0.2), harm: fx('harmonics', 0.5), volume: fx('volume', 0.8), dist: fx('distortion', 0), damp: fx('damping', 0), v: 2 };
 }
 
 function load(): State {
@@ -239,6 +253,32 @@ function unlock() {
   if (!sound.running && !document.hidden) sound.ac.resume().catch(() => {});
 }
 for (const ev of ['pointerdown', 'pointerup', 'keydown', 'click']) window.addEventListener(ev, unlock, { capture: true });
+
+// First, day 14's card: a frosted square in the middle, headphones recommended. The chain
+// swings behind it without a sound (a browser plays nothing before a press); a click anywhere,
+// or a key, takes the card away and, being a press, starts the sound. That click does nothing
+// else: it holds no link and turns no knob. Every visit, since every visit starts silent.
+// (`?nocard` in a link leaves it out: for the grabs.)
+let veil: HTMLElement | null = null;
+if (!clean && !query.has('nocard')) {
+  const card = (veil = document.createElement('div'));
+  card.className = 'veil';
+  card.innerHTML =
+    '<div class="card"><svg width="72" height="72" viewBox="0 0 24 24" aria-hidden="true"><path d="M4.5 13.6V11.6a7.5 7.5 0 0 1 15 0v2" fill="none" stroke="currentColor" stroke-width="0.8" stroke-linecap="round"/><g fill="currentColor"><rect x="3" y="13.2" width="3.1" height="6.6" rx="1.55"/><rect x="5.2" y="12.4" width="2.7" height="8.6" rx="1.35"/><rect x="17.9" y="13.2" width="3.1" height="6.6" rx="1.55"/><rect x="16.1" y="12.4" width="2.7" height="8.6" rx="1.35"/></g></svg>' +
+    '<button type="button" class="x" aria-label="Close"><svg width="14" height="14" viewBox="0 0 12 12" aria-hidden="true"><path d="M2.5 2.5l7 7M9.5 2.5l-7 7" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg></button>' +
+    '<b>Headphones recommended</b><i lang="ja">ヘッドホン推奨</i></div>';
+  const lift = () => {
+    if (!veil) return;
+    veil = null;
+    card.classList.add('gone');
+    window.removeEventListener('keydown', lift);
+    window.setTimeout(() => card.remove(), 500);
+  };
+  card.addEventListener('pointerdown', (e) => e.stopPropagation());
+  card.addEventListener('click', lift);
+  window.addEventListener('keydown', lift);
+  document.body.append(card);
+}
 document.addEventListener('visibilitychange', () => {
   if (!sound) return;
   if (document.hidden) sound.ac.suspend().catch(() => {});
@@ -248,6 +288,8 @@ document.addEventListener('visibilitychange', () => {
 interface Flash extends Hit {
   /** when it is seen and heard, clock seconds */
   t: number;
+  /** how much of its loudness it kept, 0..1: by arm, a hit off where its joint usually hits is a little softer */
+  kept: number;
 }
 const flashes: Flash[] = [];
 /** every hit of the bar behind, for the bar's rows when no two bars are the same */
@@ -262,7 +304,21 @@ function rest(k: number): number {
   return y;
 }
 /** the instruments that are a set of sounds, not one sound at many pitches */
-const isKit = () => state.instrument === '808' || state.instrument === 'bones';
+const isKit = () => kit(state.instrument);
+/** what said the note before the drums took over, to go back to after them */
+let melodicBy: State['by'] = 'hit';
+/**
+ * Another instrument. The drums go by arm to start with (a kick on one arm, a snare on the
+ * next: a drum that changes with where the joint happens to be is a mess), and coming back from
+ * them the notes go as they did before.
+ */
+function setInstrument(id: string) {
+  if (kit(id) && !isKit()) {
+    melodicBy = state.by;
+    state.by = 'arm';
+  } else if (!kit(id) && isKit()) state.by = melodicBy;
+  state.instrument = id;
+}
 const NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
 /** what arm k sounds when sounds go by arm: its drum, its pair of bones, or the note where it rests */
 function soundName(k: number): string {
@@ -271,6 +327,22 @@ function soundName(k: number): string {
   if (state.instrument === 'bones') return `B${(a.sound % KIT.length) + 1}`;
   const midi = noteAt(scaleNotes(), (state.root + rest(k)) / RULER);
   return NOTE_NAMES[midi % 12] + (Math.floor(midi / 12) - 1);
+}
+/**
+ * By arm every hit of an arm is the same sound, so something else has to say they are not the
+ * same hit: where it landed. Each joint has a place it usually hits (a running average of how
+ * far down it was, the last dozen or so hits), and a hit off that is a little softer, like a
+ * drum struck off its middle: down to OFF_CENTRE of its loudness, a third of an arm length
+ * away and beyond. By hit it does nothing: there, where it landed is already the note.
+ */
+const OFF_CENTRE = 0.55;
+const usual: number[] = [];
+function centred(h: Hit): number {
+  if (state.by !== 'arm') return 1;
+  const was = usual[h.k];
+  usual[h.k] = was === undefined ? h.pos : was + (h.pos - was) * 0.12;
+  if (was === undefined) return 1;
+  return 1 - (1 - OFF_CENTRE) * Math.min(1, Math.abs(h.pos - was) / 0.33);
 }
 /** how far under the root a hit counts as being, for its note: where it was, or where its arm rests */
 const depthOf = (h: Hit) => (state.by === 'arm' ? rest(h.k) : h.pos);
@@ -330,12 +402,14 @@ function schedule() {
   for (const h of hits) {
     played.push(h);
     const at = t0 + (h.phase - phi0) * barSeconds();
-    flashes.push({ ...h, t: at });
+    const kept = centred(h);
+    flashes.push({ ...h, t: at, kept });
     // its own voice, wherever it is in the chain, on the note where it is
     const midi = noteAt(scaleNotes(), (state.root + depthOf(h)) / RULER);
     // a kit's sound: the arm's own when sounds go by arm, else the one at the note it hit
     const step = state.by === 'arm' && isKit() ? (state.arms[h.k]?.sound ?? 0) : stepOf(scaleNotes(), midi);
-    sound?.hit(state.arms[h.k]?.hue ?? h.k, h.dir, h.vel, at, state.arms[h.k]?.vol, midi, step);
+    // the sound squares its volume: the root of what is kept, so the hit is that much softer and no more
+    sound?.hit(state.arms[h.k]?.hue ?? h.k, h.dir, h.vel, at, (state.arms[h.k]?.vol ?? 1) * Math.sqrt(kept), midi, step);
   }
   scanned = end;
 }
@@ -384,39 +458,30 @@ function setColour(on: boolean) {
   }
 }
 
-// --- the drawer: open to start with where there is room, shut on a phone; remembered ---
-
-const DRAWER_KEY = 'codevember-2026-18-drawer';
-let drawerOpen = window.innerWidth > 760;
-try {
-  const kept = localStorage.getItem(DRAWER_KEY);
-  if (kept) drawerOpen = kept === 'open';
-} catch {
-  // no storage: as the screen says
-}
-/** where the drawer begins: the scene and the curves stop short of it. Infinity while it is shut. */
-let drawerLeft = Infinity;
-
-/** `keep`: it was asked for by hand, so it is remembered (how the page happens to open is not) */
-function setDrawer(open: boolean, keep = false) {
-  drawerOpen = open;
-  drawer.hidden = !open;
-  drawerToggle.setAttribute('aria-pressed', String(open));
-  if (keep) {
-    try {
-      localStorage.setItem(DRAWER_KEY, open ? 'open' : 'shut');
-    } catch {
-      // nothing kept
-    }
-  }
-  measure();
-}
-drawerToggle.addEventListener('click', () => setDrawer(!drawerOpen, true));
+/** the top of everything along the bottom: the tip's box goes over it */
+let tipOver = 0;
+/** where the bar ends, when it lies under the title and reaches the middle (a phone): the ruler of notes starts under it */
+let topClear = 0;
 
 function measure() {
+  // The instrument's panel and the tracks' stand side by side from the left, as tall as each
+  // other; where the window is not wide enough for that, the instrument goes over the tracks.
+  panel.classList.remove('over');
+  const head = panel.querySelector<HTMLElement>('.voice');
+  const rows = panel.querySelector<HTMLElement>('.tracks');
+  if (head && rows && head.offsetWidth + rows.offsetWidth + 10 > panel.clientWidth) panel.classList.add('over');
   const r = panel.getBoundingClientRect();
   panelRect = { left: r.left, top: r.top };
-  drawerLeft = drawerOpen && !clean ? drawer.getBoundingClientRect().left : Infinity;
+  tipOver = Math.min(r.top, head?.getBoundingClientRect().top ?? r.top);
+  // The bar sits top right; where the title reaches under it (a phone) it goes below the title instead.
+  topBar.style.top = '';
+  const plate = document.querySelector<HTMLElement>('.plate .head')?.getBoundingClientRect();
+  let box = topBar.getBoundingClientRect();
+  if (plate && box.left < plate.right + 8) {
+    topBar.style.top = `${plate.bottom + 10}px`;
+    box = topBar.getBoundingClientRect();
+  }
+  topClear = !clean && box.left < window.innerWidth / 2 + 30 ? box.bottom : 0;
   rowBoxes = [...panel.querySelectorAll('.arm')].map((row) => {
     const b = row.getBoundingClientRect();
     rowsRight = b.right;
@@ -425,18 +490,99 @@ function measure() {
   placeTip();
 }
 
+/** a knob's turn for a value: from seven o'clock round to five */
+const turnOf = (v: number, min: number, max: number) => -135 + (270 * (v - min)) / (max - min || 1);
+/**
+ * A knob, as on day 07: press it and drag up (or to the right) and it turns up, a tall gauge
+ * over it showing where it is while it is held; a click leaves the gauge open, to drag on.
+ * It is a ring and a hand, or (`num`) its number alone. The arrow keys step it.
+ */
+const knob = (p: string, value: number, min: number, max: number, step: number, label: string, num = false) =>
+  `<span class="knob${num ? ' num' : ''}" role="slider" tabindex="0" data-p="${p}" data-tip="${p === 'bpm' ? 'tempo' : p}" data-min="${min}" data-max="${max}" data-step="${step}" data-value="${value}" aria-label="${label}" aria-valuemin="${min}" aria-valuemax="${max}" aria-valuenow="${value}" style="--turn: ${turnOf(value, min, max).toFixed(1)}deg">${num ? value : ''}</span>`;
+function setKnob(el: HTMLElement, v: number) {
+  el.dataset.value = String(v);
+  el.setAttribute('aria-valuenow', String(v));
+  el.style.setProperty('--turn', `${turnOf(v, Number(el.dataset.min), Number(el.dataset.max)).toFixed(1)}deg`);
+  if (el.classList.contains('num')) el.textContent = String(v);
+}
+
+const icon = (d: string) => `<svg viewBox="0 0 14 14" width="14" height="14" aria-hidden="true">${d}</svg>`;
+const ICONS = {
+  play: icon('<path d="M4.2 2.4v9.2l7.4-4.6z"/>'),
+  pause: icon('<path d="M3.4 2.6h2.6v8.8H3.4zM8 2.6h2.6v8.8H8z"/>'),
+  restart: icon('<path class="s" d="M2.6 7.4a4.4 4.4 0 1 0 1.3-3.5"/><path class="s" d="M3.6 1.4v2.8h2.8"/>'),
+  sound: icon('<path d="M1.8 5.2h2.3l2.9-2.5v8.6L4.1 8.8H1.8z"/><path class="s" d="M9 5.2a2.6 2.6 0 0 1 0 3.6M10.7 3.5a5 5 0 0 1 0 7"/>'),
+  muted: icon('<path d="M1.8 5.2h2.3l2.9-2.5v8.6L4.1 8.8H1.8z"/><path class="s" d="M9.3 5.3l3.2 3.4M12.5 5.3L9.3 8.7"/>'),
+  menu: icon('<path class="s" d="M2.5 4h9M2.5 7h9M2.5 10h9"/>'),
+  warn: icon('<path class="s" d="M7 2L12.6 11.6H1.4z"/><path class="s" d="M7 5.8v2.6"/><circle cx="7" cy="10" r="0.75"/>'),
+  plus: '<svg viewBox="0 0 18 18" width="18" height="18" aria-hidden="true"><circle class="s ring" cx="9" cy="9" r="8"/><path class="s" d="M9 5.6v6.8M5.6 9h6.8"/></svg>',
+  minus: '<svg viewBox="0 0 18 18" width="18" height="18" aria-hidden="true"><circle class="s ring" cx="9" cy="9" r="8"/><path class="s" d="M5.6 9h6.8"/></svg>',
+  caret: '<svg viewBox="0 0 8 8" width="7" height="7" aria-hidden="true"><path class="s" d="M1.4 2.8L4 5.4l2.6-2.6"/></svg>',
+};
+const CMD = /Mac|iPhone|iPad/.test(navigator.platform) ? '⌘' : 'Ctrl ';
+
+/** which list is open: the instrument's, the scale's, the menu, or none. It lives through the panels being made again. */
+let openPop = '';
+
 function build() {
+  showGauge(null);
   const many = state.arms.length > 1;
-  panel.classList.toggle('weightless', !state.physics);
+  // Only the columns that do something are there: an arm's sound when sounds go by arm, its
+  // weight and its push when the chain has physics.
+  const bySound = state.by === 'arm';
+  const knobs = state.physics ? 6 : 4;
+  panel.style.setProperty('--cols', `14px 26px 30px 26px 28px ${bySound ? '36px ' : ''}repeat(${knobs}, 36px) 26px`);
+  panel.style.setProperty('--cols-phone', `14px 26px 28px 26px 26px repeat(${knobs}, 1fr) 26px`);
   queueMicrotask(() => {
-    document.querySelectorAll<HTMLInputElement>('.ui input[type="range"]').forEach(mark);
     showHot();
   });
+  const pct = (v: number) => Math.round(v * 100);
+  /** a section of the panel under its label */
+  const part = (label: string, inner: string) => `<section><h3>${label}</h3><div class="ctl">${inner}</div></section>`;
+  /** a knob over its name, where a section has more than one */
+  const cell = (label: string, inner: string) => `<span class="cell">${inner}<i>${label}</i></span>`;
+  /** a list, as on day 07: only what is picked shows; pressed, the rest stand over it (press, slide and let go, or tap and tap) */
+  const pick = (p: 'instrument' | 'scale', label: string, list: { id: string; label: string }[]) => {
+    const cur = list.find((c) => c.id === state[p]) ?? list[0];
+    return `<span class="pick" data-pop="${p}">
+        <button class="cur" data-tip="${p}" aria-haspopup="listbox" aria-expanded="${openPop === p}" aria-label="${label}">${cur.label}${ICONS.caret}</button>
+        <span class="pop" role="listbox" ${openPop === p ? '' : 'hidden'}>${list.map((c) => `<button role="option" data-act="pick" data-p="${p}" data-id="${c.id}" aria-selected="${c.id === cur.id}">${c.label}</button>`).join('')}</span>
+      </span>`;
+  };
+  const mix = (p: string, name: string, v: number, label = '') => (label ? cell(label, knob(p, pct(v), 0, 100, 1, name)) : knob(p, pct(v), 0, 100, 1, name));
+  // Along the bottom, two panels side by side, as tall as each other: the instrument over the
+  // mix, each in sections under their labels, and the tracks, a row a link.
   panel.innerHTML = `
-    <div class="picker" data-tip="instrument">
-      ${INSTRUMENTS.map((c) => `<button data-act="pick" data-id="${c.id}" aria-pressed="${c.id === state.instrument}">${c.label}</button>`).join('')}
+    <div class="voice">
+      <div class="group" role="group" aria-label="Instrument">
+        ${part('Instrument', pick('instrument', 'Instrument', INSTRUMENTS) + (isKit() ? '' : pick('scale', 'Scale', SCALES)))}
+        ${part(
+          'Notes',
+          `<span class="seg" role="radiogroup" aria-label="What says which note a hit is" data-tip="by">
+            <button role="radio" data-act="by" data-id="hit" aria-checked="${state.by === 'hit'}" aria-pressed="${state.by === 'hit'}">By hit</button>
+            <button role="radio" data-act="by" data-id="arm" aria-checked="${state.by === 'arm'}" aria-pressed="${state.by === 'arm'}">By arm</button>
+          </span>`,
+        )}
+      </div>
+      <div class="group" role="group" aria-label="Pendulum mode">
+        ${part(
+          'Pendulum mode',
+          `<span class="seg" role="radiogroup" aria-label="How the chain moves" data-tip="physics">
+            <button role="radio" data-act="motion" data-id="formula" aria-checked="${!state.physics}" aria-pressed="${!state.physics}">Formula</button>
+            <button role="radio" data-act="motion" data-id="physics" aria-checked="${state.physics}" aria-pressed="${state.physics}">Physics</button>
+          </span>${state.physics ? `<span class="warning" role="status">${ICONS.warn}Drifts out of time</span>` : ''}`,
+        )}
+      </div>
+      <div class="group" role="group" aria-label="Mix">
+        ${part('Mix', mix('volume', 'Volume', state.volume, 'Volume') + mix('harm', 'Harmonics', state.harm, 'Harm'))}
+        ${part('Reverb', mix('reverb', 'Reverb', state.reverb, 'Amount') + mix('room', 'Room', state.room, 'Room') + mix('damp', 'Damping', state.damp, 'Damp'))}
+        ${part('Delay', mix('delay', 'Delay', state.delay))}
+        ${part('Distortion', mix('dist', 'Distortion', state.dist))}
+      </div>
     </div>
-    <div class="cols"><span>Swings</span><span>Sum</span><span class="snd">Sound</span><span>Swing</span><span>Length</span><span>Phase</span><span>Volume</span><span>Weight</span><span>Push</span></div>
+    <div class="tracks" role="group" aria-label="Tracks">
+    <h3>Tracks</h3>
+    <div class="cols"><span>Swings</span><span>Sum</span>${bySound ? '<span class="snd">Sound</span>' : ''}<span>Volume</span><span>Swing</span><span>Length</span><span>Phase</span>${state.physics ? '<span>Weight</span><span>Push</span>' : ''}<span></span></div>
     ${state.arms
       .map(
         (a, k) => `
@@ -444,61 +590,84 @@ function build() {
       <span class="grip" data-tip="grip" aria-label="Move arm ${k + 1}">⋮⋮</span>
       <button data-act="dn" data-tip="swings" aria-label="Fewer swings per bar">−</button><output data-tip="swings">×${a.n}</output><button data-act="up" data-tip="swings" aria-label="More swings per bar">+</button>
       <button data-act="own" data-tip="mode" aria-pressed="${a.mode === 'sum'}" aria-label="Arm ${k + 1} sounds on the sum">Σ</button>
-      <button class="snd" data-act="sound" data-tip="sound" aria-label="Sound of arm ${k + 1}" ${state.by === 'arm' && isKit() ? '' : 'disabled'}>${state.by === 'arm' ? soundName(k) : '·'}</button>
-      <input type="range" data-p="swing" data-tip="swing" min="0" max="180" step="1" value="${Math.round((a.swing * 180) / Math.PI)}" aria-label="Swing of arm ${k + 1}" />
-      <input type="range" data-p="len" data-tip="len" min="0.1" max="1.5" step="0.01" value="${a.len}" aria-label="Length of arm ${k + 1}" />
-      <input type="range" data-p="phase" data-tip="phase" min="0" max="360" step="1" value="${Math.round((a.phase * 180) / Math.PI)}" aria-label="Phase of arm ${k + 1}" />
-      <input type="range" data-p="vol" data-tip="vol" min="0" max="100" step="1" value="${Math.round(a.vol * 100)}" aria-label="Volume of arm ${k + 1}, 0 is muted" />
-      <input type="range" data-p="mass" data-tip="mass" min="0" max="100" step="1" value="${Math.round(a.mass * 100)}" aria-label="Weight of arm ${k + 1}" />
-      <input type="range" data-p="push" data-tip="push" min="0" max="100" step="1" value="${Math.round(a.push * 100)}" aria-label="Push of arm ${k + 1}" />
-      <button data-act="rm" data-tip="rm" aria-label="Remove arm ${k + 1}" ${many ? '' : 'disabled'}>✕</button>
+      ${bySound ? `<button class="snd" data-act="sound" data-tip="sound" aria-label="Sound of arm ${k + 1}" ${isKit() ? '' : 'disabled'}>${soundName(k)}</button>` : ''}
+      ${knob('vol', pct(a.vol), 0, 100, 1, `Volume of arm ${k + 1}, 0 is muted`)}
+      ${knob('swing', Math.round((a.swing * 180) / Math.PI), 0, 180, 1, `Swing of arm ${k + 1}`)}
+      ${knob('len', a.len, 0.1, 1.5, 0.01, `Length of arm ${k + 1}`)}
+      ${knob('phase', Math.round((a.phase * 180) / Math.PI), 0, 360, 1, `Phase of arm ${k + 1}`)}
+      ${state.physics ? knob('mass', pct(a.mass), 0, 100, 1, `Weight of arm ${k + 1}`) + knob('push', pct(a.push), 0, 100, 1, `Push of arm ${k + 1}`) : ''}
+      <button data-act="rm" data-tip="rm" aria-label="Remove arm ${k + 1}" ${many ? '' : 'disabled'}>${ICONS.minus}</button>
     </div>`,
       )
       .join('')}
-    <div class="globals">
-      <button data-act="add" data-tip="add" ${state.arms.length < MAX_ARMS ? '' : 'disabled'}>+ Arm</button>
+    <button class="add" data-act="add" data-tip="add" ${state.arms.length < MAX_ARMS ? '' : 'disabled'}>${ICONS.plus}Arm</button>
     </div>`;
-  const slider = (p: string, label: string, value: number, min = 0, max = 100) =>
-    `<label class="row" data-tip="${p === 'bpm' ? 'tempo' : p}"><span>${label}</span><input type="range" data-p="${p}" min="${min}" max="${max}" step="1" value="${value}" /><output id="${p}">${value}</output></label>`;
-  const pct = (v: number) => Math.round(v * 100);
-  drawer.innerHTML = `
-    <section><h2>Transport</h2>
-      <div class="pair">
-        <button data-act="play" data-tip="play">${playing ? 'Pause' : 'Play'}</button>
-        <button data-act="restart" data-tip="restart">Restart</button>
-        <button data-act="mute" data-tip="mute">${muted ? 'Muted' : 'Sound'}</button>
-      </div>
-      ${slider('bpm', 'Tempo', state.bpm, 40, 220)}
-    </section>
-    <section><h2>Motion</h2>
-      <div class="pair"><button data-act="physics" data-tip="physics" aria-pressed="${state.physics}">${state.physics ? 'Physics' : 'Formula'}</button></div>
-    </section>
-    <section><h2>Notes</h2>
-      <div class="pair">
-        <button data-act="scale" data-tip="scale">${(SCALES.find((c) => c.id === state.scale) ?? SCALES[0]).label}</button>
-        <button data-act="by" data-tip="by">${state.by === 'arm' ? 'By arm' : 'By hit'}</button>
-      </div>
-    </section>
-    <section><h2>Mix</h2>
-      ${slider('reverb', 'Reverb', pct(state.reverb))}
-      ${slider('room', 'Room', pct(state.room))}
-      ${slider('delay', 'Delay', pct(state.delay))}
-      ${slider('harm', 'Harmonics', pct(state.harm))}
-    </section>
-    <section><h2>View</h2>
-      <div class="pair">
-        <button data-act="timeline" data-tip="timeline" aria-pressed="${timeline}">Timeline</button>
-        <button data-act="colour" data-tip="colour" aria-pressed="${colour}">Colour</button>
-      </div>
-    </section>
-    <section><h2>Setups</h2>
-      <div class="pair">
-        <button data-act="save" data-tip="save">Save</button>
-        <button data-act="saveas" data-tip="saveas">Save as</button>
-        <button data-act="open" data-tip="open">Open</button>
-      </div>
-    </section>`;
+  // The bar, top right: the transport, and behind the ≡ what is set once (what is shown, the
+  // tips, the setups).
+  const flip = (act: string, label: string, on: boolean, key = '') =>
+    `<button class="row" role="menuitemcheckbox" data-act="${act}" data-tip="${act}" aria-checked="${on}"><span>${label}</span>${key ? `<kbd>${key}</kbd>` : ''}<i class="switch${on ? ' on' : ''}"></i></button>`;
+  const does = (act: string, label: string, key: string) => `<button class="row" role="menuitem" data-act="${act}" data-tip="${act}"><span>${label}</span><kbd>${key}</kbd></button>`;
+  topBar.innerHTML = `
+    <button data-act="play" data-tip="play" aria-label="${playing ? 'Pause' : 'Play'}">${playing ? ICONS.pause : ICONS.play}</button>
+    <button data-act="restart" data-tip="restart" aria-label="Restart">${ICONS.restart}</button>
+    <button data-act="mute" data-tip="mute" aria-label="${muted ? 'Sound on' : 'Sound off'}">${muted ? ICONS.muted : ICONS.sound}</button>
+    ${knob('bpm', state.bpm, 40, 220, 1, 'Tempo', true)}
+    <span class="sep"></span>
+    <span class="pick" data-pop="menu">
+      <button class="cur" data-tip="menu" aria-haspopup="menu" aria-expanded="${openPop === 'menu'}" aria-label="Menu">${ICONS.menu}</button>
+      <span class="pop menu" role="menu" ${openPop === 'menu' ? '' : 'hidden'}>
+        ${flip('timeline', 'Timeline', timeline, 'T')}
+        ${flip('colour', 'Colour', colour)}
+        ${flip('tips', 'Tips', tipsOn, '?')}
+        <hr />
+        ${does('save', 'Save', `${CMD}S`)}
+        ${does('saveas', 'Save as', `⇧${CMD}S`)}
+        ${does('open', 'Open', `${CMD}O`)}
+      </span>
+    </span>`;
   measure();
+}
+
+// --- the lists and the menu: one open at a time, shut by a press anywhere else ---
+
+function setPop(id: string) {
+  openPop = id;
+  for (const p of document.querySelectorAll<HTMLElement>('.pick')) {
+    const on = p.dataset.pop === id;
+    p.querySelector<HTMLElement>('.pop')!.hidden = !on;
+    p.querySelector('.cur')!.setAttribute('aria-expanded', String(on));
+  }
+  if (id === 'instrument' || id === 'scale') showTip(undefined);
+}
+/** pressed on a list's button and not let go yet: letting go over a choice takes it */
+let sliding = false;
+const choiceAt = (e: PointerEvent) => {
+  const b = document.elementFromPoint(e.clientX, e.clientY)?.closest<HTMLElement>('.pop button');
+  return b && !b.closest<HTMLElement>('.pop')!.hidden ? b : null;
+};
+const unmark = () => document.querySelector('.pop button.at')?.classList.remove('at');
+window.addEventListener('pointerdown', (e) => {
+  const t = e.target as HTMLElement;
+  const cur = t.closest?.<HTMLElement>('.pick > .cur');
+  if (cur) {
+    e.preventDefault();
+    const id = cur.parentElement!.dataset.pop!;
+    setPop(openPop === id ? '' : id);
+    sliding = openPop !== '';
+  } else if (openPop && !t.closest?.('.pop')) setPop('');
+});
+window.addEventListener('pointermove', (e) => {
+  if (!sliding) return;
+  unmark();
+  choiceAt(e)?.classList.add('at');
+});
+for (const ev of ['pointerup', 'pointercancel']) {
+  window.addEventListener(ev, (e) => {
+    if (!sliding) return;
+    sliding = false;
+    unmark();
+    if (ev === 'pointerup') choiceAt(e as PointerEvent)?.click();
+  });
 }
 
 // --- tips: what the control under the pointer does, in a box of its own over the workbench ---
@@ -517,24 +686,27 @@ const TIPS: Record<string, [string, string]> = {
   play: ['Pause / Play', 'Stops the motion where it is, and lets it go on. Key: space.'],
   mute: ['Sound', 'All sound on or off. Key: M.'],
   mass: ['Weight', 'How hard this link pulls on what it hangs from, with physics on. At the bottom it rides the arm above and is shaken by it, and the arm above never knows. At the top it weighs as much as the arm it hangs from, and throws it about.'],
-  physics: ['Formula / Physics', 'Formula: every arm goes exactly as it is set. Physics: every arm is a real swing hung in the swing above, with its weight, kept going by the push. Key: W.'],
+  physics: ['Pendulum mode', 'Formula: every arm goes exactly as it is set. Physics: every arm is a real swing hung in the swing above, with its weight, kept going by the push. The chain is then on its own: it drifts out of time, and that is said in orange for as long as it is on. No key for it: it is not to be switched by a slip of the finger.'],
   push: ['Push', 'What keeps this swing going, with physics on: a push in time with its own rhythm, and the air against it. High and it keeps its time whatever the others do; from about the middle the bar comes round; lower and it drifts; 0 lets it go. The arrow at the joint is the push right now: none when the swing is on its own time.'],
-  instrument: ['Instrument', 'What is struck. Tine: a kalimba\'s, a note that rings on. Bones: a drum, two bones knocked together, like a soft rimshot; the same for a link wherever it is: rhythm, no tune. Square: electronic, a filter every hit opens. TR-808: the drum machine, a sound a note: the marks down the ruler say which. Key: I, for the next.'],
-  sound: ['Sound', 'What this arm sounds, when sounds go by arm (Notes, in the drawer). On the drum machine and the bones: press for the next of the eight, shift for the one before. On the others it is the note where the arm rests on the ruler: pull its ring longer or shorter.'],
+  instrument: ['Instrument', 'What is struck. Tine: a kalimba\'s, a note that rings on. Bones: a drum, two bones knocked together, like a soft rimshot; the same for a link wherever it is: rhythm, no tune. Square: electronic, a filter every hit opens. TR-808: the drum machine, a sound a note: the marks down the ruler say which. Pick it from the list, or key I for the next.'],
+  sound: ['Sound', 'What this arm sounds, when sounds go by arm (Notes, in the instrument panel). On the drum machine and the bones: press for the next of the eight, shift for the one before. On the others it is the note where the arm rests on the ruler: pull its ring longer or shorter.'],
   by: ['By hit / By arm', 'What says which note, or which drum, a hit is. By hit: where the joint is when it hits, so a joint far down the chain plays a different one each time. By arm: where its arm ends when the chain hangs straight, so every arm has one of its own. Key: B.'],
-  scale: ['Scale', 'The notes the joints play: where a joint is when it hits is its note, low at the root and high far out, always the nearest one of this scale. Press for the next. The marks down the centre line are its notes. Key: N.'],
+  scale: ['Scale', 'The notes the joints play: where a joint is when it hits is its note, low at the root and high far out, always the nearest one of this scale. Pick it from the list, or key N for the next. The marks down the centre line are its notes.'],
   reverb: ['Reverb', 'How much of what you hear is the room: none at the bottom; higher, the notes themselves go down as the room comes up; at the top, only the room.'],
   room: ['Room', 'How big the room is. Small, the walls are close and hard: it rings like metal, a pipe, a tin. Big, a hall. Turn Reverb up to hear it: all the way up with a small room is metal alone.'],
   delay: ['Delay', 'An echo in time, a dotted eighth apart, bouncing left then right: off at the bottom; higher, more goes in and more comes round again.'],
   harm: ['Harmonics', 'The overtone over every note: none at the bottom (plain, round), each link\'s own in the middle, twice that at the top (bright).'],
   tempo: ['Tempo', 'Beats a minute, four to the bar.'],
-  drawer: ['Controls', 'The drawer: play and tempo, physics, the scale, the mix, the setups. Shut it and the chain has the whole width.'],
+  menu: ['Menu', 'What is shown, these tips, the setups.'],
+  volume: ['Volume', 'How loud it all is.'],
+  damp: ['Damping', 'How much of the room\'s top is taken off as it comes back: open at the bottom, a room hung with blankets at the top.'],
+  dist: ['Distortion', 'Everything driven into a soft clipper, before the room and the echo: clean at the bottom, warm in the middle, a fuzz at the top, where every tail is as loud as its note.'],
   save: ['Save', 'Keeps this setup under the name it has, and asks for one the first time. Key: cmd+S.'],
   saveas: ['Save as', 'Asks for a name and keeps this setup under it, offering the last name with the next number. Key: cmd+shift+S.'],
   open: ['Open', 'Everything saved by name, the newest first. Key: cmd+O. Ten more live on the digits: shift and a digit keeps, the digit brings back.'],
   timeline: ['Timeline', 'Each link\'s curve beside its row: what its joint crosses zero with, over the bar, a dot where it hits. Put away to start with. Key: T.'],
   colour: ['Colour', 'A colour a link (magenta, pink, neon green, and on), or all of it black and white, as it is to start with.'],
-  tips: ['Tips', 'These boxes, on or off. Key: ?. And the sliders: a dragged one catches on its marks, shift slides past them.'],
+  tips: ['Tips', 'These boxes, on or off. Key: ?. And the knobs: press one and drag up (or to the right) to turn it up, the gauge over it shows where it is; a click leaves the gauge open, to drag on. It catches on the quarters and the round numbers, shift turns past them; the arrow keys step it.'],
 };
 
 const TIPS_KEY = 'codevember-2026-18-tips';
@@ -546,22 +718,22 @@ try {
 }
 
 function showTip(key: string | undefined) {
-  const t = tipsOn && key ? TIPS[key] : undefined;
+  // not while a list stands open over where the box goes
+  const t = tipsOn && key && openPop !== 'instrument' && openPop !== 'scale' ? TIPS[key] : undefined;
   tip.hidden = !t;
   if (!t) return;
   // faded while the formula runs: say why, and what turns it on
-  const off = (key === 'mass' || key === 'push') && !state.physics ? ' Off now: the formula is running. Press Formula (or W) for physics.' : '';
+  const off = (key === 'mass' || key === 'push') && !state.physics ? ' Off now: the formula is running. Pick Physics under Pendulum mode.' : '';
   tip.replaceChildren(Object.assign(document.createElement('b'), { textContent: t[0] }), Object.assign(document.createElement('span'), { textContent: t[1] + off }));
 }
 
 /** over the workbench's rows on a wide screen; on a phone the stylesheet puts it under the title */
 function placeTip() {
-  tip.style.bottom = window.innerWidth > 760 ? `${window.innerHeight - panelRect.top + 12}px` : '';
+  tip.style.bottom = window.innerWidth > 760 ? `${window.innerHeight - tipOver + 12}px` : '';
 }
 
 function setTips(on: boolean) {
   tipsOn = on;
-  tipsButton.setAttribute('aria-pressed', String(on));
   showTip(on ? 'tips' : undefined);
   try {
     localStorage.setItem(TIPS_KEY, on ? 'on' : 'off');
@@ -569,11 +741,9 @@ function setTips(on: boolean) {
     // nothing kept
   }
 }
-tipsButton.setAttribute('aria-pressed', String(tipsOn));
-tipsButton.addEventListener('click', () => setTips(!tipsOn));
 
 const tipOf = (e: Event) => (e.target as HTMLElement).closest?.<HTMLElement>('[data-tip]')?.dataset.tip;
-for (const el of [panel, drawer, tipsButton, drawerToggle]) {
+for (const el of [panel, topBar]) {
   el.addEventListener('pointerover', (e) => showTip(tipOf(e)));
   el.addEventListener('focusin', (e) => showTip(tipOf(e)));
   // a mouse leaving takes the tip away; a finger's stays until the next press somewhere else
@@ -595,6 +765,7 @@ function addArm() {
 function removeArm(k = state.arms.length - 1) {
   if (state.arms.length < 2) return;
   state.arms.splice(k, 1);
+  usual.length = 0;
   held = -1;
   if (sim.live) sim.removed(k);
 }
@@ -604,7 +775,7 @@ function toggle(what: 'mode' | 'play' | 'mute' | 'physics' | 'scale' | 'instrume
     note(state.by === 'arm' ? 'A note an arm' : 'A note where it hits');
   }
   if (what === 'instrument') {
-    state.instrument = INSTRUMENTS[(INSTRUMENTS.findIndex((c) => c.id === state.instrument) + 1) % INSTRUMENTS.length].id;
+    setInstrument(INSTRUMENTS[(INSTRUMENTS.findIndex((c) => c.id === state.instrument) + 1) % INSTRUMENTS.length].id);
     note(INSTRUMENTS.find((c) => c.id === state.instrument)!.label);
   }
   if (what === 'scale') {
@@ -628,16 +799,21 @@ function toggle(what: 'mode' | 'play' | 'mute' | 'physics' | 'scale' | 'instrume
 }
 
 const onClick = (e: Event) => {
+  // a list's button reached by the keyboard (a pointer opens it as it goes down)
+  const cur = (e.target as HTMLElement).closest<HTMLElement>('.pick > .cur');
+  if (cur && (e as MouseEvent).detail === 0) return setPop(openPop === cur.parentElement!.dataset.pop ? '' : cur.parentElement!.dataset.pop!);
   const b = (e.target as HTMLElement).closest<HTMLButtonElement>('button[data-act]');
   if (!b) return;
   const act = b.dataset.act!;
-  if (act === 'timeline' || act === 'colour') {
+  if (act === 'timeline' || act === 'colour' || act === 'tips') {
     if (act === 'timeline') setTimeline(!timeline);
-    else setColour(!colour);
+    else if (act === 'colour') setColour(!colour);
+    else setTips(!tipsOn);
     build();
     return;
   }
   if (act === 'save' || act === 'saveas' || act === 'open') {
+    setPop('');
     if (act === 'open') showSaved();
     else if (act === 'saveas' || !current) askName();
     else saveAs(current);
@@ -650,14 +826,20 @@ const onClick = (e: Event) => {
   else if (act === 'sound') state.arms[k].sound = (state.arms[k].sound + ((e as MouseEvent).shiftKey ? KIT.length - 1 : 1)) % KIT.length;
   else if (act === 'rm') removeArm(k);
   else if (act === 'add') addArm();
-  else if (act === 'pick') state.instrument = b.dataset.id!;
+  else if (act === 'pick') {
+    if (b.dataset.p === 'scale') state.scale = b.dataset.id!;
+    else setInstrument(b.dataset.id!);
+    openPop = '';
+  }
+  else if (act === 'by' && b.dataset.id) state.by = b.dataset.id === 'arm' ? 'arm' : 'hit';
+  else if (act === 'motion') state.physics = b.dataset.id === 'physics';
   else if (act === 'restart') restart();
   else toggle(act as 'mode' | 'play' | 'mute' | 'physics' | 'scale' | 'instrument' | 'by');
   changed();
   build();
 };
 panel.addEventListener('click', onClick);
-drawer.addEventListener('click', onClick);
+topBar.addEventListener('click', onClick);
 
 // --- reorder: a row dragged by its grip moves its link along the chain ---
 
@@ -678,6 +860,7 @@ window.addEventListener('pointermove', (e) => {
   const to = rowBoxes.findIndex((b) => Math.abs(e.clientY - b.y) <= b.h / 2 + 3);
   if (to < 0 || to === moving || to >= state.arms.length) return;
   state.arms.splice(to, 0, ...state.arms.splice(moving, 1));
+  usual.length = 0;
   moving = held = to;
   // with weight the arms are not where they were: the chain starts again on the formula
   sim.live = false;
@@ -695,9 +878,12 @@ for (const ev of ['pointerup', 'pointercancel']) {
   });
 }
 
-// --- snap: a slider being dragged catches on its marks (the middle, the quarters, the round numbers) ---
+// --- the knobs: turned by dragging, catching on their marks (the middle, the quarters, the round numbers) ---
 
 const SNAPS: Record<string, number[]> = {
+  volume: [0, 25, 50, 75, 80, 100],
+  dist: [0, 25, 50, 75, 100],
+  damp: [0, 25, 50, 75, 100],
   swing: [0, 45, 90, 135, 180],
   len: [0.25, 0.5, 0.75, 1, 1.25, 1.5],
   phase: [0, 45, 90, 135, 180, 225, 270, 315, 360],
@@ -710,74 +896,143 @@ const SNAPS: Record<string, number[]> = {
   harm: [0, 25, 50, 75, 100],
   bpm: [60, 80, 90, 100, 120, 140, 160, 180, 200],
 };
-/** how near a mark catches, of the slider's whole way */
-const CATCH = 0.025;
-/** a pointer is dragging a slider (keys step freely: a mark would never let go of them), and shift slides past the marks */
-let dragging = false;
-let past = false;
+/** how near a mark catches, of the knob's whole way */
+const CATCH = 0.035;
+/** pixels of drag to the whole of a knob's way: the gauge's height, so its fill goes with the pointer */
+const TURN_PX = 140;
+/**
+ * The knob being turned, where the pointer took it and what it was then. `on`: the press is on
+ * its gauge, left open, and the value is where the pointer is on it. `moved`: it was dragged,
+ * not clicked. `was`: its gauge was open already.
+ */
+let turning: { el: HTMLElement; x: number; y: number; from: number; on: boolean; moved: boolean; was: boolean } | null = null;
 
-for (const el of [panel, drawer]) {
-  el.addEventListener('pointerdown', (e) => {
-    dragging = (e.target as HTMLElement).matches?.('input[type="range"]') ?? false;
-    past = e.shiftKey;
-  });
+// The gauge, as on day 07: one tall pill over the knob that is held, filled as far as the knob
+// is turned, its number at the foot. A click on a knob leaves it open, and it is dragged on.
+const gauge = document.createElement('div');
+gauge.className = 'gauge';
+gauge.innerHTML = '<div class="track"><div class="fill"></div><b></b></div>';
+document.body.append(gauge);
+let gaugeFor: HTMLElement | null = null;
+let gaugeUntil = 0;
+const pinned = () => gauge.classList.contains('pinned');
+
+function fillGauge() {
+  const el = gaugeFor;
+  if (!el) return;
+  const min = Number(el.dataset.min);
+  const v = Number(el.dataset.value);
+  const p = el.dataset.p;
+  gauge.style.setProperty('--t', ((v - min) / (Number(el.dataset.max) - min || 1)).toFixed(4));
+  gauge.querySelector('b')!.textContent = p === 'swing' || p === 'phase' ? `${v}°` : String(v);
 }
-window.addEventListener('pointermove', (e) => dragging && (past = e.shiftKey));
-for (const ev of ['pointerup', 'pointercancel']) window.addEventListener(ev, () => (dragging = false));
-for (const ev of ['keydown', 'keyup'] as const) window.addEventListener(ev, (e) => e.key === 'Shift' && (past = ev === 'keydown'));
-
-/** the slider's value, on a mark if it is being dragged near one */
-function snapped(r: HTMLInputElement): number {
-  let v = Number(r.value);
-  const marks = SNAPS[r.dataset.p ?? ''];
-  if (!marks || !dragging || past) return v;
-  const reach = (Number(r.max) - Number(r.min)) * CATCH;
-  for (const m of marks) {
-    if (Math.abs(v - m) <= reach && Math.abs(v - m) > 0) {
-      v = m;
-      r.value = String(m);
-      break;
-    }
-  }
-  return v;
+function showGauge(el: HTMLElement | null, pin = false) {
+  window.clearTimeout(gaugeUntil);
+  gaugeFor?.classList.remove('on');
+  gaugeFor = el;
+  gauge.classList.toggle('open', !!el);
+  gauge.classList.toggle('pinned', !!el && pin);
+  if (!el) return;
+  el.classList.add('on');
+  const r = el.getBoundingClientRect();
+  // over the knob, or under it where there is no room over it (the tempo, at the top)
+  const below = r.top < 190;
+  gauge.classList.toggle('below', below);
+  gauge.style.left = `${Math.min(window.innerWidth - 26, Math.max(26, r.left + r.width / 2))}px`;
+  gauge.style.top = `${below ? r.bottom + 10 : r.top - 10}px`;
+  gauge.style.setProperty('--arm', getComputedStyle(el).getPropertyValue('--arm').trim() || `rgb(${INK})`);
+  fillGauge();
 }
 
-/** the marks, drawn on the slider: a tick where it catches */
-function mark(r: HTMLInputElement) {
-  const marks = SNAPS[r.dataset.p ?? ''];
-  if (!marks) return;
-  const min = Number(r.min);
-  const span = Number(r.max) - min;
-  // the thumb's middle travels from half a thumb in to half a thumb from the end
-  r.style.background = marks
-    .filter((m) => m >= min && m <= min + span)
-    .map((m) => `linear-gradient(rgba(${INK}, 0.4), rgba(${INK}, 0.4)) calc(4px + ${((m - min) / span).toFixed(4)} * (100% - 9px)) 50% / 1px 7px no-repeat`)
-    .join(', ');
-}
-
-const onInput = (e: Event) => {
-  const r = e.target as HTMLInputElement;
-  const v = snapped(r);
-  if (r.dataset.p === 'bpm') {
+/** a knob's new value, put where it belongs: the tempo, the mix, or an arm's own */
+function setParam(el: HTMLElement, v: number) {
+  const p = el.dataset.p!;
+  setKnob(el, v);
+  if (p === 'bpm') {
     anchor();
     state.bpm = v;
-    drawer.querySelector('#bpm')!.textContent = String(v);
-  } else if (r.dataset.p === 'reverb' || r.dataset.p === 'room' || r.dataset.p === 'delay' || r.dataset.p === 'harm') {
-    state[r.dataset.p] = v / 100;
-    drawer.querySelector('#' + r.dataset.p)!.textContent = String(v);
+  } else if (p === 'reverb' || p === 'room' || p === 'delay' || p === 'harm' || p === 'volume' || p === 'dist' || p === 'damp') {
+    state[p] = v / 100;
   } else {
-    const a = state.arms[Number(r.closest<HTMLElement>('.arm')!.dataset.k)];
-    if (r.dataset.p === 'swing') a.swing = (v * Math.PI) / 180;
-    else if (r.dataset.p === 'phase') a.phase = (v * Math.PI) / 180;
-    else if (r.dataset.p === 'vol') a.vol = v / 100;
-    else if (r.dataset.p === 'mass') a.mass = v / 100;
-    else if (r.dataset.p === 'push') a.push = v / 100;
+    const a = state.arms[Number(el.closest<HTMLElement>('.arm')!.dataset.k)];
+    if (p === 'swing') a.swing = (v * Math.PI) / 180;
+    else if (p === 'phase') a.phase = (v * Math.PI) / 180;
+    else if (p === 'vol') a.vol = v / 100;
+    else if (p === 'mass') a.mass = v / 100;
+    else if (p === 'push') a.push = v / 100;
     else a.len = v;
   }
+  if (gaugeFor === el) fillGauge();
   changed();
-};
-panel.addEventListener('input', onInput);
-drawer.addEventListener('input', onInput);
+}
+
+/** v brought onto the knob's steps and within its ends */
+function stepped(el: HTMLElement, v: number): number {
+  const min = Number(el.dataset.min);
+  const max = Number(el.dataset.max);
+  const step = Number(el.dataset.step) || 1;
+  return Math.min(max, Math.max(min, Math.round((Math.round((v - min) / step) * step + min) * 100) / 100));
+}
+
+window.addEventListener('pointerdown', (e) => {
+  const t = e.target as HTMLElement;
+  // a gauge left open: a press on it turns its knob to where the press is, a press anywhere else puts it away
+  if (gaugeFor && pinned() && gauge.contains(t)) {
+    e.preventDefault();
+    turning = { el: gaugeFor, x: e.clientX, y: e.clientY, from: Number(gaugeFor.dataset.value), on: true, moved: true, was: true };
+    turn(e);
+    return;
+  }
+  const k = t.closest?.<HTMLElement>('.knob');
+  const was = !!k && gaugeFor === k && pinned();
+  if (gaugeFor && gaugeFor !== k) showGauge(null);
+  if (!k) return;
+  e.preventDefault();
+  k.focus();
+  turning = { el: k, x: e.clientX, y: e.clientY, from: Number(k.dataset.value), on: false, moved: false, was };
+  showGauge(k);
+});
+// the arrow keys step a knob that has the focus (ten steps with shift); no mark holds them
+window.addEventListener('keydown', (e) => {
+  const k = (e.target as HTMLElement).closest?.<HTMLElement>('.knob');
+  if (!k || e.metaKey || e.ctrlKey || e.altKey) return;
+  const way = e.key === 'ArrowUp' || e.key === 'ArrowRight' ? 1 : e.key === 'ArrowDown' || e.key === 'ArrowLeft' ? -1 : 0;
+  if (!way) return;
+  e.preventDefault();
+  e.stopPropagation();
+  const open = gaugeFor === k && pinned();
+  if (!open) showGauge(k);
+  setParam(k, stepped(k, Number(k.dataset.value) + way * (Number(k.dataset.step) || 1) * (e.shiftKey ? 10 : 1)));
+  if (!open) gaugeUntil = window.setTimeout(() => showGauge(null), 900);
+});
+function turn(e: PointerEvent) {
+  if (!turning) return;
+  const { el } = turning;
+  const min = Number(el.dataset.min);
+  const span = Number(el.dataset.max) - min;
+  if (Math.abs(e.clientX - turning.x) + Math.abs(e.clientY - turning.y) > 3) turning.moved = true;
+  let v: number;
+  if (turning.on) {
+    // on the gauge: where the pointer is on it
+    const r = gauge.querySelector('.track')!.getBoundingClientRect();
+    v = stepped(el, min + Math.min(1, Math.max(0, (r.bottom - 9 - e.clientY) / (r.height - 18))) * span);
+  } else {
+    // up, or to the right, is more
+    v = stepped(el, turning.from + ((turning.y - e.clientY + e.clientX - turning.x) / TURN_PX) * span);
+  }
+  // shift turns past the marks
+  if (!e.shiftKey) for (const m of SNAPS[el.dataset.p ?? ''] ?? []) if (Math.abs(v - m) <= span * CATCH) v = m;
+  if (v !== Number(el.dataset.value)) setParam(el, v);
+}
+window.addEventListener('pointermove', turn);
+for (const ev of ['pointerup', 'pointercancel']) {
+  window.addEventListener(ev, () => {
+    if (!turning) return;
+    // dragged: the gauge goes with the finger. Clicked: it stays, or goes if it was there already.
+    if (!turning.on) showGauge(turning.moved || turning.was ? null : turning.el, true);
+    turning = null;
+  });
+}
 
 // --- presets: shift and a digit keeps the whole setup under it, the digit alone brings it back ---
 
@@ -983,7 +1238,6 @@ window.addEventListener('keydown', (e) => {
   else if (e.key === 'r') restart();
   else if (e.key === '?') setTips(!tipsOn);
   else if (e.key === 's') toggle('mode');
-  else if (e.key === 'w') toggle('physics');
   else if (e.key === 'n') toggle('scale');
   else if (e.key === 'i') toggle('instrument');
   else if (e.key === 'b') toggle('by');
@@ -1038,6 +1292,8 @@ const pushes: number[] = [];
 const seen: number[] = [];
 /** the link the pointer is on, or -1; and the one a click holds lit */
 let hot = -1;
+/** it is lit from its track in the panel, not from the chain */
+let hotRow = false;
 let held = -1;
 const trail = new Float32Array((TRAIL + 1) * 2 * MAX_ARMS);
 let hinted = '';
@@ -1057,8 +1313,7 @@ function frame() {
   const edge = wide ? 24 : 16;
   let total = 0;
   for (const a of arms) total += a.len;
-  // the drawer, when it is open beside the scene (on a phone it lies over it): nothing is drawn under it
-  const wall = wide && Number.isFinite(drawerLeft) ? drawerLeft - 24 : w - edge;
+  const wall = w - edge;
   const cx0 = rowsRight + 28;
   const cw = wall - cx0;
   const curves = timeline && !clean && wide && cw > 120 && rowBoxes.length >= n;
@@ -1067,7 +1322,7 @@ function frame() {
   // The ruler of notes stands still, from under the title to over the workbench, and the root
   // hangs where it is put on it. An arm length is always the same stretch of it, so where a
   // joint is says its note; only a chain too long for the ruler makes it all smaller.
-  const y0 = wide ? 84 : 124;
+  const y0 = Math.max(wide ? 84 : 124, topClear + 18);
   const y1 = Math.max(y0 + 120, (clean ? h - 30 : panelRect.top - 18) - (timeline && !curves ? 80 : 28));
   const target = (y1 - y0) / Math.max(RULER, state.root + total + 0.05);
   // while an arm is being pulled longer the scale holds still, or the ring would slide from under the pointer
@@ -1128,10 +1383,9 @@ function frame() {
     line(ox, oy, ox, oy + arms[k].len * unit, 0.35, 1, k);
   }
 
-  // Every joint's path, the last one's a little brighter: the picture the swings add up to. It
-  // is the bar behind the joint, brightest where it has just been and gone by the time it is a
-  // bar old. (With the formula the path is a closed one and comes round; with weight it never
-  // does.) One stroke has one colour, so it is drawn in pieces, each a little fainter.
+  // Every joint's path, the last one's a little brighter: a short tail, the quarter of a bar
+  // behind it, brightest where it has just been and gone by the end of that. One stroke has one
+  // colour, so it is drawn in pieces, each a little fainter.
   const weighted = state.physics;
   ctx.lineWidth = 1;
   ctx.lineCap = 'butt';
@@ -1149,13 +1403,13 @@ function frame() {
       ctx.strokeStyle = tint(k, bright * Math.pow(1 - (c + 0.5) / PIECES, 1.7));
       ctx.beginPath();
       if (weighted) {
-        const per = TRAIL / PIECES;
+        const per = (TRAIL * TAIL) / PIECES;
         for (let m = 0; m <= per; m++) {
           const i = TRAIL - c * per - m;
           ctx.lineTo(X(trail[(i * MAX_ARMS + k) * 2]), Y(trail[(i * MAX_ARMS + k) * 2 + 1]));
         }
       } else {
-        const per = ORBIT / PIECES;
+        const per = (ORBIT * TAIL) / PIECES;
         for (let m = 0; m <= per; m++) {
           const i = (((head - c * per - m) % ORBIT) + ORBIT) % ORBIT;
           ctx.lineTo(X(o[2 * i]), Y(o[2 * i + 1]));
@@ -1177,7 +1431,7 @@ function frame() {
     }
     lit[f.k] = Math.max(lit[f.k], 1 - age / 0.14);
     pose(f.phase, then);
-    ctx.strokeStyle = tint(f.k, (1 - age / 0.4) ** 2 * (0.25 + 0.75 * f.vel) * (0.15 + 0.85 * arms[f.k].vol));
+    ctx.strokeStyle = tint(f.k, (1 - age / 0.4) ** 2 * (0.25 + 0.75 * f.vel) * (0.15 + 0.85 * arms[f.k].vol) * f.kept);
     ctx.lineWidth = 1;
     ctx.beginPath();
     ctx.arc(X(then[2 * f.k]), Y(then[2 * f.k + 1]), 5 + age * (40 + 80 * f.vel), 0, Math.PI * 2);
@@ -1206,10 +1460,13 @@ function frame() {
     ctx.beginPath();
     ctx.arc(px, py, outer, 0, Math.PI * 2);
     ctx.arc(px, py, inner, 0, Math.PI * 2, true);
-    // how loud the link is, to be seen: the ring fuller the louder, never solid, all but clear when it is muted
-    ctx.fillStyle = tint(lit1, 0.025 + 0.3 * arms[lit1].vol);
+    // Pointed at on the chain, how loud the link is, to be seen: the ring fuller the louder,
+    // never solid, all but clear when it is muted. Pointed at from its track, only a light
+    // ground to say which one it is: its knobs are right there under the pointer.
+    const fromTrack = hot >= 0 ? hotRow : moving >= 0;
+    ctx.fillStyle = tint(lit1, fromTrack ? 0.05 : 0.025 + 0.3 * arms[lit1].vol);
     ctx.fill('evenodd');
-    ctx.strokeStyle = tint(lit1, 0.4);
+    ctx.strokeStyle = tint(lit1, fromTrack ? 0.18 : 0.4);
     ctx.lineWidth = 1;
     for (const r of [inner, outer]) {
       if (r < 1) continue;
@@ -1338,7 +1595,8 @@ function frame() {
     line(cx0 + at * cw, rowBoxes[0].y - rowBoxes[0].h / 2 - 2, cx0 + at * cw, rowBoxes[n - 1].y + rowBoxes[n - 1].h / 2 + 2, 0.5);
   }
 
-  const say = t < notedUntil ? noted : sound?.running ? '' : 'Tap for sound';
+  // under the title: a word for a moment, or, should the browser have put the sound to sleep again after the card, how to wake it
+  const say = t < notedUntil ? noted : veil || sound?.running ? '' : 'Tap for sound';
   if (say !== hinted) hint.textContent = hinted = say;
 
   requestAnimationFrame(frame);
@@ -1354,7 +1612,9 @@ function showHot() {
   panel.querySelectorAll('.arm').forEach((row, i) => row.classList.toggle('hot', i === k));
 }
 
-function heat(k: number) {
+/** `row`: the pointer is on the link's track, not on the chain */
+function heat(k: number, row = false) {
+  hotRow = row && k >= 0;
   if (k === hot) return;
   hot = k;
   canvas.style.cursor = k >= 0 ? 'pointer' : '';
@@ -1406,15 +1666,15 @@ window.addEventListener('pointermove', (e) => {
       a.vol = Math.round(Math.min(1, Math.max(0, pull.vol - dy / VOL_PX)) * 100) / 100;
       note(`Volume ${Math.round(a.vol * 100)}`);
     } else a.swing = (Math.round(Math.min(180, Math.max(0, (pull.swing * 180) / Math.PI + dx / SWING_PX))) * Math.PI) / 180;
-    const slider = panel.querySelector<HTMLInputElement>(`.arm[data-k="${pull.k}"] [data-p="${pull.way}"]`);
-    if (slider) slider.value = String(pull.way === 'len' ? a.len : pull.way === 'vol' ? Math.round(a.vol * 100) : Math.round((a.swing * 180) / Math.PI));
+    const its = panel.querySelector<HTMLElement>(`.arm[data-k="${pull.k}"] .knob[data-p="${pull.way}"]`);
+    if (its) setKnob(its, pull.way === 'len' ? a.len : pull.way === 'vol' ? Math.round(a.vol * 100) : Math.round((a.swing * 180) / Math.PI));
     canvas.style.cursor = pull.way === 'swing' ? 'ew-resize' : 'ns-resize';
     changed();
     return;
   }
   const row = (e.target as HTMLElement).closest?.<HTMLElement>('.arm');
   onRoot = e.target === canvas && seen.length > 1 && fromRoot(e) <= 12;
-  heat(row ? Number(row.dataset.k) : e.target === canvas && !onRoot ? armAt(e.clientX, e.clientY) : -1);
+  heat(row ? Number(row.dataset.k) : e.target === canvas && !onRoot ? armAt(e.clientX, e.clientY) : -1, !!row);
   if (onRoot) canvas.style.cursor = 'ns-resize';
 });
 // A press on the root takes hold of it. A press in a ring holds that link lit (until a press
@@ -1446,6 +1706,5 @@ document.addEventListener('pointerleave', () => heat(-1));
 window.addEventListener('resize', resize);
 changed();
 build();
-setDrawer(drawerOpen);
 resize();
 requestAnimationFrame(frame);
