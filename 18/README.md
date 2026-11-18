@@ -3,8 +3,8 @@
 2026-11-18
 
 A pendulum as a drum machine, drawn in lines, black and white. (Or a colour a link, *Colour*
-in the menu, `?colour` in a link: from magenta down the chain to pink (it had neon green
-in it too, and was loud); an arm and the joint at its end, its path, its rings
+in the menu, `?colour` in a link: from a bluish purple down the chain to pink (it was
+magenta, pink and neon green first, and loud; then magenta to pink, all one warmth); an arm and the joint at its end, its path, its rings
 and its row in the panel are then all that colour. It was colour for a while, to tell the
 rows apart; pointing at a link does that now.) Take it down to one arm swinging once a bar: a
 tick where it crosses the centre line going right, a tock going left. A binary rhythm. Then more

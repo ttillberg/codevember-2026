@@ -16,8 +16,8 @@ const tip = document.querySelector<HTMLElement>('#tip')!;
 
 const INK = '244, 244, 242';
 const BACK = '#0b0b0d';
-/** a colour a link, from magenta to pink: the first four in even steps down the chain, the next four the tones between and a paler pink */
-const PALETTE = ['255, 43, 209', '255, 89, 211', '255, 136, 212', '255, 182, 214', '255, 66, 210', '255, 113, 212', '255, 159, 213', '255, 214, 232'];
+/** a colour a link, from a bluish purple to pink: the first four in even steps down the chain, the next four the tones between and a paler pink */
+const PALETTE = ['118, 96, 255', '164, 114, 238', '209, 132, 222', '255, 150, 205', '141, 105, 247', '187, 123, 230', '232, 141, 213', '255, 196, 226'];
 const MAX_ARMS = 8;
 const MAX_N = 10;
 /**
@@ -770,7 +770,7 @@ const TIPS: Record<string, [string, string]> = {
   saveas: ['Save as', 'Asks for a name and keeps this setup under it, offering the last name with the next number. Key: cmd+shift+S.'],
   open: ['Open', 'Everything saved by name, the newest first. Key: cmd+O. Ten more live on the digits: shift and a digit keeps, the digit brings back.'],
   timeline: ['Timeline', 'Each link\'s curve beside its row: what its joint crosses zero with, over the bar, a dot where it hits. Put away to start with. Key: T.'],
-  colour: ['Colour', 'A colour a link, from magenta down the chain to pink, or all of it black and white, as it is to start with.'],
+  colour: ['Colour', 'A colour a link, from a bluish purple down the chain to pink, or all of it black and white, as it is to start with.'],
   tips: ['Tips', 'These boxes, on or off. Key: ?. And the knobs: press one and drag up (or to the right) to turn it up, the gauge over it shows where it is; a click leaves the gauge open, to drag on. It catches on the quarters and the round numbers, shift turns past them; the arrow keys step it.'],
 };
 
