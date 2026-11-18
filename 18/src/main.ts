@@ -30,6 +30,8 @@ const LOOK = 0.12;
 const ORBIT = 720;
 /** and along its trail, the bar behind it, when it has weight */
 const TRAIL = 288;
+/** the pieces a path is drawn in, each fainter than the one before: both counts above divide by it */
+const PIECES = 36;
 /** points along a link's curve */
 const WAVE = 480;
 
@@ -287,7 +289,10 @@ function measure() {
 function build() {
   const many = state.arms.length > 1;
   panel.classList.toggle('weightless', !state.physics);
-  queueMicrotask(() => panel.querySelectorAll<HTMLInputElement>('input[type="range"]').forEach(mark));
+  queueMicrotask(() => {
+    panel.querySelectorAll<HTMLInputElement>('input[type="range"]').forEach(mark);
+    showHot();
+  });
   panel.innerHTML = `
     <div class="cols"><span>Swings</span><span>Sum</span><span>Swing</span><span>Length</span><span>Phase</span><span>Volume</span><span>Weight</span><span>Push</span></div>
     ${state.arms
@@ -734,6 +739,11 @@ function line(x0: number, y0: number, x1: number, y1: number, a: number, width =
 const now: number[] = [];
 const then: number[] = [];
 const pushes: number[] = [];
+/** the chain on the screen, as it was last drawn: the pivot, then every joint */
+const seen: number[] = [];
+/** the link the pointer is on, or -1; and the one a click holds lit */
+let hot = -1;
+let held = -1;
 const trail = new Float32Array((TRAIL + 1) * 2 * MAX_ARMS);
 let hinted = '';
 let drawn = 0;
@@ -778,20 +788,41 @@ function frame() {
     line(ox, oy, ox, oy + arms[k].len * unit, 0.35, 1, k);
   }
 
-  // every joint's path over the bar, the last one's a little brighter: the picture the swings add up to
-  // With weight there is no such closed path: the bar behind it instead, a trail.
+  // Every joint's path, the last one's a little brighter: the picture the swings add up to. It
+  // is the bar behind the joint, brightest where it has just been and gone by the time it is a
+  // bar old. (With the formula the path is a closed one and comes round; with weight it never
+  // does.) One stroke has one colour, so it is drawn in pieces, each a little fainter.
   const weighted = state.physics;
   ctx.lineWidth = 1;
+  ctx.lineCap = 'butt';
   if (weighted) {
     for (let i = 0; i <= TRAIL; i++) trail.set(pose(phi - 1 + i / TRAIL, then), i * 2 * MAX_ARMS);
   }
+  const head = Math.floor((phi - Math.floor(phi)) * ORBIT);
+  // with a link lit (the pointer in its ring, or held by a click), its path alone
+  const only = hot >= 0 ? hot : held;
   for (let k = 0; k < n; k++) {
+    if (only >= 0 && only < n && k !== only) continue;
     const o = orbits[k];
-    ctx.strokeStyle = tint(k, k === n - 1 ? 0.5 : 0.22);
-    ctx.beginPath();
-    if (weighted) for (let i = 0; i <= TRAIL; i++) ctx.lineTo(X(trail[(i * MAX_ARMS + k) * 2]), Y(trail[(i * MAX_ARMS + k) * 2 + 1]));
-    else for (let i = 0; i <= ORBIT; i++) ctx.lineTo(X(o[2 * i]), Y(o[2 * i + 1]));
-    ctx.stroke();
+    const bright = k === n - 1 || k === only ? 0.9 : 0.5;
+    for (let c = 0; c < PIECES; c++) {
+      ctx.strokeStyle = tint(k, bright * Math.pow(1 - (c + 0.5) / PIECES, 1.7));
+      ctx.beginPath();
+      if (weighted) {
+        const per = TRAIL / PIECES;
+        for (let m = 0; m <= per; m++) {
+          const i = TRAIL - c * per - m;
+          ctx.lineTo(X(trail[(i * MAX_ARMS + k) * 2]), Y(trail[(i * MAX_ARMS + k) * 2 + 1]));
+        }
+      } else {
+        const per = ORBIT / PIECES;
+        for (let m = 0; m <= per; m++) {
+          const i = (((head - c * per - m) % ORBIT) + ORBIT) % ORBIT;
+          ctx.lineTo(X(o[2 * i]), Y(o[2 * i + 1]));
+        }
+      }
+      ctx.stroke();
+    }
   }
 
   // the hits: a ring where the joint crossed, and which joints just sounded
@@ -815,6 +846,38 @@ function frame() {
 
   // the chain
   ctx.lineCap = 'round';
+  // where it is on the screen, for the pointer: the pivot, then every joint
+  seen[0] = px;
+  seen[1] = py;
+  for (let k = 0; k < n; k++) {
+    seen[2 * k + 2] = X(now[2 * k]);
+    seen[2 * k + 3] = Y(now[2 * k + 1]);
+  }
+  seen.length = 2 * n + 2;
+  // The link that is lit (the pointer in its ring, or on its row, or held by a click): its ring
+  // round the root, from where the arms above it end to where it ends when the chain hangs
+  // straight, and a soft rounded bar round the arm itself. The rings stand still: a link can be
+  // picked while it moves.
+  const lit1 = hot >= 0 ? hot : held;
+  if (lit1 >= 0 && lit1 < n) {
+    let inner = 0;
+    for (let k = 0; k < lit1; k++) inner += arms[k].len * unit;
+    const outer = inner + arms[lit1].len * unit;
+    ctx.beginPath();
+    ctx.arc(px, py, outer, 0, Math.PI * 2);
+    ctx.arc(px, py, inner, 0, Math.PI * 2, true);
+    ctx.fillStyle = tint(lit1, 0.09);
+    ctx.fill('evenodd');
+    ctx.strokeStyle = tint(lit1, 0.4);
+    ctx.lineWidth = 1;
+    for (const r of [inner, outer]) {
+      if (r < 1) continue;
+      ctx.beginPath();
+      ctx.arc(px, py, r, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+    line(seen[2 * lit1], seen[2 * lit1 + 1], seen[2 * lit1 + 2], seen[2 * lit1 + 3], 0.22, 16, lit1);
+  }
   // a link is all one colour: the arm and the joint at its end
   for (let k = 0; k < n; k++) line(k ? X(now[2 * k - 2]) : px, k ? Y(now[2 * k - 1]) : py, X(now[2 * k]), Y(now[2 * k + 1]), 1, 2, k);
   // The push, where it can be seen: at each joint an arrow along the way its motor is pushing
@@ -934,6 +997,49 @@ function frame() {
 
 // the dev console: __pendulum.sound()?.stats says how many hits went out and how far ahead
 if (import.meta.env.DEV) Object.assign(window, { __pendulum: { state, sim, energy: () => sim.energy(state.arms), sound: () => sound, bar: () => bar, played: () => played } });
+
+// --- the link under the pointer: lit on the chain and in the workbench, from either side ---
+
+function showHot() {
+  const k = hot >= 0 ? hot : held;
+  panel.querySelectorAll('.arm').forEach((row, i) => row.classList.toggle('hot', i === k));
+}
+
+function heat(k: number) {
+  if (k === hot) return;
+  hot = k;
+  canvas.style.cursor = k >= 0 ? 'pointer' : '';
+  showHot();
+}
+
+/**
+ * Which link the point belongs to, by how far it is from the root alone: the first arm's length
+ * out is the first link, the next arm's length beyond that the second, and so on (and a little
+ * over the last). Where the chain is has no say, so the same place is always the same link:
+ * one can be picked while it all moves.
+ */
+function armAt(x: number, y: number, over = 10): number {
+  if (seen.length < 4) return -1;
+  const d = Math.hypot(x - seen[0], y - seen[1]);
+  let r = 0;
+  for (let k = 0; k < state.arms.length; k++) {
+    r += state.arms[k].len * unit;
+    if (d <= r) return k;
+  }
+  return d <= r + over ? state.arms.length - 1 : -1;
+}
+
+window.addEventListener('pointermove', (e) => {
+  const row = (e.target as HTMLElement).closest?.<HTMLElement>('.arm');
+  heat(row ? Number(row.dataset.k) : e.target === canvas ? armAt(e.clientX, e.clientY) : -1);
+});
+// a click (or a finger) holds the link it lands in, lit until a click lands in none
+window.addEventListener('pointerdown', (e) => {
+  if (e.target !== canvas) return;
+  held = armAt(e.clientX, e.clientY, e.pointerType === 'mouse' ? 10 : 18);
+  showHot();
+});
+document.addEventListener('pointerleave', () => heat(-1));
 
 window.addEventListener('resize', resize);
 changed();

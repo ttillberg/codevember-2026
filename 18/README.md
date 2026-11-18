@@ -82,6 +82,18 @@ pnpm -C 18 dev
   as tall as it is hard; hits that fall together stand on each other. (It was a row a joint
   along the bottom, then this line everywhere; beside the curves it said the same thing
   twice.)
+- **Which link is which**: rings round the root. The first arm's length out from where the
+  chain hangs is the first link, the next arm's length beyond that the second, and so on:
+  where the chain is has no say, so a link can be picked while it all moves, and the same
+  place is always the same link. The pointer in a ring lights the ring, a soft bar round the
+  arm, and its row in the workbench, and only that link's path is drawn. The pointer on a row
+  does the same the other way. A click, or a finger, holds it lit until a click lands outside
+  the rings. (First the arm itself had to be hit, then anywhere in the circle round where it
+  hangs: both moved with the chain.)
+- **The paths**: behind every joint, the bar it has just drawn, in its colour, brightest where
+  it has just been and gone by the time it is a bar old; the last joint's is the brightest.
+  (They were whole closed curves at one brightness first: a picture, but not of anything
+  moving.)
 - The chain takes the middle of what is over the workbench. (The workbench was a block
   bottom right first, the chain beside it; along the bottom, the rows have their curves and
   the chain has the width.)

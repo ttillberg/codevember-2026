@@ -50,6 +50,9 @@ canvas { display: block; width: 100vw; height: 100vh; }
 /* a heading never widens its column: the rows under it would stick out of the screen */
 .panel .cols span { min-width: 0; overflow: hidden; white-space: nowrap; }
 /* a row is in its arm's colour: the count and the thumbs */
+/* the link the pointer is on, here or on the chain: its row in a soft rounded bar of its colour */
+.panel .arm { border-radius: 14px; }
+.panel .arm.hot { background: color-mix(in srgb, var(--arm) 18%, transparent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--arm) 18%, transparent); }
 .panel .arm output { color: var(--arm); }
 .panel .arm button[aria-pressed="true"] { background: var(--arm); border-color: var(--arm); }
 .panel .arm button[aria-pressed="false"] { color: var(--arm); }
