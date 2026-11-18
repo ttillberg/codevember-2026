@@ -33,7 +33,7 @@ const ORBIT = 720;
 const TRAIL = 288;
 /** the pieces a path is drawn in, each fainter than the one before, and how much of a bar the path is: both counts above, times that, divide by the pieces */
 const PIECES = 36;
-const TAIL = 0.25;
+const TAIL = 0.5;
 /** points along a link's curve */
 const WAVE = 480;
 
@@ -1467,7 +1467,7 @@ function frame() {
     line(ox, oy, ox, oy + arms[k].len * unit, 0.35, 1, k);
   }
 
-  // Every joint's path, the last one's a little brighter: a short tail, the quarter of a bar
+  // Every joint's path, the last one's a little brighter: a tail, the half of a bar
   // behind it, brightest where it has just been and gone by the end of that. One stroke has one
   // colour, so it is drawn in pieces, each a little fainter.
   const weighted = state.physics;

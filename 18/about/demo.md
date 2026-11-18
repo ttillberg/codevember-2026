@@ -13,10 +13,11 @@ Just the pendulum, in action: four arms on the formula (×1, ×2, ×3, ×5, each
 
 In colour (`?colour`: a bluish purple at the top of the chain to pink at its end), and slow: 48 beats a minute, a bar every five seconds, so it is something to watch swing and not a blur. (At 120 it was five bars in the ten seconds, and hectic in a small square.)
 
-The motion is started from the top as the clip starts (`R`). Ten seconds is two bars: the loop closes on itself, and the still, which is the last frame, is the top of a bar. Every arm starts the bar somewhere in its swing (its phase: right, left, right, left), so that frame catches the chain bent, not hanging straight.
+The motion is started from the top (`R`), and the clip starts a third of a bar later: the first arm is then passing the middle of its swing, at its fastest, with the half bar it has just drawn trailing behind every joint. Ten seconds is two bars, so the loop closes on itself, and the still, which is the last frame, is that same moment: the chain in the middle of a swing, not at rest at the end of one.
 
 ```setup
 key r
+wait 1700
 ```
 
 ```steps
