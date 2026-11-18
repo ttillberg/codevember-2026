@@ -37,14 +37,13 @@ const TAU = Math.PI * 2;
 
 export const angle = (a: Arm, phi: number) => a.swing * Math.sin(TAU * a.n * phi + a.phase);
 
-/** the joints' positions at φ, x to the right and y down, in arm lengths: [x0, y0, x1, y1, …] */
-export function joints(arms: Arm[], phi: number, out: number[] = []): number[] {
+/** the joints' positions for these angles, x to the right and y down, in arm lengths: [x0, y0, x1, y1, …] */
+export function place(arms: Arm[], angles: ArrayLike<number>, out: number[] = []): number[] {
   let x = 0;
   let y = 0;
   for (let k = 0; k < arms.length; k++) {
-    const t = angle(arms[k], phi);
-    x += arms[k].len * Math.sin(t);
-    y += arms[k].len * Math.cos(t);
+    x += arms[k].len * Math.sin(angles[k]);
+    y += arms[k].len * Math.cos(angles[k]);
     out[2 * k] = x;
     out[2 * k + 1] = y;
   }
@@ -61,7 +60,7 @@ export function signal(arms: Arm[], k: number, phi: number, mode: Mode): number 
 }
 
 /** the fastest joint k's signal can change, per bar */
-function topSpeed(arms: Arm[], k: number, mode: Mode): number {
+export function topSpeed(arms: Arm[], k: number, mode: Mode): number {
   let s = 0;
   for (let j = mode === 'each' ? k : 0; j <= k; j++) s += arms[j].len * arms[j].swing * TAU * arms[j].n;
   return s;

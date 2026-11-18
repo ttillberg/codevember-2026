@@ -1,5 +1,6 @@
 import { Sound } from './audio';
-import { crossings, joints, type Arm, type Hit, type Mode } from './rhythm';
+import { Sim } from './physics';
+import { angle, crossings, place, type Arm, type Hit, type Mode } from './rhythm';
 
 // ?clean: no page furniture, the scene alone (screengrabs, clips)
 const query = new URLSearchParams(location.search);
@@ -23,6 +24,8 @@ const MAX_N = 16;
 const LOOK = 0.12;
 /** points along a joint's path over one bar */
 const ORBIT = 720;
+/** and along its trail, the bar behind it, when it has weight */
+const TRAIL = 288;
 
 // --- what is set ---
 
@@ -31,12 +34,14 @@ interface State {
   /** four beats to the bar: the first arm at ×1 ticks on 1 and tocks on 3 */
   bpm: number;
   mode: Mode;
+  /** 0 the formula, 1 a real pendulum let go, between them the formula bent by weight (physics.ts) */
+  loose: number;
 }
 
 const KEY = 'codevember-2026-18';
-const fresh = (): State => ({ arms: [{ n: 1, swing: 0.6, len: 1, phase: 0 }], bpm: 120, mode: 'sum' });
+const fresh = (): State => ({ arms: [{ n: 1, swing: 0.6, len: 1, phase: 0 }], bpm: 120, mode: 'sum', loose: 0 });
 
-/** ?arms=1-34-1,2-52-0.62-90 (swings, swing in degrees, length, phase in degrees if any), &bpm=, &mode=each: a pattern in a link, for clips too */
+/** ?arms=1-34-1,2-52-0.62-90 (swings, swing in degrees, length, phase in degrees if any), &bpm=, &mode=each, &physics=0.4: a pattern in a link, for clips too */
 function fromQuery(): State | null {
   const q = query.get('arms');
   if (!q) return null;
@@ -47,7 +52,8 @@ function fromQuery(): State | null {
     .map(([n, deg, len, phase = 0]) => ({ n: Math.min(MAX_N, Math.max(1, Math.round(n))), swing: (Math.min(180, Math.max(0, deg)) * Math.PI) / 180, len: Math.min(1.5, Math.max(0.1, len)), phase: (((phase % 360) + 360) % 360) * (Math.PI / 180) }));
   if (!arms.length) return null;
   const bpm = Number(query.get('bpm'));
-  return { arms: arms.slice(0, MAX_ARMS), bpm: bpm >= 40 && bpm <= 220 ? bpm : 120, mode: query.get('mode') === 'each' ? 'each' : 'sum' };
+  const loose = Number(query.get('physics'));
+  return { arms: arms.slice(0, MAX_ARMS), bpm: bpm >= 40 && bpm <= 220 ? bpm : 120, mode: query.get('mode') === 'each' ? 'each' : 'sum', loose: loose > 0 ? Math.min(1, loose) : 0 };
 }
 
 function load(): State {
@@ -56,7 +62,7 @@ function load(): State {
   try {
     const s = JSON.parse(localStorage.getItem(KEY) ?? 'null') as State | null;
     if (s && Array.isArray(s.arms) && s.arms.length && s.arms.every((a) => [a.n, a.swing, a.len, a.phase].every(Number.isFinite))) {
-      return { arms: s.arms.slice(0, MAX_ARMS), bpm: Number.isFinite(s.bpm) ? s.bpm : 120, mode: s.mode === 'each' ? 'each' : 'sum' };
+      return { arms: s.arms.slice(0, MAX_ARMS), bpm: Number.isFinite(s.bpm) ? s.bpm : 120, mode: s.mode === 'each' ? 'each' : 'sum', loose: s.loose > 0 ? Math.min(1, s.loose) : 0 };
     }
   } catch {
     // no storage, or not ours: start over
@@ -92,7 +98,7 @@ function changed() {
   const tmp: number[] = [];
   orbits = state.arms.map(() => new Float32Array((ORBIT + 1) * 2));
   for (let i = 0; i <= ORBIT; i++) {
-    joints(state.arms, i / ORBIT, tmp);
+    place(state.arms, state.arms.map((a) => angle(a, i / ORBIT)), tmp);
     for (let k = 0; k < orbits.length; k++) {
       orbits[k][2 * i] = tmp[2 * k];
       orbits[k][2 * i + 1] = tmp[2 * k + 1];
@@ -132,13 +138,24 @@ interface Flash extends Hit {
   t: number;
 }
 const flashes: Flash[] = [];
+/** every hit of the bar behind, for the bar's rows when no two bars are the same */
+let played: Hit[] = [];
 let scanned = NaN;
+const sim = new Sim();
+
+/** where the joints are at φ: the weighted chain's where it has been run, the formula's otherwise */
+const angles: number[] = [];
+function pose(phi: number, out: number[]): number[] {
+  const arms = state.arms;
+  if (!(state.loose > 0 && sim.sample(phi, arms.length, angles))) {
+    for (let k = 0; k < arms.length; k++) angles[k] = angle(arms[k], phi);
+    angles.length = arms.length;
+  }
+  return place(arms, angles, out);
+}
 
 function schedule() {
-  if (!playing) {
-    scanned = NaN;
-    return;
-  }
+  if (!playing) return;
   const t = clock();
   const here = phaseAt(t);
   const end = phaseAt(t + Math.min(0.8, Math.max(LOOK, (sound?.latency ?? 0) + 0.08)));
@@ -146,7 +163,19 @@ function schedule() {
   if (!(scanned >= here)) scanned = here;
   if (!(end > scanned)) return;
   sound?.sync();
-  for (const h of crossings(state.arms, state.mode, scanned, end)) {
+  const hits: Hit[] = [];
+  if (state.loose > 0) {
+    // run the weighted chain on to there; from the formula if it is new, or was left far behind
+    if (!sim.live || sim.phi < here - 0.25) sim.reset(state.arms, scanned);
+    sim.advance(state.arms, state.mode, state.loose, end, scanned, hits);
+    scanned = Math.max(end, sim.phi);
+  } else {
+    sim.live = false;
+    crossings(state.arms, state.mode, scanned, end, hits);
+    scanned = end;
+  }
+  for (const h of hits) {
+    played.push(h);
     const at = t0 + (h.phase - phi0) * barSeconds();
     flashes.push({ ...h, t: at });
     sound?.hit(h.k, h.dir, h.vel, at);
@@ -181,6 +210,7 @@ function build() {
       <button data-act="play">${playing ? 'Pause' : 'Play'}</button>
       <button data-act="mute">${muted ? 'Muted' : 'Sound'}</button>
     </div>
+    <label class="row" title="0 the formula, 100 a real pendulum let go"><span>Physics</span><input type="range" data-p="loose" min="0" max="100" step="1" value="${Math.round(state.loose * 100)}" /><output id="loose">${Math.round(state.loose * 100)}</output></label>
     <label class="row"><span>Tempo</span><input type="range" data-p="bpm" min="40" max="220" step="1" value="${state.bpm}" /><output id="bpm">${state.bpm}</output></label>`;
   const r = panel.getBoundingClientRect();
   panelRect = { left: r.left, top: r.top };
@@ -190,9 +220,12 @@ function addArm() {
   if (state.arms.length >= MAX_ARMS) return;
   const last = state.arms[state.arms.length - 1];
   state.arms.push({ n: Math.min(MAX_N, last.n + 1), swing: 0.9, len: Math.max(0.2, +(last.len * 0.62).toFixed(2)), phase: 0 });
+  if (sim.live) sim.added(state.arms);
 }
 function removeArm(k = state.arms.length - 1) {
-  if (state.arms.length > 1) state.arms.splice(k, 1);
+  if (state.arms.length < 2) return;
+  state.arms.splice(k, 1);
+  if (sim.live) sim.removed(k);
 }
 function toggle(what: 'mode' | 'play' | 'mute') {
   if (what === 'mode') state.mode = state.mode === 'sum' ? 'each' : 'sum';
@@ -227,6 +260,9 @@ panel.addEventListener('input', (e) => {
     anchor();
     state.bpm = v;
     panel.querySelector('#bpm')!.textContent = String(v);
+  } else if (r.dataset.p === 'loose') {
+    state.loose = v / 100;
+    panel.querySelector('#loose')!.textContent = String(v);
   } else {
     const a = state.arms[Number(r.closest<HTMLElement>('.arm')!.dataset.k)];
     if (r.dataset.p === 'swing') a.swing = (v * Math.PI) / 180;
@@ -280,6 +316,7 @@ function line(x0: number, y0: number, x1: number, y1: number, a: number, width =
 
 const now: number[] = [];
 const then: number[] = [];
+const trail = new Float32Array((TRAIL + 1) * 2 * MAX_ARMS);
 let hinted = '';
 let drawn = 0;
 
@@ -310,7 +347,7 @@ function frame() {
   const X = (x: number) => px + x * unit;
   const Y = (y: number) => py + y * unit;
 
-  joints(arms, phi, now);
+  pose(phi, now);
 
   // what a joint has to cross: the centre line, or its own vertical
   if (state.mode === 'sum') line(px, py - 14, px, Y(total) + 14, 0.22);
@@ -321,13 +358,18 @@ function frame() {
   }
 
   // every joint's path over the bar, the last one's a little brighter: the picture the swings add up to
+  // With weight there is no such closed path: the bar behind it instead, a trail.
+  const weighted = state.loose > 0;
   ctx.lineWidth = 1;
+  if (weighted) {
+    for (let i = 0; i <= TRAIL; i++) trail.set(pose(phi - 1 + i / TRAIL, then), i * 2 * MAX_ARMS);
+  }
   for (let k = 0; k < n; k++) {
     const o = orbits[k];
     ctx.strokeStyle = ink(k === n - 1 ? 0.3 : 0.1);
     ctx.beginPath();
-    ctx.moveTo(X(o[0]), Y(o[1]));
-    for (let i = 1; i <= ORBIT; i++) ctx.lineTo(X(o[2 * i]), Y(o[2 * i + 1]));
+    if (weighted) for (let i = 0; i <= TRAIL; i++) ctx.lineTo(X(trail[(i * MAX_ARMS + k) * 2]), Y(trail[(i * MAX_ARMS + k) * 2 + 1]));
+    else for (let i = 0; i <= ORBIT; i++) ctx.lineTo(X(o[2 * i]), Y(o[2 * i + 1]));
     ctx.stroke();
   }
 
@@ -342,7 +384,7 @@ function frame() {
       continue;
     }
     lit[f.k] = Math.max(lit[f.k], 1 - age / 0.14);
-    joints(arms, f.phase, then);
+    pose(f.phase, then);
     ctx.strokeStyle = ink((1 - age / 0.4) ** 2 * (0.25 + 0.75 * f.vel));
     ctx.lineWidth = 1;
     ctx.beginPath();
@@ -382,12 +424,15 @@ function frame() {
     const y = tlTop + k * rowH + rowH / 2;
     line(tlX0, y, tlX1, y, 0.16);
   }
-  for (const b of bar) {
-    const x = tlX0 + b.phase * tlW;
+  // with weight no bar is the next one: the hits as they fell, the playhead writing over the bar before
+  if (played.length && played[0].phase < phi - 1.5) played = played.filter((b) => b.phase > phi - 1);
+  for (const b of weighted ? played : bar) {
+    const since = weighted ? phi - b.phase : (at - b.phase + 1) % 1;
+    if (since < 0 || since >= 1 || b.k >= n) continue;
+    const x = tlX0 + (b.phase - Math.floor(b.phase)) * tlW;
     const y = tlTop + b.k * rowH + rowH / 2;
-    const since = (at - b.phase + 1) % 1;
     const glow = since < 0.03 ? 1 - since / 0.03 : 0;
-    line(x, y, x, y - b.dir * (2.5 + 5.5 * b.vel + 2 * glow), 0.55 + 0.45 * glow, 1.5);
+    line(x, y, x, y - b.dir * (2.5 + 5.5 * b.vel + 2 * glow), (weighted ? 0.75 - 0.6 * since : 0.55) + 0.45 * glow, 1.5);
   }
   line(tlX0 + at * tlW, tlTop - 4, tlX0 + at * tlW, tlBottom + 2, 0.5);
 
@@ -398,7 +443,7 @@ function frame() {
 }
 
 // the dev console: __pendulum.sound()?.stats says how many hits went out and how far ahead
-if (import.meta.env.DEV) Object.assign(window, { __pendulum: { state, sound: () => sound, bar: () => bar } });
+if (import.meta.env.DEV) Object.assign(window, { __pendulum: { state, sim, sound: () => sound, bar: () => bar, played: () => played } });
 
 window.addEventListener('resize', resize);
 changed();
