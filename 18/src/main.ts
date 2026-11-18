@@ -34,14 +34,18 @@ interface State {
   /** four beats to the bar: the first arm at ×1 ticks on 1 and tocks on 3 */
   bpm: number;
   mode: Mode;
-  /** 0 the formula, 1 a real pendulum let go, between them the formula bent by weight (physics.ts) */
-  loose: number;
+  /** 0 the formula. Over it the arms are real swings, and this is how heavy each joint is against the one above (physics.ts) */
+  weight: number;
+  /** 0..1, how hard every swing is pushed in time, and how thick the air is */
+  push: number;
 }
 
 const KEY = 'codevember-2026-18';
-const fresh = (): State => ({ arms: [{ n: 1, swing: 0.6, len: 1, phase: 0 }], bpm: 120, mode: 'sum', loose: 0 });
+const fresh = (): State => ({ arms: [{ n: 1, swing: 0.6, len: 1, phase: 0 }], bpm: 120, mode: 'sum', weight: 0, push: 0.3 });
 
-/** ?arms=1-34-1,2-52-0.62-90 (swings, swing in degrees, length, phase in degrees if any), &bpm=, &mode=each, &physics=0.4: a pattern in a link, for clips too */
+const unit01 = (v: number, or: number) => (Number.isFinite(v) ? Math.min(1, Math.max(0, v)) : or);
+
+/** ?arms=1-34-1,2-52-0.62-90 (swings, swing in degrees, length, phase in degrees if any), &bpm=, &mode=each, &weight=0.3, &push=0.3: a pattern in a link, for clips too */
 function fromQuery(): State | null {
   const q = query.get('arms');
   if (!q) return null;
@@ -52,8 +56,9 @@ function fromQuery(): State | null {
     .map(([n, deg, len, phase = 0]) => ({ n: Math.min(MAX_N, Math.max(1, Math.round(n))), swing: (Math.min(180, Math.max(0, deg)) * Math.PI) / 180, len: Math.min(1.5, Math.max(0.1, len)), phase: (((phase % 360) + 360) % 360) * (Math.PI / 180) }));
   if (!arms.length) return null;
   const bpm = Number(query.get('bpm'));
-  const loose = Number(query.get('physics'));
-  return { arms: arms.slice(0, MAX_ARMS), bpm: bpm >= 40 && bpm <= 220 ? bpm : 120, mode: query.get('mode') === 'each' ? 'each' : 'sum', loose: loose > 0 ? Math.min(1, loose) : 0 };
+  const weight = Number(query.get('weight'));
+  const push = Number(query.get('push'));
+  return { arms: arms.slice(0, MAX_ARMS), bpm: bpm >= 40 && bpm <= 220 ? bpm : 120, mode: query.get('mode') === 'each' ? 'each' : 'sum', weight: unit01(weight, 0), push: query.has('push') ? unit01(push, 0.3) : 0.3 };
 }
 
 function load(): State {
@@ -62,7 +67,7 @@ function load(): State {
   try {
     const s = JSON.parse(localStorage.getItem(KEY) ?? 'null') as State | null;
     if (s && Array.isArray(s.arms) && s.arms.length && s.arms.every((a) => [a.n, a.swing, a.len, a.phase].every(Number.isFinite))) {
-      return { arms: s.arms.slice(0, MAX_ARMS), bpm: Number.isFinite(s.bpm) ? s.bpm : 120, mode: s.mode === 'each' ? 'each' : 'sum', loose: s.loose > 0 ? Math.min(1, s.loose) : 0 };
+      return { arms: s.arms.slice(0, MAX_ARMS), bpm: Number.isFinite(s.bpm) ? s.bpm : 120, mode: s.mode === 'each' ? 'each' : 'sum', weight: unit01(s.weight, 0), push: unit01(s.push, 0.3) };
     }
   } catch {
     // no storage, or not ours: start over
@@ -142,12 +147,14 @@ const flashes: Flash[] = [];
 let played: Hit[] = [];
 let scanned = NaN;
 const sim = new Sim();
+/** the push's knob as one over the swing's Q: a whisper at the bottom, at the top the air is syrup and the push rules */
+const pushOf = () => 4 * state.push * state.push;
 
 /** where the joints are at φ: the weighted chain's where it has been run, the formula's otherwise */
 const angles: number[] = [];
 function pose(phi: number, out: number[]): number[] {
   const arms = state.arms;
-  if (!(state.loose > 0 && sim.sample(phi, arms.length, angles))) {
+  if (!(state.weight > 0 && sim.sample(phi, arms.length, angles))) {
     for (let k = 0; k < arms.length; k++) angles[k] = angle(arms[k], phi);
     angles.length = arms.length;
   }
@@ -169,7 +176,7 @@ function restart() {
   phi0 = Math.min(SEED, -lookahead() / barSeconds());
   t0 = clock();
   scanned = SEED;
-  if (state.loose > 0) sim.reset(state.arms, SEED);
+  if (state.weight > 0) sim.reset(state.arms, SEED);
   else sim.live = false;
   flashes.length = 0;
   played = [];
@@ -185,10 +192,10 @@ function schedule() {
   if (!(end > scanned)) return;
   sound?.sync();
   const hits: Hit[] = [];
-  if (state.loose > 0) {
+  if (state.weight > 0) {
     // run the weighted chain on to there; from the formula if it is new, or was left far behind
     if (!sim.live || sim.phi < here - 0.25) sim.reset(state.arms, scanned);
-    sim.advance(state.arms, state.mode, state.loose, end, scanned, hits);
+    sim.advance(state.arms, state.mode, pushOf(), state.weight, end, scanned, hits);
     scanned = Math.max(end, sim.phi);
   } else {
     sim.live = false;
@@ -234,7 +241,8 @@ function build() {
       <button data-act="play">${playing ? 'Pause' : 'Play'}</button>
       <button data-act="mute">${muted ? 'Muted' : 'Sound'}</button>
     </div>
-    <label class="row" title="0 the formula, 100 a real pendulum let go"><span>Physics</span><input type="range" data-p="loose" min="0" max="100" step="1" value="${Math.round(state.loose * 100)}" /><output id="loose">${Math.round(state.loose * 100)}</output></label>
+    <label class="row" title="0 is the formula. Over it every arm is a real swing in the swing above, and this is how heavy each joint is against the one above it"><span>Weight</span><input type="range" data-p="weight" min="0" max="100" step="1" value="${Math.round(state.weight * 100)}" /><output id="weight">${Math.round(state.weight * 100)}</output></label>
+    <label class="row" title="How hard every swing is pushed in time (and how thick the air is). 0 lets go"><span>Push</span><input type="range" data-p="push" min="0" max="100" step="1" value="${Math.round(state.push * 100)}" /><output id="push">${Math.round(state.push * 100)}</output></label>
     <label class="row"><span>Tempo</span><input type="range" data-p="bpm" min="40" max="220" step="1" value="${state.bpm}" /><output id="bpm">${state.bpm}</output></label>`;
   const r = panel.getBoundingClientRect();
   panelRect = { left: r.left, top: r.top };
@@ -285,9 +293,9 @@ panel.addEventListener('input', (e) => {
     anchor();
     state.bpm = v;
     panel.querySelector('#bpm')!.textContent = String(v);
-  } else if (r.dataset.p === 'loose') {
-    state.loose = v / 100;
-    panel.querySelector('#loose')!.textContent = String(v);
+  } else if (r.dataset.p === 'weight' || r.dataset.p === 'push') {
+    state[r.dataset.p] = v / 100;
+    panel.querySelector('#' + r.dataset.p)!.textContent = String(v);
   } else {
     const a = state.arms[Number(r.closest<HTMLElement>('.arm')!.dataset.k)];
     if (r.dataset.p === 'swing') a.swing = (v * Math.PI) / 180;
@@ -385,7 +393,7 @@ function frame() {
 
   // every joint's path over the bar, the last one's a little brighter: the picture the swings add up to
   // With weight there is no such closed path: the bar behind it instead, a trail.
-  const weighted = state.loose > 0;
+  const weighted = state.weight > 0;
   ctx.lineWidth = 1;
   if (weighted) {
     for (let i = 0; i <= TRAIL; i++) trail.set(pose(phi - 1 + i / TRAIL, then), i * 2 * MAX_ARMS);
@@ -469,7 +477,7 @@ function frame() {
 }
 
 // the dev console: __pendulum.sound()?.stats says how many hits went out and how far ahead
-if (import.meta.env.DEV) Object.assign(window, { __pendulum: { state, sim, sound: () => sound, bar: () => bar, played: () => played } });
+if (import.meta.env.DEV) Object.assign(window, { __pendulum: { state, sim, energy: () => sim.energy(state.arms, state.weight), sound: () => sound, bar: () => bar, played: () => played } });
 
 window.addEventListener('resize', resize);
 changed();

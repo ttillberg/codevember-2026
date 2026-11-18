@@ -33,15 +33,19 @@ pnpm -C 18 dev
   weight the chain is put back on the formula: the same chaos again, from the start.
 - **Pause** (space), **Sound** (`M`), **Tempo**: four beats to the bar, so ×1 ticks on 1 and
   tocks on 3.
-- **Physics**: 0 is the formula. Turn it up and the arms have weight: gravity and the other
-  arms pull on each one, and it is held to the formula less and less. The rhythm bends, hits
-  slide and merge, but it still comes round every bar, all the way to the 90s. At 100 it is a
-  real pendulum let go from where it was: chaos, no bar like the one before.
+- **Weight**: 0 is the formula. Over it every arm is a real swing hung in the swing above, a
+  weight at each joint, and the knob is how heavy each joint is against the one above it. Light
+  ones ride the swing over them and are shaken by it; heavy ones throw it about.
+- **Push**: what keeps a swing going, the force you give a swing: a push along the way it
+  should be moving, in its own rhythm, and the air against the way it is. Nothing holds it in
+  place. High and the rhythm is kept close to the formula; around 30 the bar still comes
+  round, bent by the weight; lower and the swings drift against each other; at 0 they are let
+  go.
 - **The bar** along the bottom: a row a joint, a tick a hit, up for tick and down for tock, as
   tall as it is hard. With weight it shows what was played, the playhead writing over the bar
   before, and the paths become the trail of the last bar.
 - `?arms=1-34-1,2-52-0.62-90` is a pattern in a link (swings, swing in degrees, length, and the
-  phase in degrees if any; `&bpm=`, `&mode=each`, `&physics=0.5`). Without it, the last pattern is remembered. `?clean` hides the furniture.
+  phase in degrees if any; `&bpm=`, `&mode=each`, `&weight=0.3`, `&push=0.4`). Without it, the last pattern is remembered. `?clean` hides the furniture.
 
 ## How it works
 
@@ -52,24 +56,32 @@ pnpm -C 18 dev
   latency, bluetooth too: a hit that has to start in the past lands on the scheduler's tick.)
 - The weight (`physics.ts`) is a real pendulum of n arms, a point mass at every joint, solved
   for the angles' accelerations (an n by n system a step) and stepped with RK4, 4096 steps a
-  bar. The knob blends two accelerations for each arm: the physical one, and a pull to the
-  formula (critically damped, two cycles a bar, the formula's own acceleration fed forward so 0
-  follows it exactly). It runs in bars, not seconds: gravity is set so the first arm alone,
-  let go, swings at its own rate, so tempo only says how fast a bar goes by. And it runs ahead
+  bar. Two things are not as in nature. Each arm has a gravity of its own, set so that alone
+  it swings its ×n a bar whatever its length: its own rhythm. And at each joint a motor gives
+  the push, `(θ'* − θ') ω / Q`: the formula's speed against the arm's own, so on the formula it
+  is nothing, and the formula's motion is what every swing does by itself. The motor pushes
+  back on the arm above as hard as it pushes its own. What bends the rhythm is then only what
+  is real: a wide swing is slower than a small one, the joint an arm hangs from is moving, and
+  the arms under it pull.
+- It runs in bars, not seconds, so tempo only says how fast a bar goes by. And it runs ahead
   of what is seen, as far as the formula's crossings are looked up, so the hits are still
   known before they are heard; the drawing reads the kept states behind it.
-- Checked: let go, three arms keep their energy to six digits over 16 bars, eight wild ones
-  to 4 in 10⁵ over 8; one arm at 10° takes 1.002 bars a swing, at 34° 1.023 (a real pendulum
-  is slower the wider it swings). With the default three arms the formula is followed within
-  1° at 2, 11° at 20, 36° at 50, and the bar still repeats at 90.
+- Checked: with nothing pushing the energy stays put to six digits over 16 bars at any
+  weight; an arm alone at 34° takes 1.023 of its own period, ×1 and ×3 alike. With the default
+  three arms, bar 10 is bar 11 from push 30 up at every weight, and never under it; at weight
+  30 the arms are within 20°, 29° and 76° of the formula at push 30, and 6°, 13°, 14° at 100.
+- Tried first: one knob that blended the physical acceleration with a pull to the formula,
+  gravity fading in as the pull faded out. Neither one thing nor the other: half way it was
+  the formula with a limp, at the top chaos with no pulse. Weight that is always there, and a
+  push, is a thing you can picture.
 - The voices are plain Web Audio nodes: a sine with a falling pitch, one partial over it, a
   click of noise. Low for the first joint and higher down the chain, the tock a fourth under
   the tick, harder hits brighter. A short room, a compressor.
 - `__pendulum.sound()?.stats` in the dev console: how many hits went out, how far ahead.
-  `__pendulum.sim.energy(__pendulum.state.arms)`: what should stay put at 100.
+  `__pendulum.energy()`: what should stay put with push at 0.
 
 ## Next
 
 Ratios that are not whole (a bar that never quite repeats), easing the swing's shape, pulling
-an arm aside by hand (with weight it can just be let go), and the weights themselves: a heavy
-end drags the arms over it.
+an arm aside by hand (with weight it can just be let go), and a push that is a kick at the
+crossing, like a clock's, instead of a steady hand.

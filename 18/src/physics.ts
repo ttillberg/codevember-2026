@@ -1,12 +1,19 @@
-// The same chain, with weight: a real pendulum of n arms, a point mass at every joint, in
-// gravity. Left alone it is chaos, no bar ever repeats; so one knob, `loose`, blends two
-// accelerations for every arm: what gravity and the other arms do to it (loose), and a pull
-// towards where the formula says it should be (1 - loose), critically damped, with the
-// formula's own acceleration fed forward so that at 0 it follows exactly. In between, the
-// rhythm is the formula's, bent by weight.
+// The same chain, with weight: a swing in a swing. Every arm is a real pendulum hanging from
+// the end of the one above it, a point mass at its joint, and what keeps it going is what you
+// give a swing: a push along the way it should be moving, and the air against the way it is.
+// Nothing holds it in place.
 //
-// It runs in bars, not seconds: gravity is set so the first arm alone, let go, swings at its
-// own rate (g = (2π n₁)² L₁). So tempo only says how fast a bar goes by, and a pause is a
+// - Its own rhythm. Each arm has a gravity of its own, set so that alone it swings its n times
+//   a bar whatever its length (g = (2π n)² L). So the formula's motion is what every swing
+//   does by itself, and the push is in time with that: (θ'* - θ') ω / Q, the formula's speed
+//   against its own. On the formula the push is nothing at all.
+// - Weight. The mass at each joint is `weight` times the one above it. Light children ride
+//   the swing above and are shaken by it; heavy ones throw it about, and the motor at a joint
+//   pushes back on the arm above as hard as it pushes its own.
+// - What bends the rhythm is then only what is real: a wide swing is slower than a small one,
+//   the joint an arm hangs from is moving, and the arms under it pull.
+//
+// It runs in bars, not seconds, so tempo only says how fast a bar goes by, and a pause is a
 // phase that stands still. And it runs ahead of what is seen, like the formula's crossings:
 // the hits are known before they are heard.
 
@@ -21,10 +28,6 @@ const KEEP = 8;
 const RATE = STEPS / KEEP;
 /** kept states: four bars */
 const CAP = 2048;
-/** how hard an arm is pulled to the formula: the pull's own frequency, cycles a bar */
-const PULL = 2;
-
-const wrap = (a: number) => a - TAU * Math.round(a / TAU);
 /** where kept state e lives (e is negative during a count in) */
 const slot = (e: number) => (((e % CAP) + CAP) % CAP) * MAX;
 
@@ -43,6 +46,8 @@ export class Sim {
 
   private A = new Float64Array(MAX * MAX);
   private b = new Float64Array(MAX);
+  private mu = new Float64Array(MAX + 1);
+  private tq = new Float64Array(MAX + 1);
   private k = [0, 1, 2, 3].map(() => new Float64Array(MAX));
   private ts = new Float64Array(MAX);
   private os = [0, 1, 2].map(() => new Float64Array(MAX));
@@ -114,78 +119,78 @@ export class Sim {
   }
 
   /** every arm's angular acceleration, per bar², into out */
-  private accel(arms: Arm[], loose: number, phi: number, th: Float64Array, om: Float64Array, out: Float64Array) {
+  private accel(arms: Arm[], push: number, weight: number, phi: number, th: Float64Array, om: Float64Array, out: Float64Array) {
     const n = arms.length;
-    const { A, b } = this;
-    if (loose > 0) {
-      // n point masses of 1: A θ" = b, with μ(i, j) the mass hanging under both arms
-      const g = (TAU * arms[0].n) ** 2 * arms[0].len;
-      for (let i = 0; i < n; i++) {
-        let bi = -(n - i) * g * Math.sin(th[i]);
-        for (let j = 0; j < n; j++) {
-          const mu = n - Math.max(i, j);
-          const d = th[i] - th[j];
-          A[i * n + j] = mu * arms[j].len * Math.cos(d);
-          bi -= mu * arms[j].len * Math.sin(d) * om[j] * om[j];
-        }
-        b[i] = bi;
-      }
-      // gaussian elimination, the largest pivot first
-      for (let c = 0; c < n; c++) {
-        let p = c;
-        for (let r = c + 1; r < n; r++) if (Math.abs(A[r * n + c]) > Math.abs(A[p * n + c])) p = r;
-        if (p !== c) {
-          for (let m = c; m < n; m++) [A[c * n + m], A[p * n + m]] = [A[p * n + m], A[c * n + m]];
-          [b[c], b[p]] = [b[p], b[c]];
-        }
-        const d = A[c * n + c];
-        for (let r = c + 1; r < n; r++) {
-          const f = A[r * n + c] / d;
-          if (!f) continue;
-          for (let m = c; m < n; m++) A[r * n + m] -= f * A[c * n + m];
-          b[r] -= f * b[c];
-        }
-      }
-      for (let r = n - 1; r >= 0; r--) {
-        let s = b[r];
-        for (let m = r + 1; m < n; m++) s -= A[r * n + m] * b[m];
-        b[r] = s / A[r * n + r];
-      }
-    }
-    const w = TAU * PULL;
-    for (let i = 0; i < n; i++) {
+    const { A, b, mu, tq } = this;
+    // the weight hanging under every arm, and each arm's push, as an acceleration of its own
+    mu[n] = 0;
+    tq[n] = 0;
+    for (let i = n - 1; i >= 0; i--) {
       const a = arms[i];
       const wn = TAU * a.n;
-      const p = wn * phi + a.phase;
-      const s = a.swing * Math.sin(p);
-      const pull = -wn * wn * s + 2 * w * (a.swing * wn * Math.cos(p) - om[i]) + w * w * wrap(s - th[i]);
-      out[i] = (loose > 0 ? loose * b[i] : 0) + (1 - loose) * pull;
+      mu[i] = mu[i + 1] + Math.pow(weight, i);
+      tq[i] = push * wn * (a.swing * wn * Math.cos(wn * phi + a.phase) - om[i]);
+    }
+    // A θ" = b, every row over the weight under its arm and over its length
+    for (let i = 0; i < n; i++) {
+      const wn = TAU * arms[i].n;
+      let bi = -wn * wn * arms[i].len * Math.sin(th[i]) + arms[i].len * tq[i];
+      // the motor of the arm below pushes back on this one
+      if (i + 1 < n) bi -= (mu[i + 1] / mu[i]) * ((arms[i + 1].len * arms[i + 1].len) / arms[i].len) * tq[i + 1];
+      for (let j = 0; j < n; j++) {
+        const r = mu[Math.max(i, j)] / mu[i];
+        const d = th[i] - th[j];
+        A[i * n + j] = r * arms[j].len * Math.cos(d);
+        bi -= r * arms[j].len * Math.sin(d) * om[j] * om[j];
+      }
+      b[i] = bi;
+    }
+    // gaussian elimination, the largest pivot first
+    for (let c = 0; c < n; c++) {
+      let p = c;
+      for (let r = c + 1; r < n; r++) if (Math.abs(A[r * n + c]) > Math.abs(A[p * n + c])) p = r;
+      if (p !== c) {
+        for (let m = c; m < n; m++) [A[c * n + m], A[p * n + m]] = [A[p * n + m], A[c * n + m]];
+        [b[c], b[p]] = [b[p], b[c]];
+      }
+      const d = A[c * n + c];
+      for (let r = c + 1; r < n; r++) {
+        const f = A[r * n + c] / d;
+        if (!f) continue;
+        for (let m = c; m < n; m++) A[r * n + m] -= f * A[c * n + m];
+        b[r] -= f * b[c];
+      }
+    }
+    for (let r = n - 1; r >= 0; r--) {
+      let s = b[r];
+      for (let m = r + 1; m < n; m++) s -= A[r * n + m] * b[m];
+      out[r] = b[r] = s / A[r * n + r];
     }
   }
 
-  private step(arms: Arm[], loose: number) {
+  private step(arms: Arm[], push: number, weight: number) {
     const n = arms.length;
     const h = 1 / STEPS;
     const phi = this.i / STEPS;
     const { th, om, ts } = this;
     const [k1, k2, k3, k4] = this.k;
     const [o2, o3, o4] = this.os;
-    this.accel(arms, loose, phi, th, om, k1);
+    this.accel(arms, push, weight, phi, th, om, k1);
     for (let j = 0; j < n; j++) {
       ts[j] = th[j] + (h / 2) * om[j];
       o2[j] = om[j] + (h / 2) * k1[j];
     }
-    this.accel(arms, loose, phi + h / 2, ts, o2, k2);
+    this.accel(arms, push, weight, phi + h / 2, ts, o2, k2);
     for (let j = 0; j < n; j++) {
       ts[j] = th[j] + (h / 2) * o2[j];
       o3[j] = om[j] + (h / 2) * k2[j];
     }
-    this.accel(arms, loose, phi + h / 2, ts, o3, k3);
+    this.accel(arms, push, weight, phi + h / 2, ts, o3, k3);
     for (let j = 0; j < n; j++) {
       ts[j] = th[j] + h * o3[j];
       o4[j] = om[j] + h * k3[j];
     }
-    this.accel(arms, loose, phi + h, ts, o4, k4);
+    this.accel(arms, push, weight, phi + h, ts, o4, k4);
     for (let j = 0; j < n; j++) {
       th[j] += (h / 6) * (om[j] + 2 * o2[j] + 2 * o3[j] + o4[j]);
       om[j] += (h / 6) * (k1[j] + 2 * k2[j] + 2 * k3[j] + k4[j]);
@@ -203,7 +208,7 @@ export class Sim {
   }
 
   /** run on to φ = to, and say where every joint crossed on the way (those at or after `since`) */
-  advance(arms: Arm[], mode: Mode, loose: number, to: number, since: number, out: Hit[]) {
+  advance(arms: Arm[], mode: Mode, push: number, weight: number, to: number, since: number, out: Hit[]) {
     const n = arms.length;
     if (this.prevMode !== mode) {
       this.signals(arms, mode, this.prev);
@@ -211,7 +216,7 @@ export class Sim {
     }
     const sig = new Float64Array(MAX);
     while (this.i < to * STEPS) {
-      this.step(arms, loose);
+      this.step(arms, push, weight);
       this.signals(arms, mode, sig);
       for (let k = 0; k < n; k++) {
         const s0 = this.prev[k];
@@ -229,18 +234,20 @@ export class Sim {
     return out;
   }
 
-  /** for the dev console: kinetic and potential energy of the weights, per bar² (constant when loose is 1) */
-  energy(arms: Arm[]): number {
-    const g = (TAU * arms[0].n) ** 2 * arms[0].len;
+  /** for the dev console: kinetic and potential energy of the weights, per bar² (constant when nothing pushes) */
+  energy(arms: Arm[], weight: number): number {
+    const n = arms.length;
     let vx = 0;
     let vy = 0;
-    let y = 0;
     let e = 0;
-    for (let j = 0; j < arms.length; j++) {
+    let under = 0;
+    for (let j = 0; j < n; j++) under += Math.pow(weight, j);
+    for (let j = 0; j < n; j++) {
+      const m = Math.pow(weight, j);
       vx += arms[j].len * Math.cos(this.th[j]) * this.om[j];
       vy -= arms[j].len * Math.sin(this.th[j]) * this.om[j];
-      y += arms[j].len * Math.cos(this.th[j]);
-      e += 0.5 * (vx * vx + vy * vy) - g * y;
+      e += 0.5 * m * (vx * vx + vy * vy) - under * (TAU * arms[j].n * arms[j].len) ** 2 * Math.cos(this.th[j]);
+      under -= m;
     }
     return e;
   }
