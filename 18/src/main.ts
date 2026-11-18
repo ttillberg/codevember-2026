@@ -11,6 +11,8 @@ const canvas = document.querySelector<HTMLCanvasElement>('#c')!;
 const ctx = canvas.getContext('2d')!;
 const panel = document.querySelector<HTMLElement>('#panel')!;
 const hint = document.querySelector<HTMLElement>('#hint')!;
+const tip = document.querySelector<HTMLElement>('#tip')!;
+const tipsButton = document.querySelector<HTMLButtonElement>('#tips')!;
 
 const INK = '244, 244, 242';
 const BACK = '#0b0b0d';
@@ -224,30 +226,95 @@ function build() {
       .map(
         (a, k) => `
     <div class="arm" data-k="${k}">
-      <button data-act="dn" aria-label="Fewer swings per bar">−</button><output>×${a.n}</output><button data-act="up" aria-label="More swings per bar">+</button>
-      <input type="range" data-p="swing" min="0" max="180" step="1" value="${Math.round((a.swing * 180) / Math.PI)}" aria-label="Swing of arm ${k + 1}" />
-      <input type="range" data-p="len" min="0.1" max="1.5" step="0.01" value="${a.len}" aria-label="Length of arm ${k + 1}" />
-      <input type="range" data-p="phase" min="0" max="360" step="1" value="${Math.round((a.phase * 180) / Math.PI)}" aria-label="Phase of arm ${k + 1}" />
-      <input type="range" data-p="vol" min="0" max="100" step="1" value="${Math.round(a.vol * 100)}" aria-label="Volume of arm ${k + 1}, 0 is muted" />
-      <button data-act="rm" aria-label="Remove arm ${k + 1}" ${many ? '' : 'disabled'}>✕</button>
+      <button data-act="dn" data-tip="swings" aria-label="Fewer swings per bar">−</button><output data-tip="swings">×${a.n}</output><button data-act="up" data-tip="swings" aria-label="More swings per bar">+</button>
+      <input type="range" data-p="swing" data-tip="swing" min="0" max="180" step="1" value="${Math.round((a.swing * 180) / Math.PI)}" aria-label="Swing of arm ${k + 1}" />
+      <input type="range" data-p="len" data-tip="len" min="0.1" max="1.5" step="0.01" value="${a.len}" aria-label="Length of arm ${k + 1}" />
+      <input type="range" data-p="phase" data-tip="phase" min="0" max="360" step="1" value="${Math.round((a.phase * 180) / Math.PI)}" aria-label="Phase of arm ${k + 1}" />
+      <input type="range" data-p="vol" data-tip="vol" min="0" max="100" step="1" value="${Math.round(a.vol * 100)}" aria-label="Volume of arm ${k + 1}, 0 is muted" />
+      <button data-act="rm" data-tip="rm" aria-label="Remove arm ${k + 1}" ${many ? '' : 'disabled'}>✕</button>
     </div>`,
       )
       .join('')}
     <div class="row">
-      <button data-act="add" ${state.arms.length < MAX_ARMS ? '' : 'disabled'}>+ Arm</button>
-      <button data-act="mode" title="What a joint crosses to sound: the centre line (sum) or its own vertical (each)">${state.mode}</button>
+      <button data-act="add" data-tip="add" ${state.arms.length < MAX_ARMS ? '' : 'disabled'}>+ Arm</button>
+      <button data-act="mode" data-tip="mode">${state.mode}</button>
     </div>
     <div class="row">
-      <button data-act="restart" title="The motion from the top, the setup as it is (R)">Restart</button>
-      <button data-act="play">${playing ? 'Pause' : 'Play'}</button>
-      <button data-act="mute">${muted ? 'Muted' : 'Sound'}</button>
+      <button data-act="restart" data-tip="restart">Restart</button>
+      <button data-act="play" data-tip="play">${playing ? 'Pause' : 'Play'}</button>
+      <button data-act="mute" data-tip="mute">${muted ? 'Muted' : 'Sound'}</button>
     </div>
-    <label class="row" title="0 is the formula. Over it every arm is a real swing in the swing above, and this is how heavy each joint is against the one above it"><span>Weight</span><input type="range" data-p="weight" min="0" max="100" step="1" value="${Math.round(state.weight * 100)}" /><output id="weight">${Math.round(state.weight * 100)}</output></label>
-    <label class="row" title="How hard every swing is pushed in time (and how thick the air is). 0 lets go"><span>Push</span><input type="range" data-p="push" min="0" max="100" step="1" value="${Math.round(state.push * 100)}" /><output id="push">${Math.round(state.push * 100)}</output></label>
-    <label class="row"><span>Tempo</span><input type="range" data-p="bpm" min="40" max="220" step="1" value="${state.bpm}" /><output id="bpm">${state.bpm}</output></label>`;
+    <label class="row" data-tip="weight"><span>Weight</span><input type="range" data-p="weight" min="0" max="100" step="1" value="${Math.round(state.weight * 100)}" /><output id="weight">${Math.round(state.weight * 100)}</output></label>
+    <label class="row" data-tip="push"><span>Push</span><input type="range" data-p="push" min="0" max="100" step="1" value="${Math.round(state.push * 100)}" /><output id="push">${Math.round(state.push * 100)}</output></label>
+    <label class="row" data-tip="tempo"><span>Tempo</span><input type="range" data-p="bpm" min="40" max="220" step="1" value="${state.bpm}" /><output id="bpm">${state.bpm}</output></label>`;
   const r = panel.getBoundingClientRect();
   panelRect = { left: r.left, top: r.top };
+  placeTip();
 }
+
+// --- tips: what the control under the pointer does, in a box of its own over the workbench ---
+
+const TIPS: Record<string, [string, string]> = {
+  swings: ['Swings', 'How many times the arm swings in a bar: its harmonic. ×1 crosses the line twice a bar, ×2 four times.'],
+  swing: ['Swing', 'How far the arm swings to each side, 0 to 180°. Wider and it counts for more in the sum; with weight, wider is also slower.'],
+  len: ['Length', 'How long the arm is: how far it carries the joints under it.'],
+  phase: ['Phase', 'Where in its swing the arm is when the bar starts. 0° it crosses going right, 90° it is out at the right.'],
+  vol: ['Volume', 'How loud this joint is. All the way down is muted: the arm still swings and still moves the ones under it.'],
+  rm: ['Remove', 'Takes this arm away.'],
+  add: ['+ Arm', 'Hangs a new arm on the end, one harmonic up. Keys: + and −.'],
+  mode: ['Sum / Each', 'What a joint crosses to sound. Sum: the centre line under the pivot, every arm above it added up. Each: the vertical under its own origin, its arm alone. Key: S.'],
+  restart: ['Restart', 'The motion from the top, the setup as it is. With weight, the same setup plays the same again. Key: R.'],
+  play: ['Pause / Play', 'Stops the motion where it is, and lets it go on. Key: space.'],
+  mute: ['Sound', 'All sound on or off. Key: M.'],
+  weight: ['Weight', '0 is the formula. Over it every arm is a real swing hung in the swing above, and this is how heavy each joint is against the one above it.'],
+  push: ['Push', 'What keeps a swing going: a push in time with its own rhythm, and the air against it. From about 30 the bar comes round; lower and the swings drift; 0 lets go.'],
+  tempo: ['Tempo', 'Beats a minute, four to the bar.'],
+  tips: ['Tips', 'These boxes, on or off. Key: ?'],
+};
+
+const TIPS_KEY = 'codevember-2026-18-tips';
+let tipsOn = true;
+try {
+  tipsOn = localStorage.getItem(TIPS_KEY) !== 'off';
+} catch {
+  // no storage: on
+}
+
+function showTip(key: string | undefined) {
+  const t = tipsOn && key ? TIPS[key] : undefined;
+  tip.hidden = !t;
+  if (!t) return;
+  tip.replaceChildren(Object.assign(document.createElement('b'), { textContent: t[0] }), Object.assign(document.createElement('span'), { textContent: t[1] }));
+}
+
+/** over the workbench on a wide screen; on a phone the stylesheet puts it under the title */
+function placeTip() {
+  tip.style.bottom = window.innerWidth > 760 ? `${window.innerHeight - panelRect.top + 12}px` : '';
+}
+
+function setTips(on: boolean) {
+  tipsOn = on;
+  tipsButton.setAttribute('aria-pressed', String(on));
+  showTip(on ? 'tips' : undefined);
+  try {
+    localStorage.setItem(TIPS_KEY, on ? 'on' : 'off');
+  } catch {
+    // nothing kept
+  }
+}
+tipsButton.setAttribute('aria-pressed', String(tipsOn));
+tipsButton.addEventListener('click', () => setTips(!tipsOn));
+
+const tipOf = (e: Event) => (e.target as HTMLElement).closest?.<HTMLElement>('[data-tip]')?.dataset.tip;
+for (const el of [panel, tipsButton]) {
+  el.addEventListener('pointerover', (e) => showTip(tipOf(e)));
+  el.addEventListener('focusin', (e) => showTip(tipOf(e)));
+  // a mouse leaving takes the tip away; a finger's stays until the next press somewhere else
+  el.addEventListener('pointerleave', (e) => e.pointerType === 'mouse' && showTip(undefined));
+}
+window.addEventListener('pointerdown', (e) => {
+  if (!(e.target as HTMLElement).closest?.('[data-tip]')) showTip(undefined);
+});
 
 function addArm() {
   if (state.arms.length >= MAX_ARMS) return;
@@ -314,6 +381,7 @@ window.addEventListener('keydown', (e) => {
   else if (e.key === '-' || e.key === '_') removeArm();
   else if (e.key === 'm') toggle('mute');
   else if (e.key === 'r') restart();
+  else if (e.key === '?') setTips(!tipsOn);
   else if (e.key === 's') toggle('mode');
   else return;
   e.preventDefault();
@@ -338,6 +406,7 @@ function resize() {
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   const r = panel.getBoundingClientRect();
   panelRect = { left: r.left, top: r.top };
+  placeTip();
 }
 
 const ink = (a: number) => `rgba(${INK}, ${a})`;

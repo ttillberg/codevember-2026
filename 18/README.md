@@ -43,6 +43,9 @@ pnpm -C 18 dev
   place. High and the rhythm is kept close to the formula; around 30 the bar still comes
   round, bent by the weight; lower and the swings drift against each other; at 0 they are let
   go.
+- **Tips** (the `?` top right, or the `?` key): what the control under the pointer does, in a
+  box of its own over the workbench (under the title on a phone, where it shows for the
+  control you press). On to start with, remembered.
 - **The bar** along the bottom: a row a joint, a tick a hit, up for tick and down for tock, as
   tall as it is hard. With weight it shows what was played, the playhead writing over the bar
   before, and the paths become the trail of the last bar.
