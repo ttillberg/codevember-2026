@@ -133,8 +133,18 @@ canvas { display: block; width: 100vw; height: 100vh; }
 .pop.menu { left: auto; right: -6px; bottom: auto; top: calc(100% + 11px); transform: none; min-width: 188px; }
 .pop hr { width: calc(100% - 20px); margin: 3px auto; border: 0; height: 1px; background: rgba(244, 244, 242, 0.12); }
 .pop .row { height: 30px; gap: 10px; border-radius: 13px; color: #f4f4f2; }
-.row span { flex: 1; text-align: left; }
-.row kbd { font: inherit; letter-spacing: 0.04em; opacity: 0.45; }
+/* (its name takes the room: the keys and the switch stand at the right) */
+.row > span:first-child { flex: 1; text-align: left; }
+/* A key, drawn as a key: its cap in a fine outline with barely rounded corners. Keys held
+   together stand side by side; a slash between two is either of them. */
+.keys { display: inline-flex; align-items: center; gap: 3px; flex: none; }
+.keys i { margin: 0 2px; font-style: normal; opacity: 0.5; }
+kbd {
+  display: inline-flex; align-items: center; justify-content: center; box-sizing: border-box; min-width: 18px; height: 18px; padding: 0 4px;
+  border: 1px solid rgba(244, 244, 242, 0.5); border-radius: 2px;
+  font: 600 10px/1 Inter, "Helvetica Neue", Helvetica, Arial, sans-serif; letter-spacing: 0; text-transform: none; color: #f4f4f2;
+}
+.row .keys { opacity: 0.7; }
 .switch { position: relative; flex: none; width: 24px; height: 14px; border-radius: 999px; background: rgba(244, 244, 242, 0.18); transition: background 0.15s; }
 .switch::after {
   content: ""; position: absolute; left: 2px; top: 2px; width: 10px; height: 10px; border-radius: 50%; background: #f4f4f2;
@@ -292,7 +302,7 @@ canvas { display: block; width: 100vw; height: 100vh; }
 }
 @supports (corner-shape: squircle) { .tip { corner-shape: squircle; border-radius: 40px; } }
 .tip[hidden] { display: none; }
-.tip b { display: block; margin-bottom: 5px; font-weight: 600; font-size: 15px; line-height: 1.25; letter-spacing: -0.01em; }
+.tip b { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 5px; font-weight: 600; font-size: 15px; line-height: 1.25; letter-spacing: -0.01em; }
 .tip span { color: rgba(244, 244, 242, 0.8); }
 @media (max-width: 760px) {
   .tip { top: calc(max(16px, env(safe-area-inset-top)) + 116px); left: max(16px, env(safe-area-inset-left)); right: max(16px, env(safe-area-inset-right)); width: auto; max-width: none; }

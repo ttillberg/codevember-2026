@@ -145,6 +145,11 @@ pnpm -C 18 dev
   press). Frosted like the card the page opens with: grey glass, no outline, a deep shadow;
   the control's name at that card's size, what it does under it, a little softer. On to
   start with, remembered. (It was a dark box with a border, its name in small caps.)
+- **Keys**, wherever a control has one: drawn as keys, each cap in a fine outline with barely
+  rounded corners, beside the control's name in its tip and beside its row in the menu
+  (`⌘` `S`, `T`, `+` / `−`). They were words at the end of a tip's sentence ("Key: S."),
+  which nobody reads to the end of. The `≡` itself has no tip: it opens a list of things
+  that each have their own.
 - (The workbench was a block bottom right with everything in it, then a strip along the
   bottom with one long line of buttons and sliders under the rows. Then a row a link, and a drawer
   for the rest.)
