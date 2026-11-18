@@ -2,8 +2,8 @@
 
 2026-11-18
 
-A pendulum as a drum machine, drawn in lines. It starts as one arm swinging once a bar: a tick
-where it crosses the centre line going right, a tock going left. A binary rhythm. Then more
+A pendulum as a drum machine, drawn in lines. Take it down to one arm swinging once a bar: a
+tick where it crosses the centre line going right, a tock going left. A binary rhythm. Then more
 arms, each hung from the end of the one before and swinging its own number of times a bar, and
 every joint is a voice that sounds where *it* crosses the centre line.
 
@@ -43,6 +43,15 @@ pnpm -C 18 dev
   place. High and the rhythm is kept close to the formula; around 30 the bar still comes
   round, bent by the weight; lower and the swings drift against each other; at 0 they are let
   go.
+- **Presets**: shift and a digit (0 to 9) keeps the whole setup under it (the arms, sum or
+  each, tempo, weight, push); the digit alone brings it back, the motion going on where the bar
+  is. A word under the title says which. 0 is the default until something is saved over it.
+  Remembered per viewer.
+- **Saved by name** (ctrl where there is no cmd): **cmd+shift+S** asks for a name and saves the
+  setup under it, offering the last name with the next number (groove, groove 2, groove 3);
+  **cmd+S** saves over the name it has (and asks for one the first time); **cmd+O** lists
+  everything saved, the newest first: arrows and enter, or a click, opens one, `✕` deletes it.
+  Remembered per viewer, beside the digits' presets.
 - **Tips** (the `?` top right, or the `?` key): what the control under the pointer does, in a
   box of its own over the workbench (under the title on a phone, where it shows for the
   control you press). On to start with, remembered.
@@ -50,7 +59,8 @@ pnpm -C 18 dev
   tall as it is hard. With weight it shows what was played, the playhead writing over the bar
   before, and the paths become the trail of the last bar.
 - `?arms=1-34-1,2-52-0.62-90-50` is a pattern in a link (swings, swing in degrees, length, and
-  if any the phase in degrees and the volume in percent; `&bpm=`, `&mode=each`, `&weight=0.3`, `&push=0.4`). Without it, the last pattern is remembered. `?clean` hides the furniture.
+  if any the phase in degrees and the volume in percent; `&bpm=`, `&mode=each`, `&weight=0.3`, `&push=0.4`). Without it, the last pattern is remembered; a
+  pattern opened from a link is not, until something in it is changed. `?clean` hides the furniture.
 
 ## How it works
 

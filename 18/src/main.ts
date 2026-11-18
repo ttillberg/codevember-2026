@@ -43,9 +43,34 @@ interface State {
 }
 
 const KEY = 'codevember-2026-18';
-const fresh = (): State => ({ arms: [{ n: 1, swing: 0.6, len: 1, phase: 0, vol: 1 }], bpm: 120, mode: 'sum', weight: 0, push: 0.3 });
+const rad = (deg: number) => (deg * Math.PI) / 180;
+/** what the page opens with, and what 0 brings back: four short arms, two of them half a swing late */
+const fresh = (): State => ({
+  arms: [
+    { n: 2, swing: rad(35), len: 0.38, phase: rad(175), vol: 0.54 },
+    { n: 2, swing: rad(36), len: 0.26, phase: 0, vol: 0.15 },
+    { n: 4, swing: 0.9, len: 0.37, phase: 0, vol: 1 },
+    { n: 5, swing: rad(125), len: 0.17, phase: rad(176), vol: 1 },
+  ],
+  bpm: 120,
+  mode: 'sum',
+  weight: 0,
+  push: 1,
+});
 
 const unit01 = (v: number, or: number) => (Number.isFinite(v) ? Math.min(1, Math.max(0, v)) : or);
+
+/** a setup read back from storage, made safe; null if it is not one */
+function sane(s: State | null | undefined): State | null {
+  if (!s || !Array.isArray(s.arms) || !s.arms.length || !s.arms.every((a) => a && [a.n, a.swing, a.len, a.phase].every(Number.isFinite))) return null;
+  return {
+    arms: s.arms.slice(0, MAX_ARMS).map((a) => ({ n: Math.min(MAX_N, Math.max(1, Math.round(a.n))), swing: a.swing, len: a.len, phase: a.phase, vol: unit01(a.vol, 1) })),
+    bpm: s.bpm >= 40 && s.bpm <= 220 ? s.bpm : 120,
+    mode: s.mode === 'each' ? 'each' : 'sum',
+    weight: unit01(s.weight, 0),
+    push: unit01(s.push, 0.3),
+  };
+}
 
 /** ?arms=1-34-1,2-52-0.62-90-50 (swings, swing in degrees, length, then if any the phase in degrees and the volume in percent), &bpm=, &mode=each, &weight=0.3, &push=0.3: a pattern in a link, for clips too */
 function fromQuery(): State | null {
@@ -67,14 +92,11 @@ function load(): State {
   const q = fromQuery();
   if (q) return q;
   try {
-    const s = JSON.parse(localStorage.getItem(KEY) ?? 'null') as State | null;
-    if (s && Array.isArray(s.arms) && s.arms.length && s.arms.every((a) => [a.n, a.swing, a.len, a.phase].every(Number.isFinite))) {
-      return { arms: s.arms.slice(0, MAX_ARMS).map((a) => ({ ...a, vol: unit01(a.vol, 1) })), bpm: Number.isFinite(s.bpm) ? s.bpm : 120, mode: s.mode === 'each' ? 'each' : 'sum', weight: unit01(s.weight, 0), push: unit01(s.push, 0.3) };
-    }
+    return sane(JSON.parse(localStorage.getItem(KEY) ?? 'null')) ?? fresh();
   } catch {
     // no storage, or not ours: start over
+    return fresh();
   }
-  return fresh();
 }
 
 const state = load();
@@ -100,7 +122,8 @@ function anchor() {
 let bar: Hit[] = [];
 let orbits: Float32Array[] = [];
 
-function changed() {
+/** `keep` false when nothing was set by hand: a pattern opened from a link does not write over the one remembered */
+function changed(keep = true) {
   bar = crossings(state.arms, state.mode, -1e-6, 1 - 1e-6);
   const tmp: number[] = [];
   orbits = state.arms.map(() => new Float32Array((ORBIT + 1) * 2));
@@ -111,6 +134,7 @@ function changed() {
       orbits[k][2 * i + 1] = tmp[2 * k + 1];
     }
   }
+  if (!keep) return;
   try {
     localStorage.setItem(KEY, JSON.stringify(state));
   } catch {
@@ -374,8 +398,191 @@ panel.addEventListener('input', (e) => {
   changed();
 });
 
+// --- presets: shift and a digit keeps the whole setup under it, the digit alone brings it back ---
+
+const PRESETS_KEY = 'codevember-2026-18-presets';
+let noted = '';
+let notedUntil = 0;
+/** a word under the title for a moment */
+function note(text: string) {
+  noted = text;
+  notedUntil = clock() + 1.6;
+}
+
+function presets(): Record<string, State> {
+  try {
+    return JSON.parse(localStorage.getItem(PRESETS_KEY) ?? '{}') ?? {};
+  } catch {
+    return {};
+  }
+}
+
+function savePreset(digit: string) {
+  try {
+    localStorage.setItem(PRESETS_KEY, JSON.stringify({ ...presets(), [digit]: state }));
+    note(`Saved ${digit}`);
+  } catch {
+    note('Nowhere to save');
+  }
+}
+
+/** 0 is the default until something is saved over it */
+function recallPreset(digit: string) {
+  const s = sane(presets()[digit]) ?? (digit === '0' ? fresh() : null);
+  if (!s) return note(`${digit} is empty`);
+  apply(s);
+  note(`Preset ${digit}`);
+}
+
+/** a whole setup put in place of this one, the motion going on where the bar is */
+function apply(s: State) {
+  anchor();
+  Object.assign(state, s);
+  // with weight, the chain starts again from the formula: the arms are not the same ones
+  sim.live = false;
+  changed();
+  build();
+}
+
+// --- saved by name: cmd+S saves, cmd+shift+S asks for a name, cmd+O lists them (ctrl where there is no cmd) ---
+
+interface Saved {
+  name: string;
+  at: number;
+  state: State;
+}
+const SAVES_KEY = 'codevember-2026-18-saves';
+const NAME_KEY = 'codevember-2026-18-name';
+/** the name this setup was last saved or opened under: what cmd+S writes to */
+let current = '';
+try {
+  current = localStorage.getItem(NAME_KEY) ?? '';
+} catch {
+  // no storage: no name
+}
+
+function saves(): Saved[] {
+  try {
+    const all = JSON.parse(localStorage.getItem(SAVES_KEY) ?? '[]');
+    return Array.isArray(all) ? all.filter((s) => s && typeof s.name === 'string' && s.name) : [];
+  } catch {
+    return [];
+  }
+}
+
+function keep(all: Saved[], name: string): boolean {
+  try {
+    localStorage.setItem(SAVES_KEY, JSON.stringify(all));
+    localStorage.setItem(NAME_KEY, (current = name));
+    return true;
+  } catch {
+    note('Nowhere to save');
+    return false;
+  }
+}
+
+/** under that name, the newest first; one already there is written over */
+function saveAs(name: string) {
+  name = name.trim().slice(0, 40);
+  if (!name) return;
+  if (keep([{ name, at: Date.now(), state }, ...saves().filter((s) => s.name !== name)], name)) note(`Saved ${name}`);
+}
+
+/** the name to offer: the last one and the next number (groove, groove 2, groove 3), the first not taken */
+function nextName(): string {
+  const taken = new Set(saves().map((s) => s.name));
+  const [, stem, num] = /^(.*?)(?:\s+(\d+))?$/.exec(current || 'Pattern')!;
+  let i = num ? Number(num) + 1 : current ? 2 : 1;
+  while (taken.has(`${stem} ${i}`)) i++;
+  return `${stem} ${i}`;
+}
+
+const sheet = document.createElement('div');
+sheet.className = 'sheet';
+sheet.hidden = true;
+document.body.append(sheet);
+const el = <K extends keyof HTMLElementTagNameMap>(tag: K, text = '', cls = '') => Object.assign(document.createElement(tag), { textContent: text, className: cls });
+
+function closeSheet() {
+  sheet.hidden = true;
+  sheet.replaceChildren();
+}
+
+function askName() {
+  const input = Object.assign(el('input'), { type: 'text', value: nextName(), maxLength: 40, spellcheck: false, autocomplete: 'off' });
+  input.setAttribute('aria-label', 'Name');
+  input.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter') return;
+    saveAs(input.value);
+    closeSheet();
+  });
+  sheet.replaceChildren(el('b', 'Save as'), input, el('i', 'Enter saves, esc leaves'));
+  sheet.hidden = false;
+  input.focus();
+  input.select();
+}
+
+function showSaved() {
+  const all = saves();
+  const rows = all.map((s) => {
+    const open = el('button', s.name, 'open');
+    const n = Array.isArray(s.state?.arms) ? s.state.arms.length : 0;
+    open.append(el('span', `${n} ${n === 1 ? 'arm' : 'arms'} · ${new Date(s.at).toLocaleDateString(undefined, { day: 'numeric', month: 'short' })}`));
+    if (s.name === current) open.setAttribute('aria-current', 'true');
+    open.addEventListener('click', () => {
+      const st = sane(s.state);
+      if (!st) return note(`${s.name} is broken`);
+      apply(st);
+      keep(all, s.name);
+      note(`Opened ${s.name}`);
+      closeSheet();
+    });
+    const del = el('button', '✕', 'del');
+    del.setAttribute('aria-label', `Delete ${s.name}`);
+    del.addEventListener('click', () => {
+      if (keep(all.filter((o) => o !== s), s.name === current ? '' : current)) showSaved();
+    });
+    const row = el('div', '', 'saved');
+    row.append(open, del);
+    return row;
+  });
+  sheet.replaceChildren(el('b', 'Saved'), ...rows, el('i', rows.length ? 'Enter opens, esc leaves' : 'Nothing saved yet. Cmd+S saves this one.'));
+  sheet.hidden = false;
+  (sheet.querySelector<HTMLElement>('[aria-current]') ?? sheet.querySelector<HTMLElement>('.open'))?.focus();
+}
+
+window.addEventListener('pointerdown', (e) => {
+  if (!sheet.hidden && !sheet.contains(e.target as Node)) closeSheet();
+});
+
 window.addEventListener('keydown', (e) => {
+  if ((e.metaKey || e.ctrlKey) && !e.altKey && (e.code === 'KeyS' || e.code === 'KeyO')) {
+    e.preventDefault();
+    if (e.code === 'KeyO') showSaved();
+    else if (e.shiftKey || !current) askName();
+    else saveAs(current);
+    return;
+  }
+  // a sheet is up: the keys are its own (a name being typed, the list walked)
+  if (!sheet.hidden) {
+    if (e.key === 'Escape') closeSheet();
+    else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      const rows = [...sheet.querySelectorAll<HTMLElement>('.open')];
+      const at = rows.indexOf(document.activeElement as HTMLElement);
+      rows[(at + (e.key === 'ArrowDown' ? 1 : rows.length - 1)) % rows.length]?.focus();
+      e.preventDefault();
+    }
+    return;
+  }
   if (e.metaKey || e.ctrlKey || e.altKey) return;
+  // by the key's place, not its character: shift and 2 is " or @ depending on the keyboard
+  const digit = /^(?:Digit|Numpad)(\d)$/.exec(e.code)?.[1];
+  if (digit) {
+    e.preventDefault();
+    if (e.shiftKey) savePreset(digit);
+    else recallPreset(digit);
+    return;
+  }
   if (e.key === ' ') toggle('play');
   else if (e.key === '+' || e.key === '=') addArm();
   else if (e.key === '-' || e.key === '_') removeArm();
@@ -541,7 +748,7 @@ function frame() {
   }
   line(tlX0 + at * tlW, tlTop - 4, tlX0 + at * tlW, tlBottom + 2, 0.5);
 
-  const say = sound?.running ? '' : 'Tap for sound';
+  const say = t < notedUntil ? noted : sound?.running ? '' : 'Tap for sound';
   if (say !== hinted) hint.textContent = hinted = say;
 
   requestAnimationFrame(frame);
@@ -551,7 +758,7 @@ function frame() {
 if (import.meta.env.DEV) Object.assign(window, { __pendulum: { state, sim, energy: () => sim.energy(state.arms, state.weight), sound: () => sound, bar: () => bar, played: () => played } });
 
 window.addEventListener('resize', resize);
-changed();
+changed(!query.has('arms'));
 build();
 resize();
 requestAnimationFrame(frame);
