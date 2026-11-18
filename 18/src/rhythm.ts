@@ -19,6 +19,8 @@ export interface Arm {
   mass: number;
   /** what its joint crosses to sound */
   mode: Mode;
+  /** 0..1, how hard its swing is pushed in time, when the chain has weight: 0 lets it go */
+  push: number;
 }
 
 /**

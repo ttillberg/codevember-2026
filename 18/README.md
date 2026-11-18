@@ -32,8 +32,8 @@ pnpm -C 18 dev
   (the harmonic), then how far it swings (0 to 180°), how long it is, and its phase: where in
   its swing it is when the bar starts (0° it crosses going right, 90° it is out at the right),
   how loud its joint's voice is (all the way down is muted, the arm still swings and still
-  moves the ones under it, its row and its rings go dim), and its weight, which counts only
-  with physics on.
+  moves the ones under it, its row and its rings go dim), and its weight and its push, which
+  count only with physics on.
   `✕` takes it away.
 - **+ Arm** (or `+`, `-` takes the last one away): a new arm on the end, one harmonic up.
 - **Σ**, in every row (`S` for all of them at once): what that joint crosses to sound. Lit, the
@@ -51,11 +51,17 @@ pnpm -C 18 dev
   down, the first arm does its own swing undisturbed. At the top the link weighs as much as
   the arm it hangs from, and throws it about: with every weight up it is the real chain of
   equal weights, and a short first arm gets thrown over the top.
-- **Push**: what keeps a swing going, the force you give a swing: a push along the way it
-  should be moving, in its own rhythm, and the air against the way it is. Nothing holds it in
-  place. High and the rhythm is kept close to the formula; around 30 the bar still comes
-  round, bent by the weight; lower and the swings drift against each other; at 0 they are let
-  go.
+- **Push**, in every row: what keeps that swing going, the force you give a swing: a push
+  along the way it should be moving, in its own rhythm, and the air against the way it is.
+  Nothing holds it in place. High and it keeps its time whatever the others do; around the
+  middle the bar still comes round, bent by the weight; lower and it drifts; at 0 it is let go. So the
+  first arm can keep strict time while the far ones run loose. (It was one knob for the whole
+  chain first.)
+  The push never kicks in at one place: it is a steady hand, at every moment as hard as the
+  arm's speed is off the formula's, and nothing at all when the swing is on its own time. So
+  it is drawn: an arrow at each joint, along the way its motor pushes right now, as long as
+  the push is hard. Watch a first arm with heavy links under it: the arrow points one way
+  through half its swing, then the other.
 - **Presets**: shift and a digit (0 to 9) keeps the whole setup under it (the arms, sum or
   each, tempo, weight, push); the digit alone brings it back, the motion going on where the bar
   is. A word under the title says which. 0 is the default until something is saved over it.
@@ -65,6 +71,9 @@ pnpm -C 18 dev
   **cmd+S** saves over the name it has (and asks for one the first time); **cmd+O** lists
   everything saved, the newest first: arrows and enter, or a click, opens one, `✕` deletes it.
   Remembered per viewer, beside the digits' presets.
+- **Snap**: a slider being dragged catches on its marks, the ticks drawn on it: the quarters
+  of volume, weight and push, every 45° of swing and phase, every quarter of a length, the
+  round tempos. Shift slides past them, and so do the arrow keys.
 - **Tips** (the `?` top right, or the `?` key): what the control under the pointer does, in a
   box of its own over the workbench (under the title on a phone, where it shows for the
   control you press). On to start with, remembered.
@@ -78,8 +87,8 @@ pnpm -C 18 dev
   the chain has the width.)
 - `?arms=1-34-1,2-52-0.62-90-50-30` is a pattern in a link (swings, swing in degrees, length,
   and if any the phase in degrees, the volume and the weight in percent; `&bpm=`,
-  `&mode=each`, `&physics=1`, `&push=0.4`; a seventh value in an arm, 1 or 0, is each or sum for
-  that arm alone). Without it, the last pattern is remembered; a
+  `&physics=1`, and `&mode=each`, `&push=0.5` for every arm that does not say; a seventh value
+  in an arm, 1 or 0, is each or sum for that arm alone, an eighth its push in percent). Without it, the last pattern is remembered; a
   pattern opened from a link is a visit and never writes over it (a preset or a name keeps it).
   `?clean` hides the furniture.
 
@@ -108,9 +117,14 @@ pnpm -C 18 dev
 - Checked, four arms (×1, ×2, ×2, ×4), the first set to swing 23°: with every weight down
   and push 100 it swings 23°; with every weight up, 92° (and with every weight up and nothing
   pushing, a calm chain keeps its energy to six digits over 16 bars: that one is real). Push
-  40 and weights 1, 0.5, 0.25, 0.12: 82°, and the bar repeats. With nothing pushing, 128 bars
+  59 and weights 1, 0.5, 0.25, 0.12: 82°, and the bar repeats. With nothing pushing, 128 bars
   of any weights stay finite, the arms going round and round at the speed the air allows; so
   do eight arms at ×16 swinging 180°.
+  Three arms (×1, ×2, ×3), pushed 100, 59 and 0: within 9°, 30° and 108° of the formula.
+- The push knob is a curve, `4 · knob^3.47`, as one over the swing's Q: nothing at the
+  bottom, 4 at the top, and 0.36 in the middle, about where a chain starts coming round every
+  bar. (It was `4 · knob²` first, and that point sat at 30: most of the knob did nearly the
+  same thing. Setups kept from then have their push moved to where it does the same.)
 - Weight was first the real thing, a mass a joint, only their ratios counting. Honest, and
   not what a knob called weight should do: all the way down on every arm was the same as all
   the way up.

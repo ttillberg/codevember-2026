@@ -27,6 +27,19 @@ const MAX = 8;
 /** an arm let go from the very top passes the bottom at twice its own rate; past this many times it, the air goes thick */
 const TOO_FAST = 3;
 const THICK = 8;
+/**
+ * The push's knob (0..1) as one over the swing's Q: nothing at the bottom, 4 at the top (the
+ * air is syrup and the push rules), and in the middle 0.36, about where a chain starts coming
+ * round every bar: the knob's middle is the middle of what it does.
+ */
+export const PUSH_CURVE = Math.log(0.36 / 4) / Math.log(0.5);
+const pushRate = (knob: number) => 4 * Math.pow(knob, PUSH_CURVE);
+
+/** an arm's push at φ when it turns at om, as an angular acceleration: the formula's speed against its own */
+function pushOn(a: Arm, phi: number, om: number): number {
+  const wn = TAU * a.n;
+  return pushRate(a.push) * wn * (a.swing * wn * Math.cos(wn * phi + a.phase) - om);
+}
 /** what a joint weighs to the arms above it */
 const massOf = (a: Arm) => Math.min(1, Math.max(0, a.mass));
 /** steps to a bar (RK4) */
@@ -126,8 +139,18 @@ export class Sim {
     return true;
   }
 
+  /** every arm's push at φ, per bar², from what was kept (how fast it turned is read off the states either side); false before it */
+  pushAt(arms: Arm[], phi: number, out: number[]): boolean {
+    const n = arms.length;
+    const d = 1 / RATE;
+    if (!this.sample(phi - d, n, this.was) || !this.sample(phi + d, n, out)) return false;
+    for (let j = 0; j < n; j++) out[j] = pushOn(arms[j], phi, (out[j] - this.was[j]) / (2 * d));
+    return true;
+  }
+  private was: number[] = [];
+
   /** every arm's angular acceleration, per bar², into out */
-  private accel(arms: Arm[], push: number, phi: number, th: Float64Array, om: Float64Array, out: Float64Array) {
+  private accel(arms: Arm[], phi: number, th: Float64Array, om: Float64Array, out: Float64Array) {
     const n = arms.length;
     const { A, b, mu, tq } = this;
     // what hangs under each joint, as the arms above it feel it (mu[i]: joint i and all below),
@@ -136,9 +159,8 @@ export class Sim {
     tq[n] = 0;
     for (let i = n - 1; i >= 0; i--) {
       const a = arms[i];
-      const wn = TAU * a.n;
       mu[i] = mu[i + 1] + massOf(a);
-      tq[i] = push * wn * (a.swing * wn * Math.cos(wn * phi + a.phase) - om[i]);
+      tq[i] = pushOn(a, phi, om[i]);
     }
     // A θ" = b, every row over what its own arm carries (its joint at 1, the rest under it as
     // they weigh to it) and over its length
@@ -186,29 +208,29 @@ export class Sim {
     }
   }
 
-  private step(arms: Arm[], push: number) {
+  private step(arms: Arm[]) {
     const n = arms.length;
     const h = 1 / STEPS;
     const phi = this.i / STEPS;
     const { th, om, ts } = this;
     const [k1, k2, k3, k4] = this.k;
     const [o2, o3, o4] = this.os;
-    this.accel(arms, push, phi, th, om, k1);
+    this.accel(arms, phi, th, om, k1);
     for (let j = 0; j < n; j++) {
       ts[j] = th[j] + (h / 2) * om[j];
       o2[j] = om[j] + (h / 2) * k1[j];
     }
-    this.accel(arms, push, phi + h / 2, ts, o2, k2);
+    this.accel(arms, phi + h / 2, ts, o2, k2);
     for (let j = 0; j < n; j++) {
       ts[j] = th[j] + (h / 2) * o2[j];
       o3[j] = om[j] + (h / 2) * k2[j];
     }
-    this.accel(arms, push, phi + h / 2, ts, o3, k3);
+    this.accel(arms, phi + h / 2, ts, o3, k3);
     for (let j = 0; j < n; j++) {
       ts[j] = th[j] + h * o3[j];
       o4[j] = om[j] + h * k3[j];
     }
-    this.accel(arms, push, phi + h, ts, o4, k4);
+    this.accel(arms, phi + h, ts, o4, k4);
     for (let j = 0; j < n; j++) {
       th[j] += (h / 6) * (om[j] + 2 * o2[j] + 2 * o3[j] + o4[j]);
       om[j] += (h / 6) * (k1[j] + 2 * k2[j] + 2 * k3[j] + k4[j]);
@@ -226,7 +248,7 @@ export class Sim {
   }
 
   /** run on to φ = to, and say where every joint crossed on the way (those at or after `since`) */
-  advance(arms: Arm[], push: number, to: number, since: number, out: Hit[]) {
+  advance(arms: Arm[], to: number, since: number, out: Hit[]) {
     const n = arms.length;
     // a joint whose line was changed starts from where it is against the new one: no hit for the change
     const modes = arms.map((a) => a.mode).join();
@@ -236,7 +258,7 @@ export class Sim {
     }
     const sig = new Float64Array(MAX);
     while (this.i < to * STEPS) {
-      this.step(arms, push);
+      this.step(arms);
       // should it ever come apart all the same: back on the formula, where it is
       let whole = 0;
       for (let j = 0; j < n; j++) whole += this.th[j] + this.om[j];

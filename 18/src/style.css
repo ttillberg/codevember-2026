@@ -45,7 +45,7 @@ canvas { display: block; width: 100vw; height: 100vh; }
   letter-spacing: 0.12em; text-transform: uppercase;
   user-select: none; -webkit-user-select: none; touch-action: manipulation;
 }
-.panel .cols, .panel .arm { width: 510px; max-width: 100%; display: grid; grid-template-columns: 22px 30px 22px 28px 1fr 1fr 1fr 1fr 1fr 22px; gap: 6px; align-items: center; }
+.panel .cols, .panel .arm { width: 580px; max-width: 100%; display: grid; grid-template-columns: 22px 30px 22px 28px 1fr 1fr 1fr 1fr 1fr 1fr 22px; gap: 6px; align-items: center; }
 .panel .cols { opacity: 0.5; }
 /* a heading never widens its column: the rows under it would stick out of the screen */
 .panel .cols span { min-width: 0; overflow: hidden; white-space: nowrap; }
@@ -55,9 +55,9 @@ canvas { display: block; width: 100vw; height: 100vh; }
 .panel .arm button[aria-pressed="false"] { color: var(--arm); }
 .panel .arm input[type="range"]::-webkit-slider-thumb { background: var(--arm); }
 .panel .arm input[type="range"]::-moz-range-thumb { background: var(--arm); }
-/* the weights count for nothing while the formula runs: dim, still there to set */
-.panel.weightless .cols span:last-child { opacity: 0.4; }
-.panel.weightless input[data-p="mass"] { opacity: 0.3; }
+/* weight and push count for nothing while the formula runs: dim, still there to set */
+.panel.weightless .cols span:nth-last-child(-n + 2) { opacity: 0.4; }
+.panel.weightless input[data-p="mass"], .panel.weightless input[data-p="push"] { opacity: 0.3; }
 .panel button[aria-pressed="true"] { background: #f4f4f2; border-color: #f4f4f2; color: #0b0b0d; }
 .panel .cols span:first-child { grid-column: 1 / 4; }
 .panel output { text-align: center; font-variant-numeric: tabular-nums; }
@@ -105,7 +105,7 @@ canvas { display: block; width: 100vw; height: 100vh; }
 /* the tip: what the control under the pointer does, in a box of its own over the workbench */
 .tip {
   position: fixed; z-index: 3; pointer-events: none;
-  left: max(24px, env(safe-area-inset-left)); width: 510px; box-sizing: border-box;
+  left: max(24px, env(safe-area-inset-left)); width: 580px; box-sizing: border-box;
   padding: 10px 12px 11px; border: 1px solid rgba(244, 244, 242, 0.35); border-radius: 10px;
   background: rgba(11, 11, 13, 0.6); -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
   color: #f4f4f2; font: 400 13px/1.4 Inter, "Helvetica Neue", Helvetica, Arial, sans-serif;
