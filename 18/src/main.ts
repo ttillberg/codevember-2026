@@ -5,6 +5,8 @@ import { angle, crossings, place, signal, type Arm, type Hit, type Mode } from '
 // ?clean: no page furniture, the scene alone (screengrabs, clips)
 const query = new URLSearchParams(location.search);
 const clean = query.has('clean');
+/** `?bare`, with `?clean`: the chain alone, in action: no centre line and no rings where it hits (the index's picture) */
+const bare = query.has('bare');
 if (clean) document.body.classList.add('clean');
 
 const canvas = document.querySelector<HTMLCanvasElement>('#c')!;
@@ -1458,8 +1460,10 @@ function frame() {
   // The stretch of it under the root is what a joint on the sum has to cross, a little brighter.
   // Where a joint is on it when it hits is still its note (low at the top), the nearest one of
   // the scale: that is heard, not drawn.
-  line(px, 0, px, h, 0.1);
-  if (arms.some((a) => a.mode === 'sum')) line(px, py, px, Y(total) + 14, 0.25);
+  if (!bare) {
+    line(px, 0, px, h, 0.1);
+    if (arms.some((a) => a.mode === 'sum')) line(px, py, px, Y(total) + 14, 0.25);
+  }
   // Only on the drum machine by hit, where a height is a sound and not a pitch, each one is
   // named beside the line (they go round, a sound a note of the scale, down the ruler), so a
   // joint can be put on the one that is wanted.
@@ -1542,6 +1546,7 @@ function frame() {
       continue;
     }
     lit[f.k] = Math.max(lit[f.k], 1 - age / 0.14);
+    if (bare) continue;
     pose(f.phase, then);
     ctx.strokeStyle = tint(f.k, (1 - age / 0.4) ** 2 * (0.25 + 0.75 * f.vel) * (0.15 + 0.85 * heard(f.k)) * f.kept);
     ctx.lineWidth = 1;
