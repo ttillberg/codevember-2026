@@ -20,7 +20,7 @@
 // phase that stands still. And it runs ahead of what is seen, like the formula's crossings:
 // the hits are known before they are heard.
 
-import { topSpeed, type Arm, type Hit } from './rhythm';
+import { reach, topSpeed, type Arm, type Hit } from './rhythm';
 
 const TAU = Math.PI * 2;
 const MAX = 8;
@@ -275,7 +275,7 @@ export class Sim {
         if (up || (s0 > 0 && s1 <= 0)) {
           const phase = (this.i - 1 + s0 / (s0 - s1)) / STEPS;
           const top = topSpeed(arms, k);
-          if (phase >= since && top > 0) out.push({ k, phase, dir: up ? 1 : -1, vel: Math.min(1, (Math.abs(s1 - s0) * STEPS) / top) });
+          if (phase >= since && top > 0) out.push({ k, phase, dir: up ? 1 : -1, vel: Math.min(1, (Math.abs(s1 - s0) * STEPS) / top), pos: reach(arms, k, this.th) });
         }
         this.prev[k] = s1;
       }

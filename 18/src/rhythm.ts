@@ -21,6 +21,10 @@ export interface Arm {
   mode: Mode;
   /** 0..1, how hard its swing is pushed in time, when the chain has weight: 0 lets it go */
   push: number;
+  /** which colour and which voice are its own: they go with it when it is moved along the chain */
+  hue: number;
+  /** which of a kit's sounds is its own, when sounds go by arm (a drum of the machine's, a pair of the bones) */
+  sound: number;
 }
 
 /**
@@ -39,6 +43,8 @@ export interface Hit {
   dir: 1 | -1;
   /** 0..1, how fast it crossed, against the fastest that joint can go */
   vel: number;
+  /** how far under the root the joint was when it crossed, in arm lengths (over it is less than nothing): with where the root is, its height on the ruler, its note */
+  pos: number;
 }
 
 const TAU = Math.PI * 2;
@@ -57,6 +63,13 @@ export function place(arms: Arm[], angles: ArrayLike<number>, out: number[] = []
   }
   out.length = arms.length * 2;
   return out;
+}
+
+/** how far under the root joint k is at these angles, in arm lengths: its height, not how far away it is */
+export function reach(arms: Arm[], k: number, angles: ArrayLike<number>): number {
+  let y = 0;
+  for (let j = 0; j <= k; j++) y += arms[j].len * Math.cos(angles[j]);
+  return y;
 }
 
 /** what joint k crosses zero with */
@@ -104,7 +117,7 @@ export function crossings(arms: Arm[], from: number, to: number, out: Hit[] = []
         }
         const p = (a + b) / 2;
         const v = Math.abs(signal(arms, k, p + h) - signal(arms, k, p - h)) / (2 * h);
-        out.push({ k, phase: p, dir: up ? 1 : -1, vel: Math.min(1, v / top) });
+        out.push({ k, phase: p, dir: up ? 1 : -1, vel: Math.min(1, v / top), pos: reach(arms, k, arms.map((a) => angle(a, p))) });
       }
       p0 = p1;
       s0 = s1;

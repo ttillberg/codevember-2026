@@ -2,9 +2,11 @@
 
 2026-11-18
 
-A pendulum as a drum machine, drawn in lines, a colour a link: magenta, pink, neon green, and
-the same three again down the chain, deeper, paler, yellower. An arm and the joint at its end,
-its path, its rings, its row in the bar and its row in the workbench are all that colour. Take it down to one arm swinging once a bar: a
+A pendulum as a drum machine, drawn in lines, black and white. (Or a colour a link, *Colour*
+in the drawer's View, `?colour` in a link: magenta, pink, neon green, and the same three again
+down the chain, deeper, paler, yellower; an arm and the joint at its end, its path, its rings
+and its row in the workbench are then all that colour. It was colour for a while, to tell the
+rows apart; pointing at a link does that now.) Take it down to one arm swinging once a bar: a
 tick where it crosses the centre line going right, a tock going left. A binary rhythm. Then more
 arms, each hung from the end of the one before and swinging its own number of times a bar, and
 every joint is a voice that sounds where *it* crosses the centre line.
@@ -23,12 +25,20 @@ pnpm -C 18 dev
 
 ## How it plays
 
-- **The workbench**, along the bottom: a row a link on the left, and beside each row, drawn to
-  the right edge, **its curve**: what its joint crosses zero with, over the bar. In sum that
-  is every arm above it added up, the partial sums of the series, each row one term more; in
-  each it is the arm's own swing, row by row as its Σ says. A dot is a hit: where the curve crosses its line. With
-  physics it is the bar behind as it went, wrapping at the playhead. Under the rows, one line
-  of everything else. (On a phone there is no room beside the rows: no curves.) In a row: `− ×n +` is how many swings it makes in a bar
+- **The drawer**, right, behind the `≡` top right: everything that is not a link's own, a
+  section each. *Transport*: play and pause, restart, tempo. *Motion*: formula or physics.
+  *Notes*: the scale, sound on or off. *Mix*: reverb, room, delay, harmonics. *View*: the
+  timeline. *Setups*: save, save as, open. Open to start with where there is room. On a phone
+  it lies over the scene, shut until asked for. Remembered.
+- **The timeline** (`T`, or its button in the drawer): beside each link's row, drawn to the
+  drawer's edge, its curve: what its joint crosses zero with, over the bar. In sum that is
+  every arm above it added up, the partial sums of the series, each row one term more; in
+  each it is the arm's own swing, row by row as its Σ says. A dot is a hit: where the curve
+  crosses its line. With physics it is the bar behind as it went, wrapping at the playhead.
+  Where there is no room beside the rows (a phone), one line under the chain instead. Put
+  away to start with: the chain and its notes are the thing; `?timeline` in a link brings it.
+- **The workbench**, along the bottom, in the middle under the chain: a row a link, and
+  `+ Arm` under them. In a row: `− ×n +` is how many swings it makes in a bar
   (the harmonic), then how far it swings (0 to 180°), how long it is, and its phase: where in
   its swing it is when the bar starts (0° it crosses going right, 90° it is out at the right),
   how loud its joint's voice is (all the way down is muted, the arm still swings and still
@@ -77,11 +87,13 @@ pnpm -C 18 dev
 - **Tips** (the `?` top right, or the `?` key): what the control under the pointer does, in a
   box of its own over the workbench (under the title on a phone, where it shows for the
   control you press). On to start with, remembered.
-- **The bar**, one line right under the chain, only where the rows have no curves beside
-  them (a phone, `?clean`): a tick a hit in its link's colour, up for tick and down for tock,
-  as tall as it is hard; hits that fall together stand on each other. (It was a row a joint
-  along the bottom, then this line everywhere; beside the curves it said the same thing
-  twice.)
+- (The workbench was a block bottom right with everything in it, then a strip along the
+  bottom with one long line of buttons and sliders under the rows. A row a link and a drawer
+  for the rest is two things that each do one.)
+- **Reorder**: drag a row by its grip, the dots at its left, up or down, and its link moves
+  along the chain: where an arm hangs changes everything it adds up to. Its colour, its voice
+  and its settings go with it (so the colours are no longer in order down the chain, and the
+  low voice can be the last joint). With physics the chain starts again on the formula.
 - **Which link is which**: rings round the root. The first arm's length out from where the
   chain hangs is the first link, the next arm's length beyond that the second, and so on:
   where the chain is has no say, so a link can be picked while it all moves, and the same
@@ -94,12 +106,11 @@ pnpm -C 18 dev
   it has just been and gone by the time it is a bar old; the last joint's is the brightest.
   (They were whole closed curves at one brightness first: a picture, but not of anything
   moving.)
-- The chain takes the middle of what is over the workbench. (The workbench was a block
-  bottom right first, the chain beside it; along the bottom, the rows have their curves and
-  the chain has the width.)
+- The chain hangs in the middle of the screen, the rows in the middle under it, the drawer to
+  one side.
 - `?arms=1-34-1,2-52-0.62-90-50-30` is a pattern in a link (swings, swing in degrees, length,
   and if any the phase in degrees, the volume and the weight in percent; `&bpm=`,
-  `&physics=1`, and `&mode=each`, `&push=0.5` for every arm that does not say; a seventh value
+  `&physics=1`, `&root=0.4` (where the root hangs, in arm lengths down the ruler), and `&mode=each`, `&push=0.5` for every arm that does not say; a seventh value
   in an arm, 1 or 0, is each or sum for that arm alone, an eighth its push in percent). Without it, the last pattern is remembered; a
   pattern opened from a link is a visit and never writes over it (a preset or a name keeps it).
   `?clean` hides the furniture.
@@ -146,9 +157,94 @@ pnpm -C 18 dev
   push, is a thing you can picture.
 - It was black and white, lines only. The colour is not decoration: with five arms, which row
   is which joint was a count from the top every time.
-- The voices are plain Web Audio nodes: a sine with a falling pitch, one partial over it, a
-  click of noise. Low for the first joint and higher down the chain, the tock a fourth under
-  the tick, harder hits brighter. A short room, a compressor.
+- **The note is where the joint is when it hits**, as on day 14's string. The notes are laid
+  down a ruler that stands still on the screen, down the middle: low at the top (A1), four
+  octaves to the bottom (A5), a mark at every note of the scale and a longer one at every A.
+  The root hangs somewhere on it, and a joint plays the note at its own height on the screen
+  when it hits, the nearest one of the scale, so whatever the chain does it is in tune. (It
+  was how far the joint was from the root, whichever way: the same thing where it crosses
+  the centre line under the root, but a joint on *each*, out to one side when it hits, or one
+  thrown up over the root, played a note that was not where it was.) The bass is
+  at the top: the first joint, the one that keeps time, is the low one. A first joint always
+  crosses at the same place and plays one note; a joint far down the chain crosses at a
+  different height each time, and plays a tune: on Tension the default's last joint goes C4
+  F4 F4 B4 F4 F4 C4 E4 round the bar, over a first joint on E3.
+- **Played by hand, on the chain itself.** *The root* is a handle: drag it up the ruler and
+  the whole key goes down, down and it goes up; nothing else changes. *A link's ring*,
+  dragged: down pulls its arm longer and up shorter (as far as the pointer goes), so its
+  joint and all under it move down the ruler to higher notes; left and right is its swing,
+  narrower and wider (three pixels a degree). With cmd held (ctrl where there is none), up
+  and down is how loud the link is instead; and cmd with the up and down keys does the same
+  for the link that is lit. The lit ring shows it: fuller the louder, never solid, all but
+  clear when the link is muted. Whichever way a drag sets off, it keeps to. The
+  row's sliders follow. An arm length is always the same stretch of the ruler (two of them
+  are the whole of it), so a note stays where it is on the screen; only a chain too long for
+  the ruler makes it all smaller.
+- (First the four octaves were laid along the chain itself, however long it was: a longer arm
+  moved every note, its own least of all. And low was at the far end, as a long string is
+  low; but then the joint that keeps time was the squeak and the busy one the rumble.)
+- **By hit or by arm** (Notes, in the drawer, or `B`): what says which note, or which drum, a
+  hit is. *By hit* is where the joint is when it hits: a joint far down the chain plays a
+  different one each time, and the chain writes its own tune, or its own fill. *By arm* gives
+  every arm one of its own, whatever it is doing, and then it has to be said which, in the
+  arm's row, under *Sound*. On the drum machine and the bones that is a button: press it for
+  the next of the eight sounds, shift for the one before; a new chain starts as a kit, bass
+  drum, snare, closed hat, clap. On the tine and the square it is the note where the arm rests
+  when the chain hangs straight, marked on the ruler: pull its ring longer or shorter. By arm
+  is a drum kit played by a pendulum; by hit is the pendulum playing what it finds. (On a
+  phone there is no room in a row for the sound, and an arm keeps the one it has.)
+- **The scales** are day 14's, all on A: Tension (1 2 b3 5 b6, to start with), minor
+  pentatonic, kumoi, major pentatonic, aeolian, hijaz. The scale button in the workbench (or
+  `N`) takes the next; `&scale=kumoi` in a link.
+- **Four instruments**, picked right under the chain (or `I` for the next; `&instrument=bones`
+  in a link). What differs is the thing struck.
+  *Tine*: a kalimba's. A sine that rings on (a second for the lowest, a fifth of one for the
+  highest), one pure overtone over it that dies sooner, a click. *Bones*: a drum, two
+  bones knocked together, which is to say a soft rimshot, low: most of it a thud around a
+  hundred hertz, a trace of tone over that (a few hundredths of a second, with what rings
+  with it as on a rim, 1.59 and 2.3 times it, no notes), and a little dull wood in the strike. There is no tune in it: there are eight pairs of
+  bones, eight sizes, taken like the drum machine's sounds, a pair a note down the ruler or a
+  pair an arm; tick a little higher than tock, and what is left is the rhythm and how hard. (It was
+  a note first, a triangle that died at once, a xylophone of bone; then a clack tuned to the
+  note; then a sharp dry click, high and gone in 30 thousandths of a second. What was wanted
+  was the two in the hand.) *Square*: electronic, as on day 14. Two square waves a few cents
+  apart through a filter the hit opens and that closes again, a sine an octave under: harder
+  is not louder so much as more open. *TR-808*: the drum
+  machine, and different in kind: not one sound tuned to the note but a sound a note. Going
+  down the ruler every note of the scale is the next of eight, round and round: bass drum,
+  rimshot, snare, closed hat, clap, low tom, open hat, cowbell (BD RS SD CH CP LT OH CB), and
+  the marks down the ruler say which, so a joint can be put on the one that is wanted by
+  dragging the root or pulling an arm longer. Each is made the way the machine made it, near
+  enough: a sine that falls for the drums, six squares that agree on nothing for the metal,
+  noise through a band for the snare and the clap. On Tension the default plays a bass drum
+  on its first joint and a snare on its second, and its last goes CP OH OH BD OH OH CP LT
+  round the bar. Harmonics in the mix is, for each, how much there is over the note: the
+  tine's overtone, the bones' knock, how far the square's filter opens, how much hiss and
+  metal the machine has.
+- The voices are plain Web Audio nodes. The pitch does not move, but for the tine's very
+  lowest, which get a thump; the lowest notes of all have an octave over them for small
+  speakers. A link's own, with its colour, is a small difference in each: which overtone
+  rings, where the knock sits, how sharp the filter is. Tick and tock are the same note,
+  heard on either side; harder hits are brighter. A short room, a compressor.
+- Checked by ear's stand-in: single notes struck with the chain paused, and the loudest
+  frequency coming out read off an analyser: 109.9 Hz for A2 (110), 219.7 for A3, 329.6 for
+  E4, 439.5 for A4, 880.4 for A5. And every note of the default's bar is in the scale, on all
+  six.
+  Tine and square, A2 to A5 struck on each: the loudest frequency is the note asked for
+  every time (within the 3 Hz the reading is good to), and they are within 3 dB of each
+  other. The bones: a link's knock is the same wherever its joint is.
+  The mix the same way, one A4 struck: its octave is at -98 dB with harmonics at 0, -54 in the
+  middle, -50 at the top; 1.1 s after the strike there is nothing dry, -57 dB with delay at
+  50 and -50 at 100, -46 dB with reverb at 50 and -37 at 100. Everything at the top and six
+  strikes in a row peaks at half of full scale.
+  The room: a burst of noise into it, and the level after: at size 0 it is gone in a second
+  and what is left rings at a few frequencies (1.2, 1.3, 1.4, 2.7, 2.9 kHz, 18 dB over the
+  rest); at size 100 it is still there after two, and nothing rings. The mix, read off the two
+  branches: at 0 the note alone, at 50 the note 3 dB down, at 75 it 9 dB down, at 100 the
+  room alone.
+- First each link had a fixed note, the tock a fourth under the tick, a falling pitch and a
+  partial that was no note at all (2.76 times it, a woodblock's): a drum kit. Then the note
+  by position on one pentatonic, with the same drum voice: notes on paper, thuds to the ear.
 - `__pendulum.sound()?.stats` in the dev console: how many hits went out, how far ahead.
   `__pendulum.energy()`: what should stay put with push at 0.
 

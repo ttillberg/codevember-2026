@@ -1,4 +1,4 @@
-import { Sound } from './audio';
+import { INSTRUMENTS, KIT, RULER, SCALES, SPAN, Sound, noteAt, stepOf } from './audio';
 import { PUSH_CURVE, Sim } from './physics';
 import { angle, crossings, place, signal, type Arm, type Hit, type Mode } from './rhythm';
 
@@ -10,6 +10,8 @@ if (clean) document.body.classList.add('clean');
 const canvas = document.querySelector<HTMLCanvasElement>('#c')!;
 const ctx = canvas.getContext('2d')!;
 const panel = document.querySelector<HTMLElement>('#panel')!;
+const drawer = document.querySelector<HTMLElement>('#drawer')!;
+const drawerToggle = document.querySelector<HTMLButtonElement>('#drawerToggle')!;
 const hint = document.querySelector<HTMLElement>('#hint')!;
 const tip = document.querySelector<HTMLElement>('#tip')!;
 const tipsButton = document.querySelector<HTMLButtonElement>('#tips')!;
@@ -43,6 +45,24 @@ interface State {
   bpm: number;
   /** off the formula; on, the arms are real swings with the weights they have (physics.ts) */
   physics: boolean;
+  /** which scale the notes are on, one of audio.ts's */
+  scale: string;
+  /** what is struck, one of audio.ts's instruments */
+  instrument: string;
+  /**
+   * What says which note (or which drum) a hit is. `hit`: where the joint is when it hits, so a
+   * joint far down the chain plays a different one each time. `arm`: where its arm ends when
+   * the chain hangs straight, so every arm has one of its own, whatever it is doing.
+   */
+  by: 'hit' | 'arm';
+  /** where the root hangs on the ruler of notes, in arm lengths from its top: higher is a lower key */
+  root: number;
+  /** the mix, each 0..1: the room, the echo, and the overtone over every note (the middle is as designed) */
+  reverb: number;
+  /** the room's size, 0..1: small rings like metal, big is a hall */
+  room: number;
+  delay: number;
+  harm: number;
   /** 2 since the push knob has its lock point in the middle: older setups have theirs moved to where it does the same */
   v?: number;
 }
@@ -52,13 +72,21 @@ const rad = (deg: number) => (deg * Math.PI) / 180;
 /** what the page opens with, and what 0 brings back: four short arms, two of them half a swing late */
 const fresh = (): State => ({
   arms: [
-    { n: 2, swing: rad(35), len: 0.38, phase: rad(175), vol: 0.54, mass: 1, mode: 'sum', push: 0.5 },
-    { n: 2, swing: rad(36), len: 0.26, phase: 0, vol: 0.15, mass: 0.5, mode: 'sum', push: 0.5 },
-    { n: 4, swing: 0.9, len: 0.37, phase: 0, vol: 1, mass: 0.25, mode: 'sum', push: 0.5 },
-    { n: 5, swing: rad(125), len: 0.17, phase: rad(176), vol: 1, mass: 0.12, mode: 'sum', push: 0.5 },
+    { n: 2, swing: rad(35), len: 0.38, phase: rad(175), vol: 0.54, mass: 1, mode: 'sum', push: 0.5, hue: 0, sound: 0 },
+    { n: 2, swing: rad(36), len: 0.26, phase: 0, vol: 0.15, mass: 0.5, mode: 'sum', push: 0.5, hue: 1, sound: 2 },
+    { n: 4, swing: 0.9, len: 0.37, phase: 0, vol: 1, mass: 0.25, mode: 'sum', push: 0.5, hue: 2, sound: 3 },
+    { n: 5, swing: rad(125), len: 0.17, phase: rad(176), vol: 1, mass: 0.12, mode: 'sum', push: 0.5, hue: 3, sound: 4 },
   ],
   bpm: 120,
   physics: false,
+  scale: 'tension',
+  instrument: 'tine',
+  by: 'hit',
+  root: 0.4,
+  reverb: 0.25,
+  room: 0.7,
+  delay: 0.2,
+  harm: 0.5,
   v: 2,
 });
 
@@ -73,15 +101,33 @@ const massFor = (mass: number | undefined, k: number, weight = 0) => (Number.isF
 /** a push set on the old knob (4·p², the lock point at 30), as the place on the new one that pushes as hard */
 const pushFrom = (old: number) => Math.pow(old, 2 / PUSH_CURVE);
 
+/** the root's place on the ruler, kept on it */
+const rootIn = (v: number | undefined) => (Number.isFinite(v) ? Math.min(RULER - 0.2, Math.max(0, v!)) : 0.4);
+
+/** the kit sound a link starts with, by its colour: bass drum, snare, closed hat, clap, open hat, tom, rim, cowbell */
+const FIRST_SOUND = [0, 2, 3, 4, 6, 5, 1, 7];
+const soundIn = (v: number | undefined, hue: number) => (Number.isInteger(v) && v! >= 0 && v! < KIT.length ? v! : FIRST_SOUND[hue % FIRST_SOUND.length]);
+
 /** a setup read back from storage, made safe; null if it is not one */
 function sane(given: State | null | undefined): State | null {
   // `weight`, and one `mode` and one `push` for all: how setups were kept before each arm had its own
   const s = given as (State & { weight?: number; mode?: Mode; push?: number }) | null | undefined;
   if (!s || !Array.isArray(s.arms) || !s.arms.length || !s.arms.every((a) => a && [a.n, a.swing, a.len, a.phase].every(Number.isFinite))) return null;
+  // every arm its own colour: as kept if they are all different, else down the chain
+  const kept = s.arms.slice(0, MAX_ARMS).map((a) => a.hue);
+  const hues = kept.every((h, k) => Number.isInteger(h) && h >= 0 && h < PALETTE.length && kept.indexOf(h) === k) ? kept : kept.map((_, k) => k);
   return {
-    arms: s.arms.slice(0, MAX_ARMS).map((a, k) => ({ n: Math.min(MAX_N, Math.max(1, Math.round(a.n))), swing: a.swing, len: a.len, phase: a.phase, vol: unit01(a.vol, 1), mass: massFor(a.mass, k, s.weight), mode: (a.mode ?? s.mode) === 'each' ? 'each' : 'sum', push: s.v === 2 ? unit01(a.push, 0.5) : pushFrom(unit01(a.push ?? s.push ?? 0.3, 0.3)) })),
+    arms: s.arms.slice(0, MAX_ARMS).map((a, k) => ({ n: Math.min(MAX_N, Math.max(1, Math.round(a.n))), swing: a.swing, len: a.len, phase: a.phase, vol: unit01(a.vol, 1), mass: massFor(a.mass, k, s.weight), mode: (a.mode ?? s.mode) === 'each' ? 'each' : 'sum', push: s.v === 2 ? unit01(a.push, 0.5) : pushFrom(unit01(a.push ?? s.push ?? 0.3, 0.3)), hue: hues[k], sound: soundIn(a.sound, hues[k]) })),
     bpm: s.bpm >= 40 && s.bpm <= 220 ? s.bpm : 120,
     physics: typeof s.physics === 'boolean' ? s.physics : s.weight! > 0,
+    scale: SCALES.some((c) => c.id === s.scale) ? s.scale : 'tension',
+    instrument: INSTRUMENTS.some((c) => c.id === s.instrument) ? s.instrument : 'tine',
+    by: s.by === 'arm' ? 'arm' : 'hit',
+    root: rootIn(s.root),
+    reverb: unit01(s.reverb, 0.25),
+    room: unit01(s.room, 0.7),
+    delay: unit01(s.delay, 0.2),
+    harm: unit01(s.harm, 0.5),
     v: 2,
   };
 }
@@ -89,7 +135,7 @@ function sane(given: State | null | undefined): State | null {
 /**
  * ?arms=1-34-1,2-52-0.62-90-50-30-1-40 (swings, swing in degrees, length, then if any the phase
  * in degrees, the volume and the weight in percent, 1 for each or 0 for sum, and the push in
- * percent), &bpm=, &physics=1, and for every arm that does not say: &mode=each, &push=0.5. A
+ * percent), &bpm=, &physics=1, &scale=kumoi, &instrument=bones, &by=arm, &root=0.4, &reverb= &room= &delay= &harmonics= (0 to 1), and for every arm that does not say: &mode=each, &push=0.5. A
  * pattern in a link, for clips too. &weight=0.3 is the old way to say physics, each joint that
  * many times the one above.
  */
@@ -97,16 +143,17 @@ function fromQuery(): State | null {
   const q = query.get('arms');
   if (!q) return null;
   const weight = Number(query.get('weight')) || 0;
+  const fx = (name: string, or: number) => (query.has(name) ? unit01(Number(query.get(name)), or) : or);
   const all = query.get('mode') === 'each' ? 1 : 0;
   const pushAll = query.has('push') ? Number(query.get('push')) * 100 : 50;
   const arms = q
     .split(',')
     .map((a) => a.split('-').map(Number))
     .filter((a) => a.length >= 3 && a.every(Number.isFinite))
-    .map(([n, deg, len, phase = 0, vol = 100, mass, each = all, push = pushAll], k): Arm => ({ n: Math.min(MAX_N, Math.max(1, Math.round(n))), swing: (Math.min(180, Math.max(0, deg)) * Math.PI) / 180, len: Math.min(1.5, Math.max(0.1, len)), phase: (((phase % 360) + 360) % 360) * (Math.PI / 180), vol: unit01(vol / 100, 1), mass: massFor(mass === undefined ? undefined : mass / 100, k, weight), mode: each ? 'each' : 'sum', push: unit01(push / 100, 0.5) }));
+    .map(([n, deg, len, phase = 0, vol = 100, mass, each = all, push = pushAll], k): Arm => ({ n: Math.min(MAX_N, Math.max(1, Math.round(n))), swing: (Math.min(180, Math.max(0, deg)) * Math.PI) / 180, len: Math.min(1.5, Math.max(0.1, len)), phase: (((phase % 360) + 360) % 360) * (Math.PI / 180), vol: unit01(vol / 100, 1), mass: massFor(mass === undefined ? undefined : mass / 100, k, weight), mode: each ? 'each' : 'sum', push: unit01(push / 100, 0.5), hue: k, sound: FIRST_SOUND[k % FIRST_SOUND.length] }));
   if (!arms.length) return null;
   const bpm = Number(query.get('bpm'));
-  return { arms: arms.slice(0, MAX_ARMS), bpm: bpm >= 40 && bpm <= 220 ? bpm : 120, physics: query.has('physics') ? query.get('physics') !== '0' : weight > 0, v: 2 };
+  return { arms: arms.slice(0, MAX_ARMS), bpm: bpm >= 40 && bpm <= 220 ? bpm : 120, physics: query.has('physics') ? query.get('physics') !== '0' : weight > 0, scale: SCALES.find((c) => c.id === query.get('scale'))?.id ?? 'tension', instrument: INSTRUMENTS.find((c) => c.id === query.get('instrument'))?.id ?? 'tine', by: query.get('by') === 'arm' ? 'arm' : 'hit', root: rootIn(query.has('root') ? Number(query.get('root')) : undefined), reverb: fx('reverb', 0.25), room: fx('room', 0.7), delay: fx('delay', 0.2), harm: fx('harmonics', 0.5), v: 2 };
 }
 
 function load(): State {
@@ -166,6 +213,7 @@ function changed() {
       orbits[k][2 * i + 1] = tmp[2 * k + 1];
     }
   }
+  sound?.set(state);
   if (linked) return;
   try {
     localStorage.setItem(KEY, JSON.stringify(state));
@@ -183,6 +231,7 @@ function unlock() {
     try {
       sound = new Sound();
       sound.muted = muted;
+      sound.set(state);
     } catch {
       return;
     }
@@ -205,6 +254,26 @@ const flashes: Flash[] = [];
 let played: Hit[] = [];
 let scanned = NaN;
 const sim = new Sim();
+const scaleNotes = () => (SCALES.find((c) => c.id === state.scale) ?? SCALES[0]).notes;
+/** how far down the chain arm k ends when it all hangs straight: its own place on the ruler */
+function rest(k: number): number {
+  let y = 0;
+  for (let j = 0; j <= k && j < state.arms.length; j++) y += state.arms[j].len;
+  return y;
+}
+/** the instruments that are a set of sounds, not one sound at many pitches */
+const isKit = () => state.instrument === '808' || state.instrument === 'bones';
+const NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+/** what arm k sounds when sounds go by arm: its drum, its pair of bones, or the note where it rests */
+function soundName(k: number): string {
+  const a = state.arms[k];
+  if (state.instrument === '808') return KIT[a.sound % KIT.length];
+  if (state.instrument === 'bones') return `B${(a.sound % KIT.length) + 1}`;
+  const midi = noteAt(scaleNotes(), (state.root + rest(k)) / RULER);
+  return NOTE_NAMES[midi % 12] + (Math.floor(midi / 12) - 1);
+}
+/** how far under the root a hit counts as being, for its note: where it was, or where its arm rests */
+const depthOf = (h: Hit) => (state.by === 'arm' ? rest(h.k) : h.pos);
 
 /** where the joints are at φ: the weighted chain's where it has been run, the formula's otherwise */
 const angles: number[] = [];
@@ -262,7 +331,11 @@ function schedule() {
     played.push(h);
     const at = t0 + (h.phase - phi0) * barSeconds();
     flashes.push({ ...h, t: at });
-    sound?.hit(h.k, h.dir, h.vel, at, state.arms[h.k]?.vol);
+    // its own voice, wherever it is in the chain, on the note where it is
+    const midi = noteAt(scaleNotes(), (state.root + depthOf(h)) / RULER);
+    // a kit's sound: the arm's own when sounds go by arm, else the one at the note it hit
+    const step = state.by === 'arm' && isKit() ? (state.arms[h.k]?.sound ?? 0) : stepOf(scaleNotes(), midi);
+    sound?.hit(state.arms[h.k]?.hue ?? h.k, h.dir, h.vel, at, state.arms[h.k]?.vol, midi, step);
   }
   scanned = end;
 }
@@ -275,9 +348,75 @@ let panelRect = { left: 0, top: 0 };
 let rowBoxes: { y: number; h: number }[] = [];
 let rowsRight = 0;
 
+// --- the timeline (each link's curve beside its row; one line under the chain where there is no room for those): put away to start with, there when asked for ---
+
+const TIMELINE_KEY = 'codevember-2026-18-timeline';
+let timeline = query.has('timeline');
+try {
+  if (!timeline) timeline = localStorage.getItem(TIMELINE_KEY) === 'on';
+} catch {
+  // no storage: put away
+}
+function setTimeline(on: boolean) {
+  timeline = on;
+  try {
+    localStorage.setItem(TIMELINE_KEY, on ? 'on' : 'off');
+  } catch {
+    // nothing kept
+  }
+}
+
+// --- colour: a colour a link, or all of it in the one ink (to start with) ---
+
+const COLOUR_KEY = 'codevember-2026-18-colour';
+let colour = query.has('colour');
+try {
+  if (!colour) colour = localStorage.getItem(COLOUR_KEY) === 'on';
+} catch {
+  // no storage: the ink
+}
+function setColour(on: boolean) {
+  colour = on;
+  try {
+    localStorage.setItem(COLOUR_KEY, on ? 'on' : 'off');
+  } catch {
+    // nothing kept
+  }
+}
+
+// --- the drawer: open to start with where there is room, shut on a phone; remembered ---
+
+const DRAWER_KEY = 'codevember-2026-18-drawer';
+let drawerOpen = window.innerWidth > 760;
+try {
+  const kept = localStorage.getItem(DRAWER_KEY);
+  if (kept) drawerOpen = kept === 'open';
+} catch {
+  // no storage: as the screen says
+}
+/** where the drawer begins: the scene and the curves stop short of it. Infinity while it is shut. */
+let drawerLeft = Infinity;
+
+/** `keep`: it was asked for by hand, so it is remembered (how the page happens to open is not) */
+function setDrawer(open: boolean, keep = false) {
+  drawerOpen = open;
+  drawer.hidden = !open;
+  drawerToggle.setAttribute('aria-pressed', String(open));
+  if (keep) {
+    try {
+      localStorage.setItem(DRAWER_KEY, open ? 'open' : 'shut');
+    } catch {
+      // nothing kept
+    }
+  }
+  measure();
+}
+drawerToggle.addEventListener('click', () => setDrawer(!drawerOpen, true));
+
 function measure() {
   const r = panel.getBoundingClientRect();
   panelRect = { left: r.left, top: r.top };
+  drawerLeft = drawerOpen && !clean ? drawer.getBoundingClientRect().left : Infinity;
   rowBoxes = [...panel.querySelectorAll('.arm')].map((row) => {
     const b = row.getBoundingClientRect();
     rowsRight = b.right;
@@ -290,17 +429,22 @@ function build() {
   const many = state.arms.length > 1;
   panel.classList.toggle('weightless', !state.physics);
   queueMicrotask(() => {
-    panel.querySelectorAll<HTMLInputElement>('input[type="range"]').forEach(mark);
+    document.querySelectorAll<HTMLInputElement>('.ui input[type="range"]').forEach(mark);
     showHot();
   });
   panel.innerHTML = `
-    <div class="cols"><span>Swings</span><span>Sum</span><span>Swing</span><span>Length</span><span>Phase</span><span>Volume</span><span>Weight</span><span>Push</span></div>
+    <div class="picker" data-tip="instrument">
+      ${INSTRUMENTS.map((c) => `<button data-act="pick" data-id="${c.id}" aria-pressed="${c.id === state.instrument}">${c.label}</button>`).join('')}
+    </div>
+    <div class="cols"><span>Swings</span><span>Sum</span><span class="snd">Sound</span><span>Swing</span><span>Length</span><span>Phase</span><span>Volume</span><span>Weight</span><span>Push</span></div>
     ${state.arms
       .map(
         (a, k) => `
-    <div class="arm" data-k="${k}" style="--arm: rgb(${PALETTE[k % PALETTE.length]})">
+    <div class="arm" data-k="${k}" style="--arm: rgb(${colour ? PALETTE[a.hue % PALETTE.length] : INK})">
+      <span class="grip" data-tip="grip" aria-label="Move arm ${k + 1}">⋮⋮</span>
       <button data-act="dn" data-tip="swings" aria-label="Fewer swings per bar">−</button><output data-tip="swings">×${a.n}</output><button data-act="up" data-tip="swings" aria-label="More swings per bar">+</button>
       <button data-act="own" data-tip="mode" aria-pressed="${a.mode === 'sum'}" aria-label="Arm ${k + 1} sounds on the sum">Σ</button>
+      <button class="snd" data-act="sound" data-tip="sound" aria-label="Sound of arm ${k + 1}" ${state.by === 'arm' && isKit() ? '' : 'disabled'}>${state.by === 'arm' ? soundName(k) : '·'}</button>
       <input type="range" data-p="swing" data-tip="swing" min="0" max="180" step="1" value="${Math.round((a.swing * 180) / Math.PI)}" aria-label="Swing of arm ${k + 1}" />
       <input type="range" data-p="len" data-tip="len" min="0.1" max="1.5" step="0.01" value="${a.len}" aria-label="Length of arm ${k + 1}" />
       <input type="range" data-p="phase" data-tip="phase" min="0" max="360" step="1" value="${Math.round((a.phase * 180) / Math.PI)}" aria-label="Phase of arm ${k + 1}" />
@@ -313,12 +457,47 @@ function build() {
       .join('')}
     <div class="globals">
       <button data-act="add" data-tip="add" ${state.arms.length < MAX_ARMS ? '' : 'disabled'}>+ Arm</button>
-      <button data-act="physics" data-tip="physics" aria-pressed="${state.physics}">${state.physics ? 'Physics' : 'Formula'}</button>
-      <button data-act="restart" data-tip="restart">Restart</button>
-      <button data-act="play" data-tip="play">${playing ? 'Pause' : 'Play'}</button>
-      <button data-act="mute" data-tip="mute">${muted ? 'Muted' : 'Sound'}</button>
-      <label class="row" data-tip="tempo"><span>Tempo</span><input type="range" data-p="bpm" min="40" max="220" step="1" value="${state.bpm}" /><output id="bpm">${state.bpm}</output></label>
     </div>`;
+  const slider = (p: string, label: string, value: number, min = 0, max = 100) =>
+    `<label class="row" data-tip="${p === 'bpm' ? 'tempo' : p}"><span>${label}</span><input type="range" data-p="${p}" min="${min}" max="${max}" step="1" value="${value}" /><output id="${p}">${value}</output></label>`;
+  const pct = (v: number) => Math.round(v * 100);
+  drawer.innerHTML = `
+    <section><h2>Transport</h2>
+      <div class="pair">
+        <button data-act="play" data-tip="play">${playing ? 'Pause' : 'Play'}</button>
+        <button data-act="restart" data-tip="restart">Restart</button>
+        <button data-act="mute" data-tip="mute">${muted ? 'Muted' : 'Sound'}</button>
+      </div>
+      ${slider('bpm', 'Tempo', state.bpm, 40, 220)}
+    </section>
+    <section><h2>Motion</h2>
+      <div class="pair"><button data-act="physics" data-tip="physics" aria-pressed="${state.physics}">${state.physics ? 'Physics' : 'Formula'}</button></div>
+    </section>
+    <section><h2>Notes</h2>
+      <div class="pair">
+        <button data-act="scale" data-tip="scale">${(SCALES.find((c) => c.id === state.scale) ?? SCALES[0]).label}</button>
+        <button data-act="by" data-tip="by">${state.by === 'arm' ? 'By arm' : 'By hit'}</button>
+      </div>
+    </section>
+    <section><h2>Mix</h2>
+      ${slider('reverb', 'Reverb', pct(state.reverb))}
+      ${slider('room', 'Room', pct(state.room))}
+      ${slider('delay', 'Delay', pct(state.delay))}
+      ${slider('harm', 'Harmonics', pct(state.harm))}
+    </section>
+    <section><h2>View</h2>
+      <div class="pair">
+        <button data-act="timeline" data-tip="timeline" aria-pressed="${timeline}">Timeline</button>
+        <button data-act="colour" data-tip="colour" aria-pressed="${colour}">Colour</button>
+      </div>
+    </section>
+    <section><h2>Setups</h2>
+      <div class="pair">
+        <button data-act="save" data-tip="save">Save</button>
+        <button data-act="saveas" data-tip="saveas">Save as</button>
+        <button data-act="open" data-tip="open">Open</button>
+      </div>
+    </section>`;
   measure();
 }
 
@@ -331,6 +510,7 @@ const TIPS: Record<string, [string, string]> = {
   phase: ['Phase', 'Where in its swing the arm is when the bar starts. 0° it crosses going right, 90° it is out at the right.'],
   vol: ['Volume', 'How loud this joint is. All the way down is muted: the arm still swings and still moves the ones under it.'],
   rm: ['Remove', 'Takes this arm away.'],
+  grip: ['Move', 'Drag up or down to move this link along the chain. Its colour, its voice and its settings go with it.'],
   add: ['+ Arm', 'Hangs a new arm on the end, one harmonic up. Keys: + and −.'],
   mode: ['Sum / Each', 'What this joint crosses to sound. Lit, the sum: the centre line under the pivot, every arm above it added up. Not lit, each: the vertical under its own origin, its arm alone. Key: S, for all of them.'],
   restart: ['Restart', 'The motion from the top, the setup as it is. With physics on, the same setup plays the same again. Key: R.'],
@@ -339,7 +519,21 @@ const TIPS: Record<string, [string, string]> = {
   mass: ['Weight', 'How hard this link pulls on what it hangs from, with physics on. At the bottom it rides the arm above and is shaken by it, and the arm above never knows. At the top it weighs as much as the arm it hangs from, and throws it about.'],
   physics: ['Formula / Physics', 'Formula: every arm goes exactly as it is set. Physics: every arm is a real swing hung in the swing above, with its weight, kept going by the push. Key: W.'],
   push: ['Push', 'What keeps this swing going, with physics on: a push in time with its own rhythm, and the air against it. High and it keeps its time whatever the others do; from about the middle the bar comes round; lower and it drifts; 0 lets it go. The arrow at the joint is the push right now: none when the swing is on its own time.'],
+  instrument: ['Instrument', 'What is struck. Tine: a kalimba\'s, a note that rings on. Bones: a drum, two bones knocked together, like a soft rimshot; the same for a link wherever it is: rhythm, no tune. Square: electronic, a filter every hit opens. TR-808: the drum machine, a sound a note: the marks down the ruler say which. Key: I, for the next.'],
+  sound: ['Sound', 'What this arm sounds, when sounds go by arm (Notes, in the drawer). On the drum machine and the bones: press for the next of the eight, shift for the one before. On the others it is the note where the arm rests on the ruler: pull its ring longer or shorter.'],
+  by: ['By hit / By arm', 'What says which note, or which drum, a hit is. By hit: where the joint is when it hits, so a joint far down the chain plays a different one each time. By arm: where its arm ends when the chain hangs straight, so every arm has one of its own. Key: B.'],
+  scale: ['Scale', 'The notes the joints play: where a joint is when it hits is its note, low at the root and high far out, always the nearest one of this scale. Press for the next. The marks down the centre line are its notes. Key: N.'],
+  reverb: ['Reverb', 'How much of what you hear is the room: none at the bottom; higher, the notes themselves go down as the room comes up; at the top, only the room.'],
+  room: ['Room', 'How big the room is. Small, the walls are close and hard: it rings like metal, a pipe, a tin. Big, a hall. Turn Reverb up to hear it: all the way up with a small room is metal alone.'],
+  delay: ['Delay', 'An echo in time, a dotted eighth apart, bouncing left then right: off at the bottom; higher, more goes in and more comes round again.'],
+  harm: ['Harmonics', 'The overtone over every note: none at the bottom (plain, round), each link\'s own in the middle, twice that at the top (bright).'],
   tempo: ['Tempo', 'Beats a minute, four to the bar.'],
+  drawer: ['Controls', 'The drawer: play and tempo, physics, the scale, the mix, the setups. Shut it and the chain has the whole width.'],
+  save: ['Save', 'Keeps this setup under the name it has, and asks for one the first time. Key: cmd+S.'],
+  saveas: ['Save as', 'Asks for a name and keeps this setup under it, offering the last name with the next number. Key: cmd+shift+S.'],
+  open: ['Open', 'Everything saved by name, the newest first. Key: cmd+O. Ten more live on the digits: shift and a digit keeps, the digit brings back.'],
+  timeline: ['Timeline', 'Each link\'s curve beside its row: what its joint crosses zero with, over the bar, a dot where it hits. Put away to start with. Key: T.'],
+  colour: ['Colour', 'A colour a link (magenta, pink, neon green, and on), or all of it black and white, as it is to start with.'],
   tips: ['Tips', 'These boxes, on or off. Key: ?. And the sliders: a dragged one catches on its marks, shift slides past them.'],
 };
 
@@ -379,7 +573,7 @@ tipsButton.setAttribute('aria-pressed', String(tipsOn));
 tipsButton.addEventListener('click', () => setTips(!tipsOn));
 
 const tipOf = (e: Event) => (e.target as HTMLElement).closest?.<HTMLElement>('[data-tip]')?.dataset.tip;
-for (const el of [panel, tipsButton]) {
+for (const el of [panel, drawer, tipsButton, drawerToggle]) {
   el.addEventListener('pointerover', (e) => showTip(tipOf(e)));
   el.addEventListener('focusin', (e) => showTip(tipOf(e)));
   // a mouse leaving takes the tip away; a finger's stays until the next press somewhere else
@@ -392,15 +586,31 @@ window.addEventListener('pointerdown', (e) => {
 function addArm() {
   if (state.arms.length >= MAX_ARMS) return;
   const last = state.arms[state.arms.length - 1];
-  state.arms.push({ n: Math.min(MAX_N, last.n + 1), swing: 0.9, len: Math.max(0.2, +(last.len * 0.62).toFixed(2)), phase: 0, vol: 1, mass: +(last.mass / 2).toFixed(2), mode: last.mode, push: last.push });
+  state.arms.push({ n: Math.min(MAX_N, last.n + 1), swing: 0.9, len: Math.max(0.2, +(last.len * 0.62).toFixed(2)), phase: 0, vol: 1, mass: +(last.mass / 2).toFixed(2), mode: last.mode, push: last.push, hue: -1, sound: 0 });
+  const made = state.arms[state.arms.length - 1];
+  made.hue = PALETTE.findIndex((_, h) => !state.arms.some((a) => a.hue === h));
+  made.sound = FIRST_SOUND[made.hue % FIRST_SOUND.length];
   if (sim.live) sim.added(state.arms);
 }
 function removeArm(k = state.arms.length - 1) {
   if (state.arms.length < 2) return;
   state.arms.splice(k, 1);
+  held = -1;
   if (sim.live) sim.removed(k);
 }
-function toggle(what: 'mode' | 'play' | 'mute' | 'physics') {
+function toggle(what: 'mode' | 'play' | 'mute' | 'physics' | 'scale' | 'instrument' | 'by') {
+  if (what === 'by') {
+    state.by = state.by === 'arm' ? 'hit' : 'arm';
+    note(state.by === 'arm' ? 'A note an arm' : 'A note where it hits');
+  }
+  if (what === 'instrument') {
+    state.instrument = INSTRUMENTS[(INSTRUMENTS.findIndex((c) => c.id === state.instrument) + 1) % INSTRUMENTS.length].id;
+    note(INSTRUMENTS.find((c) => c.id === state.instrument)!.label);
+  }
+  if (what === 'scale') {
+    state.scale = SCALES[(SCALES.findIndex((c) => c.id === state.scale) + 1) % SCALES.length].id;
+    note(SCALES.find((c) => c.id === state.scale)!.label);
+  }
   if (what === 'mode') {
     // all of them: to each if any is on the sum, else back to the sum
     const to: Mode = state.arms.some((a) => a.mode === 'sum') ? 'each' : 'sum';
@@ -417,21 +627,73 @@ function toggle(what: 'mode' | 'play' | 'mute' | 'physics') {
   }
 }
 
-panel.addEventListener('click', (e) => {
+const onClick = (e: Event) => {
   const b = (e.target as HTMLElement).closest<HTMLButtonElement>('button[data-act]');
   if (!b) return;
   const act = b.dataset.act!;
+  if (act === 'timeline' || act === 'colour') {
+    if (act === 'timeline') setTimeline(!timeline);
+    else setColour(!colour);
+    build();
+    return;
+  }
+  if (act === 'save' || act === 'saveas' || act === 'open') {
+    if (act === 'open') showSaved();
+    else if (act === 'saveas' || !current) askName();
+    else saveAs(current);
+    return;
+  }
   const k = Number(b.closest<HTMLElement>('.arm')?.dataset.k);
   if (act === 'up') state.arms[k].n = Math.min(MAX_N, state.arms[k].n + 1);
   else if (act === 'dn') state.arms[k].n = Math.max(1, state.arms[k].n - 1);
   else if (act === 'own') state.arms[k].mode = state.arms[k].mode === 'sum' ? 'each' : 'sum';
+  else if (act === 'sound') state.arms[k].sound = (state.arms[k].sound + ((e as MouseEvent).shiftKey ? KIT.length - 1 : 1)) % KIT.length;
   else if (act === 'rm') removeArm(k);
   else if (act === 'add') addArm();
+  else if (act === 'pick') state.instrument = b.dataset.id!;
   else if (act === 'restart') restart();
-  else toggle(act as 'mode' | 'play' | 'mute' | 'physics');
+  else toggle(act as 'mode' | 'play' | 'mute' | 'physics' | 'scale' | 'instrument' | 'by');
+  changed();
+  build();
+};
+panel.addEventListener('click', onClick);
+drawer.addEventListener('click', onClick);
+
+// --- reorder: a row dragged by its grip moves its link along the chain ---
+
+/** the row being moved, as it is now, or -1 */
+let moving = -1;
+
+panel.addEventListener('pointerdown', (e) => {
+  const grip = (e.target as HTMLElement).closest?.<HTMLElement>('.grip');
+  if (!grip) return;
+  e.preventDefault();
+  moving = held = Number(grip.closest<HTMLElement>('.arm')!.dataset.k);
+  panel.classList.add('moving');
+  showHot();
+});
+window.addEventListener('pointermove', (e) => {
+  if (moving < 0) return;
+  // the row the pointer is over takes it: the rows between move one place the other way
+  const to = rowBoxes.findIndex((b) => Math.abs(e.clientY - b.y) <= b.h / 2 + 3);
+  if (to < 0 || to === moving || to >= state.arms.length) return;
+  state.arms.splice(to, 0, ...state.arms.splice(moving, 1));
+  moving = held = to;
+  // with weight the arms are not where they were: the chain starts again on the formula
+  sim.live = false;
+  flashes.length = 0;
+  played = [];
   changed();
   build();
 });
+for (const ev of ['pointerup', 'pointercancel']) {
+  window.addEventListener(ev, () => {
+    if (moving < 0) return;
+    moving = held = -1;
+    panel.classList.remove('moving');
+    showHot();
+  });
+}
 
 // --- snap: a slider being dragged catches on its marks (the middle, the quarters, the round numbers) ---
 
@@ -442,6 +704,10 @@ const SNAPS: Record<string, number[]> = {
   vol: [0, 25, 50, 75, 100],
   mass: [0, 25, 50, 75, 100],
   push: [0, 25, 50, 75, 100],
+  reverb: [0, 25, 50, 75, 100],
+  room: [0, 25, 50, 75, 100],
+  delay: [0, 25, 50, 75, 100],
+  harm: [0, 25, 50, 75, 100],
   bpm: [60, 80, 90, 100, 120, 140, 160, 180, 200],
 };
 /** how near a mark catches, of the slider's whole way */
@@ -450,10 +716,12 @@ const CATCH = 0.025;
 let dragging = false;
 let past = false;
 
-panel.addEventListener('pointerdown', (e) => {
-  dragging = (e.target as HTMLElement).matches?.('input[type="range"]') ?? false;
-  past = e.shiftKey;
-});
+for (const el of [panel, drawer]) {
+  el.addEventListener('pointerdown', (e) => {
+    dragging = (e.target as HTMLElement).matches?.('input[type="range"]') ?? false;
+    past = e.shiftKey;
+  });
+}
 window.addEventListener('pointermove', (e) => dragging && (past = e.shiftKey));
 for (const ev of ['pointerup', 'pointercancel']) window.addEventListener(ev, () => (dragging = false));
 for (const ev of ['keydown', 'keyup'] as const) window.addEventListener(ev, (e) => e.key === 'Shift' && (past = ev === 'keydown'));
@@ -487,13 +755,16 @@ function mark(r: HTMLInputElement) {
     .join(', ');
 }
 
-panel.addEventListener('input', (e) => {
+const onInput = (e: Event) => {
   const r = e.target as HTMLInputElement;
   const v = snapped(r);
   if (r.dataset.p === 'bpm') {
     anchor();
     state.bpm = v;
-    panel.querySelector('#bpm')!.textContent = String(v);
+    drawer.querySelector('#bpm')!.textContent = String(v);
+  } else if (r.dataset.p === 'reverb' || r.dataset.p === 'room' || r.dataset.p === 'delay' || r.dataset.p === 'harm') {
+    state[r.dataset.p] = v / 100;
+    drawer.querySelector('#' + r.dataset.p)!.textContent = String(v);
   } else {
     const a = state.arms[Number(r.closest<HTMLElement>('.arm')!.dataset.k)];
     if (r.dataset.p === 'swing') a.swing = (v * Math.PI) / 180;
@@ -504,7 +775,9 @@ panel.addEventListener('input', (e) => {
     else a.len = v;
   }
   changed();
-});
+};
+panel.addEventListener('input', onInput);
+drawer.addEventListener('input', onInput);
 
 // --- presets: shift and a digit keeps the whole setup under it, the digit alone brings it back ---
 
@@ -671,6 +944,18 @@ window.addEventListener('keydown', (e) => {
     else saveAs(current);
     return;
   }
+  // cmd (or ctrl) and up or down: the lit link (the one the pointer is in the ring of, or held) louder or quieter
+  if ((e.metaKey || e.ctrlKey) && !e.altKey && (e.key === 'ArrowUp' || e.key === 'ArrowDown') && sheet.hidden) {
+    const k = hot >= 0 ? hot : held;
+    if (k < 0 || k >= state.arms.length) return;
+    e.preventDefault();
+    const a = state.arms[k];
+    a.vol = Math.round(Math.min(1, Math.max(0, a.vol + (e.key === 'ArrowUp' ? 0.05 : -0.05))) * 100) / 100;
+    note(`Volume ${Math.round(a.vol * 100)}`);
+    changed();
+    build();
+    return;
+  }
   // a sheet is up: the keys are its own (a name being typed, the list walked)
   if (!sheet.hidden) {
     if (e.key === 'Escape') closeSheet();
@@ -699,6 +984,10 @@ window.addEventListener('keydown', (e) => {
   else if (e.key === '?') setTips(!tipsOn);
   else if (e.key === 's') toggle('mode');
   else if (e.key === 'w') toggle('physics');
+  else if (e.key === 'n') toggle('scale');
+  else if (e.key === 'i') toggle('instrument');
+  else if (e.key === 'b') toggle('by');
+  else if (e.key === 't') setTimeline(!timeline);
   else return;
   e.preventDefault();
   changed();
@@ -710,8 +999,14 @@ window.addEventListener('keydown', (e) => {
 let w = 0;
 let h = 0;
 let dpr = 1;
-/** pixels to an arm length, eased so adding an arm does not jump */
+/** pixels to an arm length, eased so a chain outgrowing the ruler does not jump */
 let unit = 0;
+/** the ruler as it was last drawn: its top, and its pixels to an arm length */
+let ruler = { y0: 0, unit: 1 };
+/** the pointer is on the root; it is moving the root; it is pulling an arm longer (which, and from where) */
+let onRoot = false;
+let rooting = false;
+let pull: { k: number; x: number; y: number; len: number; swing: number; vol: number; way: '' | 'len' | 'swing' | 'vol' } | null = null;
 
 function resize() {
   dpr = Math.min(window.devicePixelRatio, 2);
@@ -724,8 +1019,8 @@ function resize() {
 }
 
 const ink = (a: number) => `rgba(${INK}, ${a})`;
-/** link k's colour: the arm and the joint at its end, its path, its rings, its row in the bar and in the workbench */
-const tint = (k: number, a: number) => `rgba(${PALETTE[k % PALETTE.length]}, ${a})`;
+/** link k's colour, its own wherever it is in the chain: the arm and the joint at its end, its path, its rings, its row in the bar and in the workbench */
+const tint = (k: number, a: number) => `rgba(${colour ? PALETTE[(state.arms[k]?.hue ?? k) % PALETTE.length] : INK}, ${a})`;
 /** a line in the ink, or in link k's colour */
 function line(x0: number, y0: number, x1: number, y1: number, a: number, width = 1, k = -1) {
   ctx.strokeStyle = k < 0 ? ink(a) : tint(k, a);
@@ -762,25 +1057,70 @@ function frame() {
   const edge = wide ? 24 : 16;
   let total = 0;
   for (const a of arms) total += a.len;
+  // the drawer, when it is open beside the scene (on a phone it lies over it): nothing is drawn under it
+  const wall = wide && Number.isFinite(drawerLeft) ? drawerLeft - 24 : w - edge;
   const cx0 = rowsRight + 28;
-  const cw = w - edge - cx0;
-  const curves = !clean && wide && cw > 120 && rowBoxes.length >= n;
+  const cw = wall - cx0;
+  const curves = timeline && !clean && wide && cw > 120 && rowBoxes.length >= n;
+  // the chain hangs in the middle of the screen, the rows under it in the middle too
   const px = w / 2;
-  const py = Math.max(wide ? 150 : 112, h * 0.24);
-  const reach = Math.max(40, Math.min(px - edge, (clean ? h - 30 : panelRect.top - 18) - (curves ? 30 : 80) - py));
-  const tlY = py + reach + 44;
+  // The ruler of notes stands still, from under the title to over the workbench, and the root
+  // hangs where it is put on it. An arm length is always the same stretch of it, so where a
+  // joint is says its note; only a chain too long for the ruler makes it all smaller.
+  const y0 = wide ? 84 : 124;
+  const y1 = Math.max(y0 + 120, (clean ? h - 30 : panelRect.top - 18) - (timeline && !curves ? 80 : 28));
+  const target = (y1 - y0) / Math.max(RULER, state.root + total + 0.05);
+  // while an arm is being pulled longer the scale holds still, or the ring would slide from under the pointer
+  if (!pull) unit = unit ? unit + (target - unit) * (1 - Math.exp(-(t - drawn) * 8)) : target;
+  drawn = t;
+  const py = y0 + state.root * unit;
+  const reach = Math.max(40, Math.min(px - edge, (RULER * unit) / 2));
+  const tlY = y1 + 44;
   const tlX0 = px - reach;
   const tlX1 = px + reach;
-  const target = reach / Math.max(1, total);
-  unit = unit ? unit + (target - unit) * (1 - Math.exp(-(t - drawn) * 8)) : target;
-  drawn = t;
   const X = (x: number) => px + x * unit;
   const Y = (y: number) => py + y * unit;
+  ruler = { y0, unit };
 
   pose(phi, now);
 
   // what a joint has to cross: the centre line, or its own vertical
-  if (arms.some((a) => a.mode === 'sum')) line(px, py - 14, px, Y(total) + 14, 0.22);
+  // the ruler, the whole of it: the line the joints cross is the stretch of it under the root
+  line(px, y0, px, y0 + RULER * unit, 0.1);
+  if (arms.some((a) => a.mode === 'sum')) line(px, py, px, Y(total) + 14, 0.25);
+  // its notes: a mark at every note of the scale, a longer one at every A, low at the top. Where
+  // a joint is when it hits is the note it plays, the nearest of these.
+  const marks = scaleNotes();
+  // On the drum machine a note is a sound, not a pitch: every mark says which (they go round, a
+  // sound a mark, down the ruler), so a joint can be put on the one that is wanted.
+  const kit = state.instrument === '808' && state.by === 'hit';
+  if (kit) {
+    ctx.font = '600 8px Inter, "Helvetica Neue", Helvetica, Arial, sans-serif';
+    ctx.textBaseline = 'middle';
+    ctx.textAlign = 'left';
+    ctx.fillStyle = ink(0.5);
+  }
+  let step = 0;
+  for (let m = 0; m <= SPAN; m++) {
+    if (!marks.includes(m % 12)) continue;
+    const y = y0 + (m / SPAN) * RULER * unit;
+    const half = kit ? 3 : m % 12 === 0 ? 5 : 1.5;
+    line(px - half, y, px + half, y, 0.4);
+    if (kit) ctx.fillText(KIT[step % KIT.length], px + 9, y + 0.5);
+    step++;
+  }
+  // by arm: where each arm rests on the ruler is its note, so that is marked, in its colour
+  if (state.by === 'arm' && !isKit()) {
+    for (let k = 0; k < n; k++) {
+      const y = Y(rest(k));
+      ctx.fillStyle = tint(k, 0.95);
+      ctx.beginPath();
+      ctx.moveTo(px - 6, y);
+      ctx.lineTo(px - 13, y - 4);
+      ctx.lineTo(px - 13, y + 4);
+      ctx.fill();
+    }
+  }
   for (let k = 0; k < n; k++) {
     if (arms[k].mode !== 'each') continue;
     const ox = k ? X(now[2 * k - 2]) : px;
@@ -866,7 +1206,8 @@ function frame() {
     ctx.beginPath();
     ctx.arc(px, py, outer, 0, Math.PI * 2);
     ctx.arc(px, py, inner, 0, Math.PI * 2, true);
-    ctx.fillStyle = tint(lit1, 0.09);
+    // how loud the link is, to be seen: the ring fuller the louder, never solid, all but clear when it is muted
+    ctx.fillStyle = tint(lit1, 0.025 + 0.3 * arms[lit1].vol);
     ctx.fill('evenodd');
     ctx.strokeStyle = tint(lit1, 0.4);
     ctx.lineWidth = 1;
@@ -904,16 +1245,24 @@ function frame() {
       line(ex, ey, ex - (tx * 0.9 - ty * 0.45) * head, ey - (ty * 0.9 + tx * 0.45) * head, 0.9, 1.25, k);
     }
   }
+  // the root: a handle, to be put higher or lower on the ruler
+  ctx.fillStyle = BACK;
+  ctx.strokeStyle = ink(onRoot || rooting ? 1 : 0.7);
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.arc(px, py, onRoot || rooting ? 7 : 5.5, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
   ctx.fillStyle = ink(0.95);
   ctx.beginPath();
-  ctx.arc(px, py, 2.5, 0, Math.PI * 2);
+  ctx.arc(px, py, 2, 0, Math.PI * 2);
   ctx.fill();
   for (let k = 0; k < n; k++) {
     // all its colour, as big as it is heavy with physics on; when it sounds it swells and goes white for a moment
     const hit = Math.max(0, lit[k]);
     ctx.beginPath();
     ctx.arc(X(now[2 * k]), Y(now[2 * k + 1]), (state.physics ? 2.5 + 4.5 * Math.sqrt(arms[k].mass) : 5) * (1 + 0.5 * hit), 0, Math.PI * 2);
-    ctx.fillStyle = `rgb(${PALETTE[k % PALETTE.length]})`;
+    ctx.fillStyle = tint(k, 1);
     ctx.fill();
     if (hit > 0) {
       ctx.fillStyle = ink(0.85 * hit);
@@ -927,7 +1276,7 @@ function frame() {
   const at = phi - Math.floor(phi);
   // with weight no bar is the next one: the hits as they fell, the playhead writing over the bar before
   if (played.length && played[0].phase < phi - 1.5) played = played.filter((b) => b.phase > phi - 1);
-  if (!curves) {
+  if (timeline && !curves) {
     line(tlX0, tlY, tlX1, tlY, 0.25);
     for (let q = 0; q <= 4; q++) line(tlX0 + (tlW * q) / 4, tlY - 2, tlX0 + (tlW * q) / 4, tlY + 2, 0.35);
     const stood = new Map<number, number>();
@@ -1029,20 +1378,74 @@ function armAt(x: number, y: number, over = 10): number {
   return d <= r + over ? state.arms.length - 1 : -1;
 }
 
+/** pixels of a sideways drag to a degree of swing, and of a drag up or down to the whole of a volume */
+const SWING_PX = 3;
+const VOL_PX = 160;
+const fromRoot = (e: PointerEvent) => Math.hypot(e.clientX - seen[0], e.clientY - seen[1]);
+
 window.addEventListener('pointermove', (e) => {
+  // the root, held: it goes up and down the ruler with the pointer, and the key with it
+  if (rooting) {
+    state.root = Math.min(RULER - 0.2, Math.max(0, (e.clientY - ruler.y0) / ruler.unit));
+    changed();
+    return;
+  }
+  // A ring, held. Up and down is the arm's length (down, longer: as far as the pointer goes).
+  // Left and right is its swing (right, wider). Whichever way it sets off, it keeps to.
+  if (pull) {
+    const dx = e.clientX - pull.x;
+    const dy = e.clientY - pull.y;
+    if (!pull.way) {
+      if (Math.hypot(dx, dy) < 5) return;
+      // with cmd (or ctrl) held, up and down is how loud the link is instead
+      pull.way = Math.abs(dx) > Math.abs(dy) ? 'swing' : e.metaKey || e.ctrlKey ? 'vol' : 'len';
+    }
+    const a = state.arms[pull.k];
+    if (pull.way === 'len') a.len = Math.round(Math.min(1.5, Math.max(0.1, pull.len + dy / ruler.unit)) * 100) / 100;
+    else if (pull.way === 'vol') {
+      a.vol = Math.round(Math.min(1, Math.max(0, pull.vol - dy / VOL_PX)) * 100) / 100;
+      note(`Volume ${Math.round(a.vol * 100)}`);
+    } else a.swing = (Math.round(Math.min(180, Math.max(0, (pull.swing * 180) / Math.PI + dx / SWING_PX))) * Math.PI) / 180;
+    const slider = panel.querySelector<HTMLInputElement>(`.arm[data-k="${pull.k}"] [data-p="${pull.way}"]`);
+    if (slider) slider.value = String(pull.way === 'len' ? a.len : pull.way === 'vol' ? Math.round(a.vol * 100) : Math.round((a.swing * 180) / Math.PI));
+    canvas.style.cursor = pull.way === 'swing' ? 'ew-resize' : 'ns-resize';
+    changed();
+    return;
+  }
   const row = (e.target as HTMLElement).closest?.<HTMLElement>('.arm');
-  heat(row ? Number(row.dataset.k) : e.target === canvas ? armAt(e.clientX, e.clientY) : -1);
+  onRoot = e.target === canvas && seen.length > 1 && fromRoot(e) <= 12;
+  heat(row ? Number(row.dataset.k) : e.target === canvas && !onRoot ? armAt(e.clientX, e.clientY) : -1);
+  if (onRoot) canvas.style.cursor = 'ns-resize';
 });
-// a click (or a finger) holds the link it lands in, lit until a click lands in none
+// A press on the root takes hold of it. A press in a ring holds that link lit (until a press
+// lands in none), and dragged from there pulls its arm longer or shorter.
 window.addEventListener('pointerdown', (e) => {
-  if (e.target !== canvas) return;
-  held = armAt(e.clientX, e.clientY, e.pointerType === 'mouse' ? 10 : 18);
+  if (e.target !== canvas || seen.length < 2) return;
+  const finger = e.pointerType !== 'mouse';
+  if (fromRoot(e) <= (finger ? 22 : 12)) {
+    rooting = true;
+    held = -1;
+  } else {
+    held = armAt(e.clientX, e.clientY, finger ? 18 : 10);
+    if (held >= 0) pull = { k: held, x: e.clientX, y: e.clientY, len: state.arms[held].len, swing: state.arms[held].swing, vol: state.arms[held].vol, way: '' };
+  }
+  canvas.setPointerCapture?.(e.pointerId);
   showHot();
 });
+for (const ev of ['pointerup', 'pointercancel']) {
+  window.addEventListener(ev, () => {
+    if (!rooting && !pull) return;
+    rooting = false;
+    pull = null;
+    // the rows say each arm's note when sounds go by arm: it may have moved
+    build();
+  });
+}
 document.addEventListener('pointerleave', () => heat(-1));
 
 window.addEventListener('resize', resize);
 changed();
 build();
+setDrawer(drawerOpen);
 resize();
 requestAnimationFrame(frame);
