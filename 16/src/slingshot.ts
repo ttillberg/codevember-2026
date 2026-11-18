@@ -12,7 +12,7 @@ const WOOD = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.8
 const CORD = new THREE.MeshStandardMaterial({ color: 0x3e2a1a, roughness: 0.7 }); // the leather thong of the grip
 const RUBBER = new THREE.MeshStandardMaterial({ color: 0x7a1c12, roughness: 0.55 });
 const LEATHER = new THREE.MeshStandardMaterial({ color: 0x7a5434, roughness: 0.75 });
-const LOAD = new THREE.MeshStandardMaterial({ color: 0xe8dcc0, roughness: 1, emissive: 0x8a6a3a, emissiveIntensity: 0.4 });
+const LOAD = new THREE.MeshStandardMaterial({ color: 0xb4a482, roughness: 1, emissive: 0x8a6a3a, emissiveIntensity: 0.4 });
 
 // where the fork stands in the eye's space (metres; the eye is a gnome's, the slingshot a gnome's toy)
 const AT = new THREE.Vector3(0, -0.049, -0.175); // centred, under the sight
@@ -203,7 +203,9 @@ export class Slingshot {
     this.rig.add(this.fork, this.pouchMesh);
     this.scene.add(this.rig);
     // lit as the scene is: the low gold sun, a warm dim fill
-    this.scene.add(new THREE.HemisphereLight(0xb8a27a, 0x2a2416, 0.9));
+    // lit as in your own shadow: held just in front of you, low in the moss, the sun hardly ever falls on it, so
+    // mostly the dim warm light of the wood round it; the sun only from behind it, looking into the sun, at its edges
+    this.scene.add(new THREE.HemisphereLight(0x9c8a68, 0x1e1a10, 0.75));
     this.sun = new THREE.DirectionalLight(0xffd7a0, 2.2);
     this.scene.add(this.sun, this.sun.target);
     this.rt = new THREE.WebGLRenderTarget(1, 1, { samples: 4, type: THREE.HalfFloatType });
@@ -276,7 +278,7 @@ export class Slingshot {
     this.pouchMesh.position.set(mid.x, mid.y - 0.003 + this.x * 0.15, mid.z + 0.004 - this.x);
     this.pouchMesh.rotation.x = -this.x * 4;
     this.load.visible = this.loaded > 0.5;
-    (this.load.material as THREE.MeshStandardMaterial).emissiveIntensity = 0.3 + 0.8 * this.draw;
+    (this.load.material as THREE.MeshStandardMaterial).emissiveIntensity = 0.1 + 0.8 * this.draw; // in shade at rest, glowing as it is drawn
     // the bands: from each tip to the pouch's sides
     for (let i = 0; i < 2; i++) {
       const a = this.tips[i].clone().add(this.fork.position);
@@ -288,6 +290,8 @@ export class Slingshot {
     }
     // the sun as the eye sees it
     this.sun.position.copy(sunDir).transformDirection(eye.matrixWorldInverse);
+    // the sun in front of you (behind the slingshot) or nothing: with it at your back you stand in its way
+    this.sun.intensity = 2.4 * THREE.MathUtils.smoothstep(-this.sun.position.z, 0.25, 0.9);
     this.sun.target.position.set(0, 0, 0);
   }
 

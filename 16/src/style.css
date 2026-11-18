@@ -69,6 +69,26 @@ body.touch .mouseonly, body:not(.touch) .touchonly { display: none; }
 body.touch .gyro { display: grid; }
 @media (max-width: 640px) { .gyro { top: max(16px, env(safe-area-inset-top)); right: max(16px, env(safe-area-inset-right)); } }
 .clean .gyro { display: none; }
+/* top right: the sound on or off, the gyro's round button; on a phone it sits left of the gyro */
+.mute {
+  display: grid; position: fixed; z-index: 3;
+  top: max(24px, env(safe-area-inset-top)); right: max(24px, env(safe-area-inset-right));
+  place-items: center; width: 34px; height: 34px; padding: 0; border: 0; border-radius: 50%;
+  background: rgba(20, 16, 10, 0.35); color: #f4f4f2; cursor: pointer;
+  -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
+  box-shadow: inset 0 0 0 1px rgba(244, 244, 242, 0.35);
+  transition: background 0.2s, color 0.2s, transform 0.25s cubic-bezier(0.3, 1.4, 0.5, 1);
+}
+.mute:active { transform: scale(0.94); }
+.mute .off, .mute.muted .on { display: none; }
+.mute.muted .off { display: inline; }
+.mute.muted { opacity: 0.7; }
+body.touch .mute { right: calc(max(24px, env(safe-area-inset-right)) + 44px); }
+@media (max-width: 640px) {
+  .mute { top: max(16px, env(safe-area-inset-top)); right: max(16px, env(safe-area-inset-right)); }
+  body.touch .mute { right: calc(max(16px, env(safe-area-inset-right)) + 44px); }
+}
+.clean .mute { display: none; }
 
 /* the fungarium: a little notebook that comes up out of the packet, olive cloth cover round a paper page */
 .fungarium [hidden] { display: none !important; }

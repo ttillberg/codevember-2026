@@ -5,9 +5,13 @@
 import * as THREE from 'three';
 
 export class Sound {
-  private ctx: AudioContext | null = null;
+  ctx: AudioContext | null = null; // read by the forest's sounds too
   private noise: AudioBuffer | null = null;
-  private out: GainNode | null = null;
+  out: GainNode | null = null;
+  /** The mute: a gain after out, so the soundboard's master stays as it was. Remembered between visits. */
+  muted = (() => { try { return localStorage.getItem('16-muted') === '1'; } catch { return false; } })();
+  private hush: GainNode | null = null;
+  send: AudioNode | null = null; // into the wood's reverb (forest.ts sets it), a little of each sound
   private v = new THREE.Vector3();
 
   constructor(private camera: THREE.Camera) {
@@ -27,9 +31,17 @@ export class Sound {
     for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
     this.out = ctx.createGain();
     this.out.gain.value = 0.7;
-    this.out.connect(ctx.destination);
+    this.hush = ctx.createGain();
+    this.hush.gain.value = this.muted ? 0 : 1;
+    this.out.connect(this.hush).connect(ctx.destination);
     this.ctx = ctx;
     this.noise = buf;
+  }
+
+  mute(on: boolean) {
+    this.muted = on;
+    try { localStorage.setItem('16-muted', on ? '1' : '0'); } catch { /* no storage */ }
+    if (this.ctx && this.hush) this.hush.gain.setTargetAtTime(on ? 0 : 1, this.ctx.currentTime, 0.05);
   }
 
   /** How loud and which side, for a sound at p: quieter with distance, panned by where it is from you. */
@@ -67,6 +79,7 @@ export class Sound {
     g.gain.exponentialRampToValueAtTime(0.32, t + len * 0.22);
     g.gain.exponentialRampToValueAtTime(0.0001, t + len);
     s.connect(bp).connect(g).connect(this.out);
+    if (this.send) g.connect(this.send);
     s.start(t, Math.random() * 1.5);
     s.stop(t + len + 0.05);
   }
@@ -80,6 +93,7 @@ export class Sound {
     const panner = ctx.createStereoPanner();
     panner.pan.value = pan;
     panner.connect(this.out);
+    if (this.send) panner.connect(this.send);
     // the breath of it: noise, low-passed and closing down
     const s = this.source(ctx);
     const lp = ctx.createBiquadFilter();
@@ -157,6 +171,7 @@ export class Sound {
     const g = ctx.createGain();
     g.gain.value = v.vol * gain;
     g.connect(panner).connect(this.out);
+    if (this.send) panner.connect(this.send);
     // the body: two resonances, the second higher and weaker; and a little of the dry tick itself
     for (const [f, q, w] of [[v.band * j, v.q, 1], [v.band * j * v.band2, v.q * 0.8, 0.5]] as const) {
       const bp = ctx.createBiquadFilter();

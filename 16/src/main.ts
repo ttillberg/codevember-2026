@@ -18,6 +18,8 @@ import { Fungi, type FungusKind } from './fungi';
 import { Spores } from './spores';
 import { Dust } from './dust';
 import { Slingshot } from './slingshot';
+import { Forest } from './forest';
+import { soundboard } from './soundboard';
 import { Fungarium, type Species } from './fungarium';
 import { Pouch } from './pouch';
 import { Sound } from './sound';
@@ -110,6 +112,10 @@ scene.add(fungi.group);
 const spores = new Spores(share);
 // a whoosh when you fling, a puff where it lands and where you sow
 const sound = new Sound(camera);
+// the wood's own: wind in the spruces and birds round you
+const forest = new Forest(sound, camera);
+// ?debug: a soundboard to try them one by one
+if (params.has('debug')) soundboard(forest, sound, camera);
 const creakAt = new THREE.Vector3();
 const creakNext = new WeakMap<object, number>(); // when each growing cluster creaks next
 const fxScene = new THREE.Scene();
@@ -304,7 +310,7 @@ addEventListener('resize', resize);
 resize();
 
 // ---- crawling and looking. Drag to turn your head, hold still to crawl where you look (drag while holding
-// to steer; crawl straight into a trunk and you climb it), tap anywhere to throw spores at the sight in the middle of the screen. Keys: W or up crawls (shift crouches, space hops), S or down backs off, A D or left right
+// to steer; crawl straight into a trunk and you climb it), tap anywhere to throw spores at the sight in the middle of the screen. Keys: W or up crawls (shift runs, C crouches, space hops), S or down backs off, A D or left right
 // turn your head.
 // climbing: the trunk you are on, the angle round it (atan2 of z, x) and the height over its foot
 const me = { x: 0, z: 0, y: 0, speed: 0, side: 0, bob: 0, hop: 0, vy: 0, dip: 0, dipV: 0, crouch: 0, climb: null as null | { t: Trunk; phi: number; h: number } };
@@ -361,9 +367,10 @@ canvas.addEventListener('pointermove', (e) => {
     const k = THREE.MathUtils.degToRad(camera.fov) / innerHeight * DRAG_TURN;
     // just looking you drag the world round; crawling you steer, so drag left and you turn left
     look.tYaw += (e.clientX - lastX) * k * (holding ? -1 : 1);
-    // up and down: a finger just looking drags the world (up looks down), a mouse points (up looks up)
-    // crawling, a finger steers the same way: up looks up, as left turns left
-    const tilt = e.pointerType === 'mouse' || holding ? -1 : 1;
+    // up and down the same as across: just looking, finger or mouse, you drag the world (up looks down; a mouse
+    // pointing, up looking up, went against its own sideways drag); crawling, a finger steers: up looks up, as left
+    // turns left
+    const tilt = holding ? -1 : 1;
     look.tPitch = clampPitch(look.tPitch + (e.clientY - lastY) * k * tilt);
   }
   lastX = e.clientX; lastY = e.clientY;
@@ -386,6 +393,13 @@ const release = (e: PointerEvent) => {
 canvas.addEventListener('pointerup', release);
 canvas.addEventListener('pointercancel', release);
 // gyro (phones): turning and tilting the phone turns your head, on top of dragging. iOS asks first, from a tap.
+// the mute, top right (or M)
+const muteButton = document.querySelector<HTMLButtonElement>('.mute')!;
+const showMute = () => { muteButton.classList.toggle('muted', sound.muted); muteButton.setAttribute('aria-pressed', String(sound.muted)); muteButton.ariaLabel = sound.muted ? 'Unmute' : 'Mute'; };
+const toggleMute = () => { sound.mute(!sound.muted); showMute(); };
+muteButton.addEventListener('click', toggleMute);
+addEventListener('keydown', (e) => { if (e.code === 'KeyM' && !e.repeat) toggleMute(); });
+showMute();
 const gyroButton = document.querySelector<HTMLButtonElement>('.gyro')!;
 if (coarse) document.body.classList.add('touch');
 let gyroOn = false;
@@ -565,10 +579,16 @@ function focusDistance() {
 // wood. Only the eye moves, not where you are or aim; none of it for those who ask for less motion.
 const still = matchMedia('(prefers-reduced-motion: reduce)').matches;
 let breath = 0, roam = Math.random() * 100, roamW = 0;
+let puffed = 0; // out of breath after a hop, fading
+let stepAt = 0; // which footfall the gait is on
 function alive(dt: number, walking: number) {
   if (still) return { yaw: 0, pitch: 0, up: 0 };
+  const b0 = Math.sin(breath * 1.7);
   breath += dt;
   roam += dt;
+  // heard too: in as the eye rises, out as it falls; deeper walking and for a while after a hop
+  const b1 = Math.sin(breath * 1.7);
+  if ((b0 < 0) !== (b1 < 0)) forest.breathe(b1 > 0, 0.6 + 0.6 * walking + puffed);
   roamW += (walking - roamW) * Math.min(1, dt * 1.5); // eases in and out, no snap when you stop
   const w = 1 - 0.5 * walking; // the breath is less with the walk carrying you
   return {
@@ -589,10 +609,10 @@ function crawl(dt: number) {
     const off = lastX - downX, out = Math.max(0, Math.abs(off) - STEER_DEAD) / (Math.min(innerWidth, innerHeight) * 0.3);
     look.tYaw -= Math.sign(off) * Math.min(1, out) * STEER_RATE * dt;
   }
-  // shift held: crouch, the eye down among the frond tips, creeping at half the pace
-  const crouching = (keys.has('ShiftLeft') || keys.has('ShiftRight')) && !me.climb;
+  // C held: crouch, the eye down among the frond tips, creeping at half the pace; shift held: run, twice the pace
+  const crouching = keys.has('KeyC') && !me.climb;
   me.crouch += ((crouching ? 1 : 0) - me.crouch) * Math.min(1, dt * 7);
-  const run = 1 - 0.5 * me.crouch;
+  const run = (keys.has('ShiftLeft') || keys.has('ShiftRight') ? 2 : 1) * (1 - 0.5 * me.crouch);
   me.speed += (fwd * 0.36 * run - me.speed) * Math.min(1, dt * 4);
   me.side += (strafe * 0.26 * run - me.side) * Math.min(1, dt * 4);
   const fx = -Math.sin(look.yaw), fz = -Math.cos(look.yaw); // you crawl where you look
@@ -600,6 +620,10 @@ function crawl(dt: number) {
   const pace = Math.hypot(me.speed, me.side);
   const walking = Math.min(1, pace / 0.2);
   me.bob += dt * (2 + 16 * pace);
+  // a footfall each time the eye comes down, heard
+  const stepNow = Math.floor(me.bob / Math.PI);
+  if (stepNow !== stepAt) { if (walking > 0.25 && !me.climb && me.hop <= 0) forest.step(0.5 + 0.5 * walking, me.crouch, stepNow % 2 === 0); stepAt = stepNow; }
+  puffed = Math.max(0, puffed - dt * 0.12);
   const shove = 1 + 0.35 * Math.sin(me.bob * 2) * walking;
   if (me.climb) climb(dt, fx, fz, me.speed * shove);
   else walk(dt, fx, fz, me.speed * shove);
@@ -615,7 +639,7 @@ function crawl(dt: number) {
   if (me.hop > 0 || me.vy > 0) {
     me.vy -= 9.8 * dt;
     me.hop += me.vy * dt;
-    if (me.hop <= 0) { me.dipV -= Math.min(0.35, -me.vy * 0.3); me.hop = 0; me.vy = 0; }
+    if (me.hop <= 0) { me.dipV -= Math.min(0.35, -me.vy * 0.3); me.hop = 0; me.vy = 0; forest.step(1.6, me.crouch, true); forest.step(1.2, me.crouch, false); puffed = Math.min(1, puffed + 0.5); }
   }
   me.dipV += (-me.dip * 260 - me.dipV * 22) * dt;
   me.dip += me.dipV * dt;
@@ -696,7 +720,7 @@ const sunScreen = new THREE.Vector3();
 const camDir = new THREE.Vector3();
 let focus = 1;
 // dev: tuning handles in the console
-if (import.meta.env.DEV) Object.assign(window, { sound, trees, ants, ferns, props, fungi, fungarium, spores, throwAt, shellMat, lensMat, atmosMat, camera, aoPass, lens, atmos, beautyRT, scene, renderer, composer, world, me, look });
+if (import.meta.env.DEV) Object.assign(window, { sound, forest, trees, ants, ferns, props, fungi, fungarium, spores, throwAt, shellMat, lensMat, atmosMat, camera, aoPass, lens, atmos, beautyRT, scene, renderer, composer, world, me, look });
 renderer.setAnimationLoop(() => {
   const dt = Math.min(clock.getDelta(), 0.05);
   shellMat.uniforms.uTime.value = clock.elapsedTime;
@@ -757,4 +781,5 @@ renderer.setAnimationLoop(() => {
   if (throwKind !== slingKind) { slingKind = throwKind; sling.swap(); } // other spores: down and up with them
   sling.update(dt, camera, lightDir, charging, me.bob, Math.min(1, Math.hypot(me.speed, me.side) / 0.2), look.yaw, look.pitch);
   sling.render(renderer);
+  forest.update(dt);
 });
