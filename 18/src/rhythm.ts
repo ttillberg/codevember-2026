@@ -13,6 +13,8 @@ export interface Arm {
   len: number;
   /** radians, where in its swing it is when the bar starts */
   phase: number;
+  /** 0..1, how loud its joint's voice is: 0 is muted */
+  vol: number;
 }
 
 /**

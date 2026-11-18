@@ -108,15 +108,15 @@ export class Sound {
     this.latency = Math.max(0, ac.currentTime - (performance.now() / 1000 + this.off));
   }
 
-  /** joint k crosses at performance time t (seconds), going dir, as hard as vel (0..1) */
-  hit(k: number, dir: number, vel: number, t: number) {
+  /** joint k crosses at performance time t (seconds), going dir, as hard as vel (0..1), its voice at vol (0..1) */
+  hit(k: number, dir: number, vel: number, t: number, vol = 1) {
     const ac = this.ac;
-    if (!this.running || !Number.isFinite(this.off)) return;
+    if (!this.running || !Number.isFinite(this.off) || !(vol > 0)) return;
     const when = Math.max(ac.currentTime + 0.002, t + this.off);
     this.stats = { hits: this.stats.hits + 1, late: when - (t + this.off), lead: when - ac.currentTime };
     const v = VOICES[Math.min(k, VOICES.length - 1)];
     const f = v.f * (dir > 0 ? 1 : v.tock);
-    const level = v.gain * (0.18 + 0.82 * Math.pow(vel, 1.6));
+    const level = v.gain * vol * vol * (0.18 + 0.82 * Math.pow(vel, 1.6));
 
     const pan = ac.createStereoPanner();
     pan.pan.value = dir * (k ? 0.25 : 0.08);

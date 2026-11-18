@@ -41,11 +41,11 @@ interface State {
 }
 
 const KEY = 'codevember-2026-18';
-const fresh = (): State => ({ arms: [{ n: 1, swing: 0.6, len: 1, phase: 0 }], bpm: 120, mode: 'sum', weight: 0, push: 0.3 });
+const fresh = (): State => ({ arms: [{ n: 1, swing: 0.6, len: 1, phase: 0, vol: 1 }], bpm: 120, mode: 'sum', weight: 0, push: 0.3 });
 
 const unit01 = (v: number, or: number) => (Number.isFinite(v) ? Math.min(1, Math.max(0, v)) : or);
 
-/** ?arms=1-34-1,2-52-0.62-90 (swings, swing in degrees, length, phase in degrees if any), &bpm=, &mode=each, &weight=0.3, &push=0.3: a pattern in a link, for clips too */
+/** ?arms=1-34-1,2-52-0.62-90-50 (swings, swing in degrees, length, then if any the phase in degrees and the volume in percent), &bpm=, &mode=each, &weight=0.3, &push=0.3: a pattern in a link, for clips too */
 function fromQuery(): State | null {
   const q = query.get('arms');
   if (!q) return null;
@@ -53,7 +53,7 @@ function fromQuery(): State | null {
     .split(',')
     .map((a) => a.split('-').map(Number))
     .filter((a) => a.length >= 3 && a.every(Number.isFinite))
-    .map(([n, deg, len, phase = 0]) => ({ n: Math.min(MAX_N, Math.max(1, Math.round(n))), swing: (Math.min(180, Math.max(0, deg)) * Math.PI) / 180, len: Math.min(1.5, Math.max(0.1, len)), phase: (((phase % 360) + 360) % 360) * (Math.PI / 180) }));
+    .map(([n, deg, len, phase = 0, vol = 100]) => ({ n: Math.min(MAX_N, Math.max(1, Math.round(n))), swing: (Math.min(180, Math.max(0, deg)) * Math.PI) / 180, len: Math.min(1.5, Math.max(0.1, len)), phase: (((phase % 360) + 360) % 360) * (Math.PI / 180), vol: unit01(vol / 100, 1) }));
   if (!arms.length) return null;
   const bpm = Number(query.get('bpm'));
   const weight = Number(query.get('weight'));
@@ -67,7 +67,7 @@ function load(): State {
   try {
     const s = JSON.parse(localStorage.getItem(KEY) ?? 'null') as State | null;
     if (s && Array.isArray(s.arms) && s.arms.length && s.arms.every((a) => [a.n, a.swing, a.len, a.phase].every(Number.isFinite))) {
-      return { arms: s.arms.slice(0, MAX_ARMS), bpm: Number.isFinite(s.bpm) ? s.bpm : 120, mode: s.mode === 'each' ? 'each' : 'sum', weight: unit01(s.weight, 0), push: unit01(s.push, 0.3) };
+      return { arms: s.arms.slice(0, MAX_ARMS).map((a) => ({ ...a, vol: unit01(a.vol, 1) })), bpm: Number.isFinite(s.bpm) ? s.bpm : 120, mode: s.mode === 'each' ? 'each' : 'sum', weight: unit01(s.weight, 0), push: unit01(s.push, 0.3) };
     }
   } catch {
     // no storage, or not ours: start over
@@ -206,7 +206,7 @@ function schedule() {
     played.push(h);
     const at = t0 + (h.phase - phi0) * barSeconds();
     flashes.push({ ...h, t: at });
-    sound?.hit(h.k, h.dir, h.vel, at);
+    sound?.hit(h.k, h.dir, h.vel, at, state.arms[h.k]?.vol);
   }
   scanned = end;
 }
@@ -219,7 +219,7 @@ let panelRect = { left: 0, top: 0 };
 function build() {
   const many = state.arms.length > 1;
   panel.innerHTML = `
-    <div class="cols"><span>Swings</span><span>Swing</span><span>Length</span><span>Phase</span></div>
+    <div class="cols"><span>Swings</span><span>Swing</span><span>Length</span><span>Phase</span><span>Volume</span></div>
     ${state.arms
       .map(
         (a, k) => `
@@ -228,6 +228,7 @@ function build() {
       <input type="range" data-p="swing" min="0" max="180" step="1" value="${Math.round((a.swing * 180) / Math.PI)}" aria-label="Swing of arm ${k + 1}" />
       <input type="range" data-p="len" min="0.1" max="1.5" step="0.01" value="${a.len}" aria-label="Length of arm ${k + 1}" />
       <input type="range" data-p="phase" min="0" max="360" step="1" value="${Math.round((a.phase * 180) / Math.PI)}" aria-label="Phase of arm ${k + 1}" />
+      <input type="range" data-p="vol" min="0" max="100" step="1" value="${Math.round(a.vol * 100)}" aria-label="Volume of arm ${k + 1}, 0 is muted" />
       <button data-act="rm" aria-label="Remove arm ${k + 1}" ${many ? '' : 'disabled'}>✕</button>
     </div>`,
       )
@@ -251,7 +252,7 @@ function build() {
 function addArm() {
   if (state.arms.length >= MAX_ARMS) return;
   const last = state.arms[state.arms.length - 1];
-  state.arms.push({ n: Math.min(MAX_N, last.n + 1), swing: 0.9, len: Math.max(0.2, +(last.len * 0.62).toFixed(2)), phase: 0 });
+  state.arms.push({ n: Math.min(MAX_N, last.n + 1), swing: 0.9, len: Math.max(0.2, +(last.len * 0.62).toFixed(2)), phase: 0, vol: 1 });
   if (sim.live) sim.added(state.arms);
 }
 function removeArm(k = state.arms.length - 1) {
@@ -300,6 +301,7 @@ panel.addEventListener('input', (e) => {
     const a = state.arms[Number(r.closest<HTMLElement>('.arm')!.dataset.k)];
     if (r.dataset.p === 'swing') a.swing = (v * Math.PI) / 180;
     else if (r.dataset.p === 'phase') a.phase = (v * Math.PI) / 180;
+    else if (r.dataset.p === 'vol') a.vol = v / 100;
     else a.len = v;
   }
   changed();
@@ -419,7 +421,7 @@ function frame() {
     }
     lit[f.k] = Math.max(lit[f.k], 1 - age / 0.14);
     pose(f.phase, then);
-    ctx.strokeStyle = ink((1 - age / 0.4) ** 2 * (0.25 + 0.75 * f.vel));
+    ctx.strokeStyle = ink((1 - age / 0.4) ** 2 * (0.25 + 0.75 * f.vel) * (0.15 + 0.85 * arms[f.k].vol));
     ctx.lineWidth = 1;
     ctx.beginPath();
     ctx.arc(X(then[2 * f.k]), Y(then[2 * f.k + 1]), 5 + age * (40 + 80 * f.vel), 0, Math.PI * 2);
@@ -456,7 +458,7 @@ function frame() {
   for (let q = 0; q <= 4; q++) line(tlX0 + (tlW * q) / 4, tlBottom + 3, tlX0 + (tlW * q) / 4, tlBottom + 7, 0.35);
   for (let k = 0; k < n; k++) {
     const y = tlTop + k * rowH + rowH / 2;
-    line(tlX0, y, tlX1, y, 0.16);
+    line(tlX0, y, tlX1, y, 0.05 + 0.11 * arms[k].vol);
   }
   // with weight no bar is the next one: the hits as they fell, the playhead writing over the bar before
   if (played.length && played[0].phase < phi - 1.5) played = played.filter((b) => b.phase > phi - 1);
@@ -466,7 +468,7 @@ function frame() {
     const x = tlX0 + (b.phase - Math.floor(b.phase)) * tlW;
     const y = tlTop + b.k * rowH + rowH / 2;
     const glow = since < 0.03 ? 1 - since / 0.03 : 0;
-    line(x, y, x, y - b.dir * (2.5 + 5.5 * b.vel + 2 * glow), (weighted ? 0.75 - 0.6 * since : 0.55) + 0.45 * glow, 1.5);
+    line(x, y, x, y - b.dir * (2.5 + 5.5 * b.vel + 2 * glow), ((weighted ? 0.75 - 0.6 * since : 0.55) + 0.45 * glow) * (0.2 + 0.8 * arms[b.k].vol), 1.5);
   }
   line(tlX0 + at * tlW, tlTop - 4, tlX0 + at * tlW, tlBottom + 2, 0.5);
 

@@ -23,7 +23,9 @@ pnpm -C 18 dev
 
 - **The workbench**, bottom right: a row an arm. `− ×n +` is how many swings it makes in a bar
   (the harmonic), then how far it swings (0 to 180°), how long it is, and its phase: where in
-  its swing it is when the bar starts (0° it crosses going right, 90° it is out at the right).
+  its swing it is when the bar starts (0° it crosses going right, 90° it is out at the right),
+  and how loud its joint's voice is: all the way down is muted, the arm still swings and still
+  moves the ones under it, its row and its rings go dim.
   `✕` takes it away.
 - **+ Arm** (or `+`, `-` takes the last one away): a new arm on the end, one harmonic up.
 - **Sum / Each** (`S`): what a joint crosses to sound. *Sum* is the centre line under the pivot:
@@ -44,8 +46,8 @@ pnpm -C 18 dev
 - **The bar** along the bottom: a row a joint, a tick a hit, up for tick and down for tock, as
   tall as it is hard. With weight it shows what was played, the playhead writing over the bar
   before, and the paths become the trail of the last bar.
-- `?arms=1-34-1,2-52-0.62-90` is a pattern in a link (swings, swing in degrees, length, and the
-  phase in degrees if any; `&bpm=`, `&mode=each`, `&weight=0.3`, `&push=0.4`). Without it, the last pattern is remembered. `?clean` hides the furniture.
+- `?arms=1-34-1,2-52-0.62-90-50` is a pattern in a link (swings, swing in degrees, length, and
+  if any the phase in degrees and the volume in percent; `&bpm=`, `&mode=each`, `&weight=0.3`, `&push=0.4`). Without it, the last pattern is remembered. `?clean` hides the furniture.
 
 ## How it works
 
