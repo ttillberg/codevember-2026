@@ -29,6 +29,8 @@ pnpm -C 18 dev
 - **Sum / Each** (`S`): what a joint crosses to sound. *Sum* is the centre line under the pivot:
   the Fourier picture. *Each* is the vertical under the joint's own origin, its arm alone: a
   plain polyrhythm, every arm an even pulse.
+- **Restart** (`R`): the motion from the top, the setup as it is. The bar starts over, and with
+  weight the chain is put back on the formula: the same chaos again, from the start.
 - **Pause** (space), **Sound** (`M`), **Tempo**: four beats to the bar, so ×1 ticks on 1 and
   tocks on 3.
 - **Physics**: 0 is the formula. Turn it up and the arms have weight: gravity and the other

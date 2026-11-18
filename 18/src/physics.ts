@@ -25,6 +25,8 @@ const CAP = 2048;
 const PULL = 2;
 
 const wrap = (a: number) => a - TAU * Math.round(a / TAU);
+/** where kept state e lives (e is negative during a count in) */
+const slot = (e: number) => (((e % CAP) + CAP) % CAP) * MAX;
 
 export class Sim {
   live = false;
@@ -75,7 +77,7 @@ export class Sim {
     const j = arms.length - 1;
     this.seed(arms[j], j);
     for (let e = Math.round(this.from * RATE); e <= Math.floor(this.i / KEEP); e++) {
-      this.hist[(e % CAP) * MAX + j] = arms[j].swing * Math.sin((TAU * arms[j].n * e) / RATE + arms[j].phase);
+      this.hist[slot(e) + j] = arms[j].swing * Math.sin((TAU * arms[j].n * e) / RATE + arms[j].phase);
     }
     this.prevMode = null;
   }
@@ -91,7 +93,7 @@ export class Sim {
   }
 
   private keep(n: number) {
-    const s = ((this.i / KEEP) % CAP) * MAX;
+    const s = slot(this.i / KEEP);
     for (let j = 0; j < n; j++) this.hist[s + j] = this.th[j];
   }
 
@@ -104,8 +106,8 @@ export class Sim {
     const hi = Math.min(last, lo + 1);
     const f = Math.min(1, e - lo);
     for (let j = 0; j < n; j++) {
-      const a = this.hist[(lo % CAP) * MAX + j];
-      out[j] = a + (this.hist[(hi % CAP) * MAX + j] - a) * f;
+      const a = this.hist[slot(lo) + j];
+      out[j] = a + (this.hist[slot(hi) + j] - a) * f;
     }
     out.length = n;
     return true;

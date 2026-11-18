@@ -154,11 +154,32 @@ function pose(phi: number, out: number[]): number[] {
   return place(arms, angles, out);
 }
 
+/** how far ahead the hits are worked out now, seconds */
+const lookahead = () => Math.min(0.8, Math.max(LOOK, (sound?.latency ?? 0) + 0.08));
+
+/** where a restart picks the motion up, bars: just before the bar, so its first crossing counts */
+const SEED = -1 / 64;
+
+/**
+ * The motion from the top, the setup as it is: the bar starts over, and with weight the chain
+ * is put back on the formula, always at the same point, so the same setup gives the same
+ * chaos again. It starts a lookahead before the bar, silent, so the first hit is on time.
+ */
+function restart() {
+  phi0 = Math.min(SEED, -lookahead() / barSeconds());
+  t0 = clock();
+  scanned = SEED;
+  if (state.loose > 0) sim.reset(state.arms, SEED);
+  else sim.live = false;
+  flashes.length = 0;
+  played = [];
+}
+
 function schedule() {
   if (!playing) return;
   const t = clock();
   const here = phaseAt(t);
-  const end = phaseAt(t + Math.min(0.8, Math.max(LOOK, (sound?.latency ?? 0) + 0.08)));
+  const end = phaseAt(t + lookahead());
   // the first tick, or the timer was held back (a hidden tab): no burst of old hits
   if (!(scanned >= here)) scanned = here;
   if (!(end > scanned)) return;
@@ -207,6 +228,9 @@ function build() {
     <div class="row">
       <button data-act="add" ${state.arms.length < MAX_ARMS ? '' : 'disabled'}>+ Arm</button>
       <button data-act="mode" title="What a joint crosses to sound: the centre line (sum) or its own vertical (each)">${state.mode}</button>
+    </div>
+    <div class="row">
+      <button data-act="restart" title="The motion from the top, the setup as it is (R)">Restart</button>
       <button data-act="play">${playing ? 'Pause' : 'Play'}</button>
       <button data-act="mute">${muted ? 'Muted' : 'Sound'}</button>
     </div>
@@ -248,6 +272,7 @@ panel.addEventListener('click', (e) => {
   else if (act === 'dn') state.arms[k].n = Math.max(1, state.arms[k].n - 1);
   else if (act === 'rm') removeArm(k);
   else if (act === 'add') addArm();
+  else if (act === 'restart') restart();
   else toggle(act as 'mode' | 'play' | 'mute');
   changed();
   build();
@@ -278,6 +303,7 @@ window.addEventListener('keydown', (e) => {
   else if (e.key === '+' || e.key === '=') addArm();
   else if (e.key === '-' || e.key === '_') removeArm();
   else if (e.key === 'm') toggle('mute');
+  else if (e.key === 'r') restart();
   else if (e.key === 's') toggle('mode');
   else return;
   e.preventDefault();
