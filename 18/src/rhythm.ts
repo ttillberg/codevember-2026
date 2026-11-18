@@ -15,6 +15,9 @@ export interface Arm {
   phase: number;
   /** 0..1, how loud its joint's voice is: 0 is muted */
   vol: number;
+  /** silenced, whatever its volume; and, when any arm has it, only those that do are heard */
+  mute?: boolean;
+  solo?: boolean;
   /** how heavy its joint is, when the chain has weight (physics.ts): only against the others' does it count */
   mass: number;
   /** what its joint crosses to sound */

@@ -3,8 +3,8 @@
 2026-11-18
 
 A pendulum as a drum machine, drawn in lines, black and white. (Or a colour a link, *Colour*
-in the menu, `?colour` in a link: magenta, pink, neon green, and the same three again
-down the chain, deeper, paler, yellower; an arm and the joint at its end, its path, its rings
+in the menu, `?colour` in a link: from magenta down the chain to pink (it had neon green
+in it too, and was loud); an arm and the joint at its end, its path, its rings
 and its row in the panel are then all that colour. It was colour for a while, to tell the
 rows apart; pointing at a link does that now.) Take it down to one arm swinging once a bar: a
 tick where it crosses the centre line going right, a tock going left. A binary rhythm. Then more
@@ -25,23 +25,32 @@ pnpm -C 18 dev
 
 ## How it plays
 
-- **Along the bottom**, two panels, black with a hairline round them that is all but not there, in the way of day 07's
+- **Along the bottom**, two panels, dark frosted glass with a hairline round them that is all but not there, in the way of day 07's
   pills (a control with no border of its own, lit while it is on or held), everything in
   sections under their labels. (They were frosted glass like day 07's, lighter at the top;
-  then one flat grey. Black and an outline is this day's own: lines on black.)
-  - **Instrument and mix**, one panel, a row each. Instrument: two lists (the
-    instrument: tine, bones, square, TR-808; and its scale), and Notes, by hit or by arm. A
-    list shows only what is picked; pressed, the rest stand over it: press, slide and let
-    go, or tap and tap. Under it Mix (volume, harmonics), Reverb (how much, the room's size,
-    its damping), Delay, Distortion. Between the two, Pendulum mode: formula or physics.
+  then one flat grey. Then black with an outline; frosted again once the chain had the
+  whole page and swung behind them.)
+  - **Instrument and mix**, one panel, a row each. Instrument: the four of them
+    as pills side by side, the one that plays lit (tine, bones, square, TR-808), and its
+    scale as a list, which shows only what is picked; pressed, the rest stand over it:
+    press, slide and let go, or tap and tap. Under it Mix (volume, harmonics), Reverb (how much, the room's size,
+    its damping), Delay, Distortion. Between the two, on one line, Notes and Pendulum mode
+    (formula or physics).
   - **Tracks**, the other panel: the columns' names, a row a link
-    with a hairline between, and under the last `+ Arm`, its plus in a ring (a row's remove
-    is a minus in the same ring). The row the pointer is on is a band of its colour from
+    with a hairline between, and *Add track* as the last row, on the rows' own columns: its plus in a ring the size
+    of a knob, under the volume knobs (a row's remove is a minus in a ring too; it was
+    `+ Arm`, a button in the middle under the rows). The row the pointer is on is a band of its colour from
     edge to edge of the panel.
-  - The two stand side by side from the bottom left corner, as tall as each other. Where the window is
-    not wide enough for that (and on a phone) instrument and mix go over the tracks. (They
-    were two pills over the tracks first, every track a pill of its own: seven pieces where
-    two say the same. Then the instrument's panel alone bottom left, a size of its own.)
+  - The two stand side by side in the middle along the bottom, as tall as each other, a
+    generous gap between them and the centre line running down the middle of it, the scene
+    over them. The space under the last row
+    of each is the space over its first label: the taller one sets the height, and in the
+    other the rows spread out (the instrument's) or Add track stays at the foot (the
+    tracks'). Where the window is not wide enough for both (and on a phone) the instrument's
+    panel stands on the tracks'. (They were two pills over the tracks first, every track a
+    pill of its own: seven pieces where two say the same. And for a moment a column up the
+    left side with the chain the height of the page, swinging behind them: more chain, but
+    the two side by side under it looked better.)
 - **First, a card**, day 14's: a frosted square in the middle, headphones recommended. The
   chain swings behind it without a sound, since a browser plays nothing before a press; a
   click anywhere, or a key, takes the card away and starts the sound, and does nothing else.
@@ -50,7 +59,8 @@ pnpm -C 18 dev
   `?nocard` in a link leaves it out.
 - **The bar**, top right, another pill: play or pause, restart, sound, the tempo (a knob that
   is its number), and behind the `≡` a menu for what is set once: the timeline,
-  colour, the tips (a switch each), save, save as, open. Under the title on a phone.
+  colour, the tips (a switch each), save, save as, open, and Reset (a new piece from
+  scratch: one arm swinging once a bar, everything else as it starts; what is saved is kept). Under the title on a phone.
   (Instrument, notes and mix were a panel of their own right over the pendulum, the tracks a
   workbench under it, and the rest a drawer down the right side: three places and three
   looks. Now the pendulum has the whole height over one panel.)
@@ -61,14 +71,18 @@ pnpm -C 18 dev
   crosses its line. With physics it is the bar behind as it went, wrapping at the playhead.
   Where there is no room beside the rows (a phone), one line under the chain instead. Put
   away to start with: the chain and its notes are the thing; `?timeline` in a link brings it.
-- **A track**, a link's row in the panel: `− ×n +` is how many swings it makes in a bar
-  (the harmonic), then how far it swings (0 to 180°), how long it is, and its phase: where in
+- **A track**, a link's row in the panel, from the left: **solo** (only this track is heard,
+  with any others soloed) and **mute** (silent whatever its volume; the arm still swings),
+  its volume, Σ, then a knob with `×n` beside it for how many swings it makes in a bar, 1 to
+  10 (the harmonic; it was a minus and a plus round the count, up to 16, at the front of the
+  row), then how far it swings (0 to 180°), how long it is, and its phase: where in
   its swing it is when the bar starts (0° it crosses going right, 90° it is out at the right),
   how loud its joint's voice is (all the way down is muted, the arm still swings and still
   moves the ones under it, its row and its rings go dim), and its weight and its push, which
   count only with physics on.
   `✕` takes it away.
-- **+ Arm** (or `+`, `-` takes the last one away): a new arm on the end, one harmonic up.
+- **Add track** (or `+`, `-` takes the last one away): a new arm on the end, one harmonic up. It
+  comes in at half volume: a new voice at full is a jolt, and it is easier turned up than down.
 - **Σ**, in every row (`S` for all of them at once): what that joint crosses to sound. Lit, the
   sum: the centre line under the pivot, the Fourier picture. Not lit, each: the vertical under
   its own origin, its arm alone, an even pulse. Mixed, the low joints can keep time while the
@@ -78,7 +92,8 @@ pnpm -C 18 dev
 - **Pause** (space), **Sound** (`M`), **Tempo**: four beats to the bar, so ×1 ticks on 1 and
   tocks on 3.
 - **Pendulum mode**, formula or physics, in the instrument's panel. No key for it, and
-  while physics is on its button is orange with a warning beside it (it drifts out of time):
+  while physics is on its button is orange with a warning sign beside it (it drifts out of
+  time, as its tip says):
   it changes everything, and should not be on by a slip of the finger or without being
   seen. (It was a switch in the menu with `W` for a key.) With the formula every arm goes exactly as it is set. With
   physics every arm is a real swing hung in the swing above. Its **weight** is how hard it
@@ -115,14 +130,17 @@ pnpm -C 18 dev
   it is turned, its number at the foot (140 pixels is the whole way, the gauge's height, so
   the fill goes with the pointer). A click leaves the gauge open, to drag on; a press
   anywhere else puts it away. The knob itself is a ring and a hand, from seven o'clock round
-  to five (the tempo's is its number). The arrow keys step one that has the focus, ten steps
+  to five (the tempo's is its number), with three dots two pixels outside the ring: where
+  its way starts, its middle, where it ends. The arrow keys step one that has the focus, ten steps
   with shift. A turned knob catches on its marks (the quarters of volume, weight, push and
   the mix, every 45° of swing and phase, every quarter of a length, the round tempos) and
   shift turns past them. (They were sliders, with a tick drawn at every mark: six of them an
   arm made a row 640 pixels wide, mostly track. Then knobs with their number said under the
   title while they turned, a long way from the hand.)
 - **Tips** (in the menu, or the `?` key): what the control under the pointer does, in a card
-  of its own over the panels (under the title on a phone, where it shows for the control you
+  of its own beside the panel that control is in: left of the instrument's, right of the
+  tracks', under the bar for the bar's (over the panel where there is no room beside it;
+  under the title on a phone, where it shows for the control you
   press). Frosted like the card the page opens with: grey glass, no outline, a deep shadow;
   the control's name at that card's size, what it does under it, a little softer. On to
   start with, remembered. (It was a dark box with a border, its name in small caps.)
@@ -199,7 +217,10 @@ pnpm -C 18 dev
   is which joint was a count from the top every time.
 - **The note is where the joint is when it hits**, as on day 14's string. The notes are laid
   down a ruler that stands still on the screen, down the middle: low at the top (A1), four
-  octaves to the bottom (A5), a mark at every note of the scale and a longer one at every A.
+  octaves to the bottom (A5). It is not drawn: the centre line runs from the top of the page
+  to the bottom with nothing marked on it, and where a joint is on it is heard. (There was a
+  mark at every note of the scale and a longer one at every A: a ruler to read, in the
+  middle of something to listen to.)
   The root hangs somewhere on it, and a joint plays the note at its own height on the screen
   when it hits, the nearest one of the scale, so whatever the chain does it is in tune. (It
   was how far the joint was from the root, whichever way: the same thing where it crosses
@@ -261,7 +282,7 @@ pnpm -C 18 dev
   machine, and different in kind: not one sound tuned to the note but a sound a note. Going
   down the ruler every note of the scale is the next of eight, round and round: bass drum,
   rimshot, snare, closed hat, clap, low tom, open hat, cowbell (BD RS SD CH CP LT OH CB), and
-  the marks down the ruler say which, so a joint can be put on the one that is wanted by
+  their names down the line say which (only then, by hit), so a joint can be put on the one that is wanted by
   dragging the root or pulling an arm longer. Each is made the way the machine made it, near
   enough: a sine that falls for the drums, six squares that agree on nothing for the metal,
   noise through a band for the snare and the clap. On Tension the default plays a bass drum

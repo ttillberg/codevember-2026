@@ -16,10 +16,10 @@ const tip = document.querySelector<HTMLElement>('#tip')!;
 
 const INK = '244, 244, 242';
 const BACK = '#0b0b0d';
-/** a colour a link, down the chain: magenta, pink, neon green, then the same three again, deeper, paler, yellower */
-const PALETTE = ['255, 43, 209', '255, 158, 196', '57, 255, 20', '214, 0, 170', '255, 200, 228', '182, 255, 58', '255, 79, 154', '45, 255, 160'];
+/** a colour a link, from magenta to pink: the first four in even steps down the chain, the next four the tones between and a paler pink */
+const PALETTE = ['255, 43, 209', '255, 89, 211', '255, 136, 212', '255, 182, 214', '255, 66, 210', '255, 113, 212', '255, 159, 213', '255, 214, 232'];
 const MAX_ARMS = 8;
-const MAX_N = 16;
+const MAX_N = 10;
 /**
  * How far ahead hits are worked out and handed to the audio clock, seconds: at least this, and
  * always past the output's own latency (bluetooth is a fifth of a second), or a hit would
@@ -98,6 +98,9 @@ const fresh = (): State => ({
   v: 2,
 });
 
+/** a new piece from scratch: one arm swinging once a bar, tick and tock, everything else as it starts */
+const blank = (): State => ({ ...fresh(), arms: [{ n: 1, swing: rad(52), len: 1, phase: 0, vol: 1, mass: 1, mode: 'sum', push: 0.5, hue: 0, sound: 0 }] });
+
 const unit01 = (v: number, or: number) => (Number.isFinite(v) ? Math.min(1, Math.max(0, v)) : or);
 
 /**
@@ -125,7 +128,7 @@ function sane(given: State | null | undefined): State | null {
   const kept = s.arms.slice(0, MAX_ARMS).map((a) => a.hue);
   const hues = kept.every((h, k) => Number.isInteger(h) && h >= 0 && h < PALETTE.length && kept.indexOf(h) === k) ? kept : kept.map((_, k) => k);
   return {
-    arms: s.arms.slice(0, MAX_ARMS).map((a, k) => ({ n: Math.min(MAX_N, Math.max(1, Math.round(a.n))), swing: a.swing, len: a.len, phase: a.phase, vol: unit01(a.vol, 1), mass: massFor(a.mass, k, s.weight), mode: (a.mode ?? s.mode) === 'each' ? 'each' : 'sum', push: s.v === 2 ? unit01(a.push, 0.5) : pushFrom(unit01(a.push ?? s.push ?? 0.3, 0.3)), hue: hues[k], sound: soundIn(a.sound, hues[k]) })),
+    arms: s.arms.slice(0, MAX_ARMS).map((a, k) => ({ n: Math.min(MAX_N, Math.max(1, Math.round(a.n))), swing: a.swing, len: a.len, phase: a.phase, vol: unit01(a.vol, 1), mute: !!a.mute, solo: !!a.solo, mass: massFor(a.mass, k, s.weight), mode: (a.mode ?? s.mode) === 'each' ? 'each' : 'sum', push: s.v === 2 ? unit01(a.push, 0.5) : pushFrom(unit01(a.push ?? s.push ?? 0.3, 0.3)), hue: hues[k], sound: soundIn(a.sound, hues[k]) })),
     bpm: s.bpm >= 40 && s.bpm <= 220 ? s.bpm : 120,
     physics: typeof s.physics === 'boolean' ? s.physics : s.weight! > 0,
     scale: SCALES.some((c) => c.id === s.scale) ? s.scale : 'tension',
@@ -305,6 +308,12 @@ function rest(k: number): number {
 }
 /** the instruments that are a set of sounds, not one sound at many pitches */
 const isKit = () => kit(state.instrument);
+/** how loud arm k is heard: its volume, or nothing while it is muted, or while another is soloed and it is not */
+function heard(k: number): number {
+  const a = state.arms[k];
+  if (!a || a.mute || (!a.solo && state.arms.some((b) => b.solo))) return 0;
+  return a.vol;
+}
 /** what said the note before the drums took over, to go back to after them */
 let melodicBy: State['by'] = 'hit';
 /**
@@ -409,7 +418,7 @@ function schedule() {
     // a kit's sound: the arm's own when sounds go by arm, else the one at the note it hit
     const step = state.by === 'arm' && isKit() ? (state.arms[h.k]?.sound ?? 0) : stepOf(scaleNotes(), midi);
     // the sound squares its volume: the root of what is kept, so the hit is that much softer and no more
-    sound?.hit(state.arms[h.k]?.hue ?? h.k, h.dir, h.vel, at, (state.arms[h.k]?.vol ?? 1) * Math.sqrt(kept), midi, step);
+    sound?.hit(state.arms[h.k]?.hue ?? h.k, h.dir, h.vel, at, heard(h.k) * Math.sqrt(kept), midi, step);
   }
   scanned = end;
 }
@@ -458,21 +467,30 @@ function setColour(on: boolean) {
   }
 }
 
-/** the top of everything along the bottom: the tip's box goes over it */
-let tipOver = 0;
 /** where the bar ends, when it lies under the title and reaches the middle (a phone): the ruler of notes starts under it */
 let topClear = 0;
 
 function measure() {
   // The instrument's panel and the tracks' stand side by side from the left, as tall as each
-  // other; where the window is not wide enough for that, the instrument goes over the tracks.
+  // other, and the scene is over them. Where the window is not wide enough for that, the
+  // instrument's stands on the tracks'.
   panel.classList.remove('over');
+  panel.style.paddingLeft = panel.style.paddingRight = '';
   const head = panel.querySelector<HTMLElement>('.voice');
   const rows = panel.querySelector<HTMLElement>('.tracks');
-  if (head && rows && head.offsetWidth + rows.offsetWidth + 10 > panel.clientWidth) panel.classList.add('over');
+  if (head && rows) {
+    const room = panel.clientWidth;
+    // (32: the gap between them, as the stylesheet has it)
+    const pair = head.offsetWidth + rows.offsetWidth + 32;
+    // The two are not as wide as each other, and the centre line runs between them: the
+    // narrower one is given the difference as room beside it, so the gap is on the line.
+    // (Where there is no room for that, the pair is in the middle as it is.)
+    const more = rows.offsetWidth - head.offsetWidth;
+    if (pair > room) panel.classList.add('over');
+    else if (pair + Math.abs(more) <= room) panel.style[more > 0 ? 'paddingLeft' : 'paddingRight'] = `${Math.abs(more)}px`;
+  }
   const r = panel.getBoundingClientRect();
   panelRect = { left: r.left, top: r.top };
-  tipOver = Math.min(r.top, head?.getBoundingClientRect().top ?? r.top);
   // The bar sits top right; where the title reaches under it (a phone) it goes below the title instead.
   topBar.style.top = '';
   const plate = document.querySelector<HTMLElement>('.plate .head')?.getBoundingClientRect();
@@ -498,7 +516,7 @@ const turnOf = (v: number, min: number, max: number) => -135 + (270 * (v - min))
  * It is a ring and a hand, or (`num`) its number alone. The arrow keys step it.
  */
 const knob = (p: string, value: number, min: number, max: number, step: number, label: string, num = false) =>
-  `<span class="knob${num ? ' num' : ''}" role="slider" tabindex="0" data-p="${p}" data-tip="${p === 'bpm' ? 'tempo' : p}" data-min="${min}" data-max="${max}" data-step="${step}" data-value="${value}" aria-label="${label}" aria-valuemin="${min}" aria-valuemax="${max}" aria-valuenow="${value}" style="--turn: ${turnOf(value, min, max).toFixed(1)}deg">${num ? value : ''}</span>`;
+  `<span class="knob${num ? ' num' : ''}" role="slider" tabindex="0" data-p="${p}" data-tip="${p === 'bpm' ? 'tempo' : p === 'n' ? 'swings' : p}" data-min="${min}" data-max="${max}" data-step="${step}" data-value="${value}" aria-label="${label}" aria-valuemin="${min}" aria-valuemax="${max}" aria-valuenow="${value}" style="--turn: ${turnOf(value, min, max).toFixed(1)}deg">${num ? value : ''}</span>`;
 function setKnob(el: HTMLElement, v: number) {
   el.dataset.value = String(v);
   el.setAttribute('aria-valuenow', String(v));
@@ -515,7 +533,8 @@ const ICONS = {
   muted: icon('<path d="M1.8 5.2h2.3l2.9-2.5v8.6L4.1 8.8H1.8z"/><path class="s" d="M9.3 5.3l3.2 3.4M12.5 5.3L9.3 8.7"/>'),
   menu: icon('<path class="s" d="M2.5 4h9M2.5 7h9M2.5 10h9"/>'),
   warn: icon('<path class="s" d="M7 2L12.6 11.6H1.4z"/><path class="s" d="M7 5.8v2.6"/><circle cx="7" cy="10" r="0.75"/>'),
-  plus: '<svg viewBox="0 0 18 18" width="18" height="18" aria-hidden="true"><circle class="s ring" cx="9" cy="9" r="8"/><path class="s" d="M9 5.6v6.8M5.6 9h6.8"/></svg>',
+  // the size of a knob: it stands under the volume knobs
+  plus: '<svg viewBox="0 0 22 22" width="22" height="22" aria-hidden="true"><circle class="s ring" cx="11" cy="11" r="10.5"/><path class="s" d="M11 7.2v7.6M7.2 11h7.6"/></svg>',
   minus: '<svg viewBox="0 0 18 18" width="18" height="18" aria-hidden="true"><circle class="s ring" cx="9" cy="9" r="8"/><path class="s" d="M5.6 9h6.8"/></svg>',
   caret: '<svg viewBox="0 0 8 8" width="7" height="7" aria-hidden="true"><path class="s" d="M1.4 2.8L4 5.4l2.6-2.6"/></svg>',
 };
@@ -531,8 +550,9 @@ function build() {
   // weight and its push when the chain has physics.
   const bySound = state.by === 'arm';
   const knobs = state.physics ? 6 : 4;
-  panel.style.setProperty('--cols', `14px 26px 30px 26px 28px ${bySound ? '36px ' : ''}repeat(${knobs}, 36px) 26px`);
-  panel.style.setProperty('--cols-phone', `14px 26px 28px 26px 26px repeat(${knobs}, 1fr) 26px`);
+  // the grip, solo, mute, volume, sum, (sound,) swings and its count, then the rest of the knobs, remove
+  panel.style.setProperty('--cols', `14px 26px 26px 36px 28px ${bySound ? '36px ' : ''}36px 24px repeat(${knobs - 1}, 36px) 26px`);
+  panel.style.setProperty('--cols-phone', `14px 22px 22px 1fr 26px 1fr 22px repeat(${knobs - 1}, 1fr) 24px`);
   queueMicrotask(() => {
     showHot();
   });
@@ -555,7 +575,13 @@ function build() {
   panel.innerHTML = `
     <div class="voice">
       <div class="group" role="group" aria-label="Instrument">
-        ${part('Instrument', pick('instrument', 'Instrument', INSTRUMENTS) + (isKit() ? '' : pick('scale', 'Scale', SCALES)))}
+        ${part(
+          'Instrument',
+          `<span class="seg" role="radiogroup" aria-label="Instrument" data-tip="instrument">${INSTRUMENTS.map((c) => `<button role="radio" data-act="pick" data-p="instrument" data-id="${c.id}" aria-checked="${c.id === state.instrument}" aria-pressed="${c.id === state.instrument}">${c.label}</button>`).join('')}</span>`,
+        )}
+        ${isKit() ? '' : part('Scale', pick('scale', 'Scale', SCALES))}
+      </div>
+      <div class="group" role="group" aria-label="Notes and pendulum mode">
         ${part(
           'Notes',
           `<span class="seg" role="radiogroup" aria-label="What says which note a hit is" data-tip="by">
@@ -563,14 +589,12 @@ function build() {
             <button role="radio" data-act="by" data-id="arm" aria-checked="${state.by === 'arm'}" aria-pressed="${state.by === 'arm'}">By arm</button>
           </span>`,
         )}
-      </div>
-      <div class="group" role="group" aria-label="Pendulum mode">
         ${part(
           'Pendulum mode',
           `<span class="seg" role="radiogroup" aria-label="How the chain moves" data-tip="physics">
             <button role="radio" data-act="motion" data-id="formula" aria-checked="${!state.physics}" aria-pressed="${!state.physics}">Formula</button>
             <button role="radio" data-act="motion" data-id="physics" aria-checked="${state.physics}" aria-pressed="${state.physics}">Physics</button>
-          </span>${state.physics ? `<span class="warning" role="status">${ICONS.warn}Drifts out of time</span>` : ''}`,
+          </span>${state.physics ? `<span class="warning" role="status" data-tip="physics" aria-label="Physics is on: the chain drifts out of time">${ICONS.warn}</span>` : ''}`,
         )}
       </div>
       <div class="group" role="group" aria-label="Mix">
@@ -582,16 +606,18 @@ function build() {
     </div>
     <div class="tracks" role="group" aria-label="Tracks">
     <h3>Tracks</h3>
-    <div class="cols"><span>Swings</span><span>Sum</span>${bySound ? '<span class="snd">Sound</span>' : ''}<span>Volume</span><span>Swing</span><span>Length</span><span>Phase</span>${state.physics ? '<span>Weight</span><span>Push</span>' : ''}<span></span></div>
+    <div class="cols"><span></span><span>Solo</span><span>Mute</span><span>Volume</span><span>Sum</span>${bySound ? '<span class="snd">Sound</span>' : ''}<span>Swings</span><span></span><span>Swing</span><span>Length</span><span>Phase</span>${state.physics ? '<span>Weight</span><span>Push</span>' : ''}<span></span></div>
     ${state.arms
       .map(
         (a, k) => `
     <div class="arm" data-k="${k}" style="--arm: rgb(${colour ? PALETTE[a.hue % PALETTE.length] : INK})">
       <span class="grip" data-tip="grip" aria-label="Move arm ${k + 1}">⋮⋮</span>
-      <button data-act="dn" data-tip="swings" aria-label="Fewer swings per bar">−</button><output data-tip="swings">×${a.n}</output><button data-act="up" data-tip="swings" aria-label="More swings per bar">+</button>
+      <button class="ms" data-act="solo" data-tip="solo" aria-pressed="${!!a.solo}" aria-label="Solo arm ${k + 1}">S</button>
+      <button class="ms" data-act="quiet" data-tip="quiet" aria-pressed="${!!a.mute}" aria-label="Mute arm ${k + 1}">M</button>
+      ${knob('vol', pct(a.vol), 0, 100, 1, `Volume of arm ${k + 1}`)}
       <button data-act="own" data-tip="mode" aria-pressed="${a.mode === 'sum'}" aria-label="Arm ${k + 1} sounds on the sum">Σ</button>
       ${bySound ? `<button class="snd" data-act="sound" data-tip="sound" aria-label="Sound of arm ${k + 1}" ${isKit() ? '' : 'disabled'}>${soundName(k)}</button>` : ''}
-      ${knob('vol', pct(a.vol), 0, 100, 1, `Volume of arm ${k + 1}, 0 is muted`)}
+      ${knob('n', a.n, 1, MAX_N, 1, `Swings per bar of arm ${k + 1}`)}<output data-tip="swings">×${a.n}</output>
       ${knob('swing', Math.round((a.swing * 180) / Math.PI), 0, 180, 1, `Swing of arm ${k + 1}`)}
       ${knob('len', a.len, 0.1, 1.5, 0.01, `Length of arm ${k + 1}`)}
       ${knob('phase', Math.round((a.phase * 180) / Math.PI), 0, 360, 1, `Phase of arm ${k + 1}`)}
@@ -600,13 +626,13 @@ function build() {
     </div>`,
       )
       .join('')}
-    <button class="add" data-act="add" data-tip="add" ${state.arms.length < MAX_ARMS ? '' : 'disabled'}>${ICONS.plus}Arm</button>
+    <button class="add" data-act="add" data-tip="add" ${state.arms.length < MAX_ARMS ? '' : 'disabled'}>${ICONS.plus}<span>Add track</span></button>
     </div>`;
   // The bar, top right: the transport, and behind the ≡ what is set once (what is shown, the
   // tips, the setups).
   const flip = (act: string, label: string, on: boolean, key = '') =>
     `<button class="row" role="menuitemcheckbox" data-act="${act}" data-tip="${act}" aria-checked="${on}"><span>${label}</span>${key ? `<kbd>${key}</kbd>` : ''}<i class="switch${on ? ' on' : ''}"></i></button>`;
-  const does = (act: string, label: string, key: string) => `<button class="row" role="menuitem" data-act="${act}" data-tip="${act}"><span>${label}</span><kbd>${key}</kbd></button>`;
+  const does = (act: string, label: string, key = '') => `<button class="row" role="menuitem" data-act="${act}" data-tip="${act}"><span>${label}</span>${key ? `<kbd>${key}</kbd>` : ''}</button>`;
   topBar.innerHTML = `
     <button data-act="play" data-tip="play" aria-label="${playing ? 'Pause' : 'Play'}">${playing ? ICONS.pause : ICONS.play}</button>
     <button data-act="restart" data-tip="restart" aria-label="Restart">${ICONS.restart}</button>
@@ -623,6 +649,8 @@ function build() {
         ${does('save', 'Save', `${CMD}S`)}
         ${does('saveas', 'Save as', `⇧${CMD}S`)}
         ${does('open', 'Open', `${CMD}O`)}
+        <hr />
+        ${does('reset', 'Reset')}
       </span>
     </span>`;
   measure();
@@ -673,14 +701,16 @@ for (const ev of ['pointerup', 'pointercancel']) {
 // --- tips: what the control under the pointer does, in a box of its own over the workbench ---
 
 const TIPS: Record<string, [string, string]> = {
-  swings: ['Swings', 'How many times the arm swings in a bar: its harmonic. ×1 crosses the line twice a bar, ×2 four times.'],
+  swings: ['Swings', 'How many times the arm swings in a bar, 1 to 10: its harmonic. ×1 crosses the line twice a bar, ×2 four times.'],
   swing: ['Swing', 'How far the arm swings to each side, 0 to 180°. Wider and it counts for more in the sum; with physics on, wider is also slower.'],
   len: ['Length', 'How long the arm is: how far it carries the joints under it.'],
   phase: ['Phase', 'Where in its swing the arm is when the bar starts. 0° it crosses going right, 90° it is out at the right.'],
   vol: ['Volume', 'How loud this joint is. All the way down is muted: the arm still swings and still moves the ones under it.'],
   rm: ['Remove', 'Takes this arm away.'],
+  quiet: ['Mute', 'Silences this track, whatever its volume. The arm still swings and still moves the ones under it.'],
+  solo: ['Solo', 'Only this track is heard, with any others that are soloed too.'],
   grip: ['Move', 'Drag up or down to move this link along the chain. Its colour, its voice and its settings go with it.'],
-  add: ['+ Arm', 'Hangs a new arm on the end, one harmonic up. Keys: + and −.'],
+  add: ['Add track', 'Hangs a new arm on the end, one harmonic up, at half volume. Keys: + and −.'],
   mode: ['Sum / Each', 'What this joint crosses to sound. Lit, the sum: the centre line under the pivot, every arm above it added up. Not lit, each: the vertical under its own origin, its arm alone. Key: S, for all of them.'],
   restart: ['Restart', 'The motion from the top, the setup as it is. With physics on, the same setup plays the same again. Key: R.'],
   play: ['Pause / Play', 'Stops the motion where it is, and lets it go on. Key: space.'],
@@ -688,16 +718,17 @@ const TIPS: Record<string, [string, string]> = {
   mass: ['Weight', 'How hard this link pulls on what it hangs from, with physics on. At the bottom it rides the arm above and is shaken by it, and the arm above never knows. At the top it weighs as much as the arm it hangs from, and throws it about.'],
   physics: ['Pendulum mode', 'Formula: every arm goes exactly as it is set. Physics: every arm is a real swing hung in the swing above, with its weight, kept going by the push. The chain is then on its own: it drifts out of time, and that is said in orange for as long as it is on. No key for it: it is not to be switched by a slip of the finger.'],
   push: ['Push', 'What keeps this swing going, with physics on: a push in time with its own rhythm, and the air against it. High and it keeps its time whatever the others do; from about the middle the bar comes round; lower and it drifts; 0 lets it go. The arrow at the joint is the push right now: none when the swing is on its own time.'],
-  instrument: ['Instrument', 'What is struck. Tine: a kalimba\'s, a note that rings on. Bones: a drum, two bones knocked together, like a soft rimshot; the same for a link wherever it is: rhythm, no tune. Square: electronic, a filter every hit opens. TR-808: the drum machine, a sound a note: the marks down the ruler say which. Pick it from the list, or key I for the next.'],
+  instrument: ['Instrument', 'What is struck. Tine: a kalimba\'s, a note that rings on. Bones: a drum, two bones knocked together, like a soft rimshot; the same for a link wherever it is: rhythm, no tune. Square: electronic, a filter every hit opens. TR-808: the drum machine, a sound an arm, or by hit a sound a note: their names down the line say which. Key I for the next.'],
   sound: ['Sound', 'What this arm sounds, when sounds go by arm (Notes, in the instrument panel). On the drum machine and the bones: press for the next of the eight, shift for the one before. On the others it is the note where the arm rests on the ruler: pull its ring longer or shorter.'],
   by: ['By hit / By arm', 'What says which note, or which drum, a hit is. By hit: where the joint is when it hits, so a joint far down the chain plays a different one each time. By arm: where its arm ends when the chain hangs straight, so every arm has one of its own. Key: B.'],
-  scale: ['Scale', 'The notes the joints play: where a joint is when it hits is its note, low at the root and high far out, always the nearest one of this scale. Pick it from the list, or key N for the next. The marks down the centre line are its notes.'],
+  scale: ['Scale', 'The notes the joints play: where a joint is when it hits is its note, low at the root and high far out, always the nearest one of this scale. Pick it from the list, or key N for the next.'],
   reverb: ['Reverb', 'How much of what you hear is the room: none at the bottom; higher, the notes themselves go down as the room comes up; at the top, only the room.'],
   room: ['Room', 'How big the room is. Small, the walls are close and hard: it rings like metal, a pipe, a tin. Big, a hall. Turn Reverb up to hear it: all the way up with a small room is metal alone.'],
   delay: ['Delay', 'An echo in time, a dotted eighth apart, bouncing left then right: off at the bottom; higher, more goes in and more comes round again.'],
   harm: ['Harmonics', 'The overtone over every note: none at the bottom (plain, round), each link\'s own in the middle, twice that at the top (bright).'],
   tempo: ['Tempo', 'Beats a minute, four to the bar.'],
-  menu: ['Menu', 'What is shown, these tips, the setups.'],
+  menu: ['Menu', 'What is shown, these tips, the setups, and Reset.'],
+  reset: ['Reset', 'A new piece from scratch: one arm swinging once a bar, and the instrument, the notes, the mix and the tempo as they start. What is saved by name and on the digits is kept. No key for it.'],
   volume: ['Volume', 'How loud it all is.'],
   damp: ['Damping', 'How much of the room\'s top is taken off as it comes back: open at the bottom, a room hung with blankets at the top.'],
   dist: ['Distortion', 'Everything driven into a soft clipper, before the room and the echo: clean at the bottom, warm in the middle, a fuzz at the top, where every tail is as loud as its note.'],
@@ -705,7 +736,7 @@ const TIPS: Record<string, [string, string]> = {
   saveas: ['Save as', 'Asks for a name and keeps this setup under it, offering the last name with the next number. Key: cmd+shift+S.'],
   open: ['Open', 'Everything saved by name, the newest first. Key: cmd+O. Ten more live on the digits: shift and a digit keeps, the digit brings back.'],
   timeline: ['Timeline', 'Each link\'s curve beside its row: what its joint crosses zero with, over the bar, a dot where it hits. Put away to start with. Key: T.'],
-  colour: ['Colour', 'A colour a link (magenta, pink, neon green, and on), or all of it black and white, as it is to start with.'],
+  colour: ['Colour', 'A colour a link, from magenta down the chain to pink, or all of it black and white, as it is to start with.'],
   tips: ['Tips', 'These boxes, on or off. Key: ?. And the knobs: press one and drag up (or to the right) to turn it up, the gauge over it shows where it is; a click leaves the gauge open, to drag on. It catches on the quarters and the round numbers, shift turns past them; the arrow keys step it.'],
 };
 
@@ -717,19 +748,53 @@ try {
   // no storage: on
 }
 
-function showTip(key: string | undefined) {
+/** the panel (or the bar) the control with the tip is in: the tip stands beside it */
+let tipHost: HTMLElement | null = null;
+
+function showTip(key: string | undefined, from?: HTMLElement | null) {
   // not while a list stands open over where the box goes
   const t = tipsOn && key && openPop !== 'instrument' && openPop !== 'scale' ? TIPS[key] : undefined;
   tip.hidden = !t;
   if (!t) return;
+  tipHost = from?.closest<HTMLElement>('.voice, .tracks, .bar') ?? topBar;
   // faded while the formula runs: say why, and what turns it on
   const off = (key === 'mass' || key === 'push') && !state.physics ? ' Off now: the formula is running. Pick Physics under Pendulum mode.' : '';
   tip.replaceChildren(Object.assign(document.createElement('b'), { textContent: t[0] }), Object.assign(document.createElement('span'), { textContent: t[1] + off }));
+  placeTip();
 }
 
-/** over the workbench's rows on a wide screen; on a phone the stylesheet puts it under the title */
+/**
+ * Beside its panel: left of the instrument's, right of the tracks', standing on the same line
+ * as the panel and as wide as the room there (a narrow column of text where that is little).
+ * Where there is no room beside it at all, over it, as wide as the panel. The bar's hang
+ * under the bar. On a phone the stylesheet puts it under the title.
+ */
 function placeTip() {
-  tip.style.bottom = window.innerWidth > 760 ? `${window.innerHeight - tipOver + 12}px` : '';
+  const st = tip.style;
+  st.left = st.right = st.top = st.bottom = st.width = '';
+  tip.classList.remove('slim');
+  if (window.innerWidth <= 760 || !tipHost?.isConnected) return;
+  const r = tipHost.getBoundingClientRect();
+  const gap = 12;
+  if (tipHost === topBar) {
+    st.top = `${r.bottom + gap}px`;
+    st.right = `${window.innerWidth - r.right}px`;
+    st.width = '320px';
+    return;
+  }
+  const left = tipHost.classList.contains('voice');
+  const room = (left ? r.left : window.innerWidth - r.right) - 24 - gap;
+  if (room >= 190) {
+    const wide = Math.min(320, room);
+    tip.classList.toggle('slim', wide < 280);
+    st.width = `${wide}px`;
+    st.left = `${left ? r.left - gap - wide : r.right + gap}px`;
+    st.bottom = `${window.innerHeight - r.bottom}px`;
+  } else {
+    st.left = `${r.left}px`;
+    st.width = `${r.width}px`;
+    st.bottom = `${window.innerHeight - r.top + gap}px`;
+  }
 }
 
 function setTips(on: boolean) {
@@ -742,10 +807,10 @@ function setTips(on: boolean) {
   }
 }
 
-const tipOf = (e: Event) => (e.target as HTMLElement).closest?.<HTMLElement>('[data-tip]')?.dataset.tip;
+const tipAt = (e: Event) => (e.target as HTMLElement).closest?.<HTMLElement>('[data-tip]');
 for (const el of [panel, topBar]) {
-  el.addEventListener('pointerover', (e) => showTip(tipOf(e)));
-  el.addEventListener('focusin', (e) => showTip(tipOf(e)));
+  el.addEventListener('pointerover', (e) => showTip(tipAt(e)?.dataset.tip, tipAt(e)));
+  el.addEventListener('focusin', (e) => showTip(tipAt(e)?.dataset.tip, tipAt(e)));
   // a mouse leaving takes the tip away; a finger's stays until the next press somewhere else
   el.addEventListener('pointerleave', (e) => e.pointerType === 'mouse' && showTip(undefined));
 }
@@ -756,7 +821,7 @@ window.addEventListener('pointerdown', (e) => {
 function addArm() {
   if (state.arms.length >= MAX_ARMS) return;
   const last = state.arms[state.arms.length - 1];
-  state.arms.push({ n: Math.min(MAX_N, last.n + 1), swing: 0.9, len: Math.max(0.2, +(last.len * 0.62).toFixed(2)), phase: 0, vol: 1, mass: +(last.mass / 2).toFixed(2), mode: last.mode, push: last.push, hue: -1, sound: 0 });
+  state.arms.push({ n: Math.min(MAX_N, last.n + 1), swing: 0.9, len: Math.max(0.2, +(last.len * 0.62).toFixed(2)), phase: 0, vol: 0.5, mass: +(last.mass / 2).toFixed(2), mode: last.mode, push: last.push, hue: -1, sound: 0 });
   const made = state.arms[state.arms.length - 1];
   made.hue = PALETTE.findIndex((_, h) => !state.arms.some((a) => a.hue === h));
   made.sound = FIRST_SOUND[made.hue % FIRST_SOUND.length];
@@ -812,6 +877,17 @@ const onClick = (e: Event) => {
     build();
     return;
   }
+  if (act === 'reset') {
+    // a new piece from scratch: one arm, the rest as it starts; what is saved by name and on the digits is kept
+    setPop('');
+    usual.length = 0;
+    held = -1;
+    melodicBy = 'hit';
+    apply(blank());
+    restart();
+    note('Reset');
+    return;
+  }
   if (act === 'save' || act === 'saveas' || act === 'open') {
     setPop('');
     if (act === 'open') showSaved();
@@ -820,9 +896,9 @@ const onClick = (e: Event) => {
     return;
   }
   const k = Number(b.closest<HTMLElement>('.arm')?.dataset.k);
-  if (act === 'up') state.arms[k].n = Math.min(MAX_N, state.arms[k].n + 1);
-  else if (act === 'dn') state.arms[k].n = Math.max(1, state.arms[k].n - 1);
-  else if (act === 'own') state.arms[k].mode = state.arms[k].mode === 'sum' ? 'each' : 'sum';
+  if (act === 'own') state.arms[k].mode = state.arms[k].mode === 'sum' ? 'each' : 'sum';
+  else if (act === 'quiet') state.arms[k].mute = !state.arms[k].mute;
+  else if (act === 'solo') state.arms[k].solo = !state.arms[k].solo;
   else if (act === 'sound') state.arms[k].sound = (state.arms[k].sound + ((e as MouseEvent).shiftKey ? KIT.length - 1 : 1)) % KIT.length;
   else if (act === 'rm') removeArm(k);
   else if (act === 'add') addArm();
@@ -924,7 +1000,7 @@ function fillGauge() {
   const v = Number(el.dataset.value);
   const p = el.dataset.p;
   gauge.style.setProperty('--t', ((v - min) / (Number(el.dataset.max) - min || 1)).toFixed(4));
-  gauge.querySelector('b')!.textContent = p === 'swing' || p === 'phase' ? `${v}°` : String(v);
+  gauge.querySelector('b')!.textContent = p === 'swing' || p === 'phase' ? `${v}°` : p === 'n' ? `×${v}` : String(v);
 }
 function showGauge(el: HTMLElement | null, pin = false) {
   window.clearTimeout(gaugeUntil);
@@ -955,7 +1031,11 @@ function setParam(el: HTMLElement, v: number) {
     state[p] = v / 100;
   } else {
     const a = state.arms[Number(el.closest<HTMLElement>('.arm')!.dataset.k)];
-    if (p === 'swing') a.swing = (v * Math.PI) / 180;
+    if (p === 'n') {
+      a.n = v;
+      // its count is written beside the knob
+      el.closest('.arm')!.querySelector('output')!.textContent = `×${v}`;
+    } else if (p === 'swing') a.swing = (v * Math.PI) / 180;
     else if (p === 'phase') a.phase = (v * Math.PI) / 180;
     else if (p === 'vol') a.vol = v / 100;
     else if (p === 'mass') a.mass = v / 100;
@@ -1339,30 +1419,27 @@ function frame() {
 
   pose(phi, now);
 
-  // what a joint has to cross: the centre line, or its own vertical
-  // the ruler, the whole of it: the line the joints cross is the stretch of it under the root
-  line(px, y0, px, y0 + RULER * unit, 0.1);
+  // The centre line, from the top of the page to the bottom: one line, nothing marked on it.
+  // The stretch of it under the root is what a joint on the sum has to cross, a little brighter.
+  // Where a joint is on it when it hits is still its note (low at the top), the nearest one of
+  // the scale: that is heard, not drawn.
+  line(px, 0, px, h, 0.1);
   if (arms.some((a) => a.mode === 'sum')) line(px, py, px, Y(total) + 14, 0.25);
-  // its notes: a mark at every note of the scale, a longer one at every A, low at the top. Where
-  // a joint is when it hits is the note it plays, the nearest of these.
-  const marks = scaleNotes();
-  // On the drum machine a note is a sound, not a pitch: every mark says which (they go round, a
-  // sound a mark, down the ruler), so a joint can be put on the one that is wanted.
-  const kit = state.instrument === '808' && state.by === 'hit';
-  if (kit) {
+  // Only on the drum machine by hit, where a height is a sound and not a pitch, each one is
+  // named beside the line (they go round, a sound a note of the scale, down the ruler), so a
+  // joint can be put on the one that is wanted.
+  if (state.instrument === '808' && state.by === 'hit') {
+    const marks = scaleNotes();
     ctx.font = '600 8px Inter, "Helvetica Neue", Helvetica, Arial, sans-serif';
     ctx.textBaseline = 'middle';
     ctx.textAlign = 'left';
     ctx.fillStyle = ink(0.5);
-  }
-  let step = 0;
-  for (let m = 0; m <= SPAN; m++) {
-    if (!marks.includes(m % 12)) continue;
-    const y = y0 + (m / SPAN) * RULER * unit;
-    const half = kit ? 3 : m % 12 === 0 ? 5 : 1.5;
-    line(px - half, y, px + half, y, 0.4);
-    if (kit) ctx.fillText(KIT[step % KIT.length], px + 9, y + 0.5);
-    step++;
+    let step = 0;
+    for (let m = 0; m <= SPAN; m++) {
+      if (!marks.includes(m % 12)) continue;
+      ctx.fillText(KIT[step % KIT.length], px + 9, y0 + (m / SPAN) * RULER * unit + 0.5);
+      step++;
+    }
   }
   // by arm: where each arm rests on the ruler is its note, so that is marked, in its colour
   if (state.by === 'arm' && !isKit()) {
@@ -1431,7 +1508,7 @@ function frame() {
     }
     lit[f.k] = Math.max(lit[f.k], 1 - age / 0.14);
     pose(f.phase, then);
-    ctx.strokeStyle = tint(f.k, (1 - age / 0.4) ** 2 * (0.25 + 0.75 * f.vel) * (0.15 + 0.85 * arms[f.k].vol) * f.kept);
+    ctx.strokeStyle = tint(f.k, (1 - age / 0.4) ** 2 * (0.25 + 0.75 * f.vel) * (0.15 + 0.85 * heard(f.k)) * f.kept);
     ctx.lineWidth = 1;
     ctx.beginPath();
     ctx.arc(X(then[2 * f.k]), Y(then[2 * f.k + 1]), 5 + age * (40 + 80 * f.vel), 0, Math.PI * 2);
@@ -1464,7 +1541,7 @@ function frame() {
     // never solid, all but clear when it is muted. Pointed at from its track, only a light
     // ground to say which one it is: its knobs are right there under the pointer.
     const fromTrack = hot >= 0 ? hotRow : moving >= 0;
-    ctx.fillStyle = tint(lit1, fromTrack ? 0.05 : 0.025 + 0.3 * arms[lit1].vol);
+    ctx.fillStyle = tint(lit1, fromTrack ? 0.05 : 0.025 + 0.3 * heard(lit1));
     ctx.fill('evenodd');
     ctx.strokeStyle = tint(lit1, fromTrack ? 0.18 : 0.4);
     ctx.lineWidth = 1;
@@ -1546,7 +1623,7 @@ function frame() {
       const from = stood.get(key) ?? 2;
       const tall = 2.5 + 5 * b.vel + 2 * glow;
       stood.set(key, from + tall + 2);
-      line(x, tlY - b.dir * from, x, tlY - b.dir * (from + tall), ((weighted ? 0.9 - 0.6 * since : 0.8) + 0.2 * glow) * (0.2 + 0.8 * arms[b.k].vol), 1.5, b.k);
+      line(x, tlY - b.dir * from, x, tlY - b.dir * (from + tall), ((weighted ? 0.9 - 0.6 * since : 0.8) + 0.2 * glow) * (0.2 + 0.8 * heard(b.k)), 1.5, b.k);
     }
     line(tlX0 + at * tlW, tlY - 14, tlX0 + at * tlW, tlY + 14, 0.5);
   }
@@ -1559,7 +1636,7 @@ function frame() {
       const { y, h: rh } = rowBoxes[k];
       const amp = rh / 2 + 3;
       line(cx0, y, cx0 + cw, y, 0.2, 1, k);
-      ctx.strokeStyle = tint(k, 0.35 + 0.6 * arms[k].vol);
+      ctx.strokeStyle = tint(k, 0.35 + 0.6 * heard(k));
       ctx.lineWidth = 1.25;
       ctx.beginPath();
       if (weighted) {
@@ -1587,7 +1664,7 @@ function frame() {
       const since = weighted ? phi - b.phase : (at - b.phase + 1) % 1;
       if (since < 0 || since >= 1 || b.k >= n) continue;
       const glow = since < 0.03 ? 1 - since / 0.03 : 0;
-      ctx.fillStyle = tint(b.k, (0.25 + 0.75 * arms[b.k].vol) * (weighted ? 1 - 0.6 * since : 1));
+      ctx.fillStyle = tint(b.k, (0.25 + 0.75 * heard(b.k)) * (weighted ? 1 - 0.6 * since : 1));
       ctx.beginPath();
       ctx.arc(cx0 + (b.phase - Math.floor(b.phase)) * cw, rowBoxes[b.k].y, 1.5 + 1.5 * b.vel + 2 * glow, 0, Math.PI * 2);
       ctx.fill();

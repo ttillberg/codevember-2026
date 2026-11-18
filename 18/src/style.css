@@ -49,12 +49,13 @@ canvas { display: block; width: 100vw; height: 100vh; }
 .pill, .voice, .tracks, .arm, .pop, .gauge { position: relative; isolation: isolate; }
 .pill::before, .voice::before, .tracks::before, .pop::before, .gauge::before {
   content: ""; position: absolute; z-index: -1; inset: 0; border-radius: inherit; pointer-events: none;
-  /* a hairline: half a pixel where the screen has them */
-  background: #0b0b0d; box-sizing: border-box; border: 0.5px solid rgba(244, 244, 242, 0.2);
+  /* Frosted: the chain swings behind the panels, and shows through as a blur. A hairline round it, half a pixel where the screen has them. */
+  background: rgba(22, 22, 25, 0.55); box-sizing: border-box; border: 0.5px solid rgba(244, 244, 242, 0.2);
+  -webkit-backdrop-filter: blur(16px) saturate(1.6); backdrop-filter: blur(16px) saturate(1.6);
 }
 .pill { border-radius: 999px; }
-/* what stands over the scene to be read: a shadow under it too */
-.pop::before, .gauge::before { box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5); }
+/* what stands over the scene to be read: denser, and a shadow under it */
+.pop::before, .gauge::before { background: rgba(22, 22, 25, 0.82); box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5); }
 
 /* a button in a pill: no border, a soft disc under the pointer, the ink when it is on */
 .ui button {
@@ -71,29 +72,26 @@ canvas { display: block; width: 100vw; height: 100vh; }
 .ui output { text-align: center; font-variant-numeric: tabular-nums; }
 .sep { flex: none; width: 1px; height: 14px; margin: 0 5px; background: rgba(244, 244, 242, 0.14); }
 
-/* Along the bottom, from the left: the instrument's panel and the tracks' side by side, as tall
-   as each other; one over the other where there is no room for that (.over, main.ts). Only
-   the panels take the pointer: beside them it goes through to the scene. */
+/* Along the bottom, in the middle: the instrument's panel and the tracks' side by side, as tall
+   as each other. Where there is no room for that (.over, main.ts) the instrument's stands on
+   the tracks'. Only the panels take the pointer: beside them it goes through to the scene. */
 .panel {
   position: fixed; z-index: 2;
   left: max(24px, env(safe-area-inset-left)); right: max(24px, env(safe-area-inset-right)); bottom: max(24px, env(safe-area-inset-bottom));
-  display: flex; justify-content: flex-start; align-items: stretch; gap: 10px; pointer-events: none;
+  display: flex; justify-content: center; align-items: stretch; gap: 32px; pointer-events: none; box-sizing: border-box;
 }
 .panel > * { flex: none; pointer-events: auto; max-width: 100%; box-sizing: border-box; }
 .panel.over { flex-direction: column; align-items: center; gap: 6px; }
 
 /* The instrument and the mix: one panel, a row each with a line between, each row in sections
-   under their labels with a line between those too. Over the tracks, the two rows are side by
-   side instead. */
-.voice { display: flex; flex-direction: column; align-items: stretch; padding: 18px 20px 16px; border-radius: 22px; }
+   under their labels with a line between those too. */
+/* (as tall as the tracks' panel when that is the taller: its rows then spread over the height, the mix at the foot) */
+.voice { display: flex; flex-direction: column; align-items: stretch; justify-content: space-between; padding: 18px 20px 18px; border-radius: 22px; }
 .voice .group + .group { margin-top: 9px; padding-top: 11px; border-top: 1px solid rgba(244, 244, 242, 0.12); }
-.panel.over .voice { flex-direction: row; flex-wrap: wrap; justify-content: center; align-items: flex-start; gap: 12px 0; }
-.panel.over .voice .group + .group { margin-top: 0; padding-top: 0; border-top: 0; }
 .group { display: flex; align-items: stretch; }
 .group section { display: grid; align-content: start; gap: 8px; padding: 0 9px; border-left: 1px solid rgba(244, 244, 242, 0.12); }
-.voice:not(.x) .group:first-child section:first-child, .panel:not(.over) .group section:first-child { padding-left: 0; border-left: 0; }
+.group section:first-child { padding-left: 0; border-left: 0; }
 .group section:last-child { padding-right: 0; }
-.panel.over .voice .group:first-child section:last-child { padding-right: 9px; }
 .group h3, .tracks h3 { margin: 0; font: inherit; font-size: 9px; white-space: nowrap; }
 .ctl { display: flex; align-items: flex-start; gap: 2px; }
 /* a list is a pill of its own, so it reads as something to press */
@@ -107,9 +105,10 @@ canvas { display: block; width: 100vw; height: 100vh; }
 .cell > i, .cols { font-style: normal; font-size: 8px; letter-spacing: 0.06em; white-space: nowrap; }
 .cell > i { font-size: 6.5px; line-height: 7px; letter-spacing: 0.05em; opacity: 0.36; }
 .seg { display: flex; gap: 2px; }
-/* Physics is on: its button is orange, and what that means is said beside it in the same orange */
+/* Physics is on: its button is orange, with a warning sign beside it in the same orange */
 .ui .seg button[data-id="physics"][aria-pressed="true"] { background: #ff9500; color: #0b0b0d; }
-.warning { display: flex; align-items: center; gap: 6px; height: 26px; margin-left: 10px; color: #ff9500; font-size: 8px; letter-spacing: 0.06em; white-space: nowrap; }
+/* (the sign alone: the row has no room for words, and the tip says them) */
+.warning { display: flex; align-items: center; height: 26px; margin-left: 4px; color: #ff9500; }
 
 /* a list: what is picked, and pressed, the rest standing over it */
 .pick { position: relative; display: flex; }
@@ -135,14 +134,14 @@ canvas { display: block; width: 100vw; height: 100vh; }
 .switch.on::after { transform: translateX(10px); background: #0b0b0d; }
 
 /* the tracks: one panel of glass under its label, the columns' names, then a row a link */
-.tracks { --pad: 14px; display: grid; gap: 3px; justify-items: center; align-content: start; padding: 18px var(--pad) 12px; border-radius: 22px; }
-.tracks h3 { justify-self: start; margin: 0 8px 9px; }
+/* (the space under the last row is the space over the label: 18px to the plus's ring) */
+.tracks { --pad: 14px; display: flex; flex-direction: column; align-items: stretch; gap: 3px; padding: 18px var(--pad) 13px; border-radius: 22px; }
+.tracks h3 { align-self: flex-start; margin: 0 8px 9px; }
 .cols, .arm { display: grid; grid-template-columns: var(--cols); gap: 4px; align-items: center; justify-items: center; padding: 0 8px; }
 /* the columns' names: as small and as dim as the knobs' in the other panel */
 .cols { height: 10px; font-size: 6.5px; line-height: 7px; letter-spacing: 0.05em; opacity: 0.36; }
 /* a heading never widens its column: the rows under it would stick out of the screen */
 .cols span { min-width: 0; overflow: hidden; justify-self: stretch; text-align: center; }
-.cols span:first-child { grid-column: 2 / 5; }
 .arm { padding: 3px 8px; border-radius: 999px; }
 /* the link the pointer is on, here or on the chain: its row in its colour, from edge to edge of the panel */
 .arm::before { content: ""; position: absolute; z-index: -1; inset: -1px calc(1px - var(--pad)) -2px; pointer-events: none; }
@@ -152,6 +151,13 @@ canvas { display: block; width: 100vw; height: 100vh; }
 .arm output { color: var(--arm); justify-self: stretch; }
 .arm button { padding: 0; justify-self: stretch; }
 .arm button[aria-pressed="true"] { background: var(--arm); color: #0b0b0d; }
+/* solo and mute: a letter each, in a ring the size of remove's and as fine as a knob's (not white); filled while it is on */
+.ui .arm .ms {
+  justify-self: center; width: 18px; min-width: 18px; height: 18px; padding: 0; border-radius: 50%;
+  border: 1px solid rgba(244, 244, 242, 0.45); color: rgba(244, 244, 242, 0.8); font-size: 8px; letter-spacing: 0; line-height: 1;
+}
+.ui .arm .ms:hover { border-color: #f4f4f2; color: #f4f4f2; background: none; }
+.ui .arm .ms[aria-pressed="true"] { background: var(--arm); border-color: var(--arm); color: #0b0b0d; }
 /* an arm's sound: a drum to press through, or the note where it rests (to read, not to press) */
 .arm .snd { font-size: 9px; letter-spacing: 0.04em; color: var(--arm); }
 .arm .snd:disabled { opacity: 0.55; }
@@ -159,8 +165,21 @@ canvas { display: block; width: 100vw; height: 100vh; }
 .grip { color: var(--arm); opacity: 0.6; font-size: 12px; letter-spacing: -0.2em; text-align: center; cursor: grab; touch-action: none; line-height: 26px; }
 .grip:hover { opacity: 1; }
 .panel.moving, .panel.moving .grip { cursor: grabbing; }
-/* + Arm: the plus in a ring */
-.ui button.add { gap: 7px; padding: 0 12px 0 4px; margin-top: 3px; }
+/* Add track: the last row, on the rows' own columns: its plus in a ring the size of a knob,
+   under the volume knobs, its name beside it. A hairline over it. Where the panel is taller
+   than its rows (the other one is), it stays at the foot. */
+.ui button.add {
+  position: relative; display: grid; grid-template-columns: var(--cols); gap: 4px; align-items: center; justify-items: center;
+  height: 32px; margin-top: auto; padding: 3px 8px; border-radius: 0;
+}
+.ui button.add:hover { background: none; }
+/* Add track and a track's remove: in the full ink, ring and all */
+.ui button.add, .ui .arm button[data-act="rm"] { color: #f4f4f2; }
+.ui button.add svg .ring, .ui .arm button[data-act="rm"] svg .ring { opacity: 1; }
+/* (the volume knobs are the fourth column) */
+.add svg { grid-column: 4; }
+.add span { grid-column: 5 / -1; justify-self: start; padding-left: 4px; }
+.arm + .add::after { content: ""; position: absolute; left: 8px; right: 8px; top: -2px; height: 1px; background: rgba(244, 244, 242, 0.1); pointer-events: none; }
 .ui svg .s.ring { stroke-width: 1; opacity: 0.6; }
 .ui button:hover svg .ring { opacity: 1; }
 /* and a track's remove: a minus in the same ring, no disc behind it */
@@ -177,6 +196,16 @@ canvas { display: block; width: 100vw; height: 100vh; }
   content: ""; position: absolute; left: 50%; top: 5%; width: 2px; height: 40%; margin-left: -1px; border-radius: 1px;
   background: var(--arm, #f4f4f2); transform-origin: 50% 112.5%; transform: rotate(var(--turn, 0deg));
 }
+/* Three dots round it, two pixels outside the ring: where its way starts, its middle, where it
+   ends. One dot at the top and its two shadows, a turn of 135 degrees to either side (--far is
+   from the knob's centre to a dot's: half the knob, the two pixels, half the dot). */
+.knob::before {
+  content: ""; position: absolute; left: 50%; top: -5px; width: 2px; height: 2px; margin-left: -1px; border-radius: 50%;
+  --far: 14px; --dot: rgba(244, 244, 242, 0.5);
+  background: var(--dot);
+  box-shadow: calc(var(--far) * -0.7071) calc(var(--far) * 1.7071) 0 0 var(--dot), calc(var(--far) * 0.7071) calc(var(--far) * 1.7071) 0 0 var(--dot);
+}
+.knob.num::before { display: none; }
 .knob:hover, .knob:focus { border-color: #f4f4f2; }
 .knob.on { background: var(--arm, #f4f4f2); border-color: var(--arm, #f4f4f2); }
 .knob.on::after { background: #0b0b0d; }
@@ -220,21 +249,24 @@ canvas { display: block; width: 100vw; height: 100vh; }
 
 @media (max-width: 760px) {
   .panel { left: max(16px, env(safe-area-inset-left)); right: max(16px, env(safe-area-inset-right)); bottom: max(16px, env(safe-area-inset-bottom)); }
-  .tracks { --pad: 10px; width: 100%; padding-top: 16px; }
-  .cols, .arm { width: 100%; box-sizing: border-box; grid-template-columns: var(--cols-phone); }
+  .panel.over { align-items: stretch; }
+  .tracks { --pad: 10px; padding-top: 16px; }
+  .cols, .arm, .ui button.add { box-sizing: border-box; grid-template-columns: var(--cols-phone); }
   /* no room for an arm's sound on a phone: it keeps the one it has */
   .arm .snd, .cols .snd { display: none; }
-  /* and the instrument over the mix as on a wide screen, not side by side: the full width, a line between */
-  .panel.over .voice { flex-direction: column; flex-wrap: nowrap; align-items: stretch; gap: 0; width: 100%; box-sizing: border-box; }
-  .panel.over .voice .group + .group { margin-top: 9px; padding-top: 11px; border-top: 1px solid rgba(244, 244, 242, 0.12); }
-  .panel.over .voice .group section:first-child { padding-left: 0; border-left: 0; }
-  .panel.over .voice .group:first-child section:last-child { padding-right: 0; }
   .cols { letter-spacing: 0.02em; }
   .cell { min-width: 32px; }
   .voice { padding: 16px 16px 14px; }
   .group section { padding: 0 8px; }
+  /* the instruments and the scale do not fit one line: the scale goes under them */
+  .voice .group:first-child { flex-direction: column; gap: 10px; }
+  .voice .group:first-child section { padding: 0; border: 0; }
+  /* and the rows under them only just do: the words a little closer */
+  .group h3 { letter-spacing: 0.08em; }
+  .ui .seg button { padding: 0 7px; letter-spacing: 0.08em; }
   .group h3 { font-size: 8px; }
   .arm .knob { width: 100%; max-width: 24px; height: auto; aspect-ratio: 1; }
+  .arm .knob::before { --far: 15px; }
   .bar { top: max(16px, env(safe-area-inset-top)); right: max(16px, env(safe-area-inset-right)); }
 }
 .clean .panel, .clean .bar, .clean .gauge { display: none; }
@@ -244,7 +276,8 @@ canvas { display: block; width: 100vw; height: 100vh; }
    the size of that card's line, what it does under it, a little softer, with room to read. */
 .tip {
   position: fixed; z-index: 3; pointer-events: none;
-  left: max(24px, env(safe-area-inset-left)); width: 440px; box-sizing: border-box;
+  /* beside the panel its control is in (main.ts puts it there and says how wide) */
+  width: 320px; max-width: calc(100vw - 48px); box-sizing: border-box;
   padding: 17px 22px 19px; border-radius: 26px;
   background: rgba(58, 58, 60, 0.3);
   -webkit-backdrop-filter: blur(12px) saturate(1.8); backdrop-filter: blur(12px) saturate(1.8);
@@ -255,8 +288,11 @@ canvas { display: block; width: 100vw; height: 100vh; }
 .tip[hidden] { display: none; }
 .tip b { display: block; margin-bottom: 5px; font-weight: 600; font-size: 15px; line-height: 1.25; letter-spacing: -0.01em; }
 .tip span { color: rgba(244, 244, 242, 0.8); }
+/* little room beside the panel: a narrow column, the words a size down */
+.tip.slim { padding: 14px 16px 15px; border-radius: 20px; font-size: 12px; }
+.tip.slim b { font-size: 13px; }
 @media (max-width: 760px) {
-  .tip { top: calc(max(16px, env(safe-area-inset-top)) + 116px); left: max(16px, env(safe-area-inset-left)); right: max(16px, env(safe-area-inset-right)); width: auto; }
+  .tip { top: calc(max(16px, env(safe-area-inset-top)) + 116px); left: max(16px, env(safe-area-inset-left)); right: max(16px, env(safe-area-inset-right)); width: auto; max-width: none; }
 }
 .clean .tip { display: none; }
 
