@@ -39,13 +39,13 @@ canvas { display: block; width: 100vw; height: 100vh; }
 .panel {
   position: fixed; z-index: 2;
   right: max(24px, env(safe-area-inset-right)); bottom: max(24px, env(safe-area-inset-bottom));
-  width: 300px; display: grid; gap: 6px;
+  width: 360px; display: grid; gap: 6px;
   color: #f4f4f2;
   font: 600 10px/1 Inter, "Helvetica Neue", Helvetica, Arial, sans-serif;
   letter-spacing: 0.12em; text-transform: uppercase;
   user-select: none; -webkit-user-select: none; touch-action: manipulation;
 }
-.panel .cols, .panel .arm { display: grid; grid-template-columns: 22px 30px 22px 1fr 1fr 22px; gap: 6px; align-items: center; }
+.panel .cols, .panel .arm { display: grid; grid-template-columns: 22px 30px 22px 1fr 1fr 1fr 22px; gap: 6px; align-items: center; }
 .panel .cols { opacity: 0.5; }
 .panel .cols span:first-child { grid-column: 1 / 4; }
 .panel output { text-align: center; font-variant-numeric: tabular-nums; }

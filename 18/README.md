@@ -22,7 +22,9 @@ pnpm -C 18 dev
 ## How it plays
 
 - **The workbench**, bottom right: a row an arm. `− ×n +` is how many swings it makes in a bar
-  (the harmonic), then how far it swings (0 to 180°) and how long it is. `✕` takes it away.
+  (the harmonic), then how far it swings (0 to 180°), how long it is, and its phase: where in
+  its swing it is when the bar starts (0° it crosses going right, 90° it is out at the right).
+  `✕` takes it away.
 - **+ Arm** (or `+`, `-` takes the last one away): a new arm on the end, one harmonic up.
 - **Sum / Each** (`S`): what a joint crosses to sound. *Sum* is the centre line under the pivot:
   the Fourier picture. *Each* is the vertical under the joint's own origin, its arm alone: a
@@ -31,8 +33,8 @@ pnpm -C 18 dev
   tocks on 3.
 - **The bar** along the bottom: a row a joint, a tick a hit, up for tick and down for tock, as
   tall as it is hard.
-- `?arms=1-34-1,2-52-0.62` is a pattern in a link (swings, swing in degrees, length; `&bpm=`,
-  `&mode=each`). Without it, the last pattern is remembered. `?clean` hides the furniture.
+- `?arms=1-34-1,2-52-0.62-90` is a pattern in a link (swings, swing in degrees, length, and the
+  phase in degrees if any; `&bpm=`, `&mode=each`). Without it, the last pattern is remembered. `?clean` hides the furniture.
 
 ## How it works
 
@@ -48,6 +50,6 @@ pnpm -C 18 dev
 
 ## Next
 
-Phase per arm (sine or cosine changes the rhythm), ratios that are not whole (a bar that never
+Ratios that are not whole (a bar that never
 quite repeats), real physics with a knob from formula to chaos, easing the swing's shape, and
 pulling an arm aside by hand.

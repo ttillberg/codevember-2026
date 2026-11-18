@@ -36,7 +36,7 @@ interface State {
 const KEY = 'codevember-2026-18';
 const fresh = (): State => ({ arms: [{ n: 1, swing: 0.6, len: 1, phase: 0 }], bpm: 120, mode: 'sum' });
 
-/** ?arms=1-34-1,2-52-0.62 (swings, swing in degrees, length), &bpm=, &mode=each: a pattern in a link, for clips too */
+/** ?arms=1-34-1,2-52-0.62-90 (swings, swing in degrees, length, phase in degrees if any), &bpm=, &mode=each: a pattern in a link, for clips too */
 function fromQuery(): State | null {
   const q = query.get('arms');
   if (!q) return null;
@@ -44,7 +44,7 @@ function fromQuery(): State | null {
     .split(',')
     .map((a) => a.split('-').map(Number))
     .filter((a) => a.length >= 3 && a.every(Number.isFinite))
-    .map(([n, deg, len]) => ({ n: Math.min(MAX_N, Math.max(1, Math.round(n))), swing: (Math.min(180, Math.max(0, deg)) * Math.PI) / 180, len: Math.min(1.5, Math.max(0.1, len)), phase: 0 }));
+    .map(([n, deg, len, phase = 0]) => ({ n: Math.min(MAX_N, Math.max(1, Math.round(n))), swing: (Math.min(180, Math.max(0, deg)) * Math.PI) / 180, len: Math.min(1.5, Math.max(0.1, len)), phase: (((phase % 360) + 360) % 360) * (Math.PI / 180) }));
   if (!arms.length) return null;
   const bpm = Number(query.get('bpm'));
   return { arms: arms.slice(0, MAX_ARMS), bpm: bpm >= 40 && bpm <= 220 ? bpm : 120, mode: query.get('mode') === 'each' ? 'each' : 'sum' };
@@ -162,7 +162,7 @@ let panelRect = { left: 0, top: 0 };
 function build() {
   const many = state.arms.length > 1;
   panel.innerHTML = `
-    <div class="cols"><span>Swings</span><span>Swing</span><span>Length</span></div>
+    <div class="cols"><span>Swings</span><span>Swing</span><span>Length</span><span>Phase</span></div>
     ${state.arms
       .map(
         (a, k) => `
@@ -170,6 +170,7 @@ function build() {
       <button data-act="dn" aria-label="Fewer swings per bar">−</button><output>×${a.n}</output><button data-act="up" aria-label="More swings per bar">+</button>
       <input type="range" data-p="swing" min="0" max="180" step="1" value="${Math.round((a.swing * 180) / Math.PI)}" aria-label="Swing of arm ${k + 1}" />
       <input type="range" data-p="len" min="0.1" max="1.5" step="0.01" value="${a.len}" aria-label="Length of arm ${k + 1}" />
+      <input type="range" data-p="phase" min="0" max="360" step="1" value="${Math.round((a.phase * 180) / Math.PI)}" aria-label="Phase of arm ${k + 1}" />
       <button data-act="rm" aria-label="Remove arm ${k + 1}" ${many ? '' : 'disabled'}>✕</button>
     </div>`,
       )
@@ -229,6 +230,7 @@ panel.addEventListener('input', (e) => {
   } else {
     const a = state.arms[Number(r.closest<HTMLElement>('.arm')!.dataset.k)];
     if (r.dataset.p === 'swing') a.swing = (v * Math.PI) / 180;
+    else if (r.dataset.p === 'phase') a.phase = (v * Math.PI) / 180;
     else a.len = v;
   }
   changed();
