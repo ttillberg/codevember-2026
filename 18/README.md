@@ -3,8 +3,9 @@
 2026-11-18
 
 A pendulum as a drum machine, drawn in lines, black and white. (Or a colour a link, *Colour*
-in the menu, `?colour` in a link: from a bluish purple down the chain to pink (it was
-magenta, pink and neon green first, and loud; then magenta to pink, all one warmth); an arm and the joint at its end, its path, its rings
+in the menu, `?colour` in a link: green, cyan, a bluish purple and pink down the chain (it was
+magenta, pink and neon green first, and loud; then magenta to pink, all one warmth; then
+purple to pink, two colours where four tell four arms apart); an arm and the joint at its end, its path, its rings
 and its row in the panel are then all that colour. It was colour for a while, to tell the
 rows apart; pointing at a link does that now.) Take it down to one arm swinging once a bar: a
 tick where it crosses the centre line going right, a tock going left. A binary rhythm. Then more
@@ -25,7 +26,7 @@ pnpm -C 18 dev
 
 ## How it plays
 
-- **Along the bottom**, two panels, dark frosted glass with a hairline round them that is all but not there, in the way of day 07's
+- **Up the left side**, two panels, dark frosted glass with a hairline round them that is all but not there, in the way of day 07's
   pills (a control with no border of its own, lit while it is on or held), everything in
   sections under their labels. (They were frosted glass like day 07's, lighter at the top;
   then one flat grey. Then black with an outline; frosted again once the chain had the
@@ -41,14 +42,16 @@ pnpm -C 18 dev
     of a knob, under the volume knobs (a row's remove is a minus in a ring too; it was
     `+ Arm`, a button in the middle under the rows). The row the pointer is on is a band of its colour from
     edge to edge of the panel.
-  - The two stand side by side in the middle along the bottom, on the same line, a generous
-    gap between them and the centre line running down the middle of it, the scene over
-    them. The tracks' panel is only as tall as its rows (one track is a short panel, not a
-    tall one with a hole in it); the instrument's grows to it when it is the taller, its
-    rows spread out. The space under the last row of each is the space over its first label.
+  - The two are a column up the left side, the instrument's panel on the tracks', as wide
+    as each other; on a phone the column is the width of the screen. The scene is the
+    page's, not what the panels leave of it: the chain hangs in the middle of the screen
+    from as high as the page lets it (right under the top edge; under the title on a phone),
+    is as big as the page is tall, and swings behind the panels' frosted glass where it
+    reaches them. A new setup hangs its root at the very top. (The two were side by side
+    along the bottom for a while, the chain squeezed into what was left over them: every
+    track added made the chain smaller.)
   - **An eye** in each panel's corner puts that panel away, down to its name in a pill, and
-    brings it back: each on its own, remembered. With both away the chain has the page down
-    to the foot. Where the window is not wide enough for both (and on a phone) the instrument's
+    brings it back: each on its own, remembered. With both away nothing is over the chain. Where the window is not wide enough for both (and on a phone) the instrument's
     panel stands on the tracks'. (They were two pills over the tracks first, every track a
     pill of its own: seven pieces where two say the same. And for a moment a column up the
     left side with the chain the height of the page, swinging behind them: more chain, but
@@ -140,8 +143,8 @@ pnpm -C 18 dev
   arm made a row 640 pixels wide, mostly track. Then knobs with their number said under the
   title while they turned, a long way from the hand.)
 - **Tips** (in the menu, or the `?` key): what the control under the pointer does, in a card
-  of its own over the panel that control is in, as wide as the panel; under the bar for the
-  bar's, and beside the menu for its rows (under the title on a phone, where it shows for the control you
+  of its own to the right of the column, beside the panel that control is in; under the bar
+  for the bar's, and beside the menu for its rows (under the title on a phone, where it shows for the control you
   press). Frosted like the card the page opens with: grey glass, no outline, a deep shadow;
   the control's name at that card's size, what it does under it, a little softer. On to
   start with, remembered. (It was a dark box with a border, its name in small caps.)

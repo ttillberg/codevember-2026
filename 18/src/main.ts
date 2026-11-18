@@ -18,8 +18,8 @@ const tip = document.querySelector<HTMLElement>('#tip')!;
 
 const INK = '244, 244, 242';
 const BACK = '#0b0b0d';
-/** a colour a link, from a bluish purple to pink: the first four in even steps down the chain, the next four the tones between and a paler pink */
-const PALETTE = ['118, 96, 255', '164, 114, 238', '209, 132, 222', '255, 150, 205', '141, 105, 247', '187, 123, 230', '232, 141, 213', '255, 196, 226'];
+/** a colour a link, down the chain: green, cyan, a bluish purple, pink; then the tones between them, and a paler pink */
+const PALETTE = ['72, 232, 150', '64, 208, 255', '118, 96, 255', '255, 150, 205', '66, 222, 204', '92, 150, 255', '187, 123, 230', '255, 196, 226'];
 const MAX_N = 10;
 /**
  * How far ahead hits are worked out and handed to the audio clock, seconds: at least this, and
@@ -116,7 +116,7 @@ const fresh = (): State => ({
   scale: 'tension',
   instrument: 'tine',
   by: 'hit',
-  root: 0.4,
+  root: 0,
   reverb: 0.25,
   room: 0.7,
   delay: 0.2,
@@ -142,7 +142,7 @@ const massFor = (mass: number | undefined, k: number, weight = 0) => unit01(mass
 const pushFrom = (old: number) => Math.pow(old, 2 / PUSH_CURVE);
 
 /** the root's place on the ruler, kept on it */
-const rootIn = (v: number | undefined, or = 0.4) => (Number.isFinite(v) ? within(v!, 0, RULER - 0.2) : or);
+const rootIn = (v: number | undefined, or = 0) => (Number.isFinite(v) ? within(v!, 0, RULER - 0.2) : or);
 
 /** the kit sound a link starts with, by its colour: bass drum, snare, closed hat, clap, open hat, tom, rim, cowbell */
 const FIRST_SOUND = [0, 2, 3, 4, 6, 5, 1, 7];
@@ -466,8 +466,8 @@ window.setInterval(schedule, 25);
 
 // --- the panels ---
 
-/** where the panels begin: the scene ends over them */
-let panelTop = 0;
+/** where the scene can begin: the top of the ruler of notes, the highest the root can hang */
+let sceneTop = 36;
 /** where each link's row is, and where the rows end: its curve is drawn beside it */
 let rowBoxes: { y: number; h: number }[] = [];
 let rowsRight = 0;
@@ -503,25 +503,6 @@ function fold(id: string) {
 let topClear = 0;
 
 function measure() {
-  // The instrument's panel and the tracks' stand side by side from the left, as tall as each
-  // other, and the scene is over them. Where the window is not wide enough for that, the
-  // instrument's stands on the tracks'.
-  panel.classList.remove('over');
-  panel.style.paddingLeft = panel.style.paddingRight = '';
-  const head = panel.querySelector<HTMLElement>('.voice');
-  const rows = panel.querySelector<HTMLElement>('.tracks');
-  if (head && rows) {
-    const room = panel.clientWidth;
-    // (32: the gap between them, as the stylesheet has it)
-    const pair = head.offsetWidth + rows.offsetWidth + 32;
-    // The two are not as wide as each other, and the centre line runs between them: the
-    // narrower one is given the difference as room beside it, so the gap is on the line.
-    // (Where there is no room for that, the pair is in the middle as it is.)
-    const more = rows.offsetWidth - head.offsetWidth;
-    if (pair > room) panel.classList.add('over');
-    else if (pair + Math.abs(more) <= room) panel.style[more > 0 ? 'paddingLeft' : 'paddingRight'] = `${Math.abs(more)}px`;
-  }
-  panelTop = panel.getBoundingClientRect().top;
   // The bar sits top right; where the title reaches under it (a phone) it goes below the title instead.
   topBar.style.top = '';
   const plate = document.querySelector<HTMLElement>('.plate .head')?.getBoundingClientRect();
@@ -530,7 +511,11 @@ function measure() {
     topBar.style.top = `${plate.bottom + 10}px`;
     box = topBar.getBoundingClientRect();
   }
-  topClear = !clean && box.left < window.innerWidth / 2 + 30 ? box.bottom : 0;
+  const mid = window.innerWidth / 2;
+  topClear = !clean && box.left < mid + 30 ? box.bottom : 0;
+  // The chain hangs from as high as the page lets it: right under the top edge where the middle
+  // is free, under the title where the title reaches the middle (a phone).
+  sceneTop = !clean && plate && plate.right + 24 >= mid ? plate.bottom + 54 : 36;
   const boxes = [...panel.querySelectorAll('.arm')].map((row) => row.getBoundingClientRect());
   rowBoxes = boxes.map((b) => ({ y: b.top + b.height / 2, h: b.height }));
   if (boxes.length) rowsRight = boxes[boxes.length - 1].right;
@@ -608,8 +593,8 @@ function build() {
       </span>`;
   };
   const mix = (p: string, name: string, v: number, label = '') => (label ? cell(label, knob(p, pct(v), 0, 100, 1, name)) : knob(p, pct(v), 0, 100, 1, name));
-  // Along the bottom, two panels side by side, as tall as each other: the instrument over the
-  // mix, each in sections under their labels, and the tracks, a row a link.
+  // Up the left side, two panels, one on the other: the instrument over the mix, each in
+  // sections under their labels, and under it the tracks, a row a link.
   /** the eye in a panel's corner: open while the panel is out, shut while it is put away */
   const eye = (id: string, name: string) =>
     `<button class="eye" data-act="fold" data-id="${id}" data-tip="fold" aria-expanded="${!folded[id]}" aria-label="${folded[id] ? 'Show' : 'Hide'} ${name}">${folded[id] ? ICONS.eyeShut : ICONS.eye}</button>`;
@@ -789,7 +774,7 @@ const TIPS: Record<string, [string, string, (string | string[])?]> = {
   saveas: ['Save as', 'Asks for a name and keeps this setup under it, offering the last name with the next number.', `⇧ ${CMD} S`],
   open: ['Open', 'Everything saved by name, the newest first. Ten more live on the digits: shift and a digit keeps, the digit brings back.', [`${CMD} O`, '0–9 ~bring_back', '⇧ 0–9 ~keep']],
   timeline: ['Timeline', 'Each link\'s curve beside its row: what its joint crosses zero with, over the bar, a dot where it hits. Put away to start with.', 'T'],
-  colour: ['Colour', 'A colour a link, from a bluish purple down the chain to pink, or all of it black and white, as it is to start with.'],
+  colour: ['Colour', 'A colour a link, down the chain: green, cyan, a bluish purple, pink. Or all of it black and white, as it is to start with.'],
   tips: ['Tips', 'These cards, on or off. And the knobs: press one and drag up (or to the right) to turn it up, the gauge over it shows where it is; a click leaves the gauge open, to drag on. It catches on the quarters and the round numbers, shift turns past them; the arrow keys step it.', ['?', 'Drag_↕ ~a_knob', '⇧ Drag_↕ ~past_its_marks', '← → ~step_it']],
 };
 
@@ -812,8 +797,8 @@ function showTip(key: string | undefined, from?: HTMLElement | null) {
 }
 
 /**
- * With its panel: over the instrument's for the instrument's controls, over the tracks' for
- * theirs, as wide as the panel. The bar's hang under the bar, and the menu's rows' stand to the
+ * With its panel: to the right of the column, beside the instrument's panel for its controls
+ * and beside the tracks' for theirs. The bar's hang under the bar, and the menu's rows' stand to the
  * left of the menu. On a phone the stylesheet puts it under the title.
  */
 function placeTip() {
@@ -835,10 +820,11 @@ function placeTip() {
     st.width = '320px';
     return;
   }
-  // a panel's: over that panel, as wide as it is
-  st.left = `${r.left}px`;
-  st.width = `${Math.max(280, r.width)}px`;
-  st.bottom = `${window.innerHeight - r.top + gap}px`;
+  // a panel's: beside the column, level with the top of the instrument's or the foot of the tracks'
+  st.left = `${r.right + gap}px`;
+  st.width = '320px';
+  if (tipHost.classList.contains('voice')) st.top = `${r.top}px`;
+  else st.bottom = `${window.innerHeight - r.bottom}px`;
 }
 
 function setTips(on: boolean) {
@@ -1420,8 +1406,12 @@ function frame() {
   // The ruler of notes stands still, from under the title to over the workbench, and the root
   // hangs where it is put on it. An arm length is always the same stretch of it, so where a
   // joint is says its note; only a chain too long for the ruler makes it all smaller.
-  const y0 = Math.max(wide ? 84 : 124, topClear + 18);
-  const y1 = Math.max(y0 + 120, (clean ? h - 30 : panelTop - 18) - (timeline && !curves ? 80 : 28));
+  // The scene is the page's, not what the panels leave of it: from the top to the foot, the
+  // chain swinging behind the panels where it reaches them. (Only the curves beside the rows,
+  // when they are drawn, keep it over them.)
+  const y0 = Math.max(sceneTop, topClear + 18);
+  const floor = clean ? h - 30 : curves ? rowBoxes[0].y - rowBoxes[0].h / 2 - 24 : h - 12;
+  const y1 = Math.max(y0 + 120, floor - (timeline && !curves ? 80 : 28));
   const target = (y1 - y0) / Math.max(RULER, state.root + total + 0.05);
   // while an arm is being pulled longer the scale holds still, or the ring would slide from under the pointer
   if (!pull) unit = unit ? unit + (target - unit) * (1 - Math.exp(-(t - drawn) * 8)) : target;
