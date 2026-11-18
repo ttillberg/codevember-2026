@@ -571,10 +571,16 @@ const ICONS = {
 };
 const CMD = /Mac|iPhone|iPad/.test(navigator.platform) ? '⌘' : 'Ctrl';
 /**
- * Keys, each drawn as a key: its cap in a fine outline. Written as words with spaces between:
- * 'S' is a key, '⌘ S' two held together, '+ / −' either of two.
+ * Keys, and what the hand does, each drawn as a key: its cap in a fine outline. Written as
+ * words with spaces between: 'S' is a key, '⌘ S' two held together, '+ / −' either of two.
+ * A `_` is a space inside a cap ('Drag_↕'), and a word led by `~` is said beside the caps,
+ * not on one ('~on_its_ring').
  */
-const keycaps = (keys: string) => `<span class="keys">${keys.split(' ').map((k) => (k === '/' ? '<i>/</i>' : `<kbd>${k}</kbd>`)).join('')}</span>`;
+const keycaps = (keys: string) =>
+  `<span class="keys">${keys
+    .split(' ')
+    .map((k) => (k === '/' ? '<i>/</i>' : k[0] === '~' ? `<i>${k.slice(1).replace(/_/g, ' ')}</i>` : `<kbd>${k.replace(/_/g, ' ')}</kbd>`))
+    .join('')}</span>`;
 
 /** which list is open: the scale's, the menu, or none. It lives through the panels being made again. */
 let openPop = '';
@@ -746,17 +752,17 @@ for (const ev of ['pointerup', 'pointercancel']) {
 
 // --- tips: what the control under the pointer does, in a card of its own by its panel ---
 
-/** a control's name, what it does, and the keys for it where there are any (drawn as keys beside the name) */
-const TIPS: Record<string, [string, string, string?]> = {
+/** a control's name, what it does, and the keys and the moves of the hand for it where there are any (drawn as keys beside the name, a line each) */
+const TIPS: Record<string, [string, string, (string | string[])?]> = {
   swings: ['Swings', 'How many times the arm swings in a bar, 1 to 10: its harmonic. ×1 crosses the line twice a bar, ×2 four times.'],
-  swing: ['Swing', 'How far the arm swings to each side, 0 to 180°. Wider and it counts for more in the sum; with physics on, wider is also slower.'],
-  len: ['Length', 'How long the arm is: how far it carries the joints under it.'],
+  swing: ['Swing', 'How far the arm swings to each side, 0 to 180°. Wider and it counts for more in the sum; with physics on, wider is also slower.', 'Drag_↔ ~on_its_ring'],
+  len: ['Length', 'How long the arm is: how far it carries the joints under it.', 'Drag_↕ ~on_its_ring'],
   phase: ['Phase', 'Where in its swing the arm is when the bar starts. 0° it crosses going right, 90° it is out at the right.'],
-  vol: ['Volume', 'How loud this joint is. All the way down is muted: the arm still swings and still moves the ones under it. The keys turn the lit link up and down.', `${CMD} ↑ / ${CMD} ↓`],
+  vol: ['Volume', 'How loud this joint is. All the way down is muted: the arm still swings and still moves the ones under it. The keys turn the lit link up and down.', [`${CMD} ↑ / ${CMD} ↓`, `${CMD} Drag_↕ ~on_its_ring`]],
   rm: ['Remove', 'Takes this arm away.'],
   quiet: ['Mute', 'Silences this track, whatever its volume. The arm still swings and still moves the ones under it.'],
   solo: ['Solo', 'Only this track is heard, with any others that are soloed too.'],
-  grip: ['Move', 'Drag up or down to move this link along the chain. Its colour, its voice and its settings go with it.'],
+  grip: ['Move', 'Drag up or down to move this link along the chain. Its colour, its voice and its settings go with it.', 'Drag_↕'],
   add: ['Add track', 'Hangs a new arm on the end, one harmonic up, at half volume. The other key takes the last one away.', '+ / −'],
   mode: ['Sum / Each', 'What this joint crosses to sound. Lit, the sum: the centre line under the pivot, every arm above it added up. Not lit, each: the vertical under its own origin, its arm alone. The key switches all of them at once.', 'S'],
   restart: ['Restart', 'The motion from the top, the setup as it is. With physics on, the same setup plays the same again.', 'R'],
@@ -766,9 +772,9 @@ const TIPS: Record<string, [string, string, string?]> = {
   physics: ['Pendulum mode', 'Formula: every arm goes exactly as it is set. Physics: every arm is a real swing hung in the swing above, with its weight, kept going by the push. The chain is then on its own: it drifts out of time, and that is said in orange for as long as it is on. No key for it: it is not to be switched by a slip of the finger.'],
   push: ['Push', 'What keeps this swing going, with physics on: a push in time with its own rhythm, and the air against it. High and it keeps its time whatever the others do; from about the middle the bar comes round; lower and it drifts; 0 lets it go. The arrow at the joint is the push right now: none when the swing is on its own time.'],
   instrument: ['Instrument', 'What is struck. Tine: a kalimba\'s, a note that rings on. Bones: a drum, two bones knocked together, like a soft rimshot; the same for a link wherever it is: rhythm, no tune. Square: electronic, a filter every hit opens. TR-808: the drum machine, a sound an arm, or by hit a sound a note: their names down the line say which. The key goes to the next.', 'I'],
-  sound: ['Sound', 'What this arm sounds, when sounds go by arm (Notes, in the instrument panel). On the drum machine and the bones: press for the next of the eight, shift for the one before. On the others it is the note where the arm rests on the ruler: pull its ring longer or shorter.'],
+  sound: ['Sound', 'What this arm sounds, when sounds go by arm (Notes, in the instrument panel). On the drum machine and the bones: press for the next of the eight, shift for the one before. On the others it is the note where the arm rests on the ruler: pull its ring longer or shorter.', ['Click ~the_next', '⇧ Click ~the_one_before']],
   by: ['By hit / By arm', 'What says which note, or which drum, a hit is. By hit: where the joint is when it hits, so a joint far down the chain plays a different one each time. By arm: where its arm ends when the chain hangs straight, so every arm has one of its own.', 'B'],
-  scale: ['Scale', 'The notes the joints play: where a joint is when it hits is its note, low at the root and high far out, always the nearest one of this scale. Pick it from the list; the key goes to the next.', 'N'],
+  scale: ['Scale', 'The notes the joints play: where a joint is when it hits is its note, low at the root and high far out, always the nearest one of this scale. Pick it from the list; the key goes to the next. The key it is all in is where the root hangs: lower on the page is higher.', ['N', 'Drag_↕ ~on_the_root']],
   reverb: ['Reverb', 'How much of what you hear is the room: none at the bottom; higher, the notes themselves go down as the room comes up; at the top, only the room.'],
   room: ['Room', 'How big the room is. Small, the walls are close and hard: it rings like metal, a pipe, a tin. Big, a hall. Turn Reverb up to hear it: all the way up with a small room is metal alone.'],
   delay: ['Delay', 'An echo in time, a dotted eighth apart, bouncing left then right: off at the bottom; higher, more goes in and more comes round again.'],
@@ -781,10 +787,10 @@ const TIPS: Record<string, [string, string, string?]> = {
   dist: ['Distortion', 'Everything driven into a soft clipper, before the room and the echo: clean at the bottom, warm in the middle, a fuzz at the top, where every tail is as loud as its note.'],
   save: ['Save', 'Keeps this setup under the name it has, and asks for one the first time.', `${CMD} S`],
   saveas: ['Save as', 'Asks for a name and keeps this setup under it, offering the last name with the next number.', `⇧ ${CMD} S`],
-  open: ['Open', 'Everything saved by name, the newest first. Ten more live on the digits: shift and a digit keeps, the digit brings back.', `${CMD} O`],
+  open: ['Open', 'Everything saved by name, the newest first. Ten more live on the digits: shift and a digit keeps, the digit brings back.', [`${CMD} O`, '0–9 ~bring_back', '⇧ 0–9 ~keep']],
   timeline: ['Timeline', 'Each link\'s curve beside its row: what its joint crosses zero with, over the bar, a dot where it hits. Put away to start with.', 'T'],
   colour: ['Colour', 'A colour a link, from a bluish purple down the chain to pink, or all of it black and white, as it is to start with.'],
-  tips: ['Tips', 'These cards, on or off. And the knobs: press one and drag up (or to the right) to turn it up, the gauge over it shows where it is; a click leaves the gauge open, to drag on. It catches on the quarters and the round numbers, shift turns past them; the arrow keys step it.', '?'],
+  tips: ['Tips', 'These cards, on or off. And the knobs: press one and drag up (or to the right) to turn it up, the gauge over it shows where it is; a click leaves the gauge open, to drag on. It catches on the quarters and the round numbers, shift turns past them; the arrow keys step it.', ['?', 'Drag_↕ ~a_knob', '⇧ Drag_↕ ~past_its_marks', '← → ~step_it']],
 };
 
 const TIPS_KEY = `${KEY}-tips`;
@@ -800,7 +806,7 @@ function showTip(key: string | undefined, from?: HTMLElement | null) {
   if (!t) return;
   tipHost = from?.closest<HTMLElement>('.pop.menu, .voice, .tracks, .bar') ?? topBar;
   const name = el('b', t[0]);
-  if (t[2]) name.insertAdjacentHTML('beforeend', keycaps(t[2]));
+  if (t[2]) name.insertAdjacentHTML('beforeend', `<span class="keyrows">${[t[2]].flat().map(keycaps).join('')}</span>`);
   tip.replaceChildren(name, el('span', t[1]));
   placeTip();
 }

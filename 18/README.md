@@ -147,7 +147,10 @@ pnpm -C 18 dev
   start with, remembered. (It was a dark box with a border, its name in small caps.)
 - **Keys**, wherever a control has one: drawn as keys, each cap in a fine outline with barely
   rounded corners, beside the control's name in its tip and beside its row in the menu
-  (`⌘` `S`, `T`, `+` / `−`). They were words at the end of a tip's sentence ("Key: S."),
+  (`⌘` `S`, `T`, `+` / `−`). The moves of the hand are there the same way, a line each:
+  `Drag ↕` on its ring for an arm's length, `Drag ↔` for its swing, `⌘` `Drag ↕` for its
+  volume, `Drag ↕` on the root for the key, `⇧` `Click` for the sound before, the digits
+  for the ten presets. They were words at the end of a tip's sentence ("Key: S."),
   which nobody reads to the end of. The `≡` itself has no tip: it opens a list of things
   that each have their own.
 - (The workbench was a block bottom right with everything in it, then a strip along the
