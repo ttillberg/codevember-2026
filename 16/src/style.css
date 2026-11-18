@@ -30,6 +30,8 @@ canvas { display: block; width: 100vw; height: 100vh; }
 }
 /* what you can do, under the plate */
 .plate .sub { margin-top: 14px; font-weight: 600; font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; }
+/* desktop: the key row bottom left says it all, so no line of help under the title; a phone has no key row */
+body:not(.touch) .plate .sub { display: none; }
 canvas { touch-action: none; cursor: grab; }
 canvas:active { cursor: grabbing; }
 /* the sight: a small ring with ticks locked in the middle of the screen, pulses on a throw */
@@ -140,9 +142,10 @@ body.touch .fungarium .take kbd { display: none; }
 .fungarium .back { border: 0; padding: 0; margin-bottom: 4px; }
 /* ?clean: the scene alone */
 .clean .plate { display: none; }
-/* the pouch in hand: a kraft-paper packet of spores at the bottom centre, its label the specimen you throw */
+/* the pouch in hand: a kraft-paper packet of spores at the bottom right, held in the right hand, its label the
+   specimen you throw */
 .pouch {
-  position: fixed; z-index: 3; left: 50%; bottom: -14px; width: 120px; height: 160px; margin-left: -60px;
+  position: fixed; z-index: 3; right: max(24px, env(safe-area-inset-right)); bottom: max(18px, env(safe-area-inset-bottom)); width: 120px; height: 160px;
   pointer-events: none;
 }
 .pouch .hold {
@@ -169,13 +172,14 @@ body.touch .fungarium .take kbd { display: none; }
 .pouch .label i { font: italic 500 8.5px/1.15 Georgia, "Times New Roman", serif; opacity: 0.75; max-width: 100%; overflow-wrap: anywhere; }
 .pouch kbd { position: absolute; left: 5px; top: 4px; font: 600 8px/1 Inter, "Helvetica Neue", Helvetica, Arial, sans-serif; opacity: 0.55; }
 body.touch .pouch kbd { display: none; }
-@media (max-width: 640px) { .pouch { transform: scale(0.85); transform-origin: 50% 100%; } }
+@media (max-width: 640px) { .pouch { right: max(12px, env(safe-area-inset-right)); bottom: max(12px, env(safe-area-inset-bottom)); transform: scale(0.75); transform-origin: 100% 100%; } }
 .clean .pouch { display: none; }
-@media (min-width: 900px) and (min-height: 600px) { .pouch { transform: scale(1.45); transform-origin: 50% 100%; } }
+/* (all of it in view: it was larger and cut off by the bottom edge) */
+@media (min-width: 900px) and (min-height: 600px) { .pouch { right: 32px; bottom: 24px; transform: scale(1.1); transform-origin: 100% 100%; } }
 
-/* desktop: the pointer lock, bottom right, a pill with the crosshair (as day 08's); locked, esc to unlock in its place */
+/* desktop: the pointer lock, bottom centre, a pill with the crosshair (as day 08's); locked, esc to unlock in its place */
 .lockpill, .unlock {
-  position: fixed; z-index: 3; right: max(24px, env(safe-area-inset-right)); bottom: max(24px, env(safe-area-inset-bottom));
+  position: fixed; z-index: 3; left: 0; right: 0; margin: 0 auto; width: max-content; bottom: max(24px, env(safe-area-inset-bottom));
   display: inline-flex; align-items: center; gap: 8px; white-space: nowrap;
   font: 700 11px/1 Inter, "Helvetica Neue", Helvetica, Arial, sans-serif; letter-spacing: 0.14em; text-transform: uppercase; color: #f4f4f2;
 }

@@ -16,6 +16,8 @@ import { makeDewMaterial } from './dew';
 import { makeAtmosPass, makeLensPass } from './post';
 import { Fungi, type FungusKind } from './fungi';
 import { Spores } from './spores';
+import { Dust } from './dust';
+import { Slingshot } from './slingshot';
 import { Fungarium, type Species } from './fungarium';
 import { Pouch } from './pouch';
 import { Sound } from './sound';
@@ -112,6 +114,12 @@ const creakAt = new THREE.Vector3();
 const creakNext = new WeakMap<object, number>(); // when each growing cluster creaks next
 const fxScene = new THREE.Scene();
 fxScene.add(spores.mesh);
+// dust hanging in the air, showing only in the sun's beams
+const dust = new Dust(share);
+fxScene.add(dust.mesh);
+// the slingshot in hand, drawn over the finished picture
+const sling = new Slingshot();
+let slingKind = '';
 // where a cluster stands: its foot down in the moss, stems coming up through it
 const fungusFoot = (x: number, z: number) => { const g = groundHeight(x, z); return g + 0.03 * mossAt(x, g, z); };
 
@@ -263,6 +271,9 @@ composer.addPass(atmos);
 // spore smoke into the finished, hazy image: its own lighter haze keeps a column visible from far off
 spores.material.uniforms.tDepth.value = beautyRT.depthTexture;
 spores.material.uniforms.cameraNear.value = camera.near;
+dust.material.uniforms.tDepth.value = beautyRT.depthTexture;
+dust.material.uniforms.cameraNear.value = camera.near;
+dust.material.uniforms.cameraFar.value = camera.far;
 const fx = new RenderPass(fxScene, camera);
 fx.clear = false;
 composer.addPass(fx);
@@ -285,16 +296,18 @@ function resize() {
   camera.fov = camera.aspect < 1 ? 58 : 40;
   camera.updateProjectionMatrix();
   spores.setSize(px.x, px.y, camera.fov);
+  dust.setSize(px.x, px.y, camera.fov);
+  sling.setSize(px.x, px.y, camera.fov, camera.aspect);
   (dewMaterial as THREE.ShaderMaterial).uniforms.uPx.value = px.y / (2 * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2));
 }
 addEventListener('resize', resize);
 resize();
 
 // ---- crawling and looking. Drag to turn your head, hold still to crawl where you look (drag while holding
-// to steer; crawl straight into a trunk and you climb it), tap anywhere to throw spores at the sight in the middle of the screen. Space throws too. Keys: W or up crawls (shift runs), S or down backs off, A D or left right
+// to steer; crawl straight into a trunk and you climb it), tap anywhere to throw spores at the sight in the middle of the screen. Keys: W or up crawls (shift crouches, space hops), S or down backs off, A D or left right
 // turn your head.
 // climbing: the trunk you are on, the angle round it (atan2 of z, x) and the height over its foot
-const me = { x: 0, z: 0, y: 0, speed: 0, side: 0, bob: 0, climb: null as null | { t: Trunk; phi: number; h: number } };
+const me = { x: 0, z: 0, y: 0, speed: 0, side: 0, bob: 0, hop: 0, vy: 0, dip: 0, dipV: 0, crouch: 0, climb: null as null | { t: Trunk; phi: number; h: number } };
 const CLIMB_MAX = 2; // a bit up the trunk: high enough to look down on the moss and the ferns, not into the haze
 const look = { yaw: 0, pitch: 0.12, tYaw: 0, tPitch: 0.12 }; // a little up: the fern over you
 const PITCH_MIN = -0.6, PITCH_MAX = 0.85; // up far enough to see under a cap, not past it
@@ -310,7 +323,7 @@ let downAt = 0, downX = 0, downY = 0, lastX = 0, lastY = 0;
 let holdTimer = 0;
 let charging = false; // a mouse held down: a throw wound up
 let look0 = { yaw: 0, pitch: 0 }; // where you looked when the finger went down: a flick up gives the look back
-// the pointer lock (desktop, the pill bottom right or L): the mouse itself is the look, no drag; click throws,
+// the pointer lock (desktop, the pill bottom centre or L): the mouse itself is the look, no drag; click throws,
 // hold the button to fling at the sight
 const locked = () => document.pointerLockElement === canvas;
 const lockPill = document.querySelector<HTMLButtonElement>('.lockpill')!;
@@ -319,6 +332,7 @@ lockPill.addEventListener('click', lock);
 document.addEventListener('pointerlockchange', () => document.body.classList.toggle('locked', locked()));
 // turning: a screen height of drag turns about twice the field of view; held and dragged off the spot where the
 // finger went down, you also keep turning that way, faster the further out, so a hairpin needs no second swipe
+const HOP = 1.3; // m/s up off the moss: about nine centimetres high
 const DRAG_TURN = 2.2, STEER_RATE = 2.4, STEER_DEAD = 14;
 canvas.addEventListener('pointerdown', (e) => {
   if (!locked()) try { canvas.setPointerCapture(e.pointerId); } catch { /* a synthetic pointer */ }
@@ -461,7 +475,8 @@ function dropOldest() {
 addEventListener('keydown', (e) => {
   if (e.code === 'KeyF') { keys.clear(); if (locked()) document.exitPointerLock(); fungarium.toggle(); }
   if (e.code === 'KeyL' && !fungarium.isOpen && !coarse) { if (locked()) document.exitPointerLock(); else lock(); }
-  if (e.code === 'Space' && !fungarium.isOpen && !e.repeat) { e.preventDefault(); throwAt(); }
+  // a hop: up off the moss and down again (from the moss, not off the bark)
+  if (e.code === 'Space' && !fungarium.isOpen && !e.repeat) { e.preventDefault(); if (!me.climb && me.hop <= 0) me.vy = HOP; }
   if (e.code === 'Escape' && fungarium.isOpen) fungarium.close();
 });
 /** Where the sight in the middle of the screen lands: on the moss, or aimed over it, a couple of steps that way. */
@@ -503,7 +518,9 @@ function throwTo(hit: THREE.Vector3, far: boolean) {
     hit.y = groundHeight(hit.x, hit.z);
   }
   pouch.kick();
-  const from = camera.position.clone().add(new THREE.Vector3(0, -0.03, 0)).addScaledVector(camera.getWorldDirection(new THREE.Vector3()), 0.15);
+  // the slingshot lets fly either way; flung, the pinch leaves from its pouch, sown, it is let go in front of you
+  sling.fire();
+  const from = far ? sling.pouchWorld(camera) : camera.position.clone().add(new THREE.Vector3(0, -0.03, 0)).addScaledVector(camera.getWorldDirection(new THREE.Vector3()), 0.15);
   const kind = throwKind;
   const land = (p: THREE.Vector3, size: number) => {
     sound.puff(p, size);
@@ -543,6 +560,24 @@ function focusDistance() {
   return 8;
 }
 
+// Never quite still: a slow breath, the eye rising and falling a little and the head with it. Walking, the head
+// looks about on its own, slowly this way and that and a little up and down, as one does going through a
+// wood. Only the eye moves, not where you are or aim; none of it for those who ask for less motion.
+const still = matchMedia('(prefers-reduced-motion: reduce)').matches;
+let breath = 0, roam = Math.random() * 100, roamW = 0;
+function alive(dt: number, walking: number) {
+  if (still) return { yaw: 0, pitch: 0, up: 0 };
+  breath += dt;
+  roam += dt;
+  roamW += (walking - roamW) * Math.min(1, dt * 1.5); // eases in and out, no snap when you stop
+  const w = 1 - 0.5 * walking; // the breath is less with the walk carrying you
+  return {
+    yaw: (Math.sin(roam * 0.37) * 0.035 + Math.sin(roam * 0.17 + 2.0) * 0.025) * roamW,
+    pitch: Math.sin(breath * 1.7) * 0.004 * w + Math.sin(roam * 0.29 + 1.0) * 0.015 * roamW,
+    up: Math.sin(breath * 1.7 + 0.8) * 0.0006 * w,
+  };
+}
+
 function crawl(dt: number) {
   const fwd = (keys.has('KeyW') || keys.has('ArrowUp') || (holding && !backing) || autoWalk ? 1 : 0) - (keys.has('KeyS') || keys.has('ArrowDown') || (holding && backing) ? 0.5 : 0);
   const turn = (keys.has('KeyA') || keys.has('ArrowLeft') ? 1 : 0) - (keys.has('KeyD') || keys.has('ArrowRight') ? 1 : 0);
@@ -554,26 +589,40 @@ function crawl(dt: number) {
     const off = lastX - downX, out = Math.max(0, Math.abs(off) - STEER_DEAD) / (Math.min(innerWidth, innerHeight) * 0.3);
     look.tYaw -= Math.sign(off) * Math.min(1, out) * STEER_RATE * dt;
   }
-  // shift held: run, twice the pace (the six legs patter faster with it)
-  const run = keys.has('ShiftLeft') || keys.has('ShiftRight') ? 2 : 1;
+  // shift held: crouch, the eye down among the frond tips, creeping at half the pace
+  const crouching = (keys.has('ShiftLeft') || keys.has('ShiftRight')) && !me.climb;
+  me.crouch += ((crouching ? 1 : 0) - me.crouch) * Math.min(1, dt * 7);
+  const run = 1 - 0.5 * me.crouch;
   me.speed += (fwd * 0.36 * run - me.speed) * Math.min(1, dt * 4);
   me.side += (strafe * 0.26 * run - me.side) * Math.min(1, dt * 4);
   const fx = -Math.sin(look.yaw), fz = -Math.cos(look.yaw); // you crawl where you look
-  // six legs, three down at a time (a tripod gait): no lumbering, a quick even patter, each set of three
-  // giving a little shove forward as it pushes off
+  // two feet, a step each side: slower than an ant's patter, each step a little shove forward as it pushes off
   const pace = Math.hypot(me.speed, me.side);
   const walking = Math.min(1, pace / 0.2);
-  me.bob += dt * (5 + 30 * pace);
+  me.bob += dt * (2 + 16 * pace);
   const shove = 1 + 0.35 * Math.sin(me.bob * 2) * walking;
   if (me.climb) climb(dt, fx, fz, me.speed * shove);
   else walk(dt, fx, fz, me.speed * shove);
   // eased a little: a head turning, not a mouse
   look.yaw += (look.tYaw - look.yaw) * Math.min(1, dt * 10);
   look.pitch += (look.tPitch - look.pitch) * Math.min(1, dt * 10);
-  // a body slung between six legs: a small quick tick up each push-off, a slight rock from one tripod to the other
-  const heave = (Math.abs(Math.sin(me.bob)) - 0.64) * 0.0018 * walking;
-  camera.position.set(me.x, me.y + heave, me.z);
-  camera.rotation.set(look.pitch + Math.sin(me.bob * 2 + 0.6) * 0.0035 * walking, look.yaw, Math.sin(me.bob) * 0.004 * walking);
+  // on two feet: the eye lifts over each step and dips as the foot comes down (twice a stride), sways to the
+  // side the weight is on and rolls a little with it, and the head nods with each footfall
+  const heave = (Math.abs(Math.sin(me.bob)) - 0.64) * 0.005 * walking;
+  const lean = Math.sin(me.bob) * walking;
+  const a = alive(dt, walking);
+  // a hop: thrown up, falling back; landing, the knees give a little and spring back
+  if (me.hop > 0 || me.vy > 0) {
+    me.vy -= 9.8 * dt;
+    me.hop += me.vy * dt;
+    if (me.hop <= 0) { me.dipV -= Math.min(0.35, -me.vy * 0.3); me.hop = 0; me.vy = 0; }
+  }
+  me.dipV += (-me.dip * 260 - me.dipV * 22) * dt;
+  me.dip += me.dipV * dt;
+  const sx = -fz, sz = fx; // your right
+  const y = me.y + heave + a.up + me.hop + me.dip * 0.5 - me.crouch * 0.055;
+  camera.position.set(me.x + sx * lean * 0.0025, y, me.z + sz * lean * 0.0025);
+  camera.rotation.set(look.pitch + Math.sin(me.bob * 2 + 0.6) * 0.006 * walking + a.pitch, look.yaw + a.yaw, -lean * 0.012);
   camera.updateMatrixWorld();
   return { fx, fz };
 }
@@ -670,6 +719,7 @@ renderer.setAnimationLoop(() => {
     creakNext.set(c, tNow + (burst ? 0.12 + 0.3 * Math.random() : -Math.log(1 - Math.random()) * 1.3 + 0.15));
   }
   spores.update(dt, clock.elapsedTime);
+  dust.update(groundHeight(me.x, me.z));
   world.update(me.x, me.z, fx, fz, 1);
   props.update(me.x, me.z);
   ferns.update(me.x, me.z);
@@ -703,4 +753,8 @@ renderer.setAnimationLoop(() => {
   renderer.render(scene, camera);
   renderer.setRenderTarget(null);
   composer.render();
+  sling.visible = !fungarium.isOpen && !document.body.classList.contains('clean');
+  if (throwKind !== slingKind) { slingKind = throwKind; sling.swap(); } // other spores: down and up with them
+  sling.update(dt, camera, lightDir, charging, me.bob, Math.min(1, Math.hypot(me.speed, me.side) / 0.2), look.yaw, look.pitch);
+  sling.render(renderer);
 });
