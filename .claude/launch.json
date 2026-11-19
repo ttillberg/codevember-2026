@@ -57,6 +57,17 @@
       "url": "https://localhost:5104"
     },
     {
+      "name": "04-snakes",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": [
+        "-C",
+        "04-snakes",
+        "dev"
+      ],
+      "port": 5140,
+      "url": "http://localhost:5140"
+    },
+    {
       "name": "14",
       "runtimeExecutable": "pnpm",
       "runtimeArgs": [

@@ -1,0 +1,24 @@
+{
+  "name": "day-04-snakes",
+  "private": true,
+  "description": "Eight snakes in a knot that holds: green tree pythons and corn snakes, crawling through it",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "devDependencies": {
+    "@types/three": "^0.187.0",
+    "typescript": "^5.9.3",
+    "vite": "^7.3.1"
+  },
+  "codevember": {
+    "day": 4,
+    "word": "Tangle",
+    "date": "2026-11-04"
+  },
+  "dependencies": {
+    "three": "^0.187.0"
+  }
+}
