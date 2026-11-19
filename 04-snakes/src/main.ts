@@ -42,7 +42,7 @@ controls.target.set(0, 0, 0);
 controls.enableDamping = true;
 controls.dampingFactor = 0.07;
 controls.minDistance = 0.08;
-controls.maxDistance = 1.6;
+controls.maxDistance = 1.6; // set from the framing in resize()
 controls.maxPolarAngle = 1.0;
 controls.rotateSpeed = 0.6;
 controls.screenSpacePanning = true;
@@ -373,6 +373,8 @@ function resize() {
   const tw = (portrait ? AREA.h : AREA.w) * VIEW, th = (portrait ? AREA.w : AREA.h) * VIEW;
   const seen = Math.min(th, tw / camera.aspect); // metres of ground top to bottom
   const d = seen / 2 / Math.tan((15 * Math.PI) / 180);
+  // a little further out than that, never so far the pile's edge and the bare ground show
+  controls.maxDistance = d * 1.3;
   if (!placed) {
     camera.position.set(0, d * Math.cos(0.12), d * Math.sin(0.12));
     placed = true;
