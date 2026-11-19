@@ -10,7 +10,8 @@ pnpm -C 02 dev
 
 - **Click / tap** the glass: a bullet. **Wheel**: zoom in on the cracks. The pointer moves the head a little.
 - **Click again**: the football, where you clicked. **Space**, or the first button: the football at the middle. While the glass falls, **hold** (pointer or Space) for slow motion.
-- **R**, or the second button: a new pane. **M**: sound.
+- **B**, or the ball button: hide the ball itself (also `?noball`). The glass still gets everything it does.
+- **R**: a new pane. **M**: sound.
 - `?seed=7` pins the pane, `?clean` hides the furniture.
 
 ## Two parts

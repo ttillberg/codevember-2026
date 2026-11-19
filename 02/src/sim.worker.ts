@@ -118,12 +118,12 @@ async function bake(req: BakeRequest) {
     kick[i * 6 + 3] = gauss() * w; kick[i * 6 + 4] = gauss() * w; kick[i * 6 + 5] = gauss() * w * 0.5;
   }
 
-  // the ball: lighter than glass by volume, but heavy enough to go through
+  // the ball: far heavier than a real one, so the glass does not slow it: it goes through as if nothing was there
   const ball = world.createRigidBody(
     RAPIER.RigidBodyDesc.dynamic().setTranslation(req.ball.p[0] * S, req.ball.p[1] * S, req.ball.p[2] * S)
       .setLinvel(req.ball.v[0] * S, req.ball.v[1] * S, req.ball.v[2] * S).setAngvel({ x: req.ball.w[0], y: req.ball.w[1], z: req.ball.w[2] }).setCcdEnabled(true),
   );
-  world.createCollider(RAPIER.ColliderDesc.ball(req.ball.r * S).setDensity(0.7).setRestitution(0.55).setFriction(0.6).setCollisionGroups(groups(G_BALL, G_SHARD | G_WORLD)), ball);
+  world.createCollider(RAPIER.ColliderDesc.ball(req.ball.r * S).setDensity(4).setRestitution(0.55).setFriction(0.6).setCollisionGroups(groups(G_BALL, G_SHARD | G_WORLD)), ball);
 
   const maxFrames = MAX_SECONDS * FPS;
   const CHUNK = 6;

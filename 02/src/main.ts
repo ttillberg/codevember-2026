@@ -170,7 +170,7 @@ function shoot(x: number, y: number) {
  *  pane is cracked, cut and baked while it flies. The flight is shown in slow motion (it would be over in three
  *  frames), and the fall starts at that same pace, then picks up. */
 const BALL_R = 0.11;
-const FLIGHT = 0.36;
+const FLIGHT = 0.42;
 const KICK = 30; // m/s
 let ballSlow = 1; // how much slower than life the flight is shown
 const ball = { on: false, at: 0, p: [0, 0, 0], v: [0, 0, 0], w: [0, 0, 0] }; // p, v: as it reaches the glass, at time `at`
@@ -204,7 +204,8 @@ function kick(x: number, y: number) {
 
 /** The ball before it hits: a throw, backwards from where it will land. */
 function flyBall() {
-  const t = Math.min(0, now - ball.at) * ballSlow;
+  // not clamped at the glass: if the bake is a few frames late the ball carries on rather than wait for it
+  const t = (now - ball.at) * ballSlow;
   const p = renderer.ball.p, q = renderer.ball.q;
   p[0] = ball.p[0] + ball.v[0] * t; p[1] = ball.p[1] + ball.v[1] * t; p[2] = ball.p[2] + ball.v[2] * t;
   const a = ball.w[0] * t * 0.5;
@@ -223,7 +224,7 @@ function startFall() {
   if (!set || !lastImpact) return;
   state = 'falling';
   playhead = 0; lastHitFrame = 0;
-  if (ball.on) { speed = ballSlow; recoil = 1.6; }
+  if (ball.on) { speed = ballSlow; recoil = 1.6; playhead = Math.max(0, now - ball.at) * ballSlow; }
   renderer.shards = true;
   renderer.setPose(frames[0], frames[0], 0);
   // dust comes off every crack as the pane lets go
@@ -313,8 +314,21 @@ window.addEventListener('keydown', (e) => {
     else if (state === 'fallen') reset();
   } else if (e.code === 'KeyR') reset();
   else if (e.code === 'KeyM') toggleSound();
+  else if (e.code === 'KeyB') toggleBall();
 });
 window.addEventListener('keyup', (e) => { if (e.code === 'Space') slow = false; });
+
+// the ball can be left out of the picture: the glass then bursts by itself
+let showBall = !params.has('noball');
+try { if (localStorage.getItem('codevember-02-ball') === '0') showBall = false; } catch { /* no storage */ }
+const ballBtn = document.querySelector<HTMLButtonElement>('#ball')!;
+function toggleBall() {
+  showBall = !showBall;
+  ballBtn.classList.toggle('off', !showBall);
+  try { localStorage.setItem('codevember-02-ball', showBall ? '1' : '0'); } catch { /* no storage */ }
+}
+ballBtn.classList.toggle('off', !showBall);
+ballBtn.addEventListener('click', toggleBall);
 
 const soundBtn = document.querySelector<HTMLButtonElement>('#sound')!;
 function toggleSound() {
@@ -342,8 +356,8 @@ function frame(ms: number) {
   fade += (fadeTo - fade) * Math.min(1, dt * 12);
   if (resetAt >= 0 && now > resetAt) { resetAt = -1; newPane(); fadeTo = 1; zoomTo = 1; }
 
-  if (state === 'doomed' && now >= fallAt && (bakeDone || frames.length > 40)) startFall();
-  renderer.ball.on = ball.on;
+  if (state === 'doomed' && now >= fallAt && (bakeDone || frames.length > 5)) startFall();
+  renderer.ball.on = ball.on && showBall;
   if (ball.on && state === 'doomed') flyBall();
   if (state === 'falling') {
     speed += ((slow ? 0.07 : PACE) - speed) * Math.min(1, dt * (slow || speed > PACE ? 10 : 1.6));
