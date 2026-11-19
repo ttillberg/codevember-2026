@@ -19,12 +19,16 @@ type BarKnob = {
   put(t: number): void;
 };
 
-// 24 px line icons (Feather's cloud-rain, droplet and wind; the scratch is three claw marks).
+// 24 px line icons (Feather's cloud-rain, droplet and wind; the scratch is a garden trowel, digging down to the left).
 export const ICONS = {
   rain: 'M16 13v8M8 13v8M12 15v8M20 16.58A5 5 0 0 0 18 7h-1.26A8 8 0 1 0 4 15.25',
   water: 'M12 2.69l5.66 5.66a8 8 0 1 1-11.31 0z',
   wind: 'M9.59 4.59A2 2 0 1 1 11 8H2m10.59 11.41A2 2 0 1 0 14 16H2m15.73-8.27A2.5 2.5 0 1 1 19.5 12H2',
-  scratch: 'M8 3L4.5 21M13.5 3L10 21M19 3l-3.5 18',
+  scratch:
+    'M14.55 6.91L17.94 3.51C18.64 2.81 19.78 2.81 20.49 3.51C21.19 4.22 21.19 5.36 20.49 6.06L17.09 9.45Z' +
+    'M15.82 8.18L12.85 11.15' +
+    'M9.03 7.33L16.67 14.97L14.12 17.52C11.15 20.49 7.33 20.91 3.51 20.49C3.09 16.67 3.51 12.85 6.48 9.88Z' +
+    'M10.64 13.36L7.42 16.58',
 };
 
 const SVG = 'width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"';
