@@ -4,7 +4,7 @@ import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { MapControls } from '@react-three/drei';
 import { Bloom, ChromaticAberration, EffectComposer, SMAA, TiltShift2, ToneMapping, Vignette, wrapEffect } from '@react-three/postprocessing';
 import { BlendFunction, Effect, ToneMappingMode } from 'postprocessing';
-import { Color, DirectionalLight, HemisphereLight, MOUSE, OrthographicCamera, PerspectiveCamera, TOUCH, Uniform, Vector2, type Vector3 } from 'three';
+import { Color, DirectionalLight, HemisphereLight, MOUSE, OrthographicCamera, PerspectiveCamera, TOUCH, Uniform, Vector2, Vector3 } from 'three';
 import { HAZE, MOOD, NIGHT, RICH, hoursPerSecond, skyAt, lampWarmth } from './haze';
 import { Cars, TIMELAPSE } from './Cars';
 import type { Sim } from './sim';
@@ -178,8 +178,6 @@ const HAND: Intent = alone(true, () => (TILE ? [] : [
 ]).reduce((it, line) => addStroke(it, line.map(([x, y]) => ({ x, y })), true) ?? it, TILE ? tileStrokes(TILE.i, TILE.j, TILE.detail) : baseIntent()));
 // ?endless lays four tiles together, each where it lies in the grid, the hand-drawn one among them (see `place` in net.ts)
 const BASE: Intent = LAND.on && !TILE ? windowStrokes(HAND) : HAND;
-/** What the drone looks at now, for the shadows to follow it over a place bigger than they reach. */
-const LOOK = { x: 10, z: -10 };
 /** One house in this many is left standing. */
 const KEEP = 2;
 /** Milliseconds a smear has to be held still before the ground is made of it for real. */
@@ -261,10 +259,6 @@ function Drone({ shot, move, set, onShot, onWindow, onAhead }: {
   const fence = useCallback((e?: { target: unknown }) => {
     const c = e!.target as { target: { x: number; z: number }; object: { position: { x: number; z: number } }; getDistance(): number };
     const t = c.target, cam = c.object.position;
-    if (LAND.on) {
-      // over the endless grid nothing holds it: the tiles follow it (see `Drone`), and so do the shadows
-      LOOK.x = Math.round(t.x / 24) * 24; LOOK.z = Math.round(t.z / 24) * 24;
-    }
     const d = LAND.on ? 0 : Math.hypot(t.x - TARGET[0], t.z - TARGET[2]);
     // the closer it flies, the further out it may go: up close there is no haze in the frame to hide
     const reach = Math.min(360, 130 + Math.max(0, 800 - c.getDistance()) * 0.45);
@@ -324,7 +318,61 @@ function Drone({ shot, move, set, onShot, onWindow, onAhead }: {
     // not when the shot only followed a hand: that one is flown already
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [camera, key, set]);
+  // the arrow keys or WASD fly it: ahead and back along where it looks, sideways across; gently, and with Shift twice as fast
+  const keys = useRef({ up: 0, down: 0, left: 0, right: 0, fast: 0 });
+  // what the hand asks, smoothed twice so the throttle comes in on a curve; the speed it has; the dip it is in
+  const stick = useRef({ f1: 0, s1: 0, f2: 0, s2: 0, vf: 0, vs: 0, dip: 0 });
+  useEffect(() => {
+    const names: Record<string, 'up' | 'down' | 'left' | 'right'> = { ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right' };
+    // (WASD by where the keys lie, not what they print: on another layout they are still the four under the left hand)
+    const codes: Record<string, 'up' | 'down' | 'left' | 'right'> = { KeyW: 'up', KeyS: 'down', KeyA: 'left', KeyD: 'right' };
+    const on = (v: number) => (e: KeyboardEvent) => {
+      keys.current.fast = +e.shiftKey;
+      const k = names[e.key] ?? codes[e.code];
+      if (!k || e.metaKey || e.ctrlKey || e.altKey) return;
+      // a slider or a field has the arrows for itself
+      const el = e.target as HTMLElement | null;
+      if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.getAttribute('role') === 'slider' || el.isContentEditable)) return;
+      e.preventDefault();
+      keys.current[k] = v;
+    };
+    const down = on(1), up = on(0), lost = () => { keys.current = { up: 0, down: 0, left: 0, right: 0, fast: 0 }; };
+    addEventListener('keydown', down);
+    addEventListener('keyup', up);
+    addEventListener('blur', lost);
+    return () => { removeEventListener('keydown', down); removeEventListener('keyup', up); removeEventListener('blur', lost); };
+  }, []);
+  const steer = (dt: number) => {
+    const c = controls.current, k = keys.current, q = stick.current, p = camera.position;
+    if (!c) return;
+    const wf = k.up - k.down, ws = k.right - k.left;
+    // two easings one after the other: it leans into the move rather than jumping to it, and lets go a little slower
+    const ease = (from: number, to: number, rate: number) => from + (to - from) * (1 - Math.exp(-dt * rate));
+    const rate = (w: number, v: number) => (w && Math.abs(w) >= Math.abs(v) ? 3.2 : 2.6);
+    q.f1 = ease(q.f1, wf, rate(wf, q.f1)); q.s1 = ease(q.s1, ws, rate(ws, q.s1));
+    q.f2 = ease(q.f2, q.f1, rate(wf, q.f2)); q.s2 = ease(q.s2, q.s1, rate(ws, q.s2));
+    if (Math.abs(q.f2) < 1e-4 && Math.abs(q.s2) < 1e-4 && !wf && !ws && Math.abs(q.dip) < 1e-3) { q.f2 = q.s2 = q.f1 = q.s1 = 0; return; }
+    // a hand on it: the drift north stops, and the sliders follow
+    if (wf || ws) held.current = Math.max(held.current, performance.now() + 900);
+    // further off it covers more ground, as anything does that is seen from high up
+    const dx = c.target.x - p.x, dz = c.target.z - p.z, flat = Math.hypot(dx, dz) || 1, dist = Math.hypot(dx, p.y - c.target.y, dz);
+    const top = dist * 0.22 * (k.fast ? 1 : 0.5);
+    q.vf = ease(q.vf, q.f2 * top, 6); q.vs = ease(q.vs, q.s2 * top, 6);
+    const fx = dx / flat, fz = dz / flat, rx = -fz, rz = fx;
+    const mx = (fx * q.vf + rx * q.vs) * dt, mz = (fz * q.vf + rz * q.vs) * dt;
+    c.target.x += mx; c.target.z += mz; p.x += mx; p.z += mz;
+    // sideways it turns into the way it slides, as a drone banks into a curve; less so when it also flies ahead
+    const turn = -(q.vs / Math.max(top, 1)) * (0.2 - 0.08 * Math.abs(q.f2)) * dt;
+    if (turn) {
+      const ox = p.x - c.target.x, oz = p.z - c.target.z, cos = Math.cos(turn), sin = Math.sin(turn);
+      p.x = c.target.x + ox * cos + oz * sin; p.z = c.target.z - ox * sin + oz * cos;
+    }
+    // and it dips its nose as it speeds up, and lifts it as it slows: the picture sinks a little, then rises again
+    const dip = ease(q.dip, (q.f2 - wf) * 0.02 * dist, 4);
+    p.y += dip - q.dip; q.dip = dip;
+  };
   useFrame(({ clock }, delta) => {
+    steer(Math.min(Math.max(delta, 0), 0.1));
     fly.current(clock.elapsedTime);
     const c = controls.current as unknown as { target: Vector3 } | null;
     if (!LAND.on || !c || !onWindow) return;
@@ -334,7 +382,6 @@ function Drone({ shot, move, set, onShot, onWindow, onAhead }: {
       const d = move.north * Math.min(Math.max(delta, 0), 0.1);
       c.target.z -= d; camera.position.z -= d;
     }
-    LOOK.x = Math.round(c.target.x / 24) * 24; LOOK.z = Math.round(c.target.z / 24) * 24;
     // The window is the two tiles by two whose middles the drone is between: when it passes a middle, the two tiles
     // behind it are let go and two are laid ahead, all of them further off than the frame reaches. A little past, so
     // that it does not go back and forth on the line
@@ -389,8 +436,14 @@ function Drone({ shot, move, set, onShot, onWindow, onAhead }: {
  * A low sun is not slow on the ground, where the end of a long shadow runs: under LOW_SUN radians they are drawn twice as often.
  */
 const SHADOW_EVERY = 6, LOW_SUN = 0.35;
-/** Metres from the middle that the shadows reach, and how far up anything stands that casts one. */
-const SHADE = { wide: 430, far: 400, tall: 70 };
+/**
+ * The shadows cover what is in the frame and no more: the four corners of the picture, where they meet the ground,
+ * seen from the sun. `tall` is how high a roof stands that has to have its shadow too, `reach` how far off the ground
+ * is still taken when the top of the frame runs out to the haze, `grid` what the box is rounded to so that it does
+ * not crawl a little with every frame.
+ */
+const SHADE = { tall: 70, reach: 1600, grid: 24 };
+const CORNERS = [[-1, -1], [1, -1], [1, 1], [-1, 1]] as const;
 
 /** The sun, the sky and the moon: one light that casts shadows and one that fills them, moved and coloured by the hour. */
 function Sun({ speed, shadow, lazy, clock, scrub, onHour, live, readout }: {
@@ -406,7 +459,9 @@ function Sun({ speed, shadow, lazy, clock, scrub, onHour, live, readout }: {
 }) {
   const gl = useThree((s) => s.gl);
   const scene = useThree((s) => s.scene);
+  const eye = useThree((s) => s.camera);
   const frame = useRef(0);
+  const probe = useMemo(() => new Vector3(), []);
   useEffect(() => {
     gl.shadowMap.autoUpdate = !lazy;
     return () => { gl.shadowMap.autoUpdate = true; };
@@ -429,14 +484,31 @@ function Sun({ speed, shadow, lazy, clock, scrub, onHour, live, readout }: {
     const k = skyAt(hour.current);
     if (lazy && n % (k.el < LOW_SUN ? SHADOW_EVERY / 2 : SHADOW_EVERY) === 0) gl.shadowMap.needsUpdate = true;
     const s = sun.current!, cos = Math.cos(k.el), sin = Math.sin(k.el);
-    s.position.set(LOOK.x - Math.sin(k.phi) * cos * 900, sin * 900, LOOK.z + Math.cos(k.phi) * cos * 900);
-    if (s.target.position.x !== LOOK.x || s.target.position.z !== LOOK.z) { s.target.position.set(LOOK.x, 0, LOOK.z); s.target.updateMatrixWorld(); }
+    // where the corners of the picture meet the ground (or as far as the haze, where they do not)
+    const ground: [number, number][] = [];
+    for (const [nx, ny] of CORNERS) {
+      const d = probe.set(nx, ny, 0.5).unproject(eye).sub(eye.position).normalize();
+      const t = d.y < -1e-3 ? Math.min(-eye.position.y / d.y, SHADE.reach) : SHADE.reach;
+      ground.push([eye.position.x + d.x * t, eye.position.z + d.z * t]);
+    }
+    // the sun looks at the middle of that, from its own side; across and up its view are these two
+    const g = SHADE.grid, mx = Math.round(ground.reduce((a, p) => a + p[0], 0) / 4 / g) * g, mz = Math.round(ground.reduce((a, p) => a + p[1], 0) / 4 / g) * g;
+    const sx = -Math.sin(k.phi), sz = Math.cos(k.phi);
+    s.position.set(mx + sx * cos * 900, sin * 900, mz + sz * cos * 900);
+    if (s.target.position.x !== mx || s.target.position.z !== mz) { s.target.position.set(mx, 0, mz); s.target.updateMatrixWorld(); }
     s.intensity = k.power;
     s.color.copy(k.sun);
-    // a low sun sees the ground edge on: the shadow map is drawn only as tall as that, and its pixels go further
-    const cam = s.shadow.camera as OrthographicCamera;
-    cam.top = Math.min(330, SHADE.far * sin + SHADE.tall * cos);
-    cam.bottom = -Math.min(330, SHADE.far * sin + 8);
+    // seen from the sun, a step across the ground is a step across; a step towards it is foreshortened to sin of the
+    // elevation, and a roof stands up by cos of it. A low sun sees the ground edge on: the map is drawn only as tall as that
+    let lo = Infinity, hi = -Infinity, near = Infinity, far = -Infinity;
+    for (const [x, z] of ground) {
+      const ax = (x - mx) * sz - (z - mz) * sx, up = ((x - mx) * sx + (z - mz) * sz) * sin;
+      lo = Math.min(lo, ax); hi = Math.max(hi, ax); near = Math.min(near, up); far = Math.max(far, up);
+    }
+    const cam = s.shadow.camera as OrthographicCamera, up = (v: number) => Math.ceil(v / g) * g;
+    // (ground towards the sun lies low in the sun's view, and a roof stands up above the ground it is on)
+    cam.left = -up(-lo + 8); cam.right = up(hi + 8);
+    cam.top = up(-near + SHADE.tall * cos + 8); cam.bottom = -up(far + 8);
     cam.updateProjectionMatrix();
     sky.current!.intensity = k.fill;
     sky.current!.color.copy(k.air);
@@ -448,7 +520,7 @@ function Sun({ speed, shadow, lazy, clock, scrub, onHour, live, readout }: {
     <>
       <hemisphereLight ref={sky} args={[0xbcd4ff, 0x6b6a52, 0.95]} />
       <directionalLight ref={sun} castShadow={shadow} shadow-mapSize={[res, res]} shadow-bias={-0.0004} shadow-normalBias={0.25}>
-        <orthographicCamera attach="shadow-camera" args={[-SHADE.wide, SHADE.wide, 330, -330, 100, 1900]} />
+        <orthographicCamera attach="shadow-camera" args={[-430, 430, 330, -330, 100, 1900]} />
         <object3D attach="target" position={TARGET} />
       </directionalLight>
     </>
@@ -870,11 +942,11 @@ export function App() {
       if ((e.key === 'h' || e.key === 'H') && !e.metaKey && !e.ctrlKey && !e.altKey) setHeat((v) => !v);
       // C shows the journeys of the road under the pointer, and C again takes them away
       if ((e.key === 'c' || e.key === 'C') && !e.metaKey && !e.ctrlKey && !e.altKey) setTracing((v) => !v);
-      // R takes up the road brush, B the bridge, S the smear, E the eraser
-      const pick = ({ r: 'road', b: 'bridge', s: 'smear', e: 'erase' } as Record<string, Brush>)[e.key.toLowerCase()];
+      // R takes up the road brush, B the bridge, M the smear, E the eraser (WASD fly the drone)
+      const pick = ({ r: 'road', b: 'bridge', m: 'smear', e: 'erase' } as Record<string, Brush>)[e.key.toLowerCase()];
       if (pick && !e.metaKey && !e.ctrlKey && !e.altKey) { setBrush(pick); setTool(pick); }
-      // D draws the network over the picture, and D again takes it away
-      if ((e.key === 'd' || e.key === 'D') && !e.metaKey && !e.ctrlKey && !e.altKey) setNodes((v) => !v);
+      // N draws the network over the picture, and N again takes it away
+      if ((e.key === 'n' || e.key === 'N') && !e.metaKey && !e.ctrlKey && !e.altKey) setNodes((v) => !v);
       // T takes up the next brush, shift and T the one before
       if ((e.key === 't' || e.key === 'T') && !e.metaKey && !e.ctrlKey && !e.altKey) {
         const order: Brush[] = SIZED ? ['road', 'bridge', 'smear', 'size', 'erase'] : ['road', 'bridge', 'smear', 'erase'];

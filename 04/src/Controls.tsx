@@ -261,7 +261,7 @@ export function Brushes({ tool, sized, grow, reach, rub, onPick, onGrow, onSmear
       {BRUSHES.map(([b, label, Icon, keys]) => (
         <Fragment key={b}>
           {sized && b === 'erase' && <SizeBrush on={tool === 'size'} grow={grow} onPick={() => onPick('size')} onGrow={onGrow} />}
-          {b === 'smear' ? <KnobBrush name="Smear" hotkey="S" icon={<SmearIcon />} min={SMEAR_MIN} max={SMEAR_MAX} on={tool === b} reach={reach} onPick={() => onPick(b)} onSet={onSmear} />
+          {b === 'smear' ? <KnobBrush name="Smear" hotkey="M" icon={<SmearIcon />} min={SMEAR_MIN} max={SMEAR_MAX} on={tool === b} reach={reach} onPick={() => onPick(b)} onSet={onSmear} />
             : b === 'erase' ? <KnobBrush name="Erase" hotkey="E" icon={<EraseIcon />} min={ERASE_MIN} max={ERASE_MAX} on={tool === b} reach={rub} onPick={() => onPick(b)} onSet={onRub} /> : (
             <button className={tool === b ? 'on' : ''} aria-label={label} aria-pressed={tool === b} onClick={() => onPick(b)}>
               <Icon />
