@@ -13,7 +13,7 @@ pnpm -C 02 dev
 - **Space**, or the first button: a football through the middle, at 30 m/s. **B**, or the ball button: hide the ball itself (also `?noball`).
 - While the glass falls, **hold** (pointer or Space) for slow motion.
 - **R**: a new pane. **M**: sound.
-- A mouse moves the head a little. A finger does not: under a touch the glass stays put.
+- The pointer never moves the camera: it has a slow sway of its own (`Camera sway` in the workbench, down to none), and the wheel zooms.
 - `?seed=7` pins the pane, `?clean` hides the furniture.
 - `?debug` (or `#debug`): the workbench, a gear bottom right. Three folding sections, the scene (light, glass, pace), the cracks (from the next bullet) and the simulation (from the next break). Every value, and what is folded, is kept in localStorage; double click a name to put its value back.
 

@@ -306,7 +306,6 @@ function startFall() {
 
 // ---------------------------------------------------------------- camera
 let w = 0, h = 0;
-const ptr = { x: 0, y: 0, sx: 0, sy: 0 };
 let zoom = 1, zoomTo = 1;
 const focus = [0, 0.4, 0];
 const cam: { eye: number[]; view: Float32Array; proj: Float32Array } = { eye: [0, 0.5, 2], view: new Float32Array(16), proj: new Float32Array(16) };
@@ -319,9 +318,9 @@ function updateCamera(t: number) {
   const k = 1 - 1 / zoom;
   const target = [home[0] + (focus[0] - home[0]) * k, home[1] + (focus[1] - home[1]) * k, 0];
   const d = dist / zoom;
-  // the pointer moves the head a little; with none, a slow sway
-  const yaw = ptr.sx * 0.2 + Math.sin(t * 0.21) * 0.035 * V.sway;
-  const pitch = 0.1 - ptr.sy * 0.07 + Math.sin(t * 0.17 + 1) * 0.012 * V.sway + recoil * recoil * 0.012;
+  // the pointer never moves the camera: only a slow sway of its own, and the wheel
+  const yaw = Math.sin(t * 0.21) * 0.035 * V.sway;
+  const pitch = 0.1 + Math.sin(t * 0.17 + 1) * 0.012 * V.sway + recoil * recoil * 0.012;
   cam.eye = [target[0] + Math.sin(yaw) * Math.cos(pitch) * d, Math.max(0.04, target[1] + Math.sin(pitch) * d), Math.cos(yaw) * Math.cos(pitch) * d];
   cam.view = lookAt(cam.eye, target, [recoil * 0.004, 1, 0]);
   cam.proj = perspective(FOV, aspect, 0.03, 40);
@@ -353,7 +352,6 @@ function reset() {
 canvas.addEventListener('pointerdown', (e) => {
   sound.wake();
   mouse = e.pointerType === 'mouse';
-  if (mouse) { ptr.x = (e.clientX / w) * 2 - 1; ptr.y = (e.clientY / h) * 2 - 1; } else { ptr.x = 0; ptr.y = 0; }
   if (state === 'intact') { down = { x: e.clientX, y: e.clientY, t: performance.now(), id: e.pointerId }; canvas.setPointerCapture(e.pointerId); }
   else if (state === 'falling') { slow = true; canvas.setPointerCapture(e.pointerId); }
   else if (state === 'fallen') reset();
@@ -374,9 +372,8 @@ const release = (e: PointerEvent) => {
 canvas.addEventListener('pointerup', release);
 canvas.addEventListener('pointercancel', release);
 window.addEventListener('pointermove', (e) => {
-  // only a mouse moves the head, and not while it is pressed: under a finger the glass stays put
+  // (the pointer only says where a zoom will go)
   if (e.pointerType !== 'mouse' || down) return;
-  ptr.x = (e.clientX / w) * 2 - 1; ptr.y = (e.clientY / h) * 2 - 1;
   if (zoom < 1.02) { const [x, y] = pick(e.clientX, e.clientY); focus[0] = x - pane.W / 2; focus[1] = y + Y0; }
 });
 canvas.addEventListener('wheel', (e) => {
@@ -431,7 +428,6 @@ function frame(ms: number) {
   now += dt;
   flash *= Math.exp(-dt / 0.045);
   recoil *= Math.exp(-dt / 0.09);
-  ptr.sx += (ptr.x - ptr.sx) * Math.min(1, dt * 5); ptr.sy += (ptr.y - ptr.sy) * Math.min(1, dt * 5);
   zoom += (zoomTo - zoom) * Math.min(1, dt * 9);
   fade += (fadeTo - fade) * Math.min(1, dt * 12);
   if (resetAt >= 0 && now > resetAt) { resetAt = -1; newPane(); fadeTo = 1; zoomTo = 1; }
