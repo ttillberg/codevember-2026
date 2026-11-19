@@ -340,17 +340,19 @@ export class Pane {
   }
 
   /** Every open tip runs until it meets a crack or the frame, and islands are tied to the rest. */
-  finish(time: number, maxArea = 0.006, spread = 1): Seg[] {
+  /** With `standing`, nothing runs on: only the pieces the cracks already cut out are cut smaller, and the
+   *  largest face, the glass still standing, is left alone. */
+  finish(time: number, maxArea = 0.006, spread = 1, standing = false): Seg[] {
     const firstPath = this.paths.length;
     const tips = this.tips;
-    this.tips = [];
+    if (!standing) this.tips = [];
     const queue: Grow[] = [];
-    for (const tip of tips) {
+    for (const tip of standing ? [] : tips) {
       if (this.nbr[tip.node].length !== 1) continue;
       this.grow({ node: tip.node, ang: tip.ang, budget: 10, mode: 0, cx: tip.cx, cy: tip.cy, sign: 1, parent: -2, parentIdx: 0, delay: this.rand() * 0.22 * spread, first: 0, branch: 0, skipFirst: false }, queue);
     }
     // a group of cracks that touches nothing else would be a shard inside a shard: tie it to the rest
-    for (let pass = 0; pass < 30; pass++) {
+    for (let pass = 0; pass < 30 && !standing; pass++) {
       const comp = this.components();
       const main = comp[0];
       let best = -1;
@@ -361,7 +363,14 @@ export class Pane {
     // and the big pieces give way: cracks across every face larger than a hand
     for (let pass = 0; pass < 8; pass++) {
       let cut = 0;
-      for (const loop of this.faces()) {
+      const loops = this.faces();
+      let keep: number[] | null = null;
+      if (standing) {
+        let big = 0;
+        for (const loop of loops) { const a = this.area(loop); if (a > big) { big = a; keep = loop; } }
+      }
+      for (const loop of loops) {
+        if (loop === keep) continue;
         let a = 0, cx = 0, cy = 0;
         for (let i = 0; i < loop.length; i++) {
           const u = loop[i], v = loop[(i + 1) % loop.length];
@@ -378,9 +387,15 @@ export class Pane {
       }
       if (!cut) break;
     }
-    this.tips = [];
+    if (!standing) this.tips = [];
     this.stampTimes(firstPath, time, true);
     return this.segs(firstPath);
+  }
+
+  area(loop: number[]) {
+    let a = 0;
+    for (let i = 0; i < loop.length; i++) { const u = loop[i], v = loop[(i + 1) % loop.length]; a += this.nx[u] * this.ny[v] - this.nx[v] * this.ny[u]; }
+    return a / 2;
   }
 
   private components() {

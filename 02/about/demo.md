@@ -13,7 +13,7 @@ The pane is always the same one (`?seed=7`).
 
 ## The index clip: four bullets, then the shock
 
-One idea: the whole arc. Four shots, each web stopped by the ones before, a beat, then a swipe and all four holes blow out at once, with a second of slow motion while the shards are in the air.
+One idea: the whole arc. Four shots, each web stopped by the ones before, a beat, then a swipe and everything the cracks have cut loose blows out at once, the rest of the pane left standing, with a second of slow motion while the shards are in the air.
 
 ```steps
 wait 400

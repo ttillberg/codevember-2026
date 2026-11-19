@@ -105,7 +105,7 @@ function setHint() {
     : state === 'falling' ? (touch ? 'Hold to slow it down' : 'Hold to slow it down')
     : state === 'doomed' ? ''
     : shots === 0 ? (touch ? 'Tap the glass to shoot' : 'Click the glass to shoot')
-    : shots < 3 ? (touch ? 'Swipe: every hole blows out' : 'Drag: every hole blows out. Space: a football')
+    : shots < 3 ? (touch ? 'Swipe: what is broken blows out' : 'Drag: what is broken blows out. Space: a football')
     : '';
 }
 
@@ -215,33 +215,53 @@ function kick(x: number, y: number) {
   setHint();
 }
 
-/** A swipe: a shock, at once. It is as if a ball nobody sees went through every bullet hole at the same
- *  instant: each hole gets a blunt blow, the pane is cut small, and one heavy sphere per hole goes into the sim. */
-function shock(ax: number, ay: number, bx: number, by: number) {
+/** A swipe: a shock, at once. Only what is already broken goes: the pieces the cracks have cut out of the
+ *  pane are cut smaller and blown out the back, as if a ball nobody sees went through every bullet hole at the
+ *  same instant. The glass around them, cracked or not, stays standing. */
+function shock() {
   if (state !== 'intact') return;
+  if (!pane.impacts.length) return; // nothing is broken yet
+  const at = pane.impacts.map((im) => [im.x, im.y]);
+  const never = 1e9; // the new cuts are inside pieces that leave: they are only ever seen as shard edges
+  pane.finish(never, V.shardArea / 1e4, 0, true);
+  const next = buildShards(pane, Y0, true);
+  if (!next.count) return;
   state = 'doomed';
-  // where the bullets went; with none, where the swipe was
-  const at = pane.impacts.length ? pane.impacts.map((im) => [im.x, im.y]) : [[(ax + bx) / 2, (ay + by) / 2]];
+  set = next;
   const lead = 0.06; // just long enough for the worker to hand back its first frames
   sound.smash(lead);
-  const never = 1e9; // the pane is replaced by its shards before any of this would be drawn
-  const energy = Math.max(0.9, V.blow / Math.sqrt(at.length));
-  for (const [x, y] of at) {
-    const cx = Math.min(pane.W - 0.02, Math.max(0.02, x)), cy = Math.min(pane.H - 0.02, Math.max(0.02, y));
-    pane.shoot(cx, cy, never, energy, true).impact.r = 0;
-  }
-  pane.finish(never, V.shardArea / 1e4, 0);
-  set = buildShards(pane, Y0);
   renderer.setShards(set);
   frames = []; hits = []; bakeDone = false;
   fallAt = now + lead;
   shocked = true;
   const impacts = at.map(([x, y]) => [x - pane.W / 2, y + Y0] as [number, number]);
-  const balls = impacts.map(([x, y]) => ({ p: [x, y, (V.ballSize / 100) + 0.012], v: [(Math.random() - 0.5) * 3, (Math.random() - 0.5) * 3, -V.kick], w: [0, 0, 0], r: (V.ballSize / 100) }));
+  const balls = impacts.map(([x, y]) => ({ p: [x, y, V.ballSize / 100 + 0.012], v: [(Math.random() - 0.5) * 3, (Math.random() - 0.5) * 3, -V.kick], w: [0, 0, 0], r: V.ballSize / 100 }));
   shockAt = impacts;
-  const req: BakeRequest = { type: 'bake', run: ++run, bodies: set.bodies, impacts, width: pane.W, y0: Y0, seed, balls, cfg: simCfg() };
+  const req: BakeRequest = { type: 'bake', run: ++run, bodies: set.bodies, impacts, width: pane.W, y0: Y0, seed, balls, cfg: simCfg(), standing: true };
   worker.postMessage(req);
   setHint();
+}
+
+/** The moment the pieces leave: they are cut out of the pane that stays (blue in the mask), and of its cracks
+ *  only those with standing glass on one side at least are kept. */
+function cutPane() {
+  if (!set) return;
+  const s = mask.width / pane.W;
+  mctx.globalCompositeOperation = 'lighter';
+  mctx.fillStyle = 'rgb(0,0,255)';
+  for (const loop of set.cut) {
+    mctx.beginPath();
+    for (let i = 0; i < loop.length; i += 2) { const x = loop[i] * s, y = (pane.H - loop[i + 1]) * s; if (i) mctx.lineTo(x, y); else mctx.moveTo(x, y); }
+    mctx.closePath(); mctx.fill();
+  }
+  renderer.setMask(mask);
+  const N = pane.nx.length, { sides, gone } = set;
+  renderer.rebuildCracks(pane, (a, b) => {
+    const ab = a * N + b, ba = b * N + a;
+    const has1 = sides.has(ab), has2 = sides.has(ba);
+    if (!has1 && !has2) return false; // a crack that ends in clear glass: it stays
+    return (!has1 || gone.has(ab)) && (!has2 || gone.has(ba));
+  });
 }
 let shocked = false;
 let shockAt: [number, number][] = [];
@@ -271,6 +291,8 @@ function startFall() {
   if (ball.on) { speed = ballSlow; recoil = 1.6; playhead = Math.max(0, now - ball.at) * ballSlow; }
   if (shocked) { speed = 0.2; recoil = 1.6; flash = 0.35; }
   renderer.shards = true;
+  renderer.standing = shocked;
+  if (shocked) cutPane();
   renderer.setPose(frames[0], frames[0], 0);
   // dust comes off every crack as the pane lets go
   for (let i = 0; i < 3200 * V.dust; i++) {
@@ -347,7 +369,7 @@ const release = (e: PointerEvent) => {
   if (e.type !== 'pointerup' || state !== 'intact') return;
   const far = Math.hypot(e.clientX - d.x, e.clientY - d.y);
   if (far < 14) { const [x, y] = pick(d.x, d.y); shoot(x, y); }
-  else if (far > 40) { const [ax, ay] = pick(d.x, d.y), [bx, by] = pick(e.clientX, e.clientY); shock(ax, ay, bx, by); }
+  else if (far > 40) { shock(); }
 };
 canvas.addEventListener('pointerup', release);
 canvas.addEventListener('pointercancel', release);
@@ -437,7 +459,7 @@ function frame(ms: number) {
   renderer.setDust(dPos, dUsed);
 
   updateCamera(now);
-  renderer.draw(cam.view, cam.proj, cam.eye, renderer.shards ? playhead : now, flash, fade, dUsed);
+  renderer.draw(cam.view, cam.proj, cam.eye, now, playhead, flash, fade, dUsed);
   requestAnimationFrame(frame);
 }
 
@@ -451,7 +473,7 @@ Object.assign(window, {
   shatter: {
     shoot: (u: number, v: number) => shoot(u * pane.W, v * pane.H),
     kick: (u: number, v: number) => kick(u * pane.W, v * pane.H), reset,
-    shock: (ax: number, ay: number, bx: number, by: number) => shock(ax, ay, bx, by),
+    shock,
     seek: (t: number) => { held = t; },
     get state() { return state; },
     get info() { return { state, shots, crack: pane.crackLen, limit, shards: set?.count, low: set?.bodies.filter((b) => b.low).length, frames: frames.length, bakeDone }; },

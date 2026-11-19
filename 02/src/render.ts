@@ -46,6 +46,8 @@ export class Renderer {
   private sceneFbo: WebGLFramebuffer | null = null; private sceneTex: WebGLTexture | null = null;
   private w = 0; private h = 0;
   shards = false;
+  /** the pane itself, where it stands: all of it before the break, what is left of it after */
+  standing = true;
   /** the football: where it is and how it is turned, or off */
   ball = { on: false, p: [0, 0, 0], q: [0, 0, 0, 1], r: 0.11 };
   /** what the settings panel turns */
@@ -167,7 +169,7 @@ export class Renderer {
     const gl = this.gl;
     const { W, H, T } = pane;
     this.pane = { W, H, y0, T };
-    this.shards = false;
+    this.shards = false; this.standing = true;
     const hx = W / 2;
     const r: number[] = [];
     const quadv = (a: number[], b: number[], c: number[], d: number[], m: number) => { for (const p of [a, b, c, a, c, d]) r.push(p[0], p[1], p[2], m); };
@@ -323,18 +325,37 @@ export class Renderer {
     gl.bindVertexArray(this.ballVao); gl.drawArrays(gl.TRIANGLES, 0, this.ballCount);
   }
 
-  private drawWalls() {
+  /** What is left standing and what flies are drawn one after the other: the pane and its cracks where they
+   *  are, cut out where pieces left (uCut), then the shards with their poses and their own clock. */
+  private drawGlass(u: Record<string, WebGLUniformLocation | null>, walls: boolean, now: number, shardNow: number) {
     const gl = this.gl;
-    if (this.shards) { gl.bindVertexArray(this.wallVao); gl.drawArrays(gl.TRIANGLES, 0, this.wallCount); }
-    else { gl.bindVertexArray(this.ribbonVao); gl.drawArrays(gl.TRIANGLES, 0, this.ribbonCount); }
-  }
-  private drawFaces() {
-    const gl = this.gl;
-    if (this.shards) { gl.bindVertexArray(this.faceVao); gl.drawArrays(gl.TRIANGLES, 0, this.faceCount); }
-    else { gl.bindVertexArray(this.paneVao); gl.drawArrays(gl.TRIANGLES, 0, 6); }
+    if (this.standing) {
+      gl.uniform1f(u.uUseXf, 0); gl.uniform1f(u.uCut, this.shards ? 1 : 0); gl.uniform1f(u.uNow, now);
+      if (walls) { gl.bindVertexArray(this.ribbonVao); gl.drawArrays(gl.TRIANGLES, 0, this.ribbonCount); }
+      else { gl.bindVertexArray(this.paneVao); gl.drawArrays(gl.TRIANGLES, 0, 6); }
+    }
+    if (this.shards) {
+      gl.uniform1f(u.uUseXf, 1); gl.uniform1f(u.uCut, 0); gl.uniform1f(u.uNow, shardNow);
+      if (walls) { gl.bindVertexArray(this.wallVao); gl.drawArrays(gl.TRIANGLES, 0, this.wallCount); }
+      else { gl.bindVertexArray(this.faceVao); gl.drawArrays(gl.TRIANGLES, 0, this.faceCount); }
+    }
   }
 
-  draw(view: Mat4, proj: Mat4, cam: number[], now: number, flash: number, fade: number, dustCount: number) {
+  /** The cracks again, from the graph itself, without the ones `drop` names: those between two pieces that left. */
+  rebuildCracks(pane: Pane, drop: (a: number, b: number) => boolean) {
+    const { nx, ny, ox, oy, W, T, ea, eb, ekind } = pane;
+    const hx = W / 2, y0 = this.pane.y0;
+    this.ribbonData = [];
+    for (let e = 0; e < ea.length; e++) {
+      const a = ea[e], b = eb[e];
+      if (drop(a, b)) continue;
+      const frame = ekind[e] === 1;
+      pushWall(this.ribbonData, nx[a] - hx, ny[a] + y0, nx[b] - hx, ny[b] + y0, frame ? 0 : ox[a], frame ? 0 : oy[a], frame ? 0 : ox[b], frame ? 0 : oy[b], 0, T, nx[a], ny[a], nx[b], ny[b], -1e3, -1e3, 0, frame ? 0 : ekind[e], 0);
+    }
+    this.uploadRibbons();
+  }
+
+  draw(view: Mat4, proj: Mat4, cam: number[], now: number, shardNow: number, flash: number, fade: number, dustCount: number) {
     const gl = this.gl;
     const vp = mul(proj, view);
     gl.disable(gl.CULL_FACE);
@@ -347,8 +368,8 @@ export class Renderer {
     gl.enable(gl.BLEND); gl.blendEquation(gl.MIN); gl.blendFunc(gl.ONE, gl.ONE);
     let u = this.use('shadow');
     this.glassUniforms(u, vp, now, flash, true);
-    gl.uniform1f(u.uShade, 1 - this.look.shadow * 0.41); this.drawFaces();
-    gl.uniform1f(u.uShade, 1 - this.look.shadow); this.drawWalls();
+    gl.uniform1f(u.uShade, 1 - this.look.shadow * 0.41); this.drawGlass(u, false, now, shardNow);
+    gl.uniform1f(u.uShade, 1 - this.look.shadow); this.drawGlass(u, true, now, shardNow);
     this.drawBall(vp, flash, true);
     gl.blendEquation(gl.FUNC_ADD); gl.disable(gl.BLEND);
 
@@ -367,7 +388,7 @@ export class Renderer {
     this.glassUniforms(u, vp, now, flash, false);
     gl.uniform3fv(u.uCam, cam);
     gl.uniform1f(u.uSeam, this.look.seam);
-    this.drawWalls();
+    this.drawGlass(u, true, now, shardNow);
     gl.bindFramebuffer(gl.READ_FRAMEBUFFER, this.msFbo);
     gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, this.sceneFbo);
     gl.blitFramebuffer(0, 0, this.w, this.h, 0, 0, this.w, this.h, gl.COLOR_BUFFER_BIT, gl.NEAREST);
@@ -389,7 +410,7 @@ export class Renderer {
     gl.uniform1f(u.uBend, this.look.bend * proj[5] * 0.5);
     gl.uniform3f(u.uGlass, this.look.tint, this.look.wavy, this.look.refl);
     gl.uniform1i(u.uScene, 3);
-    this.drawFaces();
+    this.drawGlass(u, false, now, shardNow);
     gl.disable(gl.DEPTH_TEST);
 
     if (dustCount) {

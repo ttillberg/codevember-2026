@@ -122,12 +122,13 @@ void main() {
 export const SHADOW_FS = /* glsl */ `#version 300 es
 precision highp float;
 in vec2 vUv; in vec4 vD;
-uniform float uNow; uniform float uShade;
+uniform float uNow; uniform float uShade; uniform float uCut;
 uniform sampler2D uMask; uniform vec2 uPane;
 out vec4 o;
 void main() {
   if (vD.y > uNow) discard;
-  if (texture(uMask, vUv / uPane).r > 0.5) discard;
+  vec4 m = texture(uMask, vUv / uPane);
+  if (m.r > 0.5 || (uCut > 0.5 && m.b > 0.5)) discard;
   o = vec4(uShade);
 }
 `;
@@ -136,12 +137,13 @@ void main() {
 // crack shows the room from somewhere else, or it is sent along the pane and stays in: that is the dark line.
 export const WALL_FS = COMMON + /* glsl */ `
 in vec3 vW; in vec3 vN; in vec3 vNl; in vec2 vUv; in vec4 vD; flat in vec4 vQ;
-uniform vec3 uCam; uniform float uNow; uniform float uSeam;
+uniform vec3 uCam; uniform float uNow; uniform float uSeam; uniform float uCut;
 uniform sampler2D uMask; uniform vec2 uPane;
 out vec4 o;
 void main() {
   if (vD.y > uNow) discard;
-  if (texture(uMask, vUv / uPane).r > 0.5) discard;
+  // (once pieces have left, the cracks that stay were chosen one by one: no mask for them)
+  if (uCut < 0.5 && texture(uMask, vUv / uPane).r > 0.5) discard;
   vec3 V = normalize(vW - uCam);
   vec3 Vl = rotInv(vQ, V);
   // hackle: the surface of a fracture is not smooth
@@ -170,12 +172,12 @@ void main() {
 // a face of the glass: what is behind it, bent a little, plus what it mirrors
 export const FACE_FS = COMMON + /* glsl */ `
 in vec3 vW; in vec3 vN; in vec3 vNl; in vec2 vUv; in vec4 vD; flat in vec4 vQ;
-uniform vec3 uCam; uniform mat4 uView; uniform vec2 uRes; uniform float uBend; uniform vec3 uGlass; // tint, waviness, reflections
+uniform vec3 uCam; uniform mat4 uView; uniform vec2 uRes; uniform float uBend; uniform float uCut; uniform vec3 uGlass; // tint, waviness, reflections
 uniform sampler2D uScene; uniform sampler2D uMask; uniform vec2 uPane;
 out vec4 o;
 void main() {
   vec4 m = texture(uMask, vUv / uPane);
-  if (m.r > 0.5) discard;
+  if (m.r > 0.5 || (uCut > 0.5 && m.b > 0.5)) discard; // blue: where pieces have left the standing pane
   // float glass is never flat
   vec2 w = vec2(fbm(vUv * 5.0 + 3.0), fbm(vUv * 5.0 + 19.0)) - 0.5;
   vec3 N = normalize(vN + rot(vQ, vec3(w * uGlass.y, 0.0)));

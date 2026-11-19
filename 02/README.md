@@ -2,14 +2,14 @@
 
 2026-11-02
 
-A pane of 8 mm glass standing in a channel. Shoot it as often as you like: every bullet is a hole and a web of cracks. Then swipe: a shock, and every bullet hole blows out at once. Or kick a football through it.
+A pane of 8 mm glass standing in a channel. Shoot it as often as you like: every bullet is a hole and a web of cracks. Then swipe: a shock, and everything the cracks have cut loose blows out at once, while the rest of the pane stays standing. Or kick a football through all of it.
 
 ```sh
 pnpm -C 02 dev
 ```
 
 - **Click / tap** the glass: a bullet, as many as you want. **Wheel**: zoom in on the cracks.
-- **Swipe / drag** across the glass: the shock. Which way does not matter.
+- **Swipe / drag** across the glass: the shock. Which way does not matter. Only what is broken goes.
 - **Space**, or the first button: a football through the middle, at 30 m/s. **B**, or the ball button: hide the ball itself (also `?noball`).
 - While the glass falls, **hold** (pointer or Space) for slow motion.
 - **R**: a new pane. **M**: sound.
@@ -29,7 +29,9 @@ Cracks are closed: there is no gap to see. What is drawn is the crack surface it
 
 A worker gets each shard as convex pieces (Douglas-Peucker, then triangles merged while they stay convex) and the ball as a sphere with its velocity and spin, and simulates them with Rapier in decimetres. What the ball is about to go through is loose at once, the rest lets go within a few frames, each piece with a push: out the back in a cone near the impact, outwards at the rim. The flight is shown in slow motion (at 30 m/s it would be three frames), which is also the time the worker needs to get ahead: the fall starts at that same pace on impact and picks up to 0.6 of life. Frames are positions and quaternions in a float texture, blended between two baked frames, so it stays smooth at any pace, and slower still while held.
 
-**The shock.** Same preparation, another cause: it is as if a ball nobody sees went through every bullet hole at the same instant. Each hole gets a blunt blow in the graph, everything is cut small, and one heavy sphere per hole goes into the simulation, never drawn. It is at once: the pane is its shards 60 ms after the swipe, the time the worker needs for its first frames, and the fall starts very slow and picks up. With no bullet in the pane, the one blow is where the swipe was.
+**The shock.** Only what is already broken goes. Nothing runs on and nothing new is cracked: the faces of the graph as it stands are the pieces, which means every cell the cracks have closed. The largest face, the pane around them, is not a shard: it stays. The pieces are cut smaller, and it is as if a ball nobody sees went through every bullet hole at the same instant: one heavy sphere per hole goes into the simulation, never drawn. The pane is its shards 60 ms after the swipe, the time the worker needs for its first frames.
+
+What stays is still drawn as the pane it was: one quad, cut out where the pieces left (their outlines are painted into the mask), and its cracks rebuilt from the graph, without those that had a leaving piece on both sides. A crack that ends in clear glass stays where it is.
 
 Splinters under 1.5 cm² are boxes that only meet the floor. Some of the pieces standing in the channel stay there.
 

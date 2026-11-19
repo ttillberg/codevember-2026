@@ -16,6 +16,8 @@ export interface BakeRequest {
   /** the balls as they reach the glass: position, velocity, spin, radius. The pose of the first is the last body of every frame. */
   balls: { p: number[]; v: number[]; w: number[]; r: number }[];
   cfg: SimConfig;
+  /** part of the pane stays up: the pieces must leave backwards, not slide down inside it */
+  standing?: boolean;
 }
 
 /** What the settings panel turns. */
@@ -114,15 +116,15 @@ async function bake(req: BakeRequest) {
     }
     // what the ball is about to go through is loose at once, the rest follows within a few frames
     release[i] = d < 0.2 ? 0 : ((d - 0.2) / cfg.front) * (0.75 + rand() * 0.5) + rand() * 0.02;
-    if (b.low && b.c[1] - req.y0 < 0.14 && d > 0.25 && rand() < cfg.stuck) { state[i] = 2; continue; }
+    if (b.low && b.c[1] - req.y0 < 0.14 && d > 0.25 && !req.standing && rand() < cfg.stuck) { state[i] = 2; continue; }
     last = Math.max(last, release[i]);
     // the bullet pushes what is near it through, the rest gets a nudge either way
     const near = Math.exp(-d / cfg.reach);
     const out = d > 1e-4 ? 1 / d : 0;
     // a hard kick: the middle is blown out the back in a cone, the rim of the pane is thrown outwards
-    kick[i * 6] = dx * out * (cfg.pushOut * near + 0.5) * (0.5 + rand()) + gauss() * 0.3;
-    kick[i * 6 + 1] = dy * out * (cfg.pushOut * near + 0.4) * (0.5 + rand()) + gauss() * 0.3 + 1.2 * near;
-    kick[i * 6 + 2] = -cfg.pushBack * near * (0.35 + rand()) - 0.4 - rand() * 1.4;
+    kick[i * 6] = dx * out * (cfg.pushOut * near + 0.5) * (req.standing ? 0.35 : 1) * (0.5 + rand()) + gauss() * 0.3;
+    kick[i * 6 + 1] = dy * out * (cfg.pushOut * near + 0.4) * (req.standing ? 0.35 : 1) * (0.5 + rand()) + gauss() * 0.3 + 1.2 * near;
+    kick[i * 6 + 2] = -cfg.pushBack * near * (0.35 + rand()) - (req.standing ? 1.6 : 0.4) - rand() * 1.4;
     const w = cfg.spin * (0.25 + near) + (b.tiny ? 8 : 0);
     kick[i * 6 + 3] = gauss() * w; kick[i * 6 + 4] = gauss() * w; kick[i * 6 + 5] = gauss() * w * 0.5;
   }

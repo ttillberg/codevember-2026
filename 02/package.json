@@ -1,7 +1,7 @@
 {
   "name": "day-02",
   "private": true,
-  "description": "Shoot a pane of 8 mm glass as often as you like, then swipe: every bullet hole blows out at once, a thousand baked rigid shards",
+  "description": "Shoot a pane of 8 mm glass as often as you like, then swipe: what the cracks have cut loose blows out, baked rigid shards, and the rest stays standing",
   "type": "module",
   "scripts": {
     "dev": "vite",
