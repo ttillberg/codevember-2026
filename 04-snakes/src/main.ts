@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
-import { AREA, VIEW } from './bake';
+import data from './tracks.json';
 import { PERIOD, SCARE, createSnake, createWorld, loadTracks, type Snake } from './physics';
 import { BOIDS, COLUBRIDS, type Species } from './species';
 import { createBody, type Body } from './body';
@@ -17,7 +17,12 @@ if (query.has('clean')) document.body.classList.add('clean');
 
 const BG = 0x0b0b0d;
 const canvas = document.querySelector<HTMLCanvasElement>('#c')!;
-const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
+// no multisampling on the canvas: the scene is drawn multisampled into its own target (post.ts) and
+// only a flat quad reaches the screen
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: 'high-performance' });
+// the patch the knot was baked onto, and how much of it the camera frames (bake.ts)
+const { area: AREA, view: VIEW } = data;
+const SPAN = Math.max(AREA.w, AREA.h) + 0.16; // the pile and a margin, either way up
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.toneMapping = THREE.NeutralToneMapping;
@@ -51,11 +56,12 @@ controls.screenSpacePanning = true;
 const key = new THREE.DirectionalLight(0xfff2e2, 2.6);
 key.position.set(0.9, 2.2, 0.7);
 key.castShadow = true;
-key.shadow.mapSize.set(3072, 3072);
-key.shadow.camera.left = -0.5;
-key.shadow.camera.right = 0.5;
-key.shadow.camera.top = 0.5;
-key.shadow.camera.bottom = -0.5;
+// the shadow map over the pile and no further
+key.shadow.mapSize.set(2048, 2048);
+key.shadow.camera.left = -SPAN / 2;
+key.shadow.camera.right = SPAN / 2;
+key.shadow.camera.top = SPAN / 2;
+key.shadow.camera.bottom = -SPAN / 2;
 key.shadow.camera.near = 1;
 key.shadow.camera.far = 5;
 key.shadow.bias = -0.0004;
@@ -68,7 +74,7 @@ scene.add(rim);
 scene.add(new THREE.HemisphereLight(0x8a96a0, 0x1a1410, 0.35));
 
 // --- contact shadows: the bodies drawn from above, soft, darker the closer to the ground ----
-const CONTACT_SPAN = 1.0;
+const CONTACT_SPAN = SPAN;
 const contact = (() => {
   const size = 768;
   const cv = document.createElement('canvas');
@@ -182,7 +188,8 @@ const kinds = tracks.map((t, k) => {
   const f = t.radius / base.radius;
   return {
     f,
-    sp: { ...base, radius: t.radius, neck: base.neck * f, headLength: base.headLength * f, headWidth: base.headWidth * f, lift: base.lift * f * 0.6, seed: base.pattern * 17 + 3 + k * 5.3 },
+    // as long as it lies on its track: four fifths of the loop (physics.ts)
+    sp: { ...base, length: t.len * 0.8 - base.headLength * f, radius: t.radius, neck: base.neck * f, headLength: base.headLength * f, headWidth: base.headWidth * f, lift: base.lift * f * 0.6, seed: base.pattern * 17 + 3 + k * 5.3 },
   };
 });
 const snakes: Snake[] = tracks.map((t, k) => createSnake(kinds[k].sp, t, k, t.len * ((k * 0.381966) % 1), k + 1));
@@ -227,18 +234,26 @@ const base = import.meta.env.BASE_URL;
 const ray = new THREE.Raycaster();
 const ndc = new THREE.Vector2();
 const tmpV = new THREE.Vector3();
-let stroking = false;
 // a snake held down: after a moment it starts to get away, faster the longer it is held
 let held: { s: Snake; i: number; t: number } | null = null;
 
-function pick(ev: PointerEvent) {
+/** the ray through the pointer, set on `ray` */
+function aim(ev: PointerEvent) {
   const r = canvas.getBoundingClientRect();
-  return pickAt(((ev.clientX - r.left) / r.width) * 2 - 1, -((ev.clientY - r.top) / r.height) * 2 + 1);
+  ndc.set(((ev.clientX - r.left) / r.width) * 2 - 1, -((ev.clientY - r.top) / r.height) * 2 + 1);
+  ray.setFromCamera(ndc, camera);
+}
+function pick(ev: PointerEvent) {
+  aim(ev);
+  return pickRay();
 }
 /** the nearest body along the ray through a point on the screen (-1..1), and how far */
 function pickAt(x: number, y: number) {
   ndc.set(x, y);
   ray.setFromCamera(ndc, camera);
+  return pickRay();
+}
+function pickRay() {
   let best: { s: Snake; i: number; t: number } | null = null;
   const o = ray.ray.origin, d = ray.ray.direction;
   for (const s of snakes) {
@@ -279,13 +294,12 @@ canvas.addEventListener('pointerdown', (ev) => {
   // on a snake a press doesn't turn the camera; held, it sends the snake off
   held = { s: p.s, i: p.i, t: 0 };
   controls.enabled = false;
-  stroking = true;
   canvas.setPointerCapture(ev.pointerId);
   canvas.style.cursor = 'grabbing';
 });
 
 canvas.addEventListener('pointermove', (ev) => {
-  if (stroking) return;
+  if (held) return;
   if (ev.pointerType === 'mouse') canvas.style.cursor = pick(ev) ? 'grab' : '';
 });
 
@@ -298,9 +312,7 @@ function scaleAt(s: Snake, ev: PointerEvent) {
   const k = snakes.indexOf(s);
   const mesh = bodies[k].mesh;
   mesh.geometry.computeBoundingSphere();
-  const r = canvas.getBoundingClientRect();
-  ndc.set(((ev.clientX - r.left) / r.width) * 2 - 1, -((ev.clientY - r.top) / r.height) * 2 + 1);
-  ray.setFromCamera(ndc, camera);
+  aim(ev);
   const hit = ray.intersectObject(mesh, false)[0];
   if (!hit || !hit.face) return null;
   const pos = mesh.geometry.getAttribute('position') as THREE.BufferAttribute;
@@ -318,18 +330,15 @@ function scaleAt(s: Snake, ev: PointerEvent) {
 }
 
 function release() {
+  if (!held) return;
   held = null;
-  if (!stroking) return;
-  stroking = false;
   controls.enabled = true;
   canvas.style.cursor = '';
 }
 canvas.addEventListener('pointerup', (ev) => {
   // a click on the ground (not a drag of the camera) focuses there
   if (!downHit && Math.hypot(ev.clientX - downX, ev.clientY - downY) < 6) {
-    const r = canvas.getBoundingClientRect();
-    ndc.set(((ev.clientX - r.left) / r.width) * 2 - 1, -((ev.clientY - r.top) / r.height) * 2 + 1);
-    ray.setFromCamera(ndc, camera);
+    aim(ev);
     const at = new THREE.Vector3();
     if (ray.ray.intersectPlane(groundPlane, at)) focusOn = at;
   }
@@ -338,8 +347,8 @@ canvas.addEventListener('pointerup', (ev) => {
 canvas.addEventListener('pointercancel', release);
 
 // --- ?debug ---------------------------------------------------------------------------------
-const panel = query.has('debug')
-  ? debugPanel([
+if (query.has('debug')) {
+  debugPanel([
     { kind: 'title', label: 'ssao' },
     { kind: 'choice', label: 'show', options: ['picture', 'occlusion'], get: () => LOOK.view, set: (i) => (LOOK.view = i) },
     { kind: 'slider', obj: LOOK, key: 'ao', label: 'strength', min: 0, max: 3, step: 0.05 },
@@ -351,8 +360,8 @@ const panel = query.has('debug')
     { kind: 'slider', obj: LOOK, key: 'grade', label: 'grade', min: 0, max: 1.5, step: 0.05 },
     { kind: 'slider', obj: LOOK, key: 'grain', label: 'grain', min: 0, max: 0.08, step: 0.002 },
     { kind: 'slider', obj: LOOK, key: 'vignette', label: 'vignette', min: 0, max: 1, step: 0.02 },
-  ])
-  : null;
+  ]);
+}
 
 // --- loop ---------------------------------------------------------------------------------
 const post = createPost(renderer);
@@ -372,7 +381,7 @@ function resize() {
   // well inside the pile: nothing but skin from edge to edge
   const tw = (portrait ? AREA.h : AREA.w) * VIEW, th = (portrait ? AREA.w : AREA.h) * VIEW;
   const seen = Math.min(th, tw / camera.aspect); // metres of ground top to bottom
-  const d = seen / 2 / Math.tan((15 * Math.PI) / 180);
+  const d = seen / 2 / Math.tan(THREE.MathUtils.degToRad(camera.fov / 2));
   // a little further out than that, never so far the pile's edge and the bare ground show
   controls.maxDistance = d * 1.3;
   if (!placed) {
@@ -400,7 +409,7 @@ function frame(ts: number) {
   contact.draw(snakes);
   for (let k = 0; k < snakes.length; k++) {
     const b = bodies[k];
-    b.update(time, world, dt);
+    b.update(time, world);
     const h = heads[k];
     if (h) {
       h.place(b.neck.pos, b.neck.fwd, b.neck.up);

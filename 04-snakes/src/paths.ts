@@ -44,32 +44,12 @@ function closedCurve(f: (t: number) => [number, number], n = 16000, step = 0.004
   return { len, xz, step: st, n: m };
 }
 
-export function wrap(s: number, len: number) {
-  s %= len;
-  return s < 0 ? s + len : s;
-}
-
 /** signed shortest difference a - b on a loop */
 export function loopDiff(a: number, b: number, len: number) {
   let d = (a - b) % len;
   if (d > len / 2) d -= len;
   if (d < -len / 2) d += len;
   return d;
-}
-
-export function sample(p: Path, s: number, out: { x: number; z: number; tx: number; tz: number }) {
-  const f = wrap(s, p.len) / p.step;
-  const i = Math.floor(f);
-  const t = f - i;
-  const a = i % p.n, b = (i + 1) % p.n;
-  const ax = p.xz[a * 2], az = p.xz[a * 2 + 1];
-  const bx = p.xz[b * 2], bz = p.xz[b * 2 + 1];
-  out.x = ax + (bx - ax) * t;
-  out.z = az + (bz - az) * t;
-  const l = Math.hypot(bx - ax, bz - az) || 1;
-  out.tx = (bx - ax) / l;
-  out.tz = (bz - az) / l;
-  return out;
 }
 
 function crossings(paths: Path[]): Crossing[] {
@@ -81,7 +61,7 @@ function crossings(paths: Path[]): Crossing[] {
   for (let A = 0; A < paths.length; A++) {
     for (let B = A; B < paths.length; B++) {
       const pa = paths[A], pb = paths[B];
-      // coarse: test every 4th sample as a segment, refine locally is not needed at 4 mm
+      // every sample a segment: at 4 mm apart, close enough
       for (let i = 0; i < pa.n; i++) {
         const [x1, y1, x2, y2] = seg(pa, i);
         for (let j = A === B ? i + 2 : 0; j < pb.n; j++) {
@@ -101,46 +81,9 @@ function crossings(paths: Path[]): Crossing[] {
   return out;
 }
 
-/** over, under, over… along each path. Returns the number of crossings it could not make alternate */
-function alternate(paths: Path[], cr: Crossing[]): number {
-  // passages per path, in order of arc length
-  type Pass = { c: Crossing; first: boolean; s: number };
-  const passes: Pass[][] = paths.map(() => []);
-  for (const c of cr) {
-    passes[c.a].push({ c, first: true, s: c.sa });
-    passes[c.b].push({ c, first: false, s: c.sb });
-  }
-  passes.forEach((l) => l.sort((x, y) => x.s - y.s));
-  const set = new Map<Crossing, boolean>();
-  let conflicts = 0;
-  // a passage is over when (first && aOver) || (!first && !aOver)
-  for (let k = 0; k < paths.length; k++) {
-    const list = passes[k];
-    if (!list.length) continue;
-    // phase: the first passage already decided fixes the rest of this path
-    let phase = true;
-    const known = list.findIndex((p) => set.has(p.c));
-    if (known >= 0) {
-      const p = list[known];
-      const over = p.first === set.get(p.c);
-      phase = known % 2 === 0 ? over : !over;
-    }
-    list.forEach((p, i) => {
-      const over = i % 2 === 0 ? phase : !phase;
-      const aOver = p.first ? over : !over;
-      if (set.has(p.c)) {
-        if (set.get(p.c) !== aOver) conflicts++;
-      } else set.set(p.c, aOver);
-    });
-  }
-  for (const c of cr) c.aOver = set.get(c)!;
-  return conflicts;
-}
-
 export interface Tangle {
   paths: Path[];
   crossings: Crossing[];
-  conflicts: number;
 }
 
 export function rng(seed: number) {
@@ -170,10 +113,9 @@ function dropKisses(paths: Path[], cr: Crossing[]) {
   return cr.filter((c) => !gone.has(c));
 }
 
+/** the loops and where they cross; which strand goes over is left to the caller (bake.ts) */
 export function buildTangle(paths: Path[]): Tangle {
-  const cr = dropKisses(paths, crossings(paths));
-  const conflicts = alternate(paths, cr);
-  return { paths, crossings: cr, conflicts };
+  return { paths, crossings: dropKisses(paths, crossings(paths)) };
 }
 
 /** a Lissajous figure a:b, stretched to w by h, bent off true by a little low noise so it reads as a body

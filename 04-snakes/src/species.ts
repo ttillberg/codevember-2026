@@ -9,7 +9,7 @@ export interface Species {
   name: string;
   /** whose head: the GLB modelled for that family */
   shape: Shape;
-  length: number; // neck to tail tip (set from the track)
+  length: number; // neck to tail tip: set from the track it lies on (main.ts)
   radius: number; // thickest: the size its family's head is modelled at
   neck: number; // at the head, the Blender head's neck ring
   headLength: number;
@@ -18,7 +18,6 @@ export interface Species {
   rows: number; // dorsal scale rows round the body
   scaleAspect: number; // scale length / width
   ventralWidth: number; // fraction of the girth the belly plates cover
-  speed: number; // m/s crawling
   lift: number; // how high it raises its head
   // look
   pattern: number; // which body pattern in skin.ts
@@ -42,12 +41,15 @@ export interface Species {
 
 const PY = {
   shape: 'python' as const, length: 1, radius: 0.0215, neck: 0.0122, headLength: 0.056, headWidth: 0.02,
-  vent: 0.94, scaleAspect: 1.15, ventralWidth: 0.22, speed: 0.018, lift: 0.07,
+  vent: 0.94, scaleAspect: 1.15, ventralWidth: 0.22, lift: 0.07,
 };
 const CO = {
   shape: 'corn' as const, length: 1, radius: 0.0165, neck: 0.0098, headLength: 0.034, headWidth: 0.0122,
-  vent: 0.93, scaleAspect: 1.3, ventralWidth: 0.26, speed: 0.022, lift: 0.05,
+  vent: 0.93, scaleAspect: 1.3, ventralWidth: 0.26, lift: 0.05,
 };
+
+/** the two families' sizes, as their heads are modelled (the bake lays its loops out at these too) */
+export const FAMILIES = { python: PY, corn: CO };
 
 /** largest first in each family: the thickest tracks get the biggest snakes */
 export const BOIDS: Species[] = [

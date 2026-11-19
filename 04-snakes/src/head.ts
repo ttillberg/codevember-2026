@@ -12,7 +12,6 @@ export interface Head {
   /** place at the neck ring, looking along fwd */
   place(pos: THREE.Vector3, fwd: THREE.Vector3, up: THREE.Vector3): void;
   update(dt: number, time: number, excited: number): void;
-  flick(): void;
 }
 
 function eyeMaterial(sp: Species, radius: number) {
@@ -176,9 +175,6 @@ diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.01), smoothstep(0.62, 0.75, vTx)
           tongue.visible = false;
         }
       }
-    },
-    flick() {
-      if (flickT < 0) flickT = 0;
     },
   };
 }

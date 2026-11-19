@@ -5,7 +5,7 @@
 // Every snake goes once round its loop in PERIOD seconds, in slow pushes and pauses that add up to
 // exactly one lap; its head comes up to look round where nothing lies over it. All of it periodic,
 // so the whole knot loops seamlessly every PERIOD seconds.
-// Stroke one and it shoots off along its track: one smooth dash on top of its crawl, at full speed
+// Hold one down and it gets away along its track: one smooth dash on top of its crawl, at full speed
 // in a fraction of a second, back to a crawl over a few. The ones lying next to it start too, less.
 // However far it runs it is still on its own track, so a scare never undoes the knot.
 import data from './tracks.json';
@@ -14,8 +14,8 @@ import type { Species } from './species';
 export const PERIOD = 90;
 export const SEG = 0.018;
 const CELL = 0.05;
-/** bodies are drawn this much thinner than the track was baked with (bake.ts BAKE.inflate) */
-const INFLATE = 1.08;
+/** bodies are drawn this much thinner than the track was baked with: the bake writes it down */
+const INFLATE = data.inflate;
 /** a scared snake: how fast it dashes at most (m/s), how fast it gets there (1/s), how fast it calms down (1/s) */
 export const SCARE = { speed: 0.22, up: 10, calm: 0.38 };
 
@@ -53,7 +53,9 @@ export function loadTracks(portrait: boolean): Track[] {
 }
 
 const tp = { x: 0, y: 0, z: 0, tx: 0, tz: 0, clear: 0 };
-function trackAt(t: Track, s: number, out = tp) {
+/** the point s along a track, its direction on the ground and the room above it, into `tp` */
+function trackAt(t: Track, s: number) {
+  const out = tp;
   let f = (s % t.len) / t.step;
   if (f < 0) f += t.n;
   const i = Math.floor(f) % t.n, j = (i + 1) % t.n, u = f - Math.floor(f);
@@ -103,7 +105,6 @@ export interface Snake {
    * (follows the scare quickly: a sharp start, no jump) */
   scare: number;
   rush: number;
-  time: number;
   /** its pushes and pauses, its looking about: whole numbers of them per lap */
   beat: { pushes: number; pushPh: number; looks: number; lookPh: number; sways: number; swayPh: number };
 }
@@ -126,7 +127,7 @@ export function createSnake(sp: Species, track: Track, index: number, head0: num
   };
   const s: Snake = {
     sp, n, seg, pos: new Float32Array(n * 3), rad, col, track, pathIndex: index, head: head0, head0, clock: 0, dash: 0, headK,
-    lift: 0, look: 0, scare: 0, rush: 0, time: r(9) * 100,
+    lift: 0, look: 0, scare: 0, rush: 0,
     beat: {
       pushes: 5 + Math.floor(r(1) * 5), pushPh: r(2) * Math.PI * 2,
       looks: 3 + Math.floor(r(3) * 3), lookPh: r(4) * Math.PI * 2,
@@ -173,7 +174,7 @@ function place(s: Snake) {
 }
 
 export function createWorld(snakes: Snake[]) {
-  // every sphere of every snake, on a grid over the ground (for the bodies' occlusion, and strokes)
+  // every sphere of every snake, on a grid over the ground (for the bodies' occlusion)
   const total = snakes.reduce((t, s) => t + s.n, 0);
   const gS = new Uint8Array(total), gI = new Uint16Array(total);
   {
@@ -226,7 +227,6 @@ export function createWorld(snakes: Snake[]) {
   function step(dt: number) {
     dt = Math.min(dt, 1 / 30);
     for (const s of snakes) {
-      s.time += dt;
       s.scare *= Math.exp(-dt * SCARE.calm);
       s.rush += (s.scare - s.rush) * (1 - Math.exp(-dt * SCARE.up));
       s.clock += dt;
@@ -242,7 +242,7 @@ export function createWorld(snakes: Snake[]) {
     snakes,
     step,
     near,
-    /** a stroke over snake `s` (0..1 how hard): it shoots off, and the ones lying close by start too */
+    /** snake `s` scared at sphere `i` (0..1 how much): it gets away, and the ones lying close by start too */
     stroke(s: Snake, i: number, amount: number) {
       s.scare = Math.max(s.scare, amount);
       const x = s.pos[i * 3], z = s.pos[i * 3 + 2];

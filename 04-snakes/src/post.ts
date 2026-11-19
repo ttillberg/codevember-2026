@@ -9,8 +9,8 @@
 // each pixel on a golden-angle spiral, out to its circle of confusion (thin lens: it grows with how far
 // a point is from the focus, in dioptres); a sample only counts where its own circle reaches this
 // pixel, and one behind a sharp pixel only as far as this pixel's own circle, so nothing blurs over
-// what is in focus. The focus is pulled by hand: it follows what is in the middle of the screen,
-// a little late. Then tone mapping and sRGB, and the grade on the display values: a soft S curve,
+// what is in focus; the depth comes along in the colour's alpha from the pass before. The focus is
+// pulled by hand, a little late, onto its mark (main.ts: a click). Then tone mapping and sRGB, and the grade on the display values: a soft S curve,
 // cool shadows and warm highlights, a touch more colour, a lifted black, a vignette, fine grain.
 import * as THREE from 'three';
 import { FullScreenQuad } from 'three/examples/jsm/postprocessing/Pass.js';
@@ -28,6 +28,15 @@ uniform mat4 uInvProj;
 vec3 viewPos(vec2 uv) {
   vec4 p = uInvProj * vec4(uv * 2.0 - 1.0, texture2D(tDepth, uv).x * 2.0 - 1.0, 1.0);
   return p.xyz / p.w;
+}`;
+
+// depth along the view (positive, metres) from the depth buffer: two constants, no matrix
+const VIEWZ = /* glsl */ `
+uniform sampler2D tDepth;
+uniform float uNear, uFar;
+float viewZ(vec2 uv) {
+  float d = texture2D(tDepth, uv).x * 2.0 - 1.0;
+  return 2.0 * uNear * uFar / (uFar + uNear - d * (uFar - uNear));
 }`;
 
 const AO = /* glsl */ `
@@ -73,41 +82,38 @@ const COMPOSE = /* glsl */ `
 precision highp float;
 uniform sampler2D tColor;
 uniform sampler2D tAO;
-${VIEWPOS}
+${VIEWZ}
 uniform vec2 uAORes;
 uniform float uStrength;
 uniform float uView;
 varying vec2 vUv;
 void main() {
   vec3 c = texture2D(tColor, vUv).rgb;
-  float z0 = viewPos(vUv).z;
+  float z0 = viewZ(vUv);
   float sum = 0.0, wsum = 0.0;
   for (int y = -2; y <= 2; y++) for (int x = -2; x <= 2; x++) {
     vec2 uv = vUv + vec2(float(x), float(y)) / uAORes;
-    float w = exp(-abs(viewPos(uv).z - z0) * 400.0);
+    float w = exp(-abs(viewZ(uv) - z0) * 400.0);
     sum += texture2D(tAO, uv).r * w;
     wsum += w;
   }
   float ao = sum / max(wsum, 1e-4);
   float k = clamp(mix(1.0, pow(ao, 1.5), uStrength), 0.0, 1.0);
-  gl_FragColor = vec4(uView > 0.5 ? vec3(k * 0.6) : c * k, 1.0);
+  // the depth goes along in alpha, so the blur after needn't read the depth buffer again
+  gl_FragColor = vec4(uView > 0.5 ? vec3(k * 0.6) : c * k, z0);
 }`;
 
 const DOF = /* glsl */ `
 precision highp float;
-uniform sampler2D tColor;
-uniform sampler2D tDepth;
+uniform sampler2D tColor; // rgb the picture, a its depth along the view
 uniform vec2 uRes;
-uniform float uNear, uFar, uFocus, uAperture, uMaxR;
+uniform float uFocus, uAperture, uMaxR;
 varying vec2 vUv;
-float viewZ(vec2 uv) {
-  float d = texture2D(tDepth, uv).x * 2.0 - 1.0;
-  return 2.0 * uNear * uFar / (uFar + uNear - d * (uFar - uNear));
-}
 float coc(float z) { return min(uAperture * abs(1.0 / uFocus - 1.0 / z) * uRes.y, uMaxR); }
 void main() {
-  vec3 c0 = texture2D(tColor, vUv).rgb;
-  float z0 = viewZ(vUv);
+  vec4 s0 = texture2D(tColor, vUv);
+  vec3 c0 = s0.rgb;
+  float z0 = s0.a;
   float r0 = coc(z0);
   vec3 sum = c0;
   float wsum = 1.0;
@@ -117,12 +123,13 @@ void main() {
     float r = sqrt(t) * uMaxR;
     float a = float(i) * 2.39996323;
     vec2 uv = vUv + vec2(cos(a), sin(a)) * r / uRes;
-    float z = viewZ(uv);
+    vec4 sc = texture2D(tColor, uv);
+    float z = sc.a;
     float rs = coc(z);
     // behind this pixel: it can't blur over it further than this pixel's own blur
     if (z > z0) rs = min(rs, r0);
     float w = smoothstep(r - 1.0, r + 1.0, rs);
-    sum += texture2D(tColor, uv).rgb * w;
+    sum += sc.rgb * w;
     wsum += w;
   }
   gl_FragColor = vec4(sum / wsum, 1.0);
@@ -199,15 +206,15 @@ export function createPost(renderer: THREE.WebGLRenderer) {
   const compose = new FullScreenQuad(new THREE.ShaderMaterial({
     uniforms: {
       tColor: { value: scene.texture }, tAO: { value: aoRT.texture }, tDepth: { value: scene.depthTexture },
-      uInvProj: { value: invProj }, uAORes: { value: new THREE.Vector2(1, 1) }, uStrength: { value: LOOK.ao }, uView: { value: 0 },
+      uNear: { value: 0.01 }, uFar: { value: 20 }, uAORes: { value: new THREE.Vector2(1, 1) }, uStrength: { value: LOOK.ao }, uView: { value: 0 },
     },
     vertexShader: VERT, fragmentShader: COMPOSE, depthTest: false, depthWrite: false,
   }));
 
   const dof = new FullScreenQuad(new THREE.ShaderMaterial({
     uniforms: {
-      tColor: { value: lit.texture }, tDepth: { value: scene.depthTexture },
-      uRes: { value: new THREE.Vector2(1, 1) }, uNear: { value: 0.01 }, uFar: { value: 20 },
+      tColor: { value: lit.texture },
+      uRes: { value: new THREE.Vector2(1, 1) },
       uFocus: { value: 0.35 }, uAperture: { value: LOOK.aperture }, uMaxR: { value: 10 },
     },
     vertexShader: VERT, fragmentShader: DOF, depthTest: false, depthWrite: false,
@@ -239,8 +246,6 @@ export function createPost(renderer: THREE.WebGLRenderer) {
     render(world: THREE.Scene, camera: THREE.PerspectiveCamera, focus: number, time: number) {
       const m1 = dof.material as THREE.ShaderMaterial, m2 = grade.material as THREE.ShaderMaterial;
       const H = m1.uniforms.uRes.value.y;
-      m1.uniforms.uNear.value = camera.near;
-      m1.uniforms.uFar.value = camera.far;
       m1.uniforms.uFocus.value = focus;
       // the occlusion alone is shown sharp
       m1.uniforms.uAperture.value = LOOK.view ? 0 : LOOK.aperture;
@@ -256,6 +261,8 @@ export function createPost(renderer: THREE.WebGLRenderer) {
       invProj.copy(camera.projectionMatrixInverse);
       ma.uniforms.uProj.value.copy(camera.projectionMatrix);
       ma.uniforms.uRadius.value = LOOK.aoRadius;
+      mc.uniforms.uNear.value = camera.near;
+      mc.uniforms.uFar.value = camera.far;
       mc.uniforms.uStrength.value = LOOK.ao;
       mc.uniforms.uView.value = LOOK.view;
       if (LOOK.ao > 0 || LOOK.view) {

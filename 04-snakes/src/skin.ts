@@ -12,7 +12,6 @@ const GLSL = /* glsl */ `
 uniform float uRows;
 uniform float uVw;
 uniform float uVRatio;
-uniform float uPattern;
 uniform float uSeed;
 uniform float uLength;
 uniform float uRadius;
@@ -23,7 +22,7 @@ uniform float uTextT0;
 uniform float uTextCol;
 uniform float uKind;
 uniform float uTime;
-uniform vec3 uPixOn;
+uniform vec3 uPixOn;  // linear
 uniform vec3 uPixOff;
 uniform vec4 uSpark[4];
 varying vec4 vBody;
@@ -46,13 +45,16 @@ vec3 srgb(vec3 c) { return pow(c / 255.0, vec3(2.2)); }
 // dorsal scales: staggered rows of rounded rhombi that overlap like shingles, the one nearer the
 // head always on top. p = (along in scale lengths, round in rows), st = stretch: on the outside
 // of a bend the scales draw apart and leave skin between them.
+// a scale's half length and half width in the grid: drawn out along a stretched bend, a little narrower
+vec2 scaleR(float st) { return vec2(0.78 / st, 1.12 / pow(st, 0.35)); }
 float scaleShape(vec2 d, float ra, float rb) {
   float ax = abs(d.x) / (d.x > 0.0 ? ra : ra * 0.8);
   return pow(pow(ax, 1.55) + pow(abs(d.y) / rb, 1.55), 1.0 / 1.55);
 }
 void dorsalTop(vec2 p, float st, out vec2 cTop, out float eTop, out vec2 oTop) {
   eTop = 9.0; cTop = vec2(0.0); oTop = vec2(0.0);
-  float ra = 0.78 / st, rb = 1.12 / pow(st, 0.35);
+  vec2 R = scaleR(st);
+  float ra = R.x, rb = R.y;
   float bestX = 1e9;
   float j0 = floor(p.y);
   for (int dj = -1; dj <= 2; dj++) {
@@ -69,7 +71,8 @@ void dorsalTop(vec2 p, float st, out vec2 cTop, out float eTop, out vec2 oTop) {
 }
 // the free edges just in front of p throw a thin shadow on it
 float edgeShadow(vec2 p, float st, float topX) {
-  float ra = 0.78 / st, rb = 1.12 / pow(st, 0.35);
+  vec2 R = scaleR(st);
+  float ra = R.x, rb = R.y;
   float sh = 0.0;
   float j0 = floor(p.y);
   for (int dj = -1; dj <= 2; dj++) {
@@ -87,15 +90,19 @@ float edgeShadow(vec2 p, float st, float topX) {
   }
   return sh;
 }
-float dorsalH(vec2 p, float st, float gap) {
-  vec2 c; float e; vec2 o;
-  dorsalTop(p, st, c, e, o);
+// the height at a point of the top scale found there (e: how far out on it, o: offset from its centre)
+float dorsalHAt(float e, vec2 o, float st, float gap) {
   if (e > 1.0) return 0.0;
-  float ra = 0.78 / st;
+  float ra = scaleR(st).x;
   float rim = smoothstep(1.0, 1.0 - gap, e);
   float dome = 1.0 - e * e;
   float lift = clamp(o.x / ra, -1.0, 1.0); // the free back edge stands proud
   return 0.25 + rim * (0.35 + 0.25 * dome + 0.3 * lift);
+}
+float dorsalH(vec2 p, float st, float gap) {
+  vec2 c; float e; vec2 o;
+  dorsalTop(p, st, c, e, o);
+  return dorsalHAt(e, o, st, gap);
 }
 
 // belly plates: one per vertebra, the back edge over the next one
@@ -345,7 +352,7 @@ const FONT: Record<string, string[]> = {
 };
 const texts = new Map<string, { tex: THREE.DataTexture; width: number }>();
 /** a line of text as a one-channel texture, a 5 x 7 cell and a column of space per letter */
-export function textTexture(line: string) {
+function textTexture(line: string) {
   let t = texts.get(line);
   if (t) return t;
   const chars = [...line];
@@ -365,6 +372,9 @@ export function textTexture(line: string) {
   return t;
 }
 
+/** an sRGB colour (0..255) as the linear one a shader works in, converted once */
+const lin = (c: number[]) => new THREE.Color().setRGB(c[0] / 255, c[1] / 255, c[2] / 255, THREE.SRGBColorSpace);
+
 export function createSkin(sp: Species) {
   const mat = new THREE.MeshPhysicalMaterial({
     color: 0xffffff,
@@ -381,19 +391,18 @@ export function createSkin(sp: Species) {
     uRows: { value: sp.rows },
     uVw: { value: sp.ventralWidth },
     uVRatio: { value: sp.shape === 'python' ? 2.2 : 1.35 },
-    uPattern: { value: sp.pattern },
     uSeed: { value: sp.seed ?? sp.pattern * 17 + 3 },
     uLength: { value: sp.length },
     uRadius: { value: sp.radius },
-    uBare: { value: new THREE.Vector3(...sp.bare) },
+    uBare: { value: lin(sp.bare) },
     tText: { value: textTexture(sp.text ?? ' ').tex },
     uTextW: { value: sp.text ? textTexture(sp.text).width : 0 },
     uTextT0: { value: -99 },
     uTextCol: { value: 0 },
     uKind: { value: sp.pixelAnim },
     uTime: { value: 0 },
-    uPixOn: { value: new THREE.Vector3(...sp.pixel.on) },
-    uPixOff: { value: new THREE.Vector3(...sp.pixel.off) },
+    uPixOn: { value: lin(sp.pixel.on) },
+    uPixOff: { value: lin(sp.pixel.off) },
     uSpark: { value: [0, 1, 2, 3].map(() => new THREE.Vector4(0, 0, -99, 0)) },
   };
   mat.userData.uniforms = uniforms;
@@ -457,14 +466,13 @@ if (isBelly > 0.5) {
   joint = 1.0 - smoothstep(0.0, g * 0.5, fract(av));
   lift = fract(av);
 } else {
-  float side = vv > 0.0 ? 1.0 : -1.0;
   float b = (sV - halfV) / (1.0 - uVw) * uRows;
   vec2 p = vec2(sA, b);
   vec2 c; float e; vec2 o;
   float st = stretch;
   dorsalTop(p, st, c, e, o);
   float gapE = 0.12;
-  h = dorsalH(p, st, gapE);
+  h = dorsalHAt(e, o, st, gapE);
   hA = dorsalH(p + vec2(dA, 0.0), st, gapE);
   hB = dorsalH(p + vec2(0.0, dB), st, gapE);
   float bare = step(1.0, e);
@@ -541,15 +549,15 @@ if (isBelly > 0.5) {
     star = max(star, on);
   }
   // whichever of its two pixel colours stands out more from this scale's own
-  starC = distance(base, srgb(uPixOn)) > distance(base, srgb(uPixOff)) ? srgb(uPixOn) : srgb(uPixOff);
-  float ra = 0.78 / st;
+  starC = distance(base, uPixOn) > distance(base, uPixOff) ? uPixOn : uPixOff;
+  float ra = scaleR(st).x;
   float lf = clamp(o.x / ra, -1.0, 1.0);
   // the scale's own variation, a lighter free edge, the rim and the shadow of the scale in front
   col = base * (0.9 + 0.18 * id) * (1.0 + 0.07 * lf) * (1.0 + 0.4 * shuffled);
   float rim = 1.0 - smoothstep(1.0, 1.0 - gapE, e);
   float sh = edgeShadow(p, st, c.x);
   joint = max(rim * 0.5 * (1.0 - bare), sh * 0.55);
-  vec3 skinC = srgb(uBare);
+  vec3 skinC = uBare;
   col = mix(col, skinC * 0.55, bare);
   lift = lf * 0.5 + 0.5;
 }
@@ -557,8 +565,11 @@ if (isBelly > 0.5) {
 {
   // two scales' worth averaged, as a scattering of odd scales (the python's white ones) would be
   float pl = floor(sA / uVRatio);
-  vec3 smoothC = mix(bodyColor(sM, phi, 0.25, isBelly, pl), bodyColor(sM, phi, 0.62, isBelly, pl), 0.4);
-  col = mix(smoothC, col, smoothstep(0.0, 0.6, fade));
+  // (only where it shows: close up the scales are drawn and this is skipped)
+  if (fade < 0.6) {
+    vec3 smoothC = mix(bodyColor(sM, phi, 0.25, isBelly, pl), bodyColor(sM, phi, 0.62, isBelly, pl), 0.4);
+    col = mix(smoothC, col, smoothstep(0.0, 0.6, fade));
+  }
 }
 // the text and the stars: scales recoloured against the pattern, each in whichever of the snake's
 // two pixel colours stands out more from its own; the heart red, but where the scale is red already
@@ -571,7 +582,6 @@ col = mix(col, col * 0.4, joint * fade);
 // the tucked front of each scale lies in the shade of the one before
 col *= mix(1.0, 0.82 + 0.18 * lift, fade);
 diffuseColor.rgb = col * mix(1.0, vAO, 0.55);
-float scaleH = h;
 float gradA = (hA - h) / (dA * mPerA);
 float gradB = (hB - h) / (dB * spacingM);
 float amp = (isBelly > 0.5 ? 0.0004 : 0.11 * spacingM) * fade;

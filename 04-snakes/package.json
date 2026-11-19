@@ -1,7 +1,7 @@
 {
   "name": "day-04-snakes",
   "private": true,
-  "description": "Eight snakes in a knot that holds: green tree pythons and corn snakes, crawling through it",
+  "description": "Eight snakes of eight species in a knot that holds, crawling through it",
   "type": "module",
   "scripts": {
     "dev": "vite",

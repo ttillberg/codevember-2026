@@ -1,6 +1,6 @@
 /* a dark day: backdrop #0b0b0d, ink #f4f4f2. A light one: a light backdrop, ink #1c1c1c (docs/DESIGN.md) */
 html, body { margin: 0; height: 100%; background: #0b0b0d; overflow: hidden; }
-canvas { display: block; width: 100vw; height: 100vh; }
+canvas { display: block; width: 100vw; height: 100vh; touch-action: none; }
 
 /* the title plate, top left: the day in Plex capitals, the way home under it */
 .plate {
@@ -25,12 +25,7 @@ canvas { display: block; width: 100vw; height: 100vh; }
   .plate { top: max(16px, env(safe-area-inset-top)); left: max(16px, env(safe-area-inset-left)); }
   .plate b { font-size: 36px; }
   .plate .head > i { font-size: 10px; }
-  .plate .what { font-size: 9px; margin-top: 10px; }
 }
-.plate .what {
-  margin: 14px 0 0; font-weight: 600; font-size: 11px; line-height: 1.5; letter-spacing: 0.12em; text-transform: uppercase;
-}
-canvas { touch-action: none; }
 /* ?clean: the scene alone */
 .clean .plate { display: none; }
 

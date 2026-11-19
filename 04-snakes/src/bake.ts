@@ -2,10 +2,10 @@
 // one a whole snake's track, piled together and let fall under hard physics (many iterations, all
 // the time it needs, nobody waiting for a frame) until it is still. What is kept is where every loop
 // came to rest, in three dimensions: its track. At run time the snakes only glide along their tracks
-// (physics.ts), so nothing can shake or sink in, and a hand is the only thing that ever moves a body
-// off its track.
+// (physics.ts), so nothing can shake or sink in.
 // Many knots are tried, each scored: no body in another, the screen covered with skin, not too deep.
-import { type Path, type Tangle, buildTangle, lissajous, undulate, rng } from './paths.ts';
+import { type Path, type Tangle, buildTangle, lissajous, loopDiff, undulate, rng } from './paths.ts';
+import { FAMILIES } from './species.ts';
 
 const TAU = Math.PI * 2;
 /** the patch of ground the knot is packed onto (the camera sees about half of it) */
@@ -13,7 +13,8 @@ export const AREA = { w: 0.54, h: 0.36 };
 /** what the camera covers, as a fraction of the area */
 export const VIEW = 0.55;
 export const LOOPS = 8;
-export const RADIUS = [0.0215, 0.0165]; // python, corn: the thickest part of the body
+/** python, corn: the thickest part of the body */
+export const RADIUS = [FAMILIES.python.radius, FAMILIES.corn.radius];
 /** how long a loop may be: eight of them on this patch make two or three layers */
 const LEN = [0.9, 1.3];
 
@@ -70,7 +71,6 @@ export function candidate(seed: number): Candidate {
     };
   });
   for (const x of tangle.crossings) x.aOver = waves[x.a](x.sa) > waves[x.b](x.sb);
-  tangle.conflicts = 0;
   return { seed, tangle, radii, species };
 }
 
@@ -86,14 +86,13 @@ export interface Settled {
 const SEGB = 0.01;
 const CELL = 0.05;
 
-/** let the loops fall into one another until they are still */
-/** knobs: how firmly the loops are held to their drawing once the pile has formed (1/s), how much bodies
- * lying on each other are kept from sliding off sideways, how much wider than drawn the bodies collide
- * (whatever a pile presses in, the solver never quite undoes; this way it never shows), and the tightest
- * bend, in body radii */
-export const BAKE = { pullLate: 0.2, stack: 0, inflate: 1.08, bend: 2 };
+/** knobs: how firmly the loops are held to their drawing once the pile has formed (1/s), how much wider
+ * than drawn the bodies collide (whatever a pile presses in, the solver never quite undoes; this way it
+ * never shows, and the run time reads it back from tracks.json), and the tightest bend, in body radii */
+export const BAKE = { pullLate: 0.2, inflate: 1.08, bend: 2 };
 
-export function settle(c: Candidate, seconds = 6, substeps = 4, iters = 10): Settled {
+/** let the loops fall into one another until they are still */
+export function settle(c: Candidate, seconds: number, substeps: number, iters: number): Settled {
   const { tangle, radii } = c;
   const paths = tangle.paths;
   const off: number[] = [], cnt: number[] = [], seg: number[] = [];
@@ -125,8 +124,7 @@ export function settle(c: Candidate, seconds = 6, substeps = 4, iters = 10): Set
       const k = side ? x.b : x.a, sc = side ? x.sb : x.sa;
       const r = radii[k], wdt = 1.4 * r + 0.03;
       for (let i = 0; i < cnt[k]; i++) {
-        let d = Math.abs(i * seg[k] - sc) % paths[k].len;
-        d = Math.min(d, paths[k].len - d);
+        const d = Math.abs(loopDiff(i * seg[k], sc, paths[k].len));
         if (d > wdt) continue;
         const g = off[k] + i;
         const w = 1 - Math.max(0, (d - wdt * 0.55) / (wdt * 0.45));
@@ -171,14 +169,13 @@ export function settle(c: Candidate, seconds = 6, substeps = 4, iters = 10): Set
     const a = g * 3, b = h * 3;
     let dx = pos[a] - pos[b], dy = pos[a + 1] - pos[b + 1], dz = pos[a + 2] - pos[b + 2];
     if (dx * dx + dy * dy + dz * dz >= R * R) return;
+    // at a crossing the strand that is over goes up (whoever is on top already stays there); anywhere
+    // else bodies just push apart, so a pile can slump the way a heap does
     let o = 0, wv = 0;
     if (xing[g] >= 0 && xing[g] === xing[h] && xside[g] !== xside[h]) {
       const x = tangle.crossings[xing[g]];
       o = Math.abs(dy) > 0.2 * R ? Math.sign(dy) : (xside[g] === 0) === x.aOver ? 1 : -1;
       wv = Math.min(xw[g], xw[h]);
-    } else {
-      const t = Math.min(1, Math.max(0, (Math.abs(dy) / R - 0.25) / 0.35));
-      if (t > 0) { o = Math.sign(dy); wv = t * t * (3 - 2 * t) * BAKE.stack; }
     }
     if (wv > 0) {
       const dh = Math.sqrt(dx * dx + dz * dz);
@@ -284,7 +281,6 @@ export interface Score {
   sumPen: number; // mm summed over every pair of spheres
   coverage: number; // 0..1 of what the camera sees covered by a body
   layers: number; // the highest body, in python thicknesses
-  conflicts: number;
 }
 
 /** pairs of spheres from different parts of the knot, with how far they are in each other */
@@ -322,7 +318,7 @@ function eachOverlap(s: Settled, cb: (g: number, h: number, pen: number, dy: num
   }
 }
 
-export function score(c: Candidate, s: Settled): Score {
+export function score(s: Settled): Score {
   let maxPen = 0, sumPen = 0;
   eachOverlap(s, (g, h, pen) => {
     if (h < g || pen <= 0) return;
@@ -348,9 +344,8 @@ export function score(c: Candidate, s: Settled): Score {
   tops.sort((a, b) => a - b);
   const layers = tops[Math.floor(tops.length * 0.99)] / (2 * RADIUS[0]);
   const mm = 1000;
-  const conflicts = c.tangle.conflicts;
-  const scoreV = coverage * 100 - maxPen * mm * 3 - sumPen * mm * 0.05 - Math.max(0, layers - 3) * 40 - conflicts * 0.2;
-  return { score: scoreV, maxPen: maxPen * mm, sumPen: sumPen * mm, coverage, layers, conflicts };
+  const scoreV = coverage * 100 - maxPen * mm * 3 - sumPen * mm * 0.05 - Math.max(0, layers - 3) * 40;
+  return { score: scoreV, maxPen: maxPen * mm, sumPen: sumPen * mm, coverage, layers };
 }
 
 /** per sphere: 1 where nothing lies over the body (a head can come up there), 0 where something does */

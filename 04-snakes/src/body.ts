@@ -12,11 +12,9 @@ const SEC = 8; // directions the occlusion is worked out in
 
 export interface Body {
   mesh: THREE.Mesh;
-  update(time: number, world: World, dt: number): void;
+  update(time: number, world: World): void;
   /** where the head goes: the neck ring centre and its frame */
   neck: { pos: THREE.Vector3; fwd: THREE.Vector3; up: THREE.Vector3 };
-  /** the drawn spine, eased and relaxed */
-  spine: Float32Array;
 }
 
 function profileTable(n: number, top: number, bottom: number, ridge: number) {
@@ -116,6 +114,14 @@ export function createBody(s: Snake, material: THREE.Material): Body {
     ringM[r] = spacing * sp.scaleAspect;
     ringA[r] = r === 0 ? ringS[0] / ringM[r] : ringA[r - 1] + (ringS[r] - ringS[r - 1]) / ringM[r];
   }
+  // metres along and metres per scale never change: written once
+  for (let r = 0; r < rings; r++) {
+    for (let j = 0; j <= RAD; j++) {
+      const o = r * (RAD + 1) + j;
+      body2[o * 2] = ringS[r];
+      body2[o * 2 + 1] = ringM[r];
+    }
+  }
 
   const C = new Float32Array(rings * 3);
   const T = new Float32Array(rings * 3);
@@ -157,7 +163,7 @@ export function createBody(s: Snake, material: THREE.Material): Body {
     world.near(gx, gz, visit);
   }
 
-  function update(time: number, world: World, dt: number) {
+  function update(time: number, world: World) {
     // centres: the plug rings carry on the neck's line into the head
     const fx = P[K * 3] - P[0], fy = P[K * 3 + 1] - P[1], fz = P[K * 3 + 2] - P[2];
     const fl = Math.hypot(fx, fy, fz) || 1;
@@ -255,12 +261,8 @@ export function createBody(s: Snake, material: THREE.Material): Body {
         body[o * 4 + 1] = j / RAD;
         body[o * 4 + 2] = Math.max(R, sp.neck * 0.25);
         body[o * 4 + 3] = Math.min(1.8, Math.max(0.6, st));
-        body2[o * 2] = ringS[r];
-        body2[o * 2 + 1] = ringM[r];
         // occlusion: the ground under it and the bodies against it
-        const vx = pos[o * 3], vy = pos[o * 3 + 1], vz = pos[o * 3 + 2];
-        const wx = nor[o * 3], wy = nor[o * 3 + 1], wz = nor[o * 3 + 2];
-        void vx; void vz; void wx; void wz;
+        const vy = pos[o * 3 + 1], wy = nor[o * 3 + 1];
         const fs = (j / RAD) * SEC, k0 = Math.floor(fs) % SEC, ft = fs - Math.floor(fs);
         let occ = sec[k0] + (sec[(k0 + 1) % SEC] - sec[k0]) * ft;
         occ += Math.max(0, -wy) * Math.max(0, 1 - vy / 0.035) * 0.9 + Math.max(0, 1 - vy / 0.012) * 0.3;
@@ -272,7 +274,6 @@ export function createBody(s: Snake, material: THREE.Material): Body {
     tanAttr.needsUpdate = true;
     bodyAttr.needsUpdate = true;
     aoAttr.needsUpdate = true;
-    (geo.getAttribute('aBody2') as THREE.BufferAttribute).needsUpdate = true;
 
     // the neck frame for the head
     const r0 = PLUG;
@@ -282,5 +283,5 @@ export function createBody(s: Snake, material: THREE.Material): Body {
     neck.up.copy(v3).addScaledVector(neck.fwd, -v3.dot(neck.fwd)).normalize();
   }
 
-  return { mesh, update, neck, spine: P };
+  return { mesh, update, neck };
 }

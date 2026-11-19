@@ -15,7 +15,6 @@ export function debugPanel(rows: Row[]) {
   const body = document.createElement('div');
   body.className = 'debug-body';
   el.append(body);
-  const refresh: (() => void)[] = [];
   for (const r of rows) {
     const row = document.createElement('label');
     row.className = 'debug-row';
@@ -47,7 +46,6 @@ export function debugPanel(rows: Row[]) {
       });
       const mark = () => bs.forEach((b, i) => b.classList.toggle('on', i === r.get()));
       mark();
-      refresh.push(mark);
       btns.append(...bs);
       row.append(name, btns);
     }
@@ -56,5 +54,4 @@ export function debugPanel(rows: Row[]) {
   // keep pointer events on the panel off the canvas
   for (const ev of ['pointerdown', 'pointermove', 'wheel'] as const) el.addEventListener(ev, (e) => e.stopPropagation());
   document.body.append(el);
-  return { refresh: () => refresh.forEach((f) => f()) };
 }
