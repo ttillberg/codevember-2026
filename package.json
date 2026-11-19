@@ -12,6 +12,7 @@
     "node": ">=22"
   },
   "scripts": {
+    "dev": "node scripts/dev.mjs",
     "new": "node scripts/new.mjs",
     "build": "node scripts/build.mjs",
     "grab": "node scripts/grab.mjs",
