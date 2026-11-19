@@ -31,6 +31,12 @@ export interface Species {
    * Eye and tongue colours are linear, times 255 */
   eye: { inner: RGB; outer: RGB; slit: boolean; pupil?: RGB };
   tongue: RGB;
+  /** the scales as pixels: a lit one and the band round them, both out of its own pattern (sRGB 0..255) */
+  pixel: { on: RGB; off: RGB };
+  /** what a tap sets off in its scales: 0 a star, 1 a ring, 2 a diamond, 3 a plus, 4 its scales scattered */
+  pixelAnim: number;
+  /** what a click writes down its back, if anything */
+  text?: string;
   seed?: number; // this one snake's scales and markings
 }
 
@@ -47,36 +53,36 @@ const CO = {
 export const BOIDS: Species[] = [
   {
     ...PY, name: 'burmese', pattern: 4, rows: 80, iridescence: 0.18, roughness: 0.32, clearcoat: 0.35,
-    bare: [236, 222, 196], eye: { inner: [200, 60, 70], outer: [120, 20, 30], slit: true, pupil: [90, 6, 14] }, tongue: [150, 40, 50],
+    bare: [236, 222, 196], eye: { inner: [200, 60, 70], outer: [120, 20, 30], slit: true, pupil: [90, 6, 14] }, tongue: [150, 40, 50], pixel: { on: [226, 150, 40], off: [244, 236, 212] }, pixelAnim: 0,
   },
   {
     ...PY, name: 'ball', pattern: 2, rows: 70, iridescence: 0.12, roughness: 0.36, clearcoat: 0.3,
-    bare: [120, 96, 70], eye: { inner: [30, 22, 14], outer: [8, 6, 4], slit: true }, tongue: [10, 10, 12],
+    bare: [120, 96, 70], eye: { inner: [30, 22, 14], outer: [8, 6, 4], slit: true }, tongue: [10, 10, 12], pixel: { on: [214, 170, 96], off: [40, 27, 18] }, pixelAnim: 2,
   },
   {
     ...PY, name: 'python', pattern: 0, rows: 96, iridescence: 0.22, roughness: 0.4, clearcoat: 0.3,
-    bare: [120, 150, 96], eye: { inner: [107, 115, 84], outer: [51, 61, 38], slit: true }, tongue: [5, 5, 6],
+    bare: [120, 150, 96], eye: { inner: [107, 115, 84], outer: [51, 61, 38], slit: true }, tongue: [5, 5, 6], pixel: { on: [214, 226, 196], off: [18, 104, 46] }, pixelAnim: 1,
   },
   {
     ...PY, name: 'carpet', pattern: 3, rows: 64, iridescence: 0.1, roughness: 0.34, clearcoat: 0.32,
-    bare: [150, 130, 70], eye: { inner: [120, 80, 30], outer: [30, 20, 8], slit: true }, tongue: [8, 8, 10],
+    bare: [150, 130, 70], eye: { inner: [120, 80, 30], outer: [30, 20, 8], slit: true }, tongue: [8, 8, 10], pixel: { on: [232, 184, 28], off: [18, 15, 11] }, pixelAnim: 3,
   },
 ];
 export const COLUBRIDS: Species[] = [
   {
     ...CO, name: 'king', pattern: 5, rows: 34, iridescence: 0.05, roughness: 0.26, clearcoat: 0.5,
-    bare: [150, 140, 126], eye: { inner: [24, 16, 10], outer: [6, 4, 3], slit: false }, tongue: [12, 10, 10],
+    bare: [150, 140, 126], eye: { inner: [24, 16, 10], outer: [6, 4, 3], slit: false }, tongue: [12, 10, 10], pixel: { on: [238, 232, 210], off: [30, 22, 18] }, pixelAnim: 0, text: 'CODEVEMBER 2026 - @THEO_T',
   },
   {
     ...CO, name: 'corn', pattern: 1, rows: 40, iridescence: 0, roughness: 0.3, clearcoat: 0.45,
-    bare: [196, 176, 156], eye: { inner: [158, 56, 15], outer: [64, 18, 8], slit: false }, tongue: [64, 4, 5],
+    bare: [196, 176, 156], eye: { inner: [158, 56, 15], outer: [64, 18, 8], slit: false }, tongue: [64, 4, 5], pixel: { on: [226, 168, 112], off: [26, 14, 10] }, pixelAnim: 4, text: 'to Wim ♥',
   },
   {
     ...CO, name: 'milk', pattern: 6, rows: 32, iridescence: 0, roughness: 0.24, clearcoat: 0.55,
-    bare: [170, 150, 130], eye: { inner: [14, 10, 8], outer: [4, 3, 2], slit: false }, tongue: [16, 8, 8],
+    bare: [170, 150, 130], eye: { inner: [14, 10, 8], outer: [4, 3, 2], slit: false }, tongue: [16, 8, 8], pixel: { on: [238, 200, 96], off: [16, 13, 12] }, pixelAnim: 1,
   },
   {
     ...CO, name: 'garter', pattern: 7, rows: 26, iridescence: 0, roughness: 0.38, clearcoat: 0.35,
-    bare: [150, 150, 110], eye: { inner: [90, 60, 20], outer: [20, 14, 6], slit: false }, tongue: [150, 20, 24],
+    bare: [150, 150, 110], eye: { inner: [90, 60, 20], outer: [20, 14, 6], slit: false }, tongue: [150, 20, 24], pixel: { on: [224, 200, 96], off: [20, 20, 14] }, pixelAnim: 2,
   },
 ];

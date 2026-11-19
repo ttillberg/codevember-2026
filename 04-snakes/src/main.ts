@@ -9,6 +9,7 @@ import { createBody, type Body } from './body';
 import { createSkin } from './skin';
 import { createHead, type Head } from './head';
 import { LOOK, createPost, handheld } from './post';
+import { debugPanel } from './debug';
 
 const query = new URLSearchParams(location.search);
 // ?clean: no page furniture, the scene alone (screengrabs, clips)
@@ -187,8 +188,9 @@ const kinds = tracks.map((t, k) => {
 const snakes: Snake[] = tracks.map((t, k) => createSnake(kinds[k].sp, t, k, t.len * ((k * 0.381966) % 1), k + 1));
 const world = createWorld(snakes);
 world.step(1 / 60);
-const bodies: Body[] = snakes.map((s) => {
-  const b = createBody(s, createSkin(s.sp));
+const skins = snakes.map((s) => createSkin(s.sp));
+const bodies: Body[] = snakes.map((s, k) => {
+  const b = createBody(s, skins[k]);
   scene.add(b.mesh);
   return b;
 });
@@ -220,13 +222,14 @@ const base = import.meta.env.BASE_URL;
   });
 });
 
-// --- strokes -------------------------------------------------------------------------------
-// press on a snake and stroke it: it shoots off along its track, the faster the stroke the harder
+// --- touch -------------------------------------------------------------------------------
+// tap a snake and its scales play; hold it and it gets away along its track, the longer the faster
 const ray = new THREE.Raycaster();
 const ndc = new THREE.Vector2();
 const tmpV = new THREE.Vector3();
 let stroking = false;
-let lastX = 0, lastY = 0, lastT = 0;
+// a snake held down: after a moment it starts to get away, faster the longer it is held
+let held: { s: Snake; i: number; t: number } | null = null;
 
 function pick(ev: PointerEvent) {
   const r = canvas.getBoundingClientRect();
@@ -264,29 +267,58 @@ canvas.addEventListener('pointerdown', (ev) => {
   downHit = !!p;
   if (!p) return;
   focusOn = { s: p.s, i: p.i };
-  // on a snake the drag is a stroke, not a turn of the camera
+  // a tap sets off the snake's pixel animation in its scales, and the line runs out of the scale tapped
+  const at = scaleAt(p.s, ev);
+  if (at) {
+    const u = skins[snakes.indexOf(p.s)].userData.uniforms;
+    (u.uSpark.value as THREE.Vector4[])[sparkNext++ % 4].set(at.along, at.row, time, 1);
+    // the line once the animation is done
+    u.uTextT0.value = time + 0.75;
+    u.uTextCol.value = at.col;
+  }
+  // on a snake a press doesn't turn the camera; held, it sends the snake off
+  held = { s: p.s, i: p.i, t: 0 };
   controls.enabled = false;
   stroking = true;
   canvas.setPointerCapture(ev.pointerId);
-  lastX = ev.clientX; lastY = ev.clientY; lastT = ev.timeStamp;
-  // a touch alone makes it start
-  world.stroke(p.s, p.i, 0.35);
   canvas.style.cursor = 'grabbing';
 });
 
 canvas.addEventListener('pointermove', (ev) => {
-  if (stroking) {
-    const dtm = Math.max(8, ev.timeStamp - lastT) / 1000;
-    const v = Math.hypot(ev.clientX - lastX, ev.clientY - lastY) / dtm; // px/s
-    lastX = ev.clientX; lastY = ev.clientY; lastT = ev.timeStamp;
-    const p = pick(ev);
-    if (p) world.stroke(p.s, p.i, Math.min(1, 0.35 + v / 1400));
-    return;
-  }
+  if (stroking) return;
   if (ev.pointerType === 'mouse') canvas.style.cursor = pick(ev) ? 'grab' : '';
 });
 
+/** the scale under the pointer: where the ray meets the body's own mesh, in the skin's own scale
+ * coordinates (along, in scale lengths; round, in rows), so whatever is put there stays on the skin */
+const tri = new THREE.Triangle(), bary = new THREE.Vector3();
+const va = new THREE.Vector3(), vb = new THREE.Vector3(), vc = new THREE.Vector3();
+let sparkNext = 0;
+function scaleAt(s: Snake, ev: PointerEvent) {
+  const k = snakes.indexOf(s);
+  const mesh = bodies[k].mesh;
+  mesh.geometry.computeBoundingSphere();
+  const r = canvas.getBoundingClientRect();
+  ndc.set(((ev.clientX - r.left) / r.width) * 2 - 1, -((ev.clientY - r.top) / r.height) * 2 + 1);
+  ray.setFromCamera(ndc, camera);
+  const hit = ray.intersectObject(mesh, false)[0];
+  if (!hit || !hit.face) return null;
+  const pos = mesh.geometry.getAttribute('position') as THREE.BufferAttribute;
+  const body = mesh.geometry.getAttribute('aBody') as THREE.BufferAttribute;
+  const { a, b, c } = hit.face;
+  tri.set(va.fromBufferAttribute(pos, a), vb.fromBufferAttribute(pos, b), vc.fromBufferAttribute(pos, c));
+  tri.getBarycoord(hit.point, bary);
+  const sA = body.getX(a) * bary.x + body.getX(b) * bary.y + body.getX(c) * bary.z;
+  const sV = body.getY(a) * bary.x + body.getY(b) * bary.y + body.getY(c) * bary.z;
+  const vw = s.sp.ventralWidth;
+  const row = Math.round(((sV - vw / 2) / (1 - vw)) * s.sp.rows);
+  const off = (((row % 2) + 2) % 2) * 0.5;
+  const col = Math.round(sA - off);
+  return { along: col + off, row, col };
+}
+
 function release() {
+  held = null;
   if (!stroking) return;
   stroking = false;
   controls.enabled = true;
@@ -304,6 +336,23 @@ canvas.addEventListener('pointerup', (ev) => {
   release();
 });
 canvas.addEventListener('pointercancel', release);
+
+// --- ?debug ---------------------------------------------------------------------------------
+const panel = query.has('debug')
+  ? debugPanel([
+    { kind: 'title', label: 'ssao' },
+    { kind: 'choice', label: 'show', options: ['picture', 'occlusion'], get: () => LOOK.view, set: (i) => (LOOK.view = i) },
+    { kind: 'slider', obj: LOOK, key: 'ao', label: 'strength', min: 0, max: 3, step: 0.05 },
+    { kind: 'slider', obj: LOOK, key: 'aoRadius', label: 'reach m', min: 0.003, max: 0.08, step: 0.001 },
+    { kind: 'title', label: 'lens' },
+    { kind: 'slider', obj: LOOK, key: 'aperture', label: 'aperture', min: 0, max: 0.04, step: 0.001 },
+    { kind: 'slider', obj: LOOK, key: 'maxBlur', label: 'max blur', min: 0, max: 30, step: 1 },
+    { kind: 'title', label: 'grade' },
+    { kind: 'slider', obj: LOOK, key: 'grade', label: 'grade', min: 0, max: 1.5, step: 0.05 },
+    { kind: 'slider', obj: LOOK, key: 'grain', label: 'grain', min: 0, max: 0.08, step: 0.002 },
+    { kind: 'slider', obj: LOOK, key: 'vignette', label: 'vignette', min: 0, max: 1, step: 0.02 },
+  ])
+  : null;
 
 // --- loop ---------------------------------------------------------------------------------
 const post = createPost(renderer);
@@ -340,7 +389,12 @@ function frame(ts: number) {
   timer.update(ts);
   const dt = Math.min(timer.getDelta(), 1 / 20);
   time += dt;
+  if (held) {
+    held.t += dt;
+    if (held.t > 0.3) world.stroke(held.s, held.i, Math.min(1, 0.45 + (held.t - 0.3) * 0.8));
+  }
   world.step(dt);
+  skins.forEach((m) => (m.userData.uniforms.uTime.value = time));
   contact.draw(snakes);
   for (let k = 0; k < snakes.length; k++) {
     const b = bodies[k];
@@ -378,4 +432,4 @@ function frame(ts: number) {
 }
 requestAnimationFrame(frame);
 
-Object.assign(window, { __snakes: { SCARE, LOOK, PERIOD, world, snakes, tracks, camera, controls, bodies, renderer, scene, contact } });
+Object.assign(window, { __snakes: { SCARE, LOOK, PERIOD, skins, world, snakes, tracks, camera, controls, bodies, renderer, scene, contact } });

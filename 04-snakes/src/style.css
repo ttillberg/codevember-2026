@@ -33,3 +33,22 @@ canvas { display: block; width: 100vw; height: 100vh; }
 canvas { touch-action: none; }
 /* ?clean: the scene alone */
 .clean .plate { display: none; }
+
+/* ?debug: the look's knobs, bottom right, folding away */
+.debug {
+  position: fixed; z-index: 3; right: max(16px, env(safe-area-inset-right)); bottom: max(16px, env(safe-area-inset-bottom));
+  width: 280px; color: #f4f4f2; background: rgba(11, 11, 13, 0.82); border-radius: 8px;
+  font: 11px/1.3 Inter, "Helvetica Neue", Helvetica, Arial, sans-serif; backdrop-filter: blur(8px);
+}
+.debug button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; }
+.debug-head { display: block; width: 100%; padding: 8px 12px; text-align: left; font-weight: 600 !important; letter-spacing: 0.12em; text-transform: uppercase; }
+.debug.folded .debug-body { display: none; }
+.debug-body { padding: 0 12px 10px; }
+.debug-title { display: block; margin: 8px 0 4px; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase; opacity: 0.6; }
+.debug-row { display: grid; grid-template-columns: 74px 1fr 40px; align-items: center; gap: 8px; margin: 3px 0; }
+.debug-row input { width: 100%; accent-color: #f4f4f2; }
+.debug-row output { text-align: right; font-variant-numeric: tabular-nums; opacity: 0.8; }
+.debug-choice { grid-column: 2 / 4; display: flex; gap: 4px; }
+.debug-choice button { flex: 1; padding: 3px 0; border-radius: 4px; background: rgba(255, 255, 255, 0.08) !important; }
+.debug-choice button.on { background: #f4f4f2 !important; color: #0b0b0d; }
+.clean .debug { display: none; }

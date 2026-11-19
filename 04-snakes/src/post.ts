@@ -1,4 +1,10 @@
-// After the render: a macro lens's shallow depth of field, then the grade.
+// After the render: ambient occlusion from the depth (the creases of the pile and the joins between
+// bodies), a macro lens's shallow depth of field, then the grade.
+// Occlusion is worked out at half size: each pixel's place in view space from the depth, its normal
+// from its neighbours (the nearer of the two either side, so an edge doesn't smear), and 16 points
+// in the hemisphere over it, turned by a hash per pixel; a point the scene lies in front of is
+// occluded, counted less the further the blocker is (no dark halos round a body far in front). It is
+// smoothed over the neighbours that are at the same depth and laid on the colour before the blur.
 // The scene is drawn into a multisampled float target with its depth. Depth of field gathers round
 // each pixel on a golden-angle spiral, out to its circle of confusion (thin lens: it grows with how far
 // a point is from the focus, in dioptres); a sample only counts where its own circle reaches this
@@ -9,12 +15,83 @@
 import * as THREE from 'three';
 import { FullScreenQuad } from 'three/examples/jsm/postprocessing/Pass.js';
 
-/** knobs: aperture (bigger, shallower), the largest blur in pixels at 1000 px tall, the grade's strength */
-export const LOOK = { aperture: 0.011, maxBlur: 13, grade: 1, grain: 0.022, vignette: 0.38 };
+/** knobs: what is shown (0 the picture, 1 the occlusion alone), occlusion strength and reach (m), aperture (bigger, shallower), the largest blur in pixels at 1000 px tall, the grade's strength */
+export const LOOK = { view: 0, ao: 1.3, aoRadius: 0.025, aperture: 0.011, maxBlur: 13, grade: 1, grain: 0.022, vignette: 0.38 };
 
 const VERT = /* glsl */ `
 varying vec2 vUv;
 void main() { vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }`;
+
+const VIEWPOS = /* glsl */ `
+uniform sampler2D tDepth;
+uniform mat4 uInvProj;
+vec3 viewPos(vec2 uv) {
+  vec4 p = uInvProj * vec4(uv * 2.0 - 1.0, texture2D(tDepth, uv).x * 2.0 - 1.0, 1.0);
+  return p.xyz / p.w;
+}`;
+
+const AO = /* glsl */ `
+precision highp float;
+${VIEWPOS}
+uniform mat4 uProj;
+uniform vec2 uRes;
+uniform float uRadius;
+varying vec2 vUv;
+float hash(vec2 p) { vec3 p3 = fract(vec3(p.xyx) * .1031); p3 += dot(p3, p3.yzx + 33.33); return fract((p3.x + p3.y) * p3.z); }
+void main() {
+  vec3 P = viewPos(vUv);
+  if (-P.z > 5.0) { gl_FragColor = vec4(1.0); return; }
+  vec2 px = 1.0 / uRes;
+  vec3 r = viewPos(vUv + vec2(px.x, 0.0)) - P, l = P - viewPos(vUv - vec2(px.x, 0.0));
+  vec3 u = viewPos(vUv + vec2(0.0, px.y)) - P, d = P - viewPos(vUv - vec2(0.0, px.y));
+  vec3 dx = abs(r.z) < abs(l.z) ? r : l;
+  vec3 dy = abs(u.z) < abs(d.z) ? u : d;
+  vec3 N = normalize(cross(dx, dy));
+  float a0 = hash(gl_FragCoord.xy) * 6.2832;
+  vec3 rv = vec3(cos(a0), sin(a0), 0.0);
+  vec3 T = normalize(rv - N * dot(rv, N));
+  vec3 B = cross(N, T);
+  float occ = 0.0;
+  const int K = 16;
+  for (int i = 0; i < K; i++) {
+    float t = (float(i) + 0.5) / float(K);
+    float a = float(i) * 2.39996323;
+    float h = sqrt(1.0 - t);
+    vec3 dir = T * cos(a) * sqrt(t) + B * sin(a) * sqrt(t) + N * h;
+    float sc = mix(0.15, 1.0, fract(t * 7.0 + hash(gl_FragCoord.yx)));
+    vec3 S = P + dir * uRadius * sc * sc;
+    vec4 c = uProj * vec4(S, 1.0);
+    vec2 suv = c.xy / c.w * 0.5 + 0.5;
+    float sz = viewPos(suv).z;
+    float range = smoothstep(0.0, 1.0, uRadius / max(abs(P.z - sz), 1e-5));
+    occ += step(S.z + 0.0008, sz) * range;
+  }
+  gl_FragColor = vec4(vec3(1.0 - occ / float(K)), 1.0);
+}`;
+
+const COMPOSE = /* glsl */ `
+precision highp float;
+uniform sampler2D tColor;
+uniform sampler2D tAO;
+${VIEWPOS}
+uniform vec2 uAORes;
+uniform float uStrength;
+uniform float uView;
+varying vec2 vUv;
+void main() {
+  vec3 c = texture2D(tColor, vUv).rgb;
+  float z0 = viewPos(vUv).z;
+  float sum = 0.0, wsum = 0.0;
+  for (int y = -2; y <= 2; y++) for (int x = -2; x <= 2; x++) {
+    vec2 uv = vUv + vec2(float(x), float(y)) / uAORes;
+    float w = exp(-abs(viewPos(uv).z - z0) * 400.0);
+    sum += texture2D(tAO, uv).r * w;
+    wsum += w;
+  }
+  float ao = sum / max(wsum, 1e-4);
+  float k = clamp(mix(1.0, pow(ao, 1.5), uStrength), 0.0, 1.0);
+  gl_FragColor = vec4(uView > 0.5 ? vec3(k * 0.6) : c * k, 1.0);
+}`;
 
 const DOF = /* glsl */ `
 precision highp float;
@@ -107,11 +184,29 @@ export function createPost(renderer: THREE.WebGLRenderer) {
   };
   const scene = make(4);
   scene.depthTexture = new THREE.DepthTexture(1, 1, THREE.FloatType);
+  const aoRT = new THREE.WebGLRenderTarget(1, 1, { type: THREE.UnsignedByteType });
+  const lit = make(0);
   const blurred = make(0);
+  const invProj = new THREE.Matrix4();
+
+  const ao = new FullScreenQuad(new THREE.ShaderMaterial({
+    uniforms: {
+      tDepth: { value: scene.depthTexture }, uInvProj: { value: invProj }, uProj: { value: new THREE.Matrix4() },
+      uRes: { value: new THREE.Vector2(1, 1) }, uRadius: { value: LOOK.aoRadius },
+    },
+    vertexShader: VERT, fragmentShader: AO, depthTest: false, depthWrite: false,
+  }));
+  const compose = new FullScreenQuad(new THREE.ShaderMaterial({
+    uniforms: {
+      tColor: { value: scene.texture }, tAO: { value: aoRT.texture }, tDepth: { value: scene.depthTexture },
+      uInvProj: { value: invProj }, uAORes: { value: new THREE.Vector2(1, 1) }, uStrength: { value: LOOK.ao }, uView: { value: 0 },
+    },
+    vertexShader: VERT, fragmentShader: COMPOSE, depthTest: false, depthWrite: false,
+  }));
 
   const dof = new FullScreenQuad(new THREE.ShaderMaterial({
     uniforms: {
-      tColor: { value: scene.texture }, tDepth: { value: scene.depthTexture },
+      tColor: { value: lit.texture }, tDepth: { value: scene.depthTexture },
       uRes: { value: new THREE.Vector2(1, 1) }, uNear: { value: 0.01 }, uFar: { value: 20 },
       uFocus: { value: 0.35 }, uAperture: { value: LOOK.aperture }, uMaxR: { value: 10 },
     },
@@ -131,7 +226,12 @@ export function createPost(renderer: THREE.WebGLRenderer) {
       const pr = renderer.getPixelRatio();
       const W = Math.round(w * pr), H = Math.round(h * pr);
       scene.setSize(W, H);
+      lit.setSize(W, H);
       blurred.setSize(W, H);
+      const aw = Math.ceil(W / 2), ah = Math.ceil(H / 2);
+      aoRT.setSize(aw, ah);
+      (ao.material as THREE.ShaderMaterial).uniforms.uRes.value.set(aw, ah);
+      (compose.material as THREE.ShaderMaterial).uniforms.uAORes.value.set(aw, ah);
       const m1 = dof.material as THREE.ShaderMaterial, m2 = grade.material as THREE.ShaderMaterial;
       m1.uniforms.uRes.value.set(W, H);
       m2.uniforms.uRes.value.set(W, H);
@@ -142,7 +242,8 @@ export function createPost(renderer: THREE.WebGLRenderer) {
       m1.uniforms.uNear.value = camera.near;
       m1.uniforms.uFar.value = camera.far;
       m1.uniforms.uFocus.value = focus;
-      m1.uniforms.uAperture.value = LOOK.aperture;
+      // the occlusion alone is shown sharp
+      m1.uniforms.uAperture.value = LOOK.view ? 0 : LOOK.aperture;
       m1.uniforms.uMaxR.value = (LOOK.maxBlur * H) / 1000;
       m2.uniforms.uTime.value = time;
       m2.uniforms.uGrade.value = LOOK.grade;
@@ -151,6 +252,18 @@ export function createPost(renderer: THREE.WebGLRenderer) {
       m2.uniforms.uExposure.value = renderer.toneMappingExposure;
       renderer.setRenderTarget(scene);
       renderer.render(world, camera);
+      const ma = ao.material as THREE.ShaderMaterial, mc = compose.material as THREE.ShaderMaterial;
+      invProj.copy(camera.projectionMatrixInverse);
+      ma.uniforms.uProj.value.copy(camera.projectionMatrix);
+      ma.uniforms.uRadius.value = LOOK.aoRadius;
+      mc.uniforms.uStrength.value = LOOK.ao;
+      mc.uniforms.uView.value = LOOK.view;
+      if (LOOK.ao > 0 || LOOK.view) {
+        renderer.setRenderTarget(aoRT);
+        ao.render(renderer);
+      }
+      renderer.setRenderTarget(lit);
+      compose.render(renderer);
       renderer.setRenderTarget(blurred);
       dof.render(renderer);
       renderer.setRenderTarget(null);

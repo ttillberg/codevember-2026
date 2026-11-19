@@ -17,6 +17,15 @@ uniform float uSeed;
 uniform float uLength;
 uniform float uRadius;
 uniform vec3 uBare;
+uniform sampler2D tText;
+uniform float uTextW;
+uniform float uTextT0;
+uniform float uTextCol;
+uniform float uKind;
+uniform float uTime;
+uniform vec3 uPixOn;
+uniform vec3 uPixOff;
+uniform vec4 uSpark[4];
 varying vec4 vBody;
 varying vec2 vBody2;
 varying vec3 vTanV;
@@ -308,6 +317,54 @@ vec3 bodyColor(float s, float phi, float id, float belly, float plate) {
 }
 `;
 
+// a 5 x 7 font for the few letters it needs, and the line it scrolls, as a one-channel texture
+const FONT: Record<string, string[]> = {
+  C: ['01110', '10001', '10000', '10000', '10000', '10001', '01110'],
+  O: ['01110', '10001', '10001', '10001', '10001', '10001', '01110'],
+  D: ['11110', '10001', '10001', '10001', '10001', '10001', '11110'],
+  E: ['11111', '10000', '10000', '11110', '10000', '10000', '11111'],
+  V: ['10001', '10001', '10001', '10001', '10001', '01010', '00100'],
+  M: ['10001', '11011', '10101', '10101', '10001', '10001', '10001'],
+  B: ['11110', '10001', '10001', '11110', '10001', '10001', '11110'],
+  R: ['11110', '10001', '10001', '11110', '10100', '10010', '10001'],
+  '2': ['01110', '10001', '00001', '00010', '00100', '01000', '11111'],
+  '0': ['01110', '10001', '10011', '10101', '11001', '10001', '01110'],
+  '6': ['00110', '01000', '10000', '11110', '10001', '10001', '01110'],
+  T: ['11111', '00100', '00100', '00100', '00100', '00100', '00100'],
+  W: ['10001', '10001', '10001', '10101', '10101', '10101', '01010'],
+  t: ['00100', '00100', '01110', '00100', '00100', '00101', '00010'],
+  o: ['00000', '00000', '01110', '10001', '10001', '10001', '01110'],
+  i: ['00100', '00000', '01100', '00100', '00100', '00100', '01110'],
+  m: ['00000', '00000', '11010', '10101', '10101', '10001', '10001'],
+  '♥': ['00000', '01010', '11111', '11111', '01110', '00100', '00000'],
+  H: ['10001', '10001', '10001', '11111', '10001', '10001', '10001'],
+  '@': ['01110', '10001', '10111', '10101', '10111', '10000', '01111'],
+  '-': ['00000', '00000', '00000', '11111', '00000', '00000', '00000'],
+  _: ['00000', '00000', '00000', '00000', '00000', '00000', '11111'],
+  ' ': ['00000', '00000', '00000', '00000', '00000', '00000', '00000'],
+};
+const texts = new Map<string, { tex: THREE.DataTexture; width: number }>();
+/** a line of text as a one-channel texture, a 5 x 7 cell and a column of space per letter */
+export function textTexture(line: string) {
+  let t = texts.get(line);
+  if (t) return t;
+  const chars = [...line];
+  const width = chars.length * 6;
+  const data = new Uint8Array(width * 7);
+  chars.forEach((ch, n) => {
+    const g = FONT[ch] ?? FONT[' '];
+    // a heart's pixels are stored at half: drawn red
+    const v = ch === '♥' ? 128 : 255;
+    for (let y = 0; y < 7; y++) for (let x = 0; x < 5; x++) if (g[y][x] === '1') data[y * width + n * 6 + x] = v;
+  });
+  const tex = new THREE.DataTexture(data, width, 7, THREE.RedFormat, THREE.UnsignedByteType);
+  tex.magFilter = tex.minFilter = THREE.NearestFilter;
+  tex.needsUpdate = true;
+  t = { tex, width };
+  texts.set(line, t);
+  return t;
+}
+
 export function createSkin(sp: Species) {
   const mat = new THREE.MeshPhysicalMaterial({
     color: 0xffffff,
@@ -329,7 +386,17 @@ export function createSkin(sp: Species) {
     uLength: { value: sp.length },
     uRadius: { value: sp.radius },
     uBare: { value: new THREE.Vector3(...sp.bare) },
+    tText: { value: textTexture(sp.text ?? ' ').tex },
+    uTextW: { value: sp.text ? textTexture(sp.text).width : 0 },
+    uTextT0: { value: -99 },
+    uTextCol: { value: 0 },
+    uKind: { value: sp.pixelAnim },
+    uTime: { value: 0 },
+    uPixOn: { value: new THREE.Vector3(...sp.pixel.on) },
+    uPixOff: { value: new THREE.Vector3(...sp.pixel.off) },
+    uSpark: { value: [0, 1, 2, 3].map(() => new THREE.Vector4(0, 0, -99, 0)) },
   };
+  mat.userData.uniforms = uniforms;
   mat.onBeforeCompile = (sh) => {
     Object.assign(sh.uniforms, uniforms);
     sh.vertexShader = sh.vertexShader
@@ -372,6 +439,8 @@ float h, hA, hB;
 float dA = 0.035, dB = 0.035;
 float joint;
 float lift = 0.0;
+float lit = 0.0, star = 0.0, heart = 0.0;
+vec3 starC = vec3(0.0);
 if (isBelly > 0.5) {
   float av = sA / uVRatio;
   float q = vv / halfV;
@@ -399,18 +468,84 @@ if (isBelly > 0.5) {
   hA = dorsalH(p + vec2(dA, 0.0), st, gapE);
   hB = dorsalH(p + vec2(0.0, dB), st, gapE);
   float bare = step(1.0, e);
-  float id = hash12(c + uSeed);
+  // the scatter (one species' tap): round the scale tapped, each scale wears the colour of another
+  // a few scales off, shuffled anew every frame, twelve a second, the shuffle spreading and dying down
+  vec2 cm = c;
+  float shuffled = 0.0;
+  if (uKind > 3.5) {
+    for (int q = 0; q < 4; q++) {
+      vec4 sk = uSpark[q];
+      float age = uTime - sk.z;
+      if (sk.w < 0.5 || age < 0.0 || age > 1.8) continue;
+      float R = min(4.0 + age * 12.0, 12.0);
+      float d = length(c - sk.xy);
+      if (d >= R) continue;
+      float fr = floor(age * 12.0);
+      float amp = 10.0 * pow(1.0 - age / 1.8, 1.5) * (1.0 - d / R);
+      vec2 hh = vec2(hash12(c + fr * 1.37 + float(q) * 7.1), hash12(c.yx + fr * 2.11 + float(q) * 3.3)) - 0.5;
+      vec2 mo = floor(hh * 2.0 * amp + 0.5);
+      cm += mo;
+      if (mod(abs(mo.y), 2.0) > 0.5) cm.x += 0.5;
+      shuffled = max(shuffled, step(0.5, abs(mo.x) + abs(mo.y)) * min(1.0, amp / 4.0));
+    }
+  }
+  float id = hash12(cm + uSeed);
   scaleId = id;
   // every scale sits at its own slight angle: they catch the light one by one
   tilt = (vec2(hash12(c + 1.7), hash12(c + 5.3)) - 0.5) * 0.3 * (1.0 - bare);
-  float sC = sM + (c.x - p.x) * mPerA;
-  float vC = halfV + c.y / uRows * (1.0 - uVw);
+  // a shuffled scale is knocked askew, catching the light
+  tilt += (vec2(hash12(cm + 3.1), hash12(cm + 9.7)) - 0.5) * 1.1 * shuffled;
+  float sC = sM + (cm.x - p.x) * mPerA;
+  float vC = halfV + cm.y / uRows * (1.0 - uVw);
   float phiC = (vC - 0.5) * 6.2832;
   vec3 base = bodyColor(sC, phiC, id, 0.0, 0.0);
+  if (uTextT0 > -50.0 && uTextW > 0.5) {
+    // after a click, the scales as pixels: the line in a 5 x 7 font comes out of the scale clicked and
+    // runs toward the head, four scales a second, on the seven rows round the spine
+    float k = c.y - (floor(uRows * 0.5) - 3.0);
+    float colI = floor(c.x - mod(c.y, 2.0) * 0.5);
+    float lead = uTextCol - floor((uTime - uTextT0) * 4.0);
+    float u = colI - lead;
+    float shown = step(0.0, u) * step(u, uTextW - 1.0) * step(colI, uTextCol) * step(0.04, sC) * step(sC, uLength * 0.9);
+    if (k >= 0.0 && k < 7.0) {
+      float tv = texture2D(tText, vec2((u + 0.5) / uTextW, (6.0 - k + 0.5) / 7.0)).r * shown;
+      lit = step(0.25, tv);
+      heart = lit * step(tv, 0.75);
+    }
+  }
+  // a tap's pixel animation, twelve frames a second, each species its own: a star (a dot, four
+  // crossed rays to a *, the middle going out, the tips running on alone), a ring, a diamond, a plus
+  for (int q = 0; q < 4; q++) {
+    vec4 sk = uSpark[q];
+    float f = floor((uTime - sk.z) * 12.0);
+    if (sk.w < 0.5 || f < 0.0 || f > 8.0 || uKind > 3.5) continue;
+    float ax = abs(c.x - sk.x), ay = abs(c.y - sk.y);
+    float on = 0.0;
+    if (uKind < 0.5 || uKind > 2.5) {
+      float r0 = f < 4.0 ? 0.0 : f < 5.0 ? 1.0 : f < 6.0 ? 2.0 : f < 7.0 ? 4.0 : f < 8.0 ? 5.0 : 6.0;
+      float r1 = f < 4.0 ? f : f < 5.0 ? 4.0 : f < 8.0 ? 5.0 : 6.0;
+      float r = 99.0;
+      if (ay < 0.5) r = ax;                                          // along the body
+      if (ax < 0.6) r = min(r, ay);                                  // round it
+      if (uKind < 0.5 && abs(ax - ay) < 0.6) r = min(r, ay);         // the star's diagonals
+      on = step(r0 - 0.01, r) * step(r, r1 + 0.01);
+    } else if (uKind < 1.5) {
+      // a ring going out, breaking into every other scale as it goes
+      float r = length(vec2(ax, ay));
+      on = step(abs(r - f * 0.9), 0.55) * (f < 5.0 ? 1.0 : step(mod(floor(c.x) + c.y, 2.0), 0.5));
+    } else {
+      // a diamond going out, only its four corners at the end
+      float r = ax + ay;
+      on = step(abs(r - f), 0.6) * (f < 6.0 ? 1.0 : step(min(ax, ay), 0.6));
+    }
+    star = max(star, on);
+  }
+  // whichever of its two pixel colours stands out more from this scale's own
+  starC = distance(base, srgb(uPixOn)) > distance(base, srgb(uPixOff)) ? srgb(uPixOn) : srgb(uPixOff);
   float ra = 0.78 / st;
   float lf = clamp(o.x / ra, -1.0, 1.0);
   // the scale's own variation, a lighter free edge, the rim and the shadow of the scale in front
-  col = base * (0.9 + 0.18 * id) * (1.0 + 0.07 * lf);
+  col = base * (0.9 + 0.18 * id) * (1.0 + 0.07 * lf) * (1.0 + 0.4 * shuffled);
   float rim = 1.0 - smoothstep(1.0, 1.0 - gapE, e);
   float sh = edgeShadow(p, st, c.x);
   joint = max(rim * 0.5 * (1.0 - bare), sh * 0.55);
@@ -425,6 +560,12 @@ if (isBelly > 0.5) {
   vec3 smoothC = mix(bodyColor(sM, phi, 0.25, isBelly, pl), bodyColor(sM, phi, 0.62, isBelly, pl), 0.4);
   col = mix(smoothC, col, smoothstep(0.0, 0.6, fade));
 }
+// the text and the stars: scales recoloured against the pattern, each in whichever of the snake's
+// two pixel colours stands out more from its own; the heart red, but where the scale is red already
+vec3 heartC = srgb(vec3(214.0, 22.0, 34.0));
+heartC = distance(starC, heartC) < 0.25 || distance(col, heartC) < 0.35 ? starC : heartC;
+col = mix(col, mix(starC, heartC, heart) * (0.9 + 0.18 * scaleId), lit);
+col = mix(col, starC * (0.9 + 0.18 * scaleId), star);
 // the joints and the shadows under the free edges
 col = mix(col, col * 0.4, joint * fade);
 // the tucked front of each scale lies in the shade of the one before
