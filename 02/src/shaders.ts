@@ -1,0 +1,243 @@
+// All the GLSL. The room is analytic: a floor, a back wall and a few lamps, so anything can ask what it sees
+// along a ray (`look`), the backdrop pass as much as a crack surface mirroring the room from inside the glass.
+
+const COMMON = /* glsl */ `#version 300 es
+precision highp float;
+uniform float uFlash;
+uniform sampler2D uShadow;
+
+float hash(vec2 p) { p = fract(p * vec2(123.34, 456.21)); p += dot(p, p + 45.32); return fract(p.x * p.y); }
+float vnoise(vec2 p) {
+  vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
+  return mix(mix(hash(i), hash(i + vec2(1, 0)), f.x), mix(hash(i + vec2(0, 1)), hash(i + vec2(1, 1)), f.x), f.y);
+}
+float fbm(vec2 p) { float a = 0.5, s = 0.0; for (int i = 0; i < 4; i++) { s += a * vnoise(p); p = p * 2.03 + 7.1; a *= 0.5; } return s; }
+vec3 rot(vec4 q, vec3 v) { return v + 2.0 * cross(q.xyz, cross(q.xyz, v) + q.w * v); }
+vec3 rotInv(vec4 q, vec3 v) { return rot(vec4(-q.xyz, q.w), v); }
+
+const float WALL_Z = -2.4;
+// the floor shadow map covers x -2…2, z -2.4…1.6
+vec2 shadowUv(vec3 p) { return vec2(p.x / 4.0 + 0.5, (p.z + 2.4) / 4.0); }
+
+vec3 floorCol(vec3 p) {
+  float n = fbm(p.xz * 3.0) * 0.6 + vnoise(p.xz * 41.0) * 0.25 + vnoise(p.xz * 97.0) * 0.15;
+  vec3 alb = mix(vec3(0.12, 0.118, 0.115), vec3(0.24, 0.228, 0.215), n);
+  vec2 g = abs(fract(p.xz / 1.2 + 0.5) - 0.5) * 1.2;
+  alb *= 1.0 - 0.4 * smoothstep(0.005, 0.0, min(g.x, g.y));
+  vec2 q = p.xz - vec2(0.0, -0.25);
+  float pool = exp(-dot(q, q) / 1.5);
+  float sh = texture(uShadow, shadowUv(p)).r;
+  float lit = 0.05 + 1.3 * pool * sh;
+  vec3 f = p - vec3(0.0, 0.5, 2.0);
+  lit += uFlash * 3.0 / (1.0 + dot(f, f));
+  return alb * lit * vec3(1.0, 0.95, 0.88);
+}
+vec3 wallCol(vec3 p) {
+  vec2 q = (p.xy - vec2(0.1, 0.7)) * vec2(1.0, 1.25);
+  float pool = exp(-dot(q, q) / 1.25);
+  float n = fbm(p.xy * 2.2);
+  vec3 alb = vec3(0.56, 0.5, 0.44) * (0.8 + 0.4 * n);
+  alb *= 1.0 - 0.16 * smoothstep(0.01, 0.0, abs(fract(p.x / 0.3) - 0.5) * 0.3);
+  float lit = 0.025 + 0.9 * pool + uFlash * 0.5;
+  lit *= mix(0.5, 1.0, smoothstep(0.0, 0.45, p.y));
+  return alb * lit * smoothstep(5.0, 2.5, p.y);
+}
+vec3 studio(vec3 d) {
+  vec3 c = vec3(0.012, 0.012, 0.014);
+  c += vec3(1.0, 0.97, 0.92) * 9.0 * smoothstep(0.72, 0.9, dot(d, normalize(vec3(-0.4, 0.85, 0.35))));
+  c += vec3(0.75, 0.88, 1.0) * 5.0 * smoothstep(0.95, 0.975, dot(d, normalize(vec3(0.9, 0.3, 0.3))));
+  c += vec3(1.0, 0.95, 0.9) * 1.1 * smoothstep(0.8, 1.0, dot(d, normalize(vec3(0.3, 0.4, 1.0)))) * smoothstep(0.0, 0.25, d.y);
+  c += vec3(1.0, 0.8, 0.5) * 14.0 * uFlash * smoothstep(0.5, 1.0, d.z) * smoothstep(0.0, 0.3, d.y);
+  return c;
+}
+vec3 look(vec3 ro, vec3 rd) {
+  float tf = rd.y < -1e-4 ? -ro.y / rd.y : 1e9;
+  float tw = rd.z < -1e-4 ? (WALL_Z - ro.z) / rd.z : 1e9;
+  if (tf < tw && tf < 1e8) return floorCol(ro + rd * tf);
+  if (tw < 1e8) return wallCol(ro + rd * tw);
+  return studio(rd);
+}
+vec3 tone(vec3 c) { c = c / (1.0 + c * 0.35); return pow(c, vec3(0.4545)); }
+`;
+
+export const ROOM_VS = /* glsl */ `#version 300 es
+layout(location = 0) in vec3 aPos;
+layout(location = 1) in float aMat;
+uniform mat4 uVP;
+out vec3 vW; out float vMat;
+void main() { vW = aPos; vMat = aMat; gl_Position = uVP * vec4(aPos, 1.0); }
+`;
+
+export const ROOM_FS = COMMON + /* glsl */ `
+in vec3 vW; in float vMat;
+uniform vec3 uCam;
+out vec4 o;
+void main() {
+  vec3 c;
+  if (vMat < 0.5) c = floorCol(vW);
+  else if (vMat < 1.5) c = wallCol(vW);
+  else {
+    // the channel the pane stands in: dark steel with a line of light along its top edge
+    vec3 V = normalize(vW - uCam);
+    c = vec3(0.022, 0.022, 0.025) + 0.05 * smoothstep(0.024, 0.03, vW.y) * step(0.0, vW.z) + 0.02 * uFlash;
+  }
+  o = vec4(tone(c), 1.0);
+}
+`;
+
+// one vertex shader for everything made of glass: the cracked pane in place, or shards with a pose each
+export const GLASS_VS = /* glsl */ `#version 300 es
+layout(location = 0) in vec3 aPos;
+layout(location = 1) in vec3 aNrm;
+layout(location = 2) in vec2 aUv;
+layout(location = 3) in vec4 aD; // depth in the glass 0…1, birth, shard id, kind
+uniform mat4 uVP;
+uniform highp sampler2D uXf;
+uniform float uUseXf;
+uniform float uToFloor;
+out vec3 vW; out vec3 vN; out vec3 vNl; out vec2 vUv; out vec4 vD; flat out vec4 vQ;
+vec3 rot(vec4 q, vec3 v) { return v + 2.0 * cross(q.xyz, cross(q.xyz, v) + q.w * v); }
+void main() {
+  vec4 q = vec4(0, 0, 0, 1);
+  vec3 p = aPos, n = aNrm;
+  if (uUseXf > 0.5) {
+    int id = int(aD.z + 0.5);
+    ivec2 tc = ivec2((id * 2) % 1024, (id * 2) / 1024);
+    vec4 a = texelFetch(uXf, tc, 0);
+    q = texelFetch(uXf, tc + ivec2(1, 0), 0);
+    p = a.xyz + rot(q, aPos);
+    n = rot(q, aNrm);
+  }
+  vW = p; vN = n; vNl = aNrm; vUv = aUv; vD = aD; vQ = q;
+  if (uToFloor > 0.5) {
+    // the shadow on the floor, straight into the floor map
+    vec3 L = normalize(vec3(0.18, -1.0, -0.62));
+    vec3 f = p - L * (p.y / L.y);
+    gl_Position = vec4(f.x / 2.0, (f.z + 2.4) / 2.0 - 1.0, 0.0, 1.0);
+  } else gl_Position = uVP * vec4(p, 1.0);
+}
+`;
+
+export const SHADOW_FS = /* glsl */ `#version 300 es
+precision highp float;
+in vec2 vUv; in vec4 vD;
+uniform float uNow; uniform float uShade;
+uniform sampler2D uMask; uniform vec2 uPane;
+out vec4 o;
+void main() {
+  if (vD.y > uNow) discard;
+  if (texture(uMask, vUv / uPane).r > 0.5) discard;
+  o = vec4(uShade);
+}
+`;
+
+// a crack surface. Light inside the glass that meets it is mirrored: it either leaves through a face, and the
+// crack shows the room from somewhere else, or it is sent along the pane and stays in: that is the dark line.
+export const WALL_FS = COMMON + /* glsl */ `
+in vec3 vW; in vec3 vN; in vec3 vNl; in vec2 vUv; in vec4 vD; flat in vec4 vQ;
+uniform vec3 uCam; uniform float uNow;
+uniform sampler2D uMask; uniform vec2 uPane;
+out vec4 o;
+void main() {
+  if (vD.y > uNow) discard;
+  if (texture(uMask, vUv / uPane).r > 0.5) discard;
+  vec3 V = normalize(vW - uCam);
+  vec3 Vl = rotInv(vQ, V);
+  // hackle: the surface of a fracture is not smooth
+  vec2 hp = vUv * 420.0 + vD.x * 5.0;
+  vec3 h = vec3(vnoise(hp) - 0.5, vnoise(hp + 31.7) - 0.5, vnoise(hp + 73.1) - 0.5);
+  vec3 Nl = normalize(vNl + h * 0.5);
+  float sz = Vl.z < 0.0 ? 1.0 : -1.0;
+  vec3 Vg = refract(Vl, vec3(0, 0, sz), 1.0 / 1.5);
+  vec3 Rg = reflect(Vg, Nl);
+  float esc = smoothstep(0.7, 0.8, abs(Rg.z));
+  vec3 og = refract(Rg, vec3(0, 0, -sign(Rg.z)), 1.5);
+  vec3 seen = dot(og, og) > 0.0 ? look(vW, rot(vQ, og)) : vec3(0.0);
+  vec3 trapped = vec3(0.006, 0.02, 0.018) + vec3(0.25, 0.5, 0.45) * uFlash * 0.25;
+  vec3 c = mix(trapped, seen * vec3(0.82, 0.95, 0.9), esc);
+  // where the crack meets the surface the edge is chipped and catches light
+  float seam = exp(-vD.x * 10.0) + 0.5 * exp(-(1.0 - vD.x) * 10.0);
+  float glint = pow(vnoise(vUv * 900.0 + Vl.xy * 14.0), 6.0);
+  c += vec3(0.6, 0.85, 0.8) * seam * (0.16 + 1.6 * glint + uFlash);
+  // the tip of a running crack flashes
+  c += vec3(0.8, 1.0, 0.95) * 1.5 * exp(-(uNow - vD.y) / 0.05);
+  if (vD.w > 1.5) c = mix(c, vec3(0.55, 0.62, 0.6) * (0.5 + uFlash * 2.0), 0.55); // the crushed rim of the hole
+  o = vec4(tone(c), 1.0);
+}
+`;
+
+// a face of the glass: what is behind it, bent a little, plus what it mirrors
+export const FACE_FS = COMMON + /* glsl */ `
+in vec3 vW; in vec3 vN; in vec3 vNl; in vec2 vUv; in vec4 vD; flat in vec4 vQ;
+uniform vec3 uCam; uniform mat4 uView; uniform vec2 uRes; uniform float uBend;
+uniform sampler2D uScene; uniform sampler2D uMask; uniform vec2 uPane;
+out vec4 o;
+void main() {
+  vec4 m = texture(uMask, vUv / uPane);
+  if (m.r > 0.5) discard;
+  // float glass is never flat
+  vec2 w = vec2(fbm(vUv * 5.0 + 3.0), fbm(vUv * 5.0 + 19.0)) - 0.5;
+  vec3 N = normalize(vN + rot(vQ, vec3(w * 0.06, 0.0)));
+  vec3 V = normalize(vW - uCam);
+  if (dot(N, V) > 0.0) N = -N;
+  vec3 Nv = mat3(uView) * N;
+  vec2 suv = gl_FragCoord.xy / uRes;
+  // a slab shifts what is behind it sideways by a fraction of its thickness, more the steeper it is seen
+  vec2 off = -Nv.xy * uBend * gl_FragCoord.w * vec2(uRes.y / uRes.x, 1.0);
+  off *= min(1.0, 0.025 / (length(off) + 1e-5));
+  vec3 c = vec3(texture(uScene, suv + off * 0.93).r, texture(uScene, suv + off).g, texture(uScene, suv + off * 1.07).b);
+  c *= vec3(0.93, 0.975, 0.955);
+  float F = 0.06 + 0.94 * pow(1.0 - max(dot(-V, N), 0.0), 4.0);
+  c += tone(look(vW, reflect(V, N))) * F;
+  // crushed glass around the hole scatters white
+  float frost = m.g * (0.9 + 0.7 * vnoise(vUv * 1500.0));
+  c = mix(c, vec3(0.62, 0.68, 0.66) * (0.55 + uFlash * 3.0), clamp(frost, 0.0, 0.85));
+  o = vec4(c, 1.0);
+}
+`;
+
+export const QUAD_VS = /* glsl */ `#version 300 es
+layout(location = 0) in vec2 aPos;
+out vec2 vUv;
+void main() { vUv = aPos * 0.5 + 0.5; gl_Position = vec4(aPos, 0.0, 1.0); }
+`;
+
+export const COPY_FS = /* glsl */ `#version 300 es
+precision highp float;
+in vec2 vUv; uniform sampler2D uTex; out vec4 o;
+void main() { o = vec4(texture(uTex, vUv).rgb, 1.0); }
+`;
+
+// drawn last, multiplied in: corners fall off
+export const VIGNETTE_FS = /* glsl */ `#version 300 es
+precision highp float;
+in vec2 vUv; uniform float uFade; out vec4 o;
+void main() {
+  vec2 q = vUv - 0.5;
+  float v = smoothstep(0.95, 0.25, length(q)) * 0.55 + 0.45;
+  o = vec4(vec3(v * uFade), 1.0);
+}
+`;
+
+export const DUST_VS = /* glsl */ `#version 300 es
+layout(location = 0) in vec4 aP; // position, life 0…1
+layout(location = 1) in float aSeed;
+uniform mat4 uVP; uniform float uPx; uniform vec3 uCam;
+out float vA;
+void main() {
+  gl_Position = uVP * vec4(aP.xyz, 1.0);
+  float tw = 0.5 + 0.5 * sin(aSeed * 91.0 + dot(aP.xyz, vec3(190.0, 230.0, 170.0)) + dot(uCam, vec3(9.0)));
+  vA = aP.w * tw * tw;
+  gl_PointSize = max(1.0, uPx * (0.0018 + 0.004 * fract(aSeed * 7.3)) / gl_Position.w);
+}
+`;
+
+export const DUST_FS = /* glsl */ `#version 300 es
+precision highp float;
+in float vA; uniform float uFlash; out vec4 o;
+void main() {
+  vec2 q = gl_PointCoord - 0.5;
+  float a = smoothstep(0.5, 0.1, length(q)) * vA;
+  o = vec4(vec3(0.75, 0.9, 0.88) * a * (0.5 + uFlash * 3.0), 1.0);
+}
+`;

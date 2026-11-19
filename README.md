@@ -10,7 +10,7 @@ Live: https://ttillberg.github.io/codevember-2026/
 | Day | Word | Experiment | Source |
 | --- | --- | --- | --- |
 | 01 | Fold | [View](https://ttillberg.github.io/codevember-2026/01/) | [Code](https://github.com/ttillberg/codevember-2026/tree/main/01) |
-| 02 | Shatter | — | — |
+| 02 | Shatter | [View](https://ttillberg.github.io/codevember-2026/02/) | [Code](https://github.com/ttillberg/codevember-2026/tree/main/02) |
 | 03 | Melt | — | — |
 | 04 | Tangle | [View](https://ttillberg.github.io/codevember-2026/04/) | [Code](https://github.com/ttillberg/codevember-2026/tree/main/04) |
 | 04 | Tangle | [View](https://ttillberg.github.io/codevember-2026/04-snakes/) | [Code](https://github.com/ttillberg/codevember-2026/tree/main/04-snakes) |
