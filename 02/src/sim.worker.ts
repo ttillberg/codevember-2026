@@ -34,6 +34,8 @@ export interface FramesMessage {
   /** count: how hard glass hit the floor during that frame */
   hits: Float32Array;
   done: boolean;
+  /** frames the bake will be at most */
+  total: number;
 }
 
 /** The sim runs in decimetres: 8 mm shards are small for a solver tuned for metres. */
@@ -188,7 +190,7 @@ async function bake(req: BakeRequest) {
     quiet = t > last + 0.5 && awake === 0 ? quiet + 1 : 0;
     const done = f === maxFrames - 1 || quiet > 20;
     if (inChunk === CHUNK || done) {
-      const msg: FramesMessage = { type: 'frames', run: req.run, first, count: inChunk, data: data.subarray(0, inChunk * N7), hits: hits.subarray(0, inChunk), done };
+      const msg: FramesMessage = { type: 'frames', run: req.run, first, count: inChunk, data: data.subarray(0, inChunk * N7), hits: hits.subarray(0, inChunk), done, total: maxFrames };
       const copy = { ...msg, data: msg.data.slice(), hits: msg.hits.slice() };
       (self as unknown as Worker).postMessage(copy, [copy.data.buffer, copy.hits.buffer]);
       first += inChunk; inChunk = 0;

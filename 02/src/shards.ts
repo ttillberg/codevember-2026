@@ -27,9 +27,8 @@ export interface ShardSet {
   bodies: Body[];
   /** the outlines of everything that leaves the pane, in pane space, to cut it out of what stays */
   cut: number[][];
-  /** one entry per side of an edge (u * n + v): the sides that bound a face at all, and those whose face leaves */
-  sides: Set<number>;
-  gone: Set<number>;
+  /** part of the pane stays standing */
+  kept: boolean;
 }
 
 const cross = (ax: number, ay: number, bx: number, by: number, cx: number, cy: number) => (bx - ax) * (cy - ay) - (by - ay) * (cx - ax);
@@ -116,16 +115,14 @@ function convexParts(loop: number[], xs: number[], ys: number[]): number[][] {
 
 /** y0 is the height of the bottom of the pane above the floor. The front of the glass is z = 0, the back z = -T. */
 /** With `standing`, the largest face stays where it is, if it stands in the channel: it is not a shard. */
-export function buildShards(pane: Pane, y0: number, standing = false): ShardSet {
+export function buildShards(pane: Pane, y0: number, standing = false, gone: (loop: number[]) => boolean = () => false): ShardSet {
   const { nx, ny, ox, oy, W, T } = pane;
-  const loops = pane.faces();
+  const loops = pane.faces().filter((l) => !gone(l)); // without what left in an earlier fall
   const walls: number[] = [];
   const faces: number[] = [];
   const bodies: Body[] = [];
   const hx = W / 2;
-  const N = nx.length;
   const cut: number[][] = [];
-  const sides = new Set<number>(), gone = new Set<number>();
   let keep: number[] | null = null;
   if (standing) {
     let big = 0;
@@ -134,11 +131,6 @@ export function buildShards(pane: Pane, y0: number, standing = false): ShardSet 
   }
   for (const loop of loops) {
     const n = loop.length;
-    for (let i = 0; i < n; i++) {
-      const k = loop[i] * N + loop[(i + 1) % n];
-      sides.add(k);
-      if (loop !== keep) gone.add(k);
-    }
     if (loop === keep) continue;
     let a = 0, cx = 0, cy = 0, low = false;
     for (let i = 0; i < n; i++) {
@@ -153,8 +145,8 @@ export function buildShards(pane: Pane, y0: number, standing = false): ShardSet 
     // what the bullet took with it
     let shot = false;
     for (const im of pane.impacts) if (Math.hypot(cx - im.x, cy - im.y) < im.r) { shot = true; break; }
+    cut.push(loop.flatMap((u) => [nx[u], ny[u]])); // the splinters of a bullet hole too: they are gone already
     if (shot) continue;
-    cut.push(loop.flatMap((u) => [nx[u], ny[u]]));
 
     const id = bodies.length;
     const wx = cx - hx, wy = cy + y0, wz = -T / 2;
@@ -197,7 +189,7 @@ export function buildShards(pane: Pane, y0: number, standing = false): ShardSet 
     }
     bodies.push({ c: [wx, wy, wz], area: a, tiny, hulls, half, low });
   }
-  return { count: bodies.length, walls: new Float32Array(walls), faces: new Float32Array(faces), bodies, cut, sides, gone };
+  return { count: bodies.length, walls: new Float32Array(walls), faces: new Float32Array(faces), bodies, cut, kept: !!keep };
 }
 
 /** One crack surface, from the front of the glass at a → b to the back at a + slant → b + slant.

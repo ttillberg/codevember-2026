@@ -342,7 +342,7 @@ export class Pane {
   /** Every open tip runs until it meets a crack or the frame, and islands are tied to the rest. */
   /** With `standing`, nothing runs on: only the pieces the cracks already cut out are cut smaller, and the
    *  largest face, the glass still standing, is left alone. */
-  finish(time: number, maxArea = 0.006, spread = 1, standing = false): Seg[] {
+  finish(time: number, maxArea = 0.006, spread = 1, standing = false, gone: (loop: number[]) => boolean = () => false): Seg[] {
     const firstPath = this.paths.length;
     const tips = this.tips;
     if (!standing) this.tips = [];
@@ -363,7 +363,7 @@ export class Pane {
     // and the big pieces give way: cracks across every face larger than a hand
     for (let pass = 0; pass < 8; pass++) {
       let cut = 0;
-      const loops = this.faces();
+      const loops = this.faces().filter((l) => !gone(l));
       let keep: number[] | null = null;
       if (standing) {
         let big = 0;

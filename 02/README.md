@@ -11,7 +11,8 @@ pnpm -C 02 dev
 - **Click / tap** the glass: a bullet, as many as you want. **Wheel**: zoom in on the cracks.
 - **Swipe / drag** across the glass: the shock. Which way does not matter. Only what is broken goes.
 - **Space**, or the first button: a football through the middle, at 30 m/s. **B**, or the ball button: hide the ball itself (also `?noball`).
-- While the glass falls, **hold** (pointer or Space) for slow motion.
+- While the glass falls, **hold** (pointer or Space) for slow motion. A thin bar at the bottom shows how far the worker is with the bake.
+- With glass still standing after a shock, carry on: more bullets, another swipe. With none left, a click is a new pane.
 - **R**: a new pane. **M**: sound.
 - The pointer never moves the camera: it has a slow sway of its own (`Camera sway` in the workbench, down to none), and the wheel zooms.
 - `?seed=7` pins the pane, `?clean` hides the furniture.
@@ -30,6 +31,8 @@ Cracks are closed: there is no gap to see. What is drawn is the crack surface it
 A worker gets each shard as convex pieces (Douglas-Peucker, then triangles merged while they stay convex) and the ball as a sphere with its velocity and spin, and simulates them with Rapier in decimetres. What the ball is about to go through is loose at once, the rest lets go within a few frames, each piece with a push: out the back in a cone near the impact, outwards at the rim. The flight is shown in slow motion (at 30 m/s it would be three frames), which is also the time the worker needs to get ahead: the fall starts at that same pace on impact and picks up to 0.6 of life. Frames are positions and quaternions in a float texture, blended between two baked frames, so it stays smooth at any pace, and slower still while held.
 
 **The shock.** Only what is already broken goes. Nothing runs on and nothing new is cracked: the faces of the graph as it stands are the pieces, which means every cell the cracks have closed. The largest face, the pane around them, is not a shard: it stays. The pieces are cut smaller, and it is as if a ball nobody sees went through every bullet hole at the same instant: one heavy sphere per hole goes into the simulation, never drawn. The pane is its shards 60 ms after the swipe, the time the worker needs for its first frames.
+
+Whatever is left standing can be shot again, and shocked again: the pane goes in as many falls as it takes, and the shards of each stay where they came to rest. Faces that already left are told apart by the mask. A bullet through an opening hits nothing.
 
 What stays is still drawn as the pane it was: one quad, cut out where the pieces left (their outlines are painted into the mask), and its cracks rebuilt from the graph, without those that had a leaving piece on both sides. A crack that ends in clear glass stays where it is.
 

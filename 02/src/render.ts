@@ -39,6 +39,7 @@ export class Renderer {
   private wallVao: WebGLVertexArrayObject; private wallBuf: WebGLBuffer; private wallCount = 0;
   private faceVao: WebGLVertexArrayObject; private faceBuf: WebGLBuffer; private faceCount = 0;
   private dustVao: WebGLVertexArrayObject; private dustBuf: WebGLBuffer; private dustSeed: WebGLBuffer;
+  private wallAll = new Float32Array(0); private faceAll = new Float32Array(0); private shardCount = 0;
   private xf: WebGLTexture; private xfData = new Float32Array(XF_W * 4); private xfRows = 1;
   private mask: WebGLTexture;
   private shadowFbo: WebGLFramebuffer; private shadowTex: WebGLTexture;
@@ -170,6 +171,7 @@ export class Renderer {
     const { W, H, T } = pane;
     this.pane = { W, H, y0, T };
     this.shards = false; this.standing = true;
+    this.wallAll = new Float32Array(0); this.faceAll = new Float32Array(0); this.shardCount = 0; this.wallCount = this.faceCount = 0;
     const hx = W / 2;
     const r: number[] = [];
     const quadv = (a: number[], b: number[], c: number[], d: number[], m: number) => { for (const p of [a, b, c, a, c, d]) r.push(p[0], p[1], p[2], m); };
@@ -231,24 +233,35 @@ export class Renderer {
     gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
   }
 
-  setShards(set: ShardSet) {
+  /** A new fall. The shards of earlier ones stay where they came to rest: the new ones are added after them.
+   *  Returns the id of the first new shard. */
+  addShards(set: ShardSet): number {
     const gl = this.gl;
-    gl.bindBuffer(gl.ARRAY_BUFFER, this.wallBuf); gl.bufferData(gl.ARRAY_BUFFER, set.walls, gl.STATIC_DRAW);
-    gl.bindBuffer(gl.ARRAY_BUFFER, this.faceBuf); gl.bufferData(gl.ARRAY_BUFFER, set.faces, gl.STATIC_DRAW);
-    this.wallCount = set.walls.length / STRIDE;
-    this.faceCount = set.faces.length / STRIDE;
-    this.xfRows = Math.max(1, Math.ceil(((set.count + 1) * 2) / XF_W));
-    this.xfData = new Float32Array(XF_W * this.xfRows * 4);
+    const base = this.shardCount;
+    for (const arr of [set.walls, set.faces]) for (let i = 10; i < arr.length; i += STRIDE) arr[i] += base;
+    const join = (old: Float32Array, add: Float32Array) => { const o = new Float32Array(old.length + add.length); o.set(old); o.set(add, old.length); return o; };
+    this.wallAll = join(this.wallAll, set.walls); this.faceAll = join(this.faceAll, set.faces);
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.wallBuf); gl.bufferData(gl.ARRAY_BUFFER, this.wallAll, gl.STATIC_DRAW);
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.faceBuf); gl.bufferData(gl.ARRAY_BUFFER, this.faceAll, gl.STATIC_DRAW);
+    this.wallCount = this.wallAll.length / STRIDE;
+    this.faceCount = this.faceAll.length / STRIDE;
+    this.shardCount = base + set.count;
+    this.xfRows = Math.max(1, Math.ceil((this.shardCount * 2) / XF_W));
+    const d = new Float32Array(XF_W * this.xfRows * 4);
+    d.set(this.xfData.subarray(0, Math.min(d.length, base * 8)));
+    // until the fall starts the new ones are where they stand in the pane
+    for (let i = 0; i < set.count; i++) { const o = (base + i) * 8, c = set.bodies[i].c; d[o] = c[0]; d[o + 1] = c[1]; d[o + 2] = c[2]; d[o + 7] = 1; }
+    this.xfData = d;
     gl.bindTexture(gl.TEXTURE_2D, this.xf);
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, XF_W, this.xfRows, 0, gl.RGBA, gl.FLOAT, this.xfData);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, XF_W, this.xfRows, 0, gl.RGBA, gl.FLOAT, d);
+    return base;
   }
 
-  /** Poses for the shards: frame a blended towards frame b. Both are bodies × 7. */
-  setPose(a: Float32Array, b: Float32Array, k: number) {
+  /** Poses for `count` shards from id `base` on: frame a blended towards frame b, each count × 7 at least. */
+  setPose(a: Float32Array, b: Float32Array, k: number, base: number, count: number) {
     const gl = this.gl, d = this.xfData;
-    const n = a.length / 7;
-    for (let i = 0; i < n; i++) {
-      const s = i * 7, o = i * 8;
+    for (let i = 0; i < count; i++) {
+      const s = i * 7, o = (base + i) * 8;
       d[o] = a[s] + (b[s] - a[s]) * k; d[o + 1] = a[s + 1] + (b[s + 1] - a[s + 1]) * k; d[o + 2] = a[s + 2] + (b[s + 2] - a[s + 2]) * k;
       let bx = b[s + 3], by = b[s + 4], bz = b[s + 5], bw = b[s + 6];
       if (a[s + 3] * bx + a[s + 4] * by + a[s + 5] * bz + a[s + 6] * bw < 0) { bx = -bx; by = -by; bz = -bz; bw = -bw; }

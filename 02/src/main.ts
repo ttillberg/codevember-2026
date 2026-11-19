@@ -16,6 +16,8 @@ if (params.has('clean')) document.body.classList.add('clean');
 
 const canvas = document.querySelector<HTMLCanvasElement>('#c')!;
 const hint = document.querySelector<HTMLElement>('#hint')!;
+const bakeBar = document.querySelector<HTMLElement>('#bake')!;
+const bakeFill = bakeBar.querySelector<HTMLElement>('i')!;
 const renderer = new Renderer(canvas);
 const sound = new Sound();
 const worker = new Worker(new URL('./sim.worker.ts', import.meta.url), { type: 'module' });
@@ -65,7 +67,7 @@ let resetAt = -1;
 
 // the mask over the pane: holes and crushed glass
 const mask = document.createElement('canvas');
-const mctx = mask.getContext('2d')!;
+const mctx = mask.getContext('2d', { willReadFrequently: true })!;
 
 // glass dust
 const DUST = Renderer.DUST;
@@ -86,7 +88,7 @@ function newPane() {
   shots = 0;
   state = 'intact';
   set = null;
-  ball.on = false; shocked = false;
+  ball.on = false; shocked = false; maskData = null; shardBase = 0;
   frames = []; hits = []; bakeDone = false;
   run++;
   const s = 2048 / Math.max(W, H);
@@ -162,7 +164,7 @@ function shoot(x: number, y: number) {
   if (state !== 'intact') return;
   sound.shot();
   flash = 1; recoil = 1;
-  if (x < 0 || y < 0 || x > pane.W || y > pane.H || pane.inHole(x, y)) return; // through a hole, or wide
+  if (x < 0 || y < 0 || x > pane.W || y > pane.H || pane.inHole(x, y) || goneAt(x, y)) return; // through a hole, or wide
   const res = pane.shoot(x, y, now, 0.75 + Math.random() * 0.6);
   renderer.addCracks(pane, res.segs);
   drawMask(res.impact);
@@ -202,17 +204,44 @@ function kick(x: number, y: number) {
   const res = pane.shoot(x, y, at, V.blow, true);
   res.impact.r = 0; // a ball leaves no hole of its own
   renderer.addCracks(pane, res.segs);
-  renderer.addCracks(pane, pane.finish(at, V.shardArea / 1e4, 0.1));
+  renderer.addCracks(pane, pane.finish(at, V.shardArea / 1e4, 0.1, false, loopGone));
   lastImpact = res.impact;
   sound.smash(FLIGHT);
-  set = buildShards(pane, Y0);
-  renderer.setShards(set);
+  set = buildShards(pane, Y0, false, loopGone);
+  shocked = false;
+  shardBase = renderer.addShards(set);
   frames = []; hits = []; bakeDone = false;
   fallAt = at;
   const req: BakeRequest = { type: 'bake', run: ++run, bodies: set.bodies, impacts: [[hit[0], hit[1]]], width: pane.W, y0: Y0, seed, balls: [{ p: hit, v, w: ball.w, r: (V.ballSize / 100) }], cfg: simCfg() };
   shockAt = [[hit[0], hit[1]]];
   worker.postMessage(req);
   setHint();
+}
+
+// what has left the pane in an earlier fall, read off the mask (blue)
+let maskData: Uint8ClampedArray | null = null;
+function goneAt(x: number, y: number) {
+  if (!maskData) return false;
+  const s = mask.width / pane.W;
+  const px = Math.floor(x * s), py = Math.floor((pane.H - y) * s);
+  if (px < 0 || py < 0 || px >= mask.width || py >= mask.height) return true;
+  return maskData[(py * mask.width + px) * 4 + 2] > 127;
+}
+/** Is this face of the crack graph one that already fell? Asked just inside a few of its edges. */
+function loopGone(loop: number[]) {
+  if (!maskData) return false;
+  const n = loop.length, step = Math.max(1, Math.floor(n / 7));
+  let yes = 0, all = 0;
+  for (let i = 0; i < n; i += step) {
+    const a = loop[i], b = loop[(i + 1) % n];
+    const ax = pane.nx[a], ay = pane.ny[a], bx = pane.nx[b], by = pane.ny[b];
+    const l = Math.hypot(bx - ax, by - ay);
+    if (l < 1e-5) continue;
+    // the inside of a counter-clockwise loop is on the left
+    if (goneAt((ax + bx) / 2 - ((by - ay) / l) * 0.0015, (ay + by) / 2 + ((bx - ax) / l) * 0.0015)) yes++;
+    all++;
+  }
+  return all > 0 && yes * 2 > all;
 }
 
 /** A swipe: a shock, at once. Only what is already broken goes: the pieces the cracks have cut out of the
@@ -223,14 +252,14 @@ function shock() {
   if (!pane.impacts.length) return; // nothing is broken yet
   const at = pane.impacts.map((im) => [im.x, im.y]);
   const never = 1e9; // the new cuts are inside pieces that leave: they are only ever seen as shard edges
-  pane.finish(never, V.shardArea / 1e4, 0, true);
-  const next = buildShards(pane, Y0, true);
+  pane.finish(never, V.shardArea / 1e4, 0, true, loopGone);
+  const next = buildShards(pane, Y0, true, loopGone);
   if (!next.count) return;
   state = 'doomed';
   set = next;
   const lead = 0.06; // just long enough for the worker to hand back its first frames
   sound.smash(lead);
-  renderer.setShards(set);
+  shardBase = renderer.addShards(set);
   frames = []; hits = []; bakeDone = false;
   fallAt = now + lead;
   shocked = true;
@@ -255,15 +284,29 @@ function cutPane() {
     mctx.closePath(); mctx.fill();
   }
   renderer.setMask(mask);
-  const N = pane.nx.length, { sides, gone } = set;
+  // a crack stays only if there is standing glass on one side of it at least. Asked of the mask itself, a
+  // millimetre and a half to each side: that also takes the cracks that ended inside a piece that left
+  const img = maskData = mctx.getImageData(0, 0, mask.width, mask.height).data;
+  const left = (x: number, y: number) => {
+    const px = Math.floor(x * s), py = Math.floor((pane.H - y) * s);
+    if (px < 0 || py < 0 || px >= mask.width || py >= mask.height) return true;
+    const i = (py * mask.width + px) * 4;
+    return img[i] > 127 || img[i + 2] > 127;
+  };
   renderer.rebuildCracks(pane, (a, b) => {
-    const ab = a * N + b, ba = b * N + a;
-    const has1 = sides.has(ab), has2 = sides.has(ba);
-    if (!has1 && !has2) return false; // a crack that ends in clear glass: it stays
-    return (!has1 || gone.has(ab)) && (!has2 || gone.has(ba));
+    const ax = pane.nx[a], ay = pane.ny[a], bx = pane.nx[b], by = pane.ny[b];
+    const l = Math.hypot(bx - ax, by - ay) || 1;
+    const ox = (-(by - ay) / l) * 0.0015, oy = ((bx - ax) / l) * 0.0015;
+    for (const k of [0.5, 0.2, 0.8]) {
+      const mx = ax + (bx - ax) * k, my = ay + (by - ay) * k;
+      if (!left(mx + ox, my + oy) || !left(mx - ox, my - oy)) return false;
+    }
+    return true;
   });
 }
 let shocked = false;
+let shardBase = 0; // id of the first shard of the fall being played
+let bakeTotal = 1;
 let shockAt: [number, number][] = [];
 
 /** The ball before it hits: a throw, backwards from where it will land. */
@@ -281,6 +324,7 @@ worker.onmessage = (e: MessageEvent<FramesMessage>) => {
   if (m.type !== 'frames' || m.run !== run || !set) return;
   const n = (set.count + 1) * 7;
   for (let i = 0; i < m.count; i++) { frames.push(m.data.subarray(i * n, (i + 1) * n)); hits.push(m.hits[i]); }
+  bakeTotal = m.total;
   if (m.done) bakeDone = true;
 };
 
@@ -291,9 +335,9 @@ function startFall() {
   if (ball.on) { speed = ballSlow; recoil = 1.6; playhead = Math.max(0, now - ball.at) * ballSlow; }
   if (shocked) { speed = 0.2; recoil = 1.6; flash = 0.35; }
   renderer.shards = true;
-  renderer.standing = shocked;
+  renderer.standing = shocked && set.kept;
   if (shocked) cutPane();
-  renderer.setPose(frames[0], frames[0], 0);
+  renderer.setPose(frames[0], frames[0], 0, shardBase, set.count);
   // dust comes off every crack as the pane lets go
   for (let i = 0; i < 3200 * V.dust; i++) {
     const b = set.bodies[(Math.random() * set.count) | 0];
@@ -445,14 +489,20 @@ function frame(ms: number) {
     if (f > lastFrame) { f = lastFrame; playhead = lastFrame / 60; }
     const i = Math.floor(f);
     const fa = frames[i], fb = frames[Math.min(lastFrame, i + 1)], k = f - i, o = set!.count * 7;
-    renderer.setPose(fa, fb, k);
+    renderer.setPose(fa, fb, k, shardBase, set!.count);
     for (let c = 0; c < 3; c++) renderer.ball.p[c] = fa[o + c] + (fb[o + c] - fa[o + c]) * k;
     for (let c = 0; c < 4; c++) renderer.ball.q[c] = fa[o + 3 + c];
     for (; lastHitFrame <= i; lastHitFrame++) sound.tinkle(hits[lastHitFrame], Math.max(0.25, speed / V.pace));
-    if (bakeDone && i >= lastFrame) { state = 'fallen'; setHint(); }
+    // with glass still standing it can all be done again: more bullets, another shock
+    if (bakeDone && i >= lastFrame && held < 0) { state = renderer.standing ? 'intact' : 'fallen'; setHint(); }
   }
   stepDust(state === 'falling' ? dt * speed : dt);
   renderer.setDust(dPos, dUsed);
+
+  // how far the bake is, while it runs
+  const baking = (state === 'doomed' || state === 'falling') && !bakeDone;
+  bakeBar.hidden = !baking;
+  if (baking) bakeFill.style.transform = `scaleX(${Math.min(1, frames.length / bakeTotal)})`;
 
   updateCamera(now);
   renderer.draw(cam.view, cam.proj, cam.eye, now, playhead, flash, fade, dUsed);

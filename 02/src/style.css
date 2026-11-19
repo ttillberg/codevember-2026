@@ -100,3 +100,16 @@ canvas { touch-action: none; cursor: crosshair; }
   .debug-row input { height: 36px; }
 }
 .clean .debug { display: none; }
+
+/* the bake, bottom centre: how much of the fall the worker has simulated */
+#bake {
+  position: fixed; z-index: 2; left: 50%; bottom: max(28px, env(safe-area-inset-bottom)); transform: translateX(-50%);
+  width: min(220px, 50vw); height: 3px; border-radius: 2px; background: rgba(244, 244, 242, 0.2); pointer-events: none;
+}
+#bake[hidden] { display: none; }
+#bake i { position: absolute; inset: 0; border-radius: 2px; background: #f4f4f2; transform-origin: 0 50%; transform: scaleX(0); }
+#bake span {
+  position: absolute; left: 0; right: 0; bottom: 10px; text-align: center; color: #f4f4f2;
+  font: 600 10px/1 Inter, "Helvetica Neue", Helvetica, Arial, sans-serif; letter-spacing: 0.12em; text-transform: uppercase;
+}
+.clean #bake { display: none; }
