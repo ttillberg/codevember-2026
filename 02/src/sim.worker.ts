@@ -14,6 +14,8 @@ export interface BakeRequest {
   seed: number;
   /** the football as it reaches the glass: position, velocity, spin, radius. Its pose is the last body of every frame. */
   ball: { p: number[]; v: number[]; w: number[]; r: number };
+  /** a shock wave instead: its direction over the pane and when it lets go of each shard, seconds */
+  wave?: { dir: [number, number]; release: Float32Array };
 }
 
 export interface FramesMessage {
@@ -105,6 +107,19 @@ async function bake(req: BakeRequest) {
     const d = Math.hypot(dx, dy);
     // what the ball is about to go through is loose at once, the rest follows within a few frames
     release[i] = d < 0.2 ? 0 : ((d - 0.2) / 7) * (0.75 + rand() * 0.5) + rand() * 0.02;
+    if (req.wave) {
+      // the front takes each piece as it passes: thrown back, and along with the wave
+      release[i] = req.wave.release[i];
+      if (b.low && b.c[1] - req.y0 < 0.14 && rand() < 0.3) { state[i] = 2; continue; }
+      last = Math.max(last, release[i]);
+      const push = 1.5 + rand() * 3.5;
+      kick[i * 6] = req.wave.dir[0] * push + gauss() * 0.6;
+      kick[i * 6 + 1] = req.wave.dir[1] * push + gauss() * 0.6 + 0.6;
+      kick[i * 6 + 2] = -(3.5 + rand() * rand() * 11);
+      const ws = 6 + rand() * 14 + (b.tiny ? 8 : 0);
+      kick[i * 6 + 3] = gauss() * ws; kick[i * 6 + 4] = gauss() * ws; kick[i * 6 + 5] = gauss() * ws * 0.5;
+      continue;
+    }
     if (b.low && b.c[1] - req.y0 < 0.14 && d > 0.25 && rand() < 0.5) { state[i] = 2; continue; }
     last = Math.max(last, release[i]);
     // the bullet pushes what is near it through, the rest gets a nudge either way

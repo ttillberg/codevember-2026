@@ -1,7 +1,7 @@
 {
   "name": "day-02",
   "private": true,
-  "description": "Shoot a pane of 8 mm glass and watch the cracks run, then kick a football through it: a thousand baked rigid shards",
+  "description": "Shoot a pane of 8 mm glass as often as you like, then swipe: a shock wave takes it apart, fifteen hundred baked rigid shards",
   "type": "module",
   "scripts": {
     "dev": "vite",

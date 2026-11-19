@@ -7,30 +7,36 @@ ink: white
 ---
 # 02 / Shatter, demo
 
-How to show this day off: what the clip on the index plays, and the half minute for X. `pnpm grab 02 --clip` and `pnpm grab 02 --x` read this file (see `scripts/clip.mjs`). Coordinates are in a 1200 × 1200 viewport; the pane (0.9 × 0.8 m at this aspect) fills its middle. The first press on the glass is a bullet, the second the football; either is a drag that goes nowhere.
+How to show this day off: what the clip on the index plays, and the half minute for X. `pnpm grab 02 --clip` and `pnpm grab 02 --x` read this file (see `scripts/clip.mjs`). Coordinates are in a 1200 × 1200 viewport; the pane (0.9 × 0.8 m at this aspect) fills its middle. A press that stays put is a bullet (a drag that goes nowhere), one that travels is a shock wave.
 
 The pane is always the same one (`?seed=7`).
 
-## The index clip: a bullet, then the football
+## The index clip: four bullets, then the wave
 
-One idea: the whole arc. A bullet and its web, a beat to look at it, then the football through the middle of the pane, with a second of slow motion while the shards are in the air.
+One idea: the whole arc. Four shots, each web stopped by the ones before, a beat, then a swipe from left to right and the front takes the pane with it, with a second of slow motion while the shards are in the air.
 
 ```steps
-wait 600
-drag 520,500 521,500 60ms
-wait 2600
-# the football
-drag 640,560 641,560 60ms
-wait 900
+wait 400
+drag 420,480 421,480 60ms
+wait 700
+drag 760,620 761,620 60ms
+wait 700
+drag 560,740 561,740 60ms
+wait 700
+drag 820,400 821,400 60ms
+wait 1500
+# the shock wave
+drag 250,600 950,580 250ms
+wait 1100
 # slow motion: a press held while it falls
 drag 600,600 601,600 1500ms
 ```
 
 ## The half minute for X
 
-1. **Close up, 0–8 s.** Zoomed in on the bullet hole: the web, the tips creeping, the ticks.
-2. **Back out, 8–11 s.**
-3. **The football, 11–30 s.** Through the pane; held in slow motion for most of the fall, then let go.
+1. **Close up, 0–8 s.** Zoomed in on a bullet hole: the web, the tips creeping, the ticks.
+2. **Back out, more bullets, 8–15 s.**
+3. **The wave, 15–30 s.** A swipe; held in slow motion for most of the fall, then let go.
 
 ```x
 wait 600
@@ -39,8 +45,14 @@ wait 400
 wheel -900 520,520
 wait 6000
 wheel 2000 600,600
-wait 2500
-drag 660,560 661,560 60ms
-wait 700
+wait 1500
+drag 800,700 801,700 60ms
+wait 900
+drag 400,780 401,780 60ms
+wait 900
+drag 700,380 701,380 60ms
+wait 1500
+drag 250,600 950,580 250ms
+wait 900
 drag 600,600 601,600 7000ms
 ```

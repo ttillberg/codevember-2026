@@ -2,16 +2,18 @@
 
 2026-11-02
 
-A pane of 8 mm glass standing in a channel. The first click is a bullet: a hole and a web of cracks. The second is a football, kicked hard, and the pane is gone.
+A pane of 8 mm glass standing in a channel. Shoot it as often as you like: every bullet is a hole and a web of cracks. Then swipe across it: a shock wave crosses the pane the way the finger went and takes it apart. Or kick a football through it.
 
 ```sh
 pnpm -C 02 dev
 ```
 
-- **Click / tap** the glass: a bullet. **Wheel**: zoom in on the cracks. The pointer moves the head a little.
-- **Click again**: the football, where you clicked. **Space**, or the first button: the football at the middle. While the glass falls, **hold** (pointer or Space) for slow motion.
-- **B**, or the ball button: hide the ball itself (also `?noball`). The glass still gets everything it does.
+- **Click / tap** the glass: a bullet, as many as you want. **Wheel**: zoom in on the cracks.
+- **Swipe / drag** across the glass: a shock wave, in that direction.
+- **Space**, or the first button: a football through the middle, at 30 m/s. **B**, or the ball button: hide the ball itself (also `?noball`).
+- While the glass falls, **hold** (pointer or Space) for slow motion.
 - **R**: a new pane. **M**: sound.
+- A mouse moves the head a little. A finger does not: under a touch the glass stays put.
 - `?seed=7` pins the pane, `?clean` hides the furniture.
 
 ## Two parts
@@ -25,6 +27,8 @@ Cracks are closed: there is no gap to see. What is drawn is the crack surface it
 **The football** (`src/shards.ts`, `src/sim.worker.ts`). It leaves the foot at 30 m/s, and from that moment where and how it hits is known, so everything is prepared while it flies: a blunt impact is added to the graph (forty radials, most of them long), every open tip runs until it meets something, every piece larger than a few fingers is cut again, and the faces of the graph are the shards, about a thousand. Their side walls are the same quads the cracks were drawn with, so the cracked pane and the shards are one picture at the moment of impact.
 
 A worker gets each shard as convex pieces (Douglas-Peucker, then triangles merged while they stay convex) and the ball as a sphere with its velocity and spin, and simulates them with Rapier in decimetres. What the ball is about to go through is loose at once, the rest lets go within a few frames, each piece with a push: out the back in a cone near the impact, outwards at the rim. The flight is shown in slow motion (at 30 m/s it would be three frames), which is also the time the worker needs to get ahead: the fall starts at that same pace on impact and picks up to 0.6 of life. Frames are positions and quaternions in a float texture, blended between two baked frames, so it stays smooth at any pace, and slower still while held.
+
+**The shock wave.** Same preparation, another cause. A few blunt blows are scattered over the pane and everything is cut small, but none of it is drawn while the pane stands. Each shard is let go when the front reaches it (9 m/s over the pane, in the time of the fall), thrown back and along with the wave, and its new crack surfaces are born at that same moment, with the flash a running crack tip has: the front is a line of light crossing the glass, with a ridge that bends what is behind it just ahead.
 
 Splinters under 1.5 cm² are boxes that only meet the floor. Some of the pieces standing in the channel stay there.
 

@@ -4,7 +4,7 @@
 // inside the glass. Then, once the pane has taken too much, it is cut into shards along those same cracks
 // (shards.ts), a worker bakes the fall with rigid bodies (sim.worker.ts) and the page plays it back.
 import { Pane, type Impact } from './cracks';
-import { buildShards, type ShardSet } from './shards';
+import { STRIDE, buildShards, type ShardSet } from './shards';
 import { Renderer, lookAt, perspective } from './render';
 import { Sound } from './audio';
 import type { BakeRequest, FramesMessage } from './sim.worker';
@@ -74,7 +74,7 @@ function newPane() {
   shots = 0;
   state = 'intact';
   set = null;
-  ball.on = false;
+  ball.on = false; waveOn = false; waveRel = null; drawnNodes.clear(); renderer.wave = [1, 0, 0, 0];
   frames = []; hits = []; bakeDone = false;
   run++;
   const s = 2048 / Math.max(W, H);
@@ -93,7 +93,8 @@ function setHint() {
     : state === 'falling' ? (touch ? 'Hold to slow it down' : 'Hold to slow it down')
     : state === 'doomed' ? ''
     : shots === 0 ? (touch ? 'Tap the glass to shoot' : 'Click the glass to shoot')
-    : (touch ? 'Tap again: a football' : 'Click again: a football');
+    : shots < 3 ? (touch ? 'Swipe: a shock wave' : 'Drag: a shock wave. Space: a football')
+    : '';
 }
 
 function drawMask(im: Impact) {
@@ -152,6 +153,7 @@ function shoot(x: number, y: number) {
   if (x < 0 || y < 0 || x > pane.W || y > pane.H || pane.inHole(x, y)) return; // through a hole, or wide
   const res = pane.shoot(x, y, now, 0.75 + Math.random() * 0.6);
   renderer.addCracks(pane, res.segs);
+  for (const sg of res.segs) for (const nd of [sg.a, sg.b]) drawnNodes.add(`${Math.round(pane.nx[nd] * 1e5)},${Math.round(pane.ny[nd] * 1e5)}`);
   drawMask(res.impact);
   lastImpact = res.impact;
   shots++;
@@ -202,6 +204,61 @@ function kick(x: number, y: number) {
   setHint();
 }
 
+/** A swipe: a shock wave that crosses the pane the way the finger went and takes everything with it.
+ *  Like the ball it is known before it arrives, so the pane is cut and baked while the air gathers. */
+const WAVE_SPEED = 9; // m/s over the pane, in the time of the fall
+let waveOn = false;
+let waveMin = 0;
+function shock(ax: number, ay: number, bx: number, by: number) {
+  if (state !== 'intact') return;
+  let dx = bx - ax, dy = by - ay;
+  const l = Math.hypot(dx, dy);
+  if (l < 1e-4) return;
+  dx /= l; dy /= l;
+  state = 'doomed';
+  const lead = 0.3;
+  sound.whoosh(lead); sound.smash(lead + 0.05);
+  // a few blunt blows where the pressure finds a weakness, then everything is cut small. None of it is
+  // drawn in the standing pane (their time never comes): the cracks show as the front reaches them
+  const never = 1e9;
+  for (let i = 0; i < 4; i++) {
+    const res = pane.shoot(pane.W * (0.12 + 0.76 * pane.rand()), pane.H * (0.12 + 0.76 * pane.rand()), never, 1.1, true);
+    res.impact.r = 0;
+  }
+  pane.finish(never, 0.0022, 0);
+  set = buildShards(pane, Y0);
+  // when the front reaches each shard
+  const n = set.count;
+  const rel = new Float32Array(n);
+  let min = Infinity;
+  const proj = (i: number) => (set!.bodies[i].c[0] + pane.W / 2) * dx + (set!.bodies[i].c[1] - Y0) * dy;
+  for (let i = 0; i < n; i++) min = Math.min(min, proj(i));
+  for (let i = 0; i < n; i++) rel[i] = Math.max(0, (proj(i) - min) / WAVE_SPEED + (Math.random() - 0.5) * 0.008);
+  // the bullets' cracks are already there; the new ones are born with the front
+  const old = new Set<string>();
+  const key = (u: number, v: number) => `${Math.round(u * 1e5)},${Math.round(v * 1e5)}`;
+  for (const k of drawnNodes) old.add(k);
+  const wl = set.walls;
+  for (let i = 0; i < wl.length; i += STRIDE * 6) {
+    const known = old.has(key(wl[i + 6], wl[i + 7])) && old.has(key(wl[i + STRIDE + 6], wl[i + STRIDE + 7]));
+    if (known) continue;
+    const t = rel[wl[i + 10]];
+    for (let k = 0; k < 6; k++) wl[i + k * STRIDE + 9] = t - 0.012;
+  }
+  renderer.setShards(set);
+  waveOn = true; waveMin = min;
+  renderer.wave = [dx, dy, min - 0.3, 1];
+  frames = []; hits = []; bakeDone = false;
+  fallAt = now + lead;
+  const req: BakeRequest = { type: 'bake', run: ++run, bodies: set.bodies, impact: [0, 0], width: pane.W, y0: Y0, seed, ball: { p: [0, 0.2, 60], v: [0, 0, 0], w: [0, 0, 0], r: BALL_R }, wave: { dir: [dx, dy], release: rel } };
+  worker.postMessage(req);
+  waveRel = rel;
+  setHint();
+}
+let waveRel: Float32Array | null = null;
+/** both ends of every crack drawn so far, to tell old cracks from the ones the wave makes */
+const drawnNodes = new Set<string>();
+
 /** The ball before it hits: a throw, backwards from where it will land. */
 function flyBall() {
   // not clamped at the glass: if the bake is a few frames late the ball carries on rather than wait for it
@@ -221,18 +278,20 @@ worker.onmessage = (e: MessageEvent<FramesMessage>) => {
 };
 
 function startFall() {
-  if (!set || !lastImpact) return;
+  if (!set) return;
   state = 'falling';
   playhead = 0; lastHitFrame = 0;
   if (ball.on) { speed = ballSlow; recoil = 1.6; playhead = Math.max(0, now - ball.at) * ballSlow; }
+  if (waveOn) { speed = 0.3; recoil = 1.2; }
   renderer.shards = true;
   renderer.setPose(frames[0], frames[0], 0);
   // dust comes off every crack as the pane lets go
-  const ix = lastImpact.x - pane.W / 2, iy = lastImpact.y + Y0;
+  const ix = lastImpact ? lastImpact.x - pane.W / 2 : 0, iy = lastImpact ? lastImpact.y + Y0 : 0.4;
   for (let i = 0; i < 3200; i++) {
-    const b = set.bodies[(Math.random() * set.count) | 0];
+    const bi = (Math.random() * set.count) | 0;
+    const b = set.bodies[bi];
     const d = Math.hypot(b.c[0] - ix, b.c[1] - iy);
-    dust(b.c[0] + gauss() * 0.02, b.c[1] + gauss() * 0.02, -T / 2, gauss() * 0.5, gauss() * 0.5, gauss() * 0.8 - 1.2 * Math.exp(-d / 0.25) * 4, 1 + Math.random() * 2.5, d / 7 + Math.random() * 0.1);
+    dust(b.c[0] + gauss() * 0.02, b.c[1] + gauss() * 0.02, -T / 2, gauss() * 0.5, gauss() * 0.5, gauss() * 0.8 - 1.2 * Math.exp(-d / 0.25) * 4, 1 + Math.random() * 2.5, waveRel ? waveRel[bi] / 0.3 + Math.random() * 0.1 : d / 7 + Math.random() * 0.1);
   }
   setHint();
 }
@@ -285,17 +344,30 @@ function reset() {
 
 canvas.addEventListener('pointerdown', (e) => {
   sound.wake();
-  ptr.x = (e.clientX / w) * 2 - 1; ptr.y = (e.clientY / h) * 2 - 1;
-  if (state === 'intact') {
-    const [x, y] = pick(e.clientX, e.clientY);
-    if (shots === 0) shoot(x, y); else if (x > -0.1 && y > -0.1 && x < pane.W + 0.1 && y < pane.H + 0.1) kick(x, y);
-  } else if (state === 'falling') { slow = true; canvas.setPointerCapture(e.pointerId); }
+  mouse = e.pointerType === 'mouse';
+  if (mouse) { ptr.x = (e.clientX / w) * 2 - 1; ptr.y = (e.clientY / h) * 2 - 1; } else { ptr.x = 0; ptr.y = 0; }
+  if (state === 'intact') { down = { x: e.clientX, y: e.clientY, t: performance.now(), id: e.pointerId }; canvas.setPointerCapture(e.pointerId); }
+  else if (state === 'falling') { slow = true; canvas.setPointerCapture(e.pointerId); }
   else if (state === 'fallen') reset();
 });
-const release = () => { slow = false; };
+// a press that stays put is a bullet, one that travels is a shock wave the way it went
+let down: { x: number; y: number; t: number; id: number } | null = null;
+let mouse = true;
+const release = (e: PointerEvent) => {
+  slow = false;
+  if (!down || down.id !== e.pointerId) return;
+  const d = down;
+  down = null;
+  if (e.type !== 'pointerup' || state !== 'intact') return;
+  const far = Math.hypot(e.clientX - d.x, e.clientY - d.y);
+  if (far < 14) { const [x, y] = pick(d.x, d.y); shoot(x, y); }
+  else if (far > 40) { const [ax, ay] = pick(d.x, d.y), [bx, by] = pick(e.clientX, e.clientY); shock(ax, ay, bx, by); }
+};
 canvas.addEventListener('pointerup', release);
 canvas.addEventListener('pointercancel', release);
 window.addEventListener('pointermove', (e) => {
+  // only a mouse moves the head, and not while it is pressed: under a finger the glass stays put
+  if (e.pointerType !== 'mouse' || down) return;
   ptr.x = (e.clientX / w) * 2 - 1; ptr.y = (e.clientY / h) * 2 - 1;
   if (zoom < 1.02) { const [x, y] = pick(e.clientX, e.clientY); focus[0] = x - pane.W / 2; focus[1] = y + Y0; }
 });
@@ -358,6 +430,7 @@ function frame(ms: number) {
 
   if (state === 'doomed' && now >= fallAt && (bakeDone || frames.length > 5)) startFall();
   renderer.ball.on = ball.on && showBall;
+  if (waveOn) renderer.wave[2] = state === 'falling' ? waveMin + playhead * WAVE_SPEED : waveMin - 0.3 * Math.max(0, fallAt - now) / 0.3;
   if (ball.on && state === 'doomed') flyBall();
   if (state === 'falling') {
     speed += ((slow ? 0.07 : PACE) - speed) * Math.min(1, dt * (slow || speed > PACE ? 10 : 1.6));
@@ -378,7 +451,7 @@ function frame(ms: number) {
   renderer.setDust(dPos, dUsed);
 
   updateCamera(now);
-  renderer.draw(cam.view, cam.proj, cam.eye, now, flash, fade, dUsed);
+  renderer.draw(cam.view, cam.proj, cam.eye, renderer.shards ? playhead : now, flash, fade, dUsed);
   requestAnimationFrame(frame);
 }
 
@@ -392,6 +465,7 @@ Object.assign(window, {
   shatter: {
     shoot: (u: number, v: number) => shoot(u * pane.W, v * pane.H),
     kick: (u: number, v: number) => kick(u * pane.W, v * pane.H), reset,
+    shock: (ax: number, ay: number, bx: number, by: number) => shock(ax, ay, bx, by),
     seek: (t: number) => { held = t; },
     get state() { return state; },
     get info() { return { state, shots, crack: pane.crackLen, limit, shards: set?.count, low: set?.bodies.filter((b) => b.low).length, frames: frames.length, bakeDone }; },
