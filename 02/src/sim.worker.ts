@@ -12,6 +12,8 @@ export interface BakeRequest {
   width: number;
   y0: number;
   seed: number;
+  /** the football as it reaches the glass: position, velocity, spin, radius. Its pose is the last body of every frame. */
+  ball: { p: number[]; v: number[]; w: number[]; r: number };
 }
 
 export interface FramesMessage {
@@ -19,7 +21,7 @@ export interface FramesMessage {
   run: number;
   first: number;
   count: number;
-  /** count × bodies × 7: position, quaternion */
+  /** count × (bodies + 1) × 7: position, quaternion; the ball last */
   data: Float32Array;
   /** count: how hard glass hit the floor during that frame */
   hits: Float32Array;
@@ -59,15 +61,17 @@ async function bake(req: BakeRequest) {
   const world = new RAPIER.World({ x: 0, y: -9.81 * S, z: 0 });
   world.timestep = 1 / (FPS * SUB);
 
-  const G_SHARD = 0x0001, G_TINY = 0x0002, G_WORLD = 0x0004;
+  const G_SHARD = 0x0001, G_TINY = 0x0002, G_WORLD = 0x0004, G_BALL = 0x0008;
   const groups = (member: number, filter: number) => (member << 16) | filter;
 
   // floor, and the channel the pane stands in
   const ground = world.createRigidBody(RAPIER.RigidBodyDesc.fixed());
-  world.createCollider(RAPIER.ColliderDesc.cuboid(80, 5, 80).setTranslation(0, -5, 0).setFriction(0.7).setRestitution(0.3).setCollisionGroups(groups(G_WORLD, G_SHARD | G_TINY)), ground);
+  world.createCollider(RAPIER.ColliderDesc.cuboid(80, 5, 80).setTranslation(0, -5, 0).setFriction(0.7).setRestitution(0.3).setCollisionGroups(groups(G_WORLD, G_SHARD | G_TINY | G_BALL)), ground);
+  // the back wall, for the ball
+  world.createCollider(RAPIER.ColliderDesc.cuboid(80, 80, 5).setTranslation(0, 0, (-2.4 - 0.5) * S).setRestitution(0.4).setCollisionGroups(groups(G_WORLD, G_SHARD | G_TINY | G_BALL)), ground);
   world.createCollider(
     RAPIER.ColliderDesc.cuboid((req.width / 2 + 0.03) * S, (req.y0 / 2) * S, 0.022 * S).setTranslation(0, (req.y0 / 2) * S, -0.004 * S)
-      .setFriction(0.5).setRestitution(0.2).setCollisionGroups(groups(G_WORLD, G_SHARD | G_TINY)),
+      .setFriction(0.5).setRestitution(0.2).setCollisionGroups(groups(G_WORLD, G_SHARD | G_TINY | G_BALL)),
     ground,
   );
 
@@ -90,7 +94,7 @@ async function bake(req: BakeRequest) {
         for (let k = 0; k < h.length; k++) pts[k] = h[k] * S;
         const desc = RAPIER.ColliderDesc.convexHull(pts);
         if (!desc) continue;
-        world.createCollider(desc.setFriction(0.45).setRestitution(0.22).setCollisionGroups(groups(G_SHARD, G_SHARD | G_WORLD)), body);
+        world.createCollider(desc.setFriction(0.45).setRestitution(0.22).setCollisionGroups(groups(G_SHARD, G_SHARD | G_WORLD | G_BALL)), body);
         made++;
       }
       if (!made) world.createCollider(RAPIER.ColliderDesc.ball(0.004 * S).setCollisionGroups(groups(G_TINY, G_WORLD)), body);
@@ -99,22 +103,32 @@ async function bake(req: BakeRequest) {
     // the pane lets go from the last impact outwards, then from the top down
     const dx = b.c[0] - req.impact[0], dy = b.c[1] - req.impact[1];
     const d = Math.hypot(dx, dy);
-    release[i] = (d / 2.6) * (0.75 + rand() * 0.5) + rand() * 0.03;
-    if (b.low && b.c[1] - req.y0 < 0.16 && rand() < 0.7) { state[i] = 2; continue; }
+    // what the ball is about to go through is loose at once, the rest follows within a few frames
+    release[i] = d < 0.2 ? 0 : ((d - 0.2) / 7) * (0.75 + rand() * 0.5) + rand() * 0.02;
+    if (b.low && b.c[1] - req.y0 < 0.14 && d > 0.25 && rand() < 0.5) { state[i] = 2; continue; }
     last = Math.max(last, release[i]);
     // the bullet pushes what is near it through, the rest gets a nudge either way
-    const near = Math.exp(-d / 0.1);
+    const near = Math.exp(-d / 0.3);
     const out = d > 1e-4 ? 1 / d : 0;
-    kick[i * 6] = dx * out * (0.9 * near + 0.08) + gauss() * 0.08;
-    kick[i * 6 + 1] = dy * out * (0.9 * near) + gauss() * 0.08;
-    kick[i * 6 + 2] = -2.8 * near * (0.5 + rand()) + (rand() < 0.68 ? -1 : 1) * (0.1 + rand() * 0.35);
-    const w = 1.5 + 9 * near + (b.tiny ? 6 : 0);
+    // a hard kick: the middle is blown out the back in a cone, the rim of the pane is thrown outwards
+    kick[i * 6] = dx * out * (4.5 * near + 0.5) * (0.5 + rand()) + gauss() * 0.3;
+    kick[i * 6 + 1] = dy * out * (4.5 * near + 0.4) * (0.5 + rand()) + gauss() * 0.3 + 1.2 * near;
+    kick[i * 6 + 2] = -13 * near * (0.35 + rand()) - 0.4 - rand() * 1.4;
+    const w = 4 + 16 * near + (b.tiny ? 8 : 0);
     kick[i * 6 + 3] = gauss() * w; kick[i * 6 + 4] = gauss() * w; kick[i * 6 + 5] = gauss() * w * 0.5;
   }
 
+  // the ball: lighter than glass by volume, but heavy enough to go through
+  const ball = world.createRigidBody(
+    RAPIER.RigidBodyDesc.dynamic().setTranslation(req.ball.p[0] * S, req.ball.p[1] * S, req.ball.p[2] * S)
+      .setLinvel(req.ball.v[0] * S, req.ball.v[1] * S, req.ball.v[2] * S).setAngvel({ x: req.ball.w[0], y: req.ball.w[1], z: req.ball.w[2] }).setCcdEnabled(true),
+  );
+  world.createCollider(RAPIER.ColliderDesc.ball(req.ball.r * S).setDensity(0.7).setRestitution(0.55).setFriction(0.6).setCollisionGroups(groups(G_BALL, G_SHARD | G_WORLD)), ball);
+
   const maxFrames = MAX_SECONDS * FPS;
   const CHUNK = 6;
-  let data = new Float32Array(CHUNK * n * 7);
+  const N7 = (n + 1) * 7;
+  let data = new Float32Array(CHUNK * N7);
   let hits = new Float32Array(CHUNK);
   let inChunk = 0, first = 0, quiet = 0;
   for (let f = 0; f < maxFrames; f++) {
@@ -139,7 +153,7 @@ async function bake(req: BakeRequest) {
       }
     }
     let awake = 0;
-    const o = inChunk * n * 7;
+    const o = inChunk * N7;
     for (let i = 0; i < n; i++) {
       const body = bodies[i];
       const p = body.translation(), q = body.rotation();
@@ -148,12 +162,18 @@ async function bake(req: BakeRequest) {
       data[k + 3] = q.x; data[k + 4] = q.y; data[k + 5] = q.z; data[k + 6] = q.w;
       if (state[i] === 1 && !body.isSleeping()) awake++;
     }
+    {
+      const p = ball.translation(), q = ball.rotation(), k = o + n * 7;
+      data[k] = p.x / S; data[k + 1] = p.y / S; data[k + 2] = p.z / S;
+      data[k + 3] = q.x; data[k + 4] = q.y; data[k + 5] = q.z; data[k + 6] = q.w;
+      if (!ball.isSleeping() && Math.hypot(ball.linvel().x, ball.linvel().y, ball.linvel().z) > 0.3 * S) awake++;
+    }
     hits[inChunk] = hit;
     inChunk++;
     quiet = t > last + 0.5 && awake === 0 ? quiet + 1 : 0;
     const done = f === maxFrames - 1 || quiet > 20;
     if (inChunk === CHUNK || done) {
-      const msg: FramesMessage = { type: 'frames', run: req.run, first, count: inChunk, data: data.subarray(0, inChunk * n * 7), hits: hits.subarray(0, inChunk), done };
+      const msg: FramesMessage = { type: 'frames', run: req.run, first, count: inChunk, data: data.subarray(0, inChunk * N7), hits: hits.subarray(0, inChunk), done };
       const copy = { ...msg, data: msg.data.slice(), hits: msg.hits.slice() };
       (self as unknown as Worker).postMessage(copy, [copy.data.buffer, copy.hits.buffer]);
       first += inChunk; inChunk = 0;

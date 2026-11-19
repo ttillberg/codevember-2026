@@ -2,14 +2,14 @@
 
 2026-11-02
 
-A pane of 8 mm glass standing in a channel, and a gun. Click the glass to shoot it. It takes a few bullets, then it gives way.
+A pane of 8 mm glass standing in a channel. The first click is a bullet: a hole and a web of cracks. The second is a football, kicked hard, and the pane is gone.
 
 ```sh
 pnpm -C 02 dev
 ```
 
 - **Click / tap** the glass: a bullet. **Wheel**: zoom in on the cracks. The pointer moves the head a little.
-- **Space**, or the first button: break it now. While it falls, **hold** (pointer or Space) for slow motion.
+- **Click again**: the football, where you clicked. **Space**, or the first button: the football at the middle. While the glass falls, **hold** (pointer or Space) for slow motion.
 - **R**, or the second button: a new pane. **M**: sound.
 - `?seed=7` pins the pane, `?clean` hides the furniture.
 
@@ -21,9 +21,9 @@ A crack that runs into something is there within a frame or two. One that runs o
 
 Cracks are closed: there is no gap to see. What is drawn is the crack surface itself, a ribbon from the front of the glass to the back, slanted a little, different at every node. Light inside the glass that meets it is mirrored. Either it then leaves through a face, and the crack shows the room from somewhere else (nearly invisible, or a glint when that somewhere is a lamp), or it is sent along the pane beyond the critical angle and stays in the glass: that is the dark line. Only the bullet holes are open, cut out with a mask that also carries the crushed, white glass around them.
 
-**The fall** (`src/shards.ts`, `src/sim.worker.ts`). When the cracks add up to more than the pane can take (13 to 21 m per m², drawn per pane), every open tip runs until it meets something, every piece larger than a hand is cut again, and the faces of the graph are the shards. Their side walls are the same quads the cracks were drawn with, so the cracked pane and the pile of shards are one picture at the moment it lets go.
+**The football** (`src/shards.ts`, `src/sim.worker.ts`). It leaves the foot at 30 m/s, and from that moment where and how it hits is known, so everything is prepared while it flies: a blunt impact is added to the graph (forty radials, most of them long), every open tip runs until it meets something, every piece larger than a few fingers is cut again, and the faces of the graph are the shards, about a thousand. Their side walls are the same quads the cracks were drawn with, so the cracked pane and the shards are one picture at the moment of impact.
 
-A worker gets each shard as convex pieces (Douglas-Peucker, then triangles merged while they stay convex), lets them go in a wave from the last impact, and simulates them with Rapier in decimetres. It runs several times faster than real time, so the page starts playing 0.6 s after the last shot while the worker is still ahead of it. Frames are positions and quaternions in a float texture, blended between two baked frames, which is why the fall can be played slower than life, and slower still while held, and stay smooth.
+A worker gets each shard as convex pieces (Douglas-Peucker, then triangles merged while they stay convex) and the ball as a sphere with its velocity and spin, and simulates them with Rapier in decimetres. What the ball is about to go through is loose at once, the rest lets go within a few frames, each piece with a push: out the back in a cone near the impact, outwards at the rim. The flight is shown in slow motion (at 30 m/s it would be three frames), which is also the time the worker needs to get ahead: the fall starts at that same pace on impact and picks up to 0.6 of life. Frames are positions and quaternions in a float texture, blended between two baked frames, so it stays smooth at any pace, and slower still while held.
 
 Splinters under 1.5 cm² are boxes that only meet the floor. Some of the pieces standing in the channel stay there.
 
@@ -34,6 +34,8 @@ Three steps a frame, WebGL2, no library:
 1. The shadow of the glass on the floor, into a map: faces dim the light a little, crack surfaces a lot (min blending, so a pile does not go black).
 2. The room (analytic: any shader can ask what a ray sees) and every crack surface, multisampled, into a texture.
 3. The faces of the glass on screen. They look that texture up, shifted by their normal, so everything behind a face is seen through it, cracks and other shards included.
+
+The ball is a sphere with twelve dark patches, drawn into the same texture, so it is seen through the glass too.
 
 Sound is synthesised: noise and sines. The fall is one grain per shard that meets the floor, counted by the worker per frame.
 

@@ -263,7 +263,7 @@ export class Pane {
   }
 
   /** A bullet at x, y. Returns the cracks to draw, each with the time its tip passes. */
-  shoot(x: number, y: number, time: number, energy = 1): { segs: Seg[]; ticks: number[]; impact: Impact } {
+  shoot(x: number, y: number, time: number, energy = 1, blunt = false): { segs: Seg[]; ticks: number[]; impact: Impact } {
     const rand = this.rand;
     const firstPath = this.paths.length;
     x = Math.min(this.W - 0.004, Math.max(0.004, x));
@@ -272,12 +272,12 @@ export class Pane {
     const rh = 0.0062 * (0.9 + rand() * 0.35);
     const impact: Impact = { x, y, r: rh, time, rim: [] };
     const queue: Grow[] = [];
-    const nR = Math.round(20 + rand() * 12);
+    const nR = blunt ? 40 : Math.round(20 + rand() * 12);
     const a0 = rand() * Math.PI * 2;
     const radials: number[] = [];
     for (let i = 0; i < nR; i++) {
       const ang = a0 + ((i + (rand() - 0.5) * 0.6) / nR) * Math.PI * 2;
-      const long = rand() < 0.5;
+      const long = rand() < (blunt ? 0.85 : 0.5);
       // log-normal: most long ones stop within a hand's width, a few cross the pane
       const budget = long ? 0.2 * energy * Math.exp(this.gauss() * 0.8) : 0.006 + rand() * rand() * 0.05;
       radials.push(this.grow({ node: c, ang, budget: budget + rh, mode: 0, cx: x, cy: y, sign: 1, parent: -1, parentIdx: 0, delay: 0, first: rh * (0.85 + rand() * 0.4), branch: long ? 5 : 0, skipFirst: true }, queue));
@@ -334,14 +334,14 @@ export class Pane {
   }
 
   /** Every open tip runs until it meets a crack or the frame, and islands are tied to the rest. */
-  finish(time: number, maxArea = 0.006): Seg[] {
+  finish(time: number, maxArea = 0.006, spread = 1): Seg[] {
     const firstPath = this.paths.length;
     const tips = this.tips;
     this.tips = [];
     const queue: Grow[] = [];
     for (const tip of tips) {
       if (this.nbr[tip.node].length !== 1) continue;
-      this.grow({ node: tip.node, ang: tip.ang, budget: 10, mode: 0, cx: tip.cx, cy: tip.cy, sign: 1, parent: -2, parentIdx: 0, delay: this.rand() * 0.22, first: 0, branch: 0, skipFirst: false }, queue);
+      this.grow({ node: tip.node, ang: tip.ang, budget: 10, mode: 0, cx: tip.cx, cy: tip.cy, sign: 1, parent: -2, parentIdx: 0, delay: this.rand() * 0.22 * spread, first: 0, branch: 0, skipFirst: false }, queue);
     }
     // a group of cracks that touches nothing else would be a shard inside a shard: tie it to the rest
     for (let pass = 0; pass < 30; pass++) {
@@ -353,7 +353,7 @@ export class Pane {
       this.grow({ node: best, ang: 0, budget: 10, mode: 2, cx: this.nx[best], cy: this.ny[best], sign: 1, parent: -2, parentIdx: 0, delay: this.rand() * 0.2, first: 0, branch: 0, skipFirst: false }, queue);
     }
     // and the big pieces give way: cracks across every face larger than a hand
-    for (let pass = 0; pass < 5; pass++) {
+    for (let pass = 0; pass < 8; pass++) {
       let cut = 0;
       for (const loop of this.faces()) {
         let a = 0, cx = 0, cy = 0;
@@ -367,7 +367,7 @@ export class Pane {
         cx /= 6 * a; cy /= 6 * a;
         const from = loop[Math.floor(this.rand() * loop.length)];
         const ang = Math.atan2(cy - this.ny[from], cx - this.nx[from]) + this.gauss() * 0.25;
-        this.grow({ node: from, ang, budget: 10, mode: 0, cx, cy, sign: 1, parent: -2, parentIdx: 0, delay: 0.05 + pass * 0.04 + this.rand() * 0.2, first: 0, branch: 0, skipFirst: false }, queue);
+        this.grow({ node: from, ang, budget: 10, mode: 0, cx, cy, sign: 1, parent: -2, parentIdx: 0, delay: (0.05 + pass * 0.04 + this.rand() * 0.2) * spread, first: 0, branch: 0, skipFirst: false }, queue);
         cut++;
       }
       if (!cut) break;

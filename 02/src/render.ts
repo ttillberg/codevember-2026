@@ -1,6 +1,6 @@
 // WebGL2. Three steps a frame: the shadow of the glass on the floor, into a map; the room and every crack
 // surface, into a texture; then the faces of the glass on screen, which look that texture up, bent.
-import { COPY_FS, DUST_FS, DUST_VS, FACE_FS, GLASS_VS, QUAD_VS, ROOM_FS, ROOM_VS, SHADOW_FS, VIGNETTE_FS, WALL_FS } from './shaders';
+import { BALL_FS, BALL_VS, COPY_FS, DUST_FS, DUST_VS, FACE_FS, GLASS_VS, QUAD_VS, ROOM_FS, ROOM_VS, SHADOW_FS, VIGNETTE_FS, WALL_FS } from './shaders';
 import { STRIDE, pushWall, type ShardSet } from './shards';
 import type { Pane, Seg } from './cracks';
 
@@ -46,6 +46,9 @@ export class Renderer {
   private sceneFbo: WebGLFramebuffer | null = null; private sceneTex: WebGLTexture | null = null;
   private w = 0; private h = 0;
   shards = false;
+  /** the football: where it is and how it is turned, or off */
+  ball = { on: false, p: [0, 0, 0], q: [0, 0, 0, 1], r: 0.11 };
+  private ballVao!: WebGLVertexArrayObject; private ballCount = 0;
   pane = { W: 1, H: 1, y0: 0, T: 0.008 };
   static SHADOW = 2048;
   static DUST = 6000;
@@ -61,6 +64,19 @@ export class Renderer {
     this.prog('copy', QUAD_VS, COPY_FS);
     this.prog('vignette', QUAD_VS, VIGNETTE_FS);
     this.prog('dust', DUST_VS, DUST_FS);
+    this.prog('ball', BALL_VS, BALL_FS);
+    {
+      const v: number[] = [];
+      const A = 24, B = 48;
+      const pt = (i: number, j: number) => { const th = (i / A) * Math.PI, ph = (j / B) * Math.PI * 2; v.push(Math.sin(th) * Math.cos(ph), Math.cos(th), Math.sin(th) * Math.sin(ph)); };
+      for (let i = 0; i < A; i++) for (let j = 0; j < B; j++) { pt(i, j); pt(i + 1, j); pt(i + 1, j + 1); pt(i, j); pt(i + 1, j + 1); pt(i, j + 1); }
+      this.ballVao = gl.createVertexArray()!;
+      gl.bindVertexArray(this.ballVao);
+      gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
+      gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(v), gl.STATIC_DRAW);
+      gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 3, gl.FLOAT, false, 0, 0);
+      this.ballCount = v.length / 3;
+    }
 
     this.quad = gl.createVertexArray()!;
     gl.bindVertexArray(this.quad);
@@ -217,7 +233,7 @@ export class Renderer {
     gl.bindBuffer(gl.ARRAY_BUFFER, this.faceBuf); gl.bufferData(gl.ARRAY_BUFFER, set.faces, gl.STATIC_DRAW);
     this.wallCount = set.walls.length / STRIDE;
     this.faceCount = set.faces.length / STRIDE;
-    this.xfRows = Math.max(1, Math.ceil((set.count * 2) / XF_W));
+    this.xfRows = Math.max(1, Math.ceil(((set.count + 1) * 2) / XF_W));
     this.xfData = new Float32Array(XF_W * this.xfRows * 4);
     gl.bindTexture(gl.TEXTURE_2D, this.xf);
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, XF_W, this.xfRows, 0, gl.RGBA, gl.FLOAT, this.xfData);
@@ -292,6 +308,18 @@ export class Renderer {
     gl.activeTexture(gl.TEXTURE2); gl.bindTexture(gl.TEXTURE_2D, this.shadowTex); gl.uniform1i(u.uShadow, 2);
   }
 
+  private drawBall(vp: Mat4, flash: number, toFloor: boolean) {
+    if (!this.ball.on) return;
+    const gl = this.gl, u = this.use('ball');
+    gl.uniformMatrix4fv(u.uVP, false, vp);
+    gl.uniform4f(u.uBall, this.ball.p[0], this.ball.p[1], this.ball.p[2], this.ball.r);
+    gl.uniform4fv(u.uQ, this.ball.q);
+    gl.uniform1f(u.uToFloor, toFloor ? 1 : 0);
+    gl.uniform1f(u.uFlash, flash);
+    gl.activeTexture(gl.TEXTURE2); gl.bindTexture(gl.TEXTURE_2D, this.shadowTex); gl.uniform1i(u.uShadow, 2);
+    gl.bindVertexArray(this.ballVao); gl.drawArrays(gl.TRIANGLES, 0, this.ballCount);
+  }
+
   private drawWalls() {
     const gl = this.gl;
     if (this.shards) { gl.bindVertexArray(this.wallVao); gl.drawArrays(gl.TRIANGLES, 0, this.wallCount); }
@@ -318,6 +346,7 @@ export class Renderer {
     this.glassUniforms(u, vp, now, flash, true);
     gl.uniform1f(u.uShade, 0.76); this.drawFaces();
     gl.uniform1f(u.uShade, 0.42); this.drawWalls();
+    this.drawBall(vp, flash, true);
     gl.blendEquation(gl.FUNC_ADD); gl.disable(gl.BLEND);
 
     // 2. the room and the crack surfaces
@@ -330,6 +359,7 @@ export class Renderer {
     gl.uniform3fv(u.uCam, cam); gl.uniform1f(u.uFlash, flash);
     gl.activeTexture(gl.TEXTURE2); gl.bindTexture(gl.TEXTURE_2D, this.shadowTex); gl.uniform1i(u.uShadow, 2);
     gl.bindVertexArray(this.room); gl.drawArrays(gl.TRIANGLES, 0, this.roomCount);
+    this.drawBall(vp, flash, false);
     u = this.use('wall');
     this.glassUniforms(u, vp, now, flash, false);
     gl.uniform3fv(u.uCam, cam);

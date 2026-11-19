@@ -1,7 +1,7 @@
 {
   "name": "day-02",
   "private": true,
-  "description": "Shoot a pane of 8 mm glass: each bullet grows a web of cracks, then the pane gives way along them and falls as baked rigid shards",
+  "description": "Shoot a pane of 8 mm glass and watch the cracks run, then kick a football through it: a thousand baked rigid shards",
   "type": "module",
   "scripts": {
     "dev": "vite",
