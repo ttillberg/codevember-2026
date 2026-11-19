@@ -7,13 +7,13 @@ ink: white
 ---
 # 02 / Shatter, demo
 
-How to show this day off: what the clip on the index plays, and the half minute for X. `pnpm grab 02 --clip` and `pnpm grab 02 --x` read this file (see `scripts/clip.mjs`). Coordinates are in a 1200 × 1200 viewport; the pane (0.9 × 0.8 m at this aspect) fills its middle. A press that stays put is a bullet (a drag that goes nowhere), one that travels is a shock wave.
+How to show this day off: what the clip on the index plays, and the half minute for X. `pnpm grab 02 --clip` and `pnpm grab 02 --x` read this file (see `scripts/clip.mjs`). Coordinates are in a 1200 × 1200 viewport; the pane (0.9 × 0.8 m at this aspect) fills its middle. A press that stays put is a bullet (a drag that goes nowhere), one that travels is the shock.
 
 The pane is always the same one (`?seed=7`).
 
-## The index clip: four bullets, then the wave
+## The index clip: four bullets, then the shock
 
-One idea: the whole arc. Four shots, each web stopped by the ones before, a beat, then a swipe from left to right and the front takes the pane with it, with a second of slow motion while the shards are in the air.
+One idea: the whole arc. Four shots, each web stopped by the ones before, a beat, then a swipe and all four holes blow out at once, with a second of slow motion while the shards are in the air.
 
 ```steps
 wait 400
@@ -25,7 +25,7 @@ drag 560,740 561,740 60ms
 wait 700
 drag 820,400 821,400 60ms
 wait 1500
-# the shock wave
+# the shock
 drag 250,600 950,580 250ms
 wait 1100
 # slow motion: a press held while it falls
@@ -36,7 +36,7 @@ drag 600,600 601,600 1500ms
 
 1. **Close up, 0–8 s.** Zoomed in on a bullet hole: the web, the tips creeping, the ticks.
 2. **Back out, more bullets, 8–15 s.**
-3. **The wave, 15–30 s.** A swipe; held in slow motion for most of the fall, then let go.
+3. **The shock, 15–30 s.** A swipe; held in slow motion for most of the fall, then let go.
 
 ```x
 wait 600

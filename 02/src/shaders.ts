@@ -169,7 +169,7 @@ void main() {
 // a face of the glass: what is behind it, bent a little, plus what it mirrors
 export const FACE_FS = COMMON + /* glsl */ `
 in vec3 vW; in vec3 vN; in vec3 vNl; in vec2 vUv; in vec4 vD; flat in vec4 vQ;
-uniform vec3 uCam; uniform mat4 uView; uniform vec2 uRes; uniform float uBend; uniform vec4 uWave;
+uniform vec3 uCam; uniform mat4 uView; uniform vec2 uRes; uniform float uBend;
 uniform sampler2D uScene; uniform sampler2D uMask; uniform vec2 uPane;
 out vec4 o;
 void main() {
@@ -177,10 +177,7 @@ void main() {
   if (m.r > 0.5) discard;
   // float glass is never flat
   vec2 w = vec2(fbm(vUv * 5.0 + 3.0), fbm(vUv * 5.0 + 19.0)) - 0.5;
-  // the shock front: a ridge of pressure that bends what is behind it as it crosses the pane
-  float wv = dot(vUv, uWave.xy) - uWave.z;
-  float ridge = uWave.w * exp(-wv * wv / 0.0012);
-  vec3 N = normalize(vN + rot(vQ, vec3(w * 0.06 + uWave.xy * ridge * sign(wv) * 0.9, 0.0)));
+  vec3 N = normalize(vN + rot(vQ, vec3(w * 0.06, 0.0)));
   vec3 V = normalize(vW - uCam);
   if (dot(N, V) > 0.0) N = -N;
   vec3 Nv = mat3(uView) * N;
@@ -195,7 +192,6 @@ void main() {
   // crushed glass around the hole scatters white
   float frost = m.g * (0.9 + 0.7 * vnoise(vUv * 1500.0));
   c = mix(c, vec3(0.62, 0.68, 0.66) * (0.55 + uFlash * 3.0), clamp(frost, 0.0, 0.85));
-  c += vec3(0.5, 0.6, 0.58) * ridge * 0.35;
   o = vec4(c, 1.0);
 }
 `;

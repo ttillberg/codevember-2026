@@ -78,14 +78,6 @@ export class Sound {
     o.connect(g).connect(this.out!); o.start(t); o.stop(t + 0.2);
   }
 
-  /** Air pushed hard: the shock wave on its way. */
-  whoosh(dur: number) {
-    if (!this.ctx) return;
-    const t = this.ctx.currentTime;
-    this.burst(t, dur + 0.25, 'lowpass', 140, 1500, 0.6, 0.9);
-    this.burst(t + dur, 0.5, 'lowpass', 300, 50, 0.7, 1.2);
-  }
-
   /** The ball goes through the pane. */
   smash(delay: number) {
     if (!this.ctx) return;

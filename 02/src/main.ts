@@ -4,7 +4,7 @@
 // inside the glass. Then, once the pane has taken too much, it is cut into shards along those same cracks
 // (shards.ts), a worker bakes the fall with rigid bodies (sim.worker.ts) and the page plays it back.
 import { Pane, type Impact } from './cracks';
-import { STRIDE, buildShards, type ShardSet } from './shards';
+import { buildShards, type ShardSet } from './shards';
 import { Renderer, lookAt, perspective } from './render';
 import { Sound } from './audio';
 import type { BakeRequest, FramesMessage } from './sim.worker';
@@ -74,7 +74,7 @@ function newPane() {
   shots = 0;
   state = 'intact';
   set = null;
-  ball.on = false; waveOn = false; waveRel = null; drawnNodes.clear(); renderer.wave = [1, 0, 0, 0];
+  ball.on = false; shocked = false;
   frames = []; hits = []; bakeDone = false;
   run++;
   const s = 2048 / Math.max(W, H);
@@ -93,7 +93,7 @@ function setHint() {
     : state === 'falling' ? (touch ? 'Hold to slow it down' : 'Hold to slow it down')
     : state === 'doomed' ? ''
     : shots === 0 ? (touch ? 'Tap the glass to shoot' : 'Click the glass to shoot')
-    : shots < 3 ? (touch ? 'Swipe: a shock wave' : 'Drag: a shock wave. Space: a football')
+    : shots < 3 ? (touch ? 'Swipe: every hole blows out' : 'Drag: every hole blows out. Space: a football')
     : '';
 }
 
@@ -153,7 +153,6 @@ function shoot(x: number, y: number) {
   if (x < 0 || y < 0 || x > pane.W || y > pane.H || pane.inHole(x, y)) return; // through a hole, or wide
   const res = pane.shoot(x, y, now, 0.75 + Math.random() * 0.6);
   renderer.addCracks(pane, res.segs);
-  for (const sg of res.segs) for (const nd of [sg.a, sg.b]) drawnNodes.add(`${Math.round(pane.nx[nd] * 1e5)},${Math.round(pane.ny[nd] * 1e5)}`);
   drawMask(res.impact);
   lastImpact = res.impact;
   shots++;
@@ -199,65 +198,42 @@ function kick(x: number, y: number) {
   renderer.setShards(set);
   frames = []; hits = []; bakeDone = false;
   fallAt = at;
-  const req: BakeRequest = { type: 'bake', run: ++run, bodies: set.bodies, impact: [hit[0], hit[1]], width: pane.W, y0: Y0, seed, ball: { p: hit, v, w: ball.w, r: BALL_R } };
+  const req: BakeRequest = { type: 'bake', run: ++run, bodies: set.bodies, impacts: [[hit[0], hit[1]]], width: pane.W, y0: Y0, seed, balls: [{ p: hit, v, w: ball.w, r: BALL_R }] };
+  shockAt = [[hit[0], hit[1]]];
   worker.postMessage(req);
   setHint();
 }
 
-/** A swipe: a shock wave that crosses the pane the way the finger went and takes everything with it.
- *  Like the ball it is known before it arrives, so the pane is cut and baked while the air gathers. */
-const WAVE_SPEED = 9; // m/s over the pane, in the time of the fall
-let waveOn = false;
-let waveMin = 0;
+/** A swipe: a shock, at once. It is as if a ball nobody sees went through every bullet hole at the same
+ *  instant: each hole gets a blunt blow, the pane is cut small, and one heavy sphere per hole goes into the sim. */
 function shock(ax: number, ay: number, bx: number, by: number) {
   if (state !== 'intact') return;
-  let dx = bx - ax, dy = by - ay;
-  const l = Math.hypot(dx, dy);
-  if (l < 1e-4) return;
-  dx /= l; dy /= l;
   state = 'doomed';
-  const lead = 0.3;
-  sound.whoosh(lead); sound.smash(lead + 0.05);
-  // a few blunt blows where the pressure finds a weakness, then everything is cut small. None of it is
-  // drawn in the standing pane (their time never comes): the cracks show as the front reaches them
-  const never = 1e9;
-  for (let i = 0; i < 4; i++) {
-    const res = pane.shoot(pane.W * (0.12 + 0.76 * pane.rand()), pane.H * (0.12 + 0.76 * pane.rand()), never, 1.1, true);
-    res.impact.r = 0;
+  // where the bullets went; with none, where the swipe was
+  const at = pane.impacts.length ? pane.impacts.map((im) => [im.x, im.y]) : [[(ax + bx) / 2, (ay + by) / 2]];
+  const lead = 0.06; // just long enough for the worker to hand back its first frames
+  sound.smash(lead);
+  const never = 1e9; // the pane is replaced by its shards before any of this would be drawn
+  const energy = Math.max(0.9, 2.4 / Math.sqrt(at.length));
+  for (const [x, y] of at) {
+    const cx = Math.min(pane.W - 0.02, Math.max(0.02, x)), cy = Math.min(pane.H - 0.02, Math.max(0.02, y));
+    pane.shoot(cx, cy, never, energy, true).impact.r = 0;
   }
   pane.finish(never, 0.0022, 0);
   set = buildShards(pane, Y0);
-  // when the front reaches each shard
-  const n = set.count;
-  const rel = new Float32Array(n);
-  let min = Infinity;
-  const proj = (i: number) => (set!.bodies[i].c[0] + pane.W / 2) * dx + (set!.bodies[i].c[1] - Y0) * dy;
-  for (let i = 0; i < n; i++) min = Math.min(min, proj(i));
-  for (let i = 0; i < n; i++) rel[i] = Math.max(0, (proj(i) - min) / WAVE_SPEED + (Math.random() - 0.5) * 0.008);
-  // the bullets' cracks are already there; the new ones are born with the front
-  const old = new Set<string>();
-  const key = (u: number, v: number) => `${Math.round(u * 1e5)},${Math.round(v * 1e5)}`;
-  for (const k of drawnNodes) old.add(k);
-  const wl = set.walls;
-  for (let i = 0; i < wl.length; i += STRIDE * 6) {
-    const known = old.has(key(wl[i + 6], wl[i + 7])) && old.has(key(wl[i + STRIDE + 6], wl[i + STRIDE + 7]));
-    if (known) continue;
-    const t = rel[wl[i + 10]];
-    for (let k = 0; k < 6; k++) wl[i + k * STRIDE + 9] = t - 0.012;
-  }
   renderer.setShards(set);
-  waveOn = true; waveMin = min;
-  renderer.wave = [dx, dy, min - 0.3, 1];
   frames = []; hits = []; bakeDone = false;
   fallAt = now + lead;
-  const req: BakeRequest = { type: 'bake', run: ++run, bodies: set.bodies, impact: [0, 0], width: pane.W, y0: Y0, seed, ball: { p: [0, 0.2, 60], v: [0, 0, 0], w: [0, 0, 0], r: BALL_R }, wave: { dir: [dx, dy], release: rel } };
+  shocked = true;
+  const impacts = at.map(([x, y]) => [x - pane.W / 2, y + Y0] as [number, number]);
+  const balls = impacts.map(([x, y]) => ({ p: [x, y, BALL_R + 0.012], v: [(Math.random() - 0.5) * 3, (Math.random() - 0.5) * 3, -KICK], w: [0, 0, 0], r: BALL_R }));
+  shockAt = impacts;
+  const req: BakeRequest = { type: 'bake', run: ++run, bodies: set.bodies, impacts, width: pane.W, y0: Y0, seed, balls };
   worker.postMessage(req);
-  waveRel = rel;
   setHint();
 }
-let waveRel: Float32Array | null = null;
-/** both ends of every crack drawn so far, to tell old cracks from the ones the wave makes */
-const drawnNodes = new Set<string>();
+let shocked = false;
+let shockAt: [number, number][] = [];
 
 /** The ball before it hits: a throw, backwards from where it will land. */
 function flyBall() {
@@ -282,16 +258,15 @@ function startFall() {
   state = 'falling';
   playhead = 0; lastHitFrame = 0;
   if (ball.on) { speed = ballSlow; recoil = 1.6; playhead = Math.max(0, now - ball.at) * ballSlow; }
-  if (waveOn) { speed = 0.3; recoil = 1.2; }
+  if (shocked) { speed = 0.2; recoil = 1.6; flash = 0.35; }
   renderer.shards = true;
   renderer.setPose(frames[0], frames[0], 0);
   // dust comes off every crack as the pane lets go
-  const ix = lastImpact ? lastImpact.x - pane.W / 2 : 0, iy = lastImpact ? lastImpact.y + Y0 : 0.4;
   for (let i = 0; i < 3200; i++) {
-    const bi = (Math.random() * set.count) | 0;
-    const b = set.bodies[bi];
-    const d = Math.hypot(b.c[0] - ix, b.c[1] - iy);
-    dust(b.c[0] + gauss() * 0.02, b.c[1] + gauss() * 0.02, -T / 2, gauss() * 0.5, gauss() * 0.5, gauss() * 0.8 - 1.2 * Math.exp(-d / 0.25) * 4, 1 + Math.random() * 2.5, waveRel ? waveRel[bi] / 0.3 + Math.random() * 0.1 : d / 7 + Math.random() * 0.1);
+    const b = set.bodies[(Math.random() * set.count) | 0];
+    let d = Infinity;
+    for (const [ix, iy] of shockAt) d = Math.min(d, Math.hypot(b.c[0] - ix, b.c[1] - iy));
+    dust(b.c[0] + gauss() * 0.02, b.c[1] + gauss() * 0.02, -T / 2, gauss() * 0.5, gauss() * 0.5, gauss() * 0.8 - 1.2 * Math.exp(-d / 0.25) * 4, 1 + Math.random() * 2.5, d / 7 + Math.random() * 0.1);
   }
   setHint();
 }
@@ -430,7 +405,6 @@ function frame(ms: number) {
 
   if (state === 'doomed' && now >= fallAt && (bakeDone || frames.length > 5)) startFall();
   renderer.ball.on = ball.on && showBall;
-  if (waveOn) renderer.wave[2] = state === 'falling' ? waveMin + playhead * WAVE_SPEED : waveMin - 0.3 * Math.max(0, fallAt - now) / 0.3;
   if (ball.on && state === 'doomed') flyBall();
   if (state === 'falling') {
     speed += ((slow ? 0.07 : PACE) - speed) * Math.min(1, dt * (slow || speed > PACE ? 10 : 1.6));

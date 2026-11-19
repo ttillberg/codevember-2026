@@ -48,8 +48,6 @@ export class Renderer {
   shards = false;
   /** the football: where it is and how it is turned, or off */
   ball = { on: false, p: [0, 0, 0], q: [0, 0, 0, 1], r: 0.11 };
-  /** the shock front over the pane: direction x, y, how far along it is (metres), strength */
-  wave = [1, 0, 0, 0];
   private ballVao!: WebGLVertexArrayObject; private ballCount = 0;
   pane = { W: 1, H: 1, y0: 0, T: 0.008 };
   static SHADOW = 2048;
@@ -385,7 +383,6 @@ export class Renderer {
     gl.uniformMatrix4fv(u.uView, false, view);
     gl.uniform2f(u.uRes, this.w, this.h);
     gl.uniform1f(u.uBend, 0.014 * proj[5] * 0.5);
-    gl.uniform4fv(u.uWave, this.wave);
     gl.uniform1i(u.uScene, 3);
     this.drawFaces();
     gl.disable(gl.DEPTH_TEST);
