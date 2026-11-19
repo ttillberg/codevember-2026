@@ -1,27 +1,19 @@
-// Shared by the simulation and the picture. main.ts puts GX, GY, GZ, PAL, SOFT and BG in front.
-// Whoever includes this declares `cells`.
-
-const AIR = 0u;
-const WATER = 1u;
-const SED = 2u;
-const ROCK = 3u;
-const GROUND = 4u;
-const PLANT = 5u; // only a picture, like water: stamped from what grows (sim.wgsl grow and stamp)
-const WALL = 7u;
-const BONE = 13u; // a rock layer: what lies buried (world.ts)
+// Shared by the simulation and the picture. main.ts puts a header in front: the grid's size, the
+// block's place in it (CUBE, TOP, LO), the cell types, the tools, the layers that are not rock,
+// and PAL, SOFT and BG. Whoever includes this declares `cells`, `u` and `pk`.
 
 struct U {
-  camO: vec4f, // where the middle of the screen starts, far outside the grid. w: the pointer, x in picture pixels
-  camR: vec4f, // right, w: voxels per pixel
-  camU: vec4f, // up. w: the pointer, y in picture pixels
-  camF: vec4f, // forward, every ray's direction (orthographic)
-  res: vec4f,  // width, height, time, wind radius
-  sun: vec4f,  // towards the light, w: the radius of the hose, or of the scratch when that is in hand
-  rayO: vec4f, // pointer ray, w: tool held down
-  rayD: vec4f, // the line of sight, also the way the hose goes. w: tool (1 rain, 2 hose, 3 wind, 4 scratch)
-  wind: vec4f, // water: gravity, the least flow that wears, inertia. w: rain radius
-  p0: vec4f,   // erosion rate, the depth of a film that clings, evaporation, rain rate
-  p1: vec4f,   // wind rate, hose rate (or the scratch's), support limit, pointer over the scene
+  camO: vec4f,    // where the middle of the screen starts, far outside the grid
+  camR: vec4f,    // right, w: voxels per pixel
+  camU: vec4f,    // up
+  camF: vec4f,    // forward: every ray's direction (orthographic), so the line of sight, and the way the jets go
+  res: vec4f,     // width, height, time
+  sun: vec4f,     // towards the light
+  rayO: vec4f,    // where the pointer's ray starts
+  pointer: vec4f, // x, y in picture pixels, over the scene, tool held down
+  tool: vec4f,    // the tool in hand (RAIN, HOSE, WIND, SCRATCH), its radius in voxels, its rate
+  water: vec4f,   // gravity, the least flow that wears, inertia, the depth of a film that clings
+  wear: vec4f,    // erosion rate, evaporation, support limit
 };
 
 struct Pick {
@@ -39,6 +31,14 @@ struct Hit {
   wcell: vec3i,
 };
 
+fn toolNow() -> u32 { return u32(u.tool.x); }
+// the tool is held down, and on something
+fn working() -> bool { return u.pointer.w > 0.5 && pk.pos.w > 0.5; }
+
+// a cell's bits (world.ts has the list)
+fn ty(c: u32) -> u32 { return c & 7u; }
+fn layerOf(c: u32) -> u32 { return (c >> 3u) & 15u; }
+
 fn idx(p: vec3i) -> u32 {
   return u32(p.x + GX * (p.z + GZ * p.y));
 }
@@ -51,6 +51,14 @@ fn pcg(v: u32) -> u32 {
   let x = v * 747796405u + 2891336453u;
   let w = ((x >> ((x >> 28u) + 4u)) ^ x) * 277803737u;
   return (w >> 22u) ^ w;
+}
+
+// a hash as a number, 0..1
+fn unit(h: u32) -> f32 { return f32(h >> 8u) / 16777216.0; }
+
+// one number per cell, always the same one
+fn grain(p: vec3i) -> f32 {
+  return unit(pcg(u32(p.x) + pcg(u32(p.y) + pcg(u32(p.z)))));
 }
 
 // The wind is a hair dryer in the hand of whoever is looking: it blows straight in along the
@@ -96,7 +104,7 @@ fn march(ro: vec3f, rd: vec3f) -> Hit {
   for (var i = 0; i < 560; i++) {
     if (!inGrid(cell)) { break; }
     let c = cells[idx(cell)];
-    let t = c & 7u;
+    let t = ty(c);
     if (t == WATER) {
       if (h.water == 0.0) { h.wn = n; h.wcell = cell; }
       h.water += 1.0;

@@ -10,8 +10,8 @@
 
 const TRAVEL = 140; // px of drag for the whole range, the gauge's height
 
-export type BarTool = { id: number; name: string; key: string; icon: string };
-export type BarKnob = {
+type BarTool = { id: number; name: string; key: string; icon: string };
+type BarKnob = {
   name: string;
   key?: string; // how to set it from the scene, shown in its tip
   face(t: number): string; // the button's picture at this value, an svg
@@ -144,16 +144,17 @@ export function buildBar(host: HTMLElement, tools: BarTool[], knobs: BarKnob[], 
     });
   }
 
+  // the values changed from outside the bar (a drag on the scene, another tool)
+  const refresh = () => {
+    for (const draw of redraw) draw();
+  };
   return {
     // show which tool is picked, and the knobs at its values
     select(id: number) {
       for (const [i, b] of buttons) b.classList.toggle('on', i === id);
-      for (const draw of redraw) draw();
+      refresh();
     },
-    // the values changed from outside the bar (a drag on the scene)
-    refresh() {
-      for (const draw of redraw) draw();
-    },
+    refresh,
     // a knob's gauge held open from outside, while its value is dragged on the scene
     peek(name: string, open: boolean) {
       peeks.get(name)?.(open);

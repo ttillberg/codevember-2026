@@ -10,13 +10,9 @@ fn vs(@builtin(vertex_index) i: u32) -> @builtin(position) vec4f {
   return vec4f(p * 2.0 - 1.0, 0.0, 1.0);
 }
 
-fn h3(p: vec3i) -> f32 {
-  return f32(pcg(u32(p.x) + pcg(u32(p.y) + pcg(u32(p.z)))) >> 8u) / 16777216.0;
-}
-
 fn solid(p: vec3i) -> f32 {
   if (!inGrid(p)) { return 0.0; }
-  return f32((cells[idx(p)] & 7u) >= SED);
+  return f32(ty(cells[idx(p)]) >= SED);
 }
 
 // The backdrop: a sky, cool and pale at the top, the paper of the page in the middle, warm
@@ -43,17 +39,16 @@ const WATER_SHALLOW = vec3f(0.16, 0.62, 0.66);
 const WATER_DEEP = vec3f(0.04, 0.33, 0.42);
 
 fn h2(p: vec2f, t: u32) -> f32 {
-  return f32(pcg(u32(p.x) + pcg(u32(p.y) + pcg(t))) >> 8u) / 16777216.0;
+  return unit(pcg(u32(p.x) + pcg(u32(p.y) + pcg(t))));
 }
 
 // The end of the hose's jet, drawn over the picture. The jet goes along the line of sight, so
 // all there is to see of it is where it lands: a white core the width of the jet, and spray
 // flying out from it in streaks, thinning with distance.
 fn hoseJet(col: vec3f, px: vec2f) -> vec3f {
-  if (u.rayO.w < 0.5 || u32(u.rayD.w) != 2u || pk.pos.w < 0.5) { return col; }
-  let b = vec2f(u.camO.w, u.camU.w);
-  let core = max(u.sun.w / u.camR.w * 0.45, 2.0); // the jet's radius where it lands, in pixels
-  let d = px - b;
+  if (!working() || toolNow() != HOSE) { return col; }
+  let core = max(u.tool.y / u.camR.w * 0.45, 2.0); // the jet's radius where it lands, in pixels
+  let d = px - u.pointer.xy;
   let r = length(d);
   if (r > core * 4.5) { return col; }
   let tick = u32(u.res.z * 30.0);
@@ -81,11 +76,11 @@ fn fs(@builtin(position) fc: vec4f) -> @location(0) vec4f {
 
   var col = backdrop(px);
   if (h.hit) {
-    let t = h.c & 7u;
-    var bcol = PAL[(h.c >> 3u) & 15u];
+    let t = ty(h.c);
+    var bcol = PAL[layerOf(h.c)];
     if (t != GROUND) {
       bcol *= 0.88 + 0.05 * f32((h.c >> 8u) & 3u);
-      bcol *= 0.96 + 0.08 * h3(h.cell);
+      bcol *= 0.96 + 0.08 * grain(h.cell);
     }
     if (t == SED) { bcol = mix(bcol, vec3f(0.86, 0.68, 0.52), 0.3); }
 
@@ -110,28 +105,27 @@ fn fs(@builtin(position) fc: vec4f) -> @location(0) vec4f {
 
     // the brush, drawn on the rock
     if (pk.pos.w > 0.5) {
-      let tool = u32(u.rayD.w);
-      if (tool == 3u) {
+      let tool = toolNow();
+      if (tool == WIND) {
         // The wind blows straight in, so what there is to see of it is the air spreading over
         // what it hits: dashes running outward from where it is aimed, fainter where it is
         // weaker. Faint while only aimed, plain while it blows.
-        let on = windOn(cen, pk.pos.xyz, u.rayD.xyz, u.res.w);
-        let d = px - vec2f(u.camO.w, u.camU.w);
+        let on = windOn(cen, pk.pos.xyz, u.camF.xyz, u.tool.y);
+        let d = px - u.pointer.xy;
         let reach = length(d) * u.camR.w; // in voxels, on the screen
         let turn = (atan2(d.y, d.x) + 3.1416) * 14.0;
         let spoke = floor(turn);
         let run = fract(reach * 0.035 - u.res.z * 1.6 + h2(vec2f(spoke, 2.0), 5u));
         // thin spokes, or far out a dash is a slab
         if (h2(vec2f(spoke, 7.0), 11u) < 0.6 && run < 0.22 && fract(turn) * reach < 1.6) {
-          col = mix(col, vec3f(1.0), on * select(0.14, 0.38, u.rayO.w > 0.5));
+          col = mix(col, vec3f(1.0), on * select(0.14, 0.38, u.pointer.w > 0.5));
         }
       } else {
-        var r = u.sun.w;
         var d = distance(cen, pk.pos.xyz);
         var show = true;
         // rain falls in a column: its ring only on what faces up
-        if (tool == 1u) { r = u.wind.w; d = distance(cen.xz, pk.pos.xz); show = h.n.y > 0.5; }
-        if (show && abs(d - r) < 0.6) { col = mix(col, vec3f(1.0), 0.45); }
+        if (tool == RAIN) { d = distance(cen.xz, pk.pos.xz); show = h.n.y > 0.5; }
+        if (show && abs(d - u.tool.y) < 0.6) { col = mix(col, vec3f(1.0), 0.45); }
       }
     }
   }

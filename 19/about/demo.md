@@ -17,7 +17,7 @@ One idea: what rain does to it. It opens on a block that is well hollowed out al
 What the clip itself shows is not a flood: a narrow, lighter shower drawn slowly across the top, the water finding its way down through what is already cut, over the lips and off the sides, and taking a little more with it. It does not loop: wearing only goes one way, the clip jumps back to the start. The still is the last frame.
 
 ```init
-localStorage.setItem('codevember-19-brush', JSON.stringify({ force: [0, 0.7, 0.4, 0.7, 0.4], radius: [0, 42, 7, 50, 6] }));
+localStorage.setItem('codevember-19-brush', JSON.stringify({ force: [0, 0.7, 0.75, 0.7, 0.6], radius: [0, 42, 7, 50, 11.2] }));
 ```
 
 ```setup
@@ -44,7 +44,7 @@ Thirty seconds, all four tools, all of them hard: everything at full force (the 
 5. **Round the back, 22–30 s.** Two quarter turns, and from behind a last burst of rain (`1`), so it ends on water running through what was cut.
 
 ```x-setup
-js erosion.level(1, 1); erosion.level(2, 1); erosion.level(3, 1); erosion.level(4, 1); erosion.brush(1, 42)
+js erosion.level(1, 1); erosion.level(2, 1); erosion.level(3, 1); erosion.level(4, 1); erosion.brush(1, 42); erosion.brush(4, 6)
 drag 600,330 606,333 2000ms
 ```
 

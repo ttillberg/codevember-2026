@@ -3,16 +3,19 @@
 import commonSrc from './common.wgsl?raw';
 import simSrc from './sim.wgsl?raw';
 import renderSrc from './render.wgsl?raw';
-import { GX, GY, GZ, GROUND_H, CUBE, LAYERS, GREEN, BONE_LAYER, BONE_COLOR, BONE_SOFT, GROUND_LAYER, GROUND_COLOR, buildWorld } from './world';
+import { GX, GY, GZ, GROUND_H, CUBE, X0, Z0, TOP, TYPES, LAYERS, EXTRA, EXTRA_LAYERS, buildWorld } from './world';
 import { buildBar, forceFace, ICONS, sizeFace } from './bar';
 
 const query = new URLSearchParams(location.search);
 // ?clean: no page furniture, the scene alone (screengrabs, clips)
-if (query.has('clean')) document.body.classList.add('clean');
+const clean = query.has('clean');
+document.body.classList.toggle('clean', clean);
 
 const BACKDROP = '#e8e3da';
+// the tools, by the number the shaders, the keys and what is saved know them by
+const TOOL = { RAIN: 1, HOSE: 2, WIND: 3, SCRATCH: 4 };
 
-// Tuning. On window.P in dev.
+// Tuning. On window.P, to play with from the console.
 const P = {
   steps: 4, // simulation steps per frame, for the falling sediment and for the water
   erode: 0.1, // how fast running water wears its bed, at level 40 (sim.wgsl settle has the rest of the sum)
@@ -21,7 +24,7 @@ const P = {
   evap: 0.0004, // depth a film of water loses per step. Water with depth to it does not dry (sim.wgsl settle)
   rainRate: 0.006, // depth of rain per step
   hoseRate: 0.55, // how hard the hose wears what it lands on, like windRate
-  scratchRate: 0.9, // and the scratch: at the 40 it starts on, one pass takes the surface clean off
+  scratchRate: 0.9, // and the scratch: at level 40, one pass takes the surface clean off
   gravity: 0.2, // how hard a difference in level pushes the water
   inertia: 0.9, // how much of its flow the water keeps from one step to the next
   cling: 0.06, // the depth under which water is a film that hardly runs
@@ -53,22 +56,21 @@ context.configure({ device, format, alphaMode: 'opaque' });
 // ---------- shaders ----------
 
 const rgb = (hex: string) => [1, 3, 5].map((i) => (parseInt(hex.slice(i, i + 2), 16) / 255).toFixed(4));
-const pal: string[] = [];
-const soft: string[] = [];
-for (let i = 0; i < 16; i++) {
-  const layer = LAYERS[i];
-  const special = i === GROUND_LAYER ? GROUND_COLOR : i === BONE_LAYER ? BONE_COLOR : GREEN[i];
-  pal.push(`vec3f(${rgb(layer?.color ?? special ?? '#ff00ff')})`);
-  soft.push((layer?.soft ?? (i === BONE_LAYER ? BONE_SOFT : 0)).toFixed(3));
-}
+const layers = Array.from({ length: 16 }, (_, i) => LAYERS[i] ?? EXTRA_LAYERS[i] ?? { color: '#ff00ff', soft: 0 });
+const ids = (o: Record<string, number>) => Object.entries(o).map(([name, id]) => `const ${name} = ${id}u;`).join('\n');
+// what the shaders are told (common.wgsl): the grid, the block in it, and the names of things
 const header = `
-const CUBE: i32 = ${CUBE};
-const TOP: i32 = ${GROUND_H + CUBE};
 const GX: i32 = ${GX};
 const GY: i32 = ${GY};
 const GZ: i32 = ${GZ};
-const PAL = array<vec3f, 16>(${pal.join(', ')});
-const SOFT = array<f32, 16>(${soft.join(', ')});
+const CUBE: i32 = ${CUBE};
+const TOP: i32 = ${TOP};
+const LO = vec3i(${X0}, ${GROUND_H}, ${Z0});
+${ids(TYPES)}
+${ids(EXTRA)}
+${ids(TOOL)}
+const PAL = array<vec3f, 16>(${layers.map((l) => `vec3f(${rgb(l.color)})`).join(', ')});
+const SOFT = array<f32, 16>(${layers.map((l) => l.soft.toFixed(3)).join(', ')});
 const BG = vec3f(${rgb(BACKDROP)});
 `;
 
@@ -85,7 +87,7 @@ for (const [name, m] of [['sim', simModule], ['render', renderModule]] as const)
 const cellBuf = device.createBuffer({ size: GX * GY * GZ * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC });
 const uData = new Float32Array(11 * 4);
 const uBuf = device.createBuffer({ size: uData.byteLength, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
-const stepData = new Uint32Array(8);
+const stepData = new Uint32Array(4);
 const stepBuf = device.createBuffer({ size: stepData.byteLength, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
 const pickBuf = device.createBuffer({ size: 32, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC });
 // the highest rock of every column: only what is open to the sky can be worked on
@@ -108,33 +110,16 @@ function reset(seed = (Math.random() * 1e9) | 0) {
 }
 reset(Number(query.get('seed') ?? 19));
 
-const simLayout = device.createBindGroupLayout({
-  entries: [
-    { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } },
-    { binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'uniform' } },
-    { binding: 2, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'uniform' } },
-    { binding: 3, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } },
-    { binding: 4, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } },
-    { binding: 5, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } },
-    { binding: 6, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } },
-    { binding: 7, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } },
-    { binding: 8, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } },
-  ],
-});
-const simGroup = device.createBindGroup({
-  layout: simLayout,
-  entries: [
-    { binding: 0, resource: { buffer: cellBuf } },
-    { binding: 1, resource: { buffer: uBuf } },
-    { binding: 2, resource: { buffer: stepBuf } },
-    { binding: 3, resource: { buffer: pickBuf } },
-    { binding: 4, resource: { buffer: skyBuf } },
-    { binding: 5, resource: { buffer: colBuf } },
-    { binding: 6, resource: { buffer: fluxBuf } },
-    { binding: 7, resource: { buffer: ranBuf } },
-    { binding: 8, resource: { buffer: vegBuf } },
-  ],
-});
+// a bind group and its layout from one list, the bindings in the order the shader numbers them
+function bind(visibility: number, buffers: [GPUBuffer, GPUBufferBindingType][]) {
+  const layout = device.createBindGroupLayout({ entries: buffers.map(([, type], binding) => ({ binding, visibility, buffer: { type } })) });
+  const group = device.createBindGroup({ layout, entries: buffers.map(([buffer], binding) => ({ binding, resource: { buffer } })) });
+  return { layout, group };
+}
+const { layout: simLayout, group: simGroup } = bind(GPUShaderStage.COMPUTE, [
+  [cellBuf, 'storage'], [uBuf, 'uniform'], [stepBuf, 'uniform'], [pickBuf, 'storage'], [skyBuf, 'storage'],
+  [colBuf, 'storage'], [fluxBuf, 'storage'], [ranBuf, 'storage'], [vegBuf, 'storage'],
+]);
 const simPipelineLayout = device.createPipelineLayout({ bindGroupLayouts: [simLayout] });
 const compute = (entryPoint: string) =>
   device.createComputePipeline({ layout: simPipelineLayout, compute: { module: simModule, entryPoint } });
@@ -147,21 +132,9 @@ const settlePipe = compute('settle');
 const growPipe = compute('grow');
 const stampPipe = compute('stamp');
 
-const renderLayout = device.createBindGroupLayout({
-  entries: [
-    { binding: 0, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'read-only-storage' } },
-    { binding: 1, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },
-    { binding: 2, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'read-only-storage' } },
-  ],
-});
-const renderGroup = device.createBindGroup({
-  layout: renderLayout,
-  entries: [
-    { binding: 0, resource: { buffer: cellBuf } },
-    { binding: 1, resource: { buffer: uBuf } },
-    { binding: 2, resource: { buffer: pickBuf } },
-  ],
-});
+const { layout: renderLayout, group: renderGroup } = bind(GPUShaderStage.FRAGMENT, [
+  [cellBuf, 'read-only-storage'], [uBuf, 'uniform'], [pickBuf, 'read-only-storage'],
+]);
 const renderPipe = device.createRenderPipeline({
   layout: device.createPipelineLayout({ bindGroupLayouts: [renderLayout] }),
   vertex: { module: renderModule, entryPoint: 'vs' },
@@ -208,7 +181,7 @@ const target: V3 = [GX / 2, GROUND_H + CUBE * 0.42, GZ / 2];
 const cam = { o: [0, 0, 0] as V3, r: [1, 0, 0] as V3, u: [0, 1, 0] as V3, f: [0, 0, -1] as V3, inv: 1 };
 const nz = (v: number) => (Math.abs(v) < 1e-5 ? 1e-5 : v); // the grid walk divides by these
 
-function updateCamera() {
+function updateCamera(yaw: number) {
   const cp = Math.cos(pitch);
   const sp = Math.sin(pitch);
   const cy = Math.cos(yaw);
@@ -235,7 +208,6 @@ function updateCamera() {
   const pxPerCss = W / Math.max(1, window.innerWidth);
   const room = H / 2 - 100 * pxPerCss - foot / cam.inv; // 100 CSS px: the bar and the air over it
   // (not in ?clean: with no title and no bar to keep clear of, the block sits in the middle)
-  const clean = document.body.classList.contains('clean');
   const lower = clean ? 0 : Math.max(0, Math.min(H * (upright ? 0.08 : P.lower), room)) * cam.inv;
   cam.o = [cam.o[0] + cam.u[0] * lower, cam.o[1] + cam.u[1] * lower, cam.o[2] + cam.u[2] * lower];
 }
@@ -250,8 +222,8 @@ function rayOrigin(clientX: number, clientY: number): V3 {
 
 // does a ray along the view meet the rock's box? Decides between the tool and turning the table.
 function overRock(o: V3) {
-  const lo: V3 = [GX / 2 - CUBE / 2 - 6, 0, GZ / 2 - CUBE / 2 - 6];
-  const hi: V3 = [GX / 2 + CUBE / 2 + 6, GROUND_H + CUBE + 6, GZ / 2 + CUBE / 2 + 6];
+  const lo: V3 = [X0 - 6, 0, Z0 - 6];
+  const hi: V3 = [X0 + CUBE + 6, TOP + 6, Z0 + CUBE + 6];
   let tn = -Infinity;
   let tf = Infinity;
   for (let i = 0; i < 3; i++) {
@@ -265,7 +237,7 @@ function overRock(o: V3) {
 
 // ---------- pointer and tools ----------
 
-let tool = 1; // 1 rain, 2 hose, 3 wind, 4 scratch
+let tool = TOOL.RAIN;
 let hover = false;
 let held = false;
 let turning = false;
@@ -281,38 +253,40 @@ const sizeRing = document.querySelector<HTMLElement>('.size-ring')!;
 
 // A tool has two things to set, each tool its own, both remembered from one visit to the next,
 // both on the same two knobs in the bar whichever tool is in hand.
-// Its force, 0..1: how hard it works, 1 at the 40 it starts on, 10 times that at 100, a fifth at
+// Its force, 0..1: how hard it works. That is a power of 1 at 40, 10 times that at 100, a fifth at
 // 0. For rain the hard work is the wearing, not the amount of water: ten times the water only
 // drowns the rock, deep water shelters what is under it. So its force turns up how fast running
 // water wears, and the rain itself only a little.
 // And its size, the brush's radius in voxels: the knob, or cmd + drag on the scene.
-const size = [0, 0.4, 0.4, 0.4, 0.4];
-const RADIUS = [
-  { min: 0, max: 0, start: 0 },
-  { min: 5, max: 45, start: 13 }, // rain
-  { min: 2, max: 16, start: 7 }, // hose
-  { min: 12, max: 90, start: 40 }, // wind
-  { min: 1.5, max: 14, start: 6 }, // scratch
+// (min, max, start: the radius. force: what it starts on. rate: what the shader gets at this much power, from the tuning above.)
+type Tool = { id: number; name: string; icon: string; min: number; max: number; start: number; force: number; rate(power: number): number };
+const TOOLS: Tool[] = [
+  { id: TOOL.RAIN, name: 'Rain', icon: ICONS.rain, min: 5, max: 45, start: 13, force: 0.75, rate: (p) => P.rainRate * p ** 0.3 },
+  { id: TOOL.HOSE, name: 'Hose', icon: ICONS.water, min: 2, max: 16, start: 7, force: 0.75, rate: (p) => P.hoseRate * p },
+  { id: TOOL.WIND, name: 'Wind', icon: ICONS.wind, min: 12, max: 90, start: 40, force: 0.75, rate: (p) => P.windRate * p },
+  { id: TOOL.SCRATCH, name: 'Scratch', icon: ICONS.scratch, min: 1.5, max: 14, start: 11.2, force: 0.6, rate: (p) => P.scratchRate * p }, // big (90 on the knob) and not so hard
 ];
-const brush = RADIUS.map((r) => r.start);
+const toolOf = (id: number) => TOOLS[id - 1];
+// both by the tool's number, as they are saved (nothing at 0)
+const force = [0, ...TOOLS.map((t) => t.force)];
+const brush = [0, ...TOOLS.map((t) => t.start)];
 const BRUSH = 'codevember-19-brush';
 try {
   const saved = JSON.parse(localStorage.getItem(BRUSH) ?? 'null');
-  for (let i = 1; i <= 4; i++) {
-    if (saved?.force?.[i] >= 0 && saved.force[i] <= 1) size[i] = saved.force[i];
-    // (a scratch saved at 3 or a hose at 4 is an old default, kept by nobody's choice: it takes the new one)
-    const old = (i === 4 && saved?.radius?.[i] === 3) || (i === 2 && saved?.radius?.[i] === 4);
-    if (!old && saved?.radius?.[i] >= RADIUS[i].min && saved.radius[i] <= RADIUS[i].max) brush[i] = saved.radius[i];
+  for (const { id, min, max } of TOOLS) {
+    // (a force saved at 0.4, a scratch at 3 or 6 or a hose at 4 is an old default, kept by nobody's choice: it takes the new one)
+    if (saved?.force?.[id] >= 0 && saved.force[id] <= 1 && saved.force[id] !== 0.4) force[id] = saved.force[id];
+    const old = (id === TOOL.SCRATCH && [3, 6].includes(saved?.radius?.[id])) || (id === TOOL.HOSE && saved?.radius?.[id] === 4);
+    if (!old && saved?.radius?.[id] >= min && saved.radius[id] <= max) brush[id] = saved.radius[id];
   }
 } catch { /* no storage, or not ours: the defaults */ }
 const remember = () => {
-  try { localStorage.setItem(BRUSH, JSON.stringify({ force: size, radius: brush })); } catch { /* no storage */ }
+  try { localStorage.setItem(BRUSH, JSON.stringify({ force, radius: brush })); } catch { /* no storage */ }
 };
-const radius = (t: number) => brush[t];
 // the size as the knob has it, 0..1 over the tool's range, evenly by ratio
-const sizeKnob = (t: number) => Math.log(brush[t] / RADIUS[t].min) / Math.log(RADIUS[t].max / RADIUS[t].min);
-const setSizeKnob = (t: number, v: number) => { brush[t] = RADIUS[t].min * (RADIUS[t].max / RADIUS[t].min) ** v; };
-const power = (t: number) => 10 ** (((size[t] ?? 0.4) - 0.4) / 0.6);
+const sizeKnob = (t: number) => Math.log(brush[t] / toolOf(t).min) / Math.log(toolOf(t).max / toolOf(t).min);
+const setSizeKnob = (t: number, v: number) => { brush[t] = toolOf(t).min * (toolOf(t).max / toolOf(t).min) ** v; };
+const power = (t: number) => 10 ** ((force[t] - 0.4) / 0.6);
 
 function showRing() {
   if (!sizing) return;
@@ -327,17 +301,12 @@ function showRing() {
 
 const bar = buildBar(
   document.querySelector<HTMLElement>('#bar')!,
-  [
-    { id: 1, name: 'Rain', key: '1', icon: ICONS.rain },
-    { id: 2, name: 'Hose', key: '2', icon: ICONS.water },
-    { id: 3, name: 'Wind', key: '3', icon: ICONS.wind },
-    { id: 4, name: 'Scratch', key: '4', icon: ICONS.scratch },
-  ],
+  TOOLS.map(({ id, name, icon }) => ({ id, name, icon, key: String(id) })),
   [
     { name: 'Size', key: MAC ? '⌘ drag' : 'Ctrl drag', face: sizeFace, get: () => sizeKnob(tool), put: (v) => { setSizeKnob(tool, v); remember(); } },
-    { name: 'Force', key: MAC ? '⇧⌘ drag' : 'Shift Ctrl drag', face: forceFace, get: () => size[tool], put: (v) => { size[tool] = v; remember(); } },
+    { name: 'Force', key: MAC ? '⇧⌘ drag' : 'Shift Ctrl drag', face: forceFace, get: () => force[tool], put: (v) => { force[tool] = v; remember(); } },
   ],
-  { select: (id) => setTool(id) },
+  { select: setTool },
 );
 function setTool(t: number) {
   tool = t;
@@ -381,7 +350,7 @@ canvas.addEventListener('pointerdown', (e) => {
   hover = true;
   last = { x: e.clientX, y: e.clientY };
   if ((e.metaKey || e.ctrlKey) && e.shiftKey) {
-    forcing = { x: e.clientX, t: size[tool] };
+    forcing = { x: e.clientX, t: force[tool] };
     bar.peek('Force', true);
     setCursor(true);
   } else if (e.metaKey || e.ctrlKey) {
@@ -393,13 +362,13 @@ canvas.addEventListener('pointerdown', (e) => {
 });
 canvas.addEventListener('pointermove', (e) => {
   if (forcing) {
-    size[tool] = Math.min(1, Math.max(0, forcing.t + (e.clientX - forcing.x) / 160));
+    force[tool] = Math.min(1, Math.max(0, forcing.t + (e.clientX - forcing.x) / 160));
     bar.refresh();
     return;
   }
   if (sizing) {
     const k = Math.exp((e.clientX - sizing.x) / 160);
-    brush[tool] = Math.min(RADIUS[tool].max, Math.max(RADIUS[tool].min, sizing.r * k));
+    brush[tool] = Math.min(toolOf(tool).max, Math.max(toolOf(tool).min, sizing.r * k));
     showRing();
     bar.refresh();
     return;
@@ -445,7 +414,7 @@ canvas.addEventListener('wheel', (e) => {
 
 window.addEventListener('keydown', (e) => {
   if (e.metaKey || e.ctrlKey || e.altKey) return;
-  if (e.key >= '1' && e.key <= '4') setTool(Number(e.key));
+  if (toolOf(Number(e.key))) setTool(Number(e.key));
   else if (e.key === 'r' || e.key === 'R') reset();
   else if (e.key === 'ArrowLeft') yaw -= Math.PI / 2;
   else if (e.key === 'ArrowRight') yaw += Math.PI / 2;
@@ -467,10 +436,7 @@ let yawNow = yaw;
 function frame(t: number) {
   // the arrow keys turn a quarter at once: ease into it
   yawNow += (yaw - yawNow) * 0.2;
-  const yawTarget = yaw;
-  yaw = yawNow;
-  updateCamera();
-  yaw = yawTarget;
+  updateCamera(yawNow);
 
   const norm = (v: V3): V3 => {
     const l = Math.hypot(...v);
@@ -483,13 +449,8 @@ function frame(t: number) {
   const rect = canvas.getBoundingClientRect();
   const px = ((ptr.x - rect.left) / rect.width) * W;
   const py = ((ptr.y - rect.top) / rect.height) * H;
-  uData.set([...cam.o, px], 0);
-  uData.set([...cam.r, cam.inv], 4);
-  uData.set([...cam.u, py], 8);
-  uData.set([...cam.f, 0], 12);
-  uData.set([W, H, t / 1000, radius(3)], 16);
   let working = held;
-  if (tool === 4) {
+  if (tool === TOOL.SCRATCH) {
     scratch.frames++;
     const moved = Math.hypot(ptr.x - scratch.at.x, ptr.y - scratch.at.y) > 8;
     working = held && scratch.frames >= (moved ? 3 : 7);
@@ -499,23 +460,33 @@ function frame(t: number) {
       scratch.bite = 0.7 + 0.6 * Math.random();
     }
   }
-  uData.set([...sun, tool === 4 ? radius(4) * scratch.bite : radius(2)], 20);
-  uData.set([...rayOrigin(ptr.x, ptr.y), working ? 1 : 0], 24);
-  uData.set([...cam.f, tool], 28);
-  uData.set([P.gravity, P.minFlow, P.inertia, radius(1)], 32);
-  const wearTo = held && tool === 1 ? power(1) : held && tool === 2 ? 1 : P.calm;
+  const wearTo = held && tool === TOOL.RAIN ? power(tool) : held && tool === TOOL.HOSE ? 1 : P.calm;
   wearing += (wearTo - wearing) * (wearTo > wearing ? 0.2 : 0.03);
-  uData.set([P.erode * wearing, P.cling, P.evap, P.rainRate * power(1) ** 0.3], 36);
-  const jetRate = tool === 4 ? P.scratchRate * power(4) : P.hoseRate * power(2);
-  uData.set([P.windRate * power(3), jetRate, P.supportLimit, hover ? 1 : 0], 40);
+  // struct U in common.wgsl, a vec4 a line
+  uData.set(cam.o, 0);
+  uData.set([...cam.r, cam.inv], 4);
+  uData.set(cam.u, 8);
+  uData.set(cam.f, 12);
+  uData.set([W, H, t / 1000], 16);
+  uData.set(sun, 20);
+  uData.set(rayOrigin(ptr.x, ptr.y), 24);
+  uData.set([px, py, hover ? 1 : 0, working ? 1 : 0], 28);
+  uData.set([tool, brush[tool] * (tool === TOOL.SCRATCH ? scratch.bite : 1), toolOf(tool).rate(power(tool))], 32);
+  uData.set([P.gravity, P.minFlow, P.inertia, P.cling], 36);
+  uData.set([P.erode * wearing, P.evap, P.supportLimit], 40);
   device.queue.writeBuffer(uBuf, 0, uData);
+
+  // one dispatch over every column
+  const columns = (pass: GPUComputePassEncoder, pipe: GPUComputePipeline) => {
+    pass.setPipeline(pipe);
+    pass.dispatchWorkgroups(GX / 8, GZ / 8);
+  };
 
   {
     const enc = device.createCommandEncoder();
     const pass = enc.beginComputePass();
     pass.setBindGroup(0, simGroup);
-    pass.setPipeline(skyPipe);
-    pass.dispatchWorkgroups(GX / 8, GZ / 8);
+    columns(pass, skyPipe);
     pass.setPipeline(pickPipe);
     pass.dispatchWorkgroups(1);
     pass.end();
@@ -526,7 +497,7 @@ function frame(t: number) {
   for (let i = 0; i < P.steps; i++) {
     step++;
     const bits = (Math.random() * 4) | 0;
-    stepData.set([bits & 1, step & 1, bits >> 1, step, (Math.random() * 0xffffffff) >>> 0, 0, 0, 0]);
+    stepData.set([bits & 1, step & 1, bits >> 1, (Math.random() * 0xffffffff) >>> 0]);
     device.queue.writeBuffer(stepBuf, 0, stepData);
     const enc = device.createCommandEncoder();
     const pass = enc.beginComputePass();
@@ -535,7 +506,7 @@ function frame(t: number) {
     pass.dispatchWorkgroups(Math.ceil((GX / 2 + 1) / 4), Math.ceil((GY / 2 + 1) / 4), Math.ceil((GZ / 2 + 1) / 4));
     if (i % 2 === 0) {
       pass.setPipeline(supportPipe);
-      pass.dispatchWorkgroups(GX / 4, GY / 4, GZ / 4);
+      pass.dispatchWorkgroups(CUBE / 4, CUBE / 4, CUBE / 4); // the block only
     }
     pass.end();
     device.queue.submit([enc.finish()]);
@@ -548,15 +519,11 @@ function frame(t: number) {
     const pass = enc.beginComputePass();
     pass.setBindGroup(0, simGroup);
     for (let i = 0; i < P.steps; i++) {
-      pass.setPipeline(flowPipe);
-      pass.dispatchWorkgroups(GX / 8, GZ / 8);
-      pass.setPipeline(settlePipe);
-      pass.dispatchWorkgroups(GX / 8, GZ / 8);
+      columns(pass, flowPipe);
+      columns(pass, settlePipe);
     }
-    pass.setPipeline(growPipe);
-    pass.dispatchWorkgroups(GX / 8, GZ / 8);
-    pass.setPipeline(stampPipe);
-    pass.dispatchWorkgroups(GX / 8, GZ / 8);
+    columns(pass, growPipe);
+    columns(pass, stampPipe);
     pass.end();
     device.queue.submit([enc.finish()]);
   }
@@ -581,15 +548,22 @@ requestAnimationFrame(loop);
 
 // ?hold=0.42,0.3,1: a tool held from the start, on a point given as a fraction of the screen.
 // A fourth number is its level, 0..1, a fifth the seconds after which it is let go.
-const holdAt = query.get('hold')?.split(',').map(Number);
-if (holdAt) {
-  setTool(holdAt[2] || 1);
-  if (holdAt[3] >= 0) size[tool] = holdAt[3];
-  bar.refresh();
-  if (holdAt[4] > 0) setTimeout(release, holdAt[4] * 1000);
-  ptr = { x: holdAt[0] * window.innerWidth, y: holdAt[1] * window.innerHeight };
+// hold a tool on a screen point without a pointer, and set its force
+function hold(x: number, y: number, t = tool) {
+  setTool(t);
+  ptr = { x, y };
   hover = true;
   held = true;
+}
+function level(t: number, v: number) {
+  force[t] = v;
+  bar.refresh();
+}
+const holdAt = query.get('hold')?.split(',').map(Number);
+if (holdAt) {
+  hold(holdAt[0] * window.innerWidth, holdAt[1] * window.innerHeight, holdAt[2] || TOOL.RAIN);
+  if (holdAt[3] >= 0) level(tool, holdAt[3]);
+  if (holdAt[4] > 0) setTimeout(release, holdAt[4] * 1000);
 }
 
 async function readBack(src: GPUBuffer) {
@@ -603,20 +577,15 @@ async function readBack(src: GPUBuffer) {
   return out;
 }
 
-// for tests and clips: hold a tool on a screen point without a pointer
+// for tests and clips
 (window as unknown as Record<string, unknown>).erosion = {
   P,
   setTool,
   reset,
-  hold(x: number, y: number, t = tool) {
-    setTool(t);
-    ptr = { x, y };
-    hover = true;
-    held = true;
-  },
+  hold,
   release,
   turn(a: number) { yaw = a; },
-  level(t: number, v: number) { size[t] = v; bar.refresh(); },
+  level,
   brush(t: number, r?: number) { if (r !== undefined) { brush[t] = r; bar.refresh(); } return brush[t]; },
   // run frames by hand, for when the page is hidden and the browser holds its own back
   tick(n = 1) { for (let i = 0; i < n; i++) frame(performance.now()); },
@@ -627,13 +596,12 @@ async function readBack(src: GPUBuffer) {
   dims: [GX, GY, GZ],
   // read the grid back: how many cells of each type, and what the pointer is on
   async stats() {
-    const read = readBack;
-    const cells = new Uint32Array(await read(cellBuf));
+    const cells = new Uint32Array(await readBack(cellBuf));
     const count = [0, 0, 0, 0, 0, 0, 0, 0];
     for (let i = 0; i < cells.length; i++) count[cells[i] & 7]++;
     const [air, water, sediment, rock, ground, plants] = count;
     // the water itself is the depth per column; `water` above counts the voxels it is drawn with
-    const cols = new Float32Array(await read(colBuf));
+    const cols = new Float32Array(await readBack(colBuf));
     let volume = 0;
     let wet = 0;
     let deepest = 0;
@@ -642,6 +610,6 @@ async function readBack(src: GPUBuffer) {
       if (cols[i] > 0.25) wet++;
       deepest = Math.max(deepest, cols[i]);
     }
-    return { air, water, sediment, rock, ground, plants, volume, wet, deepest, pick: [...new Float32Array(await read(pickBuf))], step, held, hover, tool };
+    return { air, water, sediment, rock, ground, plants, volume, wet, deepest, pick: [...new Float32Array(await readBack(pickBuf))], step, held, hover, tool };
   },
 };

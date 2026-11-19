@@ -5,18 +5,14 @@
 //   sim       falling sediment, the wind, the hose and the scratch, in 2x2x2 blocks
 //   support   rock that has lost its way to the ground turns to rubble
 //   flow      water: how much leaves each column for each neighbour
-//   settle    water: the new depth, the rain and the spring, and the bed it wears down
+//   settle    water: the new depth, the rain and the hose, and the bed it wears down
 //   grow      what is green: where the ground has been wet and is then left alone
 //   stamp     water and plants drawn into the grid as voxels: the surface, the falls, the rain, grass and trees
 
-struct StepU {
-  off: vec4u,  // block offset per axis (0 or 1), w: step
-  seed: vec4u,
-};
-
 @group(0) @binding(0) var<storage, read_write> cells: array<u32>;
 @group(0) @binding(1) var<uniform> u: U;
-@group(0) @binding(2) var<uniform> su: StepU;
+// this step: where the 2x2x2 blocks are cut, an offset per axis (0 or 1), and in w its seed
+@group(0) @binding(2) var<uniform> su: vec4u;
 @group(0) @binding(3) var<storage, read_write> pk: Pick;
 @group(0) @binding(4) var<storage, read_write> sky: array<u32>;
 // per column: x water depth, y wear (the part of a voxel worn off so far), z bed height,
@@ -31,10 +27,25 @@ struct StepU {
 // tree growing, up to 3), y the bed it grew on, z moisture, w how far along the tufts on a wall beside it are
 @group(0) @binding(8) var<storage, read_write> veg: array<vec4f>;
 
-fn ty(c: u32) -> u32 { return c & 7u; }
 fn solid(t: u32) -> bool { return t == ROCK || t == GROUND || t == SED; }
 
-// Weather comes from above. Rain and the spring only land on what has no rock over it: the sides of
+// How wet is wet: the water that has run through a column lately (ran) and its depth, against
+// what each counts for.
+const RAN_WEARS = 0.003; // enough has run here to wear: banks come down beside it, rot is eaten under it
+const RAN_WETS = 0.002;  // enough to keep the ground moist
+const DAMP = 0.01;       // a depth that wets what it lies on
+const DRAWN = 0.03;      // a depth that is drawn
+const POOL = 0.3;        // standing water: nothing grows under it, its shore is green
+
+// the four columns beside one, to -x, +x, -z, +z. Off the grid there is none: the column itself.
+fn neighbours(x: i32, z: i32) -> array<u32, 4> {
+  let i = u32(x + GX * z);
+  return array<u32, 4>(
+    select(i, i - 1u, x > 0), select(i, i + 1u, x < GX - 1),
+    select(i, i - u32(GX), z > 0), select(i, i + u32(GX), z < GZ - 1));
+}
+
+// Weather comes from above. Rain only lands on what has no rock over it: the sides of
 // the block and what is under an overhang are out of reach until what covers them is gone.
 // The bed is where water stands: the top of the rock, or of the sediment lying on it (a grain
 // still falling, with nothing under it, is not ground yet).
@@ -44,7 +55,7 @@ fn skyline(@builtin(global_invocation_id) gid: vec3u) {
   let z = i32(gid.y);
   if (x >= GX || z >= GZ) { return; }
   var bed = -1;
-  var y = GY - 1;
+  var y = TOP - 1; // above the block there is only ever air, water and leaves
   while (y > 0) {
     let t = ty(cells[idx(vec3i(x, y, z))]);
     if (t == ROCK || t == GROUND) { break; }
@@ -65,13 +76,11 @@ fn openToSky(p: vec3i) -> bool {
 fn pickMain() {
   let before = pk.pos;
   var pos = vec4f(0.0);
-  var n = vec4f(0.0);
-  if (u.p1.w > 0.5) {
-    let h = march(u.rayO.xyz, u.rayD.xyz);
-    // the wind and the hose are aimed at whatever is there, top or side; rain comes from above
-    if (h.hit && (u32(u.rayD.w) >= 2u || openToSky(h.cell))) {
+  if (u.pointer.z > 0.5) {
+    let h = march(u.rayO.xyz, u.camF.xyz);
+    // the hose, the wind and the scratch are aimed at whatever is there, top or side; rain comes from above
+    if (h.hit && (toolNow() != RAIN || openToSky(h.cell))) {
       pos = vec4f(vec3f(h.cell) + 0.5, 1.0);
-      n = vec4f(h.n, 0.0);
     } else if (h.hit && abs(h.n.y) < 0.5) {
       // a wall: the weather lands at its foot, on the open ground under the point it was aimed at
       // (the far side of a pit seen at a slant, the side of the block)
@@ -80,7 +89,6 @@ fn pickMain() {
         let floorY = i32(sky[q.x + GX * q.z]);
         if (floorY <= q.y) {
           pos = vec4f(vec3f(vec3i(q.x, floorY, q.z)) + 0.5, 1.0);
-          n = vec4f(0.0, 1.0, 0.0, 0.0);
         }
       }
     }
@@ -91,20 +99,27 @@ fn pickMain() {
 
 // A water voxel is only a picture of the water, a plant voxel of a plant (see stamp): to what falls, they are air.
 fn open(c: u32) -> bool {
-  let t = c & 7u;
+  let t = ty(c);
   return t == AIR || t == WATER || t == PLANT;
 }
 
 fn rnd(st: ptr<function, u32>) -> f32 {
   *st = pcg(*st);
-  return f32(*st >> 8u) / 16777216.0;
+  return unit(*st);
 }
 
-// rock to sediment of the same layer and shade, or to nothing
+// rock to sediment of the same layer and shade
+fn toSed(c: u32) -> u32 { return (c & 0x378u) | SED; }
+
+// or to nothing
 fn crumble(c: u32, st: ptr<function, u32>, yield_: f32) -> u32 {
-  if (rnd(st) < yield_) { return (c & 0x378u) | SED; }
+  if (rnd(st) < yield_) { return toSed(c); }
   return AIR;
 }
+
+// rock only: its steps to the ground through rock (support)
+fn distOf(c: u32) -> u32 { return (c >> 16u) & 0xFFFu; }
+fn withDist(c: u32, d: u32) -> u32 { return (c & 0xF000FFFFu) | (d << 16u); }
 
 // how rotten a rock voxel is, 0 sound to 1 (world.ts bakes it in: pockets, lenses along the beds)
 fn rotOf(c: u32) -> f32 {
@@ -114,7 +129,7 @@ fn rotOf(c: u32) -> f32 {
 // how easily a rock voxel wears: its layer, a joint, and above all how rotten it is. Sound rock
 // goes at a third of its layer's rate, a rotten pocket at six times it.
 fn softOf(c: u32) -> f32 {
-  var s = SOFT[(c >> 3u) & 15u];
+  var s = SOFT[layerOf(c)];
   if ((c & 0x400u) != 0u) { s *= 4.0; }
   let r = rotOf(c);
   return s * (0.35 + 6.0 * r * r * r);
@@ -129,18 +144,20 @@ fn cellPos(b0: vec3i, k: i32) -> vec3i {
 // In a block, k = dx + 2 dz + 4 dy: 0-3 is the lower floor, 4-7 the upper.
 @compute @workgroup_size(4, 4, 4)
 fn sim(@builtin(global_invocation_id) gid: vec3u) {
-  let b0 = vec3i(gid) * 2 - vec3i(su.off.xyz);
+  let b0 = vec3i(gid) * 2 - vec3i(su.xyz);
   if (b0.x >= GX || b0.y >= GY || b0.z >= GZ) { return; }
-  var st = pcg(gid.x + pcg(gid.y + pcg(gid.z + su.seed.x)));
+  var st = pcg(gid.x + pcg(gid.y + pcg(gid.z + su.w)));
 
-  let held = u.rayO.w > 0.5 && pk.pos.w > 0.5;
-  let tool = u32(u.rayD.w);
-  let windR = u.res.w;
+  let held = working();
+  let tool = toolNow();
+  let radius = u.tool.y;
+  let rate = u.tool.z;
 
   var c: array<u32, 8>;
   var o: array<u32, 8>;
   var inb: array<bool, 8>;
-  var air = false;
+  var air = false;   // room for something to move into
+  var stuff = false; // something that can move or wear
 
   for (var k = 0; k < 8; k++) {
     let p = cellPos(b0, k);
@@ -152,42 +169,47 @@ fn sim(@builtin(global_invocation_id) gid: vec3u) {
     // sediment goes over the edge of the tray: off the side of the grid, or down past the tray's rim to the bottom of it
     if (ib && ty(v) == SED && (p.x == 0 || p.z == 0 || p.x == GX - 1 || p.z == GZ - 1 || p.y == 0)) { v = AIR; }
     if (open(v)) { air = true; }
+    if (ty(v) == SED || ty(v) == ROCK) { stuff = true; }
     c[k] = v;
+  }
+  // Most blocks are solid rock or empty air, and nothing below does anything to either.
+  if (!air || !stuff) {
+    for (var k = 0; k < 8; k++) {
+      if (inb[k] && c[k] != o[k]) { cells[idx(cellPos(b0, k))] = c[k]; } // what went over the edge
+    }
+    return;
   }
 
   // The two jets, both in the hand of whoever is looking, both along the line of sight through
   // the pointer, on whatever is there, top or side. The hose: a pressure washer, narrow and
   // hard. The wind: a hair dryer, wide and gentle (windOn). Either only wears what faces it:
   // rock with nothing in front of it on the side the jet comes from.
-  let jet = u.rayD.xyz; // the way the jet goes
+  let jet = u.camF.xyz; // the way the jet goes
   let w = normalize(vec3f(jet.x, 0.0, jet.z)); // and the way the wind carries what is loose
   let centre = vec3f(b0) + 1.0;
   var blast = false;  // is this block in it
   var f = 0.0;        // how much of it is left here
-  var rate = u.p1.x;
-  if (held && tool == 3u) {
-    f = windOn(centre, pk.pos.xyz, jet, windR);
+  if (held && tool == WIND) {
+    f = windOn(centre, pk.pos.xyz, jet, radius);
     blast = f > 0.03;
   }
-  if (held && tool == 2u) {
+  if (held && tool == HOSE) {
     let r = distance(centre, pk.pos.xyz);
-    blast = r < u.sun.w;
-    f = 1.0 - r / u.sun.w;
-    rate = u.p1.y;
+    blast = r < radius;
+    f = 1.0 - r / radius;
   }
   // The scratch: nothing but a point dragged over the rock. It takes what is under it, there and
   // then, whatever it is made of (nearly), and what comes loose falls. It comes in pulses (main.ts
   // holds it down a frame at a time): each is one short mark, along the stroke from where the
   // pointer was the frame before to where it is (unless it jumped: from one face to another, say).
-  if (held && tool == 4u) {
+  if (held && tool == SCRATCH) {
     var a = pk.was.xyz;
     let b = pk.pos.xyz;
     if (pk.was.w < 0.5 || distance(a, b) > 40.0) { a = b; }
     let ab = b - a;
     let r = distance(centre, a + ab * clamp(dot(centre - a, ab) / max(dot(ab, ab), 1e-4), 0.0, 1.0));
-    blast = r < u.sun.w;
-    f = min(2.0 * (1.0 - r / u.sun.w), 1.0); // a clean edge: full across most of its width
-    rate = u.p1.y;
+    blast = r < radius;
+    f = min(2.0 * (1.0 - r / radius), 1.0); // a clean edge: full across most of its width
   }
   // the axis this block feels the jet along, one of the three (0 x, 1 z, 2 y), and for what the
   // wind pushes one of the two level ones
@@ -198,10 +220,10 @@ fn sim(@builtin(global_invocation_id) gid: vec3u) {
   // The wind only reaches the surface: what whoever is looking can see. Rock that faces the right
   // way but has something between it and the eye, the far wall of a canyon, the back of a pit,
   // a ledge behind a tree, is in the lee. One look back along the line of sight per block.
-  if (blast && air && tool == 3u) {
+  if (blast && tool == WIND) {
     blast = !march(centre - jet * 2.6, -jet).hit;
   }
-  if (blast && air) {
+  if (blast) {
     for (var k = 0; k < 8; k++) {
       // the cell in front of this one, on the side the jet comes from, when it is in this block
       // (half the time, hence the 2)
@@ -217,16 +239,16 @@ fn sim(@builtin(global_invocation_id) gid: vec3u) {
         if (jet.y > 0.0 && k >= 4) { nb = k - 4; }
       }
       var soft = softOf(c[k]);
-      if (tool == 4u) {
+      if (tool == SCRATCH) {
         soft = pow(soft, 0.3); // a hard bed slows the scratch a little, it does not stop it
-        if (((c[k] >> 3u) & 15u) == BONE) { soft = 0.001; } // bone does: a scratch cleans a skeleton, it does not cut it
+        if (layerOf(c[k]) == BONE) { soft = SOFT[BONE]; } // bone does: a scratch cleans a skeleton, it does not cut it
       }
       // what is in front of it must be open; and for the wind, not water: it does not reach a lake's bed
       var faced = false;
-      if (nb >= 0) { faced = open(c[nb]) && !(tool == 3u && ty(c[nb]) == WATER); }
+      if (nb >= 0) { faced = open(c[nb]) && !(tool == WIND && ty(c[nb]) == WATER); }
       if (faced && inb[k] && ty(c[k]) == ROCK && rnd(&st) < rate * 2.0 * soft * f) {
-        c[k] = crumble(c[k], &st, select(0.3, 0.6, tool == 4u));
-      } else if ((tool == 2u || tool == 4u) && ty(c[k]) == SED && rnd(&st) < select(0.3, 0.5, tool == 4u) * f) {
+        c[k] = crumble(c[k], &st, select(0.3, 0.6, tool == SCRATCH));
+      } else if ((tool == HOSE || tool == SCRATCH) && ty(c[k]) == SED && rnd(&st) < select(0.3, 0.5, tool == SCRATCH) * f) {
         // the hose flushes out what it has knocked loose, or it would plug its own hole; the
         // scratch sweeps its groove
         c[k] = AIR;
@@ -258,7 +280,7 @@ fn sim(@builtin(global_invocation_id) gid: vec3u) {
   }
 
   // the wind pushes what is loose, and takes some of the dust away
-  if (blast && tool == 3u) {
+  if (blast && tool == WIND) {
     for (var fl = 0; fl < 2; fl++) {
       for (var q = 0; q < 2; q++) {
         var i = fl * 4 + q;
@@ -286,33 +308,31 @@ fn sim(@builtin(global_invocation_id) gid: vec3u) {
 // climb a step each pass. Past the limit, it is not standing on anything: rubble.
 @compute @workgroup_size(4, 4, 4)
 fn support(@builtin(global_invocation_id) gid: vec3u) {
-  let p = vec3i(gid);
-  if (p.x >= GX || p.y >= GY || p.z >= GZ) { return; }
+  // only the block is asked: rock never leaves it (and so every neighbour is in the grid)
+  let p = LO + vec3i(gid);
   let i = idx(p);
   let c = cells[i];
-  if ((c & 7u) != ROCK) { return; }
+  if (ty(c) != ROCK) { return; }
   // Bone holds itself up, and what hangs on it: a skeleton dug free stands where it stood. (A
   // rib has no rock under it once the rock is gone, and would be rubble by the rule below.)
-  if (((c >> 3u) & 15u) == BONE) {
-    if (((c >> 16u) & 0xFFFu) != 1u) { cells[i] = (c & 0xF000FFFFu) | (1u << 16u); }
+  if (layerOf(c) == BONE) {
+    if (distOf(c) != 1u) { cells[i] = withDist(c, 1u); }
     return;
   }
   var m = 4094u;
   for (var a = 0; a < 6; a++) {
     var d = vec3i(0);
     d[a >> 1] = (a & 1) * 2 - 1;
-    let q = p + d;
-    if (!inGrid(q)) { continue; }
-    let nb = cells[idx(q)];
-    let t = nb & 7u;
+    let nb = cells[idx(p + d)];
+    let t = ty(nb);
     if (t == GROUND) { m = 0u; }
-    else if (t == ROCK) { m = min(m, (nb >> 16u) & 0xFFFu); }
+    else if (t == ROCK) { m = min(m, distOf(nb)); }
   }
   let dist = m + 1u;
-  if (f32(dist) >= u.p1.z) {
-    cells[i] = (c & 0x378u) | SED;
-  } else if (dist != ((c >> 16u) & 0xFFFu)) {
-    cells[i] = (c & 0xF000FFFFu) | (dist << 16u);
+  if (f32(dist) >= u.wear.z) {
+    cells[i] = toSed(c);
+  } else if (dist != distOf(c)) {
+    cells[i] = withDist(c, dist);
   }
 }
 
@@ -324,22 +344,20 @@ fn support(@builtin(global_invocation_id) gid: vec3u) {
 // and spills there, and levels out, all from one rule. The flow keeps some of its speed from
 // step to step, which is why a pool sloshes before it lies still.
 
-fn grain(x: i32, y: i32, z: i32) -> f32 {
-  return f32(pcg(u32(x) + pcg(u32(y) + pcg(u32(z)))) >> 8u) / 16777216.0;
+// the top voxel of a column: the one its bed is the top of
+fn topCell(x: i32, z: i32, bed: f32) -> u32 {
+  return cells[idx(vec3i(x, max(i32(bed) - 1, 0), z))];
 }
 
-// how easily the top voxel of a column wears. Loose sediment goes easily, the ground not at all.
-fn softTop(x: i32, top: i32, z: i32) -> f32 {
-  if (top <= 0) { return 0.0; }
-  let c = cells[idx(vec3i(x, top, z))];
+// how easily it wears. Loose sediment goes easily, the ground not at all.
+fn softTop(c: u32) -> f32 {
   if (ty(c) == ROCK) { return softOf(c); }
   if (ty(c) == SED) { return 3.0; }
   return 0.0;
 }
 
 fn onBlock(x: i32, z: i32) -> bool {
-  let lo = (vec2i(GX, GZ) - CUBE) / 2;
-  return x >= lo.x && z >= lo.y && x < lo.x + CUBE && z < lo.y + CUBE;
+  return x >= LO.x && z >= LO.z && x < LO.x + CUBE && z < LO.z + CUBE;
 }
 
 // what leaves each column for each neighbour, and the banks
@@ -349,51 +367,53 @@ fn flow(@builtin(global_invocation_id) gid: vec3u) {
   let z = i32(gid.y);
   if (x >= GX || z >= GZ) { return; }
   let i = u32(x + GX * z);
+  // off the block there is no water (settle), so none to send on
+  if (!onBlock(x, z)) { return; }
   let d = col[i].x;
   let bed = col[i].z;
-  // the neighbours: their beds and their water; off the grid nothing holds the water back
-  var nb = vec4f(bed);
-  var nd = vec4f(0.0);
-  var nr = vec4f(0.0);
-  if (x > 0) { nb.x = col[i - 1u].z; nd.x = col[i - 1u].x; nr.x = ran[i - 1u]; }
-  if (x < GX - 1) { nb.y = col[i + 1u].z; nd.y = col[i + 1u].x; nr.y = ran[i + 1u]; }
-  if (z > 0) { nb.z = col[i - u32(GX)].z; nd.z = col[i - u32(GX)].x; nr.z = ran[i - u32(GX)]; }
-  if (z < GZ - 1) { nb.w = col[i + u32(GX)].z; nd.w = col[i + u32(GX)].x; nr.w = ran[i + u32(GX)]; }
+  // the neighbours: their beds, their water, and what has run there
+  var around = neighbours(x, z);
+  var nb: vec4f;
+  var nd: vec4f;
+  var nr: vec4f;
+  for (var a = 0; a < 4; a++) {
+    nb[a] = col[around[a]].z;
+    nd[a] = col[around[a]].x;
+    nr[a] = ran[around[a]];
+  }
 
   // The banks. Water wears its own column, and left at that every column would be cut on its
   // own: slots a voxel wide, spikes left standing between them, a hole with walls straight
   // down. So a column that stands too high above a neighbour where water runs or has just run
   // wears too, the higher the faster: the bank comes down after the bed. A channel opens into
   // a valley, a hole into a funnel, and nothing is left standing in the wet.
-  if (onBlock(x, z)) {
-    // How high a bank can stand is the rock's business: rotten rock slumps to a slope, sound
-    // rock stands as a wall, and a hard bed holds a ledge. So a valley's sides are not one
-    // slope from top to bottom, they step and bulge with what they are cut through.
-    var stand = 2.0;
-    let topCell = cells[idx(vec3i(x, max(i32(bed) - 1, 0), z))];
-    if (ty(topCell) == ROCK) {
-      stand = 1.0 + 5.0 * (1.0 - rotOf(topCell));
-      if (SOFT[(topCell >> 3u) & 15u] < 0.3) { stand += 3.0; }
-    }
-    var over = 0.0;
-    for (var a = 0; a < 4; a++) {
-      // only beside water that runs or has just run: a bank stands over a still pond for good
-      if (nr[a] > 0.003) { over = max(over, bed - nb[a] - stand); }
-    }
-    if (over > 0.0) {
-      // As fast as the bed can sink (settle), so a cut never gets ahead of its banks. Hard rock
-      // holds a bank up longer, but not by as much as it holds up a bed: the square root.
-      let hold = sqrt(4.0 * softTop(x, i32(bed) - 1, z));
-      col[i].y += min(0.012 * min(u.p0.x * 10.0, 3.0) * hold * min(over, 3.0), 0.03);
-    }
+  // How high a bank can stand is the rock's business: rotten rock slumps to a slope, sound
+  // rock stands as a wall, and a hard bed holds a ledge. So a valley's sides are not one
+  // slope from top to bottom, they step and bulge with what they are cut through.
+  var stand = 2.0;
+  let top = topCell(x, z, bed);
+  if (ty(top) == ROCK) {
+    stand = 1.0 + 5.0 * (1.0 - rotOf(top));
+    if (SOFT[layerOf(top)] < 0.3) { stand += 3.0; }
+  }
+  var over = 0.0;
+  for (var a = 0; a < 4; a++) {
+    // only beside water that runs or has just run: a bank stands over a still pond for good
+    if (nr[a] > RAN_WEARS) { over = max(over, bed - nb[a] - stand); }
+  }
+  if (over > 0.0) {
+    // As fast as the bed can sink (settle), so a cut never gets ahead of its banks. Hard rock
+    // holds a bank up longer, but not by as much as it holds up a bed: the square root.
+    let hold = sqrt(4.0 * softTop(top));
+    col[i].y += min(0.012 * min(u.wear.x * 10.0, 3.0) * hold * min(over, 3.0), 0.03);
   }
 
   if (d <= 0.0) { flux[i] = vec4f(0.0); col[i].w = 0.0; return; }
   let h = bed + d;
   let nh = nb + nd;
   // a film clings: thin water is slow to get going, so it gathers before it runs
-  let grip = d / (d + u.p0.y);
-  var f = max(vec4f(0.0), flux[i] * u.wind.z + u.wind.x * grip * (vec4f(h) - nh));
+  let grip = d / (d + u.water.w);
+  var f = max(vec4f(0.0), flux[i] * u.water.z + u.water.x * grip * (vec4f(h) - nh));
   // never more than is there
   let total = f.x + f.y + f.z + f.w;
   if (total > d) { f *= d / total; }
@@ -418,26 +438,25 @@ fn settle(@builtin(global_invocation_id) gid: vec3u) {
     return;
   }
   let f = flux[i];
+  var around = neighbours(x, z);
   var inn = 0.0;
-  if (x > 0) { inn += flux[i - 1u].y; }
-  if (x < GX - 1) { inn += flux[i + 1u].x; }
-  if (z > 0) { inn += flux[i - u32(GX)].w; }
-  if (z < GZ - 1) { inn += flux[i + u32(GX)].z; }
+  for (var a = 0; a < 4; a++) { inn += flux[around[a]][a ^ 1]; } // what each neighbour sends this way
   let out = f.x + f.y + f.z + f.w;
   var d = me.x + inn - out;
 
   // rain falls in a column around the pointer
-  if (u.rayO.w > 0.5 && pk.pos.w > 0.5) {
-    let tool = u32(u.rayD.w);
+  if (working()) {
+    let tool = toolNow();
+    let radius = u.tool.y;
     let r = distance(vec2f(f32(x), f32(z)) + 0.5, pk.pos.xz);
     // the cloud has no edge: it rains hardest in the middle and thins out, so it leaves no circle
-    if (tool == 1u && r < u.wind.w) { d += u.p0.w * 2.0 * (1.0 - r * r / (u.wind.w * u.wind.w)); }
+    if (tool == RAIN && r < radius) { d += u.tool.z * 2.0 * (1.0 - r * r / (radius * radius)); }
     // the hose leaves its water on the ground it hits (on a wall it has nowhere to stand: stamp draws the spray)
-    if (tool == 2u && r < u.sun.w && abs(me.z - pk.pos.y) < u.sun.w + 2.0) { d += 0.02; }
+    if (tool == HOSE && r < radius && abs(me.z - pk.pos.y) < radius + 2.0) { d += 0.02; }
   }
   // Only a film dries. Water with any depth to it stays: a hollow that has filled is a lake
   // until something lets it out.
-  d = max(d - u.p0.z * (1.0 - smoothstep(0.15, 0.4, d)), 0.0);
+  d = max(d - u.wear.y * (1.0 - smoothstep(0.15, 0.4, d)), 0.0);
 
   // Running water wears its bed, by how much of it goes through and by how far it drops there.
   // Where a little more runs, the bed sinks a little faster, so more runs there: that is how a
@@ -452,30 +471,26 @@ fn settle(@builtin(global_invocation_id) gid: vec3u) {
   // not drilled through under the cloud. Deep water shelters what is under it.
   // A column can only sink so fast, however hard it rains: slower than the water can follow,
   // or every column would be cut on its own.
-  let top = i32(me.z) - 1;
-  let soft = softTop(x, top, z);
-  if (out > u.wind.y) {
+  let top = topCell(x, z, me.z);
+  let soft = softTop(top);
+  if (out > u.water.y) {
     let steep = min(me.w, 3.0) / (1.0 + 0.1 * d * d);
-    me.y += min(u.p0.x * soft * 4.5 * (out - u.wind.y) * steep, 0.03);
+    me.y += min(u.wear.x * soft * 4.5 * (out - u.water.y) * steep, 0.03);
   }
   // One thing does go where the water does not drop: rot. Under water that runs or has just
   // run, a pocket of rotten rock is eaten out where it is, a pit a few voxels across, while
   // the sound rock round it is left. That is where it starts. The pit's rim is a bank and a
   // lip, and the rest gnaws on from there. Under a pond that lies still, nothing: when the
   // rain stops, so does this.
-  if (d > 0.01 && ran[i] > 0.003) {
-    let c = cells[idx(vec3i(x, max(top, 0), z))];
-    if (ty(c) == ROCK) {
-      let r = rotOf(c);
-      me.y += min(u.p0.x * soft * 0.25 * max(r - 0.7, 0.0) / (1.0 + d * d), 0.03);
-    }
+  if (d > DAMP && ran[i] > RAN_WEARS && ty(top) == ROCK) {
+    me.y += min(u.wear.x * soft * 0.25 * max(rotOf(top) - 0.7, 0.0) / (1.0 + d * d), 0.03);
   }
   // The wear, the bed's and the bank's (flow), adds up until a whole voxel is gone. Only ever
   // the top one: water cuts down, never sideways.
   if (me.y >= 1.0) {
     me.y -= 1.0;
-    if (softTop(x, top, z) > 0.0) {
-      cells[idx(vec3i(x, top, z))] = AIR;
+    if (soft > 0.0) {
+      cells[idx(vec3i(x, i32(me.z) - 1, z))] = AIR;
       me.z -= 1.0;
     }
   }
@@ -484,10 +499,7 @@ fn settle(@builtin(global_invocation_id) gid: vec3u) {
   // valley is wider than its stream. (The neighbours may be a step ahead or behind in this
   // pass; a fading maximum does not care.)
   var beside = 0.0;
-  if (x > 0) { beside = max(beside, ran[i - 1u]); }
-  if (x < GX - 1) { beside = max(beside, ran[i + 1u]); }
-  if (z > 0) { beside = max(beside, ran[i - u32(GX)]); }
-  if (z < GZ - 1) { beside = max(beside, ran[i + u32(GX)]); }
+  for (var a = 0; a < 4; a++) { beside = max(beside, ran[around[a]]); }
   ran[i] = max(max(ran[i] * 0.99, 0.5 * (inn + out)), beside * 0.8);
 }
 
@@ -517,31 +529,26 @@ fn grow(@builtin(global_invocation_id) gid: vec3u) {
   var wetWall = false;
   var shore = false;
   var seep = 0.0;
+  var around = neighbours(x, z);
   for (var a = 0; a < 4; a++) {
-    var j = i;
-    var ok = false;
-    if (a == 0 && x > 0) { j = i - 1u; ok = true; }
-    if (a == 1 && x < GX - 1) { j = i + 1u; ok = true; }
-    if (a == 2 && z > 0) { j = i - u32(GX); ok = true; }
-    if (a == 3 && z < GZ - 1) { j = i + u32(GX); ok = true; }
-    if (!ok) { continue; }
+    let j = around[a];
+    if (j == i) { continue; }
     let nb = col[j].z;
     if (abs(nb - bed) <= 1.0) { level++; }
-    if (nb - bed >= 3.0 && (col[j].x > 0.01 || ran[j] > 0.002)) { wetWall = true; }
-    if (col[j].x > 0.3) { shore = true; }
+    if (nb - bed >= 3.0 && (col[j].x > DAMP || ran[j] > RAN_WETS)) { wetWall = true; }
+    if (col[j].x > POOL) { shore = true; }
     seep = max(seep, veg[j].z);
   }
 
   // Moisture: full where water is or runs or lies alongside, and it seeps out sideways from
   // there, a little less each column, so standing water keeps a belt round it green. Away from
   // all that the ground dries in a minute or so.
-  let wet = on && (me.x > 0.01 || ran[i] > 0.002 || shore);
+  let wet = on && (me.x > DAMP || ran[i] > RAN_WETS || shore);
   v.z = clamp(max(v.z + select(-0.0002, 0.02, wet), select(0.0, seep * 0.93, on)), 0.0, 1.0);
   v.w = clamp(v.w + select(-0.0002, 0.004, wetWall), 0.0, 1.0);
 
-  let top = cells[idx(vec3i(x, max(i32(bed) - 1, 0), z))];
-  // soil is what has fallen and lies loose, or rock rotten enough to root in: sound rock stays bare
-  let soil = ty(top) == SED || (ty(top) == ROCK && rotOf(top) > 0.45);
+  let top = topCell(x, z, bed);
+  let soil = rootable(top);
   // Low down it is desert: what grows there (stamp draws cactus) asks for neither soil nor
   // water, only somewhere to stand and to be left alone, and takes its time.
   let desert = f32(TOP) - bed > DESERT && (ty(top) == SED || ty(top) == ROCK);
@@ -549,7 +556,7 @@ fn grow(@builtin(global_invocation_id) gid: vec3u) {
     // the ground it stood on is gone, or new ground has come down on it
     v.x = 0.0;
     v.y = bed;
-  } else if (!on || (!soil && !desert) || me.x > 0.3 || me.w > 0.02) {
+  } else if (!on || (!soil && !desert) || me.x > POOL || me.w > 0.02) {
     v.x = max(v.x - 0.05, 0.0); // under water, or in the way of it
   } else if (level < 2) {
     v.x = max(v.x - 0.02, 0.0); // nothing to stand on
@@ -566,14 +573,7 @@ fn grow(@builtin(global_invocation_id) gid: vec3u) {
 
 const DESERT = 12.0; // this far below the top of the block, it is desert
 
-// Cactus stands on its own, closer lattice, one site per 5x5 columns, and the further down the
-// more of the sites have one: quite a few, by the floor of a canyon.
-const CSITE = 5;
-fn cactusSite(cx: i32, cz: i32) -> vec2i {
-  let h = pcg(u32(cx) * 83492791u + u32(cz) * 2971215073u);
-  return vec2i(cx * CSITE + i32(h % u32(CSITE)), cz * CSITE + i32((h >> 8u) % u32(CSITE)));
-}
-
+// soil is what has fallen and lies loose, or rock rotten enough to root in: sound rock stays bare
 fn rootable(c: u32) -> bool {
   return ty(c) == SED || (ty(c) == ROCK && rotOf(c) > 0.45);
 }
@@ -581,14 +581,21 @@ fn rootable(c: u32) -> bool {
 // Trees stand on a loose lattice of sites, one per 8x8 columns, each at its own spot in its
 // square. A site grows a tree when its own column's cover gets that far. Every column draws
 // the part of each nearby tree that passes through it, so no column writes outside itself.
+// Cactus stands on its own, closer lattice, one site per 5x5 columns, and the further down the
+// more of the sites have one: quite a few, by the floor of a canyon.
 const SITE = 8;
-fn siteOf(cx: i32, cz: i32) -> vec2i {
-  let h = pcg(u32(cx) * 73856093u + u32(cz) * 19349663u);
-  return vec2i(cx * SITE + i32(h % u32(SITE)), cz * SITE + i32((h >> 8u) % u32(SITE)));
+const SITE_SALT = vec2u(73856093u, 19349663u);
+const CSITE = 5;
+const CSITE_SALT = vec2u(83492791u, 2971215073u);
+
+// the site of square (cx, cz) of a lattice
+fn siteOf(cx: i32, cz: i32, size: i32, salt: vec2u) -> vec2i {
+  let h = pcg(u32(cx) * salt.x + u32(cz) * salt.y);
+  return vec2i(cx * size + i32(h % u32(size)), cz * size + i32((h >> 8u) % u32(size)));
 }
 
-// The water as voxels, for the picture: the grid is what gets drawn, so the depth is stamped
-// into it, a column at a time. Nothing reads these voxels back as water.
+// The water and the green as voxels, for the picture: the grid is what gets drawn, so both are
+// stamped into it, a column at a time. Nothing reads these voxels back.
 @compute @workgroup_size(8, 8, 1)
 fn stamp(@builtin(global_invocation_id) gid: vec3u) {
   let x = i32(gid.x);
@@ -600,7 +607,7 @@ fn stamp(@builtin(global_invocation_id) gid: vec3u) {
   // the water's voxels, and how full the top one is (1..15, for how faintly a film is drawn)
   var surf = base;
   var full = 15u;
-  if (me.x > 0.03) {
+  if (me.x > DRAWN) {
     surf = base + i32(ceil(me.x));
     full = u32(clamp((me.x - floor(me.x - 0.001)) * 15.0, 1.0, 15.0));
   }
@@ -608,13 +615,11 @@ fn stamp(@builtin(global_invocation_id) gid: vec3u) {
   // a fall: water coming in over an edge well above this column's own surface
   var fallTop = 0;
   var fallQ = 0.0;
+  var around = neighbours(x, z);
   for (var a = 0; a < 4; a++) {
-    var j = i;
-    var fin = 0.0;
-    if (a == 0 && x > 0) { j = i - 1u; fin = flux[j].y; }
-    if (a == 1 && x < GX - 1) { j = i + 1u; fin = flux[j].x; }
-    if (a == 2 && z > 0) { j = i - u32(GX); fin = flux[j].w; }
-    if (a == 3 && z < GZ - 1) { j = i + u32(GX); fin = flux[j].z; }
+    let j = around[a];
+    if (j == i) { continue; }
+    let fin = flux[j][a ^ 1]; // what it sends this way
     let lip = i32(col[j].z);
     if (fin > 0.003 && lip > surf + 1) {
       fallTop = max(fallTop, lip + 1);
@@ -622,13 +627,11 @@ fn stamp(@builtin(global_invocation_id) gid: vec3u) {
     }
   }
 
-  var raining = false;
-  if (u.rayO.w > 0.5 && pk.pos.w > 0.5 && u32(u.rayD.w) == 1u) {
-    raining = distance(vec2f(f32(x), f32(z)) + 0.5, pk.pos.xz) < u.wind.w;
-  }
-  // the hose: spray round where it lands
-  let hosing = u.rayO.w > 0.5 && pk.pos.w > 0.5 && u32(u.rayD.w) == 2u
-    && distance(vec2f(f32(x), f32(z)) + 0.5, pk.pos.xz) < u.sun.w * 1.4;
+  // rain coming down in its column, and the hose's spray round where it lands
+  let radius = u.tool.y;
+  let near = distance(vec2f(f32(x), f32(z)) + 0.5, pk.pos.xz);
+  let raining = working() && toolNow() == RAIN && near < radius;
+  let hosing = working() && toolNow() == HOSE && near < radius * 1.4;
   let drop = pcg(u32(x) * 7919u + u32(z) * 104729u);
   let tick = u32(u.res.z * 40.0);
   // white water: the faster it runs, the lighter it is drawn
@@ -641,7 +644,7 @@ fn stamp(@builtin(global_invocation_id) gid: vec3u) {
   var treeAt: array<vec4i, 9>; // site x, top of the trunk, site z, foot of the trunk
   var treeR: array<f32, 9>;    // the crown's radius
   for (var a = 0; a < 9; a++) {
-    let s = siteOf(x / SITE + a % 3 - 1, z / SITE + a / 3 - 1);
+    let s = siteOf(x / SITE + a % 3 - 1, z / SITE + a / 3 - 1, SITE, SITE_SALT);
     if (!onBlock(s.x, s.y)) { continue; }
     let si = u32(s.x + GX * s.y);
     let g = veg[si].x;
@@ -649,7 +652,7 @@ fn stamp(@builtin(global_invocation_id) gid: vec3u) {
     if (g <= 1.0 || (h % 10u) >= 4u) { continue; } // not that far along, or a site where none will
     let foot = i32(col[si].z);
     // a tree wants water and soil under it, wherever it is (the desert's cover grows without)
-    if (veg[si].z <= 0.1 || !rootable(cells[idx(vec3i(s.x, max(foot - 1, 0), s.y))])) { continue; }
+    if (veg[si].z <= 0.1 || !rootable(topCell(s.x, s.y, col[si].z))) { continue; }
     let size = clamp((g - 1.0) / 2.0, 0.0, 1.0);
     let tall = i32(2.0 + size * (3.0 + 3.0 * f32((h >> 4u) & 15u) / 15.0));
     treeAt[treeN] = vec4i(s.x, foot + tall, s.y, foot);
@@ -661,7 +664,7 @@ fn stamp(@builtin(global_invocation_id) gid: vec3u) {
   var cacAt: array<vec4i, 9>;  // site x, foot, site z, height
   var cacArm: array<vec4i, 9>; // which way the arm goes (0..3), how far out, at what height, how far up
   for (var a = 0; a < 9; a++) {
-    let s = cactusSite(x / CSITE + a % 3 - 1, z / CSITE + a / 3 - 1);
+    let s = siteOf(x / CSITE + a % 3 - 1, z / CSITE + a / 3 - 1, CSITE, CSITE_SALT);
     if (!onBlock(s.x, s.y)) { continue; }
     let si = u32(s.x + GX * s.y);
     let foot = i32(col[si].z);
@@ -675,18 +678,11 @@ fn stamp(@builtin(global_invocation_id) gid: vec3u) {
     cacArm[cacN] = vec4i(i32((h >> 12u) & 3u), select(0, 1 + i32((h >> 14u) & 1u), tall >= 4), armAt, max(tall - armAt - 1 - i32((h >> 15u) & 1u), 1));
     cacN++;
   }
-  let fertile = rootable(cells[idx(vec3i(x, max(base - 1, 0), z))]);
+  let fertile = rootable(topCell(x, z, me.z));
   var wallTop = 0; // the highest bed among the neighbours: up to there, there may be a wall beside
-  var wallAt: array<u32, 4>;
   var wallBed: array<i32, 4>;
   for (var a = 0; a < 4; a++) {
-    var j = i;
-    if (a == 0 && x > 0) { j = i - 1u; }
-    if (a == 1 && x < GX - 1) { j = i + 1u; }
-    if (a == 2 && z > 0) { j = i - u32(GX); }
-    if (a == 3 && z < GZ - 1) { j = i + u32(GX); }
-    wallAt[a] = j;
-    wallBed[a] = select(i32(col[j].z), 0, j == i);
+    wallBed[a] = select(i32(col[around[a]].z), 0, around[a] == i);
     wallTop = max(wallTop, wallBed[a]);
   }
 
@@ -701,29 +697,29 @@ fn stamp(@builtin(global_invocation_id) gid: vec3u) {
       want = WATER | (rush << 12u) | (select(15u, full, y == surf - 1) << 8u);
     } else if (y < fallTop) {
       // the fall is a curtain of drops going down, denser the more water comes over
-      if (grain(x, y + i32(tick), z) < clamp(fallQ * 8.0, 0.2, 1.0)) { want = WATER | 0xFF00u; }
+      if (grain(vec3i(x, y + i32(tick), z)) < clamp(fallQ * 8.0, 0.2, 1.0)) { want = WATER | 0xFF00u; }
     } else if (raining && (drop & 15u) == 0u && ((u32(y) + tick + (drop >> 8u)) % 28u) < 2u) {
       want = WATER | 0xFF00u;
     }
-    if (hosing && want == AIR && distance(vec3f(f32(x), f32(y), f32(z)) + 0.5, pk.pos.xyz) < u.sun.w * 1.4
-        && grain(x + i32(tick), y, z) < 0.22) {
+    if (hosing && want == AIR && distance(vec3f(f32(x), f32(y), f32(z)) + 0.5, pk.pos.xyz) < radius * 1.4
+        && grain(vec3i(x + i32(tick), y, z)) < 0.22) {
       want = WATER | 0xFF00u;
     }
-    // green goes where there is no water. Layers 8 and 9 are grass, 10 and 11 leaves, 12 wood, 14 cactus.
+    // green goes where there is no water. Its layers: grass and leaves, two tones of each, wood, cactus.
     if (y >= surf) {
       var green = 0u;
-      let g = grain(x, y, z);
+      let g = grain(vec3i(x, y, z));
       // the cover: grass on the bed where there is soil, and a bush here and there once it is thick and moist
       if (surf == base && fertile) {
-        if (y == base && v.x > 0.3) { green = 8u + u32(g < 0.4); }
-        if (y == base + 1 && v.x > 0.8 && v.z > 0.1 && g < 0.2) { green = 10u; }
+        if (y == base && v.x > 0.3) { green = GRASS + u32(g < 0.4); }
+        if (y == base + 1 && v.x > 0.8 && v.z > 0.1 && g < 0.2) { green = LEAF; }
       }
       // tufts on a wall beside: where the wall's rock is rotten, the more the longer it has been wet
       if (green == 0u && y < wallTop && y > base && v.w > 0.0) {
         for (var a = 0; a < 4; a++) {
           if (y >= wallBed[a]) { continue; }
-          let wc = cells[idx(vec3i(i32(wallAt[a]) % GX, y, i32(wallAt[a]) / GX))];
-          if (ty(wc) == ROCK && rotOf(wc) > 0.65 && g < v.w * 0.22) { green = 9u + u32(g < v.w * 0.08); }
+          let wc = cells[idx(vec3i(i32(around[a]) % GX, y, i32(around[a]) / GX))];
+          if (ty(wc) == ROCK && rotOf(wc) > 0.65 && g < v.w * 0.22) { green = GRASS + 1u + u32(g < v.w * 0.08); }
         }
       }
       // trees: the trunk in the site's own column, the crown a ball round its top
@@ -732,8 +728,8 @@ fn stamp(@builtin(global_invocation_id) gid: vec3u) {
         let dx = f32(x - tr.x);
         let dz = f32(z - tr.z);
         let dy = f32(y - tr.y) * 1.15;
-        if (dx * dx + dy * dy + dz * dz < treeR[a] * treeR[a]) { green = 10u + u32(g < 0.45); }
-        else if (x == tr.x && z == tr.z && y >= tr.w && y < tr.y) { green = 12u; }
+        if (dx * dx + dy * dy + dz * dz < treeR[a] * treeR[a]) { green = LEAF + u32(g < 0.45); }
+        else if (x == tr.x && z == tr.z && y >= tr.w && y < tr.y) { green = WOOD; }
       }
       for (var a = 0; a < cacN; a++) {
         let ca = cacAt[a];
@@ -741,7 +737,7 @@ fn stamp(@builtin(global_invocation_id) gid: vec3u) {
         let rx = x - ca.x;
         let rz = z - ca.z;
         let ry = y - ca.y;
-        if (rx == 0 && rz == 0 && ry >= 0 && ry < ca.w) { green = 14u; }
+        if (rx == 0 && rz == 0 && ry >= 0 && ry < ca.w) { green = CACTUS; }
         var d = vec2i(1, 0);
         if (ar.x == 1) { d = vec2i(-1, 0); }
         if (ar.x == 2) { d = vec2i(0, 1); }
@@ -749,10 +745,10 @@ fn stamp(@builtin(global_invocation_id) gid: vec3u) {
         // out along the arm, then up at its end
         let k = rx * d.x + rz * d.y;
         if (rx == k * d.x && rz == k * d.y && k >= 1 && k <= ar.y) {
-          if (ry == ar.z || (k == ar.y && ry > ar.z && ry <= ar.z + ar.w)) { green = 14u; }
+          if (ry == ar.z || (k == ar.y && ry > ar.z && ry <= ar.z + ar.w)) { green = CACTUS; }
         }
         // the second arm, the other way and a little higher, one column out
-        if (ca.w >= 6 && rx == -d.x && rz == -d.y && ry >= ar.z + 2 && ry <= ar.z + 2 + max(ar.w - 2, 1)) { green = 14u; }
+        if (ca.w >= 6 && rx == -d.x && rz == -d.y && ry >= ar.z + 2 && ry <= ar.z + 2 + max(ar.w - 2, 1)) { green = CACTUS; }
       }
       if (green != 0u) { want = PLANT | (green << 3u); }
     }
