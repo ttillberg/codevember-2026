@@ -45,8 +45,8 @@ const STEPS = 4096;
 /** every so many steps the angles are kept, for drawing */
 const KEEP = 8;
 const RATE = STEPS / KEEP;
-/** kept states: four bars */
-const CAP = 2048;
+/** kept states: sixteen bars (the waves look four back; a finger on the scene can hold the picture a while) */
+const CAP = 8192;
 /** where kept state e lives (e is negative during a count in) */
 const slot = (e: number) => (((e % CAP) + CAP) % CAP) * MAX;
 

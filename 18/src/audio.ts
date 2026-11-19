@@ -3,6 +3,8 @@
 // root, on a scale; the link's own is the timbre.
 // Hits are given in performance time and started on the audio clock, so the rhythm is as
 // tight as the formula, whatever the frame rate does.
+import acidUrl from './acid.worklet.ts?worker&url';
+import type { AcidMsg } from './acid.worklet';
 
 /**
  * Where a joint is when it hits is its note, as on day 14's string: the notes are laid down a
@@ -43,19 +45,93 @@ const hertz = (midi: number) => 440 * Math.pow(2, (midi - 69) / 12);
  * - bones: a drum, two bones knocked together: a soft rimshot. A round knock with some tone
  *   in it, a tenth of a second, and what rings with it as on a rim. Rhythm only: every link
  *   has its own pair, and the note asked for does not come into it.
- * - square: electronic, as on day 14. Two square waves a few cents apart through a filter the
- *   hit opens and that closes again: harder is not louder so much as more open.
+ * - TB-303: the bass machine (Roland's, from the soundbox's voice, ported): a saw or a square
+ *   through a four-pole ladder filter that every note opens and that closes again, with its
+ *   knobs: cutoff, resonance, how far the envelope opens it, how long it takes to close, how
+ *   much an accent counts, how slowly a slide glides, and its tune. Mono, as it was: a note
+ *   that starts while the last is still held glides to its pitch instead of striking again, and
+ *   a hard hit is an accent. Runs in an AudioWorklet (acid.worklet.ts); where a page has none
+ *   (a phone over plain http) it is the plain square voice it was, without the knobs.
  * - 808: the drum machine. Not one sound tuned to the note but a sound a note (KIT, below):
  *   bass drum, rimshot, snare, hats, clap, tom, cowbell, each made the way the machine made
  *   it, near enough: a sine that falls for the drums, six squares that agree on nothing for
  *   the metal, noise through a band for the rest.
+ * - chatter: a voice saying a syllable on the note (VEINS, below): a buzz through three
+ *   formants that make the vowel, the consonant before it made of where they start from and
+ *   a little noise.
  */
 export const INSTRUMENTS: Array<{ id: string; label: string }> = [
   { id: 'tine', label: 'Tine' },
   { id: 'bones', label: 'Bones' },
-  { id: 'square', label: 'Square' },
+  { id: '303', label: 'TB-303' },
   { id: '808', label: 'TR-808' },
+  { id: 'chatter', label: 'Chatter' },
 ];
+
+/** the vowels, by their first three formants (Hz) */
+const VOWELS: Record<string, [number, number, number]> = {
+  a: [780, 1200, 2700],
+  e: [450, 1900, 2600],
+  i: [300, 2250, 3000],
+  o: [480, 820, 2650],
+  u: [330, 740, 2450],
+};
+/**
+ * The consonants, by what they do to the vowel after them: where its first two formants start
+ * from (the mouth's shape before it opens), how long until the voice comes in (s), and the
+ * noise at the start: its band, how long, how loud, and whether it is a hiss (s) or a burst.
+ * A hum (m, n) is the voice through a shut mouth first: only the lowest formant.
+ */
+type Consonant = { f1: number; f2: number; gap: number; noise?: [number, number, number]; hiss?: boolean; hum?: boolean };
+const CONSONANTS: Record<string, Consonant> = {
+  b: { f1: 240, f2: 850, gap: 0.006, noise: [600, 0.008, 0.25] },
+  d: { f1: 250, f2: 1750, gap: 0.008, noise: [3200, 0.01, 0.3] },
+  k: { f1: 300, f2: 2100, gap: 0.04, noise: [2400, 0.03, 0.5] },
+  t: { f1: 300, f2: 1800, gap: 0.045, noise: [4800, 0.035, 0.5] },
+  p: { f1: 260, f2: 800, gap: 0.035, noise: [900, 0.025, 0.45] },
+  m: { f1: 250, f2: 1000, gap: 0, hum: true },
+  n: { f1: 250, f2: 1600, gap: 0, hum: true },
+  l: { f1: 340, f2: 1100, gap: 0 },
+  s: { f1: 300, f2: 1700, gap: 0.07, noise: [5500, 0.07, 0.22], hiss: true },
+};
+/**
+ * Each link's vein: four syllables alike, one consonant and the vowels round it, and the size
+ * of the mouth that says them (its formants times this: over 1 a smaller one). A hit says one
+ * of the four, never the one before it.
+ */
+const VEINS = [
+  { says: ['ba', 'bi', 'bo', 'bu'], mouth: 1 },
+  { says: ['da', 'de', 'di', 'do'], mouth: 1.1 },
+  { says: ['ka', 'ke', 'ki', 'ko'], mouth: 0.94 },
+  { says: ['ma', 'me', 'mi', 'mo'], mouth: 1.16 },
+  { says: ['la', 'le', 'li', 'lu'], mouth: 1.05 },
+  { says: ['ta', 'te', 'ti', 'tu'], mouth: 0.9 },
+  { says: ['na', 'ne', 'no', 'nu'], mouth: 1.2 },
+  { says: ['pa', 'pe', 'pi', 'po'], mouth: 0.97 },
+];
+
+/**
+ * The 303's knobs as they are kept: each 0..1 (the wave 0 for a saw, 1 for a square; the tune in
+ * semitones, -12 to 12). The ones that are times and pitches go along a log from their lowest
+ * to their highest (acidParams), as a knob over such a range should.
+ */
+export interface Acid {
+  wave: number;
+  cutoff: number;
+  res: number;
+  env: number;
+  decay: number;
+  accent: number;
+  slide: number;
+  tune: number;
+}
+/** where they start: the soundbox's own (800 Hz, 0.6 resonance, 0.5 env mod, 0.3 s, 0.5 accent, 60 ms) */
+export const ACID_START: Acid = { wave: 0, cutoff: 0.533, res: 0.6, env: 0.5, decay: 0.486, accent: 0.5, slide: 0.486, tune: 0 };
+const along = (x: number, from: number, to: number) => from * Math.pow(to / from, Math.min(1, Math.max(0, x)));
+/** a note's gate: how long a note is held before it lets go, seconds (a note inside it glides) */
+const ACID_GATE = 0.16;
+/** how much the 303 is turned down to sit with the others */
+const ACID_LEVEL = 1.4;
 
 /**
  * The drum machine's sounds, one to a note: going down the ruler, every note of the scale is
@@ -139,20 +215,79 @@ const DRIVE_MAX = 24;
 /** the low pass on the room, Hz: with no damping and with all of it */
 const DAMP_OPEN = 16000;
 const DAMP_SHUT = 500;
+/**
+ * The tremolo's speed is a note value of the tempo, not a number of hertz: how many times it
+ * dips and comes back in a bar. (The knob's value is the place in this list.) It is locked to
+ * the bar, at its fullest on the beat, and dips between.
+ */
+export const TREM_DIVS: Array<{ label: string; perBar: number }> = [
+  { label: '1/1', perBar: 1 },
+  { label: '1/2', perBar: 2 },
+  { label: '1/4', perBar: 4 },
+  { label: '1/8', perBar: 8 },
+  { label: '1/8T', perBar: 12 },
+  { label: '1/16', perBar: 16 },
+  { label: '1/32', perBar: 32 },
+];
+/** it starts on the eighths */
+export const TREM_START = 3;
+/** how long a channel's tremolo is trusted to be in step with the bar before it is put right again, seconds (the two clocks drift apart, a hair) */
+const TREM_RELOCK = 8;
+/** a hit's level when its speed does not count: that of a fairly hard one (vel about 0.68), so the knob does not turn the whole mix up */
+const EVEN = 0.6;
 /** the level at the top of the volume knob: 80 on it is 0.8, where it was before there was a knob */
 const VOLUME_TOP = 0.8 / Math.pow(0.8, 1.5);
+/** the chatter's buzz before the mouth: most of a sawtooth is lost in its formants, so it goes in hot to come out as loud as a tine */
+const CHAT_LEVEL = 2.4;
 
-export class Sound {
-  readonly ac: AudioContext;
-  private bus: GainNode;
+/** what one pendulum's mix is: each knob 0..1, and the tempo the echo keeps (a dotted eighth of it) */
+export interface Mix {
+  reverb: number;
+  room: number;
+  delay: number;
+  harm: number;
+  bpm: number;
+  volume: number;
+  dist: number;
+  damp: number;
+  velocity: number;
+  /** the tremolo: how deep it is (0 none, 1 down to silence), and how fast: its place in TREM_DIVS */
+  trem: number;
+  tremRate: number;
+  /** the 303's knobs (what a 303 on this channel sounds like), and whether it is what is struck: its voice is made ahead, as soon as it is */
+  acid: Acid;
+  instrument: string;
+}
+
+/**
+ * One pendulum's own channel, the whole way to the master: the distortion, the room, the echo,
+ * a compressor and its level. Every pendulum has one, so each is mixed on its own (a tine
+ * with no room beside a chatter drowned in one).
+ */
+class Strip {
+  /** where its hits go in */
+  readonly bus: GainNode;
   private out: GainNode;
-  private noise: AudioBuffer;
-  /** context time minus performance time, for what is heard now */
-  private off = NaN;
-  /** seconds between a sound being started and being heard */
-  latency = 0;
   private level = 0.8;
-  private quiet = false;
+  /** the tremolo: a gain that a sine moves, after everything the channel does (the room's tail shakes too) */
+  private flutter: GainNode;
+  private lfo: OscillatorNode;
+  private swing: GainNode;
+  /** the 303 on this channel: made at its first note (where the page can run a worklet), and what its knobs say */
+  private voice: AudioWorkletNode | null = null;
+  private knobs: Acid | null = null;
+  private wantsVoice = false;
+  private knobsSaid = '';
+  private gateEnd = -Infinity;
+  private gen = 0;
+  /** what the tremolo is locked for: the tempo and the note value, and whether there is any; and when it was last put in step */
+  private lockKey = '';
+  private lockOn = false;
+  private div = TREM_START;
+  private bpm = 120;
+  /** it is out of step with the bar (new, or the tempo or the note value moved) and is to be locked again */
+  unlocked = true;
+  lockedAt = -Infinity;
   /** the distortion, before the room and the echo: how hard it is driven, and brought back down after */
   private pre: GainNode;
   private post: GainNode;
@@ -169,16 +304,13 @@ export class Sound {
   private size = 0.7;
   private resting = 0;
   /** how loud the overtone over every note is: 1 as designed, 0 none (plain sines), 2 twice */
-  private harm = 1;
-  private instrument = 'tine';
+  harm = 1;
+  /** how much a hit's speed counts in its level: 1 all of it, 0 none (every hit at EVEN) */
+  touch = 1;
   /** the mix as it was last set, to know when there is nothing new */
   private said = '';
-  /** for the dev console: how many hits, and how late the latest one had to start (seconds, 0 is on time) */
-  stats = { hits: 0, late: 0, lead: 0 };
 
-  constructor() {
-    const AC: typeof AudioContext = window.AudioContext ?? (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-    const ac = (this.ac = new AC({ latencyHint: 'interactive' }));
+  constructor(private ac: AudioContext, to: AudioNode) {
     this.bus = ac.createGain();
     const conv = (this.conv = ac.createConvolver());
     conv.buffer = room(ac, this.size);
@@ -213,7 +345,16 @@ export class Sound {
     this.damp.frequency.value = DAMP_OPEN;
     this.post.connect(this.dry).connect(comp);
     this.post.connect(conv).connect(this.damp).connect(this.wet).connect(comp);
-    comp.connect(this.out).connect(ac.destination);
+    // the tremolo: the gain sits at 1 - depth/2 and the sine moves it by depth/2 either way, so it swings between 1 - depth and 1
+    this.flutter = ac.createGain();
+    this.lfo = ac.createOscillator();
+    this.swing = ac.createGain();
+    this.swing.gain.value = 0;
+    this.lfo.connect(this.swing).connect(this.flutter.gain);
+    this.lfo.start();
+    // (until it is locked it sways at the bar's pace on the eighths, from nowhere in particular)
+    this.lfo.frequency.value = (TREM_DIVS[TREM_START].perBar * this.bpm) / 240;
+    comp.connect(this.flutter).connect(this.out).connect(to);
 
     // The echo, as on day 14: a dotted eighth apart, bouncing left then right, dark (a band from
     // 180 Hz to 2.8 kHz) so it sits behind the notes, and a little of it into the room.
@@ -237,20 +378,6 @@ export class Sound {
     });
     echo.connect(comp);
     echo.connect(conv);
-
-    // a second of it: the short knocks take a sliver, the snare and the clap loop it without it being heard as a loop
-    this.noise = ac.createBuffer(1, ac.sampleRate, ac.sampleRate);
-    const d = this.noise.getChannelData(0);
-    for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
-  }
-
-  get running() {
-    return this.ac.state === 'running';
-  }
-
-  set muted(m: boolean) {
-    this.quiet = m;
-    this.out.gain.setTargetAtTime(m ? 0 : this.level, this.ac.currentTime, 0.015);
   }
 
   /**
@@ -259,18 +386,17 @@ export class Sound {
    * much of it comes round again; harmonics is the overtone over every note, none at 0, as
    * designed in the middle, twice at the top.
    */
-  set(mix: { reverb: number; room: number; delay: number; harm: number; bpm: number; instrument: string; volume: number; dist: number; damp: number }) {
+  set(mix: Mix) {
     // told again with nothing new (a track's knob being turned says so a hundred times a second): nothing to do
-    const said = [mix.reverb, mix.room, mix.delay, mix.harm, mix.bpm, mix.instrument, mix.volume, mix.dist, mix.damp].join();
+    const said = [mix.reverb, mix.room, mix.delay, mix.harm, mix.bpm, mix.volume, mix.dist, mix.damp, mix.velocity, mix.trem, mix.tremRate, mix.instrument, Object.values(mix.acid).join()].join();
     if (said === this.said) return;
     this.said = said;
-    this.instrument = mix.instrument;
     const now = this.ac.currentTime;
     // the volume of it all: 80 is where it was before there was a knob
     const level = VOLUME_TOP * Math.pow(mix.volume, 1.5);
     if (level !== this.level) {
       this.level = level;
-      if (!this.quiet) this.out.gain.setTargetAtTime(level, now, 0.02);
+      this.out.gain.setTargetAtTime(level, now, 0.02);
     }
     // The distortion: how hard everything is driven into the clipper, from next to nothing (clean)
     // to a fuzz. What comes out is brought back to about the level it had, a little under at the
@@ -301,7 +427,181 @@ export class Sound {
     this.send.gain.setTargetAtTime(0.7 * mix.delay, now, 0.03);
     this.again.gain.setTargetAtTime(mix.delay > 0 ? 0.2 + 0.45 * mix.delay : 0, now, 0.03);
     for (const tap of this.taps) tap.delayTime.setTargetAtTime((0.75 * 60) / mix.bpm, now, 0.05);
+    this.knobs = mix.acid;
+    this.wantsVoice = mix.instrument === '303';
+    this.ready();
+    this.tellKnobs();
+    this.flutter.gain.setTargetAtTime(1 - 0.5 * mix.trem, now, 0.03);
+    this.swing.gain.setTargetAtTime(0.5 * mix.trem, now, 0.03);
+    // its pace is the tempo's: the bar a second's worth of cycles long, as many to it as the note value says
+    this.div = Math.min(TREM_DIVS.length - 1, Math.max(0, Math.round(mix.tremRate)));
+    this.bpm = mix.bpm;
+    const key = `${this.bpm}|${this.div}`;
+    const on = mix.trem > 0;
+    if (key !== this.lockKey || on !== this.lockOn) {
+      this.lockKey = key;
+      this.lockOn = on;
+      this.unlocked = true;
+    }
     this.harm = 2 * mix.harm;
+    this.touch = mix.velocity;
+  }
+
+  /**
+   * Put the tremolo in step with the bar: a fresh sine, started at `at` (context time) at the
+   * pace of the tempo and the note value, turned so that at `at` it is where the bar is (`bars`,
+   * how far into it): at its fullest on the beat. A sine turned a quarter of a cycle is a cosine,
+   * and a cosine and a sine added are a sine of any turn: a table of two numbers says it. Where the
+   * old one stops, this one takes up, at the same level, so nothing is heard of the change.
+   */
+  lock(at: number, bars: number) {
+    this.unlocked = false;
+    this.lockedAt = this.ac.currentTime;
+    if (!this.lockOn) return;
+    const per = TREM_DIVS[this.div].perBar;
+    const turn = 2 * Math.PI * ((per * bars) % 1) + Math.PI / 2;
+    const next = this.ac.createOscillator();
+    next.setPeriodicWave(this.ac.createPeriodicWave([0, Math.sin(turn)], [0, Math.cos(turn)], { disableNormalization: true }));
+    next.frequency.value = (per * this.bpm) / 240;
+    next.connect(this.swing);
+    next.start(at);
+    const old = this.lfo;
+    old.stop(at);
+    old.onended = () => old.disconnect();
+    this.lfo = next;
+  }
+
+  /** the 303's knobs, in the units it runs on, told to its voice when they are new */
+  private tellKnobs() {
+    const a = this.knobs;
+    if (!this.voice || !a) return;
+    const params = {
+      type: 'params' as const,
+      wave: a.wave,
+      cutoff: along(a.cutoff, 80, 6000),
+      res: a.res,
+      envmod: a.env,
+      decay: along(a.decay, 0.05, 2),
+      accent: a.accent,
+      slide: along(a.slide, 0.01, 0.4),
+      tune: a.tune,
+    };
+    const said = JSON.stringify(params);
+    if (said === this.knobsSaid) return;
+    this.knobsSaid = said;
+    this.voice.port.postMessage(params satisfies AcidMsg);
+  }
+
+  /** the page can run its 303 now (or the channel wants it now): made ahead of the first note, which a voice takes a moment to be ready for */
+  ready() {
+    if (this.wantsVoice) this.acidVoice();
+  }
+
+  /** the 303 of this channel, made the first time it is wanted; null where there is no worklet to run it in */
+  private acidVoice(): AudioWorkletNode | null {
+    if (this.voice) return this.voice;
+    if (!acidReady.has(this.ac)) return null;
+    const node = new AudioWorkletNode(this.ac, 'acid', { numberOfInputs: 0, numberOfOutputs: 1, outputChannelCount: [2] });
+    node.connect(this.bus);
+    this.voice = node;
+    this.tellKnobs();
+    return node;
+  }
+
+  /**
+   * A note of the 303, at context time `when`: the note (midi), how loud, whether it is an
+   * accent, and how far to either side. One held while this starts makes it a slide: it glides
+   * there, and the end that was set for the one before is called off. False where there is
+   * no 303 to play it.
+   */
+  note(when: number, midi: number, gain: number, accent: boolean, pan: number): boolean {
+    const node = this.acidVoice();
+    if (!node) return false;
+    const gen = ++this.gen;
+    node.port.postMessage({ type: 'on', t: when, note: midi, gain: gain * ACID_LEVEL, accent, slide: when < this.gateEnd, pan, gen } satisfies AcidMsg);
+    this.gateEnd = when + ACID_GATE;
+    node.port.postMessage({ type: 'off', t: this.gateEnd, gen } satisfies AcidMsg);
+    return true;
+  }
+
+  /** the pendulum is gone: what was in it dies where it is (the echo's loop cut, so it does not ring on unheard) */
+  dispose() {
+    window.clearTimeout(this.resting);
+    this.send.gain.value = 0;
+    this.again.gain.value = 0;
+    this.lfo.stop();
+    this.voice?.disconnect();
+    this.out.disconnect();
+  }
+}
+
+/** the contexts that have the 303's worklet loaded: a page without one (plain http) runs the old square voice */
+const acidReady = new WeakSet<BaseAudioContext>();
+
+export class Sound {
+  readonly ac: AudioContext;
+  /** everything's way out: shut by the sound being off */
+  private master: GainNode;
+  /** a channel a pendulum, made when first asked for */
+  private strips: Strip[] = [];
+  private noise: AudioBuffer;
+  /** context time minus performance time, for what is heard now */
+  private off = NaN;
+  /** seconds between a sound being started and being heard */
+  latency = 0;
+  /** for the dev console: how many hits, and how late the latest one had to start (seconds, 0 is on time) */
+  stats = { hits: 0, late: 0, lead: 0 };
+  /** how far into the bar (in bars) it is at a time on the page's clock, seconds: what the tremolos are locked to */
+  bar: ((t: number) => number) | null = null;
+  private relocking = false;
+
+  constructor() {
+    const AC: typeof AudioContext = window.AudioContext ?? (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+    const ac = (this.ac = new AC({ latencyHint: 'interactive' }));
+    this.master = ac.createGain();
+    this.master.connect(ac.destination);
+    this.strip(0);
+    // the 303's worklet: a moment to load (its first note may be the old voice's), and not at all on a page that cannot
+    ac.audioWorklet?.addModule(acidUrl).then(
+      () => {
+        acidReady.add(ac);
+        for (const strip of this.strips) strip.ready();
+      },
+      () => {},
+    );
+
+    // a second of it: the short knocks take a sliver, the snare and the clap loop it without it being heard as a loop
+    this.noise = ac.createBuffer(1, ac.sampleRate, ac.sampleRate);
+    const d = this.noise.getChannelData(0);
+    for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+  }
+
+  get running() {
+    return this.ac.state === 'running';
+  }
+
+  set muted(m: boolean) {
+    this.master.gain.setTargetAtTime(m ? 0 : 1, this.ac.currentTime, 0.015);
+  }
+
+  private strip(i: number): Strip {
+    while (this.strips.length <= i) this.strips.push(new Strip(this.ac, this.master));
+    return this.strips[i];
+  }
+
+  /** the mix of pendulum i */
+  set(i: number, mix: Mix) {
+    this.strip(i).set(mix);
+  }
+
+  /** the bar has started over, or been held or let go: every tremolo is to be put in step with it again */
+  relock() {
+    this.relocking = true;
+  }
+
+  /** only n pendulums are left: the channels of the others go */
+  keep(n: number) {
+    while (this.strips.length > Math.max(1, n)) this.strips.pop()!.dispose();
   }
 
   /** Line the two clocks up. Once per scheduler tick: smoothed, so a jittery reading does not move the beat. */
@@ -316,11 +616,19 @@ export class Sound {
     if (!Number.isFinite(this.off) || Math.abs(o - this.off) > 0.03) this.off = o;
     else this.off += (o - this.off) * 0.05;
     this.latency = Math.max(0, ac.currentTime - (performance.now() / 1000 + this.off));
+    // the tremolos, in step with the bar: those that were put out of it, all of them when the bar moved, and every so often against drift
+    const bar = this.bar;
+    if (!bar) return;
+    const at = ac.currentTime + 0.03;
+    for (const strip of this.strips) {
+      if (this.relocking || strip.unlocked || ac.currentTime - strip.lockedAt > TREM_RELOCK) strip.lock(at, bar(at - this.off));
+    }
+    this.relocking = false;
   }
 
   /**
-   * A joint crosses at performance time t (seconds), going dir, as hard as vel (0..1), and
-   * sounds the note `midi` with the voice `hue` at vol (0..1). Tick and tock are the same
+   * A joint of pendulum `pen` crosses at performance time t (seconds), going dir, as hard as vel (0..1), and
+   * sounds the note `midi` with the voice `hue` at vol (0..1), on `instrument` (each pendulum has its own). Tick and tock are the same
    * note: the way it goes is only which side it is heard on.
    *
    * What is struck is the instrument (INSTRUMENTS, above). The tine: the note as a sine that
@@ -328,22 +636,28 @@ export class Sound {
    * over it that dies sooner, a click for the strike. The pitch does not move, but for the
    * very lowest, which get a thump.
    */
-  hit(hue: number, dir: number, vel: number, t: number, vol: number, midi: number, step: number) {
+  hit(pen: number, instrument: string, hue: number, dir: number, vel: number, t: number, vol: number, midi: number, step: number) {
     const ac = this.ac;
     if (!this.running || !Number.isFinite(this.off) || !(vol > 0)) return;
+    const chan = this.strip(pen);
+    const harm = chan.harm;
     const when = Math.max(ac.currentTime + 0.002, t + this.off);
     this.stats = { hits: this.stats.hits + 1, late: when - (t + this.off), lead: when - ac.currentTime };
     const f = hertz(midi);
     const which = hue % TIMBRES.length;
     const v = TIMBRES[which];
     // how hard, as a level: its volume, and how fast it crossed
-    const dyn = vol * vol * (0.18 + 0.82 * Math.pow(vel, 1.6));
+    const fast = 0.18 + 0.82 * Math.pow(vel, 1.6);
+    const dyn = vol * vol * (EVEN + (fast - EVEN) * chan.touch);
     // and a note's own loudness: low ones need more of it to be heard as loud
     const loud = Math.min(1, Math.pow(55 / f, 0.42)) * dyn;
 
+    // the 303 plays its own notes, in the worklet; where there is none, the square voice below
+    if (instrument === '303' && chan.note(when, midi, dyn, vel >= 0.75, dir * Math.min(0.25, f / 1200))) return;
+
     const pan = ac.createStereoPanner();
     pan.pan.value = dir * Math.min(0.25, f / 1200);
-    pan.connect(this.bus);
+    pan.connect(chan.bus);
 
     const ring = (freq: number, from: number, amp: number, long: number) => {
       const o = ac.createOscillator();
@@ -373,12 +687,17 @@ export class Sound {
       n.stop(when + Math.min(0.045, long + 0.01));
     };
 
-    if (this.instrument === '808') {
-      this.drum(KIT[step % KIT.length], when, 0.9 * dyn, vel, pan);
+    if (instrument === '808') {
+      this.drum(KIT[step % KIT.length], when, 0.9 * dyn, vel, pan, harm);
       return;
     }
 
-    if (this.instrument === 'bones') {
+    if (instrument === 'chatter') {
+      this.say(which, when, f, dir, vel, loud, pan, harm);
+      return;
+    }
+
+    if (instrument === 'bones') {
       // A drum: two bones knocked together, and what that sounds like is a soft rimshot. A
       // round knock with some tone in it, a tenth of a second of it, not a tune: there are
       // eight pairs of bones, a pair a note down the ruler, round and round, as the drum
@@ -394,21 +713,21 @@ export class Sound {
       // anything struck does, and down in a moment.
       ring(bone, 1.12, level * 0.5, 0.075 + 0.025 * vel);
       // what rings with it, as on a rim: no notes over the tone (1.59 and 2.3 times it), and shorter
-      ring(bone * 1.59, 1, level * 0.25 * (0.5 + 0.5 * this.harm), 0.055);
-      if (this.harm > 0) ring(bone * 2.3, 1, level * 0.14 * this.harm * hard, 0.035);
+      ring(bone * 1.59, 1, level * 0.25 * (0.5 + 0.5 * harm), 0.055);
+      if (harm > 0) ring(bone * 2.3, 1, level * 0.14 * harm * hard, 0.035);
       // the knock itself: soft and dull, wood, no hiss (a Burial rim, not a studio one)
       knock('bandpass', 1100 + 90 * which, level * 0.9 * hard, 0.016, 1.2);
       return;
     }
 
-    if (this.instrument === 'square') {
+    if (instrument === '303') {
       const dur = Math.min(0.7, Math.max(0.15, 0.4 * Math.sqrt(220 / f)));
       const level = loud * 0.3;
       const filter = ac.createBiquadFilter();
       filter.type = 'lowpass';
       filter.Q.value = 2 + (which % 4) * 1.5;
       // the hit opens it, as far as it is hard (and as harmonics says); then it closes on the note
-      const open = Math.min(9000, f * (2 + 14 * vel * this.harm));
+      const open = Math.min(9000, f * (2 + 14 * vel * harm));
       filter.frequency.setValueAtTime(open, when);
       filter.frequency.exponentialRampToValueAtTime(Math.max(120, f * 1.2), when + dur * 0.7);
       const g = ac.createGain();
@@ -432,16 +751,123 @@ export class Sound {
     const dur = Math.min(1, Math.max(0.2, 0.6 * Math.sqrt(220 / f)));
     ring(f, f < 120 ? 1 + ((120 - f) / 120) * 1.2 : 1, loud, dur);
     // harder is brighter, not only louder
-    if (this.harm > 0) ring(f * v.over, 1, loud * v.bright * this.harm * (0.3 + 0.7 * vel), dur * 0.45);
+    if (harm > 0) ring(f * v.over, 1, loud * v.bright * harm * (0.3 + 0.7 * vel), dur * 0.45);
     // what a small speaker cannot play, an octave up
     if (f < 110) ring(f * 2, 1, loud * 0.45, dur * 0.7);
     knock('highpass', 1800 + 400 * which, loud * v.click * vel, 0.014);
   }
 
-  /** one of the drum machine's sounds, at `when`, as loud as `level`, as hard as `vel`, into `out` */
-  private drum(kind: string, when: number, level: number, vel: number, out: AudioNode) {
+  /** the syllable each link said last, so that the next is another */
+  private last: number[] = [];
+
+  /**
+   * One syllable of the chatter, on the note f, at `when`: one of the four of the link's vein
+   * (VEINS), at random. The voice is a buzz (a sawtooth, and a breath of noise in it) through
+   * three formants side by side, and those are the vowel. Before it the consonant: the formants
+   * start where it puts them and slide to the vowel's, after a gap and a burst of noise if it
+   * has them. The pitch slides onto the note as speech does, tick from under it, tock from over.
+   */
+  private say(which: number, when: number, f: number, dir: number, vel: number, loud: number, out: AudioNode, harm: number) {
     const ac = this.ac;
-    const bright = 0.5 + 0.5 * this.harm;
+    const vein = VEINS[which % VEINS.length];
+    const n = vein.says.length;
+    const k = ((this.last[which] ?? 0) + 1 + Math.floor(Math.random() * (n - 1))) % n;
+    this.last[which] = k;
+    const word = vein.says[k];
+    const c = CONSONANTS[word[0]];
+    const vowel = VOWELS[word[1]];
+    // a higher note is a smaller mouth, a little: chatter, not a chipmunk
+    const mouth = vein.mouth * Math.pow(Math.max(1, f / 220), 0.12);
+    const on = when + c.gap;
+    const dur = Math.min(0.3, Math.max(0.13, 0.22 * Math.pow(220 / f, 0.2)));
+    const end = on + dur;
+    const level = loud * CHAT_LEVEL;
+    // a hum holds the mouth shut a moment before it opens; an l slides slower
+    const shut = c.hum ? 0.045 : 0;
+    const slide = word[0] === 'l' ? 0.07 : 0.045;
+
+    // the mouth: three formants side by side, wider for a high voice (whose harmonics are far apart)
+    const mouthIn = ac.createGain();
+    const wide = [80, 100, 140];
+    const gains = [1, 0.55 * (0.5 + 0.5 * harm), 0.3 * harm * (0.4 + 0.6 * vel)];
+    const from = [c.f1, c.f2, vowel[2]];
+    for (let i = 0; i < 3; i++) {
+      const band = ac.createBiquadFilter();
+      band.type = 'bandpass';
+      const to = vowel[i] * mouth;
+      band.Q.value = to / Math.max(wide[i], f * 0.5);
+      band.frequency.setValueAtTime(from[i] * mouth, when);
+      band.frequency.setValueAtTime(from[i] * mouth, on + shut);
+      band.frequency.exponentialRampToValueAtTime(to, on + shut + slide);
+      const g = ac.createGain();
+      g.gain.setValueAtTime(c.hum && i > 0 ? 0.06 * gains[i] : gains[i], when);
+      if (c.hum && i > 0) {
+        g.gain.setValueAtTime(0.06 * gains[i], on + shut);
+        g.gain.linearRampToValueAtTime(gains[i], on + shut + 0.03);
+      }
+      mouthIn.connect(band).connect(g).connect(out);
+    }
+
+    // the voice
+    const buzz = ac.createOscillator();
+    buzz.type = 'sawtooth';
+    buzz.frequency.setValueAtTime(f * Math.pow(2, (dir > 0 ? -1.5 : 1.5) / 12), on);
+    buzz.frequency.exponentialRampToValueAtTime(f, on + 0.07);
+    const voice = ac.createGain();
+    voice.gain.setValueAtTime(0, on);
+    voice.gain.linearRampToValueAtTime(level * (c.hum ? 0.6 : 1), on + (c.hum ? 0.02 : 0.01));
+    voice.gain.linearRampToValueAtTime(level, on + shut + 0.03);
+    voice.gain.setValueAtTime(level, on + dur * 0.4);
+    voice.gain.exponentialRampToValueAtTime(0.0001, end);
+    buzz.connect(voice).connect(mouthIn);
+    buzz.start(on);
+    buzz.stop(end + 0.03);
+
+    // the breath: through the mouth too, a puff of it before the vowel after a k, t or p
+    const breath = ac.createBufferSource();
+    breath.buffer = this.noise;
+    const air = ac.createGain();
+    const puff = c.gap > 0.02 && !c.hiss;
+    air.gain.setValueAtTime(0, when);
+    if (puff) {
+      air.gain.linearRampToValueAtTime(level * 0.9, when + 0.01);
+      air.gain.setValueAtTime(level * 0.9, on);
+    }
+    air.gain.linearRampToValueAtTime(level * 0.05, on + 0.02);
+    air.gain.exponentialRampToValueAtTime(0.0001, end);
+    breath.connect(air).connect(mouthIn);
+    breath.start(when);
+    breath.stop(end + 0.03);
+
+    // the consonant's own noise: a burst at the lips or the teeth, or a hiss
+    if (c.noise) {
+      const [freq, long, amp] = c.noise;
+      const src = ac.createBufferSource();
+      src.buffer = this.noise;
+      const band = ac.createBiquadFilter();
+      band.type = c.hiss ? 'highpass' : 'bandpass';
+      band.frequency.value = freq * mouth;
+      band.Q.value = c.hiss ? 0.7 : 1.4;
+      const g = ac.createGain();
+      const peak = amp * level * (0.6 + 0.4 * vel);
+      if (c.hiss) {
+        g.gain.setValueAtTime(0, when);
+        g.gain.linearRampToValueAtTime(peak, when + long * 0.5);
+        g.gain.linearRampToValueAtTime(0, when + long);
+      } else {
+        g.gain.setValueAtTime(peak, when);
+        g.gain.exponentialRampToValueAtTime(0.0001, when + long);
+      }
+      src.connect(band).connect(g).connect(out);
+      src.start(when);
+      src.stop(when + long + 0.02);
+    }
+  }
+
+  /** one of the drum machine's sounds, at `when`, as loud as `level`, as hard as `vel`, into `out` */
+  private drum(kind: string, when: number, level: number, vel: number, out: AudioNode, harmonics: number) {
+    const ac = this.ac;
+    const bright = 0.5 + 0.5 * harmonics;
     /** an oscillator that falls from `from` times its pitch, and dies in `long` */
     const tone = (type: OscillatorType, freq: number, from: number, fall: number, amp: number, long: number, to: AudioNode = out) => {
       const o = ac.createOscillator();

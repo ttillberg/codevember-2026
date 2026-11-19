@@ -1,6 +1,43 @@
 /* a dark day: backdrop #0b0b0d, ink #f4f4f2. A light one: a light backdrop, ink #1c1c1c (docs/DESIGN.md) */
+/* The spacing of the panels, in one place: every gap in them is one of these, so a row is as far
+   from the next in every panel, and a name as far from its knobs. (README, "Spacing".) */
+:root {
+  --sp-panel-y: 18px; /* a panel's padding, top and bottom */
+  --sp-panel-x: 20px; /* and at its sides */
+  --sp-row: 14px; /* between two rows of a panel: this much on each side of the hairline */
+  --sp-col: 9px; /* between two sections of a row: this much on each side of the hairline */
+  --sp-label: 8px; /* a section's name to what stands under it */
+  --sp-item: 4px; /* between controls next to each other */
+  --sp-cell: 46px; /* a knob's column: the knob stands flush left in it, as its section's name does, and its own name flush left under it */
+  --rule: rgba(244, 244, 242, 0.12); /* the hairline between rows and between sections */
+}
 html, body { margin: 0; height: 100%; background: #0b0b0d; overflow: hidden; }
-canvas { display: block; width: 100vw; height: 100vh; }
+/* the background is not flat: a little lighter in the middle, darker at the edges */
+body {
+  background-color: #0b0b0d;
+  background-image: radial-gradient(ellipse 110% 85% at 50% 38%, #0e0e11 0%, #0b0b0d 55%, #060607 100%);
+}
+/* Millimetre paper, very faint: a line every 2 mm (8 px) and a stronger every 10 mm (40 px), on the page behind the scene. Not in a picture (`?clean`). */
+body:not(.clean) {
+  background-image:
+    linear-gradient(rgba(244, 244, 242, 0.02) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(244, 244, 242, 0.02) 1px, transparent 1px),
+    linear-gradient(rgba(244, 244, 242, 0.009) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(244, 244, 242, 0.009) 1px, transparent 1px),
+    radial-gradient(ellipse 110% 85% at 50% 38%, #0e0e11 0%, #0b0b0d 55%, #060607 100%);
+  background-size: 40px 40px, 40px 40px, 8px 8px, 8px 8px, 100% 100%;
+  /* from the middle of the pendulums and the top of the ruler (main.ts sets them): a line through each centre line */
+  background-position: var(--grid-x, 0) var(--grid-y, 0), var(--grid-x, 0) var(--grid-y, 0), var(--grid-x, 0) var(--grid-y, 0), var(--grid-x, 0) var(--grid-y, 0), 0 0;
+}
+/* a finger held on the page selects nothing, opens no menu, flashes nothing */
+body { user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent; }
+/* (but a name being typed is text) */
+input[type="text"] { user-select: text; -webkit-user-select: text; }
+/* and on the scene it is the chain's: no scrolling, no zooming under it */
+/* (the page's own box, not 100vh: on a phone 100vh is taller than what shows under the browser's bar, and the picture was stretched) */
+canvas { display: block; position: fixed; inset: 0; width: 100%; height: 100%; touch-action: none; }
+/* the haze (`?haze`): a small canvas stretched over the page and put out of focus */
+.haze { display: block; position: fixed; inset: 0; width: 100%; height: 100%; pointer-events: none; filter: blur(26px); opacity: 0; }
 
 /* the title plate, top left: the day in Plex capitals, the way home under it */
 .plate {
@@ -26,6 +63,8 @@ canvas { display: block; width: 100vw; height: 100vh; }
   .plate b { font-size: 36px; }
   .plate .head > i { font-size: 10px; }
 }
+/* full screen: the big title goes, the line under it stays */
+.full .plate .head { display: none; }
 /* ?clean: the scene alone */
 .clean .plate { display: none; }
 
@@ -53,6 +92,8 @@ canvas { display: block; width: 100vw; height: 100vh; }
   background: rgba(22, 22, 25, 0.55); box-sizing: border-box; border: 0.5px solid rgba(244, 244, 242, 0.2);
   -webkit-backdrop-filter: blur(16px) saturate(1.6); backdrop-filter: blur(16px) saturate(1.6);
 }
+/* the two panels have no line round them: the frost alone */
+.voice::before, .tracks::before { border: 0; }
 .pill { border-radius: 999px; }
 /* what stands over the scene to be read: denser, and a shadow under it */
 .pop::before, .gauge::before { background: rgba(22, 22, 25, 0.82); box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5); }
@@ -78,41 +119,107 @@ canvas { display: block; width: 100vw; height: 100vh; }
 .panel {
   position: fixed; z-index: 2;
   left: max(24px, env(safe-area-inset-left)); bottom: max(24px, env(safe-area-inset-bottom));
-  width: max-content; max-width: calc(100vw - 48px); box-sizing: border-box;
-  display: flex; flex-direction: column; align-items: stretch; gap: 10px; pointer-events: none;
+  width: max-content; max-width: none; box-sizing: border-box;
+  /* along the bottom, side by side, all as tall as each other and standing on the same line: if the window is not wide for them they are scaled down to fit (main.ts, measure), and only when that would make them too small do they wrap, one line over the other */
+  display: flex; flex-flow: row nowrap; align-items: stretch; gap: 10px; pointer-events: none;
 }
+/* all the open panels are as tall as the tallest, standing on one baseline; one put away stays low, on the baseline */
+/* one put away stays low, on the baseline */
+.panel .shut { align-self: flex-end; }
+/* Only the mix and the instrument are made as tall as each other (a group of their own, so that nothing else stretches them): the pendulums and the tracks are as tall as their rows, each on the baseline. */
+.panel > .pens, .panel > .tracks { align-self: flex-end; }
+.panel > .rest { display: flex; flex-flow: row nowrap; align-items: stretch; gap: 10px; align-self: flex-end; }
+.rest > * { flex: none; pointer-events: auto; }
+.panel.wrap { max-width: calc(100vw - 48px); flex-wrap: wrap; }
+/* with room over, the line runs to the edge of the screen and the tracks (the last panel) take what is left */
+.panel.fill { right: max(24px, env(safe-area-inset-right)); width: auto; }
+.panel.fill > .tracks { flex: 1 1 auto; }
 .panel > * { flex: none; pointer-events: auto; max-width: 100%; box-sizing: border-box; }
 /* The eye in a panel's corner puts it away, down to its name in a pill, and brings it back. */
 .ui .eye { position: absolute; top: 7px; right: 10px; width: 26px; height: 24px; padding: 0; }
 .voice.shut, .tracks.shut {
-  flex-direction: row; align-items: center; align-self: flex-start; justify-content: flex-start;
-  min-width: 150px; padding: 0 44px 0 20px; height: 40px; border-radius: 999px;
+  flex-direction: row; align-items: center; justify-content: flex-start;
+  min-width: 150px; padding: 0 44px 0 20px; height: 40px; border-radius: 22px;
 }
 .voice.shut h3, .tracks.shut h3 { align-self: center; margin: 0; }
 .shut .eye { top: 8px; right: 8px; }
+/* a panel put away opens on a press anywhere on its bar, not only on the eye */
+.voice.shut, .tracks.shut { cursor: pointer; }
+.voice.shut:hover::before, .tracks.shut:hover::before { background: rgba(34, 34, 38, 0.62); }
 
 /* The instrument and the mix: one panel, a row each with a line between, each row in sections
    under their labels with a line between those too. */
-.voice { display: flex; flex-direction: column; align-items: stretch; padding: 18px 20px 18px; border-radius: 22px; }
-.voice .group + .group { margin-top: 9px; padding-top: 11px; border-top: 1px solid rgba(244, 244, 242, 0.12); }
+.voice { display: flex; flex-direction: column; align-items: stretch; padding: var(--sp-panel-y) var(--sp-panel-x); border-radius: 22px; }
+/* every row after the first: the same air over its hairline as under it */
+.voice .group + .group { margin-top: var(--sp-row); padding-top: var(--sp-row); border-top: 1px solid var(--rule); }
 .group { display: flex; align-items: stretch; }
-.group section { display: grid; align-content: start; gap: 8px; padding: 0 9px; border-left: 1px solid rgba(244, 244, 242, 0.12); }
+/* The mix on a grid, every knob in a column of the same width so they stand over one another:
+   row one the mix and the tremolo, row two the reverb, the delay and the distortion. A line
+   stands between the three and the rest (in the gutter, the fourth column). */
+.mixgrid { display: grid; grid-template-columns: repeat(4, var(--sp-cell)) calc(var(--sp-col) * 2) repeat(2, var(--sp-cell)); row-gap: var(--sp-row); }
+/* (the hairline between its two rows is a row of its own, so the air over it is the air under it) */
+.mixgrid .rule { grid-area: 2 / 1 / 3 / 8; height: 1px; background: var(--rule); }
+.mixgrid section { position: relative; display: grid; align-content: start; gap: var(--sp-label); padding: 0; border: 0; }
+.mixgrid .ctl { display: grid; grid-auto-flow: column; grid-auto-columns: var(--sp-cell); gap: 0; justify-items: start; align-items: start; }
+.mixgrid .cell { min-width: 0; }
+.mixgrid .m-mix { grid-area: 1 / 1 / 2 / 5; }
+.mixgrid .m-trem { grid-area: 1 / 6 / 2 / 8; }
+.mixgrid .m-rev { grid-area: 3 / 1 / 4 / 4; }
+.mixgrid .m-delay { grid-area: 3 / 6 / 4 / 7; }
+.mixgrid .m-dist { grid-area: 3 / 7 / 4 / 8; }
+.mixgrid .m-trem::before, .mixgrid .m-delay::before { content: ""; position: absolute; left: calc(var(--sp-col) * -1); top: 0; bottom: 0; width: 1px; background: var(--rule); }
+.group section { display: grid; align-content: start; gap: var(--sp-label); padding: 0 var(--sp-col); border-left: 1px solid var(--rule); }
 .group section:first-child { padding-left: 0; border-left: 0; }
 .group section:last-child { padding-right: 0; }
 .voice h3, .tracks h3 { margin: 0; font: inherit; font-size: 9px; white-space: nowrap; }
-.ctl { display: flex; align-items: flex-start; gap: 4px; }
+.ctl { display: flex; align-items: flex-start; gap: var(--sp-item); }
 /* a list is a pill of its own, so it reads as something to press */
 .ui .ctl > .pick > .cur { padding: 0 9px 0 11px; background: rgba(244, 244, 242, 0.1); color: #f4f4f2; }
 .ui .ctl > .pick > .cur:hover, .ui .ctl > .pick > .cur[aria-expanded="true"] { background: rgba(244, 244, 242, 0.2); }
 .ctl > .knob { margin: 2px 0; }
 /* a knob over its name: tiny, in the middle under it */
-.cell { display: grid; justify-items: center; gap: 5px; min-width: 34px; }
+.cell { display: grid; justify-items: start; gap: 5px; min-width: var(--sp-cell); }
 .cell > .knob { margin-top: 2px; }
 /* (and the columns' names over the tracks are the same small, dim words) */
 .cell > i, .cols { font-style: normal; font-size: 6.5px; line-height: 7px; letter-spacing: 0.05em; white-space: nowrap; opacity: 0.36; }
 .seg { display: flex; gap: 2px; }
+/* eight pendulums are more than a line holds: the strips wrap */
+/* The pendulums are a panel of their own, a row each like the tracks': its number, its
+   instrument (a sign and its name), its solo and its mute. A pendulum has a colour of its own
+   (its place in the palette: --pen); the one being set is a band of it, with its number filled. */
+.pens .ctl { flex-direction: column; align-items: stretch; gap: var(--sp-label); }
+.pens .stack { display: grid; margin: 0 -10px; }
+.pens .strip {
+  position: relative; display: grid; grid-template-columns: 26px 14px minmax(58px, 1fr) 18px 18px; align-items: center; gap: 8px;
+  height: 38px; padding: 0 10px; border-radius: 14px;
+}
+/* a hairline between one and the next, none against the band */
+.pens .strip + .strip::after { content: ""; position: absolute; left: 10px; right: 10px; top: 0; height: 1px; background: var(--rule); pointer-events: none; }
+.pens .strip { cursor: pointer; }
+.pens .strip:hover:not(.on) { background: color-mix(in srgb, var(--pen) 9%, transparent); }
+.pens .strip.on { background: color-mix(in srgb, var(--pen) 20%, transparent); }
+.pens .strip.on::after, .pens .strip.on + .strip::after { display: none; }
+.ui .pens .strip .no { width: 26px; min-width: 26px; height: 26px; padding: 0; border-radius: 50%; color: var(--pen); font-size: 12px; font-weight: 600; }
+.ui .pens .strip .no:hover { background: color-mix(in srgb, var(--pen) 20%, transparent); color: var(--pen); }
+.ui .pens .strip .no[aria-pressed="true"] { background: var(--pen); color: #0b0b0d; }
+.pens .inst { display: flex; color: var(--pen); opacity: 0.8; }
+.pens .what { font-style: normal; font-size: 9px; letter-spacing: 0.08em; text-transform: uppercase; opacity: 0.55; white-space: nowrap; }
+.pens .strip.on .what { opacity: 1; }
+.ui .pens .strip .ms {
+  width: 18px; min-width: 18px; height: 18px; padding: 0; border-radius: 50%;
+  border: 1px solid rgba(244, 244, 242, 0.4); color: rgba(244, 244, 242, 0.75); font-size: 8px; letter-spacing: 0; line-height: 1;
+}
+.ui .pens .strip .ms:hover { border-color: #f4f4f2; color: #f4f4f2; background: none; }
+.ui .pens .strip .ms[aria-pressed="true"] { background: var(--pen); border-color: var(--pen); color: #0b0b0d; }
+/* add, duplicate, remove: under the rows, with a hairline over them */
+.pens .acts { display: flex; gap: 6px; margin-top: calc(var(--sp-row) - var(--sp-label)); padding-top: var(--sp-row); border-top: 1px solid var(--rule); }
+/* a pendulum added or taken away: its plus or its minus in a ring, no disc behind it */
+.ui .ctl button.icon { width: 26px; min-width: 26px; padding: 0; background: none; color: #f4f4f2; }
+.ui .ctl button.icon:hover { background: none; }
 /* Physics is on: its button is orange, with a warning sign beside it in the same orange */
 .ui .seg button[data-id="physics"][aria-pressed="true"] { background: #ff9500; color: #0b0b0d; }
+/* In the instrument panel (and the mix's speed) the one that is on is a grey, not white: the same grey as the scale's list, a little lighter, with the ink as it is (physics stays orange) */
+.ui .voice.inst button[aria-pressed="true"]:not([data-id="physics"]), .ui .voice.inst .pop button[aria-selected="true"], .ui .voice.mix button[aria-pressed="true"] { background: rgba(244, 244, 242, 0.2); color: #f4f4f2; }
 /* (the sign alone: the row has no room for words, and the tip says them) */
 .warning { display: flex; align-items: center; height: 26px; margin-left: 4px; color: #ff9500; }
 
@@ -154,8 +261,8 @@ kbd {
 
 /* the tracks: one panel of glass under its label, the columns' names, then a row a link */
 /* (the space under the last row is the space over the label: 18px to the plus's ring) */
-.tracks { --pad: 14px; display: flex; flex-direction: column; align-items: stretch; gap: 3px; padding: 18px var(--pad) 13px; border-radius: 22px; }
-.tracks h3 { align-self: flex-start; margin: 0 8px 9px; }
+.tracks { --pad: 14px; display: flex; flex-direction: column; align-items: stretch; gap: 3px; padding: var(--sp-panel-y) var(--pad) 13px; border-radius: 22px; }
+.tracks h3 { align-self: flex-start; margin: 0 8px var(--sp-label); }
 .cols, .arm { display: grid; grid-template-columns: var(--cols); gap: 4px; align-items: center; justify-items: center; padding: 0 8px; }
 .cols { height: 10px; }
 /* a heading never widens its column: the rows under it would stick out of the screen */
@@ -265,7 +372,7 @@ kbd {
 
 @media (max-width: 760px) {
   /* the column is the width of the screen */
-  .panel { left: max(16px, env(safe-area-inset-left)); right: max(16px, env(safe-area-inset-right)); bottom: max(16px, env(safe-area-inset-bottom)); width: auto; max-width: none; gap: 6px; }
+  .panel { left: max(16px, env(safe-area-inset-left)); right: max(16px, env(safe-area-inset-right)); bottom: max(16px, env(safe-area-inset-bottom)); width: auto; max-width: none; gap: 6px; flex-direction: column; flex-wrap: nowrap; align-items: stretch; }
   .tracks { --pad: 10px; padding-top: 16px; }
   .cols, .arm, .ui button.add { box-sizing: border-box; grid-template-columns: var(--cols-phone); }
   /* no room for an arm's sound on a phone: it keeps the one it has */
@@ -275,13 +382,36 @@ kbd {
   .voice { padding: 16px 16px 14px; }
   .group section { padding: 0 8px; }
   /* the instruments and the scale do not fit one line: the scale goes under them */
-  .voice .group:first-child { flex-direction: column; gap: 10px; }
-  .voice .group:first-child section { padding: 0; border: 0; }
+  .voice .group[aria-label="Instrument"] { flex-direction: column; gap: 10px; }
+  .voice .group[aria-label="Instrument"] section { padding: 0; border: 0; }
   /* and the rows under them only just do: the words a little closer */
   .group h3 { font-size: 8px; letter-spacing: 0.08em; }
   .ui .seg button { padding: 0 7px; letter-spacing: 0.08em; }
   .arm .knob { width: 100%; max-width: 24px; height: auto; aspect-ratio: 1; }
   .arm .knob::before { --far: 15px; }
+  /* On a phone, no panels: the instrument's is not there, and the tracks are a frosted sheet
+     along the bottom, edge to edge, with one track's knobs on it and nothing else. */
+  .panel { left: 0; right: 0; bottom: 0; gap: 0; }
+  /* (on a phone the group is not a box: the sheet is the panel) */
+  .rest { display: contents; }
+  .voice { display: none; }
+  .tracks { touch-action: none; padding: 14px 10px max(12px, calc(env(safe-area-inset-bottom) + 4px)); border-radius: 22px 22px 0 0; }
+  .tracks::before { border-bottom: 0; border-left: 0; border-right: 0; }
+  .tracks h3, .tracks .eye { display: none; }
+  .ui .tracks button.add { display: none; }
+  /* the sheet: what is not over the scene, bigger */
+  .tracks .wide { display: none; }
+  .tracks .arm::after { display: none; }
+  .tracks .arm .knob { max-width: 38px; }
+  .tracks .arm { padding: 6px 8px; }
+  /* which track it is, only as a hint: no row lit in its colour, a short line of it at the top of the sheet */
+  .tracks .arm.hot::before { background: none; }
+  .tracks::after { content: ""; position: absolute; top: 6px; left: 50%; width: 28px; height: 3px; margin-left: -14px; border-radius: 2px; background: var(--shown); opacity: 0.9; pointer-events: none; }
+  /* one track at a time: the one shown, the rest away; swiped, not scrolled */
+  .tracks .arm:not(.shown) { display: none; }
+  .tracks .arm.shown { animation: shown 0.18s ease-out; }
+  .tracks .grip { visibility: hidden; }
+
   .bar { top: max(16px, env(safe-area-inset-top)); right: max(16px, env(safe-area-inset-right)); }
 }
 .clean .panel, .clean .bar, .clean .gauge { display: none; }
@@ -373,3 +503,40 @@ kbd {
 }
 .sheet .del:hover, .sheet .del:focus { border-color: #f4f4f2; outline: none; }
 .clean .sheet { display: none; }
+
+/* The track in short, on a phone, under the bar and at its right: the one before, its number in
+   its colour, its mute and its volume, the next. */
+.lead {
+  display: none; position: fixed; z-index: 2; right: max(16px, env(safe-area-inset-right));
+  align-items: center; gap: 6px; height: 44px; padding: 0 6px; box-sizing: border-box;
+}
+.lead .no { min-width: 18px; text-align: center; color: var(--arm); font-size: 13px; letter-spacing: 0; font-variant-numeric: tabular-nums; }
+.lead .its { display: flex; align-items: center; gap: 8px; }
+.lead.ui .step { width: 30px; height: 32px; padding: 0; border-radius: 50%; }
+.lead .step:first-child svg { transform: rotate(90deg); }
+.lead .step:last-child svg { transform: rotate(-90deg); }
+.lead .step svg { width: 10px; height: 10px; }
+.lead .knob { width: 28px; height: 28px; }
+.lead.ui .ms {
+  width: 22px; min-width: 22px; height: 22px; padding: 0; border-radius: 50%;
+  border: 1px solid rgba(244, 244, 242, 0.45); color: rgba(244, 244, 242, 0.8); font-size: 9px; letter-spacing: 0; line-height: 1;
+}
+.lead.ui .ms[aria-pressed="true"] { background: var(--arm); border-color: var(--arm); color: #0b0b0d; }
+@media (max-width: 760px) { .lead { display: flex; } }
+.clean .lead { display: none; }
+
+/* the one track shown, on a phone, coming in */
+@keyframes shown { from { opacity: 0; transform: translateY(6px); } }
+
+/* The debug panel (`?debug`, or D): sliders on the waves' numbers, under the bar. */
+.debug {
+  position: fixed; z-index: 3; top: calc(max(24px, env(safe-area-inset-top)) + 58px); right: max(24px, env(safe-area-inset-right));
+  display: flex; flex-direction: column; gap: 8px; width: 250px; padding: 14px 16px; border-radius: 16px;
+  background: rgba(22, 22, 25, 0.8); border: 0.5px solid rgba(244, 244, 242, 0.2);
+  font-size: 9px; letter-spacing: 0.08em; text-transform: uppercase;
+}
+.debug h3 { margin: 0 0 2px; font: inherit; }
+.debug label { display: grid; grid-template-columns: 44px 1fr 34px; align-items: center; gap: 8px; }
+.debug input { width: 100%; margin: 0; accent-color: #f4f4f2; }
+.debug output { text-align: right; font-variant-numeric: tabular-nums; }
+.debug button { align-self: flex-start; margin-top: 2px; }
