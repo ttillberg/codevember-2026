@@ -79,15 +79,26 @@ fn windOn(p: vec3f, aim: vec3f, jet: vec3f, radius: f32) -> f32 {
   return exp(-off * off / (radius * radius)) * exp(-max(along, 0.0) / 120.0);
 }
 
-// Walk the grid cell by cell (Amanatides and Woo). Water is seen through, and counted; so is glass.
+// What is at a cell. In the grid, what the grid holds. Past its sides the tray goes on, round,
+// for as far as it reaches: there is nothing there but that.
+fn cellAt(p: vec3i) -> u32 {
+  if (inGrid(p)) { return cells[idx(p)]; }
+  if (p.y >= 0 && p.y < LO.y && distance(vec2f(p.xz) + 0.5, vec2f(f32(GX), f32(GZ)) * 0.5) <= TRAY) {
+    return GROUND | (GROUND_LAYER << 3u);
+  }
+  return AIR;
+}
+
+// Walk the grid cell by cell (Amanatides and Woo), and BEYOND cells past its sides. Water is seen through, and counted; so is glass.
 fn march(ro: vec3f, rd: vec3f) -> Hit {
   var h: Hit;
   h.hit = false;
   h.water = 0.0;
   h.glass = 0.0;
-  let g = vec3f(f32(GX), f32(GY), f32(GZ));
+  let lo = vec3f(-f32(BEYOND), 0.0, -f32(BEYOND));
+  let g = vec3f(f32(GX + BEYOND), f32(GY), f32(GZ + BEYOND));
   let inv = 1.0 / rd;
-  let ta = (vec3f(0.0) - ro) * inv;
+  let ta = (lo - ro) * inv;
   let tb = (g - ro) * inv;
   let t0 = min(ta, tb);
   let t1 = max(ta, tb);
@@ -103,14 +114,14 @@ fn march(ro: vec3f, rd: vec3f) -> Hit {
     else { n = vec3f(0.0, 0.0, -sg.z); }
   }
   let p = ro + rd * (max(tn, 0.0) + 0.001);
-  var cell = vec3i(clamp(floor(p), vec3f(0.0), g - 1.0));
+  var cell = vec3i(clamp(floor(p), lo, g - 1.0));
   let stp = vec3i(sg);
   let td = abs(inv);
   var tm = (vec3f(cell) + max(sg, vec3f(0.0)) - ro) * inv;
 
-  for (var i = 0; i < 560; i++) {
-    if (!inGrid(cell)) { break; }
-    let c = cells[idx(cell)];
+  for (var i = 0; i < 580; i++) {
+    if (any(cell < vec3i(lo)) || any(cell >= vec3i(g))) { break; }
+    let c = cellAt(cell);
     let t = ty(c);
     if (t == WATER) {
       if (h.water == 0.0) { h.wn = n; h.wcell = cell; }

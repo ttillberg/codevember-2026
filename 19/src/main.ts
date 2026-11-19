@@ -3,7 +3,7 @@
 import commonSrc from './common.wgsl?raw';
 import simSrc from './sim.wgsl?raw';
 import renderSrc from './render.wgsl?raw';
-import { GX, GY, GZ, GROUND_H, CUBE, X0, Z0, TOP, TYPES, LAYERS, EXTRA, EXTRA_LAYERS, MODEL, MODEL_AT, buildWorld, type Saucer } from './world';
+import { GX, GY, GZ, GROUND_H, CUBE, X0, Z0, TOP, TRAY, TYPES, LAYERS, EXTRA, EXTRA_LAYERS, MODEL, MODEL_AT, buildWorld, type Saucer } from './world';
 import { buildBar, forceFace, ICONS, sizeFace } from './bar';
 
 const query = new URLSearchParams(location.search);
@@ -84,6 +84,7 @@ const GZ: i32 = ${GZ};
 const CUBE: i32 = ${CUBE};
 const TOP: i32 = ${TOP};
 const LO = vec3i(${X0}, ${GROUND_H}, ${Z0});
+const TRAY: f32 = ${TRAY};
 const MODEL = vec3i(${MODEL});
 const MODEL_AT = vec3f(${MODEL_AT.map((v) => v.toFixed(1))});
 ${ids(TYPES)}
@@ -94,8 +95,11 @@ const SOFT = array<f32, 32>(${layers.map((l) => l.soft.toFixed(3)).join(', ')});
 const BG = vec3f(${rgb(BACKDROP)});
 `;
 
-const simModule = device.createShaderModule({ code: header + commonSrc + simSrc });
-const renderModule = device.createShaderModule({ code: header + commonSrc + renderSrc });
+// BEYOND: how far past the grid's sides a ray is walked, for what of the tray is out there. The
+// picture walks it; the simulation's rays (the pointer, the wind's lee) keep to the grid.
+const beyond = Math.max(0, Math.ceil(TRAY - GX / 2) + 1);
+const simModule = device.createShaderModule({ code: `const BEYOND: i32 = 0;\n` + header + commonSrc + simSrc });
+const renderModule = device.createShaderModule({ code: `const BEYOND: i32 = ${beyond};\n` + header + commonSrc + renderSrc });
 if (debug) {
   for (const [name, module] of [['sim', simModule], ['render', renderModule]] as const) {
     module.getCompilationInfo().then((info) => info.messages.forEach((m) => say(`${name}.wgsl ${m.type} line ${m.lineNum}: ${m.message}`)));
@@ -594,7 +598,7 @@ function fly(s: number) {
   const turn = s * s * 1.2; // spinning up
   const x = x0.map((v, i) => v * Math.cos(turn) + z0[i] * Math.sin(turn)) as V3;
   return {
-    at: at.map((v, i) => v + out[i] * free * 44 + up[i] + axes[0][i] * shake + away[i] * gone) as V3,
+    at: at.map((v, i) => v + out[i] * free * 56 + up[i] + axes[0][i] * shake + away[i] * gone) as V3,
     x, y, z: cross(x, y),
   };
 }

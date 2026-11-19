@@ -21,6 +21,11 @@ export const CUBE = 128;
 export const X0 = (GX - CUBE) / 2;
 export const Z0 = (GZ - CUBE) / 2;
 export const TOP = GROUND_H + CUBE;
+// The round tray the block stands on, its radius. A little more than half the grid: the block's
+// corners (90 from the middle) stand well in from its rim, not on it. Out towards the corners of
+// the grid there is room for that; where the tray runs past the grid's sides, four slivers of
+// it, it is only drawn (common.wgsl cellAt), and nothing can lie there.
+export const TRAY = 101;
 
 // the shaders get these from main.ts, under the same names
 export const TYPES = { AIR: 0, WATER: 1, SED: 2, ROCK: 3, GROUND: 4, PLANT: 5, WALL: 7 };
@@ -363,13 +368,13 @@ function bury(cells: Uint32Array, seed: number): { saucer: Saucer; gold: number 
   const far = (face: number, along: number, inn: number, up: number): P3 =>
     face === 2 ? [GX / 2 + along, GROUND_H + up, Z0 + inn] : [X0 + inn, GROUND_H + up, GZ / 2 + along];
   const face = r(300) < 0.5 ? 2 : 3;
-  // The saucer leans, and lies just so far in that the low edge of its rim comes out through
-  // the face: a sliver of metal in the wall, and a lamp going on and off in it.
+  // The saucer leans, and lies a little way in: the nearest of its rim is some voxels of rock
+  // behind the face, nothing of it to be seen until that face has been worked on.
   const lean = 0.25 + r(301) * 0.2;
   const to = r(302) * 6.28;
   const out = face === 2 ? Math.sin(to) : Math.cos(to); // how much of the lean is towards the face
   const reach = SAUCER * Math.sqrt(1 - (Math.sin(lean) * out) ** 2); // how far the rim gets that way
-  const lies = leaning(far(face, -5 + r(303) * 35, reach - 1.5, 38 + r(304) * 46), lean, to);
+  const lies = leaning(far(face, -5 + r(303) * 35, reach + 5 + r(308) * 7, 38 + r(304) * 46), lean, to);
   saucer(lies);
 
   // the saucer once more, upright and on its own, for when it flies
@@ -456,11 +461,10 @@ function landscape(cells: Uint32Array, seed: number) {
 export function buildWorld(seed: number, bare = false): World {
   const cells = new Uint32Array(GX * GY * GZ);
 
-  // the tray the block stands on: a round one, as wide as the grid lets it be, just clear of the block's corners
-  const rim = GX / 2 - 1;
+  // the tray the block stands on: a round one, what of it the grid has room for
   for (let z = 0; z < GZ; z++) {
     for (let x = 0; x < GX; x++) {
-      if (Math.hypot(x + 0.5 - GX / 2, z + 0.5 - GZ / 2) > rim) continue;
+      if (Math.hypot(x + 0.5 - GX / 2, z + 0.5 - GZ / 2) > TRAY) continue;
       for (let y = 0; y < GROUND_H; y++) cells[idx(x, y, z)] = GROUND | (EXTRA.GROUND_LAYER << 3);
     }
   }

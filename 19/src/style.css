@@ -1,6 +1,8 @@
 /* a light day, ink #1c1c1c (docs/DESIGN.md). The backdrop is a sky: cool and pale at the top, the paper #e8e3da
    in the middle (main.ts BACKDROP), warm towards the ground. The shader draws it (render.wgsl backdrop);
    the page has the same three stops under the canvas, for an overscroll or a late first frame. */
+/* --k: how big the bar and the gear are. Full size down to a phone 393 wide; on a narrower one the bar would crowd the sides. */
+:root { --k: 1; }
 html, body { margin: 0; height: 100%; background: #e8e3da; overflow: hidden; }
 body { background: linear-gradient(to bottom, #ccdce0, #e8e3da 50%, #f3d8bd) fixed; }
 /* Nothing to select or long-press: a drag on the scene or on its furniture must not start a text selection,
@@ -34,7 +36,7 @@ canvas { display: block; image-rendering: pixelated; touch-action: none; cursor:
    (where a disc only shows while pressed, and reaches into its neighbours) it crowded the icons either side.
    RAIN HOSE WIND SCRATCH | SIZE FORCE: four tools, then the two knobs that set the tool in hand (src/bar.ts). */
 .bar {
-  position: fixed; z-index: 2; left: 50%; transform: translateX(-50%);
+  position: fixed; z-index: 2; left: 50%; transform: translateX(-50%) scale(var(--k)); transform-origin: 50% 100%;
   bottom: max(32px, env(safe-area-inset-bottom));
   display: flex; gap: 4px; padding: 6px; border-radius: 999px;
   user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent;
@@ -104,11 +106,11 @@ canvas { display: block; image-rendering: pixelated; touch-action: none; cursor:
   .knob > button:hover:not(.held) .tip { opacity: 1; transform: translate(-50%, 0); transition-delay: 0.35s; }
 }
 
-/* the brush's size, shown while cmd + drag sets it (day 05's ring) */
 /* gold picked up, in a heap on the bar's right shoulder: nothing there until there is some */
 .heap { position: absolute; right: 30px; bottom: 100%; line-height: 0; pointer-events: none; opacity: 0; transition: opacity 0.4s; }
 .heap.some { opacity: 1; }
 
+/* the brush's size, shown while cmd + drag sets it (day 05's ring) */
 .size-ring {
   display: none; position: fixed; z-index: 1; pointer-events: none;
   transform: translate(-50%, -50%);
@@ -117,24 +119,32 @@ canvas { display: block; image-rendering: pixelated; touch-action: none; cursor:
 }
 
 /* settings: a gear top right, its menu a frosted panel under it (day 05's, which is day 07's) */
-.settings { position: fixed; z-index: 11; top: max(8px, env(safe-area-inset-top)); right: max(6px, env(safe-area-inset-right)); }
+.settings { position: fixed; z-index: 11; top: max(24px, env(safe-area-inset-top)); right: max(24px, env(safe-area-inset-right)); }
+/* The gear is a disc of the bar's own glass, as big as the bar is high, and it does what a
+   button in the bar does: a faint disc under the pointer, a black one while its menu is open. */
 .gear {
-  display: flex; align-items: center; justify-content: center; width: 64px; height: 64px; padding: 0; border: 0;
-  border-radius: 50%; background: none; color: #868583; cursor: pointer; -webkit-tap-highlight-color: transparent;
-  transition: color 0.12s, background 0.12s;
+  position: relative; isolation: isolate; display: flex; align-items: center; justify-content: center;
+  width: calc(58px * var(--k)); height: calc(58px * var(--k)); padding: 0; border: 0; border-radius: 50%;
+  color: #868583; cursor: pointer; -webkit-tap-highlight-color: transparent; transition: color 0.12s;
+  background: linear-gradient(to bottom, rgba(244, 241, 235, 0.92), rgba(236, 232, 224, 0.82));
+  backdrop-filter: blur(30px) saturate(1.8); -webkit-backdrop-filter: blur(30px) saturate(1.8);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.9), inset 0 0 0 1px rgba(255, 255, 255, 0.5);
 }
-.gear svg { width: 30px; height: 30px; display: block; transition: transform 0.3s cubic-bezier(0.2, 0.8, 0.2, 1); }
-.gear:hover { color: #1c1c1c; }
-.gear.on { color: #1c1c1c; background: rgba(0, 0, 0, 0.06); }
+.gear::before { content: ''; position: absolute; inset: calc(6px * var(--k)); border-radius: 50%; z-index: -1; transition: background 0.1s; }
+.gear svg { width: calc(24px * var(--k)); height: calc(24px * var(--k)); display: block; transition: transform 0.3s cubic-bezier(0.2, 0.8, 0.2, 1); }
+.gear:hover { color: #111; }
+.gear:hover::before { background: rgba(0, 0, 0, 0.05); }
+.gear.on { color: #fff; }
+.gear.on::before { background: #111; }
 .gear.on svg { transform: rotate(30deg); }
 .settings .menu {
-  position: absolute; right: 4px; top: calc(100% + 6px);
+  position: absolute; right: 0; top: calc(100% + 6px);
   display: flex; flex-direction: column; min-width: 200px; padding: 6px; border-radius: 20px; box-sizing: border-box;
   font: 12px/16px Inter, "Helvetica Neue", Helvetica, Arial, sans-serif; color: #111; user-select: none; -webkit-user-select: none;
   background: linear-gradient(to bottom, rgba(255, 255, 255, 0.7), rgba(255, 255, 255, 0.45));
   backdrop-filter: blur(30px) saturate(1.8) brightness(1.04); -webkit-backdrop-filter: blur(30px) saturate(1.8) brightness(1.04);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.9), inset 0 0 0 1px rgba(255, 255, 255, 0.5), 0 8px 24px rgba(0, 0, 0, 0.1);
-  transform-origin: calc(100% - 28px) 0; animation: menu-in 0.2s cubic-bezier(0.2, 0.8, 0.2, 1);
+  transform-origin: calc(100% - 29px * var(--k)) 0; animation: menu-in 0.2s cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 .settings .menu[hidden] { display: none; }
 @keyframes menu-in { from { opacity: 0; transform: translateY(-6px) scale(0.96); } }
@@ -173,6 +183,11 @@ canvas { display: block; image-rendering: pixelated; touch-action: none; cursor:
   .plate b { font-size: 36px; }
   .plate .head > i { font-size: 10px; }
   .bar { bottom: max(20px, env(safe-area-inset-bottom)); }
+  .settings { top: max(16px, env(safe-area-inset-top)); right: max(16px, env(safe-area-inset-right)); }
+}
+/* narrower than an iPhone 16 (393): the bar is 325 wide, which leaves it no air on a 360 and does not fit a 320 */
+@media (max-width: 392px) {
+  :root { --k: 0.88; }
 }
 /* ?clean: the scene alone */
 .clean .plate, .clean .bar, .clean .size-ring, .clean .settings { display: none !important; }
