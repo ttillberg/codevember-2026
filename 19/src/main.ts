@@ -349,8 +349,38 @@ setTool(tool);
 const TOUCH_LIFT = 40; // CSS px
 const pointAt = (e: PointerEvent) => ({ x: e.clientX, y: e.clientY - (e.pointerType === 'touch' ? TOUCH_LIFT : 0) });
 
+// Two fingers are the camera's, wherever they land: moved together they turn the table as a drag
+// beside the rock does, a pinch zooms, a twist turns too. One finger has the tool, but not at
+// once: a second finger gets a moment to land first, or every pinch would begin with a scratch.
+const TOUCH_WAIT = 90; // ms
+const TWIST_FROM = 0.15; // radians before a twist counts, so that a pinch does not turn the table
+const fingers = new Map<number, { x: number; y: number }>();
+let pinch: { x: number; y: number; d: number; a: number; twist: number } | null = null;
+let pinched = false; // two fingers have been down: what is left of the touch does nothing
+let heldFrom = 0; // when the tool may start (performance.now)
+const clampZoom = (z: number) => Math.min(5, Math.max(0.6, z));
+function pinchAt() {
+  const [a, b] = [...fingers.values()];
+  return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2, d: Math.hypot(b.x - a.x, b.y - a.y), a: Math.atan2(b.y - a.y, b.x - a.x) };
+}
+function turn(dx: number, dy: number) {
+  yaw -= dx * 0.008;
+  pitch = Math.min(1.2, Math.max(0.2, pitch + dy * 0.005));
+}
+
 canvas.addEventListener('pointerdown', (e) => {
   try { canvas.setPointerCapture(e.pointerId); } catch { /* a made-up pointer in a test */ }
+  if (e.pointerType === 'touch') {
+    fingers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (fingers.size > 1) {
+      release();
+      hover = false;
+      pinched = true;
+      pinch = fingers.size === 2 ? { ...pinchAt(), twist: 0 } : null;
+      return;
+    }
+    heldFrom = performance.now() + TOUCH_WAIT;
+  }
   ptr = pointAt(e);
   hover = true;
   last = { x: e.clientX, y: e.clientY };
@@ -366,6 +396,18 @@ canvas.addEventListener('pointerdown', (e) => {
   else turning = true;
 });
 canvas.addEventListener('pointermove', (e) => {
+  if (fingers.has(e.pointerId)) fingers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  if (pinched) {
+    if (!pinch || fingers.size !== 2) return;
+    const now = pinchAt();
+    turn(now.x - pinch.x, now.y - pinch.y);
+    zoom = clampZoom((zoom * now.d) / Math.max(1, pinch.d));
+    const da = Math.atan2(Math.sin(now.a - pinch.a), Math.cos(now.a - pinch.a)); // the short way round
+    const twist = pinch.twist + da;
+    if (Math.abs(pinch.twist) > TWIST_FROM) yaw += da;
+    pinch = { ...now, twist };
+    return;
+  }
   if (forcing) {
     force[tool] = Math.min(1, Math.max(0, forcing.t + (e.clientX - forcing.x) / 160));
     bar.refresh();
@@ -380,8 +422,7 @@ canvas.addEventListener('pointermove', (e) => {
   }
   setCursor(e.metaKey || e.ctrlKey);
   if (turning) {
-    yaw -= (e.clientX - last.x) * 0.008;
-    pitch = Math.min(1.2, Math.max(0.2, pitch + (e.clientY - last.y) * 0.005));
+    turn(e.clientX - last.x, e.clientY - last.y);
     last = { x: e.clientX, y: e.clientY };
     return;
   }
@@ -408,13 +449,19 @@ function setCursor(mod: boolean) {
 }
 window.addEventListener('keydown', (e) => { if (e.key === 'Meta' || e.key === 'Control') setCursor(true); });
 window.addEventListener('keyup', (e) => { if (e.key === 'Meta' || e.key === 'Control') setCursor(false); });
-canvas.addEventListener('pointerup', release);
-canvas.addEventListener('pointercancel', release);
+const lift = (e: PointerEvent) => {
+  fingers.delete(e.pointerId);
+  if (!pinched) return release();
+  pinch = null;
+  if (!fingers.size) pinched = false;
+};
+canvas.addEventListener('pointerup', lift);
+canvas.addEventListener('pointercancel', lift);
 canvas.addEventListener('pointerleave', () => { if (!held) hover = false; });
 canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 canvas.addEventListener('wheel', (e) => {
   e.preventDefault();
-  zoom = Math.min(5, Math.max(0.6, zoom * Math.exp(-e.deltaY * 0.0015)));
+  zoom = clampZoom(zoom * Math.exp(-e.deltaY * 0.0015));
 }, { passive: false });
 
 window.addEventListener('keydown', (e) => {
@@ -454,11 +501,11 @@ function frame(t: number) {
   const rect = canvas.getBoundingClientRect();
   const px = ((ptr.x - rect.left) / rect.width) * W;
   const py = ((ptr.y - rect.top) / rect.height) * H;
-  let working = held;
+  let working = held && performance.now() >= heldFrom;
   if (tool === TOOL.SCRATCH) {
     scratch.frames++;
     const moved = Math.hypot(ptr.x - scratch.at.x, ptr.y - scratch.at.y) > 8;
-    working = held && scratch.frames >= (moved ? 3 : 7);
+    working = working && scratch.frames >= (moved ? 3 : 7);
     if (working) {
       scratch.frames = 0;
       scratch.at = { ...ptr };
@@ -590,6 +637,7 @@ async function readBack(src: GPUBuffer) {
   hold,
   release,
   turn(a: number) { yaw = a; },
+  camera: () => ({ yaw, pitch, zoom }),
   level,
   brush(t: number, r?: number) { if (r !== undefined) { brush[t] = r; bar.refresh(); } return brush[t]; },
   // run frames by hand, for when the page is hidden and the browser holds its own back

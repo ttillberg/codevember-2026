@@ -15,7 +15,7 @@ pnpm -C 19 dev   # https://localhost:5119, self-signed: WebGPU on a phone needs 
 
 The gear, top right: the detail (how big a picture pixel is: low, medium, high) and a new block.
 
-Drag beside the rock to turn it, arrows for a quarter turn, wheel to zoom. On a touch screen the brush sits a little above the finger, which would hide it otherwise.
+Drag beside the rock to turn it, arrows for a quarter turn, wheel to zoom. On a touch screen the brush sits a little above the finger, which would hide it otherwise. Two fingers are the camera's, wherever they land: moved together or twisted they turn the rock, a pinch zooms.
 
 The scratch is nothing but a point dragged over the rock: it takes what is under it, there and then, hard bed or soft, and what comes loose falls. It works in pulses, like a nail on a wall: a bite, a gap, a bite, each a little bigger or smaller than the last. A drag is a run of short marks, holding still a slow pecking at one spot.
 
