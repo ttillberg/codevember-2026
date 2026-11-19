@@ -1,9 +1,9 @@
 // Everything that stands still: grass, asphalt, paint, buildings, trees.
 import { useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import { NIGHT, glowing } from './haze';
-import { BufferGeometry, Color, DoubleSide, Float32BufferAttribute, InstancedMesh, Matrix4, MeshStandardMaterial, Object3D, Uniform, Vector3 } from 'three';
+import { BoxGeometry, BufferGeometry, Color, DoubleSide, Float32BufferAttribute, InstancedMesh, Matrix4, MeshStandardMaterial, Object3D, PlaneGeometry, Uniform, Vector3 } from 'three';
 import { boxed, buildGround, clearOf, onRoad, WALK } from './geo';
-import { TILE, cumLen, offset, place, pointOn, rng, saltOf, type Net } from './net';
+import { TILE, cumLen, forgetFar, offset, place, pointOn, rng, saltOf, type Net } from './net';
 
 /** A tile of the grid, and where its middle lies. */
 export interface Tile { i: number; j: number; x: number; y: number }
@@ -190,6 +190,9 @@ export function World({ net, blocks, wood, trees = true, season = 'autumn', tile
   );
 }
 
+// one box and one square, scaled to each wall and roof: the sheds come and go with their tile, and these stay
+const BOX = new BoxGeometry(), PLANE = new PlaneGeometry();
+
 function Buildings({ net }: { net: Net }) {
   const units = useRef<InstancedMesh>(null);
   const roofs = useMemo(() => new Map<number, MeshStandardMaterial>(), []);
@@ -232,25 +235,17 @@ function Buildings({ net }: { net: Net }) {
         if (b.canopy)
           return (
             <group key={i}>
-              <mesh position={[cx, b.h, cz]} castShadow receiveShadow material={roof(b.roof)} dispose={null}>
-                <boxGeometry args={[w, 0.7, d]} />
-              </mesh>
+              <mesh position={[cx, b.h, cz]} scale={[w, 0.7, d]} castShadow receiveShadow geometry={BOX} material={roof(b.roof)} dispose={null} />
               {[-1, 1].map((s) => (
-                <mesh key={s} position={[cx + (s * w) / 3, b.h / 2, cz]} castShadow material={wall(b.wall)} dispose={null}>
-                  <boxGeometry args={[0.5, b.h, 0.5]} />
-                </mesh>
+                <mesh key={s} position={[cx + (s * w) / 3, b.h / 2, cz]} scale={[0.5, b.h, 0.5]} castShadow geometry={BOX} material={wall(b.wall)} dispose={null} />
               ))}
             </group>
           );
         return (
           <group key={i}>
-            <mesh position={[cx, b.h / 2, cz]} castShadow receiveShadow material={wall(b.wall)} dispose={null}>
-              <boxGeometry args={[w, b.h, d]} />
-            </mesh>
+            <mesh position={[cx, b.h / 2, cz]} scale={[w, b.h, d]} castShadow receiveShadow geometry={BOX} material={wall(b.wall)} dispose={null} />
             {/* the roof deck, inside a rim of wall */}
-            <mesh position={[cx, b.h + 0.03, cz]} rotation-x={-Math.PI / 2} receiveShadow material={roof(b.roof)} dispose={null}>
-              <planeGeometry args={[w - 1, d - 1]} />
-            </mesh>
+            <mesh position={[cx, b.h + 0.03, cz]} rotation-x={-Math.PI / 2} scale={[w - 1, d - 1, 1]} receiveShadow geometry={PLANE} material={roof(b.roof)} dispose={null} />
           </group>
         );
       })}
@@ -375,10 +370,14 @@ function fallen() {
 // the woods of every tile planted so far, by season and tile
 const WOODS = new Map<string, { x: number; y: number; blobs: { m: Matrix4; c: Color }[]; fir: boolean; size: number; deep: boolean }[]>();
 
+/** ?endless: the window moved on: the woods of tiles far behind it are let go, and planted again if they come back. */
+export const forgetWoods = () => forgetFar(WOODS);
+
 function Trees({ net, blocks, glade, season, tile }: { net: Net; blocks: Block[]; glade?: Glade; season: Season; tile: Tile }) {
   const ref = useRef<InstancedMesh>(null), firs = useRef<InstancedMesh>(null), floor = useRef<InstancedMesh>(null), stems = useRef<InstancedMesh>(null);
   const crown = useMemo(tuft, []);
   const PINE = useMemo(pine, []);
+  useEffect(() => () => { crown.dispose(); PINE.dispose(); }, [crown, PINE]);
   // in winter most of the leaves are gone: only a third of the cards are drawn
   useLayoutEffect(() => { crown.setDrawRange(0, season === 'winter' ? Math.floor(crown.index!.count / 18) * 6 : Infinity); }, [crown, season]);
   // the street trees are planted last: from these on, each one goes with its road while a smear is dragged
@@ -432,7 +431,7 @@ function Trees({ net, blocks, glade, season, tile }: { net: Net; blocks: Block[]
         const h = size * (2.8 + r() * 1.4);
         o.position.set(x, h / 2 + 0.6, y); o.scale.set(size, h, size); o.rotation.set(0, r() * 6, 0);
         o.updateMatrix();
-        blobs.push({ m: o.matrix.clone(), c: hue });
+        if (keep) blobs.push({ m: o.matrix.clone(), c: hue });
       } else {
         const n = bush ? 1 + ((r() * 2) | 0) : 2 + ((r() * 3) | 0);
         for (let k = 0; k < n; k++) {
@@ -441,7 +440,9 @@ function Trees({ net, blocks, glade, season, tile }: { net: Net; blocks: Block[]
           o.scale.set(s, s * (0.75 + r() * 0.3), s);
           o.rotation.set(r() * 3, r() * 3, r() * 3);
           o.updateMatrix();
-          blobs.push({ m: o.matrix.clone(), c: hue.clone().offsetHSL(0, 0, (r() - 0.5) * 0.04) });
+          // (the draw is made whether it is kept or not: the trees after it come out the same)
+          const dl = (r() - 0.5) * 0.04;
+          if (keep) blobs.push({ m: o.matrix.clone(), c: hue.clone().offsetHSL(0, 0, dl) });
         }
       }
       if (keep) part.push({ x, y, blobs, fir, size: bush ? 0 : size, deep: !spot });

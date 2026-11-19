@@ -9,7 +9,7 @@ import { HAZE, MOOD, NIGHT, RICH, hoursPerSecond, skyAt, lampWarmth } from './ha
 import { Cars, TIMELAPSE } from './Cars';
 import type { Sim } from './sim';
 import { gpu } from './Glow';
-import { SEASONS, World, type Season, type Tile } from './World';
+import { SEASONS, World, forgetWoods, type Season, type Tile } from './World';
 import { plantSmall, plantTown, shifted, turnSome, type Block } from './Town';
 import { People, Signs, Street } from './Life';
 import { Commons, plantCommons, standingCommons, type Green } from './Park';
@@ -24,7 +24,7 @@ import { baseIntent, derive, no, standing, type Intent } from './intent';
 import { Nodes } from './Nodes';
 import { addStroke, erase, resize, smear, smearStart, tangled, tidy } from './paint';
 import { holdStrokes, tileAsked, tileStrokes, windowStrokes } from './tiles';
-import { TILE as SIDE, alone, movePlace, place as LAND, saltOf, splitNet, tilesNow } from './net';
+import { TILE as SIDE, alone, forgetFar, movePlace, place as LAND, saltOf, splitNet, tilesNow } from './net';
 import { laid, madeAt, wetStart, smearSet } from './wet';
 
 /** The grade: exposure, warmth, bite, how much colour is left, how grey the blacks are, and what the stock and the glass add. */
@@ -524,6 +524,8 @@ export function App() {
   const onWindow = useCallback((i: number, j: number) => {
     holdStrokes(top.current);
     movePlace(i, j);
+    // what was kept for the tiles left far behind is let go: they are made again, the same, if the drone comes back
+    forgetFar(planted.current); forgetFar(stood.current); forgetWoods();
     const next = windowStrokes(HAND);
     top.current = next;
     setWin((n) => n + 1);

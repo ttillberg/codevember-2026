@@ -11,7 +11,7 @@
 // - everything smaller is grown inside the tile and kept well clear of every other stroke, further than the rules'
 //   own ROOM, except where it joins one, squarely. So no two roads merge that were not meant to.
 import { baseIntent, nearest, type Intent, type Stroke } from './intent';
-import { TILE, cumLen, place, pointOn, rng, tilesNow, type V } from './net';
+import { TILE, cumLen, forgetFar, place, pointOn, rng, tilesNow, type V } from './net';
 
 export { TILE };
 /** The seed of the whole world. Another seed is another world; the grid of big roads is the same in all of them. */
@@ -385,7 +385,8 @@ export function tileStrokes(i: number, j: number, detail: Detail = 2, seed = WOR
   const key = seed + ':' + i + ':' + j;
   let m = kept.get(key);
   if (!m) {
-    if (kept.size > 400) kept.clear();
+    if (place.on) forgetFar(kept);
+    else if (kept.size > 400) kept.clear();
     kept.set(key, (m = make(i, j, seed)));
   }
   return m.strokes.slice(0, m.upTo[detail]);

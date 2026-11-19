@@ -183,6 +183,15 @@ export function movePlace(i: number, j: number) {
 /** The tiles of the window, and where each one's middle lies. */
 export const tilesNow = (): { i: number; j: number; x: number; y: number }[] =>
   place.on ? [0, 1].flatMap((b) => [0, 1].map((a) => ({ i: place.i + a, j: place.j + b, x: (place.i + a) * TILE, y: (place.j + b) * TILE }))) : [{ i: 0, j: 0, x: 0, y: 0 }];
+/** Whether tile (i, j) is in the window or one tile round it: what is kept of a tile is let go once it lies further off. */
+export const nearPlace = (i: number, j: number) => !place.on || (i >= place.i - 1 && i <= place.i + 2 && j >= place.j - 1 && j <= place.j + 2);
+/** Lets go of whatever is kept for a tile far from the window: the key ends in the tile, as 'i,j' or 'i:j'. */
+export function forgetFar(m: Map<string, unknown>) {
+  for (const k of m.keys()) {
+    const t = /(-?\d+)[,:](-?\d+)$/.exec(k);
+    if (t && !nearPlace(+t[1], +t[2])) m.delete(k);
+  }
+}
 /** One tile on its own, as if it were the whole place: what is planted in a tile is planted on this, so it never depends on its neighbours. */
 export function alone<T>(sheds: boolean, make: () => T): T {
   const was = { half: place.half, sheds: place.sheds };
@@ -728,6 +737,6 @@ export function splitNet(net: Net): Map<string, Net> {
     if (was && was.sig === sig) out.set(key, was.net);
     else { parts.set(key, { sig, net: n }); out.set(key, n); }
   }
-  if (parts.size > 60) for (const k of parts.keys()) if (!out.has(k)) parts.delete(k);
+  forgetFar(parts);
   return out;
 }
