@@ -105,6 +105,10 @@ canvas { display: block; image-rendering: pixelated; touch-action: none; cursor:
 }
 
 /* the brush's size, shown while cmd + drag sets it (day 05's ring) */
+/* gold picked up, in a heap on the bar's right shoulder: nothing there until there is some */
+.heap { position: absolute; right: 30px; bottom: 100%; line-height: 0; pointer-events: none; opacity: 0; transition: opacity 0.4s; }
+.heap.some { opacity: 1; }
+
 .size-ring {
   display: none; position: fixed; z-index: 1; pointer-events: none;
   transform: translate(-50%, -50%);

@@ -13,7 +13,11 @@ struct U {
   pointer: vec4f, // x, y in picture pixels, over the scene, tool held down
   tool: vec4f,    // the tool in hand (RAIN, HOSE, WIND, SCRATCH), its radius in voxels, its rate
   water: vec4f,   // gravity, the least flow that wears, inertia, the depth of a film that clings
-  wear: vec4f,    // erosion rate, evaporation, support limit
+  wear: vec4f,    // erosion rate, evaporation, support limit, the saucer has left
+  craft: vec4f,   // the saucer in flight: where it is, w: that it is flying
+  craftX: vec4f,  // and its own three axes: how it is turned
+  craftY: vec4f,
+  craftZ: vec4f,
 };
 
 struct Pick {
@@ -29,6 +33,8 @@ struct Hit {
   water: f32,   // water cells crossed on the way
   wn: vec3f,    // the face of the first one
   wcell: vec3i,
+  glass: f32,   // and glass cells
+  gn: vec3f,
 };
 
 fn toolNow() -> u32 { return u32(u.tool.x); }
@@ -37,7 +43,7 @@ fn working() -> bool { return u.pointer.w > 0.5 && pk.pos.w > 0.5; }
 
 // a cell's bits (world.ts has the list)
 fn ty(c: u32) -> u32 { return c & 7u; }
-fn layerOf(c: u32) -> u32 { return (c >> 3u) & 15u; }
+fn layerOf(c: u32) -> u32 { return (c >> 3u) & 31u; }
 
 fn idx(p: vec3i) -> u32 {
   return u32(p.x + GX * (p.z + GZ * p.y));
@@ -73,11 +79,12 @@ fn windOn(p: vec3f, aim: vec3f, jet: vec3f, radius: f32) -> f32 {
   return exp(-off * off / (radius * radius)) * exp(-max(along, 0.0) / 120.0);
 }
 
-// Walk the grid cell by cell (Amanatides and Woo). Water is seen through, and counted.
+// Walk the grid cell by cell (Amanatides and Woo). Water is seen through, and counted; so is glass.
 fn march(ro: vec3f, rd: vec3f) -> Hit {
   var h: Hit;
   h.hit = false;
   h.water = 0.0;
+  h.glass = 0.0;
   let g = vec3f(f32(GX), f32(GY), f32(GZ));
   let inv = 1.0 / rd;
   let ta = (vec3f(0.0) - ro) * inv;
@@ -108,6 +115,9 @@ fn march(ro: vec3f, rd: vec3f) -> Hit {
     if (t == WATER) {
       if (h.water == 0.0) { h.wn = n; h.wcell = cell; }
       h.water += 1.0;
+    } else if (t == ROCK && layerOf(c) == GLASS) {
+      if (h.glass == 0.0) { h.gn = n; }
+      h.glass += 1.0;
     } else if (t != AIR) {
       h.hit = true;
       h.cell = cell;

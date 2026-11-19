@@ -3,13 +3,29 @@
 import commonSrc from './common.wgsl?raw';
 import simSrc from './sim.wgsl?raw';
 import renderSrc from './render.wgsl?raw';
-import { GX, GY, GZ, GROUND_H, CUBE, X0, Z0, TOP, TYPES, LAYERS, EXTRA, EXTRA_LAYERS, buildWorld } from './world';
+import { GX, GY, GZ, GROUND_H, CUBE, X0, Z0, TOP, TYPES, LAYERS, EXTRA, EXTRA_LAYERS, MODEL, MODEL_AT, buildWorld, type Saucer } from './world';
 import { buildBar, forceFace, ICONS, sizeFace } from './bar';
 
 const query = new URLSearchParams(location.search);
 // ?clean: no page furniture, the scene alone (screengrabs, clips)
 const clean = query.has('clean');
 document.body.classList.toggle('clean', clean);
+
+// ?debug: what goes wrong, written on the page (a phone has no console to look in)
+const debug = query.has('debug');
+function say(msg: string) {
+  if (!debug) return;
+  let el = document.querySelector<HTMLElement>('#debug');
+  if (!el) {
+    el = document.createElement('pre');
+    el.id = 'debug';
+    el.style.cssText = 'position:fixed;z-index:9;left:8px;right:8px;top:90px;margin:0;font:10px/1.3 monospace;white-space:pre-wrap;color:#b00;pointer-events:none';
+    document.body.append(el);
+  }
+  el.textContent += msg + '\n';
+}
+window.addEventListener('error', (e) => say('error: ' + e.message));
+window.addEventListener('unhandledrejection', (e) => say('rejected: ' + (e.reason?.message ?? e.reason)));
 
 const BACKDROP = '#e8e3da';
 // the tools, by the number the shaders and what is saved know them by (the bar and the keys have their own order: TOOLS)
@@ -49,6 +65,8 @@ if (!navigator.gpu) fail('This one needs WebGPU: a recent Chrome, Edge or Safari
 const adapter = await navigator.gpu.requestAdapter({ powerPreference: 'high-performance' });
 if (!adapter) fail('No WebGPU adapter here.');
 const device = await adapter.requestDevice();
+device.addEventListener('uncapturederror', (e) => say('gpu: ' + (e as GPUUncapturedErrorEvent).error.message));
+if (debug) say(`storage buffers per stage: ${device.limits.maxStorageBuffersPerShaderStage}`);
 const context = canvas.getContext('webgpu')!;
 const format = navigator.gpu.getPreferredCanvasFormat();
 context.configure({ device, format, alphaMode: 'opaque' });
@@ -56,7 +74,7 @@ context.configure({ device, format, alphaMode: 'opaque' });
 // ---------- shaders ----------
 
 const rgb = (hex: string) => [1, 3, 5].map((i) => (parseInt(hex.slice(i, i + 2), 16) / 255).toFixed(4));
-const layers = Array.from({ length: 16 }, (_, i) => LAYERS[i] ?? EXTRA_LAYERS[i] ?? { color: '#ff00ff', soft: 0 });
+const layers = Array.from({ length: 32 }, (_, i) => LAYERS[i] ?? EXTRA_LAYERS[i] ?? { color: '#ff00ff', soft: 0 });
 const ids = (o: Record<string, number>) => Object.entries(o).map(([name, id]) => `const ${name} = ${id}u;`).join('\n');
 // what the shaders are told (common.wgsl): the grid, the block in it, and the names of things
 const header = `
@@ -66,16 +84,23 @@ const GZ: i32 = ${GZ};
 const CUBE: i32 = ${CUBE};
 const TOP: i32 = ${TOP};
 const LO = vec3i(${X0}, ${GROUND_H}, ${Z0});
+const MODEL = vec3i(${MODEL});
+const MODEL_AT = vec3f(${MODEL_AT.map((v) => v.toFixed(1))});
 ${ids(TYPES)}
 ${ids(EXTRA)}
 ${ids(TOOL)}
-const PAL = array<vec3f, 16>(${layers.map((l) => `vec3f(${rgb(l.color)})`).join(', ')});
-const SOFT = array<f32, 16>(${layers.map((l) => l.soft.toFixed(3)).join(', ')});
+const PAL = array<vec3f, 32>(${layers.map((l) => `vec3f(${rgb(l.color)})`).join(', ')});
+const SOFT = array<f32, 32>(${layers.map((l) => l.soft.toFixed(3)).join(', ')});
 const BG = vec3f(${rgb(BACKDROP)});
 `;
 
 const simModule = device.createShaderModule({ code: header + commonSrc + simSrc });
 const renderModule = device.createShaderModule({ code: header + commonSrc + renderSrc });
+if (debug) {
+  for (const [name, module] of [['sim', simModule], ['render', renderModule]] as const) {
+    module.getCompilationInfo().then((info) => info.messages.forEach((m) => say(`${name}.wgsl ${m.type} line ${m.lineNum}: ${m.message}`)));
+  }
+}
 for (const [name, m] of [['sim', simModule], ['render', renderModule]] as const) {
   m.getCompilationInfo().then((info) => {
     for (const msg of info.messages) console[msg.type === 'error' ? 'error' : 'warn'](`${name}.wgsl ${msg.lineNum}:${msg.linePos} ${msg.message}`);
@@ -85,7 +110,7 @@ for (const [name, m] of [['sim', simModule], ['render', renderModule]] as const)
 // ---------- buffers ----------
 
 const cellBuf = device.createBuffer({ size: GX * GY * GZ * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC });
-const uData = new Float32Array(11 * 4);
+const uData = new Float32Array(15 * 4);
 const uBuf = device.createBuffer({ size: uData.byteLength, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
 const stepData = new Uint32Array(4);
 const stepBuf = device.createBuffer({ size: stepData.byteLength, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
@@ -98,10 +123,35 @@ const fluxBuf = device.createBuffer({ size: GX * GZ * 16, usage: GPUBufferUsage.
 const ranBuf = device.createBuffer({ size: GX * GZ * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
 // what grows, per column: cover, the bed it grew on, moisture, tufts on a wall beside
 const vegBuf = device.createBuffer({ size: GX * GZ * 16, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
+// what has been picked up (sim.wgsl tally), the saucer's own model (world.ts), and what is read
+// back to see how things stand: the cells round the saucer, and the tally
+const tallyBuf = device.createBuffer({ size: 16, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC });
+const modelBuf = device.createBuffer({ size: MODEL[0] * MODEL[1] * MODEL[2] * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
+const PROBES = 40; // room for
+const probeBuf = device.createBuffer({ size: (PROBES + 4) * 4, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
+
+
+// ---------- what is found ----------
+
+const bare = query.has('bare');
+let saucer: Saucer; // this block's (world.ts)
+let left = false; // it has taken off: it is no longer in the grid
+let flight: number | null = null; // and since when it is in the air, while it is
+let goldAll = 1; // voxels of gold in the block
+let gold = 0; // and of them, picked up
+let heaped = -1; // nuggets shown on the bar
+
 const dry = new Float32Array(GX * GZ * 4);
 
 function reset(seed = (Math.random() * 1e9) | 0) {
-  const world = buildWorld(seed);
+  const world = buildWorld(seed, bare);
+  saucer = world.saucer;
+  goldAll = Math.max(1, world.gold);
+  left = false;
+  flight = null;
+  gold = 0;
+  device.queue.writeBuffer(modelBuf, 0, saucer.model);
+  device.queue.writeBuffer(tallyBuf, 0, new Uint32Array(4));
   device.queue.writeBuffer(cellBuf, 0, world.cells);
   device.queue.writeBuffer(colBuf, 0, world.col);
   device.queue.writeBuffer(fluxBuf, 0, dry);
@@ -118,7 +168,7 @@ function bind(visibility: number, buffers: [GPUBuffer, GPUBufferBindingType][]) 
 }
 const { layout: simLayout, group: simGroup } = bind(GPUShaderStage.COMPUTE, [
   [cellBuf, 'storage'], [uBuf, 'uniform'], [stepBuf, 'uniform'], [pickBuf, 'storage'], [skyBuf, 'storage'],
-  [colBuf, 'storage'], [fluxBuf, 'storage'], [ranBuf, 'storage'], [vegBuf, 'storage'],
+  [colBuf, 'storage'], [fluxBuf, 'storage'], [ranBuf, 'storage'], [vegBuf, 'storage'], [tallyBuf, 'storage'],
 ]);
 const simPipelineLayout = device.createPipelineLayout({ bindGroupLayouts: [simLayout] });
 const compute = (entryPoint: string) =>
@@ -133,7 +183,7 @@ const growPipe = compute('grow');
 const stampPipe = compute('stamp');
 
 const { layout: renderLayout, group: renderGroup } = bind(GPUShaderStage.FRAGMENT, [
-  [cellBuf, 'read-only-storage'], [uBuf, 'uniform'], [pickBuf, 'read-only-storage'],
+  [cellBuf, 'read-only-storage'], [uBuf, 'uniform'], [pickBuf, 'read-only-storage'], [modelBuf, 'read-only-storage'],
 ]);
 const renderPipe = device.createRenderPipeline({
   layout: device.createPipelineLayout({ bindGroupLayouts: [renderLayout] }),
@@ -371,6 +421,13 @@ function turn(dx: number, dy: number) {
 canvas.addEventListener('pointerdown', (e) => {
   try { canvas.setPointerCapture(e.pointerId); } catch { /* a made-up pointer in a test */ }
   if (e.pointerType === 'touch') {
+    // the first finger of a touch: there is no other. One still on the books is one whose lift
+    // never got here, and it would make every touch after it the second finger of a pinch.
+    if (e.isPrimary) {
+      fingers.clear();
+      pinched = false;
+      pinch = null;
+    }
     fingers.set(e.pointerId, { x: e.clientX, y: e.clientY });
     if (fingers.size > 1) {
       release();
@@ -485,6 +542,63 @@ const scratch = { frames: 0, at: { x: 0, y: 0 }, bite: 1 };
 let wearing = P.calm;
 let yawNow = yaw;
 
+// How things stand, asked now and then: a few cells round the saucer, and the tally of gold. Not
+// the grid, which is far too big to read back: forty numbers.
+let frames = 0;
+let probing = false;
+const HEAP = 49; // nuggets in a full heap: all the gold there is
+const open = (c: number) => (c & 7) === TYPES.AIR || (c & 7) === TYPES.WATER || (c & 7) === TYPES.PLANT;
+function probe() {
+  if (probing) return;
+  probing = true;
+  const asked = saucer;
+  const enc = device.createCommandEncoder();
+  asked.probes.forEach((cell, k) => enc.copyBufferToBuffer(cellBuf, cell * 4, probeBuf, k * 4, 4));
+  enc.copyBufferToBuffer(tallyBuf, 0, probeBuf, PROBES * 4, 16);
+  device.queue.submit([enc.finish()]);
+  probeBuf.mapAsync(GPUMapMode.READ).then(() => {
+    const got = new Uint32Array(probeBuf.getMappedRange().slice(0));
+    probeBuf.unmap();
+    probing = false;
+    if (asked !== saucer) return; // a new block meanwhile
+    gold = got[PROBES];
+    // The saucer, nearly dug out: most of what is round it is open. Then it goes home.
+    const free = asked.probes.filter((_, k) => open(got[k])).length;
+    if (!bare && free >= asked.probes.length * 0.8) launch();
+  });
+}
+function launch() {
+  if (left) return;
+  left = true; // sim.wgsl support takes it out of the grid
+  flight = performance.now(); // and render.wgsl draws its model in its place
+}
+
+// The saucer's way home, s seconds in: it shakes loose, backs out through the face it lay behind
+// and comes level, turning, hangs there a moment, and is gone, up and away. Where it is, and its
+// three axes.
+const unit = (v: V3): V3 => { const l = Math.hypot(...v) || 1; return [v[0] / l, v[1] / l, v[2] / l]; };
+const cross = (a: V3, b: V3): V3 => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+function fly(s: number) {
+  const { at, axes, out } = saucer;
+  const k = Math.min(1, s / 1.8);
+  const free = k * k * (3 - 2 * k);
+  const gone = Math.max(0, s - 2.8) ** 2 * 420;
+  const shake = Math.sin(s * 45) * 0.5 * (1 - free);
+  const bob = Math.sin(s * 6) * 0.7 * free;
+  const away = unit([out[0] * 0.4, 1, out[2] * 0.4]);
+  const up = [0, free * 10 + bob, 0];
+  const y = unit(axes[1].map((v, i) => v + ((i === 1 ? 1 : 0) - v) * free) as V3);
+  const lean = axes[0][0] * y[0] + axes[0][1] * y[1] + axes[0][2] * y[2];
+  const x0 = unit(axes[0].map((v, i) => v - y[i] * lean) as V3);
+  const z0 = cross(x0, y);
+  const turn = s * s * 1.2; // spinning up
+  const x = x0.map((v, i) => v * Math.cos(turn) + z0[i] * Math.sin(turn)) as V3;
+  return {
+    at: at.map((v, i) => v + out[i] * free * 44 + up[i] + axes[0][i] * shake + away[i] * gone) as V3,
+    x, y, z: cross(x, y),
+  };
+}
+
 function frame(t: number) {
   // the arrow keys turn a quarter at once: ease into it
   yawNow += (yaw - yawNow) * 0.2;
@@ -525,7 +639,31 @@ function frame(t: number) {
   uData.set([px, py, hover ? 1 : 0, working ? 1 : 0], 28);
   uData.set([tool, brush[tool] * (tool === TOOL.SCRATCH ? scratch.bite : 1), toolOf(tool).rate(power(tool))], 32);
   uData.set([P.gravity, P.minFlow, P.inertia, P.cling], 36);
-  uData.set([P.erode * wearing, P.evap, P.supportLimit], 40);
+  // (bare, nothing holds anything up: nothing may count as loose)
+  uData.set([P.erode * wearing, P.evap, bare ? 1e9 : P.supportLimit, left ? 1 : 0], 40);
+  let pose = null;
+  if (flight !== null) {
+    const s = (performance.now() - flight) / 1000;
+    if (s > 4.4) flight = null;
+    else pose = fly(s);
+  }
+  uData.set(pose ? [...pose.at, 1] : [0, 0, 0, 0], 44);
+  uData.set(pose?.x ?? [1, 0, 0], 48);
+  uData.set(pose?.y ?? [0, 1, 0], 52);
+  uData.set(pose?.z ?? [0, 0, 1], 56);
+  if (frames++ % 20 === 0) probe();
+  if (debug) {
+    let el = document.querySelector<HTMLElement>('#state');
+    if (!el) {
+      el = document.createElement('pre');
+      el.id = 'state';
+      el.style.cssText = 'position:fixed;z-index:9;left:8px;top:70px;margin:0;font:10px/1.3 monospace;color:#036;pointer-events:none';
+      document.body.append(el);
+    }
+    el.textContent = `frame ${frames} tool ${tool} held ${held} working ${working} hover ${hover} fingers ${fingers.size} pinched ${pinched} turning ${turning} left ${left} gold ${gold}`;
+  }
+  const nuggets = Math.min(HEAP, Math.ceil((gold / goldAll) * HEAP));
+  if (nuggets !== heaped) bar.heap((heaped = nuggets));
   device.queue.writeBuffer(uBuf, 0, uData);
 
   // one dispatch over every column
@@ -638,6 +776,11 @@ async function readBack(src: GPUBuffer) {
   release,
   turn(a: number) { yaw = a; },
   camera: () => ({ yaw, pitch, zoom }),
+  // what has been found: the gold picked up (of how much), whether the saucer has left, and sending it off by hand
+  found: () => ({ gold, goldAll, left, flying: flight !== null }),
+  launch,
+  // look at a point in the grid, this much zoomed in
+  look(x: number, y: number, z: number, by = 1) { target[0] = x; target[1] = y; target[2] = z; zoom = by; },
   level,
   brush(t: number, r?: number) { if (r !== undefined) { brush[t] = r; bar.refresh(); } return brush[t]; },
   // run frames by hand, for when the page is hidden and the browser holds its own back

@@ -2,7 +2,7 @@
 //
 //   bits 0-2    type: air, water, sediment, rock, ground, plant (and WALL, what sim.wgsl sees off the grid)
 //               (a water voxel is only the picture of the water, which is a depth per column: sim.wgsl)
-//   bits 3-6    layer, the colour and the hardness (LAYERS)
+//   bits 3-7    layer, the colour and the hardness (LAYERS, and EXTRA from 8 up)
 //   bits 8-9    shade, the lamination: thin lighter and darker beds inside a layer
 //   bit  10     weak: a vertical joint, wears four times as fast
 //   bits 8-11   water only: how full this voxel is, 1..15 (a film is drawn faint)
@@ -43,7 +43,9 @@ export const LAYERS: { name: string; color: string; soft: number }[] = [
 // The layers that are not rock beds, drawn with the same bits. What grows (sim.wgsl stamp): grass
 // and leaves in two tones each, wood, cactus. What lies buried: bone, all but proof against the
 // weather, a thousandth of plain sandstone: digging one out, it is what is left. And the tray.
-export const EXTRA = { GRASS: 8, LEAF: 10, WOOD: 12, BONE: 13, CACTUS: 14, GROUND_LAYER: 15 };
+// From METAL up, the rest of what lies buried (sim.wgsl lasting): a saucer (METAL to LAMP: its
+// hull, the glass of its dome, seen through (common.wgsl march), and its lamps), and gold.
+export const EXTRA = { GRASS: 8, LEAF: 10, WOOD: 12, BONE: 13, CACTUS: 14, GROUND_LAYER: 15, METAL: 16, GLASS: 17, LAMP: 18, GOLD: 19 };
 export const EXTRA_LAYERS: Record<number, { color: string; soft: number }> = {
   [EXTRA.GRASS]: { color: '#8fa04a', soft: 0 },
   [EXTRA.GRASS + 1]: { color: '#6f8f3f', soft: 0 },
@@ -53,6 +55,10 @@ export const EXTRA_LAYERS: Record<number, { color: string; soft: number }> = {
   [EXTRA.BONE]: { color: '#fbf6e6', soft: 0.001 },
   [EXTRA.CACTUS]: { color: '#5f9a6e', soft: 0 },
   [EXTRA.GROUND_LAYER]: { color: '#2e2927', soft: 0 },
+  [EXTRA.METAL]: { color: '#9aa6ad', soft: 0 },
+  [EXTRA.GLASS]: { color: '#b4e4ea', soft: 0 },
+  [EXTRA.LAMP]: { color: '#f3c24a', soft: 0 },
+  [EXTRA.GOLD]: { color: '#eeb02a', soft: 0 },
 };
 
 // bottom to top: [layer, thickness in voxels]
@@ -107,9 +113,16 @@ function columnNoise(x: number, z: number, seed: number) {
 
 // A block, as it starts: the voxels, and per column the water (depth, wear, bed, discharge: sim.wgsl col)
 // and what grows (cover, the bed it grew on, moisture, wall tufts: sim.wgsl veg).
-export type World = { cells: Uint32Array<ArrayBuffer>; col: Float32Array<ArrayBuffer>; veg: Float32Array<ArrayBuffer> };
+// And the saucer that lies in it (bury): a model of it on its own, upright, in a small grid
+// (MODEL, its own middle at MODEL_AT), for when it flies; where it lies in the block, the three
+// axes it lies along (its own x, up and z) and the way out through the nearest face; and probes,
+// cells round it that are open once it has been dug out. And how much gold there is.
+export type Saucer = { model: Uint32Array<ArrayBuffer>; at: P3; axes: P3[]; out: P3; probes: number[] };
+export type World = { cells: Uint32Array<ArrayBuffer>; col: Float32Array<ArrayBuffer>; veg: Float32Array<ArrayBuffer>; saucer: Saucer; gold: number };
+export const MODEL: P3 = [48, 24, 48];
+export const MODEL_AT: P3 = [24, 8, 24];
 
-type P3 = [number, number, number];
+export type P3 = [number, number, number];
 
 // ---------- what lies buried ----------
 //
@@ -118,13 +131,25 @@ type P3 = [number, number, number];
 // voxel within a radius of a line) and a knob (the skull), in the animal's own frame: x along
 // it, nose first, y up, z across. Each is set a little way in behind one of the block's faces,
 // side on to it, where taking that face off will find it.
-function bury(cells: Uint32Array, seed: number) {
+function bury(cells: Uint32Array, seed: number): { saucer: Saucer; gold: number } {
+  // what the tools draw with: the layer, its shade (-1: bone's own mottle), and whether they
+  // draw in the open too, inside a hollow, or only where there is rock to turn
+  const pen = { layer: EXTRA.BONE, shade: -1, air: false };
+  // and what they draw on: the block, or for the saucer's model a small grid of its own
+  const block = { cells, has: (x: number, y: number, z: number) => onBlock(x, z) && y >= GROUND_H && y < TOP, at: idx };
+  let on = block;
+  let gold = 0;
   const put = (x: number, y: number, z: number) => {
-    if (!onBlock(x, z) || y < GROUND_H || y >= TOP) return;
-    const i = idx(x, y, z);
-    if ((cells[i] & 7) !== ROCK) return;
-    const shade = 2 + (hash3(x, y, z, seed + 31) < 0.3 ? 1 : 0);
-    cells[i] = ROCK | (EXTRA.BONE << 3) | (shade << 8) | (cells[i] & 0x0fff0000);
+    if (!on.has(x, y, z)) return;
+    const i = on.at(x, y, z);
+    const t = on.cells[i] & 7;
+    if (t !== ROCK && !(pen.air && t === AIR)) return;
+    const shade = pen.shade >= 0 ? pen.shade : 2 + (hash3(x, y, z, seed + 31) < 0.3 ? 1 : 0);
+    if (pen.layer === EXTRA.GOLD && ((on.cells[i] >> 3) & 31) !== EXTRA.GOLD) gold++;
+    on.cells[i] = ROCK | (pen.layer << 3) | (shade << 8) | (on.cells[i] & 0x0fff0000);
+  };
+  const dig = (x: number, y: number, z: number) => {
+    if (on.has(x, y, z)) on.cells[on.at(x, y, z)] = AIR;
   };
   // k is the animal's scale: the models are drawn large and set in the rock at half that.
   // A bone is never thinner than a voxel, whatever the scale.
@@ -232,6 +257,75 @@ function bury(cells: Uint32Array, seed: number) {
     }
   };
 
+  // ---------- and what is not a skeleton ----------
+
+  // a frame leaning over: y is its own up, tipped `lean` from upright towards the heading `to`
+  const leaning = (c: P3, lean: number, to: number): Frame => {
+    const [sl, cl, st, ct] = [Math.sin(lean), Math.cos(lean), Math.sin(to), Math.cos(to)];
+    const axes: P3[] = [[cl * ct, -sl, cl * st], [sl * ct, cl, sl * st], [-st, 0, ct]];
+    return {
+      k: 1,
+      at: (p) => [0, 1, 2].map((i) => c[i] + p[0] * axes[0][i] + p[1] * axes[1][i] + p[2] * axes[2][i]) as P3,
+      back: (p) => axes.map((a) => (p[0] - c[0]) * a[0] + (p[1] - c[1]) * a[1] + (p[2] - c[2]) * a[2]) as P3,
+    };
+  };
+  const box = (c: P3, m: number, each: (x: number, y: number, z: number) => void) => {
+    for (let y = Math.floor(c[1] - m); y <= c[1] + m; y++) for (let z = Math.floor(c[2] - m); z <= c[2] + m; z++) for (let x = Math.floor(c[0] - m); x <= c[0] + m; x++) each(x, y, z);
+  };
+
+  // A flying saucer, where it came down, on a slant. A lens of metal with seams in it, lamps
+  // round the rim, a glass dome, and under the dome a cabin, hollow and empty.
+  const SAUCER = 20; // its radius
+  const saucer = (f: Frame) => {
+    box(f.at([0, 0, 0]), SAUCER + 2, (x, y, z) => {
+      const [lx, h, lz] = f.back([x, y, z]);
+      const r = Math.hypot(lx, lz);
+      const dome = Math.hypot(r, h - 3); // from the middle of the ball the dome is the top of
+      const lens = 1 - (r / SAUCER) ** 2;
+      if (dome < 7 && h > 1.5) dig(x, y, z);
+      else if (r <= SAUCER && h <= 1 + 4 * lens && h >= -0.8 - 3.2 * lens) {
+        const turn = (Math.atan2(lz, lx) / (2 * Math.PI) + 0.5) * 12; // twelve lamps, twelve plates
+        const lamp = r > SAUCER - 1.7 && Math.abs((turn % 1) - 0.5) < 0.2;
+        const seam = Math.abs(r - 9.5) < 0.5 || Math.abs(r - 15) < 0.5 || (r > 9.5 && turn % 1 < 0.1);
+        pen.layer = lamp ? EXTRA.LAMP : EXTRA.METAL;
+        pen.shade = lamp ? Math.floor(turn) & 3 : seam ? 0 : 3; // a lamp's shade is its turn to be lit (render.wgsl)
+        put(x, y, z);
+      } else if (dome <= 8.5 && h > 0) {
+        pen.layer = EXTRA.GLASS;
+        put(x, y, z);
+      }
+    });
+    Object.assign(pen, { layer: EXTRA.BONE, shade: -1, air: false });
+  };
+  // Round it, just clear of the hull: a ring off the rim, a ring over it and one under, the top
+  // of the dome and the belly. In its own frame.
+  const SAUCER_PROBES: P3[] = [[0, 13.5, 0], [0, -6.5, 0]];
+  for (let k = 0; k < 12; k++) {
+    const [c, sn] = [Math.cos((k * Math.PI) / 6), Math.sin((k * Math.PI) / 6)];
+    SAUCER_PROBES.push([c * (SAUCER + 2), 0, sn * (SAUCER + 2)]);
+    if (k % 3 !== 2) SAUCER_PROBES.push([c * 11, k % 3 ? -6 : 8, sn * 11], [c * 11, k % 3 ? 8 : -6, sn * 11]);
+  }
+
+  // Gold: a vein, a thread wandering up through the beds and forking, a nugget here and there.
+  // In the upper half of the block: not far to dig for from the top.
+  const vein = (n: number) => {
+    const q = (k: number) => hash2(900 + n * 100 + k, 77, seed);
+    const f = frame(0, 0, 0, 0);
+    let k = 10;
+    const run = (from: P3, heading: number, steps: number) => {
+      let p = from;
+      for (let s = 0; s < steps; s++) {
+        heading += (q(k++) - 0.5) * 1.6;
+        const next: P3 = [p[0] + Math.cos(heading) * 5, p[1] + 0.5 + q(k++) * 3, p[2] + Math.sin(heading) * 5];
+        bone(f, p, next, 0.6 + 0.5 * q(k++));
+        if (q(k++) < 0.3) knob(f, next, [1.7, 1.5, 1.7]);
+        if (steps > 5 && s % 3 === 2) run(next, heading + (q(k++) < 0.5 ? 1.3 : -1.3), 4);
+        p = next;
+      }
+    };
+    run([X0 + 16 + q(1) * (CUBE - 32), GROUND_H + 45 + q(2) * 35, Z0 + 16 + q(3) * (CUBE - 32)], q(4) * 6.28, 9);
+  };
+
   // behind a face: 0 the +z face and 1 the +x face (the two a first look shows), 2 and 3 the far ones.
   // `along` is the place along the face, `in` how far behind it, `up` the height of the feet.
   const SMALL = 1 / 2;
@@ -261,6 +355,39 @@ function bury(cells: Uint32Array, seed: number) {
     const f = frame(X0 + 8 + r(20 + k) * (CUBE - 16), GROUND_H + 6 + r(40 + k) * (CUBE - 14), Z0 + 8 + r(60 + k) * (CUBE - 16), r(80 + k) * 6.28);
     ammonite(f, 1.5 + r(100 + k) * 2);
   }
+
+  pen.layer = EXTRA.GOLD;
+  for (let n = 0; n < 3; n++) vein(n);
+  // The saucer is behind one of the two far faces: nothing of it in a first look. A point `inn`
+  // behind a far face, `along` it and `up`:
+  const far = (face: number, along: number, inn: number, up: number): P3 =>
+    face === 2 ? [GX / 2 + along, GROUND_H + up, Z0 + inn] : [X0 + inn, GROUND_H + up, GZ / 2 + along];
+  const face = r(300) < 0.5 ? 2 : 3;
+  // The saucer leans, and lies just so far in that the low edge of its rim comes out through
+  // the face: a sliver of metal in the wall, and a lamp going on and off in it.
+  const lean = 0.25 + r(301) * 0.2;
+  const to = r(302) * 6.28;
+  const out = face === 2 ? Math.sin(to) : Math.cos(to); // how much of the lean is towards the face
+  const reach = SAUCER * Math.sqrt(1 - (Math.sin(lean) * out) ** 2); // how far the rim gets that way
+  const lies = leaning(far(face, -5 + r(303) * 35, reach - 1.5, 38 + r(304) * 46), lean, to);
+  saucer(lies);
+
+  // the saucer once more, upright and on its own, for when it flies
+  const model = new Uint32Array(MODEL[0] * MODEL[1] * MODEL[2]);
+  on = {
+    cells: model,
+    has: (x, y, z) => x >= 0 && y >= 0 && z >= 0 && x < MODEL[0] && y < MODEL[1] && z < MODEL[2],
+    at: (x, y, z) => x + MODEL[0] * (z + MODEL[2] * y),
+  };
+  pen.air = true;
+  saucer(leaning(MODEL_AT, 0, 0));
+  on = block;
+  const at = lies.at([0, 0, 0]);
+  const axes = ([[1, 0, 0], [0, 1, 0], [0, 0, 1]] as P3[]).map((e) => lies.at(e).map((v, i) => v - at[i]) as P3);
+  const probes = SAUCER_PROBES.map((q) => lies.at(q).map(Math.round) as P3)
+    .filter(([x, y, z]) => x >= 0 && y >= 0 && z >= 0 && x < GX && y < GY && z < GZ)
+    .map(([x, y, z]) => idx(x, y, z));
+  return { saucer: { model, at, axes, out: face === 2 ? [0, 0, -1] : [-1, 0, 0], probes }, gold };
 }
 
 // ---------- how it starts ----------
@@ -325,7 +452,8 @@ function landscape(cells: Uint32Array, seed: number) {
   return { col, veg };
 }
 
-export function buildWorld(seed: number): World {
+// `bare`: only what lies buried, the rock gone from round it. To see what there is to find.
+export function buildWorld(seed: number, bare = false): World {
   const cells = new Uint32Array(GX * GY * GZ);
 
   // the tray the block stands on: a round one, as wide as the grid lets it be, just clear of the block's corners
@@ -372,6 +500,12 @@ export function buildWorld(seed: number): World {
       }
     }
   }
-  bury(cells, seed);
-  return { cells, ...landscape(cells, seed) };
+  const buried = bury(cells, seed);
+  if (bare) {
+    for (let i = 0; i < cells.length; i++) if ((cells[i] & 7) === ROCK && ((cells[i] >> 3) & 31) < 8) cells[i] = AIR;
+    const col = new Float32Array(GX * GZ * 4);
+    for (let i = 2; i < col.length; i += 4) col[i] = GROUND_H;
+    return { cells, col, veg: new Float32Array(GX * GZ * 4), ...buried };
+  }
+  return { cells, ...landscape(cells, seed), ...buried };
 }

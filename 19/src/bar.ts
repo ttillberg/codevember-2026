@@ -144,6 +144,33 @@ export function buildBar(host: HTMLElement, tools: BarTool[], knobs: BarKnob[], 
     });
   }
 
+  // Gold that has been picked up lies in a heap on the bar's shoulder. It is drawn the way a
+  // heap comes about: nuggets dropped one by one on the middle, each rolling down to where it lies.
+  const heap = document.createElement('div');
+  heap.className = 'heap';
+  heap.setAttribute('aria-hidden', 'true');
+  host.append(heap);
+  const COLS = 13;
+  const ROWS = 9;
+  const NUGGET = 5; // px
+  const drawHeap = (n: number) => {
+    const high: number[] = new Array(COLS).fill(0);
+    let nuggets = '';
+    for (let i = 0; i < n; i++) {
+      let c = (COLS >> 1) + ((i * 7) % 3) - 1;
+      for (;;) {
+        const l = c > 0 ? high[c - 1] : 99;
+        const r = c < COLS - 1 ? high[c + 1] : 99;
+        if (Math.min(l, r) >= high[c]) break;
+        c += l < r || (l === r && i % 2 === 0) ? -1 : 1;
+      }
+      const y = ROWS - 1 - Math.min(high[c]++, ROWS - 1);
+      nuggets += `<rect x="${c * NUGGET}" y="${y * NUGGET}" width="${NUGGET}" height="${NUGGET}" fill="${['#eeb02a', '#d99a1c', '#f6cf5a'][(i * 5) % 3]}"/>`;
+    }
+    heap.innerHTML = `<svg width="${COLS * NUGGET}" height="${ROWS * NUGGET}" viewBox="0 0 ${COLS * NUGGET} ${ROWS * NUGGET}" shape-rendering="crispEdges">${nuggets}</svg>`;
+    heap.classList.toggle('some', n > 0);
+  };
+
   // the values changed from outside the bar (a drag on the scene, another tool)
   const refresh = () => {
     for (const draw of redraw) draw();
@@ -155,6 +182,7 @@ export function buildBar(host: HTMLElement, tools: BarTool[], knobs: BarKnob[], 
       refresh();
     },
     refresh,
+    heap: drawHeap,
     // a knob's gauge held open from outside, while its value is dragged on the scene
     peek(name: string, open: boolean) {
       peeks.get(name)?.(open);

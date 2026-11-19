@@ -26,6 +26,9 @@
 // per column, what grows: x how far along the ground cover is (0 bare, grass, bushes, then a
 // tree growing, up to 3), y the bed it grew on, z moisture, w how far along the tufts on a wall beside it are
 @group(0) @binding(8) var<storage, read_write> veg: array<vec4f>;
+// what has been picked up: [0] voxels of gold grit swept off or gone over the edge. Nothing of it
+// is lost: main.ts reads this back and heaps it on the tool bar.
+@group(0) @binding(9) var<storage, read_write> tally: array<atomic<u32>, 4>;
 
 fn solid(t: u32) -> bool { return t == ROCK || t == GROUND || t == SED; }
 
@@ -109,7 +112,7 @@ fn rnd(st: ptr<function, u32>) -> f32 {
 }
 
 // rock to sediment of the same layer and shade
-fn toSed(c: u32) -> u32 { return (c & 0x378u) | SED; }
+fn toSed(c: u32) -> u32 { return (c & 0x3F8u) | SED; }
 
 // or to nothing
 fn crumble(c: u32, st: ptr<function, u32>, yield_: f32) -> u32 {
@@ -133,6 +136,13 @@ fn softOf(c: u32) -> f32 {
   if ((c & 0x400u) != 0u) { s *= 4.0; }
   let r = rotOf(c);
   return s * (0.35 + 6.0 * r * r * r);
+}
+
+// What lies buried and is not rock (world.ts): bone, and from METAL up a saucer and gold. The scratch cleans it, it does not cut it, and it hangs together a good way
+// further than rock does (support).
+fn lasting(c: u32) -> bool {
+  let l = layerOf(c);
+  return l == BONE || l >= METAL;
 }
 
 fn cellPos(b0: vec3i, k: i32) -> vec3i {
@@ -167,7 +177,10 @@ fn sim(@builtin(global_invocation_id) gid: vec3u) {
     if (ib) { v = cells[idx(p)]; }
     o[k] = v;
     // sediment goes over the edge of the tray: off the side of the grid, or down past the tray's rim to the bottom of it
-    if (ib && ty(v) == SED && (p.x == 0 || p.z == 0 || p.x == GX - 1 || p.z == GZ - 1 || p.y == 0)) { v = AIR; }
+    if (ib && ty(v) == SED && (p.x == 0 || p.z == 0 || p.x == GX - 1 || p.z == GZ - 1 || p.y == 0)) {
+      if (layerOf(v) == GOLD) { atomicAdd(&tally[0], 1u); }
+      v = AIR;
+    }
     if (open(v)) { air = true; }
     if (ty(v) == SED || ty(v) == ROCK) { stuff = true; }
     c[k] = v;
@@ -240,8 +253,9 @@ fn sim(@builtin(global_invocation_id) gid: vec3u) {
       }
       var soft = softOf(c[k]);
       if (tool == SCRATCH) {
-        soft = pow(soft, 0.3); // a hard bed slows the scratch a little, it does not stop it
-        if (layerOf(c[k]) == BONE) { soft = SOFT[BONE]; } // bone does: a scratch cleans a skeleton, it does not cut it
+        // a hard bed slows the scratch a little, it does not stop it. Bone does, and the rest of
+        // what lies buried: a scratch cleans a skeleton, it does not cut it
+        if (lasting(c[k])) { soft = SOFT[layerOf(c[k])]; } else { soft = pow(soft, 0.3); }
       }
       // what is in front of it must be open; and for the wind, not water: it does not reach a lake's bed
       var faced = false;
@@ -250,7 +264,8 @@ fn sim(@builtin(global_invocation_id) gid: vec3u) {
         c[k] = crumble(c[k], &st, select(0.3, 0.6, tool == SCRATCH));
       } else if ((tool == HOSE || tool == SCRATCH) && ty(c[k]) == SED && rnd(&st) < select(0.3, 0.5, tool == SCRATCH) * f) {
         // the hose flushes out what it has knocked loose, or it would plug its own hole; the
-        // scratch sweeps its groove
+        // scratch sweeps its groove. Gold swept up is pocketed.
+        if (layerOf(c[k]) == GOLD) { atomicAdd(&tally[0], 1u); }
         c[k] = AIR;
       }
     }
@@ -292,7 +307,7 @@ fn sim(@builtin(global_invocation_id) gid: vec3u) {
           let b = c[j];
           c[j] = c[i];
           c[i] = b;
-          if (rnd(&st) < 0.03) { c[j] = AIR; }
+          if (rnd(&st) < 0.03 && layerOf(c[j]) != GOLD) { c[j] = AIR; } // (gold is no dust)
         }
       }
     }
@@ -302,6 +317,8 @@ fn sim(@builtin(global_invocation_id) gid: vec3u) {
     if (inb[k] && c[k] != o[k]) { cells[idx(cellPos(b0, k))] = c[k]; }
   }
 }
+
+const HANG = 300.0; // how many steps further than rock what lies buried hangs together
 
 // Every rock cell keeps its distance to the ground, counted through rock: one more than its
 // nearest neighbour's. Cut a piece loose and its numbers have nothing to hold on to, they
@@ -313,10 +330,10 @@ fn support(@builtin(global_invocation_id) gid: vec3u) {
   let i = idx(p);
   let c = cells[i];
   if (ty(c) != ROCK) { return; }
-  // Bone holds itself up, and what hangs on it: a skeleton dug free stands where it stood. (A
-  // rib has no rock under it once the rock is gone, and would be rubble by the rule below.)
-  if (layerOf(c) == BONE) {
-    if (distOf(c) != 1u) { cells[i] = withDist(c, 1u); }
+  // the saucer has left (main.ts): what there was of it in the grid goes
+  let own = lasting(c);
+  if (own && u.wear.w > 0.5 && layerOf(c) >= METAL && layerOf(c) <= LAMP) {
+    cells[i] = AIR;
     return;
   }
   var m = 4094u;
@@ -329,7 +346,12 @@ fn support(@builtin(global_invocation_id) gid: vec3u) {
     else if (t == ROCK) { m = min(m, distOf(nb)); }
   }
   let dist = m + 1u;
-  if (f32(dist) >= u.wear.z) {
+  // What lies buried counts its steps as rock does, through rock and through its own kind, but
+  // it is let go a good deal further: a skeleton hangs whole from one bone left in the wall (a
+  // rib has no rock under it once the rock is gone, and would be rubble by the rock's rule). Dug
+  // free altogether, with nothing left to hang from, its numbers climb like any loose piece's,
+  // and a few seconds on it comes apart: grit of its own colour.
+  if (f32(dist) >= u.wear.z + select(0.0, HANG, own)) {
     cells[i] = toSed(c);
   } else if (dist != distOf(c)) {
     cells[i] = withDist(c, dist);
@@ -352,7 +374,7 @@ fn topCell(x: i32, z: i32, bed: f32) -> u32 {
 // how easily it wears. Loose sediment goes easily, the ground not at all.
 fn softTop(c: u32) -> f32 {
   if (ty(c) == ROCK) { return softOf(c); }
-  if (ty(c) == SED) { return 3.0; }
+  if (ty(c) == SED) { return select(3.0, 0.0, layerOf(c) == GOLD); } // (gold stays in the stream bed)
   return 0.0;
 }
 
@@ -551,7 +573,8 @@ fn grow(@builtin(global_invocation_id) gid: vec3u) {
   let soil = rootable(top);
   // Low down it is desert: what grows there (stamp draws cactus) asks for neither soil nor
   // water, only somewhere to stand and to be left alone, and takes its time.
-  let desert = f32(TOP) - bed > DESERT && (ty(top) == SED || ty(top) == ROCK);
+  // (not on a saucer: on rock, and on bone)
+  let desert = f32(TOP) - bed > DESERT && (ty(top) == SED || (ty(top) == ROCK && layerOf(top) < METAL));
   if (bed != v.y) {
     // the ground it stood on is gone, or new ground has come down on it
     v.x = 0.0;

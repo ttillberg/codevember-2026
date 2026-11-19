@@ -3,6 +3,8 @@
 @group(0) @binding(0) var<storage, read> cells: array<u32>;
 @group(0) @binding(1) var<uniform> u: U;
 @group(0) @binding(2) var<storage, read> pk: Pick;
+// the saucer on its own, upright, in a small grid (world.ts MODEL): what flies when it flies
+@group(0) @binding(3) var<storage, read> model: array<u32>;
 
 @vertex
 fn vs(@builtin(vertex_index) i: u32) -> @builtin(position) vec4f {
@@ -66,6 +68,107 @@ fn hoseJet(col: vec3f, px: vec2f) -> vec3f {
   return col;
 }
 
+// A voxel's own tone: its layer's colour, its shade, a grain.
+fn tone(c: u32, cell: vec3i) -> vec3f {
+  let layer = layerOf(c);
+  var bcol = PAL[layer];
+  if (ty(c) != GROUND) {
+    bcol *= 0.88 + 0.05 * f32((c >> 8u) & 3u);
+    if (layer != METAL) { bcol *= 0.96 + 0.08 * grain(cell); } // metal is smooth
+  }
+  if (ty(c) == SED) { bcol = mix(bcol, vec3f(0.86, 0.68, 0.52), 0.3); }
+  return bcol;
+}
+
+// What gives light of its own, over the lit tone: lamps, a glint.
+fn lights(lit: vec3f, c: u32, cell: vec3i, rate: f32) -> vec3f {
+  let layer = layerOf(c);
+  let shade = (c >> 8u) & 3u;
+  var col = lit;
+  // the saucer's lamps: one in four lit, and the light runs round the rim
+  if (layer == LAMP) {
+    col = select(PAL[LAMP] * 0.5, vec3f(1.0, 0.97, 0.78), shade == (u32(u.res.z * rate) & 3u));
+  }
+  // gold glints: a voxel here, a voxel there, a moment each
+  if (layer == GOLD && h2(vec2f(cell.xy) + vec2f(0.0, f32(cell.z) * 191.0), u32(u.res.z * 5.0)) > 0.93) {
+    col = mix(col, vec3f(1.0), 0.75);
+  }
+  return col;
+}
+
+// The saucer in flight is not in the block's grid. It is a small grid of its own, walked the
+// same way, in its own frame: wherever it is and however it is turned, its voxels stay voxels.
+struct Craft {
+  hit: bool,
+  t: f32,      // how far along the ray
+  cell: vec3i,
+  n: vec3f,    // the face, turned back into the world
+  c: u32,
+  glass: f32,  // glass cells crossed on the way, and how far along the first was
+  gt: f32,
+  gn: vec3f,
+};
+
+fn marchCraft(ro: vec3f, rd: vec3f) -> Craft {
+  var h: Craft;
+  h.hit = false;
+  h.glass = 0.0;
+  let ax = u.craftX.xyz;
+  let ay = u.craftY.xyz;
+  let az = u.craftZ.xyz;
+  let rel = ro - u.craft.xyz;
+  let o = vec3f(dot(rel, ax), dot(rel, ay), dot(rel, az)) + MODEL_AT;
+  var d = vec3f(dot(rd, ax), dot(rd, ay), dot(rd, az));
+  d = select(d, vec3f(1e-5), abs(d) < vec3f(1e-5)); // the walk divides by these
+  let g = vec3f(MODEL);
+  let inv = 1.0 / d;
+  let ta = (vec3f(0.0) - o) * inv;
+  let tb = (g - o) * inv;
+  let t0 = min(ta, tb);
+  let t1 = max(ta, tb);
+  let tn = max(max(t0.x, t0.y), t0.z);
+  let tf = min(min(t1.x, t1.y), t1.z);
+  if (tn >= tf || tf <= 0.0) { return h; }
+
+  let sg = sign(d);
+  var n = vec3f(0.0, 1.0, 0.0);
+  if (t0.x >= t0.y && t0.x >= t0.z) { n = vec3f(-sg.x, 0.0, 0.0); }
+  else if (t0.y >= t0.z) { n = vec3f(0.0, -sg.y, 0.0); }
+  else { n = vec3f(0.0, 0.0, -sg.z); }
+  var t = max(tn, 0.0);
+  var cell = vec3i(clamp(floor(o + d * (t + 0.001)), vec3f(0.0), g - 1.0));
+  let stp = vec3i(sg);
+  let td = abs(inv);
+  var tm = (vec3f(cell) + max(sg, vec3f(0.0)) - o) * inv;
+  for (var i = 0; i < 130; i++) {
+    if (any(cell < vec3i(0)) || any(cell >= MODEL)) { break; }
+    let c = model[cell.x + MODEL.x * (cell.z + MODEL.z * cell.y)];
+    if (c != 0u) {
+      if (layerOf(c) == GLASS) {
+        if (h.glass == 0.0) { h.gt = t; h.gn = ax * n.x + ay * n.y + az * n.z; }
+        h.glass += 1.0;
+      } else {
+        h.hit = true;
+        h.t = t;
+        h.cell = cell;
+        h.n = ax * n.x + ay * n.y + az * n.z;
+        h.c = c;
+        break;
+      }
+    }
+    if (tm.x < tm.y && tm.x < tm.z) {
+      t = tm.x; cell.x += stp.x; tm.x += td.x; n = vec3f(-sg.x, 0.0, 0.0);
+    } else if (tm.y < tm.z) {
+      t = tm.y; cell.y += stp.y; tm.y += td.y; n = vec3f(0.0, -sg.y, 0.0);
+    } else {
+      t = tm.z; cell.z += stp.z; tm.z += td.z; n = vec3f(0.0, 0.0, -sg.z);
+    }
+  }
+  return h;
+}
+
+const SHADE = vec3f(0.5, 0.47, 0.58); // what is not in the sun
+
 @fragment
 fn fs(@builtin(position) fc: vec4f) -> @location(0) vec4f {
   let px = floor(fc.xy) + 0.5;
@@ -76,13 +179,7 @@ fn fs(@builtin(position) fc: vec4f) -> @location(0) vec4f {
 
   var col = backdrop(px);
   if (h.hit) {
-    let t = ty(h.c);
-    var bcol = PAL[layerOf(h.c)];
-    if (t != GROUND) {
-      bcol *= 0.88 + 0.05 * f32((h.c >> 8u) & 3u);
-      bcol *= 0.96 + 0.08 * grain(h.cell);
-    }
-    if (t == SED) { bcol = mix(bcol, vec3f(0.86, 0.68, 0.52), 0.3); }
+    let bcol = tone(h.c, h.cell);
 
     // the whole face gets one light: asked from its centre, not from the pixel
     let cen = vec3f(h.cell) + 0.5;
@@ -99,9 +196,10 @@ fn fs(@builtin(position) fc: vec4f) -> @location(0) vec4f {
     if (lit) {
       col = bcol * (0.62 + 0.5 * lam);
     } else {
-      col = bcol * vec3f(0.5, 0.47, 0.58);
+      col = bcol * SHADE;
     }
     col *= 1.0 - 0.07 * ao;
+    col = lights(col, h.c, h.cell, 5.0);
 
     // the brush, drawn on the rock
     if (pk.pos.w > 0.5) {
@@ -130,6 +228,10 @@ fn fs(@builtin(position) fc: vec4f) -> @location(0) vec4f {
     }
   }
 
+  // glass: a pale wash over what is behind it, lighter on the faces the sun is on
+  if (h.glass > 0.0) {
+    col = mix(col, PAL[GLASS], 0.2 + 0.3 * max(dot(h.gn, u.sun.xyz), 0.0));
+  }
   if (h.water > 0.0) {
     // how much water the ray went through: whole voxels, and how full the first one is
     let first = cells[idx(h.wcell)];
@@ -142,6 +244,20 @@ fn fs(@builtin(position) fc: vec4f) -> @location(0) vec4f {
     wcol = mix(wcol, vec3f(0.78, 0.94, 0.93), 0.5 * rush);
     // a film is a sheen, a hand's depth is water
     col = mix(col, wcol, (0.45 + 0.5 * depth) * min(through * 2.5, 1.0));
+  }
+  // the saucer, flying: over whatever of the block is behind it
+  if (u.craft.w > 0.5) {
+    let k = marchCraft(ro, u.camF.xyz);
+    var behind = 1e9; // how far along this ray the block is
+    if (h.hit) { behind = dot(vec3f(h.cell) + 0.5 - ro, u.camF.xyz); }
+    if (k.hit && k.t < behind) {
+      let lam = max(dot(k.n, u.sun.xyz), 0.0);
+      let bcol = tone(k.c, k.cell);
+      col = lights(select(bcol * SHADE, bcol * (0.62 + 0.5 * lam), lam > 0.0), k.c, k.cell, 16.0); // its lamps racing
+    }
+    if (k.glass > 0.0 && k.gt < behind) {
+      col = mix(col, PAL[GLASS], 0.2 + 0.3 * max(dot(k.gn, u.sun.xyz), 0.0));
+    }
   }
   col = hoseJet(col, floor(fc.xy));
   return vec4f(col, 1.0);
