@@ -106,12 +106,10 @@
       "runtimeArgs": [
         "-C",
         "19",
-        "dev",
-        "--port",
-        "5119",
-        "--strictPort"
+        "dev"
       ],
-      "port": 5119
+      "port": 5119,
+      "url": "https://localhost:5119"
     }
   ]
 }

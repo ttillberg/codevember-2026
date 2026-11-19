@@ -27,7 +27,7 @@ Live: https://ttillberg.github.io/codevember-2026/
 | 16 | Spore | [View](https://ttillberg.github.io/codevember-2026/16/) | [Code](https://github.com/ttillberg/codevember-2026/tree/main/16) |
 | 17 | Kelp | — | — |
 | 18 | Pendulum | [View](https://ttillberg.github.io/codevember-2026/18/) | [Code](https://github.com/ttillberg/codevember-2026/tree/main/18) |
-| 19 | Erosion | — | — |
+| 19 | Erosion | [View](https://ttillberg.github.io/codevember-2026/19/) | [Code](https://github.com/ttillberg/codevember-2026/tree/main/19) |
 | 20 | Cocoon | — | — |
 | 21 | Bolt | — | — |
 | 22 | Echo | — | — |

@@ -3,13 +3,13 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-    <meta name="theme-color" content="#e8e3da" />
+    <meta name="theme-color" content="#ccdce0" />
     <title>19 · Erosion · Codevember 2026</title>
-    <meta name="description" content="A cube of layered sandstone, worn voxel by voxel: rain, water and wind" />
+    <meta name="description" content="A cube of layered sandstone with a lake on it and bones in it, worn voxel by voxel: rain, a hose, wind and a scratch, and what grows after" />
     <meta name="author" content="Theo Tillberg" />
     <!-- share image: 19/about/screengrab.png, copied next to the build by scripts/build.mjs -->
     <meta property="og:title" content="19 · Erosion · Codevember 2026" />
-    <meta property="og:description" content="A cube of layered sandstone, worn voxel by voxel: rain, water and wind" />
+    <meta property="og:description" content="A cube of layered sandstone with a lake on it and bones in it, worn voxel by voxel: rain, a hose, wind and a scratch, and what grows after" />
     <meta property="og:image" content="https://ttillberg.github.io/codevember-2026/19/screengrab.png" />
     <meta property="og:image:width" content="1200" />
     <meta property="og:image:height" content="1200" />
@@ -24,11 +24,24 @@
     <canvas id="c"></canvas>
     <!-- the title plate (docs/DESIGN.md): put the word in Japanese in the span -->
     <div class="plate"><div class="head"><b>19 Erosion</b><i><a class="home" href="https://ttillberg.github.io/codevember-2026/">Codevember 2026 <span lang="ja">侵食</span></a> · <a class="home" href="https://x.com/theo_t">@theo_t</a></i></div></div>
-    <div class="tools">
-      <button data-tool="1">Rain</button>
-      <button data-tool="2">Water</button>
-      <button data-tool="3">Wind</button>
-      <button id="reset">Reset</button>
+    <!-- the tool bar: src/bar.ts fills it -->
+    <div class="bar" id="bar"></div>
+    <!-- the brush's size while it is being set (cmd + drag) -->
+    <div class="size-ring"></div>
+    <!-- settings: a gear top right, a frosted menu under it (day 05's, which is day 07's) -->
+    <div class="settings">
+      <button class="gear" aria-label="settings" aria-haspopup="true" aria-expanded="false"><svg viewBox="1.4 1.4 13.2 13.2" aria-hidden="true"><path d="M14.35 7.23 L14.33 8.97 L12.53 9.27 L12.02 10.44 L13.03 11.95 L11.78 13.16 L10.31 12.10 L9.12 12.57 L8.77 14.35 L7.03 14.33 L6.73 12.53 L5.56 12.02 L4.05 13.03 L2.84 11.78 L3.90 10.31 L3.43 9.12 L1.65 8.77 L1.67 7.03 L3.47 6.73 L3.98 5.56 L2.97 4.05 L4.22 2.84 L5.69 3.90 L6.88 3.43 L7.23 1.65 L8.97 1.67 L9.27 3.47 L10.44 3.98 L11.95 2.97 L13.16 4.22 L12.10 5.69 L12.57 6.88 Z M10.2 8 A2.2 2.2 0 1 0 5.8 8 A2.2 2.2 0 1 0 10.2 8 Z" fill="currentColor" fill-rule="evenodd" /></svg></button>
+      <div class="menu" role="menu" hidden>
+        <label class="row select"><span>Detail</span><select data-detail>
+          <option value="low">LOW</option>
+          <option value="med">MED</option>
+          <option value="high">HIGH</option>
+        </select></label>
+        <hr />
+        <div class="actions">
+          <button data-action="reset"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3v3.5h3.5" /><path d="M3.4 6.2A5.3 5.3 0 1 1 3.3 10" /></svg>New block<kbd>R</kbd></button>
+        </div>
+      </div>
     </div>
     <script type="module" src="./src/main.ts"></script>
   </body>

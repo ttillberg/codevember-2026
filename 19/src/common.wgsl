@@ -6,25 +6,27 @@ const WATER = 1u;
 const SED = 2u;
 const ROCK = 3u;
 const GROUND = 4u;
+const PLANT = 5u; // only a picture, like water: stamped from what grows (sim.wgsl grow and stamp)
 const WALL = 7u;
+const BONE = 13u; // a rock layer: what lies buried (world.ts)
 
 struct U {
-  camO: vec4f, // where the middle of the screen starts, far outside the grid
+  camO: vec4f, // where the middle of the screen starts, far outside the grid. w: the pointer, x in picture pixels
   camR: vec4f, // right, w: voxels per pixel
-  camU: vec4f, // up
+  camU: vec4f, // up. w: the pointer, y in picture pixels
   camF: vec4f, // forward, every ray's direction (orthographic)
   res: vec4f,  // width, height, time, wind radius
-  sun: vec4f,  // towards the light
+  sun: vec4f,  // towards the light, w: the radius of the hose, or of the scratch when that is in hand
   rayO: vec4f, // pointer ray, w: tool held down
-  rayD: vec4f, // w: tool (1 rain, 2 water, 3 wind)
-  wind: vec4f, // direction, w: rain radius
-  p0: vec4f,   // erosion rate, sediment yield, evaporation, rain rate
-  p1: vec4f,   // wind rate, hose rate, support limit, pointer over the scene
+  rayD: vec4f, // the line of sight, also the way the hose goes. w: tool (1 rain, 2 hose, 3 wind, 4 scratch)
+  wind: vec4f, // water: gravity, the least flow that wears, inertia. w: rain radius
+  p0: vec4f,   // erosion rate, the depth of a film that clings, evaporation, rain rate
+  p1: vec4f,   // wind rate, hose rate (or the scratch's), support limit, pointer over the scene
 };
 
 struct Pick {
   pos: vec4f, // centre of the cell under the pointer, w: hit
-  n: vec4f,
+  was: vec4f, // where that was the frame before, w: that there was one. A stroke runs from one to the other.
 };
 
 struct Hit {
@@ -49,6 +51,18 @@ fn pcg(v: u32) -> u32 {
   let x = v * 747796405u + 2891336453u;
   let w = ((x >> ((x >> 28u) + 4u)) ^ x) * 277803737u;
   return (w >> 22u) ^ w;
+}
+
+// The wind is a hair dryer in the hand of whoever is looking: it blows straight in along the
+// line of sight, at where the pointer is. It is wide, it takes in most of the block, and it is
+// strongest where it is aimed: it falls off with the distance from the line it is aimed along
+// (which is the distance from the pointer, on the screen), and a little with how far past the
+// aim it has to go.
+fn windOn(p: vec3f, aim: vec3f, jet: vec3f, radius: f32) -> f32 {
+  let rel = p - aim;
+  let along = dot(rel, jet);
+  let off = length(rel - jet * along);
+  return exp(-off * off / (radius * radius)) * exp(-max(along, 0.0) / 120.0);
 }
 
 // Walk the grid cell by cell (Amanatides and Woo). Water is seen through, and counted.

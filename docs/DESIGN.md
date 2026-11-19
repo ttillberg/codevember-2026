@@ -6,6 +6,7 @@ How a day looks and is put together, so thirty of them read as one month. Taken 
 
 - One scene, full screen, nothing scrolls (a phone layout may, as 08's does). The page background is the scene's backdrop, and `<meta name="theme-color">` is that same colour.
 - `<head>` as in `template/index.html`: title `NN · Word · Codevember 2026`, `description` and `og:description` the one-liner from `package.json`, `og:image` at `https://ttillberg.github.io/codevember-2026/NN/screengrab.png` (1200 square), `twitter:card` `summary_large_image`, `viewport-fit=cover`.
+- Nothing on the page can be selected: `user-select: none`, no touch callout, no tap highlight, on `html, body` (the template has it). A drag belongs to the scene. Text meant to be copied opts back in.
 - `?clean` hides all page furniture, title included, and leaves the scene. The recorder hides it anyway, but a day with a clean mode looks better in its own clip and screengrab.
 
 ## Black or white

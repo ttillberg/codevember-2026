@@ -1,5 +1,8 @@
 /* a dark day: backdrop #0b0b0d, ink #f4f4f2. A light one: a light backdrop, ink #1c1c1c (docs/DESIGN.md) */
 html, body { margin: 0; height: 100%; background: #0b0b0d; overflow: hidden; }
+/* Nothing to select or long-press: a drag on the scene or on its furniture must not start a text selection,
+   a callout or a tap flash. A day with real text to copy turns it back on for that text (user-select: text). */
+html, body { user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent; }
 canvas { display: block; width: 100vw; height: 100vh; }
 
 /* the title plate, top left: the day in Plex capitals, the way home under it */
