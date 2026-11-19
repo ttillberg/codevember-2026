@@ -1,0 +1,55 @@
+/* a light day: backdrop #e8e3da (the shader's BG, main.ts BACKDROP), ink #1c1c1c (docs/DESIGN.md) */
+html, body { margin: 0; height: 100%; background: #e8e3da; overflow: hidden; }
+/* main.ts sizes the canvas: a low picture, shown in whole big pixels */
+canvas { display: block; image-rendering: pixelated; touch-action: none; cursor: crosshair; }
+
+/* the title plate, top left: the day in Plex capitals, the way home under it */
+.plate {
+  position: fixed; z-index: 2;
+  top: max(24px, env(safe-area-inset-top)); left: max(24px, env(safe-area-inset-left));
+  pointer-events: none; user-select: none; -webkit-user-select: none;
+  color: #1c1c1c;
+  font: 13px/1.4 Inter, "Helvetica Neue", Helvetica, Arial, sans-serif;
+}
+.plate b {
+  display: block; white-space: nowrap;
+  font: 700 56px/0.9 "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  letter-spacing: -0.02em; text-transform: uppercase;
+}
+.plate .head > i {
+  display: block; margin-top: 6px; font-style: normal;
+  font-weight: 600; font-size: 14px; line-height: 1.15; letter-spacing: 0.12em; text-transform: uppercase;
+}
+.plate .home { color: inherit; text-decoration: none; pointer-events: auto; }
+.plate .home span[lang="ja"] { font-family: "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Noto Sans JP", "Yu Gothic", sans-serif; letter-spacing: 0.06em; }
+
+/* the tool bar, bottom centre */
+.tools {
+  position: fixed; z-index: 2; left: 50%; transform: translateX(-50%);
+  bottom: max(24px, env(safe-area-inset-bottom));
+  display: flex; gap: 6px;
+}
+.tools button {
+  height: 34px; padding: 0 16px; border: 0; border-radius: 17px;
+  background: rgba(255, 255, 255, 0.45); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+  color: #1c1c1c; cursor: pointer;
+  font: 600 12px/1 Inter, "Helvetica Neue", Helvetica, Arial, sans-serif;
+  letter-spacing: 0.12em; text-transform: uppercase;
+}
+.tools button.on { background: #1c1c1c; color: #e8e3da; }
+.tools #reset { margin-left: 10px; }
+
+.note {
+  position: fixed; inset: 0; margin: auto; height: 1em; text-align: center; color: #1c1c1c;
+  font: 400 13px/1.4 Inter, "Helvetica Neue", Helvetica, Arial, sans-serif;
+}
+
+@media (max-width: 640px) {
+  .plate { top: max(16px, env(safe-area-inset-top)); left: max(16px, env(safe-area-inset-left)); }
+  .plate b { font-size: 36px; }
+  .plate .head > i { font-size: 10px; }
+  .tools { bottom: max(16px, env(safe-area-inset-bottom)); }
+  .tools button { padding: 0 12px; font-size: 11px; }
+}
+/* ?clean: the scene alone */
+.clean .plate, .clean .tools { display: none; }
