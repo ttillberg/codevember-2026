@@ -15,7 +15,12 @@ export interface BakeRequest {
   seed: number;
   /** the balls as they reach the glass: position, velocity, spin, radius. The pose of the first is the last body of every frame. */
   balls: { p: number[]; v: number[]; w: number[]; r: number }[];
+  cfg: SimConfig;
 }
+
+/** What the settings panel turns. */
+export interface SimConfig { gravity: number; ballDensity: number; pushBack: number; pushOut: number; reach: number; spin: number; front: number; bounce: number; friction: number; stuck: number; seconds: number }
+export const SIM_DEFAULTS: SimConfig = { gravity: 9.81, ballDensity: 4, pushBack: 13, pushOut: 4.5, reach: 0.3, spin: 16, front: 7, bounce: 0.22, friction: 0.45, stuck: 0.5, seconds: 7 };
 
 export interface FramesMessage {
   type: 'frames';
@@ -33,7 +38,6 @@ export interface FramesMessage {
 const S = 10;
 const FPS = 60;
 const SUB = 2;
-const MAX_SECONDS = 7;
 
 const ready = RAPIER.init();
 let current = 0;
@@ -59,7 +63,8 @@ self.onmessage = async (e: MessageEvent<BakeRequest>) => {
 async function bake(req: BakeRequest) {
   const rand = rng32(req.seed);
   const gauss = () => (rand() + rand() + rand() + rand() - 2) * 1.7320508;
-  const world = new RAPIER.World({ x: 0, y: -9.81 * S, z: 0 });
+  const cfg = { ...SIM_DEFAULTS, ...req.cfg };
+  const world = new RAPIER.World({ x: 0, y: -cfg.gravity * S, z: 0 });
   world.timestep = 1 / (FPS * SUB);
 
   const G_SHARD = 0x0001, G_TINY = 0x0002, G_WORLD = 0x0004, G_BALL = 0x0008;
@@ -95,7 +100,7 @@ async function bake(req: BakeRequest) {
         for (let k = 0; k < h.length; k++) pts[k] = h[k] * S;
         const desc = RAPIER.ColliderDesc.convexHull(pts);
         if (!desc) continue;
-        world.createCollider(desc.setFriction(0.45).setRestitution(0.22).setCollisionGroups(groups(G_SHARD, G_SHARD | G_WORLD | G_BALL)), body);
+        world.createCollider(desc.setFriction(cfg.friction).setRestitution(cfg.bounce).setCollisionGroups(groups(G_SHARD, G_SHARD | G_WORLD | G_BALL)), body);
         made++;
       }
       if (!made) world.createCollider(RAPIER.ColliderDesc.ball(0.004 * S).setCollisionGroups(groups(G_TINY, G_WORLD)), body);
@@ -108,17 +113,17 @@ async function bake(req: BakeRequest) {
       if (e < d) { d = e; dx = ex; dy = ey; }
     }
     // what the ball is about to go through is loose at once, the rest follows within a few frames
-    release[i] = d < 0.2 ? 0 : ((d - 0.2) / 7) * (0.75 + rand() * 0.5) + rand() * 0.02;
-    if (b.low && b.c[1] - req.y0 < 0.14 && d > 0.25 && rand() < 0.5) { state[i] = 2; continue; }
+    release[i] = d < 0.2 ? 0 : ((d - 0.2) / cfg.front) * (0.75 + rand() * 0.5) + rand() * 0.02;
+    if (b.low && b.c[1] - req.y0 < 0.14 && d > 0.25 && rand() < cfg.stuck) { state[i] = 2; continue; }
     last = Math.max(last, release[i]);
     // the bullet pushes what is near it through, the rest gets a nudge either way
-    const near = Math.exp(-d / 0.3);
+    const near = Math.exp(-d / cfg.reach);
     const out = d > 1e-4 ? 1 / d : 0;
     // a hard kick: the middle is blown out the back in a cone, the rim of the pane is thrown outwards
-    kick[i * 6] = dx * out * (4.5 * near + 0.5) * (0.5 + rand()) + gauss() * 0.3;
-    kick[i * 6 + 1] = dy * out * (4.5 * near + 0.4) * (0.5 + rand()) + gauss() * 0.3 + 1.2 * near;
-    kick[i * 6 + 2] = -13 * near * (0.35 + rand()) - 0.4 - rand() * 1.4;
-    const w = 4 + 16 * near + (b.tiny ? 8 : 0);
+    kick[i * 6] = dx * out * (cfg.pushOut * near + 0.5) * (0.5 + rand()) + gauss() * 0.3;
+    kick[i * 6 + 1] = dy * out * (cfg.pushOut * near + 0.4) * (0.5 + rand()) + gauss() * 0.3 + 1.2 * near;
+    kick[i * 6 + 2] = -cfg.pushBack * near * (0.35 + rand()) - 0.4 - rand() * 1.4;
+    const w = cfg.spin * (0.25 + near) + (b.tiny ? 8 : 0);
     kick[i * 6 + 3] = gauss() * w; kick[i * 6 + 4] = gauss() * w; kick[i * 6 + 5] = gauss() * w * 0.5;
   }
 
@@ -128,12 +133,12 @@ async function bake(req: BakeRequest) {
       RAPIER.RigidBodyDesc.dynamic().setTranslation(bl.p[0] * S, bl.p[1] * S, bl.p[2] * S)
         .setLinvel(bl.v[0] * S, bl.v[1] * S, bl.v[2] * S).setAngvel({ x: bl.w[0], y: bl.w[1], z: bl.w[2] }).setCcdEnabled(true),
     );
-    world.createCollider(RAPIER.ColliderDesc.ball(bl.r * S).setDensity(4).setRestitution(0.55).setFriction(0.6).setCollisionGroups(groups(G_BALL, G_SHARD | G_WORLD)), body);
+    world.createCollider(RAPIER.ColliderDesc.ball(bl.r * S).setDensity(cfg.ballDensity).setRestitution(0.55).setFriction(0.6).setCollisionGroups(groups(G_BALL, G_SHARD | G_WORLD)), body);
     return body;
   });
   const ball = balls[0];
 
-  const maxFrames = MAX_SECONDS * FPS;
+  const maxFrames = Math.round(cfg.seconds * FPS);
   const CHUNK = 6;
   const N7 = (n + 1) * 7;
   let data = new Float32Array(CHUNK * N7);

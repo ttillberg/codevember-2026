@@ -48,6 +48,8 @@ export class Renderer {
   shards = false;
   /** the football: where it is and how it is turned, or off */
   ball = { on: false, p: [0, 0, 0], q: [0, 0, 0, 1], r: 0.11 };
+  /** what the settings panel turns */
+  look = { exposure: 1, wall: 1, floor: 1, dark: 1, tint: 1, wavy: 0.06, refl: 1, bend: 0.014, seam: 0.16, shadow: 0.58 };
   private ballVao!: WebGLVertexArrayObject; private ballCount = 0;
   pane = { W: 1, H: 1, y0: 0, T: 0.008 };
   static SHADOW = 2048;
@@ -290,8 +292,9 @@ export class Renderer {
   }
 
   private use(name: string) {
-    const pr = this.progs[name];
+    const pr = this.progs[name], k = this.look;
     this.gl.useProgram(pr.p);
+    if (pr.u.uLook) this.gl.uniform4f(pr.u.uLook, k.exposure, k.wall, k.floor, k.dark);
     return pr.u;
   }
 
@@ -344,8 +347,8 @@ export class Renderer {
     gl.enable(gl.BLEND); gl.blendEquation(gl.MIN); gl.blendFunc(gl.ONE, gl.ONE);
     let u = this.use('shadow');
     this.glassUniforms(u, vp, now, flash, true);
-    gl.uniform1f(u.uShade, 0.76); this.drawFaces();
-    gl.uniform1f(u.uShade, 0.42); this.drawWalls();
+    gl.uniform1f(u.uShade, 1 - this.look.shadow * 0.41); this.drawFaces();
+    gl.uniform1f(u.uShade, 1 - this.look.shadow); this.drawWalls();
     this.drawBall(vp, flash, true);
     gl.blendEquation(gl.FUNC_ADD); gl.disable(gl.BLEND);
 
@@ -363,6 +366,7 @@ export class Renderer {
     u = this.use('wall');
     this.glassUniforms(u, vp, now, flash, false);
     gl.uniform3fv(u.uCam, cam);
+    gl.uniform1f(u.uSeam, this.look.seam);
     this.drawWalls();
     gl.bindFramebuffer(gl.READ_FRAMEBUFFER, this.msFbo);
     gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, this.sceneFbo);
@@ -382,7 +386,8 @@ export class Renderer {
     gl.uniform3fv(u.uCam, cam);
     gl.uniformMatrix4fv(u.uView, false, view);
     gl.uniform2f(u.uRes, this.w, this.h);
-    gl.uniform1f(u.uBend, 0.014 * proj[5] * 0.5);
+    gl.uniform1f(u.uBend, this.look.bend * proj[5] * 0.5);
+    gl.uniform3f(u.uGlass, this.look.tint, this.look.wavy, this.look.refl);
     gl.uniform1i(u.uScene, 3);
     this.drawFaces();
     gl.disable(gl.DEPTH_TEST);

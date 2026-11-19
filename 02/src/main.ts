@@ -3,11 +3,12 @@
 // Two parts. First the cracks: each bullet grows a web from its impact (cracks.ts), drawn as the crack surfaces
 // inside the glass. Then, once the pane has taken too much, it is cut into shards along those same cracks
 // (shards.ts), a worker bakes the fall with rigid bodies (sim.worker.ts) and the page plays it back.
-import { Pane, type Impact } from './cracks';
+import { CRACKS, Pane, type Impact } from './cracks';
+import { defaults, mountPanel } from './settings';
 import { buildShards, type ShardSet } from './shards';
 import { Renderer, lookAt, perspective } from './render';
 import { Sound } from './audio';
-import type { BakeRequest, FramesMessage } from './sim.worker';
+import type { BakeRequest, FramesMessage, SimConfig } from './sim.worker';
 
 const params = new URLSearchParams(location.search);
 // ?clean: no page furniture, the scene alone (screengrabs, clips)
@@ -18,6 +19,17 @@ const hint = document.querySelector<HTMLElement>('#hint')!;
 const renderer = new Renderer(canvas);
 const sound = new Sound();
 const worker = new Worker(new URL('./sim.worker.ts', import.meta.url), { type: 'module' });
+
+// every number the workbench can turn (?debug): the scene at once, cracks from the next bullet, the sim from the next break
+const V = defaults();
+function applySettings() {
+  for (const k of Object.keys(CRACKS) as (keyof typeof CRACKS)[]) CRACKS[k] = V[k];
+  CRACKS.hole = V.hole / 1000;
+  const L = renderer.look;
+  for (const k of Object.keys(L) as (keyof typeof L)[]) L[k] = V[k];
+}
+const simCfg = (): SimConfig => ({ gravity: V.gravity, ballDensity: V.ballDensity, pushBack: V.pushBack, pushOut: V.pushOut, reach: V.reach, spin: V.spin, front: V.front, bounce: V.bounce, friction: V.friction, stuck: V.stuck, seconds: V.seconds });
+if (params.has('debug') || params.has('settings') || location.hash === '#debug') mountPanel(V, applySettings);
 
 const T = 0.008; // the glass is 8 mm thick
 const Y0 = 0.03; // and stands in a channel this high
@@ -40,8 +52,8 @@ let fallAt = 0;
 let playhead = 0; // seconds into the baked fall
 let lastHitFrame = 0;
 let slow = false;
-const PACE = 0.6; // the fall plays a little slower than life: it is over in half a second otherwise
-let speed = PACE;
+// the fall plays a little slower than life (V.pace): it is over in half a second otherwise
+let speed = 0.6;
 let held = -1; // a playhead to hold, for stills
 
 let now = 0; // seconds, the clock of the scene
@@ -158,7 +170,7 @@ function shoot(x: number, y: number) {
   shots++;
   for (const t of res.ticks) sound.tick(t - now);
   const wx = x - pane.W / 2, wy = y + Y0;
-  for (let i = 0; i < 420; i++) {
+  for (let i = 0; i < 420 * V.dust; i++) {
     const back = Math.random() < 0.72;
     const sp = back ? 1.5 + Math.random() * Math.random() * 11 : 0.5 + Math.random() * 3.5;
     const cone = back ? 0.32 : 0.6;
@@ -170,9 +182,8 @@ function shoot(x: number, y: number) {
 /** The football, kicked hard: 30 m/s. Where and how it hits is known the moment it leaves the foot, so the
  *  pane is cracked, cut and baked while it flies. The flight is shown in slow motion (it would be over in three
  *  frames), and the fall starts at that same pace, then picks up. */
-const BALL_R = 0.11;
 const FLIGHT = 0.42;
-const KICK = 30; // m/s
+
 let ballSlow = 1; // how much slower than life the flight is shown
 const ball = { on: false, at: 0, p: [0, 0, 0], v: [0, 0, 0], w: [0, 0, 0] }; // p, v: as it reaches the glass, at time `at`
 function kick(x: number, y: number) {
@@ -181,24 +192,24 @@ function kick(x: number, y: number) {
   state = 'doomed';
   sound.kick();
   const at = now + FLIGHT;
-  const hit = [x - pane.W / 2, y + Y0, BALL_R + 0.012];
+  const hit = [x - pane.W / 2, y + Y0, (V.ballSize / 100) + 0.012];
   const from = [cam.eye[0] * 0.5, 0.12, cam.eye[2] * 0.82];
   const len = Math.hypot(hit[0] - from[0], hit[1] - from[1], hit[2] - from[2]);
-  const v = [((hit[0] - from[0]) / len) * KICK, ((hit[1] - from[1]) / len) * KICK, ((hit[2] - from[2]) / len) * KICK];
-  ballSlow = len / FLIGHT / KICK;
+  const v = [((hit[0] - from[0]) / len) * V.kick, ((hit[1] - from[1]) / len) * V.kick, ((hit[2] - from[2]) / len) * V.kick];
+  ballSlow = len / FLIGHT / V.kick;
   ball.on = true; ball.at = at; ball.p = hit; ball.v = v; ball.w = [-40, (Math.random() - 0.5) * 16, (Math.random() - 0.5) * 16];
   // the cracks of the impact: a blunt blow, radials all over the pane, then everything cut small
-  const res = pane.shoot(x, y, at, 2.4, true);
+  const res = pane.shoot(x, y, at, V.blow, true);
   res.impact.r = 0; // a ball leaves no hole of its own
   renderer.addCracks(pane, res.segs);
-  renderer.addCracks(pane, pane.finish(at, 0.0022, 0.1));
+  renderer.addCracks(pane, pane.finish(at, V.shardArea / 1e4, 0.1));
   lastImpact = res.impact;
   sound.smash(FLIGHT);
   set = buildShards(pane, Y0);
   renderer.setShards(set);
   frames = []; hits = []; bakeDone = false;
   fallAt = at;
-  const req: BakeRequest = { type: 'bake', run: ++run, bodies: set.bodies, impacts: [[hit[0], hit[1]]], width: pane.W, y0: Y0, seed, balls: [{ p: hit, v, w: ball.w, r: BALL_R }] };
+  const req: BakeRequest = { type: 'bake', run: ++run, bodies: set.bodies, impacts: [[hit[0], hit[1]]], width: pane.W, y0: Y0, seed, balls: [{ p: hit, v, w: ball.w, r: (V.ballSize / 100) }], cfg: simCfg() };
   shockAt = [[hit[0], hit[1]]];
   worker.postMessage(req);
   setHint();
@@ -214,21 +225,21 @@ function shock(ax: number, ay: number, bx: number, by: number) {
   const lead = 0.06; // just long enough for the worker to hand back its first frames
   sound.smash(lead);
   const never = 1e9; // the pane is replaced by its shards before any of this would be drawn
-  const energy = Math.max(0.9, 2.4 / Math.sqrt(at.length));
+  const energy = Math.max(0.9, V.blow / Math.sqrt(at.length));
   for (const [x, y] of at) {
     const cx = Math.min(pane.W - 0.02, Math.max(0.02, x)), cy = Math.min(pane.H - 0.02, Math.max(0.02, y));
     pane.shoot(cx, cy, never, energy, true).impact.r = 0;
   }
-  pane.finish(never, 0.0022, 0);
+  pane.finish(never, V.shardArea / 1e4, 0);
   set = buildShards(pane, Y0);
   renderer.setShards(set);
   frames = []; hits = []; bakeDone = false;
   fallAt = now + lead;
   shocked = true;
   const impacts = at.map(([x, y]) => [x - pane.W / 2, y + Y0] as [number, number]);
-  const balls = impacts.map(([x, y]) => ({ p: [x, y, BALL_R + 0.012], v: [(Math.random() - 0.5) * 3, (Math.random() - 0.5) * 3, -KICK], w: [0, 0, 0], r: BALL_R }));
+  const balls = impacts.map(([x, y]) => ({ p: [x, y, (V.ballSize / 100) + 0.012], v: [(Math.random() - 0.5) * 3, (Math.random() - 0.5) * 3, -V.kick], w: [0, 0, 0], r: (V.ballSize / 100) }));
   shockAt = impacts;
-  const req: BakeRequest = { type: 'bake', run: ++run, bodies: set.bodies, impacts, width: pane.W, y0: Y0, seed, balls };
+  const req: BakeRequest = { type: 'bake', run: ++run, bodies: set.bodies, impacts, width: pane.W, y0: Y0, seed, balls, cfg: simCfg() };
   worker.postMessage(req);
   setHint();
 }
@@ -262,7 +273,7 @@ function startFall() {
   renderer.shards = true;
   renderer.setPose(frames[0], frames[0], 0);
   // dust comes off every crack as the pane lets go
-  for (let i = 0; i < 3200; i++) {
+  for (let i = 0; i < 3200 * V.dust; i++) {
     const b = set.bodies[(Math.random() * set.count) | 0];
     let d = Infinity;
     for (const [ix, iy] of shockAt) d = Math.min(d, Math.hypot(b.c[0] - ix, b.c[1] - iy));
@@ -287,8 +298,8 @@ function updateCamera(t: number) {
   const target = [home[0] + (focus[0] - home[0]) * k, home[1] + (focus[1] - home[1]) * k, 0];
   const d = dist / zoom;
   // the pointer moves the head a little; with none, a slow sway
-  const yaw = ptr.sx * 0.2 + Math.sin(t * 0.21) * 0.035;
-  const pitch = 0.1 - ptr.sy * 0.07 + Math.sin(t * 0.17 + 1) * 0.012 + recoil * recoil * 0.012;
+  const yaw = ptr.sx * 0.2 + Math.sin(t * 0.21) * 0.035 * V.sway;
+  const pitch = 0.1 - ptr.sy * 0.07 + Math.sin(t * 0.17 + 1) * 0.012 * V.sway + recoil * recoil * 0.012;
   cam.eye = [target[0] + Math.sin(yaw) * Math.cos(pitch) * d, Math.max(0.04, target[1] + Math.sin(pitch) * d), Math.cos(yaw) * Math.cos(pitch) * d];
   cam.view = lookAt(cam.eye, target, [recoil * 0.004, 1, 0]);
   cam.proj = perspective(FOV, aspect, 0.03, 40);
@@ -405,9 +416,10 @@ function frame(ms: number) {
 
   if (state === 'doomed' && now >= fallAt && (bakeDone || frames.length > 5)) startFall();
   renderer.ball.on = ball.on && showBall;
+  renderer.ball.r = V.ballSize / 100;
   if (ball.on && state === 'doomed') flyBall();
   if (state === 'falling') {
-    speed += ((slow ? 0.07 : PACE) - speed) * Math.min(1, dt * (slow || speed > PACE ? 10 : 1.6));
+    speed += ((slow ? V.slow : V.pace) - speed) * Math.min(1, dt * (slow || speed > V.pace ? 10 : 1.6));
     playhead += dt * speed;
     if (held >= 0) playhead = held;
     const lastFrame = frames.length - 1;
@@ -418,7 +430,7 @@ function frame(ms: number) {
     renderer.setPose(fa, fb, k);
     for (let c = 0; c < 3; c++) renderer.ball.p[c] = fa[o + c] + (fb[o + c] - fa[o + c]) * k;
     for (let c = 0; c < 4; c++) renderer.ball.q[c] = fa[o + 3 + c];
-    for (; lastHitFrame <= i; lastHitFrame++) sound.tinkle(hits[lastHitFrame], Math.max(0.25, speed / PACE));
+    for (; lastHitFrame <= i; lastHitFrame++) sound.tinkle(hits[lastHitFrame], Math.max(0.25, speed / V.pace));
     if (bakeDone && i >= lastFrame) { state = 'fallen'; setHint(); }
   }
   stepDust(state === 'falling' ? dt * speed : dt);

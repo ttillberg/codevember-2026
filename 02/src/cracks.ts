@@ -17,6 +17,12 @@ export function rng32(seed: number) {
   };
 }
 
+/** What the settings panel turns. Read at every bullet. */
+export const CRACKS = {
+  radials: 20, radialsVar: 12, longP: 0.5, length: 0.2, lengthVar: 0.8,
+  wander: 0.45, kink: 0.16, branch: 5, rings: 0.65, ringsFar: 0.3, hole: 0.0062, slant: 0.42,
+};
+
 export const FRAME = 1;
 export const CRACK = 0;
 export const RIM = 2;
@@ -209,7 +215,7 @@ export class Pane {
     this.paths.push(path);
     let cur = g.node, ang = g.ang, budget = g.budget, s = 0, kappa = 0;
     let slant = this.gauss() * 0.3;
-    const amax = this.T * 0.42;
+    const amax = this.T * CRACKS.slant;
     let first = g.first;
     let guard = 0;
     while (budget > 1e-5 && guard++ < 4000) {
@@ -217,9 +223,9 @@ export class Pane {
       let h = first > 0 ? first : Math.min(0.014, 0.0035 + 0.05 * r);
       first = 0;
       if (g.mode === 0) {
-        kappa = kappa * 0.92 + this.gauss() * 0.45;
+        kappa = kappa * 0.92 + this.gauss() * CRACKS.wander;
         ang += kappa * h + this.gauss() * 0.02;
-        if (this.rand() < h * 4) ang += this.gauss() * 0.16; // a kink now and then
+        if (this.rand() < h * 4) ang += this.gauss() * CRACKS.kink; // a kink now and then
       } else if (g.mode === 1) {
         // around the impact, opening a little: it meets the next radial slightly further out
         const rad = Math.atan2(ny[cur] - g.cy, nx[cur] - g.cx);
@@ -269,18 +275,18 @@ export class Pane {
     x = Math.min(this.W - 0.004, Math.max(0.004, x));
     y = Math.min(this.H - 0.004, Math.max(0.004, y));
     const c = this.node(x, y, 0, 0);
-    const rh = 0.0062 * (0.9 + rand() * 0.35);
+    const rh = CRACKS.hole * (0.9 + rand() * 0.35);
     const impact: Impact = { x, y, r: rh, time, rim: [] };
     const queue: Grow[] = [];
-    const nR = blunt ? 40 : Math.round(20 + rand() * 12);
+    const nR = blunt ? Math.max(40, CRACKS.radials) : Math.round(CRACKS.radials + rand() * CRACKS.radialsVar);
     const a0 = rand() * Math.PI * 2;
     const radials: number[] = [];
     for (let i = 0; i < nR; i++) {
       const ang = a0 + ((i + (rand() - 0.5) * 0.6) / nR) * Math.PI * 2;
-      const long = rand() < (blunt ? 0.85 : 0.5);
+      const long = rand() < (blunt ? Math.max(0.85, CRACKS.longP) : CRACKS.longP);
       // log-normal: most long ones stop within a hand's width, a few cross the pane
-      const budget = long ? 0.2 * energy * Math.exp(this.gauss() * 0.8) : 0.006 + rand() * rand() * 0.05;
-      radials.push(this.grow({ node: c, ang, budget: budget + rh, mode: 0, cx: x, cy: y, sign: 1, parent: -1, parentIdx: 0, delay: 0, first: rh * (0.85 + rand() * 0.4), branch: long ? 5 : 0, skipFirst: true }, queue));
+      const budget = long ? CRACKS.length * energy * Math.exp(this.gauss() * CRACKS.lengthVar) : 0.006 + rand() * rand() * 0.05;
+      radials.push(this.grow({ node: c, ang, budget: budget + rh, mode: 0, cx: x, cy: y, sign: 1, parent: -1, parentIdx: 0, delay: 0, first: rh * (0.85 + rand() * 0.4), branch: long ? CRACKS.branch : 0, skipFirst: true }, queue));
     }
     while (queue.length) this.grow(queue.shift()!, queue);
 
@@ -308,7 +314,7 @@ export class Pane {
         const r = Math.hypot(this.nx[n] - x, this.ny[n] - y);
         if (r < next) continue;
         next = r * (1.22 + rand() * 0.5) + 0.002;
-        if (rand() > 0.3 + 0.65 * Math.exp(-r / 0.075)) continue;
+        if (rand() > CRACKS.ringsFar + CRACKS.rings * Math.exp(-r / 0.075)) continue;
         if (this.nbr[n].length > 2) continue;
         queue.push({ node: n, ang: 0, budget: r * (0.5 + rand() * 2.2), mode: 1, cx: x, cy: y, sign: rand() < 0.5 ? -1 : 1, parent: p, parentIdx: i, delay: 0.004 + rand() * 0.03, first: 0, branch: 0, skipFirst: false });
       }

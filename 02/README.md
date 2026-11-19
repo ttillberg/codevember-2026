@@ -15,6 +15,7 @@ pnpm -C 02 dev
 - **R**: a new pane. **M**: sound.
 - A mouse moves the head a little. A finger does not: under a touch the glass stays put.
 - `?seed=7` pins the pane, `?clean` hides the furniture.
+- `?debug` (or `#debug`): the workbench, a gear bottom right. Three folding sections, the scene (light, glass, pace), the cracks (from the next bullet) and the simulation (from the next break). Every value, and what is folded, is kept in localStorage; double click a name to put its value back.
 
 ## Two parts
 
