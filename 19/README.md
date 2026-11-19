@@ -8,7 +8,7 @@ A cube of layered sandstone, 128 voxels a side, worn down with three tools: rain
 pnpm -C 19 dev   # https://localhost:5119, self-signed: WebGPU on a phone needs a secure context
 ```
 
-`1` rain, `2` hose, `3` wind, `4` scratch, `R` a new block. The bar is `RAIN HOSE WIND SCRATCH | SIZE FORCE` (day 07's, `src/bar.ts`): four tools, then two knobs, the same two for every tool, each showing and setting the value of the tool in hand. Each tool keeps its own size and force, from one visit to the next.
+`1` scratch, `2` rain, `3` hose, `4` wind, `R` a new block. The scratch is in hand from the start. The bar is `SCRATCH RAIN HOSE WIND | SIZE FORCE` (day 07's, `src/bar.ts`): four tools, then two knobs, the same two for every tool, each showing and setting the value of the tool in hand. Each tool keeps its own size and force, from one visit to the next.
 
 - **Size**: the brush. Hold the knob and drag, up or right, a gauge shows while you hold; or tap it to pin the gauge and drag on that. Or hold cmd (ctrl) and drag sideways on the scene: a ring shows the brush and stays where the drag began, only its size changes (day 05's).
 - **Force**: how hard the tool works. The knob, or hold shift and cmd (ctrl) and drag sideways on the scene, and the knob's gauge shows while you drag. It starts on 75 (the scratch on 60); 100 is ten times what 40 is. For rain the hard work is the wearing, not the amount of water (ten times the water only drowns the rock), so its force sets how fast running water wears.
@@ -62,7 +62,7 @@ A first try moved the water as voxels in the same blocks as the sediment. It fil
 
 - `?seed=19` the block
 - `?px=3` device pixels per picture pixel
-- `?hold=0.42,0.3,1,0.4,10` a tool (1 rain, 2 hose, 3 wind, 4 scratch) held from the start on a point of the screen, at a level, let go after so many seconds, for captures
+- `?hold=0.42,0.3,1,0.4,10` a tool (by its number in the code, not its key: 1 rain, 2 hose, 3 wind, 4 scratch) held from the start on a point of the screen, at a level, let go after so many seconds, for captures
 - `?clean` the scene alone
 
 `window.P` holds the rates, `window.erosion.stats()` reads the grid and the water back.

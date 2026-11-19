@@ -12,7 +12,7 @@ const clean = query.has('clean');
 document.body.classList.toggle('clean', clean);
 
 const BACKDROP = '#e8e3da';
-// the tools, by the number the shaders, the keys and what is saved know them by
+// the tools, by the number the shaders and what is saved know them by (the bar and the keys have their own order: TOOLS)
 const TOOL = { RAIN: 1, HOSE: 2, WIND: 3, SCRATCH: 4 };
 
 // Tuning. On window.P, to play with from the console.
@@ -237,7 +237,7 @@ function overRock(o: V3) {
 
 // ---------- pointer and tools ----------
 
-let tool = TOOL.RAIN;
+let tool = TOOL.SCRATCH; // the one in hand from the start
 let hover = false;
 let held = false;
 let turning = false;
@@ -260,16 +260,21 @@ const sizeRing = document.querySelector<HTMLElement>('.size-ring')!;
 // And its size, the brush's radius in voxels: the knob, or cmd + drag on the scene.
 // (min, max, start: the radius. force: what it starts on. rate: what the shader gets at this much power, from the tuning above.)
 type Tool = { id: number; name: string; icon: string; min: number; max: number; start: number; force: number; rate(power: number): number };
+// in the order of the bar, which is the order of the keys 1 to 4
 const TOOLS: Tool[] = [
+  { id: TOOL.SCRATCH, name: 'Scratch', icon: ICONS.scratch, min: 1.5, max: 14, start: 11.2, force: 0.6, rate: (p) => P.scratchRate * p }, // big (90 on the knob) and not so hard
   { id: TOOL.RAIN, name: 'Rain', icon: ICONS.rain, min: 5, max: 45, start: 13, force: 0.75, rate: (p) => P.rainRate * p ** 0.3 },
   { id: TOOL.HOSE, name: 'Hose', icon: ICONS.water, min: 2, max: 16, start: 7, force: 0.75, rate: (p) => P.hoseRate * p },
   { id: TOOL.WIND, name: 'Wind', icon: ICONS.wind, min: 12, max: 90, start: 40, force: 0.75, rate: (p) => P.windRate * p },
-  { id: TOOL.SCRATCH, name: 'Scratch', icon: ICONS.scratch, min: 1.5, max: 14, start: 11.2, force: 0.6, rate: (p) => P.scratchRate * p }, // big (90 on the knob) and not so hard
 ];
-const toolOf = (id: number) => TOOLS[id - 1];
+const toolOf = (id: number) => TOOLS.find((t) => t.id === id)!;
 // both by the tool's number, as they are saved (nothing at 0)
-const force = [0, ...TOOLS.map((t) => t.force)];
-const brush = [0, ...TOOLS.map((t) => t.start)];
+const force = [0, 0, 0, 0, 0];
+const brush = [0, 0, 0, 0, 0];
+for (const t of TOOLS) {
+  force[t.id] = t.force;
+  brush[t.id] = t.start;
+}
 const BRUSH = 'codevember-19-brush';
 try {
   const saved = JSON.parse(localStorage.getItem(BRUSH) ?? 'null');
@@ -301,7 +306,7 @@ function showRing() {
 
 const bar = buildBar(
   document.querySelector<HTMLElement>('#bar')!,
-  TOOLS.map(({ id, name, icon }) => ({ id, name, icon, key: String(id) })),
+  TOOLS.map(({ id, name, icon }, i) => ({ id, name, icon, key: String(i + 1) })),
   [
     { name: 'Size', key: MAC ? '⌘ drag' : 'Ctrl drag', face: sizeFace, get: () => sizeKnob(tool), put: (v) => { setSizeKnob(tool, v); remember(); } },
     { name: 'Force', key: MAC ? '⇧⌘ drag' : 'Shift Ctrl drag', face: forceFace, get: () => force[tool], put: (v) => { force[tool] = v; remember(); } },
@@ -312,7 +317,7 @@ function setTool(t: number) {
   tool = t;
   bar.select(t);
 }
-setTool(1);
+setTool(tool);
 
 // settings: a gear top right, its menu holds the detail and a new block
 {
@@ -341,7 +346,7 @@ setTool(1);
 
 // Where a pointer acts. A mouse, where it is. A finger hides what is under it, so it acts a
 // little above itself: the brush sits clear of the fingertip, where it can be seen.
-const TOUCH_LIFT = 56; // CSS px
+const TOUCH_LIFT = 40; // CSS px
 const pointAt = (e: PointerEvent) => ({ x: e.clientX, y: e.clientY - (e.pointerType === 'touch' ? TOUCH_LIFT : 0) });
 
 canvas.addEventListener('pointerdown', (e) => {
@@ -414,7 +419,7 @@ canvas.addEventListener('wheel', (e) => {
 
 window.addEventListener('keydown', (e) => {
   if (e.metaKey || e.ctrlKey || e.altKey) return;
-  if (toolOf(Number(e.key))) setTool(Number(e.key));
+  if (TOOLS[Number(e.key) - 1]) setTool(TOOLS[Number(e.key) - 1].id);
   else if (e.key === 'r' || e.key === 'R') reset();
   else if (e.key === 'ArrowLeft') yaw -= Math.PI / 2;
   else if (e.key === 'ArrowRight') yaw += Math.PI / 2;

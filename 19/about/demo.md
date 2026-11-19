@@ -22,6 +22,7 @@ localStorage.setItem('codevember-19-brush', JSON.stringify({ force: [0, 0.7, 0.7
 
 ```setup
 # hard rain held on the middle of the top (a slow drag of a few pixels is a hold), then let it drain
+js erosion.setTool(1)
 drag 600,330 606,333 11000ms
 wait 1800
 # and for the clip a narrower, lighter shower
@@ -38,13 +39,13 @@ drag 500,330 600,300 700,340 4900ms
 Thirty seconds, all four tools, all of them hard: everything at full force (the `x-setup` block turns them up, through the page's own `erosion.level`; the index clip keeps its gentler rain). No sound: the day has none.
 
 1. **Rain, 0–7 s.** It is already raining when it starts (two seconds of it off camera), from a cloud nearly as wide as the block, so the water reaches every edge: at full force the falls eat in at once and the top comes apart. (A narrow cloud at that force only digs itself a pond.)
-2. **The hose, 7–12 s.** `2`, swept down and across the left wall: a trench washed out of it.
-3. **The wind, 12–19 s.** `3`, the hair dryer on the right wall, where the mammoth lies pressed in the surface: the wall goes, the bones stay.
-4. **The scratch, 19–22 s.** `4`: four quick strokes over the skeleton and the wall beside it.
-5. **Round the back, 22–30 s.** Two quarter turns, and from behind a last burst of rain (`1`), so it ends on water running through what was cut.
+2. **The hose, 7–12 s.** `3`, swept down and across the left wall: a trench washed out of it.
+3. **The wind, 12–19 s.** `4`, the hair dryer on the right wall, where the mammoth lies pressed in the surface: the wall goes, the bones stay.
+4. **The scratch, 19–22 s.** `1`: four quick strokes over the skeleton and the wall beside it.
+5. **Round the back, 22–30 s.** Two quarter turns, and from behind a last burst of rain (`2`), so it ends on water running through what was cut.
 
 ```x-setup
-js erosion.level(1, 1); erosion.level(2, 1); erosion.level(3, 1); erosion.level(4, 1); erosion.brush(1, 42); erosion.brush(4, 6)
+js erosion.level(1, 1); erosion.level(2, 1); erosion.level(3, 1); erosion.level(4, 1); erosion.brush(1, 42); erosion.brush(4, 6); erosion.setTool(1)
 drag 600,330 606,333 2000ms
 ```
 
@@ -52,13 +53,13 @@ drag 600,330 606,333 2000ms
 # 1. rain, held on the middle of the top
 drag 606,333 600,330 7000ms
 # 2. the hose, swept over the left wall
-key 2
+key 3
 drag 320,540 470,700 380,610 2500ms
 # 3. wind on the right wall
-key 3
+key 4
 drag 790,640 796,644 7000ms
 # 4. scratch: over the mammoth and beside it
-key 4
+key 1
 drag 680,610 840,690 500ms
 wait 150
 drag 840,610 680,700 500ms
@@ -71,6 +72,6 @@ key ArrowRight
 wait 2300
 key ArrowRight
 wait 2300
-key 1
+key 2
 drag 600,330 606,333 2800ms
 ```
