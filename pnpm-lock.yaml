@@ -203,6 +203,9 @@ importers:
       '@types/three':
         specifier: ^0.187.0
         version: 0.187.0
+      '@vitejs/plugin-basic-ssl':
+        specifier: ^2.3.0
+        version: 2.3.0(vite@8.3.5(esbuild@0.28.2))
       '@vitejs/plugin-react':
         specifier: ^6.2.1
         version: 6.2.1(vite@8.3.5(esbuild@0.28.2))
@@ -274,6 +277,9 @@ importers:
       '@types/three':
         specifier: ^0.187.0
         version: 0.187.0
+      '@vitejs/plugin-basic-ssl':
+        specifier: ^2.3.0
+        version: 2.3.0(vite@7.3.7(lightningcss@1.33.0))
       typescript:
         specifier: ^5.9.3
         version: 5.9.3
@@ -317,6 +323,9 @@ importers:
       '@types/three':
         specifier: ^0.187.0
         version: 0.187.0
+      '@vitejs/plugin-basic-ssl':
+        specifier: ^2.3.0
+        version: 2.3.0(vite@8.3.5(esbuild@0.28.2))
       '@vitejs/plugin-react':
         specifier: ^6.2.1
         version: 6.2.1(vite@8.3.5(esbuild@0.28.2))
@@ -354,6 +363,9 @@ importers:
       '@types/three':
         specifier: ^0.187.0
         version: 0.187.0
+      '@vitejs/plugin-basic-ssl':
+        specifier: ^2.3.0
+        version: 2.3.0(vite@8.3.5(esbuild@0.28.2))
       '@vitejs/plugin-react':
         specifier: ^6.2.1
         version: 6.2.1(vite@8.3.5(esbuild@0.28.2))
@@ -391,6 +403,9 @@ importers:
       '@types/three':
         specifier: ^0.187.0
         version: 0.187.0
+      '@vitejs/plugin-basic-ssl':
+        specifier: ^2.3.0
+        version: 2.3.0(vite@8.3.5(esbuild@0.28.2))
       '@vitejs/plugin-react':
         specifier: ^6.2.1
         version: 6.2.1(vite@8.3.5(esbuild@0.28.2))
@@ -410,6 +425,9 @@ importers:
       '@types/three':
         specifier: ^0.187.0
         version: 0.187.0
+      '@vitejs/plugin-basic-ssl':
+        specifier: ^2.3.0
+        version: 2.3.0(vite@7.3.7(lightningcss@1.33.0))
       typescript:
         specifier: ^5.9.3
         version: 5.9.3
@@ -426,6 +444,9 @@ importers:
       '@types/three':
         specifier: ^0.187.0
         version: 0.187.0
+      '@vitejs/plugin-basic-ssl':
+        specifier: ^2.3.0
+        version: 2.3.0(vite@7.3.7(lightningcss@1.33.0))
       typescript:
         specifier: ^5.9.3
         version: 5.9.3
@@ -466,6 +487,9 @@ importers:
 
   '18':
     devDependencies:
+      '@vitejs/plugin-basic-ssl':
+        specifier: ^2.3.0
+        version: 2.3.0(vite@7.3.7(lightningcss@1.33.0))
       typescript:
         specifier: ^5.9.3
         version: 5.9.3

@@ -18,12 +18,12 @@ Each day is a standalone Vite + TypeScript project with its own `package.json`, 
 ```sh
 pnpm new 07        # copies template/ → 07/, fills in day, word, date
 pnpm install       # links the new workspace package
-pnpm -C 07 dev     # http://localhost:5173
+pnpm -C 07 dev     # http://localhost:5107, or from inside 07/: pnpm dev
 ```
 
 Add deps per day: `pnpm -C 07 add three`.
 
-The dev server listens on the local network too (`server.host: true` in every day's `vite.config.ts`, the template included): Vite prints a `Network` url, open it on a phone on the same wifi. Keep it when a day changes its config.
+The dev server runs on port 51NN, NN the day, and listens on the local network too: Vite prints a `Network` url, open it on a phone on the same wifi. The port comes from the folder name and is strict, so a second server for the same day fails instead of drifting to another port. A phone hands out WebGPU, AudioWorklet and the gyroscope only to a secure context, so a day that needs one of them serves https by default, with a self-signed cert (`@vitejs/plugin-basic-ssl`; accept the warning once per browser), and the rest serve http. `HTTPS=1` and `HTTP=1` override it. All of it is in every day's `vite.config.ts`, the template included: keep it when a day changes its config, and flip `const https` when a day starts to need a secure context.
 
 ## Metadata
 
@@ -56,7 +56,7 @@ All optional, whichever is there is used. The build copies them to `dist/NN/scre
 
 ```sh
 pnpm grab 08 --clip                                     # screengrab.mp4 from the live site, played by demo.md
-pnpm grab 08 --clip --url http://localhost:5173/        # from the dev server instead
+pnpm grab 08 --clip --url http://localhost:5108/         # from the dev server instead
 pnpm grab 08 --clip --still                             # and a new screengrab.png (the last frame), else only if missing
 pnpm grab 08 --x                                        # x.mp4, the 60 s video
 ```
@@ -70,9 +70,9 @@ Grab the clip once the day is done: every change to the day dates it. The `demo`
 Every day keeps a trail of its own making in `NN/process/` (gitignored), for timelapses:
 
 ```sh
-pnpm grab 08                  # screenshot of the dev server (http://localhost:5173/), 1280 × 800
+pnpm grab 08                  # screenshot of the dev server (localhost:5108, https or http), 1280 × 800
 pnpm grab 08 --video 6        # 6 s clip, mp4 through ffmpeg
-pnpm grab 08 --url http://localhost:5174/ --wait 3000
+pnpm grab 08 --url http://localhost:5108/?debug --wait 3000
 pnpm grab 08 --next png       # print the next file name, to save a shot taken another way
 pnpm grab 08 --timelapse      # stitch every png into NN/process/NN-timelapse.mp4
 ```

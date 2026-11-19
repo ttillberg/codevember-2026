@@ -1,15 +1,18 @@
+import { basename, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vite';
 import basicSsl from '@vitejs/plugin-basic-ssl';
 
 // Root build script sets CODEVEMBER_BASE to /codevember-2026/NN/.
 // Standalone dev/build uses '/'.
-// HTTPS=1 serves dev over https with a self-signed cert: a phone only hands out its gyroscope to a secure
-// context, so tilting to look around needs it on the LAN.
+// Dev runs on https://localhost:51NN, NN this folder, and on the LAN: https, since a phone hands out its gyroscope
+// only to a secure context. The cert is self-signed, accept it once. HTTP=1 for plain http.
+const https = !process.env.HTTP;
+const day = Number(basename(dirname(fileURLToPath(import.meta.url))));
+
 export default defineConfig({
   base: process.env.CODEVEMBER_BASE ?? '/',
+  plugins: https ? [basicSsl()] : [],
   build: { target: 'esnext' },
-  plugins: process.env.HTTPS ? [basicSsl()] : [],
-  // dev on the local network too: open the Network url Vite prints on a phone on the same wifi
-  // ngrok for showing it from afar: Vite turns away host names it does not know
-  server: { host: true, allowedHosts: ['.ngrok-free.app', '.ngrok.app', '.ngrok.io'] },
+  server: { host: true, port: day ? 5100 + day : 5173, strictPort: true, allowedHosts: ['.ngrok-free.app', '.ngrok-free.dev', '.ngrok.app', '.ngrok.io'] },
 });

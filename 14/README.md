@@ -12,7 +12,7 @@ ringing out at the nodes. More
 fingers are more players: pluck with one while another holds, and both ring.
 
 ```sh
-pnpm -C 14 dev                       # HTTPS=1 for a phone on the LAN (AudioWorklet wants https)
+pnpm -C 14 dev                       # https://localhost:5114, so a phone on the LAN gets AudioWorklet; NOHMR=1 while playing on one
 ```
 
 ## How it plays

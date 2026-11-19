@@ -51,6 +51,5 @@ Drag to turn your head: you drag the world, across and up and down alike (a mous
 - Pincushion moss is shells only; in big patches on the ground they read as flat green facets. It is off on the ground.
 
 ```sh
-pnpm -C 16 dev
-HTTPS=1 pnpm -C 16 dev   # self-signed https, so a phone on the LAN hands out its gyroscope
+pnpm -C 16 dev   # https://localhost:5116, self-signed so a phone on the LAN hands out its gyroscope
 ```

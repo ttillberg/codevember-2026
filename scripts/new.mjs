@@ -41,4 +41,4 @@ for (const file of ['README.md', 'index.html', 'about/demo.md']) {
 }
 
 console.log(`created ${dir}/ — ${word} (${date})`);
-console.log(`next: pnpm install && pnpm -C ${dir} dev`);
+console.log(`next: pnpm install && pnpm -C ${dir} dev   # http://localhost:51${dir}`);

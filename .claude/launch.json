@@ -18,12 +18,10 @@
       "runtimeArgs": [
         "-C",
         "05",
-        "dev",
-        "--port",
-        "5105",
-        "--strictPort"
+        "dev"
       ],
-      "port": 5105
+      "port": 5105,
+      "url": "http://localhost:5105"
     },
     {
       "name": "06",
@@ -31,12 +29,10 @@
       "runtimeArgs": [
         "-C",
         "06",
-        "dev",
-        "--port",
-        "5106",
-        "--strictPort"
+        "dev"
       ],
-      "port": 5106
+      "port": 5106,
+      "url": "http://localhost:5106"
     },
     {
       "name": "01",
@@ -44,12 +40,10 @@
       "runtimeArgs": [
         "-C",
         "01",
-        "dev",
-        "--port",
-        "5101",
-        "--strictPort"
+        "dev"
       ],
-      "port": 5101
+      "port": 5101,
+      "url": "http://localhost:5101"
     },
     {
       "name": "04",
@@ -57,13 +51,10 @@
       "runtimeArgs": [
         "-C",
         "04",
-        "dev",
-        "--port",
-        "5104",
-        "--strictPort",
-        "--host"
+        "dev"
       ],
-      "port": 5104
+      "port": 5104,
+      "url": "https://localhost:5104"
     },
     {
       "name": "14",
@@ -71,12 +62,10 @@
       "runtimeArgs": [
         "-C",
         "14",
-        "dev",
-        "--port",
-        "4014",
-        "--strictPort"
+        "dev"
       ],
-      "port": 4014
+      "port": 5114,
+      "url": "https://localhost:5114"
     },
     {
       "name": "16",
@@ -84,28 +73,10 @@
       "runtimeArgs": [
         "-C",
         "16",
-        "dev",
-        "--port",
-        "5116",
-        "--strictPort"
+        "dev"
       ],
-      "port": 5116
-    },
-    {
-      "name": "16-https",
-      "runtimeExecutable": "env",
-      "runtimeArgs": [
-        "HTTPS=1",
-        "pnpm",
-        "-C",
-        "16",
-        "dev",
-        "--port",
-        "5117",
-        "--strictPort"
-      ],
-      "port": 5117,
-      "url": "https://localhost:5117"
+      "port": 5116,
+      "url": "https://localhost:5116"
     },
     {
       "name": "18",
@@ -113,12 +84,10 @@
       "runtimeArgs": [
         "-C",
         "18",
-        "dev",
-        "--port",
-        "5118",
-        "--strictPort"
+        "dev"
       ],
-      "port": 5118
+      "port": 5118,
+      "url": "https://localhost:5118"
     }
   ]
 }

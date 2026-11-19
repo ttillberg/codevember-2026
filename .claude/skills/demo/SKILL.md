@@ -35,7 +35,7 @@ Frontmatter (`query`, `warmup`, `seconds`, `xseconds`), a few lines for people s
 ```sh
 pnpm grab NN --clip            # about/screengrab.mp4 (and screengrab.png if missing; --still to replace it)
 pnpm grab NN --x               # about/x.mp4
-pnpm grab NN --clip --url http://localhost:5173/    # from the dev server, for unpushed work
+pnpm grab NN --clip --url http://localhost:51NN/     #  (https on a secure day) from the dev server, for unpushed work
 ```
 
 Check each before showing it: a contact strip, then read the image.

@@ -1,15 +1,15 @@
 // Process capture: a screenshot or a short clip of a running day, for timelapses.
 // Files land in NN/process/ (gitignored) as NN-0001-YYYYMMDD-HHMMSS.png|mp4.
 //
-//   pnpm grab 08                    screenshot of http://localhost:5173/
+//   pnpm grab 08                    screenshot of the dev server, localhost:51NN (https or http)
 //   pnpm grab 08 --video 6          6 s clip (webm, converted to mp4 if ffmpeg is there)
-//   pnpm grab 08 --url http://localhost:5174/ --wait 3000 --size 1280x800
+//   pnpm grab 08 --url http://localhost:5108/ --wait 3000 --size 1280x800
 //   pnpm grab 08 --next png         only print the next file path (to save a shot taken elsewhere)
 //   pnpm grab 08 --timelapse        stitch every png in process/ into NN-timelapse.mp4
 //
 // Show-off videos are something else, played by NN/about/demo.md, see clip.mjs:
 //   pnpm grab 08 --clip             NN/about/screengrab.mp4, the 10 s index loop, from the live site
-//   pnpm grab 08 --clip --url http://localhost:5173/ --still    from the dev server, and a new screengrab.png
+//   pnpm grab 08 --clip --url http://localhost:5108/ --still    from the dev server, and a new screengrab.png
 //   pnpm grab 08 --x                NN/about/x.mp4, 60 s, 1080 square, for X (gitignored)
 import { existsSync, mkdirSync, readdirSync, renameSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
@@ -70,7 +70,10 @@ if (opt('timelapse')) {
   process.exit(0);
 }
 
-const url = opt('url', 'http://localhost:5173/');
+// the day's dev server: http on most days, https on one that needs a secure context (a plain request fails there)
+const port = 5100 + day;
+const plain = await fetch(`http://localhost:${port}/`).then(() => true, () => false);
+const url = opt('url', `${plain ? 'http' : 'https'}://localhost:${port}/`);
 const wait = Number(opt('wait', 2000));
 const [width, height] = String(opt('size', '1280x800')).split('x').map(Number);
 const video = opt('video') ? Number(opt('video') === true ? 5 : opt('video')) : 0;
@@ -86,6 +89,7 @@ const tmp = join(out, '.video');
 const context = await browser.newContext({
   viewport: { width, height },
   deviceScaleFactor: 1,
+  ignoreHTTPSErrors: true, // the dev server's cert is self-signed
   ...(video ? { recordVideo: { dir: tmp, size: { width, height } } } : {}),
 });
 const page = await context.newPage();

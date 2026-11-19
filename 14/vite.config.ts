@@ -1,15 +1,19 @@
+import { basename, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vite';
 import basicSsl from '@vitejs/plugin-basic-ssl';
 
 // Root build script sets CODEVEMBER_BASE to /codevember-2026/NN/.
 // Standalone dev/build uses '/'.
-// HTTPS=1 serves dev over https with a self-signed cert: AudioWorklet needs a
-// secure context, so a phone on the LAN gets no sound over plain http. That server
-// never reloads by itself: a reload mid-play leaves a phone's audio hung, so it
-// takes the new code only when you reload it yourself.
+// Dev runs on https://localhost:51NN, NN this folder, and on the LAN: https, since a phone hands out AudioWorklet
+// only to a secure context. The cert is self-signed, accept it once. HTTP=1 for plain http.
+const https = !process.env.HTTP;
+const day = Number(basename(dirname(fileURLToPath(import.meta.url))));
+// NOHMR=1 when playing on a phone: a reload mid-play leaves its audio hung, so it takes new code only when you reload.
+
 export default defineConfig({
   base: process.env.CODEVEMBER_BASE ?? '/',
+  plugins: https ? [basicSsl()] : [],
   build: { target: 'esnext' },
-  plugins: process.env.HTTPS ? [basicSsl()] : [],
-  server: process.env.HTTPS ? { hmr: false } : {},
+  server: { host: true, port: day ? 5100 + day : 5173, strictPort: true, hmr: !process.env.NOHMR },
 });

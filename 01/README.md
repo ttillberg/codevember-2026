@@ -65,5 +65,5 @@ Gable tabs that meet the roof hinge at a corner taper at `90 - pitch` so they ne
 ```sh
 pnpm -C 01 test   # vitest: the gabled net in depth (glue, borders, folding, pinning), and every building: lies flat, closes, one cut line, stands, prints, folds up
 pnpm -C 01 dev
-ngrok http 5173   # to play it on a phone anywhere; the dev server allows ngrok hosts
+ngrok http 5101   # to play it on a phone anywhere; the dev server allows ngrok hosts
 ```

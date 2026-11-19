@@ -153,7 +153,7 @@ export async function clip(dir, { mode = 'clip', base, still = false } = {}) {
     headless: true,
     args: ['--enable-unsafe-webgpu', '--ignore-gpu-blocklist', '--use-angle=metal'],
   });
-  const ctx = await browser.newContext({ viewport: { width: SIZE, height: SIZE }, deviceScaleFactor: 1 });
+  const ctx = await browser.newContext({ viewport: { width: SIZE, height: SIZE }, deviceScaleFactor: 1, ignoreHTTPSErrors: true });
   const page = await ctx.newPage();
   if (m.sound) await page.addInitScript(AUDIO_TAP);
   if (demo.blocks.init) await page.addInitScript(demo.blocks.init[0]);

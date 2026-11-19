@@ -1,12 +1,19 @@
+import { basename, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
+import basicSsl from '@vitejs/plugin-basic-ssl';
 
 // Root build script sets CODEVEMBER_BASE to /codevember-2026/NN/.
 // Standalone dev/build uses '/'.
+// Dev runs on https://localhost:51NN, NN this folder, and on the LAN: https, since a phone hands out WebGPU
+// only to a secure context. The cert is self-signed, accept it once. HTTP=1 for plain http.
+const https = !process.env.HTTP;
+const day = Number(basename(dirname(fileURLToPath(import.meta.url))));
+
 export default defineConfig({
   base: process.env.CODEVEMBER_BASE ?? '/',
-  plugins: [react()],
+  plugins: [react(), ...(https ? [basicSsl()] : [])],
   build: { target: 'esnext' },
-  // dev on the local network too: open the Network url Vite prints on a phone on the same wifi
-  server: { host: true },
+  server: { host: true, port: day ? 5100 + day : 5173, strictPort: true },
 });
