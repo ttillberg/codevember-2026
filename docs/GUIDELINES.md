@@ -19,6 +19,7 @@ Each day is a standalone Vite + TypeScript project with its own `package.json`, 
 pnpm new 07        # copies template/ → 07/, fills in day, word, date
 pnpm install       # links the new workspace package
 pnpm -C 07 dev     # http://localhost:5107, or from inside 07/: pnpm dev
+pnpm dev 07        # the same from the root; in a day-07-word worktree plain `pnpm dev` is enough
 ```
 
 Add deps per day: `pnpm -C 07 add three`.
