@@ -28,20 +28,26 @@ for (const d of days) {
   d.ink = existsSync(join(ROOT, d.dir, 'about', 'demo.md')) && readDemo(d.dir).ink === 'white' ? 'white' : 'black';
 }
 
-// 2. Root index.html: a square per day of the month, the built ones linked, with their screengrab if any
-const built = new Map(days.map((d) => [d.day, d]));
-const squares = WORDS.map((word, i) => {
+// 2. Root index.html: a square per day of the month, the built ones linked, with their screengrab if any.
+// A day with a second piece (04-snakes) gets a square for each; an empty day is left out for every extra
+// piece, so the grid stays at 30 squares and its rows even.
+const HIDDEN = new Set([3]); // empty days left out of the index, one per extra piece
+const pieces = (day) => days.filter((d) => d.day === day);
+const dayCount = new Set(days.map((d) => d.day)).size;
+const squares = WORDS.flatMap((word, i) => {
   const day = i + 1;
-  const dir = String(day).padStart(2, '0');
-  const d = built.get(day);
-  const label = `<span class="label">${dir} ${escapeHtml(d?.word || word)}</span>`;
-  if (!d) return `      <div class="sq empty">${label}</div>`;
-  const poster = d.screengrab ? `./${dir}/screengrab.png` : '';
-  const img = d.clip
-    ? `<video src="./${dir}/screengrab.mp4"${poster ? ` poster="${poster}"` : ''} autoplay muted loop playsinline preload="auto"></video>`
-    : poster ? `<img src="${poster}" alt="" loading="lazy" />` : '';
-  const title = d.description && d.description !== d.word ? ` title="${escapeHtml(d.description)}"` : '';
-  return `      <a class="sq${d.screengrab || d.clip ? ' has-img' : ''} ink-${d.ink}" href="./${dir}/"${title}>${img}${label}</a>`;
+  const nn = String(day).padStart(2, '0');
+  const here = pieces(day);
+  if (!here.length) return HIDDEN.has(day) ? [] : [`      <div class="sq empty"><span class="label">${nn} ${escapeHtml(word)}</span></div>`];
+  return here.map((d) => {
+    const label = `<span class="label">${nn} ${escapeHtml(d.word || word)}</span>`;
+    const poster = d.screengrab ? `./${d.dir}/screengrab.png` : '';
+    const img = d.clip
+      ? `<video src="./${d.dir}/screengrab.mp4"${poster ? ` poster="${poster}"` : ''} autoplay muted loop playsinline preload="auto"></video>`
+      : poster ? `<img src="${poster}" alt="" loading="lazy" />` : '';
+    const title = d.description && d.description !== d.word ? ` title="${escapeHtml(d.description)}"` : '';
+    return `      <a class="sq${d.screengrab || d.clip ? ' has-img' : ''} ink-${d.ink}" href="./${d.dir}/"${title}>${img}${label}</a>`;
+  });
 }).join('\n');
 
 writeFileSync(
@@ -99,7 +105,7 @@ writeFileSync(
 <body>
   <main>
     <h1>Codevember 2026</h1>
-    <p class="sub caps">${days.length} of 30 days by Theo Tillberg · <a href="${GITHUB}"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 .3a12 12 0 0 0-3.8 23.38c.6.12.83-.26.83-.57l-.02-2.04c-3.34.72-4.04-1.61-4.04-1.61-.55-1.39-1.33-1.76-1.33-1.76-1.09-.74.08-.73.08-.73 1.2.08 1.84 1.24 1.84 1.24 1.07 1.83 2.8 1.3 3.49 1 .1-.78.42-1.3.76-1.6-2.67-.3-5.47-1.33-5.47-5.93 0-1.31.47-2.38 1.24-3.22-.14-.3-.54-1.52.1-3.18 0 0 1-.32 3.3 1.23a11.5 11.5 0 0 1 6 0c2.28-1.55 3.29-1.23 3.29-1.23.64 1.66.24 2.88.12 3.18a4.65 4.65 0 0 1 1.23 3.22c0 4.61-2.8 5.63-5.48 5.92.42.36.81 1.1.81 2.22l-.01 3.29c0 .31.2.69.82.57A12 12 0 0 0 12 .3"/></svg>Source</a> · <a href="https://x.com/theo_t"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M18.9 1.15h3.68l-8.04 9.19L24 22.85h-7.4l-5.8-7.59-6.64 7.59H.47l8.6-9.83L0 1.15h7.6l5.24 6.93zm-1.29 19.5h2.04L6.49 3.24H4.3z"/></svg>@theo_t</a></p>
+    <p class="sub caps">${dayCount} of 30 days by Theo Tillberg · <a href="${GITHUB}"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 .3a12 12 0 0 0-3.8 23.38c.6.12.83-.26.83-.57l-.02-2.04c-3.34.72-4.04-1.61-4.04-1.61-.55-1.39-1.33-1.76-1.33-1.76-1.09-.74.08-.73.08-.73 1.2.08 1.84 1.24 1.84 1.24 1.07 1.83 2.8 1.3 3.49 1 .1-.78.42-1.3.76-1.6-2.67-.3-5.47-1.33-5.47-5.93 0-1.31.47-2.38 1.24-3.22-.14-.3-.54-1.52.1-3.18 0 0 1-.32 3.3 1.23a11.5 11.5 0 0 1 6 0c2.28-1.55 3.29-1.23 3.29-1.23.64 1.66.24 2.88.12 3.18a4.65 4.65 0 0 1 1.23 3.22c0 4.61-2.8 5.63-5.48 5.92.42.36.81 1.1.81 2.22l-.01 3.29c0 .31.2.69.82.57A12 12 0 0 0 12 .3"/></svg>Source</a> · <a href="https://x.com/theo_t"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M18.9 1.15h3.68l-8.04 9.19L24 22.85h-7.4l-5.8-7.59-6.64 7.59H.47l8.6-9.83L0 1.15h7.6l5.24 6.93zm-1.29 19.5h2.04L6.49 3.24H4.3z"/></svg>@theo_t</a></p>
     <div class="grid">
 ${squares}
     </div>
@@ -111,14 +117,13 @@ ${squares}
 );
 
 // 3. README table between markers
-const byDay = new Map(days.map((d) => [d.day, d]));
-const rows = WORDS.map((word, i) => {
+const rows = WORDS.flatMap((word, i) => {
   const day = i + 1;
-  const dir = String(day).padStart(2, '0');
-  const d = byDay.get(day);
-  return d
-    ? `| ${dir} | ${word} | [View](${HOMEPAGE}/${dir}/) | [Code](${GITHUB}/tree/main/${dir}) |`
-    : `| ${dir} | ${word} | — | — |`;
+  const nn = String(day).padStart(2, '0');
+  const here = pieces(day);
+  return here.length
+    ? here.map((d) => `| ${nn} | ${word} | [View](${HOMEPAGE}/${d.dir}/) | [Code](${GITHUB}/tree/main/${d.dir}) |`)
+    : [`| ${nn} | ${word} | — | — |`];
 });
 const table = ['| Day | Word | Experiment | Source |', '| --- | --- | --- | --- |', ...rows].join('\n');
 
@@ -131,7 +136,7 @@ const b = readme.indexOf(end);
 if (a === -1 || b === -1) throw new Error('README.md is missing days:start / days:end markers');
 writeFileSync(readmePath, readme.slice(0, a + start.length) + '\n' + table + '\n' + readme.slice(b));
 
-console.log(`\n✔ built ${days.length} day(s) into dist/, README updated`);
+console.log(`\n✔ built ${days.length} piece(s) of ${dayCount} day(s) into dist/, README updated`);
 
 function copyMedia(dir, name) {
   const src = [join(ROOT, dir, 'about', name), join(ROOT, dir, name)].find((p) => existsSync(p));
