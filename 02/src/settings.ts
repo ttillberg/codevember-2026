@@ -10,6 +10,8 @@ const it = (key: string, label: string, min: number, max: number, step: number, 
 export const SECTIONS: Section[] = [
   {
     id: 'scene', title: 'Scene', items: [
+      it('panes', 'Panes', 1, 3, 1, 2),
+      it('gap', 'Gap, cm', 3, 80, 1, 25),
       it('exposure', 'Exposure', 0.3, 2.5, 0.01, 1),
       it('wall', 'Wall light', 0, 2.5, 0.01, 1),
       it('floor', 'Floor light', 0, 2.5, 0.01, 1),
@@ -22,7 +24,7 @@ export const SECTIONS: Section[] = [
       it('shadow', 'Floor shadow', 0, 1, 0.01, 0.58),
       it('dust', 'Dust', 0, 3, 0.05, 1),
       it('sway', 'Camera sway', 0, 4, 0.05, 1),
-      it('pace', 'Fall speed', 0.05, 1.5, 0.01, 0.6),
+      it('pace', 'Fall speed', 0.05, 1.5, 0.01, 1),
       it('slow', 'Held speed', 0.01, 0.5, 0.01, 0.07),
     ],
   },

@@ -1,7 +1,7 @@
 {
   "name": "day-02",
   "private": true,
-  "description": "Shoot a pane of 8 mm glass as often as you like, then swipe: what the cracks have cut loose blows out, baked rigid shards, and the rest stays standing",
+  "description": "Two panes of 8 mm glass, one behind the other: shoot through both as often as you like, then swipe, and what the cracks have cut loose blows out as baked rigid shards",
   "type": "module",
   "scripts": {
     "dev": "vite",

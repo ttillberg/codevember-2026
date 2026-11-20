@@ -34,7 +34,8 @@ export class Renderer {
   private quad: WebGLVertexArrayObject;
   private room: WebGLVertexArrayObject;
   private roomCount = 0;
-  private ribbonVao: WebGLVertexArrayObject; private ribbonBuf: WebGLBuffer; private ribbonData: number[] = []; private ribbonCount = 0;
+  /** one per pane: its cracks where it stands, whether it stands at all, whether pieces have been cut out of it */
+  private layers: { vao: WebGLVertexArrayObject; buf: WebGLBuffer; data: number[]; count: number; z: number; standing: boolean; cut: boolean }[] = [];
   private paneVao: WebGLVertexArrayObject; private paneBuf: WebGLBuffer;
   private wallVao: WebGLVertexArrayObject; private wallBuf: WebGLBuffer; private wallCount = 0;
   private faceVao: WebGLVertexArrayObject; private faceBuf: WebGLBuffer; private faceCount = 0;
@@ -47,14 +48,12 @@ export class Renderer {
   private sceneFbo: WebGLFramebuffer | null = null; private sceneTex: WebGLTexture | null = null;
   private w = 0; private h = 0;
   shards = false;
-  /** the pane itself, where it stands: all of it before the break, what is left of it after */
-  standing = true;
   /** the football: where it is and how it is turned, or off */
   ball = { on: false, p: [0, 0, 0], q: [0, 0, 0, 1], r: 0.11 };
   /** what the settings panel turns */
   look = { exposure: 1, wall: 1, floor: 1, dark: 1, tint: 1, wavy: 0.06, refl: 1, bend: 0.014, seam: 0.16, shadow: 0.58 };
   private ballVao!: WebGLVertexArrayObject; private ballCount = 0;
-  pane = { W: 1, H: 1, y0: 0, T: 0.008 };
+  pane = { W: 1, H: 1, y0: 0, T: 0.008, N: 1 };
   static SHADOW = 2048;
   static DUST = 6000;
 
@@ -90,7 +89,6 @@ export class Renderer {
     gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
 
     this.room = gl.createVertexArray()!;
-    [this.ribbonVao, this.ribbonBuf] = this.glassVao();
     [this.paneVao, this.paneBuf] = this.glassVao();
     [this.wallVao, this.wallBuf] = this.glassVao();
     [this.faceVao, this.faceBuf] = this.glassVao();
@@ -165,65 +163,72 @@ export class Renderer {
     return [vao, buf];
   }
 
-  /** A new pane: the room around it, the pane as one quad, its four edges as the first crack surfaces. */
-  setPane(pane: Pane, y0: number) {
+  /** New panes, one behind the other at the given depths: the room around them, each pane as one quad and
+   *  its four edges as its first crack surfaces. */
+  setPanes(W: number, H: number, T: number, y0: number, zs: number[]) {
     const gl = this.gl;
-    const { W, H, T } = pane;
-    this.pane = { W, H, y0, T };
-    this.shards = false; this.standing = true;
+    this.pane = { W, H, y0, T, N: zs.length };
+    this.shards = false;
     this.wallAll = new Float32Array(0); this.faceAll = new Float32Array(0); this.shardCount = 0; this.wallCount = this.faceCount = 0;
     const hx = W / 2;
     const r: number[] = [];
     const quadv = (a: number[], b: number[], c: number[], d: number[], m: number) => { for (const p of [a, b, c, a, c, d]) r.push(p[0], p[1], p[2], m); };
     quadv([-9, 0, 6], [9, 0, 6], [9, 0, -2.4], [-9, 0, -2.4], 0);
     quadv([-9, 0, -2.4], [9, 0, -2.4], [9, 7, -2.4], [-9, 7, -2.4], 1);
-    // the channel
-    const bx = hx + 0.03, bz0 = -0.026, bz1 = 0.018;
-    quadv([-bx, 0, bz1], [bx, 0, bz1], [bx, y0, bz1], [-bx, y0, bz1], 2);
-    quadv([-bx, y0, bz1], [bx, y0, bz1], [bx, y0, bz0], [-bx, y0, bz0], 2);
-    quadv([-bx, 0, bz0], [-bx, 0, bz1], [-bx, y0, bz1], [-bx, y0, bz0], 2);
-    quadv([bx, 0, bz1], [bx, 0, bz0], [bx, y0, bz0], [bx, y0, bz1], 2);
+    const f: number[] = [];
+    for (const old of this.layers) { gl.deleteBuffer(old.buf); gl.deleteVertexArray(old.vao); }
+    this.layers = zs.map((z, i) => {
+      // its channel
+      const bx = hx + 0.03, bz0 = z - 0.026, bz1 = z + 0.018;
+      quadv([-bx, 0, bz1], [bx, 0, bz1], [bx, y0, bz1], [-bx, y0, bz1], 2);
+      quadv([-bx, y0, bz1], [bx, y0, bz1], [bx, y0, bz0], [-bx, y0, bz0], 2);
+      quadv([-bx, 0, bz0], [-bx, 0, bz1], [-bx, y0, bz1], [-bx, y0, bz0], 2);
+      quadv([bx, 0, bz1], [bx, 0, bz0], [bx, y0, bz0], [bx, y0, bz1], 2);
+      const corner = (x: number, y: number) => f.push(x - hx, y + y0, z, 0, 0, 1, x, y, 0, -1e3, 0, i * 10);
+      corner(0, 0); corner(W, 0); corner(W, H); corner(0, 0); corner(W, H); corner(0, H);
+      const [vao, buf] = this.glassVao();
+      const data: number[] = [];
+      const c = [[0, 0], [W, 0], [W, H], [0, H]];
+      for (let k = 0; k < 4; k++) {
+        const a = c[k], b = c[(k + 1) % 4];
+        pushWall(data, a[0] - hx, a[1] + y0, b[0] - hx, b[1] + y0, 0, 0, 0, 0, z, T, a[0], a[1], b[0], b[1], -1e3, -1e3, 0, i * 10, 0);
+      }
+      return { vao, buf, data, count: 0, z, standing: true, cut: false };
+    });
     gl.bindVertexArray(this.room);
     gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
     gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(r), gl.STATIC_DRAW);
     gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 3, gl.FLOAT, false, 16, 0);
     gl.enableVertexAttribArray(1); gl.vertexAttribPointer(1, 1, gl.FLOAT, false, 16, 12);
     this.roomCount = r.length / 4;
-
-    const f: number[] = [];
-    const corner = (x: number, y: number) => f.push(x - hx, y + y0, 0, 0, 0, 1, x, y, 0, -1e3, 0, 0);
-    corner(0, 0); corner(W, 0); corner(W, H); corner(0, 0); corner(W, H); corner(0, H);
     gl.bindBuffer(gl.ARRAY_BUFFER, this.paneBuf);
     gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(f), gl.STATIC_DRAW);
-
-    this.ribbonData = [];
-    const c = [[0, 0], [W, 0], [W, H], [0, H]];
-    for (let i = 0; i < 4; i++) {
-      const a = c[i], b = c[(i + 1) % 4];
-      pushWall(this.ribbonData, a[0] - hx, a[1] + y0, b[0] - hx, b[1] + y0, 0, 0, 0, 0, 0, T, a[0], a[1], b[0], b[1], -1e3, -1e3, 0, 0, 0);
-    }
-    this.uploadRibbons();
+    for (let i = 0; i < zs.length; i++) this.uploadRibbons(i);
     this.setMask(null);
   }
 
-  addCracks(pane: Pane, segs: Seg[]) {
+  /** Does pane i still stand, in part at least? */
+  setStanding(i: number, standing: boolean) { this.layers[i].standing = standing; }
+
+  addCracks(i: number, pane: Pane, segs: Seg[]) {
     const { nx, ny, ox, oy, W, T } = pane;
-    const hx = W / 2, y0 = this.pane.y0;
+    const hx = W / 2, y0 = this.pane.y0, L = this.layers[i];
     for (const s of segs) {
       const { a, b } = s;
-      pushWall(this.ribbonData, nx[a] - hx, ny[a] + y0, nx[b] - hx, ny[b] + y0, ox[a], oy[a], ox[b], oy[b], 0, T, nx[a], ny[a], nx[b], ny[b], s.ta, s.tb, 0, s.kind, 0);
+      pushWall(L.data, nx[a] - hx, ny[a] + y0, nx[b] - hx, ny[b] + y0, ox[a], oy[a], ox[b], oy[b], L.z, T, nx[a], ny[a], nx[b], ny[b], s.ta, s.tb, 0, s.kind + i * 10, 0);
     }
-    this.uploadRibbons();
+    this.uploadRibbons(i);
   }
 
-  private uploadRibbons() {
-    const gl = this.gl;
-    gl.bindBuffer(gl.ARRAY_BUFFER, this.ribbonBuf);
-    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(this.ribbonData), gl.DYNAMIC_DRAW);
-    this.ribbonCount = this.ribbonData.length / STRIDE;
+  private uploadRibbons(i: number) {
+    const gl = this.gl, L = this.layers[i];
+    gl.bindBuffer(gl.ARRAY_BUFFER, L.buf);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(L.data), gl.DYNAMIC_DRAW);
+    L.count = L.data.length / STRIDE;
   }
 
-  /** The hole and frost map: a canvas over the pane, red where the glass is gone, green where it is crushed. */
+  /** The hole and frost map: a canvas with every pane's map, one under the other. Red where a bullet took the
+   *  glass, green where it is crushed, blue where pieces have left. */
   setMask(canvas: HTMLCanvasElement | null) {
     const gl = this.gl;
     gl.bindTexture(gl.TEXTURE_2D, this.mask);
@@ -320,7 +325,7 @@ export class Renderer {
     gl.uniform1f(u.uToFloor, toFloor ? 1 : 0);
     gl.uniform1f(u.uNow, now);
     gl.uniform1f(u.uFlash, flash);
-    gl.uniform2f(u.uPane, this.pane.W, this.pane.H);
+    gl.uniform3f(u.uPane, this.pane.W, this.pane.H, this.pane.N);
     gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, this.xf); gl.uniform1i(u.uXf, 0);
     gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, this.mask); gl.uniform1i(u.uMask, 1);
     gl.activeTexture(gl.TEXTURE2); gl.bindTexture(gl.TEXTURE_2D, this.shadowTex); gl.uniform1i(u.uShadow, 2);
@@ -338,15 +343,17 @@ export class Renderer {
     gl.bindVertexArray(this.ballVao); gl.drawArrays(gl.TRIANGLES, 0, this.ballCount);
   }
 
-  /** What is left standing and what flies are drawn one after the other: the pane and its cracks where they
-   *  are, cut out where pieces left (uCut), then the shards with their poses and their own clock. */
+  /** What is left standing and what flies are drawn one after the other: each pane and its cracks where they
+   *  are, cut out where pieces left (uCut), then the shards with their poses. */
   private drawGlass(u: Record<string, WebGLUniformLocation | null>, walls: boolean, now: number, shardNow: number) {
     const gl = this.gl;
-    if (this.standing) {
-      gl.uniform1f(u.uUseXf, 0); gl.uniform1f(u.uCut, this.shards ? 1 : 0); gl.uniform1f(u.uNow, now);
-      if (walls) { gl.bindVertexArray(this.ribbonVao); gl.drawArrays(gl.TRIANGLES, 0, this.ribbonCount); }
-      else { gl.bindVertexArray(this.paneVao); gl.drawArrays(gl.TRIANGLES, 0, 6); }
-    }
+    gl.uniform1f(u.uUseXf, 0); gl.uniform1f(u.uNow, now);
+    this.layers.forEach((L, i) => {
+      if (!L.standing) return;
+      gl.uniform1f(u.uCut, L.cut ? 1 : 0);
+      if (walls) { gl.bindVertexArray(L.vao); gl.drawArrays(gl.TRIANGLES, 0, L.count); }
+      else { gl.bindVertexArray(this.paneVao); gl.drawArrays(gl.TRIANGLES, i * 6, 6); }
+    });
     if (this.shards) {
       gl.uniform1f(u.uUseXf, 1); gl.uniform1f(u.uCut, 0); gl.uniform1f(u.uNow, shardNow);
       if (walls) { gl.bindVertexArray(this.wallVao); gl.drawArrays(gl.TRIANGLES, 0, this.wallCount); }
@@ -354,18 +361,19 @@ export class Renderer {
     }
   }
 
-  /** The cracks again, from the graph itself, without the ones `drop` names: those between two pieces that left. */
-  rebuildCracks(pane: Pane, drop: (a: number, b: number) => boolean) {
+  /** The cracks of pane i again, from the graph itself, without the ones `drop` names: those between two
+   *  pieces that left. From here on the pane is one that has lost pieces. */
+  rebuildCracks(i: number, pane: Pane, drop: (a: number, b: number) => boolean) {
     const { nx, ny, ox, oy, W, T, ea, eb, ekind } = pane;
-    const hx = W / 2, y0 = this.pane.y0;
-    this.ribbonData = [];
+    const hx = W / 2, y0 = this.pane.y0, L = this.layers[i];
+    L.data = []; L.cut = true;
     for (let e = 0; e < ea.length; e++) {
       const a = ea[e], b = eb[e];
       if (drop(a, b)) continue;
       const frame = ekind[e] === 1;
-      pushWall(this.ribbonData, nx[a] - hx, ny[a] + y0, nx[b] - hx, ny[b] + y0, frame ? 0 : ox[a], frame ? 0 : oy[a], frame ? 0 : ox[b], frame ? 0 : oy[b], 0, T, nx[a], ny[a], nx[b], ny[b], -1e3, -1e3, 0, frame ? 0 : ekind[e], 0);
+      pushWall(L.data, nx[a] - hx, ny[a] + y0, nx[b] - hx, ny[b] + y0, frame ? 0 : ox[a], frame ? 0 : oy[a], frame ? 0 : ox[b], frame ? 0 : oy[b], L.z, T, nx[a], ny[a], nx[b], ny[b], -1e3, -1e3, 0, (frame ? 0 : ekind[e]) + i * 10, 0);
     }
-    this.uploadRibbons();
+    this.uploadRibbons(i);
   }
 
   draw(view: Mat4, proj: Mat4, cam: number[], now: number, shardNow: number, flash: number, fade: number, dustCount: number) {

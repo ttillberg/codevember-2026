@@ -8,8 +8,10 @@ export interface BakeRequest {
   type: 'bake';
   run: number;
   bodies: Body[];
-  /** world x, y of every blow: where a ball goes through */
-  impacts: [number, number][];
+  /** world x, y, z of every blow: where a ball goes through, and which pane (its z) */
+  impacts: [number, number, number][];
+  /** where the front of each pane stands */
+  zs: number[];
   width: number;
   y0: number;
   seed: number;
@@ -79,11 +81,13 @@ async function bake(req: BakeRequest) {
   world.createCollider(RAPIER.ColliderDesc.cuboid(80, 5, 80).setTranslation(0, -5, 0).setFriction(0.7).setRestitution(0.3).setCollisionGroups(groups(G_WORLD, G_SHARD | G_TINY | G_BALL)), ground);
   // the back wall, for the ball
   world.createCollider(RAPIER.ColliderDesc.cuboid(80, 80, 5).setTranslation(0, 0, (-2.4 - 0.5) * S).setRestitution(0.4).setCollisionGroups(groups(G_WORLD, G_SHARD | G_TINY | G_BALL)), ground);
-  world.createCollider(
-    RAPIER.ColliderDesc.cuboid((req.width / 2 + 0.03) * S, (req.y0 / 2) * S, 0.022 * S).setTranslation(0, (req.y0 / 2) * S, -0.004 * S)
-      .setFriction(0.5).setRestitution(0.2).setCollisionGroups(groups(G_WORLD, G_SHARD | G_TINY | G_BALL)),
-    ground,
-  );
+  for (const z of req.zs) {
+    world.createCollider(
+      RAPIER.ColliderDesc.cuboid((req.width / 2 + 0.03) * S, (req.y0 / 2) * S, 0.022 * S).setTranslation(0, (req.y0 / 2) * S, (z - 0.004) * S)
+        .setFriction(0.5).setRestitution(0.2).setCollisionGroups(groups(G_WORLD, G_SHARD | G_TINY | G_BALL)),
+      ground,
+    );
+  }
 
   const n = req.bodies.length;
   const bodies: RAPIER.RigidBody[] = [];
@@ -112,9 +116,14 @@ async function bake(req: BakeRequest) {
     bodies.push(body);
     // the pane lets go from the last impact outwards, then from the top down
     let dx = 0, dy = 0, d = Infinity;
-    for (const im of req.impacts) {
-      const ex = b.c[0] - im[0], ey = b.c[1] - im[1], e = Math.hypot(ex, ey);
-      if (e < d) { d = e; dx = ex; dy = ey; }
+    // the nearest blow to its own pane
+    for (const own of [true, false]) {
+      for (const im of req.impacts) {
+        if (own && Math.abs(b.c[2] - im[2]) > 0.05) continue;
+        const ex = b.c[0] - im[0], ey = b.c[1] - im[1], e = Math.hypot(ex, ey);
+        if (e < d) { d = e; dx = ex; dy = ey; }
+      }
+      if (d < Infinity) break;
     }
     // what the ball is about to go through is loose at once, the rest follows within a few frames
     release[i] = d < 0.2 ? 0 : ((d - 0.2) / cfg.front) * (0.75 + rand() * 0.5) + rand() * 0.02;

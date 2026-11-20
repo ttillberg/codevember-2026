@@ -123,11 +123,13 @@ export const SHADOW_FS = /* glsl */ `#version 300 es
 precision highp float;
 in vec2 vUv; in vec4 vD;
 uniform float uNow; uniform float uShade; uniform float uCut;
-uniform sampler2D uMask; uniform vec2 uPane;
+uniform sampler2D uMask; uniform vec3 uPane;
 out vec4 o;
+// the masks of all panes are stacked in one texture; the pane a vertex belongs to is the tens of its kind
+vec2 maskUv(vec2 uv, float kind) { float l = floor(kind / 10.0 + 0.01); return vec2(uv.x / uPane.x, (uv.y / uPane.y + uPane.z - 1.0 - l) / uPane.z); }
 void main() {
   if (vD.y > uNow) discard;
-  vec4 m = texture(uMask, vUv / uPane);
+  vec4 m = texture(uMask, maskUv(vUv, vD.w));
   if (m.r > 0.5 || (uCut > 0.5 && m.b > 0.5)) discard;
   o = vec4(uShade);
 }
@@ -138,12 +140,14 @@ void main() {
 export const WALL_FS = COMMON + /* glsl */ `
 in vec3 vW; in vec3 vN; in vec3 vNl; in vec2 vUv; in vec4 vD; flat in vec4 vQ;
 uniform vec3 uCam; uniform float uNow; uniform float uSeam; uniform float uCut;
-uniform sampler2D uMask; uniform vec2 uPane;
+uniform sampler2D uMask; uniform vec3 uPane;
 out vec4 o;
+// the masks of all panes are stacked in one texture; the pane a vertex belongs to is the tens of its kind
+vec2 maskUv(vec2 uv, float kind) { float l = floor(kind / 10.0 + 0.01); return vec2(uv.x / uPane.x, (uv.y / uPane.y + uPane.z - 1.0 - l) / uPane.z); }
 void main() {
   if (vD.y > uNow) discard;
   // (once pieces have left, the cracks that stay were chosen one by one: no mask for them)
-  if (uCut < 0.5 && texture(uMask, vUv / uPane).r > 0.5) discard;
+  if (uCut < 0.5 && texture(uMask, maskUv(vUv, vD.w)).r > 0.5) discard;
   vec3 V = normalize(vW - uCam);
   vec3 Vl = rotInv(vQ, V);
   // hackle: the surface of a fracture is not smooth
@@ -164,7 +168,7 @@ void main() {
   c += vec3(0.6, 0.85, 0.8) * seam * (uSeam + 1.6 * glint + uFlash);
   // the tip of a running crack flashes
   c += vec3(0.8, 1.0, 0.95) * 1.5 * exp(-(uNow - vD.y) / 0.05);
-  if (vD.w > 1.5) c = mix(c, vec3(0.55, 0.62, 0.6) * (0.5 + uFlash * 2.0), 0.55); // the crushed rim of the hole
+  if (mod(vD.w, 10.0) > 1.5) c = mix(c, vec3(0.55, 0.62, 0.6) * (0.5 + uFlash * 2.0), 0.55); // the crushed rim of the hole
   o = vec4(tone(c), 1.0);
 }
 `;
@@ -173,11 +177,13 @@ void main() {
 export const FACE_FS = COMMON + /* glsl */ `
 in vec3 vW; in vec3 vN; in vec3 vNl; in vec2 vUv; in vec4 vD; flat in vec4 vQ;
 uniform vec3 uCam; uniform mat4 uView; uniform vec2 uRes; uniform float uBend; uniform float uCut; uniform float uNow; uniform vec3 uGlass; // tint, waviness, reflections
-uniform sampler2D uScene; uniform sampler2D uMask; uniform vec2 uPane;
+uniform sampler2D uScene; uniform sampler2D uMask; uniform vec3 uPane;
 out vec4 o;
+// the masks of all panes are stacked in one texture; the pane a vertex belongs to is the tens of its kind
+vec2 maskUv(vec2 uv, float kind) { float l = floor(kind / 10.0 + 0.01); return vec2(uv.x / uPane.x, (uv.y / uPane.y + uPane.z - 1.0 - l) / uPane.z); }
 void main() {
   if (vD.y > uNow) discard; // shards cut ahead of the blow that frees them
-  vec4 m = texture(uMask, vUv / uPane);
+  vec4 m = texture(uMask, maskUv(vUv, vD.w));
   if (m.r > 0.5 || (uCut > 0.5 && m.b > 0.5)) discard; // blue: where pieces have left the standing pane
   // float glass is never flat
   vec2 w = vec2(fbm(vUv * 5.0 + 3.0), fbm(vUv * 5.0 + 19.0)) - 0.5;

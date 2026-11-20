@@ -2,13 +2,13 @@
 
 2026-11-02
 
-A pane of 8 mm glass standing in a channel. Shoot it as often as you like: every bullet is a hole and a web of cracks. Then swipe: a shock, and everything the cracks have cut loose blows out at once, while the rest of the pane stays standing. Or kick a football through all of it.
+Two panes of 8 mm glass, each standing in a channel, one 25 cm behind the other. Shoot them as often as you like: a bullet goes through both, and in each it is a hole and a web of cracks. Then swipe: a shock, and everything the cracks have cut loose blows out at once, while the rest of the pane stays standing. Or kick a football through all of it.
 
 ```sh
 pnpm -C 02 dev
 ```
 
-- **Click / tap** the glass: a bullet, as many as you want. **Wheel**: zoom in on the cracks.
+- **Click / tap** the glass: a bullet, through every pane in its way, as many as you want. **Wheel**: zoom in on the cracks.
 - **Swipe / drag** across the glass, or **Space**: the shock. Which way does not matter. Only what is broken goes.
 - The first button: a football through the middle, at 30 m/s. **B**, or the ball button: hide the ball itself (also `?noball`).
 - While glass falls, **hold** a press where it is for slow motion (Space too, when there is nothing to break). A thin bar at the bottom shows how far the worker is with the bake.
@@ -16,6 +16,7 @@ pnpm -C 02 dev
 - **R**: a new pane. **M**: sound.
 - The pointer never moves the camera: it has a slow sway of its own (`Camera sway` in the workbench, down to none), and the wheel zooms.
 - `?seed=7` pins the pane, `?clean` hides the furniture.
+- The fall plays at the speed of life (`Fall speed` in the workbench, to slow it for good).
 - `?debug` (or `#debug`): the workbench, a gear bottom right. Three folding sections, the scene (light, glass, pace), the cracks (from the next bullet) and the simulation (from the next break). Every value, and what is folded, is kept in localStorage; double click a name to put its value back.
 
 ## Two parts
@@ -28,7 +29,7 @@ Cracks are closed: there is no gap to see. What is drawn is the crack surface it
 
 **The football** (`src/shards.ts`, `src/sim.worker.ts`). It leaves the foot at 30 m/s, and from that moment where and how it hits is known, so everything is prepared while it flies: a blunt impact is added to the graph (forty radials, most of them long), every open tip runs until it meets something, every piece larger than a few fingers is cut again, and the faces of the graph are the shards, about a thousand. Their side walls are the same quads the cracks were drawn with, so the cracked pane and the shards are one picture at the moment of impact.
 
-A worker gets each shard as convex pieces (Douglas-Peucker, then triangles merged while they stay convex) and the ball as a sphere with its velocity and spin, and simulates them with Rapier in decimetres. What the ball is about to go through is loose at once, the rest lets go within a few frames, each piece with a push: out the back in a cone near the impact, outwards at the rim. The flight is shown in slow motion (at 30 m/s it would be three frames), which is also the time the worker needs to get ahead: the fall starts at that same pace on impact and picks up to 0.6 of life. Frames are positions and quaternions in a float texture, blended between two baked frames, so it stays smooth at any pace, and slower still while held.
+A worker gets each shard as convex pieces (Douglas-Peucker, then triangles merged while they stay convex) and the ball as a sphere with its velocity and spin, and simulates them with Rapier in decimetres. What the ball is about to go through is loose at once, the rest lets go within a few frames, each piece with a push: out the back in a cone near the impact, outwards at the rim. The flight is shown in slow motion (at 30 m/s it would be three frames), which is also the time the worker needs to get ahead: the fall starts at that same pace on impact and picks up to 0.6 of life. Frames are positions and quaternions in a float texture, blended between two baked frames, so it stays smooth at any pace: the pace of life by default, far slower while held.
 
 **The shock.** Only what is already broken goes. Nothing runs on and nothing new is cracked: the faces of the graph as it stands are the pieces, which means every cell the cracks have closed. The largest face, the pane around them, is not a shard: it stays. The pieces are cut smaller, and it is as if a ball nobody sees went through every bullet hole at the same instant: one heavy sphere per hole goes into the simulation, never drawn. None of this waits for the swipe. A moment after every bullet, what a shock would do now is worked out on a copy of the pane (the real one can still be shot, and must not meet cuts nobody sees) and the worker bakes that fall. A swipe only has to play it: the copy becomes the pane. Another bullet, or another number in the workbench, and it is prepared again.
 
@@ -37,6 +38,8 @@ Whatever is left standing can be shot again, and shocked again, without waiting:
 What stays is still drawn as the pane it was: one quad, cut out where the pieces left (their outlines are painted into the mask), and its cracks rebuilt from the graph, without those that had a leaving piece on both sides. A crack that ends in clear glass stays where it is.
 
 Splinters under 1.5 cm² are boxes that only meet the floor. Some of the pieces standing in the channel stay there.
+
+**Two panes.** Each pane is its own graph, with its own part of one mask texture; which pane a vertex belongs to rides in the tens of its `kind`. A bullet is the ray from the eye, so it meets the second pane a little off from where it met the first. Everything else is one: one set of shards per fall with both panes' pieces in it, one simulation, so what is blown out of the front pane flies through, or into, what leaves the back one. `Panes` (1 to 3) and `Gap` are in the workbench.
 
 ## Drawing it
 

@@ -115,7 +115,8 @@ function convexParts(loop: number[], xs: number[], ys: number[]): number[][] {
 
 /** y0 is the height of the bottom of the pane above the floor. The front of the glass is z = 0, the back z = -T. */
 /** With `standing`, the largest face stays where it is, if it stands in the channel: it is not a shard. */
-export function buildShards(pane: Pane, y0: number, standing = false, gone: (loop: number[]) => boolean = () => false): ShardSet {
+/** `layer` is which pane this is, and `z` where its front stands: several can stand behind each other. */
+export function buildShards(pane: Pane, y0: number, standing = false, gone: (loop: number[]) => boolean = () => false, layer = 0, z = 0): ShardSet {
   const { nx, ny, ox, oy, W, T } = pane;
   const loops = pane.faces().filter((l) => !gone(l)); // without what left in an earlier fall
   const walls: number[] = [];
@@ -149,23 +150,23 @@ export function buildShards(pane: Pane, y0: number, standing = false, gone: (loo
     if (shot) continue;
 
     const id = bodies.length;
-    const wx = cx - hx, wy = cy + y0, wz = -T / 2;
+    const wx = cx - hx, wy = cy + y0, wz = z - T / 2;
     const flat: number[] = [];
     for (const u of loop) flat.push(nx[u], ny[u]);
     const tri = earcut(flat);
     for (let i = 0; i < tri.length; i += 3) {
       for (let k = 0; k < 3; k++) {
         const u = loop[tri[i + k]];
-        faces.push(nx[u] - cx, ny[u] - cy, T / 2, 0, 0, 1, nx[u], ny[u], 0, -1e3, id, 0);
+        faces.push(nx[u] - cx, ny[u] - cy, T / 2, 0, 0, 1, nx[u], ny[u], 0, -1e3, id, layer * 10);
       }
       for (let k = 2; k >= 0; k--) {
         const u = loop[tri[i + k]];
-        faces.push(nx[u] + ox[u] - cx, ny[u] + oy[u] - cy, -T / 2, 0, 0, -1, nx[u], ny[u], 1, -1e3, id, 0);
+        faces.push(nx[u] + ox[u] - cx, ny[u] + oy[u] - cy, -T / 2, 0, 0, -1, nx[u], ny[u], 1, -1e3, id, layer * 10);
       }
     }
     for (let i = 0; i < n; i++) {
       const u = loop[i], v = loop[(i + 1) % n];
-      pushWall(walls, nx[u] - cx, ny[u] - cy, nx[v] - cx, ny[v] - cy, ox[u], oy[u], ox[v], oy[v], T / 2, T, nx[u], ny[u], nx[v], ny[v], -1e3, -1e3, id, 0, 1);
+      pushWall(walls, nx[u] - cx, ny[u] - cy, nx[v] - cx, ny[v] - cy, ox[u], oy[u], ox[v], oy[v], T / 2, T, nx[u], ny[u], nx[v], ny[v], -1e3, -1e3, id, layer * 10, 1);
     }
 
     const tiny = a < 1.5e-4;
@@ -214,4 +215,22 @@ export function pushWall(
   const C = [bx + obx, by + oby, zb, nx, ny, nz, ub, vb, 1, tb, id, k];
   const D = [ax + oax, ay + oay, zb, nx, ny, nz, ua, va, 1, ta, id, k];
   out.push(...A, ...B, ...C, ...A, ...C, ...D);
+}
+
+/** Several panes' shards as one set, for one fall: ids run on from one to the next. */
+export function mergeSets(parts: ShardSet[]): ShardSet {
+  let base = 0, nw = 0, nf = 0;
+  for (const p of parts) { nw += p.walls.length; nf += p.faces.length; }
+  const walls = new Float32Array(nw), faces = new Float32Array(nf);
+  const bodies: Body[] = [];
+  let ow = 0, of = 0;
+  for (const p of parts) {
+    walls.set(p.walls, ow); faces.set(p.faces, of);
+    for (let i = ow + 10; i < ow + p.walls.length; i += STRIDE) walls[i] += base;
+    for (let i = of + 10; i < of + p.faces.length; i += STRIDE) faces[i] += base;
+    ow += p.walls.length; of += p.faces.length;
+    bodies.push(...p.bodies);
+    base += p.count;
+  }
+  return { count: base, walls, faces, bodies, cut: [], kept: parts.some((p) => p.kept) };
 }
