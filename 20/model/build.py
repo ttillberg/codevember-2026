@@ -9,7 +9,7 @@ The names the web side reads (pod, door, plug.NNN, socket.NNN, hang, drip.NNN) a
 The form: the body's outline in the front view and in the side view, both traced off the sheet (sheet.py),
 stood up as two prisms and intersected, then cut by a few slanted planes where the sheet shows big facets.
 """
-import bpy, bmesh, math, os, sys
+import bpy, bmesh, math, os, sys, random
 from mathutils import Vector, Matrix
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -135,6 +135,12 @@ def on_x(az, el, p, y, z):
 # where the shield's stepped back edge runs down to its foot, side view: halfway along it, on the shield
 _y, _z = sheet.to_view('right', 370, 520)
 STEP = on_x(-58, -11, A, -_y, _z)
+# The shield is not flat: it folds down a line through the 03 (side view x 390), the part behind turning more
+# to the side, and again across its upper stepped part, which turns up towards the cap.
+_y, _z = sheet.to_view('right', 390, 460)
+FOLD = on_x(-58, -11, A, -_y, _z)
+_y, _z = sheet.to_view('right', 290, 300)
+UPPER = on_x(-68, -13, FOLD, -_y, _z)
 RIGHT = Vector((0.93, 0.05, 0.0))   # the right flank at its widest
 
 # Big facets, as (name, az, el, where): where is a point it goes through, or how far in from where the
@@ -143,6 +149,9 @@ FACETS = [
     ('strip', -25, 9, SEAM),      # left of the seam, down the front
     ('door', 30, 9, SEAM),       # right of the seam: the hatch
     ('shield_l', -58, -11, A),      # the 03 shield on the left flank
+    ('shield_l2', -68, -13, FOLD),  # its back part, turned a little more to the side
+    ('shield_l3', -78, 16, UPPER),  # its upper stepped part, turned up
+    ('skirt_lf', -42, -30, 0.03),   # a small facet low on the front corner
     ('shield_r', 85, 2, RIGHT),       # and on the right flank
     ('back_l', -152, 0, 0.12),    # the white strips down the back corners
     ('back_r', 152, 0, 0.12),
@@ -239,7 +248,7 @@ def cut_plates(bm):
         elif view == 'top':
             name = 'open' if f.normal.z > 0.85 else 'top_' + sector(c)
         else:
-            name = 'bottom' if f.normal.z < -0.85 else 'open' if sector(c) == 'b' else 'under_' + sector(c)
+            name = 'open' if f.normal.z < -0.85 or sector(c) == 'b' else 'under_' + sector(c)   # the bottom: machinery
         f[plate] = name.encode()
     return plate
 
@@ -338,7 +347,19 @@ INK = mat('ink', (0.022, 0.023, 0.026), 0.6)
 BLOOD = mat('blood', (0.16, 0.004, 0.006), 0.14)
 SHROUD = mat('shroud', (0.55, 0.5, 0.42), 0.75)
 HOSE = mat('hose', (0.03, 0.032, 0.035), 0.5, 0.15)
-LED = mat('led', (0.02, 0.01, 0.0), 0.4, 0.0, ((1.0, 0.62, 0.25), 8.0))
+def frosted(name):
+    """dirty frosted glass: lets light through, blurred, and little else"""
+    m = mat(name, (0.62, 0.64, 0.6), 0.62)
+    b = next(n for n in m.node_tree.nodes if n.type == 'BSDF_PRINCIPLED')
+    b.inputs['Transmission Weight'].default_value = 1.0
+    b.inputs['IOR'].default_value = 1.45
+    return m
+FROST = frosted('frost')
+LED_RED = mat('led_red', (0.02, 0.0, 0.0), 0.4, 0.0, ((1.0, 0.08, 0.04), 3.0))
+LED_GREEN = mat('led_green', (0.0, 0.02, 0.0), 0.4, 0.0, ((0.2, 1.0, 0.35), 2.5))
+DARK = mat('dark', (0.012, 0.012, 0.014), 0.7)
+STEEL = mat('steel', (0.2, 0.205, 0.21), 0.38, 0.85)   # clamps and collars, catching the light
+LED = mat('led', (0.02, 0.01, 0.0), 0.4, 0.0, ((1.0, 0.55, 0.18), 3.0))   # warm, not burnt white
 
 
 def bevel(o, width):
@@ -396,11 +417,11 @@ class Soup:
         self.bm.faces.new(a); self.bm.faces.new(list(reversed(b)))
 
 
-    def tube(self, pts, r, seg=10):
-        """a hose through some points"""
+    def tube(self, pts, r, seg=10, smooth=True):
+        """a hose through some points (already smooth, or smoothed here)"""
         pts = [Vector(p) for p in pts]
-        path = []
-        for i in range(len(pts) - 1):
+        path = [] if smooth else pts[:-1]
+        for i in range(len(pts) - 1 if smooth else 0):
             p0, p1, p2, p3 = pts[max(i - 1, 0)], pts[i], pts[i + 1], pts[min(i + 2, len(pts) - 1)]
             for j in range(6):
                 t = j / 6
@@ -419,13 +440,20 @@ class Soup:
         self.bm.faces.new(list(reversed(rings[0]))); self.bm.faces.new(rings[-1])
 
 
-def block(soup, view, x0, y0, x1, y1, out, depth=None):
-    """a box over a pixel rectangle of a view, its face `out` metres proud of the surface there"""
+def block(soup, view, x0, y0, x1, y1, out, depth=None, tilt=0.0, flush=False):
+    """a box over a pixel rectangle of a view, its face `out` metres proud of the surface there, turned by
+    `tilt` (radians, anticlockwise as the view sees it) about its middle. Square to the view, or with `flush`
+    laid in the surface's own plane, where the surface is turned away from the view"""
     h = hit(view, (x0 + x1) / 2, (y0 + y1) / 2)
     if not h: return None
     k = sheet.scale(view)
     depth = depth or out + 0.06
-    soup.box(((x1 - x0) * k, (y1 - y0) * k, depth), h[0] + VIEW_DIRS[view] * (out - depth / 2), view_frame(view))
+    if flush:
+        soup.box(((x1 - x0) * k, (y1 - y0) * k, depth), h[0] + h[1] * (out - depth / 2),
+                 frame_at(h[1]).to_4x4() @ Matrix.Rotation(tilt, 4, 'Z'))
+    else:
+        soup.box(((x1 - x0) * k, (y1 - y0) * k, depth), h[0] + VIEW_DIRS[view] * (out - depth / 2),
+                 view_frame(view) @ Matrix.Rotation(tilt, 4, 'Z'))
     return h
 
 
@@ -442,6 +470,180 @@ def pipe(soup, view, pts, r, out):
 
 # ---------------------------------------------------------------- machinery: the open back, the flanks behind the shields, the seam
 
+def spline(pts, n=8):
+    """Catmull-Rom through points"""
+    pts = [Vector(p) for p in pts]
+    out = []
+    for i in range(len(pts) - 1):
+        p0, p1, p2, p3 = pts[max(i - 1, 0)], pts[i], pts[i + 1], pts[min(i + 2, len(pts) - 1)]
+        for j in range(n):
+            t = j / n
+            out.append(0.5 * ((2 * p1) + (p2 - p0) * t + (2 * p0 - 5 * p1 + 4 * p2 - p3) * t * t + (3 * p1 - p0 - 3 * p2 + p3) * t ** 3))
+    out.append(pts[-1])
+    return out
+
+
+EVERY = 0.28   # a collar on every hose, this far apart
+
+
+def line(hose, steel, mech, path, r, cap_start=True, cap_end=True):
+    """A hose, fitted the one way every hose on the pod is: along a path of world points; each end it has goes
+    into a steel coupling on a foot down to the surface, and a collar every EVERY metres, bolted to the surface
+    by a bracket. A path that leaves the pod (to a cable) has no coupling at that end."""
+    if len(path) < 2: return
+    dense = spline(path, 6)
+    hose.tube(dense, r, 10, smooth=False)
+    def rot(d): return d.normalized().to_track_quat('Z', 'Y').to_matrix().to_4x4()
+    def foot(p, w):
+        loc, n, i, dist = BVH.find_nearest(p)
+        if loc is None or dist < 1e-3: return
+        d = loc - p
+        mech.box((w, w, d.length + 0.02), (p + loc) / 2, rot(d))
+    for cap, end, nxt in ((cap_start, dense[0], dense[1]), (cap_end, dense[-1], dense[-2])):
+        if not cap: continue
+        d = (end - nxt).normalized()
+        steel.box((r * 2.9, r * 2.9, 0.1), end + d * 0.03, rot(d))
+        steel.box((r * 3.4, r * 3.4, 0.025), end + d * 0.09, rot(d))
+        foot(end + d * 0.03, r * 2.2)
+    walked, next_at = 0.0, EVERY * 0.6
+    for a, b in zip(dense, dense[1:]):
+        seg = (b - a).length
+        while walked + seg >= next_at:
+            t = (next_at - walked) / seg
+            p = a.lerp(b, t)
+            steel.cyl(r + 0.02, p - (b - a).normalized() * 0.03, p + (b - a).normalized() * 0.03, 8)
+            foot(p, 0.03)
+            next_at += EVERY
+        walked += seg
+
+
+def surface_path(view, pts, out, step=25):
+    """pixels of a view to world points `out` metres off the surface under them. The pixel line is sampled
+    every `step` pixels, so a hose drawn straight in the view follows the rounded surface instead of cutting
+    through it between two far points"""
+    dense = []
+    for (x0, y0), (x1, y1) in zip(pts, pts[1:]):
+        n = max(1, int(math.hypot(x1 - x0, y1 - y0) / step))
+        dense += [(x0 + (x1 - x0) * i / n, y0 + (y1 - y0) * i / n) for i in range(n)]
+    dense.append(pts[-1])
+    hits = [h for h in (hit(view, *q) for q in dense) if h]
+    path = [h[0] + h[1] * out for h in hits]
+    # the surface folds; a hose does not: ease out the kinks the folds put in it, the ends held
+    for _ in range(4):
+        path = path[:1] + [(path[i - 1] + path[i] * 2 + path[i + 1]) / 4 for i in range(1, len(path) - 1)] + path[-1:]
+    return path
+
+
+def run(hose, steel, view, pts, r, out):
+    """a hose along pixels of a view that comes out of the body and goes back into it: both ends dive under the
+    surface, through a steel grommet, so no end hangs in the air"""
+    hits = [h for h in (hit(view, *q) for q in pts) if h]
+    if len(hits) < 2: return
+    path = [h[0] + h[1] * out for h in hits]
+    a, b = hits[0], hits[-1]
+    hose.tube([a[0] - a[1] * 0.06] + path + [b[0] - b[1] * 0.06], r)
+    for p, n in ((a[0], a[1]), (b[0], b[1])):
+        steel.cyl(r + 0.018, p - n * 0.01, p + n * (out + r * 0.6), 12)
+
+
+def collar(soup, view, x, y, r, out, length, seg=8):
+    """a ring round a hose that runs up the surface at pixel (x, y): its axis the surface's up"""
+    h = hit(view, x, y)
+    if not h: return
+    n = h[1]
+    up = Vector((0, 0, 1)); up = (up - n * up.dot(n)).normalized()
+    c = h[0] + n * out
+    soup.cyl(r, c - up * length / 2, c + up * length / 2, seg)
+
+
+def boss(soup, view, x, y, r_px, out):
+    """a round fitting standing out of the surface at pixel (x, y), a ring round its face"""
+    h = hit(view, x, y)
+    if not h: return
+    k = sheet.scale(view)
+    p, n = h[0], h[1]
+    soup.cyl(r_px * k, p, p + n * out, 16)
+    soup.cyl(r_px * k * 0.6, p + n * out, p + n * (out + 0.015), 16)
+
+
+def greebles(view, hoses, m, panel, lamps, hose, steel, tilt, seed):
+    """The machinery in a flank's open part, behind the shield, in layers: base plates under everything, ribbed
+    panels, boxes, round fittings, thin hoses, a few lamps. Every piece lies in the surface's own plane, its
+    whole footprint on open surface (never on a plate, never over an edge), and anything that stands taller
+    than the base keeps clear of the hoses. Placed by a seeded random, so every build is the same."""
+    rng = random.Random(seed)
+    x_lo, x_hi = (95, 450) if view == 'right' else (250, 605)
+    y_lo, y_hi = 240, 815
+    def corners(cx, cy, w, h, t, grow=0.0):
+        c, s_ = math.cos(t), math.sin(t)
+        out = []
+        for dx, dy in ((-1, -1), (1, -1), (1, 1), (-1, 1), (0, -1), (0, 1), (-1, 0), (1, 0)):
+            dx, dy = dx * (w / 2 + grow), dy * (h / 2 + grow)
+            out.append((cx + dx * c + dy * s_, cy - dx * s_ + dy * c))
+        return out
+    def is_open(x, y):
+        h = hit(view, x, y)
+        return h is not None and h[3] == 'open'
+    def seg_d(px, py, ax, ay, bx, by):
+        vx, vy = bx - ax, by - ay
+        t = max(0.0, min(1.0, ((px - ax) * vx + (py - ay) * vy) / (vx * vx + vy * vy or 1)))
+        return math.hypot(px - (ax + vx * t), py - (ay + vy * t))
+    def hose_d(x, y):
+        return min((seg_d(x, y, *a, *b) for pts in hoses for a, b in zip(pts, pts[1:])), default=1e9)
+    taken = []
+    def fits(cx, cy, w, h, t, clear_hoses, layer):
+        pts = corners(cx, cy, w, h, t, 5)
+        if not all(is_open(x, y) for x, y in pts + [(cx, cy)]): return False
+        if clear_hoses and min(hose_d(x, y) for x, y in pts + [(cx, cy)]) < 14: return False
+        for (ox, oy, orad, ol) in taken:
+            if ol == layer and math.hypot(cx - ox, cy - oy) < orad + math.hypot(w, h) / 2 * 0.8: return False
+        return True
+    def place(n, size, layer, clear_hoses, tries=400):
+        got = []
+        for _ in range(tries):
+            if len(got) >= n: break
+            w, h = size()
+            t = tilt if rng.random() < 0.7 else 0.0
+            cx, cy = rng.uniform(x_lo, x_hi), rng.uniform(y_lo, y_hi)
+            if fits(cx, cy, w, h, t, clear_hoses, layer):
+                taken.append((cx, cy, math.hypot(w, h) / 2, layer))
+                got.append((cx, cy, w, h, t))
+        return got
+    def box(soup, cx, cy, w, h, t, out, depth):
+        block(soup, view, cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2, out, depth, t, flush=True)
+    # base plates, under everything (the hoses run over them)
+    for cx, cy, w, h, t in place(16, lambda: (rng.uniform(40, 75), rng.uniform(60, 130)), 0, False):
+        box(m, cx, cy, w, h, t, 0.022, 0.05)
+    # ribbed panels
+    for cx, cy, w, h, t in place(3, lambda: (rng.uniform(28, 38), rng.uniform(90, 130)), 1, True):
+        box(panel, cx, cy, w, h, t, 0.045, 0.05)
+        c, s_ = math.cos(t), math.sin(t)
+        for j in range(6):
+            dy = -h / 2 + h * (j + 0.5) / 6
+            box(m, cx + dy * s_, cy + dy * c, w + 6, 4, t, 0.056, 0.03)
+    # boxes, some of them grey plates
+    for cx, cy, w, h, t in place(26, lambda: (rng.uniform(14, 40), rng.uniform(14, 52)), 1, True):
+        box(panel if rng.random() < 0.25 else m, cx, cy, w, h, t, rng.uniform(0.04, 0.085), 0.08)
+    # round fittings
+    for cx, cy, w, h, t in place(16, lambda: (12, 12), 2, True):
+        boss(steel, view, cx, cy, rng.uniform(4, 8), rng.uniform(0.045, 0.075))
+    # thin hoses along the diagonal, fitted like every other hose
+    n = 0
+    for _ in range(200):
+        if n >= 3: break
+        L = rng.uniform(70, 170)
+        x0, y0 = rng.uniform(x_lo, x_hi), rng.uniform(y_lo, y_hi - L)
+        x1, y1 = x0 + L * math.sin(-tilt) * -1, y0 + L * math.cos(tilt)
+        pts = [(x0 + (x1 - x0) * i / 6, y0 + (y1 - y0) * i / 6) for i in range(7)]
+        if all(is_open(x, y) and hose_d(x, y) > 20 for x, y in pts):
+            line(hose, steel, m, surface_path(view, [pts[0], pts[-1]], 0.05), 0.016)
+            hoses.append(pts)
+            n += 1
+    # a few lamps
+    for cx, cy, w, h, t in place(4, lambda: (5, 9), 3, True):
+        box(lamps, cx, cy, w, h, t, 0.06, 0.02)
+
+
 def mirror(pts, w=555):
     """the back view's pixels, the other side"""
     return [(w - x, y) for x, y in pts]
@@ -450,60 +652,116 @@ def mirror(pts, w=555):
 def machinery():
     """everything that is not shell, where the sheet has it. Returns the two hoses' tops, which go on up to the
     ceiling as cables."""
-    m, lamps, white, plate_, hose = Soup(), Soup(), Soup(), Soup(), Soup()
-    # the back. Plates on a spine: the block with two lamps, the middle plate, the maker's plate, the foot
-    for rect, out in (((198, 345, 368, 470), 0.10), ((228, 470, 342, 620), 0.07), ((228, 620, 342, 692), 0.085),
-                      ((205, 705, 355, 765), 0.08)):
+    m, lamps, white, plate_, hose, steel = Soup(), Soup(), Soup(), Soup(), Soup(), Soup()
+    # the back. Plates on a spine: the block with two lamps, the maker's plate (tall, a seam across it), the foot
+    for rect, out in (((198, 345, 368, 470), 0.10), ((231, 474, 339, 690), 0.08), ((210, 712, 354, 786), 0.085)):
         block(plate_, 'back', *rect, out)
-    # the spine, the manifold up top, clamp boxes, a bar across, brackets in the pockets either side, the base
-    for rect, out in (((240, 140, 320, 700), 0.035), ((205, 95, 360, 150), 0.06), ((150, 245, 215, 292), 0.085),
-                      ((350, 245, 420, 292), 0.085), ((112, 330, 455, 344), 0.05), ((66, 420, 120, 436), 0.03),
-                      ((66, 560, 120, 576), 0.03), ((445, 420, 499, 436), 0.03), ((445, 560, 499, 576), 0.03),
-                      ((130, 712, 205, 775), 0.05), ((360, 712, 435, 775), 0.05), ((180, 690, 385, 704), 0.04)):
+    block(plate_, 'back', 229, 622, 341, 632, 0.09)
+    # the spine, three ribs on it above the block, the manifold up top, a bar across, brackets in the pockets,
+    # blocks either side of the foot
+    for rect, out in (((240, 140, 320, 700), 0.035), ((205, 95, 360, 150), 0.06), ((150, 330, 405, 344), 0.05),
+                      ((120, 740, 205, 798), 0.05), ((350, 740, 435, 798), 0.05),
+                      ((180, 690, 385, 704), 0.04), ((241, 240, 259, 345), 0.075), ((271, 240, 289, 345), 0.08),
+                      ((301, 240, 319, 345), 0.075)):
         block(m, 'back', *rect, out)
-    # hoses: two heavy ones from the top down, bending in to the foot, thinner ones down the pockets, two from
-    # the manifold into the block
+    # round fittings either side of the spine's head, bosses either side of the maker's plate
+    for x, y, r, out in ((234, 219, 18, 0.07), (354, 219, 18, 0.07), (207, 636, 14, 0.1), (358, 636, 14, 0.1)):
+        boss(steel, 'back', x, y, r, out)
+    # hoses: two pairs of heavy ones from the top down, sleeved in rings, bending in to the foot; thinner ones
+    # down the pockets, two from the manifold into the block
     tops = []
-    for pts, r, out in (([(185, 112), (185, 400), (185, 630), (200, 685), (240, 700)], 0.045, 0.085),
-                        ([(140, 230), (140, 640), (152, 690), (185, 705)], 0.026, 0.045),
-                        ([(160, 240), (160, 620)], 0.018, 0.06),
-                        ([(258, 150), (258, 345)], 0.022, 0.07)):
+    for x, dx in ((162, 0), (186, 6)):
+        pts = [(x, 200), (x, 400), (x, 630), (x + 14 + dx, 684), (x + 40 + dx, 698)]
         for side in (pts, mirror(pts)):
-            path = pipe(hose, 'back', side, r, out)
-            if r > 0.04 and path: tops.append((path[0], r))
-    for y in (265, 420, 560):   # clamps on the heavy ones
-        for x in (185, 370):
-            block(m, 'back', x - 16, y - 9, x + 16, y + 9, 0.085 + 0.045 + 0.012)
-    for rect, out in (((204, 378, 216, 420), 0.102), ((348, 378, 360, 420), 0.102), ((400, 250, 410, 282), 0.09),
-                      ((104, 346, 113, 356), 0.065), ((442, 346, 451, 356), 0.065)):
+            # from the back the top of the pod slopes away, so a hose drawn up to the top edge would dive
+            # into it: it runs up the back and leaves it straight up, to its cable; at the foot, a coupling
+            path = surface_path('back', side, 0.09)
+            if len(path) < 2: continue
+            up = path[0] + Vector((0, 0, 0.42))
+            line(hose, steel, m, [up] + path, 0.04, cap_start=False)
+            tops.append((up, 0.04))
+    for pts, r, out in (([(140, 240), (140, 640), (150, 684), (172, 700)], 0.026, 0.05),
+                        ([(258, 205), (258, 340)], 0.022, 0.07)):
+        for side in (pts, mirror(pts)):
+            line(hose, steel, m, surface_path('back', side, out), r)
+    # up top a block that holds each pair, with a lamp in it
+    for x0, x1 in ((150, 200), (355, 405)):
+        block(steel, 'back', x0, 250, x1, 282, 0.15)
+    # lamps: two on the block, one in the right clamp, little ones on the shell's steps, specks in the pockets
+    for rect, out in (((204, 378, 216, 420), 0.102), ((348, 378, 360, 420), 0.102), ((396, 252, 406, 280), 0.152),
+                      ((187, 794, 197, 802), 0.052), ((367, 794, 377, 802), 0.052)):
         block(lamps, 'back', *rect, out, 0.02)
-    # the flanks, behind the shields: a heavy hose down and bending forward at the foot, a thin one by it,
+    for x, y in ((180, 558), (180, 594), (192, 678), (360, 558), (366, 594), (390, 630), (130, 500), (425, 500)):
+        block(lamps, 'back', x - 3, y - 3, x + 3, y + 3, 0.04, 0.01)
+    # the flanks, behind the shields: two hoses side by side down near the back edge, straight and steep,
+    # then a sharp bend forward into a box at the foot (the inner one comes straight down from above first),
     # boxes, clamps, two lamps. The side view's front is on its right, so the other flank is drawn the other way.
     for view, rects, hoses, clamps, lights in (
-        ('right', [((200, 440, 245, 560), 0.05), ((250, 470, 300, 580), 0.045), ((205, 735, 330, 790), 0.035), ((128, 250, 178, 330), 0.045)],
-         [([(130, 270), (140, 420), (150, 560), (200, 650), (280, 690), (340, 670)], 0.042, 0.05),
-          ([(112, 300), (118, 520), (160, 660), (240, 710)], 0.026, 0.03)],
-         [(128, 380, 158, 392), (140, 520, 170, 532)], [(315, 733, 332, 746), (118, 265, 128, 280)]),
-        ('left', [((430, 430, 480, 560), 0.05), ((470, 470, 525, 590), 0.045), ((400, 735, 520, 790), 0.035), ((545, 250, 592, 330), 0.045)],
-         [([(565, 250), (565, 420), (560, 560), (510, 650), (430, 690), (370, 680)], 0.042, 0.05),
-          ([(588, 300), (590, 520), (545, 660), (470, 710)], 0.026, 0.03)],
-         [(550, 380, 580, 392), (545, 520, 575, 532)], [(388, 733, 405, 746), (590, 265, 600, 280)])):
-        for rect, out in rects: block(m, view, *rect, out)
-        for pts, r, out in hoses: pipe(hose, view, pts, r, out)
-        for rect in clamps: block(m, view, *rect, 0.1)
-        for rect in lights: block(lamps, view, *rect, 0.05, 0.02)
+        ('right', [((292, 680, 360, 745), 0.11)],
+         [([(140, 366), (205, 640), (221, 677), (240, 692), (330, 722)], 0.036, 0.06),
+          ([(157, 253), (155, 330), (168, 385), (238, 632), (254, 668), (272, 681), (326, 698)], 0.036, 0.06)],
+         [(128, 380, 158, 392), (140, 520, 170, 532)], [(315, 733, 332, 746)]),
+        ('left', [((340, 680, 408, 745), 0.11)],
+         [([(560, 366), (495, 640), (479, 677), (460, 692), (370, 722)], 0.036, 0.06),
+          ([(543, 253), (545, 330), (532, 385), (462, 632), (446, 668), (428, 681), (374, 698)], 0.036, 0.06)],
+         [(550, 380, 580, 392), (545, 520, 575, 532)], [(388, 733, 405, 746)])):
+        # the boxes lean with the shield's stepped edge, which runs down towards the front a third off upright
+        tilt = 0.57 if view == 'right' else -0.57
+        for rect, out in rects: block(m, view, *rect, out, None, 0.0, flush=True)
+        greebles(view, [pts for pts, r, out in hoses], m, plate_, lamps, hose, steel, tilt, 20 if view == 'right' else 21)
+        for pts, r, out in hoses: line(hose, steel, m, surface_path(view, pts, out), r)
+        # (clamps out at the flank's back edge stood off the side: left off)
+        for rect in lights: block(lamps, view, *rect, 0.05, 0.02, flush=True)
     # the seam: a white latch across it with a lamp, a smaller block, dark things in it
     block(white, 'front', 376, 385, 424, 472, 0.11)
     block(white, 'front', 406, 520, 436, 575, 0.09)
     for rect, out in (((398, 150, 418, 260), 0.03), ((418, 620, 440, 700), 0.03), ((404, 300, 422, 370), 0.05)):
         block(m, 'front', *rect, out)
     block(lamps, 'front', 384, 398, 398, 410, 0.112, 0.02)
-    m.done('mech', MECH, pod, None, 0.006)
+    m.done('mech', MECH, pod, None, 0.008)
     hose.done('hoses', HOSE, pod, None, 0)
+    steel.done('clamps', STEEL, pod, None, 0.004)
     lamps.done('lamps', LED, pod, None, 0)
     white.done('blocks', BLOCK, pod, None, 0.008)
     plate_.done('spine_plate', PANEL, pod, None, 0.006)
     return tops
+
+
+# ---------------------------------------------------------------- a window in the hatch
+
+def window():
+    """Not on the sheet: a thick window high in the hatch, dirty frosted glass in a steel frame. Behind it a dark
+    board of diodes, most off, a few lit; through the glass only their glow comes, blurred. Built flat in the
+    hatch's own plane, around where the front view's pixel (478, 278) lands."""
+    T_DOOR = THICK['door']
+    h = hit('front', 478, 278)
+    F = frame_at(h[1])
+    R = F.to_4x4()
+    k = sheet.scale('front') / abs(h[1].dot(VIEW_DIRS['front']))   # the hatch is turned: a pixel is wider on it
+    W, H = 52 * sheet.scale('front') / 0.87, 211 * sheet.scale('front')   # the glass, metres
+    def at(u, v, w): return h[0] + F @ Vector((u, v, T_DOOR + w))
+    frame, back, glass = Soup(), Soup(), Soup()
+    lit = {'amber': Soup(), 'red': Soup(), 'green': Soup(), 'off': Soup()}
+    b = 0.045                                  # the frame's width
+    for (cu, cv, su, sv) in ((0, (H + b) / 2, W + 2 * b, b), (0, -(H + b) / 2, W + 2 * b, b),
+                             (-(W + b) / 2, 0, b, H), ((W + b) / 2, 0, b, H)):
+        frame.box((su, sv, 0.07), at(cu, cv, 0.015), R)
+    back.box((W, H, 0.02), at(0, 0, -0.004), R)
+    glass.box((W, H, 0.016), at(0, 0, 0.034), R)
+    # the board: three columns of diodes; which are lit is fixed, not random, so every build is the same
+    pattern = 'aoaoooaoo' 'ooraoooao' 'aoogoaooa' 'oaooaoroo' 'ooaoooaoo' 'aooaoogoa' 'oooaoaooo' 'aoooraooa' 'ooaoooaoo'
+    i = 0
+    for row in range(9):
+        for col in range(3):
+            u, v = (col - 1) * W * 0.3, H / 2 - H * (row + 0.5) / 9
+            kind = {'a': 'amber', 'r': 'red', 'g': 'green', 'o': 'off'}[pattern[i % len(pattern)]]
+            lit[kind].box((0.016, 0.016, 0.01), at(u, v, 0.009), R)
+            i += 1
+    frame.done('door_frame', STEEL, door, DOOR_INV, 0.006)
+    back.done('door_board', DARK, door, DOOR_INV, 0)
+    for kind, material in (('amber', LED), ('red', LED_RED), ('green', LED_GREEN), ('off', MECH)):
+        lit[kind].done('door_diodes_' + kind, material, door, DOOR_INV, 0)
+    glass.done('door_window', FROST, door, DOOR_INV, 0.003)
 
 
 # ---------------------------------------------------------------- the deck on top, where the cables go in
@@ -533,14 +791,25 @@ def deck():
 # ---------------------------------------------------------------- under it
 
 def underside():
-    m = Soup()
-    c = sum((f.calc_center_median() for f in hull.faces if plate_of(f) == 'bottom'), Vector())
-    n = sum(1 for f in hull.faces if plate_of(f) == 'bottom')
-    c /= max(1, n)
+    """the bottom is open machinery: a frame round a sunk block, ribs, a ring of boxes, hoses under it"""
+    m, hose, lamps = Soup(), Soup(), Soup()
+    under = [f for f in hull.faces if plate_of(f) == 'open' and f.normal.z < -0.85]
+    c = sum((f.calc_center_median() for f in under), Vector()) / max(1, len(under))
     zb = min(v.co.z for v in hull.verts)
-    m.box((0.3, 0.16, 0.05), Vector((c.x, c.y - 0.05, zb - 0.015)))
-    m.done('under', MECH, pod, None, 0.004)
-    return Vector((c.x - 0.15, c.y + 0.1, zb - 0.07))
+    m.box((0.62, 0.5, 0.06), Vector((c.x, c.y, zb - 0.01)))            # the frame
+    m.box((0.34, 0.24, 0.05), Vector((c.x, c.y - 0.02, zb - 0.055)))    # the block sunk in it
+    for dx in (-0.2, -0.07, 0.07, 0.2):                                  # ribs across
+        m.box((0.035, 0.62, 0.04), Vector((c.x + dx, c.y, zb - 0.025)))
+    for a, rx, ry in ((0.6, 0.42, 0.32), (2.5, 0.42, 0.32), (3.8, 0.4, 0.3), (5.6, 0.4, 0.3)):
+        m.box((0.14, 0.12, 0.08), Vector((c.x + rx * math.cos(a), c.y + ry * math.sin(a), zb + 0.0)))
+    for x in (-0.3, 0.3):
+        hose.tube([Vector((c.x + x, c.y - 0.3, zb + 0.02)), Vector((c.x + x * 1.05, c.y, zb - 0.03)), Vector((c.x + x, c.y + 0.3, zb + 0.02))], 0.035)
+    for x in (-0.11, 0.11):
+        lamps.box((0.05, 0.02, 0.012), Vector((c.x + x, c.y - 0.15, zb - 0.083)))
+    m.done('under', MECH, pod, None, 0.006)
+    hose.done('under_hoses', HOSE, pod, None, 0)
+    lamps.done('under_lamps', LED, pod, None, 0)
+    return Vector((c.x - 0.15, c.y + 0.1, zb - 0.09))
 
 
 # ---------------------------------------------------------------- markings
@@ -621,7 +890,7 @@ def lay(ink, view, anchor, items, shift=0, out=None):
         M = frame_at(g[1]).to_4x4(); M.translation = g[0] + g[1] * (th + LIFT)
         return M
     for kind, *a in items:
-        at = place(*((a[1], a[2]) if kind == 'text' else (a[0], a[3]) if kind in ('rect', 'icon', 'bars', 'slash') else (a[0], a[1])))
+        at = place(*((a[1], a[2]) if kind == 'text' else (a[0], a[3]) if kind in ('rect', 'icon', 'bars', 'slash', 'tri', 'vee') else (a[0], a[1])))
         if at is None: continue
         if kind == 'text':
             body, x, y, cap, bold = a
@@ -631,6 +900,12 @@ def lay(ink, view, anchor, items, shift=0, out=None):
         elif kind == 'split': ink.split_disc(0, 0, a[2] * k, at @ Matrix.Rotation(0.45, 4, 'Z'))
         elif kind == 'icon': ink.icon(0, 0, (a[2] - a[0]) * k, (a[3] - a[1]) * k, at)
         elif kind == 'bars': ink.bars(0, 0, (a[2] - a[0]) * k, (a[3] - a[1]) * k, at, a[4])
+        elif kind == 'tri':
+            w, h = (a[2] - a[0]) * k, (a[3] - a[1]) * k
+            ink.poly([(0, 0), (w, 0), (w / 2, h)], at)
+        elif kind == 'vee':
+            w, h, t = (a[2] - a[0]) * k, (a[3] - a[1]) * k, (a[2] - a[0]) * k * 0.18
+            ink.poly([(0, h), (t, h), (w / 2, t * 1.4), (w - t, h), (w, h), (w / 2, 0)], at)
         elif kind == 'slash':
             x0, y0, x1, y1 = a
             M = at
@@ -662,7 +937,9 @@ def markings():
     # low on the right of the front
     lay(ink, 'front', (505, 728), [('text', 'CONTAIN\nPRESERVE\nITERATE', 505, 728, 10, 0.006), ('slash', 476, 722, 486, 758)])
     # the maker's plate on the spine
-    lay(ink, 'back', (245, 672), [('text', 'UEC', 245, 672, 22, 0.012)], out=0.085)
+    lay(ink, 'back', (245, 672), [('text', 'UEC', 245, 672, 22, 0.012)], out=0.08)
+    lay(ink, 'back', (240, 500), [('tri', 240, 486, 254, 500), ('tri', 316, 486, 330, 500)], out=0.08)
+    lay(ink, 'back', (270, 760), [('vee', 270, 728, 294, 752)], out=0.085)
     ink.done('marks', INK, pod)
     # on the hatch
     ink = Marks()
@@ -890,7 +1167,7 @@ def bake_paint(objs):
         px = np.empty(SIZE * SIZE * 4, np.float32); img.pixels.foreach_get(px)
         bpy.data.images.remove(img)
         return px.reshape(SIZE, SIZE, 4)[:, :, :3]
-    flat = [o for o in col.objects if o.name in ('marks', 'door_marks', 'blood', 'door_glass')]
+    flat = [o for o in col.objects if o.name in ('marks', 'door_marks', 'blood', 'door_window')]
     for o in flat: o.hide_render = True  # a hair above the plate, they would shadow it black
     c = bake('b_colour', colour)
     r = bake('b_rough', rough)[:, :, :1]
@@ -946,6 +1223,7 @@ def freeze(objs, name, parent):
 result = {'faces': len(hull.faces), 'plates': sorted(ALL)}
 if STAGE != 'hull':
     hose_tops = machinery()
+    window()
     ports, top = deck()
     ports += [(p, Vector((0, 0.25, 1)).normalized(), r) for p, r in hose_tops]
     under = underside()

@@ -89,12 +89,9 @@ PLATES = {
         ('skirt_rs', [(95, 712), (330, 660), (405, 620), (425, 700), (480, 835), (300, 840), (125, 820), (75, 760),
                       (62, 700)]),
     ],
-    'back': [
-        ('back_r', [(70, 185), (130, 100), (212, 92), (212, 140), (140, 190), (108, 330), (140, 385), (70, 610),
-                    (48, 660), (10, 590), (15, 420), (35, 300)]),
-        ('back_l', [(485, 185), (425, 100), (343, 92), (343, 140), (415, 190), (447, 330), (415, 385), (485, 610),
-                    (507, 660), (545, 590), (540, 420), (520, 300)]),
-    ],
+    # (white strips down the back corners, as the sheet's back view has them, were tried and taken off: they
+    # stood off the back like wings. The back is machinery out to the flanks' plates.)
+    'back': [],
 }
 # What a piece of surface is when no outline of its view takes it.
 OTHERWISE = {'front': 'panel_m', 'right': 'open', 'left': 'open', 'back': 'open'}
