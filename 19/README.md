@@ -8,7 +8,7 @@ A cube of layered sandstone, 128 voxels a side, worn down with three tools: rain
 pnpm -C 19 dev   # https://localhost:5119, self-signed: WebGPU on a phone needs a secure context
 ```
 
-`1` scratch, `2` rain, `3` hose, `4` wind, `R` a new block. The scratch is in hand from the start. The bar is `SCRATCH RAIN HOSE WIND | SIZE FORCE` (day 07's, `src/bar.ts`): four tools, then two knobs, the same two for every tool, each showing and setting the value of the tool in hand. Each tool keeps its own size and force, from one visit to the next.
+`1` rain, `2` wind, `3` hose, `4` scratch, `R` a new block. The rain is in hand from the start. The bar is `RAIN WIND HOSE SCRATCH | SIZE FORCE` (day 07's, `src/bar.ts`): four tools, then two knobs, the same two for every tool, each showing and setting the value of the tool in hand. Each tool keeps its own size and force, from one visit to the next.
 
 - **Size**: the brush. Hold the knob and drag, up or right, a gauge shows while you hold; or tap it to pin the gauge and drag on that. Or hold cmd (ctrl) and drag sideways on the scene: a ring shows the brush and stays where the drag began, only its size changes (day 05's).
 - **Force**: how hard the tool works. The knob, or hold shift and cmd (ctrl) and drag sideways on the scene, and the knob's gauge shows while you drag. It starts on 75 (the scratch on 60); 100 is ten times what 40 is. For rain the hard work is the wearing, not the amount of water (ten times the water only drowns the rock), so its force sets how fast running water wears.

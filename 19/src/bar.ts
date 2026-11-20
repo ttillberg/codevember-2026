@@ -1,6 +1,6 @@
 // The tool bar, after day 07's: icons in a frosted pill under the scene.
 //
-//   SCRATCH  RAIN  HOSE  WIND  |  SIZE  FORCE
+//   RAIN  WIND  HOSE  SCRATCH  |  SIZE  FORCE
 //
 // A tap on a tool picks it. Size and force are knobs, the same two for every tool, each showing
 // and setting the value of the tool in hand: hold the knob and drag, up or right, and a tall

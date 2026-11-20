@@ -291,7 +291,7 @@ function overRock(o: V3) {
 
 // ---------- pointer and tools ----------
 
-let tool = TOOL.SCRATCH; // the one in hand from the start
+let tool = TOOL.RAIN; // the one in hand from the start
 let hover = false;
 let held = false;
 let turning = false;
@@ -316,10 +316,10 @@ const sizeRing = document.querySelector<HTMLElement>('.size-ring')!;
 type Tool = { id: number; name: string; icon: string; min: number; max: number; start: number; force: number; rate(power: number): number };
 // in the order of the bar, which is the order of the keys 1 to 4
 const TOOLS: Tool[] = [
-  { id: TOOL.SCRATCH, name: 'Scratch', icon: ICONS.scratch, min: 1.5, max: 14, start: 11.2, force: 0.6, rate: (p) => P.scratchRate * p }, // big (90 on the knob) and not so hard
-  { id: TOOL.RAIN, name: 'Rain', icon: ICONS.rain, min: 5, max: 45, start: 13, force: 0.75, rate: (p) => P.rainRate * p ** 0.3 },
-  { id: TOOL.HOSE, name: 'Hose', icon: ICONS.water, min: 2, max: 16, start: 7, force: 0.75, rate: (p) => P.hoseRate * p },
+  { id: TOOL.RAIN, name: 'Rain', icon: ICONS.rain, min: 5, max: 45, start: 24, force: 0.75, rate: (p) => P.rainRate * p ** 0.3 },
   { id: TOOL.WIND, name: 'Wind', icon: ICONS.wind, min: 12, max: 90, start: 40, force: 0.75, rate: (p) => P.windRate * p },
+  { id: TOOL.HOSE, name: 'Hose', icon: ICONS.water, min: 2, max: 16, start: 7, force: 0.75, rate: (p) => P.hoseRate * p },
+  { id: TOOL.SCRATCH, name: 'Scratch', icon: ICONS.scratch, min: 1.5, max: 14, start: 11.2, force: 0.6, rate: (p) => P.scratchRate * p }, // big (90 on the knob) and not so hard
 ];
 const toolOf = (id: number) => TOOLS.find((t) => t.id === id)!;
 // both by the tool's number, as they are saved (nothing at 0)
@@ -333,9 +333,9 @@ const BRUSH = 'codevember-19-brush';
 try {
   const saved = JSON.parse(localStorage.getItem(BRUSH) ?? 'null');
   for (const { id, min, max } of TOOLS) {
-    // (a force saved at 0.4, a scratch at 3 or 6 or a hose at 4 is an old default, kept by nobody's choice: it takes the new one)
+    // (a force saved at 0.4, a scratch at 3 or 6, a hose at 4 or a rain at 13 is an old default, kept by nobody's choice: it takes the new one)
     if (saved?.force?.[id] >= 0 && saved.force[id] <= 1 && saved.force[id] !== 0.4) force[id] = saved.force[id];
-    const old = (id === TOOL.SCRATCH && [3, 6].includes(saved?.radius?.[id])) || (id === TOOL.HOSE && saved?.radius?.[id] === 4);
+    const old = (id === TOOL.SCRATCH && [3, 6].includes(saved?.radius?.[id])) || (id === TOOL.HOSE && saved?.radius?.[id] === 4) || (id === TOOL.RAIN && saved?.radius?.[id] === 13);
     if (!old && saved?.radius?.[id] >= min && saved.radius[id] <= max) brush[id] = saved.radius[id];
   }
 } catch { /* no storage, or not ours: the defaults */ }
