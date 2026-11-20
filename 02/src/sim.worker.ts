@@ -44,7 +44,7 @@ const FPS = 60;
 const SUB = 2;
 
 const ready = RAPIER.init();
-let current = 0;
+const cancelled = new Set<number>();
 
 function rng32(seed: number) {
   let a = seed >>> 0;
@@ -56,10 +56,10 @@ function rng32(seed: number) {
   };
 }
 
-self.onmessage = async (e: MessageEvent<BakeRequest>) => {
+self.onmessage = async (e: MessageEvent<BakeRequest | { type: 'cancel'; run: number }>) => {
   const req = e.data;
+  if (req.type === 'cancel') { cancelled.add(req.run); return; }
   if (req.type !== 'bake') return;
-  current = req.run;
   await ready;
   bake(req);
 };
@@ -194,9 +194,9 @@ async function bake(req: BakeRequest) {
       const copy = { ...msg, data: msg.data.slice(), hits: msg.hits.slice() };
       (self as unknown as Worker).postMessage(copy, [copy.data.buffer, copy.hits.buffer]);
       first += inChunk; inChunk = 0;
-      // let a newer request in
+      // let other messages in: another bake runs alongside, a cancelled one stops here
       await new Promise((r) => setTimeout(r, 0));
-      if (current !== req.run) break;
+      if (cancelled.has(req.run)) { cancelled.delete(req.run); break; }
     }
     if (done) break;
   }

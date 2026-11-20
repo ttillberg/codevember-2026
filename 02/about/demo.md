@@ -28,8 +28,8 @@ wait 1500
 # the shock
 drag 250,600 950,580 250ms
 wait 1100
-# slow motion: a press held while it falls
-drag 600,600 601,600 1500ms
+# slow motion: a press held, where it is, while it falls
+drag 600,900 601,900 1500ms
 ```
 
 ## The half minute for X

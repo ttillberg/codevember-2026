@@ -5,7 +5,7 @@
 // (shards.ts), a worker bakes the fall with rigid bodies (sim.worker.ts) and the page plays it back.
 import { CRACKS, Pane, type Impact } from './cracks';
 import { defaults, mountPanel } from './settings';
-import { buildShards, type ShardSet } from './shards';
+import { STRIDE, buildShards, type ShardSet } from './shards';
 import { Renderer, lookAt, perspective } from './render';
 import { Sound } from './audio';
 import type { BakeRequest, FramesMessage, SimConfig } from './sim.worker';
@@ -39,26 +39,43 @@ const T = 0.008; // the glass is 8 mm thick
 const Y0 = 0.03; // and stands in a channel this high
 const FOV = (30 * Math.PI) / 180;
 
-type State = 'intact' | 'doomed' | 'falling' | 'fallen';
+// intact: there is glass to shoot. doomed: the football is in the air. fallen: no glass is left standing.
+// Falls play on their own whatever the state: a pane can lose pieces while it is being shot.
+type State = 'intact' | 'doomed' | 'fallen';
 let state: State = 'intact';
 let pane!: Pane;
 let seed = Number(params.get('seed')) || (Math.random() * 1e9) | 0;
-let limit = 0; // metres of crack the pane can take
 let lastImpact: Impact | null = null;
 let shots = 0;
 
-let set: ShardSet | null = null;
+/** What the worker sends back for one request: the frames of one fall, as they come. */
+interface Bake { run: number; count: number; frames: Float32Array[]; hits: number[]; done: boolean; total: number }
+/** One fall: a set of shards, their baked frames and where the playback is. Several can play at once. */
+interface Fall {
+  bake: Bake; set: ShardSet; base: number; // id of its first shard in the renderer
+  at: number; // when it starts, on the scene's clock
+  started: boolean; over: boolean;
+  playhead: number; lastHit: number; speed: number;
+  ball: boolean; // the football is in this one
+  near: [number, number][]; // where it was hit, for the dust
+}
+const bakes = new Map<number, Bake>();
+const falls: Fall[] = [];
 let run = 0;
-let frames: Float32Array[] = [];
-let hits: number[] = [];
-let bakeDone = false;
-let fallAt = 0;
-let playhead = 0; // seconds into the baked fall
-let lastHitFrame = 0;
 let slow = false;
-// the fall plays a little slower than life (V.pace): it is over in half a second otherwise
-let speed = 0.6;
 let held = -1; // a playhead to hold, for stills
+const active = () => falls.some((f) => !f.over);
+
+function bakeFall(set: ShardSet, req: Omit<BakeRequest, 'type' | 'run' | 'bodies' | 'width' | 'y0' | 'seed' | 'cfg'>): Bake {
+  const bake: Bake = { run: ++run, count: set.count, frames: [], hits: [], done: false, total: 1 };
+  bakes.set(bake.run, bake);
+  worker.postMessage({ type: 'bake', run: bake.run, bodies: set.bodies, width: pane.W, y0: Y0, seed, cfg: simCfg(), ...req } satisfies BakeRequest);
+  return bake;
+}
+function dropBake(bake: Bake) {
+  bakes.delete(bake.run);
+  if (!bake.done) worker.postMessage({ type: 'cancel', run: bake.run });
+}
 
 let now = 0; // seconds, the clock of the scene
 let flash = 0;
@@ -85,15 +102,13 @@ function newPane() {
   const [W, H] = aspect > 1.15 ? [1.2, 0.8] : aspect < 0.8 ? [0.62, 0.95] : [0.9, 0.8];
   seed = (seed * 1664525 + 1013904223) >>> 0;
   pane = new Pane(W, H, T, seed);
-  limit = W * H * (13 + pane.rand() * 8);
   lastImpact = null;
   shots = 0;
   state = 'intact';
-  set = null;
-  ball.on = false; shocked = false; maskData = null; shardBase = 0;
+  ball.on = false; maskData = null;
   clearTimeout(readyTimer); readyTimer = 0; ready = null;
-  frames = []; hits = []; bakeDone = false;
-  run++;
+  for (const b of [...bakes.values()]) dropBake(b);
+  falls.length = 0;
   const s = 2048 / Math.max(W, H);
   mask.width = Math.round(W * s); mask.height = Math.round(H * s);
   mctx.globalCompositeOperation = 'source-over';
@@ -106,11 +121,10 @@ function newPane() {
 function setHint() {
   const touch = matchMedia('(pointer: coarse)').matches;
   hint.textContent =
-    state === 'fallen' ? (touch ? 'Tap for a new pane' : 'Click for a new pane')
-    : state === 'falling' ? (touch ? 'Hold to slow it down' : 'Hold to slow it down')
+    state === 'fallen' ? (active() ? 'Hold to slow it down' : touch ? 'Tap for a new pane' : 'Click for a new pane')
     : state === 'doomed' ? ''
     : shots === 0 ? (touch ? 'Tap the glass to shoot' : 'Click the glass to shoot')
-    : shots < 3 ? (touch ? 'Swipe: what is broken blows out' : 'Drag: what is broken blows out. Space: a football')
+    : shots < 4 ? (touch ? 'Swipe: what is broken blows out' : 'Drag or space: what is broken blows out')
     : '';
 }
 
@@ -196,7 +210,8 @@ function kick(x: number, y: number) {
   if (state !== 'intact') return;
   x = Math.min(pane.W - 0.02, Math.max(0.02, x)); y = Math.min(pane.H - 0.02, Math.max(0.05, y));
   state = 'doomed';
-  clearTimeout(readyTimer); readyTimer = 0; ready = null;
+  clearTimeout(readyTimer); readyTimer = 0;
+  if (ready) { dropBake(ready.bake); ready = null; }
   sound.kick();
   const at = now + FLIGHT;
   const hit = [x - pane.W / 2, y + Y0, (V.ballSize / 100) + 0.012];
@@ -212,14 +227,13 @@ function kick(x: number, y: number) {
   renderer.addCracks(pane, pane.finish(at, V.shardArea / 1e4, 0.1, false, loopGone));
   lastImpact = res.impact;
   sound.smash(FLIGHT);
-  set = buildShards(pane, Y0, false, loopGone);
-  shocked = false;
-  shardBase = renderer.addShards(set);
-  frames = []; hits = []; bakeDone = false;
-  fallAt = at;
-  const req: BakeRequest = { type: 'bake', run: ++run, bodies: set.bodies, impacts: [[hit[0], hit[1]]], width: pane.W, y0: Y0, seed, balls: [{ p: hit, v, w: ball.w, r: (V.ballSize / 100) }], cfg: simCfg() };
-  shockAt = [[hit[0], hit[1]]];
-  worker.postMessage(req);
+  const set = buildShards(pane, Y0, false, loopGone);
+  // cut now, seen at the impact: until then the pane is still the pane
+  for (const arr of [set.walls, set.faces]) for (let i = 9; i < arr.length; i += STRIDE) arr[i] = at;
+  const base = renderer.addShards(set);
+  renderer.shards = true;
+  const bake = bakeFall(set, { impacts: [[hit[0], hit[1]]], balls: [{ p: hit, v, w: ball.w, r: V.ballSize / 100 }] });
+  falls.push({ bake, set, base, at, started: false, over: false, playhead: 0, lastHit: 0, speed: ballSlow, ball: true, near: [[hit[0], hit[1]]] });
   setHint();
 }
 
@@ -252,13 +266,13 @@ function loopGone(loop: number[], p: Pane = pane) {
 /** The break, got ready ahead. As soon as a bullet has hit, what a shock would do now is worked out on a copy
  *  of the pane (the real one can still be shot) and the worker starts baking that fall. A swipe then only has
  *  to play it. Another bullet, or another setting, and it is thrown away and prepared again. */
-interface Ready { pane: Pane; set: ShardSet; impacts: [number, number][]; shots: number }
+interface Ready { pane: Pane; set: ShardSet; impacts: [number, number][]; shots: number; bake: Bake }
 let ready: Ready | null = null;
 let readyTimer = 0;
 function prepare() {
   clearTimeout(readyTimer);
   readyTimer = 0;
-  ready = null;
+  if (ready) { dropBake(ready.bake); ready = null; }
   if (state !== 'intact' || !pane.impacts.length) return;
   const copy = pane.clone();
   const gone = (loop: number[]) => loopGone(loop, copy);
@@ -268,44 +282,42 @@ function prepare() {
   if (!next.count) return;
   const impacts = pane.impacts.map((im) => [im.x - pane.W / 2, im.y + Y0] as [number, number]);
   const balls = impacts.map(([x, y]) => ({ p: [x, y, V.ballSize / 100 + 0.012], v: [(Math.random() - 0.5) * 3, (Math.random() - 0.5) * 3, -V.kick], w: [0, 0, 0], r: V.ballSize / 100 }));
-  ready = { pane: copy, set: next, impacts, shots };
-  set = next;
-  frames = []; hits = []; bakeDone = false;
-  const req: BakeRequest = { type: 'bake', run: ++run, bodies: next.bodies, impacts, width: pane.W, y0: Y0, seed, balls, cfg: simCfg(), standing: true };
-  worker.postMessage(req);
+  ready = { pane: copy, set: next, impacts, shots, bake: bakeFall(next, { impacts, balls, standing: true }) };
 }
 /** A moment after the bullet, not in its frame: the crack must not stutter for it. */
 function prepareSoon(ms = 140) {
   clearTimeout(readyTimer);
-  ready = null;
+  if (ready) { dropBake(ready.bake); ready = null; }
   readyTimer = window.setTimeout(prepare, ms);
 }
 
 /** A swipe: a shock, at once. Only what is already broken goes: the pieces the cracks have cut out of the
  *  pane are cut smaller and blown out the back, as if a ball nobody sees went through every bullet hole at the
  *  same instant. The glass around them, cracked or not, stays standing. */
-function shock() {
-  if (state !== 'intact') return;
-  if (!pane.impacts.length) return; // nothing is broken yet
+function shock(): boolean {
+  if (state !== 'intact') return false;
+  if (!pane.impacts.length) return false; // nothing is broken yet
   if (!ready || ready.shots !== shots || readyTimer) prepare(); // swiped before it was got ready
-  if (!ready) return;
+  if (!ready) return false;
   // the copy, with its pieces cut, is the pane from here on
-  pane = ready.pane;
-  set = ready.set;
-  shockAt = ready.impacts;
+  const r = ready;
   ready = null;
-  state = 'doomed';
+  pane = r.pane;
   sound.smash(0);
-  shardBase = renderer.addShards(set);
-  fallAt = now;
-  shocked = true;
+  const base = renderer.addShards(r.set);
+  renderer.shards = true;
+  cutPane(r.set);
+  // with glass still standing it can all be done again at once: more bullets, another shock
+  renderer.standing = r.set.kept;
+  state = r.set.kept ? 'intact' : 'fallen';
+  falls.push({ bake: r.bake, set: r.set, base, at: now, started: false, over: false, playhead: 0, lastHit: 0, speed: 0.2, ball: false, near: r.impacts });
   setHint();
+  return true;
 }
 
 /** The moment the pieces leave: they are cut out of the pane that stays (blue in the mask), and of its cracks
  *  only those with standing glass on one side at least are kept. */
-function cutPane() {
-  if (!set) return;
+function cutPane(set: ShardSet) {
   const s = mask.width / pane.W;
   mctx.globalCompositeOperation = 'lighter';
   mctx.fillStyle = 'rgb(0,0,255)';
@@ -335,11 +347,6 @@ function cutPane() {
     return true;
   });
 }
-let shocked = false;
-let shardBase = 0; // id of the first shard of the fall being played
-let bakeTotal = 1;
-let shockAt: [number, number][] = [];
-
 /** The ball before it hits: a throw, backwards from where it will land. */
 function flyBall() {
   // not clamped at the glass: if the bake is a few frames late the ball carries on rather than wait for it
@@ -352,31 +359,50 @@ function flyBall() {
 
 worker.onmessage = (e: MessageEvent<FramesMessage>) => {
   const m = e.data;
-  if (m.type !== 'frames' || m.run !== run || !set) return;
-  const n = (set.count + 1) * 7;
-  for (let i = 0; i < m.count; i++) { frames.push(m.data.subarray(i * n, (i + 1) * n)); hits.push(m.hits[i]); }
-  bakeTotal = m.total;
-  if (m.done) bakeDone = true;
+  const bake = bakes.get(m.run);
+  if (m.type !== 'frames' || !bake) return;
+  const n = (bake.count + 1) * 7;
+  for (let i = 0; i < m.count; i++) { bake.frames.push(m.data.subarray(i * n, (i + 1) * n)); bake.hits.push(m.hits[i]); }
+  bake.total = m.total;
+  if (m.done) bake.done = true;
 };
 
-function startFall() {
-  if (!set) return;
-  state = 'falling';
-  playhead = 0; lastHitFrame = 0;
-  if (ball.on) { speed = ballSlow; recoil = 1.6; playhead = Math.max(0, now - ball.at) * ballSlow; }
-  if (shocked) { speed = 0.2; recoil = 1.6; flash = 0.35; }
-  renderer.shards = true;
-  renderer.standing = shocked && set.kept;
-  if (shocked) cutPane();
-  renderer.setPose(frames[0], frames[0], 0, shardBase, set.count);
+function startFall(f: Fall) {
+  f.started = true;
+  recoil = 1.6;
+  // the ball did not wait for the bake: the fall catches up with it
+  if (f.ball) f.playhead = Math.max(0, now - f.at) * ballSlow; else flash = 0.35;
   // dust comes off every crack as the pane lets go
-  for (let i = 0; i < 3200 * V.dust; i++) {
-    const b = set.bodies[(Math.random() * set.count) | 0];
+  for (let i = 0; i < 3200 * V.dust * Math.min(1, f.set.count / 400); i++) {
+    const b = f.set.bodies[(Math.random() * f.set.count) | 0];
     let d = Infinity;
-    for (const [ix, iy] of shockAt) d = Math.min(d, Math.hypot(b.c[0] - ix, b.c[1] - iy));
+    for (const [ix, iy] of f.near) d = Math.min(d, Math.hypot(b.c[0] - ix, b.c[1] - iy));
     dust(b.c[0] + gauss() * 0.02, b.c[1] + gauss() * 0.02, -T / 2, gauss() * 0.5, gauss() * 0.5, gauss() * 0.8 - 1.2 * Math.exp(-d / 0.25) * 4, 1 + Math.random() * 2.5, d / 7 + Math.random() * 0.1);
   }
-  setHint();
+}
+
+/** Every fall that is under way, one step on. */
+function stepFalls(dt: number) {
+  for (const f of falls) {
+    if (f.over) continue;
+    const { frames, hits } = f.bake;
+    if (!f.started) { if (now >= f.at && (f.bake.done || frames.length > 5)) startFall(f); else continue; }
+    f.speed += ((slow ? V.slow : V.pace) - f.speed) * Math.min(1, dt * (slow || f.speed > V.pace ? 10 : 1.6));
+    f.playhead += dt * f.speed;
+    if (held >= 0 && f === falls[falls.length - 1]) f.playhead = held;
+    const last = frames.length - 1;
+    let fr = f.playhead * 60;
+    if (fr > last) { fr = last; f.playhead = last / 60; }
+    const i = Math.floor(fr);
+    const fa = frames[i], fb = frames[Math.min(last, i + 1)], k = fr - i, o = f.set.count * 7;
+    renderer.setPose(fa, fb, k, f.base, f.set.count);
+    if (f.ball) {
+      for (let c = 0; c < 3; c++) renderer.ball.p[c] = fa[o + c] + (fb[o + c] - fa[o + c]) * k;
+      for (let c = 0; c < 4; c++) renderer.ball.q[c] = fa[o + 3 + c];
+    }
+    for (; f.lastHit <= i; f.lastHit++) sound.tinkle(hits[f.lastHit], Math.max(0.25, f.speed / V.pace));
+    if (f.bake.done && i >= last && held < 0) { f.over = true; bakes.delete(f.bake.run); f.bake.frames = []; setHint(); } // it rests: its frames can go
+  }
 }
 
 // ---------------------------------------------------------------- camera
@@ -424,25 +450,33 @@ function reset() {
   fadeTo = 0; resetAt = now + 0.28;
 }
 
+// A press that stays put is a bullet, one that travels is the shock. While glass is falling, a press that is
+// held, without moving, slows it down instead.
+let down: { x: number; y: number; id: number; far: number; held: boolean; timer: number } | null = null;
 canvas.addEventListener('pointerdown', (e) => {
   sound.wake();
-  mouse = e.pointerType === 'mouse';
-  if (state === 'intact') { down = { x: e.clientX, y: e.clientY, t: performance.now(), id: e.pointerId }; canvas.setPointerCapture(e.pointerId); }
-  else if (state === 'falling') { slow = true; canvas.setPointerCapture(e.pointerId); }
-  else if (state === 'fallen') reset();
+  if (state === 'doomed') return;
+  if (state === 'fallen' && !active()) { reset(); return; }
+  canvas.setPointerCapture(e.pointerId);
+  const d: NonNullable<typeof down> = { x: e.clientX, y: e.clientY, id: e.pointerId, far: 0, held: false, timer: 0 };
+  down = d;
+  if (state === 'fallen') { d.held = true; slow = true; }
+  else if (active()) d.timer = window.setTimeout(() => { if (down === d && d.far < 14 && active()) { d.held = true; slow = true; } }, 240);
 });
-// a press that stays put is a bullet, one that travels is a shock wave the way it went
-let down: { x: number; y: number; t: number; id: number } | null = null;
-let mouse = true;
+canvas.addEventListener('pointermove', (e) => {
+  if (down && down.id === e.pointerId) down.far = Math.max(down.far, Math.hypot(e.clientX - down.x, e.clientY - down.y));
+});
 const release = (e: PointerEvent) => {
-  slow = false;
   if (!down || down.id !== e.pointerId) return;
   const d = down;
   down = null;
+  clearTimeout(d.timer);
+  slow = false;
   if (e.type !== 'pointerup' || state !== 'intact') return;
-  const far = Math.hypot(e.clientX - d.x, e.clientY - d.y);
+  const far = Math.max(d.far, Math.hypot(e.clientX - d.x, e.clientY - d.y));
+  if (d.held && far < 40) return; // it was a hold. (A slow start to a swipe is still a swipe.)
   if (far < 14) { const [x, y] = pick(d.x, d.y); shoot(x, y); }
-  else if (far > 40) { shock(); }
+  else if (far > 40) shock();
 };
 canvas.addEventListener('pointerup', release);
 canvas.addEventListener('pointercancel', release);
@@ -461,9 +495,9 @@ window.addEventListener('keydown', (e) => {
   if (e.code === 'Space') {
     e.preventDefault();
     sound.wake();
-    if (state === 'intact') kick(pane.W * 0.5, pane.H * 0.5);
-    else if (state === 'falling') slow = true;
-    else if (state === 'fallen') reset();
+    // space is the swipe; with nothing to break, it slows what is falling
+    if (state === 'intact') { if (!shock() && active()) slow = true; }
+    else if (state === 'fallen') { if (active()) slow = true; else reset(); }
   } else if (e.code === 'KeyR') reset();
   else if (e.code === 'KeyM') toggleSound();
   else if (e.code === 'KeyB') toggleBall();
@@ -507,36 +541,22 @@ function frame(ms: number) {
   fade += (fadeTo - fade) * Math.min(1, dt * 12);
   if (resetAt >= 0 && now > resetAt) { resetAt = -1; newPane(); fadeTo = 1; zoomTo = 1; }
 
-  if (state === 'doomed' && now >= fallAt && (bakeDone || frames.length > 5)) startFall();
+  // the football arrives: the pane is its shards from this frame on, whether the bake is there yet or not
+  if (state === 'doomed' && now >= ball.at) { state = 'fallen'; renderer.standing = false; setHint(); }
   renderer.ball.on = ball.on && showBall;
   renderer.ball.r = V.ballSize / 100;
-  if (ball.on && state === 'doomed') flyBall();
-  if (state === 'falling') {
-    speed += ((slow ? V.slow : V.pace) - speed) * Math.min(1, dt * (slow || speed > V.pace ? 10 : 1.6));
-    playhead += dt * speed;
-    if (held >= 0) playhead = held;
-    const lastFrame = frames.length - 1;
-    let f = playhead * 60;
-    if (f > lastFrame) { f = lastFrame; playhead = lastFrame / 60; }
-    const i = Math.floor(f);
-    const fa = frames[i], fb = frames[Math.min(lastFrame, i + 1)], k = f - i, o = set!.count * 7;
-    renderer.setPose(fa, fb, k, shardBase, set!.count);
-    for (let c = 0; c < 3; c++) renderer.ball.p[c] = fa[o + c] + (fb[o + c] - fa[o + c]) * k;
-    for (let c = 0; c < 4; c++) renderer.ball.q[c] = fa[o + 3 + c];
-    for (; lastHitFrame <= i; lastHitFrame++) sound.tinkle(hits[lastHitFrame], Math.max(0.25, speed / V.pace));
-    // with glass still standing it can all be done again: more bullets, another shock
-    if (bakeDone && i >= lastFrame && held < 0) { state = renderer.standing ? 'intact' : 'fallen'; setHint(); }
-  }
-  stepDust(state === 'falling' ? dt * speed : dt);
+  if (ball.on && !falls.some((f) => f.ball && f.started)) flyBall();
+  stepFalls(dt);
+  stepDust(slow && active() ? dt * (V.slow / V.pace) : dt);
   renderer.setDust(dPos, dUsed);
 
   // how far the bake is, while it runs
-  const baking = (!!ready || state === 'doomed' || state === 'falling') && !bakeDone;
+  const baking = [...bakes.values()].find((b) => !b.done);
   bakeBar.hidden = !baking;
-  if (baking) bakeFill.style.transform = `scaleX(${Math.min(1, frames.length / bakeTotal)})`;
+  if (baking) bakeFill.style.transform = `scaleX(${Math.min(1, baking.frames.length / baking.total)})`;
 
   updateCamera(now);
-  renderer.draw(cam.view, cam.proj, cam.eye, now, playhead, flash, fade, dUsed);
+  renderer.draw(cam.view, cam.proj, cam.eye, now, now, flash, fade, dUsed);
   requestAnimationFrame(frame);
 }
 
@@ -554,6 +574,9 @@ Object.assign(window, {
     shock,
     seek: (t: number) => { held = t; },
     get state() { return state; },
-    get info() { return { state, shots, crack: pane.crackLen, limit, shards: set?.count, low: set?.bodies.filter((b) => b.low).length, frames: frames.length, bakeDone }; },
+    get info() {
+      const b = ready?.bake ?? falls[falls.length - 1]?.bake;
+      return { state, shots, crack: pane.crackLen, falls: falls.length, active: falls.filter((f) => !f.over).length, ready: !!ready, shards: b?.count, frames: b?.frames.length, bakeDone: b?.done };
+    },
   },
 });

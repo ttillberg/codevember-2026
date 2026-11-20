@@ -172,10 +172,11 @@ void main() {
 // a face of the glass: what is behind it, bent a little, plus what it mirrors
 export const FACE_FS = COMMON + /* glsl */ `
 in vec3 vW; in vec3 vN; in vec3 vNl; in vec2 vUv; in vec4 vD; flat in vec4 vQ;
-uniform vec3 uCam; uniform mat4 uView; uniform vec2 uRes; uniform float uBend; uniform float uCut; uniform vec3 uGlass; // tint, waviness, reflections
+uniform vec3 uCam; uniform mat4 uView; uniform vec2 uRes; uniform float uBend; uniform float uCut; uniform float uNow; uniform vec3 uGlass; // tint, waviness, reflections
 uniform sampler2D uScene; uniform sampler2D uMask; uniform vec2 uPane;
 out vec4 o;
 void main() {
+  if (vD.y > uNow) discard; // shards cut ahead of the blow that frees them
   vec4 m = texture(uMask, vUv / uPane);
   if (m.r > 0.5 || (uCut > 0.5 && m.b > 0.5)) discard; // blue: where pieces have left the standing pane
   // float glass is never flat
