@@ -18,6 +18,8 @@ import { Fungi, type FungusKind } from './fungi';
 import { loadModels } from './models';
 import { Spores } from './spores';
 import { Dust } from './dust';
+import { Floor } from './floor';
+import { Boulders } from './boulders';
 import { Slingshot } from './slingshot';
 import { Forest } from './forest';
 import { soundboard } from './soundboard';
@@ -124,6 +126,9 @@ fxScene.add(spores.mesh);
 // dust hanging in the air, showing only in the sun's beams
 const dust = new Dust(share);
 fxScene.add(dust.mesh);
+// and glowing motes, fewer and bigger, rising in the light (the splash's gold orbs)
+const motes = new Dust(share, { motes: true, count: coarse ? 60 : 140, box: new THREE.Vector3(9, 2.4, 9) });
+fxScene.add(motes.mesh);
 // the slingshot in hand, drawn over the finished picture
 const sling = new Slingshot();
 let slingKind = '';
@@ -174,6 +179,12 @@ scene.add(ferns.root);
 // spruce trunks, three levels of detail
 const trees = new Trees(share);
 scene.add(trees.root);
+// fallen leaves and wood sorrel on the moss
+const floorBits = new Floor(share);
+scene.add(floorBits.root);
+// boulders grown over with the ground's moss
+const boulders = new Boulders(hooks);
+scene.add(boulders.root);
 // wood ants on trails from a nest in the moss up the trunks
 const ants = new Ants(share, camera);
 scene.add(ants.mesh);
@@ -230,6 +241,7 @@ function renderShadow(centre: THREE.Vector3) {
   u.uShadowMap.value = null;
   world.forShadow(true, centre.x, centre.z, 4.3);
   ferns.forShadow(true, centre.x, centre.z, 6);
+  boulders.forShadow(true);
   farFloor.visible = false;
   ants.mesh.visible = false; // too small to cast anything worth the map
   renderer.setRenderTarget(shadowRT);
@@ -238,6 +250,7 @@ function renderShadow(centre: THREE.Vector3) {
   renderer.setRenderTarget(null);
   world.forShadow(false);
   ferns.forShadow(false);
+  boulders.forShadow(false);
   farFloor.visible = true;
   ants.mesh.visible = true;
   u.uShadowMap.value = shadowRT.depthTexture;
@@ -280,9 +293,11 @@ composer.addPass(atmos);
 // spore smoke into the finished, hazy image: its own lighter haze keeps a column visible from far off
 spores.material.uniforms.tDepth.value = beautyRT.depthTexture;
 spores.material.uniforms.cameraNear.value = camera.near;
-dust.material.uniforms.tDepth.value = beautyRT.depthTexture;
-dust.material.uniforms.cameraNear.value = camera.near;
-dust.material.uniforms.cameraFar.value = camera.far;
+for (const d of [dust, motes]) {
+  d.material.uniforms.tDepth.value = beautyRT.depthTexture;
+  d.material.uniforms.cameraNear.value = camera.near;
+  d.material.uniforms.cameraFar.value = camera.far;
+}
 const fx = new RenderPass(fxScene, camera);
 fx.clear = false;
 composer.addPass(fx);
@@ -306,6 +321,7 @@ function resize() {
   camera.updateProjectionMatrix();
   spores.setSize(px.x, px.y, camera.fov);
   dust.setSize(px.x, px.y, camera.fov);
+  motes.setSize(px.x, px.y, camera.fov);
   sling.setSize(px.x, px.y, camera.fov, camera.aspect);
   (dewMaterial as THREE.ShaderMaterial).uniforms.uPx.value = px.y / (2 * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2));
 }
@@ -660,7 +676,8 @@ function walk(dt: number, fx: number, fz: number, v: number) {
   me.x += fx * v * dt - fz * me.side * dt;
   me.z += fz * v * dt + fx * me.side * dt;
   // the tight bunch of stipes at a fern's crown is solid; the fronds you crawl under; small fungi you crawl over
-  const [cx, cz] = trees.collide(me.x, me.z, 0.05);
+  const [tx, tz] = trees.collide(me.x, me.z, 0.05);
+  const [cx, cz] = boulders.collide(tx, tz, 0.05);
   if (v > 0.05 && (cx !== me.x || cz !== me.z)) {
     // pushed off a trunk while crawling at it head on: start up it
     const t = trees.trunks.reduce((a, b) => (Math.hypot(b.x - me.x, b.z - me.z) - b.r < Math.hypot(a.x - me.x, a.z - me.z) - a.r ? b : a));
@@ -713,6 +730,8 @@ while (world.update(me.x, me.z, 0, -1, 64) > 0);
 for (let i = 0; i < 200 && props.update(me.x, me.z); i++);
 for (let i = 0; i < 200 && ferns.update(me.x, me.z); i++);
 trees.update(me.x, me.z);
+for (let i = 0; i < 300 && floorBits.update(me.x, me.z); i++);
+for (let i = 0; i < 40 && boulders.update(me.x, me.z); i++);
 placeFarFloor(me.x, me.z);
 // a few already standing in front of you when you arrive
 fungi.spawn('funnel', 0.05, fungusFoot(0.05, -0.38), -0.38, { grown: true, seed: 11, scale: 1.1 });
@@ -724,7 +743,7 @@ const sunScreen = new THREE.Vector3();
 const camDir = new THREE.Vector3();
 let focus = 1;
 // dev: tuning handles in the console
-if (import.meta.env.DEV) Object.assign(window, { sound, forest, trees, ants, ferns, props, fungi, fungarium, spores, throwAt, shellMat, lensMat, atmosMat, camera, aoPass, lens, atmos, beautyRT, scene, renderer, composer, world, me, look });
+if (import.meta.env.DEV) Object.assign(window, { boulders, floorBits, sound, forest, trees, ants, ferns, props, fungi, fungarium, spores, throwAt, shellMat, lensMat, atmosMat, camera, aoPass, lens, atmos, beautyRT, scene, renderer, composer, world, me, look });
 // loading (as day 12's ink drawing): the splash, a card in the middle, over the forest drawn as a golden wire mesh
 // (everything in its plain geometry, the moss's shells one sheet). Once the models are in and the picture's
 // shaders compiled, and the card has been up two seconds and a half, the card goes and the picture fades in over
@@ -791,10 +810,13 @@ renderer.setAnimationLoop(() => {
   }
   spores.update(dt, clock.elapsedTime);
   dust.update(groundHeight(me.x, me.z));
+  motes.update(groundHeight(me.x, me.z));
   world.update(me.x, me.z, fx, fz, 1);
   props.update(me.x, me.z);
   ferns.update(me.x, me.z);
   trees.update(me.x, me.z);
+  floorBits.update(me.x, me.z);
+  boulders.update(me.x, me.z);
   ants.update(dt, me.x, me.z, trees.trunks);
   placeFarFloor(me.x, me.z);
   // the shadow map follows a point ahead of you

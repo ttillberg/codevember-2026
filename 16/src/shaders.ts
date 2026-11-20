@@ -392,8 +392,18 @@ void main() {
       // granite: grey with a faint green film, a few pale crust lichens
       float n1 = noise3(vLocal * 20.0), n2 = noise3(vLocal * 120.0);
       bare = mix(vec3(0.07, 0.072, 0.065), vec3(0.19, 0.19, 0.17), n1 * 0.6 + n2 * 0.4);
-      bare = mix(bare, bare * vec3(0.7, 1.0, 0.65), smoothstep(0.4, 0.7, noise3(vLocal * 6.0)));
-      bare = mix(bare, vec3(0.42, 0.44, 0.36), smoothstep(0.74, 0.78, noise3(vLocal * 30.0 + 2.0)) * 0.8);
+      bare = mix(bare, bare * vec3(0.8, 0.95, 0.72), smoothstep(0.4, 0.7, noise3(vLocal * 6.0)) * 0.6);
+      // crust lichen: irregular patches, finely broken at their edge, in some places on the stone and not others;
+      // grey-green, a slightly paler rim where each grows outward, now and then a yellow-green map lichen. Low in
+      // contrast: one noise at one threshold had made round pale blots like dabs of paint
+      float lmask = smoothstep(0.42, 0.62, noise3(vLocal * 3.0 + 9.0));
+      float lf = noise3(vLocal * 18.0 + 2.0) * 0.5 + noise3(vLocal * 60.0 + 4.0) * 0.32 + noise3(vLocal * 190.0 + 6.0) * 0.18;
+      float lich = smoothstep(0.58, 0.64, lf) * lmask;
+      float lrim = (smoothstep(0.58, 0.6, lf) - smoothstep(0.6, 0.64, lf)) * lmask;
+      vec3 lcol = mix(vec3(0.17, 0.18, 0.15), vec3(0.24, 0.25, 0.2), noise3(vLocal * 80.0));
+      lcol = mix(lcol, vec3(0.2, 0.23, 0.08), smoothstep(0.62, 0.7, noise3(vLocal * 8.0 + 13.0)));
+      bare = mix(bare, lcol, lich * 0.75);
+      bare += vec3(0.025, 0.026, 0.02) * lrim;
     }
     vec3 rock = bare * (0.6 * skyTint(sN, 1.0) * (0.35 + 0.25 * sN.y) * mix(1.0, 0.6, vCavity) + 2.4 * diff);
     rock = tonemap(grade(rock));

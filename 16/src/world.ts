@@ -198,7 +198,7 @@ export interface WorldHooks {
  */
 export function dressSurface(
   hooks: WorldHooks, geo: THREE.BufferGeometry, moss: Float32Array, species: Float32Array, count: number,
-  frondCount: number, seed: number,
+  frondCount: number, seed: number, frondWeight?: Float32Array, // where the fronds stand (by default, where there is moss)
 ) {
   const group = new THREE.Group();
   const shells = new THREE.InstancedMesh(geo, hooks.shellMat, hooks.shells);
@@ -208,8 +208,11 @@ export function dressSurface(
   let fronds: Fronds | null = null;
   const disposables: { dispose(): void }[] = [geo, shells]; // the shells' instance buffer too
   if (frondCount > 0) {
-    const weight = new Float32Array(count);
-    for (let i = 0; i < count; i++) weight[i] = ss(moss[i], 0.05, 0.4);
+    let weight = frondWeight;
+    if (!weight) {
+      weight = new Float32Array(count);
+      for (let i = 0; i < count; i++) weight[i] = ss(moss[i], 0.05, 0.4);
+    }
     fronds = buildFronds(geo, weight, frondCount, seed, { dome: false, straws: false });
     const mat = fronds.mesh.material as THREE.ShaderMaterial;
     hooks.setupFronds(mat);
