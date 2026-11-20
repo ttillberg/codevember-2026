@@ -5,7 +5,7 @@
 import * as THREE from 'three';
 import { mulberry32 } from './noise';
 import { mossLighting } from './shaders';
-import { groundHeight } from './world';
+import { groundHeight, clearing } from './world';
 import { buildDew } from './dew';
 
 const CELL = 2.6;
@@ -156,7 +156,10 @@ export class Ferns {
       const gx = (ix + 0.2 + 0.6 * r()) * CELL, gz = (iz + 0.2 + 0.6 * r()) * CELL;
       for (let i = 0; i < n; i++) {
         const x = gx + (r() - 0.5) * 1.8, z = gz + (r() - 0.5) * 1.8;
-        const size = 1.3 + r() * 0.7;
+        // none in a clearing, smaller towards its edge
+        const open = clearing(x, z);
+        const size = (1.3 + r() * 0.7) * (1 - 0.45 * open);
+        if (open > 0.45) continue;
         if (Math.hypot(x, z) < 0.3 || crowns.some((c) => Math.hypot(c.x - x, c.z - z) < 0.45)) continue;
         crowns.push({ x, z });
         sizes.push(size);

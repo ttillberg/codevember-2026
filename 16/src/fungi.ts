@@ -752,7 +752,8 @@ export interface Cluster {
 
 const UP = new THREE.Vector3(0, 1, 0);
 const PACK = { m4: new THREE.Matrix4(), q: new THREE.Quaternion(), qt: new THREE.Quaternion(), e: new THREE.Euler(), p: new THREE.Vector3(), s: new THREE.Vector3() };
-const SEE = 9; // fungi further than this are hidden (and their growing not built) when Fungi.update is told where you are
+const SEE = 9;
+const SEE_MODEL = matchMedia('(pointer: coarse)').matches ? 11 : 17; // a model costs only its drawing: seen further // fungi further than this are hidden (and their growing not built) when Fungi.update is told where you are
 const BUILD_EVERY = matchMedia('(pointer: coarse)').matches ? 1 / 12 : 1 / 30; // seconds between rebuilds of a growing one
 
 export class Fungi {
@@ -1122,7 +1123,7 @@ export class Fungi {
   update(dt: number, time: number, px?: number, pz?: number) {
     for (const c of [...this.list]) {
       if (px !== undefined && pz !== undefined) {
-        const seen = Math.hypot(c.x - px, c.z - pz) < SEE + c.radius;
+        const seen = Math.hypot(c.x - px, c.z - pz) < (this.modelled(c) ? SEE_MODEL : SEE) + c.radius;
         if (seen !== c.mesh.visible) { c.mesh.visible = seen; if (seen) c.built = undefined; if (isModelKind(c.kind)) this.modelsDirty = true; }
       }
       // a pressed puffball springs back
