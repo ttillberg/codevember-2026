@@ -23,6 +23,16 @@ import { NOISE3D } from './noise';
     '#ifndef SUN_SKIP\n#define SUN_SKIP 1\n#endif\n' + chunk.slice(0, a) + '#if UNROLLED_LOOP_INDEX != SUN_SKIP\n' + chunk.slice(a, b) + '\n#endif' + chunk.slice(b);
 }
 export const POD_SUN = { SUN_SKIP: '0' };
+// and the red light inside the pod (main.ts) has no shadows: it would light the plates' seams and the machinery
+// on the flanks through the shell. Only what is in there takes it (the wrapped thing, the shell's inside):
+// everything else is compiled with NO_POINT, the point lights left out of its loop
+{
+  const chunk = THREE.ShaderChunk.lights_fragment_begin;
+  const at = '#if ( NUM_POINT_LIGHTS > 0 ) && defined( RE_Direct )';
+  if (!chunk.includes(at)) throw new Error('lights_fragment_begin: the point light loop moved');
+  THREE.ShaderChunk.lights_fragment_begin = chunk.replace(at, at + ' && !defined( NO_POINT )');
+}
+const INSIDE = new Set(['shroud', 'inner']);
 
 // value noise from a tiling 3D texture (noise.ts): one fetch where it was eight hashes with a sine each, on every
 // pixel of every surface; the octaves at odd scales keep its 32-cell period from showing
@@ -129,7 +139,7 @@ export const rubber = grit(
 );
 
 /** steel wire: the slings and the wire it hangs by */
-export const wire = grit(new THREE.MeshStandardMaterial({ color: 0x80858a, metalness: 1, roughness: 0.32 }), { scale: 30, rough: [0.7, 1.4], tint: 0.08 });
+export const wire = grit(new THREE.MeshStandardMaterial({ color: 0x1e1f22, metalness: 1, roughness: 0.36 }), { scale: 30, rough: [0.75, 1.35], tint: 0.06 }); // brushed black, as the pod's
 
 /** the hall's steel, painted long ago */
 export function hallSteel(m: THREE.MeshStandardMaterial) {
@@ -154,8 +164,8 @@ export function dress(root: THREE.Object3D) {
         return grit(physical(old, { color: 0x2b2f34, metalness: 0.85, roughness: 0.4 }), { scale: 9, rough: [0.65, 1.4], tint: 0.14 });
       case 'core': // the dark raw metal under the plates
         return grit(physical(old, { color: 0x15171a, metalness: 0.65, roughness: 0.55 }), { scale: 7, rough: [0.7, 1.4], tint: 0.18 });
-      case 'steel': // bare steel: clamps, collars, couplings, lugs
-        return grit(physical(old, { color: 0x9da1a6, metalness: 1, roughness: 0.26 }), { scale: 25, rough: [0.6, 1.7], tint: 0.07 });
+      case 'steel': // clamps, collars, couplings, lugs, connectors: brushed black metal, a dull sheen and no shine
+        return grit(physical(old, { color: 0x1c1d20, metalness: 1, roughness: 0.38 }), { scale: 25, rough: [0.75, 1.35], tint: 0.06 });
       case 'bolt': // zinc-plated bolt heads, dulled
         return grit(physical(old, { color: 0x6a6e73, metalness: 1, roughness: 0.4 }), { scale: 60, rough: [0.7, 1.5], tint: 0.18 });
       case 'brass':
@@ -213,6 +223,7 @@ export function dress(root: THREE.Object3D) {
       }
       // the pod's own (not the rubber, shared with the cables that run up out of the tight sun's reach)
       if (made !== rubber) made.defines = { ...made.defines, ...POD_SUN };
+      if (!INSIDE.has(m.name.replace(/[._]\d+$/, ''))) made.defines = { ...made.defines, NO_POINT: '' };
       done.set(m, made);
     }
       return done.get(m)!;

@@ -866,11 +866,12 @@ def machinery():
 
 def details(clear):
     """Twice the detail on the plates: on each panel the plates are cut into, one thing, picked by a seeded
-    random: a raised hatch with a grab handle, a dark slot in a steel frame (as the sheet has on the hatch), a
+    random: a raised hatch with a connector on it, a dark slot in a steel frame (as the sheet has on the hatch), a
     vent of slats, a small tag with two diodes, or nothing. Each is laid flat on its panel and only where its
     whole footprint lands on that panel, flat enough, clear of the window; never on the top or the bottom,
     where the lugs and the machinery are. And the door's hinge: knuckles along it, leaves onto door and flank."""
     rnd = random.Random(20)
+    plug = random.Random(31)   # the connectors' own, so the rest is laid out as it was
     soups = {}
     def soup(kind, parent):
         return soups.setdefault((kind, parent.name), (Soup(), parent))[0]
@@ -910,13 +911,40 @@ def details(clear):
         par = P['parent']
         if kind == 'hatch':
             hatches.setdefault(par.name, (Soup(), par, P['transform']))[0].box((w, h, 0.014), at(0, 0, 0.004), R)
-            hx = w * 0.28
-            for x in (-hx, hx):
-                soup('steel', par).box((0.03, 0.03, 0.016), at(x, h * 0.3, 0.018), R)
             for x, y in ((-1, -1), (1, -1), (1, 1), (-1, 1)):
                 b0 = at(x * (w / 2 - 0.016), y * (h / 2 - 0.016), 0.011)
                 soup('bolt', par).cyl(0.005, b0, b0 + n * 0.004, 6)
-            soup('steel', par).tube([at(-hx, h * 0.3, 0.02), at(-hx, h * 0.3, 0.05), at(hx, h * 0.3, 0.05), at(hx, h * 0.3, 0.02)], 0.008, 8, smooth=False)
+            # no handle: connectors. A round one (flange, knurled nut, a dark face with pins), two side by side,
+            # or a flat multi-pin block in a frame
+            z0 = 0.011
+            def round_one(cx, cy, r):
+                soup('mech', par).box((r * 2.6, r * 2.6, 0.006), at(cx, cy, z0), R)                       # its flange
+                for x, y in ((-1, -1), (1, -1), (1, 1), (-1, 1)):
+                    b0 = at(cx + x * r * 1.05, cy + y * r * 1.05, z0 + 0.003)
+                    soup('bolt', par).cyl(0.0032, b0, b0 + n * 0.003, 6)
+                soup('steel', par).cyl(r, at(cx, cy, z0), at(cx, cy, z0 + 0.026), 18)                  # the shell
+                soup('steel', par).cyl(r * 1.22, at(cx, cy, z0 + 0.008), at(cx, cy, z0 + 0.02), 12)     # the nut
+                soup('dark', par).cyl(r * 0.78, at(cx, cy, z0 + 0.026), at(cx, cy, z0 + 0.029), 18)     # its face
+                for k in range(5):
+                    a = k * 2 * math.pi / 5
+                    p0 = at(cx + math.cos(a) * r * 0.42, cy + math.sin(a) * r * 0.42, z0 + 0.027)
+                    soup('bolt', par).cyl(0.0022, p0, p0 + n * 0.004, 5)
+            pick = plug.random()
+            r = min(0.03, min(w, h) * 0.12)
+            if pick < 0.45:
+                round_one(w * 0.18, h * 0.12, r)
+            elif pick < 0.75:
+                round_one(-w * 0.2, h * 0.1, r * 0.85)
+                round_one(w * 0.2, h * 0.1, r * 0.85)
+            else:
+                bw, bh = min(0.13, w * 0.5), min(0.035, h * 0.18)
+                soup('steel', par).box((bw + 0.012, bh + 0.012, 0.01), at(0, h * 0.15, z0 + 0.003), R)
+                soup('dark', par).box((bw, bh, 0.012), at(0, h * 0.15, z0 + 0.004), R)
+                k = max(4, int(bw / 0.011))
+                for row in (-1, 1):
+                    for i in range(k):
+                        p0 = at(-bw / 2 + bw * (i + 0.5) / k, h * 0.15 + row * bh * 0.22, z0 + 0.01)
+                        soup('bolt', par).box((0.003, 0.003, 0.006), p0, R)
         elif kind == 'slot':
             soup('dark', par).box((w, h, 0.01), at(0, 0, 0.0), R)
             b = 0.014
@@ -994,8 +1022,8 @@ def bolts(clear):
                     if any((got[0] - c).length < r for c, r in clear): continue
                     if near_edge(q): continue
                     p = q + n * P['thick']
-                    sp.cyl(0.009, p - n * 0.002, p + n * 0.0018, 8)
-                    sp.cyl(0.006, p, p + n * 0.005, 6)
+                    sp.cyl(0.0055, p - n * 0.002, p + n * 0.0012, 8)   # small: a washer and a hex head, flush
+                    sp.cyl(0.0036, p, p + n * 0.0032, 6)
                     count += 1
                 acc += L
     for name, (sp, par) in soups.items():
