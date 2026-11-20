@@ -472,6 +472,7 @@ const fungarium = new Fungarium((kind) => { throwKind = kind; pouch.pick(kind, f
 const pouch = new Pouch((kind) => { throwKind = kind; fungarium.select(kind); }, plantAt, () => fungarium.isOpen, () => { keys.clear(); fungarium.toggle(); });
 // the specimens are drawn once things have settled, on the fungarium's own little renderer
 setTimeout(() => pouch.setThumbs(fungarium.drawThumbs()), 1500);
+fungarium.onThumbs = () => pouch.setThumbs(fungarium.thumbs);
 /** Shift and a number: that species' specimen pushes up where you aim (the middle of the screen without a mouse). */
 function plantAt(s: Species) {
   const hit = aimAt(0.45);
