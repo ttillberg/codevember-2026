@@ -42,6 +42,7 @@ export class Cable {
     this.normals = new THREE.BufferAttribute(new Float32Array(POINTS * SIDES * 3), 3);
     geo.setAttribute('position', this.positions);
     geo.setAttribute('normal', this.normals);
+    geo.setAttribute('color', new THREE.BufferAttribute(new Float32Array(POINTS * SIDES * 3).fill(1), 3)); // (the rubber takes the pod's baked shade: none here)
     // uv: round it, and along it in ribs, one every 1.3 radii as on the pod's hoses
     const uv = new Float32Array(POINTS * SIDES * 2);
     for (let i = 0; i < POINTS; i++) {

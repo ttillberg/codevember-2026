@@ -1589,6 +1589,39 @@ def bake_paint(objs):
     return {'ao_mean': float(ao.mean()), 'chip_mean': float(mt.mean()), 'colour_mean': [float(x) for x in c.reshape(-1, 3).mean(axis=0)]}
 
 
+def bake_vertex_ao(skip):
+    """The dark in the corners for everything on the pod but the plates (whose paint has it baked in): an AO bake
+    to a colour on each vertex, the web side darkens with it. One bake for all of them, the modifiers applied first
+    so the colours land on the vertices that are exported."""
+    scene.render.engine = 'CYCLES'
+    scene.cycles.samples = 48
+    if not scene.world: scene.world = bpy.data.worlds.new('World')
+    scene.world.light_settings.distance = 0.22
+    def on_pod(o):
+        while o:
+            if o in (pod, door): return True
+            o = o.parent
+        return False
+    objs = [o for o in col.objects if o.type == 'MESH' and on_pod(o) and o.name not in skip and not o.name.startswith('door_diodes')]
+    bpy.context.view_layer.update()
+    dg = bpy.context.evaluated_depsgraph_get()
+    for o in objs:
+        me = bpy.data.meshes.new_from_object(o.evaluated_get(dg))
+        old = o.data; o.modifiers.clear(); o.data = me
+        if old.users == 0: bpy.data.meshes.remove(old)
+        attr = me.color_attributes.new('ao', 'FLOAT_COLOR', 'POINT')
+        me.color_attributes.active_color = attr
+        me.attributes.active_color = attr
+    hidden = [o for o in col.objects if o.name in skip and o.type == 'MESH' and o.name not in ('plates', 'door_plates')]
+    for o in hidden: o.hide_render = True  # (a hair above the surface: they would shadow it black)
+    bpy.ops.object.select_all(action='DESELECT')
+    for o in objs: o.select_set(True)
+    bpy.context.view_layer.objects.active = objs[0]
+    bpy.ops.object.bake(type='AO', target='VERTEX_COLORS', use_clear=True)
+    for o in hidden: o.hide_render = False
+    return len(objs)
+
+
 def freeze(objs, name, parent):
     """apply the modifiers and make one object of them"""
     bpy.context.view_layer.update()
@@ -1631,12 +1664,14 @@ if STAGE == 'all':
     body_plates = freeze(on_body, 'plates', pod)
     door_plates = freeze(on_door, 'door_plates', door)
     baked = bake_paint([body_plates, door_plates]) if BAKE else None
+    if BAKE: result['vertex_ao'] = bake_vertex_ao({'plates', 'door_plates', 'marks', 'door_marks', 'decals', 'blood', 'door_window'})
     os.makedirs(os.path.join(ROOT, 'public'), exist_ok=True)
     bpy.ops.object.select_all(action='DESELECT')
     for o in col.objects: o.select_set(True)
     bpy.context.view_layer.objects.active = pod
     bpy.ops.export_scene.gltf(filepath=os.path.join(ROOT, 'public', 'cocoon.glb'), export_format='GLB', use_selection=True,
-                              export_apply=True, export_yup=True, export_extras=True, export_image_format='JPEG', export_jpeg_quality=88)
+                              export_apply=True, export_yup=True, export_extras=True, export_image_format='JPEG', export_jpeg_quality=88,
+                              export_vertex_color='ACTIVE')
     bpy.ops.wm.save_mainfile()
     tris = 0
     dg = bpy.context.evaluated_depsgraph_get()

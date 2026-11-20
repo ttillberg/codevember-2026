@@ -203,8 +203,9 @@ export class Rays extends Pass {
             sum += lit * w;
             // the fans: back along their light to the wall, and how open the fan is where it gets there
             float dz = p.z - wallZ;
-            if (dz > 0.0) {
-              vec2 q = p.xy - fanDir.xy * (dz / fanDir.z);
+            vec2 q = p.xy - fanDir.xy * (dz / fanDir.z);
+            // (only where the light could be: the fans all sit at one height, so a band of the wall)
+            if (dz > 0.0 && abs(q.y - fans[0].y) < FAN_R + 0.3) {
               float open = 0.0;
               for (int k = 0; k < FANS; k++) open += vent(q - fans[k].xy, fans[k].z) * leaf(q - fans[k].xy, iris.x);
               fsum += open * exp(-fanFade * dz) * w;

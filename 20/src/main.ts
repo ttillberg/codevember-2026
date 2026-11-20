@@ -94,6 +94,7 @@ function start() {
   SCENE_TARGETS.add(post.target); // (the hall's steel is drawn into this and no other: hall.ts)
   const sceneDepth = post.depth;
   const ao = new GTAOPass(scene, camera, 1, 1, { depthTexture: sceneDepth });
+  let aoOn = false; // the debug panel's AO (O), screen space, off: the pod has its own baked in, the hall does without (a third of a frame on a big screen)
   ao.updateGtaoMaterial({ radius: 0.45, distanceExponent: 1.4, thickness: 1.5, scale: 1.7, samples: 16 });
   ao.updatePdMaterial({ lumaPhi: 10, depthPhi: 2, normalPhi: 3, radius: 6, rings: 2, samples: 16 });
   ao.blendIntensity = 0.85;
@@ -312,7 +313,7 @@ function start() {
 
     hall = buildHall(scene, swing.position.clone(), renderer.capabilities.maxTextureSize);
     // the sun's light in the haze, marched against its shadow map, after the AO and before the tone mapping
-    const rays = new Rays(camera, hall.sun, hall.podSun, () => (ao.enabled ? ao.depthTexture : null), { roof: hall.roofY, box: hall.air, density: 0.04, fans: hall.fans });
+    const rays = new Rays(camera, hall.sun, hall.podSun, () => (eye === camera ? sceneDepth : null), { roof: hall.roofY, box: hall.air, density: 0.04, fans: hall.fans });
     post.insert(rays, 1);
     raysPass = rays;
     if (import.meta.env.DEV) Object.assign(window, { rays, sun: hall.sun, hall });
@@ -624,6 +625,7 @@ function start() {
     const views = [...panel.querySelectorAll<HTMLButtonElement>('[data-view]')];
     const projs = [...panel.querySelectorAll<HTMLButtonElement>('[data-proj]')];
     const stillBtn = panel.querySelector<HTMLButtonElement>('[data-still]')!;
+    const aoBtn = panel.querySelector<HTMLButtonElement>('[data-ao]')!;
     const copyBtn = panel.querySelector<HTMLButtonElement>('[data-copy]')!;
     // the view and what the scene is doing, as text to paste back to whoever is working on it
     const copyView = async () => {
@@ -717,6 +719,7 @@ function start() {
       views.forEach((b) => b.classList.toggle('on', goal !== null && b.dataset.view === current));
       projs.forEach((b) => b.classList.toggle('on', (b.dataset.proj === 'ortho') === (eye === ortho)));
       stillBtn.classList.toggle('on', still);
+      aoBtn.classList.toggle('on', aoOn);
       refs.forEach((b) => b.classList.toggle('on', b.dataset.ref === split));
       drawRef();
     };
@@ -748,6 +751,7 @@ function start() {
     views.forEach((b) => b.addEventListener('click', () => look(b.dataset.view as View)));
     projs.forEach((b) => b.addEventListener('click', () => project(b.dataset.proj === 'ortho')));
     stillBtn.addEventListener('click', () => { still = !still; mark(); });
+    aoBtn.addEventListener('click', () => { aoOn = !aoOn; mark(); });
     refs.forEach((b) => b.addEventListener('click', () => setSplit(b.dataset.ref as typeof split)));
     window.addEventListener('keydown', (e) => {
       if (e.metaKey || e.ctrlKey || e.altKey) return;
@@ -757,6 +761,7 @@ function start() {
       else if (e.key === '0') look('persp');
       else if (e.key === '5') project(eye !== ortho);
       else if (e.key === 'h' || e.key === 'H') { still = !still; mark(); }
+      else if (e.key === 'o' || e.key === 'O') { aoOn = !aoOn; mark(); }
       else if (e.key === 'c' || e.key === 'C') copyView();
       else if (e.key === 'r' || e.key === 'R') setSplit(split === 'off' ? 'side' : split === 'side' ? 'down' : 'off');
     });
@@ -779,7 +784,9 @@ function start() {
     const w = canvas.clientWidth; // the whole window, or half of it with the reference beside
     const h = canvas.clientHeight;
     if (!w || !h) return; // not laid out yet, or hidden
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    // a budget of pixels: a big retina screen full has 7.5 million, and every pass pays for each; 4.5 million is
+    // sharp still, at about half the cost
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2, Math.sqrt(4.5e6 / (w * h))));
     renderer.setSize(w, h, false);
     post.setSize(w, h);
     camera.aspect = w / h;
@@ -799,6 +806,8 @@ function start() {
   let time = 0;
   let frameMs = 16.7; // smoothed, for the debug readout
   function frame(now: number) {
+    // no more than 60 a second: a 120 Hz screen would draw all of it twice as often, for nothing seen
+    if (now - then < 1000 / 62) { requestAnimationFrame(frame); return; }
     frameMs += (now - then - frameMs) * 0.05;
     const dt = Math.min(0.05, (now - then) / 1000);
     then = now;
@@ -862,7 +871,7 @@ function start() {
     for (const g of GLOWING) g.material.emissiveIntensity = g.gain * (GLOW.rest + GLOW.beat * beat);
     if (door) DOOR_GLOW.inv.value.copy(door.matrixWorld).invert();
 
-    ao.enabled = eye === camera; // the debug panel's iso goes without
+    ao.enabled = eye === camera && aoOn; // the debug panel's iso goes without, and it can be switched off
     hall?.prepare(renderer, camera);
     post.render(eye);
     requestAnimationFrame(frame);

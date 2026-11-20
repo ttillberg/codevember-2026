@@ -280,6 +280,29 @@ export function dress(root: THREE.Object3D) {
     };
     mesh.material = Array.isArray(mesh.material) ? mesh.material.map(swap) : swap(mesh.material);
   });
+  // the dark in the corners, baked in Blender to a colour on each vertex of everything but the plates (whose paint
+  // has it): their materials take it. A little lifted, so a corner is dim, not black
+  const shaded = new Set<THREE.Material>();
+  root.traverse((o) => {
+    const mesh = o as THREE.Mesh;
+    const ao = mesh.isMesh ? (mesh.geometry.getAttribute('color') as THREE.BufferAttribute | undefined) : undefined;
+    if (!ao) return;
+    if (!mesh.geometry.userData.lifted) {
+      for (let i = 0; i < ao.count; i++) {
+        const v = 0.3 + 0.7 * ao.getX(i);
+        ao.setXYZ(i, v, v, v);
+      }
+      ao.needsUpdate = true;
+      mesh.geometry.userData.lifted = true;
+    }
+    for (const m of Array.isArray(mesh.material) ? mesh.material : [mesh.material]) shaded.add(m);
+  });
+  for (const m of shaded) { m.vertexColors = true; m.needsUpdate = true; }
+}
+/** white on every vertex: for what is drawn with a material that takes the baked shade and has none of its own */
+export function unshaded(geo: THREE.BufferGeometry) {
+  if (!geo.getAttribute('color')) geo.setAttribute('color', new THREE.BufferAttribute(new Float32Array(geo.getAttribute('position').count * 3).fill(1), 3));
+  return geo;
 }
 
 /**
@@ -312,8 +335,8 @@ export function instances(root: THREE.Object3D) {
     o.add(mesh);
   };
   // a bolt: from 2 mm under the plate's face to 3 mm out, its base at the point
-  const bolt = new THREE.CylinderGeometry(0.0042, 0.0042, 0.005, 6).translate(0, 0.0005, 0);
-  const collar = new THREE.CylinderGeometry(1, 1, 0.06, 6);
+  const bolt = unshaded(new THREE.CylinderGeometry(0.0042, 0.0042, 0.005, 6).translate(0, 0.0005, 0));
+  const collar = unshaded(new THREE.CylinderGeometry(1, 1, 0.06, 6));
   const found: THREE.Object3D[] = [];
   root.traverse((o) => { if (/^(bolts_|collars_hoses)/.test(o.name) && o.userData.at) found.push(o); });
   for (const o of found) {
