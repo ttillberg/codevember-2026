@@ -52,7 +52,7 @@ function start() {
   scene.add(hemi);
   // the rest of the light, from the roof and the sides, comes with the hall (hall.ts)
 
-  const camera = new THREE.PerspectiveCamera(40, 1, 0.1, 100); // nothing past 90 m shows through the haze
+  const camera = new THREE.PerspectiveCamera(40, 1, 0.1, 140); // little past 90 m shows through the haze, but the fans up in the far corner do
 
   // ambient occlusion in screen space: the dark in the machinery's corners, under the boxes, between the hoses.
   // The light shafts and the dome are not surfaces, they are left out of what it sees.
@@ -234,7 +234,7 @@ function start() {
 
     hall = buildHall(scene, swing.position.clone(), renderer.capabilities.maxTextureSize);
     // the sun's light in the haze, marched against its shadow map, after the AO and before the tone mapping
-    const rays = new Rays(camera, hall.sun, hall.podSun, () => (ao.enabled ? ao.depthTexture : null), { roof: hall.roofY, box: hall.air, density: 0.04 });
+    const rays = new Rays(camera, hall.sun, hall.podSun, () => (ao.enabled ? ao.depthTexture : null), { roof: hall.roofY, box: hall.air, density: 0.04, fans: hall.fans });
     post.insert(rays, 1);
     if (import.meta.env.DEV) Object.assign(window, { rays, sun: hall.sun });
     // ?debug: colours and render settings by hand

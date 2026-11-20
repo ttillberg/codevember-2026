@@ -161,26 +161,62 @@ export function buildHall(scene: THREE.Scene, hang: THREE.Vector3, maxTexture = 
     for (let z = Z0; z > Z1; z -= 1.4) bar(V(x0, ROOF + 0.3, z), V(x1, ROOF + 0.3, z), 0.08, 0.16);
     bar(V((x0 + x1) / 2, ROOF + 0.3, Z0), V((x0 + x1) / 2, ROOF + 0.3, Z1), 0.06, 0.12);
   }
-  // the far wall: solid, small openings in a few rows, not every bay
+  const FAN_R = 6.5, HUB = 1.1, BLADES = 5;
+  // two bigger ones up in the sun's wall, near the end: the first just where the eye looks up to as the page
+  // opens, behind the steel but peeking out from under it. The sun itself comes in through them
+  const SIDE_SCALE = 1.4;
+  const SIDE_FANS = [-61, -42].map((z, i) => ({ at: V(WX, 63, z), angle: 0.4 + i * 1.1, speed: (i % 2 ? 1 : -1) * 0.17 }));
+  // the far wall: solid, small openings in a few rows, not every bay, and a square cut out for each fan
   const HOLES: THREE.Vector3[] = [];
   {
+    const SQ = FAN_R * SIDE_SCALE + 0.5;
+    const rects: number[][] = []; // z0, z1, y0, y1
+    const side = (c: THREE.Vector3, size: THREE.Vector3) => rects.push([c.z - size.z / 2, c.z + size.z / 2, c.y - size.y / 2, c.y + size.y / 2]);
     const rnd = (() => { let a = 7; return () => ((a = (a * 16807) % 2147483647) / 2147483647); })();
     const BANDS = [14, 32, 48, 62];
     const H = 1.4, W = 1.0;
     let y = -46;
     for (const b of BANDS) {
-      box(V(WX, (y + b) / 2, (Z0 + Z1) / 2), V(0.5, b - y, Z0 - Z1));   // solid up to the band
+      side(V(WX, (y + b) / 2, (Z0 + Z1) / 2), V(0.5, b - y, Z0 - Z1));   // solid up to the band
       let z = Z0;
       for (let c = Z0 - 2.5; c > Z1 + 1; c -= 4.5) {
         if (rnd() < 0.45) continue;
-        box(V(WX, b + H / 2, (z + c + W / 2) / 2), V(0.5, H, z - (c + W / 2)));
-        HOLES.push(V(WX, b + H / 2, c));
+        side(V(WX, b + H / 2, (z + c + W / 2) / 2), V(0.5, H, z - (c + W / 2)));
+        if (!SIDE_FANS.some((f) => Math.abs(c - f.at.z) < SQ + W && Math.abs(b + H / 2 - f.at.y) < SQ + H)) HOLES.push(V(WX, b + H / 2, c));
         z = c - W / 2;
       }
-      box(V(WX, b + H / 2, (z + Z1) / 2), V(0.5, H, z - Z1));
+      side(V(WX, b + H / 2, (z + Z1) / 2), V(0.5, H, z - Z1));
       y = b + H;
     }
-    box(V(WX, (y + ROOF + 0.5) / 2, (Z0 + Z1) / 2), V(0.5, ROOF + 0.5 - y, Z0 - Z1));
+    side(V(WX, (y + ROOF + 0.5) / 2, (Z0 + Z1) / 2), V(0.5, ROOF + 0.5 - y, Z0 - Z1));
+    // the fans' squares cut out of it: each piece that overlaps one split round it
+    for (const f of SIDE_FANS) {
+      const [h0, h1, k0, k1] = [f.at.z - SQ, f.at.z + SQ, f.at.y - SQ, f.at.y + SQ];
+      for (const r of rects.splice(0)) {
+        const [z0, z1, y0, y1] = r;
+        if (z1 <= h0 || z0 >= h1 || y1 <= k0 || y0 >= k1) { rects.push(r); continue; }
+        if (y0 < k0) rects.push([z0, z1, y0, k0]);
+        if (y1 > k1) rects.push([z0, z1, k1, y1]);
+        const m0 = Math.max(y0, k0), m1 = Math.min(y1, k1);
+        if (z0 < h0) rects.push([z0, h0, m0, m1]);
+        if (z1 > h1) rects.push([h1, z1, m0, m1]);
+      }
+    }
+    for (const [z0, z1, y0, y1] of rects) if (z1 - z0 > 0.01 && y1 - y0 > 0.01) box(V(WX, (y0 + y1) / 2, (z0 + z1) / 2), V(0.5, y1 - y0, z1 - z0));
+  }
+  // the end wall the eye looks at: solid, but for a row of square holes, each a vent with a huge fan in it
+  const FZ = Z1;
+  // between the towers, above the lowest girders, the light behind them coming in a little down and across
+  const FANS = [-20, 0, 20].map((x, i) => ({ at: V(x, 34, FZ), angle: i * 0.7, speed: (i % 2 ? -1 : 1) * (0.2 + 0.04 * i) }));
+  const FAN_DIR = V(0.12, -0.28, 1).normalize();
+  {
+    const S = 2 * FAN_R + 1, lo = FANS[0].at.y - S / 2, hi = FANS[0].at.y + S / 2;
+    const wall = (x0: number, x1: number, y0: number, y1: number) => box(V((x0 + x1) / 2, (y0 + y1) / 2, FZ), V(x1 - x0, y1 - y0, 0.5));
+    wall(X0, WX, -46, lo);
+    wall(X0, WX, hi, ROOF + 0.5);
+    let x = X0;
+    for (const f of FANS) { wall(x, f.at.x - S / 2, lo, hi); x = f.at.x + S / 2; }
+    wall(x, WX, lo, hi);
   }
 
   // scaffolding: tubes on a 2 x 1.3 m grid, a lift of ledgers every 2 m, braces up the outside in turn, boards
@@ -330,6 +366,66 @@ export function buildHall(scene: THREE.Scene, hang: THREE.Vector3, maxTexture = 
     frame.castShadow = sheave.castShadow = true;
     frame.userData.still = sheave.userData.still = true;
     scene.add(frame, sheave);
+  }
+
+  // the fans: a plate round each hole cut round, a drum through the wall, struts holding the motor, five broad
+  // blades on a hub, and the daylight behind, bright through the haze; the light through them is in rays.ts
+  const rotors: THREE.Group[] = [];
+  {
+    const S = 2 * FAN_R + 1;
+    const plate = new THREE.Shape().moveTo(-S / 2, -S / 2).lineTo(S / 2, -S / 2).lineTo(S / 2, S / 2).lineTo(-S / 2, S / 2).closePath();
+    plate.holes.push(new THREE.Path().absarc(0, 0, FAN_R + 0.15, 0, Math.PI * 2, true));
+    const plateGeo = new THREE.ExtrudeGeometry(plate, { depth: 0.5, bevelEnabled: false, curveSegments: 64 });
+    const drum = new THREE.CylinderGeometry(FAN_R + 0.15, FAN_R + 0.15, 2.6, 64, 1, true).rotateX(Math.PI / 2);
+    const inner = steel.clone();
+    inner.side = THREE.DoubleSide;
+    const day = new THREE.MeshBasicMaterial({ color: 0xdfe6ee, fog: false });
+    const disc = new THREE.CircleGeometry(FAN_R + 0.2, 64);
+    const strut = new THREE.BoxGeometry(FAN_R, 0.3, 0.3).translate(FAN_R / 2, 0, 0);
+    const motor = new THREE.CylinderGeometry(1.3, 1.3, 2.2, 32).rotateX(Math.PI / 2);
+    const hub = new THREE.CylinderGeometry(HUB, HUB, 0.9, 32).rotateX(Math.PI / 2);
+    const nose = new THREE.SphereGeometry(HUB, 24, 12, 0, Math.PI * 2, 0, Math.PI / 2).rotateX(Math.PI / 2).scale(1, 1, 0.6);
+    // a blade, seen down the axis: narrow at the root, broad at the tip; pitched a third of the way round its length
+    const tip = FAN_R - 0.25;
+    const outline = new THREE.Shape().moveTo(HUB * 0.8, -0.5).lineTo(tip, -1.3).quadraticCurveTo(tip + 0.35, 0, tip, 1.3).lineTo(HUB * 0.8, 0.5).closePath();
+    const bladeGeo = new THREE.ExtrudeGeometry(outline, { depth: 0.06, bevelEnabled: false, curveSegments: 8 }).translate(0, 0, -0.03);
+    // (the ones in the sun's wall stand in its way: plate, drum, struts and motor go into its map, which is drawn
+    // once, so the light comes in round; the blades turn and are worked out where the light is marched, rays.ts)
+    let still = false;
+    const add = (parent: THREE.Object3D, g: THREE.BufferGeometry, m: THREE.Material, z: number) => {
+      const o = new THREE.Mesh(g, m);
+      o.position.z = z;
+      o.receiveShadow = true;
+      o.castShadow = o.userData.still = still && m !== day;
+      parent.add(o);
+      return o;
+    };
+    for (const f of [...FANS, ...SIDE_FANS]) {
+      const g = new THREE.Group();
+      g.position.copy(f.at);
+      still = SIDE_FANS.includes(f);
+      if (still) { g.rotation.y = -Math.PI / 2; g.scale.setScalar(SIDE_SCALE); } // facing in from the sun's side
+      add(g, plateGeo, steel, -0.25);
+      add(g, drum, inner, -0.4);
+      add(g, disc, day, -1.8);
+      for (let k = 0; k < 3; k++) add(g, strut, steel, -0.6).rotation.z = Math.PI / 2 + (k * 2 * Math.PI) / 3;
+      add(g, motor, steel, -0.4);
+      still = false;
+      const rotor = new THREE.Group();
+      rotor.position.z = 0.7;
+      add(rotor, hub, steel, 0);
+      add(rotor, nose, steel, 0.45);
+      for (let k = 0; k < BLADES; k++) {
+        const arm = new THREE.Group();
+        arm.rotation.z = (k * 2 * Math.PI) / BLADES;
+        add(arm, bladeGeo, inner, 0).rotation.x = Math.PI / 6;
+        rotor.add(arm);
+      }
+      rotor.rotation.z = f.angle;
+      g.add(rotor);
+      rotors.push(rotor);
+      scene.add(g);
+    }
   }
 
   // the glass in the roof and the windows: bright, the sky through them, seen through the haze
@@ -583,6 +679,8 @@ export function buildHall(scene: THREE.Scene, hang: THREE.Vector3, maxTexture = 
     set shaftGain(g: number) { for (const s of shafts) s.uniforms.strength.value = s.userData.strength * g; },
     air,
     roofY: ROOF,
+    /** the fans in the end wall, for the light through them (rays.ts): where, how far round, which way it comes */
+    fans: { list: FANS, dir: FAN_DIR, radius: FAN_R, hub: HUB, blades: BLADES, wallZ: FZ, side: SIDE_FANS, sideScale: SIDE_SCALE, wallX: WX },
     /** the tight sun on the pod, wherever it has swung to; as the wide one is set (the debug panel too) */
     follow(at: THREE.Vector3) {
       podSun.color.copy(sun.color);
@@ -594,6 +692,7 @@ export function buildHall(scene: THREE.Scene, hang: THREE.Vector3, maxTexture = 
     update(time: number, dt: number) {
       dome.material.uniforms.gain.value = (scene.fog as THREE.Fog).far;
       for (const s of shafts) s.uniforms.time.value = time;
+      [...FANS, ...SIDE_FANS].forEach((f, i) => { f.angle += f.speed * dt; rotors[i].rotation.z = f.angle; });
       for (const c of cars) {
         // up, wait, down, wait: a smooth ride between the ends
         const h = c.userData.hoist as (typeof HOISTS)[number];

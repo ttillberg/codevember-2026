@@ -10,7 +10,7 @@ export function tweaks(t: {
   scene: THREE.Scene;
   hemi: THREE.HemisphereLight;
   ao: { blendIntensity: number; updateGtaoMaterial: (p: Record<string, number>) => void };
-  rays: { intensity: number; fade: number; smoke: number; top: number; topFade: number };
+  rays: { intensity: number; fade: number; smoke: number; top: number; topFade: number; fan: number; fanFade: number };
   hall: { sun: THREE.DirectionalLight; roof: THREE.SpotLight; left: THREE.SpotLight; right: THREE.SpotLight; shaftGain: number; moveSun: () => void };
 }) {
   const KEY = 'cocoon20.tweaks';
@@ -62,6 +62,8 @@ export function tweaks(t: {
   s.add(t.rays, 'smoke', 0, 1, 0.01).name('smoke');
   s.add(t.rays, 'top', 0, 40, 0.1).name('glare under the roof');
   s.add(t.rays, 'topFade', 0.02, 0.6, 0.005).name('glare gone in');
+  s.add(t.rays, 'fan', 0, 20, 0.1).name('through the fans');
+  s.add(t.rays, 'fanFade', 0, 0.1, 0.001).name('fans used up');
 
   const l = gui.addFolder('lights');
   l.add(roof, 'intensity', 0, 30, 0.1).name('skylight');
