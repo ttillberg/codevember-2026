@@ -850,6 +850,8 @@ export function buildHall(scene: THREE.Scene, hang: THREE.Vector3, maxTexture = 
       const over = THREE.MathUtils.smoothstep(roof.position.x, X0 + shut * RUN - 1.5, X0 + shut * RUN + 1.5);
       roof.intensity = roofBase * over;
       shafts[0].uniforms.strength.value = shafts[0].userData.strength * shaftK * over;
+      // and the faked shafts of the windows come and go with the daylight, as the windows' lights do (main.ts)
+      for (let i = 1; i < shafts.length; i++) shafts[i].uniforms.strength.value = shafts[i].userData.strength * shaftK * (0.12 + 0.88 * (1 - shut));
       dome.material.uniforms.gain.value = (scene.fog as THREE.Fog).far;
       for (const s of shafts) s.uniforms.time.value = time;
       // (one switched off, from the hologram (game.ts), runs down slowly, and up again)

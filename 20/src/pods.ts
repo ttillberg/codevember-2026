@@ -38,8 +38,10 @@ type Shape = 'ours' | 'round' | 'long' | 'twin' | 'box';
 const NUMBER = [4, 7]; // this pod's
 // (there were five others: a ball, a capsule, two balls, a box; only the twin of this one is left. prim() still
 // makes the rest, if they are wanted back)
-const PODS: { shape: Shape; num: number[] }[] = [
-  { shape: 'ours', num: [4, 1] }, // the twin
+const PODS: { shape: Shape; num: number[]; hang?: [number, number, number] }[] = [
+  // the twin, close: under the girder just behind this one, to the right as the eye first sees it, near enough to
+  // show through the haze (x, the height of its middle, z; the girder is found above it)
+  { shape: 'ours', num: [4, 1], hang: [9, 9, -6] },
   { shape: 'ours', num: NUMBER }, // this one
 ];
 
@@ -149,11 +151,13 @@ export function pods(o: {
     let k = 1; // (the first spot is straight behind this pod, from the eye: the next one shows)
     PODS.forEach((p, i) => {
       if (p.shape === 'ours' && p.num === NUMBER) return; // this one hangs where it hangs
-      const spot = spots[k++ % spots.length];
+      const h = p.hang;
+      const placed = h && o.spans.find((s) => Math.abs(s.a.z - h[2]) < 0.1 && s.a.y > h[1] + 4 && s.a.x < h[0] && s.b.x > h[0] && s.a.y < h[1] + 20);
+      const spot = placed ? { s: placed, c: new THREE.Vector3(h[0], placed.a.y, h[2]) } : spots[k++ % spots.length];
       const a = spot.s.a, b = spot.s.b;
-      const L = 7;
+      const L = placed ? a.y - h![1] : 7;
       const trolley = new THREE.Group();
-      trolley.position.set(spot.c.x + (i % 2 ? -2 : 2), a.y - 0.15, a.z);
+      trolley.position.set(spot.c.x + (placed ? 0 : i % 2 ? -2 : 2), a.y - 0.15, a.z);
       const truck = new THREE.Mesh(new THREE.BoxGeometry(1, 0.35, 1.7), dark);
       trolley.add(truck);
       const hanger = new THREE.Group();

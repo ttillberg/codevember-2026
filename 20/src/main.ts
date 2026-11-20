@@ -549,12 +549,14 @@ function start() {
     for (const s of socketsAt) s.live.set(s.at.x + carry.x, s.at.y, s.at.z);
     if (hall) hall.trolley.position.x = carry.x;
     const w2 = G / L;
-    if (still && grab !== 'pod') {
-      ax = az = tw = vax = vaz = vtw = 0;
-    } else if (grab === 'pod') {
+    if (grab === 'pod') {
       // the hand on something heavy: a soft spring, it comes slowly and keeps going a little
       vax += (22 * (axTo - ax) - 7 * vax) * h;
       vaz += (22 * (azTo - az) - 7 * vaz) * h;
+    } else if (still) {
+      // held still: no air moving it, and a push dies out: let go, it swings back once, heavily, and settles
+      vax += (-w2 * ax - 1.2 * vax) * h;
+      vaz += (-w2 * az - 1.2 * vaz) * h;
     } else {
       // free: gravity, a little loss, and the air of the hall never quite still
       vax += (-w2 * ax - 0.12 * vax + 0.004 * Math.sin(time * 0.47 + 2)) * h;
@@ -562,7 +564,7 @@ function start() {
     }
     // (left behind as the trolley sets off, thrown on as it stops)
     if (!still) vaz -= (pull / L) * h;
-    vtw += (-0.3 * tw - 0.15 * vtw + 0.004 * Math.sin(time * 0.19) - 0.5 * vaz * vax) * h;
+    vtw += (still ? -0.3 * tw - 0.8 * vtw : -0.3 * tw - 0.15 * vtw + 0.004 * Math.sin(time * 0.19) - 0.5 * vaz * vax) * h;
     ax += vax * h;
     az += vaz * h;
     tw += vtw * h;
@@ -738,6 +740,7 @@ function start() {
         pod.quaternion.identity();
         pod.updateWorldMatrix(true, false); // the view is worked out from the pod straightened, not as it hung last frame
         still = true;
+        ax = az = tw = vax = vaz = vtw = 0; // (and hanging dead still, as the sheet draws it)
         // straight at the pod's own front, flank or back, however it hangs, its middle in the middle
         const local = view === 'front' ? new THREE.Vector3(0, 0, 1) : view === 'back' ? new THREE.Vector3(0, 0, -1) : new THREE.Vector3(side, 0, 0);
         const d = local.transformDirection(pod.matrixWorld);
