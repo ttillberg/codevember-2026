@@ -104,25 +104,36 @@ export class Sound {
     for (let i = 0; i < 22; i++) this.tick(delay + Math.random() * dur);
   }
 
-/** One contact from the simulation, as a sound. A small shard is high and short, a large one lower and rings
-   *  longer; the harder they meet, the louder. Glass on glass is a clean ping, glass on the floor has grit in it.
+/** One contact from the simulation, as a sound. Every shard is about the same note: a large one is
+   *  louder, a little longer and heavier; the harder they meet, the louder. Glass on glass is a clean ping, glass on the floor has grit in it.
    *  pan is where it happened, left to right; rate < 1 in slow motion. */
   clink(size: number, strength: number, kind: number, pan: number, rate = 1) {
     if (!this.ctx) return;
     const ctx = this.ctx, t = ctx.currentTime + Math.random() * 0.012;
-    const r = Math.sqrt(size); // metres across, roughly
-    const f = (9500 / (1 + r * 42)) * (0.8 + Math.random() * 0.4) * (0.45 + 0.55 * rate);
+    const r = Math.min(0.2, Math.sqrt(size)); // metres across, roughly
+    // glass is glass at any size: the pitch moves by a few notes only, never down into a bell. What a large
+    // piece has more of is weight: it is louder, a touch longer, and has a dull clack under it
+    const f = (5200 / (1 + r * 2.6)) * (0.75 + Math.random() * 0.5) * (0.45 + 0.55 * rate);
     const g = Math.min(0.3, (0.012 + strength * 0.022) * (0.45 + r * 9));
-    const dur = (0.035 + r * 1.3) * (kind === 1 ? 1.3 : 1) / rate;
+    const dur = (0.03 + r * 0.25) * (kind === 1 ? 1.25 : 1) / rate;
     const out = ctx.createStereoPanner();
     out.pan.value = Math.max(-1, Math.min(1, pan));
     out.connect(this.out!);
-    for (const [mul, vol] of [[1, 1], [2.76, 0.45], [5.4, 0.2]]) {
+    // three partials that are not in tune with each other, each a little different every time: a chink, not a note
+    for (const [mul, vol] of [[1, 1], [1.5 + Math.random() * 0.45, 0.6], [2.4 + Math.random() * 0.8, 0.35]]) {
       const o = ctx.createOscillator(), e = ctx.createGain();
       o.frequency.value = Math.min(16000, f * mul);
-      e.gain.setValueAtTime(g * vol, t); e.gain.exponentialRampToValueAtTime(0.0001, t + dur / Math.sqrt(mul));
+      e.gain.setValueAtTime(g * vol, t); e.gain.exponentialRampToValueAtTime(0.0001, t + dur / mul);
       o.connect(e).connect(out);
       o.start(t); o.stop(t + dur + 0.02);
+    }
+    if (r > 0.04) {
+      const src = ctx.createBufferSource(), filt = ctx.createBiquadFilter(), e = ctx.createGain();
+      src.buffer = this.noise; src.playbackRate.value = rate;
+      filt.type = 'lowpass'; filt.frequency.value = 1400; filt.Q.value = 0.6;
+      e.gain.setValueAtTime(g * (r - 0.04) * 22, t); e.gain.exponentialRampToValueAtTime(0.0001, t + 0.035 / rate);
+      src.connect(filt).connect(e).connect(out);
+      src.start(t, Math.random() * 1.5); src.stop(t + 0.05 / rate);
     }
     if (kind !== 1) {
       // the floor: a short scrape of noise under the ring
