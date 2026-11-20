@@ -14,7 +14,7 @@ export const SECTIONS: Section[] = [
       it('gap', 'Gap, cm', 3, 80, 1, 25),
       it('temper', 'Tempered (last pane)', 0, 1, 1, 0),
       it('frost', 'Frosted', 0, 1, 0.01, 0.7),
-      it('targets', 'Target size, cm', 0, 30, 0.5, 11),
+      it('targets', 'Target size, cm', 0, 40, 0.5, 20),
       it('exposure', 'Exposure', 0.3, 2.5, 0.01, 1),
       it('wall', 'Wall light', 0, 2.5, 0.01, 1),
       it('floor', 'Floor light', 0, 2.5, 0.01, 1),

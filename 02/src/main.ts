@@ -148,7 +148,8 @@ function newPane() {
 
 /** Three targets on the glass: side by side on a wide wall, one over the other on a tall one. */
 function placeTargets() {
-  const r = Math.min(V.targets / 100, W * 0.3), wide = W > H * 0.9;
+  const wide = W > H * 0.9;
+  const r = Math.min(V.targets / 100, wide ? W * 0.14 : 0.13); // (they must not reach each other)
   for (let i = 0; i < 3; i++) {
     const k = (i - 1) * 0.29;
     renderer.targets.set(wide ? [W * (0.5 + k), EYE_AT - Y0 + (i === 1 ? 0.08 : 0.02), r] : [W * 0.5, EYE_AT - Y0 + k * 1.05, r], i * 3);

@@ -53,7 +53,7 @@ Splinters under 1.5 cm² are boxes that only meet the floor. Some of the pieces 
 
 Frosted glass blurs what is behind it but not what is in it: a crack is at the surface and stays sharp. So the room is kept as a picture of its own, without the glass, next to the usual one with every crack surface in it. A face of the glass blurs the first (sixteen taps on a disc, turned by a hash per pixel, which is the grain) and puts back the second wherever the two differ: that is where a crack is. Where glass has left, the room behind is sharp.
 
-The targets are dark matt tape: a circle, four strokes through it that stop short of the middle, and in the empty middle a small dot. They are drawn in the face shader, by pane coordinates, so a shard carries its part of one wherever it goes. `Frosted` and `Target size` are in the workbench.
+The targets are dark matt tape: a small circle with a dot in its empty middle and four long strokes around it, with a gap between each stroke and the circle, so nothing touches. They are drawn in the face shader, by pane coordinates, so a shard carries its part of one wherever it goes. `Frosted` and `Target size` are in the workbench.
 
 ## Drawing it
 
