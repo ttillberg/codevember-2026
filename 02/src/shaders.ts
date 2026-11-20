@@ -75,12 +75,7 @@ uniform vec3 uCam;
 out vec4 o;
 void main() {
   vec3 c;
-  if (vMat > 3.5) {
-    // tape: grey cloth with a dull sheen, lit like the wall behind it
-    vec2 q = vW.xy - vec2(0.0, 0.5);
-    float weave = 0.9 + 0.1 * vnoise(vW.xy * vec2(700.0, 1400.0)) + 0.06 * vnoise(vW.xy * 60.0);
-    c = vec3(0.2, 0.205, 0.215) * weave * (0.25 + 0.9 * exp(-dot(q, q) / 1.6) + uFlash);
-  } else if (vMat < 0.5) c = floorCol(vW);
+  if (vMat < 0.5) c = floorCol(vW);
   else if (vMat < 1.5) c = wallCol(vW);
   else if (vMat > 2.5) c = wallCol(vec3(vW.z + 1.2, vW.y, WALL_Z)) * 0.8; // a side wall
   else {
@@ -290,5 +285,17 @@ void main() {
   vec2 q = vW.xz - vec2(0.0, -0.25);
   float lit = 0.1 + 0.18 * (N.y * 0.5 + 0.5) + key * (0.25 + 1.1 * exp(-dot(q, q) / 1.5)) + uFlash;
   o = vec4(tone(alb * lit), 1.0);
+}
+`;
+
+// tape: grey cloth with a dull sheen. Same vertices as the glass, so a strip can ride on a shard
+export const TAPE_FS = COMMON + /* glsl */ `
+in vec3 vW; in vec2 vUv;
+out vec4 o;
+void main() {
+  vec2 q = vW.xz - vec2(0.0, -0.25);
+  float weave = 0.9 + 0.1 * vnoise(vUv * vec2(700.0, 1400.0)) + 0.06 * vnoise(vUv * 60.0);
+  vec3 c = vec3(0.2, 0.205, 0.215) * weave * (0.3 + 0.85 * exp(-dot(q, q) / 1.8) + uFlash);
+  o = vec4(tone(c), 1.0);
 }
 `;

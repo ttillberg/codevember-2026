@@ -105,11 +105,20 @@ async function bake(req: BakeRequest) {
   const events = new RAPIER.EventQueue(true);
   const EV = RAPIER.ActiveEvents.COLLISION_EVENTS;
   let last = 0;
+  // shards taped together are one body: the first of a group makes it, the others add their shape to it,
+  // each where it sits. off is where a shard is in its body.
+  const lead = new Map<number, number>();
+  const off = new Float32Array(n * 3);
   for (let i = 0; i < n; i++) {
     const b = req.bodies[i];
-    const body = world.createRigidBody(RAPIER.RigidBodyDesc.fixed().setTranslation(b.c[0] * S, b.c[1] * S, b.c[2] * S));
+    const first = b.group === undefined ? i : (lead.get(b.group) ?? i);
+    if (b.group !== undefined && first === i) lead.set(b.group, i);
+    const fc = req.bodies[first].c;
+    const ox = (b.c[0] - fc[0]) * S, oy = (b.c[1] - fc[1]) * S, oz = (b.c[2] - fc[2]) * S;
+    off[i * 3] = ox; off[i * 3 + 1] = oy; off[i * 3 + 2] = oz;
+    const body = first === i ? world.createRigidBody(RAPIER.RigidBodyDesc.fixed().setTranslation(b.c[0] * S, b.c[1] * S, b.c[2] * S)) : bodies[first];
     if (b.tiny) {
-      owner.set(world.createCollider(RAPIER.ColliderDesc.cuboid(b.half[0] * S, b.half[1] * S, b.half[2] * S).setFriction(0.6).setRestitution(0.35).setCollisionGroups(groups(G_TINY, G_WORLD)).setActiveEvents(EV), body).handle, i);
+      owner.set(world.createCollider(RAPIER.ColliderDesc.cuboid(b.half[0] * S, b.half[1] * S, b.half[2] * S).setTranslation(ox, oy, oz).setFriction(0.6).setRestitution(0.35).setCollisionGroups(groups(G_TINY, G_WORLD)).setActiveEvents(EV), body).handle, i);
     } else {
       let made = 0;
       for (const h of b.hulls) {
@@ -117,7 +126,7 @@ async function bake(req: BakeRequest) {
         for (let k = 0; k < h.length; k++) pts[k] = h[k] * S;
         const desc = RAPIER.ColliderDesc.convexHull(pts);
         if (!desc) continue;
-        owner.set(world.createCollider(desc.setFriction(cfg.friction).setRestitution(cfg.bounce).setCollisionGroups(groups(G_SHARD, G_SHARD | G_WORLD | G_BALL)).setActiveEvents(EV), body).handle, i);
+        owner.set(world.createCollider(desc.setTranslation(ox, oy, oz).setFriction(cfg.friction).setRestitution(cfg.bounce).setCollisionGroups(groups(G_SHARD, G_SHARD | G_WORLD | G_BALL)).setActiveEvents(EV), body).handle, i);
         made++;
       }
       if (!made) world.createCollider(RAPIER.ColliderDesc.ball(0.004 * S).setCollisionGroups(groups(G_TINY, G_WORLD)), body);
@@ -136,6 +145,20 @@ async function bake(req: BakeRequest) {
     }
     // what the ball is about to go through is loose at once, the rest follows within a few frames
     release[i] = d < 0.2 ? 0 : ((d - 0.2) / cfg.front) * (0.75 + rand() * 0.5) + rand() * 0.02;
+    if (first !== i) {
+      // with its strip: let go when the strip is, sent the way the strip is
+      release[i] = release[first];
+      for (let k = 0; k < 6; k++) kick[i * 6 + k] = kick[first * 6 + k];
+      continue;
+    }
+    if (b.group !== undefined) {
+      // a strip of tape and its glass: it lets go late, once what held it has gone, and mostly just drops
+      release[i] = 0.06 + rand() * 0.08;
+      last = Math.max(last, release[i]);
+      kick[i * 6] = gauss() * 0.15; kick[i * 6 + 1] = 0; kick[i * 6 + 2] = -0.5 - rand() * 0.8;
+      kick[i * 6 + 3] = gauss() * 0.8; kick[i * 6 + 4] = gauss() * 0.4; kick[i * 6 + 5] = gauss() * 0.4;
+      continue;
+    }
     if (b.low && b.c[1] - req.y0 < 0.14 && d > 0.25 && !req.standing && rand() < cfg.stuck) { state[i] = 2; continue; }
     last = Math.max(last, release[i]);
     // the bullet pushes what is near it through, the rest gets a nudge either way
@@ -214,7 +237,12 @@ async function bake(req: BakeRequest) {
       const body = bodies[i];
       const p = body.translation(), q = body.rotation();
       const k = o + i * 7;
-      data[k] = p.x / S; data[k + 1] = p.y / S; data[k + 2] = p.z / S;
+      // where the shard is in its body, turned with it
+      const ax = off[i * 3], ay = off[i * 3 + 1], az = off[i * 3 + 2];
+      const tx = 2 * (q.y * az - q.z * ay), ty = 2 * (q.z * ax - q.x * az), tz = 2 * (q.x * ay - q.y * ax);
+      data[k] = (p.x + ax + q.w * tx + q.y * tz - q.z * ty) / S;
+      data[k + 1] = (p.y + ay + q.w * ty + q.z * tx - q.x * tz) / S;
+      data[k + 2] = (p.z + az + q.w * tz + q.x * ty - q.y * tx) / S;
       data[k + 3] = q.x; data[k + 4] = q.y; data[k + 5] = q.z; data[k + 6] = q.w;
       if (state[i] === 1 && !body.isSleeping()) awake++;
     }

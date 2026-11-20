@@ -18,6 +18,8 @@ export interface Body {
   half: [number, number, number];
   /** stands on the bottom of the frame */
   low: boolean;
+  /** held together with every other shard of this group by a strip of tape: they fall as one */
+  group?: number;
 }
 
 export interface ShardSet {
@@ -29,6 +31,8 @@ export interface ShardSet {
   cut: number[][];
   /** part of the pane stays standing */
   kept: boolean;
+  /** one entry per strip of tape that falls: a shard of it (its id, its centre), to hang the tape itself on */
+  groups: { group: number; id: number; c: [number, number, number] }[];
 }
 
 const cross = (ax: number, ay: number, bx: number, by: number, cx: number, cy: number) => (bx - ax) * (cy - ay) - (by - ay) * (cx - ax);
@@ -117,7 +121,7 @@ function convexParts(loop: number[], xs: number[], ys: number[]): number[][] {
 /** With `standing`, the largest face stays where it is, if it stands in the channel: it is not a shard.
  *  Nor is anything `held` (by tape). */
 /** `layer` is which pane this is, and `z` where its front stands: several can stand behind each other. */
-export function buildShards(pane: Pane, y0: number, standing = false, gone: (loop: number[]) => boolean = () => false, layer = 0, z = 0, dice = false, held: (loop: number[]) => boolean = () => false): ShardSet {
+export function buildShards(pane: Pane, y0: number, standing = false, gone: (loop: number[]) => boolean = () => false, layer = 0, z = 0, dice = false, held: (loop: number[]) => number = () => -1, groupBase = 0): ShardSet {
   const { nx, ny, ox, oy, W, T } = pane;
   const loops = pane.faces().filter((l) => !gone(l)); // without what left in an earlier fall
   const walls: number[] = [];
@@ -132,10 +136,14 @@ export function buildShards(pane: Pane, y0: number, standing = false, gone: (loo
     if (keep && (big < 0.2 * W * pane.H || !keep.some((u, i) => ny[u] < 1e-6 && ny[keep![(i + 1) % keep!.length]] < 1e-6))) keep = null;
   }
   let taped = false;
+  const groups: ShardSet['groups'] = [];
   for (const loop of loops) {
     const n = loop.length;
     if (loop === keep) continue;
-    if (held(loop)) { taped = true; continue; } // under tape: it stays where it is, part of the pane
+    // under tape: with a pane still standing around it, it stays where it is, part of that pane. With none,
+    // the strip has nothing to hang from: its pieces go, but as one, stuck to the tape
+    const tape = held(loop);
+    if (tape >= 0 && keep) { taped = true; continue; }
     let a = 0, cx = 0, cy = 0, low = false;
     for (let i = 0; i < n; i++) {
       const u = loop[i], v = loop[(i + 1) % n];
@@ -192,9 +200,12 @@ export function buildShards(pane: Pane, y0: number, standing = false, gone: (loo
         return pts;
       });
     }
-    bodies.push({ c: [wx, wy, wz], area: a, tiny, hulls, half, low });
+    if (tape >= 0) {
+      if (!groups.some((g) => g.group === groupBase + tape)) groups.push({ group: groupBase + tape, id, c: [wx, wy, wz] });
+      bodies.push({ c: [wx, wy, wz], area: a, tiny, hulls, half, low, group: groupBase + tape });
+    } else bodies.push({ c: [wx, wy, wz], area: a, tiny, hulls, half, low });
   }
-  return { count: bodies.length, walls: new Float32Array(walls), faces: new Float32Array(faces), bodies, cut, kept: !!keep || taped };
+  return { count: bodies.length, walls: new Float32Array(walls), faces: new Float32Array(faces), bodies, cut, kept: !!keep || taped, groups };
 }
 
 /** One crack surface, from the front of the glass at a → b to the back at a + slant → b + slant.
@@ -227,6 +238,7 @@ export function mergeSets(parts: ShardSet[]): ShardSet {
   for (const p of parts) { nw += p.walls.length; nf += p.faces.length; }
   const walls = new Float32Array(nw), faces = new Float32Array(nf);
   const bodies: Body[] = [];
+  const groups: ShardSet['groups'] = [];
   let ow = 0, of = 0;
   for (const p of parts) {
     walls.set(p.walls, ow); faces.set(p.faces, of);
@@ -234,7 +246,8 @@ export function mergeSets(parts: ShardSet[]): ShardSet {
     for (let i = of + 10; i < of + p.faces.length; i += STRIDE) faces[i] += base;
     ow += p.walls.length; of += p.faces.length;
     bodies.push(...p.bodies);
+    for (const g of p.groups) groups.push({ ...g, id: g.id + base });
     base += p.count;
   }
-  return { count: base, walls, faces, bodies, cut: [], kept: parts.some((p) => p.kept) };
+  return { count: base, walls, faces, bodies, cut: [], kept: parts.some((p) => p.kept), groups };
 }

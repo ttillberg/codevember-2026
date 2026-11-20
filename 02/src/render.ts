@@ -1,6 +1,6 @@
 // WebGL2. Three steps a frame: the shadow of the glass on the floor, into a map; the room and every crack
 // surface, into a texture; then the faces of the glass on screen, which look that texture up, bent.
-import { BALL_FS, BALL_VS, COPY_FS, DUST_FS, DUST_VS, FACE_FS, GLASS_VS, QUAD_VS, ROOM_FS, ROOM_VS, SHADOW_FS, VIGNETTE_FS, WALL_FS } from './shaders';
+import { BALL_FS, BALL_VS, TAPE_FS, COPY_FS, DUST_FS, DUST_VS, FACE_FS, GLASS_VS, QUAD_VS, ROOM_FS, ROOM_VS, SHADOW_FS, VIGNETTE_FS, WALL_FS } from './shaders';
 import { STRIDE, pushWall, type ShardSet } from './shards';
 import type { Pane, Seg } from './cracks';
 
@@ -52,7 +52,9 @@ export class Renderer {
   ball = { on: false, p: [0, 0, 0], q: [0, 0, 0, 1], r: 0.11 };
   /** what the settings panel turns */
   look = { exposure: 1, wall: 1, floor: 1, dark: 1, tint: 1, wavy: 0.06, refl: 1, bend: 0.014, seam: 0.16, shadow: 0.58 };
+  // tape: strips on standing glass (in the world), and strips that went down with their glass (on a shard)
   private tapeVao!: WebGLVertexArrayObject; private tapeBuf!: WebGLBuffer; private tapeCount = 0;
+  private tapeFellVao!: WebGLVertexArrayObject; private tapeFellBuf!: WebGLBuffer; private tapeFell: number[] = [];
   private ballVao!: WebGLVertexArrayObject; private ballCount = 0;
   pane = { W: 1, H: 1, y0: 0, T: 0.008, N: 1 };
   static SHADOW = 2048;
@@ -70,11 +72,9 @@ export class Renderer {
     this.prog('vignette', QUAD_VS, VIGNETTE_FS);
     this.prog('dust', DUST_VS, DUST_FS);
     this.prog('ball', BALL_VS, BALL_FS);
-    this.tapeVao = gl.createVertexArray()!; this.tapeBuf = gl.createBuffer()!;
-    gl.bindVertexArray(this.tapeVao);
-    gl.bindBuffer(gl.ARRAY_BUFFER, this.tapeBuf);
-    gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 3, gl.FLOAT, false, 16, 0);
-    gl.enableVertexAttribArray(1); gl.vertexAttribPointer(1, 1, gl.FLOAT, false, 16, 12);
+    this.prog('tape', GLASS_VS, TAPE_FS);
+    [this.tapeVao, this.tapeBuf] = this.glassVao();
+    [this.tapeFellVao, this.tapeFellBuf] = this.glassVao();
     {
       const v: number[] = [];
       const A = 24, B = 48;
@@ -174,7 +174,7 @@ export class Renderer {
   setPanes(W: number, H: number, T: number, y0: number, zs: number[]) {
     const gl = this.gl;
     this.pane = { W, H, y0, T, N: zs.length };
-    this.shards = false; this.tapeCount = 0;
+    this.shards = false; this.tapeCount = 0; this.tapeFell = [];
     this.wallAll = new Float32Array(0); this.faceAll = new Float32Array(0); this.shardCount = 0; this.wallCount = this.faceCount = 0;
     const hx = W / 2;
     const r: number[] = [];
@@ -215,13 +215,25 @@ export class Renderer {
     this.setMask(null);
   }
 
-  /** The strips of tape, as quads in the world: four corners each, x y z. */
-  setTapes(quads: number[][]) {
+  private tapeVerts(q: number[], uv: number[], id: number) {
+    const v: number[] = [];
+    for (const k of [0, 1, 2, 0, 2, 3]) v.push(q[k * 3], q[k * 3 + 1], q[k * 3 + 2], 0, 0, 1, uv[k * 2], uv[k * 2 + 1], 0, -1e3, id, 0);
+    return v;
+  }
+  /** The strips of tape on standing glass: four corners each in the world (x y z), and in pane space (x y). */
+  setTapes(strips: { q: number[]; uv: number[] }[]) {
     const gl = this.gl, v: number[] = [];
-    for (const q of quads) for (const k of [0, 1, 2, 0, 2, 3]) v.push(q[k * 3], q[k * 3 + 1], q[k * 3 + 2], 4);
+    for (const s of strips) v.push(...this.tapeVerts(s.q, s.uv, 0));
     gl.bindBuffer(gl.ARRAY_BUFFER, this.tapeBuf);
     gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(v), gl.DYNAMIC_DRAW);
-    this.tapeCount = v.length / 4;
+    this.tapeCount = v.length / STRIDE;
+  }
+  /** A strip that goes down with its glass: its corners relative to the centre of shard `id`, which it rides. */
+  addFallenTape(q: number[], uv: number[], id: number) {
+    const gl = this.gl;
+    this.tapeFell.push(...this.tapeVerts(q, uv, id));
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.tapeFellBuf);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(this.tapeFell), gl.DYNAMIC_DRAW);
   }
 
   /** Does pane i still stand, in part at least? */
@@ -449,13 +461,15 @@ export class Renderer {
     gl.uniform3f(u.uGlass, this.look.tint, this.look.wavy, this.look.refl);
     gl.uniform1i(u.uScene, 3);
     this.drawGlass(u, false, now, shardNow);
-    if (this.tapeCount) {
+    if (this.tapeCount || this.tapeFell.length) {
       // tape is on the glass, not in it: over the faces, behind whatever flies in front
-      u = this.use('room');
-      gl.uniformMatrix4fv(u.uVP, false, vp);
-      gl.uniform3fv(u.uCam, cam); gl.uniform1f(u.uFlash, flash);
+      u = this.use('tape');
+      this.glassUniforms(u, vp, now, flash, false);
       gl.depthFunc(gl.LEQUAL);
+      gl.uniform1f(u.uUseXf, 0);
       gl.bindVertexArray(this.tapeVao); gl.drawArrays(gl.TRIANGLES, 0, this.tapeCount);
+      gl.uniform1f(u.uUseXf, 1);
+      gl.bindVertexArray(this.tapeFellVao); gl.drawArrays(gl.TRIANGLES, 0, this.tapeFell.length / STRIDE);
       gl.depthFunc(gl.LESS);
     }
     gl.disable(gl.DEPTH_TEST);

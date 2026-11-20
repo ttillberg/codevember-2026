@@ -55,7 +55,7 @@ interface Layer {
   z: number; // where its front stands
   pane: Pane;
   standing: boolean;
-  tapes: { ax: number; ay: number; bx: number; by: number; w: number }[]; // strips across it, in pane space: what is under one stays up
+  tapes: { ax: number; ay: number; bx: number; by: number; w: number; fell: boolean }[]; // strips across it, in pane space: what is under one stays up
   tempered: boolean; // it does not crack: the first hit turns all of it to dice
   maskData: Uint8ClampedArray | null; // its part of the mask as it was when pieces last left: blue is gone
 }
@@ -257,6 +257,7 @@ function shoot(px: number, py: number) {
 const FLIGHT = 0.42;
 
 let ballSlow = 1; // how much slower than life the flight is shown
+let kickedSet: { set: ShardSet; base: number } | null = null;
 let kicked: { L: Layer; set: ShardSet }[] = []; // what the ball is about to take out of each pane
 const ball = { on: false, at: 0, p: [0, 0, 0], v: [0, 0, 0], w: [0, 0, 0] }; // p, v: as it reaches the glass, at time `at`
 function kick(x: number, y: number) {
@@ -292,7 +293,7 @@ function kick(x: number, y: number) {
       renderer.addCracks(L.i, L.pane, res.segs);
       renderer.addCracks(L.i, L.pane, L.pane.finish(at, V.shardArea / 1e4, 0.1, false, gone));
     }
-    const part = buildShards(L.pane, Y0, false, gone, L.i, L.z, L.tempered, (loop) => taped(L, loop));
+    const part = buildShards(L.pane, Y0, false, gone, L.i, L.z, L.tempered, (loop) => taped(L, loop), L.i * 100);
     parts.push(part);
     kicked.push({ L, set: part });
     impacts.push([lx - W / 2, ly + Y0, L.z]);
@@ -303,6 +304,7 @@ function kick(x: number, y: number) {
   for (const arr of [set.walls, set.faces]) for (let i = 9; i < arr.length; i += STRIDE) arr[i] = at;
   const base = renderer.addShards(set);
   renderer.shards = true;
+  kickedSet = { set, base };
   const bake = bakeFall(set, { impacts, balls: [{ p: hit, v, w: ball.w, r }] });
   setReplay(false);
   falls.push({ bake, set, base, at, started: false, over: false, playhead: 0, lastHit: 0, speed: ballSlow, ball: true, near: impacts });
@@ -334,35 +336,56 @@ function loopGone(L: Layer, loop: number[], p: Pane = L.pane) {
   return all > 0 && yes * 2 > all;
 }
 
-/** Is this face under a strip of tape? Then it is held: it stays up whatever happens around it. */
+/** Which strip of tape is this face under, if any? Under one it is held: with the pane, or with the strip. */
 function taped(L: Layer, loop: number[], p: Pane = L.pane) {
-  if (!L.tapes.length) return false;
+  if (!L.tapes.length) return -1;
   let cx = 0, cy = 0;
   for (const n of loop) { cx += p.nx[n]; cy += p.ny[n]; }
   cx /= loop.length; cy /= loop.length;
-  for (const t of L.tapes) {
+  for (let k = 0; k < L.tapes.length; k++) {
+    const t = L.tapes[k];
+    if (t.fell) continue;
     const dx = t.bx - t.ax, dy = t.by - t.ay;
-    if (Math.abs((cx - t.ax) * dy - (cy - t.ay) * dx) / Math.hypot(dx, dy) < t.w / 2) return true;
+    if (Math.abs((cx - t.ax) * dy - (cy - t.ay) * dx) / Math.hypot(dx, dy) < t.w / 2) return k;
   }
-  return false;
+  return -1;
+}
+/** The four corners of a strip, in the world and in pane space: its line, cut to the pane. */
+function tapeQuad(L: Layer, t: Layer['tapes'][number]) {
+  const dx = t.bx - t.ax, dy = t.by - t.ay, l = Math.hypot(dx, dy), ux = dx / l, uy = dy / l;
+  let t0 = -1e9, t1 = 1e9;
+  if (Math.abs(ux) > 1e-6) { const a = (0 - t.ax) / ux, b = (W - t.ax) / ux; t0 = Math.max(t0, Math.min(a, b)); t1 = Math.min(t1, Math.max(a, b)); }
+  if (Math.abs(uy) > 1e-6) { const a = (0 - t.ay) / uy, b = (H - t.ay) / uy; t0 = Math.max(t0, Math.min(a, b)); t1 = Math.min(t1, Math.max(a, b)); }
+  if (t1 <= t0) return null;
+  const nx = (-uy * t.w) / 2, ny = (ux * t.w) / 2;
+  const q: number[] = [], uv: number[] = [];
+  for (const [k, s] of [[t0, -1], [t1, -1], [t1, 1], [t0, 1]]) {
+    const x = t.ax + ux * k + nx * s, y = t.ay + uy * k + ny * s;
+    q.push(x - W / 2, y + Y0, L.z + 0.0008); uv.push(x, y);
+  }
+  return { q, uv };
+}
+function showTapes() {
+  const strips: { q: number[]; uv: number[] }[] = [];
+  for (const L of layers) for (const t of L.tapes) { const s = t.fell ? null : tapeQuad(L, t); if (s) strips.push(s); }
+  renderer.setTapes(strips);
+}
+/** The strips that go down in a fall: from now on each rides one of its shards. */
+function dropTapes(set: ShardSet, base: number) {
+  for (const g of set.groups) {
+    const L = layers[Math.floor(g.group / 100)], t = L?.tapes[g.group % 100];
+    if (!t || t.fell) continue;
+    const s = tapeQuad(L, t);
+    t.fell = true;
+    if (s) renderer.addFallenTape(s.q.map((v, i) => v - g.c[i % 3]), s.uv, base + g.id);
+  }
+  showTapes();
 }
 /** A strip of tape straight across every pane that stands, along the line through two points of the glass. */
 function layTape(ax: number, ay: number, bx: number, by: number) {
   if (state !== 'intact' || Math.hypot(bx - ax, by - ay) < 1e-4) return;
-  for (const L of layers) if (L.standing) L.tapes.push({ ax, ay, bx, by, w: V.tape / 100 });
-  const quads: number[][] = [];
-  for (const L of layers) for (const t of L.tapes) {
-    // the line, cut to the pane, and a little round its edges
-    const dx = t.bx - t.ax, dy = t.by - t.ay, l = Math.hypot(dx, dy), ux = dx / l, uy = dy / l;
-    let t0 = -1e9, t1 = 1e9;
-    if (Math.abs(ux) > 1e-6) { const a = (0 - t.ax) / ux, b = (W - t.ax) / ux; t0 = Math.max(t0, Math.min(a, b)); t1 = Math.min(t1, Math.max(a, b)); }
-    if (Math.abs(uy) > 1e-6) { const a = (0 - t.ay) / uy, b = (H - t.ay) / uy; t0 = Math.max(t0, Math.min(a, b)); t1 = Math.min(t1, Math.max(a, b)); }
-    if (t1 <= t0) continue;
-    const nx = -uy * t.w / 2, ny = ux * t.w / 2, z = L.z + 0.0008;
-    const P = (k: number, s: number) => [t.ax + ux * k + nx * s - W / 2, t.ay + uy * k + ny * s + Y0, z];
-    quads.push([...P(t0, -1), ...P(t1, -1), ...P(t1, 1), ...P(t0, 1)]);
-  }
-  renderer.setTapes(quads);
+  for (const L of layers) if (L.standing && L.tapes.length < 99) L.tapes.push({ ax, ay, bx, by, w: V.tape / 100, fell: false });
+  showTapes();
   sound.tick(0);
   prepareSoon(60);
 }
@@ -386,8 +409,8 @@ function prepare() {
     const copy = L.pane.clone();
     const gone = (loop: number[]) => loopGone(L, loop, copy);
     const held = (loop: number[]) => taped(L, loop, copy);
-    if (!L.tempered) copy.finish(never, V.shardArea / 1e4, 0, true, (loop) => gone(loop) || held(loop)); // (dice are small enough as they are)
-    const set = buildShards(copy, Y0, true, gone, L.i, L.z, L.tempered, held);
+    if (!L.tempered) copy.finish(never, V.shardArea / 1e4, 0, true, (loop) => gone(loop) || held(loop) >= 0); // (dice are small enough as they are)
+    const set = buildShards(copy, Y0, true, gone, L.i, L.z, L.tempered, held, L.i * 100);
     if (!set.count) continue;
     parts.push({ L, pane: copy, set });
     for (const im of L.pane.impacts) impacts.push([im.x - W / 2, im.y + Y0, L.z]);
@@ -417,6 +440,7 @@ function shock(): boolean {
   sound.smash(0);
   const base = renderer.addShards(r.set);
   renderer.shards = true;
+  dropTapes(r.set, base);
   for (const part of r.parts) {
     // the copy, with its pieces cut, is the pane from here on
     part.L.pane = part.pane;
@@ -834,6 +858,7 @@ function frame(ms: number) {
       k.L.standing = k.set.kept; renderer.setStanding(k.L.i, k.set.kept);
     }
     kicked = [];
+    if (kickedSet) { dropTapes(kickedSet.set, kickedSet.base); kickedSet = null; }
     state = layers.some((l) => l.standing) ? 'intact' : 'fallen';
     setHint();
   }
