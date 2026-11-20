@@ -135,8 +135,11 @@ export function buildHall(scene: THREE.Scene, hang: THREE.Vector3, maxTexture = 
   const gy = hang.y + 0.35;
   truss(V(-TX, gy, hang.z), V(TX, gy, hang.z), V(0, 0, 0.6), V(0, 1.8, 0), 1.8, 0.2, 0.08);
   for (let x = COLS[0] - 6; x <= WX; x += 8) bar(V(x, ROOF - 4, ROWS[0] + 6), V(x, ROOF - 4, ROWS[ROWS.length - 1] - 6), 0.3, 0.5);
-  // a frame round the hang point where the hoses come down from, a grating hung under the girder
+  // a frame round the hang point where the hoses come down from, a grating hung under the girder: on a trolley
+  // that runs along it (main.ts drives it), so its bars are kept apart from the hall's, which stand still
+  const carriage: THREE.Matrix4[] = [];
   {
+    const n0 = bars.length;
     const y = gy - 0.15, s = 1.9;
     const c = [V(-s, y, -s), V(s, y, -s), V(s, y, s), V(-s, y, s)].map((p) => p.add(V(hang.x, 0, hang.z)));
     for (let i = 0; i < 4; i++) bar(c[i], c[(i + 1) % 4], 0.14, 0.2);
@@ -145,6 +148,11 @@ export function buildHall(scene: THREE.Scene, hang: THREE.Vector3, maxTexture = 
       bar(V(hang.x + t, y, hang.z - s), V(hang.x + t, y, hang.z + s), 0.06);
     }
     for (const p of c) bar(p, V(p.x, gy, hang.z + Math.sign(p.z - hang.z) * 0.6), 0.06);
+    // the trolley itself: a beam across under the girder's chords, a truck with two wheels on each chord
+    bar(V(hang.x, gy - 0.05, hang.z - 0.9), V(hang.x, gy - 0.05, hang.z + 0.9), 0.22, 0.18);
+    for (const z of [-0.6, 0.6]) for (const x of [-0.35, 0.35]) bar(V(hang.x + x, gy - 0.05, hang.z + z), V(hang.x + x, gy + 0.32, hang.z + z), 0.08);
+    for (const z of [-0.6, 0.6]) bar(V(hang.x - 0.45, gy + 0.32, hang.z + z), V(hang.x + 0.45, gy + 0.32, hang.z + z), 0.1, 0.16);
+    carriage.push(...bars.splice(n0));
   }
 
   // the roof: across each bay, bands of glass between strips of deck, glazing bars across the glass; the deck
@@ -355,7 +363,23 @@ export function buildHall(scene: THREE.Scene, hang: THREE.Vector3, maxTexture = 
     }
   }
 
-  // the block at the hang point: a sheave in a frame
+  // the trolley, and the block under it: a sheave in a frame
+  const trolley = new THREE.Group();
+  {
+    const mesh = new THREE.InstancedMesh(unit, steel, carriage.length);
+    carriage.forEach((m, i) => mesh.setMatrixAt(i, m));
+    mesh.castShadow = mesh.receiveShadow = true;
+    const wheel = new THREE.CylinderGeometry(0.13, 0.13, 0.07, 18).rotateX(Math.PI / 2);
+    const wm = new THREE.MeshStandardMaterial({ color: 0x2a2c2f, roughness: 0.5, metalness: 0.8 });
+    for (const z of [-0.6, 0.6]) for (const x of [-0.35, 0.35]) {
+      const w = new THREE.Mesh(wheel, wm);
+      w.position.set(hang.x + x, gy + 0.13, hang.z + z + 0.13 * Math.sign(z));
+      w.castShadow = true;
+      trolley.add(w);
+    }
+    trolley.add(mesh);
+    scene.add(trolley);
+  }
   {
     const mat = new THREE.MeshStandardMaterial({ color: 0x3a3d40, roughness: 0.45, metalness: 0.8 });
     const frame = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.55, 0.32), mat);
@@ -364,8 +388,7 @@ export function buildHall(scene: THREE.Scene, hang: THREE.Vector3, maxTexture = 
     sheave.rotation.x = Math.PI / 2;
     sheave.position.set(hang.x, hang.y + 0.15, hang.z);
     frame.castShadow = sheave.castShadow = true;
-    frame.userData.still = sheave.userData.still = true;
-    scene.add(frame, sheave);
+    trolley.add(frame, sheave);
   }
 
   // the fans: a plate round each hole cut round, a drum through the wall, struts holding the motor, five broad
@@ -679,6 +702,8 @@ export function buildHall(scene: THREE.Scene, hang: THREE.Vector3, maxTexture = 
     set shaftGain(g: number) { for (const s of shafts) s.uniforms.strength.value = s.userData.strength * g; },
     air,
     roofY: ROOF,
+    /** what runs along the girder with the pod: move it along x */
+    trolley,
     /** the fans in the end wall, for the light through them (rays.ts): where, how far round, which way it comes */
     fans: { list: FANS, dir: FAN_DIR, radius: FAN_R, hub: HUB, blades: BLADES, wallZ: FZ, side: SIDE_FANS, sideScale: SIDE_SCALE, wallX: WX },
     /** the tight sun on the pod, wherever it has swung to; as the wide one is set (the debug panel too) */

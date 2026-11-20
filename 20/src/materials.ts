@@ -136,6 +136,12 @@ export function hallSteel(m: THREE.MeshStandardMaterial) {
   return grit(m, { scale: 0.7, rough: [0.75, 1.3], tint: 0.3 });
 }
 
+/** what glows red from inside the pod: the raw metal seen through the seams, the frosted window (main.ts pulses them) */
+export const GLOWING: { material: THREE.MeshStandardMaterial; gain: number }[] = [];
+/** the raw metal glows only round the door, in the door's own space: a box round it (main.ts sets it, and `inv`,
+ * the door's world matrix inverted, every frame); the rest of it, the open flanks, stays dark */
+export const DOOR_GLOW = { inv: { value: new THREE.Matrix4() }, lo: { value: new THREE.Vector3() }, hi: { value: new THREE.Vector3() } };
+
 /** every material in the glb, by name, to what it is */
 export function dress(root: THREE.Object3D) {
   const done = new Map<THREE.Material, THREE.Material>();
@@ -177,6 +183,34 @@ export function dress(root: THREE.Object3D) {
       if (!(m as THREE.MeshStandardMaterial).isMeshStandardMaterial) return m;
       if (!done.has(m)) {
       const made = make(m as THREE.MeshStandardMaterial);
+      // the red light inside comes out where the plates part and through the window
+      const name = m.name.replace(/[._]\d+$/, '');
+      if (name === 'core' || name === 'frost') {
+        const g = made as THREE.MeshStandardMaterial;
+        g.emissive = new THREE.Color(0xff1a0a);
+        g.emissiveIntensity = 0;
+        GLOWING.push({ material: g, gain: name === 'core' ? 1 : 0.25 });
+        if (name === 'core') {
+          const before = g.onBeforeCompile;
+          g.onBeforeCompile = (sh, r) => {
+            before.call(g, sh, r);
+            Object.assign(sh.uniforms, { doorInv: DOOR_GLOW.inv, doorLo: DOOR_GLOW.lo, doorHi: DOOR_GLOW.hi });
+            sh.vertexShader = sh.vertexShader
+              .replace('void main() {', 'varying vec3 vGlowAt;\nvoid main() {')
+              .replace('#include <project_vertex>', '#include <project_vertex>\n  vGlowAt = (modelMatrix * vec4(transformed, 1.0)).xyz;');
+            sh.fragmentShader = sh.fragmentShader
+              .replace('void main() {', 'varying vec3 vGlowAt;\nuniform mat4 doorInv;\nuniform vec3 doorLo, doorHi;\nvoid main() {')
+              .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
+  {
+    vec3 d = (doorInv * vec4(vGlowAt, 1.0)).xyz;
+    float out_ = length(max(max(doorLo - d, d - doorHi), 0.0));
+    totalEmissiveRadiance *= 1.0 - smoothstep(0.015, 0.06, out_);
+  }`);
+          };
+          const key = g.customProgramCacheKey.bind(g);
+          g.customProgramCacheKey = () => key() + ':doorglow';
+        }
+      }
       // the pod's own (not the rubber, shared with the cables that run up out of the tight sun's reach)
       if (made !== rubber) made.defines = { ...made.defines, ...POD_SUN };
       done.set(m, made);

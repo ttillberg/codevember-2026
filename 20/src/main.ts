@@ -8,7 +8,7 @@ import { Post } from './post';
 import { Cable } from './cables';
 import { Blood } from './blood';
 import { buildHall, SCENE_TARGETS } from './hall';
-import { dress, rubber, wire as wireSteel } from './materials';
+import { dress, DOOR_GLOW, GLOWING, rubber, wire as wireSteel } from './materials';
 
 // A pod hanging in a hall. The model comes from Blender (model/cocoon.blend → public/cocoon.glb) and says by
 // name what is what:
@@ -28,7 +28,7 @@ if (query.has('silk')) import('./silk');
 else start();
 
 function start() {
-  const FOG = 0x0b0c0f; // the hall, dark
+  const FOG = 0x080c13; // the hall, dark, and cold: the haze a steel blue
   const G = 9.8;
   const STEP = 1 / 120;
 
@@ -105,6 +105,32 @@ function start() {
   let vaz = 0;
   let vtw = 0.03;
 
+  // ---------- the crane: a trolley runs the pod along the girder above, a hoist winds it up and lets it down.
+  // Slowly, as something this heavy is moved, with long waits; it swings as the trolley starts and stops
+  const REACH = 5; // how far along the girder either way, metres
+  const LIFT = 2; // how far up
+  const MOVES: [number, number, number][] = [
+    // [seconds, along, up]: from each to the next, eased, standing still at each
+    [0, 0, 0], [8, 0, 0], [22, REACH, 0], [28, REACH, 0], [37, REACH, LIFT], [44, REACH, LIFT], [53, REACH, 0], [58, REACH, 0],
+    [84, -REACH, 0], [90, -REACH, 0], [99, -REACH, LIFT], [106, -REACH, LIFT], [115, -REACH, 0], [120, -REACH, 0], [134, 0, 0],
+  ];
+  const crane = (t: number, out: THREE.Vector3) => {
+    const u = t % MOVES[MOVES.length - 1][0];
+    let i = 0;
+    while (MOVES[i + 1][0] < u) i++;
+    const [t0, x0, y0] = MOVES[i], [t1, x1, y1] = MOVES[i + 1];
+    const k = THREE.MathUtils.smootherstep(u, t0, t1);
+    return out.set(x0 + (x1 - x0) * k, y0 + (y1 - y0) * k, 0);
+  };
+  let craneTime = 0;
+  const carry = new THREE.Vector3(); // where the crane has the pod: along the girder (x), up (y)
+  let carryWas = 0, carryWas2 = 0; // along, the steps before: how hard the trolley pulls
+  const hangAt = new THREE.Vector3(); // the hang point, the trolley at the middle
+  const hangDown = new THREE.Vector3(); // from the hang point to the pod, unit
+  let L0 = 8, linkAt = 0;
+  let mainWire: THREE.Group | null = null;
+  const socketsAt: { at: THREE.Vector3; live: THREE.Vector3 }[] = []; // the hoses' tops, on the trolley
+
   let pod: THREE.Object3D | null = null;
   const podInverse = new THREE.Matrix4();
   const podCentre = new THREE.Vector3();
@@ -170,7 +196,14 @@ function start() {
     w.userData.f1.position.y = len - 0.17;
   };
   let blood: Blood | null = null;
-  const inside = new THREE.PointLight(0xff2410, 1.6, 1.3, 2);
+  const inside = new THREE.PointLight(0xff2410, 1.6, 1.6, 2);
+  /** something in there breathing, slowly: in for two and a half seconds, out for four; 0 out, 1 in */
+  const heart = (t: number) => {
+    const u = (t % 6.5) / 6.5;
+    const w = u < 0.38 ? (u / 0.38) * 0.5 : 0.5 + ((u - 0.38) / 0.62) * 0.5;
+    return (0.5 - 0.5 * Math.cos(2 * Math.PI * w)) ** 1.4;
+  };
+  const GLOW = { rest: 0.06, beat: 2.2 }; // how bright the seams and the window, breathed out and in
 
   const Y = new THREE.Vector3(0, 1, 0);
   const q = new THREE.Quaternion();
@@ -224,7 +257,8 @@ function start() {
     const at = pod.getWorldPosition(new THREE.Vector3());
     if (hang) hang.getWorldPosition(swing.position);
     else swing.position.set(at.x, at.y + 8, at.z);
-    L = swing.position.distanceTo(at);
+    L = L0 = swing.position.distanceTo(at);
+    hangAt.copy(swing.position);
     twist.position.copy(at).sub(swing.position);
     swing.updateWorldMatrix(true, true);
     twist.attach(pod);
@@ -245,11 +279,14 @@ function start() {
       const mean = new THREE.Vector3();
       for (const o of lifts) mean.add(swing.worldToLocal(o.getWorldPosition(new THREE.Vector3())));
       mean.divideScalar(lifts.length);
-      link.position.copy(u).multiplyScalar(mean.dot(u) - 1.7);
+      hangDown.copy(u);
+      linkAt = mean.dot(u) - 1.7;
+      link.position.copy(u).multiplyScalar(linkAt);
       link.quaternion.setFromUnitVectors(Y, u.clone().negate());
       swing.add(link);
       const main = wire(0.032);
       swing.add(main);
+      mainWire = main;
       stretch(main, new THREE.Vector3(0, 0.15, 0), link.position.clone().addScaledVector(u, -0.27));
       for (const o of lifts) {
         const w = wire(0.02);
@@ -262,6 +299,9 @@ function start() {
       doorRest.copy(door.quaternion);
       localBox(door).getCenter(doorCom);
       doorArm2 = Math.max(0.01, doorCom.x * doorCom.x + doorCom.z * doorCom.z);
+      const box = localBox(door);
+      DOOR_GLOW.lo.value.copy(box.min);
+      DOOR_GLOW.hi.value.copy(box.max);
       // open is the way that takes the door away from the pod
       const far = (sign: number) => {
         door!.quaternion.copy(doorRest).multiply(q.setFromAxisAngle(Y, sign * 0.4));
@@ -275,7 +315,9 @@ function start() {
     plugs.forEach((plug, i) => {
       const socket = sockets[i];
       if (!socket) return;
-      const cable = new Cable(socket.getWorldPosition(new THREE.Vector3()), plug, plug.userData.radius ?? 0.045, plug.userData.slack ?? 1.1, rubber);
+      const top = socket.getWorldPosition(new THREE.Vector3());
+      socketsAt.push({ at: top.clone(), live: top });
+      const cable = new Cable(top, plug, plug.userData.radius ?? 0.045, plug.userData.slack ?? 1.1, rubber);
       cable.mesh.castShadow = true;
       cables.push(cable);
       scene.add(cable.mesh);
@@ -387,12 +429,28 @@ function start() {
   canvas.addEventListener('pointercancel', release);
 
   // dev only: a look at the state from the console
-  if (import.meta.env.DEV) Object.assign(window, { cocoon: () => ({ grab, open, vopen, ax, az, tw, doorSign, cables: cables.length }), look: (y: number, p: number, r: number) => { goal = null; yaw = y; pitch = p; radius = r; vyaw = vpitch = 0; }, scene, camera, ao, renderer, post });
+  if (import.meta.env.DEV) Object.assign(window, { cocoon: () => ({ grab, open, vopen, ax, az, tw, doorSign, cables: cables.length }), look: (y: number, p: number, r: number) => { goal = null; yaw = y; pitch = p; radius = r; vyaw = vpitch = 0; }, craneAt: (t: number) => { craneTime = t; }, scene, camera, ao, renderer, post });
 
   // ---------- physics, in fixed steps
 
   function physics(h: number, time: number) {
     if (!pod) return;
+    // the crane: the hang point along the girder, the pod up the line; the pendulum feels the trolley's pull
+    if (!still) craneTime += h;
+    crane(craneTime, carry);
+    // (no more than a trolley this slow can pull: a jump, the debug panel's or a frame that took long, is not a kick)
+    const pull = THREE.MathUtils.clamp((carry.x - 2 * carryWas + carryWas2) / (h * h), -0.3, 0.3);
+    carryWas2 = carryWas;
+    carryWas = carry.x;
+    swing.position.set(hangAt.x + carry.x, hangAt.y, hangAt.z);
+    L = L0 - carry.y;
+    twist.position.copy(hangDown).multiplyScalar(L);
+    if (hangDown.lengthSq()) {
+      link.position.copy(hangDown).multiplyScalar(linkAt - carry.y);
+      if (mainWire) stretch(mainWire, v1.set(0, 0.15, 0), v2.copy(link.position).addScaledVector(hangDown, -0.27));
+    }
+    for (const s of socketsAt) s.live.set(s.at.x + carry.x, s.at.y, s.at.z);
+    if (hall) hall.trolley.position.x = carry.x;
     const w2 = G / L;
     if (still && grab !== 'pod') {
       ax = az = tw = vax = vaz = vtw = 0;
@@ -405,6 +463,8 @@ function start() {
       vax += (-w2 * ax - 0.12 * vax + 0.004 * Math.sin(time * 0.47 + 2)) * h;
       vaz += (-w2 * az - 0.12 * vaz + 0.005 * Math.sin(time * 0.31) + 0.003 * Math.sin(time * 0.73 + 1)) * h;
     }
+    // (left behind as the trolley sets off, thrown on as it stops)
+    if (!still) vaz -= (pull / L) * h;
     vtw += (-0.3 * tw - 0.15 * vtw + 0.004 * Math.sin(time * 0.19) - 0.5 * vaz * vax) * h;
     ax += vax * h;
     az += vaz * h;
@@ -546,7 +606,7 @@ function start() {
         // straight at the pod's own front, flank or back, however it hangs, its middle in the middle
         const local = view === 'front' ? new THREE.Vector3(0, 0, 1) : view === 'back' ? new THREE.Vector3(0, 0, -1) : new THREE.Vector3(side, 0, 0);
         const d = local.transformDirection(pod.matrixWorld);
-        const c = podCentre.clone().applyMatrix4(pod.matrixWorld);
+        const c = podCentre.clone().applyMatrix4(pod.matrixWorld).sub(carry); // (the eye goes where the crane takes it)
         goal = { yaw: Math.atan2(d.x, d.z), pitch: 0, radius: 5.8 / Math.min(1, camera.aspect / 0.85), target: c };
       }
       mark();
@@ -628,8 +688,10 @@ function start() {
       vyaw = vpitch = 0;
     }
     pitch = THREE.MathUtils.clamp(pitch, -0.85, 0.6);
-    camera.position.set(Math.sin(yaw) * Math.cos(pitch), Math.sin(pitch), Math.cos(yaw) * Math.cos(pitch)).multiplyScalar(radius).add(target);
-    camera.lookAt(target);
+    // the eye goes along with the pod, wherever the crane takes it
+    v3.copy(target).add(carry);
+    camera.position.set(Math.sin(yaw) * Math.cos(pitch), Math.sin(pitch), Math.cos(yaw) * Math.cos(pitch)).multiplyScalar(radius).add(v3);
+    camera.lookAt(v3);
     if (eye === ortho) {
       // as big as the perspective one shows things at the target
       const h = radius * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2));
@@ -650,6 +712,11 @@ function start() {
     if (pod) hall?.follow(v1.copy(podCentre).applyMatrix4(pod.matrixWorld));
     hall?.update(time, dt);
     blood?.update(dt);
+    // the red light inside, breathing: on what it lights in there (through the open door) and out of the seams and window
+    const beat = heart(time);
+    inside.intensity = 1.2 + 7 * beat;
+    for (const g of GLOWING) g.material.emissiveIntensity = g.gain * (GLOW.rest + GLOW.beat * beat);
+    if (door) DOOR_GLOW.inv.value.copy(door.matrixWorld).invert();
 
     ao.enabled = eye === camera; // the debug panel's iso goes without
     hall?.prepare(renderer, camera);
