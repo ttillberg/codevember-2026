@@ -7,6 +7,8 @@
 // meets the back of the glass, as an offset from where it meets the front. Slants are per node, so the back of
 // the pane is tiled by the same graph, displaced.
 
+import { Delaunay } from 'd3-delaunay';
+
 export function rng32(seed: number) {
   let a = seed >>> 0;
   return () => {
@@ -144,6 +146,7 @@ export class Pane {
     c.paths = this.paths.map((q) => ({ ...q, nodes: q.nodes.slice(), s: q.s.slice(), times: q.times.slice() }));
     c.impacts = this.impacts.map((i) => ({ ...i, rim: i.rim.slice() }));
     c.tips = this.tips.map((t) => ({ ...t }));
+    c.dice2 = this.dice2; // (never changed once made)
     c.rand = c.makeRand();
     return c;
   }
@@ -286,6 +289,79 @@ export class Pane {
     path.open = true;
     this.tips.push({ node: cur, ang, cx: g.cx, cy: g.cy, path: id });
     return id;
+  }
+
+  /** Tempered glass has gone: the whole pane is in dice. */
+  diced = false;
+  private dice2: { loop: number[]; x: number; y: number; r: number }[] = [];
+
+  /** Tempered glass does not crack, it lets go everywhere at once: one hit and the whole pane is dice, a
+   *  couple of centimetres each, held in place only by each other. The graph is thrown away and built again as
+   *  the cells of scattered points; the cracks reach each place as fast as the wave from the impact does. */
+  dice(x: number, y: number, time: number, size = 0.024): { segs: Seg[]; impact: Impact } {
+    const { W, H } = this;
+    const rand = this.rand;
+    this.nx = []; this.ny = []; this.ox = []; this.oy = []; this.nbr = [];
+    this.ea = []; this.eb = []; this.ekind = []; this.stamp = []; this.owner = []; this.ownerIdx = [];
+    for (const c of this.cells) c.length = 0;
+    this.paths = []; this.tips = []; this.crackLen = 0;
+    // points on a shaken honeycomb, finer by the impact
+    const pts: number[] = [];
+    const dy = size * 0.866;
+    for (let j = 0; j * dy < H + dy; j++) for (let i = 0; i * size < W + size; i++) {
+      pts.push((i + (j % 2) * 0.5 + (rand() - 0.5) * 0.85) * size, (j + (rand() - 0.5) * 0.85) * dy);
+    }
+    for (let k = 0; k < 90; k++) { const a = rand() * 6.283, r = 0.012 + rand() * rand() * 0.11; pts.push(x + Math.cos(a) * r, y + Math.sin(a) * r); }
+    const vor = new Delaunay(Float64Array.from(pts)).voronoi([0, 0, W, H]);
+    const ids = new Map<string, number>();
+    const amax = this.T * 0.22;
+    const at = (px: number, py: number) => {
+      px = Math.min(W, Math.max(0, px)); py = Math.min(H, Math.max(0, py));
+      if (px < 1e-6) px = 0; else if (W - px < 1e-6) px = W;
+      if (py < 1e-6) py = 0; else if (H - py < 1e-6) py = H;
+      const key = `${Math.round(px * 2e5)},${Math.round(py * 2e5)}`;
+      let n = ids.get(key);
+      if (n === undefined) { n = this.node(px, py, this.gauss() * amax, this.gauss() * amax); ids.set(key, n); }
+      return n;
+    };
+    const speed = 22; // m/s as shown: the real wave would cross the pane within a frame
+    const segs: Seg[] = [];
+    this.dice2 = [];
+    for (let c = 0; c < pts.length / 2; c++) {
+      const poly = vor.cellPolygon(c);
+      if (!poly || poly.length < 4) continue;
+      const loop: number[] = [];
+      for (let k = 0; k < poly.length - 1; k++) { const n = at(poly[k][0], poly[k][1]); if (loop[loop.length - 1] !== n && loop[0] !== n) loop.push(n); }
+      if (loop.length < 3) continue;
+      let cx = 0, cy = 0;
+      for (const n of loop) { cx += this.nx[n]; cy += this.ny[n]; }
+      cx /= loop.length; cy /= loop.length;
+      let far = 0;
+      for (const n of loop) far = Math.max(far, Math.hypot(this.nx[n] - cx, this.ny[n] - cy));
+      this.dice2.push({ loop, x: cx, y: cy, r: far });
+      for (let k = 0; k < loop.length; k++) {
+        const a = loop[k], b = loop[(k + 1) % loop.length];
+        if (a === b || this.nbr[a].includes(b)) continue;
+        const ax = this.nx[a], ay = this.ny[a], bx = this.nx[b], by = this.ny[b];
+        const frame = (ax === 0 && bx === 0) || (ax === W && bx === W) || (ay === 0 && by === 0) || (ay === H && by === H);
+        if (frame) { this.ox[a] = this.oy[a] = this.ox[b] = this.oy[b] = 0; }
+        this.edge(a, b, frame ? FRAME : CRACK);
+        if (!frame) segs.push({ a, b, ta: time + Math.hypot(ax - x, ay - y) / speed, tb: time + Math.hypot(bx - x, by - y) / speed, kind: CRACK });
+      }
+    }
+    this.diced = true;
+    return { segs, impact: this.punch(x, y, time)! };
+  }
+
+  /** A bullet through a pane already in dice takes the die it hits with it. */
+  punch(x: number, y: number, time: number): Impact | null {
+    let best = -1, bd = Infinity;
+    for (let i = 0; i < this.dice2.length; i++) { const d = Math.hypot(this.dice2[i].x - x, this.dice2[i].y - y); if (d < bd) { bd = d; best = i; } }
+    if (best < 0) return null;
+    const c = this.dice2[best];
+    const impact: Impact = { x: c.x, y: c.y, r: c.r * 0.55, time, rim: c.loop.slice() };
+    this.impacts.push(impact);
+    return impact;
   }
 
   /** Where a new shot would land in a hole that is already there. */

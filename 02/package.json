@@ -1,7 +1,7 @@
 {
   "name": "day-02",
   "private": true,
-  "description": "Two panes of 8 mm glass, one behind the other: shoot through both as often as you like, then swipe, and what the cracks have cut loose blows out as baked rigid shards",
+  "description": "Two panes of 8 mm glass, the second one tempered: shoot through both, the first cracks and the second goes to dice, then swipe and what is loose blows out as baked rigid shards",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -9,6 +9,7 @@
     "preview": "vite preview"
   },
   "devDependencies": {
+    "@types/d3-delaunay": "^6.0.4",
     "@vitejs/plugin-basic-ssl": "^2.3.0",
     "typescript": "^5.9.3",
     "vite": "^7.3.1"
@@ -20,6 +21,7 @@
   },
   "dependencies": {
     "@dimforge/rapier3d-compat": "^0.21.0",
+    "d3-delaunay": "^6.0.6",
     "earcut": "^3.2.4"
   }
 }

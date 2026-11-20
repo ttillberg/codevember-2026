@@ -2,7 +2,7 @@
 
 2026-11-02
 
-Two panes of 8 mm glass, each standing in a channel, one 25 cm behind the other. Shoot them as often as you like: a bullet goes through both, and in each it is a hole and a web of cracks. Then swipe: a shock, and everything the cracks have cut loose blows out at once, while the rest of the pane stays standing. Or kick a football through all of it.
+Two panes of 8 mm glass, each standing in a channel, one 25 cm behind the other. Shoot them as often as you like: a bullet goes through both. In the first it is a hole and a web of cracks. The second is tempered: one hit and all of it is dice. Then swipe: a shock, and everything the cracks have cut loose blows out at once, while the rest of the pane stays standing. Or kick a football through all of it.
 
 ```sh
 pnpm -C 02 dev
@@ -41,6 +41,8 @@ What stays is still drawn as the pane it was: one quad, cut out where the pieces
 Splinters under 1.5 cm² are boxes that only meet the floor. Some of the pieces standing in the channel stay there.
 
 **Two panes.** Each pane is its own graph, with its own part of one mask texture; which pane a vertex belongs to rides in the tens of its `kind`. A bullet is the ray from the eye, so it meets the second pane a little off from where it met the first. Everything else is one: one set of shards per fall with both panes' pieces in it, one simulation, so what is blown out of the front pane flies through, or into, what leaves the back one. `Panes` (1 to 3) and `Gap` are in the workbench.
+
+**Tempered.** The second pane does not grow cracks. Tempered glass lets go everywhere at once, so the first hit throws its graph away and builds it again as the cells of scattered points (a shaken honeycomb, finer by the impact, Voronoi through `d3-delaunay`): about two thousand dice of 2.4 cm. The cracks appear as the wave from the impact reaches them, at 22 m/s as shown. Nothing stands on its own after that, so the next swipe takes the whole pane. Every die is a body, but one that only meets the floor: two thousand hulls leaning on each other would not bake in any time worth waiting for. A later bullet takes the die it hits with it. `2nd tempered` and `Tempered dice` are in the workbench.
 
 ## Drawing it
 

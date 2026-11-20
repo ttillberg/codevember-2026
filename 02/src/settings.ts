@@ -12,6 +12,7 @@ export const SECTIONS: Section[] = [
     id: 'scene', title: 'Scene', items: [
       it('panes', 'Panes', 1, 3, 1, 2),
       it('gap', 'Gap, cm', 3, 80, 1, 25),
+      it('temper', '2nd tempered', 0, 1, 1, 1),
       it('exposure', 'Exposure', 0.3, 2.5, 0.01, 1),
       it('wall', 'Wall light', 0, 2.5, 0.01, 1),
       it('floor', 'Floor light', 0, 2.5, 0.01, 1),
@@ -43,6 +44,7 @@ export const SECTIONS: Section[] = [
       it('hole', 'Hole, mm', 2, 30, 0.1, 6.2),
       it('slant', 'Slant', 0, 0.9, 0.01, 0.42),
       it('shardArea', 'Shard size, cm²', 4, 200, 1, 22),
+      it('dice', 'Tempered dice, cm', 1.4, 6, 0.1, 2.4),
       it('blow', 'Blow strength', 0.3, 5, 0.05, 2.4),
     ],
   },

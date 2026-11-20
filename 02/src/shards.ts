@@ -116,7 +116,7 @@ function convexParts(loop: number[], xs: number[], ys: number[]): number[][] {
 /** y0 is the height of the bottom of the pane above the floor. The front of the glass is z = 0, the back z = -T. */
 /** With `standing`, the largest face stays where it is, if it stands in the channel: it is not a shard. */
 /** `layer` is which pane this is, and `z` where its front stands: several can stand behind each other. */
-export function buildShards(pane: Pane, y0: number, standing = false, gone: (loop: number[]) => boolean = () => false, layer = 0, z = 0): ShardSet {
+export function buildShards(pane: Pane, y0: number, standing = false, gone: (loop: number[]) => boolean = () => false, layer = 0, z = 0, dice = false): ShardSet {
   const { nx, ny, ox, oy, W, T } = pane;
   const loops = pane.faces().filter((l) => !gone(l)); // without what left in an earlier fall
   const walls: number[] = [];
@@ -169,7 +169,8 @@ export function buildShards(pane: Pane, y0: number, standing = false, gone: (loo
       pushWall(walls, nx[u] - cx, ny[u] - cy, nx[v] - cx, ny[v] - cy, ox[u], oy[u], ox[v], oy[v], T / 2, T, nx[u], ny[u], nx[v], ny[v], -1e3, -1e3, id, layer * 10, 1);
     }
 
-    const tiny = a < 1.5e-4;
+    // (the dice of tempered glass are too many to have a hull each: they meet the floor, not each other)
+    const tiny = dice || a < 1.5e-4;
     let hulls: Float32Array[] = [];
     let half: [number, number, number] = [0, 0, T / 2];
     if (tiny) {

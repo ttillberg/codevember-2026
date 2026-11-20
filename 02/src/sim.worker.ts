@@ -181,7 +181,7 @@ async function bake(req: BakeRequest) {
         body.setAngvel({ x: kick[i * 6 + 3], y: kick[i * 6 + 4], z: kick[i * 6 + 5] }, true);
       }
       for (let i = 0; i < n; i++) {
-        if (state[i] !== 1) continue;
+        if (state[i] !== 1 || bodies[i].isSleeping()) continue; // (what rests meets nothing at speed)
         const v = bodies[i].linvel();
         prevV[i * 3] = v.x / S; prevV[i * 3 + 1] = v.y / S; prevV[i * 3 + 2] = v.z / S;
       }

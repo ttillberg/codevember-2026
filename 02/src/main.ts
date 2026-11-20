@@ -30,7 +30,7 @@ function applySettings() {
   CRACKS.hole = V.hole / 1000;
   const L = renderer.look;
   for (const k of Object.keys(L) as (keyof typeof L)[]) L[k] = V[k];
-  if (settled && (V.panes !== layers.length || Math.abs(V.gap / 100 - gap) > 1e-6)) reset(); // another set-up: new panes
+  if (settled && (V.panes !== layers.length || Math.abs(V.gap / 100 - gap) > 1e-6 || (layers.length > 1 && layers[1].tempered !== V.temper >= 0.5))) reset(); // another set-up: new panes
   else if (settled) prepareSoon(400); // the break that was got ready was for other numbers
 }
 const simCfg = (): SimConfig => ({ contacts: V.contacts, gravity: V.gravity, ballDensity: V.ballDensity, pushBack: V.pushBack, pushOut: V.pushOut, reach: V.reach, spin: V.spin, front: V.front, bounce: V.bounce, friction: V.friction, stuck: V.stuck, seconds: V.seconds });
@@ -55,6 +55,7 @@ interface Layer {
   z: number; // where its front stands
   pane: Pane;
   standing: boolean;
+  tempered: boolean; // it does not crack: the first hit turns all of it to dice
   maskData: Uint8ClampedArray | null; // its part of the mask as it was when pieces last left: blue is gone
 }
 let layers: Layer[] = [];
@@ -117,7 +118,7 @@ function newPane() {
   seed = (seed * 1664525 + 1013904223) >>> 0;
   gap = V.gap / 100;
   layers = [];
-  for (let i = 0; i < Math.round(V.panes); i++) layers.push({ i, z: -i * gap, pane: new Pane(W, H, T, (seed + i * 7919) >>> 0), standing: true, maskData: null });
+  for (let i = 0; i < Math.round(V.panes); i++) layers.push({ i, z: -i * gap, pane: new Pane(W, H, T, (seed + i * 7919) >>> 0), standing: true, tempered: i === 1 && V.temper >= 0.5, maskData: null });
   shots = 0;
   state = 'intact';
   ball.on = false;
@@ -216,11 +217,24 @@ function shoot(px: number, py: number) {
     const [x, y] = pick(px, py, L.z);
     if (!glassAt(L, x, y)) continue; // through a hole, or wide
     const at = now + L.i * 0.012;
-    const res = L.pane.shoot(x, y, at, 0.75 + Math.random() * 0.6);
-    renderer.addCracks(L.i, L.pane, res.segs);
-    drawMask(L, res.impact);
+    if (L.tempered) {
+      // tempered: all of it goes to dice at the first hit; after that a bullet only takes a die with it
+      if (!L.pane.diced) {
+        const res = L.pane.dice(x, y, at, V.dice / 100);
+        renderer.addCracks(L.i, L.pane, res.segs);
+        drawMask(L, res.impact);
+        sound.give(0.01, 0.3);
+      } else {
+        const im = L.pane.punch(x, y, at);
+        if (im) drawMask(L, im);
+      }
+    } else {
+      const res = L.pane.shoot(x, y, at, 0.75 + Math.random() * 0.6);
+      renderer.addCracks(L.i, L.pane, res.segs);
+      drawMask(L, res.impact);
+      for (const t of res.ticks) sound.tick(t - now);
+    }
     hit = true;
-    for (const t of res.ticks) sound.tick(t - now);
     const wx = x - W / 2, wy = y + Y0;
     for (let i = 0; i < (420 * V.dust) / layers.length; i++) {
       const back = Math.random() < 0.72;
@@ -266,11 +280,15 @@ function kick(x: number, y: number) {
     const k = (L.z - hit[2]) / v[2];
     const lx = Math.min(W - 0.02, Math.max(0.02, hit[0] + v[0] * k + W / 2)), ly = Math.min(H - 0.02, Math.max(0.02, hit[1] + v[1] * k - Y0));
     const gone = (loop: number[]) => loopGone(L, loop);
-    const res = L.pane.shoot(lx, ly, at, V.blow, true);
-    res.impact.r = 0; // a ball leaves no hole of its own
-    renderer.addCracks(L.i, L.pane, res.segs);
-    renderer.addCracks(L.i, L.pane, L.pane.finish(at, V.shardArea / 1e4, 0.1, false, gone));
-    parts.push(buildShards(L.pane, Y0, false, gone, L.i, L.z));
+    if (L.tempered) {
+      if (!L.pane.diced) { const res = L.pane.dice(lx, ly, at, V.dice / 100); res.impact.r = 0; renderer.addCracks(L.i, L.pane, res.segs); }
+    } else {
+      const res = L.pane.shoot(lx, ly, at, V.blow, true);
+      res.impact.r = 0; // a ball leaves no hole of its own
+      renderer.addCracks(L.i, L.pane, res.segs);
+      renderer.addCracks(L.i, L.pane, L.pane.finish(at, V.shardArea / 1e4, 0.1, false, gone));
+    }
+    parts.push(buildShards(L.pane, Y0, false, gone, L.i, L.z, L.tempered));
     impacts.push([lx - W / 2, ly + Y0, L.z]);
   }
   sound.smash(FLIGHT);
@@ -328,8 +346,8 @@ function prepare() {
     if (!L.standing || !L.pane.impacts.length) continue;
     const copy = L.pane.clone();
     const gone = (loop: number[]) => loopGone(L, loop, copy);
-    copy.finish(never, V.shardArea / 1e4, 0, true, gone);
-    const set = buildShards(copy, Y0, true, gone, L.i, L.z);
+    if (!L.tempered) copy.finish(never, V.shardArea / 1e4, 0, true, gone); // (dice are small enough as they are)
+    const set = buildShards(copy, Y0, true, gone, L.i, L.z, L.tempered);
     if (!set.count) continue;
     parts.push({ L, pane: copy, set });
     for (const im of L.pane.impacts) impacts.push([im.x - W / 2, im.y + Y0, L.z]);
