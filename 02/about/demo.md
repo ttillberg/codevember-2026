@@ -7,7 +7,7 @@ ink: white
 ---
 # 02 / Shatter, demo
 
-How to show this day off: what the clip on the index plays, and the half minute for X. `pnpm grab 02 --clip` and `pnpm grab 02 --x` read this file (see `scripts/clip.mjs`). Coordinates are in a 1200 × 1200 viewport; the pane (0.9 × 0.8 m at this aspect) fills its middle. A press that stays put is a bullet (a drag that goes nowhere), one that travels is the shock.
+How to show this day off: what the clip on the index plays, and the half minute for X. `pnpm grab 02 --clip` and `pnpm grab 02 --x` read this file (see `scripts/clip.mjs`). Coordinates are in a 1200 × 1200 viewport; the glass fills all of it, and the three targets are side by side across the middle. A press that stays put is a bullet (a drag that goes nowhere), one that travels is the shock.
 
 The pane is always the same one (`?seed=7`).
 

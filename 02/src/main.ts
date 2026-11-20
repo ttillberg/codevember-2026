@@ -30,8 +30,8 @@ function applySettings() {
   CRACKS.hole = V.hole / 1000;
   const L = renderer.look;
   for (const k of Object.keys(L) as (keyof typeof L)[]) L[k] = V[k];
-  if (settled) { liveBtn.classList.toggle('live', V.live >= 0.5); bakeBar.querySelector('span')!.textContent = V.live >= 0.5 ? 'Simulating' : 'Baking the fall'; }
-  if (settled && (V.panes !== layers.length || Math.abs(V.gap / 100 - gap) > 1e-6 || (layers.length > 1 && layers[1].tempered !== V.temper >= 0.5))) reset(); // another set-up: new panes
+  if (settled) { placeTargets(); liveBtn.classList.toggle('live', V.live >= 0.5); bakeBar.querySelector('span')!.textContent = V.live >= 0.5 ? 'Simulating' : 'Baking the fall'; }
+  if (settled && (V.panes !== layers.length || Math.abs(V.gap / 100 - gap) > 1e-6 || layers[layers.length - 1].tempered !== V.temper >= 0.5)) reset(); // another set-up: new panes
   else if (settled) prepareSoon(400); // the break that was got ready was for other numbers
 }
 const simCfg = (): SimConfig => ({ live: V.live >= 0.5 ? V.pace : 0, contacts: V.contacts, gravity: V.gravity, ballDensity: V.ballDensity, pushBack: V.pushBack, pushOut: V.pushOut, reach: V.reach, spin: V.spin, front: V.front, bounce: V.bounce, friction: V.friction, stuck: V.stuck, seconds: V.seconds });
@@ -41,6 +41,8 @@ if (params.has('debug') || params.has('settings') || location.hash === '#debug')
 const T = 0.008; // the glass is 8 mm thick
 const Y0 = 0.03; // and stands in a channel this high
 const FOV = (30 * Math.PI) / 180;
+const DIST = 1.9; // how far the camera stands from the glass
+const EYE_AT = 0.47; // the height it looks at
 
 // intact: there is glass to shoot. doomed: the football is in the air. fallen: no glass is left standing.
 // Falls play on their own whatever the state: a pane can lose pieces while it is being shot.
@@ -117,11 +119,14 @@ let dUsed = 0;
 
 function newPane() {
   const aspect = innerWidth / innerHeight;
-  [W, H] = aspect > 1.15 ? [1.2, 0.8] : aspect < 0.8 ? [0.62, 0.95] : [0.9, 0.8];
+  // a wall of glass: wider than the view at the distance the camera stands, and taller than its top
+  const tan = Math.tan(FOV / 2);
+  W = Math.min(2.6, 2 * DIST * tan * aspect * 1.1);
+  H = (EYE_AT + DIST * tan) * 1.06 - Y0;
   seed = (seed * 1664525 + 1013904223) >>> 0;
   gap = V.gap / 100;
   layers = [];
-  for (let i = 0; i < Math.round(V.panes); i++) layers.push({ i, z: -i * gap, pane: new Pane(W, H, T, (seed + i * 7919) >>> 0), standing: true, tapes: [], tempered: i === 1 && V.temper >= 0.5, maskData: null });
+  for (let i = 0; i < Math.round(V.panes); i++) layers.push({ i, z: -i * gap, pane: new Pane(W, H, T, (seed + i * 7919) >>> 0), standing: true, tapes: [], tempered: i === Math.round(V.panes) - 1 && V.temper >= 0.5, maskData: null });
   shots = 0;
   state = 'intact';
   ball.on = false;
@@ -135,9 +140,32 @@ function newPane() {
   mctx.globalCompositeOperation = 'source-over';
   mctx.fillStyle = '#000'; mctx.fillRect(0, 0, mask.width, mask.height);
   renderer.setPanes(W, H, T, Y0, layers.map((l) => l.z));
+  placeTargets();
+  glassBtn.classList.toggle('tempered', V.temper >= 0.5);
   dPos.fill(0); dLife.fill(0); dUsed = 0;
   setHint();
 }
+
+/** Three targets on the glass: side by side on a wide wall, one over the other on a tall one. */
+function placeTargets() {
+  const r = Math.min(V.targets / 100, W * 0.3), wide = W > H * 0.9;
+  for (let i = 0; i < 3; i++) {
+    const k = (i - 1) * 0.29;
+    renderer.targets.set(wide ? [W * (0.5 + k), EYE_AT - Y0 + (i === 1 ? 0.08 : 0.02), r] : [W * 0.5, EYE_AT - Y0 + k * 1.05, r], i * 3);
+  }
+}
+// classic glass, which cracks, or tempered, which goes to dice: a new pane either way
+const glassBtn = document.querySelector<HTMLButtonElement>('#glass')!;
+function toggleGlass() {
+  V.temper = V.temper >= 0.5 ? 0 : 1;
+  setValue('temper', V.temper);
+  modeTag.textContent = V.temper >= 0.5 ? 'Glass: tempered' : 'Glass: classic';
+  modeTag.hidden = false;
+  clearTimeout(modeTimer);
+  modeTimer = window.setTimeout(() => { modeTag.hidden = true; }, 1600);
+  reset();
+}
+glassBtn.addEventListener('click', () => { sound.wake(); toggleGlass(); });
 
 function setHint() {
   const touch = matchMedia('(pointer: coarse)').matches;
@@ -691,14 +719,14 @@ const cam: { eye: number[]; view: Float32Array; proj: Float32Array } = { eye: [0
 function updateCamera(t: number, dt: number) {
   const aspect = w / h;
   const tan = Math.tan(FOV / 2);
-  const dist = Math.max((H * 1.38) / (2 * tan), (W * 1.22) / (2 * tan * aspect));
-  const home = [0, Y0 + H * 0.43, 0];
+  const dist = DIST;
+  const home = [0, EYE_AT, 0];
   const k = 1 - 1 / zoom;
   const target = [home[0] + (focus[0] - home[0]) * k, home[1] + (focus[1] - home[1]) * k, 0];
   const d = dist / zoom;
   // the pointer never moves the camera: only a slow sway of its own, and the wheel
   const yaw = Math.sin(t * 0.21) * 0.035 * V.sway;
-  const pitch = 0.1 + Math.sin(t * 0.17 + 1) * 0.012 * V.sway + recoil * recoil * 0.012;
+  const pitch = 0.04 + Math.sin(t * 0.17 + 1) * 0.012 * V.sway + recoil * recoil * 0.012;
   cam.eye = [target[0] + Math.sin(yaw) * Math.cos(pitch) * d, Math.max(0.04, target[1] + Math.sin(pitch) * d), Math.cos(yaw) * Math.cos(pitch) * d];
   // the replay is watched from the side: the panes edge on, and the room behind them where the glass goes
   replay.side += ((replay.on ? 1 : 0) - replay.side) * Math.min(1, dt * 5);
@@ -833,6 +861,7 @@ window.addEventListener('keydown', (e) => {
   else if (e.code === 'KeyS') setReplay(!replay.on);
   else if (e.code === 'KeyT') setTaping(!taping);
   else if (e.code === 'KeyC') setLive(V.live < 0.5);
+  else if (e.code === 'KeyG') toggleGlass();
   else if (e.code === 'Escape') setReplay(false);
   else if (e.code === 'KeyM') toggleSound();
   else if (e.code === 'KeyB') toggleBall();

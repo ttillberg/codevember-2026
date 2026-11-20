@@ -46,12 +46,15 @@ export class Renderer {
   private shadowFbo: WebGLFramebuffer; private shadowTex: WebGLTexture;
   private msFbo: WebGLFramebuffer | null = null; private msColor: WebGLRenderbuffer | null = null; private msDepth: WebGLRenderbuffer | null = null;
   private sceneFbo: WebGLFramebuffer | null = null; private sceneTex: WebGLTexture | null = null;
+  private roomFbo: WebGLFramebuffer | null = null; private roomTex: WebGLTexture | null = null; // the room without the glass in it
+  /** the targets printed on the glass: x, y, radius in pane space, three of them */
+  targets = new Float32Array(9);
   private w = 0; private h = 0;
   shards = false;
   /** the football: where it is and how it is turned, or off */
   ball = { on: false, p: [0, 0, 0], q: [0, 0, 0, 1], r: 0.11 };
   /** what the settings panel turns */
-  look = { exposure: 1, wall: 1, floor: 1, dark: 1, tint: 1, wavy: 0.06, refl: 1, bend: 0.014, seam: 0.16, shadow: 0.58 };
+  look = { exposure: 1, wall: 1, floor: 1, dark: 1, tint: 1, wavy: 0.06, refl: 1, bend: 0.014, seam: 0.16, shadow: 0.58, frost: 0.7 };
   // tape: strips on standing glass (in the world), and strips that went down with their glass (on a shard)
   private tapeVao!: WebGLVertexArrayObject; private tapeBuf!: WebGLBuffer; private tapeCount = 0;
   private tapeFellVao!: WebGLVertexArrayObject; private tapeFellBuf!: WebGLBuffer; private tapeFell: number[] = [];
@@ -328,15 +331,20 @@ export class Renderer {
     gl.bindFramebuffer(gl.FRAMEBUFFER, this.msFbo);
     gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.RENDERBUFFER, this.msColor);
     gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.RENDERBUFFER, this.msDepth);
-    this.sceneTex = gl.createTexture();
-    gl.bindTexture(gl.TEXTURE_2D, this.sceneTex);
+    if (this.roomTex) gl.deleteTexture(this.roomTex);
+    this.roomFbo ??= gl.createFramebuffer();
+    for (const which of ['room', 'scene'] as const) {
+    const tex = gl.createTexture();
+    if (which === 'room') this.roomTex = tex; else this.sceneTex = tex;
+    gl.bindTexture(gl.TEXTURE_2D, tex);
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-    gl.bindFramebuffer(gl.FRAMEBUFFER, this.sceneFbo);
-    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, this.sceneTex, 0);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, which === 'room' ? this.roomFbo : this.sceneFbo);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
+    }
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
   }
 
@@ -434,6 +442,12 @@ export class Renderer {
     gl.activeTexture(gl.TEXTURE2); gl.bindTexture(gl.TEXTURE_2D, this.shadowTex); gl.uniform1i(u.uShadow, 2);
     gl.bindVertexArray(this.room); gl.drawArrays(gl.TRIANGLES, 0, this.roomCount);
     this.drawBall(vp, flash, false);
+    if (this.look.frost > 0.001) {
+      gl.bindFramebuffer(gl.READ_FRAMEBUFFER, this.msFbo);
+      gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, this.roomFbo);
+      gl.blitFramebuffer(0, 0, this.w, this.h, 0, 0, this.w, this.h, gl.COLOR_BUFFER_BIT, gl.NEAREST);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, this.msFbo);
+    }
     u = this.use('wall');
     this.glassUniforms(u, vp, now, flash, false);
     gl.uniform3fv(u.uCam, cam);
@@ -459,6 +473,9 @@ export class Renderer {
     gl.uniform2f(u.uRes, this.w, this.h);
     gl.uniform1f(u.uBend, this.look.bend * proj[5] * 0.5);
     gl.uniform3f(u.uGlass, this.look.tint, this.look.wavy, this.look.refl);
+    gl.uniform1f(u.uFrost, this.look.frost);
+    gl.uniform3fv(u['uTargets[0]'], this.targets);
+    gl.activeTexture(gl.TEXTURE4); gl.bindTexture(gl.TEXTURE_2D, this.roomTex); gl.uniform1i(u.uRoom, 4);
     gl.uniform1i(u.uScene, 3);
     this.drawGlass(u, false, now, shardNow);
     if (this.tapeCount || this.tapeFell.length) {

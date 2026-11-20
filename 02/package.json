@@ -1,7 +1,7 @@
 {
   "name": "day-02",
   "private": true,
-  "description": "Two panes of 8 mm glass, the second one tempered: shoot through both, the first cracks and the second goes to dice, then swipe and what is loose blows out as baked rigid shards",
+  "description": "A wall of frosted 8 mm glass with three targets on it, classic or tempered: shoot it, then swipe, and what is loose blows out as baked rigid shards",
   "type": "module",
   "scripts": {
     "dev": "vite",

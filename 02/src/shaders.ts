@@ -178,6 +178,7 @@ void main() {
 export const FACE_FS = COMMON + /* glsl */ `
 in vec3 vW; in vec3 vN; in vec3 vNl; in vec2 vUv; in vec4 vD; flat in vec4 vQ;
 uniform vec3 uCam; uniform mat4 uView; uniform vec2 uRes; uniform float uBend; uniform float uCut; uniform float uNow; uniform vec3 uGlass; // tint, waviness, reflections
+uniform float uFrost; uniform sampler2D uRoom; uniform vec3 uTargets[3]; // each: x, y on the pane and its radius, metres
 uniform sampler2D uScene; uniform sampler2D uMask; uniform vec3 uPane;
 out vec4 o;
 // the masks of all panes are stacked in one texture; the pane a vertex belongs to is the tens of its kind
@@ -197,7 +198,34 @@ void main() {
   vec2 off = -Nv.xy * uBend * gl_FragCoord.w * vec2(uRes.y / uRes.x, 1.0);
   off *= min(1.0, 0.025 / (length(off) + 1e-5));
   vec3 c = vec3(texture(uScene, suv + off * 0.93).r, texture(uScene, suv + off).g, texture(uScene, suv + off * 1.07).b);
+  if (uFrost > 0.001) {
+    // frosted: the room behind is a blur, but what is in the glass itself, its cracks, is right at the
+    // surface and stays sharp. The room is kept apart for that (uRoom): where the two pictures differ is a crack
+    vec3 room = texture(uRoom, suv + off).rgb;
+    float crack = smoothstep(0.03, 0.14, length(c - room));
+    float a = hash(gl_FragCoord.xy) * 6.283;
+    mat2 R = mat2(cos(a), -sin(a), sin(a), cos(a));
+    vec2 px = vec2(uRes.y / uRes.x, 1.0) * uFrost * 0.035;
+    vec3 blur = vec3(0.0);
+    for (int i = 0; i < 16; i++) {
+      float fi = float(i);
+      vec2 d = R * (sqrt((fi + 0.5) / 16.0) * vec2(cos(fi * 2.4), sin(fi * 2.4)));
+      blur += texture(uRoom, suv + off + d * px).rgb;
+    }
+    blur = mix(blur / 16.0, vec3(0.5, 0.52, 0.51) * (0.75 + uFlash), uFrost * 0.22);
+    c = mix(blur, c, crack);
+  }
   c *= pow(vec3(0.93, 0.975, 0.955), vec3(uGlass.x));
+  // the targets: rings printed on the glass, so a shard keeps its part of one
+  for (int i = 0; i < 3; i++) {
+    float r = length(vUv - uTargets[i].xy) / max(uTargets[i].z, 1e-5);
+    if (r < 1.0) {
+      float ring = floor(r * 5.0);
+      vec3 ink = ring < 1.0 ? vec3(0.62, 0.07, 0.05) : mod(ring, 2.0) < 0.5 ? vec3(0.78, 0.78, 0.75) : vec3(0.035);
+      float line = smoothstep(0.0, 0.03, abs(fract(r * 5.0 + 0.5) - 0.5)); // a hairline between rings
+      c = mix(c, ink * (0.35 + 0.65 * line) * (0.8 + uFlash * 2.0), 0.9 * smoothstep(1.0, 0.985, r));
+    }
+  }
   float F = 0.06 + 0.94 * pow(1.0 - max(dot(-V, N), 0.0), 4.0);
   c += tone(look(vW, reflect(V, N))) * F * uGlass.z;
   // crushed glass around the hole scatters white
