@@ -110,6 +110,17 @@
       ],
       "port": 5119,
       "url": "https://localhost:5119"
+    },
+    {
+      "name": "20",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": [
+        "-C",
+        "20",
+        "dev"
+      ],
+      "port": 5120,
+      "url": "http://localhost:5120"
     }
   ]
 }
