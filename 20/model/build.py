@@ -95,13 +95,31 @@ def symmetric(poly, cx):
     return right + [(2 * cx - x, y) for x, y in reversed(right)]
 
 
+def simplify(poly, eps):
+    """Douglas-Peucker on a closed outline: drop the corners that bend it less than eps pixels. Every corner
+    left is a facet edge on the form, and a corner that hardly bends draws a band across the plates."""
+    def dp(pts):
+        (x0, y0), (x1, y1) = pts[0], pts[-1]
+        L = math.hypot(x1 - x0, y1 - y0) or 1e-9
+        d = [abs((x1 - x0) * (y0 - y) - (x0 - x) * (y1 - y0)) / L for x, y in pts[1:-1]]
+        if not d or max(d) < eps: return [pts[0], pts[-1]]
+        i = d.index(max(d)) + 1
+        return dp(pts[:i + 1])[:-1] + dp(pts[i:])
+    top = min(range(len(poly)), key=lambda i: poly[i][1])
+    bot = max(range(len(poly)), key=lambda i: poly[i][1])
+    ring = poly[top:] + poly[:top]
+    k = (bot - top) % len(poly)
+    a, b = ring[:k + 1], ring[k:] + ring[:1]
+    return dp(a)[:-1] + dp(b)[:-1]
+
+
 def outline_planes(view, even=False):
     """the traced outline of a view as planes: each edge, stood up along the view's line of sight"""
     v = sheet.VIEWS[view]
     r = Vector(v['right'])
     up = Vector((0, 0, 1))
     poly = sheet.SILHOUETTE[view]
-    if even: poly = symmetric(poly, v['cx'])
+    poly = simplify(symmetric(poly, v['cx']) if even else list(poly), 5.0)
     pts = hull2d([sheet.to_view(view, *p) for p in poly])
     planes = []
     for (u0, w0), (u1, w1) in zip(pts, pts[1:] + pts[:1]):
@@ -135,12 +153,20 @@ def on_x(az, el, p, y, z):
 # where the shield's stepped back edge runs down to its foot, side view: halfway along it, on the shield
 _y, _z = sheet.to_view('right', 370, 520)
 STEP = on_x(-58, -11, A, -_y, _z)
-# The shield is not flat: it folds down a line through the 03 (side view x 390), the part behind turning more
-# to the side, and again across its upper stepped part, which turns up towards the cap.
-_y, _z = sheet.to_view('right', 390, 460)
-FOLD = on_x(-58, -11, A, -_y, _z)
+# The shield is not flat: it folds along a line that runs from its top down past the left of the 03 to its foot,
+# leaning forward as it goes (side view, (349, 218) to (479, 678)), the part behind turned 7 degrees more to the
+# side; and again across its upper stepped part, which turns up towards the cap.
+def _on_shield(px, py):
+    y, z = sheet.to_view('right', px, py)
+    return on_x(-58, -11, A, -y, z)
+F1, F2 = _on_shield(349, 218), _on_shield(479, 678)
+_d = (F2 - F1).normalized()
+_n = facing(-58, -11)
+_back = Vector((0, 1, 0)); _back = (_back - _n * _back.dot(_n) - _d * _back.dot(_d)).normalized()
+FOLD_N = max((Matrix.Rotation(sg * math.radians(7), 3, _d) @ _n for sg in (1, -1)), key=lambda m: (m - _n).dot(_back))
+FOLD = F1
 _y, _z = sheet.to_view('right', 290, 300)
-UPPER = on_x(-68, -13, FOLD, -_y, _z)
+UPPER = Vector((F1.x - ((-_y - F1.y) * FOLD_N.y + (_z - F1.z) * FOLD_N.z) / FOLD_N.x, -_y, _z))
 RIGHT = Vector((0.93, 0.05, 0.0))   # the right flank at its widest
 
 # Big facets, as (name, az, el, where): where is a point it goes through, or how far in from where the
@@ -149,7 +175,7 @@ FACETS = [
     ('strip', -25, 9, SEAM),      # left of the seam, down the front
     ('door', 30, 9, SEAM),       # right of the seam: the hatch
     ('shield_l', -58, -11, A),      # the 03 shield on the left flank
-    ('shield_l2', -68, -13, FOLD),  # its back part, turned a little more to the side
+    ('shield_l2', FOLD_N, None, FOLD),  # its back part, folded along that slanting line
     ('shield_l3', -78, 16, UPPER),  # its upper stepped part, turned up
     ('skirt_lf', -42, -30, 0.03),   # a small facet low on the front corner
     ('shield_r', 85, 2, RIGHT),       # and on the right flank
@@ -176,7 +202,7 @@ def make_hull():
         for i, (n, d) in enumerate(outline_planes(view, even=view == 'front')):
             clip(n, d - SHRINK, '%s.%02d' % (view, i))
     for name, az, el, where in FACETS:
-        n = facing(az, el)
+        n = az if isinstance(az, Vector) else facing(az, el)
         d = n.dot(where) - SHRINK if isinstance(where, Vector) else max(v.co.dot(n) for v in bm.verts) - where
         clip(n, d, name)
     bmesh.ops.recalc_face_normals(bm, faces=bm.faces[:])
@@ -932,7 +958,7 @@ def markings():
         ('text', 'UEC', 190, 628, 22, 0.012), ('cross', 290, 621, 28), ('cross', 430, 268, 30)], shift=60)
     # the marks on the caps
     lay(ink, 'front', (245, 140), [('split', 245, 140, 32), ('text', 'LES\nSOMMES\nPLUS\nLOIN', 284, 132, 7, 0.004)])
-    lay(ink, 'right', (448, 168), [('split', 448, 168, 30)])
+    # (the side view's own mark here landed on the same facet as the front view's, and the two made a blot)
     lay(ink, 'left', (298, 172), [('split', 298, 172, 28)])
     # low on the right of the front
     lay(ink, 'front', (505, 728), [('text', 'CONTAIN\nPRESERVE\nITERATE', 505, 728, 10, 0.006), ('slash', 476, 722, 486, 758)])
@@ -1227,7 +1253,8 @@ if STAGE != 'hull':
     ports, top = deck()
     ports += [(p, Vector((0, 0.25, 1)).normalized(), r) for p, r in hose_tops]
     under = underside()
-    markings()
+    # (no markings for now: the 03s, the texts, crosses, stripes, the split disc, the hatch's squares, UEC and the
+    # warning marks were taken off. markings() still lays them all, if they are wanted back)
     seam_drip = blood()
     inside()
     hooks(ports, top, seam_drip, under)
