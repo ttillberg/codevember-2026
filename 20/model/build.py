@@ -4,7 +4,7 @@
     COCOON_STAGE=hull Blender -b cocoon.blend --python build.py --python compare.py -- out.png
 
 It empties the `cocoon` collection, builds everything, saves the blend and writes ../public/cocoon.glb.
-The names the web side reads (pod, door, plug.NNN, socket.NNN, hang, drip.NNN) are in ../README.md.
+The names the web side reads (pod, door, plug.NNN, socket.NNN, hang, lift.NNN, drip.NNN) are in ../README.md.
 
 The form: the body's outline in the front view and in the side view, both traced off the sheet (sheet.py),
 stood up as two prisms and intersected, then cut by a few slanted planes where the sheet shows big facets.
@@ -1071,12 +1071,47 @@ def empty(name, loc, direction=None, parent=None, size=0.2, **props):
     return o
 
 
-def hooks(ports, top, drip_seam, drip_under):
+def lifts(top):
+    """four lugs on the shoulders round the deck, what it really hangs by: steel slings from their eyes up to one
+    link, one cable from there to the ceiling (drawn on the web side). The hoses only feed it."""
+    steel, base = Soup(), Soup()
+    eyes = []
+    for sx, sy in ((-1, -1), (1, -1), (1, 1), (-1, 1)):
+        for k in (1.0, 0.9, 0.8, 0.7, 0.6):   # in from the corner till it lands on the shell
+            off = Vector((0.5 * sx, 0.42 * sy, 0)) * k
+            got = ray(top + off + Vector((0, 0, 2)), Vector((0, 0, -1)))
+            if got: break
+        if not got: continue
+        n = got[1]
+        p = got[0] + n * got[2]   # on the plate, if there is one
+        fr = frame_at(n).to_4x4()
+        base.box((0.2, 0.2, 0.04), p + n * 0.02, fr)
+        for k in (-1, 1):   # four bolts
+            for j in (-1, 1):
+                q = p + (fr.to_3x3() @ Vector((0.07 * k, 0.07 * j, 0))) + n * 0.04
+                steel.cyl(0.012, q, q + n * 0.02, 6)
+        up = (Vector((0, 0, 1)) - off * 0.35).normalized()   # towards the link above the middle
+        side = up.cross(off.normalized()).normalized()
+        foot = p + n * 0.035
+        eye = foot + up * 0.15
+        steel.box((0.045, 0.15, 0.17), foot + up * 0.075, Matrix((side, up.cross(side), up)).transposed().to_4x4())
+        ring = [eye + (up * math.cos(t) + up.cross(side) * math.sin(t)) * 0.055 for t in [i * TAU / 16 for i in range(17)]]
+        steel.tube(ring, 0.016, 8, smooth=False)
+        eyes.append(eye + up * 0.03)
+    base.done('lug_plates', MECH, pod, None, 0.006)
+    steel.done('lugs', STEEL, pod, None, 0.004)
+    return eyes
+
+
+def hooks(ports, top, drip_seam, drip_under, eyes):
     hang = top + Vector((-0.6, 0.15, 7.2))
     for i, (p, d, r) in enumerate(ports):
-        empty('plug.%03d' % i, p, d, pod, radius=r, slack=1.02 + 0.05 * ((i * 37) % 5) / 4)
+        # they hang slack: the hoses carry nothing
+        empty('plug.%03d' % i, p, d, pod, radius=r, slack=1.08 + 0.1 * ((i * 37) % 5) / 4)
         a = i * TAU / len(ports) + 0.3
-        empty('socket.%03d' % i, hang + Vector((0.55 * math.cos(a), 0.55 * math.sin(a), 0)), (0, 0, -1))
+        empty('socket.%03d' % i, hang + Vector((1.4 * math.cos(a), 1.4 * math.sin(a), 0.4 * math.sin(3 * a))), (0, 0, -1))
+    for i, e in enumerate(eyes):
+        empty('lift.%03d' % i, e, (0, 0, 1), pod, size=0.1)
     empty('hang', hang, (0, 0, -1), size=0.6)
     empty('drip.000', drip_seam - Vector((0, 0, 0.004)), (0, 0, -1), pod, size=0.12)
     empty('drip.001', drip_under, (0, 0, -1), pod, size=0.12)
@@ -1257,10 +1292,12 @@ if STAGE != 'hull':
     # warning marks were taken off. markings() still lays them all, if they are wanted back)
     seam_drip = blood()
     inside()
-    hooks(ports, top, seam_drip, under)
-    # it hangs askew as the hall picture has it: head to the left, 26 degrees about the line the web's first view
-    # looks along (from the front, a little from its left)
-    pod.rotation_euler = Matrix.Rotation(math.radians(26), 3, Vector((-0.1, -0.995, 0))).to_euler()
+    hooks(ports, top, seam_drip, under, lifts(top))
+    # it hangs askew as the hall picture has it: seen from the web's first view (from the front left, 34 degrees
+    # round), head to the left by 24 degrees and the foot a little towards you
+    look = Vector((math.sin(-0.6), -math.cos(-0.6), 0))
+    side = Vector((math.cos(-0.6), math.sin(-0.6), 0))
+    pod.rotation_euler = (Matrix.Rotation(0.42, 3, look) @ Matrix.Rotation(0.1, 3, side)).to_euler()
 
 if STAGE == 'all':
     on_body, on_door = [o for o in PLATES if o.parent == pod], [o for o in PLATES if o.parent == door]

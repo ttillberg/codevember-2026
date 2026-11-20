@@ -3,6 +3,7 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { Cable } from './cables';
 import { Blood } from './blood';
+import { buildHall } from './hall';
 
 // A pod hanging in a hall. The model comes from Blender (model/cocoon.blend → public/cocoon.glb) and says by
 // name what is what:
@@ -30,58 +31,36 @@ function start() {
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
   renderer.toneMappingExposure = 1.05;
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
   const scene = new THREE.Scene();
   scene.background = new THREE.Color(FOG);
-  scene.fog = new THREE.FogExp2(FOG, 0.04);
+  scene.fog = new THREE.FogExp2(FOG, 0.032);
   const pmrem = new THREE.PMREMGenerator(renderer);
   scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
   scene.environmentIntensity = 0.18;
-  scene.add(new THREE.HemisphereLight(0xc8d0d8, 0x050506, 0.35)); // a little fill, no more
-  const key = new THREE.DirectionalLight(0xffffff, 3.4); // the light: high above, slanting down from the front left
-  key.position.set(-4, 10, 5);
-  scene.add(key);
-  const rim = new THREE.DirectionalLight(0xdfe6ee, 0.7); // a thin rim from behind
-  rim.position.set(5, 6, -6);
-  scene.add(rim);
+  scene.add(new THREE.HemisphereLight(0xc8d0d8, 0x050506, 0.22)); // a little fill, no more
+  // the rest of the light, from the roof and the sides, comes with the hall (hall.ts)
 
-  const camera = new THREE.PerspectiveCamera(52, 1, 0.1, 200);
+  const camera = new THREE.PerspectiveCamera(40, 1, 0.1, 200);
   const ortho = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 200); // the debug panel's iso: same eye, no perspective
   let eye: THREE.Camera = camera;
-  const target = new THREE.Vector3(0.1, 0.2, 0);
-  // the view people get, as the hall picture has it: from a little below, looking up at the pod's front, a touch from its left
-  const home = new THREE.Vector3(0.1, 0.2, 0);
-  const YAW0 = -0.1;
-  const PITCH0 = -0.4;
+  const target = new THREE.Vector3(0.1, 0.15, 0);
+  // the view people get, as the hall picture has it: from below, looking up at the pod's left side and front
+  const home = new THREE.Vector3(0.1, 0.15, 0);
+  const YAW0 = -0.6;
+  const PITCH0 = -0.55;
   let yaw = YAW0;
   let pitch = PITCH0;
   let vyaw = 0;
   let vpitch = 0;
-  let radius = 4.8;
-  let homeRadius = 4.8;
+  let radius = 7.5;
+  let homeRadius = 7.5;
   // a view the camera is easing to (the debug panel's), null while it is yours
   let goal: null | { yaw: number; pitch: number; radius: number; target: THREE.Vector3 } = null;
   let still = false; // the debug panel's hold still: no swing
   const podRest = new THREE.Quaternion(); // how the pod hangs, askew, as it comes from Blender
-
-  // the hall, a stand-in: columns and beams going into the haze
-  {
-    const mat = new THREE.MeshStandardMaterial({ color: 0x131517, roughness: 0.9 });
-    const box = new THREE.BoxGeometry(1, 1, 1);
-    const add = (sx: number, sy: number, sz: number, x: number, y: number, z: number) => {
-      const m = new THREE.Mesh(box, mat);
-      m.scale.set(sx, sy, sz);
-      m.position.set(x, y, z);
-      scene.add(m);
-    };
-    for (let i = 0; i < 5; i++) {
-      const z = -16 - i * 11;
-      add(1.6, 90, 1.6, -13 - i * 1.5, 0, z);
-      add(1.6, 90, 1.6, 12 + i * 2.5, 0, z);
-      add(40 + i * 8, 0.9, 1.2, 0, 6 + i * 5, z);
-      add(40 + i * 8, 0.6, 0.9, 0, -9 - i * 3, z + 3);
-    }
-  }
 
   // ---------- the pod: a pendulum under `hang`, with a twist of its own
 
@@ -121,6 +100,46 @@ function start() {
   let hingeKnown = false;
 
   const cables: Cable[] = [];
+  let hall: ReturnType<typeof buildHall> | null = null;
+
+  // what it really hangs by: a steel sling from each lug up to one link, one wire from the link up to the block
+  const wireMat = new THREE.MeshStandardMaterial({ color: 0x4a4d50, metalness: 0.9, roughness: 0.32 });
+  const rodGeo = new THREE.CylinderGeometry(1, 1, 1, 10);
+  rodGeo.translate(0, 0.5, 0);
+  const link = new THREE.Group(); // in the swing, on the line from the hang point to the pod
+  {
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(0.13, 0.034, 10, 28), wireMat);
+    ring.scale.y = 1.35;
+    const top = new THREE.Mesh(new THREE.TorusGeometry(0.07, 0.022, 10, 24), wireMat);
+    top.rotation.y = Math.PI / 2;
+    top.position.y = 0.2;
+    ring.castShadow = top.castShadow = true;
+    link.add(ring, top);
+  }
+  const slings: { lift: THREE.Object3D; wire: THREE.Group }[] = [];
+  const wire = (r: number) => {
+    const g = new THREE.Group();
+    const rod = new THREE.Mesh(rodGeo, wireMat);
+    rod.scale.set(r, 1, r);
+    const f0 = new THREE.Mesh(rodGeo, wireMat); // a pressed sleeve at each end
+    f0.scale.set(r * 1.9, 0.13, r * 1.9);
+    f0.position.y = 0.04;
+    const f1 = f0.clone();
+    rod.castShadow = f0.castShadow = f1.castShadow = true;
+    g.add(rod, f0, f1);
+    g.userData = { rod, f1 };
+    return g;
+  };
+  const wa = new THREE.Vector3();
+  const wb = new THREE.Vector3();
+  const stretch = (w: THREE.Group, a: THREE.Vector3, b: THREE.Vector3) => {
+    const d = b.clone().sub(a);
+    const len = d.length();
+    w.position.copy(a);
+    w.quaternion.setFromUnitVectors(Y, d.divideScalar(len));
+    w.userData.rod.scale.y = len;
+    w.userData.f1.position.y = len - 0.17;
+  };
   let blood: Blood | null = null;
   const inside = new THREE.PointLight(0xff2410, 1.6, 1.3, 2);
 
@@ -165,6 +184,7 @@ function start() {
     const plugs = named(/^plug[._]?\d+$/);
     const sockets = named(/^socket[._]?\d+$/);
     const drips = named(/^drip[._]?\d+$/);
+    const lifts = named(/^lift[._]?\d+$/);
 
     const box = localBox(pod);
     box.getCenter(podCentre);
@@ -181,6 +201,26 @@ function start() {
     podRest.copy(pod.quaternion);
     inside.position.copy(podCentre);
     pod.add(inside);
+
+    hall = buildHall(scene, swing.position.clone());
+    pod.traverse((o) => { if ((o as THREE.Mesh).isMesh) o.castShadow = o.receiveShadow = true; });
+    if (lifts.length) {
+      const u = twist.position.clone().normalize(); // down the line from the hang point
+      const mean = new THREE.Vector3();
+      for (const o of lifts) mean.add(swing.worldToLocal(o.getWorldPosition(new THREE.Vector3())));
+      mean.divideScalar(lifts.length);
+      link.position.copy(u).multiplyScalar(mean.dot(u) - 1.7);
+      link.quaternion.setFromUnitVectors(Y, u.clone().negate());
+      swing.add(link);
+      const main = wire(0.032);
+      swing.add(main);
+      stretch(main, new THREE.Vector3(0, 0.15, 0), link.position.clone().addScaledVector(u, -0.27));
+      for (const o of lifts) {
+        const w = wire(0.02);
+        scene.add(w);
+        slings.push({ lift: o, wire: w });
+      }
+    }
 
     if (door) {
       doorRest.copy(door.quaternion);
@@ -201,6 +241,7 @@ function start() {
       const socket = sockets[i];
       if (!socket) return;
       const cable = new Cable(socket.getWorldPosition(new THREE.Vector3()), plug, plug.userData.radius ?? 0.045, plug.userData.slack ?? 1.1, rubber);
+      cable.mesh.castShadow = true;
       cables.push(cable);
       scene.add(cable.mesh);
     });
@@ -224,7 +265,7 @@ function start() {
 
   // ---------- hands
 
-  type Grab = null | 'orbit' | 'pod' | 'door';
+  type Grab = null | 'orbit' | 'pan' | 'pod' | 'door';
   let grab: Grab = null;
   let px = 0;
   let py = 0;
@@ -243,9 +284,11 @@ function start() {
     px = e.clientX;
     py = e.clientY;
     canvas.setPointerCapture(e.pointerId);
+    goal = null;
+    // right drag or shift drag moves the camera sideways, anywhere
+    if (e.button === 2 || e.shiftKey) { grab = 'pan'; return; }
     grab = 'orbit';
     if (!pod) return;
-    goal = null;
     ndc.set((e.clientX / canvas.clientWidth) * 2 - 1, -(e.clientY / canvas.clientHeight) * 2 + 1);
     ray.setFromCamera(ndc, eye);
     const hit = ray.intersectObject(pod, true)[0];
@@ -281,6 +324,11 @@ function start() {
       vpitch = -dy * 0.004;
       yaw += vyaw;
       pitch += vpitch;
+    } else if (grab === 'pan') {
+      // the point under the hand stays under it, at the target's distance
+      const wpp = (2 * radius * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2))) / canvas.clientHeight;
+      target.addScaledVector(v1.setFromMatrixColumn(camera.matrixWorld, 0), -dx * wpp);
+      target.addScaledVector(v1.setFromMatrixColumn(camera.matrixWorld, 1), dy * wpp);
     } else if (grab === 'pod') {
       // the drag as a push in the world: sideways along the screen, down the screen is towards the eye
       const wpp = (2 * radius * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2))) / canvas.clientHeight;
@@ -292,6 +340,12 @@ function start() {
       openTo = THREE.MathUtils.clamp(openTo + (dx * doorPull.x + dy * doorPull.y) / doorPull.lengthSq(), AJAR, WIDE);
     }
   });
+  canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+  canvas.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    goal = null;
+    radius = THREE.MathUtils.clamp(radius * Math.exp(e.deltaY * 0.001), 2, 16);
+  }, { passive: false });
   const release = () => (grab = null);
   canvas.addEventListener('pointerup', release);
   canvas.addEventListener('pointercancel', release);
@@ -457,7 +511,7 @@ function start() {
         const local = view === 'front' ? new THREE.Vector3(0, 0, 1) : view === 'back' ? new THREE.Vector3(0, 0, -1) : new THREE.Vector3(side, 0, 0);
         const d = local.transformDirection(pod.matrixWorld);
         const c = podCentre.clone().applyMatrix4(pod.matrixWorld);
-        goal = { yaw: Math.atan2(d.x, d.z), pitch: 0, radius: 4.3 / Math.min(1, camera.aspect / 0.85), target: c };
+        goal = { yaw: Math.atan2(d.x, d.z), pitch: 0, radius: 5.8 / Math.min(1, camera.aspect / 0.85), target: c };
       }
       mark();
     };
@@ -486,7 +540,8 @@ function start() {
       tick() {
         if (menu.hidden) return;
         const deg = THREE.MathUtils.radToDeg;
-        readout.textContent = `door ${deg(open).toFixed(0)}°  swing ${deg(Math.hypot(ax, az)).toFixed(1)}°  ${eye === ortho ? 'iso' : 'pers'}`;
+        readout.textContent = `door ${deg(open).toFixed(0)}°  swing ${deg(Math.hypot(ax, az)).toFixed(1)}°  ${eye === ortho ? 'iso' : 'pers'}\n` +
+          `eye yaw ${yaw.toFixed(2)} pitch ${pitch.toFixed(2)} r ${radius.toFixed(1)} at ${target.x.toFixed(2)} ${target.y.toFixed(2)} ${target.z.toFixed(2)}`;
       },
     };
   })() : null;
@@ -496,13 +551,14 @@ function start() {
   function resize() {
     const w = canvas.clientWidth; // the whole window, or half of it with the reference beside
     const h = canvas.clientHeight;
+    if (!w || !h) return; // not laid out yet, or hidden
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.setSize(w, h, false);
     camera.aspect = w / h;
     camera.updateProjectionMatrix();
     const wasHome = radius === homeRadius && target.equals(home);
-    homeRadius = 4.8 / Math.min(1, camera.aspect / 0.85); // step back on a narrow screen
-    home.x = 0.1 + THREE.MathUtils.clamp((camera.aspect - 1) / 0.7, 0, 1); // on a wide one the pod hangs left of centre, the hall to its right
+    homeRadius = 7.5 / Math.min(1, camera.aspect / 0.85); // step back on a narrow screen
+    home.x = 0.1 + 0.75 * THREE.MathUtils.clamp((camera.aspect - 1) / 0.7, 0, 1); // on a wide one the pod hangs left of centre, the hall to its right
     if (wasHome) { radius = homeRadius; target.copy(home); }
   }
   window.addEventListener('resize', resize);
@@ -548,6 +604,8 @@ function start() {
       physics(STEP, time);
     }
     for (const c of cables) c.skin();
+    for (const s of slings) stretch(s.wire, s.lift.getWorldPosition(wa), link.localToWorld(wb.set(0, -0.12, 0)));
+    hall?.update(time, dt);
     blood?.update(dt);
 
     renderer.render(scene, eye);

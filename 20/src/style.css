@@ -71,7 +71,7 @@ canvas:active { cursor: grabbing; }
   background: rgba(255, 255, 255, 0.14); font: 600 9px/1 Inter, "Helvetica Neue", Helvetica, Arial, sans-serif; letter-spacing: 0;
 }
 .debug .seg button.on kbd { background: rgba(0, 0, 0, 0.12); }
-.debug .readout { padding: 4px 4px 0; opacity: 0.6; font-variant-numeric: tabular-nums; letter-spacing: 0.06em; }
+.debug .readout { padding: 4px 4px 0; opacity: 0.6; white-space: pre-line; font-variant-numeric: tabular-nums; letter-spacing: 0.06em; }
 @media (max-width: 640px) {
   .debug { right: max(16px, env(safe-area-inset-right)); bottom: max(16px, env(safe-area-inset-bottom)); }
 }
