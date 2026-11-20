@@ -71,9 +71,21 @@ function mound(x: number, z: number) {
 
 /** The ground without the hills at the trunks: for the far floor, whose coarse grid made tents of them that cut
  * into the trunks' feet. */
+// the hillside: falling to the right of the way to the sun (main.ts's lightDir, (0.45, 0.16, -0.88), flat on
+// the ground: (0.455, -0.89); its right hand: (0.89, 0.455)), by SLOPE a metre
+const SLOPE = 0.06;
+const SLOPE_DIR = [0.89, 0.455];
+/** The lie of the land under the moss's own swells: what the moss does not see (it grows by the local relief). */
+export function land(x: number, z: number) {
+  // the lie of the land, very discreet: the wood on a gentle hillside that falls away to your right as you
+  // go toward the sun (across the light, north to south), a few percent, slow swells on it, now and then a low rise
+  const slope = -SLOPE * (x * SLOPE_DIR[0] + z * SLOPE_DIR[1]) + fbm3(x * 0.012, 5, z * 0.012, 2, 21) * 0.6;
+  const hill = THREE.MathUtils.smoothstep(fbm3(x * 0.07, 6, z * 0.07, 2, 22), 0.08, 0.4) * 0.5;
+  return slope + hill;
+}
 export function baseHeight(x: number, z: number) {
   // broad swells plus hummocks: moss carpets are never flat
-  return fbm3(x * 0.6, 0, z * 0.6, 3, 11) * 0.12 + fbm3(x * 2.2, 1, z * 2.2, 3, 12) * 0.045;
+  return fbm3(x * 0.6, 0, z * 0.6, 3, 11) * 0.12 + fbm3(x * 2.2, 1, z * 2.2, 3, 12) * 0.045 + land(x, z);
 }
 
 export function groundHeight(x: number, z: number) {
@@ -85,7 +97,9 @@ const ss = THREE.MathUtils.smoothstep;
 
 /** Moss age at a point (0 = bare humus): a carpet with holes, thicker on the hummocks. */
 export function mossAt(x: number, y: number, z: number) {
-  const holes = fbm3(x * 1.3, 0, z * 1.3, 3, 21) + 1.6 * (y - 0.02);
+  // (the hollows go bare, the hummocks are covered: by the height over the lie of the land, not over y = 0, or
+  // a hillside went bare all the way down)
+  const holes = fbm3(x * 1.3, 0, z * 1.3, 3, 21) + 1.6 * (y - land(x, z) - 0.02);
   const cover = ss(holes, -0.5, -0.36);
   if (cover < 0.04) return 0;
   return cover * (0.78 + 0.22 * (fbm3(x * 4, y * 4, z * 4, 2, 24) * 0.5 + 0.5));
@@ -181,7 +195,8 @@ function chunkGeometry(cx: number, cz: number, step: number) {
   geo.setAttribute('speciesW2', new THREE.InterleavedBufferAttribute(ib, 1, 4));
   geo.setIndex(new THREE.BufferAttribute(idx, 1));
   // radius: half the diagonal, plus the swells, the moss and the fronds standing on it
-  geo.boundingSphere = new THREE.Sphere(new THREE.Vector3(x0 + CHUNK / 2, 0, z0 + CHUNK / 2), CHUNK * 0.71 + 0.3);
+  // (centred at the ground's height there: the land rises and falls now)
+  geo.boundingSphere = new THREE.Sphere(new THREE.Vector3(x0 + CHUNK / 2, baseHeight(x0 + CHUNK / 2, z0 + CHUNK / 2), z0 + CHUNK / 2), CHUNK * 0.71 + 0.3);
   return { geo, moss, species, count };
 }
 

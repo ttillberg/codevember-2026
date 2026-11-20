@@ -842,6 +842,7 @@ renderer.setAnimationLoop(() => {
   atmosMat.uniforms.uSunUv.value.set(sunScreen.x * 0.5 + 0.5, sunScreen.y * 0.5 + 0.5);
   atmosMat.uniforms.uSunOn.value = THREE.MathUtils.smoothstep(camera.getWorldDirection(camDir).dot(lightDir), 0.0, 0.5);
   atmosMat.uniforms.uAspect.value = camera.aspect;
+  atmosMat.uniforms.uGroundY.value = groundHeight(me.x, me.z);
   if (loading) { drawWire(); forest.update(dt); return; }
   renderer.setRenderTarget(beautyRT);
   renderer.render(scene, camera);

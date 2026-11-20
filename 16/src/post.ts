@@ -31,6 +31,7 @@ export function makeAtmosPass(depth: THREE.DepthTexture, coarse = false) {
       uAspect: { value: 1 },
       uMist: { value: 0.0 }, // ground mist density
       uMistStart: { value: 0.6 }, // clear air out to here
+      uGroundY: { value: 0 }, // the ground under the eye: the mist lies on it, not on y = 0
       // the shafts: bright, hard edged (open sky counted to a power, so the trunks cut clean wedges out of them,
       // beams as in the splash rather than a glow), reaching a long way from the sun on screen
       uShaft: { value: 1.1 },
@@ -46,7 +47,7 @@ export function makeAtmosPass(depth: THREE.DepthTexture, coarse = false) {
       uniform vec3 uHaze, uSunCol, uSunDir;
       uniform mat4 uInvProj, uCamWorld;
       uniform vec2 uSunUv;
-      uniform float uSunOn, uAspect, uMist, uMistStart, uShaft, uShaftPow, uShaftReach;
+      uniform float uSunOn, uAspect, uMist, uMistStart, uShaft, uShaftPow, uShaftReach, uGroundY;
       varying vec2 vUv;
 
       float h2(vec2 p) { p = fract(p * vec2(123.34, 456.21)); p += dot(p, p + 45.32); return fract(p.x * p.y); }
@@ -76,7 +77,7 @@ export function makeAtmosPass(depth: THREE.DepthTexture, coarse = false) {
           // it is the haze's, so it glows towards the sun. Integrated along the ray through an exponential layer.
           vec3 cam = uCamWorld[3].xyz;
           float H = 0.35;
-          float y0 = max(cam.y, 0.0), y1 = max(cam.y + r.y * z, 0.0);
+          float y0 = max(cam.y - uGroundY, 0.0), y1 = max(cam.y + r.y * z - uGroundY, 0.0);
           float dy = y1 - y0;
           float layer = abs(dy) > 1e-3 ? H * (exp(-y0 / H) - exp(-y1 / H)) / dy : exp(-y0 / H);
           // clear right around you: the mist only starts a little way off, easing in
