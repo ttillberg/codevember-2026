@@ -386,7 +386,7 @@ function start() {
       });
     }
     // the roof's shutter darkens the sun wherever it is: every lit material takes its uniforms
-    shareCover(scene);
+    shareCover(scene, hall.spare);
     // it starts shut, the hall dark; a moment, and it rolls up
     setTimeout(() => { roofWanted = true; hall?.roofOpen(true); }, 1600);
     blood = new Blood(drips);
@@ -626,6 +626,9 @@ function start() {
     const projs = [...panel.querySelectorAll<HTMLButtonElement>('[data-proj]')];
     const stillBtn = panel.querySelector<HTMLButtonElement>('[data-still]')!;
     const aoBtn = panel.querySelector<HTMLButtonElement>('[data-ao]')!;
+    const stepBtns = [...panel.querySelectorAll<HTMLButtonElement>('[data-steps]')];
+    const steelBtns = [...panel.querySelectorAll<HTMLButtonElement>('[data-steel]')];
+    let plainSteel = false;
     const copyBtn = panel.querySelector<HTMLButtonElement>('[data-copy]')!;
     // the view and what the scene is doing, as text to paste back to whoever is working on it
     const copyView = async () => {
@@ -664,7 +667,7 @@ function start() {
     // It lives in model/ref, out of the repo, so only the dev server has it.
     const load = (name: string) => { const i = new Image(); i.src = `${import.meta.env.BASE_URL}model/ref/${name}.webp`; i.onload = () => drawRef(); return i; };
     const sheet = load('sheet');
-    const hall = load('hall');
+    const hallPic = load('hall');
     // where each view sits on the sheet, in its pixels (model/sheet.py)
     const CROPS: Record<string, [number, number, number, number]> = {
       front: [40, 0, 280, 300], 'side-1': [315, 0, 560, 300], side1: [805, 0, 1045, 300], back: [585, 0, 780, 300],
@@ -680,7 +683,7 @@ function start() {
       g.fillStyle = '#16181b'; g.fillRect(0, 0, w, h);
       const key = current === 'side' ? `side${side}` : current ?? 'persp';
       const crop = CROPS[key];
-      const img = crop ? sheet : hall;
+      const img = crop ? sheet : hallPic;
       if (!img.complete || !img.naturalWidth) {
         g.fillStyle = '#f4f4f2'; g.font = '600 11px Inter, sans-serif'; g.textAlign = 'center';
         g.fillText('NO REFERENCE: MODEL/REF IS ONLY ON THE DEV SERVER', w / 2, h / 2);
@@ -720,6 +723,8 @@ function start() {
       projs.forEach((b) => b.classList.toggle('on', (b.dataset.proj === 'ortho') === (eye === ortho)));
       stillBtn.classList.toggle('on', still);
       aoBtn.classList.toggle('on', aoOn);
+      for (const b of stepBtns) b.classList.toggle('on', +b.dataset.steps! === (raysPass?.steps ?? 24));
+      for (const b of steelBtns) b.classList.toggle('on', (b.dataset.steel === 'plain') === plainSteel);
       refs.forEach((b) => b.classList.toggle('on', b.dataset.ref === split));
       drawRef();
     };
@@ -752,6 +757,8 @@ function start() {
     projs.forEach((b) => b.addEventListener('click', () => project(b.dataset.proj === 'ortho')));
     stillBtn.addEventListener('click', () => { still = !still; mark(); });
     aoBtn.addEventListener('click', () => { aoOn = !aoOn; mark(); });
+    stepBtns.forEach((b) => b.addEventListener('click', () => { if (raysPass) raysPass.steps = +b.dataset.steps!; mark(); }));
+    steelBtns.forEach((b) => b.addEventListener('click', () => { plainSteel = b.dataset.steel === 'plain'; hall?.plainSteel(plainSteel); mark(); }));
     refs.forEach((b) => b.addEventListener('click', () => setSplit(b.dataset.ref as typeof split)));
     window.addEventListener('keydown', (e) => {
       if (e.metaKey || e.ctrlKey || e.altKey) return;

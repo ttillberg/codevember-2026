@@ -306,6 +306,9 @@ export function buildHall(scene: THREE.Scene, hang: THREE.Vector3, maxTexture = 
   }
 
   const steel = hallSteel(new THREE.MeshStandardMaterial({ color: 0x2b2e32, roughness: 0.62, metalness: 0.55 }));
+  // and the same without the grit, for the debug panel to set against it (most of the steel is far off in the haze)
+  const plainSteel = new THREE.MeshStandardMaterial({ color: 0x2b2e32, roughness: 0.62, metalness: 0.55 });
+  const steelBlocks: THREE.InstancedMesh[] = [];
   // the steel in blocks of the hall, one instanced mesh each with its own bounds, so that every camera (the eye,
   // the pod's tight sun, the skylight) draws only the blocks it can see, not all 40 000 bars every time
   const unit = new THREE.BoxGeometry(1, 1, 1);
@@ -320,6 +323,7 @@ export function buildHall(scene: THREE.Scene, hang: THREE.Vector3, maxTexture = 
     }
     for (const ms of blocks.values()) {
       const mesh = new THREE.InstancedMesh(unit, steel, ms.length);
+      steelBlocks.push(mesh);
       ms.forEach((m, i) => mesh.setMatrixAt(i, m));
       mesh.instanceMatrix.needsUpdate = true;
       mesh.computeBoundingSphere();
@@ -781,6 +785,10 @@ export function buildHall(scene: THREE.Scene, hang: THREE.Vector3, maxTexture = 
     set shaftGain(g: number) { shaftK = g; for (const s of shafts) s.uniforms.strength.value = s.userData.strength * g; },
     air,
     roofY: ROOF,
+    /** the hall's steel with its grit, or plain */
+    plainSteel(on: boolean) { for (const m of steelBlocks) m.material = on ? plainSteel : steel; },
+    /** materials not in the scene yet, which still have to take the scene's shared uniforms */
+    spare: [plainSteel],
     /** what runs along the girder with the pod: move it along x */
     trolley,
     spans,

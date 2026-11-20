@@ -55,7 +55,7 @@ export class Rays extends Pass {
     this.fans = o.fans;
     const f = o.fans;
     this.march = new THREE.ShaderMaterial({
-      defines: { STEPS: o.steps ?? 40, FANS: f.list.length, SIDES: f.side.length, BLADES: f.blades.toFixed(1), FAN_R: f.radius.toFixed(2), HUB: f.hub.toFixed(2) },
+      defines: { STEPS: o.steps ?? 24, FANS: f.list.length, SIDES: f.side.length, BLADES: f.blades.toFixed(1), FAN_R: f.radius.toFixed(2), HUB: f.hub.toFixed(2) },
       uniforms: {
         tDepth: { value: null },
         tShadow: { value: null },
@@ -239,6 +239,10 @@ export class Rays extends Pass {
       depthWrite: false,
     });
   }
+
+  /** steps along each ray: fewer, cheaper, coarser (the dither and the blur hide most of it) */
+  set steps(n: number) { this.march.defines.STEPS = n; this.march.needsUpdate = true; }
+  get steps() { return this.march.defines.STEPS as number; }
 
   setSize(w: number, h: number) {
     this.half.setSize(Math.max(1, Math.ceil(w / 2)), Math.max(1, Math.ceil(h / 2)));

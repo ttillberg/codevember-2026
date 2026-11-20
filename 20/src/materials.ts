@@ -53,11 +53,12 @@ float coverLight( vec3 viewPos ) {
   THREE.ShaderChunk.lights_fragment_begin = chunk.slice(0, b) + 'directLight.color *= coverLight( geometryPosition );\n\t\t' + chunk.slice(b);
 }
 /** every lit material in the scene takes the shutter's uniforms (three gives a chunk no uniforms of its own) */
-export function shareCover(root: THREE.Object3D) {
+export function shareCover(root: THREE.Object3D, spare: THREE.Material[] = []) {
   const seen = new Set<THREE.Material>();
-  root.traverse((o) => {
-    const m = (o as THREE.Mesh).material;
-    for (const x of Array.isArray(m) ? m : m ? [m] : []) {
+  const all: THREE.Material[] = [...spare];
+  root.traverse((o) => { const m = (o as THREE.Mesh).material; if (m) all.push(...(Array.isArray(m) ? m : [m])); });
+  {
+    for (const x of all) {
       if (seen.has(x) || !(x as THREE.MeshStandardMaterial).isMeshStandardMaterial) continue;
       seen.add(x);
       const before = x.onBeforeCompile;
@@ -68,7 +69,7 @@ export function shareCover(root: THREE.Object3D) {
       };
       x.needsUpdate = true;
     }
-  });
+  }
 }
 // and the red light inside the pod (main.ts) has no shadows: it would light the plates' seams and the machinery
 // on the flanks through the shell. Only what is in there takes it (the wrapped thing, the shell's inside):
