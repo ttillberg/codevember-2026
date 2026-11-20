@@ -53,7 +53,13 @@ camera.rotation.order = 'YXZ';
 
 // dusk: the sun nine degrees over the horizon, ahead and to the right, so you crawl into it. Everything is
 // backlit, every frond tip and blade catches it, and anything standing up throws a long shadow your way.
-const lightDir = new THREE.Vector3(0.45, 0.16, -0.88).normalize();
+// the sun, ahead and to the right, SUN_UP degrees over the horizon: a morning sun at 45, its rays coming down from
+// above through the crowns (?sun=9 for the dusk the day began with, a low sun straight through the trunks)
+const SUN_UP = THREE.MathUtils.degToRad(Number(params.get('sun')) || 45);
+const SUN_FLAT = new THREE.Vector2(0.45, -0.88).normalize();
+const lightDir = new THREE.Vector3(SUN_FLAT.x * Math.cos(SUN_UP), Math.sin(SUN_UP), SUN_FLAT.y * Math.cos(SUN_UP));
+/** 0 at dusk (nine degrees) .. 1 with a morning sun (forty five): the light whiter, the air paler */
+const MORNING = THREE.MathUtils.smoothstep(SUN_UP, THREE.MathUtils.degToRad(9), THREE.MathUtils.degToRad(45));
 const shellMat = new THREE.ShaderMaterial({
   vertexShader: shellVertex,
   fragmentShader: shellFragment,
@@ -292,6 +298,9 @@ composer.addPass(aoPass);
 const atmosMat = makeAtmosPass(beautyRT.depthTexture!, coarse);
 atmosMat.uniforms.cameraNear.value = camera.near;
 atmosMat.uniforms.uSunDir.value = lightDir;
+// a morning sun is whiter than a dusk one, the air paler and a little cooler
+atmosMat.uniforms.uSunCol.value.lerp(new THREE.Color(1.0, 0.86, 0.62), MORNING);
+atmosMat.uniforms.uHaze.value.lerp(new THREE.Color(0.092, 0.084, 0.064), MORNING);
 // thick forest air: a worm cannot see far anyway
 // the air: light, so the trunks stand in layers a long way back, paler and paler, the sun coming through between
 // them (it was thick and golden, 0.22 and 0.9: past two metres everything melted into one yellow wall)

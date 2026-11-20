@@ -15,12 +15,12 @@ const DROP = RANGE + 2.5;
 const FADE = 0.8; // seconds a stand takes to dissolve in (or a new level of detail to dissolve over the old)
 
 const START = { x: 0.12, z: -0.62 }; // a fern's crown just ahead of where you start
-// level of detail: pinnae per side (spaced about a pinna's width apart), rows along a pinna, rachis rings.
-// Far ferns get half the pinnae, each twice as wide, so the frond keeps its outline in the haze.
+// level of detail: pinnae per side (close together, overlapping a little), rows along a pinna, rachis rings.
+// Mid ferns get half the pinnae, each wider; far ones are a card per frond, the pinnae cut in its outline.
 const LODS = [
-  { pinnae: 16, rows: 7, segs: 14, widen: 1 },
-  { pinnae: 8, rows: 3, segs: 6, widen: 1.9 },
-  { pinnae: 5, rows: 2, segs: 4, widen: 2.8 }, // far, in the haze
+  { pinnae: 36, rows: 7, segs: 16, widen: 1, card: false },
+  { pinnae: 18, rows: 3, segs: 8, widen: 1.5, card: false },
+  { pinnae: 0, rows: 0, segs: 8, widen: 1, card: true }, // far, in the haze: the whole frond one shape
 ];
 const LOD_NEAR = 4.5; // cell centre this close: full detail
 const LOD_MID = 8; // then the middle level up to here, the far one beyond
@@ -35,15 +35,50 @@ const UP = new THREE.Vector3(0, 1, 0);
 /** One frond into the buffers: rachis from `base` arching out along `out`. */
 function addFrond(b: Buf, lod: Lod, base: THREE.Vector3, out: THREE.Vector3, L: number, rise: number, droop: number, stage: number, phase: number, rand: () => number) {
   const { pinnae: PINNAE, rows: ROWS, segs: RACHIS_SEGS } = lod;
-  // the rachis: a quadratic bezier, up out of the crown, arching over, the tip sinking
+  // the rachis: a cubic bezier, up out of the crown, arching over, the tip hooking down (a quadratic, it could only
+  // bend once and read stiff)
   const p0 = base.clone();
-  const p1 = base.clone().addScaledVector(UP, L * 0.62 * rise).addScaledVector(out, L * 0.18);
-  const p2 = base.clone().addScaledVector(out, L * 0.78).addScaledVector(UP, L * (0.42 * rise - droop));
-  const at = (t: number, o: THREE.Vector3) => o.set(0, 0, 0).addScaledVector(p0, (1 - t) * (1 - t)).addScaledVector(p1, 2 * t * (1 - t)).addScaledVector(p2, t * t);
-  const tan = (t: number, o: THREE.Vector3) => o.copy(p1).sub(p0).multiplyScalar(2 * (1 - t)).addScaledVector(p2.clone().sub(p1), 2 * t).normalize();
+  const p1 = base.clone().addScaledVector(UP, L * 0.55 * rise).addScaledVector(out, L * 0.08);
+  const p2 = base.clone().addScaledVector(out, L * 0.55).addScaledVector(UP, L * 0.62 * rise);
+  // (the tip sinks but stays over the moss: below the crown, whole fronds had lain on the ground)
+  const p3 = base.clone().addScaledVector(out, L * 0.9).addScaledVector(UP, L * Math.max(0.12, 0.34 * rise - droop * 1.1));
+  const at = (t: number, o: THREE.Vector3) => {
+    const s = 1 - t;
+    return o.set(0, 0, 0).addScaledVector(p0, s * s * s).addScaledVector(p1, 3 * s * s * t).addScaledVector(p2, 3 * s * t * t).addScaledVector(p3, t * t * t);
+  };
+  const tan = (t: number, o: THREE.Vector3) => {
+    const s = 1 - t;
+    return o.copy(p1).sub(p0).multiplyScalar(3 * s * s).addScaledVector(p2.clone().sub(p1), 6 * s * t).addScaledVector(p3.clone().sub(p2), 3 * t * t).normalize();
+  };
   const side = new THREE.Vector3().crossVectors(out, UP).normalize();
   const P = v3(), T = v3(), N = v3();
   const frondAttr = (t: number) => [stage, phase, t, rand()]; // autumn stage, sway phase, along the frond, seed
+  if (lod.card) {
+    // far: the whole frond one strip along the rachis, as wide as its pinnae reach, its sides drooping as they do;
+    // the pinnae are cut in its outline by the shader (part 2)
+    const start = b.pos.length / 3;
+    const Q = v3(), fn = v3();
+    for (let i = 0; i <= lod.segs; i++) {
+      const t = i / lod.segs;
+      at(t, P); tan(t, T);
+      fn.crossVectors(side, T).normalize();
+      if (fn.y < 0) fn.negate();
+      const shape = t < 0.22 ? 0 : Math.pow(Math.sin(Math.PI * Math.min(1, (t - 0.2) / 0.82)), 0.75) * (1 - 0.35 * t);
+      const w = L * 0.3 * Math.max(shape, 0.02);
+      for (const c of [-1, 0, 1]) {
+        Q.copy(P).addScaledVector(side, c * w).addScaledVector(fn, -Math.abs(c) * w * 0.4).addScaledVector(T, Math.abs(c) * w * 0.25);
+        b.pos.push(Q.x, Q.y, Q.z);
+        b.nor.push(fn.x, fn.y, fn.z);
+        b.leaf.push(t, c, 2);
+        b.frond.push(...frondAttr(t));
+      }
+    }
+    for (let i = 0; i < lod.segs; i++) for (let c = 0; c < 2; c++) {
+      const a = start + i * 3 + c, bb = a + 1, d = a + 3, e = a + 4;
+      b.idx.push(a, bb, d, bb, e, d);
+    }
+    return;
+  }
   // rachis: a thin tube, tapering
   {
     const start = b.pos.length / 3;
@@ -69,23 +104,27 @@ function addFrond(b: Buf, lod: Lod, base: THREE.Vector3, out: THREE.Vector3, L: 
   // pinnae down both sides, from a little above the base to the tip
   const C = v3(), D = v3(), A = v3(), Q = v3();
   for (let k = 0; k < PINNAE; k++) for (const s of [-1, 1]) {
-    const t = 0.1 + 0.88 * (k + (s > 0 ? 0.5 : 0)) / PINNAE; // alternate a little
+    // in pairs, opposite each other (alternating, they read wrong), from a quarter of the way up: the stipe below
+    // is bare (leafy to the crown, the whole fern had seemed to come down to the ground)
+    const t = 0.24 + 0.74 * k / PINNAE;
     at(t, P); tan(t, T);
     // the frond's own plane: across is the side direction, its normal faces up-ish
     const fn = v3().crossVectors(side, T).normalize();
     if (fn.y < 0) fn.negate();
-    const shape = Math.pow(Math.sin(Math.PI * Math.min(1, (t - 0.04) / 0.98)), 0.75) * (1 - 0.35 * t);
+    const shape = Math.pow(Math.sin(Math.PI * Math.min(1, (t - 0.2) / 0.82)), 0.75) * (1 - 0.35 * t);
     const Lp = L * 0.3 * shape * (0.9 + 0.2 * rand());
     if (Lp < 0.004) continue;
-    const Wp = Lp * 0.11 * lod.widen; // half width: a pinna is about five times as long as it is wide
+    const Wp = Lp * 0.15 * lod.widen; // half width: a pinna three to four times as long as it is wide, nearly overlapping its neighbours
     D.copy(side).multiplyScalar(s).addScaledVector(T, 0.5).normalize(); // angled towards the tip
     A.crossVectors(fn, D).normalize(); // across the pinna, roughly along the rachis
     const fold = 0.25 + 0.2 * rand();
     const start = b.pos.length / 3;
     for (let r = 0; r <= ROWS; r++) {
       const u = r / ROWS;
-      // a pinna runs out and curves down under its own weight
-      C.copy(P).addScaledVector(D, u * Lp).addScaledVector(fn, -u * u * Lp * 0.3);
+      // a pinna runs straight out from the rachis for its first third, then curves down under its own weight and
+      // sweeps toward the frond's tip, a sickle (curving from the rachis on, it looked not to be attached)
+      const bend = Math.max(0, u - 0.33) / 0.67;
+      C.copy(P).addScaledVector(D, u * Lp).addScaledVector(fn, -bend * bend * Lp * 0.45).addScaledVector(T, bend * bend * Lp * 0.22);
       for (let c = -1; c <= 1; c++) {
         Q.copy(C).addScaledVector(A, c * Wp).addScaledVector(fn, (1 - Math.abs(c)) * Wp * fold); // folded up at the midrib
         b.pos.push(Q.x, Q.y, Q.z);
@@ -103,11 +142,12 @@ function addFrond(b: Buf, lod: Lod, base: THREE.Vector3, out: THREE.Vector3, L: 
     // dew: a drop or two sitting in the fold along the midrib, and now and then one hanging under the tip
     for (let k = 0; k < 2; k++) if (rand() < 0.5) {
       const u = 0.25 + 0.6 * rand();
-      C.copy(P).addScaledVector(D, u * Lp).addScaledVector(fn, -u * u * Lp * 0.3 + Wp * fold + 0.002);
+      const bend = Math.max(0, u - 0.33) / 0.67;
+      C.copy(P).addScaledVector(D, u * Lp).addScaledVector(fn, -bend * bend * Lp * 0.45 + Wp * fold + 0.002).addScaledVector(T, bend * bend * Lp * 0.22);
       b.drops.push(C.x, C.y, C.z, 0.002 + 0.003 * rand());
     }
     if (rand() < 0.2) {
-      C.copy(P).addScaledVector(D, Lp).addScaledVector(fn, -Lp * 0.3 - 0.005);
+      C.copy(P).addScaledVector(D, Lp).addScaledVector(fn, -Lp * 0.45 - 0.005).addScaledVector(T, Lp * 0.22);
       b.drops.push(C.x, C.y, C.z, 0.004 + 0.003 * rand());
     }
   }
@@ -127,8 +167,10 @@ function buildFern(b: Buf, lod: Lod, x: number, z: number, size: number, seed: n
     const L = size * (0.6 + 0.5 * rand());
     // the outer, older fronds lie lower and droop more
     const rise = 0.95 + 0.4 * rand(); // up high and arching over: room for a worm underneath
-    const droop = rand() * 0.22 * L;
-    const stage = THREE.MathUtils.clamp(fernStage + (rand() - 0.5) * 0.35, 0, 1);
+    const droop = (0.08 + rand() * 0.25) * L;
+    // a frond is still green or has turned orange and copper, hardly ever between (all of them in between had
+    // made the stands one straw gold); green and orange side by side in a stand, more turned the further on it is
+    const stage = rand() < 0.65 - 0.5 * fernStage ? 0.04 + 0.14 * rand() : 0.58 + 0.3 * rand();
     addFrond(b, lod, base, out, L, rise, droop, stage, rand() * 6.28, rand);
   }
 }
@@ -171,7 +213,7 @@ export class Ferns {
     const crowns: { x: number; z: number }[] = [];
     const sizes: number[] = [];
     // the stand you start in: a big fern just ahead, arching over you
-    if (ix === Math.floor(START.x / CELL) && iz === Math.floor(START.z / CELL)) { crowns.push({ ...START }); sizes.push(2.0); }
+    if (ix === Math.floor(START.x / CELL) && iz === Math.floor(START.z / CELL)) { crowns.push({ ...START }); sizes.push(1.6); }
     if (r() < 0.7) {
       const n = 2 + Math.floor(r() * 4); // ferns grow in stands: crawl in under them
       const gx = (ix + 0.2 + 0.6 * r()) * CELL, gz = (iz + 0.2 + 0.6 * r()) * CELL;
@@ -179,7 +221,7 @@ export class Ferns {
         const x = gx + (r() - 0.5) * 1.8, z = gz + (r() - 0.5) * 1.8;
         // none in a clearing, smaller towards its edge
         const open = clearing(x, z);
-        const size = (1.3 + r() * 0.7) * (1 - 0.45 * open);
+        const size = (1.0 + r() * 0.5) * (1 - 0.45 * open); // (a quarter smaller than they were)
         if (open > 0.45) continue;
         if (Math.hypot(x, z) < 0.3 || crowns.some((c) => Math.hypot(c.x - x, c.z - z) < 0.45)) continue;
         crowns.push({ x, z });
@@ -298,18 +340,38 @@ void main() {
   }
   float u = vLeaf.x, c = vLeaf.y;
   bool pinna = vLeaf.z > 0.5;
+  bool card = vLeaf.z > 1.5;
   // pinnules: lobes down each side of the pinna, deep cut towards the midrib, small teeth on each lobe,
   // the whole outline narrowing to the pinna's tip
   // the lobes lean towards the pinna's tip, narrow and pointed, cut almost to the midrib, finely toothed: lacy, as
   // a lady fern's (eight broad rounded lobes had read as oak leaves). Where a pinnule is only a few pixels it
   // smooths out to the pinna's outline instead of shimmering.
-  float P = 14.0;
-  float sp = (u - abs(c) * 0.22) * P;
-  float lobe = pow(abs(sin(sp * 3.14159)), 1.6);
-  float teeth = 0.06 * abs(sin(sp * 3.14159 * 4.0)) * abs(c) * lobe;
-  float fine = 1.0 - smoothstep(0.1, 0.3, fwidth(u) * P);
-  float hw = (1.0 - pow(u, 1.2)) * mix(0.72, 0.06 + 0.94 * lobe + teeth, fine);
-  if (pinna && abs(c) > hw) discard;
+  float P = 28.0; // pinnules close together, nearly touching
+  float sp, fine, hw;
+  if (card) {
+    // a far frond, one card: opposite pairs of pinnae out from the rachis, slanting to the tip, tapering, a little
+    // toothed; where they would be finer than a pixel, just the outline
+    float pv = (u - abs(c) * 0.05) * 40.0;
+    float f = fract(pv) - 0.5;
+    float thick = 0.36 * (1.0 - pow(abs(c), 1.6)) * (0.85 + 0.15 * abs(sin(abs(c) * 38.0)));
+    float solid = smoothstep(0.3, 0.7, fwidth(pv));
+    if (u < 0.22 || abs(c) > 0.97 || (abs(f) > thick && abs(c) > 0.04 && solid < 0.5)) discard;
+    u = abs(c); // along a pinna, for the colour
+    sp = pv; fine = 0.0; hw = 1.0;
+  } else {
+    // (a pinnule right at the rachis, and the base whole: starting on a notch, with only a hairline midrib there,
+    // the pinnae had looked as if they floated beside the stalk)
+    // oblong pinnules with round blunt tips, cut not quite to the midrib, faintly toothed (pointed ones had read
+    // spiky): each a half disc at the end of a parallel-sided lobe
+    sp = (u - abs(c) * 0.15) * P + 0.5;
+    float fr = fract(sp) * 2.0 - 1.0; // -1 .. 1 across one pinnule
+    float lobe = sqrt(max(0.0, 1.0 - fr * fr * 1.15));
+    float teeth = 0.025 * abs(sin(sp * 3.14159 * 6.0)) * abs(c) * lobe;
+    fine = 1.0 - smoothstep(0.1, 0.3, fwidth(u) * P);
+    hw = (1.0 - pow(u, 1.25)) * mix(0.78, 0.3 + 0.7 * lobe + teeth, fine);
+    hw = max(hw, 0.6 * (1.0 - smoothstep(0.0, 0.08, u)));
+    if (pinna && abs(c) > hw) discard;
+  }
   if (nearFade(vWorldPos, 0.05, 0.16) < 0.5) discard;
 
   vec3 N = normalize(vNormal);
@@ -321,7 +383,7 @@ void main() {
   // autumn: green, then gold, then rust and brown; the tip of a frond and of a pinna turn first
   float stage = clamp(vFrond.x + 0.35 * vFrond.z + 0.15 * u - 0.15, 0.0, 1.0);
   // (straw and copper, not a bright yellow: a saturated yellow lit up every sharp edge)
-  vec3 green = vec3(0.06, 0.16, 0.03), gold = vec3(0.4, 0.29, 0.11), rust = vec3(0.36, 0.13, 0.045), brown = vec3(0.15, 0.07, 0.03);
+  vec3 green = vec3(0.08, 0.2, 0.035), gold = vec3(0.42, 0.27, 0.09), rust = vec3(0.46, 0.17, 0.045), brown = vec3(0.18, 0.08, 0.03);
   vec3 col = stage < 0.4 ? mix(green, gold, stage / 0.4) : stage < 0.75 ? mix(gold, rust, (stage - 0.4) / 0.35) : mix(rust, brown, (stage - 0.75) / 0.25);
   col *= 0.85 + 0.3 * vFrond.w;
   if (pinna) {
@@ -331,7 +393,7 @@ void main() {
     vec3 rib = stage < 0.3 ? col * 1.3 + 0.02 : col * 0.55;
     col = mix(col, rib, clamp(mid + 0.4 * vein, 0.0, 1.0) * 0.6);
     // sori: rows of rust spore dots under each pinnule, either side of its vein
-    if (under) {
+    if (under && !card) {
       vec2 g = vec2(fract(u * P * 2.0) - 0.5, abs(c) - 0.45 * hw);
       float dot1 = 1.0 - smoothstep(0.12, 0.2, length(g * vec2(1.0, 4.5)));
       col = mix(col * 0.85, vec3(0.30, 0.12, 0.04), dot1 * step(0.15, u) * 0.9);
