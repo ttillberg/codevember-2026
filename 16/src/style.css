@@ -29,9 +29,7 @@ canvas { display: block; width: 100vw; height: 100vh; }
   .plate .head > i { font-size: 10px; }
 }
 /* what you can do, under the plate */
-.plate .sub { margin-top: 14px; font-weight: 600; font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; }
 /* desktop: the key row bottom left says it all, so no line of help under the title; a phone has no key row */
-body:not(.touch) .plate .sub { display: none; }
 canvas { touch-action: none; cursor: grab; }
 canvas:active { cursor: grabbing; }
 /* the sight: a small ring with ticks locked in the middle of the screen, pulses on a throw */
