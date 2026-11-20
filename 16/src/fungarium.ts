@@ -43,8 +43,8 @@ export const SPECIES: Species[] = [
     note: 'In spring, on burnt ground, bark and the disturbed edges of conifer forest. A tall cone of honeycomb: olive brown pits between dark ridges that run up its length, set straight on a pale, hollow, granular stem with a little groove where they meet.',
   },
   {
-    kind: 'waxcap', sv: 'Sotvaxskivling', en: 'Sooty waxcap', latin: 'Hygrophorus camarophyllus', seed: 4, scale: 1.0,
-    note: 'Under spruce, in moss, late in autumn. A sooty grey-brown cap streaked with dark fibres, opening flat around a broad hump; thick, far-apart, waxy white gills running down a white stem. Greasy to the touch when wet.',
+    kind: 'waxcap', sv: 'Papegojvaxskivling', en: 'Parrot waxcap', latin: 'Gliophorus psittacinus', seed: 4, scale: 1.0,
+    note: 'In mossy grass and at the edge of the wood, in autumn. A small bell of a cap under a coat of slime, parrot green when young, going yellow, now and then pink; thick waxy gills well apart; a slender stem, slimy and green at the top. It shines like wet glass.',
   },
 ];
 

@@ -813,7 +813,7 @@ export class Fungi {
       const { mesh, data, tint, dummy } = slot;
       const w = dummy.morphTargetInfluences!;
       const M = MODELS[c.kind];
-      const items: (Agaric | Capped)[] = c.kind === 'agaric' ? c.agarics : c.capped;
+      const items: (Agaric | Capped | Funnel | Morel)[] = c.kind === 'agaric' ? c.agarics : c.funnels.length ? c.funnels : c.morels.length ? c.morels : c.capped;
       for (const m of items) {
         const g0 = clamp01((c.age - m.delay) / m.dur);
         if (g0 <= 0 || slot.n >= mesh.instanceMatrix.count) continue;
@@ -839,6 +839,10 @@ export class Fungi {
           const o = frac(m.phase * 7.31), k = 0.9 + 0.2 * frac(m.phase * 3.7);
           data.setXYZW(n, veil, c.rot, 1, m.phase);
           tint.setXYZ(n, (0.7 + 0.04 * o) * k, (0.025 + 0.11 * o * o) * k, (0.02 + 0.01 * o) * k);
+        } else if ('tint' in m) {
+          // a chanterelle or a yellowfoot: its own colour, as the procedural one has it
+          data.setXYZW(n, 1 - THREE.MathUtils.smoothstep(g, 0.3, 1.0), c.rot, 1, m.phase);
+          tint.setXYZ(n, m.tint[0], m.tint[1], m.tint[2]);
         } else {
           // a bolete: its pores white when young, going yellow, then olive
           const cm = (m as Capped).cap;
@@ -987,20 +991,23 @@ export class Fungi {
       }
       radius = 0.08 * sc;
     } else if (kind === 'waxcap') {
-      // sotvaxskivlingar: two to five under spruce, caps 4 to 10 cm on white stems
+      // papegojvaxskivlingar: two to five in the moss, small slimy bells 2.5 to 5 cm on slender stems; green when
+      // young, yellow, now and then pink (one colour to a cluster, each a shade its own)
       const n = 2 + Math.floor(r() * 4);
+      const hue = r();
+      const base = hue < 0.5 ? [0.2, 0.3, 0.05] : hue < 0.8 ? [0.55, 0.46, 0.08] : [0.72, 0.3, 0.34];
       for (let i = 0; i < n; i++) {
         for (let attempt = 0; attempt < 20; attempt++) {
           const a = r() * Math.PI * 2, d = i === 0 ? 0 : (0.04 + 0.06 * r()) * sc;
-          const R = (0.022 + 0.026 * r()) * sc;
+          const R = (0.013 + 0.012 * r()) * sc;
           const x = Math.cos(a) * d, z = Math.sin(a) * d;
           if (capped.some((m) => Math.hypot(m.base.x - x, m.base.z - z) < (m.R + R) * 0.8)) continue;
           const k = 0.85 + 0.3 * r(), out0 = 0.06 + 0.12 * r();
           capped.push({
-            base: new THREE.Vector3(x, 0, z), H: R * (1.7 + 0.6 * r()), R, rs: R * (0.2 + 0.05 * r()),
+            base: new THREE.Vector3(x, 0, z), H: R * (2.8 + 0.8 * r()), R, rs: R * (0.2 + 0.05 * r()),
             lean: [Math.cos(a) * out0, Math.sin(a) * out0],
             delay: r() * 3 + i * 1.3, dur: 11 + 5 * r(), phase: r() * 6.28, style: WAXCAP,
-            cap: [0.2 * k, 0.17 * k, 0.15 * k], stem: [0.8, 0.79, 0.76], under: [0.86, 0.85, 0.8],
+            cap: [base[0] * k, base[1] * k, base[2] * k], stem: [0.62, 0.66, 0.4], under: [0.7, 0.72, 0.42],
           });
           break;
         }
@@ -1216,7 +1223,117 @@ void main() {
   vec3 col = vTint;
   float thin = 0.4;
   float wet = 1.0; // how glossy: a slippery jack's cap is all slime
-  if (vPart > 9.95) {
+  if (vPart > 14.95) {
+    // the waxcap model (models.ts, waxcap.py): a small bell under a coat of slime, glassy, its colour the fungus's own
+    // (parrot green, yellow or pink), paler and translucent to the rim; thick waxy gills, paler still; the stem the
+    // cap's colour washed out, greener at the top, slimy
+    float p = vPart - 15.0, t = vUv1.x;
+    float rot = vData.y;
+    vec3 pale = mix(vTint, vec3(0.86, 0.84, 0.7), 0.45);
+    if (p < 0.05) {
+      col = vTint * mix(0.85, 1.2, smoothstep(0.3, 1.0, t));
+      col = mix(col, pale, smoothstep(0.85, 1.0, t) * 0.5); // the rim translucent, striate
+      col *= 1.0 - 0.06 * smoothstep(0.75, 1.0, t) * abs(sin(around * 6.2831 * 60.0));
+      thin = 0.6; wet = 2.0;
+    } else if (p < 0.15) {
+      col = pale; thin = 0.7; wet = 1.2;
+    } else if (p < 0.5) {
+      col = mix(pale, vec3(0.9, 0.88, 0.72), 0.4) * (0.9 + 0.12 * n3(vWorldPos * 300.0));
+      thin = 0.85; wet = 0.9;
+    } else {
+      col = mix(mix(vTint, vec3(0.8, 0.8, 0.62), 0.55), vTint * 1.1, smoothstep(0.55, 1.0, along));
+      col *= 0.94 + 0.08 * n3(vWorldPos * 250.0);
+      thin = 0.6; wet = 1.5;
+    }
+    float lum = dot(col, vec3(0.3, 0.5, 0.2));
+    col = mix(col, vec3(0.3, 0.2, 0.11) * (0.45 + 0.9 * lum) + vec3(0.04, 0.03, 0.015), pow(rot, 0.7) * 0.9);
+  } else if (vPart > 13.95) {
+    // the morel model (models.ts, morel.py): a honeycomb of ridges (brown, catching the light) round deep pits (darker,
+    // shaded inside); a pale cream stem, granular, a little wrinkled at the foot
+    float p = vPart - 14.0, u = vUv1.x, pitD = vUv1.y;
+    float rot = vData.y;
+    if (p < 0.5) {
+      // (chocolate brown, the pits near black: the tint as it was lit up a pale khaki in the sun)
+      col = vTint * vec3(0.8, 0.66, 0.56) * mix(0.95, 0.3, smoothstep(0.1, 0.9, pitD));
+      col *= 0.9 + 0.15 * n3(vWorldPos * 500.0);
+      // the ridges' edges a little paler and dry-looking, the pits a touch moist
+      thin = 0.3; wet = mix(0.4, 0.9, pitD);
+    } else {
+      col = vec3(0.86, 0.81, 0.69) * (0.9 + 0.12 * n3(vWorldPos * 700.0)) * mix(0.9, 1.0, along);
+      thin = 0.5; wet = 0.3;
+    }
+    float lum = dot(col, vec3(0.3, 0.5, 0.2));
+    col = mix(col, vec3(0.3, 0.2, 0.11) * (0.45 + 0.9 * lum) + vec3(0.04, 0.03, 0.015), pow(rot, 0.7) * 0.9);
+  } else if (vPart > 11.95) {
+    // the funnel models (models.ts, funnel.py): a chanterelle (12) egg-yolk yellow all through, its blunt forking
+    // ridges a shade paler; a yellowfoot (13) a brown funnel, grey ridges under it, a hollow yellow stem
+    bool chant = vPart < 12.95;
+    float p = vPart - (chant ? 12.0 : 13.0), t = vUv1.x;
+    float rot = vData.y;
+    if (p < 0.05) {
+      // the top: chanterelle smooth and matt yellow; yellowfoot brown, darker in the funnel, finely felted
+      col = chant ? vTint * (0.92 + 0.12 * t) : vTint * mix(0.6, 1.15, smoothstep(0.0, 0.9, t));
+      col *= 0.92 + 0.12 * n3(vWorldPos * (chant ? 120.0 : 260.0));
+      thin = chant ? 0.45 : 0.6; wet = chant ? 0.5 : 0.7;
+    } else if (p < 0.15) {
+      col = chant ? vTint * 1.05 : vTint * 1.2;
+      thin = 0.6;
+    } else if (p < 0.5) {
+      // the ridges: the geometry has them; the colour a little paler on them, darker between
+      vec3 rc = chant ? vTint * vec3(1.04, 1.1, 1.4) : vec3(0.5, 0.48, 0.44);
+      float rid = abs(sin(around * 6.2831 * (13.0 + 9.0 * t)));
+      col = rc * mix(0.78, 1.08, pow(rid, 0.6)) * (0.94 + 0.1 * n3(vWorldPos * 300.0));
+      thin = chant ? 0.6 : 0.8; wet = 0.5;
+    } else {
+      // the stem: chanterelle the cap's yellow, paler low down; yellowfoot a hollow yellow-orange stem, grooved
+      col = chant ? vTint * mix(0.9, 1.05, along) * vec3(1.0, 1.05, 1.3) : vec3(0.78, 0.56, 0.14) * (0.92 + 0.1 * sin(around * 6.2831 * 9.0));
+      col *= 0.94 + 0.08 * n3(vWorldPos * 220.0);
+      thin = 0.5;
+    }
+    float lum = dot(col, vec3(0.3, 0.5, 0.2));
+    col = mix(col, vec3(0.3, 0.2, 0.11) * (0.45 + 0.9 * lum) + vec3(0.04, 0.03, 0.015), pow(rot, 0.7) * 0.9);
+  } else if (vPart > 10.95) {
+    // the slippery jack model (models.ts): a chestnut cap under a coat of slime, glossy and streaked; small angular
+    // pores, lemon yellow going olive; a pale yellow stem, dotted brown above the ring; the ring a skirt of the
+    // veil, white above, violet-brown below
+    float p = vPart - 11.0, t = vUv1.x;
+    float young = vData.x, rot = vData.y;
+    if (p < 0.05) {
+      // (chestnut, dark: lit by the sun, a brighter tint had gone a pale orange)
+      col = vTint * vec3(0.72, 0.58, 0.5) * mix(0.62, 0.95, smoothstep(0.3, 1.0, t));
+      // the slime: streaks out from the middle, darker where it runs thick
+      float streak = n3(vec3(around * 40.0, t * 6.0, 1.0)) * 0.6 + n3(vWorldPos * 160.0) * 0.4;
+      col *= 0.85 + 0.25 * streak;
+      thin = 0.25; wet = 1.6;
+    } else if (p < 0.15) {
+      // the rim's edge: hung with scraps of the veil, whitish
+      col = mix(vec3(0.82, 0.76, 0.62), vec3(0.62, 0.52, 0.5), n3(vWorldPos * 400.0) * 0.6);
+      thin = 0.5;
+    } else if (p < 0.5) {
+      // the pores: lemon yellow, small and angular, going olive with age
+      vec3 c0 = vec3(0.55, 0.52, 0.18), c1 = vec3(0.86, 0.74, 0.2);
+      col = mix(c0, c1, smoothstep(0.0, 0.7, young));
+      vec2 q = vec2(around * 260.0, t * 70.0);
+      vec2 i = floor(q), fq = fract(q) - 0.5;
+      col *= 1.0 - 0.32 * (1.0 - smoothstep(0.18, 0.34, max(abs(fq.x), abs(fq.y))));
+      col *= 0.92 + 0.1 * n3(vWorldPos * 220.0);
+      thin = 0.3; wet = 0.5;
+    } else if (p < 0.65) {
+      // the stem: pale yellow, whiter below; little brown glandular dots above the ring
+      col = mix(vec3(0.84, 0.8, 0.62), vec3(0.88, 0.78, 0.38), smoothstep(0.3, 0.9, along));
+      vec2 q = vec2(around * 34.0, along * 26.0);
+      vec2 i = floor(q), f = fract(q) - 0.5 - (vec2(h31(vec3(i, 3.0)), h31(vec3(i, 4.0))) - 0.5) * 0.5;
+      float dot1 = (1.0 - smoothstep(0.08, 0.16, length(f))) * smoothstep(0.55, 0.62, along);
+      col = mix(col, vec3(0.34, 0.2, 0.1), dot1 * 0.85);
+      thin = 0.4;
+    } else {
+      // the ring: a thin skirt, whitish above, violet-brown on its underside and hem, slimy
+      col = mix(vec3(0.8, 0.76, 0.72), vec3(0.42, 0.3, 0.34), smoothstep(0.2, 0.9, t)) * (0.9 + 0.12 * n3(vWorldPos * 300.0));
+      thin = 0.85; wet = 1.4;
+    }
+    float lum = dot(col, vec3(0.3, 0.5, 0.2));
+    col = mix(col, vec3(0.3, 0.2, 0.11) * (0.45 + 0.9 * lum) + vec3(0.04, 0.03, 0.015), pow(rot, 0.7) * 0.9);
+  } else if (vPart > 9.95) {
     // the porcini model (models.ts): a brown bun of a cap, a sponge of pores going from white to yellow to olive
     // with age, a pale barrel of a stem netted white at the top
     float p = vPart - 10.0, t = vUv1.x;
