@@ -339,15 +339,77 @@ door = core('door', set(DOOR), pod, DOOR_INV)
 door.matrix_local = DOOR_M
 
 PLATES = []
+PANELS = []      # the pieces the plates are cut into, for the details laid on them
+CUT = 0.005      # half a fine seam, where a plate is cut into panels
+
+def subpanels(b, name):
+    """Cut a plate's surface into panels, as the sheet's plates have fine seams across them, following the
+    plate's own lines, not the world's: the direction its edges run most (summed by length) sets the way; one
+    seam runs along it, parallel to those edges, where the plate is wide enough, and one or two cross it square.
+    Returns the faces of each panel and the planes, to tell the panels apart."""
+    faces = list(b.faces)
+    area = sum(f.calc_area() for f in faces)
+    if area < 0.3: return [faces], [], None
+    n = sum((f.normal * f.calc_area() for f in faces), Vector()).normalized()
+    c = sum((f.calc_center_median() * f.calc_area() for f in faces), Vector()) / area
+    # the way its edges run: boundary edges in the plate's plane, folded to one half circle, weighed by length
+    bins = {}
+    for e in b.edges:
+        if not e.is_boundary: continue
+        d = e.verts[1].co - e.verts[0].co
+        d = d - n * d.dot(n)
+        if d.length < 1e-6: continue
+        a = int(math.degrees(math.atan2(d.dot(n.orthogonal().normalized().cross(n)), d.dot(n.orthogonal().normalized()))) % 180 // 10)
+        for k in (a - 1, a, a + 1):   # a little blur, so a bend of a few degrees still counts as one line
+            bins.setdefault(k % 18, []).append(d)
+    best = max(bins.values(), key=lambda ds: sum(d.length for d in ds))
+    ref = max(best, key=lambda d: d.length).normalized()
+    along = sum((d if d.dot(ref) > 0 else -d for d in best), Vector()).normalized()
+    across = n.cross(along).normalized()
+    us = [(v.co - c).dot(along) for v in b.verts]
+    ss = [(v.co - c).dot(across) for v in b.verts]
+    rnd = random.Random(sum(map(ord, name)) * 7 + 3)
+    planes = []
+    lo, hi = min(us), max(us)
+    # across it, square to its lines: near both ends on a long plate, through the middle of a short one
+    for t in ((rnd.uniform(0.18, 0.26), rnd.uniform(0.74, 0.82)) if hi - lo > 1.0 else (rnd.uniform(0.4, 0.6),)):
+        planes.append((c + along * (lo + (hi - lo) * t), along))
+    slo, shi = min(ss), max(ss)
+    if shi - slo > 0.7 and area > 0.6:   # along it down the middle, parallel to its lines
+        planes.append((c + across * (slo + (shi - slo) * rnd.uniform(0.45, 0.55)), across))
+    for co, no in planes:
+        bmesh.ops.bisect_plane(b, geom=b.verts[:] + b.edges[:] + b.faces[:], dist=0.004, plane_co=co, plane_no=no)
+    bmesh.ops.dissolve_degenerate(b, dist=0.002, edges=b.edges[:])   # slivers would spike the even solidify
+    groups = {}
+    for f in b.faces:
+        m = f.calc_center_median()
+        groups.setdefault(tuple((m - co).dot(no) > 0 for co, no in planes), []).append(f)
+    return list(groups.values()), planes, along
+
+
 def plate(name, parent, transform=None, thick=T, gap=GAP):
     b = region({name}, transform)
     if not b.faces: b.free(); return None
     rim = bmesh.ops.inset_region(b, faces=b.faces[:], thickness=gap, depth=0, use_even_offset=True)['faces']
     bmesh.ops.delete(b, geom=rim, context='FACES')
+    groups, planes, along = subpanels(b, name)
+    for g in groups:
+        area = sum(f.calc_area() for f in g)
+        if area > 0.05:
+            c = sum((f.calc_center_median() * f.calc_area() for f in g), Vector()) / area
+            mid = min(g, key=lambda f: (f.calc_center_median() - c).length)   # the face nearest its middle
+            PANELS.append(dict(name=name, parent=parent, transform=transform, thick=thick, area=area, planes=planes,
+                               key=tuple((mid.calc_center_median() - co).dot(no) > 0 for co, no in planes),
+                               at=mid.calc_center_median(), n=mid.normal.copy(), along=along))
+    if planes:
+        for g in groups:
+            if sum(f.calc_area() for f in g) < 0.01: continue   # a sliver: an even inset would shoot its corners out
+            rim = bmesh.ops.inset_region(b, faces=[f for f in g if f.is_valid], thickness=CUT, depth=0, use_even_offset=False)['faces']
+            bmesh.ops.delete(b, geom=rim, context='FACES')
     me = bpy.data.meshes.new('plate.' + name); b.to_mesh(me); b.free(); me.materials.append(PAINT)
     o = obj('plate.' + name, me, parent)
     s = o.modifiers.new('shell', 'SOLIDIFY'); s.thickness = thick; s.offset = 1; s.use_even_offset = True
-    e = o.modifiers.new('edge', 'BEVEL'); e.width = 0.01; e.segments = 1; e.limit_method = 'ANGLE'; e.angle_limit = math.radians(35)
+    e = o.modifiers.new('edge', 'BEVEL'); e.width = 0.016; e.segments = 1; e.limit_method = 'ANGLE'; e.angle_limit = math.radians(35)
     PLATES.append(o)
     return o
 
@@ -647,25 +709,30 @@ def greebles(view, hoses, m, panel, lamps, hose, steel, tilt, seed):
     def box(soup, cx, cy, w, h, t, out, depth):
         block(soup, view, cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2, out, depth, t, flush=True)
     # base plates, under everything (the hoses run over them)
-    for cx, cy, w, h, t in place(16, lambda: (rng.uniform(40, 75), rng.uniform(60, 130)), 0, False):
+    for cx, cy, w, h, t in place(22, lambda: (rng.uniform(40, 75), rng.uniform(60, 130)), 0, False):
         box(m, cx, cy, w, h, t, 0.022, 0.05)
     # ribbed panels
-    for cx, cy, w, h, t in place(3, lambda: (rng.uniform(28, 38), rng.uniform(90, 130)), 1, True):
+    for cx, cy, w, h, t in place(5, lambda: (rng.uniform(28, 38), rng.uniform(90, 130)), 1, True):
         box(panel, cx, cy, w, h, t, 0.045, 0.05)
         c, s_ = math.cos(t), math.sin(t)
         for j in range(6):
             dy = -h / 2 + h * (j + 0.5) / 6
             box(m, cx + dy * s_, cy + dy * c, w + 6, 4, t, 0.056, 0.03)
     # boxes, some of them grey plates
-    for cx, cy, w, h, t in place(26, lambda: (rng.uniform(14, 40), rng.uniform(14, 52)), 1, True):
-        box(panel if rng.random() < 0.25 else m, cx, cy, w, h, t, rng.uniform(0.04, 0.085), 0.08)
+    for cx, cy, w, h, t in place(44, lambda: (rng.uniform(12, 40), rng.uniform(12, 52)), 1, True):
+        out = rng.uniform(0.04, 0.085)
+        box(panel if rng.random() < 0.25 else m, cx, cy, w, h, t, out, 0.08)
+        if rng.random() < 0.55:   # a smaller one on top, off its middle: a cap, a terminal, a valve block
+            k = rng.uniform(0.35, 0.6)
+            ox, oy = rng.uniform(-0.2, 0.2) * w, rng.uniform(-0.2, 0.2) * h
+            box(steel if rng.random() < 0.3 else panel, cx + ox, cy + oy, w * k, h * k, t, out + rng.uniform(0.012, 0.03), 0.05)
     # round fittings
-    for cx, cy, w, h, t in place(16, lambda: (12, 12), 2, True):
+    for cx, cy, w, h, t in place(30, lambda: (12, 12), 2, True):
         boss(steel, view, cx, cy, rng.uniform(4, 8), rng.uniform(0.045, 0.075))
     # thin hoses along the diagonal, fitted like every other hose
     n = 0
     for _ in range(200):
-        if n >= 3: break
+        if n >= 5: break
         L = rng.uniform(70, 170)
         x0, y0 = rng.uniform(x_lo, x_hi), rng.uniform(y_lo, y_hi - L)
         x1, y1 = x0 + L * math.sin(-tilt) * -1, y0 + L * math.cos(tilt)
@@ -675,7 +742,7 @@ def greebles(view, hoses, m, panel, lamps, hose, steel, tilt, seed):
             hoses.append(pts)
             n += 1
     # a few lamps
-    for cx, cy, w, h, t in place(4, lambda: (5, 9), 3, True):
+    for cx, cy, w, h, t in place(7, lambda: (5, 9), 3, True):
         box(lamps, cx, cy, w, h, t, 0.06, 0.02)
 
 
@@ -760,6 +827,97 @@ def machinery():
     white.done('blocks', BLOCK, pod, None, 0.008)
     plate_.done('spine_plate', PANEL, pod, None, 0.006)
     return tops
+
+
+# ---------------------------------------------------------------- the small things on the plates
+
+def details(clear):
+    """Twice the detail on the plates: on each panel the plates are cut into, one thing, picked by a seeded
+    random: a raised hatch with a grab handle, a dark slot in a steel frame (as the sheet has on the hatch), a
+    vent of slats, a small tag with two diodes, or nothing. Each is laid flat on its panel and only where its
+    whole footprint lands on that panel, flat enough, clear of the window; never on the top or the bottom,
+    where the lugs and the machinery are. And the door's hinge: knuckles along it, leaves onto door and flank."""
+    rnd = random.Random(20)
+    soups = {}
+    def soup(kind, parent):
+        return soups.setdefault((kind, parent.name), (Soup(), parent))[0]
+    hatches = {}
+    for P in PANELS:
+        n = P['n']
+        if abs(n.z) > 0.6: continue
+        M = P['transform'].inverted() if P['transform'] else Matrix.Identity(4)   # panel space to the pod's
+        # square to the panel's seams where it has them, else upright
+        up = P['along'] if P['along'] is not None else Vector((0, 0, 1)) if P['transform'] is None else (P['transform'].to_3x3() @ Vector((0, 0, 1))).normalized()
+        if P['along'] is not None and up.z < 0: up = -up
+        up = (up - n * up.dot(n)).normalized()
+        side = n.cross(up)
+        R = Matrix((side, up, n)).transposed().to_4x4()
+        size = min(0.6, math.sqrt(P['area']) * 0.42)
+        kind = rnd.choices(['hatch', 'slot', 'vent', 'tag', None], [4, 3, 3, 2, 2])[0]
+        if not kind: continue
+        w, h = {'hatch': (size, size * rnd.uniform(0.6, 1.1)), 'slot': (size * 0.35, size * 0.7),
+                'vent': (size * 0.8, size * 0.35), 'tag': (size * 0.4, size * 0.22)}[kind]
+        ou, ov = rnd.uniform(-0.15, 0.15) * size, rnd.uniform(-0.15, 0.15) * size
+        def fits(w, h):
+            for x, y in ((-1, -1), (1, -1), (1, 1), (-1, 1), (0, -1), (0, 1), (-1, 0), (1, 0)):
+                q = P['at'] + side * (ou + x * w / 2) + up * (ov + y * h / 2)
+                got = BVH.ray_cast(M @ (q + n * 0.25), (M.to_3x3() @ -n).normalized(), 0.5)
+                if got[0] is None: return False
+                local = M.inverted() @ got[0]
+                if abs((local - q).dot(n)) > 0.012: return False                 # not flat there
+                if plate_of(hull.faces[got[2]]) != P['name']: return False      # off the plate
+                if tuple((local - co).dot(no) > 0 for co, no in P['planes']) != P['key']: return False   # over a seam
+                if any(((M @ q) - c).length < r for c, r in clear): return False
+            return True
+        if not fits(w, h):
+            w, h = w * 0.65, h * 0.65
+            if not fits(w, h): continue
+        base = P['at'] + side * ou + up * ov + n * P['thick']
+        at = lambda x, y, z: base + side * x + up * y + n * z
+        par = P['parent']
+        if kind == 'hatch':
+            hatches.setdefault(par.name, (Soup(), par, P['transform']))[0].box((w, h, 0.014), at(0, 0, 0.004), R)
+            hx = w * 0.28
+            for x in (-hx, hx):
+                soup('steel', par).box((0.03, 0.03, 0.016), at(x, h * 0.3, 0.018), R)
+            soup('steel', par).tube([at(-hx, h * 0.3, 0.02), at(-hx, h * 0.3, 0.05), at(hx, h * 0.3, 0.05), at(hx, h * 0.3, 0.02)], 0.008, 8, smooth=False)
+        elif kind == 'slot':
+            soup('dark', par).box((w, h, 0.01), at(0, 0, 0.0), R)
+            b = 0.014
+            for (cx, cy, sx, sy) in ((0, (h + b) / 2, w + 2 * b, b), (0, -(h + b) / 2, w + 2 * b, b), (-(w + b) / 2, 0, b, h), ((w + b) / 2, 0, b, h)):
+                soup('steel', par).box((sx, sy, 0.014), at(cx, cy, 0.002), R)
+        elif kind == 'vent':
+            soup('dark', par).box((w, h, 0.012), at(0, 0, 0.0), R)
+            b = 0.018
+            for (cx, cy, sx, sy) in ((0, (h + b) / 2, w + 2 * b, b), (0, -(h + b) / 2, w + 2 * b, b), (-(w + b) / 2, 0, b, h), ((w + b) / 2, 0, b, h)):
+                soup('mech', par).box((sx, sy, 0.02), at(cx, cy, 0.004), R)
+            k = max(3, int(h / 0.03))
+            for i in range(k):
+                y = -h / 2 + h * (i + 0.5) / k
+                soup('mech', par).box((w, h / k * 0.9, 0.006), at(0, y, 0.008), R @ Matrix.Rotation(-0.5, 4, 'X'))
+        elif kind == 'tag':
+            soup('block', par).box((w, h, 0.012), at(0, 0, 0.002), R)
+            for x in (-w * 0.25, w * 0.25):
+                soup('led', par).box((0.012, 0.012, 0.006), at(x, -h * 0.15, 0.011), R)
+
+    # the hinge: knuckles on the line, the door's and the pod's taking turns, a leaf from each onto its side
+    door_y = sum((DOOR_INV @ f.calc_center_median()).y for f in hull.faces if plate_of(f) in DOOR)
+    sgn = 1 if door_y > 0 else -1
+    L = (H0 - H1).length
+    for i, z in enumerate((-0.42, -0.3, -0.1, 0.02, 0.22, 0.34)):
+        z0, z1 = z * L, (z + 0.1) * L
+        if i % 2 == 0:
+            soup('steel', door).cyl(0.032, (0, 0, z0), (0, 0, z1), 14)
+            soup('steel', door).box((0.016, 0.12, (z1 - z0) * 0.9), Vector((0.012, sgn * 0.07, (z0 + z1) / 2)))
+        else:
+            m = DOOR_M
+            soup('steel', pod).cyl(0.032, m @ Vector((0, 0, z0)), m @ Vector((0, 0, z1)), 14)
+            soup('steel', pod).box((0.016, 0.12, (z1 - z0) * 0.9), m @ Vector((0.012, -sgn * 0.07, (z0 + z1) / 2)), DOOR_M.to_3x3().to_4x4())
+    mats = {'steel': STEEL, 'dark': DARK, 'mech': MECH, 'block': BLOCK, 'led': LED}
+    for (kind, _), (sp, par) in soups.items():
+        sp.done('detail_%s_%s' % (kind, par.name), mats[kind], par, None, 0.004 if kind != 'led' else 0)
+    for name, (sp, par, _) in hatches.items():
+        PLATES.append(sp.done('hatches_' + name, PAINT, par, None, 0.004))
 
 
 # ---------------------------------------------------------------- a window in the hatch
@@ -1294,6 +1452,7 @@ result = {'faces': len(hull.faces), 'plates': sorted(ALL)}
 if STAGE != 'hull':
     hose_tops = machinery()
     window()
+    details([(Vector(hit('front', 478, 278)[0]), 0.55)])
     ports, top = deck()
     ports += [(p, Vector((0, 0.25, 1)).normalized(), r) for p, r in hose_tops]
     under = underside()
