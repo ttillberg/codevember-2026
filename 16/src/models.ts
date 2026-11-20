@@ -8,7 +8,7 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 
-export type ModelKind = 'agaric' | 'porcini' | 'slippery' | 'chanterelle' | 'funnel' | 'morel' | 'waxcap';
+export type ModelKind = 'agaric' | 'porcini' | 'slippery' | 'chanterelle' | 'funnel' | 'morel' | 'waxcap' | 'puffball' | 'finger';
 /** each model's file and its own cap radius and height to the top of the cap, metres: each fungus is scaled from these */
 export const MODELS: Record<ModelKind, { file: string; R: number; H: number }> = {
   agaric: { file: 'agaric.glb', R: 0.065, H: 0.165 },
@@ -18,6 +18,8 @@ export const MODELS: Record<ModelKind, { file: string; R: number; H: number }> =
   funnel: { file: 'yellowfoot.glb', R: 0.02, H: 0.06 }, // the yellowfoot (funnel.py builds both)
   morel: { file: 'morel.glb', R: 0.016, H: 0.078 },
   waxcap: { file: 'waxcap.glb', R: 0.02, H: 0.065 },
+  puffball: { file: 'puffball.glb', R: 0.018, H: 0.055 },
+  finger: { file: 'coral.glb', R: 0.028, H: 0.05 }, // the crested coral: a whole tuft is one
 };
 export const MODEL_KINDS = Object.keys(MODELS) as ModelKind[];
 export const isModelKind = (k: string): k is ModelKind => k in MODELS;

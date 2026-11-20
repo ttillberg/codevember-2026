@@ -639,6 +639,9 @@ function buildCapped(b: Buf, m: Capped, age: number) {
 }
 
 // ---- morels ----------------------------------------------------------------------------------------------
+const NO_LEAN: [number, number] = [0, 0];
+/** a crested coral's whole tuft, drawn as one model */
+interface Tuft { base: THREE.Vector3; R: number; H: number; lean: [number, number]; delay: number; dur: number; phase: number; tint: [number, number, number] }
 interface Morel {
   base: THREE.Vector3;
   H: number; R: number; rs: number; capH: number; // all of it; the cap's radius at its foot; the stem; the cap's height
@@ -735,6 +738,7 @@ export interface Cluster {
   mesh: THREE.Mesh;
   fingers: Finger[];
   funnels: Funnel[];
+  tuft?: Tuft;
   puffs: Puff[];
   agarics: Agaric[];
   capped: Capped[];
@@ -813,7 +817,13 @@ export class Fungi {
       const { mesh, data, tint, dummy } = slot;
       const w = dummy.morphTargetInfluences!;
       const M = MODELS[c.kind];
-      const items: (Agaric | Capped | Funnel | Morel)[] = c.kind === 'agaric' ? c.agarics : c.funnels.length ? c.funnels : c.morels.length ? c.morels : c.capped;
+      // (a crested coral is drawn whole: one tuft for its cluster, the size of its fingers, the colour of the first)
+      if (c.kind === 'finger' && !c.tuft && c.fingers.length) {
+        const L = c.fingers.reduce((s, f) => s + f.L, 0) / c.fingers.length;
+        const R = L * 0.85;
+        c.tuft = { base: new THREE.Vector3(), R, H: R * (M.H / M.R), lean: [0, 0], delay: Math.min(...c.fingers.map((f) => f.delay)), dur: Math.max(...c.fingers.map((f) => f.delay + f.dur)), phase: c.fingers[0].phase, tint: c.fingers[0].tint };
+      }
+      const items: (Agaric | Capped | Funnel | Morel | Puff | Tuft)[] = c.kind === 'agaric' ? c.agarics : c.kind === 'finger' ? (c.tuft ? [c.tuft] : []) : c.kind === 'puffball' ? c.puffs : c.funnels.length ? c.funnels : c.morels.length ? c.morels : c.capped;
       for (const m of items) {
         const g0 = clamp01((c.age - m.delay) / m.dur);
         if (g0 <= 0 || slot.n >= mesh.instanceMatrix.count) continue;
@@ -822,13 +832,16 @@ export class Fungi {
         const g = clamp01(g0 + 0.02 * Math.sin(g0 * 11 + m.phase));
         // its own cap when grown: round, open, or turned up (a third or so each)
         modelWeights(g, c.rot, THREE.MathUtils.clamp(frac(m.phase * 5.17) * 2.4 - 1.2, -1, 1), w);
+        // a puffball's 'upturn' is its being pressed (it has no upturned shape), its 'round' only half as often
+        if ('squash' in m) { w[4] *= 0.5; w[5] = m.squash; }
         const s = m.R / M.R, ky = (m.H / m.R) / (M.H / M.R);
         // up out of the moss as it starts; down into it as it goes
         const rise = (1 - ease(clamp01(g / 0.05))) * 0.02 * s + c.rot * c.rot * 0.012 * s;
         p.set(c.x + m.base.x, c.y - rise, c.z + m.base.z);
         // turned its own way (the way it falls when it withers), leaning out a little
         q.setFromAxisAngle(UP, m.phase * 2.3);
-        qt.setFromEuler(PACK.e.set(Math.atan(m.lean[1]), 0, -Math.atan(m.lean[0])));
+        const lean = 'lean' in m ? m.lean : NO_LEAN; // (a puffball stands straight)
+        qt.setFromEuler(PACK.e.set(Math.atan(lean[1]), 0, -Math.atan(lean[0])));
         q.premultiply(qt);
         sc.set(s, s * ky, s);
         mesh.setMatrixAt(n, m4.compose(p, q, sc));
@@ -839,6 +852,10 @@ export class Fungi {
           const o = frac(m.phase * 7.31), k = 0.9 + 0.2 * frac(m.phase * 3.7);
           data.setXYZW(n, veil, c.rot, 1, m.phase);
           tint.setXYZ(n, (0.7 + 0.04 * o) * k, (0.025 + 0.11 * o * o) * k, (0.02 + 0.01 * o) * k);
+        } else if ('squash' in m) {
+          // a puffball: how ripe (white to brown, the pore open), withering, how pressed
+          data.setXYZW(n, m.age, c.rot, m.squash, m.phase);
+          tint.setXYZ(n, 0.9, 0.87, 0.8);
         } else if ('tint' in m) {
           // a chanterelle or a yellowfoot: its own colour, as the procedural one has it
           data.setXYZW(n, 1 - THREE.MathUtils.smoothstep(g, 0.3, 1.0), c.rot, 1, m.phase);
@@ -917,9 +934,11 @@ export class Fungi {
         const a = r() * Math.PI * 2, d = Math.sqrt(r()) * 0.05 * sc;
         const out0 = (0.04 + 0.08 * r()) * (d / (0.05 * sc));
         const k = 0.92 + 0.16 * r();
+        // (as tall as the model is for its width: lower, the model's stem was squashed to half)
+        const R = (0.026 + 0.016 * r()) * sc;
         return {
           base: new THREE.Vector3(Math.cos(a) * d, 0, Math.sin(a) * d),
-          H: (0.036 + 0.03 * r()) * sc, rs: (0.010 + 0.005 * r()) * sc, R: (0.032 + 0.02 * r()) * sc,
+          H: R * (1.7 + 0.4 * r()), rs: (0.010 + 0.005 * r()) * sc, R,
           wave: [r() * 6.28, r() * 6.28, r() * 6.28],
           sway: [(r() - 0.5) * 0.15, r() * 6.28, (r() - 0.5) * 0.15, r() * 6.28],
           lean: [Math.cos(a) * out0, Math.sin(a) * out0],
@@ -1141,8 +1160,8 @@ export class Fungi {
       c.rot = c.wither === undefined ? 0 : clamp01((c.age - c.wither) / WITHER);
       if (c.rot >= 1) { this.remove(c); continue; }
       if (this.modelled(c)) {
-        // a model: nothing to build, only its weights to set (packed below)
-        if (!c.grown || c.rot > 0) {
+        // a model: nothing to build, only its weights to set (packed below); a pressed puffball as it springs back
+        if (!c.grown || c.rot > 0 || squashing) {
           if (c.mesh.visible) this.modelsDirty = true;
           if (!c.grown && c.age >= c.end) { c.grown = true; this.changed = true; }
         }
@@ -1223,7 +1242,33 @@ void main() {
   vec3 col = vTint;
   float thin = 0.4;
   float wet = 1.0; // how glossy: a slippery jack's cap is all slime
-  if (vPart > 14.95) {
+  if (vPart > 16.95) {
+    // the crested coral model (models.ts, coral.py): the cluster's colour (white, golden, orange), paler and a
+    // little translucent at the crests, a touch darker and browner at the foot
+    float p = vPart - 17.0, t = vUv1.x;
+    float rot = vData.y;
+    col = vTint * mix(0.75, 1.05, smoothstep(0.0, 0.5, along));
+    if (p > 0.05) col = mix(col, vTint * 1.15 + 0.04, t);
+    col *= 0.92 + 0.12 * n3(vWorldPos * 600.0);
+    thin = 0.7; wet = 0.3;
+    float lum = dot(col, vec3(0.3, 0.5, 0.2));
+    col = mix(col, vec3(0.3, 0.2, 0.11) * (0.45 + 0.9 * lum) + vec3(0.04, 0.03, 0.015), pow(rot, 0.7) * 0.9);
+  } else if (vPart > 15.95) {
+    // the puffball model (models.ts, puffball.py): white and covered in little warts, the warts' tips a shade
+    // darker; ripening (vData.x) to buff, then brown, a dark pore opening at the top
+    float p = vPart - 16.0, fromTop = vUv1.x, wart = vUv1.y;
+    float ripe = vData.x, rot = vData.y;
+    vec3 white = vec3(0.92, 0.9, 0.84), buff = vec3(0.78, 0.68, 0.5), brown = vec3(0.45, 0.34, 0.22);
+    col = mix(mix(white, buff, smoothstep(0.2, 0.6, ripe)), brown, smoothstep(0.6, 1.0, ripe));
+    col *= 1.0 - 0.18 * smoothstep(0.5, 1.0, wart);
+    if (p > 0.5) col *= 0.92; // the stem a little duller
+    float pore = (1.0 - smoothstep(0.02, 0.06, fromTop)) * smoothstep(0.7, 0.9, ripe);
+    col = mix(col, vec3(0.08, 0.06, 0.04), pore);
+    col *= 0.94 + 0.1 * n3(vWorldPos * 900.0);
+    thin = 0.35; wet = 0.25;
+    float lum = dot(col, vec3(0.3, 0.5, 0.2));
+    col = mix(col, vec3(0.3, 0.2, 0.11) * (0.45 + 0.9 * lum) + vec3(0.04, 0.03, 0.015), pow(rot, 0.7) * 0.9);
+  } else if (vPart > 14.95) {
     // the waxcap model (models.ts, waxcap.py): a small bell under a coat of slime, glassy, its colour the fungus's own
     // (parrot green, yellow or pink), paler and translucent to the rim; thick waxy gills, paler still; the stem the
     // cap's colour washed out, greener at the top, slimy

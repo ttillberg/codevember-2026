@@ -30,14 +30,16 @@ CT = 18   # over the top, margin to middle
 KINDS = {
     'chanterelle': dict(
         P=12.0,
-        OPEN=dict(R=0.035, H=0.055, rs=0.009, dip=0.006, roll=0.15, wave=1.0, thick=0.007, fl=0.8, ridge=1.0, taper=0.3, jn=0.35),
+        # (after the reference: a flat top, a little dipped, the margin thick and rolled down, lobed only gently; the
+        # stem stout, flaring up into the cap. Waved as the yellowfoot, they had read as crumpled paper)
+        OPEN=dict(R=0.03, H=0.058, rs=0.0095, dip=0.002, roll=0.7, wave=0.35, thick=0.009, fl=1.8, zp=0.45, ridge=1.0, taper=0.25, jn=0.5),
         STAGES={
             'egg': dict(R=0.007, H=0.013, rs=0.0045, dip=-0.002, roll=1.0, wave=0.0, thick=0.003, ridge=0.2),
-            'button': dict(R=0.013, H=0.026, rs=0.007, dip=-0.003, roll=0.9, wave=0.2, thick=0.005, ridge=0.5),
-            'dome': dict(R=0.024, H=0.042, rs=0.008, dip=-0.001, roll=0.6, wave=0.5, thick=0.006),
-            'wither': dict(R=0.033, H=0.045, dip=0.004, roll=-0.6, wave=1.4, thick=0.005),
-            'round': dict(R=0.032, H=0.05, dip=0.0, roll=0.35, wave=0.7),
-            'upturn': dict(R=0.038, H=0.056, dip=0.013, roll=-0.35, wave=1.6),
+            'button': dict(R=0.012, H=0.028, rs=0.007, dip=-0.003, roll=1.0, wave=0.1, thick=0.006, ridge=0.5),
+            'dome': dict(R=0.021, H=0.045, rs=0.0085, dip=-0.002, roll=0.9, wave=0.2, thick=0.008),
+            'wither': dict(R=0.029, H=0.05, dip=0.003, roll=0.2, wave=0.5, thick=0.007),
+            'round': dict(R=0.028, H=0.055, dip=-0.002, roll=0.9, wave=0.25),
+            'upturn': dict(R=0.034, H=0.06, dip=0.005, roll=0.35, wave=0.45),
         },
         cols={12.0: (0.9, 0.58, 0.1, 1), 12.1: (0.92, 0.62, 0.14, 1), 12.2: (0.94, 0.66, 0.2, 1), 12.6: (0.9, 0.64, 0.2, 1)},
     ),
@@ -59,6 +61,7 @@ KINDS = {
 
 def build(S, P):
     R, H, rs, dip, roll, wave, thick, fl, ridge, taper, jn = (S[k] for k in ('R', 'H', 'rs', 'dip', 'roll', 'wave', 'thick', 'fl', 'ridge', 'taper', 'jn'))
+    zp = S.get('zp', 0.7)  # how fast the underside rises: low, it flares like a trumpet
     m = Mesh()
     zRim = H - thick
     zJ = zRim * jn  # where the stem flares into the cap
@@ -78,25 +81,31 @@ def build(S, P):
         dr, dz = r - pr, z - pz
         return pr + dr * cb + dz * sb, pz - dr * sb + dz * cb
 
+    def pivot(a):
+        """where the margin rolls about: between the underside and the top at 0.7 out, the same for both (each about
+        its own, the rolled margin split into two layers, stacked rings)"""
+        rr, zz = rimAt(a)
+        ru, zu = rs + (rr - rs) * 0.7 ** fl, zJ + (zz - zJ) * 0.7 ** zp
+        rt, zt = rr * 0.7, zz + thick - dip * (1 - 0.49)
+        return (ru + rt) * 0.5, (zu + zt) * 0.5
+
     def under(t, a):
         """the underside (the ridged side) at t from the stem (0) to the margin (1)"""
         rr, zz = rimAt(a)
         r = rs + (rr - rs) * t ** fl
-        z = zJ + (zz - zJ) * t ** 0.7
+        z = zJ + (zz - zJ) * t ** zp
         # the ridges: blunt, forking outward (more of them toward the margin), standing down from the surface
         nr = 13 + 9 * t
         rid = ridge * 0.07 * R * abs(math.sin(a * nr)) ** 0.6 * smooth(0.03, 0.3, t) * (1 - smooth(0.92, 1.0, t))
         z -= rid
-        pr, pz = rs + (rr - rs) * 0.7 ** fl, zJ + (zz - zJ) * 0.7 ** 0.7
-        return curl(r, z, t, pr, pz)
+        return curl(r, z, t, *pivot(a))
 
     def top(t, a):
         """the top at t from the middle (0) to the margin (1): dipped (dip > 0) or domed"""
         rr, zz = rimAt(a)
         r = rr * t
         z = zz + thick - dip * (1 - t * t) + 0.08 * R * wave * wob(a, t * 3, 7) * t * (1 - t)
-        pr, pz = rr * 0.7, zz + thick - dip * (1 - 0.49)
-        return curl(r, z, t, pr, pz)
+        return curl(r, z, t, *pivot(a))
 
     # one strip: the stem up, under the cap out, round the margin, over the top in
     s0 = len(m.V)
