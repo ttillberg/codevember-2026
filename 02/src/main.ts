@@ -24,11 +24,13 @@ const worker = new Worker(new URL('./sim.worker.ts', import.meta.url), { type: '
 
 // every number the workbench can turn (?debug): the scene at once, cracks from the next bullet, the sim from the next break
 const V = defaults();
+let settled = false; // the page is up: before that there is no pane to prepare anything for
 function applySettings() {
   for (const k of Object.keys(CRACKS) as (keyof typeof CRACKS)[]) CRACKS[k] = V[k];
   CRACKS.hole = V.hole / 1000;
   const L = renderer.look;
   for (const k of Object.keys(L) as (keyof typeof L)[]) L[k] = V[k];
+  if (settled) prepareSoon(400); // the break that was got ready was for other numbers
 }
 const simCfg = (): SimConfig => ({ gravity: V.gravity, ballDensity: V.ballDensity, pushBack: V.pushBack, pushOut: V.pushOut, reach: V.reach, spin: V.spin, front: V.front, bounce: V.bounce, friction: V.friction, stuck: V.stuck, seconds: V.seconds });
 if (params.has('debug') || params.has('settings') || location.hash === '#debug') mountPanel(V, applySettings);
@@ -89,6 +91,7 @@ function newPane() {
   state = 'intact';
   set = null;
   ball.on = false; shocked = false; maskData = null; shardBase = 0;
+  clearTimeout(readyTimer); readyTimer = 0; ready = null;
   frames = []; hits = []; bakeDone = false;
   run++;
   const s = 2048 / Math.max(W, H);
@@ -179,6 +182,7 @@ function shoot(x: number, y: number) {
     dust(wx + gauss() * 0.004, wy + gauss() * 0.004, back ? -T : 0, gauss() * sp * cone, gauss() * sp * cone + 0.3, back ? -sp : sp, 0.7 + Math.random() * 2.2);
   }
   setHint();
+  prepareSoon();
 }
 
 /** The football, kicked hard: 30 m/s. Where and how it hits is known the moment it leaves the foot, so the
@@ -192,6 +196,7 @@ function kick(x: number, y: number) {
   if (state !== 'intact') return;
   x = Math.min(pane.W - 0.02, Math.max(0.02, x)); y = Math.min(pane.H - 0.02, Math.max(0.05, y));
   state = 'doomed';
+  clearTimeout(readyTimer); readyTimer = 0; ready = null;
   sound.kick();
   const at = now + FLIGHT;
   const hit = [x - pane.W / 2, y + Y0, (V.ballSize / 100) + 0.012];
@@ -220,28 +225,60 @@ function kick(x: number, y: number) {
 
 // what has left the pane in an earlier fall, read off the mask (blue)
 let maskData: Uint8ClampedArray | null = null;
-function goneAt(x: number, y: number) {
+function goneAt(x: number, y: number, p: Pane = pane) {
   if (!maskData) return false;
-  const s = mask.width / pane.W;
-  const px = Math.floor(x * s), py = Math.floor((pane.H - y) * s);
+  const s = mask.width / p.W;
+  const px = Math.floor(x * s), py = Math.floor((p.H - y) * s);
   if (px < 0 || py < 0 || px >= mask.width || py >= mask.height) return true;
   return maskData[(py * mask.width + px) * 4 + 2] > 127;
 }
 /** Is this face of the crack graph one that already fell? Asked just inside a few of its edges. */
-function loopGone(loop: number[]) {
+function loopGone(loop: number[], p: Pane = pane) {
   if (!maskData) return false;
   const n = loop.length, step = Math.max(1, Math.floor(n / 7));
   let yes = 0, all = 0;
   for (let i = 0; i < n; i += step) {
     const a = loop[i], b = loop[(i + 1) % n];
-    const ax = pane.nx[a], ay = pane.ny[a], bx = pane.nx[b], by = pane.ny[b];
+    const ax = p.nx[a], ay = p.ny[a], bx = p.nx[b], by = p.ny[b];
     const l = Math.hypot(bx - ax, by - ay);
     if (l < 1e-5) continue;
     // the inside of a counter-clockwise loop is on the left
-    if (goneAt((ax + bx) / 2 - ((by - ay) / l) * 0.0015, (ay + by) / 2 + ((bx - ax) / l) * 0.0015)) yes++;
+    if (goneAt((ax + bx) / 2 - ((by - ay) / l) * 0.0015, (ay + by) / 2 + ((bx - ax) / l) * 0.0015, p)) yes++;
     all++;
   }
   return all > 0 && yes * 2 > all;
+}
+
+/** The break, got ready ahead. As soon as a bullet has hit, what a shock would do now is worked out on a copy
+ *  of the pane (the real one can still be shot) and the worker starts baking that fall. A swipe then only has
+ *  to play it. Another bullet, or another setting, and it is thrown away and prepared again. */
+interface Ready { pane: Pane; set: ShardSet; impacts: [number, number][]; shots: number }
+let ready: Ready | null = null;
+let readyTimer = 0;
+function prepare() {
+  clearTimeout(readyTimer);
+  readyTimer = 0;
+  ready = null;
+  if (state !== 'intact' || !pane.impacts.length) return;
+  const copy = pane.clone();
+  const gone = (loop: number[]) => loopGone(loop, copy);
+  const never = 1e9; // the new cuts are inside pieces that leave: they are only ever seen as shard edges
+  copy.finish(never, V.shardArea / 1e4, 0, true, gone);
+  const next = buildShards(copy, Y0, true, gone);
+  if (!next.count) return;
+  const impacts = pane.impacts.map((im) => [im.x - pane.W / 2, im.y + Y0] as [number, number]);
+  const balls = impacts.map(([x, y]) => ({ p: [x, y, V.ballSize / 100 + 0.012], v: [(Math.random() - 0.5) * 3, (Math.random() - 0.5) * 3, -V.kick], w: [0, 0, 0], r: V.ballSize / 100 }));
+  ready = { pane: copy, set: next, impacts, shots };
+  set = next;
+  frames = []; hits = []; bakeDone = false;
+  const req: BakeRequest = { type: 'bake', run: ++run, bodies: next.bodies, impacts, width: pane.W, y0: Y0, seed, balls, cfg: simCfg(), standing: true };
+  worker.postMessage(req);
+}
+/** A moment after the bullet, not in its frame: the crack must not stutter for it. */
+function prepareSoon(ms = 140) {
+  clearTimeout(readyTimer);
+  ready = null;
+  readyTimer = window.setTimeout(prepare, ms);
 }
 
 /** A swipe: a shock, at once. Only what is already broken goes: the pieces the cracks have cut out of the
@@ -250,24 +287,18 @@ function loopGone(loop: number[]) {
 function shock() {
   if (state !== 'intact') return;
   if (!pane.impacts.length) return; // nothing is broken yet
-  const at = pane.impacts.map((im) => [im.x, im.y]);
-  const never = 1e9; // the new cuts are inside pieces that leave: they are only ever seen as shard edges
-  pane.finish(never, V.shardArea / 1e4, 0, true, loopGone);
-  const next = buildShards(pane, Y0, true, loopGone);
-  if (!next.count) return;
+  if (!ready || ready.shots !== shots || readyTimer) prepare(); // swiped before it was got ready
+  if (!ready) return;
+  // the copy, with its pieces cut, is the pane from here on
+  pane = ready.pane;
+  set = ready.set;
+  shockAt = ready.impacts;
+  ready = null;
   state = 'doomed';
-  set = next;
-  const lead = 0.06; // just long enough for the worker to hand back its first frames
-  sound.smash(lead);
+  sound.smash(0);
   shardBase = renderer.addShards(set);
-  frames = []; hits = []; bakeDone = false;
-  fallAt = now + lead;
+  fallAt = now;
   shocked = true;
-  const impacts = at.map(([x, y]) => [x - pane.W / 2, y + Y0] as [number, number]);
-  const balls = impacts.map(([x, y]) => ({ p: [x, y, V.ballSize / 100 + 0.012], v: [(Math.random() - 0.5) * 3, (Math.random() - 0.5) * 3, -V.kick], w: [0, 0, 0], r: V.ballSize / 100 }));
-  shockAt = impacts;
-  const req: BakeRequest = { type: 'bake', run: ++run, bodies: set.bodies, impacts, width: pane.W, y0: Y0, seed, balls, cfg: simCfg(), standing: true };
-  worker.postMessage(req);
   setHint();
 }
 
@@ -500,7 +531,7 @@ function frame(ms: number) {
   renderer.setDust(dPos, dUsed);
 
   // how far the bake is, while it runs
-  const baking = (state === 'doomed' || state === 'falling') && !bakeDone;
+  const baking = (!!ready || state === 'doomed' || state === 'falling') && !bakeDone;
   bakeBar.hidden = !baking;
   if (baking) bakeFill.style.transform = `scaleX(${Math.min(1, frames.length / bakeTotal)})`;
 
@@ -511,6 +542,7 @@ function frame(ms: number) {
 
 window.addEventListener('resize', resize);
 newPane();
+settled = true;
 resize();
 requestAnimationFrame(frame);
 

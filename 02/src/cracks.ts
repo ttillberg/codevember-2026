@@ -108,18 +108,44 @@ export class Pane {
   tips: Tip[] = [];
   crackLen = 0;
   rand: () => number;
+  private rs = 0; // the state of the pane's own random numbers, so a copy of the pane carries on the same
   W: number;
   H: number;
   T: number;
 
   constructor(W: number, H: number, T: number, seed: number) {
     this.W = W; this.H = H; this.T = T;
-    this.rand = rng32(seed);
+    this.rs = seed >>> 0;
+    this.rand = this.makeRand();
     this.cols = Math.ceil(W / CELL) + 1;
     this.rows = Math.ceil(H / CELL) + 1;
     this.cells = Array.from({ length: this.cols * this.rows }, () => []);
     const c = [this.node(0, 0, 0, 0), this.node(W, 0, 0, 0), this.node(W, H, 0, 0), this.node(0, H, 0, 0)];
     for (let i = 0; i < 4; i++) this.edge(c[i], c[(i + 1) % 4], FRAME);
+  }
+
+  private makeRand() {
+    return () => {
+      this.rs = (this.rs + 0x6d2b79f5) | 0;
+      let t = Math.imul(this.rs ^ (this.rs >>> 15), 1 | this.rs);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+
+  /** A copy to try things on: the break is prepared on one while the pane itself can still be shot. */
+  clone(): Pane {
+    const c = Object.create(Pane.prototype) as Pane;
+    Object.assign(c, this);
+    c.nx = this.nx.slice(); c.ny = this.ny.slice(); c.ox = this.ox.slice(); c.oy = this.oy.slice();
+    c.ea = this.ea.slice(); c.eb = this.eb.slice(); c.ekind = this.ekind.slice();
+    c.stamp = this.stamp.slice(); c.owner = this.owner.slice(); c.ownerIdx = this.ownerIdx.slice();
+    c.nbr = this.nbr.map((l) => l.slice()); c.cells = this.cells.map((l) => l.slice());
+    c.paths = this.paths.map((q) => ({ ...q, nodes: q.nodes.slice(), s: q.s.slice(), times: q.times.slice() }));
+    c.impacts = this.impacts.map((i) => ({ ...i, rim: i.rim.slice() }));
+    c.tips = this.tips.map((t) => ({ ...t }));
+    c.rand = c.makeRand();
+    return c;
   }
 
   private gauss() {
