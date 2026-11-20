@@ -84,12 +84,14 @@ export function makeAtmosPass(depth: THREE.DepthTexture, coarse = false) {
       vec3 sky(vec3 r) {
         float s = max(dot(r, uSunDir), 0.0);
         vec3 gold = vec3(1.0, 0.68, 0.24);
-        return uHaze * 1.7 * vec3(1.15, 1.0, 0.72) + gold * (0.05 + 0.3 * s * s * s) * smoothstep(-0.1, 0.4, r.y) + uSunCol * pow(s, 10.0) * 0.8;
+        // (the gold reaching down to eye level and round to the side away from the sun: fading out above the
+        // horizon, the depth of the wood at eye level was a dark brown the grade turned khaki grey)
+        return uHaze * 1.7 * vec3(1.15, 1.0, 0.72) + gold * (0.13 + 0.3 * s * s * s) * smoothstep(-0.45, 0.3, r.y) + uSunCol * pow(s, 10.0) * 0.8;
       }
       // the air between: thicker low down, lit warm towards the sun
       vec3 haze(vec3 r) {
         float s = max(dot(r, uSunDir), 0.0);
-        vec3 h = uHaze * (0.8 + 1.4 * smoothstep(-0.1, 0.5, r.y));
+        vec3 h = uHaze * (1.1 + 1.1 * smoothstep(-0.3, 0.5, r.y)) + vec3(0.05, 0.032, 0.01); // warm at eye level too
         return h + uSunCol * (pow(s, 8.0) * 0.22 + pow(s, 32.0) * 0.8);
       }
       // the ground mist's own colour: the haze lit warm by the sun, more so toward it, the way you face across the

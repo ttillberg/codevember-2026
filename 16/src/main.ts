@@ -323,7 +323,8 @@ atmosMat.uniforms.uHaze.value.lerp(new THREE.Color(0.092, 0.084, 0.064), MORNING
 // thick forest air: a worm cannot see far anyway
 // the air: light, so the trunks stand in layers a long way back, paler and paler, the sun coming through between
 // them (it was thick and golden, 0.22 and 0.9: past two metres everything melted into one yellow wall)
-atmosMat.uniforms.uFog.value = 0.06;
+atmosMat.uniforms.uFog.value = 0.035; // (thinner: at 0.06 the depth of the wood went grey and the sun on the trunks was lost)
+atmosMat.uniforms.uMistStart.value = 2.5; // the mist from a few steps off, so the near trunks' feet stand clear
 atmosMat.uniforms.uMist.value = 0.55; // and a mist lying on the moss, glowing towards the sun, the beams lighting it
 const atmos = new ShaderPass(atmosMat);
 composer.addPass(atmos);
