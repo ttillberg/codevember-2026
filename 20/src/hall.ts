@@ -181,7 +181,8 @@ export function buildHall(scene: THREE.Scene, hang: THREE.Vector3, maxTexture = 
   // two bigger ones up in the sun's wall, near the end: the first just where the eye looks up to as the page
   // opens, behind the steel but peeking out from under it. The sun itself comes in through them
   const SIDE_SCALE = 1.4;
-  const SIDE_FANS = [-61, -42].map((z, i) => ({ at: V(WX, 63, z), angle: 0.4 + i * 1.1, speed: (i % 2 ? 1 : -1) * 0.17, on: true, run: 1 }));
+  // (there were two, side by side up near the end; taken out. The code stays for any put back)
+  const SIDE_FANS: { at: THREE.Vector3; angle: number; speed: number; on: boolean; run: number }[] = [];
   // the far wall: solid, small openings in a few rows, not every bay, and a square cut out for each fan
   const HOLES: THREE.Vector3[] = [];
   {
@@ -222,8 +223,8 @@ export function buildHall(scene: THREE.Scene, hang: THREE.Vector3, maxTexture = 
   }
   // the end wall the eye looks at: solid, but for a row of square holes, each a vent with a huge fan in it
   const FZ = Z1;
-  // between the towers, above the lowest girders, the light behind them coming in a little down and across
-  const FANS = [-20, 0, 20].map((x, i) => ({ at: V(x, 34, FZ), angle: i * 0.7, speed: (i % 2 ? -1 : 1) * (0.2 + 0.04 * i), on: true, run: 1 }));
+  // between the towers, high up between the girders at 44 and 62 m, the light behind them coming in a little down and across
+  const FANS = [-20, 0, 20].map((x, i) => ({ at: V(x, 53, FZ), angle: i * 0.7, speed: (i % 2 ? -1 : 1) * (0.2 + 0.04 * i), on: true, run: 1 }));
   const FAN_DIR = V(0.12, -0.28, 1).normalize();
   {
     const S = 2 * FAN_R + 1, lo = FANS[0].at.y - S / 2, hi = FANS[0].at.y + S / 2;
@@ -522,7 +523,9 @@ export function buildHall(scene: THREE.Scene, hang: THREE.Vector3, maxTexture = 
   // dark and the light comes in as it rolls, band by band of glass from the sun's side over to here. Its shadow
   // is worked out where the light is (materials.ts, rays.ts); only the pod's own sun has it drawn in its map
   const SHUT_Y = ROOF + 0.7, SLAT = 0.6, RUN = WX - X0, R0 = 1.1, THICK_SLAT = 0.07;
-  let shut = 1, shutTo = 1, shutV = 0; // how much of the roof it covers, where it is going, how fast
+  // open, it is only half rolled up: half the roof stays covered, a little light comes in
+  const OPEN_AT = 0.5;
+  let shut = OPEN_AT, shutTo = OPEN_AT, shutV = 0; // how much of the roof it covers, where it is going, how fast: open to start with
   const shutter = new THREE.Group();
   const slatMat = new THREE.MeshStandardMaterial({ color: 0x34373b, roughness: 0.5, metalness: 0.75 });
   const slats = new THREE.InstancedMesh(new THREE.BoxGeometry(SLAT - 0.05, THICK_SLAT, Z0 - Z1 + 2), slatMat, Math.ceil(RUN / SLAT) + 1);
@@ -816,7 +819,7 @@ export function buildHall(scene: THREE.Scene, hang: THREE.Vector3, maxTexture = 
       podSun.position.copy(at).addScaledVector(toward, 120);
     },
     /** the shutter: open (rolled up) or shut */
-    roofOpen(open: boolean) { shutTo = open ? 0 : 1; },
+    roofOpen(open: boolean) { shutTo = open ? OPEN_AT : 1; },
     /** how much of the roof is open, 0..1 */
     get open() { return 1 - shut; },
     update(time: number, dt: number) {

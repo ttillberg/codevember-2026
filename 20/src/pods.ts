@@ -2,10 +2,9 @@ import * as THREE from 'three';
 import { DecalGeometry } from 'three/addons/geometries/DecalGeometry.js';
 import { POD_SUN } from './materials';
 
-// The other pods in the hall, and the machines the controls (bottom left, main.ts) will run. Five more pods hang
-// from trolleys on girders out in the hall, where the eye looks up as the page opens: one the twin of this one, a
-// ball, a capsule, two balls, a box. Each has its number painted on it in a script no one here reads, as this one
-// has its own.
+// The other pod in the hall, and the machines the controls (bottom left, main.ts) will run. The twin of this one
+// hangs from a trolley on a girder out in the hall, where the eye looks up as the page opens, its number painted
+// on it in a script no one here reads, as this one has its own.
 
 // ---------- the script: each glyph a few strokes on a box 2 wide and 3 tall
 type Glyph = [number, number][][];
@@ -37,13 +36,11 @@ function drawWord(g: CanvasRenderingContext2D, word: number[], x: number, y: num
 
 type Shape = 'ours' | 'round' | 'long' | 'twin' | 'box';
 const NUMBER = [4, 7]; // this pod's
+// (there were five others: a ball, a capsule, two balls, a box; only the twin of this one is left. prim() still
+// makes the rest, if they are wanted back)
 const PODS: { shape: Shape; num: number[] }[] = [
-  { shape: 'round', num: [4, 7] },
-  { shape: 'long', num: [0, 3] },
-  { shape: 'ours', num: [4, 1] },
-  { shape: 'box', num: [8, 5] },
+  { shape: 'ours', num: [4, 1] }, // the twin
   { shape: 'ours', num: NUMBER }, // this one
-  { shape: 'twin', num: [6, 2] },
 ];
 
 /** a machine the controls can take: something that runs along a line, one way or the other */
@@ -149,7 +146,7 @@ export function pods(o: {
       return g;
     };
     const wire = new THREE.MeshStandardMaterial({ color: 0x1e1f22, metalness: 1, roughness: 0.4 });
-    let k = 0;
+    let k = 1; // (the first spot is straight behind this pod, from the eye: the next one shows)
     PODS.forEach((p, i) => {
       if (p.shape === 'ours' && p.num === NUMBER) return; // this one hangs where it hangs
       const spot = spots[k++ % spots.length];

@@ -34,7 +34,7 @@ export function tweaks(t: {
 
   const f = gui.addFolder('haze');
   f.addColor(hex(fog.color), 'v').name('colour low');
-  f.add(fog, 'near', 0, 0.08, 0.001).name('density');
+  f.add(fog, 'near', 0, 0.16, 0.001).name('density');
   f.add(fog, 'far', 1, 40, 0.1).name('brighter up high');
   const bg = t.scene.background as THREE.Color;
   f.addColor(hex(bg), 'v').name('background');

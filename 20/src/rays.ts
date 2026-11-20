@@ -102,7 +102,9 @@ export class Rays extends Pass {
         uniform float roof, density, fade, smoke, top, topFade, time;
         uniform vec3 fans[FANS]; // the centre's x and y, and how far round the blades are
         uniform vec3 fanDir;
+        #if SIDES > 0
         uniform vec3 sides[SIDES]; // in the sun's wall: z and y of the centre, how far round
+        #endif
         uniform float wallZ, wallX, sideScale, fan, fanFade;
         uniform vec4 coverX, coverSun; // the roof's shutter (hall.ts, materials.ts)
         uniform vec2 iris; // the fans' leaf shutters, the end wall's and the sun's wall's: 1 open, 0 shut
@@ -176,6 +178,7 @@ export class Rays extends Pass {
             float lit = texture(tShadow, vec3(s.xy, s.z - 0.0008)) * cover(p);
             // the fans in the sun's wall: the map has the round holes, not the blades turning in them. Back up the
             // sun's light to the wall, and if it came in through a fan, how open it is there
+            #if SIDES > 0
             if (p.x < wallX) {
               vec3 q = p - sunDir * ((p.x - wallX) / sunDir.x);
               for (int k = 0; k < SIDES; k++) {
@@ -183,6 +186,7 @@ export class Rays extends Pass {
                 if (dot(o, o) < (FAN_R + 0.3) * (FAN_R + 0.3)) lit *= vent(o, sides[k].z) * leaf(o, iris.y);
               }
             }
+            #endif
             // the hall's map has only the steel in it: the pod and its cables, from the pod's own sun. But only what
             // stands near the pod along the light: that map has the steel too, sharp to the millimetre, where the
             // hall's blurs the thin bars away, and the air in its column would come out darker than round it.

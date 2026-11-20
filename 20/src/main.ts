@@ -30,7 +30,7 @@ if (query.has('silk')) import('./silk');
 else start();
 
 function start() {
-  const FOG = 0x080c13; // the hall, dark, and cold: the haze a steel blue
+  const FOG = 0x0a0c11; // the hall, dark, a little cold: the haze a grey with some steel blue in it
   const G = 9.8;
   const STEP = 1 / 120;
 
@@ -47,12 +47,12 @@ function start() {
   const scene = new THREE.Scene();
   scene.background = new THREE.Color(FOG);
   const FOG_GAIN = 9;
-  scene.fog = new THREE.Fog(FOG, 0.026, FOG_GAIN); // not linear: near is the density, far the haze's gain up high (hall.ts)
+  scene.fog = new THREE.Fog(FOG, 0.08, FOG_GAIN); // not linear: near is the density, far the haze's gain up high (hall.ts)
   const pmrem = new THREE.PMREMGenerator(renderer);
   scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
   scene.environmentIntensity = 0.18;
   // ---------- the controls, bottom left: the hall's machines, one symbol each, in yellow. The roof first
-  let roofWanted = false;
+  let roofWanted = true; // (the roof starts open)
   const controls = (() => {
     const list = document.querySelector<HTMLElement>('.controls')!;
     const roofBtn = list.querySelector<HTMLButtonElement>('[data-ctl="roof"]')!;
@@ -61,17 +61,17 @@ function start() {
     const light = roofBtn.querySelector<SVGGElement>('.light')!;
     roofBtn.addEventListener('click', () => { roofWanted = !roofWanted; hall?.roofOpen(roofWanted); });
     // the fans, a button for each wall's: their leaf shutters open or shut, the light through them with them
-    const fanBtns = (['end', 'side'] as const).map((w) => {
+    const fanBtns = (['end'] as const).map((w) => {
       const btn = list.querySelector<HTMLButtonElement>(`[data-ctl="fans-${w}"]`)!;
       const dots = [...btn.querySelectorAll<SVGCircleElement>('.light circle')];
       const r0 = +dots[0].getAttribute('r')!;
       let wanted = true;
-      btn.addEventListener('click', () => { wanted = !wanted; hall?.fanShutter(w === 'side', wanted); btn.setAttribute('aria-pressed', String(wanted)); });
+      btn.addEventListener('click', () => { wanted = !wanted; hall?.fanShutter(false, wanted); btn.setAttribute('aria-pressed', String(wanted)); });
       return (s: number) => { for (const d of dots) d.setAttribute('r', (r0 * s).toFixed(2)); };
     });
     return {
       /** the fans' symbols follow their shutters: the light in each ring closes to a point */
-      fans(end: number, side: number) { fanBtns[0](end); fanBtns[1](side); },
+      fans(end: number) { fanBtns[0](end); },
       /** the symbol follows the shutter: the bar rolls onto the dot, light comes through */
       roof(open: number, wanted: boolean) {
         bar.setAttribute('x2', (7 + 14 * (1 - open)).toFixed(2));
@@ -387,8 +387,6 @@ function start() {
     }
     // the roof's shutter darkens the sun wherever it is: every lit material takes its uniforms
     shareCover(scene, hall.spare);
-    // it starts shut, the hall dark; a moment, and it rolls up
-    setTimeout(() => { roofWanted = true; hall?.roofOpen(true); }, 1600);
     blood = new Blood(drips);
     scene.add(blood.mesh);
 
@@ -866,7 +864,7 @@ function start() {
       hemi.intensity = 0.22 * (0.15 + 0.85 * day);
       scene.environmentIntensity = 0.18 * (0.15 + 0.85 * day);
       controls.roof(day, roofWanted);
-      controls.fans(hall.fans.shutter.end, hall.fans.shutter.side);
+      controls.fans(hall.fans.shutter.end);
       // and the daylight through the fans and windows a little less while the roof is shut, for a dark start
       if (raysPass) raysPass.fan = 3 * (0.3 + 0.7 * day);
       hall.left.intensity = 1.6 * (0.12 + 0.88 * day);
