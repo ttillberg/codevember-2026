@@ -33,6 +33,9 @@ export function makeAtmosPass(depth: THREE.DepthTexture, coarse = false) {
       uMistStart: { value: 0.6 }, // clear air out to here
       uGroundY: { value: 0 }, // the ground under the eye: the mist lies on it, not on y = 0
       uBeam: { value: 0.9 }, // the beams in the air: how much brighter the lit air, darker the shaded
+      uCanopyMap: { value: null as THREE.Texture | null }, // the crowns' shade from above (foliage.ts), as the floor's
+      uCanopyBox: { value: new THREE.Vector3(0, 0, 1) },
+      uCanopyAmt: { value: 1 }, // shared with the scene's (main.ts)
       // the shafts: bright, hard edged (open sky counted to a power, so the trunks cut clean wedges out of them,
       // beams as in the splash rather than a glow), reaching a long way from the sun on screen
       uShaft: { value: 1.1 },
@@ -49,6 +52,9 @@ export function makeAtmosPass(depth: THREE.DepthTexture, coarse = false) {
       uniform mat4 uInvProj, uCamWorld;
       uniform vec2 uSunUv;
       uniform float uSunOn, uAspect, uMist, uMistStart, uShaft, uShaftPow, uShaftReach, uGroundY, uBeam;
+      uniform sampler2D uCanopyMap;
+      uniform vec3 uCanopyBox;
+      uniform float uCanopyAmt;
       varying vec2 vUv;
 
       float h2(vec2 p) { p = fract(p * vec2(123.34, 456.21)); p += dot(p, p + 45.32); return fract(p.x * p.y); }
@@ -66,7 +72,12 @@ export function makeAtmosPass(depth: THREE.DepthTexture, coarse = false) {
         vec2 sway = vec2(sin(uTime * 0.35), cos(uTime * 0.27)) * 0.04;
         float big = cNoise(q * 0.9 + 3.0);
         float n = cNoise(q * 3.2 + sway) * 0.62 + cNoise(q * 7.5 - sway * 1.7 + 9.0) * 0.38;
-        return smoothstep(0.4, 0.62, n + (big - 0.5) * 0.45);
+        // the crowns' shade where they are, as on the floor: the beams come down through the gaps between the
+        // pines' clumps and not through a spruce (a softer level of the map: the air is lit in columns, not specks)
+        vec2 g = (wp.xz - (10.0 + (wp.y - 10.0) * 0.3) * L.xz / max(L.y, 0.05) - uCanopyBox.xy) / uCanopyBox.z; // heights squeezed as the map's
+        float open = (g.x > 0.0 && g.y > 0.0 && g.x < 1.0 && g.y < 1.0) ? texture2D(uCanopyMap, g, 1.5).r : 0.55;
+        open = mix(open, 0.55, smoothstep(14.0, 26.0, length(g - 0.5) * uCanopyBox.z));
+        return smoothstep(0.4, 0.62, n + (big - 0.5) * mix(0.45, 0.25, min(uCanopyAmt, 1.0)) + (open - 0.55) * 0.45 * uCanopyAmt); // a nudge, as the floor's
       }
       // what is behind everything: plain golden air, a broad glow all round the sun's side and brighter towards it
       // (bright canopy gaps were here once, but between the trunks they read as patches cut out of paper)
@@ -80,6 +91,14 @@ export function makeAtmosPass(depth: THREE.DepthTexture, coarse = false) {
         float s = max(dot(r, uSunDir), 0.0);
         vec3 h = uHaze * (0.8 + 1.4 * smoothstep(-0.1, 0.5, r.y));
         return h + uSunCol * (pow(s, 8.0) * 0.22 + pow(s, 32.0) * 0.8);
+      }
+      // the ground mist's own colour: the haze lit warm by the sun, more so toward it, the way you face across the
+      // ground rather than up or down (mixed toward the sky's colour, looking level or down it took the sky's dark
+      // low half: a dull grey-brown band, flat and dirty, unlike the golden air above it)
+      vec3 mistCol(vec3 r) {
+        vec2 f = normalize(r.xz + 1e-5), sl = normalize(uSunDir.xz + 1e-5);
+        float s = max(dot(f, sl), 0.0);
+        return uHaze * 1.6 * vec3(1.15, 1.0, 0.75) + vec3(1.0, 0.72, 0.36) * (0.07 + 0.25 * s * s * s);
       }
       void main() {
         float z = -perspectiveDepthToViewZ(texture2D(tDepth, vUv).x, cameraNear, cameraFar);
@@ -106,8 +125,9 @@ export function makeAtmosPass(depth: THREE.DepthTexture, coarse = false) {
           vec3 hz = bg;
           float lum = dot(c, vec3(0.3, 0.55, 0.15)), hl = dot(hz, vec3(0.3, 0.55, 0.15));
           float thin = 1.0 - 0.4 * smoothstep(1.0, 2.5, lum / max(hl, 1e-3));
-          float f = 1.0 - (1.0 - mist) * exp(-max(z - 1.2, 0.0) * uFog * thin);
-          c = mix(c, hz, f);
+          // the mist first, in its own colour, then the haze over distance in the sky's
+          c = mix(c, mistCol(r), mist);
+          c = mix(c, hz, 1.0 - exp(-max(z - 1.2, 0.0) * uFog * thin));
         }
         // beams in the air: step along the view ray through the air, out to thirty metres, and at each step ask whether
         // the sun gets down through the crowns there. Lit air brighter, shaded air darker, the difference from the

@@ -30,7 +30,7 @@ const radius = (a: number, y: number, fl = 1) => {
 /** Where a trunk's foot is: the bottom of the unit trunk, a little into the ground. */
 export const trunkFoot = (t: Trunk) => groundHeight(t.x, t.z) - 0.03;
 /** A trunk's bark, from its middle, at a world angle round it (atan2 of z, x) and a height over its foot. */
-export const trunkRadius = (t: Trunk, phi: number, y: number) => t.r * radius(phi + t.turn, y, t.birch ? BIRCH_FLARE : 1);
+export const trunkRadius = (t: Trunk, phi: number, y: number) => t.r * radius(phi + t.turn, y / t.h, t.birch ? BIRCH_FLARE : 1);
 /** a birch's foot spreads less: a swelling, not buttresses */
 const BIRCH_FLARE = 0.45;
 
@@ -118,7 +118,7 @@ export class Trees {
       const cn = t.birch ? bcounts : counts;
       if (cn[lod] >= MAX) continue;
       q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), t.turn);
-      s.set(t.r, 1, t.r);
+      s.set(t.r, t.h, t.r); // a spruce shorter: the unit trunk squashed
       p.set(t.x, trunkFoot(t), t.z);
       lvl.setMatrixAt(cn[lod]++, m.compose(p, q, s));
     }
@@ -168,13 +168,13 @@ void main() {
   #ifdef USE_INSTANCING
   lp = instanceMatrix * lp;
   ln = mat3(instanceMatrix) * ln;
-  float r = length(instanceMatrix[0].xyz);
+  float r = length(instanceMatrix[0].xyz), sy = length(instanceMatrix[1].xyz);
   #else
-  float r = 1.0;
+  float r = 1.0, sy = 1.0;
   #endif
   vec4 wp = modelMatrix * lp;
   vNormal = normalize(mat3(modelMatrix) * ln);
-  vBark = vec2(uv.x * 6.2831853 * r, uv.y);
+  vBark = vec2(uv.x * 6.2831853 * r, uv.y * sy); // in metres on a squashed trunk too
   vWorldPos = wp.xyz;
   vR = r;
   gl_Position = projectionMatrix * viewMatrix * wp;

@@ -24,7 +24,9 @@ export function clearing(x: number, z: number) {
   const n = fbm3(x * 0.11, 3.0, z * 0.11, 2, 31) + 0.35 * fbm3(x * 0.3, 4.0, z * 0.3, 2, 32);
   return THREE.MathUtils.smoothstep(n, 0.12, 0.3);
 }
-export interface Trunk { x: number; z: number; r: number; turn: number; key: string; birch: boolean }
+// spruce: among the tall ones, a lower younger spruce, its crown dense to near the ground; h its height to the
+// tall ones' 30 m (the unit trunk scaled up and down, trees.ts)
+export interface Trunk { x: number; z: number; r: number; turn: number; key: string; birch: boolean; spruce: boolean; h: number }
 export function trunkInCell(ix: number, iz: number): Trunk | null {
   const r = mulberry32((Math.imul(ix, 0x5bd1e995) ^ Math.imul(iz, 0x1b873593) ^ 0x7ee5) >>> 0);
   if (r() > 0.7) return null;
@@ -36,7 +38,11 @@ export function trunkInCell(ix: number, iz: number): Trunk | null {
   // in a clearing most trunks are gone (a birch now and then stays, at its edge)
   const open = clearing(x, z);
   if (open > 0.3 && r() < open * (birch ? 0.7 : 1.0)) return null;
-  return { x, z, r: birch ? r0 * 0.42 : r0, turn, key: `${ix},${iz}`, birch };
+  // (drawn last: the tall ones and the birches stand where they stood)
+  // (none near the start: its low boughs filled the first view)
+  const spruce = !birch && r() < 0.4 && Math.hypot(x, z) > 6;
+  const h = spruce ? 0.5 + 0.2 * r() : 1;
+  return { x, z, r: birch ? r0 * 0.42 : spruce ? r0 * 0.6 : r0, turn, key: `${ix},${iz}`, birch, spruce, h };
 }
 const trunkCache = new Map<number, Trunk | null>();
 function cachedTrunk(ix: number, iz: number) {

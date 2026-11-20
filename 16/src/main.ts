@@ -65,6 +65,7 @@ function setSunHeight(deg: number) {
   const a = THREE.MathUtils.degToRad(Math.min(deg, 88));
   lightDir.set(SUN_FLAT.x * Math.cos(a), Math.sin(a), SUN_FLAT.y * Math.cos(a));
   shadowCentre.set(Infinity, 0, 0); // the shadow map drawn again
+  foliage.canopyDirty = true; // and the crowns' shade, moved along the new sun
 }
 // (the look panel can hold the focus by hand)
 const focusHold = { hold: false, at: 1.6 };
@@ -92,9 +93,12 @@ const shellMat = new THREE.ShaderMaterial({
     uShadowOn: { value: 0 },
     uShadowFloor: { value: 0.2 },
     uTime: { value: 0 },
+    uCanopyMap: { value: null as THREE.Texture | null },
+    uCanopyBox: { value: new THREE.Vector3(0, 0, 1) },
+    uCanopyAmt: { value: 1 },
   },
 });
-const SHARED_UNIFORMS = ['uCavityAO', 'uLightDir', 'uLightDirC', 'uRimDir', 'uRim', 'uHemi', 'uTone', 'uExposure', 'toneMappingExposure', 'uShadowMap', 'uShadowMatrix', 'uShadowOn', 'uShadowFloor', 'uTime'];
+const SHARED_UNIFORMS = ['uCavityAO', 'uLightDir', 'uLightDirC', 'uRimDir', 'uRim', 'uHemi', 'uTone', 'uExposure', 'toneMappingExposure', 'uShadowMap', 'uShadowMatrix', 'uShadowOn', 'uShadowFloor', 'uTime', 'uCanopyMap', 'uCanopyBox', 'uCanopyAmt'];
 const share = (m: THREE.ShaderMaterial) => { for (const k of SHARED_UNIFORMS) m.uniforms[k] = shellMat.uniforms[k]; };
 
 // ---- moss size: day 05's numbers at 175 %
@@ -206,8 +210,10 @@ scene.add(floorBits.root);
 const boulders = new Boulders(hooks);
 scene.add(boulders.root);
 // the crowns: spruce boughs and birch leaves on the trunks, the light coming down through them
-const foliage = new Foliage(share);
+const foliage = new Foliage(share, lightDir);
 scene.add(foliage.root);
+shellMat.uniforms.uCanopyMap.value = foliage.canopyMap;
+shellMat.uniforms.uCanopyBox.value = foliage.canopyBox;
 // wood ants on trails from a nest in the moss up the trunks
 const ants = new Ants(share, camera);
 scene.add(ants.mesh);
@@ -308,6 +314,9 @@ composer.addPass(aoPass);
 const atmosMat = makeAtmosPass(beautyRT.depthTexture!, coarse);
 atmosMat.uniforms.cameraNear.value = camera.near;
 atmosMat.uniforms.uSunDir.value = lightDir;
+atmosMat.uniforms.uCanopyMap.value = foliage.canopyMap; // the beams through the same gaps the floor is lit by
+atmosMat.uniforms.uCanopyBox.value = foliage.canopyBox;
+atmosMat.uniforms.uCanopyAmt = shellMat.uniforms.uCanopyAmt; // one value: the floor and the beams together
 // a morning sun is whiter than a dusk one, the air paler and a little cooler
 atmosMat.uniforms.uSunCol.value.lerp(new THREE.Color(1.0, 0.86, 0.62), MORNING);
 atmosMat.uniforms.uHaze.value.lerp(new THREE.Color(0.092, 0.084, 0.064), MORNING);
@@ -816,11 +825,11 @@ function drawWire() {
 }
 
 // the look panel: grade, depth of field, light and air
-if (params.has('debug')) lookboard({ lens: lensMat, atmos: atmosMat, focus: focusHold, sun: { deg: THREE.MathUtils.radToDeg(SUN_UP), set: setSunHeight } });
+if (params.has('debug')) lookboard({ lens: lensMat, atmos: atmosMat, focus: focusHold, sun: { deg: THREE.MathUtils.radToDeg(SUN_UP), set: setSunHeight }, canopy: { canvas: foliage.canopyCanvas, box: foliage.canopyBox, camera, light: lightDir } });
 // the vegetation panel: each kind taken away to see what it does
 if (params.has('debug')) vegboard([
-  { name: 'spruce trunks', objects: trees.levels },
-  { name: 'spruce boughs', objects: [foliage.boughs, foliage.model] },
+  { name: 'pine, spruce trunks', objects: trees.levels },
+  { name: 'pine, spruce boughs', objects: [foliage.boughs, foliage.model] },
   { name: 'birch trunks', objects: trees.birches },
   { name: 'birch leaves', objects: [foliage.leaves] },
   { name: 'ferns', objects: [ferns.root] },

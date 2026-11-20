@@ -15,6 +15,7 @@ import { trunkFoot, trunkRadius, type Trunk } from './trees';
 
 const coarse = matchMedia('(pointer: coarse)').matches;
 const MAX_BOUGH = coarse ? 12000 : 30000, MAX_LEAF = coarse ? 2500 : 6000;
+const HEIGHT = 30; // trees.ts
 const CROWN_TOP = 28; // a spruce's boughs go nearly to the top of its trunk (trees.ts HEIGHT, 30): no bare pole above
 
 /** A bough: a strip out along +x (0..1), across z (-0.5..0.5); the vertex shader droops it. */
@@ -115,8 +116,9 @@ function boughModel(seed: number) {
 }
 
 // near boughs are the model, far ones the card; across a metre round NEAR they dissolve into each other
-const NEAR = 5.0; // (the crowns start three to five metres up; a model is some 11,000 vertices: a few hundred is plenty)
+const NEAR = 5.0; // (a model is some 11,000 vertices: a few hundred is plenty)
 const MAX_NEAR = coarse ? 80 : 240;
+const CANOPY_SIZE = 96, CANOPY_PX = coarse ? 256 : 384; // metres, pixels: a quarter metre a pixel
 
 export class Foliage {
   readonly root = new THREE.Group();
@@ -132,8 +134,21 @@ export class Foliage {
   private allD = new Float32Array(MAX_BOUGH * 4);
   private allN = 0;
   private sortedAt = new THREE.Vector3(Infinity, 0, 0);
+  // the crowns' shade on the floor, seen from above: the crowns are too high to see from a worm's eye, but their
+  // shade is what lies on the ground. Every bough card and birch curtain a soft dark spot, moved along the sun by
+  // its height (where its shadow falls on the plane y = 0); drawn again when the crowns or the sun move.
+  // shaders.ts canopyAt reads it under its fine spots of sun.
+  readonly canopyCanvas = document.createElement('canvas');
+  readonly canopyMap: THREE.CanvasTexture;
+  readonly canopyBox = new THREE.Vector3(0, 0, CANOPY_SIZE); // x, z of its corner, its size in metres
+  private canopyAt = new THREE.Vector2(Infinity, Infinity);
+  canopyDirty = true;
 
-  constructor(setup: (m: THREE.ShaderMaterial) => void) {
+  constructor(setup: (m: THREE.ShaderMaterial) => void, private light: THREE.Vector3) {
+    this.canopyCanvas.width = this.canopyCanvas.height = CANOPY_PX;
+    this.canopyMap = new THREE.CanvasTexture(this.canopyCanvas);
+    this.canopyMap.flipY = false;
+    this.canopyMap.colorSpace = THREE.NoColorSpace;
     const make = (geo: THREE.BufferGeometry, max: number, kind: string) => {
       const data = new THREE.InstancedBufferAttribute(new Float32Array(max * 4), 4);
       geo.setAttribute('iData', data);
@@ -167,12 +182,57 @@ export class Foliage {
     this.bdata.needsUpdate = this.mdata.needsUpdate = true;
   }
 
+  /** The crowns' shade into the map, around the eye. */
+  private drawCanopy(cam: THREE.Vector3) {
+    this.canopyDirty = false;
+    const S = CANOPY_SIZE, N = CANOPY_PX, k = N / S;
+    const x0 = Math.round(cam.x / 4) * 4 - S / 2, z0 = Math.round(cam.z / 4) * 4 - S / 2;
+    this.canopyAt.set(cam.x, cam.z);
+    this.canopyBox.set(x0, z0, S);
+    const L = this.light, sx = L.x / Math.max(L.y, 0.05), sz = L.z / Math.max(L.y, 0.05);
+    const ctx = this.canopyCanvas.getContext('2d')!;
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(0, 0, N, N);
+    ctx.fillStyle = '#000';
+    const spot = (M: Float32Array, o: number, lx: number, ly: number, size: number, alpha: number) => {
+      // the card's middle in the world, and its size from its matrix
+      const x = M[o] * lx + M[o + 4] * ly + M[o + 12], y = M[o + 1] * lx + M[o + 5] * ly + M[o + 13], z = M[o + 2] * lx + M[o + 6] * ly + M[o + 14];
+      const len = Math.hypot(M[o], M[o + 1], M[o + 2]);
+      // (heights squeezed toward the crowns' middle: projected at their own, each tree's boughs from 1 to 28 m
+      // up lay along the sun in one streak 25 m long, the floor in stripes; this way a tree is a patch, gaps between)
+      const yp = 10 + (y - 10) * 0.3;
+      // each spot a little bigger or smaller, thicker or thinner: a crown in clumps
+      const j = Math.sin(o * 12.9898 + y * 78.233) * 43758.5453, jr = j - Math.floor(j);
+      const px = (x - yp * sx - x0) * k, pz = (z - yp * sz - z0) * k, r = Math.max(0.6, len * size * k * (0.6 + 0.8 * jr));
+      if (px < -r || pz < -r || px > N + r || pz > N + r) return;
+      ctx.globalAlpha = alpha * (0.5 + jr);
+      ctx.beginPath();
+      ctx.arc(px, pz, r, 0, Math.PI * 2);
+      ctx.fill();
+    };
+    // (lightly each: thousands overlap, at 0.28 the floor under the wood had gone all one shade)
+    for (let i = 0; i < this.allN; i++) spot(this.allM, i * 16, 0.5, 0, 0.4, 0.09);
+    const LM = this.leaves.instanceMatrix.array as Float32Array;
+    for (let i = 0; i < this.leaves.count; i++) spot(LM, i * 16, 0, -0.5, 0.4, 0.06); // birch: thin, light lets through
+    // soften: a blurred copy over itself
+    ctx.globalAlpha = 1;
+    ctx.filter = 'blur(1.5px)';
+    ctx.drawImage(this.canopyCanvas, 0, 0);
+    ctx.filter = 'none';
+    this.canopyMap.needsUpdate = true;
+  }
+
   /** Hang the crowns on the trunks in range: again only when the trees' set of trunks has changed. */
   update(trunks: Trunk[], cam: THREE.Vector3) {
+    if (this.canopyDirty || Math.hypot(cam.x - this.canopyAt.x, cam.z - this.canopyAt.y) > 12) {
+      if (trunks === this.placed) this.drawCanopy(cam);
+    }
     if (trunks === this.placed) {
       if (cam.distanceTo(this.sortedAt) > 0.4) this.sort(cam);
       return;
     }
+    this.canopyDirty = true;
     this.placed = trunks;
     const m = new THREE.Matrix4(), q = new THREE.Quaternion(), e = new THREE.Euler(), s = new THREE.Vector3(), p = new THREE.Vector3();
     const LD = this.ldata.array as Float32Array;
@@ -180,26 +240,47 @@ export class Foliage {
     for (const t of trunks) {
       const r = mulberry32((Math.imul(Math.round(t.x * 100), 0x7feb352d) ^ Math.imul(Math.round(t.z * 100), 0x846ca68b) ^ 0xf011) >>> 0);
       const foot = trunkFoot(t);
-      if (!t.birch) {
-        // spruce: dense whorls from a metre and a half up to near the top, five to seven boughs each, a cone: long
-        // low down, shorter and shorter to a narrow top (sparse, they had left the trunk a bare pole above 14 m)
-        // (an old spruce in a wood has shed its low boughs: from three to five metres up; low down they had filled
-        // the worm's eye with dark slabs)
-        for (let h = 3 + r() * 2; h < CROWN_TOP && nb < MAX_BOUGH; h += 0.35 + 0.3 * r() + h * 0.01) {
-          const n = 4 + Math.floor(r() * 3), a0 = r() * Math.PI * 2;
-          const reach = (0.3 + 2.3 * Math.pow(1 - h / CROWN_TOP, 1.2)) * (0.8 + 0.4 * r()) * (0.6 + t.r);
+      if (t.spruce) {
+        // a spruce, lower and compact: a dense dark cone from a metre or two up to its top, the boughs long low
+        // down and short at the top, the lowest few grey and dying
+        const top = HEIGHT * t.h - 0.6, low = 1.0 + r() * 1.5;
+        // (a cone: as long low down it had read as a column, the trunk showing in bands between the whorls)
+        for (let h = low; h < top && nb < MAX_BOUGH; h += 0.2 + 0.15 * r() + h * 0.006) {
+          const n = 6 + Math.floor(r() * 3), a0 = r() * Math.PI * 2;
+          const u = (h - low) / (top - low);
+          const reach = (0.15 + 3.6 * Math.pow(1 - u, 1.35)) * (0.85 + 0.3 * r()) * (0.75 + t.r);
           for (let k = 0; k < n && nb < MAX_BOUGH; k++) {
-            const az = a0 + (k / n) * Math.PI * 2 + (r() - 0.5) * 0.6;
+            const az = a0 + (k / n) * Math.PI * 2 + (r() - 0.5) * 0.5;
             const rad = trunkRadius(t, az, h) * 0.9;
             p.set(t.x + Math.cos(az) * rad, foot + h, t.z + Math.sin(az) * rad);
-            // out along az (x of the card), tipped down a little
-            q.setFromEuler(e.set(0, -az, -0.1 - 0.25 * r(), 'YXZ'));
-            const L = reach * (0.75 + 0.5 * r());
-            s.set(L, L, L * (0.7 + 0.25 * r()));
+            q.setFromEuler(e.set(0, -az, -0.05 - 0.2 * r(), 'YXZ'));
+            const L = reach * (0.8 + 0.4 * r());
+            s.set(L, L, L * (0.75 + 0.25 * r()));
             m.compose(p, q, s).toArray(this.allM, nb * 16);
-            // droop, tip up, seed, how dead (low ones grey)
-            // (hanging well down, as a spruce's boughs do)
-            this.allD.set([0.4 + 0.35 * r(), 0.1 * r(), r(), Math.max(0, 1 - (h - 3) / 3) * r()], nb * 4);
+            this.allD.set([0.35 + 0.35 * r(), 0.15 * r(), r(), Math.max(0, 1 - (h - low) / 1.5) * r()], nb * 4);
+            nb++;
+          }
+        }
+      } else if (!t.birch) {
+        // a pine, after the reference: branches from eight to twelve metres up, but few and open, two or three a
+        // whorl a metre or more apart, turned up toward the light; the lowest grey and bare, the needles thicker
+        // toward the top (dense whorls to the ground made it a spruce)
+        const low = 8 + r() * 4;
+        for (let h = low; h < CROWN_TOP && nb < MAX_BOUGH; h += 0.9 + 0.8 * r()) {
+          const n = 2 + Math.floor(r() * 2), a0 = r() * Math.PI * 2;
+          const u = (h - low) / (CROWN_TOP - low);
+          const reach = (0.6 + 2.4 * Math.pow(Math.sin(Math.PI * Math.min(1, 0.2 + u * 0.9)), 0.7)) * (0.8 + 0.4 * r()) * (0.6 + t.r);
+          for (let k = 0; k < n && nb < MAX_BOUGH; k++) {
+            const az = a0 + (k / n) * Math.PI * 2 + (r() - 0.5) * 1.0;
+            const rad = trunkRadius(t, az, h) * 0.9;
+            p.set(t.x + Math.cos(az) * rad, foot + h, t.z + Math.sin(az) * rad);
+            // out along az, tipped up: a pine's branches climb
+            q.setFromEuler(e.set(0, -az, 0.15 + 0.3 * r(), 'YXZ'));
+            const L = reach * (0.75 + 0.5 * r());
+            s.set(L, L, L * (0.6 + 0.25 * r()));
+            m.compose(p, q, s).toArray(this.allM, nb * 16);
+            // little droop; the lower third grey and bare
+            this.allD.set([0.1 + 0.2 * r(), 0.3 * r(), r(), Math.max(0, 1 - u * 3) * (0.5 + 0.5 * r())], nb * 4);
             nb++;
           }
         }

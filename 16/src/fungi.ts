@@ -1448,7 +1448,7 @@ void main() {
            + col * vec3(1.5, 1.1, 0.6) * thru * max(shadow, 0.3)
            + vec3(1.0, 0.9, 0.75) * spec * shadow
            + vec3(0.6, 0.62, 0.66) * sheen;
-  lit += rimLight(N, V) * col * 2.0;
+  lit += rimLight(N, V) * col * 2.0 * mix(0.3, 1.0, shadow); // (shadow is 0..1 here)
   // with the sun at your back, a gold catch on the side turned to it, as the moss and ferns get
   // (their own colour lit warm, not the moss's flat gold added: that washed a red cap out to cream)
   lit += col * vec3(1.5, 1.15, 0.7) * pow(max(dot(N, L) * 0.5 + 0.5, 0.0), 3.0) * withSun(V, L) * sunCatch(vWorldPos, shadow) * 0.7;

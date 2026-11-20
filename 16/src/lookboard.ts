@@ -27,6 +27,7 @@ export interface LookTargets {
   atmos: THREE.ShaderMaterial; // the haze pass: beams, mist, haze, shafts
   focus: { hold: boolean; at: number }; // the autofocus, held by hand
   sun: { deg: number; set(deg: number): void }; // the sun's height
+  canopy: { canvas: HTMLCanvasElement; box: THREE.Vector3; camera: THREE.Camera; light: THREE.Vector3 }; // the crowns' shade map
 }
 
 export function lookboard(t: LookTargets) {
@@ -89,7 +90,42 @@ export function lookboard(t: LookTargets) {
   slider('focus m', 'focusAt', () => t.focus.at, (v) => { t.focus.at = v; }, 0.1, 30, 0.05);
 
   add(el, 'h4', { textContent: 'Light and air' });
+  // the crowns' shade map from above, north up as in the world (x right, z down), you on it: a dot, where you look
+  // a line; the sun's direction an arrow from the edge. White is open, black under boughs
+  const ml = add(el, 'label', { className: 'check' });
+  const mc = add<HTMLInputElement>(ml, 'input', { type: 'checkbox' });
+  add(ml, 'span', { textContent: 'show crown map' });
+  const view = add<HTMLCanvasElement>(el, 'canvas', { width: 266, height: 266 });
+  view.style.cssText = 'display:none;width:266px;height:266px;border-radius:6px;margin:4px 0 6px';
+  let timer = 0;
+  const drawMap = () => {
+    const c = t.canopy, ctx = view.getContext('2d')!, W = view.width, b = c.box;
+    ctx.drawImage(c.canvas, 0, 0, W, W);
+    const k = W / b.z, p = c.camera.position;
+    const px = (p.x - b.x) * k, pz = (p.z - b.y) * k;
+    // where it looks: the camera's -z (from its matrix, no Vector3 here: three is only a type in this file)
+    const e = c.camera.matrixWorld.elements, dir = { x: -e[8], z: -e[10] };
+    const fl = Math.hypot(dir.x, dir.z) || 1;
+    // where the view reaches: the circle the map counts out to (past it, neutral)
+    ctx.strokeStyle = 'rgba(80,160,255,0.6)';
+    ctx.beginPath(); ctx.arc(px, pz, 26 * k, 0, Math.PI * 2); ctx.stroke();
+    ctx.strokeStyle = '#e8b26a'; ctx.fillStyle = '#e8b26a'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(px, pz); ctx.lineTo(px + (dir.x / fl) * 30, pz + (dir.z / fl) * 30); ctx.stroke();
+    ctx.beginPath(); ctx.arc(px, pz, 6, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = '#fff'; ctx.stroke();
+    // the sun: from the edge toward the middle, the way the light goes
+    const L = c.light, ll = Math.hypot(L.x, L.z) || 1;
+    ctx.strokeStyle = '#ffd04a';
+    ctx.beginPath(); ctx.moveTo(W / 2 + (L.x / ll) * W * 0.46, W / 2 + (L.z / ll) * W * 0.46); ctx.lineTo(W / 2 + (L.x / ll) * W * 0.34, W / 2 + (L.z / ll) * W * 0.34); ctx.stroke();
+    ctx.lineWidth = 1;
+  };
+  mc.onchange = () => {
+    view.style.display = mc.checked ? 'block' : 'none';
+    clearInterval(timer);
+    if (mc.checked) { drawMap(); timer = window.setInterval(drawMap, 250); }
+  };
   slider('sun height °', 'sun', () => t.sun.deg, (v) => t.sun.set(v), 2, 88, 1);
+  uni('crown shade', t.atmos, 'uCanopyAmt', 0, 2, 0.01); // the crowns' shade map on the floor and in the beams: 0 off
   uni('beams', t.atmos, 'uBeam', 0, 3, 0.01);
   uni('ground mist', t.atmos, 'uMist', 0, 2, 0.01);
   uni('mist from m', t.atmos, 'uMistStart', 0, 4, 0.05);

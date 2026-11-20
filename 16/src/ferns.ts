@@ -410,7 +410,7 @@ void main() {
   float thru = pow(max(dot(-V, L), 0.0), 3.0) * (pinna ? 0.9 : 0.3);
   float spec = pow(max(dot(reflect(-L, N), V), 0.0), 60.0) * 0.9; // wet: a sharp sheen
   vec3 lit = col * (0.2 * skyTint(N, 1.0) + 1.3 * diff * shadow) + col * vec3(1.5, 1.15, 0.55) * thru * shadow + vec3(1.0, 0.85, 0.6) * spec * shadow;
-  lit += rimLight(N, V) * col * 2.0;
+  lit += rimLight(N, V) * col * 2.0 * rimShade(shadow);
   // with the sun behind you, the pinnae turned to it catch it: the counterpart of the glow through them
   lit += (SUN_GLOW * 0.8 + col * 0.6) * pow(max(dot(N, L) * 0.5 + 0.5, 0.0), 2.0) * withSun(V, L) * sunCatch(vWorldPos, shadow) * (pinna ? 1.0 : 0.4);
   // the crown sits in the moss: dark at the foot

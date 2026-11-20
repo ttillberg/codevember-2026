@@ -436,7 +436,7 @@ void main() {
   vec3 c = col * (mix(0.1, 0.26, shadow) * skyTint(N, 1.0) + 1.3 * diff * shadow)
          + col * vec3(1.5, 1.2, 0.55) * thru * max(shadow, 0.25) * 1.2
          + vec3(1.0, 0.9, 0.75) * pow(max(dot(reflect(-L, N), V), 0.0), 40.0) * wet * shadow;
-  c += rimLight(N, V) * col * 1.5;
+  c += rimLight(N, V) * col * 1.5 * mix(0.3, 1.0, shadow); // (shadow is 0..1 here)
   gl_FragColor = vec4(tonemap(grade(c)), 1.0);
   #include <colorspace_fragment>
 }
