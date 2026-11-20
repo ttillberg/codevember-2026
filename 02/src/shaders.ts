@@ -216,14 +216,19 @@ void main() {
     c = mix(blur, c, crack);
   }
   c *= pow(vec3(0.93, 0.975, 0.955), vec3(uGlass.x));
-  // the targets: two pieces of dark matt tape each, crossed. A plus to aim at, no more. By pane coordinates,
-  // so a shard keeps its part of one
+  // the targets, in dark matt tape: a circle, four strokes through it that stop short of the middle, and in
+  // the empty middle a small dot. By pane coordinates, so a shard keeps its part of one
   for (int i = 0; i < 3; i++) {
-    vec2 d = abs(vUv - uTargets[i].xy) / max(uTargets[i].z, 1e-5);
-    if (max(d.x, d.y) < 1.05) {
-      float aa = fwidth(d.x) * 1.2 + 1e-4;
-      // an arm: this wide, and as long as the target is
-      float ink = smoothstep(0.11 + aa, 0.11, min(d.x, d.y)) * smoothstep(1.0 + aa, 1.0, max(d.x, d.y));
+    vec2 d = (vUv - uTargets[i].xy) / max(uTargets[i].z, 1e-5);
+    float r = length(d);
+    if (r < 1.05) {
+      vec2 q = abs(d);
+      float aa = fwidth(r) * 1.2 + 1e-4;
+      float ring = smoothstep(0.04 + aa, 0.04, abs(r - 0.62));
+      float along = max(q.x, q.y); // how far out along its stroke
+      float stroke = smoothstep(0.04 + aa, 0.04, min(q.x, q.y)) * smoothstep(0.34 - aa, 0.34, along) * smoothstep(1.0 + aa, 1.0, along);
+      float dot_ = smoothstep(0.055 + aa, 0.055, r);
+      float ink = max(ring, max(stroke, dot_));
       vec3 tape = vec3(0.04, 0.042, 0.046) * (0.85 + 0.3 * vnoise(vUv * 900.0)) * (0.7 + uFlash * 2.0);
       c = mix(c, tape, ink * 0.94);
     }
