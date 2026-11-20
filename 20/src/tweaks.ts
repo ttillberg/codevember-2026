@@ -10,7 +10,7 @@ export function tweaks(t: {
   scene: THREE.Scene;
   hemi: THREE.HemisphereLight;
   ao: { blendIntensity: number; updateGtaoMaterial: (p: Record<string, number>) => void };
-  rays: { intensity: number };
+  rays: { intensity: number; fade: number; smoke: number };
   hall: { sun: THREE.DirectionalLight; roof: THREE.SpotLight; left: THREE.SpotLight; right: THREE.SpotLight; shaftGain: number };
 }) {
   const KEY = 'cocoon20.tweaks';
@@ -55,6 +55,8 @@ export function tweaks(t: {
   s.add(dir, 'azimuth', -180, 180, 0.5);
   s.add(dir, 'elevation', 10, 89, 0.5);
   s.add(t.rays, 'intensity', 0, 4, 0.01).name('in the haze');
+  s.add(t.rays, 'fade', 0, 0.06, 0.001).name('used up going down');
+  s.add(t.rays, 'smoke', 0, 1, 0.01).name('smoke');
 
   const l = gui.addFolder('lights');
   l.add(roof, 'intensity', 0, 30, 0.1).name('skylight');

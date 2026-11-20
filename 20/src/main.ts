@@ -42,7 +42,7 @@ function start() {
 
   const scene = new THREE.Scene();
   scene.background = new THREE.Color(FOG);
-  scene.fog = new THREE.Fog(FOG, 0.026, 18); // not linear: near is the density, far the haze's gain up high (hall.ts)
+  scene.fog = new THREE.Fog(FOG, 0.026, 9); // not linear: near is the density, far the haze's gain up high (hall.ts)
   const pmrem = new THREE.PMREMGenerator(renderer);
   scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
   scene.environmentIntensity = 0.18;
@@ -235,7 +235,7 @@ function start() {
 
     hall = buildHall(scene, swing.position.clone(), renderer.capabilities.maxTextureSize);
     // the sun's light in the haze, marched against its shadow map, after the AO and before the tone mapping
-    const rays = new Rays(camera, hall.sun, () => (ao.enabled ? ao.depthTexture : null), { roof: hall.roofY, box: hall.air, density: 0.05 });
+    const rays = new Rays(camera, hall.sun, () => (ao.enabled ? ao.depthTexture : null), { roof: hall.roofY, box: hall.air, density: 0.04 });
     composer.insertPass(rays, 2);
     if (import.meta.env.DEV) Object.assign(window, { rays, sun: hall.sun });
     // ?debug: colours and render settings by hand

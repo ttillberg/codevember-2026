@@ -78,15 +78,38 @@ export function buildHall(scene: THREE.Scene, hang: THREE.Vector3, maxTexture = 
     }
   };
 
-  const TX = 12; // towers either side
+  const TX = 12; // the towers either side of the pod
+  const WX = 60; // the wall on the sun's side
   const LEVELS = [-14, 22, 44, 62]; // girders across and along
-  const rows = [24, -6, -21, -36]; // none near the eye
-  for (const z of rows) {
-    tower(-TX, z, -45, ROOF, 2.4);
-    tower(TX, z, -45, ROOF, 2.4);
-    for (const y of LEVELS) truss(V(-TX, y, z), V(TX, y, z), V(0, 0, 0.8), V(0, 2.2, 0), 2.2);
-    // the roof's trusses, deep ones
-    truss(V(-TX - 4, ROOF - 4, z), V(TX + 4, ROOF - 4, z), V(0, 0, 0.6), V(0, 4, 0), 3, 0.2, 0.09);
+  // the structure goes on in every direction, a grid of towers out into the haze; none near the eye
+  const COLS = [-60, -44, -28, -TX, TX, 28, 44];
+  const ROWS = [54, 39, 24, -6, -21, -36, -51, -66];
+  const rows = [24, -6, -21, -36]; // the hall's own rows round the pod, with catwalks along them
+  const near = (x: number, z: number) => Math.abs(x) <= TX && z <= 24 && z >= -36;
+  for (const z of ROWS) {
+    for (const x of COLS) tower(x, z, -45, ROOF, 2.4);
+    for (let i = 0; i < COLS.length - 1; i++) {
+      const a = COLS[i], b = COLS[i + 1];
+      // girders across: every level round the pod, every other one further out, staggered row by row
+      const k = ROWS.indexOf(z);
+      const ys = near(a, z) && near(b, z) ? LEVELS : LEVELS.filter((_, j) => (j + i + k) % 2 === 0);
+      for (const y of ys) truss(V(a, y, z), V(b, y, z), V(0, 0, 0.8), V(0, 2.2, 0), 2.2);
+    }
+    // the roof's trusses, deep ones, right across
+    truss(V(COLS[0] - 6, ROOF - 4, z), V(WX, ROOF - 4, z), V(0, 0, 0.6), V(0, 4, 0), 3, 0.2, 0.09);
+  }
+  for (const x of COLS) {
+    if (Math.abs(x) === TX) continue; // (along the hall's own rows below)
+    for (let i = 0; i < ROWS.length - 1; i++) {
+      const ys = LEVELS.filter((_, j) => (j + i + COLS.indexOf(x)) % 2 === 1);
+      for (const y of ys) truss(V(x, y, ROWS[i]), V(x, y, ROWS[i + 1]), V(0.8, 0, 0), V(0, 2.2, 0), 2.2);
+    }
+  }
+  for (const x of [-TX, TX]) {
+    for (const y of [22, 44]) {
+      truss(V(x, y, ROWS[0]), V(x, y, rows[0]), V(0.8, 0, 0), V(0, 2.2, 0), 2.2);
+      truss(V(x, y, rows[rows.length - 1]), V(x, y, ROWS[ROWS.length - 1]), V(0.8, 0, 0), V(0, 2.2, 0), 2.2);
+    }
   }
   for (const x of [-TX, TX]) {
     for (const y of LEVELS) truss(V(x, y, rows[0]), V(x, y, rows[rows.length - 1]), V(0.8, 0, 0), V(0, 2.2, 0), 2.2);
@@ -108,7 +131,7 @@ export function buildHall(scene: THREE.Scene, hang: THREE.Vector3, maxTexture = 
   // the girder it hangs from, across the hall, and the rails between the roof trusses
   const gy = hang.y + 0.35;
   truss(V(-TX, gy, hang.z), V(TX, gy, hang.z), V(0, 0, 0.6), V(0, 1.8, 0), 1.8, 0.2, 0.08);
-  for (const x of [-7, 0, 7]) bar(V(x, ROOF - 4, rows[0]), V(x, ROOF - 4, rows[rows.length - 1]), 0.3, 0.5);
+  for (let x = COLS[0] - 6; x <= WX; x += 8) bar(V(x, ROOF - 4, ROWS[0] + 6), V(x, ROOF - 4, ROWS[ROWS.length - 1] - 6), 0.3, 0.5);
   // a frame round the hang point where the hoses come down from, a grating hung under the girder
   {
     const y = gy - 0.15, s = 1.9;
@@ -121,18 +144,9 @@ export function buildHall(scene: THREE.Scene, hang: THREE.Vector3, maxTexture = 
     for (const p of c) bar(p, V(p.x, gy, hang.z + Math.sign(p.z - hang.z) * 0.6), 0.06);
   }
 
-  // the hall goes on far to the right, to a wall 60 m off: more towers out there, the roof trusses run on to it
-  const WX = 60;
-  for (const z of rows) {
-    for (const x of [30, 46]) tower(x, z, -45, ROOF, 2.4);
-    truss(V(TX + 4, ROOF - 4, z), V(WX, ROOF - 4, z), V(0, 0, 0.6), V(0, 4, 0), 3, 0.2, 0.09);
-    for (const y of LEVELS.filter((_, i) => i % 2 === 0)) truss(V(TX, y, z), V(46, y, z), V(0, 0, 0.8), V(0, 2.2, 0), 2.2);
-  }
-  for (const x of [30, 46]) truss(V(x, 22, rows[0]), V(x, 22, rows[rows.length - 1]), V(0.8, 0, 0), V(0, 2.2, 0), 2.2);
-
   // the roof: across each bay, bands of glass between strips of deck, glazing bars across the glass; the deck
   // is solid to the sun, the glass not, so the light comes in in bands, cut by the bars
-  const X0 = -TX - 6, Z0 = rows[0] + 6, Z1 = rows[rows.length - 1] - 6;
+  const X0 = COLS[0] - 6, Z0 = ROWS[0] + 6, Z1 = ROWS[ROWS.length - 1] - 6;
   const deck: THREE.Matrix4[] = [];
   const box = (c: THREE.Vector3, size: THREE.Vector3) => deck.push(new THREE.Matrix4().compose(c, new THREE.Quaternion(), size));
   const GLASS: [number, number][] = [];
@@ -198,16 +212,28 @@ export function buildHall(scene: THREE.Scene, hang: THREE.Vector3, maxTexture = 
     }
   };
   scaffold(TX, -6, 3, 4, -20, 16);
-  scaffold(30, -21, 3, 4, -12, 22);
+  scaffold(28, -21, 3, 4, -12, 22);
   scaffold(-TX, -36, 3, 4, 4, 10);
-  scaffold(46, 24, 3, 4, -30, 14);
+  scaffold(44, 24, 3, 4, -30, 14);
+  scaffold(-28, 24, 3, 4, -24, 26);
+  scaffold(-44, -21, 3, 4, -40, 30);
+  scaffold(-28, -51, 3, 4, 0, 18);
+  scaffold(28, 54, 3, 4, -16, 24);
+  scaffold(-TX, 39, 3, 4, -36, 20);
+  scaffold(-60, 54, 3, 4, -10, 28);
+  scaffold(44, -66, 3, 4, -20, 22);
+  scaffold(TX, -51, 3, 4, 10, 14);
 
   // hoists: a narrow lattice mast up the side of a tower, a cage on it going up and down
   const HOISTS: { x: number; z: number; lo: number; hi: number; speed: number; phase: number }[] = [
     { x: TX + 2.4, z: -1.2, lo: -18, hi: 44, speed: 0.7, phase: 0 },
-    { x: 30 - 4.2, z: -21, lo: -10, hi: 56, speed: 1.0, phase: 2.5 },
+    { x: 28 - 4.2, z: -21, lo: -10, hi: 56, speed: 1.0, phase: 2.5 },
+    { x: -28 + 4.2, z: 24, lo: -24, hi: 50, speed: 0.8, phase: 7 },
+    { x: -44 + 4.2, z: -21, lo: -36, hi: 40, speed: 0.9, phase: 3.5 },
     { x: -TX - 2.4, z: -21, lo: -30, hi: 40, speed: 0.6, phase: 5 },
   ];
+  // which way the tower a hoist stands by is, along x
+  const towardTower = (h: { x: number }) => Math.sign(COLS.reduce((a, b) => (Math.abs(b - h.x) < Math.abs(a - h.x) ? b : a)) - h.x);
   for (const h of HOISTS) {
     const s = 0.4;
     const cs = [V(-s, 0, -s), V(s, 0, -s), V(s, 0, s), V(-s, 0, s)];
@@ -220,7 +246,7 @@ export function buildHall(scene: THREE.Scene, hang: THREE.Vector3, maxTexture = 
       }
     }
     // ties back to the tower every 9 m
-    const dx = Math.sign((Math.abs(h.x - TX) < 3 ? TX : Math.abs(h.x + TX) < 3 ? -TX : 30) - h.x);
+    const dx = towardTower(h);
     for (let y = -40; y < h.hi; y += 9) bar(V(h.x + dx * s, y, h.z), V(h.x + dx * 2, y, h.z), 0.06);
   }
 
@@ -264,7 +290,7 @@ export function buildHall(scene: THREE.Scene, hang: THREE.Vector3, maxTexture = 
       piece(g, mesh, -W / 2, Hh / 2, 0, 0.02, Hh, D);
       piece(g, lamp, 0, Hh - 0.1, 0, 0.18, 0.05, 0.18);
       // on the side of the mast away from the tower
-      const side = h.x > TX + 1 && h.x < 20 ? 1 : h.x < -TX + 1 && h.x > -20 ? -1 : -1;
+      const side = -towardTower(h);
       g.position.set(h.x + side * (0.4 + W / 2 + 0.1), h.lo, h.z);
       g.userData.hoist = h;
       scene.add(g);
@@ -310,7 +336,7 @@ export function buildHall(scene: THREE.Scene, hang: THREE.Vector3, maxTexture = 
     dome = new THREE.Mesh(
       new THREE.SphereGeometry(150, 32, 16),
       new THREE.ShaderMaterial({
-        uniforms: { low: { value: (scene.fog as THREE.Fog).color }, gain: { value: 12 } },
+        uniforms: { low: { value: (scene.fog as THREE.Fog).color }, gain: { value: 9 } },
         vertexShader: 'varying vec3 vDir; void main() { vDir = normalize(position); gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
         fragmentShader: `uniform vec3 low; varying vec3 vDir;
           uniform float gain;
