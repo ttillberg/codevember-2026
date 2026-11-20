@@ -454,15 +454,24 @@ class Soup:
                 path.append(0.5 * ((2 * p1) + (p2 - p0) * t + (2 * p0 - 5 * p1 + 4 * p2 - p3) * t * t + (3 * p1 - p0 - 3 * p2 + p3) * t ** 3))
         path.append(pts[-1])
         rings, nrm = [], Vector((1, 0.2, 0.3)).normalized()
+        # uv: round the hose, and along it in ribs (one rib every 1.3 radii), for the web side's corrugation
+        along, s = [], 0.0
+        for i, p in enumerate(path):
+            if i: s += (p - path[i - 1]).length
+            along.append(s / (1.3 * r))
         for i, p in enumerate(path):
             t = (path[min(i + 1, len(path) - 1)] - path[max(i - 1, 0)]).normalized()
             nrm = nrm - t * nrm.dot(t)
             nrm = nrm.normalized() if nrm.length > 1e-6 else t.orthogonal().normalized()
             b = t.cross(nrm)
             rings.append([self.bm.verts.new(p + (nrm * math.cos(k * TAU / seg) + b * math.sin(k * TAU / seg)) * r) for k in range(seg)])
+        uv = self.bm.loops.layers.uv.verify()
         for i in range(len(rings) - 1):
             for k in range(seg):
-                self.bm.faces.new((rings[i][k], rings[i][(k + 1) % seg], rings[i + 1][(k + 1) % seg], rings[i + 1][k])).smooth = True
+                f = self.bm.faces.new((rings[i][k], rings[i][(k + 1) % seg], rings[i + 1][(k + 1) % seg], rings[i + 1][k]))
+                f.smooth = True
+                for l, (ii, kk) in zip(f.loops, ((i, k), (i, k + 1), (i + 1, k + 1), (i + 1, k))):
+                    l[uv].uv = (kk / seg, along[ii])
         self.bm.faces.new(list(reversed(rings[0]))); self.bm.faces.new(rings[-1])
 
 

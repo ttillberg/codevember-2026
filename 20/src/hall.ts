@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { hallSteel } from './materials';
 
 // the haze is lit from above: fog thickens to a brighter grey the higher up it is, so the steel stands dark
 // against it up there and sinks into the dark below
@@ -122,7 +123,7 @@ export function buildHall(scene: THREE.Scene, hang: THREE.Vector3) {
     for (const p of c) bar(p, V(p.x, gy, hang.z + Math.sign(p.z - hang.z) * 0.6), 0.06);
   }
 
-  const steel = new THREE.MeshStandardMaterial({ color: 0x2b2e32, roughness: 0.62, metalness: 0.55 });
+  const steel = hallSteel(new THREE.MeshStandardMaterial({ color: 0x2b2e32, roughness: 0.62, metalness: 0.55 }));
   const lattice = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), steel, bars.length);
   bars.forEach((m, i) => lattice.setMatrixAt(i, m));
   lattice.instanceMatrix.needsUpdate = true;

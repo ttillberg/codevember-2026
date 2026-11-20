@@ -4,6 +4,7 @@ import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { Cable } from './cables';
 import { Blood } from './blood';
 import { buildHall } from './hall';
+import { dress, rubber, wire as wireSteel } from './materials';
 
 // A pod hanging in a hall. The model comes from Blender (model/cocoon.blend → public/cocoon.glb) and says by
 // name what is what:
@@ -103,7 +104,7 @@ function start() {
   let hall: ReturnType<typeof buildHall> | null = null;
 
   // what it really hangs by: a steel sling from each lug up to one link, one wire from the link up to the block
-  const wireMat = new THREE.MeshStandardMaterial({ color: 0x4a4d50, metalness: 0.9, roughness: 0.32 });
+  const wireMat = wireSteel;
   const rodGeo = new THREE.CylinderGeometry(1, 1, 1, 10);
   rodGeo.translate(0, 0.5, 0);
   const link = new THREE.Group(); // in the swing, on the line from the hang point to the pod
@@ -171,6 +172,7 @@ function start() {
 
   new GLTFLoader().load(`${import.meta.env.BASE_URL}cocoon.glb`, (gltf) => {
     const root = gltf.scene;
+    dress(root);
     scene.add(root);
     root.updateWorldMatrix(true, true);
     const named = (re: RegExp) => {
@@ -236,7 +238,6 @@ function start() {
       setDoor();
     }
 
-    const rubber = new THREE.MeshStandardMaterial({ color: 0x0b0c0d, roughness: 0.5, metalness: 0.25 });
     plugs.forEach((plug, i) => {
       const socket = sockets[i];
       if (!socket) return;

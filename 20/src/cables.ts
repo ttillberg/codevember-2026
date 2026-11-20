@@ -4,7 +4,7 @@ import * as THREE from 'three';
 // by two points so the cable leaves the pod the way the plug points. The pod drives the cables, never the reverse.
 
 const POINTS = 40;
-const SIDES = 7;
+const SIDES = 10;
 const GRAVITY = 9.8;
 const ITERATIONS = 14;
 
@@ -42,6 +42,15 @@ export class Cable {
     this.normals = new THREE.BufferAttribute(new Float32Array(POINTS * SIDES * 3), 3);
     geo.setAttribute('position', this.positions);
     geo.setAttribute('normal', this.normals);
+    // uv: round it, and along it in ribs, one every 1.3 radii as on the pod's hoses
+    const uv = new Float32Array(POINTS * SIDES * 2);
+    for (let i = 0; i < POINTS; i++) {
+      for (let k = 0; k < SIDES; k++) {
+        uv[(i * SIDES + k) * 2] = k / SIDES;
+        uv[(i * SIDES + k) * 2 + 1] = (i * this.seg) / (1.3 * radius);
+      }
+    }
+    geo.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
     const index: number[] = [];
     for (let i = 0; i < POINTS - 1; i++) {
       for (let k = 0; k < SIDES; k++) {
