@@ -4,6 +4,8 @@ html, body { margin: 0; height: 100%; background: #0b0c0f; overflow: hidden; }
    a callout or a tap flash. A day with real text to copy turns it back on for that text (user-select: text). */
 html, body { user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent; }
 canvas { display: block; width: 100vw; height: 100vh; touch-action: none; cursor: grab; }
+/* the scene pinned to the whole screen: 100vh on a phone is not always what is on it, toolbars come and go */
+canvas#c { position: fixed; top: 0; left: 0; width: 100%; height: 100%; }
 canvas:active { cursor: grabbing; }
 
 /* the title plate, top left: the day in Plex capitals, the way home under it */

@@ -1,7 +1,10 @@
 import * as THREE from 'three';
 import { hallSteel } from './materials';
+import { NOISE3D } from './noise';
 
-const HAZE_TOP = 55; // where the haze is at its brightest
+const HAZE_TOP = 55;
+/** the render targets the scene itself is drawn into (main.ts); any other is the transmission pass's */
+export const SCENE_TARGETS = new Set<THREE.RenderTarget>(); // where the haze is at its brightest
 
 // the haze is lit from above: fog thickens to a brighter grey the higher up it is, so the steel stands dark
 // against it up there and sinks into the dark below
@@ -251,17 +254,35 @@ export function buildHall(scene: THREE.Scene, hang: THREE.Vector3, maxTexture = 
   }
 
   const steel = hallSteel(new THREE.MeshStandardMaterial({ color: 0x2b2e32, roughness: 0.62, metalness: 0.55 }));
-  const lattice = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), steel, bars.length);
-  bars.forEach((m, i) => lattice.setMatrixAt(i, m));
-  lattice.instanceMatrix.needsUpdate = true;
-  lattice.receiveShadow = true;
-  lattice.castShadow = true;
-  scene.add(lattice);
-  const roofDeck = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), steel, deck.length);
-  deck.forEach((m, i) => roofDeck.setMatrixAt(i, m));
-  roofDeck.instanceMatrix.needsUpdate = true;
-  roofDeck.castShadow = roofDeck.receiveShadow = true;
-  scene.add(roofDeck);
+  // the steel in blocks of the hall, one instanced mesh each with its own bounds, so that every camera (the eye,
+  // the pod's tight sun, the skylight) draws only the blocks it can see, not all 40 000 bars every time
+  const unit = new THREE.BoxGeometry(1, 1, 1);
+  const chunked = (list: THREE.Matrix4[], cell: THREE.Vector3) => {
+    const blocks = new Map<string, THREE.Matrix4[]>();
+    const at = new THREE.Vector3();
+    for (const m of list) {
+      at.setFromMatrixPosition(m);
+      const key = `${Math.floor(at.x / cell.x)},${Math.floor(at.y / cell.y)},${Math.floor(at.z / cell.z)}`;
+      if (!blocks.has(key)) blocks.set(key, []);
+      blocks.get(key)!.push(m);
+    }
+    for (const ms of blocks.values()) {
+      const mesh = new THREE.InstancedMesh(unit, steel, ms.length);
+      ms.forEach((m, i) => mesh.setMatrixAt(i, m));
+      mesh.instanceMatrix.needsUpdate = true;
+      mesh.computeBoundingSphere();
+      mesh.castShadow = mesh.receiveShadow = true;
+      mesh.matrixAutoUpdate = false;
+      mesh.userData.still = true; // into the sun's map that is drawn once
+      // not in what the frosted window sees through: only the inside of the pod is behind it
+      mesh.onBeforeRender = (r) => { const t = r.getRenderTarget(); if (t && !SCENE_TARGETS.has(t)) { mesh.userData.n = mesh.count; mesh.count = 0; } };
+      mesh.onAfterRender = () => { if (mesh.userData.n !== undefined) { mesh.count = mesh.userData.n; delete mesh.userData.n; } };
+      scene.add(mesh);
+    }
+    return blocks.size;
+  };
+  chunked(bars, V(16, 24, 15));
+  chunked(deck, V(400, 400, 400)); // the roof and the wall: few and long, one block
 
   // the hoists' cars: a cage of bars round a floor, a roof, a lamp; they ride up and down, stop, wait, go on
   const cars: THREE.Group[] = [];
@@ -307,6 +328,7 @@ export function buildHall(scene: THREE.Scene, hang: THREE.Vector3, maxTexture = 
     sheave.rotation.x = Math.PI / 2;
     sheave.position.set(hang.x, hang.y + 0.15, hang.z);
     frame.castShadow = sheave.castShadow = true;
+    frame.userData.still = sheave.userData.still = true;
     scene.add(frame, sheave);
   }
 
@@ -334,7 +356,7 @@ export function buildHall(scene: THREE.Scene, hang: THREE.Vector3, maxTexture = 
   // the haze beyond everything, the same grey as the fog at each height
   {
     dome = new THREE.Mesh(
-      new THREE.SphereGeometry(150, 32, 16),
+      new THREE.SphereGeometry(95, 32, 16), // inside the eye's far plane
       new THREE.ShaderMaterial({
         uniforms: { low: { value: (scene.fog as THREE.Fog).color }, gain: { value: 9 } },
         vertexShader: 'varying vec3 vDir; void main() { vDir = normalize(position); gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
@@ -382,13 +404,32 @@ export function buildHall(scene: THREE.Scene, hang: THREE.Vector3, maxTexture = 
   sun.shadow.bias = -0.0002;
   sun.shadow.normalBias = 0.02;
   sun.castShadow = true;
+  // the hall stands still: its map is drawn once (and again when the sun is moved), the pod's own sun does the rest
+  sun.shadow.autoUpdate = false;
   scene.add(sun, sun.target);
+  // (4 px, not 1: the pod's window draws the scene behind it at a third of this, and a target 0 px wide is an error)
+  const dummy = new THREE.WebGLRenderTarget(4, 4);
+  /** draw the hall's sun map: only what stands still casts into it, nothing else is drawn but the shadows */
+  const bakeSun = (renderer: THREE.WebGLRenderer, eye: THREE.Camera) => {
+    const off: THREE.Object3D[] = [];
+    scene.traverse((o) => { if (o.castShadow && !o.userData.still) { o.castShadow = false; off.push(o); } });
+    const others: THREE.LightShadow[] = [];
+    scene.traverse((o) => { const l = o as THREE.DirectionalLight; if (l.shadow && l !== sun && l.shadow.autoUpdate) { l.shadow.autoUpdate = false; others.push(l.shadow); } });
+    sun.shadow.needsUpdate = true;
+    const was = renderer.getRenderTarget();
+    renderer.setRenderTarget(dummy);
+    renderer.render(scene, eye);
+    renderer.setRenderTarget(was);
+    for (const o of off) o.castShadow = true;
+    for (const sh of others) sh.autoUpdate = true;
+  };
+  let sunDirty = true;
   // and the same sun again, for the pod alone (materials.ts): a map 4.4 m across that follows it, 2 mm a texel,
   // from far enough up the light that the roof and every bar in between still cast into it
   const podSun = new THREE.DirectionalLight(sun.color, sun.intensity);
   podSun.castShadow = true;
   podSun.shadow.mapSize.set(2048, 2048);
-  Object.assign(podSun.shadow.camera, { left: -2.2, right: 2.2, bottom: -2.2, top: 2.2, near: 1, far: 130 });
+  Object.assign(podSun.shadow.camera, { left: -2.2, right: 2.2, bottom: -2.2, top: 2.2, near: 1, far: 200 });
   podSun.shadow.camera.updateProjectionMatrix();
   podSun.shadow.bias = -0.0003;
   podSun.shadow.normalBias = 0.004;
@@ -416,7 +457,7 @@ export function buildHall(scene: THREE.Scene, hang: THREE.Vector3, maxTexture = 
 
   const shaftMat = (color: number, strength: number) =>
     new THREE.ShaderMaterial({
-      uniforms: { color: { value: new THREE.Color(color) }, strength: { value: strength }, time: { value: 0 } },
+      uniforms: { color: { value: new THREE.Color(color) }, strength: { value: strength }, time: { value: 0 }, tNoise: { value: NOISE3D } },
       vertexShader: /* glsl */ `
         varying vec3 vWorld;
         varying vec3 vNormal;
@@ -438,13 +479,8 @@ export function buildHall(scene: THREE.Scene, hang: THREE.Vector3, maxTexture = 
         varying vec3 vNormal;
         varying vec3 vLocal;
         varying float vAlong;
-        float hash(vec3 p) { return fract(sin(dot(p, vec3(127.1, 311.7, 74.7))) * 43758.5453); }
-        float noise(vec3 p) {
-          vec3 i = floor(p), f = fract(p);
-          f = f * f * (3.0 - 2.0 * f);
-          return mix(mix(mix(hash(i), hash(i + vec3(1, 0, 0)), f.x), mix(hash(i + vec3(0, 1, 0)), hash(i + vec3(1, 1, 0)), f.x), f.y),
-                     mix(mix(hash(i + vec3(0, 0, 1)), hash(i + vec3(1, 0, 1)), f.x), mix(hash(i + vec3(0, 1, 1)), hash(i + vec3(1, 1, 1)), f.x), f.y), f.z);
-        }
+        uniform highp sampler3D tNoise;
+        float noise(vec3 p) { return texture(tNoise, p / 32.0).r; } // (noise.ts: the same value noise, from a texture)
         void main() {
           vec3 toEye = cameraPosition - vWorld;
           float dist = length(toEye);
@@ -530,6 +566,15 @@ export function buildHall(scene: THREE.Scene, hang: THREE.Vector3, maxTexture = 
   scene.add(motes);
 
   return {
+    podSun,
+    /** the sun was moved: its map is drawn again before the next frame */
+    moveSun() { sunDirty = true; },
+    /** before each frame: the hall's sun map, if it is due */
+    prepare(renderer: THREE.WebGLRenderer, eye: THREE.Camera) {
+      if (!sunDirty) return;
+      sunDirty = false;
+      bakeSun(renderer, eye);
+    },
     roof,
     left,
     right,

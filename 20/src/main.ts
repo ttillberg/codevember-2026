@@ -1,14 +1,13 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
-import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
-import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { GTAOPass } from 'three/addons/postprocessing/GTAOPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { Rays } from './rays';
+import { Post } from './post';
 import { Cable } from './cables';
 import { Blood } from './blood';
-import { buildHall } from './hall';
+import { buildHall, SCENE_TARGETS } from './hall';
 import { dress, rubber, wire as wireSteel } from './materials';
 
 // A pod hanging in a hall. The model comes from Blender (model/cocoon.blend → public/cocoon.glb) and says by
@@ -39,6 +38,9 @@ function start() {
   renderer.toneMappingExposure = 1.05;
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFShadowMap;
+  // the hatch's frosted window draws the scene again to see through: at a third of the size, as frosted as it
+  // is that looks the same, and it costs a ninth
+  renderer.transmissionResolutionScale = 0.35;
 
   const scene = new THREE.Scene();
   scene.background = new THREE.Color(FOG);
@@ -50,31 +52,27 @@ function start() {
   scene.add(hemi);
   // the rest of the light, from the roof and the sides, comes with the hall (hall.ts)
 
-  const camera = new THREE.PerspectiveCamera(40, 1, 0.1, 200);
+  const camera = new THREE.PerspectiveCamera(40, 1, 0.1, 100); // nothing past 90 m shows through the haze
 
   // ambient occlusion in screen space: the dark in the machinery's corners, under the boxes, between the hoses.
   // The light shafts and the dome are not surfaces, they are left out of what it sees.
-  const composer = new EffectComposer(renderer, new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType, samples: 4 }));
-  const scenePass = new RenderPass(scene, camera);
-  const ao = new GTAOPass(scene, camera, 1, 1);
-  {
-    const self = ao as unknown as { _renderOverride: (...a: unknown[]) => void };
-    const render = self._renderOverride.bind(ao);
-    self._renderOverride = (...a) => {
-      const hidden: THREE.Object3D[] = [];
-      scene.traverseVisible((o) => { if (o.userData.noAO) hidden.push(o); });
-      for (const o of hidden) o.visible = false;
-      render(...a);
-      for (const o of hidden) o.visible = true;
-    };
-  }
+  // the frame (post.ts): the scene once, with its depth, then the AO, the light in the haze, the output
+  const post = new Post(renderer, scene);
+  SCENE_TARGETS.add(post.target); // (the hall's steel is drawn into this and no other: hall.ts)
+  const sceneDepth = post.depth;
+  const ao = new GTAOPass(scene, camera, 1, 1, { depthTexture: sceneDepth });
   ao.updateGtaoMaterial({ radius: 0.45, distanceExponent: 1.4, thickness: 1.5, scale: 1.7, samples: 16 });
   ao.updatePdMaterial({ lumaPhi: 10, depthPhi: 2, normalPhi: 3, radius: 6, rings: 2, samples: 16 });
   ao.blendIntensity = 0.85;
-  composer.addPass(scenePass);
-  composer.addPass(ao);
-  composer.addPass(new OutputPass());
-  const ortho = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 200); // the debug panel's iso: same eye, no perspective
+  // the AO at half the drawing buffer (on a retina screen: one sample a CSS pixel): it is soft and denoised as
+  // it is, and it was a quarter of the frame
+  {
+    const set = ao.setSize.bind(ao);
+    ao.setSize = (w: number, h: number) => set(Math.ceil(w / 2), Math.ceil(h / 2));
+  }
+  post.insert(ao, 0);
+  post.insert(new OutputPass(), 1);
+  const ortho = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 100); // the debug panel's iso: same eye, no perspective
   let eye: THREE.Camera = camera;
   const target = new THREE.Vector3(0.1, 0.15, 0);
   // the view people get, as the hall picture has it: from below, looking up at the pod's left side and front
@@ -89,6 +87,7 @@ function start() {
   let homeRadius = 7.5;
   // a view the camera is easing to (the debug panel's), null while it is yours
   let goal: null | { yaw: number; pitch: number; radius: number; target: THREE.Vector3 } = null;
+  const NUDGE = 0.06; // it is heavy: how far a hand can lean it, radians
   let still = false; // the debug panel's hold still: no swing
   const podRest = new THREE.Quaternion(); // how the pod hangs, askew, as it comes from Blender
 
@@ -235,8 +234,8 @@ function start() {
 
     hall = buildHall(scene, swing.position.clone(), renderer.capabilities.maxTextureSize);
     // the sun's light in the haze, marched against its shadow map, after the AO and before the tone mapping
-    const rays = new Rays(camera, hall.sun, () => (ao.enabled ? ao.depthTexture : null), { roof: hall.roofY, box: hall.air, density: 0.04 });
-    composer.insertPass(rays, 2);
+    const rays = new Rays(camera, hall.sun, hall.podSun, () => (ao.enabled ? ao.depthTexture : null), { roof: hall.roofY, box: hall.air, density: 0.04 });
+    post.insert(rays, 1);
     if (import.meta.env.DEV) Object.assign(window, { rays, sun: hall.sun });
     // ?debug: colours and render settings by hand
     if (query.has('debug')) { const h = hall; import('./tweaks').then(({ tweaks }) => tweaks({ renderer, scene, hemi, ao, rays, hall: h })); }
@@ -370,8 +369,9 @@ function start() {
       const wpp = (2 * radius * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2))) / canvas.clientHeight;
       const wx = (Math.cos(yaw) * dx + Math.sin(yaw) * dy) * wpp;
       const wz = (-Math.sin(yaw) * dx + Math.cos(yaw) * dy) * wpp;
-      azTo = THREE.MathUtils.clamp(azTo + wx / L, -0.3, 0.3);
-      axTo = THREE.MathUtils.clamp(axTo - wz / L, -0.3, 0.3);
+      // it is heavy: a long drag is a nudge, it gives a few degrees at most
+      azTo = THREE.MathUtils.clamp(azTo + (0.3 * wx) / L, -NUDGE, NUDGE);
+      axTo = THREE.MathUtils.clamp(axTo - (0.3 * wz) / L, -NUDGE, NUDGE);
     } else if (grab === 'door') {
       openTo = THREE.MathUtils.clamp(openTo + (dx * doorPull.x + dy * doorPull.y) / doorPull.lengthSq(), AJAR, WIDE);
     }
@@ -387,7 +387,7 @@ function start() {
   canvas.addEventListener('pointercancel', release);
 
   // dev only: a look at the state from the console
-  if (import.meta.env.DEV) Object.assign(window, { cocoon: () => ({ grab, open, vopen, ax, az, tw, doorSign, cables: cables.length }), scene, camera, ao });
+  if (import.meta.env.DEV) Object.assign(window, { cocoon: () => ({ grab, open, vopen, ax, az, tw, doorSign, cables: cables.length }), look: (y: number, p: number, r: number) => { goal = null; yaw = y; pitch = p; radius = r; vyaw = vpitch = 0; }, scene, camera, ao, renderer, post });
 
   // ---------- physics, in fixed steps
 
@@ -397,9 +397,9 @@ function start() {
     if (still && grab !== 'pod') {
       ax = az = tw = vax = vaz = vtw = 0;
     } else if (grab === 'pod') {
-      // the hand: a stiff, dead-beat spring
-      vax += (140 * (axTo - ax) - 24 * vax) * h;
-      vaz += (140 * (azTo - az) - 24 * vaz) * h;
+      // the hand on something heavy: a soft spring, it comes slowly and keeps going a little
+      vax += (22 * (axTo - ax) - 7 * vax) * h;
+      vaz += (22 * (azTo - az) - 7 * vaz) * h;
     } else {
       // free: gravity, a little loss, and the air of the hall never quite still
       vax += (-w2 * ax - 0.12 * vax + 0.004 * Math.sin(time * 0.47 + 2)) * h;
@@ -576,7 +576,8 @@ function start() {
       tick() {
         if (menu.hidden) return;
         const deg = THREE.MathUtils.radToDeg;
-        readout.textContent = `door ${deg(open).toFixed(0)}°  swing ${deg(Math.hypot(ax, az)).toFixed(1)}°  ${eye === ortho ? 'iso' : 'pers'}\n` +
+        readout.textContent = `${(1000 / frameMs).toFixed(0)} fps  ${frameMs.toFixed(1)} ms  ${renderer.domElement.width}×${renderer.domElement.height}  css ${canvas.clientWidth}×${canvas.clientHeight} of ${innerWidth}×${innerHeight}\n` +
+          `door ${deg(open).toFixed(0)}°  swing ${deg(Math.hypot(ax, az)).toFixed(1)}°  ${eye === ortho ? 'iso' : 'pers'}\n` +
           `eye yaw ${yaw.toFixed(2)} pitch ${pitch.toFixed(2)} r ${radius.toFixed(1)} at ${target.x.toFixed(2)} ${target.y.toFixed(2)} ${target.z.toFixed(2)}`;
       },
     };
@@ -590,8 +591,7 @@ function start() {
     if (!w || !h) return; // not laid out yet, or hidden
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.setSize(w, h, false);
-    composer.setPixelRatio(renderer.getPixelRatio());
-    composer.setSize(w, h);
+    post.setSize(w, h);
     camera.aspect = w / h;
     camera.updateProjectionMatrix();
     const wasHome = radius === homeRadius && target.equals(home);
@@ -600,12 +600,16 @@ function start() {
     if (wasHome) { radius = homeRadius; target.copy(home); }
   }
   window.addEventListener('resize', resize);
+  // (a phone does not always say: the toolbars sliding away, a turn, the canvas changes size without a resize)
+  new ResizeObserver(() => resize()).observe(canvas);
   resize();
 
   let then = performance.now();
   let owed = 0;
   let time = 0;
+  let frameMs = 16.7; // smoothed, for the debug readout
   function frame(now: number) {
+    frameMs += (now - then - frameMs) * 0.05;
     const dt = Math.min(0.05, (now - then) / 1000);
     then = now;
 
@@ -647,9 +651,9 @@ function start() {
     hall?.update(time, dt);
     blood?.update(dt);
 
-    scenePass.camera = eye;
     ao.enabled = eye === camera; // the debug panel's iso goes without
-    composer.render();
+    hall?.prepare(renderer, camera);
+    post.render(eye);
     requestAnimationFrame(frame);
   }
   requestAnimationFrame(frame);

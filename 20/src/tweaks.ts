@@ -10,8 +10,8 @@ export function tweaks(t: {
   scene: THREE.Scene;
   hemi: THREE.HemisphereLight;
   ao: { blendIntensity: number; updateGtaoMaterial: (p: Record<string, number>) => void };
-  rays: { intensity: number; fade: number; smoke: number };
-  hall: { sun: THREE.DirectionalLight; roof: THREE.SpotLight; left: THREE.SpotLight; right: THREE.SpotLight; shaftGain: number };
+  rays: { intensity: number; fade: number; smoke: number; top: number; topFade: number };
+  hall: { sun: THREE.DirectionalLight; roof: THREE.SpotLight; left: THREE.SpotLight; right: THREE.SpotLight; shaftGain: number; moveSun: () => void };
 }) {
   const KEY = 'cocoon20.tweaks';
   const fog = t.scene.fog as THREE.Fog;
@@ -46,7 +46,10 @@ export function tweaks(t: {
     const d = sun.position.clone().sub(sun.target.position);
     const dist = d.length();
     let az = Math.atan2(d.z, d.x), el = Math.asin(d.y / dist);
-    const put = () => sun.position.copy(sun.target.position).add(new THREE.Vector3(Math.cos(el) * Math.cos(az), Math.sin(el), Math.cos(el) * Math.sin(az)).multiplyScalar(dist));
+    const put = () => {
+      sun.position.copy(sun.target.position).add(new THREE.Vector3(Math.cos(el) * Math.cos(az), Math.sin(el), Math.cos(el) * Math.sin(az)).multiplyScalar(dist));
+      t.hall.moveSun();
+    };
     return {
       get azimuth() { return THREE.MathUtils.radToDeg(az); }, set azimuth(v: number) { az = THREE.MathUtils.degToRad(v); put(); },
       get elevation() { return THREE.MathUtils.radToDeg(el); }, set elevation(v: number) { el = THREE.MathUtils.degToRad(v); put(); },
@@ -57,6 +60,8 @@ export function tweaks(t: {
   s.add(t.rays, 'intensity', 0, 4, 0.01).name('in the haze');
   s.add(t.rays, 'fade', 0, 0.06, 0.001).name('used up going down');
   s.add(t.rays, 'smoke', 0, 1, 0.01).name('smoke');
+  s.add(t.rays, 'top', 0, 40, 0.1).name('glare under the roof');
+  s.add(t.rays, 'topFade', 0.02, 0.6, 0.005).name('glare gone in');
 
   const l = gui.addFolder('lights');
   l.add(roof, 'intensity', 0, 30, 0.1).name('skylight');

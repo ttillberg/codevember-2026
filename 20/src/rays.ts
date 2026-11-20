@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { FullScreenQuad, Pass } from 'three/addons/postprocessing/Pass.js';
+import { NOISE3D } from './noise';
 
 /**
  * Light in the haze, for real: from the eye out to whatever each pixel sees, a march through the air, and at
@@ -13,6 +14,9 @@ export class Rays extends Pass {
   fade = 0.014;
   /** how patchy the air is: 0 even, 1 drifting smoke and dust */
   smoke = 0.8;
+  /** and a glare right under the roof, so many times the rest, gone a few metres down */
+  top = 16;
+  topFade = 0.18;
   private half = new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType });
   private march: THREE.ShaderMaterial;
   private blend: THREE.ShaderMaterial;
@@ -21,15 +25,20 @@ export class Rays extends Pass {
   constructor(
     private camera: THREE.PerspectiveCamera,
     private sun: THREE.DirectionalLight,
+    private podSun: THREE.DirectionalLight,
     private depth: () => THREE.Texture | null,
     o: { roof: number; box: THREE.Box3; density: number; steps?: number },
   ) {
     super();
     this.march = new THREE.ShaderMaterial({
-      defines: { STEPS: o.steps ?? 64 },
+      defines: { STEPS: o.steps ?? 40 },
       uniforms: {
         tDepth: { value: null },
         tShadow: { value: null },
+        tPod: { value: null },
+        podMatrix: { value: new THREE.Matrix4() },
+        podZone: { value: new THREE.Vector2() },
+        tNoise: { value: NOISE3D },
         shadowMatrix: { value: new THREE.Matrix4() },
         projInv: { value: new THREE.Matrix4() },
         camWorld: { value: new THREE.Matrix4() },
@@ -42,30 +51,28 @@ export class Rays extends Pass {
         density: { value: o.density },
         fade: { value: 0.014 },
         smoke: { value: 0.8 },
+        top: { value: 16 },
+        topFade: { value: 0.18 },
         time: { value: 0 },
       },
       vertexShader: 'varying vec2 vUv; void main() { vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }',
       fragmentShader: /* glsl */ `
         precision highp sampler2DShadow;
         uniform sampler2D tDepth;
-        uniform sampler2DShadow tShadow;
-        uniform mat4 shadowMatrix, projInv, camWorld;
+        uniform sampler2DShadow tShadow, tPod;
+        uniform highp sampler3D tNoise;
+        uniform mat4 shadowMatrix, podMatrix, projInv, camWorld;
         uniform vec3 camPos, sunDir, sunColor, boxMin, boxMax;
-        uniform float roof, density, fade, smoke, time;
+        uniform vec2 podZone;
+        uniform float roof, density, fade, smoke, top, topFade, time;
         varying vec2 vUv;
         // a fixed dither per pixel, so the steps do not show as bands; the blur after takes it out
         float ign(vec2 p) { return fract(52.9829189 * fract(dot(p, vec2(0.06711056, 0.00583715)))); }
-        float hash(vec3 p) { return fract(sin(dot(p, vec3(127.1, 311.7, 74.7))) * 43758.5453); }
-        float noise(vec3 p) {
-          vec3 i = floor(p), f = fract(p);
-          f = f * f * (3.0 - 2.0 * f);
-          return mix(mix(mix(hash(i), hash(i + vec3(1, 0, 0)), f.x), mix(hash(i + vec3(0, 1, 0)), hash(i + vec3(1, 1, 0)), f.x), f.y),
-                     mix(mix(hash(i + vec3(0, 0, 1)), hash(i + vec3(1, 0, 1)), f.x), mix(hash(i + vec3(0, 1, 1)), hash(i + vec3(1, 1, 1)), f.x), f.y), f.z);
-        }
         // smoke and dust: big slow billows and finer wisps, drifting sideways and rising a little
         float air(vec3 p) {
+          // (value noise, tiling, from a 3D texture: one fetch an octave instead of eight hashes)
           vec3 q = p * 0.06 + vec3(time * 0.012, -time * 0.006, time * 0.008);
-          float n = noise(q) * 0.62 + noise(q * 2.9 + vec3(4.1, time * 0.03, 1.3)) * 0.38;
+          float n = texture(tNoise, q / 32.0).r * 0.62 + texture(tNoise, (q * 2.9 + vec3(4.1, time * 0.03, 1.3)) / 32.0).r * 0.38;
           return mix(1.0, smoothstep(0.28, 0.78, n) * 2.0, smoke);
         }
         void main() {
@@ -95,8 +102,20 @@ export class Rays extends Pass {
             vec3 p = camPos + rd * t;
             vec4 s = shadowMatrix * vec4(p, 1.0);
             float lit = texture(tShadow, vec3(s.xy, s.z - 0.0008));
+            // the hall's map has only the steel in it: the pod and its cables, from the pod's own sun. But only what
+            // stands near the pod along the light: that map has the steel too, sharp to the millimetre, where the
+            // hall's blurs the thin bars away, and the air in its column would come out darker than round it.
+            // So: shadowed if the first thing the pod's sun meets is past the start of the pod's stretch of the light
+            // (zs) and before the point, or the end of that stretch, whichever comes first (1 - ze)
+            vec4 ps = podMatrix * vec4(p, 1.0);
+            if (all(greaterThan(ps.xyz, vec3(0.0))) && all(lessThan(ps.xyz, vec3(1.0)))) {
+              float zs = texture(tPod, vec3(ps.xy, podZone.x));
+              float ze = texture(tPod, vec3(ps.xy, min(ps.z, podZone.y) - 0.0005));
+              lit *= 1.0 - zs * (1.0 - ze);
+            }
             // used up on the way down: the further below the roof along the light, the less is left
-            lit *= exp(-fade * max(roof - p.y, 0.0) / max(-sunDir.y, 0.2));
+            float down = max(roof - p.y, 0.0) / max(-sunDir.y, 0.2);
+            lit *= exp(-fade * down) + top * exp(-topFade * down);
             // the air thicker up where the light is, and less of it gets back to the eye from far
             float h = 0.55 + 0.45 * smoothstep(-30.0, roof, p.y);
             sum += lit * h * air(p) * exp(-0.012 * t) * dt;
@@ -144,6 +163,14 @@ export class Rays extends Pass {
       u.tDepth.value = depth;
       u.tShadow.value = map;
       u.shadowMatrix.value.copy(this.sun.shadow.matrix);
+      const pod = this.podSun.shadow.map?.depthTexture ?? null;
+      u.tPod.value = pod ?? map;
+      u.podMatrix.value.copy(this.podSun.shadow.matrix);
+      if (!pod) u.podMatrix.value.makeScale(0, 0, 0); // nothing yet: every point falls outside it
+      // the pod's stretch of its sun's depth: from 4 m before its centre (the cables over it) to 3 m past it
+      const c = this.podSun.shadow.camera;
+      const d = this.podSun.position.distanceTo(this.podSun.target.position);
+      u.podZone.value.set((d - 4 - c.near) / (c.far - c.near), (d + 3 - c.near) / (c.far - c.near));
       u.projInv.value.copy(this.camera.projectionMatrixInverse);
       u.camWorld.value.copy(this.camera.matrixWorld);
       u.camPos.value.setFromMatrixPosition(this.camera.matrixWorld);
@@ -151,6 +178,8 @@ export class Rays extends Pass {
       u.sunColor.value.copy(this.sun.color);
       u.fade.value = this.fade;
       u.smoke.value = this.smoke;
+      u.top.value = this.top;
+      u.topFade.value = this.topFade;
       u.time.value = performance.now() / 1000;
       renderer.setRenderTarget(this.half);
       this.quad.material = this.march;
@@ -171,3 +200,4 @@ export class Rays extends Pass {
     this.quad.dispose();
   }
 }
+

@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { NOISE3D } from './noise';
 
 /**
  * What things are made of. The glb only names its materials (paint, mech, steel, panel, block, hose ...); here each
@@ -8,29 +9,26 @@ import * as THREE from 'three';
  */
 
 // Two suns, the same light: the wide one, its shadow map over the whole hall, and a tight one that follows the pod
-// with a map only round it (hall.ts). Each material takes its sun from one of them and not the other: the
-// directional lights in three's light loop get a gain, SUN_WIDE for the first, SUN_TIGHT for the second; the
-// pod's materials swap the two (POD_SUN). Both suns cast shadows and are the only directional lights, so they are
-// the first two in that loop, in the order they were added.
-THREE.ShaderChunk.lights_fragment_begin = THREE.ShaderChunk.lights_fragment_begin.replace(
-  'getDirectionalLightInfo( directionalLight, directLight );',
-  `getDirectionalLightInfo( directionalLight, directLight );
-    #ifndef SUN_WIDE
-      #define SUN_WIDE 1.0
-      #define SUN_TIGHT 0.0
-    #endif
-    directLight.color *= UNROLLED_LOOP_INDEX == 0 ? SUN_WIDE : UNROLLED_LOOP_INDEX == 1 ? SUN_TIGHT : 1.0;`,
-);
-export const POD_SUN = { SUN_WIDE: '0.0', SUN_TIGHT: '1.0' };
-
-const NOISE = /* glsl */ `
-float gHash(vec3 p) { return fract(sin(dot(p, vec3(127.1, 311.7, 74.7))) * 43758.5453); }
-float gNoise(vec3 p) {
-  vec3 i = floor(p), f = fract(p);
-  f = f * f * (3.0 - 2.0 * f);
-  return mix(mix(mix(gHash(i), gHash(i + vec3(1, 0, 0)), f.x), mix(gHash(i + vec3(0, 1, 0)), gHash(i + vec3(1, 1, 0)), f.x), f.y),
-             mix(mix(gHash(i + vec3(0, 0, 1)), gHash(i + vec3(1, 0, 1)), f.x), mix(gHash(i + vec3(0, 1, 1)), gHash(i + vec3(1, 1, 1)), f.x), f.y), f.z);
+// with a map only round it (hall.ts). Each material takes its sun from one of them and leaves the other out of
+// three's light loop altogether, its shadow lookup and all: SUN_SKIP is the loop index skipped, 1 (the tight sun)
+// for everything, 0 (the wide one) for the pod's materials (POD_SUN). Both suns cast shadows and are the only
+// directional lights, so they are the first two in that loop, in the order they were added.
+{
+  const chunk = THREE.ShaderChunk.lights_fragment_begin;
+  const a = chunk.indexOf('\t\tdirectionalLight = directionalLights[ i ];');
+  const end = 'RE_Direct( directLight, geometryPosition, geometryNormal, geometryViewDir, geometryClearcoatNormal, material, reflectedLight );';
+  const b = chunk.indexOf(end, a) + end.length;
+  if (a < 0 || b < end.length) throw new Error('lights_fragment_begin: the directional loop moved');
+  THREE.ShaderChunk.lights_fragment_begin =
+    '#ifndef SUN_SKIP\n#define SUN_SKIP 1\n#endif\n' + chunk.slice(0, a) + '#if UNROLLED_LOOP_INDEX != SUN_SKIP\n' + chunk.slice(a, b) + '\n#endif' + chunk.slice(b);
 }
+export const POD_SUN = { SUN_SKIP: '0' };
+
+// value noise from a tiling 3D texture (noise.ts): one fetch where it was eight hashes with a sine each, on every
+// pixel of every surface; the octaves at odd scales keep its 32-cell period from showing
+const NOISE = /* glsl */ `
+uniform highp sampler3D gNoiseTex;
+float gNoise(vec3 p) { return texture(gNoiseTex, p / 32.0).r; }
 float gFbm(vec3 p) { return gNoise(p) * 0.55 + gNoise(p * 2.7 + 3.1) * 0.3 + gNoise(p * 7.3 + 1.7) * 0.15; }
 // three's bump, under another name so it does not clash when a material has a bump map of its own
 vec3 gPerturb(vec3 surf_pos, vec3 surf_norm, vec2 dHdxy, float faceDirection) {
@@ -58,6 +56,7 @@ const f = (x: number) => x.toFixed(4);
 function grit(m: THREE.MeshStandardMaterial, g: Grit) {
   if (g.ribs) m.defines = { ...m.defines, USE_UV: '' };
   m.onBeforeCompile = (sh) => {
+    sh.uniforms.gNoiseTex = { value: NOISE3D };
     sh.vertexShader = 'varying vec3 vGrit;\n' + sh.vertexShader.replace(
       '#include <begin_vertex>',
       `#include <begin_vertex>
