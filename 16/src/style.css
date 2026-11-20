@@ -256,3 +256,19 @@ body.touch .keymap, .clean .keymap { display: none; }
   border: 0.75px solid rgba(28, 28, 28, 0.55); border-radius: 3px; font: 600 8px/1 Inter, sans-serif; vertical-align: 1px;
 }
 body.touch .fungarium header .keys { display: none; }
+
+/* loading (as day 12): the splash, a card in the middle, over the forest drawn as a golden wire mesh; once the
+   models are in and the shaders compiled, the card goes and the picture fades in over the mesh */
+.splash { position: fixed; inset: 0; z-index: 100; display: grid; place-items: center; pointer-events: none; transition: opacity 0.9s ease; }
+.splash img { width: min(60vw, 100vh, 860px); height: auto; aspect-ratio: 1080 / 607; display: block; border-radius: 3px;
+  box-shadow: 0 0 0 1px rgba(232, 200, 140, 0.25), 0 24px 70px rgba(0, 0, 0, 0.6); pointer-events: auto; cursor: pointer; }
+@media (orientation: portrait) { .splash img { width: 88vw; } }
+.splash.gone { opacity: 0; }
+.splash.gone img { pointer-events: none; }
+.clean .splash { display: none; }
+/* the mesh's last frame, kept over the picture and faded out */
+.wiresnap { position: fixed; inset: 0; width: 100%; height: 100%; pointer-events: none; transition: opacity 1.6s ease; }
+.wiresnap.gone { opacity: 0; }
+/* the controls wait for the picture */
+.target, .keymap, .pouch, .mute, .gyro, .lockpill { transition: opacity 0.8s ease; }
+body.loading :is(.target, .keymap, .pouch, .mute, .gyro, .lockpill) { opacity: 0; pointer-events: none; }
