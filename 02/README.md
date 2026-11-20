@@ -15,6 +15,7 @@ pnpm -C 02 dev
 - As long as glass is standing, carry on, at once: more bullets, another swipe, while the last pieces are still in the air. With none left, a click is a new pane.
 - **S**, or the camera button: the latest fall again, in slow motion, from the side. A bar at the bottom has play and pause (Space), a chart of the fall's contacts over time (floor in full, glass on glass lighter), a playhead to drag, and the speed (0.05× to 1×). **Esc** to leave.
 - **T**, or the tape button, then a drag across the glass: a strip of tape along it, from edge to edge, on every pane. A click instead lays one straight across at that height. What is under tape stays with the pane as long as some of the pane stands; with none left, the strip comes down in one piece, glass and all.
+- **C**, or the bolt button (also `?realtime`): the simulation live, not cached. The worker then steps the fall at the pace it is shown and each frame is drawn as it comes; nothing is worked out before the swipe. A fall too heavy for the machine runs slow instead of smooth, which is the point of comparing.
 - **R**: a new pane. **M**: sound.
 - The pointer never moves the camera: it has a slow sway of its own (`Camera sway` in the workbench, down to none), and the wheel zooms.
 - `?seed=7` pins the pane, `?clean` hides the furniture.

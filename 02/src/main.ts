@@ -4,7 +4,7 @@
 // inside the glass. Then, once the pane has taken too much, it is cut into shards along those same cracks
 // (shards.ts), a worker bakes the fall with rigid bodies (sim.worker.ts) and the page plays it back.
 import { CRACKS, Pane, type Impact } from './cracks';
-import { defaults, mountPanel } from './settings';
+import { defaults, mountPanel, setValue } from './settings';
 import { STRIDE, buildShards, mergeSets, type ShardSet } from './shards';
 import { Renderer, lookAt, perspective } from './render';
 import { Sound } from './audio';
@@ -30,10 +30,12 @@ function applySettings() {
   CRACKS.hole = V.hole / 1000;
   const L = renderer.look;
   for (const k of Object.keys(L) as (keyof typeof L)[]) L[k] = V[k];
+  if (settled) { liveBtn.classList.toggle('live', V.live >= 0.5); bakeBar.querySelector('span')!.textContent = V.live >= 0.5 ? 'Simulating' : 'Baking the fall'; }
   if (settled && (V.panes !== layers.length || Math.abs(V.gap / 100 - gap) > 1e-6 || (layers.length > 1 && layers[1].tempered !== V.temper >= 0.5))) reset(); // another set-up: new panes
   else if (settled) prepareSoon(400); // the break that was got ready was for other numbers
 }
-const simCfg = (): SimConfig => ({ contacts: V.contacts, gravity: V.gravity, ballDensity: V.ballDensity, pushBack: V.pushBack, pushOut: V.pushOut, reach: V.reach, spin: V.spin, front: V.front, bounce: V.bounce, friction: V.friction, stuck: V.stuck, seconds: V.seconds });
+const simCfg = (): SimConfig => ({ live: V.live >= 0.5 ? V.pace : 0, contacts: V.contacts, gravity: V.gravity, ballDensity: V.ballDensity, pushBack: V.pushBack, pushOut: V.pushOut, reach: V.reach, spin: V.spin, front: V.front, bounce: V.bounce, friction: V.friction, stuck: V.stuck, seconds: V.seconds });
+if (params.has('realtime') || params.has('live')) V.live = 1;
 if (params.has('debug') || params.has('settings') || location.hash === '#debug') mountPanel(V, applySettings);
 
 const T = 0.008; // the glass is 8 mm thick
@@ -424,7 +426,9 @@ function prepare() {
 /** A moment after the bullet, not in its frame: the crack must not stutter for it. */
 function prepareSoon(ms = 140) {
   clearTimeout(readyTimer);
+  readyTimer = 0;
   if (ready) { dropBake(ready.bake); ready = null; }
+  if (V.live >= 0.5) return; // live: nothing is worked out before it happens
   readyTimer = window.setTimeout(prepare, ms);
 }
 
@@ -656,7 +660,7 @@ function stepFalls(dt: number) {
     if (f === shown) { stepReplay(f, dt); continue; }
     if (f.over) continue;
     const { frames, contacts } = f.bake;
-    if (!f.started) { if (now >= f.at && (f.bake.done || frames.length > 5)) startFall(f); else continue; }
+    if (!f.started) { if (now >= f.at && (f.bake.done || frames.length > (V.live >= 0.5 ? 0 : 5))) startFall(f); else continue; }
     f.speed += ((slow ? V.slow : V.pace) - f.speed) * Math.min(1, dt * 10);
     f.playhead += dt * f.speed;
     if (held >= 0 && f === falls[falls.length - 1]) f.playhead = held;
@@ -742,6 +746,27 @@ function reset() {
   fadeTo = 0; resetAt = now + 0.28;
 }
 
+// The simulation either way. Cached: the fall is baked ahead, as fast as the worker will go, and played from
+// memory. Live: the worker steps it at the pace it is shown, and every frame is drawn as it comes: nothing is
+// known before it happens, and a fall too heavy for the machine runs slow instead of smooth.
+const liveBtn = document.querySelector<HTMLButtonElement>('#live')!;
+const modeTag = document.querySelector<HTMLElement>('#mode')!;
+let modeTimer = 0;
+function setLive(on: boolean, say = true) {
+  V.live = on ? 1 : 0;
+  setValue('live', V.live);
+  liveBtn.classList.toggle('live', on);
+  bakeBar.querySelector('span')!.textContent = on ? 'Simulating' : 'Baking the fall';
+  if (say) {
+    modeTag.textContent = on ? 'Simulation: live' : 'Simulation: cached';
+    modeTag.hidden = false;
+    clearTimeout(modeTimer);
+    modeTimer = window.setTimeout(() => { modeTag.hidden = true; }, 1600);
+  }
+  if (settled) prepareSoon(60);
+}
+liveBtn.addEventListener('click', () => { sound.wake(); setLive(V.live < 0.5); });
+
 let taping = false; // the next press on the glass lays tape
 const tapeBtn = document.querySelector<HTMLButtonElement>('#tape')!;
 function setTaping(on: boolean) { taping = on && state === 'intact'; tapeBtn.classList.toggle('on', taping); canvas.style.cursor = taping ? 'cell' : ''; setHint(); }
@@ -807,6 +832,7 @@ window.addEventListener('keydown', (e) => {
   } else if (e.code === 'KeyR') reset();
   else if (e.code === 'KeyS') setReplay(!replay.on);
   else if (e.code === 'KeyT') setTaping(!taping);
+  else if (e.code === 'KeyC') setLive(V.live < 0.5);
   else if (e.code === 'Escape') setReplay(false);
   else if (e.code === 'KeyM') toggleSound();
   else if (e.code === 'KeyB') toggleBall();
@@ -882,6 +908,7 @@ function frame(ms: number) {
 window.addEventListener('resize', resize);
 newPane();
 settled = true;
+setLive(V.live >= 0.5, false);
 resize();
 requestAnimationFrame(frame);
 
@@ -898,7 +925,7 @@ Object.assign(window, {
     get state() { return state; },
     get info() {
       const b = ready?.bake ?? falls[falls.length - 1]?.bake;
-      return { state, shots, panes: layers.map((l) => (l.standing ? l.pane.impacts.length : -1)), falls: falls.length, active: falls.filter((f) => !f.over).length, ready: !!ready, shards: b?.count, frames: b?.frames.length, bakeDone: b?.done, contacts: (b?.contacts.length ?? 0) / CONTACT };
+      return { live: V.live >= 0.5, state, shots, panes: layers.map((l) => (l.standing ? l.pane.impacts.length : -1)), falls: falls.length, active: falls.filter((f) => !f.over).length, ready: !!ready, shards: b?.count, frames: b?.frames.length, bakeDone: b?.done, contacts: (b?.contacts.length ?? 0) / CONTACT };
     },
     /** the contacts of the latest bake, for a look: [frame, x, y, z, size, strength, kind] each */
     get contacts() {

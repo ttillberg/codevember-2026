@@ -50,6 +50,7 @@ export const SECTIONS: Section[] = [
   },
   {
     id: 'sim', title: 'Simulation', note: 'From the next break', items: [
+      it('live', 'Live, not cached', 0, 1, 1, 0),
       it('kick', 'Ball speed, m/s', 2, 80, 0.5, 30),
       it('ballSize', 'Ball radius, cm', 3, 30, 0.5, 11),
       it('ballDensity', 'Ball weight', 0.02, 12, 0.02, 4),
@@ -87,6 +88,9 @@ function save(s: Saved) {
 }
 
 /** Builds the panel, fills `values` with what was saved, and calls onChange after every change. */
+/** Puts a value in the panel from outside it (a key, a button): the slider follows, and it is kept. */
+export let setValue: (key: string, v: number) => void = () => {};
+
 export function mountPanel(values: Values, onChange: () => void) {
   const saved = load();
   const folded = saved.folded ?? { cracks: true, sim: true };
@@ -165,6 +169,13 @@ export function mountPanel(values: Values, onChange: () => void) {
     for (const { item } of inputs) if (values[item.key] !== item.def) changed[item.key] = values[item.key];
     navigator.clipboard?.writeText(JSON.stringify(changed, null, 1)).then(() => { copy.textContent = 'Copied'; setTimeout(() => (copy.textContent = 'Copy values'), 1200); }).catch(() => { copy.textContent = 'Could not copy'; });
   });
+  setValue = (key, v) => {
+    const e = inputs.find((x) => x.item.key === key);
+    if (!e) return;
+    e.range.value = String(v); e.out.textContent = fmt(e.item, v);
+    e.range.closest('.debug-row')!.classList.toggle('changed', v !== e.item.def);
+    keep();
+  };
   foot.append(reset, copy);
   box.append(foot);
   root.append(box, gear);

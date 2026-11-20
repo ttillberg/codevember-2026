@@ -44,8 +44,8 @@ canvas { touch-action: none; cursor: crosshair; }
 }
 .tools button:hover { background: rgba(244, 244, 242, 0.22); }
 .tools svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; vertical-align: middle; }
-#sound .x, #sound.off .on, #ball .x, #ball.off .on { display: none; }
-#sound.off .x, #ball.off .x { display: inline; }
+#sound .x, #sound.off .on, #ball .x, #ball.off .on, #live .on, #live.live .x { display: none; }
+#sound.off .x, #ball.off .x, #live.live .on { display: inline; }
 .tools button.off { opacity: 0.6; }
 @media (max-width: 640px) {
   /* five buttons do not fit beside the title on a phone: they go down the right edge */
@@ -143,3 +143,13 @@ canvas { touch-action: none; cursor: crosshair; }
   #rp-track { height: 56px; }
 }
 .clean #replay { display: none; }
+
+/* which way the simulation runs, said for a moment when it is changed */
+#mode {
+  position: fixed; z-index: 2; left: 50%; top: max(24px, env(safe-area-inset-top)); transform: translateX(-50%);
+  padding: 9px 14px; border-radius: 17px; color: #f4f4f2; background: rgba(16, 16, 16, 0.6);
+  -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px); pointer-events: none; white-space: nowrap;
+  font: 600 11px/1 Inter, "Helvetica Neue", Helvetica, Arial, sans-serif; letter-spacing: 0.12em; text-transform: uppercase;
+}
+#mode[hidden] { display: none; }
+.clean #mode { display: none; }

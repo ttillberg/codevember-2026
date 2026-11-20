@@ -23,8 +23,8 @@ export interface BakeRequest {
 }
 
 /** What the settings panel turns. */
-export interface SimConfig { contacts: number; gravity: number; ballDensity: number; pushBack: number; pushOut: number; reach: number; spin: number; front: number; bounce: number; friction: number; stuck: number; seconds: number }
-export const SIM_DEFAULTS: SimConfig = { contacts: 8, gravity: 9.81, ballDensity: 4, pushBack: 13, pushOut: 4.5, reach: 0.3, spin: 16, front: 7, bounce: 0.22, friction: 0.45, stuck: 0.5, seconds: 7 };
+export interface SimConfig { live: number; contacts: number; gravity: number; ballDensity: number; pushBack: number; pushOut: number; reach: number; spin: number; front: number; bounce: number; friction: number; stuck: number; seconds: number }
+export const SIM_DEFAULTS: SimConfig = { live: 0, contacts: 8, gravity: 9.81, ballDensity: 4, pushBack: 13, pushOut: 4.5, reach: 0.3, spin: 16, front: 7, bounce: 0.22, friction: 0.45, stuck: 0.5, seconds: 7 };
 
 export interface FramesMessage {
   type: 'frames';
@@ -184,7 +184,10 @@ async function bake(req: BakeRequest) {
   const ball = balls[0];
 
   const maxFrames = Math.round(cfg.seconds * FPS);
-  const CHUNK = 6;
+  // cached: as fast as it will go, a few frames a message. Live (cfg.live is the pace, 1 the speed of life):
+  // one frame a message, and no frame before its time, so what is shown is what was just worked out
+  const CHUNK = cfg.live > 0 ? 1 : 6;
+  const began = performance.now();
   const N7 = (n + 1) * 7;
   let data = new Float32Array(CHUNK * N7);
   let contacts: number[] = [];
@@ -262,7 +265,8 @@ async function bake(req: BakeRequest) {
       (self as unknown as Worker).postMessage(copy, [copy.data.buffer, copy.contacts.buffer]);
       first += inChunk; inChunk = 0;
       // let other messages in: another bake runs alongside, a cancelled one stops here
-      await new Promise((r) => setTimeout(r, 0));
+      const due = cfg.live > 0 ? began + ((f + 1) * 1000) / FPS / cfg.live - performance.now() : 0;
+      await new Promise((r) => setTimeout(r, Math.max(0, due)));
       if (cancelled.has(req.run)) { cancelled.delete(req.run); break; }
     }
     if (done) break;
