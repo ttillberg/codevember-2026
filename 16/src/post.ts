@@ -50,13 +50,13 @@ export function makeAtmosPass(depth: THREE.DepthTexture, coarse = false) {
       vec3 sky(vec3 r) {
         float s = max(dot(r, uSunDir), 0.0);
         vec3 gold = vec3(1.0, 0.68, 0.24);
-        return uHaze * 1.7 * vec3(1.35, 0.95, 0.42) + gold * (0.12 + 0.3 * s * s) * smoothstep(-0.1, 0.4, r.y) + uSunCol * pow(s, 6.0) * 0.7;
+        return uHaze * 1.7 * vec3(1.15, 1.0, 0.72) + gold * (0.05 + 0.3 * s * s * s) * smoothstep(-0.1, 0.4, r.y) + uSunCol * pow(s, 10.0) * 0.8;
       }
       // the air between: thicker low down, lit warm towards the sun
       vec3 haze(vec3 r) {
         float s = max(dot(r, uSunDir), 0.0);
         vec3 h = uHaze * (0.8 + 1.4 * smoothstep(-0.1, 0.5, r.y));
-        return h + uSunCol * (pow(s, 4.0) * 0.35 + pow(s, 24.0) * 0.8);
+        return h + uSunCol * (pow(s, 8.0) * 0.22 + pow(s, 32.0) * 0.8);
       }
       void main() {
         float z = -perspectiveDepthToViewZ(texture2D(tDepth, vUv).x, cameraNear, cameraFar);
@@ -162,7 +162,7 @@ export function makeLensPass(coarse = false) {
         col = mix(vec3(l), col, 1.0 - 0.45 * smoothstep(0.0, 0.12, green));
         // the grey haze warmed: unsaturated midtones lean amber instead of sitting a flat green-grey
         float sat = max(col.r, max(col.g, col.b)) - min(col.r, min(col.g, col.b));
-        col = mix(col, l * vec3(1.14, 1.0, 0.74), (1.0 - smoothstep(0.03, 0.16, sat)) * smoothstep(0.04, 0.3, l) * 0.65);
+        col = mix(col, l * vec3(1.1, 1.0, 0.8), (1.0 - smoothstep(0.03, 0.16, sat)) * smoothstep(0.04, 0.3, l) * 0.35);
         // split toning: shadows a deep blue-teal, highlights a cream gold
         col = mix(col * vec3(0.86, 0.95, 1.06), col * vec3(1.08, 0.99, 0.86), smoothstep(0.03, 0.45, l));
         // a soft S: deeper shadows, a rounded shoulder so the sunlit fronds do not burn out to white

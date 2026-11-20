@@ -271,8 +271,10 @@ const atmosMat = makeAtmosPass(beautyRT.depthTexture!, coarse);
 atmosMat.uniforms.cameraNear.value = camera.near;
 atmosMat.uniforms.uSunDir.value = lightDir;
 // thick forest air: a worm cannot see far anyway
-atmosMat.uniforms.uFog.value = 0.22; // the air: trunks fade out a few steps away, into the colour of the sky
-atmosMat.uniforms.uMist.value = 0.9; // and a mist lying on the moss, glowing towards the sun
+// the air: light, so the trunks stand in layers a long way back, paler and paler, the sun coming through between
+// them (it was thick and golden, 0.22 and 0.9: past two metres everything melted into one yellow wall)
+atmosMat.uniforms.uFog.value = 0.06;
+atmosMat.uniforms.uMist.value = 0.3; // and a mist lying on the moss, glowing towards the sun
 const atmos = new ShaderPass(atmosMat);
 composer.addPass(atmos);
 // spore smoke into the finished, hazy image: its own lighter haze keeps a column visible from far off
