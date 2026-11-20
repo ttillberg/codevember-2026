@@ -6,9 +6,11 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "glb": "gltf-transform webp public/cocoon.glb public/cocoon.glb && gltf-transform meshopt public/cocoon.glb public/cocoon.glb"
   },
   "devDependencies": {
+    "@gltf-transform/cli": "^4.5.1",
     "@types/three": "^0.187.0",
     "@vitejs/plugin-basic-ssl": "^2.3.0",
     "typescript": "^5.9.3",

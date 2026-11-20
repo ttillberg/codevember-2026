@@ -152,6 +152,8 @@ export const GLOWING: { material: THREE.MeshStandardMaterial; gain: number }[] =
  * the door's world matrix inverted, every frame); the rest of it, the open flanks, stays dark */
 export const DOOR_GLOW = { inv: { value: new THREE.Matrix4() }, lo: { value: new THREE.Vector3() }, hi: { value: new THREE.Vector3() } };
 
+const MADE = new Map<string, THREE.Material>(); // what dress() made of each of the glb's materials, by name
+
 /** every material in the glb, by name, to what it is */
 export function dress(root: THREE.Object3D) {
   const done = new Map<THREE.Material, THREE.Material>();
@@ -195,6 +197,7 @@ export function dress(root: THREE.Object3D) {
       const made = make(m as THREE.MeshStandardMaterial);
       // the red light inside comes out where the plates part and through the window
       const name = m.name.replace(/[._]\d+$/, '');
+      MADE.set(name, made);
       if (name === 'core' || name === 'frost') {
         const g = made as THREE.MeshStandardMaterial;
         g.emissive = new THREE.Color(0xff1a0a);
@@ -230,4 +233,44 @@ export function dress(root: THREE.Object3D) {
     };
     mesh.material = Array.isArray(mesh.material) ? mesh.material.map(swap) : swap(mesh.material);
   });
+}
+
+/**
+ * The small things there are hundreds of, which the glb has only as where they go (on an empty each: `at`, a flat
+ * list of x y z, then the way they face, then for some a size): the bolts round the panels, one small hex head
+ * each, and the collars along the hoses. Each set one instanced mesh, under the empty's parent, in its material.
+ */
+export function instances(root: THREE.Object3D) {
+  const up = new THREE.Vector3(0, 1, 0);
+  const p = new THREE.Vector3(), d = new THREE.Vector3(), s = new THREE.Vector3();
+  const q = new THREE.Quaternion(), m = new THREE.Matrix4();
+  const make = (o: THREE.Object3D, geo: THREE.BufferGeometry, mat: THREE.Material | undefined, stride: number, size: (at: number[], i: number) => number) => {
+    const at = o.userData.at as number[] | undefined;
+    if (!at?.length || !mat) return;
+    const n = Math.floor(at.length / stride);
+    const mesh = new THREE.InstancedMesh(geo, mat, n);
+    for (let i = 0; i < n; i++) {
+      const k = i * stride;
+      p.set(at[k], at[k + 1], at[k + 2]);
+      d.set(at[k + 3], at[k + 4], at[k + 5]).normalize();
+      q.setFromUnitVectors(up, d);
+      const r = size(at, k);
+      mesh.setMatrixAt(i, m.compose(p, q, s.set(r, 1, r)));
+    }
+    mesh.instanceMatrix.needsUpdate = true;
+    mesh.computeBoundingSphere();
+    mesh.name = o.name;
+    // (under the empty: it was made at its parent's origin, so its space is the list's, whatever packing the glb did
+    // to the parent's own transform)
+    o.add(mesh);
+  };
+  // a bolt: from 2 mm under the plate's face to 3 mm out, its base at the point
+  const bolt = new THREE.CylinderGeometry(0.0042, 0.0042, 0.005, 6).translate(0, 0.0005, 0);
+  const collar = new THREE.CylinderGeometry(1, 1, 0.06, 6);
+  const found: THREE.Object3D[] = [];
+  root.traverse((o) => { if (/^(bolts_|collars_hoses)/.test(o.name) && o.userData.at) found.push(o); });
+  for (const o of found) {
+    if (o.name.startsWith('bolts_')) make(o, bolt, MADE.get('bolt'), 6, () => 1);
+    else make(o, collar, MADE.get('steel'), 7, (at, k) => at[k + 6]);
+  }
 }

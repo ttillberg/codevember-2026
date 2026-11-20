@@ -124,7 +124,7 @@ export function game(o: {
 
   // ---------- this pod's number, on the flank the eye sees first
   const plates = pod.getObjectByName('plates') as THREE.Mesh | undefined;
-  if (plates) paint(plates, NUMBER, new THREE.Vector3(-0.55, 0.05, 0.83).normalize(), 0.42, 0.3);
+  if (plates) paint(plates, NUMBER, new THREE.Vector3(-0.55, 0.05, 0.83).normalize(), 0.5, -0.15);
 
   // ---------- the other pods, hanging from trolleys on girders out in the hall, where the eye looks up as the
   // page opens; each its own shape and its number painted on the side that faces this one
@@ -139,13 +139,15 @@ export function game(o: {
     const white = new THREE.MeshStandardMaterial({ color: 0xcfd0cc, roughness: 0.42, metalness: 0.15 });
     const dark = new THREE.MeshStandardMaterial({ color: 0x1b1d20, roughness: 0.45, metalness: 0.8 });
     // the twin of this pod, the one easy to take for it: its outside only, in a few meshes, no lights, no glass
-    const KEEP = new Set(['pod', 'plates', 'door', 'door_plates', 'door_frame', 'door_board', 'deck', 'hoses', 'blocks', 'under', 'clamps', 'collars', 'lamps', 'detail_dark_pod', 'detail_mech_pod', 'detail_steel_pod', 'hatches_pod']);
+    // (by the mesh's own name, or its object's where the glb split it by material: pod_1, pod_2; not by whatever it
+    // hangs under, or all of this pod's small things would come along)
+    const KEEP = new Set(['pod', 'plates', 'door', 'door_plates', 'door_frame', 'door_board', 'deck', 'hoses', 'blocks', 'under', 'mech']);
     const twin = () => {
       const c = pod.clone(true);
       const drop: THREE.Object3D[] = [];
       c.traverse((x) => {
         if ((x as THREE.Light).isLight) drop.push(x);
-        else if ((x as THREE.Mesh).isMesh && !KEEP.has(x.name) && !KEEP.has(x.parent?.name ?? '')) drop.push(x);
+        else if ((x as THREE.Mesh).isMesh && !KEEP.has(x.name.replace(/[._]\d+$/, ''))) drop.push(x);
       });
       for (const x of drop) x.removeFromParent();
       c.traverse((x) => { x.castShadow = false; });
@@ -190,7 +192,7 @@ export function game(o: {
       const toward = o.podAt.clone().sub(trolley.position).setY(0).normalize();
       let target: THREE.Mesh | undefined;
       body.traverse((x) => { if (!target && (x as THREE.Mesh).isMesh && (x.name === 'plates' || p.shape !== 'ours')) target = x as THREE.Mesh; });
-      if (target) paint(target, p.num, toward, p.shape === 'ours' ? 0.42 : 0.9, p.shape === 'ours' ? 0.3 : 0);
+      if (target) paint(target, p.num, toward, p.shape === 'ours' ? 0.5 : 0.9, p.shape === 'ours' ? -0.15 : 0);
       const lo = a.x + 1.6, hi = b.x - 1.6;
       const st = { x: trolley.position.x, v: 0, push: 0, ang: 0, vang: 0 };
       const m: Machine = {

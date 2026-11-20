@@ -616,6 +616,19 @@ def spline(pts, n=8):
 EVERY = 0.28   # a collar on every hose, this far apart
 
 
+COLLARS = []   # the collars along the hoses: where, which way, how big; drawn on the web side, instanced
+
+
+def placements(items):
+    """(point, direction[, size]) in Blender's space to a flat list in the glb's (y up), four decimals: x y z, dx dy
+    dz[, size] each"""
+    out = []
+    for it in items:
+        p, d = it[0], it[1]
+        out += [round(p.x, 4), round(p.z, 4), round(-p.y, 4), round(d.x, 4), round(d.z, 4), round(-d.y, 4)] + [round(x, 4) for x in it[2:]]
+    return out
+
+
 def line(hose, steel, mech, path, r, cap_start=True, cap_end=True):
     """A hose, fitted the one way every hose on the pod is: along a path of world points; each end it has goes
     into a steel coupling on a foot down to the surface, and a collar every EVERY metres, bolted to the surface
@@ -641,7 +654,7 @@ def line(hose, steel, mech, path, r, cap_start=True, cap_end=True):
         while walked + seg >= next_at:
             t = (next_at - walked) / seg
             p = a.lerp(b, t)
-            steel.cyl(r + 0.02, p - (b - a).normalized() * 0.03, p + (b - a).normalized() * 0.03, 8)
+            COLLARS.append((p.copy(), (b - a).normalized(), r + 0.02))   # (hundreds of them: instanced, web side)
             foot(p, 0.03)
             next_at += EVERY
         walked += seg
@@ -855,7 +868,8 @@ def machinery():
     block(lamps, 'front', 384, 398, 398, 410, 0.112, 0.02)
     m.done('mech', MECH, pod, None, 0.008)
     hose.done('hoses', HOSE, pod, None, 0)
-    steel.done('clamps', STEEL, pod, None, 0.004)
+    steel.done('clamps', STEEL, pod, None, 0)   # (the couplings at the hoses' ends; no bevel, for nothing seen)
+    empty('collars_hoses', Vector((0, 0, 0)), None, pod, 0.05, at=placements(COLLARS))
     lamps.done('lamps', LED, pod, None, 0)
     white.done('blocks', BLOCK, pod, None, 0.008)
     plate_.done('spine_plate', PANEL, pod, None, 0.006)
@@ -995,7 +1009,7 @@ def bolts(clear):
     soups, count = {}, 0
     for P in RIMS:
         M = P['transform'].inverted() if P['transform'] else Matrix.Identity(4)
-        sp = soups.setdefault(P['parent'].name, (Soup(), P['parent']))[0]
+        sp = soups.setdefault(P['parent'].name, ([], P['parent']))[0]
         segs = [(a, b) for loop in P['loops'] for a, b, _, _ in loop]
         def near_edge(q):
             for a, b in segs:
@@ -1022,12 +1036,13 @@ def bolts(clear):
                     if any((got[0] - c).length < r for c, r in clear): continue
                     if near_edge(q): continue
                     p = q + n * P['thick']
-                    sp.cyl(0.0055, p - n * 0.002, p + n * 0.0012, 8)   # small: a washer and a hex head, flush
-                    sp.cyl(0.0036, p, p + n * 0.0032, 6)
+                    sp.append((p, n))   # one small hex head here, nearly flush: drawn on the web side, instanced
                     count += 1
                 acc += L
+    # not geometry: where each bolt goes, on an empty, for the web side to draw them all as one instanced mesh
+    # (449 copies of one small hexagon were a sixth of the glb)
     for name, (sp, par) in soups.items():
-        sp.done('bolts_' + name, BOLT, par, None, 0)
+        empty('bolts_' + name, Vector((0, 0, 0)), None, par, 0.05, at=placements(sp))
     return count
 
 
@@ -1403,7 +1418,9 @@ def lifts(top):
 
 
 def hooks(ports, top, drip_seam, drip_under, eyes):
-    hang = top + Vector((-0.6, 0.15, 7.2))
+    # straight above its middle: it hangs plumb
+    mid = sum((v.co for v in hull.verts), Vector()) / len(hull.verts)
+    hang = Vector((mid.x, mid.y, top.z + 7.2))
     for i, (p, d, r) in enumerate(ports):
         # they hang slack: the hoses carry nothing
         empty('plug.%03d' % i, p, d, pod, radius=r, slack=1.08 + 0.1 * ((i * 37) % 5) / 4)
@@ -1605,11 +1622,9 @@ if STAGE != 'hull':
     seam_drip = blood()
     inside()
     hooks(ports, top, seam_drip, under, lifts(top))
-    # it hangs askew as the hall picture has it: seen from the web's first view (from the front left, 34 degrees
-    # round), head to the left by 24 degrees and the foot a little towards you
-    look = Vector((math.sin(-0.6), -math.cos(-0.6), 0))
-    side = Vector((math.cos(-0.6), math.sin(-0.6), 0))
-    pod.rotation_euler = (Matrix.Rotation(0.42, 3, look) @ Matrix.Rotation(0.1, 3, side)).to_euler()
+    # it hangs straight. (It once hung askew as the hall picture has it, head to the left by 24 degrees: a pod on
+    # four slings from one hook hangs plumb, and that read as wrong)
+    pod.rotation_euler = (0, 0, 0)
 
 if STAGE == 'all':
     on_body, on_door = [o for o in PLATES if o.parent == pod], [o for o in PLATES if o.parent == door]

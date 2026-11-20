@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { GTAOPass } from 'three/addons/postprocessing/GTAOPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
@@ -9,7 +10,7 @@ import { Cable } from './cables';
 import { game } from './game';
 import { Blood } from './blood';
 import { buildHall, SCENE_TARGETS } from './hall';
-import { dress, DOOR_GLOW, GLOWING, rubber, wire as wireSteel } from './materials';
+import { dress, DOOR_GLOW, GLOWING, instances, rubber, wire as wireSteel } from './materials';
 
 // A pod hanging in a hall. The model comes from Blender (model/cocoon.blend → public/cocoon.glb) and says by
 // name what is what:
@@ -239,9 +240,12 @@ function start() {
     door.quaternion.copy(doorRest).multiply(q.setFromAxisAngle(Y, doorSign * open));
   }
 
-  new GLTFLoader().load(`${import.meta.env.BASE_URL}cocoon.glb`, (gltf) => {
+  // (the glb is packed after Blender writes it: `pnpm -C 20 glb`, its meshes meshopt-compressed and quantized, its
+  // textures webp; 1.6 MB where it was 6.4)
+  new GLTFLoader().setMeshoptDecoder(MeshoptDecoder).load(`${import.meta.env.BASE_URL}cocoon.glb`, (gltf) => {
     const root = gltf.scene;
     dress(root);
+    instances(root); // the bolts and the hoses' collars, from where they go
     scene.add(root);
     root.updateWorldMatrix(true, true);
     const named = (re: RegExp) => {
