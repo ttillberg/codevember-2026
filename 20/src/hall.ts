@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { hallSteel } from './materials';
+import { COVER, hallSteel } from './materials';
 import { NOISE3D } from './noise';
 
 const HAZE_TOP = 55;
@@ -161,14 +161,21 @@ export function buildHall(scene: THREE.Scene, hang: THREE.Vector3, maxTexture = 
   const X0 = COLS[0] - 6, Z0 = ROWS[0] + 6, Z1 = ROWS[ROWS.length - 1] - 6;
   const deck: THREE.Matrix4[] = [];
   const box = (c: THREE.Vector3, size: THREE.Vector3) => deck.push(new THREE.Matrix4().compose(c, new THREE.Quaternion(), size));
+  // glass only in the middle: a deck all round the edge, EDGE wide, so the light comes down in the middle of the hall
+  const EDGE = 24, GZ0 = Z0 - EDGE, GZ1 = Z1 + EDGE;
   const GLASS: [number, number][] = [];
   for (let x = X0, k = 0; x < WX; x += 3, k++) {
-    if (k % 2) { GLASS.push([x, x + 3]); continue; }
+    if (k % 2 && x >= X0 + EDGE && x + 3 <= WX - EDGE) {
+      GLASS.push([x, x + 3]);
+      box(V(x + 1.5, ROOF + 0.3, (Z0 + GZ0) / 2), V(3, 0.4, Z0 - GZ0)); // the deck at either end of the band
+      box(V(x + 1.5, ROOF + 0.3, (GZ1 + Z1) / 2), V(3, 0.4, GZ1 - Z1));
+      continue;
+    }
     box(V(x + 1.5, ROOF + 0.3, (Z0 + Z1) / 2), V(3, 0.4, Z0 - Z1));
   }
   for (const [x0, x1] of GLASS) {
-    for (let z = Z0; z > Z1; z -= 1.4) bar(V(x0, ROOF + 0.3, z), V(x1, ROOF + 0.3, z), 0.08, 0.16);
-    bar(V((x0 + x1) / 2, ROOF + 0.3, Z0), V((x0 + x1) / 2, ROOF + 0.3, Z1), 0.06, 0.12);
+    for (let z = GZ0; z > GZ1; z -= 1.4) bar(V(x0, ROOF + 0.3, z), V(x1, ROOF + 0.3, z), 0.08, 0.16);
+    bar(V((x0 + x1) / 2, ROOF + 0.3, GZ0), V((x0 + x1) / 2, ROOF + 0.3, GZ1), 0.06, 0.12);
   }
   const FAN_R = 6.5, HUB = 1.1, BLADES = 5;
   // two bigger ones up in the sun's wall, near the end: the first just where the eye looks up to as the page
@@ -395,6 +402,12 @@ export function buildHall(scene: THREE.Scene, hang: THREE.Vector3, maxTexture = 
   // the fans: a plate round each hole cut round, a drum through the wall, struts holding the motor, five broad
   // blades on a hub, and the daylight behind, bright through the haze; the light through them is in rays.ts
   const rotors: THREE.Group[] = [];
+  const shutters: { side: boolean; leaves: THREE.Mesh[] }[] = [];
+  // (a leaf: from its inner edge out past the rim, wide enough to cover its fifth of the opening and more)
+  const leafGeo = new THREE.BoxGeometry(FAN_R + 0.6, 2 * FAN_R + 0.4, 0.03).translate((FAN_R + 0.6) / 2, 0, 0);
+  const leafMat = new THREE.MeshStandardMaterial({ color: 0x1d1f23, roughness: 0.45, metalness: 0.8, side: THREE.DoubleSide });
+  // each wall's: where they are (1 open, 0 shut), where they are going, how fast
+  const iris = { end: { s: 1, to: 1, v: 0 }, side: { s: 1, to: 1, v: 0 } };
   {
     const S = 2 * FAN_R + 1;
     const plate = new THREE.Shape().moveTo(-S / 2, -S / 2).lineTo(S / 2, -S / 2).lineTo(S / 2, S / 2).lineTo(-S / 2, S / 2).closePath();
@@ -448,9 +461,35 @@ export function buildHall(scene: THREE.Scene, hang: THREE.Vector3, maxTexture = 
       rotor.rotation.z = f.angle;
       g.add(rotor);
       rotors.push(rotor);
+      // the leaf shutter behind it, outside the wall: five blades, each a plate whose inner edge is one side of a
+      // five-sided opening; they slide in from five sides (turning a little as they come) until they meet in the
+      // middle. Open, they are back behind the wall
+      const iris = new THREE.Group();
+      iris.position.z = -1.0;
+      const leaves: THREE.Mesh[] = [];
+      for (let k = 0; k < 5; k++) {
+        const pivot = new THREE.Group();
+        const leaf = new THREE.Mesh(leafGeo, leafMat);
+        leaf.position.z = k * 0.012; // (each over the last, as the blades of a shutter lie)
+        pivot.add(leaf);
+        iris.add(pivot);
+        leaves.push(leaf);
+      }
+      g.add(iris);
+      shutters.push({ side: SIDE_FANS.includes(f), leaves });
       scene.add(g);
     }
   }
+  /** set a wall's shutters: s 1 open, 0 shut */
+  const setLeaves = (side: boolean, s: number) => {
+    const a = s * (FAN_R + 0.3) - 0.08, turn = (1 - s) * 0.3;
+    for (const sh of shutters) {
+      if (sh.side !== side) continue;
+      sh.leaves.forEach((leaf, k) => { leaf.parent!.rotation.z = turn + (k * 2 * Math.PI) / 5; leaf.position.x = a; });
+    }
+  };
+  setLeaves(false, 1);
+  setLeaves(true, 1);
 
   // the glass in the roof and the windows: bright, the sky through them, seen through the haze
   {
@@ -458,19 +497,55 @@ export function buildHall(scene: THREE.Scene, hang: THREE.Vector3, maxTexture = 
     const pane = new THREE.PlaneGeometry(1, 1);
     for (const [x0, x1] of GLASS) {
       const m = new THREE.Mesh(pane, glow);
-      m.scale.set(x1 - x0, Z0 - Z1, 1);
+      m.scale.set(x1 - x0, GZ0 - GZ1, 1);
       m.rotation.x = Math.PI / 2;
-      m.position.set((x0 + x1) / 2, ROOF + 0.9, (Z0 + Z1) / 2);
+      m.position.set((x0 + x1) / 2, ROOF + 0.9, (GZ0 + GZ1) / 2);
       scene.add(m);
     }
+    // (the small windows in the sun's wall in the haze like the rest, so they do not stand out of it as specks)
+    const far = new THREE.MeshBasicMaterial({ color: 0xc4ccd6 });
     for (const h of HOLES) {
-      const m = new THREE.Mesh(pane, glow);
+      const m = new THREE.Mesh(pane, far);
       m.scale.set(1, 1.4, 1);
       m.rotation.y = -Math.PI / 2;
       m.position.set(WX + 0.6, h.y, h.z);
       scene.add(m);
     }
   }
+
+  // ---------- the roof's shutter: as on a shop front, but over the whole roof. Slats run from the far end on the sun's
+  // side right across to a drum at this end, between the deck and the glass, and roll up onto it: the hall starts
+  // dark and the light comes in as it rolls, band by band of glass from the sun's side over to here. Its shadow
+  // is worked out where the light is (materials.ts, rays.ts); only the pod's own sun has it drawn in its map
+  const SHUT_Y = ROOF + 0.7, SLAT = 0.6, RUN = WX - X0, R0 = 1.1, THICK_SLAT = 0.07;
+  let shut = 1, shutTo = 1, shutV = 0; // how much of the roof it covers, where it is going, how fast
+  const shutter = new THREE.Group();
+  const slatMat = new THREE.MeshStandardMaterial({ color: 0x34373b, roughness: 0.5, metalness: 0.75 });
+  const slats = new THREE.InstancedMesh(new THREE.BoxGeometry(SLAT - 0.05, THICK_SLAT, Z0 - Z1 + 2), slatMat, Math.ceil(RUN / SLAT) + 1);
+  slats.castShadow = true;
+  slats.frustumCulled = false;
+  const drum = new THREE.Mesh(new THREE.CylinderGeometry(1, 1, Z0 - Z1 + 2, 48).rotateX(Math.PI / 2), slatMat);
+  drum.castShadow = true;
+  const housing = new THREE.Mesh(new THREE.BoxGeometry(5.2, 4.4, Z0 - Z1 + 4), new THREE.MeshStandardMaterial({ color: 0x24262a, roughness: 0.6, metalness: 0.6 }));
+  housing.position.set(X0 - 2.6, SHUT_Y + 2.3, (Z0 + Z1) / 2);
+  housing.castShadow = true;
+  shutter.add(slats, drum, housing);
+  scene.add(shutter);
+  const lay = () => {
+    const L = shut * RUN;
+    const n = Math.floor(L / SLAT);
+    const m = new THREE.Matrix4();
+    for (let i = 0; i < n; i++) slats.setMatrixAt(i, m.makeTranslation(X0 + L - (i + 0.5) * SLAT, SHUT_Y, (Z0 + Z1) / 2));
+    slats.count = n;
+    slats.instanceMatrix.needsUpdate = true;
+    // the drum fattens with what is wound on it, and turns as it winds
+    const r = Math.sqrt(R0 * R0 + ((1 - shut) * RUN * THICK_SLAT) / Math.PI);
+    drum.scale.set(r, 1, r);
+    drum.position.set(X0 - 2.6, SHUT_Y + r - 0.1, (Z0 + Z1) / 2);
+    drum.rotation.z = -((1 - shut) * RUN) / r;
+    COVER.x.value.set(X0 - 1, X0 + L, 0.6, L > 0.05 ? 1 : 0);
+  };
+  lay();
 
   let dome!: THREE.Mesh<THREE.SphereGeometry, THREE.ShaderMaterial>;
   // the haze beyond everything, the same grey as the fog at each height
@@ -629,6 +704,8 @@ export function buildHall(scene: THREE.Scene, hang: THREE.Vector3, maxTexture = 
     });
 
   const shafts: THREE.ShaderMaterial[] = [];
+  let shaftK = 1;
+  const roofBase = roof.intensity;
   /** a cone of light from `from` along `dir`, r0 wide where it starts, r1 where it ends `len` on */
   const shaft = (from: THREE.Vector3, dir: THREE.Vector3, len: number, r0: number, r1: number, color: number, strength: number) => {
     const g = new THREE.CylinderGeometry(r0, r1, len, 40, 1, true);
@@ -652,7 +729,7 @@ export function buildHall(scene: THREE.Scene, hang: THREE.Vector3, maxTexture = 
 
   // ---------- dust in the light over the pod
 
-  const DUST = 700;
+  const DUST = 450;
   const dust = new Float32Array(DUST * 3);
   const seeds = new Float32Array(DUST);
   const dustAt = (i: number, fresh: boolean) => {
@@ -681,10 +758,11 @@ export function buildHall(scene: THREE.Scene, hang: THREE.Vector3, maxTexture = 
   }
   const motes = new THREE.Points(
     dustGeo,
-    new THREE.PointsMaterial({ size: 0.035, map: new THREE.CanvasTexture(dot), color: 0x9aa4ae, transparent: true, opacity: 0.7, depthWrite: false, blending: THREE.AdditiveBlending }),
+    new THREE.PointsMaterial({ size: 0.022, map: new THREE.CanvasTexture(dot), color: 0x8a939c, transparent: true, opacity: 0.32, depthWrite: false, blending: THREE.AdditiveBlending }), // discreet
   );
   scene.add(motes);
 
+  const fansOut = { list: FANS, dir: FAN_DIR, radius: FAN_R, hub: HUB, blades: BLADES, wallZ: FZ, side: SIDE_FANS, sideScale: SIDE_SCALE, wallX: WX, shutter: { end: 1, side: 1 } };
   return {
     podSun,
     /** the sun was moved: its map is drawn again before the next frame */
@@ -700,7 +778,7 @@ export function buildHall(scene: THREE.Scene, hang: THREE.Vector3, maxTexture = 
     right,
     sun,
     /** all the faked shafts brighter or dimmer at once */
-    set shaftGain(g: number) { for (const s of shafts) s.uniforms.strength.value = s.userData.strength * g; },
+    set shaftGain(g: number) { shaftK = g; for (const s of shafts) s.uniforms.strength.value = s.userData.strength * g; },
     air,
     roofY: ROOF,
     /** what runs along the girder with the pod: move it along x */
@@ -718,7 +796,9 @@ export function buildHall(scene: THREE.Scene, hang: THREE.Vector3, maxTexture = 
       };
     }),
     /** the fans in the end wall, for the light through them (rays.ts): where, how far round, which way it comes */
-    fans: { list: FANS, dir: FAN_DIR, radius: FAN_R, hub: HUB, blades: BLADES, wallZ: FZ, side: SIDE_FANS, sideScale: SIDE_SCALE, wallX: WX },
+    fans: fansOut,
+    /** a wall's fans' leaf shutters: open or shut */
+    fanShutter(side: boolean, open: boolean) { (side ? iris.side : iris.end).to = open ? 1 : 0; },
     /** the tight sun on the pod, wherever it has swung to; as the wide one is set (the debug panel too) */
     follow(at: THREE.Vector3) {
       podSun.color.copy(sun.color);
@@ -727,7 +807,38 @@ export function buildHall(scene: THREE.Scene, hang: THREE.Vector3, maxTexture = 
       podSun.target.position.copy(at);
       podSun.position.copy(at).addScaledVector(toward, 120);
     },
+    /** the shutter: open (rolled up) or shut */
+    roofOpen(open: boolean) { shutTo = open ? 0 : 1; },
+    /** how much of the roof is open, 0..1 */
+    get open() { return 1 - shut; },
     update(time: number, dt: number) {
+      // the shutter: heavy, slow to start and to stop, a few metres a second at most
+      if (shut !== shutTo || shutV) {
+        const d = shutTo - shut, a = 0.012, vmax = 0.06;
+        const want = Math.sign(d) * Math.min(vmax, Math.sqrt(2 * a * Math.abs(d)));
+        shutV += THREE.MathUtils.clamp(want - shutV, -a * dt, a * dt);
+        shut = THREE.MathUtils.clamp(shut + shutV * dt, 0, 1);
+        if (Math.abs(d) < 1e-4 && Math.abs(shutV) < 1e-3) { shut = shutTo; shutV = 0; }
+        lay();
+      }
+      // the leaf shutters: two seconds and a bit, eased at both ends
+      for (const [side, st] of [[false, iris.end], [true, iris.side]] as const) {
+        if (st.s === st.to && !st.v) continue;
+        const d = st.to - st.s, a = 1.6, vmax = 0.55;
+        const want = Math.sign(d) * Math.min(vmax, Math.sqrt(2 * a * Math.abs(d)));
+        st.v += THREE.MathUtils.clamp(want - st.v, -a * dt, a * dt);
+        st.s = THREE.MathUtils.clamp(st.s + st.v * dt, 0, 1);
+        if (Math.abs(d) < 1e-3 && Math.abs(st.v) < 0.02) { st.s = st.to; st.v = 0; }
+        setLeaves(side, st.s);
+      }
+      fansOut.shutter.end = iris.end.s;
+      fansOut.shutter.side = iris.side.s;
+      const toward = sun.position.clone().sub(sun.target.position).normalize();
+      COVER.sun.value.set(toward.x, toward.y, toward.z, SHUT_Y);
+      // the skylight over the pod and its shaft come with the open roof over it
+      const over = THREE.MathUtils.smoothstep(roof.position.x, X0 + shut * RUN - 1.5, X0 + shut * RUN + 1.5);
+      roof.intensity = roofBase * over;
+      shafts[0].uniforms.strength.value = shafts[0].userData.strength * shaftK * over;
       dome.material.uniforms.gain.value = (scene.fog as THREE.Fog).far;
       for (const s of shafts) s.uniforms.time.value = time;
       // (one switched off, from the hologram (game.ts), runs down slowly, and up again)

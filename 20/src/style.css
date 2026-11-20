@@ -85,5 +85,17 @@ canvas:active { cursor: grabbing; }
 .split-down canvas#c { height: 50vh; }
 .split-down .ref { left: 0; bottom: 0; width: 100vw; height: 50vh; }
 .debug .label kbd { margin-left: 6px; }
+/* the controls, bottom left: round buttons on a frosted ground, each an abstract symbol in yellow (main.ts) */
+.controls { position: fixed; left: max(24px, env(safe-area-inset-left)); bottom: max(24px, env(safe-area-inset-bottom)); margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 10px; z-index: 4; }
+.controls button { width: 44px; height: 44px; border-radius: 50%; border: 1px solid rgba(255, 200, 40, 0.35); background: rgba(12, 13, 16, 0.42); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); color: #ffc82a; display: grid; place-items: center; padding: 0; cursor: pointer; -webkit-tap-highlight-color: transparent; transition: border-color 0.3s, background 0.3s; }
+.controls button[aria-pressed="true"] { border-color: rgba(255, 200, 40, 0.85); background: rgba(40, 32, 8, 0.45); }
+.controls svg { width: 24px; height: 24px; overflow: visible; }
+.controls svg * { fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; }
+.controls svg .drum { fill: currentColor; stroke: none; }
+.controls svg .light { stroke-width: 1.4; transition: opacity 0.2s; }
+.controls [data-ctl^="fans"] svg .light circle { fill: currentColor; stroke: none; }
+@media (max-width: 640px) {
+  .controls { left: max(16px, env(safe-area-inset-left)); bottom: max(16px, env(safe-area-inset-bottom)); }
+}
 /* ?clean: the scene alone */
-.clean .plate, .clean .debug { display: none; }
+.clean .plate, .clean .debug, .clean .controls { display: none; }

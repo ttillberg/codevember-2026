@@ -23,6 +23,53 @@ import { NOISE3D } from './noise';
     '#ifndef SUN_SKIP\n#define SUN_SKIP 1\n#endif\n' + chunk.slice(0, a) + '#if UNROLLED_LOOP_INDEX != SUN_SKIP\n' + chunk.slice(a, b) + '\n#endif' + chunk.slice(b);
 }
 export const POD_SUN = { SUN_SKIP: '0' };
+// The roof's shutter (hall.ts) is not in the wide sun's map, which is drawn once: where it is, it is worked out.
+// Up the sun's light from the point to the shutter's height; under the shutter if it gets there between the
+// shutter's two ends, along x. On both suns (the only directional lights): the pod's own has it in its map too, but
+// that map is a column 4.4 m across, and this is the same answer everywhere.
+export const COVER = {
+  /** the shutter along x: from, to, a soft edge, 1 if it is there at all */
+  x: { value: new THREE.Vector4(0, 0, 1, 0) },
+  /** towards the sun (xyz), the shutter's height (w) */
+  sun: { value: new THREE.Vector4(0, 1, 0, 0) },
+};
+THREE.ShaderChunk.lights_pars_begin += /* glsl */ `
+uniform vec4 coverX, coverSun;
+float coverLight( vec3 viewPos ) {
+  if ( coverX.w < 0.5 ) return 1.0;
+  // the world from the view: the view matrix is a turn and a move, so its inverse is its transpose
+  vec3 w = transpose( mat3( viewMatrix ) ) * ( viewPos - viewMatrix[ 3 ].xyz );
+  float t = ( coverSun.w - w.y ) / max( coverSun.y, 0.05 );
+  if ( t < 0.0 ) return 1.0;
+  float hx = w.x + coverSun.x * t;
+  return 1.0 - smoothstep( coverX.x - coverX.z, coverX.x + coverX.z, hx ) * ( 1.0 - smoothstep( coverX.y - coverX.z, coverX.y + coverX.z, hx ) );
+}
+`;
+{
+  const chunk = THREE.ShaderChunk.lights_fragment_begin;
+  const a = chunk.indexOf('directionalLight = directionalLights[ i ];');
+  const b = chunk.indexOf('RE_Direct(', a);
+  if (a < 0 || b < 0) throw new Error('lights_fragment_begin: the directional loop moved');
+  THREE.ShaderChunk.lights_fragment_begin = chunk.slice(0, b) + 'directLight.color *= coverLight( geometryPosition );\n\t\t' + chunk.slice(b);
+}
+/** every lit material in the scene takes the shutter's uniforms (three gives a chunk no uniforms of its own) */
+export function shareCover(root: THREE.Object3D) {
+  const seen = new Set<THREE.Material>();
+  root.traverse((o) => {
+    const m = (o as THREE.Mesh).material;
+    for (const x of Array.isArray(m) ? m : m ? [m] : []) {
+      if (seen.has(x) || !(x as THREE.MeshStandardMaterial).isMeshStandardMaterial) continue;
+      seen.add(x);
+      const before = x.onBeforeCompile;
+      x.onBeforeCompile = (sh, r) => {
+        before.call(x, sh, r);
+        sh.uniforms.coverX = COVER.x;
+        sh.uniforms.coverSun = COVER.sun;
+      };
+      x.needsUpdate = true;
+    }
+  });
+}
 // and the red light inside the pod (main.ts) has no shadows: it would light the plates' seams and the machinery
 // on the flanks through the shell. Only what is in there takes it (the wrapped thing, the shell's inside):
 // everything else is compiled with NO_POINT, the point lights left out of its loop

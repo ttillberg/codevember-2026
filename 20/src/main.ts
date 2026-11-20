@@ -7,10 +7,10 @@ import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { Rays } from './rays';
 import { Post } from './post';
 import { Cable } from './cables';
-import { game } from './game';
+import { pods } from './pods';
 import { Blood } from './blood';
 import { buildHall, SCENE_TARGETS } from './hall';
-import { dress, DOOR_GLOW, GLOWING, instances, rubber, wire as wireSteel } from './materials';
+import { dress, DOOR_GLOW, GLOWING, instances, rubber, shareCover, wire as wireSteel } from './materials';
 
 // A pod hanging in a hall. The model comes from Blender (model/cocoon.blend → public/cocoon.glb) and says by
 // name what is what:
@@ -46,10 +46,41 @@ function start() {
 
   const scene = new THREE.Scene();
   scene.background = new THREE.Color(FOG);
-  scene.fog = new THREE.Fog(FOG, 0.026, 9); // not linear: near is the density, far the haze's gain up high (hall.ts)
+  const FOG_GAIN = 9;
+  scene.fog = new THREE.Fog(FOG, 0.026, FOG_GAIN); // not linear: near is the density, far the haze's gain up high (hall.ts)
   const pmrem = new THREE.PMREMGenerator(renderer);
   scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
   scene.environmentIntensity = 0.18;
+  // ---------- the controls, bottom left: the hall's machines, one symbol each, in yellow. The roof first
+  let roofWanted = false;
+  const controls = (() => {
+    const list = document.querySelector<HTMLElement>('.controls')!;
+    const roofBtn = list.querySelector<HTMLButtonElement>('[data-ctl="roof"]')!;
+    const bar = roofBtn.querySelector<SVGLineElement>('.bar')!;
+    const drum = roofBtn.querySelector<SVGCircleElement>('.drum')!;
+    const light = roofBtn.querySelector<SVGGElement>('.light')!;
+    roofBtn.addEventListener('click', () => { roofWanted = !roofWanted; hall?.roofOpen(roofWanted); });
+    // the fans, a button for each wall's: their leaf shutters open or shut, the light through them with them
+    const fanBtns = (['end', 'side'] as const).map((w) => {
+      const btn = list.querySelector<HTMLButtonElement>(`[data-ctl="fans-${w}"]`)!;
+      const dots = [...btn.querySelectorAll<SVGCircleElement>('.light circle')];
+      const r0 = +dots[0].getAttribute('r')!;
+      let wanted = true;
+      btn.addEventListener('click', () => { wanted = !wanted; hall?.fanShutter(w === 'side', wanted); btn.setAttribute('aria-pressed', String(wanted)); });
+      return (s: number) => { for (const d of dots) d.setAttribute('r', (r0 * s).toFixed(2)); };
+    });
+    return {
+      /** the fans' symbols follow their shutters: the light in each ring closes to a point */
+      fans(end: number, side: number) { fanBtns[0](end); fanBtns[1](side); },
+      /** the symbol follows the shutter: the bar rolls onto the dot, light comes through */
+      roof(open: number, wanted: boolean) {
+        bar.setAttribute('x2', (7 + 14 * (1 - open)).toFixed(2));
+        drum.setAttribute('r', (1.8 + 0.9 * open).toFixed(2));
+        light.style.opacity = open.toFixed(2);
+        roofBtn.setAttribute('aria-pressed', String(wanted));
+      },
+    };
+  })();
   const hemi = new THREE.HemisphereLight(0xc8d0d8, 0x050506, 0.22); // a little fill, no more
   scene.add(hemi);
   // the rest of the light, from the roof and the sides, comes with the hall (hall.ts)
@@ -90,7 +121,7 @@ function start() {
   // a view the camera is easing to (the debug panel's), null while it is yours
   let goal: null | { yaw: number; pitch: number; radius: number; target: THREE.Vector3 } = null;
   const NUDGE = 0.06; // it is heavy: how far a hand can lean it, radians
-  let still = false; // the debug panel's hold still: no swing
+  let still = true; // the debug panel's hold still: no swing, no crane round; on from the start
   const podRest = new THREE.Quaternion(); // how the pod hangs, askew, as it comes from Blender
 
   // ---------- the pod: a pendulum under `hang`, with a twist of its own
@@ -204,7 +235,8 @@ function start() {
     w.userData.f1.position.y = len - 0.17;
   };
   let blood: Blood | null = null;
-  let play: ReturnType<typeof game> | null = null;
+  let others: ReturnType<typeof pods> | null = null;
+  let raysPass: Rays | null = null;
   const inside = new THREE.PointLight(0xff2410, 1.6, 1.6, 2);
   /** something in there breathing, slowly: in for two and a half seconds, out for four; 0 out, 1 in */
   const heart = (t: number) => {
@@ -282,7 +314,8 @@ function start() {
     // the sun's light in the haze, marched against its shadow map, after the AO and before the tone mapping
     const rays = new Rays(camera, hall.sun, hall.podSun, () => (ao.enabled ? ao.depthTexture : null), { roof: hall.roofY, box: hall.air, density: 0.04, fans: hall.fans });
     post.insert(rays, 1);
-    if (import.meta.env.DEV) Object.assign(window, { rays, sun: hall.sun });
+    raysPass = rays;
+    if (import.meta.env.DEV) Object.assign(window, { rays, sun: hall.sun, hall });
     // ?debug: colours and render settings by hand
     if (query.has('debug')) { const h = hall; import('./tweaks').then(({ tweaks }) => tweaks({ renderer, scene, hemi, ao, rays, hall: h })); }
     pod.traverse((o) => { if ((o as THREE.Mesh).isMesh) o.castShadow = o.receiveShadow = true; });
@@ -334,10 +367,10 @@ function start() {
       cables.push(cable);
       scene.add(cable.mesh);
     });
-    if (door && hall) {
+    if (hall) {
       const h = hall;
-      play = game({
-        scene, pod, door, fans: [...h.fans.list, ...h.fans.side],
+      others = pods({
+        scene, pod,
         podAt: podCentre.clone().applyMatrix4(pod.matrixWorld),
         spans: h.spans,
         lifts: h.lifts,
@@ -349,10 +382,12 @@ function start() {
           dock: DOCK,
           end: END,
         },
-        docked: () => { doorFree = true; },
       });
-      play.resize(canvas.clientWidth, canvas.clientHeight);
     }
+    // the roof's shutter darkens the sun wherever it is: every lit material takes its uniforms
+    shareCover(scene);
+    // it starts shut, the hall dark; a moment, and it rolls up
+    setTimeout(() => { roofWanted = true; hall?.roofOpen(true); }, 1600);
     blood = new Blood(drips);
     scene.add(blood.mesh);
 
@@ -393,7 +428,6 @@ function start() {
   let pinch: null | { d: number; r: number } = null;
   const spread = () => { const [a, b] = [...fingers.values()]; return Math.hypot(a.x - b.x, a.y - b.y) || 1; };
   canvas.addEventListener('pointerdown', (e) => {
-    if (play?.pointer('down', e)) { grab = null; return; } // the hologram's, not the scene's
     if (e.pointerType === 'touch') {
       fingers.set(e.pointerId, { x: e.clientX, y: e.clientY });
       if (fingers.size === 2) {
@@ -416,7 +450,6 @@ function start() {
     if (!pod) return;
     ndc.set((e.clientX / canvas.clientWidth) * 2 - 1, -(e.clientY / canvas.clientHeight) * 2 + 1);
     ray.setFromCamera(ndc, eye);
-    if (play && ray.intersectObject(play.target, false).length) { grab = null; play.open(); return; }
     const hit = ray.intersectObject(pod, true)[0];
     if (!hit) return;
     let o: THREE.Object3D | null = hit.object;
@@ -441,7 +474,6 @@ function start() {
     }
   });
   canvas.addEventListener('pointermove', (e) => {
-    if (play?.pointer('move', e)) return;
     if (fingers.has(e.pointerId)) fingers.set(e.pointerId, { x: e.clientX, y: e.clientY });
     if (pinch) {
       if (fingers.size >= 2) radius = THREE.MathUtils.clamp((pinch.r * pinch.d) / spread(), 2, 16);
@@ -480,7 +512,6 @@ function start() {
     radius = THREE.MathUtils.clamp(radius * Math.exp(e.deltaY * 0.001), 2, 16);
   }, { passive: false });
   const release = (e: PointerEvent) => {
-    play?.pointer('up', e);
     grab = null;
     fingers.delete(e.pointerId);
     if (fingers.size < 2) pinch = null;
@@ -603,7 +634,6 @@ function start() {
         eye: { yaw: r(yaw), pitch: r(pitch), radius: r(radius), target: v3(target), camera: v3(camera.position), look: v3(camera.getWorldDirection(new THREE.Vector3())), fov: camera.fov, projection: eye === ortho ? 'iso' : 'pers' },
         pod: { at: podAt, swing: r(THREE.MathUtils.radToDeg(Math.hypot(ax, az)), 1), twist: r(THREE.MathUtils.radToDeg(tw), 1), door: r(THREE.MathUtils.radToDeg(open), 0), doorFree, still },
         crane: { along: r(carry.x), up: r(carry.y), time: r(craneTime, 1), hand: hand ? { push: hand.push, v: r(hand.v) } : null },
-        game: play?.state() ?? null,
         screen: { css: [canvas.clientWidth, canvas.clientHeight], dpr: devicePixelRatio, fps: r(1000 / frameMs, 0), ms: r(frameMs, 1) },
         at: new Date().toISOString(),
         ua: navigator.userAgent,
@@ -694,9 +724,8 @@ function start() {
       if (view === 'side' && current === 'side' && goal) side = -side;
       current = view;
       if (view === 'persp' || !pod) {
-        // back to the pod as it hangs, swinging
+        // back to the pod as it hangs (still, unless hold still was let go)
         if (pod) pod.quaternion.copy(podRest);
-        still = false;
         goal = { yaw: YAW0, pitch: PITCH0, radius: homeRadius, target: home.clone() };
       } else {
         // the sheet draws it hanging straight and still: so does this, while you compare
@@ -759,7 +788,6 @@ function start() {
     homeRadius = 7.5 / Math.min(1, camera.aspect / 0.85); // step back on a narrow screen
     home.x = 0.1 + 0.75 * THREE.MathUtils.clamp((camera.aspect - 1) / 0.7, 0, 1); // on a wide one the pod hangs left of centre, the hall to its right
     if (wasHome) { radius = homeRadius; target.copy(home); }
-    play?.resize(w, h);
   }
   window.addEventListener('resize', resize);
   // (a phone does not always say: the toolbars sliding away, a turn, the canvas changes size without a resize)
@@ -814,7 +842,20 @@ function start() {
     if (pod) hall?.follow(v1.copy(podCentre).applyMatrix4(pod.matrixWorld));
     hall?.update(time, dt);
     blood?.update(dt);
-    play?.update(dt);
+    others?.update(dt);
+    // the daylight in the haze and the fill come with the open roof (a little of each when shut: the windows)
+    if (hall) {
+      const day = hall.open;
+      (scene.fog as THREE.Fog).far = 1 + (FOG_GAIN - 1) * (0.08 + 0.92 * day);
+      hemi.intensity = 0.22 * (0.15 + 0.85 * day);
+      scene.environmentIntensity = 0.18 * (0.15 + 0.85 * day);
+      controls.roof(day, roofWanted);
+      controls.fans(hall.fans.shutter.end, hall.fans.shutter.side);
+      // and the daylight through the fans and windows a little less while the roof is shut, for a dark start
+      if (raysPass) raysPass.fan = 3 * (0.3 + 0.7 * day);
+      hall.left.intensity = 1.6 * (0.12 + 0.88 * day);
+      hall.right.intensity = 0.9 * (0.12 + 0.88 * day);
+    }
     // the red light inside, breathing: on what it lights in there (through the open door) and out of the seams and window
     const beat = heart(time);
     inside.intensity = 1.2 + 7 * beat;
@@ -824,7 +865,6 @@ function start() {
     ao.enabled = eye === camera; // the debug panel's iso goes without
     hall?.prepare(renderer, camera);
     post.render(eye);
-    play?.render(renderer); // the hologram, over it all
     requestAnimationFrame(frame);
   }
   requestAnimationFrame(frame);

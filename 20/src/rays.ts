@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { FullScreenQuad, Pass } from 'three/addons/postprocessing/Pass.js';
 import { NOISE3D } from './noise';
+import { COVER } from './materials';
 
 /** the fans in the end wall (hall.ts): daylight comes in through them, cut by the blades as they turn */
 export interface Fans {
@@ -13,6 +14,8 @@ export interface Fans {
   /** and the ones in the sun's wall, x = wallX: the sun comes in through those, the blades cut it */
   side: { at: THREE.Vector3; angle: number }[];
   sideScale: number;
+  /** how open each wall's leaf shutters are, 0..1 */
+  shutter: { end: number; side: number };
   wallX: number;
 }
 
@@ -25,7 +28,7 @@ export interface Fans {
 export class Rays extends Pass {
   intensity = 1;
   /** how fast the sun's light is used up on its way down from the roof, per metre */
-  fade = 0.014;
+  fade = 0.025;
   /** how patchy the air is: 0 even, 1 drifting smoke and dust */
   smoke = 0.8;
   /** and a glare right under the roof, so many times the rest, gone a few metres down */
@@ -34,7 +37,7 @@ export class Rays extends Pass {
   /** the light through the fans, against the sun's */
   fan = 3;
   /** and how fast it is used up on its way in, per metre */
-  fanFade = 0.035;
+  fanFade = 0.078;
   private half = new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType });
   private march: THREE.ShaderMaterial;
   private blend: THREE.ShaderMaterial;
@@ -70,7 +73,7 @@ export class Rays extends Pass {
         boxMax: { value: o.box.max },
         roof: { value: o.roof },
         density: { value: o.density },
-        fade: { value: 0.014 },
+        fade: { value: 0.025 },
         smoke: { value: 0.8 },
         top: { value: 16 },
         topFade: { value: 0.18 },
@@ -81,8 +84,11 @@ export class Rays extends Pass {
         sides: { value: f.side.map(() => new THREE.Vector3()) },
         wallX: { value: f.wallX },
         sideScale: { value: f.sideScale },
+        coverX: COVER.x,
+        iris: { value: new THREE.Vector2(1, 1) },
+        coverSun: COVER.sun,
         fan: { value: 3 },
-        fanFade: { value: 0.035 },
+        fanFade: { value: 0.078 },
       },
       vertexShader: 'varying vec2 vUv; void main() { vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }',
       fragmentShader: /* glsl */ `
@@ -98,6 +104,22 @@ export class Rays extends Pass {
         uniform vec3 fanDir;
         uniform vec3 sides[SIDES]; // in the sun's wall: z and y of the centre, how far round
         uniform float wallZ, wallX, sideScale, fan, fanFade;
+        uniform vec4 coverX, coverSun; // the roof's shutter (hall.ts, materials.ts)
+        uniform vec2 iris; // the fans' leaf shutters, the end wall's and the sun's wall's: 1 open, 0 shut
+        // through the leaf shutter: inside the five-sided opening its blades' inner edges make (as hall.ts lays them)
+        float leaf(vec2 o, float s) {
+          if (s > 0.999) return 1.0;
+          float a = s * (FAN_R + 0.3) - 0.08, turn = (1.0 - s) * 0.3, m = -1e9;
+          for (int k = 0; k < 5; k++) { float an = turn + float(k) * 1.2566371; m = max(m, dot(o, vec2(cos(an), sin(an)))); }
+          return smoothstep(a + 0.05, a - 0.05, m);
+        }
+        float cover(vec3 p) {
+          if (coverX.w < 0.5) return 1.0;
+          float t = (coverSun.w - p.y) / max(coverSun.y, 0.05);
+          if (t < 0.0) return 1.0;
+          float hx = p.x + coverSun.x * t;
+          return 1.0 - smoothstep(coverX.x - coverX.z, coverX.x + coverX.z, hx) * (1.0 - smoothstep(coverX.y - coverX.z, coverX.y + coverX.z, hx));
+        }
         varying vec2 vUv;
         // how open a fan is at o from its centre, in the wall's plane: shut outside the drum and on the hub, by the
         // blades (broad at the tip, pitched, so a little narrower seen down the axis) and the three struts behind
@@ -151,14 +173,14 @@ export class Rays extends Pass {
             float t = tin + (float(i) + j) * dt;
             vec3 p = camPos + rd * t;
             vec4 s = shadowMatrix * vec4(p, 1.0);
-            float lit = texture(tShadow, vec3(s.xy, s.z - 0.0008));
+            float lit = texture(tShadow, vec3(s.xy, s.z - 0.0008)) * cover(p);
             // the fans in the sun's wall: the map has the round holes, not the blades turning in them. Back up the
             // sun's light to the wall, and if it came in through a fan, how open it is there
             if (p.x < wallX) {
               vec3 q = p - sunDir * ((p.x - wallX) / sunDir.x);
               for (int k = 0; k < SIDES; k++) {
                 vec2 o = vec2(q.z - sides[k].x, q.y - sides[k].y) / sideScale; // (bigger: the same fan, scaled)
-                if (dot(o, o) < (FAN_R + 0.3) * (FAN_R + 0.3)) lit *= vent(o, sides[k].z);
+                if (dot(o, o) < (FAN_R + 0.3) * (FAN_R + 0.3)) lit *= vent(o, sides[k].z) * leaf(o, iris.y);
               }
             }
             // the hall's map has only the steel in it: the pod and its cables, from the pod's own sun. But only what
@@ -184,7 +206,7 @@ export class Rays extends Pass {
             if (dz > 0.0) {
               vec2 q = p.xy - fanDir.xy * (dz / fanDir.z);
               float open = 0.0;
-              for (int k = 0; k < FANS; k++) open += vent(q - fans[k].xy, fans[k].z);
+              for (int k = 0; k < FANS; k++) open += vent(q - fans[k].xy, fans[k].z) * leaf(q - fans[k].xy, iris.x);
               fsum += open * exp(-fanFade * dz) * w;
             }
           }
@@ -251,6 +273,7 @@ export class Rays extends Pass {
       this.fans.list.forEach((f, i) => u.fans.value[i].set(f.at.x, f.at.y, f.angle));
       this.fans.side.forEach((f, i) => u.sides.value[i].set(f.at.z, f.at.y, f.angle));
       u.fan.value = this.fan;
+      u.iris.value.set(this.fans.shutter.end, this.fans.shutter.side);
       u.fanFade.value = this.fanFade;
       u.time.value = performance.now() / 1000;
       renderer.setRenderTarget(this.half);

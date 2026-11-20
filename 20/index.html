@@ -25,6 +25,12 @@
     <canvas class="ref" hidden></canvas>
     <!-- the title plate (docs/DESIGN.md): put the word in Japanese in the span -->
     <div class="plate"><div class="head"><b>20 Cocoon</b><i><a class="home" href="https://ttillberg.github.io/codevember-2026/">Codevember 2026 <span lang="ja">繭</span></a> · <a class="home" href="https://x.com/theo_t">@theo_t</a></i></div></div>
+    <!-- the controls: the hall's machines, bottom left, one abstract symbol each (main.ts) -->
+    <ul class="controls">
+      <li><button data-ctl="roof" aria-label="Roof shutter" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><circle class="drum" cx="4.5" cy="8" r="1.8" /><line class="bar" x1="7" y1="8" x2="21" y2="8" /><g class="light"><line x1="9" y1="12.5" x2="9" y2="19" /><line x1="13" y1="12.5" x2="13" y2="19" /><line x1="17" y1="12.5" x2="17" y2="19" /></g></svg></button></li>
+      <li><button data-ctl="fans-end" aria-label="Fans in the end wall" aria-pressed="true"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="4.5" cy="12" r="3.2" /><circle cx="12" cy="12" r="3.2" /><circle cx="19.5" cy="12" r="3.2" /><g class="light"><circle cx="4.5" cy="12" r="1.8" /><circle cx="12" cy="12" r="1.8" /><circle cx="19.5" cy="12" r="1.8" /></g></svg></button></li>
+      <li><button data-ctl="fans-side" aria-label="Fans in the sun's wall" aria-pressed="true"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="7" cy="12" r="5" /><circle cx="17" cy="12" r="5" /><g class="light"><circle cx="7" cy="12" r="3" /><circle cx="17" cy="12" r="3" /></g></svg></button></li>
+    </ul>
     <!-- debug: a gear bottom right, only in dev or with ?settings / ?debug (docs/DESIGN.md) -->
     <div class="debug" hidden>
       <div class="menu" role="menu">
