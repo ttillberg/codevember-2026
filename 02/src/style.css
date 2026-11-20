@@ -48,7 +48,8 @@ canvas { touch-action: none; cursor: crosshair; }
 #sound.off .x, #ball.off .x { display: inline; }
 .tools button.off { opacity: 0.6; }
 @media (max-width: 640px) {
-  .tools { top: max(16px, env(safe-area-inset-top)); right: max(16px, env(safe-area-inset-right)); }
+  /* five buttons do not fit beside the title on a phone: they go down the right edge */
+  .tools { top: max(16px, env(safe-area-inset-top)); right: max(16px, env(safe-area-inset-right)); flex-direction: column; }
   .tools button { width: 30px; height: 30px; }
   #hint { font-size: 9px; margin-top: 10px; }
 }
@@ -113,3 +114,32 @@ canvas { touch-action: none; cursor: crosshair; }
   font: 600 10px/1 Inter, "Helvetica Neue", Helvetica, Arial, sans-serif; letter-spacing: 0.12em; text-transform: uppercase;
 }
 .clean #bake { display: none; }
+
+/* the replay, bottom centre: play, the hits of the fall over time with the playhead on it, speed, time */
+#replay {
+  position: fixed; z-index: 2; left: 50%; transform: translateX(-50%);
+  bottom: max(24px, env(safe-area-inset-bottom)); width: min(620px, calc(100vw - 48px));
+  display: grid; grid-template-columns: 34px 1fr auto auto; align-items: center; gap: 10px;
+  padding: 8px 12px 8px 8px; border-radius: 12px; box-sizing: border-box;
+  color: #f4f4f2; background: rgba(16, 16, 16, 0.6); -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
+  font: 600 11px/1 Inter, "Helvetica Neue", Helvetica, Arial, sans-serif; letter-spacing: 0.08em;
+}
+#replay[hidden] { display: none; }
+#replay button { height: 34px; padding: 0; border: 0; border-radius: 17px; cursor: pointer; color: inherit; font: inherit; background: rgba(244, 244, 242, 0.12); }
+#rp-play { width: 34px; }
+#rp-play svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; vertical-align: middle; }
+#rp-play .play, #rp-play.paused .pause { display: none; }
+#rp-play.paused .play { display: inline; }
+#rp-speed { min-width: 48px; padding: 0 10px !important; font-variant-numeric: tabular-nums; }
+#rp-time { min-width: 46px; text-align: right; font-variant-numeric: tabular-nums; }
+#rp-track { position: relative; height: 48px; min-width: 0; cursor: ew-resize; touch-action: none; }
+#rp-chart { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+#rp-head { position: absolute; top: -3px; bottom: -3px; left: 0; width: 2px; margin-left: -1px; border-radius: 1px; background: #f4f4f2; pointer-events: none; }
+#rp-head::after { content: ""; position: absolute; left: -4px; top: -4px; width: 10px; height: 10px; border-radius: 50%; background: #f4f4f2; }
+#film.on { background: rgba(244, 244, 242, 0.34); }
+@media (max-width: 640px) {
+  #replay { width: calc(100vw - 24px); bottom: max(12px, env(safe-area-inset-bottom)); gap: 8px; grid-template-columns: 34px 1fr auto; }
+  #rp-time { display: none; }
+  #rp-track { height: 56px; }
+}
+.clean #replay { display: none; }

@@ -25,9 +25,16 @@
     <!-- the title plate (docs/DESIGN.md): put the word in Japanese in the span -->
     <div class="plate"><div class="head"><b>02 Shatter</b><i><a class="home" href="https://ttillberg.github.io/codevember-2026/">Codevember 2026 <span lang="ja">砕ける</span></a> · <a class="home" href="https://x.com/theo_t">@theo_t</a></i></div><p id="hint"></p></div>
     <div id="bake" hidden><i></i><span>Baking the fall</span></div>
+    <div id="replay" hidden>
+      <button id="rp-play" title="Play / pause" aria-label="Play or pause"><svg viewBox="0 0 24 24"><path class="pause" d="M8 5v14M16 5v14" /><path class="play" d="M7 4.5l12 7.5-12 7.5z" /></svg></button>
+      <div id="rp-track"><canvas id="rp-chart"></canvas><i id="rp-head"></i></div>
+      <button id="rp-speed" title="Speed" aria-label="Speed">0.2×</button>
+      <output id="rp-time">0.00 s</output>
+    </div>
     <div class="tools">
       <button id="break" title="Football (Space)" aria-label="Football"><svg viewBox="0 0 24 24"><path d="M12 3l-2 6 4 3-3 4 1 5M4 12l6-3M20 10l-6 2M7 20l4-4" /></svg></button>
       <button id="ball" title="Show the ball (B)" aria-label="Show the ball"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8" /><path class="on" d="M12 9l3 2.2-1.2 3.4h-3.6L9 11.2z" /><path class="x" d="M5 19L19 5" /></svg></button>
+      <button id="film" title="Replay from the side, slowly (S)" aria-label="Replay from the side"><svg viewBox="0 0 24 24"><rect x="3.5" y="6" width="12" height="12" rx="2" /><path d="M15.5 10.5l5-3v9l-5-3" /></svg></button>
       <button id="again" title="New pane (R)" aria-label="New pane"><svg viewBox="0 0 24 24"><path d="M19 12a7 7 0 1 1-2.2-5.1M19 4v4h-4" /></svg></button>
       <button id="sound" title="Sound (M)" aria-label="Sound"><svg viewBox="0 0 24 24"><path d="M4 10v4h3l5 4V6L7 10H4z" /><path class="on" d="M16 9a4 4 0 0 1 0 6M18.5 6.5a8 8 0 0 1 0 11" /><path class="x" d="M16 9l5 6M21 9l-5 6" /></svg></button>
     </div>

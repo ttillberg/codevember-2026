@@ -77,6 +77,7 @@ void main() {
   vec3 c;
   if (vMat < 0.5) c = floorCol(vW);
   else if (vMat < 1.5) c = wallCol(vW);
+  else if (vMat > 2.5) c = wallCol(vec3(vW.z + 1.2, vW.y, WALL_Z)) * 0.8; // a side wall
   else {
     // the channel the pane stands in: dark steel with a line of light along its top edge
     vec3 V = normalize(vW - uCam);

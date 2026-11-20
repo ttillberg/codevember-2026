@@ -175,6 +175,8 @@ export class Renderer {
     const quadv = (a: number[], b: number[], c: number[], d: number[], m: number) => { for (const p of [a, b, c, a, c, d]) r.push(p[0], p[1], p[2], m); };
     quadv([-9, 0, 6], [9, 0, 6], [9, 0, -2.4], [-9, 0, -2.4], 0);
     quadv([-9, 0, -2.4], [9, 0, -2.4], [9, 7, -2.4], [-9, 7, -2.4], 1);
+    quadv([-4.5, 0, 6], [-4.5, 0, -2.4], [-4.5, 7, -2.4], [-4.5, 7, 6], 3);
+    quadv([4.5, 0, -2.4], [4.5, 0, 6], [4.5, 7, 6], [4.5, 7, -2.4], 3);
     const f: number[] = [];
     for (const old of this.layers) { gl.deleteBuffer(old.buf); gl.deleteVertexArray(old.vao); }
     this.layers = zs.map((z, i) => {

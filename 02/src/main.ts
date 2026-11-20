@@ -122,6 +122,7 @@ function newPane() {
   state = 'intact';
   ball.on = false;
   clearTimeout(readyTimer); readyTimer = 0; ready = null;
+  if (replay.on) setReplay(false);
   for (const b of [...bakes.values()]) dropBake(b);
   falls.length = 0;
   const s = Math.min(2048, 4096 / layers.length) / Math.max(W, H);
@@ -137,7 +138,8 @@ function newPane() {
 function setHint() {
   const touch = matchMedia('(pointer: coarse)').matches;
   hint.textContent =
-    state === 'fallen' ? (active() ? 'Hold to slow it down' : touch ? 'Tap for a new pane' : 'Click for a new pane')
+    replay.on ? 'Replay'
+    : state === 'fallen' ? (active() ? 'Hold to slow it down' : touch ? 'Tap for a new pane' : 'Click for a new pane')
     : state === 'doomed' ? ''
     : shots === 0 ? (touch ? 'Tap the glass to shoot' : 'Click the glass to shoot')
     : shots < 4 ? (touch ? 'Swipe: what is broken blows out' : 'Drag or space: what is broken blows out')
@@ -278,7 +280,9 @@ function kick(x: number, y: number) {
   const base = renderer.addShards(set);
   renderer.shards = true;
   const bake = bakeFall(set, { impacts, balls: [{ p: hit, v, w: ball.w, r }] });
+  setReplay(false);
   falls.push({ bake, set, base, at, started: false, over: false, playhead: 0, lastHit: 0, speed: ballSlow, ball: true, near: impacts });
+  trimFrames();
   setHint();
 }
 
@@ -364,7 +368,9 @@ function shock(): boolean {
   }
   // with glass still standing it can all be done again at once: more bullets, another shock
   state = layers.some((l) => l.standing) ? 'intact' : 'fallen';
+  setReplay(false);
   falls.push({ bake: r.bake, set: r.set, base, at: now, started: false, over: false, playhead: 0, lastHit: 0, speed: V.pace, ball: false, near: r.impacts });
+  trimFrames();
   setHint();
   return true;
 }
@@ -440,9 +446,132 @@ function startFall(f: Fall) {
   }
 }
 
+/** A fall that rests needs its frames no more, but for the latest one: that is the one a replay plays. */
+function trimFrames() {
+  for (let i = 0; i < falls.length - 1; i++) if (falls[i].over) falls[i].bake.frames = [];
+}
+
+// ---------------------------------------------------------------- replay
+// On demand: the latest fall again, slowly, seen from the side, with its contacts over time as a chart and
+// the playhead on it to drag.
+const SPEEDS = [0.05, 0.1, 0.2, 0.5, 1];
+const replay = { on: false, t: 0, playing: true, speed: 0.2, scrub: false, next: 0, side: 0, bins: 0, drawn: -1 };
+const rpBox = document.querySelector<HTMLElement>('#replay')!;
+const rpTrack = document.querySelector<HTMLElement>('#rp-track')!;
+const rpChart = document.querySelector<HTMLCanvasElement>('#rp-chart')!;
+const rpHead = document.querySelector<HTMLElement>('#rp-head')!;
+const rpPlay = document.querySelector<HTMLButtonElement>('#rp-play')!;
+const rpSpeed = document.querySelector<HTMLButtonElement>('#rp-speed')!;
+const rpTime = document.querySelector<HTMLElement>('#rp-time')!;
+const filmBtn = document.querySelector<HTMLButtonElement>('#film')!;
+
+/** The fall a replay shows: the latest one that has started and still has its frames. */
+function replayFall(): Fall | null {
+  for (let i = falls.length - 1; i >= 0; i--) if (falls[i].started && falls[i].bake.frames.length > 1) return falls[i];
+  return null;
+}
+function setReplay(on: boolean) {
+  const f = replayFall();
+  if (on && !f) return;
+  replay.on = on;
+  filmBtn.classList.toggle('on', on);
+  rpBox.hidden = !on;
+  if (on) { replay.t = 0; replay.next = 0; replay.playing = true; replay.drawn = -1; rpPlay.classList.remove('paused'); }
+  else if (f) {
+    // back to where it was: at rest if it had come to rest, else on with the fall from here
+    const frames = f.bake.frames, last = frames.length - 1;
+    if (f.over) { renderer.setPose(frames[last], frames[last], 0, f.base, f.set.count); if (f.ball) placeBall(f, frames[last], frames[last], 0); }
+    else { f.playhead = replay.t; f.lastHit = contactAt(f, replay.t * 60); }
+  }
+  setHint();
+}
+/** Index of the first contact at or after a frame. */
+function contactAt(f: Fall, frame: number) {
+  const c = f.bake.contacts;
+  let i = 0;
+  while (i < c.length && c[i] < frame) i += CONTACT;
+  return i;
+}
+function placeBall(f: Fall, fa: Float32Array, fb: Float32Array, k: number) {
+  const o = f.set.count * 7;
+  for (let c = 0; c < 3; c++) renderer.ball.p[c] = fa[o + c] + (fb[o + c] - fa[o + c]) * k;
+  for (let c = 0; c < 4; c++) renderer.ball.q[c] = fa[o + 3 + c];
+}
+/** The contacts of a fall as bars over time: how much glass met something, how hard. Floor light, glass on glass lighter. */
+function drawChart(f: Fall) {
+  const frames = f.bake.frames.length, c = f.bake.contacts;
+  const dpr = Math.min(window.devicePixelRatio, 2);
+  const cw = Math.max(1, Math.round(rpTrack.clientWidth * dpr)), ch = Math.max(1, Math.round(rpTrack.clientHeight * dpr));
+  if (rpChart.width !== cw || rpChart.height !== ch) { rpChart.width = cw; rpChart.height = ch; }
+  const g = rpChart.getContext('2d')!;
+  g.clearRect(0, 0, cw, ch);
+  const bw = Math.max(2, Math.round(3 * dpr)), n = Math.floor(cw / bw);
+  const floor = new Float32Array(n), glass = new Float32Array(n);
+  let max = 1e-6;
+  for (let i = 0; i < c.length; i += CONTACT) {
+    const b = Math.min(n - 1, Math.floor((c[i] / Math.max(1, frames)) * n));
+    const v = c[i + 5] * Math.sqrt(c[i + 4]);
+    if (c[i + 6] === 1) glass[b] += v; else floor[b] += v;
+  }
+  for (let b = 0; b < n; b++) max = Math.max(max, floor[b] + glass[b]);
+  g.fillStyle = 'rgba(244,244,242,0.14)';
+  g.fillRect(0, ch - Math.max(1, dpr), cw, Math.max(1, dpr));
+  for (let b = 0; b < n; b++) {
+    // (a root: one loud frame must not flatten the rest of the chart)
+    const hf = Math.sqrt(floor[b] / max) * (ch - 2), hg = Math.sqrt((floor[b] + glass[b]) / max) * (ch - 2) - hf;
+    g.fillStyle = 'rgba(244,244,242,0.85)';
+    g.fillRect(b * bw, ch - hf, bw - Math.max(1, dpr * 0.75), hf);
+    g.fillStyle = 'rgba(244,244,242,0.4)';
+    g.fillRect(b * bw, ch - hf - hg, bw - Math.max(1, dpr * 0.75), hg);
+  }
+  replay.drawn = c.length + frames * 1e-6;
+}
+/** The replay drives its fall: time runs at the chosen speed, or goes where the playhead is dragged. */
+function stepReplay(f: Fall, dt: number) {
+  const frames = f.bake.frames, contacts = f.bake.contacts;
+  const last = frames.length - 1, dur = last / 60;
+  const before = replay.t;
+  if (replay.playing && !replay.scrub) { replay.t += dt * replay.speed; if (replay.t > dur) { replay.t = 0; replay.next = 0; } }
+  replay.t = Math.max(0, Math.min(dur, replay.t));
+  const fr = replay.t * 60, i = Math.min(last, Math.floor(fr));
+  const fa = frames[i], fb = frames[Math.min(last, i + 1)], k = fr - i;
+  renderer.setPose(fa, fb, k, f.base, f.set.count);
+  if (f.ball) placeBall(f, fa, fb, k);
+  // its sounds, as time passes them forwards; a jump is silent
+  if (replay.t < before || replay.t - before > 0.2) replay.next = contactAt(f, fr);
+  let played = 0;
+  for (; replay.next < contacts.length && contacts[replay.next] <= i; replay.next += CONTACT) {
+    if (played++ >= 12) continue;
+    const c = replay.next;
+    sound.clink(contacts[c + 4], contacts[c + 5], contacts[c + 6], contacts[c + 1] / (W * 0.6), Math.max(0.25, replay.speed));
+  }
+  if (replay.drawn !== contacts.length + frames.length * 1e-6) drawChart(f);
+  rpHead.style.left = `${(replay.t / Math.max(1e-6, dur)) * 100}%`;
+  rpTime.textContent = `${replay.t.toFixed(2)} s`;
+}
+const scrubTo = (e: PointerEvent) => {
+  const f = replayFall();
+  if (!f) return;
+  const r = rpTrack.getBoundingClientRect();
+  replay.t = Math.max(0, Math.min(1, (e.clientX - r.left) / r.width)) * ((f.bake.frames.length - 1) / 60);
+};
+rpTrack.addEventListener('pointerdown', (e) => { sound.wake(); replay.scrub = true; rpTrack.setPointerCapture(e.pointerId); scrubTo(e); });
+rpTrack.addEventListener('pointermove', (e) => { if (replay.scrub) scrubTo(e); });
+rpTrack.addEventListener('pointerup', () => { replay.scrub = false; });
+rpTrack.addEventListener('pointercancel', () => { replay.scrub = false; });
+rpPlay.addEventListener('click', () => { replay.playing = !replay.playing; rpPlay.classList.toggle('paused', !replay.playing); });
+rpSpeed.addEventListener('click', () => {
+  replay.speed = SPEEDS[(SPEEDS.indexOf(replay.speed) + 1) % SPEEDS.length];
+  rpSpeed.textContent = `${replay.speed}×`;
+});
+filmBtn.addEventListener('click', () => { sound.wake(); setReplay(!replay.on); });
+
 /** Every fall that is under way, one step on. */
 function stepFalls(dt: number) {
+  const shown = replay.on ? replayFall() : null;
+  if (replay.on && !shown) setReplay(false);
   for (const f of falls) {
+    if (f === shown) { stepReplay(f, dt); continue; }
     if (f.over) continue;
     const { frames, contacts } = f.bake;
     if (!f.started) { if (now >= f.at && (f.bake.done || frames.length > 5)) startFall(f); else continue; }
@@ -453,12 +582,9 @@ function stepFalls(dt: number) {
     let fr = f.playhead * 60;
     if (fr > last) { fr = last; f.playhead = last / 60; }
     const i = Math.floor(fr);
-    const fa = frames[i], fb = frames[Math.min(last, i + 1)], k = fr - i, o = f.set.count * 7;
+    const fa = frames[i], fb = frames[Math.min(last, i + 1)], k = fr - i;
     renderer.setPose(fa, fb, k, f.base, f.set.count);
-    if (f.ball) {
-      for (let c = 0; c < 3; c++) renderer.ball.p[c] = fa[o + c] + (fb[o + c] - fa[o + c]) * k;
-      for (let c = 0; c < 4; c++) renderer.ball.q[c] = fa[o + 3 + c];
-    }
+    if (f.ball) placeBall(f, fa, fb, k);
     // the contacts the simulation noted, as the playhead passes them: each is a sound of its own size, strength and place
     let played = 0;
     for (; f.lastHit < contacts.length && contacts[f.lastHit] <= i; f.lastHit += CONTACT) {
@@ -466,7 +592,7 @@ function stepFalls(dt: number) {
       const c = f.lastHit;
       sound.clink(contacts[c + 4], contacts[c + 5], contacts[c + 6], contacts[c + 1] / (W * 0.6), Math.max(0.25, f.speed / V.pace));
     }
-    if (f.bake.done && i >= last && held < 0) { f.over = true; bakes.delete(f.bake.run); f.bake.frames = []; setHint(); } // it rests: its frames can go
+    if (f.bake.done && i >= last && held < 0) { f.over = true; bakes.delete(f.bake.run); trimFrames(); setHint(); }
   }
 }
 
@@ -476,7 +602,7 @@ let zoom = 1, zoomTo = 1;
 const focus = [0, 0.4, 0];
 const cam: { eye: number[]; view: Float32Array; proj: Float32Array } = { eye: [0, 0.5, 2], view: new Float32Array(16), proj: new Float32Array(16) };
 
-function updateCamera(t: number) {
+function updateCamera(t: number, dt: number) {
   const aspect = w / h;
   const tan = Math.tan(FOV / 2);
   const dist = Math.max((H * 1.38) / (2 * tan), (W * 1.22) / (2 * tan * aspect));
@@ -488,6 +614,17 @@ function updateCamera(t: number) {
   const yaw = Math.sin(t * 0.21) * 0.035 * V.sway;
   const pitch = 0.1 + Math.sin(t * 0.17 + 1) * 0.012 * V.sway + recoil * recoil * 0.012;
   cam.eye = [target[0] + Math.sin(yaw) * Math.cos(pitch) * d, Math.max(0.04, target[1] + Math.sin(pitch) * d), Math.cos(yaw) * Math.cos(pitch) * d];
+  // the replay is watched from the side: the panes edge on, and the room behind them where the glass goes
+  replay.side += ((replay.on ? 1 : 0) - replay.side) * Math.min(1, dt * 5);
+  if (replay.side > 0.001) {
+    const e = replay.side * replay.side * (3 - 2 * replay.side);
+    const back = layers.length ? layers[layers.length - 1].z : 0;
+    const st = [0, Y0 + H * 0.42, back - 0.55];
+    // far enough to see the glass land, but inside the room: on a tall screen the view is cropped instead
+    const sd = Math.min(4.2, Math.max((H * 1.5) / (2 * tan), 2.9 / (2 * tan * aspect)));
+    const se = [sd, Y0 + H * 0.5, st[2] + 0.25];
+    for (let c = 0; c < 3; c++) { cam.eye[c] += (se[c] - cam.eye[c]) * e; target[c] += (st[c] - target[c]) * e; }
+  }
   cam.view = lookAt(cam.eye, target, [recoil * 0.004, 1, 0]);
   cam.proj = perspective(FOV, aspect, 0.03, 40);
 }
@@ -528,7 +665,7 @@ function reset() {
 let down: { x: number; y: number; id: number; far: number; held: boolean; timer: number } | null = null;
 canvas.addEventListener('pointerdown', (e) => {
   sound.wake();
-  if (state === 'doomed') return;
+  if (state === 'doomed' || replay.on) return;
   if (state === 'fallen' && !active()) { reset(); return; }
   canvas.setPointerCapture(e.pointerId);
   const d: NonNullable<typeof down> = { x: e.clientX, y: e.clientY, id: e.pointerId, far: 0, held: false, timer: 0 };
@@ -569,9 +706,12 @@ window.addEventListener('keydown', (e) => {
     e.preventDefault();
     sound.wake();
     // space is the swipe; with nothing to break, it slows what is falling
+    if (replay.on) { rpPlay.click(); return; }
     if (state === 'intact') { if (!shock() && active()) slow = true; }
     else if (state === 'fallen') { if (active()) slow = true; else reset(); }
   } else if (e.code === 'KeyR') reset();
+  else if (e.code === 'KeyS') setReplay(!replay.on);
+  else if (e.code === 'Escape') setReplay(false);
   else if (e.code === 'KeyM') toggleSound();
   else if (e.code === 'KeyB') toggleBall();
 });
@@ -625,10 +765,10 @@ function frame(ms: number) {
 
   // how far the bake is, while it runs
   const baking = [...bakes.values()].find((b) => !b.done);
-  bakeBar.hidden = !baking;
+  bakeBar.hidden = !baking || replay.on;
   if (baking) bakeFill.style.transform = `scaleX(${Math.min(1, baking.frames.length / baking.total)})`;
 
-  updateCamera(now);
+  updateCamera(now, dt);
   renderer.draw(cam.view, cam.proj, cam.eye, now, now, flash, fade, dUsed);
   requestAnimationFrame(frame);
 }
@@ -646,6 +786,8 @@ Object.assign(window, {
     shoot: (u: number, v: number) => { const p = toPage(u * W, v * H); shoot(p[0], p[1]); },
     kick: (u: number, v: number) => kick(u * W, v * H), reset,
     shock,
+    replay: (on = true) => setReplay(on),
+    get replayAt() { return replay.t; }, set replayAt(t: number) { replay.t = t; replay.playing = false; },
     seek: (t: number) => { held = t; },
     get state() { return state; },
     get info() {
