@@ -5,7 +5,6 @@ import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { TexturePass } from 'three/addons/postprocessing/TexturePass.js';
 import { GTAOPass } from 'three/addons/postprocessing/GTAOPass.js';
 import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
-import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { shellVertex, shellFragment, mossLighting } from './shaders';
 import { World, groundHeight, baseHeight, mossAt, type WorldHooks } from './world';
@@ -92,6 +91,7 @@ const shellMat = new THREE.ShaderMaterial({
     uShadowMap: { value: null },
     uShadowMatrix: { value: new THREE.Matrix4() },
     uShadowOn: { value: 0 },
+    uDepthOnly: { value: 0 },
     uShadowFloor: { value: 0.2 },
     uTime: { value: 0 },
     uCanopyMap: { value: null as THREE.Texture | null },
@@ -99,7 +99,7 @@ const shellMat = new THREE.ShaderMaterial({
     uCanopyAmt: { value: 1 },
   },
 });
-const SHARED_UNIFORMS = ['uCavityAO', 'uLightDir', 'uLightDirC', 'uRimDir', 'uRim', 'uHemi', 'uTone', 'uExposure', 'toneMappingExposure', 'uShadowMap', 'uShadowMatrix', 'uShadowOn', 'uShadowFloor', 'uTime', 'uCanopyMap', 'uCanopyBox', 'uCanopyAmt'];
+const SHARED_UNIFORMS = ['uCavityAO', 'uLightDir', 'uLightDirC', 'uRimDir', 'uRim', 'uHemi', 'uTone', 'uExposure', 'toneMappingExposure', 'uShadowMap', 'uShadowMatrix', 'uShadowOn', 'uDepthOnly', 'uShadowFloor', 'uTime', 'uCanopyMap', 'uCanopyBox', 'uCanopyAmt'];
 const share = (m: THREE.ShaderMaterial) => { for (const k of SHARED_UNIFORMS) m.uniforms[k] = shellMat.uniforms[k]; };
 
 // ---- moss size: day 05's numbers at 175 %
@@ -245,7 +245,9 @@ function placeFarFloor(px: number, pz: number) {
 
 // ---- shadow map: the patch ahead of you from the sun. Re-rendered as you crawl, without the fronds and spore
 // stalks, which are too small to matter in it and most of its cost.
-const SHADOW_SIZE = 4096;
+// (2048, as shaders.ts's penumbra reckons: at 4096 the 6 m patch was 1.5 mm a texel, and each re-render as you
+// crawled shaded 17 million pixels with the full materials, a third of a second, every quarter second)
+const SHADOW_SIZE = 2048;
 const shadowRT = new THREE.WebGLRenderTarget(SHADOW_SIZE, SHADOW_SIZE, {
   depthTexture: new THREE.DepthTexture(SHADOW_SIZE, SHADOW_SIZE, THREE.UnsignedIntType),
 });
@@ -272,6 +274,7 @@ function renderShadow(centre: THREE.Vector3) {
   const u = shellMat.uniforms;
   u.uShadowOn.value = 0;
   u.uShadowMap.value = null;
+  u.uDepthOnly.value = 1;
   world.forShadow(true, centre.x, centre.z, 4.3);
   ferns.forShadow(true, centre.x, centre.z, 6);
   boulders.forShadow(true);
@@ -288,6 +291,7 @@ function renderShadow(centre: THREE.Vector3) {
   foliage.forShadow(false);
   farFloor.visible = true;
   ants.mesh.visible = true;
+  u.uDepthOnly.value = 0;
   u.uShadowMap.value = shadowRT.depthTexture;
   u.uShadowMatrix.value.multiplyMatrices(lightCam.projectionMatrix, lightCam.matrixWorldInverse);
   u.uShadowOn.value = 1;
@@ -346,8 +350,7 @@ composer.addPass(fx);
 const lensMat = makeLensPass(coarse);
 lensMat.uniforms.uAperture.value = 0.22; // macro: a thin slice in focus, but the moss right in front still reads
 const lens = new ShaderPass(lensMat);
-composer.addPass(lens);
-composer.addPass(new OutputPass());
+composer.addPass(lens); // the last: it writes the screen in sRGB itself (no OutputPass)
 
 function resize() {
   renderer.setSize(innerWidth, innerHeight);
@@ -786,7 +789,7 @@ const sunScreen = new THREE.Vector3();
 const camDir = new THREE.Vector3();
 let focus = 1;
 // dev: tuning handles in the console
-if (import.meta.env.DEV) Object.assign(window, { foliage, oaks, boulders, floorBits, sound, forest, trees, ants, ferns, props, fungi, fungarium, spores, throwAt, shellMat, lensMat, atmosMat, camera, aoPass, lens, atmos, beautyRT, scene, renderer, composer, world, me, look });
+if (import.meta.env.DEV) Object.assign(window, { renderShadow, foliage, oaks, boulders, floorBits, sound, forest, trees, ants, ferns, props, fungi, fungarium, spores, throwAt, shellMat, lensMat, atmosMat, camera, aoPass, lens, atmos, beautyRT, scene, renderer, composer, world, me, look });
 // loading (as day 12's ink drawing): the splash, a card in the middle, over the forest drawn as a golden wire mesh
 // (everything in its plain geometry, the moss's shells one sheet). Once the models are in and the picture's
 // shaders compiled, and the card has been up two seconds and a half, the card goes and the picture fades in over

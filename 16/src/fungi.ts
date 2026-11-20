@@ -1208,6 +1208,7 @@ float n3(vec3 p) {
 }
 void main() {
   if (nearFade(vWorldPos, 0.02, 0.05) < 0.5) discard;
+  DEPTH_ONLY // the shadow pass: past the discards, nothing more to work out
   vec3 N = normalize(vNormal);
   vec3 V = normalize(cameraPosition - vWorldPos);
   if (dot(N, V) < 0.0) N = -N;

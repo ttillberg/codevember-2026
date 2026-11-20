@@ -375,6 +375,7 @@ void main() {
     if (pinna && abs(c) > hw) discard;
   }
   if (nearFade(vWorldPos, 0.05, 0.16) < 0.5) discard;
+  DEPTH_ONLY // the shadow pass: past the discards, nothing more to work out
 
   vec3 N = normalize(vNormal);
   vec3 V = normalize(cameraPosition - vWorldPos);
