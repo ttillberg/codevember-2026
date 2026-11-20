@@ -28,6 +28,8 @@ A preservation pod hanging by its cables in a hall. Push it and it swings, the c
   - `drip.NNN`: empties where it bleeds
 
   Export the `cocoon` collection as glb with modifiers applied and custom properties on.
+- **Light**: a dark hall (backdrop and fog #0b0c0f) and one light high above, slanting down from the front left, so the facets read; a little fill, a thin rim from behind.
+- **Camera**: the first view is the hall picture's: a little below the pod, looking up at its front from a touch to its left, the pod hanging head to the left (26 degrees about that line of sight, set in `build.py`). On a wide screen it hangs left of centre.
 - **Pod**: a pendulum under `hang` (two leans and a twist), not a rigid body. Drag it and a stiff spring holds it to the hand.
 - **Cables** (`cables.ts`): verlet ropes, both ends pinned, the plug end by two points so the cable leaves the way the plug points. Bending is a soft link to the point two and four further on, which spreads a bend out instead of kinking. They are pushed out of the pod taken as an ellipsoid. The pod moves the cables, never the reverse.
 - **Door**: a plate on a hinge under gravity, less the acceleration of the hinge, so it flaps when the pod is thrown about; a tired strut pulls it to, a dry hinge holds it where the pull is small, a stop keeps it from shutting. It rests a few degrees open whichever way the pod hangs. Drag it open: the drag follows the way the grabbed point would move on screen.

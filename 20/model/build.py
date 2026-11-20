@@ -1258,8 +1258,9 @@ if STAGE != 'hull':
     seam_drip = blood()
     inside()
     hooks(ports, top, seam_drip, under)
-    # it hangs askew, head to the left and a little towards you
-    pod.rotation_euler = (math.radians(6), math.radians(-14), math.radians(-12))
+    # it hangs askew as the hall picture has it: head to the left, 26 degrees about the line the web's first view
+    # looks along (from the front, a little from its left)
+    pod.rotation_euler = Matrix.Rotation(math.radians(26), 3, Vector((-0.1, -0.995, 0))).to_euler()
 
 if STAGE == 'all':
     on_body, on_door = [o for o in PLATES if o.parent == pod], [o for o in PLATES if o.parent == door]

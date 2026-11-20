@@ -22,7 +22,7 @@ if (query.has('silk')) import('./silk');
 else start();
 
 function start() {
-  const FOG = 0x565b60;
+  const FOG = 0x0b0c0f; // the hall, dark
   const G = 9.8;
   const STEP = 1 / 120;
 
@@ -36,25 +36,29 @@ function start() {
   scene.fog = new THREE.FogExp2(FOG, 0.04);
   const pmrem = new THREE.PMREMGenerator(renderer);
   scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
-  scene.environmentIntensity = 0.3;
-  scene.add(new THREE.HemisphereLight(0xd4dbe0, 0x17191b, 1.3));
-  const sky = new THREE.DirectionalLight(0xffffff, 2.4); // the skylights, high and behind
-  sky.position.set(5, 10, -4);
-  scene.add(sky);
+  scene.environmentIntensity = 0.18;
+  scene.add(new THREE.HemisphereLight(0xc8d0d8, 0x050506, 0.35)); // a little fill, no more
+  const key = new THREE.DirectionalLight(0xffffff, 3.4); // the light: high above, slanting down from the front left
+  key.position.set(-4, 10, 5);
+  scene.add(key);
+  const rim = new THREE.DirectionalLight(0xdfe6ee, 0.7); // a thin rim from behind
+  rim.position.set(5, 6, -6);
+  scene.add(rim);
 
-  const camera = new THREE.PerspectiveCamera(46, 1, 0.1, 200);
+  const camera = new THREE.PerspectiveCamera(52, 1, 0.1, 200);
   const ortho = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 200); // the debug panel's iso: same eye, no perspective
   let eye: THREE.Camera = camera;
-  const target = new THREE.Vector3(0.1, 0.35, 0);
-  const home = new THREE.Vector3(0.1, 0.35, 0); // where the target rests in the view people get
-  const YAW0 = -0.3;
-  const PITCH0 = -0.42;
+  const target = new THREE.Vector3(0.1, 0.2, 0);
+  // the view people get, as the hall picture has it: from a little below, looking up at the pod's front, a touch from its left
+  const home = new THREE.Vector3(0.1, 0.2, 0);
+  const YAW0 = -0.1;
+  const PITCH0 = -0.4;
   let yaw = YAW0;
   let pitch = PITCH0;
   let vyaw = 0;
   let vpitch = 0;
-  let radius = 5.6;
-  let homeRadius = 5.6;
+  let radius = 4.8;
+  let homeRadius = 4.8;
   // a view the camera is easing to (the debug panel's), null while it is yours
   let goal: null | { yaw: number; pitch: number; radius: number; target: THREE.Vector3 } = null;
   let still = false; // the debug panel's hold still: no swing
@@ -497,8 +501,8 @@ function start() {
     camera.aspect = w / h;
     camera.updateProjectionMatrix();
     const wasHome = radius === homeRadius && target.equals(home);
-    homeRadius = 5.6 / Math.min(1, camera.aspect / 0.85); // step back on a narrow screen
-    home.x = 0.1 + 0.9 * THREE.MathUtils.clamp((camera.aspect - 1) / 0.7, 0, 1); // on a wide one the pod hangs left of centre, the hall to its right
+    homeRadius = 4.8 / Math.min(1, camera.aspect / 0.85); // step back on a narrow screen
+    home.x = 0.1 + THREE.MathUtils.clamp((camera.aspect - 1) / 0.7, 0, 1); // on a wide one the pod hangs left of centre, the hall to its right
     if (wasHome) { radius = homeRadius; target.copy(home); }
   }
   window.addEventListener('resize', resize);
