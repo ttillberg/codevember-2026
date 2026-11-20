@@ -1114,6 +1114,26 @@ class Marks:
         me = bpy.data.meshes.new_from_object(o.evaluated_get(bpy.context.evaluated_depsgraph_get()))
         bpy.data.objects.remove(o); bpy.data.curves.remove(cu)
         self._take(me, where)
+    def svg(self, path, width, where):
+        """a drawing from an svg file, centred on where, so wide"""
+        before, cols = set(bpy.data.objects), set(bpy.data.collections)
+        bpy.ops.import_curve.svg(filepath=path)
+        new = [o for o in bpy.data.objects if o not in before]
+        bpy.context.view_layer.update()
+        dg = bpy.context.evaluated_depsgraph_get()
+        bm = bmesh.new()
+        for o in new:
+            me = bpy.data.meshes.new_from_object(o.evaluated_get(dg)); me.transform(o.matrix_world)
+            bm.from_mesh(me); bpy.data.meshes.remove(me)
+        for o in new:
+            cu = o.data; bpy.data.objects.remove(o); bpy.data.curves.remove(cu)
+        for c in set(bpy.data.collections) - cols: bpy.data.collections.remove(c)
+        xs, ys = [v.co.x for v in bm.verts], [v.co.y for v in bm.verts]
+        k = width / (max(xs) - min(xs))
+        c = Vector(((max(xs) + min(xs)) / 2, (max(ys) + min(ys)) / 2, 0))
+        bmesh.ops.transform(bm, matrix=Matrix.Diagonal((k, k, k, 1)) @ Matrix.Translation(-c), verts=bm.verts)
+        me = bpy.data.meshes.new('svg'); bm.to_mesh(me); bm.free()
+        self._take(me, where)
     def poly(self, pts, where):
         me = bpy.data.meshes.new('p'); me.from_pydata([(x, y, 0) for x, y in pts], [], [list(range(len(pts)))])
         self._take(me, where)
@@ -1166,11 +1186,12 @@ def lay(ink, view, anchor, items, shift=0, out=None):
         M = frame_at(g[1]).to_4x4(); M.translation = g[0] + g[1] * (th + LIFT)
         return M
     for kind, *a in items:
-        at = place(*((a[1], a[2]) if kind == 'text' else (a[0], a[3]) if kind in ('rect', 'icon', 'bars', 'slash', 'tri', 'vee') else (a[0], a[1])))
+        at = place(*((a[1], a[2]) if kind in ('text', 'svg') else (a[0], a[3]) if kind in ('rect', 'icon', 'bars', 'slash', 'tri', 'vee') else (a[0], a[1])))
         if at is None: continue
         if kind == 'text':
             body, x, y, cap, bold = a
             ink.text(body, cap * k / 0.727, at, bold=bold, spacing=1.12)
+        elif kind == 'svg': ink.svg(a[0], a[3] * k, at)
         elif kind == 'rect': ink.rect(0, 0, (a[2] - a[0]) * k, (a[3] - a[1]) * k, at)
         elif kind == 'cross': ink.cross(0, 0, a[2] * k, at)
         elif kind == 'split': ink.split_disc(0, 0, a[2] * k, at @ Matrix.Rotation(0.45, 4, 'Z'))
@@ -1487,7 +1508,7 @@ def bake_paint(objs):
         px = np.empty(SIZE * SIZE * 4, np.float32); img.pixels.foreach_get(px)
         bpy.data.images.remove(img)
         return px.reshape(SIZE, SIZE, 4)[:, :, :3]
-    flat = [o for o in col.objects if o.name in ('marks', 'door_marks', 'blood', 'door_window')]
+    flat = [o for o in col.objects if o.name in ('marks', 'door_marks', 'decals', 'blood', 'door_window')]
     for o in flat: o.hide_render = True  # a hair above the plate, they would shadow it black
     c = bake('b_colour', colour)
     r = bake('b_rough', rough)[:, :, :1]

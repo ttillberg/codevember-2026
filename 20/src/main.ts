@@ -5,6 +5,7 @@ import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { GTAOPass } from 'three/addons/postprocessing/GTAOPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+import { Rays } from './rays';
 import { Cable } from './cables';
 import { Blood } from './blood';
 import { buildHall } from './hall';
@@ -37,15 +38,16 @@ function start() {
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
   renderer.toneMappingExposure = 1.05;
   renderer.shadowMap.enabled = true;
-  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  renderer.shadowMap.type = THREE.PCFShadowMap;
 
   const scene = new THREE.Scene();
   scene.background = new THREE.Color(FOG);
-  scene.fog = new THREE.FogExp2(FOG, 0.032);
+  scene.fog = new THREE.Fog(FOG, 0.026, 18); // not linear: near is the density, far the haze's gain up high (hall.ts)
   const pmrem = new THREE.PMREMGenerator(renderer);
   scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
   scene.environmentIntensity = 0.18;
-  scene.add(new THREE.HemisphereLight(0xc8d0d8, 0x050506, 0.22)); // a little fill, no more
+  const hemi = new THREE.HemisphereLight(0xc8d0d8, 0x050506, 0.22); // a little fill, no more
+  scene.add(hemi);
   // the rest of the light, from the roof and the sides, comes with the hall (hall.ts)
 
   const camera = new THREE.PerspectiveCamera(40, 1, 0.1, 200);
@@ -231,7 +233,13 @@ function start() {
     inside.position.copy(podCentre);
     pod.add(inside);
 
-    hall = buildHall(scene, swing.position.clone());
+    hall = buildHall(scene, swing.position.clone(), renderer.capabilities.maxTextureSize);
+    // the sun's light in the haze, marched against its shadow map, after the AO and before the tone mapping
+    const rays = new Rays(camera, hall.sun, () => (ao.enabled ? ao.depthTexture : null), { roof: hall.roofY, box: hall.air, density: 0.05 });
+    composer.insertPass(rays, 2);
+    if (import.meta.env.DEV) Object.assign(window, { rays, sun: hall.sun });
+    // ?debug: colours and render settings by hand
+    if (query.has('debug')) { const h = hall; import('./tweaks').then(({ tweaks }) => tweaks({ renderer, scene, hemi, ao, rays, hall: h })); }
     pod.traverse((o) => { if ((o as THREE.Mesh).isMesh) o.castShadow = o.receiveShadow = true; });
     if (lifts.length) {
       const u = twist.position.clone().normalize(); // down the line from the hang point
@@ -635,6 +643,7 @@ function start() {
     }
     for (const c of cables) c.skin();
     for (const s of slings) stretch(s.wire, s.lift.getWorldPosition(wa), link.localToWorld(wb.set(0, -0.12, 0)));
+    if (pod) hall?.follow(v1.copy(podCentre).applyMatrix4(pod.matrixWorld));
     hall?.update(time, dt);
     blood?.update(dt);
 

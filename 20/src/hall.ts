@@ -1,6 +1,8 @@
 import * as THREE from 'three';
 import { hallSteel } from './materials';
 
+const HAZE_TOP = 55; // where the haze is at its brightest
+
 // the haze is lit from above: fog thickens to a brighter grey the higher up it is, so the steel stands dark
 // against it up there and sinks into the dark below
 THREE.ShaderChunk.fog_pars_vertex = '#ifdef USE_FOG\n varying float vFogDepth;\n varying float vFogY;\n#endif';
@@ -12,28 +14,23 @@ THREE.ShaderChunk.fog_vertex = `#ifdef USE_FOG
   #endif
   vFogY = (modelMatrix * fogAt).y;
 #endif`;
+// the fog is a THREE.Fog that is not linear: its `near` is the density (exp2), its `far` how much brighter the
+// haze is high up than down low (same hue), so the debug panel can set both without recompiling anything
 THREE.ShaderChunk.fog_pars_fragment = THREE.ShaderChunk.fog_pars_fragment.replace('varying float vFogDepth;', 'varying float vFogDepth;\n varying float vFogY;');
 THREE.ShaderChunk.fog_fragment = `#ifdef USE_FOG
-  #ifdef FOG_EXP2
-    float fogFactor = 1.0 - exp( - fogDensity * fogDensity * vFogDepth * vFogDepth );
-  #else
-    float fogFactor = smoothstep( fogNear, fogFar, vFogDepth );
-  #endif
-  vec3 fogLit = mix( fogColor, ${hazeHigh()}, smoothstep( -6.0, 48.0, vFogY ) );
+  float fogFactor = 1.0 - exp( - fogNear * fogNear * vFogDepth * vFogDepth );
+  vec3 fogLit = fogColor * mix( 1.0, fogFar, smoothstep( -6.0, ${HAZE_TOP.toFixed(1)}, vFogY ) );
   gl_FragColor.rgb = mix( gl_FragColor.rgb, fogLit, fogFactor );
 #endif`;
-function hazeHigh() {
-  return 'vec3(0.042, 0.048, 0.056)';
-}
 
 /**
  * The hall, made up: lattice steel going up into the haze (towers, girders, catwalks, a roof of trusses with
  * skylights), the girder the pod hangs from, light from the roof and from windows in the sides, and the shafts of
  * that light in the fog, faked as soft additive cones with dust drifting through.
  */
-export function buildHall(scene: THREE.Scene, hang: THREE.Vector3) {
+export function buildHall(scene: THREE.Scene, hang: THREE.Vector3, maxTexture = 4096) {
   const V = (x: number, y: number, z: number) => new THREE.Vector3(x, y, z);
-  const ROOF = 52;
+  const ROOF = 75; // high up, in the haze
 
   // ---------- steel: every bar one instance of a unit box, stretched from a to b
 
@@ -82,16 +79,17 @@ export function buildHall(scene: THREE.Scene, hang: THREE.Vector3) {
   };
 
   const TX = 12; // towers either side
+  const LEVELS = [-14, 22, 44, 62]; // girders across and along
   const rows = [24, -6, -21, -36]; // none near the eye
   for (const z of rows) {
     tower(-TX, z, -45, ROOF, 2.4);
     tower(TX, z, -45, ROOF, 2.4);
-    for (const y of [-14, 22, 36]) truss(V(-TX, y, z), V(TX, y, z), V(0, 0, 0.8), V(0, 2.2, 0), 2.2);
+    for (const y of LEVELS) truss(V(-TX, y, z), V(TX, y, z), V(0, 0, 0.8), V(0, 2.2, 0), 2.2);
     // the roof's trusses, deep ones
     truss(V(-TX - 4, ROOF - 4, z), V(TX + 4, ROOF - 4, z), V(0, 0, 0.6), V(0, 4, 0), 3, 0.2, 0.09);
   }
   for (const x of [-TX, TX]) {
-    for (const y of [-14, 22, 36]) truss(V(x, y, rows[0]), V(x, y, rows[rows.length - 1]), V(0.8, 0, 0), V(0, 2.2, 0), 2.2);
+    for (const y of LEVELS) truss(V(x, y, rows[0]), V(x, y, rows[rows.length - 1]), V(0.8, 0, 0), V(0, 2.2, 0), 2.2);
     // a catwalk along the inside of each row of towers, rails and all
     const cx = x - Math.sign(x) * 2.2;
     for (const y of [-6, 12]) {
@@ -123,12 +121,156 @@ export function buildHall(scene: THREE.Scene, hang: THREE.Vector3) {
     for (const p of c) bar(p, V(p.x, gy, hang.z + Math.sign(p.z - hang.z) * 0.6), 0.06);
   }
 
+  // the hall goes on far to the right, to a wall 60 m off: more towers out there, the roof trusses run on to it
+  const WX = 60;
+  for (const z of rows) {
+    for (const x of [30, 46]) tower(x, z, -45, ROOF, 2.4);
+    truss(V(TX + 4, ROOF - 4, z), V(WX, ROOF - 4, z), V(0, 0, 0.6), V(0, 4, 0), 3, 0.2, 0.09);
+    for (const y of LEVELS.filter((_, i) => i % 2 === 0)) truss(V(TX, y, z), V(46, y, z), V(0, 0, 0.8), V(0, 2.2, 0), 2.2);
+  }
+  for (const x of [30, 46]) truss(V(x, 22, rows[0]), V(x, 22, rows[rows.length - 1]), V(0.8, 0, 0), V(0, 2.2, 0), 2.2);
+
+  // the roof: across each bay, bands of glass between strips of deck, glazing bars across the glass; the deck
+  // is solid to the sun, the glass not, so the light comes in in bands, cut by the bars
+  const X0 = -TX - 6, Z0 = rows[0] + 6, Z1 = rows[rows.length - 1] - 6;
+  const deck: THREE.Matrix4[] = [];
+  const box = (c: THREE.Vector3, size: THREE.Vector3) => deck.push(new THREE.Matrix4().compose(c, new THREE.Quaternion(), size));
+  const GLASS: [number, number][] = [];
+  for (let x = X0, k = 0; x < WX; x += 3, k++) {
+    if (k % 2) { GLASS.push([x, x + 3]); continue; }
+    box(V(x + 1.5, ROOF + 0.3, (Z0 + Z1) / 2), V(3, 0.4, Z0 - Z1));
+  }
+  for (const [x0, x1] of GLASS) {
+    for (let z = Z0; z > Z1; z -= 1.4) bar(V(x0, ROOF + 0.3, z), V(x1, ROOF + 0.3, z), 0.08, 0.16);
+    bar(V((x0 + x1) / 2, ROOF + 0.3, Z0), V((x0 + x1) / 2, ROOF + 0.3, Z1), 0.06, 0.12);
+  }
+  // the far wall: solid, small openings in a few rows, not every bay
+  const HOLES: THREE.Vector3[] = [];
+  {
+    const rnd = (() => { let a = 7; return () => ((a = (a * 16807) % 2147483647) / 2147483647); })();
+    const BANDS = [14, 32, 48, 62];
+    const H = 1.4, W = 1.0;
+    let y = -46;
+    for (const b of BANDS) {
+      box(V(WX, (y + b) / 2, (Z0 + Z1) / 2), V(0.5, b - y, Z0 - Z1));   // solid up to the band
+      let z = Z0;
+      for (let c = Z0 - 2.5; c > Z1 + 1; c -= 4.5) {
+        if (rnd() < 0.45) continue;
+        box(V(WX, b + H / 2, (z + c + W / 2) / 2), V(0.5, H, z - (c + W / 2)));
+        HOLES.push(V(WX, b + H / 2, c));
+        z = c - W / 2;
+      }
+      box(V(WX, b + H / 2, (z + Z1) / 2), V(0.5, H, z - Z1));
+      y = b + H;
+    }
+    box(V(WX, (y + ROOF + 0.5) / 2, (Z0 + Z1) / 2), V(0.5, ROOF + 0.5 - y, Z0 - Z1));
+  }
+
+  // scaffolding: tubes on a 2 x 1.3 m grid, a lift of ledgers every 2 m, braces up the outside in turn, boards
+  // on every third lift; wrapped round some of the towers, part of the way up
+  const scaffold = (cx: number, cz: number, nx: number, nz: number, y0: number, lifts: number) => {
+    const BX = 2, BZ = 1.3, LIFT = 2;
+    const x0 = cx - (nx * BX) / 2, z0 = cz - (nz * BZ) / 2;
+    const at = (i: number, k: number, l: number) => V(x0 + i * BX, y0 + l * LIFT, z0 + k * BZ);
+    const top = lifts;
+    for (let i = 0; i <= nx; i++) for (let k = 0; k <= nz; k++) {
+      if (i > 0 && i < nx && k > 0 && k < nz) continue;   // round the outside only, the tower inside
+      bar(at(i, k, 0), at(i, k, top), 0.05);
+    }
+    for (let l = 1; l <= top; l++) {
+      for (let i = 0; i < nx; i++) { bar(at(i, 0, l), at(i + 1, 0, l), 0.05); bar(at(i, nz, l), at(i + 1, nz, l), 0.05); }
+      for (let k = 0; k < nz; k++) { bar(at(0, k, l), at(0, k + 1, l), 0.05); bar(at(nx, k, l), at(nx, k + 1, l), 0.05); }
+      if (l % 3 === 0) {
+        // boards on this lift, and a toe board
+        for (let i = 0; i < nx; i++) for (const k of [0, nz]) {
+          const a = at(i, k, l), b = at(i + 1, k, l), into = k ? -0.55 : 0.55;
+          bar(a.clone().add(V(0, 0.03, into)), b.clone().add(V(0, 0.03, into)), 1.0, 0.04);
+        }
+        for (let k = 0; k < nz; k++) for (const i of [0, nx]) {
+          const a = at(i, k, l), b = at(i, k + 1, l), into = i ? -0.55 : 0.55;
+          bar(a.clone().add(V(into, 0.03, 0)), b.clone().add(V(into, 0.03, 0)), 0.04, 1.0);
+        }
+      }
+      if (l % 2) {
+        for (let i = l % 4 === 1 ? 0 : 1; i < nx; i += 2) { bar(at(i, 0, l - 1), at(i + 1, 0, l), 0.045); bar(at(i, nz, l - 1), at(i + 1, nz, l), 0.045); }
+        for (let k = l % 4 === 1 ? 0 : 1; k < nz; k += 2) { bar(at(0, k, l - 1), at(0, k + 1, l), 0.045); bar(at(nx, k, l - 1), at(nx, k + 1, l), 0.045); }
+      }
+    }
+  };
+  scaffold(TX, -6, 3, 4, -20, 16);
+  scaffold(30, -21, 3, 4, -12, 22);
+  scaffold(-TX, -36, 3, 4, 4, 10);
+  scaffold(46, 24, 3, 4, -30, 14);
+
+  // hoists: a narrow lattice mast up the side of a tower, a cage on it going up and down
+  const HOISTS: { x: number; z: number; lo: number; hi: number; speed: number; phase: number }[] = [
+    { x: TX + 2.4, z: -1.2, lo: -18, hi: 44, speed: 0.7, phase: 0 },
+    { x: 30 - 4.2, z: -21, lo: -10, hi: 56, speed: 1.0, phase: 2.5 },
+    { x: -TX - 2.4, z: -21, lo: -30, hi: 40, speed: 0.6, phase: 5 },
+  ];
+  for (const h of HOISTS) {
+    const s = 0.4;
+    const cs = [V(-s, 0, -s), V(s, 0, -s), V(s, 0, s), V(-s, 0, s)];
+    for (const c of cs) bar(V(h.x + c.x, -45, h.z + c.z), V(h.x + c.x, h.hi + 6, h.z + c.z), 0.06);
+    for (let y = -45, k = 0; y < h.hi + 6; y += 1.5, k++) {
+      for (let i = 0; i < 4; i++) {
+        const a = cs[i], b = cs[(i + 1) % 4];
+        bar(V(h.x + a.x, y, h.z + a.z), V(h.x + b.x, y, h.z + b.z), 0.04);
+        if (k % 2 === i % 2) bar(V(h.x + a.x, y, h.z + a.z), V(h.x + b.x, y + 1.5, h.z + b.z), 0.03);
+      }
+    }
+    // ties back to the tower every 9 m
+    const dx = Math.sign((Math.abs(h.x - TX) < 3 ? TX : Math.abs(h.x + TX) < 3 ? -TX : 30) - h.x);
+    for (let y = -40; y < h.hi; y += 9) bar(V(h.x + dx * s, y, h.z), V(h.x + dx * 2, y, h.z), 0.06);
+  }
+
   const steel = hallSteel(new THREE.MeshStandardMaterial({ color: 0x2b2e32, roughness: 0.62, metalness: 0.55 }));
   const lattice = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), steel, bars.length);
   bars.forEach((m, i) => lattice.setMatrixAt(i, m));
   lattice.instanceMatrix.needsUpdate = true;
   lattice.receiveShadow = true;
+  lattice.castShadow = true;
   scene.add(lattice);
+  const roofDeck = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), steel, deck.length);
+  deck.forEach((m, i) => roofDeck.setMatrixAt(i, m));
+  roofDeck.instanceMatrix.needsUpdate = true;
+  roofDeck.castShadow = roofDeck.receiveShadow = true;
+  scene.add(roofDeck);
+
+  // the hoists' cars: a cage of bars round a floor, a roof, a lamp; they ride up and down, stop, wait, go on
+  const cars: THREE.Group[] = [];
+  {
+    const mat = hallSteel(new THREE.MeshStandardMaterial({ color: 0x3b3f44, roughness: 0.55, metalness: 0.6 }));
+    const mesh = new THREE.MeshStandardMaterial({ color: 0x1c1e21, roughness: 0.7, metalness: 0.4, transparent: true, opacity: 0.55 });
+    const lamp = new THREE.MeshBasicMaterial({ color: 0xffb060 });
+    const box = new THREE.BoxGeometry(1, 1, 1);
+    const piece = (g: THREE.Group, m: THREE.Material, x: number, y: number, z: number, w: number, h: number, d: number) => {
+      const p = new THREE.Mesh(box, m);
+      p.position.set(x, y, z); p.scale.set(w, h, d);
+      p.castShadow = p.receiveShadow = m !== mesh;
+      g.add(p);
+    };
+    for (const h of HOISTS) {
+      const g = new THREE.Group();
+      const W = 1.5, D = 2.2, Hh = 2.3;
+      piece(g, mat, 0, 0, 0, W, 0.12, D);
+      piece(g, mat, 0, Hh, 0, W, 0.08, D);
+      for (const [x, z] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) piece(g, mat, (x * W) / 2, Hh / 2, (z * D) / 2, 0.06, Hh, 0.06);
+      for (const y of [1.1]) {
+        piece(g, mat, 0, y, -D / 2, W, 0.05, 0.05); piece(g, mat, 0, y, D / 2, W, 0.05, 0.05);
+        piece(g, mat, -W / 2, y, 0, 0.05, 0.05, D); piece(g, mat, W / 2, y, 0, 0.05, 0.05, D);
+      }
+      piece(g, mesh, 0, Hh / 2, -D / 2, W, Hh, 0.02); piece(g, mesh, 0, Hh / 2, D / 2, W, Hh, 0.02);
+      piece(g, mesh, -W / 2, Hh / 2, 0, 0.02, Hh, D);
+      piece(g, lamp, 0, Hh - 0.1, 0, 0.18, 0.05, 0.18);
+      // on the side of the mast away from the tower
+      const side = h.x > TX + 1 && h.x < 20 ? 1 : h.x < -TX + 1 && h.x > -20 ? -1 : -1;
+      g.position.set(h.x + side * (0.4 + W / 2 + 0.1), h.lo, h.z);
+      g.userData.hoist = h;
+      scene.add(g);
+      cars.push(g);
+    }
+  }
 
   // the block at the hang point: a sheave in a frame
   {
@@ -142,30 +284,37 @@ export function buildHall(scene: THREE.Scene, hang: THREE.Vector3) {
     scene.add(frame, sheave);
   }
 
-  // skylights in the roof, and windows high in the sides: only seen as glow through the haze
+  // the glass in the roof and the windows: bright, the sky through them, seen through the haze
   {
-    const glow = new THREE.MeshBasicMaterial({ color: 0xb8c4d0, fog: false });
+    const glow = new THREE.MeshBasicMaterial({ color: 0xdfe6ee, fog: false });
     const pane = new THREE.PlaneGeometry(1, 1);
-    for (let i = 0; i < rows.length - 1; i++) {
-      for (const x of [-7, 0, 7]) {
-        const m = new THREE.Mesh(pane, glow);
-        m.scale.set(5, 12, 1);
-        m.rotation.x = Math.PI / 2;
-        m.position.set(x + 3.5, ROOF + 0.5, (rows[i] + rows[i + 1]) / 2);
-        scene.add(m);
-      }
+    for (const [x0, x1] of GLASS) {
+      const m = new THREE.Mesh(pane, glow);
+      m.scale.set(x1 - x0, Z0 - Z1, 1);
+      m.rotation.x = Math.PI / 2;
+      m.position.set((x0 + x1) / 2, ROOF + 0.9, (Z0 + Z1) / 2);
+      scene.add(m);
+    }
+    for (const h of HOLES) {
+      const m = new THREE.Mesh(pane, glow);
+      m.scale.set(1, 1.4, 1);
+      m.rotation.y = -Math.PI / 2;
+      m.position.set(WX + 0.6, h.y, h.z);
+      scene.add(m);
     }
   }
 
+  let dome!: THREE.Mesh<THREE.SphereGeometry, THREE.ShaderMaterial>;
   // the haze beyond everything, the same grey as the fog at each height
   {
-    const dome = new THREE.Mesh(
+    dome = new THREE.Mesh(
       new THREE.SphereGeometry(150, 32, 16),
       new THREE.ShaderMaterial({
-        uniforms: { low: { value: (scene.fog as THREE.FogExp2).color } },
+        uniforms: { low: { value: (scene.fog as THREE.Fog).color }, gain: { value: 12 } },
         vertexShader: 'varying vec3 vDir; void main() { vDir = normalize(position); gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
         fragmentShader: `uniform vec3 low; varying vec3 vDir;
-          void main() { gl_FragColor = vec4(mix(low, ${hazeHigh()}, smoothstep(-0.05, 0.35, vDir.y)), 1.0);
+          uniform float gain;
+          void main() { gl_FragColor = vec4(low * mix(1.0, gain, smoothstep(-0.05, 0.35, vDir.y)), 1.0);
           #include <tonemapping_fragment>
           #include <colorspace_fragment>
           }`,
@@ -179,15 +328,54 @@ export function buildHall(scene: THREE.Scene, hang: THREE.Vector3) {
     scene.add(dome);
   }
 
-  // ---------- light: the roof and the sides
+  // ---------- light: the sun through the roof and the windows, the skylight over the pod, the sides
+
+  // the sun, high on the right and a little behind: through the glass it falls in bands, cut by every bar and
+  // truss in the way; its shadow map is also what the light in the haze is marched against (rays.ts)
+  const sun = new THREE.DirectionalLight(0xe8eef4, 2.2);
+  // its shadow map fitted tight round the hall as the sun sees it, a rectangle, as fine as the GPU allows: the
+  // pod is lit through the bars by the same map the haze is marched against, so it has to be sharp
+  const air = new THREE.Box3(V(X0, -46, Z1), V(WX, ROOF, Z0));
+  const toSun = V(0.64, 1, -0.06).normalize();
+  air.getCenter(sun.target.position);
+  sun.position.copy(sun.target.position).addScaledVector(toSun, 200);
+  {
+    const view = new THREE.Matrix4().lookAt(sun.position, sun.target.position, V(0, 1, 0)).setPosition(sun.position).invert();
+    const lo = V(Infinity, Infinity, Infinity), hi = V(-Infinity, -Infinity, -Infinity);
+    for (let i = 0; i < 8; i++) {
+      const c = V(i & 1 ? air.max.x : air.min.x, i & 2 ? air.max.y : air.min.y, i & 4 ? air.max.z : air.min.z).applyMatrix4(view);
+      lo.min(c); hi.max(c);
+    }
+    Object.assign(sun.shadow.camera, { left: lo.x, right: hi.x, bottom: lo.y, top: hi.y, near: -hi.z - 2, far: -lo.z + 2 });
+    const big = Math.min(8192, maxTexture);
+    const w = hi.x - lo.x, h = hi.y - lo.y;
+    sun.shadow.mapSize.set(Math.round((big * w) / Math.max(w, h)), Math.round((big * h) / Math.max(w, h)));
+  }
+  sun.shadow.camera.updateProjectionMatrix();
+  sun.shadow.radius = 1;
+  sun.shadow.bias = -0.0002;
+  sun.shadow.normalBias = 0.02;
+  sun.castShadow = true;
+  scene.add(sun, sun.target);
+  // and the same sun again, for the pod alone (materials.ts): a map 4.4 m across that follows it, 2 mm a texel,
+  // from far enough up the light that the roof and every bar in between still cast into it
+  const podSun = new THREE.DirectionalLight(sun.color, sun.intensity);
+  podSun.castShadow = true;
+  podSun.shadow.mapSize.set(2048, 2048);
+  Object.assign(podSun.shadow.camera, { left: -2.2, right: 2.2, bottom: -2.2, top: 2.2, near: 1, far: 130 });
+  podSun.shadow.camera.updateProjectionMatrix();
+  podSun.shadow.bias = -0.0003;
+  podSun.shadow.normalBias = 0.004;
+  podSun.shadow.radius = 1;
+  scene.add(podSun, podSun.target);
 
   const roof = new THREE.SpotLight(0xe6edf5, 7, 0, 0.06, 0.55, 0); // one skylight right over it, through the girder's gap
   roof.position.set(-8.5, ROOF - 4, 9);
   roof.target.position.set(0, 0.4, 0);
   roof.castShadow = true;
   roof.shadow.mapSize.set(2048, 2048);
-  roof.shadow.camera.near = 30;
-  roof.shadow.camera.far = 70;
+  roof.shadow.camera.near = 50;
+  roof.shadow.camera.far = 95;
   roof.shadow.bias = -0.0004;
   roof.shadow.normalBias = 0.02;
   const left = new THREE.SpotLight(0x9fb4c8, 1.6, 0, 0.12, 0.8, 0); // cold, from a window in the left wall
@@ -270,15 +458,11 @@ export function buildHall(scene: THREE.Scene, hang: THREE.Vector3) {
     m.quaternion.setFromUnitVectors(V(0, -1, 0), dir.clone().normalize());
     m.renderOrder = 2;
     m.userData.noAO = true; // light in the air, nothing to shade
+    mat.userData.strength = strength;
     scene.add(m);
   };
   const toPod = roof.target.position.clone().sub(roof.position);
   shaft(roof.position, toPod, toPod.length() * 1.25, 0.5, 3.6, 0xc8d4e0, 0.14);
-  // the other skylights' light, falling slanted through the hall behind
-  const fall = V(0.22, -1, -0.12);
-  for (const [x, z, r] of [[-4, -13, 2.2], [6, -14, 1.8], [-6, -28, 2.6], [5, -29, 2], [12, -3, 1.6]] as const) {
-    shaft(V(x, ROOF, z), fall, 95, r * 0.7, r * 1.6, 0xaab6c4, 0.06);
-  }
   // and the windows in the sides
   shaft(left.position, left.target.position.clone().sub(left.position), 48, 1.6, 4.2, 0x8fa4b8, 0.08);
   shaft(V(-34, 18, -22), V(1, -0.32, 0.14), 50, 1.4, 3.6, 0x8fa4b8, 0.07);
@@ -321,8 +505,32 @@ export function buildHall(scene: THREE.Scene, hang: THREE.Vector3) {
 
   return {
     roof,
+    left,
+    right,
+    sun,
+    /** all the faked shafts brighter or dimmer at once */
+    set shaftGain(g: number) { for (const s of shafts) s.uniforms.strength.value = s.userData.strength * g; },
+    air,
+    roofY: ROOF,
+    /** the tight sun on the pod, wherever it has swung to; as the wide one is set (the debug panel too) */
+    follow(at: THREE.Vector3) {
+      podSun.color.copy(sun.color);
+      podSun.intensity = sun.intensity;
+      const toward = sun.position.clone().sub(sun.target.position).normalize();
+      podSun.target.position.copy(at);
+      podSun.position.copy(at).addScaledVector(toward, 120);
+    },
     update(time: number, dt: number) {
+      dome.material.uniforms.gain.value = (scene.fog as THREE.Fog).far;
       for (const s of shafts) s.uniforms.time.value = time;
+      for (const c of cars) {
+        // up, wait, down, wait: a smooth ride between the ends
+        const h = c.userData.hoist as (typeof HOISTS)[number];
+        const span = h.hi - h.lo, ride = span / h.speed, cycle = 2 * ride + 16;
+        const t = (time + h.phase * 10) % cycle;
+        const u = t < ride ? t / ride : t < ride + 8 ? 1 : t < 2 * ride + 8 ? 1 - (t - ride - 8) / ride : 0;
+        c.position.y = h.lo + span * u * u * (3 - 2 * u);
+      }
       for (let i = 0; i < DUST; i++) {
         const s = seeds[i];
         dust[i * 3] += Math.sin(time * 0.3 + s) * 0.05 * dt;

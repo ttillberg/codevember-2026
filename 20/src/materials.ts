@@ -7,6 +7,22 @@ import * as THREE from 'three';
  * up how rough each surface is and its tone a little, so the light catches some of it and not the rest.
  */
 
+// Two suns, the same light: the wide one, its shadow map over the whole hall, and a tight one that follows the pod
+// with a map only round it (hall.ts). Each material takes its sun from one of them and not the other: the
+// directional lights in three's light loop get a gain, SUN_WIDE for the first, SUN_TIGHT for the second; the
+// pod's materials swap the two (POD_SUN). Both suns cast shadows and are the only directional lights, so they are
+// the first two in that loop, in the order they were added.
+THREE.ShaderChunk.lights_fragment_begin = THREE.ShaderChunk.lights_fragment_begin.replace(
+  'getDirectionalLightInfo( directionalLight, directLight );',
+  `getDirectionalLightInfo( directionalLight, directLight );
+    #ifndef SUN_WIDE
+      #define SUN_WIDE 1.0
+      #define SUN_TIGHT 0.0
+    #endif
+    directLight.color *= UNROLLED_LOOP_INDEX == 0 ? SUN_WIDE : UNROLLED_LOOP_INDEX == 1 ? SUN_TIGHT : 1.0;`,
+);
+export const POD_SUN = { SUN_WIDE: '0.0', SUN_TIGHT: '1.0' };
+
 const NOISE = /* glsl */ `
 float gHash(vec3 p) { return fract(sin(dot(p, vec3(127.1, 311.7, 74.7))) * 43758.5453); }
 float gNoise(vec3 p) {
@@ -33,6 +49,7 @@ type Grit = {
   rough: [number, number]; // roughness times this, from the clean bits to the worn
   tint: number; // how much the tone wanders
   ribs?: boolean; // a hose's corrugation: ribs along uv.y, one per unit
+  wear?: number; // worn through: how much of it is gone, in flakes (a painted mark)
 };
 
 const f = (x: number) => x.toFixed(4);
@@ -54,7 +71,13 @@ function grit(m: THREE.MeshStandardMaterial, g: Grit) {
     frag = frag.replace(
       '#include <color_fragment>',
       `#include <color_fragment>
-      diffuseColor.rgb *= 1.0 + ${f(g.tint)} * (gFbm(vGrit * ${f(g.scale * 0.35)} + 11.0) - 0.5) * 2.0;`,
+      diffuseColor.rgb *= 1.0 + ${f(g.tint)} * (gFbm(vGrit * ${f(g.scale * 0.35)} + 11.0) - 0.5) * 2.0;${
+        g.wear
+          ? `
+      // flaked off: big patches where it has worn, and fine pits all over
+      if (gFbm(vGrit * ${f(g.scale * 0.12)} + 5.0) * 0.75 + gNoise(vGrit * ${f(g.scale * 2.5)}) * 0.25 < ${f(g.wear)}) discard;`
+          : ''
+      }`,
     );
     frag = frag.replace(
       '#include <roughnessmap_fragment>',
@@ -75,7 +98,7 @@ function grit(m: THREE.MeshStandardMaterial, g: Grit) {
     }
     sh.fragmentShader = frag;
   };
-  m.customProgramCacheKey = () => `grit:${g.scale}:${g.rough}:${g.tint}:${!!g.ribs}`;
+  m.customProgramCacheKey = () => `grit:${g.scale}:${g.rough}:${g.tint}:${!!g.ribs}:${g.wear ?? 0}`;
   m.needsUpdate = true;
   return m;
 }
@@ -140,6 +163,8 @@ export function dress(root: THREE.Object3D) {
         return grit(physical(old, { color: 0x0f1011, metalness: 0, roughness: 0.72 }), { scale: 10, rough: [0.85, 1.15], tint: 0.1 });
       case 'shroud': // cloth, wrapped round what is inside
         return physical(old, { metalness: 0, roughness: 0.85, sheen: 1, sheenRoughness: 0.7, sheenColor: 0x8a8070 });
+      case 'ink': // the painted marks: flat black, worn through in flakes
+        return grit(physical(old, { color: 0x0b0c0d, metalness: 0, roughness: 0.62 }), { scale: 30, rough: [0.85, 1.2], tint: 0.15, wear: 0.37 });
       case 'hose':
         return rubber;
       default:
@@ -151,7 +176,12 @@ export function dress(root: THREE.Object3D) {
     if (!mesh.isMesh) return;
     const swap = (m: THREE.Material) => {
       if (!(m as THREE.MeshStandardMaterial).isMeshStandardMaterial) return m;
-      if (!done.has(m)) done.set(m, make(m as THREE.MeshStandardMaterial));
+      if (!done.has(m)) {
+      const made = make(m as THREE.MeshStandardMaterial);
+      // the pod's own (not the rubber, shared with the cables that run up out of the tight sun's reach)
+      if (made !== rubber) made.defines = { ...made.defines, ...POD_SUN };
+      done.set(m, made);
+    }
       return done.get(m)!;
     };
     mesh.material = Array.isArray(mesh.material) ? mesh.material.map(swap) : swap(mesh.material);
