@@ -216,19 +216,14 @@ void main() {
     c = mix(blur, c, crack);
   }
   c *= pow(vec3(0.93, 0.975, 0.955), vec3(uGlass.x));
-  // the targets: a few pieces of dark matt tape stuck on the glass, no more than it takes to aim at. An outer
-  // ring in four arcs, a thin inner one, a dot. By pane coordinates, so a shard keeps its part of one
+  // the targets: two pieces of dark matt tape each, crossed. A plus to aim at, no more. By pane coordinates,
+  // so a shard keeps its part of one
   for (int i = 0; i < 3; i++) {
-    vec2 d = vUv - uTargets[i].xy;
-    float R = max(uTargets[i].z, 1e-5), r = length(d) / R;
-    if (r < 1.05) {
-      float aa = fwidth(r) * 1.2 + 1e-4;
-      float outer = smoothstep(0.065 + aa, 0.065, abs(r - 0.93));
-      float gap = abs(fract(atan(d.y, d.x) / 1.5708) - 0.5) * 1.5708 * r; // along the ring from each diagonal, in radii
-      outer *= smoothstep(0.045, 0.045 + aa, gap);
-      float inner = smoothstep(0.022 + aa, 0.022, abs(r - 0.5));
-      float dot_ = smoothstep(0.07 + aa, 0.07, r);
-      float ink = max(outer, max(inner, dot_));
+    vec2 d = abs(vUv - uTargets[i].xy) / max(uTargets[i].z, 1e-5);
+    if (max(d.x, d.y) < 1.05) {
+      float aa = fwidth(d.x) * 1.2 + 1e-4;
+      // an arm: this wide, and as long as the target is
+      float ink = smoothstep(0.11 + aa, 0.11, min(d.x, d.y)) * smoothstep(1.0 + aa, 1.0, max(d.x, d.y));
       vec3 tape = vec3(0.04, 0.042, 0.046) * (0.85 + 0.3 * vnoise(vUv * 900.0)) * (0.7 + uFlash * 2.0);
       c = mix(c, tape, ink * 0.94);
     }
