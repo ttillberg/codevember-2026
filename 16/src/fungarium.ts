@@ -5,7 +5,7 @@
 // It has its own small renderer and scene, lit like the forest at dusk but with no shadow map.
 import * as THREE from 'three';
 import { Fungi, type FungusKind } from './fungi';
-import { loadAgaric } from './agaricModel';
+import { loadModels } from './models';
 
 export interface Species { kind: FungusKind; sv: string; en: string; latin: string; note: string; seed: number; scale: number }
 
@@ -163,9 +163,9 @@ export class Fungarium {
     this.fungi = new Fungi((m) => { for (const k of Object.keys(this.uniforms)) m.uniforms[k] = this.uniforms[k]; });
     this.scene.add(this.fungi.group);
     this.thumbnails();
-    // drawn again once the fly agaric's model is in (it loads on its own; until then it is the procedural one)
-    loadAgaric().then((geo) => {
-      if (!geo) return;
+    // drawn again once the models are in (they load on their own; until then the procedural ones)
+    loadModels().then((geos) => {
+      if (!geos.some(Boolean)) return;
       const again = () => { if (this.isOpen) { setTimeout(again, 1000); return; } this.thumbnails(); this.onThumbs?.(); };
       again();
     });

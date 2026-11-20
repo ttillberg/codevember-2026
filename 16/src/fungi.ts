@@ -6,7 +6,7 @@ import * as THREE from 'three';
 import { mulberry32 } from './noise';
 import { mossLighting } from './shaders';
 import { buildDew } from './dew';
-import { loadAgaric, instancedAgaric, agaricWeights, agaricVertexShader, MODEL_R, MODEL_H } from './agaricModel';
+import { loadModel, instancedModel, modelWeights, modelVertexShader, MODELS, MODEL_KINDS, isModelKind, type ModelKind } from './models';
 
 export type FungusKind = 'funnel' | 'finger' | 'chanterelle' | 'puffball' | 'agaric' | 'porcini' | 'slippery' | 'morel' | 'waxcap';
 
@@ -760,22 +760,22 @@ export class Fungi {
   list: Cluster[] = [];
   changed = false;
   readonly material: THREE.ShaderMaterial;
-  // the fly agarics as a model, once it has loaded: one instanced mesh, each fungus its blend of the growth
-  private model: { mesh: THREE.InstancedMesh; data: THREE.InstancedBufferAttribute; dummy: THREE.Mesh } | null = null;
-  private agaricsDirty = false;
+  // the kinds that are models, once loaded: an instanced mesh each, each fungus its blend of the growth
+  private models = new Map<ModelKind, { mesh: THREE.InstancedMesh; data: THREE.InstancedBufferAttribute; tint: THREE.InstancedBufferAttribute; dummy: THREE.Mesh; n: number }>();
+  private modelsDirty = false;
 
   /** `dew`: the moss's dew material, to draw the beads of water on fresh growth (none without it). */
   constructor(setup: (m: THREE.ShaderMaterial) => void, private dew?: THREE.Material) {
     this.material = new THREE.ShaderMaterial({ vertexShader, fragmentShader, side: THREE.DoubleSide, uniforms: {} });
     setup(this.material);
-    loadAgaric().then((geo) => { if (geo) this.useModel(geo, setup); });
+    for (const k of MODEL_KINDS) loadModel(k).then((geo) => { if (geo) this.useModel(k, geo, setup); });
   }
 
-  private useModel(src: THREE.BufferGeometry, setup: (m: THREE.ShaderMaterial) => void) {
+  private useModel(kind: ModelKind, src: THREE.BufferGeometry, setup: (m: THREE.ShaderMaterial) => void) {
     const N = 1024;
-    const material = new THREE.ShaderMaterial({ vertexShader: agaricVertexShader, fragmentShader, side: THREE.DoubleSide, uniforms: {} });
+    const material = new THREE.ShaderMaterial({ vertexShader: modelVertexShader, fragmentShader, side: THREE.DoubleSide, uniforms: {} });
     setup(material);
-    const geo = instancedAgaric(src, N);
+    const geo = instancedModel(src, N);
     const mesh = new THREE.InstancedMesh(geo, material, N);
     mesh.frustumCulled = false;
     mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
@@ -784,33 +784,44 @@ export class Fungi {
     mesh.setMorphAt(0, dummy); // the texture is made for all N here, before the count drops to the ones drawn
     mesh.count = 0;
     this.group.add(mesh);
-    this.model = { mesh, data: geo.getAttribute('iData') as THREE.InstancedBufferAttribute, dummy };
+    this.models.set(kind, {
+      mesh, dummy, n: 0,
+      data: geo.getAttribute('iData') as THREE.InstancedBufferAttribute,
+      tint: geo.getAttribute('iTint') as THREE.InstancedBufferAttribute,
+    });
     // the ones already standing: their rings go, the model takes over
-    for (const c of this.list) if (c.kind === 'agaric') this.rebuild(c, 0);
-    this.agaricsDirty = true;
+    for (const c of this.list) if (c.kind === kind) this.rebuild(c, 0);
+    this.modelsDirty = true;
     this.changed = true;
   }
 
+  /** a cluster drawn by a model (once that has loaded) */
+  private modelled(c: Cluster) { return isModelKind(c.kind) && this.models.has(c.kind); }
+
   /**
-   * Every fly agaric in sight, packed into the instanced mesh: where it stands, how it leans and how big, and its
-   * blend of the stages. Only when one is growing, withering, comes or goes.
+   * Every modelled fungus in sight, packed into its kind's instanced mesh: where it stands, how it leans and how
+   * big, its blend of the stages and its colour. Only when one is growing, withering, comes or goes.
    */
-  private packAgarics() {
-    const md = this.model!;
-    const { mesh, data, dummy } = md;
-    const w = dummy.morphTargetInfluences!;
+  private packModels() {
     const m4 = PACK.m4, q = PACK.q, qt = PACK.qt, p = PACK.p, sc = PACK.s;
-    let n = 0;
+    for (const slot of this.models.values()) slot.n = 0;
     for (const c of this.list) {
-      if (c.kind !== 'agaric' || !c.mesh.visible) continue;
-      for (const m of c.agarics) {
+      if (!isModelKind(c.kind) || !c.mesh.visible) continue;
+      const slot = this.models.get(c.kind);
+      if (!slot) continue;
+      const { mesh, data, tint, dummy } = slot;
+      const w = dummy.morphTargetInfluences!;
+      const M = MODELS[c.kind];
+      const items: (Agaric | Capped)[] = c.kind === 'agaric' ? c.agarics : c.capped;
+      for (const m of items) {
         const g0 = clamp01((c.age - m.delay) / m.dur);
-        if (g0 <= 0 || n >= mesh.instanceMatrix.count) continue;
+        if (g0 <= 0 || slot.n >= mesh.instanceMatrix.count) continue;
+        const n = slot.n++;
         // growth comes in pulses
         const g = clamp01(g0 + 0.02 * Math.sin(g0 * 11 + m.phase));
         // its own cap when grown: round, open, or turned up (a third or so each)
-        agaricWeights(g, c.rot, THREE.MathUtils.clamp(frac(m.phase * 5.17) * 2.4 - 1.2, -1, 1), w);
-        const s = m.R / MODEL_R, ky = (m.H / m.R) / (MODEL_H / MODEL_R);
+        modelWeights(g, c.rot, THREE.MathUtils.clamp(frac(m.phase * 5.17) * 2.4 - 1.2, -1, 1), w);
+        const s = m.R / M.R, ky = (m.H / m.R) / (M.H / M.R);
         // up out of the moss as it starts; down into it as it goes
         const rise = (1 - ease(clamp01(g / 0.05))) * 0.02 * s + c.rot * c.rot * 0.012 * s;
         p.set(c.x + m.base.x, c.y - rise, c.z + m.base.z);
@@ -821,15 +832,27 @@ export class Fungi {
         sc.set(s, s * ky, s);
         mesh.setMatrixAt(n, m4.compose(p, q, sc));
         mesh.setMorphAt(n, dummy);
-        const veil = 1 - THREE.MathUtils.smoothstep(g, 0.08, 0.45);
-        data.setXYZW(n, veil, c.rot, 0.9 + 0.2 * frac(m.phase * 3.7), m.phase);
-        n++;
+        if (c.kind === 'agaric') {
+          // the veil: all white on the egg, cracking off as it swells; the red from a deep scarlet to going orange
+          const veil = 1 - THREE.MathUtils.smoothstep(g, 0.08, 0.45);
+          const o = frac(m.phase * 7.31), k = 0.9 + 0.2 * frac(m.phase * 3.7);
+          data.setXYZW(n, veil, c.rot, 1, m.phase);
+          tint.setXYZ(n, (0.7 + 0.04 * o) * k, (0.025 + 0.11 * o * o) * k, (0.02 + 0.01 * o) * k);
+        } else {
+          // a bolete: its pores white when young, going yellow, then olive
+          const cm = (m as Capped).cap;
+          data.setXYZW(n, 1 - THREE.MathUtils.smoothstep(g, 0.3, 1.0), c.rot, 1, m.phase);
+          tint.setXYZ(n, cm[0], cm[1], cm[2]);
+        }
       }
     }
-    mesh.count = n;
-    mesh.instanceMatrix.needsUpdate = true;
-    if (mesh.morphTexture) mesh.morphTexture.needsUpdate = true;
-    data.needsUpdate = true;
+    for (const { mesh, data, tint, n } of this.models.values()) {
+      mesh.count = n;
+      mesh.instanceMatrix.needsUpdate = true;
+      if (mesh.morphTexture) mesh.morphTexture.needsUpdate = true;
+      data.needsUpdate = true;
+      tint.needsUpdate = true;
+    }
   }
 
   /**
@@ -1050,13 +1073,13 @@ export class Fungi {
     this.list.push(c);
     this.rebuild(c, 0);
     if (opts.grown) c.grown = true;
-    if (this.model && this.agaricsDirty) { this.packAgarics(); this.agaricsDirty = false; } // drawn at once, before any update
+    if (this.modelsDirty) { this.packModels(); this.modelsDirty = false; } // drawn at once, before any update
     this.changed = true;
     return c;
   }
 
   remove(c: Cluster) {
-    if (c.kind === 'agaric') this.agaricsDirty = true;
+    if (isModelKind(c.kind)) this.modelsDirty = true;
     this.group.remove(c.mesh);
     c.mesh.geometry.dispose();
     for (const d of c.mesh.children) (d as THREE.Mesh).geometry.dispose();
@@ -1067,9 +1090,10 @@ export class Fungi {
   private rebuild(c: Cluster, time: number) {
     const b = newBuf();
     ROT = c.rot;
-    if (c.kind === 'finger') buildFingerCluster(b, c.fingers, c.age, time);
+    if (this.modelled(c)) this.modelsDirty = true; // nothing to build: the model, packed with the rest
+    else if (c.kind === 'finger') buildFingerCluster(b, c.fingers, c.age, time);
     else if (c.kind === 'puffball') for (const p of c.puffs) buildPuffball(b, p, c.age);
-    else if (c.kind === 'agaric') { if (!this.model) for (const m of c.agarics) buildAgaric(b, m, c.age); else this.agaricsDirty = true; }
+    else if (c.kind === 'agaric') for (const m of c.agarics) buildAgaric(b, m, c.age);
     else if (c.capped.length) for (const m of c.capped) buildCapped(b, m, c.age);
     else if (c.morels.length) for (const m of c.morels) buildMorel(b, m, c.age);
     else for (const f of c.funnels) buildFunnel(b, f, c.age, time);
@@ -1099,7 +1123,7 @@ export class Fungi {
     for (const c of [...this.list]) {
       if (px !== undefined && pz !== undefined) {
         const seen = Math.hypot(c.x - px, c.z - pz) < SEE + c.radius;
-        if (seen !== c.mesh.visible) { c.mesh.visible = seen; if (seen) c.built = undefined; if (c.kind === 'agaric') this.agaricsDirty = true; }
+        if (seen !== c.mesh.visible) { c.mesh.visible = seen; if (seen) c.built = undefined; if (isModelKind(c.kind)) this.modelsDirty = true; }
       }
       // a pressed puffball springs back
       let squashing = false;
@@ -1108,10 +1132,10 @@ export class Fungi {
       if (!c.grown || c.wither !== undefined) c.age += dt;
       c.rot = c.wither === undefined ? 0 : clamp01((c.age - c.wither) / WITHER);
       if (c.rot >= 1) { this.remove(c); continue; }
-      if (c.kind === 'agaric' && this.model) {
-        // the model: nothing to build, only its weights to set (packed below)
+      if (this.modelled(c)) {
+        // a model: nothing to build, only its weights to set (packed below)
         if (!c.grown || c.rot > 0) {
-          if (c.mesh.visible) this.agaricsDirty = true;
+          if (c.mesh.visible) this.modelsDirty = true;
           if (!c.grown && c.age >= c.end) { c.grown = true; this.changed = true; }
         }
         continue;
@@ -1129,7 +1153,7 @@ export class Fungi {
         this.changed = true; // the shadow map is drawn again for the grown shape, not for every step of growing
       }
     }
-    if (this.model && this.agaricsDirty) { this.packAgarics(); this.agaricsDirty = false; }
+    if (this.modelsDirty) { this.packModels(); this.modelsDirty = false; }
   }
 
   /** Inside a cluster's rough cylinder? For the autofocus; `among` the ones near enough to matter. */
@@ -1191,8 +1215,49 @@ void main() {
   vec3 col = vTint;
   float thin = 0.4;
   float wet = 1.0; // how glossy: a slippery jack's cap is all slime
-  if (vPart > 8.95) {
-    // the fly agaric model (agaricModel.ts): its parts by number, the veil and the withering per fungus
+  if (vPart > 9.95) {
+    // the porcini model (models.ts): a brown bun of a cap, a sponge of pores going from white to yellow to olive
+    // with age, a pale barrel of a stem netted white at the top
+    float p = vPart - 10.0, t = vUv1.x;
+    float young = vData.x, rot = vData.y;
+    if (p < 0.05) {
+      // the skin: a bun's crust, finely wrinkled, paler toward the rim, a little greasy; going pale on the lip
+      col = vTint * mix(0.85, 1.2, smoothstep(0.5, 1.0, t));
+      col *= 0.94 + 0.1 * n3(vWorldPos * 140.0) + 0.06 * (n3(vWorldPos * 600.0) - 0.5);
+      col = mix(col, vec3(0.8, 0.72, 0.56), smoothstep(1.02, 1.06, t) * 0.7);
+      thin = 0.2; wet = 1.1;
+    } else if (p < 0.15) {
+      // the edge between skin and pores: pale
+      col = vec3(0.84, 0.79, 0.66) * (0.94 + 0.1 * n3(vWorldPos * 500.0));
+      thin = 0.4;
+    } else if (p < 0.5) {
+      // the pores: white when young, then yellow, then olive; tiny round mouths, a sponge
+      vec3 c0 = vec3(0.6, 0.58, 0.3), c1 = vec3(0.86, 0.78, 0.42), c2 = vec3(0.9, 0.88, 0.8);
+      col = mix(mix(c0, c1, smoothstep(0.0, 0.45, young)), c2, smoothstep(0.5, 0.95, young));
+      vec2 q = vec2(around * 320.0, t * 90.0);
+      vec2 i = floor(q), fq = fract(q) - 0.5 - (vec2(h31(vec3(i, 5.0)), h31(vec3(i, 6.0))) - 0.5) * 0.4;
+      col *= 1.0 - 0.3 * (1.0 - smoothstep(0.14, 0.3, length(fq)));
+      col *= 0.92 + 0.1 * n3(vWorldPos * 200.0);
+      thin = 0.25; wet = 0.4;
+    } else {
+      // the stem: pale buff, darker low; a fine raised white net over the top half
+      col = vec3(0.8, 0.73, 0.58) * (0.95 + 0.05 * sin(around * 6.2831 * 17.0 + n3(vWorldPos * 200.0) * 4.0));
+      vec2 q = vec2(around * 30.0, along * 22.0);
+      q.x += 0.35 * sin(q.y * 1.3);
+      vec2 i = floor(q), f = fract(q);
+      float e = 9.0;
+      for (int y = -1; y <= 1; y++) for (int x = -1; x <= 1; x++) {
+        vec2 o = vec2(float(x), float(y)), c = o + 0.2 + 0.6 * vec2(h31(vec3(i + o, 3.0)), h31(vec3(i + o, 4.0)));
+        e = min(e, length((c - f) * vec2(1.0, 0.7)));
+      }
+      float net = (1.0 - smoothstep(0.3, 0.42, e)) * smoothstep(0.35, 0.75, along);
+      col = mix(col * 0.86, vec3(0.9, 0.87, 0.8), net * 0.85);
+      thin = 0.35;
+    }
+    float lum = dot(col, vec3(0.3, 0.5, 0.2));
+    col = mix(col, vec3(0.3, 0.2, 0.11) * (0.45 + 0.9 * lum) + vec3(0.04, 0.03, 0.015), pow(rot, 0.7) * 0.9);
+  } else if (vPart > 8.95) {
+    // the fly agaric model (models.ts): its parts by number, the veil and the withering per fungus
     float p = vPart - 9.0, t = vUv1.x, h = vUv1.y;
     float veil = vData.x, rot = vData.y;
     vec3 white = vec3(0.9, 0.87, 0.79);
