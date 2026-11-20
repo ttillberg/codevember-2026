@@ -9,8 +9,10 @@ import { groundHeight, clearing } from './world';
 import { buildDew } from './dew';
 
 const CELL = 2.6;
-const RANGE = 7;
-const DROP = 9.5;
+// placed out to here: with the haze lighter, stands appearing seven metres off were plain to see as you walked
+const RANGE = matchMedia('(pointer: coarse)').matches ? 9 : 12;
+const DROP = RANGE + 2.5;
+const FADE = 0.8; // seconds a stand takes to dissolve in (or a new level of detail to dissolve over the old)
 
 const START = { x: 0.12, z: -0.62 }; // a fern's crown just ahead of where you start
 // level of detail: pinnae per side (spaced about a pinna's width apart), rows along a pinna, rachis rings.
@@ -18,8 +20,10 @@ const START = { x: 0.12, z: -0.62 }; // a fern's crown just ahead of where you s
 const LODS = [
   { pinnae: 16, rows: 7, segs: 14, widen: 1 },
   { pinnae: 8, rows: 3, segs: 6, widen: 1.9 },
+  { pinnae: 5, rows: 2, segs: 4, widen: 2.8 }, // far, in the haze
 ];
 const LOD_NEAR = 4.5; // cell centre this close: full detail
+const LOD_MID = 8; // then the middle level up to here, the far one beyond
 const RACHIS_SIDES = 4;
 type Lod = (typeof LODS)[number];
 
@@ -138,11 +142,28 @@ export class Ferns {
   readonly material: THREE.ShaderMaterial;
   crowns: { x: number; z: number }[] = [];
   changed = false;
-  private cells = new Map<string, { mesh: THREE.Object3D | null; crowns: { x: number; z: number }[]; lod: number }>();
+  private cells = new Map<string, { mesh: THREE.Object3D | null; crowns: { x: number; z: number }[]; lod: number; born: number }>();
+  // the level a cell had before: dissolving away under the new one, then gone
+  private leaving: { mesh: THREE.Object3D; born: number }[] = [];
+  private clock = 0;
 
   constructor(setup: (m: THREE.ShaderMaterial) => void, private dewMaterial: THREE.Material) {
     this.material = new THREE.ShaderMaterial({ vertexShader, fragmentShader, side: THREE.DoubleSide, uniforms: {} });
     setup(this.material);
+    // per stand, set as each is drawn: how far it has dissolved in (or, leaving, out)
+    this.material.uniforms.uFade = { value: 1 };
+    this.material.uniforms.uFadeOut = { value: 0 };
+  }
+
+  /** Dissolve a stand's mesh in (or out) from a time on: the shared material's fade set just before it is drawn. */
+  private fading(mesh: THREE.Object3D, born: number, out: boolean) {
+    const mat = this.material;
+    const fern = mesh.children[0] as THREE.Mesh;
+    fern.onBeforeRender = () => {
+      mat.uniforms.uFade.value = Math.min(1, (this.clock - born) / FADE);
+      mat.uniforms.uFadeOut.value = out ? 1 : 0;
+      mat.uniformsNeedUpdate = true;
+    };
   }
 
   private build(ix: number, iz: number, lod: number) {
@@ -191,7 +212,14 @@ export class Ferns {
   }
 
   /** Place the cells coming into range and swap their detail as you come and go (one build per call), take away the ones gone out. */
-  update(px: number, pz: number) {
+  update(px: number, pz: number, dt = 0) {
+    this.clock += dt;
+    // the old levels done dissolving: gone
+    this.leaving = this.leaving.filter((l) => {
+      if (this.clock - l.born < FADE) return true;
+      this.root.remove(l.mesh); disposeAll(l.mesh);
+      return false;
+    });
     const i0 = Math.floor(px / CELL), k0 = Math.floor(pz / CELL);
     const R = Math.ceil(RANGE / CELL);
     let changed = false;
@@ -199,14 +227,16 @@ export class Ferns {
       const ix = i0 + dx, iz = k0 + dz;
       const d = Math.hypot((ix + 0.5) * CELL - px, (iz + 0.5) * CELL - pz);
       if (d > RANGE) continue;
-      const lod = d < LOD_NEAR ? 0 : 1;
+      const lod = d < LOD_NEAR ? 0 : d < LOD_MID ? 1 : 2;
       const key = `${ix},${iz}`;
       const have = this.cells.get(key);
       if (have && have.lod === lod) continue;
-      const c = this.build(ix, iz, lod);
-      if (have?.mesh) { this.root.remove(have.mesh); disposeAll(have.mesh); }
+      // a new stand dissolves in; a new level dissolves in over the old one, which dissolves out under it (the
+      // same dither, mirrored: between them every pixel is drawn once)
+      const c = { ...this.build(ix, iz, lod), born: this.clock };
+      if (have?.mesh) { this.fading(have.mesh, this.clock, true); this.leaving.push({ mesh: have.mesh, born: this.clock }); }
       this.cells.set(key, c);
-      if (c.mesh) this.root.add(c.mesh);
+      if (c.mesh) { this.fading(c.mesh, this.clock, false); this.root.add(c.mesh); }
       changed = true;
     }
     for (const [key, c] of this.cells) {
@@ -214,6 +244,7 @@ export class Ferns {
       if (Math.hypot((ix + 0.5) * CELL - px, (iz + 0.5) * CELL - pz) < DROP) continue;
       if (c.mesh) { this.root.remove(c.mesh); disposeAll(c.mesh); }
       this.cells.delete(key);
+      // (out past DROP, in the haze: simply gone)
       changed = true;
     }
     if (changed) {
@@ -255,8 +286,16 @@ varying vec3 vWorldPos;
 varying vec3 vNormal;
 varying vec3 vLeaf;
 varying vec4 vFrond;
+uniform float uFade, uFadeOut;
 
 void main() {
+  // dissolving in (or out, under a new level of detail): a fixed dither on the screen, mirrored for the one going
+  if (uFade < 1.0 || uFadeOut > 0.5) {
+    vec2 q = fract(gl_FragCoord.xy * vec2(0.1031, 0.1030));
+    q += dot(q, q.yx + 33.33);
+    float h = fract((q.x + q.y) * q.x);
+    if (uFadeOut > 0.5 ? h < uFade : h > uFade) discard;
+  }
   float u = vLeaf.x, c = vLeaf.y;
   bool pinna = vLeaf.z > 0.5;
   // pinnules: lobes down each side of the pinna, deep cut towards the midrib, small teeth on each lobe,

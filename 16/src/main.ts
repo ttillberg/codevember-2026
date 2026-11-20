@@ -813,7 +813,7 @@ renderer.setAnimationLoop(() => {
   motes.update(groundHeight(me.x, me.z));
   world.update(me.x, me.z, fx, fz, 1);
   props.update(me.x, me.z);
-  ferns.update(me.x, me.z);
+  ferns.update(me.x, me.z, dt);
   trees.update(me.x, me.z);
   floorBits.update(me.x, me.z);
   boulders.update(me.x, me.z);
