@@ -13,7 +13,9 @@ const fullscreenVertex = /* glsl */ `
 
 export function makeAtmosPass(depth: THREE.DepthTexture, coarse = false) {
   return new THREE.ShaderMaterial({
-    defines: { SHAFT_STEPS: coarse ? 12 : 24, VOL_STEPS: coarse ? 12 : 28 },
+    // (16 each: at 24 and 28 they were a quarter of the frame, the beams' field is smooth and the shafts' start jittered,
+    // and the picture is the same to the eye)
+    defines: { SHAFT_STEPS: coarse ? 10 : 16, VOL_STEPS: coarse ? 10 : 16 },
     uniforms: {
       tDiffuse: { value: null },
       tDepth: { value: depth },
@@ -139,12 +141,13 @@ export function makeAtmosPass(depth: THREE.DepthTexture, coarse = false) {
           vec3 cam = uCamWorld[3].xyz;
           vec3 L = normalize(uSunDir);
           vec3 A = normalize(cross(L, vec3(0.0, 0.0, 1.0))), B = cross(L, A);
-          float maxD = min(z, 30.0);
+          float maxD = min(z, 30.0) * step(0.0001, uBeam); // (beams off: no march at all)
           // no jitter: the field is smooth enough now for the steps not to band (jittered per pixel, white noise read
           // as grain and an interleaved gradient as a fine hatching)
           float jit = 0.5;
           float lit = 0.0, wsum = 0.0, dens = 0.0;
           for (int i = 0; i < VOL_STEPS; i++) {
+            if (maxD <= 0.0) break;
             float s = (float(i) + jit) / float(VOL_STEPS);
             float d = 0.25 + s * s * maxD; // closer together near the eye
             vec3 p = cam + r * d;
@@ -225,9 +228,20 @@ export function makeLensPass(coarse = false) {
         vec3 acc = c0.rgb;
         float wsum = 1.0;
         const int N = TAPS;
+        // how far out a tap can still count: this pixel's own blur, or a blurry thing nearer than it bleeding over
+        // it (a probe of six round it says how blurry the near things about are). Past that every tap weighs 0, so
+        // stop there: in focus that is a few taps, not forty (all forty everywhere were a fifth of the frame)
+        float reach = cc;
+        for (int k = 0; k < 6; k++) {
+          float a = float(k) * 1.0472 + 0.5;
+          vec4 s = texture2D(tDiffuse, vUv + vec2(cos(a), sin(a)) * uMaxBlur * 0.6 / uRes);
+          if (s.a < zc) reach = max(reach, coc(s.a));
+        }
+        reach = min(reach + 1.5, uMaxBlur);
         for (int i = 1; i < N; i++) {
           float fi = float(i);
           float r = sqrt(fi / float(N)) * uMaxBlur;
+          if (r > reach) break;
           float a = fi * 2.39996323;
           vec4 s = texture2D(tDiffuse, vUv + vec2(cos(a), sin(a)) * r / uRes);
           float sc = coc(s.a);
@@ -261,6 +275,8 @@ export function makeLensPass(coarse = false) {
         vec2 v = (vUv - 0.5) * vec2(uRes.x / uRes.y, 1.0);
         col *= mix(1.0, 1.0 - uVignette, smoothstep(0.35, 1.05, length(v)));
         gl_FragColor = vec4(col, 1.0);
+        // the last pass: out to sRGB on screen itself (an OutputPass after it was a whole screen more, only for this)
+        #include <colorspace_fragment>
       }
     `,
     depthTest: false,

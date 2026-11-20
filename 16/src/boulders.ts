@@ -9,7 +9,7 @@
 import * as THREE from 'three';
 import { buildRock, deadAt, pillowAt, domeAt, type Surface } from './rock';
 import { fbm3, mulberry32 } from './noise';
-import { groundHeight, dressSurface, trunkInCell, clearing, SPECIES, TREE_CELL, type WorldHooks } from './world';
+import { groundHeight, dressSurface, shellsForShadow, trunkInCell, clearing, SPECIES, TREE_CELL, type WorldHooks } from './world';
 import { oakInCell, OAK_CELL } from './oak';
 
 const coarse = matchMedia('(pointer: coarse)').matches;
@@ -173,6 +173,6 @@ export class Boulders {
 
   /** For the shadow map: the stone and its shells, not the fronds. */
   forShadow(on: boolean) {
-    for (const b of this.list.values()) if (b) for (const o of b.group.children) if (o.userData.fronds) o.visible = !on;
+    for (const b of this.list.values()) if (b) { for (const o of b.group.children) if (o.userData.fronds) o.visible = !on; shellsForShadow(b.group, on); }
   }
 }

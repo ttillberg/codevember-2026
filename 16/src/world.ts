@@ -217,12 +217,23 @@ export interface WorldHooks {
  * Grow moss on a surface: the shells, and fronds where there is moss.
  * The geometry needs the shell attributes (see chunkGeometry); moss and species are per vertex.
  */
+/** the shadow pass draws only the moss's lowest layer, the dense one: its shade on itself is millimetres, and every
+ * layer covers the whole map with a noise before its discard (all ten had been most of the shadow map's cost) */
+const SHADOW_SHELLS = 1;
+export function shellsForShadow(group: THREE.Object3D, on: boolean) {
+  for (const o of group.children) {
+    const n = o.userData.shells as number | undefined;
+    if (n) (o as THREE.InstancedMesh).count = on ? Math.min(n, SHADOW_SHELLS) : n;
+  }
+}
+
 export function dressSurface(
   hooks: WorldHooks, geo: THREE.BufferGeometry, moss: Float32Array, species: Float32Array, count: number,
   frondCount: number, seed: number, frondWeight?: Float32Array, // where the fronds stand (by default, where there is moss)
 ) {
   const group = new THREE.Group();
   const shells = new THREE.InstancedMesh(geo, hooks.shellMat, hooks.shells);
+  shells.userData.shells = hooks.shells; // all its layers (the shadow pass draws only the lowest)
   // culled by the chunk's bounding sphere, padded for what the vertex shaders push out
   shells.boundingSphere = geo.boundingSphere ? geo.boundingSphere.clone() : null;
   group.add(shells);
@@ -289,6 +300,7 @@ export class World {
         const dew = buildDew(drops, this.hooks.dewMaterial);
         dew.geometry.boundingSphere = geo.boundingSphere!.clone();
         dew.frustumCulled = true;
+        dew.userData.fronds = true; // (out of the shadow pass with the fronds, as forShadow says)
         group.add(dew);
         disposables.push(dew.geometry);
       }
@@ -355,6 +367,7 @@ export class World {
   forShadow(on: boolean, cx = 0, cz = 0, reach = 0) {
     for (const ch of this.chunks.values()) {
       for (const o of ch.group.children) if (o.userData.fronds) o.visible = !on;
+      shellsForShadow(ch.group, on);
       ch.group.visible = !on || Math.hypot((ch.cx + 0.5) * CHUNK - cx, (ch.cz + 0.5) * CHUNK - cz) < reach;
     }
   }

@@ -92,6 +92,9 @@ export const mossLighting = /* glsl */ `
 uniform sampler2D uShadowMap;
 uniform mat4 uShadowMatrix;
 uniform float uShadowOn;
+// the shadow map's pass wants only the depth: each material stops here, after its discards (its holes still holes)
+uniform float uDepthOnly;
+#define DEPTH_ONLY if (uDepthOnly > 0.5) { gl_FragColor = vec4(1.0); return; }
 uniform float uCavityAO; // 1 = moss sits darker in holes and inner corners, 0 = AO disabled
 uniform float uShadowFloor; // how dark a fully shadowed spot gets
 uniform float uTime;
@@ -350,6 +353,7 @@ void main() {
     if (dens < (dot(w, kDensity) + w5 * kDensity5) + 0.6 * uu + 0.35 * uu * graze) discard;
   }
 
+  DEPTH_ONLY // the shadow pass: past the discards, nothing more to work out
   float shadow = shadowAt(vWorldPos, N);
   float sheen = pow(1.0 - ndv, 2.5) * (dot(w, kSheen) + w5 * kSheen5) * mix(0.4, 1.0, shadow);
   // directional, not wrapped: sides facing away from the light go properly dark

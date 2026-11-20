@@ -334,6 +334,7 @@ float birchAt(vec2 b, out vec3 col, out float dark) {
   return h;
 }
 void main() {
+  DEPTH_ONLY // the shadow pass: past the discards, nothing more to work out
   vec3 N = normalize(vNormal);
   vec3 L = normalize(uLightDir);
   vec3 V = normalize(cameraPosition - vWorldPos);
@@ -375,6 +376,7 @@ void main() {
 }
 #else
 void main() {
+  DEPTH_ONLY // the shadow pass: past the discards, nothing more to work out
   vec3 N = normalize(vNormal);
   vec3 L = normalize(uLightDir);
   vec3 V = normalize(cameraPosition - vWorldPos);

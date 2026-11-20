@@ -75,6 +75,7 @@ void main() {
   vec3 N = normalize(invView * nv);
   vec3 V = normalize(cameraPosition - vCentre);
   vec3 L = normalize(uLightDir);
+  DEPTH_ONLY // the shadow pass: past the discards, nothing more to work out
   float shadow = shadowAt(vCentre, vec3(0.0, 1.0, 0.0));
   float fres = pow(1.0 - nv.z, 3.0);
   // inside: a drop is a lens, it shows a bright, upside-down world: warm light at the bottom of the drop

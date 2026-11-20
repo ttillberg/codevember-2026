@@ -430,6 +430,7 @@ void main() {
   vec3 V = normalize(cameraPosition - vWorldPos);
   if (dot(N, V) < 0.0) N = -N;
   vec3 L = normalize(uLightDir);
+  DEPTH_ONLY // the shadow pass: past the discards, nothing more to work out
   float shadow = clamp((shadowAt(vWorldPos, N) - uShadowFloor) / max(1.0 - uShadowFloor, 1e-3), 0.0, 1.0);
   float diff = max(dot(N, L), 0.0);
   float thru = pow(max(dot(-V, L), 0.0), 2.0) * thin;

@@ -57,7 +57,8 @@ export class Oaks {
       if (!geo) return;
       this.mesh = new THREE.InstancedMesh(geo, material, MAX);
       this.mesh.count = 0;
-      this.mesh.frustumCulled = false;
+      // culled by the sphere round all the oaks placed (computed as they are): drawn always, all sixteen of a model of
+      // 80,000 vertices went through every pass, the shadow map's too
       this.root.add(this.mesh);
       this.cellKey = '';
     }).catch((e) => console.warn('oak.glb', e));
@@ -84,6 +85,7 @@ export class Oaks {
     });
     this.mesh.count = this.oaks.length;
     this.mesh.instanceMatrix.needsUpdate = true;
+    this.mesh.computeBoundingSphere();
     this.changed = true;
   }
 
@@ -177,6 +179,8 @@ float leafEdge(float c, float v) {
   return abs(c) - hw;
 }
 void main() {
+  if (vPart > 2.5 && leafEdge(vUv.x, vUv.y) > 0.0) discard;
+  DEPTH_ONLY // the shadow pass: past the discards, nothing more to work out
   vec3 N = normalize(vNormal);
   vec3 V = normalize(cameraPosition - vWorldPos);
   vec3 L = normalize(uLightDir);
