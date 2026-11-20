@@ -20,7 +20,7 @@ const CSS = `
 export interface VegKind { name: string; objects: THREE.Object3D[] }
 
 /** kinds: what each checkbox shows and hides; changed: called after, to draw the shadow map again */
-export function vegboard(kinds: VegKind[], changed: () => void) {
+export function vegboard(kinds: VegKind[], changed: () => void, actions: { label: string; run: () => void }[] = []) {
   const style = document.createElement('style');
   style.textContent = CSS;
   document.head.append(style);
@@ -47,6 +47,11 @@ export function vegboard(kinds: VegKind[], changed: () => void) {
   fold.onclick = () => { el.classList.toggle('folded'); fold.textContent = el.classList.contains('folded') ? '+' : '–'; };
 
   const grid = add(el, 'div', { className: 'grid' });
+  // jumps: to see a kind up close without walking there
+  if (actions.length) {
+    const row = add(el, 'div', { className: 'grid' });
+    for (const a of actions) { const b = add(row, 'button', { textContent: a.label }); b.onclick = a.run; }
+  }
   for (const k of kinds) {
     const l = add(grid, 'label');
     const c = add<HTMLInputElement>(l, 'input', { type: 'checkbox', checked: k.objects.every((o) => o.visible) });

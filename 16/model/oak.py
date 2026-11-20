@@ -1,5 +1,6 @@
-# An old oak for the clearings, as a model: the blockout first, its rough form from where you stand (worm's eye),
-# no bark or leaves yet.
+# An old oak for the clearings, as a model, after the open-grown reference (process/ref/oak-open-grown.jpg): its
+# wood, with the bark's coordinates in metres for the shader (oak.ts), and its leaves, red oak's, in cards at the
+# ends of the twigs.
 #
 #   /Applications/Blender.app/Contents/MacOS/Blender -b -P 16/model/oak.py -- render   # and model/renders/oak*.png
 #
@@ -7,13 +8,17 @@
 # splitting a few metres up into three or four heavy limbs that go out more than up, crooked, elbowed, each forking
 # again and again, the crown wider than it is tall. Tubes along crooked paths, a ring of vertices every step, each
 # child starting inside its parent so the joins close without welding. One mesh, y up after the glTF export.
-# Part (the _part attribute): 0 the bole, 1 a limb, 2 a twig (the thin ends, where the leaves will go).
+# Part (the _part attribute): 0 the bole, 1 a limb, 2 a twig, 3 a leaf. The wood's uv: round the tube (0..1, a ring
+# has a seam vertex so it does not smear back), along it in metres; _girth its radius there, so the shader can
+# have the bark in metres round too. A leaf's uv: across (-1..1) and along (0 at the stalk, 1 at the tip), its
+# _girth a seed (its colour, its turn of autumn).
 
 import bpy, math, os, random, sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 TAU = math.pi * 2
 R = random.Random(11)
+RL = random.Random(23)  # the leaves' own: drawing from R, they changed the form of the tree itself
 
 
 def v_add(a, b): return (a[0] + b[0], a[1] + b[1], a[2] + b[2])
@@ -29,7 +34,17 @@ def v_norm(a):
 
 class Mesh:
     def __init__(self):
-        self.V, self.F, self.part = [], [], []
+        self.V, self.F, self.part, self.uv, self.girth = [], [], [], [], []
+
+    def leaf(self, base, d, side, size, seed):
+        """a leaf card from its stalk at base out along d, side across it: four corners (its outline is the
+        shader's, so the card can be plain)"""
+        start = len(self.V)
+        for v in (0.0, 1.0):
+            for c in (-1.0, 1.0):
+                p = v_add(base, v_add(v_mul(d, v * size), v_mul(side, c * size * 0.34)))
+                self.V.append(p); self.part.append(3); self.uv.append((c, v)); self.girth.append(seed)
+        self.F.append((start, start + 1, start + 3, start + 2))
 
     def tube(self, pts, radii, part, sides, cap=True, flare=None):
         """rings along pts (z up), frames carried along so they do not twist; flare(i, a) scales a ring's radius"""
@@ -38,28 +53,31 @@ class Mesh:
         ref = (0.0, 0.0, 1.0) if abs(t0[2]) < 0.9 else (1.0, 0.0, 0.0)
         u = v_norm(v_cross(t0, ref))
         start = len(self.V)
+        along = 0.0
+        ring = sides + 1  # the seam vertex again at the end of each ring, its uv 1
         for i in range(n):
+            if i > 0:
+                along += v_len(v_sub(pts[i], pts[i - 1]))
             t = v_norm(v_sub(pts[min(i + 1, n - 1)], pts[max(i - 1, 0)]))
             u = v_norm(v_sub(u, v_mul(t, v_dot(u, t))))  # parallel transport
             w = v_cross(t, u)
-            for k in range(sides):
+            for k in range(ring):
                 a = k / sides * TAU
-                r = radii[i] * (flare(i, a) if flare else 1.0)
+                r = radii[i] * (flare(i, a % TAU) if flare else 1.0)
                 d = v_add(v_mul(u, math.cos(a) * r), v_mul(w, math.sin(a) * r))
                 self.V.append(v_add(pts[i], d))
-                self.part.append(part)
+                self.part.append(part); self.uv.append((k / sides, along)); self.girth.append(radii[i])
         for i in range(n - 1):
             for k in range(sides):
-                a = start + i * sides + k
-                b = start + i * sides + (k + 1) % sides
-                self.F.append((a, b, b + sides, a + sides))
+                a = start + i * ring + k
+                self.F.append((a, a + 1, a + 1 + ring, a + ring))
         if cap:
             self.V.append(pts[-1])
-            self.part.append(part)
+            self.part.append(part); self.uv.append((0.5, along)); self.girth.append(0.0)
             c = len(self.V) - 1
-            last = start + (n - 1) * sides
+            last = start + (n - 1) * ring
             for k in range(sides):
-                self.F.append((last + k, last + (k + 1) % sides, c))
+                self.F.append((last + k, last + k + 1, c))
 
 
 M = Mesh()
@@ -95,10 +113,24 @@ def limb(p0, yaw, pitch0, pitch1, length, r0, depth):
     """a limb and its children; depth 0 is a twig"""
     steps = max(4, int(length / 0.4))
     phase = R.uniform(0, TAU)
-    pts = path(p0, yaw, pitch0, pitch1, length, steps, 0.25 if depth >= 2 else 0.4, phase)
+    # (a gentle wander: more and the long limbs curled round into loops)
+    pts = path(p0, yaw, pitch0, pitch1, length, steps, 0.15 if depth >= 2 else 0.3, phase)
     # tapering slowly, then to a point: a limb ends in its twigs, not a sawn-off pipe
     radii = [r0 * (1.0 - 0.88 * (i / steps) ** 0.9) for i in range(len(pts))]
     M.tube(pts, radii, 1 if depth > 0 else 2, 12 if r0 > 0.2 else 8 if r0 > 0.06 else 5)
+    # leaves: in clusters along the outer part of the twigs and the small branches, spreading out from them and
+    # turned up to the light, hanging a little at the tips
+    if depth <= 1:
+        nl = 22 if depth == 0 else 13
+        for j in range(nl):
+            i = min(len(pts) - 2, int(len(pts) * RL.uniform(0.35 if depth == 0 else 0.6, 1.0)))
+            t = v_norm(v_sub(pts[i + 1], pts[i]))
+            a = RL.uniform(0, TAU)
+            out = v_norm(v_cross(t, (math.cos(a), math.sin(a), RL.uniform(-0.3, 0.3))))
+            d = v_norm(v_add(v_add(out, v_mul(t, 0.6)), (0.0, 0.0, RL.uniform(-0.35, 0.15))))
+            side = v_norm(v_cross(d, (0.0, 0.0, 1.0))) if abs(d[2]) < 0.95 else (1.0, 0.0, 0.0)
+            side = v_norm(v_add(side, (0.0, 0.0, RL.uniform(-0.4, 0.4))))
+            M.leaf(pts[i], d, side, RL.uniform(0.21, 0.31), RL.random())  # (the page scales the tree up 1.3-1.6)
     if depth == 0:
         return
     L = LEVELS[depth]
@@ -129,7 +161,8 @@ def oak():
         b = sum(max(0.0, math.cos(a - ba)) ** 6 for ba in buttress)
         return 1.0 + low * (0.35 + 0.9 * b)
 
-    M.tube(bole, radii, 0, 24, cap=True, flare=flare)
+    # (open at the top: the leaders rise out of it and cover it; a cap had shown as a flat lid between them)
+    M.tube(bole, radii, 0, 24, cap=False, flare=flare)
     top = bole[-1]
     # it splits into three leaders, heavy, going up and out at forty to sixty degrees, then levelling: the long
     # limbs leave them and go out level, hanging down at their ends
@@ -148,6 +181,12 @@ def make():
     me.validate()
     attr = me.attributes.new('_part', 'FLOAT', 'POINT')
     attr.data.foreach_set('value', [float(p) for p in M.part])
+    g = me.attributes.new('_girth', 'FLOAT', 'POINT')
+    g.data.foreach_set('value', [float(x) for x in M.girth])
+    uvl = me.uv_layers.new(name='uv')
+    for poly in me.polygons:
+        for li in poly.loop_indices:
+            uvl.data[li].uv = M.uv[me.loops[li].vertex_index]
     ob = bpy.data.objects.new('oak', me)
     bpy.context.scene.collection.objects.link(ob)
     for poly in me.polygons:

@@ -27,6 +27,7 @@ import { soundboard } from './soundboard';
 import { reference } from './reference';
 import { lookboard } from './lookboard';
 import { vegboard } from './vegboard';
+import { Oaks } from './oak';
 import { Fungarium, type Species } from './fungarium';
 import { Pouch } from './pouch';
 import { Sound } from './sound';
@@ -212,6 +213,9 @@ scene.add(boulders.root);
 // the crowns: spruce boughs and birch leaves on the trunks, the light coming down through them
 const foliage = new Foliage(share, lightDir);
 scene.add(foliage.root);
+// old oaks in the clearings (a Blender model, loaded on its own)
+const oaks = new Oaks(share);
+scene.add(oaks.root);
 shellMat.uniforms.uCanopyMap.value = foliage.canopyMap;
 shellMat.uniforms.uCanopyBox.value = foliage.canopyBox;
 // wood ants on trails from a nest in the moss up the trunks
@@ -715,7 +719,8 @@ function walk(dt: number, fx: number, fz: number, v: number) {
   me.z += fz * v * dt + fx * me.side * dt;
   // the tight bunch of stipes at a fern's crown is solid; the fronds you crawl under; small fungi you crawl over
   const [tx, tz] = trees.collide(me.x, me.z, 0.05);
-  const [cx, cz] = boulders.collide(tx, tz, 0.05);
+  const [ox, oz] = oaks.collide(tx, tz, 0.05);
+  const [cx, cz] = boulders.collide(ox, oz, 0.05);
   if (v > 0.05 && (cx !== me.x || cz !== me.z)) {
     // pushed off a trunk while crawling at it head on: start up it
     const t = trees.trunks.reduce((a, b) => (Math.hypot(b.x - me.x, b.z - me.z) - b.r < Math.hypot(a.x - me.x, a.z - me.z) - a.r ? b : a));
@@ -781,7 +786,7 @@ const sunScreen = new THREE.Vector3();
 const camDir = new THREE.Vector3();
 let focus = 1;
 // dev: tuning handles in the console
-if (import.meta.env.DEV) Object.assign(window, { foliage, boulders, floorBits, sound, forest, trees, ants, ferns, props, fungi, fungarium, spores, throwAt, shellMat, lensMat, atmosMat, camera, aoPass, lens, atmos, beautyRT, scene, renderer, composer, world, me, look });
+if (import.meta.env.DEV) Object.assign(window, { foliage, oaks, boulders, floorBits, sound, forest, trees, ants, ferns, props, fungi, fungarium, spores, throwAt, shellMat, lensMat, atmosMat, camera, aoPass, lens, atmos, beautyRT, scene, renderer, composer, world, me, look });
 // loading (as day 12's ink drawing): the splash, a card in the middle, over the forest drawn as a golden wire mesh
 // (everything in its plain geometry, the moss's shells one sheet). Once the models are in and the picture's
 // shaders compiled, and the card has been up two seconds and a half, the card goes and the picture fades in over
@@ -833,11 +838,21 @@ if (params.has('debug')) vegboard([
   { name: 'pine, spruce boughs', objects: [foliage.boughs, foliage.model] },
   { name: 'birch trunks', objects: trees.birches },
   { name: 'birch leaves', objects: [foliage.leaves] },
+  { name: 'oaks', objects: [oaks.root] },
   { name: 'ferns', objects: [ferns.root] },
   { name: 'fungi', objects: [fungi.group] },
   { name: 'boulders', objects: [boulders.root] },
   { name: 'leaves, sorrel', objects: [floorBits.root] },
-], () => shadowCentre.set(Infinity, 0, 0));
+], () => shadowCentre.set(Infinity, 0, 0), [
+  // to the nearest oak, a crown's width off on its sunny side, looking up at it
+  { label: 'go to oak', run: () => {
+    const o = oaks.oaks.slice().sort((a, b) => Math.hypot(a.x - me.x, a.z - me.z) - Math.hypot(b.x - me.x, b.z - me.z))[0];
+    if (!o) return;
+    const a = Math.atan2(lightDir.z, lightDir.x);
+    me.x = o.x + Math.cos(a) * 12 * o.s; me.z = o.z + Math.sin(a) * 12 * o.s;
+    look.yaw = look.tYaw = Math.atan2(-(o.x - me.x), -(o.z - me.z)); look.pitch = look.tPitch = 0.4;
+  } },
+]);
 
 renderer.setAnimationLoop(() => {
   const dt = Math.min(clock.getDelta(), 0.05);
@@ -867,6 +882,7 @@ renderer.setAnimationLoop(() => {
   props.update(me.x, me.z);
   ferns.update(me.x, me.z, dt);
   trees.update(me.x, me.z);
+  oaks.update(me.x, me.z);
   foliage.update(trees.trunks, camera.position);
   floorBits.update(me.x, me.z);
   boulders.update(me.x, me.z);

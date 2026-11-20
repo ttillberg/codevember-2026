@@ -241,9 +241,9 @@ export class Foliage {
       const r = mulberry32((Math.imul(Math.round(t.x * 100), 0x7feb352d) ^ Math.imul(Math.round(t.z * 100), 0x846ca68b) ^ 0xf011) >>> 0);
       const foot = trunkFoot(t);
       if (t.spruce) {
-        // a spruce, lower and compact: a dense dark cone from a metre or two up to its top, the boughs long low
+        // a spruce, lower and compact: a dense dark cone from two or three metres up to its top, the boughs long low
         // down and short at the top, the lowest few grey and dying
-        const top = HEIGHT * t.h - 0.6, low = 1.0 + r() * 1.5;
+        const top = HEIGHT * t.h - 0.6, low = 2.0 + r() * 1.5; // (from two metres: lower, they were in the way)
         // (a cone: as long low down it had read as a column, the trunk showing in bands between the whorls)
         for (let h = low; h < top && nb < MAX_BOUGH; h += 0.2 + 0.15 * r() + h * 0.006) {
           const n = 6 + Math.floor(r() * 3), a0 = r() * Math.PI * 2;

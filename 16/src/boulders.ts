@@ -10,6 +10,7 @@ import * as THREE from 'three';
 import { buildRock, deadAt, pillowAt, domeAt, type Surface } from './rock';
 import { fbm3, mulberry32 } from './noise';
 import { groundHeight, dressSurface, trunkInCell, clearing, SPECIES, TREE_CELL, type WorldHooks } from './world';
+import { oakInCell, OAK_CELL } from './oak';
 
 const coarse = matchMedia('(pointer: coarse)').matches;
 const CELL = 7;
@@ -46,6 +47,12 @@ export class Boulders {
     for (let dz = -1; dz <= 1; dz++) for (let dx = -1; dx <= 1; dx++) {
       const t = trunkInCell(tix + dx, tiz + dz);
       if (t && Math.hypot(t.x - x, t.z - z) < t.r * 1.6 + size * 1.4) return null;
+    }
+    // nor in an oak's foot
+    const oix = Math.floor(x / OAK_CELL), oiz = Math.floor(z / OAK_CELL);
+    for (let dz = -1; dz <= 1; dz++) for (let dx = -1; dx <= 1; dx++) {
+      const o = oakInCell(oix + dx, oiz + dz);
+      if (o && Math.hypot(o.x - x, o.z - z) < 2.0 + size * 1.4) return null;
     }
     return { x, z, size, seed: Math.floor(r() * 1e9) };
   }
