@@ -20,9 +20,11 @@ import { Spores } from './spores';
 import { Dust } from './dust';
 import { Floor } from './floor';
 import { Boulders } from './boulders';
+import { Foliage } from './foliage';
 import { Slingshot } from './slingshot';
 import { Forest } from './forest';
 import { soundboard } from './soundboard';
+import { reference } from './reference';
 import { Fungarium, type Species } from './fungarium';
 import { Pouch } from './pouch';
 import { Sound } from './sound';
@@ -119,6 +121,8 @@ const sound = new Sound(camera);
 const forest = new Forest(sound, camera);
 // ?debug: a soundboard to try them one by one
 if (params.has('debug')) soundboard(forest, sound, camera);
+// and the splash as a reference to work toward, in a window (R: big, hidden, small)
+if (params.has('debug')) reference(`${import.meta.env.BASE_URL}splash.webp`);
 const creakAt = new THREE.Vector3();
 const creakNext = new WeakMap<object, number>(); // when each growing cluster creaks next
 const fxScene = new THREE.Scene();
@@ -185,6 +189,9 @@ scene.add(floorBits.root);
 // boulders grown over with the ground's moss
 const boulders = new Boulders(hooks);
 scene.add(boulders.root);
+// the crowns: spruce boughs and birch leaves on the trunks, the light coming down through them
+const foliage = new Foliage(share);
+scene.add(foliage.root);
 // wood ants on trails from a nest in the moss up the trunks
 const ants = new Ants(share, camera);
 scene.add(ants.mesh);
@@ -242,6 +249,7 @@ function renderShadow(centre: THREE.Vector3) {
   world.forShadow(true, centre.x, centre.z, 4.3);
   ferns.forShadow(true, centre.x, centre.z, 6);
   boulders.forShadow(true);
+  foliage.forShadow(true);
   farFloor.visible = false;
   ants.mesh.visible = false; // too small to cast anything worth the map
   renderer.setRenderTarget(shadowRT);
@@ -251,6 +259,7 @@ function renderShadow(centre: THREE.Vector3) {
   world.forShadow(false);
   ferns.forShadow(false);
   boulders.forShadow(false);
+  foliage.forShadow(false);
   farFloor.visible = true;
   ants.mesh.visible = true;
   u.uShadowMap.value = shadowRT.depthTexture;
@@ -743,7 +752,7 @@ const sunScreen = new THREE.Vector3();
 const camDir = new THREE.Vector3();
 let focus = 1;
 // dev: tuning handles in the console
-if (import.meta.env.DEV) Object.assign(window, { boulders, floorBits, sound, forest, trees, ants, ferns, props, fungi, fungarium, spores, throwAt, shellMat, lensMat, atmosMat, camera, aoPass, lens, atmos, beautyRT, scene, renderer, composer, world, me, look });
+if (import.meta.env.DEV) Object.assign(window, { foliage, boulders, floorBits, sound, forest, trees, ants, ferns, props, fungi, fungarium, spores, throwAt, shellMat, lensMat, atmosMat, camera, aoPass, lens, atmos, beautyRT, scene, renderer, composer, world, me, look });
 // loading (as day 12's ink drawing): the splash, a card in the middle, over the forest drawn as a golden wire mesh
 // (everything in its plain geometry, the moss's shells one sheet). Once the models are in and the picture's
 // shaders compiled, and the card has been up two seconds and a half, the card goes and the picture fades in over
@@ -815,6 +824,7 @@ renderer.setAnimationLoop(() => {
   props.update(me.x, me.z);
   ferns.update(me.x, me.z, dt);
   trees.update(me.x, me.z);
+  foliage.update(trees.trunks, camera.position);
   floorBits.update(me.x, me.z);
   boulders.update(me.x, me.z);
   ants.update(dt, me.x, me.z, trees.trunks);

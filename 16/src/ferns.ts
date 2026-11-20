@@ -300,11 +300,15 @@ void main() {
   bool pinna = vLeaf.z > 0.5;
   // pinnules: lobes down each side of the pinna, deep cut towards the midrib, small teeth on each lobe,
   // the whole outline narrowing to the pinna's tip
-  // the lobes lean towards the pinna's tip, oblong, cut almost to the midrib
-  float P = 8.0;
-  float lobe = abs(sin((u - abs(c) * 0.18) * P * 3.14159));
-  float teeth = 0.05 * abs(sin((u - abs(c) * 0.18) * P * 3.14159 * 5.0)) * abs(c);
-  float hw = (1.0 - pow(u, 1.3)) * (0.14 + 0.86 * pow(lobe, 0.8)) + teeth;
+  // the lobes lean towards the pinna's tip, narrow and pointed, cut almost to the midrib, finely toothed: lacy, as
+  // a lady fern's (eight broad rounded lobes had read as oak leaves). Where a pinnule is only a few pixels it
+  // smooths out to the pinna's outline instead of shimmering.
+  float P = 14.0;
+  float sp = (u - abs(c) * 0.22) * P;
+  float lobe = pow(abs(sin(sp * 3.14159)), 1.6);
+  float teeth = 0.06 * abs(sin(sp * 3.14159 * 4.0)) * abs(c) * lobe;
+  float fine = 1.0 - smoothstep(0.1, 0.3, fwidth(u) * P);
+  float hw = (1.0 - pow(u, 1.2)) * mix(0.72, 0.06 + 0.94 * lobe + teeth, fine);
   if (pinna && abs(c) > hw) discard;
   if (nearFade(vWorldPos, 0.05, 0.16) < 0.5) discard;
 
@@ -316,14 +320,16 @@ void main() {
 
   // autumn: green, then gold, then rust and brown; the tip of a frond and of a pinna turn first
   float stage = clamp(vFrond.x + 0.35 * vFrond.z + 0.15 * u - 0.15, 0.0, 1.0);
-  vec3 green = vec3(0.04, 0.11, 0.02), gold = vec3(0.40, 0.27, 0.04), rust = vec3(0.32, 0.10, 0.03), brown = vec3(0.13, 0.06, 0.025);
+  // (straw and copper, not a bright yellow: a saturated yellow lit up every sharp edge)
+  vec3 green = vec3(0.06, 0.16, 0.03), gold = vec3(0.4, 0.29, 0.11), rust = vec3(0.36, 0.13, 0.045), brown = vec3(0.15, 0.07, 0.03);
   vec3 col = stage < 0.4 ? mix(green, gold, stage / 0.4) : stage < 0.75 ? mix(gold, rust, (stage - 0.4) / 0.35) : mix(rust, brown, (stage - 0.75) / 0.25);
   col *= 0.85 + 0.3 * vFrond.w;
   if (pinna) {
-    // a paler midrib, and a vein into each pinnule
-    float mid = 1.0 - smoothstep(0.0, 0.06, abs(c));
-    float vein = (1.0 - smoothstep(0.0, 0.05, abs(fract(u * P - 0.5 * abs(c)) - 0.5) * 2.0 - 0.92)) * step(0.08, abs(c));
-    col = mix(col, col * 1.3 + 0.02, clamp(mid + 0.4 * vein, 0.0, 1.0) * 0.5);
+    // the midrib and a vein into each pinnule: paler on a green one, darker on a turned one
+    float mid = 1.0 - smoothstep(0.0, 0.05, abs(c));
+    float vein = (1.0 - smoothstep(0.0, 0.05, abs(fract(sp) - 0.5) * 2.0 - 0.92)) * step(0.08, abs(c)) * fine;
+    vec3 rib = stage < 0.3 ? col * 1.3 + 0.02 : col * 0.55;
+    col = mix(col, rib, clamp(mid + 0.4 * vein, 0.0, 1.0) * 0.6);
     // sori: rows of rust spore dots under each pinnule, either side of its vein
     if (under) {
       vec2 g = vec2(fract(u * P * 2.0) - 0.5, abs(c) - 0.45 * hw);
