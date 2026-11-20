@@ -387,6 +387,31 @@ def subpanels(b, name):
     return list(groups.values()), planes, along
 
 
+RIMS = []        # the edges of the panels, for the bolts along them
+
+def loops_of(edges, own):
+    """boundary edges walked into loops: each a list of (point, inward) with inward the way into the panel"""
+    left, loops = set(edges), []
+    at = {}
+    for e in edges:
+        for v in e.verts: at.setdefault(v, []).append(e)
+    while left:
+        e = left.pop(); v = e.verts[1]; chain = [e.verts[0], v]; es = [e]
+        while True:
+            nxt = [x for x in at[v] if x in left]
+            if not nxt: break
+            e = nxt[0]; left.discard(e); v = e.other_vert(v); chain.append(v); es.append(e)
+        pts = []
+        for i, e in enumerate(es):
+            a, b = chain[i].co, chain[i + 1].co
+            f = next(lf for lf in e.link_faces if lf in own)
+            d = (b - a).normalized(); inward = f.normal.cross(d)
+            if inward.dot(f.calc_center_median() - (a + b) / 2) < 0: inward = -inward
+            pts.append((a.copy(), b.copy(), inward, f.normal.copy()))
+        loops.append(pts)
+    return loops
+
+
 def plate(name, parent, transform=None, thick=T, gap=GAP):
     b = region({name}, transform)
     if not b.faces: b.free(); return None
@@ -401,6 +426,13 @@ def plate(name, parent, transform=None, thick=T, gap=GAP):
             PANELS.append(dict(name=name, parent=parent, transform=transform, thick=thick, area=area, planes=planes,
                                key=tuple((mid.calc_center_median() - co).dot(no) > 0 for co, no in planes),
                                at=mid.calc_center_median(), n=mid.normal.copy(), along=along))
+    # each panel's edge, as loops in order: where the bolts go
+    for g in groups:
+        if sum(f.calc_area() for f in g) < 0.05: continue
+        own = set(g)
+        edge = [e for f in g for e in f.edges if sum(1 for lf in e.link_faces if lf in own) == 1]
+        if edge: RIMS.append(dict(name=name, parent=parent, transform=transform, thick=thick, loops=loops_of(edge, own),
+                                  planes=planes, key=tuple((g[0].calc_center_median() - co).dot(no) > 0 for co, no in planes)))
     if planes:
         for g in groups:
             if sum(f.calc_area() for f in g) < 0.01: continue   # a sliver: an even inset would shoot its corners out
@@ -447,6 +479,7 @@ LED_RED = mat('led_red', (0.02, 0.0, 0.0), 0.4, 0.0, ((1.0, 0.08, 0.04), 3.0))
 LED_GREEN = mat('led_green', (0.0, 0.02, 0.0), 0.4, 0.0, ((0.2, 1.0, 0.35), 2.5))
 DARK = mat('dark', (0.012, 0.012, 0.014), 0.7)
 STEEL = mat('steel', (0.2, 0.205, 0.21), 0.38, 0.85)   # clamps and collars, catching the light
+BOLT = mat('bolt', (0.12, 0.125, 0.13), 0.42, 0.9)
 LED = mat('led', (0.02, 0.01, 0.0), 0.4, 0.0, ((1.0, 0.55, 0.18), 3.0))   # warm, not burnt white
 
 
@@ -880,6 +913,9 @@ def details(clear):
             hx = w * 0.28
             for x in (-hx, hx):
                 soup('steel', par).box((0.03, 0.03, 0.016), at(x, h * 0.3, 0.018), R)
+            for x, y in ((-1, -1), (1, -1), (1, 1), (-1, 1)):
+                b0 = at(x * (w / 2 - 0.016), y * (h / 2 - 0.016), 0.011)
+                soup('bolt', par).cyl(0.005, b0, b0 + n * 0.004, 6)
             soup('steel', par).tube([at(-hx, h * 0.3, 0.02), at(-hx, h * 0.3, 0.05), at(hx, h * 0.3, 0.05), at(hx, h * 0.3, 0.02)], 0.008, 8, smooth=False)
         elif kind == 'slot':
             soup('dark', par).box((w, h, 0.01), at(0, 0, 0.0), R)
@@ -891,6 +927,9 @@ def details(clear):
             b = 0.018
             for (cx, cy, sx, sy) in ((0, (h + b) / 2, w + 2 * b, b), (0, -(h + b) / 2, w + 2 * b, b), (-(w + b) / 2, 0, b, h), ((w + b) / 2, 0, b, h)):
                 soup('mech', par).box((sx, sy, 0.02), at(cx, cy, 0.004), R)
+            for x, y in ((-1, -1), (1, -1), (1, 1), (-1, 1)):
+                b0 = at(x * (w / 2 + b / 2), y * (h / 2 + b / 2), 0.014)
+                soup('bolt', par).cyl(0.0045, b0, b0 + n * 0.0035, 6)
             k = max(3, int(h / 0.03))
             for i in range(k):
                 y = -h / 2 + h * (i + 0.5) / k
@@ -913,11 +952,55 @@ def details(clear):
             m = DOOR_M
             soup('steel', pod).cyl(0.032, m @ Vector((0, 0, z0)), m @ Vector((0, 0, z1)), 14)
             soup('steel', pod).box((0.016, 0.12, (z1 - z0) * 0.9), m @ Vector((0.012, -sgn * 0.07, (z0 + z1) / 2)), DOOR_M.to_3x3().to_4x4())
-    mats = {'steel': STEEL, 'dark': DARK, 'mech': MECH, 'block': BLOCK, 'led': LED}
+    mats = {'steel': STEEL, 'dark': DARK, 'mech': MECH, 'block': BLOCK, 'led': LED, 'bolt': BOLT}
     for (kind, _), (sp, par) in soups.items():
-        sp.done('detail_%s_%s' % (kind, par.name), mats[kind], par, None, 0.004 if kind != 'led' else 0)
+        sp.done('detail_%s_%s' % (kind, par.name), mats[kind], par, None, 0 if kind in ('led', 'bolt') else 0.004)
     for name, (sp, par, _) in hatches.items():
         PLATES.append(sp.done('hatches_' + name, PAINT, par, None, 0.004))
+
+
+def bolts(clear):
+    """Bolts round every panel, a little in from its edge, one every 13 cm or so along it: a hex head on a washer,
+    only where it lands flat on its own panel, not too near another edge (at the corners) or the window."""
+    rnd = random.Random(31)
+    EVERY, IN = 0.13, 0.026
+    soups, count = {}, 0
+    for P in RIMS:
+        M = P['transform'].inverted() if P['transform'] else Matrix.Identity(4)
+        sp = soups.setdefault(P['parent'].name, (Soup(), P['parent']))[0]
+        segs = [(a, b) for loop in P['loops'] for a, b, _, _ in loop]
+        def near_edge(q):
+            for a, b in segs:
+                ab = b - a; t = max(0.0, min(1.0, (q - a).dot(ab) / max(ab.length_squared, 1e-12)))
+                if (a + ab * t - q).length < IN * 0.75: return True
+            return False
+        for loop in P['loops']:
+            total = sum((b - a).length for a, b, _, _ in loop)
+            if total < 0.3: continue
+            k = max(3, round(total / EVERY)); step = total / k
+            marks = [rnd.uniform(0, step) + i * step for i in range(k)]
+            acc, j = 0.0, 0
+            for a, b, inward, n in loop:
+                L = (b - a).length
+                while j < len(marks) and marks[j] <= acc + L:
+                    q = a + (b - a) * ((marks[j] - acc) / max(L, 1e-9)) + inward * IN
+                    j += 1
+                    got = BVH.ray_cast(M @ (q + n * 0.25), (M.to_3x3() @ -n).normalized(), 0.5)
+                    if got[0] is None: continue
+                    local = M.inverted() @ got[0]
+                    if abs((local - q).dot(n)) > 0.012: continue
+                    if plate_of(hull.faces[got[2]]) != P['name']: continue
+                    if tuple((local - co).dot(no) > 0 for co, no in P['planes']) != P['key']: continue
+                    if any((got[0] - c).length < r for c, r in clear): continue
+                    if near_edge(q): continue
+                    p = q + n * P['thick']
+                    sp.cyl(0.009, p - n * 0.002, p + n * 0.0018, 8)
+                    sp.cyl(0.006, p, p + n * 0.005, 6)
+                    count += 1
+                acc += L
+    for name, (sp, par) in soups.items():
+        sp.done('bolts_' + name, BOLT, par, None, 0)
+    return count
 
 
 # ---------------------------------------------------------------- a window in the hatch
@@ -1299,7 +1382,7 @@ def bake_paint(objs):
     scene.cycles.use_denoising = False
     scene.render.bake.margin = 6
     if not scene.world: scene.world = bpy.data.worlds.new('World')
-    scene.world.light_settings.distance = 0.3
+    scene.world.light_settings.distance = 0.22
 
     # the bevel becomes real, then one atlas for both
     bpy.context.view_layer.update()
@@ -1371,11 +1454,20 @@ def bake_paint(objs):
     scratch = op('MAXIMUM', scratch, op('MULTIPLY', op('MULTIPLY', cracks(mapping(P, rot=(1.1, 0.2, 0.7)), 19.0, 0.012), ramp(noise(mapping(P, loc=(1, 8, 2)), 5.0, 3), 0.52, 0.7)), 0.7))
     speck = op('MULTIPLY', ramp(fine, 0.7, 0.8), 0.4)
 
-    colour = mix(op('MULTIPLY', dirt, 0.5), (0.74, 0.74, 0.71), (0.27, 0.24, 0.2))
+    # grime: heavier towards the foot (the pod's own up is its object Z), dust settled on what faces up
+    tc = node('ShaderNodeTexCoord')
+    nz = node('ShaderNodeSeparateXYZ'); K.new(tc.outputs['Normal'], nz.inputs[0])
+    pz = node('ShaderNodeSeparateXYZ'); K.new(P, pz.inputs[0])
+    low = ramp(pz.outputs['Z'], 0.2, -1.3)
+    dirt = op('ADD', dirt, op('MULTIPLY', low, op('MULTIPLY', ramp(noise(mapping(P, (6, 6, 1.5)), 1.0, 4, 0.6), 0.35, 0.7), 0.6)), True)
+    dust = op('MULTIPLY', ramp(nz.outputs['Z'], 0.35, 0.85), ramp(noise(P, 6, 4, 0.6), 0.3, 0.6))
+    colour = mix(op('MULTIPLY', dirt, 0.72), (0.66, 0.66, 0.63), (0.25, 0.22, 0.18))
+    colour = mix(op('MULTIPLY', dust, 0.55), colour, (0.5, 0.46, 0.4))
     colour = mix(speck, colour, (0.2, 0.2, 0.2))
     colour = mix(op('MULTIPLY', scratch, 0.7), colour, (0.36, 0.36, 0.37))
     colour = mix(chip, colour, (0.05, 0.05, 0.055))
     rough = op('SUBTRACT', op('ADD', op('ADD', 0.42, op('MULTIPLY', dirt, 0.3)), op('MULTIPLY', fine, 0.1)), op('MULTIPLY', scratch, 0.12))
+    rough = op('ADD', rough, op('MULTIPLY', dust, 0.25))
     rough = op('ADD', op('MULTIPLY', rough, op('SUBTRACT', 1.0, chip)), op('MULTIPLY', chip, 0.34))
 
     emit = node('ShaderNodeEmission'); out = node('ShaderNodeOutputMaterial'); K.new(emit.outputs[0], out.inputs['Surface'])
@@ -1406,7 +1498,8 @@ def bake_paint(objs):
 
     # dirt gathers where the light does not
     shade = 1 - ao
-    c = c * (1 - 0.7 * shade) * (1 - 0.35 * shade) + np.array([0.2, 0.17, 0.13], np.float32) * 0.25 * shade
+    shade = np.power(shade, 0.8)
+    c = c * (1 - 0.75 * shade) * (1 - 0.4 * shade) + np.array([0.2, 0.17, 0.13], np.float32) * 0.25 * shade
     r = np.clip(r + 0.25 * shade, 0, 1)
     srgb = np.where(c <= 0.0031308, c * 12.92, 1.055 * np.power(np.clip(c, 1e-6, 1), 1 / 2.4) - 0.055)
     def image(name, rgb, space):
@@ -1452,7 +1545,9 @@ result = {'faces': len(hull.faces), 'plates': sorted(ALL)}
 if STAGE != 'hull':
     hose_tops = machinery()
     window()
-    details([(Vector(hit('front', 478, 278)[0]), 0.55)])
+    keep_clear = [(Vector(hit('front', 478, 278)[0]), 0.55)]
+    details(keep_clear)
+    result['bolts'] = bolts(keep_clear)
     ports, top = deck()
     ports += [(p, Vector((0, 0.25, 1)).normalized(), r) for p, r in hose_tops]
     under = underside()

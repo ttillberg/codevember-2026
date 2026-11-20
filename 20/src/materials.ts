@@ -128,6 +128,8 @@ export function dress(root: THREE.Object3D) {
         return grit(physical(old, { color: 0x15171a, metalness: 0.65, roughness: 0.55 }), { scale: 7, rough: [0.7, 1.4], tint: 0.18 });
       case 'steel': // bare steel: clamps, collars, couplings, lugs
         return grit(physical(old, { color: 0x9da1a6, metalness: 1, roughness: 0.26 }), { scale: 25, rough: [0.6, 1.7], tint: 0.07 });
+      case 'bolt': // zinc-plated bolt heads, dulled
+        return grit(physical(old, { color: 0x6a6e73, metalness: 1, roughness: 0.4 }), { scale: 60, rough: [0.7, 1.5], tint: 0.18 });
       case 'brass':
         return grit(physical(old, { roughness: 0.3, metalness: 1 }), { scale: 20, rough: [0.7, 1.6], tint: 0.12 });
       case 'panel': // dark plastic: ribbed panels, boxes

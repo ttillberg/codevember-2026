@@ -1,6 +1,10 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { GTAOPass } from 'three/addons/postprocessing/GTAOPass.js';
+import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { Cable } from './cables';
 import { Blood } from './blood';
 import { buildHall } from './hall';
@@ -45,6 +49,29 @@ function start() {
   // the rest of the light, from the roof and the sides, comes with the hall (hall.ts)
 
   const camera = new THREE.PerspectiveCamera(40, 1, 0.1, 200);
+
+  // ambient occlusion in screen space: the dark in the machinery's corners, under the boxes, between the hoses.
+  // The light shafts and the dome are not surfaces, they are left out of what it sees.
+  const composer = new EffectComposer(renderer, new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType, samples: 4 }));
+  const scenePass = new RenderPass(scene, camera);
+  const ao = new GTAOPass(scene, camera, 1, 1);
+  {
+    const self = ao as unknown as { _renderOverride: (...a: unknown[]) => void };
+    const render = self._renderOverride.bind(ao);
+    self._renderOverride = (...a) => {
+      const hidden: THREE.Object3D[] = [];
+      scene.traverseVisible((o) => { if (o.userData.noAO) hidden.push(o); });
+      for (const o of hidden) o.visible = false;
+      render(...a);
+      for (const o of hidden) o.visible = true;
+    };
+  }
+  ao.updateGtaoMaterial({ radius: 0.45, distanceExponent: 1.4, thickness: 1.5, scale: 1.7, samples: 16 });
+  ao.updatePdMaterial({ lumaPhi: 10, depthPhi: 2, normalPhi: 3, radius: 6, rings: 2, samples: 16 });
+  ao.blendIntensity = 0.85;
+  composer.addPass(scenePass);
+  composer.addPass(ao);
+  composer.addPass(new OutputPass());
   const ortho = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 200); // the debug panel's iso: same eye, no perspective
   let eye: THREE.Camera = camera;
   const target = new THREE.Vector3(0.1, 0.15, 0);
@@ -352,7 +379,7 @@ function start() {
   canvas.addEventListener('pointercancel', release);
 
   // dev only: a look at the state from the console
-  if (import.meta.env.DEV) Object.assign(window, { cocoon: () => ({ grab, open, vopen, ax, az, tw, doorSign, cables: cables.length }), scene, camera });
+  if (import.meta.env.DEV) Object.assign(window, { cocoon: () => ({ grab, open, vopen, ax, az, tw, doorSign, cables: cables.length }), scene, camera, ao });
 
   // ---------- physics, in fixed steps
 
@@ -555,6 +582,8 @@ function start() {
     if (!w || !h) return; // not laid out yet, or hidden
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.setSize(w, h, false);
+    composer.setPixelRatio(renderer.getPixelRatio());
+    composer.setSize(w, h);
     camera.aspect = w / h;
     camera.updateProjectionMatrix();
     const wasHome = radius === homeRadius && target.equals(home);
@@ -609,7 +638,9 @@ function start() {
     hall?.update(time, dt);
     blood?.update(dt);
 
-    renderer.render(scene, eye);
+    scenePass.camera = eye;
+    ao.enabled = eye === camera; // the debug panel's iso goes without
+    composer.render();
     requestAnimationFrame(frame);
   }
   requestAnimationFrame(frame);

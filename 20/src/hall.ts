@@ -175,6 +175,7 @@ export function buildHall(scene: THREE.Scene, hang: THREE.Vector3) {
       }),
     );
     dome.renderOrder = -1;
+    dome.userData.noAO = true;
     scene.add(dome);
   }
 
@@ -240,10 +241,16 @@ export function buildHall(scene: THREE.Scene, hang: THREE.Vector3) {
                   + noise(vec3(vLocal.x * 4.0 + time * 0.1, vLocal.y * 0.2, vLocal.z * 4.0)) * 0.4;
           float a = strength * edge * along * (0.45 + 0.75 * n);
           a *= smoothstep(0.6, 4.0, dist) * (1.0 - 0.7 * smoothstep(25.0, 90.0, dist));
+          #ifndef TONE_MAPPING
+            // drawn into a target before the tone mapping (the AO pass needs that), where the tone curve's toe no
+            // longer swallows the faint rim of each cone: do it here, the faint part gone, the rest brought up
+            a = TOE_GAIN * max(a - TOE, 0.0);
+          #endif
           gl_FragColor = vec4(color * a, 1.0);
           #include <tonemapping_fragment>
           #include <colorspace_fragment>
         }`,
+      defines: { TOE: '0.012', TOE_GAIN: '2.8' },
       transparent: true,
       depthWrite: false,
       blending: THREE.AdditiveBlending,
@@ -262,6 +269,7 @@ export function buildHall(scene: THREE.Scene, hang: THREE.Vector3) {
     m.position.copy(from);
     m.quaternion.setFromUnitVectors(V(0, -1, 0), dir.clone().normalize());
     m.renderOrder = 2;
+    m.userData.noAO = true; // light in the air, nothing to shade
     scene.add(m);
   };
   const toPod = roof.target.position.clone().sub(roof.position);
