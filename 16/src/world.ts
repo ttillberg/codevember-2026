@@ -15,12 +15,16 @@ export const CHUNK = 1.0; // world units per chunk side
 // The spruce trunks (trees.ts draws them): one in about seven of ten cells of a coarse grid, by hash (it was under half; more of them give layer behind layer going off into the fog). Here so the
 // ground can know where they stand.
 export const TREE_CELL = 3.6;
-export interface Trunk { x: number; z: number; r: number; turn: number; key: string }
+export interface Trunk { x: number; z: number; r: number; turn: number; key: string; birch: boolean }
 export function trunkInCell(ix: number, iz: number): Trunk | null {
   const r = mulberry32((Math.imul(ix, 0x5bd1e995) ^ Math.imul(iz, 0x1b873593) ^ 0x7ee5) >>> 0);
   if (r() > 0.7) return null;
   const x = (ix + 0.15 + 0.7 * r()) * TREE_CELL, z = (iz + 0.15 + 0.7 * r()) * TREE_CELL;
-  return { x, z, r: 0.3 + 0.32 * r(), turn: r() * Math.PI * 2, key: `${ix},${iz}` };
+  const r0 = 0.3 + 0.32 * r(), turn = r() * Math.PI * 2;
+  // about one in three a birch, white among the dark spruces, and slimmer (drawn after the rest: the spruces
+  // stand where they stood)
+  const birch = r() < 0.36;
+  return { x, z, r: birch ? r0 * 0.42 : r0, turn, key: `${ix},${iz}`, birch };
 }
 const trunkCache = new Map<number, Trunk | null>();
 function cachedTrunk(ix: number, iz: number) {

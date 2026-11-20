@@ -1,4 +1,4 @@
-// Spruce trunks, columns rising out of the moss into the haze. One per cell of a coarse grid, by hash.
+// Spruce and birch trunks, columns rising out of the moss into the haze. One per cell of a coarse grid, by hash.
 // Three levels of detail, each an instanced mesh sharing one material: near trunks have their root flare in
 // fine geometry, mid ones a coarser version, far ones are octagonal columns. Trunks are sorted into the
 // levels as you move. The bark is a shader: spruce, small round scales overlapping like tiles, their lower edges
@@ -22,17 +22,19 @@ export { TREE_CELL, trunkInCell, type Trunk } from './world';
  */
 const buttress = (a: number) => Math.pow(Math.abs(Math.sin(a * 2.5 + 0.7)), 3) * 0.7 + Math.pow(Math.abs(Math.sin(a * 1.5 + 2.1)), 4) * 0.5;
 /** The unit trunk's radius at an angle (its own) and a height over its foot. */
-const radius = (a: number, y: number) => {
-  const flare = Math.exp(-Math.max(y, 0) / 0.28) * (0.15 + 0.7 * buttress(a)) + Math.exp(-Math.max(y, 0) / 2.5) * 0.1;
+const radius = (a: number, y: number, fl = 1) => {
+  const flare = (Math.exp(-Math.max(y, 0) / 0.28) * (0.15 + 0.7 * buttress(a)) + Math.exp(-Math.max(y, 0) / 2.5) * 0.1) * fl;
   const taper = 1 - 0.65 * (y / HEIGHT);
   return taper * (1 + flare);
 };
 /** Where a trunk's foot is: the bottom of the unit trunk, a little into the ground. */
 export const trunkFoot = (t: Trunk) => groundHeight(t.x, t.z) - 0.03;
 /** A trunk's bark, from its middle, at a world angle round it (atan2 of z, x) and a height over its foot. */
-export const trunkRadius = (t: Trunk, phi: number, y: number) => t.r * radius(phi + t.turn, y);
+export const trunkRadius = (t: Trunk, phi: number, y: number) => t.r * radius(phi + t.turn, y, t.birch ? BIRCH_FLARE : 1);
+/** a birch's foot spreads less: a swelling, not buttresses */
+const BIRCH_FLARE = 0.45;
 
-function trunkGeometry(radial: number, rings: number) {
+function trunkGeometry(radial: number, rings: number, fl = 1) {
   const pos: number[] = [], nrm: number[] = [], uvs: number[] = [], idx: number[] = [];
   const ys: number[] = [];
   for (let j = 0; j <= rings; j++) ys.push(-0.25 + (HEIGHT + 0.25) * Math.pow(j / rings, 2.6));
@@ -40,12 +42,12 @@ function trunkGeometry(radial: number, rings: number) {
     const y = ys[j];
     for (let i = 0; i <= radial; i++) {
       const a = (i / radial) * Math.PI * 2;
-      const r = radius(a, y);
+      const r = radius(a, y, fl);
       pos.push(Math.cos(a) * r, y, Math.sin(a) * r);
       // normal from the radius' change around and up
       const e = 0.01;
-      const dra = (radius(a + e, y) - radius(a - e, y)) / (2 * e);
-      const dry = (radius(a, y + e) - radius(a, y - e)) / (2 * e);
+      const dra = (radius(a + e, y, fl) - radius(a - e, y, fl)) / (2 * e);
+      const dry = (radius(a, y + e, fl) - radius(a, y - e, fl)) / (2 * e);
       const n = new THREE.Vector3(Math.cos(a) * r + Math.sin(a) * dra, -dry * r, Math.sin(a) * r - Math.cos(a) * dra).normalize();
       nrm.push(n.x, n.y, n.z);
       uvs.push(i / radial, y);
@@ -68,19 +70,25 @@ export class Trees {
   trunks: Trunk[] = []; // all placed, for collisions and the autofocus
   changed = false;
   private levels: THREE.InstancedMesh[];
+  private birches: THREE.InstancedMesh[];
   private cellKey = '';
   private lastSort = new THREE.Vector2(Infinity, Infinity);
 
   constructor(setup: (m: THREE.ShaderMaterial) => void) {
-    const mat = new THREE.ShaderMaterial({ vertexShader, fragmentShader, side: THREE.DoubleSide, uniforms: {} });
-    setup(mat);
-    this.levels = [trunkGeometry(48, 40), trunkGeometry(16, 14), trunkGeometry(8, 3)].map((g) => {
-      const m = new THREE.InstancedMesh(g, mat, MAX);
-      m.count = 0;
-      m.frustumCulled = false;
-      this.root.add(m);
-      return m;
-    });
+    const make = (birch: boolean) => {
+      const mat = new THREE.ShaderMaterial({ vertexShader, fragmentShader, side: THREE.DoubleSide, uniforms: {}, defines: birch ? { BIRCH: 1 } : {} });
+      setup(mat);
+      const fl = birch ? BIRCH_FLARE : 1;
+      return [trunkGeometry(48, 40, fl), trunkGeometry(16, 14, fl), trunkGeometry(8, 3, fl)].map((g) => {
+        const m = new THREE.InstancedMesh(g, mat, MAX);
+        m.count = 0;
+        m.frustumCulled = false;
+        this.root.add(m);
+        return m;
+      });
+    };
+    this.levels = make(false);
+    this.birches = make(true);
   }
 
   update(px: number, pz: number) {
@@ -102,18 +110,20 @@ export class Trees {
     if (Math.hypot(px - this.lastSort.x, pz - this.lastSort.y) < 0.5) return;
     this.lastSort.set(px, pz);
     const m = new THREE.Matrix4(), q = new THREE.Quaternion(), s = new THREE.Vector3(), p = new THREE.Vector3();
-    const counts = [0, 0, 0];
+    const counts = [0, 0, 0], bcounts = [0, 0, 0];
     for (const t of this.trunks) {
       const d = Math.hypot(t.x - px, t.z - pz) - t.r;
       const lod = d < LOD_DIST[0] ? 0 : d < LOD_DIST[1] ? 1 : 2;
-      const lvl = this.levels[lod];
-      if (counts[lod] >= MAX) continue;
+      const lvl = (t.birch ? this.birches : this.levels)[lod];
+      const cn = t.birch ? bcounts : counts;
+      if (cn[lod] >= MAX) continue;
       q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), t.turn);
       s.set(t.r, 1, t.r);
       p.set(t.x, trunkFoot(t), t.z);
-      lvl.setMatrixAt(counts[lod]++, m.compose(p, q, s));
+      lvl.setMatrixAt(cn[lod]++, m.compose(p, q, s));
     }
     this.levels.forEach((l, i) => { l.count = counts[i]; l.instanceMatrix.needsUpdate = true; });
+    this.birches.forEach((l, i) => { l.count = bcounts[i]; l.instanceMatrix.needsUpdate = true; });
     this.changed = true;
   }
 
@@ -234,6 +244,120 @@ vec4 barkV(vec2 b) {
   float h = crack * (0.5 + 0.35 * lift + 0.1 * dome + 0.25 * rough - 0.3 * gone);
   return vec4(h, crack, 1.0 - gone, h21(id + 3.1));
 }
+#ifdef BIRCH
+// Birch bark, in metres along it (round, up), drawn from what is there rather than from soft noise:
+//  - the white: chalky, going cream, faintly streaked round the trunk by the paper's own fibres, mottled grey
+//  - lenticels: short dark dashes in rows round the trunk, lens-shaped, of all lengths, each a little raised
+//  - the paper peeling: thin strips going round part of the trunk, a shade pinker, lifted, their lower edge
+//    curled out (a bright lip, a dark line under it)
+//  - black marks: crusty, rough-edged, in broken bands and chevrons, cracked across inside
+//  - at the foot an old birch's black bark, split in vertical fissures, low and uneven
+// The relief is a height, its normal by finite differences, eased out where it is smaller than a pixel.
+float BR; // this trunk's radius
+// the bark at b: its colour (out) and its height
+float birchAt(vec2 b, out vec3 col, out float dark) {
+  float C = 6.2831853 * BR;
+  float u = b.x / C; // 0..1 round
+  float ang = u * 6.2831853;
+  vec2 w = vec2(cos(ang), sin(ang)) * BR * 6.0; // a circle in the noise: wraps
+  float h = 0.0;
+  // the white
+  col = vec3(0.82, 0.8, 0.75) * (0.88 + 0.14 * n21(w * 2.0 + vec2(0.0, b.y * 3.0)));
+  col *= 0.95 + 0.05 * n21(vec2(floor(u * max(8.0, floor(C * 60.0))) * 1.7, b.y * 500.0)); // fibres, round
+  col = mix(col, vec3(0.62, 0.62, 0.6), smoothstep(0.6, 0.85, n21(w * 4.0 + vec2(2.0, b.y * 9.0))) * 0.25); // grey mottling
+  // the paper peeling in strips
+  float py = b.y * 7.0 + 0.6 * n21(w * 1.5 + 11.0);
+  float pid = floor(py), pf = fract(py);
+  float has = step(h21(vec2(pid, 5.0)), 0.5) * smoothstep(0.45, 0.6, n21(w * 2.0 + vec2(pid * 3.1, 1.0)));
+  float strip = has * smoothstep(0.5, 0.53, pf) * (1.0 - smoothstep(0.84, 0.86, pf));
+  col = mix(col, vec3(0.88, 0.78, 0.7), strip * 0.6);
+  float lip = has * smoothstep(0.82, 0.85, pf) * (1.0 - smoothstep(0.85, 0.87, pf)); // the curled edge
+  float under = has * smoothstep(0.86, 0.875, pf) * (1.0 - smoothstep(0.875, 0.91, pf)); // its shadow
+  col = mix(col, vec3(0.96, 0.92, 0.86), lip * 0.6);
+  col = mix(col, vec3(0.32, 0.27, 0.24), under * 0.7);
+  h += strip * 0.4 + lip * 0.9 - under * 0.3;
+  // lenticels: rows about two centimetres apart, cells about four round, a dash in about half
+  float NA = max(6.0, floor(C * 25.0));
+  float ry = b.y * 55.0 + 0.35 * n21(w * 3.0);
+  float rid = floor(ry);
+  float x = u * NA + h21(vec2(rid, 2.0)) * NA; // each row shifted round
+  float cid = mod(floor(x), NA), fx = fract(x);
+  float fy = fract(ry) - 0.5 - (h21(vec2(cid, rid + 7.0)) - 0.5) * 0.4;
+  float k1 = h21(vec2(cid, rid)), k2 = h21(vec2(cid + 3.3, rid)), k3 = h21(vec2(cid, rid + 1.9));
+  float cx = 0.3 + 0.4 * k2, hl = min(0.08 + 0.42 * k3 * k3, min(cx, 1.0 - cx) - 0.02);
+  float dx = abs(fx - cx) / hl;
+  float th = (0.06 + 0.05 * k2) * sqrt(max(0.0, 1.0 - dx * dx)); // lens-shaped: thin at the ends
+  float len = step(k1, 0.7) * (1.0 - smoothstep(th * 0.6, th, abs(fy))) * step(dx, 1.0);
+  float lrim = step(k1, 0.7) * (1.0 - smoothstep(th, th * 1.9, abs(fy))) * step(dx, 1.05) * (1.0 - len);
+  col = mix(col, vec3(0.26, 0.21, 0.18), len);
+  col = mix(col, col * 0.86, lrim * 0.5);
+  h += len * 0.6 + lrim * 0.25;
+  // black marks: rough edged, crusty, cracked across
+  // (stretched round the trunk: wider than tall)
+  float m = n21(w * 0.9 + vec2(3.0, b.y * 10.0)) * 0.6 + n21(w * 2.4 + vec2(1.0, b.y * 26.0)) * 0.4;
+  m += 0.12 * (n21(w * 10.0 + vec2(0.0, b.y * 60.0)) - 0.5) + 0.06 * (n21(w * 30.0 + vec2(0.0, b.y * 150.0)) - 0.5);
+  m += 0.1 * smoothstep(0.55, 0.85, n21(vec2(b.y * 1.4, 9.0))); // in bands
+  float mk = smoothstep(0.705, 0.72, m);
+  float crack = 1.0 - smoothstep(0.03, 0.09, abs(fract(b.y * 70.0 + 1.5 * n21(w * 9.0 + vec2(0.0, b.y * 20.0))) - 0.5));
+  vec3 crust = mix(vec3(0.07, 0.065, 0.06), vec3(0.16, 0.15, 0.14), n21(w * 30.0 + vec2(0.0, b.y * 90.0)));
+  crust = mix(crust, vec3(0.015), crack);
+  col = mix(col, crust, mk);
+  h += mk * (0.5 + 0.4 * n21(w * 25.0 + vec2(0.0, b.y * 70.0)) - 0.6 * crack);
+  // the foot: black fissured bark, low and uneven, here and there a spike climbing a fissure
+  float reach = 0.1 + 0.3 * n21(w * 1.2 + 4.0) + 0.45 * pow(n21(w * 5.0 + 2.0), 4.0) + 0.06 * n21(w * 14.0 + vec2(0.0, b.y * 3.0));
+  float foot = 1.0 - smoothstep(0.0, 0.08, b.y - reach);
+  foot = max(foot, step(0.72, n21(w * 7.0 + vec2(0.0, b.y * 12.0))) * (1.0 - smoothstep(reach, reach + 0.5, b.y)));
+  // plates split by deep cracks running up, uneven: the cracks where a noise stretched up the trunk crosses
+  // its middle, two of them, so they branch and join
+  float n1 = n21(w * 7.0 + vec2(0.0, b.y * 2.2)), n2 = n21(w * 13.0 + vec2(5.0, b.y * 4.0));
+  float cr = min(abs(n1 - 0.5) * 2.0, abs(n2 - 0.5) * 2.0 + 0.15);
+  float plate = smoothstep(0.04, 0.16, cr);
+  vec3 black = mix(vec3(0.012, 0.011, 0.01), mix(vec3(0.045, 0.04, 0.036), vec3(0.1, 0.09, 0.08), n21(w * 24.0 + vec2(0.0, b.y * 30.0))), plate);
+  col = mix(col, black, foot);
+  h = mix(h, plate * (0.4 + 0.2 * n21(w * 20.0 + vec2(0.0, b.y * 25.0))), foot);
+  dark = max(mk, foot);
+  return h;
+}
+void main() {
+  vec3 N = normalize(vNormal);
+  vec3 L = normalize(uLightDir);
+  vec3 V = normalize(cameraPosition - vWorldPos);
+  BR = vR;
+  vec2 b = vBark;
+  vec3 col; float dark;
+  float h = birchAt(b, col, dark);
+  // far: the detail smaller than a pixel goes to its average, a soft white with a little grey
+  float px = length(fwidth(vBark));
+  float fine = 1.0 - smoothstep(0.002, 0.006, px);
+  col = mix(mix(vec3(0.74, 0.72, 0.68), col, 0.55), col, fine);
+  // the relief: a millimetre or two, by finite differences round and up
+  if (fine > 0.01) {
+    vec3 c1; float d1;
+    float e = 0.0008;
+    float hx = birchAt(b + vec2(e, 0.0), c1, d1), hy = birchAt(b + vec2(0.0, e), c1, d1);
+    vec3 T = normalize(cross(N, vec3(0.0, 1.0, 0.0)) + 1e-5), B = cross(T, N);
+    N = normalize(N - (T * (hx - h) + B * (hy - h)) / e * 0.0012 * fine);
+  }
+  // green-grey algae low on the shaded side
+  float side = 0.5 + 0.5 * dot(normalize(vec3(vNormal.x, 0.0, vNormal.z) + 1e-4), normalize(vec3(-L.x, 0.0, -L.z)));
+  col = mix(col, col * vec3(0.72, 0.8, 0.62), side * (1.0 - smoothstep(0.3, 1.6, b.y)) * smoothstep(0.4, 0.7, n21(vBark * vec2(6.0, 3.0))) * 0.6 * (1.0 - dark));
+  col *= mix(0.7, 1.0, smoothstep(-0.2, 0.3, b.y)); // into the moss
+  float shadow = shadowAt(vWorldPos, N);
+  float diff = max(dot(N, L), 0.0);
+  float wrap = max(dot(N, L) * 0.5 + 0.5, 0.0);
+  // white bark is lit by everything round it: a strong fill, so it stays white in the shade (not the black: lit as
+  // much, the black went a lilac grey)
+  vec3 c = col * (mix(0.62, 0.3, dark) * skyTint(N, 1.0) + 1.5 * diff * shadow + mix(0.25, 0.1, dark) * wrap);
+  // the low sun warms the white where it reaches
+  c += col * vec3(0.55, 0.3, 0.1) * diff * shadow;
+  // backlit, the edge glows; a little sheen on the paper
+  c += col * pow(1.0 - max(dot(N, V), 0.0), 4.0) * max(dot(-V, L), 0.0) * 1.2;
+  c += vec3(1.0, 0.9, 0.75) * pow(max(dot(reflect(-L, N), V), 0.0), 30.0) * 0.12 * shadow * (1.0 - dark);
+  c += rimLight(N, V) * col * 0.8;
+  gl_FragColor = vec4(tonemap(grade(c)), 1.0);
+  #include <colorspace_fragment>
+}
+#else
 void main() {
   vec3 N = normalize(vNormal);
   vec3 L = normalize(uLightDir);
@@ -304,4 +428,5 @@ void main() {
   gl_FragColor = vec4(tonemap(grade(c)), 1.0);
   #include <colorspace_fragment>
 }
+#endif
 `;
