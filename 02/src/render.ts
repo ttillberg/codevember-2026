@@ -52,6 +52,7 @@ export class Renderer {
   ball = { on: false, p: [0, 0, 0], q: [0, 0, 0, 1], r: 0.11 };
   /** what the settings panel turns */
   look = { exposure: 1, wall: 1, floor: 1, dark: 1, tint: 1, wavy: 0.06, refl: 1, bend: 0.014, seam: 0.16, shadow: 0.58 };
+  private tapeVao!: WebGLVertexArrayObject; private tapeBuf!: WebGLBuffer; private tapeCount = 0;
   private ballVao!: WebGLVertexArrayObject; private ballCount = 0;
   pane = { W: 1, H: 1, y0: 0, T: 0.008, N: 1 };
   static SHADOW = 2048;
@@ -69,6 +70,11 @@ export class Renderer {
     this.prog('vignette', QUAD_VS, VIGNETTE_FS);
     this.prog('dust', DUST_VS, DUST_FS);
     this.prog('ball', BALL_VS, BALL_FS);
+    this.tapeVao = gl.createVertexArray()!; this.tapeBuf = gl.createBuffer()!;
+    gl.bindVertexArray(this.tapeVao);
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.tapeBuf);
+    gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 3, gl.FLOAT, false, 16, 0);
+    gl.enableVertexAttribArray(1); gl.vertexAttribPointer(1, 1, gl.FLOAT, false, 16, 12);
     {
       const v: number[] = [];
       const A = 24, B = 48;
@@ -168,7 +174,7 @@ export class Renderer {
   setPanes(W: number, H: number, T: number, y0: number, zs: number[]) {
     const gl = this.gl;
     this.pane = { W, H, y0, T, N: zs.length };
-    this.shards = false;
+    this.shards = false; this.tapeCount = 0;
     this.wallAll = new Float32Array(0); this.faceAll = new Float32Array(0); this.shardCount = 0; this.wallCount = this.faceCount = 0;
     const hx = W / 2;
     const r: number[] = [];
@@ -207,6 +213,15 @@ export class Renderer {
     gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(f), gl.STATIC_DRAW);
     for (let i = 0; i < zs.length; i++) this.uploadRibbons(i);
     this.setMask(null);
+  }
+
+  /** The strips of tape, as quads in the world: four corners each, x y z. */
+  setTapes(quads: number[][]) {
+    const gl = this.gl, v: number[] = [];
+    for (const q of quads) for (const k of [0, 1, 2, 0, 2, 3]) v.push(q[k * 3], q[k * 3 + 1], q[k * 3 + 2], 4);
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.tapeBuf);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(v), gl.DYNAMIC_DRAW);
+    this.tapeCount = v.length / 4;
   }
 
   /** Does pane i still stand, in part at least? */
@@ -434,6 +449,15 @@ export class Renderer {
     gl.uniform3f(u.uGlass, this.look.tint, this.look.wavy, this.look.refl);
     gl.uniform1i(u.uScene, 3);
     this.drawGlass(u, false, now, shardNow);
+    if (this.tapeCount) {
+      // tape is on the glass, not in it: over the faces, behind whatever flies in front
+      u = this.use('room');
+      gl.uniformMatrix4fv(u.uVP, false, vp);
+      gl.uniform3fv(u.uCam, cam); gl.uniform1f(u.uFlash, flash);
+      gl.depthFunc(gl.LEQUAL);
+      gl.bindVertexArray(this.tapeVao); gl.drawArrays(gl.TRIANGLES, 0, this.tapeCount);
+      gl.depthFunc(gl.LESS);
+    }
     gl.disable(gl.DEPTH_TEST);
 
     if (dustCount) {

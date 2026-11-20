@@ -114,9 +114,10 @@ function convexParts(loop: number[], xs: number[], ys: number[]): number[][] {
 }
 
 /** y0 is the height of the bottom of the pane above the floor. The front of the glass is z = 0, the back z = -T. */
-/** With `standing`, the largest face stays where it is, if it stands in the channel: it is not a shard. */
+/** With `standing`, the largest face stays where it is, if it stands in the channel: it is not a shard.
+ *  Nor is anything `held` (by tape). */
 /** `layer` is which pane this is, and `z` where its front stands: several can stand behind each other. */
-export function buildShards(pane: Pane, y0: number, standing = false, gone: (loop: number[]) => boolean = () => false, layer = 0, z = 0, dice = false): ShardSet {
+export function buildShards(pane: Pane, y0: number, standing = false, gone: (loop: number[]) => boolean = () => false, layer = 0, z = 0, dice = false, held: (loop: number[]) => boolean = () => false): ShardSet {
   const { nx, ny, ox, oy, W, T } = pane;
   const loops = pane.faces().filter((l) => !gone(l)); // without what left in an earlier fall
   const walls: number[] = [];
@@ -130,9 +131,11 @@ export function buildShards(pane: Pane, y0: number, standing = false, gone: (loo
     for (const loop of loops) { const a = pane.area(loop); if (a > big) { big = a; keep = loop; } }
     if (keep && (big < 0.2 * W * pane.H || !keep.some((u, i) => ny[u] < 1e-6 && ny[keep![(i + 1) % keep!.length]] < 1e-6))) keep = null;
   }
+  let taped = false;
   for (const loop of loops) {
     const n = loop.length;
     if (loop === keep) continue;
+    if (held(loop)) { taped = true; continue; } // under tape: it stays where it is, part of the pane
     let a = 0, cx = 0, cy = 0, low = false;
     for (let i = 0; i < n; i++) {
       const u = loop[i], v = loop[(i + 1) % n];
@@ -191,7 +194,7 @@ export function buildShards(pane: Pane, y0: number, standing = false, gone: (loo
     }
     bodies.push({ c: [wx, wy, wz], area: a, tiny, hulls, half, low });
   }
-  return { count: bodies.length, walls: new Float32Array(walls), faces: new Float32Array(faces), bodies, cut, kept: !!keep };
+  return { count: bodies.length, walls: new Float32Array(walls), faces: new Float32Array(faces), bodies, cut, kept: !!keep || taped };
 }
 
 /** One crack surface, from the front of the glass at a → b to the back at a + slant → b + slant.

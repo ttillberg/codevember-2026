@@ -55,6 +55,7 @@ interface Layer {
   z: number; // where its front stands
   pane: Pane;
   standing: boolean;
+  tapes: { ax: number; ay: number; bx: number; by: number; w: number }[]; // strips across it, in pane space: what is under one stays up
   tempered: boolean; // it does not crack: the first hit turns all of it to dice
   maskData: Uint8ClampedArray | null; // its part of the mask as it was when pieces last left: blue is gone
 }
@@ -118,7 +119,7 @@ function newPane() {
   seed = (seed * 1664525 + 1013904223) >>> 0;
   gap = V.gap / 100;
   layers = [];
-  for (let i = 0; i < Math.round(V.panes); i++) layers.push({ i, z: -i * gap, pane: new Pane(W, H, T, (seed + i * 7919) >>> 0), standing: true, tempered: i === 1 && V.temper >= 0.5, maskData: null });
+  for (let i = 0; i < Math.round(V.panes); i++) layers.push({ i, z: -i * gap, pane: new Pane(W, H, T, (seed + i * 7919) >>> 0), standing: true, tapes: [], tempered: i === 1 && V.temper >= 0.5, maskData: null });
   shots = 0;
   state = 'intact';
   ball.on = false;
@@ -140,6 +141,7 @@ function setHint() {
   const touch = matchMedia('(pointer: coarse)').matches;
   hint.textContent =
     replay.on ? 'Replay'
+    : taping ? (touch ? 'Tape: drag across the glass, or tap' : 'Tape: drag across the glass, or click for one straight across')
     : state === 'fallen' ? (active() ? 'Hold to slow it down' : touch ? 'Tap for a new pane' : 'Click for a new pane')
     : state === 'doomed' ? ''
     : shots === 0 ? (touch ? 'Tap the glass to shoot' : 'Click the glass to shoot')
@@ -255,6 +257,7 @@ function shoot(px: number, py: number) {
 const FLIGHT = 0.42;
 
 let ballSlow = 1; // how much slower than life the flight is shown
+let kicked: { L: Layer; set: ShardSet }[] = []; // what the ball is about to take out of each pane
 const ball = { on: false, at: 0, p: [0, 0, 0], v: [0, 0, 0], w: [0, 0, 0] }; // p, v: as it reaches the glass, at time `at`
 function kick(x: number, y: number) {
   if (state !== 'intact') return;
@@ -274,6 +277,7 @@ function kick(x: number, y: number) {
   // on every pane still up: a blunt blow where the ball goes through, radials all over, then everything cut small
   const parts: ShardSet[] = [];
   const impacts: [number, number, number][] = [];
+  kicked = [];
   for (const L of layers) {
     if (!L.standing) continue;
     // where the ball's line meets this pane
@@ -288,7 +292,9 @@ function kick(x: number, y: number) {
       renderer.addCracks(L.i, L.pane, res.segs);
       renderer.addCracks(L.i, L.pane, L.pane.finish(at, V.shardArea / 1e4, 0.1, false, gone));
     }
-    parts.push(buildShards(L.pane, Y0, false, gone, L.i, L.z, L.tempered));
+    const part = buildShards(L.pane, Y0, false, gone, L.i, L.z, L.tempered, (loop) => taped(L, loop));
+    parts.push(part);
+    kicked.push({ L, set: part });
     impacts.push([lx - W / 2, ly + Y0, L.z]);
   }
   sound.smash(FLIGHT);
@@ -328,6 +334,39 @@ function loopGone(L: Layer, loop: number[], p: Pane = L.pane) {
   return all > 0 && yes * 2 > all;
 }
 
+/** Is this face under a strip of tape? Then it is held: it stays up whatever happens around it. */
+function taped(L: Layer, loop: number[], p: Pane = L.pane) {
+  if (!L.tapes.length) return false;
+  let cx = 0, cy = 0;
+  for (const n of loop) { cx += p.nx[n]; cy += p.ny[n]; }
+  cx /= loop.length; cy /= loop.length;
+  for (const t of L.tapes) {
+    const dx = t.bx - t.ax, dy = t.by - t.ay;
+    if (Math.abs((cx - t.ax) * dy - (cy - t.ay) * dx) / Math.hypot(dx, dy) < t.w / 2) return true;
+  }
+  return false;
+}
+/** A strip of tape straight across every pane that stands, along the line through two points of the glass. */
+function layTape(ax: number, ay: number, bx: number, by: number) {
+  if (state !== 'intact' || Math.hypot(bx - ax, by - ay) < 1e-4) return;
+  for (const L of layers) if (L.standing) L.tapes.push({ ax, ay, bx, by, w: V.tape / 100 });
+  const quads: number[][] = [];
+  for (const L of layers) for (const t of L.tapes) {
+    // the line, cut to the pane, and a little round its edges
+    const dx = t.bx - t.ax, dy = t.by - t.ay, l = Math.hypot(dx, dy), ux = dx / l, uy = dy / l;
+    let t0 = -1e9, t1 = 1e9;
+    if (Math.abs(ux) > 1e-6) { const a = (0 - t.ax) / ux, b = (W - t.ax) / ux; t0 = Math.max(t0, Math.min(a, b)); t1 = Math.min(t1, Math.max(a, b)); }
+    if (Math.abs(uy) > 1e-6) { const a = (0 - t.ay) / uy, b = (H - t.ay) / uy; t0 = Math.max(t0, Math.min(a, b)); t1 = Math.min(t1, Math.max(a, b)); }
+    if (t1 <= t0) continue;
+    const nx = -uy * t.w / 2, ny = ux * t.w / 2, z = L.z + 0.0008;
+    const P = (k: number, s: number) => [t.ax + ux * k + nx * s - W / 2, t.ay + uy * k + ny * s + Y0, z];
+    quads.push([...P(t0, -1), ...P(t1, -1), ...P(t1, 1), ...P(t0, 1)]);
+  }
+  renderer.setTapes(quads);
+  sound.tick(0);
+  prepareSoon(60);
+}
+
 /** The break, got ready ahead. As soon as a bullet has hit, what a shock would do now is worked out on copies
  *  of the panes (the real ones can still be shot) and the worker starts baking that fall. A swipe then only
  *  has to play it. Another bullet, or another setting, and it is thrown away and prepared again. */
@@ -346,8 +385,9 @@ function prepare() {
     if (!L.standing || !L.pane.impacts.length) continue;
     const copy = L.pane.clone();
     const gone = (loop: number[]) => loopGone(L, loop, copy);
-    if (!L.tempered) copy.finish(never, V.shardArea / 1e4, 0, true, gone); // (dice are small enough as they are)
-    const set = buildShards(copy, Y0, true, gone, L.i, L.z, L.tempered);
+    const held = (loop: number[]) => taped(L, loop, copy);
+    if (!L.tempered) copy.finish(never, V.shardArea / 1e4, 0, true, (loop) => gone(loop) || held(loop)); // (dice are small enough as they are)
+    const set = buildShards(copy, Y0, true, gone, L.i, L.z, L.tempered, held);
     if (!set.count) continue;
     parts.push({ L, pane: copy, set });
     for (const im of L.pane.impacts) impacts.push([im.x - W / 2, im.y + Y0, L.z]);
@@ -678,6 +718,11 @@ function reset() {
   fadeTo = 0; resetAt = now + 0.28;
 }
 
+let taping = false; // the next press on the glass lays tape
+const tapeBtn = document.querySelector<HTMLButtonElement>('#tape')!;
+function setTaping(on: boolean) { taping = on && state === 'intact'; tapeBtn.classList.toggle('on', taping); canvas.style.cursor = taping ? 'cell' : ''; setHint(); }
+tapeBtn.addEventListener('click', () => { sound.wake(); setTaping(!taping); });
+
 // A press that stays put is a bullet, one that travels is the shock. While glass is falling, a press that is
 // held, without moving, slows it down instead.
 let down: { x: number; y: number; id: number; far: number; held: boolean; timer: number } | null = null;
@@ -702,6 +747,14 @@ const release = (e: PointerEvent) => {
   slow = false;
   if (e.type !== 'pointerup' || state !== 'intact') return;
   const far = Math.max(d.far, Math.hypot(e.clientX - d.x, e.clientY - d.y));
+  if (taping) {
+    // a drag is a strip along it; a tap, one straight across at that height
+    const [ax, ay] = pick(d.x, d.y);
+    const [bx, by] = far < 14 ? [ax + 1, ay] : pick(e.clientX, e.clientY);
+    layTape(ax, ay, bx, by);
+    setTaping(false);
+    return;
+  }
   if (d.held && far < 40) return; // it was a hold. (A slow start to a swipe is still a swipe.)
   if (far < 14) shoot(d.x, d.y);
   else if (far > 40) shock();
@@ -729,6 +782,7 @@ window.addEventListener('keydown', (e) => {
     else if (state === 'fallen') { if (active()) slow = true; else reset(); }
   } else if (e.code === 'KeyR') reset();
   else if (e.code === 'KeyS') setReplay(!replay.on);
+  else if (e.code === 'KeyT') setTaping(!taping);
   else if (e.code === 'Escape') setReplay(false);
   else if (e.code === 'KeyM') toggleSound();
   else if (e.code === 'KeyB') toggleBall();
@@ -773,7 +827,16 @@ function frame(ms: number) {
   if (resetAt >= 0 && now > resetAt) { resetAt = -1; newPane(); fadeTo = 1; zoomTo = 1; }
 
   // the football arrives: the pane is its shards from this frame on, whether the bake is there yet or not
-  if (state === 'doomed' && now >= ball.at) { state = 'fallen'; for (const L of layers) { L.standing = false; renderer.setStanding(L.i, false); } setHint(); }
+  if (state === 'doomed' && now >= ball.at) {
+    for (const k of kicked) {
+      // what tape holds is still pane: the rest is cut out of it. With no tape the pane is gone
+      if (k.set.kept) cutPane(k.L, k.set);
+      k.L.standing = k.set.kept; renderer.setStanding(k.L.i, k.set.kept);
+    }
+    kicked = [];
+    state = layers.some((l) => l.standing) ? 'intact' : 'fallen';
+    setHint();
+  }
   renderer.ball.on = ball.on && showBall;
   renderer.ball.r = V.ballSize / 100;
   if (ball.on && !falls.some((f) => f.ball && f.started)) flyBall();

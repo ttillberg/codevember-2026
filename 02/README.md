@@ -14,6 +14,7 @@ pnpm -C 02 dev
 - While glass falls, **hold** a press where it is for slow motion (Space too, when there is nothing to break). A thin bar at the bottom shows how far the worker is with the bake.
 - As long as glass is standing, carry on, at once: more bullets, another swipe, while the last pieces are still in the air. With none left, a click is a new pane.
 - **S**, or the camera button: the latest fall again, in slow motion, from the side. A bar at the bottom has play and pause (Space), a chart of the fall's contacts over time (floor in full, glass on glass lighter), a playhead to drag, and the speed (0.05× to 1×). **Esc** to leave.
+- **T**, or the tape button, then a drag across the glass: a strip of tape along it, from edge to edge, on every pane. A click instead lays one straight across at that height. What is under tape stays up.
 - **R**: a new pane. **M**: sound.
 - The pointer never moves the camera: it has a slow sway of its own (`Camera sway` in the workbench, down to none), and the wheel zooms.
 - `?seed=7` pins the pane, `?clean` hides the furniture.
@@ -43,6 +44,8 @@ Splinters under 1.5 cm² are boxes that only meet the floor. Some of the pieces 
 **Two panes.** Each pane is its own graph, with its own part of one mask texture; which pane a vertex belongs to rides in the tens of its `kind`. A bullet is the ray from the eye, so it meets the second pane a little off from where it met the first. Everything else is one: one set of shards per fall with both panes' pieces in it, one simulation, so what is blown out of the front pane flies through, or into, what leaves the back one. `Panes` (1 to 3) and `Gap` are in the workbench.
 
 **Tempered.** The second pane does not grow cracks. Tempered glass lets go everywhere at once, so the first hit throws its graph away and builds it again as the cells of scattered points (a shaken honeycomb, finer by the impact, Voronoi through `d3-delaunay`): about two thousand dice of 2.4 cm. The cracks appear as the wave from the impact reaches them, at 22 m/s as shown. Nothing stands on its own after that, so the next swipe takes the whole pane. Every die is a body, but one that only meets the floor: two thousand hulls leaning on each other would not bake in any time worth waiting for. A later bullet takes the die it hits with it. `2nd tempered` and `Tempered dice` are in the workbench.
+
+**Tape.** A strip is a line across the pane and a width. A face of the graph whose middle is under one is held: it is not cut, not made a shard and not given to the simulation, so it stays part of the standing pane, cracks and all, and can still be shot. That holds for the shock and for the football, which otherwise takes everything.
 
 ## Drawing it
 

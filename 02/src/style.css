@@ -136,7 +136,7 @@ canvas { touch-action: none; cursor: crosshair; }
 #rp-chart { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
 #rp-head { position: absolute; top: -3px; bottom: -3px; left: 0; width: 2px; margin-left: -1px; border-radius: 1px; background: #f4f4f2; pointer-events: none; }
 #rp-head::after { content: ""; position: absolute; left: -4px; top: -4px; width: 10px; height: 10px; border-radius: 50%; background: #f4f4f2; }
-#film.on { background: rgba(244, 244, 242, 0.34); }
+#film.on, #tape.on { background: rgba(244, 244, 242, 0.34); }
 @media (max-width: 640px) {
   #replay { width: calc(100vw - 24px); bottom: max(12px, env(safe-area-inset-bottom)); gap: 8px; grid-template-columns: 34px 1fr auto; }
   #rp-time { display: none; }
