@@ -61,6 +61,7 @@ export const SECTIONS: Section[] = [
       it('friction', 'Friction', 0, 1.5, 0.01, 0.45),
       it('stuck', 'Left standing', 0, 1, 0.01, 0.5),
       it('seconds', 'Baked seconds', 2, 15, 0.5, 7),
+      it('contacts', 'Sounds per frame', 0, 24, 1, 8),
     ],
   },
 ];

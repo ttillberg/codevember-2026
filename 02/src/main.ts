@@ -8,7 +8,7 @@ import { defaults, mountPanel } from './settings';
 import { STRIDE, buildShards, mergeSets, type ShardSet } from './shards';
 import { Renderer, lookAt, perspective } from './render';
 import { Sound } from './audio';
-import type { BakeRequest, FramesMessage, SimConfig } from './sim.worker';
+import { CONTACT, type BakeRequest, type FramesMessage, type SimConfig } from './sim.worker';
 
 const params = new URLSearchParams(location.search);
 // ?clean: no page furniture, the scene alone (screengrabs, clips)
@@ -33,7 +33,7 @@ function applySettings() {
   if (settled && (V.panes !== layers.length || Math.abs(V.gap / 100 - gap) > 1e-6)) reset(); // another set-up: new panes
   else if (settled) prepareSoon(400); // the break that was got ready was for other numbers
 }
-const simCfg = (): SimConfig => ({ gravity: V.gravity, ballDensity: V.ballDensity, pushBack: V.pushBack, pushOut: V.pushOut, reach: V.reach, spin: V.spin, front: V.front, bounce: V.bounce, friction: V.friction, stuck: V.stuck, seconds: V.seconds });
+const simCfg = (): SimConfig => ({ contacts: V.contacts, gravity: V.gravity, ballDensity: V.ballDensity, pushBack: V.pushBack, pushOut: V.pushOut, reach: V.reach, spin: V.spin, front: V.front, bounce: V.bounce, friction: V.friction, stuck: V.stuck, seconds: V.seconds });
 if (params.has('debug') || params.has('settings') || location.hash === '#debug') mountPanel(V, applySettings);
 
 const T = 0.008; // the glass is 8 mm thick
@@ -62,7 +62,7 @@ let W = 1.2, H = 0.8; // the size of a pane
 let gap = 0.25; // between two panes
 
 /** What the worker sends back for one request: the frames of one fall, as they come. */
-interface Bake { run: number; count: number; frames: Float32Array[]; hits: number[]; done: boolean; total: number }
+interface Bake { run: number; count: number; frames: Float32Array[]; contacts: number[]; done: boolean; total: number }
 /** One fall: a set of shards, their baked frames and where the playback is. Several can play at once. */
 interface Fall {
   bake: Bake; set: ShardSet; base: number; // id of its first shard in the renderer
@@ -80,7 +80,7 @@ let held = -1; // a playhead to hold, for stills
 const active = () => falls.some((f) => !f.over);
 
 function bakeFall(set: ShardSet, req: Pick<BakeRequest, 'impacts' | 'balls' | 'standing'>): Bake {
-  const bake: Bake = { run: ++run, count: set.count, frames: [], hits: [], done: false, total: 1 };
+  const bake: Bake = { run: ++run, count: set.count, frames: [], contacts: [], done: false, total: 1 };
   bakes.set(bake.run, bake);
   worker.postMessage({ type: 'bake', run: bake.run, bodies: set.bodies, width: W, y0: Y0, seed, cfg: simCfg(), zs: layers.map((l) => l.z), ...req } satisfies BakeRequest);
   return bake;
@@ -420,7 +420,8 @@ worker.onmessage = (e: MessageEvent<FramesMessage>) => {
   const bake = bakes.get(m.run);
   if (m.type !== 'frames' || !bake) return;
   const n = (bake.count + 1) * 7;
-  for (let i = 0; i < m.count; i++) { bake.frames.push(m.data.subarray(i * n, (i + 1) * n)); bake.hits.push(m.hits[i]); }
+  for (let i = 0; i < m.count; i++) bake.frames.push(m.data.subarray(i * n, (i + 1) * n));
+  for (let i = 0; i < m.contacts.length; i++) bake.contacts.push(m.contacts[i]);
   bake.total = m.total;
   if (m.done) bake.done = true;
 };
@@ -443,7 +444,7 @@ function startFall(f: Fall) {
 function stepFalls(dt: number) {
   for (const f of falls) {
     if (f.over) continue;
-    const { frames, hits } = f.bake;
+    const { frames, contacts } = f.bake;
     if (!f.started) { if (now >= f.at && (f.bake.done || frames.length > 5)) startFall(f); else continue; }
     f.speed += ((slow ? V.slow : V.pace) - f.speed) * Math.min(1, dt * 10);
     f.playhead += dt * f.speed;
@@ -458,7 +459,13 @@ function stepFalls(dt: number) {
       for (let c = 0; c < 3; c++) renderer.ball.p[c] = fa[o + c] + (fb[o + c] - fa[o + c]) * k;
       for (let c = 0; c < 4; c++) renderer.ball.q[c] = fa[o + 3 + c];
     }
-    for (; f.lastHit <= i; f.lastHit++) sound.tinkle(hits[f.lastHit], Math.max(0.25, f.speed / V.pace));
+    // the contacts the simulation noted, as the playhead passes them: each is a sound of its own size, strength and place
+    let played = 0;
+    for (; f.lastHit < contacts.length && contacts[f.lastHit] <= i; f.lastHit += CONTACT) {
+      if (played++ >= 12) continue; // (a jump of the playhead: do not play a second's worth at once)
+      const c = f.lastHit;
+      sound.clink(contacts[c + 4], contacts[c + 5], contacts[c + 6], contacts[c + 1] / (W * 0.6), Math.max(0.25, f.speed / V.pace));
+    }
     if (f.bake.done && i >= last && held < 0) { f.over = true; bakes.delete(f.bake.run); f.bake.frames = []; setHint(); } // it rests: its frames can go
   }
 }
@@ -643,7 +650,14 @@ Object.assign(window, {
     get state() { return state; },
     get info() {
       const b = ready?.bake ?? falls[falls.length - 1]?.bake;
-      return { state, shots, panes: layers.map((l) => (l.standing ? l.pane.impacts.length : -1)), falls: falls.length, active: falls.filter((f) => !f.over).length, ready: !!ready, shards: b?.count, frames: b?.frames.length, bakeDone: b?.done };
+      return { state, shots, panes: layers.map((l) => (l.standing ? l.pane.impacts.length : -1)), falls: falls.length, active: falls.filter((f) => !f.over).length, ready: !!ready, shards: b?.count, frames: b?.frames.length, bakeDone: b?.done, contacts: (b?.contacts.length ?? 0) / CONTACT };
+    },
+    /** the contacts of the latest bake, for a look: [frame, x, y, z, size, strength, kind] each */
+    get contacts() {
+      const c = (ready?.bake ?? falls[falls.length - 1]?.bake)?.contacts ?? [];
+      const out: number[][] = [];
+      for (let i = 0; i < c.length; i += CONTACT) out.push(c.slice(i, i + CONTACT));
+      return out;
     },
   },
 });

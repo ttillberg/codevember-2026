@@ -51,7 +51,7 @@ Three steps a frame, WebGL2, no library:
 
 The ball is a sphere with twelve dark patches, drawn into the same texture, so it is seen through the glass too.
 
-Sound is synthesised: noise and sines. The fall is one grain per shard that meets the floor, counted by the worker per frame.
+Sound is synthesised: noise and sines. The fall is not scored by hand: the simulation notes every contact as it bakes (Rapier's collision events), with the frame, the place, the size of the shard (the smaller of two) and the speed they met at, and whether it was glass on the floor, on glass or on the ball. The loudest few of each frame go back with the frames, and the playback sounds each as its playhead passes: a small shard high and short, a large one lower and longer, harder is louder, panned to where it landed, grit under it if it was the floor. `shatter.contacts` in the console lists them.
 
 ## Learned
 
