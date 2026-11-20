@@ -6,6 +6,7 @@ import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { Rays } from './rays';
 import { Post } from './post';
 import { Cable } from './cables';
+import { game } from './game';
 import { Blood } from './blood';
 import { buildHall, SCENE_TARGETS } from './hall';
 import { dress, DOOR_GLOW, GLOWING, rubber, wire as wireSteel } from './materials';
@@ -123,6 +124,12 @@ function start() {
     return out.set(x0 + (x1 - x0) * k, y0 + (y1 - y0) * k, 0);
   };
   let craneTime = 0;
+  // the hand on it, once the hologram has linked the crane (game.ts): a lever that pushes the trolley one way or
+  // the other, heavy, against the girder's ends; the hoist lets the pod back down to its rest as you go
+  const END = 10; // the trolley's travel along the girder, either way
+  const DOCK = 9;
+  let hand: null | { push: number; v: number } = null;
+  let doorFree = false; // in the dock: the door opens on its own
   const carry = new THREE.Vector3(); // where the crane has the pod: along the girder (x), up (y)
   let carryWas = 0, carryWas2 = 0; // along, the steps before: how hard the trolley pulls
   const hangAt = new THREE.Vector3(); // the hang point, the trolley at the middle
@@ -196,6 +203,7 @@ function start() {
     w.userData.f1.position.y = len - 0.17;
   };
   let blood: Blood | null = null;
+  let play: ReturnType<typeof game> | null = null;
   const inside = new THREE.PointLight(0xff2410, 1.6, 1.6, 2);
   /** something in there breathing, slowly: in for two and a half seconds, out for four; 0 out, 1 in */
   const heart = (t: number) => {
@@ -322,6 +330,25 @@ function start() {
       cables.push(cable);
       scene.add(cable.mesh);
     });
+    if (door && hall) {
+      const h = hall;
+      play = game({
+        scene, pod, door, fans: [...h.fans.list, ...h.fans.side],
+        podAt: podCentre.clone().applyMatrix4(pod.matrixWorld),
+        spans: h.spans,
+        lifts: h.lifts,
+        crane: {
+          link: () => { hand = { push: 0, v: 0 }; },
+          push: (d) => { if (hand) hand.push = d; },
+          at: () => carry.x,
+          speed: () => hand?.v ?? 0,
+          dock: DOCK,
+          end: END,
+        },
+        docked: () => { doorFree = true; },
+      });
+      play.resize(canvas.clientWidth, canvas.clientHeight);
+    }
     blood = new Blood(drips);
     scene.add(blood.mesh);
 
@@ -357,7 +384,24 @@ function start() {
     return new THREE.Vector2((v.x * 0.5 + 0.5) * canvas.clientWidth, (-v.y * 0.5 + 0.5) * canvas.clientHeight);
   };
 
+  // two fingers: a pinch, nearer or farther, and nothing else while it lasts
+  const fingers = new Map<number, { x: number; y: number }>();
+  let pinch: null | { d: number; r: number } = null;
+  const spread = () => { const [a, b] = [...fingers.values()]; return Math.hypot(a.x - b.x, a.y - b.y) || 1; };
   canvas.addEventListener('pointerdown', (e) => {
+    if (play?.pointer('down', e)) { grab = null; return; } // the hologram's, not the scene's
+    if (e.pointerType === 'touch') {
+      fingers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (fingers.size === 2) {
+        pinch = { d: spread(), r: radius };
+        vyaw = vpitch = 0;
+        if (grab === 'door' || grab === 'pod') { axTo = ax; azTo = az; openTo = open; }
+        grab = null;
+        goal = null;
+        return;
+      }
+      if (fingers.size > 2) return;
+    }
     px = e.clientX;
     py = e.clientY;
     canvas.setPointerCapture(e.pointerId);
@@ -368,6 +412,7 @@ function start() {
     if (!pod) return;
     ndc.set((e.clientX / canvas.clientWidth) * 2 - 1, -(e.clientY / canvas.clientHeight) * 2 + 1);
     ray.setFromCamera(ndc, eye);
+    if (play && ray.intersectObject(play.target, false).length) { grab = null; play.open(); return; }
     const hit = ray.intersectObject(pod, true)[0];
     if (!hit) return;
     let o: THREE.Object3D | null = hit.object;
@@ -392,6 +437,12 @@ function start() {
     }
   });
   canvas.addEventListener('pointermove', (e) => {
+    if (play?.pointer('move', e)) return;
+    if (fingers.has(e.pointerId)) fingers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pinch) {
+      if (fingers.size >= 2) radius = THREE.MathUtils.clamp((pinch.r * pinch.d) / spread(), 2, 16);
+      return;
+    }
     const dx = e.clientX - px;
     const dy = e.clientY - py;
     px = e.clientX;
@@ -424,20 +475,32 @@ function start() {
     goal = null;
     radius = THREE.MathUtils.clamp(radius * Math.exp(e.deltaY * 0.001), 2, 16);
   }, { passive: false });
-  const release = () => (grab = null);
+  const release = (e: PointerEvent) => {
+    play?.pointer('up', e);
+    grab = null;
+    fingers.delete(e.pointerId);
+    if (fingers.size < 2) pinch = null;
+  };
   canvas.addEventListener('pointerup', release);
   canvas.addEventListener('pointercancel', release);
 
   // dev only: a look at the state from the console
-  if (import.meta.env.DEV) Object.assign(window, { cocoon: () => ({ grab, open, vopen, ax, az, tw, doorSign, cables: cables.length }), look: (y: number, p: number, r: number) => { goal = null; yaw = y; pitch = p; radius = r; vyaw = vpitch = 0; }, craneAt: (t: number) => { craneTime = t; }, scene, camera, ao, renderer, post });
+  if (import.meta.env.DEV) Object.assign(window, { cocoon: () => ({ grab, open, vopen, ax, az, tw, doorSign, cables: cables.length, carry: carry.x, hand, doorFree }), __x: () => carry.x, look: (y: number, p: number, r: number) => { goal = null; yaw = y; pitch = p; radius = r; vyaw = vpitch = 0; }, craneAt: (t: number) => { craneTime = t; }, view: (s: { yaw: number; pitch: number; radius: number; target: number[] }) => { goal = null; yaw = s.yaw; pitch = s.pitch; radius = s.radius; target.fromArray(s.target); vyaw = vpitch = 0; }, scene, camera, ao, renderer, post });
 
   // ---------- physics, in fixed steps
 
   function physics(h: number, time: number) {
     if (!pod) return;
     // the crane: the hang point along the girder, the pod up the line; the pendulum feels the trolley's pull
-    if (!still) craneTime += h;
-    crane(craneTime, carry);
+    if (hand) {
+      hand.v += (hand.push * 0.22 - 0.35 * hand.v) * h;
+      carry.x += hand.v * h;
+      if (Math.abs(carry.x) > END) { carry.x = Math.sign(carry.x) * END; hand.v *= -0.15; } // it knocks at the end
+      carry.y += (0 - carry.y) * Math.min(1, h * 0.6);
+    } else {
+      if (!still) craneTime += h;
+      crane(craneTime, carry);
+    }
     // (no more than a trolley this slow can pull: a jump, the debug panel's or a frame that took long, is not a kick)
     const pull = THREE.MathUtils.clamp((carry.x - 2 * carryWas + carryWas2) / (h * h), -0.3, 0.3);
     carryWas2 = carryWas;
@@ -493,9 +556,9 @@ function start() {
         v3.set(0, 1, 0).transformDirection(door.matrixWorld); // hinge
         // gravity and the swing throw it about, a tired strut pulls it to: whichever way the pod hangs it
         // comes to rest nearly shut
-        const pull = doorSign * v1.cross(v2).dot(v3) * (3 / (4 * doorArm2)) * 0.35 - STRUT * (open - AJAR);
+        const pull = doorFree ? 3 * (1.45 - open) : doorSign * v1.cross(v2).dot(v3) * (3 / (4 * doorArm2)) * 0.35 - STRUT * (open - AJAR);
         // a dry hinge: it stays where it is left until the pull is more than the hinge holds, and drags while it moves
-        if (Math.abs(vopen) < 0.02 && Math.abs(pull) < STICK) vopen = 0;
+        if (!doorFree && Math.abs(vopen) < 0.02 && Math.abs(pull) < STICK) vopen = 0;
         else vopen += (pull - Math.sign(vopen || pull) * STICK * 0.6 - 0.6 * vopen) * h;
       }
       open += vopen * h;
@@ -526,6 +589,39 @@ function start() {
     const views = [...panel.querySelectorAll<HTMLButtonElement>('[data-view]')];
     const projs = [...panel.querySelectorAll<HTMLButtonElement>('[data-proj]')];
     const stillBtn = panel.querySelector<HTMLButtonElement>('[data-still]')!;
+    const copyBtn = panel.querySelector<HTMLButtonElement>('[data-copy]')!;
+    // the view and what the scene is doing, as text to paste back to whoever is working on it
+    const copyView = async () => {
+      const r = (v: number, n = 2) => +v.toFixed(n);
+      const v3 = (v: THREE.Vector3) => [r(v.x), r(v.y), r(v.z)];
+      const podAt = pod ? v3(podCentre.clone().applyMatrix4(pod.matrixWorld)) : null;
+      const snap = {
+        eye: { yaw: r(yaw), pitch: r(pitch), radius: r(radius), target: v3(target), camera: v3(camera.position), look: v3(camera.getWorldDirection(new THREE.Vector3())), fov: camera.fov, projection: eye === ortho ? 'iso' : 'pers' },
+        pod: { at: podAt, swing: r(THREE.MathUtils.radToDeg(Math.hypot(ax, az)), 1), twist: r(THREE.MathUtils.radToDeg(tw), 1), door: r(THREE.MathUtils.radToDeg(open), 0), doorFree, still },
+        crane: { along: r(carry.x), up: r(carry.y), time: r(craneTime, 1), hand: hand ? { push: hand.push, v: r(hand.v) } : null },
+        game: play?.state() ?? null,
+        screen: { css: [canvas.clientWidth, canvas.clientHeight], dpr: devicePixelRatio, fps: r(1000 / frameMs, 0), ms: r(frameMs, 1) },
+        at: new Date().toISOString(),
+        ua: navigator.userAgent,
+      };
+      const text = '```json\n' + JSON.stringify(snap, null, 1) + '\n```\n' + `look(${r(yaw)}, ${r(pitch)}, ${r(radius)})`;
+      let ok = false;
+      try { await navigator.clipboard.writeText(text); ok = true; } catch { /* not a secure page (the phone on the local net): the old way */ }
+      if (!ok) {
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        ta.setAttribute('readonly', '');
+        Object.assign(ta.style, { position: 'fixed', top: '0', left: '0', opacity: '0', userSelect: 'text', webkitUserSelect: 'text' });
+        document.body.appendChild(ta);
+        ta.select();
+        ta.setSelectionRange(0, text.length);
+        ok = document.execCommand('copy');
+        ta.remove();
+      }
+      copyBtn.firstChild!.textContent = ok ? 'Copied' : 'No clipboard';
+      setTimeout(() => { copyBtn.firstChild!.textContent = 'Copy view'; }, 1400);
+    };
+    copyBtn.addEventListener('click', copyView);
     const refs = [...panel.querySelectorAll<HTMLButtonElement>('[data-ref]')];
     const pane = document.querySelector<HTMLCanvasElement>('.ref')!;
     // the reference: the turnaround sheet's view for front, flanks and back, the hall picture for perspective.
@@ -628,6 +724,7 @@ function start() {
       else if (e.key === '0') look('persp');
       else if (e.key === '5') project(eye !== ortho);
       else if (e.key === 'h' || e.key === 'H') { still = !still; mark(); }
+      else if (e.key === 'c' || e.key === 'C') copyView();
       else if (e.key === 'r' || e.key === 'R') setSplit(split === 'off' ? 'side' : split === 'side' ? 'down' : 'off');
     });
     canvas.addEventListener('pointerdown', () => queueMicrotask(mark));
@@ -658,6 +755,7 @@ function start() {
     homeRadius = 7.5 / Math.min(1, camera.aspect / 0.85); // step back on a narrow screen
     home.x = 0.1 + 0.75 * THREE.MathUtils.clamp((camera.aspect - 1) / 0.7, 0, 1); // on a wide one the pod hangs left of centre, the hall to its right
     if (wasHome) { radius = homeRadius; target.copy(home); }
+    play?.resize(w, h);
   }
   window.addEventListener('resize', resize);
   // (a phone does not always say: the toolbars sliding away, a turn, the canvas changes size without a resize)
@@ -712,6 +810,7 @@ function start() {
     if (pod) hall?.follow(v1.copy(podCentre).applyMatrix4(pod.matrixWorld));
     hall?.update(time, dt);
     blood?.update(dt);
+    play?.update(dt);
     // the red light inside, breathing: on what it lights in there (through the open door) and out of the seams and window
     const beat = heart(time);
     inside.intensity = 1.2 + 7 * beat;
@@ -721,6 +820,7 @@ function start() {
     ao.enabled = eye === camera; // the debug panel's iso goes without
     hall?.prepare(renderer, camera);
     post.render(eye);
+    play?.render(renderer); // the hologram, over it all
     requestAnimationFrame(frame);
   }
   requestAnimationFrame(frame);

@@ -89,6 +89,7 @@ export function buildHall(scene: THREE.Scene, hang: THREE.Vector3, maxTexture = 
   const ROWS = [54, 39, 24, -6, -21, -36, -51, -66];
   const rows = [24, -6, -21, -36]; // the hall's own rows round the pod, with catwalks along them
   const near = (x: number, z: number) => Math.abs(x) <= TX && z <= 24 && z >= -36;
+  const spans: { a: THREE.Vector3; b: THREE.Vector3 }[] = []; // the girders across, for other pods to hang from (game.ts)
   for (const z of ROWS) {
     for (const x of COLS) tower(x, z, -45, ROOF, 2.4);
     for (let i = 0; i < COLS.length - 1; i++) {
@@ -96,7 +97,7 @@ export function buildHall(scene: THREE.Scene, hang: THREE.Vector3, maxTexture = 
       // girders across: every level round the pod, every other one further out, staggered row by row
       const k = ROWS.indexOf(z);
       const ys = near(a, z) && near(b, z) ? LEVELS : LEVELS.filter((_, j) => (j + i + k) % 2 === 0);
-      for (const y of ys) truss(V(a, y, z), V(b, y, z), V(0, 0, 0.8), V(0, 2.2, 0), 2.2);
+      for (const y of ys) { truss(V(a, y, z), V(b, y, z), V(0, 0, 0.8), V(0, 2.2, 0), 2.2); spans.push({ a: V(a, y, z), b: V(b, y, z) }); }
     }
     // the roof's trusses, deep ones, right across
     truss(V(COLS[0] - 6, ROOF - 4, z), V(WX, ROOF - 4, z), V(0, 0, 0.6), V(0, 4, 0), 3, 0.2, 0.09);
@@ -173,7 +174,7 @@ export function buildHall(scene: THREE.Scene, hang: THREE.Vector3, maxTexture = 
   // two bigger ones up in the sun's wall, near the end: the first just where the eye looks up to as the page
   // opens, behind the steel but peeking out from under it. The sun itself comes in through them
   const SIDE_SCALE = 1.4;
-  const SIDE_FANS = [-61, -42].map((z, i) => ({ at: V(WX, 63, z), angle: 0.4 + i * 1.1, speed: (i % 2 ? 1 : -1) * 0.17 }));
+  const SIDE_FANS = [-61, -42].map((z, i) => ({ at: V(WX, 63, z), angle: 0.4 + i * 1.1, speed: (i % 2 ? 1 : -1) * 0.17, on: true, run: 1 }));
   // the far wall: solid, small openings in a few rows, not every bay, and a square cut out for each fan
   const HOLES: THREE.Vector3[] = [];
   {
@@ -215,7 +216,7 @@ export function buildHall(scene: THREE.Scene, hang: THREE.Vector3, maxTexture = 
   // the end wall the eye looks at: solid, but for a row of square holes, each a vent with a huge fan in it
   const FZ = Z1;
   // between the towers, above the lowest girders, the light behind them coming in a little down and across
-  const FANS = [-20, 0, 20].map((x, i) => ({ at: V(x, 34, FZ), angle: i * 0.7, speed: (i % 2 ? -1 : 1) * (0.2 + 0.04 * i) }));
+  const FANS = [-20, 0, 20].map((x, i) => ({ at: V(x, 34, FZ), angle: i * 0.7, speed: (i % 2 ? -1 : 1) * (0.2 + 0.04 * i), on: true, run: 1 }));
   const FAN_DIR = V(0.12, -0.28, 1).normalize();
   {
     const S = 2 * FAN_R + 1, lo = FANS[0].at.y - S / 2, hi = FANS[0].at.y + S / 2;
@@ -704,6 +705,18 @@ export function buildHall(scene: THREE.Scene, hang: THREE.Vector3, maxTexture = 
     roofY: ROOF,
     /** what runs along the girder with the pod: move it along x */
     trolley,
+    spans,
+    /** the hoists' cages, each to be taken in hand */
+    lifts: cars.map((c) => {
+      const h = c.userData.hoist as (typeof HOISTS)[number];
+      return {
+        lo: h.lo, hi: h.hi,
+        at: () => c.position.y,
+        speed: () => (c.userData.hand?.v as number | undefined) ?? 0,
+        link: () => { c.userData.hand ??= { push: 0, v: 0 }; },
+        push: (d: number) => { if (c.userData.hand) c.userData.hand.push = d; },
+      };
+    }),
     /** the fans in the end wall, for the light through them (rays.ts): where, how far round, which way it comes */
     fans: { list: FANS, dir: FAN_DIR, radius: FAN_R, hub: HUB, blades: BLADES, wallZ: FZ, side: SIDE_FANS, sideScale: SIDE_SCALE, wallX: WX },
     /** the tight sun on the pod, wherever it has swung to; as the wide one is set (the debug panel too) */
@@ -717,10 +730,23 @@ export function buildHall(scene: THREE.Scene, hang: THREE.Vector3, maxTexture = 
     update(time: number, dt: number) {
       dome.material.uniforms.gain.value = (scene.fog as THREE.Fog).far;
       for (const s of shafts) s.uniforms.time.value = time;
-      [...FANS, ...SIDE_FANS].forEach((f, i) => { f.angle += f.speed * dt; rotors[i].rotation.z = f.angle; });
+      // (one switched off, from the hologram (game.ts), runs down slowly, and up again)
+      [...FANS, ...SIDE_FANS].forEach((f, i) => {
+        f.run += ((f.on ? 1 : 0) - f.run) * Math.min(1, dt * 0.35);
+        f.angle += f.speed * f.run * dt;
+        rotors[i].rotation.z = f.angle;
+      });
       for (const c of cars) {
-        // up, wait, down, wait: a smooth ride between the ends
         const h = c.userData.hoist as (typeof HOISTS)[number];
+        // in someone's hand (the hologram, game.ts): up or down as the lever is pushed, heavy, to the ends
+        const hand = c.userData.hand as { push: number; v: number } | undefined;
+        if (hand) {
+          hand.v += (hand.push * 1.2 - 0.8 * hand.v) * dt;
+          c.position.y = THREE.MathUtils.clamp(c.position.y + hand.v * dt, h.lo, h.hi);
+          if (c.position.y === h.lo || c.position.y === h.hi) hand.v = 0;
+          continue;
+        }
+        // up, wait, down, wait: a smooth ride between the ends
         const span = h.hi - h.lo, ride = span / h.speed, cycle = 2 * ride + 16;
         const t = (time + h.phase * 10) % cycle;
         const u = t < ride ? t / ride : t < ride + 8 ? 1 : t < 2 * ride + 8 ? 1 - (t - ride - 8) / ride : 0;
