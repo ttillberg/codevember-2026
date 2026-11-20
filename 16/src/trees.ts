@@ -69,8 +69,8 @@ export class Trees {
   readonly root = new THREE.Group();
   trunks: Trunk[] = []; // all placed, for collisions and the autofocus
   changed = false;
-  private levels: THREE.InstancedMesh[];
-  private birches: THREE.InstancedMesh[];
+  readonly levels: THREE.InstancedMesh[];
+  readonly birches: THREE.InstancedMesh[];
   private cellKey = '';
   private lastSort = new THREE.Vector2(Infinity, Infinity);
 
@@ -254,21 +254,30 @@ vec4 barkV(vec2 b) {
 //  - at the foot an old birch's black bark, split in vertical fissures, low and uneven
 // The relief is a height, its normal by finite differences, eased out where it is smaller than a pixel.
 float BR; // this trunk's radius
+float BU, BC; // where round the trunk (0..1) and its circumference
+// Noise round the trunk at k (times six) per metre round, o up it: straight round, so a mark is level (a circle
+// in the noise with the height added to one axis sheared it, diagonal on the side facing you); the last tenth
+// round crossfades into the first, so it closes without a seam.
+float nw(float k, vec2 o) {
+  float L = BC * 6.0 * k, x = BU * L;
+  return mix(n21(vec2(x, 0.0) + o), n21(vec2(x - L, 0.0) + o), smoothstep(0.9, 1.0, BU));
+}
+float nw(float k, float o) { return nw(k, vec2(o)); }
+float PX; // a pixel's size on the bark, in metres: detail finer than it is eased out (it aliased into stripes)
 // the bark at b: its colour (out) and its height
 float birchAt(vec2 b, out vec3 col, out float dark) {
   float C = 6.2831853 * BR;
   float u = b.x / C; // 0..1 round
-  float ang = u * 6.2831853;
-  vec2 w = vec2(cos(ang), sin(ang)) * BR * 6.0; // a circle in the noise: wraps
+  BU = u; BC = C;
   float h = 0.0;
   // the white
-  col = vec3(0.82, 0.8, 0.75) * (0.88 + 0.14 * n21(w * 2.0 + vec2(0.0, b.y * 3.0)));
-  col *= 0.95 + 0.05 * n21(vec2(floor(u * max(8.0, floor(C * 60.0))) * 1.7, b.y * 500.0)); // fibres, round
-  col = mix(col, vec3(0.62, 0.62, 0.6), smoothstep(0.6, 0.85, n21(w * 4.0 + vec2(2.0, b.y * 9.0))) * 0.25); // grey mottling
+  col = vec3(0.82, 0.8, 0.75) * (0.88 + 0.14 * nw(2.0, vec2(0.0, b.y * 3.0)));
+  col *= 0.95 + 0.05 * n21(vec2(floor(u * max(8.0, floor(C * 60.0))) * 1.7, b.y * 500.0)) * (1.0 - smoothstep(0.0005, 0.002, PX)); // fibres, round
+  col = mix(col, vec3(0.62, 0.62, 0.6), smoothstep(0.6, 0.85, nw(4.0, vec2(2.0, b.y * 9.0))) * 0.25); // grey mottling
   // the paper peeling in strips
-  float py = b.y * 7.0 + 0.6 * n21(w * 1.5 + 11.0);
+  float py = b.y * 7.0 + 0.6 * nw(1.5, 11.0);
   float pid = floor(py), pf = fract(py);
-  float has = step(h21(vec2(pid, 5.0)), 0.5) * smoothstep(0.45, 0.6, n21(w * 2.0 + vec2(pid * 3.1, 1.0)));
+  float has = step(h21(vec2(pid, 5.0)), 0.5) * smoothstep(0.45, 0.6, nw(2.0, vec2(pid * 3.1, 1.0)));
   float strip = has * smoothstep(0.5, 0.53, pf) * (1.0 - smoothstep(0.84, 0.86, pf));
   col = mix(col, vec3(0.88, 0.78, 0.7), strip * 0.6);
   float lip = has * smoothstep(0.82, 0.85, pf) * (1.0 - smoothstep(0.85, 0.87, pf)); // the curled edge
@@ -278,7 +287,7 @@ float birchAt(vec2 b, out vec3 col, out float dark) {
   h += strip * 0.4 + lip * 0.9 - under * 0.3;
   // lenticels: rows about two centimetres apart, cells about four round, a dash in about half
   float NA = max(6.0, floor(C * 25.0));
-  float ry = b.y * 55.0 + 0.35 * n21(w * 3.0);
+  float ry = b.y * 55.0 + 0.35 * nw(3.0, 0.0);
   float rid = floor(ry);
   float x = u * NA + h21(vec2(rid, 2.0)) * NA; // each row shifted round
   float cid = mod(floor(x), NA), fx = fract(x);
@@ -289,32 +298,38 @@ float birchAt(vec2 b, out vec3 col, out float dark) {
   float th = (0.06 + 0.05 * k2) * sqrt(max(0.0, 1.0 - dx * dx)); // lens-shaped: thin at the ends
   float len = step(k1, 0.7) * (1.0 - smoothstep(th * 0.6, th, abs(fy))) * step(dx, 1.0);
   float lrim = step(k1, 0.7) * (1.0 - smoothstep(th, th * 1.9, abs(fy))) * step(dx, 1.05) * (1.0 - len);
+  float lfade = 1.0 - smoothstep(0.003, 0.008, PX); // rows two centimetres apart: further off, a faint grey
+  len *= lfade; lrim *= lfade;
   col = mix(col, vec3(0.26, 0.21, 0.18), len);
   col = mix(col, col * 0.86, lrim * 0.5);
+  col *= 1.0 - 0.06 * (1.0 - lfade);
   h += len * 0.6 + lrim * 0.25;
   // black marks: rough edged, crusty, cracked across
-  // (stretched round the trunk: wider than tall)
-  float m = n21(w * 0.9 + vec2(3.0, b.y * 10.0)) * 0.6 + n21(w * 2.4 + vec2(1.0, b.y * 26.0)) * 0.4;
-  m += 0.12 * (n21(w * 10.0 + vec2(0.0, b.y * 60.0)) - 0.5) + 0.06 * (n21(w * 30.0 + vec2(0.0, b.y * 150.0)) - 0.5);
+  // (horizontal: wider than tall, dashes and bands round the trunk)
+  float m = nw(0.7, vec2(3.0, b.y * 24.0)) * 0.6 + nw(1.8, vec2(1.0, b.y * 55.0)) * 0.4; // thin: a few centimetres tall, a hand or more wide
+  m += 0.12 * (nw(10.0, vec2(0.0, b.y * 55.0)) - 0.5) * (1.0 - smoothstep(0.004, 0.012, PX));
+  m += 0.06 * (nw(30.0, vec2(0.0, b.y * 160.0)) - 0.5) * (1.0 - smoothstep(0.0015, 0.005, PX));
   m += 0.1 * smoothstep(0.55, 0.85, n21(vec2(b.y * 1.4, 9.0))); // in bands
-  float mk = smoothstep(0.705, 0.72, m);
-  float crack = 1.0 - smoothstep(0.03, 0.09, abs(fract(b.y * 70.0 + 1.5 * n21(w * 9.0 + vec2(0.0, b.y * 20.0))) - 0.5));
-  vec3 crust = mix(vec3(0.07, 0.065, 0.06), vec3(0.16, 0.15, 0.14), n21(w * 30.0 + vec2(0.0, b.y * 90.0)));
+  float me = 0.0075 + PX * 1.5; // the edge as soft as a pixel, no softer
+  float mk = smoothstep(0.685 - me, 0.685 + me, m);
+  float crack = (1.0 - smoothstep(0.03, 0.09, abs(fract(b.y * 70.0 + 1.5 * nw(9.0, vec2(0.0, b.y * 20.0))) - 0.5)))
+    * (1.0 - smoothstep(0.002, 0.006, PX)); // fourteen millimetres apart: off before they alias
+  vec3 crust = mix(vec3(0.07, 0.065, 0.06), vec3(0.16, 0.15, 0.14), mix(nw(30.0, vec2(0.0, b.y * 90.0)), 0.5, smoothstep(0.002, 0.006, PX)));
   crust = mix(crust, vec3(0.015), crack);
   col = mix(col, crust, mk);
-  h += mk * (0.5 + 0.4 * n21(w * 25.0 + vec2(0.0, b.y * 70.0)) - 0.6 * crack);
+  h += mk * (0.5 + 0.4 * nw(25.0, vec2(0.0, b.y * 70.0)) - 0.6 * crack);
   // the foot: black fissured bark, low and uneven, here and there a spike climbing a fissure
-  float reach = 0.1 + 0.3 * n21(w * 1.2 + 4.0) + 0.45 * pow(n21(w * 5.0 + 2.0), 4.0) + 0.06 * n21(w * 14.0 + vec2(0.0, b.y * 3.0));
+  float reach = 0.1 + 0.3 * nw(1.2, 4.0) + 0.45 * pow(nw(5.0, 2.0), 4.0) + 0.06 * nw(14.0, vec2(0.0, b.y * 3.0));
   float foot = 1.0 - smoothstep(0.0, 0.08, b.y - reach);
-  foot = max(foot, step(0.72, n21(w * 7.0 + vec2(0.0, b.y * 12.0))) * (1.0 - smoothstep(reach, reach + 0.5, b.y)));
+  foot = max(foot, step(0.72, nw(7.0, vec2(0.0, b.y * 12.0))) * (1.0 - smoothstep(reach, reach + 0.5, b.y)));
   // plates split by deep cracks running up, uneven: the cracks where a noise stretched up the trunk crosses
   // its middle, two of them, so they branch and join
-  float n1 = n21(w * 7.0 + vec2(0.0, b.y * 2.2)), n2 = n21(w * 13.0 + vec2(5.0, b.y * 4.0));
+  float n1 = nw(7.0, vec2(0.0, b.y * 2.2)), n2 = nw(13.0, vec2(5.0, b.y * 4.0));
   float cr = min(abs(n1 - 0.5) * 2.0, abs(n2 - 0.5) * 2.0 + 0.15);
   float plate = smoothstep(0.04, 0.16, cr);
-  vec3 black = mix(vec3(0.012, 0.011, 0.01), mix(vec3(0.045, 0.04, 0.036), vec3(0.1, 0.09, 0.08), n21(w * 24.0 + vec2(0.0, b.y * 30.0))), plate);
+  vec3 black = mix(vec3(0.012, 0.011, 0.01), mix(vec3(0.045, 0.04, 0.036), vec3(0.1, 0.09, 0.08), nw(24.0, vec2(0.0, b.y * 30.0))), plate);
   col = mix(col, black, foot);
-  h = mix(h, plate * (0.4 + 0.2 * n21(w * 20.0 + vec2(0.0, b.y * 25.0))), foot);
+  h = mix(h, plate * (0.4 + 0.2 * nw(20.0, vec2(0.0, b.y * 25.0))), foot);
   dark = max(mk, foot);
   return h;
 }
@@ -323,13 +338,14 @@ void main() {
   vec3 L = normalize(uLightDir);
   vec3 V = normalize(cameraPosition - vWorldPos);
   BR = vR;
+  PX = length(fwidth(vBark));
   vec2 b = vBark;
   vec3 col; float dark;
   float h = birchAt(b, col, dark);
   // far: the detail smaller than a pixel goes to its average, a soft white with a little grey
   float px = length(fwidth(vBark));
   float fine = 1.0 - smoothstep(0.002, 0.006, px);
-  col = mix(mix(vec3(0.74, 0.72, 0.68), col, 0.55), col, fine);
+  col = mix(col, mix(vec3(0.74, 0.72, 0.68), col, 0.55), (1.0 - fine) * (1.0 - dark)); // the black marks stay black far off
   // the relief: a millimetre or two, by finite differences round and up
   if (fine > 0.01) {
     vec3 c1; float d1;

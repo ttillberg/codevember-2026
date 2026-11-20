@@ -120,11 +120,11 @@ const MAX_NEAR = coarse ? 80 : 240;
 
 export class Foliage {
   readonly root = new THREE.Group();
-  private boughs: THREE.InstancedMesh;
-  private leaves: THREE.InstancedMesh;
+  readonly boughs: THREE.InstancedMesh;
+  readonly leaves: THREE.InstancedMesh;
   private bdata: THREE.InstancedBufferAttribute;
   private ldata: THREE.InstancedBufferAttribute;
-  private model: THREE.InstancedMesh;
+  readonly model: THREE.InstancedMesh;
   private mdata: THREE.InstancedBufferAttribute;
   private placed: Trunk[] | null = null;
   // every bough placed: its matrix, its data, where it hangs from (sorted into card or model as you move)

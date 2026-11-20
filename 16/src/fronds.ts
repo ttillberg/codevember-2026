@@ -416,9 +416,10 @@ varying float vStraw;
 void main() {
   if (nearFade(vWorldPos, 0.03, 0.08) < 0.5) discard;
   vec3 N = normalize(vNormal);
-  if (!gl_FrontFacing) N = -N;
   vec3 L = normalize(uLightDir);
   vec3 V = normalize(cameraPosition - vWorldPos);
+  // the side you see: the ribbon is wound against cross(D, across), so gl_FrontFacing had it always facing away
+  if (dot(N, V) < 0.0) N = -N;
 
   vec3 root, tip, col;
   if (vStraw > 0.5) {

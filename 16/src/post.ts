@@ -13,7 +13,7 @@ const fullscreenVertex = /* glsl */ `
 
 export function makeAtmosPass(depth: THREE.DepthTexture, coarse = false) {
   return new THREE.ShaderMaterial({
-    defines: { SHAFT_STEPS: coarse ? 12 : 24 },
+    defines: { SHAFT_STEPS: coarse ? 12 : 24, VOL_STEPS: coarse ? 12 : 28 },
     uniforms: {
       tDiffuse: { value: null },
       tDepth: { value: depth },
@@ -32,6 +32,7 @@ export function makeAtmosPass(depth: THREE.DepthTexture, coarse = false) {
       uMist: { value: 0.0 }, // ground mist density
       uMistStart: { value: 0.6 }, // clear air out to here
       uGroundY: { value: 0 }, // the ground under the eye: the mist lies on it, not on y = 0
+      uBeam: { value: 0.9 }, // the beams in the air: how much brighter the lit air, darker the shaded
       // the shafts: bright, hard edged (open sky counted to a power, so the trunks cut clean wedges out of them,
       // beams as in the splash rather than a glow), reaching a long way from the sun on screen
       uShaft: { value: 1.1 },
@@ -47,10 +48,26 @@ export function makeAtmosPass(depth: THREE.DepthTexture, coarse = false) {
       uniform vec3 uHaze, uSunCol, uSunDir;
       uniform mat4 uInvProj, uCamWorld;
       uniform vec2 uSunUv;
-      uniform float uSunOn, uAspect, uMist, uMistStart, uShaft, uShaftPow, uShaftReach, uGroundY;
+      uniform float uSunOn, uAspect, uMist, uMistStart, uShaft, uShaftPow, uShaftReach, uGroundY, uBeam;
       varying vec2 vUv;
 
       float h2(vec2 p) { p = fract(p * vec2(123.34, 456.21)); p += dot(p, p + 45.32); return fract(p.x * p.y); }
+      // the canopy's light, as shaders.ts canopyAt: pools and spots of sun projected down along the light, so the
+      // air between the crowns and the floor is lit in the same columns the floor is
+      float cNoise(vec2 p) {
+        vec2 i = floor(p), f = fract(p);
+        f = f * f * (3.0 - 2.0 * f);
+        return mix(mix(h2(i), h2(i + vec2(1, 0)), f.x), mix(h2(i + vec2(0, 1)), h2(i + vec2(1, 1)), f.x), f.y);
+      }
+      // (only its pools and the larger spots, softly: with the finest spots, neighbouring pixels sampled light and
+      // dark and the beams came out as a dither)
+      float beamAt(vec3 wp, vec3 L, vec3 A, vec3 B) {
+        vec2 q = vec2(dot(wp, A), dot(wp, B));
+        vec2 sway = vec2(sin(uTime * 0.35), cos(uTime * 0.27)) * 0.04;
+        float big = cNoise(q * 0.9 + 3.0);
+        float n = cNoise(q * 3.2 + sway) * 0.62 + cNoise(q * 7.5 - sway * 1.7 + 9.0) * 0.38;
+        return smoothstep(0.4, 0.62, n + (big - 0.5) * 0.45);
+      }
       // what is behind everything: plain golden air, a broad glow all round the sun's side and brighter towards it
       // (bright canopy gaps were here once, but between the trunks they read as patches cut out of paper)
       vec3 sky(vec3 r) {
@@ -92,6 +109,35 @@ export function makeAtmosPass(depth: THREE.DepthTexture, coarse = false) {
           float f = 1.0 - (1.0 - mist) * exp(-max(z - 1.2, 0.0) * uFog * thin);
           c = mix(c, hz, f);
         }
+        // beams in the air: step along the view ray through the air, out to thirty metres, and at each step ask whether
+        // the sun gets down through the crowns there. Lit air brighter, shaded air darker, the difference from the
+        // average put on the picture: columns of light through the wood seen from anywhere, the sun on screen or not.
+        // The air is far thicker low down, a mist on the moss, so the beams light up most where they reach it.
+        {
+          vec3 cam = uCamWorld[3].xyz;
+          vec3 L = normalize(uSunDir);
+          vec3 A = normalize(cross(L, vec3(0.0, 0.0, 1.0))), B = cross(L, A);
+          float maxD = min(z, 30.0);
+          // no jitter: the field is smooth enough now for the steps not to band (jittered per pixel, white noise read
+          // as grain and an interleaved gradient as a fine hatching)
+          float jit = 0.5;
+          float lit = 0.0, wsum = 0.0, dens = 0.0;
+          for (int i = 0; i < VOL_STEPS; i++) {
+            float s = (float(i) + jit) / float(VOL_STEPS);
+            float d = 0.25 + s * s * maxD; // closer together near the eye
+            vec3 p = cam + r * d;
+            float h = max(p.y - uGroundY, 0.0);
+            float rho = 0.25 + 2.2 * exp(-h / 0.7); // thin air, thick on the moss
+            float w = rho * (2.0 * s + 0.05) * exp(-d * 0.05);
+            lit += beamAt(p, L, A, B) * w;
+            wsum += w;
+            dens += rho * (2.0 * s + 0.05) / float(VOL_STEPS);
+          }
+          float frac = lit / max(wsum, 1e-4); // how much of the air on the way is in the sun
+          float fwd = 0.4 + 0.9 * pow(max(dot(r, L), 0.0), 3.0); // fine haze scatters forward
+          float amount = (1.0 - exp(-maxD * 0.15)) * min(dens, 1.5);
+          c = max(c + uSunCol * (frac - 0.38) * uBeam * fwd * amount, vec3(0.0));
+        }
         // light shafts: march towards the sun on screen and count how much of the way is open sky or far,
         // hazy air. Grass, stalks, stems and trunks in between cut dark wedges out of the glow.
         if (uSunOn > 0.0) {
@@ -129,12 +175,22 @@ export function makeLensPass(coarse = false) {
       uFocus: { value: 1.6 }, // focus distance, world units
       uAperture: { value: 1.0 }, // blur radius in px at one dioptre of defocus, times uMaxBlur
       uMaxBlur: { value: 14 }, // px, at the drawing buffer's size
+      // the grade, in uniforms for the look panel (?debug), its defaults the look as it is
+      uBright: { value: 1 }, // exposure after everything
+      uSat: { value: 1 }, // saturation
+      uGreen: { value: 0.45 }, // greens pulled to olive and calmed
+      uWarm: { value: 0.35 }, // grey midtones leaning amber
+      uSplit: { value: 1 }, // split toning: teal shadows, cream highlights
+      uContrast: { value: 0.55 }, // the soft S
+      uLift: { value: 1 }, // lifted blacks
+      uVignette: { value: 0.45 }, // how dark the corners
     },
     vertexShader: fullscreenVertex,
     fragmentShader: /* glsl */ `
       uniform sampler2D tDiffuse; // rgb: the scene in its haze, a: view depth
       uniform vec2 uRes;
       uniform float uFocus, uAperture, uMaxBlur;
+      uniform float uBright, uSat, uGreen, uWarm, uSplit, uContrast, uLift, uVignette;
       varying vec2 vUv;
 
       // blur radius in px: thin lens, proportional to the difference in dioptres from the focus
@@ -162,24 +218,26 @@ export function makeLensPass(coarse = false) {
         vec3 col = acc / wsum;
 
         // grade, one look over everything: an autumn dusk on film
+        col *= uBright;
         float l = dot(col, vec3(0.2126, 0.7152, 0.0722));
+        col = mix(vec3(l), col, uSat);
         // greens pulled towards olive and calmed: the moss was a loud lime next to the golden ferns
         float green = max(col.g - max(col.r, col.b), 0.0);
-        col.r += green * 0.45;
-        col = mix(vec3(l), col, 1.0 - 0.45 * smoothstep(0.0, 0.12, green));
+        col.r += green * uGreen;
+        col = mix(vec3(l), col, 1.0 - uGreen * smoothstep(0.0, 0.12, green));
         // the grey haze warmed: unsaturated midtones lean amber instead of sitting a flat green-grey
         float sat = max(col.r, max(col.g, col.b)) - min(col.r, min(col.g, col.b));
-        col = mix(col, l * vec3(1.1, 1.0, 0.8), (1.0 - smoothstep(0.03, 0.16, sat)) * smoothstep(0.04, 0.3, l) * 0.35);
+        col = mix(col, l * vec3(1.1, 1.0, 0.8), (1.0 - smoothstep(0.03, 0.16, sat)) * smoothstep(0.04, 0.3, l) * uWarm);
         // split toning: shadows a deep blue-teal, highlights a cream gold
-        col = mix(col * vec3(0.86, 0.95, 1.06), col * vec3(1.08, 0.99, 0.86), smoothstep(0.03, 0.45, l));
+        col = mix(col, mix(col * vec3(0.86, 0.95, 1.06), col * vec3(1.08, 0.99, 0.86), smoothstep(0.03, 0.45, l)), uSplit);
         // a soft S: deeper shadows, a rounded shoulder so the sunlit fronds do not burn out to white
         l = dot(col, vec3(0.2126, 0.7152, 0.0722));
         float lc = l < 0.5 ? 2.0 * l * l * (1.5 - l) + l * 0.25 : l;
         lc = mix(lc, 0.82 + 0.18 * (1.0 - exp(-(l - 0.72) * 4.0)), step(0.72, l));
-        col *= mix(1.0, lc / max(l, 1e-4), 0.55);
-        col += vec3(0.005, 0.007, 0.009); // lifted blacks, like a lens in haze
+        col *= mix(1.0, lc / max(l, 1e-4), uContrast);
+        col += vec3(0.005, 0.007, 0.009) * uLift; // lifted blacks, like a lens in haze
         vec2 v = (vUv - 0.5) * vec2(uRes.x / uRes.y, 1.0);
-        col *= mix(1.0, 0.55, smoothstep(0.35, 1.05, length(v)));
+        col *= mix(1.0, 1.0 - uVignette, smoothstep(0.35, 1.05, length(v)));
         gl_FragColor = vec4(col, 1.0);
       }
     `,

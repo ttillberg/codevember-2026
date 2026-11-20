@@ -137,7 +137,9 @@ function addFrond(b: Buf, lod: Lod, base: THREE.Vector3, out: THREE.Vector3, L: 
     }
     for (let r = 0; r < ROWS; r++) for (let c = 0; c < 2; c++) {
       const a = start + r * 3 + c, bb = a + 1, d = a + 3, e = a + 4;
-      b.idx.push(a, bb, d, bb, e, d);
+      // wound so the front face is the upper side (across × out = -fn the other way): the shader takes the side
+      // from gl_FrontFacing, and wound the other way the sunlit top was lit as the underside, dark, with the sori
+      b.idx.push(a, d, bb, bb, d, e);
     }
     // dew: a drop or two sitting in the fold along the midrib, and now and then one hanging under the tip
     for (let k = 0; k < 2; k++) if (rand() < 0.5) {

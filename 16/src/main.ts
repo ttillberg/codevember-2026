@@ -25,6 +25,8 @@ import { Slingshot } from './slingshot';
 import { Forest } from './forest';
 import { soundboard } from './soundboard';
 import { reference } from './reference';
+import { lookboard } from './lookboard';
+import { vegboard } from './vegboard';
 import { Fungarium, type Species } from './fungarium';
 import { Pouch } from './pouch';
 import { Sound } from './sound';
@@ -58,6 +60,14 @@ camera.rotation.order = 'YXZ';
 const SUN_UP = THREE.MathUtils.degToRad(Number(params.get('sun')) || 45);
 const SUN_FLAT = new THREE.Vector2(0.45, -0.88).normalize();
 const lightDir = new THREE.Vector3(SUN_FLAT.x * Math.cos(SUN_UP), Math.sin(SUN_UP), SUN_FLAT.y * Math.cos(SUN_UP));
+/** the sun to another height, live (the look panel): every uniform holds this same vector */
+function setSunHeight(deg: number) {
+  const a = THREE.MathUtils.degToRad(Math.min(deg, 88));
+  lightDir.set(SUN_FLAT.x * Math.cos(a), Math.sin(a), SUN_FLAT.y * Math.cos(a));
+  shadowCentre.set(Infinity, 0, 0); // the shadow map drawn again
+}
+// (the look panel can hold the focus by hand)
+const focusHold = { hold: false, at: 1.6 };
 /** 0 at dusk (nine degrees) .. 1 with a morning sun (forty five): the light whiter, the air paler */
 const MORNING = THREE.MathUtils.smoothstep(SUN_UP, THREE.MathUtils.degToRad(9), THREE.MathUtils.degToRad(45));
 const shellMat = new THREE.ShaderMaterial({
@@ -305,7 +315,7 @@ atmosMat.uniforms.uHaze.value.lerp(new THREE.Color(0.092, 0.084, 0.064), MORNING
 // the air: light, so the trunks stand in layers a long way back, paler and paler, the sun coming through between
 // them (it was thick and golden, 0.22 and 0.9: past two metres everything melted into one yellow wall)
 atmosMat.uniforms.uFog.value = 0.06;
-atmosMat.uniforms.uMist.value = 0.3; // and a mist lying on the moss, glowing towards the sun
+atmosMat.uniforms.uMist.value = 0.55; // and a mist lying on the moss, glowing towards the sun, the beams lighting it
 const atmos = new ShaderPass(atmosMat);
 composer.addPass(atmos);
 // spore smoke into the finished, hazy image: its own lighter haze keeps a column visible from far off
@@ -805,6 +815,20 @@ function drawWire() {
   setTimeout(() => snap.remove(), 2000);
 }
 
+// the look panel: grade, depth of field, light and air
+if (params.has('debug')) lookboard({ lens: lensMat, atmos: atmosMat, focus: focusHold, sun: { deg: THREE.MathUtils.radToDeg(SUN_UP), set: setSunHeight } });
+// the vegetation panel: each kind taken away to see what it does
+if (params.has('debug')) vegboard([
+  { name: 'spruce trunks', objects: trees.levels },
+  { name: 'spruce boughs', objects: [foliage.boughs, foliage.model] },
+  { name: 'birch trunks', objects: trees.birches },
+  { name: 'birch leaves', objects: [foliage.leaves] },
+  { name: 'ferns', objects: [ferns.root] },
+  { name: 'fungi', objects: [fungi.group] },
+  { name: 'boulders', objects: [boulders.root] },
+  { name: 'leaves, sorrel', objects: [floorBits.root] },
+], () => shadowCentre.set(Infinity, 0, 0));
+
 renderer.setAnimationLoop(() => {
   const dt = Math.min(clock.getDelta(), 0.05);
   shellMat.uniforms.uTime.value = clock.elapsedTime;
@@ -852,7 +876,7 @@ renderer.setAnimationLoop(() => {
   }
   // autofocus on whatever is straight ahead, eased like a lens hunting a little
   focus += (focusDistance() - focus) * Math.min(1, dt * 5);
-  lensMat.uniforms.uFocus.value = focus;
+  lensMat.uniforms.uFocus.value = focusHold.hold ? focusHold.at : focus;
   atmosMat.uniforms.uInvProj.value.copy(camera.projectionMatrixInverse);
   atmosMat.uniforms.uCamWorld.value.copy(camera.matrixWorld);
   atmosMat.uniforms.uTime.value = shellMat.uniforms.uTime.value;
