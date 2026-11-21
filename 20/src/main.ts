@@ -69,8 +69,9 @@ function start() {
       const btn = list.querySelector<HTMLButtonElement>(`[data-ctl="fans-${w}"]`)!;
       const blades = btn.querySelector<SVGGElement>('.blades')!;
       let wanted = true; // (the fans are open from the start: the light the hall starts in)
-      btn.addEventListener('click', () => { wanted = !wanted; hall?.fanShutter(false, wanted); btn.setAttribute('aria-pressed', String(wanted)); watch('fans'); });
-      return (s: number) => { blades.style.opacity = (0.18 + 0.82 * s).toFixed(2); };
+      const set = (on: boolean) => { wanted = on; hall?.fanShutter(false, wanted); btn.setAttribute('aria-pressed', String(wanted)); };
+      btn.addEventListener('click', () => { set(!wanted); watch('fans'); });
+      return { show: (s: number) => { blades.style.opacity = (0.18 + 0.82 * s).toFixed(2); }, set };
     });
     // the crane: off it stands where it is, on it goes its round along the girder, hoisting at each end
     const railBtn = list.querySelector<HTMLButtonElement>('[data-ctl="rail"]')!;
@@ -91,7 +92,9 @@ function start() {
       /** pressed while the eye is on its own (the opening, or the shots after) */
       eye(own: boolean) { if (own !== eyeWas) eyeBtn.setAttribute('aria-pressed', String((eyeWas = own))); },
       /** the fan's symbol follows the shutters: its blades fade as they shut */
-      fans(end: number) { fanBtns[0](end); },
+      fans(end: number) { fanBtns[0].show(end); },
+      /** the fans' shutters open, whatever they were */
+      fansOpen() { fanBtns[0].set(true); },
       /** the symbol follows the shutter: the rays under the roof's line come as it opens */
       roof(open: number, wanted: boolean) {
         light.style.opacity = (0.22 + 0.78 * open).toFixed(2);
@@ -310,7 +313,11 @@ function start() {
   let sway = 0;
   // (?debug skips it: the roof open, the eye on the pod, no fade)
   const QUICK = query.has('debug');
-  let cine: null | { t: number; on: boolean; cue: number } = QUICK ? null : { t: 0, on: false, cue: 0 }; // (on once the scene is there)
+  let cine: null | { t: number; on: boolean } = QUICK ? null : { t: 0, on: false }; // (on once the scene is there)
+  // how many of the opening's cues have been given. They are not the opening's to lose: cut it short, with a
+  // press before it has begun even, and what it had still to set going is set going at once (the roof opens,
+  // the fans run): the hall is not left shut and dark because you were quick
+  let cuesDone = QUICK ? CUES.length : 0;
   const target = (QUICK ? LAND : SHOT).target.clone();
   // the view people get, as the hall picture has it: from below, looking up at the pod's left side and front
   const home = new THREE.Vector3(0.1, 0.15, 0);
@@ -1105,7 +1112,7 @@ function start() {
     if (goal) cine = auto = peek = null;
     if (cine?.on) {
       cine.t += dt;
-      while (cine.cue < CUES.length && CUES[cine.cue][0] <= cine.t) CUES[cine.cue++][1]();
+      while (cuesDone < CUES.length && CUES[cuesDone][0] <= cine.t) CUES[cuesDone++][1]();
       // which take, and how far into it; a new take is a cut
       let start = 0, k = 0;
       while (k < TAKES.length - 1 && cine.t > start + TAKES[k].s) start += TAKES[k++].s;
@@ -1120,7 +1127,11 @@ function start() {
       target.lerpVectors(tk.from.target, tk.to.target, u);
       vyaw = vpitch = 0;
       // the opening over, the eye stays on its own: on into the shots (a touch and it is yours)
-      if (cine.t > start + tk.s && k === TAKES.length - 1 && cine.cue >= CUES.length) { cine = null; play(); }
+      if (cine.t > start + tk.s && k === TAKES.length - 1 && cuesDone >= CUES.length) { cine = null; play(); }
+    }
+    if (!cine && hall && cuesDone < CUES.length) {
+      while (cuesDone < CUES.length) CUES[cuesDone++][1]();
+      controls.fansOpen();
     }
     let stood: THREE.Vector3 | null = null; // the shot stands still: where the crane had the pod at its cut
     let lens = 40;
