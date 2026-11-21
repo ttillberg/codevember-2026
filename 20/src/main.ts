@@ -8,11 +8,10 @@ import { Rays } from './rays';
 import { Post } from './post';
 import { Dof } from './dof';
 import { Cable } from './cables';
-import { pods } from './pods';
 import { Blood } from './blood';
 import { Screen } from './screen';
 import { buildHall, SCENE_TARGETS } from './hall';
-import { dress, DOOR_GLOW, GLOWING, instances, rubber, SHADE, shareCover, wire as wireSteel } from './materials';
+import { dress, GLOWING, instances, rubber, SHADE, shareCover, wire as wireSteel } from './materials';
 
 // A pod hanging in a hall. The model comes from Blender (model/cocoon.blend → public/cocoon.glb) and says by
 // name what is what:
@@ -215,6 +214,24 @@ function start() {
     at(0.6, 0.35, 5.5, 0, 0.3, 0, 0.8), // from its front right, above, half way in
     fly([4.5, -2, -11], [-1.5, -1.5, -11.5], [0, 0.6, 0], 1.35, 40), // passing behind it, low
   ];
+  // The moving ones and the far ones are slower and longer: the same way gone in half as long again, a far view
+  // held a third longer. (Close, a shot is over in a second and a half and that is right; far off or on the
+  // move, three or four seconds was a glimpse.)
+  for (const a of AUTO) a.s *= a.fly ? 1.5 : a.radius >= 9 ? 1.35 : 1;
+  // And the hall on its own, the pod not in it: the roof, the fans, a hoist, the steel going off into the dark.
+  // Slow, six or seven seconds each, spread through the round
+  const HALL: [number, Auto][] = [
+    // (from well back, not close on them: the thing small in the hall, the eye kept on it all the same)
+    [4, fly([-8, 0, -8], [8, 0, -8], [0, 50, -72], 2.2, 42)], // across the hall, the eye on the end wall's fans high up
+    [9, fly([6, -2, 16], [6, -2, 2], [-10, 75, -20], 2.3, 55)], // from low down, looking up at the roof: the glass in its bands, the trusses
+    [14, fly([30, -8, 12], [30, 0, 12], [15.7, -2, -1.2], 2.2, 40)], // rising, off to one side of a hoist's mast, its cage on it
+    // (one down into the dark under everything was tried, twice: a black picture)
+    [21, fly([-18, 6, 12], [-18, 6, 2], [-60, 14, -34], 2.2, 38)], // drifting, the eye into the steel: tower behind tower, the lamps far off
+    [26, fly([-6, 14, 10], [6, 14, 10], [-40, 78, -10], 2.3, 48)], // along under the roof, far below it, towards the shutter's end
+    [31, fly([5, -6, -10], [-5, -6, -10], [0, 53, -72], 2.0, 34)], // the middle fan from under the pod's height, the blades going round
+  ];
+  const OF_HALL = new Set(HALL.map(([, a]) => a)); // (and while one of these is on, the hall's fine steel is drawn)
+  HALL.reverse().forEach(([i, a]) => AUTO.splice(i, 0, a));
   // And when one of the hall's machines is set going while the eye is on its own, it looks: a cut at once, and
   // the next three shots have it in the picture, before the round goes on. Not close on it, the other way: wide,
   // the pod still there, so that what happens is seen and no more is made of it than that.
@@ -289,7 +306,18 @@ function start() {
     cutNow = true;
   };
   // (it goes on from where the round had got to, not from its first shot again)
-  const play = () => { queue = []; auto = { t: 0, i: next((roundAt + 1) % AUTO.length), n: 0, q: null }; anchor.copy(carry); cutNow = true; };
+  // (and from a clean start: whatever had the eye is let go of. Pressed while the eye was looking in, the look in
+  // went on under the shots, its long lens and its focus on the screen with it; pressed while it was on its way to
+  // the door after a tap, that move ended the shots again the next frame)
+  const play = () => {
+    peek = null;
+    goal = null;
+    vyaw = vpitch = 0;
+    queue = [];
+    auto = { t: 0, i: next((roundAt + 1) % AUTO.length), n: 0, q: null };
+    anchor.copy(carry);
+    cutNow = true;
+  };
   const watch = (what: keyof typeof SEE) => {
     if (!auto) return; // (the eye is yours, or the opening is on: it is not taken)
     // three of them: the ones not seen for longest
@@ -372,7 +400,7 @@ function start() {
   // the other, heavy, against the girder's ends; the hoist lets the pod back down to its rest as you go
   const END = 10; // the trolley's travel along the girder, either way
   const DOCK = 9;
-  let hand: null | { push: number; v: number } = null;
+  let hand = null as null | { push: number; v: number }; // (nothing links it now: it was linked through pods.ts, which is gone with the twin)
   let doorFree = false; // in the dock: the door opens on its own
   const carry = new THREE.Vector3(); // where the crane has the pod: along the girder (x), up (y)
   let carryWas = 0, carryWas2 = 0; // along, the steps before: how hard the trolley pulls
@@ -464,17 +492,22 @@ function start() {
   let blood: Blood | null = null;
   let screen: Screen | null = null; // what is in there (screen.ts)
   const restInverse = new THREE.Matrix4(); // the pod as it hangs at rest, inverted: the look in is written in that frame
-  let bloodAt: THREE.Object3D | null = null; // where it drips from: the end of the run down the door's seam
-  let others: ReturnType<typeof pods> | null = null;
+  let bloodAt: THREE.Object3D | null = null; // where it drips from: the lowest point of the pod's edge under the door's corner
   let raysPass: Rays | null = null;
-  const inside = new THREE.PointLight(0xff2410, 1.6, 1.6, 2);
+  const inside = new THREE.PointLight(0xff2410, 1.6, 2.4, 2);
+  // the lamp it comes from: a red bar under the pod's ceiling (it was a light at the pod's middle with nothing to see)
+  const lamp = new THREE.Mesh(
+    new THREE.BoxGeometry(0.3, 0.025, 0.06),
+    new THREE.MeshStandardMaterial({ color: 0x060606, roughness: 0.6, emissive: 0xff2410, emissiveIntensity: 0 }),
+  );
+  GLOWING.push({ material: lamp.material, gain: 2.5 });
   /** something in there breathing, slowly: in for two and a half seconds, out for four; 0 out, 1 in */
   const heart = (t: number) => {
     const u = (t % 6.5) / 6.5;
     const w = u < 0.38 ? (u / 0.38) * 0.5 : 0.5 + ((u - 0.38) / 0.62) * 0.5;
     return (0.5 - 0.5 * Math.cos(2 * Math.PI * w)) ** 1.4;
   };
-  const GLOW = { rest: 0.06, beat: 2.2 }; // how bright the seams and the window, breathed out and in
+  const GLOW = { rest: 0.06, beat: 2.2 }; // how bright the window and the lamp in there, breathed out and in
 
   const Y = new THREE.Vector3(0, 1, 0);
   const q = new THREE.Quaternion();
@@ -540,8 +573,18 @@ function start() {
     swing.updateWorldMatrix(true, true);
     twist.attach(pod);
     podRest.copy(pod.quaternion);
-    inside.position.copy(podCentre);
-    pod.add(inside);
+    // under the ceiling: straight up from the pod's middle to the first of its own shell
+    {
+      pod.updateWorldMatrix(true, true);
+      const from = podCentre.clone().applyMatrix4(pod.matrixWorld);
+      const up = new THREE.Vector3(0, 1, 0).transformDirection(pod.matrixWorld);
+      const shell = (o: THREE.Object3D) => o === pod || (o.parent === pod && /^pod/.test(o.name));
+      const hit = new THREE.Raycaster(from, up, 0.05, 3).intersectObject(pod, true).find((h) => shell(h.object));
+      const top = hit ? pod.worldToLocal(hit.point.clone()) : podCentre.clone().setY(podCentre.y + podRadii.y * 0.6);
+      lamp.position.copy(top).setY(top.y - 0.03);
+      inside.position.copy(top).setY(top.y - 0.14);
+      pod.add(lamp, inside);
+    }
     // nobody in there: the wrapped thing and its straps are in the model still, and not shown
     pod.traverse((o) => { if (/^(body|strap[._]?\d+)$/.test(o.name)) o.visible = false; });
     // the screen in there, on what held it, turned a little towards the door's opening (placed in the world, then hung on the pod)
@@ -574,9 +617,6 @@ function start() {
       doorRest.copy(door.quaternion);
       localBox(door).getCenter(doorCom);
       doorArm2 = Math.max(0.01, doorCom.x * doorCom.x + doorCom.z * doorCom.z);
-      const box = localBox(door);
-      DOOR_GLOW.lo.value.copy(box.min);
-      DOOR_GLOW.hi.value.copy(box.max);
       // open is the way that takes the door away from the pod
       const far = (sign: number) => {
         door!.quaternion.copy(doorRest).multiply(q.setFromAxisAngle(Y, sign * 0.4));
@@ -597,23 +637,7 @@ function start() {
       cables.push(cable);
       scene.add(cable.mesh);
     });
-    if (hall) {
-      const h = hall;
-      others = pods({
-        scene, pod,
-        podAt: podCentre.clone().applyMatrix4(pod.matrixWorld),
-        spans: h.spans,
-        lifts: h.lifts,
-        crane: {
-          link: () => { hand = { push: 0, v: 0 }; },
-          push: (d) => { if (hand) hand.push = d; },
-          at: () => carry.x,
-          speed: () => hand?.v ?? 0,
-          dock: DOCK,
-          end: END,
-        },
-      });
-    }
+    // (this is the only pod in the hall: its twin, which hung from a trolley under the next girder, is gone)
     // the roof's shutter darkens the sun wherever it is: every lit material takes its uniforms
     shareCover(scene, hall.spare);
     // the page comes up black; once all of it is there and drawn (two frames, the shaders built), it fades in
@@ -664,9 +688,31 @@ function start() {
   let pinch: null | { d: number; r: number } = null;
   const spread = () => { const [a, b] = [...fingers.values()]; return Math.hypot(a.x - b.x, a.y - b.y) || 1; };
   let wasIn = false; // the press came while the eye was looking in: it takes the eye back, it does not start it again
-  canvas.addEventListener('pointerdown', () => { wasIn = !!peek; cine = auto = peek = null; }); // (the eye is yours)
-  canvas.addEventListener('wheel', () => { cine = auto = peek = null; });
+  // While the eye is on its own, only a press on the pod takes it: a press on the hall is let go by. (Any press
+  // took it, and a stray click during a shot of the roof left you holding the eye, looking at the roof.) Once
+  // it is yours, the hall is yours to drag round as before. And the pointer shows which: a hand over the pod
+  const overPod = (x: number, y: number) => {
+    if (!pod) return false;
+    ndc.set((x / canvas.clientWidth) * 2 - 1, -(y / canvas.clientHeight) * 2 + 1);
+    ray.setFromCamera(ndc, eye);
+    return ray.intersectObject(pod, true).length > 0;
+  };
+  let missed = false; // this press was on the hall while the eye was on its own: nothing comes of it
   canvas.addEventListener('pointerdown', (e) => {
+    missed = !!(cine || auto) && !overPod(e.clientX, e.clientY);
+    if (missed) return;
+    wasIn = !!peek;
+    cine = auto = peek = null; // (the eye is yours)
+  });
+  canvas.addEventListener('wheel', (e) => {
+    missed = !!(cine || auto) && !overPod(e.clientX, e.clientY);
+    if (!missed) cine = auto = peek = null;
+  });
+  canvas.addEventListener('pointermove', (e) => {
+    if (e.pointerType === 'mouse' && !e.buttons) canvas.classList.toggle('on-pod', overPod(e.clientX, e.clientY));
+  });
+  canvas.addEventListener('pointerdown', (e) => {
+    if (missed) return;
     if (e.pointerType === 'touch') {
       fingers.set(e.pointerId, { x: e.clientX, y: e.clientY });
       if (fingers.size === 2) {
@@ -758,6 +804,7 @@ function start() {
   canvas.addEventListener('contextmenu', (e) => e.preventDefault());
   canvas.addEventListener('wheel', (e) => {
     e.preventDefault();
+    if (missed) return;
     goal = null;
     radius = THREE.MathUtils.clamp(radius * Math.exp(e.deltaY * 0.001), 2, 16);
   }, { passive: false });
@@ -1160,7 +1207,7 @@ function start() {
       if (auto.t >= CUT * shown().s) cut();
       const s = shown();
       // (nearer, or through a longer lens, the same turn is a faster picture: less of it)
-      const rate = (s.radius < 6 ? 0.9 : 1.3) * Math.min(1, (s.fov ?? 40) / 40);
+      const rate = (s.radius < 6 ? 0.9 : s.radius >= 9 ? 0.9 : 1.3) * Math.min(1, (s.fov ?? 40) / 40);
       const x = auto.t / (CUT * s.s); // 0 at the cut, 1 at the next
       seen.set(key(s), clock());
       if (!auto.q) roundAt = auto.i;
@@ -1180,6 +1227,8 @@ function start() {
       vyaw = vpitch = 0;
       if (s.fixed) stood = anchor;
     }
+    hall?.detail(!!auto && OF_HALL.has(shown()));
+    if (hall && pod) hall.eyeAt(camera.position.distanceTo(v1.copy(podCentre).applyMatrix4(pod.matrixWorld)));
     // the lens: each shot's own while the eye is on its own, back to the usual one after (eased, not a jump)
     {
       const fov = peek ? lens : auto ? shown().fov ?? 40 : 40;
@@ -1253,7 +1302,6 @@ function start() {
     hall?.update(time, dt);
     screen?.update(dt, open > 0.2, now / 1000);
     blood?.update(dt, camera.position, (2 * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2))) / canvas.clientHeight);
-    others?.update(dt);
     // the daylight in the haze and the fill come with the open roof (a little of each when shut: the windows)
     if (hall) {
       const day = hall.open;
@@ -1268,11 +1316,10 @@ function start() {
       hall.left.intensity = 1.6 * (0.12 + 0.88 * day);
       hall.right.intensity = 0.9 * (0.12 + 0.88 * day);
     }
-    // the red light inside, breathing: on what it lights in there (through the open door) and out of the seams and window
+    // the red light inside, breathing: on what it lights in there (through the open door) and out of the window
     const beat = heart(time);
     inside.intensity = 1.2 + 7 * beat;
     for (const g of GLOWING) g.material.emissiveIntensity = g.gain * (GLOW.rest + GLOW.beat * beat);
-    if (door) DOOR_GLOW.inv.value.copy(door.matrixWorld).invert();
 
     ao.enabled = eye === camera && aoOn; // the debug panel's iso goes without, and it can be switched off
     hall?.prepare(renderer, camera);

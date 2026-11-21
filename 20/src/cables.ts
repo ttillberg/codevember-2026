@@ -3,8 +3,11 @@ import * as THREE from 'three';
 // A cable: a verlet rope between a socket in the ceiling and a plug on the pod. Both ends are pinned, the plug end
 // by two points so the cable leaves the pod the way the plug points. The pod drives the cables, never the reverse.
 
-const POINTS = 40;
-const SIDES = 10;
+const POINTS = 40; // of the rope that is simulated
+const SUB = 3; // rings of the tube to each of them: the rope's points are 25 cm apart, and a tube bent only there
+// shows every bend as a corner; between them it follows a curve through them
+const RINGS = (POINTS - 1) * SUB + 1;
+const SIDES = 16; // round it (10 showed as flats along its edge of light)
 const GRAVITY = 9.8;
 const ITERATIONS = 14;
 
@@ -38,22 +41,22 @@ export class Cable {
       a.toArray(this.q, i * 3);
     }
     const geo = new THREE.BufferGeometry();
-    this.positions = new THREE.BufferAttribute(new Float32Array(POINTS * SIDES * 3), 3);
-    this.normals = new THREE.BufferAttribute(new Float32Array(POINTS * SIDES * 3), 3);
+    this.positions = new THREE.BufferAttribute(new Float32Array(RINGS * SIDES * 3), 3);
+    this.normals = new THREE.BufferAttribute(new Float32Array(RINGS * SIDES * 3), 3);
     geo.setAttribute('position', this.positions);
     geo.setAttribute('normal', this.normals);
-    geo.setAttribute('color', new THREE.BufferAttribute(new Float32Array(POINTS * SIDES * 3).fill(1), 3)); // (the rubber takes the pod's baked shade: none here)
+    geo.setAttribute('color', new THREE.BufferAttribute(new Float32Array(RINGS * SIDES * 3).fill(1), 3)); // (the rubber takes the pod's baked shade: none here)
     // uv: round it, and along it in ribs, one every 1.3 radii as on the pod's hoses
-    const uv = new Float32Array(POINTS * SIDES * 2);
-    for (let i = 0; i < POINTS; i++) {
+    const uv = new Float32Array(RINGS * SIDES * 2);
+    for (let i = 0; i < RINGS; i++) {
       for (let k = 0; k < SIDES; k++) {
         uv[(i * SIDES + k) * 2] = k / SIDES;
-        uv[(i * SIDES + k) * 2 + 1] = (i * this.seg) / (1.3 * radius);
+        uv[(i * SIDES + k) * 2 + 1] = ((i / SUB) * this.seg) / (1.3 * radius);
       }
     }
     geo.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
     const index: number[] = [];
-    for (let i = 0; i < POINTS - 1; i++) {
+    for (let i = 0; i < RINGS - 1; i++) {
       for (let k = 0; k < SIDES; k++) {
         const k1 = (k + 1) % SIDES;
         const r0 = i * SIDES;
@@ -115,16 +118,26 @@ export class Cable {
     p[j3 + 2] -= dz * f * wj;
   }
 
-  /** skin the rope: a ring per point, the frame carried along so the tube does not twist */
+  /** skin the rope: rings along a curve through its points (Catmull-Rom), the frame carried along so the tube
+   *  does not twist */
   skin() {
     const { p, radius } = this;
     const pos = this.positions.array as Float32Array;
     const nor = this.normals.array as Float32Array;
     nrm.set(1, 0, 0);
-    for (let i = 0; i < POINTS; i++) {
-      const i0 = Math.max(0, i - 1) * 3;
-      const i1 = Math.min(POINTS - 1, i + 1) * 3;
-      t.set(p[i1] - p[i0], p[i1 + 1] - p[i0 + 1], p[i1 + 2] - p[i0 + 2]).normalize();
+    for (let r = 0; r < RINGS; r++) {
+      const i = Math.min(POINTS - 2, Math.floor(r / SUB));
+      const u = r / SUB - i;
+      const a0 = Math.max(0, i - 1) * 3, a1 = i * 3, a2 = (i + 1) * 3, a3 = Math.min(POINTS - 1, i + 2) * 3;
+      const u2 = u * u, u3 = u2 * u;
+      // where the ring is, and which way the curve runs there
+      for (let c = 0; c < 3; c++) {
+        const p0 = p[a0 + c], p1 = p[a1 + c], p2 = p[a2 + c], p3 = p[a3 + c];
+        const at = 0.5 * (2 * p1 + (p2 - p0) * u + (2 * p0 - 5 * p1 + 4 * p2 - p3) * u2 + (3 * p1 - p0 - 3 * p2 + p3) * u3);
+        const go = 0.5 * (p2 - p0 + 2 * (2 * p0 - 5 * p1 + 4 * p2 - p3) * u + 3 * (3 * p1 - p0 - 3 * p2 + p3) * u2);
+        if (c === 0) { a.x = at; t.x = go; } else if (c === 1) { a.y = at; t.y = go; } else { a.z = at; t.z = go; }
+      }
+      t.normalize();
       nrm.addScaledVector(t, -nrm.dot(t));
       if (nrm.lengthSq() < 1e-8) nrm.set(0, 0, 1).addScaledVector(t, -t.z);
       nrm.normalize();
@@ -133,16 +146,16 @@ export class Cable {
         const ang = (k / SIDES) * Math.PI * 2;
         const c = Math.cos(ang);
         const s = Math.sin(ang);
-        const o = (i * SIDES + k) * 3;
+        const o = (r * SIDES + k) * 3;
         const nx = nrm.x * c + bin.x * s;
         const ny = nrm.y * c + bin.y * s;
         const nz = nrm.z * c + bin.z * s;
         nor[o] = nx;
         nor[o + 1] = ny;
         nor[o + 2] = nz;
-        pos[o] = p[i * 3] + nx * radius;
-        pos[o + 1] = p[i * 3 + 1] + ny * radius;
-        pos[o + 2] = p[i * 3 + 2] + nz * radius;
+        pos[o] = a.x + nx * radius;
+        pos[o + 1] = a.y + ny * radius;
+        pos[o + 2] = a.z + nz * radius;
       }
     }
     this.positions.needsUpdate = true;

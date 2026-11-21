@@ -11,6 +11,7 @@ stood up as two prisms and intersected, then cut by a few slanted planes where t
 """
 import bpy, bmesh, math, os, sys, random
 from mathutils import Vector, Matrix
+from mathutils.bvhtree import BVHTree
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -257,6 +258,18 @@ def cut_plates(bm):
                 geom = set(faces)
                 for f in faces: geom.update(f.edges); geom.update(f.verts)
                 bmesh.ops.bisect_plane(bm, geom=list(geom), dist=1e-5, plane_co=p0, plane_no=n.normalized())
+    # and along the lines a plate is cut into smaller plates by (each in its view)
+    for whole, (view, parts) in sheet.SPLITS.items():
+        t = VIEW_DIRS[view]
+        for _, poly in parts:
+            for a, b in zip(poly, poly[1:] + poly[:1]):
+                p0, p1 = Vector(sheet.to_world(view, *a)), Vector(sheet.to_world(view, *b))
+                n = (p1 - p0).cross(t)
+                if n.length < 1e-9: continue
+                faces = [f for f in bm.faces if view_of(f) == view]
+                geom = set(faces)
+                for f in faces: geom.update(f.edges); geom.update(f.verts)
+                bmesh.ops.bisect_plane(bm, geom=list(geom), dist=1e-5, plane_co=p0, plane_no=n.normalized())
     for f in bm.faces:
         view = view_of(f)
         c = f.calc_center_median()
@@ -275,6 +288,10 @@ def cut_plates(bm):
             name = 'open' if f.normal.z > 0.85 else 'top_' + sector(c)
         else:
             name = 'open' if f.normal.z < -0.85 or sector(c) == 'b' else 'under_' + sector(c)   # the bottom: machinery
+        if name in sheet.SPLITS and sheet.SPLITS[name][0] == view:
+            px, py = to_pixel(view, c)
+            part = next((k for k, poly in sheet.SPLITS[name][1] if inside(poly, px, py)), None)
+            if part: name = name + '_' + part
         f[plate] = name.encode()
     return plate
 
@@ -338,18 +355,106 @@ pod = core('pod', ALL - set(DOOR))
 door = core('door', set(DOOR), pod, DOOR_INV)
 door.matrix_local = DOOR_M
 
+# The seam down the front, closed. (The sheet's plates left a channel open down it, see sheet.py; they meet the
+# hatch now.) Along it the two edges are brought up to one another: both walls lie along the plane that halves
+# the angle between the two plates there (where they lie in one plane, square to it; where they turn from one
+# another, a mitre: plates standing out along their own normals would gape at their outsides), a finger of
+# nothing between them.
+SEAM_G = 0.007   # half the seam, measured across that plane
+
+def seam_edges():
+    """the edges of the surface where the hatch meets what is across the seam from it: per plate, each as (one end,
+    the other, the plate's normal there, the way into the plate, the way across the mitre into it)"""
+    out = {}
+    for e in hull.edges:
+        if len(e.link_faces) != 2: continue
+        f1, f2 = e.link_faces
+        n1, n2 = plate_of(f1), plate_of(f2)
+        if 'open' in (n1, n2) or (n1 in DOOR) == (n2 in DOOR): continue
+        a, b = e.verts[0].co, e.verts[1].co
+        mid, t = (a + b) / 2, (b - a).normalized()
+        if to_pixel('front', mid)[0] > 470 or abs(t.z) < 0.6: continue   # the seam's side of the hatch, not its hinge
+        def into(f):
+            m = f.normal.cross(t)
+            return m if m.dot(f.calc_center_median() - mid) > 0 else -m
+        m1, m2 = into(f1), into(f2)
+        out.setdefault(n1, []).append((a.copy(), b.copy(), f1.normal.copy(), m1, (m1 - m2).normalized()))
+        out.setdefault(n2, []).append((a.copy(), b.copy(), f2.normal.copy(), m2, (m2 - m1).normalized()))
+    return out
+
+SEAMS = seam_edges()
+print('SEAM', {k: (len(v), round(sum((b - a).length for a, b, *_ in v), 3)) for k, v in SEAMS.items()})
+
+
+WIN_W, WIN_H = 0.17, 211 * sheet.scale('front')   # the glass, metres
+REVEAL = 0.03    # how much wider the window's opening is at the plate's outside than at the glass, each side
+LAND = 0.05      # the plate left standing between the opening and a fold or an edge of the hatch, at least
+
+def window_at():
+    """where the hatch's window is (about the front view's pixel (478, 278)): the point on the surface, right, up,
+    out, the plate it is in, and its outline (right, up; metres; counter-clockwise seen from outside). It leans as
+    the hatch does: its sides run along the hinge, so the plate left standing between it and the hatch's edge is
+    as wide all the way up. A little narrower than it was, and a little further from the hinge, for there to be
+    plate enough either side of it. And it keeps to the hatch's flat: towards its top the flat ends at a fold
+    that runs down to the left, and the window's corner there is cut off along that fold, a hand in from it."""
+    from mathutils.bvhtree import BVHTree
+    hull.faces.ensure_lookup_table(); hull.faces.index_update()
+    loc, n, i, _ = BVHTree.FromBMesh(hull).ray_cast(Vector(sheet.to_world('front', 478, 278, 10.0)), -VIEW_DIRS['front'])
+    name = plate_of(hull.faces[i])
+    up = (H0 - H1).normalized(); up = (up - n * up.dot(n)).normalized()
+    if up.z < 0: up = -up
+    right = up.cross(n)
+    loc = loc - right * 0.015
+    def uv(q): return Vector(((q - loc).dot(right), (q - loc).dot(up)))
+    flat = {f for f in hull.faces if plate_of(f) == name and f.normal.dot(n) > 0.999 and abs((f.calc_center_median() - loc).dot(n)) < 1e-3}
+    poly = [Vector((-WIN_W / 2, -WIN_H / 2)), Vector((WIN_W / 2, -WIN_H / 2)), Vector((WIN_W / 2, WIN_H / 2)), Vector((-WIN_W / 2, WIN_H / 2))]
+    for f in flat:
+        c = uv(f.calc_center_median())
+        for e in f.edges:
+            other = [g for g in e.link_faces if g is not f]
+            if other and other[0] in flat: continue
+            a, b = uv(e.verts[0].co), uv(e.verts[1].co)
+            if (b - a).length < 1e-6: continue
+            d = Vector(((b - a).y, -(b - a).x)).normalized()
+            if d.dot(c - a) > 0: d = -d                                   # out of the flat
+            # the plate's own edge is a gap's width in from there
+            k = a.dot(d) - (LAND + REVEAL + (0.032 if other and plate_of(other[0]) != name else 0.0))
+            if max(q.dot(d) - k for q in poly) < 0.012: continue           # (not for a sliver off a corner)
+            cut = []
+            for q0, q1 in zip(poly, poly[1:] + poly[:1]):
+                s0, s1 = q0.dot(d) - k, q1.dot(d) - k
+                if s0 <= 0: cut.append(q0)
+                if (s0 < 0) != (s1 < 0) and abs(s0 - s1) > 1e-9: cut.append(q0 + (q1 - q0) * (s0 / (s0 - s1)))
+            poly = [q for j, q in enumerate(cut) if (q - cut[j - 1]).length > 0.005]
+    return (loc, right, up, n), name, poly
+
+WIN, WIN_PLATE, WIN_POLY = window_at()
+print('WINDOW', [(round(q.x, 3), round(q.y, 3)) for q in WIN_POLY])
+
 PLATES = []
 PANELS = []      # the pieces the plates are cut into, for the details laid on them
-CUT = 0.005      # half a fine seam, where a plate is cut into panels
+SPOTS = []       # where a detail was put, in the pod's space, and how far round it: the markings keep off them
+CUT = 0.005      # half a fine seam, where a plate is cut into panels (as it was: now FINE)
+FINE = 0.0015    # half a hairline, between a plate's panels
+WHICH = {}       # plate name: (a tree of its panels' faces, panel id by face): which panel a point is on
+
+def panel_at(name, local):
+    """the id of the panel of that plate at a point (panel space), or None in a gap or off it"""
+    got = WHICH.get(name)
+    if not got: return None
+    loc, nrm, idx, dist = got[0].find_nearest(local, 0.02)
+    return None if idx is None else got[1].get(idx)
+
 
 def subpanels(b, name):
-    """Cut a plate's surface into panels, as the sheet's plates have fine seams across them, following the
-    plate's own lines, not the world's: the direction its edges run most (summed by length) sets the way; one
-    seam runs along it, parallel to those edges, where the plate is wide enough, and one or two cross it square.
-    Returns the faces of each panel and the planes, to tell the panels apart."""
+    """A plate is one panel now. (It was cut by planes laid across it from outside, a seam straight through whatever
+    the plate did under it, and stars where they crossed: cheap. Then by its own edge drawn again further in, which
+    most plates are too bent or too notched for. The cutting that follows a plate's shape is drawn by hand, in
+    sheet.SPLITS, and makes plates of the parts.) Returns its faces, no relief, and the way its lines run, which
+    the details are squared to."""
     faces = list(b.faces)
     area = sum(f.calc_area() for f in faces)
-    if area < 0.3: return [faces], [], None
+    if area < 0.3: return [faces], [0.0], None
     n = sum((f.normal * f.calc_area() for f in faces), Vector()).normalized()
     c = sum((f.calc_center_median() * f.calc_area() for f in faces), Vector()) / area
     # the way its edges run: boundary edges in the plate's plane, folded to one half circle, weighed by length
@@ -366,25 +471,7 @@ def subpanels(b, name):
     ref = max(best, key=lambda d: d.length).normalized()
     along = sum((d if d.dot(ref) > 0 else -d for d in best), Vector()).normalized()
     across = n.cross(along).normalized()
-    us = [(v.co - c).dot(along) for v in b.verts]
-    ss = [(v.co - c).dot(across) for v in b.verts]
-    rnd = random.Random(sum(map(ord, name)) * 7 + 3)
-    planes = []
-    lo, hi = min(us), max(us)
-    # across it, square to its lines: near both ends on a long plate, through the middle of a short one
-    for t in ((rnd.uniform(0.18, 0.26), rnd.uniform(0.74, 0.82)) if hi - lo > 1.0 else (rnd.uniform(0.4, 0.6),)):
-        planes.append((c + along * (lo + (hi - lo) * t), along))
-    slo, shi = min(ss), max(ss)
-    if shi - slo > 0.7 and area > 0.6:   # along it down the middle, parallel to its lines
-        planes.append((c + across * (slo + (shi - slo) * rnd.uniform(0.45, 0.55)), across))
-    for co, no in planes:
-        bmesh.ops.bisect_plane(b, geom=b.verts[:] + b.edges[:] + b.faces[:], dist=0.004, plane_co=co, plane_no=no)
-    bmesh.ops.dissolve_degenerate(b, dist=0.002, edges=b.edges[:])   # slivers would spike the even solidify
-    groups = {}
-    for f in b.faces:
-        m = f.calc_center_median()
-        groups.setdefault(tuple((m - co).dot(no) > 0 for co, no in planes), []).append(f)
-    return list(groups.values()), planes, along
+    return [faces], [0.0], along
 
 
 RIMS = []        # the edges of the panels, for the bolts along them
@@ -417,39 +504,146 @@ def plate(name, parent, transform=None, thick=T, gap=GAP):
     if not b.faces: b.free(); return None
     rim = bmesh.ops.inset_region(b, faces=b.faces[:], thickness=gap, depth=0, use_even_offset=True)['faces']
     bmesh.ops.delete(b, geom=rim, context='FACES')
-    groups, planes, along = subpanels(b, name)
+    slide = {}   # a vert of the edge: how its outer copy is moved along the plate, once the plate has its thickness
+    def loc(q): return transform @ q if transform else q
+    def way(d): return transform.to_3x3() @ d if transform else d
+    if name == WIN_PLATE:
+        # the window: a hole through the plate, its sides sloping out (a reveal), the glass down in it
+        o, U, V, N = loc(WIN[0]), way(WIN[1]), way(WIN[2]), way(WIN[3])
+        def flat(f): return f.normal.dot(N) > 0.999 and abs((f.calc_center_median() - o).dot(N)) < 1e-3
+        def uv(q): return Vector(((q - o).dot(U), (q - o).dot(V)))
+        sides = []   # each side of the outline: a point on it, the way out across it
+        for q0, q1 in zip(WIN_POLY, WIN_POLY[1:] + WIN_POLY[:1]):
+            sides.append((q0, Vector(((q1 - q0).y, -(q1 - q0).x)).normalized()))
+        for q0, d in sides:
+            geom = set(f for f in b.faces if flat(f))
+            for f in list(geom): geom.update(f.edges); geom.update(f.verts)
+            bmesh.ops.bisect_plane(b, geom=list(geom), dist=1e-6, plane_co=o + U * q0.x + V * q0.y, plane_no=U * d.x + V * d.y)
+        def off(q, i): return (q - sides[i][0]).dot(sides[i][1])
+        hole = [f for f in b.faces if flat(f) and all(off(uv(f.calc_center_median()), i) < 0 for i in range(len(sides)))]
+        bmesh.ops.delete(b, geom=hole, context='FACES')
+        # the cuts ran on across the whole flat, out to its folds, and a corner they made on a fold right by the
+        # plate's own corner came out of the thickening 2 cm proud. Taken out again, all but the lowest side's,
+        # which ties the hole to the plate's edges either side (a face cannot have a hole in it)
+        low = min(range(len(sides)), key=lambda i: sides[i][1].y)
+        extra = [e for e in b.edges if len(e.link_faces) == 2 and all(flat(f) for f in e.link_faces)
+                 and any(i != low and all(abs(off(uv(v.co), i)) < 1e-5 for v in e.verts) for i in range(len(sides)))
+                 and not all(abs(off(uv(v.co), low)) < 1e-5 for v in e.verts)]
+        bmesh.ops.dissolve_edges(b, edges=extra, use_verts=True)
+        for v in b.verts:
+            if not v.is_boundary or abs((v.co - o).dot(N)) > 1e-3: continue
+            q = uv(v.co)
+            if any(off(q, i) > 1e-4 for i in range(len(sides))): continue
+            on = [i for i in range(len(sides)) if abs(off(q, i)) < 1e-4]
+            if len(on) == 1: x = sides[on[0]][1] * REVEAL
+            elif len(on) >= 2:   # a corner: out by the reveal across both its sides
+                d0, d1 = sides[on[0]][1], sides[on[-1]][1]
+                det = d0.x * d1.y - d0.y * d1.x
+                x = Vector(((d1.y - d0.y) / det, (d0.x - d1.x) / det)) * REVEAL if abs(det) > 1e-6 else d0 * REVEAL
+            else: continue
+            slide[v] = U * x.x + V * x.y
+        print('WINDOW hole', name, len(hole), 'faces', len(extra), 'edges out', len(slide), 'verts')
+    # the seam: the edge along it is brought up to the mitre, here at the root and, further down, at the outside
+    seams = [(loc(a0), loc(b0), way(n), way(m), way(sx)) for a0, b0, n, m, sx in SEAMS.get(name, [])]
+    mitred = {}
+    for e in [e for e in b.edges if len(e.link_faces) == 1] if seams else []:
+        f = e.link_faces[0]
+        mid, d = (e.verts[0].co + e.verts[1].co) / 2, (e.verts[1].co - e.verts[0].co).normalized()
+        for a0, b0, n, m, sx in seams:
+            ab = b0 - a0; L = ab.length; t = (mid - a0).dot(ab) / L
+            if t < -0.02 or t > L + 0.02 or abs(d.dot(ab) / L) < 0.97 or f.normal.dot(n) < 0.99: continue
+            if (a0 + ab * (t / L) - mid).length > gap * 1.5 + 0.004: continue
+            for v in e.verts: mitred.setdefault(v, (a0, sx, m, n))
+            break
+    def to_mitre(q, c): return c[2] * ((SEAM_G - (q - c[0]).dot(c[1])) / c[2].dot(c[1]))
+    lean = {}   # where such a vert is at the root: how far its outer copy goes beyond it (for the bolts)
+    for v, c in mitred.items():
+        v.co += to_mitre(v.co, c)
+        lean[tuple(round(x, 5) for x in v.co)] = to_mitre(v.co + c[3] * thick, c)
+        slide[v] = c
+    if seams: print('MITRE', name, len(mitred), 'verts', [round(d.length, 3) for d in list(lean.values())[:3]])
+    groups, lifts, along = subpanels(b, name)
+    gids = []
     for g in groups:
         area = sum(f.calc_area() for f in g)
+        gid = '%s#%d' % (name, len(gids)); gids.append(gid)
         if area > 0.05:
             c = sum((f.calc_center_median() * f.calc_area() for f in g), Vector()) / area
             mid = min(g, key=lambda f: (f.calc_center_median() - c).length)   # the face nearest its middle
-            PANELS.append(dict(name=name, parent=parent, transform=transform, thick=thick, area=area, planes=planes,
-                               key=tuple((mid.calc_center_median() - co).dot(no) > 0 for co, no in planes),
+            PANELS.append(dict(name=name, parent=parent, transform=transform, thick=thick, area=area, gid=gid,
                                at=mid.calc_center_median(), n=mid.normal.copy(), along=along))
     # each panel's edge, as loops in order: where the bolts go
-    for g in groups:
+    for g, gid in zip(groups, gids):
         if sum(f.calc_area() for f in g) < 0.05: continue
         own = set(g)
         edge = [e for f in g for e in f.edges if sum(1 for lf in e.link_faces if lf in own) == 1]
-        if edge: RIMS.append(dict(name=name, parent=parent, transform=transform, thick=thick, loops=loops_of(edge, own),
-                                  planes=planes, key=tuple((g[0].calc_center_median() - co).dot(no) > 0 for co, no in planes)))
-    if planes:
+        if not edge: continue
+        loops = loops_of(edge, own)
+        if lean:   # along the seam the plate's outside reaches further than its root: the bolts follow the outside
+            def out(q): return q + lean.get(tuple(round(x, 5) for x in q), Vector())
+            loops = [[(out(a), out(b_), inward, n) for a, b_, inward, n in loop] for loop in loops]
+        RIMS.append(dict(name=name, parent=parent, transform=transform, thick=thick, loops=loops, gid=gid))
+    if len(groups) > 1:
+        # a hairline between them, hardly there: three millimetres
         for g in groups:
             if sum(f.calc_area() for f in g) < 0.01: continue   # a sliver: an even inset would shoot its corners out
-            rim = bmesh.ops.inset_region(b, faces=[f for f in g if f.is_valid], thickness=CUT, depth=0, use_even_offset=False)['faces']
+            rim = bmesh.ops.inset_region(b, faces=[f for f in g if f.is_valid], thickness=FINE, depth=0, use_even_offset=False)['faces']
             bmesh.ops.delete(b, geom=rim, context='FACES')
+        # and a little relief: the pad stands out of the plate, the strip a shade (each is a piece of its own now)
+        b.normal_update()
+        for g, lift in zip(groups, lifts):
+            if not lift: continue
+            for v in {v for f in g if f.is_valid for v in f.verts}: v.co += v.normal * lift
+    # which panel a point of the plate is on: the panel's faces, to look it up in (panel space)
+    b.faces.ensure_lookup_table(); b.faces.index_update()
+    of = {}
+    for g, gid in zip(groups, gids):
+        for f in g:
+            if f.is_valid: of[f.index] = gid
+    WHICH[name] = (BVHTree.FromBMesh(b), of)
+    # slivers that face another way than what they hang on: thickened evenly, such a one throws a spike out of the
+    # plate (there was one at the seam, where the strip's edge turns: it read as a wedge stuck on). Off, before that
+    b.faces.ensure_lookup_table(); b.normal_update()
+    # (thin ones only: the plates left of the seam turn the ridge and have a lip on the hatch's side of it, in pieces
+    # that are small but no slivers)
+    def thin(f): return f.calc_area() / max(e.calc_length() for e in f.edges) < 0.02
+    odd = [f for f in b.faces if f.calc_area() < 0.006 and thin(f) and any(lf is not f and lf.normal.dot(f.normal) < 0.75 for e in f.edges for lf in e.link_faces)]
+    if odd:
+        print('SLIVERS', name, len(odd), [round(f.calc_area(), 4) for f in odd][:6])
+        bmesh.ops.delete(b, geom=odd, context='FACES')
+    b.verts.index_update()
+    moved = {v.index: c for v, c in slide.items() if v.is_valid}
+    root = [v.co.copy() for v in b.verts]
     me = bpy.data.meshes.new('plate.' + name); b.to_mesh(me); b.free(); me.materials.append(PAINT)
     o = obj('plate.' + name, me, parent)
     s = o.modifiers.new('shell', 'SOLIDIFY'); s.thickness = thick; s.offset = 1; s.use_even_offset = True
+    if moved:
+        # the thickness now, not at the end, and the outer copies of those verts moved: the solidify gives the
+        # verts as they were, then a copy of each in the same order, and one of the two is the outside
+        bpy.context.view_layer.update()
+        solid = bpy.data.meshes.new_from_object(o.evaluated_get(bpy.context.evaluated_depsgraph_get()))
+        assert len(solid.vertices) == 2 * len(root), (name, len(solid.vertices), len(root))
+        for i, c in moved.items():
+            p, q = solid.vertices[i], solid.vertices[i + len(root)]
+            top = q if (q.co - root[i]).length > (p.co - root[i]).length else p
+            top.co = top.co + (c if isinstance(c, Vector) else to_mitre(top.co, c))
+        o.modifiers.clear(); o.data = solid; bpy.data.meshes.remove(me)
     e = o.modifiers.new('edge', 'BEVEL'); e.width = 0.016; e.segments = 1; e.limit_method = 'ANGLE'; e.angle_limit = math.radians(35)
     PLATES.append(o)
     return o
 
-# The plates either side of the seam stand well out, thick, with a wide gap between them: the seam is a channel
-# with walls, deep enough to be dark in, as the hall picture has it. The skirts along the foot are thick too.
-THICK = {'shield_l': 0.075, 'shield_r': 0.075, 'cap_l': 0.07, 'strip': 0.15, 'door': 0.16, 'door_low': 0.16, 'bottom': 0.04,
+# The plates either side of the seam stand well out, thick. (With a wide gap between them once, a channel with
+# walls; the seam is closed now.) The skirts along the foot are thick too.
+THICK = {'shield_l': 0.075, 'shield_r': 0.075, 'cap_l': 0.07, 'strip': 0.07, 'door': 0.16, 'door_low': 0.16, 'bottom': 0.04,
          'skirt_fl': 0.1, 'skirt_fr': 0.1, 'skirt_ls': 0.1, 'skirt_rs': 0.1, 'panel_m': 0.09}
-WIDE = {'strip': 0.032, 'door': 0.032, 'door_low': 0.032}   # half the gap round these
+WIDE = {'door': 0.032, 'door_low': 0.032}   # half the gap round these
+# the plates a shield is cut into: a hairline between them (5 mm, hardly there), and each a little thicker or
+# thinner than the next, so the shield has some relief to it and is not one flat sheet
+for whole, (_, parts) in sheet.SPLITS.items():
+    WIDE[whole] = 0.0025
+    for i, (k, _) in enumerate(parts):
+        WIDE[whole + '_' + k] = 0.0025
+        THICK[whole + '_' + k] = THICK.get(whole, T) + (0.012, -0.006, 0.014, 0.008, 0.018)[i % 5]
 for name in sorted(ALL - {'open'}):
     if name in DOOR: plate(name, door, DOOR_INV, THICK.get(name, T), WIDE.get(name, GAP))
     else: plate(name, pod, None, THICK.get(name, T), 0.06 if name == 'bottom' else WIDE.get(name, GAP))
@@ -836,13 +1030,9 @@ def machinery():
                         ([(258, 205), (258, 340)], 0.022, 0.07)):
         for side in (pts, mirror(pts)):
             path = surface_path('back', side, out)
-            if r > 0.025 and len(path) >= 2:
-                # (the ones down the pockets leave the pod upwards too: every cable comes in at the back now)
-                up = path[0] + Vector((0, 0, 0.34))
-                line(hose, steel, m, [up] + path, r, cap_start=False)
-                tops.append((up, r))
-            else:
-                line(hose, steel, m, path, r)
+            # (the ones down the pockets end in a coupling up top, as the short ones do: fewer cables, six of them,
+            # the four heavy ones and one from each flank)
+            line(hose, steel, m, path, r)
     # up top a block that holds each pair, with a lamp in it
     for x0, x1 in ((150, 200), (355, 405)):
         block(steel, 'back', x0, 250, x1, 282, 0.15)
@@ -868,28 +1058,26 @@ def machinery():
         tilt = 0.57 if view == 'right' else -0.57
         for rect, out in rects: block(m, view, *rect, out, None, 0.0, flush=True)
         greebles(view, [pts for pts, r, out in hoses], m, plate_, lamps, hose, steel, tilt, 20 if view == 'right' else 21)
-        for pts, r, out in hoses:
-            # the flank's hoses too: up off their top ends, each to a cable
+        for i, (pts, r, out) in enumerate(hoses):
+            # of each flank's two hoses the inner one goes on up off its top end to a cable; the other ends in a coupling
             path = surface_path(view, pts, out)
             if len(path) < 2: continue
+            if i == 0: line(hose, steel, m, path, r); continue
             up = path[0] + Vector((0, 0, 0.3))
             line(hose, steel, m, [up] + path, r, cap_start=False)
             tops.append((up, r))
         # (clamps out at the flank's back edge stood off the side: left off)
         for rect in lights: block(lamps, view, *rect, 0.05, 0.02, flush=True)
-    # the seam: a white latch across it with a lamp, a smaller block, dark things in it
+    # the seam: dark things in it
     # (out past the thick plates either side of the seam, which they bridge)
-    block(white, 'front', 376, 385, 424, 472, 0.2)
-    block(white, 'front', 406, 520, 436, 575, 0.18)
-    for rect, out in (((398, 150, 418, 260), 0.03), ((418, 620, 440, 700), 0.03), ((404, 300, 422, 370), 0.05)):
-        block(m, 'front', *rect, out)
-    block(lamps, 'front', 384, 398, 398, 410, 0.202, 0.02)
+    # (the white latch across the seam and the smaller block under it are gone: boxes stuck on, and odd)
+    # (and the three dark blocks in it: the seam is closed now, a finger wide, and there is no room in it)
     m.done('mech', MECH, pod, None, 0.008)
     hose.done('hoses', HOSE, pod, None, 0)
     steel.done('clamps', STEEL, pod, None, 0)   # (the couplings at the hoses' ends; no bevel, for nothing seen)
     empty('collars_hoses', Vector((0, 0, 0)), None, pod, 0.05, at=placements(COLLARS))
     lamps.done('lamps', LED, pod, None, 0)
-    white.done('blocks', BLOCK, pod, None, 0.008)
+    white.bm.free()   # (nothing in it any more)
     plate_.done('spine_plate', PANEL, pod, None, 0.006)
     return tops
 
@@ -932,7 +1120,7 @@ def details(clear):
                 local = M.inverted() @ got[0]
                 if abs((local - q).dot(n)) > 0.012: return False                 # not flat there
                 if plate_of(hull.faces[got[2]]) != P['name']: return False      # off the plate
-                if tuple((local - co).dot(no) > 0 for co, no in P['planes']) != P['key']: return False   # over a seam
+                if panel_at(P['name'], local) != P['gid']: return False   # over a seam, or on another panel
                 if any(((M @ q) - c).length < r for c, r in clear): return False
             return True
         if not fits(w, h):
@@ -942,6 +1130,10 @@ def details(clear):
         # squares on it and no more; hatches and vents all over it hid its shape. Left out here, after the dice
         # are thrown, so every other plate keeps what it had)
         if P['name'] in DOOR: continue
+        # (and no dark slots in frames, no vents of slats, anywhere: they read as cheap. Left out after the dice
+        # too, so the hatches and tags stay where they were)
+        if kind in ('slot', 'vent'): continue
+        SPOTS.append(((M @ (P['at'] + side * ou + up * ov)), max(w, h) * 0.75))
         base = P['at'] + side * ou + up * ov + n * P['thick']
         at = lambda x, y, z: base + side * x + up * y + n * z
         par = P['parent']
@@ -1011,7 +1203,7 @@ def details(clear):
         z0, z1 = z * L, (z + 0.1) * L
         if i % 2 == 0:
             soup('steel', door).cyl(0.032, (0, 0, z0), (0, 0, z1), 14)
-            soup('steel', door).box((0.016, 0.12, (z1 - z0) * 0.9), Vector((0.012, sgn * 0.07, (z0 + z1) / 2)))
+            # (its leaf onto the door is gone: it lay inside the door's plate, never seen, and came out in the window)
         else:
             m = DOOR_M
             soup('steel', pod).cyl(0.032, m @ Vector((0, 0, z0)), m @ Vector((0, 0, z1)), 14)
@@ -1021,6 +1213,48 @@ def details(clear):
         sp.done('detail_%s_%s' % (kind, par.name), mats[kind], par, None, 0 if kind in ('led', 'bolt') else 0.004)
     for name, (sp, par, _) in hatches.items():
         PLATES.append(sp.done('hatches_' + name, PAINT, par, None, 0.004))
+
+
+def slits():
+    """Short dark slits let into the panels, as the reference has them: a hand or two long, two centimetres wide,
+    one or two on most panels, along the panel's lines or square to them, now and then on the slant, a pair side
+    by side sometimes. Only where all of one is on its panel, clear of the seams and of what is bolted on."""
+    rnd = random.Random(77)
+    made = {}
+    count = 0
+    for P in PANELS:
+        n = P['n']
+        if abs(n.z) > 0.6 or P['area'] < 0.1: continue
+        Mp = P['transform'].inverted() if P['transform'] else Matrix.Identity(4)   # panel space to the pod's
+        up = P['along'] if P['along'] is not None else Vector((0, 0, 1)) if P['transform'] is None else (P['transform'].to_3x3() @ Vector((0, 0, 1))).normalized()
+        if P['along'] is not None and up.z < 0: up = -up
+        up = (up - n * up.dot(n)).normalized()
+        side = up.cross(n)
+        R = Matrix((side, up, n)).transposed().to_4x4()
+        reach = math.sqrt(P['area']) * 0.42
+        for _ in range(rnd.choice((0, 1, 1, 2))):
+            L, w = rnd.uniform(0.09, 0.2), 0.02
+            turn = rnd.choice((0, 0, 0, 0, math.pi / 2, math.pi / 2, math.pi / 4, -math.pi / 4))
+            pair = rnd.random() < 0.3
+            for attempt in range(12):
+                u, v = rnd.uniform(-reach, reach), rnd.uniform(-reach, reach)
+                Rz = R @ Matrix.Rotation(turn, 4, 'Z')
+                spots = [(0.0, 0.0)] + ([(0.05, 0.0)] if pair else [])
+                ok = True
+                for ox, oy in spots:
+                    T4 = Mp @ (Matrix.Translation(P['at'] + side * u + up * v) @ Rz @ Matrix.Translation((ox, oy, 0)))
+                    if not on_one_panel(T4, (-w / 2, -L / 2, w / 2, L / 2), 0.03): ok = False; break
+                if not ok: continue
+                for ox, oy in spots:
+                    at = Matrix.Translation(P['at'] + side * u + up * v + n * (P['thick'] + 0.001)) @ Rz @ Matrix.Translation((ox, oy, 0))
+                    sp = made.setdefault(P['parent'].name, (Soup(), P['parent']))[0]
+                    sp.box((w, L, 0.004), at.translation, at.to_3x3().to_4x4())
+                    SPOTS.append((Mp @ at.translation, L / 2 + 0.03))
+                    count += 1
+                break
+    for name, (sp, par) in made.items():
+        sp.done('detail_slit_' + name, DARK, par, None, 0)
+    return count
 
 
 def bolts(clear):
@@ -1054,7 +1288,7 @@ def bolts(clear):
                     local = M.inverted() @ got[0]
                     if abs((local - q).dot(n)) > 0.012: continue
                     if plate_of(hull.faces[got[2]]) != P['name']: continue
-                    if tuple((local - co).dot(no) > 0 for co, no in P['planes']) != P['key']: continue
+                    if panel_at(P['name'], local) != P['gid']: continue
                     if any((got[0] - c).length < r for c, r in clear): continue
                     if near_edge(q): continue
                     p = q + n * P['thick']
@@ -1075,21 +1309,18 @@ def window():
     hatch still reads as one leaning slab. Behind it a dark
     board of diodes, most off, a few lit; through the glass only their glow comes, blurred. Built flat in the
     hatch's own plane, around where the front view's pixel (478, 278) lands."""
-    T_DOOR = THICK['door']
-    h = hit('front', 478, 278)
-    F = frame_at(h[1])
+    o, F = WIN[0], Matrix(WIN[1:]).transposed()
     R = F.to_4x4()
-    k = sheet.scale('front') / abs(h[1].dot(VIEW_DIRS['front']))   # the hatch is turned: a pixel is wider on it
-    W, H = 52 * sheet.scale('front') / 0.87, 211 * sheet.scale('front')   # the glass, metres
-    def at(u, v, w): return h[0] + F @ Vector((u, v, T_DOOR + w))
-    frame, back, glass = Soup(), Soup(), Soup()
+    W, H = WIN_W, WIN_H   # (the glass and the board are the whole oblong: its cut-off corner is inside the plate)
+    # (it had a frame of four bars laid on the hatch round it, and read as stuck on. Now it is let into the plate:
+    # a hole through the hatch's 16 cm, its sides sloping out to a chamfered rim, the glass a hand down in it and
+    # running in under the plate all round, no frame. plate() cuts the hole.)
+    DOWN = 0.05                                # the board's height above the hatch's root: the glass is 10 cm in
+    def at(u, v, w): return o + F @ Vector((u, v, DOWN + w))
+    back, glass = Soup(), Soup()
     lit = {'amber': Soup(), 'red': Soup(), 'green': Soup(), 'off': Soup()}
-    b = 0.03                                   # the frame's width
-    for (cu, cv, su, sv) in ((0, (H + b) / 2, W + 2 * b, b), (0, -(H + b) / 2, W + 2 * b, b),
-                             (-(W + b) / 2, 0, b, H), ((W + b) / 2, 0, b, H)):
-        frame.box((su, sv, 0.024), at(cu, cv, 0.004), R)
-    back.box((W, H, 0.004), at(0, 0, 0.002), R)
-    glass.box((W, H, 0.004), at(0, 0, 0.012), R)
+    back.box((W + 0.03, H + 0.03, 0.004), at(0, 0, 0.002), R)
+    glass.box((W + 0.03, H + 0.03, 0.004), at(0, 0, 0.012), R)
     # the board: three columns of diodes; which are lit is fixed, not random, so every build is the same
     pattern = 'aoaoooaoo' 'ooraoooao' 'aoogoaooa' 'oaooaoroo' 'ooaoooaoo' 'aooaoogoa' 'oooaoaooo' 'aoooraooa' 'ooaoooaoo'
     i = 0
@@ -1099,7 +1330,6 @@ def window():
             kind = {'a': 'amber', 'r': 'red', 'g': 'green', 'o': 'off'}[pattern[i % len(pattern)]]
             lit[kind].box((0.016, 0.016, 0.004), at(u, v, 0.006), R)
             i += 1
-    frame.done('door_frame', STEEL, door, DOOR_INV, 0.006)
     back.done('door_board', DARK, door, DOOR_INV, 0)
     for kind, material in (('amber', LED), ('red', LED_RED), ('green', LED_GREEN), ('off', MECH)):
         lit[kind].done('door_diodes_' + kind, material, door, DOOR_INV, 0)
@@ -1178,6 +1408,17 @@ class Marks:
         me = bpy.data.meshes.new_from_object(o.evaluated_get(bpy.context.evaluated_depsgraph_get()))
         bpy.data.objects.remove(o); bpy.data.curves.remove(cu)
         self._take(me, where)
+    @staticmethod
+    def measure(body, size, bold=0.0, spacing=1.0):
+        """how wide and tall some words come out"""
+        cu = bpy.data.curves.new('t', 'FONT')
+        cu.body, cu.size, cu.space_character, cu.offset = body, size, spacing, bold * size
+        if FONT: cu.font = FONT
+        o = bpy.data.objects.new('t', cu); col.objects.link(o)
+        bpy.context.view_layer.update()
+        xs = [c[0] for c in o.bound_box]; ys = [c[1] for c in o.bound_box]
+        bpy.data.objects.remove(o); bpy.data.curves.remove(cu)
+        return max(xs) - min(xs), max(ys) - min(ys)
     def svg(self, path, width, where):
         """a drawing from an svg file, centred on where, so wide"""
         before, cols = set(bpy.data.objects), set(bpy.data.collections)
@@ -1202,6 +1443,34 @@ class Marks:
         me = bpy.data.meshes.new('p'); me.from_pydata([(x, y, 0) for x, y in pts], [], [list(range(len(pts)))])
         self._take(me, where)
     def rect(self, x, y, w, h, where): self.poly([(x, y), (x + w, y), (x + w, y + h), (x, y + h)], where)
+    def ring(self, pts, t, where):
+        """the outline of a convex shape, t thick, its corners mitred"""
+        c = sum((Vector(q) for q in pts), Vector((0, 0))) / len(pts)
+        n = len(pts)
+        def off(i, d):
+            a, b, e = Vector(pts[i - 1]), Vector(pts[i]), Vector(pts[(i + 1) % n])
+            u, v = (b - a).normalized(), (e - b).normalized()
+            m = Vector((-(u.y + v.y), u.x + v.x))
+            if m.length < 1e-9: m = Vector((-u.y, u.x))
+            m.normalize()
+            if m.dot(b - c) < 0: m = -m
+            return b + m * (d / max(0.2, abs(m.dot(Vector((-u.y, u.x))))))
+        for i in range(n):
+            j = (i + 1) % n
+            self.poly([tuple(off(i, t / 2)), tuple(off(j, t / 2)), tuple(off(j, -t / 2)), tuple(off(i, -t / 2))], where)
+    def three(self, w, where):
+        """the three.js mark: a triangle of triangles, drawn in line (the svg is strokes, which do not import as faces)"""
+        import re
+        src = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'decals', 'three.svg')).read()
+        tris = []
+        for d in re.findall(r'<path d="m([^"]+)z"', src):
+            v = [float(x) for x in re.findall(r'-?[0-9.]+', d)]
+            p0 = Vector((v[0], v[1])); p1 = p0 + Vector((v[2], v[3])); p2 = p1 + Vector((v[4], v[5]))
+            tris.append([p0, p1, p2])
+        xs = [q.x for t in tris for q in t]; ys = [q.y for t in tris for q in t]
+        k = w / (max(xs) - min(xs)); cx, cy = (max(xs) + min(xs)) / 2, (max(ys) + min(ys)) / 2
+        for t in tris:
+            self.ring([((q.x - cx) * k, -(q.y - cy) * k) for q in t], 4.4 * k, where)
     def cross(self, x, y, s, where, t=0.26):
         self.rect(x - s / 2, y - s * t / 2, s, s * t, where); self.rect(x - s * t / 2, y - s / 2, s * t, s, where)
     def disc(self, x, y, r, where, a0=0.0, a1=TAU, seg=28):
@@ -1238,9 +1507,42 @@ class Marks:
             self.poly([(x0, y), (x0 + step * 0.55, y), (x0 + step * 0.55 + h * 0.5, y + h), (x0 + h * 0.5, y + h)], where)
 
 
+def on_one_panel(M, box, margin=0.035, why=None, plate=None):
+    """is a mark laid at M (a 4x4 on a plate's face, Z out), filling box (x0, y0, x1, y1 in its own plane, metres),
+    all on one panel: the same plate under all of it, flat, on one side of every seam the plate is cut by and not
+    near one, and off whatever is bolted on?"""
+    n = (M.to_3x3() @ Vector((0, 0, 1))).normalized()
+    x0, y0, x1, y1 = box[0] - margin, box[1] - margin, box[2] + margin, box[3] + margin
+    first = None
+    for i in range(5):
+        for j in range(5):
+            q = M @ Vector((x0 + (x1 - x0) * i / 4, y0 + (y1 - y0) * j / 4, 0))
+            loc, nrm, idx, _ = BVH.ray_cast(q + n * 0.25, -n, 0.6)
+            if loc is None or nrm.dot(n) < 0.995:
+                if why is not None: why.append('off' if loc is None else 'bent %.3f' % nrm.dot(n))
+                return False
+            name = plate_of(hull.faces[idx])
+            if plate and name != plate: return False   # (it stays on the plate it was drawn on)
+            tr = next((P['transform'] for P in PANELS if P['name'] == name), None)
+            mine = panel_at(name, (tr @ loc) if tr else loc)
+            if mine is None:
+                if why is not None: why.append('no panel on ' + name)
+                return False
+            if first is None: first = (mine, loc)
+            elif mine != first[0] or abs((loc - first[1]).dot(n)) > 0.008:
+                if why is not None: why.append('other panel' if mine != first[0] else 'step %.3f' % abs((loc - first[1]).dot(n)))
+                return False
+            if any((loc - c).length < r for c, r in SPOTS):
+                if why is not None: why.append('detail')
+                return False
+    return True
+
+
 def lay(ink, view, anchor, items, shift=0, out=None):
     """marks drawn in a view's pixels, each shot onto the surface along that view's line of sight, so it lands
-    where the sheet draws it, and laid flat on the face it lands on. `shift` slides them across the view."""
+    where the sheet draws it, and laid flat on the face it lands on. `shift` slides them across the view.
+    A mark that would lie across a seam, a plate's edge or a detail is moved, the little it takes, to where all of it
+    is on one panel (a list of marks in `items` is moved as one); a little smaller if there is no such place near."""
     k = sheet.scale(view)
     def place(x, y):
         """a 4x4 at pixel (x, y), on the face there, Z out"""
@@ -1249,46 +1551,120 @@ def lay(ink, view, anchor, items, shift=0, out=None):
         th = g[2] if out is None else out
         M = frame_at(g[1]).to_4x4(); M.translation = g[0] + g[1] * (th + LIFT)
         return M
-    for kind, *a in items:
-        at = place(*((a[1], a[2]) if kind in ('text', 'svg') else (a[0], a[3]) if kind in ('rect', 'icon', 'bars', 'slash', 'tri', 'vee') else (a[0], a[1])))
-        if at is None: continue
-        if kind == 'text':
-            body, x, y, cap, bold = a
-            ink.text(body, cap * k / 0.727, at, bold=bold, spacing=1.12)
-        elif kind == 'svg': ink.svg(a[0], a[3] * k, at)
-        elif kind == 'rect': ink.rect(0, 0, (a[2] - a[0]) * k, (a[3] - a[1]) * k, at)
-        elif kind == 'cross': ink.cross(0, 0, a[2] * k, at)
-        elif kind == 'split': ink.split_disc(0, 0, a[2] * k, at @ Matrix.Rotation(0.45, 4, 'Z'))
-        elif kind == 'icon': ink.icon(0, 0, (a[2] - a[0]) * k, (a[3] - a[1]) * k, at)
-        elif kind == 'bars': ink.bars(0, 0, (a[2] - a[0]) * k, (a[3] - a[1]) * k, at, a[4])
-        elif kind == 'tri':
-            w, h = (a[2] - a[0]) * k, (a[3] - a[1]) * k
-            ink.poly([(0, 0), (w, 0), (w / 2, h)], at)
-        elif kind == 'vee':
-            w, h, t = (a[2] - a[0]) * k, (a[3] - a[1]) * k, (a[2] - a[0]) * k * 0.18
-            ink.poly([(0, h), (t, h), (w / 2, t * 1.4), (w - t, h), (w, h), (w / 2, 0)], at)
-        elif kind == 'slash':
-            x0, y0, x1, y1 = a
-            M = at
-            for dx in (0, 9):
-                ink.poly([(dx * k, 0), ((dx + 5) * k, 0), ((x1 - x0 + dx + 5) * k, (y1 - y0) * k), ((x1 - x0 + dx) * k, (y1 - y0) * k)], M)
+    def pixel(kind, a):
+        return (a[1], a[2]) if kind in ('text', 'svg') else (a[0], a[3]) if kind in ('rect', 'icon', 'bars', 'slash', 'tri', 'vee') else (a[0], a[1])
+    def box(kind, a, z):
+        """what a mark covers, in its own plane"""
+        if kind == 'text':   # (measured; never made smaller, see below)
+            w, h = Marks.measure(a[0], a[3] * k / 0.727, a[4], 1.12)
+            return (0, 0, w * z, h * z)
+        if kind in ('rect', 'icon'): return (0, 0, (a[2] - a[0]) * k * z, (a[3] - a[1]) * k * z)
+        if kind == 'bars': return (0, 0, ((a[2] - a[0]) + (a[3] - a[1]) * 0.5 - (a[2] - a[0]) / a[4] * 0.45) * k * z, (a[3] - a[1]) * k * z)
+        if kind == 'cross': return (-a[2] * k * z / 2, -a[2] * k * z / 2, a[2] * k * z / 2, a[2] * k * z / 2)
+        if kind == 'split': return (-a[2] * k * z, -a[2] * k * z, a[2] * k * z, a[2] * k * z)
+        if kind == 'svg': return (-a[3] * k * z / 2, -a[3] * k * z / 2, a[3] * k * z / 2, a[3] * k * z / 2)
+        if kind == 'three': return (-a[2] * k * z / 2, -a[2] * k * z / 2, a[2] * k * z / 2, a[2] * k * z / 2)
+        return None
+    # the places to try: where it was drawn first, then round it, further and further
+    ring = sorted(((dx, dy) for dx in range(-120, 121, 6) for dy in range(-120, 121, 6)), key=lambda d: d[0] * d[0] + d[1] * d[1])
+    def room(group):
+        """where a mark, or some marks as one, can go: (how much smaller, how far over), or None"""
+        # (on the plate the first of them was drawn on: a mark does not wander off onto the door, or round a corner)
+        g = hit(view, pixel(group[0][0], group[0][1:])[0] + shift, pixel(group[0][0], group[0][1:])[1])
+        home = plate_of(hull.faces[BVH.find_nearest(g[0])[2]]) if g else None
+        # (the words may come down a little too, now that a shield is several plates: better smaller than half
+        # under the next plate)
+        words = any(kind == 'text' for kind, *a in group)
+        # (the words stay on their own plate if any of it takes them, a little smaller if need be; and if none
+        # does, now that a shield is several plates, they go to the nearest panel that takes all of them: better
+        # that than half under the next plate)
+        for where in ((home, None) if words else (home,)):
+            for z in ((1.0, 0.88, 0.76, 0.66) if words else (1.0, 0.85, 0.72, 0.6, 0.5, 0.42)):
+                for dx, dy in ring:
+                    ms = [place(pixel(kind, a)[0] + dx, pixel(kind, a)[1] + dy) for kind, *a in group]
+                    if any(m is None for m in ms): continue
+                    if all(on_one_panel(m, box(kind, a, z), 0.025, plate=where) for m, (kind, *a) in zip(ms, group)): return (z, dx, dy)
+        return None
+    def put(group, found):
+        """draw them, there; and what is put down is in the way of what comes after"""
+        if found is None and any(kind == 'text' for kind, *a in group): found = (1.0, 0, 0)   # (the words are not left off)
+        if found is None:   # nowhere on its plate takes it whole: better none than one across a seam
+            why = []
+            for dx, dy in ring[:400]:
+                for (kind, *a) in group:
+                    m = place(pixel(kind, a)[0] + dx, pixel(kind, a)[1] + dy)
+                    if m is not None: on_one_panel(m, box(kind, a, 0.5), 0.025, why=why)
+            tally = {}
+            for w in why: tally[w.split(' ')[0]] = tally.get(w.split(' ')[0], 0) + 1
+            print('MARK left off', [g[0] for g in group], 'at', pixel(group[0][0], group[0][1:]), tally)
+            return
+        elif found != (1.0, 0, 0): print('MARK moved', [g[0] for g in group], found)
+        z, dx, dy = found or (1.0, 0, 0)
+        for kind, *a in group:
+            px, py = pixel(kind, a)
+            at = place(px + dx, py + dy)
+            if at is None: continue
+            kz = k * z
+            b = box(kind, a, z)
+            if b and out is None:
+                w, h = b[2] - b[0], b[3] - b[1]
+                n = max(1, round(max(w, h) / max(min(w, h), 1e-3)))
+                for i in range(n):
+                    f = (i + 0.5) / n
+                    c = Vector((b[0] + w * f, (b[1] + b[3]) / 2, 0)) if w >= h else Vector(((b[0] + b[2]) / 2, b[1] + h * f, 0))
+                    SPOTS.append((at @ c, min(w, h) * 0.75 + 0.02))
+            if kind == 'text':
+                body, x, y, cap, bold = a
+                ink.text(body, cap * kz / 0.727, at, bold=bold, spacing=1.12)
+            elif kind == 'svg': ink.svg(a[0], a[3] * kz, at)
+            elif kind == 'three': ink.three(a[2] * kz, at)
+            elif kind == 'rect': ink.rect(0, 0, (a[2] - a[0]) * kz, (a[3] - a[1]) * kz, at)
+            elif kind == 'cross': ink.cross(0, 0, a[2] * kz, at)
+            elif kind == 'split': ink.split_disc(0, 0, a[2] * kz, at @ Matrix.Rotation(0.45, 4, 'Z'))
+            elif kind == 'icon': ink.icon(0, 0, (a[2] - a[0]) * kz, (a[3] - a[1]) * kz, at)
+            elif kind == 'bars': ink.bars(0, 0, (a[2] - a[0]) * kz, (a[3] - a[1]) * kz, at, a[4])
+            elif kind == 'tri':
+                w, h = (a[2] - a[0]) * k, (a[3] - a[1]) * k
+                ink.poly([(0, 0), (w, 0), (w / 2, h)], at)
+            elif kind == 'vee':
+                w, h, t = (a[2] - a[0]) * k, (a[3] - a[1]) * k, (a[2] - a[0]) * k * 0.18
+                ink.poly([(0, h), (t, h), (w / 2, t * 1.4), (w - t, h), (w, h), (w / 2, 0)], at)
+            elif kind == 'slash':
+                x0, y0, x1, y1 = a
+                for ddx in (0, 9):
+                    ink.poly([(ddx * k, 0), ((ddx + 5) * k, 0), ((x1 - x0 + ddx + 5) * k, (y1 - y0) * k), ((x1 - x0 + ddx) * k, (y1 - y0) * k)], at)
+
+    for item in items:
+        group = item if isinstance(item, list) else [item]
+        if out is not None or not all(box(kind, a, 1) for kind, *a in group): put(group, (1.0, 0, 0)); continue
+        found = room(group)
+        if found is None and len(group) > 1:
+            # no panel takes them side by side: each to its own, then
+            print('MARK apart', [g[0] for g in group])
+            for one in group: put([one], room([one]))
+        else: put(group, found)
 
 
 def markings():
     ink = Marks()
+    SPOTS.append((Vector(hit('front', 478, 278)[0]), 0.5))   # the window: no mark on it or against its frame
     # the 03 shield on the left flank, as the side view has it, slid a little back: the front view has it
     # further left than the side view puts it, and this is halfway
     lay(ink, 'right', (405, 380), [
         ('text', 'DAY-20', 405, 384, 36, 0.0),   # (the only words on it: every other text was taken off)
-        ('icon', 445, 460, 492, 530), ('bars', 505, 460, 570, 530, 3),   # (the bars kept this side of the seam)
+        [('icon', 445, 460, 492, 530), ('bars', 505, 460, 570, 530, 3)],   # (moved as one)
         ('cross', 418, 582, 22), ('cross', 456, 588, 22), ('cross', 446, 624, 24),
         ('cross', 310, 265, 30)], shift=-45)
     # and on the right flank, slid back onto the flank proper: where the side view has it, it would sit on
     # the corner and show from the front, which the front view does not
     lay(ink, 'left', (210, 380), [
         ('text', 'DAY-20', 210, 384, 36, 0.0),
-        ('icon', 160, 462, 212, 530), ('bars', 225, 462, 322, 530, 3),
+        [('icon', 160, 462, 212, 530), ('bars', 225, 462, 322, 530, 3)],
         ('cross', 290, 621, 28), ('cross', 430, 268, 30)], shift=60)
+    # what it was made with, two small marks side by side on the right flank, under the words: the maker of the
+    # model that wrote it, and three.js
+    decal = lambda f: os.path.join(os.path.dirname(os.path.abspath(__file__)), 'decals', f)
+    lay(ink, 'left', (245, 455), [[('svg', decal('claude.svg'), 245, 455, 30), ('three', 287, 456, 32)]], shift=60)
     # the marks on the caps
     lay(ink, 'front', (245, 140), [('split', 245, 140, 32)])
     # (the side view's own mark here landed on the same facet as the front view's, and the two made a blot)
@@ -1306,37 +1682,24 @@ def markings():
     ink.done('door_marks', INK, door, DOOR_INV)
 
 
-# ---------------------------------------------------------------- blood: down the seam and off the skirt
+# ---------------------------------------------------------------- blood: off the foot, under the door
 
 def blood():
-    bm = bmesh.new()
-    ends = []
-    for pts, width in (([(406, 472), (409, 520), (412, 580), (417, 646)], 0.014), ([(398, 480), (399, 512)], 0.007),
-                       ([(425, 662), (427, 720), (431, 802)], 0.012), ([(415, 666), (416, 700)], 0.007),
-                       ([(392, 476), (390, 492)], 0.006)):
-        path = []
-        for (x0, y0), (x1, y1) in zip(pts, pts[1:]):
-            for j in range(6):
-                t = j / 6
-                h = hit('front', x0 + (x1 - x0) * t, y0 + (y1 - y0) * t)
-                if h: path.append((h[0] + h[1] * (h[2] + LIFT * 1.5), h[1]))
-        h = hit('front', *pts[-1])
-        path.append((h[0] + h[1] * (h[2] + LIFT * 1.5), h[1]))
-        left, right = [], []
-        N = len(path)
-        for i, (p, n) in enumerate(path):
-            d = (path[min(i + 1, N - 1)][0] - path[max(i - 1, 0)][0]).normalized()
-            across = n.cross(d).normalized()
-            s = i / (N - 1)
-            w = width * (1 - 0.5 * s) * (0.75 + 0.25 * math.sin(i * 1.7))
-            if s > 0.85: w = width * (0.6 + 1.4 * math.sin((s - 0.85) / 0.15 * math.pi))
-            left.append(p - across * w / 2); right.append(p + across * w / 2)
-        bm.faces.new([bm.verts.new(q) for q in left + right[::-1]])
-        ends.append(path[-1][0])
-    bmesh.ops.triangulate(bm, faces=bm.faces[:])
-    me = bpy.data.meshes.new('blood'); bm.to_mesh(me); bm.free(); me.materials.append(BLOOD)
-    obj('blood', me, pod)
-    return min(ends, key=lambda p: p.z)
+    """Where it drips from, and no more. (There were runs of it painted on the plates left of the seam, five strokes
+    down the strip and the skirt: stains on the outside of a shut steel door, which nothing inside could have put
+    there. Gone.) It comes from the floor in there: out under the door's foot and off the lowest point of the
+    pod's edge below the door's corner, where a drop would gather. That point is found, not read off the sheet:
+    rays straight up from under the pod, round where the seam ends, and the lowest plate they meet."""
+    at = next(h for h in (hit('front', 459, y) for y in range(840, 700, -5)) if h)[0]
+    best = None
+    for i in range(-8, 9):
+        for j in range(0, 12):
+            got = ray(Vector((at.x + i * 0.02, at.y + j * 0.02, -5.0)), Vector((0, 0, 1)))
+            if not got or got[3] == 'open': continue
+            q = got[0] + got[1] * got[2]          # the plate's outside there
+            if best is None or q.z < best.z: best = q
+    print('BLOOD drips from', [round(v, 3) for v in best], 'front px', [round(v) for v in to_pixel('front', best)])
+    return best
 
 
 # ---------------------------------------------------------------- inside: something wrapped
@@ -1666,6 +2029,7 @@ if STAGE != 'hull':
     window()
     keep_clear = [(Vector(hit('front', 478, 278)[0]), 0.55)]
     details(keep_clear)
+    result['slits'] = slits()
     result['bolts'] = bolts(keep_clear)
     ports, top = deck()
     ports += [(p, Vector((0, 0.25, 1)).normalized(), r) for p, r in hose_tops]

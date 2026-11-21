@@ -57,16 +57,17 @@ def to_world(view, px, py, depth=0.0):
 
 # The plates, traced in the view each is seen best in, as (name, outline). Read in order: the first outline a
 # piece of the surface falls in decides what it is. 'open' is no plate: the dark core, the machinery.
-# The seam down the front is left open on purpose, a hand wide, with the blocks in it.
+# The seam down the front is closed: the plates left of it come up to the hatch's own edge. (It was left open, a
+# channel 20 px wide traced down between them with dark blocks in it, and with the plates as thick as they are
+# the hatch stood 15 cm off its neighbours and read as ajar.)
+SEAM_418 = 425 + 10 * 118 / 170   # the hatch's edge at y 418: on its line from (425, 300) to (435, 470), exactly
 PLATES = {
     'front': [
-        ('open', [(390, 60), (410, 60), (425, 300), (435, 470), (447, 650), (457, 845), (437, 845), (427, 650),
-                  (415, 470), (405, 300)]),
-        ('cap_l', [(150, 175), (205, 86), (390, 72), (405, 300), (410, 418), (345, 424), (298, 300), (268, 212)]),
-        ('strip', [(345, 424), (410, 418), (415, 470), (427, 650), (398, 652)]),
+        ('cap_l', [(150, 175), (205, 86), (410, 72), (425, 300), (SEAM_418, 418), (345, 424), (298, 300), (268, 212)]),
+        ('strip', [(345, 424), (SEAM_418, 418), (435, 470), (452, 594), (447, 650), (398, 652)]),
         ('panel_l', [(92, 300), (120, 230), (150, 175), (268, 212), (298, 300), (345, 424), (398, 652), (130, 640),
                      (100, 520), (88, 400)]),
-        ('skirt_fl', [(130, 640), (398, 652), (427, 650), (437, 845), (300, 830), (190, 800), (140, 720)]),
+        ('skirt_fl', [(130, 640), (398, 652), (447, 650), (458, 700), (460, 845), (300, 830), (190, 800), (140, 720)]),
         ('door', [(410, 72), (500, 88), (518, 160), (532, 300), (546, 450), (558, 578), (452, 594), (435, 470),
                   (425, 300)]),
         ('door_low', [(452, 594), (558, 578), (566, 690), (458, 700), (447, 650)]),
@@ -92,6 +93,34 @@ PLATES = {
     # (white strips down the back corners, as the sheet's back view has them, were tried and taken off: they
     # stood off the back like wings. The back is machinery out to the flanks' plates.)
     'back': [],
+}
+# A plate cut into smaller plates of its own, by outlines drawn inside it in its own view: lines that follow the
+# plate's shape (its edge drawn again further in, turning where it turns), not straight cuts laid across it. Read
+# in order, as the plates are; what none of them takes stays the plate itself. They may run on past the plate's
+# edge: only what is the plate is asked. The right shield's are traced from lines drawn over the sheet's left
+# view; the left shield's are made the same way, to its own shape.
+SPLITS = {
+    'shield_r': ('left', [
+        # the foot of it, under a line across
+        ('d', [(60, 583), (270, 583), (268, 616), (262, 700), (60, 740)]),
+        # its front third, left of a line that comes down from the top, turns towards the front and runs down
+        ('a', [(60, 583), (60, 200), (283, 200), (283, 284), (281, 317), (237, 386), (211, 458), (208, 521), (200, 583)]),
+        # the middle of it, between that line and the next, which starts on the slant at the top
+        ('b', [(283, 200), (306, 248), (355, 317), (348, 324), (326, 393), (312, 478), (290, 524), (270, 583),
+               (200, 583), (208, 521), (211, 458), (237, 386), (281, 317), (283, 284)]),
+        # a small one high up, by the cross
+        ('t', [(339, 271), (417, 275), (401, 298), (358, 317)]),
+        # the panel in its back lobe, the lobe's own shape a hand in from its edge
+        ('e', [(348, 324), (355, 317), (427, 288), (485, 288), (482, 366), (456, 390), (410, 398), (342, 389), (326, 393)]),
+    ]),
+    'shield_l': ('right', [
+        # a strip down its front edge, turning as the edge does
+        ('f', [(500, 150), (492, 206), (532, 325), (556, 430), (566, 560), (579, 655), (587, 760), (700, 760), (700, 150)]),
+        # a band along its stepped lower edge
+        ('g', [(250, 450), (300, 372), (342, 383), (484, 605), (470, 700), (430, 660)]),
+        # a band under its top edge
+        ('h', [(150, 250), (150, 316), (215, 312), (330, 236), (395, 238), (450, 262), (492, 256), (492, 150)]),
+    ]),
 }
 # What a piece of surface is when no outline of its view takes it.
 OTHERWISE = {'front': 'panel_m', 'right': 'open', 'left': 'open', 'back': 'open'}

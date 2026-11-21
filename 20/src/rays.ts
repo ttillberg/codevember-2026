@@ -87,6 +87,7 @@ export class Rays extends Pass {
         coverX: COVER.x,
         iris: { value: new THREE.Vector2(1, 1) },
         coverSun: COVER.sun,
+        coverGlass: COVER.glass,
         fan: { value: 3 },
         fanFade: { value: 0.078 },
       },
@@ -107,6 +108,7 @@ export class Rays extends Pass {
         #endif
         uniform float wallZ, wallX, sideScale, fan, fanFade;
         uniform vec4 coverX, coverSun; // the roof's shutter (hall.ts, materials.ts)
+        uniform vec4 coverGlass; // where the roof is glass: along x, along z
         uniform vec2 iris; // the fans' leaf shutters, the end wall's and the sun's wall's: 1 open, 0 shut
         // through the leaf shutter: inside the five-sided opening its blades' inner edges make (as hall.ts lays them)
         float leaf(vec2 o, float s) {
@@ -116,11 +118,23 @@ export class Rays extends Pass {
           return smoothstep(a + 0.05, a - 0.05, m);
         }
         float cover(vec3 p) {
-          if (coverX.w < 0.5) return 1.0;
           float t = (coverSun.w - p.y) / max(coverSun.y, 0.05);
           if (t < 0.0) return 1.0;
           float hx = p.x + coverSun.x * t;
-          return 1.0 - smoothstep(coverX.x - coverX.z, coverX.x + coverX.z, hx) * (1.0 - smoothstep(coverX.y - coverX.z, coverX.y + coverX.z, hx));
+          // past the glass the roof is deck, out to the walls: no sun comes down through it. (The sun's map lets
+          // specks of it by, and the shutter, which once lay over all of the roof when shut and hid them, stops
+          // at the glass's end now: the dark under the roof was dotted with them.) What crosses the roof's
+          // height outside the wall came in through the wall, and is let be
+          if ((hx > coverGlass.y + 1.0 && hx < wallX) || hx < coverGlass.x - 1.0) return 0.0;
+          // (and at the hall's two ends the same, along z: the specks were over the end wall's fans too)
+          float hz = p.z + coverSun.z * t;
+          if (hx < wallX && (hz < coverGlass.z - 1.0 || hz > coverGlass.w + 1.0)) return 0.0;
+          if (coverX.w < 0.5) return 1.0;
+          // (in the air its edge is not the half metre it is on the steel: the light comes on over 8 m behind it. As
+          // it starts to roll back, the first slit lets in a sheet of light a hand thick, thinner than a step of
+          // this march, and the air under the roof was dots where a step happened to land in it. Now a thin
+          // sheet is a faint one, and it is full by the time it is thick enough to be met at every step)
+          return 1.0 - smoothstep(coverX.x - coverX.z, coverX.x + coverX.z, hx) * (1.0 - smoothstep(coverX.y, coverX.y + 8.0, hx));
         }
         varying vec2 vUv;
         // how open a fan is at o from its centre, in the wall's plane: shut outside the drum and on the hub, by the
@@ -178,15 +192,21 @@ export class Rays extends Pass {
             float lit = texture(tShadow, vec3(s.xy, s.z - 0.0008)) * cover(p);
             // the fans in the sun's wall: the map has the round holes, not the blades turning in them. Back up the
             // sun's light to the wall, and if it came in through a fan, how open it is there
-            #if SIDES > 0
+            // And the small windows in that wall, a metre wide: their shafts are thinner than a step of this
+            // march, which met each one or missed it by the dither, and they came out as rows of dots across the
+            // dark (plain to see with the roof shut). What came in through the wall and not through a fan is left
+            // out of the air; it still falls on the steel.
             if (p.x < wallX) {
               vec3 q = p - sunDir * ((p.x - wallX) / sunDir.x);
+              bool fanned = false;
+              #if SIDES > 0
               for (int k = 0; k < SIDES; k++) {
                 vec2 o = vec2(q.z - sides[k].x, q.y - sides[k].y) / sideScale; // (bigger: the same fan, scaled)
-                if (dot(o, o) < (FAN_R + 0.3) * (FAN_R + 0.3)) lit *= vent(o, sides[k].z) * leaf(o, iris.y);
+                if (dot(o, o) < (FAN_R + 0.3) * (FAN_R + 0.3)) { lit *= vent(o, sides[k].z) * leaf(o, iris.y); fanned = true; }
               }
+              #endif
+              if (!fanned && q.y < roof) lit = 0.0;
             }
-            #endif
             // the hall's map has only the steel in it: the pod and its cables, from the pod's own sun. But only what
             // stands near the pod along the light: that map has the steel too, sharp to the millimetre, where the
             // hall's blurs the thin bars away, and the air in its column would come out darker than round it.
@@ -211,7 +231,16 @@ export class Rays extends Pass {
             // (only where the light could be: the fans all sit at one height, so a band of the wall)
             if (dz > 0.0 && abs(q.y - fans[0].y) < FAN_R + 0.3) {
               float open = 0.0;
-              for (int k = 0; k < FANS; k++) open += vent(q - fans[k].xy, fans[k].z) * leaf(q - fans[k].xy, iris.x);
+              // (the blades' pattern goes soft with the way from the wall, as light through a fan does, and by 45 m it
+              // is the round of the fan at what the blades let by. Far from the wall the slices of light between
+              // the blades were thinner than a step of this march, and left specks in the dark where one was met)
+              float soft = smoothstep(12.0, 45.0, dz);
+              for (int k = 0; k < FANS; k++) {
+                vec2 o = q - fans[k].xy;
+                float r = length(o);
+                float round_ = 0.5 * smoothstep(FAN_R + 0.15 + 2.0 * soft, FAN_R - 0.1 - 2.0 * soft, r) * smoothstep(HUB - 0.1 - soft, HUB + 0.15 + soft, r);
+                open += mix(vent(o, fans[k].z), round_, soft) * leaf(o, iris.x);
+              }
               fsum += open * exp(-fanFade * dz) * w;
             }
           }

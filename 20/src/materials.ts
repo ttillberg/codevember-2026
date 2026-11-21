@@ -32,6 +32,8 @@ export const COVER = {
   x: { value: new THREE.Vector4(0, 0, 1, 0) },
   /** towards the sun (xyz), the shutter's height (w) */
   sun: { value: new THREE.Vector4(0, 1, 0, 0) },
+  /** where the roof's glass is: from and to along x, from and to along z (the rest of the roof is deck) */
+  glass: { value: new THREE.Vector4(-1e3, 1e3, -1e3, 1e3) },
 };
 THREE.ShaderChunk.lights_pars_begin += /* glsl */ `
 uniform vec4 coverX, coverSun;
@@ -127,31 +129,41 @@ const PAINT = /* glsl */ `
       float gShade = ( 1.0 - gOrm.r ) * uShade;
       vec3 P = vGrit;
       float gPx = length( fwidth( P ) );
-      // grime: gathers where the light does not, and runs down from there in streaks
-      float gRun = smoothstep( 0.38, 0.76, gFbm( vec3( P.x * 22.0, P.y * 1.1, P.z * 22.0 ) + 3.0 ) );
-      float gPatch = smoothstep( 0.35, 0.7, gFbm( P * 2.3 + 17.0 ) );
-      // (and soot along the seams, where the edge mask is high, and smudges where hands and hoses have been)
-      float gSeam = gOrm.b * ( 0.35 + 0.65 * gFbm( P * 11.0 + 23.0 ) );
-      float gSmudge = smoothstep( 0.48, 0.74, gFbm( P * 5.5 + 41.0 ) ) * smoothstep( 0.4, 0.7, gFbm( P * 1.3 + 7.0 ) );
-      gGrime = clamp( gShade * 0.9 + gRun * ( 0.2 + 0.42 * gPatch + 0.6 * gShade ) + 0.55 * gSeam + 0.4 * gSmudge, 0.0, 1.0 );
-      diffuseColor.rgb = mix( diffuseColor.rgb, diffuseColor.rgb * vec3( 0.3, 0.27, 0.24 ), gGrime );
-      // pits: specks of paint gone, in drifts, and a few bigger
-      float gFine = 1.0 - smoothstep( 0.004, 0.012, gPx );
-      float gPit = smoothstep( 0.79, 0.83, gNoise( P * 330.0 + 7.0 ) ) * smoothstep( 0.38, 0.62, gFbm( P * 7.0 + 31.0 ) ) * gFine;
-      gPit = max( gPit, smoothstep( 0.87, 0.9, gNoise( P * 120.0 + 2.0 ) ) * 0.85 * ( 1.0 - smoothstep( 0.01, 0.03, gPx ) ) );
-      // scratches: thin, a hand long, two ways, where something has rubbed
-      float gRub = smoothstep( 0.45, 0.7, gFbm( P * 3.1 + 5.0 ) );
-      float gScr = smoothstep( 0.8, 0.86, gNoise( vec3( dot( P, vec3( 0.62, 0.74, 0.26 ) ) * 14.0, dot( P, vec3( -0.74, 0.66, -0.12 ) ) * 800.0, dot( P, vec3( -0.26, -0.12, 0.96 ) ) * 14.0 ) ) );
-      gScr = max( gScr, smoothstep( 0.82, 0.87, gNoise( vec3( dot( P, vec3( 0.3, -0.5, 0.81 ) ) * 700.0, dot( P, vec3( 0.9, 0.4, -0.1 ) ) * 11.0, dot( P, vec3( -0.3, 0.77, 0.56 ) ) * 11.0 ) + 9.0 ) ) );
-      gScr *= gRub * ( 1.0 - smoothstep( 0.002, 0.007, gPx ) );
-      // chips: the paint gone to the metal along the panels' edges, ragged
-      gChip = smoothstep( 0.74, 0.8, gOrm.b * 0.8 + gFbm( P * 34.0 ) * 0.62 ) * ( 1.0 - smoothstep( 0.02, 0.06, gPx ) );
-      // scuffs: the paint rubbed thin in patches, grey under it
-      float gScuff = smoothstep( 0.66, 0.74, gFbm( P * 17.0 + 3.0 ) ) * gRub * ( 1.0 - smoothstep( 0.03, 0.08, gPx ) );
-      diffuseColor.rgb = mix( diffuseColor.rgb, vec3( 0.34, 0.33, 0.32 ), gScuff * 0.55 );
-      diffuseColor.rgb = mix( diffuseColor.rgb, vec3( 0.16, 0.15, 0.14 ), gPit * 0.8 );
-      diffuseColor.rgb = mix( diffuseColor.rgb, diffuseColor.rgb * 0.45, gScr * 0.7 );
-      diffuseColor.rgb = mix( diffuseColor.rgb, vec3( 0.05, 0.05, 0.055 ), gChip );`;
+      // The paint is clean, on the whole, and what dirt there is is small: that is the look. (It was big: soft
+      // patches of grime, streaks, flecks a centimetre or two across all over it, long scratches.) What is left:
+      // the dark where the light does not get, from the baked shade; a thin broken line of worn paint right on a
+      // panel's edge, nibbled into here and there; and in the middle of a panel pinpricks, a few nicks and a few
+      // hairlines, in drifts, where it has been knocked.
+      float gFine = 1.0 - smoothstep( 0.0025, 0.008, gPx );   // gone before it is finer than the pixels
+      float gMid = 1.0 - smoothstep( 0.008, 0.03, gPx );
+      float gWorn = smoothstep( 0.4, 0.66, gFbm( P * 2.6 + 31.0 ) );   // where it has been knocked about
+      // grime: in the corners, and a little of it running down from there; soot along the seams
+      float gRun = smoothstep( 0.45, 0.8, gFbm( vec3( P.x * 22.0, P.y * 1.1, P.z * 22.0 ) + 3.0 ) );
+      float gSeam = gOrm.b * ( 0.3 + 0.7 * gFbm( P * 11.0 + 23.0 ) );
+      float gSmudge = smoothstep( 0.5, 0.76, gFbm( P * 5.5 + 41.0 ) ) * gWorn;   // a little, where hands and hoses have been
+      gGrime = clamp( gShade * 0.85 + gRun * ( 0.09 + 0.36 * gShade ) + 0.32 * gSeam + 0.14 * gSmudge, 0.0, 1.0 );
+      diffuseColor.rgb = mix( diffuseColor.rgb, diffuseColor.rgb * vec3( 0.34, 0.31, 0.28 ), gGrime );
+      diffuseColor.rgb *= 1.0 + 0.05 * ( gFbm( P * 1.7 + 17.0 ) - 0.5 );
+      // pinpricks, a couple of millimetres, and a few nicks of a centimetre
+      // (few in the clean middle of a panel, more where it is worn, most near its edges: fewer of them, not fainter)
+      float gMany = clamp( 0.17 + 0.55 * gWorn * gWorn + 0.8 * smoothstep( 0.15, 0.65, gOrm.b ), 0.0, 1.0 );
+      float gAt = mix( 0.91, 0.8, gMany );
+      float gSpeck = smoothstep( gAt, gAt + 0.04, gNoise( P * 560.0 + 7.0 ) ) * gFine;
+      float gNick = smoothstep( 0.86, 0.885, gNoise( P * 100.0 + 2.0 ) * 0.78 + gNoise( P * 370.0 ) * 0.22 ) * gWorn * gMid;
+      // hairlines, a hand long, two ways, few
+      float gScr = smoothstep( 0.825, 0.865, gNoise( vec3( dot( P, vec3( 0.62, 0.74, 0.26 ) ) * 12.0, dot( P, vec3( -0.74, 0.66, -0.12 ) ) * 1100.0, dot( P, vec3( -0.26, -0.12, 0.96 ) ) * 12.0 ) ) );
+      gScr = max( gScr, smoothstep( 0.835, 0.875, gNoise( vec3( dot( P, vec3( 0.3, -0.5, 0.81 ) ) * 1000.0, dot( P, vec3( 0.9, 0.4, -0.1 ) ) * 10.0, dot( P, vec3( -0.3, 0.77, 0.56 ) ) * 10.0 ) + 9.0 ) ) );
+      gScr *= gWorn * ( 1.0 - smoothstep( 0.0015, 0.005, gPx ) );
+      // the edge: a line of paint worn through right on it, fine and broken, more in some stretches than others,
+      // and small bites out of the paint beside it
+      float gWhere = smoothstep( 0.32, 0.6, gFbm( P * 4.3 + 51.0 ) );
+      float gRag = gFbm( P * 75.0 ) * 0.5 + gNoise( P * 280.0 + 5.0 ) * 0.5;
+      float gLine = smoothstep( 0.66, 0.78, gOrm.b + ( gRag - 0.5 ) * 0.46 ) * ( 0.5 + 0.5 * gWhere );
+      float gBite = smoothstep( 0.77, 0.83, gOrm.b * 0.6 + gNoise( P * 85.0 + 9.0 ) * 0.42 + gNoise( P * 300.0 + 1.0 ) * 0.12 ) * gWhere;
+      gChip = max( gLine, gBite ) * gMid;
+      diffuseColor.rgb = mix( diffuseColor.rgb, diffuseColor.rgb * 0.5, gScr * 0.6 );
+      diffuseColor.rgb = mix( diffuseColor.rgb, vec3( 0.1, 0.095, 0.09 ), max( gSpeck * 0.85, gNick ) );
+      diffuseColor.rgb = mix( diffuseColor.rgb, vec3( 0.075, 0.072, 0.07 ), gChip );`;
 
 const f = (x: number) => x.toFixed(4);
 
@@ -246,11 +258,10 @@ export function hallSteel(m: THREE.MeshStandardMaterial) {
   return grit(m, { scale: 0.7, rough: [0.75, 1.3], tint: 0.3 });
 }
 
-/** what glows red from inside the pod: the raw metal seen through the seams, the frosted window (main.ts pulses them) */
+/** what glows red from inside the pod: the frosted window, the lamp in there (main.ts pulses them). (The raw metal
+ * under the plates glowed too, round the door, to read as light in the seams: but the door is a slab of metal,
+ * light does not come through it or out of its edge, and with the door open its rim was a band of orange.) */
 export const GLOWING: { material: THREE.MeshStandardMaterial; gain: number }[] = [];
-/** the raw metal glows only round the door, in the door's own space: a box round it (main.ts sets it, and `inv`,
- * the door's world matrix inverted, every frame); the rest of it, the open flanks, stays dark */
-export const DOOR_GLOW = { inv: { value: new THREE.Matrix4() }, lo: { value: new THREE.Vector3() }, hi: { value: new THREE.Vector3() } };
 
 // the plates' paint without their textures, for the small things painted with them
 const WHITE = grit(
@@ -301,34 +312,14 @@ export function dress(root: THREE.Object3D) {
       if (!(m as THREE.MeshStandardMaterial).isMeshStandardMaterial) return m;
       if (!done.has(m)) {
       const made = make(m as THREE.MeshStandardMaterial);
-      // the red light inside comes out where the plates part and through the window
+      // the red light inside comes out through the window, and nowhere else
       const name = m.name.replace(/[._]\d+$/, '');
       MADE.set(name, made);
-      if (name === 'core' || name === 'frost') {
+      if (name === 'frost') {
         const g = made as THREE.MeshStandardMaterial;
         g.emissive = new THREE.Color(0xff1a0a);
         g.emissiveIntensity = 0;
-        GLOWING.push({ material: g, gain: name === 'core' ? 1 : 0.25 });
-        if (name === 'core') {
-          const before = g.onBeforeCompile;
-          g.onBeforeCompile = (sh, r) => {
-            before.call(g, sh, r);
-            Object.assign(sh.uniforms, { doorInv: DOOR_GLOW.inv, doorLo: DOOR_GLOW.lo, doorHi: DOOR_GLOW.hi });
-            sh.vertexShader = sh.vertexShader
-              .replace('void main() {', 'varying vec3 vGlowAt;\nvoid main() {')
-              .replace('#include <project_vertex>', '#include <project_vertex>\n  vGlowAt = (modelMatrix * vec4(transformed, 1.0)).xyz;');
-            sh.fragmentShader = sh.fragmentShader
-              .replace('void main() {', 'varying vec3 vGlowAt;\nuniform mat4 doorInv;\nuniform vec3 doorLo, doorHi;\nvoid main() {')
-              .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
-  {
-    vec3 d = (doorInv * vec4(vGlowAt, 1.0)).xyz;
-    float out_ = length(max(max(doorLo - d, d - doorHi), 0.0));
-    totalEmissiveRadiance *= 1.0 - smoothstep(0.015, 0.06, out_);
-  }`);
-          };
-          const key = g.customProgramCacheKey.bind(g);
-          g.customProgramCacheKey = () => key() + ':doorglow';
-        }
+        GLOWING.push({ material: g, gain: 0.25 });
       }
       // the pod's own (not the rubber, shared with the cables that run up out of the tight sun's reach)
       if (made !== rubber) made.defines = { ...made.defines, ...POD_SUN };
