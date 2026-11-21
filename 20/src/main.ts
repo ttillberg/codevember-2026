@@ -10,6 +10,7 @@ import { Dof } from './dof';
 import { Cable } from './cables';
 import { pods } from './pods';
 import { Blood } from './blood';
+import { Screen } from './screen';
 import { buildHall, SCENE_TARGETS } from './hall';
 import { dress, DOOR_GLOW, GLOWING, instances, rubber, SHADE, shareCover, wire as wireSteel } from './materials';
 
@@ -290,10 +291,20 @@ function start() {
     if (!auto.q) auto.i = (auto.i + 1) % AUTO.length; // the shot cut away from is not come back to
     cut();
   };
+  // ---------- the look in. The door held open far enough catches; a tap on the pod then and the eye goes to look, in
+  // one move, no cuts (cuts were tried: the eye jumping about was odd): from wherever it is it turns round to the
+  // door's side, drawing back a little and dipping under where it was, then comes up and in, slower and slower,
+  // through a longer and longer lens, and stops short of the opening and a little to one side. A glance in, not the
+  // whole of it. In there a screen is on. Where it ends is written in the frame of the pod at rest (metres).
+  const PEEK_S = 9; // seconds, all of it
+  const PEEK_FROM = new THREE.Vector3(0.74, 0.2, 1.8); // where the eye ends up
+  const SCREEN_AT = new THREE.Vector3(0.06, 0.2, -0.08); // where the screen is, stood on end: a metre tall
+  const PEEK_AT = new THREE.Vector3(0.06, -0.02, -0.05); // what the eye looks at: low on it, over the line being typed
+  let peek: null | { t: number; yaw: number; pitch: number; radius: number; target: THREE.Vector3; fov: number } = null;
+  const peekStart = () => { cine = auto = null; goal = null; peek = { t: 0, yaw, pitch, radius, target: target.clone(), fov: camera.fov }; };
   // held in the hand, the close shots: the eye wanders a little and breathes (?hand=0 off, ?hand=2 twice as much)
   const HAND = Math.max(0, +(query.get('hand') ?? 1));
   let sway = 0;
-  let cutNow = false; // a cut this frame: the focus jumps with it, it is not pulled
   // (?debug skips it: the roof open, the eye on the pod, no fade)
   const QUICK = query.has('debug');
   let cine: null | { t: number; on: boolean; cue: number } = QUICK ? null : { t: 0, on: false, cue: 0 }; // (on once the scene is there)
@@ -378,6 +389,12 @@ function start() {
   let open = 0;
   // shut and latched to start with; a press on it and the latch lets go: it pops a crack open, and the blood comes
   let latched = true;
+  // held open far enough and let go, it catches and stays: HOLD and beyond, it settles at STAY
+  const HOLD = 1.1, STAY = 1.32;
+  let stuck = false;
+  const m4 = new THREE.Matrix4();
+  let cutNow = false; // a cut this frame: the focus jumps with it, it is not pulled
+  let downAt: null | { x: number; y: number; t: number; stuck: boolean; onPod: boolean } = null; // the press, to tell a tap from a drag
   let vopen = 0;
   const hinge = new THREE.Vector3();
   const hingeWas = new THREE.Vector3();
@@ -434,6 +451,8 @@ function start() {
     w.userData.f1.position.y = len - 0.17;
   };
   let blood: Blood | null = null;
+  let screen: Screen | null = null; // what is in there (screen.ts)
+  const restInverse = new THREE.Matrix4(); // the pod as it hangs at rest, inverted: the look in is written in that frame
   let bloodAt: THREE.Object3D | null = null; // where it drips from: the end of the run down the door's seam
   let others: ReturnType<typeof pods> | null = null;
   let raysPass: Rays | null = null;
@@ -512,6 +531,15 @@ function start() {
     podRest.copy(pod.quaternion);
     inside.position.copy(podCentre);
     pod.add(inside);
+    // nobody in there: the wrapped thing and its straps are in the model still, and not shown
+    pod.traverse((o) => { if (/^(body|strap[._]?\d+)$/.test(o.name)) o.visible = false; });
+    // the screen in there, on what held it, turned a little towards the door's opening (placed in the world, then hung on the pod)
+    restInverse.copy(pod.matrixWorld).invert();
+    screen = new Screen();
+    screen.mesh.position.copy(SCREEN_AT);
+    screen.mesh.rotation.y = 0.3;
+    scene.add(screen.mesh);
+    pod.attach(screen.mesh);
 
     hall = buildHall(scene, swing.position.clone(), renderer.capabilities.maxTextureSize, query.get('steel'));
     if (NO.has('scaffolding')) hall.scaffolding(false);
@@ -624,8 +652,9 @@ function start() {
   const fingers = new Map<number, { x: number; y: number }>();
   let pinch: null | { d: number; r: number } = null;
   const spread = () => { const [a, b] = [...fingers.values()]; return Math.hypot(a.x - b.x, a.y - b.y) || 1; };
-  canvas.addEventListener('pointerdown', () => { cine = auto = null; }); // (the eye is yours)
-  canvas.addEventListener('wheel', () => { cine = auto = null; });
+  let wasIn = false; // the press came while the eye was looking in: it takes the eye back, it does not start it again
+  canvas.addEventListener('pointerdown', () => { wasIn = !!peek; cine = auto = peek = null; }); // (the eye is yours)
+  canvas.addEventListener('wheel', () => { cine = auto = peek = null; });
   canvas.addEventListener('pointerdown', (e) => {
     if (e.pointerType === 'touch') {
       fingers.set(e.pointerId, { x: e.clientX, y: e.clientY });
@@ -643,6 +672,7 @@ function start() {
     py = e.clientY;
     canvas.setPointerCapture(e.pointerId);
     goal = null;
+    downAt = { x: e.clientX, y: e.clientY, t: performance.now(), stuck, onPod: false };
     // right drag or shift drag moves the camera sideways, anywhere
     if (e.button === 2 || e.shiftKey) { grab = 'pan'; return; }
     grab = 'orbit';
@@ -651,6 +681,7 @@ function start() {
     ray.setFromCamera(ndc, eye);
     const hit = ray.intersectObject(pod, true)[0];
     if (!hit) return;
+    downAt.onPod = true;
     let o: THREE.Object3D | null = hit.object;
     while (o && o !== door) o = o.parent;
     if (o && door && latched) {
@@ -709,6 +740,7 @@ function start() {
       azTo = THREE.MathUtils.clamp(azTo + (0.3 * wx) / L, -NUDGE, NUDGE);
       axTo = THREE.MathUtils.clamp(axTo - (0.3 * wz) / L, -NUDGE, NUDGE);
     } else if (grab === 'door') {
+      stuck = false; // (in the hand again)
       openTo = THREE.MathUtils.clamp(openTo + (dx * doorPull.x + dy * doorPull.y) / doorPull.lengthSq(), AJAR, WIDE);
     }
   });
@@ -719,6 +751,12 @@ function start() {
     radius = THREE.MathUtils.clamp(radius * Math.exp(e.deltaY * 0.001), 2, 16);
   }, { passive: false });
   const release = (e: PointerEvent) => {
+    // let go of the door far enough open: it catches
+    if (grab === 'door' && open >= HOLD) stuck = true;
+    // a tap on the pod while its door stands open: the eye goes to look in (further down)
+    const tap = downAt && performance.now() - downAt.t < 400 && Math.hypot(e.clientX - downAt.x, e.clientY - downAt.y) < 8;
+    if (tap && downAt!.stuck && downAt!.onPod && !wasIn && e.type === 'pointerup') { stuck = true; lookIn(); }
+    downAt = null;
     grab = null;
     fingers.delete(e.pointerId);
     if (fingers.size < 2) pinch = null;
@@ -726,8 +764,9 @@ function start() {
   canvas.addEventListener('pointerup', release);
   canvas.addEventListener('pointercancel', release);
 
+  const lookIn = () => peekStart();
   // dev only: a look at the state from the console
-  if (import.meta.env.DEV) Object.assign(window, { cocoon: () => ({ grab, open, vopen, ax, az, tw, doorSign, cables: cables.length, carry: carry.x, hand, doorFree }), __x: () => carry.x, look: (y: number, p: number, r: number) => { goal = null; yaw = y; pitch = p; radius = r; vyaw = vpitch = 0; }, craneAt: (t: number) => { craneTime = t; }, shotKey: () => (auto ? key(shown()) : cine?.on ? 'cine' : null), shot: (i: number, x = 0.5) => { play(); auto!.i = i; auto!.t = CUT * AUTO[i].s * x; }, see: (what: 'roof' | 'fans' | 'rail', k: number) => { play(); auto!.q = SEE[what][k]; auto!.t = (CUT * auto!.q.s) / 2; }, cineAt: (t: number) => { if (cine) cine.t = t; }, view: (s: { yaw: number; pitch: number; radius: number; target: number[] }) => { goal = null; yaw = s.yaw; pitch = s.pitch; radius = s.radius; target.fromArray(s.target); vyaw = vpitch = 0; }, scene, camera, ao, renderer, post });
+  if (import.meta.env.DEV) Object.assign(window, { cocoon: () => ({ grab, open, vopen, ax, az, tw, doorSign, cables: cables.length, carry: carry.x, hand, doorFree }), __x: () => carry.x, look: (y: number, p: number, r: number) => { goal = null; yaw = y; pitch = p; radius = r; vyaw = vpitch = 0; }, craneAt: (t: number) => { craneTime = t; }, doorAt: (v: number) => { latched = false; open = v; vopen = 0; stuck = v >= HOLD; }, peekAt: (t: number) => { if (!peek) peekStart(); peek!.t = t; }, shotKey: () => (auto ? key(shown()) : cine?.on ? 'cine' : null), shot: (i: number, x = 0.5) => { play(); auto!.i = i; auto!.t = CUT * AUTO[i].s * x; }, see: (what: 'roof' | 'fans' | 'rail', k: number) => { play(); auto!.q = SEE[what][k]; auto!.t = (CUT * auto!.q.s) / 2; }, cineAt: (t: number) => { if (cine) cine.t = t; }, view: (s: { yaw: number; pitch: number; radius: number; target: number[] }) => { goal = null; yaw = s.yaw; pitch = s.pitch; radius = s.radius; target.fromArray(s.target); vyaw = vpitch = 0; }, scene, camera, ao, renderer, post });
 
   // ---------- physics, in fixed steps
 
@@ -799,9 +838,10 @@ function start() {
         v3.set(0, 1, 0).transformDirection(door.matrixWorld); // hinge
         // gravity and the swing throw it about, a tired strut pulls it to: whichever way the pod hangs it
         // comes to rest nearly shut
-        const pull = doorFree ? 3 * (1.45 - open) : doorSign * v1.cross(v2).dot(v3) * (3 / (4 * doorArm2)) * 0.35 - STRUT * (open - AJAR);
+        const pull = stuck ? 14 * (STAY - open) - 2.4 * vopen : doorFree ? 3 * (1.45 - open) : doorSign * v1.cross(v2).dot(v3) * (3 / (4 * doorArm2)) * 0.35 - STRUT * (open - AJAR);
         // a dry hinge: it stays where it is left until the pull is more than the hinge holds, and drags while it moves
-        if (!doorFree && Math.abs(vopen) < 0.02 && Math.abs(pull) < STICK) vopen = 0;
+        if (stuck) vopen += pull * h;
+        else if (!doorFree && Math.abs(vopen) < 0.02 && Math.abs(pull) < STICK) vopen = 0;
         else vopen += (pull - Math.sign(vopen || pull) * STICK * 0.6 - 0.6 * vopen) * h;
       }
       open += vopen * h;
@@ -1053,7 +1093,7 @@ function start() {
       vpitch *= 0.92;
     }
     // the opening shot, eased from one view to the next (a view from the debug panel ends it)
-    if (goal) cine = auto = null;
+    if (goal) cine = auto = peek = null;
     if (cine?.on) {
       cine.t += dt;
       while (cine.cue < CUES.length && CUES[cine.cue][0] <= cine.t) CUES[cine.cue++][1]();
@@ -1074,6 +1114,27 @@ function start() {
       if (cine.t > start + tk.s && k === TAKES.length - 1 && cine.cue >= CUES.length) { cine = null; play(); }
     }
     let stood: THREE.Vector3 | null = null; // the shot stands still: where the crane had the pod at its cut
+    let lens = 40;
+    if (peek && pod) {
+      peek.t += dt;
+      const x = THREE.MathUtils.clamp(peek.t / PEEK_S, 0, 1);
+      const e = (a: number, b: number) => THREE.MathUtils.smoothstep(x, a, b);
+      // where it ends, from the pod's frame at rest to where it hangs now
+      m4.multiplyMatrices(pod.matrixWorld, restInverse);
+      v2.copy(PEEK_AT).applyMatrix4(m4); // what it looks at
+      v1.copy(PEEK_FROM).applyMatrix4(m4).sub(v2); // from where, seen from there
+      const rEnd = v1.length(), yawEnd = Math.atan2(v1.x, v1.z), pitchEnd = Math.asin(v1.y / rEnd);
+      // the pan: round to the door's side, the short way, and the look moves from the pod to the screen in it
+      yaw = peek.yaw + Math.atan2(Math.sin(yawEnd - peek.yaw), Math.cos(yawEnd - peek.yaw)) * e(0, 0.7);
+      target.lerpVectors(peek.target, v2.sub(carry), e(0, 0.65));
+      // the flight: it dips under where it was on the way round, and comes up to where it ends
+      pitch = THREE.MathUtils.lerp(peek.pitch, pitchEnd, e(0.1, 0.9)) - 0.2 * Math.sin(Math.PI * e(0.05, 0.85));
+      // and the way in: back a little first, then in, slower and slower, the lens longer and longer
+      const out = THREE.MathUtils.lerp(peek.radius, Math.max(peek.radius, 4.4), e(0, 0.3));
+      radius = THREE.MathUtils.lerp(out, rEnd, 1 - (1 - e(0.22, 1)) ** 2);
+      lens = THREE.MathUtils.lerp(peek.fov, 28, e(0.3, 1));
+      vyaw = vpitch = 0;
+    }
     if (auto) {
       auto.t += dt;
       if (auto.t >= CUT * shown().s) cut();
@@ -1101,11 +1162,11 @@ function start() {
     }
     // the lens: each shot's own while the eye is on its own, back to the usual one after (eased, not a jump)
     {
-      const fov = auto ? shown().fov ?? 40 : 40;
-      const next = auto ? fov : camera.fov + (fov - camera.fov) * Math.min(1, dt * 4);
+      const fov = peek ? lens : auto ? shown().fov ?? 40 : 40;
+      const next = peek || auto ? fov : camera.fov + (fov - camera.fov) * Math.min(1, dt * 4);
       if (Math.abs(next - camera.fov) > 1e-3) { camera.fov = Math.abs(next - fov) < 0.02 ? fov : next; camera.updateProjectionMatrix(); }
     }
-    controls.eye(!!(cine?.on || auto));
+    controls.eye(!!(cine?.on || auto || peek));
     if (goal) {
       const k = 1 - Math.exp(-dt * 6);
       yaw += Math.atan2(Math.sin(goal.yaw - yaw), Math.cos(goal.yaw - yaw)) * k;
@@ -1114,14 +1175,14 @@ function start() {
       target.lerp(goal.target, k);
       vyaw = vpitch = 0;
     }
-    if (!auto) pitch = THREE.MathUtils.clamp(pitch, -0.85, 0.6); // (on its own it may look straight down, from the girder)
+    if (!auto && !peek) pitch = THREE.MathUtils.clamp(pitch, -0.85, 0.6); // (on its own it may look straight down, from the girder)
     // the eye goes along with the pod, wherever the crane takes it
     v3.copy(target).add(stood ?? carry);
     camera.position.set(Math.sin(yaw) * Math.cos(pitch), Math.sin(pitch), Math.cos(yaw) * Math.cos(pitch)).multiplyScalar(radius).add(v3);
     camera.lookAt(v3);
     // held in the hand, when the eye is on its own and close: it wanders slowly, breathes, shakes a very little
     {
-      const want = cine?.on || auto ? HAND * Math.max(THREE.MathUtils.clamp((7 - radius) / 3.5, 0, 1), auto && shown().walk ? 0.5 : 0) : 0;
+      const want = cine?.on || auto || peek ? HAND * Math.max(THREE.MathUtils.clamp((7 - radius) / 3.5, 0, 1), auto && shown().walk ? 0.5 : 0) : 0;
       sway += (want - sway) * Math.min(1, dt * 3);
       if (sway > 1e-3) {
         const t = now / 1000;
@@ -1136,7 +1197,7 @@ function start() {
     // and the lens: close, what is not the pod goes soft. The focus is where the eye's line meets the pod, taken
     // as an ellipsoid (smooth, and nothing to read back); pulled over a moment, but for a cut
     {
-      const want = eye === camera && pod && (cine?.on || auto) ? DOF * THREE.MathUtils.clamp((7 - radius) / 3.5, 0, 1) : 0;
+      const want = eye === camera && pod && (cine?.on || auto || peek) ? DOF * THREE.MathUtils.clamp((7 - radius) / 3.5, 0, 1) : 0;
       dof.amount = cutNow ? want : dof.amount + (want - dof.amount) * Math.min(1, dt * 3);
       dof.enabled = dof.amount > 0.01;
       if (dof.enabled && pod) {
@@ -1145,7 +1206,9 @@ function start() {
         const d = v2.set(0, 0, -1).transformDirection(camera.matrixWorld).transformDirection(podInverse).divide(podRadii);
         const a = d.dot(d), b = 2 * o.dot(d), c = o.dot(o) - 1;
         const disc = b * b - 4 * a * c;
-        const f = Math.max(0.6, disc > 0 ? (-b - Math.sqrt(disc)) / (2 * a) : -b / (2 * a));
+        let f = Math.max(0.6, disc > 0 ? (-b - Math.sqrt(disc)) / (2 * a) : -b / (2 * a));
+        // (looking in, on its last way up to the opening: what is in there is sharp, the door's edge is not)
+        if (peek && screen && peek.t > PEEK_S * 0.45) f = camera.position.distanceTo(screen.mesh.getWorldPosition(v3));
         dof.focus = cutNow ? f : dof.focus + (f - dof.focus) * Math.min(1, dt * 8);
       }
       cutNow = false;
@@ -1168,6 +1231,7 @@ function start() {
     for (const c of cables) c.skin();
     if (pod) hall?.follow(v1.copy(podCentre).applyMatrix4(pod.matrixWorld));
     hall?.update(time, dt);
+    screen?.update(dt, open > 0.2, now / 1000);
     blood?.update(dt, camera.position, (2 * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2))) / canvas.clientHeight);
     others?.update(dt);
     // the daylight in the haze and the fill come with the open roof (a little of each when shut: the windows)
