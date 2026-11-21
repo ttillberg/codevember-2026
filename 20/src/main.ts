@@ -147,6 +147,9 @@ function start() {
   // the side, low, which came right before the landing and was nearly the landing's own angle)
   const BACK: Shot = { yaw: Math.PI + 0.7, pitch: -0.45, radius: 6.5, target: new THREE.Vector3(0, 1.2, 0) }; // its back, the machinery and its lamps
   const ABOVE: Shot = { yaw: 2.4, pitch: 0.6, radius: 6.5, target: new THREE.Vector3(0, 0.9, -0.2) }; // from above, down on its top and the mount: the opposite of where it lands
+  // where a tap on the pod sends the eye: in front of it, a little to the door's side, level, all of the pod in the
+  // picture with room round it (not close on the door: you want to see what you are about to pull at)
+  const FRONT: Shot = { yaw: 0.26, pitch: 0.05, radius: 6.3, target: new THREE.Vector3(0.1, 0.22, 0) };
   const LAND: Shot = { yaw: -0.51, pitch: -0.38, radius: 9, target: new THREE.Vector3(0.9, 0.64, -0.8) };
   // each a shot: from, to, how long, eased at both ends (the opening), even (the cuts) or eased only into its end
   type Take = { from: Shot; to: Shot; s: number; ease: 'both' | 'even' | 'end'; fit?: boolean };
@@ -320,7 +323,8 @@ function start() {
   let radius = QUICK ? LAND.radius : SHOT.radius;
   let homeRadius = 7.5;
   // a view the camera is easing to (the debug panel's), null while it is yours
-  let goal: null | { yaw: number; pitch: number; radius: number; target: THREE.Vector3 } = null;
+  // (`rate`: how fast the eye goes there, per second; 6 unless said, which is the debug panel's snap)
+  let goal: null | { yaw: number; pitch: number; radius: number; target: THREE.Vector3; rate?: number } = null;
   const NUDGE = 0.06; // it is heavy: how far a hand can lean it, radians
   let still = true; // the debug panel's hold still: no swing, no crane round; on from the start
   const podRest = new THREE.Quaternion(); // how the pod hangs, askew, as it comes from Blender
@@ -753,9 +757,14 @@ function start() {
   const release = (e: PointerEvent) => {
     // let go of the door far enough open: it catches
     if (grab === 'door' && open >= HOLD) stuck = true;
-    // a tap on the pod while its door stands open: the eye goes to look in (further down)
+    // a tap on the pod: the eye goes to the door, wherever it was and whoever had it (it is not just left where
+    // the shot had it, for you to turn); and if the door stands open, caught, it goes to look in. A tap while it
+    // is looking in brings it back out to the door.
     const tap = downAt && performance.now() - downAt.t < 400 && Math.hypot(e.clientX - downAt.x, e.clientY - downAt.y) < 8;
-    if (tap && downAt!.stuck && downAt!.onPod && !wasIn && e.type === 'pointerup') { stuck = true; lookIn(); }
+    if (tap && downAt!.onPod && e.type === 'pointerup') {
+      if (downAt!.stuck && !wasIn) { stuck = true; lookIn(); }
+      else goal = { yaw: FRONT.yaw, pitch: FRONT.pitch, radius: FRONT.radius * fit(), target: FRONT.target.clone(), rate: 2.4 };
+    }
     downAt = null;
     grab = null;
     fingers.delete(e.pointerId);
@@ -1168,7 +1177,7 @@ function start() {
     }
     controls.eye(!!(cine?.on || auto || peek));
     if (goal) {
-      const k = 1 - Math.exp(-dt * 6);
+      const k = 1 - Math.exp(-dt * (goal.rate ?? 6));
       yaw += Math.atan2(Math.sin(goal.yaw - yaw), Math.cos(goal.yaw - yaw)) * k;
       pitch += (goal.pitch - pitch) * k;
       radius += (goal.radius - radius) * k;
