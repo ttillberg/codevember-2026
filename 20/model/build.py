@@ -1071,7 +1071,8 @@ def bolts(clear):
 # ---------------------------------------------------------------- a window in the hatch
 
 def window():
-    """Not on the sheet: a thick window high in the hatch, dirty frosted glass in a steel frame. Behind it a dark
+    """Not on the sheet: a window high in the hatch, dirty frosted glass in a low frame, let in near flush so the
+    hatch still reads as one leaning slab. Behind it a dark
     board of diodes, most off, a few lit; through the glass only their glow comes, blurred. Built flat in the
     hatch's own plane, around where the front view's pixel (478, 278) lands."""
     T_DOOR = THICK['door']
@@ -1083,12 +1084,12 @@ def window():
     def at(u, v, w): return h[0] + F @ Vector((u, v, T_DOOR + w))
     frame, back, glass = Soup(), Soup(), Soup()
     lit = {'amber': Soup(), 'red': Soup(), 'green': Soup(), 'off': Soup()}
-    b = 0.045                                  # the frame's width
+    b = 0.03                                   # the frame's width
     for (cu, cv, su, sv) in ((0, (H + b) / 2, W + 2 * b, b), (0, -(H + b) / 2, W + 2 * b, b),
                              (-(W + b) / 2, 0, b, H), ((W + b) / 2, 0, b, H)):
-        frame.box((su, sv, 0.07), at(cu, cv, 0.015), R)
-    back.box((W, H, 0.02), at(0, 0, -0.004), R)
-    glass.box((W, H, 0.016), at(0, 0, 0.034), R)
+        frame.box((su, sv, 0.024), at(cu, cv, 0.004), R)
+    back.box((W, H, 0.004), at(0, 0, 0.002), R)
+    glass.box((W, H, 0.004), at(0, 0, 0.012), R)
     # the board: three columns of diodes; which are lit is fixed, not random, so every build is the same
     pattern = 'aoaoooaoo' 'ooraoooao' 'aoogoaooa' 'oaooaoroo' 'ooaoooaoo' 'aooaoogoa' 'oooaoaooo' 'aoooraooa' 'ooaoooaoo'
     i = 0
@@ -1096,13 +1097,13 @@ def window():
         for col in range(3):
             u, v = (col - 1) * W * 0.3, H / 2 - H * (row + 0.5) / 9
             kind = {'a': 'amber', 'r': 'red', 'g': 'green', 'o': 'off'}[pattern[i % len(pattern)]]
-            lit[kind].box((0.016, 0.016, 0.01), at(u, v, 0.009), R)
+            lit[kind].box((0.016, 0.016, 0.004), at(u, v, 0.006), R)
             i += 1
     frame.done('door_frame', STEEL, door, DOOR_INV, 0.006)
     back.done('door_board', DARK, door, DOOR_INV, 0)
     for kind, material in (('amber', LED), ('red', LED_RED), ('green', LED_GREEN), ('off', MECH)):
         lit[kind].done('door_diodes_' + kind, material, door, DOOR_INV, 0)
-    glass.done('door_window', FROST, door, DOOR_INV, 0.003)
+    glass.done('door_window', FROST, door, DOOR_INV, 0.001)
 
 
 # ---------------------------------------------------------------- the deck on top, where the cables go in
