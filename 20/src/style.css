@@ -85,17 +85,24 @@ canvas:active { cursor: grabbing; }
 .split-down canvas#c { height: 50vh; }
 .split-down .ref { left: 0; bottom: 0; width: 100vw; height: 50vh; }
 .debug .label kbd { margin-left: 6px; }
-/* the controls, bottom left: round buttons on a frosted ground, each an abstract symbol in yellow (main.ts) */
-.controls { position: fixed; left: max(24px, env(safe-area-inset-left)); bottom: max(24px, env(safe-area-inset-bottom)); margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 10px; z-index: 4; }
-.controls button { width: 44px; height: 44px; border-radius: 50%; border: 1px solid rgba(255, 200, 40, 0.35); background: rgba(12, 13, 16, 0.42); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); color: #ffc82a; display: grid; place-items: center; padding: 0; cursor: pointer; -webkit-tap-highlight-color: transparent; transition: border-color 0.3s, background 0.3s; }
-.controls button[aria-pressed="true"] { border-color: rgba(255, 200, 40, 0.85); background: rgba(40, 32, 8, 0.45); }
+/* the controls, bottom left: bare symbols in white, in a row, nothing round them; dim when off, full when on (main.ts) */
+.controls { position: fixed; left: max(20px, env(safe-area-inset-left)); bottom: max(20px, env(safe-area-inset-bottom)); margin: 0; padding: 0; list-style: none; display: flex; flex-direction: row; gap: 2px; z-index: 4; }
+.controls button { width: 44px; height: 44px; border: 0; background: none; color: rgba(255, 255, 255, 0.42); display: grid; place-items: center; padding: 0; cursor: pointer; -webkit-tap-highlight-color: transparent; transition: color 0.3s; filter: drop-shadow(0 0 6px rgba(0, 0, 0, 0.6)); }
+.controls button[aria-pressed="true"] { color: #fff; }
+.controls button:focus-visible { outline: 1px solid rgba(255, 255, 255, 0.7); outline-offset: -4px; border-radius: 50%; }
+@media (hover: hover) { .controls button:hover { color: #fff; } }
 .controls svg { width: 24px; height: 24px; overflow: visible; }
-.controls svg * { fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; }
-.controls svg .drum { fill: currentColor; stroke: none; }
+.controls svg * { fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.controls svg .solid { fill: currentColor; stroke: none; }
 .controls svg .light { stroke-width: 1.4; transition: opacity 0.2s; }
-.controls [data-ctl^="fans"] svg .light circle { fill: currentColor; stroke: none; }
+/* the eye: a dot in the middle while it is yours; on its own, a play mark there, and the eye going round */
+.controls [data-ctl="eye"] .auto, .controls [data-ctl="eye"][aria-pressed="true"] .mine { opacity: 0; }
+.controls [data-ctl="eye"][aria-pressed="true"] .auto { opacity: 1; }
+.controls [data-ctl="eye"] .orbit { transform-origin: 12px 12px; }
+.controls [data-ctl="eye"][aria-pressed="true"] .orbit { animation: orbit 9s linear infinite; }
+@keyframes orbit { to { transform: rotate(360deg); } }
 @media (max-width: 640px) {
-  .controls { left: max(16px, env(safe-area-inset-left)); bottom: max(16px, env(safe-area-inset-bottom)); }
+  .controls { left: max(12px, env(safe-area-inset-left)); bottom: max(12px, env(safe-area-inset-bottom)); }
 }
 /* the page comes up black and fades in once the scene is there (main.ts) */
 .fade { position: fixed; inset: 0; background: #000; z-index: 50; pointer-events: none; transition: opacity 3.5s ease-in-out; }

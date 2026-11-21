@@ -6,6 +6,7 @@ import { GTAOPass } from 'three/addons/postprocessing/GTAOPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { Rays } from './rays';
 import { Post } from './post';
+import { Dof } from './dof';
 import { Cable } from './cables';
 import { pods } from './pods';
 import { Blood } from './blood';
@@ -54,13 +55,12 @@ function start() {
   const pmrem = new THREE.PMREMGenerator(renderer);
   scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
   scene.environmentIntensity = 0.18;
-  // ---------- the controls, bottom left: the hall's machines, one symbol each, in yellow. The roof first
+  // ---------- the controls, bottom left: the hall's machines and the eye, one symbol each, in white. The roof first
   let roofWanted = query.has('debug'); // (the hall starts with the roof shut: only the fans let light in; ?debug open)
+  let railOn = false; // the crane's round along the girder: off until asked for
   const controls = (() => {
     const list = document.querySelector<HTMLElement>('.controls')!;
     const roofBtn = list.querySelector<HTMLButtonElement>('[data-ctl="roof"]')!;
-    const bar = roofBtn.querySelector<SVGLineElement>('.bar')!;
-    const drum = roofBtn.querySelector<SVGCircleElement>('.drum')!;
     const light = roofBtn.querySelector<SVGGElement>('.light')!;
     roofBtn.addEventListener('click', () => { roofWanted = !roofWanted; hall?.roofOpen(roofWanted); });
     // the fans, a button for each wall's: their leaf shutters open or shut, the light through them with them
@@ -72,14 +72,24 @@ function start() {
       btn.addEventListener('click', () => { wanted = !wanted; hall?.fanShutter(false, wanted); btn.setAttribute('aria-pressed', String(wanted)); });
       return (s: number) => { for (const d of dots) d.setAttribute('r', (r0 * s).toFixed(2)); };
     });
+    // the crane: off it stands where it is, on it goes its round along the girder, hoisting at each end
+    const railBtn = list.querySelector<HTMLButtonElement>('[data-ctl="rail"]')!;
+    const car = railBtn.querySelector<SVGGElement>('.car')!;
+    railBtn.addEventListener('click', () => { railOn = !railOn; railBtn.setAttribute('aria-pressed', String(railOn)); });
+    // the eye: yours (drag, pinch), or on its own, a new shot every few seconds
+    const eyeBtn = list.querySelector<HTMLButtonElement>('[data-ctl="eye"]')!;
+    eyeBtn.addEventListener('click', () => { if (cine || auto) cine = auto = null; else auto = { t: 0, i: 0 }; });
+    let eyeWas: boolean | null = null;
     return {
+      /** the trolley's symbol goes along its line with the trolley */
+      rail(along: number) { car.setAttribute('transform', `translate(${(along * 6).toFixed(2)} 0)`); },
+      /** pressed while the eye is on its own (the opening, or the shots after) */
+      eye(own: boolean) { if (own !== eyeWas) eyeBtn.setAttribute('aria-pressed', String((eyeWas = own))); },
       /** the fans' symbols follow their shutters: the light in each ring closes to a point */
       fans(end: number) { fanBtns[0](end); },
-      /** the symbol follows the shutter: the bar rolls onto the dot, light comes through */
+      /** the symbol follows the shutter: the rays under the roof's line come as it opens */
       roof(open: number, wanted: boolean) {
-        bar.setAttribute('x2', (7 + 14 * (1 - open)).toFixed(2));
-        drum.setAttribute('r', (1.8 + 0.9 * open).toFixed(2));
-        light.style.opacity = open.toFixed(2);
+        light.style.opacity = (0.22 + 0.78 * open).toFixed(2);
         roofBtn.setAttribute('aria-pressed', String(wanted));
       },
     };
@@ -109,6 +119,12 @@ function start() {
   }
   post.insert(ao, 0);
   post.insert(new OutputPass(), 1);
+  // depth of field for the close shots, when the eye is on its own: after the light in the haze (which is put in
+  // before it, further down), before the output. ?dof=0 off, ?dof=2 twice as much
+  const DOF = Math.max(0, +(query.get('dof') ?? 1));
+  const dof = new Dof(camera, () => sceneDepth);
+  dof.enabled = false;
+  post.insert(dof, 1);
   const ortho = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 100); // the debug panel's iso: same eye, no perspective
   let eye: THREE.Camera = camera;
   // the opening: from well below and off to the side, looking up at the pod and past it into the dark of a hall
@@ -135,6 +151,26 @@ function start() {
     { from: turn(LAND, -9), to: LAND, s: 6, ease: 'end' },
   ];
   const CUES: [number, () => void][] = [[4.5, () => { roofWanted = true; hall?.roofOpen(true); }]];
+  // the eye on its own, after the opening or whenever asked for: a cut every CUT seconds (3; ?cut=5) through
+  // these, wide and close in turn, each drifting a few degrees round the pod, one way then the other
+  const CUT = Math.max(0.5, +(query.get('cut') ?? 3) || 3);
+  const AUTO: Shot[] = [
+    LAND,
+    { yaw: 0.05, pitch: 0.04, radius: 2.9, target: new THREE.Vector3(0.45, 0.9, 0.1) }, // the window
+    FLANK,
+    { yaw: 0.4, pitch: -0.35, radius: 3.3, target: new THREE.Vector3(0.3, -0.5, 0.2) }, // the seam low down, the latch, the blood
+    SHOT,
+    DOOR,
+    { yaw: Math.PI + 0.7, pitch: -0.45, radius: 6.5, target: new THREE.Vector3(0, 1.2, 0) }, // its back, the machinery
+    { yaw: Math.PI / 2 + 0.1, pitch: -0.04, radius: 3.6, target: new THREE.Vector3(0, 1.5, -0.35) }, // the mount and the hoist's block, from the side against the haze
+    CABLES,
+    { yaw: -0.95, pitch: -0.18, radius: 3.5, target: new THREE.Vector3(-0.35, 0.45, 0.25) }, // the markings on its flank
+  ];
+  let auto: null | { t: number; i: number } = null;
+  // held in the hand, the close shots: the eye wanders a little and breathes (?hand=0 off, ?hand=2 twice as much)
+  const HAND = Math.max(0, +(query.get('hand') ?? 1));
+  let sway = 0;
+  let cutNow = false; // a cut this frame: the focus jumps with it, it is not pulled
   // (?debug skips it: the roof open, the eye on the pod, no fade)
   const QUICK = query.has('debug');
   let cine: null | { t: number; on: boolean; cue: number } = QUICK ? null : { t: 0, on: false, cue: 0 }; // (on once the scene is there)
@@ -462,8 +498,8 @@ function start() {
   const fingers = new Map<number, { x: number; y: number }>();
   let pinch: null | { d: number; r: number } = null;
   const spread = () => { const [a, b] = [...fingers.values()]; return Math.hypot(a.x - b.x, a.y - b.y) || 1; };
-  canvas.addEventListener('pointerdown', () => { cine = null; }); // (the eye is yours)
-  canvas.addEventListener('wheel', () => { cine = null; });
+  canvas.addEventListener('pointerdown', () => { cine = auto = null; }); // (the eye is yours)
+  canvas.addEventListener('wheel', () => { cine = auto = null; });
   canvas.addEventListener('pointerdown', (e) => {
     if (e.pointerType === 'touch') {
       fingers.set(e.pointerId, { x: e.clientX, y: e.clientY });
@@ -578,7 +614,7 @@ function start() {
       if (Math.abs(carry.x) > END) { carry.x = Math.sign(carry.x) * END; hand.v *= -0.15; } // it knocks at the end
       carry.y += (0 - carry.y) * Math.min(1, h * 0.6);
     } else {
-      if (!still) craneTime += h;
+      if (railOn) craneTime += h;
       crane(craneTime, carry);
     }
     // (no more than a trolley this slow can pull: a jump, the debug panel's or a frame that took long, is not a kick)
@@ -606,7 +642,7 @@ function start() {
       vaz += (-w2 * az - 0.12 * vaz + 0.005 * Math.sin(time * 0.31) + 0.003 * Math.sin(time * 0.73 + 1)) * h;
     }
     // (left behind as the trolley sets off, thrown on as it stops)
-    if (!still) vaz -= (pull / L) * h;
+    if (!still || railOn) vaz -= (pull / L) * h;
     vtw += (still ? -0.3 * tw - 0.8 * vtw : -0.3 * tw - 0.15 * vtw + 0.004 * Math.sin(time * 0.19) - 0.5 * vaz * vax) * h;
     ax += vax * h;
     az += vaz * h;
@@ -661,7 +697,7 @@ function start() {
   // ---------- the debug panel: views as on a turnaround sheet, iso or perspective, hold still
 
   const panel = document.querySelector<HTMLElement>('.debug');
-  const showDebug = import.meta.env.DEV || query.has('settings') || query.has('debug');
+  const showDebug = query.has('settings') || query.has('debug'); // (hidden otherwise, in dev too)
   type View = 'front' | 'side' | 'back' | 'persp';
   let side = -1; // which flank Side shows: -1 the 03 shield's (the sheet's right view), 1 the other
   const debug = panel && showDebug ? (() => {
@@ -884,7 +920,7 @@ function start() {
       vpitch *= 0.92;
     }
     // the opening shot, eased from one view to the next (a view from the debug panel ends it)
-    if (goal) cine = null;
+    if (goal) cine = auto = null;
     if (cine?.on) {
       cine.t += dt;
       while (cine.cue < CUES.length && CUES[cine.cue][0] <= cine.t) CUES[cine.cue++][1]();
@@ -892,6 +928,7 @@ function start() {
       let start = 0, k = 0;
       while (k < TAKES.length - 1 && cine.t > start + TAKES[k].s) start += TAKES[k++].s;
       const tk = TAKES[k];
+      if (cine.t - dt <= start && k > 0) cutNow = true;
       const x = THREE.MathUtils.clamp((cine.t - start) / tk.s, 0, 1);
       const u = tk.ease === 'both' ? THREE.MathUtils.smootherstep(x, 0, 1) : tk.ease === 'end' ? 1 - (1 - x) * (1 - x) : x;
       yaw = THREE.MathUtils.lerp(tk.from.yaw, tk.to.yaw, u);
@@ -901,6 +938,18 @@ function start() {
       vyaw = vpitch = 0;
       if (cine.t > start + tk.s && k === TAKES.length - 1 && cine.cue >= CUES.length) cine = null;
     }
+    if (auto) {
+      auto.t += dt;
+      if (auto.t >= CUT) { auto.t -= CUT; auto.i = (auto.i + 1) % AUTO.length; cutNow = true; } // a cut
+      const s = AUTO[auto.i];
+      // (nearer, the same turn is a faster picture: less of it)
+      yaw = s.yaw + deg(s.radius < 6 ? 0.9 : 1.3) * (auto.t - CUT / 2) * (auto.i % 2 ? -1 : 1);
+      pitch = s.pitch;
+      radius = s.radius;
+      target.copy(s.target);
+      vyaw = vpitch = 0;
+    }
+    controls.eye(!!(cine?.on || auto));
     if (goal) {
       const k = 1 - Math.exp(-dt * 6);
       yaw += Math.atan2(Math.sin(goal.yaw - yaw), Math.cos(goal.yaw - yaw)) * k;
@@ -914,6 +963,37 @@ function start() {
     v3.copy(target).add(carry);
     camera.position.set(Math.sin(yaw) * Math.cos(pitch), Math.sin(pitch), Math.cos(yaw) * Math.cos(pitch)).multiplyScalar(radius).add(v3);
     camera.lookAt(v3);
+    // held in the hand, when the eye is on its own and close: it wanders slowly, breathes, shakes a very little
+    {
+      const want = cine?.on || auto ? HAND * THREE.MathUtils.clamp((7 - radius) / 3.5, 0, 1) : 0;
+      sway += (want - sway) * Math.min(1, dt * 3);
+      if (sway > 1e-3) {
+        const t = now / 1000;
+        const n = (a: number, b: number, c: number) => 0.6 * Math.sin(t * a + c) + 0.4 * Math.sin(t * b + c * 1.7);
+        camera.rotateY(sway * (0.011 * n(0.83, 1.9, 0.3) + 0.0016 * Math.sin(t * 7.1)));
+        camera.rotateX(sway * (0.009 * n(0.67, 2.3, 1.9) + 0.0016 * Math.sin(t * 8.3 + 1)));
+        camera.rotateZ(sway * 0.006 * n(0.41, 1.3, 4.1));
+        camera.translateX(sway * 0.02 * n(0.5, 1.1, 2.2));
+        camera.translateY(sway * 0.015 * n(0.37, 0.9, 5));
+      }
+    }
+    // and the lens: close, what is not the pod goes soft. The focus is where the eye's line meets the pod, taken
+    // as an ellipsoid (smooth, and nothing to read back); pulled over a moment, but for a cut
+    {
+      const want = eye === camera && pod && (cine?.on || auto) ? DOF * THREE.MathUtils.clamp((7 - radius) / 3.5, 0, 1) : 0;
+      dof.amount = cutNow ? want : dof.amount + (want - dof.amount) * Math.min(1, dt * 3);
+      dof.enabled = dof.amount > 0.01;
+      if (dof.enabled && pod) {
+        camera.updateMatrixWorld();
+        const o = v1.copy(camera.position).applyMatrix4(podInverse).sub(podCentre).divide(podRadii);
+        const d = v2.set(0, 0, -1).transformDirection(camera.matrixWorld).transformDirection(podInverse).divide(podRadii);
+        const a = d.dot(d), b = 2 * o.dot(d), c = o.dot(o) - 1;
+        const disc = b * b - 4 * a * c;
+        const f = Math.max(0.6, disc > 0 ? (-b - Math.sqrt(disc)) / (2 * a) : -b / (2 * a));
+        dof.focus = cutNow ? f : dof.focus + (f - dof.focus) * Math.min(1, dt * 8);
+      }
+      cutNow = false;
+    }
     if (eye === ortho) {
       // as big as the perspective one shows things at the target
       const h = radius * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2));
@@ -942,6 +1022,7 @@ function start() {
       scene.environmentIntensity = 0.18 * (0.15 + 0.85 * day);
       controls.roof(day, roofWanted);
       controls.fans(hall.fans.shutter.end);
+      controls.rail(carry.x / END);
       // and the daylight through the fans and windows a little less while the roof is shut, for a dark start
       if (raysPass) raysPass.fan = 3 * (0.3 + 0.7 * day);
       hall.left.intensity = 1.6 * (0.12 + 0.88 * day);
