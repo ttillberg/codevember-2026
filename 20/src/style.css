@@ -95,6 +95,9 @@ canvas:active { cursor: grabbing; }
 .controls svg * { fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 .controls svg .solid { fill: currentColor; stroke: none; }
 .controls svg .light { stroke-width: 1.4; transition: opacity 0.2s; }
+/* the fan: five blades in a ring, turning while its shutters are open */
+.controls [data-ctl^="fans"] .blades { transform-origin: 12px 12px; }
+.controls [data-ctl^="fans"][aria-pressed="true"] .blades { animation: orbit 5s linear infinite; }
 /* the eye: a dot in the middle while it is yours; on its own, a play mark there, and the eye going round */
 .controls [data-ctl="eye"] .auto, .controls [data-ctl="eye"][aria-pressed="true"] .mine { opacity: 0; }
 .controls [data-ctl="eye"][aria-pressed="true"] .auto { opacity: 1; }

@@ -40,7 +40,9 @@ export class Blood {
   private time = 0;
 
   constructor(points: THREE.Object3D[]) {
-    const mat = new THREE.MeshStandardMaterial({ color: 0x4a0306, roughness: 0.12, metalness: 0 });
+    // (a darker red, 0x4a0306 and unlit by anything of its own, was right for blood and could not be seen: in the
+    // dark of the hall it was black on black. Redder, and with a little light of its own, as the red inside has)
+    const mat = new THREE.MeshStandardMaterial({ color: 0x8c0508, emissive: 0x3a0003, roughness: 0.12, metalness: 0 });
     this.mesh = new THREE.InstancedMesh(new THREE.SphereGeometry(1, 10, 8), mat, MAX + points.length);
     this.mesh.frustumCulled = false;
     this.sources = points.map((at, i) => {
@@ -59,8 +61,11 @@ export class Blood {
   private running = false;
   start() { this.running = true; }
 
-  update(dt: number) {
+  /** `eye` and `px` (the size of a CSS pixel at one metre from it): from far off a run 9 mm across is thinner than
+   *  a pixel and is not there at all, so nothing of it is drawn thinner than a pixel and a half */
+  update(dt: number, eye?: THREE.Vector3, px = 0) {
     if (dt <= 0) return;
+    const least = (x: number, y: number, z: number) => (eye ? 0.75 * px * Math.hypot(x - eye.x, y - eye.y, z - eye.z) : 0);
     if (!this.running) { this.mesh.count = 0; return; }
     this.time += dt;
     let n = 0;
@@ -90,7 +95,7 @@ export class Blood {
         this.pinch[i] = 0.12 + Math.random() * 0.22;
       }
       // the bead it all runs off, a little fuller when more is coming
-      const r = RADIUS * (1.6 + 0.6 * f);
+      const r = Math.max(RADIUS * (1.6 + 0.6 * f), least(s.pos.x, s.pos.y, s.pos.z) * 1.4);
       scl.set(r, r * 1.35, r);
       m.compose(now.set(s.pos.x, s.pos.y - r * 0.9, s.pos.z), quat.identity(), scl);
       this.mesh.setMatrixAt(n++, m);
@@ -119,7 +124,8 @@ export class Blood {
       const len = THREE.MathUtils.lerp(thread, drop, t);
       const thin = THREE.MathUtils.lerp(0.8, 1.15, t); // a thread is thinner than the drop it gathers into
       quat.setFromUnitVectors(up, dir);
-      scl.set(r * thin, len, r * thin);
+      const w = Math.max(r * thin, least(this.p[o], this.p[o + 1], this.p[o + 2]));
+      scl.set(w, Math.max(len, w), w);
       m.compose(now.set(this.p[o], this.p[o + 1], this.p[o + 2]), quat, scl);
       this.mesh.setMatrixAt(n++, m);
     }

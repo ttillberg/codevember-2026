@@ -66,11 +66,10 @@ function start() {
     // the fans, a button for each wall's: their leaf shutters open or shut, the light through them with them
     const fanBtns = (['end'] as const).map((w) => {
       const btn = list.querySelector<HTMLButtonElement>(`[data-ctl="fans-${w}"]`)!;
-      const dots = [...btn.querySelectorAll<SVGCircleElement>('.light circle')];
-      const r0 = +dots[0].getAttribute('r')!;
+      const blades = btn.querySelector<SVGGElement>('.blades')!;
       let wanted = true; // (the fans are open from the start: the light the hall starts in)
       btn.addEventListener('click', () => { wanted = !wanted; hall?.fanShutter(false, wanted); btn.setAttribute('aria-pressed', String(wanted)); });
-      return (s: number) => { for (const d of dots) d.setAttribute('r', (r0 * s).toFixed(2)); };
+      return (s: number) => { blades.style.opacity = (0.18 + 0.82 * s).toFixed(2); };
     });
     // the crane: off it stands where it is, on it goes its round along the girder, hoisting at each end
     const railBtn = list.querySelector<HTMLButtonElement>('[data-ctl="rail"]')!;
@@ -78,14 +77,14 @@ function start() {
     railBtn.addEventListener('click', () => { railOn = !railOn; railBtn.setAttribute('aria-pressed', String(railOn)); });
     // the eye: yours (drag, pinch), or on its own, a new shot every few seconds
     const eyeBtn = list.querySelector<HTMLButtonElement>('[data-ctl="eye"]')!;
-    eyeBtn.addEventListener('click', () => { if (cine || auto) cine = auto = null; else auto = { t: 0, i: 0 }; });
+    eyeBtn.addEventListener('click', () => { if (cine || auto) cine = auto = null; else { auto = { t: 0, i: 0 }; cutNow = true; } });
     let eyeWas: boolean | null = null;
     return {
       /** the trolley's symbol goes along its line with the trolley */
       rail(along: number) { car.setAttribute('transform', `translate(${(along * 6).toFixed(2)} 0)`); },
       /** pressed while the eye is on its own (the opening, or the shots after) */
       eye(own: boolean) { if (own !== eyeWas) eyeBtn.setAttribute('aria-pressed', String((eyeWas = own))); },
-      /** the fans' symbols follow their shutters: the light in each ring closes to a point */
+      /** the fan's symbol follows the shutters: its blades fade as they shut */
       fans(end: number) { fanBtns[0](end); },
       /** the symbol follows the shutter: the rays under the roof's line come as it opens */
       roof(open: number, wanted: boolean) {
@@ -138,34 +137,48 @@ function start() {
   const deg = THREE.MathUtils.degToRad;
   const turn = (v: Shot, d: number): Shot => ({ ...v, yaw: v.yaw + deg(d) });
   const DOOR: Shot = { yaw: 0.15, pitch: -0.12, radius: 3.4, target: new THREE.Vector3(0.35, 0.55, 0.1) }; // close on the door, the red in its seams
-  const CABLES: Shot = { yaw: -1.5, pitch: -0.7, radius: 5.5, target: new THREE.Vector3(0.2, 3.2, 0) }; // up the cables from below
-  const FLANK: Shot = { yaw: -1.22, pitch: -0.43, radius: 9.03, target: new THREE.Vector3(1.02, 0.62, -0.48) }; // from the side, low: its flank and its markings
+  // (two that were here are gone: up the cables from below, which was cables and little else, and the flank from
+  // the side, low, which came right before the landing and was nearly the landing's own angle)
+  const BACK: Shot = { yaw: Math.PI + 0.7, pitch: -0.45, radius: 6.5, target: new THREE.Vector3(0, 1.2, 0) }; // its back, the machinery and its lamps
+  const ABOVE: Shot = { yaw: 2.4, pitch: 0.6, radius: 6.5, target: new THREE.Vector3(0, 0.9, -0.2) }; // from above, down on its top and the mount: the opposite of where it lands
   const LAND: Shot = { yaw: -0.51, pitch: -0.38, radius: 9, target: new THREE.Vector3(0.9, 0.64, -0.8) };
   // each a shot: from, to, how long, eased at both ends (the opening), even (the cuts) or eased only into its end
-  type Take = { from: Shot; to: Shot; s: number; ease: 'both' | 'even' | 'end' };
+  type Take = { from: Shot; to: Shot; s: number; ease: 'both' | 'even' | 'end'; fit?: boolean };
   const TAKES: Take[] = [
     { from: SHOT, to: turn(SHOT, 20), s: 22, ease: 'both' },
     { from: DOOR, to: turn(DOOR, 7), s: 4.5, ease: 'even' },
-    { from: CABLES, to: turn(CABLES, -8), s: 4.5, ease: 'even' },
-    { from: turn(FLANK, -3), to: turn(FLANK, 3), s: 5, ease: 'even' },
+    { from: BACK, to: turn(BACK, -7), s: 4.5, ease: 'even', fit: true },
+    { from: turn(ABOVE, -3), to: turn(ABOVE, 3), s: 4.5, ease: 'even', fit: true },
     { from: turn(LAND, -9), to: LAND, s: 6, ease: 'end' },
   ];
   const CUES: [number, () => void][] = [[4.5, () => { roofWanted = true; hall?.roofOpen(true); }]];
-  // the eye on its own, after the opening or whenever asked for: a cut every CUT seconds (3; ?cut=5) through
-  // these, wide and close in turn, each drifting a few degrees round the pod, one way then the other
+  // the eye on its own, after the opening or whenever asked for: cuts through these, and a rhythm to them. A beat
+  // is CUT seconds (3; ?cut=5): the wide ones are held a beat or more, the close ones about half of one, two close
+  // ones in a row before the next wide one. No two alike after each other: round the pod, below it and above, near
+  // and far, and several lenses (the usual 40 degrees, a wide one from below, longer ones that stack the hall
+  // up behind it; not from far off, the haze takes the pod at 20 m). Each drifts a little round the pod, one way then the other.
   const CUT = Math.max(0.5, +(query.get('cut') ?? 3) || 3);
-  const AUTO: Shot[] = [
-    LAND,
-    { yaw: 0.05, pitch: 0.04, radius: 2.9, target: new THREE.Vector3(0.45, 0.9, 0.1) }, // the window
-    FLANK,
-    { yaw: 0.4, pitch: -0.35, radius: 3.3, target: new THREE.Vector3(0.3, -0.5, 0.2) }, // the seam low down, the latch, the blood
-    SHOT,
-    DOOR,
-    { yaw: Math.PI + 0.7, pitch: -0.45, radius: 6.5, target: new THREE.Vector3(0, 1.2, 0) }, // its back, the machinery
-    { yaw: Math.PI / 2 + 0.1, pitch: -0.04, radius: 3.6, target: new THREE.Vector3(0, 1.5, -0.35) }, // the mount and the hoist's block, from the side against the haze
-    CABLES,
-    { yaw: -0.95, pitch: -0.18, radius: 3.5, target: new THREE.Vector3(-0.35, 0.45, 0.25) }, // the markings on its flank
+  type Auto = Shot & { s: number; fov?: number };
+  const at = (yaw: number, pitch: number, radius: number, x: number, y: number, z: number, s: number, fov?: number): Auto => ({ yaw, pitch, radius, target: new THREE.Vector3(x, y, z), s, fov });
+  const AUTO: Auto[] = [
+    at(0.05, 0.04, 2.9, 0.45, 0.9, 0.1, 0.55), // the window
+    at(0.4, -0.35, 3.3, 0.3, -0.5, 0.2, 0.6), // the seam low down, the latch, the blood
+    at(-Math.PI / 2, 0.0, 11.5, 0, 0.4, 0, 1.15, 30), // from the side, a longer lens: the pod flat on as the sheet draws it, the hall stacked up behind
+    { ...ABOVE, s: 0.9 }, // from above, down on its top and the mount, the depth under it
+    at(Math.PI / 2 + 0.1, 0.1, 3.4, 0, 0.95, -0.2, 0.55), // the mount and the hoist's block from the side, the pod's head under them
+    { ...SHOT, s: 1.35 }, // the first view: from well below, the roof and the fans over it
+    at(-0.95, -0.18, 3.5, -0.35, 0.45, 0.25, 0.55), // the markings on its flank
+    at(0.3, -0.85, 3.6, 0, -0.7, 0, 0.6, 55), // right under it, a wide lens: the lamps of its underside, the cables going up
+    { ...BACK, s: 0.95 }, // its back, the machinery
+    at(0.85, -0.08, 15, 0, 0.2, 0, 1.1, 24), // from the front right, a longer lens, the steel stacked up behind it
+    at(0.95, 0.12, 2.5, 0.5, 0.15, 0.3, 0.5), // the door's edge, close, from its hinge side
+    at(0.6, -0.5, 5.5, 0, 0.1, 0, 0.8), // from under its door side, half way in
+    at(0.35, 0.5, 11, 0, -0.8, 0, 1.3, 45), // high up in front of it, looking down past it into the dark
   ];
+  const hold = (i: number) => CUT * AUTO[i].s; // how long shot i is held
+  // on an upright screen the picture is narrow and a shot made for a wide one cuts the pod off, or shows the
+  // cables and no pod: the eye stands back, up to 1.6 times as far
+  const fit = () => (camera.aspect < 0.85 ? Math.min(1.6, (0.85 / camera.aspect) ** 0.6) : 1);
   let auto: null | { t: number; i: number } = null;
   // held in the hand, the close shots: the eye wanders a little and breathes (?hand=0 off, ?hand=2 twice as much)
   const HAND = Math.max(0, +(query.get('hand') ?? 1));
@@ -601,7 +614,7 @@ function start() {
   canvas.addEventListener('pointercancel', release);
 
   // dev only: a look at the state from the console
-  if (import.meta.env.DEV) Object.assign(window, { cocoon: () => ({ grab, open, vopen, ax, az, tw, doorSign, cables: cables.length, carry: carry.x, hand, doorFree }), __x: () => carry.x, look: (y: number, p: number, r: number) => { goal = null; yaw = y; pitch = p; radius = r; vyaw = vpitch = 0; }, craneAt: (t: number) => { craneTime = t; }, cineAt: (t: number) => { if (cine) cine.t = t; }, view: (s: { yaw: number; pitch: number; radius: number; target: number[] }) => { goal = null; yaw = s.yaw; pitch = s.pitch; radius = s.radius; target.fromArray(s.target); vyaw = vpitch = 0; }, scene, camera, ao, renderer, post });
+  if (import.meta.env.DEV) Object.assign(window, { cocoon: () => ({ grab, open, vopen, ax, az, tw, doorSign, cables: cables.length, carry: carry.x, hand, doorFree }), __x: () => carry.x, look: (y: number, p: number, r: number) => { goal = null; yaw = y; pitch = p; radius = r; vyaw = vpitch = 0; }, craneAt: (t: number) => { craneTime = t; }, shot: (i: number) => { auto = { t: hold(i) / 2, i }; cutNow = true; }, cineAt: (t: number) => { if (cine) cine.t = t; }, view: (s: { yaw: number; pitch: number; radius: number; target: number[] }) => { goal = null; yaw = s.yaw; pitch = s.pitch; radius = s.radius; target.fromArray(s.target); vyaw = vpitch = 0; }, scene, camera, ao, renderer, post });
 
   // ---------- physics, in fixed steps
 
@@ -933,21 +946,29 @@ function start() {
       const u = tk.ease === 'both' ? THREE.MathUtils.smootherstep(x, 0, 1) : tk.ease === 'end' ? 1 - (1 - x) * (1 - x) : x;
       yaw = THREE.MathUtils.lerp(tk.from.yaw, tk.to.yaw, u);
       pitch = THREE.MathUtils.lerp(tk.from.pitch, tk.to.pitch, u);
-      radius = THREE.MathUtils.lerp(tk.from.radius, tk.to.radius, u);
+      radius = THREE.MathUtils.lerp(tk.from.radius, tk.to.radius, u) * (tk.fit ? fit() : 1);
       target.lerpVectors(tk.from.target, tk.to.target, u);
       vyaw = vpitch = 0;
-      if (cine.t > start + tk.s && k === TAKES.length - 1 && cine.cue >= CUES.length) cine = null;
+      // the opening over, the eye stays on its own: on into the shots (a touch and it is yours)
+      if (cine.t > start + tk.s && k === TAKES.length - 1 && cine.cue >= CUES.length) { cine = null; auto = { t: 0, i: 0 }; cutNow = true; }
     }
     if (auto) {
       auto.t += dt;
-      if (auto.t >= CUT) { auto.t -= CUT; auto.i = (auto.i + 1) % AUTO.length; cutNow = true; } // a cut
+      if (auto.t >= hold(auto.i)) { auto.t -= hold(auto.i); auto.i = (auto.i + 1) % AUTO.length; cutNow = true; } // a cut
       const s = AUTO[auto.i];
-      // (nearer, the same turn is a faster picture: less of it)
-      yaw = s.yaw + deg(s.radius < 6 ? 0.9 : 1.3) * (auto.t - CUT / 2) * (auto.i % 2 ? -1 : 1);
+      // (nearer, or through a longer lens, the same turn is a faster picture: less of it)
+      const rate = (s.radius < 6 ? 0.9 : 1.3) * Math.min(1, (s.fov ?? 40) / 40);
+      yaw = s.yaw + deg(rate) * (auto.t - hold(auto.i) / 2) * (auto.i % 2 ? -1 : 1);
       pitch = s.pitch;
-      radius = s.radius;
+      radius = s.radius * fit();
       target.copy(s.target);
       vyaw = vpitch = 0;
+    }
+    // the lens: each shot's own while the eye is on its own, back to the usual one after (eased, not a jump)
+    {
+      const fov = auto ? AUTO[auto.i].fov ?? 40 : 40;
+      const next = auto ? fov : camera.fov + (fov - camera.fov) * Math.min(1, dt * 4);
+      if (Math.abs(next - camera.fov) > 1e-3) { camera.fov = Math.abs(next - fov) < 0.02 ? fov : next; camera.updateProjectionMatrix(); }
     }
     controls.eye(!!(cine?.on || auto));
     if (goal) {
@@ -1012,7 +1033,7 @@ function start() {
     for (const c of cables) c.skin();
     if (pod) hall?.follow(v1.copy(podCentre).applyMatrix4(pod.matrixWorld));
     hall?.update(time, dt);
-    blood?.update(dt);
+    blood?.update(dt, camera.position, (2 * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2))) / canvas.clientHeight);
     others?.update(dt);
     // the daylight in the haze and the fill come with the open roof (a little of each when shut: the windows)
     if (hall) {
