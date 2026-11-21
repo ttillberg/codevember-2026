@@ -1403,49 +1403,54 @@ def empty(name, loc, direction=None, parent=None, size=0.2, **props):
     return o
 
 
-def lifts(top):
-    """four lugs on the shoulders round the deck, what it really hangs by: steel slings from their eyes up to one
-    link, one cable from there to the ceiling (drawn on the web side). The hoses only feed it."""
+def mount(top):
+    """What it hangs by, all of it at the back: a plate bolted to the spine's head, two cheeks standing off it and
+    up past the top of the pod, a pin through them. The hoist's block locks onto the pin (drawn on the web side);
+    no eyes, no slings. Returns the pin's middle. (It hung by four lugs on its shoulders and slings to a ring: that
+    read as rigged up for the day.)"""
     steel, base = Soup(), Soup()
-    eyes = []
-    for sx, sy in ((-1, -1), (1, -1), (1, 1), (-1, 1)):
-        for k in (1.0, 0.9, 0.8, 0.7, 0.6):   # in from the corner till it lands on the shell
-            off = Vector((0.5 * sx, 0.42 * sy, 0)) * k
-            got = ray(top + off + Vector((0, 0, 2)), Vector((0, 0, -1)))
-            if got: break
-        if not got: continue
-        n = got[1]
-        p = got[0] + n * got[2]   # on the plate, if there is one
-        fr = frame_at(n).to_4x4()
-        base.box((0.2, 0.2, 0.04), p + n * 0.02, fr)
-        for k in (-1, 1):   # four bolts
-            for j in (-1, 1):
-                q = p + (fr.to_3x3() @ Vector((0.07 * k, 0.07 * j, 0))) + n * 0.04
-                steel.cyl(0.012, q, q + n * 0.02, 6)
-        up = (Vector((0, 0, 1)) - off * 0.35).normalized()   # towards the link above the middle
-        side = up.cross(off.normalized()).normalized()
-        foot = p + n * 0.035
-        eye = foot + up * 0.15
-        steel.box((0.045, 0.15, 0.17), foot + up * 0.075, Matrix((side, up.cross(side), up)).transposed().to_4x4())
-        ring = [eye + (up * math.cos(t) + up.cross(side) * math.sin(t)) * 0.055 for t in [i * TAU / 16 for i in range(17)]]
-        steel.tube(ring, 0.016, 8, smooth=False)
-        eyes.append(eye + up * 0.03)
-    base.done('lug_plates', MECH, pod, None, 0.006)
-    steel.done('lugs', STEEL, pod, None, 0.004)
-    return eyes
+    B, Z = VIEW_DIRS['back'], Vector((0, 0, 1))
+    X = Z.cross(B).normalized()
+    k = sheet.scale('back')
+    h = block(base, 'back', 226, 100, 329, 200, 0.1)
+    p = h[0]
+    zt = top.z - p.z + 0.14                      # the pin, over the top of the pod
+    def at(x, d, z): return p + X * x + B * d + Z * z
+    for x in (-0.17, 0.17):                       # bolts down both edges of the plate
+        for z in (-0.14, -0.05, 0.05, 0.14):
+            steel.cyl(0.016, at(x, 0.1, z), at(x, 0.118, z), 6)
+    # the cheeks: one outline, cut from plate
+    side = [(0.05, -0.17), (0.17, -0.17), (0.33, zt - 0.2), (0.33, zt + 0.05), (0.27, zt + 0.12), (0.15, zt + 0.12),
+            (0.09, zt + 0.05), (0.05, zt - 0.25)]
+    for x in (-0.11, 0.11):
+        a = [steel.bm.verts.new(at(x - 0.02, d, z)) for d, z in side]
+        b = [steel.bm.verts.new(at(x + 0.02, d, z)) for d, z in side]
+        n = len(side)
+        for i in range(n): steel.bm.faces.new((a[i], a[(i + 1) % n], b[(i + 1) % n], b[i]))
+        steel.bm.faces.new(list(reversed(a))); steel.bm.faces.new(b)
+    bmesh.ops.recalc_face_normals(steel.bm, faces=steel.bm.faces[:])
+    # the pin, a collar on each end; a tube between the cheeks lower down, and a web across their backs
+    eye = at(0, 0.21, zt)
+    steel.cyl(0.036, at(-0.17, 0.21, zt), at(0.17, 0.21, zt), 16)
+    for x in (-1, 1): steel.cyl(0.055, at(0.13 * x, 0.21, zt), at(0.155 * x, 0.21, zt), 16)
+    steel.cyl(0.03, at(-0.11, 0.17, 0.05), at(0.11, 0.17, 0.05), 12)
+    steel.box((0.2, 0.025, max(0.1, zt - 0.3)), at(0, 0.3, (zt - 0.3) / 2 + 0.02),
+              Matrix((X, B, Z)).transposed().to_4x4())
+    base.done('mount_plate', MECH, pod, None, 0.008)
+    steel.done('mount', STEEL, pod, None, 0.005)
+    return eye, k
 
 
 def hooks(ports, top, drip_seam, drip_under, eyes):
-    # straight above its middle: it hangs plumb
-    mid = sum((v.co for v in hull.verts), Vector()) / len(hull.verts)
-    hang = Vector((mid.x, mid.y, top.z + 7.2))
+    # straight above the pin it hangs by, at its back; and it hangs plumb all the same
+    hang = Vector((eyes[0].x, eyes[0].y, top.z + 7.2))
     ports = sorted(ports, key=lambda t: -t[0].x)   # (round the arc in the order they stand, so no two cross)
     for i, (p, d, r) in enumerate(ports):
         # they hang slack: the hoses carry nothing
         empty('plug.%03d' % i, p, d, pod, radius=r, slack=1.08 + 0.1 * ((i * 37) % 5) / 4)
         # (in an arc over the back, where they all go down to: none comes across the top of the pod)
         a = math.pi / 2 + (i / max(1, len(ports) - 1) - 0.5) * math.pi * 1.15
-        empty('socket.%03d' % i, hang + Vector((1.5 * math.cos(a), 0.35 + 1.5 * math.sin(a), 0.4 * math.sin(3 * a))), (0, 0, -1))
+        empty('socket.%03d' % i, hang + Vector((1.5 * math.cos(a), 0.1 + 1.5 * math.sin(a), 0.4 * math.sin(3 * a))), (0, 0, -1))
     for i, e in enumerate(eyes):
         empty('lift.%03d' % i, e, (0, 0, 1), pod, size=0.1)
     empty('hang', hang, (0, 0, -1), size=0.6)
@@ -1670,9 +1675,11 @@ if STAGE != 'hull':
     markings()
     seam_drip = blood()
     inside()
-    hooks(ports, top, seam_drip, under, lifts(top))
-    # it hangs straight. (It once hung askew as the hall picture has it, head to the left by 24 degrees: a pod on
-    # four slings from one hook hangs plumb, and that read as wrong)
+    eye, back_scale = mount(top)
+    result['mount'] = [round(v, 3) for v in (*eye, top.z, back_scale)]
+    hooks(ports, top, seam_drip, under, [eye])
+    # it hangs straight. (It once hung askew as the hall picture has it, head to the left by 24 degrees, and that
+    # read as wrong)
     pod.rotation_euler = (0, 0, 0)
 
 if STAGE == 'all':

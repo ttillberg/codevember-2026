@@ -310,10 +310,11 @@ export function buildHall(scene: THREE.Scene, hang: THREE.Vector3, maxTexture = 
   // and the same without the grit, for the debug panel to set against it (most of the steel is far off in the haze)
   const plainSteel = new THREE.MeshStandardMaterial({ color: 0x2b2e32, roughness: 0.62, metalness: 0.55 });
   const steelBlocks: THREE.InstancedMesh[] = [];
+  const bareBars: THREE.InstancedMesh[] = []; // the bars alone, without the roof and the wall: ?no=scaffolding
   // the steel in blocks of the hall, one instanced mesh each with its own bounds, so that every camera (the eye,
   // the pod's tight sun, the skylight) draws only the blocks it can see, not all 40 000 bars every time
   const unit = new THREE.BoxGeometry(1, 1, 1);
-  const chunked = (list: THREE.Matrix4[], cell: THREE.Vector3) => {
+  const chunked = (list: THREE.Matrix4[], cell: THREE.Vector3, into?: THREE.InstancedMesh[]) => {
     const blocks = new Map<string, THREE.Matrix4[]>();
     const at = new THREE.Vector3();
     for (const m of list) {
@@ -325,6 +326,7 @@ export function buildHall(scene: THREE.Scene, hang: THREE.Vector3, maxTexture = 
     for (const ms of blocks.values()) {
       const mesh = new THREE.InstancedMesh(unit, steel, ms.length);
       steelBlocks.push(mesh);
+      into?.push(mesh);
       ms.forEach((m, i) => mesh.setMatrixAt(i, m));
       mesh.instanceMatrix.needsUpdate = true;
       mesh.computeBoundingSphere();
@@ -338,7 +340,7 @@ export function buildHall(scene: THREE.Scene, hang: THREE.Vector3, maxTexture = 
     }
     return blocks.size;
   };
-  chunked(bars, V(16, 24, 15));
+  chunked(bars, V(16, 24, 15), bareBars);
   chunked(deck, V(400, 400, 400)); // the roof and the wall: few and long, one block
 
   // the hoists' cars: a cage of bars round a floor, a roof, a lamp; they ride up and down, stop, wait, go on
@@ -795,6 +797,8 @@ export function buildHall(scene: THREE.Scene, hang: THREE.Vector3, maxTexture = 
     roofY: ROOF,
     /** the hall's steel with its grit, or plain */
     plainSteel(on: boolean) { for (const m of steelBlocks) m.material = on ? plainSteel : steel; },
+    /** the scaffolding (every bar of steel; the roof and the wall stay) there or not, shadows and all: for debugging */
+    scaffolding(on: boolean) { for (const m of bareBars) m.visible = on; sunDirty = true; },
     /** materials not in the scene yet, which still have to take the scene's shared uniforms */
     spare: [plainSteel],
     /** what runs along the girder with the pod: move it along x */

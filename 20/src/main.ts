@@ -19,10 +19,13 @@ import { dress, DOOR_GLOW, GLOWING, instances, rubber, SHADE, shareCover, wire a
 //   plug.NNN     empties on the pod, local Z the way the cable leaves; custom props radius, slack
 //   socket.NNN   empties in the ceiling, one per plug
 //   hang         empty, the point the whole thing swings from
+//   lift.000     empty on the pod, the pin of the mount at its back: the hoist block locks on there
 //   drip.NNN     empties where it bleeds
 // Nothing here knows the shape of the pod: remodel it, keep the names.
 
 const query = new URLSearchParams(location.search);
+// ?no=scaffolding (a list, with commas): what to leave out, for debugging
+const NO = new Set((query.get('no') ?? '').split(',').map((s) => s.trim()).filter(Boolean));
 // ?clean: no page furniture, the scene alone (screengrabs, clips)
 if (query.has('clean')) document.body.classList.add('clean');
 // ?silk: the first take on the word, a silk cocoon spun from one thread
@@ -194,7 +197,7 @@ function start() {
   let carryWas = 0, carryWas2 = 0; // along, the steps before: how hard the trolley pulls
   const hangAt = new THREE.Vector3(); // the hang point, the trolley at the middle
   const hangDown = new THREE.Vector3(); // from the hang point to the pod, unit
-  let L0 = 8, linkAt = 0;
+  let L0 = 8;
   let mainWire: THREE.Group | null = null;
   const socketsAt: { at: THREE.Vector3; live: THREE.Vector3 }[] = []; // the hoses' tops, on the trolley
 
@@ -226,21 +229,30 @@ function start() {
   const cables: Cable[] = [];
   let hall: ReturnType<typeof buildHall> | null = null;
 
-  // what it really hangs by: a steel sling from each lug up to one link, one wire from the link up to the block
+  // what it hangs by: the hoist's block, locked onto the pin of the mount at the pod's back, one wire from the
+  // block up to the trolley. (It was a ring and four slings to lugs on its shoulders.)
   const wireMat = wireSteel;
   const rodGeo = new THREE.CylinderGeometry(1, 1, 1, 10);
   rodGeo.translate(0, 0.5, 0);
-  const link = new THREE.Group(); // in the swing, on the line from the hang point to the pod
+  const HEAD = 0.8; // from the pin up to where the wire goes into the block
+  const block = new THREE.Group(); // in the twist, at the pin: it turns and leans with the pod
   {
-    const ring = new THREE.Mesh(new THREE.TorusGeometry(0.13, 0.034, 10, 28), wireMat);
-    ring.scale.y = 1.35;
-    const top = new THREE.Mesh(new THREE.TorusGeometry(0.07, 0.022, 10, 24), wireMat);
-    top.rotation.y = Math.PI / 2;
-    top.position.y = 0.2;
-    ring.castShadow = top.castShadow = true;
-    link.add(ring, top);
+    const part = (geo: THREE.BufferGeometry, y: number, x = 0) => {
+      const m = new THREE.Mesh(geo, wireMat);
+      m.position.set(x, y, 0);
+      m.castShadow = true;
+      block.add(m);
+      return m;
+    };
+    const acrossX = (r: number, len: number, seg = 20) => new THREE.CylinderGeometry(r, r, len, seg).rotateZ(Math.PI / 2);
+    part(new THREE.BoxGeometry(0.07, 0.32, 0.14), 0.1); // the tongue between the cheeks, the pin through it
+    part(new THREE.CylinderGeometry(0.085, 0.085, 0.07, 20), 0.29); // a swivel
+    part(new THREE.BoxGeometry(0.2, 0.05, 0.2), 0.345);
+    for (const x of [-0.085, 0.085]) part(new THREE.BoxGeometry(0.028, 0.42, 0.3), 0.56, x); // the block's cheeks
+    part(acrossX(0.13, 0.1, 28), 0.56); // the sheave
+    part(acrossX(0.045, 0.24), 0.56); // its axle
+    part(new THREE.BoxGeometry(0.2, 0.04, 0.14), 0.77);
   }
-  const slings: { lift: THREE.Object3D; wire: THREE.Group }[] = [];
   const wire = (r: number) => {
     const g = new THREE.Group();
     const rod = new THREE.Mesh(rodGeo, wireMat);
@@ -254,8 +266,6 @@ function start() {
     g.userData = { rod, f1 };
     return g;
   };
-  const wa = new THREE.Vector3();
-  const wb = new THREE.Vector3();
   const stretch = (w: THREE.Group, a: THREE.Vector3, b: THREE.Vector3) => {
     const d = b.clone().sub(a);
     const len = d.length();
@@ -327,13 +337,16 @@ function start() {
     box.getCenter(podCentre);
     box.getSize(podRadii).multiplyScalar(0.5 * 1.04).addScalar(0.07);
 
-    // hang the pod: swing at the hang point, twist at the pod, the pod keeps its place and its tilt
+    // hang the pod: swing at the hang point, twist at the mount's pin, the pod keeps its place and its tilt
     const at = pod.getWorldPosition(new THREE.Vector3());
     if (hang) hang.getWorldPosition(swing.position);
     else swing.position.set(at.x, at.y + 8, at.z);
-    L = L0 = swing.position.distanceTo(at);
+    // (twist at the pin it hangs by, straight under the hang point: the pod turns about its mount, not its middle)
+    const held = lifts.length ? lifts[0].getWorldPosition(new THREE.Vector3()) : at;
+    L = L0 = swing.position.distanceTo(held);
     hangAt.copy(swing.position);
-    twist.position.copy(at).sub(swing.position);
+    twist.position.copy(held).sub(swing.position);
+    hangDown.copy(twist.position).normalize();
     swing.updateWorldMatrix(true, true);
     twist.attach(pod);
     podRest.copy(pod.quaternion);
@@ -341,6 +354,7 @@ function start() {
     pod.add(inside);
 
     hall = buildHall(scene, swing.position.clone(), renderer.capabilities.maxTextureSize);
+    if (NO.has('scaffolding')) hall.scaffolding(false);
     // the sun's light in the haze, marched against its shadow map, after the AO and before the tone mapping
     const rays = new Rays(camera, hall.sun, hall.podSun, () => (eye === camera ? sceneDepth : null), { roof: hall.roofY, box: hall.air, density: 0.04, fans: hall.fans });
     post.insert(rays, 1);
@@ -350,24 +364,11 @@ function start() {
     if (query.has('debug')) { const h = hall; import('./tweaks').then(({ tweaks }) => tweaks({ renderer, scene, hemi, ao, rays, hall: h })); }
     pod.traverse((o) => { if ((o as THREE.Mesh).isMesh) o.castShadow = o.receiveShadow = true; });
     if (lifts.length) {
-      const u = twist.position.clone().normalize(); // down the line from the hang point
-      const mean = new THREE.Vector3();
-      for (const o of lifts) mean.add(swing.worldToLocal(o.getWorldPosition(new THREE.Vector3())));
-      mean.divideScalar(lifts.length);
-      hangDown.copy(u);
-      linkAt = mean.dot(u) - 1.7;
-      link.position.copy(u).multiplyScalar(linkAt);
-      link.quaternion.setFromUnitVectors(Y, u.clone().negate());
-      swing.add(link);
+      twist.add(block);
       const main = wire(0.032);
       swing.add(main);
       mainWire = main;
-      stretch(main, new THREE.Vector3(0, 0.15, 0), link.position.clone().addScaledVector(u, -0.27));
-      for (const o of lifts) {
-        const w = wire(0.02);
-        scene.add(w);
-        slings.push({ lift: o, wire: w });
-      }
+      stretch(main, new THREE.Vector3(0, 0.15, 0), twist.position.clone().addScaledVector(hangDown, -HEAD));
     }
 
     if (door) {
@@ -587,10 +588,7 @@ function start() {
     swing.position.set(hangAt.x + carry.x, hangAt.y, hangAt.z);
     L = L0 - carry.y;
     twist.position.copy(hangDown).multiplyScalar(L);
-    if (hangDown.lengthSq()) {
-      link.position.copy(hangDown).multiplyScalar(linkAt - carry.y);
-      if (mainWire) stretch(mainWire, v1.set(0, 0.15, 0), v2.copy(link.position).addScaledVector(hangDown, -0.27));
-    }
+    if (mainWire) stretch(mainWire, v1.set(0, 0.15, 0), v2.copy(twist.position).addScaledVector(hangDown, -HEAD));
     for (const s of socketsAt) s.live.set(s.at.x + carry.x, s.at.y, s.at.z);
     if (hall) hall.trolley.position.x = carry.x;
     const w2 = G / L;
@@ -678,7 +676,7 @@ function start() {
     const shadeBtn = panel.querySelector<HTMLButtonElement>('[data-shade]')!;
     const stepBtns = [...panel.querySelectorAll<HTMLButtonElement>('[data-steps]')];
     const steelBtns = [...panel.querySelectorAll<HTMLButtonElement>('[data-steel]')];
-    let plainSteel = false;
+    let steelMode = NO.has('scaffolding') ? 'off' : 'grit';
     const copyBtn = panel.querySelector<HTMLButtonElement>('[data-copy]')!;
     // the view and what the scene is doing, as text to paste back to whoever is working on it
     const copyView = async () => {
@@ -775,7 +773,7 @@ function start() {
       aoBtn.classList.toggle('on', aoOn);
       shadeBtn.classList.toggle('on', SHADE.value > 0.5);
       for (const b of stepBtns) b.classList.toggle('on', +b.dataset.steps! === (raysPass?.steps ?? 24));
-      for (const b of steelBtns) b.classList.toggle('on', (b.dataset.steel === 'plain') === plainSteel);
+      for (const b of steelBtns) b.classList.toggle('on', b.dataset.steel === steelMode);
       refs.forEach((b) => b.classList.toggle('on', b.dataset.ref === split));
       drawRef();
     };
@@ -812,7 +810,12 @@ function start() {
     // the baked AO (the paint's, and the colour on the other parts' vertices): on or off, to see what it does
     shadeBtn.addEventListener('click', () => { SHADE.value = SHADE.value > 0.5 ? 0 : 1; mark(); });
     stepBtns.forEach((b) => b.addEventListener('click', () => { if (raysPass) raysPass.steps = +b.dataset.steps!; mark(); }));
-    steelBtns.forEach((b) => b.addEventListener('click', () => { plainSteel = b.dataset.steel === 'plain'; hall?.plainSteel(plainSteel); mark(); }));
+    steelBtns.forEach((b) => b.addEventListener('click', () => {
+      steelMode = b.dataset.steel!;
+      hall?.plainSteel(steelMode === 'plain');
+      hall?.scaffolding(steelMode !== 'off');
+      mark();
+    }));
     refs.forEach((b) => b.addEventListener('click', () => setSplit(b.dataset.ref as typeof split)));
     window.addEventListener('keydown', (e) => {
       if (e.metaKey || e.ctrlKey || e.altKey) return;
@@ -927,7 +930,6 @@ function start() {
       physics(STEP, time);
     }
     for (const c of cables) c.skin();
-    for (const s of slings) stretch(s.wire, s.lift.getWorldPosition(wa), link.localToWorld(wb.set(0, -0.12, 0)));
     if (pod) hall?.follow(v1.copy(podCentre).applyMatrix4(pod.matrixWorld));
     hall?.update(time, dt);
     blood?.update(dt);
