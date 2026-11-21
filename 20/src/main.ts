@@ -212,23 +212,33 @@ function start() {
   // the next three shots have it in the picture, before the round goes on. Not close on it, the other way: wide,
   // the pod still there, so that what happens is seen and no more is made of it than that.
   const SEE: Record<'roof' | 'fans' | 'rail', Auto[]> = {
-    // the roof: from below, three ways, the shutter and the light coming or going over the pod
+    // the roof: from below, the shutter and the light coming or going over the pod (six of each of these, three
+    // shown at a time: the ones not seen for longest)
     roof: [
       { ...at(0.3, -0.85, 4.2, 0, -0.4, 0, 1.1, 55), wide: true },
       { ...at(2.6, -0.8, 9, 0, 2.6, 0, 1.1, 50), wide: true }, // (no further out: with the pod along the rail the eye would stand in a staging)
       { ...SHOT, s: 1.2, wide: true },
+      { ...at(-1.2, -0.8, 7, 0, 1.5, 0, 1.1, 50), wide: true },
+      { ...at(0.9, -0.7, 13, 0, 2.5, 0, 1.2, 44), wide: true },
+      { ...at(-2.6, -0.82, 5.5, 0, 0.5, 0, 1.1, 55), wide: true },
     ],
     // the fans, high in the end wall: from in front of the pod and under it, the wall over its head
     fans: [
       { ...at(0.0, -0.42, 13, 0, 0.6, 0, 1.1), wide: true },
       { ...at(-0.24, -0.58, 15, 0.3, 1.6, -0.4, 1.1), wide: true },
       { ...at(0.4, -0.5, 9.5, 0, 2.2, 0, 1.1, 50), wide: true },
+      { ...at(0.2, -0.36, 8, 0, 1.2, 0, 1.1, 46), wide: true },
+      { ...at(0.3, -0.62, 11.5, 0, 1.2, 0, 1.1, 46), wide: true },
+      { ...at(-0.35, -0.3, 6.5, 0, 1.6, 0, 1.0, 50), wide: true },
     ],
     // the crane: the girder, the trolley and the wire over the pod, the eye standing still so the pod travels
     rail: [
       { ...at(0.15, -0.22, 14, 0, 4.4, 0, 1.3, 46), wide: true, fixed: true },
       { ...at(-0.6, -0.3, 13, 0, 3.3, 0, 1.3), wide: true, fixed: true },
       { ...at(Math.PI / 2 - 0.3, -0.18, 13, 0, 4.2, 0, 1.3, 46), wide: true, fixed: true },
+      { ...at(0.5, -0.4, 11, 0, 3.5, 0, 1.3, 50), wide: true, fixed: true },
+      { ...at(-0.2, -0.1, 15.5, 0, 4.2, 0, 1.3, 40), wide: true, fixed: true },
+      { ...at(-Math.PI / 2 + 0.35, -0.3, 11, 0, 3.6, 0, 1.3, 48), wide: true, fixed: true },
     ],
   };
   // on an upright screen the picture is narrow and a shot made for a wide one cuts the pod off, or shows the
@@ -240,20 +250,43 @@ function start() {
   let queue: Auto[] = [];
   const anchor = new THREE.Vector3(); // where the crane had the pod at the cut, for the shots that stand still
   const shown = () => auto!.q ?? AUTO[auto!.i];
+  // No shot twice within half a minute, nor one much like it: each is known by where it looks from, roughly (a
+  // quarter of a radian, a metre, half a metre of target), so the opening's takes, the round's and the ones that
+  // look at a machine are all one to this, and a shot a few degrees off another is the same shot.
+  const AGAIN = 30;
+  const seen = new Map<string, number>();
+  const coarse = (x: number, step: number) => Math.round(x / step);
+  const key = (s: Auto | Shot) => {
+    const f = (s as Auto).fly;
+    if (f) return `f${coarse(f.a.x, 1.5)},${coarse(f.a.y, 1.5)},${coarse(f.a.z, 1.5)},${coarse(f.b.x, 1.5)},${coarse(f.b.y, 1.5)},${coarse(f.b.z, 1.5)}`;
+    const yaw = Math.atan2(Math.sin(s.yaw), Math.cos(s.yaw));
+    return `${coarse(yaw, 0.25)},${coarse(s.pitch, 0.2)},${coarse(s.radius, 1)},${coarse(s.target.x, 0.5)},${coarse(s.target.y, 0.5)},${coarse(s.target.z, 0.5)}`;
+  };
+  const clock = () => performance.now() / 1000;
+  const last = (s: Auto | Shot) => seen.get(key(s)) ?? -1e9;
+  const fresh = (s: Auto | Shot) => clock() - last(s) > AGAIN;
+  /** on from i to the round's next shot not seen lately (i itself if it is one) */
+  const next = (i: number) => {
+    for (let k = 0; k < AUTO.length && !fresh(AUTO[i]); k++) i = (i + 1) % AUTO.length;
+    return i;
+  };
+  let roundAt = -1; // where the round had got to when the eye was last on its own
   const cut = () => {
     if (!auto) return;
     if (queue.length) auto.q = queue.shift()!;
-    else if (auto.q) auto.q = null; // (back to the round, at the shot it was to show next)
-    else auto.i = (auto.i + 1) % AUTO.length;
+    else if (auto.q) { auto.q = null; auto.i = next(auto.i); } // (back to the round, at the shot it was to show next)
+    else auto.i = next((auto.i + 1) % AUTO.length);
     auto.t = 0;
     auto.n++;
     anchor.copy(carry);
     cutNow = true;
   };
-  const play = () => { queue = []; auto = { t: 0, i: 0, n: 0, q: null }; anchor.copy(carry); cutNow = true; };
+  // (it goes on from where the round had got to, not from its first shot again)
+  const play = () => { queue = []; auto = { t: 0, i: next((roundAt + 1) % AUTO.length), n: 0, q: null }; anchor.copy(carry); cutNow = true; };
   const watch = (what: keyof typeof SEE) => {
     if (!auto) return; // (the eye is yours, or the opening is on: it is not taken)
-    queue = [...SEE[what]];
+    // three of them: the ones not seen for longest
+    queue = [...SEE[what]].sort((a, b) => last(a) - last(b)).slice(0, 3);
     if (!auto.q) auto.i = (auto.i + 1) % AUTO.length; // the shot cut away from is not come back to
     cut();
   };
@@ -694,7 +727,7 @@ function start() {
   canvas.addEventListener('pointercancel', release);
 
   // dev only: a look at the state from the console
-  if (import.meta.env.DEV) Object.assign(window, { cocoon: () => ({ grab, open, vopen, ax, az, tw, doorSign, cables: cables.length, carry: carry.x, hand, doorFree }), __x: () => carry.x, look: (y: number, p: number, r: number) => { goal = null; yaw = y; pitch = p; radius = r; vyaw = vpitch = 0; }, craneAt: (t: number) => { craneTime = t; }, shot: (i: number, x = 0.5) => { play(); auto!.i = i; auto!.t = CUT * AUTO[i].s * x; }, see: (what: 'roof' | 'fans' | 'rail', k: number) => { play(); auto!.q = SEE[what][k]; auto!.t = (CUT * auto!.q.s) / 2; }, cineAt: (t: number) => { if (cine) cine.t = t; }, view: (s: { yaw: number; pitch: number; radius: number; target: number[] }) => { goal = null; yaw = s.yaw; pitch = s.pitch; radius = s.radius; target.fromArray(s.target); vyaw = vpitch = 0; }, scene, camera, ao, renderer, post });
+  if (import.meta.env.DEV) Object.assign(window, { cocoon: () => ({ grab, open, vopen, ax, az, tw, doorSign, cables: cables.length, carry: carry.x, hand, doorFree }), __x: () => carry.x, look: (y: number, p: number, r: number) => { goal = null; yaw = y; pitch = p; radius = r; vyaw = vpitch = 0; }, craneAt: (t: number) => { craneTime = t; }, shotKey: () => (auto ? key(shown()) : cine?.on ? 'cine' : null), shot: (i: number, x = 0.5) => { play(); auto!.i = i; auto!.t = CUT * AUTO[i].s * x; }, see: (what: 'roof' | 'fans' | 'rail', k: number) => { play(); auto!.q = SEE[what][k]; auto!.t = (CUT * auto!.q.s) / 2; }, cineAt: (t: number) => { if (cine) cine.t = t; }, view: (s: { yaw: number; pitch: number; radius: number; target: number[] }) => { goal = null; yaw = s.yaw; pitch = s.pitch; radius = s.radius; target.fromArray(s.target); vyaw = vpitch = 0; }, scene, camera, ao, renderer, post });
 
   // ---------- physics, in fixed steps
 
@@ -1029,6 +1062,7 @@ function start() {
       while (k < TAKES.length - 1 && cine.t > start + TAKES[k].s) start += TAKES[k++].s;
       const tk = TAKES[k];
       if (cine.t - dt <= start && k > 0) cutNow = true;
+      seen.set(key(tk.from), clock());
       const x = THREE.MathUtils.clamp((cine.t - start) / tk.s, 0, 1);
       const u = tk.ease === 'both' ? THREE.MathUtils.smootherstep(x, 0, 1) : tk.ease === 'end' ? 1 - (1 - x) * (1 - x) : x;
       yaw = THREE.MathUtils.lerp(tk.from.yaw, tk.to.yaw, u);
@@ -1047,6 +1081,8 @@ function start() {
       // (nearer, or through a longer lens, the same turn is a faster picture: less of it)
       const rate = (s.radius < 6 ? 0.9 : 1.3) * Math.min(1, (s.fov ?? 40) / 40);
       const x = auto.t / (CUT * s.s); // 0 at the cut, 1 at the next
+      seen.set(key(s), clock());
+      if (!auto.q) roundAt = auto.i;
       target.copy(s.target);
       if (s.fly) {
         // out in the hall, moving at an even pace, the eye on the pod wherever the crane has it
