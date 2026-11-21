@@ -8,7 +8,7 @@ import { defaults, mountPanel, setValue } from './settings';
 import { buildShards, mergeSets, type ShardSet } from './shards';
 import { Renderer, lookAt, perspective } from './render';
 import { Sound } from './audio';
-import { CONTACT, type BakeRequest, type FramesMessage, type SimConfig } from './sim.worker';
+import type { BakeRequest, FramesMessage, SimConfig } from './sim.worker';
 
 const params = new URLSearchParams(location.search);
 // ?clean: no page furniture, the scene alone (screengrabs, clips)
@@ -18,19 +18,30 @@ const canvas = document.querySelector<HTMLCanvasElement>('#c')!;
 const hint = document.querySelector<HTMLElement>('#hint')!;
 const bakeBar = document.querySelector<HTMLElement>('#bake')!;
 const bakeFill = bakeBar.querySelector<HTMLElement>('i')!;
+const bakeText = bakeBar.querySelector<HTMLElement>('span')!;
+let bakeLabel = '';
 const renderer = new Renderer(canvas);
 const sound = new Sound();
+// (a type-only import above: a value from the worker's file would pull Rapier into the page as well)
+const CONTACT = 7; // floats per contact, as sim.worker.ts writes them
 const worker = new Worker(new URL('./sim.worker.ts', import.meta.url), { type: 'module' });
 
 // every number the workbench can turn (?debug): the scene at once, cracks from the next bullet, the sim from the next break
 const V = defaults();
 let settled = false; // the page is up: before that there is no pane to prepare anything for
+function applyLook() {
+  const L = renderer.look;
+  for (const k of Object.keys(L) as (keyof typeof L)[]) L[k] = V[k];
+  // two rooms: dark, where the glass, its dust and its glints are what is lit, or a studio with a bright wall behind
+  const studio = V.studio >= 0.5;
+  L.wall *= studio ? 2.4 : 0.1; L.floor *= studio ? 1.5 : 0.5;
+  document.body.classList.toggle('studio', studio);
+}
 function applySettings() {
   for (const k of Object.keys(CRACKS) as (keyof typeof CRACKS)[]) CRACKS[k] = V[k];
   CRACKS.hole = V.hole / 1000;
-  const L = renderer.look;
-  for (const k of Object.keys(L) as (keyof typeof L)[]) L[k] = V[k];
-  if (settled) { placeTargets(); liveBtn.classList.toggle('live', V.live >= 0.5); bakeBar.querySelector('span')!.textContent = V.live >= 0.5 ? 'Simulating' : 'Baking the fall'; }
+  applyLook();
+  if (settled) { placeTargets(); liveBtn.classList.toggle('live', V.live >= 0.5); }
   if (settled && (V.panes !== layers.length || Math.abs(V.gap / 100 - gap) > 1e-6 || layers[layers.length - 1].tempered !== V.temper >= 0.5)) reset(); // another set-up: new panes
   else if (settled) prepareSoon(400); // the break that was got ready was for other numbers
 }
@@ -67,7 +78,7 @@ let W = 1.2, H = 0.8; // the size of a pane
 let gap = 0.25; // between two panes
 
 /** What the worker sends back for one request: the frames of one fall, as they come. */
-interface Bake { run: number; count: number; frames: Float32Array[]; contacts: number[]; done: boolean; total: number }
+interface Bake { run: number; count: number; frames: Float32Array[]; contacts: number[]; done: boolean; total: number; left: number } // left: pieces not at rest yet, where the worker has got to
 /** One fall: a set of shards, their baked frames and where the playback is. Several can play at once. */
 interface Fall {
   bake: Bake; set: ShardSet; base: number; // id of its first shard in the renderer
@@ -84,7 +95,7 @@ let held = -1; // a playhead to hold, for stills
 const active = () => falls.some((f) => !f.over);
 
 function bakeFall(set: ShardSet, req: Pick<BakeRequest, 'impacts' | 'balls' | 'standing'>): Bake {
-  const bake: Bake = { run: ++run, count: set.count, frames: [], contacts: [], done: false, total: 1 };
+  const bake: Bake = { run: ++run, count: set.count, frames: [], contacts: [], done: false, total: 1, left: set.count };
   bakes.set(bake.run, bake);
   worker.postMessage({ type: 'bake', run: bake.run, bodies: set.bodies, width: W, y0: Y0, seed, cfg: simCfg(), zs: layers.map((l) => l.z), ...req } satisfies BakeRequest);
   return bake;
@@ -112,8 +123,16 @@ const dPos = new Float32Array(DUST * 4);
 const dVel = new Float32Array(DUST * 3);
 const dLife = new Float32Array(DUST);
 const dWait = new Float32Array(DUST);
+const dDrag = new Float32Array(DUST); // how soon the air stops it: a splinter falls, powder hangs
 let dNext = 0;
 let dUsed = 0;
+// and glass ground to powder: puffs that hang in the air. x, y, z, thickness, radius, seed each
+const HAZE = Renderer.HAZE;
+const hBuf = new Float32Array(HAZE * 6);
+const hVel = new Float32Array(HAZE * 3);
+const hAge = new Float32Array(HAZE), hLife = new Float32Array(HAZE), hSize = new Float32Array(HAZE), hWait = new Float32Array(HAZE);
+let hNext = 0;
+let hUsed = 0;
 
 function newPane() {
   const aspect = innerWidth / innerHeight;
@@ -140,6 +159,7 @@ function newPane() {
   placeTargets();
   glassBtn.classList.toggle('tempered', V.temper >= 0.5);
   dPos.fill(0); dLife.fill(0); dUsed = 0;
+  hBuf.fill(0); hLife.fill(0); hUsed = 0;
   setHint();
 }
 
@@ -164,6 +184,17 @@ function toggleGlass() {
   reset();
 }
 glassBtn.addEventListener('click', () => { sound.wake(); toggleGlass(); });
+// the room: dark, or a studio. Nothing about the glass changes
+function toggleLight() {
+  V.studio = V.studio >= 0.5 ? 0 : 1;
+  setValue('studio', V.studio);
+  applyLook();
+  modeTag.textContent = V.studio >= 0.5 ? 'Light: studio' : 'Light: dark';
+  modeTag.hidden = false;
+  clearTimeout(modeTimer);
+  modeTimer = window.setTimeout(() => { modeTag.hidden = true; }, 1600);
+}
+document.querySelector<HTMLButtonElement>('#light')!.addEventListener('click', toggleLight);
 
 function setHint() {
   const touch = matchMedia('(pointer: coarse)').matches;
@@ -214,16 +245,44 @@ function dust(x: number, y: number, z: number, vx: number, vy: number, vz: numbe
   dPos[i * 4] = x; dPos[i * 4 + 1] = y; dPos[i * 4 + 2] = z; dPos[i * 4 + 3] = 0;
   dVel[i * 3] = vx; dVel[i * 3 + 1] = vy; dVel[i * 3 + 2] = vz;
   dLife[i] = life; dWait[i] = wait;
+  const r = Math.random();
+  dDrag[i] = 1.4 + 9 * r * r;
+}
+/** A puff of powder: thrown, stopped by the air within a few tenths of a second, then it hangs, spreads and thins. */
+function haze(x: number, y: number, z: number, vx: number, vy: number, vz: number, life: number, size: number, wait = 0) {
+  const i = hNext; hNext = (hNext + 1) % HAZE; hUsed = Math.max(hUsed, i + 1);
+  hBuf[i * 6] = x; hBuf[i * 6 + 1] = y; hBuf[i * 6 + 2] = z; hBuf[i * 6 + 3] = 0; hBuf[i * 6 + 4] = size; hBuf[i * 6 + 5] = Math.random();
+  hVel[i * 3] = vx; hVel[i * 3 + 1] = vy; hVel[i * 3 + 2] = vz;
+  hAge[i] = 0; hLife[i] = life; hSize[i] = size; hWait[i] = wait;
+}
+function stepHaze(dt: number) {
+  const k = Math.max(0, 1 - 4.5 * dt);
+  for (let i = 0; i < hUsed; i++) {
+    const p = i * 6, v = i * 3;
+    if (hAge[i] >= hLife[i]) { hBuf[p + 3] = 0; continue; }
+    if (hWait[i] > 0) { hWait[i] -= dt; continue; }
+    const age = (hAge[i] += dt), s = hBuf[p + 5] * 40;
+    hVel[v] *= k; hVel[v + 1] *= k; hVel[v + 2] *= k;
+    // once it has stopped it only wanders, and sinks a little
+    hBuf[p] += (hVel[v] + Math.sin(age * 0.6 + s) * 0.018) * dt;
+    hBuf[p + 1] = Math.max(0.02, hBuf[p + 1] + (hVel[v + 1] + Math.sin(age * 0.45 + s * 1.7) * 0.012 - 0.012) * dt);
+    hBuf[p + 2] += (hVel[v + 2] + Math.cos(age * 0.5 + s * 0.6) * 0.018) * dt;
+    const r = hSize[i] * (1 + 2.6 * (1 - Math.exp(-age * 1.3))) + 0.025 * age;
+    hBuf[p + 4] = r;
+    // as it spreads there is less of it in any one place
+    const t = Math.min(1, age / hLife[i]);
+    hBuf[p + 3] = Math.min(1, age / 0.05) * Math.pow(1 - t, 1.4) * 0.6 * Math.pow(hSize[i] / r, 0.5);
+  }
 }
 const gauss = () => (Math.random() + Math.random() + Math.random() + Math.random() - 2) * 1.73;
 
 function stepDust(dt: number) {
-  const drag = Math.exp(-2.2 * dt);
   for (let i = 0; i < dUsed; i++) {
     if (dLife[i] <= 0) { dPos[i * 4 + 3] = 0; continue; }
     if (dWait[i] > 0) { dWait[i] -= dt; continue; }
     const p = i * 4, v = i * 3;
-    dLife[i] -= dt * (dPos[p + 1] <= 0.003 ? 0.35 : 1);
+    dLife[i] -= dt * (dPos[p + 1] <= 0.003 ? 0.1 : 1); // what lies on the floor glitters there a good while
+    const drag = Math.max(0, 1 - dDrag[i] * dt);
     dVel[v] *= drag; dVel[v + 1] = dVel[v + 1] * drag - 6.5 * dt; dVel[v + 2] *= drag;
     dPos[p] += dVel[v] * dt; dPos[p + 1] += dVel[v + 1] * dt; dPos[p + 2] += dVel[v + 2] * dt;
     if (dPos[p + 1] < 0.003) { dPos[p + 1] = 0.003; dVel[v] = dVel[v + 1] = dVel[v + 2] = 0; }
@@ -276,11 +335,18 @@ function shoot(px: number, py: number, was?: boolean[]) {
       const cone = back ? 0.32 : 0.6;
       dust(wx + gauss() * 0.004, wy + gauss() * 0.004, L.z + (back ? -T : 0), gauss() * sp * cone, gauss() * sp * cone + 0.3, back ? -sp : sp, 0.7 + Math.random() * 2.2);
     }
+    // and the powder: a plume out the back along the bullet's way, a smaller one towards the gun
+    for (let i = 0; i < (16 * V.dust) / layers.length; i++) {
+      const back = i % 4 > 0;
+      const sp = back ? 1 + Math.random() * 9 : 0.4 + Math.random() * 2.2;
+      haze(wx, wy, L.z + (back ? -T : 0), gauss() * sp * 0.13, gauss() * sp * 0.13 + 0.05, back ? -sp : sp, 3.5 + Math.random() * 4, 0.018 + Math.random() * 0.03, Math.random() * 0.03);
+    }
   }
   if (!hit) return;
   shots++;
   setHint();
-  prepareSoon();
+  // live, nothing is baked, so there is nothing to wait for: every bullet blows out what it has just cut loose
+  if (V.live >= 0.5) shock(); else prepareSoon();
 }
 
 // what has left a pane in an earlier fall, read off its part of the mask (blue)
@@ -464,7 +530,7 @@ function shock(): boolean {
   for (const part of r.parts) {
     // the copy, with its pieces cut, is the pane from here on
     part.L.pane = part.pane;
-    cutPane(part.L, part.set);
+    if (part.set.kept) cutPane(part.L, part.set); // (a pane with nothing left has no mask or cracks to keep)
     part.L.standing = part.set.kept;
     renderer.setStanding(part.L.i, part.set.kept);
   }
@@ -521,7 +587,7 @@ worker.onmessage = (e: MessageEvent<FramesMessage>) => {
   const n = (bake.count + 1) * 7;
   for (let i = 0; i < m.count; i++) bake.frames.push(m.data.subarray(i * n, (i + 1) * n));
   for (let i = 0; i < m.contacts.length; i++) bake.contacts.push(m.contacts[i]);
-  bake.total = m.total;
+  bake.total = m.total; bake.left = m.left;
   if (m.done) bake.done = true;
 };
 
@@ -530,7 +596,16 @@ function startFall(f: Fall) {
   recoil = 1.6;
   flash = 0.35;
   // dust comes off every crack as the glass lets go
-  for (let i = 0; i < 3200 * V.dust * Math.min(1, f.set.count / 400); i++) {
+  const much = V.dust * Math.min(1, f.set.count / 400);
+  for (let i = 0; i < 90 * much; i++) {
+    // powder off the cracks, most of it where the blow was
+    const b = f.set.bodies[(Math.random() * f.set.count) | 0];
+    let d = Infinity;
+    for (const [ix, iy] of f.near) d = Math.min(d, Math.hypot(b.c[0] - ix, b.c[1] - iy));
+    const push = Math.exp(-d / 0.25);
+    haze(b.c[0], b.c[1], b.c[2], gauss() * 0.35, gauss() * 0.3 + 0.1, -0.4 - Math.random() * (1 + 6 * push), 4 + Math.random() * 5, 0.03 + Math.random() * 0.05, d / 7 + Math.random() * 0.12);
+  }
+  for (let i = 0; i < 4600 * much; i++) {
     const b = f.set.bodies[(Math.random() * f.set.count) | 0];
     let d = Infinity;
     for (const [ix, iy] of f.near) d = Math.min(d, Math.hypot(b.c[0] - ix, b.c[1] - iy));
@@ -563,14 +638,15 @@ function replayFall(): Fall | null {
   return null;
 }
 function setReplay(on: boolean) {
-  const f = replayFall();
+  const f = replayFall(), was = replay.on;
   if (on && !f) return;
   replay.on = on;
   filmBtn.classList.toggle('on', on);
   rpBox.hidden = !on;
   if (on) { replay.t = 0; replay.next = 0; replay.playing = true; replay.drawn = -1; rpPlay.classList.remove('paused'); }
-  else if (f) {
-    // back to where it was: at rest if it had come to rest, else on with the fall from here
+  else if (f && was) {
+    // back to where it was: at rest if it had come to rest, else on with the fall from here. (Only out of a
+    // replay: a fall in the air that was never replayed is left alone)
     const frames = f.bake.frames, last = frames.length - 1;
     if (f.over) { renderer.setPose(frames[last], frames[last], 0, f.base, f.set.count); }
     else { f.playhead = replay.t; f.lastHit = contactAt(f, replay.t * 60); }
@@ -755,7 +831,6 @@ function setLive(on: boolean, say = true) {
   V.live = on ? 1 : 0;
   setValue('live', V.live);
   liveBtn.classList.toggle('live', on);
-  bakeBar.querySelector('span')!.textContent = on ? 'Simulating' : 'Baking the fall';
   if (say) {
     modeTag.textContent = on ? 'Simulation: live' : 'Simulation: cached';
     modeTag.hidden = false;
@@ -833,6 +908,7 @@ window.addEventListener('keydown', (e) => {
   else if (e.code === 'KeyT') setTaping(!taping);
   else if (e.code === 'KeyC') setLive(V.live < 0.5);
   else if (e.code === 'KeyG') toggleGlass();
+  else if (e.code === 'KeyL') toggleLight();
   else if (e.code === 'Escape') setReplay(false);
   else if (e.code === 'KeyM') toggleSound();
 });
@@ -860,21 +936,28 @@ function frame(ms: number) {
   if (resetAt >= 0 && now > resetAt) { resetAt = -1; newPane(); fadeTo = 1; zoomTo = 1; }
 
   stepFalls(dt);
-  stepDust(slow && active() ? dt * (V.slow / V.pace) : dt);
-  renderer.setDust(dPos, dUsed);
+  const airDt = slow && active() ? dt * (V.slow / V.pace) : dt;
+  stepDust(airDt); stepHaze(airDt);
+  renderer.setDust(dPos, dUsed); renderer.setHaze(hBuf, hUsed);
 
   // how far the bake is, while it runs
   const baking = [...bakes.values()].find((b) => !b.done);
   bakeBar.hidden = !baking || replay.on;
-  if (baking) bakeFill.style.transform = `scaleX(${Math.min(1, baking.frames.length / baking.total)})`;
+  if (baking) {
+    bakeFill.style.transform = `scaleX(${Math.min(1, baking.frames.length / baking.total)})`;
+    // and how many pieces have still to come to rest before it is done
+    const label = `${V.live >= 0.5 ? 'Simulating' : 'Baking the fall'} · ${baking.left} ${baking.left === 1 ? 'piece' : 'pieces'} left`;
+    if (label !== bakeLabel) bakeText.textContent = bakeLabel = label;
+  }
 
   updateCamera(now, dt);
-  renderer.draw(cam.view, cam.proj, cam.eye, now, now, flash, fade, dUsed);
+  renderer.draw(cam.view, cam.proj, cam.eye, now, now, flash, fade, dUsed, hUsed);
   requestAnimationFrame(frame);
 }
 
 window.addEventListener('resize', resize);
 newPane();
+applyLook();
 settled = true;
 setLive(V.live >= 0.5, false);
 resize();

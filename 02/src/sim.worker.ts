@@ -40,6 +40,8 @@ export interface FramesMessage {
   done: boolean;
   /** frames the bake will be at most */
   total: number;
+  /** shards not at rest yet in the last of these frames: still to let go, or let go and moving */
+  left: number;
 }
 
 export const CONTACT = 7;
@@ -97,7 +99,7 @@ async function bake(req: BakeRequest) {
   const bodies: RAPIER.RigidBody[] = [];
   const release = new Float32Array(n);
   const kick = new Float32Array(n * 6);
-  const state = new Uint8Array(n); // 0 held, 1 falling, 2 stuck in the channel for good
+  const state = new Uint8Array(n); // 0 held, 1 falling, 2 stuck in the channel for good, 3 out of the room
   // contacts: who a collider belongs to, how fast each body was going before the step, when it was let go
   const owner = new Map<number, number>();
   const prevV = new Float32Array(n * 3);
@@ -193,6 +195,7 @@ async function bake(req: BakeRequest) {
   let contacts: number[] = [];
   const frameContacts: number[][] = [];
   let inChunk = 0, first = 0, quiet = 0;
+  const few = Math.min(9, Math.floor(n * 0.03));
   for (let f = 0; f < maxFrames; f++) {
     const t = f / FPS;
     frameContacts.length = 0;
@@ -234,7 +237,7 @@ async function bake(req: BakeRequest) {
     // the loudest few of the frame are kept: a thousand shards landing is not a thousand sounds
     frameContacts.sort((u, v) => v[5] * Math.sqrt(v[4]) - u[5] * Math.sqrt(u[4]));
     for (let k = 0; k < Math.min(cfg.contacts, frameContacts.length); k++) contacts.push(...frameContacts[k]);
-    let awake = 0;
+    let awake = 0, left = 0, fast = 0;
     const o = inChunk * N7;
     for (let i = 0; i < n; i++) {
       const body = bodies[i];
@@ -247,19 +250,37 @@ async function bake(req: BakeRequest) {
       data[k + 1] = (p.y + ay + q.w * ty + q.z * tx - q.x * tz) / S;
       data[k + 2] = (p.z + az + q.w * tz + q.x * ty - q.y * tx) / S;
       data[k + 3] = q.x; data[k + 4] = q.y; data[k + 5] = q.z; data[k + 6] = q.w;
-      if (state[i] === 1 && !body.isSleeping()) awake++;
+      // one that is thrown off the edge of the floor falls for ever: it is out of the room and out of the count
+      if (state[i] === 1 && (p.y < -0.3 * S || Math.abs(p.x) > 7.8 * S || Math.abs(p.z) > 7.8 * S)) { state[i] = 3; body.setEnabled(false); }
+      // still to come to rest: held, or moving. (A pile never goes to sleep in the solver's sense, though nothing
+      // in it moves: what counts is whether a piece can be seen to move.)
+      if (state[i] === 0) { left++; fast++; }
+      else if (state[i] === 1 && !body.isSleeping()) {
+        const lv = body.linvel(), av = body.angvel();
+        const v = Math.hypot(lv.x, lv.y, lv.z);
+        if (v > 0.02 * S || Math.hypot(av.x, av.y, av.z) > 0.6) { left++; if (v > 0.25 * S) fast++; }
+      }
     }
     {
       const p = ball.translation(), q = ball.rotation(), k = o + n * 7;
       data[k] = p.x / S; data[k + 1] = p.y / S; data[k + 2] = p.z / S;
       data[k + 3] = q.x; data[k + 4] = q.y; data[k + 5] = q.z; data[k + 6] = q.w;
-      for (const bb of balls) { const lv = bb.linvel(); if (!bb.isSleeping() && Math.hypot(lv.x, lv.y, lv.z) > 0.3 * S) awake++; }
+      // the unseen balls have done their work within a second: after that they would only roll about, nudging
+      // glass that lies still, and keep the bake going to its last frame
+      for (const bb of balls) {
+        if (!bb.isEnabled()) continue;
+        const bp = bb.translation(), lv = bb.linvel();
+        if (t > 1 || bp.y < -0.3 * S || Math.abs(bp.x) > 7.8 * S || Math.abs(bp.z) > 7.8 * S) bb.setEnabled(false);
+        else if (!bb.isSleeping() && Math.hypot(lv.x, lv.y, lv.z) > 0.3 * S) awake++;
+      }
     }
     inChunk++;
-    quiet = t > last + 0.5 && awake === 0 ? quiet + 1 : 0;
+    // done when it is all at rest, or all but a few that only rock where they lie: they would have the bake run
+    // to its last frame for nothing anyone looks at
+    quiet = t > last + 0.5 && awake === 0 && fast === 0 && left <= few ? quiet + 1 : 0;
     const done = f === maxFrames - 1 || quiet > 20;
     if (inChunk === CHUNK || done) {
-      const msg: FramesMessage = { type: 'frames', run: req.run, first, count: inChunk, data: data.subarray(0, inChunk * N7), contacts: new Float32Array(contacts), done, total: maxFrames };
+      const msg: FramesMessage = { type: 'frames', run: req.run, first, count: inChunk, data: data.subarray(0, inChunk * N7), contacts: new Float32Array(contacts), done, total: maxFrames, left };
       const copy = { ...msg, data: msg.data.slice() };
       contacts = [];
       (self as unknown as Worker).postMessage(copy, [copy.data.buffer, copy.contacts.buffer]);

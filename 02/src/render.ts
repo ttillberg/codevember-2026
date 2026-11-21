@@ -1,6 +1,6 @@
 // WebGL2. Three steps a frame: the shadow of the glass on the floor, into a map; the room and every crack
 // surface, into a texture; then the faces of the glass on screen, which look that texture up, bent.
-import { TAPE_FS, COPY_FS, DUST_FS, DUST_VS, FACE_FS, GLASS_VS, QUAD_VS, ROOM_FS, ROOM_VS, SHADOW_FS, VIGNETTE_FS, WALL_FS } from './shaders';
+import { TAPE_FS, COPY_FS, DUST_FS, DUST_VS, HAZE_FS, HAZE_VS, FACE_FS, GLASS_VS, QUAD_VS, ROOM_FS, ROOM_VS, SHADOW_FS, VIGNETTE_FS, WALL_FS } from './shaders';
 import { STRIDE, pushWall, type ShardSet } from './shards';
 import type { Pane, Seg } from './cracks';
 
@@ -40,6 +40,7 @@ export class Renderer {
   private wallVao: WebGLVertexArrayObject; private wallBuf: WebGLBuffer; private wallCount = 0;
   private faceVao: WebGLVertexArrayObject; private faceBuf: WebGLBuffer; private faceCount = 0;
   private dustVao: WebGLVertexArrayObject; private dustBuf: WebGLBuffer; private dustSeed: WebGLBuffer;
+  private hazeVao: WebGLVertexArrayObject; private hazeBuf: WebGLBuffer;
   private wallAll = new Float32Array(0); private faceAll = new Float32Array(0); private shardCount = 0;
   private xf: WebGLTexture; private xfData = new Float32Array(XF_W * 4); private xfRows = 1;
   private mask: WebGLTexture;
@@ -58,7 +59,8 @@ export class Renderer {
   private tapeFellVao!: WebGLVertexArrayObject; private tapeFellBuf!: WebGLBuffer; private tapeFell: number[] = [];
   pane = { W: 1, H: 1, y0: 0, T: 0.008, N: 1 };
   static SHADOW = 2048;
-  static DUST = 6000;
+  static DUST = 9000;
+  static HAZE = 260;
 
   constructor(canvas: HTMLCanvasElement) {
     const gl = canvas.getContext('webgl2', { antialias: true, alpha: false, powerPreference: 'high-performance' });
@@ -71,6 +73,7 @@ export class Renderer {
     this.prog('copy', QUAD_VS, COPY_FS);
     this.prog('vignette', QUAD_VS, VIGNETTE_FS);
     this.prog('dust', DUST_VS, DUST_FS);
+    this.prog('haze', HAZE_VS, HAZE_FS);
     this.prog('tape', GLASS_VS, TAPE_FS);
     [this.tapeVao, this.tapeBuf] = this.glassVao();
     [this.tapeFellVao, this.tapeFellBuf] = this.glassVao();
@@ -98,6 +101,15 @@ export class Renderer {
     for (let i = 0; i < seeds.length; i++) seeds[i] = Math.random();
     gl.bufferData(gl.ARRAY_BUFFER, seeds, gl.STATIC_DRAW);
     gl.enableVertexAttribArray(1); gl.vertexAttribPointer(1, 1, gl.FLOAT, false, 0, 0);
+
+    // haze: x, y, z, thickness, radius, seed
+    this.hazeVao = gl.createVertexArray()!;
+    gl.bindVertexArray(this.hazeVao);
+    this.hazeBuf = gl.createBuffer()!;
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.hazeBuf);
+    gl.bufferData(gl.ARRAY_BUFFER, Renderer.HAZE * 24, gl.DYNAMIC_DRAW);
+    gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 4, gl.FLOAT, false, 24, 0);
+    gl.enableVertexAttribArray(1); gl.vertexAttribPointer(1, 2, gl.FLOAT, false, 24, 16);
 
     this.xf = gl.createTexture()!;
     gl.bindTexture(gl.TEXTURE_2D, this.xf);
@@ -300,6 +312,12 @@ export class Renderer {
     gl.bufferSubData(gl.ARRAY_BUFFER, 0, data, 0, count * 4);
   }
 
+  setHaze(data: Float32Array, count: number) {
+    const gl = this.gl;
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.hazeBuf);
+    gl.bufferSubData(gl.ARRAY_BUFFER, 0, data, 0, count * 6);
+  }
+
   resize(w: number, h: number) {
     if (w === this.w && h === this.h) return;
     const gl = this.gl;
@@ -385,7 +403,7 @@ export class Renderer {
     this.uploadRibbons(i);
   }
 
-  draw(view: Mat4, proj: Mat4, cam: number[], now: number, shardNow: number, flash: number, fade: number, dustCount: number) {
+  draw(view: Mat4, proj: Mat4, cam: number[], now: number, shardNow: number, flash: number, fade: number, dustCount: number, hazeCount: number) {
     const gl = this.gl;
     const vp = mul(proj, view);
     gl.disable(gl.CULL_FACE);
@@ -412,6 +430,15 @@ export class Renderer {
     gl.uniform3fv(u.uCam, cam); gl.uniform1f(u.uFlash, flash);
     gl.activeTexture(gl.TEXTURE2); gl.bindTexture(gl.TEXTURE_2D, this.shadowTex); gl.uniform1i(u.uShadow, 2);
     gl.bindVertexArray(this.room); gl.drawArrays(gl.TRIANGLES, 0, this.roomCount);
+    if (hazeCount) {
+      // the haze is part of the room: in front of its walls, behind whatever glass is drawn after it
+      gl.enable(gl.BLEND); gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA); gl.depthMask(false);
+      u = this.use('haze');
+      gl.uniformMatrix4fv(u.uVP, false, vp);
+      gl.uniform1f(u.uPx, this.h * proj[5] * 0.5); gl.uniform1f(u.uFlash, flash);
+      gl.bindVertexArray(this.hazeVao); gl.drawArrays(gl.POINTS, 0, hazeCount);
+      gl.depthMask(true); gl.disable(gl.BLEND);
+    }
     if (this.look.frost > 0.001) {
       gl.bindFramebuffer(gl.READ_FRAMEBUFFER, this.msFbo);
       gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, this.roomFbo);

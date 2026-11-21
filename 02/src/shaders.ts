@@ -45,7 +45,9 @@ vec3 wallCol(vec3 p) {
 }
 vec3 studio(vec3 d) {
   vec3 c = vec3(0.012, 0.012, 0.014);
-  c += vec3(1.0, 0.97, 0.92) * 9.0 * smoothstep(0.72, 0.9, dot(d, normalize(vec3(-0.4, 0.85, 0.35))));
+  float key = dot(d, normalize(vec3(-0.4, 0.85, 0.35)));
+  c += vec3(1.0, 0.97, 0.92) * 9.0 * smoothstep(0.72, 0.9, key);
+  c += vec3(1.0, 0.98, 0.95) * 70.0 * smoothstep(0.988, 0.997, key); // the bulb itself: what a turning shard flashes with
   c += vec3(0.75, 0.88, 1.0) * 5.0 * smoothstep(0.95, 0.975, dot(d, normalize(vec3(0.9, 0.3, 0.3))));
   c += vec3(1.0, 0.95, 0.9) * 1.1 * smoothstep(0.8, 1.0, dot(d, normalize(vec3(0.3, 0.4, 1.0)))) * smoothstep(0.0, 0.25, d.y);
   c += vec3(1.0, 0.8, 0.5) * 14.0 * uFlash * smoothstep(0.5, 1.0, d.z) * smoothstep(0.0, 0.3, d.y);
@@ -140,7 +142,7 @@ void main() {
 // crack shows the room from somewhere else, or it is sent along the pane and stays in: that is the dark line.
 export const WALL_FS = COMMON + /* glsl */ `
 in vec3 vW; in vec3 vN; in vec3 vNl; in vec2 vUv; in vec4 vD; flat in vec4 vQ;
-uniform vec3 uCam; uniform float uNow; uniform float uSeam; uniform float uCut;
+uniform vec3 uCam; uniform float uNow; uniform float uSeam; uniform float uCut; uniform float uUseXf;
 uniform sampler2D uMask; uniform vec3 uPane;
 out vec4 o;
 // the masks of all panes are stacked in one texture; the pane a vertex belongs to is the tens of its kind
@@ -163,6 +165,11 @@ void main() {
   vec3 seen = dot(og, og) > 0.0 ? look(vW, rot(vQ, og)) : vec3(0.0);
   vec3 trapped = vec3(0.006, 0.02, 0.018) + vec3(0.25, 0.5, 0.45) * uFlash * 0.25;
   vec3 c = mix(trapped, seen * vec3(0.82, 0.95, 0.9), esc);
+  // a shard on its own: the light it has gathered through its faces leaves by its edges, bottle green
+  if (uUseXf > 0.5) {
+    vec2 lp = vW.xz - vec2(0.0, -0.25);
+    c += vec3(0.004, 0.04, 0.024) * (0.2 + 1.1 * exp(-dot(lp, lp) / 1.5) + 2.0 * uFlash) * (0.5 + vnoise(hp * 0.2));
+  }
   // where the crack meets the surface the edge is chipped and catches light
   float seam = exp(-vD.x * 10.0) + 0.5 * exp(-(1.0 - vD.x) * 10.0);
   float glint = pow(vnoise(vUv * 900.0 + Vl.xy * 14.0), 6.0);
@@ -215,7 +222,8 @@ void main() {
     blur = mix(blur / 16.0, vec3(0.5, 0.52, 0.51) * (0.75 + uFlash), uFrost * 0.22);
     c = mix(blur, c, crack);
   }
-  c *= pow(vec3(0.93, 0.975, 0.955), vec3(uGlass.x));
+  // green, and greener the longer the way through it: a pane seen from the front is nearly clear, a shard on edge is not
+  c *= pow(vec3(0.93, 0.975, 0.955), vec3(uGlass.x / max(abs(dot(N, V)), 0.14)));
   // the targets, in dark matt tape: a small circle with a dot in its empty middle, and four long strokes
   // around it. Nothing touches: there is a gap between each stroke and the circle. By pane coordinates, so a
   // shard keeps its part of one
@@ -266,26 +274,69 @@ void main() {
 }
 `;
 
+// glass in grains and splinters. Each turns as it flies and as the eye moves: dull most of the time, then a
+// flash of the lamp. Most are grains, a few are long
 export const DUST_VS = /* glsl */ `#version 300 es
 layout(location = 0) in vec4 aP; // position, life 0…1
 layout(location = 1) in float aSeed;
 uniform mat4 uVP; uniform float uPx; uniform vec3 uCam;
-out float vA;
+out float vA; out vec3 vR;
 void main() {
   gl_Position = uVP * vec4(aP.xyz, 1.0);
-  float tw = 0.5 + 0.5 * sin(aSeed * 91.0 + dot(aP.xyz, vec3(190.0, 230.0, 170.0)) + dot(uCam, vec3(9.0)));
-  vA = aP.w * tw * tw;
-  gl_PointSize = max(1.0, uPx * (0.0018 + 0.004 * fract(aSeed * 7.3)) / gl_Position.w);
+  float ph = aSeed * 91.0 + dot(aP.xyz, vec3(190.0, 230.0, 170.0)) + dot(uCam, vec3(9.0));
+  float tw = 0.5 + 0.5 * sin(ph);
+  float big = pow(fract(aSeed * 7.3), 5.0);
+  // (one that flies at the lens is gone before it fills the picture)
+  vA = aP.w * (0.1 + 0.55 * tw * tw + 6.0 * pow(tw, 26.0)) * smoothstep(0.25, 0.7, gl_Position.w);
+  float a = aSeed * 40.0 + ph * 0.12;
+  vR = vec3(cos(a), sin(a), 1.0 + 3.5 * big);
+  gl_PointSize = clamp(uPx * (0.0016 + 0.013 * big) / gl_Position.w, 1.5, 28.0);
 }
 `;
 
 export const DUST_FS = /* glsl */ `#version 300 es
 precision highp float;
-in float vA; uniform float uFlash; out vec4 o;
+in float vA; in vec3 vR; uniform float uFlash; out vec4 o;
 void main() {
   vec2 q = gl_PointCoord - 0.5;
+  q = vec2(q.x * vR.x + q.y * vR.y, (q.y * vR.x - q.x * vR.y) * vR.z);
   float a = smoothstep(0.5, 0.1, length(q)) * vA;
-  o = vec4(vec3(0.75, 0.9, 0.88) * a * (0.5 + uFlash * 3.0), 1.0);
+  o = vec4(vec3(0.72, 0.92, 0.86) * a * (0.5 + uFlash * 3.0), 1.0);
+}
+`;
+
+// glass ground to powder: soft puffs that hang in the air and drift. They go into the picture of the room, so
+// frosted glass in front of them blurs them like the rest of it
+export const HAZE_VS = /* glsl */ `#version 300 es
+layout(location = 0) in vec4 aP; // position, how thick it still is
+layout(location = 1) in vec2 aS; // radius in metres, seed
+uniform mat4 uVP; uniform float uPx;
+out float vA; out float vSeed; out vec3 vW;
+void main() {
+  gl_Position = uVP * vec4(aP.xyz, 1.0);
+  float px = uPx * aS.x * 2.0 / max(gl_Position.w, 0.05);
+  // (a point is only allowed to be so large: past that it thins out)
+  vA = aP.w * min(1.0, 240.0 / px) * smoothstep(0.3, 0.9, gl_Position.w); vSeed = aS.y; vW = aP.xyz;
+  gl_PointSize = min(px, 240.0);
+  if (aP.w <= 0.0) gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
+}
+`;
+
+export const HAZE_FS = COMMON + /* glsl */ `
+in float vA; in float vSeed; in vec3 vW;
+out vec4 o;
+void main() {
+  vec2 q = gl_PointCoord - 0.5;
+  float body = max(exp(-dot(q, q) * 14.0) - 0.03, 0.0);
+  // not a ball: wisps, each puff turned its own way
+  float t = vSeed * 6.283;
+  vec2 w = mat2(cos(t), -sin(t), sin(t), cos(t)) * q;
+  float n = 0.55 * vnoise(w * vec2(3.0, 6.0) + vSeed * 37.0) + 0.45 * vnoise(w * vec2(7.0, 13.0) + vSeed * 91.0);
+  float a = body * (0.08 + 2.1 * n * n) * vA;
+  // lit by the lamp over the floor, and by the shot: paler than a dark room, darker than a bright one
+  vec2 p = vW.xz - vec2(0.0, -0.25);
+  float lit = 0.07 + 0.34 * exp(-dot(p, p) / 1.5) + uFlash * 1.2;
+  o = vec4(tone(vec3(0.74, 0.8, 0.78) * lit) * a, a);
 }
 `;
 

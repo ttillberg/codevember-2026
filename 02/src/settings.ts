@@ -18,6 +18,7 @@ export const SECTIONS: Section[] = [
       it('exposure', 'Exposure', 0.3, 2.5, 0.01, 1),
       it('wall', 'Wall light', 0, 2.5, 0.01, 1),
       it('floor', 'Floor light', 0, 2.5, 0.01, 1),
+      it('studio', 'Studio, not dark', 0, 1, 1, 0),
       it('tint', 'Glass tint', 0, 4, 0.01, 1),
       it('refl', 'Reflections', 0, 4, 0.01, 1),
       it('bend', 'Refraction', 0, 0.08, 0.001, 0.014),
