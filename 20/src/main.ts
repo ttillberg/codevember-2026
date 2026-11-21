@@ -353,7 +353,7 @@ function start() {
     inside.position.copy(podCentre);
     pod.add(inside);
 
-    hall = buildHall(scene, swing.position.clone(), renderer.capabilities.maxTextureSize);
+    hall = buildHall(scene, swing.position.clone(), renderer.capabilities.maxTextureSize, query.get('steel'));
     if (NO.has('scaffolding')) hall.scaffolding(false);
     // the sun's light in the haze, marched against its shadow map, after the AO and before the tone mapping
     const rays = new Rays(camera, hall.sun, hall.podSun, () => (eye === camera ? sceneDepth : null), { roof: hall.roofY, box: hall.air, density: 0.04, fans: hall.fans });

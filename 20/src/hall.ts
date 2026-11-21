@@ -31,13 +31,24 @@ THREE.ShaderChunk.fog_fragment = `#ifdef USE_FOG
  * skylights), the girder the pod hangs from, light from the roof and from windows in the sides, and the shafts of
  * that light in the fog, faked as soft additive cones with dust drifting through.
  */
-export function buildHall(scene: THREE.Scene, hang: THREE.Vector3, maxTexture = 4096) {
+export function buildHall(scene: THREE.Scene, hang: THREE.Vector3, maxTexture = 4096, steelAs: string | null = null) {
+  const fullSteel = steelAs === 'full';
   const V = (x: number, y: number, z: number) => new THREE.Vector3(x, y, z);
   const ROOF = 75; // high up, in the haze
 
   // ---------- steel: every bar one instance of a unit box, stretched from a to b
 
+  // Cheap but good to look at: only the hall's own bay round the pod is built bar by bar. Everything further out,
+  // which is nearly all of it and stands in the haze, is a light frame: the same towers, girders and stagings with
+  // bays three times as long and members a little heavier, so they hold at that distance. A third of the bars,
+  // and drawn in a few big blocks instead of hundreds of small ones.
   const bars: THREE.Matrix4[] = [];
+  const lite: THREE.Matrix4[] = [];
+  let sink = bars;
+  const nodes: THREE.Vector3[] = []; // joints of the far frame, where a lamp might be
+  const NEAR = { x: 15, z0: -39, z1: 27, y0: -30, y1: 34 };
+  // (fullSteel: all of it bar by bar, as it was, to set the light frame against: ?steel=full)
+  const farAt = (x: number, y: number, z: number) => !fullSteel && (Math.abs(x) > NEAR.x || z < NEAR.z0 || z > NEAR.z1 || y < NEAR.y0 || y > NEAR.y1);
   const up = V(0, 1, 0);
   const m4 = new THREE.Matrix4();
   const q = new THREE.Quaternion();
@@ -46,39 +57,59 @@ export function buildHall(scene: THREE.Scene, hang: THREE.Vector3, maxTexture = 
     const len = d.length();
     if (len < 1e-4) return;
     q.setFromUnitVectors(up, d.divideScalar(len));
-    bars.push(m4.compose(a.clone().add(b).multiplyScalar(0.5), q, V(w, len, h)).clone());
+    sink.push(m4.compose(a.clone().add(b).multiplyScalar(0.5), q, V(w, len, h)).clone());
   };
 
-  /** a box truss from a to b, `side` its half width, `rise` its height, panels about `panel` long */
-  const truss = (a: THREE.Vector3, b: THREE.Vector3, side: THREE.Vector3, rise: THREE.Vector3, panel: number, chord = 0.16, web = 0.07) => {
+  /** a box truss from a to b, `side` its half width, `rise` its height, panels about `panel` long. Far off (or
+   *  where `light` says so) a light one: long panels, a post each side and a diagonal, nothing across */
+  const truss = (a: THREE.Vector3, b: THREE.Vector3, side: THREE.Vector3, rise: THREE.Vector3, panel: number, chord = 0.16, web = 0.07, light?: boolean) => {
+    const mid = a.clone().lerp(b, 0.5);
+    const far = fullSteel ? false : light ?? farAt(mid.x, mid.y, mid.z);
+    const was = sink;
+    sink = far ? lite : bars;
+    if (far) { panel *= 3; chord *= 1.25; web *= 1.5; }
     const corners = [side.clone().negate(), side.clone(), side.clone().negate().add(rise), side.clone().add(rise)];
     for (const c of corners) bar(a.clone().add(c), b.clone().add(c), chord);
     const n = Math.max(1, Math.round(a.distanceTo(b) / panel));
     for (let i = 0; i <= n; i++) {
       const p = a.clone().lerp(b, i / n);
       const [l0, r0, l1, r1] = corners.map((c) => p.clone().add(c));
-      bar(l0, l1, web); bar(r0, r1, web); bar(l0, r0, web); bar(l1, r1, web);
+      bar(l0, l1, web); bar(r0, r1, web);
+      if (!far) { bar(l0, r0, web); bar(l1, r1, web); } else nodes.push(i % 2 ? l0 : r1);
       if (i === n) continue;
       const p2 = a.clone().lerp(b, (i + 1) / n);
       const [l2, r2, l3, r3] = corners.map((c) => p2.clone().add(c));
       if (i % 2) { bar(l0, l3, web); bar(r0, r3, web); } else { bar(l1, l2, web); bar(r1, r2, web); }
     }
+    sink = was;
   };
 
-  /** a lattice tower, w wide, from y0 to y1 */
+  /** a lattice tower, w wide, from y0 to y1: bar by bar where it passes the pod's bay, a light one above, below
+   *  and everywhere else (long bays, a diagonal on two faces of each in turn) */
   const tower = (x: number, z: number, y0: number, y1: number, w: number) => {
     const h = w / 2;
     const cs = [V(-h, 0, -h), V(h, 0, -h), V(h, 0, h), V(-h, 0, h)];
-    for (const c of cs) bar(V(x + c.x, y0, z + c.z), V(x + c.x, y1, z + c.z), 0.22);
-    const step = w * 1.2;
-    for (let y = y0, k = 0; y < y1; y += step, k++) {
-      for (let i = 0; i < 4; i++) {
-        const a = cs[i], b = cs[(i + 1) % 4];
-        bar(V(x + a.x, y, z + a.z), V(x + b.x, y, z + b.z), 0.1);
-        const flip = (k + i) % 2 ? 1 : 0;
-        bar(V(x + a.x, y + step * flip, z + a.z), V(x + b.x, y + step * (1 - flip), z + b.z), 0.07);
+    const was = sink;
+    const run = (a: number, b: number, far: boolean) => {
+      if (b - a < 0.5) return;
+      sink = far ? lite : bars;
+      for (const c of cs) bar(V(x + c.x, a, z + c.z), V(x + c.x, b, z + c.z), far ? 0.26 : 0.22);
+      const step = w * 1.2 * (far ? 3 : 1);
+      for (let y = a, k = 0; y < b; y += step, k++) {
+        const top = Math.min(b, y + step);
+        if (far) nodes.push(V(x + cs[k % 4].x * 1.15, y + 0.4, z + cs[k % 4].z * 1.15));
+        for (let i = 0; i < 4; i++) {
+          const p = cs[i], n = cs[(i + 1) % 4];
+          bar(V(x + p.x, y, z + p.z), V(x + n.x, y, z + n.z), far ? 0.14 : 0.1);
+          if (far && (k + i) % 2) continue;
+          const flip = (k + (far ? i >> 1 : i)) % 2 ? 1 : 0;
+          bar(V(x + p.x, flip ? top : y, z + p.z), V(x + n.x, flip ? y : top, z + n.z), far ? 0.1 : 0.07);
+        }
       }
-    }
+    };
+    if (farAt(x, 0, z)) run(y0, y1, true);
+    else { run(y0, NEAR.y0, true); run(Math.max(y0, NEAR.y0), Math.min(y1, NEAR.y1), false); run(NEAR.y1, y1, true); }
+    sink = was;
   };
 
   const TX = 12; // the towers either side of the pod
@@ -100,7 +131,7 @@ export function buildHall(scene: THREE.Scene, hang: THREE.Vector3, maxTexture = 
       for (const y of ys) { truss(V(a, y, z), V(b, y, z), V(0, 0, 0.8), V(0, 2.2, 0), 2.2); spans.push({ a: V(a, y, z), b: V(b, y, z) }); }
     }
     // the roof's trusses, deep ones, right across
-    truss(V(COLS[0] - 6, ROOF - 4, z), V(WX, ROOF - 4, z), V(0, 0, 0.6), V(0, 4, 0), 3, 0.2, 0.09);
+    truss(V(COLS[0] - 6, ROOF - 4, z), V(WX, ROOF - 4, z), V(0, 0, 0.6), V(0, 4, 0), 3, 0.2, 0.09, true);
   }
   for (const x of COLS) {
     if (Math.abs(x) === TX) continue; // (along the hall's own rows below)
@@ -134,8 +165,10 @@ export function buildHall(scene: THREE.Scene, hang: THREE.Vector3, maxTexture = 
   }
   // the girder it hangs from, across the hall, and the rails between the roof trusses
   const gy = hang.y + 0.35;
-  truss(V(-TX, gy, hang.z), V(TX, gy, hang.z), V(0, 0, 0.6), V(0, 1.8, 0), 1.8, 0.2, 0.08);
+  truss(V(-TX, gy, hang.z), V(TX, gy, hang.z), V(0, 0, 0.6), V(0, 1.8, 0), 1.8, 0.2, 0.08, false);
+  sink = lite;
   for (let x = COLS[0] - 6; x <= WX; x += 8) bar(V(x, ROOF - 4, ROWS[0] + 6), V(x, ROOF - 4, ROWS[ROWS.length - 1] - 6), 0.3, 0.5);
+  sink = bars;
   // a frame round the hang point where the hoses come down from, a grating hung under the girder: on a trolley
   // that runs along it (main.ts drives it), so its bars are kept apart from the hall's, which stand still
   const carriage: THREE.Matrix4[] = [];
@@ -173,10 +206,12 @@ export function buildHall(scene: THREE.Scene, hang: THREE.Vector3, maxTexture = 
     }
     box(V(x + 1.5, ROOF + 0.3, (Z0 + Z1) / 2), V(3, 0.4, Z0 - Z1));
   }
+  sink = lite;
   for (const [x0, x1] of GLASS) {
     for (let z = GZ0; z > GZ1; z -= 1.4) bar(V(x0, ROOF + 0.3, z), V(x1, ROOF + 0.3, z), 0.08, 0.16);
     bar(V((x0 + x1) / 2, ROOF + 0.3, GZ0), V((x0 + x1) / 2, ROOF + 0.3, GZ1), 0.06, 0.12);
   }
+  sink = bars;
   const FAN_R = 6.5, HUB = 1.1, BLADES = 5;
   // two bigger ones up in the sun's wall, near the end: the first just where the eye looks up to as the page
   // opens, behind the steel but peeking out from under it. The sun itself comes in through them
@@ -243,6 +278,28 @@ export function buildHall(scene: THREE.Scene, hang: THREE.Vector3, maxTexture = 
     const x0 = cx - (nx * BX) / 2, z0 = cz - (nz * BZ) / 2;
     const at = (i: number, k: number, l: number) => V(x0 + i * BX, y0 + l * LIFT, z0 + k * BZ);
     const top = lifts;
+    if (farAt(cx, y0 + (lifts * LIFT) / 2, cz)) {
+      // far off: the standards, and on every third lift one ledger and one run of boards down each side, a brace
+      // up each face between them
+      sink = lite;
+      for (let i = 0; i <= nx; i++) for (let k = 0; k <= nz; k++) {
+        if (i > 0 && i < nx && k > 0 && k < nz) continue;
+        bar(at(i, k, 0), at(i, k, top), 0.07);
+      }
+      for (let l = 3; l <= top; l += 3) {
+        for (const k of [0, nz]) {
+          bar(at(0, k, l), at(nx, k, l), 0.07);
+          bar(at(0, k, l).add(V(0, 0.03, k ? -0.55 : 0.55)), at(nx, k, l).add(V(0, 0.03, k ? -0.55 : 0.55)), 1.0, 0.05);
+          if ((l / 3) % 2) bar(at(0, k, l - 3), at(nx, k, l), 0.06); else bar(at(nx, k, l - 3), at(0, k, l), 0.06);
+        }
+        for (const i of [0, nx]) {
+          bar(at(i, 0, l), at(i, nz, l), 0.07);
+          bar(at(i, 0, l).add(V(i ? -0.55 : 0.55, 0.03, 0)), at(i, nz, l).add(V(i ? -0.55 : 0.55, 0.03, 0)), 0.05, 1.0);
+        }
+      }
+      sink = bars;
+      return;
+    }
     for (let i = 0; i <= nx; i++) for (let k = 0; k <= nz; k++) {
       if (i > 0 && i < nx && k > 0 && k < nz) continue;   // round the outside only, the tower inside
       bar(at(i, k, 0), at(i, k, top), 0.05);
@@ -293,17 +350,24 @@ export function buildHall(scene: THREE.Scene, hang: THREE.Vector3, maxTexture = 
   for (const h of HOISTS) {
     const s = 0.4;
     const cs = [V(-s, 0, -s), V(s, 0, -s), V(s, 0, s), V(-s, 0, s)];
-    for (const c of cs) bar(V(h.x + c.x, -45, h.z + c.z), V(h.x + c.x, h.hi + 6, h.z + c.z), 0.06);
-    for (let y = -45, k = 0; y < h.hi + 6; y += 1.5, k++) {
+    // (bar by bar where it passes the pod's bay, in long bays elsewhere)
+    for (let y = -45, k = 0; y < h.hi + 6; k++) {
+      const far = farAt(h.x, y, h.z);
+      const step = far ? 4.5 : 1.5, top = Math.min(h.hi + 6, y + step);
+      sink = far ? lite : bars;
+      for (const c of cs) bar(V(h.x + c.x, y, h.z + c.z), V(h.x + c.x, top, h.z + c.z), far ? 0.08 : 0.06);
       for (let i = 0; i < 4; i++) {
         const a = cs[i], b = cs[(i + 1) % 4];
-        bar(V(h.x + a.x, y, h.z + a.z), V(h.x + b.x, y, h.z + b.z), 0.04);
-        if (k % 2 === i % 2) bar(V(h.x + a.x, y, h.z + a.z), V(h.x + b.x, y + 1.5, h.z + b.z), 0.03);
+        bar(V(h.x + a.x, y, h.z + a.z), V(h.x + b.x, y, h.z + b.z), far ? 0.06 : 0.04);
+        if (k % 2 === i % 2) bar(V(h.x + a.x, y, h.z + a.z), V(h.x + b.x, top, h.z + b.z), far ? 0.05 : 0.03);
       }
+      y = top;
     }
+    sink = lite;
     // ties back to the tower every 9 m
     const dx = towardTower(h);
     for (let y = -40; y < h.hi; y += 9) bar(V(h.x + dx * s, y, h.z), V(h.x + dx * 2, y, h.z), 0.06);
+    sink = bars;
   }
 
   const steel = hallSteel(new THREE.MeshStandardMaterial({ color: 0x2b2e32, roughness: 0.62, metalness: 0.55 }));
@@ -314,7 +378,10 @@ export function buildHall(scene: THREE.Scene, hang: THREE.Vector3, maxTexture = 
   // the steel in blocks of the hall, one instanced mesh each with its own bounds, so that every camera (the eye,
   // the pod's tight sun, the skylight) draws only the blocks it can see, not all 40 000 bars every time
   const unit = new THREE.BoxGeometry(1, 1, 1);
-  const chunked = (list: THREE.Matrix4[], cell: THREE.Vector3, into?: THREE.InstancedMesh[]) => {
+  // the light frame far off is not lit at all: out there it is a dark shape in the haze and nothing else, and the
+  // lights, their shadow maps and the grit were being worked out for every pixel of it (?steel=lit: lit all the same)
+  const farSteel = steelAs === 'lit' ? steel : new THREE.MeshBasicMaterial({ color: 0x0c0d0f });
+  const chunked = (list: THREE.Matrix4[], cell: THREE.Vector3, into?: THREE.InstancedMesh[], material: THREE.Material = steel) => {
     const blocks = new Map<string, THREE.Matrix4[]>();
     const at = new THREE.Vector3();
     for (const m of list) {
@@ -324,8 +391,8 @@ export function buildHall(scene: THREE.Scene, hang: THREE.Vector3, maxTexture = 
       blocks.get(key)!.push(m);
     }
     for (const ms of blocks.values()) {
-      const mesh = new THREE.InstancedMesh(unit, steel, ms.length);
-      steelBlocks.push(mesh);
+      const mesh = new THREE.InstancedMesh(unit, material, ms.length);
+      if (material === steel) steelBlocks.push(mesh);
       into?.push(mesh);
       ms.forEach((m, i) => mesh.setMatrixAt(i, m));
       mesh.instanceMatrix.needsUpdate = true;
@@ -341,6 +408,8 @@ export function buildHall(scene: THREE.Scene, hang: THREE.Vector3, maxTexture = 
     return blocks.size;
   };
   chunked(bars, V(16, 24, 15), bareBars);
+  chunked(lite, V(64, 80, 60), bareBars, farSteel); // the light frame far off: a few big blocks
+  if (import.meta.env.DEV) console.info(`hall steel: ${bars.length} bars near, ${lite.length} far, ${bareBars.length} blocks`);
   chunked(deck, V(400, 400, 400)); // the roof and the wall: few and long, one block
 
   // the hoists' cars: a cage of bars round a floor, a roof, a lamp; they ride up and down, stop, wait, go on
@@ -776,6 +845,35 @@ export function buildHall(scene: THREE.Scene, hang: THREE.Vector3, maxTexture = 
   );
   scene.add(motes);
 
+  // lamps far off: specks of light on the far frame, as if on panels and switchboards out there. Not lights at
+  // all: two sets of points, one draw each, the reds breathing slowly. They are what gives the dark its depth
+  const lampsFar: THREE.Points[] = [];
+  {
+    const rnd = (() => { let a = 91; return () => ((a = (a * 16807) % 2147483647) / 2147483647); })();
+    const steady: number[] = [], steadyC: number[] = [], red: number[] = [], redC: number[] = [];
+    const c = new THREE.Color();
+    for (const n of nodes) {
+      if (rnd() > 0.2) continue;
+      const d = Math.hypot(n.x, n.y, n.z);
+      const dim = (2.4 * (0.3 + 0.7 * rnd())) / (1 + (d / 60) ** 2); // (the haze, by hand: they are not fogged)
+      const pick = rnd();
+      if (pick < 0.1) { red.push(n.x, n.y, n.z); c.set(0xff2a14).multiplyScalar(dim * 1.3); redC.push(c.r, c.g, c.b); continue; }
+      c.set(pick < 0.72 ? 0xffb060 : 0xcfe0ff).multiplyScalar(dim);
+      steady.push(n.x, n.y, n.z); steadyC.push(c.r, c.g, c.b);
+    }
+    const map = new THREE.CanvasTexture(dot);
+    for (const [at, col] of [[steady, steadyC], [red, redC]]) {
+      const g = new THREE.BufferGeometry();
+      g.setAttribute('position', new THREE.Float32BufferAttribute(at, 3));
+      g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+      const pts = new THREE.Points(g, new THREE.PointsMaterial({ size: 0.8, map, vertexColors: true, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, fog: false }));
+      pts.frustumCulled = false;
+      scene.add(pts);
+      lampsFar.push(pts);
+    }
+    if (import.meta.env.DEV) console.info(`hall lamps far: ${steady.length / 3} steady, ${red.length / 3} red`);
+  }
+
   const fansOut = { list: FANS, dir: FAN_DIR, radius: FAN_R, hub: HUB, blades: BLADES, wallZ: FZ, side: SIDE_FANS, sideScale: SIDE_SCALE, wallX: WX, shutter: { end: 1, side: 1 } };
   return {
     podSun,
@@ -798,7 +896,7 @@ export function buildHall(scene: THREE.Scene, hang: THREE.Vector3, maxTexture = 
     /** the hall's steel with its grit, or plain */
     plainSteel(on: boolean) { for (const m of steelBlocks) m.material = on ? plainSteel : steel; },
     /** the scaffolding (every bar of steel; the roof and the wall stay) there or not, shadows and all: for debugging */
-    scaffolding(on: boolean) { for (const m of bareBars) m.visible = on; sunDirty = true; },
+    scaffolding(on: boolean) { for (const m of bareBars) m.visible = on; for (const l of lampsFar) l.visible = on; sunDirty = true; },
     /** materials not in the scene yet, which still have to take the scene's shared uniforms */
     spare: [plainSteel],
     /** what runs along the girder with the pod: move it along x */
@@ -837,6 +935,8 @@ export function buildHall(scene: THREE.Scene, hang: THREE.Vector3, maxTexture = 
     liftsRun(on: boolean) { liftsOn = on; },
     update(time: number, dt: number) {
       if (liftsOn) liftTime += dt;
+      // the red lamps far off breathe, slowly
+      (lampsFar[1].material as THREE.PointsMaterial).opacity = 0.25 + 0.75 * (0.5 + 0.5 * Math.sin(time * 1.3)) ** 2;
       // the shutter: heavy, slow to start and to stop, a few metres a second at most
       if (shut !== shutTo || shutV) {
         const d = shutTo - shut, a = 0.012, vmax = 0.06;
