@@ -336,6 +336,10 @@ export function buildHall(scene: THREE.Scene, hang: THREE.Vector3, maxTexture = 
   scaffold(-60, 54, 3, 4, -10, 28);
   scaffold(44, -66, 3, 4, -20, 22);
   scaffold(TX, -51, 3, 4, 10, 14);
+  // and near the pod, in its own bay, bar by bar: round the towers the eye looks past, at the heights it looks at
+  scaffold(TX, -21, 3, 4, 0, 12);
+  scaffold(-TX, -6, 3, 4, -14, 11);
+  scaffold(-TX, 24, 3, 4, -8, 8);
 
   // hoists: a narrow lattice mast up the side of a tower, a cage on it going up and down
   const HOISTS: { x: number; z: number; lo: number; hi: number; speed: number; phase: number }[] = [
