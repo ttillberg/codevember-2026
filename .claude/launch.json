@@ -46,6 +46,17 @@
       "url": "http://localhost:5101"
     },
     {
+      "name": "02",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": [
+        "-C",
+        "02",
+        "dev"
+      ],
+      "port": 5102,
+      "url": "http://localhost:5102"
+    },
+    {
       "name": "04",
       "runtimeExecutable": "pnpm",
       "runtimeArgs": [
