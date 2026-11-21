@@ -5,7 +5,7 @@
 // (shards.ts), a worker bakes the fall with rigid bodies (sim.worker.ts) and the page plays it back.
 import { CRACKS, Pane, type Impact } from './cracks';
 import { defaults, mountPanel, setValue } from './settings';
-import { STRIDE, buildShards, mergeSets, type ShardSet } from './shards';
+import { buildShards, mergeSets, type ShardSet } from './shards';
 import { Renderer, lookAt, perspective } from './render';
 import { Sound } from './audio';
 import { CONTACT, type BakeRequest, type FramesMessage, type SimConfig } from './sim.worker';
@@ -44,11 +44,9 @@ const FOV = (30 * Math.PI) / 180;
 const DIST = 1.9; // how far the camera stands from the glass
 const EYE_AT = 0.47; // the height it looks at
 
-// intact: there is glass to shoot. doomed: the football is in the air. fallen: no glass is left standing.
+// intact: there is glass to shoot. fallen: no glass is left standing.
 // Falls play on their own whatever the state: a pane can lose pieces while it is being shot.
-// intact: there is glass to shoot. doomed: the football is in the air. fallen: no glass is left standing.
-// Falls play on their own whatever the state: a pane can lose pieces while it is being shot.
-type State = 'intact' | 'doomed' | 'fallen';
+type State = 'intact' | 'fallen';
 let state: State = 'intact';
 let seed = Number(params.get('seed')) || (Math.random() * 1e9) | 0;
 let shots = 0;
@@ -62,6 +60,7 @@ interface Layer {
   tapes: { ax: number; ay: number; bx: number; by: number; w: number; fell: boolean }[]; // strips across it, in pane space: what is under one stays up
   tempered: boolean; // it does not crack: the first hit turns all of it to dice
   maskData: Uint8ClampedArray | null; // its part of the mask as it was when pieces last left: blue is gone
+  spent: number; // how many of its bullet holes a shock has already had: a tap by one of those is only a bullet
 }
 let layers: Layer[] = [];
 let W = 1.2, H = 0.8; // the size of a pane
@@ -75,7 +74,6 @@ interface Fall {
   at: number; // when it starts, on the scene's clock
   started: boolean; over: boolean;
   playhead: number; lastHit: number; speed: number;
-  ball: boolean; // the football is in this one
   near: [number, number, number][]; // where it was hit, for the dust
 }
 const bakes = new Map<number, Bake>();
@@ -126,10 +124,9 @@ function newPane() {
   seed = (seed * 1664525 + 1013904223) >>> 0;
   gap = V.gap / 100;
   layers = [];
-  for (let i = 0; i < Math.round(V.panes); i++) layers.push({ i, z: -i * gap, pane: new Pane(W, H, T, (seed + i * 7919) >>> 0), standing: true, tapes: [], tempered: i === Math.round(V.panes) - 1 && V.temper >= 0.5, maskData: null });
+  for (let i = 0; i < Math.round(V.panes); i++) layers.push({ i, z: -i * gap, pane: new Pane(W, H, T, (seed + i * 7919) >>> 0), standing: true, tapes: [], tempered: i === Math.round(V.panes) - 1 && V.temper >= 0.5, maskData: null, spent: 0 });
   shots = 0;
   state = 'intact';
-  ball.on = false;
   clearTimeout(readyTimer); readyTimer = 0; ready = null;
   if (replay.on) setReplay(false);
   for (const b of [...bakes.values()]) dropBake(b);
@@ -174,7 +171,6 @@ function setHint() {
     replay.on ? 'Replay'
     : taping ? (touch ? 'Tape: drag across the glass, or tap' : 'Tape: drag across the glass, or click for one straight across')
     : state === 'fallen' ? (active() ? 'Hold to slow it down' : touch ? 'Tap for a new pane' : 'Click for a new pane')
-    : state === 'doomed' ? ''
     : shots === 0 ? (touch ? 'Tap the glass to shoot' : 'Click the glass to shoot')
     : shots < 4 ? (touch ? 'Swipe: what is broken blows out' : 'Drag or space: what is broken blows out')
     : '';
@@ -240,17 +236,22 @@ function glassAt(L: Layer, x: number, y: number) {
   return L.standing && x >= 0 && y >= 0 && x <= W && y <= H && !L.pane.inHole(x, y) && !goneAt(L, x, y);
 }
 
-/** A bullet along the ray through a point of the page. It goes through every pane in its way. */
-function shoot(px: number, py: number) {
-  if (state !== 'intact') return;
+/** A bullet along the ray through a point of the page. It goes through every pane in its way.
+ *  `was`: the bullet that set off a shock, fired just after it. Per pane, whether there was glass in its way
+ *  before the pieces left: what is still standing there gets its hole and cracks, what left still gives dust. */
+function shoot(px: number, py: number, was?: boolean[]) {
+  if (state !== 'intact' && !was) return;
   sound.shot();
   flash = 1; recoil = 1;
   let hit = false;
   for (const L of layers) {
     const [x, y] = pick(px, py, L.z);
-    if (!glassAt(L, x, y)) continue; // through a hole, or wide
+    const glass = glassAt(L, x, y);
+    if (!glass && !was?.[L.i]) continue; // through a hole, or wide
     const at = now + L.i * 0.012;
-    if (L.tempered) {
+    if (!glass) {
+      // it left with the shock, this very frame
+    } else if (L.tempered) {
       // tempered: all of it goes to dice at the first hit; after that a bullet only takes a die with it
       if (!L.pane.diced) {
         const res = L.pane.dice(x, y, at, V.dice / 100);
@@ -267,7 +268,7 @@ function shoot(px: number, py: number) {
       drawMask(L, res.impact);
       for (const t of res.ticks) sound.tick(t - now);
     }
-    hit = true;
+    if (glass) hit = true;
     const wx = x - W / 2, wy = y + Y0;
     for (let i = 0; i < (420 * V.dust) / layers.length; i++) {
       const back = Math.random() < 0.72;
@@ -280,67 +281,6 @@ function shoot(px: number, py: number) {
   shots++;
   setHint();
   prepareSoon();
-}
-
-/** The football, kicked hard: 30 m/s. Where and how it hits is known the moment it leaves the foot, so the
- *  panes are cracked, cut and baked while it flies. The flight is shown in slow motion (it would be over in
- *  three frames); at the glass it is back to the pace of the fall almost at once. */
-const FLIGHT = 0.42;
-
-let ballSlow = 1; // how much slower than life the flight is shown
-let kickedSet: { set: ShardSet; base: number } | null = null;
-let kicked: { L: Layer; set: ShardSet }[] = []; // what the ball is about to take out of each pane
-const ball = { on: false, at: 0, p: [0, 0, 0], v: [0, 0, 0], w: [0, 0, 0] }; // p, v: as it reaches the glass, at time `at`
-function kick(x: number, y: number) {
-  if (state !== 'intact') return;
-  x = Math.min(W - 0.02, Math.max(0.02, x)); y = Math.min(H - 0.02, Math.max(0.05, y));
-  state = 'doomed';
-  clearTimeout(readyTimer); readyTimer = 0;
-  if (ready) { dropBake(ready.bake); ready = null; }
-  sound.kick();
-  const at = now + FLIGHT;
-  const r = V.ballSize / 100;
-  const hit = [x - W / 2, y + Y0, r + 0.012];
-  const from = [cam.eye[0] * 0.5, 0.12, cam.eye[2] * 0.82];
-  const len = Math.hypot(hit[0] - from[0], hit[1] - from[1], hit[2] - from[2]);
-  const v = [((hit[0] - from[0]) / len) * V.kick, ((hit[1] - from[1]) / len) * V.kick, ((hit[2] - from[2]) / len) * V.kick];
-  ballSlow = len / FLIGHT / V.kick;
-  ball.on = true; ball.at = at; ball.p = hit; ball.v = v; ball.w = [-40, (Math.random() - 0.5) * 16, (Math.random() - 0.5) * 16];
-  // on every pane still up: a blunt blow where the ball goes through, radials all over, then everything cut small
-  const parts: ShardSet[] = [];
-  const impacts: [number, number, number][] = [];
-  kicked = [];
-  for (const L of layers) {
-    if (!L.standing) continue;
-    // where the ball's line meets this pane
-    const k = (L.z - hit[2]) / v[2];
-    const lx = Math.min(W - 0.02, Math.max(0.02, hit[0] + v[0] * k + W / 2)), ly = Math.min(H - 0.02, Math.max(0.02, hit[1] + v[1] * k - Y0));
-    const gone = (loop: number[]) => loopGone(L, loop);
-    if (L.tempered) {
-      if (!L.pane.diced) { const res = L.pane.dice(lx, ly, at, V.dice / 100); res.impact.r = 0; renderer.addCracks(L.i, L.pane, res.segs); }
-    } else {
-      const res = L.pane.shoot(lx, ly, at, V.blow, true);
-      res.impact.r = 0; // a ball leaves no hole of its own
-      renderer.addCracks(L.i, L.pane, res.segs);
-      renderer.addCracks(L.i, L.pane, L.pane.finish(at, V.shardArea / 1e4, 0.1, false, gone));
-    }
-    const part = buildShards(L.pane, Y0, false, gone, L.i, L.z, L.tempered, (loop) => taped(L, loop), L.i * 100);
-    parts.push(part);
-    kicked.push({ L, set: part });
-    impacts.push([lx - W / 2, ly + Y0, L.z]);
-  }
-  sound.smash(FLIGHT);
-  const set = mergeSets(parts);
-  // cut now, seen at the impact: until then the panes are still the panes
-  for (const arr of [set.walls, set.faces]) for (let i = 9; i < arr.length; i += STRIDE) arr[i] = at;
-  const base = renderer.addShards(set);
-  renderer.shards = true;
-  kickedSet = { set, base };
-  const bake = bakeFall(set, { impacts, balls: [{ p: hit, v, w: ball.w, r }] });
-  setReplay(false);
-  falls.push({ bake, set, base, at, started: false, over: false, playhead: 0, lastHit: 0, speed: ballSlow, ball: true, near: impacts });
-  trimFrames();
-  setHint();
 }
 
 // what has left a pane in an earlier fall, read off its part of the mask (blue)
@@ -461,6 +401,53 @@ function prepareSoon(ms = 140) {
   readyTimer = window.setTimeout(prepare, ms);
 }
 
+/** Is the break got ready, baked to its last frame? (Live, nothing is: it is as ready as it gets.) */
+const baked = () => V.live >= 0.5 || (!!ready && !readyTimer && ready.shots === shots && ready.bake.done);
+/** Is there a bullet hole within a few centimetres of this point of the page, in a pane still standing, that
+ *  no shock has had yet? A spot breaks by a tap once: with a hole a shock already had this near, it is no.
+ *  The taped circle of a target is shot at will, never a break; a hole in one counts for the whole circle, so
+ *  it is the glass just around a target that has been hit that breaks. */
+const SAME_SPOT = 0.06;
+const TAPED = 0.34; // the circle of a target, of its radius
+function targetAt(x: number, y: number) {
+  const t = renderer.targets;
+  for (let k = 0; k < 9; k += 3) if (Math.hypot(x - t[k], y - t[k + 1]) < t[k + 2] * TAPED) return k;
+  return -1;
+}
+function freshHoleNear(px: number, py: number) {
+  const t = renderer.targets;
+  let fresh = false;
+  for (const L of layers) {
+    if (!L.standing) continue;
+    const [x, y] = pick(px, py, L.z);
+    if (targetAt(x, y) >= 0) return false;
+    const ims = L.pane.impacts;
+    for (let i = 0; i < ims.length; i++) {
+      const k = targetAt(ims[i].x, ims[i].y);
+      const far = k < 0 ? Math.hypot(x - ims[i].x, y - ims[i].y) : Math.hypot(x - t[k], y - t[k + 1]) - t[k + 2] * TAPED;
+      if (far >= SAME_SPOT) continue;
+      if (i < L.spent) return false;
+      fresh = true;
+    }
+  }
+  return fresh;
+}
+/** A tap: a bullet. By a fresh hole, with the break ready to play, it is the shock as well: the bullet is still
+ *  fired, into what the shock leaves. Below the pane it is the shock and a shot at nothing. */
+function tap(px: number, py: number) {
+  // under the glass, at the floor: the shock for all of it, as a swipe is. Once too: it takes a hole no shock has had
+  if (state === 'intact' && pick(px, py, layers[0].z)[1] < 0) {
+    if (layers.some((L) => L.standing && L.pane.impacts.length > L.spent)) shock();
+    shoot(px, py, layers.map(() => false));
+    return;
+  }
+  if (state === 'intact' && shots > 0 && baked() && freshHoleNear(px, py)) {
+    const was = layers.map((L) => { const [x, y] = pick(px, py, L.z); return glassAt(L, x, y); });
+    if (shock()) { shoot(px, py, was); return; }
+  }
+  shoot(px, py);
+}
+
 /** A swipe: a shock, at once. Only what is already broken goes: the pieces the cracks have cut out of the
  *  panes are cut smaller and blown out the back, as if a ball nobody sees went through every bullet hole at the
  *  same instant. The glass around them, cracked or not, stays standing. */
@@ -481,10 +468,11 @@ function shock(): boolean {
     part.L.standing = part.set.kept;
     renderer.setStanding(part.L.i, part.set.kept);
   }
+  for (const L of layers) L.spent = L.pane.impacts.length; // every hole there is has had its shock
   // with glass still standing it can all be done again at once: more bullets, another shock
   state = layers.some((l) => l.standing) ? 'intact' : 'fallen';
   setReplay(false);
-  falls.push({ bake: r.bake, set: r.set, base, at: now, started: false, over: false, playhead: 0, lastHit: 0, speed: V.pace, ball: false, near: r.impacts });
+  falls.push({ bake: r.bake, set: r.set, base, at: now, started: false, over: false, playhead: 0, lastHit: 0, speed: V.pace, near: r.impacts });
   trimFrames();
   setHint();
   return true;
@@ -526,16 +514,6 @@ function cutPane(L: Layer, set: ShardSet) {
   });
 }
 
-/** The ball before it hits: a throw, backwards from where it will land. */
-function flyBall() {
-  // not clamped at the glass: if the bake is a few frames late the ball carries on rather than wait for it
-  const t = (now - ball.at) * ballSlow;
-  const p = renderer.ball.p, q = renderer.ball.q;
-  p[0] = ball.p[0] + ball.v[0] * t; p[1] = ball.p[1] + ball.v[1] * t; p[2] = ball.p[2] + ball.v[2] * t;
-  const a = ball.w[0] * t * 0.5;
-  q[0] = Math.sin(a); q[1] = 0; q[2] = 0; q[3] = Math.cos(a);
-}
-
 worker.onmessage = (e: MessageEvent<FramesMessage>) => {
   const m = e.data;
   const bake = bakes.get(m.run);
@@ -550,8 +528,7 @@ worker.onmessage = (e: MessageEvent<FramesMessage>) => {
 function startFall(f: Fall) {
   f.started = true;
   recoil = 1.6;
-  // the ball did not wait for the bake: the fall catches up with it
-  if (f.ball) f.playhead = Math.max(0, now - f.at) * ballSlow; else flash = 0.35;
+  flash = 0.35;
   // dust comes off every crack as the glass lets go
   for (let i = 0; i < 3200 * V.dust * Math.min(1, f.set.count / 400); i++) {
     const b = f.set.bodies[(Math.random() * f.set.count) | 0];
@@ -595,7 +572,7 @@ function setReplay(on: boolean) {
   else if (f) {
     // back to where it was: at rest if it had come to rest, else on with the fall from here
     const frames = f.bake.frames, last = frames.length - 1;
-    if (f.over) { renderer.setPose(frames[last], frames[last], 0, f.base, f.set.count); if (f.ball) placeBall(f, frames[last], frames[last], 0); }
+    if (f.over) { renderer.setPose(frames[last], frames[last], 0, f.base, f.set.count); }
     else { f.playhead = replay.t; f.lastHit = contactAt(f, replay.t * 60); }
   }
   setHint();
@@ -606,11 +583,6 @@ function contactAt(f: Fall, frame: number) {
   let i = 0;
   while (i < c.length && c[i] < frame) i += CONTACT;
   return i;
-}
-function placeBall(f: Fall, fa: Float32Array, fb: Float32Array, k: number) {
-  const o = f.set.count * 7;
-  for (let c = 0; c < 3; c++) renderer.ball.p[c] = fa[o + c] + (fb[o + c] - fa[o + c]) * k;
-  for (let c = 0; c < 4; c++) renderer.ball.q[c] = fa[o + 3 + c];
 }
 /** The contacts of a fall as bars over time: how much glass met something, how hard. Floor light, glass on glass lighter. */
 function drawChart(f: Fall) {
@@ -651,7 +623,6 @@ function stepReplay(f: Fall, dt: number) {
   const fr = replay.t * 60, i = Math.min(last, Math.floor(fr));
   const fa = frames[i], fb = frames[Math.min(last, i + 1)], k = fr - i;
   renderer.setPose(fa, fb, k, f.base, f.set.count);
-  if (f.ball) placeBall(f, fa, fb, k);
   // its sounds, as time passes them forwards; a jump is silent
   if (replay.t < before || replay.t - before > 0.2) replay.next = contactAt(f, fr);
   let played = 0;
@@ -699,7 +670,6 @@ function stepFalls(dt: number) {
     const i = Math.floor(fr);
     const fa = frames[i], fb = frames[Math.min(last, i + 1)], k = fr - i;
     renderer.setPose(fa, fb, k, f.base, f.set.count);
-    if (f.ball) placeBall(f, fa, fb, k);
     // the contacts the simulation noted, as the playhead passes them: each is a sound of its own size, strength and place
     let played = 0;
     for (; f.lastHit < contacts.length && contacts[f.lastHit] <= i; f.lastHit += CONTACT) {
@@ -801,12 +771,12 @@ const tapeBtn = document.querySelector<HTMLButtonElement>('#tape')!;
 function setTaping(on: boolean) { taping = on && state === 'intact'; tapeBtn.classList.toggle('on', taping); canvas.style.cursor = taping ? 'cell' : ''; setHint(); }
 tapeBtn.addEventListener('click', () => { sound.wake(); setTaping(!taping); });
 
-// A press that stays put is a bullet, one that travels is the shock. While glass is falling, a press that is
+// A press that stays put is a bullet (and the shock with it, by a fresh hole with the break ready), one that travels is the shock. While glass is falling, a press that is
 // held, without moving, slows it down instead.
 let down: { x: number; y: number; id: number; far: number; held: boolean; timer: number } | null = null;
 canvas.addEventListener('pointerdown', (e) => {
   sound.wake();
-  if (state === 'doomed' || replay.on) return;
+  if (replay.on) return;
   if (state === 'fallen' && !active()) { reset(); return; }
   canvas.setPointerCapture(e.pointerId);
   const d: NonNullable<typeof down> = { x: e.clientX, y: e.clientY, id: e.pointerId, far: 0, held: false, timer: 0 };
@@ -834,7 +804,7 @@ const release = (e: PointerEvent) => {
     return;
   }
   if (d.held && far < 40) return; // it was a hold. (A slow start to a swipe is still a swipe.)
-  if (far < 14) shoot(d.x, d.y);
+  if (far < 14) tap(d.x, d.y);
   else if (far > 40) shock();
 };
 canvas.addEventListener('pointerup', release);
@@ -865,21 +835,8 @@ window.addEventListener('keydown', (e) => {
   else if (e.code === 'KeyG') toggleGlass();
   else if (e.code === 'Escape') setReplay(false);
   else if (e.code === 'KeyM') toggleSound();
-  else if (e.code === 'KeyB') toggleBall();
 });
 window.addEventListener('keyup', (e) => { if (e.code === 'Space') slow = false; });
-
-// the ball can be left out of the picture: the glass then bursts by itself
-let showBall = !params.has('noball');
-try { if (localStorage.getItem('codevember-02-ball') === '0') showBall = false; } catch { /* no storage */ }
-const ballBtn = document.querySelector<HTMLButtonElement>('#ball')!;
-function toggleBall() {
-  showBall = !showBall;
-  ballBtn.classList.toggle('off', !showBall);
-  try { localStorage.setItem('codevember-02-ball', showBall ? '1' : '0'); } catch { /* no storage */ }
-}
-ballBtn.classList.toggle('off', !showBall);
-ballBtn.addEventListener('click', toggleBall);
 
 const soundBtn = document.querySelector<HTMLButtonElement>('#sound')!;
 function toggleSound() {
@@ -889,10 +846,6 @@ function toggleSound() {
 }
 soundBtn.addEventListener('click', toggleSound);
 document.querySelector<HTMLButtonElement>('#again')!.addEventListener('click', () => { sound.wake(); reset(); });
-document.querySelector<HTMLButtonElement>('#break')!.addEventListener('click', () => {
-  sound.wake();
-  if (state === 'intact') kick(W * 0.5, H * 0.5);
-});
 
 // ---------------------------------------------------------------- frame
 let prev = 0;
@@ -906,21 +859,6 @@ function frame(ms: number) {
   fade += (fadeTo - fade) * Math.min(1, dt * 12);
   if (resetAt >= 0 && now > resetAt) { resetAt = -1; newPane(); fadeTo = 1; zoomTo = 1; }
 
-  // the football arrives: the pane is its shards from this frame on, whether the bake is there yet or not
-  if (state === 'doomed' && now >= ball.at) {
-    for (const k of kicked) {
-      // what tape holds is still pane: the rest is cut out of it. With no tape the pane is gone
-      if (k.set.kept) cutPane(k.L, k.set);
-      k.L.standing = k.set.kept; renderer.setStanding(k.L.i, k.set.kept);
-    }
-    kicked = [];
-    if (kickedSet) { dropTapes(kickedSet.set, kickedSet.base); kickedSet = null; }
-    state = layers.some((l) => l.standing) ? 'intact' : 'fallen';
-    setHint();
-  }
-  renderer.ball.on = ball.on && showBall;
-  renderer.ball.r = V.ballSize / 100;
-  if (ball.on && !falls.some((f) => f.ball && f.started)) flyBall();
   stepFalls(dt);
   stepDust(slow && active() ? dt * (V.slow / V.pace) : dt);
   renderer.setDust(dPos, dUsed);
@@ -947,7 +885,12 @@ Object.assign(window, {
   shatter: {
     /** a bullet through a point of the front pane, 0…1 across and up */
     shoot: (u: number, v: number) => { const p = toPage(u * W, v * H); shoot(p[0], p[1]); },
-    kick: (u: number, v: number) => kick(u * W, v * H), reset,
+    /** a tap there, as the pointer would: a bullet, and the shock with it by a fresh hole */
+    tap: (u: number, v: number) => { const p = toPage(u * W, v * H); tap(p[0], p[1]); },
+    reset,
+    /** the three targets, each 0…1 across and up, and its radius in metres */
+    get targets() { const t = renderer.targets; return [0, 3, 6].map((k) => [t[k] / W, t[k + 1] / H, t[k + 2]]); },
+    get size() { return [W, H]; },
     shock,
     replay: (on = true) => setReplay(on),
     get replayAt() { return replay.t; }, set replayAt(t: number) { replay.t = t; replay.playing = false; },

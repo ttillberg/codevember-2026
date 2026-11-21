@@ -1,6 +1,6 @@
 // WebGL2. Three steps a frame: the shadow of the glass on the floor, into a map; the room and every crack
 // surface, into a texture; then the faces of the glass on screen, which look that texture up, bent.
-import { BALL_FS, BALL_VS, TAPE_FS, COPY_FS, DUST_FS, DUST_VS, FACE_FS, GLASS_VS, QUAD_VS, ROOM_FS, ROOM_VS, SHADOW_FS, VIGNETTE_FS, WALL_FS } from './shaders';
+import { TAPE_FS, COPY_FS, DUST_FS, DUST_VS, FACE_FS, GLASS_VS, QUAD_VS, ROOM_FS, ROOM_VS, SHADOW_FS, VIGNETTE_FS, WALL_FS } from './shaders';
 import { STRIDE, pushWall, type ShardSet } from './shards';
 import type { Pane, Seg } from './cracks';
 
@@ -51,14 +51,11 @@ export class Renderer {
   targets = new Float32Array(9);
   private w = 0; private h = 0;
   shards = false;
-  /** the football: where it is and how it is turned, or off */
-  ball = { on: false, p: [0, 0, 0], q: [0, 0, 0, 1], r: 0.11 };
   /** what the settings panel turns */
   look = { exposure: 1, wall: 1, floor: 1, dark: 1, tint: 1, wavy: 0.06, refl: 1, bend: 0.014, seam: 0.16, shadow: 0.58, frost: 0.7 };
   // tape: strips on standing glass (in the world), and strips that went down with their glass (on a shard)
   private tapeVao!: WebGLVertexArrayObject; private tapeBuf!: WebGLBuffer; private tapeCount = 0;
   private tapeFellVao!: WebGLVertexArrayObject; private tapeFellBuf!: WebGLBuffer; private tapeFell: number[] = [];
-  private ballVao!: WebGLVertexArrayObject; private ballCount = 0;
   pane = { W: 1, H: 1, y0: 0, T: 0.008, N: 1 };
   static SHADOW = 2048;
   static DUST = 6000;
@@ -74,22 +71,9 @@ export class Renderer {
     this.prog('copy', QUAD_VS, COPY_FS);
     this.prog('vignette', QUAD_VS, VIGNETTE_FS);
     this.prog('dust', DUST_VS, DUST_FS);
-    this.prog('ball', BALL_VS, BALL_FS);
     this.prog('tape', GLASS_VS, TAPE_FS);
     [this.tapeVao, this.tapeBuf] = this.glassVao();
     [this.tapeFellVao, this.tapeFellBuf] = this.glassVao();
-    {
-      const v: number[] = [];
-      const A = 24, B = 48;
-      const pt = (i: number, j: number) => { const th = (i / A) * Math.PI, ph = (j / B) * Math.PI * 2; v.push(Math.sin(th) * Math.cos(ph), Math.cos(th), Math.sin(th) * Math.sin(ph)); };
-      for (let i = 0; i < A; i++) for (let j = 0; j < B; j++) { pt(i, j); pt(i + 1, j); pt(i + 1, j + 1); pt(i, j); pt(i + 1, j + 1); pt(i, j + 1); }
-      this.ballVao = gl.createVertexArray()!;
-      gl.bindVertexArray(this.ballVao);
-      gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
-      gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(v), gl.STATIC_DRAW);
-      gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 3, gl.FLOAT, false, 0, 0);
-      this.ballCount = v.length / 3;
-    }
 
     this.quad = gl.createVertexArray()!;
     gl.bindVertexArray(this.quad);
@@ -368,18 +352,6 @@ export class Renderer {
     gl.activeTexture(gl.TEXTURE2); gl.bindTexture(gl.TEXTURE_2D, this.shadowTex); gl.uniform1i(u.uShadow, 2);
   }
 
-  private drawBall(vp: Mat4, flash: number, toFloor: boolean) {
-    if (!this.ball.on) return;
-    const gl = this.gl, u = this.use('ball');
-    gl.uniformMatrix4fv(u.uVP, false, vp);
-    gl.uniform4f(u.uBall, this.ball.p[0], this.ball.p[1], this.ball.p[2], this.ball.r);
-    gl.uniform4fv(u.uQ, this.ball.q);
-    gl.uniform1f(u.uToFloor, toFloor ? 1 : 0);
-    gl.uniform1f(u.uFlash, flash);
-    gl.activeTexture(gl.TEXTURE2); gl.bindTexture(gl.TEXTURE_2D, this.shadowTex); gl.uniform1i(u.uShadow, 2);
-    gl.bindVertexArray(this.ballVao); gl.drawArrays(gl.TRIANGLES, 0, this.ballCount);
-  }
-
   /** What is left standing and what flies are drawn one after the other: each pane and its cracks where they
    *  are, cut out where pieces left (uCut), then the shards with their poses. */
   private drawGlass(u: Record<string, WebGLUniformLocation | null>, walls: boolean, now: number, shardNow: number) {
@@ -428,7 +400,6 @@ export class Renderer {
     this.glassUniforms(u, vp, now, flash, true);
     gl.uniform1f(u.uShade, 1 - this.look.shadow * 0.41); this.drawGlass(u, false, now, shardNow);
     gl.uniform1f(u.uShade, 1 - this.look.shadow); this.drawGlass(u, true, now, shardNow);
-    this.drawBall(vp, flash, true);
     gl.blendEquation(gl.FUNC_ADD); gl.disable(gl.BLEND);
 
     // 2. the room and the crack surfaces
@@ -441,7 +412,6 @@ export class Renderer {
     gl.uniform3fv(u.uCam, cam); gl.uniform1f(u.uFlash, flash);
     gl.activeTexture(gl.TEXTURE2); gl.bindTexture(gl.TEXTURE_2D, this.shadowTex); gl.uniform1i(u.uShadow, 2);
     gl.bindVertexArray(this.room); gl.drawArrays(gl.TRIANGLES, 0, this.roomCount);
-    this.drawBall(vp, flash, false);
     if (this.look.frost > 0.001) {
       gl.bindFramebuffer(gl.READ_FRAMEBUFFER, this.msFbo);
       gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, this.roomFbo);

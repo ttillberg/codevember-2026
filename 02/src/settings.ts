@@ -47,15 +47,14 @@ export const SECTIONS: Section[] = [
       it('slant', 'Slant', 0, 0.9, 0.01, 0.42),
       it('shardArea', 'Shard size, cm²', 4, 200, 1, 22),
       it('dice', 'Tempered dice, cm', 1.4, 6, 0.1, 3),
-      it('blow', 'Blow strength', 0.3, 5, 0.05, 2.4),
     ],
   },
   {
     id: 'sim', title: 'Simulation', note: 'From the next break', items: [
       it('live', 'Live, not cached', 0, 1, 1, 0),
-      it('kick', 'Ball speed, m/s', 2, 80, 0.5, 30),
-      it('ballSize', 'Ball radius, cm', 3, 30, 0.5, 11),
-      it('ballDensity', 'Ball weight', 0.02, 12, 0.02, 4),
+      it('kick', 'Shock ball speed, m/s', 2, 80, 0.5, 30),
+      it('ballSize', 'Shock ball radius, cm', 3, 30, 0.5, 11),
+      it('ballDensity', 'Shock ball weight', 0.02, 12, 0.02, 4),
       it('gravity', 'Gravity, m/s²', 0, 30, 0.1, 9.81),
       it('pushBack', 'Push back', 0, 40, 0.5, 13),
       it('pushOut', 'Push outwards', 0, 20, 0.1, 4.5),

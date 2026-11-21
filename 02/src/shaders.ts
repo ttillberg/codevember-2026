@@ -289,41 +289,6 @@ void main() {
 }
 `;
 
-export const BALL_VS = /* glsl */ `#version 300 es
-layout(location = 0) in vec3 aPos;
-uniform mat4 uVP; uniform vec4 uBall; uniform vec4 uQ; uniform float uToFloor;
-out vec3 vW; out vec3 vN; out vec3 vL;
-vec3 rot(vec4 q, vec3 v) { return v + 2.0 * cross(q.xyz, cross(q.xyz, v) + q.w * v); }
-void main() {
-  vL = aPos; vN = rot(uQ, aPos);
-  vec3 p = uBall.xyz + vN * uBall.w;
-  vW = p;
-  if (uToFloor > 0.5) {
-    vec3 L = normalize(vec3(0.18, -1.0, -0.62));
-    vec3 f = p - L * (p.y / L.y);
-    gl_Position = vec4(f.x / 2.0, (f.z + 2.4) / 2.0 - 1.0, 0.0, 1.0);
-  } else gl_Position = uVP * vec4(p, 1.0);
-}
-`;
-
-export const BALL_FS = COMMON + /* glsl */ `
-in vec3 vW; in vec3 vN; in vec3 vL;
-uniform float uToFloor;
-out vec4 o;
-void main() {
-  if (uToFloor > 0.5) { o = vec4(0.3); return; }
-  vec3 n = normalize(vL), N = normalize(vN);
-  // twelve dark patches, one at each corner of an icosahedron
-  vec3 m = abs(n), v = normalize(vec3(0.0, 1.0, 1.618));
-  float d = max(dot(m, v), max(dot(m, v.zxy), dot(m, v.yzx)));
-  vec3 alb = mix(vec3(0.86, 0.85, 0.82), vec3(0.03), smoothstep(0.928, 0.94, d));
-  float key = max(dot(N, normalize(vec3(-0.18, 1.0, 0.62))), 0.0);
-  vec2 q = vW.xz - vec2(0.0, -0.25);
-  float lit = 0.1 + 0.18 * (N.y * 0.5 + 0.5) + key * (0.25 + 1.1 * exp(-dot(q, q) / 1.5)) + uFlash;
-  o = vec4(tone(alb * lit), 1.0);
-}
-`;
-
 // tape: grey cloth with a dull sheen. Same vertices as the glass, so a strip can ride on a shard
 export const TAPE_FS = COMMON + /* glsl */ `
 in vec3 vW; in vec2 vUv;

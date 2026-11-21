@@ -67,18 +67,7 @@ export class Sound {
     for (let i = 0; i < 5; i++) this.ping(t + 0.015 + Math.random() * 0.08, 2600 + Math.random() * 5200, 0.05 + Math.random() * 0.1, 0.07);
   }
 
-  /** A foot on a ball. */
-  kick() {
-    if (!this.ctx) return;
-    const t = this.ctx.currentTime;
-    this.burst(t, 0.09, 'lowpass', 900, 120, 0.8, 0.9);
-    const o = this.ctx.createOscillator(), g = this.ctx.createGain();
-    o.frequency.setValueAtTime(190, t); o.frequency.exponentialRampToValueAtTime(70, t + 0.1);
-    g.gain.setValueAtTime(0.8, t); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.16);
-    o.connect(g).connect(this.out!); o.start(t); o.stop(t + 0.2);
-  }
-
-  /** The ball goes through the pane. */
+  /** The shock: everything loose goes at once. */
   smash(delay: number) {
     if (!this.ctx) return;
     const t = this.ctx.currentTime + delay;

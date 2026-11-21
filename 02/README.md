@@ -2,7 +2,7 @@
 
 2026-11-02
 
-A wall of frosted 8 mm glass, wider and taller than the view, with three targets taped on it. Shoot it as often as you like: every bullet is a hole and a web of cracks. Or make it tempered glass, and one hit turns all of it to dice. Then swipe: a shock, and everything that is loose blows out at once, while the rest stays standing. Or kick a football through all of it.
+A wall of frosted 8 mm glass, wider and taller than the view, with three targets taped on it. Shoot it as often as you like: every bullet is a hole and a web of cracks. Or make it tempered glass, and one hit turns all of it to dice. Then swipe: a shock, and everything that is loose blows out at once, while the rest stays standing.
 
 ```sh
 pnpm -C 02 dev
@@ -10,7 +10,8 @@ pnpm -C 02 dev
 
 - **Click / tap** the glass: a bullet, through every pane in its way, as many as you want. **Wheel**: zoom in on the cracks.
 - **Swipe / drag** across the glass, or **Space**: the shock. Which way does not matter. Only what is broken goes.
-- The first button: a football through the middle, at 30 m/s. **B**, or the ball button: hide the ball itself (also `?noball`).
+- **Click / tap by a fresh bullet hole** (within 6 cm), once the bake is done: the bullet, and the shock with it. Once per spot: near a hole a shock has already had, a tap is only a bullet. The taped circle of a target is safe, shoot it at will; with a hole in it, it is a tap just around the circle that breaks.
+- **Click / tap below the glass**, on the floor: the shock for all of it, like a swipe. Once for every new bullet: with no hole since the last shock, it is a shot at the floor.
 - While glass falls, **hold** a press where it is for slow motion (Space too, when there is nothing to break). A thin bar at the bottom shows how far the worker is with the bake.
 - As long as glass is standing, carry on, at once: more bullets, another swipe, while the last pieces are still in the air. With none left, a click is a new pane.
 - **S**, or the camera button: the latest fall again, in slow motion, from the side. A bar at the bottom has play and pause (Space), a chart of the fall's contacts over time (floor in full, glass on glass lighter), a playhead to drag, and the speed (0.05× to 1×). **Esc** to leave.
@@ -31,9 +32,9 @@ A crack that runs into something is there within a frame or two. One that runs o
 
 Cracks are closed: there is no gap to see. What is drawn is the crack surface itself, a ribbon from the front of the glass to the back, slanted a little, different at every node. Light inside the glass that meets it is mirrored. Either it then leaves through a face, and the crack shows the room from somewhere else (nearly invisible, or a glint when that somewhere is a lamp), or it is sent along the pane beyond the critical angle and stays in the glass: that is the dark line. Only the bullet holes are open, cut out with a mask that also carries the crushed, white glass around them.
 
-**The football** (`src/shards.ts`, `src/sim.worker.ts`). It leaves the foot at 30 m/s, and from that moment where and how it hits is known, so everything is prepared while it flies: a blunt impact is added to the graph (forty radials, most of them long), every open tip runs until it meets something, every piece larger than a few fingers is cut again, and the faces of the graph are the shards, about a thousand. Their side walls are the same quads the cracks were drawn with, so the cracked pane and the shards are one picture at the moment of impact.
+**The fall** (`src/shards.ts`, `src/sim.worker.ts`). The faces of the crack graph are the shards. Their side walls are the same quads the cracks were drawn with, so the cracked pane and the shards are one picture at the moment they let go.
 
-A worker gets each shard as convex pieces (Douglas-Peucker, then triangles merged while they stay convex) and the ball as a sphere with its velocity and spin, and simulates them with Rapier in decimetres. What the ball is about to go through is loose at once, the rest lets go within a few frames, each piece with a push: out the back in a cone near the impact, outwards at the rim. The flight is shown in slow motion (at 30 m/s it would be three frames), which is also the time the worker needs to get ahead: the fall starts at that same pace on impact and picks up to 0.6 of life. Frames are positions and quaternions in a float texture, blended between two baked frames, so it stays smooth at any pace: the pace of life by default, far slower while held.
+A worker gets each shard as convex pieces (Douglas-Peucker, then triangles merged while they stay convex) and simulates them with Rapier in decimetres. What is nearest a blow is loose at once, the rest lets go within a few frames, each piece with a push: out the back in a cone near the impact, outwards at the rim. Frames are positions and quaternions in a float texture, blended between two baked frames, so it stays smooth at any pace: the pace of life by default, far slower while held.
 
 **The shock.** Only what is already broken goes. Nothing runs on and nothing new is cracked: the faces of the graph as it stands are the pieces, which means every cell the cracks have closed. The largest face, the pane around them, is not a shard: it stays. The pieces are cut smaller, and it is as if a ball nobody sees went through every bullet hole at the same instant: one heavy sphere per hole goes into the simulation, never drawn. None of this waits for the swipe. A moment after every bullet, what a shock would do now is worked out on a copy of the pane (the real one can still be shot, and must not meet cuts nobody sees) and the worker bakes that fall. A swipe only has to play it: the copy becomes the pane. Another bullet, or another number in the workbench, and it is prepared again.
 
@@ -47,7 +48,7 @@ Splinters under 1.5 cm² are boxes that only meet the floor. Some of the pieces 
 
 **Tempered.** The second pane does not grow cracks. Tempered glass lets go everywhere at once, so the first hit throws its graph away and builds it again as the cells of scattered points (a shaken honeycomb, finer by the impact, Voronoi through `d3-delaunay`): about two thousand dice of 2.4 cm. The cracks appear as the wave from the impact reaches them, at 22 m/s as shown. Nothing stands on its own after that, so the next swipe takes the whole pane. Every die is a body, but one that only meets the floor: two thousand hulls leaning on each other would not bake in any time worth waiting for. A later bullet takes the die it hits with it. `2nd tempered` and `Tempered dice` are in the workbench.
 
-**Tape.** A strip is a line across the pane and a width, and a face of the graph whose middle is under one is held. Held by what depends on what is left. While the pane still has its large standing face, the held pieces stay part of it: not cut, not shards, not in the simulation, still there to be shot. When nothing of the pane stands (the tempered one after any shock, either one after the football), tape has nothing to hang from: the held pieces of one strip go to the worker as a group, which makes one rigid body of them, each shard's shape where it sits, and the strip drops and tumbles as one, a little after the rest. The tape itself is drawn riding one of those shards.
+**Tape.** A strip is a line across the pane and a width, and a face of the graph whose middle is under one is held. Held by what depends on what is left. While the pane still has its large standing face, the held pieces stay part of it: not cut, not shards, not in the simulation, still there to be shot. When nothing of the pane stands (the tempered one after any shock), tape has nothing to hang from: the held pieces of one strip go to the worker as a group, which makes one rigid body of them, each shard's shape where it sits, and the strip drops and tumbles as one, a little after the rest. The tape itself is drawn riding one of those shards.
 
 **The wall, its frost and its targets.** The pane is sized from the camera: wider than what is seen at the distance it stands, taller than the top of the view, so there is only glass and a strip of floor. One pane by default (`Panes` in the workbench brings back two or three, one behind the other).
 
@@ -63,9 +64,7 @@ Three steps a frame, WebGL2, no library:
 2. The room (analytic: any shader can ask what a ray sees) and every crack surface, multisampled, into a texture.
 3. The faces of the glass on screen. They look that texture up, shifted by their normal, so everything behind a face is seen through it, cracks and other shards included.
 
-The ball is a sphere with twelve dark patches, drawn into the same texture, so it is seen through the glass too.
-
-Sound is synthesised: noise and sines. The fall is not scored by hand: the simulation notes every contact as it bakes (Rapier's collision events), with the frame, the place, the size of the shard (the smaller of two) and the speed they met at, and whether it was glass on the floor, on glass or on the ball. The loudest few of each frame go back with the frames, and the playback sounds each as its playhead passes: every shard close to the same pitch (glass is glass: a large piece that rings low sounds like a clock), a large one louder, a little longer and with a dull clack under it, harder is louder, panned to where it landed, grit under it if it was the floor. `shatter.contacts` in the console lists them.
+Sound is synthesised: noise and sines. The fall is not scored by hand: the simulation notes every contact as it bakes (Rapier's collision events), with the frame, the place, the size of the shard (the smaller of two) and the speed they met at, and whether it was glass on the floor or on glass. The loudest few of each frame go back with the frames, and the playback sounds each as its playhead passes: every shard close to the same pitch (glass is glass: a large piece that rings low sounds like a clock), a large one louder, a little longer and with a dull clack under it, harder is louder, panned to where it landed, grit under it if it was the floor. `shatter.contacts` in the console lists them.
 
 ## Learned
 

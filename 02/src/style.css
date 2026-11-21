@@ -44,8 +44,8 @@ canvas { touch-action: none; cursor: crosshair; }
 }
 .tools button:hover { background: rgba(244, 244, 242, 0.22); }
 .tools svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; vertical-align: middle; }
-#sound .x, #sound.off .on, #ball .x, #ball.off .on, #live .on, #live.live .x, #glass .on, #glass.tempered .x { display: none; }
-#sound.off .x, #ball.off .x, #live.live .on, #glass.tempered .on { display: inline; }
+#sound .x, #sound.off .on, #live .on, #live.live .x, #glass .on, #glass.tempered .x { display: none; }
+#sound.off .x, #live.live .on, #glass.tempered .on { display: inline; }
 .tools button.off { opacity: 0.6; }
 @media (max-width: 640px) {
   /* five buttons do not fit beside the title on a phone: they go down the right edge */
