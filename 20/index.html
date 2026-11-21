@@ -27,7 +27,7 @@
     <div class="plate"><div class="head"><b>20 Cocoon</b><i><a class="home" href="https://ttillberg.github.io/codevember-2026/">Codevember 2026 <span lang="ja">繭</span></a> · <a class="home" href="https://x.com/theo_t">@theo_t</a></i></div></div>
     <!-- the controls: the hall's machines, bottom left, one abstract symbol each (main.ts) -->
     <ul class="controls">
-      <li><button data-ctl="roof" aria-label="Roof shutter" aria-pressed="true"><svg viewBox="0 0 24 24" aria-hidden="true"><circle class="drum" cx="4.5" cy="8" r="1.8" /><line class="bar" x1="7" y1="8" x2="21" y2="8" /><g class="light"><line x1="9" y1="12.5" x2="9" y2="19" /><line x1="13" y1="12.5" x2="13" y2="19" /><line x1="17" y1="12.5" x2="17" y2="19" /></g></svg></button></li>
+      <li><button data-ctl="roof" aria-label="Roof shutter" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><circle class="drum" cx="4.5" cy="8" r="1.8" /><line class="bar" x1="7" y1="8" x2="21" y2="8" /><g class="light"><line x1="9" y1="12.5" x2="9" y2="19" /><line x1="13" y1="12.5" x2="13" y2="19" /><line x1="17" y1="12.5" x2="17" y2="19" /></g></svg></button></li>
       <li><button data-ctl="fans-end" aria-label="Fans in the end wall" aria-pressed="true"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="4.5" cy="12" r="3.2" /><circle cx="12" cy="12" r="3.2" /><circle cx="19.5" cy="12" r="3.2" /><g class="light"><circle cx="4.5" cy="12" r="1.8" /><circle cx="12" cy="12" r="1.8" /><circle cx="19.5" cy="12" r="1.8" /></g></svg></button></li>
     </ul>
     <!-- debug: a gear bottom right, only in dev or with ?settings / ?debug (docs/DESIGN.md) -->
@@ -64,6 +64,8 @@
       </div>
       <button class="gear" aria-label="expand the debug panel" aria-expanded="true" hidden><svg viewBox="1.4 1.4 13.2 13.2" aria-hidden="true"><path d="M14.35 7.23 L14.33 8.97 L12.53 9.27 L12.02 10.44 L13.03 11.95 L11.78 13.16 L10.31 12.10 L9.12 12.57 L8.77 14.35 L7.03 14.33 L6.73 12.53 L5.56 12.02 L4.05 13.03 L2.84 11.78 L3.90 10.31 L3.43 9.12 L1.65 8.77 L1.67 7.03 L3.47 6.73 L3.98 5.56 L2.97 4.05 L4.22 2.84 L5.69 3.90 L6.88 3.43 L7.23 1.65 L8.97 1.67 L9.27 3.47 L10.44 3.98 L11.95 2.97 L13.16 4.22 L12.10 5.69 L12.57 6.88 Z M10.2 8 A2.2 2.2 0 1 0 5.8 8 A2.2 2.2 0 1 0 10.2 8 Z" fill="currentColor" fill-rule="evenodd" /></svg></button>
     </div>
+    <!-- black over it all until the scene is loaded and drawn, then it fades in (main.ts) -->
+    <div class="fade"></div>
     <script type="module" src="./src/main.ts"></script>
   </body>
 </html>

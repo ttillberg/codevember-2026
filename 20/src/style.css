@@ -97,5 +97,8 @@ canvas:active { cursor: grabbing; }
 @media (max-width: 640px) {
   .controls { left: max(16px, env(safe-area-inset-left)); bottom: max(16px, env(safe-area-inset-bottom)); }
 }
+/* the page comes up black and fades in once the scene is there (main.ts) */
+.fade { position: fixed; inset: 0; background: #000; z-index: 50; pointer-events: none; transition: opacity 3.5s ease-in-out; }
+.fade.in { opacity: 0; }
 /* ?clean: the scene alone */
 .clean .plate, .clean .debug, .clean .controls { display: none; }

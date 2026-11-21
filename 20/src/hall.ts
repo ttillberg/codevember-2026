@@ -412,7 +412,8 @@ export function buildHall(scene: THREE.Scene, hang: THREE.Vector3, maxTexture = 
   const leafGeo = new THREE.BoxGeometry(FAN_R + 0.6, 2 * FAN_R + 0.4, 0.03).translate((FAN_R + 0.6) / 2, 0, 0);
   const leafMat = new THREE.MeshStandardMaterial({ color: 0x1d1f23, roughness: 0.45, metalness: 0.8, side: THREE.DoubleSide });
   // each wall's: where they are (1 open, 0 shut), where they are going, how fast
-  const iris = { end: { s: 1, to: 1, v: 0 }, side: { s: 1, to: 1, v: 0 } };
+  let liftsOn = false, liftTime = 0; // the hoists stand where they are until set going
+  const iris = { end: { s: 1, to: 1, v: 0 }, side: { s: 1, to: 1, v: 0 } }; // (open to start with: the light the hall starts in)
   {
     const S = 2 * FAN_R + 1;
     const plate = new THREE.Shape().moveTo(-S / 2, -S / 2).lineTo(S / 2, -S / 2).lineTo(S / 2, S / 2).lineTo(-S / 2, S / 2).closePath();
@@ -496,6 +497,9 @@ export function buildHall(scene: THREE.Scene, hang: THREE.Vector3, maxTexture = 
   setLeaves(false, 1);
   setLeaves(true, 1);
 
+  // the small windows in the sun's wall: daylight, so as much as the roof lets in (update)
+  const windowGlow = new THREE.MeshBasicMaterial({ color: 0xc4ccd6 });
+  const WINDOW = new THREE.Color(0xc4ccd6);
   // the glass in the roof and the windows: bright, the sky through them, seen through the haze
   {
     const glow = new THREE.MeshBasicMaterial({ color: 0xdfe6ee, fog: false });
@@ -508,7 +512,7 @@ export function buildHall(scene: THREE.Scene, hang: THREE.Vector3, maxTexture = 
       scene.add(m);
     }
     // (the small windows in the sun's wall in the haze like the rest, so they do not stand out of it as specks)
-    const far = new THREE.MeshBasicMaterial({ color: 0xc4ccd6 });
+    const far = windowGlow;
     for (const h of HOLES) {
       const m = new THREE.Mesh(pane, far);
       m.scale.set(1, 1.4, 1);
@@ -523,12 +527,13 @@ export function buildHall(scene: THREE.Scene, hang: THREE.Vector3, maxTexture = 
   // dark and the light comes in as it rolls, band by band of glass from the sun's side over to here. Its shadow
   // is worked out where the light is (materials.ts, rays.ts); only the pod's own sun has it drawn in its map
   const SHUT_Y = ROOF + 0.7, SLAT = 0.6, RUN = WX - X0, R0 = 1.1, THICK_SLAT = 0.07;
-  // open, it is only half rolled up: half the roof stays covered, a little light comes in
-  const OPEN_AT = 0.5;
-  let shut = OPEN_AT, shutTo = OPEN_AT, shutV = 0; // how much of the roof it covers, where it is going, how fast: open to start with
+  // open, it is not all the way rolled up: a quarter of the roof stays covered, on this side
+  const OPEN_AT = 0.25;
+  let shut = 1, shutTo = 1, shutV = 0; // how much of the roof it covers, where it is going, how fast: shut to start with
   const shutter = new THREE.Group();
   const slatMat = new THREE.MeshStandardMaterial({ color: 0x34373b, roughness: 0.5, metalness: 0.75 });
-  const slats = new THREE.InstancedMesh(new THREE.BoxGeometry(SLAT - 0.05, THICK_SLAT, Z0 - Z1 + 2), slatMat, Math.ceil(RUN / SLAT) + 1);
+  // (each a little wider than its pitch, so they overlap: shut, no glass glows through between them)
+  const slats = new THREE.InstancedMesh(new THREE.BoxGeometry(SLAT + 0.04, THICK_SLAT, Z0 - Z1 + 2), slatMat, Math.ceil(RUN / SLAT) + 1);
   slats.castShadow = true;
   slats.frustumCulled = false;
   const drum = new THREE.Mesh(new THREE.CylinderGeometry(1, 1, Z0 - Z1 + 2, 48).rotateX(Math.PI / 2), slatMat);
@@ -820,9 +825,14 @@ export function buildHall(scene: THREE.Scene, hang: THREE.Vector3, maxTexture = 
     },
     /** the shutter: open (rolled up) or shut */
     roofOpen(open: boolean) { shutTo = open ? OPEN_AT : 1; },
+    /** the same, at once (no rolling: the debug page starts with it open) */
+    roofSet(open: boolean) { shut = shutTo = open ? OPEN_AT : 1; shutV = 0; lay(); },
     /** how much of the roof is open, 0..1 */
     get open() { return 1 - shut; },
+    /** the hoists' own rounds: still until set going (a cue of the opening, later) */
+    liftsRun(on: boolean) { liftsOn = on; },
     update(time: number, dt: number) {
+      if (liftsOn) liftTime += dt;
       // the shutter: heavy, slow to start and to stop, a few metres a second at most
       if (shut !== shutTo || shutV) {
         const d = shutTo - shut, a = 0.012, vmax = 0.06;
@@ -850,6 +860,7 @@ export function buildHall(scene: THREE.Scene, hang: THREE.Vector3, maxTexture = 
       const over = THREE.MathUtils.smoothstep(roof.position.x, X0 + shut * RUN - 1.5, X0 + shut * RUN + 1.5);
       roof.intensity = roofBase * over;
       shafts[0].uniforms.strength.value = shafts[0].userData.strength * shaftK * over;
+      windowGlow.color.copy(WINDOW).multiplyScalar(0.12 + 0.88 * (1 - shut));
       // and the faked shafts of the windows come and go with the daylight, as the windows' lights do (main.ts)
       for (let i = 1; i < shafts.length; i++) shafts[i].uniforms.strength.value = shafts[i].userData.strength * shaftK * (0.12 + 0.88 * (1 - shut));
       dome.material.uniforms.gain.value = (scene.fog as THREE.Fog).far;
@@ -872,7 +883,7 @@ export function buildHall(scene: THREE.Scene, hang: THREE.Vector3, maxTexture = 
         }
         // up, wait, down, wait: a smooth ride between the ends
         const span = h.hi - h.lo, ride = span / h.speed, cycle = 2 * ride + 16;
-        const t = (time + h.phase * 10) % cycle;
+        const t = (liftTime + h.phase * 10) % cycle;
         const u = t < ride ? t / ride : t < ride + 8 ? 1 : t < 2 * ride + 8 ? 1 - (t - ride - 8) / ride : 0;
         c.position.y = h.lo + span * u * u * (3 - 2 * u);
       }

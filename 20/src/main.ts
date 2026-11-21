@@ -52,7 +52,7 @@ function start() {
   scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
   scene.environmentIntensity = 0.18;
   // ---------- the controls, bottom left: the hall's machines, one symbol each, in yellow. The roof first
-  let roofWanted = true; // (the roof starts open)
+  let roofWanted = query.has('debug'); // (the hall starts with the roof shut: only the fans let light in; ?debug open)
   const controls = (() => {
     const list = document.querySelector<HTMLElement>('.controls')!;
     const roofBtn = list.querySelector<HTMLButtonElement>('[data-ctl="roof"]')!;
@@ -65,7 +65,7 @@ function start() {
       const btn = list.querySelector<HTMLButtonElement>(`[data-ctl="fans-${w}"]`)!;
       const dots = [...btn.querySelectorAll<SVGCircleElement>('.light circle')];
       const r0 = +dots[0].getAttribute('r')!;
-      let wanted = true;
+      let wanted = true; // (the fans are open from the start: the light the hall starts in)
       btn.addEventListener('click', () => { wanted = !wanted; hall?.fanShutter(false, wanted); btn.setAttribute('aria-pressed', String(wanted)); });
       return (s: number) => { for (const d of dots) d.setAttribute('r', (r0 * s).toFixed(2)); };
     });
@@ -108,16 +108,43 @@ function start() {
   post.insert(new OutputPass(), 1);
   const ortho = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 100); // the debug panel's iso: same eye, no perspective
   let eye: THREE.Camera = camera;
-  const target = new THREE.Vector3(0.1, 0.15, 0);
+  // the opening: from well below and off to the side, looking up at the pod and past it into the dark of a hall
+  // shut down, as it fades in; a moment, and the roof's shutter rolls up, the eye turning slowly. A touch, a drag or the
+  // wheel and the eye is yours
+  type Shot = { yaw: number; pitch: number; radius: number; target: THREE.Vector3 };
+  const SHOT: Shot = { yaw: -0.52, pitch: -0.77, radius: 16, target: new THREE.Vector3(1.08, 2.1, -1.14) };
+  // [seconds, the view there]; eased from each to the next; and what happens when
+  // and all the while, until the roof is open (some 22 s), the eye turns slowly round it, 20 degrees. Then a few
+  // cuts, each shot drifting round the pod, slow and even, and the last landing where the eye is left
+  const deg = THREE.MathUtils.degToRad;
+  const turn = (v: Shot, d: number): Shot => ({ ...v, yaw: v.yaw + deg(d) });
+  const DOOR: Shot = { yaw: 0.15, pitch: -0.12, radius: 3.4, target: new THREE.Vector3(0.35, 0.55, 0.1) }; // close on the door, the red in its seams
+  const CABLES: Shot = { yaw: -1.5, pitch: -0.7, radius: 5.5, target: new THREE.Vector3(0.2, 3.2, 0) }; // up the cables from below
+  const HALL: Shot = { yaw: 0.35, pitch: -0.28, radius: 15, target: new THREE.Vector3(2.5, 3, -2.5) }; // the hall, the fans, the twin
+  const LAND: Shot = { yaw: -0.51, pitch: -0.38, radius: 9, target: new THREE.Vector3(0.9, 0.64, -0.8) };
+  // each a shot: from, to, how long, eased at both ends (the opening), even (the cuts) or eased only into its end
+  type Take = { from: Shot; to: Shot; s: number; ease: 'both' | 'even' | 'end' };
+  const TAKES: Take[] = [
+    { from: SHOT, to: turn(SHOT, 20), s: 22, ease: 'both' },
+    { from: DOOR, to: turn(DOOR, 7), s: 4.5, ease: 'even' },
+    { from: CABLES, to: turn(CABLES, -8), s: 4.5, ease: 'even' },
+    { from: HALL, to: turn(HALL, 6), s: 5, ease: 'even' },
+    { from: turn(LAND, -9), to: LAND, s: 6, ease: 'end' },
+  ];
+  const CUES: [number, () => void][] = [[4.5, () => { roofWanted = true; hall?.roofOpen(true); }]];
+  // (?debug skips it: the roof open, the eye on the pod, no fade)
+  const QUICK = query.has('debug');
+  let cine: null | { t: number; on: boolean; cue: number } = QUICK ? null : { t: 0, on: false, cue: 0 }; // (on once the scene is there)
+  const target = (QUICK ? LAND : SHOT).target.clone();
   // the view people get, as the hall picture has it: from below, looking up at the pod's left side and front
   const home = new THREE.Vector3(0.1, 0.15, 0);
   const YAW0 = -0.6;
   const PITCH0 = -0.55;
-  let yaw = YAW0;
-  let pitch = PITCH0;
+  let yaw = QUICK ? LAND.yaw : SHOT.yaw;
+  let pitch = QUICK ? LAND.pitch : SHOT.pitch;
   let vyaw = 0;
   let vpitch = 0;
-  let radius = 7.5;
+  let radius = QUICK ? LAND.radius : SHOT.radius;
   let homeRadius = 7.5;
   // a view the camera is easing to (the debug panel's), null while it is yours
   let goal: null | { yaw: number; pitch: number; radius: number; target: THREE.Vector3 } = null;
@@ -186,7 +213,9 @@ function start() {
   const doorCom = new THREE.Vector3(); // door local
   let doorSign = 1; // which way round the hinge is open
   let doorArm2 = 0.2; // (distance of its centre from the hinge) squared
-  let open = 0.08;
+  let open = 0;
+  // shut and latched to start with; a press on it and the latch lets go: it pops a crack open, and the blood comes
+  let latched = true;
   let vopen = 0;
   const hinge = new THREE.Vector3();
   const hingeWas = new THREE.Vector3();
@@ -387,6 +416,12 @@ function start() {
     }
     // the roof's shutter darkens the sun wherever it is: every lit material takes its uniforms
     shareCover(scene, hall.spare);
+    // the page comes up black; once all of it is there and drawn (two frames, the shaders built), it fades in
+    if (QUICK) { hall.roofSet(true); document.querySelector('.fade')?.remove(); }
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      document.querySelector('.fade')?.classList.add('in');
+      if (cine) cine.on = true;
+    }));
     blood = new Blood(drips);
     scene.add(blood.mesh);
 
@@ -426,6 +461,8 @@ function start() {
   const fingers = new Map<number, { x: number; y: number }>();
   let pinch: null | { d: number; r: number } = null;
   const spread = () => { const [a, b] = [...fingers.values()]; return Math.hypot(a.x - b.x, a.y - b.y) || 1; };
+  canvas.addEventListener('pointerdown', () => { cine = null; }); // (the eye is yours)
+  canvas.addEventListener('wheel', () => { cine = null; });
   canvas.addEventListener('pointerdown', (e) => {
     if (e.pointerType === 'touch') {
       fingers.set(e.pointerId, { x: e.clientX, y: e.clientY });
@@ -453,6 +490,14 @@ function start() {
     if (!hit) return;
     let o: THREE.Object3D | null = hit.object;
     while (o && o !== door) o = o.parent;
+    if (o && door && latched) {
+      latched = false;
+      open = AJAR;
+      vopen = 0.7; // (a pop: it springs out and settles a crack open, the strut holding it)
+      blood?.start();
+      grab = null;
+      return;
+    }
     if (o && door) {
       // how the grabbed point moves on screen as the door opens: drag along that
       grab = 'door';
@@ -519,7 +564,7 @@ function start() {
   canvas.addEventListener('pointercancel', release);
 
   // dev only: a look at the state from the console
-  if (import.meta.env.DEV) Object.assign(window, { cocoon: () => ({ grab, open, vopen, ax, az, tw, doorSign, cables: cables.length, carry: carry.x, hand, doorFree }), __x: () => carry.x, look: (y: number, p: number, r: number) => { goal = null; yaw = y; pitch = p; radius = r; vyaw = vpitch = 0; }, craneAt: (t: number) => { craneTime = t; }, view: (s: { yaw: number; pitch: number; radius: number; target: number[] }) => { goal = null; yaw = s.yaw; pitch = s.pitch; radius = s.radius; target.fromArray(s.target); vyaw = vpitch = 0; }, scene, camera, ao, renderer, post });
+  if (import.meta.env.DEV) Object.assign(window, { cocoon: () => ({ grab, open, vopen, ax, az, tw, doorSign, cables: cables.length, carry: carry.x, hand, doorFree }), __x: () => carry.x, look: (y: number, p: number, r: number) => { goal = null; yaw = y; pitch = p; radius = r; vyaw = vpitch = 0; }, craneAt: (t: number) => { craneTime = t; }, cineAt: (t: number) => { if (cine) cine.t = t; }, view: (s: { yaw: number; pitch: number; radius: number; target: number[] }) => { goal = null; yaw = s.yaw; pitch = s.pitch; radius = s.radius; target.fromArray(s.target); vyaw = vpitch = 0; }, scene, camera, ao, renderer, post });
 
   // ---------- physics, in fixed steps
 
@@ -584,7 +629,9 @@ function start() {
       }
       hingeWas.copy(hinge);
       hingeKnown = true;
-      if (grab === 'door') {
+      if (latched) {
+        open = vopen = 0;
+      } else if (grab === 'door') {
         vopen += (220 * (openTo - open) - 30 * vopen) * h;
       } else {
         v1.copy(doorCom).applyMatrix4(door.matrixWorld).sub(hinge); // arm
@@ -598,7 +645,9 @@ function start() {
         else vopen += (pull - Math.sign(vopen || pull) * STICK * 0.6 - 0.6 * vopen) * h;
       }
       open += vopen * h;
-      if (open < AJAR) {
+      if (latched) {
+        open = 0;
+      } else if (open < AJAR) {
         open = AJAR;
         vopen = Math.abs(vopen) * 0.25; // it knocks, it does not latch
       } else if (open > WIDE) {
@@ -825,6 +874,24 @@ function start() {
       pitch += vpitch;
       vyaw *= 0.92;
       vpitch *= 0.92;
+    }
+    // the opening shot, eased from one view to the next (a view from the debug panel ends it)
+    if (goal) cine = null;
+    if (cine?.on) {
+      cine.t += dt;
+      while (cine.cue < CUES.length && CUES[cine.cue][0] <= cine.t) CUES[cine.cue++][1]();
+      // which take, and how far into it; a new take is a cut
+      let start = 0, k = 0;
+      while (k < TAKES.length - 1 && cine.t > start + TAKES[k].s) start += TAKES[k++].s;
+      const tk = TAKES[k];
+      const x = THREE.MathUtils.clamp((cine.t - start) / tk.s, 0, 1);
+      const u = tk.ease === 'both' ? THREE.MathUtils.smootherstep(x, 0, 1) : tk.ease === 'end' ? 1 - (1 - x) * (1 - x) : x;
+      yaw = THREE.MathUtils.lerp(tk.from.yaw, tk.to.yaw, u);
+      pitch = THREE.MathUtils.lerp(tk.from.pitch, tk.to.pitch, u);
+      radius = THREE.MathUtils.lerp(tk.from.radius, tk.to.radius, u);
+      target.lerpVectors(tk.from.target, tk.to.target, u);
+      vyaw = vpitch = 0;
+      if (cine.t > start + tk.s && k === TAKES.length - 1 && cine.cue >= CUES.length) cine = null;
     }
     if (goal) {
       const k = 1 - Math.exp(-dt * 6);

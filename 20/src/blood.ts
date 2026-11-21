@@ -55,8 +55,13 @@ export class Blood {
     return 0.55 + 0.25 * Math.sin(t * 0.7) + 0.2 * Math.sin(t * 1.9 + 1.3);
   }
 
+  /** none of it until the door is opened (main.ts): then it starts, and never stops */
+  private running = false;
+  start() { this.running = true; }
+
   update(dt: number) {
     if (dt <= 0) return;
+    if (!this.running) { this.mesh.count = 0; return; }
     this.time += dt;
     let n = 0;
     for (const s of this.sources) {
