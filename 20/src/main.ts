@@ -62,22 +62,27 @@ function start() {
     const list = document.querySelector<HTMLElement>('.controls')!;
     const roofBtn = list.querySelector<HTMLButtonElement>('[data-ctl="roof"]')!;
     const light = roofBtn.querySelector<SVGGElement>('.light')!;
-    roofBtn.addEventListener('click', () => { roofWanted = !roofWanted; hall?.roofOpen(roofWanted); });
+    roofBtn.addEventListener('click', () => { roofWanted = !roofWanted; hall?.roofOpen(roofWanted); watch('roof'); });
     // the fans, a button for each wall's: their leaf shutters open or shut, the light through them with them
     const fanBtns = (['end'] as const).map((w) => {
       const btn = list.querySelector<HTMLButtonElement>(`[data-ctl="fans-${w}"]`)!;
       const blades = btn.querySelector<SVGGElement>('.blades')!;
       let wanted = true; // (the fans are open from the start: the light the hall starts in)
-      btn.addEventListener('click', () => { wanted = !wanted; hall?.fanShutter(false, wanted); btn.setAttribute('aria-pressed', String(wanted)); });
+      btn.addEventListener('click', () => { wanted = !wanted; hall?.fanShutter(false, wanted); btn.setAttribute('aria-pressed', String(wanted)); watch('fans'); });
       return (s: number) => { blades.style.opacity = (0.18 + 0.82 * s).toFixed(2); };
     });
     // the crane: off it stands where it is, on it goes its round along the girder, hoisting at each end
     const railBtn = list.querySelector<HTMLButtonElement>('[data-ctl="rail"]')!;
     const car = railBtn.querySelector<SVGGElement>('.car')!;
-    railBtn.addEventListener('click', () => { railOn = !railOn; railBtn.setAttribute('aria-pressed', String(railOn)); });
+    railBtn.addEventListener('click', () => {
+      railOn = !railOn;
+      railBtn.setAttribute('aria-pressed', String(railOn));
+      if (railOn) craneTime = Math.max(craneTime, MOVES[1][0]); // (its round starts with a wait: not when asked to go)
+      watch('rail');
+    });
     // the eye: yours (drag, pinch), or on its own, a new shot every few seconds
     const eyeBtn = list.querySelector<HTMLButtonElement>('[data-ctl="eye"]')!;
-    eyeBtn.addEventListener('click', () => { if (cine || auto) cine = auto = null; else { auto = { t: 0, i: 0 }; cutNow = true; } });
+    eyeBtn.addEventListener('click', () => { if (cine || auto) cine = auto = null; else play(); });
     let eyeWas: boolean | null = null;
     return {
       /** the trolley's symbol goes along its line with the trolley */
@@ -158,28 +163,100 @@ function start() {
   // and far, and several lenses (the usual 40 degrees, a wide one from below, longer ones that stack the hall
   // up behind it; not from far off, the haze takes the pod at 20 m). Each drifts a little round the pod, one way then the other.
   const CUT = Math.max(0.5, +(query.get('cut') ?? 3) || 3);
-  type Auto = Shot & { s: number; fov?: number };
+  // (`wide`: made to show what is over the pod, tall as it is: not stood back from on an upright screen. `fixed`:
+  // the eye does not go along with the crane, the pod travels through the picture)
+  // `fly`: the eye is out in the hall and moves, from a to b (world, metres), looking at the pod all the while;
+  // `walk`: and is held in the hand as it goes)
+  type Auto = Shot & { s: number; fov?: number; wide?: boolean; fixed?: boolean; fly?: { a: THREE.Vector3; b: THREE.Vector3 }; walk?: boolean };
   const at = (yaw: number, pitch: number, radius: number, x: number, y: number, z: number, s: number, fov?: number): Auto => ({ yaw, pitch, radius, target: new THREE.Vector3(x, y, z), s, fov });
+  // from out in the hall, the eye moving past steel that stands between it and the pod: that is what gives the
+  // picture its depth. Not from far: the haze takes the pod at 20 m
+  const fly = (a: number[], b: number[], look: number[], s: number, fov?: number, walk = false): Auto => ({ yaw: 0, pitch: 0, radius: 12, target: new THREE.Vector3().fromArray(look), s, fov, wide: true, walk, fly: { a: new THREE.Vector3().fromArray(a), b: new THREE.Vector3().fromArray(b) } });
   const AUTO: Auto[] = [
     at(0.05, 0.04, 2.9, 0.45, 0.9, 0.1, 0.55), // the window
     at(0.4, -0.35, 3.3, 0.3, -0.5, 0.2, 0.6), // the seam low down, the latch, the blood
+    fly([9.8, -5.2, 7.5], [9.8, -5.2, 3.2], [0, 0.6, 0], 1.4, 40, true), // walking the low catwalk, crouched under its rail, looking up at it
     at(-Math.PI / 2, 0.0, 11.5, 0, 0.4, 0, 1.15, 30), // from the side, a longer lens: the pod flat on as the sheet draws it, the hall stacked up behind
+    at(-0.3, 0.5, 2.7, 0, 1.1, 0.1, 0.55), // its top from in front and above: the deck, its lamps
     { ...ABOVE, s: 0.9 }, // from above, down on its top and the mount, the depth under it
+    fly([15.6, -3.2, -1.2], [15.6, 3.2, -1.2], [0, 0.6, 0], 1.4, 36), // up the hoist's mast, through its lattice
     at(Math.PI / 2 + 0.1, 0.1, 3.4, 0, 0.95, -0.2, 0.55), // the mount and the hoist's block from the side, the pod's head under them
     { ...SHOT, s: 1.35 }, // the first view: from well below, the roof and the fans over it
     at(-0.95, -0.18, 3.5, -0.35, 0.45, 0.25, 0.55), // the markings on its flank
-    at(0.3, -0.85, 3.6, 0, -0.7, 0, 0.6, 55), // right under it, a wide lens: the lamps of its underside, the cables going up
+    at(-0.12, 0.02, 2.2, 0.15, 0.45, 0.6, 0.5), // the latch across the seam, its lamp
+    fly([-4.5, -7, 3], [2.5, -7, 4.5], [0, 0.3, 0], 1.3, 46), // passing under it, looking up
     { ...BACK, s: 0.95 }, // its back, the machinery
+    at(Math.PI - 0.3, -0.15, 2.7, 0, 0.3, -0.5, 0.55), // the machinery of its back, close: the lamps in it
     at(0.85, -0.08, 15, 0, 0.2, 0, 1.1, 24), // from the front right, a longer lens, the steel stacked up behind it
+    fly([-14.4, -0.4, -4.05], [-10.6, -0.4, -4.05], [0, 0.5, 0], 1.4, 38, true), // along the boards of the staging on its other side, its tubes going by
     at(0.95, 0.12, 2.5, 0.5, 0.15, 0.3, 0.5), // the door's edge, close, from its hinge side
     at(0.6, -0.5, 5.5, 0, 0.1, 0, 0.8), // from under its door side, half way in
+    fly([10.5, 11.8, 2.2], [6.5, 11.8, 2.2], [0, 2.6, 0], 1.35, 44), // over the girder it hangs from, along it towards the trolley: the wire down to it
     at(0.35, 0.5, 11, 0, -0.8, 0, 1.3, 45), // high up in front of it, looking down past it into the dark
+    at(1.2, -0.5, 2.9, 0, -1.1, 0, 0.55), // the frame under it and its lamps, from the side
+    at(0.3, -0.85, 3.6, 0, -0.7, 0, 0.6, 55), // right under it, a wide lens: the lamps of its underside, the cables going up
+    fly([2.5, -6.5, 9], [2.5, 1.5, 9], [0, 0.5, 0], 1.4, 40), // rising in front of it, from under it to level with it
+    at(2.6, 0.3, 10, 0, 0, 0, 1.15, 35), // from behind it on the right, a little above
+    at(1.45, -0.05, 3.2, 0.6, 0.2, 0, 0.55), // its right flank, close
+    at(-0.7, -0.3, 5.2, 0, 0.3, 0, 0.8), // from its front left, half way in
+    at(0.0, -0.05, 13, 0, 0.2, 0, 1.1, 20), // straight on, a long lens
+    fly([-9.8, -5.2, -8.5], [-9.8, -5.2, -3.6], [0, 0.6, 0], 1.4, 40, true), // the low catwalk on the other side, out of the staging round the tower there
+    at(-1.3, -0.75, 3.2, -0.3, -0.3, 0, 0.6, 55), // from under its left flank, a wide lens, up along it
+    fly([3.4, 7.5, 1.7], [1.3, 7.5, 2.0], [0, 0.8, 0], 1.3, 48), // under the girder, along it: down the wire on its head, the dark under it
+    at(-2.3, -0.5, 9, 0, 0.8, 0, 1.15), // from behind it on the left, below
+    fly([12, -2.5, -6], [12, 3, -6], [0, 0.5, 0], 1.4, 40), // up inside the tower beside it, through its lattice and the staging round it
+    at(0.6, 0.35, 5.5, 0, 0.3, 0, 0.8), // from its front right, above, half way in
+    fly([4.5, -2, -11], [-1.5, -1.5, -11.5], [0, 0.6, 0], 1.35, 40), // passing behind it, low
   ];
-  const hold = (i: number) => CUT * AUTO[i].s; // how long shot i is held
+  // And when one of the hall's machines is set going while the eye is on its own, it looks: a cut at once, and
+  // the next three shots have it in the picture, before the round goes on. Not close on it, the other way: wide,
+  // the pod still there, so that what happens is seen and no more is made of it than that.
+  const SEE: Record<'roof' | 'fans' | 'rail', Auto[]> = {
+    // the roof: from below, three ways, the shutter and the light coming or going over the pod
+    roof: [
+      { ...at(0.3, -0.85, 4.2, 0, -0.4, 0, 1.1, 55), wide: true },
+      { ...at(2.6, -0.8, 9, 0, 2.6, 0, 1.1, 50), wide: true }, // (no further out: with the pod along the rail the eye would stand in a staging)
+      { ...SHOT, s: 1.2, wide: true },
+    ],
+    // the fans, high in the end wall: from in front of the pod and under it, the wall over its head
+    fans: [
+      { ...at(0.0, -0.42, 13, 0, 0.6, 0, 1.1), wide: true },
+      { ...at(-0.24, -0.58, 15, 0.3, 1.6, -0.4, 1.1), wide: true },
+      { ...at(0.4, -0.5, 9.5, 0, 2.2, 0, 1.1, 50), wide: true },
+    ],
+    // the crane: the girder, the trolley and the wire over the pod, the eye standing still so the pod travels
+    rail: [
+      { ...at(0.15, -0.22, 14, 0, 4.4, 0, 1.3, 46), wide: true, fixed: true },
+      { ...at(-0.6, -0.3, 13, 0, 3.3, 0, 1.3), wide: true, fixed: true },
+      { ...at(Math.PI / 2 - 0.3, -0.18, 13, 0, 4.2, 0, 1.3, 46), wide: true, fixed: true },
+    ],
+  };
   // on an upright screen the picture is narrow and a shot made for a wide one cuts the pod off, or shows the
   // cables and no pod: the eye stands back, up to 1.6 times as far
   const fit = () => (camera.aspect < 0.85 ? Math.min(1.6, (0.85 / camera.aspect) ** 0.6) : 1);
-  let auto: null | { t: number; i: number } = null;
+  // t into the shot, i which of the round's, n how many cuts so far (which way it drifts), q a shot put in before
+  // the round's next one
+  let auto: null | { t: number; i: number; n: number; q: Auto | null } = null;
+  let queue: Auto[] = [];
+  const anchor = new THREE.Vector3(); // where the crane had the pod at the cut, for the shots that stand still
+  const shown = () => auto!.q ?? AUTO[auto!.i];
+  const cut = () => {
+    if (!auto) return;
+    if (queue.length) auto.q = queue.shift()!;
+    else if (auto.q) auto.q = null; // (back to the round, at the shot it was to show next)
+    else auto.i = (auto.i + 1) % AUTO.length;
+    auto.t = 0;
+    auto.n++;
+    anchor.copy(carry);
+    cutNow = true;
+  };
+  const play = () => { queue = []; auto = { t: 0, i: 0, n: 0, q: null }; anchor.copy(carry); cutNow = true; };
+  const watch = (what: keyof typeof SEE) => {
+    if (!auto) return; // (the eye is yours, or the opening is on: it is not taken)
+    queue = [...SEE[what]];
+    if (!auto.q) auto.i = (auto.i + 1) % AUTO.length; // the shot cut away from is not come back to
+    cut();
+  };
   // held in the hand, the close shots: the eye wanders a little and breathes (?hand=0 off, ?hand=2 twice as much)
   const HAND = Math.max(0, +(query.get('hand') ?? 1));
   let sway = 0;
@@ -324,6 +401,7 @@ function start() {
     w.userData.f1.position.y = len - 0.17;
   };
   let blood: Blood | null = null;
+  let bloodAt: THREE.Object3D | null = null; // where it drips from: the end of the run down the door's seam
   let others: ReturnType<typeof pods> | null = null;
   let raysPass: Rays | null = null;
   const inside = new THREE.PointLight(0xff2410, 1.6, 1.6, 2);
@@ -472,8 +550,10 @@ function start() {
       document.querySelector('.fade')?.classList.add('in');
       if (cine) cine.on = true;
     }));
-    blood = new Blood(drips);
-    scene.add(blood.mesh);
+    // (one run only, at the door: the other point, under the pod, is left dry)
+    bloodAt = drips[0] ?? null;
+    if (bloodAt) blood = new Blood(bloodAt);
+    if (blood) scene.add(blood.mesh);
 
     // let the cables fall into place before anyone looks
     for (let i = 0; i < 400; i++) physics(STEP, 0);
@@ -614,7 +694,7 @@ function start() {
   canvas.addEventListener('pointercancel', release);
 
   // dev only: a look at the state from the console
-  if (import.meta.env.DEV) Object.assign(window, { cocoon: () => ({ grab, open, vopen, ax, az, tw, doorSign, cables: cables.length, carry: carry.x, hand, doorFree }), __x: () => carry.x, look: (y: number, p: number, r: number) => { goal = null; yaw = y; pitch = p; radius = r; vyaw = vpitch = 0; }, craneAt: (t: number) => { craneTime = t; }, shot: (i: number) => { auto = { t: hold(i) / 2, i }; cutNow = true; }, cineAt: (t: number) => { if (cine) cine.t = t; }, view: (s: { yaw: number; pitch: number; radius: number; target: number[] }) => { goal = null; yaw = s.yaw; pitch = s.pitch; radius = s.radius; target.fromArray(s.target); vyaw = vpitch = 0; }, scene, camera, ao, renderer, post });
+  if (import.meta.env.DEV) Object.assign(window, { cocoon: () => ({ grab, open, vopen, ax, az, tw, doorSign, cables: cables.length, carry: carry.x, hand, doorFree }), __x: () => carry.x, look: (y: number, p: number, r: number) => { goal = null; yaw = y; pitch = p; radius = r; vyaw = vpitch = 0; }, craneAt: (t: number) => { craneTime = t; }, shot: (i: number, x = 0.5) => { play(); auto!.i = i; auto!.t = CUT * AUTO[i].s * x; }, see: (what: 'roof' | 'fans' | 'rail', k: number) => { play(); auto!.q = SEE[what][k]; auto!.t = (CUT * auto!.q.s) / 2; }, cineAt: (t: number) => { if (cine) cine.t = t; }, view: (s: { yaw: number; pitch: number; radius: number; target: number[] }) => { goal = null; yaw = s.yaw; pitch = s.pitch; radius = s.radius; target.fromArray(s.target); vyaw = vpitch = 0; }, scene, camera, ao, renderer, post });
 
   // ---------- physics, in fixed steps
 
@@ -727,6 +807,13 @@ function start() {
     const steelBtns = [...panel.querySelectorAll<HTMLButtonElement>('[data-steel]')];
     let steelMode = NO.has('scaffolding') ? 'off' : 'grit';
     const copyBtn = panel.querySelector<HTMLButtonElement>('[data-copy]')!;
+    // Blood: the eye goes close in on where it drips, and it is set dripping without the door being pressed
+    panel.querySelector<HTMLButtonElement>('[data-blood]')!.addEventListener('click', () => {
+      if (!bloodAt) return;
+      blood?.start();
+      goal = { yaw: 0.45, pitch: -0.1, radius: 0.5, target: bloodAt.getWorldPosition(new THREE.Vector3()).sub(carry).add(new THREE.Vector3(0, -0.07, 0)) };
+      mark();
+    });
     // the view and what the scene is doing, as text to paste back to whoever is working on it
     const copyView = async () => {
       const r = (v: number, n = 2) => +v.toFixed(n);
@@ -950,23 +1037,35 @@ function start() {
       target.lerpVectors(tk.from.target, tk.to.target, u);
       vyaw = vpitch = 0;
       // the opening over, the eye stays on its own: on into the shots (a touch and it is yours)
-      if (cine.t > start + tk.s && k === TAKES.length - 1 && cine.cue >= CUES.length) { cine = null; auto = { t: 0, i: 0 }; cutNow = true; }
+      if (cine.t > start + tk.s && k === TAKES.length - 1 && cine.cue >= CUES.length) { cine = null; play(); }
     }
+    let stood: THREE.Vector3 | null = null; // the shot stands still: where the crane had the pod at its cut
     if (auto) {
       auto.t += dt;
-      if (auto.t >= hold(auto.i)) { auto.t -= hold(auto.i); auto.i = (auto.i + 1) % AUTO.length; cutNow = true; } // a cut
-      const s = AUTO[auto.i];
+      if (auto.t >= CUT * shown().s) cut();
+      const s = shown();
       // (nearer, or through a longer lens, the same turn is a faster picture: less of it)
       const rate = (s.radius < 6 ? 0.9 : 1.3) * Math.min(1, (s.fov ?? 40) / 40);
-      yaw = s.yaw + deg(rate) * (auto.t - hold(auto.i) / 2) * (auto.i % 2 ? -1 : 1);
-      pitch = s.pitch;
-      radius = s.radius * fit();
+      const x = auto.t / (CUT * s.s); // 0 at the cut, 1 at the next
       target.copy(s.target);
+      if (s.fly) {
+        // out in the hall, moving at an even pace, the eye on the pod wherever the crane has it
+        v1.lerpVectors(s.fly.a, s.fly.b, x).sub(v2.copy(target).add(carry));
+        radius = v1.length();
+        yaw = Math.atan2(v1.x, v1.z);
+        pitch = Math.asin(v1.y / radius);
+      } else {
+        yaw = s.yaw + deg(rate) * (auto.t - (CUT * s.s) / 2) * (auto.n % 2 ? -1 : 1);
+        pitch = s.pitch;
+        // (the wide ones go in a little all the while, 6 %: nothing stands quite still)
+        radius = s.radius * (s.wide ? 1 : fit()) * (s.radius >= 6 ? 1.03 - 0.06 * x : 1);
+      }
       vyaw = vpitch = 0;
+      if (s.fixed) stood = anchor;
     }
     // the lens: each shot's own while the eye is on its own, back to the usual one after (eased, not a jump)
     {
-      const fov = auto ? AUTO[auto.i].fov ?? 40 : 40;
+      const fov = auto ? shown().fov ?? 40 : 40;
       const next = auto ? fov : camera.fov + (fov - camera.fov) * Math.min(1, dt * 4);
       if (Math.abs(next - camera.fov) > 1e-3) { camera.fov = Math.abs(next - fov) < 0.02 ? fov : next; camera.updateProjectionMatrix(); }
     }
@@ -979,14 +1078,14 @@ function start() {
       target.lerp(goal.target, k);
       vyaw = vpitch = 0;
     }
-    pitch = THREE.MathUtils.clamp(pitch, -0.85, 0.6);
+    if (!auto) pitch = THREE.MathUtils.clamp(pitch, -0.85, 0.6); // (on its own it may look straight down, from the girder)
     // the eye goes along with the pod, wherever the crane takes it
-    v3.copy(target).add(carry);
+    v3.copy(target).add(stood ?? carry);
     camera.position.set(Math.sin(yaw) * Math.cos(pitch), Math.sin(pitch), Math.cos(yaw) * Math.cos(pitch)).multiplyScalar(radius).add(v3);
     camera.lookAt(v3);
     // held in the hand, when the eye is on its own and close: it wanders slowly, breathes, shakes a very little
     {
-      const want = cine?.on || auto ? HAND * THREE.MathUtils.clamp((7 - radius) / 3.5, 0, 1) : 0;
+      const want = cine?.on || auto ? HAND * Math.max(THREE.MathUtils.clamp((7 - radius) / 3.5, 0, 1), auto && shown().walk ? 0.5 : 0) : 0;
       sway += (want - sway) * Math.min(1, dt * 3);
       if (sway > 1e-3) {
         const t = now / 1000;
