@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "glb": "gltf-transform webp public/cocoon.glb public/cocoon.glb && gltf-transform meshopt public/cocoon.glb public/cocoon.glb"
+    "glb": "gltf-transform webp public/cocoon.glb public/cocoon.glb --quality 92 && gltf-transform meshopt public/cocoon.glb public/cocoon.glb"
   },
   "devDependencies": {
     "@gltf-transform/cli": "^4.5.1",

@@ -10,7 +10,7 @@ import { Cable } from './cables';
 import { pods } from './pods';
 import { Blood } from './blood';
 import { buildHall, SCENE_TARGETS } from './hall';
-import { dress, DOOR_GLOW, GLOWING, instances, rubber, shareCover, wire as wireSteel } from './materials';
+import { dress, DOOR_GLOW, GLOWING, instances, rubber, SHADE, shareCover, wire as wireSteel } from './materials';
 
 // A pod hanging in a hall. The model comes from Blender (model/cocoon.blend → public/cocoon.glb) and says by
 // name what is what:
@@ -675,6 +675,7 @@ function start() {
     const projs = [...panel.querySelectorAll<HTMLButtonElement>('[data-proj]')];
     const stillBtn = panel.querySelector<HTMLButtonElement>('[data-still]')!;
     const aoBtn = panel.querySelector<HTMLButtonElement>('[data-ao]')!;
+    const shadeBtn = panel.querySelector<HTMLButtonElement>('[data-shade]')!;
     const stepBtns = [...panel.querySelectorAll<HTMLButtonElement>('[data-steps]')];
     const steelBtns = [...panel.querySelectorAll<HTMLButtonElement>('[data-steel]')];
     let plainSteel = false;
@@ -772,6 +773,7 @@ function start() {
       projs.forEach((b) => b.classList.toggle('on', (b.dataset.proj === 'ortho') === (eye === ortho)));
       stillBtn.classList.toggle('on', still);
       aoBtn.classList.toggle('on', aoOn);
+      shadeBtn.classList.toggle('on', SHADE.value > 0.5);
       for (const b of stepBtns) b.classList.toggle('on', +b.dataset.steps! === (raysPass?.steps ?? 24));
       for (const b of steelBtns) b.classList.toggle('on', (b.dataset.steel === 'plain') === plainSteel);
       refs.forEach((b) => b.classList.toggle('on', b.dataset.ref === split));
@@ -807,6 +809,8 @@ function start() {
     projs.forEach((b) => b.addEventListener('click', () => project(b.dataset.proj === 'ortho')));
     stillBtn.addEventListener('click', () => { still = !still; mark(); });
     aoBtn.addEventListener('click', () => { aoOn = !aoOn; mark(); });
+    // the baked AO (the paint's, and the colour on the other parts' vertices): on or off, to see what it does
+    shadeBtn.addEventListener('click', () => { SHADE.value = SHADE.value > 0.5 ? 0 : 1; mark(); });
     stepBtns.forEach((b) => b.addEventListener('click', () => { if (raysPass) raysPass.steps = +b.dataset.steps!; mark(); }));
     steelBtns.forEach((b) => b.addEventListener('click', () => { plainSteel = b.dataset.steel === 'plain'; hall?.plainSteel(plainSteel); mark(); }));
     refs.forEach((b) => b.addEventListener('click', () => setSplit(b.dataset.ref as typeof split)));
@@ -819,6 +823,7 @@ function start() {
       else if (e.key === '5') project(eye !== ortho);
       else if (e.key === 'h' || e.key === 'H') { still = !still; mark(); }
       else if (e.key === 'o' || e.key === 'O') { aoOn = !aoOn; mark(); }
+      else if (e.key === 'm' || e.key === 'M') { SHADE.value = SHADE.value > 0.5 ? 0 : 1; mark(); }
       else if (e.key === 'c' || e.key === 'C') copyView();
       else if (e.key === 'r' || e.key === 'R') setSplit(split === 'off' ? 'side' : split === 'side' ? 'down' : 'off');
     });

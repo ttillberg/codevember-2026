@@ -106,7 +106,52 @@ type Grit = {
   tint: number; // how much the tone wanders
   ribs?: boolean; // a hose's corrugation: ribs along uv.y, one per unit
   wear?: number; // worn through: how much of it is gone, in flakes (a painted mark)
+  paint?: boolean; // worn white paint: grime, pits, scratches, chipped edges, drawn here
 };
+
+/** the baked dark in the corners (the paint's AO, the colour on the other parts' vertices): 1 on, 0 off (the debug panel) */
+export const SHADE = { value: 1 };
+
+// The wear on the white paint. The textures carry only what is soft (the white, broad dirt, the AO in the ORM's
+// red, how near a panel's edge in its blue: 2.4 mm a texel); everything fine is drawn here, in the plates' own
+// space, so it is sharp however near the eye is, and fades out before it gets finer than the pixels.
+const PAINT = /* glsl */ `
+      #ifdef USE_ROUGHNESSMAP
+        vec3 gOrm = texture2D( roughnessMap, vRoughnessMapUv ).rgb;
+      #else
+        vec3 gOrm = vec3( 1.0, 0.5, 0.3 );
+        #ifdef USE_COLOR
+          gOrm.r = vColor.r;
+        #endif
+      #endif
+      float gShade = ( 1.0 - gOrm.r ) * uShade;
+      vec3 P = vGrit;
+      float gPx = length( fwidth( P ) );
+      // grime: gathers where the light does not, and runs down from there in streaks
+      float gRun = smoothstep( 0.38, 0.76, gFbm( vec3( P.x * 22.0, P.y * 1.1, P.z * 22.0 ) + 3.0 ) );
+      float gPatch = smoothstep( 0.35, 0.7, gFbm( P * 2.3 + 17.0 ) );
+      // (and soot along the seams, where the edge mask is high, and smudges where hands and hoses have been)
+      float gSeam = gOrm.b * ( 0.35 + 0.65 * gFbm( P * 11.0 + 23.0 ) );
+      float gSmudge = smoothstep( 0.48, 0.74, gFbm( P * 5.5 + 41.0 ) ) * smoothstep( 0.4, 0.7, gFbm( P * 1.3 + 7.0 ) );
+      gGrime = clamp( gShade * 0.9 + gRun * ( 0.2 + 0.42 * gPatch + 0.6 * gShade ) + 0.55 * gSeam + 0.4 * gSmudge, 0.0, 1.0 );
+      diffuseColor.rgb = mix( diffuseColor.rgb, diffuseColor.rgb * vec3( 0.3, 0.27, 0.24 ), gGrime );
+      // pits: specks of paint gone, in drifts, and a few bigger
+      float gFine = 1.0 - smoothstep( 0.004, 0.012, gPx );
+      float gPit = smoothstep( 0.79, 0.83, gNoise( P * 330.0 + 7.0 ) ) * smoothstep( 0.38, 0.62, gFbm( P * 7.0 + 31.0 ) ) * gFine;
+      gPit = max( gPit, smoothstep( 0.87, 0.9, gNoise( P * 120.0 + 2.0 ) ) * 0.85 * ( 1.0 - smoothstep( 0.01, 0.03, gPx ) ) );
+      // scratches: thin, a hand long, two ways, where something has rubbed
+      float gRub = smoothstep( 0.45, 0.7, gFbm( P * 3.1 + 5.0 ) );
+      float gScr = smoothstep( 0.8, 0.86, gNoise( vec3( dot( P, vec3( 0.62, 0.74, 0.26 ) ) * 14.0, dot( P, vec3( -0.74, 0.66, -0.12 ) ) * 800.0, dot( P, vec3( -0.26, -0.12, 0.96 ) ) * 14.0 ) ) );
+      gScr = max( gScr, smoothstep( 0.82, 0.87, gNoise( vec3( dot( P, vec3( 0.3, -0.5, 0.81 ) ) * 700.0, dot( P, vec3( 0.9, 0.4, -0.1 ) ) * 11.0, dot( P, vec3( -0.3, 0.77, 0.56 ) ) * 11.0 ) + 9.0 ) ) );
+      gScr *= gRub * ( 1.0 - smoothstep( 0.002, 0.007, gPx ) );
+      // chips: the paint gone to the metal along the panels' edges, ragged
+      gChip = smoothstep( 0.74, 0.8, gOrm.b * 0.8 + gFbm( P * 34.0 ) * 0.62 ) * ( 1.0 - smoothstep( 0.02, 0.06, gPx ) );
+      // scuffs: the paint rubbed thin in patches, grey under it
+      float gScuff = smoothstep( 0.66, 0.74, gFbm( P * 17.0 + 3.0 ) ) * gRub * ( 1.0 - smoothstep( 0.03, 0.08, gPx ) );
+      diffuseColor.rgb = mix( diffuseColor.rgb, vec3( 0.34, 0.33, 0.32 ), gScuff * 0.55 );
+      diffuseColor.rgb = mix( diffuseColor.rgb, vec3( 0.16, 0.15, 0.14 ), gPit * 0.8 );
+      diffuseColor.rgb = mix( diffuseColor.rgb, diffuseColor.rgb * 0.45, gScr * 0.7 );
+      diffuseColor.rgb = mix( diffuseColor.rgb, vec3( 0.05, 0.05, 0.055 ), gChip );`;
 
 const f = (x: number) => x.toFixed(4);
 
@@ -124,11 +169,15 @@ function grit(m: THREE.MeshStandardMaterial, g: Grit) {
       #endif
       vGrit = gritAt.xyz;`,
     );
-    let frag = 'varying vec3 vGrit;\n' + NOISE + sh.fragmentShader;
+    sh.uniforms.uShade = SHADE;
+    let frag = 'varying vec3 vGrit;\nuniform float uShade;\nfloat gGrime = 0.0, gChip = 0.0;\n' + NOISE + sh.fragmentShader;
     frag = frag.replace(
       '#include <color_fragment>',
       `#include <color_fragment>
-      diffuseColor.rgb *= 1.0 + ${f(g.tint)} * (gFbm(vGrit * ${f(g.scale * 0.35)} + 11.0) - 0.5) * 2.0;${
+      #ifdef USE_COLOR
+        diffuseColor.rgb *= mix( 1.0 / max( vColor.r, 0.05 ), 1.0, uShade ); // (the baked shade on the vertices, off)
+      #endif
+      diffuseColor.rgb *= 1.0 + ${f(g.tint)} * (gFbm(vGrit * ${f(g.scale * 0.35)} + 11.0) - 0.5) * 2.0;${g.paint ? PAINT : ''}${
         g.wear
           ? `
       // flaked off: big patches where it has worn, and fine pits all over
@@ -139,8 +188,10 @@ function grit(m: THREE.MeshStandardMaterial, g: Grit) {
     frag = frag.replace(
       '#include <roughnessmap_fragment>',
       `#include <roughnessmap_fragment>
-      roughnessFactor = clamp(roughnessFactor * mix(${f(g.rough[0])}, ${f(g.rough[1])}, smoothstep(0.25, 0.75, gFbm(vGrit * ${f(g.scale)}))), 0.04, 1.0);`,
+      roughnessFactor = clamp(roughnessFactor * mix(${f(g.rough[0])}, ${f(g.rough[1])}, smoothstep(0.25, 0.75, gFbm(vGrit * ${f(g.scale)}))), 0.04, 1.0);
+      roughnessFactor = mix( min( roughnessFactor + 0.3 * gGrime, 1.0 ), 0.34, gChip );`,
     );
+    if (g.paint) frag = frag.replace('#include <metalnessmap_fragment>', '#include <metalnessmap_fragment>\n      metalnessFactor = gChip; // (the map\'s blue is the edge mask, not metal: bare metal only where the paint has chipped)');
     if (g.ribs) {
       frag = frag.replace(
         '#include <normal_fragment_maps>',
@@ -148,14 +199,14 @@ function grit(m: THREE.MeshStandardMaterial, g: Grit) {
         {
           // ribs: their slope, the same however near they are, gone where they get finer than the pixels
           float w = max(fwidth(vUv.y), 1e-4);
-          float h = 0.16 * (0.5 - 0.5 * cos(6.2831853 * vUv.y)) * (1.0 - smoothstep(0.2, 0.6, w));
+          float h = 0.1 * (0.5 - 0.5 * cos(6.2831853 * vUv.y)) * (1.0 - smoothstep(0.2, 0.6, w));
           normal = gPerturb(-vViewPosition, normal, vec2(dFdx(h), dFdy(h)) / w * 0.35, faceDirection);
         }`,
       );
     }
     sh.fragmentShader = frag;
   };
-  m.customProgramCacheKey = () => `grit:${g.scale}:${g.rough}:${g.tint}:${!!g.ribs}:${g.wear ?? 0}`;
+  m.customProgramCacheKey = () => `grit:${g.scale}:${g.rough}:${g.tint}:${!!g.ribs}:${g.wear ?? 0}:${!!g.paint}`;
   m.needsUpdate = true;
   return m;
 }
@@ -182,8 +233,9 @@ function physical(old: THREE.MeshStandardMaterial, p: THREE.MeshPhysicalMaterial
 
 /** black rubber, ribbed: the hoses on the pod and the cables to the ceiling */
 export const rubber = grit(
-  new THREE.MeshPhysicalMaterial({ name: 'hose', color: 0x111214, roughness: 0.58, metalness: 0, sheen: 0.5, sheenRoughness: 0.5, sheenColor: 0x3c4248 }),
-  { scale: 6, rough: [0.85, 1.2], tint: 0.12, ribs: true },
+  // (black: little sheen, dull, its ribs shallow, so it is a dark line with a soft edge of light, not grey bands)
+  new THREE.MeshPhysicalMaterial({ name: 'hose', color: 0x060607, roughness: 0.74, metalness: 0, sheen: 0.18, sheenRoughness: 0.6, sheenColor: 0x1c1e22 }),
+  { scale: 6, rough: [0.9, 1.15], tint: 0.06, ribs: true },
 );
 
 /** steel wire: the slings and the wire it hangs by */
@@ -200,6 +252,12 @@ export const GLOWING: { material: THREE.MeshStandardMaterial; gain: number }[] =
  * the door's world matrix inverted, every frame); the rest of it, the open flanks, stays dark */
 export const DOOR_GLOW = { inv: { value: new THREE.Matrix4() }, lo: { value: new THREE.Vector3() }, hi: { value: new THREE.Vector3() } };
 
+// the plates' paint without their textures, for the small things painted with them
+const WHITE = grit(
+  new THREE.MeshPhysicalMaterial({ name: 'paint_plain', color: 0xd6d6d1, roughness: 0.5, metalness: 0, clearcoat: 0.3, clearcoatRoughness: 0.45 }),
+  { scale: 40, rough: [0.85, 1.15], tint: 0.03, paint: true },
+);
+WHITE.defines = { ...WHITE.defines, ...POD_SUN, NO_POINT: '' };
 const MADE = new Map<string, THREE.Material>(); // what dress() made of each of the glb's materials, by name
 
 /** every material in the glb, by name, to what it is */
@@ -209,7 +267,7 @@ export function dress(root: THREE.Object3D) {
     const name = old.name.replace(/[._]\d+$/, '');
     switch (name) {
       case 'paint': // painted plate: the baked wear, under a thin satin clearcoat
-        return grit(physical(old, { clearcoat: 0.35, clearcoatRoughness: 0.42 }), { scale: 40, rough: [0.85, 1.15], tint: 0.03 });
+        return grit(physical(old, { clearcoat: 0.3, clearcoatRoughness: 0.45 }), { scale: 40, rough: [0.85, 1.15], tint: 0.03, paint: true });
       case 'mech': // gunmetal machinery
         return grit(physical(old, { color: 0x2b2f34, metalness: 0.85, roughness: 0.4 }), { scale: 9, rough: [0.65, 1.4], tint: 0.14 });
       case 'core': // the dark raw metal under the plates
@@ -218,8 +276,8 @@ export function dress(root: THREE.Object3D) {
         return grit(physical(old, { color: 0x1c1d20, metalness: 1, roughness: 0.38 }), { scale: 25, rough: [0.75, 1.35], tint: 0.06 });
       case 'bolt': // zinc-plated bolt heads, dulled
         return grit(physical(old, { color: 0x6a6e73, metalness: 1, roughness: 0.4 }), { scale: 60, rough: [0.7, 1.5], tint: 0.18 });
-      case 'brass':
-        return grit(physical(old, { roughness: 0.3, metalness: 1 }), { scale: 20, rough: [0.7, 1.6], tint: 0.12 });
+      case 'brass': // (was brass: now a dark worn metal, as the rest of the fittings)
+        return grit(physical(old, { color: 0x34363a, roughness: 0.46, metalness: 1 }), { scale: 20, rough: [0.7, 1.5], tint: 0.14 });
       case 'panel': // dark plastic: ribbed panels, boxes
         return grit(physical(old, { color: 0x313438, metalness: 0, roughness: 0.55, specularIntensity: 0.6 }), { scale: 14, rough: [0.8, 1.25], tint: 0.08 });
       case 'block': // light plastic housings, a little gloss
@@ -280,6 +338,9 @@ export function dress(root: THREE.Object3D) {
       return done.get(m)!;
     };
     mesh.material = Array.isArray(mesh.material) ? mesh.material.map(swap) : swap(mesh.material);
+    // worn white all over: what is bolted onto the plates (hinges, vents' frames, slots' frames, the connectors, the
+    // window's frame) is painted as they are, not black; the dark behind a vent or in a slot stays dark
+    if (/^(detail_(steel|mech)_|door_frame)/.test(mesh.name)) mesh.material = WHITE;
   });
   // the dark in the corners, baked in Blender to a colour on each vertex of everything but the plates (whose paint
   // has it): their materials take it. A little lifted, so a corner is dim, not black

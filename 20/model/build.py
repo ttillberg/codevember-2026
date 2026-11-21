@@ -898,7 +898,7 @@ def details(clear):
         up = P['along'] if P['along'] is not None else Vector((0, 0, 1)) if P['transform'] is None else (P['transform'].to_3x3() @ Vector((0, 0, 1))).normalized()
         if P['along'] is not None and up.z < 0: up = -up
         up = (up - n * up.dot(n)).normalized()
-        side = n.cross(up)
+        side = up.cross(n)   # (right-handed with up and n: the other way round every box was inside out, and dark)
         R = Matrix((side, up, n)).transposed().to_4x4()
         size = min(0.6, math.sqrt(P['area']) * 0.42)
         kind = rnd.choices(['hatch', 'slot', 'vent', 'tag', None], [4, 3, 3, 2, 2])[0]
@@ -1527,14 +1527,13 @@ def bake_paint(objs):
     low = ramp(pz.outputs['Z'], 0.2, -1.3)
     dirt = op('ADD', dirt, op('MULTIPLY', low, op('MULTIPLY', ramp(noise(mapping(P, (6, 6, 1.5)), 1.0, 4, 0.6), 0.35, 0.7), 0.6)), True)
     dust = op('MULTIPLY', ramp(nz.outputs['Z'], 0.35, 0.85), ramp(noise(P, 6, 4, 0.6), 0.3, 0.6))
-    colour = mix(op('MULTIPLY', dirt, 0.72), (0.66, 0.66, 0.63), (0.25, 0.22, 0.18))
-    colour = mix(op('MULTIPLY', dust, 0.55), colour, (0.5, 0.46, 0.4))
-    colour = mix(speck, colour, (0.2, 0.2, 0.2))
-    colour = mix(op('MULTIPLY', scratch, 0.7), colour, (0.36, 0.36, 0.37))
-    colour = mix(chip, colour, (0.05, 0.05, 0.055))
-    rough = op('SUBTRACT', op('ADD', op('ADD', 0.42, op('MULTIPLY', dirt, 0.3)), op('MULTIPLY', fine, 0.1)), op('MULTIPLY', scratch, 0.12))
-    rough = op('ADD', rough, op('MULTIPLY', dust, 0.25))
-    rough = op('ADD', op('MULTIPLY', rough, op('SUBTRACT', 1.0, chip)), op('MULTIPLY', chip, 0.34))
+    # Only what is soft is baked: the white, where the dirt lies in broad patches, the dust on what faces up. At
+    # 2.4 mm a texel anything fine (chips, scratches, specks) came out as mush; all of that is drawn on the web
+    # side (materials.ts), sharp at any distance, from the edge mask and the AO that go out with the textures
+    colour = mix(op('MULTIPLY', dirt, 0.34), (0.74, 0.74, 0.72), (0.3, 0.27, 0.23))
+    colour = mix(op('MULTIPLY', dust, 0.4), colour, (0.55, 0.52, 0.47))
+    rough = op('ADD', op('ADD', 0.42, op('MULTIPLY', dirt, 0.3)), op('MULTIPLY', dust, 0.25))
+    _unused = (speck, scratch, chip)
 
     emit = node('ShaderNodeEmission'); out = node('ShaderNodeOutputMaterial'); K.new(emit.outputs[0], out.inputs['Surface'])
     target = node('ShaderNodeTexImage'); N.active = target
@@ -1557,16 +1556,12 @@ def bake_paint(objs):
     for o in flat: o.hide_render = True  # a hair above the plate, they would shadow it black
     c = bake('b_colour', colour)
     r = bake('b_rough', rough)[:, :, :1]
-    mt = bake('b_metal', chip)[:, :, :1]
+    mt = bake('b_metal', edge)[:, :, :1]   # (not metal: how near a panel's edge, 0..1, for the web side's chips)
     scene.cycles.samples = 48
     ao = np.clip(bake('b_ao', None, 'AO')[:, :, :1], 0, 1)
     for o in flat: o.hide_render = False
 
-    # dirt gathers where the light does not
-    shade = 1 - ao
-    shade = np.power(shade, 0.8)
-    c = c * (1 - 0.75 * shade) * (1 - 0.4 * shade) + np.array([0.2, 0.17, 0.13], np.float32) * 0.25 * shade
-    r = np.clip(r + 0.25 * shade, 0, 1)
+    # (the AO goes out in the ORM's red, not into the colour: the web side darkens with it, and can leave it off)
     srgb = np.where(c <= 0.0031308, c * 12.92, 1.055 * np.power(np.clip(c, 1e-6, 1), 1 / 2.4) - 0.055)
     def image(name, rgb, space):
         img = bpy.data.images.get(name)
@@ -1670,7 +1665,7 @@ if STAGE == 'all':
     for o in col.objects: o.select_set(True)
     bpy.context.view_layer.objects.active = pod
     bpy.ops.export_scene.gltf(filepath=os.path.join(ROOT, 'public', 'cocoon.glb'), export_format='GLB', use_selection=True,
-                              export_apply=True, export_yup=True, export_extras=True, export_image_format='JPEG', export_jpeg_quality=88,
+                              export_apply=True, export_yup=True, export_extras=True, export_image_format='AUTO',
                               export_vertex_color='ACTIVE')
     bpy.ops.wm.save_mainfile()
     tris = 0
