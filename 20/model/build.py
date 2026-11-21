@@ -447,7 +447,7 @@ def plate(name, parent, transform=None, thick=T, gap=GAP):
 
 # The plates either side of the seam stand well out, thick, with a wide gap between them: the seam is a channel
 # with walls, deep enough to be dark in, as the hall picture has it. The skirts along the foot are thick too.
-THICK = {'shield_l': 0.075, 'shield_r': 0.075, 'cap_l': 0.07, 'strip': 0.15, 'door': 0.13, 'door_low': 0.13, 'bottom': 0.04,
+THICK = {'shield_l': 0.075, 'shield_r': 0.075, 'cap_l': 0.07, 'strip': 0.15, 'door': 0.16, 'door_low': 0.16, 'bottom': 0.04,
          'skirt_fl': 0.1, 'skirt_fr': 0.1, 'skirt_ls': 0.1, 'skirt_rs': 0.1, 'panel_m': 0.09}
 WIDE = {'strip': 0.032, 'door': 0.032, 'door_low': 0.032}   # half the gap round these
 for name in sorted(ALL - {'open'}):
@@ -938,6 +938,10 @@ def details(clear):
         if not fits(w, h):
             w, h = w * 0.65, h * 0.65
             if not fits(w, h): continue
+        # (nothing bolted onto the door: on the sheet it is one clean slab leaning along the seam, three dark
+        # squares on it and no more; hatches and vents all over it hid its shape. Left out here, after the dice
+        # are thrown, so every other plate keeps what it had)
+        if P['name'] in DOOR: continue
         base = P['at'] + side * ou + up * ov + n * P['thick']
         at = lambda x, y, z: base + side * x + up * y + n * z
         par = P['parent']
