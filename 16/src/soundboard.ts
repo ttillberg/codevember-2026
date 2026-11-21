@@ -1,6 +1,7 @@
 // ?debug: a soundboard to try the sounds one by one. Every sound on a button (the birds, the ground's, the loud
 // cracks, your body, the throws and the fungi's creaks), where it comes from (any side, or left, right, ahead,
 // behind, so far off), the levels of each part, and switches for what plays by itself, to hear one thing alone.
+import { debugStack } from './debugStack';
 import * as THREE from 'three';
 import { BIRDS, GROUND_KINDS, LOUD_KINDS, type Forest } from './forest';
 import type { Sound } from './sound';
@@ -15,11 +16,10 @@ const NAMES: Record<string, string> = {
 };
 
 const CSS = `
-.soundboard { position: fixed; z-index: 20; top: 70px; right: 12px; width: 300px; max-height: calc(100vh - 82px); overflow: auto;
-  padding: 10px 12px 12px; box-sizing: border-box; border-radius: 10px; background: rgba(14, 12, 8, 0.82);
+.soundboard { flex: none; padding: 10px 12px 12px; box-sizing: border-box; border-radius: 10px; background: rgba(14, 12, 8, 0.82);
   -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px); box-shadow: inset 0 0 0 1px rgba(244, 244, 242, 0.18);
   color: #f4f4f2; font: 500 11px/1.3 Inter, "Helvetica Neue", Helvetica, Arial, sans-serif; user-select: none; }
-.soundboard.folded > :not(header) { display: none; }
+.soundboard.folded > :not(header) { display: none !important; }
 .soundboard header { display: flex; justify-content: space-between; align-items: center; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; }
 .soundboard h4 { margin: 10px 0 5px; font-size: 9px; letter-spacing: 0.14em; text-transform: uppercase; opacity: 0.55; }
 .soundboard .row { display: flex; flex-wrap: wrap; gap: 4px; }
@@ -41,7 +41,8 @@ export function soundboard(forest: Forest, sound: Sound, camera: THREE.Camera) {
   el.className = 'soundboard';
   // keep its clicks and keys to itself: not a throw, not a crawl
   for (const ev of ['pointerdown', 'pointerup', 'keydown', 'wheel']) el.addEventListener(ev, (e) => e.stopPropagation());
-  document.body.append(el);
+  el.classList.add('folded'); // folded to its header to begin with: the look panel is the one in use
+  debugStack().append(el);
 
   function add<T extends HTMLElement = HTMLElement>(parent: HTMLElement, tag: string, props: object = {}): T {
     const n = Object.assign(document.createElement(tag), props) as T;
@@ -50,7 +51,7 @@ export function soundboard(forest: Forest, sound: Sound, camera: THREE.Camera) {
   }
   const head = add(el, 'header');
   add(head, 'span', { textContent: 'Soundboard' });
-  const fold = add(head, 'button', { textContent: '–' });
+  const fold = add(head, 'button', { textContent: '+' });
   fold.onclick = () => { el.classList.toggle('folded'); fold.textContent = el.classList.contains('folded') ? '+' : '–'; };
 
   // where it comes from

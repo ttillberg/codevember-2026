@@ -5,7 +5,6 @@ import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { TexturePass } from 'three/addons/postprocessing/TexturePass.js';
 import { GTAOPass } from 'three/addons/postprocessing/GTAOPass.js';
 import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
-import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { shellVertex, shellFragment, mossLighting } from './shaders';
 import { World, groundHeight, baseHeight, mossAt, type WorldHooks } from './world';
@@ -15,11 +14,19 @@ import { Trees, trunkFoot, trunkRadius, type Trunk } from './trees';
 import { makeDewMaterial } from './dew';
 import { makeAtmosPass, makeLensPass } from './post';
 import { Fungi, type FungusKind } from './fungi';
+import { loadModels } from './models';
 import { Spores } from './spores';
 import { Dust } from './dust';
+import { Floor } from './floor';
+import { Boulders } from './boulders';
+import { Foliage } from './foliage';
 import { Slingshot } from './slingshot';
 import { Forest } from './forest';
 import { soundboard } from './soundboard';
+import { reference } from './reference';
+import { lookboard } from './lookboard';
+import { vegboard } from './vegboard';
+import { Oaks } from './oak';
 import { Fungarium, type Species } from './fungarium';
 import { Pouch } from './pouch';
 import { Sound } from './sound';
@@ -48,7 +55,22 @@ camera.rotation.order = 'YXZ';
 
 // dusk: the sun nine degrees over the horizon, ahead and to the right, so you crawl into it. Everything is
 // backlit, every frond tip and blade catches it, and anything standing up throws a long shadow your way.
-const lightDir = new THREE.Vector3(0.45, 0.16, -0.88).normalize();
+// the sun, ahead and to the right, SUN_UP degrees over the horizon: a morning sun at 45, its rays coming down from
+// above through the crowns (?sun=9 for the dusk the day began with, a low sun straight through the trunks)
+const SUN_UP = THREE.MathUtils.degToRad(Number(params.get('sun')) || 45);
+const SUN_FLAT = new THREE.Vector2(0.45, -0.88).normalize();
+const lightDir = new THREE.Vector3(SUN_FLAT.x * Math.cos(SUN_UP), Math.sin(SUN_UP), SUN_FLAT.y * Math.cos(SUN_UP));
+/** the sun to another height, live (the look panel): every uniform holds this same vector */
+function setSunHeight(deg: number) {
+  const a = THREE.MathUtils.degToRad(Math.min(deg, 88));
+  lightDir.set(SUN_FLAT.x * Math.cos(a), Math.sin(a), SUN_FLAT.y * Math.cos(a));
+  shadowCentre.set(Infinity, 0, 0); // the shadow map drawn again
+  foliage.canopyDirty = true; // and the crowns' shade, moved along the new sun
+}
+// (the look panel can hold the focus by hand)
+const focusHold = { hold: false, at: 1.6 };
+/** 0 at dusk (nine degrees) .. 1 with a morning sun (forty five): the light whiter, the air paler */
+const MORNING = THREE.MathUtils.smoothstep(SUN_UP, THREE.MathUtils.degToRad(9), THREE.MathUtils.degToRad(45));
 const shellMat = new THREE.ShaderMaterial({
   vertexShader: shellVertex,
   fragmentShader: shellFragment,
@@ -69,11 +91,15 @@ const shellMat = new THREE.ShaderMaterial({
     uShadowMap: { value: null },
     uShadowMatrix: { value: new THREE.Matrix4() },
     uShadowOn: { value: 0 },
+    uDepthOnly: { value: 0 },
     uShadowFloor: { value: 0.2 },
     uTime: { value: 0 },
+    uCanopyMap: { value: null as THREE.Texture | null },
+    uCanopyBox: { value: new THREE.Vector3(0, 0, 1) },
+    uCanopyAmt: { value: 1 },
   },
 });
-const SHARED_UNIFORMS = ['uCavityAO', 'uLightDir', 'uLightDirC', 'uRimDir', 'uRim', 'uHemi', 'uTone', 'uExposure', 'toneMappingExposure', 'uShadowMap', 'uShadowMatrix', 'uShadowOn', 'uShadowFloor', 'uTime'];
+const SHARED_UNIFORMS = ['uCavityAO', 'uLightDir', 'uLightDirC', 'uRimDir', 'uRim', 'uHemi', 'uTone', 'uExposure', 'toneMappingExposure', 'uShadowMap', 'uShadowMatrix', 'uShadowOn', 'uDepthOnly', 'uShadowFloor', 'uTime', 'uCanopyMap', 'uCanopyBox', 'uCanopyAmt'];
 const share = (m: THREE.ShaderMaterial) => { for (const k of SHARED_UNIFORMS) m.uniforms[k] = shellMat.uniforms[k]; };
 
 // ---- moss size: day 05's numbers at 175 %
@@ -116,6 +142,8 @@ const sound = new Sound(camera);
 const forest = new Forest(sound, camera);
 // ?debug: a soundboard to try them one by one
 if (params.has('debug')) soundboard(forest, sound, camera);
+// and the splash as a reference to work toward, in a window (R: big, hidden, small)
+if (params.has('debug')) reference(`${import.meta.env.BASE_URL}splash.webp`);
 const creakAt = new THREE.Vector3();
 const creakNext = new WeakMap<object, number>(); // when each growing cluster creaks next
 const fxScene = new THREE.Scene();
@@ -123,6 +151,9 @@ fxScene.add(spores.mesh);
 // dust hanging in the air, showing only in the sun's beams
 const dust = new Dust(share);
 fxScene.add(dust.mesh);
+// and glowing motes, fewer and bigger, rising in the light (the splash's gold orbs)
+const motes = new Dust(share, { motes: true, count: coarse ? 60 : 140, box: new THREE.Vector3(9, 2.4, 9) });
+fxScene.add(motes.mesh);
 // the slingshot in hand, drawn over the finished picture
 const sling = new Slingshot();
 let slingKind = '';
@@ -173,6 +204,20 @@ scene.add(ferns.root);
 // spruce trunks, three levels of detail
 const trees = new Trees(share);
 scene.add(trees.root);
+// fallen leaves and wood sorrel on the moss
+const floorBits = new Floor(share);
+scene.add(floorBits.root);
+// boulders grown over with the ground's moss
+const boulders = new Boulders(hooks);
+scene.add(boulders.root);
+// the crowns: spruce boughs and birch leaves on the trunks, the light coming down through them
+const foliage = new Foliage(share, lightDir);
+scene.add(foliage.root);
+// old oaks in the clearings (a Blender model, loaded on its own)
+const oaks = new Oaks(share);
+scene.add(oaks.root);
+shellMat.uniforms.uCanopyMap.value = foliage.canopyMap;
+shellMat.uniforms.uCanopyBox.value = foliage.canopyBox;
 // wood ants on trails from a nest in the moss up the trunks
 const ants = new Ants(share, camera);
 scene.add(ants.mesh);
@@ -200,7 +245,9 @@ function placeFarFloor(px: number, pz: number) {
 
 // ---- shadow map: the patch ahead of you from the sun. Re-rendered as you crawl, without the fronds and spore
 // stalks, which are too small to matter in it and most of its cost.
-const SHADOW_SIZE = 4096;
+// (2048, as shaders.ts's penumbra reckons: at 4096 the 6 m patch was 1.5 mm a texel, and each re-render as you
+// crawled shaded 17 million pixels with the full materials, a third of a second, every quarter second)
+const SHADOW_SIZE = 2048;
 const shadowRT = new THREE.WebGLRenderTarget(SHADOW_SIZE, SHADOW_SIZE, {
   depthTexture: new THREE.DepthTexture(SHADOW_SIZE, SHADOW_SIZE, THREE.UnsignedIntType),
 });
@@ -227,8 +274,11 @@ function renderShadow(centre: THREE.Vector3) {
   const u = shellMat.uniforms;
   u.uShadowOn.value = 0;
   u.uShadowMap.value = null;
+  u.uDepthOnly.value = 1;
   world.forShadow(true, centre.x, centre.z, 4.3);
   ferns.forShadow(true, centre.x, centre.z, 6);
+  boulders.forShadow(true);
+  foliage.forShadow(true);
   farFloor.visible = false;
   ants.mesh.visible = false; // too small to cast anything worth the map
   renderer.setRenderTarget(shadowRT);
@@ -237,8 +287,11 @@ function renderShadow(centre: THREE.Vector3) {
   renderer.setRenderTarget(null);
   world.forShadow(false);
   ferns.forShadow(false);
+  boulders.forShadow(false);
+  foliage.forShadow(false);
   farFloor.visible = true;
   ants.mesh.visible = true;
+  u.uDepthOnly.value = 0;
   u.uShadowMap.value = shadowRT.depthTexture;
   u.uShadowMatrix.value.multiplyMatrices(lightCam.projectionMatrix, lightCam.matrixWorldInverse);
   u.uShadowOn.value = 1;
@@ -269,25 +322,35 @@ composer.addPass(aoPass);
 const atmosMat = makeAtmosPass(beautyRT.depthTexture!, coarse);
 atmosMat.uniforms.cameraNear.value = camera.near;
 atmosMat.uniforms.uSunDir.value = lightDir;
+atmosMat.uniforms.uCanopyMap.value = foliage.canopyMap; // the beams through the same gaps the floor is lit by
+atmosMat.uniforms.uCanopyBox.value = foliage.canopyBox;
+atmosMat.uniforms.uCanopyAmt = shellMat.uniforms.uCanopyAmt; // one value: the floor and the beams together
+// a morning sun is whiter than a dusk one, the air paler and a little cooler
+atmosMat.uniforms.uSunCol.value.lerp(new THREE.Color(1.0, 0.86, 0.62), MORNING);
+atmosMat.uniforms.uHaze.value.lerp(new THREE.Color(0.092, 0.084, 0.064), MORNING);
 // thick forest air: a worm cannot see far anyway
-atmosMat.uniforms.uFog.value = 0.22; // the air: trunks fade out a few steps away, into the colour of the sky
-atmosMat.uniforms.uMist.value = 0.9; // and a mist lying on the moss, glowing towards the sun
+// the air: light, so the trunks stand in layers a long way back, paler and paler, the sun coming through between
+// them (it was thick and golden, 0.22 and 0.9: past two metres everything melted into one yellow wall)
+atmosMat.uniforms.uFog.value = 0.035; // (thinner: at 0.06 the depth of the wood went grey and the sun on the trunks was lost)
+atmosMat.uniforms.uMistStart.value = 2.5; // the mist from a few steps off, so the near trunks' feet stand clear
+atmosMat.uniforms.uMist.value = 0.55; // and a mist lying on the moss, glowing towards the sun, the beams lighting it
 const atmos = new ShaderPass(atmosMat);
 composer.addPass(atmos);
 // spore smoke into the finished, hazy image: its own lighter haze keeps a column visible from far off
 spores.material.uniforms.tDepth.value = beautyRT.depthTexture;
 spores.material.uniforms.cameraNear.value = camera.near;
-dust.material.uniforms.tDepth.value = beautyRT.depthTexture;
-dust.material.uniforms.cameraNear.value = camera.near;
-dust.material.uniforms.cameraFar.value = camera.far;
+for (const d of [dust, motes]) {
+  d.material.uniforms.tDepth.value = beautyRT.depthTexture;
+  d.material.uniforms.cameraNear.value = camera.near;
+  d.material.uniforms.cameraFar.value = camera.far;
+}
 const fx = new RenderPass(fxScene, camera);
 fx.clear = false;
 composer.addPass(fx);
 const lensMat = makeLensPass(coarse);
 lensMat.uniforms.uAperture.value = 0.22; // macro: a thin slice in focus, but the moss right in front still reads
 const lens = new ShaderPass(lensMat);
-composer.addPass(lens);
-composer.addPass(new OutputPass());
+composer.addPass(lens); // the last: it writes the screen in sRGB itself (no OutputPass)
 
 function resize() {
   renderer.setSize(innerWidth, innerHeight);
@@ -303,6 +366,7 @@ function resize() {
   camera.updateProjectionMatrix();
   spores.setSize(px.x, px.y, camera.fov);
   dust.setSize(px.x, px.y, camera.fov);
+  motes.setSize(px.x, px.y, camera.fov);
   sling.setSize(px.x, px.y, camera.fov, camera.aspect);
   (dewMaterial as THREE.ShaderMaterial).uniforms.uPx.value = px.y / (2 * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2));
 }
@@ -472,6 +536,7 @@ const fungarium = new Fungarium((kind) => { throwKind = kind; pouch.pick(kind, f
 const pouch = new Pouch((kind) => { throwKind = kind; fungarium.select(kind); }, plantAt, () => fungarium.isOpen, () => { keys.clear(); fungarium.toggle(); });
 // the specimens are drawn once things have settled, on the fungarium's own little renderer
 setTimeout(() => pouch.setThumbs(fungarium.drawThumbs()), 1500);
+fungarium.onThumbs = () => pouch.setThumbs(fungarium.thumbs);
 /** Shift and a number: that species' specimen pushes up where you aim (the middle of the screen without a mouse). */
 function plantAt(s: Species) {
   const hit = aimAt(0.45);
@@ -656,7 +721,9 @@ function walk(dt: number, fx: number, fz: number, v: number) {
   me.x += fx * v * dt - fz * me.side * dt;
   me.z += fz * v * dt + fx * me.side * dt;
   // the tight bunch of stipes at a fern's crown is solid; the fronds you crawl under; small fungi you crawl over
-  const [cx, cz] = trees.collide(me.x, me.z, 0.05);
+  const [tx, tz] = trees.collide(me.x, me.z, 0.05);
+  const [ox, oz] = oaks.collide(tx, tz, 0.05);
+  const [cx, cz] = boulders.collide(ox, oz, 0.05);
   if (v > 0.05 && (cx !== me.x || cz !== me.z)) {
     // pushed off a trunk while crawling at it head on: start up it
     const t = trees.trunks.reduce((a, b) => (Math.hypot(b.x - me.x, b.z - me.z) - b.r < Math.hypot(a.x - me.x, a.z - me.z) - a.r ? b : a));
@@ -709,6 +776,8 @@ while (world.update(me.x, me.z, 0, -1, 64) > 0);
 for (let i = 0; i < 200 && props.update(me.x, me.z); i++);
 for (let i = 0; i < 200 && ferns.update(me.x, me.z); i++);
 trees.update(me.x, me.z);
+for (let i = 0; i < 300 && floorBits.update(me.x, me.z); i++);
+for (let i = 0; i < 40 && boulders.update(me.x, me.z); i++);
 placeFarFloor(me.x, me.z);
 // a few already standing in front of you when you arrive
 fungi.spawn('funnel', 0.05, fungusFoot(0.05, -0.38), -0.38, { grown: true, seed: 11, scale: 1.1 });
@@ -720,7 +789,74 @@ const sunScreen = new THREE.Vector3();
 const camDir = new THREE.Vector3();
 let focus = 1;
 // dev: tuning handles in the console
-if (import.meta.env.DEV) Object.assign(window, { sound, forest, trees, ants, ferns, props, fungi, fungarium, spores, throwAt, shellMat, lensMat, atmosMat, camera, aoPass, lens, atmos, beautyRT, scene, renderer, composer, world, me, look });
+if (import.meta.env.DEV) Object.assign(window, { renderShadow, foliage, oaks, boulders, floorBits, sound, forest, trees, ants, ferns, props, fungi, fungarium, spores, throwAt, shellMat, lensMat, atmosMat, camera, aoPass, lens, atmos, beautyRT, scene, renderer, composer, world, me, look });
+// loading (as day 12's ink drawing): the splash, a card in the middle, over the forest drawn as a golden wire mesh
+// (everything in its plain geometry, the moss's shells one sheet). Once the models are in and the picture's
+// shaders compiled, and the card has been up two seconds and a half, the card goes and the picture fades in over
+// the mesh's last frame. A tap on the card lets you in at once.
+const splash = document.querySelector<HTMLElement>('.splash');
+let loading = !!splash && !document.body.classList.contains('clean');
+let revealNow = false;
+const wireMat = new THREE.MeshBasicMaterial({ color: 0xe0b56c, wireframe: true, transparent: true, opacity: 0.08, depthWrite: true });
+const WIRE_BG = new THREE.Color(0x120e08);
+// (the mesh goes into the dark with distance, so it has depth)
+const wireFog = new THREE.Fog(WIRE_BG, 0.4, 9);
+if (!loading) { document.body.classList.remove('loading'); splash?.remove(); }
+else {
+  const shown = performance.now();
+  splash!.addEventListener('pointerdown', (e) => { e.stopPropagation(); revealNow = true; });
+  Promise.all([loadModels(), renderer.compileAsync(scene, camera).catch(() => {})])
+    .then(() => setTimeout(() => { revealNow = true; }, Math.max(0, 2500 - (performance.now() - shown))));
+}
+/** the mesh drawn instead of the picture; on the last one, kept in a canvas over the page and faded out */
+function drawWire() {
+  scene.overrideMaterial = wireMat;
+  scene.fog = wireFog;
+  renderer.setClearColor(WIRE_BG);
+  renderer.setRenderTarget(null);
+  renderer.render(scene, camera);
+  scene.overrideMaterial = null;
+  scene.fog = null;
+  renderer.setClearColor(BG);
+  if (!revealNow) return;
+  const snap = document.createElement('canvas');
+  snap.className = 'wiresnap';
+  snap.width = canvas.width; snap.height = canvas.height;
+  snap.getContext('2d')!.drawImage(canvas, 0, 0); // (now, before the frame is handed on: no preserved buffer needed)
+  document.body.append(snap);
+  loading = false;
+  document.body.classList.remove('loading');
+  splash!.classList.add('gone');
+  setTimeout(() => splash!.remove(), 1000);
+  // the picture's first frames underneath first, then the mesh fades off them
+  requestAnimationFrame(() => requestAnimationFrame(() => snap.classList.add('gone')));
+  setTimeout(() => snap.remove(), 2000);
+}
+
+// the look panel: grade, depth of field, light and air
+if (params.has('debug')) lookboard({ lens: lensMat, atmos: atmosMat, focus: focusHold, sun: { deg: THREE.MathUtils.radToDeg(SUN_UP), set: setSunHeight }, canopy: { canvas: foliage.canopyCanvas, box: foliage.canopyBox, camera, light: lightDir } });
+// the vegetation panel: each kind taken away to see what it does
+if (params.has('debug')) vegboard([
+  { name: 'pine, spruce trunks', objects: trees.levels },
+  { name: 'pine, spruce boughs', objects: [foliage.boughs, foliage.model] },
+  { name: 'birch trunks', objects: trees.birches },
+  { name: 'birch leaves', objects: [foliage.leaves] },
+  { name: 'oaks', objects: [oaks.root] },
+  { name: 'ferns', objects: [ferns.root] },
+  { name: 'fungi', objects: [fungi.group] },
+  { name: 'boulders', objects: [boulders.root] },
+  { name: 'leaves, sorrel', objects: [floorBits.root] },
+], () => shadowCentre.set(Infinity, 0, 0), [
+  // to the nearest oak, a crown's width off on its sunny side, looking up at it
+  { label: 'go to oak', run: () => {
+    const o = oaks.oaks.slice().sort((a, b) => Math.hypot(a.x - me.x, a.z - me.z) - Math.hypot(b.x - me.x, b.z - me.z))[0];
+    if (!o) return;
+    const a = Math.atan2(lightDir.z, lightDir.x);
+    me.x = o.x + Math.cos(a) * 12 * o.s; me.z = o.z + Math.sin(a) * 12 * o.s;
+    look.yaw = look.tYaw = Math.atan2(-(o.x - me.x), -(o.z - me.z)); look.pitch = look.tPitch = 0.4;
+  } },
+]);
+
 renderer.setAnimationLoop(() => {
   const dt = Math.min(clock.getDelta(), 0.05);
   shellMat.uniforms.uTime.value = clock.elapsedTime;
@@ -744,10 +880,15 @@ renderer.setAnimationLoop(() => {
   }
   spores.update(dt, clock.elapsedTime);
   dust.update(groundHeight(me.x, me.z));
+  motes.update(groundHeight(me.x, me.z));
   world.update(me.x, me.z, fx, fz, 1);
   props.update(me.x, me.z);
-  ferns.update(me.x, me.z);
+  ferns.update(me.x, me.z, dt);
   trees.update(me.x, me.z);
+  oaks.update(me.x, me.z);
+  foliage.update(trees.trunks, camera.position);
+  floorBits.update(me.x, me.z);
+  boulders.update(me.x, me.z);
   ants.update(dt, me.x, me.z, trees.trunks);
   placeFarFloor(me.x, me.z);
   // the shadow map follows a point ahead of you
@@ -764,7 +905,7 @@ renderer.setAnimationLoop(() => {
   }
   // autofocus on whatever is straight ahead, eased like a lens hunting a little
   focus += (focusDistance() - focus) * Math.min(1, dt * 5);
-  lensMat.uniforms.uFocus.value = focus;
+  lensMat.uniforms.uFocus.value = focusHold.hold ? focusHold.at : focus;
   atmosMat.uniforms.uInvProj.value.copy(camera.projectionMatrixInverse);
   atmosMat.uniforms.uCamWorld.value.copy(camera.matrixWorld);
   atmosMat.uniforms.uTime.value = shellMat.uniforms.uTime.value;
@@ -773,6 +914,8 @@ renderer.setAnimationLoop(() => {
   atmosMat.uniforms.uSunUv.value.set(sunScreen.x * 0.5 + 0.5, sunScreen.y * 0.5 + 0.5);
   atmosMat.uniforms.uSunOn.value = THREE.MathUtils.smoothstep(camera.getWorldDirection(camDir).dot(lightDir), 0.0, 0.5);
   atmosMat.uniforms.uAspect.value = camera.aspect;
+  atmosMat.uniforms.uGroundY.value = groundHeight(me.x, me.z);
+  if (loading) { drawWire(); forest.update(dt); return; }
   renderer.setRenderTarget(beautyRT);
   renderer.render(scene, camera);
   renderer.setRenderTarget(null);

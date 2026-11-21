@@ -416,9 +416,10 @@ varying float vStraw;
 void main() {
   if (nearFade(vWorldPos, 0.03, 0.08) < 0.5) discard;
   vec3 N = normalize(vNormal);
-  if (!gl_FrontFacing) N = -N;
   vec3 L = normalize(uLightDir);
   vec3 V = normalize(cameraPosition - vWorldPos);
+  // the side you see: the ribbon is wound against cross(D, across), so gl_FrontFacing had it always facing away
+  if (dot(N, V) < 0.0) N = -N;
 
   vec3 root, tip, col;
   if (vStraw > 0.5) {
@@ -482,11 +483,14 @@ void main() {
   float ambient = lichen ? 0.3 : 0.17;  // lichen is matte, mostly ambient; a forest floor's shade is deep
   float wrapK = lichen ? 0.45 : 0.75;
   ao *= mix(1.0, 0.45, vCavity * uCavityAO);
-  vec3 lit = col * ao * (ambient * mix(0.7, 1.0, shadow) + wrapK * wrap + back * shadow) * gain + tip * rim * shadow;
+  // (the fill dimmer in the shade too: the pale straw fronds had stayed bright in it, and the sun's patches on the
+  // floor did not show)
+  float sunHere = sunIn(shadow);
+  vec3 lit = col * ao * (ambient * mix(0.45, 1.0, sunHere) + wrapK * wrap + back * shadow) * gain + tip * rim * shadow;
   // wet leaves: a sharp little sheen off each one in the low sun
   lit += vec3(1.0, 0.85, 0.6) * pow(max(dot(reflect(-L, N), V), 0.0), 50.0) * 0.5 * shadow * ao;
   lit *= skyTint(normalize(vSurfN), 1.0 - 0.6 * wrap);
-  lit += rimLight(normalize(vSurfN), V) * (col * 2.6 + tip * 0.6) * (0.2 + 0.8 * vT) * mix(1.0, 0.3, vCavity);
+  lit += rimLight(normalize(vSurfN), V) * (col * 2.6 + tip * 0.6) * (0.2 + 0.8 * vT) * mix(1.0, 0.3, vCavity) * rimShade(shadow);
   // the other way round: with the sun behind you, the leaves turned to it catch it, gold-green; the backlit glow's
   // counterpart, so looking away from the sun is not a black carpet
   float face = pow(max(dot(N, L) * 0.5 + 0.5, 0.0), 2.0);

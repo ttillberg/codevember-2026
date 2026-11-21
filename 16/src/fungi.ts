@@ -6,6 +6,7 @@ import * as THREE from 'three';
 import { mulberry32 } from './noise';
 import { mossLighting } from './shaders';
 import { buildDew } from './dew';
+import { loadModel, instancedModel, modelWeights, modelVertexShader, MODELS, MODEL_KINDS, isModelKind, type ModelKind } from './models';
 
 export type FungusKind = 'funnel' | 'finger' | 'chanterelle' | 'puffball' | 'agaric' | 'porcini' | 'slippery' | 'morel' | 'waxcap';
 
@@ -749,7 +750,10 @@ export interface Cluster {
   built?: number; // when it was last rebuilt, on the update's clock
 }
 
-const SEE = 9; // fungi further than this are hidden (and their growing not built) when Fungi.update is told where you are
+const UP = new THREE.Vector3(0, 1, 0);
+const PACK = { m4: new THREE.Matrix4(), q: new THREE.Quaternion(), qt: new THREE.Quaternion(), e: new THREE.Euler(), p: new THREE.Vector3(), s: new THREE.Vector3() };
+const SEE = 9;
+const SEE_MODEL = matchMedia('(pointer: coarse)').matches ? 11 : 17; // a model costs only its drawing: seen further // fungi further than this are hidden (and their growing not built) when Fungi.update is told where you are
 const BUILD_EVERY = matchMedia('(pointer: coarse)').matches ? 1 / 12 : 1 / 30; // seconds between rebuilds of a growing one
 
 export class Fungi {
@@ -757,11 +761,99 @@ export class Fungi {
   list: Cluster[] = [];
   changed = false;
   readonly material: THREE.ShaderMaterial;
+  // the kinds that are models, once loaded: an instanced mesh each, each fungus its blend of the growth
+  private models = new Map<ModelKind, { mesh: THREE.InstancedMesh; data: THREE.InstancedBufferAttribute; tint: THREE.InstancedBufferAttribute; dummy: THREE.Mesh; n: number }>();
+  private modelsDirty = false;
 
   /** `dew`: the moss's dew material, to draw the beads of water on fresh growth (none without it). */
   constructor(setup: (m: THREE.ShaderMaterial) => void, private dew?: THREE.Material) {
     this.material = new THREE.ShaderMaterial({ vertexShader, fragmentShader, side: THREE.DoubleSide, uniforms: {} });
     setup(this.material);
+    for (const k of MODEL_KINDS) loadModel(k).then((geo) => { if (geo) this.useModel(k, geo, setup); });
+  }
+
+  private useModel(kind: ModelKind, src: THREE.BufferGeometry, setup: (m: THREE.ShaderMaterial) => void) {
+    const N = 1024;
+    const material = new THREE.ShaderMaterial({ vertexShader: modelVertexShader, fragmentShader, side: THREE.DoubleSide, uniforms: {} });
+    setup(material);
+    const geo = instancedModel(src, N);
+    const mesh = new THREE.InstancedMesh(geo, material, N);
+    mesh.frustumCulled = false;
+    mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    const dummy = new THREE.Mesh(geo);
+    dummy.morphTargetInfluences = [0, 0, 0, 0, 0, 0];
+    mesh.setMorphAt(0, dummy); // the texture is made for all N here, before the count drops to the ones drawn
+    mesh.count = 0;
+    this.group.add(mesh);
+    this.models.set(kind, {
+      mesh, dummy, n: 0,
+      data: geo.getAttribute('iData') as THREE.InstancedBufferAttribute,
+      tint: geo.getAttribute('iTint') as THREE.InstancedBufferAttribute,
+    });
+    // the ones already standing: their rings go, the model takes over
+    for (const c of this.list) if (c.kind === kind) this.rebuild(c, 0);
+    this.modelsDirty = true;
+    this.changed = true;
+  }
+
+  /** a cluster drawn by a model (once that has loaded) */
+  private modelled(c: Cluster) { return isModelKind(c.kind) && this.models.has(c.kind); }
+
+  /**
+   * Every modelled fungus in sight, packed into its kind's instanced mesh: where it stands, how it leans and how
+   * big, its blend of the stages and its colour. Only when one is growing, withering, comes or goes.
+   */
+  private packModels() {
+    const m4 = PACK.m4, q = PACK.q, qt = PACK.qt, p = PACK.p, sc = PACK.s;
+    for (const slot of this.models.values()) slot.n = 0;
+    for (const c of this.list) {
+      if (!isModelKind(c.kind) || !c.mesh.visible) continue;
+      const slot = this.models.get(c.kind);
+      if (!slot) continue;
+      const { mesh, data, tint, dummy } = slot;
+      const w = dummy.morphTargetInfluences!;
+      const M = MODELS[c.kind];
+      const items: (Agaric | Capped)[] = c.kind === 'agaric' ? c.agarics : c.capped;
+      for (const m of items) {
+        const g0 = clamp01((c.age - m.delay) / m.dur);
+        if (g0 <= 0 || slot.n >= mesh.instanceMatrix.count) continue;
+        const n = slot.n++;
+        // growth comes in pulses
+        const g = clamp01(g0 + 0.02 * Math.sin(g0 * 11 + m.phase));
+        // its own cap when grown: round, open, or turned up (a third or so each)
+        modelWeights(g, c.rot, THREE.MathUtils.clamp(frac(m.phase * 5.17) * 2.4 - 1.2, -1, 1), w);
+        const s = m.R / M.R, ky = (m.H / m.R) / (M.H / M.R);
+        // up out of the moss as it starts; down into it as it goes
+        const rise = (1 - ease(clamp01(g / 0.05))) * 0.02 * s + c.rot * c.rot * 0.012 * s;
+        p.set(c.x + m.base.x, c.y - rise, c.z + m.base.z);
+        // turned its own way (the way it falls when it withers), leaning out a little
+        q.setFromAxisAngle(UP, m.phase * 2.3);
+        qt.setFromEuler(PACK.e.set(Math.atan(m.lean[1]), 0, -Math.atan(m.lean[0])));
+        q.premultiply(qt);
+        sc.set(s, s * ky, s);
+        mesh.setMatrixAt(n, m4.compose(p, q, sc));
+        mesh.setMorphAt(n, dummy);
+        if (c.kind === 'agaric') {
+          // the veil: all white on the egg, cracking off as it swells; the red from a deep scarlet to going orange
+          const veil = 1 - THREE.MathUtils.smoothstep(g, 0.08, 0.45);
+          const o = frac(m.phase * 7.31), k = 0.9 + 0.2 * frac(m.phase * 3.7);
+          data.setXYZW(n, veil, c.rot, 1, m.phase);
+          tint.setXYZ(n, (0.7 + 0.04 * o) * k, (0.025 + 0.11 * o * o) * k, (0.02 + 0.01 * o) * k);
+        } else {
+          // a bolete: its pores white when young, going yellow, then olive
+          const cm = (m as Capped).cap;
+          data.setXYZW(n, 1 - THREE.MathUtils.smoothstep(g, 0.3, 1.0), c.rot, 1, m.phase);
+          tint.setXYZ(n, cm[0], cm[1], cm[2]);
+        }
+      }
+    }
+    for (const { mesh, data, tint, n } of this.models.values()) {
+      mesh.count = n;
+      mesh.instanceMatrix.needsUpdate = true;
+      if (mesh.morphTexture) mesh.morphTexture.needsUpdate = true;
+      data.needsUpdate = true;
+      tint.needsUpdate = true;
+    }
   }
 
   /**
@@ -982,11 +1074,13 @@ export class Fungi {
     this.list.push(c);
     this.rebuild(c, 0);
     if (opts.grown) c.grown = true;
+    if (this.modelsDirty) { this.packModels(); this.modelsDirty = false; } // drawn at once, before any update
     this.changed = true;
     return c;
   }
 
   remove(c: Cluster) {
+    if (isModelKind(c.kind)) this.modelsDirty = true;
     this.group.remove(c.mesh);
     c.mesh.geometry.dispose();
     for (const d of c.mesh.children) (d as THREE.Mesh).geometry.dispose();
@@ -997,7 +1091,8 @@ export class Fungi {
   private rebuild(c: Cluster, time: number) {
     const b = newBuf();
     ROT = c.rot;
-    if (c.kind === 'finger') buildFingerCluster(b, c.fingers, c.age, time);
+    if (this.modelled(c)) this.modelsDirty = true; // nothing to build: the model, packed with the rest
+    else if (c.kind === 'finger') buildFingerCluster(b, c.fingers, c.age, time);
     else if (c.kind === 'puffball') for (const p of c.puffs) buildPuffball(b, p, c.age);
     else if (c.kind === 'agaric') for (const m of c.agarics) buildAgaric(b, m, c.age);
     else if (c.capped.length) for (const m of c.capped) buildCapped(b, m, c.age);
@@ -1028,8 +1123,8 @@ export class Fungi {
   update(dt: number, time: number, px?: number, pz?: number) {
     for (const c of [...this.list]) {
       if (px !== undefined && pz !== undefined) {
-        const seen = Math.hypot(c.x - px, c.z - pz) < SEE + c.radius;
-        if (seen !== c.mesh.visible) { c.mesh.visible = seen; if (seen) c.built = undefined; }
+        const seen = Math.hypot(c.x - px, c.z - pz) < (this.modelled(c) ? SEE_MODEL : SEE) + c.radius;
+        if (seen !== c.mesh.visible) { c.mesh.visible = seen; if (seen) c.built = undefined; if (isModelKind(c.kind)) this.modelsDirty = true; }
       }
       // a pressed puffball springs back
       let squashing = false;
@@ -1038,6 +1133,14 @@ export class Fungi {
       if (!c.grown || c.wither !== undefined) c.age += dt;
       c.rot = c.wither === undefined ? 0 : clamp01((c.age - c.wither) / WITHER);
       if (c.rot >= 1) { this.remove(c); continue; }
+      if (this.modelled(c)) {
+        // a model: nothing to build, only its weights to set (packed below)
+        if (!c.grown || c.rot > 0) {
+          if (c.mesh.visible) this.modelsDirty = true;
+          if (!c.grown && c.age >= c.end) { c.grown = true; this.changed = true; }
+        }
+        continue;
+      }
       if (c.grown && c.rot <= 0 && !squashing) continue;
       // growing and withering are slow: rebuilt a few dozen times a second, not every frame (each build is a
       // lathe and its beads; on a phone, every frame of it stuttered), the last step always
@@ -1051,6 +1154,7 @@ export class Fungi {
         this.changed = true; // the shadow map is drawn again for the grown shape, not for every step of growing
       }
     }
+    if (this.modelsDirty) { this.packModels(); this.modelsDirty = false; }
   }
 
   /** Inside a cluster's rough cylinder? For the autofocus; `among` the ones near enough to matter. */
@@ -1070,7 +1174,11 @@ varying vec3 vNormal;
 varying float vPart;
 varying vec2 vUvf;
 varying vec3 vTint;
+varying vec2 vUv1;
+varying vec4 vData;
 void main() {
+  vUv1 = vec2(0.0);
+  vData = vec4(0.0);
   vec4 wp = modelMatrix * vec4(position, 1.0);
   vWorldPos = wp.xyz;
   vNormal = normalize(mat3(modelMatrix) * normal);
@@ -1090,6 +1198,8 @@ varying vec3 vNormal;
 varying float vPart;
 varying vec2 vUvf;
 varying vec3 vTint;
+varying vec2 vUv1; // the model's: out across the cap, a per-piece random
+varying vec4 vData; // the model's, per fungus: veil, rot, the red's depth, a seed
 float h31(vec3 p) { p = fract(p * vec3(0.1031, 0.1030, 0.0973)); p += dot(p, p.yxz + 33.33); return fract((p.x + p.y) * p.z); }
 float n3(vec3 p) {
   vec3 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
@@ -1098,6 +1208,7 @@ float n3(vec3 p) {
 }
 void main() {
   if (nearFade(vWorldPos, 0.02, 0.05) < 0.5) discard;
+  DEPTH_ONLY // the shadow pass: past the discards, nothing more to work out
   vec3 N = normalize(vNormal);
   vec3 V = normalize(cameraPosition - vWorldPos);
   if (dot(N, V) < 0.0) N = -N;
@@ -1106,7 +1217,91 @@ void main() {
   vec3 col = vTint;
   float thin = 0.4;
   float wet = 1.0; // how glossy: a slippery jack's cap is all slime
-  if (vPart < 0.5) {
+  if (vPart > 9.95) {
+    // the porcini model (models.ts): a brown bun of a cap, a sponge of pores going from white to yellow to olive
+    // with age, a pale barrel of a stem netted white at the top
+    float p = vPart - 10.0, t = vUv1.x;
+    float young = vData.x, rot = vData.y;
+    if (p < 0.05) {
+      // the skin: a bun's crust, finely wrinkled, paler toward the rim, a little greasy; going pale on the lip
+      col = vTint * mix(0.85, 1.2, smoothstep(0.5, 1.0, t));
+      col *= 0.94 + 0.1 * n3(vWorldPos * 140.0) + 0.06 * (n3(vWorldPos * 600.0) - 0.5);
+      col = mix(col, vec3(0.8, 0.72, 0.56), smoothstep(1.02, 1.06, t) * 0.7);
+      thin = 0.2; wet = 1.1;
+    } else if (p < 0.15) {
+      // the edge between skin and pores: pale
+      col = vec3(0.84, 0.79, 0.66) * (0.94 + 0.1 * n3(vWorldPos * 500.0));
+      thin = 0.4;
+    } else if (p < 0.5) {
+      // the pores: white when young, then yellow, then olive; tiny round mouths, a sponge
+      vec3 c0 = vec3(0.6, 0.58, 0.3), c1 = vec3(0.86, 0.78, 0.42), c2 = vec3(0.9, 0.88, 0.8);
+      col = mix(mix(c0, c1, smoothstep(0.0, 0.45, young)), c2, smoothstep(0.5, 0.95, young));
+      vec2 q = vec2(around * 320.0, t * 90.0);
+      vec2 i = floor(q), fq = fract(q) - 0.5 - (vec2(h31(vec3(i, 5.0)), h31(vec3(i, 6.0))) - 0.5) * 0.4;
+      col *= 1.0 - 0.3 * (1.0 - smoothstep(0.14, 0.3, length(fq)));
+      col *= 0.92 + 0.1 * n3(vWorldPos * 200.0);
+      thin = 0.25; wet = 0.4;
+    } else {
+      // the stem: pale buff, darker low; a fine raised white net over the top half
+      col = vec3(0.8, 0.73, 0.58) * (0.95 + 0.05 * sin(around * 6.2831 * 17.0 + n3(vWorldPos * 200.0) * 4.0));
+      vec2 q = vec2(around * 30.0, along * 22.0);
+      q.x += 0.35 * sin(q.y * 1.3);
+      vec2 i = floor(q), f = fract(q);
+      float e = 9.0;
+      for (int y = -1; y <= 1; y++) for (int x = -1; x <= 1; x++) {
+        vec2 o = vec2(float(x), float(y)), c = o + 0.2 + 0.6 * vec2(h31(vec3(i + o, 3.0)), h31(vec3(i + o, 4.0)));
+        e = min(e, length((c - f) * vec2(1.0, 0.7)));
+      }
+      float net = (1.0 - smoothstep(0.3, 0.42, e)) * smoothstep(0.35, 0.75, along);
+      col = mix(col * 0.86, vec3(0.9, 0.87, 0.8), net * 0.85);
+      thin = 0.35;
+    }
+    float lum = dot(col, vec3(0.3, 0.5, 0.2));
+    col = mix(col, vec3(0.3, 0.2, 0.11) * (0.45 + 0.9 * lum) + vec3(0.04, 0.03, 0.015), pow(rot, 0.7) * 0.9);
+  } else if (vPart > 8.95) {
+    // the fly agaric model (models.ts): its parts by number, the veil and the withering per fungus
+    float p = vPart - 9.0, t = vUv1.x, h = vUv1.y;
+    float veil = vData.x, rot = vData.y;
+    vec3 white = vec3(0.9, 0.87, 0.79);
+    if (p < 0.05) {
+      // the cap's skin: red, deeper in the middle, more orange to the rim, faintly striate at the very edge
+      col = vTint * mix(0.78, 1.12, smoothstep(0.0, 0.95, t));
+      // more orange out to the rim, the very edge going yellowish
+      col.g += vTint.r * (0.06 * smoothstep(0.45, 1.0, t) + 0.08 * smoothstep(0.93, 1.0, t));
+      col *= 1.0 - 0.12 * smoothstep(0.86, 1.0, t) * abs(sin(around * 6.2831 * 70.0));
+      col *= 0.93 + 0.12 * n3(vWorldPos * 220.0);
+      // the universal veil: all of it white on the egg, cracking off into patches as the cap swells
+      float crack = 0.62 * n3(vWorldPos * 240.0) + 0.38 * n3(vWorldPos * 60.0);
+      col = mix(col, white * (0.92 + 0.1 * n3(vWorldPos * 600.0)), smoothstep(crack - 0.06, crack + 0.06, veil * 1.2 - 0.1));
+      thin = 0.35; wet = 1.3;
+    } else if (p < 0.15) {
+      // the flesh turning under at the rim: white, a red line along the skin's edge
+      col = mix(white * 0.95, vTint * 1.2, smoothstep(0.55, 0.0, abs(t - 1.0) * 30.0) * 0.6 * (1.0 - veil));
+      thin = 0.6;
+    } else if (p < 0.3) {
+      // a wart: a cottony flake of the veil, chalky cream, some yellowed, rough and dry (no slime on it)
+      col = mix(vec3(0.97, 0.95, 0.88), vec3(0.92, 0.86, 0.66), h * 0.45) * (0.9 + 0.16 * n3(vWorldPos * 1400.0));
+      thin = 0.45; wet = 0.15;
+    } else if (p < 0.5) {
+      // the gills: white, close, a soft sheen on each blade
+      col = white * 1.02 * (0.9 + 0.1 * n3(vWorldPos * 500.0));
+      thin = 0.9; wet = 0.6;
+    } else if (p < 0.7) {
+      // the stem: white, fine lengthwise fibres; below the ring, faint torn bands of the veil, uneven
+      col = white * (0.95 + 0.04 * sin(around * 6.2831 * 23.0 + n3(vWorldPos * 300.0) * 6.0) + 0.05 * (n3(vWorldPos * 700.0) - 0.5));
+      float band = n3(vec3(around * 9.0, along * 22.0, 0.0)) * n3(vec3(around * 31.0, along * 60.0, 3.0));
+      col *= 1.0 - 0.07 * (1.0 - smoothstep(0.5, 0.8, along)) * smoothstep(0.25, 0.45, band);
+      thin = 0.4;
+    } else {
+      // the ring: a thin white skirt, finely grooved from above, its hem a little yellow
+      col = white * (0.92 + 0.08 * abs(sin(around * 6.2831 * 90.0 + n3(vWorldPos * 200.0) * 3.0)));
+      col = mix(col, vec3(0.88, 0.8, 0.55), smoothstep(0.75, 1.0, t) * 0.35);
+      thin = 0.85;
+    }
+    // withering: everything browns, the red to a dull rust, the white to a dirty buff
+    float lum = dot(col, vec3(0.3, 0.5, 0.2));
+    col = mix(col, vec3(0.34, 0.2, 0.1) * (0.45 + 0.9 * lum) + vec3(0.05, 0.03, 0.015), pow(rot, 0.7) * 0.9);
+  } else if (vPart < 0.5) {
     // stem: fine lengthwise fibres, white mycelium at the foot where it comes out of the moss
     col *= 0.94 + 0.06 * sin(around * 6.2831 * 11.0 + n3(vWorldPos * 300.0) * 5.0) + 0.06 * (n3(vWorldPos * 500.0) - 0.5);
     col = mix(col, vec3(0.72, 0.70, 0.64), (1.0 - smoothstep(0.0, 0.08, along)) * 0.8);
@@ -1254,7 +1449,7 @@ void main() {
            + col * vec3(1.5, 1.1, 0.6) * thru * max(shadow, 0.3)
            + vec3(1.0, 0.9, 0.75) * spec * shadow
            + vec3(0.6, 0.62, 0.66) * sheen;
-  lit += rimLight(N, V) * col * 2.0;
+  lit += rimLight(N, V) * col * 2.0 * mix(0.3, 1.0, shadow); // (shadow is 0..1 here)
   // with the sun at your back, a gold catch on the side turned to it, as the moss and ferns get
   // (their own colour lit warm, not the moss's flat gold added: that washed a red cap out to cream)
   lit += col * vec3(1.5, 1.15, 0.7) * pow(max(dot(N, L) * 0.5 + 0.5, 0.0), 3.0) * withSun(V, L) * sunCatch(vWorldPos, shadow) * 0.7;

@@ -15,12 +15,34 @@ export const CHUNK = 1.0; // world units per chunk side
 // The spruce trunks (trees.ts draws them): one in about seven of ten cells of a coarse grid, by hash (it was under half; more of them give layer behind layer going off into the fog). Here so the
 // ground can know where they stand.
 export const TREE_CELL = 3.6;
-export interface Trunk { x: number; z: number; r: number; turn: number; key: string }
+/**
+ * Clearings: where the wood opens, 0 under the ferns and trunks .. 1 in the open. A slow noise, a clearing a few
+ * metres across every so often; the ferns stay out of them, the trunks thin out, and the giant fly agarics stand
+ * in them (props.ts), so from down in the moss you see out to them, as in the splash.
+ */
+export function clearing(x: number, z: number) {
+  const n = fbm3(x * 0.11, 3.0, z * 0.11, 2, 31) + 0.35 * fbm3(x * 0.3, 4.0, z * 0.3, 2, 32);
+  return THREE.MathUtils.smoothstep(n, 0.12, 0.3);
+}
+// spruce: among the tall ones, a lower younger spruce, its crown dense to near the ground; h its height to the
+// tall ones' 30 m (the unit trunk scaled up and down, trees.ts)
+export interface Trunk { x: number; z: number; r: number; turn: number; key: string; birch: boolean; spruce: boolean; h: number }
 export function trunkInCell(ix: number, iz: number): Trunk | null {
   const r = mulberry32((Math.imul(ix, 0x5bd1e995) ^ Math.imul(iz, 0x1b873593) ^ 0x7ee5) >>> 0);
   if (r() > 0.7) return null;
   const x = (ix + 0.15 + 0.7 * r()) * TREE_CELL, z = (iz + 0.15 + 0.7 * r()) * TREE_CELL;
-  return { x, z, r: 0.3 + 0.32 * r(), turn: r() * Math.PI * 2, key: `${ix},${iz}` };
+  const r0 = 0.3 + 0.32 * r(), turn = r() * Math.PI * 2;
+  // about one in three a birch, white among the dark spruces, and slimmer (drawn after the rest: the spruces
+  // stand where they stood)
+  const birch = r() < 0.36;
+  // in a clearing most trunks are gone (a birch now and then stays, at its edge)
+  const open = clearing(x, z);
+  if (open > 0.3 && r() < open * (birch ? 0.7 : 1.0)) return null;
+  // (drawn last: the tall ones and the birches stand where they stood)
+  // (none near the start: its low boughs filled the first view)
+  const spruce = !birch && r() < 0.4 && Math.hypot(x, z) > 6;
+  const h = spruce ? 0.5 + 0.2 * r() : 1;
+  return { x, z, r: birch ? r0 * 0.42 : spruce ? r0 * 0.6 : r0, turn, key: `${ix},${iz}`, birch, spruce, h };
 }
 const trunkCache = new Map<number, Trunk | null>();
 function cachedTrunk(ix: number, iz: number) {
@@ -55,9 +77,21 @@ function mound(x: number, z: number) {
 
 /** The ground without the hills at the trunks: for the far floor, whose coarse grid made tents of them that cut
  * into the trunks' feet. */
+// the hillside: falling to the right of the way to the sun (main.ts's lightDir, (0.45, 0.16, -0.88), flat on
+// the ground: (0.455, -0.89); its right hand: (0.89, 0.455)), by SLOPE a metre
+const SLOPE = 0.06;
+const SLOPE_DIR = [0.89, 0.455];
+/** The lie of the land under the moss's own swells: what the moss does not see (it grows by the local relief). */
+export function land(x: number, z: number) {
+  // the lie of the land, very discreet: the wood on a gentle hillside that falls away to your right as you
+  // go toward the sun (across the light, north to south), a few percent, slow swells on it, now and then a low rise
+  const slope = -SLOPE * (x * SLOPE_DIR[0] + z * SLOPE_DIR[1]) + fbm3(x * 0.012, 5, z * 0.012, 2, 21) * 0.6;
+  const hill = THREE.MathUtils.smoothstep(fbm3(x * 0.07, 6, z * 0.07, 2, 22), 0.08, 0.4) * 0.5;
+  return slope + hill;
+}
 export function baseHeight(x: number, z: number) {
   // broad swells plus hummocks: moss carpets are never flat
-  return fbm3(x * 0.6, 0, z * 0.6, 3, 11) * 0.12 + fbm3(x * 2.2, 1, z * 2.2, 3, 12) * 0.045;
+  return fbm3(x * 0.6, 0, z * 0.6, 3, 11) * 0.12 + fbm3(x * 2.2, 1, z * 2.2, 3, 12) * 0.045 + land(x, z);
 }
 
 export function groundHeight(x: number, z: number) {
@@ -69,7 +103,9 @@ const ss = THREE.MathUtils.smoothstep;
 
 /** Moss age at a point (0 = bare humus): a carpet with holes, thicker on the hummocks. */
 export function mossAt(x: number, y: number, z: number) {
-  const holes = fbm3(x * 1.3, 0, z * 1.3, 3, 21) + 1.6 * (y - 0.02);
+  // (the hollows go bare, the hummocks are covered: by the height over the lie of the land, not over y = 0, or
+  // a hillside went bare all the way down)
+  const holes = fbm3(x * 1.3, 0, z * 1.3, 3, 21) + 1.6 * (y - land(x, z) - 0.02);
   const cover = ss(holes, -0.5, -0.36);
   if (cover < 0.04) return 0;
   return cover * (0.78 + 0.22 * (fbm3(x * 4, y * 4, z * 4, 2, 24) * 0.5 + 0.5));
@@ -165,7 +201,8 @@ function chunkGeometry(cx: number, cz: number, step: number) {
   geo.setAttribute('speciesW2', new THREE.InterleavedBufferAttribute(ib, 1, 4));
   geo.setIndex(new THREE.BufferAttribute(idx, 1));
   // radius: half the diagonal, plus the swells, the moss and the fronds standing on it
-  geo.boundingSphere = new THREE.Sphere(new THREE.Vector3(x0 + CHUNK / 2, 0, z0 + CHUNK / 2), CHUNK * 0.71 + 0.3);
+  // (centred at the ground's height there: the land rises and falls now)
+  geo.boundingSphere = new THREE.Sphere(new THREE.Vector3(x0 + CHUNK / 2, baseHeight(x0 + CHUNK / 2, z0 + CHUNK / 2), z0 + CHUNK / 2), CHUNK * 0.71 + 0.3);
   return { geo, moss, species, count };
 }
 
@@ -180,20 +217,34 @@ export interface WorldHooks {
  * Grow moss on a surface: the shells, and fronds where there is moss.
  * The geometry needs the shell attributes (see chunkGeometry); moss and species are per vertex.
  */
+/** the shadow pass draws only the moss's lowest layer, the dense one: its shade on itself is millimetres, and every
+ * layer covers the whole map with a noise before its discard (all ten had been most of the shadow map's cost) */
+const SHADOW_SHELLS = 1;
+export function shellsForShadow(group: THREE.Object3D, on: boolean) {
+  for (const o of group.children) {
+    const n = o.userData.shells as number | undefined;
+    if (n) (o as THREE.InstancedMesh).count = on ? Math.min(n, SHADOW_SHELLS) : n;
+  }
+}
+
 export function dressSurface(
   hooks: WorldHooks, geo: THREE.BufferGeometry, moss: Float32Array, species: Float32Array, count: number,
-  frondCount: number, seed: number,
+  frondCount: number, seed: number, frondWeight?: Float32Array, // where the fronds stand (by default, where there is moss)
 ) {
   const group = new THREE.Group();
   const shells = new THREE.InstancedMesh(geo, hooks.shellMat, hooks.shells);
+  shells.userData.shells = hooks.shells; // all its layers (the shadow pass draws only the lowest)
   // culled by the chunk's bounding sphere, padded for what the vertex shaders push out
   shells.boundingSphere = geo.boundingSphere ? geo.boundingSphere.clone() : null;
   group.add(shells);
   let fronds: Fronds | null = null;
   const disposables: { dispose(): void }[] = [geo, shells]; // the shells' instance buffer too
   if (frondCount > 0) {
-    const weight = new Float32Array(count);
-    for (let i = 0; i < count; i++) weight[i] = ss(moss[i], 0.05, 0.4);
+    let weight = frondWeight;
+    if (!weight) {
+      weight = new Float32Array(count);
+      for (let i = 0; i < count; i++) weight[i] = ss(moss[i], 0.05, 0.4);
+    }
     fronds = buildFronds(geo, weight, frondCount, seed, { dome: false, straws: false });
     const mat = fronds.mesh.material as THREE.ShaderMaterial;
     hooks.setupFronds(mat);
@@ -249,6 +300,7 @@ export class World {
         const dew = buildDew(drops, this.hooks.dewMaterial);
         dew.geometry.boundingSphere = geo.boundingSphere!.clone();
         dew.frustumCulled = true;
+        dew.userData.fronds = true; // (out of the shadow pass with the fronds, as forShadow says)
         group.add(dew);
         disposables.push(dew.geometry);
       }
@@ -315,6 +367,7 @@ export class World {
   forShadow(on: boolean, cx = 0, cz = 0, reach = 0) {
     for (const ch of this.chunks.values()) {
       for (const o of ch.group.children) if (o.userData.fronds) o.visible = !on;
+      shellsForShadow(ch.group, on);
       ch.group.visible = !on || Math.hypot((ch.cx + 0.5) * CHUNK - cx, (ch.cz + 0.5) * CHUNK - cz) < reach;
     }
   }

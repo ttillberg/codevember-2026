@@ -92,10 +92,16 @@ export const mossLighting = /* glsl */ `
 uniform sampler2D uShadowMap;
 uniform mat4 uShadowMatrix;
 uniform float uShadowOn;
+// the shadow map's pass wants only the depth: each material stops here, after its discards (its holes still holes)
+uniform float uDepthOnly;
+#define DEPTH_ONLY if (uDepthOnly > 0.5) { gl_FragColor = vec4(1.0); return; }
 uniform float uCavityAO; // 1 = moss sits darker in holes and inner corners, 0 = AO disabled
 uniform float uShadowFloor; // how dark a fully shadowed spot gets
 uniform float uTime;
 uniform vec3 uLightDirC; // the sun, for the canopy projection
+uniform sampler2D uCanopyMap; // the crowns' shade from above (foliage.ts): 1 open, 0 under thick boughs
+uniform vec3 uCanopyBox; // its corner x, z and its size
+uniform float uCanopyAmt; // how much the map counts: 0 the noise alone (the look panel's crown shade)
 
 // ---- canopy: the sun comes through leaves, so the light on the floor is a field of soft spots, projected
 // along the light and swaying slowly
@@ -114,13 +120,28 @@ float canopyAt(vec3 wp) {
   // big pools of light, broken up by leaves into smaller spots
   float big = cNoise(q * 0.9 + 3.0);
   float n = cNoise(q * 3.2 + sway) * 0.5 + cNoise(q * 7.5 - sway * 1.7 + 9.0) * 0.32 + cNoise(q * 19.0 + sway * 3.0 + 4.0) * 0.18;
+  // the crowns' own shade, where they are: under a spruce dark, under a pine's clumps patchy, in the open lit
+  // (the noise alone put shade and sun anywhere, not under the trees)
+  // (the map is drawn for the floor, its heights squeezed as foliage.ts does: a point up in the air the same)
+  vec2 g = (wp.xz - (10.0 + (wp.y - 10.0) * 0.3) * L.xz / max(L.y, 0.05) - uCanopyBox.xy) / uCanopyBox.z;
+  float open = (g.x > 0.0 && g.y > 0.0 && g.x < 1.0 && g.y < 1.0) ? texture2D(uCanopyMap, g).r : 0.55;
+  // far off, toward the sun, the crowns that would shade it are past the ones placed: neither lit nor shaded there
+  open = mix(open, 0.55, smoothstep(14.0, 26.0, length(g - 0.5) * uCanopyBox.z));
   // (more of it lets the sun through than at first: looking away from the sun the floor was nearly all in shade)
-  return smoothstep(0.45, 0.58, n + (big - 0.5) * 0.45);
+  // (a nudge, not a lid: weighed in fully, under a crown all was shade and in a gap all sun, each patch metres
+  // across, bigger than the floor a worm's eye sees, so no patches showed at all; this way the flecks of sun
+  // stay everywhere, fewer and smaller under the crowns, more in the gaps)
+  return smoothstep(0.45, 0.58, n + (big - 0.5) * mix(0.45, 0.25, min(uCanopyAmt, 1.0)) + (open - 0.55) * 0.35 * uCanopyAmt);
 }
 
 // A cheat for looking away from the sun: things turned to it catch a warm glow, not their own (very dark) colour
 // lit, and even in the long shadows a few flecks get through the fern lace. 'withSun' is 1 with the sun at your
 // back, 0 looking into it, where the glow through things and the rims carry the light instead.
+// the backlit rim is sun through the leaves: in the crowns' shade it is gone too (unshadowed, looking toward the sun
+// the moss glowed alike in sun and shade, and the patches on the floor did not show). shadow as shadowAt gives it
+// how much sun reaches here, 0..1, from what shadowAt gives (uShadowFloor..1)
+float sunIn(float shadow) { return clamp((shadow - uShadowFloor) / max(1.0 - uShadowFloor, 1e-3), 0.0, 1.0); }
+float rimShade(float shadow) { return mix(0.3, 1.0, sunIn(shadow)); }
 float withSun(vec3 V, vec3 L) { return smoothstep(-0.1, 0.8, dot(normalize(V.xz + 1e-5), normalize(L.xz + 1e-5))); }
 float sunCatch(vec3 wp, float shadow) {
   vec3 L = normalize(uLightDirC);
@@ -332,6 +353,7 @@ void main() {
     if (dens < (dot(w, kDensity) + w5 * kDensity5) + 0.6 * uu + 0.35 * uu * graze) discard;
   }
 
+  DEPTH_ONLY // the shadow pass: past the discards, nothing more to work out
   float shadow = shadowAt(vWorldPos, N);
   float sheen = pow(1.0 - ndv, 2.5) * (dot(w, kSheen) + w5 * kSheen5) * mix(0.4, 1.0, shadow);
   // directional, not wrapped: sides facing away from the light go properly dark
@@ -392,8 +414,18 @@ void main() {
       // granite: grey with a faint green film, a few pale crust lichens
       float n1 = noise3(vLocal * 20.0), n2 = noise3(vLocal * 120.0);
       bare = mix(vec3(0.07, 0.072, 0.065), vec3(0.19, 0.19, 0.17), n1 * 0.6 + n2 * 0.4);
-      bare = mix(bare, bare * vec3(0.7, 1.0, 0.65), smoothstep(0.4, 0.7, noise3(vLocal * 6.0)));
-      bare = mix(bare, vec3(0.42, 0.44, 0.36), smoothstep(0.74, 0.78, noise3(vLocal * 30.0 + 2.0)) * 0.8);
+      bare = mix(bare, bare * vec3(0.8, 0.95, 0.72), smoothstep(0.4, 0.7, noise3(vLocal * 6.0)) * 0.6);
+      // crust lichen: irregular patches, finely broken at their edge, in some places on the stone and not others;
+      // grey-green, a slightly paler rim where each grows outward, now and then a yellow-green map lichen. Low in
+      // contrast: one noise at one threshold had made round pale blots like dabs of paint
+      float lmask = smoothstep(0.42, 0.62, noise3(vLocal * 3.0 + 9.0));
+      float lf = noise3(vLocal * 18.0 + 2.0) * 0.5 + noise3(vLocal * 60.0 + 4.0) * 0.32 + noise3(vLocal * 190.0 + 6.0) * 0.18;
+      float lich = smoothstep(0.58, 0.64, lf) * lmask;
+      float lrim = (smoothstep(0.58, 0.6, lf) - smoothstep(0.6, 0.64, lf)) * lmask;
+      vec3 lcol = mix(vec3(0.17, 0.18, 0.15), vec3(0.24, 0.25, 0.2), noise3(vLocal * 80.0));
+      lcol = mix(lcol, vec3(0.2, 0.23, 0.08), smoothstep(0.62, 0.7, noise3(vLocal * 8.0 + 13.0)));
+      bare = mix(bare, lcol, lich * 0.75);
+      bare += vec3(0.025, 0.026, 0.02) * lrim;
     }
     vec3 rock = bare * (0.6 * skyTint(sN, 1.0) * (0.35 + 0.25 * sN.y) * mix(1.0, 0.6, vCavity) + 2.4 * diff);
     rock = tonemap(grade(rock));
@@ -408,7 +440,7 @@ void main() {
     velvet *= mix(mix(0.85, 0.96, w.w), 1.0, pillow);
     velvet *= mix(1.0, mix(0.65, 1.0, vDome), w.w); // dark crevice between cushion clumps  // valleys a touch darker, the mounds carry the shape not the colour
     velvet *= skyTint(N, 1.0 - 0.6 * wrap);
-    velvet += rimLight(N, V) * lime * 2.2;
+    velvet += rimLight(N, V) * lime * 2.2 * rimShade(shadow);
     // the velvet seen with the sun at your back: the same gold catch as the strands over it
     velvet += SUN_GLOW * 0.6 * withSun(V, L) * sunCatch(vWorldPos, shadow) * (0.3 + 0.7 * bump);
     vec3 ground = mix(vec3(0.03, 0.025, 0.012), velvet, (dot(w, kBase) + w5 * kBase5));
@@ -427,12 +459,13 @@ void main() {
   col += SUN_GLOW * withSun(V, L) * sunCatch(vWorldPos, shadow) * pow(uu, 1.6) * 0.9 * (1.0 - 0.6 * vCavity);
   // young sparse moss at a patch edge reads as light specks, not dirt
   col = mix(col, lime * 0.8, (1.0 - smoothstep(0.1, 0.5, age)) * 0.7);
-  col *= mix(mix(0.85, 0.96, w.w), 1.0, pillow) * (0.8 + 0.2 * hemi) * mix(0.6, 1.0, shadow);
+  // (darker in the crowns' shade than it was: at 0.6 of the raw shadow, a shaded patch was barely darker than a lit one)
+  col *= mix(mix(0.85, 0.96, w.w), 1.0, pillow) * (0.8 + 0.2 * hemi) * mix(0.42, 1.0, sunIn(shadow));
   col *= mix(1.0, mix(0.75, 1.0, vDome), w.w);
   // cushion hair has pale yellow-green tips
   col = mix(col, vec3(0.42, 0.52, 0.30), smoothstep(0.75, 1.0, uu) * 0.25 * w.w * vDome);
   col *= skyTint(N, 1.0 - 0.6 * wrap);
-  col += rimLight(N, V) * lime * 3.0 * uu;
+  col += rimLight(N, V) * lime * 3.0 * uu * rimShade(shadow);
   col *= mix(1.0, 0.45, vCavity * uCavityAO);
   gl_FragColor = vec4(tonemap(grade(col)), 1.0);
   #include <colorspace_fragment>
