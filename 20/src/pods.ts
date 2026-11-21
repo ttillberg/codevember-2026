@@ -107,7 +107,9 @@ export function pods(o: {
 
   // ---------- this pod's number, on the flank the eye sees first
   const plates = pod.getObjectByName('plates') as THREE.Mesh | undefined;
-  if (plates) paint(plates, NUMBER, new THREE.Vector3(-0.55, 0.05, 0.83).normalize(), 0.5, -0.15);
+  // (not painted on it any more: its flank has its 03 and the rest of its markings back, from the model. The twin
+  // keeps its number in the script)
+  void plates;
 
   // ---------- the other pods, hanging from trolleys on girders out in the hall, where the eye looks up as the
   // page opens; each its own shape and its number painted on the side that faces this one

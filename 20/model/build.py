@@ -445,10 +445,14 @@ def plate(name, parent, transform=None, thick=T, gap=GAP):
     PLATES.append(o)
     return o
 
-THICK = {'shield_l': 0.075, 'shield_r': 0.075, 'cap_l': 0.07, 'strip': 0.08, 'door': 0.065, 'bottom': 0.04}
+# The plates either side of the seam stand well out, thick, with a wide gap between them: the seam is a channel
+# with walls, deep enough to be dark in, as the hall picture has it. The skirts along the foot are thick too.
+THICK = {'shield_l': 0.075, 'shield_r': 0.075, 'cap_l': 0.07, 'strip': 0.15, 'door': 0.13, 'door_low': 0.13, 'bottom': 0.04,
+         'skirt_fl': 0.1, 'skirt_fr': 0.1, 'skirt_ls': 0.1, 'skirt_rs': 0.1, 'panel_m': 0.09}
+WIDE = {'strip': 0.032, 'door': 0.032, 'door_low': 0.032}   # half the gap round these
 for name in sorted(ALL - {'open'}):
-    if name in DOOR: plate(name, door, DOOR_INV, THICK.get(name, T))
-    else: plate(name, pod, None, THICK.get(name, T), 0.06 if name == 'bottom' else GAP)
+    if name in DOOR: plate(name, door, DOOR_INV, THICK.get(name, T), WIDE.get(name, GAP))
+    else: plate(name, pod, None, THICK.get(name, T), 0.06 if name == 'bottom' else WIDE.get(name, GAP))
 
 
 
@@ -831,7 +835,14 @@ def machinery():
     for pts, r, out in (([(140, 240), (140, 640), (150, 684), (172, 700)], 0.026, 0.05),
                         ([(258, 205), (258, 340)], 0.022, 0.07)):
         for side in (pts, mirror(pts)):
-            line(hose, steel, m, surface_path('back', side, out), r)
+            path = surface_path('back', side, out)
+            if r > 0.025 and len(path) >= 2:
+                # (the ones down the pockets leave the pod upwards too: every cable comes in at the back now)
+                up = path[0] + Vector((0, 0, 0.34))
+                line(hose, steel, m, [up] + path, r, cap_start=False)
+                tops.append((up, r))
+            else:
+                line(hose, steel, m, path, r)
     # up top a block that holds each pair, with a lamp in it
     for x0, x1 in ((150, 200), (355, 405)):
         block(steel, 'back', x0, 250, x1, 282, 0.15)
@@ -857,15 +868,22 @@ def machinery():
         tilt = 0.57 if view == 'right' else -0.57
         for rect, out in rects: block(m, view, *rect, out, None, 0.0, flush=True)
         greebles(view, [pts for pts, r, out in hoses], m, plate_, lamps, hose, steel, tilt, 20 if view == 'right' else 21)
-        for pts, r, out in hoses: line(hose, steel, m, surface_path(view, pts, out), r)
+        for pts, r, out in hoses:
+            # the flank's hoses too: up off their top ends, each to a cable
+            path = surface_path(view, pts, out)
+            if len(path) < 2: continue
+            up = path[0] + Vector((0, 0, 0.3))
+            line(hose, steel, m, [up] + path, r, cap_start=False)
+            tops.append((up, r))
         # (clamps out at the flank's back edge stood off the side: left off)
         for rect in lights: block(lamps, view, *rect, 0.05, 0.02, flush=True)
     # the seam: a white latch across it with a lamp, a smaller block, dark things in it
-    block(white, 'front', 376, 385, 424, 472, 0.11)
-    block(white, 'front', 406, 520, 436, 575, 0.09)
+    # (out past the thick plates either side of the seam, which they bridge)
+    block(white, 'front', 376, 385, 424, 472, 0.2)
+    block(white, 'front', 406, 520, 436, 575, 0.18)
     for rect, out in (((398, 150, 418, 260), 0.03), ((418, 620, 440, 700), 0.03), ((404, 300, 422, 370), 0.05)):
         block(m, 'front', *rect, out)
-    block(lamps, 'front', 384, 398, 398, 410, 0.112, 0.02)
+    block(lamps, 'front', 384, 398, 398, 410, 0.202, 0.02)
     m.done('mech', MECH, pod, None, 0.008)
     hose.done('hoses', HOSE, pod, None, 0)
     steel.done('clamps', STEEL, pod, None, 0)   # (the couplings at the hoses' ends; no bevel, for nothing seen)
@@ -1090,16 +1108,11 @@ def deck():
     c = sum((f.calc_center_median() for f in tops), Vector()) / len(tops)
     m, brass = Soup(), Soup()
     m.box((0.5, 0.4, 0.08), c + Vector((0, 0.02, 0.0)))
+    # (the nine ports that stood here, where the cables came in, are gone: the cables all come in at the back, onto
+    # the hoses' upper ends; the deck is a plain cover)
     ports = []
-    for row, y in enumerate((-0.17, 0.0, 0.17)):
-        for x in (-0.2, 0.0, 0.2):
-            p = c + Vector((x - 0.02 * row, y, 0.05))
-            lean = Vector((x * 0.5, y * 0.4, 1)).normalized()
-            m.cyl(0.07, p, p + lean * 0.06, 14)
-            brass.cyl(0.062, p + lean * 0.06, p + lean * 0.11, 14)
-            ports.append((p + lean * 0.11, lean, 0.05))
     m.done('deck', MECH, pod, None, 0.005)
-    brass.done('collars', BRASS, pod, None, 0.003)
+    brass.bm.free()
     lamps = Soup()
     for x in (-0.12, 0.12):
         lamps.box((0.03, 0.012, 0.05), c + Vector((x, -0.26, 0.04)))
@@ -1133,8 +1146,11 @@ def underside():
 
 # ---------------------------------------------------------------- markings
 
-fonts = os.path.join(os.path.dirname(bpy.app.binary_path), '..', 'Resources', '%d.%d' % bpy.app.version[:2], 'datafiles', 'fonts', 'Inter.woff2')
-FONT = bpy.data.fonts.load(fonts, check_existing=True) if os.path.exists(fonts) else None
+# the Mac's own face, San Francisco, bold (SF Pro if it is installed, else the system's; else Blender's Inter)
+fonts = next((f for f in ('/Library/Fonts/SF-Pro-Display-Bold.otf', os.path.expanduser('~/Library/Fonts/SF-Pro-Display-Bold.otf'), '/System/Library/Fonts/SFNS.ttf',
+                          os.path.join(os.path.dirname(bpy.app.binary_path), '..', 'Resources', '%d.%d' % bpy.app.version[:2], 'datafiles', 'fonts', 'Inter.woff2'))
+              if os.path.exists(f)), None)
+FONT = bpy.data.fonts.load(fonts, check_existing=True) if fonts else None
 
 class Marks:
     """flat shapes laid on plates, gathered into one mesh"""
@@ -1258,26 +1274,23 @@ def markings():
     # the 03 shield on the left flank, as the side view has it, slid a little back: the front view has it
     # further left than the side view puts it, and this is halfway
     lay(ink, 'right', (405, 380), [
-        ('text', '03', 405, 380, 64, 0.03), ('text', 'TYPE-A', 405, 412, 11, 0.008),
-        ('text', 'STASIS PRESERVATION', 405, 430, 11, 0.006),
-        ('icon', 445, 460, 492, 530), ('bars', 505, 460, 592, 530, 3),
+        ('text', 'DAY-20', 405, 384, 36, 0.0),   # (the only words on it: every other text was taken off)
+        ('icon', 445, 460, 492, 530), ('bars', 505, 460, 570, 530, 3),   # (the bars kept this side of the seam)
         ('cross', 418, 582, 22), ('cross', 456, 588, 22), ('cross', 446, 624, 24),
-        ('text', 'RETECH\nHUMAN\nFURTHER', 486, 597, 10, 0.006), ('cross', 310, 265, 30)], shift=-45)
+        ('cross', 310, 265, 30)], shift=-45)
     # and on the right flank, slid back onto the flank proper: where the side view has it, it would sit on
     # the corner and show from the front, which the front view does not
     lay(ink, 'left', (210, 380), [
-        ('text', '03', 210, 380, 66, 0.03), ('text', 'TYPE-A', 186, 412, 11, 0.008),
-        ('text', 'STASIS PRESERVATION', 178, 430, 11, 0.006),
+        ('text', 'DAY-20', 210, 384, 36, 0.0),
         ('icon', 160, 462, 212, 530), ('bars', 225, 462, 322, 530, 3),
-        ('text', 'UEC', 190, 628, 22, 0.012), ('cross', 290, 621, 28), ('cross', 430, 268, 30)], shift=60)
+        ('cross', 290, 621, 28), ('cross', 430, 268, 30)], shift=60)
     # the marks on the caps
-    lay(ink, 'front', (245, 140), [('split', 245, 140, 32), ('text', 'LES\nSOMMES\nPLUS\nLOIN', 284, 132, 7, 0.004)])
+    lay(ink, 'front', (245, 140), [('split', 245, 140, 32)])
     # (the side view's own mark here landed on the same facet as the front view's, and the two made a blot)
     lay(ink, 'left', (298, 172), [('split', 298, 172, 28)])
     # low on the right of the front
-    lay(ink, 'front', (505, 728), [('text', 'CONTAIN\nPRESERVE\nITERATE', 505, 728, 10, 0.006), ('slash', 476, 722, 486, 758)])
+    lay(ink, 'front', (505, 728), [('slash', 476, 722, 486, 758)])
     # the maker's plate on the spine
-    lay(ink, 'back', (245, 672), [('text', 'UEC', 245, 672, 22, 0.012)], out=0.08)
     lay(ink, 'back', (240, 500), [('tri', 240, 486, 254, 500), ('tri', 316, 486, 330, 500)], out=0.08)
     lay(ink, 'back', (270, 760), [('vee', 270, 728, 294, 752)], out=0.085)
     ink.done('marks', INK, pod)
@@ -1421,11 +1434,13 @@ def hooks(ports, top, drip_seam, drip_under, eyes):
     # straight above its middle: it hangs plumb
     mid = sum((v.co for v in hull.verts), Vector()) / len(hull.verts)
     hang = Vector((mid.x, mid.y, top.z + 7.2))
+    ports = sorted(ports, key=lambda t: -t[0].x)   # (round the arc in the order they stand, so no two cross)
     for i, (p, d, r) in enumerate(ports):
         # they hang slack: the hoses carry nothing
         empty('plug.%03d' % i, p, d, pod, radius=r, slack=1.08 + 0.1 * ((i * 37) % 5) / 4)
-        a = i * TAU / len(ports) + 0.3
-        empty('socket.%03d' % i, hang + Vector((1.4 * math.cos(a), 1.4 * math.sin(a), 0.4 * math.sin(3 * a))), (0, 0, -1))
+        # (in an arc over the back, where they all go down to: none comes across the top of the pod)
+        a = math.pi / 2 + (i / max(1, len(ports) - 1) - 0.5) * math.pi * 1.15
+        empty('socket.%03d' % i, hang + Vector((1.5 * math.cos(a), 0.35 + 1.5 * math.sin(a), 0.4 * math.sin(3 * a))), (0, 0, -1))
     for i, e in enumerate(eyes):
         empty('lift.%03d' % i, e, (0, 0, 1), pod, size=0.1)
     empty('hang', hang, (0, 0, -1), size=0.6)
@@ -1645,8 +1660,9 @@ if STAGE != 'hull':
     ports, top = deck()
     ports += [(p, Vector((0, 0.25, 1)).normalized(), r) for p, r in hose_tops]
     under = underside()
-    # (no markings for now: the 03s, the texts, crosses, stripes, the split disc, the hatch's squares, UEC and the
-    # warning marks were taken off. markings() still lays them all, if they are wanted back)
+    # the markings, back on: the 03s, the texts, crosses, stripes, the split disc, the hatch's squares, UEC, the
+    # warning marks (they were taken off for a while)
+    markings()
     seam_drip = blood()
     inside()
     hooks(ports, top, seam_drip, under, lifts(top))

@@ -120,7 +120,7 @@ function start() {
   const turn = (v: Shot, d: number): Shot => ({ ...v, yaw: v.yaw + deg(d) });
   const DOOR: Shot = { yaw: 0.15, pitch: -0.12, radius: 3.4, target: new THREE.Vector3(0.35, 0.55, 0.1) }; // close on the door, the red in its seams
   const CABLES: Shot = { yaw: -1.5, pitch: -0.7, radius: 5.5, target: new THREE.Vector3(0.2, 3.2, 0) }; // up the cables from below
-  const HALL: Shot = { yaw: 0.35, pitch: -0.28, radius: 15, target: new THREE.Vector3(2.5, 3, -2.5) }; // the hall, the fans, the twin
+  const FLANK: Shot = { yaw: -1.22, pitch: -0.43, radius: 9.03, target: new THREE.Vector3(1.02, 0.62, -0.48) }; // from the side, low: its flank and its markings
   const LAND: Shot = { yaw: -0.51, pitch: -0.38, radius: 9, target: new THREE.Vector3(0.9, 0.64, -0.8) };
   // each a shot: from, to, how long, eased at both ends (the opening), even (the cuts) or eased only into its end
   type Take = { from: Shot; to: Shot; s: number; ease: 'both' | 'even' | 'end' };
@@ -128,7 +128,7 @@ function start() {
     { from: SHOT, to: turn(SHOT, 20), s: 22, ease: 'both' },
     { from: DOOR, to: turn(DOOR, 7), s: 4.5, ease: 'even' },
     { from: CABLES, to: turn(CABLES, -8), s: 4.5, ease: 'even' },
-    { from: HALL, to: turn(HALL, 6), s: 5, ease: 'even' },
+    { from: turn(FLANK, -3), to: turn(FLANK, 3), s: 5, ease: 'even' },
     { from: turn(LAND, -9), to: LAND, s: 6, ease: 'end' },
   ];
   const CUES: [number, () => void][] = [[4.5, () => { roofWanted = true; hall?.roofOpen(true); }]];

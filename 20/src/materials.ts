@@ -231,11 +231,11 @@ function physical(old: THREE.MeshStandardMaterial, p: THREE.MeshPhysicalMaterial
   return m;
 }
 
-/** black rubber, ribbed: the hoses on the pod and the cables to the ceiling */
+/** black rubber, smooth: the hoses on the pod and the cables to the ceiling */
 export const rubber = grit(
-  // (black: little sheen, dull, its ribs shallow, so it is a dark line with a soft edge of light, not grey bands)
+  // (black, smooth: little sheen, dull, and no ribs any more, so it is a dark line with a soft edge of light)
   new THREE.MeshPhysicalMaterial({ name: 'hose', color: 0x060607, roughness: 0.74, metalness: 0, sheen: 0.18, sheenRoughness: 0.6, sheenColor: 0x1c1e22 }),
-  { scale: 6, rough: [0.9, 1.15], tint: 0.06, ribs: true },
+  { scale: 6, rough: [0.9, 1.15], tint: 0.06 },
 );
 
 /** steel wire: the slings and the wire it hangs by */
@@ -287,7 +287,7 @@ export function dress(root: THREE.Object3D) {
       case 'shroud': // cloth, wrapped round what is inside
         return physical(old, { metalness: 0, roughness: 0.85, sheen: 1, sheenRoughness: 0.7, sheenColor: 0x8a8070 });
       case 'ink': // the painted marks: flat black, worn through in flakes
-        return grit(physical(old, { color: 0x0b0c0d, metalness: 0, roughness: 0.62 }), { scale: 30, rough: [0.85, 1.2], tint: 0.15, wear: 0.37 });
+        return grit(physical(old, { color: 0x0b0c0d, metalness: 0, roughness: 0.62 }), { scale: 30, rough: [0.85, 1.2], tint: 0.15, wear: 0.27 });
       case 'hose':
         return rubber;
       default:
