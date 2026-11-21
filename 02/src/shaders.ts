@@ -99,16 +99,18 @@ uniform mat4 uVP;
 uniform highp sampler2D uXf;
 uniform float uUseXf;
 uniform float uToFloor;
-out vec3 vW; out vec3 vN; out vec3 vNl; out vec2 vUv; out vec4 vD; flat out vec4 vQ;
+out vec3 vW; out vec3 vN; out vec3 vNl; out vec2 vUv; out vec4 vD; flat out vec4 vQ; flat out float vFree;
 vec3 rot(vec4 q, vec3 v) { return v + 2.0 * cross(q.xyz, cross(q.xyz, v) + q.w * v); }
 void main() {
   vec4 q = vec4(0, 0, 0, 1);
   vec3 p = aPos, n = aNrm;
+  vFree = 1.0;
   if (uUseXf > 0.5) {
     int id = int(aD.z + 0.5);
     ivec2 tc = ivec2((id * 2) % 1024, (id * 2) / 1024);
     vec4 a = texelFetch(uXf, tc, 0);
     q = texelFetch(uXf, tc + ivec2(1, 0), 0);
+    vFree = a.w; // 0 while it is still one piece of a larger shard that has not broken again
     p = a.xyz + rot(q, aPos);
     n = rot(q, aNrm);
   }
@@ -124,7 +126,7 @@ void main() {
 
 export const SHADOW_FS = /* glsl */ `#version 300 es
 precision highp float;
-in vec2 vUv; in vec4 vD;
+in vec2 vUv; in vec4 vD; flat in float vFree;
 uniform float uNow; uniform float uShade; uniform float uCut;
 uniform sampler2D uMask; uniform vec3 uPane;
 out vec4 o;
@@ -132,6 +134,7 @@ out vec4 o;
 vec2 maskUv(vec2 uv, float kind) { float l = floor(kind / 10.0 + 0.01); return vec2(uv.x / uPane.x, (uv.y / uPane.y + uPane.z - 1.0 - l) / uPane.z); }
 void main() {
   if (vD.y > uNow) discard;
+  if (mod(vD.w, 10.0) > 2.5 && vFree < 0.5) discard; // a cut inside a shard that is still whole
   vec4 m = texture(uMask, maskUv(vUv, vD.w));
   if (m.r > 0.5 || (uCut > 0.5 && m.b > 0.5)) discard;
   o = vec4(uShade);
@@ -141,14 +144,17 @@ void main() {
 // a crack surface. Light inside the glass that meets it is mirrored: it either leaves through a face, and the
 // crack shows the room from somewhere else, or it is sent along the pane and stays in: that is the dark line.
 export const WALL_FS = COMMON + /* glsl */ `
-in vec3 vW; in vec3 vN; in vec3 vNl; in vec2 vUv; in vec4 vD; flat in vec4 vQ;
+in vec3 vW; in vec3 vN; in vec3 vNl; in vec2 vUv; in vec4 vD; flat in vec4 vQ; flat in float vFree;
 uniform vec3 uCam; uniform float uNow; uniform float uSeam; uniform float uCut; uniform float uUseXf;
 uniform sampler2D uMask; uniform vec3 uPane;
+uniform vec3 uTint[4]; uniform vec3 uEdge[4]; // per pane: what it lets through, and the colour its edges glow in
 out vec4 o;
 // the masks of all panes are stacked in one texture; the pane a vertex belongs to is the tens of its kind
 vec2 maskUv(vec2 uv, float kind) { float l = floor(kind / 10.0 + 0.01); return vec2(uv.x / uPane.x, (uv.y / uPane.y + uPane.z - 1.0 - l) / uPane.z); }
 void main() {
   if (vD.y > uNow) discard;
+  float kd = mod(vD.w, 10.0);
+  if (kd > 2.5 && vFree < 0.5) discard; // a cut inside a shard that is still whole: it shows when it breaks again
   // (once pieces have left, the cracks that stay were chosen one by one: no mask for them)
   if (uCut < 0.5 && texture(uMask, maskUv(vUv, vD.w)).r > 0.5) discard;
   vec3 V = normalize(vW - uCam);
@@ -163,12 +169,14 @@ void main() {
   float esc = max(smoothstep(0.7, 0.8, abs(Rg.z)), 1.0 - uLook.w);
   vec3 og = refract(Rg, vec3(0, 0, -sign(Rg.z)), 1.5);
   vec3 seen = dot(og, og) > 0.0 ? look(vW, rot(vQ, og)) : vec3(0.0);
-  vec3 trapped = vec3(0.006, 0.02, 0.018) + vec3(0.25, 0.5, 0.45) * uFlash * 0.25;
-  vec3 c = mix(trapped, seen * vec3(0.82, 0.95, 0.9), esc);
-  // a shard on its own: the light it has gathered through its faces leaves by its edges, bottle green
+  int layer = int(floor(vD.w / 10.0 + 0.01));
+  vec3 edge = uEdge[layer];
+  vec3 trapped = edge * 0.5 + 0.004 + vec3(0.25, 0.5, 0.45) * uFlash * 0.25;
+  vec3 c = mix(trapped, seen * pow(uTint[layer], vec3(2.6)), esc);
+  // a shard on its own: the light it has gathered through its faces leaves by its edges, in the colour of its glass
   if (uUseXf > 0.5) {
     vec2 lp = vW.xz - vec2(0.0, -0.25);
-    c += vec3(0.004, 0.04, 0.024) * (0.2 + 1.1 * exp(-dot(lp, lp) / 1.5) + 2.0 * uFlash) * (0.5 + vnoise(hp * 0.2));
+    c += edge * (0.2 + 1.1 * exp(-dot(lp, lp) / 1.5) + 2.0 * uFlash) * (0.5 + vnoise(hp * 0.2));
   }
   // where the crack meets the surface the edge is chipped and catches light
   float seam = exp(-vD.x * 10.0) + 0.5 * exp(-(1.0 - vD.x) * 10.0);
@@ -176,7 +184,7 @@ void main() {
   c += vec3(0.6, 0.85, 0.8) * seam * (uSeam + 1.6 * glint + uFlash);
   // the tip of a running crack flashes
   c += vec3(0.8, 1.0, 0.95) * 1.5 * exp(-(uNow - vD.y) / 0.05);
-  if (mod(vD.w, 10.0) > 1.5) c = mix(c, vec3(0.55, 0.62, 0.6) * (0.5 + uFlash * 2.0), 0.55); // the crushed rim of the hole
+  if (kd > 1.5 && kd < 2.5) c = mix(c, vec3(0.55, 0.62, 0.6) * (0.5 + uFlash * 2.0), 0.55); // the crushed rim of the hole
   o = vec4(tone(c), 1.0);
 }
 `;
@@ -186,7 +194,7 @@ export const FACE_FS = COMMON + /* glsl */ `
 in vec3 vW; in vec3 vN; in vec3 vNl; in vec2 vUv; in vec4 vD; flat in vec4 vQ;
 uniform vec3 uCam; uniform mat4 uView; uniform vec2 uRes; uniform float uBend; uniform float uCut; uniform float uNow; uniform vec3 uGlass; // tint, waviness, reflections
 uniform float uFrost; uniform sampler2D uRoom; uniform vec3 uTargets[3]; // each: x, y on the pane and its radius, metres
-uniform sampler2D uScene; uniform sampler2D uMask; uniform vec3 uPane;
+uniform sampler2D uScene; uniform sampler2D uMask; uniform vec3 uPane; uniform sampler2D uTints;
 out vec4 o;
 // the masks of all panes are stacked in one texture; the pane a vertex belongs to is the tens of its kind
 vec2 maskUv(vec2 uv, float kind) { float l = floor(kind / 10.0 + 0.01); return vec2(uv.x / uPane.x, (uv.y / uPane.y + uPane.z - 1.0 - l) / uPane.z); }
@@ -222,12 +230,12 @@ void main() {
     blur = mix(blur / 16.0, vec3(0.5, 0.52, 0.51) * (0.75 + uFlash), uFrost * 0.22);
     c = mix(blur, c, crack);
   }
-  // green, and greener the longer the way through it: a pane seen from the front is nearly clear, a shard on edge is not
-  c *= pow(vec3(0.93, 0.975, 0.955), vec3(uGlass.x / max(abs(dot(N, V)), 0.14)));
+  // coloured by all the glass on the way, this piece and whatever is behind or in front of it (the tint pass)
+  c *= texture(uTints, suv).rgb;
   // the targets, in dark matt tape: a small circle with a dot in its empty middle, and four long strokes
   // around it. Nothing touches: there is a gap between each stroke and the circle. By pane coordinates, so a
   // shard keeps its part of one
-  for (int i = 0; i < 3; i++) {
+  for (int i = 0; i < 3 && vD.w < 9.5; i++) { // (on the front pane only)
     vec2 d = (vUv - uTargets[i].xy) / max(uTargets[i].z, 1e-5);
     vec2 q = abs(d);
     if (max(q.x, q.y) < 1.05) {
@@ -248,6 +256,26 @@ void main() {
   float frost = m.g * (0.9 + 0.7 * vnoise(vUv * 1500.0));
   c = mix(c, vec3(0.62, 0.68, 0.66) * (0.55 + uFlash * 3.0), clamp(frost, 0.0, 0.85));
   o = vec4(c, 1.0);
+}
+`;
+
+// What all the glass along a line of sight lets through, multiplied up: every face of every pane and shard is
+// drawn into one picture, each darkening it by its own colour, in any order. Glass is coloured by the way
+// through it, so a pane from the front is pale and a shard on edge is not; a shard has a front and a back, a
+// standing pane only its front, so each face of a shard is half the way.
+export const TINT_FS = /* glsl */ `#version 300 es
+precision highp float;
+in vec3 vW; in vec3 vN; in vec2 vUv; in vec4 vD;
+uniform vec3 uCam; uniform float uNow; uniform float uCut; uniform float uUseXf; uniform float uTintK;
+uniform sampler2D uMask; uniform vec3 uPane; uniform vec3 uTint[4];
+out vec4 o;
+vec2 maskUv(vec2 uv, float kind) { float l = floor(kind / 10.0 + 0.01); return vec2(uv.x / uPane.x, (uv.y / uPane.y + uPane.z - 1.0 - l) / uPane.z); }
+void main() {
+  if (vD.y > uNow) discard;
+  vec4 m = texture(uMask, maskUv(vUv, vD.w));
+  if (m.r > 0.5 || (uCut > 0.5 && m.b > 0.5)) discard;
+  float way = (uUseXf > 0.5 ? 0.5 : 1.0) / max(abs(dot(normalize(vN), normalize(vW - uCam))), 0.14);
+  o = vec4(pow(uTint[int(floor(vD.w / 10.0 + 0.01))], vec3(uTintK * way)), 1.0);
 }
 `;
 

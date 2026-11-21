@@ -5,7 +5,7 @@
 // (shards.ts), a worker bakes the fall with rigid bodies (sim.worker.ts) and the page plays it back.
 import { CRACKS, Pane, type Impact } from './cracks';
 import { defaults, mountPanel, setValue } from './settings';
-import { buildShards, mergeSets, type ShardSet } from './shards';
+import { buildShards, limitHulls, mergeSets, type ShardSet } from './shards';
 import { Renderer, lookAt, perspective } from './render';
 import { Sound } from './audio';
 import type { BakeRequest, FramesMessage, SimConfig } from './sim.worker';
@@ -23,7 +23,7 @@ let bakeLabel = '';
 const renderer = new Renderer(canvas);
 const sound = new Sound();
 // (a type-only import above: a value from the worker's file would pull Rapier into the page as well)
-const CONTACT = 7; // floats per contact, as sim.worker.ts writes them
+const CONTACT = 7, SPLIT = 5; // floats per contact, and per shard that broke again, as sim.worker.ts writes them
 const worker = new Worker(new URL('./sim.worker.ts', import.meta.url), { type: 'module' });
 
 // every number the workbench can turn (?debug): the scene at once, cracks from the next bullet, the sim from the next break
@@ -35,6 +35,7 @@ function applyLook() {
   // two rooms: dark, where the glass, its dust and its glints are what is lit, or a studio with a bright wall behind
   const studio = V.studio >= 0.5;
   L.wall *= studio ? 2.4 : 0.1; L.floor *= studio ? 1.5 : 0.5;
+  if (stacked) L.frost = 0; // the coloured panes are clear
   document.body.classList.toggle('studio', studio);
 }
 function applySettings() {
@@ -42,14 +43,26 @@ function applySettings() {
   CRACKS.hole = V.hole / 1000;
   applyLook();
   if (settled) { placeTargets(); liveBtn.classList.toggle('live', V.live >= 0.5); }
-  if (settled && (V.panes !== layers.length || Math.abs(V.gap / 100 - gap) > 1e-6 || layers[layers.length - 1].tempered !== V.temper >= 0.5)) reset(); // another set-up: new panes
+  const again = stacked !== V.layered >= 0.5 || (!stacked && (V.panes !== layers.length || Math.abs(V.gap / 100 - gap) > 1e-6));
+  if (settled && (again || layers[layers.length - 1].tempered !== V.temper >= 0.5)) reset(); // another set-up: new panes
   else if (settled) prepareSoon(400); // the break that was got ready was for other numbers
 }
-const simCfg = (): SimConfig => ({ live: V.live >= 0.5 ? V.pace : 0, contacts: V.contacts, gravity: V.gravity, ballDensity: V.ballDensity, pushBack: V.pushBack, pushOut: V.pushOut, reach: V.reach, spin: V.spin, front: V.front, bounce: V.bounce, friction: V.friction, stuck: V.stuck, seconds: V.seconds });
+const simCfg = (): SimConfig => ({ live: V.live >= 0.5 ? V.pace : 0, contacts: V.contacts, gravity: V.gravity, ballDensity: V.ballDensity, pushBack: V.pushBack, pushOut: V.pushOut, reach: V.reach, spin: V.spin, front: V.front, bounce: V.bounce, friction: V.friction, stuck: V.stuck, seconds: V.seconds, again: V.again });
 if (params.has('realtime') || params.has('live')) V.live = 1;
+if (params.has('layers')) V.layered = V.studio = 1;
 if (params.has('debug') || params.has('settings') || location.hash === '#debug') mountPanel(V, applySettings);
 
-const T = 0.008; // the glass is 8 mm thick
+// A pane: how thick, what it lets through seen from the front, and the colour its edges glow in.
+// Plain: 8 mm of window glass, green in its thickness. Or three clear panes one behind the other, thin cyan,
+// thick magenta and yellow: where two overlap what comes through is blue, red or green, and all three, grey.
+interface Glass { T: number; tint: number[]; edge: number[] }
+const PLAIN: Glass = { T: 0.008, tint: [0.93, 0.975, 0.955], edge: [0.004, 0.04, 0.024] };
+const STACK: Glass[] = [
+  { T: 0.004, tint: [0.6, 0.93, 0.96], edge: [0.015, 0.2, 0.24] },
+  { T: 0.012, tint: [0.96, 0.58, 0.93], edge: [0.26, 0.012, 0.22] },
+  { T: 0.006, tint: [0.98, 0.94, 0.52], edge: [0.27, 0.22, 0.012] },
+];
+let stacked = false; // the panes standing now are the three coloured ones
 const Y0 = 0.03; // and stands in a channel this high
 const FOV = (30 * Math.PI) / 180;
 const DIST = 1.9; // how far the camera stands from the glass
@@ -78,13 +91,19 @@ let W = 1.2, H = 0.8; // the size of a pane
 let gap = 0.25; // between two panes
 
 /** What the worker sends back for one request: the frames of one fall, as they come. */
-interface Bake { run: number; count: number; frames: Float32Array[]; contacts: number[]; done: boolean; total: number; left: number } // left: pieces not at rest yet, where the worker has got to
+interface Bake {
+  run: number; count: number; frames: Float32Array[]; contacts: number[]; done: boolean; total: number;
+  left: number; // pieces not at rest yet, where the worker has got to
+  freeAt: Float32Array; // per piece, the frame at which the larger shard it is of breaks again: from then it is on its own
+  splits: number[]; // those breaks, SPLIT floats each: frame, which shard, where
+  parts: Map<number, number[]>; // the pieces of each larger shard
+}
 /** One fall: a set of shards, their baked frames and where the playback is. Several can play at once. */
 interface Fall {
   bake: Bake; set: ShardSet; base: number; // id of its first shard in the renderer
   at: number; // when it starts, on the scene's clock
   started: boolean; over: boolean;
-  playhead: number; lastHit: number; speed: number;
+  playhead: number; lastHit: number; lastSplit: number; speed: number;
   near: [number, number, number][]; // where it was hit, for the dust
 }
 const bakes = new Map<number, Bake>();
@@ -95,7 +114,9 @@ let held = -1; // a playhead to hold, for stills
 const active = () => falls.some((f) => !f.over);
 
 function bakeFall(set: ShardSet, req: Pick<BakeRequest, 'impacts' | 'balls' | 'standing'>): Bake {
-  const bake: Bake = { run: ++run, count: set.count, frames: [], contacts: [], done: false, total: 1, left: set.count };
+  const parts = new Map<number, number[]>();
+  set.bodies.forEach((b, i) => { if (b.parent !== undefined && b.group === undefined) { const m = parts.get(b.parent); if (m) m.push(i); else parts.set(b.parent, [i]); } });
+  const bake: Bake = { run: ++run, count: set.count, frames: [], contacts: [], done: false, total: 1, left: set.count, freeAt: new Float32Array(set.count).fill(1e9), splits: [], parts };
   bakes.set(bake.run, bake);
   worker.postMessage({ type: 'bake', run: bake.run, bodies: set.bodies, width: W, y0: Y0, seed, cfg: simCfg(), zs: layers.map((l) => l.z), ...req } satisfies BakeRequest);
   return bake;
@@ -141,9 +162,13 @@ function newPane() {
   W = Math.min(2.6, 2 * DIST * tan * aspect * 1.1);
   H = (EYE_AT + DIST * tan) * 1.06 - Y0;
   seed = (seed * 1664525 + 1013904223) >>> 0;
-  gap = V.gap / 100;
-  layers = [];
-  for (let i = 0; i < Math.round(V.panes); i++) layers.push({ i, z: -i * gap, pane: new Pane(W, H, T, (seed + i * 7919) >>> 0), standing: true, tapes: [], tempered: i === Math.round(V.panes) - 1 && V.temper >= 0.5, maskData: null, spent: 0 });
+  stacked = V.layered >= 0.5;
+  const glass = stacked ? STACK : Array.from({ length: Math.round(V.panes) }, () => PLAIN);
+  gap = stacked ? 0.07 : V.gap / 100; // (the coloured ones stand close: they are to be seen through each other)
+  layers = glass.map((g, i) => ({ i, z: -i * gap, pane: new Pane(W, H, g.T, (seed + i * 7919) >>> 0), standing: true, tapes: [], tempered: i === glass.length - 1 && V.temper >= 0.5, maskData: null, spent: 0 }));
+  renderer.tints.fill(1); renderer.edges.fill(0);
+  glass.forEach((g, i) => { renderer.tints.set(g.tint, i * 3); renderer.edges.set(g.edge, i * 3); });
+  applyLook();
   shots = 0;
   state = 'intact';
   clearTimeout(readyTimer); readyTimer = 0; ready = null;
@@ -155,9 +180,10 @@ function newPane() {
   mask.width = mw; mask.height = mh * layers.length;
   mctx.globalCompositeOperation = 'source-over';
   mctx.fillStyle = '#000'; mctx.fillRect(0, 0, mask.width, mask.height);
-  renderer.setPanes(W, H, T, Y0, layers.map((l) => l.z));
+  renderer.setPanes(W, H, layers.map((l) => l.pane.T), Y0, layers.map((l) => l.z));
   placeTargets();
   glassBtn.classList.toggle('tempered', V.temper >= 0.5);
+  stackBtn.classList.toggle('on', stacked);
   dPos.fill(0); dLife.fill(0); dUsed = 0;
   hBuf.fill(0); hLife.fill(0); hUsed = 0;
   setHint();
@@ -195,6 +221,20 @@ function toggleLight() {
   modeTimer = window.setTimeout(() => { modeTag.hidden = true; }, 1600);
 }
 document.querySelector<HTMLButtonElement>('#light')!.addEventListener('click', toggleLight);
+// one wall of frosted glass, or three clear panes in three colours: new panes either way
+const stackBtn = document.querySelector<HTMLButtonElement>('#stack')!;
+function toggleStack() {
+  V.layered = V.layered >= 0.5 ? 0 : 1;
+  setValue('layered', V.layered);
+  // (clear glass in a dark room is hardly there: the coloured panes come with the studio's light, L for the dark)
+  if (V.layered >= 0.5 && V.studio < 0.5) { V.studio = 1; setValue('studio', 1); }
+  modeTag.textContent = V.layered >= 0.5 ? 'Glass: three colours' : 'Glass: frosted';
+  modeTag.hidden = false;
+  clearTimeout(modeTimer);
+  modeTimer = window.setTimeout(() => { modeTag.hidden = true; }, 1600);
+  reset();
+}
+stackBtn.addEventListener('click', () => { sound.wake(); toggleStack(); });
 
 function setHint() {
   const touch = matchMedia('(pointer: coarse)').matches;
@@ -333,13 +373,13 @@ function shoot(px: number, py: number, was?: boolean[]) {
       const back = Math.random() < 0.72;
       const sp = back ? 1.5 + Math.random() * Math.random() * 11 : 0.5 + Math.random() * 3.5;
       const cone = back ? 0.32 : 0.6;
-      dust(wx + gauss() * 0.004, wy + gauss() * 0.004, L.z + (back ? -T : 0), gauss() * sp * cone, gauss() * sp * cone + 0.3, back ? -sp : sp, 0.7 + Math.random() * 2.2);
+      dust(wx + gauss() * 0.004, wy + gauss() * 0.004, L.z + (back ? -L.pane.T : 0), gauss() * sp * cone, gauss() * sp * cone + 0.3, back ? -sp : sp, 0.7 + Math.random() * 2.2);
     }
     // and the powder: a plume out the back along the bullet's way, a smaller one towards the gun
     for (let i = 0; i < (16 * V.dust) / layers.length; i++) {
       const back = i % 4 > 0;
       const sp = back ? 1 + Math.random() * 9 : 0.4 + Math.random() * 2.2;
-      haze(wx, wy, L.z + (back ? -T : 0), gauss() * sp * 0.13, gauss() * sp * 0.13 + 0.05, back ? -sp : sp, 3.5 + Math.random() * 4, 0.018 + Math.random() * 0.03, Math.random() * 0.03);
+      haze(wx, wy, L.z + (back ? -L.pane.T : 0), gauss() * sp * 0.13, gauss() * sp * 0.13 + 0.05, back ? -sp : sp, 3.5 + Math.random() * 4, 0.018 + Math.random() * 0.03, Math.random() * 0.03);
     }
   }
   if (!hit) return;
@@ -446,8 +486,33 @@ function prepare() {
     const copy = L.pane.clone();
     const gone = (loop: number[]) => loopGone(L, loop, copy);
     const held = (loop: number[]) => taped(L, loop, copy);
-    if (!L.tempered) copy.finish(never, V.shardArea / 1e4, 0, true, (loop) => gone(loop) || held(loop) >= 0); // (dice are small enough as they are)
-    const set = buildShards(copy, Y0, true, gone, L.i, L.z, L.tempered, held, L.i * 100);
+    const fixed = (loop: number[]) => gone(loop) || held(loop) >= 0;
+    let parentOf: ((x: number, y: number) => number) | undefined;
+    if (!L.tempered) { // (dice are small enough as they are)
+      copy.finish(never, V.shardArea / 1e4, 0, true, fixed);
+      if (V.live < 0.5 && V.again > 0) {
+        // baked, a second and finer cut inside the first: what each shard will break into where it lands hard.
+        // Which shard a piece is of is asked of the first cut's outlines, the smallest that holds it
+        const polys = copy.faces().filter((loop) => !fixed(loop)).map((loop) => ({ a: copy.area(loop), p: loop.flatMap((u) => [copy.nx[u], copy.ny[u]]) })).sort((u, v) => u.a - v.a);
+        polys.pop(); // (the largest is the pane that stays)
+        // what a bake costs goes by how many pieces there are, far more than by anything else: with a lot of
+        // glass loose the pieces are larger, so that there are never more than the worker bakes in a few seconds
+        let loose = 0;
+        for (const q of polys) loose += q.a;
+        const budget = V.most / layers.filter((l) => l.standing && !l.tempered).length;
+        copy.finish(never, Math.max(V.pieces / 1e4, (2 * loose) / Math.max(1, budget - polys.length)), 0, true, fixed);
+        parentOf = (x, y) => {
+          for (let k = 0; k < polys.length; k++) {
+            const p = polys[k].p;
+            let inside = false;
+            for (let i = 0, j = p.length - 2; i < p.length; j = i, i += 2) if ((p[i + 1] > y) !== (p[j + 1] > y) && x < ((p[j] - p[i]) * (y - p[i + 1])) / (p[j + 1] - p[i + 1]) + p[i]) inside = !inside;
+            if (inside) return k;
+          }
+          return -1;
+        };
+      }
+    }
+    const set = buildShards(copy, Y0, true, gone, L.i, L.z, L.tempered, held, L.i * 100, parentOf);
     if (!set.count) continue;
     parts.push({ L, pane: copy, set });
     for (const im of L.pane.impacts) impacts.push([im.x - W / 2, im.y + Y0, L.z]);
@@ -456,6 +521,7 @@ function prepare() {
   const r = V.ballSize / 100;
   const balls = impacts.map(([x, y, z]) => ({ p: [x, y, z + r + 0.012], v: [(Math.random() - 0.5) * 3, (Math.random() - 0.5) * 3, -V.kick], w: [0, 0, 0], r }));
   const set = mergeSets(parts.map((p) => p.set));
+  limitHulls(set, V.hulls);
   ready = { parts, set, impacts, shots, bake: bakeFall(set, { impacts, balls, standing: true }) };
 }
 /** A moment after the bullet, not in its frame: the crack must not stutter for it. */
@@ -538,7 +604,7 @@ function shock(): boolean {
   // with glass still standing it can all be done again at once: more bullets, another shock
   state = layers.some((l) => l.standing) ? 'intact' : 'fallen';
   setReplay(false);
-  falls.push({ bake: r.bake, set: r.set, base, at: now, started: false, over: false, playhead: 0, lastHit: 0, speed: V.pace, near: r.impacts });
+  falls.push({ bake: r.bake, set: r.set, base, at: now, started: false, over: false, playhead: 0, lastHit: 0, lastSplit: 0, speed: V.pace, near: r.impacts });
   trimFrames();
   setHint();
   return true;
@@ -587,6 +653,10 @@ worker.onmessage = (e: MessageEvent<FramesMessage>) => {
   const n = (bake.count + 1) * 7;
   for (let i = 0; i < m.count; i++) bake.frames.push(m.data.subarray(i * n, (i + 1) * n));
   for (let i = 0; i < m.contacts.length; i++) bake.contacts.push(m.contacts[i]);
+  for (let i = 0; i < m.splits.length; i += SPLIT) {
+    for (const k of bake.parts.get(m.splits[i + 1]) ?? []) bake.freeAt[k] = m.splits[i];
+    for (let k = 0; k < SPLIT; k++) bake.splits.push(m.splits[i + k]);
+  }
   bake.total = m.total; bake.left = m.left;
   if (m.done) bake.done = true;
 };
@@ -648,8 +718,8 @@ function setReplay(on: boolean) {
     // back to where it was: at rest if it had come to rest, else on with the fall from here. (Only out of a
     // replay: a fall in the air that was never replayed is left alone)
     const frames = f.bake.frames, last = frames.length - 1;
-    if (f.over) { renderer.setPose(frames[last], frames[last], 0, f.base, f.set.count); }
-    else { f.playhead = replay.t; f.lastHit = contactAt(f, replay.t * 60); }
+    if (f.over) { renderer.setPose(frames[last], frames[last], 0, f.base, f.set.count, f.bake.freeAt, last); }
+    else { f.playhead = replay.t; f.lastHit = contactAt(f, replay.t * 60); f.lastSplit = 0; while (f.lastSplit < f.bake.splits.length && f.bake.splits[f.lastSplit] < replay.t * 60) f.lastSplit += SPLIT; }
   }
   setHint();
 }
@@ -698,7 +768,7 @@ function stepReplay(f: Fall, dt: number) {
   replay.t = Math.max(0, Math.min(dur, replay.t));
   const fr = replay.t * 60, i = Math.min(last, Math.floor(fr));
   const fa = frames[i], fb = frames[Math.min(last, i + 1)], k = fr - i;
-  renderer.setPose(fa, fb, k, f.base, f.set.count);
+  renderer.setPose(fa, fb, k, f.base, f.set.count, f.bake.freeAt, fr);
   // its sounds, as time passes them forwards; a jump is silent
   if (replay.t < before || replay.t - before > 0.2) replay.next = contactAt(f, fr);
   let played = 0;
@@ -745,7 +815,15 @@ function stepFalls(dt: number) {
     if (fr > last) { fr = last; f.playhead = last / 60; }
     const i = Math.floor(fr);
     const fa = frames[i], fb = frames[Math.min(last, i + 1)], k = fr - i;
-    renderer.setPose(fa, fb, k, f.base, f.set.count);
+    renderer.setPose(fa, fb, k, f.base, f.set.count, f.bake.freeAt, fr);
+    // where a shard breaks again: a spray of grains off it, and now and then a little powder
+    const sp = f.bake.splits;
+    for (let burst = 0; f.lastSplit < sp.length && sp[f.lastSplit] <= i; f.lastSplit += SPLIT) {
+      if (burst++ >= 8) continue;
+      const x = sp[f.lastSplit + 2], y = sp[f.lastSplit + 3], z = sp[f.lastSplit + 4];
+      for (let j = 0; j < 9 * V.dust; j++) dust(x + gauss() * 0.012, y + 0.004, z + gauss() * 0.012, gauss() * 0.9, 0.3 + Math.random() * 1.7, gauss() * 0.9, 0.5 + Math.random() * 1.6);
+      if (Math.random() < 0.4) haze(x, y + 0.02, z, gauss() * 0.2, 0.1 + Math.random() * 0.3, gauss() * 0.2, 2 + Math.random() * 2.5, 0.02 + Math.random() * 0.03);
+    }
     // the contacts the simulation noted, as the playhead passes them: each is a sound of its own size, strength and place
     let played = 0;
     for (; f.lastHit < contacts.length && contacts[f.lastHit] <= i; f.lastHit += CONTACT) {
@@ -909,6 +987,7 @@ window.addEventListener('keydown', (e) => {
   else if (e.code === 'KeyC') setLive(V.live < 0.5);
   else if (e.code === 'KeyG') toggleGlass();
   else if (e.code === 'KeyL') toggleLight();
+  else if (e.code === 'KeyK') toggleStack();
   else if (e.code === 'Escape') setReplay(false);
   else if (e.code === 'KeyM') toggleSound();
 });

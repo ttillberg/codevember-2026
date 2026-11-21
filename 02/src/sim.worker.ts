@@ -23,8 +23,8 @@ export interface BakeRequest {
 }
 
 /** What the settings panel turns. */
-export interface SimConfig { live: number; contacts: number; gravity: number; ballDensity: number; pushBack: number; pushOut: number; reach: number; spin: number; front: number; bounce: number; friction: number; stuck: number; seconds: number }
-export const SIM_DEFAULTS: SimConfig = { live: 0, contacts: 8, gravity: 9.81, ballDensity: 4, pushBack: 13, pushOut: 4.5, reach: 0.3, spin: 16, front: 7, bounce: 0.22, friction: 0.45, stuck: 0.5, seconds: 7 };
+export interface SimConfig { live: number; contacts: number; gravity: number; ballDensity: number; pushBack: number; pushOut: number; reach: number; spin: number; front: number; bounce: number; friction: number; stuck: number; seconds: number; again: number }
+export const SIM_DEFAULTS: SimConfig = { live: 0, contacts: 8, gravity: 9.81, ballDensity: 4, pushBack: 13, pushOut: 4.5, reach: 0.3, spin: 16, front: 7, bounce: 0.22, friction: 0.45, stuck: 0.5, seconds: 7, again: 3 };
 
 export interface FramesMessage {
   type: 'frames';
@@ -42,14 +42,16 @@ export interface FramesMessage {
   total: number;
   /** shards not at rest yet in the last of these frames: still to let go, or let go and moving */
   left: number;
+  /** the shards that broke again in these frames, SPLIT floats each: frame, which (Body.parent), x, y, z */
+  splits: Float32Array;
 }
 
 export const CONTACT = 7;
+export const SPLIT = 5;
 
 /** The sim runs in decimetres: 8 mm shards are small for a solver tuned for metres. */
 const S = 10;
 const FPS = 60;
-const SUB = 2;
 
 const ready = RAPIER.init();
 const cancelled = new Set<number>();
@@ -77,7 +79,14 @@ async function bake(req: BakeRequest) {
   const gauss = () => (rand() + rand() + rand() + rand() - 2) * 1.7320508;
   const cfg = { ...SIM_DEFAULTS, ...req.cfg };
   const world = new RAPIER.World({ x: 0, y: -cfg.gravity * S, z: 0 });
+  // baked, there is a little more time: half as many passes of the solver again, and nothing may pass through
+  // anything between two steps. Thin glass in a pile needs it. Live keeps to what a frame can carry.
+  // (More steps were tried, three and four to a frame: nothing to be seen for it, and the bake no longer kept
+  // ahead of the fall. What a bake costs goes by the number of pieces and how they pile up.)
+  const careful = !(cfg.live > 0);
+  const SUB = 2;
   world.timestep = 1 / (FPS * SUB);
+  world.numSolverIterations = careful ? 6 : 4;
 
   const G_SHARD = 0x0001, G_TINY = 0x0002, G_WORLD = 0x0004, G_BALL = 0x0008;
   const groups = (member: number, filter: number) => (member << 16) | filter;
@@ -87,9 +96,14 @@ async function bake(req: BakeRequest) {
   world.createCollider(RAPIER.ColliderDesc.cuboid(80, 5, 80).setTranslation(0, -5, 0).setFriction(0.7).setRestitution(0.3).setCollisionGroups(groups(G_WORLD, G_SHARD | G_TINY | G_BALL)), ground);
   // the back wall, for the ball
   world.createCollider(RAPIER.ColliderDesc.cuboid(80, 80, 5).setTranslation(0, 0, (-2.4 - 0.5) * S).setRestitution(0.4).setCollisionGroups(groups(G_WORLD, G_SHARD | G_TINY | G_BALL)), ground);
-  for (const z of req.zs) {
+  // and the side walls of the room, where they are drawn: glass thrown that far comes back off them
+  for (const side of [-1, 1]) world.createCollider(RAPIER.ColliderDesc.cuboid(5, 80, 80).setTranslation(side * (4.5 + 0.5) * S, 0, 0).setRestitution(0.3).setFriction(0.6).setCollisionGroups(groups(G_WORLD, G_SHARD | G_TINY | G_BALL)), ground);
+  // (panes that stand close have one block under them all: in the slots between their channels glass would
+  // wedge and never lie still)
+  const close = req.zs.length > 1 && Math.abs(req.zs[0] - req.zs[1]) < 0.1;
+  for (const [z0, z1] of close ? [[Math.min(...req.zs) - 0.026, Math.max(...req.zs) + 0.018]] : req.zs.map((z) => [z - 0.026, z + 0.018])) {
     world.createCollider(
-      RAPIER.ColliderDesc.cuboid((req.width / 2 + 0.03) * S, (req.y0 / 2) * S, 0.022 * S).setTranslation(0, (req.y0 / 2) * S, (z - 0.004) * S)
+      RAPIER.ColliderDesc.cuboid((req.width / 2 + 0.03) * S, (req.y0 / 2) * S, ((z1 - z0) / 2) * S).setTranslation(0, (req.y0 / 2) * S, ((z0 + z1) / 2) * S)
         .setFriction(0.5).setRestitution(0.2).setCollisionGroups(groups(G_WORLD, G_SHARD | G_TINY | G_BALL)),
       ground,
     );
@@ -109,30 +123,45 @@ async function bake(req: BakeRequest) {
   let last = 0;
   // shards taped together are one body: the first of a group makes it, the others add their shape to it,
   // each where it sits. off is where a shard is in its body.
+  // The pieces of a larger shard are one body in the same way, until it lands hard enough to break again:
+  // then each piece gets a body of its own, where it is and as it goes.
   const lead = new Map<number, number>();
   const off = new Float32Array(n * 3);
-  for (let i = 0; i < n; i++) {
-    const b = req.bodies[i];
-    const first = b.group === undefined ? i : (lead.get(b.group) ?? i);
-    if (b.group !== undefined && first === i) lead.set(b.group, i);
-    const fc = req.bodies[first].c;
-    const ox = (b.c[0] - fc[0]) * S, oy = (b.c[1] - fc[1]) * S, oz = (b.c[2] - fc[2]) * S;
-    off[i * 3] = ox; off[i * 3 + 1] = oy; off[i * 3 + 2] = oz;
-    const body = first === i ? world.createRigidBody(RAPIER.RigidBodyDesc.fixed().setTranslation(b.c[0] * S, b.c[1] * S, b.c[2] * S)) : bodies[first];
+  const handles: number[][] = [];
+  const members = new Map<number, number[]>();
+  const whole = new Uint8Array(n);
+  const again = careful && cfg.again > 0;
+  const air = (d: RAPIER.RigidBodyDesc) => d.setLinearDamping(0.05).setAngularDamping(0.25).setCcdEnabled(careful);
+  /** The shape of shard i, on a body, at (ox, oy, oz) in it. */
+  const shape = (i: number, body: RAPIER.RigidBody, ox: number, oy: number, oz: number) => {
+    const b = req.bodies[i], hs: number[] = [];
+    handles[i] = hs;
     if (b.tiny) {
-      owner.set(world.createCollider(RAPIER.ColliderDesc.cuboid(b.half[0] * S, b.half[1] * S, b.half[2] * S).setTranslation(ox, oy, oz).setFriction(0.6).setRestitution(0.35).setCollisionGroups(groups(G_TINY, G_WORLD)).setActiveEvents(EV), body).handle, i);
+      hs.push(world.createCollider(RAPIER.ColliderDesc.cuboid(b.half[0] * S, b.half[1] * S, b.half[2] * S).setTranslation(ox, oy, oz).setFriction(0.6).setRestitution(0.35).setCollisionGroups(groups(G_TINY, G_WORLD)).setActiveEvents(EV), body).handle);
     } else {
-      let made = 0;
       for (const h of b.hulls) {
         const pts = new Float32Array(h.length);
         for (let k = 0; k < h.length; k++) pts[k] = h[k] * S;
         const desc = RAPIER.ColliderDesc.convexHull(pts);
         if (!desc) continue;
-        owner.set(world.createCollider(desc.setTranslation(ox, oy, oz).setFriction(cfg.friction).setRestitution(cfg.bounce).setCollisionGroups(groups(G_SHARD, G_SHARD | G_WORLD | G_BALL)).setActiveEvents(EV), body).handle, i);
-        made++;
+        hs.push(world.createCollider(desc.setTranslation(ox, oy, oz).setFriction(cfg.friction).setRestitution(cfg.bounce).setCollisionGroups(groups(G_SHARD, G_SHARD | G_WORLD | G_BALL)).setActiveEvents(EV), body).handle);
       }
-      if (!made) world.createCollider(RAPIER.ColliderDesc.ball(0.004 * S).setCollisionGroups(groups(G_TINY, G_WORLD)), body);
+      if (!hs.length) world.createCollider(RAPIER.ColliderDesc.ball(0.004 * S).setTranslation(ox, oy, oz).setCollisionGroups(groups(G_TINY, G_WORLD)), body);
     }
+    for (const h of hs) owner.set(h, i);
+  };
+  for (let i = 0; i < n; i++) {
+    const b = req.bodies[i];
+    const part = b.group === undefined && b.parent !== undefined && again;
+    const key = b.group !== undefined ? b.group : part ? -1 - b.parent! : undefined;
+    const first = key === undefined ? i : (lead.get(key) ?? i);
+    if (key !== undefined && first === i) lead.set(key, i);
+    if (part) { whole[i] = 1; const m = members.get(b.parent!); if (m) m.push(i); else members.set(b.parent!, [i]); }
+    const fc = req.bodies[first].c;
+    const ox = (b.c[0] - fc[0]) * S, oy = (b.c[1] - fc[1]) * S, oz = (b.c[2] - fc[2]) * S;
+    off[i * 3] = ox; off[i * 3 + 1] = oy; off[i * 3 + 2] = oz;
+    const body = first === i ? world.createRigidBody(air(RAPIER.RigidBodyDesc.fixed()).setTranslation(b.c[0] * S, b.c[1] * S, b.c[2] * S)) : bodies[first];
+    shape(i, body, ox, oy, oz);
     bodies.push(body);
     // the pane lets go from the last impact outwards, then from the top down
     let dx = 0, dy = 0, d = Infinity;
@@ -185,6 +214,37 @@ async function bake(req: BakeRequest) {
   });
   const ball = balls[0];
 
+  // A shard that is still whole and meets something hard enough breaks into its pieces. Each goes on as it
+  // went, with what its place in the turning shard gives it, and a little apart from the others.
+  const toSplit = new Set<number>();
+  let splits: number[] = [];
+  const split = (P: number, ts: number, f: number) => {
+    const ms = members.get(P);
+    if (!ms || !whole[ms[0]]) return;
+    const old = bodies[ms[0]];
+    const p = old.translation(), q = old.rotation(), v = old.linvel(), w = old.angvel(), com = old.worldCom();
+    const at = ms.map((i) => {
+      const ax = off[i * 3], ay = off[i * 3 + 1], az = off[i * 3 + 2];
+      const tx = 2 * (q.y * az - q.z * ay), ty = 2 * (q.z * ax - q.x * az), tz = 2 * (q.x * ay - q.y * ax);
+      return [p.x + ax + q.w * tx + q.y * tz - q.z * ty, p.y + ay + q.w * ty + q.z * tx - q.x * tz, p.z + az + q.w * tz + q.x * ty - q.y * tx];
+    });
+    for (const i of ms) for (const h of handles[i]) owner.delete(h);
+    world.removeRigidBody(old);
+    ms.forEach((i, k) => {
+      const [x, y, z] = at[k];
+      const rx = x - com.x, ry = y - com.y, rz = z - com.z, l = Math.hypot(rx, ry, rz) || 1;
+      const push = (0.15 + rand() * 0.5) * S;
+      const body = world.createRigidBody(air(RAPIER.RigidBodyDesc.dynamic()).setTranslation(x, y, z).setRotation(q)
+        .setLinvel(v.x + w.y * rz - w.z * ry + (rx / l) * push, v.y + w.z * rx - w.x * rz + (ry / l) * push + rand() * 0.4 * S, v.z + w.x * ry - w.y * rx + (rz / l) * push)
+        .setAngvel({ x: w.x + gauss() * 5, y: w.y + gauss() * 5, z: w.z + gauss() * 5 }));
+      shape(i, body, 0, 0, 0);
+      bodies[i] = body; off[i * 3] = off[i * 3 + 1] = off[i * 3 + 2] = 0;
+      whole[i] = 0; freed[i] = ts;
+    });
+    splits.push(f, P, com.x / S, com.y / S, com.z / S);
+  };
+
+  const backZ = Math.min(...req.zs);
   const maxFrames = Math.round(cfg.seconds * FPS);
   // cached: as fast as it will go, a few frames a message. Live (cfg.live is the pace, 1 the speed of life):
   // one frame a message, and no frame before its time, so what is shown is what was just worked out
@@ -229,10 +289,16 @@ async function bake(req: BakeRequest) {
           size = Math.min(size, req.bodies[b].area); kind = 1;
         } else if (b === -2) kind = 2;
         const strength = Math.hypot(rx, ry, rz);
+        // (glass on glass has to be harder: two shards meeting in the air mostly glance off)
+        if (again && strength > cfg.again * (kind === 1 ? 1.8 : 1)) {
+          if (whole[a]) toSplit.add(req.bodies[a].parent!);
+          if (b >= 0 && whole[b]) toSplit.add(req.bodies[b].parent!);
+        }
         if (strength < 0.35) return;
         const p = bodies[a].translation();
         frameContacts.push([f, p.x / S, p.y / S, p.z / S, size, strength, kind]);
       });
+      if (toSplit.size) { for (const P of toSplit) split(P, ts, f); toSplit.clear(); }
     }
     // the loudest few of the frame are kept: a thousand shards landing is not a thousand sounds
     frameContacts.sort((u, v) => v[5] * Math.sqrt(v[4]) - u[5] * Math.sqrt(u[4]));
@@ -265,12 +331,13 @@ async function bake(req: BakeRequest) {
       const p = ball.translation(), q = ball.rotation(), k = o + n * 7;
       data[k] = p.x / S; data[k + 1] = p.y / S; data[k + 2] = p.z / S;
       data[k + 3] = q.x; data[k + 4] = q.y; data[k + 5] = q.z; data[k + 6] = q.w;
-      // the unseen balls have done their work within a second: after that they would only roll about, nudging
-      // glass that lies still, and keep the bake going to its last frame
+      // an unseen ball has done its work half a metre behind the last pane: it is taken away there. Left in, it
+      // comes back off the wall through the glass it has just sent flying and throws it at the lens, then rolls
+      // about nudging what lies still, and keeps the bake going to its last frame
       for (const bb of balls) {
         if (!bb.isEnabled()) continue;
         const bp = bb.translation(), lv = bb.linvel();
-        if (t > 1 || bp.y < -0.3 * S || Math.abs(bp.x) > 7.8 * S || Math.abs(bp.z) > 7.8 * S) bb.setEnabled(false);
+        if (t > 0.4 || bp.z < (backZ - 0.5) * S || bp.y < -0.3 * S || Math.abs(bp.x) > 7.8 * S || Math.abs(bp.z) > 7.8 * S) bb.setEnabled(false);
         else if (!bb.isSleeping() && Math.hypot(lv.x, lv.y, lv.z) > 0.3 * S) awake++;
       }
     }
@@ -280,10 +347,10 @@ async function bake(req: BakeRequest) {
     quiet = t > last + 0.5 && awake === 0 && fast === 0 && left <= few ? quiet + 1 : 0;
     const done = f === maxFrames - 1 || quiet > 20;
     if (inChunk === CHUNK || done) {
-      const msg: FramesMessage = { type: 'frames', run: req.run, first, count: inChunk, data: data.subarray(0, inChunk * N7), contacts: new Float32Array(contacts), done, total: maxFrames, left };
+      const msg: FramesMessage = { type: 'frames', run: req.run, first, count: inChunk, data: data.subarray(0, inChunk * N7), contacts: new Float32Array(contacts), done, total: maxFrames, left, splits: new Float32Array(splits) };
       const copy = { ...msg, data: msg.data.slice() };
-      contacts = [];
-      (self as unknown as Worker).postMessage(copy, [copy.data.buffer, copy.contacts.buffer]);
+      contacts = []; splits = [];
+      (self as unknown as Worker).postMessage(copy, [copy.data.buffer, copy.contacts.buffer, copy.splits.buffer]);
       first += inChunk; inChunk = 0;
       // let other messages in: another bake runs alongside, a cancelled one stops here
       const due = cfg.live > 0 ? began + ((f + 1) * 1000) / FPS / cfg.live - performance.now() : 0;

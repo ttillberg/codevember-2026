@@ -20,6 +20,8 @@ export interface Body {
   low: boolean;
   /** held together with every other shard of this group by a strip of tape: they fall as one */
   group?: number;
+  /** one piece of a larger shard that is still whole: they fall as one until it lands hard, then each for itself */
+  parent?: number;
 }
 
 export interface ShardSet {
@@ -121,9 +123,26 @@ function convexParts(loop: number[], xs: number[], ys: number[]): number[][] {
 /** With `standing`, the largest face stays where it is, if it stands in the channel: it is not a shard.
  *  Nor is anything `held` (by tape). */
 /** `layer` is which pane this is, and `z` where its front stands: several can stand behind each other. */
-export function buildShards(pane: Pane, y0: number, standing = false, gone: (loop: number[]) => boolean = () => false, layer = 0, z = 0, dice = false, held: (loop: number[]) => number = () => -1, groupBase = 0): ShardSet {
+/** `parentOf` says which larger shard a point of the pane is in, when the graph was cut twice, coarse then fine:
+ *  the faces are the fine pieces, and those of one larger shard go as one until it breaks. The cuts between
+ *  them are walls of kind 3: not to be seen while it is whole. */
+export function buildShards(pane: Pane, y0: number, standing = false, gone: (loop: number[]) => boolean = () => false, layer = 0, z = 0, dice = false, held: (loop: number[]) => number = () => -1, groupBase = 0, parentOf?: (x: number, y: number) => number): ShardSet {
   const { nx, ny, ox, oy, W, T } = pane;
   const loops = pane.faces().filter((l) => !gone(l)); // without what left in an earlier fall
+  // which larger shard each face is of, and which face is across each edge
+  const N = nx.length;
+  const across = new Map<number, number>();
+  const parent = new Int32Array(loops.length).fill(-1);
+  if (parentOf) loops.forEach((loop, li) => {
+    let a = 0, cx = 0, cy = 0;
+    for (let i = 0; i < loop.length; i++) {
+      const u = loop[i], v = loop[(i + 1) % loop.length];
+      const w = nx[u] * ny[v] - nx[v] * ny[u];
+      a += w; cx += (nx[u] + nx[v]) * w; cy += (ny[u] + ny[v]) * w;
+      across.set(u * N + v, li);
+    }
+    if (a > 2e-8 && held(loop) < 0) parent[li] = parentOf(cx / (3 * a), cy / (3 * a));
+  });
   const walls: number[] = [];
   const faces: number[] = [];
   const bodies: Body[] = [];
@@ -137,7 +156,8 @@ export function buildShards(pane: Pane, y0: number, standing = false, gone: (loo
   }
   let taped = false;
   const groups: ShardSet['groups'] = [];
-  for (const loop of loops) {
+  for (let li = 0; li < loops.length; li++) {
+    const loop = loops[li];
     const n = loop.length;
     if (loop === keep) continue;
     // under tape: with a pane still standing around it, it stays where it is, part of that pane. With none,
@@ -177,7 +197,9 @@ export function buildShards(pane: Pane, y0: number, standing = false, gone: (loo
     }
     for (let i = 0; i < n; i++) {
       const u = loop[i], v = loop[(i + 1) % n];
-      pushWall(walls, nx[u] - cx, ny[u] - cy, nx[v] - cx, ny[v] - cy, ox[u], oy[u], ox[v], oy[v], T / 2, T, nx[u], ny[u], nx[v], ny[v], -1e3, -1e3, id, layer * 10, 1);
+      const other = parent[li] >= 0 ? across.get(v * N + u) : undefined;
+      const inner = other !== undefined && parent[other] === parent[li];
+      pushWall(walls, nx[u] - cx, ny[u] - cy, nx[v] - cx, ny[v] - cy, ox[u], oy[u], ox[v], oy[v], T / 2, T, nx[u], ny[u], nx[v], ny[v], -1e3, -1e3, id, layer * 10 + (inner ? 3 : 0), 1);
     }
 
     // (the dice of tempered glass are too many to have a hull each: they meet the floor, not each other)
@@ -203,7 +225,8 @@ export function buildShards(pane: Pane, y0: number, standing = false, gone: (loo
     if (tape >= 0) {
       if (!groups.some((g) => g.group === groupBase + tape)) groups.push({ group: groupBase + tape, id, c: [wx, wy, wz] });
       bodies.push({ c: [wx, wy, wz], area: a, tiny, hulls, half, low, group: groupBase + tape });
-    } else bodies.push({ c: [wx, wy, wz], area: a, tiny, hulls, half, low });
+    } else if (parent[li] >= 0) bodies.push({ c: [wx, wy, wz], area: a, tiny, hulls, half, low, parent: layer * 100000 + parent[li] });
+    else bodies.push({ c: [wx, wy, wz], area: a, tiny, hulls, half, low });
   }
   return { count: bodies.length, walls: new Float32Array(walls), faces: new Float32Array(faces), bodies, cut, kept: !!keep || taped, groups };
 }
@@ -230,6 +253,19 @@ export function pushWall(
   const C = [bx + obx, by + oby, zb, nx, ny, nz, ub, vb, 1, tb, id, k];
   const D = [ax + oax, ay + oay, zb, nx, ny, nz, ua, va, 1, ta, id, k];
   out.push(...A, ...B, ...C, ...A, ...C, ...D);
+}
+
+/** No more than `most` shards with a hull of their own: past that the smallest become tiny ones, a box that
+ *  meets the floor and the walls but not other glass. What a simulation costs is glass meeting glass. */
+export function limitHulls(set: ShardSet, most: number) {
+  const full = set.bodies.filter((b) => !b.tiny).sort((a, b) => a.area - b.area);
+  for (let i = 0; i < full.length - most; i++) {
+    const b = full[i];
+    let ex = 0, ey = 0, ez = 0;
+    for (const h of b.hulls) for (let k = 0; k < h.length; k += 3) { ex = Math.max(ex, Math.abs(h[k])); ey = Math.max(ey, Math.abs(h[k + 1])); ez = Math.max(ez, Math.abs(h[k + 2])); }
+    b.tiny = true; b.hulls = [];
+    b.half = [Math.max(0.002, ex * 0.8), Math.max(0.002, ey * 0.8), ez || b.half[2]];
+  }
 }
 
 /** Several panes' shards as one set, for one fall: ids run on from one to the next. */

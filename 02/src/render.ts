@@ -1,6 +1,6 @@
 // WebGL2. Three steps a frame: the shadow of the glass on the floor, into a map; the room and every crack
 // surface, into a texture; then the faces of the glass on screen, which look that texture up, bent.
-import { TAPE_FS, COPY_FS, DUST_FS, DUST_VS, HAZE_FS, HAZE_VS, FACE_FS, GLASS_VS, QUAD_VS, ROOM_FS, ROOM_VS, SHADOW_FS, VIGNETTE_FS, WALL_FS } from './shaders';
+import { TAPE_FS, TINT_FS, COPY_FS, DUST_FS, DUST_VS, HAZE_FS, HAZE_VS, FACE_FS, GLASS_VS, QUAD_VS, ROOM_FS, ROOM_VS, SHADOW_FS, VIGNETTE_FS, WALL_FS } from './shaders';
 import { STRIDE, pushWall, type ShardSet } from './shards';
 import type { Pane, Seg } from './cracks';
 
@@ -48,6 +48,9 @@ export class Renderer {
   private msFbo: WebGLFramebuffer | null = null; private msColor: WebGLRenderbuffer | null = null; private msDepth: WebGLRenderbuffer | null = null;
   private sceneFbo: WebGLFramebuffer | null = null; private sceneTex: WebGLTexture | null = null;
   private roomFbo: WebGLFramebuffer | null = null; private roomTex: WebGLTexture | null = null; // the room without the glass in it
+  private tintFbo: WebGLFramebuffer | null = null; private tintTex: WebGLTexture | null = null; // what all the glass on the way lets through
+  /** per pane, up to four: what its glass lets through seen from the front, and the colour its edges glow in */
+  tints = new Float32Array(12).fill(1); edges = new Float32Array(12);
   /** the targets printed on the glass: x, y, radius in pane space, three of them */
   targets = new Float32Array(9);
   private w = 0; private h = 0;
@@ -75,6 +78,7 @@ export class Renderer {
     this.prog('dust', DUST_VS, DUST_FS);
     this.prog('haze', HAZE_VS, HAZE_FS);
     this.prog('tape', GLASS_VS, TAPE_FS);
+    this.prog('tint', GLASS_VS, TINT_FS);
     [this.tapeVao, this.tapeBuf] = this.glassVao();
     [this.tapeFellVao, this.tapeFellBuf] = this.glassVao();
 
@@ -170,9 +174,9 @@ export class Renderer {
 
   /** New panes, one behind the other at the given depths: the room around them, each pane as one quad and
    *  its four edges as its first crack surfaces. */
-  setPanes(W: number, H: number, T: number, y0: number, zs: number[]) {
+  setPanes(W: number, H: number, Ts: number[], y0: number, zs: number[]) {
     const gl = this.gl;
-    this.pane = { W, H, y0, T, N: zs.length };
+    this.pane = { W, H, y0, T: Ts[0], N: zs.length };
     this.shards = false; this.tapeCount = 0; this.tapeFell = [];
     this.wallAll = new Float32Array(0); this.faceAll = new Float32Array(0); this.shardCount = 0; this.wallCount = this.faceCount = 0;
     const hx = W / 2;
@@ -198,7 +202,7 @@ export class Renderer {
       const c = [[0, 0], [W, 0], [W, H], [0, H]];
       for (let k = 0; k < 4; k++) {
         const a = c[k], b = c[(k + 1) % 4];
-        pushWall(data, a[0] - hx, a[1] + y0, b[0] - hx, b[1] + y0, 0, 0, 0, 0, z, T, a[0], a[1], b[0], b[1], -1e3, -1e3, 0, i * 10, 0);
+        pushWall(data, a[0] - hx, a[1] + y0, b[0] - hx, b[1] + y0, 0, 0, 0, 0, z, Ts[i], a[0], a[1], b[0], b[1], -1e3, -1e3, 0, i * 10, 0);
       }
       return { vao, buf, data, count: 0, z, standing: true, cut: false };
     });
@@ -291,10 +295,13 @@ export class Renderer {
   }
 
   /** Poses for `count` shards from id `base` on: frame a blended towards frame b, each count × 7 at least. */
-  setPose(a: Float32Array, b: Float32Array, k: number, base: number, count: number) {
+  /** `freeAt`: per shard, the frame from which it is on its own; before it, the cuts between it and the
+   *  other pieces of its larger shard are not drawn. */
+  setPose(a: Float32Array, b: Float32Array, k: number, base: number, count: number, freeAt: Float32Array, frame: number) {
     const gl = this.gl, d = this.xfData;
     for (let i = 0; i < count; i++) {
       const s = i * 7, o = (base + i) * 8;
+      d[o + 3] = frame >= freeAt[i] ? 1 : 0;
       d[o] = a[s] + (b[s] - a[s]) * k; d[o + 1] = a[s + 1] + (b[s + 1] - a[s + 1]) * k; d[o + 2] = a[s + 2] + (b[s + 2] - a[s + 2]) * k;
       let bx = b[s + 3], by = b[s + 4], bz = b[s + 5], bw = b[s + 6];
       if (a[s + 3] * bx + a[s + 4] * by + a[s + 5] * bz + a[s + 6] * bw < 0) { bx = -bx; by = -by; bz = -bz; bw = -bw; }
@@ -335,6 +342,15 @@ export class Renderer {
     gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.RENDERBUFFER, this.msDepth);
     if (this.roomTex) gl.deleteTexture(this.roomTex);
     this.roomFbo ??= gl.createFramebuffer();
+    if (this.tintTex) gl.deleteTexture(this.tintTex);
+    this.tintFbo ??= gl.createFramebuffer();
+    this.tintTex = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, this.tintTex);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, this.tintFbo);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, this.tintTex, 0);
     for (const which of ['room', 'scene'] as const) {
     const tex = gl.createTexture();
     if (which === 'room') this.roomTex = tex; else this.sceneTex = tex;
@@ -449,10 +465,24 @@ export class Renderer {
     this.glassUniforms(u, vp, now, flash, false);
     gl.uniform3fv(u.uCam, cam);
     gl.uniform1f(u.uSeam, this.look.seam);
+    gl.uniform3fv(u['uTint[0]'], this.tints); gl.uniform3fv(u['uEdge[0]'], this.edges);
     this.drawGlass(u, true, now, shardNow);
     gl.bindFramebuffer(gl.READ_FRAMEBUFFER, this.msFbo);
     gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, this.sceneFbo);
     gl.blitFramebuffer(0, 0, this.w, this.h, 0, 0, this.w, this.h, gl.COLOR_BUFFER_BIT, gl.NEAREST);
+
+    // 2b. what all the glass lets through, along every line of sight: each face multiplies its colour in
+    gl.bindFramebuffer(gl.FRAMEBUFFER, this.tintFbo);
+    gl.viewport(0, 0, this.w, this.h);
+    gl.clearColor(1, 1, 1, 1); gl.clear(gl.COLOR_BUFFER_BIT);
+    gl.disable(gl.DEPTH_TEST);
+    gl.enable(gl.BLEND); gl.blendFunc(gl.DST_COLOR, gl.ZERO);
+    u = this.use('tint');
+    this.glassUniforms(u, vp, now, flash, false);
+    gl.uniform3fv(u.uCam, cam); gl.uniform1f(u.uTintK, this.look.tint);
+    gl.uniform3fv(u['uTint[0]'], this.tints);
+    this.drawGlass(u, false, now, shardNow);
+    gl.disable(gl.BLEND);
 
     // 3. on screen: that picture, then the faces of the glass over it
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
@@ -474,6 +504,7 @@ export class Renderer {
     gl.uniform3fv(u['uTargets[0]'], this.targets);
     gl.activeTexture(gl.TEXTURE4); gl.bindTexture(gl.TEXTURE_2D, this.roomTex); gl.uniform1i(u.uRoom, 4);
     gl.uniform1i(u.uScene, 3);
+    gl.activeTexture(gl.TEXTURE5); gl.bindTexture(gl.TEXTURE_2D, this.tintTex); gl.uniform1i(u.uTints, 5);
     this.drawGlass(u, false, now, shardNow);
     if (this.tapeCount || this.tapeFell.length) {
       // tape is on the glass, not in it: over the faces, behind whatever flies in front
