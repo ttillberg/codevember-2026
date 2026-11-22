@@ -169,6 +169,7 @@ function start() {
   post.insert(dof, 1);
   const ortho = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 100); // the debug panel's iso: same eye, no perspective
   let eye: THREE.Camera = camera;
+  let ready = false;
   // the opening: from well below and off to the side, looking up at the pod and past it into the dark of a hall
   // shut down, as it fades in; a moment, and the roof's shutter rolls up, the eye turning slowly. A touch, a drag or the
   // wheel and the eye is yours
@@ -689,19 +690,34 @@ function start() {
     // (this is the only pod in the hall: its twin, which hung from a trolley under the next girder, is gone)
     // the roof's shutter darkens the sun wherever it is: every lit material takes its uniforms
     shareCover(scene, hall.spare);
-    // the page comes up black; once all of it is there and drawn (two frames, the shaders built), it fades in
     if (QUICK) { hall.roofSet(true); document.querySelector('.fade')?.remove(); }
-    requestAnimationFrame(() => requestAnimationFrame(() => {
-      document.querySelector('.fade')?.classList.add('in');
-      if (cine) cine.on = true;
-    }));
     // (one run only, at the door: the other point, under the pod, is left dry)
     bloodAt = drips[0] ?? null;
     if (bloodAt) blood = new Blood(bloodAt);
     if (blood) scene.add(blood.mesh);
 
-    // let the cables fall into place before anyone looks
-    for (let i = 0; i < 400; i++) physics(STEP, 0);
+    // the rest is done in pieces, the main thread let go between them, so the loader's fan keeps turning (a phone
+    // stood still for three seconds when it was all one go): the cables fall into place before anyone looks, the
+    // shaders are built off the thread where the browser can (KHR_parallel_shader_compile), and only then is
+    // anything drawn; two frames more and the black fades
+    void (async () => {
+      const breathe = () => new Promise((r) => setTimeout(r, 0));
+      for (let i = 0; i < 400; i += 25) {
+        for (let j = 0; j < 25; j++) physics(STEP, 0);
+        await breathe();
+      }
+      for (const c of cables) c.skin();
+      await breathe();
+      // the sun's map first (it sets the lights the shaders are built for), then the shaders
+      hall!.prepare(renderer, camera);
+      await breathe();
+      try { await renderer.compileAsync(scene, camera); } catch { /* drawn the old way, the first frame building them */ }
+      ready = true;
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        document.querySelector('.fade')?.classList.add('in');
+        if (cine) cine.on = true;
+      }));
+    })();
   });
 
   /** push a rope point out of the pod, taken as an ellipsoid */
@@ -1196,6 +1212,8 @@ function start() {
   function frame(now: number) {
     // no more than 60 a second: a 120 Hz screen would draw all of it twice as often, for nothing seen
     if (now - then < 1000 / 62) { requestAnimationFrame(frame); return; }
+    // nothing is drawn until the scene is all there (the loader turning meanwhile)
+    if (!ready) { then = now; requestAnimationFrame(frame); return; }
     frameMs += (now - then - frameMs) * 0.05;
     const dt = Math.min(0.05, (now - then) / 1000);
     then = now;

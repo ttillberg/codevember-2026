@@ -3,24 +3,31 @@ import * as THREE from 'three';
 /** value noise on a 32³ lattice, smoothed, tiling: what the march samples for its smoke */
 function noise3d() {
   const N = 32, R = 4; // 4 texels a lattice cell, so trilinear filtering stands in for the smoothstep
-  const hash = (x: number, y: number, z: number) => {
-    const h = Math.sin(((x % N) + N) % N * 127.1 + (((y % N) + N) % N) * 311.7 + (((z % N) + N) % N) * 74.7) * 43758.5453;
-    return h - Math.floor(h);
-  };
+  // the lattice hashed once (32³ sines, not eight for each of the 128³ texels: that stood a phone still for most
+  // of a second), and the smoothstep weights, the same for every cell
+  const L = new Float32Array(N * N * N);
+  for (let z = 0; z < N; z++) for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
+    const h = Math.sin(x * 127.1 + y * 311.7 + z * 74.7) * 43758.5453;
+    L[x + y * N + z * N * N] = h - Math.floor(h);
+  }
   const S = N * R;
   const data = new Uint8Array(S * S * S);
-  const sm = (t: number) => t * t * (3 - 2 * t);
-  for (let z = 0; z < S; z++) for (let y = 0; y < S; y++) for (let x = 0; x < S; x++) {
-    const fx = x / R, fy = y / R, fz = z / R;
-    const ix = Math.floor(fx), iy = Math.floor(fy), iz = Math.floor(fz);
-    const ux = sm(fx - ix), uy = sm(fy - iy), uz = sm(fz - iz);
-    const l = (a: number, b: number, t: number) => a + (b - a) * t;
-    const v = l(
-      l(l(hash(ix, iy, iz), hash(ix + 1, iy, iz), ux), l(hash(ix, iy + 1, iz), hash(ix + 1, iy + 1, iz), ux), uy),
-      l(l(hash(ix, iy, iz + 1), hash(ix + 1, iy, iz + 1), ux), l(hash(ix, iy + 1, iz + 1), hash(ix + 1, iy + 1, iz + 1), ux), uy),
-      uz,
-    );
-    data[x + y * S + z * S * S] = Math.round(v * 255);
+  const W = Array.from({ length: R }, (_, i) => { const t = i / R; return t * t * (3 - 2 * t); });
+  const l = (a: number, b: number, t: number) => a + (b - a) * t;
+  for (let z = 0; z < S; z++) {
+    const iz = (z / R) | 0, uz = W[z % R], z0 = iz * N * N, z1 = ((iz + 1) % N) * N * N;
+    for (let y = 0; y < S; y++) {
+      const iy = (y / R) | 0, uy = W[y % R], y0 = iy * N, y1 = ((iy + 1) % N) * N;
+      for (let x = 0; x < S; x++) {
+        const ix = (x / R) | 0, ux = W[x % R], x1 = (ix + 1) % N;
+        const v = l(
+          l(l(L[ix + y0 + z0], L[x1 + y0 + z0], ux), l(L[ix + y1 + z0], L[x1 + y1 + z0], ux), uy),
+          l(l(L[ix + y0 + z1], L[x1 + y0 + z1], ux), l(L[ix + y1 + z1], L[x1 + y1 + z1], ux), uy),
+          uz,
+        );
+        data[x + y * S + z * S * S] = Math.round(v * 255);
+      }
+    }
   }
   const t = new THREE.Data3DTexture(data, S, S, S);
   t.format = THREE.RedFormat;
