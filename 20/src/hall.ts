@@ -777,6 +777,7 @@ export function buildHall(scene: THREE.Scene, hang: THREE.Vector3, maxTexture = 
     for (const sh of others) sh.autoUpdate = true;
   };
   let sunDirty = true;
+  let mapDue = 0; // seconds to the next drawing of the sun's map while the shutter moves
   // and the same sun again, for the pod alone (materials.ts): a map 4.4 m across that follows it, 2 mm a texel,
   // from far enough up the light that the roof and every bar in between still cast into it
   const podSun = new THREE.DirectionalLight(sun.color, sun.intensity);
@@ -1131,6 +1132,11 @@ export function buildHall(scene: THREE.Scene, hang: THREE.Vector3, maxTexture = 
         shut = THREE.MathUtils.clamp(shut + shutV * dt, 0, 1);
         if (Math.abs(d) < 1e-4 && Math.abs(shutV) < 1e-3) { shut = shutTo; shutV = 0; }
         lay();
+        // The sun's map has the shutter's slats in it, whatever is switched off while it is drawn (two ways of
+        // keeping them out were tried and did not), and it is drawn once: drawn with the roof shut, as the page
+        // starts, it kept the sun out of the air for good, and no shafts came from the roof once it had opened.
+        // So it is drawn again as the shutter goes, twice a second, and once more where it stops
+        if ((mapDue -= dt) <= 0 || shut === shutTo) { mapDue = 0.5; sunDirty = true; }
       }
       // the leaf shutters: two seconds and a bit, eased at both ends
       for (const [side, st] of [[false, iris.end], [true, iris.side]] as const) {
