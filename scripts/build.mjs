@@ -2,7 +2,7 @@ import { execSync } from 'node:child_process';
 import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { ROOT, REPO, HOMEPAGE, GITHUB, listDays } from './lib.mjs';
-import { WORDS } from './words.mjs';
+import { WORDS, dateFor } from './words.mjs';
 import { readDemo } from './clip.mjs';
 
 const days = listDays();
@@ -29,16 +29,23 @@ for (const d of days) {
 }
 
 // 2. Root index.html: a square per day of the month, the built ones linked, with their screengrab if any.
-// A day with a second piece (04-snakes) gets a square for each; an empty day is left out for every extra
-// piece, so the grid stays at 30 squares and its rows even.
-const HIDDEN = new Set([3]); // empty days left out of the index, one per extra piece
-const pieces = (day) => days.filter((d) => d.day === day);
-const dayCount = new Set(days.map((d) => d.day)).size;
+// A day with a second piece (04-snakes) gets a square for each, and an empty day in HIDDEN is left out for
+// every extra piece, so the grid stays at 30. A piece in UNLISTED is built and live but not linked: on a
+// desktop its day stands as an empty square, on a phone it goes with the missed days.
+const UNLISTED = new Set(['01']); // not ready to show
+const HIDDEN = new Set([3]); // empty days left out, one per extra piece
+const listed = days.filter((d) => !UNLISTED.has(d.dir));
+const pieces = (day) => listed.filter((d) => d.day === day);
+const dayCount = new Set(listed.map((d) => d.day)).size;
 const squares = WORDS.flatMap((word, i) => {
   const day = i + 1;
   const nn = String(day).padStart(2, '0');
   const here = pieces(day);
-  if (!here.length) return HIDDEN.has(day) ? [] : [`      <div class="sq empty"><span class="label">${nn} ${escapeHtml(word)}</span></div>`];
+  if (!here.length) {
+    if (HIDDEN.has(day)) return [];
+    const unlisted = days.some((d) => d.day === day);
+    return [`      <div class="sq empty${unlisted ? ' unlisted' : ''}" data-date="${dateFor(day)}"><span class="label">${nn} ${escapeHtml(word)}</span></div>`];
+  }
   return here.map((d) => {
     const label = `<span class="label">${nn} ${escapeHtml(d.word || word)}</span>`;
     const poster = d.screengrab ? `./${d.dir}/screengrab.png` : '';
@@ -99,6 +106,8 @@ writeFileSync(
       footer { font-size: 10px; margin-top: 24px; }
       .grid { grid-template-columns: repeat(2, 1fr); }
       .label { top: 8px; left: 8px; right: 8px; font-size: 10px; }
+      /* a phone scrolls: only the days still to come stay as empty squares, the missed ones go */
+      .sq.empty.past, .sq.unlisted { display: none; }
     }
   </style>
 </head>
@@ -111,6 +120,12 @@ ${squares}
     </div>
     <footer class="caps">Prompt list and initiative by <a href="https://x.com/thespite">@thespite</a></footer>
   </main>
+  <script>
+    // an empty day before today is a missed one (marked here, not at build time, so it stays right between deploys)
+    const d = new Date();
+    const today = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+    for (const sq of document.querySelectorAll('.sq.empty[data-date]')) sq.classList.toggle('past', sq.dataset.date < today);
+  </script>
 </body>
 </html>
 `,
@@ -120,7 +135,7 @@ ${squares}
 const rows = WORDS.flatMap((word, i) => {
   const day = i + 1;
   const nn = String(day).padStart(2, '0');
-  const here = pieces(day);
+  const here = days.filter((d) => d.day === day); // every piece, the unlisted ones too
   return here.length
     ? here.map((d) => `| ${nn} | ${word} | [View](${HOMEPAGE}/${d.dir}/) | [Code](${GITHUB}/tree/main/${d.dir}) |`)
     : [`| ${nn} | ${word} | — | — |`];
