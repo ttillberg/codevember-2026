@@ -928,30 +928,37 @@ export class Sound {
       o.start(when);
       o.stop(when + 0.06);
     };
-    // the bell: a square, short, a little rough
-    const bell = (when: number) => {
+    // a beep: a square, short, a little rough; the bell is the long one
+    const beep = (when: number, f = 784, len = 0.13, loud = 0.1) => {
       const o = ac.createOscillator();
       o.type = 'square';
-      o.frequency.value = 784;
+      o.frequency.value = f;
       const l = ac.createBiquadFilter();
       l.type = 'lowpass';
       l.frequency.value = 2600;
       const g = ac.createGain();
       g.gain.setValueAtTime(0, when);
-      g.gain.linearRampToValueAtTime(0.1, when + 0.004);
-      g.gain.setValueAtTime(0.1, when + 0.11);
-      g.gain.linearRampToValueAtTime(0, when + 0.13);
+      g.gain.linearRampToValueAtTime(loud, when + 0.004);
+      g.gain.setValueAtTime(loud, when + len - 0.02);
+      g.gain.linearRampToValueAtTime(0, when + len);
       o.connect(l).connect(g).connect(m.bus);
       o.start(when);
-      o.stop(when + 0.15);
+      o.stop(when + len + 0.02);
     };
+    const bell = (when: number) => beep(when);
+    // the machine thinking: a run of short blips, each its own pitch off a few
+    const BLIPS = [523, 659, 784, 1047, 1319, 1568];
+    const blips = (when: number, n: number) => { for (let i = 0; i < n; i++) beep(when + i * 0.07, BLIPS[Math.floor(r() * BLIPS.length)], 0.045, 0.07); };
+    // an error: the same low note three times
+    const error = (when: number) => { for (let i = 0; i < 3; i++) beep(when + i * 0.16, 392, 0.09, 0.11); };
     if (m.mode === 'type') {
       if (m.left <= 0) {
         // the return: heavier, pressed and let go; the bell now and then; and the machine answers, or it waits
         click(at, 1500, 0.5, 140, 0.02);
         click(at + 0.07, 2600, 0.2, 0);
-        if (r() < 0.35) bell(at + 0.18);
-        if (r() < 0.6) { m.mode = 'print'; m.left = 24 + Math.floor(r() * 90); return 0.45 + r() * 0.5; }
+        if (r() < 0.7) bell(at + 0.18);
+        if (r() < 0.15) { error(at + 0.4); m.mode = 'wait'; return 0.9; }
+        if (r() < 0.65) { blips(at + 0.35, 2 + Math.floor(r() * 6)); m.mode = 'print'; m.left = 24 + Math.floor(r() * 90); return 1.0 + r() * 0.5; }
         m.mode = 'wait';
         return 0.3;
       }
@@ -970,7 +977,10 @@ export class Sound {
       if (m.left <= 0) {
         click(at, 1800, 0.22, 0, 0.03);
         if (r() < 0.45) { m.left = 20 + Math.floor(r() * 60); return 0.12; }
-        if (r() < 0.25) bell(at + 0.1);
+        if (r() < 0.25) blips(at + 0.08, 1 + Math.floor(r() * 3));
+        // done: two notes up, the prompt back
+        beep(at + 0.3, 1047, 0.06, 0.09);
+        beep(at + 0.37, 1568, 0.08, 0.09);
         m.mode = 'wait';
         return 0.2;
       }
@@ -978,7 +988,8 @@ export class Sound {
       if ((m.left % 64) < 40 || r() < 0.85) click(at, 3600, 0.12 + 0.03 * r(), 0, 0.006);
       return 1 / 30;
     }
-    // the prompt, waiting: someone reading, thinking; then typing again
+    // the prompt, waiting: someone reading, thinking; then typing again (a blip now and then from the machine meanwhile)
+    if (r() < 0.4) blips(at + 0.6 + r(), 1 + Math.floor(r() * 2));
     m.mode = 'type';
     m.left = 6 + Math.floor(r() * 40);
     m.word = 1 + Math.floor(r() * 6);
