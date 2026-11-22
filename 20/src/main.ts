@@ -10,6 +10,8 @@ import { Dof } from './dof';
 import { Cable } from './cables';
 import { Blood } from './blood';
 import { Screen } from './screen';
+import { Sound, type Place } from './sound';
+import { doorLamps } from './lamps';
 import { buildHall, SCENE_TARGETS } from './hall';
 import { dress, GLOWING, instances, rubber, SHADE, shareCover, wire as wireSteel } from './materials';
 
@@ -58,6 +60,10 @@ function start() {
   // ---------- the controls, bottom left: the hall's machines and the eye, one symbol each, in white. The roof first
   let roofWanted = query.has('debug'); // (the hall starts with the roof shut: only the fans let light in; ?debug open)
   let railOn = false; // the crane's round along the girder: off until asked for
+  let sound: Sound | null = null; // the hall's sound (sound.ts), made on the first press
+  let lamps: ReturnType<typeof doorLamps> = null; // the door's red and green (lamps.ts)
+  /** the eye has gone to the door: the first time, its lamp goes green as it gets there, with a beep */
+  const doorSeen = (after: number) => setTimeout(() => { if (lamps?.green()) sound?.ok(); }, after);
   const controls = (() => {
     const list = document.querySelector<HTMLElement>('.controls')!;
     const roofBtn = list.querySelector<HTMLButtonElement>('[data-ctl="roof"]')!;
@@ -85,6 +91,35 @@ function start() {
     const eyeBtn = list.querySelector<HTMLButtonElement>('[data-ctl="eye"]')!;
     eyeBtn.addEventListener('click', () => { if (cine || auto) cine = auto = null; else play(); });
     let eyeWas: boolean | null = null;
+    // the sound: off until this symbol turns it on (and off again). Nothing is made until then. (?sound: on from the
+    // first press anywhere, as a page may not make a sound before one)
+    const soundBtn = list.querySelector<HTMLButtonElement>('[data-ctl="sound"]')!;
+    let soundOn = query.has('sound');
+    soundBtn.setAttribute('aria-pressed', String(soundOn));
+    const unlock = () => {
+      if (!soundOn) return;
+      if (!sound) { try { sound = new Sound(); } catch { return; } }
+      sound.muted = false;
+      if (!sound.running && !document.hidden) sound.ac.resume().catch(() => {});
+    };
+    for (const ev of ['pointerdown', 'keydown']) window.addEventListener(ev, unlock, { capture: true });
+    soundBtn.addEventListener('click', () => {
+      soundOn = !soundOn;
+      soundBtn.setAttribute('aria-pressed', String(soundOn));
+      if (soundOn) unlock();
+      else if (sound) {
+        sound.muted = true;
+        // (faded out, then it stops working altogether until it is turned on again)
+        const was = sound;
+        setTimeout(() => { if (!soundOn) was.ac.suspend().catch(() => {}); }, 1500);
+      }
+    });
+    // (and quiet while the page is not looked at)
+    document.addEventListener('visibilitychange', () => {
+      if (!sound) return;
+      if (document.hidden) sound.ac.suspend().catch(() => {});
+      else if (soundOn) sound.ac.resume().catch(() => {});
+    });
     return {
       /** the trolley's symbol goes along its line with the trolley */
       rail(along: number) { car.setAttribute('transform', `translate(${(along * 6).toFixed(2)} 0)`); },
@@ -491,6 +526,11 @@ function start() {
   };
   let blood: Blood | null = null;
   let screen: Screen | null = null; // what is in there (screen.ts)
+  let dayWas = 0, fansWas = 1; // (how far the shutters had got last frame: the sound hears them move)
+  const v3s = [new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3()];
+  // what makes a sound of its own where it is (sound.ts): the pod, the end wall's fans, the hoists' cages, the roof
+  let places: Place[] = [];
+  const cageWas: number[] = [];
   const restInverse = new THREE.Matrix4(); // the pod as it hangs at rest, inverted: the look in is written in that frame
   let bloodAt: THREE.Object3D | null = null; // where it drips from: the lowest point of the pod's edge under the door's corner
   let raysPass: Rays | null = null;
@@ -589,6 +629,8 @@ function start() {
     pod.traverse((o) => { if (/^(body|strap[._]?\d+)$/.test(o.name)) o.visible = false; });
     // the screen in there, on what held it, turned a little towards the door's opening (placed in the world, then hung on the pod)
     restInverse.copy(pod.matrixWorld).invert();
+    // the door's two lamps, red until the eye first goes to the door
+    if (door) lamps = doorLamps(door);
     screen = new Screen();
     screen.mesh.position.copy(SCREEN_AT);
     screen.mesh.rotation.y = 0.3;
@@ -637,6 +679,13 @@ function start() {
       cables.push(cable);
       scene.add(cable.mesh);
     });
+    hall.liftsRun(true); // (the hoists ride up and down: they had stood still, waiting for a cue never given)
+    places = [
+      { kind: 'pod', at: { x: 0, y: 0, z: 0 } },
+      ...hall.fans.list.map((f) => ({ kind: 'fan' as const, at: f.at })),
+      ...hall.cages.map((c) => ({ kind: 'cage' as const, at: c })),
+      { kind: 'roof', at: { x: 0, y: 0, z: 0 } },
+    ];
     // (this is the only pod in the hall: its twin, which hung from a trolley under the next girder, is gone)
     // the roof's shutter darkens the sun wherever it is: every lit material takes its uniforms
     shareCover(scene, hall.spare);
@@ -739,10 +788,12 @@ function start() {
     const hit = ray.intersectObject(pod, true)[0];
     if (!hit) return;
     downAt.onPod = true;
+    sound?.startMusic(); // (something starts playing in there)
     let o: THREE.Object3D | null = hit.object;
     while (o && o !== door) o = o.parent;
     if (o && door && latched) {
       latched = false;
+      sound?.latch();
       open = AJAR;
       vopen = 0.7; // (a pop: it springs out and settles a crack open, the strut holding it)
       blood?.start();
@@ -810,14 +861,14 @@ function start() {
   }, { passive: false });
   const release = (e: PointerEvent) => {
     // let go of the door far enough open: it catches
-    if (grab === 'door' && open >= HOLD) stuck = true;
+    if (grab === 'door' && open >= HOLD) { stuck = true; sound?.caught(); }
     // a tap on the pod: the eye goes to the door, wherever it was and whoever had it (it is not just left where
     // the shot had it, for you to turn); and if the door stands open, caught, it goes to look in. A tap while it
     // is looking in brings it back out to the door.
     const tap = downAt && performance.now() - downAt.t < 400 && Math.hypot(e.clientX - downAt.x, e.clientY - downAt.y) < 8;
     if (tap && downAt!.onPod && e.type === 'pointerup') {
       if (downAt!.stuck && !wasIn) { stuck = true; lookIn(); }
-      else goal = { yaw: FRONT.yaw, pitch: FRONT.pitch, radius: FRONT.radius * fit(), target: FRONT.target.clone(), rate: 2.4 };
+      else { goal = { yaw: FRONT.yaw, pitch: FRONT.pitch, radius: FRONT.radius * fit(), target: FRONT.target.clone(), rate: 2.4 }; doorSeen(1400); }
     }
     downAt = null;
     grab = null;
@@ -827,9 +878,9 @@ function start() {
   canvas.addEventListener('pointerup', release);
   canvas.addEventListener('pointercancel', release);
 
-  const lookIn = () => peekStart();
+  const lookIn = () => { peekStart(); doorSeen(2500); };
   // dev only: a look at the state from the console
-  if (import.meta.env.DEV) Object.assign(window, { cocoon: () => ({ grab, open, vopen, ax, az, tw, doorSign, cables: cables.length, carry: carry.x, hand, doorFree }), __x: () => carry.x, look: (y: number, p: number, r: number) => { goal = null; yaw = y; pitch = p; radius = r; vyaw = vpitch = 0; }, craneAt: (t: number) => { craneTime = t; }, doorAt: (v: number) => { latched = false; open = v; vopen = 0; stuck = v >= HOLD; }, peekAt: (t: number) => { if (!peek) peekStart(); peek!.t = t; }, shotKey: () => (auto ? key(shown()) : cine?.on ? 'cine' : null), shot: (i: number, x = 0.5) => { play(); auto!.i = i; auto!.t = CUT * AUTO[i].s * x; }, see: (what: 'roof' | 'fans' | 'rail', k: number) => { play(); auto!.q = SEE[what][k]; auto!.t = (CUT * auto!.q.s) / 2; }, cineAt: (t: number) => { if (cine) cine.t = t; }, view: (s: { yaw: number; pitch: number; radius: number; target: number[] }) => { goal = null; yaw = s.yaw; pitch = s.pitch; radius = s.radius; target.fromArray(s.target); vyaw = vpitch = 0; }, scene, camera, ao, renderer, post });
+  if (import.meta.env.DEV) Object.assign(window, { sound: () => sound, cocoon: () => ({ grab, open, vopen, ax, az, tw, doorSign, cables: cables.length, carry: carry.x, hand, doorFree }), __x: () => carry.x, look: (y: number, p: number, r: number) => { goal = null; yaw = y; pitch = p; radius = r; vyaw = vpitch = 0; }, craneAt: (t: number) => { craneTime = t; }, doorAt: (v: number) => { latched = false; open = v; vopen = 0; stuck = v >= HOLD; }, peekAt: (t: number) => { if (!peek) peekStart(); peek!.t = t; }, shotKey: () => (auto ? key(shown()) : cine?.on ? 'cine' : null), shot: (i: number, x = 0.5) => { play(); auto!.i = i; auto!.t = CUT * AUTO[i].s * x; }, see: (what: 'roof' | 'fans' | 'rail', k: number) => { play(); auto!.q = SEE[what][k]; auto!.t = (CUT * auto!.q.s) / 2; }, cineAt: (t: number) => { if (cine) cine.t = t; }, view: (s: { yaw: number; pitch: number; radius: number; target: number[] }) => { goal = null; yaw = s.yaw; pitch = s.pitch; radius = s.radius; target.fromArray(s.target); vyaw = vpitch = 0; }, scene, camera, ao, renderer, post });
 
   // ---------- physics, in fixed steps
 
@@ -1228,7 +1279,6 @@ function start() {
       if (s.fixed) stood = anchor;
     }
     hall?.detail(!!auto && OF_HALL.has(shown()));
-    if (hall && pod) hall.eyeAt(camera.position.distanceTo(v1.copy(podCentre).applyMatrix4(pod.matrixWorld)));
     // the lens: each shot's own while the eye is on its own, back to the usual one after (eased, not a jump)
     {
       const fov = peek ? lens : auto ? shown().fov ?? 40 : 40;
@@ -1321,6 +1371,28 @@ function start() {
     inside.intensity = 1.2 + 7 * beat;
     for (const g of GLOWING) g.material.emissiveIntensity = g.gain * (GLOW.rest + GLOW.beat * beat);
 
+    // the sound follows the eye: how near the pod, where it is in the picture, how far up the eye looks; and the
+    // shutters as they move
+    if (sound && hall && pod) {
+      v1.copy(podCentre).applyMatrix4(pod.matrixWorld);
+      const dist = camera.position.distanceTo(v1);
+      const pan = v3s[3].copy(v1).project(camera).x;
+      const up = camera.getWorldDirection(v2).y;
+      const day = hall.open, fans = hall.fans.shutter.end;
+      const h = Math.max(dt, 1e-3);
+      // (the door: how open; the opening: how near the eye is to where it would look in from)
+      const door = THREE.MathUtils.clamp(open / 1.3, 0, 1);
+      v2.copy(PEEK_AT).applyMatrix4(m4.multiplyMatrices(pod.matrixWorld, restInverse));
+      const inside = peek ? 1 : 1 - THREE.MathUtils.smoothstep(camera.position.distanceTo(v2), 1.2, 4);
+      const fwd = camera.getWorldDirection(v3s[0]);
+      const right = v3s[1].crossVectors(fwd, camera.up).normalize();
+      places[0].at = v1; // the pod (still where v1 has it)
+      places[places.length - 1].at = v3s[2].set(camera.position.x, hall.roofY, camera.position.z); // the roof, straight up
+      const cages = hall.cages.map((c, i) => { const v = (c.y - (cageWas[i] ?? c.y)) / h; cageWas[i] = c.y; return { at: c, speed: v }; });
+      sound.update(dt, { dist, pan, up, beat, day, fans, roll: hall.rolling, leaf: Math.abs(fans - fansWas) / h / 0.4, door, inside, eye: camera.position, fwd, right, places, cages, doorSpeed: vopen, fanTurns: hall.fans.list.map((f) => f.angle) });
+      dayWas = day;
+      fansWas = fans;
+    }
     ao.enabled = eye === camera && aoOn; // the debug panel's iso goes without, and it can be switched off
     hall?.prepare(renderer, camera);
     post.render(eye);

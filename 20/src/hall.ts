@@ -864,7 +864,6 @@ export function buildHall(scene: THREE.Scene, hang: THREE.Vector3, maxTexture = 
 
   const shafts: THREE.ShaderMaterial[] = [];
   let shaftK = 1;
-  let shaftNear = 1; // 1 with the eye by the pod, 0 with it far off: the faked shafts are for the near shots
   const roofBase = roof.intensity;
   /** a cone of light from `from` along `dir`, r0 wide where it starts, r1 where it ends `len` on */
   const shaft = (from: THREE.Vector3, dir: THREE.Vector3, len: number, r0: number, r1: number, color: number, strength: number) => {
@@ -886,6 +885,29 @@ export function buildHall(scene: THREE.Scene, hang: THREE.Vector3, maxTexture = 
   shaft(left.position, left.target.position.clone().sub(left.position), 48, 1.6, 4.2, 0x8fa4b8, 0.08);
   shaft(V(-34, 18, -22), V(1, -0.32, 0.14), 50, 1.4, 3.6, 0x8fa4b8, 0.07);
   shaft(right.position, right.target.position.clone().sub(right.position), 45, 1.4, 3.4, 0xc8b8a0, 0.06);
+  // And all over the hall, not only by the pod: down from the roof's glass along the sun, where a band of it lets
+  // the sun through, and in from the windows in the sun's wall. (With cones only round the pod, the eye drawn back
+  // saw them for what they were, light kept to one corner of the hall: they were faded out with the distance. Now
+  // they are everywhere the light comes in, and stay.) Each from a fixed place, seeded; the roof's go with the
+  // shutter over the glass they come through, the windows' with the daylight
+  const roofShafts: { mat: THREE.ShaderMaterial; x: number }[] = [];
+  {
+    const rnd = (() => { let a = 2024; return () => ((a = (a * 16807) % 2147483647) / 2147483647); })();
+    const down = sun.target.position.clone().sub(sun.position).normalize();
+    for (let i = 0; i < 16; i++) {
+      const [x0, x1] = GLASS[Math.floor(rnd() * GLASS.length)];
+      const from = V(x0 + (x1 - x0) * rnd(), ROOF, GZ1 + (GZ0 - GZ1) * rnd());
+      if (from.distanceTo(roof.position) < 10) continue; // (the one over the pod is its own)
+      shaft(from, down, 70 + 30 * rnd(), 1.0 + 0.8 * rnd(), 4 + 3 * rnd(), 0xc8d4e0, 0.05 + 0.05 * rnd());
+      roofShafts.push({ mat: shafts[shafts.length - 1], x: from.x });
+    }
+    for (let i = 0; i < 8; i++) {
+      const h = HOLES[Math.floor(rnd() * HOLES.length)];
+      const from = V(WX - 0.5, h.y, h.z);
+      if (from.y > ROOF - 10 || from.y < -20) continue;
+      shaft(from, V(-1, down.y * 0.8, down.z).normalize(), 40 + 25 * rnd(), 0.7, 3 + 2 * rnd(), 0x8fa4b8, 0.04 + 0.04 * rnd());
+    }
+  }
 
   // ---------- dust in the light over the pod
 
@@ -1069,10 +1091,6 @@ export function buildHall(scene: THREE.Scene, hang: THREE.Vector3, maxTexture = 
     left,
     right,
     sun,
-    /** how near the pod the eye is, in metres: the faked shafts are cones drawn round the lights, right from by the
-     * pod and odd from far off, where the whole cone is in the picture, a shape hung in the air. All there within
-     * 9 m, gone at 14 */
-    eyeAt(metres: number) { shaftNear = 1 - THREE.MathUtils.smoothstep(metres, 9, 14); },
     /** all the faked shafts brighter or dimmer at once */
     set shaftGain(g: number) { shaftK = g; for (const s of shafts) s.uniforms.strength.value = s.userData.strength * g; },
     air,
@@ -1089,6 +1107,10 @@ export function buildHall(scene: THREE.Scene, hang: THREE.Vector3, maxTexture = 
     trolley,
     spans,
     /** the hoists' cages, each to be taken in hand */
+    /** how fast the roof's shutter is rolling, 0 still, 1 at full speed (the sound hears it) */
+    get rolling() { return Math.abs(shutV) / 0.06; },
+    /** where the hoists' cages are, in the world */
+    cages: cars.map((c) => c.position),
     lifts: cars.map((c) => {
       const h = c.userData.hoist as (typeof HOISTS)[number];
       return {
@@ -1155,10 +1177,12 @@ export function buildHall(scene: THREE.Scene, hang: THREE.Vector3, maxTexture = 
       // the skylight over the pod and its shaft come with the open roof over it
       const over = THREE.MathUtils.smoothstep(roof.position.x, X0 + shut * RUN - 1.5, X0 + shut * RUN + 1.5);
       roof.intensity = roofBase * over;
-      shafts[0].uniforms.strength.value = shafts[0].userData.strength * shaftK * shaftNear * over;
+      shafts[0].uniforms.strength.value = shafts[0].userData.strength * shaftK * over;
       windowGlow.color.copy(WINDOW).multiplyScalar(0.12 + 0.88 * dayIn());
       // and the faked shafts of the windows come and go with the daylight, as the windows' lights do (main.ts)
-      for (let i = 1; i < shafts.length; i++) shafts[i].uniforms.strength.value = shafts[i].userData.strength * shaftK * shaftNear * (0.12 + 0.88 * dayIn());
+      for (let i = 1; i < shafts.length; i++) shafts[i].uniforms.strength.value = shafts[i].userData.strength * shaftK * (0.12 + 0.88 * dayIn());
+      // (the roof's own, over the glass the shutter has rolled back from, and dark where it still covers it)
+      for (const r of roofShafts) r.mat.uniforms.strength.value = r.mat.userData.strength * shaftK * THREE.MathUtils.smoothstep(r.x, X0 + shut * RUN - 1.5, X0 + shut * RUN + 1.5);
       dome.material.uniforms.gain.value = (scene.fog as THREE.Fog).far;
       for (const s of shafts) s.uniforms.time.value = time;
       // (one switched off, from the hologram (game.ts), runs down slowly, and up again)

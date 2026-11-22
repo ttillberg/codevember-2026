@@ -99,6 +99,8 @@ canvas:active { cursor: grabbing; }
 .controls svg .light { stroke-width: 1.4; transition: opacity 0.2s; }
 /* the eye: a dot in the middle while it is yours; on its own, a play mark there, and the eye going round */
 .controls [data-ctl="eye"] .auto, .controls [data-ctl="eye"][aria-pressed="true"] .mine { opacity: 0; }
+.controls [data-ctl="sound"] .off, .controls [data-ctl="sound"][aria-pressed="false"] .waves { opacity: 0; }
+.controls [data-ctl="sound"][aria-pressed="false"] .off { opacity: 1; }
 .controls [data-ctl="eye"][aria-pressed="true"] .auto { opacity: 1; }
 .controls [data-ctl="eye"] .orbit { transform-origin: 12px 12px; }
 .controls [data-ctl="eye"][aria-pressed="true"] .orbit { animation: orbit 9s linear infinite; }

@@ -662,6 +662,7 @@ BLOCK = mat('block', (0.62, 0.62, 0.6), 0.5)
 PANEL = mat('panel', (0.22, 0.225, 0.23), 0.5, 0.35)
 BRASS = mat('brass', (0.55, 0.38, 0.16), 0.32, 1.0)
 INK = mat('ink', (0.022, 0.023, 0.026), 0.6)
+DECAL = mat('decal', (0.022, 0.023, 0.026), 0.6)   # the same ink, worn harder (materials.ts)
 BLOOD = mat('blood', (0.16, 0.004, 0.006), 0.14)
 SHROUD = mat('shroud', (0.55, 0.5, 0.42), 0.75)
 HOSE = mat('hose', (0.03, 0.032, 0.035), 0.5, 0.15)
@@ -1664,7 +1665,10 @@ def markings():
     # what it was made with, two small marks side by side on the right flank, under the words: the maker of the
     # model that wrote it, and three.js
     decal = lambda f: os.path.join(os.path.dirname(os.path.abspath(__file__)), 'decals', f)
-    lay(ink, 'left', (245, 455), [[('svg', decal('claude.svg'), 245, 455, 30), ('three', 287, 456, 32)]], shift=60)
+    # (a mesh of their own, so the page can wear them harder than the rest: scratched, flaked)
+    deco = Marks()
+    lay(deco, 'left', (245, 455), [[('svg', decal('claude.svg'), 245, 455, 30), ('three', 287, 456, 32)]], shift=60)
+    deco.done('decals', DECAL, pod)
     # the marks on the caps
     lay(ink, 'front', (245, 140), [('split', 245, 140, 32)])
     # (the side view's own mark here landed on the same facet as the front view's, and the two made a blot)

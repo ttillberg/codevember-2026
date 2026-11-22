@@ -108,6 +108,7 @@ type Grit = {
   tint: number; // how much the tone wanders
   ribs?: boolean; // a hose's corrugation: ribs along uv.y, one per unit
   wear?: number; // worn through: how much of it is gone, in flakes (a painted mark)
+  scratch?: boolean; // and scratched through, in long hairlines two ways
   paint?: boolean; // worn white paint: grime, pits, scratches, chipped edges, drawn here
 };
 
@@ -193,7 +194,20 @@ function grit(m: THREE.MeshStandardMaterial, g: Grit) {
         g.wear
           ? `
       // flaked off: big patches where it has worn, and fine pits all over
-      if (gFbm(vGrit * ${f(g.scale * 0.12)} + 5.0) * 0.75 + gNoise(vGrit * ${f(g.scale * 2.5)}) * 0.25 < ${f(g.wear)}) discard;`
+      if (gFbm(vGrit * ${f(g.scale * 0.12)} + 5.0) * 0.75 + gNoise(vGrit * ${f(g.scale * 2.5)}) * 0.25 < ${f(g.wear)}) discard;${
+        g.scratch
+          ? `
+      // scratched through: noise stretched far along one way and squeezed across it, cut where it crosses its middle,
+      // makes long hairlines; two such, a little apart in angle, and only some of each (another noise says where)
+      {
+        vec3 sp = vGrit * 30.0;
+        float s1 = gNoise(vec3(dot(sp, vec3(0.8, 0.5, 0.33)) * 0.6, dot(sp, vec3(-0.5, 0.8, 0.2)) * 22.0, sp.z * 0.6));
+        float s2 = gNoise(vec3(dot(sp, vec3(0.4, -0.9, 0.2)) * 0.6 + 7.0, dot(sp, vec3(0.9, 0.4, -0.1)) * 18.0, sp.z * 0.6 + 3.0));
+        float where1 = step(0.48, gNoise(sp * 0.25 + 2.0)), where2 = step(0.58, gNoise(sp * 0.3 + 9.0));
+        if (abs(s1 - 0.5) < 0.022 * where1 || abs(s2 - 0.5) < 0.018 * where2) discard;
+      }`
+          : ''
+      }`
           : ''
       }`,
     );
@@ -218,7 +232,7 @@ function grit(m: THREE.MeshStandardMaterial, g: Grit) {
     }
     sh.fragmentShader = frag;
   };
-  m.customProgramCacheKey = () => `grit:${g.scale}:${g.rough}:${g.tint}:${!!g.ribs}:${g.wear ?? 0}:${!!g.paint}`;
+  m.customProgramCacheKey = () => `grit:${g.scale}:${g.rough}:${g.tint}:${!!g.ribs}:${g.wear ?? 0}:${!!g.paint}:${!!g.scratch}`;
   m.needsUpdate = true;
   return m;
 }
@@ -299,6 +313,8 @@ export function dress(root: THREE.Object3D) {
         return physical(old, { metalness: 0, roughness: 0.85, sheen: 1, sheenRoughness: 0.7, sheenColor: 0x8a8070 });
       case 'ink': // the painted marks: flat black, worn through in flakes
         return grit(physical(old, { color: 0x0b0c0d, metalness: 0, roughness: 0.62 }), { scale: 30, rough: [0.85, 1.2], tint: 0.15, wear: 0.27 });
+      case 'decal': // the two makers' marks: the same ink, older, flaked more and scratched through
+        return grit(physical(old, { color: 0x0b0c0d, metalness: 0, roughness: 0.62 }), { scale: 30, rough: [0.85, 1.2], tint: 0.2, wear: 0.36, scratch: true });
       case 'hose':
         return rubber;
       default:
