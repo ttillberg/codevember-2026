@@ -56,20 +56,13 @@ const VOICE: Record<Place['kind'], { hp: number; bp?: number; ref: number; loud:
   roof: { hp: 2200, bp: 4200, ref: 35, loud: 0.06 },
 };
 
-// Sad, and in the drone's key: A minor, slow. Four bars round, each chord with its seventh: A minor, F major,
-// D minor, and B flat major (the drone's minor second over A, as a chord: the turn that makes it ache)
-const BPM = 88;
+// Upbeat, as it was first (it was made sad and slow for a while, and is back): 112 BPM, four bars round, A minor,
+// F, C, G (as roots and the chords over them)
+const BPM = 112;
 const STEP = 60 / BPM / 4; // a sixteenth
 const midi = (n: number) => 440 * Math.pow(2, (n - 69) / 12);
-const CHORDS = [[57, 60, 64, 67], [53, 57, 60, 64], [50, 53, 57, 60], [46, 50, 53, 57]];
-const ARP = [0, 2, 1, 3, 2, 1, 3, 2]; // (eighths, up and across the chord)
-// the tune: a few notes a bar, falling, (sixteenth, note)
-const TUNE: [number, number][][] = [
-  [[0, 76], [6, 74], [10, 72]],
-  [[0, 72], [8, 69]],
-  [[0, 77], [6, 76], [10, 74]],
-  [[0, 74], [4, 72], [8, 70], [12, 69]],
-];
+const CHORDS = [[57, 60, 64], [53, 57, 60], [48, 52, 55], [55, 59, 62]];
+const ARP = [0, 1, 2, 1, 2, 0, 1, 2, 0, 2, 1, 0, 1, 2, 1, 2];
 
 const smooth = (x: number, a: number, b: number) => {
   const t = Math.min(1, Math.max(0, (x - a) / (b - a)));
@@ -944,30 +937,30 @@ export class Sound {
       src.start(at, Math.random() * 0.5);
       src.stop(at + d + 0.05);
     };
-    // the kick: half time, on one and on the and of two
-    if (s16 === 0 || s16 === 6) {
+    // the kick: four to the floor
+    if (s16 % 4 === 0) {
       const o = ac.createOscillator();
-      o.frequency.setValueAtTime(120, at);
-      o.frequency.exponentialRampToValueAtTime(40, at + 0.15);
+      o.frequency.setValueAtTime(150, at);
+      o.frequency.exponentialRampToValueAtTime(45, at + 0.12);
       const g = ac.createGain();
-      env(g, 0.8, 0.003, 0.45);
+      env(g, 0.9, 0.002, 0.3);
       o.connect(g).connect(m.bus);
       o.start(at);
-      o.stop(at + 0.5);
+      o.stop(at + 0.35);
     }
-    // the snare on three, soft, with a long tail of noise
-    if (s16 === 8) { hiss(0.3, 0.4, 'bandpass', 1500); osc('triangle', 170, 0.12, 0.001, 0.1); }
-    // the hats, quiet, eighths
-    if (s16 % 2 === 0) hiss(s16 % 4 === 2 ? 0.07 : 0.035, 0.06, 'highpass', 8000);
-    // the bass: the root held, a long note a half bar, falling to the fifth below at the bar's end
-    if (s16 === 0) osc('sawtooth', midi(chord[0] - 12), 0.32, 0.02, STEP * 12, 380);
-    if (s16 === 12) osc('sawtooth', midi(chord[0] - 17), 0.22, 0.02, STEP * 4, 380);
-    // the arpeggio: eighths across the chord, an octave up, soft and round
-    if (s16 % 2 === 0) osc('triangle', midi(chord[ARP[s16 / 2]] + 12), 0.06, 0.01, 0.5, 2200);
-    // the pad: the chord over the whole bar, slow in, slow out, two detuned saws a note, dark
-    if (s16 === 0) for (const n of chord) for (const c of [-9, 9]) osc('sawtooth', midi(n), 0.03, 0.9, STEP * 16 + 1.2, 1000, c);
-    // the tune, falling, a little vibrato-less and plain, as from a cheap synth in there
-    for (const [at16, n] of TUNE[bar]) if (at16 === s16) osc('square', midi(n), 0.045, 0.03, 0.9, 1600);
+    // the snare on two and four, a clap's worth of noise and a little tone
+    if (s16 === 4 || s16 === 12) { hiss(0.45, 0.18, 'bandpass', 1800); osc('triangle', 190, 0.2, 0.001, 0.08); }
+    // the hats, on the offbeats, and a quiet one on every other sixteenth
+    if (s16 % 4 === 2) hiss(0.18, 0.05, 'highpass', 7000);
+    else if (s16 % 2 === 1) hiss(0.05, 0.03, 'highpass', 9000);
+    // the bass: eighths, the root, up an octave on the offbeat
+    if (s16 % 2 === 0) osc('sawtooth', midi(chord[0] - 24 + (s16 % 4 === 2 ? 12 : 0)), 0.35, 0.005, 0.2, 700);
+    // the arpeggio: sixteenths up and down the chord, two octaves up, a square
+    osc('square', midi(chord[ARP[s16]] + 12), 0.07, 0.003, 0.12, 3200);
+    // the pad: the chord at the bar's start, slow in, held, two detuned saws a note
+    if (s16 === 0) for (const n of chord) for (const c of [-8, 8]) osc('sawtooth', midi(n), 0.035, 0.4, STEP * 16 + 0.6, 1400, c);
+    // and the hook, every other bar: a few notes over it
+    if (bar % 2 === 1 && [0, 3, 6, 10].includes(s16)) osc('triangle', midi(chord[[2, 1, 2, 0][[0, 3, 6, 10].indexOf(s16)]] + 24), 0.09, 0.01, 0.25);
   }
 
   /** a press somewhere in the hall, working: a heavy thump, the pitch dropping as it lands, and its echo */
@@ -1085,7 +1078,12 @@ export class Sound {
     // with the fans open
     const turn = e.fanTurns[1] ?? e.fanTurns[0] ?? 0;
     const swell = 0.5 + 0.5 * Math.cos(turn * 5);
-    this.drone.gain.gain.setTargetAtTime(0.32 * (1 - 0.6 * e.fans * (1 - swell)), t, 0.1);
+    // and over that it breathes, slowly: it comes up over some ten seconds, stays a while, goes down to almost
+    // nothing and is gone for a few seconds before it comes back. Never quite the same length twice (two slow
+    // cycles, out of step, decide)
+    const ph = t / 26 + 0.15 * Math.sin(t / 61);
+    const breath = Math.pow(0.5 - 0.5 * Math.cos(ph * Math.PI * 2), 1.5);
+    this.drone.gain.gain.setTargetAtTime(0.36 * (0.04 + 0.96 * breath) * (1 - 0.6 * e.fans * (1 - swell)), t, 0.1);
     // the hum: loud close in and where the pod is, breathing; a murmur from far
     this.hum.gain.gain.setTargetAtTime((0.02 + 0.2 * near * near) * (0.45 + 0.55 * e.beat), t, 0.08);
     this.hum.tone.frequency.setTargetAtTime(70 + 70 * near + 40 * e.beat, t, 0.1);
