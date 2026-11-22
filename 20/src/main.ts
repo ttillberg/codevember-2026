@@ -89,7 +89,7 @@ function start() {
     });
     // the eye: yours (drag, pinch), or on its own, a new shot every few seconds
     const eyeBtn = list.querySelector<HTMLButtonElement>('[data-ctl="eye"]')!;
-    eyeBtn.addEventListener('click', () => { if (cine || auto) cine = auto = null; else play(); });
+    eyeBtn.addEventListener('click', () => { if (cine || auto) letGo(); else play(); });
     let eyeWas: boolean | null = null;
     // the sound: off until this symbol turns it on (and off again). Nothing is made until then. (?sound: on from the
     // first press anywhere, as a page may not make a sound before one)
@@ -170,6 +170,7 @@ function start() {
   const ortho = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 100); // the debug panel's iso: same eye, no perspective
   let eye: THREE.Camera = camera;
   let ready = false;
+  let resK = 1; // how much of the pixel budget is drawn (pace, below)
   // the opening: from well below and off to the side, looking up at the pod and past it into the dark of a hall
   // shut down, as it fades in; a moment, and the roof's shutter rolls up, the eye turning slowly. A touch, a drag or the
   // wheel and the eye is yours
@@ -371,7 +372,23 @@ function start() {
   const SCREEN_AT = new THREE.Vector3(0.06, 0.2, -0.08); // where the screen is, stood on end: a metre tall
   const PEEK_AT = new THREE.Vector3(0.06, -0.02, -0.05); // what the eye looks at: low on it, over the line being typed
   let peek: null | { t: number; yaw: number; pitch: number; radius: number; target: THREE.Vector3; fov: number } = null;
-  const peekStart = () => { cine = auto = null; goal = null; peek = { t: 0, yaw, pitch, radius, target: target.clone(), fov: camera.fov }; };
+  // The eye's own distance is taken through its own lens, 40 degrees: drawn through any other, it stands as far off
+  // as frames the target the same. A shot's long lens let go of widens back to 40 over a moment, and the eye moving
+  // in at the same time had the two at odds: the widening ate the start of the move, which seemed to begin slowly,
+  // nothing happening, and then pull in. Now the widening comes with a step in that keeps the pod its size: all
+  // that is seen is the move. (The shots and the look in keep their own distances: `dist`)
+  const T20 = Math.tan(THREE.MathUtils.degToRad(20));
+  const reach = () => Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)) / T20;
+  /** the eye given back, from just where it is */
+  const letGo = () => {
+    if (auto || peek) {
+      // (a shot standing still had it on where the crane had the pod at its cut, not where it is now)
+      if (auto && shown().fixed) target.add(anchor).sub(carry);
+      radius *= reach();
+    }
+    cine = auto = peek = null;
+  };
+  const peekStart = () => { cine = auto = null; goal = null; peek = { t: 0, yaw, pitch, radius: radius / reach(), target: target.clone(), fov: camera.fov }; };
   // held in the hand, the close shots: the eye wanders a little and breathes (?hand=0 off, ?hand=2 twice as much)
   const HAND = Math.max(0, +(query.get('hand') ?? 1));
   let sway = 0;
@@ -395,7 +412,7 @@ function start() {
   let homeRadius = 7.5;
   // a view the camera is easing to (the debug panel's), null while it is yours
   // (`rate`: how fast the eye goes there, per second; 6 unless said, which is the debug panel's snap)
-  let goal: null | { yaw: number; pitch: number; radius: number; target: THREE.Vector3; rate?: number } = null;
+  let goal: null | { yaw: number; pitch: number; radius: number; target: THREE.Vector3; rate?: number; tap?: boolean } = null;
   const NUDGE = 0.06; // it is heavy: how far a hand can lean it, radians
   let still = true; // the debug panel's hold still: no swing, no crane round; on from the start
   const podRest = new THREE.Quaternion(); // how the pod hangs, askew, as it comes from Blender
@@ -680,6 +697,8 @@ function start() {
       cables.push(cable);
       scene.add(cable.mesh);
     });
+    // (their maps drawn when the frame says: every other one)
+    hall.podSun.shadow.autoUpdate = hall.roof.shadow.autoUpdate = false;
     hall.liftsRun(true); // (the hoists ride up and down: they had stood still, waiting for a cue never given)
     places = [
       { kind: 'pod', at: { x: 0, y: 0, z: 0 } },
@@ -756,22 +775,26 @@ function start() {
   // While the eye is on its own, only a press on the pod takes it: a press on the hall is let go by. (Any press
   // took it, and a stray click during a shot of the roof left you holding the eye, looking at the roof.) Once
   // it is yours, the hall is yours to drag round as before. And the pointer shows which: a hand over the pod
-  const overPod = (x: number, y: number) => {
-    if (!pod) return false;
+  /** what of the pod is under (x, y), if any */
+  const podAt = (x: number, y: number) => {
+    if (!pod) return null;
     ndc.set((x / canvas.clientWidth) * 2 - 1, -(y / canvas.clientHeight) * 2 + 1);
     ray.setFromCamera(ndc, eye);
-    return ray.intersectObject(pod, true).length > 0;
+    return ray.intersectObject(pod, true)[0] ?? null;
   };
+  const overPod = (x: number, y: number) => podAt(x, y) !== null;
   let missed = false; // this press was on the hall while the eye was on its own: nothing comes of it
+  let downHit: THREE.Intersection | null = null; // the press's own hit on the pod: cast once (88k triangles, on a phone)
   canvas.addEventListener('pointerdown', (e) => {
-    missed = !!(cine || auto) && !overPod(e.clientX, e.clientY);
+    downHit = podAt(e.clientX, e.clientY);
+    missed = !!(cine || auto) && !downHit;
     if (missed) return;
     wasIn = !!peek;
-    cine = auto = peek = null; // (the eye is yours)
+    letGo(); // (the eye is yours)
   });
   canvas.addEventListener('wheel', (e) => {
     missed = !!(cine || auto) && !overPod(e.clientX, e.clientY);
-    if (!missed) cine = auto = peek = null;
+    if (!missed) letGo();
   });
   canvas.addEventListener('pointermove', (e) => {
     if (e.pointerType === 'mouse' && !e.buttons) canvas.classList.toggle('on-pod', overPod(e.clientX, e.clientY));
@@ -799,11 +822,12 @@ function start() {
     if (e.button === 2 || e.shiftKey) { grab = 'pan'; return; }
     grab = 'orbit';
     if (!pod) return;
-    ndc.set((e.clientX / canvas.clientWidth) * 2 - 1, -(e.clientY / canvas.clientHeight) * 2 + 1);
-    ray.setFromCamera(ndc, eye);
-    const hit = ray.intersectObject(pod, true)[0];
+    const hit = downHit;
     if (!hit) return;
     downAt.onPod = true;
+    // the eye sets off for the door at once, as the finger comes down, not as it lifts: a press is felt. A drag
+    // stops it where it has got to (pointermove); a tap goes on with it (release)
+    if (!(stuck && !wasIn)) goal = toDoor();
     sound?.startMusic(); // (something starts playing in there)
     let o: THREE.Object3D | null = hit.object;
     while (o && o !== door) o = o.parent;
@@ -841,6 +865,8 @@ function start() {
       if (fingers.size >= 2) radius = THREE.MathUtils.clamp((pinch.r * pinch.d) / spread(), 2, 16);
       return;
     }
+    // (a press on the pod that turns into a drag: the eye stops where its way to the door has got it)
+    if (goal?.tap && downAt && Math.hypot(e.clientX - downAt.x, e.clientY - downAt.y) >= 8) goal = null;
     const dx = e.clientX - px;
     const dy = e.clientY - py;
     px = e.clientX;
@@ -884,7 +910,7 @@ function start() {
     const tap = downAt && performance.now() - downAt.t < 400 && Math.hypot(e.clientX - downAt.x, e.clientY - downAt.y) < 8;
     if (tap && downAt!.onPod && e.type === 'pointerup') {
       if (downAt!.stuck && !wasIn) { stuck = true; lookIn(); }
-      else { goal = { yaw: FRONT.yaw, pitch: FRONT.pitch, radius: FRONT.radius * fit(), target: FRONT.target.clone(), rate: 2.4 }; doorSeen(1400); }
+      else { goal = toDoor(); doorSeen(1400); }
     }
     downAt = null;
     grab = null;
@@ -895,6 +921,8 @@ function start() {
   canvas.addEventListener('pointercancel', release);
 
   const lookIn = () => { peekStart(); doorSeen(2500); };
+  /** the move to the door: fast off the mark, slower and slower in (no easing in: it goes the moment it is asked) */
+  function toDoor() { return { yaw: FRONT.yaw, pitch: FRONT.pitch, radius: FRONT.radius * fit(), target: FRONT.target.clone(), rate: 3, tap: true }; }
   // dev only: a look at the state from the console
   if (import.meta.env.DEV) Object.assign(window, { sound: () => sound, cocoon: () => ({ grab, open, vopen, ax, az, tw, doorSign, cables: cables.length, carry: carry.x, hand, doorFree }), __x: () => carry.x, look: (y: number, p: number, r: number) => { goal = null; yaw = y; pitch = p; radius = r; vyaw = vpitch = 0; }, craneAt: (t: number) => { craneTime = t; }, doorAt: (v: number) => { latched = false; open = v; vopen = 0; stuck = v >= HOLD; }, peekAt: (t: number) => { if (!peek) peekStart(); peek!.t = t; }, shotKey: () => (auto ? key(shown()) : cine?.on ? 'cine' : null), shot: (i: number, x = 0.5) => { play(); auto!.i = i; auto!.t = CUT * AUTO[i].s * x; }, see: (what: 'roof' | 'fans' | 'rail', k: number) => { play(); auto!.q = SEE[what][k]; auto!.t = (CUT * auto!.q.s) / 2; }, cineAt: (t: number) => { if (cine) cine.t = t; }, view: (s: { yaw: number; pitch: number; radius: number; target: number[] }) => { goal = null; yaw = s.yaw; pitch = s.pitch; radius = s.radius; target.fromArray(s.target); vyaw = vpitch = 0; }, scene, camera, ao, renderer, post });
 
@@ -1190,7 +1218,7 @@ function start() {
     if (!w || !h) return; // not laid out yet, or hidden
     // a budget of pixels: a big retina screen full has 7.5 million, and every pass pays for each; 4.5 million is
     // sharp still, at about half the cost
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2, Math.sqrt(4.5e6 / (w * h))));
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2, Math.sqrt(4.5e6 / (w * h))) * resK);
     renderer.setSize(w, h, false);
     post.setSize(w, h);
     camera.aspect = w / h;
@@ -1209,6 +1237,22 @@ function start() {
   let owed = 0;
   let time = 0;
   let frameMs = 16.7; // smoothed, for the debug readout
+  // the resolution follows the frame rate: a phone that cannot keep up draws fewer pixels (down to 0.8 of them across:
+  // 0.6 was tried, and the roof's glass went to blocks)
+  // until it can, and more again when it has time to spare; not straight back up to a step it was too slow at, but
+  // that is forgotten bit by bit (a slow while, a hitch, is not the phone)
+  let paceMs = 16.7, slowFor = 0, fastFor = 0, calmFor = 0, resCeil = 1.01;
+  const pace = (ms: number, dt: number) => {
+    if (ms > 200) return; // (the page was hidden: not a slow frame)
+    paceMs += (ms - paceMs) * 0.08;
+    slowFor = paceMs > 25 ? slowFor + dt : 0;
+    fastFor = paceMs < 17.6 ? fastFor + dt : 0;
+    calmFor = paceMs < 17.6 ? calmFor + dt : 0;
+    if (calmFor > 15) { resCeil = Math.min(1.01, resCeil + 0.15); calmFor = 0; }
+    if (slowFor > 1 && resK > 0.8) { resCeil = resK; resK = Math.max(0.8, resK * 0.9); slowFor = 0; resize(); }
+    else if (fastFor > 3 && resK < 1 && resK / 0.9 < resCeil - 0.01) { resK = Math.min(1, resK / 0.9); fastFor = 0; resize(); }
+  };
+  let shadowTick = false;
   function frame(now: number) {
     // no more than 60 a second: a 120 Hz screen would draw all of it twice as often, for nothing seen
     if (now - then < 1000 / 62) { requestAnimationFrame(frame); return; }
@@ -1216,6 +1260,7 @@ function start() {
     if (!ready) { then = now; requestAnimationFrame(frame); return; }
     frameMs += (now - then - frameMs) * 0.05;
     const dt = Math.min(0.05, (now - then) / 1000);
+    pace(now - then, dt);
     then = now;
 
     if (grab !== 'orbit') {
@@ -1225,7 +1270,7 @@ function start() {
       vpitch *= 0.92;
     }
     // the opening shot, eased from one view to the next (a view from the debug panel ends it)
-    if (goal) cine = auto = peek = null;
+    if (goal) letGo();
     if (cine?.on) {
       cine.t += dt;
       while (cuesDone < CUES.length && CUES[cuesDone][0] <= cine.t) CUES[cuesDone++][1]();
@@ -1315,7 +1360,8 @@ function start() {
     if (!auto && !peek) pitch = THREE.MathUtils.clamp(pitch, -0.85, 0.6); // (on its own it may look straight down, from the girder)
     // the eye goes along with the pod, wherever the crane takes it
     v3.copy(target).add(stood ?? carry);
-    camera.position.set(Math.sin(yaw) * Math.cos(pitch), Math.sin(pitch), Math.cos(yaw) * Math.cos(pitch)).multiplyScalar(radius).add(v3);
+    const dist = auto || peek ? radius : radius / reach(); // (the eye's own distance is through 40 degrees: above)
+    camera.position.set(Math.sin(yaw) * Math.cos(pitch), Math.sin(pitch), Math.cos(yaw) * Math.cos(pitch)).multiplyScalar(dist).add(v3);
     camera.lookAt(v3);
     // held in the hand, when the eye is on its own and close: it wanders slowly, breathes, shakes a very little
     {
@@ -1413,6 +1459,10 @@ function start() {
     }
     ao.enabled = eye === camera && aoOn; // the debug panel's iso goes without, and it can be switched off
     hall?.prepare(renderer, camera);
+    // the pod's sun and the roof's skylight redraw their maps every other frame: the pod swings slowly, and the two
+    // 2048² maps were a sixth of the frame (after the hall's sun is baked, which must not catch them half drawn)
+    shadowTick = !shadowTick;
+    if (shadowTick && hall) { hall.podSun.shadow.needsUpdate = true; hall.roof.shadow.needsUpdate = true; }
     post.render(eye);
     requestAnimationFrame(frame);
   }
