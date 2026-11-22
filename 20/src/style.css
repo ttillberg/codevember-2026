@@ -35,7 +35,7 @@ canvas:active { cursor: grabbing; }
   .plate .head > i { font-size: 10px; }
 }
 /* debug: a gear bottom right, its panel a frosted card above it. Dev, or ?settings / ?debug, never for visitors */
-.debug { position: fixed; z-index: 3; right: max(24px, env(safe-area-inset-right)); bottom: max(24px, env(safe-area-inset-bottom)); display: flex; flex-direction: column; align-items: flex-end; gap: 8px; }
+.debug { position: fixed; z-index: 5; right: max(24px, env(safe-area-inset-right)); bottom: max(24px, env(safe-area-inset-bottom)); display: flex; flex-direction: column; align-items: flex-end; gap: 8px; }
 .debug[hidden] { display: none; }
 .debug .gear {
   display: flex; align-items: center; justify-content: center; width: 34px; height: 34px; padding: 0; border: 0; border-radius: 50%;
@@ -87,13 +87,25 @@ canvas:active { cursor: grabbing; }
 .split-down canvas#c { height: 50vh; }
 .split-down .ref { left: 0; bottom: 0; width: 100vw; height: 50vh; }
 .debug .label kbd { margin-left: 6px; }
-/* the controls, bottom left: bare symbols in white, in a row, nothing round them; dim when off, full when on (main.ts) */
-.controls { position: fixed; left: max(20px, env(safe-area-inset-left)); bottom: max(20px, env(safe-area-inset-bottom)); margin: 0; padding: 0; list-style: none; display: flex; flex-direction: row; gap: 2px; z-index: 4; }
-.controls button { width: 44px; height: 44px; border: 0; background: none; color: rgba(255, 255, 255, 0.42); display: grid; place-items: center; padding: 0; cursor: pointer; -webkit-tap-highlight-color: transparent; transition: color 0.3s; filter: drop-shadow(0 0 6px rgba(0, 0, 0, 0.6)); }
-.controls button[aria-pressed="true"] { color: #fff; }
-.controls button:focus-visible { outline: 1px solid rgba(255, 255, 255, 0.7); outline-offset: -4px; border-radius: 50%; }
-@media (hover: hover) { .controls button:hover { color: #fff; } }
-.controls svg { width: 24px; height: 24px; overflow: visible; }
+/* the controls: small round buttons on a frosted ground, as the other days' (docs/DESIGN.md); on, the button is the
+   ink and the symbol the dark (main.ts). They were bare symbols, dim when off and full when on */
+.controls { position: fixed; left: max(20px, env(safe-area-inset-left)); right: max(20px, env(safe-area-inset-right)); bottom: max(20px, env(safe-area-inset-bottom)); margin: 0; padding: 0; list-style: none; display: flex; flex-direction: row; gap: 8px; z-index: 4; pointer-events: none; }
+/* the scene's own on the left; the camera and the sound on the right (the row spans the width: only its buttons take a touch) */
+.controls .end { margin-left: auto; }
+.controls button { pointer-events: auto; }
+/* (with the debug gear there, bottom right, the right pair stands clear of it) */
+body:has(.debug:not([hidden])) .controls { right: max(68px, calc(env(safe-area-inset-right) + 48px)); }
+.controls button {
+  width: 36px; height: 36px; border: 0; border-radius: 50%; display: grid; place-items: center; padding: 0; cursor: pointer;
+  background: rgba(11, 11, 13, 0.4); color: #f4f4f2; box-shadow: inset 0 0 0 1px rgba(244, 244, 242, 0.3);
+  -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px); -webkit-tap-highlight-color: transparent;
+  transition: background 0.2s, color 0.2s, transform 0.25s cubic-bezier(0.3, 1.4, 0.5, 1);
+}
+.controls button:active { transform: scale(0.94); }
+.controls button[aria-pressed="true"] { background: #f4f4f2; color: #0b0b0d; }
+.controls button:focus-visible { outline: 1px solid rgba(244, 244, 242, 0.7); outline-offset: 2px; }
+@media (hover: hover) { .controls button:not([aria-pressed="true"]):hover { background: rgba(244, 244, 242, 0.16); } }
+.controls svg { width: 20px; height: 20px; overflow: visible; }
 .controls svg * { fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 .controls svg .solid { fill: currentColor; stroke: none; }
 .controls svg .light { stroke-width: 1.4; transition: opacity 0.2s; }
@@ -106,7 +118,8 @@ canvas:active { cursor: grabbing; }
 .controls [data-ctl="eye"][aria-pressed="true"] .orbit { animation: orbit 9s linear infinite; }
 @keyframes orbit { to { transform: rotate(360deg); } }
 @media (max-width: 640px) {
-  .controls { left: max(12px, env(safe-area-inset-left)); bottom: max(12px, env(safe-area-inset-bottom)); }
+  .controls { left: max(12px, env(safe-area-inset-left)); right: max(12px, env(safe-area-inset-right)); bottom: max(12px, env(safe-area-inset-bottom)); }
+  body:has(.debug:not([hidden])) .controls { right: max(56px, calc(env(safe-area-inset-right) + 40px)); }
 }
 /* the page comes up black and fades in once the scene is there (main.ts) */
 .fade { position: fixed; inset: 0; background: #000; z-index: 50; pointer-events: none; transition: opacity 3.5s ease-in-out; }
