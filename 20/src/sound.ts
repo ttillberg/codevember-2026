@@ -56,14 +56,6 @@ const VOICE: Record<Place['kind'], { hp: number; bp?: number; ref: number; loud:
   roof: { hp: 2200, bp: 4200, ref: 35, loud: 0.06 },
 };
 
-// Upbeat, as it was first (it was made sad and slow for a while, and is back): 112 BPM, four bars round, A minor,
-// F, C, G (as roots and the chords over them)
-const BPM = 112;
-const STEP = 60 / BPM / 4; // a sixteenth
-const midi = (n: number) => 440 * Math.pow(2, (n - 69) / 12);
-const CHORDS = [[57, 60, 64], [53, 57, 60], [48, 52, 55], [55, 59, 62]];
-const ARP = [0, 1, 2, 1, 2, 0, 1, 2, 0, 2, 1, 0, 1, 2, 1, 2];
-
 const smooth = (x: number, a: number, b: number) => {
   const t = Math.min(1, Math.max(0, (x - a) / (b - a)));
   return t * t * (3 - 2 * t);
@@ -128,7 +120,7 @@ export class Sound {
   private spots: { gain: GainNode; tone: BiquadFilterNode; pan: StereoPannerNode }[] = [];
   private white!: AudioBuffer;
   private brown!: AudioBuffer;
-  private music: null | { bus: GainNode; tone: BiquadFilterNode; level: GainNode; hall: GainNode; next: number; step: number; noise: AudioBuffer } = null;
+  private music: null | { bus: GainNode; tone: BiquadFilterNode; level: GainNode; hall: GainNode; next: number; noise: AudioBuffer; mode: 'type' | 'print' | 'wait'; left: number; word: number } = null;
   private nextPress = 1.5;
   private pressBeat = 0;
   private nextVent = 4;
@@ -879,8 +871,10 @@ export class Sound {
     return (this.spots[i] = { gain, tone, pan });
   }
 
-  /** Something playing in there: synth pop, muffled through the pod's steel. Started by the first press on the pod;
-   * it plays on from then, and how much of it comes out is the door's and the eye's (update) */
+  /** Someone in there at an old terminal, muffled through the pod's steel: keys typed in bursts, a word at a time, the
+   * return; now and then the bell; the machine printing its answer back, fast and even; the prompt waiting. Started
+   * by the first press on the pod; it goes on from then, and how much of it comes out is the door's and the eye's
+   * (update). (It was synth pop, a disco loop, for a while) */
   startMusic() {
     if (this.music) return;
     const ac = this.ac;
@@ -900,67 +894,95 @@ export class Sound {
     const nb = ac.createBuffer(1, ac.sampleRate, ac.sampleRate);
     const d = nb.getChannelData(0);
     for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
-    this.music = { bus, tone, level, hall, next: ac.currentTime + 0.1, step: 0, noise: nb };
+    this.music = { bus, tone, level, hall, next: ac.currentTime + 0.4, noise: nb, mode: 'type', left: 14, word: 4 };
   }
 
-  /** one sixteenth of it, at time `at` */
-  private play(step: number, at: number) {
+  /** the next thing at the terminal, at time `at`; returns how long until the one after */
+  private play(at: number) {
     const m = this.music!, ac = this.ac;
-    const s16 = step % 16, bar = Math.floor(step / 16) % 4;
-    const chord = CHORDS[bar];
-    const env = (g: GainNode, peak: number, a: number, d: number) => {
-      g.gain.setValueAtTime(0, at);
-      g.gain.linearRampToValueAtTime(peak, at + a);
-      g.gain.exponentialRampToValueAtTime(0.0001, at + a + d);
-    };
-    const osc = (type: OscillatorType, f: number, peak: number, a: number, d: number, cut = 0, detune = 0) => {
-      const o = ac.createOscillator();
-      o.type = type;
-      o.frequency.value = f;
-      o.detune.value = detune;
-      const g = ac.createGain();
-      env(g, peak, a, d);
-      if (cut) { const l = ac.createBiquadFilter(); l.type = 'lowpass'; l.frequency.value = cut; o.connect(l).connect(g); } else o.connect(g);
-      g.connect(m.bus);
-      o.start(at);
-      o.stop(at + a + d + 0.05);
-    };
-    const hiss = (peak: number, d: number, type: BiquadFilterType, f: number) => {
+    const r = Math.random;
+    // a click: a burst of noise through a band, and a short thock under it, the key bottoming out
+    const click = (when: number, band: number, loud: number, thock: number, len = 0.014) => {
       const src = ac.createBufferSource();
       src.buffer = m.noise;
       const b = ac.createBiquadFilter();
-      b.type = type;
-      b.frequency.value = f;
+      b.type = 'bandpass';
+      b.frequency.value = band * (0.85 + 0.3 * r());
+      b.Q.value = 1.6;
       const g = ac.createGain();
-      env(g, peak, 0.002, d);
+      g.gain.setValueAtTime(0, when);
+      g.gain.linearRampToValueAtTime(loud, when + 0.0015);
+      g.gain.exponentialRampToValueAtTime(0.0001, when + len);
       src.connect(b).connect(g).connect(m.bus);
-      src.start(at, Math.random() * 0.5);
-      src.stop(at + d + 0.05);
-    };
-    // the kick: four to the floor
-    if (s16 % 4 === 0) {
+      src.start(when, r() * 0.9);
+      src.stop(when + len + 0.02);
+      if (!thock) return;
       const o = ac.createOscillator();
-      o.frequency.setValueAtTime(150, at);
-      o.frequency.exponentialRampToValueAtTime(45, at + 0.12);
+      o.frequency.setValueAtTime(thock * (0.9 + 0.2 * r()), when);
+      o.frequency.exponentialRampToValueAtTime(thock * 0.55, when + 0.03);
+      const h = ac.createGain();
+      h.gain.setValueAtTime(0, when);
+      h.gain.linearRampToValueAtTime(loud * 0.8, when + 0.002);
+      h.gain.exponentialRampToValueAtTime(0.0001, when + 0.04);
+      o.connect(h).connect(m.bus);
+      o.start(when);
+      o.stop(when + 0.06);
+    };
+    // the bell: a square, short, a little rough
+    const bell = (when: number) => {
+      const o = ac.createOscillator();
+      o.type = 'square';
+      o.frequency.value = 784;
+      const l = ac.createBiquadFilter();
+      l.type = 'lowpass';
+      l.frequency.value = 2600;
       const g = ac.createGain();
-      env(g, 0.9, 0.002, 0.3);
-      o.connect(g).connect(m.bus);
-      o.start(at);
-      o.stop(at + 0.35);
+      g.gain.setValueAtTime(0, when);
+      g.gain.linearRampToValueAtTime(0.1, when + 0.004);
+      g.gain.setValueAtTime(0.1, when + 0.11);
+      g.gain.linearRampToValueAtTime(0, when + 0.13);
+      o.connect(l).connect(g).connect(m.bus);
+      o.start(when);
+      o.stop(when + 0.15);
+    };
+    if (m.mode === 'type') {
+      if (m.left <= 0) {
+        // the return: heavier, pressed and let go; the bell now and then; and the machine answers, or it waits
+        click(at, 1500, 0.5, 140, 0.02);
+        click(at + 0.07, 2600, 0.2, 0);
+        if (r() < 0.35) bell(at + 0.18);
+        if (r() < 0.6) { m.mode = 'print'; m.left = 24 + Math.floor(r() * 90); return 0.45 + r() * 0.5; }
+        m.mode = 'wait';
+        return 0.3;
+      }
+      m.left--;
+      if (m.word-- <= 0) {
+        // the space bar: lower, and a breath before the next word
+        click(at, 1300, 0.38, 120);
+        m.word = 2 + Math.floor(r() * 7);
+        return 0.14 + r() * 0.16 + (r() < 0.12 ? 0.5 + r() : 0);
+      }
+      click(at, 2900, 0.26 + 0.12 * r(), 200);
+      return 0.07 + r() * 0.1;
     }
-    // the snare on two and four, a clap's worth of noise and a little tone
-    if (s16 === 4 || s16 === 12) { hiss(0.45, 0.18, 'bandpass', 1800); osc('triangle', 190, 0.2, 0.001, 0.08); }
-    // the hats, on the offbeats, and a quiet one on every other sixteenth
-    if (s16 % 4 === 2) hiss(0.18, 0.05, 'highpass', 7000);
-    else if (s16 % 2 === 1) hiss(0.05, 0.03, 'highpass', 9000);
-    // the bass: eighths, the root, up an octave on the offbeat
-    if (s16 % 2 === 0) osc('sawtooth', midi(chord[0] - 24 + (s16 % 4 === 2 ? 12 : 0)), 0.35, 0.005, 0.2, 700);
-    // the arpeggio: sixteenths up and down the chord, two octaves up, a square
-    osc('square', midi(chord[ARP[s16]] + 12), 0.07, 0.003, 0.12, 3200);
-    // the pad: the chord at the bar's start, slow in, held, two detuned saws a note
-    if (s16 === 0) for (const n of chord) for (const c of [-8, 8]) osc('sawtooth', midi(n), 0.035, 0.4, STEP * 16 + 0.6, 1400, c);
-    // and the hook, every other bar: a few notes over it
-    if (bar % 2 === 1 && [0, 3, 6, 10].includes(s16)) osc('triangle', midi(chord[[2, 1, 2, 0][[0, 3, 6, 10].indexOf(s16)]] + 24), 0.09, 0.01, 0.25);
+    if (m.mode === 'print') {
+      // the answer, printed back: thirty a second, even, a little lighter on the spaces; a line, a return, the next
+      if (m.left <= 0) {
+        click(at, 1800, 0.22, 0, 0.03);
+        if (r() < 0.45) { m.left = 20 + Math.floor(r() * 60); return 0.12; }
+        if (r() < 0.25) bell(at + 0.1);
+        m.mode = 'wait';
+        return 0.2;
+      }
+      m.left--;
+      if ((m.left % 64) < 40 || r() < 0.85) click(at, 3600, 0.12 + 0.03 * r(), 0, 0.006);
+      return 1 / 30;
+    }
+    // the prompt, waiting: someone reading, thinking; then typing again
+    m.mode = 'type';
+    m.left = 6 + Math.floor(r() * 40);
+    m.word = 1 + Math.floor(r() * 6);
+    return 1.2 + r() * 4.5;
   }
 
   /** a press somewhere in the hall, working: a heavy thump, the pitch dropping as it lands, and its echo */
@@ -1177,11 +1199,11 @@ export class Sound {
     this.creak.pitch.frequency.setTargetAtTime(950 + 500 * ds, t, 0.1);
     if (this.doorWas > 0.4 && ds < 0.05) this.knock(t + 0.01, 0.35 * this.doorWas * dn, e.pan * 0.4, 0.3);
     this.doorWas = ds < 0.05 ? 0 : Math.max(this.doorWas * 0.9, ds);
-    // the music in the pod: through its steel, low and dull, and opening up with the door and as the eye comes to
+    // the terminal in the pod: through its steel, low and dull, and opening up with the door and as the eye comes to
     // the opening; panned with the pod
     if (this.music) {
       const m = this.music;
-      while (m.next < t + 0.25) { this.play(m.step, m.next); m.step++; m.next += STEP; }
+      while (m.next < t + 0.25) m.next += this.play(m.next);
       const out = Math.max(Math.min(1, e.door), 0);
       const clear = out * (0.55 + 0.45 * e.inside);
       m.tone.frequency.setTargetAtTime(170 + 9000 * Math.pow(clear, 1.6), t, 0.12);
