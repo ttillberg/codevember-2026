@@ -1,6 +1,6 @@
 ---
 query:
-warmup: 3000
+warmup: 16000
 ink: white
 seconds: 10
 ---
