@@ -40,9 +40,10 @@ export class OrangeDeskLamp {
     this.wallGlow.position.set(0.55, 3.65, -0.55);
     this.root.add(this.wallGlow);
 
-    // Positioned further left so the base sits slightly outside the default screen edge (heat safe from CRT!)
-    this.root.position.set(-5.95, 0, 0.45);
-    this.root.rotation.y = -0.14;
+    // Positioned off-left and slightly lower so the shade sits cleanly BELOW the top-left title plate (and heat-safe from CRT!)
+    this.root.position.set(-5.35, 0, -0.60);
+    this.root.rotation.y = -0.08;
+    this.root.scale.setScalar(0.78);
 
     const loader = new GLTFLoader();
     const url = `${import.meta.env.BASE_URL}lamp.glb`;

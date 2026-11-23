@@ -21,7 +21,7 @@ interface LiveKey {
 // Authentic Commodore 64C 66-key layout (4 sculpted cream rows + long spacebar + 4 dark-taupe F-keys)
 const KEY_SPECS: KeySpec[] = [
   // Row 0 (top number row with authentic C64 dual legends!)
-  { label: '←', key: 'Escape', w: 1, col: 0, row: 0 },
+  { label: '←', key: '_', w: 1, col: 0, row: 0 },
   { label: '1', shiftLabel: '!', petscii: 'BLK', key: '1', aliases: ['!'], w: 1, col: 1, row: 0 },
   { label: '2', shiftLabel: '"', petscii: 'WHT', key: '2', aliases: ['"', '@'], w: 1, col: 2, row: 0 },
   { label: '3', shiftLabel: '#', petscii: 'RED', key: '3', aliases: ['#'], w: 1, col: 3, row: 0 },
@@ -203,10 +203,7 @@ export class Commodore64Breadbin {
     c64.add(seam);
 
     // 2. Signature Commodore 64C full-width horizontal slatted rear cooling louvers!
-    const louverBaseY = -minY + (H - (bodyGeo.boundingBox!.max.y + minY) * 0.5);
-    // Compute exact top plateau Y of the extruded wedge
     const topPlateauY = bodyGeo.boundingBox!.max.y - minY;
-    void louverBaseY;
 
     const louverGroup = new THREE.Group();
     const louverStartZ = -hd + 0.075;
@@ -229,7 +226,6 @@ export class Commodore64Breadbin {
       const slat = new THREE.Mesh(slatGeo, caseMat);
       slat.position.set(0, topPlateauY + 0.005, sz);
       slat.rotation.x = 0.08;
-      slat.castShadow = true;
       slat.receiveShadow = true;
       louverGroup.add(slat);
     }
@@ -329,13 +325,13 @@ export class Commodore64Breadbin {
     badgeMesh.position.set(1.30, 0.021, 0.41);
     deckGroup.add(badgeMesh);
 
-    // 4. Build all 66 high-detail sculpted cylindrical-dished C64C keycaps!
-    const { creamMat, fnGreyMat, uvRectFor } = makeC64CKeycapAtlasMaterials();
-
+    // 4. Build all 66 high-detail sculpted cylindrical-dished C64C keycaps sharing ONE combined atlas!
     const unit = 0.194;
+    const keyH = 0.132;
+    const { keycapMat, uvRectFor } = makeC64CKeycapAtlasMaterial(unit, keyH);
+
     const startX = -1.78;
     const startZ = -0.40;
-    const keyH = 0.132; // tall iconic Commodore sculptural key height!
 
     for (let idx = 0; idx < KEY_SPECS.length; idx++) {
       const spec = KEY_SPECS[idx];
@@ -343,15 +339,13 @@ export class Commodore64Breadbin {
       const kd = unit - 0.020;
 
       const geo = makeDishedC64CKeycapGeo(kw, keyH, kd, uvRectFor(idx));
-      const mat = spec.fn ? fnGreyMat : creamMat;
-      const keyMesh = new THREE.Mesh(geo, mat);
+      const keyMesh = new THREE.Mesh(geo, keycapMat);
 
       const kx = startX + (spec.col + spec.w * 0.5) * unit;
       const kz = startZ + spec.row * (unit + 0.006);
       const restY = 0.068;
 
       keyMesh.position.set(kx, restY, kz);
-      keyMesh.castShadow = true;
       keyMesh.receiveShadow = true;
       keyMesh.userData.hit = { kind: 'key', key: spec.key };
       deckGroup.add(keyMesh);
@@ -598,6 +592,17 @@ function makeDishedC64CKeycapGeo(
     return -halfH;
   };
 
+  const topHalfW = halfW * taperX;
+  const topHalfD = halfD * taperZ;
+  const clamp01 = (v: number) => (v < 0 ? 0 : v > 1 ? 1 : v);
+
+  // Map top face (+Y) into top 112/192 of atlas cell, front face (+Z) into bottom 80/192 skirt band!
+  const [u0, v0, u1, v1] = uvRect;
+  const du = u1 - u0;
+  const dv = v1 - v0;
+  const skirtFrac = 80 / 192;
+  const splitV = v0 + dv * skirtFrac;
+
   for (let i = 0; i < pos.count; i++) {
     let x = remapXZ(pos.getX(i), halfW);
     let y = remapY(pos.getY(i));
@@ -635,120 +640,147 @@ function makeDishedC64CKeycapGeo(
       yDish = -(1 - nx * nx) * 0.010 * (1 - Math.abs(nz) * 0.25);
     }
 
-    pos.setXYZ(i, x * sx, y + yDish, z * sz + zShift);
-  }
-  geo.computeVertexNormals();
+    const fx = x * sx;
+    const fy = y + yDish;
+    const fz = z * sz + zShift;
+    pos.setXYZ(i, fx, fy, fz);
 
-  // Map top face (+Y) into top 74% of atlas cell, front face (+Z) into bottom 26% PETSCII band!
-  const [u0, v0, u1, v1] = uvRect;
-  const du = u1 - u0;
-  const dv = v1 - v0;
-  const splitV = v0 + dv * 0.26;
-
-  for (let i = 0; i < uv.count; i++) {
-    const su = uv.getX(i);
-    const sv = uv.getY(i);
+    // 5. Compute true physical-space UVs so remapped chamfers & wide keys never stretch legends!
     if (faceDir[i] === 'top') {
-      uv.setXY(i, u0 + (0.04 + su * 0.92) * du, splitV + (0.04 + sv * 0.92) * (v1 - splitV));
+      const su = clamp01(0.5 + fx / (2 * topHalfW));
+      const sv = clamp01(0.5 - (fz + 0.014) / (2 * topHalfD));
+      uv.setXY(i, u0 + (0.03 + su * 0.94) * du, splitV + (0.03 + sv * 0.94) * (v1 - splitV));
     } else if (faceDir[i] === 'front') {
-      uv.setXY(i, u0 + (0.06 + su * 0.88) * du, v0 + (0.06 + sv * 0.88) * (splitV - v0));
+      const su = clamp01(0.5 + fx / (2 * halfW));
+      const sv = clamp01((fy + halfH) / h);
+      uv.setXY(i, u0 + (0.03 + su * 0.94) * du, v0 + (0.04 + sv * 0.92) * (splitV - v0));
     } else {
-      uv.setXY(i, u0 + du * 0.04, v1 - dv * 0.04);
+      // Solid cream or grey corner inside this key's own atlas cell (never bleeds text onto side walls)
+      uv.setXY(i, u0 + du * 0.025, v1 - dv * 0.025);
     }
   }
+  geo.computeVertexNormals();
 
   return geo;
 }
 
-function makeC64CKeycapAtlasMaterials(): {
-  creamMat: THREE.MeshStandardMaterial;
-  fnGreyMat: THREE.MeshStandardMaterial;
+function makeC64CKeycapAtlasMaterial(
+  unit: number,
+  keyH: number,
+): {
+  keycapMat: THREE.MeshStandardMaterial;
   uvRectFor: (idx: number) => [number, number, number, number];
 } {
   const cols = 9;
   const rows = 8;
-  const cellW = 144;
-  const cellH = 144;
+  const cellW = 160;
+  const cellH = 192;
+  const topH = 112;
+  const skirtH = cellH - topH; // 80 px dedicated to front skirt (zero vertical stretch!)
   const W = cols * cellW;
   const H = rows * cellH;
 
-  const makeTex = (bgHex: string, skirtHex: string, fgHex: string, petsciiHex: string) => {
-    const c = document.createElement('canvas');
-    c.width = W;
-    c.height = H;
-    const ctx = c.getContext('2d')!;
+  const c = document.createElement('canvas');
+  c.width = W;
+  c.height = H;
+  const ctx = c.getContext('2d')!;
+  ctx.fillStyle = '#ded7c9';
+  ctx.fillRect(0, 0, W, H);
+
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+
+  const canvasTopAspect = cellW / topH;
+  const canvasFrontAspect = cellW / skirtH;
+  const kd = unit - 0.020;
+
+  for (let i = 0; i < KEY_SPECS.length; i++) {
+    const spec = KEY_SPECS[i];
+    const ox = (i % cols) * cellW;
+    const oy = Math.floor(i / cols) * cellH;
+
+    const bgHex = spec.fn ? '#7f7a71' : '#ded7c9';
+    const skirtHex = spec.fn ? '#716c63' : '#d2cab9';
+    const fgHex = spec.fn ? '#1d1b19' : '#252321';
+    const petsciiHex = '#4b4741';
+
+    // Fill key cell background (top + slightly shaded front skirt)
     ctx.fillStyle = bgHex;
-    ctx.fillRect(0, 0, W, H);
+    ctx.fillRect(ox, oy, cellW, topH);
 
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
+    // Soft dished-top subtle specular highlight
+    const grad = ctx.createRadialGradient(
+      ox + cellW * 0.5,
+      oy + topH * 0.42,
+      6,
+      ox + cellW * 0.5,
+      oy + topH * 0.5,
+      cellW * 0.54,
+    );
+    grad.addColorStop(0, 'rgba(255,255,255,0.12)');
+    grad.addColorStop(0.7, 'rgba(0,0,0,0.0)');
+    grad.addColorStop(1, 'rgba(0,0,0,0.09)');
+    ctx.fillStyle = grad;
+    ctx.fillRect(ox, oy, cellW, topH);
 
-    for (let i = 0; i < KEY_SPECS.length; i++) {
-      const spec = KEY_SPECS[i];
-      const ox = (i % cols) * cellW;
-      const oy = Math.floor(i / cols) * cellH;
-      const topH = Math.floor(cellH * 0.74);
+    ctx.fillStyle = skirtHex;
+    ctx.fillRect(ox, oy + topH, cellW, skirtH);
 
-      // Soft dished top highlight gradient
-      const grad = ctx.createRadialGradient(
-        ox + cellW * 0.5,
-        oy + topH * 0.42,
-        6,
-        ox + cellW * 0.5,
-        oy + topH * 0.5,
-        cellW * 0.52,
-      );
-      grad.addColorStop(0, 'rgba(255,255,255,0.14)');
-      grad.addColorStop(0.7, 'rgba(0,0,0,0.0)');
-      grad.addColorStop(1, 'rgba(0,0,0,0.10)');
-      ctx.fillStyle = grad;
-      ctx.fillRect(ox, oy, cellW, topH);
+    // Exact physical aspect compensation so wide keys (RETURN, SHIFT, CTRL, RESTORE, F1..F7) never stretch!
+    const kw = spec.w * unit - 0.018;
+    const taperX = Math.max(0.75, 1 - 0.048 / kw);
+    const taperZ = 0.72;
+    const physTopAspect = (kw * taperX) / (kd * taperZ);
+    const topScaleX = canvasTopAspect / physTopAspect;
 
-      // Slightly shaded front skirt zone (bottom 26% of cell)
-      ctx.fillStyle = skirtHex;
-      ctx.fillRect(ox, oy + topH, cellW, cellH - topH);
+    const cx = ox + cellW * 0.5;
+    ctx.save();
+    ctx.translate(cx, oy);
+    ctx.scale(topScaleX, 1);
+    ctx.fillStyle = fgHex;
 
-      // Main & shifted top legends (authentic C64C dark charcoal print on cream!)
-      const cx = ox + cellW * 0.5;
-      ctx.fillStyle = fgHex;
-      if (spec.shiftLabel && spec.label) {
-        const longShift = spec.shiftLabel.length > 2;
-        const longMain = spec.label.length > 2;
-        ctx.font = `700 ${longShift ? 20 : 28}px "IBM Plex Sans", Inter, sans-serif`;
-        ctx.fillText(spec.shiftLabel, cx, oy + topH * 0.32);
-        ctx.font = `700 ${longMain ? 22 : 34}px "IBM Plex Sans", Inter, sans-serif`;
-        ctx.fillText(spec.label, cx, oy + topH * 0.69);
-      } else if (spec.label) {
-        const len = spec.label.length;
-        const size = len > 5 ? 21 : len > 2 ? 25 : len === 2 ? 36 : 46;
-        ctx.font = `700 ${size}px "IBM Plex Sans", Inter, sans-serif`;
-        ctx.fillText(spec.label, cx, oy + topH * 0.52);
-      }
-
-      // Authentic PETSCII front-skirt graphic print!
-      if (spec.petscii) {
-        ctx.fillStyle = petsciiHex;
-        ctx.font = '700 17px "IBM Plex Sans", Inter, sans-serif';
-        ctx.fillText(spec.petscii, cx, oy + topH + (cellH - topH) * 0.54);
-      }
+    if (spec.shiftLabel && spec.label) {
+      const longShift = spec.shiftLabel.length > 2;
+      const longMain = spec.label.length > 2;
+      const shiftSize = spec.fn ? 22 : longShift ? 19 : 26;
+      const mainSize = spec.fn ? 22 : longMain ? 20 : 32;
+      ctx.font = `700 ${shiftSize}px "IBM Plex Sans", Inter, sans-serif`;
+      ctx.fillText(spec.shiftLabel, 0, topH * 0.30);
+      ctx.font = `700 ${mainSize}px "IBM Plex Sans", Inter, sans-serif`;
+      ctx.fillText(spec.label, 0, topH * 0.70);
+    } else if (spec.label) {
+      const len = spec.label.length;
+      const size = len > 5 ? 24 : len > 2 ? 27 : len === 2 ? 34 : 44;
+      ctx.font = `700 ${size}px "IBM Plex Sans", Inter, sans-serif`;
+      ctx.fillText(spec.label, 0, topH * 0.51);
     }
+    ctx.restore();
 
-    const tex = new THREE.CanvasTexture(c);
-    tex.colorSpace = THREE.SRGBColorSpace;
-    tex.anisotropy = 8;
-    return tex;
-  };
+    // Exact aspect-compensated crisp front-skirt legends (BLK..OFF & subtle C64 PETSCII graphics!)
+    if (spec.petscii) {
+      const physFrontAspect = kw / keyH;
+      const frontScaleX = canvasFrontAspect / physFrontAspect;
+      ctx.save();
+      ctx.translate(cx, oy + topH + skirtH * 0.46);
+      ctx.scale(frontScaleX, 1);
+      ctx.fillStyle = petsciiHex;
+      const isWord = /^[A-Z]{3}$/.test(spec.petscii);
+      ctx.font = isWord
+        ? '700 13px "IBM Plex Sans", Inter, sans-serif'
+        : '600 15px "IBM Plex Sans", Inter, sans-serif';
+      ctx.fillText(spec.petscii, 0, 0);
+      ctx.restore();
+    }
+  }
 
-  // Authentic Commodore 64C warm off-white cream keys + dark taupe-grey F-keys!
-  const creamMat = new THREE.MeshStandardMaterial({
-    map: makeTex('#ded7c9', '#cdc5b6', '#262422', '#4a4640'),
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = 8;
+
+  const keycapMat = new THREE.MeshStandardMaterial({
+    map: tex,
     roughness: 0.42,
     metalness: 0.03,
-  });
-  const fnGreyMat = new THREE.MeshStandardMaterial({
-    map: makeTex('#7f7a71', '#6e6960', '#201e1c', '#201e1c'),
-    roughness: 0.46,
-    metalness: 0.04,
   });
 
   const uvRectFor = (idx: number): [number, number, number, number] => {
@@ -761,7 +793,7 @@ function makeC64CKeycapAtlasMaterials(): {
     return [u0, v0, u1, v1];
   };
 
-  return { creamMat, fnGreyMat, uvRectFor };
+  return { keycapMat, uvRectFor };
 }
 
 function makePowerLabelTex(): THREE.CanvasTexture {

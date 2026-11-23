@@ -239,11 +239,6 @@ function makeBatmanDialTexture(): THREE.CanvasTexture {
     ctx.quadraticCurveTo(8, 2, 0, 8);
     ctx.quadraticCurveTo(-8, 2, -22, 6);
     ctx.fill();
-    ctx.fillStyle = '#ffffff';
-    ctx.font = '700 9px "IBM Plex Sans", sans-serif';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText('BAT MAN', 0, 2);
     ctx.restore();
   };
   drawMiniBadge(cx, cy - R * 0.89);
@@ -293,26 +288,6 @@ function makeBatmanDialTexture(): THREE.CanvasTexture {
   ctx.fillStyle = '#ffffff';
   ctx.fillRect(-7, -23, 5, 3);
   ctx.fillRect(2, -23, 5, 3);
-
-  // Bold 1980s red-orange "BAT" and "MAN" block letters with bright yellow outline
-  ctx.font = '700 66px "IBM Plex Sans", sans-serif';
-  ctx.textBaseline = 'middle';
-  ctx.lineJoin = 'round';
-
-  const drawLogoWord = (word: string, x: number, y: number) => {
-    ctx.textAlign = 'center';
-    ctx.strokeStyle = '#241f1c';
-    ctx.lineWidth = 10;
-    ctx.strokeText(word, x, y);
-    ctx.strokeStyle = '#f5df4d';
-    ctx.lineWidth = 6;
-    ctx.strokeText(word, x, y);
-    ctx.fillStyle = '#e54632';
-    ctx.fillText(word, x, y);
-  };
-
-  drawLogoWord('BAT', -78, 22);
-  drawLogoWord('MAN', 82, 22);
 
   ctx.restore();
 
