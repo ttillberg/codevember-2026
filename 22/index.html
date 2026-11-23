@@ -27,8 +27,10 @@
       <canvas id="crt-fs-canvas" width="384" height="272"></canvas>
       <div class="crt-fs-scanlines" aria-hidden="true"></div>
     </div>
-    <!-- Hidden input for touch/mobile virtual keyboards when tapping the CRT screen -->
-    <input id="touch-kbd" type="text" tabindex="-1" autocomplete="off" autocorrect="off" autocapitalize="characters" spellcheck="false" aria-label="Commodore 64 keyboard input" />
+    <!-- Hidden input for native iOS/Android virtual keyboard when tapping the CRT or C64 keyboard -->
+    <input id="touch-kbd" type="text" tabindex="-1" inputmode="text" enterkeyhint="go" autocomplete="off" autocorrect="off" autocapitalize="characters" spellcheck="false" aria-label="Commodore 64 keyboard input" />
+    <!-- Shown only while the mobile virtual keyboard is open so touch users can press C64 RUN/STOP -->
+    <button id="btn-esc" class="mobile-esc" type="button" hidden aria-label="RUN/STOP (Escape)">ESC · STOP</button>
 
     <!-- the title plate (docs/DESIGN.md) -->
     <div class="plate">

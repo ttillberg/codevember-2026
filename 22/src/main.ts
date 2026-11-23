@@ -26,6 +26,7 @@ const crtFsEl = document.querySelector<HTMLElement>('#crt-fullscreen')!;
 const crtFsCanvas = document.querySelector<HTMLCanvasElement>('#crt-fs-canvas')!;
 const crtFsCtx = crtFsCanvas.getContext('2d')!;
 const touchInput = document.querySelector<HTMLInputElement>('#touch-kbd')!;
+const btnEsc = document.querySelector<HTMLButtonElement>('#btn-esc')!;
 const btnFocus = document.querySelector<HTMLButtonElement>('#btn-focus')!;
 const btnSound = document.querySelector<HTMLButtonElement>('#btn-sound')!;
 const btnPaper = document.querySelector<HTMLButtonElement>('#btn-paper')!;
@@ -104,16 +105,57 @@ const parallax = { x: 0, y: 0 };
 const desiredPos = new THREE.Vector3();
 const desiredTarget = new THREE.Vector3();
 
+let mobileKbdOpen = false;
+
 function computePreset(focused: boolean) {
-  const aspect = window.innerWidth / Math.max(1, window.innerHeight);
+  const fullW = Math.max(1, window.innerWidth);
+  const fullH = Math.max(1, window.innerHeight);
+  const aspect = fullW / fullH;
+  const isPhonePortraitWidth = fullW < 640;
+  const portraitMobile = !focused && aspect < 0.85;
 
   if (focused) {
     // Zoom straight into the CRT screen while the full-viewport C64 blue screen fades in
     camGoalTarget.set(0, 1.98, 1.0);
     camGoalPos.set(0, 2.02, 4.2);
+  } else if (mobileKbdOpen && isPhonePortraitWidth) {
+    // Portrait mobile keyboard open: fit the 1702 CRT cleanly inside the exact usable visualViewport
+    // strip between the top title plate (22 ECHO) and the top of the iOS/Android keyboard!
+    const vv = window.visualViewport;
+    const visH = vv?.height ?? fullH;
+    const vvTop = vv?.offsetTop ?? 0;
+    const tanHalfV = Math.tan(THREE.MathUtils.degToRad(camera.fov * 0.5));
+    const screenZ = 1.15;
+    const screenCenterY = 2.02;
+
+    // Reserve clean clearance for top "22 ECHO" header (~84px) and bottom ESC pill + bezel (~52px)
+    const topSafePx = 84;
+    const bottomSafePx = 52;
+    const usableH = Math.max(140, visH - topSafePx - bottomSafePx);
+    const usableFrac = usableH / fullH;
+
+    // Exact distance using Three.js camera.aspect (fullW / fullH):
+    // fits 3.24u width (blue CRT 2.86u + tidy side margin) and 2.38u height inside usableH
+    const distForWidth = 1.62 / (tanHalfV * aspect);
+    const distForHeight = 1.19 / (tanHalfV * usableFrac);
+    const dist = Math.max(distForWidth, distForHeight);
+
+    // Project CRT center (y = 2.02) to the exact vertical midpoint of [vvTop + topSafePx .. vvTop + visH - bottomSafePx]
+    const targetPxFromTop = vvTop + topSafePx + usableH * 0.5;
+    const ndcY = 1 - (2 * targetPxFromTop) / fullH;
+    const camY = screenCenterY - ndcY * dist * tanHalfV;
+
+    camGoalTarget.set(0.0, camY, screenZ);
+    camGoalPos.set(0.0, camY, screenZ + dist);
+  } else if (portraitMobile) {
+    // Portrait mobile (keyboard closed): full cozy desk view (lamp peek, 1702, full C64C, clock, 1541)
+    // that zooms cleanly into the CRT the moment you tap to open the iOS keyboard
+    const distScale = Math.max(0.84, Math.min(1.12, 0.48 / Math.max(0.38, aspect)));
+    camGoalTarget.set(0.10, 1.66, 0.35);
+    camGoalPos.set(0.28, 3.65, 18.2 * distScale);
   } else {
     // Big centered 1702 CRT with the C64C cropping naturally at the bottom foreground, 1541 + TAC-2 on the right, cheat sheet + lamp on the left
-    const narrow = aspect < 1.50 ? Math.min(2.15, 1.50 / Math.max(0.55, aspect)) : 1.0;
+    const narrow = aspect < 1.50 ? Math.min(1.85, 1.50 / Math.max(0.85, aspect)) : 1.0;
     camGoalTarget.set(0.16, 1.70, 0.30);
     camGoalPos.set(0.48 * Math.min(1.25, narrow), 3.02 * Math.pow(narrow, 0.28), 8.62 * narrow);
   }
@@ -339,6 +381,22 @@ canvas.addEventListener('lostpointercapture', () => {
   releaseKnob();
 });
 
+const C64_SHIFT_MAP: Record<string, string> = {
+  '1': '!', '2': '"', '3': '#', '4': '$', '5': '%', '6': '&', '7': "'", '8': '(', '9': ')',
+  ':': '[', ';': ']', ',': '<', '.': '>', '/': '?',
+};
+let virtualShift = false;
+
+let lastTouchTapOpensKbd = false;
+
+canvas.addEventListener('click', () => {
+  // iOS Safari strictly trusts synchronous 'click' events to open the native virtual keyboard
+  if (lastTouchTapOpensKbd) {
+    lastTouchTapOpensKbd = false;
+    openMobileKeyboard();
+  }
+});
+
 canvas.addEventListener('pointerup', (e) => {
   activePointers.delete(e.pointerId);
   if (e.pointerType === 'mouse' && e.button !== 0) return;
@@ -358,7 +416,7 @@ canvas.addEventListener('pointerup', (e) => {
     return;
   }
 
-  if (hit.kind !== 'screen' && document.activeElement === touchInput) {
+  if (hit.kind !== 'screen' && hit.kind !== 'key' && document.activeElement === touchInput) {
     touchInput.blur();
   }
 
@@ -383,9 +441,21 @@ canvas.addEventListener('pointerup', (e) => {
     if (ticking) sound.playClockTick(0, true);
     showToast(ticking ? 'Clock tick on' : 'Clock tick off');
   } else if (hit.kind === 'key') {
-    c64.triggerKey(hit.key);
-    sound.playKey(hit.key);
-    basic.handleKey(hit.key, false, false);
+    if (e.pointerType === 'touch') {
+      // On iOS/Android touchscreens, tapping the 3D keyboard pops up the native OS keyboard!
+      lastTouchTapOpensKbd = true;
+      openMobileKeyboard();
+    } else {
+      c64.triggerKey(hit.key);
+      sound.playKey(hit.key);
+      if (hit.key === 'Shift') {
+        virtualShift = !virtualShift;
+      } else {
+        const outKey = virtualShift ? (C64_SHIFT_MAP[hit.key] ?? hit.key) : hit.key;
+        virtualShift = false;
+        basic.handleKey(outKey, false, false);
+      }
+    }
   } else if (hit.kind === 'joystick') {
     const local = tac2.root.worldToLocal(lastHitPoint.clone());
     const dx = Math.abs(local.x) >= Math.abs(local.z) ? (local.x >= 0 ? 1 : -1) : 0;
@@ -408,7 +478,8 @@ canvas.addEventListener('pointerup', (e) => {
     setPaperOpen(paperViewEl.hidden);
   } else if (hit.kind === 'screen') {
     if (e.pointerType === 'touch') {
-      touchInput.focus({ preventScroll: true });
+      lastTouchTapOpensKbd = true;
+      openMobileKeyboard();
     }
   }
 });
@@ -427,7 +498,7 @@ crtFsEl.addEventListener('dblclick', () => {
 crtFsEl.addEventListener('pointerdown', (e) => {
   sound.unlock();
   if (e.pointerType === 'touch') {
-    touchInput.focus({ preventScroll: true });
+    openMobileKeyboard();
   }
 });
 
@@ -517,10 +588,8 @@ window.addEventListener('keydown', (e) => {
   if (document.activeElement === touchInput) {
     if (e.key === 'Enter' || e.key === 'Backspace' || e.key === 'Escape') {
       e.preventDefault();
-      c64.triggerKey(e.key);
-      if (basic.handleKey(e.key, e.ctrlKey, e.metaKey)) {
-        sound.playKey(e.key);
-      }
+      fireTouchSpecialKey(e.key);
+      resetTouchSentinel();
     }
     return;
   }
@@ -566,18 +635,107 @@ window.addEventListener('keydown', (e) => {
   }
 });
 
-touchInput.addEventListener('input', () => {
-  const val = touchInput.value;
-  if (val) {
-    for (const ch of val) {
-      c64.triggerKey(ch);
-      if (basic.handleKey(ch, false, false)) {
-        sound.playKey(ch);
-      }
-    }
-    touchInput.value = '';
+// ---- Native iOS / Android Virtual Keyboard Bridge ----
+// Keep a 1-space sentinel inside #touch-kbd so iOS & Android Backspace always emits an input event.
+const KBD_SENTINEL = ' ';
+let lastTouchSpecialAt = 0;
+
+function resetTouchSentinel() {
+  touchInput.value = KBD_SENTINEL;
+  try {
+    touchInput.setSelectionRange(1, 1);
+  } catch {
+    // Ignore browsers that disallow selection changes on hidden inputs
+  }
+}
+
+function openMobileKeyboard() {
+  resetTouchSentinel();
+  touchInput.focus({ preventScroll: true });
+  try {
+    touchInput.setSelectionRange(1, 1);
+  } catch {
+    // Ignore
+  }
+}
+
+function fireTouchSpecialKey(key: 'Enter' | 'Backspace' | 'Escape') {
+  const now = performance.now();
+  if (now - lastTouchSpecialAt < 25) return;
+  lastTouchSpecialAt = now;
+  c64.triggerKey(key);
+  if (basic.handleKey(key, false, false)) {
+    sound.playKey(key);
+  }
+}
+
+touchInput.addEventListener('focus', () => {
+  mobileKbdOpen = true;
+  resetTouchSentinel();
+  btnEsc.hidden = false;
+  syncVisualViewport();
+  computePreset(focusedMode);
+});
+
+touchInput.addEventListener('blur', () => {
+  mobileKbdOpen = false;
+  btnEsc.hidden = true;
+  document.documentElement.style.setProperty('--vv-bottom', `${window.innerHeight}px`);
+  computePreset(focusedMode);
+});
+
+touchInput.addEventListener('beforeinput', (e) => {
+  if (e.inputType === 'insertLineBreak' || e.inputType === 'insertParagraph') {
+    e.preventDefault();
+    fireTouchSpecialKey('Enter');
+    resetTouchSentinel();
+  } else if (e.inputType === 'deleteContentBackward') {
+    e.preventDefault();
+    fireTouchSpecialKey('Backspace');
+    resetTouchSentinel();
   }
 });
+
+touchInput.addEventListener('input', () => {
+  const val = touchInput.value;
+  if (val.length === 0) {
+    // Sentinel deleted -> Backspace on iOS/Android
+    fireTouchSpecialKey('Backspace');
+    resetTouchSentinel();
+    return;
+  }
+  // Strip leading/trailing sentinel space so actual typed characters pass through cleanly
+  const typed = val.startsWith(KBD_SENTINEL) ? val.slice(1) : val.endsWith(KBD_SENTINEL) ? val.slice(0, -1) : val;
+  if (typed.length > 0) {
+    for (const ch of typed) {
+      if (ch === '\n' || ch === '\r') {
+        fireTouchSpecialKey('Enter');
+      } else {
+        c64.triggerKey(ch);
+        if (basic.handleKey(ch, false, false)) {
+          sound.playKey(ch);
+        }
+      }
+    }
+  }
+  resetTouchSentinel();
+});
+
+btnEsc.addEventListener('pointerdown', (e) => {
+  // Prevent blur so tapping ESC · STOP breaks the BASIC loop without dismissing the iOS keyboard
+  e.preventDefault();
+  sound.unlock();
+  fireTouchSpecialKey('Escape');
+});
+
+function syncVisualViewport() {
+  const vv = window.visualViewport;
+  const vvBottom = vv ? Math.round(vv.offsetTop + vv.height) : window.innerHeight;
+  document.documentElement.style.setProperty('--vv-bottom', `${vvBottom}px`);
+  computePreset(focusedMode);
+}
+window.visualViewport?.addEventListener('resize', syncVisualViewport);
+window.visualViewport?.addEventListener('scroll', syncVisualViewport);
 
 // ---- Fullscreen C64 Blue Screen Sync ----
 let lastFsBorder = -1;
@@ -670,10 +828,10 @@ function animate(now: number) {
   fillLight.intensity = 0.08 + roomLampLevel * 0.30;
   hemi.intensity = 0.12 + roomLampLevel * 0.22;
 
-  // Subtle, calm pointer parallax around the desk view (suspended during fullscreen CRT mode)
+  // Subtle, calm pointer parallax around the desk view (suspended during fullscreen CRT & mobile typing zoom)
   const pk = Math.min(1, dt * 3.4);
-  const pTargetX = focusedMode ? 0 : parallaxTarget.x;
-  const pTargetY = focusedMode ? 0 : parallaxTarget.y;
+  const pTargetX = focusedMode || mobileKbdOpen ? 0 : parallaxTarget.x;
+  const pTargetY = focusedMode || mobileKbdOpen ? 0 : parallaxTarget.y;
   parallax.x += (pTargetX - parallax.x) * pk;
   parallax.y += (pTargetY - parallax.y) * pk;
 

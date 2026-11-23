@@ -67,15 +67,42 @@ html, body {
 
 #touch-kbd {
   position: fixed;
-  left: -9999px;
+  left: 0;
   top: 0;
   width: 1px;
   height: 1px;
+  padding: 0;
+  border: 0;
   font-size: 16px;
-  opacity: 0;
+  background: transparent;
+  color: transparent;
+  caret-color: transparent;
+  opacity: 0.01;
   pointer-events: none;
   user-select: text;
   -webkit-user-select: text;
+}
+
+.mobile-esc {
+  position: fixed;
+  z-index: 7;
+  right: max(14px, env(safe-area-inset-right));
+  top: calc(var(--vv-bottom, 100vh) - 44px);
+  padding: 7px 13px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.24);
+  background: rgba(16, 15, 14, 0.82);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  color: #f4f4f2;
+  font: 600 11px/1.1 Inter, "Helvetica Neue", Helvetica, Arial, sans-serif;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.mobile-esc[hidden] {
+  display: none;
 }
 
 /* Title plate, top left */
