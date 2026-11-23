@@ -58,7 +58,7 @@ export function buildSwedishRoom(): THREE.Group {
     }),
   );
   driveShadow.rotation.x = -Math.PI / 2;
-  driveShadow.position.set(3.05, 0.004, 0.24);
+  driveShadow.position.set(3.05, 0.004, -0.82);
   driveShadow.rotation.z = 0.18;
   room.add(driveShadow);
 

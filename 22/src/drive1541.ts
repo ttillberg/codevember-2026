@@ -237,8 +237,8 @@ export class Commodore1541 {
       this.root.add(foot);
     }
 
-    // Place right next to the Commodore 1702 monitor, slightly angled inward
-    this.root.position.set(3.05, 0, 0.24);
+    // Place right next to the Commodore 1702 monitor, pushed back so an ejected floppy clears the TAC-2 cleanly
+    this.root.position.set(3.05, 0, -0.82);
     this.root.rotation.y = -0.18;
   }
 

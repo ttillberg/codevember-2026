@@ -226,9 +226,9 @@ export class Tac2Joystick {
     suncomPlaque.position.set(0, H + 0.004, 0.455);
     joy.add(suncomPlaque);
 
-    // Place on the right side of the desk right beside the C64C and in front of the 1541 drive
-    this.root.position.set(2.74, 0, 2.52);
-    this.root.rotation.y = -0.18;
+    // Place on the right side of the desk right beside the C64C, clear of the 1541's ejected floppy disk!
+    this.root.position.set(3.04, 0, 2.74);
+    this.root.rotation.y = -0.22;
 
     this.root.updateMatrixWorld(true);
     this.cableEntryWorld.set(0, 0.15, -D / 2 - 0.10).applyMatrix4(this.root.matrixWorld);
