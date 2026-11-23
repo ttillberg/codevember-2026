@@ -178,9 +178,9 @@ export class Bic4ColorPen {
     this.hitMesh.userData.hit = { kind: 'pen' };
     pen.add(this.hitMesh);
 
-    // Rest casually on the desk right beside the BASIC CHEAT SHEET paper
-    this.root.position.set(-2.22, this.baseY, 1.24);
-    this.root.rotation.y = 0.45;
+    // Rest casually on the open desk above the BASIC CHEAT SHEET so the full two-tone pen, 4 sliders & top ball show cleanly
+    this.root.position.set(-3.08, this.baseY, 0.42);
+    this.root.rotation.y = 0.36;
   }
 
   clickNextColor(): string {

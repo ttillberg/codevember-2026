@@ -42,9 +42,9 @@ export class OrangeDeskLamp {
 
     // Clamped off-screen to the left desk border so the full-size shade hangs big in the mid-left open space
     // cleanly below the title text and clear of both the 1702 monitor and cheat sheet
-    this.root.position.set(-7.18, -1.78, 0.35);
+    this.root.position.set(-7.62, -1.46, 0.35);
     this.root.rotation.set(0, -0.06, -0.32);
-    this.root.scale.setScalar(1.22);
+    this.root.scale.setScalar(1.34);
 
     const loader = new GLTFLoader();
     const url = `${import.meta.env.BASE_URL}lamp.glb`;
