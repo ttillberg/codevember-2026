@@ -441,6 +441,8 @@ attribute float part;
 varying float vPart;
 #endif
 uniform float uTime;
+uniform vec4 uWalker; // walker's foot position (xyz), crouch (w)
+uniform vec2 uWalkDir; // walker's facing XZ for left/right parting
 varying vec2 vUv;
 varying vec3 vWorldPos;
 varying vec3 vNormal;
@@ -486,8 +488,38 @@ void main() {
   #endif
   vLocal = position;
   vec4 wp = modelMatrix * instanceMatrix * vec4(p, 1.0);
+  vec3 wn = normalize(mat3(modelMatrix) * mat3(instanceMatrix) * n);
+  #if defined(GRASS) || defined(SORREL) || defined(FLOWER)
+  // brush aside left/right as the walker crawls through, keeping roots anchored in the moss
+  {
+    vec2 rootXZ = (modelMatrix * instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0)).xz;
+    vec2 d = rootXZ - uWalker.xz;
+    float dist = length(d);
+    float rad = 0.36 + 0.06 * uWalker.w;
+    float dy = abs(wp.y - uWalker.y);
+    float push = smoothstep(rad, 0.04, dist) * smoothstep(0.5, 0.1, dy);
+    if (push > 0.001) {
+      #ifdef GRASS
+      float bendW = position.y * position.y;
+      float stemH = length(instanceMatrix[1].xyz);
+      #else
+      float bendW = part < 0.5 ? uv.y * uv.y : 1.0;
+      float stemH = length(instanceMatrix[1].xyz) * iData.x;
+      #endif
+      vec2 away = dist > 1e-4 ? d / dist : vec2(1.0, 0.0);
+      vec2 right = vec2(-uWalkDir.y, uWalkDir.x);
+      float side = dot(d, right);
+      float sidePush = clamp(side / 0.07, -1.0, 1.0) + (iData.w < 0.5 ? -0.35 : 0.35) * (1.0 - smoothstep(0.0, 0.08, abs(side)));
+      vec2 dir = normalize(away * 0.45 + right * sidePush * 0.9);
+      float amt = push * push * min(stemH * 0.82, 0.22) * bendW;
+      wp.xz += dir * amt;
+      wp.y -= amt * 0.45 * push;
+      wn = normalize(wn + vec3(dir.x, 0.0, dir.y) * push * 0.7 * bendW);
+    }
+  }
+  #endif
   vWorldPos = wp.xyz;
-  vNormal = normalize(mat3(modelMatrix) * mat3(instanceMatrix) * n);
+  vNormal = wn;
   vUv = uv;
   #ifdef LEAF
   vUv = vec2(position.x, position.z);

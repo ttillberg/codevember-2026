@@ -98,9 +98,11 @@ const shellMat = new THREE.ShaderMaterial({
     uCanopyMap: { value: null as THREE.Texture | null },
     uCanopyBox: { value: new THREE.Vector3(0, 0, 1) },
     uCanopyAmt: { value: 1 },
+    uWalker: { value: new THREE.Vector4(0, 0, 0, 0) }, // walker's foot position (xyz) for parting grass/flowers
+    uWalkDir: { value: new THREE.Vector2(0, -1) }, // walker's facing XZ so blades part cleanly left/right
   },
 });
-const SHARED_UNIFORMS = ['uCavityAO', 'uLightDir', 'uLightDirC', 'uRimDir', 'uRim', 'uHemi', 'uTone', 'uExposure', 'toneMappingExposure', 'uShadowMap', 'uShadowMatrix', 'uShadowOn', 'uDepthOnly', 'uShadowFloor', 'uTime', 'uCanopyMap', 'uCanopyBox', 'uCanopyAmt'];
+const SHARED_UNIFORMS = ['uCavityAO', 'uLightDir', 'uLightDirC', 'uRimDir', 'uRim', 'uHemi', 'uTone', 'uExposure', 'toneMappingExposure', 'uShadowMap', 'uShadowMatrix', 'uShadowOn', 'uDepthOnly', 'uShadowFloor', 'uTime', 'uCanopyMap', 'uCanopyBox', 'uCanopyAmt', 'uWalker', 'uWalkDir'];
 const share = (m: THREE.ShaderMaterial) => { for (const k of SHARED_UNIFORMS) m.uniforms[k] = shellMat.uniforms[k]; };
 
 // ---- moss size: day 05's numbers at 175 %
@@ -910,6 +912,8 @@ renderer.setAnimationLoop(() => {
   const dt = Math.min(clock.getDelta(), 0.05);
   shellMat.uniforms.uTime.value = clock.elapsedTime;
   const { fx, fz } = crawl(dt);
+  shellMat.uniforms.uWalker.value.set(me.x, me.y + me.hop - 0.11, me.z, me.crouch);
+  shellMat.uniforms.uWalkDir.value.set(fx, fz);
   pouch.update(dt, me.bob, Math.min(1, Math.abs(me.speed) / 0.2));
   fungi.update(dt, clock.elapsedTime, me.x, me.z);
   // the ones growing near you creak now and then, each kind in its own voice
