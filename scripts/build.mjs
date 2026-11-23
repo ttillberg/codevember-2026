@@ -131,7 +131,22 @@ ${squares}
 `,
 );
 
-// 3. README table between markers
+// 3. Optional analytics in CI (only when GA_MEASUREMENT_ID is set; local/fork builds stay clean)
+const gaId = process.env.GA_MEASUREMENT_ID?.trim();
+if (gaId) {
+  if (!/^G-[A-Z0-9]+$/i.test(gaId)) throw new Error('Invalid GA_MEASUREMENT_ID format (expected G-...)');
+  const gtag = [
+    `  <script async src="https://www.googletagmanager.com/gtag/js?id=${gaId}"></script>`,
+    `  <script>window.dataLayer=window.dataLayer||[];function gtag(){dataLayer.push(arguments);}gtag('js',new Date());gtag('config','${gaId}');</script>`,
+  ].join('\n');
+  for (const htmlPath of [join(dist, 'index.html'), ...days.map((d) => join(dist, d.dir, 'index.html'))]) {
+    if (!existsSync(htmlPath)) continue;
+    const html = readFileSync(htmlPath, 'utf8');
+    writeFileSync(htmlPath, html.replace(/<\/head>/i, `${gtag}\n</head>`));
+  }
+}
+
+// 4. README table between markers
 const rows = WORDS.flatMap((word, i) => {
   const day = i + 1;
   const nn = String(day).padStart(2, '0');
