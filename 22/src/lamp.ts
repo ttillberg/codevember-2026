@@ -40,10 +40,11 @@ export class OrangeDeskLamp {
     this.wallGlow.position.set(0.55, 3.65, -0.55);
     this.root.add(this.wallGlow);
 
-    // Positioned off-left and slightly lower so the shade sits cleanly BELOW the top-left title plate (and heat-safe from CRT!)
-    this.root.position.set(-5.35, 0, -0.60);
-    this.root.rotation.y = -0.08;
-    this.root.scale.setScalar(0.78);
+    // Clamped off-screen to the left desk border so the full-size shade hangs big in the mid-left open space
+    // cleanly below the title text and clear of both the 1702 monitor and cheat sheet
+    this.root.position.set(-7.18, -1.78, 0.35);
+    this.root.rotation.set(0, -0.06, -0.32);
+    this.root.scale.setScalar(1.22);
 
     const loader = new GLTFLoader();
     const url = `${import.meta.env.BASE_URL}lamp.glb`;
