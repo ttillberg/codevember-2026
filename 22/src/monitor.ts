@@ -197,7 +197,7 @@ export class Commodore1702 {
 
     // 4. Curved 4:3 CRT Glass Screen + Custom GLSL CRT Shader
     // Sits cleanly in front of the outer shell face and tucked inside the deep beveled bezel opening!
-    const crtGeo = makeCurvedCrtGeometry(screenW + 0.18, screenH + 0.18, 48, 36, 0.095);
+    const crtGeo = makeCurvedCrtGeometry(screenW + 0.18, screenH + 0.18, 24, 18, 0.095);
     this.crtMaterial = makeCrtShaderMaterial(this.screenTexture);
     this.screenMesh = new THREE.Mesh(crtGeo, this.crtMaterial);
     this.screenMesh.position.set(0, screenCenterY, faceZ + 0.012);
@@ -296,9 +296,8 @@ export class Commodore1702 {
       color: 0x201c19,
       roughness: 0.16,
       metalness: 0.05,
-      transmission: 0.35,
       transparent: true,
-      opacity: 0.84,
+      opacity: 0.78,
       clearcoat: 0.9,
       clearcoatRoughness: 0.12,
     });

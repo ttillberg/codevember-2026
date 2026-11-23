@@ -25,7 +25,7 @@ export class OrangeDeskLamp {
     this.spotLight = new THREE.SpotLight(0xffdfb0, 28, 19, Math.PI * 0.46, 0.62, 1.4);
     this.spotLight.position.set(1.75, 3.25, 0.25);
     this.spotLight.castShadow = true;
-    this.spotLight.shadow.mapSize.set(2048, 2048);
+    this.spotLight.shadow.mapSize.set(1024, 1024);
     this.spotLight.shadow.bias = -0.0004;
     this.spotLight.shadow.normalBias = 0.02;
     this.root.add(this.spotLight);
@@ -59,7 +59,8 @@ export class OrangeDeskLamp {
         if (obj.name === 'switch_rocker') this.switchRocker = obj;
 
         if (obj instanceof THREE.Mesh) {
-          obj.castShadow = obj.name !== 'bulb' && obj.name !== 'shade_inner';
+          const skipShadow = obj.name === 'bulb' || obj.name === 'shade_inner' || obj.name.startsWith('cord_');
+          obj.castShadow = !skipShadow;
           obj.receiveShadow = true;
           obj.userData.hit = { kind: 'lamp' };
           this.interactiveMeshes.push(obj);
@@ -83,6 +84,8 @@ export class OrangeDeskLamp {
       }
 
       onReady?.();
+    }, undefined, (err) => {
+      console.warn('Failed to load desk lamp model:', err);
     });
   }
 

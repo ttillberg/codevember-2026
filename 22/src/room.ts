@@ -329,7 +329,6 @@ function makeDeskTextures(): {
     rCtx.strokeStyle = `rgba(205, 205, 205, ${(alpha * 2.2).toFixed(3)})`;
     rCtx.lineWidth = width + 0.4;
     rCtx.beginPath();
-    cCtx.moveTo(x0, y0);
     rCtx.moveTo(x0, y0);
     rCtx.quadraticCurveTo(cx, cy, x1, y1);
     rCtx.stroke();

@@ -259,9 +259,9 @@ export class C64Basic {
       return true;
     }
 
-    // CLR/HOME (Ctrl+L or Home)
+    // CLR/HOME (Ctrl+L or Home) — ignored during active INPUT so prompt lock stays intact
     if (key === 'Home' || (ctrl && (key === 'l' || key === 'L'))) {
-      if (!this.running || this.inputState) {
+      if (!this.running && !this.inputState) {
         if (ctrl) this.screen.clear();
         else this.screen.home();
       }
@@ -598,7 +598,14 @@ export class C64Basic {
   }
 
   private resumeDirect() {
+    let steps = 0;
+    const MAX_DIRECT_STEPS = 4000;
     while (this.directRemainder) {
+      if (++steps > MAX_DIRECT_STEPS) {
+        this.directRemainder = null;
+        this.reportError('OUT OF MEMORY', null);
+        return;
+      }
       const { text, offset } = this.directRemainder;
       if (offset >= text.length) {
         this.directRemainder = null;
@@ -619,6 +626,10 @@ export class C64Basic {
         }
         if (res.action === 'input') {
           return;
+        }
+        if (res.action === 'jumpPc') {
+          this.directRemainder = { text, offset: res.offset };
+          continue;
         }
         if (res.action === 'jump') {
           this.directRemainder = null;
@@ -766,6 +777,7 @@ export class C64Basic {
       this.forStack = [];
       this.gosubStack = [];
       this.stoppedState = null;
+      this.pendingEchoInput = null;
       this.keyBuffer = [];
       this.rebuildLineIndex();
       this.collectDataStatements();

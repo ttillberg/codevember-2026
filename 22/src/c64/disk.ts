@@ -222,13 +222,23 @@ export class C64FloppyDisk {
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
       if (raw) {
-        const saved = JSON.parse(raw) as DiskProgram[];
-        for (const p of saved) {
-          if (p && typeof p.name === 'string' && p.lines) {
-            this.programs.set(p.name.toUpperCase(), {
-              name: p.name.toUpperCase(),
-              lines: p.lines,
-            });
+        const saved = JSON.parse(raw) as unknown;
+        if (Array.isArray(saved)) {
+          for (const p of saved) {
+            if (!p || typeof p !== 'object' || typeof (p as DiskProgram).name !== 'string') continue;
+            const rawLines = (p as DiskProgram).lines;
+            if (!rawLines || typeof rawLines !== 'object' || Array.isArray(rawLines)) continue;
+            const cleanLines: Record<number, string> = {};
+            for (const [k, v] of Object.entries(rawLines)) {
+              const ln = Number(k);
+              if (Number.isInteger(ln) && ln >= 0 && ln <= 63999 && typeof v === 'string') {
+                cleanLines[ln] = v;
+              }
+            }
+            const upper = (p as DiskProgram).name.trim().toUpperCase();
+            if (upper) {
+              this.programs.set(upper, { name: upper, lines: cleanLines });
+            }
           }
         }
       }

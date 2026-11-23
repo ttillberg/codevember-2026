@@ -129,7 +129,7 @@ scene.add(deskLamp.root);
 
 const deskPaper = new DeskCheatPaper();
 scene.add(deskPaper.root);
-paperImgEl.src = deskPaper.canvas.toDataURL('image/png');
+let paperImgReady = false;
 
 const bicPen = new Bic4ColorPen();
 scene.add(bicPen.root);
@@ -207,11 +207,34 @@ const pointerNdc = new THREE.Vector2();
 
 let downPos = { x: 0, y: 0 };
 let activeKnob: keyof MonitorKnobs | null = null;
+let activeKnobPointerId: number | null = null;
 let lastKnobY = 0;
+let lastCursor = '';
+let canvasRect = canvas.getBoundingClientRect();
+const activePointers = new Set<number>();
+let multiTouchGesture = false;
 const lastHitPoint = new THREE.Vector3();
 
+function setCursor(next: string) {
+  if (lastCursor !== next) {
+    lastCursor = next;
+    canvas.style.cursor = next;
+  }
+}
+
+function releaseKnob() {
+  if (!activeKnob) return;
+  if (activeKnobPointerId !== null && canvas.hasPointerCapture(activeKnobPointerId)) {
+    canvas.releasePointerCapture(activeKnobPointerId);
+  }
+  activeKnob = null;
+  activeKnobPointerId = null;
+  controls.enabled = true;
+  setCursor('grab');
+}
+
 function pickScene(clientX: number, clientY: number): SceneHit | null {
-  const rect = canvas.getBoundingClientRect();
+  const rect = canvasRect;
   pointerNdc.x = ((clientX - rect.left) / rect.width) * 2 - 1;
   pointerNdc.y = -((clientY - rect.top) / rect.height) * 2 + 1;
   raycaster.setFromCamera(pointerNdc, camera);
@@ -228,16 +251,26 @@ function pickScene(clientX: number, clientY: number): SceneHit | null {
 
 canvas.addEventListener('pointerdown', (e) => {
   sound.unlock();
+  if (e.pointerType === 'mouse' && e.button !== 0) return;
+
+  activePointers.add(e.pointerId);
+  if (activePointers.size > 1) {
+    multiTouchGesture = true;
+    return;
+  }
+  multiTouchGesture = false;
+
   downPos = { x: e.clientX, y: e.clientY };
   camAnimating = false;
 
   const hit = pickScene(e.clientX, e.clientY);
   if (hit?.kind === 'knob' && hit.knob) {
     activeKnob = hit.knob;
+    activeKnobPointerId = e.pointerId;
     lastKnobY = e.clientY;
     controls.enabled = false;
     canvas.setPointerCapture(e.pointerId);
-    canvas.style.cursor = 'ns-resize';
+    setCursor('ns-resize');
   }
 });
 
@@ -248,7 +281,7 @@ canvas.addEventListener('pointermove', (e) => {
     monitor.adjustKnob(activeKnob, dy * 0.0045);
     return;
   }
-  if (e.buttons === 0) {
+  if (e.buttons === 0 && e.pointerType === 'mouse') {
     const hit = pickScene(e.clientX, e.clientY);
     deskPaper.setHovered(hit?.kind === 'paper');
     bicPen.setHovered(hit?.kind === 'pen');
@@ -264,13 +297,13 @@ canvas.addEventListener('pointermove', (e) => {
       hit?.kind === 'joystick' ||
       hit?.kind === 'joystick-fire'
     ) {
-      canvas.style.cursor = 'pointer';
+      setCursor('pointer');
     } else if (hit?.kind === 'knob') {
-      canvas.style.cursor = 'ns-resize';
+      setCursor('ns-resize');
     } else if (hit?.kind === 'screen') {
-      canvas.style.cursor = 'text';
+      setCursor('text');
     } else {
-      canvas.style.cursor = 'grab';
+      setCursor('grab');
     }
   }
 });
@@ -280,19 +313,37 @@ canvas.addEventListener('pointerleave', () => {
   bicPen.setHovered(false);
 });
 
+canvas.addEventListener('pointercancel', (e) => {
+  activePointers.delete(e.pointerId);
+  releaseKnob();
+});
+
+canvas.addEventListener('lostpointercapture', () => {
+  releaseKnob();
+});
+
 canvas.addEventListener('pointerup', (e) => {
+  activePointers.delete(e.pointerId);
+  if (e.pointerType === 'mouse' && e.button !== 0) return;
+
   if (activeKnob) {
-    activeKnob = null;
-    controls.enabled = true;
-    canvas.style.cursor = 'grab';
+    releaseKnob();
     return;
   }
+  if (multiTouchGesture) return;
 
   const dist = Math.hypot(e.clientX - downPos.x, e.clientY - downPos.y);
   if (dist > 6) return;
 
   const hit = pickScene(e.clientX, e.clientY);
-  if (!hit) return;
+  if (!hit) {
+    if (document.activeElement === touchInput) touchInput.blur();
+    return;
+  }
+
+  if (hit.kind !== 'screen' && document.activeElement === touchInput) {
+    touchInput.blur();
+  }
 
   if (hit.kind === 'power') {
     const on = monitor.togglePower();
@@ -322,7 +373,7 @@ canvas.addEventListener('pointerup', (e) => {
     const local = tac2.root.worldToLocal(lastHitPoint.clone());
     const dx = Math.abs(local.x) >= Math.abs(local.z) ? (local.x >= 0 ? 1 : -1) : 0;
     const dz = Math.abs(local.z) > Math.abs(local.x) ? (local.z >= 0 ? 1 : -1) : 0;
-    tac2.nudge(dx || 1, dz, 0.22);
+    tac2.nudge(dx === 0 && dz === 0 ? 1 : dx, dz, 0.22);
     sound.playJoystickClick(false);
     if (basic.running) {
       if (dx < 0) basic.handleKey('a', false, false);
@@ -358,6 +409,10 @@ controls.addEventListener('start', () => {
 
 // ---- Cheat Paper Overlay ----
 function setPaperOpen(open: boolean) {
+  if (open && !paperImgReady) {
+    paperImgReady = true;
+    paperImgEl.src = deskPaper.canvas.toDataURL('image/png');
+  }
   paperViewEl.hidden = !open;
   deskPaper.root.visible = !open;
   btnPaper.setAttribute('aria-pressed', String(open));
@@ -438,6 +493,7 @@ window.addEventListener('keydown', (e) => {
   if (document.activeElement === touchInput) {
     if (e.key === 'Enter' || e.key === 'Backspace' || e.key === 'Escape') {
       e.preventDefault();
+      c64.triggerKey(e.key);
       if (basic.handleKey(e.key, e.ctrlKey, e.metaKey)) {
         sound.playKey(e.key);
       }
@@ -458,7 +514,7 @@ window.addEventListener('keydown', (e) => {
     e.key === 'Enter' ||
     e.key === 'Escape' ||
     e.key === 'Home' ||
-    e.key.startsWith('Arrow') ||
+    (!e.altKey && e.key.startsWith('Arrow')) ||
     (e.ctrlKey && (e.key === 'l' || e.key === 'L' || e.key === 'c' || e.key === 'C'))
   ) {
     e.preventDefault();
@@ -524,7 +580,7 @@ btnPaper.addEventListener('click', () => {
   btnPaper.blur();
 });
 
-// ---- Resize ----
+// ---- Resize & Tab Visibility ----
 function resize() {
   const w = window.innerWidth;
   const h = window.innerHeight;
@@ -532,9 +588,13 @@ function resize() {
   camera.updateProjectionMatrix();
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
   renderer.setSize(w, h);
+  canvasRect = canvas.getBoundingClientRect();
   if (camAnimating) computePreset(focusedMode);
 }
 window.addEventListener('resize', resize);
+document.addEventListener('visibilitychange', () => {
+  sound.setPageVisible(!document.hidden);
+});
 
 // ---- Main Loop ----
 let lastTime = performance.now();

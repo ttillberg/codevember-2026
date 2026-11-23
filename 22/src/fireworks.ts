@@ -176,6 +176,16 @@ export class EchoFireworks {
   }
 
   update(dt: number) {
+    if (
+      this.pendingLaunches.length === 0 &&
+      this.rockets.length === 0 &&
+      this.sparks.length === 0 &&
+      this.flashes.length === 0
+    ) {
+      if (this.burstLight.intensity > 0) this.burstLight.intensity = 0;
+      return;
+    }
+
     // 1. Trigger scheduled launches
     for (let i = this.pendingLaunches.length - 1; i >= 0; i--) {
       this.pendingLaunches[i].delay -= dt;
@@ -271,25 +281,37 @@ export class EchoFireworks {
     this.geo.setDrawRange(0, drawCount);
     this.trailGeo.setDrawRange(0, drawCount * 2);
     if (drawCount > 0) {
-      this.geo.attributes.position.needsUpdate = true;
-      this.geo.attributes.color.needsUpdate = true;
-      this.trailGeo.attributes.position.needsUpdate = true;
-      this.trailGeo.attributes.color.needsUpdate = true;
+      const posAttr = this.geo.attributes.position as THREE.BufferAttribute;
+      const colAttr = this.geo.attributes.color as THREE.BufferAttribute;
+      const tPosAttr = this.trailGeo.attributes.position as THREE.BufferAttribute;
+      const tColAttr = this.trailGeo.attributes.color as THREE.BufferAttribute;
+      posAttr.clearUpdateRanges();
+      posAttr.addUpdateRange(0, drawCount * 3);
+      colAttr.clearUpdateRanges();
+      colAttr.addUpdateRange(0, drawCount * 3);
+      tPosAttr.clearUpdateRanges();
+      tPosAttr.addUpdateRange(0, drawCount * 6);
+      tColAttr.clearUpdateRanges();
+      tColAttr.addUpdateRange(0, drawCount * 6);
+      posAttr.needsUpdate = true;
+      colAttr.needsUpdate = true;
+      tPosAttr.needsUpdate = true;
+      tColAttr.needsUpdate = true;
     }
 
-    // 4. Update dynamic burst illumination light
+    // 4. Update dynamic burst illumination light (guard against expired flash NaN!)
     if (this.flashes.length > 0) {
-      let strongest = this.flashes[0];
+      let strongest: BurstFlash | null = null;
       for (let i = this.flashes.length - 1; i >= 0; i--) {
         const f = this.flashes[i];
         f.life -= dt;
         if (f.life <= 0) {
           this.flashes.splice(i, 1);
-        } else if (f.life / f.maxLife > strongest.life / strongest.maxLife) {
+        } else if (!strongest || f.life / f.maxLife > strongest.life / strongest.maxLife) {
           strongest = f;
         }
       }
-      if (this.flashes.length > 0) {
+      if (strongest) {
         const intensity = Math.pow(strongest.life / strongest.maxLife, 1.6) * 8.5;
         this.burstLight.position.copy(strongest.pos);
         this.burstLight.color.copy(strongest.color);

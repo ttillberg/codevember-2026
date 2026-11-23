@@ -183,6 +183,7 @@ setGlyph(0x7f, [0x0f, 0x0f, 0x0f, 0x0f, 0xf0, 0xf0, 0xf0, 0xf0]); // checker qua
  * or -1 if it is a non-printing control code.
  */
 export function petsciiToScreenCode(code: number): number {
+  if (code === 0xa3) return 0x1c;              // '£' round-trips cleanly to C64 pound glyph
   const c = code & 0xff;
   // Standard ASCII lowercase -> uppercase PETSCII (authentic C64 default mode)
   if (c >= 0x61 && c <= 0x7a) return c - 0x60; // 'a'..'z' -> 0x01..0x1A

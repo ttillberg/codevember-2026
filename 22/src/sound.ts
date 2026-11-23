@@ -63,10 +63,30 @@ export class MonitorSound {
     this.enabled = on;
     if (this.ctx && this.humGain) {
       const now = this.ctx.currentTime;
-      this.humGain.gain.setTargetAtTime(on && this.powered ? 0.008 : 0, now, 0.06);
+      this.humGain.gain.cancelScheduledValues(now);
+      this.humGain.gain.setTargetAtTime(on && this.powered ? 0.008 : 0, now, 0.04);
     }
     if (!on && this.sidGain && this.ctx) {
-      this.sidGain.gain.setTargetAtTime(0, this.ctx.currentTime, 0.02);
+      const now = this.ctx.currentTime;
+      this.sidGain.gain.cancelScheduledValues(now);
+      this.sidGain.gain.setTargetAtTime(0, now, 0.02);
+    }
+    if (this.ctx) {
+      if (!on && this.ctx.state === 'running') {
+        this.ctx.suspend().catch(() => {});
+      } else if (on && this.ctx.state === 'suspended') {
+        this.ctx.resume().catch(() => {});
+      }
+    }
+  }
+
+  /** Pause/resume Web Audio when browser tab visibility changes to save CPU/battery. */
+  setPageVisible(visible: boolean) {
+    if (!this.ctx) return;
+    if (!visible && this.ctx.state === 'running') {
+      this.ctx.suspend().catch(() => {});
+    } else if (visible && this.enabled && this.ctx.state === 'suspended') {
+      this.ctx.resume().catch(() => {});
     }
   }
 
@@ -457,6 +477,9 @@ export class MonitorSound {
       } else if (!gate) {
         this.sidGain.gain.setTargetAtTime(0, now, releaseSec * 0.35);
       }
+    } else if (reg === 24 && gate) {
+      this.sidGain.gain.cancelScheduledValues(now);
+      this.sidGain.gain.setTargetAtTime(vol * 0.14, now, 0.015);
     }
   }
 

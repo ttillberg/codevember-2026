@@ -20,7 +20,7 @@ export class Bic4ColorPen {
   private readonly sliders: THREE.Group[] = [];
   private readonly sliderAnim = [1, 0, 0, 0]; // 1 = clicked down, 0 = up
   private readonly nibMat: THREE.MeshStandardMaterial;
-  private readonly nibMesh: THREE.Mesh;
+  private readonly nibMesh: THREE.Group;
 
   activeIndex = 0; // starts on Blue
   private hovered = false;
@@ -82,7 +82,7 @@ export class Bic4ColorPen {
     nibTip.rotation.z = Math.PI / 2;
     const nibInk = new THREE.Mesh(new THREE.SphereGeometry(0.0055, 8, 8), this.nibMat);
     nibInk.position.x = -0.022;
-    this.nibMesh = new THREE.Mesh();
+    this.nibMesh = new THREE.Group();
     this.nibMesh.add(nibTip, nibInk);
     this.nibMesh.position.x = -0.755;
     pen.add(this.nibMesh);

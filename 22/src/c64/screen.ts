@@ -13,6 +13,10 @@ export const BORDER_Y = 36;
 export const SCREEN_W = COLS * 8 + BORDER_X * 2; // 384
 export const SCREEN_H = ROWS * 8 + BORDER_Y * 2; // 272
 
+const PACKED_PALETTE = new Uint32Array(
+  C64_PALETTE_RGB.map(([r, g, b]) => 0xff000000 | (b << 16) | (g << 8) | r),
+);
+
 export class C64Screen {
   readonly screenRam = new Uint8Array(COLS * ROWS);
   readonly colorRam = new Uint8Array(COLS * ROWS);
@@ -248,7 +252,7 @@ export class C64Screen {
 
   /** Authentic C64 INST/DEL (backspace) within the current logical line. */
   backspace(minCol = 0, lockRow = -1) {
-    if (lockRow >= 0 && this.cursorY === lockRow && this.cursorX <= minCol) {
+    if (lockRow >= 0 && (this.cursorY < lockRow || (this.cursorY === lockRow && this.cursorX <= minCol))) {
       return;
     }
 
@@ -340,17 +344,18 @@ export class C64Screen {
     return out.replace(/\s+$/, '');
   }
 
+  private readonly glowCache: [number, number, number] = [0, 0, 0];
+
   /** Compute a live RGB tint (0..1) representing the monitor's current emitted color for ambient lighting. */
   getScreenGlowColor(): [number, number, number] {
     const [br, bg, bb] = C64_PALETTE_RGB[this.borderColor];
     const [gr, gg, gb] = C64_PALETTE_RGB[this.bgColor];
     const [tr, tg, tb] = C64_PALETTE_RGB[this.textColor];
     // Blend background (55%), border (30%), text highlights (15%)
-    return [
-      (gr * 0.55 + br * 0.30 + tr * 0.15) / 255,
-      (gg * 0.55 + bg * 0.30 + tg * 0.15) / 255,
-      (gb * 0.55 + bb * 0.30 + tb * 0.15) / 255,
-    ];
+    this.glowCache[0] = (gr * 0.55 + br * 0.30 + tr * 0.15) / 255;
+    this.glowCache[1] = (gg * 0.55 + bg * 0.30 + tg * 0.15) / 255;
+    this.glowCache[2] = (gb * 0.55 + bb * 0.30 + tb * 0.15) / 255;
+    return this.glowCache;
   }
 
   /** Render screen RAM + border + cursor into the offscreen canvas. Returns true if redrawn. */
@@ -358,12 +363,8 @@ export class C64Screen {
     if (!this.dirty) return false;
     this.dirty = false;
 
-    const pack = (rgb: [number, number, number]) =>
-      0xff000000 | (rgb[2] << 16) | (rgb[1] << 8) | rgb[0];
-
-    const borderPx = pack(C64_PALETTE_RGB[this.borderColor]);
-    const bgPx = pack(C64_PALETTE_RGB[this.bgColor]);
-    const packedPalette = C64_PALETTE_RGB.map(pack);
+    const borderPx = PACKED_PALETTE[this.borderColor];
+    const bgPx = PACKED_PALETTE[this.bgColor];
 
     // Fill entire frame with border color
     this.pixels.fill(borderPx);
@@ -383,8 +384,8 @@ export class C64Screen {
         const reversed = Boolean(rawCode & 0x80) !== isCursor;
         const glyphBase = (rawCode & 0x7f) * 8;
         const fgPx = isCursor
-          ? packedPalette[this.textColor]
-          : packedPalette[this.colorRam[idx] & 0x0f];
+          ? PACKED_PALETTE[this.textColor]
+          : PACKED_PALETTE[this.colorRam[idx] & 0x0f];
 
         const pxBase = BORDER_X + col * 8;
         for (let gy = 0; gy < 8; gy++) {

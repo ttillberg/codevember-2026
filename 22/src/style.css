@@ -29,8 +29,11 @@ canvas {
   top: 0;
   width: 1px;
   height: 1px;
+  font-size: 16px;
   opacity: 0;
   pointer-events: none;
+  user-select: text;
+  -webkit-user-select: text;
 }
 
 /* Title plate, top left */
