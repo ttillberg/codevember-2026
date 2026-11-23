@@ -54,11 +54,13 @@ export class OrangeDeskLamp {
 
       let lightOrigin: THREE.Object3D | null = null;
       let lightTarget: THREE.Object3D | null = null;
+      let shadeOuter: THREE.Object3D | null = null;
 
       model.traverse((obj) => {
         if (obj.name === 'light_origin') lightOrigin = obj;
         if (obj.name === 'light_target') lightTarget = obj;
         if (obj.name === 'switch_rocker') this.switchRocker = obj;
+        if (obj.name === 'shade_outer') shadeOuter = obj;
 
         if (obj instanceof THREE.Mesh) {
           const skipShadow = obj.name === 'bulb' || obj.name === 'shade_inner' || obj.name.startsWith('cord_');
@@ -75,6 +77,13 @@ export class OrangeDeskLamp {
           }
         }
       });
+
+      // Slap a slightly crooked, heat-curled 1980s Garbage Pail Kids sticker onto the flared orange shade!
+      if (shadeOuter) {
+        const sticker = buildLampShadeSticker();
+        (shadeOuter as THREE.Object3D).add(sticker);
+        this.interactiveMeshes.push(sticker);
+      }
 
       // Attach live SpotLight precisely to the Blender shade's bulb origin & aim axis
       if (lightOrigin && lightTarget) {
@@ -112,4 +121,74 @@ export class OrangeDeskLamp {
       this.switchRocker.rotation.x = this.lit ? -0.28 : 0.28;
     }
   }
+}
+
+/**
+ * Builds a curved conical vinyl sticker mesh wrapped tightly onto `shade_outer`'s flared cone,
+ * slightly crooked with a subtle heat-curled top-right corner.
+ */
+function buildLampShadeSticker(): THREE.Mesh {
+  const segU = 16;
+  const segV = 16;
+  const geo = new THREE.PlaneGeometry(1, 1, segU, segV);
+  const pos = geo.attributes.position;
+
+  // Exact conical flare coordinates of `shade_outer` (Y-up in glTF space)
+  const yTop = -0.545;
+  const rTop = 0.355;
+  const yBot = -0.940;
+  const rBot = 0.610;
+  const flareLen = Math.hypot(rBot - rTop, yTop - yBot); // 0.470
+
+  // Classic 250x350 (5:7) Garbage Pail Kids sticker card proportions
+  const stickerH = 0.42;
+  const stickerW = stickerH * (250 / 350);
+  const sCenter = flareLen * 0.56;
+  const thetaCenter = 0.34; // faces cleanly toward the camera on the burnt-orange shade
+  const tilt = -0.14;       // playful hand-stuck 8-year-old crookedness!
+  const cosT = Math.cos(tilt);
+  const sinT = Math.sin(tilt);
+
+  for (let i = 0; i < pos.count; i++) {
+    const u = pos.getX(i); // -0.5..+0.5
+    const v = pos.getY(i); // -0.5..+0.5 (+0.5 = top of sticker)
+
+    const dx = u * stickerW * cosT - v * stickerH * sinT;
+    const ds = u * stickerW * sinT + v * stickerH * cosT;
+
+    const s = sCenter - ds;
+    const t = s / flareLen;
+    const r = rTop + (rBot - rTop) * t;
+    const y = yTop + (yBot - yTop) * t;
+    const theta = thetaCenter + dx / Math.max(0.15, r);
+
+    // Subtle heat-peeled top-right corner lift from the warm tungsten bulb inside
+    const peelU = Math.max(0, u - 0.16);
+    const peelV = Math.max(0, v - 0.16);
+    const peelLift = peelU * peelV * 0.14;
+
+    const rOff = r + 0.005 + peelLift;
+    pos.setXYZ(i, Math.sin(theta) * rOff, y, Math.cos(theta) * rOff);
+  }
+  geo.computeVertexNormals();
+
+  const tex = new THREE.TextureLoader().load(`${import.meta.env.BASE_URL}gpk-sticker.jpg`);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = 8;
+
+  const mat = new THREE.MeshPhysicalMaterial({
+    map: tex,
+    roughness: 0.30,
+    metalness: 0.02,
+    clearcoat: 0.45,
+    clearcoatRoughness: 0.22,
+    polygonOffset: true,
+    polygonOffsetFactor: -2,
+    side: THREE.DoubleSide,
+  });
+
+  const mesh = new THREE.Mesh(geo, mat);
+  mesh.receiveShadow = true;
+  mesh.userData.hit = { kind: 'lamp' };
+  return mesh;
 }
