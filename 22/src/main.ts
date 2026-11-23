@@ -1,0 +1,592 @@
+import * as THREE from 'three';
+import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+import { C64Screen } from './c64/screen';
+import { C64Basic } from './c64/basic';
+import { C64FloppyDisk } from './c64/disk';
+import { Commodore1702, type MonitorHit, type MonitorKnobs } from './monitor';
+import { Commodore1541 } from './drive1541';
+import { DeskCheatPaper } from './cheatsheet';
+import { Bic4ColorPen } from './bicpen';
+import { OrangeDeskLamp } from './lamp';
+import { RetroWallClock } from './clock';
+import { buildKidSketches } from './sketches';
+import { Commodore64Breadbin } from './c64breadbin';
+import { Tac2Joystick } from './tac2';
+import { EchoFireworks } from './fireworks';
+import { buildSwedishRoom } from './room';
+import { MonitorSound } from './sound';
+
+// ?clean: no page furniture, the scene alone (screengrabs, clips)
+const params = new URLSearchParams(location.search);
+if (params.has('clean')) document.body.classList.add('clean');
+
+const canvas = document.querySelector<HTMLCanvasElement>('#c')!;
+const touchInput = document.querySelector<HTMLInputElement>('#touch-kbd')!;
+const btnFocus = document.querySelector<HTMLButtonElement>('#btn-focus')!;
+const btnSound = document.querySelector<HTMLButtonElement>('#btn-sound')!;
+const btnPaper = document.querySelector<HTMLButtonElement>('#btn-paper')!;
+const paperViewEl = document.querySelector<HTMLElement>('#paper-view')!;
+const paperImgEl = document.querySelector<HTMLImageElement>('#paper-img')!;
+const paperCloseBtn = document.querySelector<HTMLButtonElement>('#paper-close')!;
+const toastEl = document.querySelector<HTMLElement>('#toast')!;
+
+let toastTimer: number | null = null;
+function showToast(msg: string, durationMs = 1600) {
+  toastEl.textContent = msg;
+  toastEl.classList.add('show');
+  if (toastTimer !== null) window.clearTimeout(toastTimer);
+  toastTimer = window.setTimeout(() => {
+    toastEl.classList.remove('show');
+    toastTimer = null;
+  }, durationMs);
+}
+
+// ---- C64 Machine, 1541 Disk & Audio ----
+const sound = new MonitorSound();
+const fireworks = new EchoFireworks(() => sound.playFireworkPop());
+const screen = new C64Screen();
+const disk = new C64FloppyDisk();
+const drive = new Commodore1541();
+const basic = new C64Basic(screen, {
+  disk,
+  onSidPoke: (reg, val) => sound.sidPoke(reg, val),
+  onSidSilence: () => sound.silenceSid(),
+  onDiskActivity: (state) => {
+    drive.setActivity(state);
+    if (state !== 'idle') sound.playDiskSeek(state);
+  },
+  onEchoAchieved: (echoed) => {
+    fireworks.celebrate();
+    sound.playEchoFanfare();
+    const preview = echoed.length > 18 ? `${echoed.slice(0, 18)}…` : echoed;
+    showToast(`ECHO! "${preview}" — nice work!`, 3400);
+  },
+});
+
+// ---- Three.js Scene ----
+const renderer = new THREE.WebGLRenderer({
+  canvas,
+  antialias: true,
+  powerPreference: 'high-performance',
+});
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.08;
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x0d0c0b);
+scene.fog = new THREE.FogExp2(0x0d0c0b, 0.026);
+
+const camera = new THREE.PerspectiveCamera(34, window.innerWidth / window.innerHeight, 0.1, 60);
+
+const controls = new OrbitControls(camera, canvas);
+controls.enableDamping = true;
+controls.dampingFactor = 0.07;
+controls.enablePan = false;
+controls.minDistance = 2.9;
+controls.maxDistance = 13.0;
+controls.maxPolarAngle = Math.PI * 0.495; // stay above the desk surface
+controls.minPolarAngle = 0.2;
+
+// Camera presets: hero desk view (monitor + paper in front) vs close-up typing focus
+let focusedMode = false;
+const camGoalPos = new THREE.Vector3();
+const camGoalTarget = new THREE.Vector3();
+let camAnimating = false;
+
+function computePreset(focused: boolean) {
+  const aspect = window.innerWidth / Math.max(1, window.innerHeight);
+
+  if (focused) {
+    const narrow = aspect < 1.15 ? Math.min(2.1, 1.15 / Math.max(0.5, aspect)) : 1.0;
+    camGoalTarget.set(0, 1.98, 1.0);
+    camGoalPos.set(0, 2.02, 5.1 * narrow);
+  } else {
+    // Big centered 1702 CRT with the C64C cropping naturally at the bottom foreground, 1541 + TAC-2 on the right, cheat sheet + lamp on the left
+    const narrow = aspect < 1.50 ? Math.min(2.15, 1.50 / Math.max(0.55, aspect)) : 1.0;
+    camGoalTarget.set(0.16, 1.70, 0.30);
+    camGoalPos.set(0.48 * Math.min(1.25, narrow), 3.02 * Math.pow(narrow, 0.28), 8.62 * narrow);
+  }
+}
+
+computePreset(false);
+camera.position.copy(camGoalPos);
+controls.target.copy(camGoalTarget);
+controls.update();
+
+// ---- Commodore 1702 Monitor, 1541 Floppy Drive, Orange Desk Lamp, Cheat Paper & BIC Pen ----
+const monitor = new Commodore1702(screen.canvas);
+scene.add(monitor.root);
+scene.add(drive.root);
+
+const deskLamp = new OrangeDeskLamp(() => {
+  pickables.push(...deskLamp.interactiveMeshes);
+});
+scene.add(deskLamp.root);
+
+const deskPaper = new DeskCheatPaper();
+scene.add(deskPaper.root);
+paperImgEl.src = deskPaper.canvas.toDataURL('image/png');
+
+const bicPen = new Bic4ColorPen();
+scene.add(bicPen.root);
+
+const wallClock = new RetroWallClock((sec) => sound.playClockTick(sec));
+scene.add(wallClock.root);
+
+const tac2 = new Tac2Joystick();
+scene.add(tac2.root);
+
+const c64 = new Commodore64Breadbin(tac2.cableEntryWorld);
+scene.add(c64.root);
+
+const pickables: THREE.Object3D[] = [
+  ...monitor.interactiveMeshes,
+  ...drive.interactiveMeshes,
+  ...deskLamp.interactiveMeshes,
+  ...c64.interactiveMeshes,
+  ...tac2.interactiveMeshes,
+  deskPaper.hitMesh,
+  bicPen.hitMesh,
+  wallClock.hitMesh,
+];
+
+// ---- 1984 Swedish Bedroom Desk, Heritage Wallpaper, Kid Sketches & Echo Fireworks ----
+scene.add(buildSwedishRoom());
+scene.add(buildKidSketches());
+scene.add(fireworks.root);
+
+// ---- Moody Room Lighting (modulated smoothly by the clickable orange desk lamp) ----
+const hemi = new THREE.HemisphereLight(0xd6cfc4, 0x241d17, 0.34);
+scene.add(hemi);
+
+// Warm overhead/left desk lamp key light (dims down to moonlight when the orange lamp is off!)
+const keyLight = new THREE.DirectionalLight(0xffe4be, 1.45);
+keyLight.position.set(-4.2, 6.8, 4.8);
+keyLight.castShadow = true;
+keyLight.shadow.mapSize.set(2048, 2048);
+keyLight.shadow.camera.near = 1;
+keyLight.shadow.camera.far = 24;
+const d = 6.8;
+keyLight.shadow.camera.left = -d;
+keyLight.shadow.camera.right = d;
+keyLight.shadow.camera.top = d;
+keyLight.shadow.camera.bottom = -d;
+keyLight.shadow.bias = -0.0005;
+keyLight.shadow.normalBias = 0.02;
+scene.add(keyLight);
+
+// Subtle cool rim light from back-right to sculpt the 1702 & lamp silhouettes
+const rimLight = new THREE.DirectionalLight(0xa7c0ea, 0.58);
+rimLight.position.set(4.5, 4.4, -5.2);
+scene.add(rimLight);
+
+// Soft warm bounce fill from right-front
+const fillLight = new THREE.DirectionalLight(0xe5d8c4, 0.38);
+fillLight.position.set(4.2, 2.6, 4.6);
+scene.add(fillLight);
+
+let roomLampLevel = 1.0;
+
+// ---- Pointer & Raycast Interaction ----
+type SceneHit =
+  | MonitorHit
+  | { kind: 'paper' }
+  | { kind: 'drive' }
+  | { kind: 'pen' }
+  | { kind: 'lamp' }
+  | { kind: 'clock' }
+  | { kind: 'key'; key: string }
+  | { kind: 'joystick' }
+  | { kind: 'joystick-fire' };
+const raycaster = new THREE.Raycaster();
+const pointerNdc = new THREE.Vector2();
+
+let downPos = { x: 0, y: 0 };
+let activeKnob: keyof MonitorKnobs | null = null;
+let lastKnobY = 0;
+const lastHitPoint = new THREE.Vector3();
+
+function pickScene(clientX: number, clientY: number): SceneHit | null {
+  const rect = canvas.getBoundingClientRect();
+  pointerNdc.x = ((clientX - rect.left) / rect.width) * 2 - 1;
+  pointerNdc.y = -((clientY - rect.top) / rect.height) * 2 + 1;
+  raycaster.setFromCamera(pointerNdc, camera);
+  const hits = raycaster.intersectObjects(pickables, false);
+  for (const h of hits) {
+    const data = h.object.userData.hit as SceneHit | undefined;
+    if (!data) continue;
+    if (data.kind === 'knob' && !monitor.hatchOpen) continue;
+    lastHitPoint.copy(h.point);
+    return data;
+  }
+  return null;
+}
+
+canvas.addEventListener('pointerdown', (e) => {
+  sound.unlock();
+  downPos = { x: e.clientX, y: e.clientY };
+  camAnimating = false;
+
+  const hit = pickScene(e.clientX, e.clientY);
+  if (hit?.kind === 'knob' && hit.knob) {
+    activeKnob = hit.knob;
+    lastKnobY = e.clientY;
+    controls.enabled = false;
+    canvas.setPointerCapture(e.pointerId);
+    canvas.style.cursor = 'ns-resize';
+  }
+});
+
+canvas.addEventListener('pointermove', (e) => {
+  if (activeKnob) {
+    const dy = lastKnobY - e.clientY;
+    lastKnobY = e.clientY;
+    monitor.adjustKnob(activeKnob, dy * 0.0045);
+    return;
+  }
+  if (e.buttons === 0) {
+    const hit = pickScene(e.clientX, e.clientY);
+    deskPaper.setHovered(hit?.kind === 'paper');
+    bicPen.setHovered(hit?.kind === 'pen');
+    if (
+      hit?.kind === 'power' ||
+      hit?.kind === 'hatch' ||
+      hit?.kind === 'paper' ||
+      hit?.kind === 'drive' ||
+      hit?.kind === 'pen' ||
+      hit?.kind === 'lamp' ||
+      hit?.kind === 'clock' ||
+      hit?.kind === 'key' ||
+      hit?.kind === 'joystick' ||
+      hit?.kind === 'joystick-fire'
+    ) {
+      canvas.style.cursor = 'pointer';
+    } else if (hit?.kind === 'knob') {
+      canvas.style.cursor = 'ns-resize';
+    } else if (hit?.kind === 'screen') {
+      canvas.style.cursor = 'text';
+    } else {
+      canvas.style.cursor = 'grab';
+    }
+  }
+});
+
+canvas.addEventListener('pointerleave', () => {
+  deskPaper.setHovered(false);
+  bicPen.setHovered(false);
+});
+
+canvas.addEventListener('pointerup', (e) => {
+  if (activeKnob) {
+    activeKnob = null;
+    controls.enabled = true;
+    canvas.style.cursor = 'grab';
+    return;
+  }
+
+  const dist = Math.hypot(e.clientX - downPos.x, e.clientY - downPos.y);
+  if (dist > 6) return;
+
+  const hit = pickScene(e.clientX, e.clientY);
+  if (!hit) return;
+
+  if (hit.kind === 'power') {
+    const on = monitor.togglePower();
+    sound.setPowered(on);
+  } else if (hit.kind === 'hatch') {
+    const open = monitor.toggleHatch();
+    sound.playHatch(open);
+  } else if (hit.kind === 'drive') {
+    const inserted = drive.toggleDisk();
+    disk.inserted = inserted;
+    sound.playFloppyLatch(inserted);
+  } else if (hit.kind === 'pen') {
+    bicPen.clickNextColor();
+    sound.playBicClick();
+  } else if (hit.kind === 'lamp') {
+    const on = deskLamp.toggle();
+    sound.playLampSwitch(on);
+  } else if (hit.kind === 'clock') {
+    const ticking = wallClock.toggleTickSound();
+    if (ticking) sound.playClockTick(0, true);
+    showToast(ticking ? 'Clock tick on' : 'Clock tick off');
+  } else if (hit.kind === 'key') {
+    c64.triggerKey(hit.key);
+    sound.playKey(hit.key);
+    basic.handleKey(hit.key, false, false);
+  } else if (hit.kind === 'joystick') {
+    const local = tac2.root.worldToLocal(lastHitPoint.clone());
+    const dx = Math.abs(local.x) >= Math.abs(local.z) ? (local.x >= 0 ? 1 : -1) : 0;
+    const dz = Math.abs(local.z) > Math.abs(local.x) ? (local.z >= 0 ? 1 : -1) : 0;
+    tac2.nudge(dx || 1, dz, 0.22);
+    sound.playJoystickClick(false);
+    if (basic.running) {
+      if (dx < 0) basic.handleKey('a', false, false);
+      else if (dx > 0) basic.handleKey('d', false, false);
+      else if (dz < 0) basic.handleKey('w', false, false);
+      else if (dz > 0) basic.handleKey('s', false, false);
+    }
+  } else if (hit.kind === 'joystick-fire') {
+    tac2.pressFire(false);
+    sound.playJoystickClick(true);
+    if (basic.running) {
+      basic.handleKey(' ', false, false);
+    }
+  } else if (hit.kind === 'paper') {
+    setPaperOpen(paperViewEl.hidden);
+  } else if (hit.kind === 'screen') {
+    if (e.pointerType === 'touch') {
+      touchInput.focus({ preventScroll: true });
+    }
+  }
+});
+
+canvas.addEventListener('dblclick', (e) => {
+  const hit = pickScene(e.clientX, e.clientY);
+  if (hit?.kind === 'screen') {
+    setFocused(!focusedMode);
+  }
+});
+
+controls.addEventListener('start', () => {
+  camAnimating = false;
+});
+
+// ---- Cheat Paper Overlay ----
+function setPaperOpen(open: boolean) {
+  paperViewEl.hidden = !open;
+  deskPaper.root.visible = !open;
+  btnPaper.setAttribute('aria-pressed', String(open));
+  sound.playPageFlip();
+}
+
+paperCloseBtn.addEventListener('click', () => {
+  setPaperOpen(false);
+  paperCloseBtn.blur();
+});
+
+// ---- Keyboard & Clipboard Wiring ----
+function copyProgramToClipboard() {
+  const listing = basic.exportListing();
+  if (!listing) {
+    showToast('No program to copy');
+    return;
+  }
+  const lineCount = listing.split('\n').length;
+  navigator.clipboard?.writeText(listing).then(
+    () => showToast(`Copied ${lineCount} ${lineCount === 1 ? 'line' : 'lines'}`),
+    () => showToast('Clipboard unavailable'),
+  );
+}
+
+window.addEventListener('copy', (e) => {
+  const sel = window.getSelection()?.toString();
+  if (sel) return; // let normal text selection copy if any
+  const listing = basic.exportListing();
+  if (!listing) return;
+  e.preventDefault();
+  e.clipboardData?.setData('text/plain', listing);
+  const lineCount = listing.split('\n').length;
+  showToast(`Copied ${lineCount} ${lineCount === 1 ? 'line' : 'lines'}`);
+});
+
+let lastPasteAt = 0;
+
+function applyPastedText(text: string) {
+  if (!text) return;
+  lastPasteAt = performance.now();
+  const count = basic.pasteText(text);
+  if (count > 0) {
+    sound.playKey('Enter');
+    if (count > 1) showToast(`Pasted ${count} lines`);
+  }
+}
+
+window.addEventListener('paste', (e) => {
+  const text = e.clipboardData?.getData('text/plain');
+  if (!text) return;
+  e.preventDefault();
+  applyPastedText(text);
+});
+
+window.addEventListener('keydown', (e) => {
+  sound.unlock();
+  // Cmd+C (macOS) or Ctrl+Shift+C: copy whole BASIC program listing
+  if ((e.metaKey && !e.ctrlKey && !e.altKey && e.key.toLowerCase() === 'c') ||
+      (e.ctrlKey && e.shiftKey && !e.metaKey && e.key.toLowerCase() === 'c')) {
+    e.preventDefault();
+    copyProgramToClipboard();
+    return;
+  }
+
+  // Cmd+V / Ctrl+V: let native 'paste' fire, with clipboard API fallback if body ignores paste
+  if ((e.metaKey || e.ctrlKey) && !e.altKey && e.key.toLowerCase() === 'v') {
+    const triggeredAt = performance.now();
+    window.setTimeout(() => {
+      if (lastPasteAt >= triggeredAt) return;
+      navigator.clipboard?.readText().then(applyPastedText).catch(() => {});
+    }, 35);
+    return;
+  }
+
+  // Let other browser shortcuts pass through (Cmd+R reloads, Cmd+L focuses address bar, etc.)
+  if (e.metaKey) return;
+  if (document.activeElement === touchInput) {
+    if (e.key === 'Enter' || e.key === 'Backspace' || e.key === 'Escape') {
+      e.preventDefault();
+      if (basic.handleKey(e.key, e.ctrlKey, e.metaKey)) {
+        sound.playKey(e.key);
+      }
+    }
+    return;
+  }
+
+  // Only close the cheat paper on Escape if no BASIC program is currently running
+  if (e.key === 'Escape' && !basic.running && !paperViewEl.hidden) {
+    setPaperOpen(false);
+    e.preventDefault();
+    return;
+  }
+
+  if (
+    e.key === ' ' ||
+    e.key === 'Backspace' ||
+    e.key === 'Enter' ||
+    e.key === 'Escape' ||
+    e.key === 'Home' ||
+    e.key.startsWith('Arrow') ||
+    (e.ctrlKey && (e.key === 'l' || e.key === 'L' || e.key === 'c' || e.key === 'C'))
+  ) {
+    e.preventDefault();
+  }
+
+  if (document.activeElement instanceof HTMLButtonElement) {
+    document.activeElement.blur();
+  }
+
+  const handled = basic.handleKey(e.key, e.ctrlKey, e.metaKey);
+  c64.triggerKey(e.key);
+  if (e.key === 'ArrowLeft' || (basic.running && e.key.toLowerCase() === 'a')) {
+    tac2.nudge(-1, 0);
+  } else if (e.key === 'ArrowRight' || (basic.running && e.key.toLowerCase() === 'd')) {
+    tac2.nudge(1, 0);
+  } else if (e.key === 'ArrowUp' || (basic.running && e.key.toLowerCase() === 'w')) {
+    tac2.nudge(0, -1);
+  } else if (e.key === 'ArrowDown' || (basic.running && e.key.toLowerCase() === 's')) {
+    tac2.nudge(0, 1);
+  } else if (e.key === ' ' && basic.running) {
+    tac2.pressFire(false);
+  }
+  if (handled) {
+    sound.playKey(e.key);
+  }
+});
+
+touchInput.addEventListener('input', () => {
+  const val = touchInput.value;
+  if (val) {
+    for (const ch of val) {
+      c64.triggerKey(ch);
+      if (basic.handleKey(ch, false, false)) {
+        sound.playKey(ch);
+      }
+    }
+    touchInput.value = '';
+  }
+});
+
+// ---- Top-right Controls ----
+function setFocused(on: boolean) {
+  focusedMode = on;
+  btnFocus.setAttribute('aria-pressed', String(on));
+  computePreset(on);
+  camAnimating = true;
+}
+
+btnFocus.addEventListener('click', () => {
+  setFocused(!focusedMode);
+  btnFocus.blur();
+});
+
+btnSound.addEventListener('click', () => {
+  const next = !sound.enabled;
+  sound.setEnabled(next);
+  btnSound.setAttribute('aria-pressed', String(next));
+  btnSound.blur();
+});
+
+btnPaper.addEventListener('click', () => {
+  setPaperOpen(paperViewEl.hidden);
+  btnPaper.blur();
+});
+
+// ---- Resize ----
+function resize() {
+  const w = window.innerWidth;
+  const h = window.innerHeight;
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  renderer.setSize(w, h);
+  if (camAnimating) computePreset(focusedMode);
+}
+window.addEventListener('resize', resize);
+
+// ---- Main Loop ----
+let lastTime = performance.now();
+const startTime = lastTime;
+
+function animate(now: number) {
+  requestAnimationFrame(animate);
+  const dt = Math.min(0.05, (now - lastTime) / 1000);
+  lastTime = now;
+  const elapsed = (now - startTime) / 1000;
+
+  basic.step(18, dt);
+  screen.tick(dt);
+  if (screen.render()) {
+    monitor.markScreenDirty();
+  }
+
+  monitor.update(dt, elapsed, screen.getScreenGlowColor());
+  drive.update(dt, elapsed);
+  deskLamp.update(dt);
+  deskPaper.update(dt);
+  bicPen.update(dt);
+  wallClock.update();
+  c64.update(dt);
+  tac2.update(dt);
+  fireworks.update(dt);
+
+  // Smoothly dim room fill down to CRT-lit late-night mode when the orange lamp is clicked off
+  const targetLamp = deskLamp.lit ? 1.0 : 0.0;
+  roomLampLevel += (targetLamp - roomLampLevel) * Math.min(1, dt * 14);
+  keyLight.intensity = 0.16 + roomLampLevel * 1.28;
+  fillLight.intensity = 0.08 + roomLampLevel * 0.30;
+  hemi.intensity = 0.12 + roomLampLevel * 0.22;
+
+  if (camAnimating) {
+    const k = Math.min(1, dt * 6.5);
+    camera.position.lerp(camGoalPos, k);
+    controls.target.lerp(camGoalTarget, k);
+    if (
+      camera.position.distanceTo(camGoalPos) < 0.008 &&
+      controls.target.distanceTo(camGoalTarget) < 0.008
+    ) {
+      camera.position.copy(camGoalPos);
+      controls.target.copy(camGoalTarget);
+      camAnimating = false;
+    }
+  }
+
+  controls.update();
+  renderer.render(scene, camera);
+}
+
+screen.render();
+monitor.markScreenDirty();
+requestAnimationFrame(animate);

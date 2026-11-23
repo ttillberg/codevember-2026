@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#0d0c0b" />
+    <title>22 · Echo · Codevember 2026</title>
+    <meta name="description" content="A Commodore 1702 CRT and 1541 floppy drive running C64 BASIC V2, with a scribbled cheat sheet: type your first echo program, save to disk, or load a game" />
+    <meta name="author" content="Theo Tillberg" />
+    <!-- share image: 22/about/screengrab.png, copied next to the build by scripts/build.mjs -->
+    <meta property="og:title" content="22 · Echo · Codevember 2026" />
+    <meta property="og:description" content="A Commodore 1702 CRT and 1541 floppy drive running C64 BASIC V2, with a scribbled cheat sheet: type your first echo program, save to disk, or load a game" />
+    <meta property="og:image" content="https://ttillberg.github.io/codevember-2026/22/screengrab.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="1200" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <link rel="icon" href="data:," />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@700&family=Inter:wght@400;600&display=swap" />
+    <link rel="stylesheet" href="./src/style.css" />
+  </head>
+  <body>
+    <canvas id="c"></canvas>
+    <!-- Hidden input for touch/mobile virtual keyboards when tapping the CRT screen -->
+    <input id="touch-kbd" type="text" autocomplete="off" autocorrect="off" autocapitalize="characters" spellcheck="false" aria-label="Commodore 64 keyboard input" />
+
+    <!-- the title plate (docs/DESIGN.md) -->
+    <div class="plate">
+      <div class="head">
+        <b>22 Echo</b>
+        <i><a class="home" href="https://ttillberg.github.io/codevember-2026/">Codevember 2026 <span lang="ja">反響</span></a> · <a class="home" href="https://x.com/theo_t">@theo_t</a></i>
+      </div>
+    </div>
+
+    <!-- top-right furniture: focus view, sound, cheat paper (?) -->
+    <div class="actions">
+      <button id="btn-focus" class="icon-btn" aria-label="Zoom to screen" title="Focus screen" aria-pressed="false">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M4 9V5h4M20 9V5h-4M4 15v4h4M20 15v4h-4" />
+        </svg>
+      </button>
+      <button id="btn-sound" class="icon-btn" aria-label="Toggle sound" title="Sound" aria-pressed="true">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path class="solid" d="M4.5 9.5h3.2L12 6v12l-4.3-3.5H4.5z" />
+          <g class="waves">
+            <path d="M15 9.2a4 4 0 0 1 0 5.6" />
+            <path d="M17.6 6.8a7.4 7.4 0 0 1 0 10.4" />
+          </g>
+          <path class="mute" d="M15.2 9.5l5 5M20.2 9.5l-5 5" />
+        </svg>
+      </button>
+      <button id="btn-paper" class="icon-btn" aria-label="Pick up cheat sheet" title="Cheat sheet" aria-pressed="false">?</button>
+    </div>
+
+    <!-- Close-up of the 8-year-old's handwritten cheat paper (docked right, keeps CRT typable) -->
+    <aside id="paper-view" class="paper-view" hidden aria-label="Handwritten C64 cheat sheet">
+      <button id="paper-close" class="paper-close" aria-label="Put paper back" title="Close">×</button>
+      <img id="paper-img" alt="Handwritten C64 BASIC cheat notes" />
+    </aside>
+
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+    <script type="module" src="./src/main.ts"></script>
+  </body>
+</html>
