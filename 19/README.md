@@ -8,7 +8,7 @@ A cube of layered sandstone, 128 voxels a side, worn down with three tools: rain
 pnpm -C 19 dev   # https://localhost:5119, self-signed: WebGPU on a phone needs a secure context
 ```
 
-`1` rain, `2` wind, `3` hose, `4` scratch, `R` a new block. The rain is in hand from the start. The bar is `RAIN WIND HOSE SCRATCH | SIZE FORCE` (day 07's, `src/bar.ts`): four tools, then two knobs, the same two for every tool, each showing and setting the value of the tool in hand. Each tool keeps its own size and force, from one visit to the next.
+`1` rain, `2` wind, `3` hose, `4` scratch, `5` dynamite, `R` a new block. The rain is in hand from the start. The bar is `RAIN WIND HOSE SCRATCH DYNAMITE | SIZE FORCE` (day 07's, `src/bar.ts`): five tools, then two knobs, the same two for every tool, each showing and setting the value of the tool in hand. Each tool keeps its own size and force, from one visit to the next.
 
 - **Size**: the brush. Hold the knob and drag, up or right, a gauge shows while you hold; or tap it to pin the gauge and drag on that. Or hold cmd (ctrl) and drag sideways on the scene: a ring shows the brush and stays where the drag began, only its size changes (day 05's).
 - **Force**: how hard the tool works. The knob, or hold shift and cmd (ctrl) and drag sideways on the scene, and the knob's gauge shows while you drag. It starts on 75 (the scratch on 60); 100 is ten times what 40 is. For rain the hard work is the wearing, not the amount of water (ten times the water only drowns the rock), so its force sets how fast running water wears.
@@ -18,6 +18,8 @@ The gear, top right: the detail (how big a picture pixel is: low, medium, high) 
 Drag beside the rock to turn it, arrows for a quarter turn, wheel to zoom. On a touch screen the brush sits a little above the finger, which would hide it otherwise. Two fingers are the camera's, wherever they land: moved together or twisted they turn the rock, a pinch zooms.
 
 The scratch is nothing but a point dragged over the rock: it takes what is under it, there and then, hard bed or soft, and what comes loose falls. It works in pulses, like a nail on a wall: a bite, a gap, a bite, each a little bigger or smaller than the last. A drag is a run of short marks, holding still a slow pecking at one spot.
+
+The dynamite starts in a small closed wooden box perched on a minimalist high shelf on the far side of the black board (out of reach of kids): turn the block around and click or tap the box to collect it and unlock the tool (`5`) beside the trowel. Once collected, a tap or click on any face of the rock plants a bundled stick with a sizzling fuse that burns down and blows a ragged, stratified crater, showering rubble down the slope, pushing standing water outward, scorching and fracturing the rim for later erosion, and chaining nearby sticks. Bones and the saucer survive the blast intact so a charge can uncover them; gold shakes loose into sediment or straight into the bar's gold heap, and clicking the gold heap opens a DM to `@theo_t` to claim a gift.
 
 The wind is a hair dryer in your hand, the same way round as the hose: it blows straight in along the line of sight, at where the pointer is. It is wide, it takes in most of the block, and strongest where it is aimed, falling off with the distance from the pointer and a little with depth. It only reaches the surface, what you can see from where you are: what has anything between it and your eye, rock or a tree, is in the lee. It finds the rotten pockets first, and carries what is loose away from you; dashes run outward over the rock from where it is aimed. Rain is the one thing that comes from above.
 
@@ -69,7 +71,7 @@ A first try moved the water as voxels in the same blocks as the sediment. It fil
 
 - `?seed=19` the block
 - `?px=3` device pixels per picture pixel
-- `?hold=0.42,0.3,1,0.4,10` a tool (by its number in the code, not its key: 1 rain, 2 hose, 3 wind, 4 scratch) held from the start on a point of the screen, at a level, let go after so many seconds, for captures
+- `?hold=0.42,0.3,1,0.4,10` a tool (by its number in the code, not its key: 1 rain, 2 hose, 3 wind, 4 scratch, 5 dynamite) held from the start on a point of the screen, at a level, let go after so many seconds, for captures
 - `?clean` the scene alone
 - `?bare` only what lies buried, the rock gone from round it: to see what there is to find
 

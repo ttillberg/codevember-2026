@@ -23,6 +23,22 @@ struct U {
 struct Pick {
   pos: vec4f, // centre of the cell under the pointer, w: hit
   was: vec4f, // where that was the frame before, w: that there was one. A stroke runs from one to the other.
+  n: vec4f,   // face normal of the cell under the pointer
+};
+
+const MAX_STICKS: u32 = 16u;
+const MAX_BLASTS: u32 = 8u;
+// collectible dynamite box perched high on a minimalistic shelf on the far side of the black board
+const SHELF_AT = vec3f(88.0, 8.0, 16.0);
+const SHELF_H: f32 = 18.9;
+const CRATE_AT = vec3f(88.0, 26.9, 16.0);
+
+struct Dyn {
+  counts: vec4u,            // x: planted stick count, y: active blast count, z: crate (0 gone, 1 on board, 2 hovered)
+  detPos: vec4f,            // detonation center xyz, w: blast radius
+  detInfo: vec4f,           // x: force (0..1), y: seed
+  sticks: array<vec4f, 32>, // 2*i = (pos.xyz, fuse 0..1), 2*i+1 = (dir.xyz, radius)
+  blasts: array<vec4f, 16>, // 2*i = (pos.xyz, age s), 2*i+1 = (radius, force, seed, 0)
 };
 
 struct Hit {

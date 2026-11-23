@@ -34,7 +34,7 @@ canvas { display: block; image-rendering: pixelated; touch-action: none; cursor:
 /* The tool bar, bottom centre, after day 07's: icons in a frosted pill. A button is a 46px disc around a 24px
    icon, and there are 4px between buttons: the picked tool keeps its black disc, and at day 07's closer spacing
    (where a disc only shows while pressed, and reaches into its neighbours) it crowded the icons either side.
-   RAIN HOSE WIND SCRATCH | SIZE FORCE: four tools, then the two knobs that set the tool in hand (src/bar.ts). */
+   RAIN WIND HOSE SCRATCH DYNAMITE | SIZE FORCE: five tools, then the two knobs that set the tool in hand (src/bar.ts). */
 .bar {
   position: fixed; z-index: 2; left: 50%; transform: translateX(-50%) scale(var(--k)); transform-origin: 50% 100%;
   bottom: max(32px, env(safe-area-inset-bottom));
@@ -45,7 +45,12 @@ canvas { display: block; image-rendering: pixelated; touch-action: none; cursor:
   backdrop-filter: blur(30px) saturate(1.8); -webkit-backdrop-filter: blur(30px) saturate(1.8);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.9), inset 0 0 0 1px rgba(255, 255, 255, 0.5);
 }
-.knob { position: relative; display: flex; }
+.knob {
+  position: relative; display: flex; flex: none;
+  transition: width 0.28s cubic-bezier(0.2, 0.8, 0.2, 1), margin 0.28s cubic-bezier(0.2, 0.8, 0.2, 1), opacity 0.22s ease;
+}
+.knob.locked { width: 0; margin-left: -4px; overflow: hidden; opacity: 0; pointer-events: none; }
+.knob.locked > button { pointer-events: none; }
 .knob > button {
   position: relative; isolation: isolate; display: flex; align-items: center; justify-content: center;
   width: 46px; height: 46px; padding: 0; border: 0; background: none;
@@ -72,7 +77,7 @@ canvas { display: block; image-rendering: pixelated; touch-action: none; cursor:
 
 /* Hold a knob and drag: a tall gauge shows while held. A tap pins it open, to drag on it. */
 .gauge {
-  position: absolute; left: 50%; bottom: calc(100% + 14px); padding: 6px; border-radius: 999px; pointer-events: none;
+  position: absolute; left: 50%; bottom: calc(100% + 14px); z-index: 3; padding: 6px; border-radius: 999px; pointer-events: none;
   background: rgba(255, 255, 255, 0.5); backdrop-filter: blur(18px) saturate(1.6); -webkit-backdrop-filter: blur(18px) saturate(1.6);
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.6), 0 8px 24px rgba(0, 0, 0, 0.1);
   opacity: 0; transform: translate(-50%, 6px) scale(0.96); transform-origin: 50% 100%;
@@ -103,12 +108,20 @@ canvas { display: block; image-rendering: pixelated; touch-action: none; cursor:
   box-sizing: border-box; border-radius: 5px; background: #9a9996; color: #fff; font: inherit; font-size: 10px;
 }
 @media (hover: hover) {
-  .knob > button:hover:not(.held) .tip { opacity: 1; transform: translate(-50%, 0); transition-delay: 0.35s; }
+  .knob > button:hover:not(.held) .tip,
+  .heap.some:hover .tip { opacity: 1; transform: translate(-50%, 0); transition-delay: 0.35s; }
+  .heap.some:hover .tip { transition-delay: 0.12s; }
 }
 
-/* gold picked up, in a heap on the bar's right shoulder: nothing there until there is some */
-.heap { position: absolute; right: 30px; bottom: 100%; line-height: 0; pointer-events: none; opacity: 0; transition: opacity 0.4s; }
-.heap.some { opacity: 1; }
+/* gold picked up, in a heap on the bar's right shoulder: nothing there until there is some.
+   Clickable once gold is collected: opens a DM to @theo_t to claim a gift. */
+.heap {
+  position: absolute; right: 30px; bottom: 100%; line-height: 0; text-decoration: none;
+  pointer-events: none; opacity: 0; transition: opacity 0.4s, filter 0.15s;
+}
+.heap.some { opacity: 1; pointer-events: auto; cursor: pointer; }
+.heap.some:hover { filter: brightness(1.08); }
+.heap .tip { bottom: calc(100% + 8px); }
 
 /* the brush's size, shown while cmd + drag sets it (day 05's ring) */
 .size-ring {
@@ -185,9 +198,12 @@ canvas { display: block; image-rendering: pixelated; touch-action: none; cursor:
   .bar { bottom: max(20px, env(safe-area-inset-bottom)); }
   .settings { top: max(16px, env(safe-area-inset-top)); right: max(16px, env(safe-area-inset-right)); }
 }
-/* narrower than an iPhone 16 (393): the bar is 325 wide, which leaves it no air on a 360 and does not fit a 320 */
-@media (max-width: 392px) {
-  :root { --k: 0.88; }
+/* narrower screens: the bar is 375 wide with five tools, so scale it down with breathing room */
+@media (max-width: 420px) {
+  :root { --k: 0.9; }
+}
+@media (max-width: 360px) {
+  :root { --k: 0.8; }
 }
 /* ?clean: the scene alone */
 .clean .plate, .clean .bar, .clean .size-ring, .clean .settings { display: none !important; }
