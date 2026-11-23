@@ -190,59 +190,97 @@ varying vec3 vNormal;
 varying vec2 vBark;
 varying float vR;
 ${common}
-// Up close, the grain on a plate: fibres running up the trunk a few millimetres apart, and the outer bark
-// peeling in small papery scales, each a little step. In metres along the bark.
+// Up close, the grain on a plate: fine vertical fibres, hairline cracks and subtle micro-pitting.
 float grain(vec2 b) {
-  float fib = n21(b * vec2(220.0, 45.0)) * 0.55 + n21(b * vec2(520.0, 110.0)) * 0.45;
-  float fl = n21(b * vec2(55.0, 34.0) + n21(b * vec2(9.0, 5.0)) * 2.0) * 3.0;
-  float scale = (floor(fl) + smoothstep(0.42, 0.58, fract(fl))) / 3.0;
-  float crumb = n21(b * vec2(110.0, 80.0));
-  return fib * 0.35 + scale * 0.4 + crumb * 0.25;
+  float fib = n21(b * vec2(210.0, 22.0)) * 0.55 + n21(b * vec2(460.0, 55.0)) * 0.45;
+  float pit = n21(b * vec2(120.0, 85.0));
+  return fib * 0.68 + pit * 0.32;
 }
-// Spruce bark: thin round scales a couple of centimetres across, overlapping like roof tiles, each one's
-// lower edge lifted off the trunk so it catches the light above and drops a little shadow below; shallow
-// cracks between them, and here and there a scale gone, showing red-brown underneath. A cell noise with a
-// whole number of cells around so it wraps without a seam, its rows nudged by sines of the angle (which wrap
-// too) so they do not line up.
-float AROUND; // cells around this trunk
-const float PER_Y = 30.0; // cells per unit up: a scale is about three centimetres tall
-vec4 barkV(vec2 b) {
-  float ang = b.x / (6.2831853 * vR); // 0..1 around
-  vec2 p = vec2(ang * AROUND, b.y * PER_Y);
-  float a = ang * 6.2831853;
-  p.y += 0.35 * sin(a * 7.0 + b.y * 2.0) + 0.2 * sin(a * 19.0 - b.y * 5.0);
-  // the cells warped by a noise round the trunk (a circle in it, so it wraps): curved, uneven scales, not tiles
-  float K = AROUND * 0.11;
-  vec2 w = vec2(cos(a), sin(a)) * K;
-  p += (vec2(n21(w + vec2(0.0, p.y * 0.6)), n21(w * 1.3 + vec2(5.2, p.y * 0.5))) - 0.5) * vec2(0.9, 0.7);
+
+// Mature Scots pine / spruce bark (after reference): crisp, predominantly vertical dark rough charcoal-grey
+// fissures with heavily shredded vertical bark fibres, separating tall jagged jigsaw-like papery plates
+// (~5 cm wide x 16 cm tall) in dusty ash-taupe and warm cinnamon-terracotta peeling in sharp thin layers,
+// with olive moss clinging inside the crevices. All horizontal frequencies wrap cleanly round the trunk.
+float CIRC; // trunk circumference in metres
+float wNoise(vec2 b, float around, float up, vec2 off) {
+  float u = fract(b.x / CIRC);
+  float x = u * around;
+  vec2 q = vec2(x, b.y * up) + off;
+  vec2 q2 = vec2(x - around, b.y * up) + off;
+  return mix(n21(q), n21(q2), smoothstep(0.88, 1.0, u));
+}
+
+// Deep vertical fissure & ridge field: returns (ridge 0 in chasm .. 1 on plateau, rough shredded crevice bark).
+vec2 fissureField(vec2 b, float px) {
+  float nA = max(10.0, floor(CIRC * 13.0 + 0.5)); // vertical ridges ~7.5 cm apart
+  float nB = max(18.0, floor(CIRC * 24.0 + 0.5)); // branching secondary vertical cracks
+  float nC = max(36.0, floor(CIRC * 58.0 + 0.5)); // sharp torn-edge crags
+  // subtle vertical meander (keeps furrows running predominantly straight up and down like pine bark)
+  float wx = (wNoise(b, max(6.0, floor(CIRC * 7.0)), 1.4, vec2(1.7, 3.1)) - 0.5) * 0.05
+           + (wNoise(b, nB, 5.5, vec2(7.3, 2.4)) - 0.5) * 0.018;
+  vec2 bw = vec2(b.x + wx, b.y);
+  // tall vertical channels (6-8x taller than wide)
+  float f1 = abs(wNoise(bw, nA, 1.5, vec2(4.2, 1.1)) - 0.5) * 2.0;
+  float f2 = abs(wNoise(bw, nB, 3.2, vec2(13.5, 6.7)) - 0.5) * 2.0;
+  // high-frequency splintered wall edge so fissures look craggy and chipped, never smooth curves
+  float jag = (wNoise(bw, nC, 16.0, vec2(9.1, 4.3)) - 0.5) * 0.28 * (1.0 - smoothstep(0.008, 0.032, px));
+  float ch = min(f1, f2 * 1.15 + 0.1) + jag;
+  float aa = max(0.025, px * 3.5);
+  float ridge = smoothstep(0.20 - aa, 0.38 + aa, ch);
+  // rough, craggy, vertically shredded bark inside the fissures (strong contrast between splinters and deep gaps)
+  float s1 = wNoise(bw, max(36.0, floor(CIRC * 68.0)), 18.0, vec2(2.1, 8.8));
+  float s2 = wNoise(bw, max(72.0, floor(CIRC * 150.0)), 42.0, vec2(11.4, 3.2));
+  float s3 = wNoise(bw, max(120.0, floor(CIRC * 280.0)), 90.0, vec2(5.7, 1.9));
+  float shred = s1 * 0.45 + s2 * 0.35 + s3 * 0.20;
+  return vec2(ridge, shred);
+}
+
+// Tall jagged flaky plates sitting on the ridges (single 3x3 Voronoi pass, wrapped around the trunk).
+// Outputs: plate mask (0 in crack .. 1 on flat plate), peeling flake depth (0..1), plate id, flake lip, bevel.
+void barkPlates(vec2 b, float px, out float plate, out float flake, out float cellId, out float lip, out vec2 bevel) {
+  float around = max(14.0, floor(CIRC * 16.5 + 0.5)); // plates ~6 cm wide
+  float perY = 6.2;                                    // plates ~16 cm tall (tall vertical slabs)
+  float ang = b.x / CIRC;
+  vec2 p = vec2(ang * around, b.y * perY);
+  // crisp multi-scale torn-paper warp: modest macro curve + sharp fine jagged edges
+  float wFade = 1.0 - smoothstep(0.008, 0.032, px);
+  float w1 = wNoise(b, around * 0.6, 2.4, vec2(2.3, 5.1)) - 0.5;
+  float w2 = wNoise(b, around * 1.8, 7.5, vec2(8.7, 1.9)) - 0.5;
+  float w3 = wNoise(b, around * 5.0, 22.0, vec2(4.5, 9.2)) - 0.5;
+  p += vec2(w1 * 0.42 + w2 * 0.24 + w3 * 0.14 * wFade, w1 * 0.35 + w2 * 0.22 + w3 * 0.12 * wFade);
   vec2 i = floor(p), f = fract(p);
   float f1 = 9.0, f2 = 9.0;
   vec2 id = vec2(0.0), q1 = vec2(0.0), q2 = vec2(0.0);
   for (int y = -1; y <= 1; y++) for (int x = -1; x <= 1; x++) {
     vec2 o = vec2(float(x), float(y));
     vec2 c = i + o;
-    c.x = mod(c.x, AROUND);
-    vec2 pt = o + 0.15 + 0.7 * vec2(h21(c), h21(c + 17.3));
-    float l = length((pt - f) * vec2(1.0, 0.8));
+    c.x = mod(c.x, around);
+    vec2 pt = o + 0.14 + 0.72 * vec2(h21(c), h21(c + 17.3));
+    float l = length((pt - f) * vec2(1.0, 0.9));
     if (l < f1) { f2 = f1; q2 = q1; f1 = l; q1 = pt; id = c; } else if (l < f2) { f2 = l; q2 = pt; }
   }
   float edge = f2 - f1;
-  // where one scale's lower edge lies over the next a dark gap shows under it; beside each other they only
-  // just part, so the scales read as overlapping tiles and not a net of outlines
-  float rag = (n21(p * vec2(4.0, 3.0)) - 0.5) * 0.1 + (n21(p * vec2(11.0, 9.0)) - 0.5) * 0.06;
+  float rag = ((n21(p * vec2(7.0, 6.0)) - 0.5) * 0.12 + (n21(p * vec2(19.0, 15.0)) - 0.5) * 0.07) * wFade;
+  float aa = max(0.014, px * 4.0);
+  plate = smoothstep(0.025, 0.085 + aa, edge + rag);
   vec2 dq = q2 - q1;
-  float under = smoothstep(0.2, 0.7, -dq.y / (length(dq) + 1e-4)); // the neighbour is below this scale
-  float crack = smoothstep(0.0, mix(0.03, 0.14, under), edge + rag);
-  crack = mix(1.0 - 0.18 * (1.0 - crack), crack, under);
-  // the scale: rises towards its lower edge, which stands off the trunk; a slight dome across
-  vec2 d = f - q1; // from the scale's middle
-  float lift = clamp(0.5 - d.y * 0.9, 0.0, 1.0);
-  float dome = 1.0 - clamp(f1 * 1.4, 0.0, 1.0);
-  // some scales have come away: a step down to the red-brown underneath
-  float gone = step(h21(id + 8.1), 0.035);
-  float rough = n21(p * vec2(3.0, 2.5)) * 0.5 + n21(p * vec2(7.0, 6.0)) * 0.3 + n21(p * vec2(17.0, 13.0)) * 0.2;
-  float h = crack * (0.5 + 0.35 * lift + 0.1 * dome + 0.25 * rough - 0.3 * gone);
-  return vec4(h, crack, 1.0 - gone, h21(id + 3.1));
+  float bevelMask = (1.0 - smoothstep(0.015, 0.11 + aa, edge + rag)) * smoothstep(0.0, 0.03, edge + rag);
+  bevel = normalize(dq + 1e-5) * bevelMask;
+  cellId = h21(id + 3.1);
+  // sharp, torn papery peeling layers on each plate (3 distinct overlapping flakes with thin dark shadow edges)
+  vec2 fp = b * vec2(26.0, 14.0) + vec2(cellId * 17.3, cellId * 11.1);
+  fp += (vec2(n21(fp * 0.4), n21(fp * 0.4 + 5.7)) - 0.5) * 2.4
+      + (vec2(n21(fp * 1.8 + 2.3), n21(fp * 1.8 + 8.1)) - 0.5) * 0.75 * wFade;
+  float fl = n21(fp) * 0.62 + n21(fp * 2.8 + 3.1) * 0.38;
+  float flAa = max(0.008, px * 6.5);
+  float s1 = smoothstep(0.34 - flAa, 0.34 + flAa, fl);
+  float s2 = smoothstep(0.58 - flAa, 0.58 + flAa, fl);
+  float s3 = smoothstep(0.76 - flAa, 0.76 + flAa, fl);
+  flake = (s1 + s2 + s3) / 3.0;
+  // razor-thin dark shadow right along each peeling flake step
+  lip = (smoothstep(0.34 - flAa * 2.8, 0.34, fl) * (1.0 - s1)
+       + smoothstep(0.58 - flAa * 2.8, 0.58, fl) * (1.0 - s2)
+       + smoothstep(0.76 - flAa * 2.8, 0.76, fl) * (1.0 - s3)) * wFade;
 }
 #ifdef BIRCH
 // Birch bark, in metres along it (round, up), drawn from what is there rather than from soft noise:
@@ -377,72 +415,107 @@ void main() {
 #else
 void main() {
   DEPTH_ONLY // the shadow pass: past the discards, nothing more to work out
-  vec3 N = normalize(vNormal);
+  vec3 N0 = normalize(vNormal);
+  vec3 N = N0;
   vec3 L = normalize(uLightDir);
   vec3 V = normalize(cameraPosition - vWorldPos);
-  AROUND = max(12.0, floor(6.2831853 * vR * 40.0 + 0.5)); // scales about 2.5 cm wide
-  vec4 bv = barkV(vBark);
-  float h = bv.x;
-  // far away the cells are smaller than a pixel: ease the relief and the contrast out instead of shimmering
-  float px = length(fwidth(vBark)) * PER_Y * 1.6;
-  float near = 1.0 - smoothstep(0.25, 0.9, px);
-  // the normal from the height's slope along the bark, around and up (finite differences, so it is the same
-  // up close as far away), tilted by scales a few millimetres thick
-  if (near > 0.01) {
-    float e = 0.0015;
-    float hx = barkV(vBark + vec2(e, 0.0)).x, hy = barkV(vBark + vec2(0.0, e)).x;
-    vec3 T = normalize(cross(N, vec3(0.0, 1.0, 0.0)) + 1e-5), B = cross(T, N);
-    N = normalize(N - (T * (hx - h) + B * (hy - h)) / e * 0.004 * near);
-  }
-  vec3 N0 = normalize(vNormal);
   vec3 T0 = normalize(cross(N0, vec3(0.0, 1.0, 0.0)) + 1e-5), B0 = cross(T0, N0);
-  float side = 0.5 + 0.5 * dot(normalize(vec3(N0.x, 0.0, N0.z) + 1e-4), normalize(vec3(-L.x, 0.0, -L.z)));
-  // the fine detail only once it is bigger than a pixel or so: the grain
-  float fineFade = 1.0 - smoothstep(0.35, 1.1, length(fwidth(vBark)) * 260.0);
+
+  CIRC = 6.2831853 * vR;
+  float px = length(fwidth(vBark)); // world metres per pixel on the bark: prevents crack shimmering at distance
+  float macroFade = 1.0 - smoothstep(0.025, 0.075, px);
+  float midFade = 1.0 - smoothstep(0.010, 0.034, px);
+  float fineFade = 1.0 - smoothstep(0.004, 0.016, px);
+
+  vec2 fis = fissureField(vBark, px);
+  float ridge = fis.x;  // 0 deep chasm .. 1 ridge plateau
+  float shred = fis.y;  // rough vertical shredded fibres inside fissures
+
+  float plate, flake, cell, lip;
+  vec2 bevel;
+  barkPlates(vBark, px, plate, flake, cell, lip, bevel);
+  // plates sit on the ridge plateaus; where a fissure cuts through, the rough crevice bark shows instead
+  float onPlate = ridge * plate;
+  float h = ridge * (0.45 + 0.4 * plate + 0.15 * flake) + (1.0 - ridge) * shred * 0.28;
+
+  // pixel-width-aware bump normal: deep chasms & rough shredded crevices cast crisp relief without aliasing
+  if (macroFade > 0.01) {
+    float e = max(0.0022, px * 0.65);
+    vec2 fx = fissureField(vBark + vec2(e, 0.0), px);
+    vec2 fy = fissureField(vBark + vec2(0.0, e), px);
+    float hx = fx.x * 0.85 + (1.0 - fx.x) * fx.y * 0.45;
+    float hy = fy.x * 0.85 + (1.0 - fy.x) * fy.y * 0.45;
+    float hc = ridge * 0.85 + (1.0 - ridge) * shred * 0.45;
+    vec2 grad = vec2(hx - hc, hy - hc) / e * 0.015 * macroFade;
+    // crisp bevel normal along each plate's stepped jagged rim
+    grad += bevel * ridge * 0.65 * midFade;
+    N = normalize(N - (T0 * grad.x + B0 * grad.y));
+  }
+  // crisp micro-grain and shredded splinters up close (stays active through 2–3 m closeups)
   float g = 0.5;
   if (fineFade > 0.01) {
-    float e = 0.0012;
+    float e = max(0.0012, px * 0.55);
     g = grain(vBark);
-    float gk = 0.0014 * fineFade * bv.y;
-    if (gk > 0.0) N = normalize(N - (T0 * (grain(vBark + vec2(e, 0.0)) - g) + B0 * (grain(vBark + vec2(0.0, e)) - g)) / e * gk);
+    float gx = grain(vBark + vec2(e, 0.0)) - g, gy = grain(vBark + vec2(0.0, e)) - g;
+    float gk = mix(0.0038, 0.0011, onPlate) * fineFade; // very craggy in crevices, smooth papery plates
+    N = normalize(N - (T0 * gx + B0 * gy) / e * gk);
   }
 
-  float furrow = bv.y, layers = bv.z, cell = bv.w;
-  // dark grey weathered scales, each a shade different, red-brown where one came away, near black in the cracks
-  vec3 top = mix(vec3(0.062, 0.055, 0.048), vec3(0.105, 0.095, 0.082), cell);
-  vec3 under = mix(vec3(0.075, 0.052, 0.04), vec3(0.095, 0.065, 0.048), cell);
-  vec3 col = mix(under, top, layers);
-  col *= 0.85 + 0.3 * n21(vBark * vec2(40.0, 14.0));
-  // the grain: darker between the fibres, the scales' edges catching a little pale
-  col *= mix(1.0, 0.55 + 0.9 * g, fineFade * furrow);
-  col = mix(col, vec3(0.2, 0.18, 0.16), smoothstep(0.62, 0.8, g) * 0.35 * fineFade * furrow);
-  // up close each scale is weathered unevenly: pale flaky patches and dark pits
-  float wx = n21(vBark * vec2(150.0, 110.0) + cell * 9.0);
-  col *= mix(1.0, 0.6 + 0.8 * wx, fineFade);
-  col = mix(col, vec3(0.17, 0.16, 0.145), smoothstep(0.7, 0.85, n21(vBark * vec2(70.0, 55.0) + 4.0)) * 0.5 * fineFade * layers);
-  col = mix(vec3(0.014, 0.012, 0.01), col, mix(0.6, 1.0, near) * furrow + (1.0 - near) * 0.5 * (1.0 - furrow));
-  col = mix(vec3(0.085, 0.078, 0.07), col, mix(0.5, 1.0, near)); // far: the average
-  // green algae on the shaded side, crust lichen in pale patches on the scales
-  col = mix(col, vec3(0.10, 0.13, 0.06), smoothstep(0.45, 0.75, n21(vBark * vec2(1.2, 0.5) + 3.0) * side + 0.15 * side) * 0.6 * furrow);
-  // lichen in specks, not a smooth wash; and mottling, dark and pale blotches across the bark
-  float speck = smoothstep(0.35, 0.75, n21(vBark * vec2(60.0, 45.0) + 3.0));
-  col = mix(col, vec3(0.24, 0.25, 0.21), smoothstep(0.6, 0.72, n21(vBark * vec2(2.2, 1.4) + 7.0)) * h * 0.6 * speck);
-  col *= 0.75 + 0.5 * n21(vBark * vec2(14.0, 6.0) + 11.0);
+  // ---- colours calibrated to the reference pine bark photo:
+  // 1. Deep crevices: textured, weathered charcoal-grey shredded bark (pale grey splinter ridges over near-black cracks)
+  vec3 chasm = vec3(0.006, 0.006, 0.007);
+  float splinter = smoothstep(0.28, 0.78, shred);
+  vec3 roughGrey = mix(vec3(0.024, 0.025, 0.028), vec3(0.135, 0.132, 0.130), splinter);
+  roughGrey *= 0.65 + 0.65 * n21(vBark * vec2(48.0, 12.0));
+  vec3 creviceCol = mix(chasm, roughGrey, smoothstep(0.02, 0.36, ridge + shred * 0.32));
+
+  // 2. Large flaky plates: layered papery slabs mixing pale weathered ash-taupe and dusty terracotta-cinnamon
+  float warmth = smoothstep(0.12, 0.88, cell * 0.55 + n21(vBark * vec2(5.5, 2.6) + 2.1) * 0.45);
+  vec3 ashTaupe = mix(vec3(0.115, 0.105, 0.10), vec3(0.19, 0.165, 0.15), cell);
+  vec3 cinnamon = mix(vec3(0.145, 0.072, 0.042), vec3(0.22, 0.112, 0.062), warmth);
+  vec3 rustChip = vec3(0.175, 0.078, 0.038);
+  // outer weathered papery flakes are paler taupe/ash-brown; peeled layers reveal warm dusty cinnamon
+  vec3 plateCol = mix(rustChip, cinnamon, smoothstep(0.0, 0.5, flake));
+  plateCol = mix(plateCol, ashTaupe, smoothstep(0.42, 0.95, flake) * (0.48 + 0.52 * (1.0 - warmth)));
+  // subtle vertical papery marbling across each slab
+  plateCol *= 0.84 + 0.32 * n21(vBark * vec2(22.0, 6.5) + cell * 11.0);
+  // fine dark hairline cracks crossing the flat plates + tiny bark pits
+  float fineCrack = (1.0 - smoothstep(0.018, 0.065, abs(n21(vBark * vec2(32.0, 18.0) + cell * 7.0) - 0.5))) * midFade;
+  plateCol *= 1.0 - 0.5 * fineCrack;
+  plateCol *= mix(1.0, 0.78 + 0.44 * g, fineFade);
+  // crisp thin dark drop-shadow along each peeling papery flake edge
+  plateCol *= 1.0 - 0.62 * clamp(lip, 0.0, 1.0);
+
+  // combine rough charcoal-grey crevices with dusty cinnamon/taupe flaky plates
+  vec3 col = mix(creviceCol, plateCol, onPlate);
+  // crisp dark cliff shadow right where a raised plate drops into a crevice
+  float cliffAO = smoothstep(0.0, 0.32, ridge) * mix(0.32, 1.0, smoothstep(0.0, 0.35, plate));
+  col *= mix(1.0, 0.45 + 0.55 * cliffAO, macroFade);
+  // far away: ease smoothly to the average weathered grey-cinnamon furrowed tone
+  col = mix(vec3(0.085, 0.072, 0.064), col, mix(0.45, 1.0, macroFade));
+
+  // olive-green moss & algae nestled inside the damp vertical crevices (never washing across dry plates)
+  float side = 0.5 + 0.5 * dot(normalize(vec3(N0.x, 0.0, N0.z) + 1e-4), normalize(vec3(-L.x, 0.0, -L.z)));
+  float creviceMoss = (1.0 - onPlate * 0.92) * smoothstep(0.36, 0.72, n21(vBark * vec2(4.2, 1.8) + 3.0) * (0.45 + 0.7 * side));
+  float lowMoss = (1.0 - smoothstep(0.0, 1.6, max(vBark.y, 0.0))) * 0.42;
+  float mossAmt = clamp(creviceMoss * (0.45 + lowMoss), 0.0, 0.78);
+  col = mix(col, mix(vec3(0.036, 0.058, 0.016), vec3(0.08, 0.11, 0.028), splinter), mossAmt);
+  // sparse pale-grey crust lichen flecks on weathered plates
+  float speck = smoothstep(0.42, 0.78, n21(vBark * vec2(65.0, 48.0) + 3.0)) * midFade;
+  col = mix(col, vec3(0.20, 0.21, 0.19), smoothstep(0.65, 0.77, n21(vBark * vec2(2.6, 1.6) + 7.0)) * onPlate * 0.42 * speck);
 
   float shadow = shadowAt(vWorldPos, N);
   float diff = max(dot(N, L), 0.0);
-  // down the gaps the scales either side shade it: no sun in there, so the walls do not shine
-  diff *= mix(smoothstep(0.1, 0.7, furrow), 1.0, 1.0 - near);
-  vec3 c = col * (0.4 * skyTint(N, 1.0) + 2.0 * diff * shadow);
-  // the bark is nearly black, so the low sun on it barely showed: where it reaches, the trunk's side catches the
-  // warm gold, through its own pattern so the scales still read. Smooth, not broken by the canopy's spots: in spots
-  // it came out as white flakes, a birch's bark, and the haze let only the bright ones through
+  // deep fissures self-shadow so the recessed cracks stay dark against sunlit plates
+  float cavity = mix(0.22, 1.0, smoothstep(0.06, 0.58, ridge) * mix(0.35, 1.0, plate));
+  diff *= mix(1.0, cavity, macroFade);
+  vec3 c = col * (0.40 * skyTint(N, 1.0) * mix(0.48, 1.0, cavity) + 2.0 * diff * shadow);
+  // subtle warm sun catch on sunlit plates without turning crevices orange
   float sway = 0.7 + 0.3 * n21(vec2(vBark.y * 0.15, vWorldPos.x * 0.3 + vWorldPos.z * 0.7));
-  c += vec3(1.25, 0.56, 0.15) * (col * 3.0 + 0.008) * diff * sway;
-  // the low sun behind a trunk lights its edge
-  // (only off the plates, broken by their roughness: a smooth even rim was what read as plastic)
-  c += col * pow(1.0 - max(dot(N, V), 0.0), 4.0) * max(dot(-V, L), 0.0) * 1.4 * furrow * (0.4 + 0.6 * n21(vBark * vec2(30.0, 12.0)));
-  c *= mix(0.45, 1.0, smoothstep(-0.2, 0.25, vBark.y)); // dark where it goes into the moss
+  c += vec3(0.36, 0.19, 0.07) * col * 1.4 * diff * mix(0.35, 1.0, shadow) * sway * (0.2 + 0.8 * onPlate);
+  // backlit rough silhouette rim
+  c += col * pow(1.0 - max(dot(N, V), 0.0), 4.0) * max(dot(-V, L), 0.0) * 1.15 * (0.3 + 0.7 * onPlate) * (0.4 + 0.6 * h);
+  c *= mix(0.45, 1.0, smoothstep(-0.2, 0.25, vBark.y)); // dark where it sinks into the moss
   gl_FragColor = vec4(tonemap(grade(c)), 1.0);
   #include <colorspace_fragment>
 }
