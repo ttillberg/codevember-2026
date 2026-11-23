@@ -14,7 +14,7 @@ import * as THREE from 'three';
 import { mergeVertices } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { mulberry32, noise3 } from './noise';
 import { mossLighting } from './shaders';
-import { groundHeight, mossAt, trunkInCell, clearing, TREE_CELL } from './world';
+import { groundHeight, mossAt, trunkInCell, puddleAt, clearing, TREE_CELL } from './world';
 
 const coarse = matchMedia('(pointer: coarse)').matches;
 const CELL = 1.0;
@@ -163,18 +163,22 @@ export class Floor {
     const put = (kind: Kind, d: number[]) => { out[kind].m.push(...mat.compose(p, q, s).elements); out[kind].d.push(...d); };
     const cx = (ix + 0.5) * CELL, cz = (iz + 0.5) * CELL;
     const open = clearing(cx, cz);
-    // leaves: a few anywhere, many under a birch; some wedged on edge in the moss, where they show
+    // leaves: a few anywhere, many under a birch; some wedged on edge in the moss, where they show.
+    // On a puddle, a fallen leaf floats flat on the surface or lies dark on the bed.
     const nl = Math.floor(2 + r() * 3 + 26 * birchNear(cx, cz) * (0.6 + 0.4 * r()));
     for (let i = 0; i < nl; i++) {
       const x = (ix + r()) * CELL, z = (iz + r()) * CELL;
-      const edge = r() < 0.4;
-      p.set(x, mossTop(x, z) + (edge ? 0.0 : 0.018), z);
-      const tilt = edge ? (r() < 0.5 ? -1 : 1) * (0.9 + 0.5 * r()) : (r() - 0.5) * 0.5;
-      q.setFromEuler(e.set(tilt, r() * Math.PI * 2, (r() - 0.5) * 0.5, 'YXZ'));
+      const pd = puddleAt(x, z);
+      const inWater = pd !== null && pd.u < 0.96;
+      const edge = !inWater && r() < 0.4;
+      const floats = inWater && r() < 0.55;
+      p.set(x, floats ? pd.puddle.y + 0.0018 : inWater ? groundHeight(x, z) + 0.004 : mossTop(x, z) + (edge ? 0.0 : 0.018), z);
+      const tilt = edge ? (r() < 0.5 ? -1 : 1) * (0.9 + 0.5 * r()) : inWater ? (r() - 0.5) * 0.06 : (r() - 0.5) * 0.5;
+      q.setFromEuler(e.set(tilt, r() * Math.PI * 2, inWater ? (r() - 0.5) * 0.06 : (r() - 0.5) * 0.5, 'YXZ'));
       const sz = 0.04 + 0.035 * r();
       s.set(sz * (0.75 + 0.1 * r()), sz, sz);
       // curl, colour (yellow .. orange .. brown), decay, seed
-      put('LEAF', [(r() - 0.3) * 0.35, r() * r(), r() < 0.2 ? r() : 0, r()]);
+      put('LEAF', [inWater ? 0.06 * r() : (r() - 0.3) * 0.35, r() * r(), r() < 0.2 ? r() : 0, r()]);
     }
     // wood sorrel: a dense clump in about two cells in five
     if (r() < 0.4) {
@@ -183,6 +187,8 @@ export class Floor {
       for (let i = 0; i < n; i++) {
         const a = r() * Math.PI * 2, d = Math.sqrt(r()) * 0.34;
         const x = gx + Math.cos(a) * d, z = gz + Math.sin(a) * d;
+        const pd = puddleAt(x, z);
+        if (pd && pd.u < 1.04) continue;
         const leaf = 0.018 + 0.013 * r(); // a leaflet two or three centimetres long
         const h = 0.07 + 0.07 * r() * (1 - 0.5 * d / 0.34); // its stem out of the moss, taller in the middle
         p.set(x, mossTop(x, z) + h, z);
@@ -198,6 +204,8 @@ export class Floor {
       for (let i = 0; i < n; i++) {
         const a = r() * Math.PI * 2, d = Math.sqrt(r()) * 0.12;
         const x = gx + Math.cos(a) * d, z = gz + Math.sin(a) * d;
+        const pd = puddleAt(x, z);
+        if (pd && pd.u < 1.04) continue;
         const hgt = 0.035 + 0.03 * r(); // (over the moss's fronds: a fairy tale's, a little)
         p.set(x, mossTop(x, z) + 0.008, z);
         q.setFromEuler(e.set((r() - 0.5) * 0.4, r() * Math.PI * 2, (r() - 0.5) * 0.4, 'YXZ'));
@@ -210,6 +218,8 @@ export class Floor {
       const n = 1 + Math.floor(r() * 4);
       for (let i = 0; i < n; i++) {
         const x = (ix + 0.15 + 0.7 * r()) * CELL, z = (iz + 0.15 + 0.7 * r()) * CELL;
+        const pd = puddleAt(x, z);
+        if (pd && pd.u < 1.06) continue;
         const w = 0.1 + 0.12 * r();
         p.set(x, mossTop(x, z) + 0.012, z);
         q.setFromEuler(e.set(0, r() * Math.PI * 2, 0));
@@ -222,6 +232,8 @@ export class Floor {
       const n = 1 + Math.floor(r() * 2);
       for (let i = 0; i < n; i++) {
         const x = (ix + 0.15 + 0.7 * r()) * CELL, z = (iz + 0.15 + 0.7 * r()) * CELL;
+        const pd = puddleAt(x, z);
+        if (pd && pd.u < 0.85) continue; // allow stones along the shoreline bank
         const w = 0.08 + 0.22 * r() * r();
         p.set(x, groundHeight(x, z) + w * 0.18, z);
         q.setFromEuler(e.set((r() - 0.5) * 0.5, r() * Math.PI * 2, (r() - 0.5) * 0.5));

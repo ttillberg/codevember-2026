@@ -7,7 +7,8 @@ import { GTAOPass } from 'three/addons/postprocessing/GTAOPass.js';
 import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { shellVertex, shellFragment, mossLighting } from './shaders';
-import { World, groundHeight, baseHeight, mossAt, type WorldHooks } from './world';
+import { World, groundHeight, baseHeight, mossAt, puddleAt, type WorldHooks } from './world';
+import { Puddles } from './puddles';
 import { Props } from './props';
 import { Ferns } from './ferns';
 import { Trees, trunkFoot, trunkRadius, type Trunk } from './trees';
@@ -207,6 +208,9 @@ scene.add(trees.root);
 // fallen leaves and wood sorrel on the moss
 const floorBits = new Floor(share);
 scene.add(floorBits.root);
+// rainwater puddles pooled in shallow hollows of the moss carpet
+const puddles = new Puddles(share);
+scene.add(puddles.root);
 // boulders grown over with the ground's moss
 const boulders = new Boulders(hooks);
 scene.add(boulders.root);
@@ -281,6 +285,8 @@ function renderShadow(centre: THREE.Vector3) {
   foliage.forShadow(true);
   farFloor.visible = false;
   ants.mesh.visible = false; // too small to cast anything worth the map
+  const puddlesVis = puddles.root.visible;
+  puddles.root.visible = false; // water does not cast shadows
   renderer.setRenderTarget(shadowRT);
   renderer.clear();
   renderer.render(scene, lightCam);
@@ -291,6 +297,7 @@ function renderShadow(centre: THREE.Vector3) {
   foliage.forShadow(false);
   farFloor.visible = true;
   ants.mesh.visible = true;
+  puddles.root.visible = puddlesVis;
   u.uDepthOnly.value = 0;
   u.uShadowMap.value = shadowRT.depthTexture;
   u.uShadowMatrix.value.multiplyMatrices(lightCam.projectionMatrix, lightCam.matrixWorldInverse);
@@ -523,7 +530,9 @@ function groundAt(cx: number, cy: number) {
   for (let t = 0.03; t < 7; t += t < 1 ? 0.008 : 0.03) {
     const x = o.x + d.x * t, y = o.y + d.y * t, z = o.z + d.z * t;
     const g = groundHeight(x, z);
-    if (y < g + 0.055 * mossAt(x, g, z)) return new THREE.Vector3(x, g, z);
+    const pd = puddleAt(x, z);
+    const surf = Math.max(g + 0.055 * mossAt(x, g, z), pd && pd.u < 1 ? pd.puddle.y : -Infinity);
+    if (y < surf) return new THREE.Vector3(x, pd && pd.u < 1 ? pd.puddle.y : g, z);
   }
   return null;
 }
@@ -602,7 +611,14 @@ function throwTo(hit: THREE.Vector3, far: boolean) {
   const from = far ? sling.pouchWorld(camera) : camera.position.clone().add(new THREE.Vector3(0, -0.03, 0)).addScaledVector(camera.getWorldDirection(new THREE.Vector3()), 0.15);
   const kind = throwKind;
   const land = (p: THREE.Vector3, size: number) => {
-    sound.puff(p, size);
+    const pd = puddleAt(p.x, p.z);
+    if (pd && pd.u < 1.0) {
+      sound.plop(p, size);
+      puddles.splash(p.x, p.z, clock.elapsedTime, 0.7 + 0.5 * size);
+      if (pd.u < 0.94) return; // spores landing in open water ripple instead of sprouting underwater
+    } else {
+      sound.puff(p, size);
+    }
     // the cloud settles first; then, one after another, they push up
     setTimeout(() => {
       fungi.spawn(kind, p.x, fungusFoot(p.x, p.z), p.z);
@@ -633,7 +649,9 @@ function focusDistance() {
   const nearTrunks = trees.trunks.filter((t) => Math.hypot(t.x - o.x, t.z - o.z) < 8 + t.r * 1.6);
   for (let t = 0.03; t < 8; t += t < 1 ? 0.01 : 0.04) {
     const x = o.x + ray.x * t, y = o.y + ray.y * t, z = o.z + ray.z * t;
-    if (y < groundHeight(x, z) + 0.05) return t;
+    const pd = puddleAt(x, z);
+    const surf = Math.max(groundHeight(x, z) + 0.05, pd && pd.u < 1 ? pd.puddle.y : -Infinity);
+    if (y < surf) return t;
     if ((t < FOCUS_FUNGI && fungi.hit(x, y, z, nearFungi)) || trees.hit(x, y, z, nearTrunks)) return t;
   }
   return 8;
@@ -686,8 +704,19 @@ function crawl(dt: number) {
   const walking = Math.min(1, pace / 0.2);
   me.bob += dt * (2 + 16 * pace);
   // a footfall each time the eye comes down, heard
+  const stepWet = (x: number, z: number) => {
+    const pd = puddleAt(x, z);
+    return !pd ? 0 : pd.u < 1.0 ? 1 : 1 - THREE.MathUtils.smoothstep(pd.u, 1.0, 1.15);
+  };
   const stepNow = Math.floor(me.bob / Math.PI);
-  if (stepNow !== stepAt) { if (walking > 0.25 && !me.climb && me.hop <= 0) forest.step(0.5 + 0.5 * walking, me.crouch, stepNow % 2 === 0); stepAt = stepNow; }
+  if (stepNow !== stepAt) {
+    if (walking > 0.25 && !me.climb && me.hop <= 0) {
+      const wet = stepWet(me.x, me.z);
+      forest.step(0.5 + 0.5 * walking, me.crouch, stepNow % 2 === 0, wet);
+      if (wet > 0.5) puddles.splash(me.x, me.z, clock.elapsedTime, 0.65);
+    }
+    stepAt = stepNow;
+  }
   puffed = Math.max(0, puffed - dt * 0.12);
   const shove = 1 + 0.35 * Math.sin(me.bob * 2) * walking;
   if (me.climb) climb(dt, fx, fz, me.speed * shove);
@@ -704,7 +733,12 @@ function crawl(dt: number) {
   if (me.hop > 0 || me.vy > 0) {
     me.vy -= 9.8 * dt;
     me.hop += me.vy * dt;
-    if (me.hop <= 0) { me.dipV -= Math.min(0.35, -me.vy * 0.3); me.hop = 0; me.vy = 0; forest.step(1.6, me.crouch, true); forest.step(1.2, me.crouch, false); puffed = Math.min(1, puffed + 0.5); }
+    if (me.hop <= 0) {
+      me.dipV -= Math.min(0.35, -me.vy * 0.3); me.hop = 0; me.vy = 0;
+      const wet = stepWet(me.x, me.z);
+      forest.step(1.6, me.crouch, true, wet); forest.step(1.2, me.crouch, false, wet); puffed = Math.min(1, puffed + 0.5);
+      if (wet > 0.4) puddles.splash(me.x, me.z, clock.elapsedTime, 1.3);
+    }
   }
   me.dipV += (-me.dip * 260 - me.dipV * 22) * dt;
   me.dip += me.dipV * dt;
@@ -738,7 +772,9 @@ function walk(dt: number, fx: number, fz: number, v: number) {
   }
   // a worm's eye: just over the moss, rising and falling with it, a slow heave while crawling
   const g = groundHeight(me.x, me.z);
-  const ground = g + 0.055 * mossAt(me.x, g, me.z) + 0.11; // just over the frond tips
+  const pd = puddleAt(me.x, me.z);
+  const surf = Math.max(g + 0.055 * mossAt(me.x, g, me.z), pd && pd.u < 1 ? pd.puddle.y : -Infinity);
+  const ground = surf + 0.11; // just over the frond tips or water surface
   me.y += (ground - me.y) * Math.min(1, dt * 6);
 }
 
@@ -777,6 +813,7 @@ for (let i = 0; i < 200 && props.update(me.x, me.z); i++);
 for (let i = 0; i < 200 && ferns.update(me.x, me.z); i++);
 trees.update(me.x, me.z);
 for (let i = 0; i < 300 && floorBits.update(me.x, me.z); i++);
+puddles.update(me.x, me.z);
 for (let i = 0; i < 40 && boulders.update(me.x, me.z); i++);
 placeFarFloor(me.x, me.z);
 // a few already standing in front of you when you arrive
@@ -789,7 +826,7 @@ const sunScreen = new THREE.Vector3();
 const camDir = new THREE.Vector3();
 let focus = 1;
 // dev: tuning handles in the console
-if (import.meta.env.DEV) Object.assign(window, { renderShadow, foliage, oaks, boulders, floorBits, sound, forest, trees, ants, ferns, props, fungi, fungarium, spores, throwAt, shellMat, lensMat, atmosMat, camera, aoPass, lens, atmos, beautyRT, scene, renderer, composer, world, me, look });
+if (import.meta.env.DEV) Object.assign(window, { renderShadow, foliage, oaks, boulders, floorBits, puddles, sound, forest, trees, ants, ferns, props, fungi, fungarium, spores, throwAt, shellMat, lensMat, atmosMat, camera, aoPass, lens, atmos, beautyRT, scene, renderer, composer, world, me, look });
 // loading (as day 12's ink drawing): the splash, a card in the middle, over the forest drawn as a golden wire mesh
 // (everything in its plain geometry, the moss's shells one sheet). Once the models are in and the picture's
 // shaders compiled, and the card has been up two seconds and a half, the card goes and the picture fades in over
@@ -846,6 +883,7 @@ if (params.has('debug')) vegboard([
   { name: 'fungi', objects: [fungi.group] },
   { name: 'boulders', objects: [boulders.root] },
   { name: 'leaves, sorrel', objects: [floorBits.root] },
+  { name: 'puddles', objects: [puddles.root] },
 ], () => shadowCentre.set(Infinity, 0, 0), [
   // to the nearest oak, a crown's width off on its sunny side, looking up at it
   { label: 'go to oak', run: () => {
@@ -854,6 +892,14 @@ if (params.has('debug')) vegboard([
     const a = Math.atan2(lightDir.z, lightDir.x);
     me.x = o.x + Math.cos(a) * 12 * o.s; me.z = o.z + Math.sin(a) * 12 * o.s;
     look.yaw = look.tYaw = Math.atan2(-(o.x - me.x), -(o.z - me.z)); look.pitch = look.tPitch = 0.4;
+  } },
+  // to the nearest puddle, standing right at its bank looking across it toward the sun
+  { label: 'go to puddle', run: () => {
+    const p = puddles.list.slice().sort((a, b) => Math.hypot(a.x - me.x, a.z - me.z) - Math.hypot(b.x - me.x, b.z - me.z))[0];
+    if (!p) return;
+    const d = Math.max(p.rx, p.rz) * 0.95 + 0.14;
+    me.x = p.x - SUN_FLAT.x * d; me.z = p.z - SUN_FLAT.y * d;
+    look.yaw = look.tYaw = Math.atan2(-(p.x - me.x), -(p.z - me.z)); look.pitch = look.tPitch = -0.22;
   } },
 ]);
 
@@ -888,6 +934,7 @@ renderer.setAnimationLoop(() => {
   oaks.update(me.x, me.z);
   foliage.update(trees.trunks, camera.position);
   floorBits.update(me.x, me.z);
+  puddles.update(me.x, me.z);
   boulders.update(me.x, me.z);
   ants.update(dt, me.x, me.z, trees.trunks);
   placeFarFloor(me.x, me.z);

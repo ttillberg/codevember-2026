@@ -519,25 +519,62 @@ export class Forest {
     return p;
   }
 
-  /** A footfall on the moss: mostly a soft hiss of fronds brushed, a faint pad under it, a little crackle of dry
-   * stalks (a thud was too heavy for a gnome on moss). `k` how hard (a landing more). */
-  step(k: number, crouch: number, left: boolean) {
+  /** A footfall on the moss — or in a puddle when `wet` > 0 (0 dry moss .. 1 open water). On moss: a soft hiss
+   * of fronds brushed, a faint pad, dry stalk crackles. In a puddle: a wet surface slap, water wash and rising
+   * Minnaert bubble blips. `k` how hard (a landing more). */
+  step(k: number, crouch: number, left: boolean, wet = 0) {
     const ctx = this.audio.ctx;
     if (!ctx || !this.ready() || !this.noise) return;
     const t = ctx.currentTime + 0.01, a = k * (1 - 0.55 * crouch) * this.levels.body, dst = this.self(left ? -0.18 : 0.18);
-    const s = ctx.createBufferSource();
-    s.buffer = this.noise; s.loop = true;
-    const lp = ctx.createBiquadFilter();
-    lp.type = 'lowpass'; lp.frequency.value = rr(500, 900); lp.Q.value = 0.7;
-    const g = ctx.createGain();
-    g.gain.setValueAtTime(0.0001, t);
-    g.gain.linearRampToValueAtTime(0.1 * a, t + 0.02);
-    g.gain.exponentialRampToValueAtTime(0.0001, t + rr(0.07, 0.11));
-    s.connect(lp).connect(g).connect(dst);
-    s.start(t, R() * 1.5); s.stop(t + 0.15);
-    tone(ctx, dst, t, 0.07, 110, 60, 0.05 * a, { attack: 0.01 });
-    rasp(ctx, dst, t, rr(0.14, 0.22), rr(3200, 5200), 0.7, 0.16 * a, this.noise, 0.03); // the hiss of the fronds
-    for (let i = 0; i < 1 + Math.floor(R() * 4); i++) rasp(ctx, dst, t + rr(0, 0.06), rr(0.003, 0.008), rr(2500, 6000), 2, rr(0.025, 0.07) * a, this.noise, 0.0006);
+    const dry = Math.max(0, 1 - wet);
+    if (dry > 0.02) {
+      const s = ctx.createBufferSource();
+      s.buffer = this.noise; s.loop = true;
+      const lp = ctx.createBiquadFilter();
+      lp.type = 'lowpass'; lp.frequency.value = rr(500, 900); lp.Q.value = 0.7;
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.linearRampToValueAtTime(0.1 * a * dry, t + 0.02);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + rr(0.07, 0.11));
+      s.connect(lp).connect(g).connect(dst);
+      s.start(t, R() * 1.5); s.stop(t + 0.15);
+      tone(ctx, dst, t, 0.07, 110, 60, 0.05 * a * dry, { attack: 0.01 });
+      rasp(ctx, dst, t, rr(0.14, 0.22), rr(3200, 5200), 0.7, 0.16 * a * dry, this.noise, 0.03); // the hiss of the fronds
+      for (let i = 0; i < 1 + Math.floor(R() * 4); i++) rasp(ctx, dst, t + rr(0, 0.06), rr(0.003, 0.008), rr(2500, 6000), 2, rr(0.025, 0.07) * a * dry, this.noise, 0.0006);
+    }
+    if (wet > 0.02) {
+      const w = a * wet;
+      // surface slap: bandpass noise sweeping upward as the foot breaks the water
+      const sl = ctx.createBufferSource();
+      sl.buffer = this.noise; sl.loop = true;
+      const bp = ctx.createBiquadFilter();
+      bp.type = 'bandpass'; bp.Q.value = 1.3;
+      const dur = rr(0.07, 0.12) * (k > 1 ? 1.35 : 1);
+      bp.frequency.setValueAtTime(rr(500, 760), t);
+      bp.frequency.exponentialRampToValueAtTime(rr(1450, 2150), t + dur * 0.65);
+      const sg = ctx.createGain();
+      sg.gain.setValueAtTime(0.0001, t);
+      sg.gain.linearRampToValueAtTime(0.16 * w, t + 0.006);
+      sg.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+      sl.connect(bp).connect(sg).connect(dst);
+      sl.start(t, R() * 1.5); sl.stop(t + dur + 0.03);
+      // hollow shallow-water thump
+      tone(ctx, dst, t, 0.055, rr(170, 210), rr(85, 110), 0.045 * w, { attack: 0.005 });
+      // fine spray & wash tail
+      rasp(ctx, dst, t + 0.008, rr(0.14, 0.24) * (k > 1 ? 1.3 : 1), rr(2300, 3600), 0.8, 0.13 * w, this.noise, 0.015);
+      // rising Minnaert bubble chirps (air pockets shrinking as they surface)
+      const nb = 4 + Math.floor(R() * 4) + (k > 1 ? 3 : 0);
+      for (let i = 0; i < nb; i++) {
+        const dt = rr(0.006, k > 1 ? 0.18 : 0.13);
+        const f0 = rr(480, 1750);
+        tone(ctx, dst, t + dt, rr(0.014, 0.032), f0, f0 * rr(1.45, 1.9), rr(0.018, 0.052) * w, { attack: 0.002 });
+      }
+      // a couple of late falling drops landing back on the puddle
+      for (let i = 0; i < 1 + Math.floor(R() * 2); i++) {
+        const f0 = rr(1300, 2500);
+        tone(ctx, dst, t + rr(0.11, 0.24), rr(0.013, 0.022), f0, f0 * rr(1.35, 1.65), rr(0.012, 0.03) * w, { attack: 0.0015 });
+      }
+    }
   }
 
   /** A breath, in or out: air through the nose, rising as it fills, lower and longer going out. `k` how deep. */

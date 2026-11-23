@@ -8,7 +8,7 @@
 import * as THREE from 'three';
 import { mulberry32 } from './noise';
 import { mossLighting } from './shaders';
-import { groundHeight, mossAt } from './world';
+import { groundHeight, mossAt, puddleAt } from './world';
 import { trunkFoot, trunkRadius, type Trunk } from './trees';
 
 const MAX = 1500; // ants drawn at most
@@ -28,11 +28,13 @@ function groundUp(x: number, z: number, ups: number[]) {
   ups.push(-gx / nl, (2 * e) / nl, -gz / nl);
 }
 
+const inPuddle = (x: number, z: number) => { const pd = puddleAt(x, z); return pd !== null && pd.u < 1.06; };
+
 /**
  * A lone ant crossing in front of you, a scout off its trail: a wandering line over the moss from one side of
- * the view to the other, a hand or two ahead, walked once.
+ * the view to the other, a hand or two ahead, walked once. Skipped if the path crosses a puddle.
  */
-function makeStray(cam: THREE.Camera): Trail {
+function makeStray(cam: THREE.Camera): Trail | null {
   const f = cam.getWorldDirection(new THREE.Vector3()).setY(0).normalize();
   const sx = -f.z, sz = f.x;
   const d = 0.25 + Math.random() * 0.15, half = 0.15 + d * 0.4, slant = (Math.random() - 0.5) * 0.6;
@@ -44,6 +46,7 @@ function makeStray(cam: THREE.Camera): Trail {
     const u = i / steps, t = (u * 2 - 1) * half * dir;
     const ahead = d + t * slant + 0.03 * Math.sin(u * k * Math.PI + w);
     const x = cam.position.x + f.x * ahead + sx * t, z = cam.position.z + f.z * ahead + sz * t;
+    if (inPuddle(x, z)) return null;
     pts.push(x, ground(x, z), z);
     groundUp(x, z, ups);
   }
@@ -51,23 +54,38 @@ function makeStray(cam: THREE.Camera): Trail {
   return { key: 'stray', pts: new Float32Array(pts), ups: new Float32Array(ups), n, ants: [{ s: 0, dir: 1, speed: 0.035 + 0.02 * Math.random(), lane: 0, phase: Math.random() * 100, rest: 0 }] };
 }
 
-/** A trail for this trunk, or null (half have none). */
+/** A trail for this trunk, or null (half have none). Avoids puddles by picking a dry direction or stopping at the bank. */
 function makeTrail(t: Trunk): Trail | null {
   const r = mulberry32((Math.imul(Math.round(t.x * 100), 0x2c1b3c6d) ^ Math.imul(Math.round(t.z * 100), 0x297a2d39) ^ 0xa17) >>> 0);
   if (r() > 0.5) return null;
-  const a = r() * Math.PI * 2; // the nest lies this way from the trunk
+  const a0 = r() * Math.PI * 2; // the nest lies this way from the trunk
   const far = t.r * 1.5 + 1.4 + 1.6 * r();
+  const w1 = r() * 6.28, w2 = r() * 6.28, k1 = 2 + r() * 2, k2 = 5 + r() * 4;
+  // pick the first candidate direction from the trunk whose ground leg stays dry (fallback: trim at the bank)
+  let a = a0;
+  for (let attempt = 0; attempt < 6; attempt++) {
+    const cand = a0 + attempt * 1.0472;
+    const ex = Math.cos(cand), ez = Math.sin(cand), px = -ez, pz = ex;
+    let wet = false;
+    for (let s = 0; s <= 24 && !wet; s++) {
+      const u = s / 24, d = far * (1 - u);
+      const wig = Math.sin(u * Math.PI) * (0.18 * Math.sin(u * k1 * Math.PI + w1) + 0.05 * Math.sin(u * k2 * Math.PI + w2));
+      if (inPuddle(t.x + ex * d + px * wig, t.z + ez * d + pz * wig)) wet = true;
+    }
+    if (!wet) { a = cand; break; }
+  }
   const nx = t.x + Math.cos(a) * far, nz = t.z + Math.sin(a) * far;
   const pts: number[] = [], ups: number[] = [];
   // over the moss: from the nest to the bark, wandering a little either side of the straight line
   const ex = Math.cos(a), ez = Math.sin(a), px = -ez, pz = ex;
-  const w1 = r() * 6.28, w2 = r() * 6.28, k1 = 2 + r() * 2, k2 = 5 + r() * 4;
   let lx = nx, lz = nz;
   const steps = Math.ceil(far / STEP);
   for (let i = 0; i <= steps; i++) {
     const u = i / steps, d = far * (1 - u);
     const wig = Math.sin(u * Math.PI) * (0.18 * Math.sin(u * k1 * Math.PI + w1) + 0.05 * Math.sin(u * k2 * Math.PI + w2));
     const x = t.x + ex * d + px * wig, z = t.z + ez * d + pz * wig;
+    // never walk through water: if the outer end hits a puddle, start the trail on the dry bank nearer the trunk
+    if (inPuddle(x, z)) { pts.length = 0; ups.length = 0; continue; }
     // stop at the bark (the root flare too)
     const phi = Math.atan2(z - t.z, x - t.x);
     const y = ground(x, z);
@@ -264,7 +282,7 @@ export class Ants {
     if (this.stray && this.stray.ants[0].s >= (this.stray.n - 1) * STEP) this.stray = null;
     if (!this.stray && (this.strayIn -= dt) <= 0) {
       this.stray = makeStray(this.camera);
-      this.strayIn = 10 + Math.random() * 25;
+      this.strayIn = this.stray ? 10 + Math.random() * 25 : 3 + Math.random() * 4;
     }
     const ph = this.phase.array as Float32Array, wk = this.walk.array as Float32Array;
     const f = new THREE.Vector3(), up = new THREE.Vector3(), side = new THREE.Vector3(), p = new THREE.Vector3();

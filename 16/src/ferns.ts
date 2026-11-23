@@ -5,7 +5,7 @@
 import * as THREE from 'three';
 import { mulberry32 } from './noise';
 import { mossLighting } from './shaders';
-import { groundHeight, clearing } from './world';
+import { groundHeight, clearing, puddleAt } from './world';
 import { buildDew } from './dew';
 
 const CELL = 2.6;
@@ -226,6 +226,8 @@ export class Ferns {
         const size = (1.0 + r() * 0.5) * (1 - 0.45 * open); // (a quarter smaller than they were)
         if (open > 0.45) continue;
         if (Math.hypot(x, z) < 0.3 || crowns.some((c) => Math.hypot(c.x - x, c.z - z) < 0.45)) continue;
+        const pd = puddleAt(x, z);
+        if (pd && pd.u < 1.06) continue; // ferns stand on the mossy bank, arching over the water
         crowns.push({ x, z });
         sizes.push(size);
       }

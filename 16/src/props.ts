@@ -4,7 +4,7 @@
 // porcini), so the wood has fungi standing in it a long way back, paler in the haze, as in the splash.
 import { mulberry32 } from './noise';
 import type { Fungi, FungusKind } from './fungi';
-import { clearing } from './world';
+import { clearing, puddleAt } from './world';
 
 // how often each kind stands about in the forest, by weight
 const MIX: [FungusKind, number][] = [['funnel', 0.24], ['finger', 0.2], ['chanterelle', 0.18], ['puffball', 0.16], ['agaric', 0.1], ['porcini', 0.12], ['slippery', 0.1], ['morel', 0.06], ['waxcap', 0.1]];
@@ -45,6 +45,8 @@ export class Props {
       const x = (ix + 0.1 + 0.8 * r()) * CELL, z = (iz + 0.1 + 0.8 * r()) * CELL;
       const seed = Math.floor(r() * 1e9), scale = 0.8 + 0.5 * r();
       if (Math.hypot(x, z) < 0.6) continue; // the start has its own
+      const pd = puddleAt(x, z);
+      if (pd && pd.u < 1.04) continue; // no fungi underwater
       const key = `${ix},${iz}:${i}`;
       this.fungi.spawn(kind, x, this.foot(x, z), z, { grown: true, key, seed, scale });
       keys.push(key);
@@ -66,6 +68,8 @@ export class Props {
       const a = r() * Math.PI * 2, d = i === 0 ? 0 : 0.25 + 0.45 * r();
       const x = cx + Math.cos(a) * d, z = cz + Math.sin(a) * d;
       if (Math.hypot(x, z) < 2) continue; // not on top of the start
+      const pd = puddleAt(x, z);
+      if (pd && pd.u < 1.04) continue;
       const key = `g${ix},${iz}:${i}`;
       // giants, as in the splash: from down in the moss they stand over the ferns, caps a hand to half a metre
       // across (a fairy tale's, not a field guide's)

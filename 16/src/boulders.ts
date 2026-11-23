@@ -9,7 +9,7 @@
 import * as THREE from 'three';
 import { buildRock, deadAt, pillowAt, domeAt, type Surface } from './rock';
 import { fbm3, mulberry32 } from './noise';
-import { groundHeight, dressSurface, shellsForShadow, trunkInCell, clearing, SPECIES, TREE_CELL, type WorldHooks } from './world';
+import { groundHeight, dressSurface, shellsForShadow, trunkInCell, puddleAt, clearing, SPECIES, TREE_CELL, type WorldHooks } from './world';
 import { oakInCell, OAK_CELL } from './oak';
 
 const coarse = matchMedia('(pointer: coarse)').matches;
@@ -54,6 +54,9 @@ export class Boulders {
       const o = oakInCell(oix + dx, oiz + dz);
       if (o && Math.hypot(o.x - x, o.z - z) < 2.0 + size * 1.4) return null;
     }
+    // nor sitting in a puddle
+    const pd = puddleAt(x, z);
+    if (pd && pd.u < 1.35) return null;
     return { x, z, size, seed: Math.floor(r() * 1e9) };
   }
 

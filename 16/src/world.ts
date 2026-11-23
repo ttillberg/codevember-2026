@@ -89,9 +89,111 @@ export function land(x: number, z: number) {
   const hill = THREE.MathUtils.smoothstep(fbm3(x * 0.07, 6, z * 0.07, 2, 22), 0.08, 0.4) * 0.5;
   return slope + hill;
 }
-export function baseHeight(x: number, z: number) {
+export function rawBaseHeight(x: number, z: number) {
   // broad swells plus hummocks: moss carpets are never flat
   return fbm3(x * 0.6, 0, z * 0.6, 3, 11) * 0.12 + fbm3(x * 2.2, 1, z * 2.2, 3, 12) * 0.045 + land(x, z);
+}
+
+// Rainwater puddles: shallow level basins carved into the moss carpet on a coarse grid, away from trunks and
+// the start. Each has an organic outline (three low Fourier harmonics) and a gentle mossy lip holding the water
+// even on the hillside slope, so neighbouring chunks agree and puddles scale endlessly.
+export const PUDDLE_CELL = 5.5;
+export interface Puddle {
+  x: number; z: number; y: number;
+  rx: number; rz: number; rot: number;
+  depth: number;
+  a2: number; p2: number; a3: number; p3: number; a4: number; p4: number;
+  seed: number; key: string;
+}
+/** Organic normalised radius from a puddle's centre: < 1 inside the water, 1 at the shoreline, > 1 on the bank. */
+export function puddleNorm(p: Puddle, x: number, z: number) {
+  const dx = x - p.x, dz = z - p.z;
+  const c = Math.cos(p.rot), s = Math.sin(p.rot);
+  const lx = c * dx - s * dz, lz = s * dx + c * dz;
+  const ex = lx / p.rx, ez = lz / p.rz;
+  const r = Math.hypot(ex, ez);
+  if (r < 1e-6) return 0;
+  const th = Math.atan2(ez, ex);
+  const wob = 1 + p.a2 * Math.cos(2 * th + p.p2) + p.a3 * Math.cos(3 * th + p.p3) + p.a4 * Math.cos(4 * th + p.p4);
+  return r / wob;
+}
+export function puddleInCell(ix: number, iz: number): Puddle | null {
+  const r = mulberry32((Math.imul(ix, 0x4cf5ad43) ^ Math.imul(iz, 0x27d4eb2d) ^ 0x900d) >>> 0);
+  if (r() > 0.48) return null;
+  const x = (ix + 0.24 + 0.52 * r()) * PUDDLE_CELL, z = (iz + 0.24 + 0.52 * r()) * PUDDLE_CELL;
+  const rx = 0.52 + 0.62 * r();
+  const rz = rx * (0.62 + 0.36 * r());
+  const rot = r() * Math.PI * 2;
+  const depth = 0.036 + 0.034 * r();
+  const a2 = (r() - 0.5) * 0.28, p2 = r() * Math.PI * 2;
+  const a3 = (r() - 0.5) * 0.16, p3 = r() * Math.PI * 2;
+  const a4 = (r() - 0.5) * 0.09, p4 = r() * Math.PI * 2;
+  const seed = Math.floor(r() * 1e9);
+  const maxR = Math.max(rx, rz) * 1.28;
+  // keep clear of where you start (the opening fungi and fern stand there)
+  if (Math.hypot(x, z) < 1.2 + maxR) return null;
+  // keep clear of trunks and their root mounds
+  const tix = Math.floor(x / TREE_CELL), tiz = Math.floor(z / TREE_CELL);
+  for (let dz = -1; dz <= 1; dz++) for (let dx = -1; dx <= 1; dx++) {
+    const t = cachedTrunk(tix + dx, tiz + dz);
+    if (t && Math.hypot(t.x - x, t.z - z) < t.r + MOUND_OUT + maxR * 1.15) return null;
+  }
+  // water surface sits nearly flush with the local floor so a worm's eye sees right across the mirror
+  const h0 = rawBaseHeight(x, z);
+  let rimSum = 0;
+  for (let k = 0; k < 6; k++) {
+    const a = (k / 6) * Math.PI * 2;
+    rimSum += rawBaseHeight(x + Math.cos(a) * maxR, z + Math.sin(a) * maxR);
+  }
+  const y = Math.min(h0, rimSum / 6) - 0.008;
+  return { x, z, y, rx, rz, rot, depth, a2, p2, a3, p3, a4, p4, seed, key: `${ix},${iz}` };
+}
+const puddleCache = new Map<number, Puddle | null>();
+function cachedPuddle(ix: number, iz: number) {
+  const k = ix * 100003 + iz;
+  let p = puddleCache.get(k);
+  if (p === undefined) {
+    if (puddleCache.size > 4096) puddleCache.clear();
+    p = puddleInCell(ix, iz);
+    puddleCache.set(k, p);
+  }
+  return p;
+}
+/** Closest puddle affecting (x, z) (u < 1.85), or null. `depth` is > 0 inside the water. */
+export function puddleAt(x: number, z: number): { puddle: Puddle; u: number; depth: number } | null {
+  const ix = Math.floor(x / PUDDLE_CELL), iz = Math.floor(z / PUDDLE_CELL);
+  let best: { puddle: Puddle; u: number; depth: number } | null = null;
+  for (let dz = -1; dz <= 1; dz++) for (let dx = -1; dx <= 1; dx++) {
+    const p = cachedPuddle(ix + dx, iz + dz);
+    if (!p) continue;
+    const maxR = Math.max(p.rx, p.rz) * 2.4;
+    if (Math.abs(x - p.x) > maxR || Math.abs(z - p.z) > maxR) continue;
+    const u = puddleNorm(p, x, z);
+    if (u >= 1.85) continue;
+    if (!best || u < best.u) {
+      const depth = u < 1 ? p.depth * (1 - u * u) : 0;
+      best = { puddle: p, u, depth };
+    }
+  }
+  return best;
+}
+
+export function baseHeight(x: number, z: number) {
+  const raw = rawBaseHeight(x, z);
+  const pd = puddleAt(x, z);
+  if (!pd) return raw;
+  const { puddle: p, u } = pd;
+  if (u <= 1.0) {
+    // shallow submerged bowl with slight micro-relief on the bed
+    const micro = fbm3(x * 3.5, 2, z * 3.5, 2, 41) * 0.006 * (1 - u * u);
+    return p.y - p.depth * (1 - u * u) + micro;
+  }
+  // gentle shoreline lip rising cleanly above p.y before easing back into the natural hillside
+  const q = Math.min(1, (u - 1.0) / 0.26);
+  const lip = p.y + 0.018 * (1 - (1 - q) * (1 - q));
+  const rim = THREE.MathUtils.lerp(lip, Math.max(lip, raw), ss(u, 1.0, 1.35));
+  const t = ss(u, 1.16, 1.85);
+  return rim * (1 - t) + raw * t;
 }
 
 export function groundHeight(x: number, z: number) {
@@ -101,12 +203,15 @@ export function groundHeight(x: number, z: number) {
 
 const ss = THREE.MathUtils.smoothstep;
 
-/** Moss age at a point (0 = bare humus): a carpet with holes, thicker on the hummocks. */
+/** Moss age at a point (0 = bare humus): a carpet with holes, thicker on the hummocks, bare inside puddles. */
 export function mossAt(x: number, y: number, z: number) {
   // (the hollows go bare, the hummocks are covered: by the height over the lie of the land, not over y = 0, or
   // a hillside went bare all the way down)
+  const pd = puddleAt(x, z);
+  const dry = pd ? ss(pd.u, 0.98, 1.24) : 1;
+  if (dry < 0.04) return 0;
   const holes = fbm3(x * 1.3, 0, z * 1.3, 3, 21) + 1.6 * (y - land(x, z) - 0.02);
-  const cover = ss(holes, -0.5, -0.36);
+  const cover = ss(holes, -0.5, -0.36) * dry;
   if (cover < 0.04) return 0;
   return cover * (0.78 + 0.22 * (fbm3(x * 4, y * 4, z * 4, 2, 24) * 0.5 + 0.5));
 }
@@ -167,8 +272,11 @@ function chunkGeometry(cx: number, cz: number, step: number) {
     setN(nor, i, k, j, 1);
     setN(mnor, i, k, j, B);
     surf[i * 3 + 1] = x; surf[i * 3 + 2] = z;
-    // no pincushion on the ground, so its clump field is not needed: 1 everywhere
-    fields[i * 4] = deadAt(x, y, z); fields[i * 4 + 1] = pillowAt(x, y, z); fields[i * 4 + 2] = 1;
+    // no pincushion on the ground, so its clump field is not needed: 1 everywhere.
+    // cavity darkens the soaked humus bed and the damp moss rim around puddles for free.
+    const pd = puddleAt(x, z);
+    const wet = pd ? 1 - ss(pd.u, 0.96, 1.24) : 0;
+    fields[i * 4] = deadAt(x, y, z); fields[i * 4 + 1] = pillowAt(x, y, z); fields[i * 4 + 2] = 1; fields[i * 4 + 3] = wet * 0.65;
     const m = mossAt(x, y, z);
     moss[i] = m;
     // species, from fields: glittering wood-moss is the carpet; pincushion domes in their own patches,

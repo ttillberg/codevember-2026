@@ -83,7 +83,9 @@ export function soundboard(forest: Forest, sound: Sound, camera: THREE.Camera) {
   let left = true;
   add(body, 'button', { textContent: 'steg', onclick: () => { forest.step(0.9, 0, left); left = !left; } });
   add(body, 'button', { textContent: 'steg hukad', onclick: () => { forest.step(0.9, 1, left); left = !left; } });
+  add(body, 'button', { textContent: 'steg pöl', onclick: () => { forest.step(0.9, 0, left, 1); left = !left; } });
   add(body, 'button', { textContent: 'landning', onclick: () => { forest.step(1.6, 0, true); forest.step(1.2, 0, false); } });
+  add(body, 'button', { textContent: 'landning pöl', onclick: () => { forest.step(1.6, 0, true, 1); forest.step(1.2, 0, false, 1); } });
   add(body, 'button', { textContent: 'andas in', onclick: () => forest.breathe(true, 1) });
   add(body, 'button', { textContent: 'andas ut', onclick: () => forest.breathe(false, 1) });
   add(el, 'h4', { textContent: 'Kast' });
@@ -92,6 +94,7 @@ export function soundboard(forest: Forest, sound: Sound, camera: THREE.Camera) {
   add(throws, 'button', { textContent: 'sus', onclick: () => sound.whoosh(1) });
   add(throws, 'button', { textContent: 'puff', onclick: () => sound.puff(ahead(), 1) });
   add(throws, 'button', { textContent: 'puff liten', onclick: () => sound.puff(ahead(), 0.45) });
+  add(throws, 'button', { textContent: 'plask', onclick: () => sound.plop(ahead(), 1) });
   buttons('Svampar knarrar', FUNGI, (k) => sound.creak(ahead(), k));
 
   // the levels

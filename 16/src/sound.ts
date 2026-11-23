@@ -84,6 +84,51 @@ export class Sound {
     s.stop(t + len + 0.05);
   }
 
+  /** Spores landing on a puddle: a rising water-drop plip and a tiny splash, spatialised to p. */
+  plop(p?: THREE.Vector3, size = 1) {
+    const ctx = this.ctx;
+    if (!ctx || !this.noise || !this.out) return;
+    const { gain, pan } = this.place(p);
+    const t = ctx.currentTime, amp = gain * (0.55 + 0.45 * size);
+    const panner = ctx.createStereoPanner();
+    panner.pan.value = pan;
+    panner.connect(this.out);
+    if (this.send) panner.connect(this.send);
+    // primary Minnaert bubble chirp
+    const osc = ctx.createOscillator(), og = ctx.createGain();
+    const f0 = 560 + Math.random() * 360;
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(f0, t);
+    osc.frequency.exponentialRampToValueAtTime(f0 * (1.55 + Math.random() * 0.35), t + 0.034);
+    og.gain.setValueAtTime(0.0001, t);
+    og.gain.linearRampToValueAtTime(0.22 * amp, t + 0.003);
+    og.gain.exponentialRampToValueAtTime(0.0001, t + 0.042);
+    osc.connect(og).connect(panner);
+    osc.start(t); osc.stop(t + 0.05);
+    // small scatter of secondary droplets
+    for (let i = 0; i < (size > 0.6 ? 3 : 2); i++) {
+      const dt = 0.025 + Math.random() * 0.09, o2 = ctx.createOscillator(), g2 = ctx.createGain();
+      const f2 = 950 + Math.random() * 1100;
+      o2.type = 'sine';
+      o2.frequency.setValueAtTime(f2, t + dt);
+      o2.frequency.exponentialRampToValueAtTime(f2 * 1.5, t + dt + 0.02);
+      g2.gain.setValueAtTime(0.0001, t + dt);
+      g2.gain.linearRampToValueAtTime((0.05 + Math.random() * 0.06) * amp, t + dt + 0.002);
+      g2.gain.exponentialRampToValueAtTime(0.0001, t + dt + 0.026);
+      o2.connect(g2).connect(panner);
+      o2.start(t + dt); o2.stop(t + dt + 0.032);
+    }
+    // brief splash hiss
+    const s = this.source(ctx), bp = ctx.createBiquadFilter(), sg = ctx.createGain();
+    bp.type = 'bandpass'; bp.frequency.value = 1800 + Math.random() * 700; bp.Q.value = 1.1;
+    const len = 0.08 + 0.07 * size;
+    sg.gain.setValueAtTime(0.0001, t);
+    sg.gain.linearRampToValueAtTime(0.16 * amp, t + 0.006);
+    sg.gain.exponentialRampToValueAtTime(0.0001, t + len);
+    s.connect(bp).connect(sg).connect(panner);
+    s.start(t, Math.random() * 1.5); s.stop(t + len + 0.03);
+  }
+
   /** A soft puff of spores at p (landing, sowing): `size` 0..1, a burst bigger than a sowing. */
   puff(p?: THREE.Vector3, size = 1) {
     const ctx = this.ctx;
