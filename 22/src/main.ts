@@ -13,6 +13,7 @@ import { buildKidSketches } from './sketches';
 import { Commodore64Breadbin } from './c64breadbin';
 import { Tac2Joystick } from './tac2';
 import { EchoFireworks } from './fireworks';
+import { FilmColorGrade } from './post';
 import { buildSwedishRoom } from './room';
 import { MonitorSound } from './sound';
 
@@ -76,8 +77,14 @@ renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 1.08;
+// Tone mapping & 1984 35mm film color grade are handled in the post-processing pass
+renderer.toneMapping = THREE.NoToneMapping;
+
+const filmGrade = new FilmColorGrade(
+  window.innerWidth,
+  window.innerHeight,
+  Math.min(window.devicePixelRatio, 2),
+);
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x0d0c0b);
@@ -613,10 +620,12 @@ btnPaper.addEventListener('click', () => {
 function resize() {
   const w = window.innerWidth;
   const h = window.innerHeight;
+  const dpr = Math.min(window.devicePixelRatio, 2);
   camera.aspect = w / h;
   camera.updateProjectionMatrix();
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  renderer.setPixelRatio(dpr);
   renderer.setSize(w, h);
+  filmGrade.resize(w, h, dpr);
   canvasRect = canvas.getBoundingClientRect();
   computePreset(focusedMode);
 }
@@ -683,7 +692,7 @@ function animate(now: number) {
   camera.position.copy(camCurPos);
   camera.lookAt(camCurTarget);
 
-  renderer.render(scene, camera);
+  filmGrade.render(renderer, scene, camera, elapsed);
 }
 
 screen.render();
