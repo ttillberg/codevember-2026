@@ -86,7 +86,7 @@ export class Spores {
   /** Throw a pinch of spores from `from` to `to` along an arc; `onLand` gets the landing point. */
   throw(from: THREE.Vector3, to: THREE.Vector3, onLand: (p: THREE.Vector3) => void) {
     const d = from.distanceTo(to);
-    this.shots.push({ from: from.clone(), to: to.clone(), t: 0, dur: 0.5 + d * 0.3, peak: 0.08 + d * 0.2, onLand });
+    this.shots.push({ from: from.clone(), to: to.clone(), t: 0, dur: 0.36 + d * 0.22, peak: 0.1 + d * 0.19, onLand });
   }
 
   private burst(p: THREE.Vector3) {
@@ -165,13 +165,22 @@ export class Spores {
       const t0 = Math.min(sh.t, 1);
       sh.t += dt / sh.dur;
       const t1 = Math.min(sh.t, 1);
-      // the arc: puffs left hanging all along the way (several per frame, spread over the step, so the arc
-      // is a continuous wisp), slowly sinking and fading over a few seconds
-      for (let k = 0; k < 6; k++) {
-        const t = t0 + (t1 - t0) * (k + r()) / 6;
+      // the arc: a continuous wisp of spore smoke hanging in the air behind the flying pinch, plus glittering
+      // motes shed off the leading cloud so the trajectory reads clearly from the slingshot to landing
+      const nPuff = Math.max(4, Math.round(9 * Q));
+      for (let k = 0; k < nPuff; k++) {
+        const t = t0 + (t1 - t0) * (k + r()) / nPuff;
         tmp.lerpVectors(sh.from, sh.to, t);
         tmp.y += sh.peak * 4 * t * (1 - t);
-        this.emit(tmp, (r() - 0.5) * 0.01, (r() - 0.6) * 0.01, (r() - 0.5) * 0.01, 2.5 + r() * 1.5, 0.007 + r() * 0.005, 0, 2.5 + r() * 2, 0, 1.3);
+        this.emit(tmp, (r() - 0.5) * 0.014, (r() - 0.55) * 0.012, (r() - 0.5) * 0.014, 2.4 + r() * 1.6, 0.011 + r() * 0.007, 0, 2.2 + r() * 1.8, 0.002, 2.1);
+      }
+      // leading spore motes shedding off the pinch in flight
+      const nMote = Math.max(6, Math.round(20 * Q));
+      for (let k = 0; k < nMote; k++) {
+        const t = t0 + (t1 - t0) * r();
+        tmp.lerpVectors(sh.from, sh.to, t);
+        tmp.y += sh.peak * 4 * t * (1 - t);
+        this.emit(tmp, (r() - 0.5) * 0.05, (r() - 0.4) * 0.05, (r() - 0.5) * 0.05, 0.9 + r() * 1.1, 0.0008 + r() * 0.0008, 1, 1, 0, 1.4);
       }
       if (sh.t >= 1) {
         this.burst(sh.to);
@@ -202,7 +211,7 @@ export class Spores {
       d[i * 4] = this.size0[i] * (1 + (this.grow[i] - 1) * (1 - Math.pow(1 - age, 2)));
       // the band comes in slowly as the burst clears, and goes out very slowly
       const band = d[i * 4 + 2] > 1.5;
-      d[i * 4 + 1] = (band ? THREE.MathUtils.smoothstep(age, 0.02, 0.15) * f : Math.min(1, age * 10) * Math.pow(f, 1.3)) * this.str[i];
+      d[i * 4 + 1] = (band ? THREE.MathUtils.smoothstep(age, 0.02, 0.15) * f : Math.min(1, age * 35) * Math.pow(f, 1.3)) * this.str[i];
     }
     this.iPos.needsUpdate = true;
     this.iData.needsUpdate = true;

@@ -572,27 +572,36 @@ addEventListener('keydown', (e) => {
   if (e.code === 'Escape' && fungarium.isOpen) fungarium.close();
 });
 /** Where the sight in the middle of the screen lands: on the moss, or aimed over it, a couple of steps that way. */
-function aimAt(far = 2.2) {
+function aimAt(far = 2.6) {
   const hit = groundAt(innerWidth / 2, innerHeight / 2);
   if (hit) return hit;
   const d = rc.ray.direction;
   const l = Math.hypot(d.x, d.z) || 1;
   const x = camera.position.x + (d.x / l) * far, z = camera.position.z + (d.z / l) * far;
-  return new THREE.Vector3(x, groundHeight(x, z), z);
+  const pd = puddleAt(x, z);
+  return new THREE.Vector3(x, pd && pd.u < 1 ? pd.puddle.y : groundHeight(x, z), z);
 }
-/** A pinch of spores sown where you click or tap: where that point's ray meets the moss, so they come up right
- * there; but never nearer than 45 cm (closer, they grew up out of focus) nor further than 1.6 m (not across the
- * forest): pulled in or pushed out along the same line of sight, so they stay under the pointer on screen. Into
- * the air it goes 1.6 m that way. */
+const SOW_REACH = 1.05; // within this distance a click sows right on the moss; beyond it, the slingshot fires at once
+/** Click or tap to sow near you, or automatically fire an immediate slingshot shot when aiming beyond reach. */
 function throwNear(cx = innerWidth / 2, cy = innerHeight / 2) {
   const hit = groundAt(cx, cy);
   const o = camera.position, r = rc.ray.direction; // groundAt aimed the ray through the point
   const h = Math.hypot(r.x, r.z) || 1;
   // how far along the line of sight, measured flat
   const d = hit ? Math.hypot(hit.x - o.x, hit.z - o.z) : Infinity;
-  const D = THREE.MathUtils.clamp(d, 0.45, 1.6);
+  if (d > SOW_REACH) {
+    // beyond arm's reach: immediately launch a slingshot arc right to the clicked spot (or 2.6 m ahead in open air)
+    const D = hit ? Math.min(d, 5.5) : 2.6;
+    const x = o.x + (r.x / h) * D, z = o.z + (r.z / h) * D;
+    const pd = puddleAt(x, z);
+    const y = hit && d <= 5.5 ? hit.y : pd && pd.u < 1 ? pd.puddle.y : groundHeight(x, z);
+    throwTo(new THREE.Vector3(x, y, z), true);
+    return;
+  }
+  const D = Math.max(d, 0.45);
   const x = o.x + (r.x / h) * D, z = o.z + (r.z / h) * D;
-  throwTo(new THREE.Vector3(x, groundHeight(x, z), z), false);
+  const pd = puddleAt(x, z);
+  throwTo(new THREE.Vector3(x, pd && pd.u < 1 ? pd.puddle.y : groundHeight(x, z), z), false);
 }
 /** Flung at the sight, arcing over the moss like a grenade. */
 function throwAt() { throwTo(aimAt(), true); }
@@ -632,7 +641,7 @@ function throwTo(hit: THREE.Vector3, far: boolean) {
   // sown: no throw, just a cloud let go there; flung: an arc over the moss and a burst where it lands
   if (far) {
     spores.throw(from, hit, (p) => land(p, 1));
-    sound.whoosh(0.5 + from.distanceTo(hit) * 0.3); // as long as the flight
+    sound.whoosh(0.36 + from.distanceTo(hit) * 0.22); // as long as the flight
   }
   else {
     // the cloud is let go over the moss's top, not in it: down among the fronds it was hidden

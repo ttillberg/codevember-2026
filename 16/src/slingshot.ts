@@ -234,8 +234,9 @@ export class Slingshot {
 
   /** Let go: the pouch snaps out, the fork kicks, it is empty a moment. */
   fire() {
-    // a flick on a phone fires without a draw: as if drawn halfway
-    if (this.x > -PULL * 0.4) this.x = -PULL * 0.5;
+    // a quick shot without a held draw still pops the fork up slightly and snaps from half draw
+    if (this.x > -PULL * 0.4) this.x = -PULL * 0.55;
+    if (this.up < 0.65) this.up = 0.65;
     this.draw = 0;
     this.kickV += 9;
     this.loaded = 0;
