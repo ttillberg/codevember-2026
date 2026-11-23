@@ -29,7 +29,7 @@ window.addEventListener('unhandledrejection', (e) => say('rejected: ' + (e.reaso
 
 const BACKDROP = '#e8e3da';
 // the tools, by the number the shaders and what is saved know them by (the bar and the keys have their own order: TOOLS)
-const TOOL = { RAIN: 1, HOSE: 2, WIND: 3, SCRATCH: 4 };
+const TOOL = { RAIN: 1, HOSE: 2, WIND: 3, SCRATCH: 4, DYNAMITE: 5 };
 
 // Tuning. On window.P, to play with from the console.
 const P = {
@@ -118,7 +118,13 @@ const uData = new Float32Array(15 * 4);
 const uBuf = device.createBuffer({ size: uData.byteLength, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
 const stepData = new Uint32Array(4);
 const stepBuf = device.createBuffer({ size: stepData.byteLength, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
-const pickBuf = device.createBuffer({ size: 32, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC });
+const pickBuf = device.createBuffer({ size: 48, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC });
+const pickReadBuf = device.createBuffer({ size: 48, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
+// dynamite sticks, active visual explosions, and the detonation for this frame (common.wgsl Dyn)
+const dynRaw = new ArrayBuffer(816);
+const dynU32 = new Uint32Array(dynRaw);
+const dynF32 = new Float32Array(dynRaw);
+const dynBuf = device.createBuffer({ size: dynRaw.byteLength, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
 // the highest rock of every column: only what is open to the sky can be worked on
 const skyBuf = device.createBuffer({ size: GX * GZ * 4, usage: GPUBufferUsage.STORAGE });
 // the water, per column: depth, wear, bed and discharge in one, and what flows out to the four neighbours
@@ -144,6 +150,24 @@ let flight: number | null = null; // and since when it is in the air, while it i
 let goldAll = 1; // voxels of gold in the block
 let gold = 0; // and of them, picked up
 let heaped = -1; // nuggets shown on the bar
+let dug = false; // has the visitor started digging on this block
+let digSeconds = 0; // active seconds elapsed since they first started digging
+let goldFoundSeconds = 0; // digSeconds at the moment the latest gold voxel was collected
+
+const MAX_STICKS = 16;
+const MAX_BLASTS = 8;
+const FUSE_TIME = 1.25; // seconds from plant to boom
+const CRATE_AT: V3 = [88, GROUND_H + 18.9, 16]; // perched on a high shelf on the far side of the black board
+type Stick = { pos: V3; dir: V3; fuse: number; fuseMax: number; radius: number; force: number; seed: number };
+type Blast = { pos: V3; age: number; radius: number; force: number; seed: number };
+let hasDynamite = false;
+let crateHover = false;
+let bar: ReturnType<typeof buildBar> | undefined;
+let sticks: Stick[] = [];
+let blasts: Blast[] = [];
+let plantQueue: { x: number; y: number }[] = [];
+let readingPick = false;
+let shake = 0;
 
 const dry = new Float32Array(GX * GZ * 4);
 
@@ -154,6 +178,19 @@ function reset(seed = (Math.random() * 1e9) | 0) {
   left = false;
   flight = null;
   gold = 0;
+  dug = false;
+  digSeconds = 0;
+  goldFoundSeconds = 0;
+  hasDynamite = false;
+  crateHover = false;
+  sticks = [];
+  blasts = [];
+  plantQueue = [];
+  shake = 0;
+  if (bar) {
+    bar.reveal(TOOL.DYNAMITE, false);
+    if (tool === TOOL.DYNAMITE) setTool(TOOL.RAIN);
+  }
   device.queue.writeBuffer(modelBuf, 0, saucer.model);
   device.queue.writeBuffer(tallyBuf, 0, new Uint32Array(4));
   device.queue.writeBuffer(cellBuf, 0, world.cells);
@@ -173,6 +210,7 @@ function bind(visibility: number, buffers: [GPUBuffer, GPUBufferBindingType][]) 
 const { layout: simLayout, group: simGroup } = bind(GPUShaderStage.COMPUTE, [
   [cellBuf, 'storage'], [uBuf, 'uniform'], [stepBuf, 'uniform'], [pickBuf, 'storage'], [skyBuf, 'storage'],
   [colBuf, 'storage'], [fluxBuf, 'storage'], [ranBuf, 'storage'], [vegBuf, 'storage'], [tallyBuf, 'storage'],
+  [dynBuf, 'uniform'],
 ]);
 const simPipelineLayout = device.createPipelineLayout({ bindGroupLayouts: [simLayout] });
 const compute = (entryPoint: string) =>
@@ -185,9 +223,12 @@ const flowPipe = compute('flow');
 const settlePipe = compute('settle');
 const growPipe = compute('grow');
 const stampPipe = compute('stamp');
+const blastPipe = compute('blast');
+const blastColPipe = compute('blastCol');
 
 const { layout: renderLayout, group: renderGroup } = bind(GPUShaderStage.FRAGMENT, [
   [cellBuf, 'read-only-storage'], [uBuf, 'uniform'], [pickBuf, 'read-only-storage'], [modelBuf, 'read-only-storage'],
+  [dynBuf, 'uniform'],
 ]);
 const renderPipe = device.createRenderPipeline({
   layout: device.createPipelineLayout({ bindGroupLayouts: [renderLayout] }),
@@ -274,10 +315,7 @@ function rayOrigin(clientX: number, clientY: number): V3 {
   return [0, 1, 2].map((i) => cam.o[i] + cam.r[i] * sx + cam.u[i] * sy) as V3;
 }
 
-// does a ray along the view meet the rock's box? Decides between the tool and turning the table.
-function overRock(o: V3) {
-  const lo: V3 = [X0 - 6, 0, Z0 - 6];
-  const hi: V3 = [X0 + CUBE + 6, TOP + 6, Z0 + CUBE + 6];
+function boxHitT(o: V3, lo: V3, hi: V3) {
   let tn = -Infinity;
   let tf = Infinity;
   for (let i = 0; i < 3; i++) {
@@ -286,7 +324,21 @@ function overRock(o: V3) {
     tn = Math.max(tn, Math.min(a, b));
     tf = Math.min(tf, Math.max(a, b));
   }
-  return tn < tf;
+  return tn < tf && tf > 0 ? tn : Infinity;
+}
+
+// does a ray along the view meet the rock's box? Decides between the tool and turning the table.
+function overRock(o: V3) {
+  return boxHitT(o, [X0 - 6, 0, Z0 - 6], [X0 + CUBE + 6, TOP + 6, Z0 + CUBE + 6]) < Infinity;
+}
+
+// does a ray hit the collectible dynamite box on the back of the black board, unoccluded by the block?
+function overCrate(o: V3) {
+  if (hasDynamite) return false;
+  const tCrate = boxHitT(o, [CRATE_AT[0] - 5.2, CRATE_AT[1], CRATE_AT[2] - 3.0], [CRATE_AT[0] + 5.2, CRATE_AT[1] + 6.5, CRATE_AT[2] + 3.0]);
+  if (!Number.isFinite(tCrate)) return false;
+  const tBlock = boxHitT(o, [X0, GROUND_H, Z0], [X0 + CUBE, TOP, Z0 + CUBE]);
+  return tCrate < tBlock;
 }
 
 // ---------- pointer and tools ----------
@@ -314,17 +366,18 @@ const sizeRing = document.querySelector<HTMLElement>('.size-ring')!;
 // And its size, the brush's radius in voxels: the knob, or cmd + drag on the scene.
 // (min, max, start: the radius. force: what it starts on. rate: what the shader gets at this much power, from the tuning above.)
 type Tool = { id: number; name: string; icon: string; min: number; max: number; start: number; force: number; rate(power: number): number };
-// in the order of the bar, which is the order of the keys 1 to 4
+// in the order of the bar, which is the order of the keys 1 to 5
 const TOOLS: Tool[] = [
   { id: TOOL.RAIN, name: 'Rain', icon: ICONS.rain, min: 5, max: 45, start: 24, force: 0.75, rate: (p) => P.rainRate * p ** 0.3 },
   { id: TOOL.WIND, name: 'Wind', icon: ICONS.wind, min: 12, max: 90, start: 40, force: 0.75, rate: (p) => P.windRate * p },
   { id: TOOL.HOSE, name: 'Hose', icon: ICONS.water, min: 2, max: 16, start: 7, force: 0.75, rate: (p) => P.hoseRate * p },
   { id: TOOL.SCRATCH, name: 'Scratch', icon: ICONS.scratch, min: 1.5, max: 14, start: 11.2, force: 0.6, rate: (p) => P.scratchRate * p }, // big (90 on the knob) and not so hard
+  { id: TOOL.DYNAMITE, name: 'Dynamite', icon: ICONS.dynamite, min: 6, max: 32, start: 16, force: 0.75, rate: (p) => p },
 ];
 const toolOf = (id: number) => TOOLS.find((t) => t.id === id)!;
 // both by the tool's number, as they are saved (nothing at 0)
-const force = [0, 0, 0, 0, 0];
-const brush = [0, 0, 0, 0, 0];
+const force = [0, 0, 0, 0, 0, 0];
+const brush = [0, 0, 0, 0, 0, 0];
 for (const t of TOOLS) {
   force[t.id] = t.force;
   brush[t.id] = t.start;
@@ -358,19 +411,29 @@ function showRing() {
   sizeRing.style.top = `${sizing.y}px`;
 }
 
-const bar = buildBar(
+bar = buildBar(
   document.querySelector<HTMLElement>('#bar')!,
   TOOLS.map(({ id, name, icon }, i) => ({ id, name, icon, key: String(i + 1) })),
   [
     { name: 'Size', key: MAC ? '⌘ drag' : 'Ctrl drag', face: sizeFace, get: () => sizeKnob(tool), put: (v) => { setSizeKnob(tool, v); remember(); } },
     { name: 'Force', key: MAC ? '⇧⌘ drag' : 'Shift Ctrl drag', face: forceFace, get: () => force[tool], put: (v) => { force[tool] = v; remember(); } },
   ],
-  { select: setTool },
+  { select: setTool, elapsed: () => goldFoundSeconds, gold: () => gold },
 );
 function setTool(t: number) {
+  if (t === TOOL.DYNAMITE && !hasDynamite) return;
   tool = t;
-  bar.select(t);
+  bar!.select(t);
 }
+function collectDynamite() {
+  if (hasDynamite) return;
+  hasDynamite = true;
+  crateHover = false;
+  bar!.reveal(TOOL.DYNAMITE, true);
+  setTool(TOOL.DYNAMITE);
+  setCursor(false);
+}
+bar.reveal(TOOL.DYNAMITE, false);
 setTool(tool);
 
 // settings: a gear top right, its menu holds the detail and a new block
@@ -412,7 +475,13 @@ const fingers = new Map<number, { x: number; y: number }>();
 let pinch: { x: number; y: number; d: number; a: number; twist: number } | null = null;
 let pinched = false; // two fingers have been down: what is left of the touch does nothing
 let heldFrom = 0; // when the tool may start (performance.now)
+let touchPlant: { x: number; y: number } | null = null; // pending single-finger dynamite tap
+let touchCrate: { x: number; y: number } | null = null; // pending single-finger crate pickup tap
 const clampZoom = (z: number) => Math.min(5, Math.max(0.6, z));
+function queuePlant(x: number, y: number) {
+  dug = true;
+  if (plantQueue.length < 6) plantQueue.push({ x, y });
+}
 function pinchAt() {
   const [a, b] = [...fingers.values()];
   return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2, d: Math.hypot(b.x - a.x, b.y - a.y), a: Math.atan2(b.y - a.y, b.x - a.x) };
@@ -435,6 +504,8 @@ canvas.addEventListener('pointerdown', (e) => {
     fingers.set(e.pointerId, { x: e.clientX, y: e.clientY });
     if (fingers.size > 1) {
       release();
+      touchPlant = null;
+      touchCrate = null;
       hover = false;
       pinched = true;
       pinch = fingers.size === 2 ? { ...pinchAt(), twist: 0 } : null;
@@ -445,16 +516,26 @@ canvas.addEventListener('pointerdown', (e) => {
   ptr = pointAt(e);
   hover = true;
   last = { x: e.clientX, y: e.clientY };
+  const rayO = rayOrigin(ptr.x, ptr.y);
   if ((e.metaKey || e.ctrlKey) && e.shiftKey) {
     forcing = { x: e.clientX, t: force[tool] };
-    bar.peek('Force', true);
+    bar!.peek('Force', true);
     setCursor(true);
   } else if (e.metaKey || e.ctrlKey) {
     sizing = { x: e.clientX, y: e.clientY, r: brush[tool] };
     showRing();
     setCursor(true);
-  } else if (e.button === 0 && overRock(rayOrigin(ptr.x, ptr.y))) held = true;
-  else turning = true;
+  } else if (e.button === 0 && overCrate(rayO)) {
+    if (e.pointerType === 'touch') touchCrate = { x: e.clientX, y: e.clientY };
+    else collectDynamite();
+  } else if (e.button === 0 && overRock(rayO)) {
+    if (tool === TOOL.DYNAMITE) {
+      if (e.pointerType === 'touch') touchPlant = { x: e.clientX, y: e.clientY };
+      else queuePlant(ptr.x, ptr.y);
+    } else {
+      held = true;
+    }
+  } else turning = true;
 });
 canvas.addEventListener('pointermove', (e) => {
   if (fingers.has(e.pointerId)) fingers.set(e.pointerId, { x: e.clientX, y: e.clientY });
@@ -471,24 +552,27 @@ canvas.addEventListener('pointermove', (e) => {
   }
   if (forcing) {
     force[tool] = Math.min(1, Math.max(0, forcing.t + (e.clientX - forcing.x) / 160));
-    bar.refresh();
+    bar!.refresh();
     return;
   }
   if (sizing) {
     const k = Math.exp((e.clientX - sizing.x) / 160);
     brush[tool] = Math.min(toolOf(tool).max, Math.max(toolOf(tool).min, sizing.r * k));
     showRing();
-    bar.refresh();
+    bar!.refresh();
     return;
   }
-  setCursor(e.metaKey || e.ctrlKey);
   if (turning) {
+    crateHover = false;
+    setCursor(e.metaKey || e.ctrlKey);
     turn(e.clientX - last.x, e.clientY - last.y);
     last = { x: e.clientX, y: e.clientY };
     return;
   }
   hover = true;
   ptr = pointAt(e);
+  crateHover = overCrate(rayOrigin(ptr.x, ptr.y));
+  setCursor(e.metaKey || e.ctrlKey);
 });
 const release = () => {
   held = false;
@@ -498,7 +582,7 @@ const release = () => {
     remember();
   }
   if (forcing) {
-    bar.peek('Force', false);
+    bar!.peek('Force', false);
     remember();
   }
   sizing = null;
@@ -506,19 +590,30 @@ const release = () => {
 };
 // a resize arrow while cmd or ctrl is held: a drag will size the brush
 function setCursor(mod: boolean) {
-  canvas.style.cursor = sizing || forcing || mod ? 'ew-resize' : '';
+  canvas.style.cursor = sizing || forcing || mod ? 'ew-resize' : crateHover ? 'pointer' : '';
 }
 window.addEventListener('keydown', (e) => { if (e.key === 'Meta' || e.key === 'Control') setCursor(true); });
 window.addEventListener('keyup', (e) => { if (e.key === 'Meta' || e.key === 'Control') setCursor(false); });
 const lift = (e: PointerEvent) => {
   fingers.delete(e.pointerId);
-  if (!pinched) return release();
+  if (!pinched) {
+    if (touchCrate && e.type === 'pointerup' && Math.hypot(e.clientX - touchCrate.x, e.clientY - touchCrate.y) < 20) {
+      collectDynamite();
+    } else if (touchPlant && e.type === 'pointerup' && Math.hypot(e.clientX - touchPlant.x, e.clientY - touchPlant.y) < 20) {
+      queuePlant(ptr.x, ptr.y);
+    }
+    touchCrate = null;
+    touchPlant = null;
+    return release();
+  }
+  touchCrate = null;
+  touchPlant = null;
   pinch = null;
   if (!fingers.size) pinched = false;
 };
 canvas.addEventListener('pointerup', lift);
 canvas.addEventListener('pointercancel', lift);
-canvas.addEventListener('pointerleave', () => { if (!held) hover = false; });
+canvas.addEventListener('pointerleave', () => { if (!held) { hover = false; crateHover = false; } });
 canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 canvas.addEventListener('wheel', (e) => {
   e.preventDefault();
@@ -565,7 +660,9 @@ function probe() {
     probeBuf.unmap();
     probing = false;
     if (asked !== saucer) return; // a new block meanwhile
+    const prevGold = gold;
     gold = got[PROBES];
+    if (gold > prevGold) goldFoundSeconds = digSeconds;
     // The saucer, nearly dug out: most of what is round it is open. Then it goes home.
     const free = asked.probes.filter((_, k) => open(got[k])).length;
     if (!bare && free >= asked.probes.length * 0.8) launch();
@@ -603,10 +700,86 @@ function fly(s: number) {
   };
 }
 
+let lastT = performance.now();
+
+function stickDir(n: V3): V3 {
+  const rx = (Math.random() - 0.5) * 0.45;
+  const rz = (Math.random() - 0.5) * 0.45;
+  if (n[1] > 0.5) return unit([rx, 1, rz]);
+  if (n[1] < -0.5) return unit([rx, -0.85, rz]);
+  return unit([n[0] * 0.85 + rx * 0.35, 0.55 + Math.random() * 0.15, n[2] * 0.85 + rz * 0.35]);
+}
+
+function packDyn(det?: Stick) {
+  dynU32[0] = Math.min(sticks.length, MAX_STICKS);
+  dynU32[1] = Math.min(blasts.length, MAX_BLASTS);
+  dynU32[2] = hasDynamite ? 0 : crateHover ? 2 : 1;
+  dynU32[3] = 0;
+  if (det) {
+    dynF32.set([det.pos[0], det.pos[1], det.pos[2], det.radius], 4);
+    dynF32.set([det.force, det.seed & 0xffffff, 1, 0], 8);
+  } else {
+    dynF32.set([0, 0, 0, 0], 4);
+    dynF32.set([0, 0, 0, 0], 8);
+  }
+  const nS = Math.min(sticks.length, MAX_STICKS);
+  for (let i = 0; i < nS; i++) {
+    const s = sticks[i];
+    const base = 12 + i * 8;
+    dynF32.set([s.pos[0], s.pos[1], s.pos[2], Math.max(0, s.fuse / s.fuseMax)], base);
+    dynF32.set([s.dir[0], s.dir[1], s.dir[2], s.radius], base + 4);
+  }
+  const nB = Math.min(blasts.length, MAX_BLASTS);
+  for (let i = 0; i < nB; i++) {
+    const b = blasts[i];
+    const base = 140 + i * 8;
+    dynF32.set([b.pos[0], b.pos[1], b.pos[2], b.age], base);
+    dynF32.set([b.radius, b.force, b.seed & 0xffffff, 0], base + 4);
+  }
+}
+
 function frame(t: number) {
+  const dt = Math.min(0.05, Math.max(0.001, (t - lastT) / 1000));
+  lastT = t;
+  if (held && performance.now() >= heldFrom) dug = true;
+  if (dug && !document.hidden) digSeconds += dt;
   // the arrow keys turn a quarter at once: ease into it
   yawNow += (yaw - yawNow) * 0.2;
   updateCamera(yawNow);
+  if (shake > 0.04) {
+    const sx = (Math.sin(t * 0.09) + Math.cos(t * 0.143)) * shake;
+    const sy = (Math.cos(t * 0.11) - Math.sin(t * 0.171)) * shake;
+    cam.o = [
+      cam.o[0] + cam.r[0] * sx + cam.u[0] * sy,
+      cam.o[1] + cam.r[1] * sx + cam.u[1] * sy,
+      cam.o[2] + cam.r[2] * sx + cam.u[2] * sy,
+    ];
+    shake *= Math.exp(-dt * 11);
+  } else {
+    shake = 0;
+  }
+
+  // advance dynamite fuses and active blasts
+  const detonating: Stick[] = [];
+  const nextSticks: Stick[] = [];
+  for (const s of sticks) {
+    s.fuse -= dt;
+    if (s.fuse <= 0) detonating.push(s);
+    else nextSticks.push(s);
+  }
+  sticks = nextSticks;
+  for (const d of detonating) {
+    blasts.push({ pos: d.pos, age: 0, radius: d.radius, force: d.force, seed: d.seed });
+    if (blasts.length > MAX_BLASTS) blasts.shift();
+    shake = Math.min(4.5, shake + (d.radius / 16) * (1.1 + 1.3 * d.force));
+    // chain reaction: nearby sticks go off a split second after
+    for (const other of sticks) {
+      const dist = Math.hypot(other.pos[0] - d.pos[0], other.pos[1] - d.pos[1], other.pos[2] - d.pos[2]);
+      if (dist < d.radius * 1.65) other.fuse = Math.min(other.fuse, 0.12 + Math.random() * 0.08);
+    }
+  }
+  for (const b of blasts) b.age += dt;
+  blasts = blasts.filter((b) => b.age <= 2.25);
 
   const norm = (v: V3): V3 => {
     const l = Math.hypot(...v);
@@ -614,6 +787,10 @@ function frame(t: number) {
   };
   // the light comes over the viewer's left shoulder, wherever the table is turned
   const sun = norm([0, 1, 2].map((i) => -cam.r[i] * 0.6 + cam.u[i] * 0.75 - cam.f[i] * 0.3) as V3);
+
+  // if a click queued a dynamite plant, aim this frame's pick ray at it and read back pk
+  const planting = !readingPick && plantQueue.length > 0 ? plantQueue.shift()! : null;
+  const pickPt = planting ?? ptr;
 
   // the pointer in picture pixels, for what is drawn over the scene (the hose's jet)
   const rect = canvas.getBoundingClientRect();
@@ -639,8 +816,8 @@ function frame(t: number) {
   uData.set(cam.f, 12);
   uData.set([W, H, t / 1000], 16);
   uData.set(sun, 20);
-  uData.set(rayOrigin(ptr.x, ptr.y), 24);
-  uData.set([px, py, hover ? 1 : 0, working ? 1 : 0], 28);
+  uData.set(rayOrigin(pickPt.x, pickPt.y), 24);
+  uData.set([px, py, (hover && !crateHover) || planting ? 1 : 0, working ? 1 : 0], 28);
   uData.set([tool, brush[tool] * (tool === TOOL.SCRATCH ? scratch.bite : 1), toolOf(tool).rate(power(tool))], 32);
   uData.set([P.gravity, P.minFlow, P.inertia, P.cling], 36);
   // (bare, nothing holds anything up: nothing may count as loose)
@@ -664,10 +841,10 @@ function frame(t: number) {
       el.style.cssText = 'position:fixed;z-index:9;left:8px;top:70px;margin:0;font:10px/1.3 monospace;color:#036;pointer-events:none';
       document.body.append(el);
     }
-    el.textContent = `frame ${frames} tool ${tool} held ${held} working ${working} hover ${hover} fingers ${fingers.size} pinched ${pinched} turning ${turning} left ${left} gold ${gold}`;
+    el.textContent = `frame ${frames} tool ${tool} held ${held} working ${working} hover ${hover} sticks ${sticks.length} blasts ${blasts.length} left ${left} gold ${gold}`;
   }
   const nuggets = Math.min(HEAP, Math.ceil((gold / goldAll) * HEAP));
-  if (nuggets !== heaped) bar.heap((heaped = nuggets));
+  if (nuggets !== heaped) bar!.heap((heaped = nuggets));
   device.queue.writeBuffer(uBuf, 0, uData);
 
   // one dispatch over every column
@@ -675,6 +852,25 @@ function frame(t: number) {
     pass.setPipeline(pipe);
     pass.dispatchWorkgroups(GX / 8, GZ / 8);
   };
+
+  // run any detonations before skyline & sim so craters, water splashes and rubble start this frame
+  if (detonating.length > 0) {
+    for (const d of detonating) {
+      packDyn(d);
+      device.queue.writeBuffer(dynBuf, 0, dynRaw);
+      const enc = device.createCommandEncoder();
+      const pass = enc.beginComputePass();
+      pass.setBindGroup(0, simGroup);
+      pass.setPipeline(blastPipe);
+      pass.dispatchWorkgroups(CUBE / 4, CUBE / 4, CUBE / 4);
+      columns(pass, blastColPipe);
+      pass.end();
+      device.queue.submit([enc.finish()]);
+    }
+  } else {
+    packDyn();
+    device.queue.writeBuffer(dynBuf, 0, dynRaw);
+  }
 
   {
     const enc = device.createCommandEncoder();
@@ -684,7 +880,34 @@ function frame(t: number) {
     pass.setPipeline(pickPipe);
     pass.dispatchWorkgroups(1);
     pass.end();
+    if (planting) {
+      readingPick = true;
+      enc.copyBufferToBuffer(pickBuf, 0, pickReadBuf, 0, 48);
+    }
     device.queue.submit([enc.finish()]);
+    if (planting) {
+      const asked = saucer;
+      const radius = brush[TOOL.DYNAMITE];
+      const f = force[TOOL.DYNAMITE];
+      pickReadBuf.mapAsync(GPUMapMode.READ).then(() => {
+        const got = new Float32Array(pickReadBuf.getMappedRange().slice(0));
+        pickReadBuf.unmap();
+        readingPick = false;
+        if (asked !== saucer) return; // reset happened meanwhile
+        if (got[3] > 0.5) {
+          sticks.push({
+            pos: [got[0], got[1], got[2]],
+            dir: stickDir([got[8], got[9], got[10]]),
+            fuse: FUSE_TIME,
+            fuseMax: FUSE_TIME,
+            radius,
+            force: f,
+            seed: (Math.random() * 0xffffffff) >>> 0,
+          });
+          if (sticks.length > MAX_STICKS) sticks.shift();
+        }
+      });
+    }
   }
 
   // every step has its own block offset, so its own uniforms: one submit each
@@ -744,14 +967,22 @@ requestAnimationFrame(loop);
 // A fourth number is its level, 0..1, a fifth the seconds after which it is let go.
 // hold a tool on a screen point without a pointer, and set its force
 function hold(x: number, y: number, t = tool) {
+  if (t === TOOL.DYNAMITE) collectDynamite();
   setTool(t);
   ptr = { x, y };
   hover = true;
-  held = true;
+  if (t === TOOL.DYNAMITE) queuePlant(x, y);
+  else held = true;
+}
+function plant(x: number, y: number) {
+  collectDynamite();
+  ptr = { x, y };
+  hover = true;
+  queuePlant(x, y);
 }
 function level(t: number, v: number) {
   force[t] = v;
-  bar.refresh();
+  bar!.refresh();
 }
 const holdAt = query.get('hold')?.split(',').map(Number);
 if (holdAt) {
@@ -777,7 +1008,10 @@ async function readBack(src: GPUBuffer) {
   setTool,
   reset,
   hold,
+  plant,
   release,
+  sticks: () => sticks.length,
+  blasts: () => blasts.length,
   turn(a: number) { yaw = a; },
   camera: () => ({ yaw, pitch, zoom }),
   // what has been found: the gold picked up (of how much), whether the saucer has left, and sending it off by hand
@@ -786,7 +1020,7 @@ async function readBack(src: GPUBuffer) {
   // look at a point in the grid, this much zoomed in
   look(x: number, y: number, z: number, by = 1) { target[0] = x; target[1] = y; target[2] = z; zoom = by; },
   level,
-  brush(t: number, r?: number) { if (r !== undefined) { brush[t] = r; bar.refresh(); } return brush[t]; },
+  brush(t: number, r?: number) { if (r !== undefined) { brush[t] = r; bar!.refresh(); } return brush[t]; },
   // run frames by hand, for when the page is hidden and the browser holds its own back
   tick(n = 1) { for (let i = 0; i < n; i++) frame(performance.now()); },
   // the whole grid read back, index x + GX * (z + GZ * y): for measuring what the water does

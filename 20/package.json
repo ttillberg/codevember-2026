@@ -1,0 +1,27 @@
+{
+  "name": "day-20",
+  "private": true,
+  "description": "A preservation pod hanging by its cables in a hall: push it, pull its door, watch what drips",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "glb": "gltf-transform webp public/cocoon.glb public/cocoon.glb --quality 92 && gltf-transform meshopt public/cocoon.glb public/cocoon.glb"
+  },
+  "devDependencies": {
+    "@gltf-transform/cli": "^4.5.1",
+    "@types/three": "^0.187.0",
+    "@vitejs/plugin-basic-ssl": "^2.3.0",
+    "typescript": "^5.9.3",
+    "vite": "^7.3.1"
+  },
+  "codevember": {
+    "day": 20,
+    "word": "Cocoon",
+    "date": "2026-11-20"
+  },
+  "dependencies": {
+    "three": "^0.187.0"
+  }
+}

@@ -1,0 +1,139 @@
+/* a dark day: backdrop #0b0b0d, ink #f4f4f2. A light one: a light backdrop, ink #1c1c1c (docs/DESIGN.md) */
+html, body { margin: 0; height: 100%; background: #0b0c0f; overflow: hidden; }
+/* Nothing to select or long-press: a drag on the scene or on its furniture must not start a text selection,
+   a callout or a tap flash. A day with real text to copy turns it back on for that text (user-select: text). */
+html, body { user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent; }
+/* an arrow over the hall, a hand over the pod (main.ts): the pod is what a press does something to */
+canvas { display: block; width: 100vw; height: 100vh; touch-action: none; cursor: default; }
+canvas.on-pod { cursor: pointer; }
+/* the scene pinned to the whole screen: 100vh on a phone is not always what is on it, toolbars come and go */
+canvas#c { position: fixed; top: 0; left: 0; width: 100%; height: 100%; }
+canvas:active { cursor: grabbing; }
+
+/* the title plate, top left: the day in Plex capitals, the way home under it */
+.plate {
+  position: fixed; z-index: 2;
+  top: max(24px, env(safe-area-inset-top)); left: max(24px, env(safe-area-inset-left));
+  pointer-events: none; user-select: none; -webkit-user-select: none;
+  color: #f4f4f2;
+  font: 13px/1.4 Inter, "Helvetica Neue", Helvetica, Arial, sans-serif;
+}
+.plate b {
+  display: block; white-space: nowrap;
+  font: 700 56px/0.9 "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  letter-spacing: -0.02em; text-transform: uppercase;
+}
+.plate .head > i {
+  display: block; margin-top: 6px; font-style: normal;
+  font-weight: 600; font-size: 14px; line-height: 1.15; letter-spacing: 0.12em; text-transform: uppercase;
+}
+.plate .home { color: inherit; text-decoration: none; pointer-events: auto; }
+.plate .home span[lang="ja"] { font-family: "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Noto Sans JP", "Yu Gothic", sans-serif; letter-spacing: 0.06em; }
+@media (max-width: 640px) {
+  .plate { top: max(16px, env(safe-area-inset-top)); left: max(16px, env(safe-area-inset-left)); }
+  .plate b { font-size: 36px; }
+  .plate .head > i { font-size: 10px; }
+}
+/* debug: a gear bottom right, its panel a frosted card above it. Dev, or ?settings / ?debug, never for visitors */
+.debug { position: fixed; z-index: 5; right: max(24px, env(safe-area-inset-right)); bottom: max(24px, env(safe-area-inset-bottom)); display: flex; flex-direction: column; align-items: flex-end; gap: 8px; }
+.debug[hidden] { display: none; }
+.debug .gear {
+  display: flex; align-items: center; justify-content: center; width: 34px; height: 34px; padding: 0; border: 0; border-radius: 50%;
+  color: #f4f4f2; cursor: pointer; background: rgba(20, 22, 24, 0.45);
+  backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); transition: background 0.12s, color 0.12s;
+}
+.debug .gear svg { width: 18px; height: 18px; transition: transform 0.3s cubic-bezier(0.2, 0.8, 0.2, 1); }
+.debug .gear:hover { background: rgba(20, 22, 24, 0.7); }
+/* open: the panel, a chevron in its head folds it away; folded: the gear that brings it back */
+.debug .gear[hidden] { display: none; }
+.debug .head { display: flex; align-items: center; justify-content: space-between; padding: 0 0 2px 4px; }
+.debug .head .fold {
+  display: flex; align-items: center; justify-content: center; width: 24px; height: 24px; padding: 0; border: 0; border-radius: 50%;
+  background: rgba(255, 255, 255, 0.08); color: inherit; cursor: pointer; transition: background 0.12s;
+}
+.debug .head .fold:hover { background: rgba(255, 255, 255, 0.18); }
+.debug .head .fold svg { width: 14px; height: 14px; }
+.debug .menu {
+  display: flex; flex-direction: column; gap: 6px; padding: 10px; border-radius: 16px; min-width: 248px; box-sizing: border-box;
+  color: #f4f4f2; font: 600 10px/1 Inter, "Helvetica Neue", Helvetica, Arial, sans-serif; letter-spacing: 0.12em; text-transform: uppercase;
+  background: rgba(20, 22, 24, 0.62); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+  transform-origin: 100% 100%; animation: debug-in 0.18s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.debug .menu[hidden] { display: none; }
+@keyframes debug-in { from { opacity: 0; transform: translateY(6px) scale(0.97); } }
+.debug .label { padding: 4px 4px 0; opacity: 0.6; }
+.debug .seg { display: flex; gap: 4px; }
+.debug .seg button {
+  flex: 1; display: flex; align-items: center; justify-content: center; gap: 6px; height: 30px; padding: 0 8px; border: 0; border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08); color: inherit; font: inherit; letter-spacing: inherit; text-transform: inherit; cursor: pointer; white-space: nowrap;
+  transition: background 0.12s, color 0.12s;
+}
+.debug .seg button:hover { background: rgba(255, 255, 255, 0.18); }
+.debug .seg button.on { background: #f4f4f2; color: #1c1c1c; }
+.debug kbd {
+  display: inline-flex; align-items: center; height: 14px; padding: 0 4px; border-radius: 4px;
+  background: rgba(255, 255, 255, 0.14); font: 600 9px/1 Inter, "Helvetica Neue", Helvetica, Arial, sans-serif; letter-spacing: 0;
+}
+.debug .seg button.on kbd { background: rgba(0, 0, 0, 0.12); }
+.debug .readout { padding: 4px 4px 0; opacity: 0.6; white-space: pre-line; font-variant-numeric: tabular-nums; letter-spacing: 0.06em; }
+@media (max-width: 640px) {
+  .debug { right: max(16px, env(safe-area-inset-right)); bottom: max(16px, env(safe-area-inset-bottom)); }
+}
+/* the debug panel's reference, beside the scene or below it */
+.ref { position: fixed; z-index: 1; background: #16181b; }
+.ref[hidden] { display: none; }
+.split-side canvas#c { width: 50vw; }
+.split-side .ref { top: 0; right: 0; width: 50vw; height: 100vh; }
+.split-down canvas#c { height: 50vh; }
+.split-down .ref { left: 0; bottom: 0; width: 100vw; height: 50vh; }
+.debug .label kbd { margin-left: 6px; }
+/* the controls: small round buttons on a frosted ground, as the other days' (docs/DESIGN.md); on, the button is the
+   ink and the symbol the dark (main.ts). They were bare symbols, dim when off and full when on */
+.controls { position: fixed; left: max(20px, env(safe-area-inset-left)); right: max(20px, env(safe-area-inset-right)); bottom: max(20px, env(safe-area-inset-bottom)); margin: 0; padding: 0; list-style: none; display: flex; flex-direction: row; gap: 8px; z-index: 4; pointer-events: none; }
+/* the scene's own on the left; the camera and the sound on the right (the row spans the width: only its buttons take a touch) */
+.controls .end { margin-left: auto; }
+.controls button { pointer-events: auto; }
+/* (with the debug gear there, bottom right, the right pair stands clear of it) */
+body:has(.debug:not([hidden])) .controls { right: max(68px, calc(env(safe-area-inset-right) + 48px)); }
+.controls button {
+  width: 36px; height: 36px; border: 0; border-radius: 50%; display: grid; place-items: center; padding: 0; cursor: pointer;
+  background: rgba(11, 11, 13, 0.4); color: #f4f4f2; box-shadow: inset 0 0 0 1px rgba(244, 244, 242, 0.3);
+  -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px); -webkit-tap-highlight-color: transparent;
+  transition: background 0.2s, color 0.2s, transform 0.25s cubic-bezier(0.3, 1.4, 0.5, 1);
+}
+.controls button:active { transform: scale(0.94); }
+.controls button[aria-pressed="true"] { background: #f4f4f2; color: #0b0b0d; }
+.controls button:focus-visible { outline: 1px solid rgba(244, 244, 242, 0.7); outline-offset: 2px; }
+@media (hover: hover) { .controls button:not([aria-pressed="true"]):hover { background: rgba(244, 244, 242, 0.16); } }
+.controls svg { width: 20px; height: 20px; overflow: visible; }
+.controls svg * { fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.controls svg .solid { fill: currentColor; stroke: none; }
+.controls svg .light { stroke-width: 1.4; transition: opacity 0.2s; }
+/* the eye: a dot in the middle while it is yours; on its own, a play mark there, and the eye going round */
+.controls [data-ctl="eye"] .auto, .controls [data-ctl="eye"][aria-pressed="true"] .mine { opacity: 0; }
+.controls [data-ctl="sound"] .off, .controls [data-ctl="sound"][aria-pressed="false"] .waves { opacity: 0; }
+.controls [data-ctl="sound"][aria-pressed="false"] .off { opacity: 1; }
+.controls [data-ctl="eye"][aria-pressed="true"] .auto { opacity: 1; }
+.controls [data-ctl="eye"] .orbit { transform-origin: 12px 12px; }
+.controls [data-ctl="eye"][aria-pressed="true"] .orbit { animation: orbit 9s linear infinite; }
+@keyframes orbit { to { transform: rotate(360deg); } }
+@media (max-width: 640px) {
+  .controls { left: max(12px, env(safe-area-inset-left)); right: max(12px, env(safe-area-inset-right)); bottom: max(12px, env(safe-area-inset-bottom)); }
+  body:has(.debug:not([hidden])) .controls { right: max(56px, calc(env(safe-area-inset-right) + 40px)); }
+}
+/* the page comes up black and fades in once the scene is there (main.ts) */
+.fade { position: fixed; inset: 0; background: #000; z-index: 50; pointer-events: none; transition: opacity 3.5s ease-in-out; }
+.fade.in { opacity: 0; }
+/* the title is there from the first: over the black, while the scene loads */
+.plate { z-index: 60; }
+/* and a fan turns in the black, the hall's own, until the scene is there; it is gone before the black is */
+.loader { position: absolute; left: 50%; top: 50%; width: 44px; height: 44px; margin: -22px 0 0 -22px; fill: #fff; opacity: 0.85; transition: opacity 0.6s ease-out; }
+.loader svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+.loader .ring { fill: none; stroke: #fff; stroke-width: 1.2; }
+/* (an html box turned on its own layer: the compositor keeps it going while the scene is built) */
+.loader .turn { will-change: transform; animation: loader-turn 2.4s linear infinite; }
+.fade.in .loader { opacity: 0; }
+@keyframes loader-turn { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .loader .turn { animation: none; } }
+/* ?clean: the scene alone */
+.clean .plate, .clean .debug, .clean .controls { display: none; }

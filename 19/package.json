@@ -1,7 +1,7 @@
 {
   "name": "day-19",
   "private": true,
-  "description": "A cube of layered sandstone with a lake on it and bones in it, worn voxel by voxel: rain, a hose, wind and a scratch, and what grows after",
+  "description": "A cube of layered sandstone with a lake on it and bones in it, worn voxel by voxel: rain, wind, a hose, a scratch and dynamite, and what grows after",
   "type": "module",
   "scripts": {
     "dev": "vite",

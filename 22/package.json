@@ -1,0 +1,25 @@
+{
+  "name": "day-22",
+  "private": true,
+  "description": "A 1984 Swedish bedroom desk with a Commodore 64C, 1702 CRT, 1541 disk drive, and Suncom TAC-2 joystick running C64 BASIC V2 — write an echo program to set off fireworks",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "devDependencies": {
+    "@types/three": "^0.187.0",
+    "@vitejs/plugin-basic-ssl": "^2.3.0",
+    "typescript": "^5.9.3",
+    "vite": "^7.3.1"
+  },
+  "codevember": {
+    "day": 22,
+    "word": "Echo",
+    "date": "2026-11-22"
+  },
+  "dependencies": {
+    "three": "^0.187.0"
+  }
+}

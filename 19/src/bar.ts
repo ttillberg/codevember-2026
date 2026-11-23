@@ -1,6 +1,6 @@
 // The tool bar, after day 07's: icons in a frosted pill under the scene.
 //
-//   RAIN  WIND  HOSE  SCRATCH  |  SIZE  FORCE
+//   RAIN  WIND  HOSE  SCRATCH  DYNAMITE  |  SIZE  FORCE
 //
 // A tap on a tool picks it. Size and force are knobs, the same two for every tool, each showing
 // and setting the value of the tool in hand: hold the knob and drag, up or right, and a tall
@@ -19,7 +19,8 @@ type BarKnob = {
   put(t: number): void;
 };
 
-// 24 px line icons (Feather's cloud-rain, droplet and wind; the scratch is a garden trowel, digging down to the left).
+// 24 px line icons (Feather's cloud-rain, droplet and wind; the scratch is a garden trowel,
+// digging down to the left; the dynamite is a taped stick with a lit fuse and spark).
 export const ICONS = {
   rain: 'M16 13v8M8 13v8M12 15v8M20 16.58A5 5 0 0 0 18 7h-1.26A8 8 0 1 0 4 15.25',
   water: 'M12 2.69l5.66 5.66a8 8 0 1 1-11.31 0z',
@@ -29,6 +30,12 @@ export const ICONS = {
     'M15.82 8.18L12.85 11.15' +
     'M9.03 7.33L16.67 14.97L14.12 17.52C11.15 20.49 7.33 20.91 3.51 20.49C3.09 16.67 3.51 12.85 6.48 9.88Z' +
     'M10.64 13.36L7.42 16.58',
+  dynamite:
+    'M11.4 7.8L16.2 12.6L8.2 20.6C7.6 21.2 6.5 21.2 5.9 20.6L3.4 18.1C2.8 17.5 2.8 16.4 3.4 15.8Z' +
+    'M9.0 10.2L13.8 15.0' +
+    'M6.1 13.1L10.9 17.9' +
+    'M13.8 10.2C15.3 8.7 15.1 6.7 16.9 5.8' +
+    'M19.2 2.2V4.0M19.2 6.8V8.6M16.0 5.4H17.8M20.6 5.4H22.4',
 };
 
 const SVG = 'width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"';
@@ -45,8 +52,9 @@ export const forceFace = (t: number) =>
   `<svg ${SVG} class="ramp"><clipPath id="force-fill"><rect x="0" y="0" width="${(1.5 + 21 * t).toFixed(2)}" height="24"/></clipPath>` +
   `<path d="${RAMP}" class="empty"/><path d="${RAMP}" clip-path="url(#force-fill)" fill="currentColor"/></svg>`;
 
-export function buildBar(host: HTMLElement, tools: BarTool[], knobs: BarKnob[], on: { select(id: number): void }) {
+export function buildBar(host: HTMLElement, tools: BarTool[], knobs: BarKnob[], on: { select(id: number): void; elapsed(): number; gold(): number }) {
   const buttons = new Map<number, HTMLButtonElement>();
+  const boxes = new Map<number, HTMLElement>();
   const redraw: (() => void)[] = [];
   const peeks = new Map<string, (open: boolean) => void>();
 
@@ -57,6 +65,7 @@ export function buildBar(host: HTMLElement, tools: BarTool[], knobs: BarKnob[], 
     host.append(box);
     const button = box.querySelector('button')!;
     buttons.set(tool.id, button);
+    boxes.set(tool.id, box);
     button.addEventListener('pointerdown', (e) => e.preventDefault()); // keep focus off it, keys stay the scene's
     button.addEventListener('click', () => on.select(tool.id));
   }
@@ -150,9 +159,33 @@ export function buildBar(host: HTMLElement, tools: BarTool[], knobs: BarKnob[], 
 
   // Gold that has been picked up lies in a heap on the bar's shoulder. It is drawn the way a
   // heap comes about: nuggets dropped one by one on the middle, each rolling down to where it lies.
-  const heap = document.createElement('div');
+  // Clicking the heap opens a DM to @theo_t on X to claim a gift.
+  const DM_ID = '21615587'; // @theo_t
+  const formatTime = (seconds: number) => {
+    const s = Math.max(1, Math.round(seconds));
+    if (s < 60) return `${s} ${s === 1 ? 'second' : 'seconds'}`;
+    if (s < 3600) {
+      const m = Math.floor(s / 60);
+      return `${s % 60 ? 'over ' : ''}${m} ${m === 1 ? 'minute' : 'minutes'}`;
+    }
+    const h = Math.floor(s / 3600);
+    return `${s % 3600 ? 'over ' : ''}${h} ${h === 1 ? 'hour' : 'hours'}`;
+  };
+  const heap = document.createElement('a');
   heap.className = 'heap';
+  heap.target = '_blank';
+  heap.rel = 'noopener noreferrer';
+  heap.setAttribute('aria-label', 'Claim gift via DM to @theo_t');
   heap.setAttribute('aria-hidden', 'true');
+  heap.tabIndex = -1;
+  const updateHref = () => {
+    const g = on.gold();
+    const text = `I found ${g} ${g === 1 ? 'voxel' : 'voxels'} gold after digging pixels for ${formatTime(on.elapsed())} (screenshot attached)`;
+    heap.href = `https://x.com/messages/compose?recipient_id=${DM_ID}&text=${encodeURIComponent(text)}`;
+  };
+  heap.addEventListener('pointerdown', (e) => { e.stopPropagation(); updateHref(); });
+  heap.addEventListener('pointerenter', updateHref);
+  heap.addEventListener('focus', updateHref);
   host.append(heap);
   const COLS = 13;
   const ROWS = 9;
@@ -171,8 +204,16 @@ export function buildBar(host: HTMLElement, tools: BarTool[], knobs: BarKnob[], 
       const y = ROWS - 1 - Math.min(high[c]++, ROWS - 1);
       nuggets += `<rect x="${c * NUGGET}" y="${y * NUGGET}" width="${NUGGET}" height="${NUGGET}" fill="${['#eeb02a', '#d99a1c', '#f6cf5a'][(i * 5) % 3]}"/>`;
     }
-    heap.innerHTML = `<svg width="${COLS * NUGGET}" height="${ROWS * NUGGET}" viewBox="0 0 ${COLS * NUGGET} ${ROWS * NUGGET}" shape-rendering="crispEdges">${nuggets}</svg>`;
+    const peak = Math.max(1, ...high);
+    const h = peak * NUGGET;
+    const y0 = (ROWS - peak) * NUGGET;
+    updateHref();
+    heap.innerHTML =
+      `<svg width="${COLS * NUGGET}" height="${h}" viewBox="0 ${y0} ${COLS * NUGGET} ${h}" shape-rendering="crispEdges">${nuggets}</svg>` +
+      tip('Claim gift', '@theo_t');
     heap.classList.toggle('some', n > 0);
+    heap.setAttribute('aria-hidden', String(n === 0));
+    heap.tabIndex = n > 0 ? 0 : -1;
   };
 
   // the values changed from outside the bar (a drag on the scene, another tool)
@@ -184,6 +225,15 @@ export function buildBar(host: HTMLElement, tools: BarTool[], knobs: BarKnob[], 
     select(id: number) {
       for (const [i, b] of buttons) b.classList.toggle('on', i === id);
       refresh();
+    },
+    // show or hide a collectible tool in the bar
+    reveal(id: number, shown: boolean) {
+      const box = boxes.get(id);
+      if (!box) return;
+      box.classList.toggle('locked', !shown);
+      box.setAttribute('aria-hidden', String(!shown));
+      const b = buttons.get(id);
+      if (b) b.tabIndex = shown ? 0 : -1;
     },
     refresh,
     heap: drawHeap,

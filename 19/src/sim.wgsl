@@ -29,6 +29,8 @@
 // what has been picked up: [0] voxels of gold grit swept off or gone over the edge. Nothing of it
 // is lost: main.ts reads this back and heaps it on the tool bar.
 @group(0) @binding(9) var<storage, read_write> tally: array<atomic<u32>, 4>;
+// dynamite: the stick detonating on this frame (blast, blastCol)
+@group(0) @binding(10) var<uniform> dyn: Dyn;
 
 fn solid(t: u32) -> bool { return t == ROCK || t == GROUND || t == SED; }
 
@@ -79,11 +81,13 @@ fn openToSky(p: vec3i) -> bool {
 fn pickMain() {
   let before = pk.pos;
   var pos = vec4f(0.0);
+  var norm = vec4f(0.0, 1.0, 0.0, 0.0);
   if (u.pointer.z > 0.5) {
     let h = march(u.rayO.xyz, u.camF.xyz);
-    // the hose, the wind and the scratch are aimed at whatever is there, top or side; rain comes from above
+    // the hose, the wind, the scratch and the dynamite are aimed at whatever is there, top or side; rain comes from above
     if (h.hit && (toolNow() != RAIN || openToSky(h.cell))) {
       pos = vec4f(vec3f(h.cell) + 0.5, 1.0);
+      norm = vec4f(h.n, 0.0);
     } else if (h.hit && abs(h.n.y) < 0.5) {
       // a wall: the weather lands at its foot, on the open ground under the point it was aimed at
       // (the far side of a pit seen at a slant, the side of the block)
@@ -98,6 +102,7 @@ fn pickMain() {
   }
   pk.pos = pos;
   pk.was = before;
+  pk.n = norm;
 }
 
 // A water voxel is only a picture of the water, a plant voxel of a plant (see stamp): to what falls, they are air.
@@ -776,5 +781,110 @@ fn stamp(@builtin(global_invocation_id) gid: vec3u) {
       if (green != 0u) { want = PLANT | (green << 3u); }
     }
     if (want != c) { cells[k] = want; }
+  }
+}
+
+// ---------- dynamite ----------
+//
+// A blast carves a ragged, stratified crater in the rock: softer beds and rotten pockets give way
+// further than hard ironstone bands. Bones and the saucer stay intact so a blast uncovers them;
+// gold shakes loose into sediment and is never lost. The crater rim is scorched dark and fractured
+// (higher rot) so rain and wind chew into it afterwards.
+
+@compute @workgroup_size(4, 4, 4)
+fn blast(@builtin(global_invocation_id) gid: vec3u) {
+  let p = LO + vec3i(gid);
+  let i = idx(p);
+  let c = cells[i];
+  let t = ty(c);
+  if (t != ROCK && t != SED) { return; }
+
+  let rel = vec3f(p) + 0.5 - dyn.detPos.xyz;
+  let dist = length(rel);
+  let R = dyn.detPos.w;
+  if (dist > R * 1.48) { return; }
+
+  let force = dyn.detInfo.x;
+  let seed = u32(dyn.detInfo.y);
+  let h = pcg((u32(p.x) * 374761393u) ^ (u32(p.y) * 668265263u) ^ (u32(p.z) * 2147483647u) ^ seed);
+  let rndVal = unit(h);
+  let rndVal2 = unit(pcg(h));
+
+  // Coarse 3D blockiness so the crater walls are craggy and faceted, not a smooth ball
+  let q = p / 3;
+  let jag = unit(pcg(u32(q.x) + pcg(u32(q.y) + pcg(u32(q.z) + seed)))) * 0.28 - 0.12;
+
+  if (t == ROCK) {
+    let layer = layerOf(c);
+    // Buried treasures: skeletons and saucer survive the blast intact
+    if (layer == BONE || (layer >= METAL && layer <= LAMP)) { return; }
+    // Gold: never lost — inner blast pockets it straight to the heap, outer shell shakes it loose into gold sediment
+    if (layer == GOLD) {
+      if (dist < R * (0.65 + jag)) {
+        atomicAdd(&tally[0], 1u);
+        cells[i] = AIR;
+      } else if (dist < R * (0.95 + jag)) {
+        cells[i] = toSed(c);
+      }
+      return;
+    }
+    let soft = clamp(softOf(c), 0.05, 4.0);
+    let resist = pow(soft, mix(0.24, 0.07, force));
+    let reach = R * (0.82 + 0.44 * force) * clamp(resist, 0.78, 1.24) * (1.0 + jag);
+
+    if (dist < reach * 0.72) {
+      if (rndVal < mix(0.26, 0.12, force)) { cells[i] = toSed(c); } else { cells[i] = AIR; }
+    } else if (dist < reach) {
+      if (rndVal < mix(0.65, 0.40, force)) { cells[i] = toSed(c); } else { cells[i] = AIR; }
+    } else if (dist < reach * 1.26) {
+      // Scorched and fractured crater rim: darkest shade and extra rot for later erosion
+      var nc = c;
+      if (rndVal < 0.72) { nc = nc & ~0x300u; }
+      let curRot = (nc >> 12u) & 15u;
+      let addRot = u32(clamp((1.0 - (dist - reach) / (reach * 0.26)) * (4.0 + 6.0 * force), 0.0, 10.0));
+      let newRot = min(15u, curRot + addRot);
+      nc = (nc & ~(15u << 12u)) | (newRot << 12u);
+      if (dist < reach * 1.07 && rndVal2 < 0.25) { nc = toSed(nc); }
+      cells[i] = nc;
+    }
+  } else if (t == SED) {
+    if (layerOf(c) == GOLD) {
+      if (dist < R * (0.85 + 0.2 * force)) {
+        atomicAdd(&tally[0], 1u);
+        cells[i] = AIR;
+      }
+      return;
+    }
+    if (dist < R * (0.85 + 0.2 * force) && rndVal < 0.75) { cells[i] = AIR; }
+  }
+}
+
+// Per-column blast effects: scorch vegetation and push standing water outward in a splash wave
+@compute @workgroup_size(8, 8, 1)
+fn blastCol(@builtin(global_invocation_id) gid: vec3u) {
+  let x = i32(gid.x);
+  let z = i32(gid.y);
+  if (x >= GX || z >= GZ) { return; }
+  let i = u32(x + GX * z);
+  let d2d = vec2f(f32(x) + 0.5, f32(z) + 0.5) - dyn.detPos.xz;
+  let dist = length(d2d);
+  let R = dyn.detPos.w;
+  if (dist > R * 1.6) { return; }
+
+  let v = veg[i];
+  let dy = abs(col[i].z - dyn.detPos.y);
+  if (dist < R * 1.15 && dy < R * 1.4) {
+    veg[i] = vec4f(0.0, v.y, v.z * 0.3, 0.0);
+  } else if (dist < R * 1.5 && dy < R * 1.6) {
+    veg[i] = vec4f(v.x * 0.4, v.y, v.z * 0.7, v.w * 0.4);
+  }
+
+  if (col[i].x > 0.02 && dist > 0.5 && dist < R * 1.5 && dy < R * 1.5) {
+    let dir = d2d / dist;
+    let push = (1.0 - dist / (R * 1.5)) * (0.35 + 0.55 * dyn.detInfo.x) * min(col[i].x, 2.0);
+    var f = flux[i];
+    if (dir.x < 0.0) { f.x += -dir.x * push; } else { f.y += dir.x * push; }
+    if (dir.y < 0.0) { f.z += -dir.y * push; } else { f.w += dir.y * push; }
+    flux[i] = f;
   }
 }
