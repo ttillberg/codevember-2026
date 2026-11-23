@@ -43,7 +43,7 @@ export class Renderer {
   private hazeVao: WebGLVertexArrayObject; private hazeBuf: WebGLBuffer;
   private wallAll = new Float32Array(0); private faceAll = new Float32Array(0); private shardCount = 0;
   private xf: WebGLTexture; private xfData = new Float32Array(XF_W * 4); private xfRows = 1;
-  private mask: WebGLTexture;
+  private mask: WebGLTexture; private paint: WebGLTexture;
   private shadowFbo: WebGLFramebuffer; private shadowTex: WebGLTexture;
   private msFbo: WebGLFramebuffer | null = null; private msColor: WebGLRenderbuffer | null = null; private msDepth: WebGLRenderbuffer | null = null;
   private sceneFbo: WebGLFramebuffer | null = null; private sceneTex: WebGLTexture | null = null;
@@ -128,6 +128,14 @@ export class Renderer {
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array(4));
+
+    this.paint = gl.createTexture()!;
+    gl.bindTexture(gl.TEXTURE_2D, this.paint);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    this.setPaint(null);
 
     this.shadowTex = gl.createTexture()!;
     gl.bindTexture(gl.TEXTURE_2D, this.shadowTex);
@@ -270,6 +278,17 @@ export class Renderer {
     gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
   }
 
+  /** What is painted on the panes: a canvas laid out as the mask is, every pane's painting one under the other.
+   *  White is bare glass, a colour is what the paint lets through. None: bare glass everywhere. */
+  setPaint(canvas: HTMLCanvasElement | null) {
+    const gl = this.gl;
+    gl.bindTexture(gl.TEXTURE_2D, this.paint);
+    if (!canvas) { gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array([255, 255, 255, 255])); return; }
+    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, canvas);
+    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+  }
+
   /** A new fall. The shards of earlier ones stay where they came to rest: the new ones are added after them.
    *  Returns the id of the first new shard. */
   addShards(set: ShardSet): number {
@@ -384,6 +403,7 @@ export class Renderer {
     gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, this.xf); gl.uniform1i(u.uXf, 0);
     gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, this.mask); gl.uniform1i(u.uMask, 1);
     gl.activeTexture(gl.TEXTURE2); gl.bindTexture(gl.TEXTURE_2D, this.shadowTex); gl.uniform1i(u.uShadow, 2);
+    gl.activeTexture(gl.TEXTURE6); gl.bindTexture(gl.TEXTURE_2D, this.paint); gl.uniform1i(u.uPaint, 6);
   }
 
   /** What is left standing and what flies are drawn one after the other: each pane and its cracks where they

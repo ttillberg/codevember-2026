@@ -13,7 +13,7 @@ export const SECTIONS: Section[] = [
       it('panes', 'Panes', 1, 3, 1, 1),
       it('gap', 'Gap, cm', 3, 80, 1, 25),
       it('temper', 'Tempered (last pane)', 0, 1, 1, 0),
-      it('layered', 'Three coloured panes, clear', 0, 1, 1, 0),
+      it('layered', 'Three painted panes, clear', 0, 1, 1, 0),
       it('frost', 'Frosted', 0, 1, 0.01, 0.7),
       it('targets', 'Target size, cm', 0, 40, 0.5, 20),
       it('exposure', 'Exposure', 0.3, 2.5, 0.01, 1),
@@ -53,7 +53,6 @@ export const SECTIONS: Section[] = [
   },
   {
     id: 'sim', title: 'Simulation', note: 'From the next break', items: [
-      it('live', 'Live, not cached', 0, 1, 1, 0),
       it('kick', 'Shock ball speed, m/s', 2, 80, 0.5, 30),
       it('ballSize', 'Shock ball radius, cm', 3, 30, 0.5, 11),
       it('ballDensity', 'Shock ball weight', 0.02, 12, 0.02, 4),
@@ -71,7 +70,7 @@ export const SECTIONS: Section[] = [
       it('hulls', 'Of them meeting each other, at most', 100, 4000, 50, 900),
       it('stuck', 'Left standing', 0, 1, 0.01, 0.5),
       it('tape', 'Tape width, cm', 2, 20, 0.5, 5),
-      it('seconds', 'Baked seconds', 2, 15, 0.5, 7),
+      it('seconds', 'Seconds, at most', 2, 15, 0.5, 7),
       it('contacts', 'Sounds per frame', 0, 24, 1, 8),
     ],
   },

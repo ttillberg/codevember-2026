@@ -1,11 +1,11 @@
-// The fall, baked. The pane is handed over as convex shards; they are let go in a wave from the last impact,
-// simulated with Rapier faster than real time, and every frame goes back to the page as positions and
-// rotations. The page plays them as they arrive, so the fall is as smooth as its frame rate whatever the count.
+// The fall. The pane is handed over as convex shards; they are let go in a wave from the last impact and
+// simulated with Rapier at the pace they are shown, and every frame goes back to the page as positions and
+// rotations as it is worked out. The page keeps them, so a fall can be slowed down, held and played again.
 import RAPIER from '@dimforge/rapier3d-compat';
 import type { Body } from './shards';
 
-export interface BakeRequest {
-  type: 'bake';
+export interface SimRequest {
+  type: 'sim';
   run: number;
   bodies: Body[];
   /** world x, y, z of every blow: where a ball goes through, and which pane (its z) */
@@ -23,26 +23,24 @@ export interface BakeRequest {
 }
 
 /** What the settings panel turns. */
-export interface SimConfig { live: number; contacts: number; gravity: number; ballDensity: number; pushBack: number; pushOut: number; reach: number; spin: number; front: number; bounce: number; friction: number; stuck: number; seconds: number; again: number }
-export const SIM_DEFAULTS: SimConfig = { live: 0, contacts: 8, gravity: 9.81, ballDensity: 4, pushBack: 13, pushOut: 4.5, reach: 0.3, spin: 16, front: 7, bounce: 0.22, friction: 0.45, stuck: 0.5, seconds: 7, again: 3 };
+export interface SimConfig { pace: number; contacts: number; gravity: number; ballDensity: number; pushBack: number; pushOut: number; reach: number; spin: number; front: number; bounce: number; friction: number; stuck: number; seconds: number; again: number }
+export const SIM_DEFAULTS: SimConfig = { pace: 1, contacts: 8, gravity: 9.81, ballDensity: 4, pushBack: 13, pushOut: 4.5, reach: 0.3, spin: 16, front: 7, bounce: 0.22, friction: 0.45, stuck: 0.5, seconds: 7, again: 3 };
 
 export interface FramesMessage {
   type: 'frames';
   run: number;
-  first: number;
-  count: number;
-  /** count × (bodies + 1) × 7: position, quaternion; the ball last */
+  /** one frame, (bodies + 1) × 7: position, quaternion; the ball last */
   data: Float32Array;
-  /** every contact worth hearing in these frames, CONTACT floats each: frame, x, y, z, size, strength, kind.
+  /** every contact worth hearing in this frame, CONTACT floats each: frame, x, y, z, size, strength, kind.
    *  size is the area of the (smaller) shard in m², strength the speed they met at in m/s,
    *  kind 0 glass on the floor or a wall, 1 glass on glass, 2 glass on the ball. */
   contacts: Float32Array;
   done: boolean;
-  /** frames the bake will be at most */
+  /** frames it will be at most */
   total: number;
-  /** shards not at rest yet in the last of these frames: still to let go, or let go and moving */
+  /** shards not at rest yet: still to let go, or let go and moving */
   left: number;
-  /** the shards that broke again in these frames, SPLIT floats each: frame, which (Body.parent), x, y, z */
+  /** the shards that broke again in this frame, SPLIT floats each: frame, which (Body.parent), x, y, z */
   splits: Float32Array;
 }
 
@@ -66,27 +64,25 @@ function rng32(seed: number) {
   };
 }
 
-self.onmessage = async (e: MessageEvent<BakeRequest | { type: 'cancel'; run: number }>) => {
+self.onmessage = async (e: MessageEvent<SimRequest | { type: 'cancel'; run: number }>) => {
   const req = e.data;
   if (req.type === 'cancel') { cancelled.add(req.run); return; }
-  if (req.type !== 'bake') return;
+  if (req.type !== 'sim') return;
   await ready;
-  bake(req);
+  simulate(req);
 };
 
-async function bake(req: BakeRequest) {
+async function simulate(req: SimRequest) {
   const rand = rng32(req.seed);
   const gauss = () => (rand() + rand() + rand() + rand() - 2) * 1.7320508;
   const cfg = { ...SIM_DEFAULTS, ...req.cfg };
   const world = new RAPIER.World({ x: 0, y: -cfg.gravity * S, z: 0 });
-  // baked, there is a little more time: half as many passes of the solver again, and nothing may pass through
-  // anything between two steps. Thin glass in a pile needs it. Live keeps to what a frame can carry.
-  // (More steps were tried, three and four to a frame: nothing to be seen for it, and the bake no longer kept
-  // ahead of the fall. What a bake costs goes by the number of pieces and how they pile up.)
-  const careful = !(cfg.live > 0);
+  // Two steps to a frame, six passes of the solver, and nothing passes through anything between two steps:
+  // thin glass in a pile needs that much. (Three and four steps were tried: nothing to be seen for it, and the
+  // simulation no longer kept up with the fall. What it costs goes by the number of pieces and how they pile up.)
   const SUB = 2;
   world.timestep = 1 / (FPS * SUB);
-  world.numSolverIterations = careful ? 6 : 4;
+  world.numSolverIterations = 6;
 
   const G_SHARD = 0x0001, G_TINY = 0x0002, G_WORLD = 0x0004, G_BALL = 0x0008;
   const groups = (member: number, filter: number) => (member << 16) | filter;
@@ -130,8 +126,8 @@ async function bake(req: BakeRequest) {
   const handles: number[][] = [];
   const members = new Map<number, number[]>();
   const whole = new Uint8Array(n);
-  const again = careful && cfg.again > 0;
-  const air = (d: RAPIER.RigidBodyDesc) => d.setLinearDamping(0.05).setAngularDamping(0.25).setCcdEnabled(careful);
+  const again = cfg.again > 0;
+  const air = (d: RAPIER.RigidBodyDesc) => d.setLinearDamping(0.05).setAngularDamping(0.25).setCcdEnabled(true);
   /** The shape of shard i, on a body, at (ox, oy, oz) in it. */
   const shape = (i: number, body: RAPIER.RigidBody, ox: number, oy: number, oz: number) => {
     const b = req.bodies[i], hs: number[] = [];
@@ -246,15 +242,14 @@ async function bake(req: BakeRequest) {
 
   const backZ = Math.min(...req.zs);
   const maxFrames = Math.round(cfg.seconds * FPS);
-  // cached: as fast as it will go, a few frames a message. Live (cfg.live is the pace, 1 the speed of life):
-  // one frame a message, and no frame before its time, so what is shown is what was just worked out
-  const CHUNK = cfg.live > 0 ? 1 : 6;
+  // one frame a message, and no frame before its time (cfg.pace: 1 is the speed of life), so what is shown is
+  // what was just worked out
   const began = performance.now();
   const N7 = (n + 1) * 7;
-  let data = new Float32Array(CHUNK * N7);
+  const data = new Float32Array(N7);
   let contacts: number[] = [];
   const frameContacts: number[][] = [];
-  let inChunk = 0, first = 0, quiet = 0;
+  let quiet = 0;
   const few = Math.min(9, Math.floor(n * 0.03));
   for (let f = 0; f < maxFrames; f++) {
     const t = f / FPS;
@@ -304,7 +299,7 @@ async function bake(req: BakeRequest) {
     frameContacts.sort((u, v) => v[5] * Math.sqrt(v[4]) - u[5] * Math.sqrt(u[4]));
     for (let k = 0; k < Math.min(cfg.contacts, frameContacts.length); k++) contacts.push(...frameContacts[k]);
     let awake = 0, left = 0, fast = 0;
-    const o = inChunk * N7;
+    const o = 0;
     for (let i = 0; i < n; i++) {
       const body = bodies[i];
       const p = body.translation(), q = body.rotation();
@@ -333,7 +328,7 @@ async function bake(req: BakeRequest) {
       data[k + 3] = q.x; data[k + 4] = q.y; data[k + 5] = q.z; data[k + 6] = q.w;
       // an unseen ball has done its work half a metre behind the last pane: it is taken away there. Left in, it
       // comes back off the wall through the glass it has just sent flying and throws it at the lens, then rolls
-      // about nudging what lies still, and keeps the bake going to its last frame
+      // about nudging what lies still, and keeps the simulation going to its last frame
       for (const bb of balls) {
         if (!bb.isEnabled()) continue;
         const bp = bb.translation(), lv = bb.linvel();
@@ -341,19 +336,16 @@ async function bake(req: BakeRequest) {
         else if (!bb.isSleeping() && Math.hypot(lv.x, lv.y, lv.z) > 0.3 * S) awake++;
       }
     }
-    inChunk++;
-    // done when it is all at rest, or all but a few that only rock where they lie: they would have the bake run
-    // to its last frame for nothing anyone looks at
+    // done when it is all at rest, or all but a few that only rock where they lie: they would have it run to
+    // its last frame for nothing anyone looks at
     quiet = t > last + 0.5 && awake === 0 && fast === 0 && left <= few ? quiet + 1 : 0;
     const done = f === maxFrames - 1 || quiet > 20;
-    if (inChunk === CHUNK || done) {
-      const msg: FramesMessage = { type: 'frames', run: req.run, first, count: inChunk, data: data.subarray(0, inChunk * N7), contacts: new Float32Array(contacts), done, total: maxFrames, left, splits: new Float32Array(splits) };
-      const copy = { ...msg, data: msg.data.slice() };
+    {
+      const msg: FramesMessage = { type: 'frames', run: req.run, data: data.slice(), contacts: new Float32Array(contacts), done, total: maxFrames, left, splits: new Float32Array(splits) };
       contacts = []; splits = [];
-      (self as unknown as Worker).postMessage(copy, [copy.data.buffer, copy.contacts.buffer, copy.splits.buffer]);
-      first += inChunk; inChunk = 0;
-      // let other messages in: another bake runs alongside, a cancelled one stops here
-      const due = cfg.live > 0 ? began + ((f + 1) * 1000) / FPS / cfg.live - performance.now() : 0;
+      (self as unknown as Worker).postMessage(msg, [msg.data.buffer, msg.contacts.buffer, msg.splits.buffer]);
+      // let other messages in: another fall runs alongside, a cancelled one stops here
+      const due = began + ((f + 1) * 1000) / FPS / cfg.pace - performance.now();
       await new Promise((r) => setTimeout(r, Math.max(0, due)));
       if (cancelled.has(req.run)) { cancelled.delete(req.run); break; }
     }

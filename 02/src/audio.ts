@@ -67,6 +67,18 @@ export class Sound {
     for (let i = 0; i < 5; i++) this.ping(t + 0.015 + Math.random() * 0.08, 2600 + Math.random() * 5200, 0.05 + Math.random() * 0.1, 0.07);
   }
 
+  /** A sledge on glass: a dull blow, no report. */
+  blow() {
+    if (!this.ctx) return;
+    const t = this.ctx.currentTime;
+    this.burst(t, 0.1, 'lowpass', 700, 110, 0.8, 1.0);
+    this.burst(t + 0.004, 0.06, 'bandpass', 3800, 2600, 1, 0.5);
+    const o = this.ctx.createOscillator(), g = this.ctx.createGain();
+    o.frequency.setValueAtTime(150, t); o.frequency.exponentialRampToValueAtTime(55, t + 0.12);
+    g.gain.setValueAtTime(0.9, t); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.2);
+    o.connect(g).connect(this.out!); o.start(t); o.stop(t + 0.24);
+  }
+
   /** The shock: everything loose goes at once. */
   smash(delay: number) {
     if (!this.ctx) return;

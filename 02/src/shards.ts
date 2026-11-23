@@ -126,14 +126,18 @@ function convexParts(loop: number[], xs: number[], ys: number[]): number[][] {
 /** `parentOf` says which larger shard a point of the pane is in, when the graph was cut twice, coarse then fine:
  *  the faces are the fine pieces, and those of one larger shard go as one until it breaks. The cuts between
  *  them are walls of kind 3: not to be seen while it is whole. */
-export function buildShards(pane: Pane, y0: number, standing = false, gone: (loop: number[]) => boolean = () => false, layer = 0, z = 0, dice = false, held: (loop: number[]) => number = () => -1, groupBase = 0, parentOf?: (x: number, y: number) => number): ShardSet {
+/** A few dozen faces at a time: it stops in between (`yield`), so that nobody has to spare a frame for all of it. */
+export function* buildShardsSteps(pane: Pane, y0: number, standing = false, gone: (loop: number[]) => boolean = () => false, layer = 0, z = 0, dice = false, held: (loop: number[]) => number = () => -1, groupBase = 0, parentOf?: (x: number, y: number) => number): Generator<void, ShardSet> {
   const { nx, ny, ox, oy, W, T } = pane;
   const loops = pane.faces().filter((l) => !gone(l)); // without what left in an earlier fall
   // which larger shard each face is of, and which face is across each edge
   const N = nx.length;
   const across = new Map<number, number>();
   const parent = new Int32Array(loops.length).fill(-1);
-  if (parentOf) loops.forEach((loop, li) => {
+  yield;
+  if (parentOf) for (let li = 0; li < loops.length; li++) {
+    const loop = loops[li];
+    if (li % 48 === 47) yield;
     let a = 0, cx = 0, cy = 0;
     for (let i = 0; i < loop.length; i++) {
       const u = loop[i], v = loop[(i + 1) % loop.length];
@@ -142,7 +146,7 @@ export function buildShards(pane: Pane, y0: number, standing = false, gone: (loo
       across.set(u * N + v, li);
     }
     if (a > 2e-8 && held(loop) < 0) parent[li] = parentOf(cx / (3 * a), cy / (3 * a));
-  });
+  }
   const walls: number[] = [];
   const faces: number[] = [];
   const bodies: Body[] = [];
@@ -159,6 +163,7 @@ export function buildShards(pane: Pane, y0: number, standing = false, gone: (loo
   for (let li = 0; li < loops.length; li++) {
     const loop = loops[li];
     const n = loop.length;
+    if (li % 48 === 47) yield;
     if (loop === keep) continue;
     // under tape: with a pane still standing around it, it stays where it is, part of that pane. With none,
     // the strip has nothing to hang from: its pieces go, but as one, stuck to the tape

@@ -148,6 +148,7 @@ in vec3 vW; in vec3 vN; in vec3 vNl; in vec2 vUv; in vec4 vD; flat in vec4 vQ; f
 uniform vec3 uCam; uniform float uNow; uniform float uSeam; uniform float uCut; uniform float uUseXf;
 uniform sampler2D uMask; uniform vec3 uPane;
 uniform vec3 uTint[4]; uniform vec3 uEdge[4]; // per pane: what it lets through, and the colour its edges glow in
+uniform sampler2D uPaint; // what is painted on the panes, laid out as the mask is: white where the glass is bare
 out vec4 o;
 // the masks of all panes are stacked in one texture; the pane a vertex belongs to is the tens of its kind
 vec2 maskUv(vec2 uv, float kind) { float l = floor(kind / 10.0 + 0.01); return vec2(uv.x / uPane.x, (uv.y / uPane.y + uPane.z - 1.0 - l) / uPane.z); }
@@ -170,9 +171,12 @@ void main() {
   vec3 og = refract(Rg, vec3(0, 0, -sign(Rg.z)), 1.5);
   vec3 seen = dot(og, og) > 0.0 ? look(vW, rot(vQ, og)) : vec3(0.0);
   int layer = int(floor(vD.w / 10.0 + 0.01));
-  vec3 edge = uEdge[layer];
+  // painted glass is coloured through: its edges glow in the paint's colour, not the glass's
+  vec3 paint = texture(uPaint, maskUv(vUv, vD.w)).rgb;
+  float sat = max(paint.r, max(paint.g, paint.b)) - min(paint.r, min(paint.g, paint.b));
+  vec3 edge = mix(uEdge[layer], paint * paint * 0.3, smoothstep(0.06, 0.3, sat));
   vec3 trapped = edge * 0.5 + 0.004 + vec3(0.25, 0.5, 0.45) * uFlash * 0.25;
-  vec3 c = mix(trapped, seen * pow(uTint[layer], vec3(2.6)), esc);
+  vec3 c = mix(trapped, seen * pow(uTint[layer] * paint, vec3(2.6)), esc);
   // a shard on its own: the light it has gathered through its faces leaves by its edges, in the colour of its glass
   if (uUseXf > 0.5) {
     vec2 lp = vW.xz - vec2(0.0, -0.25);
@@ -251,7 +255,16 @@ void main() {
     }
   }
   float F = 0.06 + 0.94 * pow(1.0 - max(dot(-V, N), 0.0), 4.0);
-  c += tone(look(vW, reflect(V, N))) * F * uGlass.z;
+  vec3 R = reflect(V, N);
+  c += tone(look(vW, R)) * F * uGlass.z;
+  // clear glass also shows what is behind the eye: a tall window, soft at its edges. It is faint, it slides
+  // over the pane as the eye moves and bends with the glass, and it is what says this is glass. (It had bars
+  // across it: bent by the waviness of the pane they read as a stain, not as a window.)
+  if (uFrost < 0.01 && R.z > 0.2) {
+    vec2 q = R.xy / R.z - vec2(0.25, 0.085);
+    vec2 e = smoothstep(vec2(0.0), vec2(0.07), vec2(0.15, 0.135) - abs(q));
+    c += vec3(1.0, 0.98, 0.94) * e.x * e.y * F * 1.5 * uGlass.z;
+  }
   // crushed glass around the hole scatters white
   float frost = m.g * (0.9 + 0.7 * vnoise(vUv * 1500.0));
   c = mix(c, vec3(0.62, 0.68, 0.66) * (0.55 + uFlash * 3.0), clamp(frost, 0.0, 0.85));
@@ -267,15 +280,17 @@ export const TINT_FS = /* glsl */ `#version 300 es
 precision highp float;
 in vec3 vW; in vec3 vN; in vec2 vUv; in vec4 vD;
 uniform vec3 uCam; uniform float uNow; uniform float uCut; uniform float uUseXf; uniform float uTintK;
-uniform sampler2D uMask; uniform vec3 uPane; uniform vec3 uTint[4];
+uniform sampler2D uMask; uniform vec3 uPane; uniform vec3 uTint[4]; uniform sampler2D uPaint;
 out vec4 o;
 vec2 maskUv(vec2 uv, float kind) { float l = floor(kind / 10.0 + 0.01); return vec2(uv.x / uPane.x, (uv.y / uPane.y + uPane.z - 1.0 - l) / uPane.z); }
 void main() {
   if (vD.y > uNow) discard;
-  vec4 m = texture(uMask, maskUv(vUv, vD.w));
+  vec2 muv = maskUv(vUv, vD.w);
+  vec4 m = texture(uMask, muv);
   if (m.r > 0.5 || (uCut > 0.5 && m.b > 0.5)) discard;
   float way = (uUseXf > 0.5 ? 0.5 : 1.0) / max(abs(dot(normalize(vN), normalize(vW - uCam))), 0.14);
-  o = vec4(pow(uTint[int(floor(vD.w / 10.0 + 0.01))], vec3(uTintK * way)), 1.0);
+  // the glass, and what is painted on it: a shard keeps its part of the painting
+  o = vec4(pow(uTint[int(floor(vD.w / 10.0 + 0.01))] * texture(uPaint, muv).rgb, vec3(uTintK * way)), 1.0);
 }
 `;
 

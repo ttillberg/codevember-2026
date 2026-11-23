@@ -445,6 +445,13 @@ export class Pane {
   /** With `standing`, nothing runs on: only the pieces the cracks already cut out are cut smaller, and the
    *  largest face, the glass still standing, is left alone. */
   finish(time: number, maxArea = 0.006, spread = 1, standing = false, gone: (loop: number[]) => boolean = () => false): Seg[] {
+    const steps = this.finishSteps(time, maxArea, spread, standing, gone);
+    let r = steps.next();
+    while (!r.done) r = steps.next();
+    return r.value;
+  }
+  /** The same, a pass at a time: it stops after each (`yield`), for whoever cannot spare a frame for all of it. */
+  *finishSteps(time: number, maxArea = 0.006, spread = 1, standing = false, gone: (loop: number[]) => boolean = () => false): Generator<void, Seg[]> {
     const firstPath = this.paths.length;
     const tips = this.tips;
     if (!standing) this.tips = [];
@@ -488,6 +495,7 @@ export class Pane {
         cut++;
       }
       if (!cut) break;
+      yield;
     }
     if (!standing) this.tips = [];
     this.stampTimes(firstPath, time, true);

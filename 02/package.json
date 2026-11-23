@@ -1,7 +1,7 @@
 {
   "name": "day-02",
   "private": true,
-  "description": "A wall of frosted 8 mm glass with three targets on it, classic or tempered: shoot it, then swipe, and what is loose blows out as baked rigid shards",
+  "description": "A wall of frosted 8 mm glass with three targets on it, or three clear panes with a painting on each: a bullet, a load of shot or a sledge, and what is cut loose blows out as rigid shards",
   "type": "module",
   "scripts": {
     "dev": "vite",

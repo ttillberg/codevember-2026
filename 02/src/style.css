@@ -45,8 +45,10 @@ canvas { touch-action: none; cursor: crosshair; }
 }
 .tools button:hover { background: rgba(244, 244, 242, 0.22); }
 .tools svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; vertical-align: middle; }
-#sound .x, #sound.off .on, #live .on, #live.live .x, #glass .on, #glass.tempered .x { display: none; }
-#sound.off .x, #live.live .on, #glass.tempered .on { display: inline; }
+#sound .x, #sound.off .on, #glass .on, #glass.tempered .x { display: none; }
+#tool g { display: none; }
+#tool[data-tool="bullet"] .bullet, #tool[data-tool="shot"] .shot, #tool[data-tool="sledge"] .sledge { display: inline; }
+#sound.off .x, #glass.tempered .on { display: inline; }
 .tools button.off { opacity: 0.6; }
 @media (max-width: 640px) {
   /* five buttons do not fit beside the title on a phone: they go down the right edge */
@@ -103,19 +105,19 @@ canvas { touch-action: none; cursor: crosshair; }
 }
 .clean .debug { display: none; }
 
-/* the bake, bottom centre: how much of the fall the worker has simulated */
-#bake {
+/* the simulation, bottom centre: how far the worker is with the fall, and how many pieces still move */
+#sim {
   position: fixed; z-index: 2; left: 50%; bottom: max(28px, env(safe-area-inset-bottom)); transform: translateX(-50%);
   width: min(220px, 50vw); height: 3px; border-radius: 2px; background: rgba(244, 244, 242, 0.2); pointer-events: none;
 }
-#bake[hidden] { display: none; }
-#bake i { position: absolute; inset: 0; border-radius: 2px; background: #f4f4f2; transform-origin: 0 50%; transform: scaleX(0); }
-#bake span {
+#sim[hidden] { display: none; }
+#sim i { position: absolute; inset: 0; border-radius: 2px; background: #f4f4f2; transform-origin: 0 50%; transform: scaleX(0); }
+#sim span {
   position: absolute; left: 50%; bottom: 10px; transform: translateX(-50%); white-space: nowrap; color: #f4f4f2;
   font: 600 10px/1 Inter, "Helvetica Neue", Helvetica, Arial, sans-serif; letter-spacing: 0.12em; text-transform: uppercase;
   font-variant-numeric: tabular-nums; /* (it counts the pieces down: the figures must not make it shake) */
 }
-.clean #bake { display: none; }
+.clean #sim { display: none; }
 
 /* the replay, bottom centre: play, the hits of the fall over time with the playhead on it, speed, time */
 #replay {
