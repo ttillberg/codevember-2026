@@ -76,7 +76,8 @@ const renderer = new THREE.WebGLRenderer({
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.shadowMap.enabled = true;
-renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+// PCFShadowMap honors shadow.radius for smooth soft penumbra without stair-step jaggies
+renderer.shadowMap.type = THREE.PCFShadowMap;
 // Tone mapping & 1984 35mm film color grade are handled in the post-processing pass
 renderer.toneMapping = THREE.NoToneMapping;
 
@@ -175,15 +176,16 @@ const keyLight = new THREE.DirectionalLight(0xffe4be, 1.45);
 keyLight.position.set(-4.2, 6.8, 4.8);
 keyLight.castShadow = true;
 keyLight.shadow.mapSize.set(2048, 2048);
-keyLight.shadow.camera.near = 1;
-keyLight.shadow.camera.far = 24;
-const d = 6.8;
+keyLight.shadow.camera.near = 2.0;
+keyLight.shadow.camera.far = 19.0;
+const d = 4.8;
 keyLight.shadow.camera.left = -d;
 keyLight.shadow.camera.right = d;
 keyLight.shadow.camera.top = d;
 keyLight.shadow.camera.bottom = -d;
-keyLight.shadow.bias = -0.0005;
-keyLight.shadow.normalBias = 0.02;
+keyLight.shadow.bias = -0.0004;
+keyLight.shadow.normalBias = 0.025;
+keyLight.shadow.radius = 3.5;
 scene.add(keyLight);
 
 // Subtle cool rim light from back-right to sculpt the 1702 & lamp silhouettes

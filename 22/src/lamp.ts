@@ -22,12 +22,15 @@ export class OrangeDeskLamp {
 
   constructor(onReady?: () => void) {
     // Live warm tungsten SpotLight (re-parented onto Blender's `light_origin` / `light_target` once loaded)
-    this.spotLight = new THREE.SpotLight(0xffdfb0, 28, 19, Math.PI * 0.46, 0.62, 1.4);
+    this.spotLight = new THREE.SpotLight(0xffdfb0, 28, 18, Math.PI * 0.34, 0.72, 1.4);
     this.spotLight.position.set(1.75, 3.25, 0.25);
     this.spotLight.castShadow = true;
-    this.spotLight.shadow.mapSize.set(1024, 1024);
+    this.spotLight.shadow.mapSize.set(2048, 2048);
+    this.spotLight.shadow.camera.near = 0.45;
+    this.spotLight.shadow.camera.far = 14;
     this.spotLight.shadow.bias = -0.0004;
-    this.spotLight.shadow.normalBias = 0.02;
+    this.spotLight.shadow.normalBias = 0.025;
+    this.spotLight.shadow.radius = 4.0;
     this.root.add(this.spotLight);
 
     const fallbackTarget = new THREE.Object3D();
@@ -63,7 +66,12 @@ export class OrangeDeskLamp {
         if (obj.name === 'shade_outer') shadeOuter = obj;
 
         if (obj instanceof THREE.Mesh) {
-          const skipShadow = obj.name === 'bulb' || obj.name === 'shade_inner' || obj.name.startsWith('cord_');
+          // Skip shadow casting on the shade itself (the SpotLight sits 0.3u inside it and would magnify its rim into jagged bands;
+          // the SpotLight's own soft penumbra shapes the warm desk cone cleanly!) and thin cords.
+          const skipShadow =
+            obj.name === 'bulb' ||
+            obj.name.startsWith('shade_') ||
+            obj.name.startsWith('cord_');
           obj.castShadow = !skipShadow;
           obj.receiveShadow = true;
           obj.userData.hit = { kind: 'lamp' };
