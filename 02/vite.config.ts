@@ -5,9 +5,9 @@ import basicSsl from '@vitejs/plugin-basic-ssl';
 
 // Root build script sets CODEVEMBER_BASE to /codevember-2026/NN/.
 // Standalone dev/build uses '/'.
-// Dev runs on http://localhost:51NN, NN this folder, and on the LAN. HTTPS=1 for https with a self-signed cert;
-// a day that needs a secure context on a phone (WebGPU, AudioWorklet, the gyroscope) makes that its default here.
-const https = !!process.env.HTTPS;
+// Dev runs on https://localhost:51NN, NN this folder, and on the LAN: https, since a phone hands out WebGPU
+// only to a secure context. The cert is self-signed, accept it once. HTTP=1 for plain http.
+const https = !process.env.HTTP;
 const day = Number(basename(dirname(fileURLToPath(import.meta.url))));
 
 export default defineConfig({

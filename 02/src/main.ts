@@ -1,1123 +1,2949 @@
-// 02 Shatter. Panes of 8 mm glass, one behind the other, and a gun.
-//
-// Two parts. First the cracks: each bullet grows a web from its impact (cracks.ts), drawn as the crack surfaces
-// inside the glass. Then what the web has cut loose is cut into shards along those same cracks (shards.ts), a
-// worker simulates their fall with rigid bodies as it is shown (sim.worker.ts) and the page draws each frame.
-import { CRACKS, Pane, rng32, type Impact } from './cracks';
-import { defaults, mountPanel, setValue } from './settings';
-import { buildShardsSteps, limitHulls, mergeSets, type ShardSet } from './shards';
-import { Renderer, lookAt, perspective } from './render';
+import './style.css';
+import {
+  Vec3,
+  Quat,
+  add3,
+  cross3,
+  dot3,
+  len3,
+  mat4Invert,
+  mat4LookAt,
+  mat4Mul,
+  mat4Perspective,
+  mulberry32,
+  norm3,
+  qConj,
+  qFromAxisAngle,
+  qIdentity,
+  qMul,
+  qNorm,
+  qRotate,
+  qSlerp,
+  scale3,
+  sub3,
+} from './math';
+import {
+  Plane,
+  Poly,
+  ShatterShard,
+  intersectPolyPlane,
+  makeCrystalPoly,
+  makeInitialBlock,
+  polyPlanes,
+  shatterPoly,
+  splitPoly,
+  triangulateCracks,
+  triangulatePoly,
+  triangulateShards,
+  triangulateSurfaceCracks,
+} from './poly';
+import { CARVE_PRESETS, CarveId, CarvePlan, buildCarvePlan } from './carve';
+import { GEM_BLACK, GEM_SPLINTER_COLORS, GEM_TEXT_COLORS, LevelPlan, MAX_LEVEL, ThrowSpec, buildLevel } from './levels';
+import { PALETTES, samplePaletteColor } from './palettes';
+import { CutPieceUpload, GpuEngine, MAX_CUT_SLOTS, MAX_SHARDS, SplinterSpawn } from './gpu';
 import { Sound } from './audio';
-import type { FramesMessage, SimConfig, SimRequest } from './sim.worker';
+import type { BakeRequest, BakeResponse, ChildShardBakeInput, ShardBakeInput, StaticObstacleInput } from './sim.worker';
+import SimWorker from './sim.worker?worker';
 
-const params = new URLSearchParams(location.search);
-// ?clean: no page furniture, the scene alone (screengrabs, clips)
-if (params.has('clean')) document.body.classList.add('clean');
+const qs = new URLSearchParams(location.search);
+const CLEAN = qs.has('clean');
+const DEBUG = qs.has('debug') || location.hash === '#debug' || import.meta.env.DEV;
+if (CLEAN) document.documentElement.classList.add('clean');
 
-const canvas = document.querySelector<HTMLCanvasElement>('#c')!;
-const hint = document.querySelector<HTMLElement>('#hint')!;
-const simBar = document.querySelector<HTMLElement>('#sim')!;
-const simFill = simBar.querySelector<HTMLElement>('i')!;
-const simText = simBar.querySelector<HTMLElement>('span')!;
-let simLabel = '';
-const renderer = new Renderer(canvas);
+const BLOCK_SIZE = 0.56;
+const CRYSTAL_SIZE = 0.36;
+const HALF_SIZE: Vec3 = [BLOCK_SIZE * 0.5, BLOCK_SIZE * 0.54, BLOCK_SIZE * 0.5];
+const CRYSTAL_HALF_SIZE: Vec3 = [CRYSTAL_SIZE * 0.5, CRYSTAL_SIZE * 0.54, CRYSTAL_SIZE * 0.5];
+const PEDESTAL_CENTER: Vec3 = [0.0, 0.52, 0.0];
+const ORIG_BLOCK_VOL = BLOCK_SIZE * BLOCK_SIZE * BLOCK_SIZE * 1.08;
+const TOSS_GRAVITY = 2.60;
+const CHUNK_GRAVITY = 4.20;
+const ENABLE_CRACKLE = false;
+const EXPLODE_ON_GROUND = true;
+
+// Studio camera: smoothly pulls back & levels framing in Toss mode for pure below-up leaps & juggling room
+const PEDESTAL_CAM_EYE: Vec3 = [0.0, 0.96, 2.22];
+const PEDESTAL_CAM_TARGET: Vec3 = [0.0, 0.40, 0.0];
+const TOSS_CAM_EYE: Vec3 = [0.0, 0.88, 2.72];
+const TOSS_CAM_TARGET: Vec3 = [0.0, 0.56, 0.0];
+let camEye: Vec3 = [...PEDESTAL_CAM_EYE] as Vec3;
+let camTarget: Vec3 = [...PEDESTAL_CAM_TARGET] as Vec3;
+const CAM_FOV = (38 * Math.PI) / 180;
+
+// Key studio light: upper-left-front for rich coloured floor caustics
+const LIGHT_DIR: Vec3 = norm3([-0.50, 0.84, 0.34]);
+
+const cfg = {
+  ior: 1.56,
+  dispersion: 0.062,
+  causticStrength: 1.35,
+  shardCount: 82,
+  explodeForce: 2.35,
+  crackDuration: 0.36,
+  exposure: 1.06,
+};
+
+interface PendingChunk {
+  cutPoly: Poly;
+  shards: ShatterShard[];
+  localPushDir: Vec3;
+  worldPos: Vec3;
+  worldVel: Vec3;
+  ballistic: boolean;
+}
+
+interface PendingCut {
+  chunks: PendingChunk[];
+  flatShards: ShatterShard[];
+  parentChunkIdx: number[];
+  crackElapsed: number;
+  crackDur: number;
+  cutQuat: Quat;
+  cutAngVel: Vec3;
+  ballistic: boolean;
+  shattering: boolean;
+  bakeId: number;
+}
+
+interface ActiveScatter {
+  baseShardId: number;
+  numShards: number;
+  fps: number;
+  numFrames: number;
+  frames: Float32Array;
+  contacts: Float32Array;
+  nextContact: number;
+  elapsed: number;
+  settled: boolean;
+  gemId: number;
+  shards: ShatterShard[];
+}
+
+interface FallingChunk {
+  slotIdx: number;
+  cutPoly: Poly;
+  worldPos: Vec3;
+  worldVel: Vec3;
+  quat: Quat;
+  angVel: Vec3;
+  targetShards: number;
+  gemId: number;
+  bakeStarted: boolean;
+  bakeId: number;
+  flatShards: ShatterShard[];
+  parentShards: ShatterShard[];
+  bakedResp: BakeResponse | null;
+  hitGroundWaiting: boolean;
+  detonated: boolean;
+}
+
+interface FlyingCrystal {
+  id: number;
+  slotIdx: number;
+  poly: Poly;
+  startVol: number;
+  pos: Vec3;
+  vel: Vec3;
+  quat: Quat;
+  angVel: Vec3;
+  gravity: number;
+  poisoned: boolean;
+  gemId: number;
+  slices: number;
+  lastSlicedAt: number;
+  swipeEntered: boolean;
+  swipeDist: number;
+  enterX: number;
+  enterY: number;
+}
+
+interface FloatingCallout {
+  x: number;
+  y: number;
+  text: string;
+  sub?: string;
+  color: string;
+  age: number;
+  maxAge: number;
+  emphasis: boolean;
+}
+
+interface TrailPoint {
+  x: number;
+  y: number;
+  t: number; // ms
+  inGlass: boolean;
+}
+
+const canvas = document.getElementById('c') as HTMLCanvasElement;
+const trailCanvas = document.getElementById('trail') as HTMLCanvasElement;
+const trailCtx = trailCanvas.getContext('2d')!;
+const hudEl = document.getElementById('hud') as HTMLDivElement;
+const hudLevelEl = document.getElementById('hud-level') as HTMLElement;
+const hudScoreEl = document.getElementById('hud-score') as HTMLElement;
+const hudBestEl = document.getElementById('hud-best') as HTMLElement;
+const bannerEl = document.getElementById('banner') as HTMLButtonElement;
+const soundBtn = document.getElementById('sound') as HTMLButtonElement;
+const pauseBtn = document.getElementById('pause') as HTMLButtonElement;
+const fatalEl = document.getElementById('fatal') as HTMLDivElement;
+
 const sound = new Sound();
-// (a type-only import above: a value from the worker's file would pull Rapier into the page as well)
-const CONTACT = 7, SPLIT = 5; // floats per contact, and per shard that broke again, as sim.worker.ts writes them
-const worker = new Worker(new URL('./sim.worker.ts', import.meta.url), { type: 'module' });
+const gpu = new GpuEngine(canvas);
+const worker = new SimWorker();
 
-// every number the workbench can turn (?debug): the scene at once, cracks from the next bullet, the sim from the next break
-const V = defaults();
-let settled = false; // the page is up: before that there is no pane to prepare anything for
-function applyLook() {
-  const L = renderer.look;
-  for (const k of Object.keys(L) as (keyof typeof L)[]) L[k] = V[k];
-  // two rooms: dark, where the glass, its dust and its glints are what is lit, or a studio with a bright wall behind
-  const studio = V.studio >= 0.5;
-  L.wall *= studio ? 2.4 : 0.1; L.floor *= studio ? 1.5 : 0.5;
-  if (stacked) L.frost = 0; // the coloured panes are clear
-  document.body.classList.toggle('studio', studio);
-}
-function applySettings() {
-  for (const k of Object.keys(CRACKS) as (keyof typeof CRACKS)[]) CRACKS[k] = V[k];
-  CRACKS.hole = V.hole / 1000;
-  applyLook();
-  if (settled) placeTargets();
-  const again = stacked !== V.layered >= 0.5 || (!stacked && (V.panes !== layers.length || Math.abs(V.gap / 100 - gap) > 1e-6));
-  if (settled && (again || layers[layers.length - 1].tempered !== V.temper >= 0.5)) reset(); // another set-up: new panes
-}
-const simCfg = (): SimConfig => ({ pace: V.pace, contacts: V.contacts, gravity: V.gravity, ballDensity: V.ballDensity, pushBack: V.pushBack, pushOut: V.pushOut, reach: V.reach, spin: V.spin, front: V.front, bounce: V.bounce, friction: V.friction, stuck: V.stuck, seconds: V.seconds, again: V.again });
-if (params.has('layers')) V.layered = V.studio = 1;
-if (params.has('debug') || params.has('settings') || location.hash === '#debug') mountPanel(V, applySettings);
+// State
+let rng = mulberry32(Number(qs.get('seed')) || 202602);
+let paletteIdx = 0;
+let crystalVariant = 0;
+let blockParts: Poly[] = [makeCrystalPoly(CRYSTAL_SIZE, 0)];
 
-// A pane: how thick, what it lets through seen from the front, and the colour its edges glow in.
-// Plain: 8 mm of window glass, green in its thickness. Or three clear panes one behind the other, a thin one,
-// a thick one and one between, each with a painting on it: the colour is in the paint, not the glass.
-interface Glass { T: number; tint: number[]; edge: number[] }
-const PLAIN: Glass = { T: 0.008, tint: [0.93, 0.975, 0.955], edge: [0.004, 0.04, 0.024] };
-const STACK: Glass[] = [
-  { T: 0.004, tint: [0.965, 0.988, 0.978], edge: [0.004, 0.03, 0.02] },
-  { T: 0.012, tint: [0.9, 0.963, 0.935], edge: [0.004, 0.05, 0.03] },
-  { T: 0.006, tint: [0.948, 0.981, 0.966], edge: [0.004, 0.036, 0.022] },
-];
-let stacked = false; // the panes standing now are the three painted ones
+// Shape / Letter carving state
+let carveId: CarveId = (qs.get('shape') as CarveId) || 'free';
+let carvePlan: CarvePlan | null = buildCarvePlan(carveId);
+let carveStepIdx = 0;
 
-// What is painted on them: a handful of flat forms, circles, triangles, bars and a half circle, so that a pane
-// is not one plain colour. Each pane has its own family, cyan and blue in front, magenta and red on the thick
-// one, yellow and orange behind, so that where forms of two panes overlap what comes through is a third
-// colour: paint lets through what it does not take, and what two take is gone.
-// One canvas, every pane's painting one under the other as in the mask; white is bare glass.
-const paint = document.createElement('canvas');
-const PAINTS = [
-  ['#35c8e8', '#6fb4ff', '#a8e4f5', '#3f7fe8'],
-  ['#ff5aa8', '#ff6a5a', '#ffb0d0', '#e040a0'],
-  ['#ffe03a', '#ffb84a', '#fff08a', '#b8e85a'],
-];
-function paintPanes() {
-  const rand = rng32(seed ^ 0x51ed);
-  const R = (a: number, b: number) => a + rand() * (b - a);
-  const s = 1280 / Math.max(W, H);
-  const pw = Math.round(W * s), ph = Math.round(H * s);
-  paint.width = pw; paint.height = ph * layers.length;
-  const c = paint.getContext('2d')!;
-  c.fillStyle = '#fff'; c.fillRect(0, 0, paint.width, paint.height);
-  const u = Math.min(W, H);
-  for (const L of layers) {
-    const cols = PAINTS[L.i % PAINTS.length];
-    const col = () => cols[Math.floor(rand() * cols.length)];
-    c.save();
-    c.beginPath(); c.rect(0, L.i * ph, pw, ph); c.clip();
-    // metres, y up, as the pane has them
-    c.translate(0, (L.i + 1) * ph); c.scale(pw / W, -ph / H);
-    c.globalCompositeOperation = 'multiply'; // (two forms of one pane over each other are deeper)
-    const px = () => R(0.06, 0.94) * W, py = () => R(0.08, 0.94) * H;
-    // two large circles, one with a paler ring round it
-    for (let i = 0; i < 2; i++) {
-      const x = px(), y = py(), r = u * R(0.16, 0.3);
-      c.fillStyle = col();
-      if (!i) { c.globalAlpha = 0.4; c.beginPath(); c.arc(x, y, r * 1.3, 0, 7); c.fill(); c.globalAlpha = 1; }
-      c.beginPath(); c.arc(x, y, r, 0, 7); c.fill();
-    }
-    // smaller ones
-    for (let i = 0, n = 2 + Math.floor(rand() * 3); i < n; i++) { c.fillStyle = col(); c.beginPath(); c.arc(px(), py(), u * R(0.04, 0.11), 0, 7); c.fill(); }
-    // triangles
-    for (let i = 0; i < 2; i++) {
-      const x = px(), y = py(), a = R(0, 6.283), h = u * R(0.25, 0.5), b = u * R(0.08, 0.18);
-      const ca = Math.cos(a), sa = Math.sin(a);
-      c.fillStyle = col(); c.beginPath();
-      c.moveTo(x + ca * h * 0.6, y + sa * h * 0.6); c.lineTo(x - ca * h * 0.4 - sa * b, y - sa * h * 0.4 + ca * b); c.lineTo(x - ca * h * 0.4 + sa * b, y - sa * h * 0.4 - ca * b);
-      c.closePath(); c.fill();
-    }
-    // bars, and a half circle
-    for (let i = 0; i < 2; i++) { c.save(); c.translate(px(), py()); c.rotate(R(0, 3.1416)); c.fillStyle = col(); const l = u * R(0.35, 0.8), t = u * R(0.05, 0.13); c.fillRect(-l / 2, -t / 2, l, t); c.restore(); }
-    { const x = px(), y = py(), a = R(0, 6.283); c.fillStyle = col(); c.beginPath(); c.arc(x, y, u * R(0.1, 0.2), a, a + Math.PI); c.closePath(); c.fill(); }
-    c.restore();
-  }
-  renderer.setPaint(paint);
-}
-const Y0 = 0.03; // and stands in a channel this high
-const FOV = (30 * Math.PI) / 180;
-const DIST = 1.9; // how far the camera stands from the glass
-const EYE_AT = 0.47; // the height it looks at
+// Stationary sculptural glass pose with subtle pointer-parallax tilt (locks steady while slashing!)
+const INIT_YAW = -0.34;
+const INIT_PITCH = 0.16;
+let baseQuat: Quat = qNorm(
+  qMul(
+    qFromAxisAngle([1, 0, 0], INIT_PITCH),
+    qFromAxisAngle([0, 1, 0], INIT_YAW),
+  ),
+);
+let mouseQuat: Quat = qIdentity();
+let targetMouseQuat: Quat = qIdentity();
+let blockQuat: Quat = [...baseQuat] as Quat;
+let blockPos: Vec3 = [...PEDESTAL_CENTER] as Vec3;
+let blockVel: Vec3 = [0, 0, 0];
+let blockAngVel: Vec3 = [0, 0, 0];
 
-// intact: there is glass to shoot. fallen: no glass is left standing.
-// Falls play on their own whatever the state: a pane can lose pieces while it is being shot.
-type State = 'intact' | 'fallen';
-let state: State = 'intact';
-let seed = Number(params.get('seed')) || (Math.random() * 1e9) | 0;
-let shots = 0;
+// 1,000-Level Deterministic Diamond Cutter Game state!
+type GamePhase = 'playing' | 'failing' | 'lost' | 'cleared';
+let tossMode = carveId === 'free' && qs.get('toss') !== '0';
+let currentLevel = Math.max(1, Math.min(MAX_LEVEL, Number(qs.get('level')) || 1));
+let levelPlan: LevelPlan = buildLevel(currentLevel);
+let levelTime = 0;
+let nextThrowIdx = 0;
+let nextWarnIdx = 0;
+let nextPopIdx = 0;
+let gamePhase: GamePhase = 'playing';
+let score = 0;
+let bestScore = (() => {
+  try { return Number(localStorage.getItem('shatter-2026-best') || '0') || 0; } catch { return 0; }
+})();
+let failFreezeTimer = 0;
+let failReason = '';
+let shakeTimer = 0;
+let shakeAmp = 0;
+let failFlash = 0;
+let clearWaitTimer = 0;
+let replayPending = false;
+let replayDelayTimer = 0;
 
-/** One pane. They stand one behind the other, the first nearest: a bullet goes through all of them. */
-interface Layer {
-  i: number;
-  z: number; // where its front stands
-  pane: Pane;
-  standing: boolean;
-  tapes: { ax: number; ay: number; bx: number; by: number; w: number; fell: boolean }[]; // strips across it, in pane space: what is under one stays up
-  tempered: boolean; // it does not crack: the first hit turns all of it to dice
-  maskData: Uint8ClampedArray | null; // its part of the mask as it was when pieces last left: blue is gone
-}
-let layers: Layer[] = [];
-let W = 1.2, H = 0.8; // the size of a pane
-let gap = 0.25; // between two panes
+let nextCrystalId = 1;
+const flyingCrystals: FlyingCrystal[] = [];
+const callouts: FloatingCallout[] = [];
+let hitStopTimer = 0;
 
-/** What the worker sends back for one request: the frames of one fall, as they come. */
-interface Sim {
-  run: number; count: number; frames: Float32Array[]; contacts: number[]; done: boolean; total: number;
-  left: number; // pieces not at rest yet, where the worker has got to
-  freeAt: Float32Array; // per piece, the frame at which the larger shard it is of breaks again: from then it is on its own
-  splits: number[]; // those breaks, SPLIT floats each: frame, which shard, where
-  parts: Map<number, number[]>; // the pieces of each larger shard
-}
-/** One fall: a set of shards, the frames of its simulation as they come, and where the playback is. Several can play at once. */
-interface Fall {
-  sim: Sim; set: ShardSet; base: number; // id of its first shard in the renderer
-  at: number; // when it starts, on the scene's clock
-  started: boolean; over: boolean;
-  playhead: number; lastHit: number; lastSplit: number; speed: number;
-  near: [number, number, number][]; // where it was hit, for the dust
-}
-const sims = new Map<number, Sim>();
-const falls: Fall[] = [];
-let run = 0;
-let slow = false;
-let held = -1; // a playhead to hold, for stills
-const active = () => falls.some((f) => !f.over);
+// Fruit Ninja scoring: same-direction combo accumulator (3+ gems = +N bonus) + Blitz streak!
+let strokeDirX = 0;
+let strokeDirY = 0;
+let lastSwooshAt = -99999;
+let lastSwooshDirX = 0;
+let lastPointerMoveAt = 0;
+let swooshAccumDist = 0;
+let strokeMultiCount = 0;
+let strokeLastHitAt = -99999;
+let strokeLastPos: Vec3 = [0, 0.7, 0];
+let strokeLastGemId = 2;
+const strokeHitIds = new Set<number>();
+let blitzTier = 0;
+let lastComboAt = -99999;
+const BLITZ_BONUS = [0, 5, 10, 15, 20, 30] as const;
+const BLITZ_LABEL = ['', 'BLITZ', 'SUPER BLITZ', 'MEGA BLITZ', 'ULTRA BLITZ', 'UNBELIEVABLE'] as const;
 
-function simulate(set: ShardSet, req: Pick<SimRequest, 'impacts' | 'balls' | 'standing'>): Sim {
-  const parts = new Map<number, number[]>();
-  set.bodies.forEach((b, i) => { if (b.parent !== undefined && b.group === undefined) { const m = parts.get(b.parent); if (m) m.push(i); else parts.set(b.parent, [i]); } });
-  const sim: Sim = { run: ++run, count: set.count, frames: [], contacts: [], done: false, total: 1, left: set.count, freeAt: new Float32Array(set.count).fill(1e9), splits: [], parts };
-  sims.set(sim.run, sim);
-  worker.postMessage({ type: 'sim', run: sim.run, bodies: set.bodies, width: W, y0: Y0, seed, cfg: simCfg(), zs: layers.map((l) => l.z), ...req } satisfies SimRequest);
-  return sim;
-}
-function dropSim(sim: Sim) {
-  sims.delete(sim.run);
-  if (!sim.done) worker.postMessage({ type: 'cancel', run: sim.run });
+/** Responsive stage width: narrower on portrait mobile screens so crystals never leave the viewport! */
+function getTossStageLayout(): { eyeZ: number; stageHalfW: number } {
+  const aspect = window.innerWidth / Math.max(1, window.innerHeight);
+  const eyeZ = aspect < 0.72 ? 3.28 : aspect < 0.95 ? 3.02 : aspect < 1.2 ? 2.86 : 2.72;
+  const halfHAtZ0 = eyeZ * Math.tan(CAM_FOV * 0.5);
+  const halfWAtZ0 = halfHAtZ0 * aspect;
+  // Tight safe stage on phones (~0.32m half-width on iPhone portrait), generous wide stage on desktop (0.88m)
+  const stageHalfW = Math.max(0.24, Math.min(0.88, halfWAtZ0 * 0.62));
+  return { eyeZ, stageHalfW };
 }
 
-let now = 0; // seconds, the clock of the scene
-let flash = 0;
-let recoil = 0;
-let fade = 0;
-let fadeTo = 1;
-let resetAt = -1;
+let freeSym = false;
+let crackleOn = ENABLE_CRACKLE;
+let autoShatter = true;
+let slowMode = false;
+let shiftSlow = false;
+let paused = false;
+let canCut = false;
 
-// the mask: holes, crushed glass and what has left, every pane's one under the other
-const mask = document.createElement('canvas');
-const mctx = mask.getContext('2d', { willReadFrequently: true })!;
-let maskDirty = false; // drawn on since it was last sent to the renderer: sent once a frame, however many holes
-let mw = 1, mh = 1; // one pane's part of it, in pixels
+// Active live cutting plane(s) (in Free mode, only active while swiping!)
+let activePlane1N: Vec3 = norm3([1, 0, 0]);
+let activePlane1R = 0.18;
+let activePlane2N: Vec3 | null = null;
+let activePlane2R = -1;
+let displayPlane1N: Vec3 = [...activePlane1N] as Vec3;
+let displayPlane1R = activePlane1R;
+let displayPlane2N: Vec3 | null = null;
+let displayPlane2R = -1;
+let showCutLine = false;
 
-// glass dust
-const DUST = Renderer.DUST;
-const dPos = new Float32Array(DUST * 4);
-const dVel = new Float32Array(DUST * 3);
-const dLife = new Float32Array(DUST);
-const dWait = new Float32Array(DUST);
-const dDrag = new Float32Array(DUST); // how soon the air stops it: a splinter falls, powder hangs
-let dNext = 0;
-let dUsed = 0;
-// and glass ground to powder: puffs that hang in the air. x, y, z, thickness, radius, seed each
-const HAZE = Renderer.HAZE;
-const hBuf = new Float32Array(HAZE * 6);
-const hVel = new Float32Array(HAZE * 3);
-const hAge = new Float32Array(HAZE), hLife = new Float32Array(HAZE), hSize = new Float32Array(HAZE), hWait = new Float32Array(HAZE);
-let hNext = 0;
-let hUsed = 0;
+// Pending cracking piece + independent falling crystal chunks (explode ONLY on ground impact!)
+let pending: PendingCut | null = null;
+let bakingCutVisual: PendingCut | null = null;
+const inFlightBakes = new Map<number, PendingCut>();
+const fallingChunks: FallingChunk[] = [];
+const fallingBakes = new Map<number, FallingChunk>();
+let nextBakeId = 1;
+let nextShardId = 0;
+const scatters: ActiveScatter[] = [];
+const floorObstacles: StaticObstacleInput[] = [];
 
-function newPane() {
-  const aspect = innerWidth / innerHeight;
-  // a wall of glass: wider than the view at the distance the camera stands, and taller than its top
-  const tan = Math.tan(FOV / 2);
-  W = Math.min(2.6, 2 * DIST * tan * aspect * 1.1);
-  H = (EYE_AT + DIST * tan) * 1.06 - Y0;
-  seed = (seed * 1664525 + 1013904223) >>> 0;
-  stacked = V.layered >= 0.5;
-  const glass = stacked ? STACK : Array.from({ length: Math.round(V.panes) }, () => PLAIN);
-  gap = stacked ? 0.07 : V.gap / 100; // (the coloured ones stand close: they are to be seen through each other)
-  layers = glass.map((g, i) => ({ i, z: -i * gap, pane: new Pane(W, H, g.T, (seed + i * 7919) >>> 0), standing: true, tapes: [], tempered: i === glass.length - 1 && V.temper >= 0.5, maskData: null }));
-  renderer.tints.fill(1); renderer.edges.fill(0);
-  glass.forEach((g, i) => { renderer.tints.set(g.tint, i * 3); renderer.edges.set(g.edge, i * 3); });
-  applyLook();
-  shots = 0;
-  state = 'intact';
-  burst = false; job = null; pellets.length = 0; pelletHit = false;
-  if (replay.on) setReplay(false);
-  for (const b of [...sims.values()]) dropSim(b);
-  falls.length = 0;
-  const s = Math.min(2048, 4096 / layers.length) / Math.max(W, H);
-  mw = Math.round(W * s); mh = Math.round(H * s);
-  mask.width = mw; mask.height = mh * layers.length;
-  mctx.globalCompositeOperation = 'source-over';
-  mctx.fillStyle = '#000'; mctx.fillRect(0, 0, mask.width, mask.height);
-  renderer.setPanes(W, H, layers.map((l) => l.pane.T), Y0, layers.map((l) => l.z));
-  if (stacked) paintPanes(); else renderer.setPaint(null);
-  placeTargets();
-  glassBtn.classList.toggle('tempered', V.temper >= 0.5);
-  stackBtn.classList.toggle('on', stacked);
-  dPos.fill(0); dLife.fill(0); dUsed = 0;
-  hBuf.fill(0); hLife.fill(0); hUsed = 0;
-  setHint();
+// Swipe / slash state (Fruit Ninja style!)
+let activePointerId = -1;
+let swiping = false;
+let swipeStartX = 0;
+let swipeStartY = 0;
+let swipeCurX = 0;
+let swipeCurY = 0;
+let swipePrevDirX = 0;
+let swipePrevDirY = 0;
+let swipeInGlassDist = 0;
+let swipeEnteredGlass = false;
+let swipeDidSlice = false;
+let slashFlash = 0; // brief razor flash brightness on cleave
+const trailPts: TrailPoint[] = [];
+
+let viewProj: Float32Array = new Float32Array(16);
+let invViewProj: Float32Array = new Float32Array(16);
+
+function updateCamera() {
+  const aspect = Math.max(0.2, canvas.width / Math.max(1, canvas.height));
+  const proj = mat4Perspective(CAM_FOV, aspect, 0.05, 40.0);
+  const view = mat4LookAt(camEye, camTarget, [0, 1, 0]);
+  viewProj = mat4Mul(proj, view);
+  invViewProj = mat4Invert(viewProj);
 }
 
-/** Three targets on the glass: side by side on a wide wall, one over the other on a tall one. */
-function placeTargets() {
-  const wide = W > H * 0.9;
-  const r = stacked ? 0 : Math.min(V.targets / 100, wide ? W * 0.14 : 0.13); // (they must not reach each other; the painted panes have none)
-  for (let i = 0; i < 3; i++) {
-    const k = (i - 1) * 0.29;
-    renderer.targets.set(wide ? [W * (0.5 + k), EYE_AT - Y0 + (i === 1 ? 0.08 : 0.02), r] : [W * 0.5, EYE_AT - Y0 + k * 1.05, r], i * 3);
-  }
-}
-// classic glass, which cracks, or tempered, which goes to dice: a new pane either way
-const glassBtn = document.querySelector<HTMLButtonElement>('#glass')!;
-function toggleGlass() {
-  V.temper = V.temper >= 0.5 ? 0 : 1;
-  setValue('temper', V.temper);
-  modeTag.textContent = V.temper >= 0.5 ? 'Glass: tempered' : 'Glass: classic';
-  modeTag.hidden = false;
-  clearTimeout(modeTimer);
-  modeTimer = window.setTimeout(() => { modeTag.hidden = true; }, 1600);
-  reset();
-}
-glassBtn.addEventListener('click', () => { sound.wake(); toggleGlass(); });
-// the room: dark, or a studio. Nothing about the glass changes
-function toggleLight() {
-  V.studio = V.studio >= 0.5 ? 0 : 1;
-  setValue('studio', V.studio);
-  applyLook();
-  modeTag.textContent = V.studio >= 0.5 ? 'Light: studio' : 'Light: dark';
-  modeTag.hidden = false;
-  clearTimeout(modeTimer);
-  modeTimer = window.setTimeout(() => { modeTag.hidden = true; }, 1600);
-}
-document.querySelector<HTMLButtonElement>('#light')!.addEventListener('click', toggleLight);
-// one wall of frosted glass, or three clear panes in three colours: new panes either way
-const stackBtn = document.querySelector<HTMLButtonElement>('#stack')!;
-function toggleStack() {
-  V.layered = V.layered >= 0.5 ? 0 : 1;
-  setValue('layered', V.layered);
-  // (clear glass in a dark room is hardly there: the coloured panes come with the studio's light, L for the dark)
-  if (V.layered >= 0.5 && V.studio < 0.5) { V.studio = 1; setValue('studio', 1); }
-  modeTag.textContent = V.layered >= 0.5 ? 'Glass: three painted panes' : 'Glass: frosted';
-  modeTag.hidden = false;
-  clearTimeout(modeTimer);
-  modeTimer = window.setTimeout(() => { modeTag.hidden = true; }, 1600);
-  reset();
-}
-stackBtn.addEventListener('click', () => { sound.wake(); toggleStack(); });
-
-function setHint() {
-  const touch = matchMedia('(pointer: coarse)').matches;
-  hint.textContent =
-    replay.on ? 'Replay'
-    : taping ? (touch ? 'Tape: drag across the glass, or tap' : 'Tape: drag across the glass, or click for one straight across')
-    : state === 'fallen' ? (active() ? 'Hold to slow it down' : touch ? 'Tap for a new pane' : 'Click for a new pane')
-    : shots === 0 ? (touch ? 'Tap the glass to shoot' : 'Click the glass to shoot')
-    : '';
-}
-
-// pane space to the pixels of that pane's part of the mask
-const MX = (x: number) => (x / W) * mw;
-const MY = (L: Layer, y: number) => L.i * mh + (1 - y / H) * mh;
-
-/** `crush`: how wide the crushed glass is, as a hole of that radius would have it. A blunt blow crushes and
- *  leaves no hole. */
-function drawMask(L: Layer, im: Impact, crush = im.r, hole = true) {
-  const s = mw / W, cx = MX(im.x), cy = MY(L, im.y);
-  mctx.save();
-  mctx.beginPath(); mctx.rect(0, L.i * mh, mw, mh); mctx.clip();
-  mctx.globalCompositeOperation = 'lighter';
-  // crushed glass: dense by the hole, in ragged petals
-  const rand = L.pane.rand;
-  const petals = 9 + Math.floor(rand() * 6);
-  for (let i = 0; i < petals; i++) {
-    const a = rand() * Math.PI * 2, r = crush * (2 + rand() * rand() * 5.5);
-    const g = mctx.createRadialGradient(cx, cy, crush * s * 0.8, cx, cy, r * s);
-    g.addColorStop(0, 'rgba(0,255,0,0.75)'); g.addColorStop(0.45, 'rgba(0,255,0,0.3)'); g.addColorStop(1, 'rgba(0,255,0,0)');
-    mctx.fillStyle = g;
-    mctx.beginPath(); mctx.moveTo(cx, cy);
-    mctx.arc(cx, cy, r * s, a, a + 0.5 + rand() * 1.2);
-    mctx.closePath(); mctx.fill();
-  }
-  // the hole, a little inside its rim so the rim keeps a lip of glass
-  if (hole) {
-    mctx.fillStyle = 'rgb(255,0,0)';
-    mctx.beginPath();
-    im.rim.forEach((n, i) => {
-      const x = im.x + (L.pane.nx[n] - im.x) * 0.9, y = im.y + (L.pane.ny[n] - im.y) * 0.9;
-      if (i) mctx.lineTo(MX(x), MY(L, y)); else mctx.moveTo(MX(x), MY(L, y));
-    });
-    mctx.closePath(); mctx.fill();
-  }
-  mctx.restore();
-  maskDirty = true;
-}
-
-function dust(x: number, y: number, z: number, vx: number, vy: number, vz: number, life: number, wait = 0) {
-  const i = dNext; dNext = (dNext + 1) % DUST; dUsed = Math.max(dUsed, i + 1);
-  dPos[i * 4] = x; dPos[i * 4 + 1] = y; dPos[i * 4 + 2] = z; dPos[i * 4 + 3] = 0;
-  dVel[i * 3] = vx; dVel[i * 3 + 1] = vy; dVel[i * 3 + 2] = vz;
-  dLife[i] = life; dWait[i] = wait;
-  const r = Math.random();
-  dDrag[i] = 1.4 + 9 * r * r;
-}
-/** A puff of powder: thrown, stopped by the air within a few tenths of a second, then it hangs, spreads and thins. */
-function haze(x: number, y: number, z: number, vx: number, vy: number, vz: number, life: number, size: number, wait = 0) {
-  const i = hNext; hNext = (hNext + 1) % HAZE; hUsed = Math.max(hUsed, i + 1);
-  hBuf[i * 6] = x; hBuf[i * 6 + 1] = y; hBuf[i * 6 + 2] = z; hBuf[i * 6 + 3] = 0; hBuf[i * 6 + 4] = size; hBuf[i * 6 + 5] = Math.random();
-  hVel[i * 3] = vx; hVel[i * 3 + 1] = vy; hVel[i * 3 + 2] = vz;
-  hAge[i] = 0; hLife[i] = life; hSize[i] = size; hWait[i] = wait;
-}
-function stepHaze(dt: number) {
-  const k = Math.max(0, 1 - 4.5 * dt);
-  for (let i = 0; i < hUsed; i++) {
-    const p = i * 6, v = i * 3;
-    if (hAge[i] >= hLife[i]) { hBuf[p + 3] = 0; continue; }
-    if (hWait[i] > 0) { hWait[i] -= dt; continue; }
-    const age = (hAge[i] += dt), s = hBuf[p + 5] * 40;
-    hVel[v] *= k; hVel[v + 1] *= k; hVel[v + 2] *= k;
-    // once it has stopped it only wanders, and sinks a little
-    hBuf[p] += (hVel[v] + Math.sin(age * 0.6 + s) * 0.018) * dt;
-    hBuf[p + 1] = Math.max(0.02, hBuf[p + 1] + (hVel[v + 1] + Math.sin(age * 0.45 + s * 1.7) * 0.012 - 0.012) * dt);
-    hBuf[p + 2] += (hVel[v + 2] + Math.cos(age * 0.5 + s * 0.6) * 0.018) * dt;
-    const r = hSize[i] * (1 + 2.6 * (1 - Math.exp(-age * 1.3))) + 0.025 * age;
-    hBuf[p + 4] = r;
-    // as it spreads there is less of it in any one place
-    const t = Math.min(1, age / hLife[i]);
-    hBuf[p + 3] = Math.min(1, age / 0.05) * Math.pow(1 - t, 1.4) * 0.6 * Math.pow(hSize[i] / r, 0.5);
-  }
-}
-const gauss = () => (Math.random() + Math.random() + Math.random() + Math.random() - 2) * 1.73;
-
-function stepDust(dt: number) {
-  for (let i = 0; i < dUsed; i++) {
-    if (dLife[i] <= 0) { dPos[i * 4 + 3] = 0; continue; }
-    if (dWait[i] > 0) { dWait[i] -= dt; continue; }
-    const p = i * 4, v = i * 3;
-    dLife[i] -= dt * (dPos[p + 1] <= 0.003 ? 0.1 : 1); // what lies on the floor glitters there a good while
-    const drag = Math.max(0, 1 - dDrag[i] * dt);
-    dVel[v] *= drag; dVel[v + 1] = dVel[v + 1] * drag - 6.5 * dt; dVel[v + 2] *= drag;
-    dPos[p] += dVel[v] * dt; dPos[p + 1] += dVel[v + 1] * dt; dPos[p + 2] += dVel[v + 2] * dt;
-    if (dPos[p + 1] < 0.003) { dPos[p + 1] = 0.003; dVel[v] = dVel[v + 1] = dVel[v + 2] = 0; }
-    dPos[p + 3] = Math.min(1, dLife[i] * 1.5);
-  }
-}
-
-/** Is there glass of this pane at x, y? Not in a bullet hole, not where pieces left. */
-function glassAt(L: Layer, x: number, y: number) {
-  return L.standing && x >= 0 && y >= 0 && x <= W && y <= H && !L.pane.inHole(x, y) && !goneAt(L, x, y);
-}
-
-// What is in the hand. A bullet goes through every pane in its way. A load of shot is eight small pellets
-// spread over a hand's width, each through every pane. A sledge is one blunt blow: a star of long cracks and no
-// hole, and it stops at the first pane it meets, so panes one behind the other go one at a time.
-type Tool = 'bullet' | 'shot' | 'sledge';
-const TOOLS: Tool[] = ['bullet', 'shot', 'sledge'];
-let tool: Tool = 'bullet';
-
-/** One blow to the panes, along the ray through a point of the page and (dx, dy) metres aside on the glass.
- *  `energy` is how far its cracks run, `share` how much of a bullet's dust it gives. Blunt, it leaves no hole
- *  and goes no further than the first pane it meets. */
-function strike(px: number, py: number, dx: number, dy: number, energy: number, share: number, blunt: boolean): boolean {
-  let hit = false;
-  for (const L of layers) {
-    const p = pick(px, py, L.z), x = p[0] + dx, y = p[1] + dy;
-    if (!glassAt(L, x, y)) continue; // through a hole, or wide
-    const at = now + L.i * 0.012;
-    if (L.tempered) {
-      // tempered: all of it goes to dice at the first hit; after that a bullet only takes a die with it
-      if (!L.pane.diced) {
-        const res = L.pane.dice(x, y, at, V.dice / 100);
-        renderer.addCracks(L.i, L.pane, res.segs);
-        drawMask(L, res.impact);
-        sound.give(0.01, 0.3);
-      } else {
-        const im = L.pane.punch(x, y, at);
-        if (im) drawMask(L, im);
-      }
-    } else {
-      const res = L.pane.shoot(x, y, at, energy, blunt);
-      renderer.addCracks(L.i, L.pane, res.segs);
-      if (blunt) { res.impact.r = 0; drawMask(L, res.impact, 0.016, false); } else drawMask(L, res.impact);
-      for (const t of res.ticks) sound.tick(t - now);
-    }
-    hit = true;
-    const wx = x - W / 2, wy = y + Y0;
-    for (let i = 0; i < (420 * V.dust * share) / layers.length; i++) {
-      const back = Math.random() < 0.72;
-      const sp = back ? 1.5 + Math.random() * Math.random() * 11 : 0.5 + Math.random() * 3.5;
-      const cone = back ? 0.32 : 0.6;
-      dust(wx + gauss() * 0.004, wy + gauss() * 0.004, L.z + (back ? -L.pane.T : 0), gauss() * sp * cone, gauss() * sp * cone + 0.3, back ? -sp : sp, 0.7 + Math.random() * 2.2);
-    }
-    // and the powder: a plume out the back along the bullet's way, a smaller one towards the gun
-    for (let i = 0; i < (16 * V.dust * share) / layers.length; i++) {
-      const back = i % 4 > 0;
-      const sp = back ? 1 + Math.random() * 9 : 0.4 + Math.random() * 2.2;
-      haze(wx, wy, L.z + (back ? -L.pane.T : 0), gauss() * sp * 0.13, gauss() * sp * 0.13 + 0.05, back ? -sp : sp, 3.5 + Math.random() * 4, 0.018 + Math.random() * 0.03, Math.random() * 0.03);
-    }
-    if (blunt) break;
-  }
-  return hit;
-}
-
-/** The tool in hand, at a point of the page. What it cuts loose is blown out: in the next frame, so that the
- *  holes and their cracks are seen first. */
-let burst = false;
-function shoot(px: number, py: number) {
-  if (state !== 'intact') return;
-  let hit = false;
-  if (tool === 'sledge') {
-    sound.blow();
-    flash = 0.2; recoil = 2.2;
-    hit = strike(px, py, 0, 0, 2.2, 1.6, true);
-  } else if (tool === 'shot') {
-    sound.shot();
-    flash = 1; recoil = 1.5;
-    // the pellets arrive one to a frame (see `pellet`): seven webs in every pane at once would hold the page up
-    for (let i = 0; i < 7; i++) pellets.push([px, py, gauss() * 0.045, gauss() * 0.045]);
-    return;
-  } else {
-    sound.shot();
-    flash = 1; recoil = 1;
-    hit = strike(px, py, 0, 0, 0.75 + Math.random() * 0.6, 1, false);
-  }
-  if (!hit) return;
-  shots++;
-  setHint();
-  burst = true;
-}
-/** The next pellet of a load of shot: a smaller hole and shorter cracks than a bullet's, and many of them, so
- *  the webs run into each other. After the last, what they cut loose goes. */
-const pellets: number[][] = [];
-let pelletHit = false;
-function pellet() {
-  const [px, py, dx, dy] = pellets.shift()!;
-  if (state === 'intact') {
-    const hole = CRACKS.hole;
-    CRACKS.hole = hole * 0.55;
-    pelletHit = strike(px, py, dx, dy, 0.3 + Math.random() * 0.3, 0.3, false) || pelletHit;
-    CRACKS.hole = hole;
-  }
-  if (pellets.length) return;
-  if (pelletHit) { shots++; setHint(); burst = true; }
-  pelletHit = false;
-}
-function setTool(t: Tool) {
-  tool = t;
-  toolBtn.dataset.tool = t;
-  modeTag.textContent = t === 'bullet' ? 'Tool: bullet' : t === 'shot' ? 'Tool: shot' : 'Tool: sledge';
-  modeTag.hidden = false;
-  clearTimeout(modeTimer);
-  modeTimer = window.setTimeout(() => { modeTag.hidden = true; }, 1600);
-}
-
-// what has left a pane in an earlier fall, read off its part of the mask (blue)
-function goneAt(L: Layer, x: number, y: number) {
-  if (!L.maskData) return false;
-  const px = Math.floor(MX(x)), py = Math.floor((1 - y / H) * mh);
-  if (px < 0 || py < 0 || px >= mw || py >= mh) return true;
-  return L.maskData[(py * mw + px) * 4 + 2] > 127;
-}
-/** Is this face of a pane's crack graph one that already fell? Asked just inside a few of its edges. */
-function loopGone(L: Layer, loop: number[], p: Pane = L.pane) {
-  if (!L.maskData) return false;
-  const n = loop.length, step = Math.max(1, Math.floor(n / 7));
-  let yes = 0, all = 0;
-  for (let i = 0; i < n; i += step) {
-    const a = loop[i], b = loop[(i + 1) % n];
-    const ax = p.nx[a], ay = p.ny[a], bx = p.nx[b], by = p.ny[b];
-    const l = Math.hypot(bx - ax, by - ay);
-    if (l < 1e-5) continue;
-    // the inside of a counter-clockwise loop is on the left
-    if (goneAt(L, (ax + bx) / 2 - ((by - ay) / l) * 0.0015, (ay + by) / 2 + ((bx - ax) / l) * 0.0015)) yes++;
-    all++;
-  }
-  return all > 0 && yes * 2 > all;
-}
-
-/** Which strip of tape is this face under, if any? Under one it is held: with the pane, or with the strip. */
-function taped(L: Layer, loop: number[], p: Pane = L.pane) {
-  if (!L.tapes.length) return -1;
-  let cx = 0, cy = 0;
-  for (const n of loop) { cx += p.nx[n]; cy += p.ny[n]; }
-  cx /= loop.length; cy /= loop.length;
-  for (let k = 0; k < L.tapes.length; k++) {
-    const t = L.tapes[k];
-    if (t.fell) continue;
-    const dx = t.bx - t.ax, dy = t.by - t.ay;
-    if (Math.abs((cx - t.ax) * dy - (cy - t.ay) * dx) / Math.hypot(dx, dy) < t.w / 2) return k;
-  }
-  return -1;
-}
-/** The four corners of a strip, in the world and in pane space: its line, cut to the pane. */
-function tapeQuad(L: Layer, t: Layer['tapes'][number]) {
-  const dx = t.bx - t.ax, dy = t.by - t.ay, l = Math.hypot(dx, dy), ux = dx / l, uy = dy / l;
-  let t0 = -1e9, t1 = 1e9;
-  if (Math.abs(ux) > 1e-6) { const a = (0 - t.ax) / ux, b = (W - t.ax) / ux; t0 = Math.max(t0, Math.min(a, b)); t1 = Math.min(t1, Math.max(a, b)); }
-  if (Math.abs(uy) > 1e-6) { const a = (0 - t.ay) / uy, b = (H - t.ay) / uy; t0 = Math.max(t0, Math.min(a, b)); t1 = Math.min(t1, Math.max(a, b)); }
-  if (t1 <= t0) return null;
-  const nx = (-uy * t.w) / 2, ny = (ux * t.w) / 2;
-  const q: number[] = [], uv: number[] = [];
-  for (const [k, s] of [[t0, -1], [t1, -1], [t1, 1], [t0, 1]]) {
-    const x = t.ax + ux * k + nx * s, y = t.ay + uy * k + ny * s;
-    q.push(x - W / 2, y + Y0, L.z + 0.0008); uv.push(x, y);
-  }
-  return { q, uv };
-}
-function showTapes() {
-  const strips: { q: number[]; uv: number[] }[] = [];
-  for (const L of layers) for (const t of L.tapes) { const s = t.fell ? null : tapeQuad(L, t); if (s) strips.push(s); }
-  renderer.setTapes(strips);
-}
-/** The strips that go down in a fall: from now on each rides one of its shards. */
-function dropTapes(set: ShardSet, base: number) {
-  for (const g of set.groups) {
-    const L = layers[Math.floor(g.group / 100)], t = L?.tapes[g.group % 100];
-    if (!t || t.fell) continue;
-    const s = tapeQuad(L, t);
-    t.fell = true;
-    if (s) renderer.addFallenTape(s.q.map((v, i) => v - g.c[i % 3]), s.uv, base + g.id);
-  }
-  showTapes();
-}
-/** A strip of tape straight across every pane that stands, along the line through two points of the glass. */
-function layTape(ax: number, ay: number, bx: number, by: number) {
-  if (state !== 'intact' || Math.hypot(bx - ax, by - ay) < 1e-4) return;
-  for (const L of layers) if (L.standing && L.tapes.length < 99) L.tapes.push({ ax, ay, bx, by, w: V.tape / 100, fell: false });
-  showTapes();
-  sound.tick(0);
-}
-
-/** What the cracks have cut loose, worked out on copies of the panes: the pieces, cut smaller, and where the
- *  blows were. Nothing of it is seen until the shock makes the copies the panes. */
-interface Loose { parts: { L: Layer; pane: Pane; set: ShardSet }[]; set: ShardSet; impacts: [number, number, number][] }
-/** It is a tenth of a second of work for one pane and two for three, so it comes in steps: after a bullet a few
- *  milliseconds of it are done in each frame (`frame`), and the picture never stops for it. The glass holds
- *  for that long and then gives, which is what glass does. */
-function* loosenSteps(): Generator<void, Loose | null> {
-  if (state !== 'intact') return null;
-  const parts: Loose['parts'] = [];
-  const impacts: [number, number, number][] = [];
-  const never = 1e9; // the new cuts are inside pieces that leave: they are only ever seen as shard edges
-  for (const L of layers) {
-    if (!L.standing || !L.pane.impacts.length) continue;
-    const copy = L.pane.clone();
-    yield;
-    const gone = (loop: number[]) => loopGone(L, loop, copy);
-    const held = (loop: number[]) => taped(L, loop, copy);
-    const fixed = (loop: number[]) => gone(loop) || held(loop) >= 0;
-    let parentOf: ((x: number, y: number) => number) | undefined;
-    if (!L.tempered) { // (dice are small enough as they are)
-      yield* copy.finishSteps(never, V.shardArea / 1e4, 0, true, fixed);
-      if (V.again > 0) {
-        // a second and finer cut inside the first: what each shard will break into where it lands hard.
-        // Which shard a piece is of is asked of the first cut's outlines, the smallest that holds it
-        const polys = copy.faces().filter((loop) => !fixed(loop)).map((loop) => ({ a: copy.area(loop), p: loop.flatMap((u) => [copy.nx[u], copy.ny[u]]) })).sort((u, v) => u.a - v.a);
-        polys.pop(); // (the largest is the pane that stays)
-        // what a simulation costs goes by how many pieces there are, far more than by anything else: with a lot
-        // of glass loose the pieces are larger, so that there are never more than the worker keeps up with
-        let loose = 0;
-        for (const q of polys) loose += q.a;
-        const budget = V.most / layers.filter((l) => l.standing && !l.tempered).length;
-        yield;
-        yield* copy.finishSteps(never, Math.max(V.pieces / 1e4, (2 * loose) / Math.max(1, budget - polys.length)), 0, true, fixed);
-        parentOf = (x, y) => {
-          for (let k = 0; k < polys.length; k++) {
-            const p = polys[k].p;
-            let inside = false;
-            for (let i = 0, j = p.length - 2; i < p.length; j = i, i += 2) if ((p[i + 1] > y) !== (p[j + 1] > y) && x < ((p[j] - p[i]) * (y - p[i + 1])) / (p[j + 1] - p[i + 1]) + p[i]) inside = !inside;
-            if (inside) return k;
-          }
-          return -1;
-        };
-      }
-    }
-    yield;
-    const set = yield* buildShardsSteps(copy, Y0, true, gone, L.i, L.z, L.tempered, held, L.i * 100, parentOf);
-    yield;
-    if (!set.count) continue;
-    parts.push({ L, pane: copy, set });
-    for (const im of L.pane.impacts) impacts.push([im.x - W / 2, im.y + Y0, L.z]);
-  }
-  if (!parts.length) return null;
-  const set = mergeSets(parts.map((p) => p.set));
-  limitHulls(set, V.hulls);
-  return { parts, set, impacts };
-}
-/** All of it at once, for a swipe or space. */
-function loosen(): Loose | null {
-  const steps = loosenSteps();
-  let r = steps.next();
-  while (!r.done) r = steps.next();
-  return r.value;
-}
-let job: Generator<void, Loose | null> | null = null; // what the last bullet cut loose, being worked out
-
-/** The shock. Only what is already broken goes: the pieces the cracks have cut out of the panes are cut smaller
- *  and blown out the back, as if a ball nobody sees went through every bullet hole at the same instant. The
- *  glass around them, cracked or not, stays standing. Every bullet sets one off; a swipe or space, another. */
-function shock(r: Loose | null = loosen()): boolean {
-  if (!r) return false; // nothing is broken
-  job = null;
-  sound.smash(0);
-  const base = renderer.addShards(r.set);
-  renderer.shards = true;
-  dropTapes(r.set, base);
-  for (const part of r.parts) {
-    // the copy, with its pieces cut, is the pane from here on
-    part.L.pane = part.pane;
-    if (part.set.kept) cutPane(part.L, part.set); // (a pane with nothing left has no mask or cracks to keep)
-    part.L.standing = part.set.kept;
-    renderer.setStanding(part.L.i, part.set.kept);
-  }
-  // with glass still standing it can all be done again at once: more bullets, another shock
-  state = layers.some((l) => l.standing) ? 'intact' : 'fallen';
-  setReplay(false);
-  const ball = V.ballSize / 100;
-  const balls = r.impacts.map(([x, y, z]) => ({ p: [x, y, z + ball + 0.012], v: [(Math.random() - 0.5) * 3, (Math.random() - 0.5) * 3, -V.kick], w: [0, 0, 0], r: ball }));
-  falls.push({ sim: simulate(r.set, { impacts: r.impacts, balls, standing: true }), set: r.set, base, at: now, started: false, over: false, playhead: 0, lastHit: 0, lastSplit: 0, speed: V.pace, near: r.impacts });
-  trimFrames();
-  setHint();
-  return true;
-}
-
-/** The moment the pieces leave: they are cut out of the pane that stays (blue in the mask), and of its cracks
- *  only those with standing glass on one side at least are kept. */
-function cutPane(L: Layer, set: ShardSet) {
-  const p = L.pane;
-  mctx.save();
-  mctx.beginPath(); mctx.rect(0, L.i * mh, mw, mh); mctx.clip();
-  mctx.globalCompositeOperation = 'lighter';
-  mctx.fillStyle = 'rgb(0,0,255)';
-  for (const loop of set.cut) {
-    mctx.beginPath();
-    for (let i = 0; i < loop.length; i += 2) { const x = MX(loop[i]), y = MY(L, loop[i + 1]); if (i) mctx.lineTo(x, y); else mctx.moveTo(x, y); }
-    mctx.closePath(); mctx.fill();
-  }
-  mctx.restore();
-  maskDirty = true;
-  // a crack stays only if there is standing glass on one side of it at least. Asked of the mask itself, a
-  // millimetre and a half to each side: that also takes the cracks that ended inside a piece that left
-  const img = L.maskData = mctx.getImageData(0, L.i * mh, mw, mh).data;
-  const left = (x: number, y: number) => {
-    const px = Math.floor(MX(x)), py = Math.floor((1 - y / H) * mh);
-    if (px < 0 || py < 0 || px >= mw || py >= mh) return true;
-    const i = (py * mw + px) * 4;
-    return img[i] > 127 || img[i + 2] > 127;
+/** Project a world-space point to CSS pixel coordinates { x, y, visible }. */
+function projectToScreen(wp: Vec3): { x: number; y: number; visible: boolean } {
+  const cx = viewProj[0] * wp[0] + viewProj[4] * wp[1] + viewProj[8] * wp[2] + viewProj[12];
+  const cy = viewProj[1] * wp[0] + viewProj[5] * wp[1] + viewProj[9] * wp[2] + viewProj[13];
+  const cw = viewProj[3] * wp[0] + viewProj[7] * wp[1] + viewProj[11] * wp[2] + viewProj[15];
+  if (cw <= 0.001) return { x: -999, y: -999, visible: false };
+  const ndcX = cx / cw;
+  const ndcY = cy / cw;
+  return {
+    x: (ndcX * 0.5 + 0.5) * window.innerWidth,
+    y: (0.5 - ndcY * 0.5) * window.innerHeight,
+    visible: ndcX >= -1.05 && ndcX <= 1.05 && ndcY >= -1.05 && ndcY <= 1.05,
   };
-  renderer.rebuildCracks(L.i, p, (a, b) => {
-    const ax = p.nx[a], ay = p.ny[a], bx = p.nx[b], by = p.ny[b];
-    const l = Math.hypot(bx - ax, by - ay) || 1;
-    const ox = (-(by - ay) / l) * 0.0015, oy = ((bx - ax) / l) * 0.0015;
-    for (const k of [0.5, 0.2, 0.8]) {
-      const mx = ax + (bx - ax) * k, my = ay + (by - ay) * k;
-      if (!left(mx + ox, my + oy) || !left(mx - ox, my - oy)) return false;
+}
+
+/** Unproject CSS pixel coordinate (clientX, clientY) to a unit world ray direction from CAM_EYE. */
+function screenToRay(clientX: number, clientY: number): Vec3 {
+  const ndcX = (clientX / Math.max(1, window.innerWidth)) * 2 - 1;
+  const ndcY = 1 - (clientY / Math.max(1, window.innerHeight)) * 2;
+  const x0 = invViewProj[0] * ndcX + invViewProj[4] * ndcY + invViewProj[12];
+  const y0 = invViewProj[1] * ndcX + invViewProj[5] * ndcY + invViewProj[13];
+  const z0 = invViewProj[2] * ndcX + invViewProj[6] * ndcY + invViewProj[14];
+  const w0 = invViewProj[3] * ndcX + invViewProj[7] * ndcY + invViewProj[15];
+
+  const x1 = invViewProj[0] * ndcX + invViewProj[4] * ndcY + invViewProj[8] + invViewProj[12];
+  const y1 = invViewProj[1] * ndcX + invViewProj[5] * ndcY + invViewProj[9] + invViewProj[13];
+  const z1 = invViewProj[2] * ndcX + invViewProj[6] * ndcY + invViewProj[10] + invViewProj[14];
+  const w1 = invViewProj[3] * ndcX + invViewProj[7] * ndcY + invViewProj[11] + invViewProj[15];
+
+  const p0: Vec3 = [x0 / w0, y0 / w0, z0 / w0];
+  const p1: Vec3 = [x1 / w1, y1 / w1, z1 / w1];
+  return norm3(sub3(p1, p0));
+}
+
+/** Exact ray vs a single convex polyhedron positioned at (pos, quat). */
+function rayHitsPolyAt(clientX: number, clientY: number, poly: Poly, pos: Vec3, quat: Quat): boolean {
+  const worldDir = screenToRay(clientX, clientY);
+  const invQ = qConj(quat);
+  const ro = qRotate(invQ, sub3(camEye, pos));
+  const rd = norm3(qRotate(invQ, worldDir));
+
+  let tMin = 0;
+  let tMax = 1e6;
+  for (const f of poly.faces) {
+    const num = f.d - dot3(f.n, ro);
+    const denom = dot3(f.n, rd);
+    if (Math.abs(denom) < 1e-7) {
+      if (num < 0) return false;
+    } else {
+      const t = num / denom;
+      if (denom > 0) tMax = Math.min(tMax, t);
+      else tMin = Math.max(tMin, t);
+      if (tMin > tMax) return false;
     }
-    return true;
+  }
+  return tMax > 0.01;
+}
+
+/** Exact ray vs convex polyhedron hit test in world space against the pedestal/carve block. */
+function rayHitsBlock(clientX: number, clientY: number): boolean {
+  if (blockParts.length === 0) return false;
+  for (const poly of blockParts) {
+    if (rayHitsPolyAt(clientX, clientY, poly, blockPos, blockQuat)) return true;
+  }
+  return false;
+}
+
+/**
+ * Compute exact 3D cutting plane spanned by camEye and screen swipe segment (x0,y0) -> (x1,y1)
+ * relative to `refCenter`, oriented with d >= 0 so n points toward the piece furthest from center!
+ */
+function swipeToWorldPlaneAt(x0: number, y0: number, x1: number, y1: number, refCenter: Vec3): { n: Vec3; d: number } | null {
+  if (Math.hypot(x1 - x0, y1 - y0) < 10) return null;
+  const r0 = screenToRay(x0, y0);
+  const r1 = screenToRay(x1, y1);
+  const cr = cross3(r0, r1);
+  const l = len3(cr);
+  if (l < 1e-5) return null;
+  let n: Vec3 = [cr[0] / l, cr[1] / l, cr[2] / l];
+  let d = dot3(sub3(camEye, refCenter), n);
+  if (d < 0) {
+    n = [-n[0], -n[1], -n[2]];
+    d = -d;
+  }
+  return { n, d };
+}
+
+function swipeToWorldPlane(x0: number, y0: number, x1: number, y1: number): { n: Vec3; d: number } | null {
+  return swipeToWorldPlaneAt(x0, y0, x1, y1, blockPos);
+}
+
+function uploadMainBlocks() {
+  gpu.setMainBlocks(
+    blockParts.map((p) => ({
+      verts: triangulatePoly(p),
+      planes: polyPlanes(p),
+    })),
+  );
+}
+
+/** Update live cutting line(s) & glowing cross-section preview loops. */
+function updateLivePreview() {
+  // Case A: Guided Shape / Letter Carve Plan
+  if (carvePlan) {
+    if (pending || carveStepIdx >= carvePlan.steps.length) {
+      canCut = false;
+      showCutLine = false;
+      activePlane2N = null;
+      activePlane2R = -1;
+      gpu.setSectionLoops([], camEye);
+      return;
+    }
+
+    const step = carvePlan.steps[carveStepIdx];
+    const loops: Vec3[][] = [];
+
+    if (step.kind === 'plane') {
+      showCutLine = true;
+      const p0 = step.planes[0];
+      activePlane1N = norm3(qRotate(blockQuat, p0.n));
+      activePlane1R = p0.d;
+      if (step.planes.length > 1) {
+        const p1 = step.planes[1];
+        activePlane2N = norm3(qRotate(blockQuat, p1.n));
+        activePlane2R = p1.d;
+      } else {
+        activePlane2N = null;
+        activePlane2R = -1;
+      }
+
+      for (const pl of step.planes) {
+        for (const bp of blockParts) {
+          const loop = intersectPolyPlane(bp, pl.n, pl.d);
+          if (loop.length >= 3) {
+            loops.push(loop.map((pt) => add3(blockPos, qRotate(blockQuat, pt))));
+          }
+        }
+      }
+      canCut = true;
+      gpu.setSectionLoops(loops, camEye);
+      return;
+    } else {
+      const c0 = step.chunks[0];
+      const isInteriorHole = Math.abs(c0.pushDir[2]) > 0.85;
+      showCutLine = !isInteriorHole;
+      activePlane1N = norm3(qRotate(blockQuat, c0.cutPlane.n));
+      activePlane1R = Math.max(0.02, c0.cutPlane.d);
+      if (step.chunks.length > 1 && !isInteriorHole) {
+        const c1 = step.chunks[1];
+        activePlane2N = norm3(qRotate(blockQuat, c1.cutPlane.n));
+        activePlane2R = Math.max(0.02, c1.cutPlane.d);
+      } else {
+        activePlane2N = null;
+        activePlane2R = -1;
+      }
+
+      for (const ch of step.chunks) {
+        for (const f of ch.poly.faces) {
+          if (Math.abs(f.n[2]) > 0.9 && f.verts.length >= 3) {
+            loops.push(f.verts.map((pt) => add3(blockPos, qRotate(blockQuat, pt))));
+          }
+        }
+      }
+      canCut = true;
+      gpu.setSectionLoops(loops, camEye);
+      return;
+    }
+  }
+
+  // Case B: Free Fruit-Ninja Slicing Mode — glass stays 100% pure & unobstructed until you swipe!
+  if (!swiping || swipeDidSlice || blockParts.length === 0) {
+    canCut = false;
+    showCutLine = false;
+    activePlane2N = null;
+    activePlane2R = -1;
+    gpu.setSectionLoops([], camEye);
+    return;
+  }
+
+  const wp = swipeToWorldPlane(swipeStartX, swipeStartY, swipeCurX, swipeCurY);
+  if (!wp) {
+    canCut = false;
+    showCutLine = false;
+    gpu.setSectionLoops([], camEye);
+    return;
+  }
+
+  showCutLine = true;
+  activePlane1N = wp.n;
+  activePlane1R = wp.d;
+  if (freeSym && wp.d > 0.015) {
+    activePlane2N = [-wp.n[0], -wp.n[1], -wp.n[2]];
+    activePlane2R = wp.d;
+  } else {
+    activePlane2N = null;
+    activePlane2R = -1;
+  }
+
+  const invQ = qConj(blockQuat);
+  const localPlanes: Plane[] = [{ n: norm3(qRotate(invQ, wp.n)), d: wp.d }];
+  if (activePlane2N) {
+    localPlanes.push({ n: norm3(qRotate(invQ, activePlane2N)), d: wp.d });
+  }
+
+  const loops: Vec3[][] = [];
+  let valid = false;
+  for (const pl of localPlanes) {
+    for (const bp of blockParts) {
+      const loop = intersectPolyPlane(bp, pl.n, pl.d);
+      if (loop.length >= 3) {
+        const sp = splitPoly(bp, pl.n, pl.d);
+        if (sp.neg && sp.pos && sp.neg.volume > 0.00005 && sp.pos.volume > 0.00005) {
+          valid = true;
+          loops.push(loop.map((pt) => add3(blockPos, qRotate(blockQuat, pt))));
+        }
+      }
+    }
+  }
+  canCut = valid;
+  gpu.setSectionLoops(loops, camEye);
+}
+
+function updateHudUI() {
+  const showGame = tossMode && !carvePlan;
+  hudEl.hidden = !showGame;
+  if (!showGame) return;
+  hudLevelEl.textContent = String(currentLevel);
+  hudScoreEl.textContent = String(score);
+  hudBestEl.textContent = String(bestScore);
+}
+
+function showReplayBanner() {
+  bannerEl.hidden = false;
+}
+
+function hideBanner() {
+  bannerEl.hidden = true;
+}
+
+function spawnCallout(worldPos: Vec3, text: string, sub?: string, emphasis = false, color = '#1c1c1c') {
+  const sp = projectToScreen(worldPos);
+  if (!sp.visible) return;
+  callouts.push({
+    x: sp.x,
+    y: sp.y - 18,
+    text,
+    sub,
+    color,
+    age: 0,
+    maxAge: emphasis ? 0.92 : 0.56,
+    emphasis,
   });
 }
 
-worker.onmessage = (e: MessageEvent<FramesMessage>) => {
-  const m = e.data;
-  const sim = sims.get(m.run);
-  if (m.type !== 'frames' || !sim) return;
-  sim.frames.push(m.data);
-  for (let i = 0; i < m.contacts.length; i++) sim.contacts.push(m.contacts[i]);
-  for (let i = 0; i < m.splits.length; i += SPLIT) {
-    for (const k of sim.parts.get(m.splits[i + 1]) ?? []) sim.freeAt[k] = m.splits[i];
-    for (let k = 0; k < SPLIT; k++) sim.splits.push(m.splits[i + k]);
+function addScore(pts: number, worldPos?: Vec3, label?: string, sub?: string, emphasis = false, gemId = 0) {
+  score += pts;
+  if (score > bestScore) {
+    bestScore = score;
+    try { localStorage.setItem('shatter-2026-best', String(bestScore)); } catch { /* ignore */ }
   }
-  sim.total = m.total; sim.left = m.left;
-  if (m.done) sim.done = true;
-};
-
-function startFall(f: Fall) {
-  f.started = true;
-  recoil = 1.6;
-  flash = 0.35;
-  // dust comes off every crack as the glass lets go
-  const much = V.dust * Math.min(1, f.set.count / 400);
-  for (let i = 0; i < 90 * much; i++) {
-    // powder off the cracks, most of it where the blow was
-    const b = f.set.bodies[(Math.random() * f.set.count) | 0];
-    let d = Infinity;
-    for (const [ix, iy] of f.near) d = Math.min(d, Math.hypot(b.c[0] - ix, b.c[1] - iy));
-    const push = Math.exp(-d / 0.25);
-    haze(b.c[0], b.c[1], b.c[2], gauss() * 0.35, gauss() * 0.3 + 0.1, -0.4 - Math.random() * (1 + 6 * push), 4 + Math.random() * 5, 0.03 + Math.random() * 0.05, d / 7 + Math.random() * 0.12);
+  if (worldPos && label) {
+    spawnCallout(worldPos, label, sub, emphasis, GEM_TEXT_COLORS[gemId] ?? '#1c1c1c');
   }
-  for (let i = 0; i < 4600 * much; i++) {
-    const b = f.set.bodies[(Math.random() * f.set.count) | 0];
-    let d = Infinity;
-    for (const [ix, iy] of f.near) d = Math.min(d, Math.hypot(b.c[0] - ix, b.c[1] - iy));
-    dust(b.c[0] + gauss() * 0.02, b.c[1] + gauss() * 0.02, b.c[2], gauss() * 0.5, gauss() * 0.5, gauss() * 0.8 - 1.2 * Math.exp(-d / 0.25) * 4, 1 + Math.random() * 2.5, d / 7 + Math.random() * 0.1);
-  }
+  updateHudUI();
 }
 
-/** A fall that rests needs its frames no more, but for the latest one: that is the one a replay plays. */
-function trimFrames() {
-  for (let i = 0; i < falls.length - 1; i++) if (falls[i].over) falls[i].sim.frames = [];
+/** Resolve an accumulated Fruit Ninja same-direction combo (3+ gems -> +N bonus, plus Blitz streak!). */
+function flushStrokeCombo(nowMs: number) {
+  const n = strokeMultiCount;
+  const pos: Vec3 = [...strokeLastPos] as Vec3;
+  const gemId = strokeLastGemId;
+  strokeMultiCount = 0;
+  strokeHitIds.clear();
+  strokeLastHitAt = -99999;
+
+  if (n < 3) return;
+
+  const pan = Math.max(-1, Math.min(1, pos[0] * 0.9));
+  sound.comboChime(n, pan);
+  addScore(n, pos, `${n}× COMBO`, `+${n}`, true, gemId);
+
+  // Fruit Ninja Blitz streak: chaining combos back-to-back within 5.5s escalates +5 -> +10 -> +15 -> +20 -> +30!
+  if (nowMs - lastComboAt <= 5500) {
+    blitzTier = Math.min(BLITZ_BONUS.length - 1, blitzTier + 1);
+    const blitzPts = BLITZ_BONUS[blitzTier];
+    const blitzPos: Vec3 = [pos[0], pos[1] - 0.16, pos[2]];
+    addScore(blitzPts, blitzPos, BLITZ_LABEL[blitzTier], `+${blitzPts}`, true, gemId);
+  } else {
+    blitzTier = 0;
+  }
+  lastComboAt = nowMs;
 }
 
-// ---------------------------------------------------------------- replay
-// On demand: the latest fall again, slowly, seen from the side, with its contacts over time as a chart and
-// the playhead on it to drag.
-const SPEEDS = [0.05, 0.1, 0.2, 0.5, 1];
-const replay = { on: false, t: 0, playing: true, speed: 0.2, scrub: false, next: 0, side: 0, bins: 0, drawn: -1 };
-const rpBox = document.querySelector<HTMLElement>('#replay')!;
-const rpTrack = document.querySelector<HTMLElement>('#rp-track')!;
-const rpChart = document.querySelector<HTMLCanvasElement>('#rp-chart')!;
-const rpHead = document.querySelector<HTMLElement>('#rp-head')!;
-const rpPlay = document.querySelector<HTMLButtonElement>('#rp-play')!;
-const rpSpeed = document.querySelector<HTMLButtonElement>('#rp-speed')!;
-const rpTime = document.querySelector<HTMLElement>('#rp-time')!;
-const filmBtn = document.querySelector<HTMLButtonElement>('#film')!;
+function updateActionUI() {
+  updateHudUI();
+}
 
-/** The fall a replay shows: the latest one that has started and still has its frames. */
-function replayFall(): Fall | null {
-  for (let i = falls.length - 1; i >= 0; i--) if (falls[i].started && falls[i].sim.frames.length > 1) return falls[i];
-  return null;
-}
-function setReplay(on: boolean) {
-  const f = replayFall(), was = replay.on;
-  if (on && !f) return;
-  replay.on = on;
-  filmBtn.classList.toggle('on', on);
-  rpBox.hidden = !on;
-  if (on) { replay.t = 0; replay.next = 0; replay.playing = true; replay.drawn = -1; rpPlay.classList.remove('paused'); }
-  else if (f && was) {
-    // back to where it was: at rest if it had come to rest, else on with the fall from here. (Only out of a
-    // replay: a fall in the air that was never replayed is left alone)
-    const frames = f.sim.frames, last = frames.length - 1;
-    if (f.over) { renderer.setPose(frames[last], frames[last], 0, f.base, f.set.count, f.sim.freeAt, last); }
-    else { f.playhead = replay.t; f.lastHit = contactAt(f, replay.t * 60); f.lastSplit = 0; while (f.lastSplit < f.sim.splits.length && f.sim.splits[f.lastSplit] < replay.t * 60) f.lastSplit += SPLIT; }
+function burstSplinters(
+  origins: Vec3[],
+  localOrigins: Vec3[],
+  baseVel: Vec3,
+  count: number,
+  spread: number,
+  sizeMin: number,
+  sizeMax: number,
+  gemId = 0,
+) {
+  if (origins.length === 0) return;
+  const pal = PALETTES[paletteIdx];
+  const gemCol = GEM_SPLINTER_COLORS[gemId];
+  const spawns: SplinterSpawn[] = [];
+  for (let i = 0; i < count; i++) {
+    const idx = Math.floor(rng() * origins.length);
+    const o = origins[idx];
+    const lo = localOrigins[idx];
+    const jitter: Vec3 = [(rng() - 0.5) * 0.03, (rng() - 0.5) * 0.03, (rng() - 0.5) * 0.03];
+    const dir = norm3([
+      baseVel[0] + (rng() - 0.5) * spread * 2,
+      baseVel[1] + (rng() - 0.32) * spread * 2,
+      baseVel[2] + (rng() - 0.5) * spread * 2,
+    ]);
+    const speed = len3(baseVel) * (0.4 + rng() * 0.9) + rng() * spread;
+    spawns.push({
+      pos: add3(o, jitter),
+      vel: scale3(dir, speed),
+      size: sizeMin + Math.pow(rng(), 2.2) * (sizeMax - sizeMin),
+      maxAge: 10 + rng() * 12,
+      color: gemCol ? ([...gemCol] as Vec3) : samplePaletteColor(lo, carvePlan ? HALF_SIZE : CRYSTAL_HALF_SIZE, pal),
+      spinSpeed: 8 + rng() * 22,
+    });
   }
-  setHint();
+  gpu.spawnSplinters(spawns);
 }
-/** Index of the first contact at or after a frame. */
-function contactAt(f: Fall, frame: number) {
-  const c = f.sim.contacts;
-  let i = 0;
-  while (i < c.length && c[i] < frame) i += CONTACT;
-  return i;
-}
-/** The contacts of a fall as bars over time: how much glass met something, how hard. Floor light, glass on glass lighter. */
-function drawChart(f: Fall) {
-  const frames = f.sim.frames.length, c = f.sim.contacts;
-  const dpr = Math.min(window.devicePixelRatio, 2);
-  const cw = Math.max(1, Math.round(rpTrack.clientWidth * dpr)), ch = Math.max(1, Math.round(rpTrack.clientHeight * dpr));
-  if (rpChart.width !== cw || rpChart.height !== ch) { rpChart.width = cw; rpChart.height = ch; }
-  const g = rpChart.getContext('2d')!;
-  g.clearRect(0, 0, cw, ch);
-  const bw = Math.max(2, Math.round(3 * dpr)), n = Math.floor(cw / bw);
-  const floor = new Float32Array(n), glass = new Float32Array(n);
-  let max = 1e-6;
-  for (let i = 0; i < c.length; i += CONTACT) {
-    const b = Math.min(n - 1, Math.floor((c[i] / Math.max(1, frames)) * n));
-    const v = c[i + 5] * Math.sqrt(c[i + 4]);
-    if (c[i + 6] === 1) glass[b] += v; else floor[b] += v;
-  }
-  for (let b = 0; b < n; b++) max = Math.max(max, floor[b] + glass[b]);
-  g.fillStyle = 'rgba(244,244,242,0.14)';
-  g.fillRect(0, ch - Math.max(1, dpr), cw, Math.max(1, dpr));
-  for (let b = 0; b < n; b++) {
-    // (a root: one loud frame must not flatten the rest of the chart)
-    const hf = Math.sqrt(floor[b] / max) * (ch - 2), hg = Math.sqrt((floor[b] + glass[b]) / max) * (ch - 2) - hf;
-    g.fillStyle = 'rgba(244,244,242,0.85)';
-    g.fillRect(b * bw, ch - hf, bw - Math.max(1, dpr * 0.75), hf);
-    g.fillStyle = 'rgba(244,244,242,0.4)';
-    g.fillRect(b * bw, ch - hf - hg, bw - Math.max(1, dpr * 0.75), hg);
-  }
-  replay.drawn = c.length + frames * 1e-6;
-}
-/** The replay drives its fall: time runs at the chosen speed, or goes where the playhead is dragged. */
-function stepReplay(f: Fall, dt: number) {
-  const frames = f.sim.frames, contacts = f.sim.contacts;
-  const last = frames.length - 1, dur = last / 60;
-  const before = replay.t;
-  if (replay.playing && !replay.scrub) { replay.t += dt * replay.speed; if (replay.t > dur) { replay.t = 0; replay.next = 0; } }
-  replay.t = Math.max(0, Math.min(dur, replay.t));
-  const fr = replay.t * 60, i = Math.min(last, Math.floor(fr));
-  const fa = frames[i], fb = frames[Math.min(last, i + 1)], k = fr - i;
-  renderer.setPose(fa, fb, k, f.base, f.set.count, f.sim.freeAt, fr);
-  // its sounds, as time passes them forwards; a jump is silent
-  if (replay.t < before || replay.t - before > 0.2) replay.next = contactAt(f, fr);
-  let played = 0;
-  for (; replay.next < contacts.length && contacts[replay.next] <= i; replay.next += CONTACT) {
-    if (played++ >= 12) continue;
-    const c = replay.next;
-    sound.clink(contacts[c + 4], contacts[c + 5], contacts[c + 6], contacts[c + 1] / (W * 0.6), Math.max(0.25, replay.speed));
-  }
-  if (replay.drawn !== contacts.length + frames.length * 1e-6) drawChart(f);
-  rpHead.style.left = `${(replay.t / Math.max(1e-6, dur)) * 100}%`;
-  rpTime.textContent = `${replay.t.toFixed(2)} s`;
-}
-const scrubTo = (e: PointerEvent) => {
-  const f = replayFall();
-  if (!f) return;
-  const r = rpTrack.getBoundingClientRect();
-  replay.t = Math.max(0, Math.min(1, (e.clientX - r.left) / r.width)) * ((f.sim.frames.length - 1) / 60);
-};
-rpTrack.addEventListener('pointerdown', (e) => { sound.wake(); replay.scrub = true; rpTrack.setPointerCapture(e.pointerId); scrubTo(e); });
-rpTrack.addEventListener('pointermove', (e) => { if (replay.scrub) scrubTo(e); });
-rpTrack.addEventListener('pointerup', () => { replay.scrub = false; });
-rpTrack.addEventListener('pointercancel', () => { replay.scrub = false; });
-rpPlay.addEventListener('click', () => { replay.playing = !replay.playing; rpPlay.classList.toggle('paused', !replay.playing); });
-rpSpeed.addEventListener('click', () => {
-  replay.speed = SPEEDS[(SPEEDS.indexOf(replay.speed) + 1) % SPEEDS.length];
-  rpSpeed.textContent = `${replay.speed}×`;
-});
-filmBtn.addEventListener('click', () => { sound.wake(); setReplay(!replay.on); });
 
-/** Every fall that is under way, one step on. */
-function stepFalls(dt: number) {
-  const shown = replay.on ? replayFall() : null;
-  if (replay.on && !shown) setReplay(false);
-  for (const f of falls) {
-    if (f === shown) { stepReplay(f, dt); continue; }
-    if (f.over) continue;
-    const { frames, contacts } = f.sim;
-    if (!f.started) { if (now >= f.at && frames.length > 0) startFall(f); else continue; }
-    f.speed += ((slow ? V.slow : V.pace) - f.speed) * Math.min(1, dt * 10);
-    f.playhead += dt * f.speed;
-    if (held >= 0 && f === falls[falls.length - 1]) f.playhead = held;
-    const last = frames.length - 1;
-    let fr = f.playhead * 60;
-    if (fr > last) { fr = last; f.playhead = last / 60; }
-    const i = Math.floor(fr);
-    const fa = frames[i], fb = frames[Math.min(last, i + 1)], k = fr - i;
-    renderer.setPose(fa, fb, k, f.base, f.set.count, f.sim.freeAt, fr);
-    // where a shard breaks again: a spray of grains off it, and now and then a little powder
-    const sp = f.sim.splits;
-    for (let burst = 0; f.lastSplit < sp.length && sp[f.lastSplit] <= i; f.lastSplit += SPLIT) {
-      if (burst++ >= 8) continue;
-      const x = sp[f.lastSplit + 2], y = sp[f.lastSplit + 3], z = sp[f.lastSplit + 4];
-      for (let j = 0; j < 9 * V.dust; j++) dust(x + gauss() * 0.012, y + 0.004, z + gauss() * 0.012, gauss() * 0.9, 0.3 + Math.random() * 1.7, gauss() * 0.9, 0.5 + Math.random() * 1.6);
-      if (Math.random() < 0.4) haze(x, y + 0.02, z, gauss() * 0.2, 0.1 + Math.random() * 0.3, gauss() * 0.2, 2 + Math.random() * 2.5, 0.02 + Math.random() * 0.03);
+/** Lowest world-space Y coordinate among all vertices of a convex polyhedron at (pos, quat). */
+function getPolyMinWorldY(poly: Poly, pos: Vec3, quat: Quat): number {
+  let minY = Infinity;
+  for (const f of poly.faces) {
+    for (const v of f.verts) {
+      const wy = pos[1] + qRotate(quat, v)[1];
+      if (wy < minY) minY = wy;
     }
-    // the contacts the simulation noted, as the playhead passes them: each is a sound of its own size, strength and place
-    let played = 0;
-    for (; f.lastHit < contacts.length && contacts[f.lastHit] <= i; f.lastHit += CONTACT) {
-      if (played++ >= 12) continue; // (a jump of the playhead: do not play a second's worth at once)
-      const c = f.lastHit;
-      sound.clink(contacts[c + 4], contacts[c + 5], contacts[c + 6], contacts[c + 1] / (W * 0.6), Math.max(0.25, f.speed / V.pace));
+  }
+  return minY;
+}
+
+/** Integrate quaternion forward by angular velocity vector over dt seconds. */
+function stepQuat(q: Quat, angVel: Vec3, dt: number): Quat {
+  const ang = len3(angVel) * dt;
+  if (ang <= 1e-5) return [...q] as Quat;
+  return qNorm(qMul(qFromAxisAngle(norm3(angVel), ang), q));
+}
+
+/** Allocate a free GPU CutSlot (0..MAX_CUT_SLOTS-1); if full, detonate the oldest/lowest falling chunk. */
+function allocCutSlot(): number {
+  const used = new Set<number>();
+  for (const fc of flyingCrystals) used.add(fc.slotIdx);
+  for (const ch of fallingChunks) used.add(ch.slotIdx);
+  for (let i = 0; i < MAX_CUT_SLOTS; i++) {
+    if (!used.has(i)) return i;
+  }
+  // All slots occupied: free the lowest falling chunk first
+  if (fallingChunks.length > 0) {
+    let oldest = fallingChunks[0];
+    for (const c of fallingChunks) {
+      if (c.worldPos[1] < oldest.worldPos[1]) oldest = c;
     }
-    if (f.sim.done && i >= last && held < 0) { f.over = true; sims.delete(f.sim.run); trimFrames(); setHint(); }
+    const freed = oldest.slotIdx;
+    if (oldest.bakedResp) {
+      detonateFallingChunk(oldest);
+    } else {
+      gpu.clearCutSlot(freed);
+      oldest.detonated = true;
+      const idx = fallingChunks.indexOf(oldest);
+      if (idx >= 0) fallingChunks.splice(idx, 1);
+    }
+    return freed;
   }
+  return 0;
 }
 
-// ---------------------------------------------------------------- camera
-let w = 0, h = 0;
-let zoom = 1, zoomTo = 1;
-const focus = [0, 0.4, 0];
-const cam: { eye: number[]; view: Float32Array; proj: Float32Array } = { eye: [0, 0.5, 2], view: new Float32Array(16), proj: new Float32Array(16) };
+/** Pre-bake a falling crystal chunk's Rapier floor-impact explosion just before touchdown so detonation has ZERO lag! */
+function startFallingChunkBake(ch: FallingChunk, dtHit: number) {
+  if (ch.bakeStarted) return;
+  ch.bakeStarted = true;
 
-function updateCamera(t: number, dt: number) {
-  const aspect = w / h;
-  const tan = Math.tan(FOV / 2);
-  const dist = DIST;
-  const home = [0, EYE_AT, 0];
-  const k = 1 - 1 / zoom;
-  const target = [home[0] + (focus[0] - home[0]) * k, home[1] + (focus[1] - home[1]) * k, 0];
-  const d = dist / zoom;
-  // the pointer never moves the camera: only a slow sway of its own, and the wheel
-  const yaw = Math.sin(t * 0.21) * 0.035 * V.sway;
-  const pitch = 0.04 + Math.sin(t * 0.17 + 1) * 0.012 * V.sway + recoil * recoil * 0.012;
-  cam.eye = [target[0] + Math.sin(yaw) * Math.cos(pitch) * d, Math.max(0.04, target[1] + Math.sin(pitch) * d), Math.cos(yaw) * Math.cos(pitch) * d];
-  // the replay is watched from the side: the panes edge on, and the room behind them where the glass goes
-  replay.side += ((replay.on ? 1 : 0) - replay.side) * Math.min(1, dt * 5);
-  if (replay.side > 0.001) {
-    const e = replay.side * replay.side * (3 - 2 * replay.side);
-    const back = layers.length ? layers[layers.length - 1].z : 0;
-    const st = [0, Y0 + H * 0.42, back - 0.55];
-    // far enough to see the glass land, but inside the room: on a tall screen the view is cropped instead
-    const sd = Math.min(4.2, Math.max((H * 1.5) / (2 * tan), 2.9 / (2 * tan * aspect)));
-    const se = [sd, Y0 + H * 0.5, st[2] + 0.25];
-    for (let c = 0; c < 3; c++) { cam.eye[c] += (se[c] - cam.eye[c]) * e; target[c] += (st[c] - target[c]) * e; }
+  const hitPos: Vec3 = [
+    ch.worldPos[0] + ch.worldVel[0] * dtHit,
+    ch.worldPos[1] + ch.worldVel[1] * dtHit - 0.5 * CHUNK_GRAVITY * dtHit * dtHit,
+    ch.worldPos[2] + ch.worldVel[2] * dtHit,
+  ];
+  const hitVel: Vec3 = [
+    ch.worldVel[0],
+    ch.worldVel[1] - CHUNK_GRAVITY * dtHit,
+    ch.worldVel[2],
+  ];
+  const hitQuat = stepQuat(ch.quat, ch.angVel, dtHit);
+  const minHitY = getPolyMinWorldY(ch.cutPoly, hitPos, hitQuat);
+  if (minHitY < 0.015) {
+    hitPos[1] += 0.015 - minHitY;
   }
-  cam.view = lookAt(cam.eye, target, [recoil * 0.004, 1, 0]);
-  cam.proj = perspective(FOV, aspect, 0.03, 40);
-}
 
-/** Where the ray through a point of the page meets a pane standing at z, in pane space. */
-function pick(px: number, py: number, z = 0): [number, number] {
-  const v = cam.view;
-  const tan = Math.tan(FOV / 2);
-  const nx = ((px / w) * 2 - 1) * tan * (w / h), ny = (1 - (py / h) * 2) * tan;
-  const dx = v[0] * nx + v[1] * ny - v[2], dy = v[4] * nx + v[5] * ny - v[6], dz = v[8] * nx + v[9] * ny - v[10];
-  const t = (z - cam.eye[2]) / dz;
-  return [cam.eye[0] + dx * t + W / 2, cam.eye[1] + dy * t - Y0];
-}
-
-/** A point of the front pane, in pane space, to where it is on the page. */
-function toPage(x: number, y: number): [number, number] {
-  const m = cam.view, p = cam.proj;
-  const wx = x - W / 2, wy = y + Y0;
-  const vx = m[0] * wx + m[4] * wy + m[12], vy = m[1] * wx + m[5] * wy + m[13], vz = m[2] * wx + m[6] * wy + m[14];
-  return [((p[0] * vx) / -vz * 0.5 + 0.5) * w, (0.5 - (p[5] * vy) / -vz * 0.5) * h];
-}
-
-function resize() {
-  const dpr = Math.min(window.devicePixelRatio, matchMedia('(pointer: coarse)').matches ? 1.5 : 2);
-  w = window.innerWidth; h = window.innerHeight;
-  canvas.width = Math.round(w * dpr); canvas.height = Math.round(h * dpr);
-  renderer.resize(canvas.width, canvas.height);
-}
-
-// ---------------------------------------------------------------- input
-function reset() {
-  if (resetAt >= 0) return;
-  fadeTo = 0; resetAt = now + 0.28;
-}
-
-// which glass, which light: said in a line at the top for a moment
-const modeTag = document.querySelector<HTMLElement>('#mode')!;
-let modeTimer = 0;
-
-let taping = false; // the next press on the glass lays tape
-const tapeBtn = document.querySelector<HTMLButtonElement>('#tape')!;
-function setTaping(on: boolean) { taping = on && state === 'intact'; tapeBtn.classList.toggle('on', taping); canvas.style.cursor = taping ? 'cell' : ''; setHint(); }
-tapeBtn.addEventListener('click', () => { sound.wake(); setTaping(!taping); });
-const toolBtn = document.querySelector<HTMLButtonElement>('#tool')!;
-toolBtn.addEventListener('click', () => { sound.wake(); setTool(TOOLS[(TOOLS.indexOf(tool) + 1) % TOOLS.length]); });
-
-// A press that stays put is a bullet, one that travels is another shock. While glass is falling, a press that is
-// held, without moving, slows it down instead.
-let down: { x: number; y: number; id: number; far: number; held: boolean; timer: number } | null = null;
-canvas.addEventListener('pointerdown', (e) => {
-  sound.wake();
-  if (replay.on) return;
-  if (state === 'fallen' && !active()) { reset(); return; }
-  canvas.setPointerCapture(e.pointerId);
-  const d: NonNullable<typeof down> = { x: e.clientX, y: e.clientY, id: e.pointerId, far: 0, held: false, timer: 0 };
-  down = d;
-  if (state === 'fallen') { d.held = true; slow = true; }
-  else if (active()) d.timer = window.setTimeout(() => { if (down === d && d.far < 14 && active()) { d.held = true; slow = true; } }, 240);
-});
-canvas.addEventListener('pointermove', (e) => {
-  if (down && down.id === e.pointerId) down.far = Math.max(down.far, Math.hypot(e.clientX - down.x, e.clientY - down.y));
-});
-const release = (e: PointerEvent) => {
-  if (!down || down.id !== e.pointerId) return;
-  const d = down;
-  down = null;
-  clearTimeout(d.timer);
-  slow = false;
-  if (e.type !== 'pointerup' || state !== 'intact') return;
-  const far = Math.max(d.far, Math.hypot(e.clientX - d.x, e.clientY - d.y));
-  if (taping) {
-    // a drag is a strip along it; a tap, one straight across at that height
-    const [ax, ay] = pick(d.x, d.y);
-    const [bx, by] = far < 14 ? [ax + 1, ay] : pick(e.clientX, e.clientY);
-    layTape(ax, ay, bx, by);
-    setTaping(false);
+  // Seed Voronoi fracture densest along the bottom ground-impact surface!
+  const localDown = norm3(qRotate(qConj(hitQuat), [0, -1, 0]));
+  const { shards } = shatterPoly(ch.cutPoly, localDown, carvePlan ? 0.20 : 0.13, ch.targetShards, rng);
+  if (shards.length === 0) {
+    ch.detonated = true;
+    gpu.clearCutSlot(ch.slotIdx);
     return;
   }
-  if (d.held && far < 40) return; // it was a hold. (A slow start to a swipe is still a swipe.)
-  if (far < 14) shoot(d.x, d.y);
-  else if (far > 40) shock();
-};
-canvas.addEventListener('pointerup', release);
-canvas.addEventListener('pointercancel', release);
-window.addEventListener('pointermove', (e) => {
-  // (the pointer only says where a zoom will go)
-  if (e.pointerType !== 'mouse' || down) return;
-  if (zoom < 1.02) { const [x, y] = pick(e.clientX, e.clientY); focus[0] = x - W / 2; focus[1] = y + Y0; }
-});
-canvas.addEventListener('wheel', (e) => {
-  e.preventDefault();
-  if (zoomTo <= 1.001 && e.deltaY < 0) { const [x, y] = pick(e.clientX, e.clientY); focus[0] = Math.max(-W / 2, Math.min(W / 2, x - W / 2)); focus[1] = Math.max(0, Math.min(H + Y0, y + Y0)); }
-  zoomTo = Math.max(1, Math.min(7, zoomTo * Math.exp(-e.deltaY * 0.0015)));
-}, { passive: false });
-window.addEventListener('keydown', (e) => {
-  if (e.repeat || e.metaKey || e.ctrlKey) return;
-  if (e.code === 'Space') {
-    e.preventDefault();
-    sound.wake();
-    // space is the swipe; with nothing to break, it slows what is falling
-    if (replay.on) { rpPlay.click(); return; }
-    if (state === 'intact') { if (!shock() && active()) slow = true; }
-    else if (state === 'fallen') { if (active()) slow = true; else reset(); }
-  } else if (e.code === 'KeyR') reset();
-  else if (e.code === 'KeyS') setReplay(!replay.on);
-  else if (e.code === 'KeyT') setTaping(!taping);
-  else if (e.code === 'KeyG') toggleGlass();
-  else if (e.code === 'KeyL') toggleLight();
-  else if (e.code === 'KeyK') toggleStack();
-  else if (e.code === 'Digit1') setTool('bullet');
-  else if (e.code === 'Digit2') setTool('shot');
-  else if (e.code === 'Digit3') setTool('sledge');
-  else if (e.code === 'Escape') setReplay(false);
-  else if (e.code === 'KeyM') toggleSound();
-});
-window.addEventListener('keyup', (e) => { if (e.code === 'Space') slow = false; });
 
-const soundBtn = document.querySelector<HTMLButtonElement>('#sound')!;
-function toggleSound() {
+  const flatShards: ShatterShard[] = [];
+  for (const s of shards) flatShards.push(s);
+  for (const s of shards) {
+    if (s.children) {
+      for (const kid of s.children) flatShards.push(kid);
+    }
+  }
+  ch.parentShards = shards;
+  ch.flatShards = flatShards;
+
+  const chunkCW = add3(hitPos, qRotate(hitQuat, ch.cutPoly.centroid));
+  const impactSpeed = Math.abs(hitVel[1]);
+  const impactBoost = Math.min(1.65, 0.72 + impactSpeed * 0.22);
+
+  let childCursor = shards.length;
+  const shardInputs: ShardBakeInput[] = [];
+
+  for (let i = 0; i < shards.length; i++) {
+    const s = shards[i];
+    const relWorld = qRotate(hitQuat, s.centroid);
+    const initPos: Vec3 = [
+      hitPos[0] + relWorld[0],
+      Math.max(0.028, hitPos[1] + relWorld[1]),
+      hitPos[2] + relWorld[2],
+    ];
+    const fromCenter = sub3(initPos, chunkCW);
+    const radXZ = norm3([fromCenter[0] + (rng() - 0.5) * 0.06, 0, fromCenter[2] + (rng() - 0.5) * 0.06]);
+    const f = cfg.explodeForce * impactBoost * (0.68 + rng() * 0.85);
+    const linVel: Vec3 = [
+      hitVel[0] * 0.52 + radXZ[0] * (1.25 * f) + (rng() - 0.5) * 0.95,
+      Math.max(0.38, 0.45 + rng() * 1.35 + impactSpeed * 0.22),
+      hitVel[2] * 0.52 + radXZ[2] * (1.25 * f) + (rng() - 0.5) * 0.95,
+    ];
+    const angVelShard: Vec3 = [
+      (rng() - 0.5) * 18,
+      (rng() - 0.5) * 18,
+      (rng() - 0.5) * 18,
+    ];
+
+    let children: ChildShardBakeInput[] | undefined;
+    if (s.children && s.children.length >= 2) {
+      children = s.children.map((kid) => ({
+        slotIndex: childCursor++,
+        hullVerts: kid.hullVerts,
+        localOffset: sub3(kid.centroid, s.centroid),
+        volume: kid.volume,
+      }));
+    }
+
+    shardInputs.push({
+      slotIndex: i,
+      hullVerts: s.hullVerts,
+      initPos,
+      initQuat: hitQuat,
+      linVel,
+      angVel: angVelShard,
+      volume: s.volume,
+      breakSpeed: 1.05 + rng() * 0.85,
+      children,
+    });
+  }
+
+  const bakeId = nextBakeId++;
+  ch.bakeId = bakeId;
+  fallingBakes.set(bakeId, ch);
+
+  const req: BakeRequest = {
+    id: bakeId,
+    totalSlots: flatShards.length,
+    shards: shardInputs,
+    staticObstacles: floorObstacles.slice(-140),
+    maxFrames: 270,
+    fps: 60,
+  };
+  worker.postMessage(req);
+}
+
+/** Detonate a falling crystal chunk the exact instant it hits the white studio floor! */
+function detonateFallingChunk(ch: FallingChunk) {
+  if (ch.detonated || !ch.bakedResp) return;
+  ch.detonated = true;
+
+  const bake = ch.bakedResp;
+  ch.bakedResp = null;
+
+  gpu.clearCutSlot(ch.slotIdx);
+  const idx = fallingChunks.indexOf(ch);
+  if (idx >= 0) fallingChunks.splice(idx, 1);
+
+  const rate = slowMode || shiftSlow ? 0.28 : 1.0;
+  sound.shatter(rate);
+
+  // Upward shower of glittering clear crystal splinters on floor impact!
+  const worldOrigins = ch.parentShards.map((s) => {
+    const rw = qRotate(ch.quat, s.centroid);
+    return [ch.worldPos[0] + rw[0], Math.max(0.02, ch.worldPos[1] + rw[1]), ch.worldPos[2] + rw[2]] as Vec3;
+  });
+  const localOrigins = ch.parentShards.map((s) => s.centroid);
+  burstSplinters(
+    worldOrigins,
+    localOrigins,
+    [ch.worldVel[0] * 0.45, 1.45, ch.worldVel[2] * 0.45],
+    440,
+    cfg.explodeForce * 1.35,
+    0.0017,
+    0.0072,
+    ch.gemId,
+  );
+
+  const totalSlots = ch.flatShards.length;
+  if (nextShardId + totalSlots > MAX_SHARDS) {
+    gpu.clearShards();
+    scatters.length = 0;
+    floorObstacles.length = 0;
+    nextShardId = 0;
+  }
+
+  const baseId = nextShardId;
+  nextShardId += totalSlots;
+
+  const meshVerts = triangulateShards(ch.flatShards, baseId);
+  gpu.addShardBatch(meshVerts);
+
+  for (let i = 0; i < totalSlots; i++) {
+    const o = i * 7;
+    const py = bake.frames[o + 1];
+    const active = py > -100;
+    gpu.setShardPose(
+      baseId + i,
+      [bake.frames[o], active ? py : -999, bake.frames[o + 2]],
+      [bake.frames[o + 3], bake.frames[o + 4], bake.frames[o + 5], bake.frames[o + 6]],
+      active,
+      ch.gemId,
+    );
+  }
+  gpu.flushShardPoses(nextShardId);
+
+  scatters.push({
+    baseShardId: baseId,
+    numShards: totalSlots,
+    fps: bake.fps,
+    numFrames: bake.numFrames,
+    frames: bake.frames,
+    contacts: bake.contacts,
+    nextContact: 0,
+    elapsed: 0,
+    settled: false,
+    gemId: ch.gemId,
+    shards: ch.flatShards,
+  });
+}
+
+/** Immediately shatter a polyhedron mid-air (used for the dramatic all-explodes loss climax!). */
+function explodePolyMidAir(poly: Poly, pos: Vec3, quat: Quat, vel: Vec3, gemId: number, shardBudget: number) {
+  const { shards } = shatterPoly(poly, [0, 1, 0], 0, shardBudget, rng);
+  if (shards.length === 0) return;
+
+  const flatShards: ShatterShard[] = [];
+  for (const s of shards) flatShards.push(s);
+  for (const s of shards) {
+    if (s.children) {
+      for (const kid of s.children) flatShards.push(kid);
+    }
+  }
+
+  const chunkCW = add3(pos, qRotate(quat, poly.centroid));
+  let childCursor = shards.length;
+  const shardInputs: ShardBakeInput[] = [];
+
+  for (let i = 0; i < shards.length; i++) {
+    const s = shards[i];
+    const relWorld = qRotate(quat, s.centroid);
+    const initPos: Vec3 = [pos[0] + relWorld[0], Math.max(0.04, pos[1] + relWorld[1]), pos[2] + relWorld[2]];
+    const fromC = sub3(initPos, chunkCW);
+    const rad = len3(fromC) > 1e-4 ? norm3(fromC) : norm3([rng() - 0.5, rng() - 0.3, rng() - 0.5]);
+    const f = cfg.explodeForce * (1.05 + rng() * 0.95);
+    const linVel: Vec3 = [
+      vel[0] * 0.3 + rad[0] * f * 1.45 + (rng() - 0.5) * 1.2,
+      vel[1] * 0.25 + rad[1] * f * 1.15 + 0.95 + rng() * 1.1,
+      vel[2] * 0.3 + rad[2] * f * 1.45 + (rng() - 0.5) * 1.2,
+    ];
+    let children: ChildShardBakeInput[] | undefined;
+    if (s.children && s.children.length >= 2) {
+      children = s.children.map((kid) => ({
+        slotIndex: childCursor++,
+        hullVerts: kid.hullVerts,
+        localOffset: sub3(kid.centroid, s.centroid),
+        volume: kid.volume,
+      }));
+    }
+    shardInputs.push({
+      slotIndex: i,
+      hullVerts: s.hullVerts,
+      initPos,
+      initQuat: quat,
+      linVel,
+      angVel: [(rng() - 0.5) * 20, (rng() - 0.5) * 20, (rng() - 0.5) * 20],
+      volume: s.volume,
+      breakSpeed: 1.05 + rng() * 0.85,
+      children,
+    });
+  }
+
+  burstSplinters(
+    shards.map((s) => {
+      const rw = qRotate(quat, s.centroid);
+      return [pos[0] + rw[0], Math.max(0.03, pos[1] + rw[1]), pos[2] + rw[2]] as Vec3;
+    }),
+    shards.map((s) => s.centroid),
+    [0, 1.2, 0],
+    260,
+    cfg.explodeForce * 1.65,
+    0.0018,
+    0.0082,
+    gemId,
+  );
+
+  // Use a one-shot FallingChunk marked hitGroundWaiting so worker.onmessage immediately launches its scatter!
+  const fakeChunk: FallingChunk = {
+    slotIdx: -1,
+    cutPoly: poly,
+    worldPos: [...pos] as Vec3,
+    worldVel: [...vel] as Vec3,
+    quat: [...quat] as Quat,
+    angVel: [0, 0, 0],
+    targetShards: shardBudget,
+    gemId,
+    bakeStarted: true,
+    bakeId: 0,
+    flatShards,
+    parentShards: shards,
+    bakedResp: null,
+    hitGroundWaiting: true,
+    detonated: false,
+  };
+  const bakeId = nextBakeId++;
+  fakeChunk.bakeId = bakeId;
+  fallingBakes.set(bakeId, fakeChunk);
+
+  worker.postMessage({
+    id: bakeId,
+    totalSlots: flatShards.length,
+    shards: shardInputs,
+    staticObstacles: floorObstacles.slice(-120),
+    maxFrames: 260,
+    fps: 60,
+  } as BakeRequest);
+}
+
+/** Dramatic Lose Trigger: ALL PAUSES -> SCREEN SHAKES -> ALL EXPLODES! */
+function triggerGameFail(reason: string) {
+  if (gamePhase === 'failing' || gamePhase === 'lost') return;
+  gamePhase = 'failing';
+  failReason = reason;
+  failFreezeTimer = 0.42;
+  shakeTimer = 0.82;
+  shakeAmp = 0.068;
+  failFlash = 1.0;
+  sound.wake();
+  sound.failFreeze();
+  hideBanner();
+  updateActionUI();
+}
+
+/** Climax of loss freeze: EVERY crystal and falling piece on screen explodes simultaneously! */
+function explodeEverythingNow() {
+  const totalPieces = flyingCrystals.length + fallingChunks.length;
+  const budget = Math.max(22, Math.min(54, Math.round(130 / Math.max(1, totalPieces))));
+
+  // Explode every flying crystal (colored gems & poisoned black diamonds!)
+  for (const fc of [...flyingCrystals]) {
+    gpu.clearCutSlot(fc.slotIdx);
+    explodePolyMidAir(fc.poly, fc.pos, fc.quat, fc.vel, fc.gemId, budget);
+  }
+  flyingCrystals.length = 0;
+
+  // Explode every tumbling cut half currently in the air
+  for (const ch of [...fallingChunks]) {
+    if (ch.detonated) continue;
+    gpu.clearCutSlot(ch.slotIdx);
+    if (ch.bakedResp) {
+      detonateFallingChunk(ch);
+    } else {
+      ch.detonated = true;
+      explodePolyMidAir(ch.cutPoly, ch.worldPos, ch.quat, ch.worldVel, ch.gemId, budget);
+    }
+  }
+  fallingChunks.length = 0;
+
+  // Even if the missed crystal already fell off-screen and nothing else was visible, burst a shockwave from bottom center!
+  if (totalPieces === 0) {
+    burstSplinters(
+      [[0, 0.12, 0]],
+      [[0, 0, 0]],
+      [0, 2.2, 0],
+      380,
+      3.4,
+      0.0022,
+      0.0085,
+      GEM_BLACK,
+    );
+  }
+
+  sound.bombExplode();
+  sound.shatter(0.68);
+  shakeTimer = Math.max(shakeTimer, 0.36);
+  shakeAmp = Math.max(shakeAmp, 0.055);
+  gamePhase = 'lost';
+  replayPending = true;
+  replayDelayTimer = 2.0;
+
+  updateActionUI();
+}
+
+/** Start (or retry) a deterministic level 1..1000 cleanly! */
+function startLevel(lv: number, resetScore = false) {
+  currentLevel = Math.max(1, Math.min(MAX_LEVEL, Math.floor(lv)));
+  if (resetScore) {
+    score = 0;
+    blitzTier = 0;
+    lastComboAt = -99999;
+  }
+
+  pending = null;
+  bakingCutVisual = null;
+  inFlightBakes.clear();
+  flyingCrystals.length = 0;
+  fallingChunks.length = 0;
+  fallingBakes.clear();
+  callouts.length = 0;
+  gpu.clearAllCutSlots();
+  blockParts = [];
+  gpu.setMainBlocks([]);
+
+  levelPlan = buildLevel(currentLevel);
+  levelTime = 0;
+  nextThrowIdx = 0;
+  nextWarnIdx = 0;
+  nextPopIdx = 0;
+  gamePhase = 'playing';
+  failFreezeTimer = 0;
+  clearWaitTimer = 0;
+  replayPending = false;
+  replayDelayTimer = 0;
+  hitStopTimer = 0;
+  strokeMultiCount = 0;
+  strokeHitIds.clear();
+  strokeLastHitAt = -99999;
+
+  hideBanner();
+  updateActionUI();
+}
+
+/** Spawn one deterministic ThrowSpec from the active LevelPlan, scaled cleanly to the viewport width! */
+function spawnScheduledThrow(th: ThrowSpec) {
+  const { stageHalfW } = getTossStageLayout();
+  const trng = mulberry32(th.seed);
+  const poly = makeCrystalPoly(CRYSTAL_SIZE, th.variant);
+  const slotIdx = allocCutSlot();
+
+  const x0 = th.lane * stageHalfW;
+  const xApex = th.targetLane * stageHalfW;
+  const y0 = -0.82;
+  // Assign a clean depth plane (front-most free slot, stepping slightly behind any airborne gem so crossing trajectories never clip!)
+  const zCandidates = [0.08, -0.34, -0.76, 0.46, -1.16];
+  let z0 = zCandidates[0];
+  let bestClearance = -1;
+  for (const zc of zCandidates) {
+    let minDz = Infinity;
+    for (const other of flyingCrystals) {
+      const dz = Math.abs(zc - other.pos[2]);
+      if (dz < minDz) minDz = dz;
+    }
+    if (minDz >= 0.40) {
+      z0 = zc;
+      break;
+    }
+    if (minDz > bestClearance) {
+      bestClearance = minDz;
+      z0 = zc;
+    }
+  }
+  const vy0 = Math.sqrt(2 * th.gravity * (th.apex - y0));
+  const tApex = vy0 / th.gravity;
+  const vx0 = (xApex - x0) / Math.max(0.25, tApex);
+  const vz0 = 0;
+
+  const pos: Vec3 = [x0, y0, z0];
+  const vel: Vec3 = [vx0, vy0, vz0];
+  const quat = qNorm(
+    qMul(
+      qFromAxisAngle([0, 1, 0], (trng() - 0.5) * Math.PI * 1.4),
+      qMul(
+        qFromAxisAngle([1, 0, 0], (trng() - 0.5) * 0.85),
+        qFromAxisAngle([0, 0, 1], (trng() - 0.5) * 0.65),
+      ),
+    ),
+  );
+  const spinAxis = norm3([(trng() - 0.5) * 1.6, 0.5 + trng() * 1.1, (trng() - 0.5) * 1.4]);
+  const angVel = scale3(spinAxis, th.spinSpeed);
+
+  gpu.setCutSlot(
+    slotIdx,
+    {
+      verts: triangulatePoly(poly),
+      planes: polyPlanes(poly),
+      crackVerts: new Float32Array(0),
+      surfaceCrackVerts: new Float32Array(0),
+    },
+    pos,
+    quat,
+    th.gemId,
+  );
+
+  flyingCrystals.push({
+    id: nextCrystalId++,
+    slotIdx,
+    poly,
+    startVol: Math.max(0.01, poly.volume),
+    pos,
+    vel,
+    quat,
+    angVel,
+    gravity: th.gravity,
+    poisoned: th.poisoned,
+    gemId: th.gemId,
+    slices: 0,
+    lastSlicedAt: -1000,
+    swipeEntered: false,
+    swipeDist: 0,
+    enterX: 0,
+    enterY: 0,
+  });
+
+  // Gem launch sound: clean pop plays right as it launches (~0.18s before entering view from below!)
+  const launchPan = Math.max(-0.85, Math.min(0.85, (x0 / Math.max(0.25, stageHalfW)) * 0.78));
+  if (th.poisoned) {
+    sound.launch(launchPan, true);
+  } else {
+    sound.gemPop(launchPan);
+  }
+}
+
+/** Spawn a solid tumbling crystal chunk that falls under gravity and explodes ONLY on ground impact! */
+function spawnFallingCrystalChunk(
+  cutPoly: Poly,
+  livePos: Vec3,
+  liveQuat: Quat,
+  liveVel: Vec3,
+  liveAngVel: Vec3,
+  pushWorld: Vec3,
+  section: Vec3[],
+  targetShards: number,
+  isBallistic: boolean,
+  sparkCount: number,
+  gemId = 0,
+) {
+  const initVel: Vec3 = isBallistic
+    ? add3(liveVel, add3(scale3(pushWorld, 0.72), [0, 0.22, 0]))
+    : add3(scale3(pushWorld, 0.85), [0, 0.36, 0]);
+  const kickAxis = cross3(pushWorld, [0, 1, 0]);
+  const kLen = len3(kickAxis);
+  const initAngVel: Vec3 = add3(
+    isBallistic ? scale3(liveAngVel, 0.75) : [0, 0, 0],
+    kLen > 1e-3
+      ? add3(scale3(kickAxis, 3.2 / kLen), [(rng() - 0.5) * 2.2, (rng() - 0.5) * 2.2, (rng() - 0.5) * 2.2])
+      : [(rng() - 0.5) * 4.5, (rng() - 0.5) * 4.5, (rng() - 0.5) * 4.5],
+  );
+
+  const slotIdx = allocCutSlot();
+  const initPos: Vec3 = add3(livePos, scale3(pushWorld, 0.012));
+  const initQuat: Quat = [...liveQuat] as Quat;
+  gpu.setCutSlot(
+    slotIdx,
+    {
+      verts: triangulatePoly(cutPoly),
+      planes: polyPlanes(cutPoly),
+      crackVerts: new Float32Array(0),
+      surfaceCrackVerts: new Float32Array(0),
+    },
+    initPos,
+    initQuat,
+    gemId,
+  );
+
+  fallingChunks.push({
+    slotIdx,
+    cutPoly,
+    worldPos: initPos,
+    worldVel: initVel,
+    quat: initQuat,
+    angVel: initAngVel,
+    targetShards,
+    gemId,
+    bakeStarted: false,
+    bakeId: 0,
+    flatShards: [],
+    parentShards: [],
+    bakedResp: null,
+    hitGroundWaiting: false,
+    detonated: false,
+  });
+
+  const sectionWorld = section.map((pt) => add3(livePos, qRotate(liveQuat, pt)));
+  burstSplinters(
+    sectionWorld.length > 0 ? sectionWorld : [add3(livePos, qRotate(liveQuat, cutPoly.centroid))],
+    section.length > 0 ? section : [cutPoly.centroid],
+    add3(isBallistic ? scale3(liveVel, 0.45) : [0, 0, 0], add3(scale3(pushWorld, 0.95), [0, 0.28, 0])),
+    sparkCount,
+    1.05,
+    0.0018,
+    0.0068,
+    gemId,
+  );
+}
+
+/** Slice one airborne FlyingCrystal along the 3D plane of the swipe segment (x0,y0) -> (x1,y1)! */
+function sliceFlyingCrystal(fc: FlyingCrystal, x0: number, y0: number, x1: number, y1: number, nowMs: number): boolean {
+  if (gamePhase !== 'playing') return false;
+
+  // POISONED BLACK DIAMOND -> instant dramatic loss (all pauses -> screen shakes -> all explodes)!
+  if (fc.poisoned) {
+    slashFlash = 1.0;
+    triggerGameFail('Hit a black diamond');
+    return true;
+  }
+
+  const wp = swipeToWorldPlaneAt(x0, y0, x1, y1, fc.pos);
+  if (!wp) return false;
+
+  const invQ = qConj(fc.quat);
+  const localPlanes: Plane[] = [{ n: norm3(qRotate(invQ, wp.n)), d: wp.d }];
+  if (freeSym && wp.d > 0.012) {
+    const n2: Vec3 = [-wp.n[0], -wp.n[1], -wp.n[2]];
+    localPlanes.push({ n: norm3(qRotate(invQ, n2)), d: wp.d });
+  }
+
+  let kept: Poly | null = fc.poly;
+  const cutCandidates: Array<{ cutPoly: Poly; localN: Vec3; localD: number; localPush: Vec3; section: Vec3[] }> = [];
+
+  for (const pl of localPlanes) {
+    if (!kept) break;
+    const sp = splitPoly(kept, pl.n, pl.d);
+    if (sp.neg && sp.pos && sp.neg.volume > 0.00005 && sp.pos.volume > 0.00005) {
+      const distNeg = len3(sp.neg.centroid);
+      const distPos = len3(sp.pos.centroid);
+      if (distPos >= distNeg) {
+        kept = sp.neg;
+        cutCandidates.push({ cutPoly: sp.pos, localN: pl.n, localD: pl.d, localPush: pl.n, section: sp.section });
+      } else {
+        kept = sp.pos;
+        const invN: Vec3 = [-pl.n[0], -pl.n[1], -pl.n[2]];
+        cutCandidates.push({ cutPoly: sp.neg, localN: invN, localD: -pl.d, localPush: invN, section: sp.section });
+      }
+    }
+  }
+
+  if (cutCandidates.length === 0 || !kept) return false;
+
+  sound.wake();
+  sound.cleave(0.14, false);
+  slashFlash = 1.0;
+  hitStopTimer = 0.028;
+  fc.slices++;
+  fc.lastSlicedAt = nowMs;
+
+  const livePos: Vec3 = [...fc.pos] as Vec3;
+  const liveQuat: Quat = [...fc.quat] as Quat;
+  const liveVel: Vec3 = [...fc.vel] as Vec3;
+  const liveAngVel: Vec3 = [...fc.angVel] as Vec3;
+  const pan = Math.max(-1, Math.min(1, livePos[0] * 0.9));
+
+  // --- FRUIT NINJA SCORING ---
+  // 1) Base hit: +1 per gem (in the gem's jewel color).
+  // 2) Same-direction Combo (3+ gems in one swipe): +N bonus flushed when the swipe ends / turns / times out.
+  // 3) Precision Critical (tight surgical dead-center cleave <= 8.5mm): +10 CRITICAL!
+  // 4) Jewel Cutter Extra Cut (max 2x slices per gem): +1!
+  const isCritical = wp.d < 0.0085 && !freeSym && fc.slices === 1;
+  if (fc.slices === 1) {
+    if (!strokeHitIds.has(fc.id)) {
+      strokeHitIds.add(fc.id);
+      strokeMultiCount++;
+      strokeLastHitAt = nowMs;
+      strokeLastPos = livePos;
+      strokeLastGemId = fc.gemId;
+    }
+    if (isCritical) {
+      sound.comboChime(4, pan);
+      addScore(11, livePos, 'CRITICAL', '+10', true, fc.gemId);
+    } else {
+      addScore(1, livePos, '+1', undefined, false, fc.gemId);
+    }
+  } else {
+    sound.comboChime(fc.slices + 1, pan);
+    addScore(1, livePos, `CUT ×${fc.slices}`, '+1', true, fc.gemId);
+  }
+
+// Dead-center bullseye, 2nd cut cap (max 2x slices per gem), OR small remaining core -> split BOTH halves cleanly and send both tumbling to explode on the ground!
+  const isBullseye = wp.d < 0.030 && !freeSym;
+  const finished = isBullseye || fc.slices >= 2 || kept.volume < fc.startVol * 0.25;
+
+  if (finished) {
+    const primary = cutCandidates[0];
+    const oppN: Vec3 = [-primary.localN[0], -primary.localN[1], -primary.localN[2]];
+    cutCandidates.push({
+      cutPoly: kept,
+      localN: oppN,
+      localD: -primary.localD,
+      localPush: oppN,
+      section: primary.section,
+    });
+    gpu.clearCutSlot(fc.slotIdx);
+    const idx = flyingCrystals.indexOf(fc);
+    if (idx >= 0) flyingCrystals.splice(idx, 1);
+  } else {
+    // Surviving crystal piece stays aloft with a crisp juggle pop so you can earn Jewel Cutter extra cuts!
+    fc.poly = kept;
+    gpu.setCutSlot(
+      fc.slotIdx,
+      {
+        verts: triangulatePoly(kept),
+        planes: polyPlanes(kept),
+        crackVerts: new Float32Array(0),
+        surfaceCrackVerts: new Float32Array(0),
+      },
+      fc.pos,
+      fc.quat,
+      fc.gemId,
+    );
+    const { stageHalfW } = getTossStageLayout();
+    const mainPushW = norm3(qRotate(liveQuat, cutCandidates[0].localPush));
+    const targetJuggleY = Math.min(1.12, Math.max(fc.pos[1] + 0.18, 0.86));
+    const juggleVy = Math.sqrt(2 * fc.gravity * Math.max(0.10, targetJuggleY - fc.pos[1]));
+    const pullX = Math.abs(fc.pos[0]) > stageHalfW * 0.7 ? -fc.pos[0] * 0.65 : -fc.pos[0] * 0.28;
+    fc.vel = [
+      fc.vel[0] * 0.45 + pullX - mainPushW[0] * 0.22,
+      juggleVy,
+      fc.vel[2] * 0.25 - mainPushW[2] * 0.10,
+    ];
+    const kickAxis = cross3(mainPushW, [0, 1, 0]);
+    const kLen = len3(kickAxis);
+    if (kLen > 1e-3) {
+      fc.angVel = add3(scale3(fc.angVel, 0.7), scale3(kickAxis, 2.2 / kLen));
+    }
+  }
+
+  // Keep shard budget balanced across multi-crystal waves so large salvos stay silky 60fps!
+  const perChunkBudget = Math.round(cfg.shardCount * (cutCandidates.length > 1 ? 0.46 : 0.64));
+  for (const c of cutCandidates) {
+    const volRatio = Math.min(1.22, Math.max(0.42, Math.pow(c.cutPoly.volume / 0.0075, 0.62)));
+    const targetShards = Math.round(perChunkBudget * volRatio);
+    const pushWorld = norm3(qRotate(liveQuat, c.localPush));
+    spawnFallingCrystalChunk(
+      c.cutPoly,
+      livePos,
+      liveQuat,
+      liveVel,
+      liveAngVel,
+      pushWorld,
+      c.section,
+      targetShards,
+      true,
+      cutCandidates.length > 1 ? 34 : 48,
+      fc.gemId,
+    );
+  }
+
+  updateActionUI();
+  return true;
+}
+
+/**
+ * STAGE 1: Execute a slice along `customWorldPlane` (from Fruit Ninja swipe!) or the next Carve step!
+ * If a previous piece is still cracking, immediately bursts it so rapid combo slashes never stall!
+ */
+function executeSlice(customWorldPlane?: { n: Vec3; d: number } | null): boolean {
+  // Rapid combo slash: if a previous cut is still cracking, shatter it immediately!
+  if (pending) {
+    triggerShatter();
+  }
+
+  if (carvePlan && carveStepIdx >= carvePlan.steps.length) {
+    resetBlock();
+    return true;
+  }
+
+  if (blockParts.length === 0) return false;
+
+  sound.wake();
+
+  const cutCandidates: Array<{ cutPoly: Poly; localN: Vec3; localD: number; localPush: Vec3; section: Vec3[] }> = [];
+
+  if (carvePlan) {
+    const step = carvePlan.steps[carveStepIdx];
+    carveStepIdx++;
+
+    if (step.kind === 'plane') {
+      let currentParts = [...blockParts];
+      for (const pl of step.planes) {
+        const nextKept: Poly[] = [];
+        for (const bp of currentParts) {
+          const sp = splitPoly(bp, pl.n, pl.d);
+          if (sp.neg && sp.pos && sp.neg.volume > 0.00012 && sp.pos.volume > 0.00012) {
+            nextKept.push(sp.neg);
+            cutCandidates.push({
+              cutPoly: sp.pos,
+              localN: pl.n,
+              localD: pl.d,
+              localPush: pl.n,
+              section: sp.section,
+            });
+          } else {
+            nextKept.push(sp.neg ?? bp);
+          }
+        }
+        currentParts = nextKept;
+      }
+      if (currentParts.length > 0) blockParts = currentParts;
+    } else {
+      blockParts = step.nextParts;
+      for (const ch of step.chunks) {
+        cutCandidates.push({
+          cutPoly: ch.poly,
+          localN: ch.cutPlane.n,
+          localD: ch.cutPlane.d,
+          localPush: norm3(ch.pushDir),
+          section: [],
+        });
+      }
+    }
+  } else {
+    if (!customWorldPlane) return false;
+    const invQ = qConj(blockQuat);
+    const localPlanes: Plane[] = [{ n: norm3(qRotate(invQ, customWorldPlane.n)), d: customWorldPlane.d }];
+    if (freeSym && customWorldPlane.d > 0.015) {
+      const n2: Vec3 = [-customWorldPlane.n[0], -customWorldPlane.n[1], -customWorldPlane.n[2]];
+      localPlanes.push({ n: norm3(qRotate(invQ, n2)), d: customWorldPlane.d });
+    }
+
+    let currentParts = [...blockParts];
+    for (const pl of localPlanes) {
+      const nextKept: Poly[] = [];
+      for (const bp of currentParts) {
+        const sp = splitPoly(bp, pl.n, pl.d);
+        if (sp.neg && sp.pos && sp.neg.volume > 0.00005 && sp.pos.volume > 0.00005) {
+          // Remove the piece furthest away from center (0, 0, 0)!
+          const distNeg = len3(sp.neg.centroid);
+          const distPos = len3(sp.pos.centroid);
+          if (distPos >= distNeg) {
+            nextKept.push(sp.neg);
+            cutCandidates.push({ cutPoly: sp.pos, localN: pl.n, localD: pl.d, localPush: pl.n, section: sp.section });
+          } else {
+            nextKept.push(sp.pos);
+            const invN: Vec3 = [-pl.n[0], -pl.n[1], -pl.n[2]];
+            cutCandidates.push({ cutPoly: sp.neg, localN: invN, localD: -pl.d, localPush: invN, section: sp.section });
+          }
+        } else {
+          nextKept.push(bp);
+        }
+      }
+      currentParts = nextKept;
+    }
+    if (currentParts.length > 0) blockParts = currentParts;
+  }
+
+  if (cutCandidates.length === 0) {
+    updateLivePreview();
+    updateActionUI();
+    return false;
+  }
+
+  cutCandidates.sort((a, b) => b.cutPoly.volume - a.cutPoly.volume);
+  const chosen = cutCandidates.slice(0, 2);
+
+  const livePos: Vec3 = [...blockPos] as Vec3;
+  const liveQuat: Quat = [...blockQuat] as Quat;
+  const liveVel: Vec3 = [...blockVel] as Vec3;
+  uploadMainBlocks();
+
+  const perChunkBudget = chosen.length > 1 ? Math.round(cfg.shardCount * 0.62) : cfg.shardCount;
+  const isBallistic = false;
+
+  // Ground-explosion mode (default when Auto is ON): severed crystal halves stay intact while tumbling
+  // through the air under gravity and ONLY explode the exact moment they slam into the studio floor!
+  if (EXPLODE_ON_GROUND && autoShatter) {
+    slashFlash = 1.0;
+    sound.cleave(0.14, false);
+
+    for (let ci = 0; ci < chosen.length; ci++) {
+      const c = chosen[ci];
+      const refVol = carvePlan ? 0.026 : 0.0075;
+      const volRatio = Math.min(1.45, Math.max(0.42, Math.pow(c.cutPoly.volume / refVol, 0.65)));
+      const targetShards = Math.round(perChunkBudget * volRatio);
+      const pushWorld = norm3(qRotate(liveQuat, c.localPush));
+
+      // Crisp clean separation velocity + tumbling spin as the severed crystal falls toward the floor
+      const initVel: Vec3 = isBallistic
+        ? add3(liveVel, add3(scale3(pushWorld, 0.72), [0, 0.24, 0]))
+        : add3(scale3(pushWorld, 0.85), [0, 0.36, 0]);
+      const kickAxis = cross3(pushWorld, [0, 1, 0]);
+      const kLen = len3(kickAxis);
+      const initAngVel: Vec3 = add3(
+        isBallistic ? scale3(blockAngVel, 0.75) : [0, 0, 0],
+        kLen > 1e-3
+          ? add3(scale3(kickAxis, 3.2 / kLen), [(rng() - 0.5) * 2.2, (rng() - 0.5) * 2.2, (rng() - 0.5) * 2.2])
+          : [(rng() - 0.5) * 4.5, (rng() - 0.5) * 4.5, (rng() - 0.5) * 4.5],
+      );
+
+      const slotIdx = allocCutSlot();
+      const initPos: Vec3 = add3(livePos, scale3(pushWorld, 0.012));
+      const initQuat: Quat = [...liveQuat] as Quat;
+      gpu.setCutSlot(
+        slotIdx,
+        {
+          verts: triangulatePoly(c.cutPoly),
+          planes: polyPlanes(c.cutPoly),
+          crackVerts: new Float32Array(0),
+          surfaceCrackVerts: new Float32Array(0),
+        },
+        initPos,
+        initQuat,
+      );
+
+      fallingChunks.push({
+        slotIdx,
+        cutPoly: c.cutPoly,
+        worldPos: initPos,
+        worldVel: initVel,
+        quat: initQuat,
+        angVel: initAngVel,
+        targetShards,
+        gemId: 0,
+        bakeStarted: false,
+        bakeId: 0,
+        flatShards: [],
+        parentShards: [],
+        bakedResp: null,
+        hitGroundWaiting: false,
+        detonated: false,
+      });
+
+      // Tiny razor-spark spray right along the diamond cleave seam
+      const sectionWorld = c.section.map((pt) => add3(livePos, qRotate(liveQuat, pt)));
+      burstSplinters(
+        sectionWorld.length > 0 ? sectionWorld : [add3(livePos, qRotate(liveQuat, c.cutPoly.centroid))],
+        c.section.length > 0 ? c.section : [c.cutPoly.centroid],
+        add3(isBallistic ? scale3(liveVel, 0.45) : [0, 0, 0], add3(scale3(pushWorld, 0.95), [0, 0.30, 0])),
+        chosen.length > 1 ? 45 : 65,
+        1.05,
+        0.0020,
+        0.0075,
+      );
+    }
+
+    updateActionUI();
+    return true;
+  }
+
+  const pendingChunks: PendingChunk[] = [];
+  const uploads: CutPieceUpload[] = [];
+  const flatShards: ShatterShard[] = [];
+  const parentChunkIdx: number[] = [];
+
+  for (let ci = 0; ci < chosen.length; ci++) {
+    const c = chosen[ci];
+    const volRatio = Math.min(1.45, Math.max(0.38, Math.pow(c.cutPoly.volume / 0.026, 0.7)));
+    const targetShards = Math.round(perChunkBudget * volRatio);
+    const { shards, crackFaces, surfaceCracks } = shatterPoly(c.cutPoly, c.localN, c.localD, targetShards, rng);
+
+    const pushWorld = norm3(qRotate(liveQuat, c.localPush));
+    const chunkVel: Vec3 = isBallistic
+      ? add3(liveVel, add3(scale3(pushWorld, 0.85), [0, 0.32, 0]))
+      : [0, 0, 0];
+
+    pendingChunks.push({
+      cutPoly: c.cutPoly,
+      shards,
+      localPushDir: c.localPush,
+      worldPos: [...livePos] as Vec3,
+      worldVel: chunkVel,
+      ballistic: isBallistic,
+    });
+    uploads.push({
+      verts: triangulatePoly(c.cutPoly),
+      planes: polyPlanes(c.cutPoly),
+      crackVerts: crackleOn ? triangulateCracks(crackFaces) : new Float32Array(0),
+      surfaceCrackVerts: crackleOn ? triangulateSurfaceCracks(surfaceCracks) : new Float32Array(0),
+    });
+
+    const sectionWorld = c.section.map((pt) => add3(livePos, qRotate(liveQuat, pt)));
+    burstSplinters(
+      sectionWorld.length > 0 ? sectionWorld : [add3(livePos, qRotate(liveQuat, c.cutPoly.centroid))],
+      c.section.length > 0 ? c.section : [c.cutPoly.centroid],
+      add3(isBallistic ? scale3(liveVel, 0.5) : [0, 0, 0], add3(scale3(pushWorld, 1.05), [0, 0.35, 0])),
+      chosen.length > 1 ? 85 : 130,
+      1.2,
+      0.0026,
+      0.009,
+    );
+  }
+
+  for (let ci = 0; ci < pendingChunks.length; ci++) {
+    for (const s of pendingChunks[ci].shards) {
+      flatShards.push(s);
+      parentChunkIdx.push(ci);
+    }
+  }
+  for (const ch of pendingChunks) {
+    for (const s of ch.shards) {
+      if (s.children) {
+        for (const kid of s.children) flatShards.push(kid);
+      }
+    }
+  }
+
+  const crackDur = crackleOn ? (isBallistic ? Math.min(0.20, cfg.crackDuration) : cfg.crackDuration) : 0.001;
+  slashFlash = 1.0;
+
+  const cutSpinKick = isBallistic ? add3(blockAngVel, [(rng() - 0.5) * 3.5, (rng() - 0.5) * 3.5, (rng() - 0.5) * 3.5]) : [0, 0, 0] as Vec3;
+
+  pending = {
+    chunks: pendingChunks,
+    flatShards,
+    parentChunkIdx,
+    crackElapsed: 0,
+    crackDur,
+    cutQuat: [...liveQuat] as Quat,
+    cutAngVel: cutSpinKick,
+    ballistic: isBallistic,
+    shattering: false,
+    bakeId: 0,
+  };
+
+  gpu.setCutPieces(uploads);
+
+  if (!crackleOn && autoShatter) {
+    // Crackle deactivated + Auto ON: kick off Rapier shatter immediately while keeping the clean crack-free chunk visible during the brief bake!
+    bakingCutVisual = pending;
+    triggerShatter();
+  } else {
+    bakingCutVisual = null;
+    sound.cleave(crackDur, crackleOn);
+    updateActionUI();
+  }
+  return true;
+}
+
+/**
+ * STAGE 2: Explode & scatter all active cracked chunks into Rapier rigid shards + GPU splinters!
+ * Moves `pending` into `inFlightBakes` immediately so rapid Fruit Ninja combo slashes never block!
+ */
+function triggerShatter() {
+  if (!pending) return;
+  sound.wake();
+
+  const p = pending;
+  pending = null;
+  p.shattering = true;
+
+  const liveQuat: Quat = p.ballistic ? ([...p.cutQuat] as Quat) : ([...blockQuat] as Quat);
+  const pFrac = Math.min(1, p.crackElapsed / Math.max(0.05, p.crackDur));
+  const drift = 0.003 + 0.009 * (1 - Math.pow(1 - pFrac, 2.4));
+
+  const liveNormals = p.chunks.map((ch) => norm3(qRotate(liveQuat, ch.localPushDir)));
+  const chunkBasePos = p.chunks.map((ch, idx) =>
+    ch.ballistic ? ch.worldPos : add3(blockPos, scale3(liveNormals[idx], drift)),
+  );
+  const chunkCentroidsWorld = p.chunks.map((ch, idx) =>
+    add3(chunkBasePos[idx], qRotate(liveQuat, ch.cutPoly.centroid)),
+  );
+
+  const splCount = Math.round(680 / Math.max(1, p.chunks.length));
+  for (let ci = 0; ci < p.chunks.length; ci++) {
+    const ch = p.chunks[ci];
+    const worldOrigins = ch.shards.map((s) => add3(chunkBasePos[ci], qRotate(liveQuat, s.centroid)));
+    const localOrigins = ch.shards.map((s) => s.centroid);
+    burstSplinters(
+      worldOrigins,
+      localOrigins,
+      add3(ch.worldVel, add3(scale3(liveNormals[ci], cfg.explodeForce * 1.15), [0, 0.95, 0])),
+      splCount,
+      cfg.explodeForce * 1.35,
+      0.0022,
+      0.0095,
+    );
+  }
+
+  const rate = slowMode || shiftSlow ? 0.28 : 1.0;
+  sound.shatter(rate);
+
+  const bakeId = nextBakeId++;
+  p.bakeId = bakeId;
+  inFlightBakes.set(bakeId, p);
+
+  const totalParents = p.parentChunkIdx.length;
+  let childCursor = totalParents;
+  const shardInputs: ShardBakeInput[] = [];
+
+  for (let parentSlot = 0; parentSlot < totalParents; parentSlot++) {
+    const s = p.flatShards[parentSlot];
+    const ci = p.parentChunkIdx[parentSlot];
+    const ch = p.chunks[ci];
+    const pushN = liveNormals[ci];
+    const baseP = chunkBasePos[ci];
+    const chunkCW = chunkCentroidsWorld[ci];
+
+    const relWorld = qRotate(liveQuat, s.centroid);
+    const initPos: Vec3 = [baseP[0] + relWorld[0], Math.max(0.03, baseP[1] + relWorld[1]), baseP[2] + relWorld[2]];
+    const fromChunk = sub3(initPos, chunkCW);
+    const radial = len3(fromChunk) > 1e-4 ? norm3(fromChunk) : pushN;
+    const f = cfg.explodeForce * (0.68 + rng() * 0.85);
+    const linVel: Vec3 = [
+      ch.worldVel[0] * 0.72 + pushN[0] * (1.05 * f) + radial[0] * (0.88 * f) + (rng() - 0.5) * 0.95,
+      ch.worldVel[1] * 0.65 + pushN[1] * (0.52 * f) + radial[1] * (0.62 * f) + 0.65 + rng() * 0.9,
+      ch.worldVel[2] * 0.72 + pushN[2] * (1.05 * f) + radial[2] * (0.88 * f) + (rng() - 0.5) * 0.95,
+    ];
+    const angVelShard: Vec3 = [
+      (rng() - 0.5) * 15,
+      (rng() - 0.5) * 15,
+      (rng() - 0.5) * 15,
+    ];
+
+    let children: ChildShardBakeInput[] | undefined;
+    if (s.children && s.children.length >= 2) {
+      children = s.children.map((kid) => ({
+        slotIndex: childCursor++,
+        hullVerts: kid.hullVerts,
+        localOffset: sub3(kid.centroid, s.centroid),
+        volume: kid.volume,
+      }));
+    }
+
+    shardInputs.push({
+      slotIndex: parentSlot,
+      hullVerts: s.hullVerts,
+      initPos,
+      initQuat: liveQuat,
+      linVel,
+      angVel: angVelShard,
+      volume: s.volume,
+      breakSpeed: 1.15 + rng() * 0.85,
+      children,
+    });
+  }
+
+  const req: BakeRequest = {
+    id: bakeId,
+    totalSlots: p.flatShards.length,
+    shards: shardInputs,
+    staticObstacles: floorObstacles.slice(-140),
+    maxFrames: 270,
+    fps: 60,
+  };
+  worker.postMessage(req);
+  updateActionUI();
+}
+
+worker.onmessage = (ev: MessageEvent<BakeResponse>) => {
+  const bake = ev.data;
+
+  // Check if this bake belongs to a ground-exploding FallingChunk!
+  const fc = fallingBakes.get(bake.id);
+  if (fc) {
+    fallingBakes.delete(bake.id);
+    if (fc.detonated) return;
+    fc.bakedResp = bake;
+    if (fc.hitGroundWaiting) {
+      detonateFallingChunk(fc);
+    }
+    return;
+  }
+
+  const p = inFlightBakes.get(bake.id);
+  if (!p) return;
+  inFlightBakes.delete(bake.id);
+
+  // Only clear GPU cut slots if no newer cut has already taken them over!
+  if (bakingCutVisual && bakingCutVisual.bakeId === bake.id) {
+    bakingCutVisual = null;
+  }
+  if (!pending && !bakingCutVisual && fallingChunks.length === 0) {
+    gpu.clearAllCutSlots();
+  }
+
+  const totalSlots = p.flatShards.length;
+  if (nextShardId + totalSlots > MAX_SHARDS) {
+    gpu.clearShards();
+    scatters.length = 0;
+    floorObstacles.length = 0;
+    nextShardId = 0;
+  }
+
+  const baseId = nextShardId;
+  nextShardId += totalSlots;
+
+  const meshVerts = triangulateShards(p.flatShards, baseId);
+  gpu.addShardBatch(meshVerts);
+
+  for (let i = 0; i < totalSlots; i++) {
+    const o = i * 7;
+    const py = bake.frames[o + 1];
+    const active = py > -100;
+    gpu.setShardPose(
+      baseId + i,
+      [bake.frames[o], active ? py : -999, bake.frames[o + 2]],
+      [bake.frames[o + 3], bake.frames[o + 4], bake.frames[o + 5], bake.frames[o + 6]],
+      active,
+    );
+  }
+  gpu.flushShardPoses(nextShardId);
+
+  scatters.push({
+    baseShardId: baseId,
+    numShards: totalSlots,
+    fps: bake.fps,
+    numFrames: bake.numFrames,
+    frames: bake.frames,
+    contacts: bake.contacts,
+    nextContact: 0,
+    elapsed: 0,
+    settled: false,
+    gemId: 0,
+    shards: p.flatShards,
+  });
+
+  updateLivePreview();
+  updateActionUI();
+};
+
+function setTossMode(on: boolean) {
+  tossMode = on && !carvePlan;
+  resetBlock();
+}
+
+function selectCarveMode(id: CarveId) {
+  carveId = id;
+  carvePlan = buildCarvePlan(id);
+  carveStepIdx = 0;
+  tossMode = id === 'free';
+  resetBlock();
+}
+
+function resetBlock() {
+  pending = null;
+  bakingCutVisual = null;
+  inFlightBakes.clear();
+  fallingChunks.length = 0;
+  fallingBakes.clear();
+  gpu.clearAllCutSlots();
+  carveStepIdx = 0;
+  hitStopTimer = 0;
+
+  if (tossMode && !carvePlan) {
+    replayFromStart();
+    updateLivePreview();
+    updateActionUI();
+    return;
+  }
+
+  hideBanner();
+  flyingCrystals.length = 0;
+  blockParts = [carvePlan ? makeInitialBlock(BLOCK_SIZE) : makeCrystalPoly(CRYSTAL_SIZE, crystalVariant++)];
+  blockPos = [...PEDESTAL_CENTER] as Vec3;
+  blockVel = [0, 0, 0];
+  blockAngVel = [0, 0, 0];
+  uploadMainBlocks();
+
+  const isLetter = CARVE_PRESETS.find((p) => p.id === carveId)?.group === 'letter';
+  baseQuat = qNorm(
+    qMul(
+      qFromAxisAngle([1, 0, 0], isLetter ? 0.12 : INIT_PITCH),
+      qFromAxisAngle([0, 1, 0], isLetter ? -0.22 : INIT_YAW),
+    ),
+  );
+  mouseQuat = qIdentity();
+  targetMouseQuat = qIdentity();
+  blockQuat = [...baseQuat] as Quat;
+  updateLivePreview();
+  updateActionUI();
+}
+
+function sweepFloor() {
+  gpu.clearShards();
+  scatters.length = 0;
+  floorObstacles.length = 0;
+  nextShardId = 0;
+}
+
+/** Clean up all floor shards/splinters and restart fresh from Level 1! */
+function replayFromStart() {
+  setPaused(false);
+  sweepFloor();
+  startLevel(1, true);
+}
+
+function setPaused(on: boolean) {
+  paused = on;
+  pauseBtn.classList.toggle('paused', paused);
+  pauseBtn.setAttribute('aria-pressed', String(paused));
+  pauseBtn.title = paused ? 'Resume (P)' : 'Pause (P)';
+  if (paused) {
+    swiping = false;
+    activePointerId = -1;
+  }
+}
+
+// =========================================================================
+// Fruit Ninja Swipe-to-Slice Interaction!
+// =========================================================================
+function updateTargetFromPointer(clientX: number, clientY: number) {
+  const nx = (clientX / Math.max(1, window.innerWidth)) * 2 - 1;
+  const ny = (clientY / Math.max(1, window.innerHeight)) * 2 - 1;
+  // Gentle sculptural inspection parallax when hovering (locks steady while slashing!)
+  const yaw = nx * 0.48;
+  const pitch = ny * 0.30;
+  targetMouseQuat = qNorm(
+    qMul(
+      qFromAxisAngle([1, 0, 0], pitch),
+      qFromAxisAngle([0, 1, 0], yaw),
+    ),
+  );
+}
+
+canvas.addEventListener('pointerdown', (e) => {
+  if (paused) return;
+  if (e.button !== 0 && e.pointerType === 'mouse') return;
+  sound.wake();
+  activePointerId = e.pointerId;
+  canvas.setPointerCapture(e.pointerId);
+
+  swiping = true;
+  swipeStartX = e.clientX;
+  swipeStartY = e.clientY;
+  swipeCurX = e.clientX;
+  swipeCurY = e.clientY;
+  swipePrevDirX = 0;
+  swipePrevDirY = 0;
+  lastSwooshDirX = 0;
+  lastPointerMoveAt = performance.now();
+  swooshAccumDist = 0;
+  strokeDirX = 0;
+  strokeDirY = 0;
+  strokeMultiCount = 0;
+  strokeHitIds.clear();
+  strokeLastHitAt = -99999;
+  swipeInGlassDist = 0;
+  swipeDidSlice = false;
+  const inGlass = rayHitsBlock(e.clientX, e.clientY);
+  swipeEnteredGlass = inGlass;
+  trailPts.push({ x: e.clientX, y: e.clientY, t: performance.now(), inGlass });
+});
+
+canvas.addEventListener('pointermove', (e) => {
+  if (!swiping || e.pointerId !== activePointerId) {
+    if (e.pointerType === 'mouse') {
+      updateTargetFromPointer(e.clientX, e.clientY);
+    }
+    return;
+  }
+
+  const now = performance.now();
+  const moveDtSec = Math.max(0.004, (now - lastPointerMoveAt) * 0.001);
+  lastPointerMoveAt = now;
+  const prevX = swipeCurX;
+  const prevY = swipeCurY;
+  const dx = e.clientX - prevX;
+  const dy = e.clientY - prevY;
+  const stepDist = Math.hypot(dx, dy);
+  const speedPxPerSec = stepDist / moveDtSec;
+  swooshAccumDist += stepDist;
+  swipeCurX = e.clientX;
+  swipeCurY = e.clientY;
+
+  // Detect sharp direction change -> re-anchor slash & reset same-direction multi-hit xN combo!
+  if (stepDist > 4) {
+    const ux = dx / stepDist;
+    const uy = dy / stepDist;
+    if (strokeDirX !== 0 || strokeDirY !== 0) {
+      const sameDirDot = ux * strokeDirX + uy * strokeDirY;
+      if (sameDirDot < 0.42) {
+        flushStrokeCombo(now);
+        strokeDirX = ux;
+        strokeDirY = uy;
+      } else {
+        // Smoothly track curved swipe tangent while still moving in the same general direction
+        const mx = strokeDirX * 0.72 + ux * 0.28;
+        const my = strokeDirY * 0.72 + uy * 0.28;
+        const ml = Math.hypot(mx, my) || 1;
+        strokeDirX = mx / ml;
+        strokeDirY = my / ml;
+      }
+    } else {
+      strokeDirX = ux;
+      strokeDirY = uy;
+    }
+
+    if (!swipeEnteredGlass && (swipePrevDirX !== 0 || swipePrevDirY !== 0)) {
+      const turnDot = ux * swipePrevDirX + uy * swipePrevDirY;
+      if (turnDot < 0.32) {
+        swipeStartX = prevX;
+        swipeStartY = prevY;
+      }
+    }
+    swipePrevDirX = ux;
+    swipePrevDirY = uy;
+
+    // Frame-rate-independent directional LTR / RTL katana swoosh on brisk strokes (works on 60Hz & 120Hz!)
+    const reversedX = lastSwooshDirX !== 0 && ux * lastSwooshDirX < -0.25;
+    if (reversedX) swooshAccumDist = Math.max(swooshAccumDist, 22);
+    const minCooldown = reversedX ? 105 : 175;
+    if (swooshAccumDist >= 22 && speedPxPerSec >= 420 && now - lastSwooshAt >= minCooldown) {
+      sound.wake();
+      const curPan = (swipeCurX / Math.max(1, window.innerWidth)) * 2 - 1;
+      const dirSign = Math.abs(ux) > 0.12 ? Math.sign(ux) : 0;
+      const panFrom = curPan - dirSign * 0.50;
+      const panTo = curPan + dirSign * 0.56;
+      const intensity = Math.min(1, (speedPxPerSec - 380) / 1800);
+      sound.swoosh(panFrom, panTo, intensity);
+      lastSwooshAt = now;
+      lastSwooshDirX = ux;
+      swooshAccumDist = 0;
+    }
+  }
+
+  // Multi-crystal Game Mode: sweep the blade across ALL flying crystals in one directional stroke!
+  if (tossMode && !carvePlan) {
+    if (gamePhase !== 'playing') {
+      if (stepDist > 2) trailPts.push({ x: e.clientX, y: e.clientY, t: now, inGlass: false });
+      return;
+    }
+    const samples = Math.max(1, Math.min(7, Math.ceil(stepDist / 12)));
+    let anyEndHit = false;
+    const snapshot = [...flyingCrystals];
+    for (const fc of snapshot) {
+      if (gamePhase !== 'playing') break;
+      if (!flyingCrystals.includes(fc)) continue;
+      if (now - fc.lastSlicedAt < 170) continue;
+
+      let hitSeg = false;
+      let endHit = false;
+      for (let s = 1; s <= samples; s++) {
+        const f = s / samples;
+        const sx = prevX + dx * f;
+        const sy = prevY + dy * f;
+        const h = rayHitsPolyAt(sx, sy, fc.poly, fc.pos, fc.quat);
+        if (h) hitSeg = true;
+        if (s === samples) endHit = h;
+      }
+      if (endHit) anyEndHit = true;
+
+      if (hitSeg) {
+        // Poisoned Black Diamond triggers IMMEDIATELY on first blade contact!
+        if (fc.poisoned) {
+          sliceFlyingCrystal(fc, prevX, prevY, swipeCurX, swipeCurY, now);
+          break;
+        }
+        if (!fc.swipeEntered) {
+          fc.swipeEntered = true;
+          fc.enterX = prevX;
+          fc.enterY = prevY;
+          fc.swipeDist = 0;
+        }
+        fc.swipeDist += stepDist;
+      }
+
+      if (fc.swipeEntered) {
+        const chord = Math.hypot(swipeCurX - fc.enterX, swipeCurY - fc.enterY);
+        if ((!endHit && chord >= 22) || (fc.swipeDist >= 34 && chord >= 28)) {
+          sliceFlyingCrystal(fc, fc.enterX, fc.enterY, swipeCurX, swipeCurY, now);
+          fc.swipeEntered = false;
+          fc.swipeDist = 0;
+        }
+      }
+    }
+
+    if (stepDist > 2) {
+      trailPts.push({ x: e.clientX, y: e.clientY, t: now, inGlass: anyEndHit });
+    }
+    return;
+  }
+
+  // Swept 5-sample hit test along (prev -> cur) for Pedestal / Guided Carve mode!
+  let segHitGlass = false;
+  let endInGlass = false;
+  const samples = Math.max(1, Math.min(6, Math.ceil(stepDist / 14)));
+  for (let s = 1; s <= samples; s++) {
+    const f = s / samples;
+    const sx = prevX + dx * f;
+    const sy = prevY + dy * f;
+    const hit = rayHitsBlock(sx, sy);
+    if (hit) segHitGlass = true;
+    if (s === samples) endInGlass = hit;
+  }
+
+  if (segHitGlass) {
+    if (!swipeEnteredGlass) {
+      // Anchor start just before entering the glass if the user was waving around waiting
+      const curChord = Math.hypot(prevX - swipeStartX, prevY - swipeStartY);
+      if (curChord > 180) {
+        swipeStartX = prevX - swipePrevDirX * 60;
+        swipeStartY = prevY - swipePrevDirY * 60;
+      }
+    }
+    swipeEnteredGlass = true;
+    swipeInGlassDist += stepDist;
+  }
+
+  if (stepDist > 2) {
+    trailPts.push({ x: e.clientX, y: e.clientY, t: now, inGlass: endInGlass });
+  }
+
+  // True Fruit Ninja feel: cleave the instant your blade passes cleanly through the glass (or cuts deep into a flying cube)!
+  // Once a slice triggers in a continuous hold, wait until the blade exits the glass before arming the return Z-slash.
+  if (swipeDidSlice && !endInGlass) {
+    swipeStartX = swipeCurX;
+    swipeStartY = swipeCurY;
+    swipeEnteredGlass = false;
+    swipeInGlassDist = 0;
+    swipeDidSlice = false;
+  }
+
+  const chord = Math.hypot(swipeCurX - swipeStartX, swipeCurY - swipeStartY);
+  const exitedGlass = swipeEnteredGlass && !endInGlass && chord >= 30;
+  const deepMidAirSlash = tossMode && swipeEnteredGlass && swipeInGlassDist >= 42 && chord >= 42;
+
+  if (!swipeDidSlice && (exitedGlass || deepMidAirSlash)) {
+    let didCut = false;
+    if (carvePlan) {
+      didCut = executeSlice(null);
+    } else {
+      const wp = swipeToWorldPlane(swipeStartX, swipeStartY, swipeCurX, swipeCurY);
+      if (wp) didCut = executeSlice(wp);
+    }
+    if (didCut) {
+      swipeStartX = swipeCurX;
+      swipeStartY = swipeCurY;
+      swipeEnteredGlass = false;
+      swipeInGlassDist = 0;
+      swipeDidSlice = true;
+    }
+  }
+});
+
+function endSwipe(e: PointerEvent) {
+  if (e.pointerId !== activePointerId) return;
+  const now = performance.now();
+
+  if (tossMode && !carvePlan) {
+    if (gamePhase === 'playing') {
+      for (const fc of [...flyingCrystals]) {
+        if (fc.swipeEntered) {
+          const chord = Math.hypot(swipeCurX - fc.enterX, swipeCurY - fc.enterY);
+          if (chord >= 16) {
+            sliceFlyingCrystal(fc, fc.enterX, fc.enterY, swipeCurX, swipeCurY, now);
+          }
+          fc.swipeEntered = false;
+          fc.swipeDist = 0;
+        }
+      }
+    }
+    flushStrokeCombo(now);
+    swiping = false;
+    activePointerId = -1;
+    swipeEnteredGlass = false;
+    swipeInGlassDist = 0;
+    swipeDidSlice = false;
+    return;
+  }
+
+  const chord = Math.hypot(swipeCurX - swipeStartX, swipeCurY - swipeStartY);
+
+  if (!swipeDidSlice) {
+    if (chord >= 22) {
+      // Shorter slash that ended inside or near the glass -> cleave cleanly on release!
+      if (carvePlan) {
+        executeSlice(null);
+      } else {
+        const wp = swipeToWorldPlane(swipeStartX, swipeStartY, swipeCurX, swipeCurY);
+        if (wp) executeSlice(wp);
+      }
+    } else {
+      // Quick tap / click without swiping:
+      // - If Auto is off and a cut is poised -> Shatter!
+      // - In Shape/Letter mode -> Carve next step!
+      if (pending && !autoShatter) {
+        triggerShatter();
+      } else if (carvePlan) {
+        executeSlice(null);
+      }
+    }
+  }
+
+  swiping = false;
+  activePointerId = -1;
+  swipeEnteredGlass = false;
+  swipeInGlassDist = 0;
+  swipeDidSlice = false;
+}
+
+canvas.addEventListener('pointerup', endSwipe);
+canvas.addEventListener('pointercancel', () => {
+  for (const fc of flyingCrystals) {
+    fc.swipeEntered = false;
+    fc.swipeDist = 0;
+  }
+  swiping = false;
+  activePointerId = -1;
+  swipeEnteredGlass = false;
+  swipeInGlassDist = 0;
+  swipeDidSlice = false;
+});
+
+/** Render the tapered katana slash ribbon + minimal studio score callouts + fail pulse on the 2D HUD canvas. */
+function renderSlashTrail(nowMs: number, rawDt: number) {
+  const w = trailCanvas.width;
+  const h = trailCanvas.height;
+  const cssW = Math.max(1, window.innerWidth);
+  const cssH = Math.max(1, window.innerHeight);
+  const dpr = w / cssW;
+  trailCtx.clearRect(0, 0, w, h);
+
+  // Prune old trail points (> 220 ms)
+  const maxAge = 220;
+  while (trailPts.length > 0 && nowMs - trailPts[0].t > maxAge) {
+    trailPts.shift();
+  }
+
+  trailCtx.save();
+  trailCtx.scale(dpr, dpr);
+
+  // Subtle dark obsidian vignette pulse during fail freeze / shake
+  if (failFlash > 0.01) {
+    const grad = trailCtx.createRadialGradient(cssW * 0.5, cssH * 0.5, Math.min(cssW, cssH) * 0.25, cssW * 0.5, cssH * 0.5, Math.max(cssW, cssH) * 0.72);
+    grad.addColorStop(0, 'rgba(20, 20, 24, 0)');
+    grad.addColorStop(1, `rgba(20, 20, 24, ${(0.28 * failFlash).toFixed(3)})`);
+    trailCtx.fillStyle = grad;
+    trailCtx.fillRect(0, 0, cssW, cssH);
+  }
+
+  // Draw tapered katana slash ribbon
+  if (trailPts.length >= 2) {
+    type Pt = (typeof trailPts)[number];
+    const strokes: Pt[][] = [];
+    let cur: Pt[] = [trailPts[0]];
+    for (let i = 1; i < trailPts.length; i++) {
+      if (trailPts[i].t - trailPts[i - 1].t > 90) {
+        if (cur.length >= 2) strokes.push(cur);
+        cur = [trailPts[i]];
+      } else {
+        cur.push(trailPts[i]);
+      }
+    }
+    if (cur.length >= 2) strokes.push(cur);
+
+    const drawRibbon = (pts: Pt[], halfWidthPx: number, fillStyle: CanvasGradient | string) => {
+      const n = pts.length;
+      const leftX = new Float32Array(n);
+      const leftY = new Float32Array(n);
+      const rightX = new Float32Array(n);
+      const rightY = new Float32Array(n);
+
+      for (let i = 0; i < n; i++) {
+        const prev = pts[Math.max(0, i - 1)];
+        const next = pts[Math.min(n - 1, i + 1)];
+        let tx = next.x - prev.x;
+        let ty = next.y - prev.y;
+        const len = Math.hypot(tx, ty) || 1;
+        tx /= len;
+        ty /= len;
+        const nx = -ty;
+        const ny = tx;
+
+        const u = i / (n - 1);
+        const ageLife = Math.max(0, 1 - (nowMs - pts[i].t) / maxAge);
+        const tipPinch = i === n - 1 ? 0 : Math.min(1, (1 - u) * 5.5);
+        const tailTaper = Math.pow(u * ageLife, 1.15);
+        const r = halfWidthPx * tailTaper * tipPinch;
+
+        leftX[i] = pts[i].x + nx * r;
+        leftY[i] = pts[i].y + ny * r;
+        rightX[i] = pts[i].x - nx * r;
+        rightY[i] = pts[i].y - ny * r;
+      }
+
+      trailCtx.beginPath();
+      trailCtx.moveTo(leftX[0], leftY[0]);
+      for (let i = 1; i < n; i++) trailCtx.lineTo(leftX[i], leftY[i]);
+      for (let i = n - 1; i >= 0; i--) trailCtx.lineTo(rightX[i], rightY[i]);
+      trailCtx.closePath();
+      trailCtx.fillStyle = fillStyle;
+      trailCtx.fill();
+    };
+
+    const boost = 1 + slashFlash * 0.65;
+    for (const stroke of strokes) {
+      const first = stroke[0];
+      const last = stroke[stroke.length - 1];
+      const headLife = Math.max(0, 1 - (nowMs - last.t) / maxAge);
+      if (headLife <= 0.01) continue;
+
+      const outerGrad = trailCtx.createLinearGradient(first.x, first.y, last.x, last.y);
+      outerGrad.addColorStop(0, 'rgba(24, 24, 28, 0)');
+      outerGrad.addColorStop(0.55, `rgba(24, 24, 28, ${(0.34 * headLife).toFixed(3)})`);
+      outerGrad.addColorStop(1, `rgba(20, 20, 24, ${(0.72 * headLife).toFixed(3)})`);
+      drawRibbon(stroke, 4.2 * boost, outerGrad);
+
+      const innerGrad = trailCtx.createLinearGradient(first.x, first.y, last.x, last.y);
+      innerGrad.addColorStop(0, 'rgba(255, 255, 255, 0)');
+      innerGrad.addColorStop(0.45, `rgba(255, 255, 255, ${(0.65 * headLife).toFixed(3)})`);
+      innerGrad.addColorStop(1, `rgba(255, 255, 255, ${(0.98 * headLife).toFixed(3)})`);
+      drawRibbon(stroke, 2.0 * boost, innerGrad);
+    }
+  }
+
+  // Draw floating studio score callouts (+10, 3x +30, CUT +15)
+  if (!CLEAN && callouts.length > 0) {
+    trailCtx.textAlign = 'center';
+    trailCtx.textBaseline = 'middle';
+    for (let i = callouts.length - 1; i >= 0; i--) {
+      const c = callouts[i];
+      c.age += rawDt;
+      if (c.age >= c.maxAge) {
+        callouts.splice(i, 1);
+        continue;
+      }
+      const u = c.age / c.maxAge;
+      const alpha = u < 0.14 ? u / 0.14 : Math.max(0, 1 - (u - 0.14) / 0.86);
+      const lift = (1 - Math.pow(1 - u, 2.2)) * (c.emphasis ? 46 : 32);
+      const y = c.y - lift;
+
+      trailCtx.globalAlpha = alpha;
+      trailCtx.lineJoin = 'round';
+      trailCtx.lineWidth = c.emphasis ? 4.5 : 3.5;
+      trailCtx.strokeStyle = 'rgba(244, 243, 240, 0.88)';
+      trailCtx.font = c.emphasis ? '700 22px "IBM Plex Sans", sans-serif' : '700 16px "IBM Plex Sans", sans-serif';
+      trailCtx.strokeText(c.text, c.x, y);
+      trailCtx.fillStyle = c.color;
+      trailCtx.fillText(c.text, c.x, y);
+      if (c.sub) {
+        trailCtx.font = '700 10px "Inter", sans-serif';
+        trailCtx.lineWidth = 3;
+        trailCtx.strokeText(c.sub, c.x, y + 17);
+        trailCtx.fillStyle = c.color;
+        trailCtx.fillText(c.sub, c.x, y + 17);
+      }
+    }
+    trailCtx.globalAlpha = 1;
+  }
+
+  trailCtx.restore();
+}
+
+bannerEl.addEventListener('click', () => {
+  replayFromStart();
+});
+
+soundBtn.addEventListener('click', () => {
   sound.wake();
   sound.setMuted(!sound.muted);
-  soundBtn.classList.toggle('off', sound.muted);
+  soundBtn.classList.toggle('muted', sound.muted);
+});
+
+pauseBtn.addEventListener('click', () => {
+  setPaused(!paused);
+});
+
+window.addEventListener('keydown', (e) => {
+  if (e.target instanceof HTMLInputElement) return;
+  if (e.key === 'Shift') { shiftSlow = true; return; }
+  if (e.code === 'Space') {
+    e.preventDefault();
+    if (gamePhase === 'lost') replayFromStart();
+    else if (pending && !autoShatter) triggerShatter();
+    else if (carvePlan) executeSlice(null);
+    else if (tossMode) setPaused(!paused);
+  } else if (e.key === 'p' || e.key === 'P' || e.key === 'Escape') {
+    if (tossMode && !carvePlan) setPaused(!paused);
+  } else if (e.key === '[') {
+    if (tossMode && !carvePlan) startLevel(Math.max(1, currentLevel - 1), false);
+  } else if (e.key === ']') {
+    if (tossMode && !carvePlan) startLevel(Math.min(MAX_LEVEL, currentLevel + 1), false);
+  } else if (e.key === 'r' || e.key === 'R') {
+    resetBlock();
+  } else if (e.key === 'c' || e.key === 'C') {
+    sweepFloor();
+  } else if (e.key === 'm' || e.key === 'M') {
+    sound.wake();
+    sound.setMuted(!sound.muted);
+    soundBtn.classList.toggle('muted', sound.muted);
+  }
+});
+
+window.addEventListener('keyup', (e) => {
+  if (e.key === 'Shift') shiftSlow = false;
+});
+
+function handleResize() {
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  const w = Math.floor(window.innerWidth * dpr);
+  const h = Math.floor(window.innerHeight * dpr);
+  gpu.resize(w, h);
+  trailCanvas.width = w;
+  trailCanvas.height = h;
+  updateCamera();
 }
-soundBtn.addEventListener('click', toggleSound);
-document.querySelector<HTMLButtonElement>('#again')!.addEventListener('click', () => { sound.wake(); reset(); });
 
-// ---------------------------------------------------------------- frame
-let prev = 0;
-function frame(ms: number) {
-  const dt = Math.min(0.05, (ms - prev) / 1000 || 0.016);
-  prev = ms;
-  now += dt;
-  flash *= Math.exp(-dt / 0.045);
-  recoil *= Math.exp(-dt / 0.09);
-  zoom += (zoomTo - zoom) * Math.min(1, dt * 9);
-  fade += (fadeTo - fade) * Math.min(1, dt * 12);
-  if (resetAt >= 0 && now > resetAt) { resetAt = -1; newPane(); fadeTo = 1; zoomTo = 1; }
-
-  // the bullets of the last frame: what they cut loose is worked out, a few milliseconds a frame, and then it
-  // goes. Another bullet meanwhile, and it starts again from the panes as they are now
-  if (burst) { burst = false; job = loosenSteps(); }
-  if (job) {
-    const t0 = performance.now();
-    let r = job.next();
-    while (!r.done && performance.now() - t0 < 6) r = job.next();
-    if (r.done) { job = null; shock(r.value); }
-  }
-  if (pellets.length) pellet();
-  stepFalls(dt);
-  const airDt = slow && active() ? dt * (V.slow / V.pace) : dt;
-  stepDust(airDt); stepHaze(airDt);
-  renderer.setDust(dPos, dUsed); renderer.setHaze(hBuf, hUsed);
-
-  // how far the sim is, while it runs
-  const running = [...sims.values()].find((b) => !b.done);
-  simBar.hidden = !running || replay.on;
-  if (running) {
-    simFill.style.transform = `scaleX(${Math.min(1, running.frames.length / running.total)})`;
-    // and how many pieces have still to come to rest before it is done
-    const label = `${running.left} ${running.left === 1 ? 'piece' : 'pieces'} still moving`;
-    if (label !== simLabel) simText.textContent = simLabel = label;
+async function boot() {
+  try {
+    await gpu.init();
+  } catch (err) {
+    fatalEl.hidden = false;
+    fatalEl.textContent = err instanceof Error ? err.message : String(err);
+    return;
   }
 
-  updateCamera(now, dt);
-  if (maskDirty) { maskDirty = false; renderer.setMask(mask); }
-  renderer.draw(cam.view, cam.proj, cam.eye, now, now, flash, fade, dUsed, hUsed);
+  handleResize();
+  window.addEventListener('resize', handleResize);
+
+  const initLayout = getTossStageLayout();
+  camEye = tossMode ? [0, TOSS_CAM_EYE[1], initLayout.eyeZ] : ([...PEDESTAL_CAM_EYE] as Vec3);
+  camTarget = [...(tossMode ? TOSS_CAM_TARGET : PEDESTAL_CAM_TARGET)] as Vec3;
+  updateCamera();
+  if (carveId !== 'free') {
+    selectCarveMode(carveId);
+  } else if (tossMode) {
+    startLevel(currentLevel, false);
+    updateLivePreview();
+    updateActionUI();
+  } else {
+    uploadMainBlocks();
+    updateLivePreview();
+    updateActionUI();
+  }
+
+  (window as unknown as Record<string, unknown>).shatter = {
+    slice: (x0: number, y0: number, x1: number, y1: number) => {
+      if (tossMode && !carvePlan) {
+        const now = performance.now();
+        let count = 0;
+        for (const fc of [...flyingCrystals]) {
+          if (sliceFlyingCrystal(fc, x0, y0, x1, y1, now)) count++;
+        }
+        return count > 0;
+      }
+      const wp = swipeToWorldPlane(x0, y0, x1, y1);
+      return wp ? executeSlice(wp) : false;
+    },
+    carve: () => executeSlice(null),
+    shatter: triggerShatter,
+    reset: resetBlock,
+    sweep: sweepFloor,
+    setLevel: (lv: number) => startLevel(lv, false),
+    toss: () => startLevel(currentLevel, false),
+    setToss: setTossMode,
+    getGameState: () => ({
+      level: currentLevel,
+      phase: gamePhase,
+      score,
+      bestScore,
+      flyingCount: flyingCrystals.length,
+      stageHalfW: getTossStageLayout().stageHalfW,
+    }),
+    getBlockScreenPos: () => {
+      if (tossMode && !carvePlan && flyingCrystals.length > 0) {
+        const fc = flyingCrystals[0];
+        return { ...projectToScreen(fc.pos), state: gamePhase, worldPos: [...fc.pos], score, count: flyingCrystals.length };
+      }
+      return { ...projectToScreen(blockPos), state: gamePhase, worldPos: [...blockPos], score, count: flyingCrystals.length };
+    },
+    getFlyingScreenPos: () => flyingCrystals.map((fc) => ({
+      id: fc.id,
+      poisoned: fc.poisoned,
+      slices: fc.slices,
+      ...projectToScreen(fc.pos),
+      worldPos: [...fc.pos],
+    })),
+    setCarve: selectCarveMode,
+    setSym: (on: boolean) => {
+      freeSym = on;
+    },
+    setCrackle: (on: boolean) => {
+      crackleOn = on;
+      if (!crackleOn && pending && autoShatter) triggerShatter();
+    },
+    setAuto: (on: boolean) => {
+      autoShatter = on;
+    },
+    setPalette: (i: number) => {
+      paletteIdx = ((i % PALETTES.length) + PALETTES.length) % PALETTES.length;
+    },
+    setPaused,
+    cfg,
+  };
+
+  let lastTs = performance.now();
+
+  function frame(ts: number) {
+    requestAnimationFrame(frame);
+    const rawDt = Math.min(0.05, Math.max(0.001, (ts - lastTs) * 0.001));
+    lastTs = ts;
+    const activeDt = paused ? 0 : rawDt;
+    const time = ts * 0.001;
+    const rate = slowMode || shiftSlow ? 0.22 : 1.0;
+    const isFrozen = paused || (tossMode && !carvePlan && gamePhase === 'failing');
+    const simDt = isFrozen ? 0 : rawDt * rate;
+
+    slashFlash *= Math.exp(-activeDt * 11.0);
+    failFlash *= Math.exp(-activeDt * 3.8);
+    if (hitStopTimer > 0) hitStopTimer = Math.max(0, hitStopTimer - activeDt);
+    if (!paused && strokeMultiCount > 0 && ts - strokeLastHitAt > 180) {
+      flushStrokeCombo(ts);
+    }
+    const flightDt = simDt * (hitStopTimer > 0 ? 0.18 : 1.0);
+
+    // Smooth camera transition + responsive portrait mobile zoom + dramatic fail screen shake!
+    const { eyeZ } = getTossStageLayout();
+    const goalEye: Vec3 = tossMode && !carvePlan ? [0, TOSS_CAM_EYE[1], eyeZ] : PEDESTAL_CAM_EYE;
+    const goalTarget: Vec3 = tossMode && !carvePlan ? TOSS_CAM_TARGET : PEDESTAL_CAM_TARGET;
+    const camLerp = 1 - Math.exp(-rawDt * 6.5);
+    camEye = [
+      camEye[0] + (goalEye[0] - camEye[0]) * camLerp,
+      camEye[1] + (goalEye[1] - camEye[1]) * camLerp,
+      camEye[2] + (goalEye[2] - camEye[2]) * camLerp,
+    ];
+    camTarget = [
+      camTarget[0] + (goalTarget[0] - camTarget[0]) * camLerp,
+      camTarget[1] + (goalTarget[1] - camTarget[1]) * camLerp,
+      camTarget[2] + (goalTarget[2] - camTarget[2]) * camLerp,
+    ];
+
+    let shakeX = 0;
+    let shakeY = 0;
+    if (shakeTimer > 0) {
+      shakeTimer = Math.max(0, shakeTimer - activeDt);
+      const env = Math.min(1, shakeTimer / 0.45);
+      const amp = shakeAmp * env * env;
+      shakeX = (Math.sin(time * 88.0) * 0.65 + Math.cos(time * 137.0) * 0.35) * amp;
+      shakeY = (Math.cos(time * 96.0) * 0.65 + Math.sin(time * 149.0) * 0.35) * amp;
+    }
+    const baseEye = camEye;
+    const baseTgt = camTarget;
+    camEye = [baseEye[0] + shakeX, baseEye[1] + shakeY, baseEye[2]];
+    camTarget = [baseTgt[0] + shakeX * 0.55, baseTgt[1] + shakeY * 0.55, baseTgt[2]];
+    updateCamera();
+    camEye = baseEye;
+    camTarget = baseTgt;
+
+    // 1. 1,000-Level Diamond Cutter Game vs. Stationary studio pedestal
+    if (tossMode && !carvePlan) {
+      if (paused) {
+        // Simulation frozen cleanly while paused
+      } else if (gamePhase === 'failing') {
+        // ALL PAUSES while SCREEN SHAKES -> then ALL EXPLODES!
+        failFreezeTimer -= activeDt;
+        if (failFreezeTimer <= 0) {
+          explodeEverythingNow();
+        }
+      } else if (gamePhase === 'playing') {
+        levelTime += simDt;
+
+        // Subtle warning cue ~0.22s BEFORE a Poisoned Black Diamond launches from below!
+        while (nextWarnIdx < levelPlan.throws.length && levelTime >= levelPlan.throws[nextWarnIdx].time - 0.22) {
+          const wth = levelPlan.throws[nextWarnIdx];
+          if (wth.poisoned) {
+            sound.blackWarning(Math.max(-0.85, Math.min(0.85, wth.lane * 0.78)));
+          }
+          nextWarnIdx++;
+        }
+
+        // Spawn deterministic pre-planned throws right on schedule!
+        while (nextThrowIdx < levelPlan.throws.length && levelTime >= levelPlan.throws[nextThrowIdx].time) {
+          spawnScheduledThrow(levelPlan.throws[nextThrowIdx]);
+          nextThrowIdx++;
+        }
+
+        // Advance all live flying crystals along their below-up ballistic arcs
+        for (let i = flyingCrystals.length - 1; i >= 0; i--) {
+          const fc = flyingCrystals[i];
+          fc.vel[1] -= fc.gravity * flightDt;
+          fc.pos = add3(fc.pos, scale3(fc.vel, flightDt));
+          fc.vel[2] *= Math.exp(-flightDt * 2.8);
+          fc.quat = stepQuat(fc.quat, fc.angVel, flightDt);
+
+          // Check falling off the bottom edge!
+          if (fc.vel[1] < 0 && fc.pos[1] < -0.90) {
+            gpu.clearCutSlot(fc.slotIdx);
+            flyingCrystals.splice(i, 1);
+
+            // Missed a clear crystal without hitting it -> LOSE (same pause / shake / explode-all effect)!
+            if (!fc.poisoned && fc.slices === 0) {
+              triggerGameFail('Missed a crystal');
+              break;
+            }
+          }
+        }
+
+        // Smooth depth-layer separation: if two gems share an XY trajectory, slip the newer one cleanly behind (-Z) so they never clip!
+        if (gamePhase === 'playing' && flyingCrystals.length > 1) {
+          const sepBlend = 1 - Math.exp(-flightDt * 16);
+          for (let i = 0; i < flyingCrystals.length; i++) {
+            for (let j = i + 1; j < flyingCrystals.length; j++) {
+              const a = flyingCrystals[i];
+              const b = flyingCrystals[j];
+              const dXY = Math.hypot(a.pos[0] - b.pos[0], a.pos[1] - b.pos[1]);
+              if (dXY < 0.48) {
+                const prox = Math.min(1, (0.48 - dXY) / 0.16);
+                const needZ = 0.42 * prox;
+                const dz = a.pos[2] - b.pos[2];
+                if (Math.abs(dz) < needZ) {
+                  // Newer (higher id) or already-deeper gem slips slightly behind (-Z)
+                  const bBehind = Math.abs(dz) > 0.02 ? b.pos[2] < a.pos[2] : b.id > a.id;
+                  const back = bBehind ? b : a;
+                  const front = bBehind ? a : b;
+                  const deficit = needZ - (front.pos[2] - back.pos[2]);
+                  if (deficit > 0) {
+                    back.pos[2] -= deficit * 0.78 * sepBlend;
+                    front.pos[2] += deficit * 0.22 * sepBlend;
+                  }
+                }
+              }
+            }
+          }
+        }
+
+        for (const fc of flyingCrystals) {
+          gpu.updateCutSlotPose(fc.slotIdx, fc.pos, fc.quat);
+        }
+
+        // Level Clear check: all throws launched and all crystals resolved cleanly!
+        if (gamePhase === 'playing' && nextThrowIdx >= levelPlan.throws.length && flyingCrystals.length === 0) {
+          gamePhase = 'cleared';
+          clearWaitTimer = 0.65;
+          sound.levelClear();
+          updateActionUI();
+        }
+      } else if (gamePhase === 'cleared') {
+        clearWaitTimer -= activeDt;
+        if (clearWaitTimer <= 0) {
+          startLevel(currentLevel < MAX_LEVEL ? currentLevel + 1 : 1, currentLevel >= MAX_LEVEL);
+        }
+      } else if (gamePhase === 'lost' && replayPending) {
+        // Wait until all exploding shards have finished settling on the floor, then 2 seconds later show REPLAY!
+        const allSettled = fallingBakes.size === 0 && scatters.every((s) => s.settled);
+        if (allSettled) {
+          replayDelayTimer -= activeDt;
+          if (replayDelayTimer <= 0) {
+            replayPending = false;
+            showReplayBanner();
+          }
+        }
+      }
+    } else if (!swiping) {
+      blockPos = [...PEDESTAL_CENTER] as Vec3;
+      const breathQ = qNorm(
+        qMul(
+          qFromAxisAngle([0, 1, 0], Math.sin(time * 0.45) * 0.045),
+          qFromAxisAngle([1, 0, 0], Math.cos(time * 0.35) * 0.022),
+        ),
+      );
+      const follow = 1 - Math.exp(-rawDt * 7.5);
+      mouseQuat = qSlerp(mouseQuat, targetMouseQuat, follow);
+      blockQuat = qNorm(qMul(mouseQuat, qMul(breathQ, baseQuat)));
+    }
+
+    updateLivePreview();
+    updateActionUI();
+
+    const glide = carvePlan ? 1 - Math.exp(-rawDt * 10.5) : 1.0;
+    displayPlane1N = norm3([
+      displayPlane1N[0] + (activePlane1N[0] - displayPlane1N[0]) * glide,
+      displayPlane1N[1] + (activePlane1N[1] - displayPlane1N[1]) * glide,
+      displayPlane1N[2] + (activePlane1N[2] - displayPlane1N[2]) * glide,
+    ]);
+    displayPlane1R += (activePlane1R - displayPlane1R) * glide;
+    if (activePlane2N) {
+      if (!displayPlane2N) {
+        displayPlane2N = [...activePlane2N] as Vec3;
+        displayPlane2R = activePlane2R;
+      } else {
+        displayPlane2N = norm3([
+          displayPlane2N[0] + (activePlane2N[0] - displayPlane2N[0]) * glide,
+          displayPlane2N[1] + (activePlane2N[1] - displayPlane2N[1]) * glide,
+          displayPlane2N[2] + (activePlane2N[2] - displayPlane2N[2]) * glide,
+        ]);
+        displayPlane2R += (activePlane2R - displayPlane2R) * glide;
+      }
+    } else {
+      displayPlane2N = null;
+      displayPlane2R = -1;
+    }
+
+    // Advance independent falling crystal chunks -> explode ONLY when each chunk hits the ground!
+    for (let i = fallingChunks.length - 1; i >= 0; i--) {
+      const ch = fallingChunks[i];
+      if (ch.detonated) {
+        fallingChunks.splice(i, 1);
+        continue;
+      }
+
+      if (!ch.hitGroundWaiting) {
+        ch.worldVel[1] -= CHUNK_GRAVITY * simDt;
+        ch.worldPos = add3(ch.worldPos, scale3(ch.worldVel, simDt));
+        ch.quat = stepQuat(ch.quat, ch.angVel, simDt);
+        const minY = getPolyMinWorldY(ch.cutPoly, ch.worldPos, ch.quat);
+
+        // Pre-bake Rapier floor-impact shatter ~0.22s before touchdown so impact explosion is instantaneous!
+        if (!ch.bakeStarted && ch.worldVel[1] < -0.1 && minY < 0.56) {
+          const vy = -ch.worldVel[1];
+          const disc = vy * vy + 2 * CHUNK_GRAVITY * Math.max(0, minY - 0.015);
+          const dtHit = Math.max(0, Math.min(0.28, (-vy + Math.sqrt(disc)) / CHUNK_GRAVITY));
+          startFallingChunkBake(ch, dtHit);
+        }
+
+        if (minY <= 0.015 && ch.worldVel[1] <= 0.05) {
+          ch.worldPos[1] += 0.015 - minY;
+          ch.hitGroundWaiting = true;
+          gpu.updateCutSlotPose(ch.slotIdx, ch.worldPos, ch.quat);
+          if (!ch.bakeStarted) {
+            startFallingChunkBake(ch, 0);
+          }
+          if (ch.bakedResp) {
+            detonateFallingChunk(ch);
+            continue;
+          }
+        } else {
+          gpu.updateCutSlotPose(ch.slotIdx, ch.worldPos, ch.quat);
+        }
+      } else if (ch.bakedResp) {
+        detonateFallingChunk(ch);
+      }
+    }
+
+    // Advance Stage 1: manual / legacy cracking severed chunk(s) (used when Auto is OFF)
+    let crackTime = 0;
+    let cutOffsets: Vec3[] = [];
+    let cutQuat: Quat = blockQuat;
+    const activeCutVis = pending ?? bakingCutVisual;
+    if (activeCutVis) {
+      activeCutVis.crackElapsed += rawDt;
+      const timeScale = 0.36 / Math.max(0.08, activeCutVis.crackDur);
+      crackTime = crackleOn && pending ? pending.crackElapsed * timeScale : 0;
+      const pFrac = Math.min(1, activeCutVis.crackElapsed / Math.max(0.05, activeCutVis.crackDur));
+
+      if (activeCutVis.ballistic) {
+        activeCutVis.cutQuat = stepQuat(activeCutVis.cutQuat, activeCutVis.cutAngVel, flightDt);
+        cutQuat = activeCutVis.cutQuat;
+        cutOffsets = activeCutVis.chunks.map((ch, idx) => {
+          ch.worldVel[1] -= TOSS_GRAVITY * flightDt;
+          ch.worldPos = add3(ch.worldPos, scale3(ch.worldVel, flightDt));
+          gpu.updateCutSlotPose(idx, ch.worldPos, cutQuat);
+          return sub3(ch.worldPos, blockPos);
+        });
+      } else {
+        cutQuat = blockQuat;
+        const drift = 0.003 + 0.009 * (1 - Math.pow(1 - pFrac, 2.4));
+        cutOffsets = activeCutVis.chunks.map((ch, idx) => {
+          const off = scale3(norm3(qRotate(blockQuat, ch.localPushDir)), drift);
+          gpu.updateCutSlotPose(idx, add3(blockPos, off), cutQuat);
+          return off;
+        });
+      }
+
+      if (pending && autoShatter && pFrac >= 1) {
+        bakingCutVisual = pending;
+        triggerShatter();
+      }
+    }
+
+    // Advance Stage 2 (Rapier baked scatter playback + secondary floor breaks + audio clinks!)
+    let posesDirty = false;
+    for (const sc of scatters) {
+      if (sc.settled) continue;
+      sc.elapsed += simDt;
+      const exactFrame = sc.elapsed * sc.fps;
+      const f0 = Math.min(sc.numFrames - 1, Math.floor(exactFrame));
+      const f1 = Math.min(sc.numFrames - 1, f0 + 1);
+      const frac = Math.max(0, Math.min(1, exactFrame - f0));
+
+      const stride = sc.numShards * 7;
+      for (let i = 0; i < sc.numShards; i++) {
+        const o0 = f0 * stride + i * 7;
+        const o1 = f1 * stride + i * 7;
+        const py0 = sc.frames[o0 + 1];
+        const py1 = sc.frames[o1 + 1];
+        if (py0 < -100) {
+          gpu.setShardPose(sc.baseShardId + i, [0, -999, 0], [0, 0, 0, 1], false);
+          continue;
+        }
+        if (py1 < -100) {
+          gpu.setShardPose(
+            sc.baseShardId + i,
+            [sc.frames[o0], py0, sc.frames[o0 + 2]],
+            [sc.frames[o0 + 3], sc.frames[o0 + 4], sc.frames[o0 + 5], sc.frames[o0 + 6]],
+            true,
+            sc.gemId,
+          );
+          continue;
+        }
+        const px = sc.frames[o0] + (sc.frames[o1] - sc.frames[o0]) * frac;
+        const py = py0 + (py1 - py0) * frac;
+        const pz = sc.frames[o0 + 2] + (sc.frames[o1 + 2] - sc.frames[o0 + 2]) * frac;
+        const q = qSlerp(
+          [sc.frames[o0 + 3], sc.frames[o0 + 4], sc.frames[o0 + 5], sc.frames[o0 + 6]],
+          [sc.frames[o1 + 3], sc.frames[o1 + 4], sc.frames[o1 + 5], sc.frames[o1 + 6]],
+          frac,
+        );
+        gpu.setShardPose(sc.baseShardId + i, [px, py, pz], q, true, sc.gemId);
+      }
+      posesDirty = true;
+
+      while (sc.nextContact < sc.contacts.length) {
+        const cFrame = sc.contacts[sc.nextContact];
+        if (cFrame > exactFrame) break;
+        const cx = sc.contacts[sc.nextContact + 1];
+        const cy = sc.contacts[sc.nextContact + 2];
+        const cz = sc.contacts[sc.nextContact + 3];
+        const cSize = sc.contacts[sc.nextContact + 4];
+        const cStrength = sc.contacts[sc.nextContact + 5];
+        const cKind = sc.contacts[sc.nextContact + 6];
+        sc.nextContact += 7;
+
+        const pan = Math.max(-1, Math.min(1, cx * 0.75));
+        if (cKind === 2) {
+          sound.miniShatter(pan, rate);
+          burstSplinters(
+            [[cx, Math.max(0.015, cy), cz]],
+            [[(rng() - 0.5) * 0.35, -0.22 + rng() * 0.44, (rng() - 0.5) * 0.35]],
+            [0, 1.15, 0],
+            56,
+            1.55,
+            0.0020,
+            0.008,
+            sc.gemId,
+          );
+        } else {
+          sound.clink(cSize, cStrength, cKind, pan, rate);
+          if (cKind === 0 && cStrength > 1.8) {
+            burstSplinters(
+              [[cx, Math.max(0.01, cy), cz]],
+              [[(rng() - 0.5) * 0.3, -0.15 + rng() * 0.35, (rng() - 0.5) * 0.3]],
+              [0, 0.55 * Math.min(3, cStrength * 0.4), 0],
+              Math.min(18, Math.round(cStrength * 3.5)),
+              0.9,
+              0.0022,
+              0.007,
+              sc.gemId,
+            );
+          }
+        }
+      }
+
+      if (f0 >= sc.numFrames - 1) {
+        sc.settled = true;
+        const lastBase = (sc.numFrames - 1) * stride;
+        for (let i = 0; i < sc.numShards; i++) {
+          const o = lastBase + i * 7;
+          const py = sc.frames[o + 1];
+          if (py > -0.5 && py < 0.8) {
+            floorObstacles.push({
+              hullVerts: sc.shards[i].hullVerts,
+              pos: [sc.frames[o], py, sc.frames[o + 2]],
+              quat: [sc.frames[o + 3], sc.frames[o + 4], sc.frames[o + 5], sc.frames[o + 6]],
+            });
+          }
+        }
+      }
+    }
+    if (posesDirty) {
+      gpu.flushShardPoses(nextShardId);
+    }
+
+    gpu.render({
+      viewProj,
+      invViewProj,
+      camPos: camEye,
+      time,
+      dt: simDt,
+      lightDir: LIGHT_DIR,
+      causticStrength: cfg.causticStrength,
+      blockCenter: tossMode && !carvePlan ? [0, -5, 0] : blockPos,
+      blockQuat,
+      halfSize: carvePlan ? HALF_SIZE : CRYSTAL_HALF_SIZE,
+      ior: cfg.ior,
+      dispersion: cfg.dispersion,
+      palette: PALETTES[paletteIdx],
+      crackProgress: crackTime,
+      planeHover: swiping ? 1.0 : 0.0,
+      cutRadius: displayPlane1R,
+      cutPlaneN: displayPlane1N,
+      cutPlane2N: showCutLine ? displayPlane2N : null,
+      cutRadius2: displayPlane2R,
+      cutOffsets,
+      cutQuat,
+      hasCutPiece: !!(pending || bakingCutVisual || fallingChunks.length > 0 || flyingCrystals.length > 0),
+      planeAlpha: showCutLine ? 1.0 : 0.0,
+      canCut,
+      exposure: cfg.exposure,
+    });
+
+    renderSlashTrail(ts, rawDt);
+  }
+
   requestAnimationFrame(frame);
 }
 
-window.addEventListener('resize', resize);
-newPane();
-applyLook();
-settled = true;
-resize();
-requestAnimationFrame(frame);
-
-// for the console, and for whoever films it
-Object.assign(window, {
-  shatter: {
-    /** a bullet through a point of the front pane, 0…1 across and up */
-    shoot: (u: number, v: number) => { const p = toPage(u * W, v * H); shoot(p[0], p[1]); },
-    reset,
-    /** the three targets, each 0…1 across and up, and its radius in metres */
-    get targets() { const t = renderer.targets; return [0, 3, 6].map((k) => [t[k] / W, t[k + 1] / H, t[k + 2]]); },
-    get size() { return [W, H]; },
-    shock,
-    replay: (on = true) => setReplay(on),
-    get replayAt() { return replay.t; }, set replayAt(t: number) { replay.t = t; replay.playing = false; },
-    seek: (t: number) => { held = t; },
-    get state() { return state; },
-    get tool() { return tool; }, set tool(t: Tool) { setTool(t); },
-    get info() {
-      const b = falls[falls.length - 1]?.sim;
-      return { state, shots, panes: layers.map((l) => (l.standing ? l.pane.impacts.length : -1)), falls: falls.length, active: falls.filter((f) => !f.over).length, shards: b?.count, frames: b?.frames.length, simDone: b?.done, contacts: (b?.contacts.length ?? 0) / CONTACT };
-    },
-    /** the contacts of the latest sim, for a look: [frame, x, y, z, size, strength, kind] each */
-    get contacts() {
-      const c = falls[falls.length - 1]?.sim.contacts ?? [];
-      const out: number[][] = [];
-      for (let i = 0; i < c.length; i += CONTACT) out.push(c.slice(i, i + CONTACT));
-      return out;
-    },
-  },
-});
+boot();

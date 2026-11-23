@@ -1,47 +1,65 @@
 <!doctype html>
 <html lang="en">
   <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-    <meta name="theme-color" content="#0a0a0a" />
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="theme-color" content="#f4f3f0" />
     <title>02 · Shatter · Codevember 2026</title>
-    <meta name="description" content="A wall of frosted 8 mm glass with three targets on it, or three clear panes with a painting on each: a bullet, a load of shot or a sledge, and what is cut loose blows out as rigid shards" />
-    <meta name="author" content="Theo Tillberg" />
-    <!-- share image: 02/about/screengrab.png, copied next to the build by scripts/build.mjs -->
+    <meta name="author" content="Theo Tillberg (@theo_t)" />
+    <meta name="description" content="WebGPU Diamond Cutter game: slice rising colored gemstones in 3D across 1,000 deterministic levels, dodge obsidian Black Diamonds, and watch severed halves shatter into refractive shards over dispersive floor caustics" />
     <meta property="og:title" content="02 · Shatter · Codevember 2026" />
-    <meta property="og:description" content="A wall of frosted 8 mm glass with three targets on it, or three clear panes with a painting on each: a bullet, a load of shot or a sledge, and what is cut loose blows out as rigid shards" />
+    <meta property="og:description" content="WebGPU Diamond Cutter game: slice rising colored gemstones in 3D across 1,000 deterministic levels, dodge obsidian Black Diamonds, and watch severed halves shatter into refractive shards over dispersive floor caustics" />
     <meta property="og:image" content="https://ttillberg.github.io/codevember-2026/02/screengrab.png" />
-    <meta property="og:image:width" content="1200" />
-    <meta property="og:image:height" content="1200" />
     <meta name="twitter:card" content="summary_large_image" />
-    <link rel="icon" href="data:," />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@700&family=Inter:wght@400;600&display=swap" />
-    <link rel="stylesheet" href="./src/style.css" />
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@700&family=Inter:wght@400;600&display=swap" rel="stylesheet" />
   </head>
   <body>
     <canvas id="c"></canvas>
-    <!-- the title plate (docs/DESIGN.md): put the word in Japanese in the span -->
-    <div class="plate"><div class="head"><b>02 Shatter</b><i><a class="home" href="https://ttillberg.github.io/codevember-2026/">Codevember 2026 <span lang="ja">砕ける</span></a> · <a class="home" href="https://x.com/theo_t">@theo_t</a></i></div><p id="hint"></p></div>
-    <div id="sim" hidden><i></i><span></span></div>
-    <div id="mode" hidden></div>
-    <div id="replay" hidden>
-      <button id="rp-play" title="Play / pause" aria-label="Play or pause"><svg viewBox="0 0 24 24"><path class="pause" d="M8 5v14M16 5v14" /><path class="play" d="M7 4.5l12 7.5-12 7.5z" /></svg></button>
-      <div id="rp-track"><canvas id="rp-chart"></canvas><i id="rp-head"></i></div>
-      <button id="rp-speed" title="Speed" aria-label="Speed">0.2×</button>
-      <output id="rp-time">0.00 s</output>
+    <canvas id="trail"></canvas>
+
+    <div class="plate">
+      <div class="head">
+        <b>02 Shatter</b>
+        <i><a class="home" href="https://ttillberg.github.io/codevember-2026/">Codevember 2026 <span lang="ja">砕ける</span></a> · <a class="home" href="https://x.com/theo_t">@theo_t</a></i>
+      </div>
     </div>
-    <div class="tools">
-      <button id="light" title="Light: dark or studio (L)" aria-label="Dark or studio light"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4" /><path d="M12 3v2.5M12 18.5V21M3 12h2.5M18.5 12H21M5.6 5.6l1.8 1.8M16.6 16.6l1.8 1.8M5.6 18.4l1.8-1.8M16.6 7.4l1.8-1.8" /></svg></button>
-      <button id="tool" data-tool="bullet" title="Tool: bullet, shot or sledge (1, 2, 3)" aria-label="Bullet, shot or sledge"><svg viewBox="0 0 24 24"><g class="bullet"><circle cx="12" cy="12" r="6.5" /><circle cx="12" cy="12" r="1.2" /></g><g class="shot"><circle cx="8" cy="8" r="1.4" /><circle cx="15.5" cy="7" r="1.4" /><circle cx="12" cy="12" r="1.4" /><circle cx="7" cy="15.5" r="1.4" /><circle cx="16.5" cy="14" r="1.4" /><circle cx="12.5" cy="18" r="1.4" /></g><g class="sledge"><path d="M5 8l6-3 3 5-6 3z" /><path d="M11 9l8 10" /></g></svg></button>
-      <button id="stack" title="Glass: one frosted wall, or three clear panes in three colours (K)" aria-label="One frosted wall or three coloured panes"><svg viewBox="0 0 24 24"><path d="M12 4l8 4-8 4-8-4z" /><path d="M4 12l8 4 8-4" /><path d="M4 16l8 4 8-4" /></svg></button>
-      <button id="glass" title="Glass: classic or tempered (G)" aria-label="Classic or tempered glass"><svg viewBox="0 0 24 24"><path class="x" d="M12 4l2 6 5-2-4 5 3 6-6-4-5 4 2-6-5-4 6 1z" /><path class="on" d="M4 4h16v16H4zM4 9.5h16M4 15h16M9.5 4v16M15 4v16" /></svg></button>
-      <button id="tape" title="Tape: drag across the glass, or tap for one straight across (T)" aria-label="Tape"><svg viewBox="0 0 24 24"><path d="M3 15.5l12-9 6 2-12 9z" /><path d="M9 11l6 2" /></svg></button>
-      <button id="film" title="Replay from the side, slowly (S)" aria-label="Replay from the side"><svg viewBox="0 0 24 24"><rect x="3.5" y="6" width="12" height="12" rx="2" /><path d="M15.5 10.5l5-3v9l-5-3" /></svg></button>
-      <button id="again" title="New pane (R)" aria-label="New pane"><svg viewBox="0 0 24 24"><path d="M19 12a7 7 0 1 1-2.2-5.1M19 4v4h-4" /></svg></button>
-      <button id="sound" title="Sound (M)" aria-label="Sound"><svg viewBox="0 0 24 24"><path d="M4 10v4h3l5 4V6L7 10H4z" /><path class="on" d="M16 9a4 4 0 0 1 0 6M18.5 6.5a8 8 0 0 1 0 11" /><path class="x" d="M16 9l5 6M21 9l-5 6" /></svg></button>
+
+    <div id="hud" class="hud" aria-live="polite">
+      <div class="hud-corner hud-left">
+        <span class="hud-meta">LEVEL</span>
+        <strong id="hud-level">1</strong>
+      </div>
+      <div class="hud-corner hud-right">
+        <span class="hud-meta">BEST <b id="hud-best">0</b></span>
+        <strong id="hud-score">0</strong>
+      </div>
     </div>
-    <script type="module" src="./src/main.ts"></script>
+
+    <button id="banner" class="banner" hidden aria-label="Replay">
+      <span class="banner-title">REPLAY</span>
+      <span class="banner-jp" lang="ja">もう一度</span>
+    </button>
+
+    <div class="top-right" aria-label="Controls">
+      <button id="sound" class="icon-btn" title="Sound (M)" aria-label="Sound">
+        <svg viewBox="0 0 24 24">
+          <path d="M4 10v4h3l5 4V6L7 10H4z" />
+          <path class="on" d="M16 9a4 4 0 0 1 0 6M18.5 6.5a8 8 0 0 1 0 11" />
+          <path class="x" d="M16 9l5 6M21 9l-5 6" />
+        </svg>
+      </button>
+      <button id="pause" class="icon-btn" title="Pause (P)" aria-label="Pause" aria-pressed="false">
+        <svg viewBox="0 0 24 24">
+          <path class="bars" d="M9 6.5v11M15 6.5v11" />
+          <path class="play" d="M8.5 6.5l9 5.5-9 5.5z" fill="currentColor" stroke="none" />
+        </svg>
+      </button>
+    </div>
+
+    <div id="fatal" class="fatal" hidden></div>
+
+    <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

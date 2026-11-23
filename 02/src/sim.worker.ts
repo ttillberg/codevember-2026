@@ -1,356 +1,409 @@
-// The fall. The pane is handed over as convex shards; they are let go in a wave from the last impact and
-// simulated with Rapier at the pace they are shown, and every frame goes back to the page as positions and
-// rotations as it is worked out. The page keeps them, so a fall can be slowed down, held and played again.
 import RAPIER from '@dimforge/rapier3d-compat';
-import type { Body } from './shards';
 
-export interface SimRequest {
-  type: 'sim';
-  run: number;
-  bodies: Body[];
-  /** world x, y, z of every blow: where a ball goes through, and which pane (its z) */
-  impacts: [number, number, number][];
-  /** where the front of each pane stands */
-  zs: number[];
-  width: number;
-  y0: number;
-  seed: number;
-  /** the balls as they reach the glass: position, velocity, spin, radius. The pose of the first is the last body of every frame. */
-  balls: { p: number[]; v: number[]; w: number[]; r: number }[];
-  cfg: SimConfig;
-  /** part of the pane stays up: the pieces must leave backwards, not slide down inside it */
-  standing?: boolean;
+export interface ChildShardBakeInput {
+  /** Slot index in the flat output shard array */
+  slotIndex: number;
+  hullVerts: Float32Array;
+  /** Offset from parent centroid in local cube coordinates */
+  localOffset: [number, number, number];
+  volume: number;
 }
 
-/** What the settings panel turns. */
-export interface SimConfig { pace: number; contacts: number; gravity: number; ballDensity: number; pushBack: number; pushOut: number; reach: number; spin: number; front: number; bounce: number; friction: number; stuck: number; seconds: number; again: number }
-export const SIM_DEFAULTS: SimConfig = { pace: 1, contacts: 8, gravity: 9.81, ballDensity: 4, pushBack: 13, pushOut: 4.5, reach: 0.3, spin: 16, front: 7, bounce: 0.22, friction: 0.45, stuck: 0.5, seconds: 7, again: 3 };
+export interface ShardBakeInput {
+  /** Slot index in the flat output shard array */
+  slotIndex: number;
+  hullVerts: Float32Array;
+  initPos: [number, number, number];
+  initQuat: [number, number, number, number];
+  linVel: [number, number, number];
+  angVel: [number, number, number];
+  volume: number;
+  /** Minimum impact speed (m/s) to trigger secondary break on floor/pile collision */
+  breakSpeed?: number;
+  children?: ChildShardBakeInput[];
+}
 
-export interface FramesMessage {
-  type: 'frames';
-  run: number;
-  /** one frame, (bodies + 1) × 7: position, quaternion; the ball last */
-  data: Float32Array;
-  /** every contact worth hearing in this frame, CONTACT floats each: frame, x, y, z, size, strength, kind.
-   *  size is the area of the (smaller) shard in m², strength the speed they met at in m/s,
-   *  kind 0 glass on the floor or a wall, 1 glass on glass, 2 glass on the ball. */
+export interface StaticObstacleInput {
+  hullVerts: Float32Array;
+  pos: [number, number, number];
+  quat: [number, number, number, number];
+}
+
+export interface BakeRequest {
+  id: number;
+  totalSlots: number;
+  shards: ShardBakeInput[];
+  staticObstacles: StaticObstacleInput[];
+  maxFrames?: number;
+  fps?: number;
+}
+
+export interface BakeResponse {
+  id: number;
+  numShards: number;
+  numFrames: number;
+  fps: number;
+  bakeMs: number;
+  /** Packed [px, py, pz, qx, qy, qz, qw] per slot per frame (py < -100 means hidden/inactive) */
+  frames: Float32Array;
+  /** Packed [frame, x, y, z, size, strength, kind] per contact event (kind: 0=floor, 1=glass, 2=secondary shatter!) */
   contacts: Float32Array;
-  done: boolean;
-  /** frames it will be at most */
-  total: number;
-  /** shards not at rest yet: still to let go, or let go and moving */
-  left: number;
-  /** the shards that broke again in this frame, SPLIT floats each: frame, which (Body.parent), x, y, z */
-  splits: Float32Array;
 }
 
-export const CONTACT = 7;
-export const SPLIT = 5;
+const SCALE = 10; // simulate in decimetres so thin glass shards stay well above solver slop
+const INV_SCALE = 1 / SCALE;
 
-/** The sim runs in decimetres: 8 mm shards are small for a solver tuned for metres. */
-const S = 10;
-const FPS = 60;
+let rapierReady: Promise<void> | null = null;
+function ensureRapier(): Promise<void> {
+  if (!rapierReady) rapierReady = RAPIER.init();
+  return rapierReady;
+}
 
-const ready = RAPIER.init();
-const cancelled = new Set<number>();
+function makeScaledHull(verts: Float32Array): RAPIER.ColliderDesc | null {
+  if (verts.length < 12) return null;
+  const scaled = new Float32Array(verts.length);
+  for (let i = 0; i < verts.length; i++) scaled[i] = verts[i] * SCALE;
+  let desc = RAPIER.ColliderDesc.convexHull(scaled);
+  if (!desc) {
+    // Fallback to AABB cuboid if nearly degenerate splinter
+    let minX = Infinity, minY = Infinity, minZ = Infinity;
+    let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
+    for (let i = 0; i < scaled.length; i += 3) {
+      if (scaled[i] < minX) minX = scaled[i]; if (scaled[i] > maxX) maxX = scaled[i];
+      if (scaled[i + 1] < minY) minY = scaled[i + 1]; if (scaled[i + 1] > maxY) maxY = scaled[i + 1];
+      if (scaled[i + 2] < minZ) minZ = scaled[i + 2]; if (scaled[i + 2] > maxZ) maxZ = scaled[i + 2];
+    }
+    desc = RAPIER.ColliderDesc.cuboid(
+      Math.max(0.03, (maxX - minX) * 0.5),
+      Math.max(0.03, (maxY - minY) * 0.5),
+      Math.max(0.03, (maxZ - minZ) * 0.5),
+    );
+  }
+  return desc;
+}
 
-function rng32(seed: number) {
-  let a = seed >>> 0;
-  return () => {
-    a = (a + 0x6d2b79f5) | 0;
-    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+function qRot(q: { x: number; y: number; z: number; w: number }, v: [number, number, number]): [number, number, number] {
+  const tx = 2 * (q.y * v[2] - q.z * v[1]);
+  const ty = 2 * (q.z * v[0] - q.x * v[2]);
+  const tz = 2 * (q.x * v[1] - q.y * v[0]);
+  return [
+    v[0] + q.w * tx + (q.y * tz - q.z * ty),
+    v[1] + q.w * ty + (q.z * tx - q.x * tz),
+    v[2] + q.w * tz + (q.x * ty - q.y * tx),
+  ];
+}
+
+self.onmessage = async (ev: MessageEvent<BakeRequest>) => {
+  await ensureRapier();
+  const t0 = performance.now();
+  const req = ev.data;
+  const fps = req.fps ?? 60;
+  const dt = 1 / fps;
+  const maxFrames = req.maxFrames ?? 270;
+  const totalSlots = req.totalSlots;
+
+  const world = new RAPIER.World({ x: 0, y: -9.81 * SCALE, z: 0 });
+  world.timestep = dt;
+  world.numSolverIterations = 6;
+
+  // Collision group bitmasks:
+  // Group 1 (0x0001): Studio floor & static resting pile
+  // Group 2 (0x0002): Primary medium/large shards (collide with floor + each other)
+  // Group 4 (0x0004): Tiny / secondary child splinters (collide with floor + resting pile)
+  const CG_FLOOR = (0x0001 << 16) | 0x0007;
+  const CG_SHARD = (0x0002 << 16) | 0x0003;
+  const CG_TINY = (0x0004 << 16) | 0x0001;
+
+  // Flat studio floor at y = 0 (smooth studio epoxy so shards skitter wide!)
+  const floorBody = world.createRigidBody(
+    RAPIER.RigidBodyDesc.fixed().setTranslation(0, -1.0 * SCALE, 0),
+  );
+  const floorCol = world.createCollider(
+    RAPIER.ColliderDesc.cuboid(16 * SCALE, 1.0 * SCALE, 16 * SCALE)
+      .setFriction(0.25)
+      .setRestitution(0.38)
+      .setCollisionGroups(CG_FLOOR),
+    floorBody,
+  );
+  const floorHandle = floorCol.handle;
+
+  // Previously resting shards on the studio floor (so new pieces bounce off the glass pile!)
+  const maxObs = Math.min(req.staticObstacles.length, 160);
+  const startObs = req.staticObstacles.length - maxObs;
+  for (let i = startObs; i < req.staticObstacles.length; i++) {
+    const o = req.staticObstacles[i];
+    const desc = makeScaledHull(o.hullVerts);
+    if (!desc) continue;
+    const rb = world.createRigidBody(
+      RAPIER.RigidBodyDesc.fixed()
+        .setTranslation(o.pos[0] * SCALE, o.pos[1] * SCALE, o.pos[2] * SCALE)
+        .setRotation({ x: o.quat[0], y: o.quat[1], z: o.quat[2], w: o.quat[3] }),
+    );
+    world.createCollider(desc.setFriction(0.42).setRestitution(0.26).setCollisionGroups(CG_FLOOR), rb);
+  }
+
+  // Active rigid bodies indexed by flat slotIndex (null = hidden/broken/not yet spawned)
+  const slotBodies: Array<RAPIER.RigidBody | null> = new Array(totalSlots).fill(null);
+  const slotMeta: Array<ShardBakeInput | null> = new Array(totalSlots).fill(null);
+  const slotBroken = new Uint8Array(totalSlots);
+  const colToSlot = new Map<number, number>();
+  const slotSizes = new Float32Array(totalSlots);
+
+  const sortedVols = req.shards.map((s) => s.volume).sort((a, b) => b - a);
+  const fullColThresh = sortedVols.length > 44 ? sortedVols[43] : 0;
+
+  for (const s of req.shards) {
+    const slot = s.slotIndex;
+    const isTiny = s.volume < fullColThresh && !s.children;
+    const rbDesc = RAPIER.RigidBodyDesc.dynamic()
+      .setTranslation(s.initPos[0] * SCALE, s.initPos[1] * SCALE, s.initPos[2] * SCALE)
+      .setRotation({ x: s.initQuat[0], y: s.initQuat[1], z: s.initQuat[2], w: s.initQuat[3] })
+      .setLinvel(s.linVel[0] * SCALE, s.linVel[1] * SCALE, s.linVel[2] * SCALE)
+      .setAngvel({ x: s.angVel[0], y: s.angVel[1], z: s.angVel[2] })
+      .setLinearDamping(0.11)
+      .setAngularDamping(0.22)
+      .setCcdEnabled(!isTiny);
+    const rb = world.createRigidBody(rbDesc);
+
+    const colDesc = makeScaledHull(s.hullVerts);
+    if (colDesc) {
+      colDesc
+        .setDensity(2.5)
+        .setFriction(0.25)
+        .setRestitution(0.38)
+        .setCollisionGroups(isTiny ? CG_TINY : CG_SHARD)
+        .setActiveEvents(RAPIER.ActiveEvents.COLLISION_EVENTS);
+      const col = world.createCollider(colDesc, rb);
+      colToSlot.set(col.handle, slot);
+    }
+
+    slotBodies[slot] = rb;
+    slotMeta[slot] = s;
+    slotSizes[slot] = Math.pow(Math.max(1e-7, s.volume), 2 / 3);
+  }
+
+  const frames = new Float32Array(maxFrames * totalSlots * 7);
+  const contactList: number[] = [];
+  const events = new RAPIER.EventQueue(true);
+
+  let actualFrames = 0;
+  let calmStreak = 0;
+  let breakSeed = req.id * 2654435761;
+  const rand = () => {
+    breakSeed = (breakSeed + 0x6d2b79f5) | 0;
+    let t = Math.imul(breakSeed ^ (breakSeed >>> 15), 1 | breakSeed);
     t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   };
-}
 
-self.onmessage = async (e: MessageEvent<SimRequest | { type: 'cancel'; run: number }>) => {
-  const req = e.data;
-  if (req.type === 'cancel') { cancelled.add(req.run); return; }
-  if (req.type !== 'sim') return;
-  await ready;
-  simulate(req);
-};
-
-async function simulate(req: SimRequest) {
-  const rand = rng32(req.seed);
-  const gauss = () => (rand() + rand() + rand() + rand() - 2) * 1.7320508;
-  const cfg = { ...SIM_DEFAULTS, ...req.cfg };
-  const world = new RAPIER.World({ x: 0, y: -cfg.gravity * S, z: 0 });
-  // Two steps to a frame, six passes of the solver, and nothing passes through anything between two steps:
-  // thin glass in a pile needs that much. (Three and four steps were tried: nothing to be seen for it, and the
-  // simulation no longer kept up with the fall. What it costs goes by the number of pieces and how they pile up.)
-  const SUB = 2;
-  world.timestep = 1 / (FPS * SUB);
-  world.numSolverIterations = 6;
-
-  const G_SHARD = 0x0001, G_TINY = 0x0002, G_WORLD = 0x0004, G_BALL = 0x0008;
-  const groups = (member: number, filter: number) => (member << 16) | filter;
-
-  // floor, and the channel the pane stands in
-  const ground = world.createRigidBody(RAPIER.RigidBodyDesc.fixed());
-  world.createCollider(RAPIER.ColliderDesc.cuboid(80, 5, 80).setTranslation(0, -5, 0).setFriction(0.7).setRestitution(0.3).setCollisionGroups(groups(G_WORLD, G_SHARD | G_TINY | G_BALL)), ground);
-  // the back wall, for the ball
-  world.createCollider(RAPIER.ColliderDesc.cuboid(80, 80, 5).setTranslation(0, 0, (-2.4 - 0.5) * S).setRestitution(0.4).setCollisionGroups(groups(G_WORLD, G_SHARD | G_TINY | G_BALL)), ground);
-  // and the side walls of the room, where they are drawn: glass thrown that far comes back off them
-  for (const side of [-1, 1]) world.createCollider(RAPIER.ColliderDesc.cuboid(5, 80, 80).setTranslation(side * (4.5 + 0.5) * S, 0, 0).setRestitution(0.3).setFriction(0.6).setCollisionGroups(groups(G_WORLD, G_SHARD | G_TINY | G_BALL)), ground);
-  // (panes that stand close have one block under them all: in the slots between their channels glass would
-  // wedge and never lie still)
-  const close = req.zs.length > 1 && Math.abs(req.zs[0] - req.zs[1]) < 0.1;
-  for (const [z0, z1] of close ? [[Math.min(...req.zs) - 0.026, Math.max(...req.zs) + 0.018]] : req.zs.map((z) => [z - 0.026, z + 0.018])) {
-    world.createCollider(
-      RAPIER.ColliderDesc.cuboid((req.width / 2 + 0.03) * S, (req.y0 / 2) * S, ((z1 - z0) / 2) * S).setTranslation(0, (req.y0 / 2) * S, ((z0 + z1) / 2) * S)
-        .setFriction(0.5).setRestitution(0.2).setCollisionGroups(groups(G_WORLD, G_SHARD | G_TINY | G_BALL)),
-      ground,
-    );
-  }
-
-  const n = req.bodies.length;
-  const bodies: RAPIER.RigidBody[] = [];
-  const release = new Float32Array(n);
-  const kick = new Float32Array(n * 6);
-  const state = new Uint8Array(n); // 0 held, 1 falling, 2 stuck in the channel for good, 3 out of the room
-  // contacts: who a collider belongs to, how fast each body was going before the step, when it was let go
-  const owner = new Map<number, number>();
-  const prevV = new Float32Array(n * 3);
-  const freed = new Float32Array(n).fill(1e9);
-  const events = new RAPIER.EventQueue(true);
-  const EV = RAPIER.ActiveEvents.COLLISION_EVENTS;
-  let last = 0;
-  // shards taped together are one body: the first of a group makes it, the others add their shape to it,
-  // each where it sits. off is where a shard is in its body.
-  // The pieces of a larger shard are one body in the same way, until it lands hard enough to break again:
-  // then each piece gets a body of its own, where it is and as it goes.
-  const lead = new Map<number, number>();
-  const off = new Float32Array(n * 3);
-  const handles: number[][] = [];
-  const members = new Map<number, number[]>();
-  const whole = new Uint8Array(n);
-  const again = cfg.again > 0;
-  const air = (d: RAPIER.RigidBodyDesc) => d.setLinearDamping(0.05).setAngularDamping(0.25).setCcdEnabled(true);
-  /** The shape of shard i, on a body, at (ox, oy, oz) in it. */
-  const shape = (i: number, body: RAPIER.RigidBody, ox: number, oy: number, oz: number) => {
-    const b = req.bodies[i], hs: number[] = [];
-    handles[i] = hs;
-    if (b.tiny) {
-      hs.push(world.createCollider(RAPIER.ColliderDesc.cuboid(b.half[0] * S, b.half[1] * S, b.half[2] * S).setTranslation(ox, oy, oz).setFriction(0.6).setRestitution(0.35).setCollisionGroups(groups(G_TINY, G_WORLD)).setActiveEvents(EV), body).handle);
+  // Frame 0 = initial state (hidden children marked with py = -999)
+  for (let slot = 0; slot < totalSlots; slot++) {
+    const rb = slotBodies[slot];
+    const o = slot * 7;
+    if (!rb) {
+      frames[o + 1] = -999;
+      frames[o + 6] = 1;
     } else {
-      for (const h of b.hulls) {
-        const pts = new Float32Array(h.length);
-        for (let k = 0; k < h.length; k++) pts[k] = h[k] * S;
-        const desc = RAPIER.ColliderDesc.convexHull(pts);
-        if (!desc) continue;
-        hs.push(world.createCollider(desc.setTranslation(ox, oy, oz).setFriction(cfg.friction).setRestitution(cfg.bounce).setCollisionGroups(groups(G_SHARD, G_SHARD | G_WORLD | G_BALL)).setActiveEvents(EV), body).handle);
-      }
-      if (!hs.length) world.createCollider(RAPIER.ColliderDesc.ball(0.004 * S).setTranslation(ox, oy, oz).setCollisionGroups(groups(G_TINY, G_WORLD)), body);
+      const p = rb.translation();
+      const q = rb.rotation();
+      frames[o] = p.x * INV_SCALE;
+      frames[o + 1] = p.y * INV_SCALE;
+      frames[o + 2] = p.z * INV_SCALE;
+      frames[o + 3] = q.x;
+      frames[o + 4] = q.y;
+      frames[o + 5] = q.z;
+      frames[o + 6] = q.w;
     }
-    for (const h of hs) owner.set(h, i);
-  };
-  for (let i = 0; i < n; i++) {
-    const b = req.bodies[i];
-    const part = b.group === undefined && b.parent !== undefined && again;
-    const key = b.group !== undefined ? b.group : part ? -1 - b.parent! : undefined;
-    const first = key === undefined ? i : (lead.get(key) ?? i);
-    if (key !== undefined && first === i) lead.set(key, i);
-    if (part) { whole[i] = 1; const m = members.get(b.parent!); if (m) m.push(i); else members.set(b.parent!, [i]); }
-    const fc = req.bodies[first].c;
-    const ox = (b.c[0] - fc[0]) * S, oy = (b.c[1] - fc[1]) * S, oz = (b.c[2] - fc[2]) * S;
-    off[i * 3] = ox; off[i * 3 + 1] = oy; off[i * 3 + 2] = oz;
-    const body = first === i ? world.createRigidBody(air(RAPIER.RigidBodyDesc.fixed()).setTranslation(b.c[0] * S, b.c[1] * S, b.c[2] * S)) : bodies[first];
-    shape(i, body, ox, oy, oz);
-    bodies.push(body);
-    // the pane lets go from the last impact outwards, then from the top down
-    let dx = 0, dy = 0, d = Infinity;
-    // the nearest blow to its own pane
-    for (const own of [true, false]) {
-      for (const im of req.impacts) {
-        if (own && Math.abs(b.c[2] - im[2]) > 0.05) continue;
-        const ex = b.c[0] - im[0], ey = b.c[1] - im[1], e = Math.hypot(ex, ey);
-        if (e < d) { d = e; dx = ex; dy = ey; }
-      }
-      if (d < Infinity) break;
-    }
-    // what the ball is about to go through is loose at once, the rest follows within a few frames
-    release[i] = d < 0.2 ? 0 : ((d - 0.2) / cfg.front) * (0.75 + rand() * 0.5) + rand() * 0.02;
-    if (first !== i) {
-      // with its strip: let go when the strip is, sent the way the strip is
-      release[i] = release[first];
-      for (let k = 0; k < 6; k++) kick[i * 6 + k] = kick[first * 6 + k];
-      continue;
-    }
-    if (b.group !== undefined) {
-      // a strip of tape and its glass: it lets go late, once what held it has gone, and mostly just drops
-      release[i] = 0.06 + rand() * 0.08;
-      last = Math.max(last, release[i]);
-      kick[i * 6] = gauss() * 0.15; kick[i * 6 + 1] = 0; kick[i * 6 + 2] = -0.5 - rand() * 0.8;
-      kick[i * 6 + 3] = gauss() * 0.8; kick[i * 6 + 4] = gauss() * 0.4; kick[i * 6 + 5] = gauss() * 0.4;
-      continue;
-    }
-    if (b.low && b.c[1] - req.y0 < 0.14 && d > 0.25 && !req.standing && rand() < cfg.stuck) { state[i] = 2; continue; }
-    last = Math.max(last, release[i]);
-    // the bullet pushes what is near it through, the rest gets a nudge either way
-    const near = Math.exp(-d / cfg.reach);
-    const out = d > 1e-4 ? 1 / d : 0;
-    // a hard kick: the middle is blown out the back in a cone, the rim of the pane is thrown outwards
-    kick[i * 6] = dx * out * (cfg.pushOut * near + 0.5) * (req.standing ? 0.35 : 1) * (0.5 + rand()) + gauss() * 0.3;
-    kick[i * 6 + 1] = dy * out * (cfg.pushOut * near + 0.4) * (req.standing ? 0.35 : 1) * (0.5 + rand()) + gauss() * 0.3 + 1.2 * near;
-    kick[i * 6 + 2] = -cfg.pushBack * near * (0.35 + rand()) - (req.standing ? 1.6 : 0.4) - rand() * 1.4;
-    const w = cfg.spin * (0.25 + near) + (b.tiny ? 8 : 0);
-    kick[i * 6 + 3] = gauss() * w; kick[i * 6 + 4] = gauss() * w; kick[i * 6 + 5] = gauss() * w * 0.5;
   }
+  actualFrames = 1;
 
-  // the balls: far heavier than a real one, so the glass does not slow them: they go through as if nothing was there
-  const balls = req.balls.map((bl) => {
-    const body = world.createRigidBody(
-      RAPIER.RigidBodyDesc.dynamic().setTranslation(bl.p[0] * S, bl.p[1] * S, bl.p[2] * S)
-        .setLinvel(bl.v[0] * S, bl.v[1] * S, bl.v[2] * S).setAngvel({ x: bl.w[0], y: bl.w[1], z: bl.w[2] }).setCcdEnabled(true),
-    );
-    owner.set(world.createCollider(RAPIER.ColliderDesc.ball(bl.r * S).setDensity(cfg.ballDensity).setRestitution(0.55).setFriction(0.6).setCollisionGroups(groups(G_BALL, G_SHARD | G_WORLD)), body).handle, -2);
-    return body;
-  });
-  const ball = balls[0];
+  for (let f = 1; f < maxFrames; f++) {
+    world.step(events);
 
-  // A shard that is still whole and meets something hard enough breaks into its pieces. Each goes on as it
-  // went, with what its place in the turning shard gives it, and a little apart from the others.
-  const toSplit = new Set<number>();
-  let splits: number[] = [];
-  const split = (P: number, ts: number, f: number) => {
-    const ms = members.get(P);
-    if (!ms || !whole[ms[0]]) return;
-    const old = bodies[ms[0]];
-    const p = old.translation(), q = old.rotation(), v = old.linvel(), w = old.angvel(), com = old.worldCom();
-    const at = ms.map((i) => {
-      const ax = off[i * 3], ay = off[i * 3 + 1], az = off[i * 3 + 2];
-      const tx = 2 * (q.y * az - q.z * ay), ty = 2 * (q.z * ax - q.x * az), tz = 2 * (q.x * ay - q.y * ax);
-      return [p.x + ax + q.w * tx + q.y * tz - q.z * ty, p.y + ay + q.w * ty + q.z * tx - q.x * tz, p.z + az + q.w * tz + q.x * ty - q.y * tx];
-    });
-    for (const i of ms) for (const h of handles[i]) owner.delete(h);
-    world.removeRigidBody(old);
-    ms.forEach((i, k) => {
-      const [x, y, z] = at[k];
-      const rx = x - com.x, ry = y - com.y, rz = z - com.z, l = Math.hypot(rx, ry, rz) || 1;
-      const push = (0.15 + rand() * 0.5) * S;
-      const body = world.createRigidBody(air(RAPIER.RigidBodyDesc.dynamic()).setTranslation(x, y, z).setRotation(q)
-        .setLinvel(v.x + w.y * rz - w.z * ry + (rx / l) * push, v.y + w.z * rx - w.x * rz + (ry / l) * push + rand() * 0.4 * S, v.z + w.x * ry - w.y * rx + (rz / l) * push)
-        .setAngvel({ x: w.x + gauss() * 5, y: w.y + gauss() * 5, z: w.z + gauss() * 5 }));
-      shape(i, body, 0, 0, 0);
-      bodies[i] = body; off[i * 3] = off[i * 3 + 1] = off[i * 3 + 2] = 0;
-      whole[i] = 0; freed[i] = ts;
-    });
-    splits.push(f, P, com.x / S, com.y / S, com.z / S);
-  };
+    const frameContacts: Array<{ x: number; y: number; z: number; size: number; strength: number; kind: number }> = [];
+    const toBreak: Array<{ slot: number; impactSpeed: number }> = [];
 
-  const backZ = Math.min(...req.zs);
-  const maxFrames = Math.round(cfg.seconds * FPS);
-  // one frame a message, and no frame before its time (cfg.pace: 1 is the speed of life), so what is shown is
-  // what was just worked out
-  const began = performance.now();
-  const N7 = (n + 1) * 7;
-  const data = new Float32Array(N7);
-  let contacts: number[] = [];
-  const frameContacts: number[][] = [];
-  let quiet = 0;
-  const few = Math.min(9, Math.floor(n * 0.03));
-  for (let f = 0; f < maxFrames; f++) {
-    const t = f / FPS;
-    frameContacts.length = 0;
-    for (let s = 0; s < SUB; s++) {
-      const ts = t + s / (FPS * SUB);
-      for (let i = 0; i < n; i++) {
-        if (state[i] !== 0 || release[i] > ts) continue;
-        state[i] = 1; freed[i] = ts;
-        const body = bodies[i];
-        body.setBodyType(RAPIER.RigidBodyType.Dynamic, true);
-        body.setLinvel({ x: kick[i * 6] * S, y: kick[i * 6 + 1] * S, z: kick[i * 6 + 2] * S }, true);
-        body.setAngvel({ x: kick[i * 6 + 3], y: kick[i * 6 + 4], z: kick[i * 6 + 5] }, true);
+    events.drainCollisionEvents((h1, h2, started) => {
+      if (!started) return;
+      const s1 = colToSlot.get(h1);
+      const s2 = colToSlot.get(h2);
+      if (s1 === undefined && s2 === undefined) return;
+
+      const isFloor = h1 === floorHandle || h2 === floorHandle;
+      const idx = s1 !== undefined ? s1 : s2!;
+      const rb1 = slotBodies[idx];
+      if (!rb1) return;
+
+      const v1 = rb1.linvel();
+      let rvx = v1.x, rvy = v1.y, rvz = v1.z;
+      let size = slotSizes[idx];
+      if (s1 !== undefined && s2 !== undefined && slotBodies[s2]) {
+        const v2 = slotBodies[s2]!.linvel();
+        rvx -= v2.x; rvy -= v2.y; rvz -= v2.z;
+        size = Math.min(slotSizes[s1], slotSizes[s2]);
       }
-      for (let i = 0; i < n; i++) {
-        if (state[i] !== 1 || bodies[i].isSleeping()) continue; // (what rests meets nothing at speed)
-        const v = bodies[i].linvel();
-        prevV[i * 3] = v.x / S; prevV[i * 3 + 1] = v.y / S; prevV[i * 3 + 2] = v.z / S;
-      }
-      world.step(events);
-      // what started touching in this step: how big, how hard, where
-      events.drainCollisionEvents((h1, h2, started) => {
-        if (!started) return;
-        let a = owner.get(h1) ?? -1, b = owner.get(h2) ?? -1;
-        if (a < 0) { const k = a; a = b; b = k; }
-        if (a < 0 || state[a] !== 1 || ts - freed[a] < 0.04) return; // not a shard in flight, or just let go
-        let rx = prevV[a * 3], ry = prevV[a * 3 + 1], rz = prevV[a * 3 + 2];
-        let size = req.bodies[a].area, kind = 0;
-        if (b >= 0) {
-          if (state[b] !== 1 || ts - freed[b] < 0.04) return;
-          rx -= prevV[b * 3]; ry -= prevV[b * 3 + 1]; rz -= prevV[b * 3 + 2];
-          size = Math.min(size, req.bodies[b].area); kind = 1;
-        } else if (b === -2) kind = 2;
-        const strength = Math.hypot(rx, ry, rz);
-        // (glass on glass has to be harder: two shards meeting in the air mostly glance off)
-        if (again && strength > cfg.again * (kind === 1 ? 1.8 : 1)) {
-          if (whole[a]) toSplit.add(req.bodies[a].parent!);
-          if (b >= 0 && whole[b]) toSplit.add(req.bodies[b].parent!);
+      const speed = Math.hypot(rvx, rvy, rvz) * INV_SCALE;
+      if (speed < 0.25) return;
+
+      const p = rb1.translation();
+      // Check if a breakable parent shard hit the floor or pile hard enough to split into smaller pieces!
+      const checkBreak = (sl: number) => {
+        if (slotBroken[sl]) return;
+        const meta = slotMeta[sl];
+        if (!meta || !meta.children || meta.children.length < 2) return;
+        const thresh = meta.breakSpeed ?? 1.85;
+        // Require a few frames of flight so it breaks on landing, not at spawn
+        if (f > 6 && speed >= thresh && (isFloor || p.y < 0.28 * SCALE)) {
+          slotBroken[sl] = 1;
+          toBreak.push({ slot: sl, impactSpeed: speed });
         }
-        if (strength < 0.35) return;
-        const p = bodies[a].translation();
-        frameContacts.push([f, p.x / S, p.y / S, p.z / S, size, strength, kind]);
+      };
+      if (s1 !== undefined) checkBreak(s1);
+      if (s2 !== undefined) checkBreak(s2);
+
+      frameContacts.push({
+        x: p.x * INV_SCALE,
+        y: Math.max(0.005, p.y * INV_SCALE),
+        z: p.z * INV_SCALE,
+        size,
+        strength: Math.min(12, speed),
+        kind: isFloor ? 0 : 1,
       });
-      if (toSplit.size) { for (const P of toSplit) split(P, ts, f); toSplit.clear(); }
-    }
-    // the loudest few of the frame are kept: a thousand shards landing is not a thousand sounds
-    frameContacts.sort((u, v) => v[5] * Math.sqrt(v[4]) - u[5] * Math.sqrt(u[4]));
-    for (let k = 0; k < Math.min(cfg.contacts, frameContacts.length); k++) contacts.push(...frameContacts[k]);
-    let awake = 0, left = 0, fast = 0;
-    const o = 0;
-    for (let i = 0; i < n; i++) {
-      const body = bodies[i];
-      const p = body.translation(), q = body.rotation();
-      const k = o + i * 7;
-      // where the shard is in its body, turned with it
-      const ax = off[i * 3], ay = off[i * 3 + 1], az = off[i * 3 + 2];
-      const tx = 2 * (q.y * az - q.z * ay), ty = 2 * (q.z * ax - q.x * az), tz = 2 * (q.x * ay - q.y * ax);
-      data[k] = (p.x + ax + q.w * tx + q.y * tz - q.z * ty) / S;
-      data[k + 1] = (p.y + ay + q.w * ty + q.z * tx - q.x * tz) / S;
-      data[k + 2] = (p.z + az + q.w * tz + q.x * ty - q.y * tx) / S;
-      data[k + 3] = q.x; data[k + 4] = q.y; data[k + 5] = q.z; data[k + 6] = q.w;
-      // one that is thrown off the edge of the floor falls for ever: it is out of the room and out of the count
-      if (state[i] === 1 && (p.y < -0.3 * S || Math.abs(p.x) > 7.8 * S || Math.abs(p.z) > 7.8 * S)) { state[i] = 3; body.setEnabled(false); }
-      // still to come to rest: held, or moving. (A pile never goes to sleep in the solver's sense, though nothing
-      // in it moves: what counts is whether a piece can be seen to move.)
-      if (state[i] === 0) { left++; fast++; }
-      else if (state[i] === 1 && !body.isSleeping()) {
-        const lv = body.linvel(), av = body.angvel();
-        const v = Math.hypot(lv.x, lv.y, lv.z);
-        if (v > 0.02 * S || Math.hypot(av.x, av.y, av.z) > 0.6) { left++; if (v > 0.25 * S) fast++; }
+    });
+
+    // Perform secondary breaks right after stepping!
+    for (const br of toBreak) {
+      const parentRb = slotBodies[br.slot];
+      const meta = slotMeta[br.slot];
+      if (!parentRb || !meta || !meta.children) continue;
+
+      const pp = parentRb.translation();
+      const pq = parentRb.rotation();
+      const plv = parentRb.linvel();
+      const pav = parentRb.angvel();
+
+      // Record a dedicated secondary-shatter event (kind = 2) for audio + splinter spark burst!
+      contactList.push(
+        f,
+        pp.x * INV_SCALE,
+        Math.max(0.015, pp.y * INV_SCALE),
+        pp.z * INV_SCALE,
+        slotSizes[br.slot],
+        Math.min(10, br.impactSpeed),
+        2,
+      );
+
+      // Remove parent rigid body & spawn its child crystal shards at its exact pose & momentum!
+      world.removeRigidBody(parentRb);
+      slotBodies[br.slot] = null;
+
+      for (const ch of meta.children) {
+        const offWorld = qRot(pq, ch.localOffset);
+        const cx = pp.x + offWorld[0] * SCALE;
+        const cy = Math.max(0.012 * SCALE, pp.y + offWorld[1] * SCALE);
+        const cz = pp.z + offWorld[2] * SCALE;
+
+        // Energetic outward secondary shatter burst so fragments shoot & skitter far across the floor!
+        const ol = Math.hypot(offWorld[0], offWorld[1], offWorld[2]) || 1;
+        const pop = (1.15 + rand() * 1.45) * Math.min(2.6, 0.75 + br.impactSpeed * 0.34);
+        const cvx = plv.x * 0.84 + (offWorld[0] / ol) * pop * SCALE + (rand() - 0.5) * 1.15 * SCALE;
+        const cvy = Math.max(0.75 * SCALE, Math.abs(plv.y) * 0.44 + (0.65 + rand() * 1.05) * SCALE);
+        const cvz = plv.z * 0.84 + (offWorld[2] / ol) * pop * SCALE + (rand() - 0.5) * 1.15 * SCALE;
+
+        const cRb = world.createRigidBody(
+          RAPIER.RigidBodyDesc.dynamic()
+            .setTranslation(cx, cy, cz)
+            .setRotation(pq)
+            .setLinvel(cvx, cvy, cvz)
+            .setAngvel({
+              x: pav.x * 0.7 + (rand() - 0.5) * 18,
+              y: pav.y * 0.7 + (rand() - 0.5) * 18,
+              z: pav.z * 0.7 + (rand() - 0.5) * 18,
+            })
+            .setLinearDamping(0.12)
+            .setAngularDamping(0.24),
+        );
+        const cDesc = makeScaledHull(ch.hullVerts);
+        if (cDesc) {
+          cDesc
+            .setDensity(2.5)
+            .setFriction(0.24)
+            .setRestitution(0.34)
+            .setCollisionGroups(CG_TINY)
+            .setActiveEvents(RAPIER.ActiveEvents.COLLISION_EVENTS);
+          const col = world.createCollider(cDesc, cRb);
+          colToSlot.set(col.handle, ch.slotIndex);
+        }
+        slotBodies[ch.slotIndex] = cRb;
+        slotSizes[ch.slotIndex] = Math.pow(Math.max(1e-7, ch.volume), 2 / 3);
       }
     }
-    {
-      const p = ball.translation(), q = ball.rotation(), k = o + n * 7;
-      data[k] = p.x / S; data[k + 1] = p.y / S; data[k + 2] = p.z / S;
-      data[k + 3] = q.x; data[k + 4] = q.y; data[k + 5] = q.z; data[k + 6] = q.w;
-      // an unseen ball has done its work half a metre behind the last pane: it is taken away there. Left in, it
-      // comes back off the wall through the glass it has just sent flying and throws it at the lens, then rolls
-      // about nudging what lies still, and keeps the simulation going to its last frame
-      for (const bb of balls) {
-        if (!bb.isEnabled()) continue;
-        const bp = bb.translation(), lv = bb.linvel();
-        if (t > 0.4 || bp.z < (backZ - 0.5) * S || bp.y < -0.3 * S || Math.abs(bp.x) > 7.8 * S || Math.abs(bp.z) > 7.8 * S) bb.setEnabled(false);
-        else if (!bb.isSleeping() && Math.hypot(lv.x, lv.y, lv.z) > 0.3 * S) awake++;
+
+    if (frameContacts.length > 0) {
+      frameContacts.sort((a, b) => b.strength * b.size - a.strength * a.size);
+      const keep = Math.min(8, frameContacts.length);
+      for (let k = 0; k < keep; k++) {
+        const c = frameContacts[k];
+        contactList.push(f, c.x, c.y, c.z, c.size, c.strength, c.kind);
       }
     }
-    // done when it is all at rest, or all but a few that only rock where they lie: they would have it run to
-    // its last frame for nothing anyone looks at
-    quiet = t > last + 0.5 && awake === 0 && fast === 0 && left <= few ? quiet + 1 : 0;
-    const done = f === maxFrames - 1 || quiet > 20;
-    {
-      const msg: FramesMessage = { type: 'frames', run: req.run, data: data.slice(), contacts: new Float32Array(contacts), done, total: maxFrames, left, splits: new Float32Array(splits) };
-      contacts = []; splits = [];
-      (self as unknown as Worker).postMessage(msg, [msg.data.buffer, msg.contacts.buffer, msg.splits.buffer]);
-      // let other messages in: another fall runs alongside, a cancelled one stops here
-      const due = began + ((f + 1) * 1000) / FPS / cfg.pace - performance.now();
-      await new Promise((r) => setTimeout(r, Math.max(0, due)));
-      if (cancelled.has(req.run)) { cancelled.delete(req.run); break; }
+
+    let moving = 0;
+    const base = f * totalSlots * 7;
+    for (let slot = 0; slot < totalSlots; slot++) {
+      const rb = slotBodies[slot];
+      const o = base + slot * 7;
+      if (!rb) {
+        frames[o + 1] = -999;
+        frames[o + 6] = 1;
+        continue;
+      }
+      const p = rb.translation();
+      const q = rb.rotation();
+      frames[o] = p.x * INV_SCALE;
+      frames[o + 1] = p.y * INV_SCALE;
+      frames[o + 2] = p.z * INV_SCALE;
+      frames[o + 3] = q.x;
+      frames[o + 4] = q.y;
+      frames[o + 5] = q.z;
+      frames[o + 6] = q.w;
+
+      const lv = rb.linvel();
+      const av = rb.angvel();
+      const spd = Math.hypot(lv.x, lv.y, lv.z) * INV_SCALE;
+      const rotSpd = Math.hypot(av.x, av.y, av.z);
+      if (f > 20 && p.y < 0.22 * SCALE && spd < 0.12 && rotSpd < 0.55) {
+        rb.setLinvel({ x: lv.x * 0.82, y: lv.y * 0.82, z: lv.z * 0.82 }, false);
+        rb.setAngvel({ x: av.x * 0.72, y: av.y * 0.72, z: av.z * 0.72 }, false);
+        if (spd < 0.03 && rotSpd < 0.15) {
+          rb.sleep();
+        }
+      }
+      if (!rb.isSleeping() && p.y > -2 * SCALE && (spd > 0.04 || rotSpd > 0.18)) {
+        moving++;
+      }
     }
-    if (done) break;
+
+    actualFrames = f + 1;
+    if (moving === 0) {
+      calmStreak++;
+      if (calmStreak >= 14 && f > 40) break;
+    } else {
+      calmStreak = 0;
+    }
   }
-  events.free();
+
   world.free();
-}
+  const trimmedFrames = frames.slice(0, actualFrames * totalSlots * 7);
+  const contacts = new Float32Array(contactList);
+  const resp: BakeResponse = {
+    id: req.id,
+    numShards: totalSlots,
+    numFrames: actualFrames,
+    fps,
+    bakeMs: performance.now() - t0,
+    frames: trimmedFrames,
+    contacts,
+  };
+  (self as unknown as Worker).postMessage(resp, [trimmedFrames.buffer, contacts.buffer]);
+};

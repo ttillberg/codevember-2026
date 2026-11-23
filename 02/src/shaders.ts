@@ -1,396 +1,1529 @@
-// All the GLSL. The room is analytic: a floor, a back wall and a few lamps, so anything can ask what it sees
-// along a ray (`look`), the backdrop pass as much as a crack surface mirroring the room from inside the glass.
+// WGSL shaders for 02 / Shatter (WebGPU)
+// - Sommerso volumetric glass (multi-bounce convex polyhedron raytracing + chromatic dispersion)
+// - Animated 3D internal Voronoi cracks with crystal edge veins & TIR flashes
+// - Glossy cut-crystal Rapier rigid-body shards
+// - WebGPU compute shader for 4096 glittering splinters
+// - Real-time dispersive fake floor caustics + bright-field white studio cyclorama
 
-const COMMON = /* glsl */ `#version 300 es
-precision highp float;
-uniform float uFlash;
-uniform sampler2D uShadow;
-uniform vec4 uLook; // exposure, wall light, floor light, crack darkness
+export const COMMON_WGSL = /* wgsl */ `
+struct SceneUniforms {
+  viewProj: mat4x4<f32>,
+  invViewProj: mat4x4<f32>,
+  camPos: vec4<f32>,        // xyz = eye, w = time
+  lightDir: vec4<f32>,      // xyz = unit dir TO light, w = causticStrength
+  blockCenter: vec4<f32>,   // xyz = world center, w = cutRadius
+  blockQuat: vec4<f32>,     // xyzw = rotation quat
+  halfSize: vec4<f32>,      // xyz = initial cube half extents, w = ior
+  palBottom: vec4<f32>,     // rgb, w = density
+  palCore: vec4<f32>,       // rgb, w = dispersion
+  palTop: vec4<f32>,        // rgb, w = crackProgress
+  palEdge: vec4<f32>,       // rgb, w = planeHover
+  cutOffset: vec4<f32>,     // xyz = world offset of severed piece, w = hasCutPiece
+  causticBounds: vec4<f32>, // x = minX, y = minZ, z = invSpan, w = floorY
+  params: vec4<f32>,        // x = planeAlpha, y = canCut, z = exposure, w = dt
+  cutQuat: vec4<f32>,       // xyzw = rotation quat of severed cracking piece(s)
+  cutPlaneN: vec4<f32>,     // xyz = outward unit normal of primary cutting plane
+  cutPlane2N: vec4<f32>,    // xyz = outward unit normal of 2nd symmetrical cutting plane, w = radius (<0 = hidden)
+};
 
-float hash(vec2 p) { p = fract(p * vec2(123.34, 456.21)); p += dot(p, p + 45.32); return fract(p.x * p.y); }
-float vnoise(vec2 p) {
-  vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
-  return mix(mix(hash(i), hash(i + vec2(1, 0)), f.x), mix(hash(i + vec2(0, 1)), hash(i + vec2(1, 1)), f.x), f.y);
+struct PolyPlanes {
+  info: vec4<u32>,              // x = planeCount, y = isCutPiece (0 = main, 1 = cut chunk), z = 0, w = 0
+  offset: vec4<f32>,            // xyz = world position when isCutPiece == 1
+  quat: vec4<f32>,              // xyzw = world rotation quat when isCutPiece == 1
+  planes: array<vec4<f32>, 64>, // xyz = outward normal in local cube space, w = d
+};
+
+struct ShardPose {
+  pos: vec4<f32>,  // xyz = world pos, w = active (>0.5)
+  quat: vec4<f32>, // xyzw = world quat
+};
+
+fn qRot(q: vec4<f32>, v: vec3<f32>) -> vec3<f32> {
+  let t = 2.0 * cross(q.xyz, v);
+  return v + q.w * t + cross(q.xyz, t);
 }
-float fbm(vec2 p) { float a = 0.5, s = 0.0; for (int i = 0; i < 4; i++) { s += a * vnoise(p); p = p * 2.03 + 7.1; a *= 0.5; } return s; }
-vec3 rot(vec4 q, vec3 v) { return v + 2.0 * cross(q.xyz, cross(q.xyz, v) + q.w * v); }
-vec3 rotInv(vec4 q, vec3 v) { return rot(vec4(-q.xyz, q.w), v); }
 
-const float WALL_Z = -2.4;
-// the floor shadow map covers x -2…2, z -2.4…1.6
-vec2 shadowUv(vec3 p) { return vec2(p.x / 4.0 + 0.5, (p.z + 2.4) / 4.0); }
+fn qInvRot(q: vec4<f32>, v: vec3<f32>) -> vec3<f32> {
+  let qc = vec4<f32>(-q.xyz, q.w);
+  return qRot(qc, v);
+}
 
-vec3 floorCol(vec3 p) {
-  float n = fbm(p.xz * 3.0) * 0.6 + vnoise(p.xz * 41.0) * 0.25 + vnoise(p.xz * 97.0) * 0.15;
-  vec3 alb = mix(vec3(0.12, 0.118, 0.115), vec3(0.24, 0.228, 0.215), n);
-  vec2 g = abs(fract(p.xz / 1.2 + 0.5) - 0.5) * 1.2;
-  alb *= 1.0 - 0.4 * smoothstep(0.005, 0.0, min(g.x, g.y));
-  vec2 q = p.xz - vec2(0.0, -0.25);
-  float pool = exp(-dot(q, q) / 1.5);
-  float sh = texture(uShadow, shadowUv(p)).r;
-  float lit = 0.05 + 1.3 * pool * sh;
-  vec3 f = p - vec3(0.0, 0.5, 2.0);
-  lit += uFlash * 3.0 / (1.0 + dot(f, f));
-  return alb * lit * vec3(1.0, 0.95, 0.88) * uLook.z;
-}
-vec3 wallCol(vec3 p) {
-  vec2 q = (p.xy - vec2(0.1, 0.7)) * vec2(1.0, 1.25);
-  float pool = exp(-dot(q, q) / 1.25);
-  float n = fbm(p.xy * 2.2);
-  vec3 alb = vec3(0.56, 0.5, 0.44) * (0.8 + 0.4 * n);
-  alb *= 1.0 - 0.16 * smoothstep(0.01, 0.0, abs(fract(p.x / 0.3) - 0.5) * 0.3);
-  float lit = 0.025 + 0.9 * pool + uFlash * 0.5;
-  lit *= mix(0.5, 1.0, smoothstep(0.0, 0.45, p.y));
-  return alb * lit * smoothstep(5.0, 2.5, p.y) * uLook.y;
-}
-vec3 studio(vec3 d) {
-  vec3 c = vec3(0.012, 0.012, 0.014);
-  float key = dot(d, normalize(vec3(-0.4, 0.85, 0.35)));
-  c += vec3(1.0, 0.97, 0.92) * 9.0 * smoothstep(0.72, 0.9, key);
-  c += vec3(1.0, 0.98, 0.95) * 70.0 * smoothstep(0.988, 0.997, key); // the bulb itself: what a turning shard flashes with
-  c += vec3(0.75, 0.88, 1.0) * 5.0 * smoothstep(0.95, 0.975, dot(d, normalize(vec3(0.9, 0.3, 0.3))));
-  c += vec3(1.0, 0.95, 0.9) * 1.1 * smoothstep(0.8, 1.0, dot(d, normalize(vec3(0.3, 0.4, 1.0)))) * smoothstep(0.0, 0.25, d.y);
-  c += vec3(1.0, 0.8, 0.5) * 14.0 * uFlash * smoothstep(0.5, 1.0, d.z) * smoothstep(0.0, 0.3, d.y);
-  return c;
-}
-vec3 look(vec3 ro, vec3 rd) {
-  float tf = rd.y < -1e-4 ? -ro.y / rd.y : 1e9;
-  float tw = rd.z < -1e-4 ? (WALL_Z - ro.z) / rd.z : 1e9;
-  if (tf < tw && tf < 1e8) return floorCol(ro + rd * tf);
-  if (tw < 1e8) return wallCol(ro + rd * tw);
-  return studio(rd);
-}
-vec3 tone(vec3 c) { c *= uLook.x; c = c / (1.0 + c * 0.35); return pow(c, vec3(0.4545)); }
-`;
+/**
+ * Venetian Sommerso 3D volumetric colour tint at a point inside the original glass cube.
+ * Rich ruby-amber base, glowing chartreuse-gold inner vessel, smoky sapphire-blue upper glass.
+ */
+fn sommersoTint(localPos: vec3<f32>, u: SceneUniforms) -> vec3<f32> {
+  let h = max(u.halfSize.xyz, vec3<f32>(0.05));
+  let p = localPos / h; // approx -1..+1
+  let r = length(p.xz);
 
-export const ROOM_VS = /* glsl */ `#version 300 es
-layout(location = 0) in vec3 aPos;
-layout(location = 1) in float aMat;
-uniform mat4 uVP;
-out vec3 vW; out float vMat;
-void main() { vW = aPos; vMat = aMat; gl_Position = uVP * vec4(aPos, 1.0); }
-`;
+  // Fiery amber/vermilion base wrapping up the bottom bevels
+  let tBase = smoothstep(-0.18, -0.56, p.y + 0.15 * r * r);
+  // Luminous chartreuse/golden inner belly (concentrated inside the block!)
+  let dyCore = (p.y + 0.08) / 0.48;
+  let tCore = exp(-dyCore * dyCore) * exp(-r * r * 0.65);
+  // Smoky sapphire-blue upper body, deepening to rich navy near outer vertical edges
+  let tTop = smoothstep(-0.20, 0.62, p.y);
+  let tRim = smoothstep(0.52, 1.18, r) * smoothstep(-0.32, 0.38, p.y);
 
-export const ROOM_FS = COMMON + /* glsl */ `
-in vec3 vW; in float vMat;
-uniform vec3 uCam;
-out vec4 o;
-void main() {
-  vec3 c;
-  if (vMat < 0.5) c = floorCol(vW);
-  else if (vMat < 1.5) c = wallCol(vW);
-  else if (vMat > 2.5) c = wallCol(vec3(vW.z + 1.2, vW.y, WALL_Z)) * 0.8; // a side wall
-  else {
-    // the channel the pane stands in: dark steel with a line of light along its top edge
-    vec3 V = normalize(vW - uCam);
-    c = vec3(0.022, 0.022, 0.025) + 0.05 * smoothstep(0.024, 0.03, vW.y) * step(0.0, vW.z) + 0.02 * uFlash;
-  }
-  o = vec4(tone(c), 1.0);
+  var col = mix(u.palTop.rgb * 0.78 + vec3<f32>(0.20), u.palTop.rgb, tTop);
+  col = mix(col, u.palEdge.rgb, tRim * 0.72);
+  col = mix(col, u.palCore.rgb, clamp(tCore * 0.98, 0.0, 0.94));
+  col = mix(col, u.palBottom.rgb, tBase);
+
+  return clamp(col, vec3<f32>(0.02), vec3<f32>(0.98));
 }
-`;
 
-// one vertex shader for everything made of glass: the cracked pane in place, or shards with a pose each
-export const GLASS_VS = /* glsl */ `#version 300 es
-layout(location = 0) in vec3 aPos;
-layout(location = 1) in vec3 aNrm;
-layout(location = 2) in vec2 aUv;
-layout(location = 3) in vec4 aD; // depth in the glass 0…1, birth, shard id, kind
-uniform mat4 uVP;
-uniform highp sampler2D uXf;
-uniform float uUseXf;
-uniform float uToFloor;
-out vec3 vW; out vec3 vN; out vec3 vNl; out vec2 vUv; out vec4 vD; flat out vec4 vQ; flat out float vFree;
-vec3 rot(vec4 q, vec3 v) { return v + 2.0 * cross(q.xyz, cross(q.xyz, v) + q.w * v); }
-void main() {
-  vec4 q = vec4(0, 0, 0, 1);
-  vec3 p = aPos, n = aNrm;
-  vFree = 1.0;
-  if (uUseXf > 0.5) {
-    int id = int(aD.z + 0.5);
-    ivec2 tc = ivec2((id * 2) % 1024, (id * 2) / 1024);
-    vec4 a = texelFetch(uXf, tc, 0);
-    q = texelFetch(uXf, tc + ivec2(1, 0), 0);
-    vFree = a.w; // 0 while it is still one piece of a larger shard that has not broken again
-    p = a.xyz + rot(q, aPos);
-    n = rot(q, aNrm);
-  }
-  vW = p; vN = n; vNl = aNrm; vUv = aUv; vD = aD; vQ = q;
-  if (uToFloor > 0.5) {
-    // the shadow on the floor, straight into the floor map
-    vec3 L = normalize(vec3(0.18, -1.0, -0.62));
-    vec3 f = p - L * (p.y / L.y);
-    gl_Position = vec4(f.x / 2.0, (f.z + 2.4) / 2.0 - 1.0, 0.0, 1.0);
-  } else gl_Position = uVP * vec4(p, 1.0);
+/** Beer-Lambert absorption coefficients sigma = -ln(tint) * density */
+fn sommersoSigma(localPos: vec3<f32>, u: SceneUniforms) -> vec3<f32> {
+  let tint = sommersoTint(localPos, u);
+  return -log(max(tint, vec3<f32>(0.012))) * u.palBottom.w;
 }
-`;
 
-export const SHADOW_FS = /* glsl */ `#version 300 es
-precision highp float;
-in vec2 vUv; in vec4 vD; flat in float vFree;
-uniform float uNow; uniform float uShade; uniform float uCut;
-uniform sampler2D uMask; uniform vec3 uPane;
-out vec4 o;
-// the masks of all panes are stacked in one texture; the pane a vertex belongs to is the tens of its kind
-vec2 maskUv(vec2 uv, float kind) { float l = floor(kind / 10.0 + 0.01); return vec2(uv.x / uPane.x, (uv.y / uPane.y + uPane.z - 1.0 - l) / uPane.z); }
-void main() {
-  if (vD.y > uNow) discard;
-  if (mod(vD.w, 10.0) > 2.5 && vFree < 0.5) discard; // a cut inside a shard that is still whole
-  vec4 m = texture(uMask, maskUv(vUv, vD.w));
-  if (m.r > 0.5 || (uCut > 0.5 && m.b > 0.5)) discard;
-  o = vec4(uShade);
-}
-`;
+/**
+ * Bright-field museum glass photography studio (no walls: pure white luminous cyclorama,
+ * sharp overhead & side softbox light strips, and crisp dark negative-fill side flags
+ * that carve obsidian dark contours along steep glass facets just like the Murano reference!).
+ */
+fn sampleStudioEnv(ro: vec3<f32>, rd: vec3<f32>, u: SceneUniforms) -> vec3<f32> {
+  let d = normalize(rd);
 
-// a crack surface. Light inside the glass that meets it is mirrored: it either leaves through a face, and the
-// crack shows the room from somewhere else, or it is sent along the pane and stays in: that is the dark line.
-export const WALL_FS = COMMON + /* glsl */ `
-in vec3 vW; in vec3 vN; in vec3 vNl; in vec2 vUv; in vec4 vD; flat in vec4 vQ; flat in float vFree;
-uniform vec3 uCam; uniform float uNow; uniform float uSeam; uniform float uCut; uniform float uUseXf;
-uniform sampler2D uMask; uniform vec3 uPane;
-uniform vec3 uTint[4]; uniform vec3 uEdge[4]; // per pane: what it lets through, and the colour its edges glow in
-uniform sampler2D uPaint; // what is painted on the panes, laid out as the mask is: white where the glass is bare
-out vec4 o;
-// the masks of all panes are stacked in one texture; the pane a vertex belongs to is the tens of its kind
-vec2 maskUv(vec2 uv, float kind) { float l = floor(kind / 10.0 + 0.01); return vec2(uv.x / uPane.x, (uv.y / uPane.y + uPane.z - 1.0 - l) / uPane.z); }
-void main() {
-  if (vD.y > uNow) discard;
-  float kd = mod(vD.w, 10.0);
-  if (kd > 2.5 && vFree < 0.5) discard; // a cut inside a shard that is still whole: it shows when it breaks again
-  // (once pieces have left, the cracks that stay were chosen one by one: no mask for them)
-  if (uCut < 0.5 && texture(uMask, maskUv(vUv, vD.w)).r > 0.5) discard;
-  vec3 V = normalize(vW - uCam);
-  vec3 Vl = rotInv(vQ, V);
-  // hackle: the surface of a fracture is not smooth
-  vec2 hp = vUv * 420.0 + vD.x * 5.0;
-  vec3 h = vec3(vnoise(hp) - 0.5, vnoise(hp + 31.7) - 0.5, vnoise(hp + 73.1) - 0.5);
-  vec3 Nl = normalize(vNl + h * 0.5);
-  float sz = Vl.z < 0.0 ? 1.0 : -1.0;
-  vec3 Vg = refract(Vl, vec3(0, 0, sz), 1.0 / 1.5);
-  vec3 Rg = reflect(Vg, Nl);
-  float esc = max(smoothstep(0.7, 0.8, abs(Rg.z)), 1.0 - uLook.w);
-  vec3 og = refract(Rg, vec3(0, 0, -sign(Rg.z)), 1.5);
-  vec3 seen = dot(og, og) > 0.0 ? look(vW, rot(vQ, og)) : vec3(0.0);
-  int layer = int(floor(vD.w / 10.0 + 0.01));
-  // painted glass is coloured through: its edges glow in the paint's colour, not the glass's
-  vec3 paint = texture(uPaint, maskUv(vUv, vD.w)).rgb;
-  float sat = max(paint.r, max(paint.g, paint.b)) - min(paint.r, min(paint.g, paint.b));
-  vec3 edge = mix(uEdge[layer], paint * paint * 0.3, smoothstep(0.06, 0.3, sat));
-  vec3 trapped = edge * 0.5 + 0.004 + vec3(0.25, 0.5, 0.45) * uFlash * 0.25;
-  vec3 c = mix(trapped, seen * pow(uTint[layer] * paint, vec3(2.6)), esc);
-  // a shard on its own: the light it has gathered through its faces leaves by its edges, in the colour of its glass
-  if (uUseXf > 0.5) {
-    vec2 lp = vW.xz - vec2(0.0, -0.25);
-    c += edge * (0.2 + 1.1 * exp(-dot(lp, lp) / 1.5) + 2.0 * uFlash) * (0.5 + vnoise(hp * 0.2));
-  }
-  // where the crack meets the surface the edge is chipped and catches light
-  float seam = exp(-vD.x * 10.0) + 0.5 * exp(-(1.0 - vD.x) * 10.0);
-  float glint = pow(vnoise(vUv * 900.0 + Vl.xy * 14.0), 6.0);
-  c += vec3(0.6, 0.85, 0.8) * seam * (uSeam + 1.6 * glint + uFlash);
-  // the tip of a running crack flashes
-  c += vec3(0.8, 1.0, 0.95) * 1.5 * exp(-(uNow - vD.y) / 0.05);
-  if (kd > 1.5 && kd < 2.5) c = mix(c, vec3(0.55, 0.62, 0.6) * (0.5 + uFlash * 2.0), 0.55); // the crushed rim of the hole
-  o = vec4(tone(c), 1.0);
-}
-`;
+  // Luminous bright-field white studio cyclorama
+  let upGrad = smoothstep(-0.18, 0.65, d.y);
+  var col = mix(vec3<f32>(0.94, 0.938, 0.932), vec3<f32>(1.04, 1.04, 1.05), upGrad);
 
-// a face of the glass: what is behind it, bent a little, plus what it mirrors
-export const FACE_FS = COMMON + /* glsl */ `
-in vec3 vW; in vec3 vN; in vec3 vNl; in vec2 vUv; in vec4 vD; flat in vec4 vQ;
-uniform vec3 uCam; uniform mat4 uView; uniform vec2 uRes; uniform float uBend; uniform float uCut; uniform float uNow; uniform vec3 uGlass; // tint, waviness, reflections
-uniform float uFrost; uniform sampler2D uRoom; uniform vec3 uTargets[3]; // each: x, y on the pane and its radius, metres
-uniform sampler2D uScene; uniform sampler2D uMask; uniform vec3 uPane; uniform sampler2D uTints;
-out vec4 o;
-// the masks of all panes are stacked in one texture; the pane a vertex belongs to is the tens of its kind
-vec2 maskUv(vec2 uv, float kind) { float l = floor(kind / 10.0 + 0.01); return vec2(uv.x / uPane.x, (uv.y / uPane.y + uPane.z - 1.0 - l) / uPane.z); }
-void main() {
-  if (vD.y > uNow) discard; // shards cut ahead of the blow that frees them
-  vec4 m = texture(uMask, maskUv(vUv, vD.w));
-  if (m.r > 0.5 || (uCut > 0.5 && m.b > 0.5)) discard; // blue: where pieces have left the standing pane
-  // float glass is never flat
-  vec2 w = vec2(fbm(vUv * 5.0 + 3.0), fbm(vUv * 5.0 + 19.0)) - 0.5;
-  vec3 N = normalize(vN + rot(vQ, vec3(w * uGlass.y, 0.0)));
-  vec3 V = normalize(vW - uCam);
-  if (dot(N, V) > 0.0) N = -N;
-  vec3 Nv = mat3(uView) * N;
-  vec2 suv = gl_FragCoord.xy / uRes;
-  // a slab shifts what is behind it sideways by a fraction of its thickness, more the steeper it is seen
-  vec2 off = -Nv.xy * uBend * gl_FragCoord.w * vec2(uRes.y / uRes.x, 1.0);
-  off *= min(1.0, 0.025 / (length(off) + 1e-5));
-  vec3 c = vec3(texture(uScene, suv + off * 0.93).r, texture(uScene, suv + off).g, texture(uScene, suv + off * 1.07).b);
-  if (uFrost > 0.001) {
-    // frosted: the room behind is a blur, but what is in the glass itself, its cracks, is right at the
-    // surface and stays sharp. The room is kept apart for that (uRoom): where the two pictures differ is a crack
-    vec3 room = texture(uRoom, suv + off).rgb;
-    float crack = smoothstep(0.03, 0.14, length(c - room));
-    float a = hash(gl_FragCoord.xy) * 6.283;
-    mat2 R = mat2(cos(a), -sin(a), sin(a), cos(a));
-    vec2 px = vec2(uRes.y / uRes.x, 1.0) * uFrost * 0.035;
-    vec3 blur = vec3(0.0);
-    for (int i = 0; i < 16; i++) {
-      float fi = float(i);
-      vec2 d = R * (sqrt((fi + 0.5) / 16.0) * vec2(cos(fi * 2.4), sin(fi * 2.4)));
-      blur += texture(uRoom, suv + off + d * px).rgb;
-    }
-    blur = mix(blur / 16.0, vec3(0.5, 0.52, 0.51) * (0.75 + uFlash), uFrost * 0.22);
-    c = mix(blur, c, crack);
-  }
-  // coloured by all the glass on the way, this piece and whatever is behind or in front of it (the tint pass)
-  c *= texture(uTints, suv).rgb;
-  // the targets, in dark matt tape: a small circle with a dot in its empty middle, and four long strokes
-  // around it. Nothing touches: there is a gap between each stroke and the circle. By pane coordinates, so a
-  // shard keeps its part of one
-  for (int i = 0; i < 3 && vD.w < 9.5; i++) { // (on the front pane only)
-    vec2 d = (vUv - uTargets[i].xy) / max(uTargets[i].z, 1e-5);
-    vec2 q = abs(d);
-    if (max(q.x, q.y) < 1.05) {
-      float r = length(d);
-      float aa = fwidth(r) * 1.2 + 1e-4;
-      float ring = smoothstep(0.022 + aa, 0.022, abs(r - 0.3));
-      float along = max(q.x, q.y); // how far out along its stroke
-      float stroke = smoothstep(0.022 + aa, 0.022, min(q.x, q.y)) * smoothstep(0.38 - aa, 0.38, along) * smoothstep(1.0 + aa, 1.0, along);
-      float dot_ = smoothstep(0.03 + aa, 0.03, r);
-      float ink = max(ring, max(stroke, dot_));
-      vec3 tape = vec3(0.04, 0.042, 0.046) * (0.85 + 0.3 * vnoise(vUv * 900.0)) * (0.7 + uFlash * 2.0);
-      c = mix(c, tape, ink * 0.94);
+  // Crisp negative-fill dark studio flags on left & right (essential for clear crystal contrast!)
+  let sideAbs = abs(d.x);
+  let flagLeftRight = smoothstep(0.50, 0.68, sideAbs) * smoothstep(-0.28, 0.10, d.y) * smoothstep(0.84, 0.42, d.y);
+  col = mix(col, vec3<f32>(0.018, 0.022, 0.032), flagLeftRight * 0.96);
+
+  // Narrow secondary rear-side negative fill strip for internal bevel depth & chromatic fire
+  let rearFlag = smoothstep(0.32, 0.54, sideAbs) * smoothstep(0.10, 0.52, -d.z) * smoothstep(-0.18, 0.22, d.y);
+  col = mix(col, vec3<f32>(0.035, 0.042, 0.058), rearFlag * 0.80);
+
+  // Crisp low dark negative-fill studio strip near horizon behind glass to outline clear crystal bases
+  let lowBand = smoothstep(0.08, -0.02, d.y) * smoothstep(-0.28, -0.10, d.y) * smoothstep(0.05, 0.45, abs(d.x));
+  col = mix(col, vec3<f32>(0.06, 0.07, 0.09), lowBand * 0.55);
+
+  // Razor-sharp overhead softbox
+  let topBox = smoothstep(0.74, 0.88, d.y) * smoothstep(0.56, 0.18, abs(d.x)) * smoothstep(0.58, 0.18, abs(d.z));
+  col += vec3<f32>(2.4, 2.38, 2.35) * topBox;
+
+  // Tall vertical left softbox window (creates the classic vertical glass reflection streak!)
+  let vStrip = smoothstep(0.92, 0.975, dot(normalize(vec3<f32>(d.x, d.y * 0.25, d.z)), normalize(vec3<f32>(-0.56, 0.1, 0.82))))
+               * smoothstep(-0.25, 0.05, d.y) * smoothstep(0.75, 0.45, d.y);
+  col += vec3<f32>(2.6, 2.62, 2.68) * vStrip;
+
+  // Front-left key studio softbox
+  let keyDir = normalize(u.lightDir.xyz);
+  let keyDot = max(0.0, dot(d, keyDir));
+  col += vec3<f32>(1.8, 1.76, 1.68) * pow(keyDot, 28.0);
+  col += vec3<f32>(3.8, 3.72, 3.60) * smoothstep(0.962, 0.990, keyDot);
+
+  // Subtle right rim softbox for catching cut facets
+  let rimDir = normalize(vec3<f32>(0.68, 0.42, 0.60));
+  let rimDot = max(0.0, dot(d, rimDir));
+  col += vec3<f32>(1.9, 1.92, 1.98) * smoothstep(0.945, 0.985, rimDot);
+
+  // Matte white studio floor reflection when looking downward
+  if (d.y < -0.005) {
+    let tFloor = (u.causticBounds.w - ro.y) / d.y;
+    if (tFloor > 0.0 && tFloor < 18.0) {
+      let hit = ro + d * tFloor;
+      let rFloor = length(hit.xz);
+      let floorFade = exp(-rFloor * rFloor * 0.05);
+      let floorCol = mix(vec3<f32>(0.96, 0.958, 0.952), vec3<f32>(0.88, 0.878, 0.872), floorFade * 0.5);
+      let underBlock = exp(-dot(hit.xz - u.blockCenter.xz, hit.xz - u.blockCenter.xz) * 4.2);
+      let shadedFloor = floorCol * (1.0 - underBlock * 0.22);
+      col = mix(col, shadedFloor, smoothstep(-0.005, -0.08, d.y));
     }
   }
-  float F = 0.06 + 0.94 * pow(1.0 - max(dot(-V, N), 0.0), 4.0);
-  vec3 R = reflect(V, N);
-  c += tone(look(vW, R)) * F * uGlass.z;
-  // clear glass also shows what is behind the eye: a tall window, soft at its edges. It is faint, it slides
-  // over the pane as the eye moves and bends with the glass, and it is what says this is glass. (It had bars
-  // across it: bent by the waviness of the pane they read as a stain, not as a window.)
-  if (uFrost < 0.01 && R.z > 0.2) {
-    vec2 q = R.xy / R.z - vec2(0.25, 0.085);
-    vec2 e = smoothstep(vec2(0.0), vec2(0.07), vec2(0.15, 0.135) - abs(q));
-    c += vec3(1.0, 0.98, 0.94) * e.x * e.y * F * 1.5 * uGlass.z;
+
+  return col;
+}
+
+fn fresnelSchlick(cosTheta: f32, f0: f32) -> f32 {
+  let x = clamp(1.0 - cosTheta, 0.0, 1.0);
+  let x2 = x * x;
+  return f0 + (1.0 - f0) * (x2 * x2 * x);
+}
+
+fn studioGrade(hdr: vec3<f32>, exposure: f32) -> vec3<f32> {
+  // High-key photographic tone curve: crisp deep darks, punchy saturated midtones, pure studio whites
+  let c = max(vec3<f32>(0.0), hdr * exposure);
+  let shoulder = (c * (1.0 + c * 0.12)) / (1.0 + c * 0.26);
+  let srgb = pow(clamp(shoulder, vec3<f32>(0.0), vec3<f32>(1.0)), vec3<f32>(1.0 / 2.2));
+  return srgb;
+}
+
+/**
+ * Physical Beer-Lambert volumetric absorption sigma (m^-1) per gemstone ID:
+ *  0 = Palette default (Sommerso/Crystal)
+ *  2 = Clear Diamond
+ *  3 = Ruby (pigeon-blood crimson)
+ *  4 = Emerald (Colombian green)
+ *  5 = Sapphire (Ceylon royal blue)
+ *  6 = Amethyst (imperial violet)
+ *  7 = Citrine Topaz (sunlit honey amber)
+ *  8 = Aquamarine (glacial turquoise)
+ */
+fn gemSigma(gemId: u32, p: vec3<f32>, u: SceneUniforms) -> vec3<f32> {
+  if (gemId == 0u) { return sommersoSigma(p, u); }
+  if (gemId == 2u) { return vec3<f32>(0.06, 0.05, 0.04); }
+  if (gemId == 3u) { return vec3<f32>(0.22, 6.40, 5.10); }
+  if (gemId == 4u) { return vec3<f32>(5.80, 0.34, 4.10); }
+  if (gemId == 5u) { return vec3<f32>(6.40, 2.35, 0.18); }
+  if (gemId == 6u) { return vec3<f32>(1.65, 6.00, 0.65); }
+  if (gemId == 7u) { return vec3<f32>(0.14, 1.55, 7.00); }
+  if (gemId == 8u) { return vec3<f32>(4.40, 0.62, 0.30); }
+  return sommersoSigma(p, u);
+}
+
+/** Luminous transmission tint for colored gem caustics & razor bevel glints. */
+fn gemTint(gemId: u32, p: vec3<f32>, u: SceneUniforms) -> vec3<f32> {
+  if (gemId == 0u) { return sommersoTint(p, u); }
+  if (gemId == 2u) { return vec3<f32>(1.00, 1.00, 1.00); }
+  if (gemId == 3u) { return vec3<f32>(1.00, 0.18, 0.28); }
+  if (gemId == 4u) { return vec3<f32>(0.16, 0.96, 0.44); }
+  if (gemId == 5u) { return vec3<f32>(0.20, 0.52, 1.00); }
+  if (gemId == 6u) { return vec3<f32>(0.78, 0.26, 1.00); }
+  if (gemId == 7u) { return vec3<f32>(1.00, 0.74, 0.14); }
+  if (gemId == 8u) { return vec3<f32>(0.18, 0.90, 0.98); }
+  return sommersoTint(p, u);
+}
+`;
+
+export const FLOOR_WGSL = /* wgsl */ `
+${COMMON_WGSL}
+
+@group(0) @binding(0) var<uniform> u: SceneUniforms;
+@group(0) @binding(1) var causticTex: texture_2d<f32>;
+@group(0) @binding(2) var causticSamp: sampler;
+
+struct VSOut {
+  @builtin(position) pos: vec4<f32>,
+  @location(0) uv: vec2<f32>,
+};
+
+@vertex
+fn vs_main(@builtin(vertex_index) vi: u32) -> VSOut {
+  var pts = array<vec2<f32>, 3>(
+    vec2<f32>(-1.0, -1.0),
+    vec2<f32>(3.0, -1.0),
+    vec2<f32>(-1.0, 3.0)
+  );
+  var out: VSOut;
+  out.pos = vec4<f32>(pts[vi], 0.9999, 1.0);
+  out.uv = pts[vi] * 0.5 + 0.5;
+  return out;
+}
+
+@fragment
+fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
+  let ndc = vec2<f32>(in.uv.x * 2.0 - 1.0, in.uv.y * 2.0 - 1.0);
+  let pNear = u.invViewProj * vec4<f32>(ndc, 0.0, 1.0);
+  let pFar = u.invViewProj * vec4<f32>(ndc, 1.0, 1.0);
+  let ro = pNear.xyz / pNear.w;
+  let rd = normalize(pFar.xyz / pFar.w - ro);
+
+  // Seamless pure bright white studio cyclorama (like the Murano product shot)
+  let horizon = smoothstep(-0.08, 0.38, rd.y);
+  var col = mix(vec3<f32>(0.96, 0.958, 0.954), vec3<f32>(1.02, 1.02, 1.018), horizon);
+
+  if (rd.y < -0.002) {
+    let t = (u.causticBounds.w - ro.y) / rd.y;
+    if (t > 0.0 && t < 45.0) {
+      let hit = ro + rd * t;
+      let dist = length(hit.xz);
+
+      let stageMask = exp(-dist * dist * 0.05);
+      var floorCol = mix(col, vec3<f32>(0.935, 0.933, 0.928), stageMask * 0.85);
+
+      let grain = fract(sin(dot(floor(hit.xz * 280.0), vec2<f32>(12.9898, 78.233))) * 43758.5453);
+      floorCol *= 0.995 + 0.010 * grain;
+
+      let cuv = (hit.xz - u.causticBounds.xy) * u.causticBounds.z;
+      if (cuv.x > 0.005 && cuv.x < 0.995 && cuv.y > 0.005 && cuv.y < 0.995) {
+        let texel = 1.0 / 1024.0;
+
+        // Soft studio shadow penumbra (alpha channel)
+        var shadow = 0.0;
+        let rS = texel * 6.5;
+        shadow += textureSampleLevel(causticTex, causticSamp, cuv, 0.0).a * 0.24;
+        shadow += textureSampleLevel(causticTex, causticSamp, cuv + vec2<f32>(rS, 0.0), 0.0).a * 0.11;
+        shadow += textureSampleLevel(causticTex, causticSamp, cuv + vec2<f32>(-rS, 0.0), 0.0).a * 0.11;
+        shadow += textureSampleLevel(causticTex, causticSamp, cuv + vec2<f32>(0.0, rS), 0.0).a * 0.11;
+        shadow += textureSampleLevel(causticTex, causticSamp, cuv + vec2<f32>(0.0, -rS), 0.0).a * 0.11;
+        shadow += textureSampleLevel(causticTex, causticSamp, cuv + vec2<f32>(rS * 0.72, rS * 0.72), 0.0).a * 0.08;
+        shadow += textureSampleLevel(causticTex, causticSamp, cuv + vec2<f32>(-rS * 0.72, rS * 0.72), 0.0).a * 0.08;
+        shadow += textureSampleLevel(causticTex, causticSamp, cuv + vec2<f32>(rS * 0.72, -rS * 0.72), 0.0).a * 0.08;
+        shadow += textureSampleLevel(causticTex, causticSamp, cuv + vec2<f32>(-rS * 0.72, -rS * 0.72), 0.0).a * 0.08;
+        shadow = clamp(shadow, 0.0, 1.0);
+
+        // Crisp chromatic caustic sample (rgb)
+        let rC = texel * 1.6;
+        var caust = textureSampleLevel(causticTex, causticSamp, cuv, 0.0).rgb * 0.44;
+        caust += textureSampleLevel(causticTex, causticSamp, cuv + vec2<f32>(rC, 0.0), 0.0).rgb * 0.14;
+        caust += textureSampleLevel(causticTex, causticSamp, cuv + vec2<f32>(-rC, 0.0), 0.0).rgb * 0.14;
+        caust += textureSampleLevel(causticTex, causticSamp, cuv + vec2<f32>(0.0, rC), 0.0).rgb * 0.14;
+        caust += textureSampleLevel(causticTex, causticSamp, cuv + vec2<f32>(0.0, -rC), 0.0).rgb * 0.14;
+
+        let edgeFade = smoothstep(0.0, 0.06, cuv.x) * smoothstep(1.0, 0.94, cuv.x) *
+                       smoothstep(0.0, 0.06, cuv.y) * smoothstep(1.0, 0.94, cuv.y);
+        shadow *= edgeFade;
+        caust *= edgeFade * u.lightDir.w;
+
+        // Soft studio occlusion + vivid stained-glass transmission & bright caustic focus bands!
+        let shadowFactor = 1.0 - shadow * 0.30;
+        let maxC = max(max(caust.r, caust.g), max(caust.b, 0.001));
+        let caustHue = caust / maxC;
+        let caustLum = dot(caust, vec3<f32>(0.299, 0.587, 0.114));
+        // Stained-glass tinting inside shadow + luminous chromatic ridges!
+        let stainMix = clamp(caustLum * 0.72, 0.0, 0.72);
+        let stained = mix(floorCol * shadowFactor, floorCol * mix(vec3<f32>(0.72), caustHue, 0.92), stainMix);
+        // Focused hot caustic bands (where facets overlap!) glow vividly
+        let hotspot = max(vec3<f32>(0.0), caust - vec3<f32>(0.18));
+        floorCol = stained + caust * 0.32 + hotspot * 0.65;
+      }
+
+      // Soft ambient grounding shadow under suspended block (fades out cleanly when block is below frame)
+      let underDist = length(hit.xz - u.blockCenter.xz);
+      let blockAbove = smoothstep(-0.15, 0.25, u.blockCenter.y);
+      let ao = exp(-underDist * underDist * 4.2) * 0.095 * blockAbove;
+      floorCol *= (1.0 - ao);
+
+      let farFade = smoothstep(3.6, 10.5, dist);
+      col = mix(floorCol, col, farFade);
+    }
   }
-  // crushed glass around the hole scatters white
-  float frost = m.g * (0.9 + 0.7 * vnoise(vUv * 1500.0));
-  c = mix(c, vec3(0.62, 0.68, 0.66) * (0.55 + uFlash * 3.0), clamp(frost, 0.0, 0.85));
-  o = vec4(c, 1.0);
+
+  return vec4<f32>(studioGrade(col, u.params.z), 1.0);
 }
 `;
 
-// What all the glass along a line of sight lets through, multiplied up: every face of every pane and shard is
-// drawn into one picture, each darkening it by its own colour, in any order. Glass is coloured by the way
-// through it, so a pane from the front is pale and a shard on edge is not; a shard has a front and a back, a
-// standing pane only its front, so each face of a shard is half the way.
-export const TINT_FS = /* glsl */ `#version 300 es
-precision highp float;
-in vec3 vW; in vec3 vN; in vec2 vUv; in vec4 vD;
-uniform vec3 uCam; uniform float uNow; uniform float uCut; uniform float uUseXf; uniform float uTintK;
-uniform sampler2D uMask; uniform vec3 uPane; uniform vec3 uTint[4]; uniform sampler2D uPaint;
-out vec4 o;
-vec2 maskUv(vec2 uv, float kind) { float l = floor(kind / 10.0 + 0.01); return vec2(uv.x / uPane.x, (uv.y / uPane.y + uPane.z - 1.0 - l) / uPane.z); }
-void main() {
-  if (vD.y > uNow) discard;
-  vec2 muv = maskUv(vUv, vD.w);
-  vec4 m = texture(uMask, muv);
-  if (m.r > 0.5 || (uCut > 0.5 && m.b > 0.5)) discard;
-  float way = (uUseXf > 0.5 ? 0.5 : 1.0) / max(abs(dot(normalize(vN), normalize(vW - uCam))), 0.14);
-  // the glass, and what is painted on it: a shard keeps its part of the painting
-  o = vec4(pow(uTint[int(floor(vD.w / 10.0 + 0.01))] * texture(uPaint, muv).rgb, vec3(uTintK * way)), 1.0);
+export const CAUSTICS_WGSL = /* wgsl */ `
+${COMMON_WGSL}
+
+@group(0) @binding(0) var<uniform> u: SceneUniforms;
+@group(0) @binding(1) var<storage, read> poses: array<ShardPose>;
+
+struct VSOut {
+  @builtin(position) pos: vec4<f32>,
+  @location(0) color: vec3<f32>,
+  @location(1) alpha: f32,
+  @location(2) localPos: vec3<f32>,
+};
+
+fn projectFloorNDC(xz: vec2<f32>) -> vec2<f32> {
+  let uv = (xz - u.causticBounds.xy) * u.causticBounds.z;
+  return vec2<f32>(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0);
+}
+
+@vertex
+fn vs_block(
+  @location(0) localPos: vec3<f32>,
+  @location(1) localNorm: vec3<f32>,
+  @builtin(instance_index) inst: u32,
+) -> VSOut {
+  var out: VSOut;
+  let wp = u.blockCenter.xyz + qRot(u.blockQuat, localPos);
+  let wn = normalize(qRot(u.blockQuat, localNorm));
+  let L = normalize(u.lightDir.xyz);
+  let h = max(0.0, wp.y - u.causticBounds.w);
+  let above = smoothstep(-0.12, 0.22, u.blockCenter.y);
+  out.localPos = localPos;
+
+  if (inst == 0u) {
+    let t = h / max(0.14, L.y);
+    let xz = wp.xz - L.xz * t;
+    out.pos = vec4<f32>(projectFloorNDC(xz), 0.5, 1.0);
+    out.color = vec3<f32>(0.0);
+    out.alpha = 0.45 * above;
+    return out;
+  }
+
+  let disp = u.palCore.w;
+  var ior = u.halfSize.w;
+  var mask = vec3<f32>(1.0, 0.0, 0.0);
+  if (inst == 1u) {
+    ior -= disp * 0.85;
+    mask = vec3<f32>(1.0, 0.0, 0.0);
+  } else if (inst == 2u) {
+    mask = vec3<f32>(0.0, 1.0, 0.0);
+  } else {
+    ior += disp * 1.05;
+    mask = vec3<f32>(0.0, 0.0, 1.0);
+  }
+
+  let nFacing = select(-wn, wn, dot(wn, L) > 0.0);
+  var refr = refract(-L, nFacing, 1.0 / ior);
+  if (length(refr) < 0.01) { refr = -L; }
+  // Tight realistic caustic focusing around the shadow footprint
+  let rayDir = normalize(mix(-L, refr, 0.92));
+  let t = h / max(0.22, -rayDir.y);
+  let xz = wp.xz + rayDir.xz * t;
+
+  let tint = sommersoTint(localPos, u);
+  let ndl = abs(dot(wn, L));
+  let focusBoost = 0.25 + 0.75 * pow(1.0 - abs(ndl - 0.52), 2.0);
+  let energy = focusBoost * (0.26 + 0.34 * ndl);
+
+  out.pos = vec4<f32>(projectFloorNDC(xz), 0.5, 1.0);
+  out.color = tint * mask * energy * 1.18 * above;
+  out.alpha = 0.0;
+  return out;
+}
+
+@vertex
+fn vs_cut(
+  @location(0) localPos: vec3<f32>,
+  @location(1) localNorm: vec3<f32>,
+  @builtin(instance_index) inst: u32,
+) -> VSOut {
+  var out: VSOut;
+  let wp = u.blockCenter.xyz + u.cutOffset.xyz + qRot(u.cutQuat, localPos);
+  let wn = normalize(qRot(u.cutQuat, localNorm));
+  let L = normalize(u.lightDir.xyz);
+  let h = max(0.0, wp.y - u.causticBounds.w);
+  out.localPos = localPos;
+
+  if (inst == 0u) {
+    let t = h / max(0.14, L.y);
+    let xz = wp.xz - L.xz * t;
+    out.pos = vec4<f32>(projectFloorNDC(xz), 0.5, 1.0);
+    out.color = vec3<f32>(0.0);
+    out.alpha = 0.42;
+    return out;
+  }
+
+  let disp = u.palCore.w;
+  var ior = u.halfSize.w;
+  var mask = vec3<f32>(1.0, 0.0, 0.0);
+  if (inst == 1u) {
+    ior -= disp * 0.85;
+    mask = vec3<f32>(1.0, 0.0, 0.0);
+  } else if (inst == 2u) {
+    mask = vec3<f32>(0.0, 1.0, 0.0);
+  } else {
+    ior += disp * 1.05;
+    mask = vec3<f32>(0.0, 0.0, 1.0);
+  }
+
+  let nFacing = select(-wn, wn, dot(wn, L) > 0.0);
+  var refr = refract(-L, nFacing, 1.0 / ior);
+  if (length(refr) < 0.01) { refr = -L; }
+  let rayDir = normalize(mix(-L, refr, 0.92));
+  let t = h / max(0.22, -rayDir.y);
+  let xz = wp.xz + rayDir.xz * t;
+
+  let tint = sommersoTint(localPos, u);
+  let ndl = abs(dot(wn, L));
+  let focusBoost = 0.25 + 0.75 * pow(1.0 - abs(ndl - 0.52), 2.0);
+  let energy = focusBoost * (0.26 + 0.34 * ndl);
+
+  out.pos = vec4<f32>(projectFloorNDC(xz), 0.5, 1.0);
+  out.color = tint * mask * energy * 1.18;
+  out.alpha = 0.0;
+  return out;
+}
+
+@vertex
+fn vs_shards(
+  @location(0) relPos: vec3<f32>,
+  @location(1) localNorm: vec3<f32>,
+  @location(2) origPos: vec3<f32>,
+  @location(3) shardIdF: f32,
+  @builtin(instance_index) inst: u32,
+) -> VSOut {
+  var out: VSOut;
+  let sid = u32(shardIdF + 0.5);
+  let pose = poses[sid];
+  out.localPos = origPos;
+  if (pose.pos.w < 0.5) {
+    out.pos = vec4<f32>(2.0, 2.0, 2.0, 1.0);
+    out.color = vec3<f32>(0.0);
+    out.alpha = 0.0;
+    return out;
+  }
+
+  let wp = pose.pos.xyz + qRot(pose.quat, relPos);
+  let wn = normalize(qRot(pose.quat, localNorm));
+  let L = normalize(u.lightDir.xyz);
+  let h = max(0.008, wp.y - u.causticBounds.w);
+
+  if (inst == 0u) {
+    let t = h / max(0.14, L.y);
+    let xz = wp.xz - L.xz * t;
+    out.pos = vec4<f32>(projectFloorNDC(xz), 0.5, 1.0);
+    out.color = vec3<f32>(0.0);
+    out.alpha = 0.32;
+    return out;
+  }
+
+  let disp = u.palCore.w;
+  var ior = u.halfSize.w;
+  var mask = vec3<f32>(1.0, 0.0, 0.0);
+  if (inst == 1u) {
+    ior -= disp;
+    mask = vec3<f32>(1.0, 0.0, 0.0);
+  } else if (inst == 2u) {
+    mask = vec3<f32>(0.0, 1.0, 0.0);
+  } else {
+    ior += disp * 1.15;
+    mask = vec3<f32>(0.0, 0.0, 1.0);
+  }
+
+  let nFacing = select(-wn, wn, dot(wn, L) > 0.0);
+  var refr = refract(-L, nFacing, 1.0 / ior);
+  if (length(refr) < 0.01) { refr = -L; }
+  let hEff = max(0.045, h + 0.03);
+  let rayDir = normalize(mix(-L, refr, 1.18));
+  let t = hEff / max(0.20, -rayDir.y);
+  let xz = wp.xz + rayDir.xz * t;
+
+  let gemId = u32(max(0.0, pose.pos.w - 0.5));
+  let tint = gemTint(gemId, origPos, u);
+  let ndl = abs(dot(wn, L));
+  let energy = 0.30 + 0.58 * ndl;
+
+  out.pos = vec4<f32>(projectFloorNDC(xz), 0.5, 1.0);
+  // Poisoned black diamond shards (gemId == 1u) cast zero rainbow caustics — only dark obsidian shadows!
+  out.color = select(tint * mask * energy * 1.15, vec3<f32>(0.0), gemId == 1u);
+  out.alpha = 0.0;
+  return out;
+}
+
+@fragment
+fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
+  // Subtle organic optical caustic ribbon modulation so flat faces don't look like plain flat rectangles
+  let wave = 0.78 + 0.34 * sin(in.localPos.x * 24.0 + in.localPos.z * 19.0) * cos(in.localPos.y * 22.0);
+  return vec4<f32>(in.color * wave, in.alpha);
 }
 `;
 
-export const QUAD_VS = /* glsl */ `#version 300 es
-layout(location = 0) in vec2 aPos;
-out vec2 vUv;
-void main() { vUv = aPos * 0.5 + 0.5; gl_Position = vec4(aPos, 0.0, 1.0); }
-`;
+/** Dedicated per-slot caustic + shadow pass for each independently tumbling cut crystal chunk! */
+export const CAUSTICS_CUT_WGSL = /* wgsl */ `
+${COMMON_WGSL}
 
-export const COPY_FS = /* glsl */ `#version 300 es
-precision highp float;
-in vec2 vUv; uniform sampler2D uTex; out vec4 o;
-void main() { o = vec4(texture(uTex, vUv).rgb, 1.0); }
-`;
+@group(0) @binding(0) var<uniform> u: SceneUniforms;
+@group(0) @binding(1) var<uniform> poly: PolyPlanes;
 
-// drawn last, multiplied in: corners fall off
-export const VIGNETTE_FS = /* glsl */ `#version 300 es
-precision highp float;
-in vec2 vUv; uniform float uFade; out vec4 o;
-void main() {
-  vec2 q = vUv - 0.5;
-  float v = smoothstep(0.95, 0.25, length(q)) * 0.55 + 0.45;
-  o = vec4(vec3(v * uFade), 1.0);
+struct VSOut {
+  @builtin(position) pos: vec4<f32>,
+  @location(0) color: vec3<f32>,
+  @location(1) alpha: f32,
+  @location(2) localPos: vec3<f32>,
+};
+
+fn projectFloorNDC(xz: vec2<f32>) -> vec2<f32> {
+  let uv = (xz - u.causticBounds.xy) * u.causticBounds.z;
+  return vec2<f32>(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0);
+}
+
+@vertex
+fn vs_cut(
+  @location(0) localPos: vec3<f32>,
+  @location(1) localNorm: vec3<f32>,
+  @builtin(instance_index) inst: u32,
+) -> VSOut {
+  var out: VSOut;
+  let wp = poly.offset.xyz + qRot(poly.quat, localPos);
+  let wn = normalize(qRot(poly.quat, localNorm));
+  let L = normalize(u.lightDir.xyz);
+  let h = max(0.0, wp.y - u.causticBounds.w);
+  let above = smoothstep(-0.12, 0.16, poly.offset.y);
+  out.localPos = localPos;
+
+  if (inst == 0u) {
+    let t = h / max(0.14, L.y);
+    let xz = wp.xz - L.xz * t;
+    out.pos = vec4<f32>(projectFloorNDC(xz), 0.5, 1.0);
+    out.color = vec3<f32>(0.0);
+    // Poisoned black diamonds cast a darker, crisper shadow!
+    let shadowAlpha = select(0.42, 0.78, poly.info.z == 1u);
+    out.alpha = shadowAlpha * above;
+    return out;
+  }
+
+  // Poisoned black diamonds absorb all light (zero prismatic floor caustics)
+  if (poly.info.z == 1u) {
+    out.pos = vec4<f32>(2.0, 2.0, 2.0, 1.0);
+    out.color = vec3<f32>(0.0);
+    out.alpha = 0.0;
+    return out;
+  }
+
+  let disp = u.palCore.w;
+  var ior = u.halfSize.w;
+  var mask = vec3<f32>(1.0, 0.0, 0.0);
+  if (inst == 1u) {
+    ior -= disp * 0.85;
+    mask = vec3<f32>(1.0, 0.0, 0.0);
+  } else if (inst == 2u) {
+    mask = vec3<f32>(0.0, 1.0, 0.0);
+  } else {
+    ior += disp * 1.05;
+    mask = vec3<f32>(0.0, 0.0, 1.0);
+  }
+
+  let nFacing = select(-wn, wn, dot(wn, L) > 0.0);
+  var refr = refract(-L, nFacing, 1.0 / ior);
+  if (length(refr) < 0.01) { refr = -L; }
+  let rayDir = normalize(mix(-L, refr, 0.92));
+  let t = h / max(0.22, -rayDir.y);
+  let xz = wp.xz + rayDir.xz * t;
+
+  let tint = gemTint(poly.info.z, localPos, u);
+  let ndl = abs(dot(wn, L));
+  let focusBoost = 0.25 + 0.75 * pow(1.0 - abs(ndl - 0.52), 2.0);
+  let energy = focusBoost * (0.26 + 0.34 * ndl);
+
+  out.pos = vec4<f32>(projectFloorNDC(xz), 0.5, 1.0);
+  out.color = tint * mask * energy * 1.24 * above;
+  out.alpha = 0.0;
+  return out;
+}
+
+@fragment
+fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
+  let wave = 0.78 + 0.34 * sin(in.localPos.x * 24.0 + in.localPos.z * 19.0) * cos(in.localPos.y * 22.0);
+  return vec4<f32>(in.color * wave, in.alpha);
 }
 `;
 
-// glass in grains and splinters. Each turns as it flies and as the eye moves: dull most of the time, then a
-// flash of the lamp. Most are grains, a few are long
-export const DUST_VS = /* glsl */ `#version 300 es
-layout(location = 0) in vec4 aP; // position, life 0…1
-layout(location = 1) in float aSeed;
-uniform mat4 uVP; uniform float uPx; uniform vec3 uCam;
-out float vA; out vec3 vR;
-void main() {
-  gl_Position = uVP * vec4(aP.xyz, 1.0);
-  float ph = aSeed * 91.0 + dot(aP.xyz, vec3(190.0, 230.0, 170.0)) + dot(uCam, vec3(9.0));
-  float tw = 0.5 + 0.5 * sin(ph);
-  float big = pow(fract(aSeed * 7.3), 5.0);
-  // (one that flies at the lens is gone before it fills the picture)
-  vA = aP.w * (0.1 + 0.55 * tw * tw + 6.0 * pow(tw, 26.0)) * smoothstep(0.25, 0.7, gl_Position.w);
-  float a = aSeed * 40.0 + ph * 0.12;
-  vR = vec3(cos(a), sin(a), 1.0 + 3.5 * big);
-  gl_PointSize = clamp(uPx * (0.0016 + 0.013 * big) / gl_Position.w, 1.5, 28.0);
+export const GLASS_WGSL = /* wgsl */ `
+${COMMON_WGSL}
+
+@group(0) @binding(0) var<uniform> u: SceneUniforms;
+@group(0) @binding(1) var<uniform> poly: PolyPlanes;
+
+struct VSOut {
+  @builtin(position) pos: vec4<f32>,
+  @location(0) worldPos: vec3<f32>,
+  @location(1) worldNorm: vec3<f32>,
+  @location(2) localPos: vec3<f32>,
+  @location(3) localNorm: vec3<f32>,
+};
+
+@vertex
+fn vs_main(
+  @location(0) localPos: vec3<f32>,
+  @location(1) localNorm: vec3<f32>,
+) -> VSOut {
+  var out: VSOut;
+  let isCut = poly.info.y == 1u;
+  let q = select(u.blockQuat, poly.quat, isCut);
+  let basePos = select(u.blockCenter.xyz, poly.offset.xyz, isCut);
+  let wp = basePos + qRot(q, localPos);
+  let wn = normalize(qRot(q, localNorm));
+  out.pos = u.viewProj * vec4<f32>(wp, 1.0);
+  out.worldPos = wp;
+  out.worldNorm = wn;
+  out.localPos = localPos;
+  out.localNorm = normalize(localNorm);
+  return out;
+}
+
+struct Hit {
+  t: f32,
+  n: vec3<f32>,
+  planeIdx: i32,
+};
+
+/** Exact ray exit from inside a convex polyhedron, ignoring skipPlane so corner bounces have zero seam dots. */
+fn traceExit(ro: vec3<f32>, rd: vec3<f32>, skipPlane: i32) -> Hit {
+  var bestT = 1e6;
+  var bestN = rd;
+  var bestIdx: i32 = -1;
+  let count = poly.info.x;
+  for (var i = 0u; i < count; i = i + 1u) {
+    let ii = i32(i);
+    if (ii == skipPlane) { continue; }
+    let pl = poly.planes[i];
+    let denom = dot(pl.xyz, rd);
+    if (denom > 1e-6) {
+      let t = (pl.w - dot(pl.xyz, ro)) / denom;
+      if (t > -1e-4 && t < bestT) {
+        bestT = max(0.0, t);
+        bestN = pl.xyz;
+        bestIdx = ii;
+      }
+    }
+  }
+  return Hit(bestT, bestN, bestIdx);
+}
+
+fn traceChannel(
+  localRo: vec3<f32>,
+  localInDir: vec3<f32>,
+  localN: vec3<f32>,
+  worldCenter: vec3<f32>,
+  objQuat: vec4<f32>,
+  ior: f32,
+  ch: u32,
+) -> f32 {
+  var rd = refract(localInDir, localN, 1.0 / ior);
+  if (length(rd) < 0.001) {
+    let wRefl = qRot(objQuat, reflect(localInDir, localN));
+    return sampleStudioEnv(worldCenter, wRefl, u)[ch];
+  }
+  rd = normalize(rd);
+  var ro = localRo;
+  var skip: i32 = -1;
+  var throughput = 1.0;
+  var accum = 0.0;
+
+  for (var bounce = 0; bounce < 4; bounce = bounce + 1) {
+    let h = traceExit(ro, rd, skip);
+    if (h.planeIdx < 0 || h.t > 100.0) { break; }
+
+    // 3-point Beer-Lambert volumetric integration through the gemstone / Sommerso body
+    let p1 = ro + rd * (h.t * 0.22);
+    let p2 = ro + rd * (h.t * 0.50);
+    let p3 = ro + rd * (h.t * 0.78);
+    let s1 = gemSigma(poly.info.z, p1, u)[ch];
+    let s2 = gemSigma(poly.info.z, p2, u)[ch];
+    let s3 = gemSigma(poly.info.z, p3, u)[ch];
+    let avgSigma = (s1 + s2 * 1.4 + s3) / 3.4;
+    throughput *= exp(-avgSigma * h.t);
+
+    let hitP = ro + rd * h.t;
+    let outN = normalize(h.n);
+
+    let exitDir = refract(rd, -outN, ior);
+    if (length(exitDir) < 0.001) {
+      // Total Internal Reflection!
+      rd = normalize(reflect(rd, -outN));
+      ro = hitP;
+      skip = h.planeIdx;
+      throughput *= 0.95;
+    } else {
+      let cosOut = clamp(dot(rd, outN), 0.0, 1.0);
+      let F = fresnelSchlick(cosOut, 0.048);
+      let wExitPos = worldCenter + qRot(objQuat, hitP);
+      let wExitDir = normalize(qRot(objQuat, exitDir));
+      let env = sampleStudioEnv(wExitPos, wExitDir, u);
+      accum += throughput * (1.0 - F) * env[ch];
+
+      throughput *= F * 0.92;
+      if (throughput < 0.015) { break; }
+      rd = normalize(reflect(rd, -outN));
+      ro = hitP;
+      skip = h.planeIdx;
+    }
+  }
+
+  if (throughput > 0.015) {
+    let wDir = normalize(qRot(objQuat, rd));
+    accum += throughput * sampleStudioEnv(worldCenter, wDir, u)[ch] * 0.30;
+  }
+  return accum;
+}
+
+@fragment
+fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
+  let N = normalize(in.worldNorm);
+  let V = normalize(u.camPos.xyz - in.worldPos);
+  let inDirWorld = -V;
+  let cosV = max(0.0, dot(N, V));
+  let L = normalize(u.lightDir.xyz);
+  let H = normalize(L + V);
+
+  // Poisoned Black Diamond (poly.info.z == 1u): lethal jet-obsidian faceted diamond with mirror studio flashes!
+  if (poly.info.z == 1u) {
+    let F = fresnelSchlick(cosV, 0.17);
+    let reflDir = reflect(inDirWorld, N);
+    let envRefl = sampleStudioEnv(in.worldPos, reflDir, u);
+    // High-contrast mirror reflection on flat diamond facets (crisp dark flags vs dazzling white softboxes!)
+    let mirror = pow(max(envRefl, vec3<f32>(0.0)), vec3<f32>(1.85)) * 0.52;
+    let ndl = max(0.0, dot(N, L));
+    let edgeGrad = length(fwidth(in.worldNorm));
+    let edgeGlint = clamp(edgeGrad * 2.8, 0.0, 1.0);
+    let spec1 = pow(max(0.0, dot(N, H)), 260.0) * 4.2;
+    let H2 = normalize(normalize(vec3<f32>(0.68, 0.42, 0.60)) + V);
+    let spec2 = pow(max(0.0, dot(N, H2)), 140.0) * 1.8;
+    let H3 = normalize(normalize(vec3<f32>(-0.55, 0.65, 0.50)) + V);
+    let spec3 = pow(max(0.0, dot(N, H3)), 90.0) * 0.75;
+    // Deep jet-black core with subtle cool graphite facet separation & whisper of crimson at extreme grazing angle
+    let baseObsidian = vec3<f32>(0.004, 0.0045, 0.0065) + vec3<f32>(0.012, 0.013, 0.017) * ndl;
+    let grazingEdge = pow(clamp(1.0 - cosV, 0.0, 1.0), 5.0) * vec3<f32>(0.18, 0.025, 0.045);
+    let col = mix(baseObsidian, mirror, F * 0.92)
+            + vec3<f32>(0.96, 0.98, 1.0) * (spec1 + spec2 + spec3)
+            + vec3<f32>(0.55, 0.58, 0.64) * edgeGlint * (0.45 + 0.55 * F)
+            + grazingEdge;
+    return vec4<f32>(studioGrade(col, u.params.z), 1.0);
+  }
+
+  let isCut = poly.info.y == 1u;
+  let objQuat = select(u.blockQuat, poly.quat, isCut);
+  let center = select(u.blockCenter.xyz, poly.offset.xyz, isCut);
+
+  let localInDir = normalize(qInvRot(objQuat, inDirWorld));
+  let localN = normalize(in.localNorm);
+
+  let baseIor = u.halfSize.w;
+  let disp = u.palCore.w;
+
+  let rCol = traceChannel(in.localPos, localInDir, localN, center, objQuat, baseIor - disp, 0u);
+  let gCol = traceChannel(in.localPos, localInDir, localN, center, objQuat, baseIor, 1u);
+  let bCol = traceChannel(in.localPos, localInDir, localN, center, objQuat, baseIor + disp * 1.15, 2u);
+  let refracted = vec3<f32>(rCol, gCol, bCol);
+
+  // Crisp glossy Fresnel reflection of the bright-field studio softboxes & dark flags
+  let F = fresnelSchlick(cosV, 0.052);
+  let reflDir = reflect(inDirWorld, N);
+  let reflected = sampleStudioEnv(in.worldPos, reflDir, u);
+
+  // Sharp studio key specular highlight
+  let spec = pow(max(0.0, dot(N, H)), 180.0) * 2.6;
+
+  var col = mix(refracted, reflected, F * 0.94) + vec3<f32>(1.0, 0.99, 0.98) * spec;
+
+  // Razor-sharp glowing score line(s) where the cutting plane(s) slice the glass
+  if (poly.info.y == 0u && u.cutOffset.w < 0.5 && u.params.y > 0.5 && u.params.x > 0.5) {
+    let relW = in.worldPos - u.blockCenter.xyz;
+    let planeDist = dot(relW, normalize(u.cutPlaneN.xyz)) - u.blockCenter.w;
+    var cutLine = exp(-abs(planeDist) * 320.0);
+    var inOuter = planeDist > 0.0;
+    if (u.cutPlane2N.w >= 0.0) {
+      let planeDist2 = dot(relW, normalize(u.cutPlane2N.xyz)) - u.cutPlane2N.w;
+      cutLine = max(cutLine, exp(-abs(planeDist2) * 320.0));
+      inOuter = inOuter || (planeDist2 > 0.0);
+    }
+    col = mix(col, vec3<f32>(1.8, 1.85, 1.95), cutLine * 0.88);
+    if (inOuter) {
+      col = mix(col, col * vec3<f32>(1.05, 1.06, 1.09) + vec3<f32>(0.025), 0.30);
+    }
+  }
+
+  return vec4<f32>(studioGrade(col, u.params.z), 1.0);
 }
 `;
 
-export const DUST_FS = /* glsl */ `#version 300 es
-precision highp float;
-in float vA; in vec3 vR; uniform float uFlash; out vec4 o;
-void main() {
-  vec2 q = gl_PointCoord - 0.5;
-  q = vec2(q.x * vR.x + q.y * vR.y, (q.y * vR.x - q.x * vR.y) * vR.z);
-  float a = smoothstep(0.5, 0.1, length(q)) * vA;
-  o = vec4(vec3(0.72, 0.92, 0.86) * a * (0.5 + uFlash * 3.0), 1.0);
+export const CRACKS_WGSL = /* wgsl */ `
+${COMMON_WGSL}
+
+@group(0) @binding(0) var<uniform> u: SceneUniforms;
+@group(0) @binding(1) var<uniform> poly: PolyPlanes;
+
+struct VSOut {
+  @builtin(position) pos: vec4<f32>,
+  @location(0) worldPos: vec3<f32>,
+  @location(1) worldNorm: vec3<f32>,
+  @location(2) localPos: vec3<f32>,
+  @location(3) delay: f32,
+  @location(4) edgeFlag: f32,
+};
+
+fn hash31(p: vec3<f32>) -> f32 {
+  var q = fract(p * 0.1031);
+  q += dot(q, q.yzx + 33.33);
+  return fract((q.x + q.y) * q.z);
+}
+
+fn vnoise3(p: vec3<f32>) -> f32 {
+  let i = floor(p);
+  let f = fract(p);
+  let s = f * f * (3.0 - 2.0 * f);
+  let n000 = hash31(i + vec3<f32>(0.0, 0.0, 0.0));
+  let n100 = hash31(i + vec3<f32>(1.0, 0.0, 0.0));
+  let n010 = hash31(i + vec3<f32>(0.0, 1.0, 0.0));
+  let n110 = hash31(i + vec3<f32>(1.0, 1.0, 0.0));
+  let n001 = hash31(i + vec3<f32>(0.0, 0.0, 1.0));
+  let n101 = hash31(i + vec3<f32>(1.0, 0.0, 1.0));
+  let n011 = hash31(i + vec3<f32>(0.0, 1.0, 1.0));
+  let n111 = hash31(i + vec3<f32>(1.0, 1.0, 1.0));
+  let nx00 = mix(n000, n100, s.x);
+  let nx10 = mix(n010, n110, s.x);
+  let nx01 = mix(n001, n101, s.x);
+  let nx11 = mix(n011, n111, s.x);
+  return mix(mix(nx00, nx10, s.y), mix(nx01, nx11, s.y), s.z);
+}
+
+@vertex
+fn vs_main(
+  @location(0) localPos: vec3<f32>,
+  @location(1) localNorm: vec3<f32>,
+  @location(2) delay: f32,
+  @location(3) edgeFlag: f32,
+) -> VSOut {
+  var out: VSOut;
+  let wp = poly.offset.xyz + qRot(poly.quat, localPos);
+  let wn = normalize(qRot(poly.quat, localNorm));
+  out.pos = u.viewProj * vec4<f32>(wp, 1.0);
+  out.worldPos = wp;
+  out.worldNorm = wn;
+  out.localPos = localPos;
+  out.delay = delay;
+  out.edgeFlag = edgeFlag;
+  return out;
+}
+
+@fragment
+fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
+  // Subtle internal 3D Voronoi fracture planes sweeping outward from the cutting plane
+  // in exact sync with the exterior shard fracture seams!
+  let arrival = clamp(in.delay * 0.27, 0.0, 0.29);
+  let tNow = u.palTop.w;
+  if (tNow < arrival) {
+    discard;
+  }
+
+  let age = tNow - arrival;
+  // Progressive internal mirror brightening as air enters the widening 3D fracture planes
+  let openUp = smoothstep(0.0, 0.22, age);
+  let hp = in.localPos * 95.0;
+  let hackle = vec3<f32>(
+    vnoise3(hp) - 0.5,
+    vnoise3(hp + vec3<f32>(17.3, 9.1, 4.7)) - 0.5,
+    vnoise3(hp + vec3<f32>(5.2, 23.7, 13.9)) - 0.5
+  );
+  let N = normalize(in.worldNorm + hackle * 0.18);
+  let V = normalize(u.camPos.xyz - in.worldPos);
+  let ndv = abs(dot(N, V));
+
+  let L = normalize(u.lightDir.xyz);
+  let H = normalize(L + V);
+  let spec = pow(max(0.0, abs(dot(N, H))), 96.0);
+  let refl = sampleStudioEnv(in.worldPos, reflect(-V, N), u);
+  let tint = sommersoTint(in.localPos, u);
+
+  let tir = pow(clamp(1.0 - ndv, 0.0, 1.0), 3.0);
+  let waveFlash = exp(-age / 0.045) * 0.38;
+
+  let darkRefr = tint * 0.18;
+  let mirrorCol = mix(darkRefr, refl * (0.58 + 0.42 * tint), 0.55) + vec3<f32>(1.8) * (spec + waveFlash);
+  let alpha = clamp((0.012 + tir * (0.10 + 0.14 * openUp) + spec * 0.26 + waveFlash * 0.22), 0.0, 0.28);
+
+  return vec4<f32>(studioGrade(mirrorCol, u.params.z), alpha);
 }
 `;
 
-// glass ground to powder: soft puffs that hang in the air and drift. They go into the picture of the room, so
-// frosted glass in front of them blurs them like the rest of it
-export const HAZE_VS = /* glsl */ `#version 300 es
-layout(location = 0) in vec4 aP; // position, how thick it still is
-layout(location = 1) in vec2 aS; // radius in metres, seed
-uniform mat4 uVP; uniform float uPx;
-out float vA; out float vSeed; out vec3 vW;
-void main() {
-  gl_Position = uVP * vec4(aP.xyz, 1.0);
-  float px = uPx * aS.x * 2.0 / max(gl_Position.w, 0.05);
-  // (a point is only allowed to be so large: past that it thins out)
-  vA = aP.w * min(1.0, 240.0 / px) * smoothstep(0.3, 0.9, gl_Position.w); vSeed = aS.y; vW = aP.xyz;
-  gl_PointSize = min(px, 240.0);
-  if (aP.w <= 0.0) gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
+export const SURFACE_CRACKS_WGSL = /* wgsl */ `
+${COMMON_WGSL}
+
+@group(0) @binding(0) var<uniform> u: SceneUniforms;
+@group(0) @binding(1) var<uniform> poly: PolyPlanes;
+
+struct VSOut {
+  @builtin(position) pos: vec4<f32>,
+  @location(0) worldPos: vec3<f32>,
+  @location(1) worldNorm: vec3<f32>,
+  @location(2) localPos: vec3<f32>,
+  @location(3) across: f32,
+  @location(4) crackTime: f32,
+  @location(5) slant: f32,
+  @location(6) boldness: f32,
+};
+
+fn hash21(p: vec2<f32>) -> f32 {
+  var q = fract(p * vec2<f32>(123.34, 456.21));
+  q += dot(q, q + 45.32);
+  return fract(q.x * q.y);
+}
+
+fn vnoise2(p: vec2<f32>) -> f32 {
+  let i = floor(p);
+  let f = fract(p);
+  let s = f * f * (3.0 - 2.0 * f);
+  return mix(
+    mix(hash21(i), hash21(i + vec2<f32>(1.0, 0.0)), s.x),
+    mix(hash21(i + vec2<f32>(0.0, 1.0)), hash21(i + vec2<f32>(1.0, 1.0)), s.x),
+    s.y
+  );
+}
+
+@vertex
+fn vs_main(
+  @location(0) localPos: vec3<f32>,
+  @location(1) localNorm: vec3<f32>,
+  @location(2) across: f32,
+  @location(3) crackTime: f32,
+  @location(4) slant: f32,
+  @location(5) boldness: f32,
+) -> VSOut {
+  var out: VSOut;
+  let wp = poly.offset.xyz + qRot(poly.quat, localPos);
+  let wn = normalize(qRot(poly.quat, localNorm));
+  out.pos = u.viewProj * vec4<f32>(wp, 1.0);
+  out.worldPos = wp;
+  out.worldNorm = wn;
+  out.localPos = localPos;
+  out.across = across;
+  out.crackTime = crackTime;
+  out.slant = slant;
+  out.boldness = boldness;
+  return out;
+}
+
+@fragment
+fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
+  // Directional fracture wave: Voronoi shard seams unzip outward from the cutting plane
+  // and progressively widen + brighten with air-gap mirror sheen as breaking tension builds!
+  let tNow = u.palTop.w;
+  if (tNow < in.crackTime) {
+    discard;
+  }
+
+  let age = tNow - in.crackTime;
+  let openProg = smoothstep(0.0, 0.26, age); // 0 right as tip unzips -> 1 as cleft widens under tension
+  let fw = max(0.06, fwidth(in.across));
+  let sgn = select(-1.0, 1.0, in.slant >= 0.0);
+
+  let chipCoord = in.localPos.xy * 460.0 + in.localPos.z * 380.0 + vec2<f32>(in.slant * 17.0, 0.0);
+  let jag = (vnoise2(chipCoord * 0.65) - 0.5) * 0.24;
+  // Crack starts razor-thin at the advancing tip and opens progressively wider!
+  let widthGrow = 0.52 + 0.58 * openProg;
+  let a = (in.across + jag) / widthGrow;
+
+  // High-contrast double-walled crystal fracture seam:
+  // crisp dark obsidian TIR cleft paired with view-dependent silver-white glints!
+  let darkBand = 1.0 - smoothstep(0.05, 0.38 + fw, abs(a + sgn * 0.22));
+  let whiteBand = 1.0 - smoothstep(0.04, 0.44 + fw, abs(a - sgn * 0.22));
+
+  let N = normalize(in.worldNorm);
+  let V = normalize(u.camPos.xyz - in.worldPos);
+  // View-dependent slant glint: some seams flash dazzling silver-white, others sit dark obsidian TIR, shifting as the glass tumbles!
+  let angleCatch = smoothstep(0.15, 0.92, sin(in.slant * 3.1 + dot(V, N) * 4.2 + in.localPos.y * 8.0) * 0.5 + 0.5);
+  let glint = pow(vnoise2(chipCoord * 1.8 + V.xy * 12.0), 3.6);
+  let tipFlash = exp(-age / 0.065);
+  let spall = (1.0 - smoothstep(0.0, 1.0, abs(a))) * in.boldness * (0.20 + 0.80 * vnoise2(chipCoord * 1.4)) * (0.35 + 0.65 * openProg) * angleCatch;
+
+  let tint = sommersoTint(in.localPos, u);
+  let darkCol = tint * 0.08 + vec3<f32>(0.015, 0.020, 0.028);
+  let whiteCol = vec3<f32>(1.45, 1.50, 1.58) + vec3<f32>(1.85) * (glint + tipFlash);
+
+  let whiteWeight = clamp(whiteBand * (0.22 + 0.62 * angleCatch * (0.45 + 0.55 * openProg) + 0.75 * glint) + spall * 0.42 + tipFlash * 0.95, 0.0, 1.0);
+  let darkWeight = darkBand * (0.88 - 0.35 * tipFlash);
+
+  let totalA = clamp((max(whiteWeight, darkWeight) + spall * 0.22) * (0.62 + 0.38 * in.boldness), 0.0, 0.96);
+  if (totalA < 0.02) { discard; }
+
+  let mixRatio = whiteWeight / max(0.001, whiteWeight + darkWeight * 1.35);
+  let col = mix(darkCol, whiteCol, mixRatio);
+
+  return vec4<f32>(studioGrade(col, u.params.z), totalA);
 }
 `;
 
-export const HAZE_FS = COMMON + /* glsl */ `
-in float vA; in float vSeed; in vec3 vW;
-out vec4 o;
-void main() {
-  vec2 q = gl_PointCoord - 0.5;
-  float body = max(exp(-dot(q, q) * 14.0) - 0.03, 0.0);
-  // not a ball: wisps, each puff turned its own way
-  float t = vSeed * 6.283;
-  vec2 w = mat2(cos(t), -sin(t), sin(t), cos(t)) * q;
-  float n = 0.55 * vnoise(w * vec2(3.0, 6.0) + vSeed * 37.0) + 0.45 * vnoise(w * vec2(7.0, 13.0) + vSeed * 91.0);
-  float a = body * (0.08 + 2.1 * n * n) * vA;
-  // lit by the lamp over the floor, and by the shot: paler than a dark room, darker than a bright one
-  vec2 p = vW.xz - vec2(0.0, -0.25);
-  float lit = 0.07 + 0.34 * exp(-dot(p, p) / 1.5) + uFlash * 1.2;
-  o = vec4(tone(vec3(0.74, 0.8, 0.78) * lit) * a, a);
+export const SHARDS_BACK_WGSL = /* wgsl */ `
+${COMMON_WGSL}
+
+@group(0) @binding(0) var<uniform> u: SceneUniforms;
+@group(0) @binding(1) var<storage, read> poses: array<ShardPose>;
+
+struct VSOut {
+  @builtin(position) pos: vec4<f32>,
+  @location(0) worldPos: vec3<f32>,
+  @location(1) worldNorm: vec3<f32>,
+  @location(2) origPos: vec3<f32>,
+};
+
+@vertex
+fn vs_main(
+  @location(0) relPos: vec3<f32>,
+  @location(1) localNorm: vec3<f32>,
+  @location(2) origPos: vec3<f32>,
+  @location(3) shardIdF: f32,
+) -> VSOut {
+  var out: VSOut;
+  let sid = u32(shardIdF + 0.5);
+  let pose = poses[sid];
+  if (pose.pos.w < 0.5) {
+    out.pos = vec4<f32>(2.0, 2.0, 2.0, 1.0);
+    out.worldPos = vec3<f32>(0.0);
+    out.worldNorm = vec3<f32>(0.0, 1.0, 0.0);
+    out.origPos = origPos;
+    return out;
+  }
+
+  let wp = pose.pos.xyz + qRot(pose.quat, relPos);
+  let wn = normalize(qRot(pose.quat, localNorm));
+  out.pos = u.viewProj * vec4<f32>(wp, 1.0);
+  out.worldPos = wp;
+  out.worldNorm = wn;
+  out.origPos = origPos;
+  return out;
+}
+
+/** Offscreen pass: stores nearest back-face world normal (rgb) and camera distance (a) for exact shard thickness & TIR! */
+@fragment
+fn fs_depth(in: VSOut) -> @location(0) vec4<f32> {
+  let dist = length(u.camPos.xyz - in.worldPos);
+  return vec4<f32>(normalize(in.worldNorm), dist);
+}
+
+/** Translucent internal back-facet pass drawn into main scene before shard front faces so crystal depth & interior edges show through! */
+@fragment
+fn fs_inner(in: VSOut) -> @location(0) vec4<f32> {
+  let N = normalize(in.worldNorm);
+  let V = normalize(u.camPos.xyz - in.worldPos);
+  let ndv = abs(dot(N, V));
+  let tint = sommersoTint(in.origPos, u);
+  let refl = sampleStudioEnv(in.worldPos, reflect(-V, -N), u);
+
+  // Back facets inside glass catch grazing TIR dark/jewel bands and bright softbox streaks
+  let grazing = pow(clamp(1.0 - ndv, 0.0, 1.0), 1.9);
+  let L = normalize(u.lightDir.xyz);
+  let H = normalize(L + V);
+  let spec = pow(max(0.0, abs(dot(N, H))), 80.0) * 1.4;
+
+  let col = mix(tint * 0.45, refl * (0.45 + 0.55 * tint), 0.55) + vec3<f32>(1.15) * spec;
+  let alpha = clamp(0.08 + grazing * 0.44 + spec * 0.25, 0.0, 0.62);
+  return vec4<f32>(studioGrade(col, u.params.z), alpha);
 }
 `;
 
-// tape: grey cloth with a dull sheen. Same vertices as the glass, so a strip can ride on a shard
-export const TAPE_FS = COMMON + /* glsl */ `
-in vec3 vW; in vec2 vUv;
-out vec4 o;
-void main() {
-  vec2 q = vW.xz - vec2(0.0, -0.25);
-  float weave = 0.9 + 0.1 * vnoise(vUv * vec2(700.0, 1400.0)) + 0.06 * vnoise(vUv * 60.0);
-  vec3 c = vec3(0.2, 0.205, 0.215) * weave * (0.3 + 0.85 * exp(-dot(q, q) / 1.8) + uFlash);
-  o = vec4(tone(c), 1.0);
+export const SHARDS_WGSL = /* wgsl */ `
+${COMMON_WGSL}
+
+@group(0) @binding(0) var<uniform> u: SceneUniforms;
+@group(0) @binding(1) var<storage, read> poses: array<ShardPose>;
+@group(0) @binding(2) var bgTex: texture_2d<f32>;
+@group(0) @binding(3) var backTex: texture_2d<f32>;
+@group(0) @binding(4) var linearSamp: sampler;
+
+struct VSOut {
+  @builtin(position) pos: vec4<f32>,
+  @location(0) worldPos: vec3<f32>,
+  @location(1) worldNorm: vec3<f32>,
+  @location(2) origPos: vec3<f32>,
+  @location(3) relPos: vec3<f32>,
+  @location(4) gemIdF: f32,
+};
+
+@vertex
+fn vs_main(
+  @location(0) relPos: vec3<f32>,
+  @location(1) localNorm: vec3<f32>,
+  @location(2) origPos: vec3<f32>,
+  @location(3) shardIdF: f32,
+) -> VSOut {
+  var out: VSOut;
+  let sid = u32(shardIdF + 0.5);
+  let pose = poses[sid];
+  if (pose.pos.w < 0.5) {
+    out.pos = vec4<f32>(2.0, 2.0, 2.0, 1.0);
+    out.worldPos = vec3<f32>(0.0);
+    out.worldNorm = vec3<f32>(0.0, 1.0, 0.0);
+    out.origPos = origPos;
+    out.relPos = relPos;
+    out.gemIdF = 0.0;
+    return out;
+  }
+
+  let wp = pose.pos.xyz + qRot(pose.quat, relPos);
+  let wn = normalize(qRot(pose.quat, localNorm));
+  out.pos = u.viewProj * vec4<f32>(wp, 1.0);
+  out.worldPos = wp;
+  out.worldNorm = wn;
+  out.origPos = origPos;
+  out.relPos = relPos;
+  out.gemIdF = max(0.0, floor(pose.pos.w - 0.5));
+  return out;
+}
+
+@fragment
+fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
+  // Compute implicit screen-space derivatives in UNIFORM control flow before branching on per-shard gemId!
+  let edgeGrad = length(fwidth(in.worldNorm));
+  let gemId = u32(in.gemIdF + 0.5);
+  if (gemId == 1u) {
+    let N = normalize(in.worldNorm);
+    let V = normalize(u.camPos.xyz - in.worldPos);
+    let cosV = max(0.0, dot(N, V));
+    let F = fresnelSchlick(cosV, 0.17);
+    let envRefl = sampleStudioEnv(in.worldPos, reflect(-V, N), u);
+    let mirror = pow(max(envRefl, vec3<f32>(0.0)), vec3<f32>(1.8)) * 0.50;
+    let L = normalize(u.lightDir.xyz);
+    let H = normalize(L + V);
+    let spec = pow(max(0.0, dot(N, H)), 220.0) * 3.6;
+    let bevel = clamp(edgeGrad * 2.4, 0.0, 1.0) * 0.45;
+    let col = mix(vec3<f32>(0.005, 0.005, 0.008), mirror, F * 0.9)
+            + vec3<f32>(0.96, 0.98, 1.0) * spec
+            + vec3<f32>(0.5, 0.52, 0.58) * bevel;
+    return vec4<f32>(studioGrade(col, u.params.z), 1.0);
+  }
+  // Subtle conchoidal fracture micro-ripple breaks flat plastic glare into real liquid-glass reflections
+  let rp = in.origPos * 28.0 + in.relPos * 19.0;
+  let ripple = vec3<f32>(
+    sin(rp.y * 1.3 + rp.z * 0.9),
+    cos(rp.z * 1.1 - rp.x * 1.4),
+    sin(rp.x * 1.2 + rp.y * 0.8)
+  ) * 0.032;
+  let N = normalize(in.worldNorm + ripple);
+  let V = normalize(u.camPos.xyz - in.worldPos);
+  let inDir = -V;
+  let cosV = max(0.0, dot(N, V));
+  let F = fresnelSchlick(cosV, 0.052);
+
+  // Sample exact back-face depth & normal from shardBackTex
+  let dims = vec2<f32>(textureDimensions(bgTex));
+  let screenUV = in.pos.xy / max(dims, vec2<f32>(1.0));
+  let backSample = textureSampleLevel(backTex, linearSamp, screenUV, 0.0);
+  let frontDist = length(u.camPos.xyz - in.worldPos);
+  let hasBack = backSample.a > frontDist + 0.001;
+  let rawThick = select(0.055, clamp(backSample.a - frontDist, 0.004, 0.34), hasBack);
+  let backN = select(-N, normalize(backSample.rgb), hasBack && length(backSample.rgb) > 0.1);
+
+  // First refraction: air -> glass
+  let ior = u.halfSize.w;
+  var rd1 = refract(inDir, N, 1.0 / ior);
+  if (length(rd1) < 0.01) { rd1 = inDir; }
+  rd1 = normalize(rd1);
+
+  // Second refraction at the shard's actual back facet: glass -> air (or Total Internal Reflection!)
+  let rd2 = refract(rd1, -backN, ior);
+  let isTIR = length(rd2) < 0.01;
+
+  // Beer-Lambert volumetric absorption scaled by TRUE geometric shard thickness!
+  // Colored gemstone shards get a modest path boost so small scattered facets stay vibrant on the white studio floor.
+  let sigma = gemSigma(gemId, in.origPos, u);
+  let gemBoost = select(1.0, 2.25, gemId >= 3u);
+  let opticalPath = rawThick * (1.25 + 0.65 * (1.0 - cosV)) * gemBoost;
+  let transmit = exp(-sigma * opticalPath);
+
+  var refrCol: vec3<f32>;
+  if (isTIR) {
+    // True Total Internal Reflection inside the shard -> crisp dark jewel mirror + bright softbox glint!
+    let tirDir = normalize(reflect(rd1, -backN));
+    let tirEnv = sampleStudioEnv(in.worldPos, tirDir, u);
+    // Longer internal bounce path intensifies the Murano glass jewel tone
+    let deepAbsorb = exp(-sigma * (opticalPath * 1.9 + 0.06));
+    refrCol = tirEnv * deepAbsorb * 0.92;
+  } else {
+    // Refracted exit ray samples the REAL studio floor, rainbow caustics & background behind the shard
+    // with chromatic R/G/B dispersion!
+    let bend = rd2 - inDir;
+    // Project 3D bend into screen UV offset (stronger for thicker glass!)
+    let refrScale = clamp(rawThick * 0.55 + 0.018, 0.014, 0.095);
+    let disp = u.palCore.w * 0.55;
+    let uvG = clamp(screenUV + vec2<f32>(bend.x, -bend.y) * refrScale, vec2<f32>(0.002), vec2<f32>(0.998));
+    let uvR = clamp(screenUV + vec2<f32>(bend.x, -bend.y) * refrScale * (1.0 - disp * 3.0), vec2<f32>(0.002), vec2<f32>(0.998));
+    let uvB = clamp(screenUV + vec2<f32>(bend.x, -bend.y) * refrScale * (1.0 + disp * 3.5), vec2<f32>(0.002), vec2<f32>(0.998));
+
+    // Convert sRGB bgTex samples back to linear before Beer-Lambert tinting!
+    let bgR = pow(textureSampleLevel(bgTex, linearSamp, uvR, 0.0).r, 2.2);
+    let bgG = pow(textureSampleLevel(bgTex, linearSamp, uvG, 0.0).g, 2.2);
+    let bgB = pow(textureSampleLevel(bgTex, linearSamp, uvB, 0.0).b, 2.2);
+    let bgLin = vec3<f32>(bgR, bgG, bgB);
+
+    // Subtle internal back-face reflection layered inside the shard
+    let innerReflDir = normalize(reflect(rd1, -backN));
+    let innerRefl = sampleStudioEnv(in.worldPos, innerReflDir, u);
+    let cosBack = clamp(dot(rd1, backN), 0.0, 1.0);
+    let fBack = fresnelSchlick(cosBack, 0.05);
+
+    refrCol = mix(bgLin, innerRefl * 0.85, fBack * 0.55) * transmit;
+  }
+
+  // Sharp glossy outer studio Fresnel reflection (curbed slightly on flat faces so no solid-white plastic blowouts!)
+  let reflDir = reflect(inDir, N);
+  let envRefl = sampleStudioEnv(in.worldPos, reflDir, u);
+  let softRefl = envRefl / (vec3<f32>(1.0) + envRefl * 0.35);
+
+  // Tight crystal specular glint from key light & secondary rim light
+  let L = normalize(u.lightDir.xyz);
+  let H = normalize(L + V);
+  let spec1 = pow(max(0.0, dot(N, H)), 220.0) * 2.8;
+  let L2 = normalize(vec3<f32>(0.65, 0.55, 0.52));
+  let H2 = normalize(L2 + V);
+  let spec2 = pow(max(0.0, dot(N, H2)), 160.0) * 1.1;
+
+  // Razor-thin edge definition where shard faces meet (dark TIR edge + bright jewel rim)
+  let bevelGlint = clamp(edgeGrad * 1.8, 0.0, 1.0);
+  let rimTint = gemTint(gemId, in.origPos, u);
+
+  var col = mix(refrCol, softRefl, F * 0.88);
+  col += vec3<f32>(1.0, 0.99, 0.98) * (spec1 + spec2);
+  // Subtle sparkling crystal edge catch
+  col += (rimTint * 0.35 + vec3<f32>(0.45)) * bevelGlint * (0.25 + 0.75 * F);
+
+  // Blend slightly with the translucent back-facet pass already in the framebuffer along ultra-thin edges
+  let edgeAlpha = clamp(0.76 + 0.24 * smoothstep(0.004, 0.035, rawThick) + F * 0.22, 0.0, 0.98);
+  return vec4<f32>(studioGrade(col, u.params.z), edgeAlpha);
+}
+`;
+
+export const SPLINTERS_COMPUTE_WGSL = /* wgsl */ `
+${COMMON_WGSL}
+
+struct Splinter {
+  pos: vec4<f32>,   // xyz = world pos, w = size (0 = inactive)
+  vel: vec4<f32>,   // xyz = world vel, w = age
+  rot: vec4<f32>,   // xyz = spin euler angles, w = maxAge
+  color: vec4<f32>, // rgb = Sommerso tint, w = spinSpeed
+};
+
+@group(0) @binding(0) var<uniform> u: SceneUniforms;
+@group(0) @binding(1) var<storage, read_write> splinters: array<Splinter>;
+
+fn hash11(p: f32) -> f32 {
+  var x = fract(p * 0.1031);
+  x *= x + 33.33;
+  x *= x + x;
+  return fract(x);
+}
+
+@compute @workgroup_size(64)
+fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {
+  let idx = gid.x;
+  if (idx >= arrayLength(&splinters)) { return; }
+
+  var s = splinters[idx];
+  if (s.pos.w <= 0.0) { return; }
+
+  let dt = clamp(u.params.w, 0.0, 0.04);
+  if (dt <= 0.0) { return; }
+
+  s.vel.w += dt;
+  if (s.vel.w >= s.rot.w) {
+    s.pos.w = 0.0;
+    splinters[idx] = s;
+    return;
+  }
+
+  let floorY = u.causticBounds.w + s.pos.w * 0.32;
+  let onFloor = s.pos.y <= floorY + 0.0005 && abs(s.vel.y) < 0.22;
+
+  if (onFloor) {
+    // Resting/sliding on the studio floor: no gravity jitter, rapid friction & complete rest!
+    s.pos.y = floorY;
+    s.vel.y = 0.0;
+    let slideDecay = exp(-dt * 18.0);
+    s.vel.x *= slideDecay;
+    s.vel.z *= slideDecay;
+    s.color.w *= exp(-dt * 22.0);
+    if (length(s.vel.xz) < 0.035) {
+      s.vel.x = 0.0;
+      s.vel.z = 0.0;
+      s.color.w = 0.0;
+    } else {
+      s.pos.x += s.vel.x * dt;
+      s.pos.z += s.vel.z * dt;
+    }
+  } else {
+    let drag = exp(-dt * (0.45 + 0.014 / max(0.004, s.pos.w)));
+    s.vel.y -= 9.81 * dt;
+    s.vel = vec4<f32>(s.vel.xyz * drag, s.vel.w);
+    s.pos = vec4<f32>(s.pos.xyz + s.vel.xyz * dt, s.pos.w);
+
+    if (s.pos.y <= floorY) {
+      s.pos.y = floorY;
+      if (abs(s.vel.y) > 0.26) {
+        let r1 = hash11(f32(idx) * 1.7 + u.camPos.w * 13.3) - 0.5;
+        let r2 = hash11(f32(idx) * 2.9 + u.camPos.w * 7.1) - 0.5;
+        s.vel.y = -s.vel.y * (0.24 + 0.14 * abs(r1));
+        s.vel.x = s.vel.x * 0.58 + r1 * 0.22;
+        s.vel.z = s.vel.z * 0.58 + r2 * 0.22;
+        s.color.w *= 0.45;
+      } else {
+        s.vel.y = 0.0;
+        s.vel.x *= 0.4;
+        s.vel.z *= 0.4;
+        s.color.w *= 0.15;
+      }
+    }
+
+    // Rotate only while actually airborne/moving
+    let spd = length(s.vel.xyz);
+    if (spd > 0.06 && s.color.w > 0.1) {
+      let spin = s.color.w * clamp(spd * 0.7, 0.0, 1.0);
+      s.rot = vec4<f32>(
+        s.rot.x + spin * dt * 1.3,
+        s.rot.y + spin * dt * 1.7,
+        s.rot.z + spin * dt * 0.9,
+        s.rot.w
+      );
+    }
+  }
+
+  splinters[idx] = s;
+}
+`;
+
+export const SPLINTERS_RENDER_WGSL = /* wgsl */ `
+${COMMON_WGSL}
+
+struct Splinter {
+  pos: vec4<f32>,
+  vel: vec4<f32>,
+  rot: vec4<f32>,
+  color: vec4<f32>,
+};
+
+@group(0) @binding(0) var<uniform> u: SceneUniforms;
+@group(0) @binding(1) var<storage, read> splinters: array<Splinter>;
+
+struct VSOut {
+  @builtin(position) pos: vec4<f32>,
+  @location(0) worldPos: vec3<f32>,
+  @location(1) worldNorm: vec3<f32>,
+  @location(2) color: vec3<f32>,
+  @location(3) fade: f32,
+};
+
+fn rotEuler(e: vec3<f32>, v: vec3<f32>) -> vec3<f32> {
+  let cx = cos(e.x); let sx = sin(e.x);
+  let cy = cos(e.y); let sy = sin(e.y);
+  let cz = cos(e.z); let sz = sin(e.z);
+  var p = vec3<f32>(v.x, v.y * cx - v.z * sx, v.y * sx + v.z * cx);
+  p = vec3<f32>(p.x * cy + p.z * sy, p.y, -p.x * sy + p.z * cy);
+  return vec3<f32>(p.x * cz - p.y * sz, p.x * sz + p.y * cz, p.z);
+}
+
+@vertex
+fn vs_main(
+  @builtin(vertex_index) vi: u32,
+  @builtin(instance_index) ii: u32,
+) -> VSOut {
+  var out: VSOut;
+  let s = splinters[ii];
+  if (s.pos.w <= 0.0) {
+    out.pos = vec4<f32>(2.0, 2.0, 2.0, 1.0);
+    out.worldPos = vec3<f32>(0.0);
+    out.worldNorm = vec3<f32>(0.0, 1.0, 0.0);
+    out.color = vec3<f32>(0.0);
+    out.fade = 0.0;
+    return out;
+  }
+
+  var corners = array<vec3<f32>, 4>(
+    vec3<f32>(0.0, 1.4, 0.0),
+    vec3<f32>(-0.52, -0.42, 0.40),
+    vec3<f32>(0.58, -0.36, 0.28),
+    vec3<f32>(-0.08, -0.48, -0.64)
+  );
+  var idx = array<u32, 12>(
+    0u, 1u, 2u,
+    0u, 2u, 3u,
+    0u, 3u, 1u,
+    1u, 3u, 2u
+  );
+  let triBase = (vi / 3u) * 3u;
+  let a = corners[idx[triBase]];
+  let b = corners[idx[triBase + 1u]];
+  let c = corners[idx[triBase + 2u]];
+  let nLocal = normalize(cross(b - a, c - a));
+  let vLocal = corners[idx[vi]];
+
+  let fade = clamp((s.rot.w - s.vel.w) / 1.8, 0.0, 1.0);
+  let sz = s.pos.w * fade;
+  let wp = s.pos.xyz + rotEuler(s.rot.xyz, vLocal * sz);
+  let wn = normalize(rotEuler(s.rot.xyz, nLocal));
+
+  out.pos = u.viewProj * vec4<f32>(wp, 1.0);
+  out.worldPos = wp;
+  out.worldNorm = wn;
+  out.color = s.color.rgb;
+  out.fade = fade;
+  return out;
+}
+
+@fragment
+fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
+  let N = normalize(in.worldNorm);
+  let V = normalize(u.camPos.xyz - in.worldPos);
+  let L = normalize(u.lightDir.xyz);
+  let H = normalize(L + V);
+
+  let spec = pow(max(0.0, abs(dot(N, H))), 48.0) * 4.5;
+  let fres = fresnelSchlick(abs(dot(N, V)), 0.10);
+  let envRefl = sampleStudioEnv(in.worldPos, reflect(-V, N), u);
+  let col = in.color * mix(envRefl * 0.68, vec3<f32>(0.24 + 0.62 * abs(dot(N, L))), 0.45) + vec3<f32>(1.4, 1.38, 1.36) * (spec + fres * 0.35);
+  return vec4<f32>(studioGrade(col, u.params.z), in.fade * 0.94);
+}
+`;
+
+export const PLANE_WGSL = /* wgsl */ `
+${COMMON_WGSL}
+
+@group(0) @binding(0) var<uniform> u: SceneUniforms;
+
+struct VSOut {
+  @builtin(position) pos: vec4<f32>,
+  @location(0) uv: vec2<f32>, // x = along line (-1..+1), y = across line (-1..+1)
+};
+
+@vertex
+fn vs_main(@builtin(vertex_index) vi: u32, @builtin(instance_index) inst: u32) -> VSOut {
+  var quad = array<vec2<f32>, 6>(
+    vec2<f32>(-1.0, -1.0), vec2<f32>(1.0, -1.0), vec2<f32>(1.0, 1.0),
+    vec2<f32>(-1.0, -1.0), vec2<f32>(1.0, 1.0), vec2<f32>(-1.0, 1.0)
+  );
+  let uv = quad[vi];
+  var n = normalize(u.cutPlaneN.xyz);
+  var rad = u.blockCenter.w;
+  if (inst == 1u) {
+    if (u.cutPlane2N.w < 0.0) {
+      var hidden: VSOut;
+      hidden.pos = vec4<f32>(2.0, 2.0, 2.0, 1.0);
+      hidden.uv = vec2<f32>(2.0, 2.0);
+      return hidden;
+    }
+    n = normalize(u.cutPlane2N.xyz);
+    rad = u.cutPlane2N.w;
+  }
+
+  let center = u.blockCenter.xyz + n * rad;
+  let toCam = normalize(u.camPos.xyz - center);
+  // Line direction lies strictly inside the cutting plane and perpendicular to the camera ray
+  var lineDir = cross(n, toCam);
+  if (length(lineDir) < 0.02) {
+    lineDir = cross(n, vec3<f32>(0.0, 1.0, 0.0));
+  }
+  lineDir = normalize(lineDir);
+  // Screen-facing thin ribbon width axis perpendicular to both lineDir and view ray
+  let sideDir = normalize(cross(toCam, lineDir));
+
+  let halfLen = 0.50;
+  let halfThick = 0.0028;
+  let wp = center + lineDir * (uv.x * halfLen) + sideDir * (uv.y * halfThick);
+
+  var out: VSOut;
+  out.pos = u.viewProj * vec4<f32>(wp, 1.0);
+  out.uv = uv;
+  return out;
+}
+
+@fragment
+fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
+  if (abs(in.uv.x) > 1.0 || abs(in.uv.y) > 1.0) { discard; }
+
+  let hover = u.palEdge.w;
+  let canCut = u.params.y;
+  let vis = u.params.x;
+
+  // Razor-sharp anti-aliased architectural hairline that tapers softly at its two ends
+  let fw = max(0.08, fwidth(in.uv.y));
+  let core = 1.0 - smoothstep(0.18 + 0.16 * hover, 0.55 + 0.15 * hover + fw, abs(in.uv.y));
+  let endFade = 1.0 - smoothstep(0.68, 1.0, abs(in.uv.x));
+  let alpha = clamp(core * endFade * (0.58 + 0.28 * hover + 0.14 * canCut) * vis, 0.0, 0.92);
+  if (alpha < 0.01) { discard; }
+
+  let col = mix(vec3<f32>(0.12, 0.12, 0.13), vec3<f32>(0.02, 0.02, 0.02), hover);
+  return vec4<f32>(col, alpha);
+}
+`;
+
+export const SECTION_WGSL = /* wgsl */ `
+${COMMON_WGSL}
+
+@group(0) @binding(0) var<uniform> u: SceneUniforms;
+
+struct VSOut {
+  @builtin(position) pos: vec4<f32>,
+};
+
+@vertex
+fn vs_main(@location(0) worldPos: vec3<f32>) -> VSOut {
+  var out: VSOut;
+  out.pos = u.viewProj * vec4<f32>(worldPos, 1.0);
+  return out;
+}
+
+@fragment
+fn fs_main() -> @location(0) vec4<f32> {
+  return vec4<f32>(0.06, 0.06, 0.07, 0.85 * u.params.x);
 }
 `;
