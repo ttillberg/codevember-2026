@@ -659,21 +659,21 @@ function animate(now: number) {
   fillLight.intensity = 0.08 + roomLampLevel * 0.30;
   hemi.intensity = 0.12 + roomLampLevel * 0.22;
 
-  // Smooth pointer parallax around the desk view (suspended during fullscreen CRT mode)
-  const pk = Math.min(1, dt * 4.8);
+  // Subtle, calm pointer parallax around the desk view (suspended during fullscreen CRT mode)
+  const pk = Math.min(1, dt * 3.4);
   const pTargetX = focusedMode ? 0 : parallaxTarget.x;
   const pTargetY = focusedMode ? 0 : parallaxTarget.y;
   parallax.x += (pTargetX - parallax.x) * pk;
   parallax.y += (pTargetY - parallax.y) * pk;
 
   desiredPos.set(
-    camGoalPos.x + parallax.x * 0.62,
-    camGoalPos.y - parallax.y * 0.26,
-    camGoalPos.z - Math.abs(parallax.x) * 0.08,
+    camGoalPos.x + parallax.x * 0.24,
+    camGoalPos.y - parallax.y * 0.10,
+    camGoalPos.z - Math.abs(parallax.x) * 0.02,
   );
   desiredTarget.set(
-    camGoalTarget.x + parallax.x * 0.14,
-    camGoalTarget.y - parallax.y * 0.08,
+    camGoalTarget.x + parallax.x * 0.05,
+    camGoalTarget.y - parallax.y * 0.03,
     camGoalTarget.z,
   );
 
