@@ -22,6 +22,11 @@
   </head>
   <body>
     <canvas id="c"></canvas>
+    <!-- Full-viewport Commodore 64 blue screen mode (toggled by top-right button or double-clicking CRT) -->
+    <div id="crt-fullscreen" class="crt-fullscreen" aria-hidden="true">
+      <canvas id="crt-fs-canvas" width="384" height="272"></canvas>
+      <div class="crt-fs-scanlines" aria-hidden="true"></div>
+    </div>
     <!-- Hidden input for touch/mobile virtual keyboards when tapping the CRT screen -->
     <input id="touch-kbd" type="text" tabindex="-1" autocomplete="off" autocorrect="off" autocapitalize="characters" spellcheck="false" aria-label="Commodore 64 keyboard input" />
 

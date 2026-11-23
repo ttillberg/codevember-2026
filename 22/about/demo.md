@@ -11,9 +11,10 @@ Ten seconds on the 1984 Swedish bedroom desk: the Commodore 1702 CRT, Commodore 
 ```steps
 # Kick off live typing of the 3-line echo program + celebratory fireworks!
 js void (async () => { const type = async (s) => { for (const ch of s) { window.dispatchEvent(new KeyboardEvent('keydown', { key: ch })); await new Promise((r) => setTimeout(r, 52)); } window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' })); await new Promise((r) => setTimeout(r, 260)); }; await new Promise((r) => setTimeout(r, 350)); await type('10 INPUT A$'); await type('20 PRINT A$'); await type('30 GOTO 10'); await type('RUN'); await new Promise((r) => setTimeout(r, 200)); await type('HELLO 1984'); await new Promise((r) => setTimeout(r, 1200)); await type('ECHO... ECHO...'); })()
-wait 1800
-drag 600,540 500,515 2800ms
+wait 1400
+move 260,460 2800ms
 wait 900
-drag 500,515 620,540 2800ms
-wait 1600
+move 940,560 2800ms
+wait 800
+move 600,520 1200ms
 ```

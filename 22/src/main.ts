@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+import { C64_PALETTE_RGB } from './c64/charset';
 import { C64Screen } from './c64/screen';
 import { C64Basic } from './c64/basic';
 import { C64FloppyDisk } from './c64/disk';
@@ -21,6 +21,9 @@ const params = new URLSearchParams(location.search);
 if (params.has('clean')) document.body.classList.add('clean');
 
 const canvas = document.querySelector<HTMLCanvasElement>('#c')!;
+const crtFsEl = document.querySelector<HTMLElement>('#crt-fullscreen')!;
+const crtFsCanvas = document.querySelector<HTMLCanvasElement>('#crt-fs-canvas')!;
+const crtFsCtx = crtFsCanvas.getContext('2d')!;
 const touchInput = document.querySelector<HTMLInputElement>('#touch-kbd')!;
 const btnFocus = document.querySelector<HTMLButtonElement>('#btn-focus')!;
 const btnSound = document.querySelector<HTMLButtonElement>('#btn-sound')!;
@@ -82,28 +85,24 @@ scene.fog = new THREE.FogExp2(0x0d0c0b, 0.026);
 
 const camera = new THREE.PerspectiveCamera(34, window.innerWidth / window.innerHeight, 0.1, 60);
 
-const controls = new OrbitControls(camera, canvas);
-controls.enableDamping = true;
-controls.dampingFactor = 0.07;
-controls.enablePan = false;
-controls.minDistance = 2.9;
-controls.maxDistance = 13.0;
-controls.maxPolarAngle = Math.PI * 0.495; // stay above the desk surface
-controls.minPolarAngle = 0.2;
-
-// Camera presets: hero desk view (monitor + paper in front) vs close-up typing focus
+// Camera presets + gentle pointer parallax (no orbit tumble!)
 let focusedMode = false;
 const camGoalPos = new THREE.Vector3();
 const camGoalTarget = new THREE.Vector3();
-let camAnimating = false;
+const camCurPos = new THREE.Vector3();
+const camCurTarget = new THREE.Vector3();
+const parallaxTarget = { x: 0, y: 0 };
+const parallax = { x: 0, y: 0 };
+const desiredPos = new THREE.Vector3();
+const desiredTarget = new THREE.Vector3();
 
 function computePreset(focused: boolean) {
   const aspect = window.innerWidth / Math.max(1, window.innerHeight);
 
   if (focused) {
-    const narrow = aspect < 1.15 ? Math.min(2.1, 1.15 / Math.max(0.5, aspect)) : 1.0;
+    // Zoom straight into the CRT screen while the full-viewport C64 blue screen fades in
     camGoalTarget.set(0, 1.98, 1.0);
-    camGoalPos.set(0, 2.02, 5.1 * narrow);
+    camGoalPos.set(0, 2.02, 4.2);
   } else {
     // Big centered 1702 CRT with the C64C cropping naturally at the bottom foreground, 1541 + TAC-2 on the right, cheat sheet + lamp on the left
     const narrow = aspect < 1.50 ? Math.min(2.15, 1.50 / Math.max(0.55, aspect)) : 1.0;
@@ -113,9 +112,10 @@ function computePreset(focused: boolean) {
 }
 
 computePreset(false);
-camera.position.copy(camGoalPos);
-controls.target.copy(camGoalTarget);
-controls.update();
+camCurPos.copy(camGoalPos);
+camCurTarget.copy(camGoalTarget);
+camera.position.copy(camCurPos);
+camera.lookAt(camCurTarget);
 
 // ---- Commodore 1702 Monitor, 1541 Floppy Drive, Orange Desk Lamp, Cheat Paper & BIC Pen ----
 const monitor = new Commodore1702(screen.canvas);
@@ -229,8 +229,7 @@ function releaseKnob() {
   }
   activeKnob = null;
   activeKnobPointerId = null;
-  controls.enabled = true;
-  setCursor('grab');
+  setCursor('default');
 }
 
 function pickScene(clientX: number, clientY: number): SceneHit | null {
@@ -261,16 +260,23 @@ canvas.addEventListener('pointerdown', (e) => {
   multiTouchGesture = false;
 
   downPos = { x: e.clientX, y: e.clientY };
-  camAnimating = false;
 
   const hit = pickScene(e.clientX, e.clientY);
   if (hit?.kind === 'knob' && hit.knob) {
     activeKnob = hit.knob;
     activeKnobPointerId = e.pointerId;
     lastKnobY = e.clientY;
-    controls.enabled = false;
     canvas.setPointerCapture(e.pointerId);
     setCursor('ns-resize');
+  }
+});
+
+window.addEventListener('pointermove', (e) => {
+  if (e.pointerType !== 'touch') {
+    const nx = (e.clientX / Math.max(1, window.innerWidth) - 0.5) * 2;
+    const ny = (e.clientY / Math.max(1, window.innerHeight) - 0.5) * 2;
+    parallaxTarget.x = Math.max(-1, Math.min(1, nx));
+    parallaxTarget.y = Math.max(-1, Math.min(1, ny));
   }
 });
 
@@ -303,7 +309,7 @@ canvas.addEventListener('pointermove', (e) => {
     } else if (hit?.kind === 'screen') {
       setCursor('text');
     } else {
-      setCursor('grab');
+      setCursor('default');
     }
   }
 });
@@ -311,6 +317,8 @@ canvas.addEventListener('pointermove', (e) => {
 canvas.addEventListener('pointerleave', () => {
   deskPaper.setHovered(false);
   bicPen.setHovered(false);
+  parallaxTarget.x = 0;
+  parallaxTarget.y = 0;
 });
 
 canvas.addEventListener('pointercancel', (e) => {
@@ -403,8 +411,15 @@ canvas.addEventListener('dblclick', (e) => {
   }
 });
 
-controls.addEventListener('start', () => {
-  camAnimating = false;
+crtFsEl.addEventListener('dblclick', () => {
+  setFocused(false);
+});
+
+crtFsEl.addEventListener('pointerdown', (e) => {
+  sound.unlock();
+  if (e.pointerType === 'touch') {
+    touchInput.focus({ preventScroll: true });
+  }
 });
 
 // ---- Cheat Paper Overlay ----
@@ -555,12 +570,26 @@ touchInput.addEventListener('input', () => {
   }
 });
 
+// ---- Fullscreen C64 Blue Screen Sync ----
+let lastFsBorder = -1;
+function syncFullscreenScreen(force = false) {
+  if (!focusedMode && !force) return;
+  crtFsCtx.drawImage(screen.canvas, 0, 0);
+  if (force || screen.borderColor !== lastFsBorder) {
+    lastFsBorder = screen.borderColor;
+    const [r, g, b] = C64_PALETTE_RGB[screen.borderColor];
+    crtFsEl.style.backgroundColor = `rgb(${r}, ${g}, ${b})`;
+  }
+}
+
 // ---- Top-right Controls ----
 function setFocused(on: boolean) {
   focusedMode = on;
   btnFocus.setAttribute('aria-pressed', String(on));
+  crtFsEl.classList.toggle('open', on);
+  crtFsEl.setAttribute('aria-hidden', String(!on));
+  if (on) syncFullscreenScreen(true);
   computePreset(on);
-  camAnimating = true;
 }
 
 btnFocus.addEventListener('click', () => {
@@ -589,7 +618,7 @@ function resize() {
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
   renderer.setSize(w, h);
   canvasRect = canvas.getBoundingClientRect();
-  if (camAnimating) computePreset(focusedMode);
+  computePreset(focusedMode);
 }
 window.addEventListener('resize', resize);
 document.addEventListener('visibilitychange', () => {
@@ -610,6 +639,7 @@ function animate(now: number) {
   screen.tick(dt);
   if (screen.render()) {
     monitor.markScreenDirty();
+    syncFullscreenScreen(false);
   }
 
   monitor.update(dt, elapsed, screen.getScreenGlowColor());
@@ -629,21 +659,30 @@ function animate(now: number) {
   fillLight.intensity = 0.08 + roomLampLevel * 0.30;
   hemi.intensity = 0.12 + roomLampLevel * 0.22;
 
-  if (camAnimating) {
-    const k = Math.min(1, dt * 6.5);
-    camera.position.lerp(camGoalPos, k);
-    controls.target.lerp(camGoalTarget, k);
-    if (
-      camera.position.distanceTo(camGoalPos) < 0.008 &&
-      controls.target.distanceTo(camGoalTarget) < 0.008
-    ) {
-      camera.position.copy(camGoalPos);
-      controls.target.copy(camGoalTarget);
-      camAnimating = false;
-    }
-  }
+  // Smooth pointer parallax around the desk view (suspended during fullscreen CRT mode)
+  const pk = Math.min(1, dt * 4.8);
+  const pTargetX = focusedMode ? 0 : parallaxTarget.x;
+  const pTargetY = focusedMode ? 0 : parallaxTarget.y;
+  parallax.x += (pTargetX - parallax.x) * pk;
+  parallax.y += (pTargetY - parallax.y) * pk;
 
-  controls.update();
+  desiredPos.set(
+    camGoalPos.x + parallax.x * 0.62,
+    camGoalPos.y - parallax.y * 0.26,
+    camGoalPos.z - Math.abs(parallax.x) * 0.08,
+  );
+  desiredTarget.set(
+    camGoalTarget.x + parallax.x * 0.14,
+    camGoalTarget.y - parallax.y * 0.08,
+    camGoalTarget.z,
+  );
+
+  const ck = Math.min(1, dt * 6.5);
+  camCurPos.lerp(desiredPos, ck);
+  camCurTarget.lerp(desiredTarget, ck);
+  camera.position.copy(camCurPos);
+  camera.lookAt(camCurTarget);
+
   renderer.render(scene, camera);
 }
 
