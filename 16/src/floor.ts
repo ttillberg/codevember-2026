@@ -4,12 +4,14 @@
 // repacked when the cells change.
 //  - wood sorrel (harsyra): dense clumps of little plants, three heart-shaped leaflets folded a little along the
 //    midrib on a thin stem well up out of the moss; a fresh light green that glows with the sun behind it
+//  - woodland grass (wavy hair-grass / autumn sedge): loose tufts of thin arching blades rising above the moss
+//  - woodland wildflowers (starflower, wood violet, tormentil, twinflower): small delicate blossoms on thin stems
 //  - pixie-cup lichens: little grey-green goblets on stalks in groups, now and then a group with red tips
 //  - reindeer lichen: pale, finely branched cushions, more of them in the clearings
 //  - stones: lumpy, half sunk, grey with pale crust lichen, moss on their tops
 //  - fallen birch leaves: curled, yellow to orange to brown; many under a birch; some wedged on edge in the moss
-// Leaves and sorrel are cards with their shape cut in the fragment shader; cups, cushions and stones are small
-// meshes, textured from their world position.
+// Leaves, sorrel, grass and flowers are lightweight instanced cards/strips with their shape cut in the fragment
+// shader; cups, cushions and stones are small meshes, textured from their world position.
 import * as THREE from 'three';
 import { mergeVertices } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { mulberry32, noise3 } from './noise';
@@ -21,8 +23,13 @@ const CELL = 1.0;
 const RANGE = coarse ? 4.5 : 6;
 const DROP = RANGE + 1.5;
 
-type Kind = 'LEAF' | 'SORREL' | 'CUP' | 'CUSHION' | 'STONE';
-const MAX: Record<Kind, number> = { LEAF: 9000, SORREL: 9000, CUP: 5000, CUSHION: 1500, STONE: 800 };
+type Kind = 'LEAF' | 'SORREL' | 'GRASS' | 'FLOWER' | 'CUP' | 'CUSHION' | 'STONE';
+const MAX: Record<Kind, number> = {
+  LEAF: 9000, SORREL: 9000,
+  GRASS: coarse ? 5500 : 12000,
+  FLOWER: coarse ? 1200 : 2800,
+  CUP: 5000, CUSHION: 1500, STONE: 800,
+};
 // levels of detail for the lumps: near they were angular, 320 triangles in all. The shape is a noise of
 // the direction from the middle, so every level is the same stone. Sorted again as you move.
 const LUMP_LOD = [1.6, 4.0]; // near up to here, then mid, then far
@@ -97,6 +104,69 @@ function sorrelGeometry() {
   return g;
 }
 
+/** A slender grass blade, 1 unit tall along +y, slight V-fold across x (-0.5..0.5); vertex shader arches and sways it. */
+function grassGeometry() {
+  const NA = 3, NL = 5;
+  const pos: number[] = [], uv: number[] = [], idx: number[] = [];
+  for (let j = 0; j <= NL; j++) {
+    const t = j / NL;
+    const w = 1 - Math.pow(t, 1.35) * 0.92; // tapers to a needle point
+    for (let i = 0; i < NA; i++) {
+      const s = i / (NA - 1) - 0.5;
+      pos.push(s * w, t, 0); // flat in z (z is scaled by blade height h for the arch, not blade width w)
+      uv.push(s, t);
+    }
+  }
+  for (let j = 0; j < NL; j++) for (let i = 0; i < NA - 1; i++) {
+    const q = j * NA + i;
+    idx.push(q, q + 1, q + NA, q + 1, q + NA + 1, q + NA);
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+  g.setIndex(idx);
+  g.computeVertexNormals();
+  return g;
+}
+
+/**
+ * A small woodland wildflower: thin crossed stem down to -1 (stretched by iData.x like sorrel, part = 0)
+ * and a softly cupped blossom disc at the origin (part = 1, uv -0.5..0.5; petals cut in the fragment shader).
+ */
+function flowerGeometry() {
+  const pos: number[] = [], uv: number[] = [], part: number[] = [], idx: number[] = [];
+  for (let s = 0; s < 2; s++) {
+    const a = s * Math.PI / 2, cx = Math.cos(a) * 0.032, cz = Math.sin(a) * 0.032;
+    const b = pos.length / 3;
+    pos.push(-cx, -1, -cz, cx, -1, cz, -cx, 0, -cz, cx, 0, cz);
+    uv.push(-0.5, 0, 0.5, 0, -0.5, 1, 0.5, 1);
+    part.push(0, 0, 0, 0);
+    idx.push(b, b + 1, b + 2, b + 1, b + 3, b + 2);
+  }
+  const N = 4;
+  const b = pos.length / 3;
+  // nod the blossom head gently forward (~34°) on its upright stem so petals face a low worm's eye
+  const nod = 0.6, cn = Math.cos(nod), sn = Math.sin(nod);
+  for (let j = 0; j <= N; j++) for (let i = 0; i <= N; i++) {
+    const x = i / N - 0.5, z = j / N - 0.5;
+    const y0 = (x * x + z * z) * 0.68 - 0.03;
+    pos.push(x, y0 * cn - z * sn, y0 * sn + z * cn);
+    uv.push(x, z);
+    part.push(1);
+  }
+  for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) {
+    const q = b + j * (N + 1) + i;
+    idx.push(q, q + N + 1, q + 1, q + 1, q + N + 1, q + N + 2);
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+  g.setAttribute('part', new THREE.Float32BufferAttribute(part, 1));
+  g.setIndex(idx);
+  g.computeVertexNormals();
+  return g;
+}
+
 /** A pixie cup, one unit tall: a thin stalk flaring into a goblet, open (the inside drawn too). uv.y: up 0..1. */
 function cupGeometry() {
   const pts: THREE.Vector2[] = [];
@@ -126,20 +196,28 @@ function lumpGeometry(seed: number, amount: number, flatBottom: boolean, detail 
 
 export class Floor {
   readonly root = new THREE.Group();
+  readonly flora: THREE.Object3D[] = []; // grass and wildflowers (for debug toggle & skipping sub-texel shadow pass)
   private cells = new Map<string, Cell>();
   private meshes = {} as Record<Kind, THREE.InstancedMesh[]>;
   private data = {} as Record<Kind, THREE.InstancedBufferAttribute[]>;
   private packedAt = new THREE.Vector2(Infinity, Infinity);
+  private floraVis: boolean[] = [];
   changed = false;
 
   constructor(setup: (m: THREE.ShaderMaterial) => void) {
     const geos: Record<Kind, THREE.BufferGeometry[]> = {
-      LEAF: [leafGeometry()], SORREL: [sorrelGeometry()], CUP: [cupGeometry()],
+      LEAF: [leafGeometry()], SORREL: [sorrelGeometry()],
+      GRASS: [grassGeometry()], FLOWER: [flowerGeometry()],
+      CUP: [cupGeometry()],
       CUSHION: LUMP_DETAIL.map((d) => lumpGeometry(41, 0.22, true, d)),
       STONE: LUMP_DETAIL.map((d) => lumpGeometry(43, 0.18, true, d)),
     };
     for (const kind of Object.keys(geos) as Kind[]) {
-      const mat = new THREE.ShaderMaterial({ vertexShader, fragmentShader, side: THREE.DoubleSide, uniforms: {}, defines: { [kind]: 1 } });
+      const mat = new THREE.ShaderMaterial({
+        vertexShader, fragmentShader, side: THREE.DoubleSide,
+        uniforms: { uFar: { value: RANGE } },
+        defines: { [kind]: 1 },
+      });
       setup(mat);
       this.meshes[kind] = [];
       this.data[kind] = [];
@@ -150,15 +228,30 @@ export class Floor {
         m.count = 0;
         m.frustumCulled = false;
         this.root.add(m);
+        if (kind === 'GRASS' || kind === 'FLOWER') this.flora.push(m);
         this.meshes[kind].push(m);
         this.data[kind].push(data);
       }
     }
   }
 
+  /** Sub-millimetre grass blades and tiny flowers are too fine for the shadow map: skip them in the shadow pass. */
+  forShadow(on: boolean) {
+    if (on) {
+      this.floraVis = this.flora.map((o) => o.visible);
+      for (const o of this.flora) o.visible = false;
+    } else {
+      this.flora.forEach((o, i) => { o.visible = this.floraVis[i] ?? true; });
+    }
+  }
+
   private build(ix: number, iz: number): Cell {
     const r = mulberry32((Math.imul(ix, 0x51ed27) ^ Math.imul(iz, 0x2f9be6d) ^ 0x1eaf) >>> 0);
-    const out: Cell = { LEAF: { m: [], d: [] }, SORREL: { m: [], d: [] }, CUP: { m: [], d: [] }, CUSHION: { m: [], d: [] }, STONE: { m: [], d: [] } };
+    const out: Cell = {
+      LEAF: { m: [], d: [] }, SORREL: { m: [], d: [] },
+      GRASS: { m: [], d: [] }, FLOWER: { m: [], d: [] },
+      CUP: { m: [], d: [] }, CUSHION: { m: [], d: [] }, STONE: { m: [], d: [] },
+    };
     const mat = new THREE.Matrix4(), q = new THREE.Quaternion(), e = new THREE.Euler(), s = new THREE.Vector3(), p = new THREE.Vector3();
     const put = (kind: Kind, d: number[]) => { out[kind].m.push(...mat.compose(p, q, s).elements); out[kind].d.push(...d); };
     const cx = (ix + 0.5) * CELL, cz = (iz + 0.5) * CELL;
@@ -195,6 +288,53 @@ export class Floor {
         q.setFromEuler(e.set((r() - 0.5) * 0.4, r() * Math.PI * 2, (r() - 0.5) * 0.4, 'YXZ'));
         s.set(leaf, leaf, leaf);
         put('SORREL', [(h + 0.02) / leaf, r(), r(), r()]);
+      }
+    }
+    // woodland grass: loose tufts of slender, wispy hair-grass & fine sedge rising above the moss (10–28 cm)
+    const tufts = r() < 0.58 + 0.22 * open ? 1 + (r() < 0.5 ? 1 : 0) : 0;
+    for (let tf = 0; tf < tufts; tf++) {
+      const gx = (ix + 0.15 + 0.7 * r()) * CELL, gz = (iz + 0.15 + 0.7 * r()) * CELL;
+      const gPd = puddleAt(gx, gz);
+      if (gPd && gPd.u < 1.03) continue;
+      // taller, lusher tufts near damp puddle rims and bright clearings
+      const lush = gPd && gPd.u < 1.38 ? 1.25 : 1 + 0.18 * open;
+      const tone = r(); // shared tint per tuft: deep woodland olive .. straw gold .. autumn russet
+      const n = 14 + Math.floor(r() * 14);
+      for (let i = 0; i < n; i++) {
+        const a = r() * Math.PI * 2, d = Math.sqrt(r()) * 0.15;
+        const x = gx + Math.cos(a) * d, z = gz + Math.sin(a) * d;
+        const pd = puddleAt(x, z);
+        if (pd && pd.u < 1.02) continue;
+        if (Math.hypot(x, z) < 0.3) continue;
+        const h = (0.10 + 0.18 * Math.pow(r(), 0.9)) * lush;
+        const w = 0.0016 + 0.0022 * r(); // hair-thin blades, never wide straps
+        p.set(x, mossTop(x, z) - 0.012, z);
+        q.setFromEuler(e.set((r() - 0.5) * 0.22, a + (r() - 0.5) * 1.1, (r() - 0.5) * 0.15, 'YXZ'));
+        s.set(w, h, h); // z scaled with h so vertex-shader arch stays proportional
+        // arch, colour tone (green -> gold -> russet), tip dryness, phase seed
+        put('GRASS', [0.22 + 0.65 * r(), Math.min(1, Math.max(0, tone + (r() - 0.5) * 0.25)), r(), r()]);
+      }
+    }
+    // woodland wildflowers: small delicate patches (starflower, wood violet, tormentil, twinflower)
+    // blossoms nod/tilt naturally so they read from a low worm's eye as well as from above
+    if (r() < 0.38 + 0.24 * open) {
+      const sp = r(); // 0..0.44 white starflower, ..0.70 violet-blue, ..0.87 butter-yellow, ..1.0 blush-pink
+      const gx = (ix + 0.2 + 0.6 * r()) * CELL, gz = (iz + 0.2 + 0.6 * r()) * CELL;
+      const n = 6 + Math.floor(r() * 8);
+      for (let i = 0; i < n; i++) {
+        const a = r() * Math.PI * 2, d = Math.sqrt(r()) * 0.38;
+        const x = gx + Math.cos(a) * d, z = gz + Math.sin(a) * d;
+        const pd = puddleAt(x, z);
+        if (pd && pd.u < 1.05) continue;
+        if (Math.hypot(x, z) < 0.45) continue; // keep clear of the opening fungi
+        const sz = (sp < 0.44 ? 0.028 : sp < 0.7 ? 0.026 : 0.024) * (0.8 + 0.45 * r());
+        const h = 0.10 + 0.11 * r() * (1 - 0.25 * d / 0.38);
+        const tilt = (r() - 0.5) * 0.4; // subtle stem lean; blossom head already nods in geometry
+        p.set(x, mossTop(x, z) + h, z);
+        q.setFromEuler(e.set(tilt, r() * Math.PI * 2, (r() - 0.5) * 0.35, 'YXZ'));
+        s.set(sz, sz, sz);
+        // stem ratio, species selector, hue jitter, phase seed
+        put('FLOWER', [(h + 0.02) / sz, sp, r(), r()]);
       }
     }
     // pixie cups: a group in about one cell in four; a third of the groups red-tipped
@@ -296,10 +436,11 @@ export class Floor {
 
 const vertexShader = /* glsl */ `
 attribute vec4 iData;
-#ifdef SORREL
+#if defined(SORREL) || defined(FLOWER)
 attribute float part;
 varying float vPart;
 #endif
+uniform float uTime;
 varying vec2 vUv;
 varying vec3 vWorldPos;
 varying vec3 vNormal;
@@ -317,6 +458,32 @@ void main() {
   vPart = part;
   if (part < 0.5) p.y *= iData.x; // the stem, down into the moss
   #endif
+  #ifdef GRASS
+  // slender blade arching outward along +z and swaying softly in the forest breeze
+  float t = p.y;
+  float bend = iData.x * t * t;
+  p.z += bend;
+  p.y -= bend * bend * 0.28;
+  float sway = sin(uTime * 1.4 + iData.w * 40.0 + instanceMatrix[3].x * 1.7 + instanceMatrix[3].z * 1.3) * 0.045 * t * t;
+  p.z += sway;
+  p.x += sway * 4.0;
+  // tilt normal with the arch so sunlit blades catch golden sheen along the curve
+  n = normalize(vec3(0.0, 0.25 + 1.4 * iData.x * t, 1.0));
+  #endif
+  #ifdef FLOWER
+  vPart = part;
+  float sw = sin(uTime * 1.35 + iData.w * 45.0 + instanceMatrix[3].x * 1.9 + instanceMatrix[3].z * 1.5) * 0.32;
+  if (part < 0.5) {
+    // stem stands roughly upright down into the moss, flexing slightly at the head
+    float st = uv.y * uv.y;
+    p.y *= iData.x;
+    p.x += sw * st;
+    p.z += sw * 0.6 * st;
+  } else {
+    p.x += sw;
+    p.z += sw * 0.6;
+  }
+  #endif
   vLocal = position;
   vec4 wp = modelMatrix * instanceMatrix * vec4(p, 1.0);
   vWorldPos = wp.xyz;
@@ -333,13 +500,14 @@ void main() {
 const fragmentShader = /* glsl */ `
 precision highp float;
 uniform vec3 uLightDir;
+uniform float uFar;
 ${mossLighting}
 varying vec2 vUv;
 varying vec3 vWorldPos;
 varying vec3 vNormal;
 varying vec4 vData;
 varying vec3 vLocal;
-#ifdef SORREL
+#if defined(SORREL) || defined(FLOWER)
 varying float vPart;
 #endif
 float h21(vec2 p) { p = fract(p * vec2(123.34, 456.21)); p += dot(p, p + 45.32); return fract(p.x * p.y); }
@@ -395,6 +563,67 @@ void main() {
     col *= 1.0 + 0.25 * (1.0 - smoothstep(0.0, 0.03, abs(a)));
     col *= 1.0 - 0.18 * smoothstep(0.7, 1.0, abs(a) / max(w, 1e-3));
     thin = 1.0; wet = 0.4;
+  }
+  #endif
+  #ifdef GRASS
+  // dissolve out gently at medium distance so tufts never pop at the cell edge
+  {
+    float d = distance(cameraPosition, vWorldPos);
+    float fk = 1.0 - smoothstep(uFar - 1.4, uFar - 0.1, d);
+    float fh = fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233))) * 43758.5453);
+    if (fh > fk) discard;
+  }
+  // deep woodland green at the base turning olive, straw-gold or autumn russet toward the tip
+  vec3 gBase = vec3(0.04, 0.13, 0.02);
+  vec3 gMid = mix(vec3(0.12, 0.26, 0.05), vec3(0.32, 0.27, 0.08), vData.y);
+  vec3 gTip = mix(vec3(0.42, 0.36, 0.11), vec3(0.44, 0.20, 0.06), vData.z);
+  col = mix(gBase, gMid, smoothstep(0.0, 0.55, t));
+  col = mix(col, gTip, smoothstep(0.45, 0.98, t) * (0.35 + 0.65 * vData.y));
+  col *= 0.85 + 0.22 * (1.0 - smoothstep(0.0, 0.18, abs(a))); // bright central rib
+  thin = 0.65; wet = 0.22;
+  #endif
+  #ifdef FLOWER
+  {
+    float d = distance(cameraPosition, vWorldPos);
+    float fk = 1.0 - smoothstep(uFar - 1.4, uFar - 0.1, d);
+    float fh = fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233))) * 43758.5453);
+    if (fh > fk) discard;
+  }
+  if (vPart < 0.5) {
+    if (abs(a) > 0.34) discard;
+    col = mix(vec3(0.18, 0.26, 0.09), vec3(0.28, 0.44, 0.14), t);
+    thin = 0.4;
+  } else {
+    float r = length(vUv);
+    float ang = atan(vUv.y, vUv.x);
+    float sp = vData.y;
+    float petals = sp < 0.44 ? 6.0 : sp < 0.70 ? 5.0 : sp < 0.87 ? 4.0 : 5.0;
+    float wave = 0.5 + 0.5 * cos(ang * petals);
+    float edge = sp < 0.44 ? (0.14 + 0.36 * pow(wave, 0.72)) : (0.17 + 0.33 * pow(wave, 0.52));
+    if (r > edge) discard;
+    vec3 pCol, cCol;
+    if (sp < 0.44) {
+      // starflower / wood anemone: crisp cream-white petals, warm golden-yellow stamens
+      pCol = mix(vec3(0.86, 0.84, 0.76), vec3(0.96, 0.94, 0.90), smoothstep(0.12, 0.42, r));
+      pCol *= mix(vec3(1.0), vec3(1.0, 0.93, 0.95), vData.z * 0.4);
+      cCol = vec3(0.88, 0.64, 0.10);
+    } else if (sp < 0.70) {
+      // wood violet / harebell: dusky periwinkle-violet with pale throat & gold eye
+      pCol = mix(vec3(0.45, 0.48, 0.82), vec3(0.24, 0.26, 0.64), smoothstep(0.14, 0.45, r));
+      pCol = mix(pCol, vec3(0.38, 0.24, 0.56), vData.z * 0.45);
+      cCol = vec3(0.85, 0.72, 0.22);
+    } else if (sp < 0.87) {
+      // tormentil: warm butter-yellow woodland star
+      pCol = mix(vec3(0.92, 0.62, 0.06), vec3(0.98, 0.82, 0.16), smoothstep(0.1, 0.42, r));
+      cCol = vec3(0.68, 0.34, 0.04);
+    } else {
+      // twinflower: soft pale rose-blush
+      pCol = mix(vec3(0.82, 0.48, 0.54), vec3(0.94, 0.78, 0.82), smoothstep(0.12, 0.44, r));
+      cCol = vec3(0.92, 0.74, 0.26);
+    }
+    // subtle petal shading toward center & delicate crease along each petal's rib
+    col = mix(cCol, pCol * (0.88 + 0.16 * wave), smoothstep(0.08, 0.15, r));
+    thin = 0.9; wet = 0.2;
   }
   #endif
   #ifdef CUP

@@ -283,6 +283,7 @@ function renderShadow(centre: THREE.Vector3) {
   ferns.forShadow(true, centre.x, centre.z, 6);
   boulders.forShadow(true);
   foliage.forShadow(true);
+  floorBits.forShadow(true);
   farFloor.visible = false;
   ants.mesh.visible = false; // too small to cast anything worth the map
   const puddlesVis = puddles.root.visible;
@@ -295,6 +296,7 @@ function renderShadow(centre: THREE.Vector3) {
   ferns.forShadow(false);
   boulders.forShadow(false);
   foliage.forShadow(false);
+  floorBits.forShadow(false);
   farFloor.visible = true;
   ants.mesh.visible = true;
   puddles.root.visible = puddlesVis;
@@ -883,6 +885,7 @@ if (params.has('debug')) vegboard([
   { name: 'fungi', objects: [fungi.group] },
   { name: 'boulders', objects: [boulders.root] },
   { name: 'leaves, sorrel', objects: [floorBits.root] },
+  { name: 'grass, flowers', objects: floorBits.flora },
   { name: 'puddles', objects: [puddles.root] },
 ], () => shadowCentre.set(Infinity, 0, 0), [
   // to the nearest oak, a crown's width off on its sunny side, looking up at it
