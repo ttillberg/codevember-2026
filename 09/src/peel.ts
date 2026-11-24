@@ -88,6 +88,7 @@ const CROWD = 5;                      // a stuck particle with this many loose n
 const rest = new Float32Array(COUNT * 3);
 const nb = new Int32Array(COUNT * 8).fill(-1);
 const nbLen = new Float32Array(COUNT * 8);
+const cellScale = new Float32Array(COUNT); // local spherical cell size relative to face-centre CELL_RAD * R
 const jitter = new Float32Array(COUNT);
 const DI = [1, -1, 0, 0, 1, 1, -1, -1], DJ = [0, 0, 1, -1, 1, -1, 1, -1];
 const OPP = [1, 0, 3, 2, 7, 6, 5, 4]; // the neighbour straight across
@@ -114,14 +115,18 @@ for (let f = 0; f < 6; f++) for (let j = 0; j < M; j++) for (let i = 0; i < M; i
 }
 for (let f = 0; f < 6; f++) for (let j = 0; j < M; j++) for (let i = 0; i < M; i++) {
   const c = (f * M + j) * M + i;
+  let cSum = 0, cCnt = 0;
   for (let k = 0; k < 8; k++) {
     const n = cellAt(f, i + DI[k], j + DJ[k]);
     let dup = n === c;
     for (let q = 0; q < k; q++) if (nb[c * 8 + q] === n) dup = true; // at a cube corner
     if (dup) continue;
     nb[c * 8 + k] = n;
-    nbLen[c * 8 + k] = Math.hypot(rest[c * 3] - rest[n * 3], rest[c * 3 + 1] - rest[n * 3 + 1], rest[c * 3 + 2] - rest[n * 3 + 2]);
+    const len = Math.hypot(rest[c * 3] - rest[n * 3], rest[c * 3 + 1] - rest[n * 3 + 1], rest[c * 3 + 2] - rest[n * 3 + 2]);
+    nbLen[c * 8 + k] = len;
+    if (k < 4) { cSum += len; cCnt++; }
   }
+  cellScale[c] = cCnt > 0 ? (cSum / cCnt) / (CELL_RAD * R) : 1;
 }
 // Padding of the atlas: which cell each padded texel shows.
 const padDst: number[] = [], padSrc: number[] = [];
@@ -177,11 +182,13 @@ export function createPeeler(world: World) {
   /** Loose cells that may still have stuck film next to them: the front. */
   let edge = new Int32Array(1 << 12);
   let nEdge = 0;
-  let nLoose = 0, nHeld = 0, nFront = 0;
+  let nLoose = 0, nHeld = 0, nFront = 0, frontTension = 0;
   const spill: number[] = [];
   let id = 0;
   let on = false;
   const G = new Vector3(), F = new Vector3(), q = new Quaternion(), v = new Vector3();
+  const liveCenter = new Vector3();
+  let hasLive = false;
   let height = 0;
 
   function hasFilm(c: number): boolean {
@@ -261,12 +268,15 @@ export function createPeeler(world: World) {
     pin.fill(0);
     st.fill(0); has.fill(0); linkKnown.fill(0); linkOk.fill(0);
     nLoose = nHeld = nFront = nEdge = 0;
+    frontTension = 0;
+    hasLive = false;
     world.tension.count = 0;
     for (const c of region) inRegion[c] = 0;
     region = [];
     on = false;
     lift.id = 0;
     lift.fade = 1;
+    lift.strain = 0;
     lift.fan.n = 0;
     lift.data.fill(0);
     lift.version++;
@@ -476,12 +486,15 @@ export function createPeeler(world: World) {
 
   // Fronts: stretches of stuck film along the loose sheet that hang together. When the
   // peel runs right across a strip there are two, one either side of the gap. Only the one
-  // nearest the finger is being pulled; the other is left where it stands.
+  // nearest the finger (with continuity hysteresis so split fronts do not pop) is being
+  // pulled; the other is left where it stands.
   const frontOf = new Int32Array(COUNT);
   const frontSeen = new Int32Array(COUNT);
   let frontGen = 0, liveFront = -1;
   let frontCells = new Int32Array(1 << 10);
   const frontSize: number[] = [];
+  const frontWidth: number[] = [];
+  const frontCx: number[] = [], frontCy: number[] = [], frontCz: number[] = [];
   function findFronts() {
     frontGen++;
     let ns = 0;
@@ -498,28 +511,74 @@ export function createPeeler(world: World) {
       }
     }
     let count = 0;
-    liveFront = -1;
-    let best = -Infinity;
+    let bestBig = -1, bestBigScore = -Infinity;
+    let bestAny = -1, bestAnyScore = -Infinity;
+    const fLen = Math.hypot(F.x, F.y, F.z) || 1;
+    const fxn = F.x / fLen, fyn = F.y / fLen, fzn = F.z / fLen;
     const stack: number[] = [];
     for (let i = 0; i < ns; i++) {
       if (frontOf[frontCells[i]] >= 0) continue;
-      let size = 0, near = -Infinity;
+      let size = 0, near = -Infinity, dotSum = 0, width = 0;
+      let cx = 0, cy = 0, cz = 0;
       stack.push(frontCells[i]);
       frontOf[frontCells[i]] = count;
       while (stack.length) {
         const n = stack.pop()!, p = n * 3;
         size++;
-        const dot = rest[p] * F.x + rest[p + 1] * F.y + rest[p + 2] * F.z; // larger is nearer the finger
+        const rx = rest[p], ry = rest[p + 1], rz = rest[p + 2];
+        cx += rx; cy += ry; cz += rz;
+        const dot = (rx * fxn + ry * fyn + rz * fzn) / R; // cosine proximity to finger, -1..1
         if (dot > near) near = dot;
+        dotSum += dot;
+        // Isotropic physical arc length of unpinned front cells in face-centre cell units:
+        // vector sum of unit directions to cardinal loose neighbours removes diagonal √2 bias,
+        // and cellScale[n] removes cube-corner compression bias.
+        if (!pinned(n)) {
+          let vx = 0, vy = 0, vz = 0;
+          for (let k = 0; k < 4; k++) {
+            if (!link(n, k)) continue;
+            const w = nb[n * 8 + k];
+            if (st[w] === STUCK) continue;
+            const invL = 1 / (nbLen[n * 8 + k] || 1);
+            vx += (rest[w * 3] - rx) * invL;
+            vy += (rest[w * 3 + 1] - ry) * invL;
+            vz += (rest[w * 3 + 2] - rz) * invL;
+          }
+          const mag = Math.hypot(vx, vy, vz);
+          width += (mag > 1e-4 ? mag : 0.7) * cellScale[n];
+        }
         for (let k = 0; k < 8; k++) {
           if (!link(n, k)) continue;
           const w = nb[n * 8 + k];
           if (frontSeen[w] === frontGen && frontOf[w] < 0) { frontOf[w] = count; stack.push(w); }
         }
       }
+      const cLen = Math.hypot(cx, cy, cz) || 1;
+      const ncx = cx / cLen, ncy = cy / cLen, ncz = cz / cLen;
       frontSize[count] = size;
-      if (size >= SPECK && near > best) { best = near; liveFront = count; }
+      frontWidth[count] = width;
+      frontCx[count] = ncx; frontCy[count] = ncy; frontCz[count] = ncz;
+      // Blend overall front alignment with nearest point, plus gentle hysteresis toward
+      // the previous frame's live front so split fronts never flicker or get hijacked.
+      let score = 0.55 * (dotSum / size) + 0.45 * near;
+      if (hasLive) {
+        const cont = ncx * liveCenter.x + ncy * liveCenter.y + ncz * liveCenter.z;
+        score += 0.15 * Math.max(0, cont);
+      }
+      if (score > bestAnyScore) { bestAnyScore = score; bestAny = count; }
+      if (size >= SPECK && score > bestBigScore) { bestBigScore = score; bestBig = count; }
       count++;
+    }
+    // Fall back to bestAny when every remaining front is shorter than SPECK so the last
+    // few cells of a piece never trigger a 1-frame fan-clip drop or detachment.
+    liveFront = bestBig >= 0 ? bestBig : bestAny;
+    if (liveFront >= 0) {
+      liveCenter.set(frontCx[liveFront], frontCy[liveFront], frontCz[liveFront]);
+      hasLive = true;
+      nFront = frontWidth[liveFront];
+    } else {
+      hasLive = false;
+      nFront = 0;
     }
   }
 
@@ -673,7 +732,8 @@ export function createPeeler(world: World) {
     const fr = R / (R + height);
     const held = pos; // held particles sit where the finger has carried them
     const n0 = nEdge;
-    let front = 0, keep = 0;
+    let keep = 0;
+    let tautSum = 0, tautCount = 0;
     for (let m = 0; m < n0; m++) {
       const c = edge[m];
       let left = false;
@@ -687,7 +747,6 @@ export function createPeeler(world: World) {
         // not the front being pulled (and not just a leftover speck): it stays as it is
         const fo = frontSeen[n] === frontGen ? frontOf[n] : -1;
         if (fo >= 0 && fo !== liveFront && frontSize[fo] >= SPECK) continue;
-        if (k < 4) front++;
         const p = n * 3;
         // the film runs from the grab to c and on to n: round the end of a cut, not across it
         const o = c * 3, len = nbLen[c * 8 + k];
@@ -750,7 +809,17 @@ export function createPeeler(world: World) {
         const may = t * (1 + (tune.elastic + SHEAR_STRETCH * tune.shear * flat * ease) * fair);
         const over = d - may;
         const limit = need * ease * fair * (1 + tune.rough * jitter[n]);
-        if (draw) note(c, n, d / Math.max(may, 1e-9), limit > 1e-9 ? over / limit : 1, spot++ % 3 === 0);
+        if (watch) {
+          const taut = d / Math.max(may, 1e-9);
+          const give = limit > 1e-9 ? over / limit : 1;
+          // 0 when slack (<= 0.7), ramps to 1 at peel threshold (over >= limit)
+          const load01 = taut < 1
+            ? 0.5 * Math.max(0, (taut - 0.7) / 0.3)
+            : 0.5 + 0.5 * Math.max(0, Math.min(1, give));
+          tautSum += load01;
+          tautCount++;
+          if (draw) note(c, n, taut, give, spot++ % 3 === 0);
+        }
         // under the taut sheet: it comes away whatever it feels itself
         if (under) { loosen(n, LOOSE, t, direct ? c : -2 - c); continue; }
         if (over <= 0) continue;
@@ -763,7 +832,7 @@ export function createPeeler(world: World) {
     // the ones that let go just now are the new front
     for (let m = n0; m < nEdge; m++) edge[keep++] = edge[m];
     nEdge = keep;
-    nFront = front;
+    if (watch) frontTension = tautCount > 0 ? tautSum / tautCount : 0;
   }
 
   /** Cells behind the front, relaxed a step a frame. A sheet with nothing stuck left just
@@ -928,17 +997,23 @@ export function createPeeler(world: World) {
     /** Particles that let go, beyond the ones in the hand. */
     get peeled() { return nLoose - nHeld; },
     get front() { return nFront; },
+    /** Mean normalized tension along the live peel front (0 slack .. 1 at peel threshold). */
+    get tension() { return frontTension; },
     /** How high the finger holds the film above the sphere. */
     get height() { return height; },
     start,
     rise,
     carry,
     clear,
-    step() {
+    step(releasing = true) {
       if (!on) return;
+      if (!releasing) return; // frozen during fade-out: never peel further after release/tear
       sheet();
       buildHull();
       for (let s = 0; s < SUB; s++) release(s === SUB - 1);
+      // Refresh fronts AFTER the final release pass so buildFan(), torn(), and peeler.front
+      // match the exact post-release front on this frame.
+      findFronts();
       deepen();
       write();
     },

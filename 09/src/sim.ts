@@ -103,6 +103,7 @@ export function createSim(ctx: Ctx): Module {
   const peeler = createPeeler(world);
   /** Seconds left of the fade after letting go, 0 while held. */
   let fading = 0;
+  const lastFinger = new Vector3();
   let lastTravel = 0, pullSpeed = 0;
   const omega = new Vector3();
   /** A cut is waiting for the pieces in motion to settle before it is relabelled. */
@@ -367,7 +368,9 @@ export function createSim(ctx: Ctx): Module {
     if (!peeler.start(grab.layer, grab.piece!.id, grab.e, grab.n)) return false;
     remember();
     finger(hit0);
+    lastFinger.copy(hit0);
     fading = 0;
+    world.lift.strain = 0;
     world.finger.from.copy(grab.e).normalize();
     world.finger.at.copy(world.finger.from);
     lastTravel = pullSpeed = 0;
@@ -386,7 +389,7 @@ export function createSim(ctx: Ctx): Module {
     if (fading > 0) {
       fading -= dt;
       world.lift.fade = Math.max(0, fading / FADE_TIME);
-      peeler.step();
+      peeler.step(false); // frozen during fade: do not keep peeling past the release/tear edge
       if (fading <= 0 && peeler.commit()) relabelNow();
       return;
     }
@@ -397,22 +400,35 @@ export function createSim(ctx: Ctx): Module {
     // flat along the surface. Past the silhouette that ray still meets the raised shell.
     lifted(R + peeler.rise(travel), tH);
     rot.setFromUnitVectors(hit0, tH);
-    pullSpeed += (Math.abs(travel - lastTravel) / dt - pullSpeed) * (1 - Math.exp(-12 * dt));
+    // True angular pull speed (catches sideways whips too), ignored while easing back toward the grab.
+    const instSpeed = dt > 1e-4 && travel >= lastTravel - 0.002 ? lastFinger.angleTo(tH) / dt : 0;
+    pullSpeed += (instSpeed - pullSpeed) * (1 - Math.exp(-12 * dt));
+    lastFinger.copy(tH);
     lastTravel = travel;
     peeler.carry(rot, travel);
-    peeler.step();
+    peeler.step(true);
     world.finger.at.copy(world.finger.from).applyQuaternion(rot);
     world.finger.height = peeler.height;
     // Nothing of it is stuck any more: it is off, and there is no use holding on to it.
     if (peeler.peeled > 0 && peeler.front === 0) {
+      world.lift.strain = 0;
       letGo();
       drag = 'torn';
       return;
     }
-    // Too much asked of it: the film breaks off along the front, out of the hand.
-    if (tune.tear > 0 && peeler.front * (1 + TEAR_SPEED * pullSpeed) > tune.tear * 40) {
-      letGo();
-      drag = 'torn';
+    // Too much asked of it: the film breaks off along the front when tensioned past its strength.
+    if (tune.tear > 0 && peeler.front > 0) {
+      const load = peeler.front * (0.45 + 0.55 * peeler.tension) * (1 + TEAR_SPEED * pullSpeed);
+      const cap = tune.tear * 40;
+      const targetStrain = Math.max(0, Math.min(1, (load / cap - 0.55) / 0.45));
+      world.lift.strain += (targetStrain - world.lift.strain) * (1 - Math.exp(-14 * dt));
+      if (load > cap && peeler.tension > 0.35) {
+        world.lift.strain = 1;
+        letGo();
+        drag = 'torn';
+      }
+    } else {
+      world.lift.strain = 0;
     }
   }
 

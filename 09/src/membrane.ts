@@ -214,6 +214,7 @@ uniform int uLiftId;      // the piece being pulled, 0 none
 uniform float uLiftGhost; // how solid lifted film is
 uniform float uLiftBand;  // height over the sphere (radii) up to which lifted film is shown
 uniform float uLiftFade;  // 1 while held, runs to 0 after letting go
+uniform float uStrain;    // 0..1 tear strain approaching break along the taut crease
 #define FAN_MAX ${FAN_MAX}
 uniform vec3 uFanC;       // the fan (lift.fan): centre and axes of its flat map,
 uniform vec3 uFanU;
@@ -533,7 +534,10 @@ const FRAG_COLOR = /* glsl */ `
   // film lying on the sphere behind it.
   if (liftBand <= 0.0) discard;
   liftFade = uLiftFade * uLiftGhost * liftBand;
-  diffuseColor.a *= liftFade;
+  // Subtle polyethylene stress-whitening along the taut peel crease as load approaches tear.
+  float craze = uStrain * smoothstep(4.5, 0.5, lw);
+  diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.95, 0.96, 0.98), craze * 0.38);
+  diffuseColor.a = min(1.0, diffuseColor.a * liftFade + craze * cov * 0.20 * uLiftFade * liftBand);
   #endif
 #endif
 `;
@@ -670,6 +674,7 @@ export function createMembrane(ctx: Ctx): Module {
   const shared = {
     uLift: { value: liftTex },
     uLiftFade: { value: 1 },
+    uStrain: { value: 0 },
     uGrid: { value: 1 },
     uLiftGhost: { value: 0.45 },
     uLiftBand: { value: 0.02 },
@@ -810,6 +815,7 @@ export function createMembrane(ctx: Ctx): Module {
       underU.uLiftId.value = b.uLiftId.value;
 
       shared.uLiftFade.value = lift.fade;
+      shared.uStrain.value = lift.strain;
       shared.uGrid.value = world.show.grid ? 1 : 0;
       shared.uLiftGhost.value = lift.ghost;
       shared.uLiftBand.value = lift.band;

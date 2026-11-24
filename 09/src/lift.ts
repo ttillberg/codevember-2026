@@ -46,6 +46,8 @@ export interface Lift {
   id: number;
   /** 1 while held. After letting go it runs to 0 and the lifted film goes with it. */
   fade: number;
+  /** 0..1 tear strain approaching break along the taut peel front (subtle stress-whitening). */
+  strain: number;
   /** How solid lifted film still is far behind the front, 0..1. Low is the look, high is
    *  for seeing what the sheet does. */
   ghost: number;
@@ -60,7 +62,7 @@ export interface Lift {
 }
 
 export function createLift(): Lift {
-  return { data: new Float32Array(LIFT_W * LIFT_H * 4), version: 1, layer: 0, id: 0, fade: 1, ghost: 0.6, band: 2,
+  return { data: new Float32Array(LIFT_W * LIFT_H * 4), version: 1, layer: 0, id: 0, fade: 1, strain: 0, ghost: 0.6, band: 2,
     fan: { c: new Float32Array(3), u: new Float32Array(3), v: new Float32Array(3), pts: new Float32Array(FAN_MAX * 2), n: 0 } };
 }
 
