@@ -195,6 +195,8 @@ const hudLevelEl = document.getElementById('hud-level') as HTMLElement;
 const hudScoreEl = document.getElementById('hud-score') as HTMLElement;
 const hudBestEl = document.getElementById('hud-best') as HTMLElement;
 const bannerEl = document.getElementById('banner') as HTMLButtonElement;
+const bannerTitleEl = bannerEl.querySelector('.banner-title') as HTMLSpanElement;
+const bannerJpEl = bannerEl.querySelector('.banner-jp') as HTMLSpanElement;
 const soundBtn = document.getElementById('sound') as HTMLButtonElement;
 const pauseBtn = document.getElementById('pause') as HTMLButtonElement;
 const fatalEl = document.getElementById('fatal') as HTMLDivElement;
@@ -231,7 +233,7 @@ let blockVel: Vec3 = [0, 0, 0];
 let blockAngVel: Vec3 = [0, 0, 0];
 
 // 1,000-Level Deterministic Diamond Cutter Game state!
-type GamePhase = 'playing' | 'failing' | 'lost' | 'cleared';
+type GamePhase = 'ready' | 'playing' | 'failing' | 'lost' | 'cleared';
 let tossMode = carveId === 'free' && qs.get('toss') !== '0';
 let currentLevel = Math.max(1, Math.min(MAX_LEVEL, Number(qs.get('level')) || 1));
 let levelPlan: LevelPlan = buildLevel(currentLevel);
@@ -239,7 +241,7 @@ let levelTime = 0;
 let nextThrowIdx = 0;
 let nextWarnIdx = 0;
 let nextPopIdx = 0;
-let gamePhase: GamePhase = 'playing';
+let gamePhase: GamePhase = 'ready';
 let score = 0;
 let bestScore = (() => {
   try { return Number(localStorage.getItem('shatter-2026-best') || '0') || 0; } catch { return 0; }
@@ -577,9 +579,26 @@ function updateHudUI() {
   hudBestEl.textContent = String(bestScore);
 }
 
-function showReplayBanner() {
+function showBanner(mode: 'play' | 'replay') {
+  if (mode === 'play') {
+    bannerTitleEl.textContent = 'PLAY';
+    bannerJpEl.textContent = '始める';
+    bannerEl.setAttribute('aria-label', 'Play');
+  } else {
+    bannerTitleEl.textContent = 'REPLAY';
+    bannerJpEl.textContent = 'もう一度';
+    bannerEl.setAttribute('aria-label', 'Replay');
+  }
   bannerEl.hidden = false;
   canvas.classList.add('replay-ready');
+}
+
+function showPlayBanner() {
+  showBanner('play');
+}
+
+function showReplayBanner() {
+  showBanner('replay');
 }
 
 function hideBanner() {
@@ -1989,6 +2008,11 @@ function updateTargetFromPointer(clientX: number, clientY: number) {
 
 canvas.addEventListener('pointerdown', (e) => {
   if (e.button !== 0 && e.pointerType === 'mouse') return;
+  if (gamePhase === 'ready' && !bannerEl.hidden) {
+    sound.wake();
+    startLevel(currentLevel, false);
+    return;
+  }
   if (gamePhase === 'lost' && !bannerEl.hidden) {
     sound.wake();
     replayFromStart();
@@ -2043,7 +2067,7 @@ canvas.addEventListener('pointermove', (e) => {
   swipeCurY = e.clientY;
 
   // Detect sharp direction change -> re-anchor slash & reset same-direction multi-hit xN combo!
-  if (stepDist > 4) {
+  if (stepDist > 2.5) {
     const ux = dx / stepDist;
     const uy = dy / stepDist;
     if (strokeDirX !== 0 || strokeDirY !== 0) {
@@ -2075,17 +2099,17 @@ canvas.addEventListener('pointermove', (e) => {
     swipePrevDirX = ux;
     swipePrevDirY = uy;
 
-    // Frame-rate-independent directional LTR / RTL katana swoosh on brisk strokes (works on 60Hz & 120Hz!)
+    // Immediate, frame-rate-independent directional LTR / RTL katana swoosh on the first brisk swipe frame!
     const reversedX = lastSwooshDirX !== 0 && ux * lastSwooshDirX < -0.25;
-    if (reversedX) swooshAccumDist = Math.max(swooshAccumDist, 22);
-    const minCooldown = reversedX ? 105 : 175;
-    if (swooshAccumDist >= 22 && speedPxPerSec >= 420 && now - lastSwooshAt >= minCooldown) {
+    if (reversedX) swooshAccumDist = Math.max(swooshAccumDist, 10);
+    const minCooldown = reversedX ? 85 : 145;
+    if (swooshAccumDist >= 10 && speedPxPerSec >= 300 && now - lastSwooshAt >= minCooldown) {
       sound.wake();
       const curPan = (swipeCurX / Math.max(1, window.innerWidth)) * 2 - 1;
       const dirSign = Math.abs(ux) > 0.12 ? Math.sign(ux) : 0;
-      const panFrom = curPan - dirSign * 0.50;
+      const panFrom = curPan - dirSign * 0.46;
       const panTo = curPan + dirSign * 0.56;
-      const intensity = Math.min(1, (speedPxPerSec - 380) / 1800);
+      const intensity = Math.min(1, (speedPxPerSec - 280) / 1600);
       sound.swoosh(panFrom, panTo, intensity);
       lastSwooshAt = now;
       lastSwooshDirX = ux;
@@ -2422,7 +2446,12 @@ function renderSlashTrail(nowMs: number, rawDt: number) {
 }
 
 bannerEl.addEventListener('click', () => {
-  replayFromStart();
+  sound.wake();
+  if (gamePhase === 'ready') {
+    startLevel(currentLevel, false);
+  } else {
+    replayFromStart();
+  }
 });
 
 soundBtn.addEventListener('click', () => {
@@ -2432,20 +2461,28 @@ soundBtn.addEventListener('click', () => {
 });
 
 pauseBtn.addEventListener('click', () => {
+  if (gamePhase === 'ready') return;
   setPaused(!paused);
 });
 
 window.addEventListener('keydown', (e) => {
   if (e.target instanceof HTMLInputElement) return;
   if (e.key === 'Shift') { shiftSlow = true; return; }
-  if (e.code === 'Space') {
+  if (e.code === 'Space' || e.code === 'Enter') {
+    if (gamePhase === 'ready') {
+      e.preventDefault();
+      sound.wake();
+      startLevel(currentLevel, false);
+      return;
+    }
+    if (e.code === 'Enter') return;
     e.preventDefault();
     if (gamePhase === 'lost') replayFromStart();
     else if (pending && !autoShatter) triggerShatter();
     else if (carvePlan) executeSlice(null);
     else if (tossMode) setPaused(!paused);
   } else if (e.key === 'p' || e.key === 'P' || e.key === 'Escape') {
-    if (tossMode && !carvePlan) setPaused(!paused);
+    if (tossMode && !carvePlan && gamePhase !== 'ready') setPaused(!paused);
   } else if (e.key === '[') {
     if (tossMode && !carvePlan) startLevel(Math.max(1, currentLevel - 1), false);
   } else if (e.key === ']') {
@@ -2494,7 +2531,15 @@ async function boot() {
   if (carveId !== 'free') {
     selectCarveMode(carveId);
   } else if (tossMode) {
-    startLevel(currentLevel, false);
+    if (qs.has('clean')) {
+      startLevel(currentLevel, false);
+    } else {
+      gamePhase = 'ready';
+      gpu.clearAllCutSlots();
+      blockParts = [];
+      gpu.setMainBlocks([]);
+      showPlayBanner();
+    }
     updateLivePreview();
     updateActionUI();
   } else {
