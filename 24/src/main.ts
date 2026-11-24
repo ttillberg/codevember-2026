@@ -10,7 +10,6 @@ import { createSkin } from './skin';
 import { createHead, type Head } from './head';
 import { LOOK, createPost, handheld } from './post';
 import { debugPanel } from './debug';
-import { previewMaterial, snakeColor } from './preview';
 
 const query = new URLSearchParams(location.search);
 // ?clean: no page furniture, the scene alone (screengrabs, clips)
@@ -226,6 +225,8 @@ const headsMade = Promise.all((['python', 'corn'] as const).map((shape) => loade
     const h = createHead(gltf, s.sp, paint);
     h.group.scale.setScalar(kinds[k].f);
     heads[k] = h;
+    // into the scene as it comes: in the drawing at once (the picture isn't drawn till it's built)
+    scene.add(h.group);
     // the neck takes the head's colours (skin.ts)
     if (h.paint) {
       const u = skins[k].userData.uniforms;
@@ -441,12 +442,9 @@ function frame(ts: number) {
   camera.position.add(shake.pos.applyQuaternion(camera.quaternion));
   camera.quaternion.multiply(qShake.setFromEuler(shake.rot));
   camera.updateMatrixWorld();
-  if (shown) post.render(scene, camera, focus, time);
-  else {
-    // the clay, straight to the screen
-    renderer.setRenderTarget(null);
-    renderer.render(scene, camera);
-  }
+  // the drawing until the picture is built, then the picture fades in over it (loading, below)
+  if (revealing && reveal < 1) reveal = Math.min(1, reveal + dt / REVEAL);
+  post.render(scene, camera, focus, time, THREE.MathUtils.smoothstep(reveal, 0, 1), reveal < 1 ? drawWire : null);
   camera.position.copy(keep.pos);
   camera.quaternion.copy(keep.quat);
   camera.updateMatrixWorld();
@@ -455,41 +453,52 @@ function frame(ts: number) {
 requestAnimationFrame(frame);
 
 // --- loading -------------------------------------------------------------------------------
-// The knot shows at once in clay (preview.ts) and moves, and can be touched, while the real shaders
-// are built off the thread, the heads come in and the textures go up, one a frame. Then a cut to the
-// picture, with nothing left for its first frame to build.
-const groundMat = ground.material as THREE.MeshStandardMaterial;
-bodies.forEach((b, k) => (b.mesh.material = previewMaterial(snakeColor(snakes[k].sp.pixel), { ao: true })));
-ground.material = previewMaterial(new THREE.Color(1, 1, 1), { map: groundMat.map!, repeat: 6, contact: contact.tex, span: CONTACT_SPAN });
-let shown = false;
+// The knot shows at once as a drawing, its wireframe in the ink of the title, and moves and can be
+// touched, while the real shaders are built off the thread, the heads come in (into the drawing as
+// they do) and the textures go up, one a frame. Then the picture fades in over the drawing, as day
+// 12's does, with nothing left for its first frames to build.
+const REVEAL = 1.6; // seconds
+let reveal = 0;
+let revealing = false;
+const wireMat = new THREE.MeshBasicMaterial({ color: 0xffffff, wireframe: true });
+// lines are never culled: the far side of every body would show through. So the bodies go into the
+// depth first, a hair further back than they are, and only the lines in front of them get drawn
+const hideMat = new THREE.MeshBasicMaterial({ colorWrite: false, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 });
+// the drawing: the bodies, not the ground, not the heads (their mesh is so fine it draws solid: they
+// come in with the picture)
+function drawWire() {
+  const g = ground.visible;
+  ground.visible = false;
+  for (const h of heads) if (h) h.group.visible = false;
+  renderer.shadowMap.autoUpdate = false;
+  scene.overrideMaterial = hideMat;
+  renderer.render(scene, camera);
+  const ac = renderer.autoClear;
+  renderer.autoClear = false;
+  scene.overrideMaterial = wireMat;
+  renderer.render(scene, camera);
+  renderer.autoClear = ac;
+  scene.overrideMaterial = null;
+  renderer.shadowMap.autoUpdate = true;
+  for (const h of heads) if (h) h.group.visible = true;
+  ground.visible = g;
+}
 const nextFrame = () => new Promise((r) => requestAnimationFrame(r));
 async function load() {
-  // two frames of clay first: where the browser can't build off the thread, the page stands still
-  // on the knot, not on black
+  // two frames of the drawing first: where the browser can't build off the thread, the page stands
+  // still on it, not on black
   await nextFrame();
   await nextFrame();
-  // ?loader: held on the clay, for looking at it
+  // ?loader: held on the drawing, for looking at it
   if (query.has('loader')) return;
   await headsMade;
-  // stand-ins wearing the real materials, never drawn: the bodies' own geometry, the ground, the heads
-  const warm = new THREE.Group();
-  bodies.forEach((b, k) => {
-    const m = new THREE.Mesh(b.mesh.geometry, skins[k]);
-    m.castShadow = m.receiveShadow = true;
-    m.frustumCulled = false;
-    warm.add(m);
-  });
-  const g = new THREE.Mesh(ground.geometry, groundMat);
-  g.receiveShadow = true;
-  warm.add(g);
-  for (const h of heads) if (h) warm.add(h.group);
   try {
-    await post.compile(warm, camera, scene);
+    await post.compile(scene, camera, scene);
     await nextFrame();
     // three asks the GPU about a program the first time it draws with it, a round trip that waits on
     // the frame in flight: ask now. And every texture uploaded, one a frame
     const materials = new Set<THREE.Material>();
-    warm.traverse((o) => {
+    scene.traverse((o) => {
       const m = (o as THREE.Mesh).material;
       if (m) for (const x of [m].flat()) materials.add(x);
     });
@@ -504,47 +513,21 @@ async function load() {
       renderer.initTexture(t);
     }
     // built isn't finished: the driver makes the rest of a program on its first draw (Metal its
-    // pipelines), a third of a second at once if left to the cut. So each part is drawn once, alone,
-    // in its real material, into the picture's own target, unseen, one a frame. The heads go into the
-    // scene for it, hidden till the cut
-    for (const h of heads) if (h) {
-      h.group.visible = false;
-      scene.add(h.group);
-    }
-    const parts: { obj: THREE.Object3D; real?: THREE.Material }[] = [
-      ...bodies.map((b, k) => ({ obj: b.mesh as THREE.Object3D, real: skins[k] as THREE.Material })),
-      { obj: ground, real: groundMat },
-      ...heads.flatMap((h) => (h ? [{ obj: h.group }] : [])),
-    ];
-    renderer.shadowMap.autoUpdate = false; // (the shadow map stays as the whole knot drew it)
+    // pipelines), a third of a second at once if left to the reveal. So each part is drawn once,
+    // alone, into the picture's own target, unseen, one a frame
+    const parts: THREE.Object3D[] = [...bodies.map((b) => b.mesh), ground, ...heads.flatMap((h) => (h ? [h.group] : []))];
     for (const p of parts) {
       await nextFrame();
-      const was = parts.map((q) => q.obj.visible);
-      parts.forEach((q) => (q.obj.visible = q === p));
-      const mesh = p.obj as THREE.Mesh;
-      const clay = mesh.material;
-      if (p.real) mesh.material = p.real;
+      const was = parts.map((q) => q.visible);
+      parts.forEach((q) => (q.visible = q === p));
       post.drawScene(scene, camera);
-      if (p.real) mesh.material = clay;
-      parts.forEach((q, i) => (q.obj.visible = was[i]));
+      parts.forEach((q, i) => (q.visible = was[i]));
     }
-    renderer.shadowMap.autoUpdate = true;
     await nextFrame();
   } catch {
     /* built on the first frame then */
   }
-  // the cut
-  bodies.forEach((b, k) => {
-    (b.mesh.material as THREE.Material).dispose();
-    b.mesh.material = skins[k];
-  });
-  (ground.material as THREE.Material).dispose();
-  ground.material = groundMat;
-  for (const h of heads) if (h) {
-    h.group.visible = true;
-    scene.add(h.group);
-  }
-  shown = true;
+  revealing = true;
   document.body.classList.remove('loading');
 }
 void load();

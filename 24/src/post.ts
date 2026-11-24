@@ -140,6 +140,9 @@ precision highp float;
 uniform sampler2D tDiffuse;
 uniform vec2 uRes;
 uniform float uTime, uGrade, uGrain, uVignette, uExposure;
+uniform sampler2D tWire;  // the loading drawing: ink where alpha
+uniform float uReveal;    // 0 = the drawing on the night, 1 = the picture
+uniform vec3 uBg, uInk;   // the page's backdrop and the title's ink, display values
 varying vec2 vUv;
 // Khronos PBR neutral, as three has it, and the sRGB curve: written out here, under names of their
 // own, since three adds its own copies to a ShaderMaterial on some paths and not others
@@ -181,6 +184,10 @@ void main() {
   c *= 1.0 - uVignette * smoothstep(0.3, 1.0, length(q) * 1.2);
   // grain, finer in the lights
   c += (hash(vUv * uRes + fract(uTime * 7.31) * 913.0) - 0.5) * uGrain * (1.2 - l);
+  if (uReveal < 1.0) {
+    vec3 drawing = mix(uBg, uInk, texture2D(tWire, vUv).a * 0.42);
+    c = mix(drawing, c, uReveal);
+  }
   gl_FragColor = vec4(c, 1.0);
 }`;
 
@@ -194,6 +201,9 @@ export function createPost(renderer: THREE.WebGLRenderer) {
   const aoRT = new THREE.WebGLRenderTarget(1, 1, { type: THREE.UnsignedByteType });
   const lit = make(0);
   const blurred = make(0);
+  // the loading drawing, multisampled: the canvas itself isn't, and a wireframe shows it
+  const wire = new THREE.WebGLRenderTarget(1, 1, { samples: 4 });
+  const clearCol = new THREE.Color();
   const invProj = new THREE.Matrix4();
 
   const ao = new FullScreenQuad(new THREE.ShaderMaterial({
@@ -224,6 +234,9 @@ export function createPost(renderer: THREE.WebGLRenderer) {
       tDiffuse: { value: blurred.texture }, uRes: { value: new THREE.Vector2(1, 1) },
       uTime: { value: 0 }, uGrade: { value: LOOK.grade }, uGrain: { value: LOOK.grain }, uVignette: { value: LOOK.vignette },
       uExposure: { value: 1 },
+      tWire: { value: wire.texture }, uReveal: { value: 1 },
+      // #0b0b0d and #f4f4f2, as the page has them
+      uBg: { value: new THREE.Vector3(11, 11, 13).divideScalar(255) }, uInk: { value: new THREE.Vector3(244, 244, 242).divideScalar(255) },
     },
     vertexShader: VERT, fragmentShader: GRADE, depthTest: false, depthWrite: false,
   }));
@@ -259,6 +272,7 @@ export function createPost(renderer: THREE.WebGLRenderer) {
       scene.setSize(W, H);
       lit.setSize(W, H);
       blurred.setSize(W, H);
+      wire.setSize(W, H);
       const aw = Math.ceil(W / 2), ah = Math.ceil(H / 2);
       aoRT.setSize(aw, ah);
       (ao.material as THREE.ShaderMaterial).uniforms.uRes.value.set(aw, ah);
@@ -267,7 +281,28 @@ export function createPost(renderer: THREE.WebGLRenderer) {
       m1.uniforms.uRes.value.set(W, H);
       m2.uniforms.uRes.value.set(W, H);
     },
-    render(world: THREE.Scene, camera: THREE.PerspectiveCamera, focus: number, time: number) {
+    /** reveal: 0 the drawing alone, 1 the picture alone. wire: draws the drawing, while it shows */
+    render(world: THREE.Scene, camera: THREE.PerspectiveCamera, focus: number, time: number, reveal = 1, drawWire: (() => void) | null = null) {
+      const mg = grade.material as THREE.ShaderMaterial;
+      mg.uniforms.uReveal.value = reveal;
+      if (drawWire) {
+        renderer.getClearColor(clearCol);
+        const a = renderer.getClearAlpha();
+        const bg = world.background;
+        world.background = null;
+        renderer.setRenderTarget(wire);
+        renderer.setClearColor(0x000000, 0);
+        renderer.clear();
+        drawWire();
+        renderer.setClearColor(clearCol, a);
+        world.background = bg;
+      }
+      // nothing of the picture shows yet: skip it, the drawing is all there is
+      if (reveal <= 0) {
+        renderer.setRenderTarget(null);
+        grade.render(renderer);
+        return;
+      }
       const m1 = dof.material as THREE.ShaderMaterial, m2 = grade.material as THREE.ShaderMaterial;
       const H = m1.uniforms.uRes.value.y;
       m1.uniforms.uFocus.value = focus;
