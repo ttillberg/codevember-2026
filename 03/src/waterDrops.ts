@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { clamp, fbm3, mulberry32, smoothstep } from './rng';
-import { MeltFieldState, POPSICLE, sampleLocalHeat } from './shape';
+import { getMeltBounds, MeltFieldState, POPSICLE, sampleLocalHeat } from './shape';
 import { PopsicleIceSystem } from './popsicleIce';
 import { FILM_U, LiquidFilmSystem } from './liquidFilm';
 
@@ -81,7 +81,9 @@ interface TrailNode {
 type PendantStage = 'dormant' | 'growing' | 'pinching' | 'recoiling';
 
 interface PendantDrop {
+  side: -1 | 1;
   anchorU: number;
+  initAnchorU: number;
   anchorV: number;
   stage: PendantStage;
   initStage: PendantStage;
@@ -495,49 +497,95 @@ function createStickMeltOverlay(sharedUniforms: WaterDropUniforms, seed: number)
   mesh: THREE.Mesh;
   uniforms: {
     uIceBottomY: { value: number };
+    uIceTopY: { value: number };
+    uIceAmount: { value: number };
     uStickWetness: { value: number };
     uMelt: { value: number };
   };
   dispose(): void;
 } {
   const segU = 64;
-  const segV = 96;
+  const archRows = 24;
+  const shaftRows = 96;
+  const segV = archRows + shaftRows;
   const vCount = (segU + 1) * (segV + 1);
   const positions = new Float32Array(vCount * 3);
   const normals = new Float32Array(vCount * 3);
   const uvs = new Float32Array(vCount * 2);
   const indices: number[] = [];
 
-  // Exact outer cross-section of createWoodStickGeometry() plus ultra-tight clearance (+0.0010)
-  // so subtle watery glaze wisps sit completely flush with ZERO silhouette halo along the wood edges!
-  const woodBevelX = POPSICLE.stickDepth * 0.19 * 0.7;
-  const hw = POPSICLE.stickWidth * 0.5 + woodBevelX + 0.0010;
-  const hd = POPSICLE.stickDepth * 0.5 + 0.0010;
-  const spanDown = 1.24;
-  // Extend well up inside the popsicle bottom so the ice depth prepass cleanly occludes the top seam!
-  const topOverlap = 0.090;
+  // Exact world-space outer envelope of createWoodStickGeometry() (including rounded semicircle top cap!)
+  // plus ultra-tight clearance (+0.0011) so sticky glaze & creeping layers sit flush with ZERO silhouette halo!
+  const woodBevel = POPSICLE.stickDepth * 0.19;
+  const woodBevelX = woodBevel * 0.7;
+  const hw = POPSICLE.stickWidth * 0.5 + woodBevelX + 0.0011;
+  const hd = POPSICLE.stickDepth * 0.5 + 0.0011;
+  const yArchCenter = POPSICLE.stickTopY - POPSICLE.stickWidth * 0.5;
+  const rArch = hw;
+  const yBot = POPSICLE.stickBottomY;
 
   for (let iv = 0; iv <= segV; iv++) {
+    let y: number;
+    let archScaleX = 1.0;
+    let archScaleZ = 1.0;
+    let archT = 0.0;
+    let bevelT = 0.0;
+
+    if (iv <= archRows) {
+      // Smooth cosine distribution over the rounded semicircle stick cap
+      const frac = iv / archRows; // 0 = very top tip, 1 = arch base
+      archT = Math.cos(frac * Math.PI * 0.5); // 1 at top tip -> 0 at arch base
+      y = yArchCenter + archT * rArch;
+      archScaleX = iv === 0 ? 0.0 : Math.sqrt(Math.max(0, 1.0 - archT * archT));
+      bevelT = smoothstep(0.90, 1.0, archT);
+      archScaleZ = iv === 0 ? 0.0 : Math.sqrt(Math.max(0.02, 1.0 - bevelT * bevelT));
+    } else {
+      const shaftFrac = (iv - archRows) / shaftRows;
+      y = yArchCenter - shaftFrac * (yArchCenter - yBot);
+    }
+
     const vNorm = iv / segV;
-    const y = topOverlap - vNorm * (spanDown + topOverlap);
 
     for (let iu = 0; iu <= segU; iu++) {
       const uNorm = iu / segU;
       const theta = iu === segU ? 0 : uNorm * Math.PI * 2;
       const sT = Math.sin(theta);
       const cT = Math.cos(theta);
-      // Rounded-rectangle superellipse snugly matching the extruded beveled birch stick
       const sgnX = sT >= 0 ? 1 : -1;
       const sgnZ = cT >= 0 ? 1 : -1;
-      const x = sgnX * Math.pow(Math.abs(sT), 0.34) * hw;
-      const z = sgnZ * Math.pow(Math.abs(cT), 0.38) * hd;
 
-      // Exact smooth analytical outward normal of the superellipse perimeter
-      let nx = sgnX * Math.pow(Math.max(1e-4, Math.abs(sT)), 1.66) / hw;
-      let nz = sgnZ * Math.pow(Math.max(1e-4, Math.abs(cT)), 1.62) / hd;
-      const nLen = Math.hypot(nx, nz) || 1;
-      nx /= nLen;
-      nz /= nLen;
+      // Superellipse cross-section snugly matching the extruded beveled birch stick
+      const x = sgnX * Math.pow(Math.abs(sT), 0.34) * hw * archScaleX;
+      const z = sgnZ * Math.pow(Math.abs(cT), 0.38) * hd * archScaleZ;
+
+      let nx: number;
+      let ny: number;
+      let nz: number;
+      if (iv === 0) {
+        nx = 0;
+        ny = 1;
+        nz = 0;
+      } else {
+        let nxB = (sgnX * Math.pow(Math.max(1e-4, Math.abs(sT)), 1.66)) / hw;
+        let nzB = (sgnZ * Math.pow(Math.max(1e-4, Math.abs(cT)), 1.62)) / hd;
+        const bLen = Math.hypot(nxB, nzB) || 1;
+        nxB /= bLen;
+        nzB /= bLen;
+
+        if (archT > 0.001) {
+          nx = nxB * (1.0 - archT * 0.55);
+          ny = archT * Math.abs(sT) * 0.92 + bevelT * 0.88;
+          nz = nzB * (1.0 - bevelT * 0.60);
+          const nLen = Math.hypot(nx, ny, nz) || 1;
+          nx /= nLen;
+          ny /= nLen;
+          nz /= nLen;
+        } else {
+          nx = nxB;
+          ny = 0;
+          nz = nzB;
+        }
+      }
 
       const idx = iv * (segU + 1) + iu;
       positions[idx * 3] = x;
@@ -545,7 +593,7 @@ function createStickMeltOverlay(sharedUniforms: WaterDropUniforms, seed: number)
       positions[idx * 3 + 2] = z;
 
       normals[idx * 3] = nx;
-      normals[idx * 3 + 1] = 0;
+      normals[idx * 3 + 1] = ny;
       normals[idx * 3 + 2] = nz;
 
       uvs[idx * 2] = uNorm;
@@ -572,6 +620,8 @@ function createStickMeltOverlay(sharedUniforms: WaterDropUniforms, seed: number)
 
   const stickMeltUniforms = {
     uIceBottomY: { value: POPSICLE.yBottom as number },
+    uIceTopY: { value: POPSICLE.yTop as number },
+    uIceAmount: { value: 1.0 as number },
     uStickWetness: { value: 0.0 as number },
     uMelt: { value: 0.0 as number },
   };
@@ -586,6 +636,8 @@ function createStickMeltOverlay(sharedUniforms: WaterDropUniforms, seed: number)
       uResolution: sharedUniforms.uResolution,
       uTime: sharedUniforms.uTime,
       uIceBottomY: stickMeltUniforms.uIceBottomY,
+      uIceTopY: stickMeltUniforms.uIceTopY,
+      uIceAmount: stickMeltUniforms.uIceAmount,
       uStickWetness: stickMeltUniforms.uStickWetness,
       uMelt: stickMeltUniforms.uMelt,
       uSeed: { value: seed * 3.17 },
@@ -593,6 +645,8 @@ function createStickMeltOverlay(sharedUniforms: WaterDropUniforms, seed: number)
     vertexShader: /* glsl */ `
       uniform float uTime;
       uniform float uIceBottomY;
+      uniform float uIceTopY;
+      uniform float uIceAmount;
       uniform float uStickWetness;
       uniform float uMelt;
       uniform float uSeed;
@@ -600,72 +654,95 @@ function createStickMeltOverlay(sharedUniforms: WaterDropUniforms, seed: number)
       varying vec3 vWorldPos;
       varying vec3 vBaseNormal;
       varying vec2 vUv;
-      varying float vDistBelow;
       varying vec2 vLocalXZ;
+      varying float vWorldY;
 
-      // Evaluates super-subtle overlapping translucent wet film layers building up on the wooden stick
-      // AFTER the porous birch wood has absorbed berry juice!
-      // Elongated organic downward-bowed film tongues (following the vertical wood grain — NEVER cartoon white bars!)
-      // create delicate stacked tonal & glossy meniscus steps as each thin layer creeps slowly down over the previous one.
       float evalLiquidLayer(float x, float dSmooth, float reach, float speed, float phase, float xCenter, float xWidth) {
         float span = max(0.35, reach * 1.25);
         float front = mod(uTime * speed + phase, span);
-        // Natural parabolic gravity tongue (leads deeper along grain channel, tapers softly toward stick edges)
         float dx = (x - xCenter) / xWidth;
         float lobeShape = exp(-dx * dx * 1.15);
         float grainRipple = sin(x * 11.5 + phase * 4.3 + uSeed) * 0.018 + cos(x * 23.0 - uSeed) * 0.008;
         float frontY = front * (0.38 + 0.78 * lobeShape) + grainRipple;
 
-        // Smooth thin layered sheet behind the creeping front + crisp delicate capillary ridge right at its lip
         float sheet = smoothstep(frontY + 0.016, frontY - 0.030, dSmooth) * smoothstep(0.02, 0.10, front) * (0.35 + 0.65 * lobeShape);
         float softLip = exp(-pow((dSmooth - frontY) / 0.012, 2.0)) * lobeShape * smoothstep(0.03, 0.12, front) * smoothstep(span, span - 0.10, front);
         return sheet * 0.28 + softLip * 0.20;
       }
 
-      float evalSyrupField(vec2 xzNorm, float distBelow) {
+      float evalStickyResidue(vec2 xzNorm, float wy) {
+        float x = xzNorm.x;
+        // Subtle organic vertical grain-aligned sticky berry-syrup film & a couple delicate glossy pooled drops
+        float grain1 = 0.5 + 0.5 * sin(x * 7.5 + wy * 3.8 + uSeed);
+        float grain2 = 0.5 + 0.5 * cos(x * 15.0 - wy * 6.5 + uSeed * 1.7);
+        float verticalStreaks = smoothstep(0.24, 0.86, grain1 * 0.62 + grain2 * 0.38);
+        // Gentle elongated vertical glossy syrup drops clinging naturally to the bare soaked wood
+        float d1 = exp(-pow((x + 0.28) / 0.26, 2.0) - pow((wy + 0.58) / 0.14, 2.0)) * 0.30;
+        float d2 = exp(-pow((x - 0.26) / 0.24, 2.0) - pow((wy + 0.84) / 0.17, 2.0)) * 0.32;
+        float d3 = exp(-pow((x + 0.04) / 0.30, 2.0) - pow((wy + 1.06) / 0.20, 2.0)) * 0.24;
+        float upperBias = smoothstep(-1.45, -0.55, wy);
+        return clamp((0.12 + verticalStreaks * 0.22) * (0.45 + 0.55 * upperBias) + d1 + d2 + d3, 0.0, 0.82);
+      }
+
+      float evalSyrupField(vec2 xzNorm, float wy) {
         float wet = clamp(uStickWetness, 0.0, 1.0);
-        if (wet < 0.08) return 0.0;
+        if (wet < 0.08 && uIceAmount > 0.95) return 0.0;
 
-        // Layers appear gently AFTER the wood itself has absorbed berry juice!
-        float layerAmt = smoothstep(0.20, 0.80, wet);
-        if (layerAmt < 0.005) return 0.0;
-
-        float dSmooth = 0.5 * (distBelow + sqrt(distBelow * distBelow + 0.0006));
         float x = xzNorm.x;
         float z = xzNorm.y;
-
         float faceMask = smoothstep(0.18, 0.58, abs(z));
-        float reach = smoothstep(0.15, 0.90, wet);
 
-        // 4 overlapping elongated wet sheen layers creeping slowly at staggered speeds across different wood grain lanes
-        float l1 = evalLiquidLayer(x, dSmooth, reach, 0.016, 0.12, -0.26, 0.68);
-        float l2 = evalLiquidLayer(x, dSmooth, reach, 0.021, 0.44,  0.22, 0.64);
-        float l3 = evalLiquidLayer(x, dSmooth, reach, 0.013, 0.72, -0.05, 0.82);
-        float l4 = evalLiquidLayer(x, dSmooth, reach, 0.025, 0.91,  0.34, 0.54);
+        // 1. Ice-present lower creeping layered glaze (fades smoothly out as iceAmount -> 0, ZERO horizontal cutoff!)
+        float iceFlow = 0.0;
+        float layerAmt = smoothstep(0.20, 0.80, wet);
+        float iceBlend = smoothstep(0.0, 0.55, uIceAmount);
+        if (layerAmt > 0.005 && iceBlend > 0.005) {
+          float distBelow = uIceBottomY - wy;
+          float dSmooth = 0.5 * (distBelow + sqrt(distBelow * distBelow + 0.0006));
+          float reach = smoothstep(0.15, 0.90, wet);
 
-        // Subtle continuous upper collar feeding the stacked translucent glaze layers
-        float collar = exp(-dSmooth / max(0.028, 0.055 * (0.5 + 0.6 * reach))) * 0.24;
-        float layered = (l1 + l2 + l3 + l4) * layerAmt;
+          float l1 = evalLiquidLayer(x, dSmooth, reach, 0.016, 0.12, -0.26, 0.68);
+          float l2 = evalLiquidLayer(x, dSmooth, reach, 0.021, 0.44,  0.22, 0.64);
+          float l3 = evalLiquidLayer(x, dSmooth, reach, 0.013, 0.72, -0.05, 0.82);
+          float l4 = evalLiquidLayer(x, dSmooth, reach, 0.025, 0.91,  0.34, 0.54);
 
-        float topFade = smoothstep(-0.075, 0.014, distBelow);
-        return clamp((collar * smoothstep(0.12, 0.40, wet) + layered) * faceMask * topFade, 0.0, 0.95);
+          float collar = exp(-dSmooth / max(0.028, 0.055 * (0.5 + 0.6 * reach))) * 0.22 * uIceAmount;
+          float layered = (l1 + l2 + l3 + l4) * layerAmt;
+          float topFade = smoothstep(-0.075, 0.014, distBelow);
+          iceFlow = clamp((collar * smoothstep(0.12, 0.40, wet) + layered) * faceMask * topFade, 0.0, 0.92);
+        }
+
+        // 2. Unified continuous bare-stick sticky syrup glaze (from rounded tip all the way down — ZERO seams!)
+        float bareWeight = clamp(max(1.0 - iceBlend, smoothstep(uIceTopY - 0.03, uIceTopY + 0.05, wy) * smoothstep(-1.05, -0.80, wy)), 0.0, 1.0);
+        float bareSticky = 0.0;
+        if (bareWeight > 0.005) {
+          float dFromTip = max(0.0, ${POPSICLE.stickTopY.toFixed(3)} - wy);
+          float sticky = evalStickyResidue(xzNorm, wy);
+          float s1 = evalLiquidLayer(x, dFromTip, 1.45, 0.010, 0.14, -0.24, 0.66);
+          float s2 = evalLiquidLayer(x, dFromTip, 1.45, 0.014, 0.49,  0.24, 0.62);
+          float s3 = evalLiquidLayer(x, dFromTip, 1.45, 0.008, 0.78, -0.04, 0.80);
+          float tipSoft = smoothstep(-0.005, 0.040, dFromTip);
+          float bareMask = 0.25 + 0.75 * faceMask;
+          bareSticky = clamp((sticky * 0.58 + (s1 + s2 + s3) * 0.68) * bareMask * tipSoft, 0.0, 0.88);
+        }
+
+        // Smooth C1 blend (NO hard max() cliff across uIceBottomY!)
+        return clamp(iceFlow * iceBlend + bareSticky * bareWeight * (1.0 - iceFlow * iceBlend * 0.65), 0.0, 0.92);
       }
 
       void main() {
         vUv = uv;
-        float distBelow = -position.y;
-        vDistBelow = distBelow;
+        vWorldY = position.y;
         vec2 xzNorm = vec2(position.x / ${hw.toFixed(6)}, position.z / ${hd.toFixed(6)});
         vLocalXZ = xzNorm;
 
-        float thick = evalSyrupField(xzNorm, distBelow);
+        float thick = evalSyrupField(xzNorm, position.y);
+        float distBelow = uIceBottomY - position.y;
         float dSmooth = 0.5 * (distBelow + sqrt(distBelow * distBelow + 0.0006));
 
-        // Ultra-subtle paper-thin layered film relief hugging the soaked wood flush
-        float tinyMeniscus = exp(-dSmooth * 36.0) * smoothstep(-0.04, 0.015, distBelow) * smoothstep(0.10, 0.45, uStickWetness) * 0.0012;
-        float layerBulge = smoothstep(0.06, 0.90, thick) * (0.0010 + 0.0014 * uStickWetness);
+        float tinyMeniscus = exp(-dSmooth * 36.0) * smoothstep(-0.04, 0.015, distBelow) * smoothstep(0.10, 0.45, uStickWetness) * uIceAmount * 0.0011;
+        float layerBulge = smoothstep(0.06, 0.88, thick) * (0.0008 + 0.0012 * max(uStickWetness, 1.0 - uIceAmount));
         vec3 displaced = position + normal * (tinyMeniscus + layerBulge);
-        displaced.y += uIceBottomY;
 
         vec4 wp = modelMatrix * vec4(displaced, 1.0);
         vWorldPos = wp.xyz;
@@ -679,6 +756,9 @@ function createStickMeltOverlay(sharedUniforms: WaterDropUniforms, seed: number)
       uniform sampler2D uSceneTex;
       uniform vec2 uResolution;
       uniform float uTime;
+      uniform float uIceBottomY;
+      uniform float uIceTopY;
+      uniform float uIceAmount;
       uniform float uStickWetness;
       uniform float uMelt;
       uniform float uSeed;
@@ -686,8 +766,8 @@ function createStickMeltOverlay(sharedUniforms: WaterDropUniforms, seed: number)
       varying vec3 vWorldPos;
       varying vec3 vBaseNormal;
       varying vec2 vUv;
-      varying float vDistBelow;
       varying vec2 vLocalXZ;
+      varying float vWorldY;
 
       float evalLiquidLayer(float x, float dSmooth, float reach, float speed, float phase, float xCenter, float xWidth) {
         float span = max(0.35, reach * 1.25);
@@ -702,83 +782,114 @@ function createStickMeltOverlay(sharedUniforms: WaterDropUniforms, seed: number)
         return sheet * 0.28 + softLip * 0.20;
       }
 
-      float evalSyrupField(vec2 xzNorm, float distBelow) {
+      float evalStickyResidue(vec2 xzNorm, float wy) {
+        float x = xzNorm.x;
+        float grain1 = 0.5 + 0.5 * sin(x * 7.5 + wy * 3.8 + uSeed);
+        float grain2 = 0.5 + 0.5 * cos(x * 15.0 - wy * 6.5 + uSeed * 1.7);
+        float verticalStreaks = smoothstep(0.24, 0.86, grain1 * 0.62 + grain2 * 0.38);
+        float d1 = exp(-pow((x + 0.28) / 0.26, 2.0) - pow((wy + 0.58) / 0.14, 2.0)) * 0.30;
+        float d2 = exp(-pow((x - 0.26) / 0.24, 2.0) - pow((wy + 0.84) / 0.17, 2.0)) * 0.32;
+        float d3 = exp(-pow((x + 0.04) / 0.30, 2.0) - pow((wy + 1.06) / 0.20, 2.0)) * 0.24;
+        float upperBias = smoothstep(-1.45, -0.55, wy);
+        return clamp((0.12 + verticalStreaks * 0.22) * (0.45 + 0.55 * upperBias) + d1 + d2 + d3, 0.0, 0.82);
+      }
+
+      float evalSyrupField(vec2 xzNorm, float wy) {
         float wet = clamp(uStickWetness, 0.0, 1.0);
-        if (wet < 0.08) return 0.0;
+        if (wet < 0.08 && uIceAmount > 0.95) return 0.0;
 
-        float layerAmt = smoothstep(0.20, 0.80, wet);
-        if (layerAmt < 0.005) return 0.0;
-
-        float dSmooth = 0.5 * (distBelow + sqrt(distBelow * distBelow + 0.0006));
         float x = xzNorm.x;
         float z = xzNorm.y;
-
         float faceMask = smoothstep(0.18, 0.58, abs(z));
-        float reach = smoothstep(0.15, 0.90, wet);
 
-        float l1 = evalLiquidLayer(x, dSmooth, reach, 0.016, 0.12, -0.26, 0.68);
-        float l2 = evalLiquidLayer(x, dSmooth, reach, 0.021, 0.44,  0.22, 0.64);
-        float l3 = evalLiquidLayer(x, dSmooth, reach, 0.013, 0.72, -0.05, 0.82);
-        float l4 = evalLiquidLayer(x, dSmooth, reach, 0.025, 0.91,  0.34, 0.54);
+        float iceFlow = 0.0;
+        float layerAmt = smoothstep(0.20, 0.80, wet);
+        float iceBlend = smoothstep(0.0, 0.55, uIceAmount);
+        if (layerAmt > 0.005 && iceBlend > 0.005) {
+          float distBelow = uIceBottomY - wy;
+          float dSmooth = 0.5 * (distBelow + sqrt(distBelow * distBelow + 0.0006));
+          float reach = smoothstep(0.15, 0.90, wet);
 
-        float collar = exp(-dSmooth / max(0.028, 0.055 * (0.5 + 0.6 * reach))) * 0.24;
-        float layered = (l1 + l2 + l3 + l4) * layerAmt;
+          float l1 = evalLiquidLayer(x, dSmooth, reach, 0.016, 0.12, -0.26, 0.68);
+          float l2 = evalLiquidLayer(x, dSmooth, reach, 0.021, 0.44,  0.22, 0.64);
+          float l3 = evalLiquidLayer(x, dSmooth, reach, 0.013, 0.72, -0.05, 0.82);
+          float l4 = evalLiquidLayer(x, dSmooth, reach, 0.025, 0.91,  0.34, 0.54);
 
-        float topFade = smoothstep(-0.075, 0.014, distBelow);
-        return clamp((collar * smoothstep(0.12, 0.40, wet) + layered) * faceMask * topFade, 0.0, 0.95);
+          float collar = exp(-dSmooth / max(0.028, 0.055 * (0.5 + 0.6 * reach))) * 0.22 * uIceAmount;
+          float layered = (l1 + l2 + l3 + l4) * layerAmt;
+          float topFade = smoothstep(-0.075, 0.014, distBelow);
+          iceFlow = clamp((collar * smoothstep(0.12, 0.40, wet) + layered) * faceMask * topFade, 0.0, 0.92);
+        }
+
+        float bareWeight = clamp(max(1.0 - iceBlend, smoothstep(uIceTopY - 0.03, uIceTopY + 0.05, wy) * smoothstep(-1.05, -0.80, wy)), 0.0, 1.0);
+        float bareSticky = 0.0;
+        if (bareWeight > 0.005) {
+          float dFromTip = max(0.0, ${POPSICLE.stickTopY.toFixed(3)} - wy);
+          float sticky = evalStickyResidue(xzNorm, wy);
+          float s1 = evalLiquidLayer(x, dFromTip, 1.45, 0.010, 0.14, -0.24, 0.66);
+          float s2 = evalLiquidLayer(x, dFromTip, 1.45, 0.014, 0.49,  0.24, 0.62);
+          float s3 = evalLiquidLayer(x, dFromTip, 1.45, 0.008, 0.78, -0.04, 0.80);
+          float tipSoft = smoothstep(-0.005, 0.040, dFromTip);
+          float bareMask = 0.25 + 0.75 * faceMask;
+          bareSticky = clamp((sticky * 0.58 + (s1 + s2 + s3) * 0.68) * bareMask * tipSoft, 0.0, 0.88);
+        }
+
+        return clamp(iceFlow * iceBlend + bareSticky * bareWeight * (1.0 - iceFlow * iceBlend * 0.65), 0.0, 0.92);
       }
 
       void main() {
-        float fC = evalSyrupField(vLocalXZ, vDistBelow);
+        float fC = evalSyrupField(vLocalXZ, vWorldY);
         if (fC < 0.04) discard;
 
         vec3 N0 = normalize(vBaseNormal);
-        vec3 T = normalize(cross(vec3(0.0, 1.0, 0.0), N0));
-        vec3 B = vec3(0.0, 1.0, 0.0);
+        vec3 rawT = cross(vec3(0.0, 1.0, 0.0), N0);
+        vec3 T = length(rawT) > 0.001 ? normalize(rawT) : vec3(1.0, 0.0, 0.0);
+        vec3 B = normalize(cross(N0, T));
 
-        float epsS = 0.024;
+        float epsS = 0.028;
         vec2 stepXZ = vec2(T.x * epsS, T.z * epsS * (${(hw / hd).toFixed(4)}));
-        float dv = 0.007;
-        float fR = evalSyrupField(vLocalXZ + stepXZ, vDistBelow);
-        float fL = evalSyrupField(vLocalXZ - stepXZ, vDistBelow);
-        float fD = evalSyrupField(vLocalXZ, vDistBelow + dv);
-        float fU = evalSyrupField(vLocalXZ, vDistBelow - dv);
+        float dv = 0.010;
+        float fR = evalSyrupField(vLocalXZ + stepXZ, vWorldY);
+        float fL = evalSyrupField(vLocalXZ - stepXZ, vWorldY);
+        float fD = evalSyrupField(vLocalXZ, vWorldY - dv);
+        float fU = evalSyrupField(vLocalXZ, vWorldY + dv);
 
         float gradT = (fR - fL) / (2.0 * epsS);
         float gradV = (fD - fU) / (2.0 * dv);
 
-        // Super subtle physical meniscus slope across the overlapping wet layers (NO neon white lines!)
-        float topDamp = smoothstep(-0.01, 0.035, vDistBelow);
-        vec3 N = normalize(N0 - T * clamp(gradT * 0.18, -0.44, 0.44) + B * clamp(gradV * 0.068 * topDamp, -0.44, 0.44));
+        // Damp slope right near the rounded top cap and across ice transitions so specular stays delicate & realistic!
+        float distBelow = uIceBottomY - vWorldY;
+        float tipDamp = smoothstep(${POPSICLE.stickTopY.toFixed(3)}, ${(POPSICLE.stickTopY - 0.09).toFixed(3)}, vWorldY);
+        float topDamp = max(1.0 - uIceAmount, smoothstep(-0.01, 0.035, distBelow)) * tipDamp;
+        vec3 N = normalize(N0 - T * clamp(gradT * 0.14 * tipDamp, -0.34, 0.34) + B * clamp(gradV * 0.055 * topDamp, -0.34, 0.34));
         vec3 V = normalize(cameraPosition - vWorldPos);
         float ndv = clamp(dot(N, V), 0.0, 1.0);
 
         vec2 screenUv = gl_FragCoord.xy / uResolution;
-        vec2 refrOff = -N.xy * (0.0016 + 0.0044 * smoothstep(0.06, 0.85, fC));
+        vec2 refrOff = -N.xy * (0.0014 + 0.0036 * smoothstep(0.06, 0.85, fC));
         vec3 bgWood = texture2D(uSceneTex, clamp(screenUv + refrOff, vec2(0.002), vec2(0.998))).rgb;
 
-        // Each overlapping wet film layer deepens & enriches the glossy berry-stained wood just enough to read!
         float optDepth = smoothstep(0.04, 0.85, fC);
-        vec3 syrupTrans = exp(-vec3(0.10, 0.88, 0.92) * (0.20 + 0.80 * optDepth));
+        vec3 syrupTrans = exp(-vec3(0.09, 0.84, 0.88) * (0.18 + 0.68 * optDepth));
         vec3 col = bgWood * syrupTrans;
 
-        // Delicate dark optical meniscus contour strictly along the curved leading edge of each added layer
-        float lipContour = clamp(-gradV * 0.055 * topDamp, 0.0, 0.26);
+        // Delicate dark optical meniscus contour along the curved leading edges of subtle sticky layers
+        float lipContour = clamp(-gradV * 0.045 * topDamp, 0.0, 0.22);
         col *= (1.0 - lipContour);
 
-        // Broken, organic studio specular highlights strictly where each curved ridge catches off-axis light
-        float fresnel = 0.015 + 0.985 * pow(1.0 - ndv, 5.2);
+        // Organic wet-syrup highlights (subtle & believable over natural birch wood grain — zero plastic bars!)
+        float fresnel = 0.014 + 0.986 * pow(1.0 - ndv, 5.0);
         vec3 l1 = normalize(vec3(-0.42, 0.54, 0.73));
         vec3 l2 = normalize(vec3(0.48, 0.42, 0.77));
         vec3 h1 = normalize(l1 + V);
         vec3 h2 = normalize(l2 + V);
-        float spec1 = pow(max(dot(N, h1), 0.0), 175.0);
-        float spec2 = pow(max(dot(N, h2), 0.0), 135.0);
-        col = mix(col, vec3(1.05, 0.97, 0.96), clamp(fresnel * 0.16, 0.0, 0.16));
-        col += vec3(2.05, 1.92, 1.88) * (spec1 * 1.15 + spec2 * 0.80);
+        float spec1 = pow(max(dot(N, h1), 0.0), 165.0);
+        float spec2 = pow(max(dot(N, h2), 0.0), 125.0);
+        col = mix(col, vec3(1.04, 0.95, 0.94), clamp(fresnel * 0.14, 0.0, 0.14));
+        col += vec3(1.85, 1.72, 1.68) * (spec1 * 0.78 + spec2 * 0.54);
 
-        float alpha = smoothstep(0.04, 0.22, fC) * smoothstep(-0.055, 0.014, vDistBelow);
-        gl_FragColor = vec4(col, alpha * 0.72);
+        float alpha = smoothstep(0.04, 0.24, fC);
+        gl_FragColor = vec4(col, alpha * 0.68);
       }
     `,
   });
@@ -796,7 +907,7 @@ function createStickMeltOverlay(sharedUniforms: WaterDropUniforms, seed: number)
 }
 
 const PENDANT_SEG_U = 28;
-const PENDANT_SEG_V = 28;
+const PENDANT_SEG_V = 40;
 
 function createPendantLatheGeometry(): THREE.BufferGeometry {
   const vCount = (PENDANT_SEG_U + 1) * (PENDANT_SEG_V + 1);
@@ -898,10 +1009,10 @@ function updatePendantLatheGeometry(
   } else {
     let bulbVert: number;
     let collarR: number;
-    let rNeck: number;
-    let pinchSharp = 0;
-    let sPinch = 0.54;
-    let flareDecay = 2.9;
+    let rMin: number;
+    let pUp: number;
+    let pBot: number;
+    let waistFrac: number;
 
     if (stage === 'growing') {
       const g = clamp(grow, 0, 1);
@@ -911,37 +1022,45 @@ function updatePendantLatheGeometry(
       bulbVert = bulbR * (1.06 + 0.16 * smoothstep(0.30, 1.0, g));
       const yBottomTarget = -0.013 * scale * (1.0 - smoothstep(0.0, 0.35, g)) - Rmax * (2.98 * Math.pow(g, 1.04));
       yBulbCenter = yBottomTarget + bulbVert;
-      collarR = bulbR * (1.68 - 0.14 * g);
-      const waistFactor = 0.90 - 0.28 * smoothstep(0.50, 1.0, g);
-      rNeck = bulbR * waistFactor;
-      pinchSharp = smoothstep(0.58, 1.0, g) * 0.18;
-      sPinch = 0.54;
-      flareDecay = 2.9;
+      collarR = bulbR * (1.62 - 0.10 * g);
+      const waistFactor = 0.88 - 0.32 * smoothstep(0.45, 1.0, g);
+      rMin = bulbR * waistFactor;
+      pUp = 1.85 + 0.35 * g;
+      pBot = 0.95 + 0.25 * g;
+      waistFrac = 0.42;
     } else {
-      // 'pinching': sugary berry-juice viscous gravity draw — fuller glossy filament & elongated teardrop stretch!
+      // 'pinching': pure C1-smooth viscous hourglass catenoid bridge — wide concave base at the ice rim,
+      // smoothly pinching thinnest RIGHT IN THE MIDDLE, then flaring smoothly BACK OUT into the hanging drop!
       const u = clamp(stageU, 0, 1);
-      bulbR = Rmax * (1.0 - 0.08 * Math.sin(u * Math.PI * 0.85));
-      bulbVert = Rmax * (1.22 + 0.24 * Math.sin(u * Math.PI * 0.80) + 0.04 * u);
+      bulbR = Rmax * (1.0 - 0.07 * Math.sin(u * Math.PI * 0.85));
+      bulbVert = Rmax * (1.22 + 0.22 * Math.sin(u * Math.PI * 0.80) + 0.04 * u);
       const sagDist = 3.55 * Rmax * Math.pow(u, 2.05);
       yBulbCenter = -1.76 * Rmax - sagDist;
-      collarR = Rmax * (1.54 - 0.24 * u);
-      // Sugary juice (moderate Ohnesorge viscosity) keeps a visibly thicker filament before final capillary snap!
-      rNeck = Rmax * 0.62 * Math.pow(Math.max(0, 1.0 - u), 0.44);
-      pinchSharp = 0.18 + 0.78 * Math.pow(u, 1.45);
-      sPinch = 0.54 + 0.24 * u;
-      flareDecay = 2.9 + 1.5 * u;
+      collarR = Rmax * (1.52 - 0.20 * u);
+      // Middle hourglass waist smoothly thins to capillary snap (matches g = 1.0 value 0.56 * Rmax at u = 0!)
+      rMin = Math.max(0.004 * Rmax, Rmax * 0.56 * Math.pow(Math.max(0, 1.0 - u), 1.08));
+      pUp = 2.20 + 0.35 * u;
+      pBot = 1.20 + 0.32 * u;
+      // Exact middle of the visible liquid bridge between the bottom ice rim and the drop top!
+      waistFrac = 0.42 + 0.04 * u;
     }
 
     const yBottom = yBulbCenter - bulbVert;
-    pinchY = yBulbCenter + bulbVert * 1.14;
+    const yVisBase = Math.min(yTop - 0.004, -0.008 * scale);
+    // Exact middle waist between visible base rim and drop equator (sits dead-center in the visible filament!)
+    const yWaist = yVisBase + (yBulbCenter - yVisBase) * waistFrac;
+    pinchY = yWaist;
 
     if (yBottom >= yTop - 0.002) {
       return { visible: false, yBulbCenter, bulbR, pinchY };
     }
 
+    const spanUp = Math.max(1e-4, yTop - yWaist);
+    const spanDn = Math.max(1e-4, yWaist - yBulbCenter);
+
     for (let iv = 0; iv <= PENDANT_SEG_V; iv++) {
       const lin = iv / PENDANT_SEG_V;
-      const s = lin < 0.7 ? lin : 0.7 + 0.3 * Math.sin(((lin - 0.7) / 0.3) * Math.PI * 0.5);
+      const s = lin < 0.72 ? lin : 0.72 + 0.28 * Math.sin(((lin - 0.72) / 0.28) * Math.PI * 0.5);
       const y = yTop + (yBottom - yTop) * s;
       yProfile[iv] = y;
 
@@ -951,24 +1070,21 @@ function updatePendantLatheGeometry(
       }
 
       if (y <= yBulbCenter) {
+        // Plump smooth rounded lower dome (C1 tangent dr/dy = 0 at y = yBulbCenter)
         const t = clamp((yBulbCenter - y) / Math.max(1e-4, bulbVert), 0, 1);
         radiusProfile[iv] = bulbR * Math.sqrt(Math.max(0, 1.0 - t * t));
-        continue;
+      } else if (y >= yWaist) {
+        // Upper concave flare from middle waist (dr/dy = 0) smoothly out into the ice bottom collar!
+        const tUp = clamp((y - yWaist) / spanUp, 0, 1);
+        radiusProfile[iv] = rMin + (collarR - rMin) * Math.pow(tUp, pUp);
+      } else {
+        // Lower hourglass flare: widens smoothly OUTWARD from middle waist (dr/dy = 0) into the rounded
+        // upper teardrop shoulder (dr/dy = 0 at y = yBulbCenter) — ZERO straight tube, ZERO equator seam!
+        const tDn = clamp((yWaist - y) / spanDn, 0, 1);
+        const sw = Math.pow(tDn, pBot);
+        const f = sw * sw * (3.0 - 2.0 * sw);
+        radiusProfile[iv] = rMin + (bulbR - rMin) * f;
       }
-
-      const sUpper = clamp((yTop - y) / Math.max(1e-4, yTop - yBulbCenter), 0, 1);
-      const collarFlare = collarR * Math.exp(-sUpper * flareDecay);
-      const dyAbove = (y - yBulbCenter) / Math.max(1e-4, bulbVert * 1.16);
-      const bulbUpper = dyAbove < 1.0 ? bulbR * Math.sqrt(Math.max(0, 1.0 - dyAbove * dyAbove)) : 0;
-
-      const waistWidth = 0.32 - 0.08 * pinchSharp;
-      const pinchDip = 1.0 - pinchSharp * Math.exp(-Math.pow((sUpper - sPinch) / waistWidth, 2.0));
-      const filament = Math.max(0.004 * Rmax, rNeck * Math.max(0.05, pinchDip));
-      const kCollar = Math.max(0.004 * Rmax, rNeck * 0.50);
-      const kBulb = Math.max(0.004 * Rmax, rNeck * 0.46);
-
-      const body = smax(collarFlare, filament, kCollar);
-      radiusProfile[iv] = smax(body, bulbUpper, kBulb);
     }
   }
 
@@ -1250,8 +1366,9 @@ export function createWaterDropSystem(seed: number, initialMode: DropMode = 'min
     tn.juiceTint = juiceTint;
   }
 
-  // 2 restrained, slow-forming bottom-rim hanging pendant sites (most meltwater drains down the wooden stick!)
+  // 2 restrained, slow-forming bottom-rim hanging pendant sites anchored to the EXACT lowest liquid accumulation troughs!
   const pendantSpecs: Array<{
+    side: -1 | 1;
     anchorU: number;
     anchorV: number;
     initStage: PendantStage;
@@ -1260,15 +1377,15 @@ export function createWaterDropSystem(seed: number, initialMode: DropMode = 'min
     scale: number;
     dormantDur: number;
   }> = [
-    // Hero bottom-left drop (poised at t=0 like reference.jpg, then long calm pauses between rare drops!)
-    { anchorU: 0.875, anchorV: 0.016, initStage: 'growing', initGrow: 0.91, growRate: 0.018, scale: 1.04, dormantDur: 7.5 },
-    // Subtle smaller bottom-right bead (rare & restrained so the stick carries most of the melt!)
-    { anchorU: 0.108, anchorV: 0.016, initStage: 'growing', initGrow: 0.44, growRate: 0.013, scale: 0.66, dormantDur: 11.5 },
+    // Hero bottom-left drop (poised at t=0 right beneath the lowest left accumulation belly!)
+    { side: -1, anchorU: 0.905, anchorV: 0.010, initStage: 'growing', initGrow: 0.91, growRate: 0.016, scale: 1.04, dormantDur: 7.5 },
+    // Subtle smaller bottom-right drop beneath the lowest right accumulation belly
+    { side: 1, anchorU: 0.095, anchorV: 0.010, initStage: 'growing', initGrow: 0.44, growRate: 0.012, scale: 0.66, dormantDur: 11.5 },
   ];
 
   const pRand = mulberry32(seed * 613 + 41);
   const pendants: PendantDrop[] = pendantSpecs.map((spec, idx) => {
-    const jitterU = seed === 1 ? 0 : (pRand() - 0.5) * 0.04;
+    const jitterU = seed === 1 ? 0 : (pRand() - 0.5) * 0.03;
     const initStage: PendantStage = seed === 1 ? spec.initStage : idx < 2 ? 'growing' : 'dormant';
     const initGrow = seed === 1 ? spec.initGrow : initStage === 'growing' ? 0.35 + pRand() * 0.55 : 0.0;
     const neckGeo = createPendantLatheGeometry();
@@ -1282,9 +1399,12 @@ export function createWaterDropSystem(seed: number, initialMode: DropMode = 'min
     pendantGroup.add(fallMesh);
 
     disposables.push(neckGeo);
+    const startU = (spec.anchorU + jitterU + 1) % 1;
 
     return {
-      anchorU: (spec.anchorU + jitterU + 1) % 1,
+      side: spec.side,
+      anchorU: startU,
+      initAnchorU: startU,
       anchorV: spec.anchorV,
       stage: initStage,
       initStage,
@@ -1307,6 +1427,68 @@ export function createWaterDropSystem(seed: number, initialMode: DropMode = 'min
       recoilStartY: -0.08 * spec.scale,
     };
   });
+
+  const scanPos = new THREE.Vector3();
+  const scanNorm = new THREE.Vector3();
+
+  /**
+   * Scans the live bottom rim on left (-1) or right (+1) of the wooden stick to find
+   * the exact lowest Y belly where sticky liquid visibly accumulates!
+   */
+  function findBottomAccumulationLow(
+    ice: PopsicleIceSystem,
+    side: -1 | 1,
+    stickClearX: number,
+    outPos: THREE.Vector3,
+  ): { found: boolean; u: number } {
+    const uStart = side < 0 ? 0.77 : 0.035;
+    const uEnd = side < 0 ? 0.965 : 0.23;
+    const samples = 36;
+    let bestY = Infinity;
+    let bestU = side < 0 ? 0.905 : 0.095;
+    let found = false;
+
+    // First find outer edge X on this side so we stay squarely on the underside belly (never climbing outer wall)
+    ice.sampleLiveSurface(side < 0 ? 0.75 : 0.25, 0.05, scanPos, scanNorm);
+    const maxAbsX = Math.abs(scanPos.x) * 0.88;
+
+    for (let k = 0; k <= samples; k++) {
+      const u = uStart + (uEnd - uStart) * (k / samples);
+      ice.sampleLiveSurface(u, 0.010, scanPos, scanNorm);
+      const ax = Math.abs(scanPos.x);
+      if (ax < stickClearX + 0.018 || ax > maxAbsX) continue;
+      if (scanPos.y < bestY) {
+        bestY = scanPos.y;
+        bestU = u;
+        outPos.copy(scanPos);
+        found = true;
+      }
+    }
+    return { found, u: bestU };
+  }
+
+  function feedPendantFromDrop(uNorm: number, volumeBoost: number) {
+    let bestP = pendants[0];
+    let bestDu = 999;
+    for (let k = 0; k < pendants.length; k++) {
+      const du = Math.abs(wrappedDeltaU(uNorm, pendants[k].anchorU));
+      if (du < bestDu) {
+        bestDu = du;
+        bestP = pendants[k];
+      }
+    }
+    if (!bestP) return;
+    if (bestP.stage === 'growing') {
+      bestP.grow = Math.min(1.0, bestP.grow + volumeBoost);
+    } else if (bestP.stage === 'dormant') {
+      bestP.stageTime += volumeBoost * 18.0;
+      if (bestP.stageTime >= bestP.dormantDuration) {
+        bestP.stage = 'growing';
+        bestP.grow = 0;
+        bestP.stageTime = 0;
+      }
+    }
+  }
 
   function wrappedDeltaU(fromU: number, toU: number): number {
     let du = toU - fromU;
@@ -1437,6 +1619,7 @@ export function createWaterDropSystem(seed: number, initialMode: DropMode = 'min
       tn.baseRadius = 0;
     }
     for (const p of pendants) {
+      p.anchorU = p.initAnchorU;
       p.stage = p.initStage;
       p.grow = p.initGrow;
       p.stageTime = 0;
@@ -1447,6 +1630,8 @@ export function createWaterDropSystem(seed: number, initialMode: DropMode = 'min
     }
     resetMinimalDrops();
     stickMelt.uniforms.uIceBottomY.value = POPSICLE.yBottom;
+    stickMelt.uniforms.uIceTopY.value = POPSICLE.yTop;
+    stickMelt.uniforms.uIceAmount.value = 1.0;
     stickMelt.uniforms.uStickWetness.value = 0.0;
     stickMelt.uniforms.uMelt.value = 0.0;
     hasInitialized = false;
@@ -1488,7 +1673,8 @@ export function createWaterDropSystem(seed: number, initialMode: DropMode = 'min
             d.uNorm = ((respawnRand() - 0.5) * 0.44 + 1) % 1;
           }
           d.vNorm = 0.20 + respawnRand() * 0.74;
-          d.radius = 0.0042;
+          // Nucleate cleanly from invisible micro-dew (0.0014) so fresh condensation NEVER pops in!
+          d.radius = 0.0014;
           d.velV = 0;
           d.velU = 0;
           d.sliding = false;
@@ -1640,29 +1826,36 @@ export function createWaterDropSystem(seed: number, initialMode: DropMode = 'min
         d.wobblePhase += dt * 24.0;
       }
 
-      if (d.vNorm < 0.032) {
-        if (updatePendants) {
-          let bestP = pendants[0];
-          let bestDu = 999;
-          for (let k = 0; k < pendants.length; k++) {
-            const du = Math.abs(wrappedDeltaU(d.uNorm, pendants[k].anchorU));
-            if (du < bestDu) {
-              bestDu = du;
-              bestP = pendants[k];
-            }
-          }
-          if (bestP && bestP.stage === 'growing') {
-            bestP.grow = Math.min(1.0, bestP.grow + (d.radius / 0.04) * 0.08);
-          } else if (bestP && bestP.stage === 'dormant') {
-            bestP.stageTime += 0.45;
+      if (d.vNorm < 0.042) {
+        // Glide laterally along the bottom rim curve into the nearest liquid accumulation belly & drain smoothly!
+        let bestP = pendants[0];
+        let bestDu = 999;
+        for (let k = 0; k < pendants.length; k++) {
+          const du = wrappedDeltaU(d.uNorm, pendants[k].anchorU);
+          if (Math.abs(du) < Math.abs(bestDu)) {
+            bestDu = du;
+            bestP = pendants[k];
           }
         }
-        d.alive = false;
-        d.radius = 0;
-        d.velV = 0;
-        d.velU = 0;
-        d.sliding = false;
-        d.respawnDelay = 2.5 + respawnRand() * 4.5;
+        if (bestP) {
+          d.uNorm = (d.uNorm + clamp(bestDu, -0.05, 0.05) * Math.min(1, dt * 3.2) + 1) % 1;
+        }
+        d.vNorm = Math.max(0.005, d.vNorm - dt * 0.032);
+        const rBefore = d.radius;
+        const drainStep = Math.min(d.radius, dt * (0.040 + d.radius * 0.8));
+        d.radius = Math.max(0, d.radius - drainStep);
+        if (updatePendants && rBefore > d.radius) {
+          const dVol = (rBefore ** 3 - d.radius ** 3) / (0.042 ** 3);
+          feedPendantFromDrop(d.uNorm, clamp(dVol * 0.16, 0, 0.045));
+        }
+        if (d.radius < 0.0018 || d.vNorm <= 0.006) {
+          d.alive = false;
+          d.radius = 0;
+          d.velV = 0;
+          d.velU = 0;
+          d.sliding = false;
+          d.respawnDelay = 3.5 + respawnRand() * 5.5;
+        }
       }
     }
 
@@ -1679,8 +1872,8 @@ export function createWaterDropSystem(seed: number, initialMode: DropMode = 'min
   }
 
   // Curated decorative eye-candy subset for 'minimal' mode:
-  // ~140 SMALL, delicate sparkling droplets (NEVER large water globes!), distributed organically along
-  // the silhouette rims & front face. Most stay calmly pinned; only a few gently glide down now and then!
+  // ~216 SMALL sparkling droplets + 30 bottom-rim pooling beads with true volume-conserving merging
+  // and smooth bottom-rim swallowing into the accumulated bottom pool & hanging pendant drops!
   interface MinimalDrop {
     uNorm: number;
     vNorm: number;
@@ -1688,7 +1881,12 @@ export function createWaterDropSystem(seed: number, initialMode: DropMode = 'min
     initV: number;
     radius: number;
     initRadius: number;
+    maxRadius: number;
     isRim: boolean;
+    isBottomPool: boolean;
+    alive: boolean;
+    absorbing: boolean;
+    respawnDelay: number;
     /** Countdown until this small droplet occasionally breaks pinning for a brief gentle glide */
     slipTimer: number;
     initSlipTimer: number;
@@ -1696,6 +1894,8 @@ export function createWaterDropSystem(seed: number, initialMode: DropMode = 'min
     slipRemain: number;
     velV: number;
     velU: number;
+    wobble: number;
+    wobblePhase: number;
     pos: THREE.Vector3;
     normal: THREE.Vector3;
   }
@@ -1739,13 +1939,20 @@ export function createWaterDropSystem(seed: number, initialMode: DropMode = 'min
       initV: vNorm,
       radius,
       initRadius: radius,
+      maxRadius: isBottomPool ? 0.024 : 0.025,
       isRim: isRim || isBottomPool,
+      isBottomPool,
+      alive: true,
+      absorbing: false,
+      respawnDelay: 0,
       slipTimer: initSlipTimer,
       initSlipTimer,
       slipping: false,
       slipRemain: 0,
       velV: 0,
       velU: 0,
+      wobble: 0,
+      wobblePhase: minRand() * Math.PI * 2,
       pos: new THREE.Vector3(),
       normal: new THREE.Vector3(0, 0, 1),
     });
@@ -1764,11 +1971,134 @@ export function createWaterDropSystem(seed: number, initialMode: DropMode = 'min
       md.uNorm = md.initU;
       md.vNorm = md.initV;
       md.radius = md.initRadius;
+      md.alive = true;
+      md.absorbing = false;
+      md.respawnDelay = 0;
       md.slipTimer = md.initSlipTimer;
       md.slipping = false;
       md.slipRemain = 0;
       md.velV = 0;
       md.velU = 0;
+      md.wobble = 0;
+    }
+  }
+
+  /**
+   * True 3D volume-conserving coalescence for small droplets in 'minimal' mode:
+   * - When two small droplets meet, they gently pull together via capillary bridge and FUSE into ONE larger drop
+   *   (`rNew = cbrt(r1^3 + r2^3)`), permanently keeping the combined volume (never shrinking back!).
+   * - When an incoming drop hits a bottom-rim pool bead, the bottom pool bead swallows it and grows (bleeding
+   *   excess liquid smoothly into the nearest big hanging pendant drop!).
+   */
+  function runMinimalCoalescence(ice: PopsicleIceSystem, dt: number, initialRelax: boolean) {
+    for (let i = 0; i < minimalDrops.length; i++) {
+      const md = minimalDrops[i];
+      if (!md.alive || md.radius < 0.0014) continue;
+      ice.sampleLiveSurface(md.uNorm, md.vNorm, md.pos, md.normal);
+    }
+
+    const mergeRatio = initialRelax ? 0.72 : 0.74;
+    const attractRatio = 1.38;
+
+    for (let i = 0; i < minimalDrops.length; i++) {
+      const a = minimalDrops[i];
+      if (!a.alive || a.absorbing || a.radius < 0.0020) continue;
+
+      for (let j = i + 1; j < minimalDrops.length; j++) {
+        const b = minimalDrops[j];
+        if (!b.alive || b.absorbing || b.radius < 0.0020) continue;
+
+        const rSum = a.radius + b.radius;
+        const maxRange = rSum * attractRatio;
+
+        const dx = b.pos.x - a.pos.x;
+        if (Math.abs(dx) > maxRange) continue;
+        const dy = b.pos.y - a.pos.y;
+        if (Math.abs(dy) > maxRange) continue;
+        const dz = b.pos.z - a.pos.z;
+        if (Math.abs(dz) > maxRange) continue;
+
+        const distSq = dx * dx + dy * dy + dz * dz;
+        const mergeDist = rSum * mergeRatio;
+
+        if (distSq < mergeDist * mergeDist) {
+          // Bottom-rim pool beads always absorb incoming drops; otherwise larger (or lower) drop swallows smaller!
+          let host: MinimalDrop;
+          let guest: MinimalDrop;
+          if (a.isBottomPool && !b.isBottomPool) {
+            host = a;
+            guest = b;
+          } else if (b.isBottomPool && !a.isBottomPool) {
+            host = b;
+            guest = a;
+          } else if (Math.abs(a.radius - b.radius) > 0.0015) {
+            host = a.radius >= b.radius ? a : b;
+            guest = a.radius >= b.radius ? b : a;
+          } else {
+            host = a.vNorm <= b.vNorm ? a : b;
+            guest = a.vNorm <= b.vNorm ? b : a;
+          }
+
+          const vHost = host.radius ** 3;
+          const vGuest = guest.radius ** 3;
+          const vTotal = vHost + vGuest;
+          const massRatio = vGuest / Math.max(1e-10, vTotal);
+          const mergedR = Math.cbrt(vTotal);
+
+          // Gently shift center toward volume-weighted midpoint (keep bottom pool beads anchored near rim!)
+          const posShift = host.isBottomPool ? 0.14 : 0.42;
+          const du = wrappedDeltaU(host.uNorm, guest.uNorm);
+          host.uNorm = (host.uNorm + du * massRatio * posShift + 1) % 1;
+          host.vNorm = clamp(host.vNorm + (guest.vNorm - host.vNorm) * massRatio * posShift, 0.006, 0.95);
+          host.radius = Math.min(host.maxRadius, mergedR);
+
+          if (!initialRelax) {
+            host.wobble = Math.min(0.85, host.wobble + 0.40 + massRatio * 0.45);
+            if (host.isBottomPool) {
+              // Bottom pool bead swallowed an incoming drop -> transfer gentle volume into the nearest big pendant too!
+              const feedVol = clamp((vGuest / (0.042 ** 3)) * 0.24, 0, 0.04);
+              feedPendantFromDrop(host.uNorm, feedVol);
+            } else if (a.slipping || b.slipping || host.radius > 0.0165) {
+              // Heavier merged droplet gains gentle momentum so it can keep gliding organically!
+              host.slipping = true;
+              host.slipRemain = Math.max(host.slipRemain, guest.slipRemain, 0.08 + massRatio * 0.14);
+              host.velV = Math.max(host.velV, guest.velV, 0.024 + Math.max(0, host.radius - 0.011) * 1.4);
+              host.velU = clamp(host.velU * (1 - massRatio) + guest.velU * massRatio + du * 0.05, -0.018, 0.018);
+            }
+          }
+
+          ice.sampleLiveSurface(host.uNorm, host.vNorm, host.pos, host.normal);
+
+          // Guest is cleanly swallowed and will slowly re-condense from invisible micro-dew later
+          guest.alive = false;
+          guest.absorbing = false;
+          guest.radius = 0;
+          guest.slipping = false;
+          guest.velV = 0;
+          guest.velU = 0;
+          guest.wobble = 0;
+          guest.respawnDelay = initialRelax ? 4.0 + ((j * 0.73) % 10.0) : 7.0 + ((j * 1.13) % 18.0);
+
+          if (host === b) break;
+        } else if (!initialRelax && dt > 0 && distSq < maxRange * maxRange) {
+          // Gentle capillary pull right before touch so merging droplets bend smoothly into each other!
+          const dist = Math.sqrt(distSq) || 1e-4;
+          const prox = smoothstep(maxRange, mergeDist, dist);
+          if (a.slipping && !b.slipping && b.vNorm < a.vNorm + 0.025) {
+            const duToB = wrappedDeltaU(a.uNorm, b.uNorm);
+            a.velU += clamp(duToB, -0.025, 0.025) * prox * dt * 1.8;
+          } else if (b.slipping && !a.slipping && a.vNorm < b.vNorm + 0.025) {
+            const duToA = wrappedDeltaU(b.uNorm, a.uNorm);
+            b.velU += clamp(duToA, -0.025, 0.025) * prox * dt * 1.8;
+          } else if (!a.isBottomPool && !b.isBottomPool) {
+            const big = a.radius >= b.radius ? a : b;
+            const small = a.radius >= b.radius ? b : a;
+            const du = wrappedDeltaU(small.uNorm, big.uNorm);
+            small.uNorm = (small.uNorm + du * prox * dt * 0.32 + 1) % 1;
+            small.vNorm = clamp(small.vNorm + (big.vNorm - small.vNorm) * prox * dt * 0.32, 0.012, 0.95);
+          }
+        }
+      }
     }
   }
 
@@ -1778,49 +2108,147 @@ export function createWaterDropSystem(seed: number, initialMode: DropMode = 'min
 
     for (let i = 0; i < minimalDrops.length; i++) {
       const md = minimalDrops[i];
+
+      if (!md.alive) {
+        md.respawnDelay -= dt * rate;
+        // Slowly nucleate fresh micro-condensation from invisible radius (0.0014) so drops NEVER pop in!
+        if (md.respawnDelay <= 0 && state.melt < 0.62) {
+          if (md.isBottomPool) {
+            md.uNorm = md.initU;
+            md.vNorm = md.initV;
+            md.slipTimer = 9999;
+          } else {
+            md.uNorm = ((md.initU + (respawnRand() - 0.5) * 0.10) + 1) % 1;
+            md.vNorm = 0.56 + respawnRand() * 0.36;
+            md.slipTimer = 12.0 + respawnRand() * 42.0;
+          }
+          md.radius = 0.0014;
+          md.alive = true;
+          md.absorbing = false;
+          md.slipping = false;
+          md.velV = 0;
+          md.velU = 0;
+          md.wobble = 0;
+        }
+        continue;
+      }
+
+      if (md.wobble > 0.001) {
+        md.wobble *= Math.exp(-dt * 5.2);
+        md.wobblePhase += dt * 22.0;
+      }
+
+      // Smooth volume-transferring absorption into the bottom-rim accumulation pool / big hanging pendant drop!
+      if (md.absorbing) {
+        let bestP = pendants[0];
+        let bestDu = 999;
+        for (let k = 0; k < pendants.length; k++) {
+          const du = wrappedDeltaU(md.uNorm, pendants[k].anchorU);
+          if (Math.abs(du) < Math.abs(bestDu)) {
+            bestDu = du;
+            bestP = pendants[k];
+          }
+        }
+        if (bestP) {
+          md.uNorm = (md.uNorm + clamp(bestDu, -0.06, 0.06) * Math.min(1, dt * 3.8) + 1) % 1;
+        }
+        md.vNorm = Math.max(0.004, md.vNorm - dt * 0.028);
+
+        const rBefore = md.radius;
+        const drainStep = Math.min(md.radius, dt * 0.026);
+        md.radius = Math.max(0, md.radius - drainStep);
+
+        if (rBefore > md.radius) {
+          // Transfer exact drained volume directly into growing the big hanging drop at the accumulation trough!
+          const dVol = (rBefore ** 3 - md.radius ** 3) / (0.042 ** 3);
+          feedPendantFromDrop(md.uNorm, clamp(dVol * 0.42, 0, 0.055));
+        }
+
+        if (md.radius < 0.0014) {
+          md.alive = false;
+          md.absorbing = false;
+          md.radius = 0;
+          md.slipping = false;
+          md.velV = 0;
+          md.velU = 0;
+          md.respawnDelay = 8.0 + respawnRand() * 18.0;
+        }
+        continue;
+      }
+
       ice.sampleLiveSurface(md.uNorm, md.vNorm, md.pos, md.normal);
 
       const liveDist = Math.hypot(md.pos.x - state.pointerX, md.pos.y - state.pointerY);
       const liveHeat = state.pointerHeat * Math.exp(-(liveDist * liveDist) / 0.14);
       const localBoost = 1.0 + liveHeat * 6.5;
 
-      // Very gentle slow condensation swell (capped strictly small!)
-      md.radius = Math.min(0.0168, md.radius + 0.00018 * dt * rate * localBoost);
+      // Gentle ambient condensation growth ONLY up to delicate unmerged size (0.0148) — NEVER shrinks merged drops!
+      const condenseCap = md.isBottomPool ? 0.0152 : 0.0148;
+      if (md.radius < condenseCap) {
+        // Freshly nucleated droplets swell slightly faster until they reach small visible dew size (~0.0055)
+        const growSpeed = md.radius < 0.0055 ? 0.00058 : 0.00016;
+        md.radius = Math.min(condenseCap, md.radius + growSpeed * dt * rate * localBoost);
+      }
+
+      // Bottom-rim pooling beads calmly accumulate liquid and slowly bleed excess into the nearest big pendant drop!
+      if (md.isBottomPool) {
+        if (md.radius > 0.0185) {
+          const rBefore = md.radius;
+          md.radius = Math.max(0.0155, md.radius - dt * 0.0012 * rate);
+          const dVol = (rBefore ** 3 - md.radius ** 3) / (0.042 ** 3);
+          feedPendantFromDrop(md.uNorm, clamp(dVol * 0.55, 0, 0.03));
+        }
+        continue;
+      }
 
       if (!md.slipping) {
-        md.slipTimer -= dt * rate * localBoost;
-        if (md.slipTimer <= 0) {
-          md.slipping = true;
-          // Brief organic glide distance (10%-28% of popsicle height) before calmly re-pinning!
-          md.slipRemain = 0.10 + ((i * 0.37) % 0.18);
-          md.velV = 0.022 + ((i * 0.19) % 0.024);
-          md.velU = 0;
+        // Newly nucleated tiny pinpricks stay pinned until they condense into visible droplets
+        if (md.radius > 0.0052) {
+          const weightFactor = 1.0 + Math.max(0, md.radius - 0.012) * 85.0;
+          md.slipTimer -= dt * rate * localBoost * weightFactor;
+          if (md.slipTimer <= 0) {
+            md.slipping = true;
+            // Brief organic glide distance (10%-28% of popsicle height) before calmly re-pinning!
+            md.slipRemain = 0.10 + ((i * 0.37) % 0.18);
+            md.velV = 0.022 + ((i * 0.19) % 0.024) + Math.max(0, md.radius - 0.011) * 1.1;
+            md.velU = 0;
+          }
         }
       } else {
         const roughL = sampleGrid(roughGrid, md.uNorm - epsU * 1.5, md.vNorm);
         const roughR = sampleGrid(roughGrid, md.uNorm + epsU * 1.5, md.vNorm);
-        const steerU = -(roughR - roughL) * 0.018;
-        md.velU += (steerU - md.velU * 5.0) * dt;
-        md.velU = clamp(md.velU, -md.velV * 0.22, md.velV * 0.22);
+        let steerU = -(roughR - roughL) * 0.018;
+
+        // Near the bottom rim (vNorm < 0.08), smoothly steer downhill along the curved underside toward the nearest accumulation trough!
+        if (md.vNorm < 0.085) {
+          let nearestDu = 999;
+          for (let k = 0; k < pendants.length; k++) {
+            const du = wrappedDeltaU(md.uNorm, pendants[k].anchorU);
+            if (Math.abs(du) < Math.abs(nearestDu)) nearestDu = du;
+          }
+          if (Math.abs(nearestDu) < 0.22) {
+            steerU += clamp(nearestDu * 1.1, -0.045, 0.045) * smoothstep(0.085, 0.020, md.vNorm);
+          }
+        }
+
+        md.velU += (steerU - md.velU * 4.8) * dt;
+        const maxU = md.vNorm < 0.055 ? 0.042 : md.velV * 0.26;
+        md.velU = clamp(md.velU, -maxU, maxU);
 
         const stepV = md.velV * dt * (1.0 + liveHeat * 1.2);
-        md.vNorm -= stepV;
+        md.vNorm = Math.max(0.008, md.vNorm - stepV);
         md.uNorm = (md.uNorm + md.velU * dt + 1) % 1;
         md.slipRemain -= stepV;
 
         // Subtly feed wet gloss into the underlying liquid film along its quiet path
         film.deposit(md.uNorm, md.vNorm, stepV * 0.95, 1);
 
-        if (md.vNorm < 0.035) {
-          // Reached bottom rim -> calmly respawn as a tiny fresh dew bead higher up
-          md.vNorm = 0.62 + ((i * 0.6180339) % 0.30);
-          md.radius = 0.0052;
+        if (md.vNorm <= 0.022) {
+          // Arrived at the bottom rim -> NEVER vanish! Smoothly merge & drain into the bottom accumulation / big drop!
+          md.absorbing = true;
           md.slipping = false;
-          md.velV = 0;
-          md.velU = 0;
-          md.slipTimer = 10.0 + ((i * 1.73) % 36.0);
-        } else if (md.slipRemain <= 0) {
-          // Calmly re-pin in place and rest for a while!
+        } else if (md.slipRemain <= 0 && md.vNorm > 0.055) {
+          // Calmly re-pin on the face and rest for a while (drops near bottom keep rolling onto the bottom lip!)
           md.slipping = false;
           md.velV = 0;
           md.velU = 0;
@@ -1828,6 +2256,9 @@ export function createWaterDropSystem(seed: number, initialMode: DropMode = 'min
         }
       }
     }
+
+    // Volume-conserving pairwise coalescence between all minimal droplets & bottom pooling beads!
+    runMinimalCoalescence(ice, dt, false);
   }
 
   function update(
@@ -1839,52 +2270,57 @@ export function createWaterDropSystem(seed: number, initialMode: DropMode = 'min
   ) {
     uniforms.uTime.value = state.time;
 
+    const stickClearX = POPSICLE.stickWidth * 0.5 + POPSICLE.stickDepth * 0.19 * 0.7 + 0.052;
+    const { yTop: yTopLive, yBot: yBotLive, iceAmount, iceGone } = getMeltBounds(state.melt);
+
     if (!hasInitialized) {
+      // Snap each pendant drop immediately onto the EXACT lowest liquid accumulation belly on its side!
+      for (let k = 0; k < pendants.length; k++) {
+        const res = findBottomAccumulationLow(ice, pendants[k].side, stickClearX, tmpPos);
+        if (res.found) {
+          pendants[k].anchorU = res.u;
+          pendants[k].initAnchorU = res.u;
+        }
+      }
       runCoalescence(ice, 0, true);
+      runMinimalCoalescence(ice, 0, true);
       hasInitialized = true;
     }
 
     const meltRate = (1.0 + state.melt * 2.1) * meltSpeedMul;
-    const activeIceScale = clamp(1.0 - smoothstep(0.75, 0.98, state.melt), 0, 1);
+    const activeIceScale = iceGone ? 0 : clamp(1.0 - smoothstep(0.62, 0.90, state.melt), 0, 1);
 
-    if (dt > 0) {
+    if (dt > 0 && !iceGone) {
       if (dropMode === 'full') {
         stepLiquidPhysics(state, ice, film, dt, meltSpeedMul, true);
       } else if (dropMode === 'minimal') {
         stepMinimalDrops(state, ice, film, dt, meltSpeedMul);
       }
 
-      // Feed real bottom drainage from the 2D viscous liquid film PDE directly into the nearest hanging pendant drops!
+      // Feed real bottom drainage from the 2D viscous liquid film PDE directly into each side's hanging pendant drop
+      // (summed per side first, then gently capped so drops grow steadily and NEVER rush prematurely!)
+      let fluxL = 0;
+      let fluxR = 0;
       for (let iu = 0; iu < FILM_U; iu++) {
         const q = film.bottomFlux[iu];
         if (q <= 0.0001) continue;
         const uNorm = (iu + 0.5) / FILM_U;
-        let bestP = pendants[0];
-        let bestDu = 999;
-        for (let k = 0; k < pendants.length; k++) {
-          const du = Math.abs(wrappedDeltaU(uNorm, pendants[k].anchorU));
-          if (du < bestDu) {
-            bestDu = du;
-            bestP = pendants[k];
-          }
-        }
-        if (bestP && bestP.stage === 'growing') {
-          // Gentle capped flux feed (most drainage goes to the wooden stick; prevents sudden drop pop-in!)
-          bestP.grow = Math.min(1.0, bestP.grow + Math.min(0.018 * dt, q * 0.028));
-        } else if (bestP && bestP.stage === 'dormant') {
-          bestP.stageTime += Math.min(0.12 * dt, q * 0.18);
-        }
+        if (uNorm > 0.5) fluxL += q;
+        else fluxR += q;
       }
+      if (fluxL > 0) feedPendantFromDrop(pendants[0].anchorU, Math.min(0.014 * dt, fluxL * 0.010));
+      if (fluxR > 0 && pendants[1]) feedPendantFromDrop(pendants[1].anchorU, Math.min(0.012 * dt, fluxR * 0.009));
     }
 
-    // Update 3D melted-ice glossy syrup rivulets on the birch wooden stick!
-    // Starts cleanly dry at t = 0 (like reference.jpg) and creeps organically down the wood as ice melts!
+    // Update 3D melted-ice glossy syrup glaze on the birch wooden stick (all the way to the bare sticky stick!)
     const liveStickWet = clamp(
-      Math.max(film.stickWetness * 1.15, smoothstep(0.012, 0.50, state.melt) * 0.96),
+      Math.max(film.stickWetness * 1.15, smoothstep(0.012, 0.50, state.melt) * 0.98),
       0,
       1,
     );
-    stickMelt.uniforms.uIceBottomY.value = POPSICLE.yBottom + clamp(state.melt, 0, 1) * 0.14;
+    stickMelt.uniforms.uIceBottomY.value = yBotLive;
+    stickMelt.uniforms.uIceTopY.value = yTopLive;
+    stickMelt.uniforms.uIceAmount.value = iceAmount;
     stickMelt.uniforms.uStickWetness.value = liveStickWet;
     stickMelt.uniforms.uMelt.value = state.melt;
 
@@ -1892,7 +2328,7 @@ export function createWaterDropSystem(seed: number, initialMode: DropMode = 'min
     let slot = 0;
 
     if (dropMode === 'minimal') {
-      // Render ~216 delicate, strictly SMALL sparkling eye-candy droplets (occasional gentle glides!)
+      // Render small sparkling droplets + bottom-rim pooling beads (with live merge wobble!)
       const minimalFade = clamp(1.0 - smoothstep(0.32, 0.78, state.melt), 0.18, 1.0);
       for (let i = 0; i < minimalDrops.length; i++) {
         const md = minimalDrops[i];
@@ -1901,7 +2337,7 @@ export function createWaterDropSystem(seed: number, initialMode: DropMode = 'min
         const o4 = slot * 4;
         slot++;
 
-        const effR = md.radius * activeIceScale * minimalFade;
+        const effR = md.alive ? md.radius * activeIceScale * minimalFade : 0;
         if (effR < 0.0014) {
           paramsArr[o4] = 0;
           continue;
@@ -1910,7 +2346,8 @@ export function createWaterDropSystem(seed: number, initialMode: DropMode = 'min
         ice.sampleLiveSurface(md.uNorm, md.vNorm, md.pos, md.normal);
         const speedNorm = md.slipping ? clamp(md.velV * 8.0, 0, 0.65) : 0;
         const aspectY = 1.04 + speedNorm * 0.22;
-        const tilt = md.slipping ? clamp(Math.atan2(md.velU * 1.4, Math.max(0.01, md.velV)), -0.4, 0.4) : 0;
+        const tilt = md.slipping ? clamp(Math.atan2(md.velU * 1.4, Math.max(0.01, md.velV)), -0.45, 0.45) : 0;
+        const wobbleOsc = md.wobble * Math.sin(md.wobblePhase);
 
         centersArr[o3] = md.pos.x;
         centersArr[o3 + 1] = md.pos.y;
@@ -1926,7 +2363,7 @@ export function createWaterDropSystem(seed: number, initialMode: DropMode = 'min
         paramsArr[o4 + 3] = md.isRim ? 0.34 : 0.25;
 
         motionArr[o2] = tilt;
-        motionArr[o2 + 1] = 0;
+        motionArr[o2 + 1] = wobbleOsc;
       }
       // Zero out remaining metaball slots cleanly
       while (slot < TOTAL_METABALLS) {
@@ -2027,16 +2464,28 @@ export function createWaterDropSystem(seed: number, initialMode: DropMode = 'min
     paramsAttr.needsUpdate = true;
     motionAttr.needsUpdate = true;
 
-    // === UPDATE 3D RAYLEIGH-PLATEAU BOTTOM-RIM PENDANT DROPS (REAL-TIME PINCH-OFF & RECOIL!) ===
-    const stickClearX = POPSICLE.stickWidth * 0.5 + POPSICLE.stickDepth * 0.19 * 0.7 + 0.055;
+    // === UPDATE 3D RAYLEIGH-PLATEAU BOTTOM-RIM PENDANT DROPS (ANCHORED TO LIVE ACCUMULATION LOWS!) ===
     for (let i = 0; i < pendants.length; i++) {
       const p = pendants[i];
+      if (!iceGone && activeIceScale > 0.05) {
+        const low = findBottomAccumulationLow(ice, p.side, stickClearX, tmpPos);
+        if (low.found) {
+          if (dt === 0 || p.stage === 'dormant') {
+            p.anchorU = low.u;
+          } else if (p.stage === 'growing') {
+            // Smoothly follow the live lowest accumulated liquid belly as the ice rim melts & reshapes!
+            const du = wrappedDeltaU(p.anchorU, low.u);
+            p.anchorU = (p.anchorU + du * Math.min(1, dt * 1.8) + 1) % 1;
+          }
+        }
+      }
+
       ice.sampleLiveSurface(p.anchorU, p.anchorV, tmpPos, tmpNorm);
 
       const clearOfStick = Math.abs(tmpPos.x) > stickClearX;
-      // Seat drop directly beneath the thickest part of the bottom ice ridge (z * 0.22) so the upper
-      // wetting collar merges cleanly behind the curved pink front lip with zero overlapping white halo!
-      p.neckMesh.position.set(tmpPos.x, tmpPos.y + 0.014, tmpPos.z * 0.22);
+      // Seat drop directly beneath the exact lowest curved bottom belly (z * 0.18) so the concave base collar
+      // emerges cleanly from the lowest liquid accumulation point with zero overlapping white halo!
+      p.neckMesh.position.set(tmpPos.x, tmpPos.y + 0.012, tmpPos.z * 0.18);
 
       const effScale = p.scale * activeIceScale;
       const Rmax = 0.043 * effScale;
@@ -2112,7 +2561,7 @@ export function createWaterDropSystem(seed: number, initialMode: DropMode = 'min
         const sxz = 1.0 / Math.sqrt(Math.max(0.5, sy));
         p.fallMesh.scale.set(p.fallR * sxz, p.fallR * sy, p.fallR * sxz);
 
-        if (p.fallMesh.position.y < -2.6) {
+        if (p.fallMesh.position.y < -3.6) {
           p.fallActive = false;
           p.fallMesh.visible = false;
         }

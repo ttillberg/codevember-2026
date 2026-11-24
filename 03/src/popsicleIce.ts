@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { clamp, mulberry32, smoothstep } from './rng';
-import { evaluatePopsicleProfile, iceContainmentDepth, MeltFieldState, POPSICLE } from './shape';
+import { evaluatePopsicleProfile, getMeltBounds, iceContainmentDepth, MeltFieldState, POPSICLE } from './shape';
 
 export interface IceUniforms {
   uBgTex: { value: THREE.Texture | null };
@@ -190,9 +190,8 @@ function createOpticalIceMaterial(): { material: THREE.ShaderMaterial; uniforms:
         return vec4(bestVec, sqrt(minD));
       }
 
-      // Tactile thawing ice micro-relief + sparkling 3D Voronoi sugar-ice slush granules (process/melt frames 0075-0108!)
-      // Smoothly leveled wherever thick glossy melt glaze flows over the crystals (frames 0064-0068!)
-      vec3 perturbNormal(vec3 N, vec3 p, float glazeCover, out float microGrain, out float slushBump) {
+      // Tactile thawing ice micro-relief + spatially varied frozen crystal roughness + 3D Voronoi slush granules!
+      vec3 perturbNormal(vec3 N, vec3 p, float glazeCover, float localFreezeRough, out float microGrain, out float slushBump) {
         vec3 sp = p * vec3(9.5, 4.5, 9.5) + vec3(uSeedOffset, uTime * 0.04, 0.0);
         float eps = 0.045;
         float h0 = fbm(sp);
@@ -201,22 +200,24 @@ function createOpticalIceMaterial(): { material: THREE.ShaderMaterial; uniforms:
         float hz = fbm(sp + vec3(0.0, 0.0, eps));
         vec3 wetGrad = vec3(hx - h0, hy - h0, hz - h0) / eps;
 
-        // Porous 3D Voronoi sugar-ice slush granules emerge organically as ice thaws (process/melt frame_0085!)
+        // Porous 3D Voronoi sugar-ice crystals: present heterogeneously in rough freeze zones at t=0,
+        // and blooming across the surface as porous wet slush as the popsicle thaws!
         float slushAmt = smoothstep(0.045, 0.36, uMelt) * (1.0 - glazeCover * 0.72);
-        vec4 cellMed = slushCells(p * 44.0 + vec3(uSeedOffset * 1.3));
-        vec4 cellFine = slushCells(p * 92.0 + vec3(uSeedOffset * 2.9));
+        vec4 cellMed = slushCells(p * 46.0 + vec3(uSeedOffset * 1.3));
+        vec4 cellFine = slushCells(p * 96.0 + vec3(uSeedOffset * 2.9));
 
-        // Rounded crystalline bead normal perturbation (infinite resolution, ZERO grid lightning lines!)
-        vec3 cellPert = cellMed.xyz * 0.65 + cellFine.xyz * 0.55;
-        float fineTooth = vnoise(p * 68.0 + vec3(uSeedOffset * 2.1));
+        vec3 cellPert = cellMed.xyz * 0.62 + cellFine.xyz * 0.58;
+        float fineTooth = vnoise(p * 72.0 + vec3(uSeedOffset * 2.1));
 
-        microGrain = clamp(fineTooth * 0.5 + (1.0 - cellFine.w) * 0.5, 0.0, 1.0);
+        microGrain = clamp(fineTooth * 0.48 + (1.0 - cellFine.w) * 0.52, 0.0, 1.0);
         slushBump = slushAmt * clamp(1.0 - cellMed.w * 0.9, 0.0, 1.0);
 
-        float domeFrost = 1.0 + smoothstep(0.45, 1.05, p.y) * 0.55;
+        float domeFrost = 1.0 + smoothstep(0.45, 1.05, p.y) * 0.50;
+        // Clear glassy pockets stay sleek (~0.025); rough freeze zones have crisp granular crystal micro-relief (~0.17)!
+        float freezeCrystalRelief = (0.024 + 0.145 * localFreezeRough) * uFrost * domeFrost * (1.0 - glazeCover * 0.65);
         vec3 pert =
           wetGrad * (0.032 + uMelt * 0.018) * (1.0 - glazeCover * 0.55) +
-          cellPert * (0.045 * uFrost * domeFrost + 0.34 * slushAmt);
+          cellPert * (freezeCrystalRelief + 0.34 * slushAmt);
 
         pert -= N * dot(pert, N);
         return normalize(N - pert);
@@ -274,9 +275,29 @@ function createOpticalIceMaterial(): { material: THREE.ShaderMaterial; uniforms:
         float glazeCover = max(smoothstep(0.16, 0.46, filmH), bottomPoolZone * 0.78);
         float glazeEdge = length(filmSlope) * smoothstep(0.10, 0.34, filmH);
 
+        // Pre-evaluate domain-warped spatial freeze-roughness field so surface crystal micro-relief AND
+        // deep internal freeze pockets share the exact same organic freezing pattern!
+        vec3 volPos = vWorldPos * vec3(2.9, 2.5, 3.4) + vec3(uSeedOffset, 0.0, 0.0);
+        vec3 warpOff = vec3(
+          fbm(volPos * 1.35 + vec3(4.1, 1.7, 2.9)),
+          fbm(volPos * 1.35 + vec3(-3.4, 6.2, 1.1)),
+          fbm(volPos * 1.35 + vec3(2.2, -5.1, 7.3))
+        ) - 0.5;
+        vec3 warpedVol = volPos + warpOff * 1.25;
+
+        float nearFluteWall = exp(-pow((abs(vWorldPos.x) - 0.165) / 0.052, 2.0)) * smoothstep(0.32, 0.04, uMelt);
+        float freezePatchRaw = fbm(warpedVol * 1.85 + vec3(-2.7, 3.8, 1.5));
+        float freezeRoughBase = clamp(
+          pow(smoothstep(0.28, 0.72, freezePatchRaw), 1.35) * 0.92 +
+          nearFluteWall * 0.38 +
+          smoothstep(0.55, 1.05, vWorldPos.y) * 0.22,
+          0.06,
+          1.0
+        ) * uFrost;
+
         float microGrain = 0.0;
         float slushFacet = 0.0;
-        vec3 N_ice = perturbNormal(N0, vWorldPos, glazeCover, microGrain, slushFacet);
+        vec3 N_ice = perturbNormal(N0, vWorldPos, glazeCover, freezeRoughBase, microGrain, slushFacet);
 
         // Build clean surface tangent basis for soft buttery liquid glaze meniscus curvature (ZERO jagged lines!)
         vec3 refUp = abs(N0.y) > 0.94 ? vec3(0.0, 0.0, 1.0) : vec3(0.0, 1.0, 0.0);
@@ -318,18 +339,49 @@ function createOpticalIceMaterial(): { material: THREE.ShaderMaterial; uniforms:
         bool hitsSolid = (interiorSample.g > 0.5) && (interiorSample.r > zBack - 0.06) && (interiorSample.r <= zFront + 0.04);
         float frontIceDist = hitsSolid ? clamp(zFront - interiorSample.r, 0.0, totalThickness) : totalThickness;
 
-        // Soft organic 3D frozen-strawberry-juice marbling (smooth clouds, zero synthetic ridges!)
-        vec3 volPos = vWorldPos * vec3(2.9, 2.5, 3.4) + vec3(uSeedOffset, 0.0, 0.0);
-        float cloudMacro = fbm(volPos);
-        float cloudMed = fbm(volPos * 2.6 + vec3(5.2, -2.1, 8.4));
-        float freezeStreaks = vnoise(vec3(vWorldPos.x * 18.0 + uSeedOffset, vWorldPos.y * 2.8, vWorldPos.z * 12.0));
+        // === SPATIALLY VARYING 3D FREEZE-ZONE ROUGHNESS & CRYSTALLINE INTERNAL STRUCTURE ===
+        // Real popsicles freeze unevenly from mold walls & around fruit surfaces, creating clear glassy windows
+        // right next to crunchy, granular, cloudy-crystalline freeze pockets & feathery micro-fracture veins!
+        float cloudMacro = fbm(warpedVol);
+        float cloudMed = fbm(warpedVol * 2.5 + vec3(5.2, -2.1, 8.4));
+        float freezeStreaks = fbm(vec3(vWorldPos.x * 13.5 + warpOff.x * 2.2 + uSeedOffset, vWorldPos.y * 2.6, vWorldPos.z * 11.0));
 
-        float frostFactor = clamp(uFrost * (0.64 + 0.52 * cloudMacro + 0.18 * (freezeStreaks - 0.5)), 0.12, 1.0);
+        float fruitNucleation = hitsSolid ? smoothstep(0.015, 0.075, frontIceDist) * smoothstep(0.24, 0.09, frontIceDist) : 0.0;
+        float freezeRoughZone = clamp(freezeRoughBase + fruitNucleation * 0.32 * uFrost, 0.06, 1.0);
 
-        // Depth-aware optical blur: front blueberries razor sharp, deep berries softly frosted, open ice luminous!
+        // Two-depth parallax-shifted 3D internal volume sampling so crystalline roughness & fracture planes
+        // visibly live INSIDE the translucent slab rather than painted flat on the outer skin!
+        vec3 innerPosA = vWorldPos - V * clamp(frontIceDist * 0.36, 0.018, 0.095);
+        vec3 innerPosB = vWorldPos - V * clamp(frontIceDist * 0.72, 0.040, 0.19);
+        float innerGranuleCoarse = fbm(innerPosA * 18.0 + warpOff * 2.2 + vec3(uSeedOffset * 1.7));
+        float innerGranuleFine = vnoise(innerPosA * 56.0 + vec3(uSeedOffset * 3.1));
+        float innerGranuleMicro = vnoise(innerPosA * 118.0 + vec3(uSeedOffset * 5.3));
+        float deepGranule = fbm(innerPosB * 24.0 + vec3(-3.1, 6.4, 2.2));
+
+        // Feathery internal freeze-fracture planes & granular snow-ice pockets (high local micro-contrast!)
+        float veinRawA = 1.0 - abs(vnoise(innerPosA * vec3(15.0, 11.0, 14.0) + warpOff * 1.9) - 0.5) * 2.0;
+        float veinRawB = 1.0 - abs(vnoise(innerPosB * vec3(28.0, 20.0, 26.0) + vec3(7.3, -4.1, 2.8)) - 0.5) * 2.0;
+        float freezeVeins = (pow(clamp(veinRawA, 0.0, 1.0), 4.0) * 0.68 + pow(clamp(veinRawB, 0.0, 1.0), 4.8) * 0.58) * freezeRoughZone;
+        float crunchyPattern = (innerGranuleCoarse * 0.42 + innerGranuleFine * 0.36 + deepGranule * 0.22);
+        // Signed internal crystal contrast [-0.5 .. +0.5]: creates BOTH deeper red-orange crystal crevices AND bright snow flecks!
+        float crystalMod = (crunchyPattern - 0.5) * 2.0 * freezeRoughZone;
+
+        float frostFactor = clamp(
+          uFrost * (0.34 + 0.66 * freezeRoughZone + 0.24 * (cloudMacro - 0.5) + 0.18 * (freezeStreaks - 0.5)),
+          0.10,
+          1.0
+        );
+
+        // Extra rough micro-refraction scatter strictly inside rough crystalline freeze zones!
+        vec2 roughJitter = vec2(innerGranuleFine - 0.5, innerGranuleMicro - 0.5) * (0.0072 * freezeRoughZone * (1.0 - glazeCover * 0.45));
+        uvR += roughJitter;
+        uvG += roughJitter;
+        uvB += roughJitter;
+
+        // Spatially varied depth-aware optical blur: clear glassy zones stay crisp, rough frozen pockets turn misty!
         float blurAmt = hitsSolid
-          ? clamp(smoothstep(0.018, 0.24, frontIceDist) * (0.45 + 0.55 * frostFactor), 0.0, 0.72)
-          : clamp(0.32 + 0.50 * frostFactor, 0.22, 0.86);
+          ? clamp(smoothstep(0.014, 0.22, frontIceDist) * (0.32 + 0.68 * frostFactor) + freezeRoughZone * 0.16, 0.0, 0.84)
+          : clamp(0.18 + 0.64 * frostFactor + freezeRoughZone * 0.14, 0.14, 0.92);
 
         vec3 bgCol;
         bgCol.r = sampleFrostedBg(uvR, blurAmt).r;
@@ -339,46 +391,83 @@ function createOpticalIceMaterial(): { material: THREE.ShaderMaterial; uniforms:
         float grazingPath = 1.0 / max(0.34, N0dotV);
         float opticalDist = frontIceDist * mix(1.0, grazingPath, 0.50);
 
-        // === PURE WARM STRAWBERRY-CORAL BEER-LAMBERT ABSORPTION ===
-        // Sweet spot between apricot and magenta -> authentic sunlit strawberry-crimson-coral juice!
+        // === VIVID STRAWBERRY-CORAL + SUBTLE WARM YELLOWISH / GOLDEN-APRICOT INTERNAL NUANCES ===
+        // Keep green absorption rich (NEVER pale beige!), while raising blue absorption subtly in warm internal
+        // & downward pockets so backlit channels glow juicy sunlit coral-apricot-amber against deep berry crimson!
         float bottomRichness = smoothstep(0.22, -0.98, vWorldPos.y);
         float topRuby = smoothstep(0.70, 1.08, vWorldPos.y);
         float edgeRichness = pow(1.0 - N0dotV, 1.32);
         float fluteOptical = smoothstep(0.10, 0.34, abs(N0.x)) * smoothstep(0.76, 0.38, abs(N0.x));
 
-        vec3 juiceSigma = vec3(0.40, 6.05, 5.85) * (0.82 + 0.42 * cloudMed);
-        juiceSigma *= (1.0 + bottomRichness * 0.56 + topRuby * 0.54 + edgeRichness * 0.78 + fluteOptical * 0.24);
+        // Organic warm golden-amber nuance field: subtle inside illuminated pockets & trending gently downward!
+        float warmPocketNoise = fbm(warpedVol * 1.50 + vec3(9.4, -3.6, 4.2));
+        float downwardWarmth = smoothstep(0.55, -0.82, vWorldPos.y);
+        float warmNuance = clamp(
+          (smoothstep(0.32, 0.76, warmPocketNoise) * 0.68 + downwardWarmth * 0.42) *
+          (1.0 - edgeRichness * 0.75) *
+          (1.0 - topRuby * 0.65),
+          0.0,
+          1.0
+        );
 
-        float absorbScale = hitsSolid ? 1.42 : 1.72;
+        // Keep green absorption strong (~5.55) so ice stays juicy coral-red while elevated blue absorption (~8.1)
+        // introduces authentic warm yellowish/golden-peach backlit nuances (matches macro crop without washing out!).
+        vec3 baseSigma = mix(vec3(0.40, 6.15, 5.80), vec3(0.34, 5.45, 8.20), warmNuance * 0.64);
+        // Internal freeze-crystal granularity directly modulates optical density (creates real volumetric dark+light crunch!)
+        float densityRough = 1.0 - crystalMod * 0.34;
+        vec3 juiceSigma = baseSigma * (0.84 + 0.44 * cloudMed) * densityRough;
+        juiceSigma *= (1.0 + bottomRichness * 0.54 + topRuby * 0.54 + edgeRichness * 0.78 + fluteOptical * 0.24);
+
+        float absorbScale = hitsSolid ? 1.48 : 1.82;
         vec3 transmittance = exp(-juiceSigma * opticalDist * absorbScale);
         vec3 transmitted = bgCol * transmittance;
 
-        // === LUMINOUS BACKLIT STRAWBERRY-CORAL SUBSURFACE SCATTERING ===
+        // === LUMINOUS BACKLIT STRAWBERRY-CORAL & GOLDEN-APRICOT SUBSURFACE SCATTERING ===
         float lightboxCore = exp(-dot(vWorldPos.xy * vec2(0.72, 0.48), vWorldPos.xy * vec2(0.72, 0.48)));
-        float openChannel = hitsSolid ? smoothstep(0.035, 0.22, frontIceDist) * 0.48 : 1.0;
+        float openChannel = hitsSolid ? smoothstep(0.030, 0.22, frontIceDist) * 0.52 : 1.0;
 
-        vec3 sunlitRoseCore = vec3(1.58, 0.70, 0.55);
-        vec3 juicyBerryPink = vec3(1.22, 0.21, 0.22);
-        vec3 deepRubyBerry = vec3(0.78, 0.03, 0.09);
+        vec3 sunlitRoseCore = vec3(1.48, 0.54, 0.40);
+        vec3 goldenPeachNuance = vec3(1.62, 0.74, 0.22); // juicy warm golden-apricot-coral nuance (NEVER pale beige!)
+        vec3 juicyBerryPink = vec3(1.20, 0.20, 0.19);
+        vec3 deepRubyBerry = vec3(0.76, 0.03, 0.08);
 
-        float cloudContrast = pow(clamp(cloudMacro * 1.15, 0.0, 1.0), 1.45);
-        float centerGlow = clamp(lightboxCore * (0.48 + 0.78 * cloudContrast) * (1.0 - edgeRichness * 0.88), 0.0, 1.0);
-        vec3 baseGlow = mix(juicyBerryPink, sunlitRoseCore, centerGlow);
+        float cloudContrast = pow(clamp(cloudMacro * 1.15, 0.0, 1.0), 1.42);
+        float centerGlow = clamp(lightboxCore * (0.46 + 0.76 * cloudContrast) * (1.0 - edgeRichness * 0.86), 0.0, 1.0);
+        vec3 sunlitCore = mix(sunlitRoseCore, goldenPeachNuance, warmNuance * 0.58);
+        vec3 baseGlow = mix(juicyBerryPink, sunlitCore, centerGlow);
+        // Subtle warm golden-coral shift in lower-middle translucent internal channels
+        baseGlow = mix(baseGlow, vec3(1.46, 0.64, 0.24), warmNuance * downwardWarmth * openChannel * 0.36);
+
         vec3 sssJuiceColor = mix(
           baseGlow,
           deepRubyBerry,
-          clamp(bottomRichness * 0.54 + edgeRichness * 0.64 + topRuby * 0.48, 0.0, 0.94)
+          clamp(bottomRichness * 0.50 + edgeRichness * 0.64 + topRuby * 0.48, 0.0, 0.94)
         );
 
-        float scatterStrength = (0.56 + 0.68 * lightboxCore) * (0.68 + 0.52 * cloudContrast) * (0.48 + 0.42 * frostFactor);
+        // Internal freeze roughness creates local dark-vs-bright crystalline scatter contrast inside the slab!
+        float roughScatterMod = 1.0 + crystalMod * 0.32;
+        float scatterStrength = (0.54 + 0.64 * lightboxCore) * (0.68 + 0.52 * cloudContrast) * (0.48 + 0.44 * frostFactor) * roughScatterMod;
         vec3 internalScatter = sssJuiceColor * (1.0 - transmittance) * openChannel * scatterStrength;
 
-        // Tactile crisp frozen micro-crystal sparkle (especially rich on dome & sides!)
-        float grainSparkle = smoothstep(0.62, 0.96, microGrain) * frostFactor * (1.0 - uMelt * 0.45);
-        float domeSparkle = 1.0 + smoothstep(0.50, 1.06, vWorldPos.y) * 1.35;
-        vec3 frostTooth = vec3(1.42, 0.78, 0.72) * grainSparkle * domeSparkle * (hitsSolid ? 0.08 : 0.16);
+        // === INTERNAL FROZEN CRYSTALLINE SNOW-POCKETS, MICRO-VEINS & ROUGH FREEZE TOOTH ===
+        // Crisp bright crystalline frost flecks & fracture planes inside rough freeze pockets (contrasting dark crevices!)
+        float crystalSpeck = smoothstep(0.60, 0.95, innerGranuleMicro) * smoothstep(0.34, 0.80, freezeRoughZone);
+        float snowPocket = smoothstep(0.54, 0.90, crunchyPattern) * smoothstep(0.36, 0.82, freezeRoughZone) * (1.0 - uMelt * 0.42);
+        float creviceDark = smoothstep(0.46, 0.14, crunchyPattern) * smoothstep(0.34, 0.82, freezeRoughZone) * (1.0 - uMelt * 0.42);
 
-        vec3 iceBody = transmitted + internalScatter + frostTooth;
+        vec3 warmFrostCol = mix(vec3(1.48, 0.98, 0.92), vec3(1.58, 1.16, 0.78), warmNuance * 0.52);
+        vec3 internalFreezeTex =
+          warmFrostCol * (snowPocket * 0.24 + freezeVeins * 0.28) * (hitsSolid ? 0.65 : 1.0) +
+          vec3(1.62, 1.46, 1.32) * crystalSpeck * 0.20 * (hitsSolid ? 0.68 : 1.0);
+
+        // Tactile crisp frozen micro-crystal sparkle (stronger in rough freeze pockets & dome!)
+        float grainSparkle = smoothstep(0.56, 0.94, microGrain) * frostFactor * (0.55 + 0.95 * freezeRoughZone) * (1.0 - uMelt * 0.45);
+        float domeSparkle = 1.0 + smoothstep(0.50, 1.06, vWorldPos.y) * 1.25;
+        vec3 frostTooth = mix(vec3(1.42, 0.78, 0.70), vec3(1.54, 0.98, 0.64), warmNuance * 0.45) *
+                          grainSparkle * domeSparkle * (hitsSolid ? 0.09 : 0.17);
+
+        // Combine transmitted + internal scatter, deepen crystalline crevices inside rough freeze pockets, then add bright frost veins!
+        vec3 iceBody = (transmitted + internalScatter) * (1.0 - creviceDark * 0.24) + internalFreezeTex + frostTooth;
 
         // Deep juicy crimson-strawberry internal reflection rim just inside the rounded outer silhouette!
         float innerRubyRim = smoothstep(0.54, 0.16, N0dotV) * smoothstep(0.02, 0.16, N0dotV);
@@ -413,17 +502,22 @@ function createOpticalIceMaterial(): { material: THREE.ShaderMaterial; uniforms:
           specWet * (fresnel * 0.72 * glazeSpecBoost) +
           specSatin * (fresnel * 0.14 * frostFactor * (1.0 - glazeCover * 0.75));
 
-        // Delicate, razor-thin glossy white specular hairlines strictly on the twin molded flutes
-        // (fades cleanly to zero as the molded flutes melt away — never draws contours on organic melt bumps!)
-        float nearFluteTrack = exp(-pow((abs(vWorldPos.x) - 0.165) / 0.062, 2.0));
+        // Organic, crystal-broken frosted specular ridges along the twin molded flutes
+        // Uses crystal-perturbed reflection + granular freeze breakup so flutes look like REAL frozen mold edges
+        // (matching the user's macro flute close-up instead of sterile vector hairlines!)
+        vec3 R_flute = reflect(-V, normalize(mix(N0, N_ice, 0.55)));
+        float nearFluteTrack = exp(-pow((abs(vWorldPos.x) - 0.165) / 0.064, 2.0));
         float fluteFade = smoothstep(0.28, 0.05, uMelt);
-        float fluteLine = exp(-pow((abs(R_smooth.x) - 0.34) / 0.024, 2.0)) *
-                          smoothstep(0.10, 0.24, abs(N0.x)) *
-                          smoothstep(0.50, 0.26, abs(N0.x)) *
-                          smoothstep(-0.84, -0.60, vWorldPos.y) *
-                          smoothstep(0.86, 0.64, vWorldPos.y) *
+        float fluteBreakup = smoothstep(0.18, 0.82, fbm(vWorldPos * vec3(14.0, 10.5, 14.0) + vec3(uSeedOffset * 2.1)));
+        float fluteCrystalSpark = smoothstep(0.45, 0.95, innerGranuleMicro) * 0.85;
+        float fluteBand = exp(-pow((abs(R_flute.x) - 0.34) / 0.056, 2.0)) *
+                          smoothstep(0.08, 0.24, abs(N0.x)) *
+                          smoothstep(0.54, 0.24, abs(N0.x)) *
+                          smoothstep(-0.86, -0.60, vWorldPos.y) *
+                          smoothstep(0.88, 0.62, vWorldPos.y) *
                           nearFluteTrack * fluteFade;
-        color += vec3(1.62, 1.44, 1.42) * fluteLine * 0.68;
+        float fluteLine = fluteBand * (0.28 + 0.82 * fluteBreakup + fluteCrystalSpark + freezeVeins * 0.45);
+        color += mix(vec3(1.56, 1.38, 1.34), vec3(1.68, 1.48, 1.24), warmNuance * 0.45) * fluteLine * 0.56;
 
         // Crisp scattered sparkling wet micro-crystal pinpoints across porous thawing sugar-ice
         // (inspired directly by process/melt frames 0075, 0082, 0085, 0108!)
@@ -667,6 +761,17 @@ export function createPopsicleIceSystem(seed: number): PopsicleIceSystem {
     uniforms.uTime.value = state.time;
     uniforms.uMelt.value = state.melt;
     uniforms.uSeedOffset.value = state.seedOffset;
+
+    const { iceGone } = getMeltBounds(state.melt);
+    if (iceGone) {
+      iceMesh.visible = false;
+      backZMesh.visible = false;
+      bubbles.mesh.visible = false;
+      return;
+    }
+    iceMesh.visible = true;
+    backZMesh.visible = true;
+    bubbles.mesh.visible = true;
 
     const stride = SEG_U + 1;
 

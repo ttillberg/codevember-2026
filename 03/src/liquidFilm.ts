@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { clamp, fbm3, smoothstep } from './rng';
-import { MeltFieldState, POPSICLE, sampleLocalHeat } from './shape';
+import { getMeltBounds, MeltFieldState, POPSICLE, sampleLocalHeat } from './shape';
 
 export const FILM_U = 96;
 const FILM_V = 96;
@@ -207,13 +207,18 @@ export function createLiquidFilmSystem(seed: number): LiquidFilmSystem {
       return;
     }
 
+    const { yTop, yBot, iceGone } = getMeltBounds(state.melt);
+    if (iceGone) {
+      stickWetness = 1.0;
+      packTexture();
+      return;
+    }
+
     const meltRate = (1.0 + state.melt * 2.4) * meltSpeedMul;
     const substeps = 2;
     const subDt = Math.min(0.025, dt / substeps);
 
-    const yTop = POPSICLE.yTop - clamp(state.melt, 0, 1) * 0.72;
-    const yBot = POPSICLE.yBottom + clamp(state.melt, 0, 1) * 0.14;
-    const halfW = POPSICLE.halfWidthBottom * (1.0 - clamp(state.melt, 0, 1) * 0.35);
+    const halfW = POPSICLE.halfWidthBottom * (1.0 - clamp(state.melt, 0, 1) * 0.45);
 
     for (let step = 0; step < substeps; step++) {
       // 1. Source term: slow ambient melt (strongest on warm dome/edges) + intense localized pointer melt!

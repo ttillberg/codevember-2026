@@ -70,6 +70,37 @@ export function sampleLocalHeat(x: number, y: number, state: MeltFieldState): nu
   return clamp(boost, 0, 0.85);
 }
 
+export interface MeltBounds {
+  yTop: number;
+  yBot: number;
+  /** 1 while solid popsicle body exists, smoothly dissolving to 0 by melt = 0.975 */
+  iceAmount: number;
+  /** True once the ice has completely melted away, leaving only the bare sticky stick */
+  iceGone: boolean;
+}
+
+/**
+ * Shared live vertical bounds & endgame dissolve state for a given melt progress [0..1].
+ * Keeps 0..0.50 faithful to the classic slow backlit melt, then smoothly collapses the
+ * remaining ice sleeve onto the upper wooden stick until only the bare sticky stick remains.
+ */
+export function getMeltBounds(melt: number): MeltBounds {
+  const m = clamp(melt, 0, 1);
+  const collapse = smoothstep(0.40, 0.975, m);
+  const collapse2 = collapse * collapse;
+
+  // Final melting slush collar clings smoothly around the upper wooden stick shaft before vanishing
+  const yFinal = -0.66;
+  const yTopBase = POPSICLE.yTop - m * 0.72;
+  const yBotBase = POPSICLE.yBottom + m * 0.14;
+
+  const yTop = yTopBase + (yFinal - yTopBase) * Math.pow(collapse, 1.38);
+  const yBot = yBotBase + (yFinal - yBotBase) * (collapse2 * 0.90 + Math.pow(collapse, 3.0) * 0.10);
+  const iceAmount = 1.0 - smoothstep(0.84, 0.975, m);
+  const iceGone = m >= 0.975 || yTop - yBot < 0.014;
+  return { yTop, yBot, iceAmount, iceGone };
+}
+
 /**
  * Evaluates current melted vertical bounds and horizontal half-width at height y.
  */
@@ -80,12 +111,9 @@ export function evaluatePopsicleProfile(
   outPos: { x: number; y: number; z: number },
 ): void {
   const m = clamp(state.melt, 0, 1);
-
-  // Global melt gently shortens the top dome faster than the bottom (gravity + warm air)
-  const topRecede = m * 0.72;
-  const botRecede = m * 0.14;
-  const yTop = POPSICLE.yTop - topRecede;
-  const yBot = POPSICLE.yBottom + botRecede;
+  const { yTop, yBot, iceAmount } = getMeltBounds(m);
+  const collapse = smoothstep(0.40, 0.975, m);
+  const endRound = smoothstep(0.72, 0.94, m);
 
   // Map vNorm in [0, 1] with concentrated resolution near top dome & bottom lip
   const s = vNorm;
@@ -93,21 +121,23 @@ export function evaluatePopsicleProfile(
   let y = yBot + (yTop - yBot) * s;
 
   // Normalized height along current body [0..1]
-  const hNorm = clamp((y - yBot) / Math.max(0.15, yTop - yBot), 0, 1);
+  const hNorm = clamp((y - yBot) / Math.max(0.02, yTop - yBot), 0, 1);
 
-  // Base trapezoid half-width (classic downward flare at t=0 -> narrows into tapered rounded bullet like process/melt!)
+  // Base trapezoid half-width (classic downward flare at t=0 -> narrows into tapered rounded bullet -> melts flush into stick!)
   const bulletTaper = smoothstep(0.08, 0.72, m);
-  const widthShrink = 1.0 - m * 0.44 * (0.62 + 0.58 * hNorm);
+  const radialCollapseW = 1.0 - Math.pow(collapse, 1.58) * 0.85;
+  const radialCollapseD = 1.0 - Math.pow(collapse, 1.50) * 0.88;
+  const widthShrink = (1.0 - m * 0.44 * (0.62 + 0.58 * hNorm)) * radialCollapseW;
   let halfW = (POPSICLE.halfWidthBottom + (POPSICLE.halfWidthTop - POPSICLE.halfWidthBottom) * hNorm) * widthShrink;
-  // Upper body narrows gently into bullet tip as it melts (matching process/melt frames 0120-0135!)
-  halfW *= 1.0 - bulletTaper * 0.22 * smoothstep(0.35, 0.92, hNorm);
+  // Upper body narrows gently into bullet tip during mid-melt, then softens into a smooth round melting cushion near the end
+  halfW *= 1.0 - bulletTaper * (1.0 - endRound * 0.55) * 0.22 * smoothstep(0.35, 0.92, hNorm);
 
-  // Base slab half-depth
-  const depthShrink = 1.0 - m * 0.48 * (0.68 + 0.45 * hNorm);
+  // Base slab half-depth (thins smoothly until flush beneath the wet wooden stick face before iceGone)
+  const depthShrink = (1.0 - m * 0.48 * (0.68 + 0.45 * hNorm)) * radialCollapseD;
   let halfD = POPSICLE.halfDepth * depthShrink;
 
   // Top dome rounding (gradually extends downward as sharp top shoulders melt away)
-  const domeStart = 0.735 - bulletTaper * 0.14;
+  const domeStart = 0.735 - bulletTaper * 0.14 - endRound * 0.08;
   let capFactor = 1.0;
   let domeDepthFactor = 1.0;
   if (hNorm > domeStart) {
@@ -117,13 +147,13 @@ export function evaluatePopsicleProfile(
     domeDepthFactor = Math.pow(sinA, 0.74);
   }
 
-  // Bottom rounded bevel lip: crisp flat popsicle bottom at t=0 -> rounds smoothly inward around stick (frame_0120!)
-  const botBevel = 0.072 + bulletTaper * 0.24;
+  // Bottom rounded bevel lip: crisp flat popsicle bottom at t=0 -> rounds smoothly inward around stick
+  const botBevel = 0.072 + bulletTaper * 0.24 + endRound * 0.16;
   if (hNorm < botBevel) {
     const t = clamp(1.0 - hNorm / botBevel, 0, 1);
     const sinB = Math.sqrt(Math.max(0, 1.0 - t * t));
     // Smoothly pulls bottom corners inward toward the stick as melt advances
-    const flatKeep = 0.86 * (1.0 - bulletTaper * 0.62);
+    const flatKeep = 0.86 * (1.0 - bulletTaper * 0.62) * (1.0 - endRound * 0.85);
     capFactor *= flatKeep + (1.0 - flatKeep) * sinB;
     domeDepthFactor *= sinB;
   }
@@ -172,25 +202,26 @@ export function evaluatePopsicleProfile(
 
   // Local pointer heat carves a smooth glossy melted depression & slumps downward slightly!
   if (localHeat > 0.001) {
-    const carve = localHeat * 0.22 * (0.4 + 0.6 * bodyBlend);
+    const carve = localHeat * 0.22 * (0.4 + 0.6 * bodyBlend) * iceAmount;
     x *= 1.0 - carve * 0.55;
     z *= 1.0 - carve * 0.78;
-    y -= localHeat * 0.065 * smoothstep(0.05, 0.3, hNorm);
+    y -= localHeat * 0.065 * smoothstep(0.05, 0.3, hNorm) * iceAmount;
   }
 
-  // Organic wet melt surface undulation + porous slush micro-erosion bumps (process/melt frames 0078-0096!)
+  // Organic wet melt surface undulation + porous slush micro-erosion bumps (scaled cleanly down during final dissolve!)
   const so = state.seedOffset;
   const nMacro = fbm3(x * 2.4 + so, y * 1.7 + state.time * 0.012, z * 2.4, 3) - 0.5;
   const nRivulet = fbm3(x * 7.8 + so * 1.7, y * 1.9 + state.time * 0.035, z * 4.5, 3) - 0.5;
   const nSlush = fbm3(x * 16.5 + so * 2.3, y * 15.5, z * 16.5, 2) - 0.5;
   const slushFactor = smoothstep(0.08, 0.45, effMelt);
-  const meltAmp = 0.010 + effMelt * 0.052;
+  const waveScale = (1.0 - collapse * 0.78) * iceAmount;
+  const meltAmp = (0.010 + effMelt * 0.052) * waveScale;
 
   const sideEdge = Math.abs(sinT);
   const edgeWave =
     nMacro * meltAmp * (0.65 + 0.55 * sideEdge) +
-    nRivulet * (0.0045 + effMelt * 0.018) +
-    nSlush * (0.016 * slushFactor);
+    nRivulet * (0.0045 + effMelt * 0.018) * waveScale +
+    nSlush * (0.016 * slushFactor) * waveScale;
 
   x += sgnX * edgeWave * (0.45 + 0.55 * sideEdge) * capFactor;
   z += sgnZ * edgeWave * 0.78 * domeDepthFactor;
@@ -200,21 +231,21 @@ export function evaluatePopsicleProfile(
   if (hNorm < 0.13) {
     const botProximity = smoothstep(0.13, 0.0, hNorm);
     const rimEdgeMask = smoothstep(0.10, 0.015, hNorm);
-    const activeRim = 1.0 - smoothstep(0.55, 0.92, m);
+    const activeRim = 1.0 - smoothstep(0.48, 0.78, m);
     const poolGrow = 0.85 + 0.30 * smoothstep(0.0, 0.30, m);
 
     // Soft rounded asymmetric sticky pooling swells evenly across left & right bottom underside
     const nBotA = fbm3(x * 8.5 + so * 1.3, so * 0.5, z * 6.5, 3);
     const nBotB = fbm3(x * 19.0 - so * 2.1, so * 1.1, z * 14.0, 2);
     const waveLobes =
-      Math.max(0, Math.sin(x * 21.0 + so * 1.1) * 0.5 + 0.5) * 0.009 +
-      Math.max(0, Math.sin(x * 38.0 - so * 2.3 + 1.4) * 0.5 + 0.5) * 0.0055 +
-      Math.max(0, nBotA - 0.36) * 0.018 +
-      Math.max(0, nBotB - 0.44) * 0.011;
+      Math.max(0, Math.sin(x * 21.0 + so * 1.1) * 0.5 + 0.5) * 0.0075 +
+      Math.max(0, Math.sin(x * 38.0 - so * 2.3 + 1.4) * 0.5 + 0.5) * 0.0045 +
+      Math.max(0, nBotA - 0.36) * 0.015 +
+      Math.max(0, nBotB - 0.44) * 0.009;
 
-    // Gentle pool sag around hero bottom-left & subtle bottom-right drop zones
-    const bulgeL = Math.exp(-Math.pow((x + 0.43) / 0.105, 2.0)) * 0.014;
-    const bulgeR = Math.exp(-Math.pow((x - 0.35) / 0.095, 2.0)) * 0.011;
+    // Distinct curved viscous accumulation bellies on bottom-left & bottom-right where liquid gathers & drops grow!
+    const bulgeL = Math.exp(-Math.pow((x + 0.35) / 0.115, 2.0)) * 0.020;
+    const bulgeR = Math.exp(-Math.pow((x - 0.34) / 0.105, 2.0)) * 0.015;
 
     // Smooth symmetric curved pink liquid fillets tucked tightly against BOTH left & right wood stick edges!
     const stickHalfW = POPSICLE.stickWidth * 0.5;
@@ -223,7 +254,7 @@ export function evaluatePopsicleProfile(
     const stickCenter = Math.exp(-Math.pow(x / (stickHalfW * 0.90), 2.0));
 
     const totalSag = Math.min(
-      0.030,
+      0.034,
       ((waveLobes + bulgeL + bulgeR) * (1.0 - stickCenter * 0.80) + filletL + filletR) * poolGrow,
     );
     y -= totalSag * botProximity * activeRim;
@@ -240,27 +271,31 @@ export function evaluatePopsicleProfile(
 }
 
 /**
- * Fast analytical signed-distance-like containment query:
- * Returns positive value when point (x, y, z) is deeply inside the current melted ice,
- * ~0 at the ice surface, and negative when exposed outside the ice.
+ * Continuous 3D signed-distance containment query:
+ * Positive strictly inside the live melted ice, ~0 on the ice surface,
+ * and smoothly negative (true Euclidean outside distance) everywhere outside
+ * with ZERO discontinuity across y = yBot or y = yTop!
  */
 export function iceContainmentDepth(x: number, y: number, z: number, state: MeltFieldState): number {
   const m = clamp(state.melt, 0, 1);
-  const yTop = POPSICLE.yTop - m * 0.72;
-  const yBot = POPSICLE.yBottom + m * 0.14;
-  if (y > yTop || y < yBot) {
-    return -Math.max(y - yTop, yBot - y);
-  }
-  const hNorm = clamp((y - yBot) / Math.max(0.15, yTop - yBot), 0, 1);
-  const bulletTaper = smoothstep(0.08, 0.72, m);
-  const widthShrink = 1.0 - m * 0.44 * (0.62 + 0.58 * hNorm);
-  let halfW = (POPSICLE.halfWidthBottom + (POPSICLE.halfWidthTop - POPSICLE.halfWidthBottom) * hNorm) * widthShrink;
-  halfW *= 1.0 - bulletTaper * 0.22 * smoothstep(0.35, 0.92, hNorm);
+  const { yTop, yBot, iceAmount, iceGone } = getMeltBounds(m);
+  if (iceGone) return -99.0;
 
-  const depthShrink = 1.0 - m * 0.48 * (0.68 + 0.45 * hNorm);
+  const collapse = smoothstep(0.40, 0.975, m);
+  const endRound = smoothstep(0.72, 0.94, m);
+  const yClamped = clamp(y, yBot, yTop);
+  const hNorm = clamp((yClamped - yBot) / Math.max(0.02, yTop - yBot), 0, 1);
+  const bulletTaper = smoothstep(0.08, 0.72, m);
+  const radialCollapseW = 1.0 - Math.pow(collapse, 1.58) * 0.85;
+  const radialCollapseD = 1.0 - Math.pow(collapse, 1.50) * 0.88;
+  const widthShrink = (1.0 - m * 0.44 * (0.62 + 0.58 * hNorm)) * radialCollapseW;
+  let halfW = (POPSICLE.halfWidthBottom + (POPSICLE.halfWidthTop - POPSICLE.halfWidthBottom) * hNorm) * widthShrink;
+  halfW *= 1.0 - bulletTaper * (1.0 - endRound * 0.55) * 0.22 * smoothstep(0.35, 0.92, hNorm);
+
+  const depthShrink = (1.0 - m * 0.48 * (0.68 + 0.45 * hNorm)) * radialCollapseD;
   let halfD = POPSICLE.halfDepth * depthShrink;
 
-  const domeStart = 0.735 - bulletTaper * 0.14;
+  const domeStart = 0.735 - bulletTaper * 0.14 - endRound * 0.08;
   if (hNorm > domeStart) {
     const t = clamp((hNorm - domeStart) / Math.max(0.1, 1.0 - domeStart), 0, 1);
     const sinA = Math.sqrt(Math.max(0, 1.0 - t * t));
@@ -268,23 +303,23 @@ export function iceContainmentDepth(x: number, y: number, z: number, state: Melt
     halfD *= Math.pow(sinA, 0.74);
   }
 
-  const botBevel = 0.072 + bulletTaper * 0.24;
+  const botBevel = 0.072 + bulletTaper * 0.24 + endRound * 0.16;
   if (hNorm < botBevel) {
     const t = clamp(1.0 - hNorm / botBevel, 0, 1);
     const sinB = Math.sqrt(Math.max(0, 1.0 - t * t));
-    const flatKeep = 0.86 * (1.0 - bulletTaper * 0.62);
+    const flatKeep = 0.86 * (1.0 - bulletTaper * 0.62) * (1.0 - endRound * 0.85);
     halfW *= flatKeep + (1.0 - flatKeep) * sinB;
     halfD *= Math.max(0.22, sinB);
   }
 
-  const localHeat = sampleLocalHeat(x, y, state);
-  const carve = localHeat * 0.22;
+  const localHeat = sampleLocalHeat(x, yClamped, state);
+  const carve = localHeat * 0.22 * iceAmount;
   halfW *= 1.0 - carve * 0.55;
   halfD *= 1.0 - carve * 0.78;
 
-  // Smooth superelliptical boundary approximation in XZ for accurate 3D collision & bounce normals!
-  const nx = Math.abs(x) / Math.max(0.02, halfW);
-  const nz = Math.abs(z) / Math.max(0.02, halfD);
+  // Smooth superelliptical boundary in XZ for accurate 3D collision & containment
+  const nx = Math.abs(x) / Math.max(0.015, halfW);
+  const nz = Math.abs(z) / Math.max(0.012, halfD);
   const p = 2.6 - bulletTaper * 0.5;
   const rNorm = Math.pow(Math.pow(nx, p) + Math.pow(nz, p), 1.0 / p);
   const radialScale = Math.min(halfW, halfD) + (Math.max(halfW, halfD) - Math.min(halfW, halfD)) * (nx / Math.max(1e-4, nx + nz));
@@ -292,7 +327,14 @@ export function iceContainmentDepth(x: number, y: number, z: number, state: Melt
 
   const dyTop = yTop - y;
   const dyBot = y - yBot;
-  return Math.min(radialDepth, dyTop, dyBot);
+  const vertDepth = Math.min(dyTop, dyBot);
+
+  if (radialDepth >= 0 && vertDepth >= 0) {
+    return Math.min(radialDepth, vertDepth);
+  }
+  const outR = Math.max(0, -radialDepth);
+  const outV = Math.max(0, -vertDepth);
+  return -Math.hypot(outR, outV);
 }
 
 /**

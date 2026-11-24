@@ -14,7 +14,7 @@ if (params.has('clean')) document.documentElement.classList.add('clean');
 
 const showSettings = import.meta.env.DEV || params.has('settings');
 let currentSeed = Math.max(1, Math.floor(Number(params.get('seed')) || 1));
-const initialMelt = clamp(params.has('melt') ? Number(params.get('melt')) : 0.035, 0, 0.98);
+const initialMelt = clamp(params.has('melt') ? Number(params.get('melt')) : 0.035, 0, 1.0);
 let paused = params.has('paused');
 const rawDropParam = params.get('drops');
 let currentDropMode: DropMode =
@@ -795,7 +795,7 @@ function tick(now: number) {
     // Slow deterministic ambient melt + pointer-accelerated warmth!
     const pointerGlobalBoost = pointerActive ? (pointerPressed ? 11.5 : 3.2) : 1.0;
     const baseMeltRate = 0.0028;
-    meltState.melt = clamp(meltState.melt + dt * baseMeltRate * simParams.speed * pointerGlobalBoost, 0, 0.98);
+    meltState.melt = clamp(meltState.melt + dt * baseMeltRate * simParams.speed * pointerGlobalBoost, 0, 1.0);
 
     // Deposit localized warmth where pointer rests on the popsicle
     if (pointerActive && !orbitMode) {
@@ -838,7 +838,7 @@ buildPopsicle(currentSeed);
 // Expose deterministic inspection API for Playwright verification captures
 (window as unknown as Record<string, unknown>).__day03 = {
   setMelt(m: number) {
-    meltState.melt = clamp(m, 0, 0.98);
+    meltState.melt = clamp(m, 0, 1.0);
     if (iceSystem && fruitAssembly && waterDrops && liquidFilm) {
       iceSystem.update(meltState, simParams.bubbles);
       fruitAssembly.update(meltState, 0, Math.max(liquidFilm.stickWetness, meltState.melt * 1.15));
@@ -851,7 +851,7 @@ buildPopsicle(currentSeed);
     const dt = seconds / steps;
     for (let i = 0; i < steps; i++) {
       meltState.time += dt;
-      meltState.melt = clamp(meltState.melt + dt * 0.0028 * simParams.speed, 0, 0.98);
+      meltState.melt = clamp(meltState.melt + dt * 0.0028 * simParams.speed, 0, 1.0);
       if (iceSystem && fruitAssembly && waterDrops && liquidFilm) {
         liquidFilm.update(meltState, dt, simParams.speed);
         iceSystem.update(meltState, simParams.bubbles);

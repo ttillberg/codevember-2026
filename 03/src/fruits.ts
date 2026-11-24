@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { clamp, fbm3, mulberry32, smoothstep } from './rng';
-import { iceContainmentDepth, iceSurfaceOutwardNormal, MeltFieldState, POPSICLE } from './shape';
+import { getMeltBounds, iceContainmentDepth, iceSurfaceOutwardNormal, MeltFieldState, POPSICLE } from './shape';
 import {
   createBlueberryTextures,
   createStrawberryTextures,
@@ -29,6 +29,8 @@ export interface FruitAssembly {
   stickMesh: THREE.Mesh;
   stickUniforms: {
     uIceBottomY: { value: number };
+    uIceTopY: { value: number };
+    uIceAmount: { value: number };
     uStickWetness: { value: number };
   };
   fruits: FruitItem[];
@@ -702,10 +704,12 @@ export function createFruitAssembly(seed: number): FruitAssembly {
     blueSetB.textures.roughness,
   );
 
-  // Birch wood popsicle stick with capillary damp wicking & subtle berry stain as ice melts
+  // Birch wood popsicle stick with capillary damp wicking & deep glossy berry stain when bare
   const woodTex = createWoodTextures(seed * 19 + 503);
   const stickUniforms = {
     uIceBottomY: { value: POPSICLE.yBottom as number },
+    uIceTopY: { value: POPSICLE.yTop as number },
+    uIceAmount: { value: 1.0 as number },
     uStickWetness: { value: 0.0 as number },
   };
   const stickMat = new THREE.MeshPhysicalMaterial({
@@ -720,6 +724,8 @@ export function createFruitAssembly(seed: number): FruitAssembly {
   });
   stickMat.onBeforeCompile = (shader) => {
     shader.uniforms.uIceBottomY = stickUniforms.uIceBottomY;
+    shader.uniforms.uIceTopY = stickUniforms.uIceTopY;
+    shader.uniforms.uIceAmount = stickUniforms.uIceAmount;
     shader.uniforms.uStickWetness = stickUniforms.uStickWetness;
     shader.vertexShader = shader.vertexShader
       .replace(
@@ -739,6 +745,8 @@ export function createFruitAssembly(seed: number): FruitAssembly {
         '#include <common>',
         `#include <common>
         uniform float uIceBottomY;
+        uniform float uIceTopY;
+        uniform float uIceAmount;
         uniform float uStickWetness;
         varying vec3 vStickWorldPos;
         varying vec3 vStickWorldNormal;`,
@@ -747,56 +755,76 @@ export function createFruitAssembly(seed: number): FruitAssembly {
         '#include <color_fragment>',
         `#include <color_fragment>
         {
-          float distBelow = uIceBottomY - vStickWorldPos.y;
-          float collarShadow = exp(-max(0.0, distBelow) * 16.0) * smoothstep(-0.08, 0.02, distBelow);
-          float insideIce = smoothstep(0.04, -0.10, distBelow);
+          // Continuous seamless berry-stain along the entire stick (ZERO blonde seam at yBot or yTop!)
+          float effRefY = mix(${POPSICLE.yBottom.toFixed(3)}, uIceBottomY, uIceAmount);
+          float distBelow = effRefY - vStickWorldPos.y;
+          float collarShadow = exp(-max(0.0, distBelow) * 16.0) * smoothstep(-0.08, 0.02, distBelow) * uIceAmount;
+          float insideIce = smoothstep(0.04, -0.10, distBelow) * smoothstep(uIceTopY + 0.04, uIceTopY - 0.04, vStickWorldPos.y) * uIceAmount;
 
-          // Porous birch fibers progressively capillary-wick melted berry juice down the ENTIRE stick!
-          // Starts dry at t = 0, creeps down along wood fibers, and eventually colors the whole stick rose-berry!
+          // Upper stick (y > -1.02) has been soaking inside frozen berry ice the whole time -> seamless deep berry stain!
+          float wasSubmerged = smoothstep(-1.14, -0.96, vStickWorldPos.y);
+          float upperSoak = wasSubmerged * smoothstep(0.08, 0.36, uStickWetness);
+          float revealedUpper = wasSubmerged * max(1.0 - uIceAmount, smoothstep(uIceTopY - 0.04, uIceTopY + 0.03, vStickWorldPos.y));
+
+          // Porous birch fibers progressively capillary-wick melted berry juice down the ENTIRE lower handle!
           float grainWick =
             0.50 + 0.30 * sin(vStickWorldPos.x * 58.0 + 1.1) +
             0.20 * sin(vStickWorldPos.x * 134.0 - 0.6);
           float progress = smoothstep(0.04, 0.78, uStickWetness);
           float edgeIrreg = (clamp(grainWick, 0.0, 1.0) - 0.5) * 0.20 * (1.0 - smoothstep(0.55, 0.88, uStickWetness));
           float wickReach = progress * 1.55 + edgeIrreg;
-          float soakFront = smoothstep(wickReach + 0.14, wickReach - 0.18, max(0.0, distBelow)) *
-                            smoothstep(-0.06, 0.015, distBelow) *
+          // Overlap generously upward past effRefY so lowerSoak + upperSoak weld at 1.000 with ZERO band!
+          float lowerSoak = smoothstep(wickReach + 0.14, wickReach - 0.18, max(0.0, distBelow)) *
+                            smoothstep(-0.30, -0.10, distBelow) *
                             smoothstep(0.02, 0.18, uStickWetness);
-          float fullSoak = smoothstep(0.30, 0.90, uStickWetness) * soakFront;
+          float soakFront = clamp(max(lowerSoak, upperSoak), 0.0, 1.0);
+          float fullSoak = clamp(max(smoothstep(0.30, 0.90, uStickWetness) * lowerSoak, upperSoak * 0.95), 0.0, 1.0);
 
           diffuseColor.rgb *= mix(vec3(1.0), vec3(0.82, 0.66, 0.64), collarShadow * 0.52);
-          diffuseColor.rgb *= mix(vec3(1.0), vec3(0.92, 0.76, 0.74), insideIce * 0.45);
-          // Natural damp strawberry-stained birch wood (wet wood darkens richly while keeping crisp natural grain!)
+          diffuseColor.rgb *= mix(vec3(1.0), vec3(0.92, 0.76, 0.74), insideIce * 0.32 * (1.0 - upperSoak));
+
+          // Natural damp strawberry-stained birch wood (upper submerged half slightly richer crimson-rose!)
           float woodLuma = dot(diffuseColor.rgb, vec3(0.30, 0.59, 0.11));
           vec3 dampRoseWood = mix(
             diffuseColor.rgb * vec3(0.90, 0.52, 0.52),
-            vec3(0.90, 0.28, 0.34) * woodLuma * 1.28,
+            vec3(0.88, 0.27, 0.33) * woodLuma * 1.26,
             0.52 + 0.40 * fullSoak
           );
-          diffuseColor.rgb = mix(diffuseColor.rgb, dampRoseWood, soakFront * (0.58 + 0.36 * fullSoak));
+          vec3 deepStickyTip = vec3(0.82, 0.22, 0.29) * woodLuma * 1.20;
+          vec3 targetStain = mix(dampRoseWood, deepStickyTip, wasSubmerged * (0.28 + 0.22 * revealedUpper));
+          diffuseColor.rgb = mix(diffuseColor.rgb, targetStain, soakFront * (0.58 + 0.38 * fullSoak));
         }`,
       )
       .replace(
         '#include <lights_fragment_end>',
         `#include <lights_fragment_end>
         {
-          float distBelow = uIceBottomY - vStickWorldPos.y;
+          float effRefY = mix(${POPSICLE.yBottom.toFixed(3)}, uIceBottomY, uIceAmount);
+          float distBelow = effRefY - vStickWorldPos.y;
+          float wasSubmerged = smoothstep(-1.14, -0.96, vStickWorldPos.y);
+          float revealedUpper = wasSubmerged * max(1.0 - uIceAmount, smoothstep(uIceTopY - 0.04, uIceTopY + 0.03, vStickWorldPos.y));
+
           float grainWick =
             0.50 + 0.30 * sin(vStickWorldPos.x * 58.0 + 1.1) +
             0.20 * sin(vStickWorldPos.x * 134.0 - 0.6);
           float progress = smoothstep(0.04, 0.78, uStickWetness);
           float edgeIrreg = (clamp(grainWick, 0.0, 1.0) - 0.5) * 0.20 * (1.0 - smoothstep(0.55, 0.88, uStickWetness));
           float wickReach = progress * 1.55 + edgeIrreg;
-          float dampMask = smoothstep(wickReach + 0.12, wickReach - 0.16, max(0.0, distBelow)) *
-                           smoothstep(-0.02, 0.025, distBelow) *
-                           smoothstep(0.03, 0.20, uStickWetness);
+          float lowerDamp = smoothstep(wickReach + 0.12, wickReach - 0.16, max(0.0, distBelow)) *
+                            smoothstep(-0.30, -0.10, distBelow) *
+                            smoothstep(0.03, 0.20, uStickWetness);
+          float dampMask = clamp(max(lowerDamp, revealedUpper), 0.0, 1.0);
           if (dampMask > 0.01) {
             vec3 sV = normalize(cameraPosition - vStickWorldPos);
             vec3 sN = normalize(vStickWorldNormal);
+            float ndv = clamp(dot(sN, sV), 0.0, 1.0);
+            // Natural damp-wood sticky satin sheen (preserves crisp birch wood grain without plastic glare!)
+            float stickyFresnel = pow(1.0 - ndv, 4.2) * (0.08 + 0.10 * revealedUpper);
             vec3 sH1 = normalize(normalize(vec3(-0.52, 0.38, 0.76)) + sV);
             vec3 sH2 = normalize(normalize(vec3(0.55, 0.32, 0.77)) + sV);
-            float wetSpec = pow(max(dot(sN, sH1), 0.0), 85.0) * 0.38 + pow(max(dot(sN, sH2), 0.0), 70.0) * 0.28;
-            reflectedLight.directSpecular += vec3(1.10, 0.96, 0.96) * wetSpec * dampMask;
+            float wetSpec = pow(max(dot(sN, sH1), 0.0), 72.0) * (0.30 + 0.14 * revealedUpper)
+                          + pow(max(dot(sN, sH2), 0.0), 58.0) * (0.22 + 0.10 * revealedUpper);
+            reflectedLight.directSpecular += vec3(1.08, 0.94, 0.93) * (wetSpec + stickyFresnel) * dampMask;
           }
         }`,
       );
@@ -858,6 +886,8 @@ export function createFruitAssembly(seed: number): FruitAssembly {
       f.mesh.visible = true;
     }
     stickUniforms.uIceBottomY.value = POPSICLE.yBottom;
+    stickUniforms.uIceTopY.value = POPSICLE.yTop;
+    stickUniforms.uIceAmount.value = 1.0;
     stickUniforms.uStickWetness.value = 0.0;
   }
 
@@ -873,26 +903,29 @@ export function createFruitAssembly(seed: number): FruitAssembly {
   }
 
   function update(meltState: MeltFieldState, dt: number, stickWetness?: number) {
-    const yBotLive = POPSICLE.yBottom + clamp(meltState.melt, 0, 1) * 0.14;
+    const { yTop: yTopLive, yBot: yBotLive, iceAmount, iceGone } = getMeltBounds(meltState.melt);
     const stickHalfW = POPSICLE.stickWidth * 0.5 + POPSICLE.stickDepth * 0.19 * 0.7;
     const stickHalfD = POPSICLE.stickDepth * 0.5;
     stickUniforms.uIceBottomY.value = yBotLive;
+    stickUniforms.uIceTopY.value = yTopLive;
+    stickUniforms.uIceAmount.value = iceAmount;
     if (stickWetness !== undefined) {
       stickUniforms.uStickWetness.value = clamp(
-        Math.max(stickWetness * 1.1, smoothstep(0.012, 0.50, meltState.melt) * 0.92),
+        Math.max(stickWetness * 1.1, smoothstep(0.012, 0.50, meltState.melt) * 0.96),
         0,
         1,
       );
     }
 
-    // Pass 1: Update all still-attached fruits first so falling fruits collide against accurate live protruding positions!
+    // Pass 1: Update all still-attached fruits first so falling fruits glance off accurate live protruding positions!
+    const endgameReleaseBoost = smoothstep(0.72, 0.90, meltState.melt) * 0.07;
     for (let i = 0; i < fruits.length; i++) {
       const f = fruits[i];
       const depth = iceContainmentDepth(f.basePos.x, f.basePos.y, f.basePos.z, meltState);
-      const releaseMargin = f.kind === 'strawberry' ? f.radius * 0.11 : f.radius * 0.09;
+      const releaseMargin = (f.kind === 'strawberry' ? f.radius * 0.11 : f.radius * 0.09) + endgameReleaseBoost;
 
       if (dt === 0) {
-        if (meltState.melt > 0.14 && depth < releaseMargin) {
+        if (iceGone || (meltState.melt > 0.14 && depth < releaseMargin)) {
           f.detached = true;
           f.mesh.visible = false;
         } else {
@@ -918,7 +951,7 @@ export function createFruitAssembly(seed: number): FruitAssembly {
         f.mesh.quaternion.copy(f.baseQuat).multiply(sagQuat);
 
         // Once melting ice recedes past the fruit's support center, peel cleanly outward in true 3D!
-        if (meltState.melt > 0.14 && depth < releaseMargin) {
+        if (iceGone || (meltState.melt > 0.14 && depth < releaseMargin)) {
           f.detached = true;
           iceSurfaceOutwardNormal(f.mesh.position.x, f.mesh.position.y, f.mesh.position.z, meltState, surfNorm);
 
@@ -931,23 +964,25 @@ export function createFruitAssembly(seed: number): FruitAssembly {
           pushZ /= horizLen;
 
           // Nudge initial center cleanly clear of the ice surface on the correct front/back side
-          const rCol = fruitCollisionRadius(f);
-          const curDepth = iceContainmentDepth(f.mesh.position.x, f.mesh.position.y, f.mesh.position.z, meltState);
-          if (curDepth > -rCol * 0.45) {
-            const clearPush = Math.min(0.14, curDepth + rCol * 0.55);
-            f.mesh.position.x += pushX * clearPush * 0.55;
-            f.mesh.position.z += pushZ * clearPush;
+          if (!iceGone) {
+            const rCol = fruitCollisionRadius(f);
+            const curDepth = iceContainmentDepth(f.mesh.position.x, f.mesh.position.y, f.mesh.position.z, meltState);
+            if (curDepth > -rCol * 0.45) {
+              const clearPush = Math.min(0.14, curDepth + rCol * 0.55);
+              f.mesh.position.x += pushX * clearPush * 0.55;
+              f.mesh.position.z += pushZ * clearPush;
+            }
           }
 
-          f.velocity.set(pushX * (0.14 + (i % 3) * 0.045), -0.18, pushZ * (0.18 + (i % 2) * 0.06));
-          f.angVel.set(pushZ * 1.5, (i % 2 === 0 ? 1 : -1) * 0.9, -pushX * 1.7);
+          f.velocity.set(pushX * (0.09 + (i % 3) * 0.03), -0.14, pushZ * (0.13 + (i % 2) * 0.04));
+          f.angVel.set(pushZ * 0.9, (i % 2 === 0 ? 1 : -1) * 0.55, -pushX * 1.0);
         }
       }
     }
 
     if (dt <= 0) return;
 
-    // Pass 2: Substepped 3D falling & collision/bounce physics against live ice, protruding fruits, and wood stick!
+    // Pass 2: Lightweight, low-bounce 3D falling & wet-friction glancing physics (floor is far below the frame!)
     const substeps = 2;
     const subDt = dt / substeps;
 
@@ -958,10 +993,10 @@ export function createFruitAssembly(seed: number): FruitAssembly {
       const rCol = fruitCollisionRadius(f);
 
       for (let s = 0; s < substeps; s++) {
-        f.velocity.y -= 5.2 * subDt;
+        f.velocity.y -= 4.9 * subDt;
         f.mesh.position.addScaledVector(f.velocity, subDt);
 
-        // Smooth world-space quaternion spin integration (zero Euler gimbal snap!)
+        // Smooth world-space quaternion spin integration
         const wMag = f.angVel.length();
         if (wMag > 1e-4) {
           spinAxis.copy(f.angVel).divideScalar(wMag);
@@ -969,43 +1004,45 @@ export function createFruitAssembly(seed: number): FruitAssembly {
           f.mesh.quaternion.premultiply(spinQuat);
         }
 
-        // A) Collide & bounce off the live melting popsicle ice body (never falls through the ice!)
-        const px = f.mesh.position.x;
-        const py = f.mesh.position.y;
-        const pz = f.mesh.position.z;
-        const dIce = iceContainmentDepth(px, py, pz, meltState);
-        if (dIce > -rCol && py > yBotLive - rCol * 1.1) {
-          iceSurfaceOutwardNormal(px, py, pz, meltState, surfNorm);
-          // Preserve back-of-popsicle side if this fruit was released behind the ice
-          if (f.basePos.z <= 0.004 && pz <= 0.02 && surfNorm.z > -0.15) {
-            surfNorm.z = -0.65;
-            const nL = Math.hypot(surfNorm.x, surfNorm.y, surfNorm.z) || 1;
-            surfNorm.x /= nL;
-            surfNorm.y /= nL;
-            surfNorm.z /= nL;
-          }
+        // A) Soft wet-friction slide & gentle deflection off live melting popsicle ice (never falls through!)
+        if (!iceGone) {
+          const px = f.mesh.position.x;
+          const py = f.mesh.position.y;
+          const pz = f.mesh.position.z;
+          const dIce = iceContainmentDepth(px, py, pz, meltState);
+          if (dIce > -rCol) {
+            iceSurfaceOutwardNormal(px, py, pz, meltState, surfNorm);
+            // Preserve back-of-popsicle side if this fruit was released behind the ice
+            if (f.basePos.z <= 0.004 && pz <= 0.02 && surfNorm.z > -0.15) {
+              surfNorm.z = -0.65;
+              const nL = Math.hypot(surfNorm.x, surfNorm.y, surfNorm.z) || 1;
+              surfNorm.x /= nL;
+              surfNorm.y /= nL;
+              surfNorm.z /= nL;
+            }
 
-          const pen = dIce + rCol;
-          f.mesh.position.x += surfNorm.x * pen;
-          f.mesh.position.y += surfNorm.y * pen * 0.45;
-          f.mesh.position.z += surfNorm.z * pen;
+            const pen = dIce + rCol;
+            f.mesh.position.x += surfNorm.x * pen;
+            f.mesh.position.y += surfNorm.y * pen * 0.35;
+            f.mesh.position.z += surfNorm.z * pen;
 
-          const vn = f.velocity.x * surfNorm.x + f.velocity.y * surfNorm.y + f.velocity.z * surfNorm.z;
-          if (vn < 0) {
-            const restitution = 0.36;
-            const jImp = -(1 + restitution) * vn;
-            f.velocity.x += surfNorm.x * jImp;
-            f.velocity.y += surfNorm.y * jImp;
-            f.velocity.z += surfNorm.z * jImp;
-            // Gentle wet surface friction + glancing spin torque
-            f.velocity.multiplyScalar(0.92);
-            f.angVel.x += (surfNorm.y * f.velocity.z - surfNorm.z * f.velocity.y) * 1.9;
-            f.angVel.y += (surfNorm.z * f.velocity.x - surfNorm.x * f.velocity.z) * 1.9;
-            f.angVel.z += (surfNorm.x * f.velocity.y - surfNorm.y * f.velocity.x) * 1.9;
+            const vn = f.velocity.x * surfNorm.x + f.velocity.y * surfNorm.y + f.velocity.z * surfNorm.z;
+            if (vn < 0) {
+              // Very low restitution + wet surface friction: soft slide/nudge, NOT a rubbery bounce!
+              const restitution = 0.10;
+              const jImp = -(1 + restitution) * vn;
+              f.velocity.x += surfNorm.x * jImp;
+              f.velocity.y += surfNorm.y * jImp;
+              f.velocity.z += surfNorm.z * jImp;
+              f.velocity.multiplyScalar(0.86);
+              f.angVel.x += (surfNorm.y * f.velocity.z - surfNorm.z * f.velocity.y) * 0.85;
+              f.angVel.y += (surfNorm.z * f.velocity.x - surfNorm.x * f.velocity.z) * 0.85;
+              f.angVel.z += (surfNorm.x * f.velocity.y - surfNorm.y * f.velocity.x) * 0.85;
+            }
           }
         }
 
-        // B) Collide & bounce off ANY other still-attached protruding fruit sticking out of the melting ice!
+        // B) Gentle glancing nudge off any still-attached protruding fruit sticking out of the melting ice
         for (let j = 0; j < fruits.length; j++) {
           if (j === i) continue;
           const other = fruits[j];
@@ -1026,52 +1063,54 @@ export function createFruitAssembly(seed: number): FruitAssembly {
             const overlap = minDist - dist;
 
             f.mesh.position.x += nx * overlap;
-            f.mesh.position.y += ny * overlap * 0.65;
+            f.mesh.position.y += ny * overlap * 0.45;
             f.mesh.position.z += nz * overlap;
 
             const vn = f.velocity.x * nx + f.velocity.y * ny + f.velocity.z * nz;
             if (vn < 0) {
-              // Squishy wet-berry glance & bounce off protruding strawberries/blueberries!
-              const bounce = 0.46;
+              // Subtle wet-berry friction glance (just enough hint of physics so it slides past instead of phasing through)
+              const bounce = 0.14;
               const imp = -(1 + bounce) * vn;
-              f.velocity.x += nx * imp + nx * 0.14;
+              f.velocity.x += nx * imp + nx * 0.045;
               f.velocity.y += ny * imp;
-              f.velocity.z += nz * imp + (f.basePos.z <= 0.004 ? -0.10 : 0.08);
-              // Add natural tumbling spin from off-center glancing collision!
-              f.angVel.x += (ny * f.velocity.z - nz * f.velocity.y) * 2.6;
-              f.angVel.y += (nz * f.velocity.x - nx * f.velocity.z) * 2.6;
-              f.angVel.z += (nx * f.velocity.y - ny * f.velocity.x) * 2.6;
+              f.velocity.z += nz * imp + (f.basePos.z <= 0.004 ? -0.04 : 0.03);
+              f.velocity.multiplyScalar(0.86);
+              f.angVel.x += (ny * f.velocity.z - nz * f.velocity.y) * 1.0;
+              f.angVel.y += (nz * f.velocity.x - nx * f.velocity.z) * 1.0;
+              f.angVel.z += (nx * f.velocity.y - ny * f.velocity.x) * 1.0;
             }
           }
         }
 
-        // C) Deflect cleanly off the wooden stick if a falling fruit grazes below the ice!
-        if (f.mesh.position.y < yBotLive + 0.02) {
+        // C) Soft damped graze off the wooden stick (including its exposed upper tip as ice melts!)
+        if (f.mesh.position.y < POPSICLE.stickTopY + rCol * 0.85) {
           const penX = stickHalfW + rCol * 0.85 - Math.abs(f.mesh.position.x);
           const penZ = stickHalfD + rCol * 0.85 - Math.abs(f.mesh.position.z);
           if (penX > 0 && penZ > 0) {
             if (penZ <= penX) {
               const sZ = f.mesh.position.z < 0 ? -1 : 1;
               f.mesh.position.z += sZ * penZ;
-              if (f.velocity.z * sZ < 0) f.velocity.z *= -0.35;
-              else f.velocity.z += sZ * 0.12;
+              if (f.velocity.z * sZ < 0) f.velocity.z *= -0.12;
+              else f.velocity.z += sZ * 0.04;
             } else {
               const sX = f.mesh.position.x < 0 ? -1 : 1;
               f.mesh.position.x += sX * penX;
-              if (f.velocity.x * sX < 0) f.velocity.x *= -0.35;
-              else f.velocity.x += sX * 0.14;
+              if (f.velocity.x * sX < 0) f.velocity.x *= -0.12;
+              else f.velocity.x += sX * 0.05;
             }
-            f.angVel.z += (f.mesh.position.x < 0 ? 1 : -1) * 1.4;
+            f.velocity.multiplyScalar(0.90);
+            f.angVel.z += (f.mesh.position.x < 0 ? 1 : -1) * 0.65;
           }
         }
 
-        // Keep tumbling spin bounded
-        if (f.angVel.lengthSq() > 49) {
-          f.angVel.setLength(7.0);
+        // Keep tumbling spin gentle and natural
+        if (f.angVel.lengthSq() > 20.25) {
+          f.angVel.setLength(4.5);
         }
       }
 
-      if (f.mesh.position.y < -3.2) {
+      // Floor / despawn sits far down well below the camera frustum so fruits fall cleanly out of sight
+      if (f.mesh.position.y < -6.5) {
         f.mesh.visible = false;
       }
     }
