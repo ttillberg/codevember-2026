@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#d5c5bc" />
+    <title>03 · Melt · Codevember 2026</title>
+    <meta name="description" content="Backlit generative berry popsicle slowly melting in real time — move or hold the pointer to warm the ice and speed up the melt." />
+    <meta name="author" content="Theo Tillberg" />
+    <!-- share image: 03/about/screengrab.png, copied next to the build by scripts/build.mjs -->
+    <meta property="og:title" content="03 · Melt · Codevember 2026" />
+    <meta property="og:description" content="Backlit generative berry popsicle slowly melting in real time." />
+    <meta property="og:image" content="https://ttillberg.github.io/codevember-2026/03/screengrab.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="1200" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <link rel="icon" href="data:," />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@700&family=Inter:wght@400;600&display=swap" />
+    <link rel="stylesheet" href="./src/style.css" />
+  </head>
+  <body>
+    <canvas id="c"></canvas>
+
+    <!-- the title plate (docs/DESIGN.md): put the word in Japanese in the span -->
+    <div class="plate"><div class="head"><b>03 Melt</b><i><a class="home" href="https://ttillberg.github.io/codevember-2026/">Codevember 2026 <span lang="ja">融解</span></a> · <a class="home" href="https://x.com/theo_t">@theo_t</a></i></div></div>
+
+    <figure id="ref-card" class="ref-card" hidden>
+      <img id="ref-img" alt="Reference macro photo" draggable="false" />
+      <figcaption>
+        <span>Ref</span>
+        <button id="btn-ref-close" class="ref-close" type="button" title="Hide reference" aria-label="Hide reference">×</button>
+      </figcaption>
+    </figure>
+    <button id="btn-ref-open" class="ref-pill" type="button" hidden>Ref</button>
+
+    <div class="controls" aria-label="Scene controls">
+      <button id="btn-play" class="icon-btn" type="button" title="Pause / Resume (Space)" aria-label="Pause or resume">
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <rect x="6" y="5" width="4" height="14" rx="1"></rect>
+          <rect x="14" y="5" width="4" height="14" rx="1"></rect>
+        </svg>
+      </button>
+      <button id="btn-reset" class="icon-btn" type="button" title="Refreeze (R)" aria-label="Refreeze popsicle">
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M3 12a9 9 0 1 0 3-6.7L3 8"></path>
+          <path d="M3 3v5h5"></path>
+        </svg>
+      </button>
+      <button id="btn-seed" class="icon-btn" type="button" title="New generative fruit mix (N)" aria-label="New fruit mix">
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <rect x="4" y="4" width="16" height="16" rx="3"></rect>
+          <circle cx="9" cy="9" r="1" fill="currentColor"></circle>
+          <circle cx="15" cy="9" r="1" fill="currentColor"></circle>
+          <circle cx="12" cy="12" r="1" fill="currentColor"></circle>
+          <circle cx="9" cy="15" r="1" fill="currentColor"></circle>
+          <circle cx="15" cy="15" r="1" fill="currentColor"></circle>
+        </svg>
+      </button>
+      <button id="btn-orbit" class="icon-btn" type="button" title="Toggle 3D orbit (O)" aria-label="Toggle 3D orbit" aria-pressed="false">
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <circle cx="12" cy="12" r="8"></circle>
+          <ellipse cx="12" cy="12" rx="8" ry="3.2"></ellipse>
+        </svg>
+      </button>
+      <button id="btn-help" class="icon-btn" type="button" title="About & Controls (?)" aria-label="Help" aria-expanded="false">?</button>
+    </div>
+
+    <div id="help-card" class="help-card" hidden>
+      <p><b>Melt</b> — hover or press on the popsicle to warm the ice and speed up the melt. Right-drag or toggle orbit to inspect in 3D.</p>
+      <p class="keys"><kbd>Space</kbd> Pause · <kbd>R</kbd> Refreeze · <kbd>N</kbd> New mix · <kbd>O</kbd> Orbit</p>
+    </div>
+
+    <div id="dev-dock" class="dev-dock" hidden>
+      <button id="btn-settings" class="icon-btn" type="button" title="Tune parameters" aria-label="Settings" aria-expanded="false">
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <circle cx="12" cy="12" r="3"></circle>
+          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9c.26.6.85 1 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+        </svg>
+      </button>
+      <div id="settings-panel" class="settings-panel" hidden>
+        <label class="row"><span>Melt</span><input id="sl-melt" type="range" min="0" max="1" step="0.005" value="0.035" /><output id="val-melt">0.04</output></label>
+        <label class="row"><span>Speed</span><input id="sl-speed" type="range" min="0.2" max="6" step="0.1" value="1" /><output id="val-speed">1.0×</output></label>
+        <label class="row"><span>Frost</span><input id="sl-frost" type="range" min="0.1" max="1" step="0.02" value="0.58" /><output id="val-frost">0.58</output></label>
+        <label class="row"><span>Bubbles</span><input id="sl-bubbles" type="range" min="0" max="1" step="0.05" value="0.92" /><output id="val-bubbles">0.92</output></label>
+        <label class="row row-select"><span>Drops</span><select id="sel-drops"><option value="minimal">Minimal (Eye Candy)</option><option value="full">Full Swarm</option><option value="off">Off</option></select></label>
+      </div>
+    </div>
+
+    <script type="module" src="./src/main.ts"></script>
+  </body>
+</html>

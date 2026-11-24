@@ -247,6 +247,25 @@ importers:
         specifier: ^7.3.1
         version: 7.3.7(@types/node@26.6.6)(lightningcss@1.33.0)
 
+  '03':
+    dependencies:
+      three:
+        specifier: ^0.187.0
+        version: 0.187.0
+    devDependencies:
+      '@types/three':
+        specifier: ^0.187.0
+        version: 0.187.0
+      '@vitejs/plugin-basic-ssl':
+        specifier: ^2.3.0
+        version: 2.3.0(vite@7.3.7(@types/node@26.6.6)(lightningcss@1.33.0))
+      typescript:
+        specifier: ^5.9.3
+        version: 5.9.3
+      vite:
+        specifier: ^7.3.1
+        version: 7.3.7(@types/node@26.6.6)(lightningcss@1.33.0)
+
   '04':
     dependencies:
       '@react-three/drei':
