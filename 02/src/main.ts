@@ -1190,12 +1190,10 @@ function spawnScheduledThrow(th: ThrowSpec) {
     enterY: 0,
   });
 
-  // Gem launch sound: clean pop plays right as it launches (~0.18s before entering view from below!)
-  const launchPan = Math.max(-0.85, Math.min(0.85, (x0 / Math.max(0.25, stageHalfW)) * 0.78));
+  // Poisoned Black Diamonds keep their darker obsidian launch whoosh; colored gems already snapped ahead of launch!
   if (th.poisoned) {
+    const launchPan = Math.max(-0.85, Math.min(0.85, (x0 / Math.max(0.25, stageHalfW)) * 0.78));
     sound.launch(launchPan, true);
-  } else {
-    sound.gemPop(launchPan);
   }
 }
 
@@ -2621,13 +2619,22 @@ async function boot() {
       } else if (gamePhase === 'playing') {
         levelTime += simDt;
 
-        // Subtle warning cue ~0.22s BEFORE a Poisoned Black Diamond launches from below!
-        while (nextWarnIdx < levelPlan.throws.length && levelTime >= levelPlan.throws[nextWarnIdx].time - 0.22) {
+        // Subtle warning cue ~0.24s BEFORE a Poisoned Black Diamond launches from below!
+        while (nextWarnIdx < levelPlan.throws.length && levelTime >= levelPlan.throws[nextWarnIdx].time - 0.24) {
           const wth = levelPlan.throws[nextWarnIdx];
           if (wth.poisoned) {
             sound.blackWarning(Math.max(-0.85, Math.min(0.85, wth.lane * 0.78)));
           }
           nextWarnIdx++;
+        }
+
+        // Sharp metallic latch-release cue ~0.18s BEFORE each colored gem launches!
+        while (nextPopIdx < levelPlan.throws.length && levelTime >= levelPlan.throws[nextPopIdx].time - 0.18) {
+          const pth = levelPlan.throws[nextPopIdx];
+          if (!pth.poisoned) {
+            sound.gemPop(Math.max(-0.85, Math.min(0.85, pth.lane * 0.78)));
+          }
+          nextPopIdx++;
         }
 
         // Spawn deterministic pre-planned throws right on schedule!

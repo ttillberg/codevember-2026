@@ -226,9 +226,14 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
   let ro = pNear.xyz / pNear.w;
   let rd = normalize(pFar.xyz / pFar.w - ro);
 
-  // Seamless pure bright white studio cyclorama (like the Murano product shot)
-  let horizon = smoothstep(-0.08, 0.38, rd.y);
-  var col = mix(vec3<f32>(0.96, 0.958, 0.954), vec3<f32>(1.02, 1.02, 1.018), horizon);
+  // Super-soft pure vertical studio gradient:
+  // airy pastel sky-mist at top -> luminous warm alabaster center -> silky warm sand-porcelain floor
+  let sy = clamp(in.uv.y, 0.0, 1.0);
+  let topCol = vec3<f32>(0.68, 0.78, 0.93);    // soft airy sky-mist
+  let midCol = vec3<f32>(0.97, 0.955, 0.94);   // luminous studio ivory horizon
+  let botCol = vec3<f32>(0.92, 0.83, 0.77);    // soft warm cream-sand cove
+  var col = mix(botCol, midCol, smoothstep(0.0, 0.50, sy));
+  col = mix(col, topCol, smoothstep(0.46, 1.0, sy));
 
   if (rd.y < -0.002) {
     let t = (u.causticBounds.w - ro.y) / rd.y;
@@ -237,7 +242,8 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
       let dist = length(hit.xz);
 
       let stageMask = exp(-dist * dist * 0.05);
-      var floorCol = mix(col, vec3<f32>(0.935, 0.933, 0.928), stageMask * 0.85);
+      // Keep the floor seamlessly blended into the soft cyclorama gradient with subtle grounding warmth
+      var floorCol = mix(col, col * vec3<f32>(0.975, 0.972, 0.968), stageMask * 0.72);
 
       let grain = fract(sin(dot(floor(hit.xz * 280.0), vec2<f32>(12.9898, 78.233))) * 43758.5453);
       floorCol *= 0.995 + 0.010 * grain;
@@ -297,7 +303,10 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
     }
   }
 
-  return vec4<f32>(studioGrade(col, u.params.z), 1.0);
+  // Tiny interleaved-gradient-noise dither eliminates 8-bit banding across soft studio gradients
+  let ign = fract(52.9829189 * fract(dot(in.pos.xy, vec2<f32>(0.06711056, 0.00583715))));
+  let graded = clamp(studioGrade(col, u.params.z) + vec3<f32>((ign - 0.5) / 255.0), vec3<f32>(0.0), vec3<f32>(1.0));
+  return vec4<f32>(graded, 1.0);
 }
 `;
 
@@ -751,7 +760,10 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
             + vec3<f32>(0.96, 0.98, 1.0) * (spec1 + spec2 + spec3)
             + vec3<f32>(0.55, 0.58, 0.64) * edgeGlint * (0.45 + 0.55 * F)
             + grazingEdge;
-    return vec4<f32>(studioGrade(col, u.params.z), 1.0);
+    // Tiny interleaved-gradient-noise dither eliminates 8-bit banding across soft studio gradients
+  let ign = fract(52.9829189 * fract(dot(in.pos.xy, vec2<f32>(0.06711056, 0.00583715))));
+  let graded = clamp(studioGrade(col, u.params.z) + vec3<f32>((ign - 0.5) / 255.0), vec3<f32>(0.0), vec3<f32>(1.0));
+  return vec4<f32>(graded, 1.0);
   }
 
   let isCut = poly.info.y == 1u;
@@ -796,7 +808,10 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
     }
   }
 
-  return vec4<f32>(studioGrade(col, u.params.z), 1.0);
+  // Tiny interleaved-gradient-noise dither eliminates 8-bit banding across soft studio gradients
+  let ign = fract(52.9829189 * fract(dot(in.pos.xy, vec2<f32>(0.06711056, 0.00583715))));
+  let graded = clamp(studioGrade(col, u.params.z) + vec3<f32>((ign - 0.5) / 255.0), vec3<f32>(0.0), vec3<f32>(1.0));
+  return vec4<f32>(graded, 1.0);
 }
 `;
 
@@ -1142,7 +1157,10 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
     let col = mix(vec3<f32>(0.005, 0.005, 0.008), mirror, F * 0.9)
             + vec3<f32>(0.96, 0.98, 1.0) * spec
             + vec3<f32>(0.5, 0.52, 0.58) * bevel;
-    return vec4<f32>(studioGrade(col, u.params.z), 1.0);
+    // Tiny interleaved-gradient-noise dither eliminates 8-bit banding across soft studio gradients
+  let ign = fract(52.9829189 * fract(dot(in.pos.xy, vec2<f32>(0.06711056, 0.00583715))));
+  let graded = clamp(studioGrade(col, u.params.z) + vec3<f32>((ign - 0.5) / 255.0), vec3<f32>(0.0), vec3<f32>(1.0));
+  return vec4<f32>(graded, 1.0);
   }
   // Subtle conchoidal fracture micro-ripple breaks flat plastic glare into real liquid-glass reflections
   let rp = in.origPos * 28.0 + in.relPos * 19.0;

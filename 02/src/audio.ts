@@ -1,5 +1,5 @@
-// Procedural WebAudio glass synthesizer: diamond cleave, creeping crack ticks,
-// explosive crystal shatter, and Rapier contact clinks on the studio floor.
+// Procedural WebAudio studio synthesizer: woodblock launch cue, directional blade swoosh,
+// diamond cleave, cinematic sub-bass boom, explosive shatter, and Rapier contact clinks.
 export class Sound {
   private ctx: AudioContext | null = null;
   private out: GainNode | null = null;
@@ -121,45 +121,63 @@ export class Sound {
     hiSrc.stop(t + dur + 0.02);
   }
 
-  /** Clear, tactile little glassy pop right before a colored gem enters the frame from below! */
+  /** Crisp, dry hardwood woodblock ("tok!") cue right before a colored gem launches from below! */
   gemPop(pan = 0) {
-    if (!this.ctx) return;
+    if (!this.ctx || !this.noise) return;
     const ctx = this.ctx;
-    const t = ctx.currentTime;
+    const t = ctx.currentTime + 0.005;
     const clampedPan = Math.max(-0.85, Math.min(0.85, pan));
 
     const p = ctx.createStereoPanner();
     p.pan.value = clampedPan;
     p.connect(this.out!);
 
-    // Crisp pitch-up glassy cork/bubble pop (cuts clearly through laptop & phone speakers!)
-    const osc = ctx.createOscillator();
-    osc.type = 'sine';
-    const base = 340 + Math.random() * 70;
-    osc.frequency.setValueAtTime(base, t);
-    osc.frequency.exponentialRampToValueAtTime(base * 2.8, t + 0.055);
-    const g = ctx.createGain();
-    g.gain.setValueAtTime(0.0001, t);
-    g.gain.linearRampToValueAtTime(0.46, t + 0.006);
-    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.072);
-    osc.connect(g).connect(p);
-    osc.start(t);
-    osc.stop(t + 0.085);
+    // Warm hollow hardwood cavity filter
+    const woodLP = ctx.createBiquadFilter();
+    woodLP.type = 'lowpass';
+    woodLP.frequency.setValueAtTime(2600, t);
+    woodLP.Q.value = 0.8;
+    woodLP.connect(p);
 
-    // Subtle crisp harmonic overtone pop + crystal glint
-    const over = ctx.createOscillator();
-    over.type = 'triangle';
-    over.frequency.setValueAtTime(base * 2.0, t);
-    over.frequency.exponentialRampToValueAtTime(base * 4.2, t + 0.038);
-    const og = ctx.createGain();
-    og.gain.setValueAtTime(0.0001, t);
-    og.gain.linearRampToValueAtTime(0.16, t + 0.004);
-    og.gain.exponentialRampToValueAtTime(0.0001, t + 0.048);
-    over.connect(og).connect(p);
-    over.start(t);
-    over.stop(t + 0.06);
+    // 1) Dry wooden mallet knock transient (~12ms)
+    const src = ctx.createBufferSource();
+    src.buffer = this.noise;
+    src.loop = true;
+    const knockBP = ctx.createBiquadFilter();
+    knockBP.type = 'bandpass';
+    knockBP.Q.value = 1.6;
+    knockBP.frequency.setValueAtTime(1750, t);
+    knockBP.frequency.exponentialRampToValueAtTime(920, t + 0.014);
+    const ng = ctx.createGain();
+    ng.gain.setValueAtTime(0.001, t);
+    ng.gain.linearRampToValueAtTime(0.58, t + 0.002);
+    ng.gain.exponentialRampToValueAtTime(0.001, t + 0.018);
+    src.connect(knockBP).connect(ng).connect(woodLP);
+    src.start(t, Math.random() * 1.5);
+    src.stop(t + 0.025);
 
-    this.ping(t + 0.01, 2400 + Math.random() * 450, 0.065, 0.09, clampedPan);
+    // 2) Hollow hardwood body modes (fundamental + dry 2.32x woodblock overtone, subtle pitch drop on impact)
+    const f0 = 660 + Math.random() * 140;
+    const modes: Array<[number, number, number]> = [
+      [1.0, 0.56, 0.072],
+      [2.32, 0.28, 0.032],
+    ];
+    for (const [ratio, peak, dur] of modes) {
+      const osc = ctx.createOscillator();
+      osc.type = 'triangle';
+      const freq = f0 * ratio;
+      // Tiny realistic mallet-compression pitch settle (-4% in 10ms)
+      osc.frequency.setValueAtTime(freq * 1.04, t);
+      osc.frequency.exponentialRampToValueAtTime(freq, t + 0.012);
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0.001, t);
+      g.gain.linearRampToValueAtTime(peak, t + 0.002);
+      g.gain.setValueAtTime(peak * 0.88, t + 0.007);
+      g.gain.exponentialRampToValueAtTime(0.001, t + dur);
+      osc.connect(g).connect(woodLP);
+      osc.start(t);
+      osc.stop(t + dur + 0.01);
+    }
   }
 
   /** Distinct ominous pre-launch telegraph cue right before a Poisoned Black Diamond rises from below. */
@@ -204,40 +222,74 @@ export class Sound {
     src.stop(t + 0.27);
   }
 
-  /** Heavy bomb detonation shockwave when a Black Diamond (or miss) explodes everything on screen! */
+  /** Cinematic trailer sub-bass boom (THWOOOM impact drop + 2.3s chest-rattling sub tail + warm harmonic drive)! */
   bombExplode() {
     if (!this.ctx || !this.noise) return;
     const ctx = this.ctx;
     const t = ctx.currentTime;
 
-    // Deep sub-bass punch dropping into chest rumble
+    // Soft analog tanh saturator so the sub-bass hits huge & warm on both headphones and laptop/phone speakers
+    const shaper = ctx.createWaveShaper();
+    const curve = new Float32Array(256);
+    for (let i = 0; i < 256; i++) {
+      const x = (i / 127.5) - 1;
+      curve[i] = Math.tanh(x * 2.4);
+    }
+    shaper.curve = curve;
+    shaper.oversample = '2x';
+
+    const boomLP = ctx.createBiquadFilter();
+    boomLP.type = 'lowpass';
+    boomLP.Q.value = 0.85;
+    boomLP.frequency.setValueAtTime(420, t);
+    boomLP.frequency.exponentialRampToValueAtTime(110, t + 0.65);
+    boomLP.frequency.exponentialRampToValueAtTime(58, t + 2.2);
+    shaper.connect(boomLP).connect(this.out!);
+
+    // 1) Pure cinematic sub-bass drop: 92 Hz -> 42 Hz (fast impact) -> 24 Hz (long ominous tail!)
     const sub = ctx.createOscillator();
     sub.type = 'sine';
-    sub.frequency.setValueAtTime(132, t);
-    sub.frequency.exponentialRampToValueAtTime(26, t + 0.54);
+    sub.frequency.setValueAtTime(92, t);
+    sub.frequency.exponentialRampToValueAtTime(42, t + 0.14);
+    sub.frequency.exponentialRampToValueAtTime(24, t + 2.15);
     const subG = ctx.createGain();
     subG.gain.setValueAtTime(0.0001, t);
-    subG.gain.linearRampToValueAtTime(0.62, t + 0.009);
-    subG.gain.exponentialRampToValueAtTime(0.0001, t + 0.58);
+    subG.gain.linearRampToValueAtTime(0.95, t + 0.012);
+    subG.gain.setValueAtTime(0.88, t + 0.08);
+    subG.gain.exponentialRampToValueAtTime(0.0001, t + 2.35);
     sub.connect(subG).connect(this.out!);
     sub.start(t);
-    sub.stop(t + 0.60);
+    sub.stop(t + 2.40);
 
-    // Secondary low crunch transient
-    const body = ctx.createOscillator();
-    body.type = 'triangle';
-    body.frequency.setValueAtTime(78, t);
-    body.frequency.exponentialRampToValueAtTime(22, t + 0.34);
-    const bodyG = ctx.createGain();
-    bodyG.gain.setValueAtTime(0.32, t);
-    bodyG.gain.exponentialRampToValueAtTime(0.0001, t + 0.36);
-    body.connect(bodyG).connect(this.out!);
-    body.start(t);
-    body.stop(t + 0.38);
+    // 2) Warm driven harmonic body (2x octave + slight detune) -> psychoacoustic sub presence on phone/laptop speakers!
+    const harm = ctx.createOscillator();
+    harm.type = 'triangle';
+    harm.frequency.setValueAtTime(184, t);
+    harm.frequency.exponentialRampToValueAtTime(84, t + 0.16);
+    harm.frequency.exponentialRampToValueAtTime(48, t + 1.95);
+    const harmG = ctx.createGain();
+    harmG.gain.setValueAtTime(0.0001, t);
+    harmG.gain.linearRampToValueAtTime(0.55, t + 0.01);
+    harmG.gain.exponentialRampToValueAtTime(0.0001, t + 2.05);
+    harm.connect(harmG).connect(shaper);
+    harm.start(t);
+    harm.stop(t + 2.10);
 
-    // Wide low-pass explosion roar + crisp initial crack
-    this.burst(t, 0.88, 'lowpass', 940, 85, 0.75, 0.82);
-    this.burst(t, 0.14, 'bandpass', 2400, 560, 1.1, 0.52);
+    // 3) Tight impact cannon transient (first 65ms punch)
+    const punch = ctx.createOscillator();
+    punch.type = 'sine';
+    punch.frequency.setValueAtTime(220, t);
+    punch.frequency.exponentialRampToValueAtTime(46, t + 0.055);
+    const punchG = ctx.createGain();
+    punchG.gain.setValueAtTime(0.68, t);
+    punchG.gain.exponentialRampToValueAtTime(0.0001, t + 0.075);
+    punch.connect(punchG).connect(this.out!);
+    punch.start(t);
+    punch.stop(t + 0.09);
+
+    // 4) Wide cinematic air-pressure roar & slow reverberant rumble tail
+    this.burst(t, 1.85, 'lowpass', 680, 62, 0.8, 0.78);
+    this.burst(t, 0.16, 'bandpass', 2100, 420, 1.0, 0.48);
   }
 
   /** Airy studio whoosh + subtle crystal bell as a new glass block launches from below. */
@@ -264,14 +316,32 @@ export class Sound {
     this.ping(t + 0.04, base * 1.25, 0.24, 0.065, pan);
   }
 
-  /** Dramatic freeze-tension crack when hitting a Black Diamond or missing a clear crystal! */
+  /** Dramatic freeze-tension crack + brief reverse-suction swell right before the cinematic sub-bass boom! */
   failFreeze() {
-    if (!this.ctx) return;
-    const t = this.ctx.currentTime;
-    this.burst(t, 0.36, 'lowpass', 380, 75, 1.2, 0.72);
-    this.burst(t, 0.18, 'bandpass', 1800, 520, 2.4, 0.55);
-    this.ping(t, 195, 0.42, 0.18, 0);
-    this.ping(t + 0.015, 208, 0.40, 0.15, 0); // eerie dissonant minor-second glass resonance
+    if (!this.ctx || !this.noise) return;
+    const ctx = this.ctx;
+    const t = ctx.currentTime;
+    // Sharp freeze glass crack + eerie minor-second ring
+    this.burst(t, 0.16, 'bandpass', 1900, 580, 2.2, 0.48);
+    this.ping(t, 195, 0.36, 0.16, 0);
+    this.ping(t + 0.015, 208, 0.34, 0.13, 0);
+
+    // Rising reverse-suction swell that cuts dead 35ms before the 0.42s boom drop!
+    const src = ctx.createBufferSource();
+    src.buffer = this.noise;
+    src.loop = true;
+    const filt = ctx.createBiquadFilter();
+    filt.type = 'bandpass';
+    filt.Q.value = 1.6;
+    filt.frequency.setValueAtTime(160, t);
+    filt.frequency.exponentialRampToValueAtTime(1250, t + 0.36);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(0.32, t + 0.35);
+    g.gain.linearRampToValueAtTime(0.0001, t + 0.385);
+    src.connect(filt).connect(g).connect(this.out!);
+    src.start(t, Math.random() * 1.5);
+    src.stop(t + 0.40);
   }
 
   /** Crisp luminous 3-note crystal triad on Level Clear! */
