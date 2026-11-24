@@ -208,7 +208,6 @@ function applyLowpassInPlace(buf: Float32Array, sr: number, f0: number, f1: numb
 }
 
 interface SoundBanks {
-  swoosh: AudioBuffer[];
   gemPop: AudioBuffer[];
   blackWarn: AudioBuffer;
   bombExplode: AudioBuffer;
@@ -224,6 +223,7 @@ interface SoundBanks {
 export class Sound {
   private ctx: AudioContext | null = null;
   private out: GainNode | null = null;
+  private noise: AudioBuffer | null = null;
   private banks: SoundBanks | null = null;
   private activeVoices = 0;
   private readonly maxVoices = 32;
@@ -273,6 +273,11 @@ export class Sound {
       ctx.resume().catch(() => {});
     }
 
+    const noiseLen = ctx.sampleRate * 2;
+    this.noise = ctx.createBuffer(1, noiseLen, ctx.sampleRate);
+    const nd = this.noise.getChannelData(0);
+    for (let i = 0; i < noiseLen; i++) nd[i] = Math.random() * 2 - 1;
+
     this.banks = this.bakeBanks(ctx);
 
     // Auto-resume cleanly if iOS Safari interrupts audio when switching apps / notifications
@@ -298,20 +303,7 @@ export class Sound {
     const makeMono = (sec: number) => ctx.createBuffer(1, Math.max(1, Math.ceil(sec * sr)), sr);
     const makeStereo = (sec: number) => ctx.createBuffer(2, Math.max(1, Math.ceil(sec * sr)), sr);
 
-    // 1) Crisp, immediate katana swoosh variations (7ms snap-in attack so swoosh NEVER trails behind finger!)
-    const swoosh: AudioBuffer[] = [];
-    for (let v = 0; v < 4; v++) {
-      const buf = makeMono(0.17);
-      const d = buf.getChannelData(0);
-      const pitch = 0.92 + v * 0.055;
-      // Immediate crisp air-cut attack (peaks at ~8ms, sweeps briskly down)
-      renderNoiseBurst(d, null, sr, 0, 0.145, 'bandpass', 2450 * pitch, 640 * pitch, 1.35, 0.56, 0.007, 0, rng);
-      // High katana edge sheen right on the leading edge
-      renderNoiseBurst(d, null, sr, 0, 0.115, 'bandpass', 3600 * pitch, 1450 * pitch, 1.85, 0.24, 0.005, 0, rng);
-      swoosh.push(buf);
-    }
-
-    // 2) Dry hardwood woodblock ("tok!") launch cue variations
+    // 1) Dry hardwood woodblock ("tok!") launch cue variations
     const gemPop: AudioBuffer[] = [];
     for (let v = 0; v < 4; v++) {
       const buf = makeMono(0.10);
@@ -455,7 +447,6 @@ export class Sound {
     }
 
     return {
-      swoosh,
       gemPop,
       blackWarn,
       bombExplode,
@@ -530,15 +521,60 @@ export class Sound {
     o.stop(at + dur + 0.02);
   }
 
-  /** Instant, crisp directional katana swoosh — pans cleanly LTR or RTL matching your cut! */
+  /** Original native WebAudio directional katana swoosh — smooth per-sample Biquad sweep, pans LTR/RTL! */
   swoosh(panFrom: number, panTo: number, intensity = 0.65) {
-    if (!this.banks) return;
+    if (!this.ctx || !this.out || !this.noise) return;
+    if (this.ctx.state !== 'running') {
+      this.ctx.resume().catch(() => {});
+    }
+    const ctx = this.ctx;
+    const t = ctx.currentTime + 0.003;
     const k = Math.max(0.25, Math.min(1, intensity));
-    const bank = this.banks.swoosh;
-    const buf = bank[Math.floor(Math.random() * bank.length)];
-    const rate = 0.94 + k * 0.16 + (Math.random() - 0.5) * 0.05;
-    const gain = 0.58 + k * 0.36;
-    this.playBuf(buf, gain, rate, panFrom, panTo, 0.12 / rate, true);
+    const dur = 0.14 + k * 0.045;
+
+    const p = ctx.createStereoPanner();
+    const p0 = Math.max(-0.94, Math.min(0.94, panFrom));
+    const p1 = Math.max(-0.94, Math.min(0.94, panTo));
+    p.pan.setValueAtTime(p0, t);
+    p.pan.linearRampToValueAtTime(p1, t + dur);
+    p.connect(this.out);
+
+    // Higher, crisper blade air sweep (clean katana sheen, never shrill)
+    const src = ctx.createBufferSource();
+    src.buffer = this.noise;
+    src.loop = true;
+    const filt = ctx.createBiquadFilter();
+    filt.type = 'bandpass';
+    filt.Q.value = 1.35;
+    filt.frequency.setValueAtTime(680 + k * 240, t);
+    filt.frequency.exponentialRampToValueAtTime(2250 + k * 750, t + dur * 0.24);
+    filt.frequency.exponentialRampToValueAtTime(560, t + dur);
+    const g = ctx.createGain();
+    const peak = 0.36 + k * 0.22;
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.linearRampToValueAtTime(peak, t + dur * 0.16);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    src.connect(filt).connect(g).connect(p);
+    src.start(t, Math.random() * 1.5);
+    src.stop(t + dur + 0.02);
+
+    // Light airy high-blade whisper layer for crispness on laptop/phone speakers
+    const hiSrc = ctx.createBufferSource();
+    hiSrc.buffer = this.noise;
+    hiSrc.loop = true;
+    const hp = ctx.createBiquadFilter();
+    hp.type = 'bandpass';
+    hp.Q.value = 1.8;
+    hp.frequency.setValueAtTime(1850 + k * 450, t);
+    hp.frequency.exponentialRampToValueAtTime(3400 + k * 600, t + dur * 0.28);
+    hp.frequency.exponentialRampToValueAtTime(1400, t + dur);
+    const hg = ctx.createGain();
+    hg.gain.setValueAtTime(0.0001, t);
+    hg.gain.linearRampToValueAtTime(0.12 + k * 0.09, t + dur * 0.18);
+    hg.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    hiSrc.connect(hp).connect(hg).connect(p);
+    hiSrc.start(t, Math.random() * 1.5);
+    hiSrc.stop(t + dur + 0.02);
   }
 
   /** Crisp, dry hardwood woodblock ("tok!") cue right before a colored gem launches from below! */
@@ -571,7 +607,7 @@ export class Sound {
       this.playBuf(this.banks.blackWarn, 0.65, 0.85, pan, undefined, 0, true);
       this.ping(t + 0.02, 520 + Math.random() * 60, 0.22, 0.075, pan);
     } else {
-      this.playBuf(this.banks.swoosh[0], 0.35, 0.72, pan, undefined, 0, true);
+      this.swoosh(pan - 0.15, pan + 0.15, 0.30);
       this.ping(t + 0.02, 1680 + Math.random() * 240, 0.16, 0.045, pan);
     }
   }
