@@ -391,7 +391,9 @@ const qShake = new THREE.Quaternion();
 const keep = { pos: new THREE.Vector3(), quat: new THREE.Quaternion() };
 let placed = false;
 function resize() {
-  const w = window.innerWidth, h = window.innerHeight;
+  // the size the canvas is laid out at, not window.innerHeight: on mobile Safari they differ while bars show
+  const w = canvas.clientWidth || window.innerWidth;
+  const h = canvas.clientHeight || window.innerHeight;
   renderer.setPixelRatio(basePR * resK);
   renderer.setSize(w, h, false);
   post.setSize(w, h);
@@ -403,13 +405,14 @@ function resize() {
   const d = seen / 2 / Math.tan(THREE.MathUtils.degToRad(camera.fov / 2));
   // a little further out than that, never so far the pile's edge and the bare ground show
   controls.maxDistance = d * 1.3;
-  if (!placed) {
+  if (!placed || touch) {
     camera.position.set(0, d * Math.cos(0.12), d * Math.sin(0.12));
     placed = true;
   }
   camera.updateProjectionMatrix();
 }
 window.addEventListener('resize', resize);
+new ResizeObserver(resize).observe(canvas);
 resize();
 
 const timer = new THREE.Timer();
