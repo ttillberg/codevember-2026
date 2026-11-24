@@ -575,10 +575,12 @@ function updateHudUI() {
 
 function showReplayBanner() {
   bannerEl.hidden = false;
+  canvas.classList.add('replay-ready');
 }
 
 function hideBanner() {
   bannerEl.hidden = true;
+  canvas.classList.remove('replay-ready');
 }
 
 function spawnCallout(worldPos: Vec3, text: string, sub?: string, emphasis = false, color = '#1c1c1c') {
@@ -1978,8 +1980,13 @@ function updateTargetFromPointer(clientX: number, clientY: number) {
 }
 
 canvas.addEventListener('pointerdown', (e) => {
-  if (paused) return;
   if (e.button !== 0 && e.pointerType === 'mouse') return;
+  if (gamePhase === 'lost' && !bannerEl.hidden) {
+    sound.wake();
+    replayFromStart();
+    return;
+  }
+  if (paused) return;
   sound.wake();
   activePointerId = e.pointerId;
   canvas.setPointerCapture(e.pointerId);

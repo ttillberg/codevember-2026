@@ -37,6 +37,10 @@ body {
   cursor: crosshair;
 }
 
+#c.replay-ready {
+  cursor: pointer;
+}
+
 #trail {
   position: fixed;
   inset: 0;
