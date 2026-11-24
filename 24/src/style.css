@@ -1,8 +1,17 @@
 /* a dark day: backdrop #0b0b0d, ink #f4f4f2. A light one: a light backdrop, ink #1c1c1c (docs/DESIGN.md) */
 html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: none; }
-/* the page and canvas run all the way to the large viewport's edges, behind Safari's bars (viewport-fit=cover) */
+/* the page and canvas run all the way to the large viewport's edges, behind Safari's header and footer bars (viewport-fit=cover) */
 html { background: #0b0b0d; }
 @supports (height: 100lvh) { html { height: 100lvh; } }
+/* on mobile Safari (iOS 26 Liquid Glass), a non-scrollable page stuck at scrollY = 0 keeps solid bars
+   at the top and bottom; a 2px runway + scrollTo(0, 1) lets the fixed canvas bleed behind both while
+   touch-action: none on the canvas prevents actual scrolling */
+@media (pointer: coarse) {
+  html, body { overflow: auto; scrollbar-width: none; }
+  html::-webkit-scrollbar, body::-webkit-scrollbar { display: none; }
+  body { height: auto; min-height: calc(100vh + 2px); }
+  @supports (height: 100lvh) { body { min-height: calc(100lvh + 2px); } }
+}
 /* Nothing to select or long-press: a hold on a snake must not start a text selection, a callout or a tap flash */
 html, body { user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent; }
 canvas {

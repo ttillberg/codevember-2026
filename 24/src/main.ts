@@ -414,6 +414,12 @@ function resize() {
 window.addEventListener('resize', resize);
 new ResizeObserver(resize).observe(canvas);
 resize();
+if (touch) {
+  // nudge out of scrollY = 0 so iOS 26 Safari composites the fixed canvas behind the top & bottom bars
+  const nudge = () => requestAnimationFrame(() => window.scrollTo(0, 1));
+  nudge();
+  window.addEventListener('pageshow', nudge);
+}
 
 const timer = new THREE.Timer();
 timer.connect(document);
