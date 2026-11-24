@@ -61,6 +61,18 @@ const CHUNK_GRAVITY = 4.20;
 const ENABLE_CRACKLE = false;
 const EXPLODE_ON_GROUND = true;
 
+// Adaptive perf budgets so Safari iOS / mobile stays silky 60fps with bounded GPU & JS memory!
+const IS_MOBILE =
+  /iPhone|iPad|iPod|Android/i.test(navigator.userAgent) ||
+  (navigator.maxTouchPoints > 1 && window.innerWidth <= 1024);
+const MAX_DPR = IS_MOBILE ? 1.5 : 2;
+const SPLINTER_CAP = IS_MOBILE ? 768 : 4096;
+const SPLINTER_SCALE = IS_MOBILE ? 0.35 : 1.0;
+const CAUSTIC_RES = IS_MOBILE ? 512 : 1024;
+const MAX_SHARD_BATCHES = IS_MOBILE ? 8 : 18;
+const MAX_FLOOR_OBSTACLES = IS_MOBILE ? 36 : 96;
+const EMPTY_F32 = new Float32Array(0);
+
 // Studio camera: smoothly pulls back & levels framing in Toss mode for pure below-up leaps & juggling room
 const PEDESTAL_CAM_EYE: Vec3 = [0.0, 0.96, 2.22];
 const PEDESTAL_CAM_TARGET: Vec3 = [0.0, 0.40, 0.0];
@@ -77,7 +89,7 @@ const cfg = {
   ior: 1.56,
   dispersion: 0.062,
   causticStrength: 1.35,
-  shardCount: 82,
+  shardCount: IS_MOBILE ? 36 : 72,
   explodeForce: 2.35,
   crackDuration: 0.36,
   exposure: 1.06,
@@ -188,7 +200,7 @@ const pauseBtn = document.getElementById('pause') as HTMLButtonElement;
 const fatalEl = document.getElementById('fatal') as HTMLDivElement;
 
 const sound = new Sound();
-const gpu = new GpuEngine(canvas);
+const gpu = new GpuEngine(canvas, { maxSplinters: SPLINTER_CAP, causticRes: CAUSTIC_RES });
 const worker = new SimWorker();
 
 // State
@@ -638,10 +650,11 @@ function burstSplinters(
   gemId = 0,
 ) {
   if (origins.length === 0) return;
+  const scaledCount = Math.max(1, Math.min(SPLINTER_CAP, Math.round(count * SPLINTER_SCALE)));
   const pal = PALETTES[paletteIdx];
   const gemCol = GEM_SPLINTER_COLORS[gemId];
   const spawns: SplinterSpawn[] = [];
-  for (let i = 0; i < count; i++) {
+  for (let i = 0; i < scaledCount; i++) {
     const idx = Math.floor(rng() * origins.length);
     const o = origins[idx];
     const lo = localOrigins[idx];
@@ -656,7 +669,7 @@ function burstSplinters(
       pos: add3(o, jitter),
       vel: scale3(dir, speed),
       size: sizeMin + Math.pow(rng(), 2.2) * (sizeMax - sizeMin),
-      maxAge: 10 + rng() * 12,
+      maxAge: IS_MOBILE ? 4.5 + rng() * 3.5 : 8 + rng() * 8,
       color: gemCol ? ([...gemCol] as Vec3) : samplePaletteColor(lo, carvePlan ? HALF_SIZE : CRYSTAL_HALF_SIZE, pal),
       spinSpeed: 8 + rng() * 22,
     });
@@ -811,8 +824,8 @@ function startFallingChunkBake(ch: FallingChunk, dtHit: number) {
     id: bakeId,
     totalSlots: flatShards.length,
     shards: shardInputs,
-    staticObstacles: floorObstacles.slice(-140),
-    maxFrames: 270,
+    staticObstacles: floorObstacles.slice(-MAX_FLOOR_OBSTACLES),
+    maxFrames: IS_MOBILE ? 210 : 260,
     fps: 60,
   };
   worker.postMessage(req);
@@ -862,7 +875,7 @@ function detonateFallingChunk(ch: FallingChunk) {
   nextShardId += totalSlots;
 
   const meshVerts = triangulateShards(ch.flatShards, baseId);
-  gpu.addShardBatch(meshVerts);
+  gpu.addShardBatch(meshVerts, baseId, totalSlots, MAX_SHARD_BATCHES);
 
   for (let i = 0; i < totalSlots; i++) {
     const o = i * 7;
@@ -984,8 +997,8 @@ function explodePolyMidAir(poly: Poly, pos: Vec3, quat: Quat, vel: Vec3, gemId: 
     id: bakeId,
     totalSlots: flatShards.length,
     shards: shardInputs,
-    staticObstacles: floorObstacles.slice(-120),
-    maxFrames: 260,
+    staticObstacles: floorObstacles.slice(-MAX_FLOOR_OBSTACLES),
+    maxFrames: IS_MOBILE ? 210 : 250,
     fps: 60,
   } as BakeRequest);
 }
@@ -1790,8 +1803,8 @@ function triggerShatter() {
     id: bakeId,
     totalSlots: p.flatShards.length,
     shards: shardInputs,
-    staticObstacles: floorObstacles.slice(-140),
-    maxFrames: 270,
+    staticObstacles: floorObstacles.slice(-MAX_FLOOR_OBSTACLES),
+    maxFrames: IS_MOBILE ? 210 : 260,
     fps: 60,
   };
   worker.postMessage(req);
@@ -1837,7 +1850,7 @@ worker.onmessage = (ev: MessageEvent<BakeResponse>) => {
   nextShardId += totalSlots;
 
   const meshVerts = triangulateShards(p.flatShards, baseId);
-  gpu.addShardBatch(meshVerts);
+  gpu.addShardBatch(meshVerts, baseId, totalSlots, MAX_SHARD_BATCHES);
 
   for (let i = 0; i < totalSlots; i++) {
     const o = i * 7;
@@ -2438,7 +2451,7 @@ window.addEventListener('keyup', (e) => {
 });
 
 function handleResize() {
-  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  const dpr = Math.min(MAX_DPR, window.devicePixelRatio || 1);
   const w = Math.floor(window.innerWidth * dpr);
   const h = Math.floor(window.innerHeight * dpr);
   gpu.resize(w, h);
@@ -2809,9 +2822,12 @@ async function boot() {
       }
     }
 
-    // Advance Stage 2 (Rapier baked scatter playback + secondary floor breaks + audio clinks!)
+    // Advance Stage 2 (Rapier baked scatter playback + secondary floor breaks + rate-limited audio clinks!)
     let posesDirty = false;
-    for (const sc of scatters) {
+    let frameClinks = 0;
+    const maxFrameClinks = IS_MOBILE ? 3 : 7;
+    for (let si = scatters.length - 1; si >= 0; si--) {
+      const sc = scatters[si];
       if (sc.settled) continue;
       sc.elapsed += simDt;
       const exactFrame = sc.elapsed * sc.fps;
@@ -2864,7 +2880,10 @@ async function boot() {
 
         const pan = Math.max(-1, Math.min(1, cx * 0.75));
         if (cKind === 2) {
-          sound.miniShatter(pan, rate);
+          if (frameClinks < maxFrameClinks) {
+            sound.miniShatter(pan, rate);
+            frameClinks++;
+          }
           burstSplinters(
             [[cx, Math.max(0.015, cy), cz]],
             [[(rng() - 0.5) * 0.35, -0.22 + rng() * 0.44, (rng() - 0.5) * 0.35]],
@@ -2876,7 +2895,10 @@ async function boot() {
             sc.gemId,
           );
         } else {
-          sound.clink(cSize, cStrength, cKind, pan, rate);
+          if (frameClinks < maxFrameClinks) {
+            sound.clink(cSize, cStrength, cKind, pan, rate);
+            frameClinks++;
+          }
           if (cKind === 0 && cStrength > 1.8) {
             burstSplinters(
               [[cx, Math.max(0.01, cy), cz]],
@@ -2906,6 +2928,14 @@ async function boot() {
             });
           }
         }
+        // Cap floorObstacles and immediately release settled animation buffers so RAM never leaks!
+        if (floorObstacles.length > MAX_FLOOR_OBSTACLES) {
+          floorObstacles.splice(0, floorObstacles.length - MAX_FLOOR_OBSTACLES);
+        }
+        sc.frames = EMPTY_F32;
+        sc.contacts = EMPTY_F32;
+        sc.shards = [];
+        scatters.splice(si, 1);
       }
     }
     if (posesDirty) {

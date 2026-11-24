@@ -16,13 +16,17 @@ import {
   SURFACE_CRACKS_WGSL,
 } from './shaders';
 
-export const MAX_SHARDS = 4096;
+export const MAX_SHARDS = 2048;
 export const MAX_SPLINTERS = 4096;
 export const MAX_CUT_SLOTS = 24;
 const MAX_BLOCK_PARTS = 12;
 const POLY_PLANES_BYTES = 48 + 64 * 16; // info(16) + offset(16) + quat(16) + 64*vec4(1024) = 1072 bytes
-const CAUSTIC_RES = 1024;
 const MSAA_SAMPLES = 4;
+
+export interface GpuPerfOptions {
+  maxSplinters?: number;
+  causticRes?: number;
+}
 
 export interface FrameParams {
   viewProj: Float32Array;
@@ -96,14 +100,21 @@ export class GpuEngine {
   canvas: HTMLCanvasElement;
 
   private msaaTex: GPUTexture | null = null;
+  private msaaView: GPUTextureView | null = null;
   private depthTex: GPUTexture | null = null;
+  private depthView: GPUTextureView | null = null;
   private bgTex: GPUTexture | null = null;
   private bgView: GPUTextureView | null = null;
   private shardBackTex: GPUTexture | null = null;
   private shardBackView: GPUTextureView | null = null;
   private shardBackDepth: GPUTexture | null = null;
+  private shardBackDepthView: GPUTextureView | null = null;
   private width = 1;
   private height = 1;
+
+  private readonly maxSplinters: number;
+  private readonly causticRes: number;
+  private hasSplinters = false;
 
   private causticTex!: GPUTexture;
   private causticView!: GPUTextureView;
@@ -121,14 +132,14 @@ export class GpuEngine {
   private blockSlots: BlockPartSlot[] = [];
   private activeBlockParts = 0;
 
-  // Up to 2 simultaneous cracking chunks (for symmetrical 2-sided cuts!)
+  // Up to MAX_CUT_SLOTS independent tumbling chunks / flying gems
   private cutSlots: CutSlot[] = [];
   private activeCutSlots = 0;
 
   private sectionVB: GPUBuffer | null = null;
   private sectionVertCount = 0;
 
-  private shardBatches: Array<{ vb: GPUBuffer; vertCount: number }> = [];
+  private shardBatches: Array<{ vb: GPUBuffer; vertCount: number; baseShardId: number; numShards: number }> = [];
 
   // Pipelines & bind groups
   private floorPipe!: GPURenderPipeline;
@@ -161,8 +172,10 @@ export class GpuEngine {
   private sectionPipe!: GPURenderPipeline;
   private sectionBG!: GPUBindGroup;
 
-  constructor(canvas: HTMLCanvasElement) {
+  constructor(canvas: HTMLCanvasElement, opts: GpuPerfOptions = {}) {
     this.canvas = canvas;
+    this.maxSplinters = Math.max(64, Math.min(MAX_SPLINTERS, Math.floor(opts.maxSplinters ?? MAX_SPLINTERS)));
+    this.causticRes = opts.causticRes ?? 1024;
   }
 
   async init(): Promise<void> {
@@ -201,12 +214,12 @@ export class GpuEngine {
     });
 
     this.splinterBuf = dev.createBuffer({
-      size: MAX_SPLINTERS * 64,
+      size: this.maxSplinters * 64,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
     });
 
     this.causticTex = dev.createTexture({
-      size: [CAUSTIC_RES, CAUSTIC_RES],
+      size: [this.causticRes, this.causticRes],
       format: 'rgba16float',
       usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
     });
@@ -632,12 +645,14 @@ export class GpuEngine {
       format: this.format,
       usage: GPUTextureUsage.RENDER_ATTACHMENT,
     });
+    this.msaaView = this.msaaTex.createView();
     this.depthTex = this.device.createTexture({
       size: [w, h],
       sampleCount: MSAA_SAMPLES,
       format: 'depth24plus',
       usage: GPUTextureUsage.RENDER_ATTACHMENT,
     });
+    this.depthView = this.depthTex.createView();
     this.bgTex = this.device.createTexture({
       size: [w, h],
       format: this.format,
@@ -657,6 +672,7 @@ export class GpuEngine {
       format: 'depth24plus',
       usage: GPUTextureUsage.RENDER_ATTACHMENT,
     });
+    this.shardBackDepthView = this.shardBackDepth.createView();
 
     this.shardsBG = this.device.createBindGroup({
       layout: this.shardsPipe.getBindGroupLayout(0),
@@ -872,14 +888,31 @@ export class GpuEngine {
     this.sectionVertCount = totalSegs * 6;
   }
 
-  addShardBatch(verts: Float32Array) {
+  addShardBatch(verts: Float32Array, baseShardId = 0, numShards = 0, maxBatches = 20) {
     if (verts.length === 0) return;
+    while (this.shardBatches.length >= maxBatches) {
+      const oldest = this.shardBatches.shift()!;
+      oldest.vb.destroy();
+      if (oldest.numShards > 0) {
+        const end = Math.min(MAX_SHARDS, oldest.baseShardId + oldest.numShards);
+        for (let id = oldest.baseShardId; id < end; id++) {
+          this.shardPosesCPU[id * 8 + 3] = 0;
+        }
+        this.device.queue.writeBuffer(
+          this.shardPosesBuf,
+          oldest.baseShardId * 32,
+          this.shardPosesCPU,
+          oldest.baseShardId * 8,
+          (end - oldest.baseShardId) * 8,
+        );
+      }
+    }
     const vb = this.device.createBuffer({
       size: Math.max(40, verts.byteLength),
       usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
     });
     this.device.queue.writeBuffer(vb, 0, verts.buffer, verts.byteOffset, verts.byteLength);
-    this.shardBatches.push({ vb, vertCount: verts.length / 10 });
+    this.shardBatches.push({ vb, vertCount: verts.length / 10, baseShardId, numShards });
   }
 
   clearShards() {
@@ -887,8 +920,10 @@ export class GpuEngine {
     this.shardBatches = [];
     this.shardPosesCPU.fill(0);
     this.device.queue.writeBuffer(this.shardPosesBuf, 0, this.shardPosesCPU);
-    const zeros = new Float32Array(MAX_SPLINTERS * 16);
+    const zeros = new Float32Array(this.maxSplinters * 16);
     this.device.queue.writeBuffer(this.splinterBuf, 0, zeros);
+    this.splinterCursor = 0;
+    this.hasSplinters = false;
   }
 
   setShardPose(shardId: number, pos: Vec3, quat: Quat, active = true, gemId = 0) {
@@ -912,8 +947,9 @@ export class GpuEngine {
 
   spawnSplinters(spawns: SplinterSpawn[]) {
     if (spawns.length === 0) return;
-    const floats = new Float32Array(spawns.length * 16);
-    for (let i = 0; i < spawns.length; i++) {
+    const count = Math.min(spawns.length, this.maxSplinters);
+    const floats = new Float32Array(count * 16);
+    for (let i = 0; i < count; i++) {
       const s = spawns[i];
       const o = i * 16;
       floats[o] = s.pos[0]; floats[o + 1] = s.pos[1]; floats[o + 2] = s.pos[2]; floats[o + 3] = s.size;
@@ -922,10 +958,10 @@ export class GpuEngine {
       floats[o + 12] = s.color[0]; floats[o + 13] = s.color[1]; floats[o + 14] = s.color[2]; floats[o + 15] = s.spinSpeed;
     }
 
-    let remaining = spawns.length;
+    let remaining = count;
     let srcOffset = 0;
     while (remaining > 0) {
-      const chunk = Math.min(remaining, MAX_SPLINTERS - this.splinterCursor);
+      const chunk = Math.min(remaining, this.maxSplinters - this.splinterCursor);
       this.device.queue.writeBuffer(
         this.splinterBuf,
         this.splinterCursor * 64,
@@ -933,10 +969,11 @@ export class GpuEngine {
         srcOffset * 16,
         chunk * 16,
       );
-      this.splinterCursor = (this.splinterCursor + chunk) % MAX_SPLINTERS;
+      this.splinterCursor = (this.splinterCursor + chunk) % this.maxSplinters;
       srcOffset += chunk;
       remaining -= chunk;
     }
+    this.hasSplinters = true;
   }
 
   render(p: FrameParams) {
@@ -969,12 +1006,12 @@ export class GpuEngine {
 
     const enc = this.device.createCommandEncoder();
 
-    // Pass 1: WebGPU Compute — step 4,096 glittering glass splinters
-    {
+    // Pass 1: WebGPU Compute — step glittering glass splinters (skipped when empty!)
+    if (this.hasSplinters && p.dt > 0) {
       const cp = enc.beginComputePass();
       cp.setPipeline(this.splintersCompPipe);
       cp.setBindGroup(0, this.splintersCompBG);
-      cp.dispatchWorkgroups(Math.ceil(MAX_SPLINTERS / 64));
+      cp.dispatchWorkgroups(Math.ceil(this.maxSplinters / 64));
       cp.end();
     }
 
@@ -1022,7 +1059,7 @@ export class GpuEngine {
     }
 
     // Pass 2b: Offscreen Shard Back-Face Depth & Normal Map
-    if (this.shardBatches.length > 0 && this.shardBackView && this.shardBackDepth) {
+    if (this.shardBatches.length > 0 && this.shardBackView && this.shardBackDepthView) {
       const rp = enc.beginRenderPass({
         colorAttachments: [{
           view: this.shardBackView,
@@ -1031,7 +1068,7 @@ export class GpuEngine {
           storeOp: 'store',
         }],
         depthStencilAttachment: {
-          view: this.shardBackDepth.createView(),
+          view: this.shardBackDepthView,
           depthClearValue: 1.0,
           depthLoadOp: 'clear',
           depthStoreOp: 'discard',
@@ -1047,8 +1084,8 @@ export class GpuEngine {
     }
 
     // Pass 3a: Studio Floor + Caustics + Main Sommerso Block(s) -> resolve copy to bgTex for shard refraction
-    const msaaView = this.msaaTex!.createView();
-    const depthView = this.depthTex!.createView();
+    const msaaView = this.msaaView!;
+    const depthView = this.depthView!;
     const swapView = this.context.getCurrentTexture().createView();
     {
       const rp = enc.beginRenderPass({
@@ -1143,9 +1180,11 @@ export class GpuEngine {
         }
       }
 
-      rp.setPipeline(this.splintersRenderPipe);
-      rp.setBindGroup(0, this.splintersRenderBG);
-      rp.draw(12, MAX_SPLINTERS);
+      if (this.hasSplinters) {
+        rp.setPipeline(this.splintersRenderPipe);
+        rp.setBindGroup(0, this.splintersRenderBG);
+        rp.draw(12, this.maxSplinters);
+      }
 
       if (p.planeAlpha > 0.01) {
         rp.setPipeline(this.planePipe);
