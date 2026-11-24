@@ -195,8 +195,8 @@ const hudLevelEl = document.getElementById('hud-level') as HTMLElement;
 const hudScoreEl = document.getElementById('hud-score') as HTMLElement;
 const hudBestEl = document.getElementById('hud-best') as HTMLElement;
 const bannerEl = document.getElementById('banner') as HTMLButtonElement;
-const bannerTitleEl = bannerEl.querySelector('.banner-title') as HTMLSpanElement;
-const bannerJpEl = bannerEl.querySelector('.banner-jp') as HTMLSpanElement;
+const bannerTitleEl = bannerEl.querySelector('.banner-title') as HTMLElement;
+const bannerJpEl = bannerEl.querySelector('.banner-jp') as HTMLElement;
 const soundBtn = document.getElementById('sound') as HTMLButtonElement;
 const pauseBtn = document.getElementById('pause') as HTMLButtonElement;
 const fatalEl = document.getElementById('fatal') as HTMLDivElement;
@@ -580,12 +580,13 @@ function updateHudUI() {
 }
 
 function showBanner(mode: 'play' | 'replay') {
+  bannerEl.dataset.mode = mode;
   if (mode === 'play') {
-    bannerTitleEl.textContent = 'PLAY';
+    bannerTitleEl.textContent = 'Play';
     bannerJpEl.textContent = '始める';
     bannerEl.setAttribute('aria-label', 'Play');
   } else {
-    bannerTitleEl.textContent = 'REPLAY';
+    bannerTitleEl.textContent = 'Replay';
     bannerJpEl.textContent = 'もう一度';
     bannerEl.setAttribute('aria-label', 'Replay');
   }

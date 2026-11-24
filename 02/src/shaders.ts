@@ -324,14 +324,14 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
   let ro = pNear.xyz / pNear.w;
   let rd = normalize(pFar.xyz / pFar.w - ro);
 
-  // Super-soft pure vertical studio gradient:
-  // airy pastel sky-mist at top -> luminous warm alabaster center -> silky warm sand-porcelain floor
+  // Editorial pure vertical studio gradient:
+  // crisp pastel Nordic sky-blue at top -> luminous ivory horizon center -> warm sand-porcelain cove floor
   let sy = clamp(in.uv.y, 0.0, 1.0);
-  let topCol = vec3<f32>(0.68, 0.78, 0.93);    // soft airy sky-mist
-  let midCol = vec3<f32>(0.97, 0.955, 0.94);   // luminous studio ivory horizon
-  let botCol = vec3<f32>(0.92, 0.83, 0.77);    // soft warm cream-sand cove
-  var col = mix(botCol, midCol, smoothstep(0.0, 0.50, sy));
-  col = mix(col, topCol, smoothstep(0.46, 1.0, sy));
+  let topCol = vec3<f32>(0.46, 0.62, 0.88);    // crisp airy pastel sky-blue
+  let midCol = vec3<f32>(0.98, 0.96, 0.935);   // luminous studio ivory horizon
+  let botCol = vec3<f32>(0.86, 0.71, 0.62);    // warm cream-sand porcelain cove
+  var col = mix(botCol, midCol, smoothstep(0.0, 0.46, sy));
+  col = mix(col, topCol, smoothstep(0.50, 1.0, sy));
 
   if (rd.y < -0.002) {
     let t = (u.causticBounds.w - ro.y) / rd.y;

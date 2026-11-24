@@ -37,9 +37,18 @@
       </div>
     </div>
 
-    <button id="banner" class="banner" hidden aria-label="Play">
-      <span class="banner-title">PLAY</span>
-      <span class="banner-jp" lang="ja">始める</span>
+    <button id="banner" class="banner" data-mode="play" hidden aria-label="Play">
+      <span class="banner-card">
+        <svg class="banner-icon icon-play" width="72" height="72" viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M8.2 5.6L18.4 12 8.2 18.4V5.6z" fill="currentColor" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round" />
+        </svg>
+        <svg class="banner-icon icon-replay" width="72" height="72" viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M5.6 12a6.4 6.4 0 1 0 1.85-4.52L5.6 9.3" fill="none" stroke="currentColor" stroke-width="1.45" stroke-linecap="round" stroke-linejoin="round" />
+          <path d="M5.6 5.2v4.1h4.1" fill="none" stroke="currentColor" stroke-width="1.45" stroke-linecap="round" stroke-linejoin="round" />
+        </svg>
+        <b class="banner-title">Play</b>
+        <i class="banner-jp" lang="ja">始める</i>
+      </span>
     </button>
 
     <div class="top-right" aria-label="Controls">
