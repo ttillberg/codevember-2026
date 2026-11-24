@@ -2,7 +2,7 @@ import { mulberry32 } from './math.ts';
 import { validateLevel } from './level-check.ts';
 
 export const MAX_LEVEL = 1000;
-const VALIDATION_WIDTHS = [0.88, 0.56, 0.32] as const;
+const VALIDATION_WIDTHS = [0.88, 0.68, 0.56] as const;
 
 /**
  * Gemstone material IDs packed into PolyPlanes.info.z and ShardPose.pos.w:
@@ -123,63 +123,64 @@ function buildLevelAttempt(level: number, attempt: number): LevelPlan {
   };
 
   const push = (spec: Omit<ThrowSpec, 'seed' | 'gemId'> & { gemId?: number }) => {
-    const lane = clamp(spec.lane, -0.94, 0.94);
-    // Clamp targetLane so the full parabolic landing (2 * targetLane - lane) stays cleanly inside [-0.98..+0.98]!
-    const minTarget = (-0.98 + lane) * 0.5;
-    const maxTarget = (0.98 + lane) * 0.5;
+    // Allow launches from across the full bottom AND past the left/right edges (side cannons up to ±1.32)!
+    const lane = clamp(spec.lane, -1.32, 1.32);
+    // Keep apex cleanly on-screen [-0.78..+0.78], while allowing arcs to exit off the opposite side (up to ±1.48)!
+    const minTarget = (-1.48 + lane) * 0.5;
+    const maxTarget = (1.48 + lane) * 0.5;
     const targetLane = clamp(spec.targetLane, Math.max(-0.78, minTarget), Math.min(0.78, maxTarget));
     throws.push({
       ...spec,
       gemId: spec.poisoned ? GEM_BLACK : (spec.gemId ?? nextGemColor()),
       lane,
       targetLane,
-      apex: clamp(spec.apex, 0.76, 1.15),
+      apex: clamp(spec.apex, 0.74, 1.16),
       seed: Math.floor(rng() * 0x7fffffff),
     });
   };
 
-  // --- Hand-choreographed onboarding levels (1..6) with juicy L->R / R->L parabolic arcs! ---
+  // --- Hand-choreographed onboarding levels (1..6) using full edges, outward splits, and varied heights! ---
   if (level === 1) {
-    // Graceful left -> right sweeping arc across center
-    push({ time: 0.20, lane: -0.68, targetLane: 0.06, apex: 0.96, gravity: 2.25, variant: 1, poisoned: false, gemId: 5, spinSpeed: 1.4 });
+    // Graceful left-edge -> right-edge sweeping arc across the frame
+    push({ time: 0.20, lane: -1.16, targetLane: 0.08, apex: 0.98, gravity: 2.25, variant: 1, poisoned: false, gemId: 5, spinSpeed: 1.4 });
   } else if (level === 2) {
-    // Twin sweeping crossing arcs (L->R & R->L) meeting cleanly near apex for 2x!
-    push({ time: 0.20, lane: -0.80, targetLane: -0.06, apex: 0.98, gravity: 2.30, variant: 0, poisoned: false, gemId: 3, spinSpeed: 1.45 });
-    push({ time: 0.24, lane: 0.80, targetLane: 0.06, apex: 0.98, gravity: 2.30, variant: 1, poisoned: false, gemId: 4, spinSpeed: 1.45 });
+    // Bold center-outward V-split: launches near bottom-center and fans far LEFT and far RIGHT off both sides!
+    push({ time: 0.20, lane: -0.18, targetLane: -0.66, apex: 1.08, gravity: 2.30, variant: 0, poisoned: false, gemId: 3, spinSpeed: 1.45 });
+    push({ time: 0.25, lane: 0.18, targetLane: 0.66, apex: 0.88, gravity: 2.30, variant: 1, poisoned: false, gemId: 4, spinSpeed: 1.45 });
   } else if (level === 3) {
-    // Wave 1: 2 sweeping L->R parallel arcs + 1 staggered R->L counter-arc
-    push({ time: 0.20, lane: -0.84, targetLane: -0.04, apex: 0.98, gravity: 2.38, variant: 2, poisoned: false, gemId: 5, spinSpeed: 1.5 });
-    push({ time: 0.25, lane: -0.58, targetLane: 0.16, apex: 1.04, gravity: 2.38, variant: 3, poisoned: false, gemId: 7, spinSpeed: 1.5 });
-    push({ time: 0.78, lane: 0.82, targetLane: -0.06, apex: 1.04, gravity: 2.38, variant: 1, poisoned: false, gemId: 6, spinSpeed: 1.55 });
-    // Wave 2: crisp crossing X-arcs across full stage
-    push({ time: 2.55, lane: -0.84, targetLane: 0.06, apex: 1.00, gravity: 2.40, variant: 0, poisoned: false, gemId: 3, spinSpeed: 1.55 });
-    push({ time: 2.68, lane: 0.84, targetLane: -0.06, apex: 1.00, gravity: 2.40, variant: 2, poisoned: false, gemId: 8, spinSpeed: 1.55 });
+    // Wave 1: far-left cannon + steep right flank pillar + staggered far-right sweep
+    push({ time: 0.20, lane: -1.24, targetLane: -0.22, apex: 1.04, gravity: 2.38, variant: 2, poisoned: false, gemId: 5, spinSpeed: 1.5 });
+    push({ time: 0.26, lane: 0.76, targetLane: 0.64, apex: 0.84, gravity: 2.38, variant: 3, poisoned: false, gemId: 7, spinSpeed: 1.5 });
+    push({ time: 0.78, lane: 1.24, targetLane: -0.06, apex: 1.14, gravity: 2.38, variant: 1, poisoned: false, gemId: 6, spinSpeed: 1.55 });
+    // Wave 2: opposite-edge X-cross sweeping completely across the screen
+    push({ time: 2.55, lane: -1.20, targetLane: 0.10, apex: 1.10, gravity: 2.40, variant: 0, poisoned: false, gemId: 3, spinSpeed: 1.55 });
+    push({ time: 2.68, lane: 1.20, targetLane: -0.10, apex: 0.88, gravity: 2.40, variant: 2, poisoned: false, gemId: 8, spinSpeed: 1.55 });
   } else if (level === 4) {
-    // Introduces Poisoned Black Diamond arcing from right while Emerald arcs from left!
-    push({ time: 0.20, lane: -0.82, targetLane: -0.14, apex: 1.00, gravity: 2.42, variant: 1, poisoned: false, gemId: 4, spinSpeed: 1.45 });
-    push({ time: 0.34, lane: 0.86, targetLane: 0.32, apex: 0.82, gravity: 2.42, variant: 2, poisoned: true, spinSpeed: 1.65 });
-    // Wave 2: Ruby + Sapphire sweeping L->R + Black Diamond trailing lower from right
-    push({ time: 2.45, lane: -0.86, targetLane: -0.08, apex: 1.04, gravity: 2.45, variant: 0, poisoned: false, gemId: 3, spinSpeed: 1.55 });
-    push({ time: 2.50, lane: -0.52, targetLane: 0.18, apex: 1.00, gravity: 2.45, variant: 3, poisoned: false, gemId: 5, spinSpeed: 1.55 });
-    push({ time: 2.86, lane: 0.86, targetLane: 0.36, apex: 0.80, gravity: 2.45, variant: 1, poisoned: true, spinSpeed: 1.7 });
+    // Introduces Poisoned Black Diamond on the far right while Emerald shoots high from the far-left edge!
+    push({ time: 0.20, lane: -1.20, targetLane: -0.36, apex: 1.10, gravity: 2.42, variant: 1, poisoned: false, gemId: 4, spinSpeed: 1.45 });
+    push({ time: 0.34, lane: 0.88, targetLane: 0.58, apex: 0.78, gravity: 2.42, variant: 2, poisoned: true, spinSpeed: 1.65 });
+    // Wave 2: Left-edge cannon + center-outward right gem + low right-side Black Diamond
+    push({ time: 2.45, lane: -1.22, targetLane: -0.48, apex: 1.12, gravity: 2.45, variant: 0, poisoned: false, gemId: 3, spinSpeed: 1.55 });
+    push({ time: 2.52, lane: 0.08, targetLane: 0.48, apex: 0.92, gravity: 2.45, variant: 3, poisoned: false, gemId: 5, spinSpeed: 1.55 });
+    push({ time: 2.86, lane: 1.16, targetLane: 0.62, apex: 0.76, gravity: 2.45, variant: 1, poisoned: true, spinSpeed: 1.7 });
   } else if (level === 5) {
-    // Wave 1: 3-gem sweeping R->L fountain cascade
-    push({ time: 0.20, lane: 0.86, targetLane: 0.02, apex: 0.96, gravity: 2.48, variant: 0, poisoned: false, gemId: 3, spinSpeed: 1.55 });
-    push({ time: 0.42, lane: 0.72, targetLane: -0.08, apex: 1.04, gravity: 2.48, variant: 1, poisoned: false, gemId: 7, spinSpeed: 1.55 });
-    push({ time: 0.64, lane: 0.56, targetLane: -0.18, apex: 0.96, gravity: 2.48, variant: 2, poisoned: false, gemId: 5, spinSpeed: 1.55 });
-    // Wave 2: wide crossing arcs + trailing low Black Diamond
-    push({ time: 2.65, lane: -0.86, targetLane: 0.06, apex: 1.08, gravity: 2.50, variant: 3, poisoned: false, gemId: 6, spinSpeed: 1.6 });
-    push({ time: 2.70, lane: 0.86, targetLane: -0.06, apex: 1.08, gravity: 2.50, variant: 1, poisoned: false, gemId: 8, spinSpeed: 1.6 });
-    push({ time: 2.98, lane: -0.80, targetLane: -0.32, apex: 0.78, gravity: 2.50, variant: 2, poisoned: true, spinSpeed: 1.75 });
+    // Wave 1: 3-gem R->L cascade from 3 completely distinct edges & heights!
+    push({ time: 0.20, lane: 1.24, targetLane: 0.14, apex: 0.86, gravity: 2.48, variant: 0, poisoned: false, gemId: 3, spinSpeed: 1.55 });
+    push({ time: 0.42, lane: 0.28, targetLane: -0.22, apex: 1.14, gravity: 2.48, variant: 1, poisoned: false, gemId: 7, spinSpeed: 1.55 });
+    push({ time: 0.64, lane: -0.68, targetLane: -0.74, apex: 0.96, gravity: 2.48, variant: 2, poisoned: false, gemId: 5, spinSpeed: 1.55 });
+    // Wave 2: opposite-edge X-cross + low left-edge Black Diamond
+    push({ time: 2.65, lane: -1.22, targetLane: 0.08, apex: 1.14, gravity: 2.50, variant: 3, poisoned: false, gemId: 6, spinSpeed: 1.6 });
+    push({ time: 2.70, lane: 1.22, targetLane: -0.08, apex: 0.94, gravity: 2.50, variant: 1, poisoned: false, gemId: 8, spinSpeed: 1.6 });
+    push({ time: 2.98, lane: -1.14, targetLane: -0.64, apex: 0.76, gravity: 2.50, variant: 2, poisoned: true, spinSpeed: 1.75 });
   } else if (level === 6) {
-    // Wave 1: 3-gem simultaneous sweeping L->R fan (huge 3x combo arc!)
-    push({ time: 0.20, lane: -0.88, targetLane: -0.18, apex: 0.98, gravity: 2.52, variant: 0, poisoned: false, gemId: 3, spinSpeed: 1.55 });
-    push({ time: 0.24, lane: -0.64, targetLane: 0.02, apex: 1.06, gravity: 2.52, variant: 1, poisoned: false, gemId: 4, spinSpeed: 1.55 });
-    push({ time: 0.28, lane: -0.38, targetLane: 0.22, apex: 0.98, gravity: 2.52, variant: 2, poisoned: false, gemId: 5, spinSpeed: 1.55 });
-    // Wave 2: sweeping R->L twin + low counter-arc Black Diamond
-    push({ time: 2.50, lane: 0.86, targetLane: 0.02, apex: 1.04, gravity: 2.55, variant: 3, poisoned: false, gemId: 7, spinSpeed: 1.6 });
-    push({ time: 2.74, lane: 0.62, targetLane: -0.16, apex: 0.98, gravity: 2.55, variant: 1, poisoned: false, gemId: 6, spinSpeed: 1.6 });
-    push({ time: 3.04, lane: -0.82, targetLane: -0.34, apex: 0.78, gravity: 2.55, variant: 0, poisoned: true, spinSpeed: 1.8 });
+    // Wave 1: 3-gem full-frame triad — far-left edge, soaring center spire, far-right edge!
+    push({ time: 0.20, lane: -1.22, targetLane: -0.66, apex: 0.90, gravity: 2.52, variant: 0, poisoned: false, gemId: 3, spinSpeed: 1.55 });
+    push({ time: 0.24, lane: -0.16, targetLane: 0.06, apex: 1.16, gravity: 2.52, variant: 1, poisoned: false, gemId: 4, spinSpeed: 1.55 });
+    push({ time: 0.28, lane: 1.22, targetLane: 0.66, apex: 0.84, gravity: 2.52, variant: 2, poisoned: false, gemId: 5, spinSpeed: 1.55 });
+    // Wave 2: sweeping R->L cannon + center-outward left arc + low right-edge Black Diamond
+    push({ time: 2.50, lane: 1.24, targetLane: 0.12, apex: 1.10, gravity: 2.55, variant: 3, poisoned: false, gemId: 7, spinSpeed: 1.6 });
+    push({ time: 2.74, lane: -0.10, targetLane: -0.64, apex: 0.94, gravity: 2.55, variant: 1, poisoned: false, gemId: 6, spinSpeed: 1.6 });
+    push({ time: 3.04, lane: 1.16, targetLane: 0.66, apex: 0.76, gravity: 2.55, variant: 0, poisoned: true, spinSpeed: 1.8 });
   } else {
     // --- Deterministic choreographed generator for Levels 7..1000 ---
     // Smooth logarithmic difficulty curve t in [0..1]
@@ -188,13 +189,17 @@ function buildLevelAttempt(level: number, attempt: number): LevelPlan {
     const waveCount = level < 14 ? 2 : level < 35 ? 3 : level < 110 ? 4 : level < 350 ? 5 : 6;
     const baseGap = 2.35 - t * 0.58; // time between waves shrinks cleanly from 2.35s -> 1.77s
     let cursorT = 0.22;
+    let prevPattern = -1;
 
     // Gentle fallback breathing room only if earlier attempts failed strict mobile/desktop clearance
     const extraStagger = attempt > 6 ? Math.min(0.24, (attempt - 6) * 0.025) : 0;
 
     for (let w = 0; w < waveCount; w++) {
-      // 0=side-sweep fan (L->R or R->L), 1=staggered side cascade, 2=crossing X-arcs, 3=twin counter-arcs, 4=criss-cross fountain
-      const pattern = Math.floor(rng() * 5);
+      // 0=outward V-fan, 1=side-edge cannon volley, 2=opposite-edge X-cross, 3=flank pillars, 4=full-canvas scatter, 5=staggered whip cascade
+      let pattern = Math.floor(rng() * 6);
+      if (pattern === prevPattern) pattern = (pattern + 1 + Math.floor(rng() * 5)) % 6;
+      prevPattern = pattern;
+
       const maxClear = Math.min(5, 2 + Math.floor(t * 3.2 + rng() * 1.3));
       const clearN = Math.max(2, maxClear);
       const poisonChance = 0.42 + t * 0.46;
@@ -218,54 +223,73 @@ function buildLevelAttempt(level: number, attempt: number): LevelPlan {
       const staggerBase = Math.max(0.16, 0.26 - t * 0.08) + extraStagger;
       let waveEndT = cursorT;
 
+      // Distinct launch slots for Full-Canvas Scatter so gems in one wave never launch from the same spot!
+      const scatterLanes = [-1.24, -0.68, -0.08, 0.58, 1.24, -0.96, 0.96];
+      for (let i = scatterLanes.length - 1; i > 0; i--) {
+        const j = Math.floor(rng() * (i + 1));
+        const tmp = scatterLanes[i]; scatterLanes[i] = scatterLanes[j]; scatterLanes[j] = tmp;
+      }
+
       for (let i = 0; i < total; i++) {
         const isPoison = poisonIdx.has(i);
         const frac = total === 1 ? 0.5 : i / (total - 1);
         let dt = 0;
         let lane = 0;
         let targetLane = 0;
-        let apex = isPoison ? 0.76 + rng() * 0.08 : 0.96 + rng() * 0.18;
+        let apex = isPoison ? 0.74 + rng() * 0.08 : 0.84 + rng() * 0.32;
 
         if (pattern === 0) {
-          // Side-Sweep Fan: whole wave launches from one side and arcs smoothly across to the opposite side!
-          lane = -sweepDir * (0.90 - frac * 0.52) + (rng() - 0.5) * 0.06;
-          targetLane = sweepDir * (-0.14 + frac * 0.36) + (rng() - 0.5) * 0.06;
-          dt = isPoison ? 0.34 + i * 0.05 + extraStagger : i * 0.04;
-          apex = isPoison ? 0.76 + rng() * 0.07 : 0.98 + Math.sin(frac * Math.PI) * 0.12;
+          // Wide Outward V-Fan: launches across the lower middle and fans OUTWARD off both left & right edges!
+          lane = -sweepDir * (-0.42 + frac * 0.84) + (rng() - 0.5) * 0.10;
+          targetLane = -sweepDir * (-0.74 + frac * 1.48) + (rng() - 0.5) * 0.08;
+          dt = isPoison ? 0.34 + i * 0.05 + extraStagger : i * 0.045;
+          apex = isPoison ? 0.74 + rng() * 0.06 : 0.84 + Math.sin(frac * Math.PI) * 0.30 + (rng() - 0.5) * 0.06;
         } else if (pattern === 1) {
-          // Staggered Sweeping Cascade: rapid L->R or R->L parabolic stream!
-          lane = -sweepDir * (0.88 - frac * 0.38) + (rng() - 0.5) * 0.06;
-          targetLane = sweepDir * (0.04 + (rng() - 0.5) * 0.24);
-          dt = i * staggerBase + (isPoison ? 0.14 : 0);
-          apex = isPoison ? 0.78 + rng() * 0.07 : 0.94 + (i % 2) * 0.12 + rng() * 0.08;
+          // Side-Edge Cannon Volley: sequential arcs shooting in from one side edge with clean spacing so trailing gems never overtake!
+          lane = -sweepDir * (1.26 - frac * 0.36) + (rng() - 0.5) * 0.08;
+          targetLane = sweepDir * (0.28 - frac * 0.72) + (rng() - 0.5) * 0.10;
+          dt = i * (staggerBase * 1.35) + (isPoison ? 0.18 : 0);
+          if (isPoison) targetLane = -sweepDir * (0.50 + rng() * 0.20);
+          apex = isPoison ? 0.74 + rng() * 0.06 : 1.12 - frac * 0.26 + (rng() - 0.5) * 0.06;
         } else if (pattern === 2) {
-          // Crossing X-Arcs: alternating bottom-left->right and bottom-right->left!
+          // Opposite-Edge X-Cross: alternating far-left->far-right and far-right->far-left sweeps!
           const side = i % 2 === 0 ? -sweepDir : sweepDir;
-          lane = side * (0.68 + rng() * 0.24);
-          targetLane = -side * (0.04 + rng() * 0.22);
+          lane = side * (0.98 + rng() * 0.32);
+          targetLane = -side * (0.04 + rng() * 0.32);
           dt = (i % 2) * 0.06 + Math.floor(i / 2) * (staggerBase * 1.35) + (isPoison ? 0.28 : 0);
-          if (isPoison) targetLane = side * (0.20 + rng() * 0.18);
-          apex = isPoison ? 0.76 + rng() * 0.07 : 0.98 + rng() * 0.14;
+          if (isPoison) targetLane = side * (0.50 + rng() * 0.22);
+          apex = isPoison ? 0.74 + rng() * 0.06 : 0.84 + (i % 2) * 0.22 + rng() * 0.10;
         } else if (pattern === 3) {
-          // Twin Counter-Arcs + Staggered Follow-Up
-          const half = Math.ceil(total / 2);
-          const side = i < half ? -sweepDir : sweepDir;
-          lane = side * (0.54 + (i % Math.max(1, half)) * 0.22 + (rng() - 0.5) * 0.08);
-          targetLane = -side * (0.02 + rng() * 0.22);
-          dt = i < half ? i * 0.045 : 0.48 + (i - half) * (0.07 + rng() * 0.06);
-          if (isPoison) {
-            dt += 0.24;
-            targetLane = side * 0.28;
+          // Flank Pillars + High Center Spire: gems pop up boldly along far-left and far-right edges!
+          const slot = i % 3;
+          if (slot === 0) {
+            lane = -0.78 - rng() * 0.42;
+            targetLane = -0.74 + rng() * 0.22;
+            apex = isPoison ? 0.74 + rng() * 0.06 : 0.84 + rng() * 0.22;
+          } else if (slot === 1) {
+            lane = 0.78 + rng() * 0.42;
+            targetLane = 0.52 + rng() * 0.22;
+            apex = isPoison ? 0.74 + rng() * 0.06 : 0.88 + rng() * 0.22;
+          } else {
+            lane = (rng() - 0.5) * 0.44;
+            targetLane = (rng() - 0.5) * 0.36;
+            apex = isPoison ? 0.74 + rng() * 0.06 : 1.06 + rng() * 0.10;
           }
-          apex = isPoison ? 0.76 + rng() * 0.08 : 0.95 + rng() * 0.17;
+          dt = Math.floor(i / 3) * (staggerBase * 1.8) + (i % 3) * 0.06 + (isPoison ? 0.26 : 0);
+        } else if (pattern === 4) {
+          // Full-Canvas Scatter: every gem enters from a unique edge/bottom spot & heads in its own direction!
+          lane = scatterLanes[i % scatterLanes.length] + (rng() - 0.5) * 0.12;
+          const aimOpposite = Math.abs(lane) > 0.75 ? -Math.sign(lane) * (0.05 + rng() * 0.40) : (rng() < 0.5 ? -1 : 1) * (0.35 + rng() * 0.38);
+          targetLane = isPoison ? Math.sign(lane || 1) * (0.48 + rng() * 0.24) : aimOpposite;
+          dt = i * (staggerBase * 0.80) + (isPoison ? 0.22 : 0);
+          apex = isPoison ? 0.74 + rng() * 0.06 : 0.82 + ((i * 37) % 100) / 100 * 0.34;
         } else {
-          // Criss-Cross Fountain Volley: alternating sweeping arcs from both lower corners!
-          const side = i % 2 === 0 ? -1 : 1;
-          lane = side * (0.58 + rng() * 0.30);
-          targetLane = -side * (0.05 + rng() * 0.24);
-          dt = i * (staggerBase * 0.85) + (isPoison ? 0.22 : 0);
-          if (isPoison) targetLane = side * 0.30;
-          apex = isPoison ? 0.76 + rng() * 0.07 : 0.92 + rng() * 0.22;
+          // Staggered Whip Cascade: crisp sequential launches walking edge-to-edge with alternating high/low arcs!
+          lane = -sweepDir * (1.24 - frac * 2.48) + (rng() - 0.5) * 0.10;
+          targetLane = sweepDir * (-0.64 + frac * 1.28) + (rng() - 0.5) * 0.12;
+          dt = i * (staggerBase * 0.92) + (isPoison ? 0.20 : 0);
+          if (isPoison) targetLane = Math.sign(lane || sweepDir) * (0.50 + rng() * 0.22);
+          apex = isPoison ? 0.74 + rng() * 0.06 : (i % 2 === 0 ? 1.04 + rng() * 0.12 : 0.82 + rng() * 0.12);
         }
 
         const throwT = cursorT + dt;

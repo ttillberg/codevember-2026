@@ -3,8 +3,8 @@ import { validateLevel } from './level-check.ts';
 
 const STAGE_WIDTHS = [
   { name: 'desktop', halfW: 0.88 },
-  { name: 'tablet', halfW: 0.56 },
-  { name: 'mobile', halfW: 0.32 },
+  { name: 'tablet', halfW: 0.68 },
+  { name: 'mobile', halfW: 0.56 },
 ];
 
 const t0 = performance.now();

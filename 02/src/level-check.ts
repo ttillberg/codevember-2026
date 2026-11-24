@@ -112,16 +112,11 @@ export function validateLevel(plan: LevelPlan, stageHalfW: number): LevelValidat
       const p = posAt(a, t);
       if (!p) continue;
       const [gx, gy] = p;
-      if (gy < SLICEABLE_MIN_Y) {
+      if (gy < SLICEABLE_MIN_Y || Math.abs(gx) > maxAllowedX) {
         curSafeRun = 0;
         continue;
       }
       visibleTime += SAMPLE_DT;
-
-      if (Math.abs(gx) > maxAllowedX) {
-        curSafeRun = 0;
-        continue;
-      }
 
       // Gather all currently visible airborne Black Diamonds at time t
       const activeBlacks: Array<[number, number]> = [];

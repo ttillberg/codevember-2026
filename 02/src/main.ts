@@ -275,15 +275,19 @@ let lastComboAt = -99999;
 const BLITZ_BONUS = [0, 5, 10, 15, 20, 30] as const;
 const BLITZ_LABEL = ['', 'BLITZ', 'SUPER BLITZ', 'MEGA BLITZ', 'ULTRA BLITZ', 'UNBELIEVABLE'] as const;
 
-/** Responsive stage width: narrower on portrait mobile screens so crystals never leave the viewport! */
-function getTossStageLayout(): { eyeZ: number; stageHalfW: number } {
+/** Responsive stage width, spawn floor & camera distance: pulls back cleanly on portrait phones so gems sweep edge-to-edge across the full tall canvas! */
+function getTossStageLayout(): { eyeZ: number; stageHalfW: number; spawnY: number; portraitFactor: number } {
   const aspect = window.innerWidth / Math.max(1, window.innerHeight);
-  const eyeZ = aspect < 0.72 ? 3.28 : aspect < 0.95 ? 3.02 : aspect < 1.2 ? 2.86 : 2.72;
+  const eyeZ = aspect < 0.72 ? 4.35 : aspect < 0.95 ? 3.48 : aspect < 1.2 ? 2.94 : 2.72;
   const halfHAtZ0 = eyeZ * Math.tan(CAM_FOV * 0.5);
   const halfWAtZ0 = halfHAtZ0 * aspect;
-  // Tight safe stage on phones (~0.32m half-width on iPhone portrait), generous wide stage on desktop (0.88m)
-  const stageHalfW = Math.max(0.24, Math.min(0.88, halfWAtZ0 * 0.62));
-  return { eyeZ, stageHalfW };
+  // On portrait phones (~0.57m half-width at eyeZ=4.35), gems span full edge-to-edge width and enter/exit cleanly past all edges!
+  const widthFrac = aspect < 0.72 ? 0.82 : aspect < 0.95 ? 0.76 : 0.66;
+  const stageHalfW = Math.max(0.48, Math.min(0.88, halfWAtZ0 * widthFrac));
+  const visibleBottomY = TOSS_CAM_TARGET[1] - halfHAtZ0;
+  const spawnY = Math.min(-0.82, visibleBottomY - 0.30);
+  const portraitFactor = aspect < 0.72 ? 1.0 : aspect < 0.95 ? 0.45 : 0.0;
+  return { eyeZ, stageHalfW, spawnY, portraitFactor };
 }
 
 let freeSym = false;
@@ -1109,18 +1113,15 @@ function startLevel(lv: number, resetScore = false) {
   updateActionUI();
 }
 
-/** Spawn one deterministic ThrowSpec from the active LevelPlan, scaled cleanly to the viewport width! */
+/** Spawn one deterministic ThrowSpec from the active LevelPlan, scaled cleanly to the viewport width & depth! */
 function spawnScheduledThrow(th: ThrowSpec) {
-  const { stageHalfW } = getTossStageLayout();
+  const { eyeZ, stageHalfW, spawnY, portraitFactor } = getTossStageLayout();
   const trng = mulberry32(th.seed);
   const poly = makeCrystalPoly(CRYSTAL_SIZE, th.variant);
   const slotIdx = allocCutSlot();
 
-  const x0 = th.lane * stageHalfW;
-  const xApex = th.targetLane * stageHalfW;
-  const y0 = -0.82;
   // Assign a clean depth plane (front-most free slot, stepping slightly behind any airborne gem so crossing trajectories never clip!)
-  const zCandidates = [0.08, -0.34, -0.76, 0.46, -1.16];
+  const zCandidates = [0.06, -0.28, -0.62, 0.34, -0.94];
   let z0 = zCandidates[0];
   let bestClearance = -1;
   for (const zc of zCandidates) {
@@ -1129,7 +1130,7 @@ function spawnScheduledThrow(th: ThrowSpec) {
       const dz = Math.abs(zc - other.pos[2]);
       if (dz < minDz) minDz = dz;
     }
-    if (minDz >= 0.40) {
+    if (minDz >= 0.34) {
       z0 = zc;
       break;
     }
@@ -1138,8 +1139,17 @@ function spawnScheduledThrow(th: ThrowSpec) {
       z0 = zc;
     }
   }
-  const vy0 = Math.sqrt(2 * th.gravity * (th.apex - y0));
-  const tApex = vy0 / th.gravity;
+
+  // Compensate for perspective depth foreshortening so gems in back depth lanes still span the exact same full screen width!
+  const zScale = Math.max(0.75, (eyeZ - z0) / eyeZ);
+  const x0 = th.lane * stageHalfW * zScale;
+  const xApex = th.targetLane * stageHalfW * zScale;
+  const y0 = spawnY;
+  const apexNorm = Math.max(0, Math.min(1, (th.apex - 0.74) / 0.42));
+  const apex = th.apex + portraitFactor * (th.poisoned ? 0.04 + apexNorm * 0.14 : 0.04 + apexNorm * 0.36);
+  const effGravity = th.gravity * (1 + portraitFactor * 0.28);
+  const vy0 = Math.sqrt(2 * effGravity * (apex - y0));
+  const tApex = vy0 / effGravity;
   const vx0 = (xApex - x0) / Math.max(0.25, tApex);
   const vz0 = 0;
 
@@ -1179,7 +1189,7 @@ function spawnScheduledThrow(th: ThrowSpec) {
     vel,
     quat,
     angVel,
-    gravity: th.gravity,
+    gravity: effGravity,
     poisoned: th.poisoned,
     gemId: th.gemId,
     slices: 0,
@@ -2651,8 +2661,13 @@ async function boot() {
           fc.vel[2] *= Math.exp(-flightDt * 2.8);
           fc.quat = stepQuat(fc.quat, fc.angVel, flightDt);
 
-          // Check falling off the bottom edge!
-          if (fc.vel[1] < 0 && fc.pos[1] < -0.90) {
+          // Check exiting off the bottom edge OR cleanly past a side edge on descent!
+          const zDist = Math.max(1.0, camEye[2] - fc.pos[2]);
+          const visHalfH = zDist * Math.tan(CAM_FOV * 0.5);
+          const visHalfW = visHalfH * (window.innerWidth / Math.max(1, window.innerHeight));
+          const despawnY = Math.min(-0.90, camTarget[1] - visHalfH - 0.28);
+          const offSideX = fc.pos[0] * fc.vel[0] > 0 && Math.abs(fc.pos[0]) > visHalfW + 0.28;
+          if (fc.vel[1] < 0 && (fc.pos[1] < despawnY || offSideX)) {
             gpu.clearCutSlot(fc.slotIdx);
             flyingCrystals.splice(i, 1);
 
