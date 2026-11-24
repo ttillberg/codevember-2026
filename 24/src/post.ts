@@ -228,7 +228,31 @@ export function createPost(renderer: THREE.WebGLRenderer) {
     vertexShader: VERT, fragmentShader: GRADE, depthTest: false, depthWrite: false,
   }));
 
+  const quadMesh = (q: FullScreenQuad) => (q as unknown as { _mesh: THREE.Mesh })._mesh;
   return {
+    /** build every program the picture will use, off the thread where the browser can
+     * (KHR_parallel_shader_compile). The scene's are built with its own target bound: into a float
+     * target three builds linear, untone-mapped programs, and built against the screen they would be
+     * the wrong ones, built again on the first frame. Each pass the same, against the target it draws into. */
+    compile(world: THREE.Object3D, camera: THREE.Camera, target: THREE.Scene) {
+      const prev = renderer.getRenderTarget();
+      const jobs: Promise<unknown>[] = [];
+      renderer.setRenderTarget(scene);
+      jobs.push(renderer.compileAsync(world, camera, target));
+      for (const [q, rt] of [[ao, aoRT], [compose, lit], [dof, blurred], [grade, null]] as const) {
+        renderer.setRenderTarget(rt);
+        jobs.push(renderer.compileAsync(quadMesh(q), camera));
+      }
+      renderer.setRenderTarget(prev);
+      return Promise.all(jobs);
+    },
+    /** the scene drawn into the picture's own target and no further: unseen */
+    drawScene(world: THREE.Scene, camera: THREE.Camera) {
+      const prev = renderer.getRenderTarget();
+      renderer.setRenderTarget(scene);
+      renderer.render(world, camera);
+      renderer.setRenderTarget(prev);
+    },
     setSize(w: number, h: number) {
       const pr = renderer.getPixelRatio();
       const W = Math.round(w * pr), H = Math.round(h * pr);

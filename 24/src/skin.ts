@@ -4,11 +4,12 @@
 // by finite differences. Colour is decided once per scale from where its centre is, so the
 // markings follow the scale edges, as they do on the animal. Where the body bends, the scales
 // part on the outside and the skin between them shows. Each species has its own pattern
-// (bodyColor, picked by PATTERN when the material is compiled).
+// (bodyColor, picked by uPattern: one program for all of them).
 import * as THREE from 'three';
 import type { Species } from './species';
 
 const GLSL = /* glsl */ `
+uniform int uPattern;
 uniform float uRows;
 uniform float uVw;
 uniform float uVRatio;
@@ -304,23 +305,15 @@ vec3 garterColor(float s, float phi, float id, float belly, float plate) {
 }
 
 vec3 bodyColor(float s, float phi, float id, float belly, float plate) {
-#if PATTERN == 0
-  return pythonColor(s, phi, id, belly, plate);
-#elif PATTERN == 1
-  return cornColor(s, phi, id, belly, plate);
-#elif PATTERN == 2
-  return ballColor(s, phi, id, belly, plate);
-#elif PATTERN == 3
-  return carpetColor(s, phi, id, belly, plate);
-#elif PATTERN == 4
-  return burmeseColor(s, phi, id, belly, plate);
-#elif PATTERN == 5
-  return kingColor(s, phi, id, belly, plate);
-#elif PATTERN == 6
-  return milkColor(s, phi, id, belly, plate);
-#else
+  // a uniform, not a define: one program for all eight snakes, built once instead of eight times
+  if (uPattern == 0) return pythonColor(s, phi, id, belly, plate);
+  if (uPattern == 1) return cornColor(s, phi, id, belly, plate);
+  if (uPattern == 2) return ballColor(s, phi, id, belly, plate);
+  if (uPattern == 3) return carpetColor(s, phi, id, belly, plate);
+  if (uPattern == 4) return burmeseColor(s, phi, id, belly, plate);
+  if (uPattern == 5) return kingColor(s, phi, id, belly, plate);
+  if (uPattern == 6) return milkColor(s, phi, id, belly, plate);
   return garterColor(s, phi, id, belly, plate);
-#endif
 }
 `;
 
@@ -388,6 +381,7 @@ export function createSkin(sp: Species) {
     iridescenceThicknessMaximum: 420,
   });
   const uniforms = {
+    uPattern: { value: sp.pattern },
     uRows: { value: sp.rows },
     uVw: { value: sp.ventralWidth },
     uVRatio: { value: sp.shape === 'python' ? 2.2 : 1.35 },
@@ -421,7 +415,7 @@ varying vec3 vTanV;`)
       .replace('#include <begin_vertex>', `#include <begin_vertex>
 vBody = aBody; vBody2 = aBody2; vAO = aAO; vTanV = normalize(normalMatrix * aTan);`);
     sh.fragmentShader = sh.fragmentShader
-      .replace('#include <common>', `#include <common>\n#define PATTERN ${sp.pattern}\n${GLSL}`)
+      .replace('#include <common>', `#include <common>\n${GLSL}`)
       .replace('#include <color_fragment>', `#include <color_fragment>
 float sA = vBody.x;            // along, in dorsal scale lengths
 float sV = vBody.y;            // round, 0 at the belly's middle, .5 on the spine
@@ -604,6 +598,6 @@ reflectedLight.directSpecular *= mix(1.0, vAO, 0.6);`)
       .replace('#include <clearcoat_normal_fragment_begin>', `#include <clearcoat_normal_fragment_begin>
 clearcoatNormal = normal;`);
   };
-  mat.customProgramCacheKey = () => 'snake-skin-' + sp.pattern;
+  mat.customProgramCacheKey = () => 'snake-skin';
   return mat;
 }

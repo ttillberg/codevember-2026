@@ -10,6 +10,7 @@ import { createSkin } from './skin';
 import { createHead, type Head } from './head';
 import { LOOK, createPost, handheld } from './post';
 import { debugPanel } from './debug';
+import { previewMaterial, snakeColor } from './preview';
 
 const query = new URLSearchParams(location.search);
 // ?clean: no page furniture, the scene alone (screengrabs, clips)
@@ -119,6 +120,7 @@ const contact = (() => {
 })();
 
 // --- ground: dark slate, fading into the night ------------------------------------
+let ground!: THREE.Mesh;
 {
   const size = 512;
   const cv = document.createElement('canvas');
@@ -153,7 +155,7 @@ const contact = (() => {
   tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
   tex.repeat.set(6, 6);
   tex.anisotropy = 8;
-  const ground = new THREE.Mesh(
+  ground = new THREE.Mesh(
     new THREE.PlaneGeometry(8, 8),
     new THREE.MeshStandardMaterial({ map: tex, roughness: 0.92, metalness: 0, bumpMap: tex, bumpScale: 0.6 }),
   );
@@ -203,31 +205,29 @@ const bodies: Body[] = snakes.map((s, k) => {
 });
 const heads: (Head | null)[] = snakes.map(() => null);
 
-// two heads modelled, a python's and a colubrid's; each species' own colours painted on its family's
+// two heads modelled, a python's and a colubrid's; each species' own colours painted on its family's.
+// Made as they come, but put on only once their shaders are built (see loading, below)
 const loader = new GLTFLoader();
 const texLoader = new THREE.TextureLoader();
 const base = import.meta.env.BASE_URL;
-(['python', 'corn'] as const).forEach((shape) => {
-  loader.load(`${base}${shape}.glb`, (gltf) => {
-    snakes.forEach((s, k) => {
-      if (s.sp.shape !== shape) return;
-      const put = (paint?: THREE.Texture) => {
-        const h = createHead(gltf, s.sp, paint);
-        h.group.scale.setScalar(kinds[k].f);
-        heads[k] = h;
-        scene.add(h.group);
-      };
-      if (s.sp.name === shape) return put();
-      texLoader.load(`${base}heads/${s.sp.name}.jpg`, (tex) => {
+const headsMade = Promise.all((['python', 'corn'] as const).map((shape) => loader.loadAsync(`${base}${shape}.glb`).then((gltf) =>
+  Promise.all(snakes.map(async (s, k) => {
+    if (s.sp.shape !== shape) return;
+    let paint: THREE.Texture | undefined;
+    if (s.sp.name !== shape) {
+      paint = await texLoader.loadAsync(`${base}heads/${s.sp.name}.jpg`).catch(() => undefined);
+      if (paint) {
         // as glTF has its textures: not flipped, sRGB, sharp at a glance
-        tex.flipY = false;
-        tex.colorSpace = THREE.SRGBColorSpace;
-        tex.anisotropy = 8;
-        put(tex);
-      }, undefined, () => put());
-    });
-  });
-});
+        paint.flipY = false;
+        paint.colorSpace = THREE.SRGBColorSpace;
+        paint.anisotropy = 8;
+      }
+    }
+    const h = createHead(gltf, s.sp, paint);
+    h.group.scale.setScalar(kinds[k].f);
+    heads[k] = h;
+  })),
+).catch(() => { /* no heads then: the bodies alone */ })));
 
 // --- touch -------------------------------------------------------------------------------
 // tap a snake and its scales play; hold it and it gets away along its track, the longer the faster
@@ -435,12 +435,112 @@ function frame(ts: number) {
   camera.position.add(shake.pos.applyQuaternion(camera.quaternion));
   camera.quaternion.multiply(qShake.setFromEuler(shake.rot));
   camera.updateMatrixWorld();
-  post.render(scene, camera, focus, time);
+  if (shown) post.render(scene, camera, focus, time);
+  else {
+    // the clay, straight to the screen
+    renderer.setRenderTarget(null);
+    renderer.render(scene, camera);
+  }
   camera.position.copy(keep.pos);
   camera.quaternion.copy(keep.quat);
   camera.updateMatrixWorld();
   requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);
+
+// --- loading -------------------------------------------------------------------------------
+// The knot shows at once in clay (preview.ts) and moves, and can be touched, while the real shaders
+// are built off the thread, the heads come in and the textures go up, one a frame. Then a cut to the
+// picture, with nothing left for its first frame to build.
+const groundMat = ground.material as THREE.MeshStandardMaterial;
+bodies.forEach((b, k) => (b.mesh.material = previewMaterial(snakeColor(snakes[k].sp.pixel), { ao: true })));
+ground.material = previewMaterial(new THREE.Color(1, 1, 1), { map: groundMat.map!, repeat: 6, contact: contact.tex, span: CONTACT_SPAN });
+let shown = false;
+const nextFrame = () => new Promise((r) => requestAnimationFrame(r));
+async function load() {
+  // two frames of clay first: where the browser can't build off the thread, the page stands still
+  // on the knot, not on black
+  await nextFrame();
+  await nextFrame();
+  // ?loader: held on the clay, for looking at it
+  if (query.has('loader')) return;
+  await headsMade;
+  // stand-ins wearing the real materials, never drawn: the bodies' own geometry, the ground, the heads
+  const warm = new THREE.Group();
+  bodies.forEach((b, k) => {
+    const m = new THREE.Mesh(b.mesh.geometry, skins[k]);
+    m.castShadow = m.receiveShadow = true;
+    m.frustumCulled = false;
+    warm.add(m);
+  });
+  const g = new THREE.Mesh(ground.geometry, groundMat);
+  g.receiveShadow = true;
+  warm.add(g);
+  for (const h of heads) if (h) warm.add(h.group);
+  try {
+    await post.compile(warm, camera, scene);
+    await nextFrame();
+    // three asks the GPU about a program the first time it draws with it, a round trip that waits on
+    // the frame in flight: ask now. And every texture uploaded, one a frame
+    const materials = new Set<THREE.Material>();
+    warm.traverse((o) => {
+      const m = (o as THREE.Mesh).material;
+      if (m) for (const x of [m].flat()) materials.add(x);
+    });
+    const textures = new Set<THREE.Texture>();
+    for (const m of materials) {
+      (renderer.properties.get(m) as { programs?: Map<string, { getUniforms(): unknown }> }).programs?.forEach((p) => p.getUniforms());
+      for (const v of Object.values(m)) if (v instanceof THREE.Texture) textures.add(v);
+      for (const u of Object.values((m.userData.uniforms ?? {}) as Record<string, { value: unknown }>)) if (u.value instanceof THREE.Texture) textures.add(u.value);
+    }
+    for (const t of textures) {
+      await nextFrame();
+      renderer.initTexture(t);
+    }
+    // built isn't finished: the driver makes the rest of a program on its first draw (Metal its
+    // pipelines), a third of a second at once if left to the cut. So each part is drawn once, alone,
+    // in its real material, into the picture's own target, unseen, one a frame. The heads go into the
+    // scene for it, hidden till the cut
+    for (const h of heads) if (h) {
+      h.group.visible = false;
+      scene.add(h.group);
+    }
+    const parts: { obj: THREE.Object3D; real?: THREE.Material }[] = [
+      ...bodies.map((b, k) => ({ obj: b.mesh as THREE.Object3D, real: skins[k] as THREE.Material })),
+      { obj: ground, real: groundMat },
+      ...heads.flatMap((h) => (h ? [{ obj: h.group }] : [])),
+    ];
+    renderer.shadowMap.autoUpdate = false; // (the shadow map stays as the whole knot drew it)
+    for (const p of parts) {
+      await nextFrame();
+      const was = parts.map((q) => q.obj.visible);
+      parts.forEach((q) => (q.obj.visible = q === p));
+      const mesh = p.obj as THREE.Mesh;
+      const clay = mesh.material;
+      if (p.real) mesh.material = p.real;
+      post.drawScene(scene, camera);
+      if (p.real) mesh.material = clay;
+      parts.forEach((q, i) => (q.obj.visible = was[i]));
+    }
+    renderer.shadowMap.autoUpdate = true;
+    await nextFrame();
+  } catch {
+    /* built on the first frame then */
+  }
+  // the cut
+  bodies.forEach((b, k) => {
+    (b.mesh.material as THREE.Material).dispose();
+    b.mesh.material = skins[k];
+  });
+  (ground.material as THREE.Material).dispose();
+  ground.material = groundMat;
+  for (const h of heads) if (h) {
+    h.group.visible = true;
+    scene.add(h.group);
+  }
+  shown = true;
+  document.body.classList.remove('loading');
+}
+void load();
 
 Object.assign(window, { __snakes: { SCARE, LOOK, PERIOD, skins, world, snakes, tracks, camera, controls, bodies, renderer, scene, contact } });
