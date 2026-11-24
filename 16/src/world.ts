@@ -41,7 +41,7 @@ export function trunkInCell(ix: number, iz: number): Trunk | null {
   // (drawn last: the tall ones and the birches stand where they stood)
   // (none near the start: its low boughs filled the first view)
   const spruce = !birch && r() < 0.4 && Math.hypot(x, z) > 6;
-  const h = spruce ? 0.5 + 0.2 * r() : 1;
+  const h = spruce ? 0.5 + 0.2 * r() : birch ? 0.64 + 0.18 * r() : 1; // birches ~19–25 m beneath the 30 m pines
   return { x, z, r: birch ? r0 * 0.42 : spruce ? r0 * 0.6 : r0, turn, key: `${ix},${iz}`, birch, spruce, h };
 }
 const trunkCache = new Map<number, Trunk | null>();
