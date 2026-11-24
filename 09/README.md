@@ -2,7 +2,7 @@
 
 2026-11-09
 
-A frog's eye wrapped in two thin films, one over the other. A cross is cut into the top one as the page lands. Take hold of an edge and pull: the film comes off under the finger, then the one under it, then the eye is looking at you.
+A human eye wrapped in two thin films, one over the other. A cross is cut into the top one as the page lands. Take hold of an edge and pull: the film comes off under the finger, then the one under it, then the eye is looking at you.
 
 Five tools, one button in the bar under the sphere (hold T to open it at the cursor, or keys 1 to 5):
 
@@ -24,7 +24,7 @@ How it works:
 - The loose film is not cloth. It is pulled taut between where it is still down and the finger, like a soap film: every loose particle goes to the mean of the ones it is joined to, never further from the hand than the film between them is long, never further from film still down than the film reaches, never under the sphere. No weight, no speed, no slack to wrinkle.
 - Only the fan between the hand and the front being pulled is drawn. The rest of the loose film hangs from nothing any more and would trail as teeth and scraps; it is cut away along the fan's straight sides in the shader, and goes for good when the hand lets go. Right at the finger the film thins out to nothing, where a hand would be holding and hiding it.
 - Letting go removes the film that is loose, flooded texel by texel so it never crosses a cut. Peeled film never lies back down.
-- The eye is all shader: a red-eyed tree frog's, with a net of cells over the iris, a slit pupil that opens and closes, a tear film, and a gaze that follows the pointer in small jumps. Under a jelly base it is a smaller ball inside a transmissive sphere instead.
+- The eye combines a sculpted corneal-dome mesh with pre-baked iris and sclera textures (pale blue and sea-green trabeculae, warm amber-brown central heterochromia, Fuchs' crypts, collarette, and branching conjunctival veins) and a light optical shader for corneal refraction, caustics, and radial pupil stretch. Its gaze tracks the pointer with smooth pursuit, saccades, micro-saccades and drift, and its pupil responds to light, focus, and films being peeled away. Under a jelly base it is a smaller ball inside a transmissive sphere instead.
 - The bar, the tool picker, the help and the title block are those of days 07 and 08, rebuilt here without a framework.
 
 While developing (or with `?settings` in the address) a gear opens the workbench: the stack of films with their looks, the sphere, and sliders for how the film behaves in the hand, kept between visits. Keys `b` and `n` reset to two fixed test scenes. `debug` draws where the finger really is, what the front feels (blue slack, yellow taut, red about to let go) and where the sheet has been torn off a front that is no longer pulled. `?dark` gives the near-black backdrop.
