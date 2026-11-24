@@ -41,6 +41,7 @@ scene.background = new THREE.Color(BG);
 
 // from above, a little off plumb, the mess bleeding off every edge
 const portrait = window.innerHeight > window.innerWidth;
+const touch = matchMedia('(pointer: coarse)').matches;
 const camera = new THREE.PerspectiveCamera(30, 1, 0.01, 20);
 const controls = new OrbitControls(camera, canvas);
 controls.target.set(0, 0, 0);
@@ -51,6 +52,10 @@ controls.maxDistance = 1.6; // set from the framing in resize()
 controls.maxPolarAngle = 1.0;
 controls.rotateSpeed = 0.6;
 controls.screenSpacePanning = true;
+// on a touch screen there are no orbit controls: touch only taps and holds the snakes
+controls.touches.ONE = null;
+controls.touches.TWO = null;
+if (touch) controls.enabled = false;
 
 // --- light ------------------------------------------------------------------------
 const key = new THREE.DirectionalLight(0xfff2e2, 2.6);
@@ -339,7 +344,7 @@ function scaleAt(s: Snake, ev: PointerEvent) {
 function release() {
   if (!held) return;
   held = null;
-  controls.enabled = true;
+  if (!touch) controls.enabled = true;
   canvas.style.cursor = '';
 }
 canvas.addEventListener('pointerup', (ev) => {
@@ -352,6 +357,7 @@ canvas.addEventListener('pointerup', (ev) => {
   release();
 });
 canvas.addEventListener('pointercancel', release);
+canvas.addEventListener('contextmenu', (ev) => ev.preventDefault());
 
 // --- ?debug ---------------------------------------------------------------------------------
 if (query.has('debug')) {
