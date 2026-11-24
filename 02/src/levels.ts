@@ -5,41 +5,53 @@ export const MAX_LEVEL = 1000;
 const VALIDATION_WIDTHS = [0.88, 0.68, 0.56] as const;
 
 /**
- * Gemstone material IDs packed into PolyPlanes.info.z and ShardPose.pos.w:
+ * Gemstone material IDs packed into PolyPlanes.info.z and ShardPose.pos.w (cool mineral spectrum):
  *  0 = Palette default (pedestal)
  *  1 = Poisoned Black Diamond (obsidian hazard)
- *  2 = Clear Diamond
- *  3 = Ruby
- *  4 = Emerald
- *  5 = Sapphire
- *  6 = Amethyst
- *  7 = Citrine Topaz
- *  8 = Aquamarine
+ *  2 = Pure Clear Diamond (100% transparent optical crystal)
+ *  3 = Rhodolite Ruby (clear -> cool purplish crimson-berry)
+ *  4 = Cyan-Emerald (clear -> cool cyan-green tourmaline)
+ *  5 = Sapphire (clear -> royal blue)
+ *  6 = Amethyst (clear -> cool imperial violet)
+ *  7 = Tanzanite (clear -> cool indigo-periwinkle)
+ *  8 = Aquamarine (clear -> crisp glacial cyan)
+ *  9 = Orchid-Mist Crystal (mostly transparent, cool rose-plum nudge)
+ * 10 = Ice-Mist Crystal (mostly transparent, pale glacier-blue nudge)
+ * 11 = Mint-Frost Crystal (mostly transparent, cool cyan-mint nudge)
+ * 12 = Lilac-Mist Crystal (mostly transparent, cool lavender nudge)
  */
 export const GEM_BLACK = 1;
-export const GEM_COLORS = [3, 4, 5, 6, 7, 8, 2] as const;
+export const GEM_COLORS = [2, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12] as const;
 
 export const GEM_SPLINTER_COLORS: Record<number, [number, number, number]> = {
   1: [0.04, 0.04, 0.05],
   2: [0.95, 0.97, 1.00],
-  3: [0.98, 0.14, 0.26],
-  4: [0.12, 0.88, 0.42],
-  5: [0.16, 0.46, 0.98],
-  6: [0.74, 0.24, 0.98],
-  7: [0.98, 0.72, 0.12],
-  8: [0.14, 0.86, 0.95],
+  3: [0.76, 0.36, 0.58],
+  4: [0.30, 0.74, 0.68],
+  5: [0.34, 0.54, 0.82],
+  6: [0.58, 0.42, 0.80],
+  7: [0.48, 0.56, 0.82],
+  8: [0.34, 0.72, 0.80],
+  9: [0.86, 0.72, 0.82],
+  10: [0.74, 0.84, 0.92],
+  11: [0.72, 0.88, 0.86],
+  12: [0.80, 0.74, 0.90],
 };
 
-/** High-contrast jewel ink colors for floating score callouts on the light #f4f3f0 studio floor. */
+/** Restrained cool mineral ink colors for floating score callouts on the light studio floor. */
 export const GEM_TEXT_COLORS: Record<number, string> = {
   1: '#1c1c1c',
   2: '#1c1c1c',
-  3: '#c81937', // Ruby
-  4: '#0d8a45', // Emerald
-  5: '#1a4fd6', // Sapphire
-  6: '#7c24cc', // Amethyst
-  7: '#bf7908', // Citrine Topaz
-  8: '#0a8594', // Aquamarine
+  3: '#7d3962', // Smoky Plum
+  4: '#296e68', // Sea-Glass Teal
+  5: '#355687', // Arctic Slate-Cobalt
+  6: '#62458a', // Smoky Iris
+  7: '#4d588f', // Storm Periwinkle
+  8: '#2c6d7d', // Glacier Petrol
+  9: '#7a526e', // Dusty Mauve-Mist
+  10: '#4a6885', // Glacier-Slate Mist
+  11: '#3f736e', // Sea-Glass Mist
+  12: '#635385', // Smoke-Lilac Mist
 };
 
 export interface ThrowSpec {
@@ -144,42 +156,42 @@ function buildLevelAttempt(level: number, attempt: number): LevelPlan {
     // Graceful left-edge -> right-edge sweeping arc across the frame
     push({ time: 0.20, lane: -1.16, targetLane: 0.08, apex: 0.98, gravity: 2.25, variant: 1, poisoned: false, gemId: 5, spinSpeed: 1.4 });
   } else if (level === 2) {
-    // Bold center-outward V-split: launches near bottom-center and fans far LEFT and far RIGHT off both sides!
+    // Bold center-outward V-split: Ruby clear->red paired with Pure Clear Diamond!
     push({ time: 0.20, lane: -0.18, targetLane: -0.66, apex: 1.08, gravity: 2.30, variant: 0, poisoned: false, gemId: 3, spinSpeed: 1.45 });
-    push({ time: 0.25, lane: 0.18, targetLane: 0.66, apex: 0.88, gravity: 2.30, variant: 1, poisoned: false, gemId: 4, spinSpeed: 1.45 });
+    push({ time: 0.25, lane: 0.18, targetLane: 0.66, apex: 0.88, gravity: 2.30, variant: 1, poisoned: false, gemId: 2, spinSpeed: 1.45 });
   } else if (level === 3) {
-    // Wave 1: far-left cannon + steep right flank pillar + staggered far-right sweep
-    push({ time: 0.20, lane: -1.24, targetLane: -0.22, apex: 1.04, gravity: 2.38, variant: 2, poisoned: false, gemId: 5, spinSpeed: 1.5 });
+    // Wave 1: Ice-Mist whisper crystal + Citrine + Amethyst
+    push({ time: 0.20, lane: -1.24, targetLane: -0.22, apex: 1.04, gravity: 2.38, variant: 2, poisoned: false, gemId: 10, spinSpeed: 1.5 });
     push({ time: 0.26, lane: 0.76, targetLane: 0.64, apex: 0.84, gravity: 2.38, variant: 3, poisoned: false, gemId: 7, spinSpeed: 1.5 });
     push({ time: 0.78, lane: 1.24, targetLane: -0.06, apex: 1.14, gravity: 2.38, variant: 1, poisoned: false, gemId: 6, spinSpeed: 1.55 });
-    // Wave 2: opposite-edge X-cross sweeping completely across the screen
-    push({ time: 2.55, lane: -1.20, targetLane: 0.10, apex: 1.10, gravity: 2.40, variant: 0, poisoned: false, gemId: 3, spinSpeed: 1.55 });
-    push({ time: 2.68, lane: 1.20, targetLane: -0.10, apex: 0.88, gravity: 2.40, variant: 2, poisoned: false, gemId: 8, spinSpeed: 1.55 });
+    // Wave 2: opposite-edge X-cross — Rose-Blush crystal + Emerald
+    push({ time: 2.55, lane: -1.20, targetLane: 0.10, apex: 1.10, gravity: 2.40, variant: 0, poisoned: false, gemId: 9, spinSpeed: 1.55 });
+    push({ time: 2.68, lane: 1.20, targetLane: -0.10, apex: 0.88, gravity: 2.40, variant: 2, poisoned: false, gemId: 4, spinSpeed: 1.55 });
   } else if (level === 4) {
     // Introduces Poisoned Black Diamond on the far right while Emerald shoots high from the far-left edge!
     push({ time: 0.20, lane: -1.20, targetLane: -0.36, apex: 1.10, gravity: 2.42, variant: 1, poisoned: false, gemId: 4, spinSpeed: 1.45 });
     push({ time: 0.34, lane: 0.88, targetLane: 0.58, apex: 0.78, gravity: 2.42, variant: 2, poisoned: true, spinSpeed: 1.65 });
-    // Wave 2: Left-edge cannon + center-outward right gem + low right-side Black Diamond
-    push({ time: 2.45, lane: -1.22, targetLane: -0.48, apex: 1.12, gravity: 2.45, variant: 0, poisoned: false, gemId: 3, spinSpeed: 1.55 });
+    // Wave 2: Pure Clear Diamond + Sapphire + low right-side Black Diamond
+    push({ time: 2.45, lane: -1.22, targetLane: -0.48, apex: 1.12, gravity: 2.45, variant: 0, poisoned: false, gemId: 2, spinSpeed: 1.55 });
     push({ time: 2.52, lane: 0.08, targetLane: 0.48, apex: 0.92, gravity: 2.45, variant: 3, poisoned: false, gemId: 5, spinSpeed: 1.55 });
     push({ time: 2.86, lane: 1.16, targetLane: 0.62, apex: 0.76, gravity: 2.45, variant: 1, poisoned: true, spinSpeed: 1.7 });
   } else if (level === 5) {
-    // Wave 1: 3-gem R->L cascade from 3 completely distinct edges & heights!
+    // Wave 1: 3-gem R->L cascade — Ruby, Champagne whisper crystal, Aquamarine
     push({ time: 0.20, lane: 1.24, targetLane: 0.14, apex: 0.86, gravity: 2.48, variant: 0, poisoned: false, gemId: 3, spinSpeed: 1.55 });
-    push({ time: 0.42, lane: 0.28, targetLane: -0.22, apex: 1.14, gravity: 2.48, variant: 1, poisoned: false, gemId: 7, spinSpeed: 1.55 });
-    push({ time: 0.64, lane: -0.68, targetLane: -0.74, apex: 0.96, gravity: 2.48, variant: 2, poisoned: false, gemId: 5, spinSpeed: 1.55 });
-    // Wave 2: opposite-edge X-cross + low left-edge Black Diamond
-    push({ time: 2.65, lane: -1.22, targetLane: 0.08, apex: 1.14, gravity: 2.50, variant: 3, poisoned: false, gemId: 6, spinSpeed: 1.6 });
-    push({ time: 2.70, lane: 1.22, targetLane: -0.08, apex: 0.94, gravity: 2.50, variant: 1, poisoned: false, gemId: 8, spinSpeed: 1.6 });
+    push({ time: 0.42, lane: 0.28, targetLane: -0.22, apex: 1.14, gravity: 2.48, variant: 1, poisoned: false, gemId: 11, spinSpeed: 1.55 });
+    push({ time: 0.64, lane: -0.68, targetLane: -0.74, apex: 0.96, gravity: 2.48, variant: 2, poisoned: false, gemId: 8, spinSpeed: 1.55 });
+    // Wave 2: opposite-edge X-cross — Lilac-Mist crystal + Pure Clear Diamond + low left-edge Black Diamond
+    push({ time: 2.65, lane: -1.22, targetLane: 0.08, apex: 1.14, gravity: 2.50, variant: 3, poisoned: false, gemId: 12, spinSpeed: 1.6 });
+    push({ time: 2.70, lane: 1.22, targetLane: -0.08, apex: 0.94, gravity: 2.50, variant: 1, poisoned: false, gemId: 2, spinSpeed: 1.6 });
     push({ time: 2.98, lane: -1.14, targetLane: -0.64, apex: 0.76, gravity: 2.50, variant: 2, poisoned: true, spinSpeed: 1.75 });
   } else if (level === 6) {
-    // Wave 1: 3-gem full-frame triad — far-left edge, soaring center spire, far-right edge!
+    // Wave 1: 3-gem full-frame triad — Ruby (clear->red), Pure Clear Diamond (center spire), Sapphire (clear->blue)!
     push({ time: 0.20, lane: -1.22, targetLane: -0.66, apex: 0.90, gravity: 2.52, variant: 0, poisoned: false, gemId: 3, spinSpeed: 1.55 });
-    push({ time: 0.24, lane: -0.16, targetLane: 0.06, apex: 1.16, gravity: 2.52, variant: 1, poisoned: false, gemId: 4, spinSpeed: 1.55 });
+    push({ time: 0.24, lane: -0.16, targetLane: 0.06, apex: 1.16, gravity: 2.52, variant: 1, poisoned: false, gemId: 2, spinSpeed: 1.55 });
     push({ time: 0.28, lane: 1.22, targetLane: 0.66, apex: 0.84, gravity: 2.52, variant: 2, poisoned: false, gemId: 5, spinSpeed: 1.55 });
-    // Wave 2: sweeping R->L cannon + center-outward left arc + low right-edge Black Diamond
-    push({ time: 2.50, lane: 1.24, targetLane: 0.12, apex: 1.10, gravity: 2.55, variant: 3, poisoned: false, gemId: 7, spinSpeed: 1.6 });
-    push({ time: 2.74, lane: -0.10, targetLane: -0.64, apex: 0.94, gravity: 2.55, variant: 1, poisoned: false, gemId: 6, spinSpeed: 1.6 });
+    // Wave 2: Rose-Blush crystal + Emerald + low right-edge Black Diamond
+    push({ time: 2.50, lane: 1.24, targetLane: 0.12, apex: 1.10, gravity: 2.55, variant: 3, poisoned: false, gemId: 9, spinSpeed: 1.6 });
+    push({ time: 2.74, lane: -0.10, targetLane: -0.64, apex: 0.94, gravity: 2.55, variant: 1, poisoned: false, gemId: 4, spinSpeed: 1.6 });
     push({ time: 3.04, lane: 1.16, targetLane: 0.66, apex: 0.76, gravity: 2.55, variant: 0, poisoned: true, spinSpeed: 1.8 });
   } else {
     // --- Deterministic choreographed generator for Levels 7..1000 ---

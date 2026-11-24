@@ -157,39 +157,137 @@ fn studioGrade(hdr: vec3<f32>, exposure: f32) -> vec3<f32> {
 }
 
 /**
- * Physical Beer-Lambert volumetric absorption sigma (m^-1) per gemstone ID:
+ * Smooth 3D transparent-to-color crystal gradient mask [0 = crystal clear, 1 = deep jewel color].
+ * Each gemstone has a slightly distinct optical axis & dip depth ("more or less" clear vs saturated)
+ * like natural bicolored quartz/tourmaline or dipped Venetian Sommerso crystal.
+ */
+fn gemGradient(gemId: u32, p: vec3<f32>, u: SceneUniforms) -> f32 {
+  let h = max(u.halfSize.xyz, vec3<f32>(0.05));
+  let q = p / h; // approx -1..+1 in crystal local space
+  let r2 = dot(q.xz, q.xz);
+
+  // Per-gem tilted optical axis & dip window so gems show organic clear->color variation as they tumble
+  var axis = vec3<f32>(0.18, -0.96, 0.14);
+  var lo = -0.68;
+  var hi = 0.58;
+  if (gemId == 3u) {
+    // Cool Rhodolite Ruby: clear crown melting smoothly into purplish crimson-berry
+    axis = normalize(vec3<f32>(0.24, -0.95, 0.18));
+    lo = -0.62;
+    hi = 0.58;
+  } else if (gemId == 4u) {
+    // Cyan-Emerald: translucent clear diagonal fading into cool cyan-emerald tourmaline
+    axis = normalize(vec3<f32>(-0.28, -0.92, 0.24));
+    lo = -0.70;
+    hi = 0.54;
+  } else if (gemId == 5u) {
+    // Sapphire: crystalline clear side sweeping into deep royal blue
+    axis = normalize(vec3<f32>(0.36, -0.88, -0.26));
+    lo = -0.56;
+    hi = 0.62;
+  } else if (gemId == 6u) {
+    // Amethyst: natural quartz clear base growing into cool imperial violet point
+    axis = normalize(vec3<f32>(-0.18, 0.96, 0.18));
+    lo = -0.58;
+    hi = 0.58;
+  } else if (gemId == 7u) {
+    // Tanzanite / Periwinkle: luminous clear crystal dipped in cool indigo-periwinkle
+    axis = normalize(vec3<f32>(0.22, -0.94, -0.22));
+    lo = -0.62;
+    hi = 0.56;
+  } else if (gemId == 8u) {
+    // Aquamarine: icy clear crystal blushing into crisp glacial cyan
+    axis = normalize(vec3<f32>(-0.32, 0.90, -0.24));
+    lo = -0.52;
+    hi = 0.64;
+  } else if (gemId == 9u) {
+    // Orchid-Mist Crystal: mostly water-clear glass with a cool rose-plum nudge at one end
+    axis = normalize(vec3<f32>(0.34, -0.90, 0.24));
+    lo = 0.08;
+    hi = 0.95;
+  } else if (gemId == 10u) {
+    // Ice-Mist Crystal: mostly pure clear glass kissed with pale glacier blue along one tip
+    axis = normalize(vec3<f32>(-0.38, 0.88, 0.22));
+    lo = 0.10;
+    hi = 0.96;
+  } else if (gemId == 11u) {
+    // Mint-Frost Crystal: luminous clear glass with a delicate icy cyan-mint blush at one corner
+    axis = normalize(vec3<f32>(0.26, -0.92, -0.28));
+    lo = 0.06;
+    hi = 0.94;
+  } else if (gemId == 12u) {
+    // Lilac-Mist Crystal: water-clear quartz with a cool lavender-periwinkle whisper at the tip
+    axis = normalize(vec3<f32>(-0.24, 0.94, -0.22));
+    lo = 0.08;
+    hi = 0.95;
+  }
+
+  // Subtle curved meniscus (like hand-dipped glass) keeps the gradient organic across faceted bevels
+  let proj = dot(q, axis) + 0.10 * (r2 - 0.45);
+  let t = smoothstep(lo, hi, proj);
+  return pow(t, 1.12);
+}
+
+/**
+ * Physical Beer-Lambert volumetric absorption sigma (m^-1) per gemstone ID (cool mineral spectrum):
  *  0 = Palette default (Sommerso/Crystal)
- *  2 = Clear Diamond
- *  3 = Ruby (pigeon-blood crimson)
- *  4 = Emerald (Colombian green)
- *  5 = Sapphire (Ceylon royal blue)
- *  6 = Amethyst (imperial violet)
- *  7 = Citrine Topaz (sunlit honey amber)
- *  8 = Aquamarine (glacial turquoise)
+ *  2 = Pure Clear Diamond (100% transparent optical crystal)
+ *  3 = Rhodolite Ruby (clear crystal -> cool purplish crimson-berry)
+ *  4 = Cyan-Emerald (clear crystal -> cool cyan-green tourmaline)
+ *  5 = Sapphire (clear crystal -> Ceylon royal blue)
+ *  6 = Amethyst (clear crystal -> cool imperial violet)
+ *  7 = Tanzanite (clear crystal -> cool indigo-periwinkle)
+ *  8 = Aquamarine (clear crystal -> crisp glacial cyan)
+ *  9 = Orchid-Mist Crystal (mostly transparent, cool rose-plum nudge)
+ * 10 = Ice-Mist Crystal (mostly transparent, pale glacier-blue nudge)
+ * 11 = Mint-Frost Crystal (mostly transparent, cool cyan-mint nudge)
+ * 12 = Lilac-Mist Crystal (mostly transparent, cool lavender nudge)
  */
 fn gemSigma(gemId: u32, p: vec3<f32>, u: SceneUniforms) -> vec3<f32> {
   if (gemId == 0u) { return sommersoSigma(p, u); }
-  if (gemId == 2u) { return vec3<f32>(0.06, 0.05, 0.04); }
-  if (gemId == 3u) { return vec3<f32>(0.22, 6.40, 5.10); }
-  if (gemId == 4u) { return vec3<f32>(5.80, 0.34, 4.10); }
-  if (gemId == 5u) { return vec3<f32>(6.40, 2.35, 0.18); }
-  if (gemId == 6u) { return vec3<f32>(1.65, 6.00, 0.65); }
-  if (gemId == 7u) { return vec3<f32>(0.14, 1.55, 7.00); }
-  if (gemId == 8u) { return vec3<f32>(4.40, 0.62, 0.30); }
-  return sommersoSigma(p, u);
+  let clearSig = vec3<f32>(0.048, 0.044, 0.040);
+  if (gemId == 2u) {
+    // 100% pure water-clear crystal diamond (zero tint, pure refraction & chromatic dispersion)
+    return clearSig;
+  }
+  var richSig = clearSig;
+  if (gemId == 3u) { richSig = vec3<f32>(1.15, 4.65, 2.15); }      // Smoky Plum / Mauve-Wine
+  else if (gemId == 4u) { richSig = vec3<f32>(4.80, 1.10, 1.45); } // Sea-Glass Teal / Fjord Spruce
+  else if (gemId == 5u) { richSig = vec3<f32>(4.80, 2.55, 0.92); } // Arctic Slate-Cobalt
+  else if (gemId == 6u) { richSig = vec3<f32>(2.15, 4.55, 1.25); } // Smoky Iris / Dusty Amethyst
+  else if (gemId == 7u) { richSig = vec3<f32>(3.30, 2.75, 1.05); } // Storm Periwinkle
+  else if (gemId == 8u) { richSig = vec3<f32>(4.35, 1.35, 0.95); } // Pale Glacier Petrol-Cyan
+  else if (gemId == 9u) { richSig = vec3<f32>(0.55, 1.85, 0.95); } // Dusty Mauve-Mist
+  else if (gemId == 10u) { richSig = vec3<f32>(1.80, 1.05, 0.42); }// Glacier-Slate Mist
+  else if (gemId == 11u) { richSig = vec3<f32>(1.85, 0.55, 0.72); }// Sea-Glass Mist
+  else if (gemId == 12u) { richSig = vec3<f32>(1.00, 1.80, 0.58); }// Smoke-Lilac Mist
+  else { return sommersoSigma(p, u); }
+
+  let g = gemGradient(gemId, p, u);
+  return mix(clearSig, richSig, g);
 }
 
-/** Luminous transmission tint for colored gem caustics & razor bevel glints. */
+/** Luminous transmission tint for colored gem caustics & razor bevel glints (inherits clear->color gradient). */
 fn gemTint(gemId: u32, p: vec3<f32>, u: SceneUniforms) -> vec3<f32> {
   if (gemId == 0u) { return sommersoTint(p, u); }
-  if (gemId == 2u) { return vec3<f32>(1.00, 1.00, 1.00); }
-  if (gemId == 3u) { return vec3<f32>(1.00, 0.18, 0.28); }
-  if (gemId == 4u) { return vec3<f32>(0.16, 0.96, 0.44); }
-  if (gemId == 5u) { return vec3<f32>(0.20, 0.52, 1.00); }
-  if (gemId == 6u) { return vec3<f32>(0.78, 0.26, 1.00); }
-  if (gemId == 7u) { return vec3<f32>(1.00, 0.74, 0.14); }
-  if (gemId == 8u) { return vec3<f32>(0.18, 0.90, 0.98); }
-  return sommersoTint(p, u);
+  let clearTint = vec3<f32>(1.00, 1.00, 1.00);
+  if (gemId == 2u) { return clearTint; }
+  var richTint = clearTint;
+  if (gemId == 3u) { richTint = vec3<f32>(0.84, 0.44, 0.68); }
+  else if (gemId == 4u) { richTint = vec3<f32>(0.36, 0.82, 0.76); }
+  else if (gemId == 5u) { richTint = vec3<f32>(0.42, 0.62, 0.88); }
+  else if (gemId == 6u) { richTint = vec3<f32>(0.68, 0.50, 0.88); }
+  else if (gemId == 7u) { richTint = vec3<f32>(0.56, 0.64, 0.88); }
+  else if (gemId == 8u) { richTint = vec3<f32>(0.40, 0.80, 0.88); }
+  else if (gemId == 9u) { richTint = vec3<f32>(0.90, 0.76, 0.86); }
+  else if (gemId == 10u) { richTint = vec3<f32>(0.76, 0.86, 0.94); }
+  else if (gemId == 11u) { richTint = vec3<f32>(0.74, 0.90, 0.88); }
+  else if (gemId == 12u) { richTint = vec3<f32>(0.84, 0.78, 0.94); }
+  else { return sommersoTint(p, u); }
+
+  let g = gemGradient(gemId, p, u);
+  let baseMix = select(0.15, 0.0, gemId >= 9u);
+  return mix(clearTint, richTint, baseMix + (1.0 - baseMix) * g);
 }
 `;
 
@@ -1197,7 +1295,7 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
   // Beer-Lambert volumetric absorption scaled by TRUE geometric shard thickness!
   // Colored gemstone shards get a modest path boost so small scattered facets stay vibrant on the white studio floor.
   let sigma = gemSigma(gemId, in.origPos, u);
-  let gemBoost = select(1.0, 2.25, gemId >= 3u);
+  let gemBoost = select(1.0, 1.65, gemId >= 3u && gemId <= 8u);
   let opticalPath = rawThick * (1.25 + 0.65 * (1.0 - cosV)) * gemBoost;
   let transmit = exp(-sigma * opticalPath);
 

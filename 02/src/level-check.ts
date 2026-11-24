@@ -78,7 +78,7 @@ export function validateLevel(plan: LevelPlan, stageHalfW: number): LevelValidat
     if (th.poisoned && th.gemId !== 1) {
       return { level: plan.level, stageHalfW, reason: `Poisoned gem has wrong gemId ${th.gemId}` };
     }
-    if (!th.poisoned && (th.gemId < 2 || th.gemId > 8)) {
+    if (!th.poisoned && (th.gemId < 2 || th.gemId > 12)) {
       return { level: plan.level, stageHalfW, reason: `Colored gem has invalid gemId ${th.gemId}` };
     }
   }
