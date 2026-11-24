@@ -29,6 +29,7 @@ uniform float uTime;
 uniform vec3 uPixOn;  // linear
 uniform vec3 uPixOff;
 uniform vec4 uSpark[4];
+uniform float uSparkEnd; // uTime past which every tap animation is done: skip the spark loops
 varying vec4 vBody;
 varying vec2 vBody2;
 varying vec3 vTanV;
@@ -55,58 +56,58 @@ float scaleShape(vec2 d, float ra, float rb) {
   float ax = abs(d.x) / (d.x > 0.0 ? ra : ra * 0.8);
   return pow(pow(ax, 1.55) + pow(abs(d.y) / rb, 1.55), 1.0 / 1.55);
 }
-void dorsalTop(vec2 p, float st, out vec2 cTop, out float eTop, out vec2 oTop) {
+void dorsalTop(vec2 p, vec2 R, out vec2 cTop, out float eTop, out vec2 oTop) {
   eTop = 9.0; cTop = vec2(0.0); oTop = vec2(0.0);
-  vec2 R = scaleR(st);
-  float ra = R.x, rb = R.y;
+  float ra = R.x, rb = R.y, raBack = -ra * 0.8;
   float bestX = 1e9;
   float j0 = floor(p.y);
   for (int dj = -1; dj <= 2; dj++) {
     float j = j0 + float(dj);
+    float dy = p.y - j;
+    if (abs(dy) >= rb) continue;
     float off = mod(j, 2.0) * 0.5;
     float i0 = floor(p.x - off + 0.5);
     for (int di = -1; di <= 1; di++) {
-      vec2 c = vec2(i0 + float(di) + off, j);
-      vec2 d = p - c;
+      float cx = i0 + float(di) + off;
+      if (cx >= bestX) continue;
+      float dx = p.x - cx;
+      if (dx >= ra || dx <= raBack) continue;
+      vec2 d = vec2(dx, dy);
       float e = scaleShape(d, ra, rb);
-      if (e < 1.0 && c.x < bestX) { bestX = c.x; cTop = c; eTop = e; oTop = d; }
+      if (e < 1.0) { bestX = cx; cTop = vec2(cx, j); eTop = e; oTop = d; }
     }
   }
 }
 // the free edges just in front of p throw a thin shadow on it
-float edgeShadow(vec2 p, float st, float topX) {
-  vec2 R = scaleR(st);
+float edgeShadow(vec2 p, vec2 R, float topX) {
   float ra = R.x, rb = R.y;
+  float raMax = ra * 1.16, rbMax = rb * 1.16;
   float sh = 0.0;
   float j0 = floor(p.y);
   for (int dj = -1; dj <= 2; dj++) {
     float j = j0 + float(dj);
+    float dy = p.y - j;
+    if (abs(dy) >= rbMax) continue;
     float off = mod(j, 2.0) * 0.5;
     float i0 = floor(p.x - off + 0.5);
     for (int di = -1; di <= 0; di++) {
-      vec2 c = vec2(i0 + float(di) + off, j);
-      if (c.x >= topX) continue;
-      vec2 d = p - c;
-      if (d.x < 0.0) continue;
-      float e = scaleShape(d, ra, rb);
+      float cx = i0 + float(di) + off;
+      if (cx >= topX) continue;
+      float dx = p.x - cx;
+      if (dx < 0.0 || dx >= raMax) continue;
+      float e = scaleShape(vec2(dx, dy), ra, rb);
       sh = max(sh, 1.0 - smoothstep(1.0, 1.16, e));
     }
   }
   return sh;
 }
 // the height at a point of the top scale found there (e: how far out on it, o: offset from its centre)
-float dorsalHAt(float e, vec2 o, float st, float gap) {
+float dorsalHAt(float e, vec2 o, float ra, float gap) {
   if (e > 1.0) return 0.0;
-  float ra = scaleR(st).x;
   float rim = smoothstep(1.0, 1.0 - gap, e);
   float dome = 1.0 - e * e;
   float lift = clamp(o.x / ra, -1.0, 1.0); // the free back edge stands proud
   return 0.25 + rim * (0.35 + 0.25 * dome + 0.3 * lift);
-}
-float dorsalH(vec2 p, float st, float gap) {
-  vec2 c; float e; vec2 o;
-  dorsalTop(p, st, c, e, o);
-  return dorsalHAt(e, o, st, gap);
 }
 
 // belly plates: one per vertebra, the back edge over the next one
@@ -419,6 +420,7 @@ export function createSkin(sp: Species) {
     uPixOn: { value: lin(sp.pixel.on) },
     uPixOff: { value: lin(sp.pixel.off) },
     uSpark: { value: [0, 1, 2, 3].map(() => new THREE.Vector4(0, 0, -99, 0)) },
+    uSparkEnd: { value: -99 },
   };
   mat.userData.uniforms = uniforms;
   mat.onBeforeCompile = (sh) => {
@@ -485,26 +487,35 @@ if (isBelly > 0.5) {
   vec2 p = vec2(sA, b);
   vec2 c; float e; vec2 o;
   float st = stretch;
-  dorsalTop(p, st, c, e, o);
+  vec2 R = scaleR(st);
+  dorsalTop(p, R, c, e, o);
   float gapE = 0.12;
-  h = dorsalHAt(e, o, st, gapE);
-  hA = dorsalH(p + vec2(dA, 0.0), st, gapE);
-  hB = dorsalH(p + vec2(0.0, dB), st, gapE);
   float bare = step(1.0, e);
+  h = dorsalHAt(e, o, R.x, gapE);
+  if (fade > 0.05 && bare < 0.5) {
+    // gradient on the winning scale itself: 2 shape calls instead of 24
+    vec2 oA = o + vec2(dA, 0.0);
+    vec2 oB = o + vec2(0.0, dB);
+    hA = dorsalHAt(scaleShape(oA, R.x, R.y), oA, R.x, gapE);
+    hB = dorsalHAt(scaleShape(oB, R.x, R.y), oB, R.x, gapE);
+  } else {
+    hA = h;
+    hB = h;
+  }
   // the scatter (one species' tap): round the scale tapped, each scale wears the colour of another
   // a few scales off, shuffled anew every frame, twelve a second, the shuffle spreading and dying down
   vec2 cm = c;
   float shuffled = 0.0;
-  if (uKind > 3.5) {
+  if (uKind > 3.5 && uTime < uSparkEnd) {
     for (int q = 0; q < 4; q++) {
       vec4 sk = uSpark[q];
       float age = uTime - sk.z;
       if (sk.w < 0.5 || age < 0.0 || age > 1.8) continue;
-      float R = min(4.0 + age * 12.0, 12.0);
+      float radS = min(4.0 + age * 12.0, 12.0);
       float d = length(c - sk.xy);
-      if (d >= R) continue;
+      if (d >= radS) continue;
       float fr = floor(age * 12.0);
-      float amp = 10.0 * pow(1.0 - age / 1.8, 1.5) * (1.0 - d / R);
+      float amp = 10.0 * pow(1.0 - age / 1.8, 1.5) * (1.0 - d / radS);
       vec2 hh = vec2(hash12(c + fr * 1.37 + float(q) * 7.1), hash12(c.yx + fr * 2.11 + float(q) * 3.3)) - 0.5;
       vec2 mo = floor(hh * 2.0 * amp + 0.5);
       cm += mo;
@@ -538,39 +549,40 @@ if (isBelly > 0.5) {
   }
   // a tap's pixel animation, twelve frames a second, each species its own: a star (a dot, four
   // crossed rays to a *, the middle going out, the tips running on alone), a ring, a diamond, a plus
-  for (int q = 0; q < 4; q++) {
-    vec4 sk = uSpark[q];
-    float f = floor((uTime - sk.z) * 12.0);
-    if (sk.w < 0.5 || f < 0.0 || f > 8.0 || uKind > 3.5) continue;
-    float ax = abs(c.x - sk.x), ay = abs(c.y - sk.y);
-    float on = 0.0;
-    if (uKind < 0.5 || uKind > 2.5) {
-      float r0 = f < 4.0 ? 0.0 : f < 5.0 ? 1.0 : f < 6.0 ? 2.0 : f < 7.0 ? 4.0 : f < 8.0 ? 5.0 : 6.0;
-      float r1 = f < 4.0 ? f : f < 5.0 ? 4.0 : f < 8.0 ? 5.0 : 6.0;
-      float r = 99.0;
-      if (ay < 0.5) r = ax;                                          // along the body
-      if (ax < 0.6) r = min(r, ay);                                  // round it
-      if (uKind < 0.5 && abs(ax - ay) < 0.6) r = min(r, ay);         // the star's diagonals
-      on = step(r0 - 0.01, r) * step(r, r1 + 0.01);
-    } else if (uKind < 1.5) {
-      // a ring going out, breaking into every other scale as it goes
-      float r = length(vec2(ax, ay));
-      on = step(abs(r - f * 0.9), 0.55) * (f < 5.0 ? 1.0 : step(mod(floor(c.x) + c.y, 2.0), 0.5));
-    } else {
-      // a diamond going out, only its four corners at the end
-      float r = ax + ay;
-      on = step(abs(r - f), 0.6) * (f < 6.0 ? 1.0 : step(min(ax, ay), 0.6));
+  if (uKind < 3.5 && uTime < uSparkEnd) {
+    for (int q = 0; q < 4; q++) {
+      vec4 sk = uSpark[q];
+      float f = floor((uTime - sk.z) * 12.0);
+      if (sk.w < 0.5 || f < 0.0 || f > 8.0) continue;
+      float ax = abs(c.x - sk.x), ay = abs(c.y - sk.y);
+      float on = 0.0;
+      if (uKind < 0.5 || uKind > 2.5) {
+        float r0 = f < 4.0 ? 0.0 : f < 5.0 ? 1.0 : f < 6.0 ? 2.0 : f < 7.0 ? 4.0 : f < 8.0 ? 5.0 : 6.0;
+        float r1 = f < 4.0 ? f : f < 5.0 ? 4.0 : f < 8.0 ? 5.0 : 6.0;
+        float r = 99.0;
+        if (ay < 0.5) r = ax;                                          // along the body
+        if (ax < 0.6) r = min(r, ay);                                  // round it
+        if (uKind < 0.5 && abs(ax - ay) < 0.6) r = min(r, ay);         // the star's diagonals
+        on = step(r0 - 0.01, r) * step(r, r1 + 0.01);
+      } else if (uKind < 1.5) {
+        // a ring going out, breaking into every other scale as it goes
+        float r = length(vec2(ax, ay));
+        on = step(abs(r - f * 0.9), 0.55) * (f < 5.0 ? 1.0 : step(mod(floor(c.x) + c.y, 2.0), 0.5));
+      } else {
+        // a diamond going out, only its four corners at the end
+        float r = ax + ay;
+        on = step(abs(r - f), 0.6) * (f < 6.0 ? 1.0 : step(min(ax, ay), 0.6));
+      }
+      star = max(star, on);
     }
-    star = max(star, on);
   }
   // whichever of its two pixel colours stands out more from this scale's own
   starC = distance(base, uPixOn) > distance(base, uPixOff) ? uPixOn : uPixOff;
-  float ra = scaleR(st).x;
-  float lf = clamp(o.x / ra, -1.0, 1.0);
+  float lf = clamp(o.x / R.x, -1.0, 1.0);
   // the scale's own variation, a lighter free edge, the rim and the shadow of the scale in front
   col = base * (0.9 + 0.18 * id) * (1.0 + 0.07 * lf) * (1.0 + 0.4 * shuffled);
   float rim = 1.0 - smoothstep(1.0, 1.0 - gapE, e);
-  float sh = edgeShadow(p, st, c.x);
+  float sh = fade > 0.05 ? edgeShadow(p, R, c.x) : 0.0;
   joint = max(rim * 0.5 * (1.0 - bare), sh * 0.55);
   vec3 skinC = uBare;
   col = mix(col, skinC * 0.55, bare);

@@ -106,7 +106,7 @@ export function createHead(gltf: GLTF, sp: Species, paint?: THREE.Texture): Head
     const eye = inner.getObjectByName(`${sp.shape}_eye_${tag}`) as THREE.Mesh;
     eye.geometry.computeBoundingSphere();
     eye.material = eyeMaterial(sp, eye.geometry.boundingSphere!.radius);
-    eye.castShadow = true;
+    eye.castShadow = false;
   }
 
   const tongue = inner.getObjectByName(sp.shape + '_tongue') as THREE.Mesh;

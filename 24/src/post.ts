@@ -39,13 +39,17 @@ float viewZ(vec2 uv) {
   return 2.0 * uNear * uFar / (uFar + uNear - d * (uFar - uNear));
 }`;
 
-const AO = /* glsl */ `
+const AO = (samples: number) => /* glsl */ `
 precision highp float;
 ${VIEWPOS}
 uniform mat4 uProj;
 uniform vec2 uRes;
-uniform float uRadius;
+uniform float uRadius, uNear, uFar;
 varying vec2 vUv;
+float viewZ(vec2 uv) {
+  float d = texture2D(tDepth, uv).x * 2.0 - 1.0;
+  return 2.0 * uNear * uFar / (uFar + uNear - d * (uFar - uNear));
+}
 float hash(vec2 p) { vec3 p3 = fract(vec3(p.xyx) * .1031); p3 += dot(p3, p3.yzx + 33.33); return fract((p3.x + p3.y) * p3.z); }
 void main() {
   vec3 P = viewPos(vUv);
@@ -57,28 +61,32 @@ void main() {
   vec3 dy = abs(u.z) < abs(d.z) ? u : d;
   vec3 N = normalize(cross(dx, dy));
   float a0 = hash(gl_FragCoord.xy) * 6.2832;
+  float h1 = hash(gl_FragCoord.yx);
   vec3 rv = vec3(cos(a0), sin(a0), 0.0);
   vec3 T = normalize(rv - N * dot(rv, N));
   vec3 B = cross(N, T);
   float occ = 0.0;
-  const int K = 16;
+  const int K = ${samples};
+  const mat2 ROT = mat2(-0.73736888, 0.67549029, -0.67549029, -0.73736888);
+  vec2 cs = vec2(1.0, 0.0);
   for (int i = 0; i < K; i++) {
     float t = (float(i) + 0.5) / float(K);
-    float a = float(i) * 2.39996323;
+    float rt = sqrt(t);
     float h = sqrt(1.0 - t);
-    vec3 dir = T * cos(a) * sqrt(t) + B * sin(a) * sqrt(t) + N * h;
-    float sc = mix(0.15, 1.0, fract(t * 7.0 + hash(gl_FragCoord.yx)));
+    vec3 dir = T * cs.x * rt + B * cs.y * rt + N * h;
+    cs = ROT * cs;
+    float sc = mix(0.15, 1.0, fract(t * 7.0 + h1));
     vec3 S = P + dir * uRadius * sc * sc;
     vec4 c = uProj * vec4(S, 1.0);
     vec2 suv = c.xy / c.w * 0.5 + 0.5;
-    float sz = viewPos(suv).z;
+    float sz = -viewZ(suv);
     float range = smoothstep(0.0, 1.0, uRadius / max(abs(P.z - sz), 1e-5));
     occ += step(S.z + 0.0008, sz) * range;
   }
   gl_FragColor = vec4(vec3(1.0 - occ / float(K)), 1.0);
 }`;
 
-const COMPOSE = /* glsl */ `
+const COMPOSE = (mobile: boolean) => /* glsl */ `
 precision highp float;
 uniform sampler2D tColor;
 uniform sampler2D tAO;
@@ -90,39 +98,61 @@ varying vec2 vUv;
 void main() {
   vec3 c = texture2D(tColor, vUv).rgb;
   float z0 = viewZ(vUv);
-  float sum = 0.0, wsum = 0.0;
-  for (int y = -2; y <= 2; y++) for (int x = -2; x <= 2; x++) {
-    vec2 uv = vUv + vec2(float(x), float(y)) / uAORes;
-    float w = exp(-abs(viewZ(uv) - z0) * 400.0);
-    sum += texture2D(tAO, uv).r * w;
-    wsum += w;
+  float k = 1.0;
+  if (uStrength > 0.001 || uView > 0.5) {
+    vec2 stepUv = ${mobile ? '1.25' : '1.5'} / uAORes;
+    float sum = texture2D(tAO, vUv).r;
+    float wsum = 1.0;
+    ${mobile ? `
+    vec2 offs[4];
+    offs[0] = vec2(stepUv.x, 0.0); offs[1] = vec2(-stepUv.x, 0.0);
+    offs[2] = vec2(0.0, stepUv.y); offs[3] = vec2(0.0, -stepUv.y);
+    for (int i = 0; i < 4; i++) {
+      vec2 uv = vUv + offs[i];
+      float w = exp(-abs(viewZ(uv) - z0) * 400.0);
+      sum += texture2D(tAO, uv).r * w;
+      wsum += w;
+    }` : `
+    for (int y = -1; y <= 1; y++) for (int x = -1; x <= 1; x++) {
+      if (x == 0 && y == 0) continue;
+      vec2 uv = vUv + vec2(float(x), float(y)) * stepUv;
+      float w = exp(-abs(viewZ(uv) - z0) * 400.0);
+      sum += texture2D(tAO, uv).r * w;
+      wsum += w;
+    }`}
+    float ao = sum / max(wsum, 1e-4);
+    k = clamp(mix(1.0, pow(ao, 1.5), uStrength), 0.0, 1.0);
   }
-  float ao = sum / max(wsum, 1e-4);
-  float k = clamp(mix(1.0, pow(ao, 1.5), uStrength), 0.0, 1.0);
   // the depth goes along in alpha, so the blur after needn't read the depth buffer again
   gl_FragColor = vec4(uView > 0.5 ? vec3(k * 0.6) : c * k, z0);
 }`;
 
-const DOF = /* glsl */ `
+const DOF = (taps: number) => /* glsl */ `
 precision highp float;
 uniform sampler2D tColor; // rgb the picture, a its depth along the view
 uniform vec2 uRes;
 uniform float uFocus, uAperture, uMaxR;
 varying vec2 vUv;
 float coc(float z) { return min(uAperture * abs(1.0 / uFocus - 1.0 / z) * uRes.y, uMaxR); }
+float hash(vec2 p) { vec3 p3 = fract(vec3(p.xyx) * .1031); p3 += dot(p3, p3.yzx + 33.33); return fract((p3.x + p3.y) * p3.z); }
 void main() {
   vec4 s0 = texture2D(tColor, vUv);
   vec3 c0 = s0.rgb;
   float z0 = s0.a;
   float r0 = coc(z0);
+  if (uAperture <= 0.0001 || uMaxR < 0.5) { gl_FragColor = vec4(c0, 1.0); return; }
   vec3 sum = c0;
   float wsum = 1.0;
-  const int N = 48;
+  const int N = ${taps};
+  const mat2 ROT = mat2(-0.73736888, 0.67549029, -0.67549029, -0.73736888);
+  float a0 = hash(gl_FragCoord.xy) * 6.2832;
+  vec2 dir = vec2(cos(a0), sin(a0));
+  vec2 invRes = 1.0 / uRes;
   for (int i = 0; i < N; i++) {
     float t = (float(i) + 0.5) / float(N);
     float r = sqrt(t) * uMaxR;
-    float a = float(i) * 2.39996323;
-    vec2 uv = vUv + vec2(cos(a), sin(a)) * r / uRes;
+    vec2 uv = vUv + dir * (r * invRes);
+    dir = ROT * dir;
     vec4 sc = texture2D(tColor, uv);
     float z = sc.a;
     float rs = coc(z);
@@ -191,34 +221,35 @@ void main() {
   gl_FragColor = vec4(c, 1.0);
 }`;
 
-export function createPost(renderer: THREE.WebGLRenderer) {
+export function createPost(renderer: THREE.WebGLRenderer, mobile = false) {
   const make = (samples: number) => {
     const rt = new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType, samples });
     return rt;
   };
-  const scene = make(4);
+  const scene = make(mobile ? 2 : 4);
   scene.depthTexture = new THREE.DepthTexture(1, 1, THREE.FloatType);
   const aoRT = new THREE.WebGLRenderTarget(1, 1, { type: THREE.UnsignedByteType });
   const lit = make(0);
   const blurred = make(0);
-  // the loading drawing, multisampled: the canvas itself isn't, and a wireframe shows it
-  const wire = new THREE.WebGLRenderTarget(1, 1, { samples: 4 });
+  // the loading drawing, multisampled: the canvas itself isn't, and a wireframe shows it; freed once revealed
+  let wire: THREE.WebGLRenderTarget | null = new THREE.WebGLRenderTarget(1, 1, { samples: mobile ? 2 : 4 });
   const clearCol = new THREE.Color();
   const invProj = new THREE.Matrix4();
+  const aoDiv = mobile ? 3 : 2;
 
   const ao = new FullScreenQuad(new THREE.ShaderMaterial({
     uniforms: {
       tDepth: { value: scene.depthTexture }, uInvProj: { value: invProj }, uProj: { value: new THREE.Matrix4() },
-      uRes: { value: new THREE.Vector2(1, 1) }, uRadius: { value: LOOK.aoRadius },
+      uRes: { value: new THREE.Vector2(1, 1) }, uRadius: { value: LOOK.aoRadius }, uNear: { value: 0.01 }, uFar: { value: 20 },
     },
-    vertexShader: VERT, fragmentShader: AO, depthTest: false, depthWrite: false,
+    vertexShader: VERT, fragmentShader: AO(mobile ? 8 : 16), depthTest: false, depthWrite: false,
   }));
   const compose = new FullScreenQuad(new THREE.ShaderMaterial({
     uniforms: {
       tColor: { value: scene.texture }, tAO: { value: aoRT.texture }, tDepth: { value: scene.depthTexture },
       uNear: { value: 0.01 }, uFar: { value: 20 }, uAORes: { value: new THREE.Vector2(1, 1) }, uStrength: { value: LOOK.ao }, uView: { value: 0 },
     },
-    vertexShader: VERT, fragmentShader: COMPOSE, depthTest: false, depthWrite: false,
+    vertexShader: VERT, fragmentShader: COMPOSE(mobile), depthTest: false, depthWrite: false,
   }));
 
   const dof = new FullScreenQuad(new THREE.ShaderMaterial({
@@ -227,14 +258,14 @@ export function createPost(renderer: THREE.WebGLRenderer) {
       uRes: { value: new THREE.Vector2(1, 1) },
       uFocus: { value: 0.35 }, uAperture: { value: LOOK.aperture }, uMaxR: { value: 10 },
     },
-    vertexShader: VERT, fragmentShader: DOF, depthTest: false, depthWrite: false,
+    vertexShader: VERT, fragmentShader: DOF(mobile ? 16 : 32), depthTest: false, depthWrite: false,
   }));
   const grade = new FullScreenQuad(new THREE.ShaderMaterial({
     uniforms: {
       tDiffuse: { value: blurred.texture }, uRes: { value: new THREE.Vector2(1, 1) },
       uTime: { value: 0 }, uGrade: { value: LOOK.grade }, uGrain: { value: LOOK.grain }, uVignette: { value: LOOK.vignette },
       uExposure: { value: 1 },
-      tWire: { value: wire.texture }, uReveal: { value: 1 },
+      tWire: { value: wire.texture as THREE.Texture | null }, uReveal: { value: 1 },
       // #0b0b0d and #f4f4f2, as the page has them
       uBg: { value: new THREE.Vector3(11, 11, 13).divideScalar(255) }, uInk: { value: new THREE.Vector3(244, 244, 242).divideScalar(255) },
     },
@@ -243,6 +274,13 @@ export function createPost(renderer: THREE.WebGLRenderer) {
 
   const quadMesh = (q: FullScreenQuad) => (q as unknown as { _mesh: THREE.Mesh })._mesh;
   return {
+    /** free the loading wireframe target once the reveal is done */
+    endWire() {
+      if (!wire) return;
+      wire.dispose();
+      wire = null;
+      (grade.material as THREE.ShaderMaterial).uniforms.tWire.value = null;
+    },
     /** build every program the picture will use, off the thread where the browser can
      * (KHR_parallel_shader_compile). The scene's are built with its own target bound: into a float
      * target three builds linear, untone-mapped programs, and built against the screen they would be
@@ -272,8 +310,8 @@ export function createPost(renderer: THREE.WebGLRenderer) {
       scene.setSize(W, H);
       lit.setSize(W, H);
       blurred.setSize(W, H);
-      wire.setSize(W, H);
-      const aw = Math.ceil(W / 2), ah = Math.ceil(H / 2);
+      wire?.setSize(W, H);
+      const aw = Math.ceil(W / aoDiv), ah = Math.ceil(H / aoDiv);
       aoRT.setSize(aw, ah);
       (ao.material as THREE.ShaderMaterial).uniforms.uRes.value.set(aw, ah);
       (compose.material as THREE.ShaderMaterial).uniforms.uAORes.value.set(aw, ah);
@@ -285,7 +323,7 @@ export function createPost(renderer: THREE.WebGLRenderer) {
     render(world: THREE.Scene, camera: THREE.PerspectiveCamera, focus: number, time: number, reveal = 1, drawWire: (() => void) | null = null) {
       const mg = grade.material as THREE.ShaderMaterial;
       mg.uniforms.uReveal.value = reveal;
-      if (drawWire) {
+      if (drawWire && wire) {
         renderer.getClearColor(clearCol);
         const a = renderer.getClearAlpha();
         const bg = world.background;
@@ -320,6 +358,8 @@ export function createPost(renderer: THREE.WebGLRenderer) {
       invProj.copy(camera.projectionMatrixInverse);
       ma.uniforms.uProj.value.copy(camera.projectionMatrix);
       ma.uniforms.uRadius.value = LOOK.aoRadius;
+      ma.uniforms.uNear.value = camera.near;
+      ma.uniforms.uFar.value = camera.far;
       mc.uniforms.uNear.value = camera.near;
       mc.uniforms.uFar.value = camera.far;
       mc.uniforms.uStrength.value = LOOK.ao;

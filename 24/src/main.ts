@@ -23,12 +23,17 @@ const renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPrefer
 // the patch the knot was baked onto, and how much of it the camera frames (bake.ts)
 const { area: AREA, view: VIEW } = data;
 const SPAN = Math.max(AREA.w, AREA.h) + 0.16; // the pile and a margin, either way up
-renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
+const portrait = window.innerHeight > window.innerWidth;
+const touch = matchMedia('(pointer: coarse)').matches;
+const basePR = Math.min(window.devicePixelRatio, touch ? 1.25 : 1.5);
+let resK = 1;
+renderer.setPixelRatio(basePR);
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.toneMapping = THREE.NeutralToneMapping;
 renderer.toneMappingExposure = 1.05;
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFShadowMap;
+if (touch) renderer.shadowMap.autoUpdate = false;
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(BG);
@@ -40,8 +45,6 @@ scene.background = new THREE.Color(BG);
 }
 
 // from above, a little off plumb, the mess bleeding off every edge
-const portrait = window.innerHeight > window.innerWidth;
-const touch = matchMedia('(pointer: coarse)').matches;
 const camera = new THREE.PerspectiveCamera(30, 1, 0.01, 20);
 const controls = new OrbitControls(camera, canvas);
 controls.target.set(0, 0, 0);
@@ -62,7 +65,8 @@ const key = new THREE.DirectionalLight(0xfff2e2, 2.6);
 key.position.set(0.9, 2.2, 0.7);
 key.castShadow = true;
 // the shadow map over the pile and no further
-key.shadow.mapSize.set(2048, 2048);
+const shadowSize = touch ? 1024 : 2048;
+key.shadow.mapSize.set(shadowSize, shadowSize);
 key.shadow.camera.left = -SPAN / 2;
 key.shadow.camera.right = SPAN / 2;
 key.shadow.camera.top = SPAN / 2;
@@ -71,7 +75,7 @@ key.shadow.camera.near = 1;
 key.shadow.camera.far = 5;
 key.shadow.bias = -0.0004;
 key.shadow.normalBias = 0.004;
-key.shadow.radius = 4;
+key.shadow.radius = touch ? 3 : 4;
 scene.add(key);
 const rim = new THREE.DirectionalLight(0xc8dcff, 1.6);
 rim.position.set(-1.2, 1.0, -1.4);
@@ -81,7 +85,7 @@ scene.add(new THREE.HemisphereLight(0x8a96a0, 0x1a1410, 0.35));
 // --- contact shadows: the bodies drawn from above, soft, darker the closer to the ground ----
 const CONTACT_SPAN = SPAN;
 const contact = (() => {
-  const size = 768;
+  const size = touch ? 256 : 384;
   const cv = document.createElement('canvas');
   cv.width = cv.height = size;
   const g = cv.getContext('2d')!;
@@ -107,11 +111,11 @@ const contact = (() => {
       g.fillRect(0, 0, size, size);
       const k = size / CONTACT_SPAN;
       for (const s of list) {
-        for (let i = 0; i < s.n; i += 1) {
+        for (let i = 0; i < s.n; i += 2) {
           const x = (s.pos[i * 3] / CONTACT_SPAN + 0.5) * size;
           const y = (s.pos[i * 3 + 2] / CONTACT_SPAN + 0.5) * size;
           const lift = Math.max(0, s.pos[i * 3 + 1] - s.rad[i]);
-          const a = 0.2 * Math.max(0, 1 - lift / 0.06);
+          const a = 0.36 * Math.max(0, 1 - lift / 0.06);
           if (a <= 0.01) continue;
           const r = (s.rad[i] * 1.6 + lift * 0.8) * k;
           g.globalAlpha = a;
@@ -203,7 +207,7 @@ const world = createWorld(snakes);
 world.step(1 / 60);
 const skins = snakes.map((s) => createSkin(s.sp));
 const bodies: Body[] = snakes.map((s, k) => {
-  const b = createBody(s, skins[k]);
+  const b = createBody(s, skins[k], touch ? { rad: 24, aoStride: 3 } : { rad: 36, aoStride: 2 });
   scene.add(b.mesh);
   return b;
 });
@@ -299,6 +303,7 @@ canvas.addEventListener('pointerdown', (ev) => {
   if (at) {
     const u = skins[snakes.indexOf(p.s)].userData.uniforms;
     (u.uSpark.value as THREE.Vector4[])[sparkNext++ % 4].set(at.along, at.row, time, 1);
+    u.uSparkEnd.value = Math.max(u.uSparkEnd.value, time + 2.0);
     // the line once the animation is done
     u.uTextT0.value = time + 0.75;
     u.uTextCol.value = at.col;
@@ -377,7 +382,7 @@ if (query.has('debug')) {
 }
 
 // --- loop ---------------------------------------------------------------------------------
-const post = createPost(renderer);
+const post = createPost(renderer, touch);
 // the focus is pulled by hand onto its mark, a little late
 let focus = 0.35;
 const focusV = new THREE.Vector3();
@@ -387,6 +392,7 @@ const keep = { pos: new THREE.Vector3(), quat: new THREE.Quaternion() };
 let placed = false;
 function resize() {
   const w = window.innerWidth, h = window.innerHeight;
+  renderer.setPixelRatio(basePR * resK);
   renderer.setSize(w, h, false);
   post.setSize(w, h);
   camera.aspect = w / h;
@@ -409,20 +415,40 @@ resize();
 const timer = new THREE.Timer();
 timer.connect(document);
 let time = 0;
+let frameNo = 0;
+let wireFreed = false;
+let lastTs = -100;
+// on a phone that still can't hold frame rate, step resolution down (to 0.75x) and back up when calm
+let paceMs = 16.7, slowFor = 0, fastFor = 0, resCeil = 1.01;
+function pace(ms: number, dt: number) {
+  if (!touch || reveal < 1 || ms > 200) return;
+  paceMs += (ms - paceMs) * 0.08;
+  slowFor = paceMs > 26 ? slowFor + dt : 0;
+  fastFor = paceMs < 18 ? fastFor + dt : 0;
+  if (slowFor > 1 && resK > 0.75) { resCeil = resK; resK = Math.max(0.75, resK * 0.9); slowFor = 0; resize(); }
+  else if (fastFor > 3 && resK < 1 && resK / 0.9 < resCeil - 0.01) { resK = Math.min(1, resK / 0.9); fastFor = 0; resize(); }
+}
 function frame(ts: number) {
+  // cap at 60 fps: a 120 Hz phone or laptop would otherwise run everything twice as often
+  const rawMs = ts - lastTs;
+  if (rawMs < 1000 / 62) { requestAnimationFrame(frame); return; }
+  lastTs = ts;
   timer.update(ts);
   const dt = Math.min(timer.getDelta(), 1 / 20);
+  pace(rawMs, dt);
   time += dt;
+  frameNo++;
   if (held) {
     held.t += dt;
     if (held.t > 0.3) world.stroke(held.s, held.i, Math.min(1, 0.45 + (held.t - 0.3) * 0.8));
   }
   world.step(dt);
   skins.forEach((m) => (m.userData.uniforms.uTime.value = time));
-  contact.draw(snakes);
+  if (!touch || frameNo % 2 === 1) contact.draw(snakes);
   for (let k = 0; k < snakes.length; k++) {
     const b = bodies[k];
-    b.update(time, world);
+    // on mobile, stagger body-on-body AO updates across two frames (half the snakes each frame)
+    b.update(time, world, !touch || (frameNo + k) % 2 === 0);
     const h = heads[k];
     if (h) {
       h.place(b.neck.pos, b.neck.fwd, b.neck.up);
@@ -449,7 +475,16 @@ function frame(ts: number) {
   camera.quaternion.multiply(qShake.setFromEuler(shake.rot));
   camera.updateMatrixWorld();
   // the drawing until the picture is built, then the picture fades in over it (loading, below)
-  if (revealing && reveal < 1) reveal = Math.min(1, reveal + dt / REVEAL);
+  if (revealing && reveal < 1) {
+    reveal = Math.min(1, reveal + dt / REVEAL);
+    if (reveal === 1 && !wireFreed) {
+      wireFreed = true;
+      post.endWire();
+      wireMat.dispose();
+      hideMat.dispose();
+    }
+  }
+  if (touch && reveal > 0 && (frameNo % 2 === 1 || reveal < 0.05)) renderer.shadowMap.needsUpdate = true;
   post.render(scene, camera, focus, time, THREE.MathUtils.smoothstep(reveal, 0, 1), reveal < 1 ? drawWire : null);
   camera.position.copy(keep.pos);
   camera.quaternion.copy(keep.quat);
@@ -474,6 +509,7 @@ const hideMat = new THREE.MeshBasicMaterial({ colorWrite: false, polygonOffset: 
 // come in with the picture)
 function drawWire() {
   const g = ground.visible;
+  const sa = renderer.shadowMap.autoUpdate;
   ground.visible = false;
   for (const h of heads) if (h) h.group.visible = false;
   renderer.shadowMap.autoUpdate = false;
@@ -485,7 +521,7 @@ function drawWire() {
   renderer.render(scene, camera);
   renderer.autoClear = ac;
   scene.overrideMaterial = null;
-  renderer.shadowMap.autoUpdate = true;
+  renderer.shadowMap.autoUpdate = sa;
   for (const h of heads) if (h) h.group.visible = true;
   ground.visible = g;
 }
