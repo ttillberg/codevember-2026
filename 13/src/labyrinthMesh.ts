@@ -14,22 +14,26 @@ import {
   sphToDir,
   type Cell,
   type Checkpoint,
+  type LevelConfig,
   type PipeEdge,
   type PipeNode,
   type ShutterPort,
   type SphereGrid,
+  type TogglePad,
   type VertexPost,
   type WallSlot,
 } from './maze';
 import {
   createArrowGlyphTexture,
   createDecalLabelTexture,
+  createGateStripeTexture,
   createLedHaloTexture,
   createMatteGrainTextures,
   createMetalBallTexture,
   createPadlockGlyphTexture,
   createPlasticScratchTextures,
   createTapeTexture,
+  createTogglePadDecalTexture,
 } from './textures';
 
 export interface LedVisual {
@@ -52,13 +56,22 @@ interface ShutterRig {
   port: ShutterPort;
   pivots: THREE.Group[];
   ringLedMat: THREE.MeshStandardMaterial;
+  linkedColorId: number; // -1 none, 0 coral, 1 cobalt
   lastOpen: number;
+}
+
+interface ToggleVisual {
+  pad: TogglePad;
+  capMesh: THREE.Mesh;
+  capMat: THREE.MeshStandardMaterial;
+  pipMat: THREE.MeshStandardMaterial;
+  baseY: number;
 }
 
 const POST_RAD_BASE = WALL_HALF_WIDTH * 1.12;
 const POST_RAD_UPPER = WALL_HALF_WIDTH * 1.04;
 const POST_RAD_TOP = WALL_HALF_WIDTH * 0.8;
-const POLE_SEAM_GAP = 0.0042;
+const POLE_SEAM_GAP = 0.0034;
 
 export interface LabyrinthRig {
   root: THREE.Group;
@@ -70,8 +83,15 @@ export interface LabyrinthRig {
   aoExcluded: THREE.Object3D[];
   applyWallExtensions: (wallExt: Float32Array) => void;
   applyShutterOpenings: (shutterOpen: Float32Array) => void;
-  setLevelCheckpoints: (checkpoints: Checkpoint[]) => void;
-  updateLeds: (time: number, clearedMask: boolean[], nextIndex: number, allCleared: boolean) => void;
+  setLevelVisuals: (level: LevelConfig) => void;
+  updateLeds: (
+    time: number,
+    clearedMask: boolean[],
+    nextIndex: number,
+    allCleared: boolean,
+    toggleMask: number,
+    togglePulse: Float32Array,
+  ) => void;
   setPlasticOpacity: (scale: number) => void;
   setScratchStrength: (scale: number) => void;
   dispose: () => void;
@@ -495,8 +515,8 @@ function buildHalfPipeEdgeGeometry(
   const dB = nodes[edge.nodeB].dir;
   const steps = Math.max(12, Math.ceil(edge.arcLen * 28));
 
-  const rIn = 0.079; // cradles 0.068 steel ball cleanly with crisp visual clearance
-  const rOut = 0.097; // sculpted physical wall thickness
+  const rIn = 0.068; // cradles 0.056 steel ball cleanly with crisp visual clearance
+  const rOut = 0.084; // sculpted physical wall thickness
   const arcSegs = 14;
   // Open U-profile: bottom at -radial, walls sweeping ±105° up toward the transparent window ceiling!
   const maxTheta = (105 * Math.PI) / 180;
@@ -536,7 +556,7 @@ function buildHalfPipeEdgeGeometry(
   };
 
   // Trim pipe ends cleanly to the outer rim of each spherical junction bowl so pipes never slice across hub centers!
-  const hubTrimFrac = Math.min(0.24, 0.082 / Math.max(0.15, edge.arcLen));
+  const hubTrimFrac = Math.min(0.24, 0.072 / Math.max(0.15, edge.arcLen));
 
   for (let s = 0; s <= steps; s++) {
     const rawT = s / steps;
@@ -609,8 +629,8 @@ function buildPipeNodeGeometry(node: PipeNode): { bowlGeo: THREE.BufferGeometry;
   const metalParts: THREE.BufferGeometry[] = [];
 
   // Hemispherical U-bowl cradle around node center at R_BALL_PIPE
-  const rIn = 0.081;
-  const rOut = 0.1;
+  const rIn = 0.07;
+  const rOut = 0.086;
   const bowlPts: THREE.Vector2[] = [];
   const segs = 10;
   const maxAng = (102 * Math.PI) / 180;
@@ -1292,6 +1312,7 @@ export function buildLabyrinthRig(grid: SphereGrid): LabyrinthRig {
       port,
       pivots,
       ringLedMat,
+      linkedColorId: -1,
       lastOpen: -1,
     });
   }
@@ -1346,13 +1367,13 @@ export function buildLabyrinthRig(grid: SphereGrid): LabyrinthRig {
 
     let arrowMat: THREE.MeshStandardMaterial | null = null;
     if (wall.locked) {
-      const glyphGeo = buildWallTopGlyphPatch(wall, R_WALL + 0.0014, 0.044, 0.044);
+      const glyphGeo = buildWallTopGlyphPatch(wall, R_WALL + 0.0014, 0.034, 0.034);
       const glyphMesh = new THREE.Mesh(glyphGeo, padlockMat);
       mesh.add(glyphMesh);
       baseAoExcluded.push(glyphMesh);
       disposables.push(glyphGeo);
     } else if (wall.hasArrow) {
-      const glyphGeo = buildWallTopGlyphPatch(wall, R_WALL + 0.0014, 0.084, 0.042);
+      const glyphGeo = buildWallTopGlyphPatch(wall, R_WALL + 0.0014, 0.066, 0.033);
       arrowMat = new THREE.MeshStandardMaterial({
         map: arrowTex,
         transparent: true,
@@ -1390,7 +1411,7 @@ export function buildLabyrinthRig(grid: SphereGrid): LabyrinthRig {
   }
   for (let i = 0; i < screwPosts.length; i++) {
     const post = screwPosts[i];
-    const screw = createMicroScrew(steelMat, darkSlotMat, 1.0);
+    const screw = createMicroScrew(steelMat, darkSlotMat, 0.78);
     screw.position.copy(post.dir).multiplyScalar(R_WALL - 0.002);
     screw.quaternion.setFromUnitVectors(upAxis, post.dir);
     screw.rotateY(i * 1.17 + 0.4);
@@ -1430,37 +1451,80 @@ export function buildLabyrinthRig(grid: SphereGrid): LabyrinthRig {
   disposables.push(startRingGeo);
 
   // =========================================================================
-  // 6. DYNAMIC PER-LEVEL CHECKPOINT LEDs (BOTH UPPER SURFACE & UNDER-DECK HALF-PIPE!)
+  // 6. DYNAMIC PER-LEVEL PUZZLE ELEMENTS: SEQUENTIAL LEDs, TOGGLE PADS & GATE STRIPES
   // =========================================================================
   const haloTex = createLedHaloTexture();
-  const bezelGeo = new THREE.TorusGeometry(0.029, 0.0058, 10, 24);
+  const bezelGeo = new THREE.TorusGeometry(0.024, 0.0048, 10, 24);
   bezelGeo.rotateX(Math.PI / 2);
-  const domeGeo = new THREE.SphereGeometry(0.022, 20, 12, 0, Math.PI * 2, 0, Math.PI * 0.55);
-  const haloGeo = new THREE.PlaneGeometry(0.24, 0.24);
-  disposables.push(haloTex, bezelGeo, domeGeo, haloGeo);
+  const domeGeo = new THREE.SphereGeometry(0.0185, 20, 12, 0, Math.PI * 2, 0, Math.PI * 0.55);
+  const haloGeo = new THREE.PlaneGeometry(0.21, 0.21);
 
-  const checkpointGroup = new THREE.Group();
-  root.add(checkpointGroup);
+  // Tactile floor Toggle Switch Pad geometry (Braun Coral A & Cobalt B)
+  const toggleBezelGeo = new THREE.TorusGeometry(0.046, 0.006, 10, 28);
+  toggleBezelGeo.rotateX(Math.PI / 2);
+  const toggleCapGeo = new THREE.CylinderGeometry(0.036, 0.039, 0.014, 24);
+  const togglePipGeo = new THREE.SphereGeometry(0.008, 12, 8);
+  const gateStripeTextures = [createGateStripeTexture('#e05038'), createGateStripeTexture('#3374de')];
+  const gateStripeMats = gateStripeTextures.map(
+    (tex) =>
+      new THREE.MeshStandardMaterial({
+        map: tex,
+        transparent: true,
+        roughness: 0.65,
+        depthWrite: false,
+      }),
+  );
+  const TOGGLE_HEX = ['#d94d34', '#2e6fd9'];
+  const TOGGLE_COLORS = [new THREE.Color(0xe0553c), new THREE.Color(0x3678e3)];
+
+  disposables.push(
+    haloTex,
+    bezelGeo,
+    domeGeo,
+    haloGeo,
+    toggleBezelGeo,
+    toggleCapGeo,
+    togglePipGeo,
+    ...gateStripeTextures,
+    ...gateStripeMats,
+  );
+
+  const levelGroup = new THREE.Group();
+  root.add(levelGroup);
 
   let leds: LedVisual[] = [];
-  let checkpointDisposables: { dispose: () => void }[] = [];
+  let toggleVisuals: ToggleVisual[] = [];
+  let levelDisposables: { dispose: () => void }[] = [];
+  let attachedGateOverlays: { parent: THREE.Object3D; mesh: THREE.Mesh }[] = [];
   let lastClearedIdx = -1;
 
-  function setLevelCheckpoints(checkpoints: Checkpoint[]) {
-    for (const d of checkpointDisposables) d.dispose();
-    checkpointDisposables = [];
-    checkpointGroup.clear();
+  function setLevelVisuals(level: LevelConfig) {
+    for (const d of levelDisposables) d.dispose();
+    levelDisposables = [];
+    for (const o of attachedGateOverlays) {
+      o.parent.remove(o.mesh);
+    }
+    attachedGateOverlays = [];
+    levelGroup.clear();
     dynamicAoExcluded.length = 0;
     leds = [];
+    toggleVisuals = [];
     lastClearedIdx = -1;
 
-    for (const cp of checkpoints) {
+    // Reset shutter color links
+    for (const s of shutterRigs) {
+      s.linkedColorId = -1;
+      s.lastOpen = -1; // force ring color refresh
+    }
+
+    // 1. Sequential Checkpoint LEDs (upper surface + under-deck half-pipe!)
+    for (const cp of level.checkpoints) {
       const qAlign = new THREE.Quaternion().setFromUnitVectors(upAxis, cp.dir);
       const baseR = cp.layer === 'pipe' ? R_PIPE_FLOOR : R_FLOOR;
 
       if (cp.layer === 'upper') {
         const labelTex = createDecalLabelTexture(cp.label, cp.isFinish ? 'END' : 'CHK');
-        const decalGeo = buildFloorDecalPatch(cp.dir, baseR + 0.0024, 0.145);
+        const decalGeo = buildFloorDecalPatch(cp.dir, baseR + 0.0022, 0.112);
         const decalMat = new THREE.MeshStandardMaterial({
           map: labelTex,
           transparent: true,
@@ -1468,51 +1532,141 @@ export function buildLabyrinthRig(grid: SphereGrid): LabyrinthRig {
           depthWrite: false,
         });
         const decalMesh = new THREE.Mesh(decalGeo, decalMat);
-        checkpointGroup.add(decalMesh);
+        levelGroup.add(decalMesh);
         dynamicAoExcluded.push(decalMesh);
-        checkpointDisposables.push(labelTex, decalGeo, decalMat);
+        levelDisposables.push(labelTex, decalGeo, decalMat);
       }
 
       const bezel = new THREE.Mesh(bezelGeo, steelMat);
       bezel.position.copy(cp.dir).multiplyScalar(baseR + 0.002);
       bezel.quaternion.copy(qAlign);
-      checkpointGroup.add(bezel);
+      levelGroup.add(bezel);
 
       const domeMat = new THREE.MeshStandardMaterial({
-        color: 0xffe4c4,
-        emissive: new THREE.Color(0xff741e),
-        emissiveIntensity: 0.7,
-        roughness: 0.22,
-        metalness: 0.04,
+        color: 0xd0cbc2,
+        emissive: new THREE.Color(0x000000),
+        emissiveIntensity: 0.0,
+        roughness: 0.24,
+        metalness: 0.05,
       });
       const dome = new THREE.Mesh(domeGeo, domeMat);
       dome.position.copy(cp.dir).multiplyScalar(baseR - 0.001);
       dome.quaternion.copy(qAlign);
-      checkpointGroup.add(dome);
-      checkpointDisposables.push(domeMat);
+      levelGroup.add(dome);
+      levelDisposables.push(domeMat);
 
       const haloMat = new THREE.MeshBasicMaterial({
         map: haloTex,
         color: 0xff8c2b,
         transparent: true,
-        opacity: 0.38,
+        opacity: 0.0,
         blending: THREE.AdditiveBlending,
         depthWrite: false,
       });
       const haloMesh = new THREE.Mesh(haloGeo, haloMat);
-      haloMesh.position.copy(cp.dir).multiplyScalar(baseR + 0.022);
+      haloMesh.position.copy(cp.dir).multiplyScalar(baseR + 0.02);
       haloMesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), cp.dir);
-      checkpointGroup.add(haloMesh);
+      levelGroup.add(haloMesh);
       dynamicAoExcluded.push(haloMesh);
-      checkpointDisposables.push(haloMat);
+      levelDisposables.push(haloMat);
 
       leds.push({
         checkpoint: cp,
         domeMat,
         haloMat,
         haloMesh,
-        localPos: cp.dir.clone().multiplyScalar(baseR + 0.075),
+        localPos: cp.dir.clone().multiplyScalar(baseR + 0.07),
       });
+    }
+
+    // 2. Mechanical Floor Toggle Switch Pads + Color-Linked Gate Wall Stripes & Shutter Links
+    for (const tg of level.toggles) {
+      const qAlign = new THREE.Quaternion().setFromUnitVectors(upAxis, tg.dir);
+      const hexStr = TOGGLE_HEX[tg.colorId];
+      const accentCol = TOGGLE_COLORS[tg.colorId];
+
+      // Pad-printed dashed ring ("SW A ⇄" / "SW B ⇄")
+      const padTex = createTogglePadDecalTexture(tg.label, hexStr);
+      const padDecalGeo = buildFloorDecalPatch(tg.dir, R_FLOOR + 0.0022, 0.115);
+      const padDecalMat = new THREE.MeshStandardMaterial({
+        map: padTex,
+        transparent: true,
+        roughness: 0.75,
+        depthWrite: false,
+      });
+      const padDecal = new THREE.Mesh(padDecalGeo, padDecalMat);
+      levelGroup.add(padDecal);
+      dynamicAoExcluded.push(padDecal);
+      levelDisposables.push(padTex, padDecalGeo, padDecalMat);
+
+      const padGroup = new THREE.Group();
+      padGroup.position.copy(tg.dir).multiplyScalar(R_FLOOR);
+      padGroup.quaternion.copy(qAlign);
+      levelGroup.add(padGroup);
+
+      // Machined stainless collar bezel
+      const bezel = new THREE.Mesh(toggleBezelGeo, steelMat);
+      bezel.position.y = 0.002;
+      padGroup.add(bezel);
+
+      // Tactile spring-loaded circular push button cap
+      const capMat = new THREE.MeshStandardMaterial({
+        color: accentCol.clone(),
+        emissive: accentCol.clone(),
+        emissiveIntensity: 0.08,
+        roughness: 0.42,
+        metalness: 0.06,
+      });
+      const capMesh = new THREE.Mesh(toggleCapGeo, capMat);
+      const baseY = 0.003;
+      capMesh.position.y = baseY;
+      capMesh.castShadow = true;
+      capMesh.receiveShadow = true;
+      padGroup.add(capMesh);
+
+      // Center LED status pip on the switch button
+      const pipMat = new THREE.MeshStandardMaterial({
+        color: 0xffffff,
+        emissive: accentCol.clone(),
+        emissiveIntensity: 0.35,
+        roughness: 0.2,
+      });
+      const pipMesh = new THREE.Mesh(togglePipGeo, pipMat);
+      pipMesh.position.y = 0.007;
+      capMesh.add(pipMesh);
+
+      levelDisposables.push(capMat, pipMat);
+      toggleVisuals.push({ pad: tg, capMesh, capMat, pipMat, baseY });
+
+      // Attach sleek Braun color-coded accent stripes to every linked gate wall blade + flush floor seam cue!
+      const stripeMat = gateStripeMats[tg.colorId];
+      for (const wid of tg.wallIds) {
+        const blade = bladeRigs[wid];
+        if (!blade || blade.slot.locked) continue;
+
+        // Raised crown stripe (moves up & down with the gate wall!)
+        const crownGeo = buildWallTopGlyphPatch(blade.slot, R_WALL + 0.0016, 0.125, 0.028);
+        const crownMesh = new THREE.Mesh(crownGeo, stripeMat);
+        blade.mesh.add(crownMesh);
+        attachedGateOverlays.push({ parent: blade.mesh, mesh: crownMesh });
+        dynamicAoExcluded.push(crownMesh);
+        levelDisposables.push(crownGeo);
+
+        // Quiet flush seam stripe on the floor so players can spot where a retracted gate wall will pop up!
+        const floorCueGeo = buildWallTopGlyphPatch(blade.slot, R_FLOOR + 0.0018, 0.11, 0.024);
+        const floorCueMesh = new THREE.Mesh(floorCueGeo, stripeMat);
+        levelGroup.add(floorCueMesh);
+        dynamicAoExcluded.push(floorCueMesh);
+        levelDisposables.push(floorCueGeo);
+      }
+
+      // Link controlled diaphragm shutters so their recessed bezel ring displays this switch's accent color!
+      for (const sid of tg.shutterIds) {
+        if (shutterRigs[sid]) {
+          shutterRigs[sid].linkedColorId = tg.colorId;
+          shutterRigs[sid].lastOpen = -1;
+        }
+      }
     }
 
     syncAoExcluded();
@@ -1701,9 +1855,8 @@ export function buildLabyrinthRig(grid: SphereGrid): LabyrinthRig {
       if (Math.abs(open - s.lastOpen) < 1e-4) continue;
       s.lastOpen = open;
 
-      // Rotate all 6 diaphragm leaves outward in unison + tuck radially into the bezel pocket!
-      const pivotAngle = open * 0.96; // 55° outward camera-iris swing
-      const tuckScale = 1.0 - open * 0.42; // retracts cleanly beneath the bezel collar when 100% open
+      const pivotAngle = open * 0.96;
+      const tuckScale = 1.0 - open * 0.42;
       for (let k = 0; k < s.pivots.length; k++) {
         const holder = s.pivots[k];
         holder.rotation.y = pivotAngle;
@@ -1711,25 +1864,41 @@ export function buildLabyrinthRig(grid: SphereGrid): LabyrinthRig {
         holder.visible = open < 0.985;
       }
 
-      // Soft mint/cyan bezel halo indicates open portal; quiet dark collar when shut
-      s.ringLedMat.emissiveIntensity = open * 1.55;
-      s.ringLedMat.color.setHex(open > 0.35 ? 0xd2ffed : 0x9b9488);
+      if (s.linkedColorId >= 0) {
+        // Toggle-controlled shutter: displays its linked Coral/Cobalt color even faintly when closed so you can plan!
+        const col = TOGGLE_COLORS[s.linkedColorId];
+        s.ringLedMat.color.copy(col);
+        s.ringLedMat.emissive.copy(col);
+        s.ringLedMat.emissiveIntensity = 0.42 + open * 1.35;
+      } else {
+        s.ringLedMat.emissive.setHex(0x2ee69c);
+        s.ringLedMat.emissiveIntensity = open * 1.55;
+        s.ringLedMat.color.setHex(open > 0.35 ? 0xd2ffed : 0x9b9488);
+      }
     }
   }
 
   const colorAmber = new THREE.Color(0xff6e18);
-  const colorStandby = new THREE.Color(0xe69044);
   const colorCleared = new THREE.Color(0x2ce391);
   const colorFinishGlow = new THREE.Color(0x46f0a5);
-  const colorPipeTarget = new THREE.Color(0x2ad9c6); // distinct crisp Scandinavian aqua-mint for under-deck pipe LEDs!
+  const colorPipeTarget = new THREE.Color(0x2ad9c6);
+  const colorLockedDim = new THREE.Color(0x6e6a64);
 
-  function updateLeds(time: number, clearedMask: boolean[], nextIndex: number, allCleared: boolean) {
+  function updateLeds(
+    time: number,
+    clearedMask: boolean[],
+    nextIndex: number,
+    allCleared: boolean,
+    toggleMask: number,
+    togglePulse: Float32Array,
+  ) {
     let newestCleared = -1;
     for (let i = 0; i < leds.length; i++) {
       if (clearedMask[i]) newestCleared = i;
     }
     if (newestCleared !== -1) lastClearedIdx = newestCleared;
 
+    // 1. Sequential Checkpoint LEDs (only NEXT pulses bright; future checkpoints stay clearly locked/dim!)
     for (let i = 0; i < leds.length; i++) {
       const led = leds[i];
       const cleared = clearedMask[i];
@@ -1752,41 +1921,35 @@ export function buildLabyrinthRig(grid: SphereGrid): LabyrinthRig {
         led.haloMat.opacity = (isPipe ? 0.24 : 0.4) + breathe * 0.08;
         led.haloMesh.scale.setScalar((isPipe ? 0.78 : 1.0) + breathe * 0.08);
       } else if (i === nextIndex) {
-        const pulse = 0.5 + 0.5 * Math.sin(time * 3.1);
+        const pulse = 0.5 + 0.5 * Math.sin(time * 3.6);
         const isPipe = led.checkpoint.layer === 'pipe';
         const col = isPipe ? colorPipeTarget : colorAmber;
         led.domeMat.color.setHex(isPipe ? 0xd0fff8 : 0xffe1c2);
         led.domeMat.emissive.copy(col);
-        led.domeMat.emissiveIntensity = (isPipe ? 1.5 : 2.0) + pulse * (isPipe ? 1.1 : 1.9);
+        led.domeMat.emissiveIntensity = (isPipe ? 1.7 : 2.2) + pulse * (isPipe ? 1.2 : 2.1);
         led.haloMat.color.copy(col);
-        led.haloMat.opacity = (isPipe ? 0.25 : 0.42) + pulse * (isPipe ? 0.18 : 0.32);
-        led.haloMesh.scale.setScalar((isPipe ? 0.78 : 0.98) + pulse * 0.22);
-      } else if (led.checkpoint.layer === 'pipe') {
-        // Under-deck pipe LEDs glow cleanly aqua-mint through the transparent window panels without blowing out!
-        const idle = 0.5 + 0.5 * Math.sin(time * 2.0 + i);
-        led.domeMat.color.setHex(0xd6fffa);
-        led.domeMat.emissive.copy(colorPipeTarget);
-        led.domeMat.emissiveIntensity = 1.05 + idle * 0.45;
-        led.haloMat.color.copy(colorPipeTarget);
-        led.haloMat.opacity = 0.2 + idle * 0.1;
-        led.haloMesh.scale.setScalar(0.75);
-      } else if (led.checkpoint.isFinish) {
-        const idle = 0.5 + 0.5 * Math.sin(time * 1.4);
-        led.domeMat.color.setHex(0xd8ffed);
-        led.domeMat.emissive.copy(colorCleared);
-        led.domeMat.emissiveIntensity = 0.95 + idle * 0.45;
-        led.haloMat.color.copy(colorCleared);
-        led.haloMat.opacity = 0.24 + idle * 0.12;
-        led.haloMesh.scale.setScalar(0.85);
+        led.haloMat.opacity = (isPipe ? 0.28 : 0.46) + pulse * (isPipe ? 0.2 : 0.36);
+        led.haloMesh.scale.setScalar((isPipe ? 0.82 : 1.02) + pulse * 0.26);
       } else {
-        const idle = 0.5 + 0.5 * Math.sin(time * 1.2 + i * 1.7);
-        led.domeMat.color.setHex(0xf6dec4);
-        led.domeMat.emissive.copy(colorStandby);
-        led.domeMat.emissiveIntensity = 0.65 + idle * 0.45;
-        led.haloMat.color.copy(colorStandby);
-        led.haloMat.opacity = 0.18 + idle * 0.1;
-        led.haloMesh.scale.setScalar(0.76);
+        // Locked future checkpoint in strict sequence: clearly dimmed/off so next target is unmistakable!
+        led.domeMat.color.setHex(0xc8c2b7);
+        led.domeMat.emissive.copy(colorLockedDim);
+        led.domeMat.emissiveIntensity = 0.05;
+        led.haloMat.opacity = 0.0;
+        led.haloMesh.scale.setScalar(0.5);
       }
+    }
+
+    // 2. Tactile Toggle Switch Button Depress & Status Pip Animation
+    for (let i = 0; i < toggleVisuals.length; i++) {
+      const tv = toggleVisuals[i];
+      const active = (toggleMask & (1 << tv.pad.id)) !== 0;
+      const press = togglePulse[tv.pad.id] || 0;
+      // Physical downward depress on click + latched slight depression when toggled ON
+      tv.capMesh.position.y = tv.baseY - press * 0.0065 - (active ? 0.0028 : 0);
+      const breathe = 0.5 + 0.5 * Math.sin(time * 2.8 + i);
+      tv.capMat.emissiveIntensity = active ? 0.34 + breathe * 0.14 : 0.06;
+      tv.pipMat.emissiveIntensity = active ? 2.4 : 0.35 + breathe * 0.2;
     }
 
     if (allCleared && leds.length > 0) {
@@ -1797,11 +1960,12 @@ export function buildLabyrinthRig(grid: SphereGrid): LabyrinthRig {
       clearedLight.intensity = 0.0;
     } else {
       if (nextIndex >= 0 && nextIndex < leds.length) {
-        const pulse = 0.5 + 0.5 * Math.sin(time * 3.1);
-        const col = leds[nextIndex].checkpoint.layer === 'pipe' ? colorPipeTarget : colorAmber;
+        const pulse = 0.5 + 0.5 * Math.sin(time * 3.6);
+        const isPipe = leds[nextIndex].checkpoint.layer === 'pipe';
+        const col = isPipe ? colorPipeTarget : colorAmber;
         activeLight.color.copy(col);
         activeLight.position.copy(leds[nextIndex].localPos);
-        activeLight.intensity = 0.85 + pulse * 0.65;
+        activeLight.intensity = (isPipe ? 0.65 : 0.9) + pulse * 0.65;
       } else {
         activeLight.intensity = 0.0;
       }
@@ -1810,17 +1974,9 @@ export function buildLabyrinthRig(grid: SphereGrid): LabyrinthRig {
         const isPipe = leds[lastClearedIdx].checkpoint.layer === 'pipe';
         clearedLight.color.copy(colorCleared);
         clearedLight.position.copy(leds[lastClearedIdx].localPos);
-        clearedLight.intensity = isPipe ? 0.56 : 0.85;
+        clearedLight.intensity = isPipe ? 0.52 : 0.78;
       } else {
-        // Highlight first unlit pipe LED from below so the transparent window glows gently without overexposing!
-        const pipeLed = leds.find((l) => l.checkpoint.layer === 'pipe');
-        if (pipeLed) {
-          clearedLight.color.copy(colorPipeTarget);
-          clearedLight.position.copy(pipeLed.localPos);
-          clearedLight.intensity = 0.46;
-        } else {
-          clearedLight.intensity = 0.0;
-        }
+        clearedLight.intensity = 0.0;
       }
     }
   }
@@ -1835,7 +1991,7 @@ export function buildLabyrinthRig(grid: SphereGrid): LabyrinthRig {
   }
 
   function dispose() {
-    for (const d of checkpointDisposables) d.dispose();
+    for (const d of levelDisposables) d.dispose();
     for (const d of disposables) d.dispose();
   }
 
@@ -1849,7 +2005,7 @@ export function buildLabyrinthRig(grid: SphereGrid): LabyrinthRig {
     aoExcluded,
     applyWallExtensions,
     applyShutterOpenings,
-    setLevelCheckpoints,
+    setLevelVisuals,
     updateLeds,
     setPlasticOpacity,
     setScratchStrength,

@@ -549,3 +549,72 @@ export function createArrowGlyphTexture(): THREE.CanvasTexture {
   return tex;
 }
 
+/**
+ * Minimalist circular pad-print ring around a floor Toggle Switch (⇄ A / ⇄ B).
+ */
+export function createTogglePadDecalTexture(label: string, accentHex: string): THREE.CanvasTexture {
+  const size = 256;
+  const canvas = document.createElement('canvas');
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext('2d')!;
+
+  ctx.clearRect(0, 0, size, size);
+
+  // Subtle dashed outer collar ring in the toggle's accent hue
+  ctx.strokeStyle = accentHex;
+  ctx.globalAlpha = 0.65;
+  ctx.lineWidth = 4.5;
+  ctx.setLineDash([12, 8]);
+  ctx.beginPath();
+  ctx.arc(size / 2, size / 2, size * 0.43, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  // Crisp label at top & toggle symbol at bottom
+  ctx.globalAlpha = 0.85;
+  ctx.fillStyle = accentHex;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.font = '700 34px "IBM Plex Sans", "Helvetica Neue", sans-serif';
+  ctx.fillText(`SW ${label}`, size / 2, size * 0.16);
+  ctx.font = '600 26px Inter, "Helvetica Neue", sans-serif';
+  ctx.fillText('⇄', size / 2, size * 0.84);
+
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = 4;
+  return tex;
+}
+
+/**
+ * Clean minimal colored accent stripe pad-printed onto the crown of a toggle-linked gate wall.
+ */
+export function createGateStripeTexture(accentHex: string): THREE.CanvasTexture {
+  const w = 256;
+  const h = 64;
+  const canvas = document.createElement('canvas');
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext('2d')!;
+
+  ctx.clearRect(0, 0, w, h);
+  ctx.fillStyle = accentHex;
+  ctx.globalAlpha = 0.88;
+  // Sleek recessed central Braun-style pill bar + two crisp end dots
+  ctx.beginPath();
+  ctx.roundRect(44, 22, w - 88, 20, 10);
+  ctx.fill();
+
+  ctx.beginPath();
+  ctx.arc(24, 32, 7, 0, Math.PI * 2);
+  ctx.arc(w - 24, 32, 7, 0, Math.PI * 2);
+  ctx.fill();
+
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = 4;
+  return tex;
+}
+
+

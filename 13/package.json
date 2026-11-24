@@ -1,7 +1,7 @@
 {
   "name": "day-13",
   "private": true,
-  "description": "A minimalist Swedish adaptive sphere labyrinth with retractable walls across 5 morphing levels, wrapped in thin clear plastic",
+  "description": "A minimalist Swedish two-layer adaptive sphere labyrinth with 10 progressive puzzles, diaphragm shutters, underneath half-pipe tubes, and mechanical floor switches",
   "type": "module",
   "scripts": {
     "dev": "vite",

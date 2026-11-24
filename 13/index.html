@@ -5,11 +5,11 @@
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="theme-color" content="#eae7e0" />
     <title>13 · Labyrinth · Codevember 2026</title>
-    <meta name="description" content="A minimalist Swedish adaptive sphere labyrinth with retractable walls across 5 morphing levels, wrapped in thin clear plastic" />
+    <meta name="description" content="A minimalist Swedish two-layer adaptive sphere labyrinth with 10 progressive puzzles, diaphragm shutters, underneath half-pipe tubes, and mechanical floor switches" />
     <meta name="author" content="Theo Tillberg" />
     <!-- share image: 13/about/screengrab.png, copied next to the build by scripts/build.mjs -->
     <meta property="og:title" content="13 · Labyrinth · Codevember 2026" />
-    <meta property="og:description" content="A minimalist Swedish adaptive sphere labyrinth with retractable walls across 5 morphing levels, wrapped in thin clear plastic" />
+    <meta property="og:description" content="A minimalist Swedish two-layer adaptive sphere labyrinth with 10 progressive puzzles, diaphragm shutters, underneath half-pipe tubes, and mechanical floor switches" />
     <meta property="og:image" content="https://ttillberg.github.io/codevember-2026/13/screengrab.png" />
     <meta property="og:image:width" content="1200" />
     <meta property="og:image:height" content="1200" />
@@ -31,13 +31,20 @@
       </div>
       <div class="status" id="status">
         <span class="dots" id="led-dots" aria-label="Checkpoint progress"></span>
-        <span class="status-text" id="status-text">LVL 01 · 0 / 3 LEDS</span>
+        <span class="status-text" id="status-text">LVL 01 · FIRST ROLL · NEXT 01</span>
       </div>
+      <div class="substatus" id="substatus"></div>
     </div>
 
     <!-- Top-right frosted controls -->
     <div class="actions">
-      <button class="icon-btn" id="btn-reset" type="button" title="Reset ball (R)" aria-label="Reset ball">
+      <button class="icon-btn gyro" id="btn-gyro" type="button" title="Tilt phone to steer" aria-label="Tilt phone to steer" aria-pressed="false">
+        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <rect x="8" y="3.5" width="8" height="17" rx="2" transform="rotate(-18 12 12)" />
+          <path d="M3 8.5a10 10 0 0 0 0 7M21 8.5a10 10 0 0 1 0 7" />
+        </svg>
+      </button>
+      <button class="icon-btn" id="btn-reset" type="button" title="Reset level (R)" aria-label="Reset level">
         <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <path d="M3 12a9 9 0 1 0 3-6.7L3 8" />
           <path d="M3 3v5h5" />
@@ -58,25 +65,30 @@
       <button class="icon-btn" id="btn-help" type="button" title="Help (?)" aria-label="Help" aria-expanded="false">?</button>
     </div>
 
-    <!-- Bottom-center minimalist 5-level morph selector (docs/DESIGN.md) -->
+    <!-- Bottom-center minimalist 10-level morph selector (docs/DESIGN.md) -->
     <div class="level-bar" id="level-bar" role="group" aria-label="Labyrinth levels">
-      <span class="level-label">LEVEL</span>
+      <span class="level-label">LVL</span>
       <button class="lvl-btn active" type="button" data-level="1">01</button>
       <button class="lvl-btn" type="button" data-level="2">02</button>
       <button class="lvl-btn" type="button" data-level="3">03</button>
       <button class="lvl-btn" type="button" data-level="4">04</button>
       <button class="lvl-btn" type="button" data-level="5">05</button>
+      <button class="lvl-btn" type="button" data-level="6">06</button>
+      <button class="lvl-btn" type="button" data-level="7">07</button>
+      <button class="lvl-btn" type="button" data-level="8">08</button>
+      <button class="lvl-btn" type="button" data-level="9">09</button>
+      <button class="lvl-btn" type="button" data-level="10">10</button>
     </div>
 
     <!-- Minimalist help popover -->
     <div class="help-card" id="help-card" hidden>
       <p class="help-title">ADAPTIVE SPHERE LABYRINTH NO. 13</p>
-      <p>Gravity pulls the steel ball toward the center of the screen (as if holding the sphere overhead). Drag to slide the labyrinth beneath the ball, drop through open diaphragm shutters into the half-pipe tubes below, and center an open exit shutter to emerge back up.</p>
+      <p>Gravity pulls the steel ball toward the center of the screen. Light the checkpoint LEDs <strong>in exact order</strong> (only the active next LED glows).</p>
+      <p>Center an open <strong>diaphragm shutter</strong> to drop into or emerge from the half-pipe tubes below. Roll over colored <strong>SW A / SW B</strong> floor switches to flip matching striped gate walls and iris shutters.</p>
       <div class="help-keys">
-        <div><span class="key">DRAG</span> Turn sphere beneath ball</div>
-        <div><span class="key">1–5</span> Morph walls &amp; shutters</div>
-        <div><span class="key">SCROLL</span> Zoom closer</div>
-        <div><span class="key">WASD</span> Fine tilt · <span class="key">R</span> Reset</div>
+        <div><span class="key">DRAG</span> Slide sphere beneath ball</div>
+        <div><span class="key">1–9</span> <span class="key">0</span> Switch levels (or <span class="key">[</span> <span class="key">]</span>)</div>
+        <div><span class="key">SCROLL</span> Zoom · <span class="key">R</span> Reset level</div>
       </div>
     </div>
 

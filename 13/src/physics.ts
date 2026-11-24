@@ -19,6 +19,7 @@ export interface PhysicsEvents {
   onCheckpoint?: (index: number, allCleared: boolean) => void;
   onDropIntoPipe?: (shutterId: number) => void;
   onEmergeFromPipe?: (shutterId: number) => void;
+  onToggle?: (toggleId: number, active: boolean) => void;
 }
 
 const TWO_PI = Math.PI * 2;
@@ -75,7 +76,7 @@ export class SphereBallPhysics {
   private readonly restitution = 0.24;
   private readonly maxSpeed = 3.35;
 
-  // Portal transition & underneath half-pipe graph state
+  // Portal transition, underneath half-pipe & mechanical toggle switch state
   private activeShutterId = -1;
   private lastEntryShutterId = -1;
   private transT = 0;
@@ -84,6 +85,9 @@ export class SphereBallPhysics {
   private pipeEdgeId = 0;
   private pipeT = 0;
   private pipeSpeed = 0;
+  toggleMask = 0;
+  private toggleInside: boolean[] = [];
+  private toggleCooldown = 0;
 
   // Scratch vectors
   private readonly invQuat = new THREE.Quaternion();
@@ -107,6 +111,9 @@ export class SphereBallPhysics {
     this.level = level;
     this.cleared = level.checkpoints.map(() => false);
     this.allCleared = false;
+    this.toggleMask = 0;
+    this.toggleInside = level.toggles.map(() => false);
+    this.toggleCooldown = 0;
     if (resetPosition) {
       this.reset();
     }
@@ -122,6 +129,9 @@ export class SphereBallPhysics {
     this.lastEntryShutterId = -1;
     this.transT = 0;
     this.portalCooldown = 0;
+    this.toggleMask = 0;
+    this.toggleInside = this.level.toggles.map(() => false);
+    this.toggleCooldown = 0;
     this.cleared = this.level.checkpoints.map(() => false);
     this.allCleared = false;
     this.speed = 0;
@@ -210,6 +220,7 @@ export class SphereBallPhysics {
   ) {
     const clampedDt = Math.min(dt, 0.04);
     if (this.portalCooldown > 0) this.portalCooldown = Math.max(0, this.portalCooldown - clampedDt);
+    if (this.toggleCooldown > 0) this.toggleCooldown = Math.max(0, this.toggleCooldown - clampedDt);
 
     this.invQuat.copy(sphereQuat).invert();
     // Gravity pulls toward the camera (as if holding the sphere overhead: ball seeks 50% / 50% of screen!)
@@ -489,22 +500,52 @@ export class SphereBallPhysics {
       events.onWallHit(Math.min(1, (maxImpact - 0.28) / 2.2));
     }
 
+    this.checkTogglePads(events);
     this.checkCheckpoints('upper', events);
   }
 
+  private checkTogglePads(events?: PhysicsEvents) {
+    const toggles = this.level.toggles;
+    if (toggles.length === 0) return;
+    const enterAngle = 0.072;
+    const exitAngle = 0.11;
+
+    for (let i = 0; i < toggles.length; i++) {
+      const tg = toggles[i];
+      const dot = Math.max(-1, Math.min(1, this.dir.dot(tg.dir)));
+      const ang = Math.acos(dot);
+
+      if (!this.toggleInside[i]) {
+        if (ang < enterAngle && this.toggleCooldown <= 0) {
+          this.toggleInside[i] = true;
+          this.toggleCooldown = 0.45;
+          this.toggleMask ^= 1 << tg.id;
+          events?.onToggle?.(tg.id, (this.toggleMask & (1 << tg.id)) !== 0);
+        }
+      } else if (ang > exitAngle) {
+        this.toggleInside[i] = false;
+      }
+    }
+  }
+
+  /**
+   * STRICT SEQUENTIAL CHECKPOINT ORDER:
+   * Only the next unlit checkpoint (`nextIdx`) can be activated; future checkpoints stay locked until their turn!
+   */
   private checkCheckpoints(activeLayer: 'upper' | 'pipe', events?: PhysicsEvents) {
     if (this.allCleared) return;
-    const triggerAngle = activeLayer === 'pipe' ? 0.175 : 0.155;
-    const cps = this.level.checkpoints;
-    for (let i = 0; i < cps.length; i++) {
-      if (this.cleared[i]) continue;
-      if (cps[i].layer !== activeLayer) continue;
-      const dot = Math.max(-1, Math.min(1, this.dir.dot(cps[i].dir)));
-      if (Math.acos(dot) < triggerAngle) {
-        this.cleared[i] = true;
-        this.allCleared = this.cleared.every(Boolean);
-        events?.onCheckpoint?.(i, this.allCleared);
-      }
+    const nextIdx = this.getNextCheckpointIndex();
+    if (nextIdx < 0) return;
+
+    const cp = this.level.checkpoints[nextIdx];
+    if (cp.layer !== activeLayer) return;
+
+    const triggerAngle = activeLayer === 'pipe' ? 0.145 : 0.115;
+    const dot = Math.max(-1, Math.min(1, this.dir.dot(cp.dir)));
+    if (Math.acos(dot) < triggerAngle) {
+      this.cleared[nextIdx] = true;
+      this.allCleared = this.cleared.every(Boolean);
+      events?.onCheckpoint?.(nextIdx, this.allCleared);
     }
   }
 }

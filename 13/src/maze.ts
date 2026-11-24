@@ -1,28 +1,26 @@
 import * as THREE from 'three';
 
 /**
- * Two-layer adaptive sphere labyrinth topology:
- * - UPPER SURFACE (R_FLOOR = 0.855 .. R_WALL = 1.000):
- *   8-band, 62-cell spherical grid with 132 thin modular wall slots & 66 steady corner poles.
- *   Certain cells hold 6-blade mechanical DIAPHRAGM IRIS SHUTTERS that open real circular holes
- *   straight through the floor shell; panels directly over the lower tunnels are TRANSPARENT
- *   polycarbonate inspection windows.
- * - UNDERNEATH HALF-PIPE TUBE SYSTEM (R_PIPE_FLOOR = 0.625):
- *   A simpler, sculpted U-shaped half-pipe channel network connecting all 6 diaphragm shutter
- *   ports beneath the upper maze — visible right through the transparent window panels!
+ * Tighter two-layer adaptive sphere puzzle topology:
+ * - 8-band, 82-cell spherical grid (1–8–16–16–16–16–8–1), 176 thin wall slots & 88 steady corner poles.
+ * - 6 mechanical 6-blade diaphragm iris shutters connecting to an underneath sculpted half-pipe tube network
+ *   visible through transparent polycarbonate floor window panels.
+ * - Mechanical floor Toggle Pads (Coral A, Cobalt B) that flip linked retractable gate walls (opening one
+ *   passage while closing another) and/or open & close linked diaphragm shutters in real time.
+ * - Strict sequential checkpoints (01 -> 02 -> ... -> 13 END) across 10 curated, state-space-BFS-verified levels.
  */
 
 export const R_CORE_INNER = 0.525;
-export const R_PIPE_FLOOR = 0.625;
-export const R_FLOOR_INNER = 0.826;
-export const R_FLOOR = 0.855;
+export const R_PIPE_FLOOR = 0.635;
+export const R_FLOOR_INNER = 0.842;
+export const R_FLOOR = 0.87;
 export const R_WALL = 1.0;
-export const R_BALL = 0.068;
+export const R_BALL = 0.056;
 export const R_BALL_CENTER = R_FLOOR + R_BALL;
 export const R_BALL_PIPE = R_PIPE_FLOOR + R_BALL;
 export const R_SHELL = 1.024;
-export const WALL_HALF_WIDTH = 0.036;
-export const R_IRIS_HOLE = 0.114; // circular opening radius in radians (~0.097 world units at R_FLOOR)
+export const WALL_HALF_WIDTH = 0.026; // sleek thin walls for tighter 82-cell combinations
+export const R_IRIS_HOLE = 0.092; // clean circular drop aperture sized for 0.056 bearing inside tighter cells
 
 export interface BandSpec {
   phiStart: number;
@@ -34,12 +32,12 @@ const DEG = Math.PI / 180;
 
 export const BANDS: BandSpec[] = [
   { phiStart: 0 * DEG, phiEnd: 19 * DEG, count: 1 },
-  { phiStart: 19 * DEG, phiEnd: 43 * DEG, count: 6 },
-  { phiStart: 43 * DEG, phiEnd: 66 * DEG, count: 12 },
-  { phiStart: 66 * DEG, phiEnd: 90 * DEG, count: 12 },
-  { phiStart: 90 * DEG, phiEnd: 114 * DEG, count: 12 },
-  { phiStart: 114 * DEG, phiEnd: 137 * DEG, count: 12 },
-  { phiStart: 137 * DEG, phiEnd: 161 * DEG, count: 6 },
+  { phiStart: 19 * DEG, phiEnd: 40 * DEG, count: 8 },
+  { phiStart: 40 * DEG, phiEnd: 65 * DEG, count: 16 },
+  { phiStart: 65 * DEG, phiEnd: 90 * DEG, count: 16 },
+  { phiStart: 90 * DEG, phiEnd: 115 * DEG, count: 16 },
+  { phiStart: 115 * DEG, phiEnd: 140 * DEG, count: 16 },
+  { phiStart: 140 * DEG, phiEnd: 161 * DEG, count: 8 },
   { phiStart: 161 * DEG, phiEnd: 180 * DEG, count: 1 },
 ];
 
@@ -57,7 +55,7 @@ export interface Cell {
   centerTheta: number;
   centerDir: THREE.Vector3;
   panelKind: PanelKind;
-  shutterId: number; // -1 if not a shutter cell
+  shutterId: number;
 }
 
 export type WallKind = 'lat' | 'lon';
@@ -100,7 +98,7 @@ export interface ShutterPort {
 export interface PipeNode {
   id: number;
   dir: THREE.Vector3;
-  shutterId: number; // -1 for interior hub junction
+  shutterId: number;
   edgeIds: number[];
 }
 
@@ -108,31 +106,57 @@ export interface PipeEdge {
   id: number;
   nodeA: number;
   nodeB: number;
-  arcLen: number; // radians along great circle
+  arcLen: number;
 }
 
 export type CheckpointLayer = 'upper' | 'pipe';
 
 export interface Checkpoint {
   index: number;
-  cellId: number; // -1 if located at an interior pipe node
-  pipeNodeId: number; // -1 if on upper surface
+  cellId: number;
+  pipeNodeId: number;
   layer: CheckpointLayer;
   label: string;
   dir: THREE.Vector3;
   isFinish: boolean;
 }
 
+export type ToggleColorId = 0 | 1; // 0 = Coral-Red (A), 1 = Cobalt-Blue (B)
+
+export interface TogglePad {
+  id: number; // 0 or 1 (bit index in toggleMask)
+  colorId: ToggleColorId;
+  label: string; // 'A' or 'B'
+  cellId: number;
+  dir: THREE.Vector3;
+  /** Wall slot ids controlled by this toggle (flips raised <-> retracted when toggled!) */
+  wallIds: number[];
+  /** Shutter port ids controlled by this toggle (flips open <-> closed when toggled!) */
+  shutterIds: number[];
+}
+
+export interface LevelSolutionStats {
+  solvable: boolean;
+  minSteps: number;
+  portalTransitions: number;
+  toggleFlips: number;
+}
+
 export interface LevelConfig {
-  level: number; // 1..5
+  level: number; // 1..10
   name: string;
-  subtitle: string;
+  difficulty: string;
   seed: number;
+  /** Base wall state when toggleMask === 0 (true = raised, false = retracted) */
   raisedWalls: boolean[];
-  /** Boolean mask per ShutterPort id: true = diaphragm iris OPEN, false = diaphragm iris CLOSED flush */
+  /** Base shutter state when toggleMask === 0 (true = open, false = closed) */
   openShutters: boolean[];
+  /** Mechanical floor toggles active on this level */
+  toggles: TogglePad[];
   startCellId: number;
+  /** Strictly sequential checkpoints: player must trigger index 0, then 1, ..., then Finish */
   checkpoints: Checkpoint[];
+  stats: LevelSolutionStats;
 }
 
 export interface SphereGrid {
@@ -161,6 +185,36 @@ function mulberry32(seed: number) {
   };
 }
 
+export function computeEffectiveWalls(level: LevelConfig, toggleMask: number, wallCount: number): boolean[] {
+  const out = level.raisedWalls.slice(0, wallCount);
+  for (const tg of level.toggles) {
+    if ((toggleMask & (1 << tg.id)) !== 0) {
+      for (const wid of tg.wallIds) {
+        out[wid] = !out[wid];
+      }
+    }
+  }
+  return out;
+}
+
+export function computeEffectiveShutters(level: LevelConfig, toggleMask: number, shutterCount: number): boolean[] {
+  const out = level.openShutters.slice(0, shutterCount);
+  for (const tg of level.toggles) {
+    if ((toggleMask & (1 << tg.id)) !== 0) {
+      for (const sid of tg.shutterIds) {
+        out[sid] = !out[sid];
+      }
+    }
+  }
+  return out;
+}
+
+function findCell(cells: Cell[], band: number, col: number): Cell {
+  const spec = BANDS[band];
+  const wrapped = ((col % spec.count) + spec.count) % spec.count;
+  return cells.find((c) => c.band === band && c.col === wrapped)!;
+}
+
 function isGraphConnected(cellCount: number, adj: WallSlot[][], closedMask: boolean[]): boolean {
   const seen = new Uint8Array(cellCount);
   const q: number[] = [0];
@@ -182,81 +236,137 @@ function isGraphConnected(cellCount: number, adj: WallSlot[][], closedMask: bool
 }
 
 /**
- * Helper: find cell index by (band, col).
+ * Exact State-Space BFS Solver verifying every level's sequential checkpoints, toggles & portal drops!
+ * State = (layer: 0 upper | 1 pipe, locId, toggleMask: 0..3, cpIdx: 0..K)
  */
-function findCell(cells: Cell[], band: number, col: number): Cell {
-  const spec = BANDS[band];
-  const wrapped = ((col % spec.count) + spec.count) % spec.count;
-  return cells.find((c) => c.band === band && c.col === wrapped)!;
-}
-
-function buildLevelConfig(
-  level: number,
-  name: string,
-  subtitle: string,
-  seed: number,
-  openFractionOfClosed: number,
-  upperCheckpointCount: number,
-  pipeCheckpointNodeIds: number[],
-  openShutters: boolean[],
-  lonBias: number,
+export function solveLevel(
+  level: Omit<LevelConfig, 'stats'>,
   cells: Cell[],
   walls: WallSlot[],
   adj: WallSlot[][],
+  shutters: ShutterPort[],
   pipeNodes: PipeNode[],
-): LevelConfig {
-  const rng = mulberry32(seed);
-  const raised = walls.map(() => true);
+  pipeEdges: PipeEdge[],
+): LevelSolutionStats {
+  const totalCps = level.checkpoints.length;
+  const maxMask = 1 << level.toggles.length;
+  const cellToToggle = new Int8Array(cells.length).fill(-1);
+  for (const tg of level.toggles) cellToToggle[tg.cellId] = tg.id;
 
-  const visited = new Uint8Array(cells.length);
-  const startId = 0;
-  const finishId = cells.length - 1;
-  const stack: number[] = [startId];
-  visited[startId] = 1;
-
-  while (stack.length > 0) {
-    const u = stack[stack.length - 1];
-    const options = adj[u].filter((w) => {
-      if (w.locked) return false;
-      const v = w.cellA === u ? w.cellB : w.cellA;
-      return !visited[v];
-    });
-
-    if (options.length === 0) {
-      stack.pop();
-      continue;
+  // Precompute wall/shutter open tables per toggleMask
+  const wallsByMask: boolean[][] = [];
+  const shuttersByMask: boolean[][] = [];
+  for (let m = 0; m < maxMask; m++) {
+    const wArr = level.raisedWalls.slice();
+    const sArr = level.openShutters.slice();
+    for (const tg of level.toggles) {
+      if ((m & (1 << tg.id)) !== 0) {
+        for (const wid of tg.wallIds) if (!walls[wid].locked) wArr[wid] = !wArr[wid];
+        for (const sid of tg.shutterIds) sArr[sid] = !sArr[sid];
+      }
     }
-
-    const scored = options.map((w) => {
-      const v = w.cellA === u ? w.cellB : w.cellA;
-      let weight = rng();
-      if (w.kind === 'lon') weight += lonBias;
-      if (cells[v].band === BANDS.length - 1) weight -= 0.4;
-      return { w, v, weight };
-    });
-    scored.sort((a, b) => b.weight - a.weight);
-    const pick = scored[0];
-    raised[pick.w.id] = false;
-    visited[pick.v] = 1;
-    stack.push(pick.v);
+    wallsByMask.push(wArr);
+    shuttersByMask.push(sArr);
   }
 
-  if (openFractionOfClosed > 0) {
-    const extraCandidates = walls.filter((w) => raised[w.id] && !w.locked);
-    for (let i = extraCandidates.length - 1; i > 0; i--) {
-      const j = Math.floor(rng() * (i + 1));
-      [extraCandidates[i], extraCandidates[j]] = [extraCandidates[j], extraCandidates[i]];
+  const locStride = Math.max(cells.length, pipeNodes.length);
+  const encode = (layer: number, loc: number, mask: number, cp: number) =>
+    (((cp * maxMask + mask) * 2 + layer) * locStride + loc);
+
+  const visited = new Set<number>();
+  interface NodeState {
+    layer: number;
+    loc: number;
+    mask: number;
+    cp: number;
+    steps: number;
+    portals: number;
+    flips: number;
+  }
+
+  const startKey = encode(0, level.startCellId, 0, 0);
+  visited.add(startKey);
+  const queue: NodeState[] = [{ layer: 0, loc: level.startCellId, mask: 0, cp: 0, steps: 0, portals: 0, flips: 0 }];
+
+  const advanceCp = (layer: number, loc: number, cp: number): number => {
+    let next = cp;
+    while (next < totalCps) {
+      const target = level.checkpoints[next];
+      if (layer === 0 && target.layer === 'upper' && target.cellId === loc) {
+        next++;
+      } else if (layer === 1 && target.layer === 'pipe' && target.pipeNodeId === loc) {
+        next++;
+      } else {
+        break;
+      }
     }
-    const toOpen = Math.floor(extraCandidates.length * openFractionOfClosed);
-    for (let i = 0; i < toOpen; i++) {
-      raised[extraCandidates[i].id] = false;
+    return next;
+  };
+
+  for (let qi = 0; qi < queue.length; qi++) {
+    const cur = queue[qi];
+    if (cur.cp >= totalCps) {
+      return {
+        solvable: true,
+        minSteps: cur.steps,
+        portalTransitions: cur.portals,
+        toggleFlips: cur.flips,
+      };
+    }
+
+    const pushState = (layer: number, loc: number, mask: number, portals: number, flips: number) => {
+      const nextCp = advanceCp(layer, loc, cur.cp);
+      const key = encode(layer, loc, mask, nextCp);
+      if (visited.has(key)) return;
+      visited.add(key);
+      queue.push({ layer, loc, mask, cp: nextCp, steps: cur.steps + 1, portals, flips });
+    };
+
+    if (cur.layer === 0) {
+      // 1. Roll to adjacent upper cell through any currently retracted wall
+      const wState = wallsByMask[cur.mask];
+      for (const w of adj[cur.loc]) {
+        if (wState[w.id]) continue;
+        const nextCell = w.cellA === cur.loc ? w.cellB : w.cellA;
+        const tgIdx = cellToToggle[nextCell];
+        if (tgIdx >= 0) {
+          // Stepping onto a toggle pad flips its bit!
+          pushState(0, nextCell, cur.mask ^ (1 << tgIdx), cur.portals, cur.flips + 1);
+        }
+        pushState(0, nextCell, cur.mask, cur.portals, cur.flips);
+      }
+
+      // 2. Drop through an open diaphragm shutter at current cell
+      const shId = cells[cur.loc].shutterId;
+      if (shId >= 0 && shuttersByMask[cur.mask][shId]) {
+        pushState(1, shutters[shId].pipeNodeId, cur.mask, cur.portals + 1, cur.flips);
+      }
+    } else {
+      // 1. Travel along underneath half-pipe edges
+      const pNode = pipeNodes[cur.loc];
+      for (const eid of pNode.edgeIds) {
+        const e = pipeEdges[eid];
+        const nextNode = e.nodeA === cur.loc ? e.nodeB : e.nodeA;
+        pushState(1, nextNode, cur.mask, cur.portals, cur.flips);
+      }
+
+      // 2. Emerge back up through an open diaphragm shutter
+      if (pNode.shutterId >= 0 && shuttersByMask[cur.mask][pNode.shutterId]) {
+        pushState(0, shutters[pNode.shutterId].cellId, cur.mask, cur.portals + 1, cur.flips);
+      }
     }
   }
 
-  // BFS for upper-surface checkpoints (avoiding shutter & window cells so LEDs sit cleanly on solid panels!)
-  const parent = new Int32Array(cells.length).fill(-1);
+  return { solvable: false, minSteps: -1, portalTransitions: 0, toggleFlips: 0 };
+}
+
+/**
+ * Helper to compute BFS distances on the upper deck from a source cell given a wall mask.
+ */
+function bfsUpper(startId: number, cells: Cell[], adj: WallSlot[][], raised: boolean[]): { dist: Int32Array; parent: Int32Array } {
   const dist = new Int32Array(cells.length).fill(-1);
-  const q: number[] = [startId];
+  const parent = new Int32Array(cells.length).fill(-1);
+  const q = [startId];
   dist[startId] = 0;
   for (let qi = 0; qi < q.length; qi++) {
     const u = q[qi];
@@ -270,119 +380,141 @@ function buildLevelConfig(
       }
     }
   }
+  return { dist, parent };
+}
 
+/**
+ * Carves a deterministic spanning tree on the upper deck, optionally splitting into isolated
+ * Northern & Southern continents (barrierBand) so the player MUST use portals or toggle gates!
+ */
+function carveUpperWalls(
+  seed: number,
+  lonBias: number,
+  extraOpenFraction: number,
+  splitEquator: boolean,
+  cells: Cell[],
+  walls: WallSlot[],
+  adj: WallSlot[][],
+): boolean[] {
+  const rng = mulberry32(seed);
+  const raised = walls.map(() => true);
+
+  const isBarrierWall = (w: WallSlot) => {
+    if (!splitEquator) return false;
+    // Complete equatorial barrier between Band 3 (north equator) and Band 4 (south equator)!
+    const bA = cells[w.cellA].band;
+    const bB = cells[w.cellB].band;
+    return (bA === 3 && bB === 4) || (bA === 4 && bB === 3);
+  };
+
+  const visited = new Uint8Array(cells.length);
+  const carveComponent = (rootCell: number) => {
+    const stack = [rootCell];
+    visited[rootCell] = 1;
+    while (stack.length > 0) {
+      const u = stack[stack.length - 1];
+      const options = adj[u].filter((w) => {
+        if (w.locked || isBarrierWall(w)) return false;
+        const v = w.cellA === u ? w.cellB : w.cellA;
+        return !visited[v];
+      });
+      if (options.length === 0) {
+        stack.pop();
+        continue;
+      }
+      const scored = options.map((w) => {
+        const v = w.cellA === u ? w.cellB : w.cellA;
+        let weight = rng();
+        if (w.kind === 'lon') weight += lonBias;
+        if (cells[v].band === BANDS.length - 1) weight -= 0.45;
+        return { w, v, weight };
+      });
+      scored.sort((a, b) => b.weight - a.weight);
+      const pick = scored[0];
+      raised[pick.w.id] = false;
+      visited[pick.v] = 1;
+      stack.push(pick.v);
+    }
+  };
+
+  carveComponent(0);
+  if (splitEquator) {
+    // Carve southern continent separately from the South Pole!
+    carveComponent(cells.length - 1);
+  }
+
+  if (extraOpenFraction > 0) {
+    const candidates = walls.filter((w) => raised[w.id] && !w.locked && !isBarrierWall(w));
+    for (let i = candidates.length - 1; i > 0; i--) {
+      const j = Math.floor(rng() * (i + 1));
+      [candidates[i], candidates[j]] = [candidates[j], candidates[i]];
+    }
+    const count = Math.floor(candidates.length * extraOpenFraction);
+    for (let i = 0; i < count; i++) raised[candidates[i].id] = false;
+  }
+
+  return raised;
+}
+
+/**
+ * Finds the unique tree wall on the path from `fromCell` to `toCell` (to turn into a clean puzzle gate!).
+ */
+function findPathWallBetween(
+  fromCell: number,
+  toCell: number,
+  cells: Cell[],
+  adj: WallSlot[][],
+  raised: boolean[],
+  preferNearTarget = true,
+): WallSlot | null {
+  const { dist, parent } = bfsUpper(fromCell, cells, adj, raised);
+  if (dist[toCell] <= 0) return null;
   const path: number[] = [];
-  let cur = finishId;
-  while (cur !== -1) {
-    path.push(cur);
-    cur = parent[cur];
+  let c = toCell;
+  while (c !== -1) {
+    path.push(c);
+    c = parent[c];
   }
   path.reverse();
+  const order: number[] = [];
+  for (let i = 0; i < path.length - 1; i++) order.push(i);
+  if (preferNearTarget) order.reverse();
 
-  const solidPathCells = path.filter(
-    (cid) => cid !== startId && cid !== finishId && cells[cid].panelKind === 'solid',
-  );
-  const upperIntermediate = Math.max(1, upperCheckpointCount - 1);
-  const chosenUpper: number[] = [];
-
-  for (let k = 1; k <= upperIntermediate; k++) {
-    if (solidPathCells.length === 0) break;
-    const idx = Math.min(
-      solidPathCells.length - 1,
-      Math.round((k * (solidPathCells.length - 1)) / (upperIntermediate + 1)),
-    );
-    const cid = solidPathCells[idx];
-    if (!chosenUpper.includes(cid)) chosenUpper.push(cid);
+  for (const idx of order) {
+    const u = path[idx];
+    const v = path[idx + 1];
+    const w = adj[u].find((seg) => !seg.locked && ((seg.cellA === u && seg.cellB === v) || (seg.cellA === v && seg.cellB === u)));
+    if (w) return w;
   }
+  return null;
+}
 
-  if (chosenUpper.length < upperIntermediate) {
-    const fallback = cells
-      .filter(
-        (c) =>
-          c.id !== startId &&
-          c.id !== finishId &&
-          c.panelKind === 'solid' &&
-          !chosenUpper.includes(c.id) &&
-          dist[c.id] > 0,
-      )
-      .sort((a, b) => dist[a.id] - dist[b.id]);
-    while (chosenUpper.length < upperIntermediate && fallback.length > 0) {
-      const idx = Math.floor(((chosenUpper.length + 1) / (upperIntermediate + 1)) * fallback.length);
-      const chosen = fallback.splice(Math.min(idx, fallback.length - 1), 1)[0];
-      chosenUpper.push(chosen.id);
-    }
-  }
-
-  const checkpoints: Checkpoint[] = [];
-
-  // Interleave upper-surface checkpoints + underneath half-pipe checkpoints, ending with 13 END at South Pole!
-  let idxCounter = 0;
-  for (let i = 0; i < chosenUpper.length; i++) {
-    const c = cells[chosenUpper[i]];
-    checkpoints.push({
-      index: idxCounter,
-      cellId: c.id,
-      pipeNodeId: -1,
-      layer: 'upper',
-      label: String(idxCounter + 1).padStart(2, '0'),
-      dir: c.centerDir.clone(),
-      isFinish: false,
-    });
-    idxCounter++;
-
-    // Insert under-deck half-pipe checkpoint cleanly into the sequence
-    if (i < pipeCheckpointNodeIds.length) {
-      const pn = pipeNodes[pipeCheckpointNodeIds[i]];
-      checkpoints.push({
-        index: idxCounter,
-        cellId: -1,
-        pipeNodeId: pn.id,
-        layer: 'pipe',
-        label: `U${i + 1}`,
-        dir: pn.dir.clone(),
-        isFinish: false,
-      });
-      idxCounter++;
-    }
-  }
-
-  // Any remaining under-deck checkpoints
-  for (let i = chosenUpper.length; i < pipeCheckpointNodeIds.length; i++) {
-    const pn = pipeNodes[pipeCheckpointNodeIds[i]];
-    checkpoints.push({
-      index: idxCounter,
-      cellId: -1,
-      pipeNodeId: pn.id,
-      layer: 'pipe',
-      label: `U${i + 1}`,
-      dir: pn.dir.clone(),
-      isFinish: false,
-    });
-    idxCounter++;
-  }
-
-  // Final South Pole END checkpoint
-  const fin = cells[finishId];
-  checkpoints.push({
-    index: idxCounter,
-    cellId: fin.id,
-    pipeNodeId: -1,
-    layer: 'upper',
-    label: '13',
-    dir: fin.centerDir.clone(),
-    isFinish: true,
-  });
-
-  return {
-    level,
-    name,
-    subtitle,
-    seed,
-    raisedWalls: raised,
-    openShutters,
-    startCellId: startId,
-    checkpoints,
-  };
+interface LevelBlueprint {
+  level: number;
+  name: string;
+  difficulty: string;
+  seed: number;
+  lonBias: number;
+  extraOpen: number;
+  splitEquator: boolean;
+  openShutters: boolean[];
+  /** Plan of sequential checkpoints: either { band, col } on upper deck or { pipeHub: 0|1|2 } in sub-pipe */
+  cpSpecs: ({ band: number; col: number; isFinish?: boolean } | { pipeHub: number })[];
+  /** Toggle puzzle specs: each places a TogglePad at a reachable solid cell, seals a gate wall to a target cp, and closes a counter-gate or flips shutters! */
+  toggleSpecs: {
+    colorId: ToggleColorId;
+    label: string;
+    padBand: number;
+    padCol: number;
+    /** Seal the path leading to this checkpoint index until toggled */
+    gateToCpIndex?: number;
+    /** Also link a counter-wall (initially OPEN, closes when toggled!) near this cell/cp */
+    closeCounterToCpIndex?: number;
+    /** Optional equatorial gate wall col (between Band 3 & Band 4) that opens when toggled */
+    equatorGateCol?: number;
+    /** Diaphragm shutter IDs that flip open/closed when this toggle is pressed */
+    shutterIds?: number[];
+  }[];
 }
 
 export function createSphereGrid(): SphereGrid {
@@ -416,16 +548,15 @@ export function createSphereGrid(): SphereGrid {
     }
   }
 
-  // --- 1. Place 6 Diaphragm Iris Shutter Ports symmetrically around the sphere ---
-  // Notice: front hero view looks around theta ~ 1.85 rad (col 3-4 of 12-cell bands, col 1-2 of 6-cell bands),
-  // so Shutter A (band 2, col 2) and Shutter B (band 3, col 5) and Shutter F (band 4, col 3) sit right in view!
+  // --- 1. Six Diaphragm Iris Shutters spanning Northern & Southern Hemispheres (bands 2..5, 16 cols) ---
+  // Hero front view centers around theta ~ 1.25 rad (col 3-4 of 16-cell bands).
   const shutterSpecs: { band: number; col: number; label: string }[] = [
-    { band: 2, col: 2, label: 'A' }, // Upper-front-right
-    { band: 3, col: 4, label: 'B' }, // Mid-front-left
-    { band: 4, col: 1, label: 'C' }, // Lower-right
-    { band: 2, col: 8, label: 'D' }, // Upper-back
-    { band: 3, col: 10, label: 'E' }, // Mid-back-right
-    { band: 4, col: 7, label: 'F' }, // Lower-back-left
+    { band: 2, col: 3, label: 'A' }, // North-front (easy access from Start!)
+    { band: 4, col: 2, label: 'B' }, // South-front-right (across the equator!)
+    { band: 3, col: 6, label: 'C' }, // North-left
+    { band: 5, col: 7, label: 'D' }, // South-back-left
+    { band: 2, col: 11, label: 'E' }, // North-back
+    { band: 4, col: 13, label: 'F' }, // South-right-back
   ];
 
   const shutters: ShutterPort[] = [];
@@ -438,13 +569,7 @@ export function createSphereGrid(): SphereGrid {
     cell.shutterId = i;
 
     const nodeId = pipeNodes.length;
-    pipeNodes.push({
-      id: nodeId,
-      dir: cell.centerDir.clone(),
-      shutterId: i,
-      edgeIds: [],
-    });
-
+    pipeNodes.push({ id: nodeId, dir: cell.centerDir.clone(), shutterId: i, edgeIds: [] });
     shutters.push({
       id: i,
       cellId: cell.id,
@@ -456,38 +581,33 @@ export function createSphereGrid(): SphereGrid {
     });
   }
 
-  // Add 3 interior half-pipe junction hubs (sitting directly under transparent window cells!)
+  // 3 Interior Half-Pipe Junction Hubs (sitting directly beneath transparent floor window panels!)
   const hubSpecs: { band: number; col: number }[] = [
-    { band: 3, col: 2 }, // Front-center window hub (connects A, B, C right in front of the viewer!)
-    { band: 3, col: 7 }, // Back-left window hub (connects B, D, F)
-    { band: 3, col: 11 }, // Right-back window hub (connects A, C, E, D)
+    { band: 3, col: 3 }, // Hub 0 (node 6): Front-center directly visible right on boot!
+    { band: 4, col: 8 }, // Hub 1 (node 7): Back-left southern hub
+    { band: 3, col: 13 }, // Hub 2 (node 8): Back-right northern hub
   ];
   const hubNodeIds: number[] = [];
   for (const hs of hubSpecs) {
     const cell = findCell(cells, hs.band, hs.col);
     const nodeId = pipeNodes.length;
-    pipeNodes.push({
-      id: nodeId,
-      dir: cell.centerDir.clone(),
-      shutterId: -1,
-      edgeIds: [],
-    });
+    pipeNodes.push({ id: nodeId, dir: cell.centerDir.clone(), shutterId: -1, edgeIds: [] });
     hubNodeIds.push(nodeId);
   }
 
-  // Connect the simpler, mind-warping underneath half-pipe tube network (9 smooth curved tubes!)
-  // Node indices: 0=A, 1=B, 2=C, 3=D, 4=E, 5=F, 6=HubFront, 7=HubBackLeft, 8=HubBackRight
+  // Connected sculptural underneath half-pipe network bridging all 6 shutters across the equator!
+  // 0=A(N), 1=B(S), 2=C(N), 3=D(S), 4=E(N), 5=F(S), 6=HubFront, 7=HubBackLeft, 8=HubBackRight
   const pipePairs: [number, number][] = [
-    [0, 6], // A -> Front Hub
-    [1, 6], // B -> Front Hub
-    [2, 6], // C -> Front Hub
-    [1, 7], // B -> Back-Left Hub
-    [3, 7], // D -> Back-Left Hub
-    [5, 7], // F -> Back-Left Hub
-    [2, 8], // C -> Back-Right Hub
-    [4, 8], // E -> Back-Right Hub
-    [3, 8], // D -> Back-Right Hub
-    [6, 8], // Front Hub -> Back-Right Hub (equatorial scenic ring!)
+    [0, 6], // A (North) <-> HubFront
+    [1, 6], // B (South) <-> HubFront
+    [2, 6], // C (North-Left) <-> HubFront
+    [2, 7], // C <-> HubBackLeft
+    [3, 7], // D (South) <-> HubBackLeft
+    [4, 7], // E (North-Back) <-> HubBackLeft
+    [4, 8], // E <-> HubBackRight
+    [5, 8], // F (South) <-> HubBackRight
+    [1, 8], // B <-> HubBackRight
+    [6, 8], // HubFront <-> HubBackRight
   ];
 
   const pipeEdges: PipeEdge[] = [];
@@ -500,21 +620,17 @@ export function createSphereGrid(): SphereGrid {
     pipeNodes[b].edgeIds.push(id);
   }
 
-  // --- 2. Mark floor panels directly above the half-pipe network as TRANSPARENT WINDOWS ---
-  // Sample points along every half-pipe edge and mark underlying mid-band cells as transparent clear windows!
+  // Mark floor cells directly above the half-pipe network as TRANSPARENT POLYCARBONATE WINDOWS
   const samplePt = new THREE.Vector3();
   for (const edge of pipeEdges) {
     const dA = pipeNodes[edge.nodeA].dir;
     const dB = pipeNodes[edge.nodeB].dir;
-    const samples = 10;
-    for (let s = 0; s <= samples; s++) {
-      const t = s / samples;
-      samplePt.copy(dA).lerp(dB, t).normalize();
-      // Find closest cell
+    for (let s = 0; s <= 10; s++) {
+      samplePt.copy(dA).lerp(dB, s / 10).normalize();
       let bestCell: Cell | null = null;
       let bestDot = -2;
       for (const c of cells) {
-        if (c.band === 0 || c.band === BANDS.length - 1) continue;
+        if (c.band <= 1 || c.band >= BANDS.length - 2) continue;
         const d = c.centerDir.dot(samplePt);
         if (d > bestDot) {
           bestDot = d;
@@ -527,7 +643,7 @@ export function createSphereGrid(): SphereGrid {
     }
   }
 
-  // --- 3. Build steady corner posts & 132 thin wall slots ---
+  // --- 2. Build 88 steady corner poles & 176 thin modular wall slots ---
   const posts: VertexPost[] = [];
   const postKeyToId = new Map<string, number>();
 
@@ -538,14 +654,7 @@ export function createSphereGrid(): SphereGrid {
     const existing = postKeyToId.get(key);
     if (existing !== undefined) return existing;
     const id = posts.length;
-    posts.push({
-      id,
-      phi,
-      theta: normTheta,
-      dir: sphToDir(phi, normTheta),
-      wallIds: [],
-      locked: false,
-    });
+    posts.push({ id, phi, theta: normTheta, dir: sphToDir(phi, normTheta), wallIds: [], locked: false });
     postKeyToId.set(key, id);
     return id;
   };
@@ -563,8 +672,6 @@ export function createSphereGrid(): SphereGrid {
     const id = walls.length;
     const postA = getOrCreatePost(phiStart, thetaStart);
     const postB = getOrCreatePost(phiEnd, thetaEnd);
-    const midPhi = 0.5 * (phiStart + phiEnd);
-    const midTheta = 0.5 * (thetaStart + thetaEnd);
     walls.push({
       id,
       kind,
@@ -574,7 +681,7 @@ export function createSphereGrid(): SphereGrid {
       phiEnd,
       thetaStart,
       thetaEnd,
-      midDir: sphToDir(midPhi, midTheta),
+      midDir: sphToDir(0.5 * (phiStart + phiEnd), 0.5 * (thetaStart + thetaEnd)),
       locked: false,
       hasArrow: false,
       postA,
@@ -591,8 +698,7 @@ export function createSphereGrid(): SphereGrid {
     const dTheta = (Math.PI * 2) / spec.count;
     for (let c = 0; c < spec.count; c++) {
       const next = (c + 1) % spec.count;
-      const theta = (c + 1) * dTheta;
-      addWall('lon', base + c, base + next, spec.phiStart, spec.phiEnd, theta, theta);
+      addWall('lon', base + c, base + next, spec.phiStart, spec.phiEnd, (c + 1) * dTheta, (c + 1) * dTheta);
     }
   }
 
@@ -604,13 +710,10 @@ export function createSphereGrid(): SphereGrid {
     const phi = upper.phiEnd;
     const maxCount = Math.max(upper.count, lower.count);
     const dTheta = (Math.PI * 2) / maxCount;
-
     for (let k = 0; k < maxCount; k++) {
       const uCol = Math.floor((k * upper.count) / maxCount);
       const lCol = Math.floor((k * lower.count) / maxCount);
-      const t0 = k * dTheta;
-      const t1 = (k + 1) * dTheta;
-      addWall('lat', upperBase + uCol, lowerBase + lCol, phi, phi, t0, t1);
+      addWall('lat', upperBase + uCol, lowerBase + lCol, phi, phi, k * dTheta, (k + 1) * dTheta);
     }
   }
 
@@ -620,14 +723,15 @@ export function createSphereGrid(): SphereGrid {
     adj[w.cellB].push(w);
   }
 
-  // --- 4. Locked structural skeleton (~16 anchor walls) ---
+  // --- 3. Permanently Locked Structural Anchor Walls (~18 walls with etched padlocks) ---
   const lockedMask = walls.map(() => false);
-  const lockRng = mulberry32(1301);
+  const lockRng = mulberry32(1309);
   const lockCandidates = walls
     .filter((w) => w.kind === 'lat' && cells[w.cellA].band >= 1 && cells[w.cellB].band <= 6)
     .sort(() => lockRng() - 0.5);
 
-  const cradleWall = walls.find((w) => w.kind === 'lat' && w.cellA === 0 && w.thetaStart >= 1.0 && w.thetaStart <= 2.2);
+  // Front-upper polar cradle wall so the steel ball rests visibly at 00 START on boot
+  const cradleWall = walls.find((w) => w.kind === 'lat' && w.cellA === 0 && w.thetaStart >= 0.7 && w.thetaStart <= 1.7);
   let lockedCount = 0;
   if (cradleWall) {
     lockedMask[cradleWall.id] = true;
@@ -638,9 +742,11 @@ export function createSphereGrid(): SphereGrid {
   }
 
   for (const w of lockCandidates) {
-    if (lockedCount >= 16) break;
+    if (lockedCount >= 18) break;
     if (w.locked) continue;
-    const tooClose = walls.some((o) => o.locked && o.midDir.dot(w.midDir) > 0.72);
+    // Keep locked walls out of the equatorial split seam so toggle gates can cleanly open equatorial bridges!
+    if (cells[w.cellA].band === 3 && cells[w.cellB].band === 4) continue;
+    const tooClose = walls.some((o) => o.locked && o.midDir.dot(w.midDir) > 0.76);
     if (tooClose) continue;
     lockedMask[w.id] = true;
     if (isGraphConnected(cells.length, adj, lockedMask)) {
@@ -653,97 +759,452 @@ export function createSphereGrid(): SphereGrid {
     }
   }
 
-  // Subtle actuator arrows on selected morphing walls
-  const arrowRng = mulberry32(4413);
+  const arrowRng = mulberry32(4419);
   const arrowCandidates = walls.filter((w) => !w.locked && w.kind === 'lat').sort(() => arrowRng() - 0.5);
   let arrowCount = 0;
   for (const w of arrowCandidates) {
-    if (arrowCount >= 12) break;
-    const tooClose = walls.some((o) => o.hasArrow && o.midDir.dot(w.midDir) > 0.62);
+    if (arrowCount >= 14) break;
+    const tooClose = walls.some((o) => o.hasArrow && o.midDir.dot(w.midDir) > 0.65);
     if (tooClose) continue;
     w.hasArrow = true;
     arrowCount++;
   }
 
-  // --- 5. Five curated levels: morphing upper walls + morphing diaphragm shutters + under-deck LEDs! ---
-  // Each level opens a curated subset of the 6 diaphragm shutters (A..F) and puts 1-2 LEDs in the half-pipes below!
-  const levels: LevelConfig[] = [
-    buildLevelConfig(
-      1,
-      '01 · OPEN',
-      'GENTLE INTRO',
-      1311,
-      0.44,
-      2,
-      [hubNodeIds[0]], // 1 under-deck LED right under the front transparent window!
-      [true, true, false, true, true, false], // A & B open, C closed (shows both open & closed iris on front!)
-      0.18,
-      cells,
-      walls,
-      adj,
-      pipeNodes,
-    ),
-    buildLevelConfig(
-      2,
-      '02 · EQUATOR',
-      'SUB-DECK LOOP',
-      2623,
-      0.3,
-      3,
-      [hubNodeIds[0]],
-      [true, false, true, true, false, true], // shutters morph! B & E iris shut, D & F iris open!
-      0.35,
-      cells,
-      walls,
-      adj,
-      pipeNodes,
-    ),
-    buildLevelConfig(
-      3,
-      '03 · SPIRAL',
-      'DUAL LAYER',
-      3937,
-      0.16,
-      3,
-      [hubNodeIds[0], hubNodeIds[1]], // 2 under-deck half-pipe LEDs!
-      [true, true, false, true, true, false],
-      0.52,
-      cells,
-      walls,
-      adj,
-      pipeNodes,
-    ),
-    buildLevelConfig(
-      4,
-      '04 · HELIX',
-      'TIGHT PORTALS',
-      5249,
-      0.06,
-      3,
-      [hubNodeIds[1], hubNodeIds[2]],
-      [false, true, true, false, true, true],
-      0.25,
-      cells,
-      walls,
-      adj,
-      pipeNodes,
-    ),
-    buildLevelConfig(
-      5,
-      '05 · MASTER',
-      'FULL ADAPTIVE',
-      6571,
-      0.0,
-      4,
-      [hubNodeIds[0], hubNodeIds[2]],
-      [true, true, true, true, true, true], // All 6 diaphragm shutters open!
-      0.42,
-      cells,
-      walls,
-      adj,
-      pipeNodes,
-    ),
+  // Helper: pick nearest solid cell to (band, col) that isn't already used by a checkpoint or toggle
+  const pickSolidCell = (band: number, col: number, avoidIds: Set<number>): Cell => {
+    const spec = BANDS[band];
+    for (let d = 0; d < spec.count; d++) {
+      for (const sgn of d === 0 ? [0] : [1, -1]) {
+        const c = findCell(cells, band, col + sgn * d);
+        if (c.panelKind === 'solid' && !avoidIds.has(c.id)) return c;
+      }
+    }
+    // Fallback to any solid cell in neighboring band
+    for (const c of cells) {
+      if (c.panelKind === 'solid' && !avoidIds.has(c.id) && c.id !== 0 && c.id !== cells.length - 1) return c;
+    }
+    return findCell(cells, band, col);
+  };
+
+  // --- 4. Ten Curated Progressive Puzzle Levels (01 dead easy -> 10 super hard!) ---
+  const blueprints: LevelBlueprint[] = [
+    // LEVEL 01: DEAD EASY — wide open tracks, 2 sequential checkpoints (01 -> 13), no portals, no toggles
+    {
+      level: 1,
+      name: 'FIRST ROLL',
+      difficulty: 'DEAD EASY',
+      seed: 1011,
+      lonBias: 0.1,
+      extraOpen: 0.56,
+      splitEquator: false,
+      openShutters: [false, false, false, false, false, false],
+      cpSpecs: [
+        { band: 2, col: 4 },
+        { band: 7, col: 0, isFinish: true },
+      ],
+      toggleSpecs: [],
+    },
+    // LEVEL 02: PORTAL INTRO — simple upper maze + open Shutters A & B, hit 01 -> drop into pipe for U2 -> emerge to 13!
+    {
+      level: 2,
+      name: 'IRIS PORTAL',
+      difficulty: 'SIMPLE · PORTAL',
+      seed: 2027,
+      lonBias: 0.2,
+      extraOpen: 0.42,
+      splitEquator: false,
+      openShutters: [true, true, false, false, false, false],
+      cpSpecs: [
+        { band: 1, col: 2 },
+        { pipeHub: 0 }, // Glowing right beneath front window!
+        { band: 7, col: 0, isFinish: true },
+      ],
+      toggleSpecs: [],
+    },
+    // LEVEL 03: FIRST SWITCH — introduces Coral Toggle A cleanly (opens gate to 02 while closing counter-wall!)
+    {
+      level: 3,
+      name: 'FIRST SWITCH',
+      difficulty: 'PLAN · SWITCH',
+      seed: 3041,
+      lonBias: 0.28,
+      extraOpen: 0.24,
+      splitEquator: false,
+      openShutters: [false, false, false, false, false, false],
+      cpSpecs: [
+        { band: 2, col: 6 },
+        { band: 5, col: 4 },
+        { band: 7, col: 0, isFinish: true },
+      ],
+      toggleSpecs: [
+        {
+          colorId: 0,
+          label: 'A',
+          padBand: 2,
+          padCol: 1,
+          gateToCpIndex: 1, // Must flip Coral A to open the corridor to 02!
+          closeCounterToCpIndex: 0, // Flipping A closes the direct path to 01!
+        },
+      ],
+    },
+    // LEVEL 04: UNDERPASS — Equator completely walled off! Must drop through North shutter into half-pipe to reach South!
+    {
+      level: 4,
+      name: 'UNDERPASS',
+      difficulty: 'PLAN · SPLIT',
+      seed: 4057,
+      lonBias: 0.32,
+      extraOpen: 0.18,
+      splitEquator: true,
+      openShutters: [true, true, true, false, false, false],
+      cpSpecs: [
+        { band: 2, col: 8 },
+        { pipeHub: 0 },
+        { band: 5, col: 11 },
+        { band: 7, col: 0, isFinish: true },
+      ],
+      toggleSpecs: [],
+    },
+    // LEVEL 05: SHUTTER LOCK — Equator walled off & exit Shutter B starts CLOSED! Must flip Coral Toggle A to iris Shutter B OPEN!
+    {
+      level: 5,
+      name: 'SHUTTER LOCK',
+      difficulty: 'PLAN · IRIS',
+      seed: 5077,
+      lonBias: 0.42,
+      extraOpen: 0.04,
+      splitEquator: true,
+      openShutters: [true, false, false, false, false, false],
+      cpSpecs: [
+        { band: 2, col: 11 },
+        { pipeHub: 0 },
+        { band: 5, col: 9 },
+        { band: 7, col: 0, isFinish: true },
+      ],
+      toggleSpecs: [
+        {
+          colorId: 0,
+          label: 'A',
+          padBand: 2,
+          padCol: 14,
+          shutterIds: [1], // Pressing Coral A irises South Shutter B OPEN so you can emerge in the South!
+          closeCounterToCpIndex: 0,
+        },
+      ],
+    },
+    // LEVEL 06: COUNTERWEIGHT — Flipping Coral A opens the path to 02 while closing a gate & swapping shutters!
+    {
+      level: 6,
+      name: 'COUNTERWEIGHT',
+      difficulty: 'TRICKY',
+      seed: 6089,
+      lonBias: 0.4,
+      extraOpen: 0.0,
+      splitEquator: false,
+      openShutters: [true, false, true, true, false, false],
+      cpSpecs: [
+        { band: 2, col: 14 },
+        { band: 5, col: 5 },
+        { pipeHub: 1 },
+        { band: 6, col: 2 },
+        { band: 7, col: 0, isFinish: true },
+      ],
+      toggleSpecs: [
+        {
+          colorId: 0,
+          label: 'A',
+          padBand: 1,
+          padCol: 3,
+          gateToCpIndex: 1,
+          closeCounterToCpIndex: 3,
+          shutterIds: [1, 2],
+        },
+      ],
+    },
+    // LEVEL 07: DUAL CIRCUIT — Two independent Toggles (Coral A & Cobalt B) controlling separate gates and portals!
+    {
+      level: 7,
+      name: 'DUAL CIRCUIT',
+      difficulty: 'HARD',
+      seed: 7109,
+      lonBias: 0.48,
+      extraOpen: 0.0,
+      splitEquator: true,
+      openShutters: [true, false, true, false, false, false],
+      cpSpecs: [
+        { band: 2, col: 10 },
+        { pipeHub: 0 },
+        { band: 5, col: 1 },
+        { band: 5, col: 12 },
+        { band: 7, col: 0, isFinish: true },
+      ],
+      toggleSpecs: [
+        {
+          colorId: 0,
+          label: 'A',
+          padBand: 1,
+          padCol: 6,
+          shutterIds: [1],
+          closeCounterToCpIndex: 0,
+        },
+        {
+          colorId: 1,
+          label: 'B',
+          padBand: 5,
+          padCol: 4,
+          gateToCpIndex: 3,
+          shutterIds: [5],
+        },
+      ],
+    },
+    // LEVEL 08: WINDING VAULT — Pure zero-loop spanning tree + dual toggles + multi-portal zig-zag!
+    {
+      level: 8,
+      name: 'WINDING VAULT',
+      difficulty: 'HARD',
+      seed: 8123,
+      lonBias: 0.52,
+      extraOpen: 0.0,
+      splitEquator: false,
+      openShutters: [true, true, false, false, true, false],
+      cpSpecs: [
+        { band: 2, col: 1 },
+        { pipeHub: 2 },
+        { band: 5, col: 10 },
+        { band: 1, col: 5 },
+        { band: 7, col: 0, isFinish: true },
+      ],
+      toggleSpecs: [
+        {
+          colorId: 0,
+          label: 'A',
+          padBand: 2,
+          padCol: 7,
+          gateToCpIndex: 2,
+          closeCounterToCpIndex: 0,
+          shutterIds: [3],
+        },
+        {
+          colorId: 1,
+          label: 'B',
+          padBand: 6,
+          padCol: 6,
+          gateToCpIndex: 4,
+          shutterIds: [2],
+        },
+      ],
+    },
+    // LEVEL 09: PARADOX — Split equator, pure tight corridors, alternating North -> Pipe -> South -> North -> Pipe -> South!
+    {
+      level: 9,
+      name: 'PARADOX',
+      difficulty: 'VERY HARD',
+      seed: 9137,
+      lonBias: 0.48,
+      extraOpen: 0.0,
+      splitEquator: true,
+      openShutters: [true, false, false, true, false, false],
+      cpSpecs: [
+        { band: 2, col: 14 },
+        { pipeHub: 1 },
+        { band: 5, col: 9 },
+        { band: 1, col: 1 },
+        { pipeHub: 2 },
+        { band: 7, col: 0, isFinish: true },
+      ],
+      toggleSpecs: [
+        {
+          colorId: 0,
+          label: 'A',
+          padBand: 2,
+          padCol: 5,
+          shutterIds: [1, 4],
+          equatorGateCol: 1,
+        },
+        {
+          colorId: 1,
+          label: 'B',
+          padBand: 5,
+          padCol: 14,
+          gateToCpIndex: 5,
+          shutterIds: [2, 5],
+        },
+      ],
+    },
+    // LEVEL 10: MASTER SPHERE — Super hard finale! Split equator, 6 strict sequential checkpoints across both decks & dual cross-linked toggles!
+    {
+      level: 10,
+      name: 'MASTER SPHERE',
+      difficulty: 'SUPER HARD',
+      seed: 10177,
+      lonBias: 0.56,
+      extraOpen: 0.0,
+      splitEquator: true,
+      openShutters: [false, false, true, false, false, false],
+      cpSpecs: [
+        { band: 2, col: 10 },
+        { pipeHub: 0 },
+        { band: 5, col: 11 },
+        { pipeHub: 2 },
+        { band: 2, col: 1 },
+        { band: 7, col: 0, isFinish: true },
+      ],
+      toggleSpecs: [
+        {
+          colorId: 0,
+          label: 'A',
+          padBand: 1,
+          padCol: 5,
+          shutterIds: [0, 1],
+          gateToCpIndex: 4,
+          closeCounterToCpIndex: 0,
+        },
+        {
+          colorId: 1,
+          label: 'B',
+          padBand: 6,
+          padCol: 4,
+          gateToCpIndex: 5,
+          closeCounterToCpIndex: 2,
+          shutterIds: [4, 5],
+        },
+      ],
+    },
   ];
+
+  const levels: LevelConfig[] = blueprints.map((bp) => {
+    const raisedWalls = carveUpperWalls(bp.seed, bp.lonBias, bp.extraOpen, bp.splitEquator, cells, walls, adj);
+    const openShutters = bp.openShutters.slice();
+
+    const usedCells = new Set<number>([0]);
+    const checkpoints: Checkpoint[] = [];
+
+    for (let i = 0; i < bp.cpSpecs.length; i++) {
+      const spec = bp.cpSpecs[i];
+      if ('pipeHub' in spec) {
+        const pn = pipeNodes[hubNodeIds[spec.pipeHub]];
+        checkpoints.push({
+          index: i,
+          cellId: -1,
+          pipeNodeId: pn.id,
+          layer: 'pipe',
+          label: `U${i + 1}`,
+          dir: pn.dir.clone(),
+          isFinish: false,
+        });
+      } else {
+        const isFinish = !!spec.isFinish;
+        const c = isFinish ? cells[cells.length - 1] : pickSolidCell(spec.band, spec.col, usedCells);
+        usedCells.add(c.id);
+        checkpoints.push({
+          index: i,
+          cellId: c.id,
+          pipeNodeId: -1,
+          layer: 'upper',
+          label: isFinish ? '13' : String(i + 1).padStart(2, '0'),
+          dir: c.centerDir.clone(),
+          isFinish,
+        });
+      }
+    }
+
+    // Build mechanical Toggle Pads & wire their gate walls (raising blocked gates & linking counter-walls!)
+    const toggles: TogglePad[] = [];
+    const claimedGateWalls = new Set<number>();
+
+    for (let ti = 0; ti < bp.toggleSpecs.length; ti++) {
+      const ts = bp.toggleSpecs[ti];
+      const padCell = pickSolidCell(ts.padBand, ts.padCol, usedCells);
+      usedCells.add(padCell.id);
+      const wallIds: number[] = [];
+
+      // 1. Primary gate wall: initially RAISED (blocking access to target checkpoint until toggled!)
+      if (ts.gateToCpIndex !== undefined && checkpoints[ts.gateToCpIndex]?.layer === 'upper') {
+        const targetCell = checkpoints[ts.gateToCpIndex].cellId;
+        const srcCell = cells[targetCell].band >= 4 && bp.splitEquator ? cells.length - 1 : 0;
+        // Find an open corridor wall leading into targetCell (different from padCell's own side!)
+        const gateWall = findPathWallBetween(
+          targetCell === cells.length - 1 ? padCell.id : srcCell,
+          targetCell,
+          cells,
+          adj,
+          raisedWalls,
+          true,
+        );
+        if (gateWall && !claimedGateWalls.has(gateWall.id)) {
+          // Make sure closing this gate does NOT block access to padCell itself from srcCell!
+          raisedWalls[gateWall.id] = true;
+          const checkReach = bfsUpper(srcCell, cells, adj, raisedWalls);
+          if (srcCell === 0 && checkReach.dist[padCell.id] === -1) {
+            // Revert if it blocked the switch itself
+            raisedWalls[gateWall.id] = false;
+          } else {
+            claimedGateWalls.add(gateWall.id);
+            wallIds.push(gateWall.id);
+          }
+        }
+      }
+
+      // 2. Counter-gate wall: initially OPEN (retracted), POPS OUT when toggled!
+      if (ts.closeCounterToCpIndex !== undefined && checkpoints[ts.closeCounterToCpIndex]?.layer === 'upper') {
+        const targetCell = checkpoints[ts.closeCounterToCpIndex].cellId;
+        const srcCell = cells[targetCell].band >= 4 && bp.splitEquator ? cells.length - 1 : 0;
+        const counterWall = findPathWallBetween(srcCell, targetCell, cells, adj, raisedWalls, true);
+        if (counterWall && !claimedGateWalls.has(counterWall.id) && !raisedWalls[counterWall.id]) {
+          claimedGateWalls.add(counterWall.id);
+          wallIds.push(counterWall.id);
+        }
+      }
+
+      // 3. Optional equatorial bridge gate wall (starts RAISED on split equator, retracts when toggled!)
+      if (ts.equatorGateCol !== undefined) {
+        const nCell = findCell(cells, 3, ts.equatorGateCol);
+        const sCell = findCell(cells, 4, ts.equatorGateCol);
+        const eqWall = adj[nCell.id].find(
+          (w) => !w.locked && ((w.cellA === nCell.id && w.cellB === sCell.id) || (w.cellA === sCell.id && w.cellB === nCell.id)),
+        );
+        if (eqWall && !claimedGateWalls.has(eqWall.id)) {
+          raisedWalls[eqWall.id] = true;
+          claimedGateWalls.add(eqWall.id);
+          wallIds.push(eqWall.id);
+        }
+      }
+
+      toggles.push({
+        id: ti,
+        colorId: ts.colorId,
+        label: ts.label,
+        cellId: padCell.id,
+        dir: padCell.centerDir.clone(),
+        wallIds,
+        shutterIds: ts.shutterIds ? ts.shutterIds.slice() : [],
+      });
+    }
+
+    const partial: Omit<LevelConfig, 'stats'> = {
+      level: bp.level,
+      name: bp.name,
+      difficulty: bp.difficulty,
+      seed: bp.seed,
+      raisedWalls,
+      openShutters,
+      toggles,
+      startCellId: 0,
+      checkpoints,
+    };
+
+    let stats = solveLevel(partial, cells, walls, adj, shutters, pipeNodes, pipeEdges);
+
+    // Safety net: if a counter-gate ever caused a subtle deadlock, drop that counter-gate and re-verify!
+    if (!stats.solvable) {
+      for (const tg of toggles) {
+        tg.wallIds = tg.wallIds.filter((wid) => raisedWalls[wid]); // keep opening gates, drop blocking counter-gates
+      }
+      stats = solveLevel(partial, cells, walls, adj, shutters, pipeNodes, pipeEdges);
+    }
+
+    return { ...partial, stats };
+  });
 
   return { cells, walls, posts, shutters, pipeNodes, pipeEdges, levels };
 }

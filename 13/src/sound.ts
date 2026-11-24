@@ -237,4 +237,42 @@ export class LabyrinthSound {
     osc.start(now);
     osc.stop(now + 0.18);
   }
+
+  /** Crisp Braun/Leica tactile micro-switch click-clack when pressing a floor Toggle Pad */
+  playToggle(active: boolean) {
+    if (!this.enabled || !this.ctx || this.ctx.state !== 'running') return;
+    const now = this.ctx.currentTime;
+
+    // Sharp mechanical snap-switch click
+    const click = this.ctx.createOscillator();
+    click.type = 'triangle';
+    click.frequency.setValueAtTime(active ? 1180 : 880, now);
+    click.frequency.exponentialRampToValueAtTime(active ? 540 : 410, now + 0.025);
+
+    const cg = this.ctx.createGain();
+    cg.gain.setValueAtTime(0.0001, now);
+    cg.gain.linearRampToValueAtTime(0.085, now + 0.002);
+    cg.gain.exponentialRampToValueAtTime(0.0001, now + 0.032);
+
+    click.connect(cg);
+    cg.connect(this.ctx.destination);
+    click.start(now);
+    click.stop(now + 0.038);
+
+    // Subtle actuator confirmation tone (rising on ON, gentle step down on OFF)
+    const tone = this.ctx.createOscillator();
+    tone.type = 'sine';
+    tone.frequency.setValueAtTime(active ? 392 : 330, now + 0.028);
+    tone.frequency.exponentialRampToValueAtTime(active ? 523.25 : 293.66, now + 0.18);
+
+    const tg = this.ctx.createGain();
+    tg.gain.setValueAtTime(0.0001, now + 0.028);
+    tg.gain.linearRampToValueAtTime(0.042, now + 0.04);
+    tg.gain.exponentialRampToValueAtTime(0.0001, now + 0.24);
+
+    tone.connect(tg);
+    tg.connect(this.ctx.destination);
+    tone.start(now + 0.028);
+    tone.stop(now + 0.26);
+  }
 }
