@@ -12,6 +12,8 @@ export interface Head {
   /** place at the neck ring, looking along fwd */
   place(pos: THREE.Vector3, fwd: THREE.Vector3, up: THREE.Vector3): void;
   update(dt: number, time: number, excited: number): void;
+  /** its paint, for the neck to take its colours from (skin.ts) */
+  paint: THREE.Texture | null;
 }
 
 function eyeMaterial(sp: Species, radius: number) {
@@ -147,6 +149,7 @@ diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.01), smoothstep(0.62, 0.75, vTx)
 
   return {
     group,
+    paint: phys.map,
     place(pos, fwd, up) {
       right.crossVectors(fwd, up).normalize();
       upO.crossVectors(right, fwd).normalize();

@@ -7,6 +7,10 @@ import * as THREE from 'three';
 import type { Snake, World } from './physics';
 
 const SUB = 2; // rings per sphere
+const SUB_TAIL = 6; // and along the tail's taper, where a coarse ring shows as a facet
+const TAIL = 5; // spheres at the end drawn that fine
+const CAP = 10; // rings in the rounded tip past the last sphere
+const CAP_LEN = 3.2; // the tip's length, in radii of the last sphere: a long rounded point
 const RAD = 36; // vertices round
 const SEC = 8; // directions the occlusion is worked out in
 
@@ -51,7 +55,18 @@ export function createBody(s: Snake, material: THREE.Material): Body {
   const K = s.headK;
   const np = s.n - K;
   const PLUG = 2;
-  const rings = PLUG + (np - 1) * SUB + 1 + 1;
+  // where each ring sits, in fractional spheres: two plug rings back into the head, the body at
+  // SUB a sphere, the tail's taper finer, then the tip, past the last sphere, closing in to a point
+  // with its rings bunched where it rounds off
+  const last = s.n - 1;
+  const tail = Math.min(TAIL, np - 2);
+  const capF = (CAP_LEN * s.rad[last]) / s.seg; // the tip's length, in spheres
+  const fs: number[] = [];
+  for (let r = 0; r < PLUG; r++) fs.push(K - (PLUG - r) * 0.5);
+  for (let q = 0; K + q / SUB < last - tail - 1e-6; q++) fs.push(K + q / SUB);
+  for (let q = 0; q <= tail * SUB_TAIL; q++) fs.push(last - tail + q / SUB_TAIL);
+  for (let q = 1; q <= CAP; q++) fs.push(last + capF * Math.sin((q / CAP) * Math.PI / 2));
+  const rings = fs.length;
   const vcount = rings * (RAD + 1);
   const pos = new Float32Array(vcount * 3);
   const nor = new Float32Array(vcount * 3);
@@ -94,17 +109,32 @@ export function createBody(s: Snake, material: THREE.Material): Body {
   const ringF = new Float32Array(rings); // fractional sphere index
   const ringA = new Float32Array(rings);
   const ringM = new Float32Array(rings);
+  // radius along the chain: a Catmull-Rom through the spheres' (not straight lines between them,
+  // which made the taper a run of cones); past the last one, the tip: half an ellipse
+  const radAt = (f: number) => {
+    const i = Math.floor(f), t = f - i;
+    const g = (k: number) => s.rad[Math.min(last, Math.max(K, k))];
+    const p0 = g(i - 1), p1 = g(i), p2 = g(i + 1), p3 = g(i + 2);
+    const t2 = t * t, t3 = t2 * t;
+    return 0.5 * (2 * p1 + (-p0 + p2) * t + (2 * p0 - 5 * p1 + 4 * p2 - p3) * t2 + (-p0 + 3 * p1 - 3 * p2 + p3) * t3);
+  };
   for (let r = 0; r < rings; r++) {
-    let f: number;
-    if (r < PLUG) f = K - (PLUG - r) * 0.5;
-    else if (r === rings - 1) f = s.n - 1 + 0.15;
-    else f = K + (r - PLUG) / SUB;
+    const f = fs[r];
     ringF[r] = f;
     ringS[r] = (f - K) * s.seg;
-    const i0 = Math.min(s.n - 1, Math.max(K, Math.floor(f)));
-    const i1 = Math.min(s.n - 1, i0 + 1);
-    const t = Math.min(1, Math.max(0, f - i0));
-    ringR[r] = r < PLUG ? sp.neck * 0.92 : r === rings - 1 ? 0 : s.rad[i0] + (s.rad[i1] - s.rad[i0]) * t;
+    if (r < PLUG) ringR[r] = sp.neck * 0.92;
+    else if (f <= last) ringR[r] = radAt(f);
+    else {
+      const x = (f - last) / capF;
+      ringR[r] = s.rad[last] * Math.sqrt(Math.max(0, 1 - x * x));
+    }
+  }
+  // how fast the radius changes along: the surface's normal leans back by it (a taper is a cone,
+  // not a cylinder, in the light). Not at the plug, which steps in under the head
+  const ringDR = new Float32Array(rings);
+  for (let r = PLUG + 1; r < rings; r++) {
+    const a = r - 1, b = Math.min(rings - 1, r + 1);
+    ringDR[r] = (ringR[b] - ringR[a]) / Math.max(1e-6, (ringF[b] - ringF[a]) * s.seg);
   }
   // dorsal scale: row spacing from the girth, length from the aspect; the coordinate along is
   // the integral of 1 / length, so scales shrink toward neck and tail as on the animal
@@ -174,10 +204,11 @@ export function createBody(s: Snake, material: THREE.Material): Body {
         C[r * 3] = P[K * 3] - (fx / fl) * back;
         C[r * 3 + 1] = P[K * 3 + 1] - (fy / fl) * back;
         C[r * 3 + 2] = P[K * 3 + 2] - (fz / fl) * back;
-      } else if (r === rings - 1) {
-        const n = s.n - 1;
-        const tx = P[n * 3] - P[(n - 1) * 3], ty = P[n * 3 + 1] - P[(n - 1) * 3 + 1], tz = P[n * 3 + 2] - P[(n - 1) * 3 + 2];
-        C[r * 3] = P[n * 3] + tx * 0.15; C[r * 3 + 1] = P[n * 3 + 1] + ty * 0.15; C[r * 3 + 2] = P[n * 3 + 2] + tz * 0.15;
+      } else if (f > last) {
+        // the tip carries on the line the chain ends on
+        const tx = P[last * 3] - P[(last - 1) * 3], ty = P[last * 3 + 1] - P[(last - 1) * 3 + 1], tz = P[last * 3 + 2] - P[(last - 1) * 3 + 2];
+        const k = f - last;
+        C[r * 3] = P[last * 3] + tx * k; C[r * 3 + 1] = P[last * 3 + 1] + ty * k; C[r * 3 + 2] = P[last * 3 + 2] + tz * k;
       } else point(f, C, r * 3);
     }
     // tangents toward the tail, then an up that follows the world's but never flips
@@ -218,6 +249,7 @@ export function createBody(s: Snake, material: THREE.Material): Body {
       const kl = kx * lx + ky * ly + kz * lz;
       const ku = kx * ux + ky * uy + kz * uz;
       const R = ringR[r];
+      const dR = ringDR[r];
       const mid = Math.min(1, Math.max(0, (ringS[r] - 0.1) / 0.2)) * Math.max(0, 1 - ringS[r] / (sp.length * 0.8));
       const rr = R * (1 + (breath - 1) * mid);
       const nb = Math.min(1, Math.max(0, ringS[r] / 0.07)); // neck: round, body: snake
@@ -251,9 +283,13 @@ export function createBody(s: Snake, material: THREE.Material): Body {
         pos[o * 3] = C[r * 3] + lx * ox + ux * oy;
         pos[o * 3 + 1] = C[r * 3 + 1] + ly * ox + uy * oy;
         pos[o * 3 + 2] = C[r * 3 + 2] + lz * ox + uz * oy;
-        nor[o * 3] = lx * nx + ux * ny;
-        nor[o * 3 + 1] = ly * nx + uy * ny;
-        nor[o * 3 + 2] = lz * nx + uz * ny;
+        // leaning back by the taper; at the very point, straight along
+        let qx = lx * nx + ux * ny - dR * tx, qy = ly * nx + uy * ny - dR * ty, qz = lz * nx + uz * ny - dR * tz;
+        if (R <= 1e-6) { qx = tx; qy = ty; qz = tz; }
+        const ql = Math.hypot(qx, qy, qz) || 1;
+        nor[o * 3] = qx / ql;
+        nor[o * 3 + 1] = qy / ql;
+        nor[o * 3 + 2] = qz / ql;
         tan[o * 3] = tx; tan[o * 3 + 1] = ty; tan[o * 3 + 2] = tz;
         // stretch: the outside of a bend is longer than the centre line
         const st = 1 - (kl * px + ku * py) * rr;

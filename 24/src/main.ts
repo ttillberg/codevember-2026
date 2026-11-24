@@ -226,6 +226,12 @@ const headsMade = Promise.all((['python', 'corn'] as const).map((shape) => loade
     const h = createHead(gltf, s.sp, paint);
     h.group.scale.setScalar(kinds[k].f);
     heads[k] = h;
+    // the neck takes the head's colours (skin.ts)
+    if (h.paint) {
+      const u = skins[k].userData.uniforms;
+      u.tHead.value = h.paint;
+      u.uHeadOn.value = 1;
+    }
   })),
 ).catch(() => { /* no heads then: the bodies alone */ })));
 

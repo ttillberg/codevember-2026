@@ -10,6 +10,9 @@ import type { Species } from './species';
 
 const GLSL = /* glsl */ `
 uniform int uPattern;
+uniform sampler2D tHead;  // the head's own paint (head.ts): its back row is what the neck grows out of
+uniform float uHeadOn;
+uniform float uNeckLen;
 uniform float uRows;
 uniform float uVw;
 uniform float uVRatio;
@@ -304,6 +307,21 @@ vec3 garterColor(float s, float phi, float id, float belly, float plate) {
   return mix(c, bc, belly);
 }
 
+// The head and the body are two meshes painted two ways: met on one ring, the pattern stopped dead
+// there. So down the neck, scale by scale, the body takes the colour the head has at its back edge
+// right above it (blurred, so a granule doesn't streak), all of them at the head, fewer and fewer
+// further on, none past uNeckLen: the head's colours run out into the body's pattern in a ragged edge,
+// scale-sized, as markings do. The head's texture runs round from the belly (u 0) over the left
+// cheek to the spine (.5), its back row along the bottom; the body's sV runs the other way round.
+vec3 neckBlend(vec3 c, float s, float sv, float id) {
+  if (uHeadOn < 0.5) return c;
+  float w = 1.0 - smoothstep(0.0, uNeckLen, s);
+  if (id >= w * w * 1.05) return c;
+  // an explicit level: the lookup is per scale, so its screen derivatives jump at every scale's edge,
+  // and left to them the GPU took the smallest level there, the whole head's average, in specks
+  return textureLod(tHead, vec2(fract(1.0 - sv), 0.985), 4.0).rgb;
+}
+
 vec3 bodyColor(float s, float phi, float id, float belly, float plate) {
   // a uniform, not a define: one program for all eight snakes, built once instead of eight times
   if (uPattern == 0) return pythonColor(s, phi, id, belly, plate);
@@ -382,6 +400,9 @@ export function createSkin(sp: Species) {
   });
   const uniforms = {
     uPattern: { value: sp.pattern },
+    tHead: { value: null as THREE.Texture | null },
+    uHeadOn: { value: 0 },
+    uNeckLen: { value: sp.headLength * 0.65 },
     uRows: { value: sp.rows },
     uVw: { value: sp.ventralWidth },
     uVRatio: { value: sp.shape === 'python' ? 2.2 : 1.35 },
@@ -455,7 +476,7 @@ if (isBelly > 0.5) {
   float id = hash12(vec2(plate, 7.0 + uSeed));
   scaleId = id;
   tilt = vec2(hash12(vec2(plate, 2.0)) - 0.5, 0.0) * 0.12;
-  vec3 base = bodyColor(sM, phi, id, 1.0, plate);
+  vec3 base = neckBlend(bodyColor(sM, phi, id, 1.0, plate), sM, sV, id);
   col = base * (0.94 + 0.12 * id);
   joint = 1.0 - smoothstep(0.0, g * 0.5, fract(av));
   lift = fract(av);
@@ -500,7 +521,7 @@ if (isBelly > 0.5) {
   float sC = sM + (cm.x - p.x) * mPerA;
   float vC = halfV + cm.y / uRows * (1.0 - uVw);
   float phiC = (vC - 0.5) * 6.2832;
-  vec3 base = bodyColor(sC, phiC, id, 0.0, 0.0);
+  vec3 base = neckBlend(bodyColor(sC, phiC, id, 0.0, 0.0), sC, vC, id);
   if (uTextT0 > -50.0 && uTextW > 0.5) {
     // after a click, the scales as pixels: the line in a 5 x 7 font comes out of the scale clicked and
     // runs toward the head, four scales a second, on the seven rows round the spine
@@ -562,6 +583,7 @@ if (isBelly > 0.5) {
   // (only where it shows: close up the scales are drawn and this is skipped)
   if (fade < 0.6) {
     vec3 smoothC = mix(bodyColor(sM, phi, 0.25, isBelly, pl), bodyColor(sM, phi, 0.62, isBelly, pl), 0.4);
+    smoothC = mix(smoothC, neckBlend(smoothC, 0.0, sV, 0.0), uHeadOn * (1.0 - smoothstep(0.0, uNeckLen, sM)) * 0.8);
     col = mix(smoothC, col, smoothstep(0.0, 0.6, fade));
   }
 }
