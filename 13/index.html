@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#eae7e0" />
+    <title>13 · Labyrinth · Codevember 2026</title>
+    <meta name="description" content="A minimalist Swedish sphere labyrinth wrapped in thin clear plastic — turn it with the pointer to guide the steel ball past the checkpoint LEDs" />
+    <meta name="author" content="Theo Tillberg" />
+    <!-- share image: 13/about/screengrab.png, copied next to the build by scripts/build.mjs -->
+    <meta property="og:title" content="13 · Labyrinth · Codevember 2026" />
+    <meta property="og:description" content="A minimalist Swedish sphere labyrinth wrapped in thin clear plastic — turn it with the pointer to guide the steel ball past the checkpoint LEDs" />
+    <meta property="og:image" content="https://ttillberg.github.io/codevember-2026/13/screengrab.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="1200" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <link rel="icon" href="data:," />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@700&family=Inter:wght@400;600&display=swap" />
+    <link rel="stylesheet" href="./src/style.css" />
+  </head>
+  <body>
+    <canvas id="c"></canvas>
+
+    <!-- Title plate (docs/DESIGN.md) -->
+    <div class="plate">
+      <div class="head">
+        <b>13 Labyrinth</b>
+        <i><a class="home" href="https://ttillberg.github.io/codevember-2026/">Codevember 2026 <span lang="ja">迷宮</span></a> · <a class="home" href="https://x.com/theo_t">@theo_t</a></i>
+      </div>
+      <div class="status" id="status">
+        <span class="dots" id="led-dots" aria-label="Checkpoint progress"></span>
+        <span class="status-text" id="status-text">0 / 5 CHECKPOINTS</span>
+      </div>
+    </div>
+
+    <!-- Top-right frosted controls -->
+    <div class="actions">
+      <button class="icon-btn" id="btn-reset" type="button" title="Reset ball (R)" aria-label="Reset ball">
+        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M3 12a9 9 0 1 0 3-6.7L3 8" />
+          <path d="M3 3v5h5" />
+        </svg>
+      </button>
+      <button class="icon-btn" id="btn-seed" type="button" title="New labyrinth (N)" aria-label="New labyrinth">
+        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="4" y="4" width="16" height="16" rx="3" />
+          <circle cx="9" cy="9" r="1.2" fill="currentColor" stroke="none" />
+          <circle cx="15" cy="9" r="1.2" fill="currentColor" stroke="none" />
+          <circle cx="12" cy="12" r="1.2" fill="currentColor" stroke="none" />
+          <circle cx="9" cy="15" r="1.2" fill="currentColor" stroke="none" />
+          <circle cx="15" cy="15" r="1.2" fill="currentColor" stroke="none" />
+        </svg>
+      </button>
+      <button class="icon-btn" id="btn-sound" type="button" title="Toggle sound (M)" aria-label="Toggle sound" aria-pressed="true">
+        <svg class="ico-on" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M11 5 6 9H2v6h4l5 4V5z" />
+          <path d="M15.5 8.5a5 5 0 0 1 0 7" />
+          <path d="M18.8 5.5a9.2 9.2 0 0 1 0 13" />
+        </svg>
+        <svg class="ico-off" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M11 5 6 9H2v6h4l5 4V5z" />
+          <path d="m22 9-6 6" />
+          <path d="m16 9 6 6" />
+        </svg>
+      </button>
+      <button class="icon-btn" id="btn-help" type="button" title="Help (?)" aria-label="Help" aria-expanded="false">?</button>
+    </div>
+
+    <!-- Minimalist help popover -->
+    <div class="help-card" id="help-card" hidden>
+      <p class="help-title">SPHERE LABYRINTH NO. 13</p>
+      <p>Drag anywhere to turn the sphere and roll the steel bearing along the track. Light all five checkpoint LEDs.</p>
+      <div class="help-keys">
+        <div><span class="key">DRAG</span> Turn sphere (edge to roll)</div>
+        <div><span class="key">SCROLL</span> Zoom closer</div>
+        <div><span class="key">WASD</span> Fine tilt</div>
+        <div><span class="key">R</span> Reset ball · <span class="key">N</span> New maze</div>
+      </div>
+    </div>
+
+    <!-- Dev / ?settings workbench -->
+    <button class="icon-btn settings-btn" id="btn-settings" type="button" title="Studio settings" aria-label="Studio settings" hidden>
+      <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="3" />
+        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9c.26.6.85 1 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+      </svg>
+    </button>
+    <div class="settings-panel" id="settings-panel" hidden>
+      <label>SSAO <input id="opt-ssao" type="range" min="0" max="1" step="0.02" value="0.56" /></label>
+      <label>COLOR GRADE <input id="opt-grade" type="range" min="0" max="1.5" step="0.05" value="1.0" /></label>
+      <label>PLASTIC SHELL <input id="opt-plastic" type="range" min="0" max="1.8" step="0.05" value="1.0" /></label>
+      <label>SCRATCHES <input id="opt-scratches" type="range" min="0" max="2" step="0.05" value="1.0" /></label>
+    </div>
+
+    <script type="module" src="./src/main.ts"></script>
+  </body>
+</html>

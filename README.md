@@ -22,7 +22,7 @@ Live: https://ttillberg.github.io/codevember-2026/
 | 10 | Caustic | — | — |
 | 11 | Rust | — | — |
 | 12 | Feather | [View](https://ttillberg.github.io/codevember-2026/12/) | [Code](https://github.com/ttillberg/codevember-2026/tree/main/12) |
-| 13 | Labyrinth | — | — |
+| 13 | Labyrinth | [View](https://ttillberg.github.io/codevember-2026/13/) | [Code](https://github.com/ttillberg/codevember-2026/tree/main/13) |
 | 14 | Tension | [View](https://ttillberg.github.io/codevember-2026/14/) | [Code](https://github.com/ttillberg/codevember-2026/tree/main/14) |
 | 15 | Mirage | — | — |
 | 16 | Spore | [View](https://ttillberg.github.io/codevember-2026/16/) | [Code](https://github.com/ttillberg/codevember-2026/tree/main/16) |

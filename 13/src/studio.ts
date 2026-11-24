@@ -1,0 +1,196 @@
+import * as THREE from 'three';
+
+export interface StudioRig {
+  envMap: THREE.Texture;
+  shadowPlane: THREE.Mesh;
+  backdropMesh: THREE.Mesh;
+  dispose: () => void;
+}
+
+/**
+ * Generates a clean Scandinavian photographic studio softbox environment map via PMREMGenerator.
+ * Includes large diffused overhead/key softboxes, cool fill, crisp rim strip, and dark negative-fill
+ * bounce cards so the bearing-steel ball and thin clear plastic shell exhibit crisp, authentic studio reflections.
+ */
+function createStudioEnvironment(renderer: THREE.WebGLRenderer): THREE.Texture {
+  const pmrem = new THREE.PMREMGenerator(renderer);
+  pmrem.compileEquirectangularShader();
+
+  const envScene = new THREE.Scene();
+  envScene.background = new THREE.Color(0xe6e3dc);
+
+  const addPanel = (
+    color: number,
+    intensity: number,
+    w: number,
+    h: number,
+    pos: [number, number, number],
+    lookAt: [number, number, number] = [0, 0, 0],
+  ) => {
+    const geo = new THREE.PlaneGeometry(w, h);
+    const mat = new THREE.MeshBasicMaterial({
+      color: new THREE.Color(color).multiplyScalar(intensity),
+      side: THREE.DoubleSide,
+    });
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.position.set(...pos);
+    mesh.lookAt(...lookAt);
+    envScene.add(mesh);
+  };
+
+  // Overhead horizontal studio softbox
+  addPanel(0xfffdf8, 3.2, 8.2, 4.4, [-1.2, 5.4, 2.2]);
+  // Main key softbox (upper-left-front — creates clean curved rectangular highlight on clear plastic shell)
+  addPanel(0xfffaf0, 3.9, 5.4, 5.2, [-4.8, 3.2, 4.0]);
+  // Cool daylight fill panel (right-front)
+  addPanel(0xf0f4fb, 1.9, 5.8, 4.6, [5.8, 1.2, 3.2]);
+  // Crisp narrow back-right rim softbox (gives razor-clean reflection on clear plastic rim)
+  addPanel(0xffffff, 3.8, 2.0, 6.8, [4.2, 2.6, -4.8]);
+  // Subtle warm studio floor bounce
+  addPanel(0xe5dfd4, 1.05, 14, 14, [0, -5.5, 0]);
+
+  // Studio negative-fill dark flags (essential for high-contrast chrome & clear polycarbonate realism!)
+  addPanel(0x2a2927, 1.0, 4.2, 5.4, [-6.5, -1.6, -2.5]);
+  addPanel(0x343330, 1.0, 3.6, 4.2, [5.8, -2.2, -1.6]);
+  addPanel(0x464440, 1.0, 5.5, 2.4, [0, -2.8, 6.4]);
+
+  const rt = pmrem.fromScene(envScene, 0.032);
+  pmrem.dispose();
+  envScene.traverse((obj) => {
+    if (obj instanceof THREE.Mesh) {
+      obj.geometry.dispose();
+      (obj.material as THREE.Material).dispose();
+    }
+  });
+
+  return rt.texture;
+}
+
+/**
+ * Soft studio contact shadow texture rendered beneath the sphere on the seamless cyclorama floor.
+ */
+function createContactShadowTexture(): THREE.CanvasTexture {
+  const size = 256;
+  const canvas = document.createElement('canvas');
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext('2d')!;
+
+  const grad = ctx.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
+  grad.addColorStop(0.0, 'rgba(32, 29, 24, 0.48)');
+  grad.addColorStop(0.28, 'rgba(36, 33, 28, 0.28)');
+  grad.addColorStop(0.6, 'rgba(44, 41, 36, 0.09)');
+  grad.addColorStop(1.0, 'rgba(48, 45, 40, 0.0)');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, size, size);
+
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
+export function setupStudio(renderer: THREE.WebGLRenderer, scene: THREE.Scene): StudioRig {
+  const envMap = createStudioEnvironment(renderer);
+  scene.environment = envMap;
+  // Moderate environment bounce on matte walls so directional softbox shadows & SSAO sculpt the tracks clearly,
+  // while chrome steel & clear plastic boost envMapIntensity per-material.
+  scene.environmentIntensity = 0.56;
+
+  // Seamless warm-alabaster photographic cyclorama backdrop dome
+  const backdropGeo = new THREE.SphereGeometry(28, 32, 24);
+  const backdropMat = new THREE.ShaderMaterial({
+    side: THREE.BackSide,
+    depthWrite: false,
+    uniforms: {
+      uTop: { value: new THREE.Color(0xdfdcd4) },
+      uMid: { value: new THREE.Color(0xebe8e0) },
+      uBottom: { value: new THREE.Color(0xd5cfc3) },
+    },
+    vertexShader: /* glsl */ `
+      varying vec3 vWorldDir;
+      void main() {
+        vec4 wp = modelMatrix * vec4(position, 1.0);
+        vWorldDir = normalize(wp.xyz);
+        gl_Position = projectionMatrix * viewMatrix * wp;
+      }
+    `,
+    fragmentShader: /* glsl */ `
+      uniform vec3 uTop;
+      uniform vec3 uMid;
+      uniform vec3 uBottom;
+      varying vec3 vWorldDir;
+      void main() {
+        float y = vWorldDir.y;
+        // Soft studio sweep brighter behind subject, gently shaded at floor & ceiling
+        vec3 col = mix(uMid, uTop, smoothstep(0.05, 0.72, y));
+        col = mix(col, uBottom, smoothstep(0.0, -0.48, y));
+        // Subtle off-center key softbox wash on the cyclorama wall
+        float keyGlow = smoothstep(-0.3, 0.95, dot(vWorldDir, normalize(vec3(-0.35, 0.28, -0.88))));
+        col += vec3(0.025, 0.023, 0.019) * keyGlow;
+        gl_FragColor = vec4(col, 1.0);
+      }
+    `,
+  });
+  const backdropMesh = new THREE.Mesh(backdropGeo, backdropMat);
+  backdropMesh.renderOrder = -10;
+  scene.add(backdropMesh);
+
+  // Soft studio hemisphere ambient bounce (balanced for rich sculptural shadow modeling)
+  const hemi = new THREE.HemisphereLight(0xfaf8f3, 0xbab1a2, 0.55);
+  scene.add(hemi);
+
+  // Primary softbox key light (upper-left-front) with crisp tight shadows inside tracks
+  const keyLight = new THREE.DirectionalLight(0xfffaf0, 1.48);
+  keyLight.position.set(-2.9, 3.8, 3.3);
+  keyLight.castShadow = true;
+  keyLight.shadow.mapSize.set(2048, 2048);
+  keyLight.shadow.camera.near = 1.5;
+  keyLight.shadow.camera.far = 12.0;
+  keyLight.shadow.camera.left = -1.45;
+  keyLight.shadow.camera.right = 1.45;
+  keyLight.shadow.camera.top = 1.45;
+  keyLight.shadow.camera.bottom = -1.45;
+  keyLight.shadow.bias = -0.00045;
+  keyLight.shadow.normalBias = 0.014;
+  keyLight.shadow.radius = 3.0;
+  scene.add(keyLight);
+
+  // Cool neutral fill light (right-front) — classic 3:1 studio key-to-fill ratio
+  const fillLight = new THREE.DirectionalLight(0xe8eff8, 0.34);
+  fillLight.position.set(4.1, 1.1, 2.4);
+  scene.add(fillLight);
+
+  // Crisp studio rim light (back-top-right)
+  const rimLight = new THREE.DirectionalLight(0xffffff, 0.58);
+  rimLight.position.set(2.5, 3.1, -3.6);
+  scene.add(rimLight);
+
+  // Grounded soft studio contact shadow under the sphere
+  const shadowTex = createContactShadowTexture();
+  const shadowGeo = new THREE.PlaneGeometry(3.1, 3.1);
+  shadowGeo.rotateX(-Math.PI / 2);
+  const shadowMat = new THREE.MeshBasicMaterial({
+    map: shadowTex,
+    transparent: true,
+    depthWrite: false,
+    opacity: 1.0,
+  });
+  const shadowPlane = new THREE.Mesh(shadowGeo, shadowMat);
+  shadowPlane.position.set(0.18, -1.18, -0.06);
+  shadowPlane.renderOrder = -2;
+  scene.add(shadowPlane);
+
+  return {
+    envMap,
+    shadowPlane,
+    backdropMesh,
+    dispose: () => {
+      envMap.dispose();
+      backdropGeo.dispose();
+      backdropMat.dispose();
+      shadowTex.dispose();
+      shadowGeo.dispose();
+      shadowMat.dispose();
+    },
+  };
+}

@@ -1,0 +1,257 @@
+/* Light studio day: backdrop #eae7e0, ink #1c1c1c (docs/DESIGN.md) */
+html, body {
+  margin: 0;
+  height: 100%;
+  background: #eae7e0;
+  overflow: hidden;
+  color: #1c1c1c;
+  font: 13px/1.4 Inter, "Helvetica Neue", Helvetica, Arial, sans-serif;
+}
+/* Nothing to select or long-press: a drag on the scene or on its furniture must not start a text selection,
+   a callout or a tap flash. */
+html, body {
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+  -webkit-tap-highlight-color: transparent;
+}
+canvas {
+  display: block;
+  width: 100vw;
+  height: 100vh;
+  touch-action: none;
+  cursor: grab;
+}
+canvas.dragging {
+  cursor: grabbing;
+}
+
+/* Title plate, top left */
+.plate {
+  position: fixed;
+  z-index: 2;
+  top: max(24px, env(safe-area-inset-top));
+  left: max(24px, env(safe-area-inset-left));
+  pointer-events: none;
+  user-select: none;
+  -webkit-user-select: none;
+  color: #1c1c1c;
+}
+.plate b {
+  display: block;
+  white-space: nowrap;
+  font: 700 56px/0.9 "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  letter-spacing: -0.02em;
+  text-transform: uppercase;
+}
+.plate .head > i {
+  display: block;
+  margin-top: 6px;
+  font-style: normal;
+  font-weight: 600;
+  font-size: 14px;
+  line-height: 1.15;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+.plate .home {
+  color: inherit;
+  text-decoration: none;
+  pointer-events: auto;
+}
+.plate .home:hover {
+  opacity: 0.65;
+}
+.plate .home span[lang="ja"] {
+  font-family: "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Noto Sans JP", "Yu Gothic", sans-serif;
+  letter-spacing: 0.06em;
+}
+
+.status {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 12px;
+  font-weight: 600;
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+.dots {
+  display: inline-flex;
+  gap: 5px;
+  align-items: center;
+}
+.dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  border: 1.25px solid rgba(28, 28, 28, 0.35);
+  background: rgba(28, 28, 28, 0.06);
+  transition: background 0.25s ease, border-color 0.25s ease, box-shadow 0.25s ease;
+}
+.dot.next {
+  border-color: #d66816;
+  background: rgba(255, 134, 38, 0.55);
+  box-shadow: 0 0 6px rgba(255, 134, 38, 0.45);
+}
+.dot.cleared {
+  border-color: #1da863;
+  background: #2dd480;
+  box-shadow: 0 0 6px rgba(45, 212, 128, 0.45);
+}
+
+/* Top-right frosted round buttons */
+.actions {
+  position: fixed;
+  z-index: 3;
+  top: max(24px, env(safe-area-inset-top));
+  right: max(24px, env(safe-area-inset-right));
+  display: flex;
+  gap: 8px;
+}
+.icon-btn {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: 1px solid rgba(28, 28, 28, 0.14);
+  background: rgba(246, 244, 239, 0.62);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  color: #1c1c1c;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  font: 600 13px/1 Inter, "Helvetica Neue", Helvetica, Arial, sans-serif;
+  cursor: pointer;
+  transition: background 0.15s ease, transform 0.15s ease, border-color 0.15s ease;
+}
+.icon-btn:hover {
+  background: rgba(255, 254, 250, 0.88);
+  border-color: rgba(28, 28, 28, 0.28);
+}
+.icon-btn:active {
+  transform: scale(0.94);
+}
+#btn-sound[aria-pressed="true"] .ico-off,
+#btn-sound[aria-pressed="false"] .ico-on {
+  display: none;
+}
+
+/* Help popover */
+.help-card {
+  position: fixed;
+  z-index: 4;
+  top: calc(max(24px, env(safe-area-inset-top)) + 42px);
+  right: max(24px, env(safe-area-inset-right));
+  width: 268px;
+  padding: 14px 16px;
+  border-radius: 12px;
+  border: 1px solid rgba(28, 28, 28, 0.12);
+  background: rgba(246, 244, 239, 0.84);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  color: #1c1c1c;
+  font-size: 12.5px;
+  line-height: 1.48;
+  box-shadow: 0 10px 28px rgba(32, 29, 24, 0.08);
+}
+.help-card p {
+  margin: 0 0 10px;
+}
+.help-title {
+  font-weight: 600;
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  margin-bottom: 6px !important;
+}
+.help-keys {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+}
+.key {
+  display: inline-block;
+  padding: 1px 6px;
+  margin-right: 4px;
+  border-radius: 4px;
+  border: 1px solid rgba(28, 28, 28, 0.22);
+  background: rgba(255, 255, 255, 0.65);
+  font-weight: 600;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+}
+
+/* Dev / ?settings workbench, bottom right */
+.settings-btn {
+  position: fixed;
+  z-index: 3;
+  bottom: max(20px, env(safe-area-inset-bottom));
+  right: max(20px, env(safe-area-inset-right));
+}
+.settings-panel {
+  position: fixed;
+  z-index: 4;
+  bottom: calc(max(20px, env(safe-area-inset-bottom)) + 42px);
+  right: max(20px, env(safe-area-inset-right));
+  width: 224px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1px solid rgba(28, 28, 28, 0.12);
+  background: rgba(246, 244, 239, 0.86);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.settings-panel[hidden] {
+  display: none;
+}
+.settings-panel label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  font-weight: 600;
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+.settings-panel input[type="range"] {
+  width: 106px;
+  accent-color: #1c1c1c;
+}
+
+@media (max-width: 640px) {
+  .plate {
+    top: max(16px, env(safe-area-inset-top));
+    left: max(16px, env(safe-area-inset-left));
+  }
+  .plate b {
+    font-size: 36px;
+  }
+  .plate .head > i {
+    font-size: 10px;
+  }
+  .status {
+    margin-top: 8px;
+    font-size: 10px;
+  }
+  .actions {
+    top: max(16px, env(safe-area-inset-top));
+    right: max(16px, env(safe-area-inset-right));
+  }
+}
+
+/* ?clean: the scene alone */
+.clean .plate,
+.clean .actions,
+.clean .help-card,
+.clean .settings-btn,
+.clean .settings-panel {
+  display: none !important;
+}
