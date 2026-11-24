@@ -1,12 +1,12 @@
 # 13 · Labyrinth
 
-A minimalist Scandinavian sphere labyrinth suspended in soft studio light. The track wraps around the entire 360° surface of a matte warm-white and beige core, enclosed inside a thin clear polycarbonate shell with faint handling scratches, recessed micro-screws, semi-transparent `MADE IN SWEDEN` seal tape, and miniature checkpoint LEDs embedded inside the corridors.
+A minimalist Scandinavian two-layer adaptive sphere labyrinth suspended in soft studio light, wrapped in a thin scratched polycarbonate shell with recessed micro-screws and semi-transparent `MADE IN SWEDEN` seal tape.
 
-Drag anywhere to turn the sphere in 3D (drag near the rim to roll around the view axis) and guide the chrome bearing ball under gravity through all five checkpoint LEDs.
+- **Adaptive upper deck (5 morphing levels)**: An 8-band, 62-cell grid with 66 steady chamfered corner poles and 132 thin retractable wall blades that slide smoothly out of precision floor seams (leaving only neat panel seams when hidden) while locked structural walls stay anchored with etched padlock icons.
+- **Mechanical diaphragm iris shutters & underneath half-pipe tubes**: Six 6-blade camera-aperture diaphragm shutters open and close across levels, revealing circular drop holes straight through the shell into a simpler, sculpted U-shaped half-pipe tube system running beneath transparent polycarbonate floor windows — complete with under-deck checkpoint LEDs. Drop down into the half-pipe tubes through an open iris, steer underneath the upper walls while watching the steel ball through the clear floor panels, and tilt an open shutter downward to emerge back up.
 
 ## What was tried & learned
 
-- **Full-sphere variable-band topology**: 7 latitude bands (`1–6–12–12–12–6–1`, 50 cells total) keep every corridor nearly square from pole to pole without polar pinching, keeping the maze clean and not overly complex.
-- **Exact analytical spherical collision**: Every wall arc (latitude ring or longitude meridian) is resolved analytically on the unit sphere with 8 physics substeps per frame and 2 corner relaxation passes, so the steel bearing glides smoothly around rounded corners without snagging.
-- **SSAO through transparent plastic**: Rendering the scene into a 4× MSAA HDR HalfFloat target and hiding the thin clear shell, scratches, and tape during the `GTAOPass` normal/depth pre-pass lets light ambient occlusion shade the interior labyrinth tracks and screw recesses cleanly without being blocked by the outer shell.
-- **Studio reflection balance**: Using a bespoke PMREM softbox + negative-fill studio lightbox with moderate global environment intensity and elevated per-material `envMapIntensity` keeps the matte bone-white/beige walls softly sculpted while giving the chrome ball and thin plastic shell crisp studio reflections.
+- **Concave seams around steady poles**: Trimming every wall blade concavely to follow the circular contour of its steady corner poles (`POLE_SEAM_GAP = 0.0042`) eliminates corner overlap where multiple walls share a pole.
+- **Per-cell perforated & windowed floor shell**: Replacing a single core sphere with 62 thickness-extruded curved panels lets solid beige panels frame flush transparent polycarbonate windows and mathematically smooth circular iris holes with real shell depth.
+- **Two-layer SSAO**: Excluding both the outer plastic shell and the flush floor window panes from `GTAOPass`'s normal pre-pass lets light ambient occlusion shade both the upper maze corridors and the underneath U-shaped half-pipe troughs through the glass.

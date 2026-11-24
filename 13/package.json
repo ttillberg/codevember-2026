@@ -1,7 +1,7 @@
 {
   "name": "day-13",
   "private": true,
-  "description": "A minimalist Swedish sphere labyrinth wrapped in thin clear plastic — turn it with the pointer to roll the steel ball past the checkpoint LEDs",
+  "description": "A minimalist Swedish adaptive sphere labyrinth with retractable walls across 5 morphing levels, wrapped in thin clear plastic",
   "type": "module",
   "scripts": {
     "dev": "vite",

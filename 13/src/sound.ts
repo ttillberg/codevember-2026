@@ -151,4 +151,90 @@ export class LabyrinthSound {
       playTone(1046.5, 0.46, 1.1, 0.05);
     }
   }
+
+  /**
+   * Subtle mechanical precision-actuator whirr & soft detent clicks when the sphere morphs between levels.
+   */
+  playMorph() {
+    if (!this.enabled || !this.ctx || this.ctx.state !== 'running') return;
+    const now = this.ctx.currentTime;
+
+    // Soft pneumatic/servo glide sweep
+    const osc = this.ctx.createOscillator();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(145, now);
+    osc.frequency.exponentialRampToValueAtTime(220, now + 0.38);
+    osc.frequency.exponentialRampToValueAtTime(160, now + 0.78);
+
+    const g = this.ctx.createGain();
+    g.gain.setValueAtTime(0.0001, now);
+    g.gain.linearRampToValueAtTime(0.028, now + 0.12);
+    g.gain.exponentialRampToValueAtTime(0.0001, now + 0.85);
+
+    osc.connect(g);
+    g.connect(this.ctx.destination);
+    osc.start(now);
+    osc.stop(now + 0.88);
+
+    // Delicate staggered mechanical detent ticks as blades lock into place
+    const tickTimes = [0.06, 0.19, 0.34, 0.51, 0.66];
+    for (let i = 0; i < tickTimes.length; i++) {
+      const t0 = now + tickTimes[i];
+      const tick = this.ctx.createOscillator();
+      tick.type = 'triangle';
+      const f = 760 + i * 75;
+      tick.frequency.setValueAtTime(f, t0);
+      tick.frequency.exponentialRampToValueAtTime(f * 0.65, t0 + 0.02);
+
+      const tg = this.ctx.createGain();
+      tg.gain.setValueAtTime(0.0001, t0);
+      tg.gain.linearRampToValueAtTime(0.018, t0 + 0.002);
+      tg.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.024);
+
+      tick.connect(tg);
+      tg.connect(this.ctx.destination);
+      tick.start(t0);
+      tick.stop(t0 + 0.028);
+    }
+  }
+
+  /** Hollow resonant steel clunk when dropping down through a diaphragm iris into the half-pipe below */
+  playPortalDrop() {
+    if (!this.enabled || !this.ctx || this.ctx.state !== 'running') return;
+    const now = this.ctx.currentTime;
+    const osc = this.ctx.createOscillator();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(420, now);
+    osc.frequency.exponentialRampToValueAtTime(165, now + 0.16);
+
+    const g = this.ctx.createGain();
+    g.gain.setValueAtTime(0.0001, now);
+    g.gain.linearRampToValueAtTime(0.085, now + 0.008);
+    g.gain.exponentialRampToValueAtTime(0.0001, now + 0.22);
+
+    osc.connect(g);
+    g.connect(this.ctx.destination);
+    osc.start(now);
+    osc.stop(now + 0.24);
+  }
+
+  /** Crisp upward mechanical pop when emerging back out of an open iris onto the upper track */
+  playPortalEmerge() {
+    if (!this.enabled || !this.ctx || this.ctx.state !== 'running') return;
+    const now = this.ctx.currentTime;
+    const osc = this.ctx.createOscillator();
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(240, now);
+    osc.frequency.exponentialRampToValueAtTime(520, now + 0.12);
+
+    const g = this.ctx.createGain();
+    g.gain.setValueAtTime(0.0001, now);
+    g.gain.linearRampToValueAtTime(0.065, now + 0.006);
+    g.gain.exponentialRampToValueAtTime(0.0001, now + 0.16);
+
+    osc.connect(g);
+    g.connect(this.ctx.destination);
+    osc.start(now);
+    osc.stop(now + 0.18);
+  }
 }

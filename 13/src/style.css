@@ -95,10 +95,18 @@ canvas.dragging {
   background: rgba(255, 134, 38, 0.55);
   box-shadow: 0 0 6px rgba(255, 134, 38, 0.45);
 }
+.dot.pipe-dot {
+  border-color: #199e90;
+}
+.dot.pipe-dot.next {
+  border-color: #16a899;
+  background: rgba(42, 217, 198, 0.55);
+  box-shadow: 0 0 6px rgba(42, 217, 198, 0.5);
+}
 .dot.cleared {
   border-color: #1da863;
-  background: #2dd480;
-  box-shadow: 0 0 6px rgba(45, 212, 128, 0.45);
+  background: #2ce391;
+  box-shadow: 0 0 6px rgba(44, 227, 145, 0.5);
 }
 
 /* Top-right frosted round buttons */
@@ -139,17 +147,77 @@ canvas.dragging {
   display: none;
 }
 
+/* Bottom-center 5-level morph selector pill */
+.level-bar {
+  position: fixed;
+  z-index: 3;
+  bottom: max(22px, env(safe-area-inset-bottom));
+  left: 50%;
+  transform: translateX(-50%);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 6px 4px 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(28, 28, 28, 0.13);
+  background: rgba(246, 244, 239, 0.66);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+.level-label {
+  font-weight: 600;
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  margin-right: 6px;
+  opacity: 0.72;
+}
+.lvl-btn {
+  position: relative;
+  height: 28px;
+  min-width: 34px;
+  padding: 0 9px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: #1c1c1c;
+  font: 600 11px/1 Inter, "Helvetica Neue", Helvetica, Arial, sans-serif;
+  letter-spacing: 0.08em;
+  cursor: pointer;
+  transition: background 0.18s ease, color 0.18s ease, border-color 0.18s ease, transform 0.12s ease;
+}
+.lvl-btn:hover {
+  background: rgba(28, 28, 28, 0.06);
+}
+.lvl-btn:active {
+  transform: scale(0.94);
+}
+.lvl-btn.active {
+  background: #1c1c1c;
+  color: #f4f3ef;
+}
+.lvl-btn.done::after {
+  content: "";
+  position: absolute;
+  top: 4px;
+  right: 5px;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: #24c97e;
+}
+
 /* Help popover */
 .help-card {
   position: fixed;
   z-index: 4;
   top: calc(max(24px, env(safe-area-inset-top)) + 42px);
   right: max(24px, env(safe-area-inset-right));
-  width: 268px;
+  width: 274px;
   padding: 14px 16px;
   border-radius: 12px;
   border: 1px solid rgba(28, 28, 28, 0.12);
-  background: rgba(246, 244, 239, 0.84);
+  background: rgba(246, 244, 239, 0.86);
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
   color: #1c1c1c;
@@ -245,11 +313,20 @@ canvas.dragging {
     top: max(16px, env(safe-area-inset-top));
     right: max(16px, env(safe-area-inset-right));
   }
+  .level-bar {
+    bottom: max(16px, env(safe-area-inset-bottom));
+    padding: 3px 5px 3px 10px;
+  }
+  .lvl-btn {
+    min-width: 30px;
+    padding: 0 7px;
+  }
 }
 
 /* ?clean: the scene alone */
 .clean .plate,
 .clean .actions,
+.clean .level-bar,
 .clean .help-card,
 .clean .settings-btn,
 .clean .settings-panel {

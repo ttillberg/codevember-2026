@@ -470,3 +470,82 @@ export function createMetalBallTexture(): THREE.CanvasTexture {
   tex.wrapT = THREE.ClampToEdgeWrapping;
   return tex;
 }
+
+/**
+ * Minimalist etched line-art padlock icon pad-printed onto permanently locked walls (inspired by reference).
+ */
+export function createPadlockGlyphTexture(): THREE.CanvasTexture {
+  const size = 128;
+  const canvas = document.createElement('canvas');
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext('2d')!;
+
+  ctx.clearRect(0, 0, size, size);
+  ctx.strokeStyle = 'rgba(42, 40, 36, 0.72)';
+  ctx.fillStyle = 'rgba(42, 40, 36, 0.72)';
+  ctx.lineWidth = 7.5;
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+
+  // Shackle arch
+  ctx.beginPath();
+  ctx.arc(64, 52, 16, Math.PI, 0, false);
+  ctx.lineTo(80, 62);
+  ctx.moveTo(48, 52);
+  ctx.lineTo(48, 62);
+  ctx.stroke();
+
+  // Lock body (rounded rect)
+  ctx.beginPath();
+  ctx.roundRect(38, 60, 52, 38, 7);
+  ctx.stroke();
+
+  // Minimal keyhole dot
+  ctx.beginPath();
+  ctx.arc(64, 79, 4.5, 0, Math.PI * 2);
+  ctx.fill();
+
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = 4;
+  return tex;
+}
+
+/**
+ * Minimalist etched directional micro-arrow for morphing actuator walls.
+ */
+export function createArrowGlyphTexture(): THREE.CanvasTexture {
+  const w = 192;
+  const h = 96;
+  const canvas = document.createElement('canvas');
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext('2d')!;
+
+  ctx.clearRect(0, 0, w, h);
+  ctx.strokeStyle = 'rgba(42, 40, 36, 0.58)';
+  ctx.lineWidth = 6.5;
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+
+  // Clean horizontal double-headed arrow (↔)
+  ctx.beginPath();
+  ctx.moveTo(46, 48);
+  ctx.lineTo(146, 48);
+  // Left arrowhead
+  ctx.moveTo(62, 34);
+  ctx.lineTo(44, 48);
+  ctx.lineTo(62, 62);
+  // Right arrowhead
+  ctx.moveTo(130, 34);
+  ctx.lineTo(148, 48);
+  ctx.lineTo(130, 62);
+  ctx.stroke();
+
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = 4;
+  return tex;
+}
+

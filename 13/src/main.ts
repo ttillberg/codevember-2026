@@ -1,6 +1,6 @@
 import * as THREE from 'three';
-import { buildLabyrinthRig, type LabyrinthRig } from './labyrinthMesh';
-import { R_BALL_CENTER, generateSphereMaze, type SphereMaze } from './maze';
+import { buildLabyrinthRig } from './labyrinthMesh';
+import { createSphereGrid } from './maze';
 import { SphereBallPhysics } from './physics';
 import { StudioPost } from './post';
 import { LabyrinthSound } from './sound';
@@ -12,13 +12,12 @@ if (params.has('clean')) document.body.classList.add('clean');
 const canvas = document.querySelector<HTMLCanvasElement>('#c')!;
 const renderer = new THREE.WebGLRenderer({
   canvas,
-  antialias: false, // MSAA handled inside StudioPost HDR target
+  antialias: false, // 4x MSAA handled inside StudioPost HDR target
   powerPreference: 'high-performance',
 });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-// StudioPost handles filmic tone mapping & sRGB output
 renderer.toneMapping = THREE.NoToneMapping;
 
 const scene = new THREE.Scene();
@@ -33,37 +32,60 @@ const studio = setupStudio(renderer, scene);
 const post = new StudioPost(renderer, scene, camera);
 const sound = new LabyrinthSound();
 
-// Container that floats subtly in the studio and holds the rotatable labyrinth sphere
 const floatGroup = new THREE.Group();
 scene.add(floatGroup);
 
-let seed = Number(params.get('seed')) || 1307;
-let maze: SphereMaze;
-let rig: LabyrinthRig;
-let physics: SphereBallPhysics;
+// Build single persistent two-layer adaptive sphere grid + 5 morphing levels
+const grid = createSphereGrid();
+const rig = buildLabyrinthRig(grid);
+floatGroup.add(rig.root);
 
-// Initial studio hero pose: showcases the gleaming steel ball, sculpted white/beige tracks,
-// prominent MADE IN SWEDEN tape across the front-lower equator, recessed screws, and glowing LEDs
-const initialQuat = new THREE.Quaternion().setFromEuler(new THREE.Euler(0.56, -0.34, 0.06, 'YXZ'));
+const initialLevelNum = Math.max(1, Math.min(5, Number(params.get('level')) || 1));
+let currentLevelIdx = initialLevelNum - 1;
+const completedLevels = new Set<number>();
+let autoAdvanceTimer: number | null = null;
+
+// Per-wall live extension state [0..1]
+const wallCount = grid.walls.length;
+const wallExt = new Float32Array(wallCount);
+const wallStartExt = new Float32Array(wallCount);
+const wallTargetExt = new Float32Array(wallCount);
+const wallDelay = new Float32Array(wallCount);
+
+// Per-shutter diaphragm iris opening state [0..1]
+const shutterCount = grid.shutters.length;
+const shutterOpen = new Float32Array(shutterCount);
+const shutterStartOpen = new Float32Array(shutterCount);
+const shutterTargetOpen = new Float32Array(shutterCount);
+const shutterDelay = new Float32Array(shutterCount);
+
+let morphElapsed = 10;
+const BLADE_DURATION = 0.56;
+const WAVE_SPREAD = 0.42;
+
+const physics = new SphereBallPhysics(grid, grid.levels[currentLevelIdx]);
+
+// Hero pose frames the chrome ball prominently near center-top with the open shutter,
+// transparent windows into the half-pipe, and MADE IN SWEDEN tape in view below
+const initialQuat = new THREE.Quaternion().setFromEuler(new THREE.Euler(0.76, -0.34, 0.05, 'YXZ'));
 const sphereQuat = initialQuat.clone();
-
-// Smooth angular velocity for silky inertia after pointer release
 const angVel = new THREE.Vector3(0, 0, 0);
 
-// UI elements
+// UI references
 const ledDotsEl = document.getElementById('led-dots')!;
 const statusTextEl = document.getElementById('status-text')!;
 const btnReset = document.getElementById('btn-reset')!;
-const btnSeed = document.getElementById('btn-seed')!;
 const btnSound = document.getElementById('btn-sound')!;
 const btnHelp = document.getElementById('btn-help')!;
 const helpCard = document.getElementById('help-card')!;
 const btnSettings = document.getElementById('btn-settings')!;
 const settingsPanel = document.getElementById('settings-panel')!;
+const levelButtons = Array.from(document.querySelectorAll<HTMLButtonElement>('.lvl-btn'));
 
 function updateStatusUI() {
+  const level = grid.levels[currentLevelIdx];
   const count = physics.getClearedCount();
-  const total = maze.checkpoints.length;
+  const total = level.checkpoints.length;
   const nextIdx = physics.getNextCheckpointIndex();
 
   if (ledDotsEl.childElementCount !== total) {
@@ -77,62 +99,105 @@ function updateStatusUI() {
 
   for (let i = 0; i < total; i++) {
     const dot = ledDotsEl.children[i] as HTMLElement;
+    dot.classList.toggle('pipe-dot', level.checkpoints[i].layer === 'pipe');
     dot.classList.toggle('cleared', physics.cleared[i]);
     dot.classList.toggle('next', !physics.cleared[i] && i === nextIdx);
   }
 
-  statusTextEl.textContent = physics.allCleared ? 'COMPLETE · ALL LEDS LIT' : `${count} / ${total} CHECKPOINTS`;
+  const lvlTag = `LVL ${String(level.level).padStart(2, '0')}`;
+  const deckTag = physics.layer === 'pipe' || physics.layer === 'dropping' ? ' · SUB-PIPE' : '';
+  statusTextEl.textContent = physics.allCleared
+    ? `${lvlTag} · COMPLETE`
+    : `${lvlTag} · ${count} / ${total} LEDS${deckTag}`;
+
+  for (const btn of levelButtons) {
+    const n = Number(btn.dataset.level);
+    btn.classList.toggle('active', n === level.level);
+    btn.classList.toggle('done', completedLevels.has(n));
+  }
 }
 
-function mountMaze(newSeed: number) {
-  if (rig) {
-    floatGroup.remove(rig.root);
-    rig.dispose();
-  }
-  seed = newSeed;
-  maze = generateSphereMaze(seed);
-  rig = buildLabyrinthRig(maze);
-  floatGroup.add(rig.root);
-
-  // Exclude transparent plastic shell, scratches, tape, decals, halos, backdrop, shadow plane from GTAO normal pass
+function syncAoExclusions() {
   post.setAoExcluded([...rig.aoExcluded, studio.backdropMesh, studio.shadowPlane]);
+}
 
-  if (!physics) {
-    physics = new SphereBallPhysics(maze);
-  } else {
-    physics.setMaze(maze);
+function applyLevel(index: number, instant: boolean, resetBall = false) {
+  if (autoAdvanceTimer !== null) {
+    window.clearTimeout(autoAdvanceTimer);
+    autoAdvanceTimer = null;
   }
 
-  sphereQuat.copy(initialQuat);
-  angVel.set(0, 0, 0);
-  rig.root.quaternion.copy(sphereQuat);
-  rig.ballMesh.position.copy(physics.dir).multiplyScalar(R_BALL_CENTER);
+  const clamped = Math.max(0, Math.min(grid.levels.length - 1, index));
+  const changed = clamped !== currentLevelIdx;
+  currentLevelIdx = clamped;
+  const level = grid.levels[currentLevelIdx];
+
+  const waveDir = new THREE.Vector3(-0.6, 0.72, 0.35).normalize().applyQuaternion(sphereQuat.clone().invert());
+
+  for (let i = 0; i < wallCount; i++) {
+    const slot = grid.walls[i];
+    const target = slot.locked || level.raisedWalls[i] ? 1.0 : 0.0;
+    wallStartExt[i] = instant ? target : wallExt[i];
+    wallTargetExt[i] = target;
+    if (instant) {
+      wallExt[i] = target;
+      wallDelay[i] = 0;
+    } else {
+      const wave01 = 0.5 - 0.5 * slot.midDir.dot(waveDir);
+      const retractLead = target < wallStartExt[i] ? 0.0 : 0.1;
+      wallDelay[i] = wave01 * WAVE_SPREAD + retractLead;
+    }
+  }
+
+  for (let i = 0; i < shutterCount; i++) {
+    const port = grid.shutters[i];
+    const target = level.openShutters[i] ? 1.0 : 0.0;
+    shutterStartOpen[i] = instant ? target : shutterOpen[i];
+    shutterTargetOpen[i] = target;
+    if (instant) {
+      shutterOpen[i] = target;
+      shutterDelay[i] = 0;
+    } else {
+      const wave01 = 0.5 - 0.5 * port.dir.dot(waveDir);
+      shutterDelay[i] = wave01 * WAVE_SPREAD * 0.8 + 0.05;
+    }
+  }
+
+  morphElapsed = instant ? 10 : 0;
+
+  if (instant) {
+    rig.applyWallExtensions(wallExt);
+    rig.applyShutterOpenings(shutterOpen);
+  } else if (changed) {
+    sound.playMorph();
+  }
+
+  rig.setLevelCheckpoints(level.checkpoints);
+  syncAoExclusions();
+  physics.setLevel(level, resetBall);
   updateStatusUI();
 }
 
-mountMaze(seed);
+applyLevel(currentLevelIdx, true, true);
+rig.root.quaternion.copy(sphereQuat);
+rig.ballMesh.position.copy(physics.dir).multiplyScalar(physics.radius);
 
-// --- Shoemake Arcball 3-DOF pointer rotation ---
-let activePointerId: number | null = null;
-const lastArcVec = new THREE.Vector3();
-const curArcVec = new THREE.Vector3();
-const dragAxis = new THREE.Vector3();
-const dragQuat = new THREE.Quaternion();
-
-function projectToArcball(clientX: number, clientY: number, out: THREE.Vector3): THREE.Vector3 {
-  const rect = canvas.getBoundingClientRect();
-  const radius = Math.min(rect.width, rect.height) * 0.42;
-  const x = (clientX - (rect.left + rect.width * 0.5)) / radius;
-  const y = -(clientY - (rect.top + rect.height * 0.5)) / radius;
-  const r2 = x * x + y * y;
-  if (r2 <= 1.0) {
-    out.set(x, y, Math.sqrt(1.0 - r2));
-  } else {
-    const inv = 1.0 / Math.sqrt(r2);
-    out.set(x * inv, y * inv, 0);
-  }
-  return out.normalize();
+function easeMechanical(x: number): number {
+  const t = Math.max(0, Math.min(1, x));
+  return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
 }
+
+// --- Direct, zero-twist camera-plane pointer rotation ---
+// Dragging moves the front face of the sphere 1:1 under your pointer (no unwanted Z-roll wobble!),
+// while overhead gravity pulls the ball cleanly toward 50% / 50% dead center of the screen.
+let activePointerId: number | null = null;
+let lastPointerX = 0;
+let lastPointerY = 0;
+const camUp = new THREE.Vector3();
+const camRight = new THREE.Vector3();
+const dragQuatX = new THREE.Quaternion();
+const dragQuatY = new THREE.Quaternion();
+const dragVelVec = new THREE.Vector3();
 
 let lastMoveTime = performance.now();
 
@@ -142,34 +207,43 @@ canvas.addEventListener('pointerdown', (e) => {
   activePointerId = e.pointerId;
   canvas.setPointerCapture(e.pointerId);
   canvas.classList.add('dragging');
-  projectToArcball(e.clientX, e.clientY, lastArcVec);
+  lastPointerX = e.clientX;
+  lastPointerY = e.clientY;
   angVel.set(0, 0, 0);
   lastMoveTime = performance.now();
 });
 
 canvas.addEventListener('pointermove', (e) => {
   if (e.pointerId !== activePointerId) return;
-  projectToArcball(e.clientX, e.clientY, curArcVec);
+  const dx = e.clientX - lastPointerX;
+  const dy = e.clientY - lastPointerY;
+  lastPointerX = e.clientX;
+  lastPointerY = e.clientY;
 
-  const dot = Math.max(-1, Math.min(1, lastArcVec.dot(curArcVec)));
-  const angle = Math.acos(dot) * 1.18;
-  if (angle > 1e-5) {
-    dragAxis.crossVectors(lastArcVec, curArcVec);
-    if (dragAxis.lengthSq() > 1e-10) {
-      dragAxis.normalize();
-      // Transform arcball axis from camera space into world space
-      dragAxis.applyQuaternion(camera.quaternion).normalize();
-      dragQuat.setFromAxisAngle(dragAxis, angle);
-      sphereQuat.premultiply(dragQuat).normalize();
+  const rect = canvas.getBoundingClientRect();
+  const radiusPx = Math.max(120, Math.min(rect.width, rect.height) * 0.36);
+  const angleY = dx / radiusPx; // drag right -> rotate front face right around camera up
+  const angleX = dy / radiusPx; // drag down  -> rotate front face down around camera right
 
-      const now = performance.now();
-      const dt = Math.max(0.008, (now - lastMoveTime) * 0.001);
-      lastMoveTime = now;
-      // Blend rotational velocity for tactile inertial coasting on release
-      angVel.lerp(dragAxis.clone().multiplyScalar(Math.min(angle / dt, 7.0)), 0.45);
-    }
+  if (Math.abs(angleX) > 1e-5 || Math.abs(angleY) > 1e-5) {
+    camUp.set(0, 1, 0).applyQuaternion(camera.quaternion).normalize();
+    camRight.set(1, 0, 0).applyQuaternion(camera.quaternion).normalize();
+
+    dragQuatY.setFromAxisAngle(camUp, angleY);
+    dragQuatX.setFromAxisAngle(camRight, angleX);
+    sphereQuat.premultiply(dragQuatY).premultiply(dragQuatX).normalize();
+
+    const now = performance.now();
+    const dt = Math.max(0.008, (now - lastMoveTime) * 0.001);
+    lastMoveTime = now;
+    dragVelVec
+      .copy(camUp)
+      .multiplyScalar(angleY / dt)
+      .addScaledVector(camRight, angleX / dt);
+    const mag = dragVelVec.length();
+    if (mag > 6.5) dragVelVec.multiplyScalar(6.5 / mag);
+    angVel.lerp(dragVelVec, 0.45);
   }
-  lastArcVec.copy(curArcVec);
 });
 
 function endDrag(e: PointerEvent) {
@@ -184,30 +258,29 @@ function endDrag(e: PointerEvent) {
 canvas.addEventListener('pointerup', endDrag);
 canvas.addEventListener('pointercancel', endDrag);
 
-// Smooth scroll-to-zoom for admiring screws, scratches & tape up close
 canvas.addEventListener(
   'wheel',
   (e) => {
     e.preventDefault();
-    targetCamDist = Math.max(2.55, Math.min(5.6, targetCamDist + e.deltaY * 0.0024));
+    targetCamDist = Math.max(2.45, Math.min(5.6, targetCamDist + e.deltaY * 0.0024));
   },
   { passive: false },
 );
 
-// Keyboard support (WASD / Arrows for fine tilting, R reset, N new maze, M mute, ? help)
 const keysDown = new Set<string>();
 window.addEventListener('keydown', (e) => {
   const k = e.key.toLowerCase();
   if (['arrowup', 'arrowdown', 'arrowleft', 'arrowright', 'w', 'a', 's', 'd', 'q', 'e'].includes(k)) {
     sound.unlock();
     keysDown.add(k);
+  } else if (k >= '1' && k <= '5') {
+    sound.unlock();
+    applyLevel(Number(k) - 1, false, false);
   } else if (k === 'r') {
     physics.reset();
     sphereQuat.copy(initialQuat);
     angVel.set(0, 0, 0);
     updateStatusUI();
-  } else if (k === 'n') {
-    mountMaze((seed + 97) % 9999);
   } else if (k === 'm') {
     toggleSound();
   } else if (k === '?' || k === 'h') {
@@ -220,7 +293,6 @@ window.addEventListener('keyup', (e) => {
   keysDown.delete(e.key.toLowerCase());
 });
 
-// UI Actions
 function toggleSound() {
   const next = !sound.isEnabled();
   sound.setEnabled(next);
@@ -242,15 +314,17 @@ btnReset.addEventListener('click', () => {
   updateStatusUI();
 });
 
-btnSeed.addEventListener('click', () => {
-  sound.unlock();
-  mountMaze((seed + 97) % 9999);
-});
-
 btnSound.addEventListener('click', toggleSound);
 btnHelp.addEventListener('click', () => toggleHelp());
 
-// Settings workbench (only in dev or ?settings per docs/DESIGN.md)
+for (const btn of levelButtons) {
+  btn.addEventListener('click', () => {
+    sound.unlock();
+    const lvl = Number(btn.dataset.level);
+    applyLevel(lvl - 1, false, false);
+  });
+}
+
 if (import.meta.env.DEV || params.has('settings')) {
   btnSettings.hidden = false;
   btnSettings.addEventListener('click', () => {
@@ -276,7 +350,6 @@ if (import.meta.env.DEV || params.has('settings')) {
   });
 }
 
-// Responsive sizing (fits mobile portrait gracefully too)
 function resize() {
   const w = window.innerWidth;
   const h = window.innerHeight;
@@ -289,8 +362,20 @@ function resize() {
 window.addEventListener('resize', resize);
 resize();
 
-// Expose lightweight debug handle for inspection & demo captures
+// Debug handle for verification & demo inspection
 (window as unknown as Record<string, unknown>).__labyrinth = {
+  setLevel: (n: number, instant = false) => applyLevel(n - 1, instant, false),
+  enterPipe: (shutterId = 0) => {
+    physics.enterPipeAtShutter(shutterId);
+    updateStatusUI();
+  },
+  setShutterOpen: (id: number, val: number) => {
+    if (id >= 0 && id < shutterCount) {
+      shutterOpen[id] = val;
+      shutterTargetOpen[id] = val;
+      rig.applyShutterOpenings(shutterOpen);
+    }
+  },
   setRotation: (rx: number, ry: number, rz = 0) => {
     sphereQuat.setFromEuler(new THREE.Euler(rx, ry, rz, 'YXZ'));
     angVel.set(0, 0, 0);
@@ -300,10 +385,13 @@ resize();
     camDist = d;
   },
   getState: () => ({
-    seed,
+    level: currentLevelIdx + 1,
+    layer: physics.layer,
+    radius: physics.radius,
     cleared: physics.getClearedCount(),
-    total: maze.checkpoints.length,
+    total: grid.levels[currentLevelIdx].checkpoints.length,
     ballDir: physics.dir.toArray(),
+    openShutters: Array.from(shutterOpen).map((v) => Number(v.toFixed(2))),
   }),
 };
 
@@ -312,6 +400,7 @@ let lastFrame = performance.now();
 const stepAxis = new THREE.Vector3();
 const stepQuat = new THREE.Quaternion();
 const keyTilt = new THREE.Vector3();
+const gravityWorldDir = new THREE.Vector3();
 
 function frame(now: number) {
   requestAnimationFrame(frame);
@@ -319,57 +408,89 @@ function frame(now: number) {
   lastFrame = now;
   const t = now * 0.001;
 
-  // Keyboard gentle tilt controls
+  // Animate radial wall morphing wave + diaphragm shutter iris rotation
+  const maxMorphTime = WAVE_SPREAD + BLADE_DURATION + 0.2;
+  if (morphElapsed <= maxMorphTime) {
+    morphElapsed += dt;
+    for (let i = 0; i < wallCount; i++) {
+      if (grid.walls[i].locked) {
+        wallExt[i] = 1.0;
+        continue;
+      }
+      const localT = (morphElapsed - wallDelay[i]) / BLADE_DURATION;
+      wallExt[i] = wallStartExt[i] + (wallTargetExt[i] - wallStartExt[i]) * easeMechanical(localT);
+    }
+    for (let i = 0; i < shutterCount; i++) {
+      const localT = (morphElapsed - shutterDelay[i]) / (BLADE_DURATION * 0.95);
+      shutterOpen[i] = shutterStartOpen[i] + (shutterTargetOpen[i] - shutterStartOpen[i]) * easeMechanical(localT);
+    }
+    rig.applyWallExtensions(wallExt);
+    rig.applyShutterOpenings(shutterOpen);
+  }
+
   keyTilt.set(0, 0, 0);
   const kSpeed = 1.85;
-  if (keysDown.has('arrowup') || keysDown.has('w')) keyTilt.x -= kSpeed;
-  if (keysDown.has('arrowdown') || keysDown.has('s')) keyTilt.x += kSpeed;
-  if (keysDown.has('arrowleft') || keysDown.has('a')) keyTilt.y -= kSpeed;
-  if (keysDown.has('arrowright') || keysDown.has('d')) keyTilt.y += kSpeed;
+  if (keysDown.has('arrowup') || keysDown.has('w')) keyTilt.x += kSpeed;
+  if (keysDown.has('arrowdown') || keysDown.has('s')) keyTilt.x -= kSpeed;
+  if (keysDown.has('arrowleft') || keysDown.has('a')) keyTilt.y += kSpeed;
+  if (keysDown.has('arrowright') || keysDown.has('d')) keyTilt.y -= kSpeed;
   if (keysDown.has('q')) keyTilt.z += kSpeed;
   if (keysDown.has('e')) keyTilt.z -= kSpeed;
   if (keyTilt.lengthSq() > 0) {
     angVel.lerp(keyTilt, Math.min(1, dt * 8));
   }
 
-  // Apply inertial coasting when not dragging
   if (activePointerId === null) {
     const wMag = angVel.length();
     if (wMag > 1e-4) {
       stepAxis.copy(angVel).multiplyScalar(1 / wMag);
       stepQuat.setFromAxisAngle(stepAxis, wMag * dt);
       sphereQuat.premultiply(stepQuat).normalize();
-      angVel.multiplyScalar(Math.exp(-4.2 * dt));
+      angVel.multiplyScalar(Math.exp(-6.5 * dt));
     }
   }
 
-  // Smooth zoom easing
   camDist += (targetCamDist - camDist) * Math.min(1, dt * 9);
   camera.position.set(0, 0.24 * (camDist / 4.55), camDist);
   camera.lookAt(0, -0.02, 0);
 
-  // Subtle floating breath in the studio + reactive floor contact shadow
   const bob = Math.sin(t * 1.15) * 0.018;
   floatGroup.position.y = bob;
   studio.shadowPlane.scale.setScalar(1.0 - bob * 1.4);
 
-  // Step spherical metal ball physics
+  // Gravity points from the sphere center directly toward the camera (ball always seeks 50% / 50% of the screen!)
+  gravityWorldDir.copy(camera.position).sub(floatGroup.position).normalize();
+
   rig.root.quaternion.copy(sphereQuat);
-  physics.step(dt, sphereQuat, {
+  physics.step(dt, sphereQuat, gravityWorldDir, wallExt, shutterOpen, {
     onWallHit: (strength) => sound.playWallHit(strength),
+    onDropIntoPipe: () => {
+      sound.playPortalDrop();
+      updateStatusUI();
+    },
+    onEmergeFromPipe: () => {
+      sound.playPortalEmerge();
+      updateStatusUI();
+    },
     onCheckpoint: (idx, allCleared) => {
       sound.playCheckpoint(idx, allCleared);
+      if (allCleared) {
+        completedLevels.add(currentLevelIdx + 1);
+        if (currentLevelIdx < grid.levels.length - 1) {
+          autoAdvanceTimer = window.setTimeout(() => {
+            applyLevel(currentLevelIdx + 1, false, false);
+          }, 2200);
+        }
+      }
       updateStatusUI();
     },
   });
   sound.updateRoll(physics.speed);
 
-  // Update ball transform & checkpoint LEDs
-  rig.ballMesh.position.copy(physics.dir).multiplyScalar(R_BALL_CENTER);
+  rig.ballMesh.position.copy(physics.dir).multiplyScalar(physics.radius);
   rig.ballMesh.quaternion.copy(physics.ballQuat);
   rig.updateLeds(t, physics.cleared, physics.getNextCheckpointIndex(), physics.allCleared);
 
-  // Render through 4x MSAA + Light GTAO + Studio Color Grade
   post.render(t);
 }
 
