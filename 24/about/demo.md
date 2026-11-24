@@ -4,7 +4,7 @@ query: ?clean
 warmup: 5000
 seconds: 10
 ---
-# 04 / Tangle (snakes), demo
+# 24 / Nest, demo
 
 `?clean`: the knot alone. Ten seconds: eight snakes crawling through the pile under a slow handheld camera, then a tap on one and its pixel animation goes off in its scales, then another held down till it gets away along its track.
 

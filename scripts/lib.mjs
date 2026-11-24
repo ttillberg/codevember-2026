@@ -2,7 +2,7 @@ import { readdirSync, readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 
 export const ROOT = new URL('..', import.meta.url).pathname;
-// NN, or NN-name for a second piece on the same day (04-snakes next to 04)
+// NN, or NN-name for a second piece on the same day (say 04-snakes next to 04)
 export const DAY_RE = /^\d{2}(-[a-z0-9-]+)?$/;
 
 export const rootPkg = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8'));

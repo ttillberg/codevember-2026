@@ -29,11 +29,11 @@ for (const d of days) {
 }
 
 // 2. Root index.html: a square per day of the month, the built ones linked, with their screengrab if any.
-// A day with a second piece (04-snakes) gets a square for each, and an empty day in HIDDEN is left out for
+// A day with a second piece (NN-name) gets a square for each, and an empty day in HIDDEN is left out for
 // every extra piece, so the grid stays at 30. A piece in UNLISTED is built and live but not linked: on a
 // desktop its day stands as an empty square, on a phone it goes with the missed days.
 const UNLISTED = new Set(['01']); // not ready to show
-const HIDDEN = new Set([3]); // empty days left out, one per extra piece
+const HIDDEN = new Set([]); // empty days left out, one per extra piece
 const listed = days.filter((d) => !UNLISTED.has(d.dir));
 const pieces = (day) => listed.filter((d) => d.day === day);
 const dayCount = new Set(listed.map((d) => d.day)).size;

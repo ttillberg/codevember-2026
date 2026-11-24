@@ -1,5 +1,5 @@
 {
-  "name": "day-04-snakes",
+  "name": "day-24-nest",
   "private": true,
   "description": "Eight snakes of eight species in a knot that holds, crawling through it",
   "type": "module",
@@ -10,13 +10,14 @@
   },
   "devDependencies": {
     "@types/three": "^0.187.0",
+    "@vitejs/plugin-basic-ssl": "^2.3.0",
     "typescript": "^5.9.3",
     "vite": "^7.3.1"
   },
   "codevember": {
-    "day": 4,
-    "word": "Tangle",
-    "date": "2026-11-04"
+    "day": 24,
+    "word": "Nest",
+    "date": "2026-11-24"
   },
   "dependencies": {
     "three": "^0.187.0"

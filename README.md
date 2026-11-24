@@ -13,7 +13,6 @@ Live: https://ttillberg.github.io/codevember-2026/
 | 02 | Shatter | [View](https://ttillberg.github.io/codevember-2026/02/) | [Code](https://github.com/ttillberg/codevember-2026/tree/main/02) |
 | 03 | Melt | — | — |
 | 04 | Tangle | [View](https://ttillberg.github.io/codevember-2026/04/) | [Code](https://github.com/ttillberg/codevember-2026/tree/main/04) |
-| 04 | Tangle | [View](https://ttillberg.github.io/codevember-2026/04-snakes/) | [Code](https://github.com/ttillberg/codevember-2026/tree/main/04-snakes) |
 | 05 | Moss | [View](https://ttillberg.github.io/codevember-2026/05/) | [Code](https://github.com/ttillberg/codevember-2026/tree/main/05) |
 | 06 | Orrery | [View](https://ttillberg.github.io/codevember-2026/06/) | [Code](https://github.com/ttillberg/codevember-2026/tree/main/06) |
 | 07 | Hollow | [View](https://ttillberg.github.io/codevember-2026/07/) | [Code](https://github.com/ttillberg/codevember-2026/tree/main/07) |
@@ -33,7 +32,7 @@ Live: https://ttillberg.github.io/codevember-2026/
 | 21 | Bolt | — | — |
 | 22 | Echo | [View](https://ttillberg.github.io/codevember-2026/22/) | [Code](https://github.com/ttillberg/codevember-2026/tree/main/22) |
 | 23 | Magma | — | — |
-| 24 | Nest | — | — |
+| 24 | Nest | [View](https://ttillberg.github.io/codevember-2026/24/) | [Code](https://github.com/ttillberg/codevember-2026/tree/main/24) |
 | 25 | Veil | — | — |
 | 26 | Anamorph | — | — |
 | 27 | Burrow | — | — |

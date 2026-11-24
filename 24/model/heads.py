@@ -2,8 +2,8 @@
 # and ../public/corn.glb. The other species of each family get only their own colour map on the same
 # scales: ../public/heads/<species>.jpg.
 #
-#   /Applications/Blender.app/Contents/MacOS/Blender -b -P 04-snakes/model/heads.py            build + export + save heads.blend
-#   /Applications/Blender.app/Contents/MacOS/Blender -b -P 04-snakes/model/heads.py -- render  same, plus preview renders
+#   /Applications/Blender.app/Contents/MacOS/Blender -b -P 24/model/heads.py            build + export + save heads.blend
+#   /Applications/Blender.app/Contents/MacOS/Blender -b -P 24/model/heads.py -- render  same, plus preview renders
 #
 # Each head is a parametric surface: u runs from the neck ring (u = 0, x = 0) to the snout tip
 # (u = 1, x = L), theta round the cross-section (0 = left cheek, pi/2 = top). Big features
