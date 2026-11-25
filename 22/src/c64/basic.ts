@@ -1,4 +1,5 @@
 import { C64Screen, COLS, ROWS, RASTER_LINES_TOTAL } from './screen';
+import { CHAR_ROM } from './charset';
 import { C64FloppyDisk } from './disk';
 import { Cpu6502 } from './cpu6502';
 import {
@@ -150,6 +151,9 @@ export class C64Basic {
   private vicD019 = 0;
   private vicD01A = 0;
   private jiffyLow = 0;
+  private cpuPort01 = 0x37; // 6510 $01: bit 2 (CHAREN) = 1 -> I/O at $D000, 0 -> CHAR_ROM at $D000
+  private cartRomStart = 0;
+  private cartRomEnd = 0;
 
   // CIA1 Port A/B ($DC00/$DC01) Joystick + 8x8 Keyboard Matrix + Timer A IRQ ($DC04-$DC0E)
   private joyHeldBits = 0;
@@ -239,15 +243,33 @@ export class C64Basic {
     const res = assemble6502(source, defaultOrg);
     if (res.ok) {
       let loadsHighRom = false;
+      this.cartRomStart = 0;
+      this.cartRomEnd = 0;
       for (const seg of res.segments) {
         if (seg.org >= 0xe000 || seg.org + seg.bytes.length > 0xf000) {
           loadsHighRom = true;
+          this.cartRomStart = seg.org;
+          this.cartRomEnd = (seg.org + seg.bytes.length - 1) & 0xffff;
+        }
+        // Standard CBM80 cartridge ROM ($8000-$9FFF): write-protect ROM so cart self-copy/init loops stay intact
+        if (
+          seg.org === 0x8000 &&
+          seg.bytes.length >= 9 &&
+          seg.bytes[4] === 0xc3 &&
+          seg.bytes[5] === 0xc2 &&
+          seg.bytes[6] === 0xcd &&
+          seg.bytes[7] === 0x38 &&
+          seg.bytes[8] === 0x30
+        ) {
+          this.cartRomStart = 0x8000;
+          this.cartRomEnd = Math.min(0xbfff, 0x8000 + seg.bytes.length - 1);
         }
         for (let i = 0; i < seg.bytes.length; i++) {
           this.ram[(seg.org + i) & 0xffff] = seg.bytes[i] & 0xff;
         }
       }
       this.screen.ultimaxMirror = loadsHighRom;
+      this.cpuPort01 = 0x37;
       this.lastAsmSymbols = res.symbols;
       this.lastAsmEntry = res.entryAddr;
       this.monDisasmPc = res.entryAddr;
@@ -1667,6 +1689,19 @@ export class C64Basic {
   private poke(addr: number, val: number) {
     const a = addr & 0xffff;
     const v = val & 0xff;
+
+    // 6510 CPU I/O port ($0001): bit 2 (CHAREN) switches $D000-$D7FF between I/O and CHAR_ROM
+    if (a === 0x0001) {
+      this.cpuPort01 = v;
+      this.ram[a] = v;
+      return;
+    }
+
+    // Write-protect active cartridge ROM window (e.g. CBM80 $8000-$9FFF or Ultimax $E000-$FFFF)
+    if (this.cartRomEnd > 0 && a >= this.cartRomStart && a <= this.cartRomEnd) {
+      return;
+    }
+
     this.ram[a] = v;
 
     // Screen RAM ($0400-$07E7)
@@ -1789,11 +1824,18 @@ export class C64Basic {
 
   private peek(addr: number): number {
     const a = addr & 0xffff;
+    if (a === 0x0001) return this.cpuPort01;
     if (a === 0x0286) return this.screen.textColor;
     if (a === 0x00c6) return this.keyBuffer.length;
     if (a === 0x00a2) return this.jiffyLow;
     if (a >= 0x0400 && a < 0x0400 + COLS * ROWS) return this.screen.screenRam[a - 0x0400];
+    // When 6510 $01 bit 2 (CHAREN) is 0, reads at $D000-$D7FF return C64 Character ROM!
+    if ((this.cpuPort01 & 0x04) === 0 && a >= 0xd000 && a < 0xd800) {
+      return CHAR_ROM[(a - 0xd000) & 0x03ff];
+    }
     if (a >= 0xd800 && a < 0xd800 + COLS * ROWS) return this.screen.colorRam[a - 0xd800];
+    if (a === 0xd419 || a === 0xd41a) return 0xff; // Paddle X/Y (no paddle)
+    if (a === 0xd41b) return (Math.random() * 256) | 0; // SID Voice 3 Oscillator RNG
     if (a === 0xd011) {
       return (this.screen.vicD011 & 0x7f) | ((this.currentRasterLine & 0x100) ? 0x80 : 0);
     }

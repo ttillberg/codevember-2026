@@ -610,21 +610,53 @@ export class C64Screen {
           }
         }
       } else {
-        // Text scanline with authentic VIC-II fine X-scroll (0..7px) & 38-col side masking!
+        // Text scanline with custom RAM/Ultimax charset ($D018), multicolor text, fine X-scroll & collision mask!
         pixels.fill(bgPx, lineBase, lineBase + 320);
         const defaultScreen = screenBase === 0x0400;
+        const charBase = (bank + (d18 & 0x0e) * 0x0400) & 0xffff;
+        const useRom = charBase === 0x1000 || charBase === 0x1800;
+        const multicolor = (d16 & 0x10) !== 0;
+        const bg1Px = PACKED_PALETTE[this.bgColor1 & 0x0f];
+        const bg2Px = PACKED_PALETTE[this.bgColor2 & 0x0f];
+        const trackFg = this.spriteEnable !== 0;
+        const fgMask = this.fgMask;
+        const fgRow = py * 320;
+        if (trackFg) fgMask.fill(0, fgRow, fgRow + 320);
+
         for (let col = 0; col < COLS; col++) {
           const idx = row * COLS + col;
           const rawCode = defaultScreen ? this.screenRam[idx] : this.readVicByte(screenBase + idx);
-          const reversed = (rawCode & 0x80) !== 0;
-          const bits = CHAR_ROM[(rawCode & 0x7f) * 8 + gy];
-          const fgPx = PACKED_PALETTE[this.colorRam[idx] & 0x0f];
+          const colVal = this.colorRam[idx] & 0x0f;
+          const isMcCell = multicolor && (colVal & 0x08) !== 0;
+          const reversed = useRom && (rawCode & 0x80) !== 0;
+          const bits = useRom
+            ? CHAR_ROM[(rawCode & 0x7f) * 8 + gy]
+            : this.readCharByte(charBase, rawCode, gy);
+          const fgPx = PACKED_PALETTE[isMcCell ? (colVal & 0x07) : colVal];
           const destX0 = col * 8 + scrollX;
-          for (let gx = 0; gx < 8; gx++) {
-            const dx = destX0 + gx;
-            if (dx >= 320) break;
-            const on = (bits & (0x80 >> gx)) !== 0;
-            pixels[lineBase + dx] = on !== reversed ? fgPx : bgPx;
+
+          if (isMcCell) {
+            for (let pair = 0; pair < 4; pair++) {
+              const code2 = (bits >> (6 - pair * 2)) & 0x03;
+              const px = code2 === 0 ? bgPx : code2 === 1 ? bg1Px : code2 === 2 ? bg2Px : fgPx;
+              const dx = destX0 + pair * 2;
+              if (dx < 320) {
+                pixels[lineBase + dx] = px;
+                if (trackFg && code2 >= 2) fgMask[fgRow + dx] = 1;
+              }
+              if (dx + 1 < 320) {
+                pixels[lineBase + dx + 1] = px;
+                if (trackFg && code2 >= 2) fgMask[fgRow + dx + 1] = 1;
+              }
+            }
+          } else {
+            for (let gx = 0; gx < 8; gx++) {
+              const dx = destX0 + gx;
+              if (dx >= 320) break;
+              const lit = ((bits & (0x80 >> gx)) !== 0) !== reversed;
+              pixels[lineBase + dx] = lit ? fgPx : bgPx;
+              if (trackFg && lit) fgMask[fgRow + dx] = 1;
+            }
           }
         }
         if (narrow38) {

@@ -731,9 +731,23 @@ export function assemble6502(source: string, defaultOrg = 0xc000): AsmResult {
   }
 
   const totalBytes = segments.reduce((sum, s) => sum + s.bytes.length, 0);
-  // If an assembled ROM/cartridge image populates the 6502 RESET vector ($FFFC/$FFFD), use it as entryAddr!
+  // Auto-detect authentic C64 entry vectors:
+  // 1) Ultimax / 6502 RESET vector at $FFFC/$FFFD
+  // 2) Standard $8000 "CBM80" cartridge autostart header ($C3 $C2 $CD $38 $30 at $8004..$8008)
   let resolvedEntry = entryAddr < 0 ? defaultOrg : entryAddr;
   for (const seg of segments) {
+    if (
+      seg.org === 0x8000 &&
+      seg.bytes.length >= 9 &&
+      seg.bytes[4] === 0xc3 &&
+      seg.bytes[5] === 0xc2 &&
+      seg.bytes[6] === 0xcd &&
+      seg.bytes[7] === 0x38 &&
+      seg.bytes[8] === 0x30
+    ) {
+      const coldStart = seg.bytes[0] | (seg.bytes[1] << 8);
+      if (coldStart >= 0x8009) resolvedEntry = coldStart;
+    }
     if (seg.org <= 0xfffc && seg.org + seg.bytes.length >= 0xfffe) {
       const lo = seg.bytes[0xfffc - seg.org];
       const hi = seg.bytes[0xfffd - seg.org];
