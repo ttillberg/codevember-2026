@@ -9,6 +9,8 @@ export class MonitorSound {
     null,
     null,
   ];
+  private sidBus: GainNode | null = null;
+  private sidEchoWet: GainNode | null = null;
   private sidRegs = new Uint8Array(25);
 
   enabled = true;
@@ -424,25 +426,61 @@ export class MonitorSound {
         v.gain.gain.cancelScheduledValues(now);
         v.gain.gain.setTargetAtTime(0, now, 0.015);
       }
+      if (this.sidEchoWet) {
+        this.sidEchoWet.gain.cancelScheduledValues(now);
+        this.sidEchoWet.gain.setTargetAtTime(0, now, 0.03);
+      }
     }
     this.sidRegs[4] &= ~0x01;
     this.sidRegs[11] &= ~0x01;
     this.sidRegs[18] &= ~0x01;
   }
 
+  private ensureSidBus(ctx: AudioContext): GainNode {
+    if (!this.sidBus) {
+      const bus = ctx.createGain();
+      bus.gain.value = 1.0;
+      bus.connect(ctx.destination);
+
+      // Warm analog tape-echo send (classic 1984 nostalgic space + Day 22 Echo motif)
+      const delay = ctx.createDelay(0.6);
+      delay.delayTime.value = 0.27;
+      const lp = ctx.createBiquadFilter();
+      lp.type = 'lowpass';
+      lp.frequency.value = 1450;
+      const fb = ctx.createGain();
+      fb.gain.value = 0.34;
+      const wet = ctx.createGain();
+      wet.gain.value = 0.28;
+
+      bus.connect(delay);
+      delay.connect(lp);
+      lp.connect(fb);
+      fb.connect(delay);
+      lp.connect(wet);
+      wet.connect(ctx.destination);
+
+      this.sidBus = bus;
+      this.sidEchoWet = wet;
+    }
+    return this.sidBus;
+  }
+
   private ensureSidVoice(ctx: AudioContext, voiceIdx: number) {
     let v = this.sidVoices[voiceIdx];
     if (!v) {
+      const bus = this.ensureSidBus(ctx);
       const osc = ctx.createOscillator();
       const filter = ctx.createBiquadFilter();
       filter.type = 'lowpass';
-      filter.frequency.value = 3400;
-      filter.Q.value = 1.2;
+      // Warm MOS 6581 analog filter character (softer on bass/pads, clear on lead)
+      filter.frequency.value = voiceIdx === 1 ? 1100 : 2200;
+      filter.Q.value = 1.6;
       const gain = ctx.createGain();
       gain.gain.value = 0;
       osc.connect(filter);
       filter.connect(gain);
-      gain.connect(ctx.destination);
+      gain.connect(bus);
       osc.start();
       v = { osc, filter, gain };
       this.sidVoices[voiceIdx] = v;
@@ -452,21 +490,22 @@ export class MonitorSound {
 
   private triggerSidNoise(ctx: AudioContext, hz: number, peak: number, decaySec: number) {
     if (!this.noiseBuf) return;
+    const bus = this.ensureSidBus(ctx);
     const now = ctx.currentTime;
     const src = ctx.createBufferSource();
     src.buffer = this.noiseBuf;
     const bp = ctx.createBiquadFilter();
     bp.type = 'bandpass';
-    bp.frequency.value = Math.max(400, Math.min(6000, hz * 1.4));
-    bp.Q.value = 0.9;
+    bp.frequency.value = Math.max(350, Math.min(4200, hz * 1.1));
+    bp.Q.value = 0.85;
     const g = ctx.createGain();
-    g.gain.setValueAtTime(Math.max(0.0001, peak * 1.15), now);
-    g.gain.exponentialRampToValueAtTime(0.0001, now + Math.max(0.035, Math.min(0.28, decaySec)));
+    g.gain.setValueAtTime(Math.max(0.0001, peak * 0.72), now);
+    g.gain.exponentialRampToValueAtTime(0.0001, now + Math.max(0.04, Math.min(0.26, decaySec)));
     src.connect(bp);
     bp.connect(g);
-    g.connect(ctx.destination);
+    g.connect(bus);
     src.start(now);
-    src.stop(now + Math.max(0.04, Math.min(0.3, decaySec)) + 0.01);
+    src.stop(now + Math.max(0.05, Math.min(0.28, decaySec)) + 0.01);
   }
 
   /** 3-Voice MOS 6581 SID synthesizer for $D400..$D418 (54272..54296) with ADSR + noise percussion. */
@@ -479,6 +518,9 @@ export class MonitorSound {
 
     const now = ctx.currentTime;
     const vol = (this.sidRegs[24] & 0x0f) / 15;
+    if (this.sidEchoWet && vol > 0) {
+      this.sidEchoWet.gain.setTargetAtTime(0.28, now, 0.05);
+    }
 
     // Master volume register ($D418 / reg 24): update any gated voices
     if (reg === 24) {

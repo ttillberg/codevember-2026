@@ -99,11 +99,15 @@ ZP_MSG_HI  = $55
 ZP_WASH    = $56   ; Color-wash animation phase
 ZP_FLOOR   = $57   ; Bottom copper floor roll phase
 ZP_FRAME   = $58   ; Frame counter
-SID_TICK   = $59   ; Music sub-step tick (0..5)
+SID_TICK   = $59   ; Music sub-step tick (0..10 -> ~88 BPM vaporwave!)
 SID_STEP   = $5A   ; Song step (0..63)
-SID_ARP    = $5B   ; Fast 50Hz chord arpeggio phase (0..2)
-SID_CHORD  = $5C   ; Current chord index * 3
-SID_SNARE  = $5D   ; Non-zero while snare drum owns Voice 3
+SID_ARP    = $5B   ; Slow cascading 4-note chord arpeggio phase (0..3)
+SID_CHORD  = $5C   ; Current chord index * 4
+SID_SNARE  = $5D   ; Non-zero while soft snare owns Voice 3
+SID_ARPTK  = $5E   ; Arpeggio divider (steps every 6 frames -> dreamy harp!)
+SID_VIB    = $5F   ; VHS tape-warble LFO phase (0..31)
+SID_L1_LO  = $70   ; Base Voice 1 freq lo (for smooth tape-warble vibrato)
+SID_L1_HI  = $71   ; Base Voice 1 freq hi
 
 ; Parallax star RAM arrays (page $02)
 STAR_X     = $0200 ; 18 bytes: current X
@@ -164,6 +168,10 @@ START:
   STA SID_ARP
   STA SID_CHORD
   STA SID_SNARE
+  STA SID_ARPTK
+  STA SID_VIB
+  STA SID_L1_LO
+  STA SID_L1_HI
 
   LDA #$07
   STA ZP_SCRX
@@ -217,23 +225,23 @@ INIT_STARS:
   LDA #$18
   STA VIC_D018
 
-  ; Initialize 3-Voice 6581 SID Synth!
-  LDA #$0E
+  ; Initialize 3-Voice 6581 SID Synth (Warm Nostalgic Vaporwave Patch!)
+  LDA #$0D
   STA SID_VOL
-  ; Voice 1: Punchy Square Lead (fast attack, medium decay, soft sustain)
-  LDA #$07
+  ; Voice 1: Dreamy Bloom Triangle Lead (soft attack, lush sustain & long release)
+  LDA #$2A
   STA SID_V1_AD
-  LDA #$54
+  LDA #$89
   STA SID_V1_SR
-  ; Voice 2: Driving Sawtooth Octave Bass (snappy pluck!)
-  LDA #$05
+  ; Voice 2: Deep Warm Analog Vaporwave Bass (gentle sustain)
+  LDA #$19
   STA SID_V2_AD
-  LDA #$22
+  LDA #$78
   STA SID_V2_SR
-  ; Voice 3: Fast Chord Arpeggio & Noise Snare
-  LDA #$04
+  ; Voice 3: Shimmering Maj7/Min9 Harp Pad & Soft Brushed Snare
+  LDA #$18
   STA SID_V3_AD
-  LDA #$42
+  LDA #$47
   STA SID_V3_SR
 
   ; Install 5-Stage VIC-II Raster IRQ Multiplexer at $0314/$0315
@@ -594,119 +602,152 @@ IRQ_DONE:
   RTI
 
 ; ============================================================================
-;   3-VOICE 6581 SID CHIPTUNE ENGINE (A MINOR CRACKTRO ANTHEM)
+;   3-VOICE 6581 SID VAPORWAVE ENGINE (~88 BPM SUNSET NOSTALGIA)
+;   Voice 1: Dreamy triangle lead + VHS tape-warble vibrato LFO
+;   Voice 2: Deep warm analog sawtooth bass with lazy sustain
+;   Voice 3: Slow cascading Maj7/Min9 harp arpeggio + soft brushed snare
 ; ============================================================================
 PLAY_SID_MUSIC:
-  ; Every frame: if Voice 3 is not currently playing a snare hit, cycle blazing fast 3-note chord arp!
+  ; ---- Gentle VHS Tape-Warble Vibrato on Voice 1 Lead ----
+  LDA SID_L1_HI
+  BEQ SKIP_VIB
+  LDA ZP_FRAME
+  AND #$01
+  BNE SKIP_VIB
+  INC SID_VIB
+  LDA SID_VIB
+  AND #$1F
+  STA SID_VIB
+  TAX
+  LDA VIB_TBL,X
+  BPL VIB_POS
+  CLC
+  ADC SID_L1_LO
+  STA SID_V1_FL
+  LDA SID_L1_HI
+  BCS VIB_HI_OK
+  SEC
+  SBC #$01
+  JMP VIB_HI_OK
+VIB_POS:
+  CLC
+  ADC SID_L1_LO
+  STA SID_V1_FL
+  LDA SID_L1_HI
+  ADC #$00
+VIB_HI_OK:
+  STA SID_V1_FH
+SKIP_VIB:
+
+  ; ---- Slow Cascading Dreamy 4-Note Chord Harp on Voice 3 ----
   LDA SID_SNARE
-  BEQ DO_FAST_ARP
+  BEQ DO_DREAM_ARP
   DEC SID_SNARE
   BNE CHECK_STEP
-  ; End of snare burst -> gate off Voice 3 cleanly before arpeggio resumes
-  LDA #$10
+  LDA #$10          ; Release brushed snare cleanly
   STA SID_V3_CR
-DO_FAST_ARP:
+  JMP CHECK_STEP
+
+DO_DREAM_ARP:
+  DEC SID_ARPTK
+  BPL CHECK_STEP
+  LDA #$06          ; Gentle cascading harp note every 7 frames
+  STA SID_ARPTK
   LDA SID_CHORD
   CLC
   ADC SID_ARP
   TAX
+  LDA #$10
+  STA SID_V3_CR
   LDA ARP_LO,X
   STA SID_V3_FL
   LDA ARP_HI,X
   STA SID_V3_FH
+  LDA #$11          ; Soft shimmering triangle harp pluck!
+  STA SID_V3_CR
   INC SID_ARP
   LDA SID_ARP
-  CMP #$03
-  BCC CHECK_STEP
-  LDA #$00
+  AND #$03          ; 4-note lush Maj7/Min9 chord cycle
   STA SID_ARP
 
 CHECK_STEP:
-  ; Advance 16th-note song sequencer every 7 frames (~130 BPM)
+  ; Advance nostalgic 8th-note sequencer every 11 frames (~88 BPM vaporwave groove)
   DEC SID_TICK
   BMI DO_SONG_STEP
   RTS
 DO_SONG_STEP:
-  LDA #$06
+  LDA #10
   STA SID_TICK
 
   LDX SID_STEP
 
-  ; ---- Voice 1: Punchy Square Lead Melody ----
+  ; ---- Voice 1: Dreamy Sustained Lead (0=HOLD, 1=SOFT REST, else new note) ----
   LDA LEAD_HI,X
-  BEQ V1_RELEASE
-  LDA #$40          ; Gate off square
+  BNE V1_NEW_NOTE
+  LDA LEAD_LO,X
+  BEQ DO_VOICE2     ; 0 = sustain/hold current dreamy note!
+  ; 1 = soft rest/breath
+  LDA #$10
+  STA SID_V1_CR
+  LDA #$00
+  STA SID_L1_HI
+  JMP DO_VOICE2
+V1_NEW_NOTE:
+  LDA #$10          ; Gate off triangle
   STA SID_V1_CR
   LDA LEAD_LO,X
+  STA SID_L1_LO
   STA SID_V1_FL
   LDA LEAD_HI,X
+  STA SID_L1_HI
   STA SID_V1_FH
-  LDA #$41          ; Gate ON square!
-  STA SID_V1_CR
-  JMP DO_VOICE2
-V1_RELEASE:
-  LDA #$40
+  LDA #$11          ; Gate ON dreamy triangle lead!
   STA SID_V1_CR
 
-  ; ---- Voice 2: Driving 16th-Note Octave Sawtooth Bass ----
+  ; ---- Voice 2: Deep Warm Analog Vaporwave Bass (0=HOLD) ----
 DO_VOICE2:
+  LDA BASS_HI,X
+  BEQ DO_VOICE3     ; 0 = hold warm sustained bass note!
   LDA #$20          ; Gate off sawtooth
   STA SID_V2_CR
   LDA BASS_LO,X
   STA SID_V2_FL
   LDA BASS_HI,X
   STA SID_V2_FH
-  LDA #$21          ; Gate ON sawtooth!
+  LDA #$21          ; Gate ON warm lowpassed analog bass!
   STA SID_V2_CR
 
-  ; ---- Voice 3: Chord Arpeggio + Snare/Hi-Hat Noise Percussion ----
-  ; Chord index = (SID_STEP >> 3) * 3
+  ; ---- Voice 3: Update 8-Bar Maj7/Min9 Chord + Soft Brushed Snare on Beat 4 ----
+DO_VOICE3:
+  ; Chord index = (SID_STEP >> 3) * 4
   TXA
   LSR A
   LSR A
   LSR A
-  STA IRQ_TMP
   ASL A
-  CLC
-  ADC IRQ_TMP
+  ASL A
   STA SID_CHORD
 
-  ; Fire crisp SID noise snare on steps 4, 12, 20, 28, 36, 44, 52, 60 (step & 7 == 4)!
+  ; Soft lo-fi vaporwave brushed snare on steps 4, 12, 20, 28, ... (step & 7 == 4)
   TXA
   AND #$07
   CMP #$04
-  BNE V3_TRIG_ARP
-  LDA #$80          ; Gate off noise
+  BNE NEXT_SONG_STEP
+  LDA #$80
   STA SID_V3_CR
   LDA #$00
   STA SID_V3_FL
-  LDA #$22          ; Snare noise pitch
+  LDA #$14          ; Warm low-pitched lo-fi LinnDrum brush snare
   STA SID_V3_FH
-  LDA #$81          ; Gate ON noise snare!
+  LDA #$81
   STA SID_V3_CR
-  LDA #$04          ; Hold snare for 4 frames before fast arp resumes
+  LDA #$06
   STA SID_SNARE
-  JMP NEXT_SONG_STEP
-
-V3_TRIG_ARP:
-  ; Retrigger crisp triangle chord arpeggio on downbeats (step & 3 == 0)
-  TXA
-  AND #$03
-  BNE NEXT_SONG_STEP
-  LDA #$10
-  STA SID_V3_CR
-  LDY SID_CHORD
-  LDA ARP_LO,Y
-  STA SID_V3_FL
-  LDA ARP_HI,Y
-  STA SID_V3_FH
-  LDA #$11          ; Gate ON triangle arp!
-  STA SID_V3_CR
 
 NEXT_SONG_STEP:
   INX
   TXA
-  AND #$3F          ; 64 steps loop
+  AND #$3F          ; 64-step 8-bar sunset loop
   STA SID_STEP
 SID_RET:
   RTS
@@ -1531,33 +1572,36 @@ SCROLL_DATA:
   .BYTE $20,$20,$20,$17,$12,$01,$10,$20,$01,$12,$0F,$15,$0E,$04,$2E,$2E,$2E,$20,$20,$20
   .BYTE $20,$20,$20,$20,$20,$20,$20,$FF
 
-; ---- 3-Voice 6581 SID Song Data (64 steps in A minor) ----
+; ---- 3-Voice 6581 SID Vaporwave Song Data (64 steps, Fmaj7-Em7-Dm9-Cmaj7) ----
 LEAD_LO:
-  .BYTE $31,$00,$86,$3D,$61,$00,$3B,$3D,$86,$00,$A1,$3D,$00,$86,$A4,$31
-  .BYTE $60,$00,$31,$86,$C0,$00,$3D,$86,$3D,$00,$3B,$3D,$86,$00,$1D,$86
-  .BYTE $A1,$00,$3B,$A1,$A4,$00,$A1,$3B,$61,$00,$3D,$86,$31,$00,$86,$3D
-  .BYTE $C0,$00,$86,$31,$A1,$00,$3D,$C0,$3D,$00,$9C,$A4,$3D,$00,$37,$3D
+  .BYTE $3D,$00,$00,$A1,$86,$00,$31,$00,$A4,$00,$00,$A1,$1D,$00,$00,$01
+  .BYTE $3D,$00,$C0,$3D,$A1,$00,$31,$00,$A4,$00,$00,$31,$1D,$00,$00,$01
+  .BYTE $31,$00,$A1,$00,$C0,$00,$3D,$A1,$86,$00,$00,$A4,$31,$00,$1E,$01
+  .BYTE $31,$00,$DE,$31,$1D,$00,$A1,$00,$A1,$00,$86,$00,$1D,$00,$31,$01
 LEAD_HI:
-  .BYTE $1C,$00,$21,$2A,$38,$00,$32,$2A,$21,$00,$25,$2A,$00,$21,$1F,$1C
-  .BYTE $16,$00,$1C,$21,$2C,$00,$2A,$21,$2A,$00,$32,$2A,$21,$00,$19,$21
-  .BYTE $25,$00,$32,$25,$1F,$00,$25,$32,$38,$00,$2A,$21,$1C,$00,$21,$2A
-  .BYTE $2C,$00,$21,$1C,$25,$00,$2A,$2C,$2A,$00,$1A,$1F,$2A,$00,$35,$2A
+  .BYTE $2A,$00,$00,$25,$21,$00,$1C,$00,$1F,$00,$00,$25,$19,$00,$00,$00
+  .BYTE $2A,$00,$2C,$2A,$25,$00,$1C,$00,$1F,$00,$00,$1C,$19,$00,$00,$00
+  .BYTE $1C,$00,$25,$00,$2C,$00,$2A,$25,$21,$00,$00,$1F,$1C,$00,$15,$00
+  .BYTE $1C,$00,$1D,$1C,$19,$00,$25,$00,$25,$00,$21,$00,$19,$00,$1C,$00
 BASS_LO:
-  .BYTE $0C,$18,$0C,$18,$0C,$18,$47,$8F,$0C,$18,$0C,$18,$61,$0C,$47,$48
-  .BYTE $98,$30,$98,$30,$98,$30,$48,$98,$61,$C3,$61,$C3,$61,$C3,$E9,$47
-  .BYTE $47,$8F,$47,$8F,$47,$8F,$E9,$68,$0C,$18,$0C,$18,$0C,$61,$8F,$18
-  .BYTE $98,$30,$98,$30,$68,$D0,$61,$0C,$48,$8F,$4E,$E9,$8F,$48,$4E,$8F
+  .BYTE $98,$00,$00,$98,$00,$61,$98,$00,$48,$00,$00,$48,$00,$E9,$48,$00
+  .BYTE $B4,$00,$00,$B4,$00,$0C,$B4,$00,$31,$00,$00,$31,$00,$47,$31,$00
+  .BYTE $BC,$00,$00,$BC,$00,$98,$77,$00,$86,$00,$00,$86,$00,$48,$0C,$00
+  .BYTE $24,$00,$00,$24,$00,$B4,$47,$00,$31,$00,$00,$31,$00,$47,$B4,$31
 BASS_HI:
-  .BYTE $07,$0E,$07,$0E,$07,$0E,$06,$0C,$07,$0E,$07,$0E,$08,$07,$06,$05
-  .BYTE $05,$0B,$05,$0B,$05,$0B,$05,$05,$08,$10,$08,$10,$08,$10,$07,$06
-  .BYTE $06,$0C,$06,$0C,$06,$0C,$07,$09,$07,$0E,$07,$0E,$07,$08,$0A,$0E
-  .BYTE $05,$0B,$05,$0B,$09,$12,$08,$07,$05,$0A,$0D,$07,$0A,$05,$0D,$0A
+  .BYTE $05,$00,$00,$05,$00,$08,$05,$00,$05,$00,$00,$05,$00,$07,$05,$00
+  .BYTE $04,$00,$00,$04,$00,$07,$04,$00,$04,$00,$00,$04,$00,$06,$04,$00
+  .BYTE $03,$00,$00,$03,$00,$05,$07,$00,$03,$00,$00,$03,$00,$05,$07,$00
+  .BYTE $03,$00,$00,$03,$00,$04,$06,$00,$04,$00,$00,$04,$00,$06,$04,$04
 ARP_LO:
-  .BYTE $31,$86,$3D,$31,$86,$3D,$60,$31,$86,$86,$3D,$3B
-  .BYTE $1D,$A4,$A1,$31,$86,$3D,$60,$31,$86,$1E,$9C,$A4
+  .BYTE $30,$18,$C3,$1E,$8F,$8F,$D2,$D0,$68,$30,$18,$1E,$61,$8F,$8F,$D2
+  .BYTE $EF,$D0,$60,$31,$18,$C3,$1E,$1D,$8F,$EF,$D0,$31,$61,$8F,$EF,$D0
 ARP_HI:
-  .BYTE $1C,$21,$2A,$1C,$21,$2A,$16,$1C,$21,$21,$2A,$32
-  .BYTE $19,$1F,$25,$1C,$21,$2A,$16,$1C,$21,$15,$1A,$1F
+  .BYTE $0B,$0E,$10,$15,$0A,$0C,$0F,$12,$09,$0B,$0E,$15,$08,$0A,$0C,$0F
+  .BYTE $0E,$12,$16,$1C,$0E,$10,$15,$19,$0C,$0E,$12,$1C,$08,$0C,$0E,$12
+VIB_TBL:
+  .BYTE $00,$01,$01,$02,$02,$02,$03,$03,$03,$03,$03,$02,$02,$02,$01,$01
+  .BYTE $00,$FF,$FF,$FE,$FE,$FE,$FD,$FD,$FD,$FD,$FD,$FE,$FE,$FE,$FF,$FF
 
 ; ---- 3D Trig, Perspective & Bitmap Row Address Tables ----
 SIN_TBL:
