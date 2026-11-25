@@ -63,6 +63,10 @@ const KEYWORDS = [
   'CMD', 'DEF', 'FN',
 ] as const;
 
+// MOS 6581 SID datasheet Attack & Decay/Release durations (milliseconds)
+const SID_ATTACK_MS = [2, 8, 16, 24, 38, 56, 68, 80, 100, 250, 500, 800, 1000, 3000, 5000, 8000];
+const SID_DECAY_MS  = [6, 24, 48, 72, 114, 168, 204, 240, 300, 750, 1500, 2400, 3000, 9000, 15000, 24000];
+
 // Authentic Commodore 64 CIA1 8x8 keyboard matrix: key -> [row ($DC00 bit), col ($DC01 bit)]
 const C64_KEY_MATRIX: Record<string, [number, number]> = {
   Backspace: [0, 0], Enter: [0, 1], ArrowRight: [0, 2], F7: [0, 3], F1: [0, 4], F3: [0, 5], F5: [0, 6], ArrowDown: [0, 7],
@@ -154,6 +158,13 @@ export class C64Basic {
   private cpuPort01 = 0x37; // 6510 $01: bit 2 (CHAREN) = 1 -> I/O at $D000, 0 -> CHAR_ROM at $D000
   private cartRomStart = 0;
   private cartRomEnd = 0;
+
+  // Real MOS 6581 SID Voice 3 ADSR envelope counter for $D41C reads
+  private sidV3Phase: 'idle' | 'attack' | 'decay' | 'release' = 'idle';
+  private sidV3Env = 0; // 0..255
+  private sidV3Ctrl = 0;
+  private sidV3Ad = 0;
+  private sidV3Sr = 0;
 
   // CIA1 Port A/B ($DC00/$DC01) Joystick + 8x8 Keyboard Matrix + Timer A IRQ ($DC04-$DC0E)
   private joyHeldBits = 0;
@@ -533,6 +544,34 @@ export class C64Basic {
     return false;
   }
 
+  /** Step real MOS 6581 SID Voice 3 ADSR envelope counter ($D41C) using datasheet timing tables. */
+  private stepSidV3Envelope(dt: number) {
+    if (this.sidV3Phase === 'idle') return;
+    const ms = dt * 1000;
+    const sustain = ((this.sidV3Sr >> 4) & 0x0f) * 17; // 0..255
+    if (this.sidV3Phase === 'attack') {
+      const atkMs = SID_ATTACK_MS[(this.sidV3Ad >> 4) & 0x0f];
+      this.sidV3Env += (255 * ms) / atkMs;
+      if (this.sidV3Env >= 255) {
+        this.sidV3Env = 255;
+        this.sidV3Phase = 'decay';
+      }
+    } else if (this.sidV3Phase === 'decay') {
+      const decMs = SID_DECAY_MS[this.sidV3Ad & 0x0f];
+      this.sidV3Env -= (255 * ms) / decMs;
+      if (this.sidV3Env <= sustain) {
+        this.sidV3Env = sustain;
+      }
+    } else if (this.sidV3Phase === 'release') {
+      const relMs = SID_DECAY_MS[this.sidV3Sr & 0x0f];
+      this.sidV3Env -= (255 * ms) / relMs;
+      if (this.sidV3Env <= 0) {
+        this.sidV3Env = 0;
+        this.sidV3Phase = 'idle';
+      }
+    }
+  }
+
   /** Trigger RUN/STOP just like pressing the C64 RUN/STOP key. */
   breakProgram() {
     if (this.cpuRunning) {
@@ -616,6 +655,7 @@ export class C64Basic {
     }
     this.jiffyLow = (this.jiffyLow + 1) & 0xff;
     this.ram[0x00a2] = this.jiffyLow;
+    this.stepSidV3Envelope(dt);
 
     if (this.diskTimer) {
       this.diskTimer.remaining -= dt;
@@ -1805,6 +1845,17 @@ export class C64Basic {
     }
     // SID ($D400-$D418)
     if (a >= 0xd400 && a <= 0xd418) {
+      if (a === 0xd412) {
+        const prevGate = (this.sidV3Ctrl & 0x01) !== 0;
+        const nextGate = (v & 0x01) !== 0;
+        this.sidV3Ctrl = v;
+        if (nextGate && !prevGate) this.sidV3Phase = 'attack';
+        else if (!nextGate && prevGate) this.sidV3Phase = 'release';
+      } else if (a === 0xd413) {
+        this.sidV3Ad = v;
+      } else if (a === 0xd414) {
+        this.sidV3Sr = v;
+      }
       this.options.onSidPoke?.(a - 0xd400, v);
       return;
     }
@@ -1855,6 +1906,7 @@ export class C64Basic {
     if (a >= 0xd800 && a < 0xd800 + COLS * ROWS) return this.screen.colorRam[a - 0xd800];
     if (a === 0xd419 || a === 0xd41a) return 0xff; // Paddle X/Y (no paddle)
     if (a === 0xd41b) return (Math.random() * 256) | 0; // SID Voice 3 Oscillator RNG
+    if (a === 0xd41c) return Math.round(this.sidV3Env) & 0xff; // SID Voice 3 ADSR Envelope output
     if (a === 0xd011) {
       return (this.screen.vicD011 & 0x7f) | ((this.currentRasterLine & 0x100) ? 0x80 : 0);
     }
@@ -1910,6 +1962,17 @@ export class C64Basic {
     // If real cartridge/user code is loaded into $E000-$FFFF (e.g. Ultimax game), execute it instead of KERNAL traps!
     if (this.screen.ultimaxMirror || this.ram[pc] !== 0) return false;
     switch (pc) {
+      case 0xff81: // CINT — init VIC/screen editor
+      case 0xff84: // IOINIT — init CIA1 60Hz Timer A & I/O
+      case 0xff8a: // RESTOR — restore KERNAL vectors
+        if (pc === 0xff84) {
+          this.cia1TaLatch = 0x411b;
+          this.cia1TaCounter = 0x411b;
+          this.cia1IcrMask = 0x01;
+          this.cia1Cra = 0x11;
+        }
+        cpu.rts();
+        return true;
       case 0xffd2: // CHROUT — print PETSCII character in A
         this.screen.printCode(cpu.a, false);
         cpu.rts();

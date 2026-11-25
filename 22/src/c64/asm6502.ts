@@ -92,6 +92,31 @@ const OPCODES: Record<string, Partial<Record<AddrMode, number>>> = {
   TXA: { IMP: 0x8a },
   TXS: { IMP: 0x9a },
   TYA: { IMP: 0x98 },
+
+  // ---- Official-layout MOS 6502/6510 undocumented opcodes (used by DASM disassemblies & demos) ----
+  LAX: { ZP: 0xa7, ZPY: 0xb7, ABS: 0xaf, ABSY: 0xbf, INDX: 0xa3, INDY: 0xb3, IMM: 0xab },
+  SAX: { ZP: 0x87, ZPY: 0x97, ABS: 0x8f, INDX: 0x83 },
+  DCP: { ZP: 0xc7, ZPX: 0xd7, ABS: 0xcf, ABSX: 0xdf, ABSY: 0xdb, INDX: 0xc3, INDY: 0xd3 },
+  ISB: { ZP: 0xe7, ZPX: 0xf7, ABS: 0xef, ABSX: 0xff, ABSY: 0xfb, INDX: 0xe3, INDY: 0xf3 },
+  ISC: { ZP: 0xe7, ZPX: 0xf7, ABS: 0xef, ABSX: 0xff, ABSY: 0xfb, INDX: 0xe3, INDY: 0xf3 },
+  SLO: { ZP: 0x07, ZPX: 0x17, ABS: 0x0f, ABSX: 0x1f, ABSY: 0x1b, INDX: 0x03, INDY: 0x13 },
+  RLA: { ZP: 0x27, ZPX: 0x37, ABS: 0x2f, ABSX: 0x3f, ABSY: 0x3b, INDX: 0x23, INDY: 0x33 },
+  SRE: { ZP: 0x47, ZPX: 0x57, ABS: 0x4f, ABSX: 0x5f, ABSY: 0x5b, INDX: 0x43, INDY: 0x53 },
+  RRA: { ZP: 0x67, ZPX: 0x77, ABS: 0x6f, ABSX: 0x7f, ABSY: 0x7b, INDX: 0x63, INDY: 0x73 },
+  SBX: { IMM: 0xcb },
+  AXS: { IMM: 0xcb },
+  ANC: { IMM: 0x0b },
+  ALR: { IMM: 0x4b },
+  ASR: { IMM: 0x4b },
+  ARR: { IMM: 0x6b },
+  LAS: { ABSY: 0xbb },
+  SHA: { ABSY: 0x9f, INDY: 0x93 },
+  SHX: { ABSY: 0x9e },
+  SHY: { ABSX: 0x9c },
+  TAS: { ABSY: 0x9b },
+  ANE: { IMM: 0x8b },
+  LXA: { IMM: 0xab },
+  USBC: { IMM: 0xeb },
 };
 
 // Reverse lookup table for disassembly: opcode -> { mnem, mode }
@@ -400,15 +425,25 @@ interface EncodedInst {
 }
 
 function encodeInstruction(
-  mnem: string,
+  rawMnem: string,
   rawOperand: string,
   symbols: Record<string, number>,
   pc: number,
   pass: 1 | 2,
   forcedMode?: AddrMode,
 ): EncodedInst {
+  // Support standard DASM size-override suffixes: .W (force 16-bit absolute) and .B/.Z (force 8-bit zero-page)
+  let mnem = rawMnem;
+  let forceAbs = false;
+  let forceZp = false;
+  const suffixMatch = rawMnem.match(/^([A-Z]{3,4})\.(W|B|Z)$/);
+  if (suffixMatch) {
+    mnem = suffixMatch[1];
+    forceAbs = suffixMatch[2] === 'W';
+    forceZp = suffixMatch[2] === 'B' || suffixMatch[2] === 'Z';
+  }
   const table = OPCODES[mnem];
-  if (!table) throw new Error(`UNKNOWN OPCODE ${mnem}`);
+  if (!table) throw new Error(`UNKNOWN OPCODE ${rawMnem}`);
   const parsed = parseOperand(rawOperand);
   const strict = pass === 2;
 
@@ -466,7 +501,7 @@ function encodeInstruction(
 
   const exprStr = parsed.kind === 'ACC' ? rawOperand.trim() : parsed.kind === 'IND' ? rawOperand.trim() : parsed.expr;
   const val = evalExpr(exprStr, symbols, pc, strict);
-  const canZp = val !== null && val >= 0 && val <= 0xff;
+  const canZp = !forceAbs && (forceZp || (val !== null && val >= 0 && val <= 0xff));
 
   if (parsed.kind === 'X') {
     const useZp = forcedMode ? forcedMode === 'ZPX' : canZp && table.ZPX !== undefined;
@@ -852,7 +887,7 @@ export function looksLike6502Assembly(text: string): boolean {
       continue;
     }
     const strippedLabel = line.replace(/^[A-Za-z_.][A-Za-z0-9_.]*:\s*/, '');
-    const firstTok = strippedLabel.split(/\s+/)[0]?.toUpperCase() ?? '';
+    const firstTok = (strippedLabel.split(/\s+/)[0]?.toUpperCase() ?? '').replace(/\.(W|B|Z)$/, '');
     if (MNEMONIC_SET.has(firstTok)) {
       asmHits++;
     }

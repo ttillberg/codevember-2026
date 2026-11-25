@@ -111,8 +111,8 @@ IRQ_NOTE   = $53
 IRQ_TMP    = $54
 
 ; Hardware registers
-IRQ_VEC_LO = $0314
-IRQ_VEC_HI = $0315
+IRQ_VEC_LO = $FFFE
+IRQ_VEC_HI = $FFFF
 VIC_D011   = $D011
 VIC_RAST   = $D012
 VIC_D016   = $D016

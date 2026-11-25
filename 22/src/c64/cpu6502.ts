@@ -516,6 +516,81 @@ export class Cpu6502 {
         break;
       }
 
+      // ---- Common MOS 6502/6510 Undocumented Opcodes ----
+      // LAX (LDA + LDX)
+      case 0xa7: { const v = this.read(this.addrZp()); this.a = this.x = this.setZN(v); cyc = 3; break; }
+      case 0xb7: { const v = this.read(this.addrZpY()); this.a = this.x = this.setZN(v); cyc = 4; break; }
+      case 0xaf: { const v = this.read(this.addrAbs()); this.a = this.x = this.setZN(v); cyc = 4; break; }
+      case 0xbf: { const { addr, cross } = this.addrAbsY(); const v = this.read(addr); this.a = this.x = this.setZN(v); cyc = cross ? 5 : 4; break; }
+      case 0xa3: { const v = this.read(this.addrIndX()); this.a = this.x = this.setZN(v); cyc = 6; break; }
+      case 0xb3: { const { addr, cross } = this.addrIndY(); const v = this.read(addr); this.a = this.x = this.setZN(v); cyc = cross ? 6 : 5; break; }
+      case 0xab: { const v = this.fetch8(); this.a = this.x = this.setZN(v); cyc = 2; break; }
+      // SAX (store A & X)
+      case 0x87: this.write(this.addrZp(), this.a & this.x); cyc = 3; break;
+      case 0x97: this.write(this.addrZpY(), this.a & this.x); cyc = 4; break;
+      case 0x8f: this.write(this.addrAbs(), this.a & this.x); cyc = 4; break;
+      case 0x83: this.write(this.addrIndX(), this.a & this.x); cyc = 6; break;
+      // DCP (DEC + CMP)
+      case 0xc7: { const a = this.addrZp(); const v = (this.read(a) - 1) & 0xff; this.write(a, v); this.cmp(this.a, v); cyc = 5; break; }
+      case 0xd7: { const a = this.addrZpX(); const v = (this.read(a) - 1) & 0xff; this.write(a, v); this.cmp(this.a, v); cyc = 6; break; }
+      case 0xcf: { const a = this.addrAbs(); const v = (this.read(a) - 1) & 0xff; this.write(a, v); this.cmp(this.a, v); cyc = 6; break; }
+      case 0xdf: { const a = this.addrAbsX().addr; const v = (this.read(a) - 1) & 0xff; this.write(a, v); this.cmp(this.a, v); cyc = 7; break; }
+      case 0xdb: { const a = this.addrAbsY().addr; const v = (this.read(a) - 1) & 0xff; this.write(a, v); this.cmp(this.a, v); cyc = 7; break; }
+      case 0xc3: { const a = this.addrIndX(); const v = (this.read(a) - 1) & 0xff; this.write(a, v); this.cmp(this.a, v); cyc = 8; break; }
+      case 0xd3: { const a = this.addrIndY().addr; const v = (this.read(a) - 1) & 0xff; this.write(a, v); this.cmp(this.a, v); cyc = 8; break; }
+      // ISB/ISC (INC + SBC)
+      case 0xe7: { const a = this.addrZp(); const v = (this.read(a) + 1) & 0xff; this.write(a, v); this.sbc(v); cyc = 5; break; }
+      case 0xf7: { const a = this.addrZpX(); const v = (this.read(a) + 1) & 0xff; this.write(a, v); this.sbc(v); cyc = 6; break; }
+      case 0xef: { const a = this.addrAbs(); const v = (this.read(a) + 1) & 0xff; this.write(a, v); this.sbc(v); cyc = 6; break; }
+      case 0xff: { const a = this.addrAbsX().addr; const v = (this.read(a) + 1) & 0xff; this.write(a, v); this.sbc(v); cyc = 7; break; }
+      case 0xfb: { const a = this.addrAbsY().addr; const v = (this.read(a) + 1) & 0xff; this.write(a, v); this.sbc(v); cyc = 7; break; }
+      case 0xe3: { const a = this.addrIndX(); const v = (this.read(a) + 1) & 0xff; this.write(a, v); this.sbc(v); cyc = 8; break; }
+      case 0xf3: { const a = this.addrIndY().addr; const v = (this.read(a) + 1) & 0xff; this.write(a, v); this.sbc(v); cyc = 8; break; }
+      // SLO (ASL + ORA)
+      case 0x07: { const a = this.addrZp(); const v = this.aslVal(this.read(a)); this.write(a, v); this.a = this.setZN(this.a | v); cyc = 5; break; }
+      case 0x17: { const a = this.addrZpX(); const v = this.aslVal(this.read(a)); this.write(a, v); this.a = this.setZN(this.a | v); cyc = 6; break; }
+      case 0x0f: { const a = this.addrAbs(); const v = this.aslVal(this.read(a)); this.write(a, v); this.a = this.setZN(this.a | v); cyc = 6; break; }
+      case 0x1f: { const a = this.addrAbsX().addr; const v = this.aslVal(this.read(a)); this.write(a, v); this.a = this.setZN(this.a | v); cyc = 7; break; }
+      case 0x1b: { const a = this.addrAbsY().addr; const v = this.aslVal(this.read(a)); this.write(a, v); this.a = this.setZN(this.a | v); cyc = 7; break; }
+      case 0x03: { const a = this.addrIndX(); const v = this.aslVal(this.read(a)); this.write(a, v); this.a = this.setZN(this.a | v); cyc = 8; break; }
+      case 0x13: { const a = this.addrIndY().addr; const v = this.aslVal(this.read(a)); this.write(a, v); this.a = this.setZN(this.a | v); cyc = 8; break; }
+      // RLA (ROL + AND)
+      case 0x27: { const a = this.addrZp(); const v = this.rolVal(this.read(a)); this.write(a, v); this.a = this.setZN(this.a & v); cyc = 5; break; }
+      case 0x37: { const a = this.addrZpX(); const v = this.rolVal(this.read(a)); this.write(a, v); this.a = this.setZN(this.a & v); cyc = 6; break; }
+      case 0x2f: { const a = this.addrAbs(); const v = this.rolVal(this.read(a)); this.write(a, v); this.a = this.setZN(this.a & v); cyc = 6; break; }
+      case 0x3f: { const a = this.addrAbsX().addr; const v = this.rolVal(this.read(a)); this.write(a, v); this.a = this.setZN(this.a & v); cyc = 7; break; }
+      case 0x3b: { const a = this.addrAbsY().addr; const v = this.rolVal(this.read(a)); this.write(a, v); this.a = this.setZN(this.a & v); cyc = 7; break; }
+      case 0x23: { const a = this.addrIndX(); const v = this.rolVal(this.read(a)); this.write(a, v); this.a = this.setZN(this.a & v); cyc = 8; break; }
+      case 0x33: { const a = this.addrIndY().addr; const v = this.rolVal(this.read(a)); this.write(a, v); this.a = this.setZN(this.a & v); cyc = 8; break; }
+      // SRE (LSR + EOR)
+      case 0x47: { const a = this.addrZp(); const v = this.lsrVal(this.read(a)); this.write(a, v); this.a = this.setZN(this.a ^ v); cyc = 5; break; }
+      case 0x57: { const a = this.addrZpX(); const v = this.lsrVal(this.read(a)); this.write(a, v); this.a = this.setZN(this.a ^ v); cyc = 6; break; }
+      case 0x4f: { const a = this.addrAbs(); const v = this.lsrVal(this.read(a)); this.write(a, v); this.a = this.setZN(this.a ^ v); cyc = 6; break; }
+      case 0x5f: { const a = this.addrAbsX().addr; const v = this.lsrVal(this.read(a)); this.write(a, v); this.a = this.setZN(this.a ^ v); cyc = 7; break; }
+      case 0x5b: { const a = this.addrAbsY().addr; const v = this.lsrVal(this.read(a)); this.write(a, v); this.a = this.setZN(this.a ^ v); cyc = 7; break; }
+      case 0x43: { const a = this.addrIndX(); const v = this.lsrVal(this.read(a)); this.write(a, v); this.a = this.setZN(this.a ^ v); cyc = 8; break; }
+      case 0x53: { const a = this.addrIndY().addr; const v = this.lsrVal(this.read(a)); this.write(a, v); this.a = this.setZN(this.a ^ v); cyc = 8; break; }
+      // RRA (ROR + ADC)
+      case 0x67: { const a = this.addrZp(); const v = this.rorVal(this.read(a)); this.write(a, v); this.adc(v); cyc = 5; break; }
+      case 0x77: { const a = this.addrZpX(); const v = this.rorVal(this.read(a)); this.write(a, v); this.adc(v); cyc = 6; break; }
+      case 0x6f: { const a = this.addrAbs(); const v = this.rorVal(this.read(a)); this.write(a, v); this.adc(v); cyc = 6; break; }
+      case 0x7f: { const a = this.addrAbsX().addr; const v = this.rorVal(this.read(a)); this.write(a, v); this.adc(v); cyc = 7; break; }
+      case 0x7b: { const a = this.addrAbsY().addr; const v = this.rorVal(this.read(a)); this.write(a, v); this.adc(v); cyc = 7; break; }
+      case 0x63: { const a = this.addrIndX(); const v = this.rorVal(this.read(a)); this.write(a, v); this.adc(v); cyc = 8; break; }
+      case 0x73: { const a = this.addrIndY().addr; const v = this.rorVal(this.read(a)); this.write(a, v); this.adc(v); cyc = 8; break; }
+      // SBX / AXS, ANC, ALR, ARR, USBC, multi-byte NOPs
+      case 0xcb: { const v = this.fetch8(); const t = (this.a & this.x) - v; this.setFlag(FLAG_C, (this.a & this.x) >= v); this.x = this.setZN(t); cyc = 2; break; }
+      case 0x0b: case 0x2b: { this.a = this.setZN(this.a & this.fetch8()); this.setFlag(FLAG_C, (this.a & 0x80) !== 0); cyc = 2; break; }
+      case 0x4b: { this.a = this.lsrVal(this.a & this.fetch8()); cyc = 2; break; }
+      case 0x6b: { this.a = this.rorVal(this.a & this.fetch8()); cyc = 2; break; }
+      case 0xeb: { this.sbc(this.fetch8()); cyc = 2; break; }
+      case 0x1a: case 0x3a: case 0x5a: case 0x7a: case 0xda: case 0xfa: cyc = 2; break;
+      case 0x80: case 0x82: case 0x89: case 0xc2: case 0xe2: this.fetch8(); cyc = 2; break;
+      case 0x04: case 0x44: case 0x64: this.fetch8(); cyc = 3; break;
+      case 0x14: case 0x34: case 0x54: case 0x74: case 0xd4: case 0xf4: this.fetch8(); cyc = 4; break;
+      case 0x0c: this.fetch16(); cyc = 4; break;
+      case 0x1c: case 0x3c: case 0x5c: case 0x7c: case 0xdc: case 0xfc: this.fetch16(); cyc = 4; break;
+
       default: {
         // Unofficial / JAM opcode
         this.lastIllegalOpcode = op;
@@ -530,17 +605,26 @@ export class Cpu6502 {
     return cyc;
   }
 
-  /** Trigger a maskable 6502 IRQ (e.g. VIC-II raster interrupt) if I flag is clear. */
+  /** Trigger a maskable 6502 IRQ (VIC-II raster or CIA1 Timer A) if I flag is clear. */
   irq(): boolean {
     if (this.halted || this.getFlag(FLAG_I)) return false;
-    // Use C64 RAM IRQ vector ($0314/$0315) if initialized, else hardware vector ($FFFE/$FFFF)
-    const vec = this.read16(0x0314) || this.read16(0xfffe);
-    if (!vec) return false;
+    const hwVec = this.read16(0xfffe);
+    const ramVec = this.read16(0x0314);
+    if (!hwVec && !ramVec) return false;
     this.push((this.pc >> 8) & 0xff);
     this.push(this.pc & 0xff);
     this.push((this.p & ~FLAG_B) | FLAG_U);
     this.setFlag(FLAG_I, true);
-    this.pc = vec;
+    if (hwVec) {
+      // Direct hardware 6502 IRQ vector ($FFFE/$FFFF): handler saves/restores A,X,Y itself
+      this.pc = hwVec;
+    } else {
+      // Authentic C64 KERNAL $FF48 IRQ trampoline: pushes A, X, Y before jumping via ($0314)
+      this.push(this.a);
+      this.push(this.x);
+      this.push(this.y);
+      this.pc = ramVec;
+    }
     this.cycles += 7;
     return true;
   }

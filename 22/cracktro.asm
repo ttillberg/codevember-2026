@@ -115,8 +115,8 @@ STAR_O0    = $0220 ; 18 bytes: previous X drawn on Bank 0
 STAR_O1    = $0240 ; 18 bytes: previous X drawn on Bank 1
 
 ; ---- Hardware Registers ----
-IRQ_VEC_LO = $0314
-IRQ_VEC_HI = $0315
+IRQ_VEC_LO = $FFFE
+IRQ_VEC_HI = $FFFF
 VIC_D011   = $D011
 VIC_RAST   = $D012
 VIC_D016   = $D016
