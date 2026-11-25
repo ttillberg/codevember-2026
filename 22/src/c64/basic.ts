@@ -62,6 +62,18 @@ const KEYWORDS = [
   'CMD', 'DEF', 'FN',
 ] as const;
 
+// Authentic Commodore 64 CIA1 8x8 keyboard matrix: key -> [row ($DC00 bit), col ($DC01 bit)]
+const C64_KEY_MATRIX: Record<string, [number, number]> = {
+  Backspace: [0, 0], Enter: [0, 1], ArrowRight: [0, 2], F7: [0, 3], F1: [0, 4], F3: [0, 5], F5: [0, 6], ArrowDown: [0, 7],
+  '3': [1, 0], W: [1, 1], A: [1, 2], '4': [1, 3], Z: [1, 4], S: [1, 5], E: [1, 6], Shift: [1, 7],
+  '5': [2, 0], R: [2, 1], D: [2, 2], '6': [2, 3], C: [2, 4], F: [2, 5], T: [2, 6], X: [2, 7],
+  '7': [3, 0], Y: [3, 1], G: [3, 2], '8': [3, 3], B: [3, 4], H: [3, 5], U: [3, 6], V: [3, 7],
+  '9': [4, 0], I: [4, 1], J: [4, 2], '0': [4, 3], M: [4, 4], K: [4, 5], O: [4, 6], N: [4, 7],
+  '+': [5, 0], P: [5, 1], L: [5, 2], '-': [5, 3], '.': [5, 4], ':': [5, 5], '@': [5, 6], ',': [5, 7],
+  '*': [6, 1], ';': [6, 2], Home: [6, 3], '=': [6, 5], '/': [6, 7],
+  '1': [7, 0], '2': [7, 3], ' ': [7, 4], Q: [7, 6],
+};
+
 export type DiskActivityState = 'idle' | 'read' | 'write' | 'error';
 
 export interface C64MachineOptions {
@@ -139,9 +151,16 @@ export class C64Basic {
   private vicD01A = 0;
   private jiffyLow = 0;
 
-  // CIA1 Port A ($DC00) Joystick Port 2: active-low bits (0=Up,1=Down,2=Left,3=Right,4=Fire)
+  // CIA1 Port A/B ($DC00/$DC01) Joystick + 8x8 Keyboard Matrix + Timer A IRQ ($DC04-$DC0E)
   private joyHeldBits = 0;
   private joyPulseTimers = [0, 0, 0, 0, 0];
+  private cia1Pra = 0xff;
+  private cia1TaLatch = 0x411b;
+  private cia1TaCounter = 0x411b;
+  private cia1IcrMask = 0;
+  private cia1IcrData = 0;
+  private cia1Cra = 0;
+  private readonly keyMatrix = new Uint8Array(8); // bit=1 when pressed at (row, col)
 
   // Interactive 6502 Machine Language Monitor (MON / ASM)
   monitorMode = false;
@@ -177,6 +196,20 @@ export class C64Basic {
     this.joyPulseTimers[bit] = Math.max(this.joyPulseTimers[bit], durationSec);
   }
 
+  /** Update authentic 8x8 C64 CIA1 keyboard matrix state for held physical keys (used by 6502 games). */
+  setMatrixKey(key: string, pressed: boolean) {
+    const pos = C64_KEY_MATRIX[key] ?? C64_KEY_MATRIX[key.toUpperCase()];
+    if (!pos) return;
+    const [row, col] = pos;
+    if (pressed) this.keyMatrix[row] |= 1 << col;
+    else this.keyMatrix[row] &= ~(1 << col);
+  }
+
+  /** Clear all held keys in the CIA1 keyboard matrix (on window blur / reset). */
+  clearMatrixKeys() {
+    this.keyMatrix.fill(0);
+  }
+
   private getJoy2Byte(): number {
     let active = this.joyHeldBits;
     for (let i = 0; i < 5; i++) {
@@ -185,15 +218,36 @@ export class C64Basic {
     return (~active) & 0xff;
   }
 
+  private readCia1PortB(): number {
+    // Combine active-low keyboard matrix rows selected by $DC00 (cia1Pra) with Joystick Port 1!
+    let colsPressed = 0;
+    for (let row = 0; row < 8; row++) {
+      if ((this.cia1Pra & (1 << row)) === 0) {
+        colsPressed |= this.keyMatrix[row];
+      }
+    }
+    // Mirror active joystick bits onto Port 1 when reading $DC01 so arrows/TAC-2 work on Port 1 games (e.g. Jupiter Lander)
+    let joyBits = this.joyHeldBits;
+    for (let i = 0; i < 5; i++) {
+      if (this.joyPulseTimers[i] > 0) joyBits |= 1 << i;
+    }
+    return (~(colsPressed | joyBits)) & 0xff;
+  }
+
   /** Assemble 6502 source and load all segments directly into 64KB RAM. */
   assembleSource(source: string, defaultOrg = 0xc000): AsmResult {
     const res = assemble6502(source, defaultOrg);
     if (res.ok) {
+      let loadsHighRom = false;
       for (const seg of res.segments) {
+        if (seg.org >= 0xe000 || seg.org + seg.bytes.length > 0xf000) {
+          loadsHighRom = true;
+        }
         for (let i = 0; i < seg.bytes.length; i++) {
           this.ram[(seg.org + i) & 0xffff] = seg.bytes[i] & 0xff;
         }
       }
+      this.screen.ultimaxMirror = loadsHighRom;
       this.lastAsmSymbols = res.symbols;
       this.lastAsmEntry = res.entryAddr;
       this.monDisasmPc = res.entryAddr;
@@ -314,8 +368,10 @@ export class C64Basic {
         this.screen.resetBlink();
         return normalized.split('\n').length;
       }
-      const endAddr = (res.entryAddr + Math.max(0, res.totalBytes - 1)) & 0xffff;
-      this.screen.printLine(`OK: $${h4(res.entryAddr)}-$${h4(endAddr)} (${res.totalBytes} BYTES)`);
+      const seg0 = res.segments[0]?.org ?? res.entryAddr;
+      const lastSeg = res.segments[res.segments.length - 1];
+      const endAddr = lastSeg ? (lastSeg.org + Math.max(0, lastSeg.bytes.length - 1)) & 0xffff : res.entryAddr;
+      this.screen.printLine(`OK: $${h4(seg0)}-$${h4(endAddr)} (${res.totalBytes} BYTES)`);
       this.screen.printLine(`TYPE SYS ${res.entryAddr} TO RUN (OR MON)`);
       this.screen.printLine(this.monitorMode ? '.' : 'READY.');
       this.screen.cursorEnabled = true;
@@ -452,6 +508,9 @@ export class C64Basic {
       this.running = false;
       this.vicD01A = 0;
       this.vicD019 = 0;
+      this.cia1Cra = 0;
+      this.cia1IcrMask = 0;
+      this.cia1IcrData = 0;
       this.options.onSidSilence?.();
       this.screen.resetVic();
       if (wasBitmap) {
@@ -1662,6 +1721,9 @@ export class C64Basic {
         this.vicD019 &= ~v;
       } else if (a === 0xd01a) {
         this.vicD01A = v & 0x0f;
+      } else if (a === 0xd01c) {
+        this.screen.spriteMulticolor = v;
+        if (this.screen.spriteEnable) this.screen.markDirty();
       } else if (a === 0xd01d) {
         this.screen.spriteExpandX = v;
         if (this.screen.spriteEnable) this.screen.markDirty();
@@ -1669,6 +1731,18 @@ export class C64Basic {
         this.screen.setBorder(v);
       } else if (a === 0xd021) {
         this.screen.setBg(v);
+      } else if (a === 0xd022) {
+        this.screen.bgColor1 = v & 0x0f;
+        this.screen.markDirty();
+      } else if (a === 0xd023) {
+        this.screen.bgColor2 = v & 0x0f;
+        this.screen.markDirty();
+      } else if (a === 0xd025) {
+        this.screen.spriteMcColor0 = v & 0x0f;
+        if (this.screen.spriteEnable) this.screen.markDirty();
+      } else if (a === 0xd026) {
+        this.screen.spriteMcColor1 = v & 0x0f;
+        if (this.screen.spriteEnable) this.screen.markDirty();
       } else if (a >= 0xd027 && a <= 0xd02e) {
         this.screen.spriteColor[a - 0xd027] = v & 0x0f;
         if (this.screen.spriteEnable) this.screen.markDirty();
@@ -1678,6 +1752,24 @@ export class C64Basic {
     // SID ($D400-$D418)
     if (a >= 0xd400 && a <= 0xd418) {
       this.options.onSidPoke?.(a - 0xd400, v);
+      return;
+    }
+    // CIA1 ($DC00-$DC0F): Keyboard Matrix Row Select & Timer A IRQ
+    if (a >= 0xdc00 && a <= 0xdc0f) {
+      if (a === 0xdc00) {
+        this.cia1Pra = v;
+      } else if (a === 0xdc04) {
+        this.cia1TaLatch = (this.cia1TaLatch & 0xff00) | v;
+      } else if (a === 0xdc05) {
+        this.cia1TaLatch = (this.cia1TaLatch & 0x00ff) | (v << 8);
+        if ((this.cia1Cra & 0x01) === 0) this.cia1TaCounter = this.cia1TaLatch;
+      } else if (a === 0xdc0d) {
+        if (v & 0x80) this.cia1IcrMask |= v & 0x1f;
+        else this.cia1IcrMask &= ~(v & 0x1f);
+      } else if (a === 0xdc0e) {
+        if (v & 0x10) this.cia1TaCounter = this.cia1TaLatch; // Force load
+        this.cia1Cra = v;
+      }
       return;
     }
     // CIA2 Port A ($DD00): VIC-II 16KB bank select
@@ -1711,9 +1803,31 @@ export class C64Basic {
     if (a === 0xd018) return this.screen.vicD018;
     if (a === 0xd019) return this.vicD019;
     if (a === 0xd01a) return this.vicD01A;
+    if (a === 0xd01c) return this.screen.spriteMulticolor;
+    if (a === 0xd01e) {
+      const c = this.screen.spriteSpriteCollision;
+      this.screen.spriteSpriteCollision = 0;
+      return c;
+    }
+    if (a === 0xd01f) {
+      const c = this.screen.spriteBgCollision;
+      this.screen.spriteBgCollision = 0;
+      return c;
+    }
     if (a === 0xd020) return this.screen.borderColor;
     if (a === 0xd021) return this.screen.bgColor;
+    if (a === 0xd022) return this.screen.bgColor1;
+    if (a === 0xd023) return this.screen.bgColor2;
     if (a === 0xdc00) return this.getJoy2Byte();
+    if (a === 0xdc01) return this.readCia1PortB();
+    if (a === 0xdc04) return this.cia1TaCounter & 0xff;
+    if (a === 0xdc05) return (this.cia1TaCounter >> 8) & 0xff;
+    if (a === 0xdc0d) {
+      const d = this.cia1IcrData;
+      this.cia1IcrData = 0;
+      return d;
+    }
+    if (a === 0xdc0e) return this.cia1Cra;
     return this.ram[a];
   }
 
@@ -1732,6 +1846,8 @@ export class C64Basic {
   }
 
   private handleKernalTrap(pc: number, cpu: Cpu6502): boolean {
+    // If real cartridge/user code is loaded into $E000-$FFFF (e.g. Ultimax game), execute it instead of KERNAL traps!
+    if (this.screen.ultimaxMirror || this.ram[pc] !== 0) return false;
     switch (pc) {
       case 0xffd2: // CHROUT — print PETSCII character in A
         this.screen.printCode(cpu.a, false);
@@ -1795,6 +1911,19 @@ export class C64Basic {
       let lineCycles = 0;
       while (lineCycles < CYCLES_PER_LINE && !this.cpu.halted) {
         lineCycles += this.cpu.step();
+      }
+
+      // Tick CIA1 Timer A (used by C64 games like Jupiter Lander for 60Hz game loop IRQs!)
+      if ((this.cia1Cra & 0x01) !== 0) {
+        this.cia1TaCounter -= lineCycles;
+        if (this.cia1TaCounter <= 0) {
+          this.cia1TaCounter += Math.max(256, this.cia1TaLatch);
+          this.cia1IcrData |= 0x01;
+          if ((this.cia1IcrMask & 0x01) !== 0) {
+            this.cia1IcrData |= 0x80;
+            this.cpu.irq();
+          }
+        }
       }
 
       this.screen.latchRasterLine(line);

@@ -36,20 +36,33 @@ export class C64Screen {
   // VIC-II state
   borderColor = 14; // Light blue ($D020 / 53280)
   bgColor = 6;      // Dark blue  ($D021 / 53281)
+  bgColor1 = 0;     // Multicolor bg 1 ($D022)
+  bgColor2 = 0;     // Multicolor bg 2 ($D023)
   textColor = 14;   // Light blue ($0286 / 646)
 
   vicD011 = 0x1b;   // Bit 5 = Bitmap Mode, Bit 4 = Display Enable
   vicD016 = 0x08;   // Bit 4 = Multicolor Mode
-  vicD018 = 0x14;   // Bits 7-4 = screen matrix offset, Bit 3 = bitmap base ($0000/$2000)
+  vicD018 = 0x14;   // Bits 7-4 = screen matrix offset, Bits 3-1 = charset/bitmap base
   vicBank = 0x0000; // CIA2 $DD00 bits 0-1 inverted -> 16KB VIC-II bank
+  /** Ultimax cartridge mode: VIC-II $3000-$3FFF mirrors ROM $F000-$FFFF (e.g. Jupiter Lander). */
+  ultimaxMirror = false;
 
-  // Hardware sprites ($D000-$D01F, $D027-$D02E)
+  // Hardware sprites ($D000-$D01F, $D025-$D02E)
   readonly spriteX = new Uint16Array(8);
   readonly spriteY = new Uint8Array(8);
   readonly spriteColor = new Uint8Array(8);
-  spriteEnable = 0; // $D015
-  spriteExpandX = 0; // $D01D
-  spriteExpandY = 0; // $D017
+  spriteEnable = 0;     // $D015
+  spriteExpandX = 0;    // $D01D
+  spriteExpandY = 0;    // $D017
+  spriteMulticolor = 0; // $D01C
+  spriteMcColor0 = 0;   // $D025
+  spriteMcColor1 = 0;   // $D026
+  spriteSpriteCollision = 0; // $D01E (cleared on read)
+  spriteBgCollision = 0;     // $D01F (cleared on read)
+
+  // Foreground pixel mask for hardware sprite-to-background collision detection ($D01F)
+  private readonly fgMask = new Uint8Array(COLS * 8 * ROWS * 8);
+  private readonly spriteOccMask = new Uint8Array(COLS * 8 * ROWS * 8);
 
   // Per-scanline latched VIC-II state for authentic C64 raster bars, split-screen, and fine X-scroll
   private readonly rasterBorder = new Uint8Array(SCREEN_H);
@@ -110,9 +123,17 @@ export class C64Screen {
     this.vicD016 = 0x08;
     this.vicD018 = 0x14;
     this.vicBank = 0x0000;
+    this.bgColor1 = 0;
+    this.bgColor2 = 0;
+    this.ultimaxMirror = false;
     this.spriteEnable = 0;
     this.spriteExpandX = 0;
     this.spriteExpandY = 0;
+    this.spriteMulticolor = 0;
+    this.spriteMcColor0 = 0;
+    this.spriteMcColor1 = 0;
+    this.spriteSpriteCollision = 0;
+    this.spriteBgCollision = 0;
     this.spriteX.fill(0);
     this.spriteY.fill(0);
     this.spriteColor.fill(1);
@@ -458,7 +479,20 @@ export class C64Screen {
     if (a >= 0x0400 && a < 0x0400 + COLS * ROWS) {
       return this.screenRam[a - 0x0400];
     }
+    if (this.ultimaxMirror && a >= 0x3000 && a < 0x4000) {
+      return this.ram ? this.ram[a | 0xc000] : 0;
+    }
     return this.ram ? this.ram[a] : 0;
+  }
+
+  /** Fetch 1 byte of character glyph data from either built-in CHAR_ROM or custom RAM/Ultimax charset ($D018). */
+  private readCharByte(charBase: number, code: number, gy: number): number {
+    // Standard C64 VIC Bank 0 Character ROM windows ($1000-$1FFF)
+    if (!this.ram || charBase === 0x1000 || charBase === 0x1800) {
+      return CHAR_ROM[(code & 0x7f) * 8 + gy];
+    }
+    // Custom RAM charset or Ultimax ROM charset (full 256 glyphs, 8 bytes each!)
+    return this.readVicByte((charBase + (code & 0xff) * 8 + gy) & 0xffff);
   }
 
   private readonly glowCache: [number, number, number] = [0, 0, 0];
@@ -604,8 +638,17 @@ export class C64Screen {
   private renderText(screenBase: number) {
     const pixels = this.pixels;
     const flatBgPx = PACKED_PALETTE[this.bgColor & 0x0f];
+    const bg1Px = PACKED_PALETTE[this.bgColor1 & 0x0f];
+    const bg2Px = PACKED_PALETTE[this.bgColor2 & 0x0f];
     const useSplits = this.hasRasterSplits;
     const defaultScreen = screenBase === 0x0400;
+    const charOffset = (this.vicD018 & 0x0e) * 0x0400;
+    const charBase = (this.vicBank + charOffset) & 0xffff;
+    const useRom = !this.ram || charBase === 0x1000 || charBase === 0x1800;
+    const multicolor = (this.vicD016 & 0x10) !== 0;
+    const trackFg = this.spriteEnable !== 0;
+    const fgMask = this.fgMask;
+    if (trackFg) fgMask.fill(0);
 
     for (let row = 0; row < ROWS; row++) {
       const pyBase = BORDER_Y + row * 8;
@@ -613,27 +656,49 @@ export class C64Screen {
         const idx = row * COLS + col;
         const rawCode = defaultScreen ? this.screenRam[idx] : this.readVicByte(screenBase + idx);
         const isCursor =
+          useRom &&
           defaultScreen &&
           this.cursorEnabled &&
           this.cursorBlinkOn &&
           row === this.cursorY &&
           col === this.cursorX;
 
-        const reversed = Boolean(rawCode & 0x80) !== isCursor;
-        const glyphBase = (rawCode & 0x7f) * 8;
+        const colVal = this.colorRam[idx] & 0x0f;
+        const isMcCell = multicolor && (colVal & 0x08) !== 0;
+        const reversed = useRom && (Boolean(rawCode & 0x80) !== isCursor);
         const fgPx = isCursor
           ? PACKED_PALETTE[this.textColor & 0x0f]
-          : PACKED_PALETTE[this.colorRam[idx] & 0x0f];
+          : PACKED_PALETTE[isMcCell ? (colVal & 0x07) : colVal];
 
         const pxBase = BORDER_X + col * 8;
         for (let gy = 0; gy < 8; gy++) {
           const sy = pyBase + gy;
           const bgPx = useSplits ? PACKED_PALETTE[this.rasterBg[sy] & 0x0f] : flatBgPx;
-          const bits = CHAR_ROM[glyphBase + gy];
+          const bits = useRom
+            ? CHAR_ROM[(rawCode & 0x7f) * 8 + gy]
+            : this.readCharByte(charBase, rawCode, gy);
           const rowOffset = sy * SCREEN_W + pxBase;
-          for (let gx = 0; gx < 8; gx++) {
-            const on = Boolean(bits & (0x80 >> gx));
-            pixels[rowOffset + gx] = on !== reversed ? fgPx : bgPx;
+          const fgRow = (row * 8 + gy) * 320 + col * 8;
+
+          if (isMcCell) {
+            for (let pair = 0; pair < 4; pair++) {
+              const code2 = (bits >> (6 - pair * 2)) & 0x03;
+              const px = code2 === 0 ? bgPx : code2 === 1 ? bg1Px : code2 === 2 ? bg2Px : fgPx;
+              const dx = pair * 2;
+              pixels[rowOffset + dx] = px;
+              pixels[rowOffset + dx + 1] = px;
+              if (trackFg && code2 >= 2) {
+                fgMask[fgRow + dx] = 1;
+                fgMask[fgRow + dx + 1] = 1;
+              }
+            }
+          } else {
+            for (let gx = 0; gx < 8; gx++) {
+              const on = Boolean(bits & (0x80 >> gx));
+              const lit = on !== reversed;
+              pixels[rowOffset + gx] = lit ? fgPx : bgPx;
+              if (trackFg && lit) fgMask[fgRow + gx] = 1;
+            }
           }
         }
       }
@@ -715,7 +780,12 @@ export class C64Screen {
 
   private renderSprites(screenBase: number) {
     const pixels = this.pixels;
-    const ram = this.ram!;
+    const fgMask = this.fgMask;
+    const occ = this.spriteOccMask;
+    occ.fill(0);
+
+    const mc0Px = PACKED_PALETTE[this.spriteMcColor0 & 0x0f];
+    const mc1Px = PACKED_PALETTE[this.spriteMcColor1 & 0x0f];
 
     // Sprite 0 has highest priority, so draw 7 down to 0
     for (let s = 7; s >= 0; s--) {
@@ -724,29 +794,53 @@ export class C64Screen {
 
       const ptr = this.readVicByte(screenBase + 0x03f8 + s);
       const dataBase = (this.vicBank + ptr * 64) & 0xffff;
-      const sx0 = this.spriteX[s] - 24 + BORDER_X;
-      const sy0 = this.spriteY[s] - 50 + BORDER_Y;
+      const sx0 = this.spriteX[s] - 24;
+      const sy0 = this.spriteY[s] - 50;
       const expX = (this.spriteExpandX & bit) !== 0 ? 2 : 1;
       const expY = (this.spriteExpandY & bit) !== 0 ? 2 : 1;
+      const isMc = (this.spriteMulticolor & bit) !== 0;
       const colPx = PACKED_PALETTE[this.spriteColor[s] & 0x0f];
 
       for (let row = 0; row < 21; row++) {
-        const b0 = ram[(dataBase + row * 3) & 0xffff];
-        const b1 = ram[(dataBase + row * 3 + 1) & 0xffff];
-        const b2 = ram[(dataBase + row * 3 + 2) & 0xffff];
+        const b0 = this.readVicByte(dataBase + row * 3);
+        const b1 = this.readVicByte(dataBase + row * 3 + 1);
+        const b2 = this.readVicByte(dataBase + row * 3 + 2);
         const bits = (b0 << 16) | (b1 << 8) | b2;
         if (bits === 0) continue;
 
         for (let dy = 0; dy < expY; dy++) {
-          const py = sy0 + row * expY + dy;
-          if (py < BORDER_Y || py >= BORDER_Y + ROWS * 8) continue;
-          const rowOff = py * SCREEN_W;
-          for (let col = 0; col < 24; col++) {
-            if ((bits & (0x800000 >>> col)) === 0) continue;
-            for (let dx = 0; dx < expX; dx++) {
-              const px = sx0 + col * expX + dx;
-              if (px >= BORDER_X && px < BORDER_X + COLS * 8) {
-                pixels[rowOff + px] = colPx;
+          const ay = sy0 + row * expY + dy;
+          if (ay < 0 || ay >= ROWS * 8) continue;
+          const rowOff = (ay + BORDER_Y) * SCREEN_W + BORDER_X;
+          const maskRow = ay * 320;
+
+          if (isMc) {
+            for (let pair = 0; pair < 12; pair++) {
+              const code = (bits >>> (22 - pair * 2)) & 0x03;
+              if (code === 0) continue;
+              const px = code === 1 ? mc0Px : code === 2 ? colPx : mc1Px;
+              const span = expX * 2;
+              for (let dx = 0; dx < span; dx++) {
+                const ax = sx0 + pair * span + dx;
+                if (ax < 0 || ax >= 320) continue;
+                pixels[rowOff + ax] = px;
+                const mi = maskRow + ax;
+                if (fgMask[mi]) this.spriteBgCollision |= bit;
+                if (occ[mi]) this.spriteSpriteCollision |= occ[mi] | bit;
+                occ[mi] |= bit;
+              }
+            }
+          } else {
+            for (let col = 0; col < 24; col++) {
+              if ((bits & (0x800000 >>> col)) === 0) continue;
+              for (let dx = 0; dx < expX; dx++) {
+                const ax = sx0 + col * expX + dx;
+                if (ax < 0 || ax >= 320) continue;
+                pixels[rowOff + ax] = colPx;
+                const mi = maskRow + ax;
+                if (fgMask[mi]) this.spriteBgCollision |= bit;
+                if (occ[mi]) this.spriteSpriteCollision |= occ[mi] | bit;
+                occ[mi] |= bit;
               }
             }
           }

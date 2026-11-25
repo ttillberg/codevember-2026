@@ -566,8 +566,8 @@ function parseSourceLines(source: string): ParsedLine[] {
       }
     }
 
-    // Split first token
-    const tokMatch = line.match(/^([.!A-Za-z_][A-Za-z0-9_]*)\s*(.*)$/);
+    // Split first token (allow dots inside DASM directives like DC.B / DC.W / DS.B)
+    const tokMatch = line.match(/^([.!A-Za-z_][A-Za-z0-9_.]*)\s*(.*)$/);
     if (!tokMatch) {
       out.push({ lineNo, label, op: line.toUpperCase(), arg: '', kind: 'INST' });
       continue;
@@ -577,13 +577,16 @@ function parseSourceLines(source: string): ParsedLine[] {
     const arg = tokMatch[2].trim();
     const opClean = opRaw.replace(/^[.!]/, '');
 
-    if (opClean === 'ORG') {
+    // Ignore DASM/CA65/ACME metadata directives
+    if (opClean === 'PROCESSOR' || opClean === 'SEG' || opClean === 'SEG.U' || opClean === 'SUBROUTINE' || opClean === 'LIST' || opClean === 'NOLIST') {
+      out.push({ lineNo, label, op: '', arg: '', kind: 'EMPTY' });
+    } else if (opClean === 'ORG') {
       out.push({ lineNo, label, op: 'ORG', arg, kind: 'ORG' });
-    } else if (opClean === 'BYTE' || opClean === 'DB' || opClean === 'TEXT' || opClean === 'PETSCII' || opClean === 'ASCII') {
+    } else if (opClean === 'BYTE' || opClean === 'DB' || opClean === 'DC.B' || opClean === 'TEXT' || opClean === 'PETSCII' || opClean === 'ASCII') {
       out.push({ lineNo, label, op: 'BYTE', arg, kind: 'BYTE' });
-    } else if (opClean === 'WORD' || opClean === 'DW') {
+    } else if (opClean === 'WORD' || opClean === 'DW' || opClean === 'DC.W') {
       out.push({ lineNo, label, op: 'WORD', arg, kind: 'WORD' });
-    } else if (opClean === 'FILL' || opClean === 'DS' || opClean === 'RES') {
+    } else if (opClean === 'FILL' || opClean === 'DS' || opClean === 'DS.B' || opClean === 'RES') {
       out.push({ lineNo, label, op: 'FILL', arg, kind: 'FILL' });
     } else {
       out.push({ lineNo, label, op: opRaw, arg, kind: 'INST' });
@@ -728,10 +731,20 @@ export function assemble6502(source: string, defaultOrg = 0xc000): AsmResult {
   }
 
   const totalBytes = segments.reduce((sum, s) => sum + s.bytes.length, 0);
+  // If an assembled ROM/cartridge image populates the 6502 RESET vector ($FFFC/$FFFD), use it as entryAddr!
+  let resolvedEntry = entryAddr < 0 ? defaultOrg : entryAddr;
+  for (const seg of segments) {
+    if (seg.org <= 0xfffc && seg.org + seg.bytes.length >= 0xfffe) {
+      const lo = seg.bytes[0xfffc - seg.org];
+      const hi = seg.bytes[0xfffd - seg.org];
+      const resetVec = lo | (hi << 8);
+      if (resetVec >= 0x0800) resolvedEntry = resetVec;
+    }
+  }
   return {
     ok: errors.length === 0,
     segments,
-    entryAddr: entryAddr < 0 ? defaultOrg : entryAddr,
+    entryAddr: resolvedEntry,
     totalBytes,
     symbols,
     errors,
@@ -820,7 +833,7 @@ export function looksLike6502Assembly(text: string): boolean {
       numbered++;
       continue;
     }
-    if (/^\*\s*=|^\.?(ORG|BYTE|WORD|DB|DW|TEXT|FILL)\b/i.test(line)) {
+    if (/^\*\s*=|^\.?(ORG|BYTE|WORD|DB|DW|DC\.B|DC\.W|DS\.B|TEXT|FILL|PROCESSOR)\b/i.test(line)) {
       asmHits += 2;
       continue;
     }

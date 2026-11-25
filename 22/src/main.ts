@@ -623,6 +623,11 @@ window.addEventListener('keydown', (e) => {
     document.activeElement.blur();
   }
 
+  if (e.key === 'F1' || e.key === 'F3' || e.key === 'F5' || e.key === 'F7') {
+    e.preventDefault();
+  }
+  basic.setMatrixKey(e.key, true);
+
   const handled = basic.handleKey(e.key, e.ctrlKey, e.metaKey);
   c64.triggerKey(e.key);
   const activeRun = basic.running || basic.cpuRunning;
@@ -648,6 +653,7 @@ window.addEventListener('keydown', (e) => {
 });
 
 window.addEventListener('keyup', (e) => {
+  basic.setMatrixKey(e.key, false);
   const k = e.key.toLowerCase();
   if (e.key === 'ArrowUp' || k === 'w') basic.setJoystickBit(0, false);
   else if (e.key === 'ArrowDown' || k === 's') basic.setJoystickBit(1, false);
@@ -657,6 +663,7 @@ window.addEventListener('keyup', (e) => {
 });
 
 window.addEventListener('blur', () => {
+  basic.clearMatrixKeys();
   for (let b = 0; b < 5; b++) basic.setJoystickBit(b, false);
 });
 
