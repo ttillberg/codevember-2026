@@ -3,6 +3,7 @@ import { clamp, fbm3, smoothstep } from './rng';
 import {
   baseHalfWidthAt,
   DEFAULT_INITIAL_MELT,
+  FROST_CLEAR_MELT,
   getMeltBounds,
   mapPopsicleVNorm,
   MeltFieldState,
@@ -256,12 +257,13 @@ export function createLiquidFilmSystem(seed: number): LiquidFilmSystem {
 
   function syncRimeToMelt(melt: number) {
     // At melt = DEFAULT_INITIAL_MELT (fresh out of fridge): outer ridges + the 3 raised vertical bars are slightly premelted
-    // while thick snowy frost sits inside the 2 recessed vertical grooves; frost melts off the ridges FIRST!
-    if (melt >= 0.24) {
+    // while thick snowy frost sits inside the 2 recessed vertical grooves; all frost clears cleanly by FROST_CLEAR_MELT
+    // BEFORE structural melt-down begins!
+    if (melt >= FROST_CLEAR_MELT) {
       rime.fill(0);
     } else {
-      const progress = clamp((melt - DEFAULT_INITIAL_MELT) / (0.24 - DEFAULT_INITIAL_MELT), 0, 1);
-      const recede = 0.22 + progress * 0.96;
+      const progress = clamp((melt - DEFAULT_INITIAL_MELT) / (FROST_CLEAR_MELT - DEFAULT_INITIAL_MELT), 0, 1);
+      const recede = 0.22 + progress * 0.98;
       for (let i = 0; i < N_RIME; i++) {
         const raw = (thawOrder[i] - recede) / 0.44 + 0.56;
         rime[i] = clamp(raw, 0, 1);
@@ -269,14 +271,14 @@ export function createLiquidFilmSystem(seed: number): LiquidFilmSystem {
     }
     packRimeTexture();
 
-    // Sync stick wetness deterministically so scrubbing Melt back to 0 leaves a truly dry stick
-    stickWetness = melt <= DEFAULT_INITIAL_MELT + 0.005 ? 0.0 : clamp(smoothstep(0.045, 0.58, melt), 0, 1);
+    // Keep the wooden stick dry while heavy freezer frost still coats the popsicle; dampen as frost clears
+    stickWetness = melt <= FROST_CLEAR_MELT * 0.72 ? 0.0 : clamp(smoothstep(FROST_CLEAR_MELT * 0.72, 0.58, melt), 0, 1);
 
     // When scrubbing directly to mid/late melt, seed realistic undulating sticky glaze waves
-    // descending from the dome; when scrubbing back to <= 0.07, restore dry premelted film!
-    if (melt > 0.07) {
-      const glazeProgress = clamp((melt - 0.07) / 0.45, 0, 1);
-      const meltGate = smoothstep(0.06, 0.22, melt);
+    // descending from the dome; when scrubbing back into the frosted phase, restore dry premelted film!
+    if (melt > 0.12) {
+      const glazeProgress = clamp((melt - 0.12) / 0.45, 0, 1);
+      const meltGate = smoothstep(0.11, 0.25, melt);
       for (let iv = 0; iv < FILM_V; iv++) {
         const v = iv / (FILM_V - 1);
         const botPool = smoothstep(0.18, 0.01, v) * glazeProgress * 0.55;
@@ -639,8 +641,8 @@ export function createLiquidFilmSystem(seed: number): LiquidFilmSystem {
     // (purely ridge-first + thermal front propagation — ZERO top->down wipe!)
     if (avgRime > 0.001) {
       rimePrev.set(rime);
-      const baseErode = (0.022 + smoothstep(0.04, 0.24, state.melt) * 0.34) * meltSpeedMul * dt;
-      const fullClearTerm = smoothstep(0.20, 0.30, state.melt) * 0.95 * dt;
+      const baseErode = (0.036 + smoothstep(0.035, FROST_CLEAR_MELT, state.melt) * 0.48) * meltSpeedMul * dt;
+      const fullClearTerm = smoothstep(FROST_CLEAR_MELT - 0.045, FROST_CLEAR_MELT - 0.005, state.melt) * 1.35 * dt;
       let rimeSum = 0;
       for (let iv = 0; iv < RIME_V; iv++) {
         const ivD = iv > 0 ? iv - 1 : 0;
@@ -684,10 +686,11 @@ export function createLiquidFilmSystem(seed: number): LiquidFilmSystem {
       rimeTexture.needsUpdate = true;
     }
 
-    // Track total bottom drainage into glossy wet berry-syrup creeping progressively down the wooden stick!
+    // Track total bottom drainage into glossy wet berry-syrup creeping down the wooden stick once frost clears!
     let totalDrain = 0;
     for (let iu = 0; iu < FILM_U; iu++) totalDrain += bottomFlux[iu];
-    stickWetness = clamp(stickWetness + totalDrain * 0.018 + dt * 0.0025 * meltRate, 0.0, 1.0);
+    const stickThawGate = smoothstep(0.22, 0.02, avgRime);
+    stickWetness = clamp(stickWetness + (totalDrain * 0.018 + dt * 0.0025 * meltRate) * stickThawGate, 0.0, 1.0);
 
     packTexture();
   }

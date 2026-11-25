@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { clamp } from './rng';
-import { DEFAULT_INITIAL_MELT, getMeltBounds, MeltFieldState, POPSICLE } from './shape';
+import { DEFAULT_INITIAL_MELT, FROST_CLEAR_MELT, getMeltBounds, MeltFieldState, POPSICLE } from './shape';
 import { createMacroStudioEnv, disposeSeedTextureCache } from './textures';
 import { createFruitAssembly, FruitAssembly } from './fruits';
 import { createPopsicleIceSystem, PopsicleIceSystem } from './popsicleIce';
@@ -41,11 +41,11 @@ const SETTINGS_STORAGE_KEY = 'codevember-03-melt-settings-v1';
 
 const DEFAULT_SIM_PARAMS = {
   speed: 1.0,
-  frost: 0.58,
-  bubbles: 0.92,
+  frost: 0.8,
+  bubbles: 0.55,
 } as const;
-const DEFAULT_DROP_MODE: DropMode = 'minimal';
-const DEFAULT_FALL_MODE: FallFocusMode = 'pause';
+const DEFAULT_DROP_MODE: DropMode = 'off';
+const DEFAULT_FALL_MODE: FallFocusMode = 'off';
 
 interface PersistedSettings {
   speed: number;
@@ -1614,6 +1614,24 @@ function computeFallDilation(dt: number, falling: boolean): { meltScale: number;
   return _fallDilation;
 }
 
+function advanceAmbientMelt(dtMelt: number, pointerGlobalBoost: number) {
+  if (dtMelt <= 0 || !liquidFilm) return;
+  const baseMeltRate = 0.0028;
+  const dMelt = dtMelt * baseMeltRate * simParams.speed * pointerGlobalBoost;
+
+  if (meltState.melt < FROST_CLEAR_MELT) {
+    if (liquidFilm.avgRime > 0.015) {
+      // Phase 1: thaw freezer frost first while holding the full molded silhouette!
+      meltState.melt = Math.min(FROST_CLEAR_MELT - 0.003, meltState.melt + dMelt * 2.4);
+    } else {
+      // Frost completely cleared (e.g. wiped off with pointer) -> glide smoothly into active melt-down!
+      meltState.melt = Math.min(FROST_CLEAR_MELT, meltState.melt + Math.max(dMelt * 2.4, dtMelt * 0.14 * simParams.speed));
+    }
+  } else {
+    meltState.melt = clamp(meltState.melt + dMelt, 0, 1.0);
+  }
+}
+
 // === ANIMATION LOOP ===
 let lastTime = performance.now();
 
@@ -1643,14 +1661,13 @@ function tick(now: number) {
 
     meltState.time += dtFluid;
 
-    // Slow deterministic ambient melt + pointer-accelerated warmth (paused/slowed while a released fruit falls!)
+    // Slow deterministic ambient melt + pointer-accelerated warmth (never melts down before frost is gone!)
     if (dtMelt > 0) {
       const pointerGlobalBoost = pointerActive ? (pointerPressed ? 11.5 : 3.2) : 1.0;
-      const baseMeltRate = 0.0028;
-      meltState.melt = clamp(meltState.melt + dtMelt * baseMeltRate * simParams.speed * pointerGlobalBoost, 0, 1.0);
+      advanceAmbientMelt(dtMelt, pointerGlobalBoost);
 
-      // Deposit localized warmth where pointer rests on the popsicle
-      if (pointerActive && !orbitMode) {
+      // Deposit structural ice-carving warmth once frost has cleared (before then, pointer melts frost cleanly!)
+      if (pointerActive && !orbitMode && (meltState.melt >= FROST_CLEAR_MELT - 0.01 || liquidFilm.avgRime < 0.05)) {
         const localDose = dtMelt * (pointerPressed ? 0.34 : 0.075) * simParams.speed;
         depositHeatSpot(meltState.pointerX, meltState.pointerY, localDose);
       }
@@ -1713,7 +1730,7 @@ buildPopsicle(currentSeed, initialMelt);
       if (iceSystem && fruitAssembly && waterDrops && liquidFilm) {
         const { meltScale, fluidScale, fruitScale } = computeFallDilation(dt, fruitAssembly.hasFallingFruitInView());
         meltState.time += dt * fluidScale;
-        meltState.melt = clamp(meltState.melt + dt * meltScale * 0.0028 * simParams.speed, 0, 1.0);
+        advanceAmbientMelt(dt * meltScale, 1.0);
         liquidFilm.update(meltState, dt * fluidScale, simParams.speed);
         iceSystem.update(meltState, simParams.bubbles);
         fruitAssembly.update(meltState, dt * fruitScale, liquidFilm.stickWetness);

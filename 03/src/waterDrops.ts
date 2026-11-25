@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { clamp, fbm3, mulberry32, smoothstep } from './rng';
-import { DEFAULT_BOTTOM_POOL, getMeltBounds, MeltFieldState, POPSICLE, sampleLocalHeat } from './shape';
+import { DEFAULT_BOTTOM_POOL, getMeltBounds, getStructuralMelt, MeltFieldState, POPSICLE, sampleLocalHeat } from './shape';
 import { PopsicleIceSystem } from './popsicleIce';
 import { FILM_U, LiquidFilmSystem } from './liquidFilm';
 import { DEFAULT_RECIPE, PopsicleRecipe, resolveOpticalPalette } from './recipe';
@@ -40,16 +40,16 @@ export interface DropDebugParams {
 export const MAX_BOTTOM_DROPS = 80;
 
 export const DEFAULT_DROP_DEBUG: DropDebugParams = {
-  sag: 0.90,
-  stretch: 1.24,
-  edgeBlur: 0.72,
+  sag: 0.54,
+  stretch: 1.51,
+  edgeBlur: 1.20,
   shadow: 0.44,
   shadowBlur: 1.05,
   rimDark: 0.48,
   size: 1.00,
   bottomPool: DEFAULT_BOTTOM_POOL,
   dripRate: 0.76,
-  bottomDrops: 34,
+  bottomDrops: 10,
 };
 
 export interface WaterDropUniforms {
@@ -1449,9 +1449,9 @@ function createStickFlowStreams(
           float u = position.x;
           float v = position.y;
 
-          // Completely dry out of the freezer (melt < 0.09); peaks at mid-melt and gracefully subsides at end of melt!
-          float flowStrength = smoothstep(0.09, 0.40, uMelt) * (1.0 - smoothstep(0.60, 0.88, uMelt));
-          float meniscusStrength = smoothstep(0.09, 0.25, uMelt) * (1.0 - smoothstep(0.60, 0.86, uMelt));
+          // Completely dry while freezer frost is thawing (melt < 0.16); peaks at mid-melt and subsides cleanly at endgame!
+          float flowStrength = smoothstep(0.16, 0.44, uMelt) * (1.0 - smoothstep(0.64, 0.90, uMelt));
+          float meniscusStrength = smoothstep(0.16, 0.30, uMelt) * (1.0 - smoothstep(0.64, 0.88, uMelt));
           vFlowMask = max(flowStrength, meniscusStrength);
 
           // Open curved D-cross-section hugging the vertical wooden edge from back bevel (-128 deg)
@@ -2035,7 +2035,7 @@ function updatePendantLatheGeometry(
 
 export function createWaterDropSystem(
   seed: number,
-  initialMode: DropMode = 'minimal',
+  initialMode: DropMode = 'off',
   initialRecipe: PopsicleRecipe = DEFAULT_RECIPE,
 ): WaterDropSystem {
   const disposables: Array<{ dispose(): void }> = [];
@@ -3747,12 +3747,13 @@ export function createWaterDropSystem(
       hasInitialized = true;
     }
 
-    // Physical mass remaining on the outer sides: full at early/mid melt, tapering smoothly to zero as the
+    // Physical mass remaining on the outer sides: full at early/mid structural melt, tapering smoothly to zero as the
     // popsicle shrinks down toward the stick at late melt (so side dripping winds down naturally!)
-    const sideSupply = 1.0 - smoothstep(0.45, 0.72, state.melt);
+    const structMelt = getStructuralMelt(state.melt);
+    const sideSupply = 1.0 - smoothstep(0.45, 0.72, structMelt);
     const pendantMeltPace =
-      (0.72 + Math.sin(clamp(state.melt, 0, 0.82) * Math.PI * 1.22) * 0.42) * sideSupply * meltSpeedMul;
-    const activeIceScale = iceGone ? 0 : clamp(1.0 - smoothstep(0.50, 0.76, state.melt), 0, 1);
+      (0.72 + Math.sin(clamp(structMelt, 0, 0.82) * Math.PI * 1.22) * 0.42) * sideSupply * meltSpeedMul;
+    const activeIceScale = iceGone ? 0 : clamp(1.0 - smoothstep(0.50, 0.76, structMelt), 0, 1);
 
     if (dt > 0 && !iceGone) {
       if (dropMode === 'full') {
@@ -3767,7 +3768,7 @@ export function createWaterDropSystem(
       // Feed real bottom drainage from the 2D viscous sticky glaze film PDE into bottom lobes & gently into pendants
       // (most liquid escapes down the stick once melting builds; side drainage winds down with sideSupply!)
       fluxPerLobe.fill(0);
-      const liveHalfW = POPSICLE.halfWidthBottom * (1.0 - clamp(state.melt, 0, 1) * 0.44);
+      const liveHalfW = POPSICLE.halfWidthBottom * (1.0 - structMelt * 0.44);
       for (let iu = 0; iu < FILM_U; iu++) {
         const q = film.bottomFlux[iu];
         if (q <= 0.0001) continue;
@@ -3787,9 +3788,10 @@ export function createWaterDropSystem(
       }
     }
 
-    // Update 3D melted-ice glossy syrup glaze on the birch wooden stick (skip draw when completely dry!)
+    // Update 3D melted-ice glossy syrup glaze on the birch wooden stick (keep dry while frosted!)
+    const frostGoneGate = smoothstep(0.18, 0.02, film.avgRime);
     const liveStickWet = clamp(
-      Math.max(film.stickWetness * 1.15, smoothstep(0.012, 0.50, state.melt) * 0.98),
+      Math.max(film.stickWetness * 1.15, smoothstep(0.14, 0.54, state.melt) * 0.98 * frostGoneGate),
       0,
       1,
     );
@@ -3798,7 +3800,7 @@ export function createWaterDropSystem(
     stickMelt.uniforms.uIceAmount.value = iceAmount;
     stickMelt.uniforms.uStickWetness.value = liveStickWet;
     stickMelt.uniforms.uMelt.value = state.melt;
-    stickMelt.mesh.visible = !(liveStickWet < 0.08 && iceAmount > 0.95 && state.melt < 0.055);
+    stickMelt.mesh.visible = !(liveStickWet < 0.08 && iceAmount > 0.95 && state.melt < 0.14);
 
     stickFlow.uniforms.uIceBottomY.value = yBotLive;
     stickFlow.uniforms.uIceAmount.value = iceAmount;
@@ -3807,12 +3809,12 @@ export function createWaterDropSystem(
       stickFlowPhase += dt * clamp(0.38 + meltSpeedMul * 0.24, 0.24, 1.15);
     }
     stickFlow.uniforms.uFlowRate.value = stickFlowPhase;
-    stickFlow.group.visible = state.melt > 0.09 && state.melt < 0.88;
+    stickFlow.group.visible = state.melt > 0.16 && state.melt < 0.90;
 
-    // Early-melt individual stick-edge drops: present while thawing starts (melt ~ 0.06..0.28),
+    // Early-melt individual stick-edge drops: appear right after frost clears (melt ~ 0.14..0.34),
     // then smoothly transition into the continuous undulating syrup flow stream once heavy melting kicks in!
-    const stickDripOnset = smoothstep(0.058, 0.16, state.melt);
-    const heavyFlowTakeover = 1.0 - smoothstep(0.22, 0.42, state.melt);
+    const stickDripOnset = smoothstep(0.14, 0.23, state.melt) * frostGoneGate;
+    const heavyFlowTakeover = 1.0 - smoothstep(0.28, 0.46, state.melt);
     const stickEdgeDropPresence = stickDripOnset * heavyFlowTakeover;
     const stickEdgeDripMul = Math.max(0.25, debugParams.dripRate);
     for (let i = 0; i < stickEdgeDrops.length; i++) {
@@ -4089,9 +4091,9 @@ export function createWaterDropSystem(
     }
 
     // === UPDATE 3D RAYLEIGH-PLATEAU BOTTOM-RIM PENDANT DROPS (ANCHORED TO LIVE ACCUMULATION LOWS!) ===
-    // Fresh out of the freezer (avgRime ~0.55, melt = 0.035), keep bottom drips completely dry (0.0) until thawing builds!
+    // Keep bottom drips & rim pearls completely dry until freezer frost has cleared and structural melt begins!
     const freezerThawProgress = clamp(
-      Math.max(smoothstep(0.055, 0.16, state.melt), smoothstep(0.42, 0.14, film.avgRime)),
+      smoothstep(0.15, 0.25, state.melt) * smoothstep(0.16, 0.01, film.avgRime),
       0,
       1,
     );
@@ -4291,16 +4293,16 @@ export function createWaterDropSystem(
     }
 
     // === UPDATE INSTANCED BOTTOM-RIM CRYSTAL PEARLS (ZERO CORNER OVERHANG, MERGE-AWARE!) ===
+    // Controlled independently via `bottomDrops` (0..80), matching pendants & stick flow when surface sweat `drops === 'off'`!
     const maxBottomPearls = Math.round(clamp(debugParams.bottomDrops, 0, bottomRimPearls.length));
-    if (dropMode === 'off' || maxBottomPearls <= 0 || iceGone || activeIceScale <= 0.05 || freezerThawProgress <= 0.01) {
+    if (maxBottomPearls <= 0 || iceGone || activeIceScale <= 0.05 || freezerThawProgress <= 0.01) {
       bottomPearlsMesh.count = 0;
       bottomPearlsMesh.visible = false;
     } else {
-      const mClamped = clamp(state.melt, 0, 1);
-      const collapse = smoothstep(0.40, 0.975, mClamped);
+      const collapse = smoothstep(0.40, 0.975, structMelt);
       const liveHalfD =
         POPSICLE.halfDepth *
-        (1.0 - mClamped * 0.34) *
+        (1.0 - structMelt * 0.34) *
         (1.0 - Math.pow(collapse, 1.50) * 0.88);
       const pearlMatArr = bottomPearlsMesh.instanceMatrix.array as Float32Array;
       let pSlot = 0;

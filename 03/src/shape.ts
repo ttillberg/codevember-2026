@@ -14,6 +14,22 @@ const STICK_BEVEL_SIZE = STICK_BEVEL_THICKNESS * 0.7;
 
 export const DEFAULT_INITIAL_MELT = 0.035;
 export const DEFAULT_BOTTOM_POOL = 1.05;
+/** Global melt threshold at which freezer hoarfrost finishes thawing and structural melt-down begins */
+export const FROST_CLEAR_MELT = 0.18;
+
+/**
+ * Maps global melt progress [0..1] to structural body melt-down [0..1].
+ * Holds strictly at 0 while freezer frost is still thawing (`melt <= FROST_CLEAR_MELT`)
+ * so the popsicle keeps its crisp molded silhouette until frost is gone, then eases
+ * smoothly from 0 -> 1.
+ */
+export function getStructuralMelt(melt: number): number {
+  const m = clamp(melt, 0, 1);
+  if (m <= FROST_CLEAR_MELT) return 0;
+  const lin = (m - FROST_CLEAR_MELT) / (1.0 - FROST_CLEAR_MELT);
+  const easeIn = smoothstep(0, 0.10, lin);
+  return lin * (0.35 + 0.65 * easeIn);
+}
 
 export const POPSICLE = {
   /** Base unmelted vertical bounds */
@@ -124,7 +140,7 @@ export interface MeltBounds {
  * along the slick wet wood toward the very end until only the bare glazed stick remains.
  */
 export function getMeltBounds(melt: number): MeltBounds {
-  const m = clamp(melt, 0, 1);
+  const m = getStructuralMelt(melt);
   const collapse = smoothstep(0.40, 0.975, m);
   const collapse2 = collapse * collapse;
 
@@ -138,7 +154,7 @@ export function getMeltBounds(melt: number): MeltBounds {
 
   const yTop = yTopBase + (yFinal - yTopBase) * Math.pow(collapse, 1.38) + slideY;
   const yBot = yBotBase + (yFinal - yBotBase) * (collapse2 * 0.90 + Math.pow(collapse, 3.0) * 0.10) + slideY;
-  // By melt ~0.885 the shrunk ice cross-section sits flush inside the birch stick; dissolve iceAmount
+  // By structural melt ~0.885 the shrunk ice cross-section sits flush inside the birch stick; dissolve iceAmount
   // in lockstep so no phantom ice collar or mid-stick liquid cutoff lingers once the ice is visibly gone.
   const iceAmount = 1.0 - smoothstep(0.78, 0.885, m);
   const iceGone = m >= 0.895 || yTop - yBot < 0.014;
@@ -146,6 +162,7 @@ export function getMeltBounds(melt: number): MeltBounds {
 }
 
 export interface ProfileFrameCache {
+  rawMelt: number;
   m: number;
   yTop: number;
   yBot: number;
@@ -162,6 +179,8 @@ export interface ProfileFrameCache {
   flatKeep: number;
   fluteCenter: number;
   waveScale: number;
+  erodeScale: number;
+  carveGate: number;
   so: number;
   timeMacroY: number;
   timeRivY: number;
@@ -202,6 +221,7 @@ export interface ProfileRowCache {
 }
 
 const _sharedFrameCache: ProfileFrameCache = {
+  rawMelt: 0,
   m: 0,
   yTop: POPSICLE.yTop,
   yBot: POPSICLE.yBottom,
@@ -218,6 +238,8 @@ const _sharedFrameCache: ProfileFrameCache = {
   flatKeep: 0.86,
   fluteCenter: POPSICLE.fluteX,
   waveScale: 1,
+  erodeScale: 0,
+  carveGate: 0,
   so: 0,
   timeMacroY: 0,
   timeRivY: 0,
@@ -259,12 +281,14 @@ const _sharedRowCache: ProfileRowCache = {
 
 /** Precomputes frame-invariant melt parameters once before rebuilding the full popsicle mesh. */
 export function prepareProfileFrame(state: MeltFieldState, out: ProfileFrameCache = _sharedFrameCache): ProfileFrameCache {
-  const m = clamp(state.melt, 0, 1);
-  const { yTop, yBot, slideY, iceAmount } = getMeltBounds(m);
+  const rawMelt = clamp(state.melt, 0, 1);
+  const m = getStructuralMelt(rawMelt);
+  const { yTop, yBot, slideY, iceAmount } = getMeltBounds(rawMelt);
   const collapse = smoothstep(0.40, 0.975, m);
   const endRound = smoothstep(0.72, 0.94, m);
-  const bulletTaper = smoothstep(0.08, 0.72, m);
+  const bulletTaper = smoothstep(0.06, 0.72, m);
 
+  out.rawMelt = rawMelt;
   out.m = m;
   out.yTop = yTop;
   out.yBot = yBot;
@@ -281,12 +305,16 @@ export function prepareProfileFrame(state: MeltFieldState, out: ProfileFrameCach
   out.flatKeep = 0.86 * (1.0 - bulletTaper * 0.62) * (1.0 - endRound * 0.85);
   out.fluteCenter = POPSICLE.fluteX * (1.0 - m * 0.25);
   out.waveScale = (1.0 - collapse * 0.78) * iceAmount;
+  // Porous crystalline silhouette erosion emerges after ~1/3 melt once smooth molded skin melts away
+  out.erodeScale = smoothstep(0.30, 0.52, rawMelt) * (1.0 - collapse * 0.42) * iceAmount;
+  out.carveGate = smoothstep(FROST_CLEAR_MELT - 0.02, FROST_CLEAR_MELT + 0.05, rawMelt);
   out.so = state.seedOffset;
   out.timeMacroY = state.time * 0.012;
   out.timeRivY = state.time * 0.035;
 
   const activeRim = 1.0 - smoothstep(0.66, 0.90, m);
-  const thawPool = smoothstep(0.038, 0.22, m);
+  // Keep bottom silhouette crisp until freezer frost clears and structural melt begins
+  const thawPool = smoothstep(0.008, 0.18, m);
   out.poolAmt = clamp(state.bottomPool ?? DEFAULT_BOTTOM_POOL, 0, 2.2) * thawPool * activeRim;
 
   const lobes = state.bottomLobes;
@@ -436,7 +464,7 @@ export function evaluatePopsicleVertex(
   let x = sgnX * Math.pow(absSinT, row.invExpX) * row.halfW;
   let z = sgnZ * Math.pow(absCosT, row.invExpZ) * row.halfD;
 
-  const localHeat = frame.hasHeatSpots ? sampleLocalHeat(x, y, state) : 0;
+  const localHeat = frame.hasHeatSpots ? sampleLocalHeat(x, y, state) * frame.carveGate : 0;
   const effMelt = clamp(frame.m + localHeat * 0.55, 0, 1);
 
   // Twin crisp vertical molded flutes on front (+Z) and back (-Z) faces (skip 4x exp when masked out!)
@@ -467,22 +495,35 @@ export function evaluatePopsicleVertex(
     y -= localHeat * 0.065 * smoothstep(0.05, 0.3, row.hNorm) * frame.iceAmount;
   }
 
-  // Organic wet melt surface undulation + porous slush micro-erosion bumps (anchored to sliding ice via yLocal!)
+  // Organic wet melt surface undulation + post-1/3 porous crystalline micro-erosion bumps (anchored via yLocal!)
   const so = frame.so;
   const yLocal = y - frame.slideY;
   const nMacro = sampleFastFbm3(x * 2.4 + so, yLocal * 1.7 + frame.timeMacroY, z * 2.4) - 0.5;
   const nRivulet = sampleFastFbm3(x * 7.8 + so * 1.7, yLocal * 1.9 + frame.timeRivY, z * 4.5) - 0.5;
   const slushFactor = smoothstep(0.08, 0.45, effMelt);
-  const nSlush = slushFactor > 0 ? sampleFastFbm3(x * 16.5 + so * 2.3, yLocal * 15.5, z * 16.5) - 0.5 : 0;
-  const meltAmp = (0.010 + effMelt * 0.052) * frame.waveScale;
+  const nSlush =
+    slushFactor > 0 || frame.erodeScale > 0
+      ? sampleFastFbm3(x * 18.0 + so * 2.3, yLocal * 17.0, z * 18.0) - 0.5
+      : 0;
+  // Crisp eroded crystalline micro-tooth along the melted silhouette & body after ~1/3 in (calm on bottom liquid pouch!)
+  const erodeBodyMask = 1.0 - row.botProximity * 0.84;
+  let crystalErode = 0;
+  if (frame.erodeScale > 0.002 && erodeBodyMask > 0.02) {
+    const nToothRaw = sampleFastFbm3(x * 34.0 + so * 4.1, yLocal * 36.0, z * 34.0);
+    const nTooth = (nToothRaw - 0.5) * 1.18 + (Math.abs(nToothRaw - 0.5) - 0.22) * 0.55;
+    crystalErode = (nSlush * 0.020 + nTooth * 0.018) * frame.erodeScale * erodeBodyMask;
+  }
+  const meltAmp = (0.004 + effMelt * 0.052) * frame.waveScale;
 
   const edgeWave =
     nMacro * meltAmp * (0.65 + 0.55 * absSinT) +
-    nRivulet * (0.0045 + effMelt * 0.018) * frame.waveScale +
-    nSlush * (0.016 * slushFactor) * frame.waveScale;
+    nRivulet * (0.0025 + effMelt * 0.018) * frame.waveScale +
+    nSlush * (0.014 * slushFactor) * frame.waveScale;
 
-  x += sgnX * edgeWave * (0.45 + 0.55 * absSinT) * row.capFactor;
-  z += sgnZ * edgeWave * 0.78 * row.domeDepthFactor;
+  // Apply crisp crystalline micro-erosion strongly on the X silhouette edges and more gently on Z faces
+  // so front faces showcase crisp pixel-level ice-pebble relief instead of coarse vertex lumps!
+  x += sgnX * (edgeWave + crystalErode) * (0.48 + 0.52 * absSinT) * row.capFactor;
+  z += sgnZ * (edgeWave + crystalErode * 0.42) * 0.78 * row.domeDepthFactor;
 
   // === SLEEK GRAVITY-WEIGHTED UNDERSIDE MENISCUS & GENTLE POOLING SWELLS ===
   // Physically bounded by capillary surface tension above the 6 drop break-off sites rather than heavy stalactites.
@@ -572,8 +613,9 @@ export function sampleIceContainment(
   state: MeltFieldState,
   out: IceContainmentInfo = _containmentScratch,
 ): IceContainmentInfo {
-  const m = clamp(state.melt, 0, 1);
-  const { yTop, yBot, iceAmount, iceGone } = getMeltBounds(m);
+  const rawMelt = clamp(state.melt, 0, 1);
+  const m = getStructuralMelt(rawMelt);
+  const { yTop, yBot, iceAmount, iceGone } = getMeltBounds(rawMelt);
   if (iceGone) {
     out.depth = -99.0;
     out.dx = -99.0;
@@ -587,7 +629,7 @@ export function sampleIceContainment(
   const endRound = smoothstep(0.72, 0.94, m);
   const yClamped = clamp(y, yBot, yTop);
   const hNorm = clamp((yClamped - yBot) / Math.max(0.02, yTop - yBot), 0, 1);
-  const bulletTaper = smoothstep(0.08, 0.72, m);
+  const bulletTaper = smoothstep(0.06, 0.72, m);
   const radialCollapseW = 1.0 - Math.pow(collapse, 1.58) * 0.85;
   const radialCollapseD = 1.0 - Math.pow(collapse, 1.50) * 0.88;
   const domeStart = POPSICLE.domeStartNorm - bulletTaper * 0.14 - endRound * 0.08;
@@ -610,7 +652,8 @@ export function sampleIceContainment(
   let halfW = _csScratch.halfW;
   let halfD = _csScratch.halfD;
 
-  const localHeat = sampleLocalHeat(x, yClamped, state);
+  const carveGate = smoothstep(FROST_CLEAR_MELT - 0.02, FROST_CLEAR_MELT + 0.05, rawMelt);
+  const localHeat = sampleLocalHeat(x, yClamped, state) * carveGate;
   const carve = localHeat * 0.22 * iceAmount;
   halfW *= 1.0 - carve * 0.55;
   halfD *= 1.0 - carve * 0.78;

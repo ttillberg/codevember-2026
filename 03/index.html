@@ -126,25 +126,25 @@
         </div>
         <label class="row"><span>Melt</span><input id="sl-melt" type="range" min="0" max="1" step="0.005" value="0.035" /><output id="val-melt">0.04</output></label>
         <label class="row"><span>Speed</span><input id="sl-speed" type="range" min="0.2" max="6" step="0.1" value="1" /><output id="val-speed">1.0×</output></label>
-        <label class="row"><span>Frost</span><input id="sl-frost" type="range" min="0.1" max="1" step="0.02" value="0.58" /><output id="val-frost">0.58</output></label>
-        <label class="row"><span>Bubbles</span><input id="sl-bubbles" type="range" min="0" max="1" step="0.05" value="0.92" /><output id="val-bubbles">0.92</output></label>
-        <label class="row row-select"><span>Drops</span><select id="sel-drops"><option value="minimal">Subtle Sweat (Natural)</option><option value="off">Glaze &amp; Pools Only</option><option value="full">Heavy Drops</option></select></label>
-        <label class="row row-select"><span>On Fall</span><select id="sel-fall"><option value="pause">Pause Melt</option><option value="slow">Slow-Mo</option><option value="off">Off</option></select></label>
+        <label class="row"><span>Frost</span><input id="sl-frost" type="range" min="0.1" max="1" step="0.02" value="0.80" /><output id="val-frost">0.80</output></label>
+        <label class="row"><span>Bubbles</span><input id="sl-bubbles" type="range" min="0" max="1" step="0.05" value="0.55" /><output id="val-bubbles">0.55</output></label>
+        <label class="row row-select"><span>Drops</span><select id="sel-drops"><option value="minimal">Subtle Sweat (Natural)</option><option value="off" selected>Glaze &amp; Pools Only</option><option value="full">Heavy Drops</option></select></label>
+        <label class="row row-select"><span>On Fall</span><select id="sel-fall"><option value="pause">Pause Melt</option><option value="slow">Slow-Mo</option><option value="off" selected>Off</option></select></label>
         <details id="drop-debug" class="drop-debug" open>
           <summary>
             <span>Drop Debug</span>
             <button id="btn-drop-reset" class="mini-btn" type="button" title="Reset drop debug defaults">Reset</button>
           </summary>
           <div class="drop-debug-body">
-            <label class="row"><span>Teardrop</span><input id="sl-drop-sag" type="range" min="0" max="1.6" step="0.02" value="0.90" /><output id="val-drop-sag">0.90</output></label>
-            <label class="row"><span>Stretch</span><input id="sl-drop-stretch" type="range" min="0.85" max="1.8" step="0.02" value="1.24" /><output id="val-drop-stretch">1.24</output></label>
-            <label class="row"><span>Edge Blur</span><input id="sl-drop-blur" type="range" min="0" max="1.5" step="0.02" value="0.72" /><output id="val-drop-blur">0.72</output></label>
+            <label class="row"><span>Teardrop</span><input id="sl-drop-sag" type="range" min="0" max="1.6" step="0.02" value="0.54" /><output id="val-drop-sag">0.54</output></label>
+            <label class="row"><span>Stretch</span><input id="sl-drop-stretch" type="range" min="0.85" max="1.8" step="0.02" value="1.51" /><output id="val-drop-stretch">1.51</output></label>
+            <label class="row"><span>Edge Blur</span><input id="sl-drop-blur" type="range" min="0" max="1.5" step="0.02" value="1.20" /><output id="val-drop-blur">1.20</output></label>
             <label class="row"><span>Shadow</span><input id="sl-drop-shadow" type="range" min="0" max="1.5" step="0.02" value="0.44" /><output id="val-drop-shadow">0.44</output></label>
             <label class="row"><span>Shd Blur</span><input id="sl-drop-shblur" type="range" min="0.2" max="2.0" step="0.05" value="1.05" /><output id="val-drop-shblur">1.05</output></label>
             <label class="row"><span>Rim Dark</span><input id="sl-drop-rim" type="range" min="0" max="1.5" step="0.02" value="0.48" /><output id="val-drop-rim">0.48</output></label>
             <label class="row"><span>Size</span><input id="sl-drop-size" type="range" min="0.5" max="1.8" step="0.02" value="1.00" /><output id="val-drop-size">1.00</output></label>
             <label class="row"><span>Bot Pool</span><input id="sl-drop-pool" type="range" min="0" max="2.0" step="0.05" value="1.05" /><output id="val-drop-pool">1.05</output></label>
-            <label class="row"><span>Bot Drops</span><input id="sl-drop-botcount" type="range" min="0" max="80" step="1" value="34" /><output id="val-drop-botcount">34</output></label>
+            <label class="row"><span>Bot Drops</span><input id="sl-drop-botcount" type="range" min="0" max="80" step="1" value="10" /><output id="val-drop-botcount">10</output></label>
             <label class="row"><span>Drip Rate</span><input id="sl-drop-drip" type="range" min="0" max="2.0" step="0.05" value="0.76" /><output id="val-drop-drip">0.76</output></label>
           </div>
         </details>

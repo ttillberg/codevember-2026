@@ -227,7 +227,17 @@ function createOpticalIceMaterial(initialRecipe: PopsicleRecipe): { material: TH
 
       // Tactile thawing ice micro-relief + spatially varied frozen crystal roughness + baked 3D Voronoi slush beads!
       // Uses only 7 hardware texture3D fetches instead of 128 hashes + 54 nested Voronoi loop iterations (~12x faster!)
-      vec3 perturbNormal(vec3 N, vec3 p, float glazeCover, float localFreezeRough, float sweatMask, out float microGrain, out float slushBump) {
+      vec3 perturbNormal(
+        vec3 N,
+        vec3 p,
+        float glazeCover,
+        float localFreezeRough,
+        float sweatMask,
+        float postThirdTex,
+        out float microGrain,
+        out float slushBump,
+        out float slushCavity
+      ) {
         vec3 sp = (p * vec3(9.5, 4.5, 9.5) + vec3(uSeedOffset, uTime * 0.04, 0.0)) * INV_P6;
         float eW = 0.008;
         float h0 = texture(uNoise3D, sp).r;
@@ -236,37 +246,77 @@ function createOpticalIceMaterial(initialRecipe: PopsicleRecipe): { material: TH
         float hz = texture(uNoise3D, sp + vec3(0.0, 0.0, eW)).r;
         vec3 wetGrad = vec3(hx - h0, hy - h0, hz - h0) / 0.048;
 
-        // Two-scale fine sweaty wet crystalline micro-pebbling & granita slush (matching real macro melt photos!):
-        // - Outside thick flowing syrup sheets, thawed ice looks intensely sweaty & finely pebbled right away;
-        // - Thick creeping sticky glaze layers (glazeCover) level those pebbles into smooth mirror-glossy syrup;
-        // - In mid-to-late melt (uMelt -> 0.35..0.78), dense sparkling granular slush breaks through across the whole body!
-        float earlySweat = (0.34 + 0.38 * smoothstep(0.05, 0.32, uMelt)) * sweatMask;
-        float deepSlush = smoothstep(0.28, 0.72, uMelt) * 1.05;
-        float glazeLeveling = mix(0.88, 0.38, smoothstep(0.32, 0.72, uMelt));
-        float slushAmt = clamp((earlySweat + deepSlush) * (1.0 - glazeCover * glazeLeveling), 0.0, 1.35);
+        // Clean multi-scale wet porous ice-pebble relief emerging smoothly after 1/3 melt:
+        // Keeps normals physically bounded (never chaotic white static!) so rich juicy color dominates
+        // while tiny pebble crests catch crisp sparse 1-2px wet glints (matching real half-melted popsicles!).
+        float earlySweat = (0.24 + 0.30 * smoothstep(0.14, 0.34, uMelt)) * sweatMask * (1.0 - glazeCover * 0.85);
+        float deepSlush = postThirdTex * (0.95 - glazeCover * 0.16);
+        float slushAmt = clamp(earlySweat + deepSlush, 0.0, 1.15);
 
+        // Subtle organic eroded melt dimples (~8mm scale) — gentle undulation without big white blotches
+        vec3 coarsePert = vec3(0.0);
+        float coarseDimple = 0.5;
+        if (postThirdTex > 0.005) {
+          vec3 cp = (p * 26.0 + vec3(uSeedOffset * 1.9, -2.4, 1.3)) * INV_P6;
+          float eD = 0.020;
+          vec4 cd0 = texture(uNoise3D, cp);
+          float cdX = texture(uNoise3D, cp + vec3(eD, 0.0, 0.0)).b;
+          float cdY = texture(uNoise3D, cp + vec3(0.0, eD, 0.0)).b;
+          float cdZ = texture(uNoise3D, cp + vec3(0.0, 0.0, eD)).b;
+          coarsePert = vec3(cd0.b - cdX, cd0.b - cdY, cd0.b - cdZ) * 2.4;
+          coarseDimple = cd0.b * 0.65 + cd0.g * 0.35;
+        }
+
+        // Primary porous icy-granita pebbles (~2.5mm scale — crisp tactile bumps & recessed wet pores!)
+        vec3 medPert = vec3(0.0);
+        float medCell = 0.5;
+        if (postThirdTex > 0.005) {
+          vec3 mp = (p * 62.0 + vec3(uSeedOffset * 2.7, 4.1, -1.9)) * INV_P8;
+          float eM = 0.022;
+          vec4 md0 = texture(uNoise3D, mp);
+          float mdX = texture(uNoise3D, mp + vec3(eM, 0.0, 0.0)).b;
+          float mdY = texture(uNoise3D, mp + vec3(0.0, eM, 0.0)).b;
+          float mdZ = texture(uNoise3D, mp + vec3(0.0, 0.0, eM)).b;
+          medPert = vec3(md0.b - mdX, md0.b - mdY, md0.b - mdZ) * 3.6;
+          medCell = md0.b;
+        }
+
+        // Fine sparkling wet micro-pebbles (~1mm scale)
         vec3 cmP = (p * 116.0 + vec3(uSeedOffset * 1.3)) * INV_P8;
-        float eC = 0.022;
+        float eC = 0.024;
         vec4 cm0 = texture(uNoise3D, cmP);
         float cmX = texture(uNoise3D, cmP + vec3(eC, 0.0, 0.0)).b;
         float cmY = texture(uNoise3D, cmP + vec3(0.0, eC, 0.0)).b;
         float cmZ = texture(uNoise3D, cmP + vec3(0.0, 0.0, eC)).b;
-        vec3 cellPert = vec3(cm0.b - cmX, cm0.b - cmY, cm0.b - cmZ) * 5.2;
+        vec3 cellPert = vec3(cm0.b - cmX, cm0.b - cmY, cm0.b - cmZ) * 3.2;
 
-        // Ultra-fine sparkling wet sweat & sugar-ice micro-facets
-        vec4 cf = texture(uNoise3D, (p * 192.0 + vec3(uSeedOffset * 2.9)) * INV_P12);
-        vec3 microFacetPert = vec3(cf.r - 0.5, cf.g - 0.5, cf.a - 0.5) * (0.48 * slushAmt);
-        microGrain = clamp(cf.a * 0.46 + cm0.b * 0.54, 0.0, 1.0);
-        slushBump = slushAmt * smoothstep(0.26, 0.90, cm0.b * 0.60 + cf.a * 0.40);
+        vec4 cf = texture(uNoise3D, (p * 188.0 + vec3(uSeedOffset * 2.9)) * INV_P12);
+        vec3 microFacetPert = vec3(cf.r - 0.5, cf.g - 0.5, cf.a - 0.5) * (0.16 * slushAmt);
+        microGrain = clamp(mix(cf.a * 0.46 + cm0.b * 0.54, medCell * 0.56 + cm0.b * 0.30 + cf.a * 0.14, postThirdTex), 0.0, 1.0);
+        slushBump = slushAmt * smoothstep(0.32, 0.90, microGrain);
+        slushCavity = postThirdTex * clamp(
+          revStep(0.50, 0.14, medCell) * 0.68 +
+          revStep(0.46, 0.14, cm0.b) * 0.22 +
+          revStep(0.46, 0.16, coarseDimple) * 0.20,
+          0.0,
+          1.0
+        );
 
         float domeFrost = 1.0 + smoothstep(0.45, 1.05, p.y) * 0.45;
-        float freezeCrystalRelief = (0.022 + 0.135 * localFreezeRough) * uFrost * domeFrost * (1.0 - glazeCover * 0.72);
+        float freezeCrystalRelief = (0.022 + 0.125 * localFreezeRough) * uFrost * domeFrost * (1.0 - glazeCover * 0.72);
         vec3 pert =
-          wetGrad * (0.030 + uMelt * 0.018) * (1.0 - glazeCover * 0.65) +
-          cellPert * (freezeCrystalRelief + 0.34 * slushAmt) +
+          wetGrad * (0.028 + uMelt * 0.016) * (1.0 - glazeCover * 0.65) +
+          coarsePert * (0.20 * postThirdTex) +
+          medPert * (0.34 * postThirdTex) +
+          cellPert * (freezeCrystalRelief + 0.18 * slushAmt) +
           microFacetPert;
 
         pert -= N * dot(pert, N);
+        // Clamp tangential perturbation magnitude so wet pebbles stay crisp & glossy without scrambling normals!
+        float pertLen = length(pert);
+        if (pertLen > 0.46) {
+          pert *= 0.46 / pertLen;
+        }
         return normalize(N - pert);
       }
 
@@ -368,9 +418,24 @@ function createOpticalIceMaterial(initialRecipe: PopsicleRecipe): { material: TH
           1.0
         ) * uFrost;
 
+        // Pre-query unrefracted depth to solid emerging fruits so porous slush bumps & refraction fade cleanly
+        // to zero right where a berry breaks the surface (eliminates peppery speckle halos around emerging berries!)
+        float dFront = vCamDepth;
+        float dBackRaw = texture(uBackIceZ, screenUv).r;
+        float dBack = (dBackRaw < 50.0 && dBackRaw > dFront - 0.02) ? dBackRaw : (dFront + 0.36);
+        float totalThickness = clamp(dBack - dFront, 0.03, 0.56);
+        vec2 rawIntSample = texture(uInteriorZ, screenUv).rg;
+        bool rawHitsSolid = (rawIntSample.g > 0.5) && (rawIntSample.r < dBack + 0.06) && (rawIntSample.r >= dFront - 0.05);
+        float rawFrontDist = rawHitsSolid ? clamp(rawIntSample.r - dFront, 0.0, totalThickness) : totalThickness;
+        float rawThinFade = rawHitsSolid ? smoothstep(0.010, 0.085, rawFrontDist) : 1.0;
+
+        // Tactile porous wet ice-crystal texture ramps in richly after 1/3 melt (keeping crystal bottom pouches & berry rims clean!)
+        float postThirdTex = smoothstep(0.30, 0.56, uMelt) * (1.0 - rimeMaskPre * 0.90) * (1.0 - max(hangLiquid, hangClear) * 0.94) * rawThinFade;
+
         float microGrain = 0.0;
         float slushFacet = 0.0;
-        vec3 N_ice = perturbNormal(N0, icePos, glazeCover, freezeRoughBase, sweatMask, microGrain, slushFacet);
+        float slushCavity = 0.0;
+        vec3 N_ice = perturbNormal(N0, icePos, glazeCover, freezeRoughBase, sweatMask, postThirdTex, microGrain, slushFacet, slushCavity);
 
         vec3 refUp = abs(N0.y) > 0.94 ? vec3(0.0, 0.0, 1.0) : vec3(0.0, 1.0, 0.0);
         vec3 T = normalize(cross(refUp, N0));
@@ -390,16 +455,6 @@ function createOpticalIceMaterial(initialRecipe: PopsicleRecipe): { material: TH
         vec3 N_glaze = normalize(N0 - meniscusBend);
         vec3 N = normalize(mix(N_ice - meniscusBend, N_glaze, max(hangLiquid, hangClear) * 0.96));
 
-        // View-space camera depth (positive distance along view ray) so slab thickness & fruit depth stay exact across 360° 3D orbit!
-        float dFront = vCamDepth;
-        float dBackRaw = texture(uBackIceZ, screenUv).r;
-        float dBack = (dBackRaw < 50.0 && dBackRaw > dFront - 0.02) ? dBackRaw : (dFront + 0.36);
-        float totalThickness = clamp(dBack - dFront, 0.03, 0.56);
-
-        // Check exact un-refracted solid depth first so shallow/emerging fruits don't refract 15px off into white backdrop!
-        vec2 rawIntSample = texture(uInteriorZ, screenUv).rg;
-        bool rawHitsSolid = (rawIntSample.g > 0.5) && (rawIntSample.r < dBack + 0.06) && (rawIntSample.r >= dFront - 0.05);
-        float rawFrontDist = rawHitsSolid ? clamp(rawIntSample.r - dFront, 0.0, totalThickness) : totalThickness;
         // Physically, Snell screen displacement scales with actual ice thickness above the fruit (Δx ∝ d -> 0 at emergence!)
         float refrDepthScale = rawHitsSolid ? smoothstep(0.002, 0.115, rawFrontDist) : 1.0;
 
@@ -618,31 +673,52 @@ function createOpticalIceMaterial(initialRecipe: PopsicleRecipe): { material: TH
         vec3 dropRimTint = mix(vec3(0.46, 0.22, 0.24), uStainCol * 0.48, 0.65);
         iceBody = mix(iceBody, iceBody * dropRimTint, clamp(hangGlassRim * 0.64, 0.0, 0.66));
 
+        // Rich colored porous pebble shading after 1/3 melt (deep juicy crevices + directional bump relief, ZERO white wash!)
+        vec3 keyL = normalize(vec3(-0.66, 0.46, 0.59));
+        vec3 keyR = normalize(vec3(0.66, 0.42, 0.62));
+        vec3 keyTop = normalize(vec3(-0.18, 0.78, 0.60));
+        vec3 keyFront = normalize(vec3(0.14, 0.34, 0.93));
+
+        if (postThirdTex > 0.005) {
+          // Pure colored micro-bump diffuse relief: lit upper pebble bevels glow richer, shadowed troughs deepen!
+          float lIce = dot(N_ice, keyL) * 0.48 + dot(N_ice, keyTop) * 0.34 + dot(N_ice, keyR) * 0.18;
+          float lBase = dot(N0, keyL) * 0.48 + dot(N0, keyTop) * 0.34 + dot(N0, keyR) * 0.18;
+          float bumpRelief = clamp(lIce - lBase, -0.34, 0.34);
+          iceBody *= 1.0 + bumpRelief * mix(0.88, 0.44, uOpacity) * postThirdTex * thinIceFade;
+
+          // Rich saturated flavor darkening inside tiny melted ice-crystal pores
+          float wetSlushDepth = slushCavity * thinIceFade * (1.0 - hangClear * 0.94);
+          vec3 creviceTint = mix(flvDeep * 0.58 + vec3(0.12), vec3(0.86, 0.83, 0.81), uOpacity * 0.82);
+          iceBody = mix(iceBody, iceBody * creviceTint, clamp(wetSlushDepth * 0.42, 0.0, 0.44));
+        }
+
         // === INTERNAL TRAPPED AIR MICRO-BUBBLES (hidden inside opaque coconut & clear hanging liquid syrup!) ===
         vec4 bub = texture(uBubblesTex, clamp(uvG, vec2(0.002), vec2(0.998)));
         float bubVis = clamp(bub.a * 0.92 * thinIceFade * (1.0 - uOpacity * 0.92) * (1.0 - hangLiquid * 0.94), 0.0, 0.92);
         iceBody = mix(iceBody, bub.rgb, bubVis);
 
-        // === WET GLAZE FRESNEL, SOFT SYRUPY SHEEN & SPARKLING VORONOI SLUSH PINPOINTS ===
-        vec3 R_glaze = reflect(-V, N_glaze);
+        // === WET GLAZE FRESNEL, SOFT SYRUPY SHEEN & SPARSE CRISP WET CRYSTAL PINPOINTS ===
+        // Gently ripple glaze reflections over the wet porous pebbles (bounded blend avoids huge white blotches!)
+        vec3 N_refl = normalize(mix(N_glaze, N_ice, clamp(postThirdTex * 0.36 * (1.0 - uOpacity * 0.35), 0.0, 0.40)));
+        vec3 R_glaze = reflect(-V, N_refl);
         vec3 R_smooth = reflect(-V, N0);
 
         float fresnel = (0.02 + 0.98 * pow(1.0 - clamp(dot(N_glaze, V), 0.0, 1.0), 4.8)) * edgeMeltFade * (0.35 + 0.65 * thinIceFade);
         float shoulderGlareTame = mix(1.0, 0.48, smoothstep(0.55, 0.95, vWorldPos.y));
-        float filmRough = mix(0.10, 0.045, glazeCover);
+        float filmRough = mix(0.10, 0.045, glazeCover) + postThirdTex * 0.165;
         vec3 specWet = evalMacroStudioReflection(R_glaze, filmRough) * shoulderGlareTame;
         vec3 specSatin = evalMacroStudioReflection(R_smooth, 0.32) * shoulderGlareTame;
 
         // Dry powdery hoarfrost damps mirror-glossy studio reflections so freshly melted streaks pop as wet glass!
         float dryFrostMatte = 1.0 - rimeMask * 0.84;
-        float glazeSpecBoost = (1.0 + glazeCover * 0.45 + wetMem * 0.16) * dryFrostMatte;
+        float glazeSpecBoost = (1.0 + glazeCover * 0.45 + wetMem * 0.16) * (1.0 - postThirdTex * 0.56) * dryFrostMatte;
         vec3 color =
           iceBody * (1.0 - fresnel * 0.38 * dryFrostMatte) +
-          specWet * (fresnel * 0.72 * glazeSpecBoost) +
+          specWet * (fresnel * 0.70 * glazeSpecBoost) +
           specSatin * (fresnel * 0.14 * frostFactor * (1.0 - glazeCover * 0.75) * thinIceFade * dryFrostMatte);
 
         // Organic, crystal-broken frosted specular ridges along the twin molded flutes
-        float fluteFade = revStep(0.28, 0.05, uMelt);
+        float fluteFade = revStep(0.36, 0.14, uMelt);
         if (fluteFade > 0.002) {
           vec3 R_flute = reflect(-V, normalize(mix(N0, N_ice, 0.55)));
           float nearFluteTrack = exp(-sq((abs(vWorldPos.x) - ${POPSICLE.fluteX.toFixed(4)}) / 0.064));
@@ -658,24 +734,22 @@ function createOpticalIceMaterial(initialRecipe: PopsicleRecipe): { material: TH
           color += mix(vec3(1.56, 1.38, 1.34), vec3(1.68, 1.48, 1.24), warmNuance * 0.45) * fluteLine * 0.34 * edgeMeltFade * dryFrostMatte;
         }
 
-        // Crisp scattered sparkling wet micro-crystal pinpoints across porous thawing sugar-ice
-        vec3 keyL = normalize(vec3(-0.66, 0.46, 0.59));
-        vec3 keyR = normalize(vec3(0.66, 0.42, 0.62));
-        vec3 keyTop = normalize(vec3(-0.18, 0.78, 0.60));
+        // Crisp sparse sparkling wet micro-crystal pinpoints across porous thawing sugar-ice
         vec3 hL = safeNorm(keyL + V);
         vec3 hR = safeNorm(keyR + V);
         vec3 hT = safeNorm(keyTop + V);
+        vec3 hF = safeNorm(keyFront + V);
 
-        float creamSmoothSpec = 1.0 - uOpacity * 0.80;
+        float creamSmoothSpec = 1.0 - uOpacity * 0.78;
         float solidIceSpec = 1.0 - hangLiquid * 0.88;
         float solidSpecScale = creamSmoothSpec * solidIceSpec;
 
         float crystalGlint = 0.0;
         if (solidSpecScale > 0.002) {
           crystalGlint =
-            pow(max(dot(N, hL), 0.0), 460.0) * 1.55 +
-            pow(max(dot(N, hR), 0.0), 460.0) * 1.35 +
-            pow(max(dot(N, hT), 0.0), 540.0) * 1.45;
+            pow(max(dot(N, hL), 0.0), 460.0) * 1.35 +
+            pow(max(dot(N, hR), 0.0), 460.0) * 1.20 +
+            pow(max(dot(N, hT), 0.0), 540.0) * 1.25;
         }
 
         float ndhL_g = max(dot(N_glaze, hL), 0.0);
@@ -684,26 +758,32 @@ function createOpticalIceMaterial(initialRecipe: PopsicleRecipe): { material: TH
 
         float softGlazeW = clamp(glazeCover * 0.68 + glazeEdge * 1.15, 0.0, 1.35);
         float softGlazeSheen = softGlazeW > 0.002
-          ? (pow(ndhL_g, 135.0) * 0.82 + pow(ndhR_g, 135.0) * 0.68 + pow(ndhT_g, 175.0) * 0.62) * softGlazeW
+          ? (pow(ndhL_g, 135.0) * 0.82 + pow(ndhR_g, 135.0) * 0.68 + pow(ndhT_g, 175.0) * 0.62) * softGlazeW * (1.0 - postThirdTex * 0.55)
           : 0.0;
         // Sharp glossy curved liquid gleam riding along the advancing lip of each creeping sticky syrup wave!
         float glazeLipGlint = glazeEdge > 0.002
-          ? (pow(ndhL_g, 280.0) * 1.45 + pow(ndhR_g, 280.0) * 1.25 + pow(ndhT_g, 320.0) * 1.35) * glazeEdge
+          ? (pow(ndhL_g, 280.0) * 1.45 + pow(ndhR_g, 280.0) * 1.25 + pow(ndhT_g, 320.0) * 1.35) * glazeEdge * (1.0 - postThirdTex * 0.62)
           : 0.0;
         float bottomStickyGlint = bottomPoolZone > 0.002
           ? (pow(ndhL_g, 210.0) * 1.25 + pow(ndhR_g, 210.0) * 1.15 + pow(ndhT_g, 180.0) * 0.92) * bottomPoolZone
           : 0.0;
 
-        // Crisp 1-2px diamond specular sweat & wet granular slush pinpoints (like Temponaut / macro melt photos!)
+        // Crisp sparse 1-2px wet white specular pinpoints on the sharpest pebble bevels (NEVER chalky white static!)
+        float ndhL_i = max(dot(N_ice, hL), 0.0);
+        float ndhR_i = max(dot(N_ice, hR), 0.0);
+        float ndhT_i = max(dot(N_ice, hT), 0.0);
+        float ndhF_i = max(dot(N_ice, hF), 0.0);
+        float pebbleCrest = smoothstep(0.48, 0.88, microGrain);
         float slushPinpoints = (slushFacet > 0.002 && solidSpecScale > 0.002)
-          ? (pow(max(dot(N_ice, hL), 0.0), 520.0) * 2.55 +
-             pow(max(dot(N_ice, hR), 0.0), 480.0) * 2.15 +
-             pow(max(dot(N_ice, hT), 0.0), 620.0) * 2.40) * slushFacet
+          ? (pow(ndhL_i, 460.0) * 2.10 +
+             pow(ndhR_i, 460.0) * 1.85 +
+             pow(ndhT_i, 520.0) * 1.95 +
+             pow(ndhF_i, 380.0) * 1.45 * postThirdTex) * slushFacet * (0.35 + 0.65 * pebbleCrest)
           : 0.0;
 
-        // Tactile sweaty granular crystalline depth across wet melting ice (damped on coconut & pure liquid hanging bellies)
-        color *= 1.0 + (microGrain - 0.48) * 0.22 * slushFacet * thinIceFade * solidSpecScale * dryFrostMatte;
-        color += vec3(1.96, 1.85, 1.80) * (crystalGlint * solidSpecScale + slushPinpoints * 1.65 * thinIceFade * solidSpecScale + glazeLipGlint * 1.05 + bottomStickyGlint * 0.95) * edgeMeltFade * (0.38 + 0.62 * thinIceFade) * dryFrostMatte;
+        // Subtle crisp granular tone variation across wet melting ice (damped on coconut & pure liquid hanging bellies)
+        color *= 1.0 + (microGrain - 0.50) * (0.18 + 0.14 * postThirdTex) * slushFacet * thinIceFade * solidSpecScale * dryFrostMatte;
+        color += vec3(1.96, 1.85, 1.80) * (crystalGlint * solidSpecScale + slushPinpoints * 1.35 * thinIceFade * solidSpecScale + glazeLipGlint * 1.05 + bottomStickyGlint * 0.95) * edgeMeltFade * (0.38 + 0.62 * thinIceFade) * dryFrostMatte;
         color += vec3(1.72, 1.60, 1.56) * softGlazeSheen * edgeMeltFade * (0.42 + 0.58 * thinIceFade) * dryFrostMatte;
 
         // Luminous clear glass bottom caustic crescent & crisp droplet-style pinpoint catchlights on hanging pouches!
@@ -906,8 +986,8 @@ export function createPopsicleIceSystem(
   isMobile = false,
   initialRecipe: PopsicleRecipe = DEFAULT_RECIPE,
 ): PopsicleIceSystem {
-  const segU = isMobile ? 80 : 96;
-  const segV = isMobile ? 52 : 72;
+  const segU = isMobile ? 84 : 112;
+  const segV = isMobile ? 56 : 96;
   const vertexCount = (segU + 1) * (segV + 1);
   const positions = new Float32Array(vertexCount * 3);
   const normals = new Float32Array(vertexCount * 3);
