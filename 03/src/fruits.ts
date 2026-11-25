@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { clamp, fbm3, mulberry32, smoothstep } from './rng';
-import { getMeltBounds, iceContainmentDepth, iceSurfaceOutwardNormal, MeltFieldState, POPSICLE } from './shape';
+import { getMeltBounds, iceContainmentDepth, MeltFieldState, POPSICLE } from './shape';
 import {
   createBlueberryTextures,
   createStrawberryTextures,
@@ -13,14 +13,24 @@ export interface FruitItem {
   mesh: THREE.Mesh;
   basePos: THREE.Vector3;
   baseQuat: THREE.Quaternion;
+  baseScale: THREE.Vector3;
   radius: number;
   velocity: THREE.Vector3;
   angVel: THREE.Vector3;
   detached: boolean;
+  /** Elapsed seconds since detaching (guarantees clean brisk exit!) */
+  detachTime: number;
+  /** True once this falling fruit has performed its single soft glancing deflection off the popsicle body */
+  glancedBody: boolean;
   /** Fraction exposed outside melting ice [0..1] */
   exposure: number;
   /** Extra melt margin before unsticking (keeps fruits embedded until well exposed) */
   holdStrength: number;
+  /** Soft-thaw spring bend state (droop + gentle flutter / soft impact flex) */
+  bendAmt: number;
+  bendVel: number;
+  bendPhase: number;
+  bendUniform?: { value: THREE.Vector3 };
 }
 
 export interface FruitAssembly {
@@ -293,13 +303,15 @@ function createWoodStickGeometry(): THREE.BufferGeometry {
 
 /**
  * Creates a physical strawberry slice material enhanced with backlit translucent SSS
- * so light from the studio lightbox behind makes the cortex & pale core glow warmly.
+ * AND per-slice GPU soft-thaw vertex bending (`uBend`) so warmed slices gently droop
+ * and flex organically as they loosen and fall!
+ * Shares compiled shader program across all slices via `customProgramCacheKey`.
  */
-function createStrawberryMaterial(seed: number): {
+function createStrawberryMaterial(textures: ReturnType<typeof createStrawberryTextures>): {
   material: THREE.MeshPhysicalMaterial;
-  textures: ReturnType<typeof createStrawberryTextures>;
+  uBend: { value: THREE.Vector3 };
 } {
-  const textures = createStrawberryTextures(seed);
+  const uBend = { value: new THREE.Vector3(0, 0, 0) };
   const material = new THREE.MeshPhysicalMaterial({
     map: textures.albedo,
     bumpMap: textures.bump,
@@ -311,17 +323,46 @@ function createStrawberryMaterial(seed: number): {
     envMapIntensity: 0.85,
   });
 
+  material.customProgramCacheKey = () => 'strawberry-softbend-v1';
+
   material.onBeforeCompile = (shader) => {
     shader.uniforms.uTranslucencyMap = { value: textures.translucency };
     shader.uniforms.uBacklightDir = { value: new THREE.Vector3(0.0, 0.08, -1.0).normalize() };
+    shader.uniforms.uBend = uBend;
 
     shader.vertexShader = shader.vertexShader
       .replace(
         '#include <common>',
         `#include <common>
+        uniform vec3 uBend;
         varying vec2 vBerryUv;
         varying vec3 vBerryWorldNormal;
         varying vec3 vBerryWorldPos;`,
+      )
+      .replace(
+        '#include <beginnormal_vertex>',
+        `#include <beginnormal_vertex>
+        {
+          float dBdx = 2.0 * uBend.x * position.x + 2.0 * uBend.z * abs(position.x);
+          float dBdy = 2.0 * uBend.x * position.y + 2.0 * uBend.y * abs(position.y);
+          objectNormal = normalize(vec3(
+            objectNormal.x - objectNormal.z * dBdx,
+            objectNormal.y - objectNormal.z * dBdy,
+            objectNormal.z
+          ));
+        }`,
+      )
+      .replace(
+        '#include <begin_vertex>',
+        `#include <begin_vertex>
+        {
+          float bR2 = position.x * position.x + position.y * position.y;
+          float bendZ = uBend.x * bR2 + uBend.y * position.y * abs(position.y) + uBend.z * position.x * abs(position.x);
+          transformed.z += bendZ;
+          // Subtle length-preserving inward draw so soft berry tissue curls naturally without stretching
+          float bendMag = abs(uBend.x) + abs(uBend.y) * 0.6 + abs(uBend.z) * 0.6;
+          transformed.xy *= 1.0 - clamp(bendMag * 0.14 * bR2, 0.0, 0.12);
+        }`,
       )
       .replace(
         '#include <worldpos_vertex>',
@@ -360,7 +401,7 @@ function createStrawberryMaterial(seed: number): {
       );
   };
 
-  return { material, textures };
+  return { material, uBend };
 }
 
 /**
@@ -681,21 +722,19 @@ export function createFruitAssembly(seed: number): FruitAssembly {
   const group = new THREE.Group();
   const disposables: Array<{ dispose(): void }> = [];
 
-  // Shared botanical materials (2 strawberry texture variants & 2 blueberry variants for organic variety)
-  const strawSetA = createStrawberryMaterial(seed * 31 + 103);
-  const strawSetB = createStrawberryMaterial(seed * 37 + 211);
+  // Shared botanical textures (2 strawberry & 2 blueberry variants; each strawberry gets its own bend uniform sharing 1 GPU shader program!)
+  const strawTexA = createStrawberryTextures(seed * 31 + 103);
+  const strawTexB = createStrawberryTextures(seed * 37 + 211);
   const blueSetA = createBlueberryMaterial(seed * 41 + 307);
   const blueSetB = createBlueberryMaterial(seed * 43 + 419);
 
   disposables.push(
-    strawSetA.material,
-    strawSetA.textures.albedo,
-    strawSetA.textures.bump,
-    strawSetA.textures.translucency,
-    strawSetB.material,
-    strawSetB.textures.albedo,
-    strawSetB.textures.bump,
-    strawSetB.textures.translucency,
+    strawTexA.albedo,
+    strawTexA.bump,
+    strawTexA.translucency,
+    strawTexB.albedo,
+    strawTexB.bump,
+    strawTexB.translucency,
     blueSetA.material,
     blueSetA.textures.albedo,
     blueSetA.textures.bump,
@@ -846,10 +885,14 @@ export function createFruitAssembly(seed: number): FruitAssembly {
   specs.forEach((spec, idx) => {
     let geo: THREE.BufferGeometry;
     let mat: THREE.Material;
+    let bendUniform: { value: THREE.Vector3 } | undefined;
 
     if (spec.kind === 'strawberry') {
       geo = createStrawberrySliceGeometry(seed * 131 + idx * 17 + 5, 0.16 + rand() * 0.04);
-      mat = idx % 2 === 0 ? strawSetA.material : strawSetB.material;
+      const straw = createStrawberryMaterial(idx % 2 === 0 ? strawTexA : strawTexB);
+      mat = straw.material;
+      bendUniform = straw.uBend;
+      disposables.push(mat);
     } else {
       geo = createBlueberryGeometry(seed * 149 + idx * 23 + 11);
       mat = idx % 2 === 0 ? blueSetA.material : blueSetB.material;
@@ -868,12 +911,19 @@ export function createFruitAssembly(seed: number): FruitAssembly {
       mesh,
       basePos: mesh.position.clone(),
       baseQuat: mesh.quaternion.clone(),
+      baseScale: mesh.scale.clone(),
       radius: spec.radius,
       velocity: new THREE.Vector3(),
       angVel: new THREE.Vector3(),
       detached: false,
+      detachTime: 0,
+      glancedBody: false,
       exposure: 0,
       holdStrength: 0.22 + rand() * 0.14,
+      bendAmt: 0,
+      bendVel: 0,
+      bendPhase: rand() * Math.PI * 2,
+      bendUniform,
     });
   });
 
@@ -881,10 +931,16 @@ export function createFruitAssembly(seed: number): FruitAssembly {
     for (const f of fruits) {
       f.mesh.position.copy(f.basePos);
       f.mesh.quaternion.copy(f.baseQuat);
+      f.mesh.scale.copy(f.baseScale);
       f.velocity.set(0, 0, 0);
       f.angVel.set(0, 0, 0);
       f.detached = false;
+      f.detachTime = 0;
+      f.glancedBody = false;
       f.exposure = 0;
+      f.bendAmt = 0;
+      f.bendVel = 0;
+      f.bendUniform?.value.set(0, 0, 0);
       f.mesh.visible = true;
     }
     stickUniforms.uIceBottomY.value = POPSICLE.yBottom;
@@ -897,17 +953,35 @@ export function createFruitAssembly(seed: number): FruitAssembly {
   const sagQuat = new THREE.Quaternion();
   const spinAxis = new THREE.Vector3();
   const spinQuat = new THREE.Quaternion();
-  const surfNorm = { x: 0, y: 0, z: 0 };
 
   function fruitCollisionRadius(f: FruitItem): number {
     // Tilted strawberry slices have thinner effective cross-section than whole spherical blueberries
     return f.kind === 'strawberry' ? f.radius * 0.44 : f.radius * 0.80;
   }
 
+  function applyPreReleasePose(f: FruitItem, depth: number, releaseMargin: number) {
+    f.exposure = clamp(1.0 - smoothstep(releaseMargin, f.radius * 0.62, depth), 0, 1);
+    const sag = smoothstep(0.38, 1.0, f.exposure);
+    const sideSign = Math.abs(f.basePos.x) > 0.03 ? Math.sign(f.basePos.x) : 1;
+
+    // Graceful melt-shift: fruit gently loosens downward, slips slightly outward, tilts, and softens!
+    f.mesh.position.set(f.basePos.x + sideSign * sag * 0.018, f.basePos.y - sag * 0.042, f.basePos.z);
+    sagEuler.set(sag * 0.14, 0, -sideSign * sag * 0.22);
+    sagQuat.setFromEuler(sagEuler);
+    f.mesh.quaternion.copy(f.baseQuat).multiply(sagQuat);
+    f.mesh.scale.copy(f.baseScale);
+
+    // Subtle soft-thaw droop on exposed strawberry slices before peeling free
+    const thawSoft = smoothstep(0.24, 1.0, f.exposure);
+    f.bendAmt = thawSoft * 0.17;
+    f.bendVel = 0;
+    if (f.bendUniform) {
+      f.bendUniform.value.set(f.bendAmt, thawSoft * 0.08, -sideSign * thawSoft * 0.11);
+    }
+  }
+
   function update(meltState: MeltFieldState, dt: number, stickWetness?: number) {
     const { yTop: yTopLive, yBot: yBotLive, iceAmount, iceGone } = getMeltBounds(meltState.melt);
-    const stickHalfW = POPSICLE.stickWidth * 0.5 + POPSICLE.stickDepth * 0.19 * 0.7;
-    const stickHalfD = POPSICLE.stickDepth * 0.5;
     stickUniforms.uIceBottomY.value = yBotLive;
     stickUniforms.uIceTopY.value = yTopLive;
     stickUniforms.uIceAmount.value = iceAmount;
@@ -919,7 +993,7 @@ export function createFruitAssembly(seed: number): FruitAssembly {
       );
     }
 
-    // Pass 1: Update all still-attached fruits first so falling fruits glance off accurate live protruding positions!
+    // Pass 1: Update still-attached fruits (stunning melt-shift & thaw softening) and trigger clean release!
     const endgameReleaseBoost = smoothstep(0.72, 0.90, meltState.melt) * 0.07;
     for (let i = 0; i < fruits.length; i++) {
       const f = fruits[i];
@@ -932,59 +1006,57 @@ export function createFruitAssembly(seed: number): FruitAssembly {
           f.mesh.visible = false;
         } else {
           f.detached = false;
+          f.detachTime = 0;
+          f.glancedBody = false;
           f.mesh.visible = true;
-          f.exposure = clamp(1.0 - smoothstep(releaseMargin, f.radius * 0.62, depth), 0, 1);
-          const sag = smoothstep(0.45, 1.0, f.exposure);
-          f.mesh.position.set(f.basePos.x, f.basePos.y - sag * 0.032, f.basePos.z);
-          sagEuler.set(sag * 0.12, 0, -Math.sign(f.basePos.x || 1) * sag * 0.18);
-          sagQuat.setFromEuler(sagEuler);
-          f.mesh.quaternion.copy(f.baseQuat).multiply(sagQuat);
+          applyPreReleasePose(f, depth, releaseMargin);
           f.velocity.set(0, 0, 0);
         }
         continue;
       }
 
       if (!f.detached) {
-        f.exposure = clamp(1.0 - smoothstep(releaseMargin, f.radius * 0.62, depth), 0, 1);
-        const sag = smoothstep(0.45, 1.0, f.exposure);
-        f.mesh.position.set(f.basePos.x, f.basePos.y - sag * 0.032, f.basePos.z);
-        sagEuler.set(sag * 0.12, 0, -Math.sign(f.basePos.x || 1) * sag * 0.18);
-        sagQuat.setFromEuler(sagEuler);
-        f.mesh.quaternion.copy(f.baseQuat).multiply(sagQuat);
+        applyPreReleasePose(f, depth, releaseMargin);
 
-        // Once melting ice recedes past the fruit's support center, peel cleanly outward in true 3D!
+        // Once melted down enough to loosen, release cleanly & decisively outward away from the popsicle!
         if (iceGone || (meltState.melt > 0.14 && depth < releaseMargin)) {
           f.detached = true;
-          iceSurfaceOutwardNormal(f.mesh.position.x, f.mesh.position.y, f.mesh.position.z, meltState, surfNorm);
+          f.detachTime = 0;
+          f.glancedBody = false;
 
-          // Fruits sitting mid-to-back (basePos.z <= 0.004) peel backward (-Z) so they fall BEHIND the popsicle!
+          // Outward horizontal direction away from the popsicle spine (guarantees it arcs clear instead of wedging!)
+          const sideX = Math.abs(f.basePos.x) > 0.04 ? Math.sign(f.basePos.x) : i % 2 === 0 ? 1 : -1;
           const isBackHalf = f.basePos.z <= 0.004;
-          let pushX = surfNorm.x;
-          let pushZ = isBackHalf ? Math.min(surfNorm.z, -0.58) : Math.max(surfNorm.z, 0.32);
-          const horizLen = Math.hypot(pushX, pushZ) || 1;
-          pushX /= horizLen;
-          pushZ /= horizLen;
+          const pushZ = isBackHalf ? -1 : 1;
 
-          // Nudge initial center cleanly clear of the ice surface on the correct front/back side
+          // Gently clear the live surface on the correct front/back side so it never starts stuck inside ice
           if (!iceGone) {
             const rCol = fruitCollisionRadius(f);
             const curDepth = iceContainmentDepth(f.mesh.position.x, f.mesh.position.y, f.mesh.position.z, meltState);
-            if (curDepth > -rCol * 0.45) {
-              const clearPush = Math.min(0.14, curDepth + rCol * 0.55);
-              f.mesh.position.x += pushX * clearPush * 0.55;
-              f.mesh.position.z += pushZ * clearPush;
+            if (curDepth > -rCol * 0.35) {
+              const clearPush = Math.min(0.14, curDepth + rCol * 0.45);
+              f.mesh.position.x += sideX * clearPush * 0.65;
+              f.mesh.position.z += pushZ * clearPush * 0.85;
             }
           }
 
-          f.velocity.set(pushX * (0.09 + (i % 3) * 0.03), -0.14, pushZ * (0.13 + (i % 2) * 0.04));
-          f.angVel.set(pushZ * 0.9, (i % 2 === 0 ? 1 : -1) * 0.55, -pushX * 1.0);
+          // Light, effortless outward peel arc (strawberries slightly floatier/wider, blueberries slightly brisker)
+          const horizKick = (f.kind === 'strawberry' ? 0.46 : 0.38) + (i % 3) * 0.07;
+          const zKick = isBackHalf ? -(0.38 + (i % 2) * 0.08) : 0.26 + (i % 2) * 0.06;
+          f.velocity.set(sideX * horizKick, -0.34, zKick);
+
+          // Gentle lazy tumble (never frantic coin-spinning!)
+          f.angVel.set(pushZ * 0.75, (i % 2 === 0 ? 1 : -1) * 0.55, -sideX * 1.15);
+
+          // Soft peel-off flex impulse as the thawed lightweight berry slips free
+          f.bendVel = f.kind === 'strawberry' ? 1.55 : 1.1;
         }
       }
     }
 
     if (dt <= 0) return;
 
-    // Pass 2: Lightweight, low-bounce 3D falling & wet-friction glancing physics (floor is far below the frame!)
+    // Pass 2: Quick, graceful falloff with at most ONE faked soft brush off the main body + soft berry flex!
     const substeps = 2;
     const subDt = dt / substeps;
 
@@ -992,13 +1064,26 @@ export function createFruitAssembly(seed: number): FruitAssembly {
       const f = fruits[i];
       if (!f.detached || !f.mesh.visible) continue;
 
+      f.detachTime += dt;
       const rCol = fruitCollisionRadius(f);
+      const sideX = Math.abs(f.basePos.x) > 0.04 ? Math.sign(f.basePos.x) : i % 2 === 0 ? 1 : -1;
+      const isBackHalf = f.basePos.z <= 0.004;
 
       for (let s = 0; s < substeps; s++) {
-        f.velocity.y -= 4.9 * subDt;
+        // Lightweight crisp gravity + subtle air drag on lateral drift
+        const grav = f.kind === 'strawberry' ? 5.6 : 6.4;
+        f.velocity.y -= grav * subDt;
+        const airDrag = Math.exp(-subDt * (f.kind === 'strawberry' ? 0.55 : 0.25));
+        f.velocity.x *= airDrag;
+        f.velocity.z *= airDrag;
         f.mesh.position.addScaledVector(f.velocity, subDt);
 
-        // Smooth world-space quaternion spin integration
+        // Smooth, gently damped tumble (bounded low so slices NEVER spin wildly on themselves!)
+        f.angVel.multiplyScalar(Math.exp(-subDt * 0.9));
+        const maxSpin = f.kind === 'strawberry' ? 2.5 : 3.2;
+        if (f.angVel.lengthSq() > maxSpin * maxSpin) {
+          f.angVel.setLength(maxSpin);
+        }
         const wMag = f.angVel.length();
         if (wMag > 1e-4) {
           spinAxis.copy(f.angVel).divideScalar(wMag);
@@ -1006,113 +1091,78 @@ export function createFruitAssembly(seed: number): FruitAssembly {
           f.mesh.quaternion.premultiply(spinQuat);
         }
 
-        // A) Soft wet-friction slide & gentle deflection off live melting popsicle ice (never falls through!)
-        if (!iceGone) {
+        // At most ONE faked soft glancing brush with the main popsicle body / protruding berry ->
+        // kicks cleanly FURTHER AWAY horizontally while NEVER slowing or trapping downward fall!
+        if (!f.glancedBody && !iceGone && f.detachTime < 0.65) {
           const px = f.mesh.position.x;
           const py = f.mesh.position.y;
           const pz = f.mesh.position.z;
+          let grazed = false;
+
           const dIce = iceContainmentDepth(px, py, pz, meltState);
-          if (dIce > -rCol) {
-            iceSurfaceOutwardNormal(px, py, pz, meltState, surfNorm);
-            // Preserve back-of-popsicle side if this fruit was released behind the ice
-            if (f.basePos.z <= 0.004 && pz <= 0.02 && surfNorm.z > -0.15) {
-              surfNorm.z = -0.65;
-              const nL = Math.hypot(surfNorm.x, surfNorm.y, surfNorm.z) || 1;
-              surfNorm.x /= nL;
-              surfNorm.y /= nL;
-              surfNorm.z /= nL;
-            }
+          if (dIce > -rCol * 0.55 && py > yBotLive - 0.08) {
+            grazed = true;
+            const pen = dIce + rCol * 0.60;
+            f.mesh.position.x += sideX * Math.max(0, pen * 0.75);
+            f.mesh.position.z += (isBackHalf ? -1 : 1) * Math.max(0, pen * 0.55);
+          }
 
-            const pen = dIce + rCol;
-            f.mesh.position.x += surfNorm.x * pen;
-            f.mesh.position.y += surfNorm.y * pen * 0.35;
-            f.mesh.position.z += surfNorm.z * pen;
-
-            const vn = f.velocity.x * surfNorm.x + f.velocity.y * surfNorm.y + f.velocity.z * surfNorm.z;
-            if (vn < 0) {
-              // Very low restitution + wet surface friction: soft slide/nudge, NOT a rubbery bounce!
-              const restitution = 0.10;
-              const jImp = -(1 + restitution) * vn;
-              f.velocity.x += surfNorm.x * jImp;
-              f.velocity.y += surfNorm.y * jImp;
-              f.velocity.z += surfNorm.z * jImp;
-              f.velocity.multiplyScalar(0.86);
-              f.angVel.x += (surfNorm.y * f.velocity.z - surfNorm.z * f.velocity.y) * 0.85;
-              f.angVel.y += (surfNorm.z * f.velocity.x - surfNorm.x * f.velocity.z) * 0.85;
-              f.angVel.z += (surfNorm.x * f.velocity.y - surfNorm.y * f.velocity.x) * 0.85;
+          if (!grazed) {
+            const grazeR = f.kind === 'strawberry' ? f.radius * 0.68 : rCol;
+            for (let j = 0; j < fruits.length; j++) {
+              if (j === i) continue;
+              const other = fruits[j];
+              if (other.detached || !other.mesh.visible || other.exposure < 0.12) continue;
+              const dx = px - other.mesh.position.x;
+              const dy = py - other.mesh.position.y;
+              const dz = pz - other.mesh.position.z;
+              const otherR = other.kind === 'strawberry' ? other.radius * 0.62 : other.radius * 0.86;
+              const minDist = (grazeR + otherR) * 0.96;
+              const distSq = dx * dx + dy * dy + dz * dz;
+              if (distSq < minDist * minDist) {
+                grazed = true;
+                const pen = minDist - Math.sqrt(Math.max(1e-6, distSq));
+                f.mesh.position.x += sideX * Math.min(0.06, pen * 0.48);
+                break;
+              }
             }
           }
-        }
 
-        // B) Gentle glancing nudge off any still-attached protruding fruit sticking out of the melting ice
-        for (let j = 0; j < fruits.length; j++) {
-          if (j === i) continue;
-          const other = fruits[j];
-          if (other.detached || !other.mesh.visible || other.exposure < 0.08) continue;
-
-          const dx = f.mesh.position.x - other.mesh.position.x;
-          const dy = f.mesh.position.y - other.mesh.position.y;
-          const dz = f.mesh.position.z - other.mesh.position.z;
-          const otherR = other.kind === 'strawberry' ? other.radius * 0.64 : other.radius * 0.90;
-          const minDist = rCol + otherR;
-          const distSq = dx * dx + dy * dy + dz * dz;
-
-          if (distSq < minDist * minDist && distSq > 1e-6) {
-            const dist = Math.sqrt(distSq);
-            const nx = dx / dist;
-            const ny = dy / dist;
-            const nz = dz / dist;
-            const overlap = minDist - dist;
-
-            f.mesh.position.x += nx * overlap;
-            f.mesh.position.y += ny * overlap * 0.45;
-            f.mesh.position.z += nz * overlap;
-
-            const vn = f.velocity.x * nx + f.velocity.y * ny + f.velocity.z * nz;
-            if (vn < 0) {
-              // Subtle wet-berry friction glance (just enough hint of physics so it slides past instead of phasing through)
-              const bounce = 0.14;
-              const imp = -(1 + bounce) * vn;
-              f.velocity.x += nx * imp + nx * 0.045;
-              f.velocity.y += ny * imp;
-              f.velocity.z += nz * imp + (f.basePos.z <= 0.004 ? -0.04 : 0.03);
-              f.velocity.multiplyScalar(0.86);
-              f.angVel.x += (ny * f.velocity.z - nz * f.velocity.y) * 1.0;
-              f.angVel.y += (nz * f.velocity.x - nx * f.velocity.z) * 1.0;
-              f.angVel.z += (nx * f.velocity.y - ny * f.velocity.x) * 1.0;
-            }
+          if (grazed) {
+            f.glancedBody = true;
+            // Faked soft glancing kick: arcs smoothly further away from the body & keeps falling briskly!
+            f.velocity.x = sideX * Math.max(Math.abs(f.velocity.x) + 0.44, 0.74);
+            f.velocity.z += isBackHalf ? -0.26 : 0.22;
+            f.velocity.y = Math.min(f.velocity.y, -0.78);
+            // Gentle visual deflection spin + soft flex bend on brush
+            f.angVel.z -= sideX * 0.85;
+            f.angVel.x += (isBackHalf ? -0.5 : 0.5);
+            f.bendVel += f.kind === 'strawberry' ? 2.4 : 1.5;
           }
-        }
-
-        // C) Soft damped graze off the wooden stick (including its exposed upper tip as ice melts!)
-        if (f.mesh.position.y < POPSICLE.stickTopY + rCol * 0.85) {
-          const penX = stickHalfW + rCol * 0.85 - Math.abs(f.mesh.position.x);
-          const penZ = stickHalfD + rCol * 0.85 - Math.abs(f.mesh.position.z);
-          if (penX > 0 && penZ > 0) {
-            if (penZ <= penX) {
-              const sZ = f.mesh.position.z < 0 ? -1 : 1;
-              f.mesh.position.z += sZ * penZ;
-              if (f.velocity.z * sZ < 0) f.velocity.z *= -0.12;
-              else f.velocity.z += sZ * 0.04;
-            } else {
-              const sX = f.mesh.position.x < 0 ? -1 : 1;
-              f.mesh.position.x += sX * penX;
-              if (f.velocity.x * sX < 0) f.velocity.x *= -0.12;
-              else f.velocity.x += sX * 0.05;
-            }
-            f.velocity.multiplyScalar(0.90);
-            f.angVel.z += (f.mesh.position.x < 0 ? 1 : -1) * 0.65;
-          }
-        }
-
-        // Keep tumbling spin gentle and natural
-        if (f.angVel.lengthSq() > 20.25) {
-          f.angVel.setLength(4.5);
         }
       }
 
-      // Floor / despawn sits far down well below the camera frustum so fruits fall cleanly out of sight
-      if (f.mesh.position.y < -6.5) {
+      // Soft damped spring deformation in flight (soft thawed strawberry flex & subtle blueberry squish!)
+      const restBend = f.kind === 'strawberry' ? 0.12 + 0.05 * Math.sin(f.detachTime * 8.5 + f.bendPhase) : 0.0;
+      const springF = (restBend - f.bendAmt) * 28.0 - f.bendVel * 5.2;
+      f.bendVel += springF * dt;
+      f.bendAmt = clamp(f.bendAmt + f.bendVel * dt, -0.26, 0.32);
+
+      if (f.bendUniform) {
+        const flutter = Math.sin(f.detachTime * 7.2 + f.bendPhase) * 0.07;
+        f.bendUniform.value.set(f.bendAmt, flutter, -sideX * f.bendAmt * 0.48);
+      } else {
+        // Subtle soft wet-berry squish on blueberries
+        const sq = clamp(f.bendAmt * 0.22, -0.07, 0.07);
+        f.mesh.scale.set(
+          f.baseScale.x * (1 + sq * 0.5),
+          f.baseScale.y * (1 - sq),
+          f.baseScale.z * (1 + sq * 0.5),
+        );
+      }
+
+      // Floor / despawn sits far below the camera frustum so fruits fall cleanly out of sight
+      if (f.mesh.position.y < -6.5 || f.detachTime > 3.0) {
         f.mesh.visible = false;
       }
     }
@@ -1121,7 +1171,7 @@ export function createFruitAssembly(seed: number): FruitAssembly {
   function hasFallingFruitInView(): boolean {
     for (let i = 0; i < fruits.length; i++) {
       const f = fruits[i];
-      if (f.detached && f.mesh.visible && f.mesh.position.y > -1.78) {
+      if (f.detached && f.mesh.visible && f.mesh.position.y > -1.78 && f.detachTime < 1.8) {
         return true;
       }
     }
