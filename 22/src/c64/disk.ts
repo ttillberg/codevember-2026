@@ -2,6 +2,7 @@
 // 6502 assembly demos, and localStorage persistence for user SAVE / LOAD programs.
 
 import { CUBE3D_ASM_SOURCE, RASTER_ASM_SOURCE } from './cube3d_asm';
+import CRACKTRO_ASM_SOURCE from '../../cracktro.asm?raw';
 
 export interface DiskProgram {
   name: string;
@@ -202,6 +203,17 @@ const BUILTIN_PROGRAMS: DiskProgram[] = [
       430: 'IF R=4 THEN PRINT "CODEX: DIFF READY FOR ";Q$;". LGTM."',
       460: 'POKE 646,12:PRINT "  [";TK;" TOKENS LEFT]":POKE 646,1:PRINT',
       470: 'GOTO 160',
+    },
+  },
+  {
+    name: 'INTRO',
+    builtin: true,
+    asmSource: CRACKTRO_ASM_SOURCE,
+    lines: {
+      10: 'REM *** CODEVEMBER 2026 CRACKTRO ***',
+      20: 'REM THEO THE BEST - YET ANOTHER INTRO',
+      30: 'REM ARROWS/TAC-2 SPIN, SPACE=PALETTE',
+      40: 'SYS 32768',
     },
   },
   {

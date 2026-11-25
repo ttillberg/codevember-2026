@@ -51,10 +51,15 @@ export class C64Screen {
   spriteExpandX = 0; // $D01D
   spriteExpandY = 0; // $D017
 
-  // Per-scanline latched colors for authentic C64 raster bars
+  // Per-scanline latched VIC-II state for authentic C64 raster bars, split-screen, and fine X-scroll
   private readonly rasterBorder = new Uint8Array(SCREEN_H);
   private readonly rasterBg = new Uint8Array(SCREEN_H);
+  private readonly rasterD011 = new Uint8Array(SCREEN_H);
+  private readonly rasterD016 = new Uint8Array(SCREEN_H);
+  private readonly rasterD018 = new Uint8Array(SCREEN_H);
+  private readonly rasterBank = new Uint16Array(SCREEN_H);
   private hasRasterSplits = false;
+  private hasModeSplits = false;
 
   cursorX = 0;
   cursorY = 0;
@@ -112,6 +117,7 @@ export class C64Screen {
     this.spriteY.fill(0);
     this.spriteColor.fill(1);
     this.hasRasterSplits = false;
+    this.hasModeSplits = false;
     this.dirty = true;
   }
 
@@ -121,25 +127,52 @@ export class C64Screen {
 
   /** Reset per-frame raster split tracking before stepping a 6502 frame. */
   beginRasterFrame() {
-    if (this.hasRasterSplits) {
+    if (this.hasRasterSplits || this.hasModeSplits) {
       this.dirty = true;
     }
     this.hasRasterSplits = false;
+    this.hasModeSplits = false;
   }
 
-  /** Latch current $D020/$D021 colors for a PAL raster line during 6502 execution. */
+  /** Latch current VIC-II registers for a PAL raster line during 6502 execution. */
   latchRasterLine(rasterLine: number) {
     const sy = rasterLine - RASTER_VISIBLE_TOP;
     if (sy < 0 || sy >= SCREEN_H) return;
     const b = this.borderColor;
     const g = this.bgColor;
-    if (this.rasterBorder[sy] !== b || this.rasterBg[sy] !== g) {
+    const d11 = this.vicD011;
+    const d16 = this.vicD016;
+    const d18 = this.vicD018;
+    const bank = this.vicBank;
+    if (
+      this.rasterBorder[sy] !== b ||
+      this.rasterBg[sy] !== g ||
+      this.rasterD011[sy] !== d11 ||
+      this.rasterD016[sy] !== d16 ||
+      this.rasterD018[sy] !== d18 ||
+      this.rasterBank[sy] !== bank
+    ) {
       this.dirty = true;
     }
     this.rasterBorder[sy] = b;
     this.rasterBg[sy] = g;
-    if (sy > 0 && (b !== this.rasterBorder[0] || g !== this.rasterBg[0])) {
-      this.hasRasterSplits = true;
+    this.rasterD011[sy] = d11;
+    this.rasterD016[sy] = d16;
+    this.rasterD018[sy] = d18;
+    this.rasterBank[sy] = bank;
+    if (sy > 0) {
+      if (b !== this.rasterBorder[0] || g !== this.rasterBg[0]) {
+        this.hasRasterSplits = true;
+      }
+      if (
+        d11 !== this.rasterD011[0] ||
+        d16 !== this.rasterD016[0] ||
+        d18 !== this.rasterD018[0] ||
+        bank !== this.rasterBank[0] ||
+        (d16 & 0x0f) !== 0x08
+      ) {
+        this.hasModeSplits = true;
+      }
     }
   }
 
@@ -471,7 +504,12 @@ export class C64Screen {
     const displayEnabled = (this.vicD011 & 0x10) !== 0;
     const screenBase = (this.vicBank + ((this.vicD018 >> 4) & 0x0f) * 0x0400) & 0xffff;
 
-    if (displayEnabled) {
+    if (this.hasModeSplits && this.ram) {
+      this.renderScanlineSplit();
+      if (this.spriteEnable !== 0) {
+        this.renderSprites(screenBase);
+      }
+    } else if (displayEnabled) {
       if (this.isBitmapMode() && this.ram) {
         const bitmapBase = (this.vicBank + ((this.vicD018 & 0x08) ? 0x2000 : 0x0000)) & 0xffff;
         const multicolor = (this.vicD016 & 0x10) !== 0;
@@ -487,6 +525,80 @@ export class C64Screen {
 
     this.ctx.putImageData(this.imgData, 0, 0);
     return true;
+  }
+
+  /** Scanline-accurate renderer when VIC-II splits modes, banks, or fine X-scroll mid-frame! */
+  private renderScanlineSplit() {
+    const pixels = this.pixels;
+    const ram = this.ram!;
+    const useSplits = this.hasRasterSplits;
+    const flatBgPx = PACKED_PALETTE[this.bgColor & 0x0f];
+    const flatBorderPx = PACKED_PALETTE[this.borderColor & 0x0f];
+
+    for (let py = 0; py < ROWS * 8; py++) {
+      const sy = BORDER_Y + py;
+      const d11 = this.rasterD011[sy];
+      if ((d11 & 0x10) === 0) continue; // Display blanked on this line
+
+      const d16 = this.rasterD016[sy];
+      const d18 = this.rasterD018[sy];
+      const bank = this.rasterBank[sy];
+      const screenBase = (bank + ((d18 >> 4) & 0x0f) * 0x0400) & 0xffff;
+      const row = py >> 3;
+      const gy = py & 7;
+      const scrollX = d16 & 0x07;
+      const narrow38 = (d16 & 0x08) === 0;
+      const bgPx = useSplits ? PACKED_PALETTE[this.rasterBg[sy] & 0x0f] : flatBgPx;
+      const borderPx = useSplits ? PACKED_PALETTE[this.rasterBorder[sy] & 0x0f] : flatBorderPx;
+      const lineBase = sy * SCREEN_W + BORDER_X;
+
+      if ((d11 & 0x20) !== 0) {
+        // Hi-Res Bitmap scanline
+        const bitmapBase = (bank + ((d18 & 0x08) ? 0x2000 : 0x0000)) & 0xffff;
+        for (let col = 0; col < COLS; col++) {
+          const cell = row * COLS + col;
+          const colByte = this.readVicByte(screenBase + cell);
+          const fgPx = PACKED_PALETTE[(colByte >> 4) & 0x0f];
+          const cellBgPx = PACKED_PALETTE[colByte & 0x0f];
+          const bits = ram[(bitmapBase + cell * 8 + gy) & 0xffff];
+          const pxOff = lineBase + col * 8;
+          if (bits === 0) {
+            pixels.fill(cellBgPx, pxOff, pxOff + 8);
+          } else {
+            pixels[pxOff] = (bits & 0x80) ? fgPx : cellBgPx;
+            pixels[pxOff + 1] = (bits & 0x40) ? fgPx : cellBgPx;
+            pixels[pxOff + 2] = (bits & 0x20) ? fgPx : cellBgPx;
+            pixels[pxOff + 3] = (bits & 0x10) ? fgPx : cellBgPx;
+            pixels[pxOff + 4] = (bits & 0x08) ? fgPx : cellBgPx;
+            pixels[pxOff + 5] = (bits & 0x04) ? fgPx : cellBgPx;
+            pixels[pxOff + 6] = (bits & 0x02) ? fgPx : cellBgPx;
+            pixels[pxOff + 7] = (bits & 0x01) ? fgPx : cellBgPx;
+          }
+        }
+      } else {
+        // Text scanline with authentic VIC-II fine X-scroll (0..7px) & 38-col side masking!
+        pixels.fill(bgPx, lineBase, lineBase + 320);
+        const defaultScreen = screenBase === 0x0400;
+        for (let col = 0; col < COLS; col++) {
+          const idx = row * COLS + col;
+          const rawCode = defaultScreen ? this.screenRam[idx] : this.readVicByte(screenBase + idx);
+          const reversed = (rawCode & 0x80) !== 0;
+          const bits = CHAR_ROM[(rawCode & 0x7f) * 8 + gy];
+          const fgPx = PACKED_PALETTE[this.colorRam[idx] & 0x0f];
+          const destX0 = col * 8 + scrollX;
+          for (let gx = 0; gx < 8; gx++) {
+            const dx = destX0 + gx;
+            if (dx >= 320) break;
+            const on = (bits & (0x80 >> gx)) !== 0;
+            pixels[lineBase + dx] = on !== reversed ? fgPx : bgPx;
+          }
+        }
+        if (narrow38) {
+          pixels.fill(borderPx, lineBase, lineBase + 7);
+          pixels.fill(borderPx, lineBase + 311, lineBase + 320);
+        }
+      }
+    }
   }
 
   private renderText(screenBase: number) {
