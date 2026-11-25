@@ -41,6 +41,7 @@ const SETTINGS_STORAGE_KEY = 'codevember-03-melt-settings-v1';
 
 const DEFAULT_SIM_PARAMS = {
   speed: 1.0,
+  turntable: 0.2,
   frost: 0.8,
   bubbles: 0.55,
 } as const;
@@ -49,6 +50,7 @@ const DEFAULT_FALL_MODE: FallFocusMode = 'off';
 
 interface PersistedSettings {
   speed: number;
+  turntable: number;
   frost: number;
   bubbles: number;
   drops: DropMode;
@@ -69,6 +71,7 @@ function loadPersistedSettings(): Partial<PersistedSettings> | null {
 
     const out: Partial<PersistedSettings> = {
       speed: readFinite(parsed.speed, DEFAULT_SIM_PARAMS.speed, 0.2, 6.0),
+      turntable: readFinite(parsed.turntable, DEFAULT_SIM_PARAMS.turntable, 0, 1.0),
       frost: readFinite(parsed.frost, DEFAULT_SIM_PARAMS.frost, 0.1, 1.0),
       bubbles: readFinite(parsed.bubbles, DEFAULT_SIM_PARAMS.bubbles, 0, 1.0),
     };
@@ -186,6 +189,13 @@ orbit.maxPolarAngle = Math.PI - 0.45;
 orbit.enabled = false;
 orbit.update();
 orbit.saveState();
+let userOrbiting = false;
+orbit.addEventListener('start', () => {
+  userOrbiting = true;
+});
+orbit.addEventListener('end', () => {
+  userOrbiting = false;
+});
 orbit.addEventListener('change', () => {
   renderDirty = true;
 });
@@ -466,7 +476,8 @@ rebuildRenderTargets();
 // === SUB-SCENES FOR CLEAN LAYER SEPARATION ===
 const solidScene = new THREE.Scene();
 solidScene.environment = studioEnv;
-solidScene.add(buildStudioLights());
+const solidLights = buildStudioLights();
+solidScene.add(solidLights);
 
 const backZScene = new THREE.Scene();
 const bubblesScene = new THREE.Scene();
@@ -479,8 +490,12 @@ let iceSystem: PopsicleIceSystem | null = null;
 let waterDrops: WaterDropSystem | null = null;
 let liquidFilm: LiquidFilmSystem | null = null;
 
+const rawTurntableParam = params.has('turntable') ? Number(params.get('turntable')) : NaN;
 const simParams = {
   speed: storedSettings?.speed ?? DEFAULT_SIM_PARAMS.speed,
+  turntable: Number.isFinite(rawTurntableParam)
+    ? clamp(rawTurntableParam, 0, 1.0)
+    : (storedSettings?.turntable ?? DEFAULT_SIM_PARAMS.turntable),
   frost: storedSettings?.frost ?? DEFAULT_SIM_PARAMS.frost,
   bubbles: storedSettings?.bubbles ?? DEFAULT_SIM_PARAMS.bubbles,
 };
@@ -493,6 +508,7 @@ const dropDebug: DropDebugParams = {
 function serializeSettings(): PersistedSettings {
   return {
     speed: Number(simParams.speed.toFixed(2)),
+    turntable: Number(simParams.turntable.toFixed(2)),
     frost: Number(simParams.frost.toFixed(2)),
     bubbles: Number(simParams.bubbles.toFixed(2)),
     drops: currentDropMode,
@@ -578,7 +594,6 @@ let currentRecipe: PopsicleRecipe = {
 
 let pointerActive = false;
 let pointerPressed = false;
-let orbitMode = false;
 let activeGrabPointerId: number | null = null;
 let rightOrbitPointerId: number | null = null;
 let prevFrostU: number | null = null;
@@ -760,6 +775,8 @@ function updatePointerRay(clientX: number, clientY: number) {
   raycaster.setFromCamera(pointerNdc, camera);
 }
 
+const _camPlaneNorm = new THREE.Vector3(0, 0, 1);
+const _camPlaneRight = new THREE.Vector3(1, 0, 0);
 function updatePointerWorld(clientX: number, clientY: number) {
   updatePointerRay(clientX, clientY);
 
@@ -787,8 +804,9 @@ function updatePointerWorld(clientX: number, clientY: number) {
       if (iceHits.length > 0 && iceHits[0].uv) {
         const u = iceHits[0].uv.x;
         const v = iceHits[0].uv.y;
-        const u0 = prevFrostU ?? u;
-        const v0 = prevFrostV ?? v;
+        const seamWrap = prevFrostU !== null && Math.abs(u - prevFrostU) > 0.35;
+        const u0 = prevFrostU !== null && !seamWrap ? prevFrostU : u;
+        const v0 = prevFrostV !== null && !seamWrap ? prevFrostV : v;
         const brushRadius = pointerPressed ? 0.072 : 0.046;
         const brushStrength = pointerPressed ? 1.0 : 0.92;
         const samples = liquidFilm.meltFrostSegment(u0, v0, u, v, brushStrength, brushRadius);
@@ -818,12 +836,23 @@ function updatePointerWorld(clientX: number, clientY: number) {
     prevFrostV = null;
   }
 
+  // Orient pointer-warmth plane horizontally toward the live turntable camera angle so hover melting works 360°!
+  _camPlaneNorm.set(camera.position.x - orbit.target.x, 0, camera.position.z - orbit.target.z);
+  if (_camPlaneNorm.lengthSq() > 1e-6) {
+    _camPlaneNorm.normalize();
+  } else {
+    _camPlaneNorm.set(0, 0, 1);
+  }
+  _camPlaneRight.set(_camPlaneNorm.z, 0, -_camPlaneNorm.x);
+  zPlane.set(_camPlaneNorm, 0);
+
   if (raycaster.ray.intersectPlane(zPlane, hitPoint)) {
     meltState.pointerX = hitPoint.x;
     meltState.pointerY = hitPoint.y;
     const { yBot, yTop } = getMeltBounds(meltState.melt);
+    const horizSpan = Math.abs(hitPoint.x * _camPlaneRight.x + hitPoint.z * _camPlaneRight.z);
     const onPopsicle =
-      Math.abs(hitPoint.x) < POPSICLE.halfWidthBottom * 1.28 &&
+      horizSpan < POPSICLE.halfWidthBottom * 1.28 &&
       hitPoint.y > Math.min(POPSICLE.yBottom, yBot) - 0.18 &&
       hitPoint.y < Math.max(POPSICLE.yTop, yTop) + 0.18;
     pointerActive = onPopsicle;
@@ -867,7 +896,7 @@ function releaseActiveGrab() {
     activeGrabPointerId = null;
   }
   fruitAssembly?.endGrab();
-  orbit.enabled = orbitMode || rightOrbitPointerId !== null;
+  orbit.enabled = rightOrbitPointerId !== null;
   syncPointerCursor();
   renderDirty = true;
 }
@@ -882,7 +911,7 @@ function clearTransientInput() {
   prevFrostU = null;
   prevFrostV = null;
   pendingPointerMove = false;
-  orbit.enabled = orbitMode;
+  orbit.enabled = false;
   fruitAssembly?.setHoveredFruit(-1);
   syncPointerCursor();
 }
@@ -931,13 +960,13 @@ canvas.addEventListener(
           return;
         }
       }
-      if (!orbitMode) {
-        pointerPressed = true;
-        prevFrostU = null;
-        prevFrostV = null;
-        updatePointerWorld(e.clientX, e.clientY);
-        renderDirty = true;
-      }
+      pointerPressed = true;
+      pendingPointerX = e.clientX;
+      pendingPointerY = e.clientY;
+      prevFrostU = null;
+      prevFrostV = null;
+      updatePointerWorld(e.clientX, e.clientY);
+      renderDirty = true;
     }
   },
   { capture: true },
@@ -949,7 +978,7 @@ window.addEventListener('pointerup', (e) => {
   }
   if (rightOrbitPointerId !== null && (e.pointerId === rightOrbitPointerId || e.pointerId === 0)) {
     rightOrbitPointerId = null;
-    if (!orbitMode) orbit.enabled = false;
+    orbit.enabled = false;
   }
   pointerPressed = false;
   prevFrostU = null;
@@ -984,12 +1013,8 @@ const custFlavorsEl = document.getElementById('cust-flavors') as HTMLDivElement;
 const custToppingsEl = document.getElementById('cust-toppings') as HTMLDivElement;
 const baseBtns = Array.from(customizePanel.querySelectorAll<HTMLButtonElement>('[data-base]'));
 
-const btnPlay = document.getElementById('btn-play') as HTMLButtonElement;
 const btnReset = document.getElementById('btn-reset') as HTMLButtonElement;
 const btnSeed = document.getElementById('btn-seed') as HTMLButtonElement;
-const btnOrbit = document.getElementById('btn-orbit') as HTMLButtonElement;
-const btnHelp = document.getElementById('btn-help') as HTMLButtonElement;
-const helpCard = document.getElementById('help-card') as HTMLDivElement;
 
 const devDock = document.getElementById('dev-dock') as HTMLDivElement;
 const btnSettings = document.getElementById('btn-settings') as HTMLButtonElement;
@@ -998,12 +1023,14 @@ const btnSettingsCopy = document.getElementById('btn-settings-copy') as HTMLButt
 const btnSettingsReset = document.getElementById('btn-settings-reset') as HTMLButtonElement;
 const slMelt = document.getElementById('sl-melt') as HTMLInputElement;
 const slSpeed = document.getElementById('sl-speed') as HTMLInputElement;
+const slTurntable = document.getElementById('sl-turntable') as HTMLInputElement;
 const slFrost = document.getElementById('sl-frost') as HTMLInputElement;
 const slBubbles = document.getElementById('sl-bubbles') as HTMLInputElement;
 const selDrops = document.getElementById('sel-drops') as HTMLSelectElement;
 const selFall = document.getElementById('sel-fall') as HTMLSelectElement;
 const valMelt = document.getElementById('val-melt') as HTMLOutputElement;
 const valSpeed = document.getElementById('val-speed') as HTMLOutputElement;
+const valTurntable = document.getElementById('val-turntable') as HTMLOutputElement;
 const valFrost = document.getElementById('val-frost') as HTMLOutputElement;
 const valBubbles = document.getElementById('val-bubbles') as HTMLOutputElement;
 
@@ -1057,18 +1084,13 @@ if (import.meta.env.DEV && !params.has('clean') && refCard && refImg && btnRefCl
   });
 }
 
-function updatePlayIcon() {
-  btnPlay.innerHTML = paused
-    ? `<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true"><path d="M8 5.5v13l11-6.5z"/></svg>`
-    : `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="6" y="5" width="4" height="14" rx="1"></rect><rect x="14" y="5" width="4" height="14" rx="1"></rect></svg>`;
-  btnPlay.setAttribute('aria-pressed', String(paused));
-}
-
 function syncWorkbenchUI() {
   slMelt.value = meltState.melt.toFixed(3);
   valMelt.textContent = meltState.melt.toFixed(2);
   slSpeed.value = simParams.speed.toFixed(1);
   valSpeed.textContent = `${simParams.speed.toFixed(1)}×`;
+  slTurntable.value = simParams.turntable.toFixed(2);
+  valTurntable.textContent = simParams.turntable <= 0.001 ? 'Off' : simParams.turntable.toFixed(2);
   slFrost.value = simParams.frost.toFixed(2);
   valFrost.textContent = simParams.frost.toFixed(2);
   slBubbles.value = simParams.bubbles.toFixed(2);
@@ -1082,31 +1104,12 @@ function syncWorkbenchUI() {
   }
 }
 
-btnPlay.addEventListener('click', () => {
-  paused = !paused;
-  updatePlayIcon();
-  renderDirty = true;
-});
-
 btnReset.addEventListener('click', () => {
   resetMelt();
 });
 
 btnSeed.addEventListener('click', () => {
   buildPopsicle(currentSeed + 1, DEFAULT_INITIAL_MELT);
-});
-
-btnOrbit.addEventListener('click', () => {
-  orbitMode = !orbitMode;
-  orbit.enabled = orbitMode || rightOrbitPointerId !== null;
-  btnOrbit.setAttribute('aria-pressed', String(orbitMode));
-  if (!orbitMode) {
-    // Clean snap back to hero macro portrait view with zero damping inertia drift!
-    orbit.enableDamping = false;
-    orbit.reset();
-    orbit.enableDamping = true;
-    renderDirty = true;
-  }
 });
 
 // Build Customize taste & topping chips deterministically from recipe lists
@@ -1190,10 +1193,6 @@ btnCustomize.addEventListener('click', () => {
   const open = customizePanel.hidden;
   customizePanel.hidden = !open;
   btnCustomize.setAttribute('aria-expanded', String(open));
-  if (open && !helpCard.hidden) {
-    helpCard.hidden = true;
-    btnHelp.setAttribute('aria-expanded', 'false');
-  }
 });
 
 btnCustRandom.addEventListener('click', () => {
@@ -1222,16 +1221,6 @@ btnCustReset.addEventListener('click', () => {
   });
 });
 
-btnHelp.addEventListener('click', () => {
-  const open = helpCard.hidden;
-  helpCard.hidden = !open;
-  btnHelp.setAttribute('aria-expanded', String(open));
-  if (open && !customizePanel.hidden) {
-    customizePanel.hidden = true;
-    btnCustomize.setAttribute('aria-expanded', 'false');
-  }
-});
-
 btnSettings.addEventListener('click', () => {
   const open = settingsPanel.hidden;
   settingsPanel.hidden = !open;
@@ -1246,6 +1235,12 @@ slMelt.addEventListener('input', () => {
 slSpeed.addEventListener('input', () => {
   simParams.speed = Number(slSpeed.value);
   valSpeed.textContent = `${simParams.speed.toFixed(1)}×`;
+  savePersistedSettings();
+});
+
+slTurntable.addEventListener('input', () => {
+  simParams.turntable = Number(slTurntable.value);
+  valTurntable.textContent = simParams.turntable <= 0.001 ? 'Off' : simParams.turntable.toFixed(2);
   savePersistedSettings();
 });
 
@@ -1333,6 +1328,7 @@ btnSettingsCopy.addEventListener('click', () => {
 function factoryResetSettings() {
   clearPersistedSettings();
   simParams.speed = DEFAULT_SIM_PARAMS.speed;
+  simParams.turntable = DEFAULT_SIM_PARAMS.turntable;
   simParams.frost = DEFAULT_SIM_PARAMS.frost;
   simParams.bubbles = DEFAULT_SIM_PARAMS.bubbles;
   currentDropMode = DEFAULT_DROP_MODE;
@@ -1374,10 +1370,6 @@ window.addEventListener('keydown', (e) => {
       customizePanel.hidden = true;
       btnCustomize.setAttribute('aria-expanded', 'false');
     }
-    if (!helpCard.hidden) {
-      helpCard.hidden = true;
-      btnHelp.setAttribute('aria-expanded', 'false');
-    }
     if (!settingsPanel.hidden) {
       settingsPanel.hidden = true;
       btnSettings.setAttribute('aria-expanded', 'false');
@@ -1388,18 +1380,13 @@ window.addEventListener('keydown', (e) => {
     if (target instanceof HTMLElement && target.closest('button, summary, a')) return;
     e.preventDefault();
     paused = !paused;
-    updatePlayIcon();
     renderDirty = true;
   } else if (e.key === 'r' || e.key === 'R') {
     resetMelt();
   } else if (e.key === 'n' || e.key === 'N') {
     buildPopsicle(currentSeed + 1, DEFAULT_INITIAL_MELT);
-  } else if (e.key === 'o' || e.key === 'O') {
-    btnOrbit.click();
   } else if (e.key === 'c' || e.key === 'C') {
     btnCustomize.click();
-  } else if (e.key === '?') {
-    btnHelp.click();
   }
 });
 
@@ -1472,6 +1459,12 @@ function renderSeparableBlur(
 function renderFrame() {
   if (contextLost || !fruitAssembly || !iceSystem || !waterDrops) return;
   const gl = renderer.getContext();
+
+  // Keep studio key lights & rear lightbox locked to the viewer's azimuth so 360° turntable stays evenly backlit!
+  solidLights.rotation.y = Math.atan2(camera.position.x - orbit.target.x, camera.position.z - orbit.target.z);
+
+  // Sync camera.matrixWorldInverse after turntable/setCamera lookAt() before projecting the studio halo!
+  camera.updateMatrixWorld();
 
   // Project popsicle center into screen UV so studio lightbox halo tracks subtly when orbiting!
   _centerProj.set(0, 0.08, 0).project(camera);
@@ -1667,7 +1660,7 @@ function tick(now: number) {
       advanceAmbientMelt(dtMelt, pointerGlobalBoost);
 
       // Deposit structural ice-carving warmth once frost has cleared (before then, pointer melts frost cleanly!)
-      if (pointerActive && !orbitMode && (meltState.melt >= FROST_CLEAR_MELT - 0.01 || liquidFilm.avgRime < 0.05)) {
+      if (pointerActive && (meltState.melt >= FROST_CLEAR_MELT - 0.01 || liquidFilm.avgRime < 0.05)) {
         const localDose = dtMelt * (pointerPressed ? 0.34 : 0.075) * simParams.speed;
         depositHeatSpot(meltState.pointerX, meltState.pointerY, localDose);
       }
@@ -1683,6 +1676,27 @@ function tick(now: number) {
     if (showSettings && !settingsPanel.hidden) {
       slMelt.value = meltState.melt.toFixed(3);
       valMelt.textContent = meltState.melt.toFixed(2);
+    }
+
+    // Gentle museum-grade 360° studio turntable (only yields while right-dragging camera or grabbing a loose fruit!)
+    if (
+      simParams.turntable > 0.001 &&
+      !userOrbiting &&
+      rightOrbitPointerId === null &&
+      activeGrabPointerId === null
+    ) {
+      const dAngle = dt * simParams.turntable * 0.8;
+      const ox = camera.position.x - orbit.target.x;
+      const oz = camera.position.z - orbit.target.z;
+      const cosA = Math.cos(dAngle);
+      const sinA = Math.sin(dAngle);
+      camera.position.x = orbit.target.x + ox * cosA + oz * sinA;
+      camera.position.z = orbit.target.z - ox * sinA + oz * cosA;
+      camera.lookAt(orbit.target);
+      camera.updateMatrixWorld();
+      if (pointerPressed && !pendingPointerMove) {
+        updatePointerWorld(pendingPointerX, pendingPointerY);
+      }
     }
   }
 
@@ -1714,7 +1728,6 @@ window.addEventListener('resize', () => {
 });
 
 // === BOOT & VERIFICATION HOOK ===
-updatePlayIcon();
 buildPopsicle(currentSeed, initialMelt);
 
 // Expose deterministic inspection API for Playwright verification captures

@@ -1262,12 +1262,12 @@ function buildFruitLayout(seed: number, recipe: PopsicleRecipe): FruitSpec[] {
         radius: 0.22,
         baseBend: [0.26, 0.18, -0.18],
       },
-      // 2. Hero glowing curved bite — mid left (pronounced soft arch/curl!)
+      // 2. Hero glowing curved bite — mid left (pronounced soft arch/curl, tucked cleanly forward of stick!)
       {
         kind: 'strawberry',
-        x: -0.22 + j(0.012),
+        x: -0.24 + j(0.012),
         y: -0.09 + j(0.012),
-        z: 0.006,
+        z: 0.042,
         scale: [0.26, 0.295, 0.255],
         rot: [-0.42, 0.56, 0.38],
         radius: 0.21,
@@ -1453,6 +1453,16 @@ function buildFruitLayout(seed: number, recipe: PopsicleRecipe): FruitSpec[] {
         z = frontSide * shallowZ;
       } else {
         z = clamp(zBias + (rand() * 2 - 1) * 0.026, -0.05, maxSafeZ);
+      }
+
+      // Gently nudge fruits/chunks forward or backward off the flat wooden stick so pieces never look bisected!
+      if (
+        y < POPSICLE.stickTopY + radius * 0.55 &&
+        Math.abs(x) < POPSICLE.stickEdgeX + radius * 0.52 &&
+        Math.abs(z) < POPSICLE.stickDepth * 0.5 + halfThickZ * 0.52
+      ) {
+        const pushZ = Math.min(Math.max(0.035, maxSafeZ), POPSICLE.stickDepth * 0.5 + halfThickZ * 0.62);
+        z = (z >= 0 ? 1 : -1) * pushZ;
       }
 
       let ok = true;
@@ -1756,11 +1766,11 @@ export function createFruitAssembly(seed: number, recipe: PopsicleRecipe = DEFAU
           diffuseColor.rgb = mix(diffuseColor.rgb, targetStain, soakFront * (0.58 + 0.38 * fullSoak));
 
           // Hidden carved signature on the front face of the upper stick underneath the ice cream!
-          // Mapped cleanly to y in [-0.99, -0.46] (100% hidden while frozen, revealed as the popsicle melts!)
+          // Mapped cleanly onto the flat embedded upper face below the rounded cap (revealed as the popsicle melts!)
           // Single 5-tap pass shared directly with lights_fragment_end (halves uCarveMap texture bandwidth!)
           float frontFace = smoothstep(0.45, 0.78, vStickWorldNormal.z);
           sSharedFrontFace = frontFace;
-          vec2 carveUv = vec2((vStickWorldPos.y + 0.99) / 0.53, (-vStickWorldPos.x + 0.088) / 0.176);
+          vec2 carveUv = vec2((vStickWorldPos.y + 0.62) / 0.60, (-vStickWorldPos.x + 0.088) / 0.176);
           if (frontFace > 0.01 && carveUv.x > 0.005 && carveUv.x < 0.995 && carveUv.y > 0.005 && carveUv.y < 0.995) {
             vec2 cTex = texture2D(uCarveMap, carveUv).rg;
             float depth = cTex.r * frontFace;
@@ -1799,10 +1809,12 @@ export function createFruitAssembly(seed: number, recipe: PopsicleRecipe = DEFAU
               sN = normalize(sN + vec3(sSharedCarveGx * 0.42, -sSharedCarveGy * 0.42, 0.0) * sSharedFrontFace);
             }
             float ndv = clamp(dot(sN, sV), 0.0, 1.0);
-            // Natural damp-wood sticky satin sheen (preserves crisp birch wood grain without plastic glare!)
+            // Natural damp-wood sticky satin sheen (camera-aligned azimuth so 360° turntable catches light on both faces!)
             float stickyFresnel = pow(1.0 - ndv, 4.2) * (0.08 + 0.10 * sSharedRevealedUpper);
-            vec3 sH1 = stickSafeNorm(normalize(vec3(-0.52, 0.38, 0.76)) + sV);
-            vec3 sH2 = stickSafeNorm(normalize(vec3(0.55, 0.32, 0.77)) + sV);
+            vec3 sCamH = stickSafeNorm(vec3(cameraPosition.x, 0.0, cameraPosition.z));
+            vec3 sCamR = vec3(sCamH.z, 0.0, -sCamH.x);
+            vec3 sH1 = stickSafeNorm(normalize(-0.52 * sCamR + vec3(0.0, 0.38, 0.0) + 0.76 * sCamH) + sV);
+            vec3 sH2 = stickSafeNorm(normalize( 0.55 * sCamR + vec3(0.0, 0.32, 0.0) + 0.77 * sCamH) + sV);
             float wetSpec = pow(max(dot(sN, sH1), 0.0), 72.0) * (0.30 + 0.14 * sSharedRevealedUpper)
                           + pow(max(dot(sN, sH2), 0.0), 58.0) * (0.22 + 0.10 * sSharedRevealedUpper);
             // Recessed groove holds slightly darker shadowed cavity while its chamfered rim catches gloss

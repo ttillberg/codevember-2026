@@ -361,6 +361,10 @@ function createOpticalIceMaterial(initialRecipe: PopsicleRecipe): { material: TH
         vec2 screenUv = gl_FragCoord.xy / uResolution;
         vec3 N0 = normalize(vWorldNormal);
 
+        // Camera-aligned horizontal studio basis so 360° turntable rotates the popsicle through fixed studio lights!
+        vec3 camH = safeNorm(vec3(cameraPosition.x, 0.0, cameraPosition.z));
+        vec3 camR = vec3(camH.z, 0.0, -camH.x);
+
         // === SAMPLE CONTINUOUS 2D VISCOUS LIQUID GLAZE FILM & FREEZER HOARFROST RIME ===
         vec4 filmSample = texture(uFilmTex, vUv);
         float filmH = filmSample.r;
@@ -459,9 +463,11 @@ function createOpticalIceMaterial(initialRecipe: PopsicleRecipe): { material: TH
         float refrDepthScale = rawHitsSolid ? smoothstep(0.002, 0.115, rawFrontDist) : 1.0;
 
         // View-space Snell screen refraction (IOR = 1.31): accurate from front, side, and 180° back orbit!
+        // Scale horizontal UV bend proportionally on the narrow 90° side profile so refraction never overshoots across the slab.
+        float sideProfile = abs(camH.x);
         vec3 Nview = mat3(viewMatrix) * N;
         float edgeBend = mix(0.014, 0.042, pow(1.0 - N0dotV, 1.30)) * (1.0 - hangClear * 0.34);
-        vec2 refrN = vec2(Nview.x, Nview.y * (1.0 - hangClear * 0.45));
+        vec2 refrN = vec2(Nview.x * mix(1.0, 0.34, sideProfile * sideProfile), Nview.y * (1.0 - hangClear * 0.45));
         vec2 baseOffset = (-refrN * edgeBend * (0.72 + totalThickness * 1.15) - filmSlope * (0.0085 * glazeWave)) * refrDepthScale;
 
         vec2 uvR = screenUv + baseOffset * 0.94;
@@ -584,7 +590,8 @@ function createOpticalIceMaterial(initialRecipe: PopsicleRecipe): { material: TH
         vec3 transmitted = bgCol * transmittance;
 
         // === LUMINOUS BACKLIT WATER-BASE SUBSURFACE SCATTERING ===
-        float lightboxCore = exp(-dot(vWorldPos.xy * vec2(0.72, 0.48), vWorldPos.xy * vec2(0.72, 0.48)));
+        float screenHoriz = dot(vWorldPos.xz, camR.xz);
+        float lightboxCore = exp(-dot(vec2(screenHoriz, vWorldPos.y) * vec2(0.72, 0.48), vec2(screenHoriz, vWorldPos.y) * vec2(0.72, 0.48)));
         float openChannel = hitsSolid ? smoothstep(0.030, 0.22, frontIceDist) * 0.52 : 1.0;
 
         float cloudContrast = pow(clamp(cloudMacro * 1.15, 0.0, 1.0), 1.42);
@@ -626,9 +633,9 @@ function createOpticalIceMaterial(initialRecipe: PopsicleRecipe): { material: TH
 
         // === OPAQUE CREAMY COCONUT-MILK BASE (and natural pulp opacity for banana/chocolate!) ===
         if (uOpacity > 0.01) {
-          vec3 cKeyL = normalize(vec3(-0.62, 0.46, 0.64));
-          vec3 cKeyR = normalize(vec3(0.64, 0.40, 0.65));
-          vec3 cKeyT = normalize(vec3(-0.14, 0.80, 0.58));
+          vec3 cKeyL = normalize(-0.62 * camR + vec3(0.0, 0.46, 0.0) + 0.64 * camH);
+          vec3 cKeyR = normalize( 0.64 * camR + vec3(0.0, 0.40, 0.0) + 0.65 * camH);
+          vec3 cKeyT = normalize(-0.14 * camR + vec3(0.0, 0.80, 0.0) + 0.58 * camH);
 
           // Soft half-Lambert creamy wrap diffuse + warm backlit milky subsurface rim glow
           float wL = clamp((dot(N, cKeyL) + 0.62) / 1.62, 0.0, 1.0);
@@ -673,11 +680,11 @@ function createOpticalIceMaterial(initialRecipe: PopsicleRecipe): { material: TH
         vec3 dropRimTint = mix(vec3(0.46, 0.22, 0.24), uStainCol * 0.48, 0.65);
         iceBody = mix(iceBody, iceBody * dropRimTint, clamp(hangGlassRim * 0.64, 0.0, 0.66));
 
-        // Rich colored porous pebble shading after 1/3 melt (deep juicy crevices + directional bump relief, ZERO white wash!)
-        vec3 keyL = normalize(vec3(-0.66, 0.46, 0.59));
-        vec3 keyR = normalize(vec3(0.66, 0.42, 0.62));
-        vec3 keyTop = normalize(vec3(-0.18, 0.78, 0.60));
-        vec3 keyFront = normalize(vec3(0.14, 0.34, 0.93));
+        // Rich colored porous pebble shading after 1/3 melt (studio lights stay locked to viewer azimuth for 360° turntable!)
+        vec3 keyL = normalize(-0.66 * camR + vec3(0.0, 0.46, 0.0) + 0.59 * camH);
+        vec3 keyR = normalize( 0.66 * camR + vec3(0.0, 0.42, 0.0) + 0.62 * camH);
+        vec3 keyTop = normalize(-0.18 * camR + vec3(0.0, 0.78, 0.0) + 0.60 * camH);
+        vec3 keyFront = normalize( 0.14 * camR + vec3(0.0, 0.34, 0.0) + 0.93 * camH);
 
         if (postThirdTex > 0.005) {
           // Pure colored micro-bump diffuse relief: lit upper pebble bevels glow richer, shadowed troughs deepen!
@@ -702,12 +709,14 @@ function createOpticalIceMaterial(initialRecipe: PopsicleRecipe): { material: TH
         vec3 N_refl = normalize(mix(N_glaze, N_ice, clamp(postThirdTex * 0.36 * (1.0 - uOpacity * 0.35), 0.0, 0.40)));
         vec3 R_glaze = reflect(-V, N_refl);
         vec3 R_smooth = reflect(-V, N0);
+        vec3 R_glazeStudio = vec3(dot(R_glaze, camR), R_glaze.y, dot(R_glaze, camH));
+        vec3 R_smoothStudio = vec3(dot(R_smooth, camR), R_smooth.y, dot(R_smooth, camH));
 
         float fresnel = (0.02 + 0.98 * pow(1.0 - clamp(dot(N_glaze, V), 0.0, 1.0), 4.8)) * edgeMeltFade * (0.35 + 0.65 * thinIceFade);
         float shoulderGlareTame = mix(1.0, 0.48, smoothstep(0.55, 0.95, vWorldPos.y));
         float filmRough = mix(0.10, 0.045, glazeCover) + postThirdTex * 0.165;
-        vec3 specWet = evalMacroStudioReflection(R_glaze, filmRough) * shoulderGlareTame;
-        vec3 specSatin = evalMacroStudioReflection(R_smooth, 0.32) * shoulderGlareTame;
+        vec3 specWet = evalMacroStudioReflection(R_glazeStudio, filmRough) * shoulderGlareTame;
+        vec3 specSatin = evalMacroStudioReflection(R_smoothStudio, 0.32) * shoulderGlareTame;
 
         // Dry powdery hoarfrost damps mirror-glossy studio reflections so freshly melted streaks pop as wet glass!
         float dryFrostMatte = 1.0 - rimeMask * 0.84;

@@ -54,7 +54,7 @@ export const POPSICLE = {
   stickBevelSize: STICK_BEVEL_SIZE,
   /** Outer wooden stick edge X (including rounded bevel) */
   stickEdgeX: STICK_WIDTH * 0.5 + STICK_BEVEL_SIZE,
-  stickTopY: -0.36,
+  stickTopY: 0.16,
   stickBottomY: -2.25,
 } as const;
 
@@ -144,8 +144,8 @@ export function getMeltBounds(melt: number): MeltBounds {
   const collapse = smoothstep(0.40, 0.975, m);
   const collapse2 = collapse * collapse;
 
-  // Final melting slush collar clings around the upper wooden stick, then loses friction and slides downward!
-  const yFinal = -0.66;
+  // Final melting slush collar clings around the embedded wooden stick, then loses friction and slides downward!
+  const yFinal = -0.46;
   const yTopBase = POPSICLE.yTop - m * 0.72;
   const yBotBase = POPSICLE.yBottom + m * 0.14;
 

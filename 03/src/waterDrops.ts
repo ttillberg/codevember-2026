@@ -786,8 +786,10 @@ function createPendantDropMaterial(
         vec3 collarColor = mix(uStainColor, uDropCreamColor, uDropOpacity);
         refrCol = mix(refrCol, collarColor, (1.0 - vFilletFade) * (0.04 + 0.22 * uDropOpacity));
 
-        vec3 l1 = normalize(vec3(-0.50, 0.56, 0.66));
-        vec3 l2 = normalize(vec3(0.56, 0.42, 0.71));
+        vec3 camH = safeNorm(vec3(cameraPosition.x, 0.0, cameraPosition.z));
+        vec3 camR = vec3(camH.z, 0.0, -camH.x);
+        vec3 l1 = normalize(-0.50 * camR + vec3(0.0, 0.56, 0.0) + 0.66 * camH);
+        vec3 l2 = normalize( 0.56 * camR + vec3(0.0, 0.42, 0.0) + 0.71 * camH);
         // Smoothly match creamy & pulpy recipes (mango, banana, chocolate, coconut) with zero hard opacity cliff!
         float creamMix = smoothstep(0.04, 0.86, uDropOpacity) * 0.88;
         if (creamMix > 0.005) {
@@ -806,7 +808,8 @@ function createPendantDropMaterial(
 
         float fresnel = 0.02 + 0.98 * pow(1.0 - ndv, 4.4);
         vec3 R = reflect(-V, N);
-        float stripRefl = exp(-sq((abs(R.x) - 0.64) / 0.16)) * smoothstep(-0.85, 0.85, R.y);
+        float rxStudio = dot(R, camR);
+        float stripRefl = exp(-sq((abs(rxStudio) - 0.64) / 0.16)) * smoothstep(-0.85, 0.85, R.y);
         float topRefl = smoothstep(0.52, 0.92, R.y);
         vec3 envSpec = vec3(1.18, 1.12, 1.08) * (0.24 + ${softReflection ? '0.46' : '1.45'} * stripRefl + ${softReflection ? '0.42' : '0.82'} * topRefl);
         col = mix(col, envSpec, clamp(fresnel * (${softReflection ? '0.38' : '0.60'} - 0.18 * uDropOpacity) * vFilletFade, 0.0, ${softReflection ? '0.42' : '0.65'}));
@@ -844,7 +847,7 @@ function createStickMeltOverlay(sharedUniforms: WaterDropUniforms, seed: number)
 } {
   const segU = 48;
   const archRows = 22;
-  const shaftRows = 96;
+  const shaftRows = 112;
   const segV = archRows + shaftRows;
   const vCount = (segU + 1) * (segV + 1);
   const positions = new Float32Array(vCount * 3);
@@ -1014,8 +1017,8 @@ function createStickMeltOverlay(sharedUniforms: WaterDropUniforms, seed: number)
       return clamp(ribbon * sideMask * edgeWet, 0.0, 1.05);
     }
 
-    // Lush, cohesive sticky melted-popsicle glaze coating the upper stick where the ice cream actually sat
-    // (wrapping cleanly over the rounded top cap y = -0.36 down through the submerged zone & tapering down the handle!)
+    // Lush, cohesive sticky melted-popsicle glaze coating the entire upper stick where the ice cream actually sat
+    // (wrapping cleanly over the rounded top cap down through the submerged zone & tapering down the handle!)
     float evalStickyResidue(vec2 xzNorm, float wy) {
       float x = xzNorm.x;
       float creepT = uTime * 0.0065;
@@ -1025,10 +1028,10 @@ function createStickMeltOverlay(sharedUniforms: WaterDropUniforms, seed: number)
       float verticalStreaks = smoothstep(0.18, 0.88, grain1 * 0.62 + grain2 * 0.38);
 
       // Thickest glossy pools sitting right on the upper rounded cap & carved text zone where the popsicle sat
-      float capPool = exp(-sq((wy + 0.46) / 0.16)) * (0.28 + 0.18 * cos(x * 4.2 + uSeed));
-      float d1 = exp(-sq((x + 0.26) / 0.34) - sq((wy + 0.54) / 0.18)) * 0.36;
-      float d2 = exp(-sq((x - 0.24) / 0.32) - sq((wy + 0.78) / 0.20)) * 0.34;
-      float d3 = exp(-sq((x + 0.04) / 0.38) - sq((wy + 1.04) / 0.24)) * 0.26;
+      float capPool = exp(-sq((wy - ${(POPSICLE.stickTopY - 0.10).toFixed(3)}) / 0.22)) * (0.28 + 0.18 * cos(x * 4.2 + uSeed));
+      float d1 = exp(-sq((x + 0.26) / 0.34) - sq((wy - ${(POPSICLE.stickTopY - 0.26).toFixed(3)}) / 0.24)) * 0.36;
+      float d2 = exp(-sq((x - 0.24) / 0.32) - sq((wy - ${(POPSICLE.stickTopY - 0.58).toFixed(3)}) / 0.26)) * 0.34;
+      float d3 = exp(-sq((x + 0.04) / 0.38) - sq((wy - ${(POPSICLE.stickTopY - 0.96).toFixed(3)}) / 0.28)) * 0.28;
       // Subtle lower trailing drip tongues extending softly down the handle from the wet upper coat
       float trail1 = exp(-sq((x + 0.22) / 0.32)) * smoothstep(-1.75, -0.92, wy) * (0.14 + 0.12 * sin(wy * 9.0 + uTime * 0.18 + uSeed));
       float trail2 = exp(-sq((x - 0.20) / 0.30)) * smoothstep(-1.62, -0.88, wy) * (0.14 + 0.12 * cos(wy * 8.2 + uTime * 0.15 - uSeed));
@@ -1074,7 +1077,7 @@ function createStickMeltOverlay(sharedUniforms: WaterDropUniforms, seed: number)
       if (bareWeight > 0.005) {
         float sticky = evalStickyResidue(xzNorm, wy);
         // Coat both the broad front/back faces AND softly wrap around the beveled edges & rounded top cap!
-        float capWrap = smoothstep(-0.52, -0.38, wy);
+        float capWrap = smoothstep(${(POPSICLE.stickTopY - 0.16).toFixed(3)}, ${(POPSICLE.stickTopY - 0.02).toFixed(3)}, wy);
         float bareMask = mix(0.42 + 0.58 * faceMask, 0.88 + 0.12 * faceMask, capWrap);
         bareSticky = clamp(sticky * bareMask, 0.0, 0.92);
       }
@@ -1211,10 +1214,12 @@ function createStickMeltOverlay(sharedUniforms: WaterDropUniforms, seed: number)
         float bareSeatBoost = (1.0 - uIceAmount) * smoothstep(-1.15, -0.60, vWorldY);
         vec3 syrupTrans = exp(-uDropSigma * mix(0.26 + 0.12 * bareSeatBoost, 0.21, edgeFactor) * (0.20 + 0.66 * optDepth));
         vec3 col = bgWood * syrupTrans;
+        vec3 camH = safeNorm(vec3(cameraPosition.x, 0.0, cameraPosition.z));
+        vec3 camR = vec3(camH.z, 0.0, -camH.x);
         float creamMix = smoothstep(0.04, 0.86, uDropOpacity) * clamp(0.45 + 0.45 * optDepth, 0.0, 0.86) * mix(0.44, 1.0, smoothstep(0.0, 0.55, uIceAmount));
         if (creamMix > 0.005) {
-          vec3 cL1 = normalize(vec3(-0.48, 0.54, 0.68));
-          vec3 cL2 = normalize(vec3(0.52, 0.42, 0.74));
+          vec3 cL1 = normalize(-0.48 * camR + vec3(0.0, 0.54, 0.0) + 0.68 * camH);
+          vec3 cL2 = normalize( 0.52 * camR + vec3(0.0, 0.42, 0.0) + 0.74 * camH);
           float cWrap = 0.62 + 0.34 * clamp((dot(N, cL1) + 0.45) / 1.45, 0.0, 1.0) + 0.20 * clamp((dot(N, cL2) + 0.45) / 1.45, 0.0, 1.0);
           col = mix(col, uDropCreamColor * cWrap, creamMix);
         }
@@ -1226,8 +1231,8 @@ function createStickMeltOverlay(sharedUniforms: WaterDropUniforms, seed: number)
         // Damp harsh specular streaks along the curved wood side bevels while keeping silky glossy coat across the upper cap!
         float bevelCalm = (1.0 - sideZone * 0.76) * smoothstep(0.05, 0.28, ndv);
         float fresnel = 0.016 + 0.984 * pow(1.0 - ndv, 4.5);
-        vec3 l1 = normalize(vec3(-0.46, 0.54, 0.70));
-        vec3 l2 = normalize(vec3(0.52, 0.42, 0.74));
+        vec3 l1 = normalize(-0.46 * camR + vec3(0.0, 0.54, 0.0) + 0.70 * camH);
+        vec3 l2 = normalize( 0.52 * camR + vec3(0.0, 0.42, 0.0) + 0.74 * camH);
         vec3 h1 = safeNorm(l1 + V);
         vec3 h2 = safeNorm(l2 + V);
         float spec1 = pow(max(dot(N, h1), 0.0), 175.0);
@@ -1560,8 +1565,10 @@ function createStickFlowStreams(
           refrCol = mix(refrCol, refrCol * mix(vec3(1.0), uStainColor * 1.02 + vec3(0.10), 0.42), woodWeld * 0.55);
 
           // Smooth creamy & pulpy recipe support (Coconut, Mango, Chocolate, Banana!)
-          vec3 l1 = normalize(vec3(-0.48, 0.56, 0.68));
-          vec3 l2 = normalize(vec3(0.54, 0.42, 0.72));
+          vec3 camH = safeNorm(vec3(cameraPosition.x, 0.0, cameraPosition.z));
+          vec3 camR = vec3(camH.z, 0.0, -camH.x);
+          vec3 l1 = normalize(-0.48 * camR + vec3(0.0, 0.56, 0.0) + 0.68 * camH);
+          vec3 l2 = normalize( 0.54 * camR + vec3(0.0, 0.42, 0.0) + 0.72 * camH);
           float creamMix = smoothstep(0.04, 0.86, uDropOpacity) * 0.88;
           if (creamMix > 0.005) {
             float cWrap = 0.62 + 0.34 * clamp((dot(N, l1) + 0.45) / 1.45, 0.0, 1.0) + 0.22 * clamp((dot(N, l2) + 0.45) / 1.45, 0.0, 1.0);
@@ -1584,7 +1591,8 @@ function createStickFlowStreams(
           // Restrained silky studio Fresnel & gliding specular sparkles rippling down every surging wave crest!
           float fresnel = 0.018 + 0.982 * pow(1.0 - ndv, 4.6);
           vec3 R = reflect(-V, N);
-          float stripRefl = exp(-sq((abs(R.x) - 0.62) / 0.18)) * smoothstep(-0.85, 0.85, R.y);
+          float rxStudio = dot(R, camR);
+          float stripRefl = exp(-sq((abs(rxStudio) - 0.62) / 0.18)) * smoothstep(-0.85, 0.85, R.y);
           vec3 envSpec = vec3(1.16, 1.10, 1.06) * (0.24 + 0.42 * stripRefl);
           col = mix(col, envSpec, clamp(fresnel * (0.34 - 0.14 * uDropOpacity) * outerMask, 0.0, 0.36));
 
