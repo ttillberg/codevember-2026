@@ -54,6 +54,7 @@ export interface FrameParams {
   planeAlpha: number;
   canCut: boolean;
   exposure: number;
+  floorScrollVelZ?: number;
 }
 
 export interface SplinterSpawn {
@@ -945,6 +946,53 @@ export class GpuEngine {
     this.device.queue.writeBuffer(this.shardPosesBuf, 0, this.shardPosesCPU, 0, count * 8);
   }
 
+  /**
+   * Continuously glide all settled floor shards along Z (dz < 0 recedes into the horizon mist;
+   * dz > 0 advances under the camera), retiring any shard outside [retireMinZ, retireMaxZ]
+   * and immediately destroying & pruning GPU vertex buffers once all shards in a batch are gone.
+   * Returns true if ALL shard batches are now empty (caller can reset nextShardId = 0).
+   */
+  scrollFloorShards(maxActiveCount: number, dz: number, retireMinZ: number, retireMaxZ: number): boolean {
+    const count = Math.min(MAX_SHARDS, maxActiveCount);
+    if (count <= 0 || Math.abs(dz) < 1e-7) return this.shardBatches.length === 0;
+    let dirty = false;
+    for (let i = 0; i < count; i++) {
+      const o = i * 8;
+      if (this.shardPosesCPU[o + 3] < 0.5) continue;
+      const nz = this.shardPosesCPU[o + 2] + dz;
+      dirty = true;
+      if (nz < retireMinZ || nz > retireMaxZ) {
+        this.shardPosesCPU[o + 1] = -999;
+        this.shardPosesCPU[o + 3] = 0;
+      } else {
+        this.shardPosesCPU[o + 2] = nz;
+      }
+    }
+    if (dirty) {
+      this.device.queue.writeBuffer(this.shardPosesBuf, 0, this.shardPosesCPU, 0, count * 8);
+    }
+
+    // Reclaim GPU vertex buffers & draw calls for any batch whose shards have all drifted out of view!
+    for (let bi = this.shardBatches.length - 1; bi >= 0; bi--) {
+      const b = this.shardBatches[bi];
+      if (b.numShards <= 0) continue;
+      const end = Math.min(MAX_SHARDS, b.baseShardId + b.numShards);
+      let anyAlive = false;
+      for (let id = b.baseShardId; id < end; id++) {
+        if (this.shardPosesCPU[id * 8 + 3] >= 0.5) {
+          anyAlive = true;
+          break;
+        }
+      }
+      if (!anyAlive) {
+        b.vb.destroy();
+        this.shardBatches.splice(bi, 1);
+      }
+    }
+
+    return this.shardBatches.length === 0;
+  }
+
   spawnSplinters(spawns: SplinterSpawn[]) {
     if (spawns.length === 0) return;
     const count = Math.min(spawns.length, this.maxSplinters);
@@ -992,10 +1040,10 @@ export class GpuEngine {
     d[64] = p.palette.edge[0]; d[65] = p.palette.edge[1]; d[66] = p.palette.edge[2]; d[67] = p.planeHover;
     const off0 = p.cutOffsets[0] ?? [0, 0, 0];
     d[68] = off0[0]; d[69] = off0[1]; d[70] = off0[2]; d[71] = p.hasCutPiece ? 1 : 0;
-    d[72] = -3.2; d[73] = -3.2; d[74] = 1 / 6.4; d[75] = 0.0;
+    d[72] = -3.6; d[73] = -4.8; d[74] = 1 / 7.2; d[75] = 0.0;
     d[76] = p.planeAlpha; d[77] = p.canCut ? 1 : 0; d[78] = p.exposure; d[79] = p.dt;
     d[80] = p.cutQuat[0]; d[81] = p.cutQuat[1]; d[82] = p.cutQuat[2]; d[83] = p.cutQuat[3];
-    d[84] = p.cutPlaneN[0]; d[85] = p.cutPlaneN[1]; d[86] = p.cutPlaneN[2]; d[87] = 0;
+    d[84] = p.cutPlaneN[0]; d[85] = p.cutPlaneN[1]; d[86] = p.cutPlaneN[2]; d[87] = p.floorScrollVelZ ?? 0;
     if (p.cutPlane2N) {
       d[88] = p.cutPlane2N[0]; d[89] = p.cutPlane2N[1]; d[90] = p.cutPlane2N[2]; d[91] = p.cutRadius2;
     } else {

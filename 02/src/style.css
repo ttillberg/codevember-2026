@@ -540,6 +540,17 @@ body {
   letter-spacing: -0.02em;
   font-variant-numeric: tabular-nums;
   color: var(--ink);
+  transform-origin: left bottom;
+}
+
+.hud-corner strong.level-bump {
+  animation: level-bump 0.42s cubic-bezier(0.22, 1.35, 0.36, 1);
+}
+
+@keyframes level-bump {
+  0% { transform: scale(1); }
+  35% { transform: scale(1.24); }
+  100% { transform: scale(1); }
 }
 
 .hud-meta {
@@ -597,7 +608,7 @@ body {
     inset 0 1px 0 rgba(255, 255, 255, 0.72),
     0 0 0 1px rgba(28, 28, 28, 0.06),
     0 24px 60px rgba(20, 24, 34, 0.14);
-  animation: card-in 0.7s 0.12s cubic-bezier(0.2, 0.8, 0.2, 1) backwards;
+  animation: card-in 0.42s cubic-bezier(0.2, 0.8, 0.2, 1) backwards;
   transition: transform 0.35s cubic-bezier(0.2, 0.8, 0.2, 1), background 0.25s ease, box-shadow 0.25s ease;
 }
 

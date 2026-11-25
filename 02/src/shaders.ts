@@ -343,7 +343,8 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
       // Keep the floor seamlessly blended into the soft cyclorama gradient with subtle grounding warmth
       var floorCol = mix(col, col * vec3<f32>(0.975, 0.972, 0.968), stageMask * 0.72);
 
-      let grain = fract(sin(dot(floor(hit.xz * 280.0), vec2<f32>(12.9898, 78.233))) * 43758.5453);
+      let grainPos = vec2<f32>(hit.x, hit.z - u.camPos.w * u.cutPlaneN.w);
+      let grain = fract(sin(dot(floor(grainPos * 280.0), vec2<f32>(12.9898, 78.233))) * 43758.5453);
       floorCol *= 0.995 + 0.010 * grain;
 
       let cuv = (hit.xz - u.causticBounds.xy) * u.causticBounds.z;
@@ -546,7 +547,8 @@ fn vs_shards(
   let sid = u32(shardIdF + 0.5);
   let pose = poses[sid];
   out.localPos = origPos;
-  if (pose.pos.w < 0.5) {
+  // LOD cull: skip shard floor caustics once a receding shard has glided far into the horizon (-Z < -2.8)
+  if (pose.pos.w < 0.5 || pose.pos.z < -2.8) {
     out.pos = vec4<f32>(2.0, 2.0, 2.0, 1.0);
     out.color = vec3<f32>(0.0);
     out.alpha = 0.0;
@@ -1142,7 +1144,8 @@ fn vs_main(
   var out: VSOut;
   let sid = u32(shardIdF + 0.5);
   let pose = poses[sid];
-  if (pose.pos.w < 0.5) {
+  // LOD Stage 1: skip back-depth & inner back-facet passes for receding distant shards (z < -2.0)!
+  if (pose.pos.w < 0.5 || pose.pos.z < -2.0) {
     out.pos = vec4<f32>(2.0, 2.0, 2.0, 1.0);
     out.worldPos = vec3<f32>(0.0);
     out.worldNorm = vec3<f32>(0.0, 1.0, 0.0);
@@ -1182,7 +1185,8 @@ fn fs_inner(in: VSOut) -> @location(0) vec4<f32> {
   let spec = pow(max(0.0, abs(dot(N, H))), 80.0) * 1.4;
 
   let col = mix(tint * 0.45, refl * (0.45 + 0.55 * tint), 0.55) + vec3<f32>(1.15) * spec;
-  let alpha = clamp(0.08 + grazing * 0.44 + spec * 0.25, 0.0, 0.62);
+  let farFade = 1.0 - smoothstep(2.0, 5.2, -in.worldPos.z);
+  let alpha = clamp(0.08 + grazing * 0.44 + spec * 0.25, 0.0, 0.62) * farFade;
   return vec4<f32>(studioGrade(col, u.params.z), alpha);
 }
 `;
@@ -1203,6 +1207,7 @@ struct VSOut {
   @location(2) origPos: vec3<f32>,
   @location(3) relPos: vec3<f32>,
   @location(4) gemIdF: f32,
+  @location(5) lodFar: f32,
 };
 
 @vertex
@@ -1222,6 +1227,7 @@ fn vs_main(
     out.origPos = origPos;
     out.relPos = relPos;
     out.gemIdF = 0.0;
+    out.lodFar = 0.0;
     return out;
   }
 
@@ -1233,6 +1239,8 @@ fn vs_main(
   out.origPos = origPos;
   out.relPos = relPos;
   out.gemIdF = max(0.0, floor(pose.pos.w - 0.5));
+  // LOD Stage 1: shards past z < -2.0 use fast single-pass mineral shading (0 backTex/bgTex lookups!)
+  out.lodFar = select(0.0, 1.0, pose.pos.z < -2.0);
   return out;
 }
 
@@ -1252,13 +1260,33 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
     let H = normalize(L + V);
     let spec = pow(max(0.0, dot(N, H)), 220.0) * 3.6;
     let bevel = clamp(edgeGrad * 2.4, 0.0, 1.0) * 0.45;
-    let col = mix(vec3<f32>(0.005, 0.005, 0.008), mirror, F * 0.9)
+    var col = mix(vec3<f32>(0.005, 0.005, 0.008), mirror, F * 0.9)
             + vec3<f32>(0.96, 0.98, 1.0) * spec
             + vec3<f32>(0.5, 0.52, 0.58) * bevel;
+    let farHaze = smoothstep(1.8, 4.4, -in.worldPos.z);
+    col = mix(col, vec3<f32>(0.98, 0.96, 0.935), farHaze);
     // Tiny interleaved-gradient-noise dither eliminates 8-bit banding across soft studio gradients
   let ign = fract(52.9829189 * fract(dot(in.pos.xy, vec2<f32>(0.06711056, 0.00583715))));
   let graded = clamp(studioGrade(col, u.params.z) + vec3<f32>((ign - 0.5) / 255.0), vec3<f32>(0.0), vec3<f32>(1.0));
-  return vec4<f32>(graded, 1.0);
+  return vec4<f32>(graded, 1.0 - farHaze * 0.95);
+  }
+
+  // LOD Stage 1: simplified single-pass crystal shading for receding distant shards (skips backTex, bgTex, refraction & TIR!)
+  if (in.lodFar > 0.5) {
+    let N = normalize(in.worldNorm);
+    let V = normalize(u.camPos.xyz - in.worldPos);
+    let L = normalize(u.lightDir.xyz);
+    let H = normalize(L + V);
+    let cosV = max(0.0, dot(N, V));
+    let F = fresnelSchlick(cosV, 0.08);
+    let ndl = max(0.0, dot(N, L));
+    let tint = gemTint(gemId, in.origPos, u);
+    let spec = pow(max(0.0, dot(N, H)), 96.0) * 1.9;
+    let body = tint * (0.64 + 0.32 * ndl);
+    var col = mix(body, vec3<f32>(1.02, 1.01, 1.00), F * 0.65) + vec3<f32>(1.0, 0.99, 0.98) * spec;
+    let farHaze = smoothstep(1.8, 4.4, -in.worldPos.z);
+    col = mix(col, vec3<f32>(0.98, 0.96, 0.935), farHaze);
+    return vec4<f32>(studioGrade(col, u.params.z), clamp(0.92 * (1.0 - farHaze), 0.0, 1.0));
   }
   // Subtle conchoidal fracture micro-ripple breaks flat plastic glare into real liquid-glass reflections
   let rp = in.origPos * 28.0 + in.relPos * 19.0;
@@ -1355,8 +1383,12 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
   // Subtle sparkling crystal edge catch
   col += (rimTint * 0.35 + vec3<f32>(0.45)) * bevelGlint * (0.25 + 0.75 * F);
 
+  // Soft horizon mist dissolution as floor-gliding shards recede into the distance (-Z)
+  let farHaze = smoothstep(1.8, 4.4, -in.worldPos.z);
+  col = mix(col, vec3<f32>(0.98, 0.96, 0.935), farHaze);
+
   // Blend slightly with the translucent back-facet pass already in the framebuffer along ultra-thin edges
-  let edgeAlpha = clamp(0.76 + 0.24 * smoothstep(0.004, 0.035, rawThick) + F * 0.22, 0.0, 0.98);
+  let edgeAlpha = clamp(0.76 + 0.24 * smoothstep(0.004, 0.035, rawThick) + F * 0.22, 0.0, 0.98) * (1.0 - farHaze * 0.95);
   return vec4<f32>(studioGrade(col, u.params.z), edgeAlpha);
 }
 `;
@@ -1403,9 +1435,10 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {
   let onFloor = s.pos.y <= floorY + 0.0005 && abs(s.vel.y) < 0.22;
 
   if (onFloor) {
-    // Resting/sliding on the studio floor: no gravity jitter, rapid friction & complete rest!
+    // Resting/sliding on the advancing studio floor: ride the floor glide seamlessly!
     s.pos.y = floorY;
     s.vel.y = 0.0;
+    s.pos.z += u.cutPlaneN.w * dt;
     let slideDecay = exp(-dt * 18.0);
     s.vel.x *= slideDecay;
     s.vel.z *= slideDecay;
@@ -1417,6 +1450,9 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {
     } else {
       s.pos.x += s.vel.x * dt;
       s.pos.z += s.vel.z * dt;
+    }
+    if (s.pos.z < -5.4 || s.pos.z > 4.2) {
+      s.pos.w = 0.0;
     }
   } else {
     let drag = exp(-dt * (0.45 + 0.014 / max(0.004, s.pos.w)));
@@ -1547,7 +1583,8 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
   let fres = fresnelSchlick(abs(dot(N, V)), 0.10);
   let envRefl = sampleStudioEnv(in.worldPos, reflect(-V, N), u);
   let col = in.color * mix(envRefl * 0.68, vec3<f32>(0.24 + 0.62 * abs(dot(N, L))), 0.45) + vec3<f32>(1.4, 1.38, 1.36) * (spec + fres * 0.35);
-  return vec4<f32>(studioGrade(col, u.params.z), in.fade * 0.94);
+  let farFade = 1.0 - smoothstep(2.0, 5.2, -in.worldPos.z);
+  return vec4<f32>(studioGrade(col, u.params.z), in.fade * 0.94 * farFade);
 }
 `;
 

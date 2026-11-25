@@ -1,4 +1,4 @@
-import { Vec3, add3, cross3, dot3, len3, lerp3, norm3, scale3, sub3 } from './math';
+import { Vec3, add3, cross3, dot3, len3, lerp3, mulberry32, norm3, scale3, sub3 } from './math';
 
 export interface Plane {
   n: Vec3; // outward unit normal
@@ -927,6 +927,144 @@ export function triangulatePoly(poly: Poly): Float32Array {
       }
     }
   }
+  return out;
+}
+
+/**
+ * Triangulate a Poisoned Black Diamond bomb gem with razor-sharp obsidian crystal shards
+ * erupting outward from its facets for an unmistakable spiky silhouette while preserving
+ * the clean convex core `poly` for physics and hit detection.
+ */
+export function triangulateBombPoly(poly: Poly, seed = 1): Float32Array {
+  const core = triangulatePoly(poly);
+  const rng = mulberry32((seed ^ 0x51a7b0b) >>> 0);
+
+  // Rank faces by area so primary shards grow from the boldest, well-spaced facets around 360°
+  const candidates: Array<{ centroid: Vec3; n: Vec3; area: number; radius: number }> = [];
+  for (const f of poly.faces) {
+    const vs = f.verts;
+    if (vs.length < 3) continue;
+    const area = polygonArea(vs, f.n);
+    if (area < 1e-4) continue;
+    let cx = 0, cy = 0, cz = 0;
+    for (const v of vs) { cx += v[0]; cy += v[1]; cz += v[2]; }
+    const inv = 1 / vs.length;
+    const centroid: Vec3 = [cx * inv, cy * inv, cz * inv];
+    let rSum = 0;
+    for (const v of vs) rSum += len3(sub3(v, centroid));
+    candidates.push({ centroid, n: f.n, area, radius: rSum * inv });
+  }
+  candidates.sort((a, b) => b.area - a.area);
+
+  const picked: typeof candidates = [];
+  for (const cand of candidates) {
+    let tooClose = false;
+    for (const p of picked) {
+      if (dot3(cand.n, p.n) > 0.76) {
+        tooClose = true;
+        break;
+      }
+    }
+    if (!tooClose) {
+      picked.push(cand);
+      if (picked.length >= 14) break;
+    }
+  }
+
+  // Collect flat-shaded outward-facing spike triangles as [px, py, pz, nx, ny, nz]
+  const spikeVerts: number[] = [];
+  const pushTri = (a: Vec3, b: Vec3, c: Vec3, refCenter: Vec3) => {
+    const rawN = cross3(sub3(b, a), sub3(c, a));
+    const nLen = len3(rawN);
+    if (nLen < 1e-7) return;
+    let n: Vec3 = [rawN[0] / nLen, rawN[1] / nLen, rawN[2] / nLen];
+    const triMid: Vec3 = [(a[0] + b[0] + c[0]) / 3, (a[1] + b[1] + c[1]) / 3, (a[2] + b[2] + c[2]) / 3];
+    let p1 = b;
+    let p2 = c;
+    if (dot3(n, sub3(triMid, refCenter)) < 0) {
+      n = [-n[0], -n[1], -n[2]];
+      p1 = c;
+      p2 = b;
+    }
+    for (const v of [a, p1, p2]) {
+      spikeVerts.push(v[0], v[1], v[2], n[0], n[1], n[2]);
+    }
+  };
+
+  const addShard = (
+    baseCenter: Vec3,
+    dir: Vec3,
+    t1: Vec3,
+    t2: Vec3,
+    sides: number,
+    rMajor: number,
+    rMinor: number,
+    length: number,
+    tipJitter: number,
+  ) => {
+    const ring: Vec3[] = [];
+    for (let i = 0; i < sides; i++) {
+      const ang = (i / sides) * Math.PI * 2 + (rng() - 0.5) * 0.30;
+      const ca = Math.cos(ang) * rMajor;
+      const sa = Math.sin(ang) * rMinor;
+      // Subtle per-vertex axial stagger keeps the shard looking fractured rather than lathe-turned
+      const axial = (rng() - 0.5) * 0.012;
+      ring.push(
+        add3(
+          baseCenter,
+          add3(add3(scale3(t1, ca), scale3(t2, sa)), scale3(dir, axial)),
+        ),
+      );
+    }
+    const tip = add3(
+      add3(baseCenter, scale3(dir, length)),
+      add3(scale3(t1, (rng() - 0.5) * tipJitter), scale3(t2, (rng() - 0.5) * tipJitter)),
+    );
+    const refCenter = add3(baseCenter, scale3(dir, length * 0.14));
+    for (let i = 0; i < sides; i++) {
+      pushTri(ring[i], ring[(i + 1) % sides], tip, refCenter);
+    }
+  };
+
+  for (let pi = 0; pi < picked.length; pi++) {
+    const { centroid, n, radius } = picked[pi];
+    const up: Vec3 = Math.abs(n[1]) < 0.9 ? [0, 1, 0] : [1, 0, 0];
+    const u0 = norm3(cross3(up, n));
+    const v0 = norm3(cross3(n, u0));
+    const phi = rng() * Math.PI * 2;
+    const cp = Math.cos(phi);
+    const sp = Math.sin(phi);
+    const t1 = add3(scale3(u0, cp), scale3(v0, sp));
+    const t2 = add3(scale3(u0, -sp), scale3(v0, cp));
+
+    // Bold sculpted obsidian crystal blade growing organically out of the facet
+    const baseEmbed = 0.030;
+    const baseC = add3(
+      add3(centroid, scale3(n, -baseEmbed)),
+      add3(scale3(t1, (rng() - 0.5) * radius * 0.18), scale3(t2, (rng() - 0.5) * radius * 0.18)),
+    );
+    const rMajor = Math.max(0.050, Math.min(0.088, radius * (0.58 + rng() * 0.22)));
+    const rMinor = rMajor * (0.56 + rng() * 0.26);
+    const spikeLen = baseEmbed + 0.084 + rng() * 0.062;
+    addShard(baseC, n, t1, t2, 4, rMajor, rMinor, spikeLen, 0.034);
+
+    // Overlapping angled companion shard beside most primary blades for a jagged mineral cluster feel
+    if (pi % 3 !== 2) {
+      const tilt = 0.42 + rng() * 0.26; // ~24°–39° cant
+      const secDir = norm3(add3(n, add3(scale3(t1, tilt), scale3(t2, (rng() - 0.5) * 0.26))));
+      const secT1 = norm3(cross3(t2, secDir));
+      const secT2 = norm3(cross3(secDir, secT1));
+      const secBase = add3(baseC, scale3(t1, rMajor * 0.36));
+      const secRMajor = rMajor * (0.56 + rng() * 0.18);
+      const secRMinor = secRMajor * (0.58 + rng() * 0.24);
+      const secLen = spikeLen * (0.58 + rng() * 0.24);
+      addShard(secBase, secDir, secT1, secT2, 3, secRMajor, secRMinor, secLen, 0.020);
+    }
+  }
+
+  const out = new Float32Array(core.length + spikeVerts.length);
+  out.set(core, 0);
+  out.set(spikeVerts, core.length);
   return out;
 }
 

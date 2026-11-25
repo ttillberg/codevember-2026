@@ -32,13 +32,14 @@ import {
   polyPlanes,
   shatterPoly,
   splitPoly,
+  triangulateBombPoly,
   triangulateCracks,
   triangulatePoly,
   triangulateShards,
   triangulateSurfaceCracks,
 } from './poly';
 import { CARVE_PRESETS, CarveId, CarvePlan, buildCarvePlan } from './carve';
-import { GEM_BLACK, GEM_SPLINTER_COLORS, GEM_TEXT_COLORS, LevelPlan, MAX_LEVEL, ThrowSpec, buildLevel } from './levels';
+import { GEM_BLACK, GEM_COLORS, GEM_SPLINTER_COLORS, GEM_TEXT_COLORS, LevelPlan, MAX_LEVEL, ThrowSpec, buildLevel } from './levels';
 import { PALETTES, samplePaletteColor } from './palettes';
 import { CutPieceUpload, GpuEngine, MAX_CUT_SLOTS, MAX_SHARDS, SplinterSpawn } from './gpu';
 import { Sound } from './audio';
@@ -93,6 +94,9 @@ const cfg = {
   explodeForce: 2.35,
   crackDuration: 0.36,
   exposure: 1.06,
+  /** Endless advancing studio floor: -1 = shards glide away into the horizon & dissolve, +1 = glide toward/under camera, 0 = static (?scroll=-1|1|0). */
+  floorScrollDir: qs.get('scroll') === '1' ? 1 : qs.get('scroll') === '0' ? 0 : -1,
+  floorScrollSpeed: 0.44,
 };
 
 interface PendingChunk {
@@ -126,7 +130,9 @@ interface ActiveScatter {
   contacts: Float32Array;
   nextContact: number;
   elapsed: number;
+  scrollZ: number;
   settled: boolean;
+  silent?: boolean;
   gemId: number;
   shards: ShatterShard[];
 }
@@ -147,6 +153,7 @@ interface FallingChunk {
   bakedResp: BakeResponse | null;
   hitGroundWaiting: boolean;
   detonated: boolean;
+  silent?: boolean;
 }
 
 interface FlyingCrystal {
@@ -252,11 +259,45 @@ let shakeTimer = 0;
 let shakeAmp = 0;
 let failFlash = 0;
 let clearWaitTimer = 0;
+type ClearStage = 'pause' | 'levelup';
+let clearStage: ClearStage = 'pause';
+let clearStageElapsed = 0;
 let replayPending = false;
 let replayDelayTimer = 0;
 
+interface BackdropGem {
+  slotIdx: number;
+  gemId: number;
+  laneX: number;
+  baseY: number;
+  portraitYOffset: number;
+  z: number;
+  bobAmp: number;
+  bobSpeed: number;
+  phase: number;
+  quat: Quat;
+  angVel: Vec3;
+}
+
+interface AttractGem {
+  slotIdx: number;
+  poly: Poly;
+  gemId: number;
+  pos: Vec3;
+  vy: number;
+  swayAmp: number;
+  swaySpeed: number;
+  phase: number;
+  baseX: number;
+  quat: Quat;
+  angVel: Vec3;
+}
+
 let nextCrystalId = 1;
 const flyingCrystals: FlyingCrystal[] = [];
+const backdropGems: BackdropGem[] = [];
+const attractGems: AttractGem[] = [];
+let attractSpawnTimer = 0;
 const callouts: FloatingCallout[] = [];
 let hitStopTimer = 0;
 
@@ -277,19 +318,30 @@ let lastComboAt = -99999;
 const BLITZ_BONUS = [0, 5, 10, 15, 20, 30] as const;
 const BLITZ_LABEL = ['', 'BLITZ', 'SUPER BLITZ', 'MEGA BLITZ', 'ULTRA BLITZ', 'UNBELIEVABLE'] as const;
 
-/** Responsive stage width, spawn floor & camera distance: pulls back cleanly on portrait phones so gems sweep edge-to-edge across the full tall canvas! */
-function getTossStageLayout(): { eyeZ: number; stageHalfW: number; spawnY: number; portraitFactor: number } {
+/** Responsive stage width, camera elevation, spawn floor & camera distance: keeps the floor directly underneath near the lower edge (~87% down) across desktop & portrait phones so falling shattered glass lands close beneath you before gliding away! */
+function getTossStageLayout(): {
+  eyeZ: number;
+  eyeY: number;
+  targetY: number;
+  liftY: number;
+  stageHalfW: number;
+  spawnY: number;
+  portraitFactor: number;
+} {
   const aspect = window.innerWidth / Math.max(1, window.innerHeight);
   const eyeZ = aspect < 0.72 ? 4.35 : aspect < 0.95 ? 3.48 : aspect < 1.2 ? 2.94 : 2.72;
+  const targetY = aspect < 0.72 ? 1.18 : aspect < 0.95 ? 0.95 : aspect < 1.2 ? 0.80 : 0.72;
+  const eyeY = aspect < 0.72 ? 1.62 : aspect < 0.95 ? 1.32 : aspect < 1.2 ? 1.13 : 1.04;
+  const liftY = targetY - TOSS_CAM_TARGET[1];
   const halfHAtZ0 = eyeZ * Math.tan(CAM_FOV * 0.5);
   const halfWAtZ0 = halfHAtZ0 * aspect;
   // On portrait phones (~0.57m half-width at eyeZ=4.35), gems span full edge-to-edge width and enter/exit cleanly past all edges!
   const widthFrac = aspect < 0.72 ? 0.82 : aspect < 0.95 ? 0.76 : 0.66;
   const stageHalfW = Math.max(0.48, Math.min(0.88, halfWAtZ0 * widthFrac));
-  const visibleBottomY = TOSS_CAM_TARGET[1] - halfHAtZ0;
-  const spawnY = Math.min(-0.82, visibleBottomY - 0.30);
+  const visibleBottomY = targetY - halfHAtZ0;
+  const spawnY = Math.min(-0.56, visibleBottomY - 0.34);
   const portraitFactor = aspect < 0.72 ? 1.0 : aspect < 0.95 ? 0.45 : 0.0;
-  return { eyeZ, stageHalfW, spawnY, portraitFactor };
+  return { eyeZ, eyeY, targetY, liftY, stageHalfW, spawnY, portraitFactor };
 }
 
 let freeSym = false;
@@ -579,6 +631,149 @@ function updateHudUI() {
   hudBestEl.textContent = String(bestScore);
 }
 
+/** Populate 5 slowly levitating cool-mineral crystals behind the frosted PLAY card on initial boot! */
+function setupReadyBackdrop() {
+  backdropGems.length = 0;
+  gpu.clearAllCutSlots();
+  const specs: Array<{
+    gemId: number;
+    variant: number;
+    scale: number;
+    laneX: number;
+    baseY: number;
+    portraitYOffset: number;
+    z: number;
+    bobAmp: number;
+    bobSpeed: number;
+    phase: number;
+    angVel: Vec3;
+  }> = [
+    { gemId: 3, variant: 0, scale: 0.96, laneX: -0.84, baseY: 0.98, portraitYOffset: 0.24, z: -0.10, bobAmp: 0.055, bobSpeed: 0.85, phase: 0.2, angVel: [0.22, 0.36, 0.14] },
+    { gemId: 4, variant: 1, scale: 0.92, laneX: -0.34, baseY: 0.42, portraitYOffset: -0.04, z: -0.30, bobAmp: 0.048, bobSpeed: 0.72, phase: 1.7, angVel: [-0.18, 0.28, 0.20] },
+    { gemId: 2, variant: 2, scale: 1.06, laneX: 0.08, baseY: 0.84, portraitYOffset: 0.18, z: 0.06, bobAmp: 0.060, bobSpeed: 0.78, phase: 3.1, angVel: [0.16, -0.32, 0.12] },
+    { gemId: 5, variant: 3, scale: 0.94, laneX: 0.82, baseY: 0.94, portraitYOffset: 0.22, z: -0.16, bobAmp: 0.052, bobSpeed: 0.90, phase: 4.4, angVel: [-0.20, -0.30, -0.15] },
+    { gemId: 8, variant: 0, scale: 0.88, laneX: 0.44, baseY: 0.38, portraitYOffset: -0.06, z: 0.14, bobAmp: 0.045, bobSpeed: 0.80, phase: 5.5, angVel: [0.24, 0.26, -0.18] },
+  ];
+
+  const { eyeZ, liftY, stageHalfW, portraitFactor } = getTossStageLayout();
+  const brng = mulberry32(20260209);
+
+  for (let i = 0; i < specs.length; i++) {
+    const sp = specs[i];
+    const poly = makeCrystalPoly(CRYSTAL_SIZE * sp.scale, sp.variant);
+    const zScale = Math.max(0.75, (eyeZ - sp.z) / eyeZ);
+    const pos: Vec3 = [
+      sp.laneX * stageHalfW * zScale,
+      sp.baseY + liftY + portraitFactor * sp.portraitYOffset,
+      sp.z,
+    ];
+    const quat = qNorm(
+      qMul(
+        qFromAxisAngle([0, 1, 0], (brng() - 0.5) * Math.PI * 1.4),
+        qFromAxisAngle([1, 0, 0], (brng() - 0.5) * 0.9),
+      ),
+    );
+    gpu.setCutSlot(
+      i,
+      {
+        verts: triangulatePoly(poly),
+        planes: polyPlanes(poly),
+        crackVerts: new Float32Array(0),
+        surfaceCrackVerts: new Float32Array(0),
+      },
+      pos,
+      quat,
+      sp.gemId,
+    );
+    backdropGems.push({
+      slotIdx: i,
+      gemId: sp.gemId,
+      laneX: sp.laneX,
+      baseY: sp.baseY,
+      portraitYOffset: sp.portraitYOffset,
+      z: sp.z,
+      bobAmp: sp.bobAmp,
+      bobSpeed: sp.bobSpeed,
+      phase: sp.phase,
+      quat,
+      angVel: sp.angVel,
+    });
+  }
+}
+
+/** Spawn one slowly falling cool-mineral gem from above the frame for the meditative Replay attract mode! */
+function spawnAttractGem() {
+  const maxAttract = IS_MOBILE ? 4 : 6;
+  if (attractGems.length >= maxAttract) return;
+  const used = new Set<number>();
+  for (const ag of attractGems) used.add(ag.slotIdx);
+  let slotIdx = -1;
+  for (let i = 0; i < MAX_CUT_SLOTS; i++) {
+    if (!used.has(i)) { slotIdx = i; break; }
+  }
+  if (slotIdx < 0) return;
+
+  const { eyeZ, targetY, stageHalfW } = getTossStageLayout();
+  const zCandidates = [0.18, 0.04, 0.30, -0.06, 0.12, 0.24];
+  let z = zCandidates[Math.floor(rng() * zCandidates.length)];
+  for (const zc of zCandidates) {
+    if (attractGems.every((o) => Math.abs(o.pos[2] - zc) >= 0.16)) {
+      z = zc;
+      break;
+    }
+  }
+  const zDist = Math.max(1.2, eyeZ - z);
+  const visHalfH = zDist * Math.tan(CAM_FOV * 0.5);
+  const zScale = Math.max(0.75, zDist / eyeZ);
+  // Pick a horizontal lane spaced away from the most recent attract gem so they form a balanced curtain
+  let laneX = (rng() * 2 - 1) * 1.02;
+  if (attractGems.length > 0) {
+    const prev = attractGems[attractGems.length - 1];
+    if (Math.abs(laneX * stageHalfW * zScale - prev.baseX) < stageHalfW * 0.45) {
+      laneX = -Math.sign(prev.baseX || 1) * (0.25 + rng() * 0.78);
+    }
+  }
+  const baseX = laneX * stageHalfW * zScale;
+  const startY = targetY + visHalfH + 0.34 + rng() * 0.18;
+
+  const gemId = GEM_COLORS[Math.floor(rng() * GEM_COLORS.length)];
+  const poly = makeCrystalPoly(CRYSTAL_SIZE * (0.76 + rng() * 0.28), Math.floor(rng() * 4));
+  const quat = qNorm(
+    qMul(
+      qFromAxisAngle([0, 1, 0], rng() * Math.PI * 2),
+      qFromAxisAngle([1, 0, 0], (rng() - 0.5) * Math.PI),
+    ),
+  );
+  const angVel: Vec3 = [(rng() - 0.5) * 0.55, (rng() - 0.5) * 0.65, (rng() - 0.5) * 0.45];
+  const pos: Vec3 = [baseX, startY, z];
+
+  gpu.setCutSlot(
+    slotIdx,
+    {
+      verts: triangulatePoly(poly),
+      planes: polyPlanes(poly),
+      crackVerts: new Float32Array(0),
+      surfaceCrackVerts: new Float32Array(0),
+    },
+    pos,
+    quat,
+    gemId,
+  );
+  attractGems.push({
+    slotIdx,
+    poly,
+    gemId,
+    pos,
+    vy: -(0.28 + rng() * 0.16),
+    swayAmp: 0.025 + rng() * 0.035,
+    swaySpeed: 0.6 + rng() * 0.45,
+    phase: rng() * Math.PI * 2,
+    baseX,
+    quat,
+    angVel,
+  });
+}
+
 function showBanner(mode: 'play' | 'replay') {
   bannerEl.dataset.mode = mode;
   if (mode === 'play') {
@@ -647,6 +842,7 @@ function flushStrokeCombo(nowMs: number) {
 
   const pan = Math.max(-1, Math.min(1, pos[0] * 0.9));
   sound.comboChime(n, pan);
+  sound.miniShatter(pan, 1.08);
   addScore(n, pos, `${n}× COMBO`, `+${n}`, true, gemId);
 
   // Fruit Ninja Blitz streak: chaining combos back-to-back within 5.5s escalates +5 -> +10 -> +15 -> +20 -> +30!
@@ -659,6 +855,30 @@ function flushStrokeCombo(nowMs: number) {
     blitzTier = 0;
   }
   lastComboAt = nowMs;
+
+  // Celebratory mid-air crystal burst: explode extra refractive glass shards & sparkling splinters right in the air!
+  const comboSize = CRYSTAL_SIZE * Math.min(1.05, 0.78 + (n - 3) * 0.08 + blitzTier * 0.06);
+  const comboPoly = makeCrystalPoly(comboSize, Math.floor(rng() * 4));
+  const comboQuat = qNorm(
+    qMul(
+      qFromAxisAngle([0, 1, 0], rng() * Math.PI * 2),
+      qFromAxisAngle([1, 0, 0], (rng() - 0.5) * Math.PI),
+    ),
+  );
+  const shardBudget = IS_MOBILE
+    ? Math.min(24, 16 + (n - 3) * 3 + blitzTier * 2)
+    : Math.min(38, 24 + (n - 3) * 4 + blitzTier * 3);
+  explodePolyMidAir(comboPoly, pos, comboQuat, [0, 0.55, 0], gemId, shardBudget, 0.78);
+  burstSplinters(
+    [pos],
+    [[0, 0, 0]],
+    [0, 1.15, 0],
+    Math.min(540, 260 + (n - 3) * 80 + blitzTier * 70),
+    cfg.explodeForce * 1.15,
+    0.0018,
+    0.0076,
+    gemId,
+  );
 }
 
 function updateActionUI() {
@@ -727,6 +947,7 @@ function allocCutSlot(): number {
   const used = new Set<number>();
   for (const fc of flyingCrystals) used.add(fc.slotIdx);
   for (const ch of fallingChunks) used.add(ch.slotIdx);
+  for (const ag of attractGems) used.add(ag.slotIdx);
   for (let i = 0; i < MAX_CUT_SLOTS; i++) {
     if (!used.has(i)) return i;
   }
@@ -792,7 +1013,7 @@ function startFallingChunkBake(ch: FallingChunk, dtHit: number) {
 
   const chunkCW = add3(hitPos, qRotate(hitQuat, ch.cutPoly.centroid));
   const impactSpeed = Math.abs(hitVel[1]);
-  const impactBoost = Math.min(1.65, 0.72 + impactSpeed * 0.22);
+  const impactBoost = Math.min(1.30, 0.62 + impactSpeed * 0.16);
 
   let childCursor = shards.length;
   const shardInputs: ShardBakeInput[] = [];
@@ -802,21 +1023,22 @@ function startFallingChunkBake(ch: FallingChunk, dtHit: number) {
     const relWorld = qRotate(hitQuat, s.centroid);
     const initPos: Vec3 = [
       hitPos[0] + relWorld[0],
-      Math.max(0.028, hitPos[1] + relWorld[1]),
+      Math.max(0.024, hitPos[1] + relWorld[1]),
       hitPos[2] + relWorld[2],
     ];
     const fromCenter = sub3(initPos, chunkCW);
     const radXZ = norm3([fromCenter[0] + (rng() - 0.5) * 0.06, 0, fromCenter[2] + (rng() - 0.5) * 0.06]);
-    const f = cfg.explodeForce * impactBoost * (0.68 + rng() * 0.85);
+    // Crisp, weighty dropped-crystal impact: sharp outward skitter along the floor with a lively low hop!
+    const f = cfg.explodeForce * 0.52 * impactBoost * (0.68 + rng() * 0.78);
     const linVel: Vec3 = [
-      hitVel[0] * 0.52 + radXZ[0] * (1.25 * f) + (rng() - 0.5) * 0.95,
-      Math.max(0.38, 0.45 + rng() * 1.35 + impactSpeed * 0.22),
-      hitVel[2] * 0.52 + radXZ[2] * (1.25 * f) + (rng() - 0.5) * 0.95,
+      hitVel[0] * 0.48 + radXZ[0] * (1.15 * f) + (rng() - 0.5) * 0.56,
+      Math.max(0.24, 0.26 + rng() * 0.68 + impactSpeed * 0.12),
+      hitVel[2] * 0.48 + radXZ[2] * (1.15 * f) + (rng() - 0.5) * 0.56,
     ];
     const angVelShard: Vec3 = [
-      (rng() - 0.5) * 18,
-      (rng() - 0.5) * 18,
-      (rng() - 0.5) * 18,
+      (rng() - 0.5) * 12.5,
+      (rng() - 0.5) * 12.5,
+      (rng() - 0.5) * 12.5,
     ];
 
     let children: ChildShardBakeInput[] | undefined;
@@ -837,7 +1059,7 @@ function startFallingChunkBake(ch: FallingChunk, dtHit: number) {
       linVel,
       angVel: angVelShard,
       volume: s.volume,
-      breakSpeed: 1.05 + rng() * 0.85,
+      breakSpeed: 1.75 + rng() * 0.95,
       children,
     });
   }
@@ -865,29 +1087,33 @@ function detonateFallingChunk(ch: FallingChunk) {
   const bake = ch.bakedResp;
   ch.bakedResp = null;
 
-  gpu.clearCutSlot(ch.slotIdx);
+  if (ch.slotIdx >= 0) {
+    gpu.clearCutSlot(ch.slotIdx);
+  }
   const idx = fallingChunks.indexOf(ch);
   if (idx >= 0) fallingChunks.splice(idx, 1);
 
-  const rate = slowMode || shiftSlow ? 0.28 : 1.0;
-  sound.shatter(rate);
+  if (ch.slotIdx >= 0) {
+    const rate = slowMode || shiftSlow ? 0.28 : 1.0;
+    sound.shatter(rate);
 
-  // Upward shower of glittering clear crystal splinters on floor impact!
-  const worldOrigins = ch.parentShards.map((s) => {
-    const rw = qRotate(ch.quat, s.centroid);
-    return [ch.worldPos[0] + rw[0], Math.max(0.02, ch.worldPos[1] + rw[1]), ch.worldPos[2] + rw[2]] as Vec3;
-  });
-  const localOrigins = ch.parentShards.map((s) => s.centroid);
-  burstSplinters(
-    worldOrigins,
-    localOrigins,
-    [ch.worldVel[0] * 0.45, 1.45, ch.worldVel[2] * 0.45],
-    440,
-    cfg.explodeForce * 1.35,
-    0.0017,
-    0.0072,
-    ch.gemId,
-  );
+    // Upward shower of glittering clear crystal splinters on floor impact!
+    const worldOrigins = ch.parentShards.map((s) => {
+      const rw = qRotate(ch.quat, s.centroid);
+      return [ch.worldPos[0] + rw[0], Math.max(0.02, ch.worldPos[1] + rw[1]), ch.worldPos[2] + rw[2]] as Vec3;
+    });
+    const localOrigins = ch.parentShards.map((s) => s.centroid);
+    burstSplinters(
+      worldOrigins,
+      localOrigins,
+      [ch.worldVel[0] * 0.38, 0.92, ch.worldVel[2] * 0.38],
+      260,
+      cfg.explodeForce * 0.78,
+      0.0017,
+      0.0068,
+      ch.gemId,
+    );
+  }
 
   const totalSlots = ch.flatShards.length;
   if (nextShardId + totalSlots > MAX_SHARDS) {
@@ -926,14 +1152,25 @@ function detonateFallingChunk(ch: FallingChunk) {
     contacts: bake.contacts,
     nextContact: 0,
     elapsed: 0,
+    scrollZ: 0,
     settled: false,
+    silent: ch.silent,
     gemId: ch.gemId,
     shards: ch.flatShards,
   });
 }
 
-/** Immediately shatter a polyhedron mid-air (used for the dramatic all-explodes loss climax!). */
-function explodePolyMidAir(poly: Poly, pos: Vec3, quat: Quat, vel: Vec3, gemId: number, shardBudget: number) {
+/** Immediately shatter a polyhedron mid-air (used for dramatic loss climax, combo bursts & silent Replay attract mode!). */
+function explodePolyMidAir(
+  poly: Poly,
+  pos: Vec3,
+  quat: Quat,
+  vel: Vec3,
+  gemId: number,
+  shardBudget: number,
+  forceScale = 1.0,
+  silent = false,
+) {
   const { shards } = shatterPoly(poly, [0, 1, 0], 0, shardBudget, rng);
   if (shards.length === 0) return;
 
@@ -955,7 +1192,7 @@ function explodePolyMidAir(poly: Poly, pos: Vec3, quat: Quat, vel: Vec3, gemId: 
     const initPos: Vec3 = [pos[0] + relWorld[0], Math.max(0.04, pos[1] + relWorld[1]), pos[2] + relWorld[2]];
     const fromC = sub3(initPos, chunkCW);
     const rad = len3(fromC) > 1e-4 ? norm3(fromC) : norm3([rng() - 0.5, rng() - 0.3, rng() - 0.5]);
-    const f = cfg.explodeForce * (1.05 + rng() * 0.95);
+    const f = cfg.explodeForce * forceScale * (1.05 + rng() * 0.95);
     const linVel: Vec3 = [
       vel[0] * 0.3 + rad[0] * f * 1.45 + (rng() - 0.5) * 1.2,
       vel[1] * 0.25 + rad[1] * f * 1.15 + 0.95 + rng() * 1.1,
@@ -989,11 +1226,11 @@ function explodePolyMidAir(poly: Poly, pos: Vec3, quat: Quat, vel: Vec3, gemId: 
       return [pos[0] + rw[0], Math.max(0.03, pos[1] + rw[1]), pos[2] + rw[2]] as Vec3;
     }),
     shards.map((s) => s.centroid),
-    [0, 1.2, 0],
-    260,
-    cfg.explodeForce * 1.65,
+    [0, silent ? 0.52 : 1.2, 0],
+    silent ? 44 : 260,
+    cfg.explodeForce * (silent ? 0.45 : 1.65),
     0.0018,
-    0.0082,
+    silent ? 0.0060 : 0.0082,
     gemId,
   );
 
@@ -1014,6 +1251,7 @@ function explodePolyMidAir(poly: Poly, pos: Vec3, quat: Quat, vel: Vec3, gemId: 
     bakedResp: null,
     hitGroundWaiting: true,
     detonated: false,
+    silent,
   };
   const bakeId = nextBakeId++;
   fakeChunk.bakeId = bakeId;
@@ -1088,8 +1326,11 @@ function explodeEverythingNow() {
   shakeTimer = Math.max(shakeTimer, 0.36);
   shakeAmp = Math.max(shakeAmp, 0.055);
   gamePhase = 'lost';
-  replayPending = true;
-  replayDelayTimer = 2.0;
+  replayPending = false;
+  replayDelayTimer = 0;
+  attractGems.length = 0;
+  attractSpawnTimer = 0.85; // brief beat after explosion, then meditative slowly falling gems begin!
+  showReplayBanner();
 
   updateActionUI();
 }
@@ -1107,6 +1348,8 @@ function startLevel(lv: number, resetScore = false) {
   bakingCutVisual = null;
   inFlightBakes.clear();
   flyingCrystals.length = 0;
+  backdropGems.length = 0;
+  attractGems.length = 0;
   fallingChunks.length = 0;
   fallingBakes.clear();
   callouts.length = 0;
@@ -1135,13 +1378,13 @@ function startLevel(lv: number, resetScore = false) {
 
 /** Spawn one deterministic ThrowSpec from the active LevelPlan, scaled cleanly to the viewport width & depth! */
 function spawnScheduledThrow(th: ThrowSpec) {
-  const { eyeZ, stageHalfW, spawnY, portraitFactor } = getTossStageLayout();
+  const { eyeZ, liftY, stageHalfW, spawnY, portraitFactor } = getTossStageLayout();
   const trng = mulberry32(th.seed);
   const poly = makeCrystalPoly(CRYSTAL_SIZE, th.variant);
   const slotIdx = allocCutSlot();
 
-  // Assign a clean depth plane (front-most free slot, stepping slightly behind any airborne gem so crossing trajectories never clip!)
-  const zCandidates = [0.06, -0.28, -0.62, 0.34, -0.94];
+  // Assign a tight foreground depth lane so every gem and its falling halves break consistently on the lower floor underneath
+  const zCandidates = [0.16, 0.04, 0.28, -0.08, 0.38];
   let z0 = zCandidates[0];
   let bestClearance = -1;
   for (const zc of zCandidates) {
@@ -1150,7 +1393,7 @@ function spawnScheduledThrow(th: ThrowSpec) {
       const dz = Math.abs(zc - other.pos[2]);
       if (dz < minDz) minDz = dz;
     }
-    if (minDz >= 0.34) {
+    if (minDz >= 0.22) {
       z0 = zc;
       break;
     }
@@ -1166,7 +1409,7 @@ function spawnScheduledThrow(th: ThrowSpec) {
   const xApex = th.targetLane * stageHalfW * zScale;
   const y0 = spawnY;
   const apexNorm = Math.max(0, Math.min(1, (th.apex - 0.74) / 0.42));
-  const apex = th.apex + portraitFactor * (th.poisoned ? 0.04 + apexNorm * 0.14 : 0.04 + apexNorm * 0.36);
+  const apex = th.apex + liftY + portraitFactor * (th.poisoned ? 0.04 + apexNorm * 0.14 : 0.04 + apexNorm * 0.36);
   const effGravity = th.gravity * (1 + portraitFactor * 0.28);
   const vy0 = Math.sqrt(2 * effGravity * (apex - y0));
   const tApex = vy0 / effGravity;
@@ -1190,7 +1433,7 @@ function spawnScheduledThrow(th: ThrowSpec) {
   gpu.setCutSlot(
     slotIdx,
     {
-      verts: triangulatePoly(poly),
+      verts: th.poisoned ? triangulateBombPoly(poly, th.seed) : triangulatePoly(poly),
       planes: polyPlanes(poly),
       crackVerts: new Float32Array(0),
       surfaceCrackVerts: new Float32Array(0),
@@ -1241,9 +1484,13 @@ function spawnFallingCrystalChunk(
   sparkCount: number,
   gemId = 0,
 ) {
-  const initVel: Vec3 = isBallistic
+  const rawVel: Vec3 = isBallistic
     ? add3(liveVel, add3(scale3(pushWorld, 0.72), [0, 0.22, 0]))
     : add3(scale3(pushWorld, 0.85), [0, 0.36, 0]);
+  // Keep ballistic cut halves falling straight down onto the foreground floor instead of flinging far back in -Z from perspective-tilted slice normals!
+  const initVel: Vec3 = isBallistic
+    ? [rawVel[0], rawVel[1], Math.max(-0.10, Math.min(0.10, liveVel[2] * 0.20 + pushWorld[2] * 0.12))]
+    : rawVel;
   const kickAxis = cross3(pushWorld, [0, 1, 0]);
   const kLen = len3(kickAxis);
   const initAngVel: Vec3 = add3(
@@ -1413,9 +1660,9 @@ function sliceFlyingCrystal(fc: FlyingCrystal, x0: number, y0: number, x1: numbe
       fc.quat,
       fc.gemId,
     );
-    const { stageHalfW } = getTossStageLayout();
+    const { stageHalfW, liftY } = getTossStageLayout();
     const mainPushW = norm3(qRotate(liveQuat, cutCandidates[0].localPush));
-    const targetJuggleY = Math.min(1.12, Math.max(fc.pos[1] + 0.18, 0.86));
+    const targetJuggleY = Math.min(1.12 + liftY, Math.max(fc.pos[1] + 0.18, 0.86 + liftY));
     const juggleVy = Math.sqrt(2 * fc.gravity * Math.max(0.10, targetJuggleY - fc.pos[1]));
     const pullX = Math.abs(fc.pos[0]) > stageHalfW * 0.7 ? -fc.pos[0] * 0.65 : -fc.pos[0] * 0.28;
     fc.vel = [
@@ -1904,6 +2151,7 @@ worker.onmessage = (ev: MessageEvent<BakeResponse>) => {
     contacts: bake.contacts,
     nextContact: 0,
     elapsed: 0,
+    scrollZ: 0,
     settled: false,
     gemId: 0,
     shards: p.flatShards,
@@ -2526,8 +2774,8 @@ async function boot() {
   window.addEventListener('resize', handleResize);
 
   const initLayout = getTossStageLayout();
-  camEye = tossMode ? [0, TOSS_CAM_EYE[1], initLayout.eyeZ] : ([...PEDESTAL_CAM_EYE] as Vec3);
-  camTarget = [...(tossMode ? TOSS_CAM_TARGET : PEDESTAL_CAM_TARGET)] as Vec3;
+  camEye = tossMode ? [0, initLayout.eyeY, initLayout.eyeZ] : ([...PEDESTAL_CAM_EYE] as Vec3);
+  camTarget = tossMode ? [0, initLayout.targetY, 0] : ([...PEDESTAL_CAM_TARGET] as Vec3);
   updateCamera();
   if (carveId !== 'free') {
     selectCarveMode(carveId);
@@ -2536,9 +2784,9 @@ async function boot() {
       startLevel(currentLevel, false);
     } else {
       gamePhase = 'ready';
-      gpu.clearAllCutSlots();
       blockParts = [];
       gpu.setMainBlocks([]);
+      setupReadyBackdrop();
       showPlayBanner();
     }
     updateLivePreview();
@@ -2624,15 +2872,15 @@ async function boot() {
     slashFlash *= Math.exp(-activeDt * 11.0);
     failFlash *= Math.exp(-activeDt * 3.8);
     if (hitStopTimer > 0) hitStopTimer = Math.max(0, hitStopTimer - activeDt);
-    if (!paused && strokeMultiCount > 0 && ts - strokeLastHitAt > 180) {
+    if (!paused && strokeMultiCount > 0 && ts - strokeLastHitAt > 135) {
       flushStrokeCombo(ts);
     }
     const flightDt = simDt * (hitStopTimer > 0 ? 0.18 : 1.0);
 
     // Smooth camera transition + responsive portrait mobile zoom + dramatic fail screen shake!
-    const { eyeZ } = getTossStageLayout();
-    const goalEye: Vec3 = tossMode && !carvePlan ? [0, TOSS_CAM_EYE[1], eyeZ] : PEDESTAL_CAM_EYE;
-    const goalTarget: Vec3 = tossMode && !carvePlan ? TOSS_CAM_TARGET : PEDESTAL_CAM_TARGET;
+    const { eyeZ, eyeY, targetY } = getTossStageLayout();
+    const goalEye: Vec3 = tossMode && !carvePlan ? [0, eyeY, eyeZ] : PEDESTAL_CAM_EYE;
+    const goalTarget: Vec3 = tossMode && !carvePlan ? [0, targetY, 0] : PEDESTAL_CAM_TARGET;
     const camLerp = 1 - Math.exp(-rawDt * 6.5);
     camEye = [
       camEye[0] + (goalEye[0] - camEye[0]) * camLerp,
@@ -2666,6 +2914,19 @@ async function boot() {
     if (tossMode && !carvePlan) {
       if (paused) {
         // Simulation frozen cleanly while paused
+      } else if (gamePhase === 'ready' && backdropGems.length > 0) {
+        // Gently levitate & tumble the crystal showcase backdrop behind the frosted PLAY card!
+        const { eyeZ, liftY, stageHalfW, portraitFactor } = getTossStageLayout();
+        for (const bg of backdropGems) {
+          bg.quat = stepQuat(bg.quat, bg.angVel, rawDt);
+          const zScale = Math.max(0.75, (eyeZ - bg.z) / eyeZ);
+          const pos: Vec3 = [
+            bg.laneX * stageHalfW * zScale + Math.cos(time * bg.bobSpeed * 0.65 + bg.phase) * 0.028,
+            bg.baseY + liftY + portraitFactor * bg.portraitYOffset + Math.sin(time * bg.bobSpeed + bg.phase) * bg.bobAmp,
+            bg.z,
+          ];
+          gpu.updateCutSlotPose(bg.slotIdx, pos, bg.quat);
+        }
       } else if (gamePhase === 'failing') {
         // ALL PAUSES while SCREEN SHAKES -> then ALL EXPLODES!
         failFreezeTimer -= activeDt;
@@ -2700,18 +2961,89 @@ async function boot() {
         }
 
         // Advance all live flying crystals along their below-up ballistic arcs
+        const heldBladeActive = swiping && !paused && ts - lastPointerMoveAt >= 55;
         for (let i = flyingCrystals.length - 1; i >= 0; i--) {
           const fc = flyingCrystals[i];
+          const prevPos: Vec3 = [fc.pos[0], fc.pos[1], fc.pos[2]];
           fc.vel[1] -= fc.gravity * flightDt;
           fc.pos = add3(fc.pos, scale3(fc.vel, flightDt));
           fc.vel[2] *= Math.exp(-flightDt * 2.8);
           fc.quat = stepQuat(fc.quat, fc.angVel, flightDt);
 
+          // Held-blade self-slicing: if the pointer is held still and a gem falls/rises across it, the gem slices itself!
+          if (heldBladeActive && gamePhase === 'playing' && ts - fc.lastSlicedAt >= 170) {
+            const hitHeld = rayHitsPolyAt(swipeCurX, swipeCurY, fc.poly, fc.pos, fc.quat);
+            if (hitHeld) {
+              if (fc.poisoned) {
+                sliceFlyingCrystal(fc, swipeCurX, swipeCurY - 40, swipeCurX, swipeCurY + 40, ts);
+                break;
+              }
+              const spPrev = projectToScreen(prevPos);
+              const spNow = projectToScreen(fc.pos);
+              const gemStep = Math.hypot(spNow.x - spPrev.x, spNow.y - spPrev.y);
+              if (!fc.swipeEntered) {
+                fc.swipeEntered = true;
+                fc.enterX = swipeCurX;
+                fc.enterY = swipeCurY;
+                fc.swipeDist = 0;
+              }
+              fc.swipeDist += Math.max(2.5, gemStep);
+              if (fc.swipeDist >= 22) {
+                const spAhead = projectToScreen(add3(fc.pos, scale3(fc.vel, 0.08)));
+                let vx = spAhead.x - spNow.x;
+                let vy = spAhead.y - spNow.y;
+                const vl = Math.hypot(vx, vy);
+                if (vl > 1) {
+                  vx /= vl;
+                  vy /= vl;
+                } else {
+                  vx = 0;
+                  vy = 1;
+                }
+                sliceFlyingCrystal(
+                  fc,
+                  swipeCurX - vx * 55,
+                  swipeCurY - vy * 55,
+                  swipeCurX + vx * 55,
+                  swipeCurY + vy * 55,
+                  ts,
+                );
+                fc.swipeEntered = false;
+                fc.swipeDist = 0;
+                if (!flyingCrystals.includes(fc)) continue;
+              }
+            } else if (fc.swipeEntered && fc.swipeDist >= 10) {
+              const spNow = projectToScreen(fc.pos);
+              const spAhead = projectToScreen(add3(fc.pos, scale3(fc.vel, 0.08)));
+              let vx = spAhead.x - spNow.x;
+              let vy = spAhead.y - spNow.y;
+              const vl = Math.hypot(vx, vy);
+              if (vl > 1) {
+                vx /= vl;
+                vy /= vl;
+              } else {
+                vx = 0;
+                vy = 1;
+              }
+              sliceFlyingCrystal(
+                fc,
+                swipeCurX - vx * 55,
+                swipeCurY - vy * 55,
+                swipeCurX + vx * 55,
+                swipeCurY + vy * 55,
+                ts,
+              );
+              fc.swipeEntered = false;
+              fc.swipeDist = 0;
+              if (!flyingCrystals.includes(fc)) continue;
+            }
+          }
+
           // Check exiting off the bottom edge OR cleanly past a side edge on descent!
           const zDist = Math.max(1.0, camEye[2] - fc.pos[2]);
           const visHalfH = zDist * Math.tan(CAM_FOV * 0.5);
           const visHalfW = visHalfH * (window.innerWidth / Math.max(1, window.innerHeight));
-          const despawnY = Math.min(-0.90, camTarget[1] - visHalfH - 0.28);
+          const despawnY = Math.min(-0.48, camTarget[1] - visHalfH - 0.28);
           const offSideX = fc.pos[0] * fc.vel[0] > 0 && Math.abs(fc.pos[0]) > visHalfW + 0.28;
           if (fc.vel[1] < 0 && (fc.pos[1] < despawnY || offSideX)) {
             gpu.clearCutSlot(fc.slotIdx);
@@ -2725,7 +3057,7 @@ async function boot() {
           }
         }
 
-        // Smooth depth-layer separation: if two gems share an XY trajectory, slip the newer one cleanly behind (-Z) so they never clip!
+        // Smooth depth-layer separation: if two gems share an XY trajectory, slip them slightly apart in Z while staying in the tight foreground band!
         if (gamePhase === 'playing' && flyingCrystals.length > 1) {
           const sepBlend = 1 - Math.exp(-flightDt * 16);
           for (let i = 0; i < flyingCrystals.length; i++) {
@@ -2733,19 +3065,19 @@ async function boot() {
               const a = flyingCrystals[i];
               const b = flyingCrystals[j];
               const dXY = Math.hypot(a.pos[0] - b.pos[0], a.pos[1] - b.pos[1]);
-              if (dXY < 0.48) {
-                const prox = Math.min(1, (0.48 - dXY) / 0.16);
-                const needZ = 0.42 * prox;
+              if (dXY < 0.44) {
+                const prox = Math.min(1, (0.44 - dXY) / 0.16);
+                const needZ = 0.32 * prox;
                 const dz = a.pos[2] - b.pos[2];
                 if (Math.abs(dz) < needZ) {
-                  // Newer (higher id) or already-deeper gem slips slightly behind (-Z)
+                  // Newer (higher id) or already-deeper gem slips slightly behind (-Z), clamped tightly so nothing drifts far back
                   const bBehind = Math.abs(dz) > 0.02 ? b.pos[2] < a.pos[2] : b.id > a.id;
                   const back = bBehind ? b : a;
                   const front = bBehind ? a : b;
                   const deficit = needZ - (front.pos[2] - back.pos[2]);
                   if (deficit > 0) {
-                    back.pos[2] -= deficit * 0.78 * sepBlend;
-                    front.pos[2] += deficit * 0.22 * sepBlend;
+                    back.pos[2] = Math.max(-0.18, back.pos[2] - deficit * 0.62 * sepBlend);
+                    front.pos[2] = Math.min(0.42, front.pos[2] + deficit * 0.38 * sepBlend);
                   }
                 }
               }
@@ -2757,26 +3089,68 @@ async function boot() {
           gpu.updateCutSlotPose(fc.slotIdx, fc.pos, fc.quat);
         }
 
-        // Level Clear check: all throws launched and all crystals resolved cleanly!
-        if (gamePhase === 'playing' && nextThrowIdx >= levelPlan.throws.length && flyingCrystals.length === 0) {
+        // Level Clear check: all throws launched, all flying crystals resolved, and all falling halves broken onto the floor!
+        if (
+          gamePhase === 'playing' &&
+          nextThrowIdx >= levelPlan.throws.length &&
+          flyingCrystals.length === 0 &&
+          fallingChunks.length === 0 &&
+          fallingBakes.size === 0
+        ) {
           gamePhase = 'cleared';
-          clearWaitTimer = 0.65;
-          sound.levelClear();
+          clearStage = 'pause';
+          clearStageElapsed = 0;
+          clearWaitTimer = 0.28; // brief beat -> increment LEVEL + chime -> launch next level!
           updateActionUI();
         }
       } else if (gamePhase === 'cleared') {
-        clearWaitTimer -= activeDt;
-        if (clearWaitTimer <= 0) {
-          startLevel(currentLevel < MAX_LEVEL ? currentLevel + 1 : 1, currentLevel >= MAX_LEVEL);
+        clearStageElapsed += activeDt;
+        if (clearStage === 'pause') {
+          if (clearStageElapsed >= clearWaitTimer) {
+            clearStage = 'levelup';
+            clearStageElapsed = 0;
+            currentLevel = currentLevel < MAX_LEVEL ? currentLevel + 1 : 1;
+            updateHudUI();
+            hudLevelEl.classList.remove('level-bump');
+            void hudLevelEl.offsetWidth;
+            hudLevelEl.classList.add('level-bump');
+            sound.levelClear();
+          }
+        } else if (clearStage === 'levelup') {
+          if (clearStageElapsed >= 0.42) {
+            startLevel(currentLevel, currentLevel === 1);
+          }
         }
-      } else if (gamePhase === 'lost' && replayPending) {
-        // Wait until all exploding shards have finished settling on the floor, then 2 seconds later show REPLAY!
-        const allSettled = fallingBakes.size === 0 && scatters.every((s) => s.settled);
-        if (allSettled) {
-          replayDelayTimer -= activeDt;
-          if (replayDelayTimer <= 0) {
-            replayPending = false;
-            showReplayBanner();
+      } else if (gamePhase === 'lost') {
+        // Meditative Replay attract mode: cool-mineral crystals drift slowly down from above behind the frosted card
+        // and gently break onto the endlessly gliding studio floor!
+        attractSpawnTimer -= activeDt;
+        if (attractSpawnTimer <= 0) {
+          spawnAttractGem();
+          attractSpawnTimer = IS_MOBILE ? 1.15 : 0.82;
+        }
+        for (let ai = attractGems.length - 1; ai >= 0; ai--) {
+          const ag = attractGems[ai];
+          ag.pos[1] += ag.vy * activeDt;
+          ag.pos[0] = ag.baseX + Math.sin(time * ag.swaySpeed + ag.phase) * ag.swayAmp;
+          ag.quat = stepQuat(ag.quat, ag.angVel, activeDt);
+          const minY = getPolyMinWorldY(ag.poly, ag.pos, ag.quat);
+          if (minY <= 0.015) {
+            ag.pos[1] += 0.015 - minY;
+            gpu.clearCutSlot(ag.slotIdx);
+            attractGems.splice(ai, 1);
+            explodePolyMidAir(
+              ag.poly,
+              ag.pos,
+              ag.quat,
+              [0, -0.35, 0],
+              ag.gemId,
+              IS_MOBILE ? 10 : 16,
+              0.24,
+              true,
+            );
+          } else {
+            gpu.updateCutSlotPose(ag.slotIdx, ag.pos, ag.quat);
           }
         }
       }
@@ -2831,6 +3205,11 @@ async function boot() {
       if (!ch.hitGroundWaiting) {
         ch.worldVel[1] -= CHUNK_GRAVITY * simDt;
         ch.worldPos = add3(ch.worldPos, scale3(ch.worldVel, simDt));
+        // Before the floor-impact bake locks in, gently guide any deeper-lane chunk toward the consistent foreground landing band (z ~ +0.16)
+        if (!ch.bakeStarted && tossMode && !carvePlan) {
+          const targetZ = Math.max(0.08, Math.min(0.28, ch.worldPos[2]));
+          ch.worldPos[2] += (targetZ - ch.worldPos[2]) * Math.min(1, simDt * 3.0);
+        }
         ch.quat = stepQuat(ch.quat, ch.angVel, simDt);
         const minY = getPolyMinWorldY(ch.cutPoly, ch.worldPos, ch.quat);
 
@@ -2897,6 +3276,24 @@ async function boot() {
       }
     }
 
+    // Advance continuous gliding studio floor (shards recede smoothly into LOD Stage 1 -> horizon dissolve -> VRAM cleanup!)
+    const floorScrolling = tossMode && !carvePlan && cfg.floorScrollDir !== 0;
+    const levelClearBoost = gamePhase === 'cleared' ? 1.35 : 1.0;
+    const floorScrollVelZ = floorScrolling ? cfg.floorScrollDir * cfg.floorScrollSpeed * levelClearBoost : 0;
+    const floorDz = floorScrollVelZ * simDt;
+    if (Math.abs(floorDz) > 1e-7) {
+      const allEmpty = gpu.scrollFloorShards(nextShardId, floorDz, -4.6, camEye[2] + 0.30);
+      if (allEmpty && scatters.length === 0 && fallingBakes.size === 0 && inFlightBakes.size === 0) {
+        nextShardId = 0;
+      }
+      for (let oi = floorObstacles.length - 1; oi >= 0; oi--) {
+        floorObstacles[oi].pos[2] += floorDz;
+        if (floorObstacles[oi].pos[2] < -3.2 || floorObstacles[oi].pos[2] > camEye[2] + 0.25) {
+          floorObstacles.splice(oi, 1);
+        }
+      }
+    }
+
     // Advance Stage 2 (Rapier baked scatter playback + secondary floor breaks + rate-limited audio clinks!)
     let posesDirty = false;
     let frameClinks = 0;
@@ -2905,6 +3302,7 @@ async function boot() {
       const sc = scatters[si];
       if (sc.settled) continue;
       sc.elapsed += simDt;
+      sc.scrollZ += floorDz;
       const exactFrame = sc.elapsed * sc.fps;
       const f0 = Math.min(sc.numFrames - 1, Math.floor(exactFrame));
       const f1 = Math.min(sc.numFrames - 1, f0 + 1);
@@ -2923,7 +3321,7 @@ async function boot() {
         if (py1 < -100) {
           gpu.setShardPose(
             sc.baseShardId + i,
-            [sc.frames[o0], py0, sc.frames[o0 + 2]],
+            [sc.frames[o0], py0, sc.frames[o0 + 2] + sc.scrollZ],
             [sc.frames[o0 + 3], sc.frames[o0 + 4], sc.frames[o0 + 5], sc.frames[o0 + 6]],
             true,
             sc.gemId,
@@ -2932,7 +3330,7 @@ async function boot() {
         }
         const px = sc.frames[o0] + (sc.frames[o1] - sc.frames[o0]) * frac;
         const py = py0 + (py1 - py0) * frac;
-        const pz = sc.frames[o0 + 2] + (sc.frames[o1 + 2] - sc.frames[o0 + 2]) * frac;
+        const pz = sc.frames[o0 + 2] + (sc.frames[o1 + 2] - sc.frames[o0 + 2]) * frac + sc.scrollZ;
         const q = qSlerp(
           [sc.frames[o0 + 3], sc.frames[o0 + 4], sc.frames[o0 + 5], sc.frames[o0 + 6]],
           [sc.frames[o1 + 3], sc.frames[o1 + 4], sc.frames[o1 + 5], sc.frames[o1 + 6]],
@@ -2947,7 +3345,7 @@ async function boot() {
         if (cFrame > exactFrame) break;
         const cx = sc.contacts[sc.nextContact + 1];
         const cy = sc.contacts[sc.nextContact + 2];
-        const cz = sc.contacts[sc.nextContact + 3];
+        const cz = sc.contacts[sc.nextContact + 3] + sc.scrollZ;
         const cSize = sc.contacts[sc.nextContact + 4];
         const cStrength = sc.contacts[sc.nextContact + 5];
         const cKind = sc.contacts[sc.nextContact + 6];
@@ -2955,7 +3353,7 @@ async function boot() {
 
         const pan = Math.max(-1, Math.min(1, cx * 0.75));
         if (cKind === 2) {
-          if (frameClinks < maxFrameClinks) {
+          if (!sc.silent && frameClinks < maxFrameClinks) {
             sound.miniShatter(pan, rate);
             frameClinks++;
           }
@@ -2963,14 +3361,14 @@ async function boot() {
             [[cx, Math.max(0.015, cy), cz]],
             [[(rng() - 0.5) * 0.35, -0.22 + rng() * 0.44, (rng() - 0.5) * 0.35]],
             [0, 1.15, 0],
-            56,
+            sc.silent ? 16 : 56,
             1.55,
             0.0020,
             0.008,
             sc.gemId,
           );
         } else {
-          if (frameClinks < maxFrameClinks) {
+          if (!sc.silent && frameClinks < maxFrameClinks) {
             sound.clink(cSize, cStrength, cKind, pan, rate);
             frameClinks++;
           }
@@ -2995,10 +3393,11 @@ async function boot() {
         for (let i = 0; i < sc.numShards; i++) {
           const o = lastBase + i * 7;
           const py = sc.frames[o + 1];
-          if (py > -0.5 && py < 0.8) {
+          const pz = sc.frames[o + 2] + sc.scrollZ;
+          if (py > -0.5 && py < 0.8 && pz > -4.4 && pz < camEye[2] + 0.2) {
             floorObstacles.push({
               hullVerts: sc.shards[i].hullVerts,
-              pos: [sc.frames[o], py, sc.frames[o + 2]],
+              pos: [sc.frames[o], py, pz],
               quat: [sc.frames[o + 3], sc.frames[o + 4], sc.frames[o + 5], sc.frames[o + 6]],
             });
           }
@@ -3039,10 +3438,11 @@ async function boot() {
       cutRadius2: displayPlane2R,
       cutOffsets,
       cutQuat,
-      hasCutPiece: !!(pending || bakingCutVisual || fallingChunks.length > 0 || flyingCrystals.length > 0),
+      hasCutPiece: !!(pending || bakingCutVisual || fallingChunks.length > 0 || flyingCrystals.length > 0 || backdropGems.length > 0 || attractGems.length > 0),
       planeAlpha: showCutLine ? 1.0 : 0.0,
       canCut,
       exposure: cfg.exposure,
+      floorScrollVelZ,
     });
 
     renderSlashTrail(ts, rawDt);

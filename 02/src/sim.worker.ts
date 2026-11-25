@@ -120,8 +120,8 @@ self.onmessage = async (ev: MessageEvent<BakeRequest>) => {
   );
   const floorCol = world.createCollider(
     RAPIER.ColliderDesc.cuboid(16 * SCALE, 1.0 * SCALE, 16 * SCALE)
-      .setFriction(0.25)
-      .setRestitution(0.38)
+      .setFriction(0.28)
+      .setRestitution(0.29)
       .setCollisionGroups(CG_FLOOR),
     floorBody,
   );
@@ -169,8 +169,8 @@ self.onmessage = async (ev: MessageEvent<BakeRequest>) => {
     if (colDesc) {
       colDesc
         .setDensity(2.5)
-        .setFriction(0.25)
-        .setRestitution(0.38)
+        .setFriction(0.28)
+        .setRestitution(0.29)
         .setCollisionGroups(isTiny ? CG_TINY : CG_SHARD)
         .setActiveEvents(RAPIER.ActiveEvents.COLLISION_EVENTS);
       const col = world.createCollider(colDesc, rb);
@@ -303,12 +303,12 @@ self.onmessage = async (ev: MessageEvent<BakeRequest>) => {
         const cy = Math.max(0.012 * SCALE, pp.y + offWorld[1] * SCALE);
         const cz = pp.z + offWorld[2] * SCALE;
 
-        // Energetic outward secondary shatter burst so fragments shoot & skitter far across the floor!
+        // Crisp secondary fracture: child fragments split with lively floor skitter without detonating skyward!
         const ol = Math.hypot(offWorld[0], offWorld[1], offWorld[2]) || 1;
-        const pop = (1.15 + rand() * 1.45) * Math.min(2.6, 0.75 + br.impactSpeed * 0.34);
-        const cvx = plv.x * 0.84 + (offWorld[0] / ol) * pop * SCALE + (rand() - 0.5) * 1.15 * SCALE;
-        const cvy = Math.max(0.75 * SCALE, Math.abs(plv.y) * 0.44 + (0.65 + rand() * 1.05) * SCALE);
-        const cvz = plv.z * 0.84 + (offWorld[2] / ol) * pop * SCALE + (rand() - 0.5) * 1.15 * SCALE;
+        const pop = (0.44 + rand() * 0.58) * Math.min(1.65, 0.64 + br.impactSpeed * 0.22);
+        const cvx = plv.x * 0.78 + (offWorld[0] / ol) * pop * SCALE + (rand() - 0.5) * 0.56 * SCALE;
+        const cvy = Math.max(0.26 * SCALE, Math.abs(plv.y) * 0.30 + (0.22 + rand() * 0.42) * SCALE);
+        const cvz = plv.z * 0.78 + (offWorld[2] / ol) * pop * SCALE + (rand() - 0.5) * 0.56 * SCALE;
 
         const cRb = world.createRigidBody(
           RAPIER.RigidBodyDesc.dynamic()
@@ -316,19 +316,19 @@ self.onmessage = async (ev: MessageEvent<BakeRequest>) => {
             .setRotation(pq)
             .setLinvel(cvx, cvy, cvz)
             .setAngvel({
-              x: pav.x * 0.7 + (rand() - 0.5) * 18,
-              y: pav.y * 0.7 + (rand() - 0.5) * 18,
-              z: pav.z * 0.7 + (rand() - 0.5) * 18,
+              x: pav.x * 0.65 + (rand() - 0.5) * 12,
+              y: pav.y * 0.65 + (rand() - 0.5) * 12,
+              z: pav.z * 0.65 + (rand() - 0.5) * 12,
             })
-            .setLinearDamping(0.12)
-            .setAngularDamping(0.24),
+            .setLinearDamping(0.14)
+            .setAngularDamping(0.26),
         );
         const cDesc = makeScaledHull(ch.hullVerts);
         if (cDesc) {
           cDesc
             .setDensity(2.5)
-            .setFriction(0.24)
-            .setRestitution(0.34)
+            .setFriction(0.27)
+            .setRestitution(0.26)
             .setCollisionGroups(CG_TINY)
             .setActiveEvents(RAPIER.ActiveEvents.COLLISION_EVENTS);
           const col = world.createCollider(cDesc, cRb);
