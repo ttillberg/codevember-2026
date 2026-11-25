@@ -211,7 +211,7 @@ const BUILTIN_PROGRAMS: DiskProgram[] = [
     asmSource: CRACKTRO_ASM_SOURCE,
     lines: {
       10: 'REM *** CODEVEMBER 2026 CRACKTRO ***',
-      20: 'REM THEO THE BEST - YET ANOTHER INTRO',
+      20: 'REM TTB - YET ANOTHER INTRO',
       30: 'REM ARROWS/TAC-2 SPIN, SPACE=PALETTE',
       40: 'SYS 32768',
     },
