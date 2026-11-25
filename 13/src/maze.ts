@@ -821,15 +821,15 @@ export function createSphereGrid(): SphereGrid {
       ],
       toggleSpecs: [],
     },
-    // LEVEL 03: FIRST SWITCH — introduces Coral Toggle A cleanly (opens gate to 02 while closing counter-wall!)
+    // LEVEL 03: FIRST SWITCH — friendly open hemispheres split by a single Red equator gate bridge (SW A is 100% required!)
     {
       level: 3,
       name: 'FIRST SWITCH',
       difficulty: 'PLAN · SWITCH',
       seed: 3041,
-      lonBias: 0.28,
-      extraOpen: 0.24,
-      splitEquator: false,
+      lonBias: 0.2,
+      extraOpen: 0.34,
+      splitEquator: true,
       openShutters: [false, false, false, false, false, false],
       cpSpecs: [
         { band: 2, col: 6 },
@@ -842,8 +842,8 @@ export function createSphereGrid(): SphereGrid {
           label: 'A',
           padBand: 2,
           padCol: 1,
-          gateToCpIndex: 1, // Must flip Coral A to open the corridor to 02!
-          closeCounterToCpIndex: 0, // Flipping A closes the direct path to 01!
+          equatorGateCol: 4, // Must flip Red A to drop the glowing equator gate bridge into South!
+          closeCounterToCpIndex: 0, // Flipping A closes a counter-wall near 01!
         },
       ],
     },
@@ -865,14 +865,14 @@ export function createSphereGrid(): SphereGrid {
       ],
       toggleSpecs: [],
     },
-    // LEVEL 05: SHUTTER LOCK — Equator walled off & exit Shutter B starts CLOSED! Must flip Coral Toggle A to iris Shutter B OPEN!
+    // LEVEL 05: SHUTTER LOCK — Equator walled off & exit Shutter B starts CLOSED! Must flip Red Toggle A to iris Shutter B OPEN!
     {
       level: 5,
       name: 'SHUTTER LOCK',
       difficulty: 'PLAN · IRIS',
       seed: 5077,
-      lonBias: 0.42,
-      extraOpen: 0.04,
+      lonBias: 0.36,
+      extraOpen: 0.08,
       splitEquator: true,
       openShutters: [true, false, false, false, false, false],
       cpSpecs: [
@@ -887,7 +887,7 @@ export function createSphereGrid(): SphereGrid {
           label: 'A',
           padBand: 2,
           padCol: 14,
-          shutterIds: [1], // Pressing Coral A irises South Shutter B OPEN so you can emerge in the South!
+          shutterIds: [1], // Pressing Red A irises South Shutter B OPEN so you can emerge in the South!
           closeCounterToCpIndex: 0,
         },
       ],
@@ -957,7 +957,7 @@ export function createSphereGrid(): SphereGrid {
         },
       ],
     },
-    // LEVEL 08: WINDING VAULT — Pure zero-loop spanning tree + dual toggles + multi-portal zig-zag!
+    // LEVEL 08: WINDING VAULT — Pure zero-loop spanning tree, split equator + dual mandatory toggles + multi-portal zig-zag!
     {
       level: 8,
       name: 'WINDING VAULT',
@@ -965,8 +965,8 @@ export function createSphereGrid(): SphereGrid {
       seed: 8123,
       lonBias: 0.52,
       extraOpen: 0.0,
-      splitEquator: false,
-      openShutters: [true, true, false, false, true, false],
+      splitEquator: true,
+      openShutters: [true, false, false, false, false, false],
       cpSpecs: [
         { band: 2, col: 1 },
         { pipeHub: 2 },
@@ -980,16 +980,15 @@ export function createSphereGrid(): SphereGrid {
           label: 'A',
           padBand: 2,
           padCol: 7,
-          gateToCpIndex: 2,
-          closeCounterToCpIndex: 0,
-          shutterIds: [3],
+          equatorGateCol: 10,
+          shutterIds: [1, 3], // Must flip Red A to open the South route & shutters!
         },
         {
           colorId: 1,
           label: 'B',
           padBand: 6,
           padCol: 6,
-          gateToCpIndex: 4,
+          gateToCpIndex: 4, // Must flip Blue B to unlock 13 END!
           shutterIds: [2],
         },
       ],
@@ -1003,7 +1002,7 @@ export function createSphereGrid(): SphereGrid {
       lonBias: 0.48,
       extraOpen: 0.0,
       splitEquator: true,
-      openShutters: [true, false, false, true, false, false],
+      openShutters: [true, false, false, false, false, false],
       cpSpecs: [
         { band: 2, col: 14 },
         { pipeHub: 1 },

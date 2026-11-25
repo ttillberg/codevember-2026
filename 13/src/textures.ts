@@ -210,12 +210,13 @@ export function createPlasticScratchTextures(): {
  * Semi-transparent matte frosted adhesive tape strip with serrated torn ends and
  * crisp minimalist Swedish technical typography ("MADE IN SWEDEN ...").
  */
-export function createTapeTexture(variant: 'primary' | 'secondary'): {
+export function createTapeTexture(variant: 'primary' | 'secondary' | 'north' | 'south'): {
   map: THREE.CanvasTexture;
   roughnessMap: THREE.CanvasTexture;
 } {
-  const w = 1536;
-  const h = 320;
+  const isPole = variant === 'north' || variant === 'south';
+  const w = isPole ? 860 : 1536;
+  const h = isPole ? 256 : 320;
   const canvas = document.createElement('canvas');
   canvas.width = w;
   canvas.height = h;
@@ -228,13 +229,14 @@ export function createTapeTexture(variant: 'primary' | 'secondary'): {
   rCtx.fillStyle = 'rgb(112, 112, 112)';
   rCtx.fillRect(0, 0, w, h);
 
-  const rng = mulberry32(variant === 'primary' ? 9913 : 5513);
+  const seedMap = { primary: 9913, secondary: 5513, north: 7113, south: 8213 };
+  const rng = mulberry32(seedMap[variant]);
 
   // Build serrated dispenser-torn path for left & right tape edges
-  const padX = 34;
-  const padY = 26;
-  const teeth = 16;
-  const toothDepth = 16;
+  const padX = isPole ? 24 : 34;
+  const padY = isPole ? 20 : 26;
+  const teeth = isPole ? 12 : 16;
+  const toothDepth = isPole ? 13 : 16;
 
   ctx.save();
   ctx.beginPath();
@@ -309,11 +311,13 @@ export function createTapeTexture(variant: 'primary' | 'secondary'): {
 
   // Thin top/bottom framing hairlines
   ctx.lineWidth = 2;
+  const lineInsetX = isPole ? 40 : 58;
+  const lineInsetY = isPole ? 30 : 40;
   ctx.beginPath();
-  ctx.moveTo(padX + 58, padY + 40);
-  ctx.lineTo(w - padX - 58, padY + 40);
-  ctx.moveTo(padX + 58, h - padY - 40);
-  ctx.lineTo(w - padX - 58, h - padY - 40);
+  ctx.moveTo(padX + lineInsetX, padY + lineInsetY);
+  ctx.lineTo(w - padX - lineInsetX, padY + lineInsetY);
+  ctx.moveTo(padX + lineInsetX, h - padY - lineInsetY);
+  ctx.lineTo(w - padX - lineInsetX, h - padY - lineInsetY);
   ctx.stroke();
 
   if (variant === 'primary') {
@@ -349,7 +353,7 @@ export function createTapeTexture(variant: 'primary' | 'secondary'): {
     ctx.fillStyle = 'rgba(32, 31, 28, 0.54)';
     ctx.font = '600 17px Inter, "Helvetica Neue", sans-serif';
     ctx.fillText('Ø120MM  QC ✓', bx + 18, h / 2 + 18);
-  } else {
+  } else if (variant === 'secondary') {
     // Secondary seal strip on opposite side
     ctx.font = '700 34px "IBM Plex Sans", "Helvetica Neue", Helvetica, Arial, sans-serif';
     ctx.fillText('INSPECTION SEAL  ·  DO NOT OPEN', padX + 110, h / 2 - 12);
@@ -357,6 +361,40 @@ export function createTapeTexture(variant: 'primary' | 'secondary'): {
     ctx.fillStyle = 'rgba(32, 31, 28, 0.54)';
     ctx.font = '600 21px Inter, "Helvetica Neue", Helvetica, Arial, sans-serif';
     ctx.fillText('LOT 26-1113   ·   PRECISION STEEL 8MM   ·   MADE IN SWEDEN', padX + 112, h / 2 + 28);
+  } else {
+    // Compact polar calibration tape (North / South) matching the MADE IN SWEDEN style
+    const isNorth = variant === 'north';
+    const rx = padX + 76;
+    const ry = h / 2;
+    ctx.lineWidth = 2.4;
+    ctx.beginPath();
+    ctx.arc(rx, ry, 14, 0, Math.PI * 2);
+    ctx.moveTo(rx - 21, ry);
+    ctx.lineTo(rx + 21, ry);
+    ctx.moveTo(rx, ry - 21);
+    ctx.lineTo(rx, ry + 21);
+    ctx.stroke();
+
+    ctx.font = '700 38px "IBM Plex Sans", "Helvetica Neue", Helvetica, Arial, sans-serif';
+    ctx.fillText(isNorth ? 'NORTH POLE' : 'SOUTH POLE', padX + 124, h / 2 - 14);
+
+    ctx.fillStyle = 'rgba(32, 31, 28, 0.56)';
+    ctx.font = '600 19px Inter, "Helvetica Neue", Helvetica, Arial, sans-serif';
+    ctx.fillText(
+      isNorth ? '+90°N  ·  00 START  ·  AXIS REF' : '−90°S  ·  13 END  ·  AXIS REF',
+      padX + 126,
+      h / 2 + 26,
+    );
+
+    const bx = w - padX - 134;
+    ctx.strokeStyle = 'rgba(32, 31, 28, 0.45)';
+    ctx.lineWidth = 2.2;
+    ctx.strokeRect(bx, h / 2 - 30, 88, 60);
+    ctx.fillStyle = 'rgba(32, 31, 28, 0.78)';
+    ctx.font = '700 32px "IBM Plex Sans", "Helvetica Neue", sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(isNorth ? 'N' : 'S', bx + 44, h / 2 + 2);
+    ctx.textAlign = 'left';
   }
 
   ctx.restore();

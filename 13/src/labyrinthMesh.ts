@@ -176,8 +176,8 @@ function buildSolidCellShell(cell: Cell): THREE.BufferGeometry {
   const indices: number[] = [];
   const v = new THREE.Vector3();
 
-  const phi0 = isNorthPole ? 0.002 : cell.phiMin;
-  const phi1 = isSouthPole ? Math.PI - 0.002 : cell.phiMax;
+  const phi0 = isNorthPole ? 0.072 : cell.phiMin;
+  const phi1 = isSouthPole ? Math.PI - 0.072 : cell.phiMax;
   const t0 = cell.thetaMin;
   const t1 = cell.thetaMax;
 
@@ -1149,6 +1149,7 @@ function buildCurvedTapePatch(
   angularWidth: number,
   angularHeight: number,
   tiltRad: number,
+  baseLatRad = 0,
 ): THREE.BufferGeometry {
   const segX = 40;
   const segY = 10;
@@ -1163,13 +1164,14 @@ function buildCurvedTapePatch(
 
   for (let iy = 0; iy <= segY; iy++) {
     const vCoord = iy / segY;
-    const lat = (vCoord - 0.5) * angularHeight;
+    const lat = baseLatRad + (vCoord - 0.5) * angularHeight;
     const cosLat = Math.cos(lat);
     const sinLat = Math.sin(lat);
 
     for (let ix = 0; ix <= segX; ix++) {
       const uCoord = ix / segX;
-      const lon = (uCoord - 0.5) * angularWidth;
+      // Scale longitude inversely by cos(baseLatRad) so polar tapes preserve exact true aspect ratio!
+      const lon = ((uCoord - 0.5) * angularWidth) / Math.max(0.35, Math.cos(baseLatRad));
       v.set(cosLat * Math.sin(lon), sinLat, cosLat * Math.cos(lon));
       v.applyQuaternion(qTilt);
       v.applyQuaternion(qSpin);
@@ -1691,13 +1693,53 @@ export function buildLabyrinthRig(grid: SphereGrid): LabyrinthRig {
   baseAoExcluded.push(startDecalMesh);
   disposables.push(startDecalTex, startDecalGeo, startDecalMat);
 
-  const startRingGeo = new THREE.TorusGeometry(0.038, 0.005, 10, 28);
-  startRingGeo.rotateX(Math.PI / 2);
-  const startRing = new THREE.Mesh(startRingGeo, steelMat);
-  startRing.position.copy(startDir).multiplyScalar(R_FLOOR + 0.003);
-  startRing.quaternion.setFromUnitVectors(upAxis, startDir);
-  root.add(startRing);
-  disposables.push(startRingGeo);
+  // Precision machined polar ball wells at BOTH North Pole (00 START launch) and South Pole (13 END drop)!
+  const poleHoleR = Math.sin(0.072) * R_FLOOR; // ~0.0626 world radius (cradles 0.056 steel ball cleanly)
+  const poleRimGeo = new THREE.TorusGeometry(poleHoleR * 1.03, 0.0062, 12, 36);
+  poleRimGeo.rotateX(Math.PI / 2);
+
+  const poleShaftH = 0.155;
+  const poleShaftGeo = new THREE.CylinderGeometry(poleHoleR * 0.99, poleHoleR * 0.92, poleShaftH, 28, 1, true);
+  // Flip shaft normals inward so looking down into the pole hole shows a clean machined metallic bore
+  const psIdx = poleShaftGeo.index!;
+  for (let i = 0; i < psIdx.count; i += 3) {
+    const tmp = psIdx.getX(i + 1);
+    psIdx.setX(i + 1, psIdx.getX(i + 2));
+    psIdx.setX(i + 2, tmp);
+  }
+  poleShaftGeo.computeVertexNormals();
+
+  const poleFloorGeo = new THREE.CircleGeometry(poleHoleR * 0.93, 28);
+  poleFloorGeo.rotateX(-Math.PI / 2);
+  const poleWellMat = new THREE.MeshStandardMaterial({
+    color: 0x3b3834,
+    metalness: 0.45,
+    roughness: 0.62,
+  });
+
+  const endDir = grid.cells[grid.cells.length - 1].centerDir;
+  for (const pDir of [startDir, endDir]) {
+    const qPole = new THREE.Quaternion().setFromUnitVectors(upAxis, pDir);
+    const poleGroup = new THREE.Group();
+    poleGroup.quaternion.copy(qPole);
+
+    const rim = new THREE.Mesh(poleRimGeo, steelMat);
+    rim.position.y = R_FLOOR + 0.0022;
+    poleGroup.add(rim);
+
+    const shaft = new THREE.Mesh(poleShaftGeo, steelMat);
+    shaft.position.y = R_FLOOR - poleShaftH * 0.5;
+    poleGroup.add(shaft);
+
+    const wellFloor = new THREE.Mesh(poleFloorGeo, poleWellMat);
+    wellFloor.position.y = R_FLOOR - poleShaftH + 0.002;
+    poleGroup.add(wellFloor);
+
+    root.add(poleGroup);
+  }
+  const finishLedRingGeo = new THREE.TorusGeometry(poleHoleR * 1.15, 0.0046, 12, 36);
+  finishLedRingGeo.rotateX(Math.PI / 2);
+  disposables.push(poleRimGeo, poleShaftGeo, poleFloorGeo, poleWellMat, finishLedRingGeo);
 
   // =========================================================================
   // 6. DYNAMIC PER-LEVEL PUZZLE ELEMENTS: SEQUENTIAL LEDs, TOGGLE PADS & NEON GATES
@@ -1799,7 +1841,7 @@ export function buildLabyrinthRig(grid: SphereGrid): LabyrinthRig {
 
       if (cp.layer === 'upper') {
         const labelTex = createDecalLabelTexture(cp.label, cp.isFinish ? 'END' : 'CHK');
-        const decalGeo = buildFloorDecalPatch(cp.dir, baseR + 0.0022, 0.112);
+        const decalGeo = buildFloorDecalPatch(cp.dir, baseR + 0.0022, cp.isFinish ? 0.17 : 0.112);
         const decalMat = new THREE.MeshStandardMaterial({
           map: labelTex,
           transparent: true,
@@ -1812,11 +1854,6 @@ export function buildLabyrinthRig(grid: SphereGrid): LabyrinthRig {
         levelDisposables.push(labelTex, decalGeo, decalMat);
       }
 
-      const bezel = new THREE.Mesh(bezelGeo, steelMat);
-      bezel.position.copy(cp.dir).multiplyScalar(baseR + 0.002);
-      bezel.quaternion.copy(qAlign);
-      levelGroup.add(bezel);
-
       const domeMat = new THREE.MeshStandardMaterial({
         color: 0xd0cbc2,
         emissive: new THREE.Color(0x000000),
@@ -1824,10 +1861,23 @@ export function buildLabyrinthRig(grid: SphereGrid): LabyrinthRig {
         roughness: 0.24,
         metalness: 0.05,
       });
-      const dome = new THREE.Mesh(domeGeo, domeMat);
-      dome.position.copy(cp.dir).multiplyScalar(baseR - 0.001);
-      dome.quaternion.copy(qAlign);
-      levelGroup.add(dome);
+      if (cp.isFinish) {
+        // South Pole 13 END: luminous LED ring framing the open polar drop socket!
+        const finishRing = new THREE.Mesh(finishLedRingGeo, domeMat);
+        finishRing.position.copy(cp.dir).multiplyScalar(baseR + 0.0032);
+        finishRing.quaternion.copy(qAlign);
+        levelGroup.add(finishRing);
+      } else {
+        const bezel = new THREE.Mesh(bezelGeo, steelMat);
+        bezel.position.copy(cp.dir).multiplyScalar(baseR + 0.002);
+        bezel.quaternion.copy(qAlign);
+        levelGroup.add(bezel);
+
+        const dome = new THREE.Mesh(domeGeo, domeMat);
+        dome.position.copy(cp.dir).multiplyScalar(baseR - 0.001);
+        dome.quaternion.copy(qAlign);
+        levelGroup.add(dome);
+      }
       levelDisposables.push(domeMat);
 
       const haloMat = new THREE.MeshBasicMaterial({
@@ -2155,6 +2205,45 @@ export function buildLabyrinthRig(grid: SphereGrid): LabyrinthRig {
   root.add(secondaryTapeMesh);
   baseAoExcluded.push(secondaryTapeMesh);
   disposables.push(secondaryTape.map, secondaryTape.roughnessMap, secondaryTapeGeo, secondaryTapeMat);
+
+  // Small calibration tapes near North Pole & South Pole (same frosted serrated adhesive style as MADE IN SWEDEN)
+  const northTape = createTapeTexture('north');
+  const northTapeGeo = buildCurvedTapePatch(R_SHELL + 0.0044, 0.34, 0.44, 0.135, 0.0, 1.16);
+  const northTapeMat = new THREE.MeshPhysicalMaterial({
+    map: northTape.map,
+    roughnessMap: northTape.roughnessMap,
+    roughness: 0.42,
+    metalness: 0.0,
+    clearcoat: 0.34,
+    clearcoatRoughness: 0.3,
+    transparent: true,
+    depthWrite: false,
+    side: THREE.FrontSide,
+  });
+  const northTapeMesh = new THREE.Mesh(northTapeGeo, northTapeMat);
+  northTapeMesh.renderOrder = 14;
+  root.add(northTapeMesh);
+  baseAoExcluded.push(northTapeMesh);
+  disposables.push(northTape.map, northTape.roughnessMap, northTapeGeo, northTapeMat);
+
+  const southTape = createTapeTexture('south');
+  const southTapeGeo = buildCurvedTapePatch(R_SHELL + 0.0044, 0.34, 0.44, 0.135, 0.0, -1.16);
+  const southTapeMat = new THREE.MeshPhysicalMaterial({
+    map: southTape.map,
+    roughnessMap: southTape.roughnessMap,
+    roughness: 0.42,
+    metalness: 0.0,
+    clearcoat: 0.34,
+    clearcoatRoughness: 0.3,
+    transparent: true,
+    depthWrite: false,
+    side: THREE.FrontSide,
+  });
+  const southTapeMesh = new THREE.Mesh(southTapeGeo, southTapeMat);
+  southTapeMesh.renderOrder = 14;
+  root.add(southTapeMesh);
+  baseAoExcluded.push(southTapeMesh);
+  disposables.push(southTape.map, southTape.roughnessMap, southTapeGeo, southTapeMat);
 
   syncAoExcluded();
 

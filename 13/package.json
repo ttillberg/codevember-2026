@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "verify": "node scripts/verify-levels.mjs"
   },
   "devDependencies": {
     "@types/three": "^0.187.0",
