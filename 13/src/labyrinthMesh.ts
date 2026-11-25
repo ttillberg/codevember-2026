@@ -26,10 +26,10 @@ import {
 import {
   createArrowGlyphTexture,
   createDecalLabelTexture,
-  createGateStripeTexture,
   createLedHaloTexture,
   createMatteGrainTextures,
   createMetalBallTexture,
+  createNeonTubeTexture,
   createPadlockGlyphTexture,
   createPlasticScratchTextures,
   createTapeTexture,
@@ -49,6 +49,7 @@ interface WallBladeRig {
   mesh: THREE.Mesh;
   mat: THREE.MeshStandardMaterial;
   arrowMat: THREE.MeshStandardMaterial | null;
+  gateColorId: number; // -1 none, 0 red, 1 blue
   lastExt: number;
 }
 
@@ -56,7 +57,11 @@ interface ShutterRig {
   port: ShutterPort;
   pivots: THREE.Group[];
   ringLedMat: THREE.MeshStandardMaterial;
-  linkedColorId: number; // -1 none, 0 coral, 1 cobalt
+  outerNeonMesh: THREE.Mesh;
+  outerNeonMat: THREE.MeshStandardMaterial;
+  outerHaloMesh: THREE.Mesh;
+  outerHaloMat: THREE.MeshBasicMaterial;
+  linkedColorId: number; // -1 none, 0 red, 1 blue
   lastOpen: number;
 }
 
@@ -66,6 +71,14 @@ interface ToggleVisual {
   capMat: THREE.MeshStandardMaterial;
   pipMat: THREE.MeshStandardMaterial;
   baseY: number;
+}
+
+interface GateNeonVisual {
+  colorId: 0 | 1;
+  wallId: number;
+  barMat: THREE.MeshStandardMaterial;
+  haloMat: THREE.MeshBasicMaterial;
+  floorBarMat: THREE.MeshStandardMaterial;
 }
 
 const POST_RAD_BASE = WALL_HALF_WIDTH * 1.12;
@@ -917,6 +930,163 @@ function buildSeamGridGeometry(grid: SphereGrid): THREE.BufferGeometry {
   return mergeGeometries(geos);
 }
 
+/**
+ * Builds a sleek 3D curved diffused neon LED bar seated along the spine of a gate wall (or flush in its floor seam).
+ * Domed cross-section catches visibility from both straight-on AND grazing side angles around the sphere.
+ */
+function buildNeonBarGeometry(
+  wall: WallSlot,
+  baseRadius: number,
+  halfWidth: number,
+  domeHeight: number,
+  endPadding = 0.018,
+): THREE.BufferGeometry {
+  const arcLen =
+    wall.kind === 'lat'
+      ? Math.abs(wall.thetaEnd - wall.thetaStart) * Math.sin(wall.phiStart)
+      : Math.abs(wall.phiEnd - wall.phiStart);
+  const trimArc = POST_RAD_TOP + POLE_SEAM_GAP + endPadding;
+  const trimFrac = Math.min(0.36, trimArc / Math.max(0.05, arcLen));
+  const steps = Math.max(8, Math.ceil(arcLen * 28));
+
+  // 5-point domed light-pipe diffuser profile (left base -> left shoulder -> apex -> right shoulder -> right base)
+  const profile: [number, number][] = [
+    [-halfWidth, baseRadius - 0.002],
+    [-halfWidth * 0.78, baseRadius + domeHeight * 0.72],
+    [0, baseRadius + domeHeight],
+    [halfWidth * 0.78, baseRadius + domeHeight * 0.72],
+    [halfWidth, baseRadius - 0.002],
+  ];
+  const profN = profile.length;
+
+  const positions: number[] = [];
+  const uvs: number[] = [];
+  const indices: number[] = [];
+
+  const dir = new THREE.Vector3();
+  const tangent = new THREE.Vector3();
+  const binormal = new THREE.Vector3();
+  const pt = new THREE.Vector3();
+  const totalPhiSpan = wall.phiEnd - wall.phiStart;
+  const totalThetaSpan = wall.thetaEnd - wall.thetaStart;
+
+  for (let s = 0; s <= steps; s++) {
+    const u = s / steps;
+    const t = trimFrac + u * (1 - trimFrac * 2);
+    const phi = wall.kind === 'lat' ? wall.phiStart : wall.phiStart + totalPhiSpan * t;
+    const theta = wall.kind === 'lon' ? wall.thetaStart : wall.thetaStart + totalThetaSpan * t;
+    sphToDir(phi, theta, dir);
+    if (wall.kind === 'lat') {
+      tangent.set(-Math.sin(theta), 0, Math.cos(theta)).normalize();
+    } else {
+      tangent.set(Math.cos(phi) * Math.cos(theta), -Math.sin(phi), Math.cos(phi) * Math.sin(theta)).normalize();
+    }
+    binormal.crossVectors(dir, tangent).normalize();
+
+    // Gently taper height to 0 at both ends for sleek molded LED end-caps
+    const endTaper = s === 0 || s === steps ? 0.15 : 1.0;
+
+    for (let p = 0; p < profN; p++) {
+      const [offset, rawRad] = profile[p];
+      const rad = baseRadius + (rawRad - baseRadius) * endTaper;
+      pt.copy(dir).multiplyScalar(rad).addScaledVector(binormal, offset * rad);
+      pt.normalize().multiplyScalar(rad);
+      positions.push(pt.x, pt.y, pt.z);
+      uvs.push(u, p / (profN - 1));
+    }
+  }
+
+  for (let s = 0; s < steps; s++) {
+    for (let p = 0; p < profN - 1; p++) {
+      const a = s * profN + p;
+      const b = (s + 1) * profN + p;
+      const c = (s + 1) * profN + (p + 1);
+      const d = s * profN + (p + 1);
+      indices.push(a, b, d, b, c, d);
+    }
+  }
+
+  // Cap both ends cleanly
+  const cap = (start: number, flip: boolean) => {
+    if (!flip) {
+      indices.push(start, start + 1, start + 4, start + 1, start + 3, start + 4, start + 1, start + 2, start + 3);
+    } else {
+      indices.push(start, start + 4, start + 1, start + 1, start + 4, start + 3, start + 1, start + 3, start + 2);
+    }
+  };
+  cap(0, false);
+  cap(steps * profN, true);
+
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  geo.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+  geo.setIndex(indices);
+  geo.computeVertexNormals();
+  return geo;
+}
+
+/**
+ * Soft glowing neon halo strip hugging a curved gate wall neon bar.
+ */
+function buildNeonHaloStripGeometry(wall: WallSlot, radius: number, halfWidth: number): THREE.BufferGeometry {
+  const arcLen =
+    wall.kind === 'lat'
+      ? Math.abs(wall.thetaEnd - wall.thetaStart) * Math.sin(wall.phiStart)
+      : Math.abs(wall.phiEnd - wall.phiStart);
+  const trimArc = POST_RAD_TOP + POLE_SEAM_GAP + 0.008;
+  const trimFrac = Math.min(0.35, trimArc / Math.max(0.05, arcLen));
+  const steps = Math.max(8, Math.ceil(arcLen * 24));
+
+  const positions: number[] = [];
+  const normals: number[] = [];
+  const uvs: number[] = [];
+  const indices: number[] = [];
+
+  const dir = new THREE.Vector3();
+  const tangent = new THREE.Vector3();
+  const binormal = new THREE.Vector3();
+  const pt = new THREE.Vector3();
+  const totalPhiSpan = wall.phiEnd - wall.phiStart;
+  const totalThetaSpan = wall.thetaEnd - wall.thetaStart;
+
+  for (let s = 0; s <= steps; s++) {
+    const u = s / steps;
+    const t = trimFrac + u * (1 - trimFrac * 2);
+    const phi = wall.kind === 'lat' ? wall.phiStart : wall.phiStart + totalPhiSpan * t;
+    const theta = wall.kind === 'lon' ? wall.thetaStart : wall.thetaStart + totalThetaSpan * t;
+    sphToDir(phi, theta, dir);
+    if (wall.kind === 'lat') {
+      tangent.set(-Math.sin(theta), 0, Math.cos(theta)).normalize();
+    } else {
+      tangent.set(Math.cos(phi) * Math.cos(theta), -Math.sin(phi), Math.cos(phi) * Math.sin(theta)).normalize();
+    }
+    binormal.crossVectors(dir, tangent).normalize();
+
+    for (let side = 0; side < 2; side++) {
+      const off = side === 0 ? -halfWidth : halfWidth;
+      pt.copy(dir).addScaledVector(binormal, off).normalize();
+      positions.push(pt.x * radius, pt.y * radius, pt.z * radius);
+      normals.push(pt.x, pt.y, pt.z);
+      uvs.push(u, side);
+    }
+  }
+
+  for (let s = 0; s < steps; s++) {
+    const a = s * 2;
+    const b = a + 1;
+    const c = a + 2;
+    const d = a + 3;
+    indices.push(a, c, b, b, c, d);
+  }
+
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  geo.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
+  geo.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+  geo.setIndex(indices);
+  return geo;
+}
+
 function buildWallTopGlyphPatch(
   wall: WallSlot,
   radius: number,
@@ -1252,11 +1422,54 @@ export function buildLabyrinthRig(grid: SphereGrid): LabyrinthRig {
     opacity: 0.78,
   });
 
-  const irisBezelGeo = new THREE.TorusGeometry(holeWorldR * 1.01, 0.0085, 12, 36);
+  const irisBezelGeo = new THREE.TorusGeometry(holeWorldR * 1.0, 0.0072, 12, 36);
   irisBezelGeo.rotateX(Math.PI / 2);
-  const irisLedRingGeo = new THREE.TorusGeometry(holeWorldR * 0.94, 0.0034, 8, 36);
+  const irisLedRingGeo = new THREE.TorusGeometry(holeWorldR * 0.905, 0.0034, 10, 36);
   irisLedRingGeo.rotateX(Math.PI / 2);
-  disposables.push(irisBladeGeo, irisBladeEdgesGeo, irisBladeMat, irisBladeLineMat, irisBezelGeo, irisLedRingGeo);
+  // Delicate recessed outer LED light-pipe ring + soft glow halo for toggle-linked shutters (no dark outline!)
+  const irisOuterNeonGeo = new THREE.TorusGeometry(holeWorldR * 1.115, 0.0038, 12, 42);
+  irisOuterNeonGeo.rotateX(Math.PI / 2);
+  const shutterHaloGeo = new THREE.PlaneGeometry(holeWorldR * 3.1, holeWorldR * 3.1);
+  shutterHaloGeo.rotateX(-Math.PI / 2);
+  // Hollow-center circular ring glow texture so the open shutter aperture stays crystal clear while the outer bezel softly glows!
+  const shutterRingCanvas = document.createElement('canvas');
+  shutterRingCanvas.width = 128;
+  shutterRingCanvas.height = 128;
+  const srCtx = shutterRingCanvas.getContext('2d')!;
+  const srImg = srCtx.createImageData(128, 128);
+  for (let y = 0; y < 128; y++) {
+    const dy = (y + 0.5) / 64 - 1;
+    for (let x = 0; x < 128; x++) {
+      const dx = (x + 0.5) / 64 - 1;
+      const r = Math.hypot(dx, dy); // bezel outer LED sits around r ≈ 0.72
+      // Completely clear inside the shutter bore (r < 0.58), smooth peak at LED ring (0.72), soft falloff to 1.0
+      let alpha = 0;
+      if (r >= 0.58 && r < 1.0) {
+        const innerFade = Math.min(1, (r - 0.58) / 0.14);
+        const outerFade = Math.pow(Math.max(0, 1 - Math.abs(r - 0.72) / 0.28), 1.9);
+        alpha = innerFade * outerFade;
+      }
+      const p = (y * 128 + x) * 4;
+      srImg.data[p] = srImg.data[p + 1] = srImg.data[p + 2] = 255;
+      srImg.data[p + 3] = Math.round(alpha * 255);
+    }
+  }
+  srCtx.putImageData(srImg, 0, 0);
+  const shutterRingHaloTex = new THREE.CanvasTexture(shutterRingCanvas);
+  shutterRingHaloTex.colorSpace = THREE.SRGBColorSpace;
+  const haloTex = createLedHaloTexture();
+  disposables.push(
+    irisBladeGeo,
+    irisBladeEdgesGeo,
+    irisBladeMat,
+    irisBladeLineMat,
+    irisBezelGeo,
+    irisLedRingGeo,
+    irisOuterNeonGeo,
+    shutterHaloGeo,
+    shutterRingHaloTex,
+    haloTex,
+  );
 
   const shutterRigs: ShutterRig[] = [];
 
@@ -1271,18 +1484,50 @@ export function buildLabyrinthRig(grid: SphereGrid): LabyrinthRig {
     bezel.position.y = 0.002;
     shutterGroup.add(bezel);
 
-    // Delicate recessed portal status LED ring right inside the iris rim
+    // Inner portal status LED ring seated cleanly along the inner chamfer of the iris rim
     const ringLedMat = new THREE.MeshStandardMaterial({
       color: 0xd0ffec,
       emissive: new THREE.Color(0x2ee69c),
       emissiveIntensity: 1.4,
-      roughness: 0.25,
+      roughness: 0.22,
       metalness: 0.05,
+      envMapIntensity: 0.25,
     });
     const ringLed = new THREE.Mesh(irisLedRingGeo, ringLedMat);
-    ringLed.position.y = -0.002;
+    ringLed.position.y = 0.0026;
     shutterGroup.add(ringLed);
-    disposables.push(ringLedMat);
+
+    // Sleek glowing outer LED ring + soft floor light bleed (shown only when linked to SW A / SW B)
+    const outerNeonMat = new THREE.MeshStandardMaterial({
+      color: 0xff5a54,
+      emissive: new THREE.Color(0xff0a0a),
+      emissiveIntensity: 2.3,
+      roughness: 0.16,
+      metalness: 0.0,
+      envMapIntensity: 0.35,
+    });
+    const outerNeonMesh = new THREE.Mesh(irisOuterNeonGeo, outerNeonMat);
+    outerNeonMesh.position.y = 0.0032;
+    outerNeonMesh.visible = false;
+    shutterGroup.add(outerNeonMesh);
+
+    const outerHaloMat = new THREE.MeshBasicMaterial({
+      map: shutterRingHaloTex,
+      color: 0xff1414,
+      transparent: true,
+      opacity: 0.34,
+      depthWrite: false,
+      polygonOffset: true,
+      polygonOffsetFactor: -1,
+      polygonOffsetUnits: -1,
+    });
+    const outerHaloMesh = new THREE.Mesh(shutterHaloGeo, outerHaloMat);
+    outerHaloMesh.position.y = 0.0022;
+    outerHaloMesh.visible = false;
+    shutterGroup.add(outerHaloMesh);
+    baseAoExcluded.push(outerHaloMesh);
+
+    disposables.push(ringLedMat, outerNeonMat, outerHaloMat);
 
     // 6 overlapping mechanical aperture blades mounted on radial pivot pins around the bezel rim!
     const pivots: THREE.Group[] = [];
@@ -1312,6 +1557,10 @@ export function buildLabyrinthRig(grid: SphereGrid): LabyrinthRig {
       port,
       pivots,
       ringLedMat,
+      outerNeonMesh,
+      outerNeonMat,
+      outerHaloMesh,
+      outerHaloMat,
       linkedColorId: -1,
       lastOpen: -1,
     });
@@ -1387,7 +1636,7 @@ export function buildLabyrinthRig(grid: SphereGrid): LabyrinthRig {
       disposables.push(glyphGeo, arrowMat);
     }
 
-    bladeRigs.push({ slot: wall, mesh, mat, arrowMat, lastExt: -1 });
+    bladeRigs.push({ slot: wall, mesh, mat, arrowMat, gateColorId: -1, lastExt: -1 });
   }
 
   // Steady permanent corner poles merged into a single clean mesh
@@ -1451,42 +1700,58 @@ export function buildLabyrinthRig(grid: SphereGrid): LabyrinthRig {
   disposables.push(startRingGeo);
 
   // =========================================================================
-  // 6. DYNAMIC PER-LEVEL PUZZLE ELEMENTS: SEQUENTIAL LEDs, TOGGLE PADS & GATE STRIPES
+  // 6. DYNAMIC PER-LEVEL PUZZLE ELEMENTS: SEQUENTIAL LEDs, TOGGLE PADS & NEON GATES
   // =========================================================================
-  const haloTex = createLedHaloTexture();
   const bezelGeo = new THREE.TorusGeometry(0.024, 0.0048, 10, 24);
   bezelGeo.rotateX(Math.PI / 2);
   const domeGeo = new THREE.SphereGeometry(0.0185, 20, 12, 0, Math.PI * 2, 0, Math.PI * 0.55);
   const haloGeo = new THREE.PlaneGeometry(0.21, 0.21);
 
-  // Tactile floor Toggle Switch Pad geometry (Braun Coral A & Cobalt B)
+  // Tactile floor Toggle Switch Pad geometry (Signal Red A & Electric Blue B)
   const toggleBezelGeo = new THREE.TorusGeometry(0.046, 0.006, 10, 28);
   toggleBezelGeo.rotateX(Math.PI / 2);
   const toggleCapGeo = new THREE.CylinderGeometry(0.036, 0.039, 0.014, 24);
   const togglePipGeo = new THREE.SphereGeometry(0.008, 12, 8);
-  const gateStripeTextures = [createGateStripeTexture('#e05038'), createGateStripeTexture('#3374de')];
-  const gateStripeMats = gateStripeTextures.map(
-    (tex) =>
-      new THREE.MeshStandardMaterial({
-        map: tex,
-        transparent: true,
-        roughness: 0.65,
-        depthWrite: false,
-      }),
-  );
-  const TOGGLE_HEX = ['#d94d34', '#2e6fd9'];
-  const TOGGLE_COLORS = [new THREE.Color(0xe0553c), new THREE.Color(0x3678e3)];
+  const TOGGLE_HEX = ['#d61010', '#1054f5'];
+  const TOGGLE_COLORS = [new THREE.Color(0xe60c0c), new THREE.Color(0x145eff)];
+  const NEON_TUBE_COLORS = [new THREE.Color(0xff524c), new THREE.Color(0x6eb2ff)];
+  const NEON_EMISSIVE_COLORS = [new THREE.Color(0xff0808), new THREE.Color(0x004eff)];
+  const NEON_AURA_COLORS = [new THREE.Color(0xff1414), new THREE.Color(0x1466ff)];
+  const GATE_WALL_GLOW = [new THREE.Color(0xf20808), new THREE.Color(0x084eff)];
+  const neonTubeTextures = [createNeonTubeTexture(0), createNeonTubeTexture(1)];
+
+  // Soft transverse gradient halo texture for the neon light bars (bright center, smooth fade at edges & ends)
+  const neonHaloCanvas = document.createElement('canvas');
+  neonHaloCanvas.width = 128;
+  neonHaloCanvas.height = 64;
+  const nhCtx = neonHaloCanvas.getContext('2d')!;
+  const nhImg = nhCtx.createImageData(128, 64);
+  for (let y = 0; y < 64; y++) {
+    const vy = Math.abs((y + 0.5) / 64 - 0.5) * 2; // 0 at center, 1 at edge
+    const fallY = Math.pow(Math.max(0, 1 - vy), 2.35);
+    for (let x = 0; x < 128; x++) {
+      const vx = Math.abs((x + 0.5) / 128 - 0.5) * 2;
+      const fallX = Math.min(1, (1 - vx) * 4.0);
+      const a = Math.round(fallY * fallX * 255);
+      const p = (y * 128 + x) * 4;
+      nhImg.data[p] = nhImg.data[p + 1] = nhImg.data[p + 2] = 255;
+      nhImg.data[p + 3] = a;
+    }
+  }
+  nhCtx.putImageData(nhImg, 0, 0);
+  const neonHaloTex = new THREE.CanvasTexture(neonHaloCanvas);
+  neonHaloTex.colorSpace = THREE.SRGBColorSpace;
 
   disposables.push(
-    haloTex,
+    neonHaloTex,
+    neonTubeTextures[0],
+    neonTubeTextures[1],
     bezelGeo,
     domeGeo,
     haloGeo,
     toggleBezelGeo,
     toggleCapGeo,
     togglePipGeo,
-    ...gateStripeTextures,
-    ...gateStripeMats,
   );
 
   const levelGroup = new THREE.Group();
@@ -1494,6 +1759,7 @@ export function buildLabyrinthRig(grid: SphereGrid): LabyrinthRig {
 
   let leds: LedVisual[] = [];
   let toggleVisuals: ToggleVisual[] = [];
+  let gateNeonVisuals: GateNeonVisual[] = [];
   let levelDisposables: { dispose: () => void }[] = [];
   let attachedGateOverlays: { parent: THREE.Object3D; mesh: THREE.Mesh }[] = [];
   let lastClearedIdx = -1;
@@ -1509,12 +1775,21 @@ export function buildLabyrinthRig(grid: SphereGrid): LabyrinthRig {
     dynamicAoExcluded.length = 0;
     leds = [];
     toggleVisuals = [];
+    gateNeonVisuals = [];
     lastClearedIdx = -1;
 
-    // Reset shutter color links
+    // Reset shutter & wall gate color links
     for (const s of shutterRigs) {
       s.linkedColorId = -1;
       s.lastOpen = -1; // force ring color refresh
+    }
+    for (const b of bladeRigs) {
+      if (!b.slot.locked) {
+        b.gateColorId = -1;
+        b.lastExt = -1;
+        b.mat.emissive.setHex(0x000000);
+        b.mat.emissiveIntensity = 0;
+      }
     }
 
     // 1. Sequential Checkpoint LEDs (upper surface + under-deck half-pipe!)
@@ -1638,26 +1913,90 @@ export function buildLabyrinthRig(grid: SphereGrid): LabyrinthRig {
       levelDisposables.push(capMat, pipMat);
       toggleVisuals.push({ pad: tg, capMesh, capMat, pipMat, baseY });
 
-      // Attach sleek Braun color-coded accent stripes to every linked gate wall blade + flush floor seam cue!
-      const stripeMat = gateStripeMats[tg.colorId];
+      // Embed a sleek, borderless frosted LED NEON LIGHT BAR along every linked gate wall + flush floor LED bar!
+      const tubeTex = neonTubeTextures[tg.colorId];
+      const auraCol = NEON_AURA_COLORS[tg.colorId];
       for (const wid of tg.wallIds) {
         const blade = bladeRigs[wid];
         if (!blade || blade.slot.locked) continue;
+        blade.gateColorId = tg.colorId;
+        blade.lastExt = -1;
 
-        // Raised crown stripe (moves up & down with the gate wall!)
-        const crownGeo = buildWallTopGlyphPatch(blade.slot, R_WALL + 0.0016, 0.125, 0.028);
-        const crownMesh = new THREE.Mesh(crownGeo, stripeMat);
-        blade.mesh.add(crownMesh);
-        attachedGateOverlays.push({ parent: blade.mesh, mesh: crownMesh });
-        dynamicAoExcluded.push(crownMesh);
-        levelDisposables.push(crownGeo);
+        // 1. Sleek domed frosted-acrylic LED neon light bar seated directly in the alabaster wall crown (no dark frame!)
+        const barGeo = buildNeonBarGeometry(blade.slot, R_WALL - 0.0005, WALL_HALF_WIDTH * 0.46, 0.0092, 0.015);
+        const barMat = new THREE.MeshStandardMaterial({
+          color: 0xffffff,
+          map: tubeTex,
+          emissive: new THREE.Color(0xffffff),
+          emissiveMap: tubeTex,
+          emissiveIntensity: 2.35,
+          roughness: 0.14,
+          metalness: 0.0,
+          envMapIntensity: 0.45,
+        });
+        const barMesh = new THREE.Mesh(barGeo, barMat);
+        blade.mesh.add(barMesh);
+        attachedGateOverlays.push({ parent: blade.mesh, mesh: barMesh });
+        levelDisposables.push(barGeo, barMat);
 
-        // Quiet flush seam stripe on the floor so players can spot where a retracted gate wall will pop up!
-        const floorCueGeo = buildWallTopGlyphPatch(blade.slot, R_FLOOR + 0.0018, 0.11, 0.024);
-        const floorCueMesh = new THREE.Mesh(floorCueGeo, stripeMat);
-        levelGroup.add(floorCueMesh);
-        dynamicAoExcluded.push(floorCueMesh);
-        levelDisposables.push(floorCueGeo);
+        // 2. Soft diffused LED glow aura spilling gently onto the white wall shoulders
+        const haloStripGeo = buildNeonHaloStripGeometry(blade.slot, R_WALL + 0.0018, WALL_HALF_WIDTH * 1.48);
+        const haloMat = new THREE.MeshBasicMaterial({
+          map: neonHaloTex,
+          color: auraCol.clone(),
+          transparent: true,
+          opacity: 0.34,
+          depthWrite: false,
+          polygonOffset: true,
+          polygonOffsetFactor: -1,
+          polygonOffsetUnits: -1,
+        });
+        const haloStripMesh = new THREE.Mesh(haloStripGeo, haloMat);
+        blade.mesh.add(haloStripMesh);
+        attachedGateOverlays.push({ parent: blade.mesh, mesh: haloStripMesh });
+        dynamicAoExcluded.push(haloStripMesh);
+        levelDisposables.push(haloStripGeo, haloMat);
+
+        // 3. Slender flush LED indicator bar embedded cleanly between the floor seams (visible when gate retracts open!)
+        const floorBarGeo = buildNeonBarGeometry(blade.slot, R_FLOOR + 0.0012, WALL_HALF_WIDTH * 0.32, 0.0032, 0.017);
+        const floorBarMat = new THREE.MeshStandardMaterial({
+          color: 0xffffff,
+          map: tubeTex,
+          emissive: new THREE.Color(0xffffff),
+          emissiveMap: tubeTex,
+          emissiveIntensity: 1.65,
+          roughness: 0.16,
+          metalness: 0.0,
+          envMapIntensity: 0.4,
+        });
+        const floorBarMesh = new THREE.Mesh(floorBarGeo, floorBarMat);
+        levelGroup.add(floorBarMesh);
+        levelDisposables.push(floorBarGeo, floorBarMat);
+
+        // Subtle soft floor LED spill beneath the flush floor indicator bar
+        const floorHaloGeo = buildNeonHaloStripGeometry(blade.slot, R_FLOOR + 0.0016, WALL_HALF_WIDTH * 1.12);
+        const floorHaloMat = new THREE.MeshBasicMaterial({
+          map: neonHaloTex,
+          color: auraCol.clone(),
+          transparent: true,
+          opacity: 0.22,
+          depthWrite: false,
+          polygonOffset: true,
+          polygonOffsetFactor: -1,
+          polygonOffsetUnits: -1,
+        });
+        const floorHaloMesh = new THREE.Mesh(floorHaloGeo, floorHaloMat);
+        levelGroup.add(floorHaloMesh);
+        dynamicAoExcluded.push(floorHaloMesh);
+        levelDisposables.push(floorHaloGeo, floorHaloMat);
+
+        gateNeonVisuals.push({
+          colorId: tg.colorId,
+          wallId: wid,
+          barMat,
+          haloMat,
+          floorBarMat,
+        });
       }
 
       // Link controlled diaphragm shutters so their recessed bezel ring displays this switch's accent color!
@@ -1841,8 +2180,16 @@ export function buildLabyrinthRig(grid: SphereGrid): LabyrinthRig {
         const blend = Math.pow(ext, 0.65);
         b.mat.color.lerpColors(COLOR_FLOOR, COLOR_WALL_RAISED, blend);
         b.mat.roughness = 0.78 + (0.48 - 0.78) * blend;
+        if (b.gateColorId >= 0) {
+          // Subtle internal red/blue backlight bleed through the matte-white gate body
+          b.mat.emissive.copy(GATE_WALL_GLOW[b.gateColorId]);
+          b.mat.emissiveIntensity = 0.14 * blend;
+        } else {
+          b.mat.emissive.setHex(0x000000);
+          b.mat.emissiveIntensity = 0;
+        }
         if (b.arrowMat) {
-          b.arrowMat.opacity = Math.max(0, (ext - 0.35) / 0.65);
+          b.arrowMat.opacity = b.gateColorId >= 0 ? 0 : Math.max(0, (ext - 0.35) / 0.65);
         }
       }
     }
@@ -1865,12 +2212,25 @@ export function buildLabyrinthRig(grid: SphereGrid): LabyrinthRig {
       }
 
       if (s.linkedColorId >= 0) {
-        // Toggle-controlled shutter: displays its linked Coral/Cobalt color even faintly when closed so you can plan!
-        const col = TOGGLE_COLORS[s.linkedColorId];
-        s.ringLedMat.color.copy(col);
-        s.ringLedMat.emissive.copy(col);
-        s.ringLedMat.emissiveIntensity = 0.42 + open * 1.35;
+        // Toggle-controlled shutter: delicate glowing Red/Blue LED ring + soft floor light halo
+        const tubeCol = NEON_TUBE_COLORS[s.linkedColorId];
+        const emCol = NEON_EMISSIVE_COLORS[s.linkedColorId];
+        const auraCol = NEON_AURA_COLORS[s.linkedColorId];
+        s.outerNeonMesh.visible = true;
+        s.outerNeonMat.color.copy(tubeCol);
+        s.outerNeonMat.emissive.copy(emCol);
+        s.outerNeonMat.emissiveIntensity = 1.9 + open * 0.9;
+
+        s.outerHaloMesh.visible = true;
+        s.outerHaloMat.color.copy(auraCol);
+        s.outerHaloMat.opacity = 0.2 + open * 0.14;
+
+        s.ringLedMat.color.copy(tubeCol);
+        s.ringLedMat.emissive.copy(emCol);
+        s.ringLedMat.emissiveIntensity = 1.3 + open * 1.1;
       } else {
+        s.outerNeonMesh.visible = false;
+        s.outerHaloMesh.visible = false;
         s.ringLedMat.emissive.setHex(0x2ee69c);
         s.ringLedMat.emissiveIntensity = open * 1.55;
         s.ringLedMat.color.setHex(open > 0.35 ? 0xd2ffed : 0x9b9488);
@@ -1945,11 +2305,28 @@ export function buildLabyrinthRig(grid: SphereGrid): LabyrinthRig {
       const tv = toggleVisuals[i];
       const active = (toggleMask & (1 << tv.pad.id)) !== 0;
       const press = togglePulse[tv.pad.id] || 0;
-      // Physical downward depress on click + latched slight depression when toggled ON
       tv.capMesh.position.y = tv.baseY - press * 0.0065 - (active ? 0.0028 : 0);
       const breathe = 0.5 + 0.5 * Math.sin(time * 2.8 + i);
-      tv.capMat.emissiveIntensity = active ? 0.34 + breathe * 0.14 : 0.06;
-      tv.pipMat.emissiveIntensity = active ? 2.4 : 0.35 + breathe * 0.2;
+      tv.capMat.emissiveIntensity = active ? 0.72 + breathe * 0.24 : 0.22 + breathe * 0.08;
+      tv.pipMat.emissiveIntensity = active ? 3.2 : 0.9 + breathe * 0.4;
+    }
+
+    // 3. Gentle living LED neon pulse on color-coded gate bars, retracted floor slots, and linked shutter rings
+    for (let i = 0; i < gateNeonVisuals.length; i++) {
+      const gn = gateNeonVisuals[i];
+      const pulse = 0.5 + 0.5 * Math.sin(time * 2.6 + gn.colorId * 2.1);
+      gn.barMat.emissiveIntensity = 2.0 + pulse * 0.7;
+      gn.haloMat.opacity = 0.28 + pulse * 0.14;
+      gn.floorBarMat.emissiveIntensity = 1.45 + pulse * 0.45;
+    }
+    for (let i = 0; i < shutterRigs.length; i++) {
+      const s = shutterRigs[i];
+      if (s.linkedColorId >= 0) {
+        const pulse = 0.5 + 0.5 * Math.sin(time * 2.6 + s.linkedColorId * 2.1);
+        const openBoost = s.lastOpen > 0 ? s.lastOpen * 0.75 : 0;
+        s.outerNeonMat.emissiveIntensity = 1.85 + openBoost + pulse * 0.55;
+        s.outerHaloMat.opacity = 0.18 + (s.lastOpen > 0 ? s.lastOpen * 0.12 : 0) + pulse * 0.08;
+      }
     }
 
     if (allCleared && leds.length > 0) {

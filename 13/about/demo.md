@@ -6,7 +6,7 @@ xseconds: 30
 ---
 # 13 / Labyrinth, demo
 
-Ten seconds: turn the plastic-wrapped two-layer sphere puzzle in studio light, morphing through its 10 progressive levels — thin wall blades sliding cleanly around steady corner poles, 6-blade diaphragm shutters opening to reveal the underneath half-pipe tubes through clear floor windows, and Coral/Cobalt floor toggle switches flipping striped gate walls.
+Ten seconds: turn the plastic-wrapped two-layer sphere puzzle in studio light, morphing through its 10 progressive levels — thin wall blades sliding cleanly around steady corner poles, 6-blade diaphragm shutters opening to reveal the underneath half-pipe tubes through clear floor windows, and Red/Cobalt floor toggle switches driving neon-bar gate walls and linked shutter collars.
 
 ```steps
 wait 700

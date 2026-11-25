@@ -25,6 +25,9 @@ canvas {
 canvas.dragging {
   cursor: grabbing;
 }
+canvas.aiming {
+  cursor: crosshair;
+}
 
 /* Title plate, top left */
 .plate {
@@ -67,75 +70,172 @@ canvas.dragging {
   letter-spacing: 0.06em;
 }
 
-.status {
+/* Bottom-left level caption (click to select only in dev / ?settings) */
+.level-hud {
+  position: fixed;
+  z-index: 3;
+  bottom: max(24px, env(safe-area-inset-bottom));
+  left: max(24px, env(safe-area-inset-left));
   display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-top: 12px;
-  font-weight: 600;
-  font-size: 11px;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+  pointer-events: none;
+  color: #1c1c1c;
 }
-.substatus {
-  display: flex;
+.level-top {
+  display: inline-flex;
   align-items: center;
   gap: 8px;
-  margin-top: 5px;
-  font-weight: 600;
-  font-size: 10px;
-  letter-spacing: 0.12em;
+}
+.reset-btn {
+  width: 24px;
+  height: 24px;
+  pointer-events: auto;
+}
+.level-num {
+  appearance: none;
+  border: 0;
+  background: none;
+  padding: 0;
+  margin: 0;
+  color: inherit;
+  font: 600 11px/1.15 Inter, "Helvetica Neue", Helvetica, Arial, sans-serif;
+  letter-spacing: 0.14em;
   text-transform: uppercase;
   opacity: 0.72;
-}
-.sw-chip {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  padding: 1px 6px;
-  border-radius: 999px;
-  border: 1px solid currentColor;
-  font-size: 9.5px;
-  letter-spacing: 0.1em;
-}
-.sw-chip.coral { color: #c74128; }
-.sw-chip.cobalt { color: #2461c9; }
-.sw-chip.on {
-  background: currentColor;
-}
-.sw-chip.on span {
-  color: #f4f3ef;
-}
-.dots {
-  display: inline-flex;
   gap: 5px;
+  pointer-events: none;
+}
+.level-num.dev-select {
+  pointer-events: auto;
+  cursor: pointer;
+  transition: opacity 0.15s ease;
+}
+.level-num.dev-select::after {
+  content: "▾";
+  font-size: 9px;
+  line-height: 1;
+  opacity: 0.65;
+  transition: transform 0.15s ease;
+}
+.level-num.dev-select[aria-expanded="true"]::after {
+  transform: rotate(180deg);
+}
+.level-num.dev-select:hover {
+  opacity: 1;
+}
+.level-title {
+  font: 700 24px/1 "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  letter-spacing: -0.015em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+/* Dev-only compact level picker popover above LEVEL N */
+.level-picker {
+  position: absolute;
+  bottom: calc(100% + 10px);
+  left: 0;
+  display: grid;
+  grid-template-columns: repeat(5, 30px);
+  gap: 3px;
+  padding: 5px;
+  border-radius: 12px;
+  border: 1px solid rgba(28, 28, 28, 0.13);
+  background: rgba(246, 244, 239, 0.86);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  box-shadow: 0 10px 28px rgba(32, 29, 24, 0.08);
+  pointer-events: auto;
+}
+.level-picker[hidden] {
+  display: none;
+}
+
+/* Right-side vertical minimalist hardware indicator lights */
+.lights-hud {
+  position: fixed;
+  z-index: 3;
+  top: 50%;
+  right: max(24px, env(safe-area-inset-right));
+  transform: translateY(-50%);
+  display: inline-flex;
+  flex-direction: column;
   align-items: center;
+  gap: 10px;
+  padding: 11px 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(28, 28, 28, 0.12);
+  background: rgba(246, 244, 239, 0.56);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  pointer-events: none;
+}
+.dots,
+.sw-dots {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 9px;
+}
+.lights-sep {
+  width: 11px;
+  height: 1px;
+  background: rgba(28, 28, 28, 0.18);
+}
+.lights-sep[hidden],
+.sw-dots[hidden] {
+  display: none;
 }
 .dot {
-  width: 7px;
-  height: 7px;
+  width: 9px;
+  height: 9px;
   border-radius: 50%;
-  border: 1.25px solid rgba(28, 28, 28, 0.35);
-  background: rgba(28, 28, 28, 0.06);
-  transition: background 0.25s ease, border-color 0.25s ease, box-shadow 0.25s ease;
+  border: 1.5px solid rgba(28, 28, 28, 0.26);
+  background: rgba(28, 28, 28, 0.05);
+  box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.45);
+  transition: background 0.25s ease, border-color 0.25s ease, box-shadow 0.25s ease, transform 0.25s ease;
 }
 .dot.next {
   border-color: #d66816;
-  background: rgba(255, 134, 38, 0.55);
-  box-shadow: 0 0 6px rgba(255, 134, 38, 0.45);
+  background: #ff8e2b;
+  box-shadow: 0 0 9px rgba(255, 134, 38, 0.65), inset 0 1px 2px rgba(255, 244, 224, 0.85);
 }
 .dot.pipe-dot {
-  border-color: #199e90;
+  border-color: rgba(25, 158, 144, 0.55);
 }
 .dot.pipe-dot.next {
-  border-color: #16a899;
-  background: rgba(42, 217, 198, 0.55);
-  box-shadow: 0 0 6px rgba(42, 217, 198, 0.5);
+  border-color: #14a394;
+  background: #2ad9c6;
+  box-shadow: 0 0 9px rgba(42, 217, 198, 0.65), inset 0 1px 2px rgba(224, 255, 250, 0.85);
 }
 .dot.cleared {
-  border-color: #1da863;
+  border-color: #1ba35f;
   background: #2ce391;
-  box-shadow: 0 0 6px rgba(44, 227, 145, 0.5);
+  box-shadow: 0 0 9px rgba(44, 227, 145, 0.55), inset 0 1px 2px rgba(225, 255, 240, 0.85);
+}
+.sw-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  border: 1.5px solid currentColor;
+  background: transparent;
+  opacity: 0.48;
+  transition: background 0.22s ease, box-shadow 0.22s ease, opacity 0.22s ease;
+}
+.sw-dot.red {
+  color: #dc1212;
+}
+.sw-dot.blue {
+  color: #1256f0;
+}
+.sw-dot.on {
+  opacity: 1;
+  background: currentColor;
+  box-shadow: 0 0 9px currentColor, inset 0 1px 2px rgba(255, 255, 255, 0.65);
 }
 
 /* Top-right frosted round buttons */
@@ -175,51 +275,12 @@ canvas.dragging {
 #btn-sound[aria-pressed="false"] .ico-on {
   display: none;
 }
-.gyro {
-  display: none;
-}
-body.touch .gyro {
-  display: inline-flex;
-}
-body.touch .gyro.on {
-  background: #1c1c1c;
-  color: #f4f3ef;
-  border-color: #1c1c1c;
-}
 
-/* Bottom-center 10-level morph selector pill */
-.level-bar {
-  position: fixed;
-  z-index: 3;
-  bottom: max(20px, env(safe-area-inset-bottom));
-  left: 50%;
-  transform: translateX(-50%);
-  display: inline-flex;
-  align-items: center;
-  gap: 2px;
-  padding: 4px 5px 4px 11px;
-  border-radius: 999px;
-  border: 1px solid rgba(28, 28, 28, 0.13);
-  background: rgba(246, 244, 239, 0.68);
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
-  max-width: calc(100vw - 24px);
-  overflow-x: auto;
-}
-.level-label {
-  font-weight: 600;
-  font-size: 10px;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  margin-right: 5px;
-  opacity: 0.72;
-  flex-shrink: 0;
-}
 .lvl-btn {
   position: relative;
   height: 27px;
   min-width: 30px;
-  padding: 0 7px;
+  padding: 0 6px;
   border-radius: 999px;
   border: 1px solid transparent;
   background: transparent;
@@ -297,18 +358,18 @@ body.touch .gyro.on {
   letter-spacing: 0.08em;
 }
 
-/* Dev / ?settings workbench, bottom right */
+/* Dev / ?settings workbench, tucked cleanly under top-right controls */
 .settings-btn {
   position: fixed;
   z-index: 3;
-  bottom: max(20px, env(safe-area-inset-bottom));
-  right: max(20px, env(safe-area-inset-right));
+  top: calc(max(24px, env(safe-area-inset-top)) + 40px);
+  right: max(24px, env(safe-area-inset-right));
 }
 .settings-panel {
   position: fixed;
   z-index: 4;
-  bottom: calc(max(20px, env(safe-area-inset-bottom)) + 42px);
-  right: max(20px, env(safe-area-inset-right));
+  top: calc(max(24px, env(safe-area-inset-top)) + 80px);
+  right: max(24px, env(safe-area-inset-right));
   width: 224px;
   padding: 12px 14px;
   border-radius: 12px;
@@ -342,6 +403,7 @@ body.touch .gyro.on {
   .plate {
     top: max(16px, env(safe-area-inset-top));
     left: max(16px, env(safe-area-inset-left));
+    max-width: calc(100vw - 100px);
   }
   .plate b {
     font-size: 32px;
@@ -349,41 +411,45 @@ body.touch .gyro.on {
   .plate .head > i {
     font-size: 9.5px;
   }
-  .status {
-    margin-top: 8px;
-    font-size: 10px;
-  }
   .actions {
     top: max(14px, env(safe-area-inset-top));
     right: max(14px, env(safe-area-inset-right));
-    display: grid;
-    grid-template-columns: repeat(2, 32px);
     gap: 6px;
   }
   .help-card {
-    top: calc(max(14px, env(safe-area-inset-top)) + 78px);
+    top: calc(max(14px, env(safe-area-inset-top)) + 42px);
     right: max(14px, env(safe-area-inset-right));
   }
-  .level-bar {
-    bottom: max(16px, env(safe-area-inset-bottom));
-    padding: 3px 5px;
-    gap: 2px;
+  .level-hud {
+    bottom: max(18px, env(safe-area-inset-bottom));
+    left: max(16px, env(safe-area-inset-left));
   }
-  .level-label {
-    display: none;
-  }
-  .lvl-btn {
-    min-width: 28px;
-    height: 26px;
-    padding: 0 5px;
+  .level-num {
     font-size: 10px;
   }
+  .level-title {
+    font-size: 19px;
+  }
+  .lights-hud {
+    right: max(14px, env(safe-area-inset-right));
+    gap: 8px;
+    padding: 9px 7px;
+  }
+  .dots,
+  .sw-dots {
+    gap: 7px;
+  }
+  .dot,
+  .sw-dot {
+    width: 8px;
+    height: 8px;
+  }
   .settings-btn {
-    bottom: calc(max(16px, env(safe-area-inset-bottom)) + 44px);
+    top: calc(max(14px, env(safe-area-inset-top)) + 38px);
     right: max(14px, env(safe-area-inset-right));
   }
   .settings-panel {
-    bottom: calc(max(16px, env(safe-area-inset-bottom)) + 84px);
+    top: calc(max(14px, env(safe-area-inset-top)) + 76px);
     right: max(14px, env(safe-area-inset-right));
   }
 }
@@ -391,7 +457,8 @@ body.touch .gyro.on {
 /* ?clean: the scene alone */
 .clean .plate,
 .clean .actions,
-.clean .level-bar,
+.clean .level-hud,
+.clean .lights-hud,
 .clean .help-card,
 .clean .settings-btn,
 .clean .settings-panel {

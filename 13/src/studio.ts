@@ -1,5 +1,141 @@
 import * as THREE from 'three';
 
+export interface AimReticleRig {
+  group: THREE.Group;
+  setPose: (dir: THREE.Vector3, upHint: THREE.Vector3, active: number) => void;
+  dispose: () => void;
+}
+
+/**
+ * Builds a minimalist 3D curved optical aiming reticle hugging the outer polycarbonate sphere shell.
+ * Four curved great-circle crosshair arms + a delicate curved center ring frame the gravity pull center
+ * directly on the curved 3D sphere surface.
+ */
+export function createAimReticle(radius: number): AimReticleRig {
+  const group = new THREE.Group();
+  const positions: number[] = [];
+  const indices: number[] = [];
+  let vOffset = 0;
+
+  const pushStrip = (pts: THREE.Vector3[], halfWidth: number, closed = false) => {
+    const n = pts.length;
+    const tangent = new THREE.Vector3();
+    const normal = new THREE.Vector3();
+    const side = new THREE.Vector3();
+    const pA = new THREE.Vector3();
+    const pB = new THREE.Vector3();
+
+    for (let i = 0; i < n; i++) {
+      const prev = pts[(i - 1 + n) % n];
+      const curr = pts[i];
+      const next = pts[(i + 1) % n];
+      if (!closed && i === 0) {
+        tangent.subVectors(next, curr).normalize();
+      } else if (!closed && i === n - 1) {
+        tangent.subVectors(curr, prev).normalize();
+      } else {
+        tangent.subVectors(next, prev).normalize();
+      }
+      normal.copy(curr).normalize();
+      side.crossVectors(normal, tangent).normalize();
+
+      pA.copy(curr).addScaledVector(side, -halfWidth).normalize().multiplyScalar(radius);
+      pB.copy(curr).addScaledVector(side, halfWidth).normalize().multiplyScalar(radius);
+      positions.push(pA.x, pA.y, pA.z, pB.x, pB.y, pB.z);
+    }
+
+    const segs = closed ? n : n - 1;
+    for (let i = 0; i < segs; i++) {
+      const iNext = (i + 1) % n;
+      const a = vOffset + i * 2;
+      const b = a + 1;
+      const c = vOffset + iNext * 2;
+      const d = c + 1;
+      indices.push(a, c, b, b, c, d);
+    }
+    vOffset += n * 2;
+  };
+
+  // 1. Delicate curved spherical center ring (angular radius ~0.080 rad, framing the chrome steel ball cleanly)
+  const ringSegs = 64;
+  const ringTheta = 0.08;
+  const ringPts: THREE.Vector3[] = [];
+  for (let i = 0; i < ringSegs; i++) {
+    const a = (i / ringSegs) * Math.PI * 2;
+    ringPts.push(
+      new THREE.Vector3(
+        Math.sin(ringTheta) * Math.cos(a) * radius,
+        Math.sin(ringTheta) * Math.sin(a) * radius,
+        Math.cos(ringTheta) * radius,
+      ),
+    );
+  }
+  pushStrip(ringPts, 0.0032, true);
+
+  // 2. Four curved great-circle crosshair arms (+X, -X, +Y, -Y) hugging the sphere curvature
+  const armSegs = 12;
+  const armStart = 0.104;
+  const armEnd = 0.245;
+  const dirs: [number, number][] = [
+    [1, 0],
+    [-1, 0],
+    [0, 1],
+    [0, -1],
+  ];
+  for (const [dx, dy] of dirs) {
+    const armPts: THREE.Vector3[] = [];
+    for (let i = 0; i <= armSegs; i++) {
+      const th = armStart + (armEnd - armStart) * (i / armSegs);
+      armPts.push(new THREE.Vector3(dx * Math.sin(th) * radius, dy * Math.sin(th) * radius, Math.cos(th) * radius));
+    }
+    pushStrip(armPts, 0.0035, false);
+  }
+
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  geo.setIndex(indices);
+
+  const mat = new THREE.MeshBasicMaterial({
+    color: 0x1c1c1c,
+    transparent: true,
+    opacity: 0.42,
+    depthWrite: false,
+    side: THREE.DoubleSide,
+  });
+
+  const mesh = new THREE.Mesh(geo, mat);
+  mesh.renderOrder = 16;
+  group.add(mesh);
+
+  const basisX = new THREE.Vector3();
+  const basisY = new THREE.Vector3();
+  const basisZ = new THREE.Vector3();
+  const rotMat = new THREE.Matrix4();
+
+  function setPose(dir: THREE.Vector3, upHint: THREE.Vector3, active: number) {
+    basisZ.copy(dir).normalize();
+    basisX.crossVectors(upHint, basisZ);
+    if (basisX.lengthSq() < 1e-6) {
+      basisX.set(1, 0, 0);
+    } else {
+      basisX.normalize();
+    }
+    basisY.crossVectors(basisZ, basisX).normalize();
+    rotMat.makeBasis(basisX, basisY, basisZ);
+    group.quaternion.setFromRotationMatrix(rotMat);
+    mat.opacity = 0.42 + active * 0.43;
+  }
+
+  return {
+    group,
+    setPose,
+    dispose: () => {
+      geo.dispose();
+      mat.dispose();
+    },
+  };
+}
+
 export interface StudioRig {
   envMap: THREE.Texture;
   shadowPlane: THREE.Mesh;

@@ -588,28 +588,40 @@ export function createTogglePadDecalTexture(label: string, accentHex: string): T
 }
 
 /**
- * Clean minimal colored accent stripe pad-printed onto the crown of a toggle-linked gate wall.
+ * Cross-section luminous LED light-pipe gradient texture for sleek gate neon bars:
+ * pure saturated red/blue glowing edges smoothly blooming into a luminous bright LED filament center
+ * (calibrated to stay unmistakably red/blue while genuinely glowing like an LED under studioFilmic).
  */
-export function createGateStripeTexture(accentHex: string): THREE.CanvasTexture {
-  const w = 256;
+export function createNeonTubeTexture(colorId: 0 | 1): THREE.CanvasTexture {
+  const w = 64;
   const h = 64;
   const canvas = document.createElement('canvas');
   canvas.width = w;
   canvas.height = h;
   const ctx = canvas.getContext('2d')!;
 
-  ctx.clearRect(0, 0, w, h);
-  ctx.fillStyle = accentHex;
-  ctx.globalAlpha = 0.88;
-  // Sleek recessed central Braun-style pill bar + two crisp end dots
-  ctx.beginPath();
-  ctx.roundRect(44, 22, w - 88, 20, 10);
-  ctx.fill();
-
-  ctx.beginPath();
-  ctx.arc(24, 32, 7, 0, Math.PI * 2);
-  ctx.arc(w - 24, 32, 7, 0, Math.PI * 2);
-  ctx.fill();
+  const grad = ctx.createLinearGradient(0, 0, 0, h);
+  if (colorId === 0) {
+    // Sleek glowing laser-red LED light pipe (pure red edges -> luminous hot red-white filament core)
+    grad.addColorStop(0.0, '#e60404');
+    grad.addColorStop(0.22, '#ff120e');
+    grad.addColorStop(0.4, '#ff4842');
+    grad.addColorStop(0.5, '#ff8a84');
+    grad.addColorStop(0.6, '#ff4842');
+    grad.addColorStop(0.78, '#ff120e');
+    grad.addColorStop(1.0, '#e60404');
+  } else {
+    // Sleek glowing cobalt-blue LED light pipe (vivid blue edges -> luminous bright cyan-blue core)
+    grad.addColorStop(0.0, '#0038f0');
+    grad.addColorStop(0.22, '#0c5eff');
+    grad.addColorStop(0.4, '#4a98ff');
+    grad.addColorStop(0.5, '#9ed0ff');
+    grad.addColorStop(0.6, '#4a98ff');
+    grad.addColorStop(0.78, '#0c5eff');
+    grad.addColorStop(1.0, '#0038f0');
+  }
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, w, h);
 
   const tex = new THREE.CanvasTexture(canvas);
   tex.colorSpace = THREE.SRGBColorSpace;

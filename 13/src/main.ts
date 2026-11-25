@@ -1,10 +1,10 @@
 import * as THREE from 'three';
 import { buildLabyrinthRig } from './labyrinthMesh';
-import { computeEffectiveShutters, computeEffectiveWalls, createSphereGrid } from './maze';
+import { R_SHELL, computeEffectiveShutters, computeEffectiveWalls, createSphereGrid } from './maze';
 import { SphereBallPhysics } from './physics';
 import { StudioPost } from './post';
 import { LabyrinthSound } from './sound';
-import { setupStudio } from './studio';
+import { createAimReticle, setupStudio } from './studio';
 
 const params = new URLSearchParams(location.search);
 if (params.has('clean')) document.body.classList.add('clean');
@@ -25,6 +25,12 @@ const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(32, window.innerWidth / window.innerHeight, 0.1, 60);
 let camDist = 4.55;
 let targetCamDist = 4.55;
+const DEFAULT_CAM_YAW = 0;
+const DEFAULT_CAM_PITCH = 0.053;
+let camYaw = DEFAULT_CAM_YAW;
+let camPitch = DEFAULT_CAM_PITCH;
+let targetCamYaw = DEFAULT_CAM_YAW;
+let targetCamPitch = DEFAULT_CAM_PITCH;
 camera.position.set(0, 0.24, camDist);
 camera.lookAt(0, -0.02, 0);
 
@@ -39,6 +45,10 @@ scene.add(floatGroup);
 const grid = createSphereGrid();
 const rig = buildLabyrinthRig(grid);
 floatGroup.add(rig.root);
+
+// Curved 3D optical aiming target hugging the outer polycarbonate shell at the gravity center
+const aimReticle = createAimReticle(R_SHELL + 0.0055);
+floatGroup.add(aimReticle.group);
 
 const initialLevelNum = Math.max(1, Math.min(grid.levels.length, Number(params.get('level')) || 1));
 let currentLevelIdx = initialLevelNum - 1;
@@ -75,16 +85,19 @@ const angVel = new THREE.Vector3(0, 0, 0);
 
 // UI references
 const ledDotsEl = document.getElementById('led-dots')!;
-const statusTextEl = document.getElementById('status-text')!;
-const substatusEl = document.getElementById('substatus')!;
+const lightsSepEl = document.getElementById('lights-sep')!;
+const swDotsEl = document.getElementById('sw-dots')!;
+const levelNumBtn = document.getElementById('level-num') as HTMLButtonElement;
+const levelTitleEl = document.getElementById('level-title')!;
+const levelPicker = document.getElementById('level-picker')!;
 const btnReset = document.getElementById('btn-reset')!;
-const btnGyro = document.getElementById('btn-gyro') as HTMLButtonElement;
 const btnSound = document.getElementById('btn-sound')!;
 const btnHelp = document.getElementById('btn-help')!;
 const helpCard = document.getElementById('help-card')!;
 const btnSettings = document.getElementById('btn-settings')!;
 const settingsPanel = document.getElementById('settings-panel')!;
 const levelButtons = Array.from(document.querySelectorAll<HTMLButtonElement>('.lvl-btn'));
+const isDevControls = import.meta.env.DEV || params.has('settings');
 
 function updateStatusUI() {
   const level = grid.levels[currentLevelIdx];
@@ -107,24 +120,28 @@ function updateStatusUI() {
     dot.classList.toggle('next', !physics.cleared[i] && i === nextIdx);
   }
 
-  const lvlTag = `LVL ${String(level.level).padStart(2, '0')} · ${level.name}`;
-  if (physics.allCleared) {
-    statusTextEl.textContent = `${lvlTag} · COMPLETE`;
-  } else {
-    const nextCp = nextIdx >= 0 ? level.checkpoints[nextIdx] : null;
-    const nextLabel = nextCp ? `NEXT ${nextCp.label}${nextCp.layer === 'pipe' ? ' (PIPE)' : ''}` : '';
-    const deckTag = physics.layer === 'pipe' || physics.layer === 'dropping' ? ' · IN PIPE' : '';
-    statusTextEl.textContent = `${lvlTag} · ${nextLabel}${deckTag}`;
+  // Bottom-right switch LEDs (pure hardware lights, only shown on levels with switches)
+  const hasToggles = level.toggles.length > 0;
+  lightsSepEl.hidden = !hasToggles;
+  swDotsEl.hidden = !hasToggles;
+  if (swDotsEl.childElementCount !== level.toggles.length) {
+    swDotsEl.innerHTML = '';
+    for (let i = 0; i < level.toggles.length; i++) {
+      const span = document.createElement('span');
+      span.className = 'sw-dot';
+      swDotsEl.appendChild(span);
+    }
+  }
+  for (let i = 0; i < level.toggles.length; i++) {
+    const tg = level.toggles[i];
+    const on = (physics.toggleMask & (1 << tg.id)) !== 0;
+    const dot = swDotsEl.children[i] as HTMLElement;
+    dot.className = `sw-dot ${tg.colorId === 0 ? 'red' : 'blue'}${on ? ' on' : ''}`;
   }
 
-  // Quiet secondary line: difficulty + live switch state chips when the level has toggles
-  const parts: string[] = [level.difficulty];
-  for (const tg of level.toggles) {
-    const on = (physics.toggleMask & (1 << tg.id)) !== 0;
-    const cls = tg.colorId === 0 ? 'coral' : 'cobalt';
-    parts.push(`<span class="sw-chip ${cls}${on ? ' on' : ''}"><span>SW ${tg.label} ${on ? 'ON' : 'OFF'}</span></span>`);
-  }
-  substatusEl.innerHTML = parts.join(' ');
+  // Bottom-left level caption
+  levelNumBtn.textContent = `LEVEL ${level.level}`;
+  levelTitleEl.textContent = physics.allCleared ? `${level.name} · CLEAR` : level.name;
 
   for (const btn of levelButtons) {
     const n = Number(btn.dataset.level);
@@ -134,7 +151,7 @@ function updateStatusUI() {
 }
 
 function syncAoExclusions() {
-  post.setAoExcluded([...rig.aoExcluded, studio.backdropMesh, studio.shadowPlane]);
+  post.setAoExcluded([...rig.aoExcluded, aimReticle.group, studio.backdropMesh, studio.shadowPlane]);
 }
 
 function startMorphToState(
@@ -210,6 +227,12 @@ function applyLevel(index: number, instant: boolean, resetBall = true) {
   if (resetBall) {
     sphereQuat.copy(initialQuat);
     angVel.set(0, 0, 0);
+    targetCamYaw = DEFAULT_CAM_YAW;
+    targetCamPitch = DEFAULT_CAM_PITCH;
+    if (instant) {
+      camYaw = DEFAULT_CAM_YAW;
+      camPitch = DEFAULT_CAM_PITCH;
+    }
   }
 
   rig.setLevelVisuals(level);
@@ -238,8 +261,10 @@ function easeMechanical(x: number): number {
   return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
 }
 
-// --- Direct, zero-twist camera-plane pointer rotation ---
+// --- Direct, zero-twist camera-plane pointer rotation + Cmd+drag camera/center orbit ---
 let activePointerId: number | null = null;
+let dragMode: 'sphere' | 'camera' = 'sphere';
+let cmdHeld = false;
 let lastPointerX = 0;
 let lastPointerY = 0;
 const camUp = new THREE.Vector3();
@@ -254,11 +279,12 @@ canvas.addEventListener('pointerdown', (e) => {
   if (activePointerId !== null) return;
   sound.unlock();
   activePointerId = e.pointerId;
+  dragMode = e.metaKey || e.ctrlKey ? 'camera' : 'sphere';
   canvas.setPointerCapture(e.pointerId);
-  canvas.classList.add('dragging');
+  canvas.classList.add(dragMode === 'camera' ? 'aiming' : 'dragging');
   lastPointerX = e.clientX;
   lastPointerY = e.clientY;
-  angVel.set(0, 0, 0);
+  if (dragMode === 'sphere') angVel.set(0, 0, 0);
   lastMoveTime = performance.now();
 });
 
@@ -268,6 +294,13 @@ canvas.addEventListener('pointermove', (e) => {
   const dy = e.clientY - lastPointerY;
   lastPointerX = e.clientX;
   lastPointerY = e.clientY;
+
+  if (dragMode === 'camera') {
+    // Cmd + drag orbits the camera around the sphere — moving the viewing angle & gravity pull center!
+    targetCamYaw -= dx * 0.0068;
+    targetCamPitch = THREE.MathUtils.clamp(targetCamPitch + dy * 0.0068, -1.24, 1.24);
+    return;
+  }
 
   const rect = canvas.getBoundingClientRect();
   const radiusPx = Math.max(120, Math.min(rect.width, rect.height) * 0.36);
@@ -298,7 +331,9 @@ canvas.addEventListener('pointermove', (e) => {
 function endDrag(e: PointerEvent) {
   if (e.pointerId !== activePointerId) return;
   activePointerId = null;
+  dragMode = 'sphere';
   canvas.classList.remove('dragging');
+  canvas.classList.toggle('aiming', cmdHeld);
   if (canvas.hasPointerCapture(e.pointerId)) {
     canvas.releasePointerCapture(e.pointerId);
   }
@@ -318,6 +353,10 @@ canvas.addEventListener(
 
 const keysDown = new Set<string>();
 window.addEventListener('keydown', (e) => {
+  if (e.key === 'Meta' || e.key === 'Control') {
+    cmdHeld = true;
+    if (activePointerId === null) canvas.classList.add('aiming');
+  }
   const k = e.key.toLowerCase();
   if (['arrowup', 'arrowdown', 'arrowleft', 'arrowright', 'w', 'a', 's', 'd', 'q', 'e'].includes(k)) {
     sound.unlock();
@@ -340,12 +379,21 @@ window.addEventListener('keydown', (e) => {
     toggleSound();
   } else if (k === '?' || k === 'h') {
     toggleHelp();
-  } else if (k === 'escape' && !helpCard.hidden) {
-    toggleHelp(false);
+  } else if (k === 'escape') {
+    if (!helpCard.hidden) toggleHelp(false);
+    if (!levelPicker.hidden) toggleLevelPicker(false);
   }
 });
 window.addEventListener('keyup', (e) => {
+  if (e.key === 'Meta' || e.key === 'Control') {
+    cmdHeld = false;
+    if (activePointerId === null) canvas.classList.remove('aiming');
+  }
   keysDown.delete(e.key.toLowerCase());
+});
+window.addEventListener('blur', () => {
+  cmdHeld = false;
+  canvas.classList.remove('aiming');
 });
 
 function resetCurrentLevel() {
@@ -355,6 +403,8 @@ function resetCurrentLevel() {
   physics.reset();
   sphereQuat.copy(initialQuat);
   angVel.set(0, 0, 0);
+  targetCamYaw = DEFAULT_CAM_YAW;
+  targetCamPitch = DEFAULT_CAM_PITCH;
   if (hadToggle) {
     const effWalls = computeEffectiveWalls(level, 0, wallCount);
     const effShutters = computeEffectiveShutters(level, 0, shutterCount);
@@ -375,99 +425,50 @@ function toggleHelp(force?: boolean) {
   const open = force !== undefined ? force : helpCard.hidden;
   helpCard.hidden = !open;
   btnHelp.setAttribute('aria-expanded', String(open));
+  if (open) settingsPanel.hidden = true;
 }
 
 btnReset.addEventListener('click', resetCurrentLevel);
 btnSound.addEventListener('click', toggleSound);
 btnHelp.addEventListener('click', () => toggleHelp());
 
-// --- Mobile gyroscope / device orientation tilt toggle (same pattern as Day 12 Feather & Day 16 Spore) ---
-const isTouchDevice =
-  matchMedia('(pointer: coarse)').matches || 'ontouchstart' in window || navigator.maxTouchPoints > 0;
-if (isTouchDevice || params.has('gyro')) {
-  document.body.classList.add('touch');
+function toggleLevelPicker(force?: boolean) {
+  if (!isDevControls) return;
+  const open = force !== undefined ? force : levelPicker.hidden;
+  levelPicker.hidden = !open;
+  levelNumBtn.setAttribute('aria-expanded', String(open));
 }
 
-let gyroOn = false;
-let gyroRef: { x: number; y: number } | null = null;
-const gyroTilt = new THREE.Vector2(0, 0); // smoothed relative screen-space tilt (-1..1)
-const gyroEuler = new THREE.Euler();
-const gyroQ = new THREE.Quaternion();
-const gyroTurn = new THREE.Quaternion();
-const gyroInvQ = new THREE.Quaternion();
-const GYRO_BACK = new THREE.Quaternion(-Math.sqrt(0.5), 0, 0, Math.sqrt(0.5));
-const GYRO_Z = new THREE.Vector3(0, 0, 1);
-const gyroDownScreen = new THREE.Vector3();
-
-function onDeviceTilt(e: DeviceOrientationEvent) {
-  if (e.alpha === null || e.beta === null || e.gamma === null) return;
-  const D = THREE.MathUtils.DEG2RAD;
-  gyroEuler.set(e.beta * D, e.alpha * D, -e.gamma * D, 'YXZ');
-  gyroQ.setFromEuler(gyroEuler).multiply(GYRO_BACK);
-  const screenAngle =
-    screen.orientation?.angle ?? (window as unknown as { orientation?: number }).orientation ?? 0;
-  gyroQ.multiply(gyroTurn.setFromAxisAngle(GYRO_Z, -screenAngle * D));
-
-  // Project Earth's real downward gravity vector (-Y) into screen space (zero gimbal lock, zero compass drift!)
-  gyroInvQ.copy(gyroQ).invert();
-  gyroDownScreen.set(0, -1, 0).applyQuaternion(gyroInvQ);
-
-  if (!gyroRef) {
-    gyroRef = { x: gyroDownScreen.x, y: gyroDownScreen.y };
-  }
-
-  const rawX = gyroDownScreen.x - gyroRef.x;
-  const rawY = gyroDownScreen.y - gyroRef.y;
-
-  // Small deadzone (~3°) around the user's calibrated holding posture so holding steady stays crisp
-  const deadzone = 0.05;
-  const shape = (v: number) => {
-    const a = Math.abs(v);
-    if (a <= deadzone) return 0;
-    return Math.sign(v) * Math.min(1, (a - deadzone) / 0.42);
-  };
-
-  gyroTilt.x = gyroTilt.x * 0.65 + shape(rawX) * 0.35;
-  gyroTilt.y = gyroTilt.y * 0.65 + shape(rawY) * 0.35;
-}
-
-btnGyro.addEventListener('click', async () => {
-  sound.unlock();
-  if (gyroOn) {
-    window.removeEventListener('deviceorientation', onDeviceTilt);
-    gyroOn = false;
-    gyroRef = null;
-    gyroTilt.set(0, 0);
-  } else {
-    const ask = (DeviceOrientationEvent as unknown as { requestPermission?: () => Promise<string> }).requestPermission;
-    if (ask) {
-      try {
-        if ((await ask()) !== 'granted') return;
-      } catch {
-        return;
-      }
-    }
-    gyroRef = null;
-    gyroTilt.set(0, 0);
-    window.addEventListener('deviceorientation', onDeviceTilt);
-    gyroOn = true;
-  }
-  btnGyro.classList.toggle('on', gyroOn);
-  btnGyro.setAttribute('aria-pressed', String(gyroOn));
-});
-
-for (const btn of levelButtons) {
-  btn.addEventListener('click', () => {
+if (isDevControls) {
+  levelNumBtn.disabled = false;
+  levelNumBtn.classList.add('dev-select');
+  levelNumBtn.title = 'Select level (dev)';
+  levelNumBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
     sound.unlock();
-    const lvl = Number(btn.dataset.level);
-    applyLevel(lvl - 1, false, true);
+    toggleLevelPicker();
   });
-}
 
-if (import.meta.env.DEV || params.has('settings')) {
+  for (const btn of levelButtons) {
+    btn.addEventListener('click', () => {
+      sound.unlock();
+      const lvl = Number(btn.dataset.level);
+      applyLevel(lvl - 1, false, true);
+      toggleLevelPicker(false);
+    });
+  }
+
+  window.addEventListener('pointerdown', (e) => {
+    if (!levelPicker.hidden && !levelPicker.contains(e.target as Node) && e.target !== levelNumBtn) {
+      toggleLevelPicker(false);
+    }
+  });
+
   btnSettings.hidden = false;
   btnSettings.addEventListener('click', () => {
-    settingsPanel.hidden = !settingsPanel.hidden;
+    const open = settingsPanel.hidden;
+    settingsPanel.hidden = !open;
+    if (open) toggleHelp(false);
   });
 
   const optSsao = document.getElementById('opt-ssao') as HTMLInputElement;
@@ -528,6 +529,14 @@ resize();
     targetCamDist = d;
     camDist = d;
   },
+  setCamera: (yaw: number, pitch: number, instant = true) => {
+    targetCamYaw = yaw;
+    targetCamPitch = THREE.MathUtils.clamp(pitch, -1.24, 1.24);
+    if (instant) {
+      camYaw = targetCamYaw;
+      camPitch = targetCamPitch;
+    }
+  },
   getState: () => ({
     level: currentLevelIdx + 1,
     name: grid.levels[currentLevelIdx].name,
@@ -546,7 +555,10 @@ let lastFrame = performance.now();
 const stepAxis = new THREE.Vector3();
 const stepQuat = new THREE.Quaternion();
 const keyTilt = new THREE.Vector3();
-const gravityWorldDir = new THREE.Vector3();
+const gravityWorldDir = new THREE.Vector3(0, 0.05, 1).normalize();
+const aimVisualDir = new THREE.Vector3(0, 0.05, 1).normalize();
+const aimUpVec = new THREE.Vector3(0, 1, 0);
+let aimActive = 0;
 
 function frame(now: number) {
   requestAnimationFrame(frame);
@@ -589,16 +601,6 @@ function frame(now: number) {
   if (keysDown.has('e')) keyTilt.z -= kSpeed;
   if (keyTilt.lengthSq() > 0) {
     angVel.lerp(keyTilt, Math.min(1, dt * 8));
-  } else if (gyroOn && activePointerId === null && gyroTilt.lengthSq() > 1e-4) {
-    // Tilting phone right edge down -> roll sphere left so ball glides right; top down -> roll sphere down so ball glides up
-    const gSpeed = 2.35;
-    camUp.set(0, 1, 0).applyQuaternion(camera.quaternion).normalize();
-    camRight.set(1, 0, 0).applyQuaternion(camera.quaternion).normalize();
-    dragVelVec
-      .copy(camUp)
-      .multiplyScalar(-gyroTilt.x * gSpeed)
-      .addScaledVector(camRight, gyroTilt.y * gSpeed);
-    angVel.lerp(dragVelVec, Math.min(1, dt * 10));
   }
 
   if (activePointerId === null) {
@@ -611,16 +613,34 @@ function frame(now: number) {
     }
   }
 
+  const camEase = 1 - Math.exp(-11 * dt);
   camDist += (targetCamDist - camDist) * Math.min(1, dt * 9);
-  camera.position.set(0, 0.24 * (camDist / 4.55), camDist);
-  camera.lookAt(0, -0.02, 0);
+  camYaw += (targetCamYaw - camYaw) * camEase;
+  camPitch += (targetCamPitch - camPitch) * camEase;
+
+  const cosPitch = Math.cos(camPitch);
+  camera.position.set(
+    camDist * cosPitch * Math.sin(camYaw),
+    camDist * Math.sin(camPitch),
+    camDist * cosPitch * Math.cos(camYaw),
+  );
+  camera.lookAt(0, -0.02 * cosPitch, 0);
 
   const bob = Math.sin(t * 1.15) * 0.018;
   floatGroup.position.y = bob;
   studio.shadowPlane.scale.setScalar(1.0 - bob * 1.4);
+  // Gently fade floor contact shadow if the user Cmd+drags the camera underneath the sphere
+  const shadowVis = THREE.MathUtils.smoothstep(Math.sin(camPitch), -0.22, 0.18);
+  (studio.shadowPlane.material as THREE.MeshBasicMaterial).opacity = shadowVis;
 
-  // Gravity points from the sphere center directly toward the camera (ball seeks 50% / 50% of screen!)
+  // Gravity points from the sphere center directly toward the camera (Cmd+drag changes camera & thus gravity center!)
   gravityWorldDir.copy(camera.position).sub(floatGroup.position).normalize();
+  // Smoothly glide the curved 3D reticle across the outer clear shell toward the gravity center
+  aimVisualDir.lerp(gravityWorldDir, 1 - Math.exp(-16 * dt)).normalize();
+  const targetAimActive = cmdHeld || (activePointerId !== null && dragMode === 'camera') ? 1 : 0;
+  aimActive += (targetAimActive - aimActive) * Math.min(1, dt * 12);
+  aimUpVec.set(0, 1, 0).applyQuaternion(camera.quaternion).normalize();
+  aimReticle.setPose(aimVisualDir, aimUpVec, aimActive);
 
   rig.root.quaternion.copy(sphereQuat);
   physics.step(dt, sphereQuat, gravityWorldDir, wallExt, shutterOpen, {

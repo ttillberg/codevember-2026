@@ -29,27 +29,10 @@
         <b>13 Labyrinth</b>
         <i><a class="home" href="https://ttillberg.github.io/codevember-2026/">Codevember 2026 <span lang="ja">迷宮</span></a> · <a class="home" href="https://x.com/theo_t">@theo_t</a></i>
       </div>
-      <div class="status" id="status">
-        <span class="dots" id="led-dots" aria-label="Checkpoint progress"></span>
-        <span class="status-text" id="status-text">LVL 01 · FIRST ROLL · NEXT 01</span>
-      </div>
-      <div class="substatus" id="substatus"></div>
     </div>
 
     <!-- Top-right frosted controls -->
     <div class="actions">
-      <button class="icon-btn gyro" id="btn-gyro" type="button" title="Tilt phone to steer" aria-label="Tilt phone to steer" aria-pressed="false">
-        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <rect x="8" y="3.5" width="8" height="17" rx="2" transform="rotate(-18 12 12)" />
-          <path d="M3 8.5a10 10 0 0 0 0 7M21 8.5a10 10 0 0 1 0 7" />
-        </svg>
-      </button>
-      <button class="icon-btn" id="btn-reset" type="button" title="Reset level (R)" aria-label="Reset level">
-        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M3 12a9 9 0 1 0 3-6.7L3 8" />
-          <path d="M3 3v5h5" />
-        </svg>
-      </button>
       <button class="icon-btn" id="btn-sound" type="button" title="Toggle sound (M)" aria-label="Toggle sound" aria-pressed="true">
         <svg class="ico-on" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <path d="M11 5 6 9H2v6h4l5 4V5z" />
@@ -65,30 +48,48 @@
       <button class="icon-btn" id="btn-help" type="button" title="Help (?)" aria-label="Help" aria-expanded="false">?</button>
     </div>
 
-    <!-- Bottom-center minimalist 10-level morph selector (docs/DESIGN.md) -->
-    <div class="level-bar" id="level-bar" role="group" aria-label="Labyrinth levels">
-      <span class="level-label">LVL</span>
-      <button class="lvl-btn active" type="button" data-level="1">01</button>
-      <button class="lvl-btn" type="button" data-level="2">02</button>
-      <button class="lvl-btn" type="button" data-level="3">03</button>
-      <button class="lvl-btn" type="button" data-level="4">04</button>
-      <button class="lvl-btn" type="button" data-level="5">05</button>
-      <button class="lvl-btn" type="button" data-level="6">06</button>
-      <button class="lvl-btn" type="button" data-level="7">07</button>
-      <button class="lvl-btn" type="button" data-level="8">08</button>
-      <button class="lvl-btn" type="button" data-level="9">09</button>
-      <button class="lvl-btn" type="button" data-level="10">10</button>
+    <!-- Bottom-left level caption + reset button (click LEVEL N to select only in dev / ?settings) -->
+    <div class="level-hud" id="level-hud">
+      <div class="level-picker" id="level-picker" role="menu" aria-label="Select level" hidden>
+        <button class="lvl-btn active" type="button" data-level="1">01</button>
+        <button class="lvl-btn" type="button" data-level="2">02</button>
+        <button class="lvl-btn" type="button" data-level="3">03</button>
+        <button class="lvl-btn" type="button" data-level="4">04</button>
+        <button class="lvl-btn" type="button" data-level="5">05</button>
+        <button class="lvl-btn" type="button" data-level="6">06</button>
+        <button class="lvl-btn" type="button" data-level="7">07</button>
+        <button class="lvl-btn" type="button" data-level="8">08</button>
+        <button class="lvl-btn" type="button" data-level="9">09</button>
+        <button class="lvl-btn" type="button" data-level="10">10</button>
+      </div>
+      <div class="level-top">
+        <button class="level-num" id="level-num" type="button" disabled aria-expanded="false">LEVEL 1</button>
+        <button class="icon-btn reset-btn" id="btn-reset" type="button" title="Reset level (R)" aria-label="Reset level">
+          <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M3 12a9 9 0 1 0 3-6.7L3 8" />
+            <path d="M3 3v5h5" />
+          </svg>
+        </button>
+      </div>
+      <div class="level-title" id="level-title">FIRST ROLL</div>
+    </div>
+
+    <!-- Right-side vertical minimalist hardware indicator lights -->
+    <div class="lights-hud" id="lights-hud" aria-label="Checkpoint and switch lights">
+      <span class="dots" id="led-dots" aria-label="Checkpoint progress"></span>
+      <span class="lights-sep" id="lights-sep" hidden></span>
+      <span class="sw-dots" id="sw-dots" aria-label="Switch states" hidden></span>
     </div>
 
     <!-- Minimalist help popover -->
     <div class="help-card" id="help-card" hidden>
       <p class="help-title">ADAPTIVE SPHERE LABYRINTH NO. 13</p>
       <p>Gravity pulls the steel ball toward the center of the screen. Light the checkpoint LEDs <strong>in exact order</strong> (only the active next LED glows).</p>
-      <p>Center an open <strong>diaphragm shutter</strong> to drop into or emerge from the half-pipe tubes below. Roll over colored <strong>SW A / SW B</strong> floor switches to flip matching striped gate walls and iris shutters.</p>
+      <p>Center an open <strong>diaphragm shutter</strong> to drop into or emerge from the half-pipe tubes below. Roll over colored <strong>SW A / SW B</strong> floor switches to flip matching neon-bar gate walls and iris shutters.</p>
       <div class="help-keys">
         <div><span class="key">DRAG</span> Slide sphere beneath ball</div>
-        <div><span class="key">1–9</span> <span class="key">0</span> Switch levels (or <span class="key">[</span> <span class="key">]</span>)</div>
-        <div><span class="key">SCROLL</span> Zoom · <span class="key">R</span> Reset level</div>
+        <div><span class="key">⌘ + DRAG</span> Orbit camera &amp; gravity center</div>
+        <div><span class="key">SCROLL</span> Zoom · <span class="key">R</span> Reset level · <span class="key">M</span> Mute</div>
       </div>
     </div>
 
