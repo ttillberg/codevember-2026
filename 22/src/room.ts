@@ -1,10 +1,30 @@
 import * as THREE from 'three';
 
+export interface SwedishRoomHandle {
+  group: THREE.Group;
+  wallMesh: THREE.Mesh;
+  cycleWallpaper: () => string;
+}
+
+interface WallpaperDef {
+  name: string;
+  url?: string;
+  repeat: [number, number];
+  tint: number;
+}
+
+const WALLPAPERS: WallpaperDef[] = [
+  { name: 'Swedish Summer Meadow', url: 'wallpaper-meadow.jpg', repeat: [6.0, 3.2], tint: 0xbcb6aa },
+  { name: 'Sage & Burgundy Stripe', url: 'wallpaper-stripe.jpg', repeat: [9.5, 5.0], tint: 0xbcb5a8 },
+  { name: 'Nordic Blue Stars', url: 'wallpaper-stars.jpg', repeat: [7.5, 4.0], tint: 0xbab4a7 },
+  { name: 'Swedish Sprig', repeat: [9.5, 5.0], tint: 0xffffff },
+];
+
 /**
  * 1984 Swedish bedroom desk & dimly-lit heritage Swedish botanical wallpaper ("tapet") wall.
  * Back wall uses FrontSide so orbiting behind the 1702 to inspect its rear RCA jacks never clips.
  */
-export function buildSwedishRoom(): THREE.Group {
+export function buildSwedishRoom(): SwedishRoomHandle {
   const room = new THREE.Group();
 
   // 1. Lived-in 1984 wooden desk with grain, scratches, pen test marks, mug ring & old tape marks
@@ -64,9 +84,9 @@ export function buildSwedishRoom(): THREE.Group {
 
   // 2. Heritage Swedish botanical wallpaper wall (Boråstapeter / Duro 1970s-80s style)
   const wallZ = -3.45;
-  const { map: wallTex, bump: wallBump } = makeSwedishWallpaperTextures();
+  const { map: sprigTex, bump: wallBump } = makeSwedishWallpaperTextures();
   const wallMat = new THREE.MeshStandardMaterial({
-    map: wallTex,
+    map: sprigTex,
     bumpMap: wallBump,
     bumpScale: 0.012,
     roughness: 0.92,
@@ -77,7 +97,42 @@ export function buildSwedishRoom(): THREE.Group {
   const wall = new THREE.Mesh(new THREE.PlaneGeometry(30, 16), wallMat);
   wall.position.set(0, 6.2, wallZ);
   wall.receiveShadow = true;
+  wall.userData = { hit: { kind: 'wallpaper' } };
   room.add(wall);
+
+  // Lazy-cached textures for the 4 clickable heritage Swedish wallpapers (default: Swedish Summer Meadow)
+  const texLoader = new THREE.TextureLoader();
+  const baseUrl = import.meta.env.BASE_URL;
+  const wallTextures: (THREE.Texture | null)[] = WALLPAPERS.map((d) => (!d.url ? sprigTex : null));
+  let wpIndex = 0;
+
+  const getWallpaperTexture = (idx: number): THREE.Texture => {
+    const existing = wallTextures[idx];
+    if (existing) return existing;
+    const def = WALLPAPERS[idx];
+    const tex = texLoader.load(`${baseUrl}${def.url}`);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    tex.wrapS = THREE.RepeatWrapping;
+    tex.wrapT = THREE.RepeatWrapping;
+    tex.repeat.set(def.repeat[0], def.repeat[1]);
+    tex.anisotropy = 8;
+    wallTextures[idx] = tex;
+    return tex;
+  };
+
+  // Apply default flower wallpaper immediately & preload alternates quietly
+  wallMat.map = getWallpaperTexture(0);
+  wallMat.color.setHex(WALLPAPERS[0].tint);
+  for (let i = 1; i < WALLPAPERS.length; i++) getWallpaperTexture(i);
+
+  const cycleWallpaper = (): string => {
+    wpIndex = (wpIndex + 1) % WALLPAPERS.length;
+    const def = WALLPAPERS[wpIndex];
+    wallMat.map = getWallpaperTexture(wpIndex);
+    wallMat.color.setHex(def.tint);
+    wallMat.needsUpdate = true;
+    return def.name;
+  };
 
   // Classic Swedish painted wooden molding rail along the wall just above the desk
   const trimMat = new THREE.MeshStandardMaterial({
@@ -96,7 +151,7 @@ export function buildSwedishRoom(): THREE.Group {
   trimLip.position.set(0, 0.35, wallZ + 0.055);
   room.add(trimLip);
 
-  return room;
+  return { group: room, wallMesh: wall, cycleWallpaper };
 }
 
 /**

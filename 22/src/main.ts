@@ -193,6 +193,12 @@ scene.add(tac2.root);
 const c64 = new Commodore64Breadbin(tac2.cableEntryWorld);
 scene.add(c64.root);
 
+// ---- 1984 Swedish Bedroom Desk, Heritage Wallpaper, Kid Sketches & Echo Fireworks ----
+const swedishRoom = buildSwedishRoom();
+scene.add(swedishRoom.group);
+scene.add(buildKidSketches());
+scene.add(fireworks.root);
+
 const pickables: THREE.Object3D[] = [
   ...monitor.interactiveMeshes,
   ...drive.interactiveMeshes,
@@ -202,12 +208,8 @@ const pickables: THREE.Object3D[] = [
   deskPaper.hitMesh,
   bicPen.hitMesh,
   wallClock.hitMesh,
+  swedishRoom.wallMesh,
 ];
-
-// ---- 1984 Swedish Bedroom Desk, Heritage Wallpaper, Kid Sketches & Echo Fireworks ----
-scene.add(buildSwedishRoom());
-scene.add(buildKidSketches());
-scene.add(fireworks.root);
 
 // ---- Moody Room Lighting (modulated smoothly by the clickable orange desk lamp) ----
 const hemi = new THREE.HemisphereLight(0xd6cfc4, 0x241d17, 0.34);
@@ -252,7 +254,8 @@ type SceneHit =
   | { kind: 'clock' }
   | { kind: 'key'; key: string }
   | { kind: 'joystick' }
-  | { kind: 'joystick-fire' };
+  | { kind: 'joystick-fire' }
+  | { kind: 'wallpaper' };
 const raycaster = new THREE.Raycaster();
 const pointerNdc = new THREE.Vector2();
 
@@ -416,7 +419,8 @@ canvas.addEventListener('pointerup', (e) => {
     return;
   }
 
-  if (hit.kind !== 'screen' && hit.kind !== 'key' && document.activeElement === touchInput) {
+  const wasTouchKbdFocused = document.activeElement === touchInput;
+  if (hit.kind !== 'screen' && hit.kind !== 'key' && wasTouchKbdFocused) {
     touchInput.blur();
   }
 
@@ -483,6 +487,10 @@ canvas.addEventListener('pointerup', (e) => {
     }
   } else if (hit.kind === 'paper') {
     setPaperOpen(paperViewEl.hidden);
+  } else if (hit.kind === 'wallpaper') {
+    if (!wasTouchKbdFocused) {
+      swedishRoom.cycleWallpaper();
+    }
   } else if (hit.kind === 'screen') {
     if (e.pointerType === 'touch') {
       lastTouchTapOpensKbd = true;
