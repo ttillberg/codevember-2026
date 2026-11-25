@@ -453,6 +453,7 @@ canvas.addEventListener('pointerup', (e) => {
       } else {
         const outKey = virtualShift ? (C64_SHIFT_MAP[hit.key] ?? hit.key) : hit.key;
         virtualShift = false;
+        basic.pulseMatrixKey(outKey);
         basic.handleKey(outKey, false, false);
       }
     }

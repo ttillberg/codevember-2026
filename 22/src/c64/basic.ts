@@ -165,6 +165,7 @@ export class C64Basic {
   private cia1IcrData = 0;
   private cia1Cra = 0;
   private readonly keyMatrix = new Uint8Array(8); // bit=1 when pressed at (row, col)
+  private readonly keyMatrixPulse = new Float32Array(64); // timed pulse per (row*8+col) for 3D key clicks
 
   // Interactive 6502 Machine Language Monitor (MON / ASM)
   monitorMode = false;
@@ -209,9 +210,18 @@ export class C64Basic {
     else this.keyMatrix[row] &= ~(1 << col);
   }
 
+  /** Pulse a C64 CIA1 keyboard matrix key briefly (for 3D C64 keyboard clicks like F1/F3/F5/F7). */
+  pulseMatrixKey(key: string, durationSec = 0.14) {
+    const pos = C64_KEY_MATRIX[key] ?? C64_KEY_MATRIX[key.toUpperCase()];
+    if (!pos) return;
+    const idx = pos[0] * 8 + pos[1];
+    this.keyMatrixPulse[idx] = Math.max(this.keyMatrixPulse[idx], durationSec);
+  }
+
   /** Clear all held keys in the CIA1 keyboard matrix (on window blur / reset). */
   clearMatrixKeys() {
     this.keyMatrix.fill(0);
+    this.keyMatrixPulse.fill(0);
   }
 
   private getJoy2Byte(): number {
@@ -228,6 +238,10 @@ export class C64Basic {
     for (let row = 0; row < 8; row++) {
       if ((this.cia1Pra & (1 << row)) === 0) {
         colsPressed |= this.keyMatrix[row];
+        const base = row * 8;
+        for (let col = 0; col < 8; col++) {
+          if (this.keyMatrixPulse[base + col] > 0) colsPressed |= 1 << col;
+        }
       }
     }
     // Mirror active joystick bits onto Port 1 when reading $DC01 so arrows/TAC-2 work on Port 1 games (e.g. Jupiter Lander)
@@ -589,10 +603,15 @@ export class C64Basic {
 
   /** Step running program, 6510 CPU, and async 1541 disk transfer non-blockingly each frame. */
   step(maxStatements = 24, dt = 1 / 60) {
-    // Decay pulsed TAC-2 joystick timers
+    // Decay pulsed TAC-2 joystick & 3D keyboard matrix timers
     for (let i = 0; i < 5; i++) {
       if (this.joyPulseTimers[i] > 0) {
         this.joyPulseTimers[i] = Math.max(0, this.joyPulseTimers[i] - dt);
+      }
+    }
+    for (let i = 0; i < 64; i++) {
+      if (this.keyMatrixPulse[i] > 0) {
+        this.keyMatrixPulse[i] = Math.max(0, this.keyMatrixPulse[i] - dt);
       }
     }
     this.jiffyLow = (this.jiffyLow + 1) & 0xff;
