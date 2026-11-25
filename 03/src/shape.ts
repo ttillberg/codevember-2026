@@ -50,6 +50,12 @@ export interface MeltFieldState {
   pointerHeat: number;
   pointerX: number;
   pointerY: number;
+  /** Bottom-rim downward pooling morph intensity (driven by Drop Debug 'Bot Pool' slider) */
+  bottomPool?: number;
+  /** Live morph target weights [outerLeft, innerLeft, innerRight, outerRight] fed by draining syrup layers */
+  bottomLobes?: [number, number, number, number];
+  /** Live gravity stretch & elastic capillary recoil [L0, L1, R0, R1] coupled to all 4 hanging bottom drops */
+  pendantPull?: [number, number, number, number];
 }
 
 /**
@@ -109,7 +115,7 @@ export function evaluatePopsicleProfile(
   vNorm: number, // 0 = bottom pole, 1 = top pole
   theta: number, // angle around Y axis: 0 = +Z front, PI/2 = +X right, PI = -Z back, -PI/2 = -X left
   state: MeltFieldState,
-  outPos: { x: number; y: number; z: number },
+  outPos: { x: number; y: number; z: number; hang?: number },
 ): void {
   const m = clamp(state.melt, 0, 1);
   const { yTop, yBot, iceAmount } = getMeltBounds(m);
@@ -159,6 +165,8 @@ export function evaluatePopsicleProfile(
     domeDepthFactor *= sinB;
   }
 
+  // Preserve un-beveled lower body half-width so underside hanging liquid lobes align cleanly in vertical columns
+  const bodyHalfW = halfW;
   halfW *= capFactor;
   halfD *= domeDepthFactor;
 
@@ -227,48 +235,87 @@ export function evaluatePopsicleProfile(
   x += sgnX * edgeWave * (0.45 + 0.55 * sideEdge) * capFactor;
   z += sgnZ * edgeWave * 0.78 * domeDepthFactor;
 
-  // Sticky accumulated berry-syrup pooling relief along the entire bottom rim (matching reference close-up!):
-  // Soft rounded scalloped viscous lobes, plump wet lip swell, and smooth symmetric liquid fillets embracing the stick!
-  if (hNorm < 0.13) {
-    const botProximity = smoothstep(0.13, 0.0, hNorm);
-    const rimEdgeMask = smoothstep(0.10, 0.015, hNorm);
-    const activeRim = 1.0 - smoothstep(0.48, 0.78, m);
-    const poolGrow = 0.85 + 0.30 * smoothstep(0.0, 0.30, m);
+  // === SLEEK GRAVITY-WEIGHTED UNDERSIDE MENISCUS & GENTLE POOLING SWELLS ===
+  // Physically bounded by capillary surface tension (water breaks into falling drops before huge pouches can hang!):
+  // forms soft, gentle, gently-breathing underside swells right above the 4 drop break-off sites rather than heavy stalactites.
+  let hangFactor = 0;
+  if (hNorm < 0.24) {
+    const botProximity = Math.pow(smoothstep(0.24, 0.0, hNorm), 1.40);
+    const rimBellyMask = smoothstep(0.20, 0.036, hNorm) * smoothstep(0.0, 0.025, hNorm);
+    const activeRim = 1.0 - smoothstep(0.66, 0.90, m);
+    // Crisp flat freezer bottom at t=0 -> develops gentle liquid underside swells as melted syrup drains down!
+    const thawPool = smoothstep(0.038, 0.22, m);
+    const poolAmt = clamp(state.bottomPool ?? 1.25, 0, 2.2) * thawPool * activeRim;
 
-    // Soft rounded asymmetric sticky pooling swells evenly across left & right bottom underside
-    const nBotA = sampleFastFbm3(x * 8.5 + so * 1.3, so * 0.5, z * 6.5);
-    const nBotB = sampleFastFbm3(x * 19.0 - so * 2.1, so * 1.1, z * 14.0);
-    const waveLobes =
-      Math.max(0, Math.sin(x * 21.0 + so * 1.1) * 0.5 + 0.5) * 0.0075 +
-      Math.max(0, Math.sin(x * 38.0 - so * 2.3 + 1.4) * 0.5 + 0.5) * 0.0045 +
-      Math.max(0, nBotA - 0.36) * 0.015 +
-      Math.max(0, nBotB - 0.44) * 0.009;
+    if (poolAmt > 0.005) {
+      const stickHalfW = POPSICLE.stickWidth * 0.5;
+      const liveW = Math.max(stickHalfW + 0.08, bodyHalfW * 0.86);
+      const availSpan = Math.max(0.075, liveW - stickHalfW);
+      const lobes = state.bottomLobes ?? [1, 1, 1, 1];
+      const pull = state.pendantPull ?? [0, 0, 0, 0];
+      const pullL0 = pull[0];
+      const pullL1 = pull[1];
+      const pullR0 = pull[2];
+      const pullR1 = pull[3];
+      const tSlow = state.time * 0.65;
 
-    // Distinct curved viscous accumulation bellies on bottom-left & bottom-right where liquid gathers & drops grow!
-    const bulgeL = Math.exp(-Math.pow((x + 0.35) / 0.115, 2.0)) * 0.020;
-    const bulgeR = Math.exp(-Math.pow((x - 0.34) / 0.105, 2.0)) * 0.015;
+      // Subtle living liquid breathing per bottom pooling swell
+      const w0 = lobes[0] * (1.0 + 0.04 * Math.sin(tSlow + 0.4));
+      const w1 = lobes[1] * (1.0 + 0.04 * Math.sin(tSlow * 1.15 + 1.9));
+      const w2 = lobes[2] * (1.0 + 0.04 * Math.sin(tSlow * 0.95 + 3.4));
+      const w3 = lobes[3] * (1.0 + 0.04 * Math.sin(tSlow * 1.10 + 4.8));
 
-    // Smooth symmetric curved pink liquid fillets tucked tightly against BOTH left & right wood stick edges!
-    const stickHalfW = POPSICLE.stickWidth * 0.5;
-    const filletL = Math.exp(-Math.pow((x + stickHalfW + 0.014) / 0.036, 2.0)) * 0.014;
-    const filletR = Math.exp(-Math.pow((x - stickHalfW - 0.014) / 0.036, 2.0)) * 0.014;
-    const stickCenter = Math.exp(-Math.pow(x / (stickHalfW * 0.90), 2.0));
+      // Gentle asymmetric base wave along the bottom rim
+      const nBotSmooth = sampleFastFbm3(x * 3.6 + so * 1.1, so * 0.5, Math.abs(z) * 3.2);
+      const broadWave = Math.max(0, nBotSmooth - 0.36) * 0.014;
 
-    const totalSag = Math.min(
-      0.034,
-      ((waveLobes + bulgeL + bulgeR) * (1.0 - stickCenter * 0.80) + filletL + filletR) * poolGrow,
-    );
-    y -= totalSag * botProximity * activeRim;
+      // 4 soft, broad, realistic capillary pooling swells (no steep V-stalactites — broad smooth bases for forming drops!)
+      const xL0 = -(stickHalfW + availSpan * 0.62);
+      const xL1 = -(stickHalfW + availSpan * 0.20);
+      const xR0 = +(stickHalfW + availSpan * 0.24);
+      const xR1 = +(stickHalfW + availSpan * 0.65);
 
-    // Plump swollen viscous lip bulging gently outward in Z & X where sticky liquid pools at the bottom rim!
-    const lipSwell = (0.008 + waveLobes * 0.55) * rimEdgeMask * activeRim * poolGrow;
-    z += sgnZ * lipSwell * (0.55 + 0.45 * Math.abs(cosT)) * (1.0 - stickCenter * 0.55);
-    x += sgnX * lipSwell * 0.38 * sideEdge;
+      const sL0 = Math.max(0.056, availSpan * 0.28);
+      const sL1 = Math.max(0.046, availSpan * 0.23);
+      const sR0 = Math.max(0.058, availSpan * 0.28);
+      const sR1 = Math.max(0.050, availSpan * 0.24);
+
+      const gL0 = Math.exp(-Math.pow(Math.abs(x - xL0) / sL0, 2.2));
+      const gL1 = Math.exp(-Math.pow(Math.abs(x - xL1) / sL1, 2.2));
+      const gR0 = Math.exp(-Math.pow(Math.abs(x - xR0) / sR0, 2.2));
+      const gR1 = Math.exp(-Math.pow(Math.abs(x - xR1) / sR1, 2.2));
+
+      // Modest capillary gravity swell right before each drop breaks off (water drips away before getting oversized!)
+      const lobeL0 = gL0 * (0.040 * w0 + Math.max(-0.012, pullL0 * 0.024));
+      const lobeL1 = gL1 * (0.028 * w1 + Math.max(-0.010, pullL1 * 0.018));
+      const lobeR0 = gR0 * (0.038 * w2 + Math.max(-0.012, pullR0 * 0.022));
+      const lobeR1 = gR1 * (0.026 * w3 + Math.max(-0.009, pullR1 * 0.016));
+
+      // Concave stick-hugging viscous fillets sweeping smoothly up onto both sides of the wooden stick
+      const filletL = Math.exp(-Math.pow((x + stickHalfW + 0.018) / 0.044, 2.0)) * 0.022 * (0.7 + 0.3 * w1);
+      const filletR = Math.exp(-Math.pow((x - stickHalfW - 0.018) / 0.044, 2.0)) * 0.018 * (0.7 + 0.3 * w2);
+      const stickCenter = Math.exp(-Math.pow(x / (stickHalfW * 0.86), 2.0));
+
+      // Physically realistic capillary ceiling (softMax = 0.088 -> sleek, natural pooling curve!)
+      const underWeight = 0.74 + 0.26 * (1.0 - Math.min(1, Math.abs(z) / Math.max(0.04, halfD)));
+      const rawSag = ((broadWave + lobeL0 + lobeL1 + lobeR0 + lobeR1) * (1.0 - stickCenter * 0.88) + filletL + filletR) * poolAmt;
+      const softMax = 0.088;
+      const totalSag = ((softMax * rawSag) / (softMax + rawSag)) * underWeight;
+      const sagHere = totalSag * botProximity;
+      y -= sagHere;
+      hangFactor = clamp(sagHere / 0.048, 0, 1);
+
+      // Gentle 3D rounded syrupy rim cushion matching the sleek underside swell
+      const lipSwell = (0.006 + sagHere * 0.34) * rimBellyMask;
+      z += sgnZ * lipSwell * (0.58 + 0.42 * Math.abs(cosT)) * (1.0 - stickCenter * 0.58);
+      x += sgnX * lipSwell * 0.16 * sideEdge;
+    }
   }
 
   outPos.x = x;
   outPos.y = y;
   outPos.z = z;
+  outPos.hang = hangFactor;
 }
 
 /**

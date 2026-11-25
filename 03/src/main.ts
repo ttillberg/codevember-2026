@@ -5,8 +5,18 @@ import { MeltFieldState, POPSICLE } from './shape';
 import { createMacroStudioEnv } from './textures';
 import { createFruitAssembly, FruitAssembly } from './fruits';
 import { createPopsicleIceSystem, PopsicleIceSystem } from './popsicleIce';
-import { createWaterDropSystem, DropMode, WaterDropSystem } from './waterDrops';
+import { createWaterDropSystem, DEFAULT_DROP_DEBUG, DropDebugParams, DropMode, WaterDropSystem } from './waterDrops';
 import { createLiquidFilmSystem, LiquidFilmSystem } from './liquidFilm';
+import {
+  BaseKind,
+  DEFAULT_RECIPE,
+  FLAVOR_LIST,
+  FlavorId,
+  normalizeRecipe,
+  PopsicleRecipe,
+  TOPPING_LIST,
+  ToppingId,
+} from './recipe';
 
 // === URL QUERY FLAGS ===
 const params = new URLSearchParams(window.location.search);
@@ -52,10 +62,10 @@ renderer.toneMapping = THREE.NoToneMapping;
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.autoClear = false;
 
-// === MACRO STUDIO CAMERA (~90mm telephoto portrait framing) ===
+// === MACRO STUDIO CAMERA (~90mm telephoto portrait framing with subtle underside perspective) ===
 const camera = new THREE.PerspectiveCamera(27, window.innerWidth / window.innerHeight, 0.1, 30);
-const BASE_CAM_POS = new THREE.Vector3(0, -0.05, 5.75);
-const BASE_TARGET = new THREE.Vector3(0, -0.08, 0);
+const BASE_CAM_POS = new THREE.Vector3(0, -1.16, 5.66);
+const BASE_TARGET = new THREE.Vector3(0, -0.09, 0);
 camera.position.copy(BASE_CAM_POS);
 camera.lookAt(BASE_TARGET);
 
@@ -150,7 +160,8 @@ const backdropMat = new THREE.ShaderMaterial({
       col = mix(col, centerGlow, coreMask);
       col = mix(col, cornerDeep, vig * 0.72);
 
-      gl_FragColor = vec4(col, 1.0);
+      // Alpha = 0.0 tags studio backdrop air (solids write 1.0, ice writes 0.25 / 0.55 near fruit contact)
+      gl_FragColor = vec4(col, 0.0);
     }
   `,
 });
@@ -363,6 +374,8 @@ const simParams = {
   bubbles: 0.92,
 };
 
+const dropDebug: DropDebugParams = { ...DEFAULT_DROP_DEBUG };
+
 const meltState: MeltFieldState = {
   melt: initialMelt,
   time: 0,
@@ -371,11 +384,30 @@ const meltState: MeltFieldState = {
   pointerHeat: 0,
   pointerX: 0,
   pointerY: 0,
+  bottomPool: DEFAULT_DROP_DEBUG.bottomPool,
+  bottomLobes: [1, 1, 1, 1],
+  pendantPull: [0, 0, 0, 0],
 };
 
 const MAX_HEAT_SPOTS = 24;
 
+let currentRecipe: PopsicleRecipe = {
+  base: DEFAULT_RECIPE.base,
+  flavors: [...DEFAULT_RECIPE.flavors],
+  toppings: [...DEFAULT_RECIPE.toppings],
+};
+
+let pointerActive = false;
+let pointerPressed = false;
+let orbitMode = false;
+let activeGrabPointerId: number | null = null;
+let prevFrostU: number | null = null;
+let prevFrostV: number | null = null;
+
 function buildPopsicle(seed: number) {
+  if (activeGrabPointerId !== null) {
+    releaseActiveGrab();
+  }
   currentSeed = seed;
 
   if (fruitAssembly) {
@@ -401,20 +433,25 @@ function buildPopsicle(seed: number) {
   meltState.seedOffset = seed * 13.7;
   meltState.heatSpots = [];
   meltState.pointerHeat = 0;
+  meltState.bottomPool = dropDebug.bottomPool;
+  meltState.bottomLobes = [1, 1, 1, 1];
+  meltState.pendantPull = [0, 0, 0, 0];
   fallFocusBlend = 0;
 
-  fruitAssembly = createFruitAssembly(seed);
+  fruitAssembly = createFruitAssembly(seed, currentRecipe);
   solidScene.add(fruitAssembly.group);
 
-  iceSystem = createPopsicleIceSystem(seed, isMobile);
+  iceSystem = createPopsicleIceSystem(seed, isMobile, currentRecipe);
   iceScene.add(iceSystem.iceMesh);
   backZScene.add(iceSystem.backZMesh);
   bubblesScene.add(iceSystem.bubblesMesh);
 
   liquidFilm = createLiquidFilmSystem(seed);
   iceSystem.uniforms.uFilmTex.value = liquidFilm.texture;
+  iceSystem.uniforms.uRimeTex.value = liquidFilm.rimeTexture;
 
-  waterDrops = createWaterDropSystem(seed, currentDropMode);
+  waterDrops = createWaterDropSystem(seed, currentDropMode, currentRecipe);
+  waterDrops.setDebugParams(dropDebug);
   dropsScene.add(waterDrops.pendantGroup);
 
   // Sync initial geometry & droplet anchors at frame 0!
@@ -423,13 +460,55 @@ function buildPopsicle(seed: number) {
   fruitAssembly.update(meltState, 0, liquidFilm.stickWetness);
   waterDrops.update(meltState, iceSystem, liquidFilm, 0, simParams.speed);
   syncWorkbenchUI();
+  syncCustomizeUI();
+}
+
+function applyRecipe(nextRaw: PopsicleRecipe, forceRefreezeIfMelted = true) {
+  const prevBase = currentRecipe.base;
+  const prevToppingsKey = currentRecipe.toppings.join(',');
+  const next = normalizeRecipe(nextRaw);
+  currentRecipe = next;
+
+  const baseChanged = next.base !== prevBase;
+  const toppingsChanged = next.toppings.join(',') !== prevToppingsKey;
+
+  // If the popsicle is already mostly melted away, refreeze fresh so you can enjoy your new recipe!
+  if (forceRefreezeIfMelted && meltState.melt > 0.78) {
+    buildPopsicle(currentSeed);
+    return;
+  }
+
+  if (baseChanged || toppingsChanged) {
+    if (activeGrabPointerId !== null) {
+      releaseActiveGrab();
+    }
+    if (fruitAssembly) {
+      solidScene.remove(fruitAssembly.group);
+      fruitAssembly.dispose();
+    }
+    fruitAssembly = createFruitAssembly(currentSeed, currentRecipe);
+    solidScene.add(fruitAssembly.group);
+    if (liquidFilm) {
+      fruitAssembly.update(meltState, 0, Math.max(liquidFilm.stickWetness, meltState.melt * 1.15));
+    }
+  } else {
+    fruitAssembly?.setRecipeColors(currentRecipe);
+  }
+
+  iceSystem?.setRecipe(currentRecipe);
+  waterDrops?.setRecipe(currentRecipe);
+  syncCustomizeUI();
 }
 
 function resetMelt() {
+  releaseActiveGrab();
   meltState.melt = 0.035;
   meltState.time = 0;
   meltState.heatSpots = [];
   meltState.pointerHeat = 0;
+  meltState.bottomPool = dropDebug.bottomPool;
+  meltState.bottomLobes = [1, 1, 1, 1];
+  meltState.pendantPull = [0, 0, 0, 0];
   fallFocusBlend = 0;
   fruitAssembly?.reset();
   liquidFilm?.reset();
@@ -442,20 +521,86 @@ function resetMelt() {
   syncWorkbenchUI();
 }
 
-// === POINTER-ACCELERATED MELT INTERACTION ===
+// === POINTER-ACCELERATED MELT & LOOSE-FRUIT GRAB INTERACTION ===
 const raycaster = new THREE.Raycaster();
 const pointerNdc = new THREE.Vector2();
 const zPlane = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0);
 const hitPoint = new THREE.Vector3();
 
-let pointerActive = false;
-let pointerPressed = false;
-let orbitMode = false;
+function syncPointerCursor() {
+  const gs = fruitAssembly?.getGrabState();
+  if (gs && gs.grabbedIndex >= 0) {
+    canvas.style.cursor = 'grabbing';
+  } else if (gs && gs.hoveredIndex >= 0) {
+    canvas.style.cursor = 'grab';
+  } else {
+    canvas.style.cursor = '';
+  }
+}
 
-function updatePointerWorld(clientX: number, clientY: number) {
+function updatePointerRay(clientX: number, clientY: number) {
   pointerNdc.x = (clientX / window.innerWidth) * 2 - 1;
   pointerNdc.y = -(clientY / window.innerHeight) * 2 + 1;
   raycaster.setFromCamera(pointerNdc, camera);
+}
+
+function updatePointerWorld(clientX: number, clientY: number) {
+  updatePointerRay(clientX, clientY);
+
+  if (activeGrabPointerId !== null && fruitAssembly) {
+    fruitAssembly.moveGrab(raycaster, meltState);
+    pointerActive = false;
+    syncPointerCursor();
+    return;
+  }
+
+  // Check if pointer is hovering an almost-released (moving) or falling fruit ready to grab!
+  let hoveringGrabbable = false;
+  if (fruitAssembly && !pointerPressed) {
+    const hoverIdx = fruitAssembly.pickGrabbableFruit(raycaster);
+    fruitAssembly.setHoveredFruit(hoverIdx);
+    hoveringGrabbable = hoverIdx >= 0;
+    syncPointerCursor();
+  }
+
+  // Direct 3D surface raycast on live melting ice: instantly melts freezer hoarfrost right under the pointer
+  // and beads up glistening small droplets along the thawed trail (works from any angle & even while paused!)
+  if (iceSystem && liquidFilm && waterDrops && !hoveringGrabbable && !(orbit.enabled && pointerPressed)) {
+    if (iceSystem.iceMesh.visible && liquidFilm.avgRime > 0.002) {
+      const iceHits = raycaster.intersectObject(iceSystem.iceMesh, false);
+      if (iceHits.length > 0 && iceHits[0].uv) {
+        const u = iceHits[0].uv.x;
+        const v = iceHits[0].uv.y;
+        const u0 = prevFrostU ?? u;
+        const v0 = prevFrostV ?? v;
+        const brushRadius = pointerPressed ? 0.072 : 0.046;
+        const brushStrength = pointerPressed ? 1.0 : 0.92;
+        const samples = liquidFilm.meltFrostSegment(u0, v0, u, v, brushStrength, brushRadius);
+        if (samples.length > 0) {
+          for (let i = 0; i < samples.length; i++) {
+            const s = samples[i];
+            waterDrops.spawnFrostMeltDrops(s.u, s.v, s.melted, liquidFilm);
+          }
+          // If paused, refresh drop buffers immediately so newly beaded droplets appear right away!
+          if (paused) {
+            waterDrops.update(meltState, iceSystem, liquidFilm, 0, simParams.speed);
+          }
+        }
+        prevFrostU = u;
+        prevFrostV = v;
+      } else {
+        prevFrostU = null;
+        prevFrostV = null;
+      }
+    } else {
+      prevFrostU = null;
+      prevFrostV = null;
+    }
+  } else {
+    prevFrostU = null;
+    prevFrostV = null;
+  }
+
   if (raycaster.ray.intersectPlane(zPlane, hitPoint)) {
     meltState.pointerX = hitPoint.x;
     meltState.pointerY = hitPoint.y;
@@ -494,6 +639,20 @@ function depositHeatSpot(x: number, y: number, dose: number) {
   }
 }
 
+function releaseActiveGrab() {
+  if (activeGrabPointerId !== null) {
+    try {
+      canvas.releasePointerCapture(activeGrabPointerId);
+    } catch {
+      // Ignore if pointer capture already released
+    }
+    activeGrabPointerId = null;
+  }
+  fruitAssembly?.endGrab();
+  orbit.enabled = orbitMode;
+  syncPointerCursor();
+}
+
 canvas.addEventListener('pointermove', (e) => {
   updatePointerWorld(e.clientX, e.clientY);
 });
@@ -504,25 +663,71 @@ canvas.addEventListener('pointerdown', (e) => {
     orbit.enabled = true;
     return;
   }
-  if (!orbitMode && e.button === 0) {
-    pointerPressed = true;
-    updatePointerWorld(e.clientX, e.clientY);
+  if (e.button === 0) {
+    updatePointerRay(e.clientX, e.clientY);
+    if (fruitAssembly) {
+      const hitIdx = fruitAssembly.pickGrabbableFruit(raycaster);
+      if (hitIdx >= 0 && fruitAssembly.beginGrab(hitIdx, raycaster, camera)) {
+        activeGrabPointerId = e.pointerId;
+        try {
+          canvas.setPointerCapture(e.pointerId);
+        } catch {
+          // Safe fallback if synthetic pointer event has no native pointerId
+        }
+        orbit.enabled = false;
+        pointerPressed = false;
+        pointerActive = false;
+        syncPointerCursor();
+        return;
+      }
+    }
+    if (!orbitMode) {
+      pointerPressed = true;
+      updatePointerWorld(e.clientX, e.clientY);
+    }
   }
 });
 
-window.addEventListener('pointerup', () => {
+window.addEventListener('pointerup', (e) => {
+  if (activeGrabPointerId !== null && (e.pointerId === activeGrabPointerId || e.pointerId === 0)) {
+    releaseActiveGrab();
+  }
   pointerPressed = false;
   if (!orbitMode) orbit.enabled = false;
 });
 
+window.addEventListener('pointercancel', () => {
+  if (activeGrabPointerId !== null) {
+    releaseActiveGrab();
+  }
+  pointerPressed = false;
+  pointerActive = false;
+});
+
 canvas.addEventListener('pointerleave', () => {
+  if (activeGrabPointerId !== null) return;
   pointerActive = false;
   pointerPressed = false;
+  prevFrostU = null;
+  prevFrostV = null;
+  fruitAssembly?.setHoveredFruit(-1);
+  syncPointerCursor();
 });
 
 canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 
 // === UI CONTROLS ===
+const btnCustomize = document.getElementById('btn-customize') as HTMLButtonElement;
+const customizePanel = document.getElementById('customize-panel') as HTMLDivElement;
+const btnCustRandom = document.getElementById('btn-cust-random') as HTMLButtonElement;
+const btnCustReset = document.getElementById('btn-cust-reset') as HTMLButtonElement;
+const custBaseNote = document.getElementById('cust-base-note') as HTMLSpanElement;
+const custFlavorNote = document.getElementById('cust-flavor-note') as HTMLSpanElement;
+const custToppingNote = document.getElementById('cust-topping-note') as HTMLSpanElement;
+const custFlavorsEl = document.getElementById('cust-flavors') as HTMLDivElement;
+const custToppingsEl = document.getElementById('cust-toppings') as HTMLDivElement;
+const baseBtns = Array.from(customizePanel.querySelectorAll<HTMLButtonElement>('[data-base]'));
+
 const btnPlay = document.getElementById('btn-play') as HTMLButtonElement;
 const btnReset = document.getElementById('btn-reset') as HTMLButtonElement;
 const btnSeed = document.getElementById('btn-seed') as HTMLButtonElement;
@@ -543,6 +748,24 @@ const valMelt = document.getElementById('val-melt') as HTMLOutputElement;
 const valSpeed = document.getElementById('val-speed') as HTMLOutputElement;
 const valFrost = document.getElementById('val-frost') as HTMLOutputElement;
 const valBubbles = document.getElementById('val-bubbles') as HTMLOutputElement;
+
+const btnDropReset = document.getElementById('btn-drop-reset') as HTMLButtonElement;
+const dropControls: Array<{
+  key: keyof DropDebugParams;
+  input: HTMLInputElement;
+  output: HTMLOutputElement;
+  repack?: boolean;
+}> = [
+  { key: 'sag', input: document.getElementById('sl-drop-sag') as HTMLInputElement, output: document.getElementById('val-drop-sag') as HTMLOutputElement },
+  { key: 'stretch', input: document.getElementById('sl-drop-stretch') as HTMLInputElement, output: document.getElementById('val-drop-stretch') as HTMLOutputElement },
+  { key: 'edgeBlur', input: document.getElementById('sl-drop-blur') as HTMLInputElement, output: document.getElementById('val-drop-blur') as HTMLOutputElement },
+  { key: 'shadow', input: document.getElementById('sl-drop-shadow') as HTMLInputElement, output: document.getElementById('val-drop-shadow') as HTMLOutputElement },
+  { key: 'shadowBlur', input: document.getElementById('sl-drop-shblur') as HTMLInputElement, output: document.getElementById('val-drop-shblur') as HTMLOutputElement },
+  { key: 'rimDark', input: document.getElementById('sl-drop-rim') as HTMLInputElement, output: document.getElementById('val-drop-rim') as HTMLOutputElement },
+  { key: 'size', input: document.getElementById('sl-drop-size') as HTMLInputElement, output: document.getElementById('val-drop-size') as HTMLOutputElement },
+  { key: 'bottomPool', input: document.getElementById('sl-drop-pool') as HTMLInputElement, output: document.getElementById('val-drop-pool') as HTMLOutputElement, repack: true },
+  { key: 'dripRate', input: document.getElementById('sl-drop-drip') as HTMLInputElement, output: document.getElementById('val-drop-drip') as HTMLOutputElement },
+];
 
 if (showSettings) {
   devDock.hidden = false;
@@ -592,6 +815,10 @@ function syncWorkbenchUI() {
   valBubbles.textContent = simParams.bubbles.toFixed(2);
   selDrops.value = currentDropMode;
   selFall.value = currentFallMode;
+  for (const c of dropControls) {
+    c.input.value = dropDebug[c.key].toFixed(2);
+    c.output.textContent = dropDebug[c.key].toFixed(2);
+  }
 }
 
 btnPlay.addEventListener('click', () => {
@@ -619,10 +846,127 @@ btnOrbit.addEventListener('click', () => {
   }
 });
 
+// Build Customize taste & topping chips deterministically from recipe lists
+const flavorButtons = new Map<FlavorId, HTMLButtonElement>();
+for (const flv of FLAVOR_LIST) {
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'chip';
+  btn.dataset.flavor = flv.id;
+  btn.innerHTML = `<span class="swatch" style="background:${flv.swatch}"></span><span>${flv.label}</span>`;
+  btn.addEventListener('click', () => {
+    const cur = [...currentRecipe.flavors];
+    const idx = cur.indexOf(flv.id);
+    if (idx >= 0) {
+      // On water base keep at least 1 flavor; on coconut allow 0 for pure coconut cream!
+      if (currentRecipe.base === 'coconut' || cur.length > 1) {
+        cur.splice(idx, 1);
+      }
+    } else {
+      if (cur.length >= 2) cur.shift();
+      cur.push(flv.id);
+    }
+    applyRecipe({ ...currentRecipe, flavors: cur });
+  });
+  custFlavorsEl.appendChild(btn);
+  flavorButtons.set(flv.id, btn);
+}
+
+const toppingButtons = new Map<ToppingId, HTMLButtonElement>();
+for (const top of TOPPING_LIST) {
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'chip';
+  btn.dataset.topping = top.id;
+  btn.innerHTML = `<span class="swatch" style="background:${top.swatch}"></span><span>${top.label}</span>`;
+  btn.addEventListener('click', () => {
+    const cur = [...currentRecipe.toppings];
+    const idx = cur.indexOf(top.id);
+    if (idx >= 0) cur.splice(idx, 1);
+    else cur.push(top.id);
+    applyRecipe({ ...currentRecipe, toppings: cur });
+  });
+  custToppingsEl.appendChild(btn);
+  toppingButtons.set(top.id, btn);
+}
+
+for (const btn of baseBtns) {
+  btn.addEventListener('click', () => {
+    const nextBase = btn.dataset.base as BaseKind;
+    if (nextBase !== currentRecipe.base) {
+      applyRecipe({ ...currentRecipe, base: nextBase });
+    }
+  });
+}
+
+function syncCustomizeUI() {
+  for (const btn of baseBtns) {
+    btn.setAttribute('aria-pressed', String(btn.dataset.base === currentRecipe.base));
+  }
+  custBaseNote.textContent = currentRecipe.base === 'coconut' ? 'Creamy opaque' : 'Translucent ice';
+
+  for (const [id, btn] of flavorButtons) {
+    btn.setAttribute('aria-pressed', String(currentRecipe.flavors.includes(id)));
+  }
+  if (currentRecipe.flavors.length === 0) {
+    custFlavorNote.textContent = 'Pure coconut';
+  } else {
+    custFlavorNote.textContent = `${currentRecipe.flavors.length} / 2 max`;
+  }
+
+  for (const [id, btn] of toppingButtons) {
+    btn.setAttribute('aria-pressed', String(currentRecipe.toppings.includes(id)));
+  }
+  custToppingNote.textContent =
+    currentRecipe.toppings.length === 0
+      ? 'None'
+      : `${currentRecipe.toppings.length} selected`;
+}
+
+btnCustomize.addEventListener('click', () => {
+  const open = customizePanel.hidden;
+  customizePanel.hidden = !open;
+  btnCustomize.setAttribute('aria-expanded', String(open));
+  if (open && !helpCard.hidden) {
+    helpCard.hidden = true;
+    btnHelp.setAttribute('aria-expanded', 'false');
+  }
+});
+
+btnCustRandom.addEventListener('click', () => {
+  const pick = <T,>(arr: T[]): T => arr[Math.floor(Math.random() * arr.length)];
+  const base: BaseKind = Math.random() < 0.45 ? 'coconut' : 'water';
+  const flavorCount = base === 'coconut' && Math.random() < 0.28 ? 0 : Math.random() < 0.55 ? 2 : 1;
+  const flavors: FlavorId[] = [];
+  while (flavors.length < flavorCount) {
+    const f = pick(FLAVOR_LIST).id;
+    if (!flavors.includes(f)) flavors.push(f);
+  }
+  const toppingCount = Math.random() < 0.16 ? 0 : Math.random() < 0.52 ? 1 : 2;
+  const toppings: ToppingId[] = [];
+  while (toppings.length < toppingCount) {
+    const t = pick(TOPPING_LIST).id;
+    if (!toppings.includes(t)) toppings.push(t);
+  }
+  applyRecipe({ base, flavors, toppings });
+});
+
+btnCustReset.addEventListener('click', () => {
+  applyRecipe({
+    base: DEFAULT_RECIPE.base,
+    flavors: [...DEFAULT_RECIPE.flavors],
+    toppings: [...DEFAULT_RECIPE.toppings],
+  });
+});
+
 btnHelp.addEventListener('click', () => {
   const open = helpCard.hidden;
   helpCard.hidden = !open;
   btnHelp.setAttribute('aria-expanded', String(open));
+  if (open && !customizePanel.hidden) {
+    customizePanel.hidden = true;
+    btnCustomize.setAttribute('aria-expanded', 'false');
+  }
 });
 
 btnSettings.addEventListener('click', () => {
@@ -635,6 +979,8 @@ slMelt.addEventListener('input', () => {
   meltState.melt = Number(slMelt.value);
   valMelt.textContent = meltState.melt.toFixed(2);
   if (iceSystem && fruitAssembly && waterDrops && liquidFilm) {
+    liquidFilm.syncRimeToMelt(meltState.melt);
+    waterDrops.clearFrostDrops();
     iceSystem.update(meltState, simParams.bubbles, true);
     fruitAssembly.update(meltState, 0, Math.max(liquidFilm.stickWetness, meltState.melt * 1.15));
     waterDrops.update(meltState, iceSystem, liquidFilm, 0, simParams.speed);
@@ -672,6 +1018,32 @@ selFall.addEventListener('change', () => {
   if (currentFallMode === 'off') fallFocusBlend = 0;
 });
 
+function applyDropDebug(partial: Partial<DropDebugParams>, forceRepack = false) {
+  Object.assign(dropDebug, partial);
+  if (partial.bottomPool !== undefined) {
+    meltState.bottomPool = dropDebug.bottomPool;
+  }
+  waterDrops?.setDebugParams(partial);
+  if (forceRepack && iceSystem && waterDrops && liquidFilm) {
+    iceSystem.update(meltState, simParams.bubbles, true);
+    waterDrops.update(meltState, iceSystem, liquidFilm, 0, simParams.speed);
+  }
+  syncWorkbenchUI();
+}
+
+for (const c of dropControls) {
+  c.input.addEventListener('input', () => {
+    const val = Number(c.input.value);
+    applyDropDebug({ [c.key]: val }, Boolean(c.repack));
+  });
+}
+
+btnDropReset.addEventListener('click', (e) => {
+  e.preventDefault();
+  e.stopPropagation();
+  applyDropDebug({ ...DEFAULT_DROP_DEBUG }, true);
+});
+
 window.addEventListener('keydown', (e) => {
   if (e.target instanceof HTMLInputElement) return;
   if (e.code === 'Space') {
@@ -684,6 +1056,8 @@ window.addEventListener('keydown', (e) => {
     buildPopsicle(currentSeed + 1);
   } else if (e.key === 'o' || e.key === 'O') {
     btnOrbit.click();
+  } else if (e.key === 'c' || e.key === 'C') {
+    btnCustomize.click();
   } else if (e.key === '?') {
     btnHelp.click();
   }
@@ -882,6 +1256,11 @@ function tick(now: number) {
     }
   }
 
+  // Always drive grabbed fruit spring & soft flex in real time (even during Pause or Slow-Mo!)
+  if (fruitAssembly && activeGrabPointerId !== null) {
+    fruitAssembly.updateGrab(rawDt, meltState);
+  }
+
   if (orbit.enabled) {
     orbit.update();
   }
@@ -908,6 +1287,8 @@ buildPopsicle(currentSeed);
     meltState.melt = clamp(m, 0, 1.0);
     fallFocusBlend = 0;
     if (iceSystem && fruitAssembly && waterDrops && liquidFilm) {
+      liquidFilm.syncRimeToMelt(meltState.melt);
+      waterDrops.clearFrostDrops();
       iceSystem.update(meltState, simParams.bubbles, true);
       fruitAssembly.update(meltState, 0, Math.max(liquidFilm.stickWetness, meltState.melt * 1.15));
       waterDrops.update(meltState, iceSystem, liquidFilm, 0, simParams.speed);
@@ -947,6 +1328,24 @@ buildPopsicle(currentSeed);
     buildPopsicle(s);
     renderFrame();
   },
+  setRecipe(partial: Partial<PopsicleRecipe>) {
+    applyRecipe(
+      {
+        base: partial.base ?? currentRecipe.base,
+        flavors: partial.flavors ?? currentRecipe.flavors,
+        toppings: partial.toppings ?? currentRecipe.toppings,
+      },
+      false,
+    );
+    renderFrame();
+  },
+  getRecipe() {
+    return {
+      base: currentRecipe.base,
+      flavors: [...currentRecipe.flavors],
+      toppings: [...currentRecipe.toppings],
+    };
+  },
   setDropMode(mode: DropMode) {
     currentDropMode = mode;
     selDrops.value = mode;
@@ -961,18 +1360,47 @@ buildPopsicle(currentSeed);
     selFall.value = mode;
     if (mode === 'off') fallFocusBlend = 0;
   },
+  setDropDebug(partial: Partial<DropDebugParams>) {
+    applyDropDebug(partial, partial.bottomPool !== undefined);
+    renderFrame();
+  },
+  getDropDebug() {
+    return { ...dropDebug };
+  },
   setCamera(x: number, y: number, z: number) {
     camera.position.set(x, y, z);
     camera.lookAt(BASE_TARGET);
     renderFrame();
+  },
+  getGrabbableFruits() {
+    if (!fruitAssembly) return [];
+    const proj = new THREE.Vector3();
+    return fruitAssembly.fruits
+      .map((f, index) => {
+        proj.copy(f.mesh.position).project(camera);
+        return {
+          index,
+          kind: f.kind,
+          exposure: f.exposure,
+          detached: f.detached,
+          grabbed: f.grabbed,
+          visible: f.mesh.visible,
+          x: (proj.x * 0.5 + 0.5) * window.innerWidth,
+          y: (-proj.y * 0.5 + 0.5) * window.innerHeight,
+          world: [f.mesh.position.x, f.mesh.position.y, f.mesh.position.z],
+        };
+      })
+      .filter((item) => item.visible && (item.detached || item.exposure >= 0.28));
   },
   getState() {
     return {
       melt: meltState.melt,
       time: meltState.time,
       seed: currentSeed,
+      avgRime: liquidFilm?.avgRime ?? 0,
       falling: fruitAssembly?.hasFallingFruitInView() ?? false,
       fallFocusBlend,
+      grab: fruitAssembly?.getGrabState() ?? null,
     };
   },
 };

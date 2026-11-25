@@ -16,6 +16,7 @@ export interface BlueberryTextures {
 export interface WoodTextures {
   albedo: THREE.CanvasTexture;
   bump: THREE.CanvasTexture;
+  carving: THREE.CanvasTexture;
 }
 
 /**
@@ -97,29 +98,30 @@ export function createStrawberryTextures(seed = 103): StrawberryTextures {
       const coreMask = 1.0 - smoothstep(0.14, 0.44, coreR + corePerturb);
       const innerHeart = 1.0 - smoothstep(0.03, 0.20, Math.hypot(nx * 1.5, (ny - 0.04) * 1.1));
 
-      // Broad rich saturated scarlet-ruby outer cortex & deep velvety crimson skin rim
-      const outerCortex = smoothstep(0.46, 0.90, rn);
-      const skinEdge = smoothstep(0.84, 1.00, rn);
+      // Broad rich saturated scarlet-ruby outer cortex & deep velvety dark-red outer skin rim
+      const outerCortex = smoothstep(0.42, 0.88, rn);
+      const skinEdge = smoothstep(0.74, 0.99, rn);
 
       // Deep juicy saturated scarlet-crimson flesh
-      let cr = 204 + (nCell - 0.5) * 32 + (nFine - 0.5) * 14;
-      let cg = 14 + (nCell - 0.5) * 14;
-      let cb = 14 + (nCell - 0.5) * 12;
+      let cr = 200 + (nCell - 0.5) * 32 + (nFine - 0.5) * 14;
+      let cg = 13 + (nCell - 0.5) * 14;
+      let cb = 13 + (nCell - 0.5) * 12;
 
       // Deep velvety ruby-crimson outer cortex
-      cr = cr * (1 - outerCortex * 0.20) + 162 * (outerCortex * 0.20);
-      cg = cg * (1 - outerCortex * 0.72) + 4 * (outerCortex * 0.72);
-      cb = cb * (1 - outerCortex * 0.60) + 10 * (outerCortex * 0.60);
+      cr = cr * (1 - outerCortex * 0.28) + 136 * (outerCortex * 0.28);
+      cg = cg * (1 - outerCortex * 0.78) + 3 * (outerCortex * 0.78);
+      cb = cb * (1 - outerCortex * 0.66) + 8 * (outerCortex * 0.66);
 
-      // Dark ruby-burgundy outer skin perimeter (pops crisply through backlit ice!)
-      cr = cr * (1 - skinEdge * 0.36) + 108 * (skinEdge * 0.36);
-      cg *= 1 - skinEdge * 0.65;
-      cb *= 1 - skinEdge * 0.45;
+      // Richer dark ripe-crimson / burgundy outer edge & bevel skin (frames each slice with deep red contrast!)
+      cr = cr * (1 - skinEdge * 0.56) + 64 * (skinEdge * 0.56);
+      cg *= 1 - skinEdge * 0.78;
+      cb *= 1 - skinEdge * 0.62;
 
-      // Crisp pale creamy-rose vascular starburst threads (clearly legible through frosted ice!)
-      cr = cr + (254 - cr) * fineVeins * 0.58;
-      cg = cg + (178 - cg) * fineVeins * 0.58;
-      cb = cb + (166 - cb) * fineVeins * 0.55;
+      // Crisp pale creamy-rose vascular starburst threads (fading gently before the deep dark-red outer edge)
+      const veinEdgeFade = smoothstep(0.91, 0.68, rn);
+      cr = cr + (254 - cr) * fineVeins * 0.56 * veinEdgeFade;
+      cg = cg + (176 - cg) * fineVeins * 0.56 * veinEdgeFade;
+      cb = cb + (164 - cb) * fineVeins * 0.52 * veinEdgeFade;
 
       // Luminous creamy-peach translucent central heart core
       const coreWeight = clamp(coreMask * (0.84 + nCell * 0.16), 0, 1);
@@ -139,7 +141,7 @@ export function createStrawberryTextures(seed = 103): StrawberryTextures {
       cb = cb + (62 - cb) * innerHeart * 0.48;
 
       let bumpVal = 128 + (nCell - 0.5) * 48 + (nFine - 0.5) * 26 - fineVeins * 24 - innerHeart * 32;
-      let sssVal = 148 + coreWeight * 92 - outerCortex * 52 + (nCell - 0.5) * 24;
+      let sssVal = (146 + coreWeight * 94 - outerCortex * 58 + (nCell - 0.5) * 24) * (1.0 - skinEdge * 0.48);
 
       // Tiny recessed natural dark-amber/bronze seeds (achenes) right on the scalloped edge
       for (let k = 0; k < achenes.length; k++) {
@@ -237,33 +239,33 @@ export function createBlueberryTextures(seed = 207): BlueberryTextures {
       const nBloom = fbm3(sx * 3.4 + off, sy * 3.4, sz * 3.4, 4);
       const nFine = fbm3(sx * 18.0 + off, sy * 18.0, sz * 18.0, 3);
 
-      // Deep dark navy-plum berry skin
-      let cr = 16 + nFine * 14;
-      let cg = 16 + nFine * 15;
-      let cb = 36 + nFine * 26;
+      // Deep rich velvety midnight-indigo / dark navy-plum wet blueberry skin
+      let cr = 12 + nFine * 11;
+      let cg = 13 + nFine * 12;
+      let cb = 30 + nFine * 22;
 
-      // Dusty pale slate-blue waxy bloom patches
-      const bloomMask = smoothstep(0.36, 0.72, nBloom) * smoothstep(0.05, 0.20, v);
-      cr = cr + (96 - cr) * bloomMask * 0.56;
-      cg = cg + (108 - cg) * bloomMask * 0.58;
-      cb = cb + (146 - cb) * bloomMask * 0.65;
+      // Very delicate natural skin tone variation (NO chalky white freezer-frost blotches!)
+      const bloomMask = smoothstep(0.42, 0.78, nBloom) * smoothstep(0.06, 0.22, v);
+      cr = cr + (44 - cr) * bloomMask * 0.42;
+      cg = cg + (50 - cg) * bloomMask * 0.44;
+      cb = cb + (82 - cb) * bloomMask * 0.48;
 
-      // Sculpted 5-pointed calyx star crater & dusty-mauve sepal rims at top pole
+      // Sculpted 5-pointed calyx star crater & natural dark-plum sepal rims at top pole
       const starWave = 0.5 + 0.5 * Math.cos(theta * 5.0);
       const calyxCrater = 1.0 - smoothstep(0.03, 0.095, v);
       const calyxRim = Math.exp(-Math.pow((v - (0.095 + starWave * 0.032)) / 0.025, 2.0));
 
-      // Pale dusty-lavender-grey sepal lip (very recognizable on macro blueberries!)
-      cr = cr + (134 - cr) * calyxRim * 0.55;
-      cg = cg + (122 - cg) * calyxRim * 0.52;
-      cb = cb + (142 - cb) * calyxRim * 0.55;
+      // Subtle natural dark dusty-plum sepal rim (wet & organic, never chalky grey frost)
+      cr = cr + (72 - cr) * calyxRim * 0.48;
+      cg = cg + (62 - cg) * calyxRim * 0.44;
+      cb = cb + (82 - cb) * calyxRim * 0.48;
 
       // Dark sunken calyx interior cavity
-      cr = cr * (1 - calyxCrater * 0.75) + 18 * (calyxCrater * 0.75);
-      cg = cg * (1 - calyxCrater * 0.80) + 14 * (calyxCrater * 0.80);
-      cb = cb * (1 - calyxCrater * 0.75) + 20 * (calyxCrater * 0.75);
+      cr = cr * (1 - calyxCrater * 0.78) + 12 * (calyxCrater * 0.78);
+      cg = cg * (1 - calyxCrater * 0.82) + 9 * (calyxCrater * 0.82);
+      cb = cb * (1 - calyxCrater * 0.78) + 15 * (calyxCrater * 0.78);
 
-      const roughVal = 46 + bloomMask * 118 + (nFine - 0.5) * 28 + calyxRim * 45;
+      const roughVal = 34 + bloomMask * 56 + (nFine - 0.5) * 22 + calyxRim * 38;
       const bumpVal = 128 + (nFine - 0.5) * 56 - calyxCrater * 72 + calyxRim * 64;
 
       const idx = (py * size + px) * 4;
@@ -373,7 +375,354 @@ export function createWoodTextures(seed = 311): WoodTextures {
   const bump = new THREE.CanvasTexture(bmpCanvas);
   bump.anisotropy = 4;
 
-  return { albedo, bump };
+  // High-res dedicated carving depth + bevel mask mapped strictly to the hidden upper birch stick
+  // underneath the ice cream (1024x340 -> exact 3.01:1 square-texel match to stick span 0.53 x 0.176!)
+  const cw = 1024;
+  const ch = 340;
+  const carveCanvas = document.createElement('canvas');
+  carveCanvas.width = cw;
+  carveCanvas.height = ch;
+  const cCtx = carveCanvas.getContext('2d')!;
+
+  const drawTrackedCentered = (
+    ctx: CanvasRenderingContext2D,
+    text: string,
+    cx: number,
+    cy: number,
+    tracking: number,
+  ) => {
+    const chars = Array.from(text);
+    const widths = chars.map((chChar) => ctx.measureText(chChar).width);
+    const totalW = widths.reduce((a, b) => a + b, 0) + tracking * Math.max(0, chars.length - 1);
+    let cursor = cx - totalW * 0.5;
+    for (let i = 0; i < chars.length; i++) {
+      ctx.fillText(chars[i], cursor + widths[i] * 0.5, cy);
+      cursor += widths[i] + tracking;
+    }
+  };
+
+  const renderCarving = () => {
+    // Scratch crisp pass (R channel = V-groove depth) & soft bevel pass (G channel = pressed edge compression)
+    const sharpCanvas = document.createElement('canvas');
+    sharpCanvas.width = cw;
+    sharpCanvas.height = ch;
+    const sCtx = sharpCanvas.getContext('2d')!;
+
+    const softCanvas = document.createElement('canvas');
+    softCanvas.width = cw;
+    softCanvas.height = ch;
+    const bCtx = softCanvas.getContext('2d')!;
+
+    const paintLetters = (ctx: CanvasRenderingContext2D, blurPx: number) => {
+      ctx.clearRect(0, 0, cw, ch);
+      ctx.save();
+      ctx.filter = blurPx > 0 ? `blur(${blurPx}px)` : 'none';
+      ctx.fillStyle = '#ffffff';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+
+      // Crisp artisanal laser/chisel-carved birch lettering centered on the hidden upper shaft (~2x bolder)
+      ctx.font = '700 84px "IBM Plex Sans", "Inter", "Helvetica Neue", system-ui, sans-serif';
+      drawTrackedCentered(ctx, 'THEO TILLBERG', cw * 0.5, ch * 0.34, 9.0);
+
+      ctx.font = '600 62px "IBM Plex Sans", "Inter", "Helvetica Neue", system-ui, sans-serif';
+      drawTrackedCentered(ctx, 'CODEVEMBER 26 - MELT', cw * 0.5, ch * 0.69, 4.5);
+      ctx.restore();
+    };
+
+    paintLetters(sCtx, 2.2);
+    paintLetters(bCtx, 5.4);
+
+    const sData = sCtx.getImageData(0, 0, cw, ch).data;
+    const bData = bCtx.getImageData(0, 0, cw, ch).data;
+    const outImg = cCtx.createImageData(cw, ch);
+    for (let i = 0; i < outImg.data.length; i += 4) {
+      outImg.data[i] = sData[i + 3]; // R = crisp V-groove depth
+      outImg.data[i + 1] = bData[i + 3]; // G = soft pressed-wood halo
+      outImg.data[i + 2] = 0;
+      outImg.data[i + 3] = 255;
+    }
+    cCtx.putImageData(outImg, 0, 0);
+  };
+
+  renderCarving();
+  const carving = new THREE.CanvasTexture(carveCanvas);
+  carving.anisotropy = 8;
+  carving.generateMipmaps = true;
+  carving.minFilter = THREE.LinearMipmapLinearFilter;
+  carving.magFilter = THREE.LinearFilter;
+  carving.wrapS = THREE.ClampToEdgeWrapping;
+  carving.wrapT = THREE.ClampToEdgeWrapping;
+
+  // Re-bake cleanly once IBM Plex Sans finishes loading so typography matches the title plate
+  if (typeof document !== 'undefined' && document.fonts && document.fonts.ready) {
+    document.fonts.ready.then(() => {
+      renderCarving();
+      carving.needsUpdate = true;
+    });
+  }
+
+  return { albedo, bump, carving };
+}
+
+function createOffscreenCanvas(w: number, h: number): HTMLCanvasElement {
+  const c = document.createElement('canvas');
+  c.width = w;
+  c.height = h;
+  return c;
+}
+
+function fbm2(x: number, y: number, octaves: number): number {
+  return fbm3(x, y, 0.37, octaves);
+}
+
+export interface ToppingTextureSet {
+  albedo: THREE.CanvasTexture;
+  bump: THREE.CanvasTexture;
+  roughness: THREE.CanvasTexture;
+}
+
+/**
+ * Generates lush velvety ruby-magenta raspberry drupelet textures.
+ */
+export function createRaspberryTextures(seed: number): ToppingTextureSet {
+  const size = 256;
+  const albCanvas = createOffscreenCanvas(size, size);
+  const bumpCanvas = createOffscreenCanvas(size, size);
+  const roughCanvas = createOffscreenCanvas(size, size);
+  const aCtx = albCanvas.getContext('2d')!;
+  const bCtx = bumpCanvas.getContext('2d')!;
+  const rCtx = roughCanvas.getContext('2d')!;
+  const aImg = aCtx.createImageData(size, size);
+  const bImg = bCtx.createImageData(size, size);
+  const rImg = rCtx.createImageData(size, size);
+  const off = seed * 11.7;
+
+  for (let py = 0; py < size; py++) {
+    for (let px = 0; px < size; px++) {
+      const u = px / size;
+      const v = py / size;
+      const n1 = fbm2(u * 10 + off, v * 10, 3);
+      const n2 = fbm2(u * 34 + off * 1.4, v * 34, 2);
+      const fuzz = smoothstep(0.55, 0.92, n2);
+
+      // Deep velvety crimson-ruby drupelet skin (no chalky white washout!)
+      const r = clamp(118 + n1 * 54 + fuzz * 14, 0, 255);
+      const g = clamp(8 + n1 * 14 + fuzz * 8, 0, 255);
+      const b = clamp(28 + n1 * 26 + fuzz * 10, 0, 255);
+      const bumpV = clamp(110 + n1 * 70 + n2 * 60, 0, 255);
+      const roughV = clamp(96 + fuzz * 95 + (1 - n1) * 40, 0, 255);
+
+      const idx = (py * size + px) * 4;
+      aImg.data[idx] = r;
+      aImg.data[idx + 1] = g;
+      aImg.data[idx + 2] = b;
+      aImg.data[idx + 3] = 255;
+
+      bImg.data[idx] = bImg.data[idx + 1] = bImg.data[idx + 2] = bumpV;
+      bImg.data[idx + 3] = 255;
+
+      rImg.data[idx] = rImg.data[idx + 1] = rImg.data[idx + 2] = roughV;
+      rImg.data[idx + 3] = 255;
+    }
+  }
+  aCtx.putImageData(aImg, 0, 0);
+  bCtx.putImageData(bImg, 0, 0);
+  rCtx.putImageData(rImg, 0, 0);
+
+  const albedo = new THREE.CanvasTexture(albCanvas);
+  albedo.colorSpace = THREE.SRGBColorSpace;
+  albedo.wrapS = albedo.wrapT = THREE.RepeatWrapping;
+  const bump = new THREE.CanvasTexture(bumpCanvas);
+  bump.wrapS = bump.wrapT = THREE.RepeatWrapping;
+  const roughness = new THREE.CanvasTexture(roughCanvas);
+  roughness.wrapS = roughness.wrapT = THREE.RepeatWrapping;
+  return { albedo, bump, roughness };
+}
+
+/**
+ * Generates tempered dark chocolate chunk textures (rich espresso cocoa + subtle fracture micro-grain).
+ */
+export function createChocolateChunkTextures(seed: number): ToppingTextureSet {
+  const size = 256;
+  const albCanvas = createOffscreenCanvas(size, size);
+  const bumpCanvas = createOffscreenCanvas(size, size);
+  const roughCanvas = createOffscreenCanvas(size, size);
+  const aCtx = albCanvas.getContext('2d')!;
+  const bCtx = bumpCanvas.getContext('2d')!;
+  const rCtx = roughCanvas.getContext('2d')!;
+  const aImg = aCtx.createImageData(size, size);
+  const bImg = bCtx.createImageData(size, size);
+  const rImg = rCtx.createImageData(size, size);
+  const off = seed * 15.3;
+
+  for (let py = 0; py < size; py++) {
+    for (let px = 0; px < size; px++) {
+      const u = px / size;
+      const v = py / size;
+      const nMacro = fbm2(u * 6 + off, v * 6, 3);
+      const nGrain = fbm2(u * 28 + off * 2.1, v * 28, 3);
+      const chip = smoothstep(0.60, 0.88, nMacro);
+
+      const r = clamp(44 + nMacro * 24 + chip * 12, 0, 255);
+      const g = clamp(22 + nMacro * 14 + chip * 7, 0, 255);
+      const b = clamp(12 + nMacro * 8 + chip * 4, 0, 255);
+      const bumpV = clamp(100 + nGrain * 85 + nMacro * 45, 0, 255);
+      const roughV = clamp(92 + nGrain * 75 + (1 - chip) * 28, 0, 255);
+
+      const idx = (py * size + px) * 4;
+      aImg.data[idx] = r;
+      aImg.data[idx + 1] = g;
+      aImg.data[idx + 2] = b;
+      aImg.data[idx + 3] = 255;
+      bImg.data[idx] = bImg.data[idx + 1] = bImg.data[idx + 2] = bumpV;
+      bImg.data[idx + 3] = 255;
+      rImg.data[idx] = rImg.data[idx + 1] = rImg.data[idx + 2] = roughV;
+      rImg.data[idx + 3] = 255;
+    }
+  }
+  aCtx.putImageData(aImg, 0, 0);
+  bCtx.putImageData(bImg, 0, 0);
+  rCtx.putImageData(rImg, 0, 0);
+
+  const albedo = new THREE.CanvasTexture(albCanvas);
+  albedo.colorSpace = THREE.SRGBColorSpace;
+  albedo.wrapS = albedo.wrapT = THREE.RepeatWrapping;
+  const bump = new THREE.CanvasTexture(bumpCanvas);
+  bump.wrapS = bump.wrapT = THREE.RepeatWrapping;
+  const roughness = new THREE.CanvasTexture(roughCanvas);
+  roughness.wrapS = roughness.wrapT = THREE.RepeatWrapping;
+  return { albedo, bump, roughness };
+}
+
+/**
+ * Generates vibrant sun-yellow dimpled lemon zest peel textures (citrus oil-gland pores + pale pith rim).
+ */
+export function createLemonZestTextures(seed: number): ToppingTextureSet {
+  const size = 256;
+  const albCanvas = createOffscreenCanvas(size, size);
+  const bumpCanvas = createOffscreenCanvas(size, size);
+  const roughCanvas = createOffscreenCanvas(size, size);
+  const aCtx = albCanvas.getContext('2d')!;
+  const bCtx = bumpCanvas.getContext('2d')!;
+  const rCtx = roughCanvas.getContext('2d')!;
+  const aImg = aCtx.createImageData(size, size);
+  const bImg = bCtx.createImageData(size, size);
+  const rImg = rCtx.createImageData(size, size);
+  const off = seed * 9.3;
+
+  for (let py = 0; py < size; py++) {
+    for (let px = 0; px < size; px++) {
+      const u = px / size;
+      const v = py / size;
+      // Subtle dimpled citrus oil-gland pores across the peel
+      const dimple = Math.sin(u * Math.PI * 22 + off) * Math.sin(v * Math.PI * 10 + off * 0.7);
+      const pore = smoothstep(0.35, 0.95, dimple * 0.5 + 0.5);
+      const n = fbm2(u * 12 + off, v * 12, 3);
+      // Slight pale creamy pith along very outer edge v near 0/1
+      const edgePith = smoothstep(0.36, 0.50, Math.abs(v - 0.5));
+
+      let r = 248 + n * 7 - pore * 12;
+      let g = 212 + n * 18 - pore * 18;
+      let b = 26 + n * 24 + edgePith * 145;
+      r = clamp(r + edgePith * 6, 0, 255);
+      g = clamp(g + edgePith * 28, 0, 255);
+      b = clamp(b, 0, 255);
+
+      const bumpV = clamp(155 - pore * 95 + n * 35, 0, 255);
+      const roughV = clamp(82 + edgePith * 90 + pore * 30, 0, 255);
+
+      const idx = (py * size + px) * 4;
+      aImg.data[idx] = r;
+      aImg.data[idx + 1] = g;
+      aImg.data[idx + 2] = b;
+      aImg.data[idx + 3] = 255;
+      bImg.data[idx] = bImg.data[idx + 1] = bImg.data[idx + 2] = bumpV;
+      bImg.data[idx + 3] = 255;
+      rImg.data[idx] = rImg.data[idx + 1] = rImg.data[idx + 2] = roughV;
+      rImg.data[idx + 3] = 255;
+    }
+  }
+  aCtx.putImageData(aImg, 0, 0);
+  bCtx.putImageData(bImg, 0, 0);
+  rCtx.putImageData(rImg, 0, 0);
+
+  const albedo = new THREE.CanvasTexture(albCanvas);
+  albedo.colorSpace = THREE.SRGBColorSpace;
+  albedo.wrapS = albedo.wrapT = THREE.RepeatWrapping;
+  const bump = new THREE.CanvasTexture(bumpCanvas);
+  bump.wrapS = bump.wrapT = THREE.RepeatWrapping;
+  const roughness = new THREE.CanvasTexture(roughCanvas);
+  roughness.wrapS = roughness.wrapT = THREE.RepeatWrapping;
+  return { albedo, bump, roughness };
+}
+
+/**
+ * Generates crunchy baked kaksmulor (cookie crumbles) textures:
+ * 'dark' = rich Oreo-style dark cocoa wafer crumb; 'butter' = toasted golden-brown butter biscuit crumb.
+ */
+export function createKaksmulorTextures(seed: number, variant: 'dark' | 'butter'): ToppingTextureSet {
+  const size = 256;
+  const albCanvas = createOffscreenCanvas(size, size);
+  const bumpCanvas = createOffscreenCanvas(size, size);
+  const roughCanvas = createOffscreenCanvas(size, size);
+  const aCtx = albCanvas.getContext('2d')!;
+  const bCtx = bumpCanvas.getContext('2d')!;
+  const rCtx = roughCanvas.getContext('2d')!;
+  const aImg = aCtx.createImageData(size, size);
+  const bImg = bCtx.createImageData(size, size);
+  const rImg = rCtx.createImageData(size, size);
+  const off = seed * 13.9;
+
+  for (let py = 0; py < size; py++) {
+    for (let px = 0; px < size; px++) {
+      const u = px / size;
+      const v = py / size;
+      const crumb = fbm2(u * 20 + off, v * 20, 4);
+      const pores = smoothstep(0.28, 0.78, fbm2(u * 42 + off * 1.7, v * 42, 2));
+      const bakeSpeck = smoothstep(0.68, 0.94, crumb);
+
+      let r: number;
+      let g: number;
+      let b: number;
+      if (variant === 'dark') {
+        // Deep matte dark cocoa cookie wafer (authentic Oreo-style cookies & cream!)
+        r = clamp(20 + crumb * 20 + bakeSpeck * 12 - (1 - pores) * 8, 8, 64);
+        g = clamp(15 + crumb * 16 + bakeSpeck * 9 - (1 - pores) * 7, 7, 52);
+        b = clamp(14 + crumb * 14 + bakeSpeck * 8 - (1 - pores) * 6, 7, 48);
+      } else {
+        // Warm toasted golden-brown Swedish shortbread / digestive cookie crumble
+        r = clamp(146 + crumb * 52 - (1 - pores) * 26, 84, 218);
+        g = clamp(102 + crumb * 42 - (1 - pores) * 22, 54, 174);
+        b = clamp(56 + crumb * 28 - (1 - pores) * 18, 28, 116);
+      }
+
+      const bumpV = clamp(65 + crumb * 125 + pores * 65, 0, 255);
+      const roughV = clamp(195 + (1 - pores) * 48 + crumb * 18, 0, 255);
+
+      const idx = (py * size + px) * 4;
+      aImg.data[idx] = r;
+      aImg.data[idx + 1] = g;
+      aImg.data[idx + 2] = b;
+      aImg.data[idx + 3] = 255;
+      bImg.data[idx] = bImg.data[idx + 1] = bImg.data[idx + 2] = bumpV;
+      bImg.data[idx + 3] = 255;
+      rImg.data[idx] = rImg.data[idx + 1] = rImg.data[idx + 2] = roughV;
+      rImg.data[idx + 3] = 255;
+    }
+  }
+  aCtx.putImageData(aImg, 0, 0);
+  bCtx.putImageData(bImg, 0, 0);
+  rCtx.putImageData(rImg, 0, 0);
+
+  const albedo = new THREE.CanvasTexture(albCanvas);
+  albedo.colorSpace = THREE.SRGBColorSpace;
+  albedo.wrapS = albedo.wrapT = THREE.RepeatWrapping;
+  const bump = new THREE.CanvasTexture(bumpCanvas);
+  bump.wrapS = bump.wrapT = THREE.RepeatWrapping;
+  const roughness = new THREE.CanvasTexture(roughCanvas);
+  roughness.wrapS = roughness.wrapT = THREE.RepeatWrapping;
+  return { albedo, bump, roughness };
 }
 
 /**
