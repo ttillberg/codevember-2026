@@ -1,7 +1,18 @@
 import * as THREE from 'three';
 import { clamp, mulberry32, smoothstep } from './rng';
 import { getSharedNoise3DTexture } from './noise3d';
-import { evaluatePopsicleProfile, getMeltBounds, iceContainmentDepth, MeltFieldState, POPSICLE } from './shape';
+import {
+  DEFAULT_BOTTOM_POOL,
+  DEFAULT_INITIAL_MELT,
+  evaluatePopsicleVertex,
+  getMeltBounds,
+  iceContainmentDepth,
+  mapPopsicleVNorm,
+  MeltFieldState,
+  POPSICLE,
+  prepareProfileFrame,
+  prepareProfileRow,
+} from './shape';
 import { DEFAULT_RECIPE, PopsicleRecipe, resolveOpticalPalette } from './recipe';
 
 export interface IceUniforms {
@@ -17,6 +28,7 @@ export interface IceUniforms {
   uResolution: { value: THREE.Vector2 };
   uTime: { value: number };
   uMelt: { value: number };
+  uSlideY: { value: number };
   uFrost: { value: number };
   uSeedOffset: { value: number };
   // Custom base (water vs opaque coconut) & max-2 flavor optical uniforms
@@ -51,7 +63,7 @@ export interface PopsicleIceSystem {
   dispose(): void;
 }
 
-function createWorldZMaterial(tag: number, side: THREE.Side): THREE.ShaderMaterial {
+function createCameraDepthMaterial(tag: number, side: THREE.Side): THREE.ShaderMaterial {
   return new THREE.ShaderMaterial({
     side,
     depthTest: true,
@@ -60,18 +72,18 @@ function createWorldZMaterial(tag: number, side: THREE.Side): THREE.ShaderMateri
       uTag: { value: tag },
     },
     vertexShader: /* glsl */ `
-      varying vec3 vWorldPos;
+      varying float vCamDepth;
       void main() {
-        vec4 wp = modelMatrix * vec4(position, 1.0);
-        vWorldPos = wp.xyz;
-        gl_Position = projectionMatrix * viewMatrix * wp;
+        vec4 mvPos = viewMatrix * modelMatrix * vec4(position, 1.0);
+        vCamDepth = -mvPos.z;
+        gl_Position = projectionMatrix * mvPos;
       }
     `,
     fragmentShader: /* glsl */ `
       uniform float uTag;
-      varying vec3 vWorldPos;
+      varying float vCamDepth;
       void main() {
-        gl_FragColor = vec4(vWorldPos.z, uTag, 0.0, 1.0);
+        gl_FragColor = vec4(vCamDepth, uTag, 0.0, 1.0);
       }
     `,
   });
@@ -98,7 +110,8 @@ function createOpticalIceMaterial(initialRecipe: PopsicleRecipe): { material: TH
     uNoise3D: { value: getSharedNoise3DTexture() },
     uResolution: { value: new THREE.Vector2(1280, 720) },
     uTime: { value: 0 },
-    uMelt: { value: 0.035 },
+    uMelt: { value: DEFAULT_INITIAL_MELT },
+    uSlideY: { value: 0 },
     uFrost: { value: 0.58 },
     uSeedOffset: { value: 0 },
     uOpacity: { value: pal.opacity },
@@ -133,14 +146,17 @@ function createOpticalIceMaterial(initialRecipe: PopsicleRecipe): { material: TH
       out vec3 vWorldNormal;
       out vec2 vUv;
       out float vHang;
+      out float vCamDepth;
 
       void main() {
         vUv = uv;
         vHang = aHang;
         vec4 wp = modelMatrix * vec4(position, 1.0);
+        vec4 mvPos = viewMatrix * wp;
         vWorldPos = wp.xyz;
         vWorldNormal = normalize(mat3(modelMatrix) * normal);
-        gl_Position = projectionMatrix * viewMatrix * wp;
+        vCamDepth = -mvPos.z;
+        gl_Position = projectionMatrix * mvPos;
       }
     `,
     fragmentShader: /* glsl */ `
@@ -159,6 +175,7 @@ function createOpticalIceMaterial(initialRecipe: PopsicleRecipe): { material: TH
       uniform vec2 uResolution;
       uniform float uTime;
       uniform float uMelt;
+      uniform float uSlideY;
       uniform float uFrost;
       uniform float uSeedOffset;
       uniform float uOpacity;
@@ -183,6 +200,7 @@ function createOpticalIceMaterial(initialRecipe: PopsicleRecipe): { material: TH
       in vec3 vWorldNormal;
       in vec2 vUv;
       in float vHang;
+      in float vCamDepth;
 
       out vec4 fragColor;
 
@@ -192,6 +210,11 @@ function createOpticalIceMaterial(initialRecipe: PopsicleRecipe): { material: TH
       const float INV_P6 = 1.0 / 6.0;
       const float INV_P8 = 1.0 / 8.0;
       const float INV_P12 = 1.0 / 12.0;
+
+      // Strict WebGL2/Metal/Adreno portable math helpers (no pow(negative,2.0), no inverted smoothstep, no zero normalize)
+      float sq(float x) { return x * x; }
+      float revStep(float hi, float lo, float x) { return 1.0 - smoothstep(lo, hi, x); }
+      vec3 safeNorm(vec3 v) { return v * inversesqrt(max(dot(v, v), 1e-8)); }
 
       float fbm3Tex(vec3 p) {
         vec4 s = texture(uNoise3D, p * INV_P6);
@@ -249,13 +272,13 @@ function createOpticalIceMaterial(initialRecipe: PopsicleRecipe): { material: TH
 
       vec3 sampleFrostedBg(vec2 uv, float blurAmt) {
         vec2 cUv = clamp(uv, vec2(0.002), vec2(0.998));
-        vec3 sharp = texture(uBgTex, cUv).rgb;
-        vec3 mid = texture(uBgBlur1, cUv).rgb;
-        vec3 deep = texture(uBgBlur2, cUv).rgb;
-        if (blurAmt < 0.5) {
-          return mix(sharp, mid, blurAmt * 2.0);
+        if (blurAmt <= 0.001) {
+          return texture(uBgTex, cUv).rgb;
         }
-        return mix(mid, deep, (blurAmt - 0.5) * 2.0);
+        if (blurAmt < 0.5) {
+          return mix(texture(uBgTex, cUv).rgb, texture(uBgBlur1, cUv).rgb, blurAmt * 2.0);
+        }
+        return mix(texture(uBgBlur1, cUv).rgb, texture(uBgBlur2, cUv).rgb, (blurAmt - 0.5) * 2.0);
       }
 
       // Crisp backlit macro studio reflections: dark front fill so coral-ruby ice stays deeply saturated!
@@ -265,20 +288,20 @@ function createOpticalIceMaterial(initialRecipe: PopsicleRecipe): { material: TH
         float sharp = mix(1.0, 0.20, roughness);
 
         // Narrow twin vertical strip-lights (silky thin reflection ribbons!)
-        float stripY = smoothstep(-0.90, -0.58, r.y) * smoothstep(0.92, 0.62, r.y);
+        float stripY = smoothstep(-0.90, -0.58, r.y) * revStep(0.92, 0.62, r.y);
         float wNarrow = 0.034 + roughness * 0.13;
-        float leftStrip = exp(-pow((r.x + 0.56) / wNarrow, 2.0));
-        float rightStrip = exp(-pow((r.x - 0.56) / wNarrow, 2.0));
+        float leftStrip = exp(-sq((r.x + 0.56) / wNarrow));
+        float rightStrip = exp(-sq((r.x - 0.56) / wNarrow));
         float stripZ = smoothstep(-0.18, 0.45, r.z);
         col += vec3(2.1, 1.95, 1.88) * (leftStrip + rightStrip) * stripY * stripZ * (0.35 + 0.85 * sharp);
 
         // Crisp grazing outer wall rim strip
-        float rimStrip = exp(-pow((abs(r.x) - 0.89) / (0.048 + roughness * 0.12), 2.0)) * stripY;
+        float rimStrip = exp(-sq((abs(r.x) - 0.89) / (0.048 + roughness * 0.12))) * stripY;
         col += vec3(2.25, 2.06, 1.98) * rimStrip * (0.42 + 0.78 * sharp);
 
         // Overhead curved dome softbox highlight
         float topBox = smoothstep(0.68 - roughness * 0.18, 0.94, r.y) *
-                       exp(-pow(r.x / (0.38 + roughness * 0.22), 2.0));
+                       exp(-sq(r.x / (0.38 + roughness * 0.22)));
         col += vec3(1.15, 1.02, 0.98) * topBox * (0.28 + 0.55 * sharp);
 
         return col;
@@ -298,7 +321,6 @@ function createOpticalIceMaterial(initialRecipe: PopsicleRecipe): { material: TH
         // Multi-scale crystalline hoarfrost needles & tiny snowy crystal tufts (inspired by freezer-fresh macro!)
         vec4 rFine = texture(uNoise3D, (vWorldPos * 96.0 + vec3(uSeedOffset * 2.1)) * INV_P12);
         vec4 rMicro = texture(uNoise3D, (vWorldPos * 235.0 + vec3(-4.2, uSeedOffset * 3.7, 2.8)) * INV_P12);
-        vec4 rTuft = texture(uNoise3D, (vWorldPos * 32.0 + vec3(uSeedOffset * 1.1, 3.3, -1.7)) * INV_P8);
         float rimeGrain = rFine.a * 0.48 + rMicro.a * 0.52;
         float frostScale = clamp(uFrost / 0.58, 0.25, 1.45);
         float rimeMaskPre = smoothstep(0.10, 0.64, rimeRaw * (0.86 + 0.26 * frostScale) + (rimeGrain - 0.5) * 0.42);
@@ -309,14 +331,14 @@ function createOpticalIceMaterial(initialRecipe: PopsicleRecipe): { material: TH
         float meltClearGate = smoothstep(0.045, 0.18, uMelt) * (1.0 - rimeMaskPre * 0.92);
         vec3 V = normalize(cameraPosition - vWorldPos);
         float N0dotV = clamp(dot(N0, V), 0.0, 1.0);
-        float bottomEdgeClear = smoothstep(0.145, 0.014, vUv.y) * meltClearGate;
+        float bottomEdgeClear = revStep(0.145, 0.014, vUv.y) * meltClearGate;
         float hangTipClear = smoothstep(0.24, 0.72, vHang);
         float hangClear = clamp(max(hangTipClear, bottomEdgeClear * 0.95), 0.0, 1.0) * (1.0 - uOpacity * 0.88);
 
         // Thick flowing sticky glaze lobes + accumulated sticky bottom-rim puddles level frost into mirror-glossy syrup!
         float sweatMask = (1.0 - rimeMaskPre) * (1.0 - max(hangLiquid, hangClear) * 0.94);
         float bottomPoolZone = max(
-          smoothstep(0.16, 0.015, vUv.y) * (1.0 - smoothstep(0.62, 0.95, uMelt)) * smoothstep(0.04, 0.14, uMelt) * (1.0 - rimeMaskPre * 0.85),
+          revStep(0.16, 0.015, vUv.y) * (1.0 - smoothstep(0.62, 0.95, uMelt)) * smoothstep(0.04, 0.14, uMelt) * (1.0 - rimeMaskPre * 0.85),
           hangLiquid
         );
         float glazeWave = smoothstep(0.16, 0.52, filmH) * (1.0 - rimeMaskPre * 0.88);
@@ -325,27 +347,30 @@ function createOpticalIceMaterial(initialRecipe: PopsicleRecipe): { material: TH
         float lipSlope = length(filmSlope);
         float glazeEdge = smoothstep(0.06, 0.44, lipSlope) * smoothstep(0.11, 0.36, filmH) * (1.0 - rimeMaskPre * 0.82);
 
+        // Anchor internal frozen texture, crystalline streaks, frost grain, and dual-flavor gradient to the sliding ice body!
+        vec3 icePos = vec3(vWorldPos.x, vWorldPos.y - uSlideY, vWorldPos.z);
+
         // Domain-warped spatial freeze-roughness field (2 texture fetches instead of 4x4-octave FBM!)
-        vec3 volPos = vWorldPos * vec3(2.9, 2.5, 3.4) + vec3(uSeedOffset, 0.0, 0.0);
+        vec3 volPos = icePos * vec3(2.9, 2.5, 3.4) + vec3(uSeedOffset, 0.0, 0.0);
         vec4 wSampA = texture(uNoise3D, (volPos * 1.35 + vec3(4.1, 1.7, 2.9)) * INV_P6);
         float wSampB = texture(uNoise3D, (volPos * 1.35 + vec3(2.2, -5.1, 7.3)) * INV_P6).r;
         vec3 warpOff = vec3(wSampA.r, wSampA.g, wSampB) - 0.5;
         vec3 warpedVol = volPos + warpOff * 1.25;
 
-        float nearFluteWall = exp(-pow((abs(vWorldPos.x) - 0.165) / 0.052, 2.0)) * smoothstep(0.32, 0.04, uMelt);
+        float nearFluteWall = exp(-sq((abs(icePos.x) - ${POPSICLE.fluteX.toFixed(4)}) / 0.052)) * revStep(0.32, 0.04, uMelt);
         vec4 patchSamp = texture(uNoise3D, (warpedVol * 1.85 + vec3(-2.7, 3.8, 1.5)) * INV_P6);
         float freezePatchRaw = patchSamp.r * 0.72 + patchSamp.a * 0.28;
         float freezeRoughBase = clamp(
           pow(smoothstep(0.28, 0.72, freezePatchRaw), 1.35) * 0.92 +
           nearFluteWall * 0.38 +
-          smoothstep(0.55, 1.05, vWorldPos.y) * 0.22,
+          smoothstep(0.55, 1.05, icePos.y) * 0.22,
           0.06,
           1.0
         ) * uFrost;
 
         float microGrain = 0.0;
         float slushFacet = 0.0;
-        vec3 N_ice = perturbNormal(N0, vWorldPos, glazeCover, freezeRoughBase, sweatMask, microGrain, slushFacet);
+        vec3 N_ice = perturbNormal(N0, icePos, glazeCover, freezeRoughBase, sweatMask, microGrain, slushFacet);
 
         vec3 refUp = abs(N0.y) > 0.94 ? vec3(0.0, 0.0, 1.0) : vec3(0.0, 1.0, 0.0);
         vec3 T = normalize(cross(refUp, N0));
@@ -365,24 +390,23 @@ function createOpticalIceMaterial(initialRecipe: PopsicleRecipe): { material: TH
         vec3 N_glaze = normalize(N0 - meniscusBend);
         vec3 N = normalize(mix(N_ice - meniscusBend, N_glaze, max(hangLiquid, hangClear) * 0.96));
 
-        float NdotV = clamp(dot(N, V), 0.0, 1.0);
-
-        float zFront = vWorldPos.z;
-        float zBackRaw = texture(uBackIceZ, screenUv).r;
-        float zBack = (zBackRaw > -5.0) ? zBackRaw : (zFront - 0.36);
-        float totalThickness = clamp(zFront - zBack, 0.03, 0.56);
+        // View-space camera depth (positive distance along view ray) so slab thickness & fruit depth stay exact across 360° 3D orbit!
+        float dFront = vCamDepth;
+        float dBackRaw = texture(uBackIceZ, screenUv).r;
+        float dBack = (dBackRaw < 50.0 && dBackRaw > dFront - 0.02) ? dBackRaw : (dFront + 0.36);
+        float totalThickness = clamp(dBack - dFront, 0.03, 0.56);
 
         // Check exact un-refracted solid depth first so shallow/emerging fruits don't refract 15px off into white backdrop!
         vec2 rawIntSample = texture(uInteriorZ, screenUv).rg;
-        bool rawHitsSolid = (rawIntSample.g > 0.5) && (rawIntSample.r > zBack - 0.06) && (rawIntSample.r <= zFront + 0.05);
-        float rawFrontDist = rawHitsSolid ? clamp(zFront - rawIntSample.r, 0.0, totalThickness) : totalThickness;
+        bool rawHitsSolid = (rawIntSample.g > 0.5) && (rawIntSample.r < dBack + 0.06) && (rawIntSample.r >= dFront - 0.05);
+        float rawFrontDist = rawHitsSolid ? clamp(rawIntSample.r - dFront, 0.0, totalThickness) : totalThickness;
         // Physically, Snell screen displacement scales with actual ice thickness above the fruit (Δx ∝ d -> 0 at emergence!)
         float refrDepthScale = rawHitsSolid ? smoothstep(0.002, 0.115, rawFrontDist) : 1.0;
 
-        // Snell screen-space refraction (IOR = 1.31); keep clear bottom liquid edge gentle so it never drags
-        // upward strawberry core smears or crimson grazing slivers down onto the transparent underside silhouette!
+        // View-space Snell screen refraction (IOR = 1.31): accurate from front, side, and 180° back orbit!
+        vec3 Nview = mat3(viewMatrix) * N;
         float edgeBend = mix(0.014, 0.042, pow(1.0 - N0dotV, 1.30)) * (1.0 - hangClear * 0.34);
-        vec2 refrN = vec2(N.x, N.y * (1.0 - hangClear * 0.45));
+        vec2 refrN = vec2(Nview.x, Nview.y * (1.0 - hangClear * 0.45));
         vec2 baseOffset = (-refrN * edgeBend * (0.72 + totalThickness * 1.15) - filmSlope * (0.0085 * glazeWave)) * refrDepthScale;
 
         vec2 uvR = screenUv + baseOffset * 0.94;
@@ -391,8 +415,8 @@ function createOpticalIceMaterial(initialRecipe: PopsicleRecipe): { material: TH
 
         // Exact front ice thickness to solid embedded fruits & stick
         vec2 interiorSample = texture(uInteriorZ, clamp(uvG, vec2(0.002), vec2(0.998))).rg;
-        bool hitsSolid = (interiorSample.g > 0.5) && (interiorSample.r > zBack - 0.06) && (interiorSample.r <= zFront + 0.04);
-        float frontIceDist = hitsSolid ? clamp(zFront - interiorSample.r, 0.0, totalThickness) : totalThickness;
+        bool hitsSolid = (interiorSample.g > 0.5) && (interiorSample.r < dBack + 0.06) && (interiorSample.r >= dFront - 0.04);
+        float frontIceDist = hitsSolid ? clamp(interiorSample.r - dFront, 0.0, totalThickness) : totalThickness;
         if (rawHitsSolid) {
           hitsSolid = true;
           frontIceDist = min(frontIceDist, rawFrontDist);
@@ -406,14 +430,14 @@ function createOpticalIceMaterial(initialRecipe: PopsicleRecipe): { material: TH
         vec4 cloudSamp = texture(uNoise3D, warpedVol * INV_P6);
         float cloudMacro = cloudSamp.r * 0.72 + cloudSamp.a * 0.28;
         float cloudMed = patchSamp.g * 0.70 + patchSamp.a * 0.30;
-        float freezeStreaks = fbm3Tex(vec3(vWorldPos.x * 13.5 + warpOff.x * 2.2 + uSeedOffset, vWorldPos.y * 2.6, vWorldPos.z * 11.0));
+        float freezeStreaks = fbm3Tex(vec3(icePos.x * 13.5 + warpOff.x * 2.2 + uSeedOffset, icePos.y * 2.6, icePos.z * 11.0));
 
-        float fruitNucleation = hitsSolid ? smoothstep(0.024, 0.085, frontIceDist) * smoothstep(0.24, 0.095, frontIceDist) : 0.0;
+        float fruitNucleation = hitsSolid ? smoothstep(0.024, 0.085, frontIceDist) * revStep(0.24, 0.095, frontIceDist) : 0.0;
         float freezeRoughZone = clamp(freezeRoughBase + fruitNucleation * 0.32 * uFrost, 0.06, 1.0);
 
         // Two-depth parallax-shifted 3D internal volume sampling (3 fetches total!)
-        vec3 innerPosA = vWorldPos - V * clamp(frontIceDist * 0.36, 0.018, 0.095);
-        vec3 innerPosB = vWorldPos - V * clamp(frontIceDist * 0.72, 0.040, 0.19);
+        vec3 innerPosA = icePos - V * clamp(frontIceDist * 0.36, 0.018, 0.095);
+        vec3 innerPosB = icePos - V * clamp(frontIceDist * 0.72, 0.040, 0.19);
         vec4 inSampA = texture(uNoise3D, (innerPosA * 18.0 + warpOff * 2.2 + vec3(uSeedOffset * 1.7)) * INV_P6);
         vec4 inSampFine = texture(uNoise3D, (innerPosA * 56.0 + vec3(uSeedOffset * 3.1)) * INV_P12);
         vec4 inSampB = texture(uNoise3D, (innerPosB * 24.0 + vec3(-3.1, 6.4, 2.2)) * INV_P6);
@@ -463,14 +487,14 @@ function createOpticalIceMaterial(initialRecipe: PopsicleRecipe): { material: TH
         float opticalDist = frontIceDist * mix(1.0, grazingPath, 0.50);
 
         // === DYNAMIC FLAVOR PALETTE (1 OR 2 ORGANICALLY SWIRLED TASTES) + WATER vs OPAQUE COCONUT BASE ===
-        float bottomRichness = smoothstep(0.22, -0.98, vWorldPos.y);
-        float topRuby = smoothstep(0.70, 1.08, vWorldPos.y);
+        float bottomRichness = revStep(0.22, -0.98, icePos.y);
+        float topRuby = smoothstep(0.70, 1.08, icePos.y);
         float edgeRichness = pow(1.0 - N0dotV, 1.32);
-        float fluteOptical = smoothstep(0.10, 0.34, abs(N0.x)) * smoothstep(0.76, 0.38, abs(N0.x));
+        float fluteOptical = smoothstep(0.10, 0.34, abs(N0.x)) * revStep(0.76, 0.38, abs(N0.x));
 
         // Organic dual-flavor layered/marbled swirl (Flavor A upper half -> Flavor B lower half)
-        float swirlWave = (cloudMacro - 0.5) * 0.46 + (cloudMed - 0.5) * 0.24 + sin(vWorldPos.x * 4.4 + uSeedOffset) * 0.08;
-        float dualMix = uIsDual > 0.5 ? smoothstep(-0.34, 0.34, -vWorldPos.y + swirlWave) : 0.0;
+        float swirlWave = (cloudMacro - 0.5) * 0.46 + (cloudMed - 0.5) * 0.24 + sin(icePos.x * 4.4 + uSeedOffset) * 0.08;
+        float dualMix = uIsDual > 0.5 ? smoothstep(-0.34, 0.34, -icePos.y + swirlWave) : 0.0;
 
         vec3 flvSigma = mix(uSigmaA, uSigmaB, dualMix);
         vec3 flvCore = mix(uCoreA, uCoreB, dualMix);
@@ -482,7 +506,7 @@ function createOpticalIceMaterial(initialRecipe: PopsicleRecipe): { material: TH
 
         // Reuses baked G channel of cloudSamp (zero extra texture fetches!) for subtle internal sunlit pockets
         float warmPocketNoise = cloudSamp.g * 0.72 + wSampA.a * 0.28;
-        float downwardWarmth = smoothstep(0.55, -0.82, vWorldPos.y);
+        float downwardWarmth = revStep(0.55, -0.82, vWorldPos.y);
         float warmNuance = clamp(
           (smoothstep(0.32, 0.76, warmPocketNoise) * 0.68 + downwardWarmth * 0.42) *
           (1.0 - edgeRichness * 0.75) *
@@ -527,7 +551,7 @@ function createOpticalIceMaterial(initialRecipe: PopsicleRecipe): { material: TH
         // === INTERNAL FROZEN CRYSTALLINE SNOW-POCKETS, MICRO-VEINS & ROUGH FREEZE TOOTH ===
         float crystalSpeck = smoothstep(0.60, 0.95, innerGranuleMicro) * smoothstep(0.34, 0.80, freezeRoughZone);
         float snowPocket = smoothstep(0.54, 0.90, crunchyPattern) * smoothstep(0.36, 0.82, freezeRoughZone) * (1.0 - uMelt * 0.42);
-        float creviceDark = smoothstep(0.46, 0.14, crunchyPattern) * smoothstep(0.34, 0.82, freezeRoughZone) * (1.0 - uMelt * 0.42);
+        float creviceDark = revStep(0.46, 0.14, crunchyPattern) * smoothstep(0.34, 0.82, freezeRoughZone) * (1.0 - uMelt * 0.42);
 
         vec3 warmFrostCol = mix(vec3(1.36, 1.30, 1.26), flvCore * 1.05 + vec3(0.45), 0.42);
         vec3 internalFreezeTex = (
@@ -542,7 +566,7 @@ function createOpticalIceMaterial(initialRecipe: PopsicleRecipe): { material: TH
 
         vec3 iceBody = (transmitted + internalScatter) * (1.0 - creviceDark * 0.24 * thinIceFade * (1.0 - hangClear * 0.92)) + internalFreezeTex + frostTooth;
 
-        float innerRubyRim = smoothstep(0.54, 0.16, N0dotV) * smoothstep(0.02, 0.16, N0dotV) * thinIceFade * (1.0 - uOpacity * 0.82) * (1.0 - hangClear * 0.88);
+        float innerRubyRim = revStep(0.54, 0.16, N0dotV) * smoothstep(0.02, 0.16, N0dotV) * thinIceFade * (1.0 - uOpacity * 0.82) * (1.0 - hangClear * 0.88);
         iceBody = mix(iceBody, iceBody * clamp(flvMid * 0.85, vec3(0.15), vec3(1.15)) + flvDeep * 0.40, innerRubyRim * 0.54);
 
         // === OPAQUE CREAMY COCONUT-MILK BASE (and natural pulp opacity for banana/chocolate!) ===
@@ -566,7 +590,7 @@ function createOpticalIceMaterial(initialRecipe: PopsicleRecipe): { material: TH
           // Toppings pressed close to the mold wall softly peek through a thin milky coconut veil
           // (just like real strawberry-coconut & cookies-and-cream paletas!)
           if (hitsSolid) {
-            float creamPeek = exp(-frontIceDist * 26.0) * smoothstep(0.105, 0.0, frontIceDist);
+            float creamPeek = exp(-frontIceDist * 26.0) * revStep(0.105, 0.0, frontIceDist);
             vec3 peekTint = mix(bgCol, bgCol * mix(vec3(1.0), flvCreamAlb, 0.22), 0.45);
             creamBase = mix(creamBase, peekTint, clamp(creamPeek * 0.90, 0.0, 0.96));
           }
@@ -590,7 +614,7 @@ function createOpticalIceMaterial(initialRecipe: PopsicleRecipe): { material: TH
         iceBody *= mix(vec3(1.0), mix(vec3(0.92), uStainCol, 0.24), wetMem * 0.24 * (1.0 - glazeCover) * thinIceFade * (1.0 - hangClear * 0.92));
 
         // Jewel-clear optical water-drop refractive contour rim along the transparent lower edge (matching hanging drops!)
-        float hangGlassRim = smoothstep(0.62, 0.14, N0dotV) * hangClear;
+        float hangGlassRim = revStep(0.62, 0.14, N0dotV) * hangClear;
         vec3 dropRimTint = mix(vec3(0.46, 0.22, 0.24), uStainCol * 0.48, 0.65);
         iceBody = mix(iceBody, iceBody * dropRimTint, clamp(hangGlassRim * 0.64, 0.0, 0.66));
 
@@ -618,69 +642,77 @@ function createOpticalIceMaterial(initialRecipe: PopsicleRecipe): { material: TH
           specSatin * (fresnel * 0.14 * frostFactor * (1.0 - glazeCover * 0.75) * thinIceFade * dryFrostMatte);
 
         // Organic, crystal-broken frosted specular ridges along the twin molded flutes
-        vec3 R_flute = reflect(-V, normalize(mix(N0, N_ice, 0.55)));
-        float nearFluteTrack = exp(-pow((abs(vWorldPos.x) - 0.165) / 0.064, 2.0));
-        float fluteFade = smoothstep(0.28, 0.05, uMelt);
-        float fluteBreakup = smoothstep(0.18, 0.82, innerGranuleCoarse);
-        float fluteCrystalSpark = smoothstep(0.45, 0.95, innerGranuleMicro) * 0.85;
-        float fluteBand = exp(-pow((abs(R_flute.x) - 0.34) / 0.056, 2.0)) *
-                          smoothstep(0.08, 0.24, abs(N0.x)) *
-                          smoothstep(0.54, 0.24, abs(N0.x)) *
-                          smoothstep(-0.86, -0.60, vWorldPos.y) *
-                          smoothstep(0.88, 0.62, vWorldPos.y) *
-                          nearFluteTrack * fluteFade;
-        float fluteLine = fluteBand * (0.28 + 0.82 * fluteBreakup + fluteCrystalSpark + freezeVeins * 0.45);
-        color += mix(vec3(1.56, 1.38, 1.34), vec3(1.68, 1.48, 1.24), warmNuance * 0.45) * fluteLine * 0.34 * edgeMeltFade * dryFrostMatte;
+        float fluteFade = revStep(0.28, 0.05, uMelt);
+        if (fluteFade > 0.002) {
+          vec3 R_flute = reflect(-V, normalize(mix(N0, N_ice, 0.55)));
+          float nearFluteTrack = exp(-sq((abs(vWorldPos.x) - ${POPSICLE.fluteX.toFixed(4)}) / 0.064));
+          float fluteBreakup = smoothstep(0.18, 0.82, innerGranuleCoarse);
+          float fluteCrystalSpark = smoothstep(0.45, 0.95, innerGranuleMicro) * 0.85;
+          float fluteBand = exp(-sq((abs(R_flute.x) - 0.34) / 0.056)) *
+                            smoothstep(0.08, 0.24, abs(N0.x)) *
+                            revStep(0.54, 0.24, abs(N0.x)) *
+                            smoothstep(-0.86, -0.60, vWorldPos.y) *
+                            revStep(0.88, 0.62, vWorldPos.y) *
+                            nearFluteTrack * fluteFade;
+          float fluteLine = fluteBand * (0.28 + 0.82 * fluteBreakup + fluteCrystalSpark + freezeVeins * 0.45);
+          color += mix(vec3(1.56, 1.38, 1.34), vec3(1.68, 1.48, 1.24), warmNuance * 0.45) * fluteLine * 0.34 * edgeMeltFade * dryFrostMatte;
+        }
 
         // Crisp scattered sparkling wet micro-crystal pinpoints across porous thawing sugar-ice
         vec3 keyL = normalize(vec3(-0.66, 0.46, 0.59));
         vec3 keyR = normalize(vec3(0.66, 0.42, 0.62));
         vec3 keyTop = normalize(vec3(-0.18, 0.78, 0.60));
-        vec3 hL = normalize(keyL + V);
-        vec3 hR = normalize(keyR + V);
-        vec3 hT = normalize(keyTop + V);
+        vec3 hL = safeNorm(keyL + V);
+        vec3 hR = safeNorm(keyR + V);
+        vec3 hT = safeNorm(keyTop + V);
 
-        float crystalGlint =
-          pow(max(dot(N, hL), 0.0), 460.0) * 1.55 +
-          pow(max(dot(N, hR), 0.0), 460.0) * 1.35 +
-          pow(max(dot(N, hT), 0.0), 540.0) * 1.45;
+        float creamSmoothSpec = 1.0 - uOpacity * 0.80;
+        float solidIceSpec = 1.0 - hangLiquid * 0.88;
+        float solidSpecScale = creamSmoothSpec * solidIceSpec;
 
-        float softGlazeSheen =
-          (pow(max(dot(N_glaze, hL), 0.0), 135.0) * 0.82 +
-           pow(max(dot(N_glaze, hR), 0.0), 135.0) * 0.68 +
-           pow(max(dot(N_glaze, hT), 0.0), 175.0) * 0.62) *
-          clamp(glazeCover * 0.68 + glazeEdge * 1.15, 0.0, 1.35);
+        float crystalGlint = 0.0;
+        if (solidSpecScale > 0.002) {
+          crystalGlint =
+            pow(max(dot(N, hL), 0.0), 460.0) * 1.55 +
+            pow(max(dot(N, hR), 0.0), 460.0) * 1.35 +
+            pow(max(dot(N, hT), 0.0), 540.0) * 1.45;
+        }
+
+        float ndhL_g = max(dot(N_glaze, hL), 0.0);
+        float ndhR_g = max(dot(N_glaze, hR), 0.0);
+        float ndhT_g = max(dot(N_glaze, hT), 0.0);
+
+        float softGlazeW = clamp(glazeCover * 0.68 + glazeEdge * 1.15, 0.0, 1.35);
+        float softGlazeSheen = softGlazeW > 0.002
+          ? (pow(ndhL_g, 135.0) * 0.82 + pow(ndhR_g, 135.0) * 0.68 + pow(ndhT_g, 175.0) * 0.62) * softGlazeW
+          : 0.0;
         // Sharp glossy curved liquid gleam riding along the advancing lip of each creeping sticky syrup wave!
-        float glazeLipGlint =
-          (pow(max(dot(N_glaze, hL), 0.0), 280.0) * 1.45 +
-           pow(max(dot(N_glaze, hR), 0.0), 280.0) * 1.25 +
-           pow(max(dot(N_glaze, hT), 0.0), 320.0) * 1.35) *
-          glazeEdge;
-        float bottomStickyGlint =
-          (pow(max(dot(N_glaze, hL), 0.0), 210.0) * 1.25 +
-           pow(max(dot(N_glaze, hR), 0.0), 210.0) * 1.15 +
-           pow(max(dot(N_glaze, hT), 0.0), 180.0) * 0.92) *
-          bottomPoolZone;
+        float glazeLipGlint = glazeEdge > 0.002
+          ? (pow(ndhL_g, 280.0) * 1.45 + pow(ndhR_g, 280.0) * 1.25 + pow(ndhT_g, 320.0) * 1.35) * glazeEdge
+          : 0.0;
+        float bottomStickyGlint = bottomPoolZone > 0.002
+          ? (pow(ndhL_g, 210.0) * 1.25 + pow(ndhR_g, 210.0) * 1.15 + pow(ndhT_g, 180.0) * 0.92) * bottomPoolZone
+          : 0.0;
 
         // Crisp 1-2px diamond specular sweat & wet granular slush pinpoints (like Temponaut / macro melt photos!)
-        float slushPinpoints =
-          (pow(max(dot(N_ice, hL), 0.0), 520.0) * 2.55 +
-           pow(max(dot(N_ice, hR), 0.0), 480.0) * 2.15 +
-           pow(max(dot(N_ice, hT), 0.0), 620.0) * 2.40) *
-          slushFacet;
+        float slushPinpoints = (slushFacet > 0.002 && solidSpecScale > 0.002)
+          ? (pow(max(dot(N_ice, hL), 0.0), 520.0) * 2.55 +
+             pow(max(dot(N_ice, hR), 0.0), 480.0) * 2.15 +
+             pow(max(dot(N_ice, hT), 0.0), 620.0) * 2.40) * slushFacet
+          : 0.0;
 
         // Tactile sweaty granular crystalline depth across wet melting ice (damped on coconut & pure liquid hanging bellies)
-        float creamSmoothSpec = 1.0 - uOpacity * 0.80;
-        float solidIceSpec = (1.0 - hangLiquid * 0.88);
-        color *= 1.0 + (microGrain - 0.48) * 0.22 * slushFacet * thinIceFade * creamSmoothSpec * solidIceSpec * dryFrostMatte;
-        color += vec3(1.96, 1.85, 1.80) * (crystalGlint * creamSmoothSpec * solidIceSpec + slushPinpoints * 1.65 * thinIceFade * creamSmoothSpec * solidIceSpec + glazeLipGlint * 1.05 + bottomStickyGlint * 0.95) * edgeMeltFade * (0.38 + 0.62 * thinIceFade) * dryFrostMatte;
+        color *= 1.0 + (microGrain - 0.48) * 0.22 * slushFacet * thinIceFade * solidSpecScale * dryFrostMatte;
+        color += vec3(1.96, 1.85, 1.80) * (crystalGlint * solidSpecScale + slushPinpoints * 1.65 * thinIceFade * solidSpecScale + glazeLipGlint * 1.05 + bottomStickyGlint * 0.95) * edgeMeltFade * (0.38 + 0.62 * thinIceFade) * dryFrostMatte;
         color += vec3(1.72, 1.60, 1.56) * softGlazeSheen * edgeMeltFade * (0.42 + 0.58 * thinIceFade) * dryFrostMatte;
 
         // Luminous clear glass bottom caustic crescent & crisp droplet-style pinpoint catchlights on hanging pouches!
-        float hangCaustic = smoothstep(0.16, -0.78, N_glaze.y) * smoothstep(0.12, 0.72, N0dotV) * max(hangLiquid, hangClear) * (1.0 - uOpacity * 0.68);
+        float hangCaustic = revStep(0.16, -0.78, N_glaze.y) * smoothstep(0.12, 0.72, N0dotV) * max(hangLiquid, hangClear) * (1.0 - uOpacity * 0.68);
         color += mix(vec3(0.82, 0.72, 0.68), uStainCol * 0.82 + vec3(0.26), 0.52) * hangCaustic * 0.62;
-        float hangPinSpec = (pow(max(dot(N_glaze, hL), 0.0), 220.0) * 1.15 + pow(max(dot(N_glaze, hR), 0.0), 180.0) * 0.82) * hangClear;
-        color += vec3(2.4, 2.3, 2.24) * hangPinSpec * edgeMeltFade;
+        if (hangClear > 0.002) {
+          float hangPinSpec = (pow(ndhL_g, 220.0) * 1.15 + pow(ndhR_g, 180.0) * 0.82) * hangClear;
+          color += vec3(2.4, 2.3, 2.24) * hangPinSpec * edgeMeltFade;
+        }
 
         // Keep the luminous cloudy pink rim glow alive across the silhouette (only softly tapered right at razor tips)
         float silhouetteRim = pow(1.0 - N0dotV, 5.4) * thinIceFade * (1.0 - hangClear * 0.28);
@@ -688,6 +720,7 @@ function createOpticalIceMaterial(initialRecipe: PopsicleRecipe): { material: TH
 
         // === FREEZER-FRESH POWDERY HOARFROST RIME LAYER (instant melt under pointer!) ===
         if (rimeMask > 0.005 || rimeWetEdge > 0.005) {
+          vec4 rTuft = texture(uNoise3D, (vWorldPos * 32.0 + vec3(uSeedOffset * 1.1, 3.3, -1.7)) * INV_P8);
           float rimEdgeFuzz = pow(1.0 - N0dotV, 1.48);
           float topSnow = smoothstep(0.62, 1.04, vWorldPos.y) * 0.22;
 
@@ -747,7 +780,7 @@ function createOpticalIceMaterial(initialRecipe: PopsicleRecipe): { material: TH
  */
 function createInternalBubbles(seed: number): {
   mesh: THREE.InstancedMesh;
-  data: Array<{ pos: THREE.Vector3; radius: number; stretchY: number; rotZ: number }>;
+  data: Array<{ pos: THREE.Vector3; radius: number; stretchY: number; cosR: number; sinR: number }>;
   dispose(): void;
 } {
   const count = 760;
@@ -768,8 +801,10 @@ function createInternalBubbles(seed: number): {
         vec4 mvPos = viewMatrix * wp;
         vNormalView = normalize(normalMatrix * mat3(instanceMatrix) * normal);
         vViewDir = normalize(-mvPos.xyz);
-        // Shallow front bubbles are crisper; deeper bubbles slightly softer
-        vDepthFront = clamp((wp.z + 0.14) / 0.34, 0.0, 1.0);
+        // Camera-relative frontness (works from front, side, and 180° back orbit!)
+        float centerDepth = -(viewMatrix * vec4(0.0, wp.y, 0.0, 1.0)).z;
+        float relFront = centerDepth - (-mvPos.z);
+        vDepthFront = clamp((relFront + 0.14) / 0.34, 0.0, 1.0);
         gl_Position = projectionMatrix * mvPos;
       }
     `,
@@ -779,6 +814,8 @@ function createInternalBubbles(seed: number): {
       varying vec3 vViewDir;
       varying float vDepthFront;
 
+      float revStep(float hi, float lo, float x) { return 1.0 - smoothstep(lo, hi, x); }
+
       void main() {
         vec3 N = normalize(vNormalView);
         vec3 V = normalize(vViewDir);
@@ -786,9 +823,9 @@ function createInternalBubbles(seed: number): {
 
         // Air bubble inside crimson-coral ice:
         // 1) Crisp dark ruby-espresso TIR contour ring around the rim
-        float darkRing = smoothstep(0.68, 0.36, ndv) * smoothstep(0.05, 0.30, ndv);
+        float darkRing = revStep(0.68, 0.36, ndv) * smoothstep(0.05, 0.30, ndv);
         // 2) Subtle bright coral-peach inner caustic on lower hemisphere
-        float innerCaustic = smoothstep(0.2, -0.75, N.y) * smoothstep(0.22, 0.72, ndv);
+        float innerCaustic = revStep(0.2, -0.75, N.y) * smoothstep(0.22, 0.72, ndv);
         // 3) Tiny razor-sharp white studio pinpoint catchlight on upper curve
         float spec = pow(max(dot(N, normalize(vec3(-0.46, 0.62, 0.63))), 0.0), 72.0);
         float spec2 = pow(max(dot(N, normalize(vec3(0.52, 0.44, 0.73))), 0.0), 90.0);
@@ -814,9 +851,9 @@ function createInternalBubbles(seed: number): {
   const mesh = new THREE.InstancedMesh(geo, mat, count);
   mesh.frustumCulled = false;
 
-  const data: Array<{ pos: THREE.Vector3; radius: number; stretchY: number; rotZ: number }> = [];
+  const data: Array<{ pos: THREE.Vector3; radius: number; stretchY: number; cosR: number; sinR: number }> = [];
   const baseState: MeltFieldState = {
-    melt: 0.035,
+    melt: DEFAULT_INITIAL_MELT,
     time: 0,
     seedOffset: seed * 13.7,
     heatSpots: [],
@@ -847,24 +884,17 @@ function createInternalBubbles(seed: number): {
       pos: new THREE.Vector3(x, y, z),
       radius,
       stretchY,
-      rotZ,
+      cosR: Math.cos(rotZ),
+      sinR: Math.sin(rotZ),
     });
     created++;
-  }
-
-  while (data.length < count) {
-    data.push({
-      pos: new THREE.Vector3(0, 0, 0),
-      radius: 0.0001,
-      stretchY: 1,
-      rotZ: 0,
-    });
   }
 
   return {
     mesh,
     data,
     dispose() {
+      mesh.dispose();
       geo.dispose();
       mat.dispose();
     },
@@ -943,27 +973,44 @@ export function createPopsicleIceSystem(
   }
   const iceMesh = new THREE.Mesh(geometry, iceMat);
   iceMesh.name = 'popsicle-ice';
+  iceMesh.frustumCulled = false;
 
-  const backZMat = createWorldZMaterial(0.0, THREE.BackSide);
+  const backZMat = createCameraDepthMaterial(0.0, THREE.BackSide);
   const backZMesh = new THREE.Mesh(geometry, backZMat);
   backZMesh.name = 'popsicle-ice-back-z';
+  backZMesh.frustumCulled = false;
 
-  const solidWorldZMat = createWorldZMaterial(1.0, THREE.FrontSide);
+  // DoubleSide so thin curved toppings (e.g. shaved-lemon ribbons) write valid interior depth from both sides
+  const solidWorldZMat = createCameraDepthMaterial(1.0, THREE.DoubleSide);
 
   const bubbles = createInternalBubbles(seed);
+  bubbles.mesh.frustumCulled = false;
 
   const tmpPos: { x: number; y: number; z: number; hang?: number } = { x: 0, y: 0, z: 0, hang: 0 };
-  const dummy = new THREE.Object3D();
 
   const vTable = new Float32Array(segV + 1);
   for (let iv = 0; iv <= segV; iv++) {
-    const t = iv / segV;
-    vTable[iv] = t * 0.55 + (0.5 - 0.5 * Math.cos(t * Math.PI)) * 0.45;
+    vTable[iv] = mapPopsicleVNorm(iv / segV);
   }
 
-  const thetaTable = new Float32Array(segU + 1);
+  // O(1) inverse LUT for vTable in `sampleLiveSurface`
+  const V_INV_SIZE = 256;
+  const vInvLUT = new Uint16Array(V_INV_SIZE + 1);
+  {
+    let ivCur = 0;
+    for (let k = 0; k <= V_INV_SIZE; k++) {
+      const target = k / V_INV_SIZE;
+      while (ivCur + 1 < segV && vTable[ivCur + 1] <= target) ivCur++;
+      vInvLUT[k] = ivCur;
+    }
+  }
+
+  const sinThetaTable = new Float32Array(segU + 1);
+  const cosThetaTable = new Float32Array(segU + 1);
   for (let iu = 0; iu <= segU; iu++) {
-    thetaTable[iu] = iu === segU ? 0 : (iu / segU) * Math.PI * 2;
+    const theta = iu === segU ? 0 : (iu / segU) * Math.PI * 2;
+    sinThetaTable[iu] = Math.sin(theta);
+    cosThetaTable[iu] = Math.cos(theta);
   }
 
   let lastMeshMelt = -999;
@@ -976,13 +1023,15 @@ export function createPopsicleIceSystem(
   let lastPull3 = -999;
   let lastBubbleMelt = -999;
   let lastBubbleDensity = -999;
+  let visibleBubbleCount = 0;
 
   function update(state: MeltFieldState, bubbleDensity: number, forceMesh = false) {
     uniforms.uTime.value = state.time;
     uniforms.uMelt.value = state.melt;
     uniforms.uSeedOffset.value = state.seedOffset;
 
-    const { iceGone } = getMeltBounds(state.melt);
+    const { slideY, iceGone } = getMeltBounds(state.melt);
+    uniforms.uSlideY.value = slideY;
     if (iceGone) {
       iceMesh.visible = false;
       backZMesh.visible = false;
@@ -991,19 +1040,19 @@ export function createPopsicleIceSystem(
     }
     iceMesh.visible = true;
     backZMesh.visible = true;
-    bubbles.mesh.visible = true;
 
     const curPull0 = state.pendantPull ? state.pendantPull[0] : 0;
     const curPull1 = state.pendantPull ? state.pendantPull[1] : 0;
     const curPull2 = state.pendantPull ? state.pendantPull[2] : 0;
     const curPull3 = state.pendantPull ? state.pendantPull[3] : 0;
+    const curBottomPool = state.bottomPool ?? DEFAULT_BOTTOM_POOL;
 
     // Smart dirty-skip: rebuild geometry immediately on melt/pull/pool/heat change, or ~35Hz for silky hanging recoil!
     const needsMesh =
       forceMesh ||
       state.seedOffset !== lastMeshSeed ||
       Math.abs(state.melt - lastMeshMelt) > 0.00025 ||
-      Math.abs((state.bottomPool ?? 1.25) - lastMeshPool) > 0.005 ||
+      Math.abs(curBottomPool - lastMeshPool) > 0.005 ||
       Math.abs(curPull0 - lastPull0) > 0.004 ||
       Math.abs(curPull1 - lastPull1) > 0.004 ||
       Math.abs(curPull2 - lastPull2) > 0.004 ||
@@ -1015,19 +1064,20 @@ export function createPopsicleIceSystem(
       lastMeshMelt = state.melt;
       lastMeshTime = state.time;
       lastMeshSeed = state.seedOffset;
-      lastMeshPool = state.bottomPool ?? 1.25;
+      lastMeshPool = curBottomPool;
       lastPull0 = curPull0;
       lastPull1 = curPull1;
       lastPull2 = curPull2;
       lastPull3 = curPull3;
 
       const stride = segU + 1;
+      const frame = prepareProfileFrame(state);
 
       for (let iv = 0; iv <= segV; iv++) {
-        const vNorm = vTable[iv];
+        const row = prepareProfileRow(vTable[iv], frame);
         const rowOff = iv * stride;
-        for (let iu = 0; iu <= segU; iu++) {
-          evaluatePopsicleProfile(vNorm, thetaTable[iu], state, tmpPos);
+        for (let iu = 0; iu < segU; iu++) {
+          evaluatePopsicleVertex(sinThetaTable[iu], cosThetaTable[iu], frame, row, state, tmpPos);
           const vIdx = rowOff + iu;
           const o = vIdx * 3;
           positions[o] = tmpPos.x;
@@ -1035,67 +1085,84 @@ export function createPopsicleIceSystem(
           positions[o + 2] = tmpPos.z;
           hangs[vIdx] = tmpPos.hang ?? 0;
         }
+        // Duplicate seam vertex iu = segU directly from iu = 0 (zero redundant evaluation!)
+        const o0 = rowOff * 3;
+        const oSeam = (rowOff + segU) * 3;
+        positions[oSeam] = positions[o0];
+        positions[oSeam + 1] = positions[o0 + 1];
+        positions[oSeam + 2] = positions[o0 + 2];
+        hangs[rowOff + segU] = hangs[rowOff];
       }
 
       for (let iv = 0; iv <= segV; iv++) {
         const rowOff = iv * stride;
-        for (let iu = 0; iu <= segU; iu++) {
-          const o = (rowOff + iu) * 3;
-          if (iv === 0) {
-            // Compute true tangent-tilted underside normal along the morphed scalloped bottom curtain!
+        if (iv === 0) {
+          for (let iu = 0; iu < segU; iu++) {
+            const o = (rowOff + iu) * 3;
             const iuPrev = iu === 0 ? segU - 1 : iu - 1;
-            const iuNext = iu === segU ? 1 : iu + 1;
+            const iuNext = iu + 1;
             const oL = (rowOff + iuPrev) * 3;
             const oR = (rowOff + iuNext) * 3;
             const dx = positions[oR] - positions[oL];
             const dy = positions[oR + 1] - positions[oL + 1];
             const slopeX = Math.abs(dx) > 1e-4 ? clamp(dy / dx, -1.65, 1.65) : 0;
-            const nLen = Math.hypot(slopeX, 1.0);
-            normals[o] = slopeX / nLen;
-            normals[o + 1] = -1.0 / nLen;
+            const invLen = 1.0 / Math.hypot(slopeX, 1.0);
+            normals[o] = slopeX * invLen;
+            normals[o + 1] = -invLen;
             normals[o + 2] = 0;
-            continue;
           }
-          if (iv === segV) {
+        } else if (iv === segV) {
+          for (let iu = 0; iu < segU; iu++) {
+            const o = (rowOff + iu) * 3;
             normals[o] = 0;
             normals[o + 1] = 1;
             normals[o + 2] = 0;
-            continue;
           }
+        } else {
+          const rowD = (iv - 1) * stride;
+          const rowU = (iv + 1) * stride;
+          for (let iu = 0; iu < segU; iu++) {
+            const o = (rowOff + iu) * 3;
+            const iuPrev = iu === 0 ? segU - 1 : iu - 1;
+            const iuNext = iu + 1;
+            const oL = (rowOff + iuPrev) * 3;
+            const oR = (rowOff + iuNext) * 3;
+            const oD = (rowD + iu) * 3;
+            const oU = (rowU + iu) * 3;
 
-          const iuPrev = iu === 0 ? segU - 1 : iu - 1;
-          const iuNext = iu === segU ? 1 : iu + 1;
-          const oL = (rowOff + iuPrev) * 3;
-          const oR = (rowOff + iuNext) * 3;
-          const oD = ((iv - 1) * stride + iu) * 3;
-          const oU = ((iv + 1) * stride + iu) * 3;
+            const dux = positions[oR] - positions[oL];
+            const duy = positions[oR + 1] - positions[oL + 1];
+            const duz = positions[oR + 2] - positions[oL + 2];
 
-          const dux = positions[oR] - positions[oL];
-          const duy = positions[oR + 1] - positions[oL + 1];
-          const duz = positions[oR + 2] - positions[oL + 2];
+            const dvx = positions[oU] - positions[oD];
+            const dvy = positions[oU + 1] - positions[oD + 1];
+            const dvz = positions[oU + 2] - positions[oD + 2];
 
-          const dvx = positions[oU] - positions[oD];
-          const dvy = positions[oU + 1] - positions[oD + 1];
-          const dvz = positions[oU + 2] - positions[oD + 2];
-
-          let nx = duy * dvz - duz * dvy;
-          let ny = duz * dvx - dux * dvz;
-          let nz = dux * dvy - duy * dvx;
-          const len = Math.hypot(nx, ny, nz);
-          if (len > 1e-7) {
-            const invL = 1.0 / len;
-            nx *= invL;
-            ny *= invL;
-            nz *= invL;
-          } else {
-            nx = 0;
-            ny = 0;
-            nz = 1;
+            let nx = duy * dvz - duz * dvy;
+            let ny = duz * dvx - dux * dvz;
+            let nz = dux * dvy - duy * dvx;
+            const len = Math.hypot(nx, ny, nz);
+            if (len > 1e-7) {
+              const invL = 1.0 / len;
+              nx *= invL;
+              ny *= invL;
+              nz *= invL;
+            } else {
+              nx = 0;
+              ny = 0;
+              nz = 1;
+            }
+            normals[o] = nx;
+            normals[o + 1] = ny;
+            normals[o + 2] = nz;
           }
-          normals[o] = nx;
-          normals[o + 1] = ny;
-          normals[o + 2] = nz;
         }
+        // Copy seam normal iu = segU from iu = 0
+        const o0 = rowOff * 3;
+        const oSeam = (rowOff + segU) * 3;
+        normals[oSeam] = normals[o0];
+        normals[oSeam + 1] = normals[o0 + 1];
+        normals[oSeam + 2] = normals[o0 + 2];
       }
 
       posAttr.needsUpdate = true;
@@ -1106,7 +1173,8 @@ export function createPopsicleIceSystem(
       }
     }
 
-    // Only re-evaluate 760 internal bubble matrices when melt or pointer heat meaningfully changes!
+    // Only re-evaluate internal bubble matrices when melt or pointer heat meaningfully changes!
+    // Compact visible instances into `bubbles.mesh.count` so opaque coconut / melted stages skip dead draws.
     const needsBubbles =
       forceMesh ||
       bubbleDensity !== lastBubbleDensity ||
@@ -1118,29 +1186,42 @@ export function createPopsicleIceSystem(
       lastBubbleDensity = bubbleDensity;
 
       const activeCount = Math.floor(bubbles.data.length * clamp(bubbleDensity, 0, 1));
-      for (let i = 0; i < bubbles.data.length; i++) {
+      const matArr = bubbles.mesh.instanceMatrix.array as Float32Array;
+      let writeSlot = 0;
+      for (let i = 0; i < activeCount; i++) {
         const b = bubbles.data[i];
-        if (i >= activeCount) {
-          dummy.scale.set(0, 0, 0);
-          dummy.updateMatrix();
-          bubbles.mesh.setMatrixAt(i, dummy.matrix);
-          continue;
-        }
-        const depth = iceContainmentDepth(b.pos.x, b.pos.y, b.pos.z, state);
+        const by = b.pos.y + slideY;
+        const depth = iceContainmentDepth(b.pos.x, by, b.pos.z, state);
         const vis = smoothstep(0.010, 0.045, depth);
-        if (vis <= 0.001) {
-          dummy.scale.set(0, 0, 0);
-        } else {
-          const s = b.radius * vis;
-          dummy.position.copy(b.pos);
-          dummy.rotation.set(0, 0, b.rotZ);
-          dummy.scale.set(s, s * b.stretchY, s);
-        }
-        dummy.updateMatrix();
-        bubbles.mesh.setMatrixAt(i, dummy.matrix);
+        if (vis <= 0.001) continue;
+
+        const sx = b.radius * vis;
+        const sy = sx * b.stretchY;
+        const o = writeSlot * 16;
+        // Direct column-major TRS matrix (rotation Z + scale + translation) — zero Object3D overhead!
+        matArr[o] = b.cosR * sx;
+        matArr[o + 1] = b.sinR * sx;
+        matArr[o + 2] = 0;
+        matArr[o + 3] = 0;
+        matArr[o + 4] = -b.sinR * sy;
+        matArr[o + 5] = b.cosR * sy;
+        matArr[o + 6] = 0;
+        matArr[o + 7] = 0;
+        matArr[o + 8] = 0;
+        matArr[o + 9] = 0;
+        matArr[o + 10] = sx;
+        matArr[o + 11] = 0;
+        matArr[o + 12] = b.pos.x;
+        matArr[o + 13] = by;
+        matArr[o + 14] = b.pos.z;
+        matArr[o + 15] = 1;
+        writeSlot++;
       }
+      visibleBubbleCount = writeSlot;
+      bubbles.mesh.count = writeSlot;
       bubbles.mesh.instanceMatrix.needsUpdate = true;
     }
+    bubbles.mesh.visible = visibleBubbleCount > 0 && uniforms.uOpacity.value < 0.96;
   }
 
   function sampleLiveSurface(uNorm: number, vNorm: number, outPos: THREE.Vector3, outNormal: THREE.Vector3) {
@@ -1152,15 +1233,10 @@ export function createPopsicleIceSystem(
     const iu1 = Math.min(segU, iu0 + 1);
     const tu = fu - iu0;
 
-    let lo = 0;
-    let hi = segV;
-    while (lo + 1 < hi) {
-      const mid = (lo + hi) >> 1;
-      if (vTable[mid] <= vClamped) lo = mid;
-      else hi = mid;
-    }
-    const iv0 = lo;
-    const iv1 = hi;
+    let iv0 = vInvLUT[(vClamped * V_INV_SIZE) | 0];
+    while (iv0 + 1 < segV && vTable[iv0 + 1] <= vClamped) iv0++;
+    while (iv0 > 0 && vTable[iv0] > vClamped) iv0--;
+    const iv1 = iv0 + 1;
     const span = Math.max(1e-5, vTable[iv1] - vTable[iv0]);
     const tv = clamp((vClamped - vTable[iv0]) / span, 0, 1);
 

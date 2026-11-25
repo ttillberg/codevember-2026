@@ -63,8 +63,10 @@ function periodicVNoise(fx: number, fy: number, fz: number, period: number, seed
 let cachedTexture: THREE.Data3DTexture | null = null;
 let cachedCpuData: Float32Array | null = null;
 
-function ensureBaked() {
-  if (cachedTexture && cachedCpuData) return;
+function ensureBaked(): { texture: THREE.Data3DTexture; cpuData: Float32Array } {
+  if (cachedTexture && cachedCpuData) {
+    return { texture: cachedTexture, cpuData: cachedCpuData };
+  }
 
   const total = SIZE * SIZE * SIZE;
   const rgba = new Uint8Array(total * 4);
@@ -164,27 +166,40 @@ function ensureBaked() {
 
   cachedTexture = tex;
   cachedCpuData = cpuR;
+  return { texture: tex, cpuData: cpuR };
 }
 
 /**
  * Returns the shared periodic 48^3 RGBA Data3DTexture (baked once on startup in ~12ms).
  */
 export function getSharedNoise3DTexture(): THREE.Data3DTexture {
-  ensureBaked();
-  return cachedTexture!;
+  return cachedTexture ?? ensureBaked().texture;
 }
+
+/**
+ * Disposes the shared baked 3D noise texture on full page teardown.
+ */
+export function disposeSharedNoise3D(): void {
+  if (cachedTexture) {
+    cachedTexture.dispose();
+    cachedTexture = null;
+  }
+  cachedCpuData = null;
+}
+
+const INV_PERIOD = SIZE / 6;
+const SIZE_SQ = SIZE * SIZE;
+const SIZE_M1 = SIZE - 1;
 
 /**
  * Ultra-fast CPU periodic 3D smooth FBM lookup backed by the baked 48^3 volume (~15x faster than JS fbm3!).
  * Scale matches `fbm3(x, y, z)` frequency closely (`1 world unit ≈ 6 noise cells`).
  */
 export function sampleFastFbm3(x: number, y: number, z: number): number {
-  ensureBaked();
-  const data = cachedCpuData!;
-  // Period of R channel is 6 cells per [0, 1] -> multiply by SIZE / 6 = 8
-  const sx = x * (SIZE / 6);
-  const sy = y * (SIZE / 6);
-  const sz = z * (SIZE / 6);
+  const data = cachedCpuData ?? ensureBaked().cpuData;
+  const sx = x * INV_PERIOD;
+  const sy = y * INV_PERIOD;
+  const sz = z * INV_PERIOD;
 
   const ix0 = Math.floor(sx);
   const iy0 = Math.floor(sy);
@@ -193,15 +208,18 @@ export function sampleFastFbm3(x: number, y: number, z: number): number {
   const ty = sy - iy0;
   const tz = sz - iz0;
 
-  const x0 = ((ix0 % SIZE) + SIZE) % SIZE;
-  const y0 = ((iy0 % SIZE) + SIZE) % SIZE;
-  const z0 = ((iz0 % SIZE) + SIZE) % SIZE;
-  const x1 = (x0 + 1) % SIZE;
-  const y1 = (y0 + 1) % SIZE;
-  const z1 = (z0 + 1) % SIZE;
+  let x0 = ix0 % SIZE;
+  if (x0 < 0) x0 += SIZE;
+  let y0 = iy0 % SIZE;
+  if (y0 < 0) y0 += SIZE;
+  let z0 = iz0 % SIZE;
+  if (z0 < 0) z0 += SIZE;
+  const x1 = x0 === SIZE_M1 ? 0 : x0 + 1;
+  const y1 = y0 === SIZE_M1 ? 0 : y0 + 1;
+  const z1 = z0 === SIZE_M1 ? 0 : z0 + 1;
 
-  const z0Off = z0 * SIZE * SIZE;
-  const z1Off = z1 * SIZE * SIZE;
+  const z0Off = z0 * SIZE_SQ;
+  const z1Off = z1 * SIZE_SQ;
   const y0Off = y0 * SIZE;
   const y1Off = y1 * SIZE;
 

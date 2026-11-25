@@ -1,5 +1,8 @@
 import * as THREE from 'three';
-import { clamp, fbm3, mulberry32, smoothstep } from './rng';
+import { clamp, fbm2D, fbm3, mulberry32, smoothstep } from './rng';
+
+export const CARVE_TEX_W = 1024;
+export const CARVE_TEX_H = 340;
 
 export interface StrawberryTextures {
   albedo: THREE.CanvasTexture;
@@ -60,11 +63,12 @@ export function createStrawberryTextures(seed = 103): StrawberryTextures {
 
   // Recessed perimeter achenes sitting RIGHT along the outer skin rim (rn ~ 0.94..0.98)
   const acheneCount = 28;
-  const achenes: Array<{ ang: number; r: number }> = [];
+  const achenes: Array<{ x: number; y: number }> = [];
   for (let i = 0; i < acheneCount; i++) {
     const a = (i / acheneCount) * Math.PI * 2 - Math.PI + (rand() - 0.5) * 0.06;
     const br = strawberryBoundaryRadius(a);
-    achenes.push({ ang: a, r: br * (0.945 + rand() * 0.025) });
+    const ar = br * (0.945 + rand() * 0.025);
+    achenes.push({ x: Math.cos(a) * ar, y: Math.sin(a) * ar });
   }
 
   for (let py = 0; py < size; py++) {
@@ -77,10 +81,10 @@ export function createStrawberryTextures(seed = 103): StrawberryTextures {
       const bR = strawberryBoundaryRadius(ang);
       const rn = r / Math.max(0.001, bR);
 
-      // Multi-scale fibrous botanical noise
-      const nCell = fbm3(nx * 28 + seedOff, ny * 28, 1.3, 4);
-      const nMed = fbm3(nx * 7.5 + seedOff, ny * 7.5, 4.7, 3);
-      const nFine = fbm3(nx * 54 + seedOff, ny * 54, 9.2, 2);
+      // Multi-scale fibrous botanical noise (true 2D FBM — ~2x faster than 3D slice)
+      const nCell = fbm2D(nx * 28 + seedOff, ny * 28 + 13.1, 4);
+      const nMed = fbm2D(nx * 7.5 + seedOff, ny * 7.5 + 47.3, 3);
+      const nFine = fbm2D(nx * 54 + seedOff, ny * 54 + 92.7, 2);
 
       // Crisp high-contrast radiating vascular filaments streaming inward from perimeter seeds toward core
       const radialWarp = (nMed - 0.5) * 2.8;
@@ -144,25 +148,28 @@ export function createStrawberryTextures(seed = 103): StrawberryTextures {
       let sssVal = (146 + coreWeight * 94 - outerCortex * 58 + (nCell - 0.5) * 24) * (1.0 - skinEdge * 0.48);
 
       // Tiny recessed natural dark-amber/bronze seeds (achenes) right on the scalloped edge
-      for (let k = 0; k < achenes.length; k++) {
-        const ac = achenes[k];
-        const ax = Math.cos(ac.ang) * ac.r;
-        const ay = Math.sin(ac.ang) * ac.r;
-        const d = Math.hypot(nx - ax, ny - ay);
-        if (d < 0.044) {
-          const dimple = smoothstep(0.044, 0.018, d);
-          cr *= 1 - dimple * 0.42;
-          cg *= 1 - dimple * 0.55;
-          cb *= 1 - dimple * 0.55;
-          bumpVal -= dimple * 56;
-          if (d < 0.016) {
-            const seedM = smoothstep(0.016, 0.007, d);
-            // Natural warm toasted amber-ochre seed (photorealistic, never bright lemon yellow!)
-            cr = cr * (1 - seedM) + 188 * seedM;
-            cg = cg * (1 - seedM) + 126 * seedM;
-            cb = cb * (1 - seedM) + 46 * seedM;
-            bumpVal += seedM * 72;
-            sssVal *= 1 - seedM * 0.78;
+      if (rn > 0.84 && rn < 1.08) {
+        for (let k = 0; k < acheneCount; k++) {
+          const ac = achenes[k];
+          const dx = nx - ac.x;
+          const dy = ny - ac.y;
+          const d2 = dx * dx + dy * dy;
+          if (d2 < 0.001936) {
+            const d = Math.sqrt(d2);
+            const dimple = smoothstep(0.044, 0.018, d);
+            cr *= 1 - dimple * 0.42;
+            cg *= 1 - dimple * 0.55;
+            cb *= 1 - dimple * 0.55;
+            bumpVal -= dimple * 56;
+            if (d < 0.016) {
+              const seedM = smoothstep(0.016, 0.007, d);
+              // Natural warm toasted amber-ochre seed (photorealistic, never bright lemon yellow!)
+              cr = cr * (1 - seedM) + 188 * seedM;
+              cg = cg * (1 - seedM) + 126 * seedM;
+              cb = cb * (1 - seedM) + 46 * seedM;
+              bumpVal += seedM * 72;
+              sssVal *= 1 - seedM * 0.78;
+            }
           }
         }
       }
@@ -327,10 +334,10 @@ export function createWoodTextures(seed = 311): WoodTextures {
     for (let px = 0; px < w; px++) {
       const u = px / (w - 1);
 
-      const warp = fbm3(u * 4.2 + off, v * 1.4, 0.5, 3) * 0.42;
-      const grain = fbm3(u * 36.0 + warp * 9.0 + off, v * 2.5, 2.1, 4);
-      const fineFiber = fbm3(u * 135.0 + off, v * 12.0, 5.4, 2);
-      const microPore = fbm3(u * 210.0 + off, v * 46.0, 8.7, 2);
+      const warp = fbm2D(u * 4.2 + off, v * 1.4 + 5.1, 3) * 0.42;
+      const grain = fbm2D(u * 36.0 + warp * 9.0 + off, v * 2.5 + 21.3, 4);
+      const fineFiber = fbm2D(u * 135.0 + off, v * 12.0 + 54.7, 2);
+      const microPore = fbm2D(u * 210.0 + off, v * 46.0 + 87.2, 2);
       const ring = 0.5 + 0.5 * Math.sin((u * 18.0 + warp * 12.0) * Math.PI);
 
       // Rich warm honey-birch wood tone (matches natural wet studio birch stick in reference!)
@@ -377,8 +384,8 @@ export function createWoodTextures(seed = 311): WoodTextures {
 
   // High-res dedicated carving depth + bevel mask mapped strictly to the hidden upper birch stick
   // underneath the ice cream (1024x340 -> exact 3.01:1 square-texel match to stick span 0.53 x 0.176!)
-  const cw = 1024;
-  const ch = 340;
+  const cw = CARVE_TEX_W;
+  const ch = CARVE_TEX_H;
   const carveCanvas = document.createElement('canvas');
   carveCanvas.width = cw;
   carveCanvas.height = ch;
@@ -454,9 +461,19 @@ export function createWoodTextures(seed = 311): WoodTextures {
   carving.wrapS = THREE.ClampToEdgeWrapping;
   carving.wrapT = THREE.ClampToEdgeWrapping;
 
-  // Re-bake cleanly once IBM Plex Sans finishes loading so typography matches the title plate
-  if (typeof document !== 'undefined' && document.fonts && document.fonts.ready) {
+  // Re-bake cleanly once IBM Plex Sans finishes loading (skip if already loaded or disposed!)
+  let carveDisposed = false;
+  carving.addEventListener('dispose', () => {
+    carveDisposed = true;
+  });
+  if (
+    typeof document !== 'undefined' &&
+    document.fonts &&
+    document.fonts.ready &&
+    (!document.fonts.check || !document.fonts.check('700 84px "IBM Plex Sans"'))
+  ) {
     document.fonts.ready.then(() => {
+      if (carveDisposed) return;
       renderCarving();
       carving.needsUpdate = true;
     });
@@ -473,7 +490,7 @@ function createOffscreenCanvas(w: number, h: number): HTMLCanvasElement {
 }
 
 function fbm2(x: number, y: number, octaves: number): number {
-  return fbm3(x, y, 0.37, octaves);
+  return fbm2D(x, y, octaves);
 }
 
 export interface ToppingTextureSet {
@@ -483,7 +500,10 @@ export interface ToppingTextureSet {
 }
 
 /**
- * Generates lush velvety ruby-magenta raspberry drupelet textures.
+ * Generates organic juicy cellular skin & micro-fuzz textures for raspberry drupelets.
+ * Kept near warm luminous neutral so per-drupelet linear vertex colors can freely paint
+ * deep ruby-crimson, occasional odd unripe/blush/peach/plum drupelets, halved hollow cup walls,
+ * and delicate pale botanical hairs without crushing green/blue channels!
  */
 export function createRaspberryTextures(seed: number): ToppingTextureSet {
   const size = 256;
@@ -502,16 +522,18 @@ export function createRaspberryTextures(seed: number): ToppingTextureSet {
     for (let px = 0; px < size; px++) {
       const u = px / size;
       const v = py / size;
-      const n1 = fbm2(u * 10 + off, v * 10, 3);
-      const n2 = fbm2(u * 34 + off * 1.4, v * 34, 2);
-      const fuzz = smoothstep(0.55, 0.92, n2);
+      const n1 = fbm2(u * 9 + off, v * 9, 3);
+      const n2 = fbm2(u * 28 + off * 1.4, v * 28, 2);
+      const nFine = fbm2(u * 62 + off * 2.1, v * 62, 2);
+      const fuzz = smoothstep(0.56, 0.92, nFine);
 
-      // Deep velvety crimson-ruby drupelet skin (no chalky white washout!)
-      const r = clamp(118 + n1 * 54 + fuzz * 14, 0, 255);
-      const g = clamp(8 + n1 * 14 + fuzz * 8, 0, 255);
-      const b = clamp(28 + n1 * 26 + fuzz * 10, 0, 255);
-      const bumpV = clamp(110 + n1 * 70 + n2 * 60, 0, 255);
-      const roughV = clamp(96 + fuzz * 95 + (1 - n1) * 40, 0, 255);
+      // Subtle juicy skin mottling + fine micro-vellum variation (neutral warm-white base for vertex-color tinting)
+      const base = 212 + n1 * 32 + (n2 - 0.5) * 16 + fuzz * 10;
+      const r = clamp(base + 8, 0, 255);
+      const g = clamp(base - 4, 0, 255);
+      const b = clamp(base - 2, 0, 255);
+      const bumpV = clamp(104 + n1 * 62 + n2 * 52 + fuzz * 36, 0, 255);
+      const roughV = clamp(88 + fuzz * 86 + (1 - n1) * 44, 0, 255);
 
       const idx = (py * size + px) * 4;
       aImg.data[idx] = r;
@@ -726,59 +748,103 @@ export function createKaksmulorTextures(seed: number, variant: 'dark' | 'butter'
 }
 
 /**
+ * Per-seed procedural texture cache so Customize toggles reuse baked CanvasTextures in <1ms.
+ * Call `disposeSeedTextureCache()` when switching to a new seed (`New mix`) or tearing down.
+ */
+const _seedTexCache = new Map<string, StrawberryTextures | BlueberryTextures | WoodTextures | ToppingTextureSet>();
+
+function getOrBake<T extends StrawberryTextures | BlueberryTextures | WoodTextures | ToppingTextureSet>(
+  key: string,
+  factory: () => T,
+): T {
+  const existing = _seedTexCache.get(key) as T | undefined;
+  if (existing) return existing;
+  const created = factory();
+  _seedTexCache.set(key, created);
+  return created;
+}
+
+export function getCachedStrawberryTextures(seed: number): StrawberryTextures {
+  return getOrBake(`strawberry:${seed}`, () => createStrawberryTextures(seed));
+}
+
+export function getCachedBlueberryTextures(seed: number): BlueberryTextures {
+  return getOrBake(`blueberry:${seed}`, () => createBlueberryTextures(seed));
+}
+
+export function getCachedWoodTextures(seed: number): WoodTextures {
+  return getOrBake(`wood:${seed}`, () => createWoodTextures(seed));
+}
+
+export function getCachedRaspberryTextures(seed: number): ToppingTextureSet {
+  return getOrBake(`raspberry:${seed}`, () => createRaspberryTextures(seed));
+}
+
+export function getCachedChocolateChunkTextures(seed: number): ToppingTextureSet {
+  return getOrBake(`chocolate:${seed}`, () => createChocolateChunkTextures(seed));
+}
+
+export function getCachedLemonZestTextures(seed: number): ToppingTextureSet {
+  return getOrBake(`lemon:${seed}`, () => createLemonZestTextures(seed));
+}
+
+export function getCachedKaksmulorTextures(seed: number, variant: 'dark' | 'butter'): ToppingTextureSet {
+  return getOrBake(`kaksmulor:${variant}:${seed}`, () => createKaksmulorTextures(seed, variant));
+}
+
+export function disposeSeedTextureCache(): void {
+  for (const entry of _seedTexCache.values()) {
+    for (const tex of Object.values(entry)) {
+      if (tex instanceof THREE.Texture) tex.dispose();
+    }
+  }
+  _seedTexCache.clear();
+}
+
+/**
  * Macro backlit photography studio PMREM environment:
  * Luminous warm-cream rear lightbox + crisp side specular strip-lights + dark front negative-fill flags.
  */
 export function createMacroStudioEnv(renderer: THREE.WebGLRenderer): THREE.Texture {
   const pmrem = new THREE.PMREMGenerator(renderer);
-  pmrem.compileEquirectangularShader();
 
   const envScene = new THREE.Scene();
   envScene.background = new THREE.Color(0xb8a39a);
 
-  const backBox = new THREE.Mesh(
-    new THREE.PlaneGeometry(14, 14),
-    new THREE.MeshBasicMaterial({ color: new THREE.Color(3.2, 2.95, 2.75), side: THREE.DoubleSide }),
-  );
-  backBox.position.set(0, 0.2, -6.5);
-  envScene.add(backBox);
+  const tempGeos: THREE.BufferGeometry[] = [];
+  const tempMats: THREE.Material[] = [];
+  const addCard = (
+    w: number,
+    h: number,
+    mat: THREE.MeshBasicMaterial,
+    pos: [number, number, number],
+    lookAt?: [number, number, number],
+  ) => {
+    const g = new THREE.PlaneGeometry(w, h);
+    tempGeos.push(g);
+    const m = new THREE.Mesh(g, mat);
+    m.position.set(pos[0], pos[1], pos[2]);
+    if (lookAt) m.lookAt(lookAt[0], lookAt[1], lookAt[2]);
+    envScene.add(m);
+  };
 
-  const leftStrip = new THREE.Mesh(
-    new THREE.PlaneGeometry(2.0, 12),
-    new THREE.MeshBasicMaterial({ color: new THREE.Color(3.6, 3.5, 3.45), side: THREE.DoubleSide }),
-  );
-  leftStrip.position.set(-5.8, 0.5, 2.2);
-  leftStrip.lookAt(0, 0.3, 0);
-  envScene.add(leftStrip);
-
-  const rightStrip = new THREE.Mesh(
-    new THREE.PlaneGeometry(2.2, 12),
-    new THREE.MeshBasicMaterial({ color: new THREE.Color(3.4, 3.3, 3.2), side: THREE.DoubleSide }),
-  );
-  rightStrip.position.set(5.8, 0.6, 2.0);
-  rightStrip.lookAt(0, 0.3, 0);
-  envScene.add(rightStrip);
-
-  const topStrip = new THREE.Mesh(
-    new THREE.PlaneGeometry(8, 3.0),
-    new THREE.MeshBasicMaterial({ color: new THREE.Color(2.4, 2.28, 2.18), side: THREE.DoubleSide }),
-  );
-  topStrip.position.set(0, 6.2, 1.0);
-  topStrip.lookAt(0, 0, 0);
-  envScene.add(topStrip);
-
+  const backMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(3.2, 2.95, 2.75), side: THREE.DoubleSide });
+  const leftMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(3.6, 3.5, 3.45), side: THREE.DoubleSide });
+  const rightMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(3.4, 3.3, 3.2), side: THREE.DoubleSide });
+  const topMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(2.4, 2.28, 2.18), side: THREE.DoubleSide });
   const negMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(0.08, 0.06, 0.07), side: THREE.DoubleSide });
-  const negL = new THREE.Mesh(new THREE.PlaneGeometry(3.4, 9), negMat);
-  negL.position.set(-4.0, 0, 5.2);
-  negL.lookAt(0, 0, 0);
-  envScene.add(negL);
+  tempMats.push(backMat, leftMat, rightMat, topMat, negMat);
 
-  const negR = new THREE.Mesh(new THREE.PlaneGeometry(3.4, 9), negMat);
-  negR.position.set(4.0, 0, 5.2);
-  negR.lookAt(0, 0, 0);
-  envScene.add(negR);
+  addCard(14, 14, backMat, [0, 0.2, -6.5]);
+  addCard(2.0, 12, leftMat, [-5.8, 0.5, 2.2], [0, 0.3, 0]);
+  addCard(2.2, 12, rightMat, [5.8, 0.6, 2.0], [0, 0.3, 0]);
+  addCard(8, 3.0, topMat, [0, 6.2, 1.0], [0, 0, 0]);
+  addCard(3.4, 9, negMat, [-4.0, 0, 5.2], [0, 0, 0]);
+  addCard(3.4, 9, negMat, [4.0, 0, 5.2], [0, 0, 0]);
 
   const rt = pmrem.fromScene(envScene, 0.025);
   pmrem.dispose();
+  for (const g of tempGeos) g.dispose();
+  for (const m of tempMats) m.dispose();
   return rt.texture;
 }

@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { clamp, fbm3, mulberry32, smoothstep } from './rng';
-import { getMeltBounds, iceContainmentDepth, MeltFieldState, POPSICLE } from './shape';
+import { baseHalfWidthAt, getMeltBounds, iceContainmentDepth, MeltFieldState, POPSICLE, sampleIceContainment } from './shape';
 import {
   DEFAULT_RECIPE,
   PopsicleRecipe,
@@ -8,14 +8,18 @@ import {
   ToppingId,
 } from './recipe';
 import {
-  createBlueberryTextures,
-  createChocolateChunkTextures,
-  createKaksmulorTextures,
-  createLemonZestTextures,
-  createRaspberryTextures,
-  createStrawberryTextures,
-  createWoodTextures,
+  CARVE_TEX_H,
+  CARVE_TEX_W,
+  getCachedBlueberryTextures,
+  getCachedChocolateChunkTextures,
+  getCachedKaksmulorTextures,
+  getCachedLemonZestTextures,
+  getCachedRaspberryTextures,
+  getCachedStrawberryTextures,
+  getCachedWoodTextures,
   strawberryBoundaryRadius,
+  StrawberryTextures,
+  BlueberryTextures,
   ToppingTextureSet,
 } from './textures';
 
@@ -31,14 +35,10 @@ export interface FruitItem {
   detached: boolean;
   /** Elapsed seconds since detaching (guarantees clean brisk exit!) */
   detachTime: number;
-  /** True once this falling fruit has performed its single soft glancing deflection off the popsicle body */
-  glancedBody: boolean;
   /** True while the user is actively grabbing / holding this fruit with their pointer */
   grabbed: boolean;
   /** Fraction exposed outside melting ice [0..1] */
   exposure: number;
-  /** Extra melt margin before unsticking (keeps fruits embedded until well exposed) */
-  holdStrength: number;
   /** Soft-thaw spring bend state (droop + gentle flutter / soft impact flex) */
   bendAmt: number;
   bendVel: number;
@@ -310,12 +310,11 @@ function createWoodStickGeometry(): THREE.BufferGeometry {
   shape.lineTo(-hw, botY);
 
   const depth = POPSICLE.stickDepth * 0.62;
-  const bevel = POPSICLE.stickDepth * 0.19;
   const geo = new THREE.ExtrudeGeometry(shape, {
     depth,
     bevelEnabled: true,
-    bevelThickness: bevel,
-    bevelSize: bevel * 0.7,
+    bevelThickness: POPSICLE.stickBevelThickness,
+    bevelSize: POPSICLE.stickBevelSize,
     bevelSegments: 4,
     curveSegments: 20,
   });
@@ -345,7 +344,7 @@ function createWoodStickGeometry(): THREE.BufferGeometry {
  * and flex organically as they loosen and fall!
  * Shares compiled shader program across all slices via `customProgramCacheKey`.
  */
-function createStrawberryMaterial(textures: ReturnType<typeof createStrawberryTextures>): {
+function createStrawberryMaterial(textures: StrawberryTextures): {
   material: THREE.MeshPhysicalMaterial;
   uBend: { value: THREE.Vector3 };
 } {
@@ -448,7 +447,7 @@ function createStrawberryMaterial(textures: ReturnType<typeof createStrawberryTe
  * while driving per-berry wet-thaw richness (`uThaw`) so uncovered berries look cleanly wet and
  * ice-free (ZERO chalky white frost halo or frozen haze!).
  */
-function createBlueberryMaterial(textures: ReturnType<typeof createBlueberryTextures>): {
+function createBlueberryMaterial(textures: BlueberryTextures): {
   material: THREE.MeshPhysicalMaterial;
   uThaw: { value: number };
 } {
@@ -526,8 +525,12 @@ function createBlueberryMaterial(textures: ReturnType<typeof createBlueberryText
           // Crisp localized wet studio pinpoint catchlights on fresh glossy uncovered blueberry skin
           vec3 lA = normalize(vec3(-0.52, 0.54, 0.66));
           vec3 lB = normalize(vec3(0.56, 0.38, 0.73));
-          float spA = pow(max(dot(nDir, normalize(lA + vDir)), 0.0), 175.0);
-          float spB = pow(max(dot(nDir, normalize(lB + vDir)), 0.0), 130.0);
+          vec3 hA = lA + vDir;
+          hA *= inversesqrt(max(dot(hA, hA), 1e-8));
+          vec3 hB = lB + vDir;
+          hB *= inversesqrt(max(dot(hB, hB), 1e-8));
+          float spA = pow(max(dot(nDir, hA), 0.0), 175.0);
+          float spB = pow(max(dot(nDir, hB), 0.0), 130.0);
           reflectedLight.directSpecular += vec3(1.55, 1.58, 1.68) * (spA * 1.15 + spB * 0.60) * (0.28 + 0.72 * thaw);
         }`,
       );
@@ -537,87 +540,379 @@ function createBlueberryMaterial(textures: ReturnType<typeof createBlueberryText
 }
 
 /**
- * Generates a true sculpted 3D aggregate drupelet raspberry (conical cluster of ~34 plump ruby drupelets
- * around a subtle recessed hollow crown, baked with crevice ambient occlusion in vertex colors!).
+ * Generates a realistic sculpted 3D aggregate drupelet raspberry:
+ * - Properly outward-wound solid plump drupelets packed tightly around a deep ruby core (never hollow/transparent!)
+ * - A tiny delicate curved botanical hair (style) emerging from each outer drupelet ball
+ * - Organic form variants: 0 = whole (gently irregular/pressed), 1 = squashed/compressed, 2 = halved longitudinal cup
+ * - Natural per-drupelet color variation plus occasional odd-colored drupelets (pale blush-pink, peach-coral, deep wine)
  */
-function createRaspberryGeometry(seed: number): THREE.BufferGeometry {
-  const rand = mulberry32(seed * 73 + 19);
+function createRaspberryGeometry(seed: number, variant = 0): THREE.BufferGeometry {
+  const rand = mulberry32(seed * 73 + 19 + variant * 131);
   const positions: number[] = [];
   const normals: number[] = [];
   const uvs: number[] = [];
   const colors: number[] = [];
+  const hairFlags: number[] = [];
   const indices: number[] = [];
+
+  const isSquashed = variant === 1;
+  const isHalved = variant === 2;
+
+  // Organic global deformation per berry (applied primarily to drupelet layout so squashed berries stay plump, never jellybean-stretched!)
+  const squashX = isSquashed ? 1.12 + rand() * 0.14 : 0.94 + rand() * 0.12;
+  const squashY = isSquashed ? 0.90 + rand() * 0.12 : 0.96 + rand() * 0.10;
+  const squashZ = isSquashed ? 0.54 + rand() * 0.12 : isHalved ? 0.92 + rand() * 0.08 : 0.82 + rand() * 0.14;
+  // Local drupelet keeps plump roundness (only gently flattened by ~28% of berry squash)
+  const localSqX = 1.0 + (squashX - 1.0) * 0.28;
+  const localSqY = 1.0 + (squashY - 1.0) * 0.28;
+  const localSqZ = 1.0 + (squashZ - 1.0) * 0.34;
+  const bendX = (rand() - 0.5) * 0.16;
+  const bendZ = (rand() - 0.5) * 0.12;
+
+  function srgbToLin(c: number): number {
+    const v = clamp(c, 0, 1);
+    return v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
+  }
+
+  function deformCenter(x: number, y: number, z: number): [number, number, number] {
+    const y2 = y * y;
+    return [(x + bendX * y2) * squashX, y * squashY, (z + bendZ * y2) * squashZ];
+  }
+
+  function pushOutwardTri(i0: number, i1: number, i2: number) {
+    const x0 = positions[i0 * 3], y0 = positions[i0 * 3 + 1], z0 = positions[i0 * 3 + 2];
+    const x1 = positions[i1 * 3], y1 = positions[i1 * 3 + 1], z1 = positions[i1 * 3 + 2];
+    const x2 = positions[i2 * 3], y2 = positions[i2 * 3 + 1], z2 = positions[i2 * 3 + 2];
+    const ex1 = x1 - x0, ey1 = y1 - y0, ez1 = z1 - z0;
+    const ex2 = x2 - x0, ey2 = y2 - y0, ez2 = z2 - z0;
+    const cx = ey1 * ez2 - ez1 * ey2;
+    const cy = ez1 * ex2 - ex1 * ez2;
+    const cz = ex1 * ey2 - ey1 * ex2;
+    const nx = normals[i0 * 3] + normals[i1 * 3] + normals[i2 * 3];
+    const ny = normals[i0 * 3 + 1] + normals[i1 * 3 + 1] + normals[i2 * 3 + 1];
+    const nz = normals[i0 * 3 + 2] + normals[i1 * 3 + 2] + normals[i2 * 3 + 2];
+    if (cx * nx + cy * ny + cz * nz >= 0) {
+      indices.push(i0, i1, i2);
+    } else {
+      indices.push(i0, i2, i1);
+    }
+  }
+
+  let vertBase = 0;
+  let oddCount = 0;
+
+  function pickDrupeletColor(forceOdd: boolean): [number, number, number] {
+    // Keep odd-colored drupelets natural & occasional (1-2 per berry, never big beige clumps!)
+    const canOdd = oddCount < 2;
+    const oddRoll = forceOdd && canOdd ? rand() : canOdd && rand() < 0.045 ? rand() : -1;
+    if (oddRoll >= 0) {
+      oddCount++;
+      if (oddRoll < 0.44) {
+        // Overripe deep burgundy-plum / dark wine drupelet
+        return [0.27 + rand() * 0.08, 0.025 + rand() * 0.025, 0.11 + rand() * 0.05];
+      }
+      if (oddRoll < 0.78) {
+        // Unripe translucent pale rose-pink drupelet (still juicy berry-tinted, never opaque beige!)
+        return [0.85 + rand() * 0.07, 0.36 + rand() * 0.12, 0.42 + rand() * 0.12];
+      }
+      // Sun-blushed warm coral-apricot odd drupelet
+      return [0.86 + rand() * 0.06, 0.44 + rand() * 0.12, 0.30 + rand() * 0.10];
+    }
+    // Natural juicy raspberry ruby-magenta palette with organic ball-to-ball ripeness variation
+    const tone = rand();
+    return [
+      0.56 + tone * 0.22,
+      0.038 + tone * 0.062,
+      0.13 + tone * 0.125,
+    ];
+  }
+
+  function addDrupeletHair(
+    rootX: number,
+    rootY: number,
+    rootZ: number,
+    dirX: number,
+    dirY: number,
+    dirZ: number,
+    drupR: number,
+    baseCol: [number, number, number],
+  ) {
+    // Whisper-fine, gracefully curled tiny botanical hair (style) emerging from each drupelet ball
+    const len = drupR * (0.38 + rand() * 0.24);
+    const curlX = (rand() - 0.5) * 0.85;
+    const curlY = -0.45 - rand() * 0.45;
+    const curlZ = (rand() - 0.5) * 0.85;
+
+    const refX = Math.abs(dirY) < 0.9 ? 0 : 1;
+    const refY = Math.abs(dirY) < 0.9 ? 1 : 0;
+    const refZ = 0;
+    let tx = dirY * refZ - dirZ * refY;
+    let ty = dirZ * refX - dirX * refZ;
+    let tz = dirX * refY - dirY * refX;
+    const tLen = Math.hypot(tx, ty, tz) || 1;
+    tx /= tLen; ty /= tLen; tz /= tLen;
+    const bx = dirY * tz - dirZ * ty;
+    const by = dirZ * tx - dirX * tz;
+    const bz = dirX * ty - dirY * tx;
+
+    const sides = 3;
+    const rings = [
+      { t: 0.0, rad: 0.0115, hFlag: 0.35 },
+      { t: 0.38, rad: 0.0075, hFlag: 0.72 },
+      { t: 0.74, rad: 0.0042, hFlag: 0.92 },
+      { t: 1.0, rad: 0.0018, hFlag: 1.0 },
+    ];
+
+    // Delicate dusty rose-amber botanical hair tint (soft & organic, never bright white cactus spines!)
+    const tipCol: [number, number, number] = [0.66, 0.38, 0.36];
+    const startVert = vertBase;
+
+    for (let rIdx = 0; rIdx < rings.length; rIdx++) {
+      const { t, rad, hFlag } = rings[rIdx];
+      const curve = t * t * len * 0.52;
+      const px = rootX + dirX * (t * len) + curlX * curve;
+      const py = rootY + dirY * (t * len) + curlY * curve;
+      const pz = rootZ + dirZ * (t * len) + curlZ * curve;
+
+      const mixC = smoothstep(0.0, 0.78, t);
+      const cr = srgbToLin(baseCol[0] * (1 - mixC) + tipCol[0] * mixC);
+      const cg = srgbToLin(baseCol[1] * (1 - mixC) + tipCol[1] * mixC);
+      const cb = srgbToLin(baseCol[2] * (1 - mixC) + tipCol[2] * mixC);
+
+      for (let s = 0; s <= sides; s++) {
+        const ang = (s / sides) * Math.PI * 2;
+        const ca = Math.cos(ang);
+        const sa = Math.sin(ang);
+        const nx = tx * ca + bx * sa;
+        const ny = ty * ca + by * sa;
+        const nz = tz * ca + bz * sa;
+
+        positions.push(px + nx * rad, py + ny * rad, pz + nz * rad);
+        normals.push(nx, ny, nz);
+        uvs.push(s / sides, t);
+        colors.push(cr, cg, cb);
+        hairFlags.push(hFlag);
+      }
+    }
+
+    const stride = sides + 1;
+    for (let rIdx = 0; rIdx < rings.length - 1; rIdx++) {
+      for (let s = 0; s < sides; s++) {
+        const a = startVert + rIdx * stride + s;
+        const b = a + 1;
+        const c = a + stride;
+        const d = c + 1;
+        pushOutwardTri(a, b, c);
+        pushOutwardTri(b, d, c);
+      }
+    }
+    vertBase += rings.length * stride;
+  }
 
   const segU = 10;
   const segV = 7;
-  let vertBase = 0;
 
-  function addDrupelet(cx: number, cy: number, cz: number, r: number, ao: number) {
+  function addDrupelet(
+    cxRaw: number,
+    cyRaw: number,
+    czRaw: number,
+    r: number,
+    ao: number,
+    srgbCol: [number, number, number],
+    withHair: boolean,
+    cutHalfPlane = false,
+  ) {
+    const startVert = vertBase;
+    const [cx, cy, cz] = deformCenter(cxRaw, cyRaw, czRaw);
+    const cLen = Math.hypot(cx, cy, cz) || 1;
+    const outX = cx / cLen;
+    const outY = cy / cLen;
+    const outZ = cz / cLen;
+    // Plump natural drupelet roundness with gentle organic squish against neighbors (never stretched jellybeans!)
+    const locSqX = localSqX * (0.94 + rand() * 0.12);
+    const locSqY = localSqY * (0.92 + rand() * 0.12);
+    const locSqZ = localSqZ * (0.94 + rand() * 0.12);
+
     for (let iv = 0; iv <= segV; iv++) {
       const phi = (iv / segV) * Math.PI;
       const sp = Math.sin(phi);
       const cp = Math.cos(phi);
       for (let iu = 0; iu <= segU; iu++) {
         const th = (iu / segU) * Math.PI * 2;
-        const nx = sp * Math.cos(th);
-        const ny = cp;
-        const nz = sp * Math.sin(th);
-        const px = cx + nx * r;
-        const py = cy + ny * r * 0.96;
-        const pz = cz + nz * r;
+        const nx0 = sp * Math.cos(th);
+        const ny0 = cp;
+        const nz0 = sp * Math.sin(th);
 
-        positions.push(px, py, pz);
-        normals.push(nx, ny, nz);
+        // Gently pillow the inner contact face against the core so drupelets pack seamlessly
+        const faceDot = nx0 * outX + ny0 * outY + nz0 * outZ;
+        const squish = faceDot < 0 ? 1.0 + faceDot * 0.16 : 1.0 + faceDot * 0.04;
+        const lx = cx + nx0 * r * locSqX * squish;
+        const ly = cy + ny0 * r * locSqY * squish;
+        let lz = cz + nz0 * r * locSqZ * squish;
+
+        let isCutFace = false;
+        const cutZ = 0.055 * squashZ;
+        if (cutHalfPlane && lz > cutZ) {
+          lz = cutZ + (lz - cutZ) * 0.14;
+          isCutFace = true;
+        }
+
+        positions.push(lx, ly, lz);
+
+        let nx = isCutFace ? nx0 * 0.25 : nx0 / locSqX;
+        let ny = isCutFace ? ny0 * 0.25 : ny0 / locSqY;
+        let nz = isCutFace ? 0.94 : nz0 / locSqZ;
+        const nLen = Math.hypot(nx, ny, nz) || 1;
+        normals.push(nx / nLen, ny / nLen, nz / nLen);
         uvs.push(iu / segU, iv / segV);
 
-        // Crevice darkening where drupelets nestle against the berry core!
-        const outDot = clamp((px * nx + py * ny + pz * nz) / Math.max(0.15, Math.hypot(px, py, pz)), 0, 1);
-        const shade = clamp(ao * (0.42 + 0.68 * outDot), 0.25, 1.05);
-        colors.push(shade, shade * 0.92, shade * 0.95);
+        // Rich crevice AO between packed drupelets; cut faces show slightly brighter juicy inner flesh
+        const outDot = clamp((lx * nx0 + ly * ny0 + lz * nz0) / Math.max(0.15, Math.hypot(lx, ly, lz)), 0, 1);
+        const shade = isCutFace
+          ? clamp(0.84 + 0.16 * rand(), 0.72, 1.04)
+          : clamp(ao * (0.30 + 0.78 * Math.pow(outDot, 0.88)), 0.20, 1.06);
+        const rr = isCutFace ? Math.min(1, srgbCol[0] * 1.12 + 0.07) : srgbCol[0];
+        const gg = isCutFace ? Math.min(1, srgbCol[1] * 1.30 + 0.08) : srgbCol[1];
+        const bb = isCutFace ? Math.min(1, srgbCol[2] * 1.15 + 0.08) : srgbCol[2];
+        colors.push(srgbToLin(rr * shade), srgbToLin(gg * shade * 0.95), srgbToLin(bb * shade * 0.96));
+        hairFlags.push(0.0);
       }
     }
+
     const stride = segU + 1;
     for (let iv = 0; iv < segV; iv++) {
       for (let iu = 0; iu < segU; iu++) {
-        const a = vertBase + iv * stride + iu;
+        const a = startVert + iv * stride + iu;
         const b = a + 1;
         const c = a + stride;
         const d = c + 1;
-        indices.push(a, c, b);
-        indices.push(b, c, d);
+        pushOutwardTri(a, b, c);
+        pushOutwardTri(b, d, c);
       }
     }
     vertBase += (segV + 1) * stride;
+
+    if (withHair && (!cutHalfPlane || czRaw < 0.02)) {
+      const hDirX = outX + (rand() - 0.5) * 0.28;
+      const hDirY = outY * 0.75 - 0.14 + (rand() - 0.5) * 0.22;
+      const hDirZ = outZ + (rand() - 0.5) * 0.28;
+      const hLen = Math.hypot(hDirX, hDirY, hDirZ) || 1;
+      const hx = hDirX / hLen, hy = hDirY / hLen, hz = hDirZ / hLen;
+      addDrupeletHair(
+        cx + hx * r * 0.94 * locSqX,
+        cy + hy * r * 0.94 * locSqY,
+        cz + hz * r * 0.94 * locSqZ,
+        hx,
+        hy,
+        hz,
+        r,
+        srgbCol,
+      );
+    }
   }
 
-  // Dark recessed core cap so the hollow stem cavity reads deep ruby-maroon
-  addDrupelet(0, -0.04, 0, 0.56, 0.34);
+  if (isHalved) {
+    // Sculpted hollow inner receptacle cup wall (the iconic velvety pale-rose arch inside a halved raspberry!)
+    const cupU = 14;
+    const cupV = 10;
+    const cupStart = vertBase;
+    for (let iv = 0; iv <= cupV; iv++) {
+      const t = iv / cupV; // 0 = top stem opening (+0.58), 1 = rounded inner cup bottom (-0.60)
+      const y = 0.58 - t * 1.18;
+      const cupR = 0.44 * Math.pow(Math.max(0.02, 1.0 - t * t * 0.94), 0.56);
+      for (let iu = 0; iu <= cupU; iu++) {
+        // Semicircle in -Z (back concave wall facing +Z viewer!)
+        const ang = Math.PI + (iu / cupU) * Math.PI; // PI..2*PI -> sin(ang) <= 0 (-Z)
+        const ca = Math.cos(ang);
+        const sa = Math.sin(ang);
+        const lx = ca * cupR;
+        const lz = sa * cupR * 0.92 + 0.05;
+        const [dx, dy, dz] = deformCenter(lx, y, lz);
+        positions.push(dx, dy, dz);
 
-  // 4 staggered organic drupelet rings forming the classic conical raspberry silhouette
+        // Inward-facing cup normal pointing toward +Z open cavity
+        let nx = -ca / squashX;
+        let ny = (t * 0.55) / squashY;
+        let nz = -sa / squashZ;
+        const nLen = Math.hypot(nx, ny, nz) || 1;
+        normals.push(nx / nLen, ny / nLen, nz / nLen);
+        uvs.push(iu / cupU, t);
+
+        // Velvety pale rose-crimson hollow core wall, deeper ruby-maroon deep inside the cup!
+        const rimGlow = smoothstep(0.15, 1.0, Math.abs(ca));
+        const depthAO = 0.42 + 0.46 * rimGlow + 0.14 * (1 - t);
+        colors.push(
+          srgbToLin(clamp((0.76 + 0.12 * rimGlow) * depthAO, 0, 1)),
+          srgbToLin(clamp((0.24 + 0.20 * rimGlow) * depthAO, 0, 1)),
+          srgbToLin(clamp((0.30 + 0.18 * rimGlow) * depthAO, 0, 1)),
+        );
+        hairFlags.push(0.0);
+      }
+    }
+    const cupStride = cupU + 1;
+    for (let iv = 0; iv < cupV; iv++) {
+      for (let iu = 0; iu < cupU; iu++) {
+        const a = cupStart + iv * cupStride + iu;
+        const b = a + 1;
+        const c = a + cupStride;
+        const d = c + 1;
+        pushOutwardTri(a, b, c);
+        pushOutwardTri(b, d, c);
+      }
+    }
+    vertBase += (cupV + 1) * cupStride;
+  } else {
+    // Solid deep burgundy-ruby core underneath drupelets so ZERO background can ever peek between packed balls!
+    addDrupelet(0, -0.04, 0, 0.62, 0.34, [0.40, 0.025, 0.095], false, false);
+  }
+
+  // Staggered organic drupelet rings forming the lush conical aggregate raspberry silhouette
   const rings: Array<{ y: number; ringR: number; count: number; drupR: number; phase: number }> = [
-    { y: 0.56, ringR: 0.44, count: 8, drupR: 0.27, phase: rand() * 6.28 },
-    { y: 0.16, ringR: 0.62, count: 10, drupR: 0.30, phase: rand() * 6.28 },
-    { y: -0.28, ringR: 0.56, count: 9, drupR: 0.29, phase: rand() * 6.28 },
-    { y: -0.66, ringR: 0.34, count: 6, drupR: 0.27, phase: rand() * 6.28 },
+    { y: 0.56, ringR: 0.44, count: 8, drupR: 0.295, phase: rand() * 6.28 },
+    { y: 0.18, ringR: 0.61, count: 10, drupR: 0.325, phase: rand() * 6.28 },
+    { y: -0.24, ringR: 0.56, count: 9, drupR: 0.315, phase: rand() * 6.28 },
+    { y: -0.62, ringR: 0.36, count: 6, drupR: 0.290, phase: rand() * 6.28 },
   ];
+
+  // Give ~58% of berries one intentional odd-colored drupelet (subtle & natural, never overdone!)
+  const oddTargetIdx = rand() < 0.58 ? Math.floor(rand() * 26) : -1;
+  let drupIdx = 0;
 
   for (const ring of rings) {
     for (let k = 0; k < ring.count; k++) {
       const ang = ring.phase + (k / ring.count) * Math.PI * 2 + (rand() - 0.5) * 0.16;
-      const rr = ring.ringR * (0.93 + rand() * 0.14);
-      const yy = ring.y + (rand() - 0.5) * 0.08;
-      const dr = ring.drupR * (0.92 + rand() * 0.16);
-      addDrupelet(Math.cos(ang) * rr, yy, Math.sin(ang) * rr, dr, 0.96);
+      const rr = ring.ringR * (0.93 + rand() * 0.13);
+      const cx = Math.cos(ang) * rr;
+      const cz = Math.sin(ang) * rr;
+      const cy = ring.y + (rand() - 0.5) * 0.08;
+      if (isHalved && cz > 0.18) {
+        drupIdx++;
+        continue;
+      }
+      const dr = ring.drupR * (0.91 + rand() * 0.18);
+      const col = pickDrupeletColor(drupIdx === oddTargetIdx);
+      addDrupelet(cx, cy, cz, dr, 0.98, col, true, isHalved);
+      drupIdx++;
     }
   }
   // Rounded apex tip drupelet
-  addDrupelet((rand() - 0.5) * 0.06, -0.84, (rand() - 0.5) * 0.06, 0.27, 1.0);
+  addDrupelet(
+    (rand() - 0.5) * 0.06,
+    -0.82,
+    isHalved ? -0.10 : (rand() - 0.5) * 0.06,
+    0.29,
+    1.0,
+    pickDrupeletColor(false),
+    true,
+    isHalved,
+  );
 
   const geo = new THREE.BufferGeometry();
   geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
   geo.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
   geo.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
   geo.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+  geo.setAttribute('aHair', new THREE.Float32BufferAttribute(hairFlags, 1));
   geo.setIndex(indices);
   return geo;
 }
@@ -742,7 +1037,7 @@ function createLemonZestGeometry(seed: number): THREE.BufferGeometry {
  */
 function createKaksmulorGeometry(seed: number, isChunk: boolean): THREE.BufferGeometry {
   const rand = mulberry32(seed * 137 + 61);
-  const geo = new THREE.IcosahedronGeometry(1.0, isChunk ? 3 : 2);
+  const geo = new THREE.IcosahedronGeometry(1.0, isChunk ? 2 : 1);
   const pos = geo.attributes.position as THREE.BufferAttribute;
   const off = rand() * 30;
   // Flat crisp broken cookie wafer chunks vs chunky bite-sized irregular biscuit crumbs!
@@ -773,27 +1068,30 @@ function createRaspberryMaterial(tex: ToppingTextureSet): {
     bumpMap: tex.bump,
     bumpScale: 0.022,
     roughnessMap: tex.roughness,
-    roughness: 0.42,
+    roughness: 0.54,
     metalness: 0.0,
     clearcoat: 0.0,
     vertexColors: true,
-    envMapIntensity: 0.28,
+    envMapIntensity: 0.18,
   });
-  material.customProgramCacheKey = () => 'raspberry-wetthaw-v2';
+  material.customProgramCacheKey = () => 'raspberry-wetthaw-v4';
   material.onBeforeCompile = (shader) => {
     shader.uniforms.uThaw = uThaw;
     shader.vertexShader = shader.vertexShader
       .replace(
         '#include <common>',
         `#include <common>
+        attribute float aHair;
         varying vec3 vRaspWorldPos;
-        varying vec3 vRaspWorldNormal;`,
+        varying vec3 vRaspWorldNormal;
+        varying float vHair;`,
       )
       .replace(
         '#include <worldpos_vertex>',
         `#include <worldpos_vertex>
         vRaspWorldPos = (modelMatrix * vec4(transformed, 1.0)).xyz;
-        vRaspWorldNormal = normalize(mat3(modelMatrix) * objectNormal);`,
+        vRaspWorldNormal = normalize(mat3(modelMatrix) * objectNormal);
+        vHair = aHair;`,
       );
     shader.fragmentShader = shader.fragmentShader
       .replace(
@@ -801,21 +1099,28 @@ function createRaspberryMaterial(tex: ToppingTextureSet): {
         `#include <common>
         uniform float uThaw;
         varying vec3 vRaspWorldPos;
-        varying vec3 vRaspWorldNormal;`,
+        varying vec3 vRaspWorldNormal;
+        varying float vHair;`,
       )
       .replace(
         '#include <color_fragment>',
         `#include <color_fragment>
         {
-          // Rich saturated wet ruby-crimson drupelets when uncovered (no chalky haze!)
-          vec3 deepRuby = pow(max(diffuseColor.rgb, vec3(0.0001)), vec3(1.16)) * vec3(1.06, 0.72, 0.80);
-          diffuseColor.rgb = mix(diffuseColor.rgb, deepRuby, 0.55 + clamp(uThaw, 0.0, 1.0) * 0.40);
+          // Preserve per-drupelet color diversity (rich ruby, pale blush-pink, peach, deep plum) while deepening slightly when wet!
+          float thaw = clamp(uThaw, 0.0, 1.0);
+          float hairMask = clamp(vHair, 0.0, 1.0);
+          vec3 wetDeep = pow(max(diffuseColor.rgb, vec3(0.0001)), vec3(1.12));
+          diffuseColor.rgb = mix(diffuseColor.rgb, wetDeep, (0.20 + thaw * 0.48) * (1.0 - hairMask));
         }`,
       )
       .replace(
         '#include <roughnessmap_fragment>',
         `#include <roughnessmap_fragment>
-        roughnessFactor = mix(roughnessFactor, min(roughnessFactor, 0.26), clamp(uThaw, 0.0, 1.0) * 0.72);`,
+        {
+          float hairMask = clamp(vHair, 0.0, 1.0);
+          float wetRough = mix(roughnessFactor, min(roughnessFactor, 0.22), clamp(uThaw, 0.0, 1.0) * 0.72);
+          roughnessFactor = mix(wetRough, 0.86, hairMask);
+        }`,
       )
       .replace(
         '#include <lights_fragment_end>',
@@ -823,22 +1128,49 @@ function createRaspberryMaterial(tex: ToppingTextureSet): {
         {
           vec3 vDir = normalize(cameraPosition - vRaspWorldPos);
           vec3 nDir = normalize(vRaspWorldNormal);
-          float ndv = clamp(abs(dot(nDir, vDir)), 0.0, 1.0);
+          float ndv = clamp(dot(nDir, vDir), 0.0, 1.0);
           float thaw = clamp(uThaw, 0.0, 1.0);
+          float hairMask = clamp(vHair, 0.0, 1.0);
+          float fleshMask = 1.0 - hairMask;
 
-          // Suppress grazing HDR lightbox rings around individual drupelets so raspberries stay juicy ruby-red!
-          float rimMask = smoothstep(0.08, 0.62, ndv);
-          reflectedLight.indirectSpecular *= mix(0.04, 0.48, rimMask);
-          reflectedLight.directSpecular *= mix(0.12, 0.90, rimMask);
-          reflectedLight.indirectDiffuse *= mix(0.72, 1.0, smoothstep(0.05, 0.45, ndv));
+          // Keep individual drupelet edges clean (no white HDR plastic rings!)
+          float rimMask = smoothstep(0.08, 0.58, ndv);
+          reflectedLight.indirectSpecular *= mix(0.06, 0.42, rimMask) * fleshMask;
+          reflectedLight.directSpecular *= mix(0.15, 0.85, rimMask) * fleshMask;
 
-          // Warm backlit translucent crimson subsurface glow + delicate wet drupelet pinpoint glints
-          reflectedLight.directDiffuse += diffuseColor.rgb * vec3(0.62, 0.06, 0.16) * (0.45 + 0.35 * rimMask);
+          // Slightly translucent (NOT transparent!) juicy drupelet subsurface scattering:
+          // - Subtle darker inner seed depth right at drupelet center (ndv^2)
+          // - Luminous warm backlit translucent ruby/blush glow through the thinner rounded drupelet shoulders!
+          float seedCore = pow(ndv, 2.2) * 0.20 * fleshMask;
+          reflectedLight.directDiffuse *= (1.0 - seedCore);
+          reflectedLight.indirectDiffuse *= (1.0 - seedCore * 0.65);
+
+          float thinGlow = pow(1.0 - ndv, 1.65) * smoothstep(0.04, 0.44, ndv);
+          vec3 sssTint = max(diffuseColor.rgb, vec3(0.035)) * vec3(1.52, 0.54, 0.68) + diffuseColor.rgb * vec3(0.28, 0.08, 0.12);
+          reflectedLight.directDiffuse += sssTint * (0.30 + 0.84 * thinGlow) * fleshMask;
+
+          // Signature microscopic peach-fuzz velvety halo on fresh raspberry skin (softens when wet/thawed!)
+          float velvetFuzz = pow(1.0 - ndv, 3.0) * (1.0 - thaw * 0.58) * fleshMask;
+          vec3 fuzzCol = mix(diffuseColor.rgb * 1.45 + vec3(0.16, 0.07, 0.10), vec3(0.94, 0.72, 0.76), 0.52);
+          reflectedLight.indirectDiffuse += fuzzCol * velvetFuzz * 0.24;
+
+          // Subtle soft backlit tint on each tiny protruding botanical hair (whisper-fine dusty rose-amber, never stark white!)
+          if (hairMask > 0.05) {
+            float hairBacklit = 0.48 + 0.52 * pow(1.0 - ndv, 1.4);
+            reflectedLight.directDiffuse += mix(diffuseColor.rgb, vec3(0.74, 0.46, 0.44), 0.45) * hairBacklit * hairMask * 0.26;
+          }
+
+          // Soft velvety satin sheen + delicate wet pinpoint on each plump drupelet crown (never plastic marble!)
           vec3 lA = normalize(vec3(-0.50, 0.54, 0.68));
           vec3 lB = normalize(vec3(0.56, 0.38, 0.73));
-          float spA = pow(max(dot(nDir, normalize(lA + vDir)), 0.0), 150.0);
-          float spB = pow(max(dot(nDir, normalize(lB + vDir)), 0.0), 115.0);
-          reflectedLight.directSpecular += vec3(1.45, 1.24, 1.28) * (spA * 0.85 + spB * 0.42) * (0.28 + 0.72 * thaw);
+          vec3 hA = lA + vDir;
+          hA *= inversesqrt(max(dot(hA, hA), 1e-8));
+          vec3 hB = lB + vDir;
+          hB *= inversesqrt(max(dot(hB, hB), 1e-8));
+          float softVelvet = pow(max(dot(nDir, hA), 0.0), 42.0) * 0.22 + pow(max(dot(nDir, hB), 0.0), 34.0) * 0.12;
+          float spA = pow(max(dot(nDir, hA), 0.0), 115.0);
+          float spB = pow(max(dot(nDir, hB), 0.0), 88.0);
+          reflectedLight.directSpecular += vec3(1.32, 1.08, 1.16) * (softVelvet + (spA * 0.48 + spB * 0.24) * (0.24 + 0.76 * thaw)) * fleshMask;
         }`,
       );
   };
@@ -1089,11 +1421,7 @@ function buildFruitLayout(seed: number, recipe: PopsicleRecipe): FruitSpec[] {
     for (let attempt = 0; attempt < 95; attempt++) {
       const y = yMin + rand() * (yMax - yMin);
       const hNorm = clamp((y - POPSICLE.yBottom) / (POPSICLE.yTop - POPSICLE.yBottom), 0, 1);
-      let maxW = POPSICLE.halfWidthBottom + (POPSICLE.halfWidthTop - POPSICLE.halfWidthBottom) * hNorm;
-      if (hNorm > 0.735) {
-        const t = clamp((hNorm - 0.735) / 0.265, 0, 1);
-        maxW *= Math.sqrt(Math.max(0.01, 1 - t * t));
-      }
+      const maxW = Math.max(0.05, baseHalfWidthAt(hNorm));
       const marginMul =
         kind === 'shaved-lemon'
           ? 1.55
@@ -1171,14 +1499,19 @@ function buildFruitLayout(seed: number, recipe: PopsicleRecipe): FruitSpec[] {
           radius,
         });
       } else if (kind === 'raspberry') {
+        const isHalved = variant === 2;
         specs.push({
           kind,
           x,
           y,
           z,
-          scale: [radius * 0.98, radius * 1.12, radius * 0.98],
-          rot: [(rand() - 0.5) * 2.2, (rand() - 0.5) * 2.8, (rand() - 0.5) * 2.4],
+          scale: [radius * 0.98, radius * 1.10, radius * 0.98],
+          // Halved berries angle slightly toward the viewer so their hollow cut cup peeks organically through the ice
+          rot: isHalved
+            ? [(rand() - 0.5) * 0.95, (rand() - 0.5) * 1.15, (rand() - 0.5) * 2.6]
+            : [(rand() - 0.5) * 2.2, (rand() - 0.5) * 2.8, (rand() - 0.5) * 2.4],
           radius,
+          variant,
         });
       } else if (kind === 'chocolate') {
         specs.push({
@@ -1248,7 +1581,9 @@ function buildFruitLayout(seed: number, recipe: PopsicleRecipe): FruitSpec[] {
           tryPlace(kind, r, yMin, yMax, n % 3 === 0 ? 0.056 : -0.012);
         } else if (kind === 'raspberry') {
           const r = 0.155 + rand() * 0.035;
-          tryPlace(kind, r, yMin, yMax, n % 2 === 0 ? 0.045 : -0.015);
+          // Mix whole (gently pressed), squashed, and halved raspberries for natural organic variety!
+          const raspVariant = n % 3 === 1 ? 1 : n % 3 === 2 ? 2 : 0;
+          tryPlace(kind, r, yMin, yMax, n % 2 === 0 ? 0.045 : -0.015, raspVariant);
         } else if (kind === 'chocolate') {
           const r = 0.088 + rand() * 0.038;
           tryPlace(kind, r, yMin, yMax, n % 2 === 0 ? 0.052 : -0.010);
@@ -1293,27 +1628,21 @@ export function createFruitAssembly(seed: number, recipe: PopsicleRecipe = DEFAU
   const disposables: Array<{ dispose(): void }> = [];
   const palette = resolveOpticalPalette(recipe);
 
-  // Lazy-create shared procedural textures ONLY for active toppings (keeps build instant & VRAM lean!)
+  // Reuse per-seed cached procedural textures ONLY for active toppings (instant Customize toggles, zero leak!)
+  // Owned by `textures.ts` seed cache and freed via `disposeSeedTextureCache()` when seed changes.
   const activeSet = new Set(recipe.toppings);
-  const strawTexA = activeSet.has('strawberry') ? createStrawberryTextures(seed * 31 + 103) : null;
-  const strawTexB = activeSet.has('strawberry') ? createStrawberryTextures(seed * 37 + 211) : null;
-  const blueTexA = activeSet.has('blueberry') ? createBlueberryTextures(seed * 41 + 307) : null;
-  const blueTexB = activeSet.has('blueberry') ? createBlueberryTextures(seed * 43 + 419) : null;
-  const raspTex = activeSet.has('raspberry') ? createRaspberryTextures(seed * 47 + 521) : null;
-  const chocTex = activeSet.has('chocolate') ? createChocolateChunkTextures(seed * 53 + 613) : null;
-  const lemonTex = activeSet.has('shaved-lemon') ? createLemonZestTextures(seed * 59 + 709) : null;
-  const kakaDarkTex = activeSet.has('kaksmulor') ? createKaksmulorTextures(seed * 61 + 811, 'dark') : null;
-  const kakaButterTex = activeSet.has('kaksmulor') ? createKaksmulorTextures(seed * 67 + 907, 'butter') : null;
-
-  for (const t of [strawTexA, strawTexB]) {
-    if (t) disposables.push(t.albedo, t.bump, t.translucency);
-  }
-  for (const t of [blueTexA, blueTexB, raspTex, chocTex, lemonTex, kakaDarkTex, kakaButterTex]) {
-    if (t) disposables.push(t.albedo, t.bump, t.roughness);
-  }
+  const strawTexA = activeSet.has('strawberry') ? getCachedStrawberryTextures(seed * 31 + 103) : null;
+  const strawTexB = activeSet.has('strawberry') ? getCachedStrawberryTextures(seed * 37 + 211) : null;
+  const blueTexA = activeSet.has('blueberry') ? getCachedBlueberryTextures(seed * 41 + 307) : null;
+  const blueTexB = activeSet.has('blueberry') ? getCachedBlueberryTextures(seed * 43 + 419) : null;
+  const raspTex = activeSet.has('raspberry') ? getCachedRaspberryTextures(seed * 47 + 521) : null;
+  const chocTex = activeSet.has('chocolate') ? getCachedChocolateChunkTextures(seed * 53 + 613) : null;
+  const lemonTex = activeSet.has('shaved-lemon') ? getCachedLemonZestTextures(seed * 59 + 709) : null;
+  const kakaDarkTex = activeSet.has('kaksmulor') ? getCachedKaksmulorTextures(seed * 61 + 811, 'dark') : null;
+  const kakaButterTex = activeSet.has('kaksmulor') ? getCachedKaksmulorTextures(seed * 67 + 907, 'butter') : null;
 
   // Birch wood popsicle stick with capillary damp wicking & dynamic flavor-colored stain!
-  const woodTex = createWoodTextures(seed * 19 + 503);
+  const woodTex = getCachedWoodTextures(seed * 19 + 503);
   const stickUniforms = {
     uIceBottomY: { value: POPSICLE.yBottom as number },
     uIceTopY: { value: POPSICLE.yTop as number },
@@ -1331,6 +1660,9 @@ export function createFruitAssembly(seed: number, recipe: PopsicleRecipe = DEFAU
     clearcoatRoughness: 0.12,
     envMapIntensity: 0.62,
   });
+  stickMat.customProgramCacheKey = () => 'wood-stick-v2';
+  const carveStepX = (2.0 / CARVE_TEX_W).toFixed(7);
+  const carveStepY = (2.0 / CARVE_TEX_H).toFixed(7);
   stickMat.onBeforeCompile = (shader) => {
     shader.uniforms.uIceBottomY = stickUniforms.uIceBottomY;
     shader.uniforms.uIceTopY = stickUniforms.uIceTopY;
@@ -1362,22 +1694,31 @@ export function createFruitAssembly(seed: number, recipe: PopsicleRecipe = DEFAU
         uniform vec3 uStainColor;
         uniform sampler2D uCarveMap;
         varying vec3 vStickWorldPos;
-        varying vec3 vStickWorldNormal;`,
+        varying vec3 vStickWorldNormal;
+        float stickRevStep(float hi, float lo, float x) { return 1.0 - smoothstep(lo, hi, x); }
+        vec3 stickSafeNorm(vec3 v) { return v * inversesqrt(max(dot(v, v), 1e-8)); }`,
       )
       .replace(
         '#include <color_fragment>',
         `#include <color_fragment>
+        float sSharedDampMask = 0.0;
+        float sSharedRevealedUpper = 0.0;
+        float sSharedCarveGx = 0.0;
+        float sSharedCarveGy = 0.0;
+        float sSharedGroovePool = 0.0;
+        float sSharedFrontFace = 0.0;
         {
           // Continuous seamless berry-stain along the entire stick (ZERO blonde seam at yBot or yTop!)
           float effRefY = mix(${POPSICLE.yBottom.toFixed(3)}, uIceBottomY, uIceAmount);
           float distBelow = effRefY - vStickWorldPos.y;
           float collarShadow = exp(-max(0.0, distBelow) * 16.0) * smoothstep(-0.08, 0.02, distBelow) * uIceAmount;
-          float insideIce = smoothstep(0.04, -0.10, distBelow) * smoothstep(uIceTopY + 0.04, uIceTopY - 0.04, vStickWorldPos.y) * uIceAmount;
+          float insideIce = stickRevStep(0.04, -0.10, distBelow) * stickRevStep(uIceTopY + 0.04, uIceTopY - 0.04, vStickWorldPos.y) * uIceAmount;
 
           // Upper stick (y > -1.02) has been soaking inside frozen berry ice the whole time -> seamless deep berry stain!
           float wasSubmerged = smoothstep(-1.14, -0.96, vStickWorldPos.y);
           float upperSoak = wasSubmerged * smoothstep(0.08, 0.36, uStickWetness);
           float revealedUpper = wasSubmerged * max(1.0 - uIceAmount, smoothstep(uIceTopY - 0.04, uIceTopY + 0.03, vStickWorldPos.y));
+          sSharedRevealedUpper = revealedUpper;
 
           // Porous birch fibers progressively capillary-wick melted berry juice down the ENTIRE lower handle!
           float grainWick =
@@ -1387,9 +1728,15 @@ export function createFruitAssembly(seed: number, recipe: PopsicleRecipe = DEFAU
           float edgeIrreg = (clamp(grainWick, 0.0, 1.0) - 0.5) * 0.20 * (1.0 - smoothstep(0.55, 0.88, uStickWetness));
           float wickReach = progress * 1.55 + edgeIrreg;
           // Overlap generously upward past effRefY so lowerSoak + upperSoak weld at 1.000 with ZERO band!
-          float lowerSoak = smoothstep(wickReach + 0.14, wickReach - 0.18, max(0.0, distBelow)) *
-                            smoothstep(-0.30, -0.10, distBelow) *
+          float distPos = max(0.0, distBelow);
+          float topOverlap = smoothstep(-0.30, -0.10, distBelow);
+          float lowerSoak = stickRevStep(wickReach + 0.14, wickReach - 0.18, distPos) *
+                            topOverlap *
                             smoothstep(0.02, 0.18, uStickWetness);
+          float lowerDamp = stickRevStep(wickReach + 0.12, wickReach - 0.16, distPos) *
+                            topOverlap *
+                            smoothstep(0.03, 0.20, uStickWetness);
+          sSharedDampMask = clamp(max(lowerDamp, revealedUpper), 0.0, 1.0);
           float soakFront = clamp(max(lowerSoak, upperSoak), 0.0, 1.0);
           float fullSoak = clamp(max(smoothstep(0.30, 0.90, uStickWetness) * lowerSoak, upperSoak * 0.95), 0.0, 1.0);
 
@@ -1410,20 +1757,25 @@ export function createFruitAssembly(seed: number, recipe: PopsicleRecipe = DEFAU
 
           // Hidden carved signature on the front face of the upper stick underneath the ice cream!
           // Mapped cleanly to y in [-0.99, -0.46] (100% hidden while frozen, revealed as the popsicle melts!)
+          // Single 5-tap pass shared directly with lights_fragment_end (halves uCarveMap texture bandwidth!)
           float frontFace = smoothstep(0.45, 0.78, vStickWorldNormal.z);
+          sSharedFrontFace = frontFace;
           vec2 carveUv = vec2((vStickWorldPos.y + 0.99) / 0.53, (-vStickWorldPos.x + 0.088) / 0.176);
           if (frontFace > 0.01 && carveUv.x > 0.005 && carveUv.x < 0.995 && carveUv.y > 0.005 && carveUv.y < 0.995) {
             vec2 cTex = texture2D(uCarveMap, carveUv).rg;
             float depth = cTex.r * frontFace;
             float halo = cTex.g * frontFace;
             if (halo > 0.01 || depth > 0.01) {
-              vec2 cStep = vec2(1.0 / 1024.0, 1.0 / 340.0) * 2.0;
+              vec2 cStep = vec2(${carveStepX}, ${carveStepY});
               float cUp = texture2D(uCarveMap, carveUv + vec2(cStep.x, 0.0)).r;
               float cDn = texture2D(uCarveMap, carveUv - vec2(cStep.x, 0.0)).r;
               float cLt = texture2D(uCarveMap, carveUv + vec2(0.0, cStep.y)).r;
               float cRt = texture2D(uCarveMap, carveUv - vec2(0.0, cStep.y)).r;
               // Screen-space light comes from upper-left (-X, +Y): upper-left groove wall sits in shadow, lower-right catches warm rim!
               float bevelShade = ((cDn - cUp) * 0.72 + (cLt - cRt) * 0.68) * frontFace;
+              sSharedCarveGx = cLt - cRt;
+              sSharedCarveGy = cUp - cDn;
+              sSharedGroovePool = depth;
 
               // Pressed/carved inner birch darkened by open wood grain + pooled flavor syrup inside the groove!
               vec3 carvedTint = mix(vec3(0.46, 0.28, 0.19), uStainColor * 0.48, soakFront);
@@ -1439,47 +1791,22 @@ export function createFruitAssembly(seed: number, recipe: PopsicleRecipe = DEFAU
         '#include <lights_fragment_end>',
         `#include <lights_fragment_end>
         {
-          float effRefY = mix(${POPSICLE.yBottom.toFixed(3)}, uIceBottomY, uIceAmount);
-          float distBelow = effRefY - vStickWorldPos.y;
-          float wasSubmerged = smoothstep(-1.14, -0.96, vStickWorldPos.y);
-          float revealedUpper = wasSubmerged * max(1.0 - uIceAmount, smoothstep(uIceTopY - 0.04, uIceTopY + 0.03, vStickWorldPos.y));
-
-          float grainWick =
-            0.50 + 0.30 * sin(vStickWorldPos.x * 58.0 + 1.1) +
-            0.20 * sin(vStickWorldPos.x * 134.0 - 0.6);
-          float progress = smoothstep(0.04, 0.78, uStickWetness);
-          float edgeIrreg = (clamp(grainWick, 0.0, 1.0) - 0.5) * 0.20 * (1.0 - smoothstep(0.55, 0.88, uStickWetness));
-          float wickReach = progress * 1.55 + edgeIrreg;
-          float lowerDamp = smoothstep(wickReach + 0.12, wickReach - 0.16, max(0.0, distBelow)) *
-                            smoothstep(-0.30, -0.10, distBelow) *
-                            smoothstep(0.03, 0.20, uStickWetness);
-          float dampMask = clamp(max(lowerDamp, revealedUpper), 0.0, 1.0);
-          if (dampMask > 0.01) {
+          if (sSharedDampMask > 0.01) {
             vec3 sV = normalize(cameraPosition - vStickWorldPos);
             vec3 sN = normalize(vStickWorldNormal);
-            // Tilt specular normal subtly across the carved letter bevel walls so studio light glints on the indentation!
-            float frontFace = smoothstep(0.45, 0.78, sN.z);
-            vec2 carveUv = vec2((vStickWorldPos.y + 0.99) / 0.53, (-vStickWorldPos.x + 0.088) / 0.176);
-            float groovePool = 0.0;
-            if (frontFace > 0.01 && carveUv.x > 0.005 && carveUv.x < 0.995 && carveUv.y > 0.005 && carveUv.y < 0.995) {
-              float cC = texture2D(uCarveMap, carveUv).r;
-              if (cC > 0.01) {
-                vec2 cStep = vec2(1.0 / 1024.0, 1.0 / 340.0) * 2.0;
-                float gx = (texture2D(uCarveMap, carveUv + vec2(0.0, cStep.y)).r - texture2D(uCarveMap, carveUv - vec2(0.0, cStep.y)).r);
-                float gy = (texture2D(uCarveMap, carveUv + vec2(cStep.x, 0.0)).r - texture2D(uCarveMap, carveUv - vec2(cStep.x, 0.0)).r);
-                sN = normalize(sN + vec3(gx * 0.42, -gy * 0.42, 0.0) * frontFace);
-                groovePool = cC * frontFace;
-              }
+            // Reuse carved letter gradient computed in color_fragment so studio light glints on the indentation!
+            if (sSharedGroovePool > 0.01) {
+              sN = normalize(sN + vec3(sSharedCarveGx * 0.42, -sSharedCarveGy * 0.42, 0.0) * sSharedFrontFace);
             }
             float ndv = clamp(dot(sN, sV), 0.0, 1.0);
             // Natural damp-wood sticky satin sheen (preserves crisp birch wood grain without plastic glare!)
-            float stickyFresnel = pow(1.0 - ndv, 4.2) * (0.08 + 0.10 * revealedUpper);
-            vec3 sH1 = normalize(normalize(vec3(-0.52, 0.38, 0.76)) + sV);
-            vec3 sH2 = normalize(normalize(vec3(0.55, 0.32, 0.77)) + sV);
-            float wetSpec = pow(max(dot(sN, sH1), 0.0), 72.0) * (0.30 + 0.14 * revealedUpper)
-                          + pow(max(dot(sN, sH2), 0.0), 58.0) * (0.22 + 0.10 * revealedUpper);
+            float stickyFresnel = pow(1.0 - ndv, 4.2) * (0.08 + 0.10 * sSharedRevealedUpper);
+            vec3 sH1 = stickSafeNorm(normalize(vec3(-0.52, 0.38, 0.76)) + sV);
+            vec3 sH2 = stickSafeNorm(normalize(vec3(0.55, 0.32, 0.77)) + sV);
+            float wetSpec = pow(max(dot(sN, sH1), 0.0), 72.0) * (0.30 + 0.14 * sSharedRevealedUpper)
+                          + pow(max(dot(sN, sH2), 0.0), 58.0) * (0.22 + 0.10 * sSharedRevealedUpper);
             // Recessed groove holds slightly darker shadowed cavity while its chamfered rim catches gloss
-            reflectedLight.directSpecular += vec3(1.08, 0.94, 0.93) * (wetSpec + stickyFresnel) * dampMask * (1.0 - groovePool * 0.32);
+            reflectedLight.directSpecular += vec3(1.08, 0.94, 0.93) * (wetSpec + stickyFresnel) * sSharedDampMask * (1.0 - sSharedGroovePool * 0.32);
           }
         }`,
       );
@@ -1489,7 +1816,7 @@ export function createFruitAssembly(seed: number, recipe: PopsicleRecipe = DEFAU
   const stickMesh = new THREE.Mesh(stickGeo, stickMat);
   stickMesh.name = 'popsicle-stick';
   group.add(stickMesh);
-  disposables.push(stickGeo, stickMat, woodTex.albedo, woodTex.bump, woodTex.carving);
+  disposables.push(stickGeo, stickMat);
 
   // Generate individual 3D botanical & culinary topping meshes
   const specs = buildFruitLayout(seed, recipe);
@@ -1507,39 +1834,58 @@ export function createFruitAssembly(seed: number, recipe: PopsicleRecipe = DEFAU
 
   specs.forEach((spec, idx) => {
     let geo: THREE.BufferGeometry;
-    let mat: THREE.Material;
+    let mat: THREE.Material | null = null;
     let bendUniform: { value: THREE.Vector3 } | undefined;
     let thawUniform: { value: number } | undefined;
 
-    if (spec.kind === 'strawberry' && strawTexA && strawTexB) {
-      geo = createStrawberrySliceGeometry(seed * 131 + idx * 17 + 5, 0.16 + rand() * 0.04);
-      const straw = createStrawberryMaterial(idx % 2 === 0 ? strawTexA : strawTexB);
-      mat = straw.material;
-      bendUniform = straw.uBend;
-      disposables.push(mat);
-    } else if (spec.kind === 'blueberry' && blueTexA && blueTexB) {
-      geo = createBlueberryGeometry(seed * 149 + idx * 23 + 11);
-      const blue = createBlueberryMaterial(idx % 2 === 0 ? blueTexA : blueTexB);
-      mat = blue.material;
-      thawUniform = blue.uThaw;
-      disposables.push(mat);
-    } else if (spec.kind === 'raspberry' && raspTex) {
-      geo = createRaspberryGeometry(seed * 157 + idx * 29 + 13);
-      const rasp = createRaspberryMaterial(raspTex);
-      mat = rasp.material;
-      thawUniform = rasp.uThaw;
-      disposables.push(mat);
-    } else if (spec.kind === 'chocolate' && sharedChocMat) {
-      geo = createChocolateChunkGeometry(seed * 163 + idx * 31 + 17);
-      mat = sharedChocMat;
-    } else if (spec.kind === 'shaved-lemon' && sharedLemonMat) {
-      geo = createLemonZestGeometry(seed * 173 + idx * 37 + 19);
-      mat = sharedLemonMat;
-    } else {
-      const isChunk = (spec.variant ?? 0) < 2;
-      const isButter = (spec.variant ?? 0) % 2 === 1;
-      geo = createKaksmulorGeometry(seed * 179 + idx * 41 + 23, isChunk);
-      mat = (isButter ? sharedKakaButterMat : sharedKakaDarkMat) || sharedKakaDarkMat!;
+    switch (spec.kind) {
+      case 'strawberry': {
+        if (!strawTexA || !strawTexB) return;
+        geo = createStrawberrySliceGeometry(seed * 131 + idx * 17 + 5, 0.16 + rand() * 0.04);
+        const straw = createStrawberryMaterial(idx % 2 === 0 ? strawTexA : strawTexB);
+        mat = straw.material;
+        bendUniform = straw.uBend;
+        disposables.push(mat);
+        break;
+      }
+      case 'blueberry': {
+        if (!blueTexA || !blueTexB) return;
+        geo = createBlueberryGeometry(seed * 149 + idx * 23 + 11);
+        const blue = createBlueberryMaterial(idx % 2 === 0 ? blueTexA : blueTexB);
+        mat = blue.material;
+        thawUniform = blue.uThaw;
+        disposables.push(mat);
+        break;
+      }
+      case 'raspberry': {
+        if (!raspTex) return;
+        geo = createRaspberryGeometry(seed * 157 + idx * 29 + 13, spec.variant ?? 0);
+        const rasp = createRaspberryMaterial(raspTex);
+        mat = rasp.material;
+        thawUniform = rasp.uThaw;
+        disposables.push(mat);
+        break;
+      }
+      case 'chocolate': {
+        if (!sharedChocMat) return;
+        geo = createChocolateChunkGeometry(seed * 163 + idx * 31 + 17);
+        mat = sharedChocMat;
+        break;
+      }
+      case 'shaved-lemon': {
+        if (!sharedLemonMat) return;
+        geo = createLemonZestGeometry(seed * 173 + idx * 37 + 19);
+        mat = sharedLemonMat;
+        break;
+      }
+      case 'kaksmulor': {
+        const isChunk = (spec.variant ?? 0) < 2;
+        const isButter = (spec.variant ?? 0) % 2 === 1;
+        mat = isButter ? sharedKakaButterMat : sharedKakaDarkMat;
+        if (!mat) return;
+        geo = createKaksmulorGeometry(seed * 179 + idx * 41 + 23, isChunk);
+        break;
+      }
     }
     disposables.push(geo);
 
@@ -1564,10 +1910,8 @@ export function createFruitAssembly(seed: number, recipe: PopsicleRecipe = DEFAU
       angVel: new THREE.Vector3(),
       detached: false,
       detachTime: 0,
-      glancedBody: false,
       grabbed: false,
       exposure: 0,
-      holdStrength: 0.22 + rand() * 0.14,
       bendAmt: bb.x,
       bendVel: 0,
       bendPhase: rand() * Math.PI * 2,
@@ -1590,7 +1934,6 @@ export function createFruitAssembly(seed: number, recipe: PopsicleRecipe = DEFAU
   const grabHitTmp = new THREE.Vector3();
   const grabPrevPos = new THREE.Vector3();
   const grabThrowVel = new THREE.Vector3();
-  const grabSmoothAccel = new THREE.Vector3();
   const grabPullDelta = new THREE.Vector3();
   const grabClearLift = new THREE.Vector3();
   const grabBankQuat = new THREE.Quaternion();
@@ -1613,7 +1956,6 @@ export function createFruitAssembly(seed: number, recipe: PopsicleRecipe = DEFAU
     grabbedIdx = -1;
     hoveredIdx = -1;
     grabThrowVel.set(0, 0, 0);
-    grabSmoothAccel.set(0, 0, 0);
     grabNeedsLift = false;
     grabLiftProgress = 0;
     grabHoldTime = 0;
@@ -1629,7 +1971,6 @@ export function createFruitAssembly(seed: number, recipe: PopsicleRecipe = DEFAU
       f.angVel.set(0, 0, 0);
       f.detached = false;
       f.detachTime = 0;
-      f.glancedBody = false;
       f.grabbed = false;
       f.exposure = 0;
       f.bendAmt = f.baseBend.x;
@@ -1650,23 +1991,65 @@ export function createFruitAssembly(seed: number, recipe: PopsicleRecipe = DEFAU
   const spinQuat = new THREE.Quaternion();
 
   function fruitCollisionRadius(f: FruitItem): number {
-    // Tilted strawberry slices have thinner effective cross-section than whole spherical blueberries
-    return f.kind === 'strawberry' ? f.radius * 0.44 : f.radius * 0.80;
+    // Tilted strawberry slices & thin peels have thinner effective Z cross-section than plump spherical berries
+    switch (f.kind) {
+      case 'strawberry':
+        return f.radius * 0.42;
+      case 'shaved-lemon':
+        return f.radius * 0.35;
+      case 'kaksmulor':
+        return f.radius * 0.50;
+      case 'chocolate':
+        return f.radius * 0.62;
+      default:
+        return f.radius * 0.84;
+    }
   }
 
-  function applyPreReleasePose(f: FruitItem, depth: number, releaseMargin: number) {
-    f.exposure = clamp(1.0 - smoothstep(releaseMargin, f.radius * 0.62, depth), 0, 1);
-    const sag = smoothstep(GRAB_EXPOSURE_MIN, 1.0, f.exposure);
-    const sideSign = Math.abs(f.basePos.x) > 0.03 ? Math.sign(f.basePos.x) : 1;
+  /**
+   * Physical mechanical ice-grip remaining around a fruit (>0 = gripped by ice, <=0 = slips free under gravity).
+   * Evaluates 3D containment, lateral side-wall support (so slices/berries never dangle halfway out in mid-air),
+   * front/back Z-slab thickness & face clearance (so plump berries release once the ice thins too far, without
+   * false-loosening fresh or shallow coconut-base fruits while the popsicle is still thick & frozen),
+   * and bottom-lip undercut support.
+   */
+  function evaluateFruitGrip(f: FruitItem, meltState: MeltFieldState, slideY = 0): number {
+    const info = sampleIceContainment(f.basePos.x, f.basePos.y + slideY, f.basePos.z, meltState);
+    const endgameBoost = smoothstep(0.60, 0.84, meltState.melt) * 0.06;
+    const rZ = fruitCollisionRadius(f);
+    const halfD = info.dz + Math.abs(f.basePos.z);
+    return Math.min(
+      info.depth - (f.radius * 0.20 + endgameBoost),
+      info.dx - (f.radius * 0.54 + endgameBoost * 0.8),
+      halfD - (rZ * 0.74 + endgameBoost * 0.7),
+      info.dz - (rZ * 0.32 + endgameBoost * 0.5),
+      info.dyBot - (f.radius * 0.36 + endgameBoost * 0.5),
+    );
+  }
 
-    // Graceful melt-shift: fruit gently loosens downward, slips slightly outward, tilts, and softens!
-    f.mesh.position.set(f.basePos.x + sideSign * sag * 0.018, f.basePos.y - sag * 0.042, f.basePos.z);
-    sagEuler.set(sag * 0.14, 0, -sideSign * sag * 0.22);
+  function applyPreReleasePose(f: FruitItem, grip: number, slideY = 0) {
+    const gripFull = Math.max(0.045, f.radius * 0.48);
+    f.exposure = clamp(1.0 - smoothstep(0.0, gripFull, grip), 0, 1);
+    const sagRaw = smoothstep(GRAB_EXPOSURE_MIN, 1.0, f.exposure);
+    // Quadratic ease-in creep: steady while gripped, gently beginning to slip downward right before letting go
+    const sag = sagRaw * sagRaw;
+    const sideSign = Math.abs(f.basePos.x) > 0.03 ? Math.sign(f.basePos.x) : 1;
+    const zOutSign = f.basePos.z <= 0.004 ? -1 : 1;
+    const isTopDome = f.basePos.y > 0.65;
+
+    // Smooth wet-ice creep downward & fractionally outward (100% continuous with release — ZERO pop or jump!)
+    // Top-dome fruits gently tip off the rounded peak toward the sloped front/back face instead of sinking into the ice
+    f.mesh.position.set(
+      f.basePos.x + sideSign * sag * 0.010,
+      f.basePos.y + slideY - sag * (isTopDome ? 0.012 : 0.046),
+      f.basePos.z + zOutSign * sag * (isTopDome ? 0.026 : 0.014),
+    );
+    sagEuler.set(zOutSign * sag * 0.12, 0, -sideSign * sag * 0.16);
     sagQuat.setFromEuler(sagEuler);
     f.mesh.quaternion.copy(f.baseQuat).multiply(sagQuat);
     f.mesh.scale.copy(f.baseScale);
 
-    // Inherent organic slice curl + extra soft-thaw droop on exposed strawberry slices before peeling free
+    // Inherent organic slice curl + extra soft-thaw droop on exposed strawberry slices before slipping free
     const thawSoft = smoothstep(0.20, 1.0, f.exposure);
     const curlDir = f.baseBend.x >= 0 ? 1 : -1;
     f.bendAmt = f.baseBend.x + curlDir * thawSoft * 0.22;
@@ -1679,13 +2062,13 @@ export function createFruitAssembly(seed: number, recipe: PopsicleRecipe = DEFAU
       );
     }
     if (f.thawUniform) {
-      // As soon as any part of a blueberry breaches the melting ice (exposure > 0.04), wet-thaw it cleanly!
+      // As soon as any part of a berry breaches the melting ice (exposure > 0.04), wet-thaw it cleanly!
       f.thawUniform.value = smoothstep(0.02, 0.38, f.exposure);
     }
   }
 
   function update(meltState: MeltFieldState, dt: number, stickWetness?: number) {
-    const { yTop: yTopLive, yBot: yBotLive, iceAmount, iceGone } = getMeltBounds(meltState.melt);
+    const { yTop: yTopLive, yBot: yBotLive, slideY, iceAmount, iceGone } = getMeltBounds(meltState.melt);
     stickUniforms.uIceBottomY.value = yBotLive;
     stickUniforms.uIceTopY.value = yTopLive;
     stickUniforms.uIceAmount.value = iceAmount;
@@ -1697,27 +2080,25 @@ export function createFruitAssembly(seed: number, recipe: PopsicleRecipe = DEFAU
       );
     }
 
-    // Pass 1: Update still-attached fruits (stunning melt-shift & thaw softening) and trigger clean release!
-    const endgameReleaseBoost = smoothstep(0.72, 0.90, meltState.melt) * 0.07;
+    // Pass 1: Update still-attached fruits (smooth pre-release creep + endgame ice slide) and let them slip free naturally!
     if (dt === 0 && grabbedIdx >= 0) {
       clearGrabState();
     }
     for (let i = 0; i < fruits.length; i++) {
       const f = fruits[i];
-      const depth = iceContainmentDepth(f.basePos.x, f.basePos.y, f.basePos.z, meltState);
-      const releaseMargin = (f.kind === 'strawberry' ? f.radius * 0.11 : f.radius * 0.09) + endgameReleaseBoost;
+      const grip = evaluateFruitGrip(f, meltState, slideY);
+      const shouldRelease = iceGone || (meltState.melt > 0.14 && grip <= 0);
 
       if (dt === 0) {
-        if (iceGone || (meltState.melt > 0.14 && depth < releaseMargin)) {
+        if (shouldRelease) {
           f.detached = true;
           f.mesh.visible = false;
         } else {
           f.detached = false;
           f.detachTime = 0;
-          f.glancedBody = false;
           f.grabbed = false;
           f.mesh.visible = true;
-          applyPreReleasePose(f, depth, releaseMargin);
+          applyPreReleasePose(f, grip, slideY);
           f.velocity.set(0, 0, 0);
         }
         continue;
@@ -1725,13 +2106,13 @@ export function createFruitAssembly(seed: number, recipe: PopsicleRecipe = DEFAU
 
       if (!f.detached) {
         if (f.grabbed) {
-          // While user is gently tugging an almost-released fruit, update exposure & auto-pop if ice melts past release
-          f.exposure = clamp(1.0 - smoothstep(releaseMargin, f.radius * 0.62, depth), 0, 1);
+          // While user is gently tugging an almost-released fruit, update exposure & smoothly release if ice melts past grip
+          const gripFull = Math.max(0.045, f.radius * 0.48);
+          f.exposure = clamp(1.0 - smoothstep(0.0, gripFull, grip), 0, 1);
           if (f.thawUniform) f.thawUniform.value = Math.max(f.thawUniform.value, smoothstep(0.02, 0.38, f.exposure));
-          if (iceGone || (meltState.melt > 0.14 && depth < releaseMargin)) {
+          if (shouldRelease) {
             f.detached = true;
             f.detachTime = 0;
-            f.glancedBody = false;
             grabBaseQuat.copy(f.mesh.quaternion);
             grabNeedsLift = true;
             grabLiftProgress = 0;
@@ -1740,7 +2121,7 @@ export function createFruitAssembly(seed: number, recipe: PopsicleRecipe = DEFAU
           continue;
         }
 
-        applyPreReleasePose(f, depth, releaseMargin);
+        applyPreReleasePose(f, grip, slideY);
 
         // Subtle organic "ready to pluck" micro-wiggle when pointer hovers a loosened fruit
         if (i === hoveredIdx && f.exposure >= GRAB_EXPOSURE_MIN) {
@@ -1752,39 +2133,22 @@ export function createFruitAssembly(seed: number, recipe: PopsicleRecipe = DEFAU
           f.mesh.quaternion.multiply(sagQuat);
         }
 
-        // Once melted down enough to loosen, release cleanly & decisively outward away from the popsicle!
-        if (iceGone || (meltState.melt > 0.14 && depth < releaseMargin)) {
+        // Once ice grip reaches zero, slip naturally downward from the EXACT current position — ZERO jump or pop!
+        if (shouldRelease) {
           f.detached = true;
           f.detachTime = 0;
-          f.glancedBody = false;
 
-          // Outward horizontal direction away from the popsicle spine (guarantees it arcs clear instead of wedging!)
           const sideX = Math.abs(f.basePos.x) > 0.04 ? Math.sign(f.basePos.x) : i % 2 === 0 ? 1 : -1;
-          const isBackHalf = f.basePos.z <= 0.004;
-          const pushZ = isBackHalf ? -1 : 1;
+          const pushZ = f.basePos.z <= 0.004 ? -1 : 1;
 
-          // Gently clear the live surface on the correct front/back side so it never starts stuck inside ice
-          if (!iceGone) {
-            const rCol = fruitCollisionRadius(f);
-            const curDepth = iceContainmentDepth(f.mesh.position.x, f.mesh.position.y, f.mesh.position.z, meltState);
-            if (curDepth > -rCol * 0.35) {
-              const clearPush = Math.min(0.14, curDepth + rCol * 0.45);
-              f.mesh.position.x += sideX * clearPush * 0.65;
-              f.mesh.position.z += pushZ * clearPush * 0.85;
-            }
-          }
+          // Continuous slow initial slip velocity (no outward pop-kick, no position teleport!)
+          f.velocity.set(sideX * (0.028 + (i % 3) * 0.010), -0.055, pushZ * 0.028);
 
-          // Light, effortless outward peel arc (strawberries slightly floatier/wider, blueberries slightly brisker)
-          const horizKick = (f.kind === 'strawberry' ? 0.46 : 0.38) + (i % 3) * 0.07;
-          const zKick = isBackHalf ? -(0.38 + (i % 2) * 0.08) : 0.26 + (i % 2) * 0.06;
-          f.velocity.set(sideX * horizKick, -0.34, zKick);
+          // Gentle gravity roll as it lets go
+          f.angVel.set(pushZ * 0.22, (i % 2 === 0 ? 1 : -1) * 0.12, -sideX * 0.30);
 
-          // Gentle lazy tumble (never frantic coin-spinning!)
-          f.angVel.set(pushZ * 0.75, (i % 2 === 0 ? 1 : -1) * 0.55, -sideX * 1.15);
-
-          // Soft peel-off flex impulse matching each slice's natural curl direction
           const curlDir = f.baseBend.x >= 0 ? 1 : -1;
-          f.bendVel = f.kind === 'strawberry' ? curlDir * 1.85 : 1.1;
+          f.bendVel = f.kind === 'strawberry' ? curlDir * 0.45 : 0.25;
           if (f.thawUniform) f.thawUniform.value = 1.0;
         }
       }
@@ -1792,7 +2156,7 @@ export function createFruitAssembly(seed: number, recipe: PopsicleRecipe = DEFAU
 
     if (dt <= 0) return;
 
-    // Pass 2: Quick, graceful falloff with at most ONE faked soft brush off the main body + soft berry flex!
+    // Pass 2: Smooth natural gravity fall with gentle continuous wet-surface glide (ZERO jump, ZERO sideways pop!)
     const substeps = 2;
     const subDt = dt / substeps;
 
@@ -1803,20 +2167,21 @@ export function createFruitAssembly(seed: number, recipe: PopsicleRecipe = DEFAU
       f.detachTime += dt;
       const rCol = fruitCollisionRadius(f);
       const sideX = Math.abs(f.basePos.x) > 0.04 ? Math.sign(f.basePos.x) : i % 2 === 0 ? 1 : -1;
-      const isBackHalf = f.basePos.z <= 0.004;
+
+      // Soft suction-break gravity ramp over the first ~0.16s so release looks genuinely heavy & slippery
+      const peelRamp = 0.24 + 0.76 * smoothstep(0.0, 0.16, f.detachTime);
+      const grav = (f.kind === 'strawberry' ? 4.8 : 5.6) * peelRamp;
 
       for (let s = 0; s < substeps; s++) {
-        // Lightweight crisp gravity + subtle air drag on lateral drift
-        const grav = f.kind === 'strawberry' ? 5.6 : 6.4;
         f.velocity.y -= grav * subDt;
         const airDrag = Math.exp(-subDt * (f.kind === 'strawberry' ? 0.55 : 0.25));
         f.velocity.x *= airDrag;
         f.velocity.z *= airDrag;
         f.mesh.position.addScaledVector(f.velocity, subDt);
 
-        // Smooth, gently damped tumble (bounded low so slices NEVER spin wildly on themselves!)
+        // Smooth, gently damped tumble
         f.angVel.multiplyScalar(Math.exp(-subDt * 0.9));
-        const maxSpin = f.kind === 'strawberry' ? 2.5 : 3.2;
+        const maxSpin = f.kind === 'strawberry' ? 2.2 : 2.8;
         if (f.angVel.lengthSq() > maxSpin * maxSpin) {
           f.angVel.setLength(maxSpin);
         }
@@ -1827,53 +2192,28 @@ export function createFruitAssembly(seed: number, recipe: PopsicleRecipe = DEFAU
           f.mesh.quaternion.premultiply(spinQuat);
         }
 
-        // At most ONE faked soft glancing brush with the main popsicle body / protruding berry ->
-        // kicks cleanly FURTHER AWAY horizontally while NEVER slowing or trapping downward fall!
-        if (!f.glancedBody && !iceGone && f.detachTime < 0.65) {
+        // Gentle continuous wet-surface glide if a falling fruit slides past the lower popsicle curve
+        // (NO position teleport and NO sudden horizontal kick!)
+        if (!iceGone) {
           const px = f.mesh.position.x;
           const py = f.mesh.position.y;
           const pz = f.mesh.position.z;
-          let grazed = false;
-
-          const dIce = iceContainmentDepth(px, py, pz, meltState);
-          if (dIce > -rCol * 0.55 && py > yBotLive - 0.08) {
-            grazed = true;
-            const pen = dIce + rCol * 0.60;
-            f.mesh.position.x += sideX * Math.max(0, pen * 0.75);
-            f.mesh.position.z += (isBackHalf ? -1 : 1) * Math.max(0, pen * 0.55);
-          }
-
-          if (!grazed) {
-            const grazeR = f.kind === 'strawberry' ? f.radius * 0.68 : rCol;
-            for (let j = 0; j < fruits.length; j++) {
-              if (j === i) continue;
-              const other = fruits[j];
-              if (other.detached || !other.mesh.visible || other.exposure < 0.12) continue;
-              const dx = px - other.mesh.position.x;
-              const dy = py - other.mesh.position.y;
-              const dz = pz - other.mesh.position.z;
-              const otherR = other.kind === 'strawberry' ? other.radius * 0.62 : other.radius * 0.86;
-              const minDist = (grazeR + otherR) * 0.96;
-              const distSq = dx * dx + dy * dy + dz * dz;
-              if (distSq < minDist * minDist) {
-                grazed = true;
-                const pen = minDist - Math.sqrt(Math.max(1e-6, distSq));
-                f.mesh.position.x += sideX * Math.min(0.06, pen * 0.48);
-                break;
+          if (py > yBotLive - 0.04 && py < yTopLive + 0.05) {
+            const dIce = iceContainmentDepth(px, py, pz, meltState);
+            const pen = dIce + rCol * 0.26;
+            if (pen > 0) {
+              const hitSideX = Math.abs(px) > 0.04 ? Math.sign(px) : sideX;
+              const hitBackHalf = pz <= 0.004;
+              const slideAccel = clamp(pen * 5.6, 0, 1.55);
+              f.velocity.x += hitSideX * slideAccel * 0.30 * subDt;
+              f.velocity.z += (hitBackHalf ? -1 : 1) * slideAccel * 1.15 * subDt;
+              // Mild wet-surface glide friction while touching ice so top-released pieces slide over the face cleanly
+              if (dIce > 0.02) {
+                f.velocity.y *= Math.exp(-subDt * 2.2);
               }
+              f.angVel.z -= hitSideX * slideAccel * 0.36 * subDt;
+              f.angVel.x += (hitBackHalf ? -1 : 1) * slideAccel * 0.34 * subDt;
             }
-          }
-
-          if (grazed) {
-            f.glancedBody = true;
-            // Faked soft glancing kick: arcs smoothly further away from the body & keeps falling briskly!
-            f.velocity.x = sideX * Math.max(Math.abs(f.velocity.x) + 0.44, 0.74);
-            f.velocity.z += isBackHalf ? -0.26 : 0.22;
-            f.velocity.y = Math.min(f.velocity.y, -0.78);
-            // Gentle visual deflection spin + soft flex bend on brush
-            f.angVel.z -= sideX * 0.85;
-            f.angVel.x += (isBackHalf ? -0.5 : 0.5);
-            f.bendVel += f.kind === 'strawberry' ? (f.baseBend.x >= 0 ? 2.6 : -2.6) : 1.5;
           }
         }
       }
@@ -1976,7 +2316,6 @@ export function createFruitAssembly(seed: number, recipe: PopsicleRecipe = DEFAU
     grabPrevPos.copy(f.mesh.position);
     grabBaseQuat.copy(f.mesh.quaternion);
     grabThrowVel.set(0, 0, 0);
-    grabSmoothAccel.set(0, 0, 0);
 
     if (raycaster.ray.intersectPlane(grabPlane, grabHitTmp)) {
       grabOffset.copy(f.mesh.position).sub(grabHitTmp);
@@ -2014,7 +2353,6 @@ export function createFruitAssembly(seed: number, recipe: PopsicleRecipe = DEFAU
       if (pullDist >= pullThresh) {
         f.detached = true;
         f.detachTime = 0;
-        f.glancedBody = false;
         grabBaseQuat.copy(f.mesh.quaternion);
 
         // Compute gentle lift toward camera so plucked berries clear the front ice cleanly while dragged!
@@ -2055,15 +2393,12 @@ export function createFruitAssembly(seed: number, recipe: PopsicleRecipe = DEFAU
         clamp(-f.velocity.x * 0.62, -2.4, 2.4),
       );
       f.detachTime = 0;
-      // Allow a single cheeky soft bounce if the user tosses the fruit back into the popsicle!
-      f.glancedBody = false;
       const curlDir = f.baseBend.x >= 0 ? 1 : -1;
       f.bendVel += clamp(f.velocity.length() * 0.55, 0.3, 2.4) * (f.kind === 'strawberry' ? curlDir : 0.7);
     }
 
     grabbedIdx = -1;
     grabThrowVel.set(0, 0, 0);
-    grabSmoothAccel.set(0, 0, 0);
     grabNeedsLift = false;
     grabLiftProgress = 0;
     grabHoldTime = 0;
@@ -2081,11 +2416,10 @@ export function createFruitAssembly(seed: number, recipe: PopsicleRecipe = DEFAU
     grabHoldTime += dt;
 
     if (!f.detached) {
-      // Elastic sticky-ice give while user holds/tugs before popping free
-      const depth = iceContainmentDepth(f.basePos.x, f.basePos.y, f.basePos.z, meltState);
-      const endgameReleaseBoost = smoothstep(0.72, 0.90, meltState.melt) * 0.07;
-      const releaseMargin = (f.kind === 'strawberry' ? f.radius * 0.11 : f.radius * 0.09) + endgameReleaseBoost;
-      applyPreReleasePose(f, depth, releaseMargin);
+      // Elastic sticky-ice give while user holds/tugs before slipping free
+      const { slideY } = getMeltBounds(meltState.melt);
+      const grip = evaluateFruitGrip(f, meltState, slideY);
+      applyPreReleasePose(f, grip, slideY);
       grabAnchorPos.copy(f.mesh.position);
 
       grabPullDelta.copy(grabTargetPos).sub(grabAnchorPos);
@@ -2124,20 +2458,14 @@ export function createFruitAssembly(seed: number, recipe: PopsicleRecipe = DEFAU
     const followAlpha = 1.0 - Math.exp(-dt * 28.0);
     f.mesh.position.lerp(grabClearLift, followAlpha);
 
-    // Track smoothed instantaneous velocity & acceleration for realistic toss + soft slice swoosh flex!
+    // Track smoothed instantaneous velocity for realistic toss + soft slice swoosh flex!
     const instVx = (f.mesh.position.x - grabPrevPos.x) / dt;
     const instVy = (f.mesh.position.y - grabPrevPos.y) / dt;
     const instVz = (f.mesh.position.z - grabPrevPos.z) / dt;
-    const prevVx = grabThrowVel.x;
-    const prevVy = grabThrowVel.y;
     const velAlpha = 1.0 - Math.exp(-dt * 18.0);
     grabThrowVel.x += (instVx - grabThrowVel.x) * velAlpha;
     grabThrowVel.y += (instVy - grabThrowVel.y) * velAlpha;
     grabThrowVel.z += (instVz - grabThrowVel.z) * velAlpha;
-
-    const accAlpha = 1.0 - Math.exp(-dt * 12.0);
-    grabSmoothAccel.x += ((grabThrowVel.x - prevVx) / dt - grabSmoothAccel.x) * accAlpha;
-    grabSmoothAccel.y += ((grabThrowVel.y - prevVy) / dt - grabSmoothAccel.y) * accAlpha;
 
     // Velocity-reactive tactile banking (feels light, wet, and alive in your hand!)
     const bankZ = clamp(-grabThrowVel.x * 0.14, -0.42, 0.42);

@@ -36,7 +36,7 @@
     <button id="btn-ref-open" class="ref-pill" type="button" hidden>Ref</button>
 
     <div class="controls" aria-label="Scene controls">
-      <button id="btn-customize" class="pill-btn" type="button" title="Customize popsicle (C)" aria-label="Customize popsicle" aria-expanded="false">
+      <button id="btn-customize" class="pill-btn" type="button" title="Customize popsicle (C)" aria-label="Customize popsicle" aria-expanded="false" aria-controls="customize-panel">
         <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <path d="M7 10a5 5 0 0 1 10 0v6a1.5 1.5 0 0 1-1.5 1.5h-7A1.5 1.5 0 0 1 7 16v-6Z"></path>
           <path d="M12 17.5V22"></path>
@@ -73,7 +73,7 @@
           <ellipse cx="12" cy="12" rx="8" ry="3.2"></ellipse>
         </svg>
       </button>
-      <button id="btn-help" class="icon-btn" type="button" title="About & Controls (?)" aria-label="Help" aria-expanded="false">?</button>
+      <button id="btn-help" class="icon-btn" type="button" title="About & Controls (?)" aria-label="Help" aria-expanded="false" aria-controls="help-card">?</button>
     </div>
 
     <div id="customize-panel" class="customize-panel" hidden>
@@ -86,7 +86,7 @@
       </div>
 
       <div class="cust-section">
-        <div class="cust-label"><span>Base</span><span id="cust-base-note" class="cust-hint">Translucent</span></div>
+        <div class="cust-label"><span>Base</span><span id="cust-base-note" class="cust-hint">Translucent ice</span></div>
         <div class="seg-toggle" role="group" aria-label="Popsicle base">
           <button type="button" class="seg-btn" data-base="water" aria-pressed="true">Water</button>
           <button type="button" class="seg-btn" data-base="coconut" aria-pressed="false">Coconut</button>
@@ -110,13 +110,20 @@
     </div>
 
     <div id="dev-dock" class="dev-dock" hidden>
-      <button id="btn-settings" class="icon-btn" type="button" title="Tune parameters" aria-label="Settings" aria-expanded="false">
+      <button id="btn-settings" class="icon-btn" type="button" title="Tune parameters" aria-label="Settings" aria-expanded="false" aria-controls="settings-panel">
         <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <circle cx="12" cy="12" r="3"></circle>
           <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9c.26.6.85 1 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
         </svg>
       </button>
       <div id="settings-panel" class="settings-panel" hidden>
+        <div class="settings-head">
+          <b>Settings</b>
+          <div class="settings-actions">
+            <button id="btn-settings-copy" class="mini-btn" type="button" title="Copy current settings as JSON">Copy</button>
+            <button id="btn-settings-reset" class="mini-btn" type="button" title="Clear saved settings and restore factory defaults">Factory Reset</button>
+          </div>
+        </div>
         <label class="row"><span>Melt</span><input id="sl-melt" type="range" min="0" max="1" step="0.005" value="0.035" /><output id="val-melt">0.04</output></label>
         <label class="row"><span>Speed</span><input id="sl-speed" type="range" min="0.2" max="6" step="0.1" value="1" /><output id="val-speed">1.0×</output></label>
         <label class="row"><span>Frost</span><input id="sl-frost" type="range" min="0.1" max="1" step="0.02" value="0.58" /><output id="val-frost">0.58</output></label>
@@ -131,12 +138,13 @@
           <div class="drop-debug-body">
             <label class="row"><span>Teardrop</span><input id="sl-drop-sag" type="range" min="0" max="1.6" step="0.02" value="0.90" /><output id="val-drop-sag">0.90</output></label>
             <label class="row"><span>Stretch</span><input id="sl-drop-stretch" type="range" min="0.85" max="1.8" step="0.02" value="1.24" /><output id="val-drop-stretch">1.24</output></label>
-            <label class="row"><span>Edge Blur</span><input id="sl-drop-blur" type="range" min="0" max="1.5" step="0.02" value="0.58" /><output id="val-drop-blur">0.58</output></label>
-            <label class="row"><span>Shadow</span><input id="sl-drop-shadow" type="range" min="0" max="1.5" step="0.02" value="0.62" /><output id="val-drop-shadow">0.62</output></label>
-            <label class="row"><span>Shd Blur</span><input id="sl-drop-shblur" type="range" min="0.2" max="2.0" step="0.05" value="0.95" /><output id="val-drop-shblur">0.95</output></label>
-            <label class="row"><span>Rim Dark</span><input id="sl-drop-rim" type="range" min="0" max="1.5" step="0.02" value="0.72" /><output id="val-drop-rim">0.72</output></label>
+            <label class="row"><span>Edge Blur</span><input id="sl-drop-blur" type="range" min="0" max="1.5" step="0.02" value="0.72" /><output id="val-drop-blur">0.72</output></label>
+            <label class="row"><span>Shadow</span><input id="sl-drop-shadow" type="range" min="0" max="1.5" step="0.02" value="0.44" /><output id="val-drop-shadow">0.44</output></label>
+            <label class="row"><span>Shd Blur</span><input id="sl-drop-shblur" type="range" min="0.2" max="2.0" step="0.05" value="1.05" /><output id="val-drop-shblur">1.05</output></label>
+            <label class="row"><span>Rim Dark</span><input id="sl-drop-rim" type="range" min="0" max="1.5" step="0.02" value="0.48" /><output id="val-drop-rim">0.48</output></label>
             <label class="row"><span>Size</span><input id="sl-drop-size" type="range" min="0.5" max="1.8" step="0.02" value="1.00" /><output id="val-drop-size">1.00</output></label>
             <label class="row"><span>Bot Pool</span><input id="sl-drop-pool" type="range" min="0" max="2.0" step="0.05" value="1.05" /><output id="val-drop-pool">1.05</output></label>
+            <label class="row"><span>Bot Drops</span><input id="sl-drop-botcount" type="range" min="0" max="80" step="1" value="34" /><output id="val-drop-botcount">34</output></label>
             <label class="row"><span>Drip Rate</span><input id="sl-drop-drip" type="range" min="0" max="2.0" step="0.05" value="0.76" /><output id="val-drop-drip">0.76</output></label>
           </div>
         </details>

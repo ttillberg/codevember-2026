@@ -27,10 +27,7 @@ export interface PopsicleRecipe {
   toppings: ToppingId[];
 }
 
-export interface FlavorOpticalSpec {
-  id: FlavorId;
-  label: string;
-  swatch: string;
+export interface OpticalSpec {
   /** Beer-Lambert spectral absorption coefficients for translucent water-based ice */
   sigma: [number, number, number];
   /** Luminous backlit translucent core color (linear HDR) */
@@ -51,6 +48,12 @@ export interface FlavorOpticalSpec {
   stain: [number, number, number];
   /** Drop optical absorption sigma for translucent droplets */
   dropSigma: [number, number, number];
+}
+
+export interface FlavorOpticalSpec extends OpticalSpec {
+  id: FlavorId;
+  label: string;
+  swatch: string;
 }
 
 export interface ResolvedOpticalPalette {
@@ -239,10 +242,7 @@ export const DEFAULT_RECIPE: PopsicleRecipe = {
   toppings: ['strawberry', 'blueberry'],
 };
 
-const PURE_COCONUT_SPEC: FlavorOpticalSpec = {
-  id: 'banana',
-  label: 'Coconut',
-  swatch: '#f4efe6',
+const PURE_COCONUT_SPEC: OpticalSpec = {
   sigma: [0.45, 0.55, 0.72],
   core: [1.34, 1.28, 1.18],
   mid: [1.08, 1.02, 0.94],
@@ -289,14 +289,14 @@ export function resolveOpticalPalette(rawRecipe: PopsicleRecipe): ResolvedOptica
   const recipe = normalizeRecipe(rawRecipe);
   const isCoconut = recipe.base === 'coconut';
 
-  const specA =
+  const specA: OpticalSpec =
     recipe.flavors.length > 0
       ? FLAVOR_MAP[recipe.flavors[0]]
       : isCoconut
         ? PURE_COCONUT_SPEC
         : FLAVOR_MAP.strawberry;
-  const specB = recipe.flavors.length > 1 ? FLAVOR_MAP[recipe.flavors[1]] : specA;
-  const isDual = recipe.flavors.length > 1 && specA.id !== specB.id;
+  const specB: OpticalSpec = recipe.flavors.length > 1 ? FLAVOR_MAP[recipe.flavors[1]] : specA;
+  const isDual = recipe.flavors.length > 1 && recipe.flavors[0] !== recipe.flavors[1];
 
   const opacity = isCoconut
     ? 0.91

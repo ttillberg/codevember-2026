@@ -64,11 +64,52 @@ export function fbm3(x: number, y: number, z: number, octaves = 4): number {
   return sum / norm;
 }
 
+/** Deterministic 2D hash -> [0, 1) */
+export function hash2(x: number, y: number): number {
+  let h = Math.imul(x, 374761393) ^ Math.imul(y, 668265263);
+  h = Math.imul(h ^ (h >>> 13), 1274126177);
+  return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
+}
+
+/** Smooth 2D value noise -> [0, 1] (2x faster than 3D noise with constant z) */
+export function valueNoise2(x: number, y: number): number {
+  const ix = Math.floor(x);
+  const iy = Math.floor(y);
+  const fx = smooth(x - ix);
+  const fy = smooth(y - iy);
+
+  const n00 = hash2(ix, iy);
+  const n10 = hash2(ix + 1, iy);
+  const n01 = hash2(ix, iy + 1);
+  const n11 = hash2(ix + 1, iy + 1);
+
+  const nx0 = n00 + (n10 - n00) * fx;
+  const nx1 = n01 + (n11 - n01) * fx;
+  return nx0 + (nx1 - nx0) * fy;
+}
+
+/** Multi-octave 2D fBm -> [0, 1] */
+export function fbm2D(x: number, y: number, octaves = 4): number {
+  let sum = 0;
+  let amp = 0.5;
+  let norm = 0;
+  let freq = 1;
+  for (let i = 0; i < octaves; i++) {
+    sum += valueNoise2(x * freq, y * freq) * amp;
+    norm += amp;
+    amp *= 0.5;
+    freq *= 2.03;
+  }
+  return sum / norm;
+}
+
 export function clamp(v: number, lo: number, hi: number): number {
   return v < lo ? lo : v > hi ? hi : v;
 }
 
 export function smoothstep(edge0: number, edge1: number, x: number): number {
-  const t = clamp((x - edge0) / (edge1 - edge0), 0, 1);
+  const span = edge1 - edge0;
+  if (Math.abs(span) < 1e-12) return x < edge0 ? 0 : 1;
+  const t = clamp((x - edge0) / span, 0, 1);
   return t * t * (3 - 2 * t);
 }
