@@ -1,4 +1,5 @@
-import { clamp, fbm3, smoothstep } from './rng';
+import { clamp, smoothstep } from './rng';
+import { sampleFastFbm3 } from './noise3d';
 
 /**
  * Shared dimensional & parametric melt shape of the molded berry popsicle.
@@ -208,11 +209,11 @@ export function evaluatePopsicleProfile(
     y -= localHeat * 0.065 * smoothstep(0.05, 0.3, hNorm) * iceAmount;
   }
 
-  // Organic wet melt surface undulation + porous slush micro-erosion bumps (scaled cleanly down during final dissolve!)
+  // Organic wet melt surface undulation + porous slush micro-erosion bumps (fast baked 3D FBM lookup!)
   const so = state.seedOffset;
-  const nMacro = fbm3(x * 2.4 + so, y * 1.7 + state.time * 0.012, z * 2.4, 3) - 0.5;
-  const nRivulet = fbm3(x * 7.8 + so * 1.7, y * 1.9 + state.time * 0.035, z * 4.5, 3) - 0.5;
-  const nSlush = fbm3(x * 16.5 + so * 2.3, y * 15.5, z * 16.5, 2) - 0.5;
+  const nMacro = sampleFastFbm3(x * 2.4 + so, y * 1.7 + state.time * 0.012, z * 2.4) - 0.5;
+  const nRivulet = sampleFastFbm3(x * 7.8 + so * 1.7, y * 1.9 + state.time * 0.035, z * 4.5) - 0.5;
+  const nSlush = sampleFastFbm3(x * 16.5 + so * 2.3, y * 15.5, z * 16.5) - 0.5;
   const slushFactor = smoothstep(0.08, 0.45, effMelt);
   const waveScale = (1.0 - collapse * 0.78) * iceAmount;
   const meltAmp = (0.010 + effMelt * 0.052) * waveScale;
@@ -235,8 +236,8 @@ export function evaluatePopsicleProfile(
     const poolGrow = 0.85 + 0.30 * smoothstep(0.0, 0.30, m);
 
     // Soft rounded asymmetric sticky pooling swells evenly across left & right bottom underside
-    const nBotA = fbm3(x * 8.5 + so * 1.3, so * 0.5, z * 6.5, 3);
-    const nBotB = fbm3(x * 19.0 - so * 2.1, so * 1.1, z * 14.0, 2);
+    const nBotA = sampleFastFbm3(x * 8.5 + so * 1.3, so * 0.5, z * 6.5);
+    const nBotB = sampleFastFbm3(x * 19.0 - so * 2.1, so * 1.1, z * 14.0);
     const waveLobes =
       Math.max(0, Math.sin(x * 21.0 + so * 1.1) * 0.5 + 0.5) * 0.0075 +
       Math.max(0, Math.sin(x * 38.0 - so * 2.3 + 1.4) * 0.5 + 0.5) * 0.0045 +

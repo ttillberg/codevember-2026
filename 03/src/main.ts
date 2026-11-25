@@ -20,15 +20,32 @@ const rawDropParam = params.get('drops');
 let currentDropMode: DropMode =
   rawDropParam === 'full' || rawDropParam === 'off' || rawDropParam === 'minimal' ? rawDropParam : 'minimal';
 
+type FallFocusMode = 'pause' | 'slow' | 'off';
+const rawFallParam = params.get('fall');
+let currentFallMode: FallFocusMode =
+  rawFallParam === 'pause' || rawFallParam === 'slow' || rawFallParam === 'off' ? rawFallParam : 'pause';
+/** Smoothly eased blend [0..1] when a detached fruit is falling through frame */
+let fallFocusBlend = 0;
+
+// Detect mobile / touch devices to keep 60fps smooth on mobile GPUs without sacrificing crispness
+const isMobile =
+  (typeof window.matchMedia === 'function' && window.matchMedia('(pointer: coarse)').matches) ||
+  /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+
+function targetPixelRatio(): number {
+  return Math.min(window.devicePixelRatio || 1, isMobile ? 1.35 : 2);
+}
+
 // === RENDERER ===
 const canvas = document.getElementById('c') as HTMLCanvasElement;
 const renderer = new THREE.WebGLRenderer({
   canvas,
-  antialias: true,
+  // All 3D scenes render to offscreen targets and composite via fullscreen Pass 7, so default-backbuffer MSAA is wasted tile bandwidth!
+  antialias: false,
   powerPreference: 'high-performance',
   alpha: false,
 });
-renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setPixelRatio(targetPixelRatio());
 renderer.setSize(window.innerWidth, window.innerHeight);
 // Keep intermediate HDR targets linear; perform single photographic film curve in final display pass!
 renderer.toneMapping = THREE.NoToneMapping;
@@ -250,9 +267,15 @@ const displayScene = new THREE.Scene();
 displayScene.add(new THREE.Mesh(fsQuadGeo, displayMat));
 
 // === RENDER TARGETS ===
-function makeRT(w: number, h: number, withDepth: boolean, linear = true): THREE.WebGLRenderTarget {
+function makeRT(
+  w: number,
+  h: number,
+  withDepth: boolean,
+  linear = true,
+  type: THREE.TextureDataType = THREE.HalfFloatType,
+): THREE.WebGLRenderTarget {
   return new THREE.WebGLRenderTarget(Math.max(2, w), Math.max(2, h), {
-    type: THREE.HalfFloatType,
+    type,
     format: THREE.RGBAFormat,
     minFilter: linear ? THREE.LinearFilter : THREE.NearestFilter,
     magFilter: linear ? THREE.LinearFilter : THREE.NearestFilter,
@@ -283,6 +306,10 @@ function rebuildRenderTargets() {
   const halfH = Math.max(2, rtHeight >> 1);
   const qtrW = Math.max(2, rtWidth >> 2);
   const qtrH = Math.max(2, rtHeight >> 2);
+  const zW = isMobile ? Math.max(2, Math.floor(rtWidth * 0.4)) : halfW;
+  const zH = isMobile ? Math.max(2, Math.floor(rtHeight * 0.4)) : halfH;
+  const bubW = isMobile ? Math.max(2, Math.floor(rtWidth * 0.75)) : rtWidth;
+  const bubH = isMobile ? Math.max(2, Math.floor(rtHeight * 0.75)) : rtHeight;
 
   backIceZRT?.dispose();
   interiorZRT?.dispose();
@@ -296,10 +323,10 @@ function rebuildRenderTargets() {
   dropFieldRT?.dispose();
   compositeRT?.dispose();
 
-  backIceZRT = makeRT(halfW, halfH, true, true);
-  interiorZRT = makeRT(halfW, halfH, true, true);
+  backIceZRT = makeRT(zW, zH, true, true);
+  interiorZRT = makeRT(zW, zH, true, true);
   bgRT = makeRT(rtWidth, rtHeight, true, true);
-  bubblesRT = makeRT(rtWidth, rtHeight, true, true);
+  bubblesRT = makeRT(bubW, bubH, true, true, isMobile ? THREE.UnsignedByteType : THREE.HalfFloatType);
   blurTemp1RT = makeRT(halfW, halfH, false, true);
   bgBlur1RT = makeRT(halfW, halfH, false, true);
   blurTemp2RT = makeRT(qtrW, qtrH, false, true);
@@ -374,11 +401,12 @@ function buildPopsicle(seed: number) {
   meltState.seedOffset = seed * 13.7;
   meltState.heatSpots = [];
   meltState.pointerHeat = 0;
+  fallFocusBlend = 0;
 
   fruitAssembly = createFruitAssembly(seed);
   solidScene.add(fruitAssembly.group);
 
-  iceSystem = createPopsicleIceSystem(seed);
+  iceSystem = createPopsicleIceSystem(seed, isMobile);
   iceScene.add(iceSystem.iceMesh);
   backZScene.add(iceSystem.backZMesh);
   bubblesScene.add(iceSystem.bubblesMesh);
@@ -391,7 +419,7 @@ function buildPopsicle(seed: number) {
 
   // Sync initial geometry & droplet anchors at frame 0!
   iceSystem.uniforms.uFrost.value = simParams.frost;
-  iceSystem.update(meltState, simParams.bubbles);
+  iceSystem.update(meltState, simParams.bubbles, true);
   fruitAssembly.update(meltState, 0, liquidFilm.stickWetness);
   waterDrops.update(meltState, iceSystem, liquidFilm, 0, simParams.speed);
   syncWorkbenchUI();
@@ -402,11 +430,12 @@ function resetMelt() {
   meltState.time = 0;
   meltState.heatSpots = [];
   meltState.pointerHeat = 0;
+  fallFocusBlend = 0;
   fruitAssembly?.reset();
   liquidFilm?.reset();
   waterDrops?.reset();
   if (iceSystem && fruitAssembly && waterDrops && liquidFilm) {
-    iceSystem.update(meltState, simParams.bubbles);
+    iceSystem.update(meltState, simParams.bubbles, true);
     fruitAssembly.update(meltState, 0, liquidFilm.stickWetness);
     waterDrops.update(meltState, iceSystem, liquidFilm, 0, simParams.speed);
   }
@@ -509,6 +538,7 @@ const slSpeed = document.getElementById('sl-speed') as HTMLInputElement;
 const slFrost = document.getElementById('sl-frost') as HTMLInputElement;
 const slBubbles = document.getElementById('sl-bubbles') as HTMLInputElement;
 const selDrops = document.getElementById('sel-drops') as HTMLSelectElement;
+const selFall = document.getElementById('sel-fall') as HTMLSelectElement;
 const valMelt = document.getElementById('val-melt') as HTMLOutputElement;
 const valSpeed = document.getElementById('val-speed') as HTMLOutputElement;
 const valFrost = document.getElementById('val-frost') as HTMLOutputElement;
@@ -561,6 +591,7 @@ function syncWorkbenchUI() {
   slBubbles.value = simParams.bubbles.toFixed(2);
   valBubbles.textContent = simParams.bubbles.toFixed(2);
   selDrops.value = currentDropMode;
+  selFall.value = currentFallMode;
 }
 
 btnPlay.addEventListener('click', () => {
@@ -604,7 +635,7 @@ slMelt.addEventListener('input', () => {
   meltState.melt = Number(slMelt.value);
   valMelt.textContent = meltState.melt.toFixed(2);
   if (iceSystem && fruitAssembly && waterDrops && liquidFilm) {
-    iceSystem.update(meltState, simParams.bubbles);
+    iceSystem.update(meltState, simParams.bubbles, true);
     fruitAssembly.update(meltState, 0, Math.max(liquidFilm.stickWetness, meltState.melt * 1.15));
     waterDrops.update(meltState, iceSystem, liquidFilm, 0, simParams.speed);
   }
@@ -634,6 +665,11 @@ selDrops.addEventListener('change', () => {
   if (iceSystem && waterDrops && liquidFilm) {
     waterDrops.update(meltState, iceSystem, liquidFilm, 0, simParams.speed);
   }
+});
+
+selFall.addEventListener('change', () => {
+  currentFallMode = selFall.value as FallFocusMode;
+  if (currentFallMode === 'off') fallFocusBlend = 0;
 });
 
 window.addEventListener('keydown', (e) => {
@@ -775,6 +811,30 @@ function renderFrame() {
   renderer.render(displayScene, fsCam);
 }
 
+function computeFallDilation(dt: number, falling: boolean): { meltScale: number; fluidScale: number; fruitScale: number } {
+  const target = currentFallMode !== 'off' && falling ? 1.0 : 0.0;
+  // Fast engage (~45ms) the moment a fruit detaches; velvety smooth resume (~220ms) once it exits frame!
+  const k = target > fallFocusBlend ? 22.0 : 4.8;
+  fallFocusBlend += (target - fallFocusBlend) * (1.0 - Math.exp(-dt * k));
+  if (fallFocusBlend < 0.001) fallFocusBlend = 0;
+
+  if (currentFallMode === 'pause') {
+    return {
+      meltScale: 1.0 - fallFocusBlend,
+      fluidScale: 1.0 - fallFocusBlend * 0.86,
+      fruitScale: 1.0 - fallFocusBlend * 0.16,
+    };
+  }
+  if (currentFallMode === 'slow') {
+    return {
+      meltScale: 1.0 - fallFocusBlend * 0.92,
+      fluidScale: 1.0 - fallFocusBlend * 0.78,
+      fruitScale: 1.0 - fallFocusBlend * 0.52,
+    };
+  }
+  return { meltScale: 1, fluidScale: 1, fruitScale: 1 };
+}
+
 // === ANIMATION LOOP ===
 let lastTime = performance.now();
 
@@ -790,24 +850,31 @@ function tick(now: number) {
   meltState.pointerHeat += (targetHeat - meltState.pointerHeat) * Math.min(1, rawDt * 8.0);
 
   if (dt > 0 && fruitAssembly && iceSystem && waterDrops && liquidFilm) {
-    meltState.time += dt;
+    const { meltScale, fluidScale, fruitScale } = computeFallDilation(dt, fruitAssembly.hasFallingFruitInView());
+    const dtMelt = dt * meltScale;
+    const dtFluid = dt * fluidScale;
+    const dtFruit = dt * fruitScale;
 
-    // Slow deterministic ambient melt + pointer-accelerated warmth!
-    const pointerGlobalBoost = pointerActive ? (pointerPressed ? 11.5 : 3.2) : 1.0;
-    const baseMeltRate = 0.0028;
-    meltState.melt = clamp(meltState.melt + dt * baseMeltRate * simParams.speed * pointerGlobalBoost, 0, 1.0);
+    meltState.time += dtFluid;
 
-    // Deposit localized warmth where pointer rests on the popsicle
-    if (pointerActive && !orbitMode) {
-      const localDose = dt * (pointerPressed ? 0.34 : 0.075) * simParams.speed;
-      depositHeatSpot(meltState.pointerX, meltState.pointerY, localDose);
+    // Slow deterministic ambient melt + pointer-accelerated warmth (paused/slowed while a released fruit falls!)
+    if (dtMelt > 0) {
+      const pointerGlobalBoost = pointerActive ? (pointerPressed ? 11.5 : 3.2) : 1.0;
+      const baseMeltRate = 0.0028;
+      meltState.melt = clamp(meltState.melt + dtMelt * baseMeltRate * simParams.speed * pointerGlobalBoost, 0, 1.0);
+
+      // Deposit localized warmth where pointer rests on the popsicle
+      if (pointerActive && !orbitMode) {
+        const localDose = dtMelt * (pointerPressed ? 0.34 : 0.075) * simParams.speed;
+        depositHeatSpot(meltState.pointerX, meltState.pointerY, localDose);
+      }
     }
 
     // Update 2D viscous liquid glaze PDE, live melting geometry, solid fruits/wet stick, and surface/pendant drops!
-    liquidFilm.update(meltState, dt, simParams.speed);
+    liquidFilm.update(meltState, dtFluid, simParams.speed);
     iceSystem.update(meltState, simParams.bubbles);
-    fruitAssembly.update(meltState, dt, liquidFilm.stickWetness);
-    waterDrops.update(meltState, iceSystem, liquidFilm, dt, simParams.speed);
+    fruitAssembly.update(meltState, dtFruit, liquidFilm.stickWetness);
+    waterDrops.update(meltState, iceSystem, liquidFilm, dtFluid, simParams.speed);
 
     if (showSettings && !settingsPanel.hidden) {
       slMelt.value = meltState.melt.toFixed(3);
@@ -826,7 +893,7 @@ function tick(now: number) {
 window.addEventListener('resize', () => {
   camera.aspect = window.innerWidth / window.innerHeight;
   camera.updateProjectionMatrix();
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  renderer.setPixelRatio(targetPixelRatio());
   renderer.setSize(window.innerWidth, window.innerHeight);
   rebuildRenderTargets();
 });
@@ -839,8 +906,9 @@ buildPopsicle(currentSeed);
 (window as unknown as Record<string, unknown>).__day03 = {
   setMelt(m: number) {
     meltState.melt = clamp(m, 0, 1.0);
+    fallFocusBlend = 0;
     if (iceSystem && fruitAssembly && waterDrops && liquidFilm) {
-      iceSystem.update(meltState, simParams.bubbles);
+      iceSystem.update(meltState, simParams.bubbles, true);
       fruitAssembly.update(meltState, 0, Math.max(liquidFilm.stickWetness, meltState.melt * 1.15));
       waterDrops.update(meltState, iceSystem, liquidFilm, 0, simParams.speed);
     }
@@ -850,13 +918,14 @@ buildPopsicle(currentSeed);
     const steps = Math.max(1, Math.ceil(seconds / 0.033));
     const dt = seconds / steps;
     for (let i = 0; i < steps; i++) {
-      meltState.time += dt;
-      meltState.melt = clamp(meltState.melt + dt * 0.0028 * simParams.speed, 0, 1.0);
       if (iceSystem && fruitAssembly && waterDrops && liquidFilm) {
-        liquidFilm.update(meltState, dt, simParams.speed);
+        const { meltScale, fluidScale, fruitScale } = computeFallDilation(dt, fruitAssembly.hasFallingFruitInView());
+        meltState.time += dt * fluidScale;
+        meltState.melt = clamp(meltState.melt + dt * meltScale * 0.0028 * simParams.speed, 0, 1.0);
+        liquidFilm.update(meltState, dt * fluidScale, simParams.speed);
         iceSystem.update(meltState, simParams.bubbles);
-        fruitAssembly.update(meltState, dt, liquidFilm.stickWetness);
-        waterDrops.update(meltState, iceSystem, liquidFilm, dt, simParams.speed);
+        fruitAssembly.update(meltState, dt * fruitScale, liquidFilm.stickWetness);
+        waterDrops.update(meltState, iceSystem, liquidFilm, dt * fluidScale, simParams.speed);
       }
     }
     renderFrame();
@@ -887,13 +956,24 @@ buildPopsicle(currentSeed);
     }
     renderFrame();
   },
+  setFallMode(mode: FallFocusMode) {
+    currentFallMode = mode;
+    selFall.value = mode;
+    if (mode === 'off') fallFocusBlend = 0;
+  },
   setCamera(x: number, y: number, z: number) {
     camera.position.set(x, y, z);
     camera.lookAt(BASE_TARGET);
     renderFrame();
   },
   getState() {
-    return { melt: meltState.melt, time: meltState.time, seed: currentSeed };
+    return {
+      melt: meltState.melt,
+      time: meltState.time,
+      seed: currentSeed,
+      falling: fruitAssembly?.hasFallingFruitInView() ?? false,
+      fallFocusBlend,
+    };
   },
 };
 

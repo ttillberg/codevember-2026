@@ -2,8 +2,8 @@ import * as THREE from 'three';
 import { clamp, fbm3, smoothstep } from './rng';
 import { getMeltBounds, MeltFieldState, POPSICLE, sampleLocalHeat } from './shape';
 
-export const FILM_U = 96;
-const FILM_V = 96;
+export const FILM_U = 64;
+const FILM_V = 64;
 
 export interface LiquidFilmSystem {
   /**
@@ -42,7 +42,6 @@ export function createLiquidFilmSystem(seed: number): LiquidFilmSystem {
   const N = FILM_U * FILM_V;
   const h = new Float32Array(N);
   const hNext = new Float32Array(N);
-  const hSmoothA = new Float32Array(N);
   const hSmoothB = new Float32Array(N);
   const wetMem = new Float32Array(N);
   const rough = new Float32Array(N);
@@ -137,9 +136,8 @@ export function createLiquidFilmSystem(seed: number): LiquidFilmSystem {
   }
 
   function packTexture() {
-    // 2 gentle Gaussian passes eliminate 96x96 pixel stair-stepping so liquid glaze lobes are silky-smooth!
-    smoothPass(h, hSmoothA);
-    smoothPass(hSmoothA, hSmoothB);
+    // 1 Gaussian smoothing pass + hardware bilinear filtering keeps liquid glaze lobes silky-smooth at ~3x lower CPU cost!
+    smoothPass(h, hSmoothB);
 
     for (let iv = 0; iv < FILM_V; iv++) {
       const ivD = Math.max(0, iv - 1);
@@ -203,20 +201,18 @@ export function createLiquidFilmSystem(seed: number): LiquidFilmSystem {
   function update(state: MeltFieldState, dt: number, meltSpeedMul: number) {
     bottomFlux.fill(0);
     if (dt <= 0) {
-      packTexture();
       return;
     }
 
     const { yTop, yBot, iceGone } = getMeltBounds(state.melt);
     if (iceGone) {
       stickWetness = 1.0;
-      packTexture();
       return;
     }
 
     const meltRate = (1.0 + state.melt * 2.4) * meltSpeedMul;
-    const substeps = 2;
-    const subDt = Math.min(0.025, dt / substeps);
+    const substeps = 1;
+    const subDt = Math.min(0.033, dt);
 
     const halfW = POPSICLE.halfWidthBottom * (1.0 - clamp(state.melt, 0, 1) * 0.45);
 

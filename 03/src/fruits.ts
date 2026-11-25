@@ -34,6 +34,8 @@ export interface FruitAssembly {
     uStickWetness: { value: number };
   };
   fruits: FruitItem[];
+  /** True while any detached fruit is still actively falling through the visible frame */
+  hasFallingFruitInView(): boolean;
   reset(): void;
   update(meltState: MeltFieldState, dt: number, stickWetness?: number): void;
   dispose(): void;
@@ -47,7 +49,7 @@ function createStrawberrySliceGeometry(seed: number, thickness = 0.16): THREE.Bu
   const rand = mulberry32(seed);
   const off = rand() * 30;
 
-  const segAng = 72;
+  const segAng = 54;
   const faceRings = [0.0, 0.22, 0.46, 0.68, 0.85, 0.955, 0.995];
   // Outer bevel rings transitioning from front (+halfT) around curved crimson skin to back (-halfT)
   const bevelProfile: Array<{ rMul: number; zFrac: number; uvR: number }> = [
@@ -200,8 +202,8 @@ function createBlueberryGeometry(seed: number): THREE.BufferGeometry {
   const starPhase = rand() * Math.PI * 2;
   const oblate = 0.85 + rand() * 0.06;
 
-  const segU = 48;
-  const segV = 36;
+  const segU = 32;
+  const segV = 24;
   const geo = new THREE.SphereGeometry(1, segU, segV);
   const pos = geo.attributes.position as THREE.BufferAttribute;
 
@@ -1116,9 +1118,19 @@ export function createFruitAssembly(seed: number): FruitAssembly {
     }
   }
 
+  function hasFallingFruitInView(): boolean {
+    for (let i = 0; i < fruits.length; i++) {
+      const f = fruits[i];
+      if (f.detached && f.mesh.visible && f.mesh.position.y > -1.78) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   function dispose() {
     for (const d of disposables) d.dispose();
   }
 
-  return { group, stickMesh, stickUniforms, fruits, reset, update, dispose };
+  return { group, stickMesh, stickUniforms, fruits, hasFallingFruitInView, reset, update, dispose };
 }
