@@ -1,9 +1,12 @@
-// Virtual Commodore 1541 floppy disk with built-in playable C64 BASIC V2 games
-// and localStorage persistence for user SAVE / LOAD programs.
+// Virtual Commodore 1541 floppy disk with built-in playable C64 BASIC V2 games,
+// 6502 assembly demos, and localStorage persistence for user SAVE / LOAD programs.
+
+import { CUBE3D_ASM_SOURCE, RASTER_ASM_SOURCE } from './cube3d_asm';
 
 export interface DiskProgram {
   name: string;
   lines: Record<number, string>;
+  asmSource?: string;
   builtin?: boolean;
 }
 
@@ -201,6 +204,27 @@ const BUILTIN_PROGRAMS: DiskProgram[] = [
       470: 'GOTO 160',
     },
   },
+  {
+    name: 'CUBE3D',
+    builtin: true,
+    asmSource: CUBE3D_ASM_SOURCE,
+    lines: {
+      10: 'REM *** 6502 3D WIREFRAME CUBE ***',
+      20: 'REM ARROWS/TAC-2 SPIN  SPACE=COLOR',
+      30: 'REM TYPE MON THEN D C000 TO INSPECT',
+      40: 'SYS 49152',
+    },
+  },
+  {
+    name: 'RASTER',
+    builtin: true,
+    asmSource: RASTER_ASM_SOURCE,
+    lines: {
+      10: 'REM *** 6502 RASTER BARS ($C000) ***',
+      20: 'REM TYPE MON THEN D C000 TO INSPECT',
+      30: 'SYS 49152',
+    },
+  },
 ];
 
 export class C64FloppyDisk {
@@ -217,7 +241,12 @@ export class C64FloppyDisk {
   private loadFromStorage() {
     this.programs.clear();
     for (const p of BUILTIN_PROGRAMS) {
-      this.programs.set(p.name, { name: p.name, lines: { ...p.lines }, builtin: true });
+      this.programs.set(p.name, {
+        name: p.name,
+        lines: { ...p.lines },
+        asmSource: p.asmSource,
+        builtin: true,
+      });
     }
     try {
       const raw = localStorage.getItem(STORAGE_KEY);

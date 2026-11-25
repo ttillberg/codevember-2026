@@ -13,6 +13,13 @@ export const BORDER_Y = 36;
 export const SCREEN_W = COLS * 8 + BORDER_X * 2; // 384
 export const SCREEN_H = ROWS * 8 + BORDER_Y * 2; // 272
 
+// PAL VIC-II scanline mapping:
+// Active 200 display rows sit at raster lines 50..249.
+// Top border (36px) maps to raster lines 14..49; bottom border (36px) to 250..285.
+export const RASTER_ACTIVE_TOP = 50;
+export const RASTER_VISIBLE_TOP = RASTER_ACTIVE_TOP - BORDER_Y; // 14
+export const RASTER_LINES_TOTAL = 312;
+
 const PACKED_PALETTE = new Uint32Array(
   C64_PALETTE_RGB.map(([r, g, b]) => 0xff000000 | (b << 16) | (g << 8) | r),
 );
@@ -23,9 +30,31 @@ export class C64Screen {
   // True if row `r` continues logically from row `r - 1` (80-char logical lines)
   readonly continued = new Uint8Array(ROWS);
 
+  // Optional 64KB RAM attached by the 6510 CPU / C64Basic machine for bitmap/sprite modes
+  private ram: Uint8Array | null = null;
+
+  // VIC-II state
   borderColor = 14; // Light blue ($D020 / 53280)
   bgColor = 6;      // Dark blue  ($D021 / 53281)
   textColor = 14;   // Light blue ($0286 / 646)
+
+  vicD011 = 0x1b;   // Bit 5 = Bitmap Mode, Bit 4 = Display Enable
+  vicD016 = 0x08;   // Bit 4 = Multicolor Mode
+  vicD018 = 0x14;   // Bits 7-4 = screen matrix offset, Bit 3 = bitmap base ($0000/$2000)
+  vicBank = 0x0000; // CIA2 $DD00 bits 0-1 inverted -> 16KB VIC-II bank
+
+  // Hardware sprites ($D000-$D01F, $D027-$D02E)
+  readonly spriteX = new Uint16Array(8);
+  readonly spriteY = new Uint8Array(8);
+  readonly spriteColor = new Uint8Array(8);
+  spriteEnable = 0; // $D015
+  spriteExpandX = 0; // $D01D
+  spriteExpandY = 0; // $D017
+
+  // Per-scanline latched colors for authentic C64 raster bars
+  private readonly rasterBorder = new Uint8Array(SCREEN_H);
+  private readonly rasterBg = new Uint8Array(SCREEN_H);
+  private hasRasterSplits = false;
 
   cursorX = 0;
   cursorY = 0;
@@ -54,14 +83,68 @@ export class C64Screen {
     this.clear();
   }
 
+  /** Attach the machine's flat 64KB RAM so VIC-II bitmap & sprite modes read directly from it. */
+  attachRam(ram: Uint8Array) {
+    this.ram = ram;
+  }
+
   reset() {
     this.borderColor = 14;
     this.bgColor = 6;
     this.textColor = 14;
+    this.resetVic();
     this.reverseMode = false;
     this.cursorEnabled = true;
     this.resetBlink();
     this.clear();
+  }
+
+  /** Restore default VIC-II text mode & clear raster splits/sprites (e.g. on RUN/STOP). */
+  resetVic() {
+    this.vicD011 = 0x1b;
+    this.vicD016 = 0x08;
+    this.vicD018 = 0x14;
+    this.vicBank = 0x0000;
+    this.spriteEnable = 0;
+    this.spriteExpandX = 0;
+    this.spriteExpandY = 0;
+    this.spriteX.fill(0);
+    this.spriteY.fill(0);
+    this.spriteColor.fill(1);
+    this.hasRasterSplits = false;
+    this.dirty = true;
+  }
+
+  isBitmapMode(): boolean {
+    return (this.vicD011 & 0x20) !== 0;
+  }
+
+  /** Reset per-frame raster split tracking before stepping a 6502 frame. */
+  beginRasterFrame() {
+    if (this.hasRasterSplits) {
+      this.dirty = true;
+    }
+    this.hasRasterSplits = false;
+  }
+
+  /** Latch current $D020/$D021 colors for a PAL raster line during 6502 execution. */
+  latchRasterLine(rasterLine: number) {
+    const sy = rasterLine - RASTER_VISIBLE_TOP;
+    if (sy < 0 || sy >= SCREEN_H) return;
+    const b = this.borderColor;
+    const g = this.bgColor;
+    if (this.rasterBorder[sy] !== b || this.rasterBg[sy] !== g) {
+      this.dirty = true;
+    }
+    this.rasterBorder[sy] = b;
+    this.rasterBg[sy] = g;
+    if (sy > 0 && (b !== this.rasterBorder[0] || g !== this.rasterBg[0])) {
+      this.hasRasterSplits = true;
+    }
+  }
+
+  markDirty() {
+    this.dirty = true;
   }
 
   clear() {
@@ -90,7 +173,7 @@ export class C64Screen {
   }
 
   tick(dt: number) {
-    if (!this.cursorEnabled) return;
+    if (!this.cursorEnabled || this.isBitmapMode()) return;
     this.blinkAccum += dt;
     // Real C64 blinks roughly every 20 jiffies (~0.33s–0.5s)
     if (this.blinkAccum >= 0.42) {
@@ -239,13 +322,6 @@ export class C64Screen {
   typeChar(ch: string) {
     if (!ch) return;
     const code = ch.charCodeAt(0);
-    // Only allow up to 2-row logical lines (80 chars), authentic C64 behavior
-    if (this.cursorX === COLS - 1) {
-      const startRow = this.getLogicalLineStart(this.cursorY);
-      if (this.cursorY - startRow >= 1) {
-        // Still allow last char on 2nd row, then wrap cleanly
-      }
-    }
     this.printCode(code, true);
     this.resetBlink();
   }
@@ -344,10 +420,26 @@ export class C64Screen {
     return out.replace(/\s+$/, '');
   }
 
+  private readVicByte(addr: number): number {
+    const a = addr & 0xffff;
+    if (a >= 0x0400 && a < 0x0400 + COLS * ROWS) {
+      return this.screenRam[a - 0x0400];
+    }
+    return this.ram ? this.ram[a] : 0;
+  }
+
   private readonly glowCache: [number, number, number] = [0, 0, 0];
 
   /** Compute a live RGB tint (0..1) representing the monitor's current emitted color for ambient lighting. */
   getScreenGlowColor(): [number, number, number] {
+    if (this.isBitmapMode()) {
+      // In hi-res demo mode, emit a cool cyan/border blend so the room reacts nicely
+      const [br, bg, bb] = C64_PALETTE_RGB[this.borderColor];
+      this.glowCache[0] = (br * 0.4 + 45) / 255;
+      this.glowCache[1] = (bg * 0.4 + 130) / 255;
+      this.glowCache[2] = (bb * 0.4 + 165) / 255;
+      return this.glowCache;
+    }
     const [br, bg, bb] = C64_PALETTE_RGB[this.borderColor];
     const [gr, gg, gb] = C64_PALETTE_RGB[this.bgColor];
     const [tr, tg, tb] = C64_PALETTE_RGB[this.textColor];
@@ -358,24 +450,58 @@ export class C64Screen {
     return this.glowCache;
   }
 
-  /** Render screen RAM + border + cursor into the offscreen canvas. Returns true if redrawn. */
+  /** Render VIC-II display (Text / Hi-Res Bitmap / Multicolor Bitmap + Raster Bars + Sprites). */
   render(): boolean {
     if (!this.dirty) return false;
     this.dirty = false;
 
-    const borderPx = PACKED_PALETTE[this.borderColor];
-    const bgPx = PACKED_PALETTE[this.bgColor];
+    const pixels = this.pixels;
 
-    // Fill entire frame with border color
-    this.pixels.fill(borderPx);
+    // 1. Fill border (per-scanline when raster splits are active, otherwise fast flat fill)
+    if (this.hasRasterSplits) {
+      for (let sy = 0; sy < SCREEN_H; sy++) {
+        const bPx = PACKED_PALETTE[this.rasterBorder[sy] & 0x0f];
+        const rowOff = sy * SCREEN_W;
+        pixels.fill(bPx, rowOff, rowOff + SCREEN_W);
+      }
+    } else {
+      pixels.fill(PACKED_PALETTE[this.borderColor & 0x0f]);
+    }
 
-    // Draw 40x25 character cells
+    const displayEnabled = (this.vicD011 & 0x10) !== 0;
+    const screenBase = (this.vicBank + ((this.vicD018 >> 4) & 0x0f) * 0x0400) & 0xffff;
+
+    if (displayEnabled) {
+      if (this.isBitmapMode() && this.ram) {
+        const bitmapBase = (this.vicBank + ((this.vicD018 & 0x08) ? 0x2000 : 0x0000)) & 0xffff;
+        const multicolor = (this.vicD016 & 0x10) !== 0;
+        this.renderBitmap(screenBase, bitmapBase, multicolor);
+      } else {
+        this.renderText(screenBase);
+      }
+
+      if (this.spriteEnable !== 0 && this.ram) {
+        this.renderSprites(screenBase);
+      }
+    }
+
+    this.ctx.putImageData(this.imgData, 0, 0);
+    return true;
+  }
+
+  private renderText(screenBase: number) {
+    const pixels = this.pixels;
+    const flatBgPx = PACKED_PALETTE[this.bgColor & 0x0f];
+    const useSplits = this.hasRasterSplits;
+    const defaultScreen = screenBase === 0x0400;
+
     for (let row = 0; row < ROWS; row++) {
       const pyBase = BORDER_Y + row * 8;
       for (let col = 0; col < COLS; col++) {
         const idx = row * COLS + col;
-        const rawCode = this.screenRam[idx];
+        const rawCode = defaultScreen ? this.screenRam[idx] : this.readVicByte(screenBase + idx);
         const isCursor =
+          defaultScreen &&
           this.cursorEnabled &&
           this.cursorBlinkOn &&
           row === this.cursorY &&
@@ -384,22 +510,136 @@ export class C64Screen {
         const reversed = Boolean(rawCode & 0x80) !== isCursor;
         const glyphBase = (rawCode & 0x7f) * 8;
         const fgPx = isCursor
-          ? PACKED_PALETTE[this.textColor]
+          ? PACKED_PALETTE[this.textColor & 0x0f]
           : PACKED_PALETTE[this.colorRam[idx] & 0x0f];
 
         const pxBase = BORDER_X + col * 8;
         for (let gy = 0; gy < 8; gy++) {
+          const sy = pyBase + gy;
+          const bgPx = useSplits ? PACKED_PALETTE[this.rasterBg[sy] & 0x0f] : flatBgPx;
           const bits = CHAR_ROM[glyphBase + gy];
-          const rowOffset = (pyBase + gy) * SCREEN_W + pxBase;
+          const rowOffset = sy * SCREEN_W + pxBase;
           for (let gx = 0; gx < 8; gx++) {
             const on = Boolean(bits & (0x80 >> gx));
-            this.pixels[rowOffset + gx] = on !== reversed ? fgPx : bgPx;
+            pixels[rowOffset + gx] = on !== reversed ? fgPx : bgPx;
           }
         }
       }
     }
+  }
 
-    this.ctx.putImageData(this.imgData, 0, 0);
-    return true;
+  private renderBitmap(screenBase: number, bitmapBase: number, multicolor: boolean) {
+    const pixels = this.pixels;
+    const ram = this.ram!;
+    const useSplits = this.hasRasterSplits;
+    const flatBgPx = PACKED_PALETTE[this.bgColor & 0x0f];
+
+    if (!multicolor) {
+      // Standard 320x200 Hi-Res Bitmap mode
+      for (let row = 0; row < ROWS; row++) {
+        const pyBase = BORDER_Y + row * 8;
+        for (let col = 0; col < COLS; col++) {
+          const cell = row * COLS + col;
+          const colByte = this.readVicByte(screenBase + cell);
+          const fgPx = PACKED_PALETTE[(colByte >> 4) & 0x0f];
+          const bgPx = PACKED_PALETTE[colByte & 0x0f];
+          const bmCell = (bitmapBase + cell * 8) & 0xffff;
+          const pxBase = BORDER_X + col * 8;
+
+          for (let gy = 0; gy < 8; gy++) {
+            const bits = ram[(bmCell + gy) & 0xffff];
+            const rowOffset = (pyBase + gy) * SCREEN_W + pxBase;
+            if (bits === 0) {
+              pixels[rowOffset] = bgPx;
+              pixels[rowOffset + 1] = bgPx;
+              pixels[rowOffset + 2] = bgPx;
+              pixels[rowOffset + 3] = bgPx;
+              pixels[rowOffset + 4] = bgPx;
+              pixels[rowOffset + 5] = bgPx;
+              pixels[rowOffset + 6] = bgPx;
+              pixels[rowOffset + 7] = bgPx;
+            } else {
+              pixels[rowOffset] = (bits & 0x80) ? fgPx : bgPx;
+              pixels[rowOffset + 1] = (bits & 0x40) ? fgPx : bgPx;
+              pixels[rowOffset + 2] = (bits & 0x20) ? fgPx : bgPx;
+              pixels[rowOffset + 3] = (bits & 0x10) ? fgPx : bgPx;
+              pixels[rowOffset + 4] = (bits & 0x08) ? fgPx : bgPx;
+              pixels[rowOffset + 5] = (bits & 0x04) ? fgPx : bgPx;
+              pixels[rowOffset + 6] = (bits & 0x02) ? fgPx : bgPx;
+              pixels[rowOffset + 7] = (bits & 0x01) ? fgPx : bgPx;
+            }
+          }
+        }
+      }
+    } else {
+      // 160x200 Multicolor Bitmap mode (2 bits per double-wide pixel)
+      for (let row = 0; row < ROWS; row++) {
+        const pyBase = BORDER_Y + row * 8;
+        for (let col = 0; col < COLS; col++) {
+          const cell = row * COLS + col;
+          const colByte = this.readVicByte(screenBase + cell);
+          const c1 = PACKED_PALETTE[(colByte >> 4) & 0x0f];
+          const c2 = PACKED_PALETTE[colByte & 0x0f];
+          const c3 = PACKED_PALETTE[this.colorRam[cell] & 0x0f];
+          const bmCell = (bitmapBase + cell * 8) & 0xffff;
+          const pxBase = BORDER_X + col * 8;
+
+          for (let gy = 0; gy < 8; gy++) {
+            const sy = pyBase + gy;
+            const c0 = useSplits ? PACKED_PALETTE[this.rasterBg[sy] & 0x0f] : flatBgPx;
+            const bits = ram[(bmCell + gy) & 0xffff];
+            const rowOffset = sy * SCREEN_W + pxBase;
+            for (let pair = 0; pair < 4; pair++) {
+              const code = (bits >> (6 - pair * 2)) & 0x03;
+              const px = code === 0 ? c0 : code === 1 ? c1 : code === 2 ? c2 : c3;
+              pixels[rowOffset + pair * 2] = px;
+              pixels[rowOffset + pair * 2 + 1] = px;
+            }
+          }
+        }
+      }
+    }
+  }
+
+  private renderSprites(screenBase: number) {
+    const pixels = this.pixels;
+    const ram = this.ram!;
+
+    // Sprite 0 has highest priority, so draw 7 down to 0
+    for (let s = 7; s >= 0; s--) {
+      const bit = 1 << s;
+      if ((this.spriteEnable & bit) === 0) continue;
+
+      const ptr = this.readVicByte(screenBase + 0x03f8 + s);
+      const dataBase = (this.vicBank + ptr * 64) & 0xffff;
+      const sx0 = this.spriteX[s] - 24 + BORDER_X;
+      const sy0 = this.spriteY[s] - 50 + BORDER_Y;
+      const expX = (this.spriteExpandX & bit) !== 0 ? 2 : 1;
+      const expY = (this.spriteExpandY & bit) !== 0 ? 2 : 1;
+      const colPx = PACKED_PALETTE[this.spriteColor[s] & 0x0f];
+
+      for (let row = 0; row < 21; row++) {
+        const b0 = ram[(dataBase + row * 3) & 0xffff];
+        const b1 = ram[(dataBase + row * 3 + 1) & 0xffff];
+        const b2 = ram[(dataBase + row * 3 + 2) & 0xffff];
+        const bits = (b0 << 16) | (b1 << 8) | b2;
+        if (bits === 0) continue;
+
+        for (let dy = 0; dy < expY; dy++) {
+          const py = sy0 + row * expY + dy;
+          if (py < BORDER_Y || py >= BORDER_Y + ROWS * 8) continue;
+          const rowOff = py * SCREEN_W;
+          for (let col = 0; col < 24; col++) {
+            if ((bits & (0x800000 >>> col)) === 0) continue;
+            for (let dx = 0; dx < expX; dx++) {
+              const px = sx0 + col * expX + dx;
+              if (px >= BORDER_X && px < BORDER_X + COLS * 8) {
+                pixels[rowOff + px] = colPx;
+              }
+            }
+          }
+        }
+      }
+    }
   }
 }

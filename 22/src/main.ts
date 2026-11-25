@@ -462,6 +462,11 @@ canvas.addEventListener('pointerup', (e) => {
     const dz = Math.abs(local.z) > Math.abs(local.x) ? (local.z >= 0 ? 1 : -1) : 0;
     tac2.nudge(dx === 0 && dz === 0 ? 1 : dx, dz, 0.22);
     sound.playJoystickClick(false);
+    // Feed CIA1 Port 2 ($DC00) joystick pulse for 6502 assembly programs
+    if (dx < 0) basic.pulseJoystickBit(2);
+    else if (dx > 0) basic.pulseJoystickBit(3);
+    else if (dz < 0) basic.pulseJoystickBit(0);
+    else if (dz > 0) basic.pulseJoystickBit(1);
     if (basic.running) {
       if (dx < 0) basic.handleKey('a', false, false);
       else if (dx > 0) basic.handleKey('d', false, false);
@@ -471,6 +476,7 @@ canvas.addEventListener('pointerup', (e) => {
   } else if (hit.kind === 'joystick-fire') {
     tac2.pressFire(false);
     sound.playJoystickClick(true);
+    basic.pulseJoystickBit(4);
     if (basic.running) {
       basic.handleKey(' ', false, false);
     }
@@ -619,20 +625,39 @@ window.addEventListener('keydown', (e) => {
 
   const handled = basic.handleKey(e.key, e.ctrlKey, e.metaKey);
   c64.triggerKey(e.key);
-  if (e.key === 'ArrowLeft' || (basic.running && e.key.toLowerCase() === 'a')) {
+  const activeRun = basic.running || basic.cpuRunning;
+  if (e.key === 'ArrowLeft' || (activeRun && e.key.toLowerCase() === 'a')) {
     tac2.nudge(-1, 0);
-  } else if (e.key === 'ArrowRight' || (basic.running && e.key.toLowerCase() === 'd')) {
+    basic.setJoystickBit(2, true);
+  } else if (e.key === 'ArrowRight' || (activeRun && e.key.toLowerCase() === 'd')) {
     tac2.nudge(1, 0);
-  } else if (e.key === 'ArrowUp' || (basic.running && e.key.toLowerCase() === 'w')) {
+    basic.setJoystickBit(3, true);
+  } else if (e.key === 'ArrowUp' || (activeRun && e.key.toLowerCase() === 'w')) {
     tac2.nudge(0, -1);
-  } else if (e.key === 'ArrowDown' || (basic.running && e.key.toLowerCase() === 's')) {
+    basic.setJoystickBit(0, true);
+  } else if (e.key === 'ArrowDown' || (activeRun && e.key.toLowerCase() === 's')) {
     tac2.nudge(0, 1);
-  } else if (e.key === ' ' && basic.running) {
+    basic.setJoystickBit(1, true);
+  } else if (e.key === ' ' && activeRun) {
     tac2.pressFire(false);
+    basic.setJoystickBit(4, true);
   }
   if (handled) {
     sound.playKey(e.key);
   }
+});
+
+window.addEventListener('keyup', (e) => {
+  const k = e.key.toLowerCase();
+  if (e.key === 'ArrowUp' || k === 'w') basic.setJoystickBit(0, false);
+  else if (e.key === 'ArrowDown' || k === 's') basic.setJoystickBit(1, false);
+  else if (e.key === 'ArrowLeft' || k === 'a') basic.setJoystickBit(2, false);
+  else if (e.key === 'ArrowRight' || k === 'd') basic.setJoystickBit(3, false);
+  else if (e.key === ' ') basic.setJoystickBit(4, false);
+});
+
+window.addEventListener('blur', () => {
+  for (let b = 0; b < 5; b++) basic.setJoystickBit(b, false);
 });
 
 // ---- Native iOS / Android Virtual Keyboard Bridge ----

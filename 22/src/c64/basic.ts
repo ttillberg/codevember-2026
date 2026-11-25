@@ -1,5 +1,13 @@
-import { C64Screen, COLS, ROWS } from './screen';
+import { C64Screen, COLS, ROWS, RASTER_LINES_TOTAL } from './screen';
 import { C64FloppyDisk } from './disk';
+import { Cpu6502 } from './cpu6502';
+import {
+  assemble6502,
+  assembleSingleLine,
+  disassembleAt,
+  looksLike6502Assembly,
+  type AsmResult,
+} from './asm6502';
 
 type BasicValue = number | string;
 
@@ -119,14 +127,81 @@ export class C64Basic {
   // Direct-mode remaining statements after an INPUT (rare, supported cleanly)
   private directRemainder: { text: string; offset: number } | null = null;
 
-  // Scratch RAM for arbitrary PEEK/POKE outside VIC/SID
-  private extraRam = new Map<number, number>();
+  // Flat 64KB RAM + MOS 6510 CPU + VIC-II raster/IRQ + CIA1 joystick state
+  readonly ram = new Uint8Array(65536);
+  readonly cpu: Cpu6502;
+  cpuRunning = false;
+  private cpuReturnToBasic: { lineIndex: number; offset: number } | null = null;
+  private cpuReturnToMonitor = false;
+  private currentRasterLine = 0;
+  private rasterIrqLine = 0;
+  private vicD019 = 0;
+  private vicD01A = 0;
+  private jiffyLow = 0;
+
+  // CIA1 Port A ($DC00) Joystick Port 2: active-low bits (0=Up,1=Down,2=Left,3=Right,4=Fire)
+  private joyHeldBits = 0;
+  private joyPulseTimers = [0, 0, 0, 0, 0];
+
+  // Interactive 6502 Machine Language Monitor (MON / ASM)
+  monitorMode = false;
+  private monAssemblePc = 0xc000;
+  private monDisasmPc = 0xc000;
+  private monMemPc = 0xc000;
+  private lastAsmSymbols: Record<string, number> = {};
+  private lastAsmEntry = 0xc000;
 
   constructor(screen: C64Screen, options: C64MachineOptions = {}) {
     this.screen = screen;
+    this.screen.attachRam(this.ram);
     this.disk = options.disk ?? new C64FloppyDisk();
     this.options = options;
+    this.cpu = new Cpu6502({
+      read: (addr) => this.peek(addr),
+      write: (addr, val) => this.poke(addr, val),
+      kernalTrap: (pc, cpu) => this.handleKernalTrap(pc, cpu),
+    });
     this.boot();
+  }
+
+  /** Set a held joystick Port 2 direction/fire bit (0=Up,1=Down,2=Left,3=Right,4=Fire). */
+  setJoystickBit(bit: number, pressed: boolean) {
+    if (bit < 0 || bit > 4) return;
+    if (pressed) this.joyHeldBits |= 1 << bit;
+    else this.joyHeldBits &= ~(1 << bit);
+  }
+
+  /** Pulse a joystick Port 2 bit briefly (used when clicking the 3D Suncom TAC-2). */
+  pulseJoystickBit(bit: number, durationSec = 0.22) {
+    if (bit < 0 || bit > 4) return;
+    this.joyPulseTimers[bit] = Math.max(this.joyPulseTimers[bit], durationSec);
+  }
+
+  private getJoy2Byte(): number {
+    let active = this.joyHeldBits;
+    for (let i = 0; i < 5; i++) {
+      if (this.joyPulseTimers[i] > 0) active |= 1 << i;
+    }
+    return (~active) & 0xff;
+  }
+
+  /** Assemble 6502 source and load all segments directly into 64KB RAM. */
+  assembleSource(source: string, defaultOrg = 0xc000): AsmResult {
+    const res = assemble6502(source, defaultOrg);
+    if (res.ok) {
+      for (const seg of res.segments) {
+        for (let i = 0; i < seg.bytes.length; i++) {
+          this.ram[(seg.org + i) & 0xffff] = seg.bytes[i] & 0xff;
+        }
+      }
+      this.lastAsmSymbols = res.symbols;
+      this.lastAsmEntry = res.entryAddr;
+      this.monDisasmPc = res.entryAddr;
+      this.monMemPc = res.entryAddr;
+      this.monAssemblePc = res.entryAddr;
+      this.cpu.pc = res.entryAddr;
+    }
+    return res;
   }
 
   boot() {
@@ -134,6 +209,18 @@ export class C64Basic {
     this.sortedLines = [];
     this.directoryListing = null;
     this.diskTimer = null;
+    this.cpuRunning = false;
+    this.cpuReturnToBasic = null;
+    this.cpuReturnToMonitor = false;
+    this.monitorMode = false;
+    this.ram.fill(0);
+    this.vicD019 = 0;
+    this.vicD01A = 0;
+    this.rasterIrqLine = 0;
+    this.currentRasterLine = 0;
+    this.joyHeldBits = 0;
+    this.joyPulseTimers.fill(0);
+    this.cpu.reset(0xc000);
     this.options.onDiskActivity?.('idle');
     this.options.onSidSilence?.();
     this.clearRuntime();
@@ -209,8 +296,31 @@ export class C64Basic {
     }
 
     // Multi-line paste: stop any running loop first if needed, then feed each line
-    if (this.running || this.diskTimer) {
+    if (this.running || this.cpuRunning || this.diskTimer) {
       this.breakProgram();
+    }
+
+    // Auto-detect pasted 6502 assembly source and assemble directly into 64KB RAM!
+    if (looksLike6502Assembly(normalized)) {
+      const h4 = (n: number) => (n & 0xffff).toString(16).toUpperCase().padStart(4, '0');
+      this.screen.printLine('ASSEMBLING 6502...');
+      const res = this.assembleSource(normalized);
+      if (!res.ok) {
+        for (const err of res.errors.slice(0, 5)) {
+          this.screen.printLine(`?ASM ${err}`);
+        }
+        this.screen.printLine('READY.');
+        this.screen.cursorEnabled = true;
+        this.screen.resetBlink();
+        return normalized.split('\n').length;
+      }
+      const endAddr = (res.entryAddr + Math.max(0, res.totalBytes - 1)) & 0xffff;
+      this.screen.printLine(`OK: $${h4(res.entryAddr)}-$${h4(endAddr)} (${res.totalBytes} BYTES)`);
+      this.screen.printLine(`TYPE SYS ${res.entryAddr} TO RUN (OR MON)`);
+      this.screen.printLine(this.monitorMode ? '.' : 'READY.');
+      this.screen.cursorEnabled = true;
+      this.screen.resetBlink();
+      return normalized.split('\n').length;
     }
 
     const lines = normalized
@@ -261,7 +371,7 @@ export class C64Basic {
 
     // CLR/HOME (Ctrl+L or Home) — ignored during active INPUT so prompt lock stays intact
     if (key === 'Home' || (ctrl && (key === 'l' || key === 'L'))) {
-      if (!this.running && !this.inputState) {
+      if (!this.running && !this.cpuRunning && !this.inputState) {
         if (ctrl) this.screen.clear();
         else this.screen.home();
       }
@@ -271,8 +381,8 @@ export class C64Basic {
     // Ignore typing while 1541 drive is actively loading/saving (except Escape/RUN-STOP)
     if (this.diskTimer) return true;
 
-    // If program is running without INPUT, buffer key for GET
-    if (this.running && !this.inputState) {
+    // If program or 6502 machine code is running without INPUT, buffer key for GET / $FFE4
+    if ((this.running || this.cpuRunning) && !this.inputState) {
       if (key.length === 1) {
         if (this.keyBuffer.length < 16) this.keyBuffer.push(key.toUpperCase());
       } else if (key === 'Enter') {
@@ -333,6 +443,38 @@ export class C64Basic {
 
   /** Trigger RUN/STOP just like pressing the C64 RUN/STOP key. */
   breakProgram() {
+    if (this.cpuRunning) {
+      const wasBitmap = this.screen.isBitmapMode();
+      const backToMon = this.cpuReturnToMonitor;
+      this.cpuRunning = false;
+      this.cpuReturnToBasic = null;
+      this.cpuReturnToMonitor = false;
+      this.running = false;
+      this.vicD01A = 0;
+      this.vicD019 = 0;
+      this.options.onSidSilence?.();
+      this.screen.resetVic();
+      if (wasBitmap) {
+        this.screen.setBorder(14);
+        this.screen.setBg(6);
+        this.screen.setTextColor(14);
+        this.screen.clear();
+      } else {
+        this.screen.newLine();
+      }
+      this.screen.printLine('BREAK');
+      if (backToMon || this.monitorMode) {
+        this.monitorMode = true;
+        this.screen.printLine(' PC  SR AC XR YR SP');
+        this.screen.printLine(`.${this.cpu.formatRegisters()}`);
+        this.screen.print('.');
+      } else {
+        this.screen.printLine('READY.');
+      }
+      this.screen.cursorEnabled = true;
+      this.screen.resetBlink();
+      return;
+    }
     if (this.diskTimer) {
       this.diskTimer = null;
       this.options.onDiskActivity?.('idle');
@@ -364,8 +506,17 @@ export class C64Basic {
     }
   }
 
-  /** Step running program and async 1541 disk transfer non-blockingly each frame. */
+  /** Step running program, 6510 CPU, and async 1541 disk transfer non-blockingly each frame. */
   step(maxStatements = 24, dt = 1 / 60) {
+    // Decay pulsed TAC-2 joystick timers
+    for (let i = 0; i < 5; i++) {
+      if (this.joyPulseTimers[i] > 0) {
+        this.joyPulseTimers[i] = Math.max(0, this.joyPulseTimers[i] - dt);
+      }
+    }
+    this.jiffyLow = (this.jiffyLow + 1) & 0xff;
+    this.ram[0x00a2] = this.jiffyLow;
+
     if (this.diskTimer) {
       this.diskTimer.remaining -= dt;
       if (this.diskTimer.remaining <= 0) {
@@ -386,10 +537,15 @@ export class C64Basic {
       return;
     }
 
+    if (this.cpuRunning) {
+      this.stepCpuFrame();
+      return;
+    }
+
     if (!this.running || this.inputState) return;
 
     let count = 0;
-    while (this.running && !this.inputState && count < maxStatements) {
+    while (this.running && !this.cpuRunning && !this.inputState && count < maxStatements) {
       if (this.pcLineIndex >= this.sortedLines.length) {
         this.finishProgram();
         return;
@@ -477,7 +633,22 @@ export class C64Basic {
 
     const line = this.screen.commitLogicalLine();
     const trimmed = line.trim();
-    if (!trimmed) return;
+    if (!trimmed) {
+      if (this.monitorMode) this.screen.print('.');
+      return;
+    }
+
+    if (this.monitorMode) {
+      this.handleMonitorCommand(trimmed);
+      return;
+    }
+
+    // Enter 6502 Machine Language Monitor (MON / MONITOR / ASM)
+    const upperCmd = trimmed.toUpperCase();
+    if (upperCmd === 'MON' || upperCmd === 'MONITOR' || upperCmd === 'ASM') {
+      this.enterMonitor();
+      return;
+    }
 
     // Check for leading line number (program editing)
     const numMatch = trimmed.match(/^(\d+)\s*(.*)$/);
@@ -946,12 +1117,15 @@ export class C64Basic {
     if (kw === 'SYS') {
       const end = findStatementEnd(src, pos + 3);
       const addr = Math.trunc(this.evalNum(src.slice(pos + 3, end)));
+      if (addr < 0 || addr > 65535) throw new BasicError('ILLEGAL QUANTITY');
       if (addr === 64738) {
         this.boot();
         this.options.onReset?.();
         return { action: 'startedRun' };
       }
-      return { action: 'continue', nextOffset: end < src.length ? end + 1 : src.length };
+      const nextOff = end < src.length ? end + 1 : src.length;
+      this.startCpu(addr, !isDirect ? { lineIndex: this.pcLineIndex, offset: nextOff } : null, false);
+      return { action: 'startedRun' };
     }
 
     if (kw === 'WAIT') {
@@ -1095,6 +1269,9 @@ export class C64Basic {
           this.pendingEchoInput = null;
           for (const [ln, src] of Object.entries(found.lines)) {
             this.program.set(Number(ln), src);
+          }
+          if (found.asmSource) {
+            this.assembleSource(found.asmSource);
           }
           this.rebuildLineIndex();
           this.clearRuntime();
@@ -1429,32 +1606,420 @@ export class C64Basic {
   }
 
   private poke(addr: number, val: number) {
-    if (addr === 53280) {
-      this.screen.setBorder(val);
-    } else if (addr === 53281) {
-      this.screen.setBg(val);
-    } else if (addr === 646) {
-      this.screen.setTextColor(val);
-    } else if (addr >= 1024 && addr < 1024 + COLS * ROWS) {
-      this.screen.pokeScreen(addr - 1024, val);
-    } else if (addr >= 55296 && addr < 55296 + COLS * ROWS) {
-      this.screen.pokeColor(addr - 55296, val);
-    } else if (addr >= 54272 && addr <= 54296) {
-      this.extraRam.set(addr, val);
-      this.options.onSidPoke?.(addr - 54272, val);
-    } else {
-      this.extraRam.set(addr, val);
+    const a = addr & 0xffff;
+    const v = val & 0xff;
+    this.ram[a] = v;
+
+    // Screen RAM ($0400-$07E7)
+    if (a >= 0x0400 && a < 0x0400 + COLS * ROWS) {
+      this.screen.pokeScreen(a - 0x0400, v);
+      return;
+    }
+    // Color RAM ($D800-$DBE7)
+    if (a >= 0xd800 && a < 0xd800 + COLS * ROWS) {
+      this.screen.pokeColor(a - 0xd800, v);
+      return;
+    }
+    // Text color ($0286)
+    if (a === 0x0286) {
+      this.screen.setTextColor(v);
+      return;
+    }
+    // VIC-II Registers ($D000-$D02E)
+    if (a >= 0xd000 && a <= 0xd02e) {
+      if (a <= 0xd00f) {
+        const s = (a - 0xd000) >> 1;
+        if ((a & 1) === 0) {
+          this.screen.spriteX[s] = (this.screen.spriteX[s] & 0x0100) | v;
+        } else {
+          this.screen.spriteY[s] = v;
+        }
+        if (this.screen.spriteEnable) this.screen.markDirty();
+      } else if (a === 0xd010) {
+        for (let s = 0; s < 8; s++) {
+          this.screen.spriteX[s] = (this.screen.spriteX[s] & 0x00ff) | (((v >> s) & 1) << 8);
+        }
+        if (this.screen.spriteEnable) this.screen.markDirty();
+      } else if (a === 0xd011) {
+        this.screen.vicD011 = v & 0x7f;
+        this.rasterIrqLine = (this.rasterIrqLine & 0xff) | ((v & 0x80) << 1);
+        this.screen.markDirty();
+      } else if (a === 0xd012) {
+        this.rasterIrqLine = (this.rasterIrqLine & 0x100) | v;
+      } else if (a === 0xd015) {
+        this.screen.spriteEnable = v;
+        this.screen.markDirty();
+      } else if (a === 0xd016) {
+        this.screen.vicD016 = v;
+        this.screen.markDirty();
+      } else if (a === 0xd017) {
+        this.screen.spriteExpandY = v;
+        if (this.screen.spriteEnable) this.screen.markDirty();
+      } else if (a === 0xd018) {
+        this.screen.vicD018 = v;
+        this.screen.markDirty();
+      } else if (a === 0xd019) {
+        this.vicD019 &= ~v;
+      } else if (a === 0xd01a) {
+        this.vicD01A = v & 0x0f;
+      } else if (a === 0xd01d) {
+        this.screen.spriteExpandX = v;
+        if (this.screen.spriteEnable) this.screen.markDirty();
+      } else if (a === 0xd020) {
+        this.screen.setBorder(v);
+      } else if (a === 0xd021) {
+        this.screen.setBg(v);
+      } else if (a >= 0xd027 && a <= 0xd02e) {
+        this.screen.spriteColor[a - 0xd027] = v & 0x0f;
+        if (this.screen.spriteEnable) this.screen.markDirty();
+      }
+      return;
+    }
+    // SID ($D400-$D418)
+    if (a >= 0xd400 && a <= 0xd418) {
+      this.options.onSidPoke?.(a - 0xd400, v);
+      return;
+    }
+    // CIA2 Port A ($DD00): VIC-II 16KB bank select
+    if (a === 0xdd00) {
+      this.screen.vicBank = (3 - (v & 0x03)) * 0x4000;
+      this.screen.markDirty();
+      return;
+    }
+    // Mark screen dirty when writing into the active VIC-II bitmap or screen bank
+    if (this.screen.isBitmapMode() || this.screen.spriteEnable !== 0) {
+      const bank = this.screen.vicBank;
+      if (a >= bank && a < bank + 0x4000) {
+        this.screen.markDirty();
+      }
     }
   }
 
   private peek(addr: number): number {
-    if (addr === 53280) return this.screen.borderColor;
-    if (addr === 53281) return this.screen.bgColor;
-    if (addr === 646) return this.screen.textColor;
-    if (addr === 198) return this.keyBuffer.length;
-    if (addr >= 1024 && addr < 1024 + COLS * ROWS) return this.screen.screenRam[addr - 1024];
-    if (addr >= 55296 && addr < 55296 + COLS * ROWS) return this.screen.colorRam[addr - 55296];
-    return this.extraRam.get(addr) ?? 0;
+    const a = addr & 0xffff;
+    if (a === 0x0286) return this.screen.textColor;
+    if (a === 0x00c6) return this.keyBuffer.length;
+    if (a === 0x00a2) return this.jiffyLow;
+    if (a >= 0x0400 && a < 0x0400 + COLS * ROWS) return this.screen.screenRam[a - 0x0400];
+    if (a >= 0xd800 && a < 0xd800 + COLS * ROWS) return this.screen.colorRam[a - 0xd800];
+    if (a === 0xd011) {
+      return (this.screen.vicD011 & 0x7f) | ((this.currentRasterLine & 0x100) ? 0x80 : 0);
+    }
+    if (a === 0xd012) return this.currentRasterLine & 0xff;
+    if (a === 0xd015) return this.screen.spriteEnable;
+    if (a === 0xd016) return this.screen.vicD016;
+    if (a === 0xd018) return this.screen.vicD018;
+    if (a === 0xd019) return this.vicD019;
+    if (a === 0xd01a) return this.vicD01A;
+    if (a === 0xd020) return this.screen.borderColor;
+    if (a === 0xd021) return this.screen.bgColor;
+    if (a === 0xdc00) return this.getJoy2Byte();
+    return this.ram[a];
+  }
+
+  // ---- 6510 CPU Execution & KERNAL Traps ----
+
+  private startCpu(
+    addr: number,
+    returnToBasic: { lineIndex: number; offset: number } | null,
+    returnToMonitor: boolean,
+  ) {
+    this.cpuReturnToBasic = returnToBasic;
+    this.cpuReturnToMonitor = returnToMonitor;
+    this.cpuRunning = true;
+    this.screen.cursorEnabled = false;
+    this.cpu.callSys(addr & 0xffff);
+  }
+
+  private handleKernalTrap(pc: number, cpu: Cpu6502): boolean {
+    switch (pc) {
+      case 0xffd2: // CHROUT — print PETSCII character in A
+        this.screen.printCode(cpu.a, false);
+        cpu.rts();
+        return true;
+      case 0xffe4: { // GETIN — read next key from buffer into A (0 if none)
+        const ch = this.keyBuffer.shift();
+        cpu.a = ch ? ch.charCodeAt(0) & 0xff : 0;
+        cpu.rts();
+        return true;
+      }
+      case 0xe544: // CLRSCR — clear screen
+        this.screen.clear();
+        cpu.rts();
+        return true;
+      case 0xe566: // HOME — cursor home
+        this.screen.home();
+        cpu.rts();
+        return true;
+      case 0xfff0: // PLOT — carry=1 read (X=row,Y=col); carry=0 set
+        if (cpu.getFlag(0x01)) {
+          cpu.x = this.screen.cursorY;
+          cpu.y = this.screen.cursorX;
+        } else {
+          this.screen.cursorY = Math.max(0, Math.min(ROWS - 1, cpu.x));
+          this.screen.cursorX = Math.max(0, Math.min(COLS - 1, cpu.y));
+        }
+        cpu.rts();
+        return true;
+      case 0xea31:
+      case 0xea81: // Standard C64 KERNAL IRQ exit (PLA/TAY/PLA/TAX/PLA/RTI)
+        cpu.y = cpu.pull();
+        cpu.x = cpu.pull();
+        cpu.a = cpu.pull();
+        cpu.p = (cpu.pull() & ~0x10) | 0x20;
+        {
+          const lo = cpu.pull();
+          const hi = cpu.pull();
+          cpu.pc = lo | (hi << 8);
+        }
+        return true;
+      default:
+        return false;
+    }
+  }
+
+  /** Step one PAL frame (~19,656 cycles across 312 raster scanlines at 63 cycles/line). */
+  private stepCpuFrame() {
+    this.screen.beginRasterFrame();
+    const CYCLES_PER_LINE = 63;
+
+    for (let line = 0; line < RASTER_LINES_TOTAL; line++) {
+      this.currentRasterLine = line;
+
+      // Fire VIC-II Raster IRQ if enabled ($D01A bit 0) and raster line matches compare
+      if ((this.vicD01A & 0x01) !== 0 && line === this.rasterIrqLine) {
+        this.vicD019 |= 0x81;
+        this.cpu.irq();
+      }
+
+      let lineCycles = 0;
+      while (lineCycles < CYCLES_PER_LINE && !this.cpu.halted) {
+        lineCycles += this.cpu.step();
+      }
+
+      this.screen.latchRasterLine(line);
+
+      if (this.cpu.halted) {
+        this.finishCpuRun();
+        return;
+      }
+    }
+  }
+
+  private finishCpuRun() {
+    const reason = this.cpu.haltReason;
+    const retBasic = this.cpuReturnToBasic;
+    const retMon = this.cpuReturnToMonitor;
+    this.cpuRunning = false;
+    this.cpuReturnToBasic = null;
+    this.cpuReturnToMonitor = false;
+
+    if (reason === 'rts' && retBasic && !retMon) {
+      // Resume BASIC right after the SYS statement
+      this.pcLineIndex = retBasic.lineIndex;
+      this.pcOffset = retBasic.offset;
+      const lineNum = this.sortedLines[this.pcLineIndex];
+      const src = lineNum !== undefined ? (this.program.get(lineNum) ?? '') : '';
+      if (this.pcOffset >= src.length) {
+        this.pcLineIndex++;
+        this.pcOffset = 0;
+      }
+      return;
+    }
+
+    if (reason === 'brk' || reason === 'jam') {
+      const wasBitmap = this.screen.isBitmapMode();
+      this.vicD01A = 0;
+      this.options.onSidSilence?.();
+      this.screen.resetVic();
+      if (wasBitmap) {
+        this.screen.setBorder(14);
+        this.screen.setBg(6);
+        this.screen.setTextColor(14);
+        this.screen.clear();
+      } else if (this.screen.cursorX > 0) {
+        this.screen.newLine();
+      }
+      if (reason === 'jam') {
+        const op = this.cpu.lastIllegalOpcode.toString(16).toUpperCase().padStart(2, '0');
+        this.screen.printLine(`?ILLEGAL OPCODE $${op}`);
+      } else {
+        this.screen.printLine('BREAK');
+      }
+      this.screen.printLine(' PC  SR AC XR YR SP');
+      this.screen.printLine(`.${this.cpu.formatRegisters()}`);
+    }
+
+    if (retMon || this.monitorMode) {
+      this.monitorMode = true;
+      if (this.screen.cursorX > 0) this.screen.newLine();
+      this.screen.print('.');
+      this.screen.cursorEnabled = true;
+      this.screen.resetBlink();
+    } else {
+      this.running = false;
+      if (this.screen.cursorX > 0) this.screen.newLine();
+      this.screen.printLine('READY.');
+      this.screen.cursorEnabled = true;
+      this.screen.resetBlink();
+    }
+  }
+
+  // ---- Interactive 6502 Machine Language Monitor (Supermon64 Style) ----
+
+  private enterMonitor() {
+    this.monitorMode = true;
+    this.screen.printLine('*** 6502 MONITOR (H=HELP, X=EXIT) ***');
+    this.screen.printLine(' PC  SR AC XR YR SP');
+    this.screen.printLine(`.${this.cpu.formatRegisters()}`);
+    this.screen.print('.');
+    this.screen.cursorEnabled = true;
+    this.screen.resetBlink();
+  }
+
+  private handleMonitorCommand(raw: string) {
+    // Strip leading '.' prompt character if present
+    const line = raw.replace(/^\.+/, '').trim();
+    if (!line) {
+      this.screen.print('.');
+      return;
+    }
+
+    const h2 = (n: number) => (n & 0xff).toString(16).toUpperCase().padStart(2, '0');
+    const h4 = (n: number) => (n & 0xffff).toString(16).toUpperCase().padStart(4, '0');
+    const parseHex = (s: string | undefined): number | null => {
+      if (!s) return null;
+      const clean = s.replace(/^\$/, '');
+      if (!/^[0-9a-fA-F]{1,4}$/.test(clean)) return null;
+      return parseInt(clean, 16) & 0xffff;
+    };
+
+    const cmd = line[0].toUpperCase();
+    const rest = line.slice(1).trim();
+
+    if (cmd === 'X') {
+      this.monitorMode = false;
+      this.screen.printLine('READY.');
+      this.screen.cursorEnabled = true;
+      this.screen.resetBlink();
+      return;
+    }
+
+    if (cmd === 'H' || cmd === '?') {
+      this.screen.printLine('A C000 LDA #$01  ASSEMBLE');
+      this.screen.printLine('D C000           DISASSEMBLE');
+      this.screen.printLine('M C000           MEMORY HEX DUMP');
+      this.screen.printLine('> C000 A9 01     WRITE HEX BYTES');
+      this.screen.printLine('G C000           GO / RUN 6502');
+      this.screen.printLine('R                SHOW REGISTERS');
+      this.screen.printLine('X                EXIT TO BASIC');
+      this.screen.printLine('(OR PASTE FULL .ASM WITH CMD+V!)');
+      this.screen.print('.');
+      return;
+    }
+
+    if (cmd === 'R') {
+      this.screen.printLine(' PC  SR AC XR YR SP');
+      this.screen.printLine(`.${this.cpu.formatRegisters()}`);
+      this.screen.print('.');
+      return;
+    }
+
+    if (cmd === 'G') {
+      const addr = parseHex(rest.split(/\s+/)[0]) ?? this.lastAsmEntry;
+      this.startCpu(addr, null, true);
+      return;
+    }
+
+    if (cmd === 'D') {
+      const parts = rest.split(/\s+/).filter(Boolean);
+      let addr = parseHex(parts[0]) ?? this.monDisasmPc;
+      const endAddr = parseHex(parts[1]);
+      const maxLines = endAddr !== null ? 24 : 10;
+      for (let i = 0; i < maxLines; i++) {
+        if (endAddr !== null && addr > endAddr) break;
+        const d = disassembleAt(this.ram, addr);
+        const hexBytes = d.bytes.map(h2).join(' ').padEnd(8, ' ');
+        this.screen.printLine(`.${h4(addr)} ${hexBytes} ${d.text}`);
+        addr = (addr + d.size) & 0xffff;
+      }
+      this.monDisasmPc = addr;
+      this.screen.print('.');
+      return;
+    }
+
+    if (cmd === 'M') {
+      const parts = rest.split(/\s+/).filter(Boolean);
+      let addr = parseHex(parts[0]) ?? this.monMemPc;
+      const endAddr = parseHex(parts[1]);
+      const rows = endAddr !== null ? Math.min(16, Math.max(1, Math.ceil((endAddr - addr + 1) / 8))) : 8;
+      for (let r = 0; r < rows; r++) {
+        const bytes: string[] = [];
+        let ascii = '';
+        for (let c = 0; c < 8; c++) {
+          const b = this.ram[(addr + c) & 0xffff];
+          bytes.push(h2(b));
+          ascii += b >= 32 && b < 96 ? String.fromCharCode(b) : '.';
+        }
+        this.screen.printLine(`:${h4(addr)} ${bytes.join(' ')} ${ascii}`);
+        addr = (addr + 8) & 0xffff;
+      }
+      this.monMemPc = addr;
+      this.screen.print('.');
+      return;
+    }
+
+    if (cmd === '>' || cmd === ':') {
+      const parts = rest.split(/\s+/).filter(Boolean);
+      const addr = parseHex(parts[0]);
+      if (addr === null || parts.length < 2) {
+        this.screen.printLine('?SYNTAX');
+        this.screen.print('.');
+        return;
+      }
+      for (let i = 1; i < parts.length; i++) {
+        const b = parseHex(parts[i]);
+        if (b !== null) this.poke((addr + i - 1) & 0xffff, b & 0xff);
+      }
+      this.screen.printLine(`WROTE ${parts.length - 1} BYTES AT $${h4(addr)}`);
+      this.screen.print('.');
+      return;
+    }
+
+    if (cmd === 'A') {
+      const parts = rest.split(/\s+/).filter(Boolean);
+      if (parts.length === 0) {
+        this.screen.printLine(`NEXT: $${h4(this.monAssemblePc)}`);
+        this.screen.print('.');
+        return;
+      }
+      let addr = this.monAssemblePc;
+      let instStr = rest;
+      const maybeAddr = parseHex(parts[0]);
+      // Treat first token as address if there's an instruction after it (and it isn't a 3-letter mnemonic like ADC/AND/ASL)
+      if (maybeAddr !== null && parts.length >= 2 && !/^(ADC|AND|ASL|BCC|BCS|BEQ|BIT|BMI|BNE|BPL|BRK|BVC|BVS|CLC|CLD|CLI|CLV|CMP|CPX|CPY|DEC|DEX|DEY|EOR|INC|INX|INY|JMP|JSR|LDA|LDX|LDY|LSR|NOP|ORA|PHA|PHP|PLA|PLP|ROL|ROR|RTI|RTS|SBC|SEC|SED|SEI|STA|STX|STY|TAX|TAY|TSX|TXA|TXS|TYA)$/i.test(parts[0])) {
+        addr = maybeAddr;
+        instStr = rest.slice(parts[0].length).trim();
+      }
+      const res = assembleSingleLine(addr, instStr, this.lastAsmSymbols);
+      if (!res.ok) {
+        this.screen.printLine(`?${res.error}`);
+        this.screen.print('.');
+        return;
+      }
+      for (let i = 0; i < res.bytes.length; i++) {
+        this.ram[(addr + i) & 0xffff] = res.bytes[i];
+      }
+      const d = disassembleAt(this.ram, addr);
+      const hexBytes = d.bytes.map(h2).join(' ').padEnd(8, ' ');
+      this.screen.printLine(`.${h4(addr)} ${hexBytes} ${d.text}`);
+      this.monAssemblePc = (addr + res.bytes.length) & 0xffff;
+      this.screen.print('.');
+      return;
+    }
+
+    this.screen.printLine('?UNKNOWN CMD (TYPE H FOR HELP)');
+    this.screen.print('.');
   }
 
   private nextRnd(arg: number): number {
