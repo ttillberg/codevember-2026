@@ -2549,6 +2549,7 @@ export function createWaterDropSystem(
     flatEdgeAbsX: number;
     innerPouchY: number;
     maxRimAbsX: number;
+    hasSmooth: boolean;
   }
 
   function makeSideScan(): SideBottomScan {
@@ -2566,6 +2567,7 @@ export function createWaterDropSystem(
       flatEdgeAbsX: 0,
       innerPouchY: Infinity,
       maxRimAbsX: 0,
+      hasSmooth: false,
     };
   }
 
@@ -2573,16 +2575,19 @@ export function createWaterDropSystem(
   const rightBottomScan = makeSideScan();
 
   /**
-   * Samples a side's bottom flat-underside profile ONCE per side per rescan (90 samples/side vs 180/pendant),
-   * caching both v = 0.008 and v = 0.018 bands so all 3 pendants, bottom pearls, and stick-flow menisci share one scan!
+   * Samples a side's bottom flat-underside profile ONCE per side per frame, computing exact sub-pixel
+   * linear crossings for `flatEdgeAbsX` and `maxRimAbsX` so bottom pearls & pendants glide smoothly
+   * inward with zero discrete bin jumps even during fast melt!
    */
-  function scanSideBottom(ice: PopsicleIceSystem, side: -1 | 1, stickClearX: number, out: SideBottomScan) {
+  function scanSideBottom(ice: PopsicleIceSystem, side: -1 | 1, stickClearX: number, out: SideBottomScan, dt = 0) {
     const uStick = side < 0 ? 0.985 : 0.015;
     const uOuter = side < 0 ? 0.752 : 0.248;
     let lowestY = Infinity;
     let innerPouchY = Infinity;
-    let maxRimAbsX = 0;
+    let rawMaxRimAbsX = 0;
 
+    let prevRimMargin = -1;
+    let prevRimAx = 0;
     for (let k = 0; k <= BOTTOM_SCAN_STEPS; k++) {
       const u = uStick + (uOuter - uStick) * (k / BOTTOM_SCAN_STEPS);
       out.u[k] = u;
@@ -2594,9 +2599,18 @@ export function createWaterDropSystem(
       out.ny0[k] = scanNorm.y;
 
       const ax = Math.abs(scanPos.x);
-      if (scanNorm.y <= -0.50 && ax > maxRimAbsX) {
-        maxRimAbsX = ax;
+      const rimMargin = -0.50 - scanNorm.y;
+      if (rimMargin >= 0) {
+        if (ax > rawMaxRimAbsX) rawMaxRimAbsX = ax;
+      } else if (k > 0 && prevRimMargin >= 0) {
+        const denom = prevRimMargin - rimMargin;
+        const t = denom > 1e-6 ? clamp(prevRimMargin / denom, 0, 1) : 0;
+        const crossAx = prevRimAx + (ax - prevRimAx) * t;
+        if (crossAx > rawMaxRimAbsX) rawMaxRimAbsX = crossAx;
       }
+      prevRimMargin = rimMargin;
+      prevRimAx = ax;
+
       if (ax >= POPSICLE.stickEdgeX + 0.012 && ax <= POPSICLE.stickEdgeX + 0.072 && scanNorm.y <= -0.45) {
         if (scanPos.y < innerPouchY) innerPouchY = scanPos.y;
       }
@@ -2611,22 +2625,79 @@ export function createWaterDropSystem(
       out.ny1[k] = scanNorm.y;
     }
 
-    let flatEdgeAbsX = stickClearX;
+    // Continuous sub-pixel linear crossing of both normal-flatness & height-flatness margins
+    let rawFlatEdgeAbsX = stickClearX;
+    let prevFlatMargin = -1;
+    let prevFlatAx = stickClearX;
     for (let k = 0; k <= BOTTOM_SCAN_STEPS; k++) {
       const ax = Math.abs(out.x0[k]);
-      if (ax >= stickClearX && out.ny0[k] <= -0.74 && out.y0[k] <= lowestY + 0.014 && ax > flatEdgeAbsX) {
-        flatEdgeAbsX = ax;
+      const flatMargin = Math.min(-0.74 - out.ny0[k], lowestY + 0.014 - out.y0[k]);
+      if (ax >= stickClearX) {
+        if (flatMargin >= 0) {
+          if (ax > rawFlatEdgeAbsX) rawFlatEdgeAbsX = ax;
+        } else if (k > 0 && prevFlatMargin >= 0) {
+          const denom = prevFlatMargin - flatMargin;
+          const t = denom > 1e-6 ? clamp(prevFlatMargin / denom, 0, 1) : 0;
+          const crossAx = prevFlatAx + (ax - prevFlatAx) * t;
+          if (crossAx > rawFlatEdgeAbsX) rawFlatEdgeAbsX = crossAx;
+        }
       }
+      prevFlatMargin = flatMargin;
+      prevFlatAx = ax;
     }
 
     out.lowestY = lowestY;
-    out.flatEdgeAbsX = flatEdgeAbsX;
     out.innerPouchY = innerPouchY;
-    out.maxRimAbsX = maxRimAbsX;
+    if (dt > 0 && out.hasSmooth) {
+      const alpha = 1.0 - Math.exp(-dt * 16.0);
+      out.flatEdgeAbsX += (rawFlatEdgeAbsX - out.flatEdgeAbsX) * alpha;
+      out.maxRimAbsX += (rawMaxRimAbsX - out.maxRimAbsX) * alpha;
+    } else {
+      out.flatEdgeAbsX = rawFlatEdgeAbsX;
+      out.maxRimAbsX = rawMaxRimAbsX;
+      out.hasSmooth = true;
+    }
+  }
+
+  /** Continuous linear interpolation along the cached bottom rim scan (zero discrete bin snapping!). */
+  function sampleScanAtAbsX(
+    scan: SideBottomScan,
+    absX: number,
+  ): { found: boolean; u: number; y: number; ny: number } {
+    for (let k = 0; k < BOTTOM_SCAN_STEPS; k++) {
+      const ax0 = Math.abs(scan.x0[k]);
+      const ax1 = Math.abs(scan.x0[k + 1]);
+      const lo = ax0 <= ax1 ? ax0 : ax1;
+      const hi = ax0 <= ax1 ? ax1 : ax0;
+      if (absX >= lo && absX <= hi && (scan.ny0[k] <= -0.60 || scan.ny0[k + 1] <= -0.60)) {
+        const span = ax1 - ax0;
+        const t = Math.abs(span) > 1e-6 ? clamp((absX - ax0) / span, 0, 1) : 0;
+        return {
+          found: true,
+          u: scan.u[k] + (scan.u[k + 1] - scan.u[k]) * t,
+          y: scan.y0[k] + (scan.y0[k + 1] - scan.y0[k]) * t,
+          ny: scan.ny0[k] + (scan.ny0[k + 1] - scan.ny0[k]) * t,
+        };
+      }
+    }
+    let bestK = -1;
+    let bestDist = Infinity;
+    for (let k = 0; k <= BOTTOM_SCAN_STEPS; k++) {
+      if (scan.ny0[k] > -0.66) continue;
+      const d = Math.abs(Math.abs(scan.x0[k]) - absX);
+      if (d < bestDist) {
+        bestDist = d;
+        bestK = k;
+      }
+    }
+    if (bestK < 0 || bestDist > 0.05) {
+      return { found: false, u: 0, y: 0, ny: 0 };
+    }
+    return { found: true, u: scan.u[bestK], y: scan.y0[bestK], ny: scan.ny0[bestK] };
   }
 
   /**
-   * Resolves the exact safe flat-underside anchor for a pendant drop from its side's cached scan,
+   * Resolves the exact continuous sub-pixel flat-underside anchor for a pendant drop from its side's cached scan,
    * strictly inset from BOTH the wooden stick AND the upward-curving rounded bottom corner.
    */
   function resolvePendantSlotFromScan(
@@ -2643,55 +2714,21 @@ export function createWaterDropSystem(
     const availSpan = maxSafeAbsX - minSafeAbsX;
 
     if (availSpan < -0.018) {
-      return { found: false, u: uMid, v: 0.010, minSafeAbsX, maxSafeAbsX, availSpan };
+      return { found: false, u: uMid, v: 0.008, minSafeAbsX, maxSafeAbsX, availSpan };
     }
 
-    const targetAbsX = availSpan <= 0 ? (minSafeAbsX + maxSafeAbsX) * 0.5 : minSafeAbsX + availSpan * slotFrac;
-    const localHalfWin = Math.min(0.010, Math.max(0.005, Math.max(0, availSpan) * 0.07));
     const clampMaxX = Math.max(minSafeAbsX, maxSafeAbsX);
-
-    let bestY = Infinity;
-    let bestU = uMid;
-    let bestV = 0.008;
-    let found = false;
-
-    let fallbackDist = Infinity;
-    let fallbackU = bestU;
-    let fallbackV = 0.008;
-    let fallbackFound = false;
-
-    for (let bv = 0; bv < 2; bv++) {
-      const vTry = bv === 0 ? 0.008 : 0.018;
-      const xs = bv === 0 ? scan.x0 : scan.x1;
-      const ys = bv === 0 ? scan.y0 : scan.y1;
-      const nys = bv === 0 ? scan.ny0 : scan.ny1;
-      for (let k = 0; k <= BOTTOM_SCAN_STEPS; k++) {
-        if (nys[k] > -0.70) continue;
-        const ax = Math.abs(xs[k]);
-        if (ax < minSafeAbsX || ax > clampMaxX) continue;
-        const dTarget = Math.abs(ax - targetAbsX);
-        if (dTarget < fallbackDist) {
-          fallbackDist = dTarget;
-          fallbackU = scan.u[k];
-          fallbackV = vTry;
-          fallbackFound = true;
-        }
-        if (dTarget <= localHalfWin && ys[k] < bestY) {
-          bestY = ys[k];
-          bestU = scan.u[k];
-          bestV = vTry;
-          found = true;
-        }
-      }
+    const targetAbsX = clamp(
+      availSpan <= 0 ? (minSafeAbsX + maxSafeAbsX) * 0.5 : minSafeAbsX + availSpan * slotFrac,
+      minSafeAbsX,
+      clampMaxX,
+    );
+    const samp = sampleScanAtAbsX(scan, targetAbsX);
+    if (!samp.found) {
+      return { found: false, u: uMid, v: 0.008, minSafeAbsX, maxSafeAbsX, availSpan };
     }
 
-    if (!found && fallbackFound) {
-      bestU = fallbackU;
-      bestV = fallbackV;
-      found = true;
-    }
-
-    return { found, u: bestU, v: bestV, minSafeAbsX, maxSafeAbsX, availSpan };
+    return { found: true, u: samp.u, v: 0.008, minSafeAbsX, maxSafeAbsX, availSpan };
   }
 
   function feedPendantFromDrop(uNorm: number, volumeBoost: number) {
@@ -2836,6 +2873,8 @@ export function createWaterDropSystem(
     hasWetness = false;
     activeDropInstances = 0;
     lastLowScanMelt = -999;
+    leftBottomScan.hasSmooth = false;
+    rightBottomScan.hasSmooth = false;
     respawnRand = mulberry32(seed * 911 + 73);
 
     for (const d of drops) {
@@ -4097,11 +4136,12 @@ export function createWaterDropSystem(
       0,
       1,
     );
-    const shouldRescanLow = dt === 0 || Math.abs(state.melt - lastLowScanMelt) > 0.004;
+    const shouldRescanLow =
+      !leftBottomScan.hasSmooth || dt > 0 || Math.abs(state.melt - lastLowScanMelt) > 1e-6;
     if (shouldRescanLow && !iceGone && activeIceScale > 0.05) {
       lastLowScanMelt = state.melt;
-      scanSideBottom(ice, -1, stickClearX, leftBottomScan);
-      scanSideBottom(ice, 1, stickClearX, rightBottomScan);
+      scanSideBottom(ice, -1, stickClearX, leftBottomScan, dt);
+      scanSideBottom(ice, 1, stickClearX, rightBottomScan, dt);
     }
 
     // Bind the concave pouch-to-stick meniscus bridge directly to each side's live translucent underside!
@@ -4153,15 +4193,17 @@ export function createWaterDropSystem(
               const curAbsX = Math.abs(tmpPos.x);
               const pushedOffCorner = curAbsX > p.maxSafeAbsX || curAbsX < p.minSafeAbsX || tmpNorm.y > -0.68;
               if (pushedOffCorner) {
-                // Immediately tuck inward inside the safe flat bottom so the collar NEVER overhangs the corner!
+                // Smoothly glide inward inside the receding flat bottom (never discrete snap/teleport!)
                 const du = wrappedDeltaU(p.anchorU, low.u);
-                const tuckRate = curAbsX > p.maxSafeAbsX + 0.015 ? 1.0 : Math.min(1, Math.max(dt, 0.04) * 8.0);
+                const tuckRate =
+                  curAbsX > p.maxSafeAbsX + 0.035 ? 1.0 - Math.exp(-dt * 24.0) : 1.0 - Math.exp(-dt * 12.0);
                 p.anchorU = (p.anchorU + du * tuckRate + 1) % 1;
                 p.anchorV += (low.v - p.anchorV) * tuckRate;
               } else if (p.stage === 'growing' && p.grow < 0.45) {
                 const du = wrappedDeltaU(p.anchorU, low.u);
-                p.anchorU = (p.anchorU + clamp(du, -0.012, 0.012) * Math.min(1, Math.max(dt, 0.03) * 1.8) + 1) % 1;
-                p.anchorV += (low.v - p.anchorV) * Math.min(1, Math.max(dt, 0.03) * 2.5);
+                const driftRate = 1.0 - Math.exp(-dt * 2.4);
+                p.anchorU = (p.anchorU + clamp(du, -0.012, 0.012) * driftRate + 1) % 1;
+                p.anchorV += (low.v - p.anchorV) * driftRate;
               }
             }
           }
@@ -4328,24 +4370,14 @@ export function createWaterDropSystem(
 
         const absX = minSafeX + bp.slotFrac * availSpan;
 
-        // Interpolate exact live bottom-rim surface Y from the cached side scan (zero extra surface evals!)
-        let bestK = 0;
-        let bestDist = Infinity;
-        for (let k = 0; k <= BOTTOM_SCAN_STEPS; k++) {
-          const ax = Math.abs(scan.x0[k]);
-          if (scan.ny0[k] > -0.66) continue;
-          const d = Math.abs(ax - absX);
-          if (d < bestDist) {
-            bestDist = d;
-            bestK = k;
-          }
-        }
-        if (bestDist > 0.050) continue;
+        // Smoothly interpolate exact live bottom-rim surface Y between bracketing scan points (zero bin jumps!)
+        const samp = sampleScanAtAbsX(scan, absX);
+        if (!samp.found) continue;
 
         const px = bp.side * absX;
         const pz = bp.zFrac * Math.max(0.016, liveHalfD * 0.34);
         // Seat cleanly on the visible bottom silhouette so every pearl glistens clearly below the underside rim
-        const py = scan.y0[bestK] - 0.0036 * activeIceScale;
+        const py = samp.y - 0.0036 * activeIceScale;
 
         // Smoothly absorb any pearl directly overlapped by an actively swelling large pendant drop (allows close neighbors!)
         let mergeFade = 1.0;
