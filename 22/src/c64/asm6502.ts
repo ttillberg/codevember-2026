@@ -169,6 +169,7 @@ function evalExpr(
   symbols: Record<string, number>,
   pc: number,
   strict: boolean,
+  scopeId = 0,
 ): number | null {
   const s = raw.trim();
   if (!s) throw new Error('EMPTY EXPRESSION');
@@ -335,6 +336,10 @@ function evalExpr(
       const start = pos;
       while (pos < s.length && /[A-Za-z0-9_.]/.test(s[pos])) pos++;
       const name = s.slice(start, pos).toUpperCase();
+      if (name.startsWith('.')) {
+        const scoped = `@@${scopeId}${name}`;
+        if (scoped in symbols) return symbols[scoped];
+      }
       if (name in symbols) return symbols[name];
       if (strict) throw new Error(`UNKNOWN SYMBOL ${name}`);
       unresolved = true;
@@ -431,6 +436,7 @@ function encodeInstruction(
   pc: number,
   pass: 1 | 2,
   forcedMode?: AddrMode,
+  scopeId = 0,
 ): EncodedInst {
   // Support standard DASM size-override suffixes: .W (force 16-bit absolute) and .B/.Z (force 8-bit zero-page)
   let mnem = rawMnem;
@@ -450,7 +456,7 @@ function encodeInstruction(
   // Branch instructions always use REL
   if (table.REL !== undefined) {
     if (parsed.kind !== 'DIRECT') throw new Error(`BAD BRANCH OPERAND`);
-    const target = evalExpr(parsed.expr, symbols, pc, strict);
+    const target = evalExpr(parsed.expr, symbols, pc, strict, scopeId);
     let rel = 0;
     if (target !== null) {
       const diff = target - (pc + 2);
@@ -475,32 +481,32 @@ function encodeInstruction(
 
   if (parsed.kind === 'IMM') {
     if (table.IMM === undefined) throw new Error(`${mnem} NO IMM MODE`);
-    const val = evalExpr(parsed.expr, symbols, pc, strict) ?? 0;
+    const val = evalExpr(parsed.expr, symbols, pc, strict, scopeId) ?? 0;
     return { mode: 'IMM', opcode: table.IMM, size: 2, bytes: [table.IMM, val & 0xff] };
   }
 
   if (parsed.kind === 'INDX') {
     if (table.INDX === undefined) throw new Error(`${mnem} NO (ZP,X) MODE`);
-    const val = evalExpr(parsed.expr, symbols, pc, strict) ?? 0;
+    const val = evalExpr(parsed.expr, symbols, pc, strict, scopeId) ?? 0;
     return { mode: 'INDX', opcode: table.INDX, size: 2, bytes: [table.INDX, val & 0xff] };
   }
 
   if (parsed.kind === 'INDY') {
     if (table.INDY === undefined) throw new Error(`${mnem} NO (ZP),Y MODE`);
-    const val = evalExpr(parsed.expr, symbols, pc, strict) ?? 0;
+    const val = evalExpr(parsed.expr, symbols, pc, strict, scopeId) ?? 0;
     return { mode: 'INDY', opcode: table.INDY, size: 2, bytes: [table.INDY, val & 0xff] };
   }
 
   if (parsed.kind === 'IND') {
     if (table.IND !== undefined) {
-      const val = evalExpr(parsed.expr, symbols, pc, strict) ?? 0;
+      const val = evalExpr(parsed.expr, symbols, pc, strict, scopeId) ?? 0;
       return { mode: 'IND', opcode: table.IND, size: 3, bytes: [table.IND, val & 0xff, (val >> 8) & 0xff] };
     }
     // Otherwise treat parenthesized expression as a normal arithmetic expression
   }
 
   const exprStr = parsed.kind === 'ACC' ? rawOperand.trim() : parsed.kind === 'IND' ? rawOperand.trim() : parsed.expr;
-  const val = evalExpr(exprStr, symbols, pc, strict);
+  const val = evalExpr(exprStr, symbols, pc, strict, scopeId);
   const canZp = !forceAbs && (forceZp || (val !== null && val >= 0 && val <= 0xff));
 
   if (parsed.kind === 'X') {
@@ -553,26 +559,38 @@ interface ParsedLine {
   label?: string;
   op: string;
   arg: string;
-  kind: 'EMPTY' | 'EQU' | 'ORG' | 'BYTE' | 'WORD' | 'FILL' | 'INST';
+  kind: 'EMPTY' | 'EQU' | 'ORG' | 'BYTE' | 'WORD' | 'FILL' | 'HEX' | 'SUBROUTINE' | 'INST';
   equName?: string;
+  scopeId: number;
+}
+
+function parseHexBytes(arg: string): number[] {
+  const clean = arg.replace(/[^0-9a-fA-F]/g, '');
+  if (clean.length % 2 !== 0) throw new Error('ODD HEX DIGITS');
+  const out: number[] = [];
+  for (let i = 0; i < clean.length; i += 2) {
+    out.push(parseInt(clean.slice(i, i + 2), 16));
+  }
+  return out;
 }
 
 function parseSourceLines(source: string): ParsedLine[] {
   const rawLines = source.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
   const out: ParsedLine[] = [];
+  let scopeId = 0;
 
   for (let i = 0; i < rawLines.length; i++) {
     const lineNo = i + 1;
     let line = stripComment(rawLines[i]).trim();
     if (!line) {
-      out.push({ lineNo, op: '', arg: '', kind: 'EMPTY' });
+      out.push({ lineNo, op: '', arg: '', kind: 'EMPTY', scopeId });
       continue;
     }
 
     // * = $C000
     const starOrg = line.match(/^\*\s*=\s*(.+)$/);
     if (starOrg) {
-      out.push({ lineNo, op: 'ORG', arg: starOrg[1].trim(), kind: 'ORG' });
+      out.push({ lineNo, op: 'ORG', arg: starOrg[1].trim(), kind: 'ORG', scopeId });
       continue;
     }
 
@@ -585,26 +603,42 @@ function parseSourceLines(source: string): ParsedLine[] {
         equName: equMatch[1].toUpperCase(),
         arg: equMatch[2].trim(),
         kind: 'EQU',
+        scopeId,
       });
       continue;
     }
 
-    // Optional label:  foo:  or  foo: LDA #1
+    // DASM colonless "LABEL SUBROUTINE"
+    const subLine = line.match(/^([A-Za-z_][A-Za-z0-9_]*)\s+SUBROUTINE\b(.*)$/i);
+    if (subLine) {
+      scopeId++;
+      out.push({
+        lineNo,
+        label: subLine[1].toUpperCase(),
+        op: 'SUBROUTINE',
+        arg: subLine[2].trim(),
+        kind: 'SUBROUTINE',
+        scopeId,
+      });
+      continue;
+    }
+
+    // Optional label:  foo:  or  .local:  or  foo: LDA #1
     let label: string | undefined;
     const colonLabel = line.match(/^([A-Za-z_.][A-Za-z0-9_.]*):(.*)$/);
     if (colonLabel) {
       label = colonLabel[1].toUpperCase();
       line = colonLabel[2].trim();
       if (!line) {
-        out.push({ lineNo, label, op: '', arg: '', kind: 'EMPTY' });
+        out.push({ lineNo, label, op: '', arg: '', kind: 'EMPTY', scopeId });
         continue;
       }
     }
 
-    // Split first token (allow dots inside DASM directives like DC.B / DC.W / DS.B)
+    // Split first token (allow dots inside DASM directives like DC.B / DC.W / DS.B / STA.W)
     const tokMatch = line.match(/^([.!A-Za-z_][A-Za-z0-9_.]*)\s*(.*)$/);
     if (!tokMatch) {
-      out.push({ lineNo, label, op: line.toUpperCase(), arg: '', kind: 'INST' });
+      out.push({ lineNo, label, op: line.toUpperCase(), arg: '', kind: 'INST', scopeId });
       continue;
     }
 
@@ -612,19 +646,23 @@ function parseSourceLines(source: string): ParsedLine[] {
     const arg = tokMatch[2].trim();
     const opClean = opRaw.replace(/^[.!]/, '');
 
-    // Ignore DASM/CA65/ACME metadata directives
-    if (opClean === 'PROCESSOR' || opClean === 'SEG' || opClean === 'SEG.U' || opClean === 'SUBROUTINE' || opClean === 'LIST' || opClean === 'NOLIST') {
-      out.push({ lineNo, label, op: '', arg: '', kind: 'EMPTY' });
+    if (opClean === 'SUBROUTINE') {
+      scopeId++;
+      out.push({ lineNo, label, op: 'SUBROUTINE', arg, kind: 'SUBROUTINE', scopeId });
+    } else if (opClean === 'PROCESSOR' || opClean === 'SEG' || opClean === 'SEG.U' || opClean === 'LIST' || opClean === 'NOLIST') {
+      out.push({ lineNo, label, op: '', arg: '', kind: 'EMPTY', scopeId });
     } else if (opClean === 'ORG') {
-      out.push({ lineNo, label, op: 'ORG', arg, kind: 'ORG' });
+      out.push({ lineNo, label, op: 'ORG', arg, kind: 'ORG', scopeId });
+    } else if (opClean === 'HEX') {
+      out.push({ lineNo, label, op: 'HEX', arg, kind: 'HEX', scopeId });
     } else if (opClean === 'BYTE' || opClean === 'DB' || opClean === 'DC.B' || opClean === 'TEXT' || opClean === 'PETSCII' || opClean === 'ASCII') {
-      out.push({ lineNo, label, op: 'BYTE', arg, kind: 'BYTE' });
+      out.push({ lineNo, label, op: 'BYTE', arg, kind: 'BYTE', scopeId });
     } else if (opClean === 'WORD' || opClean === 'DW' || opClean === 'DC.W') {
-      out.push({ lineNo, label, op: 'WORD', arg, kind: 'WORD' });
+      out.push({ lineNo, label, op: 'WORD', arg, kind: 'WORD', scopeId });
     } else if (opClean === 'FILL' || opClean === 'DS' || opClean === 'DS.B' || opClean === 'RES') {
-      out.push({ lineNo, label, op: 'FILL', arg, kind: 'FILL' });
+      out.push({ lineNo, label, op: 'FILL', arg, kind: 'FILL', scopeId });
     } else {
-      out.push({ lineNo, label, op: opRaw, arg, kind: 'INST' });
+      out.push({ lineNo, label, op: opRaw, arg, kind: 'INST', scopeId });
     }
   }
 
@@ -647,18 +685,19 @@ export function assemble6502(source: string, defaultOrg = 0xc000): AsmResult {
     const item = parsed[idx];
     try {
       if (item.label) {
-        symbols[item.label] = pc;
+        const key = item.label.startsWith('.') ? `@@${item.scopeId}${item.label}` : item.label;
+        symbols[key] = pc;
       }
-      if (item.kind === 'EMPTY') continue;
+      if (item.kind === 'EMPTY' || item.kind === 'SUBROUTINE') continue;
 
       if (item.kind === 'EQU' && item.equName) {
-        const v = evalExpr(item.arg, symbols, pc, false);
+        const v = evalExpr(item.arg, symbols, pc, false, item.scopeId);
         if (v !== null) symbols[item.equName] = v;
         continue;
       }
 
       if (item.kind === 'ORG') {
-        const v = evalExpr(item.arg, symbols, pc, true);
+        const v = evalExpr(item.arg, symbols, pc, true, item.scopeId);
         if (v === null) throw new Error('BAD ORG');
         pc = v & 0xffff;
         if (entryAddr < 0) entryAddr = pc;
@@ -667,7 +706,10 @@ export function assemble6502(source: string, defaultOrg = 0xc000): AsmResult {
 
       if (entryAddr < 0) entryAddr = pc;
 
-      if (item.kind === 'BYTE') {
+      if (item.kind === 'HEX') {
+        const bytes = parseHexBytes(item.arg);
+        pc = (pc + bytes.length) & 0xffff;
+      } else if (item.kind === 'BYTE') {
         const parts = splitCsvRespectingQuotes(item.arg);
         for (const p of parts) {
           if ((p.startsWith('"') && p.endsWith('"')) || (p.startsWith("'") && p.endsWith("'") && p.length > 3)) {
@@ -681,10 +723,10 @@ export function assemble6502(source: string, defaultOrg = 0xc000): AsmResult {
         pc = (pc + parts.length * 2) & 0xffff;
       } else if (item.kind === 'FILL') {
         const parts = splitCsvRespectingQuotes(item.arg);
-        const count = evalExpr(parts[0] ?? '0', symbols, pc, true) ?? 0;
+        const count = evalExpr(parts[0] ?? '0', symbols, pc, true, item.scopeId) ?? 0;
         pc = (pc + Math.max(0, count)) & 0xffff;
       } else if (item.kind === 'INST') {
-        const enc = encodeInstruction(item.op, item.arg, symbols, pc, 1);
+        const enc = encodeInstruction(item.op, item.arg, symbols, pc, 1, undefined, item.scopeId);
         chosenModes.set(idx, enc.mode);
         pc = (pc + enc.size) & 0xffff;
       }
@@ -697,7 +739,7 @@ export function assemble6502(source: string, defaultOrg = 0xc000): AsmResult {
   for (const item of parsed) {
     if (item.kind === 'EQU' && item.equName && !(item.equName in symbols)) {
       try {
-        const v = evalExpr(item.arg, symbols, defaultOrg, true);
+        const v = evalExpr(item.arg, symbols, defaultOrg, true, item.scopeId);
         if (v !== null) symbols[item.equName] = v;
       } catch (err) {
         errors.push(`LINE ${item.lineNo}: ${(err as Error).message}`);
@@ -725,39 +767,41 @@ export function assemble6502(source: string, defaultOrg = 0xc000): AsmResult {
 
   for (let idx = 0; idx < parsed.length; idx++) {
     const item = parsed[idx];
-    if (item.kind === 'EMPTY' || item.kind === 'EQU') continue;
+    if (item.kind === 'EMPTY' || item.kind === 'EQU' || item.kind === 'SUBROUTINE') continue;
     try {
       if (item.kind === 'ORG') {
-        const v = evalExpr(item.arg, symbols, pc, true) ?? defaultOrg;
+        const v = evalExpr(item.arg, symbols, pc, true, item.scopeId) ?? defaultOrg;
         pc = v & 0xffff;
         curSeg = null;
         continue;
       }
-      if (item.kind === 'BYTE') {
+      if (item.kind === 'HEX') {
+        for (const b of parseHexBytes(item.arg)) emitByte(b);
+      } else if (item.kind === 'BYTE') {
         const parts = splitCsvRespectingQuotes(item.arg);
         for (const p of parts) {
           if ((p.startsWith('"') && p.endsWith('"')) || (p.startsWith("'") && p.endsWith("'") && p.length > 3)) {
             const inner = p.slice(1, -1);
             for (let k = 0; k < inner.length; k++) emitByte(inner.charCodeAt(k));
           } else {
-            const v = evalExpr(p, symbols, pc, true) ?? 0;
+            const v = evalExpr(p, symbols, pc, true, item.scopeId) ?? 0;
             emitByte(v);
           }
         }
       } else if (item.kind === 'WORD') {
         const parts = splitCsvRespectingQuotes(item.arg);
         for (const p of parts) {
-          const v = evalExpr(p, symbols, pc, true) ?? 0;
+          const v = evalExpr(p, symbols, pc, true, item.scopeId) ?? 0;
           emitByte(v & 0xff);
           emitByte((v >> 8) & 0xff);
         }
       } else if (item.kind === 'FILL') {
         const parts = splitCsvRespectingQuotes(item.arg);
-        const count = evalExpr(parts[0] ?? '0', symbols, pc, true) ?? 0;
-        const fillVal = parts[1] ? (evalExpr(parts[1], symbols, pc, true) ?? 0) : 0;
+        const count = evalExpr(parts[0] ?? '0', symbols, pc, true, item.scopeId) ?? 0;
+        const fillVal = parts[1] ? (evalExpr(parts[1], symbols, pc, true, item.scopeId) ?? 0) : 0;
         for (let k = 0; k < count; k++) emitByte(fillVal);
       } else if (item.kind === 'INST') {
-        const enc = encodeInstruction(item.op, item.arg, symbols, pc, 2, chosenModes.get(idx));
+        const enc = encodeInstruction(item.op, item.arg, symbols, pc, 2, chosenModes.get(idx), item.scopeId);
         for (const b of enc.bytes) emitByte(b);
       }
     } catch (err) {
@@ -882,7 +926,7 @@ export function looksLike6502Assembly(text: string): boolean {
       numbered++;
       continue;
     }
-    if (/^\*\s*=|^\.?(ORG|BYTE|WORD|DB|DW|DC\.B|DC\.W|DS\.B|TEXT|FILL|PROCESSOR)\b/i.test(line)) {
+    if (/^\*\s*=|^\.?(ORG|BYTE|WORD|DB|DW|DC\.B|DC\.W|DS\.B|HEX|TEXT|FILL|PROCESSOR|SUBROUTINE)\b/i.test(line)) {
       asmHits += 2;
       continue;
     }

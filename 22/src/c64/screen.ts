@@ -36,11 +36,12 @@ export class C64Screen {
   // VIC-II state
   borderColor = 14; // Light blue ($D020 / 53280)
   bgColor = 6;      // Dark blue  ($D021 / 53281)
-  bgColor1 = 0;     // Multicolor bg 1 ($D022)
-  bgColor2 = 0;     // Multicolor bg 2 ($D023)
+  bgColor1 = 0;     // Multicolor / ECM bg 1 ($D022)
+  bgColor2 = 0;     // Multicolor / ECM bg 2 ($D023)
+  bgColor3 = 0;     // ECM bg 3 ($D024)
   textColor = 14;   // Light blue ($0286 / 646)
 
-  vicD011 = 0x1b;   // Bit 5 = Bitmap Mode, Bit 4 = Display Enable
+  vicD011 = 0x1b;   // Bit 6 = ECM, Bit 5 = Bitmap, Bit 4 = DEN, Bit 3 = 25/24 rows, Bits 2-0 = Y scroll
   vicD016 = 0x08;   // Bit 4 = Multicolor Mode
   vicD018 = 0x14;   // Bits 7-4 = screen matrix offset, Bits 3-1 = charset/bitmap base
   vicBank = 0x0000; // CIA2 $DD00 bits 0-1 inverted -> 16KB VIC-II bank
@@ -54,6 +55,7 @@ export class C64Screen {
   spriteEnable = 0;     // $D015
   spriteExpandX = 0;    // $D01D
   spriteExpandY = 0;    // $D017
+  spritePriority = 0;   // $D01B (bit=1 -> sprite behind foreground background pixels)
   spriteMulticolor = 0; // $D01C
   spriteMcColor0 = 0;   // $D025
   spriteMcColor1 = 0;   // $D026
@@ -125,10 +127,12 @@ export class C64Screen {
     this.vicBank = 0x0000;
     this.bgColor1 = 0;
     this.bgColor2 = 0;
+    this.bgColor3 = 0;
     this.ultimaxMirror = false;
     this.spriteEnable = 0;
     this.spriteExpandX = 0;
     this.spriteExpandY = 0;
+    this.spritePriority = 0;
     this.spriteMulticolor = 0;
     this.spriteMcColor0 = 0;
     this.spriteMcColor1 = 0;
@@ -538,8 +542,14 @@ export class C64Screen {
     const displayEnabled = (this.vicD011 & 0x10) !== 0;
     const screenBase = (this.vicBank + ((this.vicD018 >> 4) & 0x0f) * 0x0400) & 0xffff;
 
-    if (this.hasModeSplits && this.ram) {
-      this.renderScanlineSplit();
+    const needsScanlinePath =
+      this.hasModeSplits ||
+      (this.vicD011 & 0x40) !== 0 ||
+      (this.vicD011 & 0x0f) !== 0x0b ||
+      (this.vicD016 & 0x0f) !== 0x08;
+
+    if (needsScanlinePath && this.ram) {
+      this.renderScanlineSplit(this.hasModeSplits);
       if (this.spriteEnable !== 0) {
         this.renderSprites(screenBase);
       }
@@ -561,30 +571,49 @@ export class C64Screen {
     return true;
   }
 
-  /** Scanline-accurate renderer when VIC-II splits modes, banks, or fine X-scroll mid-frame! */
-  private renderScanlineSplit() {
+  /** Scanline-accurate renderer for VIC-II splits, ECM, fine X/Y-scroll, and 24-row / 38-col borders! */
+  private renderScanlineSplit(useLatched: boolean) {
     const pixels = this.pixels;
     const ram = this.ram!;
     const useSplits = this.hasRasterSplits;
     const flatBgPx = PACKED_PALETTE[this.bgColor & 0x0f];
     const flatBorderPx = PACKED_PALETTE[this.borderColor & 0x0f];
+    const bg1Px = PACKED_PALETTE[this.bgColor1 & 0x0f];
+    const bg2Px = PACKED_PALETTE[this.bgColor2 & 0x0f];
+    const bg3Px = PACKED_PALETTE[this.bgColor3 & 0x0f];
+    const trackFg = this.spriteEnable !== 0;
+    const fgMask = this.fgMask;
+    if (trackFg) fgMask.fill(0);
 
     for (let py = 0; py < ROWS * 8; py++) {
       const sy = BORDER_Y + py;
-      const d11 = this.rasterD011[sy];
+      const d11 = useLatched ? this.rasterD011[sy] : this.vicD011;
       if ((d11 & 0x10) === 0) continue; // Display blanked on this line
 
-      const d16 = this.rasterD016[sy];
-      const d18 = this.rasterD018[sy];
-      const bank = this.rasterBank[sy];
+      const borderPx = useSplits ? PACKED_PALETTE[this.rasterBorder[sy] & 0x0f] : flatBorderPx;
+      // Authentic VIC-II 24-row vertical border clip ($D011 bit 3 = 0 masks top 4px & bottom 4px)
+      if ((d11 & 0x08) === 0 && (py < 4 || py >= 196)) continue;
+
+      const d16 = useLatched ? this.rasterD016[sy] : this.vicD016;
+      const d18 = useLatched ? this.rasterD018[sy] : this.vicD018;
+      const bank = useLatched ? this.rasterBank[sy] : this.vicBank;
       const screenBase = (bank + ((d18 >> 4) & 0x0f) * 0x0400) & 0xffff;
-      const row = py >> 3;
-      const gy = py & 7;
+
+      // Authentic VIC-II fine Y-scroll ($D011 bits 0-2, default 3 -> 0px shift)
+      const yShift = (d11 & 0x07) - 3;
+      const srcPy = py - yShift;
+      const bgPx = useSplits ? PACKED_PALETTE[this.rasterBg[sy] & 0x0f] : flatBgPx;
+      const lineBase = sy * SCREEN_W + BORDER_X;
+      if (srcPy < 0 || srcPy >= ROWS * 8) {
+        pixels.fill(bgPx, lineBase, lineBase + 320);
+        continue;
+      }
+
+      const row = srcPy >> 3;
+      const gy = srcPy & 7;
       const scrollX = d16 & 0x07;
       const narrow38 = (d16 & 0x08) === 0;
-      const bgPx = useSplits ? PACKED_PALETTE[this.rasterBg[sy] & 0x0f] : flatBgPx;
-      const borderPx = useSplits ? PACKED_PALETTE[this.rasterBorder[sy] & 0x0f] : flatBorderPx;
-      const lineBase = sy * SCREEN_W + BORDER_X;
+      const fgRow = py * 320;
 
       if ((d11 & 0x20) !== 0) {
         // Hi-Res Bitmap scanline
@@ -599,46 +628,42 @@ export class C64Screen {
           if (bits === 0) {
             pixels.fill(cellBgPx, pxOff, pxOff + 8);
           } else {
-            pixels[pxOff] = (bits & 0x80) ? fgPx : cellBgPx;
-            pixels[pxOff + 1] = (bits & 0x40) ? fgPx : cellBgPx;
-            pixels[pxOff + 2] = (bits & 0x20) ? fgPx : cellBgPx;
-            pixels[pxOff + 3] = (bits & 0x10) ? fgPx : cellBgPx;
-            pixels[pxOff + 4] = (bits & 0x08) ? fgPx : cellBgPx;
-            pixels[pxOff + 5] = (bits & 0x04) ? fgPx : cellBgPx;
-            pixels[pxOff + 6] = (bits & 0x02) ? fgPx : cellBgPx;
-            pixels[pxOff + 7] = (bits & 0x01) ? fgPx : cellBgPx;
+            for (let gx = 0; gx < 8; gx++) {
+              const lit = (bits & (0x80 >> gx)) !== 0;
+              pixels[pxOff + gx] = lit ? fgPx : cellBgPx;
+              if (trackFg && lit) fgMask[fgRow + col * 8 + gx] = 1;
+            }
           }
         }
       } else {
-        // Text scanline with custom RAM/Ultimax charset ($D018), multicolor text, fine X-scroll & collision mask!
+        // Text scanline with custom RAM/Ultimax charset ($D018), ECM ($D011 bit 6), multicolor text & fine X-scroll!
         pixels.fill(bgPx, lineBase, lineBase + 320);
         const defaultScreen = screenBase === 0x0400;
         const charBase = (bank + (d18 & 0x0e) * 0x0400) & 0xffff;
         const useRom = charBase === 0x1000 || charBase === 0x1800;
-        const multicolor = (d16 & 0x10) !== 0;
-        const bg1Px = PACKED_PALETTE[this.bgColor1 & 0x0f];
-        const bg2Px = PACKED_PALETTE[this.bgColor2 & 0x0f];
-        const trackFg = this.spriteEnable !== 0;
-        const fgMask = this.fgMask;
-        const fgRow = py * 320;
-        if (trackFg) fgMask.fill(0, fgRow, fgRow + 320);
+        const ecm = (d11 & 0x40) !== 0;
+        const multicolor = !ecm && (d16 & 0x10) !== 0;
 
         for (let col = 0; col < COLS; col++) {
           const idx = row * COLS + col;
           const rawCode = defaultScreen ? this.screenRam[idx] : this.readVicByte(screenBase + idx);
           const colVal = this.colorRam[idx] & 0x0f;
           const isMcCell = multicolor && (colVal & 0x08) !== 0;
-          const reversed = useRom && (rawCode & 0x80) !== 0;
+          const charCode = ecm ? (rawCode & 0x3f) : rawCode;
+          const cellBgPx = ecm
+            ? (rawCode >> 6) === 0 ? bgPx : (rawCode >> 6) === 1 ? bg1Px : (rawCode >> 6) === 2 ? bg2Px : bg3Px
+            : bgPx;
+          const reversed = useRom && !ecm && (rawCode & 0x80) !== 0;
           const bits = useRom
-            ? CHAR_ROM[(rawCode & 0x7f) * 8 + gy]
-            : this.readCharByte(charBase, rawCode, gy);
+            ? CHAR_ROM[(charCode & 0x7f) * 8 + gy]
+            : this.readCharByte(charBase, charCode, gy);
           const fgPx = PACKED_PALETTE[isMcCell ? (colVal & 0x07) : colVal];
           const destX0 = col * 8 + scrollX;
 
           if (isMcCell) {
             for (let pair = 0; pair < 4; pair++) {
               const code2 = (bits >> (6 - pair * 2)) & 0x03;
-              const px = code2 === 0 ? bgPx : code2 === 1 ? bg1Px : code2 === 2 ? bg2Px : fgPx;
+              const px = code2 === 0 ? cellBgPx : code2 === 1 ? bg1Px : code2 === 2 ? bg2Px : fgPx;
               const dx = destX0 + pair * 2;
               if (dx < 320) {
                 pixels[lineBase + dx] = px;
@@ -654,7 +679,7 @@ export class C64Screen {
               const dx = destX0 + gx;
               if (dx >= 320) break;
               const lit = ((bits & (0x80 >> gx)) !== 0) !== reversed;
-              pixels[lineBase + dx] = lit ? fgPx : bgPx;
+              pixels[lineBase + dx] = lit ? fgPx : cellBgPx;
               if (trackFg && lit) fgMask[fgRow + dx] = 1;
             }
           }
@@ -831,6 +856,7 @@ export class C64Screen {
       const expX = (this.spriteExpandX & bit) !== 0 ? 2 : 1;
       const expY = (this.spriteExpandY & bit) !== 0 ? 2 : 1;
       const isMc = (this.spriteMulticolor & bit) !== 0;
+      const behindBg = (this.spritePriority & bit) !== 0;
       const colPx = PACKED_PALETTE[this.spriteColor[s] & 0x0f];
 
       for (let row = 0; row < 21; row++) {
@@ -855,11 +881,12 @@ export class C64Screen {
               for (let dx = 0; dx < span; dx++) {
                 const ax = sx0 + pair * span + dx;
                 if (ax < 0 || ax >= 320) continue;
-                pixels[rowOff + ax] = px;
                 const mi = maskRow + ax;
-                if (fgMask[mi]) this.spriteBgCollision |= bit;
+                const hitBg = fgMask[mi] !== 0;
+                if (hitBg) this.spriteBgCollision |= bit;
                 if (occ[mi]) this.spriteSpriteCollision |= occ[mi] | bit;
                 occ[mi] |= bit;
+                if (!behindBg || !hitBg) pixels[rowOff + ax] = px;
               }
             }
           } else {
@@ -868,11 +895,12 @@ export class C64Screen {
               for (let dx = 0; dx < expX; dx++) {
                 const ax = sx0 + col * expX + dx;
                 if (ax < 0 || ax >= 320) continue;
-                pixels[rowOff + ax] = colPx;
                 const mi = maskRow + ax;
-                if (fgMask[mi]) this.spriteBgCollision |= bit;
+                const hitBg = fgMask[mi] !== 0;
+                if (hitBg) this.spriteBgCollision |= bit;
                 if (occ[mi]) this.spriteSpriteCollision |= occ[mi] | bit;
                 occ[mi] |= bit;
+                if (!behindBg || !hitBg) pixels[rowOff + ax] = colPx;
               }
             }
           }

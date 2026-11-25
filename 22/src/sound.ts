@@ -4,13 +4,17 @@ export class MonitorSound {
   private ctx: AudioContext | null = null;
   private noiseBuf: AudioBuffer | null = null;
   private humGain: GainNode | null = null;
-  private sidVoices: ({ osc: OscillatorNode; filter: BiquadFilterNode; gain: GainNode } | null)[] = [
-    null,
-    null,
-    null,
-  ];
+  private sidVoices: ({
+    osc: OscillatorNode;
+    filter: BiquadFilterNode;
+    gain: GainNode;
+    routedToGlobalFilter: boolean;
+    lastPwBucket: number;
+  } | null)[] = [null, null, null];
   private sidBus: GainNode | null = null;
+  private sidGlobalFilter: BiquadFilterNode | null = null;
   private sidEchoWet: GainNode | null = null;
+  private sidPulseWaves: PeriodicWave[] | null = null;
   private sidRegs = new Uint8Array(25);
 
   enabled = true;
@@ -462,8 +466,67 @@ export class MonitorSound {
 
       this.sidBus = bus;
       this.sidEchoWet = wet;
+
+      // Programmable global MOS 6581 resonant filter ($D415-$D417, $D418 bits 4-6)
+      const gf = ctx.createBiquadFilter();
+      gf.type = 'lowpass';
+      gf.frequency.value = 2400;
+      gf.Q.value = 1.4;
+      gf.connect(bus);
+      this.sidGlobalFilter = gf;
     }
     return this.sidBus;
+  }
+
+  /** Build cached Fourier PeriodicWaves for 16 SID variable pulse-width duty cycles (6%..50%). */
+  private getSidPulseWave(ctx: AudioContext, duty: number): PeriodicWave {
+    if (!this.sidPulseWaves) {
+      this.sidPulseWaves = [];
+      const harmonics = 32;
+      for (let b = 0; b < 16; b++) {
+        const d = 0.06 + (b / 15) * 0.44;
+        const real = new Float32Array(harmonics + 1);
+        const imag = new Float32Array(harmonics + 1);
+        for (let n = 1; n <= harmonics; n++) {
+          // Exact Fourier pulse wave: (2 / (n*pi)) * sin(n*pi*d)
+          imag[n] = (2 / (n * Math.PI)) * Math.sin(n * Math.PI * d);
+        }
+        this.sidPulseWaves.push(ctx.createPeriodicWave(real, imag));
+      }
+    }
+    const sym = duty > 0.5 ? 1 - duty : duty;
+    const bucket = Math.max(0, Math.min(15, Math.round(((sym - 0.06) / 0.44) * 15)));
+    return this.sidPulseWaves[bucket];
+  }
+
+  private updateSidGlobalFilter(ctx: AudioContext) {
+    this.ensureSidBus(ctx);
+    const gf = this.sidGlobalFilter;
+    if (!gf) return;
+    const now = ctx.currentTime;
+    const fc = (this.sidRegs[21] & 0x07) | (this.sidRegs[22] << 3); // 0..2047
+    const hz = 40 * Math.pow(300, fc / 2047); // ~40 Hz .. 12 kHz exponential 6581 curve
+    const res = (this.sidRegs[23] >> 4) & 0x0f;
+    const modeBits = this.sidRegs[24] & 0x70;
+    if (modeBits & 0x10) gf.type = 'lowpass';
+    else if (modeBits & 0x20) gf.type = 'bandpass';
+    else if (modeBits & 0x40) gf.type = 'highpass';
+    else gf.type = 'lowpass';
+    gf.frequency.setTargetAtTime(Math.max(40, Math.min(12000, hz)), now, 0.01);
+    gf.Q.setTargetAtTime(0.7 + res * 0.75, now, 0.01);
+
+    // Route voices according to $D417 bits 0..2
+    const routing = this.sidRegs[23] & 0x07;
+    for (let i = 0; i < 3; i++) {
+      const v = this.sidVoices[i];
+      if (!v || !this.sidBus) continue;
+      const wantGlobal = (routing & (1 << i)) !== 0;
+      if (wantGlobal !== v.routedToGlobalFilter) {
+        v.gain.disconnect();
+        v.gain.connect(wantGlobal ? gf : this.sidBus);
+        v.routedToGlobalFilter = wantGlobal;
+      }
+    }
   }
 
   private ensureSidVoice(ctx: AudioContext, voiceIdx: number) {
@@ -478,11 +541,12 @@ export class MonitorSound {
       filter.Q.value = 1.6;
       const gain = ctx.createGain();
       gain.gain.value = 0;
+      const routed = ((this.sidRegs[23] & (1 << voiceIdx)) !== 0) && Boolean(this.sidGlobalFilter);
       osc.connect(filter);
       filter.connect(gain);
-      gain.connect(bus);
+      gain.connect(routed && this.sidGlobalFilter ? this.sidGlobalFilter : bus);
       osc.start();
-      v = { osc, filter, gain };
+      v = { osc, filter, gain, routedToGlobalFilter: routed, lastPwBucket: -1 };
       this.sidVoices[voiceIdx] = v;
     }
     return v;
@@ -522,8 +586,15 @@ export class MonitorSound {
       this.sidEchoWet.gain.setTargetAtTime(0.28, now, 0.05);
     }
 
-    // Master volume register ($D418 / reg 24): update any gated voices
+    // Global filter registers ($D415-$D417 / regs 21..23)
+    if (reg >= 21 && reg <= 23) {
+      this.updateSidGlobalFilter(ctx);
+      return;
+    }
+
+    // Master volume & filter mode register ($D418 / reg 24)
     if (reg === 24) {
+      this.updateSidGlobalFilter(ctx);
       for (let i = 0; i < 3; i++) {
         const base = i * 7;
         const ctrl = this.sidRegs[base + 4];
@@ -537,7 +608,6 @@ export class MonitorSound {
     }
 
     // Voice registers: Voice 0 = 0..6, Voice 1 = 7..13, Voice 2 = 14..20
-    if (reg >= 21) return;
     const voiceIdx = Math.floor(reg / 7);
     const base = voiceIdx * 7;
     const localReg = reg - base;
@@ -550,10 +620,27 @@ export class MonitorSound {
 
     const voice = this.ensureSidVoice(ctx, voiceIdx);
     if (!isNoise) {
-      if (ctrl & 0x40) voice.osc.type = 'square';
-      else if (ctrl & 0x20) voice.osc.type = 'sawtooth';
-      else if (ctrl & 0x10) voice.osc.type = 'triangle';
-      else voice.osc.type = 'square';
+      if (ctrl & 0x40) {
+        // Variable pulse width (12-bit $D402/$D403 -> Fourier PeriodicWave when PW != 0)
+        const pw = this.sidRegs[base + 2] | ((this.sidRegs[base + 3] & 0x0f) << 8);
+        if (pw > 0 && pw < 4095) {
+          const duty = pw / 4096;
+          const sym = duty > 0.5 ? 1 - duty : duty;
+          const bucket = Math.max(0, Math.min(15, Math.round(((sym - 0.06) / 0.44) * 15)));
+          if (voice.lastPwBucket !== bucket) {
+            voice.osc.setPeriodicWave(this.getSidPulseWave(ctx, duty));
+            voice.lastPwBucket = bucket;
+          }
+        } else if (voice.lastPwBucket !== -2) {
+          voice.osc.type = 'square';
+          voice.lastPwBucket = -2;
+        }
+      } else {
+        voice.lastPwBucket = -1;
+        if (ctrl & 0x20) voice.osc.type = 'sawtooth';
+        else if (ctrl & 0x10) voice.osc.type = 'triangle';
+        else voice.osc.type = 'square';
+      }
       voice.osc.frequency.setTargetAtTime(hz, now, 0.003);
     }
 

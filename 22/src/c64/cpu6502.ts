@@ -629,6 +629,29 @@ export class Cpu6502 {
     return true;
   }
 
+  /** Trigger a non-maskable 6502 NMI (e.g. CIA2 timer interrupt) via $FFFA or C64 KERNAL $0318. */
+  nmi(): boolean {
+    if (this.halted) return false;
+    const hwVec = this.read16(0xfffa);
+    const ramVec = this.read16(0x0318);
+    if (!hwVec && !ramVec) return false;
+    this.push((this.pc >> 8) & 0xff);
+    this.push(this.pc & 0xff);
+    this.push((this.p & ~FLAG_B) | FLAG_U);
+    this.setFlag(FLAG_I, true);
+    if (hwVec) {
+      this.pc = hwVec;
+    } else {
+      // Authentic C64 KERNAL $FE43 NMI trampoline: pushes A, X, Y before jumping via ($0318)
+      this.push(this.a);
+      this.push(this.x);
+      this.push(this.y);
+      this.pc = ramVec;
+    }
+    this.cycles += 7;
+    return true;
+  }
+
   /** Format CPU registers in classic Supermon64 style. */
   formatRegisters(): string {
     const h2 = (n: number) => (n & 0xff).toString(16).toUpperCase().padStart(2, '0');

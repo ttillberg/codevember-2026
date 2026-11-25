@@ -166,15 +166,27 @@ export class C64Basic {
   private sidV3Ad = 0;
   private sidV3Sr = 0;
 
-  // CIA1 Port A/B ($DC00/$DC01) Joystick + 8x8 Keyboard Matrix + Timer A IRQ ($DC04-$DC0E)
+  // CIA1 Port A/B ($DC00/$DC01) Joystick + 8x8 Keyboard Matrix + Timers A/B IRQ ($DC04-$DC0F)
   private joyHeldBits = 0;
   private joyPulseTimers = [0, 0, 0, 0, 0];
   private cia1Pra = 0xff;
   private cia1TaLatch = 0x411b;
   private cia1TaCounter = 0x411b;
+  private cia1TbLatch = 0xffff;
+  private cia1TbCounter = 0xffff;
   private cia1IcrMask = 0;
   private cia1IcrData = 0;
   private cia1Cra = 0;
+  private cia1Crb = 0;
+  // CIA2 Timers A/B NMI ($DD04-$DD0F)
+  private cia2TaLatch = 0xffff;
+  private cia2TaCounter = 0xffff;
+  private cia2TbLatch = 0xffff;
+  private cia2TbCounter = 0xffff;
+  private cia2IcrMask = 0;
+  private cia2IcrData = 0;
+  private cia2Cra = 0;
+  private cia2Crb = 0;
   private readonly keyMatrix = new Uint8Array(8); // bit=1 when pressed at (row, col)
   private readonly keyMatrixPulse = new Float32Array(64); // timed pulse per (row*8+col) for 3D key clicks
 
@@ -584,8 +596,13 @@ export class C64Basic {
       this.vicD01A = 0;
       this.vicD019 = 0;
       this.cia1Cra = 0;
+      this.cia1Crb = 0;
       this.cia1IcrMask = 0;
       this.cia1IcrData = 0;
+      this.cia2Cra = 0;
+      this.cia2Crb = 0;
+      this.cia2IcrMask = 0;
+      this.cia2IcrData = 0;
       this.options.onSidSilence?.();
       this.screen.resetVic();
       if (wasBitmap) {
@@ -1815,6 +1832,9 @@ export class C64Basic {
         this.vicD019 &= ~v;
       } else if (a === 0xd01a) {
         this.vicD01A = v & 0x0f;
+      } else if (a === 0xd01b) {
+        this.screen.spritePriority = v;
+        if (this.screen.spriteEnable) this.screen.markDirty();
       } else if (a === 0xd01c) {
         this.screen.spriteMulticolor = v;
         if (this.screen.spriteEnable) this.screen.markDirty();
@@ -1830,6 +1850,9 @@ export class C64Basic {
         this.screen.markDirty();
       } else if (a === 0xd023) {
         this.screen.bgColor2 = v & 0x0f;
+        this.screen.markDirty();
+      } else if (a === 0xd024) {
+        this.screen.bgColor3 = v & 0x0f;
         this.screen.markDirty();
       } else if (a === 0xd025) {
         this.screen.spriteMcColor0 = v & 0x0f;
@@ -1859,7 +1882,7 @@ export class C64Basic {
       this.options.onSidPoke?.(a - 0xd400, v);
       return;
     }
-    // CIA1 ($DC00-$DC0F): Keyboard Matrix Row Select & Timer A IRQ
+    // CIA1 ($DC00-$DC0F): Keyboard Matrix Row Select & Timers A/B IRQ
     if (a >= 0xdc00 && a <= 0xdc0f) {
       if (a === 0xdc00) {
         this.cia1Pra = v;
@@ -1868,19 +1891,48 @@ export class C64Basic {
       } else if (a === 0xdc05) {
         this.cia1TaLatch = (this.cia1TaLatch & 0x00ff) | (v << 8);
         if ((this.cia1Cra & 0x01) === 0) this.cia1TaCounter = this.cia1TaLatch;
+      } else if (a === 0xdc06) {
+        this.cia1TbLatch = (this.cia1TbLatch & 0xff00) | v;
+      } else if (a === 0xdc07) {
+        this.cia1TbLatch = (this.cia1TbLatch & 0x00ff) | (v << 8);
+        if ((this.cia1Crb & 0x01) === 0) this.cia1TbCounter = this.cia1TbLatch;
       } else if (a === 0xdc0d) {
         if (v & 0x80) this.cia1IcrMask |= v & 0x1f;
         else this.cia1IcrMask &= ~(v & 0x1f);
       } else if (a === 0xdc0e) {
-        if (v & 0x10) this.cia1TaCounter = this.cia1TaLatch; // Force load
+        if (v & 0x10) this.cia1TaCounter = this.cia1TaLatch;
         this.cia1Cra = v;
+      } else if (a === 0xdc0f) {
+        if (v & 0x10) this.cia1TbCounter = this.cia1TbLatch;
+        this.cia1Crb = v;
       }
       return;
     }
-    // CIA2 Port A ($DD00): VIC-II 16KB bank select
-    if (a === 0xdd00) {
-      this.screen.vicBank = (3 - (v & 0x03)) * 0x4000;
-      this.screen.markDirty();
+    // CIA2 ($DD00-$DD0F): VIC-II 16KB bank select + Timers A/B NMI
+    if (a >= 0xdd00 && a <= 0xdd0f) {
+      if (a === 0xdd00) {
+        this.screen.vicBank = (3 - (v & 0x03)) * 0x4000;
+        this.screen.markDirty();
+      } else if (a === 0xdd04) {
+        this.cia2TaLatch = (this.cia2TaLatch & 0xff00) | v;
+      } else if (a === 0xdd05) {
+        this.cia2TaLatch = (this.cia2TaLatch & 0x00ff) | (v << 8);
+        if ((this.cia2Cra & 0x01) === 0) this.cia2TaCounter = this.cia2TaLatch;
+      } else if (a === 0xdd06) {
+        this.cia2TbLatch = (this.cia2TbLatch & 0xff00) | v;
+      } else if (a === 0xdd07) {
+        this.cia2TbLatch = (this.cia2TbLatch & 0x00ff) | (v << 8);
+        if ((this.cia2Crb & 0x01) === 0) this.cia2TbCounter = this.cia2TbLatch;
+      } else if (a === 0xdd0d) {
+        if (v & 0x80) this.cia2IcrMask |= v & 0x1f;
+        else this.cia2IcrMask &= ~(v & 0x1f);
+      } else if (a === 0xdd0e) {
+        if (v & 0x10) this.cia2TaCounter = this.cia2TaLatch;
+        this.cia2Cra = v;
+      } else if (a === 0xdd0f) {
+        if (v & 0x10) this.cia2TbCounter = this.cia2TbLatch;
+        this.cia2Crb = v;
+      }
       return;
     }
     // Mark screen dirty when writing into the active VIC-II bitmap or screen bank
@@ -1916,6 +1968,7 @@ export class C64Basic {
     if (a === 0xd018) return this.screen.vicD018;
     if (a === 0xd019) return this.vicD019;
     if (a === 0xd01a) return this.vicD01A;
+    if (a === 0xd01b) return this.screen.spritePriority;
     if (a === 0xd01c) return this.screen.spriteMulticolor;
     if (a === 0xd01e) {
       const c = this.screen.spriteSpriteCollision;
@@ -1931,16 +1984,31 @@ export class C64Basic {
     if (a === 0xd021) return this.screen.bgColor;
     if (a === 0xd022) return this.screen.bgColor1;
     if (a === 0xd023) return this.screen.bgColor2;
+    if (a === 0xd024) return this.screen.bgColor3;
     if (a === 0xdc00) return this.getJoy2Byte();
     if (a === 0xdc01) return this.readCia1PortB();
     if (a === 0xdc04) return this.cia1TaCounter & 0xff;
     if (a === 0xdc05) return (this.cia1TaCounter >> 8) & 0xff;
+    if (a === 0xdc06) return this.cia1TbCounter & 0xff;
+    if (a === 0xdc07) return (this.cia1TbCounter >> 8) & 0xff;
     if (a === 0xdc0d) {
       const d = this.cia1IcrData;
       this.cia1IcrData = 0;
       return d;
     }
     if (a === 0xdc0e) return this.cia1Cra;
+    if (a === 0xdc0f) return this.cia1Crb;
+    if (a === 0xdd04) return this.cia2TaCounter & 0xff;
+    if (a === 0xdd05) return (this.cia2TaCounter >> 8) & 0xff;
+    if (a === 0xdd06) return this.cia2TbCounter & 0xff;
+    if (a === 0xdd07) return (this.cia2TbCounter >> 8) & 0xff;
+    if (a === 0xdd0d) {
+      const d = this.cia2IcrData;
+      this.cia2IcrData = 0;
+      return d;
+    }
+    if (a === 0xdd0e) return this.cia2Cra;
+    if (a === 0xdd0f) return this.cia2Crb;
     return this.ram[a];
   }
 
@@ -1962,15 +2030,39 @@ export class C64Basic {
     // If real cartridge/user code is loaded into $E000-$FFFF (e.g. Ultimax game), execute it instead of KERNAL traps!
     if (this.screen.ultimaxMirror || this.ram[pc] !== 0) return false;
     switch (pc) {
-      case 0xff81: // CINT — init VIC/screen editor
-      case 0xff84: // IOINIT — init CIA1 60Hz Timer A & I/O
-      case 0xff8a: // RESTOR — restore KERNAL vectors
-        if (pc === 0xff84) {
-          this.cia1TaLatch = 0x411b;
-          this.cia1TaCounter = 0x411b;
-          this.cia1IcrMask = 0x01;
-          this.cia1Cra = 0x11;
-        }
+      case 0xff81: // CINT — init VIC-II & screen editor
+      case 0xff5b:
+        this.screen.resetVic();
+        this.screen.setBorder(14);
+        this.screen.setBg(6);
+        this.screen.setTextColor(14);
+        this.screen.clear();
+        cpu.rts();
+        return true;
+      case 0xff84: // IOINIT — init CIA1 60Hz Timer A & CIA2
+      case 0xfda3:
+        this.cia1TaLatch = 0x411b;
+        this.cia1TaCounter = 0x411b;
+        this.cia1IcrMask = 0x01;
+        this.cia1Cra = 0x11;
+        this.cia2IcrMask = 0;
+        this.cia2Cra = 0;
+        this.cia2Crb = 0;
+        cpu.rts();
+        return true;
+      case 0xff87: // RAMTAS — zero $0002-$0101 & $0200-$03FF, set screen base $0288=$04
+      case 0xfd50:
+        for (let a = 0x0002; a <= 0x0101; a++) this.ram[a] = 0;
+        for (let a = 0x0200; a <= 0x03ff; a++) this.ram[a] = 0;
+        this.ram[0x0281] = 0x00; this.ram[0x0282] = 0x08; // BASIC start $0800
+        this.ram[0x0283] = 0x00; this.ram[0x0284] = 0xa0; // RAM top $A000
+        this.ram[0x0288] = 0x04; // Screen RAM page $0400
+        cpu.rts();
+        return true;
+      case 0xff8a: // RESTOR — restore default KERNAL IRQ/NMI vectors
+      case 0xfd15:
+        this.ram[0x0314] = 0x31; this.ram[0x0315] = 0xea; // IRQ -> $EA31
+        this.ram[0x0318] = 0x47; this.ram[0x0319] = 0xfe; // NMI -> $FE47
         cpu.rts();
         return true;
       case 0xffd2: // CHROUT — print PETSCII character in A
@@ -2003,6 +2095,8 @@ export class C64Basic {
         return true;
       case 0xea31:
       case 0xea81: // Standard C64 KERNAL IRQ exit (PLA/TAY/PLA/TAX/PLA/RTI)
+      case 0xfe47:
+      case 0xfebc: // Standard C64 KERNAL NMI exit (PLA/TAY/PLA/TAX/PLA/RTI)
         cpu.y = cpu.pull();
         cpu.x = cpu.pull();
         cpu.a = cpu.pull();
@@ -2037,15 +2131,66 @@ export class C64Basic {
         lineCycles += this.cpu.step();
       }
 
-      // Tick CIA1 Timer A (used by C64 games like Jupiter Lander for 60Hz game loop IRQs!)
+      // Tick CIA1 Timers A & B (IRQs)
+      let cia1TaUnderflow = false;
       if ((this.cia1Cra & 0x01) !== 0) {
         this.cia1TaCounter -= lineCycles;
         if (this.cia1TaCounter <= 0) {
-          this.cia1TaCounter += Math.max(256, this.cia1TaLatch);
+          cia1TaUnderflow = true;
+          this.cia1TaCounter += Math.max(16, this.cia1TaLatch);
+          if (this.cia1Cra & 0x08) this.cia1Cra &= ~0x01; // one-shot
           this.cia1IcrData |= 0x01;
           if ((this.cia1IcrMask & 0x01) !== 0) {
             this.cia1IcrData |= 0x80;
             this.cpu.irq();
+          }
+        }
+      }
+      if ((this.cia1Crb & 0x01) !== 0) {
+        const chained = (this.cia1Crb & 0x60) === 0x40;
+        const dec = chained ? (cia1TaUnderflow ? 1 : 0) : lineCycles;
+        if (dec > 0) {
+          this.cia1TbCounter -= dec;
+          if (this.cia1TbCounter <= 0) {
+            this.cia1TbCounter += Math.max(16, this.cia1TbLatch);
+            if (this.cia1Crb & 0x08) this.cia1Crb &= ~0x01;
+            this.cia1IcrData |= 0x02;
+            if ((this.cia1IcrMask & 0x02) !== 0) {
+              this.cia1IcrData |= 0x80;
+              this.cpu.irq();
+            }
+          }
+        }
+      }
+
+      // Tick CIA2 Timers A & B (NMIs)
+      let cia2TaUnderflow = false;
+      if ((this.cia2Cra & 0x01) !== 0) {
+        this.cia2TaCounter -= lineCycles;
+        if (this.cia2TaCounter <= 0) {
+          cia2TaUnderflow = true;
+          this.cia2TaCounter += Math.max(16, this.cia2TaLatch);
+          if (this.cia2Cra & 0x08) this.cia2Cra &= ~0x01;
+          this.cia2IcrData |= 0x01;
+          if ((this.cia2IcrMask & 0x01) !== 0) {
+            this.cia2IcrData |= 0x80;
+            this.cpu.nmi();
+          }
+        }
+      }
+      if ((this.cia2Crb & 0x01) !== 0) {
+        const chained = (this.cia2Crb & 0x60) === 0x40;
+        const dec = chained ? (cia2TaUnderflow ? 1 : 0) : lineCycles;
+        if (dec > 0) {
+          this.cia2TbCounter -= dec;
+          if (this.cia2TbCounter <= 0) {
+            this.cia2TbCounter += Math.max(16, this.cia2TbLatch);
+            if (this.cia2Crb & 0x08) this.cia2Crb &= ~0x01;
+            this.cia2IcrData |= 0x02;
+            if ((this.cia2IcrMask & 0x02) !== 0) {
+              this.cia2IcrData |= 0x80;
+              this.cpu.nmi();
+            }
           }
         }
       }
