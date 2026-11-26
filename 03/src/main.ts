@@ -1209,16 +1209,27 @@ for (let i = 0; i < POPSICLE_PRESETS.length; i++) {
 }
 
 function applyPreset(preset: PopsiclePreset) {
+  const isSamePreset = recipesMatch(currentRecipe, preset.recipe);
   currentRecipe = normalizeRecipe(preset.recipe);
+  if (isSamePreset) {
+    // Clicking the currently active popsicle generates a brand-new frozen mix with a fresh seed
+    buildPopsicle(currentSeed + 1, DEFAULT_INITIAL_MELT);
+    return;
+  }
   const nextMelt = meltState.melt > 0.65 ? DEFAULT_INITIAL_MELT : meltState.melt;
   buildPopsicle(preset.seed, nextMelt);
 }
 
 function syncPresetUI() {
-  for (const preset of POPSICLE_PRESETS) {
+  for (let i = 0; i < POPSICLE_PRESETS.length; i++) {
+    const preset = POPSICLE_PRESETS[i];
     const btn = presetButtons.get(preset.id);
     if (!btn) continue;
-    btn.setAttribute('aria-pressed', String(recipesMatch(currentRecipe, preset.recipe)));
+    const active = recipesMatch(currentRecipe, preset.recipe);
+    btn.setAttribute('aria-pressed', String(active));
+    btn.title = active
+      ? `${preset.name} — click for new mix (${i + 1})`
+      : `${preset.name} (${i + 1})`;
   }
 }
 
@@ -1349,13 +1360,13 @@ function syncCustomizeUI() {
   for (const btn of baseBtns) {
     btn.setAttribute('aria-pressed', String(btn.dataset.base === currentRecipe.base));
   }
-  custBaseNote.textContent = currentRecipe.base === 'coconut' ? 'Creamy opaque' : 'Translucent ice';
+  custBaseNote.textContent = currentRecipe.base === 'coconut' ? 'Opaque condensed milk' : 'Translucent ice';
 
   for (const [id, btn] of flavorButtons) {
     btn.setAttribute('aria-pressed', String(currentRecipe.flavors.includes(id)));
   }
   if (currentRecipe.flavors.length === 0) {
-    custFlavorNote.textContent = 'Pure coconut';
+    custFlavorNote.textContent = 'Pure condensed milk';
   } else {
     custFlavorNote.textContent = `${currentRecipe.flavors.length} / 2 max`;
   }

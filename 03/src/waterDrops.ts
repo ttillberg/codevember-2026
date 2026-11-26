@@ -790,10 +790,10 @@ function createPendantDropMaterial(
         vec3 camR = vec3(camH.z, 0.0, -camH.x);
         vec3 l1 = normalize(-0.50 * camR + vec3(0.0, 0.56, 0.0) + 0.66 * camH);
         vec3 l2 = normalize( 0.56 * camR + vec3(0.0, 0.42, 0.0) + 0.71 * camH);
-        // Smoothly match creamy & pulpy recipes (mango, banana, chocolate, coconut) with zero hard opacity cliff!
-        float creamMix = smoothstep(0.04, 0.86, uDropOpacity) * 0.88;
+        // Smoothly match creamy & opaque condensed-milk recipes with rich thick opaque cream drops!
+        float creamMix = smoothstep(0.04, 0.86, uDropOpacity) * 0.98;
         if (creamMix > 0.005) {
-          float cWrap = 0.62 + 0.36 * clamp((dot(N, l1) + 0.45) / 1.45, 0.0, 1.0) + 0.22 * clamp((dot(N, l2) + 0.45) / 1.45, 0.0, 1.0);
+          float cWrap = 0.52 + 0.42 * clamp((dot(N, l1) + 0.38) / 1.38, 0.0, 1.0) + 0.18 * clamp((dot(N, l2) + 0.40) / 1.40, 0.0, 1.0);
           vec3 creamyPendant = uDropCreamColor * cWrap;
           refrCol = mix(refrCol, creamyPendant, creamMix);
         }
@@ -1216,11 +1216,12 @@ function createStickMeltOverlay(sharedUniforms: WaterDropUniforms, seed: number)
         vec3 col = bgWood * syrupTrans;
         vec3 camH = safeNorm(vec3(cameraPosition.x, 0.0, cameraPosition.z));
         vec3 camR = vec3(camH.z, 0.0, -camH.x);
-        float creamMix = smoothstep(0.04, 0.86, uDropOpacity) * clamp(0.45 + 0.45 * optDepth, 0.0, 0.86) * mix(0.44, 1.0, smoothstep(0.0, 0.55, uIceAmount));
+        float isMilkDrop = smoothstep(0.76, 0.98, uDropOpacity);
+        float creamMix = smoothstep(0.04, 0.86, uDropOpacity) * clamp(0.45 + 0.45 * optDepth + 0.22 * isMilkDrop, 0.0, mix(0.86, 0.98, isMilkDrop)) * mix(0.44, 1.0, smoothstep(0.0, 0.55, uIceAmount));
         if (creamMix > 0.005) {
           vec3 cL1 = normalize(-0.48 * camR + vec3(0.0, 0.54, 0.0) + 0.68 * camH);
           vec3 cL2 = normalize( 0.52 * camR + vec3(0.0, 0.42, 0.0) + 0.74 * camH);
-          float cWrap = 0.62 + 0.34 * clamp((dot(N, cL1) + 0.45) / 1.45, 0.0, 1.0) + 0.20 * clamp((dot(N, cL2) + 0.45) / 1.45, 0.0, 1.0);
+          float cWrap = mix(0.62, 0.44, isMilkDrop) + 0.36 * clamp((dot(N, cL1) + 0.45) / 1.45, 0.0, 1.0) + 0.18 * clamp((dot(N, cL2) + 0.45) / 1.45, 0.0, 1.0);
           col = mix(col, uDropCreamColor * cWrap, creamMix);
         }
 
@@ -1239,10 +1240,12 @@ function createStickMeltOverlay(sharedUniforms: WaterDropUniforms, seed: number)
         float spec2 = pow(max(dot(N, h2), 0.0), 140.0);
         // Subtle broad wet clearcoat sheen so the coated top of the stick unmistakably reads as wet glazed syrup
         float broadSheen = pow(max(dot(N, h1), 0.0), 28.0) * 0.12 + pow(max(dot(N, h2), 0.0), 24.0) * 0.085;
-        col = mix(col, vec3(1.04, 0.96, 0.94), clamp(fresnel * (0.14 + 0.09 * bareSeatBoost) * bevelCalm, 0.0, 0.22));
-        col += vec3(1.75, 1.64, 1.58) * (spec1 * 0.66 + spec2 * 0.45 + broadSheen * (0.35 + 0.62 * bareSeatBoost)) * bevelCalm;
+        float milkSpecCalm = 1.0 - isMilkDrop * 0.48;
+        col = mix(col, vec3(1.04, 0.96, 0.94), clamp(fresnel * (0.14 + 0.09 * bareSeatBoost) * bevelCalm * milkSpecCalm, 0.0, 0.22));
+        col += vec3(1.75, 1.64, 1.58) * (spec1 * 0.66 + spec2 * 0.45 + broadSheen * (0.35 + 0.62 * bareSeatBoost)) * bevelCalm * milkSpecCalm;
 
-        float alpha = smoothstep(0.05, 0.22, fC) * mix(0.80, 0.52, edgeFactor) * smoothstep(0.02, 0.14, ndv);
+        float baseAlpha = mix(0.80, 0.52, edgeFactor);
+        float alpha = smoothstep(0.05, 0.22, fC) * mix(baseAlpha, 0.95, isMilkDrop * smoothstep(0.10, 0.48, fC)) * smoothstep(0.02, 0.14, ndv);
         gl_FragColor = vec4(col, alpha);
       }
     `,
@@ -1569,9 +1572,10 @@ function createStickFlowStreams(
           vec3 camR = vec3(camH.z, 0.0, -camH.x);
           vec3 l1 = normalize(-0.48 * camR + vec3(0.0, 0.56, 0.0) + 0.68 * camH);
           vec3 l2 = normalize( 0.54 * camR + vec3(0.0, 0.42, 0.0) + 0.72 * camH);
-          float creamMix = smoothstep(0.04, 0.86, uDropOpacity) * 0.88;
+          float isMilkDrop = smoothstep(0.76, 0.98, uDropOpacity);
+          float creamMix = smoothstep(0.04, 0.86, uDropOpacity) * mix(0.88, 0.98, isMilkDrop);
           if (creamMix > 0.005) {
-            float cWrap = 0.62 + 0.34 * clamp((dot(N, l1) + 0.45) / 1.45, 0.0, 1.0) + 0.22 * clamp((dot(N, l2) + 0.45) / 1.45, 0.0, 1.0);
+            float cWrap = mix(0.62, 0.44, isMilkDrop) + 0.36 * clamp((dot(N, l1) + 0.45) / 1.45, 0.0, 1.0) + 0.20 * clamp((dot(N, l2) + 0.45) / 1.45, 0.0, 1.0);
             refrCol = mix(refrCol, uDropCreamColor * cWrap, creamMix);
           }
 
