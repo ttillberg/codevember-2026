@@ -37,11 +37,12 @@ const initialMelt = clamp(Number.isFinite(rawMelt) ? rawMelt : DEFAULT_INITIAL_M
 let paused = params.has('paused');
 type FallFocusMode = 'pause' | 'slow' | 'off';
 
-const SETTINGS_STORAGE_KEY = 'codevember-03-melt-settings-v1';
+const SETTINGS_STORAGE_KEY = 'codevember-03-melt-settings-v2';
+const LEGACY_SETTINGS_STORAGE_KEY = 'codevember-03-melt-settings-v1';
 
 const DEFAULT_SIM_PARAMS = {
   speed: 1.0,
-  turntable: 0.2,
+  turntable: 0.0,
   frost: 0.8,
   bubbles: 0.55,
 } as const;
@@ -64,14 +65,21 @@ function readFinite(val: unknown, fallback: number, min: number, max: number): n
 
 function loadPersistedSettings(): Partial<PersistedSettings> | null {
   try {
-    const raw = window.localStorage.getItem(SETTINGS_STORAGE_KEY);
+    let raw = window.localStorage.getItem(SETTINGS_STORAGE_KEY);
+    let fromLegacy = false;
+    if (!raw) {
+      raw = window.localStorage.getItem(LEGACY_SETTINGS_STORAGE_KEY);
+      fromLegacy = Boolean(raw);
+    }
     if (!raw) return null;
     const parsed = JSON.parse(raw) as Record<string, unknown>;
     if (!parsed || typeof parsed !== 'object') return null;
 
     const out: Partial<PersistedSettings> = {
       speed: readFinite(parsed.speed, DEFAULT_SIM_PARAMS.speed, 0.2, 6.0),
-      turntable: readFinite(parsed.turntable, DEFAULT_SIM_PARAMS.turntable, 0, 1.0),
+      turntable: fromLegacy
+        ? DEFAULT_SIM_PARAMS.turntable
+        : readFinite(parsed.turntable, DEFAULT_SIM_PARAMS.turntable, 0, 1.0),
       frost: readFinite(parsed.frost, DEFAULT_SIM_PARAMS.frost, 0.1, 1.0),
       bubbles: readFinite(parsed.bubbles, DEFAULT_SIM_PARAMS.bubbles, 0, 1.0),
     };
@@ -174,27 +182,36 @@ camera.lookAt(BASE_TARGET);
 const orbit = new OrbitControls(camera, canvas);
 orbit.target.copy(BASE_TARGET);
 orbit.enableDamping = true;
-orbit.dampingFactor = 0.07;
+orbit.dampingFactor = 0.065;
+orbit.rotateSpeed = 0.72;
 orbit.enablePan = false;
-// Map RIGHT button to ROTATE as well so right-drag orbits smoothly even when Orbit mode is off!
+// Desktop: left-drag outside the ice cream (or right-drag anywhere) rotates 360°; scroll zooms.
+// Mobile/touch: 1 finger melts/rubs frost/grabs berries; 2 fingers rotate + pinch-zoom!
 orbit.mouseButtons = {
   LEFT: THREE.MOUSE.ROTATE,
   MIDDLE: THREE.MOUSE.DOLLY,
   RIGHT: THREE.MOUSE.ROTATE,
 };
+orbit.touches = {
+  ONE: null,
+  TWO: THREE.TOUCH.DOLLY_ROTATE,
+};
 orbit.minDistance = 3.2;
 orbit.maxDistance = 9.0;
-orbit.minPolarAngle = 0.45;
-orbit.maxPolarAngle = Math.PI - 0.45;
-orbit.enabled = false;
+// Curated macro studio vertical tilt band (~20° above to ~17.5° below horizontal) with full 360° spin
+orbit.minPolarAngle = Math.PI * 0.5 - 0.35;
+orbit.maxPolarAngle = Math.PI * 0.5 + 0.31;
+orbit.enabled = true;
 orbit.update();
 orbit.saveState();
 let userOrbiting = false;
 orbit.addEventListener('start', () => {
   userOrbiting = true;
+  syncPointerCursor();
 });
 orbit.addEventListener('end', () => {
   userOrbiting = false;
+  syncPointerCursor();
 });
 orbit.addEventListener('change', () => {
   renderDirty = true;
@@ -539,6 +556,7 @@ function savePersistedSettings() {
 function clearPersistedSettings() {
   try {
     window.localStorage.removeItem(SETTINGS_STORAGE_KEY);
+    window.localStorage.removeItem(LEGACY_SETTINGS_STORAGE_KEY);
   } catch {
     // Ignore storage errors
   }
@@ -594,8 +612,13 @@ let currentRecipe: PopsicleRecipe = {
 
 let pointerActive = false;
 let pointerPressed = false;
+let orbitDragging = false;
+let hoveringOutsideIce = false;
+let twoFingerOrbiting = false;
+let meltDragPointerId: number | null = null;
 let activeGrabPointerId: number | null = null;
 let rightOrbitPointerId: number | null = null;
+const activeTouchIds = new Set<number>();
 let prevFrostU: number | null = null;
 let prevFrostV: number | null = null;
 let pendingPointerMove = false;
@@ -759,9 +782,9 @@ const hitPoint = new THREE.Vector3();
 
 function syncPointerCursor() {
   const gs = fruitAssembly?.getGrabState();
-  if (gs && gs.grabbedIndex >= 0) {
+  if ((gs && gs.grabbedIndex >= 0) || orbitDragging || userOrbiting) {
     canvas.style.cursor = 'grabbing';
-  } else if (gs && gs.hoveredIndex >= 0) {
+  } else if ((gs && gs.hoveredIndex >= 0) || hoveringOutsideIce) {
     canvas.style.cursor = 'grab';
   } else {
     canvas.style.cursor = '';
@@ -775,6 +798,25 @@ function updatePointerRay(clientX: number, clientY: number) {
   raycaster.setFromCamera(pointerNdc, camera);
 }
 
+/** Exact 3D raycast test against the live melted ice body & attached protruding fruits. */
+function hitEmbeddedFruit(): boolean {
+  if (!fruitAssembly) return false;
+  for (let i = 0; i < fruitAssembly.fruits.length; i++) {
+    const f = fruitAssembly.fruits[i];
+    if (!f.detached && f.mesh.visible && raycaster.intersectObject(f.mesh, false).length > 0) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function isPointerOnIceCream(): boolean {
+  if (iceSystem && iceSystem.iceMesh.visible) {
+    if (raycaster.intersectObject(iceSystem.iceMesh, false).length > 0) return true;
+  }
+  return hitEmbeddedFruit();
+}
+
 const _camPlaneNorm = new THREE.Vector3(0, 0, 1);
 const _camPlaneRight = new THREE.Vector3(1, 0, 0);
 function updatePointerWorld(clientX: number, clientY: number) {
@@ -783,6 +825,15 @@ function updatePointerWorld(clientX: number, clientY: number) {
   if (activeGrabPointerId !== null && fruitAssembly) {
     fruitAssembly.moveGrab(raycaster, meltState);
     pointerActive = false;
+    hoveringOutsideIce = false;
+    syncPointerCursor();
+    return;
+  }
+
+  if (orbitDragging || twoFingerOrbiting || rightOrbitPointerId !== null) {
+    pointerActive = false;
+    prevFrostU = null;
+    prevFrostV = null;
     syncPointerCursor();
     return;
   }
@@ -793,40 +844,43 @@ function updatePointerWorld(clientX: number, clientY: number) {
     const hoverIdx = fruitAssembly.pickGrabbableFruit(raycaster);
     fruitAssembly.setHoveredFruit(hoverIdx);
     hoveringGrabbable = hoverIdx >= 0;
+  }
+
+  // Single 3D ice raycast shared by both hoarfrost-rubbing and outside-ice grab cursor affordance!
+  const iceHits =
+    iceSystem && iceSystem.iceMesh.visible ? raycaster.intersectObject(iceSystem.iceMesh, false) : [];
+  const onIce = iceHits.length > 0 || hitEmbeddedFruit();
+
+  if (!pointerPressed && activeTouchIds.size === 0) {
+    hoveringOutsideIce = !hoveringGrabbable && !onIce;
     syncPointerCursor();
   }
 
-  // Direct 3D surface raycast on live melting ice: instantly melts freezer hoarfrost right under the pointer
-  // and beads up glistening small droplets along the thawed trail (works from any angle & even while paused!)
-  if (iceSystem && liquidFilm && waterDrops && !hoveringGrabbable && !(orbit.enabled && pointerPressed)) {
-    if (iceSystem.iceMesh.visible && liquidFilm.avgRime > 0.002) {
-      const iceHits = raycaster.intersectObject(iceSystem.iceMesh, false);
-      if (iceHits.length > 0 && iceHits[0].uv) {
-        const u = iceHits[0].uv.x;
-        const v = iceHits[0].uv.y;
-        const seamWrap = prevFrostU !== null && Math.abs(u - prevFrostU) > 0.35;
-        const u0 = prevFrostU !== null && !seamWrap ? prevFrostU : u;
-        const v0 = prevFrostV !== null && !seamWrap ? prevFrostV : v;
-        const brushRadius = pointerPressed ? 0.072 : 0.046;
-        const brushStrength = pointerPressed ? 1.0 : 0.92;
-        const samples = liquidFilm.meltFrostSegment(u0, v0, u, v, brushStrength, brushRadius);
-        if (samples.length > 0) {
-          for (let i = 0; i < samples.length; i++) {
-            const s = samples[i];
-            waterDrops.spawnFrostMeltDrops(s.u, s.v, s.melted, liquidFilm);
-          }
-          // If paused, refresh drop buffers immediately so newly beaded droplets appear right away!
-          if (paused) {
-            waterDrops.update(meltState, iceSystem, liquidFilm, 0, simParams.speed);
-          }
-          renderDirty = true;
+  // Direct 3D surface raycast on live melting ice: melts freezer hoarfrost right under the pointer
+  // while hovering or dragging across the ice cream (paused cleanly during camera orbit!)
+  if (iceSystem && liquidFilm && waterDrops && !hoveringGrabbable && liquidFilm.avgRime > 0.002) {
+    if (iceHits.length > 0 && iceHits[0].uv) {
+      const u = iceHits[0].uv.x;
+      const v = iceHits[0].uv.y;
+      const seamWrap = prevFrostU !== null && Math.abs(u - prevFrostU) > 0.35;
+      const u0 = prevFrostU !== null && !seamWrap ? prevFrostU : u;
+      const v0 = prevFrostV !== null && !seamWrap ? prevFrostV : v;
+      const brushRadius = pointerPressed ? 0.072 : 0.046;
+      const brushStrength = pointerPressed ? 1.0 : 0.92;
+      const samples = liquidFilm.meltFrostSegment(u0, v0, u, v, brushStrength, brushRadius);
+      if (samples.length > 0) {
+        for (let i = 0; i < samples.length; i++) {
+          const s = samples[i];
+          waterDrops.spawnFrostMeltDrops(s.u, s.v, s.melted, liquidFilm);
         }
-        prevFrostU = u;
-        prevFrostV = v;
-      } else {
-        prevFrostU = null;
-        prevFrostV = null;
+        // If paused, refresh drop buffers immediately so newly beaded droplets appear right away!
+        if (paused) {
+          waterDrops.update(meltState, iceSystem, liquidFilm, 0, simParams.speed);
+        }
+        renderDirty = true;
       }
+      prevFrostU = u;
+      prevFrostV = v;
     } else {
       prevFrostU = null;
       prevFrostV = null;
@@ -896,7 +950,7 @@ function releaseActiveGrab() {
     activeGrabPointerId = null;
   }
   fruitAssembly?.endGrab();
-  orbit.enabled = rightOrbitPointerId !== null;
+  orbit.enabled = meltDragPointerId === null;
   syncPointerCursor();
   renderDirty = true;
 }
@@ -905,40 +959,101 @@ function clearTransientInput() {
   if (activeGrabPointerId !== null) {
     releaseActiveGrab();
   }
+  activeTouchIds.clear();
+  twoFingerOrbiting = false;
+  meltDragPointerId = null;
   rightOrbitPointerId = null;
   pointerPressed = false;
+  orbitDragging = false;
+  hoveringOutsideIce = false;
   pointerActive = false;
   prevFrostU = null;
   prevFrostV = null;
   pendingPointerMove = false;
-  orbit.enabled = false;
+  orbit.enabled = true;
   fruitAssembly?.setHoveredFruit(-1);
   syncPointerCursor();
 }
 
 // Coalesce high-frequency pointermove events (240–1000Hz mice) to once per animation frame!
 canvas.addEventListener('pointermove', (e) => {
+  if (twoFingerOrbiting || orbitDragging || rightOrbitPointerId !== null) return;
   if (activeGrabPointerId !== null && e.pointerId !== activeGrabPointerId) return;
+  if (meltDragPointerId !== null && e.pointerId !== meltDragPointerId) return;
   pendingPointerX = e.clientX;
   pendingPointerY = e.clientY;
   pendingPointerMove = true;
 });
 
-// Capture phase guarantees grab & right-drag orbit toggle BEFORE OrbitControls' bubble-phase listener runs!
+// Capture phase decides cleanly BEFORE OrbitControls' bubble listener runs:
+// - Touch: 1 finger melts/rubs frost/grabs berries (OrbitControls tracks it with touches.ONE=null);
+//          2 fingers rotate + pinch-zoom (touches.TWO=DOLLY_ROTATE).
+// - Mouse/Pen: dragging ON the ice cream (or grabbing a loose berry) disables OrbitControls for that press;
+//              dragging OUTSIDE the ice cream (or right-dragging anywhere) orbits 360° immediately!
 canvas.addEventListener(
   'pointerdown',
   (e) => {
-    if (e.button === 2) {
-      // Right-drag temporarily enables orbit smoothly even when Orbit mode is off!
-      rightOrbitPointerId = e.pointerId;
+    if (e.pointerType === 'touch') {
+      activeTouchIds.add(e.pointerId);
+      if (activeGrabPointerId !== null) return;
+      if (activeTouchIds.size >= 2) {
+        twoFingerOrbiting = true;
+        orbitDragging = true;
+        orbit.enabled = true;
+        pointerPressed = false;
+        pointerActive = false;
+        prevFrostU = null;
+        prevFrostV = null;
+        renderDirty = true;
+        return;
+      }
+      // Single-finger touch: keep orbit.enabled = true so OrbitControls tracks finger 1 if finger 2 lands!
       orbit.enabled = true;
+      updatePointerRay(e.clientX, e.clientY);
+      if (fruitAssembly) {
+        const hitIdx = fruitAssembly.pickGrabbableFruit(raycaster);
+        if (hitIdx >= 0 && fruitAssembly.beginGrab(hitIdx, raycaster, camera)) {
+          activeGrabPointerId = e.pointerId;
+          try {
+            canvas.setPointerCapture(e.pointerId);
+          } catch {
+            // Safe fallback if synthetic pointer event has no native pointerId
+          }
+          orbit.enabled = false;
+          pointerPressed = false;
+          orbitDragging = false;
+          pointerActive = false;
+          prevFrostU = null;
+          prevFrostV = null;
+          syncPointerCursor();
+          renderDirty = true;
+          return;
+        }
+      }
+      pointerPressed = true;
+      orbitDragging = false;
+      pendingPointerX = e.clientX;
+      pendingPointerY = e.clientY;
       prevFrostU = null;
       prevFrostV = null;
+      updatePointerWorld(e.clientX, e.clientY);
       renderDirty = true;
       return;
     }
+
+    if (e.button === 2) {
+      rightOrbitPointerId = e.pointerId;
+      orbitDragging = true;
+      orbit.enabled = true;
+      pointerActive = false;
+      prevFrostU = null;
+      prevFrostV = null;
+      syncPointerCursor();
+      renderDirty = true;
+      return;
+    }
+
     if (e.button === 0) {
-      // Ignore secondary simultaneous touch while already holding a grabbed fruit
       if (activeGrabPointerId !== null) return;
       updatePointerRay(e.clientX, e.clientY);
       if (fruitAssembly) {
@@ -952,6 +1067,7 @@ canvas.addEventListener(
           }
           orbit.enabled = false;
           pointerPressed = false;
+          orbitDragging = false;
           pointerActive = false;
           prevFrostU = null;
           prevFrostV = null;
@@ -960,38 +1076,75 @@ canvas.addEventListener(
           return;
         }
       }
-      pointerPressed = true;
-      pendingPointerX = e.clientX;
-      pendingPointerY = e.clientY;
-      prevFrostU = null;
-      prevFrostV = null;
-      updatePointerWorld(e.clientX, e.clientY);
-      renderDirty = true;
+
+      if (isPointerOnIceCream()) {
+        // Grabbing / rubbing ON the ice cream -> melt & wipe frost without moving the camera!
+        meltDragPointerId = e.pointerId;
+        orbit.enabled = false;
+        pointerPressed = true;
+        orbitDragging = false;
+        hoveringOutsideIce = false;
+        pendingPointerX = e.clientX;
+        pendingPointerY = e.clientY;
+        prevFrostU = null;
+        prevFrostV = null;
+        updatePointerWorld(e.clientX, e.clientY);
+        syncPointerCursor();
+        renderDirty = true;
+      } else {
+        // Grabbing OUTSIDE the ice cream -> turn the camera smoothly 360°!
+        orbit.enabled = true;
+        orbitDragging = true;
+        pointerPressed = false;
+        pointerActive = false;
+        prevFrostU = null;
+        prevFrostV = null;
+        syncPointerCursor();
+        renderDirty = true;
+      }
     }
   },
   { capture: true },
 );
 
 window.addEventListener('pointerup', (e) => {
+  if (e.pointerType === 'touch') {
+    activeTouchIds.delete(e.pointerId);
+  }
   if (activeGrabPointerId !== null && (e.pointerId === activeGrabPointerId || e.pointerId === 0)) {
     releaseActiveGrab();
   }
+  if (meltDragPointerId !== null && (e.pointerId === meltDragPointerId || e.pointerId === 0)) {
+    meltDragPointerId = null;
+  }
   if (rightOrbitPointerId !== null && (e.pointerId === rightOrbitPointerId || e.pointerId === 0)) {
     rightOrbitPointerId = null;
-    orbit.enabled = false;
   }
-  pointerPressed = false;
+  if (e.pointerType === 'touch') {
+    if (activeTouchIds.size === 0) {
+      twoFingerOrbiting = false;
+      orbitDragging = false;
+      pointerPressed = false;
+      pointerActive = false;
+    }
+  } else {
+    pointerPressed = false;
+    orbitDragging = false;
+  }
+  orbit.enabled = activeGrabPointerId === null && meltDragPointerId === null;
   prevFrostU = null;
   prevFrostV = null;
+  syncPointerCursor();
 });
 
 window.addEventListener('pointercancel', clearTransientInput);
 window.addEventListener('blur', clearTransientInput);
 
 canvas.addEventListener('pointerleave', () => {
-  if (activeGrabPointerId !== null) return;
+  if (activeGrabPointerId !== null || orbitDragging || meltDragPointerId !== null) return;
   pointerActive = false;
   pointerPressed = false;
+  hoveringOutsideIce = false;
   prevFrostU = null;
   prevFrostV = null;
   pendingPointerMove = false;
@@ -1642,8 +1795,9 @@ function tick(now: number) {
 
   const dt = paused ? 0 : rawDt;
 
-  // Smooth live pointer heat ramp
-  const targetHeat = pointerActive ? (pointerPressed ? 1.0 : 0.42) : 0.0;
+  // Smooth live pointer heat ramp (pause warming while dragging to orbit around the popsicle)
+  const warmingActive = pointerActive && !orbitDragging && !twoFingerOrbiting && rightOrbitPointerId === null;
+  const targetHeat = warmingActive ? (pointerPressed ? 1.0 : 0.42) : 0.0;
   meltState.pointerHeat += (targetHeat - meltState.pointerHeat) * Math.min(1, rawDt * 8.0);
 
   if (dt > 0 && fruitAssembly && iceSystem && waterDrops && liquidFilm) {
@@ -1656,11 +1810,11 @@ function tick(now: number) {
 
     // Slow deterministic ambient melt + pointer-accelerated warmth (never melts down before frost is gone!)
     if (dtMelt > 0) {
-      const pointerGlobalBoost = pointerActive ? (pointerPressed ? 11.5 : 3.2) : 1.0;
+      const pointerGlobalBoost = warmingActive ? (pointerPressed ? 11.5 : 3.2) : 1.0;
       advanceAmbientMelt(dtMelt, pointerGlobalBoost);
 
       // Deposit structural ice-carving warmth once frost has cleared (before then, pointer melts frost cleanly!)
-      if (pointerActive && (meltState.melt >= FROST_CLEAR_MELT - 0.01 || liquidFilm.avgRime < 0.05)) {
+      if (warmingActive && (meltState.melt >= FROST_CLEAR_MELT - 0.01 || liquidFilm.avgRime < 0.05)) {
         const localDose = dtMelt * (pointerPressed ? 0.34 : 0.075) * simParams.speed;
         depositHeatSpot(meltState.pointerX, meltState.pointerY, localDose);
       }
@@ -1678,14 +1832,14 @@ function tick(now: number) {
       valMelt.textContent = meltState.melt.toFixed(2);
     }
 
-    // Gentle museum-grade 360° studio turntable (only yields while right-dragging camera or grabbing a loose fruit!)
+    // Superslow museum-grade 360° studio turntable (~2.3°/s at 0.20 default; yields only to right-drag or fruit grab!)
     if (
       simParams.turntable > 0.001 &&
       !userOrbiting &&
       rightOrbitPointerId === null &&
       activeGrabPointerId === null
     ) {
-      const dAngle = dt * simParams.turntable * 0.8;
+      const dAngle = dt * simParams.turntable * 0.2;
       const ox = camera.position.x - orbit.target.x;
       const oz = camera.position.z - orbit.target.z;
       const cosA = Math.cos(dAngle);
@@ -1809,8 +1963,13 @@ buildPopsicle(currentSeed, initialMelt);
     return { ...dropDebug };
   },
   setCamera(x: number, y: number, z: number) {
+    const prevDamp = orbit.enableDamping;
+    orbit.enableDamping = false;
     camera.position.set(x, y, z);
+    orbit.target.copy(BASE_TARGET);
     camera.lookAt(BASE_TARGET);
+    orbit.update();
+    orbit.enableDamping = prevDamp;
     renderFrame();
   },
   getCamera() {

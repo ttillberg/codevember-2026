@@ -30,15 +30,29 @@ export interface FruitItem {
   baseQuat: THREE.Quaternion;
   baseScale: THREE.Vector3;
   radius: number;
+  mass: number;
   velocity: THREE.Vector3;
   angVel: THREE.Vector3;
   detached: boolean;
   /** Elapsed seconds since detaching (guarantees clean brisk exit!) */
   detachTime: number;
+  /** World position at the exact moment of detachment (anchors smooth local birth-cavity mask -> zero pop!) */
+  detachOrigin: THREE.Vector3;
+  /** Depth of the molded ice pocket right at detachment (decays smoothly to 0 as the fruit slips free) */
+  cavityDepth: number;
+  /** Initial stick overlap clearance for stick-adjacent fruits at detachment (prevents frame-0 stick pop!) */
+  stickCavity: number;
   /** True while the user is actively grabbing / holding this fruit with their pointer */
   grabbed: boolean;
   /** Fraction exposed outside melting ice [0..1] */
   exposure: number;
+  /** Wet-ice sliding contact intensity [0..1] (drives capillary adhesion & rolling torque) */
+  wetContact: number;
+  /** Accumulated knock-loose impact from upper falling berries hitting a nearly-free lower berry */
+  knockAccum: number;
+  /** Damped micro-recoil offset & velocity when an embedded fruit gets bumped by a falling berry */
+  jostlePos: THREE.Vector3;
+  jostleVel: THREE.Vector3;
   /** Soft-thaw spring bend state (droop + gentle flutter / soft impact flex) */
   bendAmt: number;
   bendVel: number;
@@ -1910,6 +1924,19 @@ export function createFruitAssembly(seed: number, recipe: PopsicleRecipe = DEFAU
 
     const bb = spec.baseBend ? new THREE.Vector3(spec.baseBend[0], spec.baseBend[1], spec.baseBend[2]) : new THREE.Vector3();
     if (bendUniform) bendUniform.value.copy(bb);
+    const matDensity =
+      spec.kind === 'chocolate'
+        ? 1.55
+        : spec.kind === 'blueberry'
+          ? 1.12
+          : spec.kind === 'raspberry'
+            ? 0.95
+            : spec.kind === 'strawberry'
+              ? 0.86
+              : spec.kind === 'kaksmulor'
+                ? 0.72
+                : 0.44;
+    const fruitMass = Math.max(0.001, matDensity * spec.radius * spec.radius * spec.radius * 420.0);
 
     fruits.push({
       kind: spec.kind,
@@ -1918,12 +1945,20 @@ export function createFruitAssembly(seed: number, recipe: PopsicleRecipe = DEFAU
       baseQuat: mesh.quaternion.clone(),
       baseScale: mesh.scale.clone(),
       radius: spec.radius,
+      mass: fruitMass,
       velocity: new THREE.Vector3(),
       angVel: new THREE.Vector3(),
       detached: false,
       detachTime: 0,
+      detachOrigin: mesh.position.clone(),
+      cavityDepth: 0,
+      stickCavity: 0,
       grabbed: false,
       exposure: 0,
+      wetContact: 0,
+      knockAccum: 0,
+      jostlePos: new THREE.Vector3(),
+      jostleVel: new THREE.Vector3(),
       bendAmt: bb.x,
       bendVel: 0,
       bendPhase: rand() * Math.PI * 2,
@@ -1983,8 +2018,15 @@ export function createFruitAssembly(seed: number, recipe: PopsicleRecipe = DEFAU
       f.angVel.set(0, 0, 0);
       f.detached = false;
       f.detachTime = 0;
+      f.detachOrigin.copy(f.basePos);
+      f.cavityDepth = 0;
+      f.stickCavity = 0;
       f.grabbed = false;
       f.exposure = 0;
+      f.wetContact = 0;
+      f.knockAccum = 0;
+      f.jostlePos.set(0, 0, 0);
+      f.jostleVel.set(0, 0, 0);
       f.bendAmt = f.baseBend.x;
       f.bendVel = 0;
       f.bendUniform?.value.copy(f.baseBend);
@@ -1997,10 +2039,130 @@ export function createFruitAssembly(seed: number, recipe: PopsicleRecipe = DEFAU
     stickUniforms.uStickWetness.value = 0.0;
   }
 
+  interface FruitPhysicsProfile {
+    gravity: number;
+    restitution: number;
+    wetDrag: number;
+    adhesion: number;
+    rollGain: number;
+    airDragLin: number;
+    airDragQuad: number;
+    angDrag: number;
+    maxSpin: number;
+    flatAero: number;
+    magnus: number;
+    flexGain: number;
+    isFlat: boolean;
+  }
+
+  const FRUIT_PHYSICS: Record<ToppingId, FruitPhysicsProfile> = {
+    blueberry: {
+      gravity: 8.2,
+      restitution: 0.30,
+      wetDrag: 1.35,
+      adhesion: 0.24,
+      rollGain: 1.15,
+      airDragLin: 0.12,
+      airDragQuad: 0.038,
+      angDrag: 0.45,
+      maxSpin: 9.8,
+      flatAero: 0.0,
+      magnus: 0.055,
+      flexGain: 0.58,
+      isFlat: false,
+    },
+    raspberry: {
+      gravity: 7.7,
+      restitution: 0.20,
+      wetDrag: 1.95,
+      adhesion: 0.32,
+      rollGain: 1.25,
+      airDragLin: 0.16,
+      airDragQuad: 0.050,
+      angDrag: 0.62,
+      maxSpin: 8.8,
+      flatAero: 0.0,
+      magnus: 0.044,
+      flexGain: 0.68,
+      isFlat: false,
+    },
+    strawberry: {
+      gravity: 7.3,
+      restitution: 0.14,
+      wetDrag: 2.15,
+      adhesion: 0.38,
+      rollGain: 0.60,
+      airDragLin: 0.18,
+      airDragQuad: 0.048,
+      angDrag: 0.95,
+      maxSpin: 5.4,
+      flatAero: 1.05,
+      magnus: 0.018,
+      flexGain: 1.0,
+      isFlat: true,
+    },
+    chocolate: {
+      gravity: 9.4,
+      restitution: 0.44,
+      wetDrag: 0.95,
+      adhesion: 0.14,
+      rollGain: 0.90,
+      airDragLin: 0.08,
+      airDragQuad: 0.025,
+      angDrag: 0.38,
+      maxSpin: 10.2,
+      flatAero: 0.14,
+      magnus: 0.028,
+      flexGain: 0.16,
+      isFlat: false,
+    },
+    kaksmulor: {
+      gravity: 7.8,
+      restitution: 0.36,
+      wetDrag: 1.25,
+      adhesion: 0.20,
+      rollGain: 1.0,
+      airDragLin: 0.15,
+      airDragQuad: 0.046,
+      angDrag: 0.55,
+      maxSpin: 11.0,
+      flatAero: 0.22,
+      magnus: 0.036,
+      flexGain: 0.22,
+      isFlat: false,
+    },
+    'shaved-lemon': {
+      gravity: 6.2,
+      restitution: 0.12,
+      wetDrag: 2.05,
+      adhesion: 0.34,
+      rollGain: 0.48,
+      airDragLin: 0.28,
+      airDragQuad: 0.085,
+      angDrag: 1.20,
+      maxSpin: 6.8,
+      flatAero: 1.40,
+      magnus: 0.022,
+      flexGain: 0.85,
+      isFlat: true,
+    },
+  };
+
   const sagEuler = new THREE.Euler();
   const sagQuat = new THREE.Quaternion();
   const spinAxis = new THREE.Vector3();
   const spinQuat = new THREE.Quaternion();
+  const physN = new THREE.Vector3();
+  const physVt = new THREE.Vector3();
+  const physRollAxis = new THREE.Vector3();
+  const physStickN = new THREE.Vector3();
+  const physFaceN = new THREE.Vector3();
+  const physVpar = new THREE.Vector3();
+  const physAeroTorque = new THREE.Vector3();
+  const physMagnus = new THREE.Vector3();
+  const physRelPos = new THREE.Vector3();
+  const physRelVel = new THREE.Vector3();
+  const physContInfo = { depth: 0, dx: 0, dz: 0, dyBot: 0, dyTop: 0 };
 
   function fruitCollisionRadius(f: FruitItem): number {
     // Tilted strawberry slices & thin peels have thinner effective Z cross-section than plump spherical berries
@@ -2018,59 +2180,159 @@ export function createFruitAssembly(seed: number, recipe: PopsicleRecipe = DEFAU
     }
   }
 
+  /** Outward unit normal of the live melting popsicle SDF via central differences (zero-allocation). */
+  function sampleIceSurfaceNormal(
+    x: number,
+    y: number,
+    z: number,
+    meltState: MeltFieldState,
+    out: THREE.Vector3,
+  ): THREE.Vector3 {
+    const eps = 0.012;
+    // iceContainmentDepth is positive inside, negative outside -> outward normal is -grad(depth)
+    const gx = iceContainmentDepth(x - eps, y, z, meltState) - iceContainmentDepth(x + eps, y, z, meltState);
+    const gy = iceContainmentDepth(x, y - eps, z, meltState) - iceContainmentDepth(x, y + eps, z, meltState);
+    const gz = iceContainmentDepth(x, y, z - eps, meltState) - iceContainmentDepth(x, y, z + eps, meltState);
+    const lenSq = gx * gx + gy * gy + gz * gz;
+    if (lenSq > 1e-10) {
+      const inv = 1 / Math.sqrt(lenSq);
+      out.set(gx * inv, gy * inv, gz * inv);
+    } else {
+      const sx = Math.abs(x) > 0.02 ? Math.sign(x) : 0;
+      const sz = z <= 0.004 ? -1 : 1;
+      out.set(sx * 0.35, 0, sz).normalize();
+    }
+    return out;
+  }
+
+  /**
+   * Exact 3D signed distance & outward normal to the birch wooden stick (beveled paddle + semicircular top cap).
+   * Returns positive distance outside the stick, negative inside.
+   */
+  const STICK_HALF_W = POPSICLE.stickEdgeX;
+  const STICK_HALF_D = POPSICLE.stickDepth * 0.5 + POPSICLE.stickBevelThickness;
+  const STICK_ARCH_Y = POPSICLE.stickTopY - STICK_HALF_W;
+
+  function sampleStickSDF(x: number, y: number, z: number, outN: THREE.Vector3): number {
+    if (y > STICK_ARCH_Y) {
+      // Semicircular rounded top cap (cylinder in XY, slab in Z)
+      const dy = y - STICK_ARCH_Y;
+      const rXY = Math.hypot(x, dy);
+      const dXY = rXY - STICK_HALF_W;
+      const dZ = Math.abs(z) - STICK_HALF_D;
+      if (dXY > 0 || dZ > 0) {
+        const ox = Math.max(0, dXY);
+        const oz = Math.max(0, dZ);
+        const dist = Math.hypot(ox, oz);
+        const rx = rXY > 1e-5 ? x / rXY : 0;
+        const ry = rXY > 1e-5 ? dy / rXY : 1;
+        const sz = z >= 0 ? 1 : -1;
+        if (dist > 1e-6) {
+          outN.set((ox * rx) / dist, (ox * ry) / dist, (oz * sz) / dist);
+        } else {
+          outN.set(0, 1, 0);
+        }
+        return dist;
+      }
+      // Inside cap
+      if (dZ > dXY) {
+        outN.set(0, 0, z >= 0 ? 1 : -1);
+        return dZ;
+      }
+      const invR = rXY > 1e-5 ? 1 / rXY : 0;
+      outN.set(x * invR, dy * invR || 1, 0);
+      return dXY;
+    }
+
+    // Rectangular beveled shaft (y <= STICK_ARCH_Y)
+    const yClamped = clamp(y, POPSICLE.stickBottomY, STICK_ARCH_Y);
+    const dx = Math.abs(x) - STICK_HALF_W;
+    const dy = Math.abs(y - yClamped);
+    const dz = Math.abs(z) - STICK_HALF_D;
+    if (dx > 0 || dy > 0 || dz > 0) {
+      const ox = Math.max(0, dx);
+      const oy = Math.max(0, dy);
+      const oz = Math.max(0, dz);
+      const dist = Math.hypot(ox, oy, oz);
+      if (dist > 1e-6) {
+        outN.set(
+          (ox * (x >= 0 ? 1 : -1)) / dist,
+          (oy * (y >= yClamped ? 1 : -1)) / dist,
+          (oz * (z >= 0 ? 1 : -1)) / dist,
+        );
+      } else {
+        outN.set(0, 0, z >= 0 ? 1 : -1);
+      }
+      return dist;
+    }
+    // Inside shaft: push out along nearest face
+    if (dz >= dx) {
+      outN.set(0, 0, z >= 0 ? 1 : -1);
+      return dz;
+    }
+    outN.set(x >= 0 ? 1 : -1, 0, 0);
+    return dx;
+  }
+
   /**
    * Physical mechanical ice-grip remaining around a fruit (>0 = gripped by ice, <=0 = slips free under gravity).
    * Evaluates 3D containment, lateral side-wall support (so slices/berries never dangle halfway out in mid-air),
    * front/back Z-slab thickness & face clearance (so plump berries release once the ice thins too far, without
    * false-loosening fresh or shallow coconut-base fruits while the popsicle is still thick & frozen),
-   * and bottom-lip undercut support.
+   * bottom-lip undercut support, and domino knock-loose impulses from falling upper berries.
    */
   function evaluateFruitGrip(f: FruitItem, meltState: MeltFieldState, slideY = 0): number {
-    const info = sampleIceContainment(f.basePos.x, f.basePos.y + slideY, f.basePos.z, meltState);
+    const info = sampleIceContainment(f.basePos.x, f.basePos.y + slideY, f.basePos.z, meltState, physContInfo);
     const endgameBoost = smoothstep(0.60, 0.84, meltState.melt) * 0.06;
     const rZ = fruitCollisionRadius(f);
     const halfD = info.dz + Math.abs(f.basePos.z);
-    return Math.min(
+    const rawGrip = Math.min(
       info.depth - (f.radius * 0.20 + endgameBoost),
       info.dx - (f.radius * 0.54 + endgameBoost * 0.8),
       halfD - (rZ * 0.74 + endgameBoost * 0.7),
       info.dz - (rZ * 0.32 + endgameBoost * 0.5),
       info.dyBot - (f.radius * 0.36 + endgameBoost * 0.5),
     );
+    return rawGrip - f.knockAccum;
   }
 
   function applyPreReleasePose(f: FruitItem, grip: number, slideY = 0) {
     const gripFull = Math.max(0.045, f.radius * 0.48);
     f.exposure = clamp(1.0 - smoothstep(0.0, gripFull, grip), 0, 1);
     const sagRaw = smoothstep(GRAB_EXPOSURE_MIN, 1.0, f.exposure);
-    // Quadratic ease-in creep: steady while gripped, gently beginning to slip downward right before letting go
-    const sag = sagRaw * sagRaw;
+    // Cubic-quadratic hybrid creep: firm while deeply frozen, noticeably yielding & tipping right before slipping free
+    const sag = sagRaw * sagRaw * (0.65 + 0.35 * sagRaw);
     const sideSign = Math.abs(f.basePos.x) > 0.03 ? Math.sign(f.basePos.x) : 1;
     const zOutSign = f.basePos.z <= 0.004 ? -1 : 1;
     const isTopDome = f.basePos.y > 0.65;
+    const isFlat = FRUIT_PHYSICS[f.kind].isFlat;
 
-    // Smooth wet-ice creep downward & fractionally outward (100% continuous with release — ZERO pop or jump!)
-    // Top-dome fruits gently tip off the rounded peak toward the sloped front/back face instead of sinking into the ice
+    // Flat slices peel top-edge first around their lower wet suction patch; plump berries settle & tip over the cavity lip!
+    const peelOutZ = isFlat ? sag * (isTopDome ? 0.032 : 0.022) : sag * (isTopDome ? 0.026 : 0.016);
+    const creepDownY = isFlat ? sag * (isTopDome ? 0.016 : 0.050) : sag * (isTopDome ? 0.014 : 0.048);
+
     f.mesh.position.set(
-      f.basePos.x + sideSign * sag * 0.010,
-      f.basePos.y + slideY - sag * (isTopDome ? 0.012 : 0.046),
-      f.basePos.z + zOutSign * sag * (isTopDome ? 0.026 : 0.014),
+      f.basePos.x + sideSign * sag * 0.012 + f.jostlePos.x,
+      f.basePos.y + slideY - creepDownY + f.jostlePos.y,
+      f.basePos.z + zOutSign * peelOutZ + f.jostlePos.z,
     );
-    sagEuler.set(zOutSign * sag * 0.12, 0, -sideSign * sag * 0.16);
+    const tipX = zOutSign * sag * (isFlat ? 0.24 : 0.16) + f.jostlePos.z * 2.4;
+    const tipZ = -sideSign * sag * (isFlat ? 0.18 : 0.20) - f.jostlePos.x * 2.4;
+    sagEuler.set(tipX, 0, tipZ);
     sagQuat.setFromEuler(sagEuler);
     f.mesh.quaternion.copy(f.baseQuat).multiply(sagQuat);
     f.mesh.scale.copy(f.baseScale);
 
-    // Inherent organic slice curl + extra soft-thaw droop on exposed strawberry slices before slipping free
-    const thawSoft = smoothstep(0.20, 1.0, f.exposure);
+    // Inherent organic slice curl + extra soft-thaw top-peel droop on exposed strawberry slices before slipping free
+    const thawSoft = smoothstep(0.18, 1.0, f.exposure);
     const curlDir = f.baseBend.x >= 0 ? 1 : -1;
-    f.bendAmt = f.baseBend.x + curlDir * thawSoft * 0.22;
+    f.bendAmt = f.baseBend.x + curlDir * thawSoft * 0.26;
     f.bendVel = 0;
     if (f.bendUniform) {
       f.bendUniform.value.set(
         f.bendAmt,
-        f.baseBend.y + thawSoft * 0.12,
-        f.baseBend.z - sideSign * thawSoft * 0.14,
+        f.baseBend.y + thawSoft * 0.16,
+        f.baseBend.z - sideSign * thawSoft * 0.16,
       );
     }
     if (f.thawUniform) {
@@ -2092,12 +2354,30 @@ export function createFruitAssembly(seed: number, recipe: PopsicleRecipe = DEFAU
       );
     }
 
-    // Pass 1: Update still-attached fruits (smooth pre-release creep + endgame ice slide) and let them slip free naturally!
+    // Pass 1: Update still-attached fruits (smooth pre-release peel/jostle + endgame slide) and release seamlessly!
     if (dt === 0 && grabbedIdx >= 0) {
       clearGrabState();
     }
     for (let i = 0; i < fruits.length; i++) {
       const f = fruits[i];
+      if (dt === 0) {
+        f.knockAccum = 0;
+        f.jostlePos.set(0, 0, 0);
+        f.jostleVel.set(0, 0, 0);
+      } else if (!f.detached && !f.grabbed) {
+        // Damped tactile recoil spring when an embedded fruit gets bumped by a falling berry above
+        const springK = 140.0;
+        const dampC = 14.0;
+        const jDt = Math.min(0.033, dt);
+        f.jostleVel.x += (-f.jostlePos.x * springK - f.jostleVel.x * dampC) * jDt;
+        f.jostleVel.y += (-f.jostlePos.y * springK - f.jostleVel.y * dampC) * jDt;
+        f.jostleVel.z += (-f.jostlePos.z * springK - f.jostleVel.z * dampC) * jDt;
+        f.jostlePos.addScaledVector(f.jostleVel, jDt);
+        if (f.jostlePos.lengthSq() > 0.045 * 0.045) {
+          f.jostlePos.setLength(0.045);
+        }
+      }
+
       const grip = evaluateFruitGrip(f, meltState, slideY);
       const shouldRelease = iceGone || (meltState.melt > 0.14 && grip <= 0);
 
@@ -2108,6 +2388,10 @@ export function createFruitAssembly(seed: number, recipe: PopsicleRecipe = DEFAU
         } else {
           f.detached = false;
           f.detachTime = 0;
+          f.detachOrigin.copy(f.basePos);
+          f.cavityDepth = 0;
+          f.stickCavity = 0;
+          f.wetContact = 0;
           f.grabbed = false;
           f.mesh.visible = true;
           applyPreReleasePose(f, grip, slideY);
@@ -2125,6 +2409,9 @@ export function createFruitAssembly(seed: number, recipe: PopsicleRecipe = DEFAU
           if (shouldRelease) {
             f.detached = true;
             f.detachTime = 0;
+            f.detachOrigin.copy(f.mesh.position);
+            f.cavityDepth = 0;
+            f.stickCavity = 0;
             grabBaseQuat.copy(f.mesh.quaternion);
             grabNeedsLift = true;
             grabLiftProgress = 0;
@@ -2145,22 +2432,50 @@ export function createFruitAssembly(seed: number, recipe: PopsicleRecipe = DEFAU
           f.mesh.quaternion.multiply(sagQuat);
         }
 
-        // Once ice grip reaches zero, slip naturally downward from the EXACT current position — ZERO jump or pop!
+        // Once ice grip reaches zero, transition seamlessly into 3D wet-slide & rigid-body physics (ZERO pop!)
         if (shouldRelease) {
           f.detached = true;
           f.detachTime = 0;
+          f.detachOrigin.copy(f.mesh.position);
+          const rCol = fruitCollisionRadius(f);
+          const dHere = iceGone
+            ? -1.0
+            : iceContainmentDepth(f.mesh.position.x, f.mesh.position.y, f.mesh.position.z, meltState);
+          // Capture exact birth-pocket nesting depth (ice + stick) so cavity masks eliminate ANY frame-0 outward pop!
+          f.cavityDepth = iceGone ? 0 : Math.max(0, dHere + rCol);
+          const dStickHere = sampleStickSDF(f.mesh.position.x, f.mesh.position.y, f.mesh.position.z, physStickN);
+          f.stickCavity = Math.max(0, rCol - dStickHere);
+          f.wetContact = iceGone ? 0 : 1.0;
 
-          const sideX = Math.abs(f.basePos.x) > 0.04 ? Math.sign(f.basePos.x) : i % 2 === 0 ? 1 : -1;
-          const pushZ = f.basePos.z <= 0.004 ? -1 : 1;
+          // Compute real local surface slope tangent so initial slip glides smoothly down the wet ice face
+          sampleIceSurfaceNormal(f.mesh.position.x, f.mesh.position.y, f.mesh.position.z, meltState, physN);
+          // Gravity projected onto local tangent plane: t = g_dir - (g_dir · N) N, where g_dir = (0, -1, 0)
+          const gn = -physN.y;
+          const tx = -gn * physN.x;
+          const ty = -1.0 - gn * physN.y;
+          const tz = -gn * physN.z;
+          const tLen = Math.hypot(tx, ty, tz);
+          const slipSpeed = 0.065 + (i % 3) * 0.012;
+          if (tLen > 0.05 && !iceGone) {
+            f.velocity.set(
+              (tx / tLen) * slipSpeed + physN.x * 0.028 + f.jostleVel.x * 0.45,
+              (ty / tLen) * slipSpeed + Math.min(0, physN.y * 0.02) + f.jostleVel.y * 0.45,
+              (tz / tLen) * slipSpeed + physN.z * 0.032 + f.jostleVel.z * 0.45,
+            );
+          } else {
+            const sideX = Math.abs(f.basePos.x) > 0.04 ? Math.sign(f.basePos.x) : i % 2 === 0 ? 1 : -1;
+            const pushZ = f.basePos.z <= 0.004 ? -1 : 1;
+            f.velocity.set(sideX * 0.03 + f.jostleVel.x * 0.5, -0.07 + f.jostleVel.y * 0.5, pushZ * 0.03 + f.jostleVel.z * 0.5);
+          }
 
-          // Continuous slow initial slip velocity (no outward pop-kick, no position teleport!)
-          f.velocity.set(sideX * (0.028 + (i % 3) * 0.010), -0.055, pushZ * 0.028);
-
-          // Gentle gravity roll as it lets go
-          f.angVel.set(pushZ * 0.22, (i % 2 === 0 ? 1 : -1) * 0.12, -sideX * 0.30);
+          // Natural rolling torque matching the outward normal & downward slip (ω ∝ N × v)
+          physRollAxis.crossVectors(physN, f.velocity);
+          const rollScale = FRUIT_PHYSICS[f.kind].rollGain / Math.max(0.06, rCol);
+          f.angVel.copy(physRollAxis).multiplyScalar(rollScale * 0.35);
+          f.angVel.y += (i % 2 === 0 ? 1 : -1) * 0.14;
 
           const curlDir = f.baseBend.x >= 0 ? 1 : -1;
-          f.bendVel = f.kind === 'strawberry' ? curlDir * 0.45 : 0.25;
+          f.bendVel = FRUIT_PHYSICS[f.kind].isFlat ? curlDir * 0.75 : 0.30;
           if (f.thawUniform) f.thawUniform.value = 1.0;
         }
       }
@@ -2168,93 +2483,393 @@ export function createFruitAssembly(seed: number, recipe: PopsicleRecipe = DEFAU
 
     if (dt <= 0) return;
 
-    // Pass 2: Smooth natural gravity fall with gentle continuous wet-surface glide (ZERO jump, ZERO sideways pop!)
-    const substeps = 2;
-    const subDt = dt / substeps;
+    // Pass 2: 4-substep 3D Rigid-Body + Wet-Syrup Slide + Stick Bounce + Fruit-to-Fruit Collision + Aerodynamics!
+    const substeps = 4;
+    const subDt = Math.min(0.05, dt) / substeps;
+    const iceHalfWBound = POPSICLE.halfWidthBottom + 0.28;
+    const iceHalfDBound = POPSICLE.halfDepth + 0.28;
 
     for (let i = 0; i < fruits.length; i++) {
       const f = fruits[i];
       if (!f.detached || !f.mesh.visible || f.grabbed) continue;
-
       f.detachTime += dt;
-      const rCol = fruitCollisionRadius(f);
-      const sideX = Math.abs(f.basePos.x) > 0.04 ? Math.sign(f.basePos.x) : i % 2 === 0 ? 1 : -1;
+    }
 
-      // Soft suction-break gravity ramp over the first ~0.16s so release looks genuinely heavy & slippery
-      const peelRamp = 0.24 + 0.76 * smoothstep(0.0, 0.16, f.detachTime);
-      const grav = (f.kind === 'strawberry' ? 4.8 : 5.6) * peelRamp;
+    for (let s = 0; s < substeps; s++) {
+      // 2a. Forces, integration, wet-ice SDF sliding/bouncing, wooden stick bounce, and embedded-fruit collisions
+      for (let i = 0; i < fruits.length; i++) {
+        const f = fruits[i];
+        if (!f.detached || !f.mesh.visible || f.grabbed) continue;
 
-      for (let s = 0; s < substeps; s++) {
-        f.velocity.y -= grav * subDt;
-        const airDrag = Math.exp(-subDt * (f.kind === 'strawberry' ? 0.55 : 0.25));
-        f.velocity.x *= airDrag;
-        f.velocity.z *= airDrag;
+        const prof = FRUIT_PHYSICS[f.kind];
+        const rCol = fruitCollisionRadius(f);
+
+        // Smooth suction-break ramp over first ~0.12s so detachment feels genuinely syrupy and weighty
+        const peelRamp = 0.28 + 0.72 * smoothstep(0.0, 0.12, f.detachTime);
+        f.velocity.y -= prof.gravity * peelRamp * subDt;
+
+        // Shape-aware aerodynamics (anisotropic flat-blade lift/flutter on slices + quadratic drag + Magnus curve)
+        const speedSq = f.velocity.lengthSq();
+        if (speedSq > 1e-6) {
+          const speed = Math.sqrt(speedSq);
+          if (prof.flatAero > 0.01) {
+            // World-space face normal of flat slice / lemon peel (local +Z)
+            physFaceN.set(0, 0, 1).applyQuaternion(f.mesh.quaternion);
+            const vPerp = f.velocity.dot(physFaceN);
+            physVpar.copy(f.velocity).addScaledVector(physFaceN, -vPerp);
+
+            // Strong broadside air resistance vs sleek edgewise slip -> creates authentic leaf/slice glide & flutter!
+            const broadDrag = -vPerp * (1.25 + Math.abs(vPerp) * 0.55) * prof.flatAero;
+            f.velocity.addScaledVector(physFaceN, broadDrag * subDt);
+            f.velocity.addScaledVector(physVpar, -prof.airDragLin * subDt);
+
+            // Aerodynamic pitching torque & rocking stability when falling tilted (center-of-pressure offset)
+            physAeroTorque.crossVectors(physFaceN, physVpar);
+            const torqueGain = clamp(vPerp * 2.1 * prof.flatAero, -5.5, 5.5);
+            f.angVel.addScaledVector(physAeroTorque, torqueGain * subDt);
+          } else {
+            // Plump spheres & dense chunks: realistic linear + quadratic air drag + subtle Magnus curve from spin
+            const dragFactor = Math.exp(-subDt * (prof.airDragLin + prof.airDragQuad * speed));
+            f.velocity.multiplyScalar(dragFactor);
+            if (prof.magnus > 0 && f.angVel.lengthSq() > 0.04) {
+              physMagnus.crossVectors(f.angVel, f.velocity);
+              f.velocity.addScaledVector(physMagnus, prof.magnus * subDt);
+            }
+          }
+        }
+
+        // Advance linear position
         f.mesh.position.addScaledVector(f.velocity, subDt);
 
-        // Smooth, gently damped tumble
-        f.angVel.multiplyScalar(Math.exp(-subDt * 0.9));
-        const maxSpin = f.kind === 'strawberry' ? 2.2 : 2.8;
-        if (f.angVel.lengthSq() > maxSpin * maxSpin) {
-          f.angVel.setLength(maxSpin);
+        // --- CONTACT 1: Live 3D Melting Ice Surface (Birth-Cavity Mask + Capillary Wet Slide + Bounce + Rolling) ---
+        let touchingIce = false;
+        if (!iceGone) {
+          const px = f.mesh.position.x;
+          const py = f.mesh.position.y;
+          const pz = f.mesh.position.z;
+          if (
+            py > yBotLive - rCol - 0.14 &&
+            py < yTopLive + rCol + 0.14 &&
+            Math.abs(px) < iceHalfWBound + rCol &&
+            Math.abs(pz) < iceHalfDBound + rCol
+          ) {
+            const dIce = iceContainmentDepth(px, py, pz, meltState);
+            // Smoothly fade out the molded birth cavity as the fruit slides clear of its original pocket!
+            let effCavity = 0;
+            if (f.cavityDepth > 1e-4) {
+              const distFromOriginSq = f.mesh.position.distanceToSquared(f.detachOrigin);
+              const cavRange = Math.max(0.08, f.radius * 1.05);
+              effCavity = f.cavityDepth * Math.exp(-distFromOriginSq / (cavRange * cavRange));
+              if (effCavity < 0.002) {
+                f.cavityDepth = 0;
+                effCavity = 0;
+              }
+            }
+            // signedDistOut > 0 means surface of fruit is outside ice; < 0 means penetrating ice
+            const signedDistOut = -(dIce + rCol - effCavity);
+            const adhesionBand = 0.058 * prof.adhesion;
+
+            if (signedDistOut < adhesionBand) {
+              sampleIceSurfaceNormal(px, py, pz, meltState, physN);
+              const vn = f.velocity.dot(physN);
+              physVt.copy(f.velocity).addScaledVector(physN, -vn);
+              const vtLen = physVt.length();
+
+              if (signedDistOut < 0) {
+                touchingIce = true;
+                const pen = -signedDistOut;
+
+                // Soft Baumgarte position projection keeps fruit outside the curved ice hull with zero jitter
+                const pushFrac = f.cavityDepth > 0.002 ? 0.32 : 0.68;
+                f.mesh.position.addScaledVector(physN, Math.min(pen * pushFrac, 0.06));
+
+                // Normal bounce impulse when moving into the wet ice
+                if (vn < 0) {
+                  const impactSpeed = -vn;
+                  const rest = impactSpeed > 0.35 ? prof.restitution : 0.0;
+                  const jn = -(1.0 + rest) * vn;
+                  f.velocity.addScaledVector(physN, jn);
+
+                  // Impact squash / soft slice slap flex!
+                  if (impactSpeed > 0.45) {
+                    const curlDir = f.baseBend.x >= 0 ? 1 : -1;
+                    f.bendVel += clamp(impactSpeed * 0.95, 0, 2.8) * prof.flexGain * (prof.isFlat ? curlDir : 1);
+                  }
+                }
+
+                // Wet-ice shear drag & true no-slip rolling torque (ω += (N × v_t) / r)
+                const wetFriction = Math.exp(-subDt * prof.wetDrag * (0.75 + 0.5 * clamp(pen / Math.max(0.02, rCol), 0, 1)));
+                physVt.multiplyScalar(wetFriction);
+                const newVn = f.velocity.dot(physN);
+                f.velocity.copy(physVt).addScaledVector(physN, newVn);
+
+                if (vtLen > 0.015) {
+                  // Target rolling angular velocity along the wet ice surface: ω_roll = (N × v_t) / r
+                  physRollAxis.crossVectors(physN, physVt).divideScalar(Math.max(0.055, rCol));
+                  const rollAlpha = 1.0 - Math.exp(-subDt * 12.0 * prof.rollGain);
+                  f.angVel.lerp(physRollAxis, rollAlpha);
+                }
+              }
+
+              // Capillary syrup surface-tension hug: briefly holds sliding berries onto slick wet ice (~0.15-0.35s)
+              // until gravity shear, speed, or curvature cleanly snaps suction and launches them into free fall!
+              const overhangRelease = smoothstep(-0.18, 0.28, physN.y + 0.14);
+              const speedBreak = 1.0 - smoothstep(0.65, 1.55, vtLen);
+              const shearBreak = 1.0 - smoothstep(0.18, 0.46, f.detachTime);
+              const peelStrength =
+                overhangRelease * speedBreak * shearBreak * (1.0 - smoothstep(0.0, adhesionBand, Math.max(0, signedDistOut)));
+              if (peelStrength > 0.01 && vn < 0.45) {
+                touchingIce = true;
+                const suctionAccel = prof.adhesion * 3.0 * peelStrength;
+                f.velocity.addScaledVector(physN, -suctionAccel * subDt);
+                // Mild watery syrup boundary shear
+                f.velocity.addScaledVector(physVt, -prof.wetDrag * 0.28 * peelStrength * subDt);
+                // Gently align flat slices tangent to the wet face only during the initial peel glide
+                if (prof.isFlat && f.detachTime < 0.30) {
+                  physFaceN.set(0, 0, 1).applyQuaternion(f.mesh.quaternion);
+                  const alignDot = physFaceN.dot(physN);
+                  if (alignDot < 0) physFaceN.negate();
+                  physAeroTorque.crossVectors(physFaceN, physN);
+                  f.angVel.addScaledVector(physAeroTorque, 4.2 * peelStrength * subDt);
+                }
+              }
+            }
+          }
+        }
+        f.wetContact += ((touchingIce ? 1 : 0) - f.wetContact) * Math.min(1, subDt * 14.0);
+
+        // --- CONTACT 2: Birch Wooden Stick Collision (Crisp Clack-Bounce & Deflection Spin!) ---
+        {
+          const px = f.mesh.position.x;
+          const py = f.mesh.position.y;
+          const pz = f.mesh.position.z;
+          if (
+            py < POPSICLE.stickTopY + rCol + 0.05 &&
+            py > POPSICLE.stickBottomY - rCol &&
+            Math.abs(px) < STICK_HALF_W + rCol + 0.04 &&
+            Math.abs(pz) < STICK_HALF_D + rCol + 0.04
+          ) {
+            const dStick = sampleStickSDF(px, py, pz, physStickN);
+            let effStickCavity = 0;
+            if (f.stickCavity > 1e-4) {
+              const distFromOriginSq = f.mesh.position.distanceToSquared(f.detachOrigin);
+              const stickRange = Math.max(0.07, f.radius * 0.9);
+              effStickCavity = f.stickCavity * Math.exp(-distFromOriginSq / (stickRange * stickRange));
+              if (effStickCavity < 0.002) {
+                f.stickCavity = 0;
+                effStickCavity = 0;
+              }
+            }
+            const pen = rCol - effStickCavity - dStick;
+            if (pen > 0) {
+              const pushFrac = f.stickCavity > 0.002 ? 0.28 : 0.82;
+              f.mesh.position.addScaledVector(physStickN, Math.min(pen * pushFrac, 0.06));
+              const vn = f.velocity.dot(physStickN);
+              if (vn < 0) {
+                const impactSpeed = -vn;
+                // Firm birch wood gives a livelier, crisper deflection than slushy wet ice!
+                const woodRest = clamp(prof.restitution + 0.14, 0.16, 0.54);
+                const jn = -(1.0 + woodRest) * vn;
+                f.velocity.addScaledVector(physStickN, jn);
+
+                // Tangential stick friction + rolling deflection spin
+                physVt.copy(f.velocity).addScaledVector(physStickN, -f.velocity.dot(physStickN));
+                const woodFriction = 0.22;
+                const jtScale = Math.min(woodFriction * jn, physVt.length());
+                if (physVt.lengthSq() > 1e-6) {
+                  physVt.normalize();
+                  f.velocity.addScaledVector(physVt, -jtScale);
+                  physRollAxis.crossVectors(physStickN, physVt);
+                  f.angVel.addScaledVector(physRollAxis, (jtScale / Math.max(0.05, rCol)) * 0.95);
+                }
+
+                // Tactile bounce squish/flex on stick impact!
+                if (impactSpeed > 0.30) {
+                  const curlDir = f.baseBend.x >= 0 ? 1 : -1;
+                  f.bendVel += clamp(impactSpeed * 1.25, 0, 3.4) * prof.flexGain * (prof.isFlat ? curlDir : 1);
+                }
+              }
+            }
+          }
+        }
+
+        // --- CONTACT 3: Falling Fruit ↔ Protruding Embedded Fruits (Deflect, Wobble & Domino Knock-Loose!) ---
+        for (let j = 0; j < fruits.length; j++) {
+          if (j === i) continue;
+          const other = fruits[j];
+          if (other.detached || !other.mesh.visible || other.grabbed) continue;
+          // Only collide with embedded fruits protruding near/outside the melting surface
+          if (other.exposure < 0.06 && !iceGone) continue;
+
+          const rOther = fruitCollisionRadius(other);
+          const minDist = rCol + rOther;
+          physRelPos.subVectors(f.mesh.position, other.mesh.position);
+          const distSq = physRelPos.lengthSq();
+          if (distSq >= minDist * minDist || distSq < 1e-9) continue;
+
+          // Avoid artificial kick if two fruits started closely packed on the very first instant of release
+          if (f.detachTime < 0.05 && f.detachOrigin.distanceToSquared(other.mesh.position) < minDist * minDist * 1.05) {
+            continue;
+          }
+
+          const dist = Math.sqrt(distSq);
+          physN.copy(physRelPos).divideScalar(dist);
+          const pen = minDist - dist;
+          f.mesh.position.addScaledVector(physN, Math.min(pen * 0.78, 0.06));
+
+          const vn = f.velocity.dot(physN);
+          if (vn < 0) {
+            const impactSpeed = -vn;
+            const avgRest = 0.5 * (prof.restitution + FRUIT_PHYSICS[other.kind].restitution);
+            const jn = -(1.0 + avgRest) * vn;
+            f.velocity.addScaledVector(physN, jn);
+
+            // Tangential roll deflection around the protruding lower berry
+            physVt.copy(f.velocity).addScaledVector(physN, -f.velocity.dot(physN));
+            if (physVt.lengthSq() > 1e-6) {
+              const vtMag = physVt.length();
+              const slipLoss = Math.min(0.28 * jn, vtMag * 0.55);
+              physVt.divideScalar(vtMag);
+              f.velocity.addScaledVector(physVt, -slipLoss);
+              physRollAxis.crossVectors(physN, physVt);
+              f.angVel.addScaledVector(physRollAxis, (slipLoss / Math.max(0.05, rCol)) * 1.1);
+            }
+
+            // Impart tactile recoil wobble to the bumped embedded berry — and knock it loose if nearly free!
+            const massRatio = clamp(f.mass / Math.max(0.001, other.mass), 0.3, 2.2);
+            const jostleImpulse = clamp(impactSpeed * 0.14 * massRatio, 0, 0.42);
+            other.jostleVel.addScaledVector(physN, -jostleImpulse);
+            other.jostleVel.y -= jostleImpulse * 0.45;
+            if (other.exposure > 0.65 && impactSpeed > 0.55) {
+              other.knockAccum += clamp((impactSpeed - 0.45) * 0.022 * massRatio * other.exposure, 0, 0.06);
+            }
+
+            // Soft juicy squish on the bouncing falling fruit
+            if (impactSpeed > 0.30) {
+              const curlDir = f.baseBend.x >= 0 ? 1 : -1;
+              f.bendVel += clamp(impactSpeed * 1.15, 0, 3.2) * prof.flexGain * (prof.isFlat ? curlDir : 1);
+            }
+          }
+        }
+
+        // Clamp speeds & integrate angular velocity cleanly
+        const maxSpeed = 13.5;
+        if (f.velocity.lengthSq() > maxSpeed * maxSpeed) {
+          f.velocity.setLength(maxSpeed);
+        }
+        f.angVel.multiplyScalar(Math.exp(-subDt * prof.angDrag));
+        if (f.angVel.lengthSq() > prof.maxSpin * prof.maxSpin) {
+          f.angVel.setLength(prof.maxSpin);
         }
         const wMag = f.angVel.length();
         if (wMag > 1e-4) {
           spinAxis.copy(f.angVel).divideScalar(wMag);
           spinQuat.setFromAxisAngle(spinAxis, wMag * subDt);
           f.mesh.quaternion.premultiply(spinQuat);
+          f.mesh.quaternion.normalize();
         }
+      }
 
-        // Gentle continuous wet-surface glide if a falling fruit slides past the lower popsicle curve
-        // (NO position teleport and NO sudden horizontal kick!)
-        if (!iceGone) {
-          const px = f.mesh.position.x;
-          const py = f.mesh.position.y;
-          const pz = f.mesh.position.z;
-          if (py > yBotLive - 0.04 && py < yTopLive + 0.05) {
-            const dIce = iceContainmentDepth(px, py, pz, meltState);
-            const pen = dIce + rCol * 0.26;
-            if (pen > 0) {
-              const hitSideX = Math.abs(px) > 0.04 ? Math.sign(px) : sideX;
-              const hitBackHalf = pz <= 0.004;
-              const slideAccel = clamp(pen * 5.6, 0, 1.55);
-              f.velocity.x += hitSideX * slideAccel * 0.30 * subDt;
-              f.velocity.z += (hitBackHalf ? -1 : 1) * slideAccel * 1.15 * subDt;
-              // Mild wet-surface glide friction while touching ice so top-released pieces slide over the face cleanly
-              if (dIce > 0.02) {
-                f.velocity.y *= Math.exp(-subDt * 2.2);
-              }
-              f.angVel.z -= hitSideX * slideAccel * 0.36 * subDt;
-              f.angVel.x += (hitBackHalf ? -1 : 1) * slideAccel * 0.34 * subDt;
+      // 2b. Pairwise Falling ↔ Falling 3D Rigid-Body Collisions (mass-weighted impulse + spin transfer!)
+      for (let i = 0; i < fruits.length; i++) {
+        const a = fruits[i];
+        if (!a.detached || !a.mesh.visible || a.grabbed) continue;
+        const rA = fruitCollisionRadius(a);
+        const invMA = 1.0 / a.mass;
+
+        for (let j = i + 1; j < fruits.length; j++) {
+          const b = fruits[j];
+          if (!b.detached || !b.mesh.visible || b.grabbed) continue;
+          const rB = fruitCollisionRadius(b);
+          const minDist = rA + rB;
+          physRelPos.subVectors(b.mesh.position, a.mesh.position);
+          const distSq = physRelPos.lengthSq();
+          if (distSq >= minDist * minDist || distSq < 1e-9) continue;
+
+          const dist = Math.sqrt(distSq);
+          physN.copy(physRelPos).divideScalar(dist); // points A -> B
+          const pen = minDist - dist;
+          const invMB = 1.0 / b.mass;
+          const invSum = invMA + invMB;
+
+          // Mass-weighted separation
+          const sep = Math.min(pen * 0.72, 0.06) / invSum;
+          a.mesh.position.addScaledVector(physN, -sep * invMA);
+          b.mesh.position.addScaledVector(physN, sep * invMB);
+
+          // Relative velocity of B w.r.t A
+          physRelVel.subVectors(b.velocity, a.velocity);
+          const vn = physRelVel.dot(physN);
+          if (vn < 0) {
+            const profA = FRUIT_PHYSICS[a.kind];
+            const profB = FRUIT_PHYSICS[b.kind];
+            const e = 0.5 * (profA.restitution + profB.restitution);
+            const jn = (-(1.0 + e) * vn) / invSum;
+            a.velocity.addScaledVector(physN, -jn * invMA);
+            b.velocity.addScaledVector(physN, jn * invMB);
+
+            // Tangential spin exchange
+            physVt.copy(physRelVel).addScaledVector(physN, -vn);
+            const vtMag = physVt.length();
+            if (vtMag > 1e-4) {
+              physVt.divideScalar(vtMag);
+              const jt = Math.min(0.24 * jn, (vtMag * 0.45) / invSum);
+              a.velocity.addScaledVector(physVt, jt * invMA);
+              b.velocity.addScaledVector(physVt, -jt * invMB);
+              physRollAxis.crossVectors(physN, physVt);
+              a.angVel.addScaledVector(physRollAxis, (jt * invMA) / Math.max(0.05, rA));
+              b.angVel.addScaledVector(physRollAxis, (jt * invMB) / Math.max(0.05, rB));
+            }
+
+            const impactSpeed = -vn;
+            if (impactSpeed > 0.30) {
+              const dirA = a.baseBend.x >= 0 ? 1 : -1;
+              const dirB = b.baseBend.x >= 0 ? 1 : -1;
+              a.bendVel += clamp(impactSpeed * 0.9, 0, 2.8) * profA.flexGain * (profA.isFlat ? dirA : 1);
+              b.bendVel += clamp(impactSpeed * 0.9, 0, 2.8) * profB.flexGain * (profB.isFlat ? dirB : 1);
             }
           }
         }
       }
+    }
 
-      // Soft damped spring deformation in flight (preserving each slice's organic curl + soft flutter!)
+    // Pass 3: Soft damped spring deformation (airflow cupping + impact squish) & clean out-of-frame despawn
+    for (let i = 0; i < fruits.length; i++) {
+      const f = fruits[i];
+      if (!f.detached || !f.mesh.visible || f.grabbed) continue;
+
+      const prof = FRUIT_PHYSICS[f.kind];
+      const sideX = Math.abs(f.basePos.x) > 0.04 ? Math.sign(f.basePos.x) : i % 2 === 0 ? 1 : -1;
       const curlDir = f.baseBend.x >= 0 ? 1 : -1;
-      const restBend =
-        f.kind === 'strawberry'
-          ? f.baseBend.x + curlDir * 0.15 + 0.07 * Math.sin(f.detachTime * 8.5 + f.bendPhase)
-          : 0.0;
-      const springF = (restBend - f.bendAmt) * 26.0 - f.bendVel * 5.0;
+
+      let aeroCup = 0;
+      if (prof.isFlat) {
+        physFaceN.set(0, 0, 1).applyQuaternion(f.mesh.quaternion);
+        aeroCup = clamp(-f.velocity.dot(physFaceN) * 0.085, -0.22, 0.22);
+      }
+
+      const restBend = prof.isFlat
+        ? f.baseBend.x + curlDir * 0.14 + aeroCup + 0.05 * Math.sin(f.detachTime * 8.2 + f.bendPhase)
+        : 0.0;
+      const springF = (restBend - f.bendAmt) * 28.0 - f.bendVel * 5.2;
       f.bendVel += springF * dt;
-      f.bendAmt = clamp(f.bendAmt + f.bendVel * dt, -0.54, 0.56);
+      f.bendAmt = clamp(f.bendAmt + f.bendVel * dt, -0.56, 0.58);
 
       if (f.bendUniform) {
-        const flutter = Math.sin(f.detachTime * 7.2 + f.bendPhase) * 0.09;
-        f.bendUniform.value.set(f.bendAmt, f.baseBend.y + flutter, f.baseBend.z - sideX * Math.abs(f.bendAmt) * 0.34);
+        const flutter = Math.sin(f.detachTime * 7.4 + f.bendPhase) * 0.075 + aeroCup * 0.45;
+        f.bendUniform.value.set(f.bendAmt, f.baseBend.y + flutter, f.baseBend.z - sideX * Math.abs(f.bendAmt) * 0.30);
       } else {
-        // Subtle soft wet-berry squish on blueberries
-        const sq = clamp(f.bendAmt * 0.22, -0.07, 0.07);
+        // Subtle juicy volume-preserving squash-and-stretch on impacts!
+        const sq = clamp(f.bendAmt * 0.22, -0.09, 0.09);
         f.mesh.scale.set(
-          f.baseScale.x * (1 + sq * 0.5),
+          f.baseScale.x * (1 + sq * 0.55),
           f.baseScale.y * (1 - sq),
-          f.baseScale.z * (1 + sq * 0.5),
+          f.baseScale.z * (1 + sq * 0.55),
         );
       }
 
-      // Floor / despawn sits far below the camera frustum so fruits fall cleanly out of sight
-      if (f.mesh.position.y < -6.5 || f.detachTime > 3.0) {
+      // Despawn cleanly once well below camera frustum (extra lifetime accommodates wet-ice slide + stick bounce!)
+      if (f.mesh.position.y < -5.2 || f.detachTime > 5.0) {
         f.mesh.visible = false;
       }
     }
@@ -2365,6 +2980,8 @@ export function createFruitAssembly(seed: number, recipe: PopsicleRecipe = DEFAU
       if (pullDist >= pullThresh) {
         f.detached = true;
         f.detachTime = 0;
+        f.cavityDepth = 0;
+        f.stickCavity = 0;
         grabBaseQuat.copy(f.mesh.quaternion);
 
         // Compute gentle lift toward camera so plucked berries clear the front ice cleanly while dragged!
@@ -2405,6 +3022,8 @@ export function createFruitAssembly(seed: number, recipe: PopsicleRecipe = DEFAU
         clamp(-f.velocity.x * 0.62, -2.4, 2.4),
       );
       f.detachTime = 0;
+      f.cavityDepth = 0;
+      f.stickCavity = 0;
       const curlDir = f.baseBend.x >= 0 ? 1 : -1;
       f.bendVel += clamp(f.velocity.length() * 0.55, 0.3, 2.4) * (f.kind === 'strawberry' ? curlDir : 0.7);
     }
@@ -2523,7 +3142,7 @@ export function createFruitAssembly(seed: number, recipe: PopsicleRecipe = DEFAU
   function hasFallingFruitInView(): boolean {
     for (let i = 0; i < fruits.length; i++) {
       const f = fruits[i];
-      if (f.detached && f.mesh.visible && (f.grabbed || (f.mesh.position.y > -1.78 && f.detachTime < 1.8))) {
+      if (f.detached && f.mesh.visible && (f.grabbed || (f.mesh.position.y > -1.95 && f.detachTime < 3.6))) {
         return true;
       }
     }
