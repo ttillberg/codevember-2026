@@ -279,7 +279,7 @@ export function setupStudio(renderer: THREE.WebGLRenderer, scene: THREE.Scene): 
   const keyLight = new THREE.DirectionalLight(0xfffaf0, 1.48);
   keyLight.position.set(-2.9, 3.8, 3.3);
   keyLight.castShadow = true;
-  keyLight.shadow.mapSize.set(2048, 2048);
+  keyLight.shadow.mapSize.set(1024, 1024);
   keyLight.shadow.camera.near = 1.5;
   keyLight.shadow.camera.far = 12.0;
   keyLight.shadow.camera.left = -1.45;
