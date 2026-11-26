@@ -23,12 +23,12 @@ import {
   type VertexPost,
   type WallSlot,
 } from './maze';
+import { createLedFilmDisplay } from './ledFilm';
 import {
   createArrowGlyphTexture,
   createDecalLabelTexture,
   createLedHaloTexture,
   createMatteGrainTextures,
-  createMetalBallTexture,
   createNeonTubeTexture,
   createPadlockGlyphTexture,
   createPlasticScratchTextures,
@@ -99,6 +99,7 @@ export interface LabyrinthRig {
   applyPoleShutters: (northOpen: number, southOpen: number) => void;
   setReadyHole: (shutterId: number, finishReady: boolean, dwell?: number, toggleId?: number) => void;
   setLevelVisuals: (level: LevelConfig) => void;
+  triggerLedIntro: () => void;
   updateLeds: (
     time: number,
     clearedMask: boolean[],
@@ -1992,6 +1993,7 @@ export function buildLabyrinthRig(grid: SphereGrid): LabyrinthRig {
     const colSeamGeo = buildWallColumnSeamGeometry(wall);
     const colSeamMesh = new THREE.Mesh(colSeamGeo, seamMat);
     mesh.add(colSeamMesh);
+    baseAoExcluded.push(colSeamMesh);
     disposables.push(colSeamGeo);
 
     let arrowMat: THREE.MeshStandardMaterial | null = null;
@@ -2234,6 +2236,8 @@ export function buildLabyrinthRig(grid: SphereGrid): LabyrinthRig {
   let lastClearedIdx = -1;
 
   function setLevelVisuals(level: LevelConfig) {
+    activeLevelRef = level;
+    lastAllClearedFilm = false;
     for (const d of levelDisposables) d.dispose();
     levelDisposables = [];
     for (const o of attachedGateOverlays) {
@@ -2486,6 +2490,7 @@ export function buildLabyrinthRig(grid: SphereGrid): LabyrinthRig {
     }
 
     syncAoExcluded();
+    ledFilm.setLevel(level.level, level.name, false);
   }
 
   const activeLight = new THREE.PointLight(0xff7820, 0.72, 0.92, 1.8);
@@ -2523,26 +2528,40 @@ export function buildLabyrinthRig(grid: SphereGrid): LabyrinthRig {
   frostRoughTex.wrapS = frostRoughTex.wrapT = THREE.RepeatWrapping;
   frostRoughTex.repeat.set(3, 3);
 
-  const ballGeo = new THREE.SphereGeometry(R_BALL, 44, 32);
+  // Zero-extra-pass frosted sea-glass marble: avoids Three.js full-scene transmission prepass while preserving
+  // identical velvety acid-etched glass optics, mineral internal depth, and luminous Fresnel rim bloom!
+  const ballGeo = new THREE.SphereGeometry(R_BALL, 40, 28);
   const ballMat = new THREE.MeshPhysicalMaterial({
-    color: 0xe2eced, // cool Scandinavian frosted sea-glass / smoked quartz tint
+    color: 0x9ab4ba, // cool Scandinavian frosted sea-glass mineral body
     metalness: 0.0,
     roughness: 0.44,
     roughnessMap: frostRoughTex,
     bumpMap: frostRoughTex,
-    bumpScale: 0.001,
-    transmission: 0.9,
+    bumpScale: 0.0011,
+    clearcoat: 0.3,
+    clearcoatRoughness: 0.32,
+    reflectivity: 0.85,
     ior: 1.52,
-    thickness: R_BALL * 2.6,
-    attenuationColor: new THREE.Color(0x547882), // deep mineral smoked-teal internal absorption
-    attenuationDistance: 0.135,
-    clearcoat: 0.22,
-    clearcoatRoughness: 0.36,
-    sheen: 0.4,
-    sheenRoughness: 0.62,
-    sheenColor: new THREE.Color(0xf6fbfc), // velvety frosted-glass Fresnel rim bloom
-    envMapIntensity: 1.55,
+    sheen: 0.65,
+    sheenRoughness: 0.52,
+    sheenColor: new THREE.Color(0xf4fbfc), // velvety frosted-glass Fresnel rim bloom
+    envMapIntensity: 1.75,
   });
+  ballMat.onBeforeCompile = (shader) => {
+    shader.fragmentShader = shader.fragmentShader.replace(
+      '#include <dithering_fragment>',
+      `
+      // Subtle translucent internal subsurface scatter & luminous frosted glass edge
+      vec3 mView = normalize(vViewPosition);
+      float mNdotV = clamp(abs(dot(normalize(normal), mView)), 0.0, 1.0);
+      float mRim = pow(1.0 - mNdotV, 2.1);
+      float mCore = pow(mNdotV, 1.5);
+      gl_FragColor.rgb = mix(gl_FragColor.rgb, gl_FragColor.rgb * vec3(0.84, 0.93, 0.95), mCore * 0.24);
+      gl_FragColor.rgb += vec3(0.24, 0.30, 0.31) * mRim;
+      #include <dithering_fragment>
+      `,
+    );
+  };
   const ballMesh = new THREE.Mesh(ballGeo, ballMat);
   ballMesh.castShadow = true;
   ballMesh.receiveShadow = true;
@@ -2575,7 +2594,7 @@ export function buildLabyrinthRig(grid: SphereGrid): LabyrinthRig {
   const { roughnessMap: scratchRough, bumpMap: scratchBump, scratchAlphaMap } = createPlasticScratchTextures();
   disposables.push(scratchRough, scratchBump, scratchAlphaMap);
 
-  const shellGeo = new THREE.SphereGeometry(R_SHELL, 88, 64);
+  const shellGeo = new THREE.SphereGeometry(R_SHELL, 64, 48);
   const plasticOpacityUniform = { value: 1.0 };
 
   const plasticMat = new THREE.MeshPhysicalMaterial({
@@ -2652,15 +2671,19 @@ export function buildLabyrinthRig(grid: SphereGrid): LabyrinthRig {
   baseAoExcluded.push(outerSeam);
   disposables.push(outerSeamGeo, outerSeamMat);
 
-  const primaryTape = createTapeTexture('primary');
-  const primaryTapeGeo = buildCurvedTapePatch(R_SHELL + 0.0042, 0.38, 0.96, 0.21, 0.11);
+  // Transparent conductive flex-PCB micro-LED film ribbon replacing MADE IN SWEDEN tape along the equator
+  const ledFilm = createLedFilmDisplay();
+  const primaryTapeGeo = buildCurvedTapePatch(R_SHELL + 0.0046, 0.36, 1.32, 0.215, 0.0);
   const primaryTapeMat = new THREE.MeshPhysicalMaterial({
-    map: primaryTape.map,
-    roughnessMap: primaryTape.roughnessMap,
-    roughness: 0.42,
-    metalness: 0.0,
-    clearcoat: 0.34,
-    clearcoatRoughness: 0.3,
+    map: ledFilm.map,
+    emissive: new THREE.Color(0xffffff),
+    emissiveMap: ledFilm.emissiveMap,
+    emissiveIntensity: 2.4,
+    roughnessMap: ledFilm.roughnessMap,
+    roughness: 0.3,
+    metalness: 0.1,
+    clearcoat: 0.62,
+    clearcoatRoughness: 0.18,
     transparent: true,
     depthWrite: false,
     side: THREE.FrontSide,
@@ -2669,7 +2692,28 @@ export function buildLabyrinthRig(grid: SphereGrid): LabyrinthRig {
   primaryTapeMesh.renderOrder = 14;
   root.add(primaryTapeMesh);
   baseAoExcluded.push(primaryTapeMesh);
-  disposables.push(primaryTape.map, primaryTape.roughnessMap, primaryTapeGeo, primaryTapeMat);
+
+  // Dedicated AdditiveBlending HDR optical bloom overlay directly over the LED film (tight & crisp!)
+  const ledGlowGeo = buildCurvedTapePatch(R_SHELL + 0.0052, 0.36, 1.32, 0.215, 0.0);
+  const ledGlowMat = new THREE.MeshBasicMaterial({
+    map: ledFilm.glowMap,
+    color: new THREE.Color(0.45, 1.35, 1.62),
+    transparent: true,
+    opacity: 0.62,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+    side: THREE.FrontSide,
+  });
+  const ledGlowMesh = new THREE.Mesh(ledGlowGeo, ledGlowMat);
+  ledGlowMesh.renderOrder = 15;
+  root.add(ledGlowMesh);
+  baseAoExcluded.push(ledGlowMesh);
+
+  // Subtle cyan local point light centered behind the LED ribbon so diodes cast cool light spill onto the maze
+  const ledFilmLight = new THREE.PointLight(0x10d4f8, 0.36, 1.05, 1.8);
+  ledFilmLight.position.set(Math.sin(0.36) * (R_SHELL - 0.075), 0.0, Math.cos(0.36) * (R_SHELL - 0.075));
+  root.add(ledFilmLight);
+  disposables.push(ledFilm, primaryTapeGeo, primaryTapeMat, ledGlowGeo, ledGlowMat);
 
   const secondaryTape = createTapeTexture('secondary');
   const secondaryTapeGeo = buildCurvedTapePatch(R_SHELL + 0.0042, Math.PI + 0.18, 0.78, 0.17, -0.075);
@@ -2849,6 +2893,9 @@ export function buildLabyrinthRig(grid: SphereGrid): LabyrinthRig {
   const colorPipeTarget = new THREE.Color(0x2ad9c6);
   const colorLockedDim = new THREE.Color(0x6e6a64);
 
+  let activeLevelRef: LevelConfig | null = null;
+  let lastAllClearedFilm = false;
+
   function updateLeds(
     time: number,
     clearedMask: boolean[],
@@ -2857,6 +2904,20 @@ export function buildLabyrinthRig(grid: SphereGrid): LabyrinthRig {
     toggleMask: number,
     togglePulse: Float32Array,
   ) {
+    if (activeLevelRef && allCleared !== lastAllClearedFilm) {
+      lastAllClearedFilm = allCleared;
+      ledFilm.setLevel(activeLevelRef.level, activeLevelRef.name, allCleared);
+    }
+    ledFilm.update(time);
+    const filmPulse = (0.94 + 0.06 * Math.sin(time * 4.2)) * (0.25 + 0.75 * ledFilm.getLightFactor());
+    if (ledFilm.isCleared()) {
+      ledGlowMat.color.setRGB(0.68 * filmPulse, 1.5 * filmPulse, 1.1 * filmPulse);
+      ledFilmLight.color.setHex(0x28e898);
+    } else {
+      ledGlowMat.color.setRGB(0.45 * filmPulse, 1.35 * filmPulse, 1.62 * filmPulse);
+      ledFilmLight.color.setHex(0x10d4f8);
+    }
+    ledFilmLight.intensity = 0.36 * filmPulse;
     let newestCleared = -1;
     for (let i = 0; i < leds.length; i++) {
       if (clearedMask[i]) newestCleared = i;
@@ -3013,6 +3074,7 @@ export function buildLabyrinthRig(grid: SphereGrid): LabyrinthRig {
     applyPoleShutters,
     setReadyHole,
     setLevelVisuals,
+    triggerLedIntro: () => ledFilm.restartIntro(),
     updateLeds,
     setPlasticOpacity,
     setScratchStrength,

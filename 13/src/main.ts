@@ -16,7 +16,7 @@ const renderer = new THREE.WebGLRenderer({
   antialias: false, // 4x MSAA handled inside StudioPost HDR target
   powerPreference: 'high-performance',
 });
-renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 renderer.toneMapping = THREE.NoToneMapping;
@@ -59,8 +59,8 @@ let levelElapsedSec = 0;
 let levelTimerStarted = false;
 
 interface LevelTransition {
-  kind: 'complete' | 'switch' | 'reset';
-  phase: 'drop' | 'morph' | 'rise';
+  kind: 'intro' | 'complete' | 'switch' | 'reset';
+  phase: 'drop' | 'morph' | 'tape' | 'to-pole' | 'rise';
   t: number;
   targetLevelIdx: number;
   dropStartDir: THREE.Vector3;
@@ -69,6 +69,8 @@ interface LevelTransition {
   dropDuration: number;
   dropSoundPlayed: boolean;
   morphDuration: number;
+  tapeDuration: number;
+  toPoleDuration: number;
   startQuat: THREE.Quaternion;
   startCamYaw: number;
   startCamPitch: number;
@@ -110,10 +112,14 @@ let activeWaveSpread = 0.4;
 
 const physics = new SphereBallPhysics(grid, grid.levels[currentLevelIdx]);
 
-// Hero top-down North Pole pose: chrome ball rests dead-center inside the aiming reticle on 00 START with NORTH POLE tape upright below
+// Hero top-down North Pole pose: frosted marble rests dead-center inside the aiming reticle on 00 START with NORTH POLE tape upright below
 const initialQuat = new THREE.Quaternion()
   .setFromAxisAngle(new THREE.Vector3(1, 0, 0), Math.PI / 2 - DEFAULT_CAM_PITCH)
   .multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), -0.34))
+  .normalize();
+// Equator hero pose: transparent conductive cyan LED film centered straight ahead and level
+const tapeQuat = new THREE.Quaternion()
+  .setFromAxisAngle(new THREE.Vector3(0, 1, 0), -0.36)
   .normalize();
 const sphereQuat = initialQuat.clone();
 const angVel = new THREE.Vector3(0, 0, 0);
@@ -246,9 +252,9 @@ function loadLevelNow(
   updateStatusUI();
 }
 
-function startLevelTransition(kind: 'complete' | 'switch' | 'reset', targetIndex: number) {
+function startLevelTransition(kind: 'intro' | 'complete' | 'switch' | 'reset', targetIndex: number) {
   const clamped = Math.max(0, Math.min(grid.levels.length - 1, targetIndex));
-  const alreadyTucked = transition !== null && transition.phase === 'morph';
+  const alreadyTucked = transition !== null && (transition.phase === 'morph' || transition.phase === 'tape');
 
   const curBallDir = physics.dir.clone().normalize();
   let dropTargetDir = curBallDir.clone();
@@ -266,8 +272,38 @@ function startLevelTransition(kind: 'complete' | 'switch' | 'reset', targetIndex
   targetCamYaw = normYaw;
   angVel.set(0, 0, 0);
 
+  const isIntro = kind === 'intro';
   const isComplete = kind === 'complete';
   const isReset = kind === 'reset';
+
+  if (isIntro) {
+    loadLevelNow(clamped, true, false);
+    sphereQuat.copy(tapeQuat);
+    camYaw = targetCamYaw = DEFAULT_CAM_YAW;
+    camPitch = targetCamPitch = DEFAULT_CAM_PITCH;
+    rig.ballMesh.visible = false;
+    rig.triggerLedIntro();
+    transition = {
+      kind: 'intro',
+      phase: 'tape',
+      t: 0,
+      targetLevelIdx: clamped,
+      dropStartDir: NORTH_POLE_DIR.clone(),
+      dropTargetDir: NORTH_POLE_DIR.clone(),
+      dropStartRadius: R_BALL_CENTER,
+      dropDuration: 0,
+      dropSoundPlayed: true,
+      morphDuration: 0,
+      tapeDuration: 3.65,
+      toPoleDuration: 1.05,
+      startQuat: tapeQuat.clone(),
+      startCamYaw: DEFAULT_CAM_YAW,
+      startCamPitch: DEFAULT_CAM_PITCH,
+      orbitSweepYaw: 0,
+      riseDuration: 0.54,
+    };
+    return;
+  }
 
   transition = {
     kind,
@@ -279,11 +315,13 @@ function startLevelTransition(kind: 'complete' | 'switch' | 'reset', targetIndex
     dropStartRadius: physics.radius,
     dropDuration: isComplete ? 0.84 : 0.34,
     dropSoundPlayed: false,
-    morphDuration: isComplete ? 1.95 : isReset ? 1.15 : 1.65,
+    morphDuration: isComplete ? 1.55 : isReset ? 1.05 : 1.35,
+    tapeDuration: isReset ? 0 : 3.55,
+    toPoleDuration: isReset ? 0 : 1.02,
     startQuat: sphereQuat.clone(),
     startCamYaw: normYaw,
     startCamPitch: camPitch,
-    orbitSweepYaw: isComplete ? Math.PI * 2 : isReset ? 0 : Math.PI * 2,
+    orbitSweepYaw: isComplete ? Math.PI * 2 : isReset ? 0 : 0,
     riseDuration: isComplete ? 0.56 : 0.48,
   };
 
@@ -291,6 +329,16 @@ function startLevelTransition(kind: 'complete' | 'switch' | 'reset', targetIndex
     rig.ballMesh.visible = false;
     loadLevelNow(clamped, false, false, isComplete ? 1.05 : 0.9, isComplete ? 0.78 : 0.66);
   }
+}
+
+function advanceTapeIntro(): boolean {
+  if (transition === null || transition.phase !== 'tape') return false;
+  transition.phase = 'to-pole';
+  transition.t = 0;
+  transition.startQuat = sphereQuat.clone();
+  transition.startCamYaw = camYaw;
+  transition.startCamPitch = camPitch;
+  return true;
 }
 
 function applyLevel(index: number, instant: boolean, _resetBall = true) {
@@ -314,7 +362,11 @@ function triggerToggleMorph(toggleId: number) {
   togglePulse[toggleId] = 1.0;
 }
 
-applyLevel(currentLevelIdx, true, true);
+if (params.has('clean')) {
+  applyLevel(currentLevelIdx, true, true);
+} else {
+  startLevelTransition('intro', currentLevelIdx);
+}
 rig.root.quaternion.copy(sphereQuat);
 rig.ballMesh.position.copy(physics.dir).multiplyScalar(physics.radius);
 
@@ -505,7 +557,9 @@ function endDrag(e: PointerEvent) {
   }
 
   if (wasPrimaryTap) {
-    tryActivatePortal();
+    if (!advanceTapeIntro()) {
+      tryActivatePortal();
+    }
   }
 }
 
@@ -544,7 +598,11 @@ window.addEventListener('keydown', (e) => {
     sound.unlock();
     applyLevel(Math.min(grid.levels.length - 1, currentLevelIdx + 1), false, true);
   } else if (k === ' ' || k === 'enter') {
-    if (transition === null && physics.readyPortal.kind !== 'none') {
+    if (transition !== null && transition.phase === 'tape') {
+      e.preventDefault();
+      sound.unlock();
+      advanceTapeIntro();
+    } else if (transition === null && physics.readyPortal.kind !== 'none') {
       e.preventDefault();
       sound.unlock();
       tryActivatePortal();
@@ -555,9 +613,7 @@ window.addEventListener('keydown', (e) => {
     toggleSound();
   } else if (k === 't') {
     const next = !telemetry.isEnabled();
-    telemetry.setEnabled(next);
-    const cb = document.getElementById('opt-telemetry') as HTMLInputElement | null;
-    if (cb) cb.checked = next;
+    applyStudioSettings({ ...studioSettings, telemetry: next }, true);
   } else if (k === '?' || k === 'h') {
     toggleHelp();
   } else if (k === 'escape') {
@@ -592,8 +648,7 @@ function resetCurrentLevel() {
 
 function toggleSound() {
   const next = !sound.isEnabled();
-  sound.setEnabled(next);
-  btnSound.setAttribute('aria-pressed', String(next));
+  applyStudioSettings({ ...studioSettings, sound: next }, true);
   if (next) sound.unlock();
 }
 
@@ -679,7 +734,29 @@ function syncLevelHudPosition() {
 let lastTapCueText = '';
 let lastTapCueDwell = -1;
 function syncTapCue() {
-  if (transition !== null || physics.readyPortal.kind === 'none') {
+  if (transition !== null) {
+    if (transition.phase === 'tape') {
+      const label = transition.kind === 'intro' ? 'TAP TO START' : 'TAP TO CONTINUE';
+      if (label !== lastTapCueText) {
+        tapCueBtn.textContent = label;
+        lastTapCueText = label;
+      }
+      const dwell = Math.min(1, Math.round((transition.t / Math.max(0.01, transition.tapeDuration)) * 200) / 200);
+      if (dwell !== lastTapCueDwell) {
+        tapCueBtn.style.setProperty('--dwell', String(dwell));
+        lastTapCueDwell = dwell;
+      }
+      if (tapCueBtn.hidden) tapCueBtn.hidden = false;
+      return;
+    }
+    if (!tapCueBtn.hidden) tapCueBtn.hidden = true;
+    if (lastTapCueDwell !== 0) {
+      tapCueBtn.style.setProperty('--dwell', '0');
+      lastTapCueDwell = 0;
+    }
+    return;
+  }
+  if (physics.readyPortal.kind === 'none') {
     if (!tapCueBtn.hidden) tapCueBtn.hidden = true;
     if (lastTapCueDwell !== 0) {
       tapCueBtn.style.setProperty('--dwell', '0');
@@ -713,8 +790,94 @@ btnHelp.addEventListener('click', () => toggleHelp());
 tapCueBtn.addEventListener('click', (e) => {
   e.stopPropagation();
   sound.unlock();
-  tryActivatePortal();
+  if (!advanceTapeIntro()) {
+    tryActivatePortal();
+  }
 });
+
+// Persistent studio settings in localStorage + Factory Reset
+const SETTINGS_STORAGE_KEY = 'codevember-13-labyrinth-settings-v1';
+interface StudioSettings {
+  ssao: number;
+  grade: number;
+  plastic: number;
+  scratches: number;
+  telemetry: boolean;
+  sound: boolean;
+}
+const FACTORY_SETTINGS: StudioSettings = {
+  ssao: 0.56,
+  grade: 1.0,
+  plastic: 1.0,
+  scratches: 1.0,
+  telemetry: true,
+  sound: true,
+};
+
+const optSsao = document.getElementById('opt-ssao') as HTMLInputElement;
+const optGrade = document.getElementById('opt-grade') as HTMLInputElement;
+const optPlastic = document.getElementById('opt-plastic') as HTMLInputElement;
+const optScratches = document.getElementById('opt-scratches') as HTMLInputElement;
+const optTelemetry = document.getElementById('opt-telemetry') as HTMLInputElement;
+const btnFactoryReset = document.getElementById('btn-factory-reset') as HTMLButtonElement;
+
+function loadStoredSettings(): StudioSettings {
+  try {
+    const raw = window.localStorage.getItem(SETTINGS_STORAGE_KEY);
+    if (!raw) return { ...FACTORY_SETTINGS };
+    const parsed = JSON.parse(raw) as Partial<StudioSettings>;
+    const clampNum = (v: unknown, min: number, max: number, fallback: number) =>
+      typeof v === 'number' && Number.isFinite(v) ? Math.max(min, Math.min(max, v)) : fallback;
+    return {
+      ssao: clampNum(parsed.ssao, 0, 1, FACTORY_SETTINGS.ssao),
+      grade: clampNum(parsed.grade, 0, 1.5, FACTORY_SETTINGS.grade),
+      plastic: clampNum(parsed.plastic, 0, 1.8, FACTORY_SETTINGS.plastic),
+      scratches: clampNum(parsed.scratches, 0, 2, FACTORY_SETTINGS.scratches),
+      telemetry: typeof parsed.telemetry === 'boolean' ? parsed.telemetry : FACTORY_SETTINGS.telemetry,
+      sound: typeof parsed.sound === 'boolean' ? parsed.sound : FACTORY_SETTINGS.sound,
+    };
+  } catch {
+    return { ...FACTORY_SETTINGS };
+  }
+}
+
+let studioSettings: StudioSettings = { ...FACTORY_SETTINGS };
+
+function applyStudioSettings(next: StudioSettings, persist: boolean) {
+  studioSettings = { ...next };
+  post.aoPass.blendIntensity = studioSettings.ssao;
+  post.gradePass.material.uniforms.uGradeStrength.value = studioSettings.grade;
+  rig.setPlasticOpacity(studioSettings.plastic);
+  rig.setScratchStrength(studioSettings.scratches);
+  telemetry.setEnabled(studioSettings.telemetry);
+  sound.setEnabled(studioSettings.sound);
+  btnSound.setAttribute('aria-pressed', String(studioSettings.sound));
+
+  if (optSsao) optSsao.value = String(studioSettings.ssao);
+  if (optGrade) optGrade.value = String(studioSettings.grade);
+  if (optPlastic) optPlastic.value = String(studioSettings.plastic);
+  if (optScratches) optScratches.value = String(studioSettings.scratches);
+  if (optTelemetry) optTelemetry.checked = studioSettings.telemetry;
+
+  if (persist) {
+    try {
+      window.localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(studioSettings));
+    } catch {
+      // Ignore storage quota / private mode restrictions
+    }
+  }
+}
+
+function resetSettingsToFactory() {
+  try {
+    window.localStorage.removeItem(SETTINGS_STORAGE_KEY);
+  } catch {
+    // Ignore storage restrictions
+  }
+  applyStudioSettings(FACTORY_SETTINGS, false);
+}
+
+applyStudioSettings(loadStoredSettings(), false);
 
 function toggleLevelPicker(force?: boolean) {
   if (!isDevControls) return;
@@ -755,26 +918,23 @@ if (isDevControls) {
     if (open) toggleHelp(false);
   });
 
-  const optSsao = document.getElementById('opt-ssao') as HTMLInputElement;
-  const optGrade = document.getElementById('opt-grade') as HTMLInputElement;
-  const optPlastic = document.getElementById('opt-plastic') as HTMLInputElement;
-  const optScratches = document.getElementById('opt-scratches') as HTMLInputElement;
-  const optTelemetry = document.getElementById('opt-telemetry') as HTMLInputElement;
-
   optSsao.addEventListener('input', () => {
-    post.aoPass.blendIntensity = Number(optSsao.value);
+    applyStudioSettings({ ...studioSettings, ssao: Number(optSsao.value) }, true);
   });
   optGrade.addEventListener('input', () => {
-    post.gradePass.material.uniforms.uGradeStrength.value = Number(optGrade.value);
+    applyStudioSettings({ ...studioSettings, grade: Number(optGrade.value) }, true);
   });
   optPlastic.addEventListener('input', () => {
-    rig.setPlasticOpacity(Number(optPlastic.value));
+    applyStudioSettings({ ...studioSettings, plastic: Number(optPlastic.value) }, true);
   });
   optScratches.addEventListener('input', () => {
-    rig.setScratchStrength(Number(optScratches.value));
+    applyStudioSettings({ ...studioSettings, scratches: Number(optScratches.value) }, true);
   });
   optTelemetry.addEventListener('change', () => {
-    telemetry.setEnabled(optTelemetry.checked);
+    applyStudioSettings({ ...studioSettings, telemetry: optTelemetry.checked }, true);
+  });
+  btnFactoryReset.addEventListener('click', () => {
+    resetSettingsToFactory();
   });
 }
 
@@ -870,9 +1030,13 @@ resize();
     const nextIdx = currentLevelIdx < grid.levels.length - 1 ? currentLevelIdx + 1 : currentLevelIdx;
     startLevelTransition('complete', nextIdx);
   },
+  skipTape: () => advanceTapeIntro(),
+  replayIntro: () => startLevelTransition('intro', currentLevelIdx),
+  resetSettings: () => resetSettingsToFactory(),
   getState: () => ({
     level: currentLevelIdx + 1,
     name: grid.levels[currentLevelIdx].name,
+    transitionPhase: transition?.phase ?? null,
     layer: physics.layer,
     radius: physics.radius,
     readyPortal: physics.readyPortal,
@@ -1006,16 +1170,15 @@ function frame(now: number) {
     } else if (tr.phase === 'morph') {
       const u = Math.min(1, tr.t / tr.morphDuration);
       const e = easeMechanical(u);
-      sphereQuat.copy(tr.startQuat).slerp(initialQuat, e).normalize();
+      const destQuat = tr.tapeDuration > 0 ? tapeQuat : initialQuat;
+      sphereQuat.copy(tr.startQuat).slerp(destQuat, e).normalize();
 
       if (tr.orbitSweepYaw > 0.01) {
-        // Smooth full 360° studio circulation while the labyrinth morphs into its new layout
         camYaw = tr.startCamYaw + e * (DEFAULT_CAM_YAW + tr.orbitSweepYaw - tr.startCamYaw);
-        camPitch = tr.startCamPitch + (DEFAULT_CAM_PITCH - tr.startCamPitch) * e + 0.24 * Math.sin(Math.PI * u);
+        camPitch = tr.startCamPitch + (DEFAULT_CAM_PITCH - tr.startCamPitch) * e + 0.22 * Math.sin(Math.PI * u);
       } else {
-        // Crisp curved studio sweep on level reset
-        camYaw = tr.startCamYaw + (DEFAULT_CAM_YAW - tr.startCamYaw) * e + 0.58 * Math.sin(Math.PI * u);
-        camPitch = tr.startCamPitch + (DEFAULT_CAM_PITCH - tr.startCamPitch) * e + 0.16 * Math.sin(Math.PI * u);
+        camYaw = tr.startCamYaw + (DEFAULT_CAM_YAW - tr.startCamYaw) * e + (tr.kind === 'reset' ? 0.58 : 0.24) * Math.sin(Math.PI * u);
+        camPitch = tr.startCamPitch + (DEFAULT_CAM_PITCH - tr.startCamPitch) * e + 0.14 * Math.sin(Math.PI * u);
       }
       targetCamYaw = camYaw;
       targetCamPitch = camPitch;
@@ -1023,7 +1186,48 @@ function frame(now: number) {
       if (u >= 1) {
         camYaw = targetCamYaw = DEFAULT_CAM_YAW;
         camPitch = targetCamPitch = DEFAULT_CAM_PITCH;
+        sphereQuat.copy(destQuat);
+        if (tr.tapeDuration > 0) {
+          rig.ballMesh.visible = false;
+          rig.triggerLedIntro();
+          tr.phase = 'tape';
+          tr.t = 0;
+        } else {
+          rig.ballMesh.visible = true;
+          rig.ballMesh.position.copy(NORTH_POLE_DIR).multiplyScalar(BALL_WELL_DEPTH);
+          sound.playPortalEmerge();
+          tr.phase = 'rise';
+          tr.t = 0;
+        }
+      }
+    } else if (tr.phase === 'tape') {
+      // First tape: centered on the cyan conductive LED film while LEVEL N blinks/dissolves -> scans into [TITLE]
+      // Wait smoothly or tap anywhere / press Space to advance immediately to the North Pole!
+      sphereQuat.copy(tapeQuat);
+      camYaw = targetCamYaw = DEFAULT_CAM_YAW;
+      camPitch = targetCamPitch = DEFAULT_CAM_PITCH;
+      rig.ballMesh.visible = false;
+
+      if (tr.t >= tr.tapeDuration) {
+        tr.phase = 'to-pole';
+        tr.t = 0;
+        tr.startQuat = tapeQuat.clone();
+        tr.startCamYaw = DEFAULT_CAM_YAW;
+        tr.startCamPitch = DEFAULT_CAM_PITCH;
+      }
+    } else if (tr.phase === 'to-pole') {
+      // Smoothly center camera on North Pole before the frosted marble appears
+      const u = Math.min(1, tr.t / Math.max(0.01, tr.toPoleDuration));
+      const e = easeMechanical(u);
+      sphereQuat.copy(tr.startQuat).slerp(initialQuat, e).normalize();
+      camYaw = targetCamYaw = tr.startCamYaw + (DEFAULT_CAM_YAW - tr.startCamYaw) * e;
+      camPitch = targetCamPitch = tr.startCamPitch + (DEFAULT_CAM_PITCH - tr.startCamPitch) * e;
+      rig.ballMesh.visible = false;
+
+      if (u >= 1) {
         sphereQuat.copy(initialQuat);
+        camYaw = targetCamYaw = DEFAULT_CAM_YAW;
+        camPitch = targetCamPitch = DEFAULT_CAM_PITCH;
         rig.ballMesh.visible = true;
         rig.ballMesh.position.copy(NORTH_POLE_DIR).multiplyScalar(BALL_WELL_DEPTH);
         sound.playPortalEmerge();
@@ -1061,6 +1265,7 @@ function frame(now: number) {
 
     gravityWorldDir.copy(WORLD_GRAVITY_DIR);
     aimActive += (0 - aimActive) * Math.min(1, dt * 10);
+    aimReticle.group.visible = false;
     aimReticle.setPose(WORLD_GRAVITY_DIR, WORLD_UP, aimActive);
 
     // Polar diaphragms during transitions: open smoothly for drop/pop-up, then close crisply once used!
@@ -1074,7 +1279,10 @@ function frame(now: number) {
         if (ctr.dropTargetDir.y < -0.5) southTarget = du < 0.78 ? 1 : 0;
       } else if (ctr.phase === 'morph') {
         const mu = Math.min(1, ctr.t / ctr.morphDuration);
-        northTarget = mu > 0.84 ? 1 : 0;
+        northTarget = ctr.tapeDuration === 0 && mu > 0.84 ? 1 : 0;
+      } else if (ctr.phase === 'to-pole') {
+        const pu = Math.min(1, ctr.t / Math.max(0.01, ctr.toPoleDuration));
+        northTarget = pu > 0.65 ? 1 : 0;
       } else if (ctr.phase === 'rise') {
         const ru = Math.min(1, ctr.t / ctr.riseDuration);
         northTarget = ru < 0.72 ? 1 : 0;
@@ -1138,6 +1346,7 @@ function frame(now: number) {
   gravityWorldDir.copy(WORLD_GRAVITY_DIR);
   const targetAimActive = cmdHeld || twoFingerActive || (activePointers.size > 0 && dragMode === 'camera') ? 1 : 0;
   aimActive += (targetAimActive - aimActive) * Math.min(1, dt * 12);
+  aimReticle.group.visible = true;
   aimReticle.setPose(WORLD_GRAVITY_DIR, WORLD_UP, aimActive);
 
   rig.root.quaternion.copy(sphereQuat);
