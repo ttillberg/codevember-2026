@@ -54,7 +54,28 @@ floatGroup.add(aimReticle.group);
 
 const initialLevelNum = Math.max(1, Math.min(grid.levels.length, Number(params.get('level')) || 1));
 let currentLevelIdx = initialLevelNum - 1;
+const PROGRESS_STORAGE_KEY = 'codevember-13-labyrinth-progress-v1';
 const completedLevels = new Set<number>();
+try {
+  const savedProgress = window.localStorage.getItem(PROGRESS_STORAGE_KEY);
+  if (savedProgress) {
+    const arr = JSON.parse(savedProgress);
+    if (Array.isArray(arr)) {
+      for (const n of arr) {
+        if (typeof n === 'number' && n >= 1 && n <= grid.levels.length) completedLevels.add(n);
+      }
+    }
+  }
+} catch {
+  // Ignore storage restrictions
+}
+function saveCompletedLevels() {
+  try {
+    window.localStorage.setItem(PROGRESS_STORAGE_KEY, JSON.stringify(Array.from(completedLevels).sort((a, b) => a - b)));
+  } catch {
+    // Ignore storage restrictions
+  }
+}
 let levelElapsedSec = 0;
 let levelTimerStarted = false;
 
@@ -125,7 +146,6 @@ const sphereQuat = initialQuat.clone();
 const angVel = new THREE.Vector3(0, 0, 0);
 
 // UI references
-const levelHudEl = document.getElementById('level-hud')!;
 const levelNumBtn = document.getElementById('level-num') as HTMLButtonElement;
 const levelTitleEl = document.getElementById('level-title')!;
 const levelPicker = document.getElementById('level-picker')!;
@@ -142,9 +162,11 @@ const isDevControls = import.meta.env.DEV || params.has('settings');
 function updateStatusUI() {
   const level = grid.levels[currentLevelIdx];
 
-  // Bottom-left level caption
+  // Bottom-left level caption (English + Japanese Kanji matching title plate)
   levelNumBtn.textContent = `LEVEL ${level.level}`;
-  levelTitleEl.textContent = physics.allCleared ? `${level.name} · CLEAR` : level.name;
+  levelTitleEl.innerHTML = physics.allCleared
+    ? `${level.name} <span lang="ja">${level.nameJa}</span> · CLEAR`
+    : `${level.name} <span lang="ja">${level.nameJa}</span>`;
 
   for (const btn of levelButtons) {
     const n = Number(btn.dataset.level);
@@ -294,7 +316,8 @@ function startLevelTransition(kind: 'intro' | 'complete' | 'switch' | 'reset', t
       dropDuration: 0,
       dropSoundPlayed: true,
       morphDuration: 0,
-      tapeDuration: 3.65,
+      // Wait for an explicit tap/click/key on the initial Level 1 intro so WebAudio unlocks cleanly!
+      tapeDuration: clamped === 0 ? Infinity : 6.8,
       toPoleDuration: 1.05,
       startQuat: tapeQuat.clone(),
       startCamYaw: DEFAULT_CAM_YAW,
@@ -316,7 +339,7 @@ function startLevelTransition(kind: 'intro' | 'complete' | 'switch' | 'reset', t
     dropDuration: isComplete ? 0.84 : 0.34,
     dropSoundPlayed: false,
     morphDuration: isComplete ? 1.55 : isReset ? 1.05 : 1.35,
-    tapeDuration: isReset ? 0 : 3.55,
+    tapeDuration: isReset ? 0 : 6.8,
     toPoleDuration: isReset ? 0 : 1.02,
     startQuat: sphereQuat.clone(),
     startCamYaw: normYaw,
@@ -333,6 +356,8 @@ function startLevelTransition(kind: 'intro' | 'complete' | 'switch' | 'reset', t
 
 function advanceTapeIntro(): boolean {
   if (transition === null || transition.phase !== 'tape') return false;
+  canvas.classList.remove('tap-ready');
+  rig.clearLedTape();
   transition.phase = 'to-pole';
   transition.t = 0;
   transition.startQuat = sphereQuat.clone();
@@ -346,6 +371,7 @@ function applyLevel(index: number, instant: boolean, _resetBall = true) {
     transition = null;
     rig.ballMesh.visible = true;
     loadLevelNow(index, true, true);
+    rig.clearLedTape();
   } else {
     startLevelTransition('switch', index);
   }
@@ -531,8 +557,7 @@ function endDrag(e: PointerEvent) {
     !twoFingerActive &&
     !suppressSingleUntilAllUp &&
     dragMode === 'sphere' &&
-    !tapMoved &&
-    performance.now() - tapStartTime < 340;
+    (transition?.phase === 'tape' || (!tapMoved && performance.now() - tapStartTime < 340));
 
   activePointers.delete(e.pointerId);
   if (canvas.hasPointerCapture(e.pointerId)) {
@@ -680,6 +705,7 @@ const physicsEvents = {
     sound.playCheckpoint(idx, allCleared);
     if (allCleared) {
       completedLevels.add(currentLevelIdx + 1);
+      saveCompletedLevels();
       const nextIdx = currentLevelIdx < grid.levels.length - 1 ? currentLevelIdx + 1 : currentLevelIdx;
       startLevelTransition('complete', nextIdx);
     }
@@ -692,71 +718,10 @@ function tryActivatePortal(): boolean {
   return physics.activateReadyPortal(shutterOpen, physicsEvents);
 }
 
-let lastLevelHudPos = '';
-function syncLevelHudPosition() {
-  const { cx, cy, radius } = telemetry.sphereScreen;
-  if (radius < 40) return;
-  const w = lastCanvasW || window.innerWidth;
-  const h = lastCanvasH || window.innerHeight;
-  const isCompact = w < 640;
-  const idealOffset = isCompact ? 16 : Math.max(20, Math.min(32, radius * 0.068));
-  const arcR = Math.min(radius + idealOffset, Math.max(90, w - cx - (isCompact ? 18 : 26)));
-
-  const leftAnchorAng = (138 * Math.PI) / 180;
-  const anchorX = cx + Math.cos(leftAnchorAng) * arcR;
-  const anchorY = cy + Math.sin(leftAnchorAng) * arcR;
-
-  let mode: 'beside' | 'below';
-  let x: number;
-  let y: number;
-
-  if (!isCompact && anchorX > 185) {
-    // Hug the lower-left orbital contour of the globe, right-aligned cleanly toward the sphere!
-    mode = 'beside';
-    x = Math.round(anchorX - 16);
-    y = Math.round(Math.max(96, Math.min(h - 46, anchorY)));
-  } else {
-    // Portrait / tight viewport: hug directly beneath the lower-left curve of the globe
-    mode = 'below';
-    x = Math.round(Math.max(18, cx - radius * 0.88));
-    y = Math.round(Math.max(96, Math.min(h - 68, cy + radius + 16)));
-  }
-
-  const key = `${mode}:${x}:${y}`;
-  if (key === lastLevelHudPos) return;
-  lastLevelHudPos = key;
-
-  levelHudEl.classList.toggle('beside-globe', mode === 'beside');
-  levelHudEl.style.left = `${x}px`;
-  levelHudEl.style.top = `${y}px`;
-}
-
 let lastTapCueText = '';
 let lastTapCueDwell = -1;
 function syncTapCue() {
-  if (transition !== null) {
-    if (transition.phase === 'tape') {
-      const label = transition.kind === 'intro' ? 'TAP TO START' : 'TAP TO CONTINUE';
-      if (label !== lastTapCueText) {
-        tapCueBtn.textContent = label;
-        lastTapCueText = label;
-      }
-      const dwell = Math.min(1, Math.round((transition.t / Math.max(0.01, transition.tapeDuration)) * 200) / 200);
-      if (dwell !== lastTapCueDwell) {
-        tapCueBtn.style.setProperty('--dwell', String(dwell));
-        lastTapCueDwell = dwell;
-      }
-      if (tapCueBtn.hidden) tapCueBtn.hidden = false;
-      return;
-    }
-    if (!tapCueBtn.hidden) tapCueBtn.hidden = true;
-    if (lastTapCueDwell !== 0) {
-      tapCueBtn.style.setProperty('--dwell', '0');
-      lastTapCueDwell = 0;
-    }
-    return;
-  }
-  if (physics.readyPortal.kind === 'none') {
+  if (transition !== null || physics.readyPortal.kind === 'none') {
     if (!tapCueBtn.hidden) tapCueBtn.hidden = true;
     if (lastTapCueDwell !== 0) {
       tapCueBtn.style.setProperty('--dwell', '0');
@@ -871,10 +836,13 @@ function applyStudioSettings(next: StudioSettings, persist: boolean) {
 function resetSettingsToFactory() {
   try {
     window.localStorage.removeItem(SETTINGS_STORAGE_KEY);
+    window.localStorage.removeItem(PROGRESS_STORAGE_KEY);
   } catch {
     // Ignore storage restrictions
   }
+  completedLevels.clear();
   applyStudioSettings(FACTORY_SETTINGS, false);
+  updateStatusUI();
 }
 
 applyStudioSettings(loadStoredSettings(), false);
@@ -1027,6 +995,7 @@ resize();
   },
   triggerComplete: () => {
     completedLevels.add(currentLevelIdx + 1);
+    saveCompletedLevels();
     const nextIdx = currentLevelIdx < grid.levels.length - 1 ? currentLevelIdx + 1 : currentLevelIdx;
     startLevelTransition('complete', nextIdx);
   },
@@ -1201,14 +1170,16 @@ function frame(now: number) {
         }
       }
     } else if (tr.phase === 'tape') {
-      // First tape: centered on the cyan conductive LED film while LEVEL N blinks/dissolves -> scans into [TITLE]
-      // Wait smoothly or tap anywhere / press Space to advance immediately to the North Pole!
+      // First tape: LEVEL N -> [TITLE] [日本語] -> TAP TO START 開始, then clears to blank as camera rotates to North Pole
       sphereQuat.copy(tapeQuat);
       camYaw = targetCamYaw = DEFAULT_CAM_YAW;
       camPitch = targetCamPitch = DEFAULT_CAM_PITCH;
       rig.ballMesh.visible = false;
+      canvas.classList.add('tap-ready');
 
-      if (tr.t >= tr.tapeDuration) {
+      if (Number.isFinite(tr.tapeDuration) && tr.t >= tr.tapeDuration) {
+        canvas.classList.remove('tap-ready');
+        rig.clearLedTape();
         tr.phase = 'to-pole';
         tr.t = 0;
         tr.startQuat = tapeQuat.clone();
@@ -1320,7 +1291,6 @@ function frame(now: number) {
       shutterOpen,
       inTransition: true,
     });
-    syncLevelHudPosition();
     return;
   }
 
@@ -1404,7 +1374,6 @@ function frame(now: number) {
     shutterOpen,
     inTransition: false,
   });
-  syncLevelHudPosition();
 }
 
 requestAnimationFrame(frame);

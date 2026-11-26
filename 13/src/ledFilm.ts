@@ -1,217 +1,101 @@
 import * as THREE from 'three';
 
-// Crisp 5x7 dot-matrix bitmap font (each row is 5 bits, MSB on left)
-const FONT_5X7: Record<string, number[]> = {
-  ' ': [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00],
-  '-': [0x00, 0x00, 0x00, 0x1c, 0x00, 0x00, 0x00],
-  '.': [0x00, 0x00, 0x00, 0x00, 0x00, 0x18, 0x18],
-  '·': [0x00, 0x00, 0x00, 0x10, 0x00, 0x00, 0x00],
-  '/': [0x02, 0x02, 0x04, 0x04, 0x08, 0x08, 0x10],
-  ':': [0x00, 0x18, 0x18, 0x00, 0x18, 0x18, 0x00],
-  '0': [0x0e, 0x11, 0x13, 0x15, 0x19, 0x11, 0x0e],
-  '1': [0x08, 0x18, 0x08, 0x08, 0x08, 0x08, 0x1c],
-  '2': [0x0e, 0x11, 0x01, 0x06, 0x08, 0x10, 0x1f],
-  '3': [0x1e, 0x01, 0x01, 0x0e, 0x01, 0x01, 0x1e],
-  '4': [0x02, 0x06, 0x0a, 0x12, 0x1f, 0x02, 0x02],
-  '5': [0x1f, 0x10, 0x1e, 0x01, 0x01, 0x11, 0x0e],
-  '6': [0x06, 0x08, 0x10, 0x1e, 0x11, 0x11, 0x0e],
-  '7': [0x1f, 0x01, 0x02, 0x04, 0x08, 0x08, 0x08],
-  '8': [0x0e, 0x11, 0x11, 0x0e, 0x11, 0x11, 0x0e],
-  '9': [0x0e, 0x11, 0x11, 0x0f, 0x01, 0x02, 0x0c],
-  A: [0x0e, 0x11, 0x11, 0x1f, 0x11, 0x11, 0x11],
-  B: [0x1e, 0x11, 0x11, 0x1e, 0x11, 0x11, 0x1e],
-  C: [0x0e, 0x11, 0x10, 0x10, 0x10, 0x11, 0x0e],
-  D: [0x1e, 0x11, 0x11, 0x11, 0x11, 0x11, 0x1e],
-  E: [0x1f, 0x10, 0x10, 0x1e, 0x10, 0x10, 0x1f],
-  F: [0x1f, 0x10, 0x10, 0x1e, 0x10, 0x10, 0x10],
-  G: [0x0e, 0x11, 0x10, 0x17, 0x11, 0x11, 0x0f],
-  H: [0x11, 0x11, 0x11, 0x1f, 0x11, 0x11, 0x11],
-  I: [0x1c, 0x08, 0x08, 0x08, 0x08, 0x08, 0x1c],
-  J: [0x07, 0x02, 0x02, 0x02, 0x02, 0x12, 0x0c],
-  K: [0x11, 0x12, 0x14, 0x18, 0x14, 0x12, 0x11],
-  L: [0x10, 0x10, 0x10, 0x10, 0x10, 0x10, 0x1f],
-  M: [0x11, 0x1b, 0x15, 0x15, 0x11, 0x11, 0x11],
-  N: [0x11, 0x19, 0x15, 0x13, 0x11, 0x11, 0x11],
-  O: [0x0e, 0x11, 0x11, 0x11, 0x11, 0x11, 0x0e],
-  P: [0x1e, 0x11, 0x11, 0x1e, 0x10, 0x10, 0x10],
-  Q: [0x0e, 0x11, 0x11, 0x11, 0x15, 0x12, 0x0d],
-  R: [0x1e, 0x11, 0x11, 0x1e, 0x14, 0x12, 0x11],
-  S: [0x0f, 0x10, 0x10, 0x0e, 0x01, 0x01, 0x1e],
-  T: [0x1f, 0x04, 0x04, 0x04, 0x04, 0x04, 0x04],
-  U: [0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x0e],
-  V: [0x11, 0x11, 0x11, 0x11, 0x11, 0x0a, 0x04],
-  W: [0x11, 0x11, 0x11, 0x15, 0x15, 0x1b, 0x11],
-  X: [0x11, 0x11, 0x0a, 0x04, 0x0a, 0x11, 0x11],
-  Y: [0x11, 0x11, 0x0a, 0x04, 0x04, 0x04, 0x04],
-  Z: [0x1f, 0x01, 0x02, 0x04, 0x08, 0x10, 0x1f],
-};
-
-// Proportional column width for narrow characters so spacing reads crisply on the LED matrix
-const GLYPH_WIDTH: Record<string, number> = {
-  ' ': 2,
-  '-': 3,
-  '.': 2,
-  '·': 1,
-  ':': 2,
-  '1': 3,
-  I: 3,
-  '/': 4,
-};
-
 export interface LedFilmRig {
   map: THREE.CanvasTexture;
-  emissiveMap: THREE.CanvasTexture;
-  glowMap: THREE.CanvasTexture;
   roughnessMap: THREE.CanvasTexture;
   isCleared: () => boolean;
-  getLightFactor: () => number;
-  setLevel: (levelNum: number, title: string, cleared?: boolean) => void;
+  setLevel: (levelNum: number, title: string, titleJa: string, cleared?: boolean) => void;
   restartIntro: () => void;
+  clearToBlank: () => void;
   update: (time: number) => void;
   dispose: () => void;
 }
 
-function makeDiodeSprite(
-  size: number,
-  haloColor: string,
-  ringColor: string,
-  bodyColor: string,
-  coreColor: string,
-  drawRing: boolean,
-): HTMLCanvasElement {
-  const c = document.createElement('canvas');
-  c.width = size;
-  c.height = size;
-  const ctx = c.getContext('2d')!;
-  const half = size * 0.5;
-
-  const grad = ctx.createRadialGradient(half, half, 0.8, half, half, half);
-  grad.addColorStop(0, haloColor);
-  grad.addColorStop(0.42, haloColor);
-  grad.addColorStop(1, 'rgba(0,0,0,0)');
-  ctx.fillStyle = grad;
-  ctx.fillRect(0, 0, size, size);
-
-  if (drawRing) {
-    ctx.fillStyle = ringColor;
-    ctx.beginPath();
-    ctx.roundRect(half - 2.75, half - 2.6, 5.5, 5.2, 1.25);
-    ctx.fill();
-  }
-
-  ctx.fillStyle = bodyColor;
-  ctx.beginPath();
-  ctx.roundRect(half - 2.15, half - 2.0, 4.3, 4.0, 0.9);
-  ctx.fill();
-
-  // Delicate pinpoint white-hot semiconductor die sparkle at the center
-  ctx.fillStyle = coreColor;
-  ctx.fillRect(half - 0.58, half - 0.55, 1.16, 1.1);
-  return c;
-}
-
-function makeBloomSprite(size: number, coreRgba: string, midRgba: string, outerRgba: string): HTMLCanvasElement {
-  const c = document.createElement('canvas');
-  c.width = size;
-  c.height = size;
-  const ctx = c.getContext('2d')!;
-  const half = size * 0.5;
-
-  const grad = ctx.createRadialGradient(half, half, 0.2, half, half, half);
-  grad.addColorStop(0.0, coreRgba);
-  grad.addColorStop(0.16, midRgba);
-  grad.addColorStop(0.52, outerRgba);
-  grad.addColorStop(1.0, 'rgba(0,0,0,0)');
-  ctx.fillStyle = grad;
-  ctx.fillRect(0, 0, size, size);
-  return c;
-}
+/**
+ * Handcrafted 100% SQUARE-CORNERED architectural bitmap pixel font (12 rows tall, uniform 2px strokes,
+ * strict 90-degree corners — zero rounded bevels, pure Swiss/Swedish hardware pixel geometry).
+ */
+const SQUARE_FONT_12: Record<string, string[]> = {
+  ' ': ['....', '....', '....', '....', '....', '....', '....', '....', '....', '....', '....', '....'],
+  '-': ['......', '......', '......', '......', '......', '######', '######', '......', '......', '......', '......', '......'],
+  '·': ['..', '..', '..', '..', '..', '##', '##', '..', '..', '..', '..', '..'],
+  '0': ['#######', '#######', '##...##', '##...##', '##...##', '##...##', '##...##', '##...##', '##...##', '##...##', '#######', '#######'],
+  '1': ['..####.', '..####.', '....##.', '....##.', '....##.', '....##.', '....##.', '....##.', '....##.', '....##.', '#######', '#######'],
+  '2': ['#######', '#######', '.....##', '.....##', '.....##', '#######', '#######', '##.....', '##.....', '##.....', '#######', '#######'],
+  '3': ['#######', '#######', '.....##', '.....##', '.....##', '..#####', '..#####', '.....##', '.....##', '.....##', '#######', '#######'],
+  '4': ['##...##', '##...##', '##...##', '##...##', '##...##', '#######', '#######', '.....##', '.....##', '.....##', '.....##', '.....##'],
+  '5': ['#######', '#######', '##.....', '##.....', '##.....', '#######', '#######', '.....##', '.....##', '.....##', '#######', '#######'],
+  '6': ['#######', '#######', '##.....', '##.....', '##.....', '#######', '#######', '##...##', '##...##', '##...##', '#######', '#######'],
+  '7': ['#######', '#######', '.....##', '.....##', '.....##', '.....##', '.....##', '.....##', '.....##', '.....##', '.....##', '.....##'],
+  '8': ['#######', '#######', '##...##', '##...##', '##...##', '#######', '#######', '##...##', '##...##', '##...##', '#######', '#######'],
+  '9': ['#######', '#######', '##...##', '##...##', '##...##', '#######', '#######', '.....##', '.....##', '.....##', '#######', '#######'],
+  A: ['#######', '#######', '##...##', '##...##', '##...##', '#######', '#######', '##...##', '##...##', '##...##', '##...##', '##...##'],
+  B: ['######.', '#######', '##...##', '##...##', '##...##', '######.', '#######', '##...##', '##...##', '##...##', '#######', '######.'],
+  C: ['#######', '#######', '##.....', '##.....', '##.....', '##.....', '##.....', '##.....', '##.....', '##.....', '#######', '#######'],
+  D: ['######.', '#######', '##...##', '##...##', '##...##', '##...##', '##...##', '##...##', '##...##', '##...##', '#######', '######.'],
+  E: ['#######', '#######', '##.....', '##.....', '##.....', '######.', '######.', '##.....', '##.....', '##.....', '#######', '#######'],
+  F: ['#######', '#######', '##.....', '##.....', '##.....', '######.', '######.', '##.....', '##.....', '##.....', '##.....', '##.....'],
+  G: ['#######', '#######', '##.....', '##.....', '##.....', '##..###', '##..###', '##...##', '##...##', '##...##', '#######', '#######'],
+  H: ['##...##', '##...##', '##...##', '##...##', '##...##', '#######', '#######', '##...##', '##...##', '##...##', '##...##', '##...##'],
+  I: ['######', '######', '..##..', '..##..', '..##..', '..##..', '..##..', '..##..', '..##..', '..##..', '######', '######'],
+  J: ['.....##', '.....##', '.....##', '.....##', '.....##', '.....##', '.....##', '##...##', '##...##', '##...##', '#######', '#######'],
+  K: ['##...##', '##...##', '##..##.', '##..##.', '##.##..', '####...', '####...', '##.##..', '##..##.', '##..##.', '##...##', '##...##'],
+  L: ['##.....', '##.....', '##.....', '##.....', '##.....', '##.....', '##.....', '##.....', '##.....', '##.....', '#######', '#######'],
+  M: ['##.....##', '###...###', '####.####', '##.###.##', '##..#..##', '##.....##', '##.....##', '##.....##', '##.....##', '##.....##', '##.....##', '##.....##'],
+  N: ['##...##', '###..##', '###..##', '####.##', '##.####', '##..###', '##..###', '##...##', '##...##', '##...##', '##...##', '##...##'],
+  O: ['#######', '#######', '##...##', '##...##', '##...##', '##...##', '##...##', '##...##', '##...##', '##...##', '#######', '#######'],
+  P: ['#######', '#######', '##...##', '##...##', '##...##', '#######', '#######', '##.....', '##.....', '##.....', '##.....', '##.....'],
+  Q: ['#######', '#######', '##...##', '##...##', '##...##', '##...##', '##...##', '##...##', '##.#.##', '##..###', '#######', '#####.#'],
+  R: ['#######', '#######', '##...##', '##...##', '##...##', '#######', '#######', '##..##.', '##...##', '##...##', '##...##', '##...##'],
+  S: ['#######', '#######', '##.....', '##.....', '##.....', '#######', '#######', '.....##', '.....##', '.....##', '#######', '#######'],
+  T: ['########', '########', '...##...', '...##...', '...##...', '...##...', '...##...', '...##...', '...##...', '...##...', '...##...', '...##...'],
+  U: ['##...##', '##...##', '##...##', '##...##', '##...##', '##...##', '##...##', '##...##', '##...##', '##...##', '#######', '#######'],
+  V: ['##...##', '##...##', '##...##', '##...##', '##...##', '##...##', '##...##', '##...##', '.##.##.', '.##.##.', '..###..', '..###..'],
+  W: ['##.....##', '##.....##', '##.....##', '##.....##', '##.....##', '##.....##', '##..#..##', '##.###.##', '####.####', '###...###', '##.....##', '##.....##'],
+  X: ['##...##', '##...##', '.##.##.', '.##.##.', '..###..', '..###..', '..###..', '..###..', '.##.##.', '.##.##.', '##...##', '##...##'],
+  Y: ['##....##', '##....##', '##....##', '.##..##.', '..####..', '...##...', '...##...', '...##...', '...##...', '...##...', '...##...', '...##...'],
+  Z: ['#######', '#######', '.....##', '....##.', '...##..', '..##...', '..##...', '.##....', '##.....', '##.....', '#######', '#######'],
+};
 
 /**
- * Transparent flexible conductive PCB / micro-LED film ribbon adhered directly to the curved outer shell.
- * Features etched silver/copper bus rails, SMD flex-driver IC, gold test pads, transparent ITO column grid,
- * smoked-PET optical contrast filter, and a centered 7x80 electric-cyan micro-LED display that blinks/dissolves
- * in "LEVEL N" and scans/dissolves into "[TITLE]".
+ * Translucent flexible electrophoretic E-Ink film ribbon (16x156 square microcapsule matrix) adhered to the outer shell.
+ * Non-filled cells stay softly translucent so the labyrinth architecture ghosts through the film,
+ * while active cells pull crisp square matte-charcoal E-Ink pigment to the surface:
+ *   LEVEL N -> [TITLE] [日本語] -> TAP TO START -> clears smoothly to blank translucent film!
  */
 export function createLedFilmDisplay(): LedFilmRig {
   const W = 768;
   const H = 128;
-  const GW = 384;
-  const GH = 64;
-  const COLS = 80;
-  const ROWS = 7;
+  const COLS = 156;
+  const ROWS = 16;
 
-  // Active diode matrix pixel grid bounds inside the 768x128 transparent film
-  const gridLeft = 74;
-  const gridRight = 694;
+  // Active 16x156 exact-square electrophoretic E-Ink pixel matrix inside the 768x128 flexible PET film
+  const gridLeft = 72;
+  const gridRight = 696;
   const gridTop = 32;
   const gridBottom = 96;
   const pitchX = (gridRight - gridLeft) / (COLS - 1);
   const pitchY = (gridBottom - gridTop) / (ROWS - 1);
 
-  // Deterministic per-diode threshold [0..1] for crisp organic pixel dissolve transitions
+  // Strict square pixel cells (no rounded corners)
+  const cellW = Math.min(pitchX, pitchY) - 0.72;
+  const cellH = cellW;
+  const halfCellW = cellW * 0.5;
+  const halfCellH = cellH * 0.5;
+
+  // Deterministic per-cell threshold [0..1] & paper micro-grain for tactile electrophoretic dissolve
   const pixelThresh = new Float32Array(COLS * ROWS);
+  const pixelJitter = new Float32Array(COLS * ROWS);
   for (let col = 0; col < COLS; col++) {
     for (let row = 0; row < ROWS; row++) {
       let h = (col * 374761393 + row * 668265263 + 1313) >>> 0;
       h = Math.imul(h ^ (h >>> 13), 1274126177) >>> 0;
       pixelThresh[col * ROWS + row] = ((h ^ (h >>> 16)) >>> 0) / 4294967295;
+      pixelJitter[col * ROWS + row] = (((h >>> 8) & 0xff) / 255 - 0.5) * 14;
     }
   }
 
-  // Pre-rendered crisp micro-LED sprites for sub-0.1ms Canvas2D blitting (electric cyan active, emerald mint cleared)
-  const SPRITE_SZ = 12;
-  const SPRITE_HALF = SPRITE_SZ * 0.5;
-  const cyanDiffSprite = makeDiodeSprite(
-    SPRITE_SZ,
-    'rgba(10, 210, 245, 0.36)',
-    'rgba(4, 34, 46, 0.62)',
-    '#06ccf0',
-    '#ecfeff',
-    true,
-  );
-  const cyanEmSprite = makeDiodeSprite(
-    SPRITE_SZ,
-    'rgba(8, 214, 248, 0.44)',
-    '#000000',
-    '#08d6f8',
-    '#e4fdff',
-    false,
-  );
-  const mintDiffSprite = makeDiodeSprite(
-    SPRITE_SZ,
-    'rgba(24, 226, 142, 0.34)',
-    'rgba(6, 40, 28, 0.60)',
-    '#14d884',
-    '#eefff8',
-    true,
-  );
-  const mintEmSprite = makeDiodeSprite(
-    SPRITE_SZ,
-    'rgba(22, 232, 144, 0.42)',
-    '#000000',
-    '#1ae48c',
-    '#e6fff5',
-    false,
-  );
-
-  // Tight, clean bloom stamps for the AdditiveBlending HDR halo mesh (keeps every diode dot sharp & saturated cyan!)
-  const BLOOM_SZ = 13;
-  const BLOOM_HALF = BLOOM_SZ * 0.5;
-  const cyanBloomSprite = makeBloomSprite(
-    BLOOM_SZ,
-    'rgba(165, 248, 255, 0.62)',
-    'rgba(14, 214, 248, 0.38)',
-    'rgba(6, 172, 230, 0.09)',
-  );
-  const mintBloomSprite = makeBloomSprite(
-    BLOOM_SZ,
-    'rgba(175, 255, 224, 0.60)',
-    'rgba(32, 230, 148, 0.36)',
-    'rgba(16, 194, 120, 0.08)',
-  );
-
-  // 1. Pre-render static flexible conductive PET film substrate + etched copper/silver traces + SMD driver IC
+  // 1. Pre-render static flexible PET laminating film + translucent unfilled E-Ink cell matrix + EPD driver IC
   const baseCanvas = document.createElement('canvas');
   baseCanvas.width = W;
   baseCanvas.height = H;
@@ -219,106 +103,72 @@ export function createLedFilmDisplay(): LedFilmRig {
 
   const padX = 9;
   const padY = 9;
-  const r = 8;
-  bCtx.beginPath();
-  bCtx.roundRect(padX, padY, W - padX * 2, H - padY * 2, r);
+  // Crisp square architectural die-cut PET film (no rounded corners)
   const filmGrad = bCtx.createLinearGradient(0, padY, 0, H - padY);
-  filmGrad.addColorStop(0, 'rgba(188, 184, 176, 0.56)');
-  filmGrad.addColorStop(0.16, 'rgba(196, 192, 186, 0.36)');
-  filmGrad.addColorStop(0.84, 'rgba(194, 190, 184, 0.34)');
-  filmGrad.addColorStop(1, 'rgba(182, 177, 169, 0.54)');
+  filmGrad.addColorStop(0, 'rgba(226, 222, 214, 0.48)');
+  filmGrad.addColorStop(0.16, 'rgba(234, 230, 223, 0.28)');
+  filmGrad.addColorStop(0.84, 'rgba(232, 228, 221, 0.26)');
+  filmGrad.addColorStop(1, 'rgba(220, 215, 206, 0.46)');
   bCtx.fillStyle = filmGrad;
-  bCtx.fill();
+  bCtx.fillRect(padX, padY, W - padX * 2, H - padY * 2);
 
-  bCtx.strokeStyle = 'rgba(96, 92, 84, 0.54)';
-  bCtx.lineWidth = 1.25;
-  bCtx.stroke();
+  bCtx.strokeStyle = 'rgba(116, 111, 102, 0.42)';
+  bCtx.lineWidth = 1.2;
+  bCtx.strokeRect(padX, padY, W - padX * 2, H - padY * 2);
 
-  bCtx.strokeStyle = 'rgba(255, 255, 255, 0.50)';
+  bCtx.strokeStyle = 'rgba(255, 255, 255, 0.58)';
   bCtx.lineWidth = 0.85;
-  bCtx.beginPath();
-  bCtx.roundRect(padX + 1.5, padY + 1.5, W - (padX + 1.5) * 2, H - (padY + 1.5) * 2, r - 1);
-  bCtx.stroke();
+  bCtx.strokeRect(padX + 1.5, padY + 1.5, W - (padX + 1.5) * 2, H - (padY + 1.5) * 2);
 
-  // Smoked translucent optical contrast window (still clearly transparent to maze behind, lets lit diodes BLAZE!)
-  const winGrad = bCtx.createLinearGradient(0, gridTop - 8, 0, gridBottom + 8);
-  winGrad.addColorStop(0, 'rgba(28, 27, 25, 0.44)');
-  winGrad.addColorStop(0.5, 'rgba(24, 23, 21, 0.48)');
-  winGrad.addColorStop(1, 'rgba(28, 27, 25, 0.44)');
-  bCtx.fillStyle = winGrad;
-  bCtx.beginPath();
-  bCtx.roundRect(gridLeft - 8, gridTop - 8, gridRight - gridLeft + 16, gridBottom - gridTop + 16, 4.5);
-  bCtx.fill();
-  bCtx.strokeStyle = 'rgba(42, 40, 36, 0.38)';
-  bCtx.lineWidth = 0.9;
-  bCtx.stroke();
+  // Semi-transparent milky e-paper substrate window (lets maze show softly through non-filled pixels!)
+  bCtx.fillStyle = 'rgba(238, 235, 228, 0.30)';
+  bCtx.fillRect(gridLeft - 6, gridTop - 6, gridRight - gridLeft + 12, gridBottom - gridTop + 12);
+  bCtx.strokeStyle = 'rgba(122, 116, 106, 0.26)';
+  bCtx.lineWidth = 0.8;
+  bCtx.strokeRect(gridLeft - 6, gridTop - 6, gridRight - gridLeft + 12, gridBottom - gridTop + 12);
 
-  // Top & bottom conductive silver-copper power bus rails (VCC / GND)
+  // Top & bottom conductive silver-copper electrode bus rails
   const drawBusRail = (y: number, thickness: number, alpha: number) => {
-    bCtx.strokeStyle = `rgba(156, 130, 92, ${alpha})`;
+    bCtx.strokeStyle = `rgba(148, 128, 96, ${alpha})`;
     bCtx.lineWidth = thickness;
     bCtx.beginPath();
     bCtx.moveTo(48, y);
     bCtx.lineTo(W - 48, y);
     bCtx.stroke();
   };
-  drawBusRail(18, 1.8, 0.58);
-  drawBusRail(22.5, 0.9, 0.38);
-  drawBusRail(H - 18, 1.8, 0.58);
-  drawBusRail(H - 22.5, 0.9, 0.38);
+  drawBusRail(17, 1.5, 0.46);
+  drawBusRail(20.5, 0.75, 0.28);
+  drawBusRail(H - 17, 1.5, 0.46);
+  drawBusRail(H - 20.5, 0.75, 0.28);
 
-  // Ultra-fine transparent conductive ITO horizontal row traces & vertical column traces
-  bCtx.strokeStyle = 'rgba(170, 158, 138, 0.22)';
-  bCtx.lineWidth = 0.7;
-  for (let row = 0; row < ROWS; row++) {
-    const y = gridTop + row * pitchY;
-    bCtx.beginPath();
-    bCtx.moveTo(56, y);
-    bCtx.lineTo(gridRight + 10, y);
-    bCtx.stroke();
-  }
-  bCtx.strokeStyle = 'rgba(170, 158, 138, 0.14)';
-  bCtx.lineWidth = 0.55;
-  for (let col = 0; col < COLS; col++) {
-    const x = gridLeft + col * pitchX;
-    bCtx.beginPath();
-    bCtx.moveTo(x, 23);
-    bCtx.lineTo(x, H - 23);
-    bCtx.stroke();
-  }
-
-  // Left end: miniature matte-charcoal SMD flex-PCB LED driver IC + metallic gull-wing pins fanning to row traces
+  // Left end: matte-charcoal E-Ink EPD flex-driver IC + metallic gull-wing leads (sharp square package)
   const icX = 26;
   const icY = 32;
   const icW = 21;
   const icH = 64;
-  bCtx.strokeStyle = 'rgba(154, 130, 94, 0.66)';
-  bCtx.lineWidth = 0.9;
-  for (let row = 0; row < ROWS; row++) {
-    const pinY = icY + 7 + (row / (ROWS - 1)) * (icH - 14);
-    const rowY = gridTop + row * pitchY;
+  bCtx.strokeStyle = 'rgba(144, 124, 92, 0.52)';
+  bCtx.lineWidth = 0.8;
+  for (let i = 0; i < 8; i++) {
+    const pinY = icY + 6 + (i / 7) * (icH - 12);
+    const rowY = gridTop + (i / 7) * (gridBottom - gridTop);
     bCtx.beginPath();
     bCtx.moveTo(icX + icW, pinY);
     bCtx.lineTo(icX + icW + 7, pinY);
-    bCtx.lineTo(56, rowY);
+    bCtx.lineTo(66, rowY);
     bCtx.stroke();
-    bCtx.fillStyle = 'rgba(186, 188, 192, 0.92)';
-    bCtx.fillRect(icX + icW, pinY - 1.2, 4, 2.4);
-    bCtx.fillRect(icX - 3, pinY - 1.2, 3, 2.4);
+    bCtx.fillStyle = 'rgba(182, 184, 188, 0.90)';
+    bCtx.fillRect(icX + icW, pinY - 1.1, 4, 2.2);
+    bCtx.fillRect(icX - 3, pinY - 1.1, 3, 2.2);
   }
-  bCtx.fillStyle = 'rgba(26, 26, 28, 0.94)';
-  bCtx.beginPath();
-  bCtx.roundRect(icX, icY, icW, icH, 2.5);
-  bCtx.fill();
-  bCtx.strokeStyle = 'rgba(98, 98, 102, 0.62)';
-  bCtx.lineWidth = 0.85;
-  bCtx.stroke();
-  bCtx.fillStyle = 'rgba(210, 205, 198, 0.74)';
-  bCtx.beginPath();
-  bCtx.arc(icX + 5.5, icY + 6, 1.7, 0, Math.PI * 2);
-  bCtx.fill();
+  bCtx.fillStyle = 'rgba(30, 30, 32, 0.92)';
+  bCtx.fillRect(icX, icY, icW, icH);
+  bCtx.strokeStyle = 'rgba(98, 98, 102, 0.55)';
+  bCtx.lineWidth = 0.8;
+  bCtx.strokeRect(icX, icY, icW, icH);
+  bCtx.fillStyle = 'rgba(216, 212, 204, 0.72)';
+  bCtx.fillRect(icX + 4, icY + 4.5, 3, 3);
 
-  // Right end: 4 gold-plated flex connector test pads (VCC · DAT · CLK · GND)
+  // Right end: 4 gold-plated square flex connector pads (V+, DA, CK, GD)
   const padColX = W - 43;
   const padLabels = ['V+', 'DA', 'CK', 'GD'];
   bCtx.font = '600 6.5px "IBM Plex Mono", ui-monospace, monospace';
@@ -326,344 +176,525 @@ export function createLedFilmDisplay(): LedFilmRig {
   bCtx.textAlign = 'right';
   for (let i = 0; i < 4; i++) {
     const py = 38 + i * 17.5;
-    bCtx.fillStyle = 'rgba(204, 166, 94, 0.86)';
-    bCtx.beginPath();
-    bCtx.roundRect(padColX, py - 4, 14, 8, 2);
-    bCtx.fill();
-    bCtx.strokeStyle = 'rgba(128, 98, 50, 0.70)';
+    bCtx.fillStyle = 'rgba(198, 162, 94, 0.82)';
+    bCtx.fillRect(padColX, py - 4, 14, 8);
+    bCtx.strokeStyle = 'rgba(128, 98, 50, 0.65)';
     bCtx.lineWidth = 0.75;
-    bCtx.stroke();
-    bCtx.strokeStyle = 'rgba(154, 130, 94, 0.54)';
+    bCtx.strokeRect(padColX, py - 4, 14, 8);
+    bCtx.strokeStyle = 'rgba(146, 126, 94, 0.46)';
     bCtx.beginPath();
     bCtx.moveTo(padColX, py);
-    bCtx.lineTo(gridRight + 10, py);
+    bCtx.lineTo(gridRight + 6, py);
     bCtx.stroke();
-    bCtx.fillStyle = 'rgba(46, 42, 36, 0.76)';
+    bCtx.fillStyle = 'rgba(46, 42, 36, 0.72)';
     bCtx.fillText(padLabels[i], padColX - 3, py);
   }
 
   // Technical micro-silkscreen along top & bottom margins
   bCtx.font = '600 6.8px "IBM Plex Mono", ui-monospace, monospace';
-  bCtx.fillStyle = 'rgba(34, 31, 26, 0.70)';
+  bCtx.fillStyle = 'rgba(38, 35, 30, 0.62)';
   bCtx.textAlign = 'left';
   bCtx.textBaseline = 'middle';
-  bCtx.fillText('FPC-13 // TRANSPARENT LED FILM', 74, 15.5);
+  bCtx.fillText('EPD-13 // TRANSLUCENT E-INK FILM', 72, 13.5);
   bCtx.textAlign = 'right';
-  bCtx.fillText('ITO MATRIX 7×80 · STHLM', 694, H - 15);
+  bCtx.fillText('16×156 ELECTROPHORETIC · STHLM', 696, H - 13.5);
 
-  // Pre-draw all 7x80 physical unlit micro-LED SMD packages onto the smoked window
+  // Subtle translucent square microcapsule grid across the active E-Ink window
+  bCtx.fillStyle = 'rgba(244, 241, 234, 0.17)';
   for (let row = 0; row < ROWS; row++) {
-    const y = gridTop + row * pitchY;
+    const y = gridTop + row * pitchY - halfCellH;
     for (let col = 0; col < COLS; col++) {
-      const x = gridLeft + col * pitchX;
-      bCtx.fillStyle = 'rgba(182, 176, 166, 0.20)';
-      bCtx.fillRect(x - 1.85, y - 1.65, 3.7, 3.3);
-      bCtx.fillStyle = 'rgba(24, 22, 20, 0.34)';
-      bCtx.fillRect(x - 0.8, y - 0.8, 1.6, 1.6);
+      const x = gridLeft + col * pitchX - halfCellW;
+      bCtx.fillRect(x, y, cellW, cellH);
     }
   }
+  bCtx.strokeStyle = 'rgba(122, 116, 106, 0.10)';
+  bCtx.lineWidth = 0.45;
+  for (let row = 0; row <= ROWS; row++) {
+    const y = gridTop - pitchY * 0.5 + row * pitchY;
+    bCtx.beginPath();
+    bCtx.moveTo(gridLeft - pitchX * 0.5, y);
+    bCtx.lineTo(gridRight + pitchX * 0.5, y);
+    bCtx.stroke();
+  }
+  for (let col = 0; col <= COLS; col += 2) {
+    const x = gridLeft - pitchX * 0.5 + col * pitchX;
+    bCtx.beginPath();
+    bCtx.moveTo(x, gridTop - pitchY * 0.5);
+    bCtx.lineTo(x, gridBottom + pitchY * 0.5);
+    bCtx.stroke();
+  }
 
-  // 2. Roughness map (glossy PET film + matte SMD IC)
+  // 2. Roughness map: matte paper-like finish over the active E-Ink window, satin PET around margins
   const roughCanvas = document.createElement('canvas');
   roughCanvas.width = 128;
   roughCanvas.height = 32;
   const rCtx = roughCanvas.getContext('2d')!;
-  rCtx.fillStyle = '#444444';
+  rCtx.fillStyle = '#5c5c5c';
   rCtx.fillRect(0, 0, 128, 32);
-  rCtx.fillStyle = '#989898';
+  rCtx.fillStyle = '#c4c4c4';
+  rCtx.fillRect(11, 7, 106, 18);
+  rCtx.fillStyle = '#9a9a9a';
   rCtx.fillRect(4, 8, 4, 16);
 
-  // 3. Live diffuse, emissive, and wide-bloom canvases (generateMipmaps=false for locked 60 FPS!)
+  // 3. Live diffuse canvas (generateMipmaps=false eliminates GPU stalls for locked 60 FPS!)
   const mapCanvas = document.createElement('canvas');
   mapCanvas.width = W;
   mapCanvas.height = H;
   const mCtx = mapCanvas.getContext('2d')!;
 
-  const emCanvas = document.createElement('canvas');
-  emCanvas.width = W;
-  emCanvas.height = H;
-  const eCtx = emCanvas.getContext('2d')!;
+  const map = new THREE.CanvasTexture(mapCanvas);
+  map.colorSpace = THREE.SRGBColorSpace;
+  map.generateMipmaps = false;
+  map.minFilter = THREE.LinearFilter;
+  map.magFilter = THREE.LinearFilter;
+  map.anisotropy = 1;
 
-  const glowCanvas = document.createElement('canvas');
-  glowCanvas.width = GW;
-  glowCanvas.height = GH;
-  const gCtx = glowCanvas.getContext('2d')!;
-
-  const makeLiveTex = (canvas: HTMLCanvasElement) => {
-    const t = new THREE.CanvasTexture(canvas);
-    t.colorSpace = THREE.SRGBColorSpace;
-    t.generateMipmaps = false;
-    t.minFilter = THREE.LinearFilter;
-    t.magFilter = THREE.LinearFilter;
-    t.anisotropy = 1;
-    return t;
-  };
-
-  const map = makeLiveTex(mapCanvas);
-  const emissiveMap = makeLiveTex(emCanvas);
-  const glowMap = makeLiveTex(glowCanvas);
   const roughnessMap = new THREE.CanvasTexture(roughCanvas);
 
-  const buildCenteredColumns = (text: string): Uint8Array => {
+  // Offscreen 16px pixel-grid rasterizer specifically for DotGothic16 Japanese Kanji (true 16x16 square pixel font!)
+  const jaCanvas = document.createElement('canvas');
+  jaCanvas.width = 80;
+  jaCanvas.height = ROWS;
+  const jaCtx = jaCanvas.getContext('2d', { willReadFrequently: true })!;
+
+  const buildLatinCols = (text: string): number[] => {
     const upper = text.toUpperCase();
-    const raw: number[] = [];
+    const cols: number[] = [];
     for (let i = 0; i < upper.length; i++) {
-      const ch = upper[i];
-      const glyph = FONT_5X7[ch] ?? FONT_5X7[' '];
-      const gw = GLYPH_WIDTH[ch] ?? 5;
+      const glyph = SQUARE_FONT_12[upper[i]] ?? SQUARE_FONT_12[' '];
+      const gw = glyph[0].length;
       for (let cx = 0; cx < gw; cx++) {
-        let colBits = 0;
-        const bitMask = 1 << (4 - cx);
-        for (let ry = 0; ry < ROWS; ry++) {
-          if (glyph[ry] & bitMask) colBits |= 1 << ry;
+        let bits = 0;
+        for (let ry = 0; ry < 12; ry++) {
+          if (glyph[ry][cx] === '#') bits |= 1 << (ry + 2); // Centered cleanly inside 16 rows (rows 2..13)
         }
-        raw.push(colBits);
+        cols.push(bits);
       }
-      if (i < upper.length - 1) raw.push(0); // 1-column kerning gap
+      if (i < upper.length - 1) cols.push(0, 0); // Crisp 2-pixel square kerning gap
     }
-    const out = new Uint8Array(COLS);
-    const startCol = Math.max(0, Math.floor((COLS - raw.length) * 0.5));
-    for (let i = 0; i < raw.length && startCol + i < COLS; i++) {
-      out[startCol + i] = raw[i];
+    return cols;
+  };
+
+  const buildJapaneseCols = (ja: string): number[] => {
+    if (!ja) return [];
+    jaCtx.clearRect(0, 0, jaCanvas.width, ROWS);
+    jaCtx.imageSmoothingEnabled = false;
+    jaCtx.fillStyle = '#000000';
+    jaCtx.textBaseline = 'middle';
+    jaCtx.textAlign = 'left';
+    // DotGothic16 is a genuine 16x16 square-dot Japanese pixel font!
+    jaCtx.font = '400 15px "DotGothic16", "Hiragino Sans", "Noto Sans JP", monospace';
+    const w = Math.min(jaCanvas.width - 2, Math.ceil(jaCtx.measureText(ja).width) + 2);
+    jaCtx.fillText(ja, 1, ROWS * 0.5 + 0.5);
+
+    const data = jaCtx.getImageData(0, 0, w, ROWS).data;
+    const raw: number[] = [];
+    for (let col = 0; col < w; col++) {
+      let bits = 0;
+      for (let row = 0; row < ROWS; row++) {
+        const a = data[(row * w + col) * 4 + 3];
+        if (a >= 104) bits |= 1 << row;
+      }
+      raw.push(bits);
     }
+    // Trim leading/trailing empty columns for exact centering
+    let first = 0;
+    while (first < raw.length && raw[first] === 0) first++;
+    let last = raw.length - 1;
+    while (last >= first && raw[last] === 0) last--;
+    return first <= last ? raw.slice(first, last + 1) : [];
+  };
+
+  const composeCentered = (latin: string, ja = ''): Uint16Array => {
+    const lCols = buildLatinCols(latin);
+    const jCols = buildJapaneseCols(ja);
+    const gap = lCols.length > 0 && jCols.length > 0 ? 7 : 0;
+    const total = lCols.length + gap + jCols.length;
+    const out = new Uint16Array(COLS);
+    const start = Math.max(0, Math.floor((COLS - total) * 0.5));
+    let cursor = start;
+    for (let i = 0; i < lCols.length && cursor < COLS; i++, cursor++) out[cursor] = lCols[i];
+    cursor += gap;
+    for (let i = 0; i < jCols.length && cursor < COLS; i++, cursor++) out[cursor] = jCols[i];
     return out;
   };
 
-  const frameCols = new Uint8Array(COLS);
-  let levelCols = buildCenteredColumns('LEVEL 1');
-  let titleCols = buildCenteredColumns('FIRST ROLL');
-  let clearCols = buildCenteredColumns('CLEAR');
+  const emptyCols = new Uint16Array(COLS);
+  const frameCols = new Uint16Array(COLS);
+  const clearSourceCols = new Uint16Array(COLS);
+
+  let curLevelNum = 1;
+  let curTitle = 'FIRST ROLL';
+  let curTitleJa = '初転';
   let isClearedColor = false;
-  let seqStartTime = -1;
+
+  let levelCols: Uint16Array = new Uint16Array(COLS);
+  let titleCols: Uint16Array = new Uint16Array(COLS);
+  let tapCols: Uint16Array = new Uint16Array(COLS);
+  let clearCols: Uint16Array = new Uint16Array(COLS);
+
+  const rebuildBitmaps = () => {
+    levelCols = composeCentered(`LEVEL ${curLevelNum}`);
+    titleCols = composeCentered(curTitle, curTitleJa);
+    tapCols = composeCentered('TAP TO START', '開始');
+    clearCols = composeCentered(`LEVEL ${curLevelNum} CLEAR`, '完了');
+    lastRenderKey = '';
+  };
+
+  type TapeMode = 'intro' | 'clearing' | 'blank' | 'cleared';
+  let mode: TapeMode = 'intro';
+  let modeStartTime = -1;
   let lastRenderKey = '';
   let currentKey = '';
-  let lightFactor = 1.0;
 
-  const drawDisplay = (cols: Uint8Array, scanCol: number, pilotOn: boolean) => {
+  const drawDisplay = (
+    cols: Uint16Array,
+    ghostCols: Uint16Array | null,
+    ghostAlpha: number,
+    flashMode: 'none' | 'dark' | 'light',
+    scanCol: number,
+    busyPip: boolean,
+  ) => {
     mCtx.clearRect(0, 0, W, H);
     mCtx.drawImage(baseCanvas, 0, 0);
 
-    eCtx.fillStyle = '#000000';
-    eCtx.fillRect(0, 0, W, H);
+    // Tiny square passive e-ink refresh status pip below the EPD controller IC
+    const px = 34;
+    const py = 105;
+    mCtx.fillStyle = busyPip
+      ? isClearedColor
+        ? 'rgba(18, 128, 82, 0.92)'
+        : 'rgba(28, 28, 30, 0.86)'
+      : 'rgba(140, 134, 124, 0.24)';
+    mCtx.fillRect(px, py, 4.2, 4.2);
 
-    gCtx.globalCompositeOperation = 'source-over';
-    gCtx.fillStyle = '#000000';
-    gCtx.fillRect(0, 0, GW, GH);
-    gCtx.globalCompositeOperation = 'lighter';
-
-    const diffSprite = isClearedColor ? mintDiffSprite : cyanDiffSprite;
-    const emSprite = isClearedColor ? mintEmSprite : cyanEmSprite;
-    const bloomSprite = isClearedColor ? mintBloomSprite : cyanBloomSprite;
-
-    if (pilotOn) {
-      const px = 36;
-      const py = 107;
-      mCtx.drawImage(diffSprite, px - 5.5, py - 5.5, 11, 11);
-      eCtx.drawImage(emSprite, px - 5.5, py - 5.5, 11, 11);
-      gCtx.drawImage(bloomSprite, px * 0.5 - 8, py * 0.5 - 8, 16, 16);
+    // Classic E-Ink full-panel polarity clear flash
+    if (flashMode === 'dark') {
+      mCtx.fillStyle = 'rgba(34, 34, 36, 0.68)';
+      mCtx.fillRect(
+        gridLeft - halfCellW,
+        gridTop - halfCellH,
+        gridRight - gridLeft + cellW,
+        gridBottom - gridTop + cellH,
+      );
+      map.needsUpdate = true;
+      return;
     }
 
-    let litCount = 0;
-    for (let col = 0; col < COLS; col++) {
-      const bits = cols[col];
-      const isScanHead = scanCol >= 0 && col === scanCol;
-      if (bits === 0 && !isScanHead) continue;
+    if (flashMode === 'light') {
+      mCtx.fillStyle = 'rgba(248, 246, 240, 0.56)';
+      mCtx.fillRect(
+        gridLeft - halfCellW,
+        gridTop - halfCellH,
+        gridRight - gridLeft + cellW,
+        gridBottom - gridTop + cellH,
+      );
+      map.needsUpdate = true;
+      return;
+    }
 
-      const cx = gridLeft + col * pitchX;
-      const x = cx - SPRITE_HALF;
-      const gx = cx * 0.5 - BLOOM_HALF;
-      for (let row = 0; row < ROWS; row++) {
-        const bitOn = (bits & (1 << row)) !== 0;
-        if (!bitOn && !isScanHead) continue;
-
-        const cy = gridTop + row * pitchY;
-        if (bitOn) {
-          mCtx.drawImage(diffSprite, x, cy - SPRITE_HALF);
-          eCtx.drawImage(emSprite, x, cy - SPRITE_HALF);
-          gCtx.drawImage(bloomSprite, gx, cy * 0.5 - BLOOM_HALF);
-          litCount++;
-        } else {
-          // Subtle luminous cyan optical scanline cursor sweeping left-to-right during title reveal
-          mCtx.globalAlpha = 0.42;
-          eCtx.globalAlpha = 0.48;
-          gCtx.globalAlpha = 0.36;
-          mCtx.drawImage(diffSprite, x, cy - SPRITE_HALF);
-          eCtx.drawImage(emSprite, x, cy - SPRITE_HALF);
-          gCtx.drawImage(bloomSprite, gx, cy * 0.5 - BLOOM_HALF);
-          mCtx.globalAlpha = 1;
-          eCtx.globalAlpha = 1;
-          gCtx.globalAlpha = 1;
+    // Subtle real E-Ink micro-ghosting right after a partial refresh
+    if (ghostCols && ghostAlpha > 0.005) {
+      mCtx.fillStyle = `rgba(34, 34, 36, ${ghostAlpha.toFixed(3)})`;
+      for (let col = 0; col < COLS; col++) {
+        const gBits = ghostCols[col];
+        if (gBits === 0) continue;
+        const cx = gridLeft + col * pitchX - halfCellW;
+        for (let row = 0; row < ROWS; row++) {
+          if ((gBits & (1 << row)) === 0) continue;
+          const cy = gridTop + row * pitchY - halfCellH;
+          mCtx.fillRect(cx, cy, cellW, cellH);
         }
       }
     }
 
-    lightFactor = Math.min(1, litCount / 55);
+    // Active crisp square matte electrophoretic E-Ink pigment pixels
+    for (let col = 0; col < COLS; col++) {
+      const bits = cols[col];
+      const isScanDark = scanCol >= 0 && (col === scanCol || col === scanCol + 1);
+      const isScanClear = scanCol >= 0 && (col === scanCol - 1 || col === scanCol - 2);
+      if (bits === 0 && !isScanDark && !isScanClear) continue;
+
+      const cx = gridLeft + col * pitchX - halfCellW;
+      for (let row = 0; row < ROWS; row++) {
+        const cy = gridTop + row * pitchY - halfCellH;
+        const bitOn = (bits & (1 << row)) !== 0;
+
+        if (isScanDark) {
+          mCtx.fillStyle = bitOn ? 'rgba(244, 241, 234, 0.64)' : 'rgba(42, 42, 44, 0.48)';
+          mCtx.fillRect(cx, cy, cellW, cellH);
+        } else if (isScanClear && !bitOn) {
+          mCtx.fillStyle = 'rgba(248, 246, 240, 0.42)';
+          mCtx.fillRect(cx, cy, cellW, cellH);
+        } else if (bitOn) {
+          const j = pixelJitter[col * ROWS + row];
+          if (isClearedColor) {
+            const rC = Math.round(14 + j * 0.25);
+            const gC = Math.round(112 + j * 0.45);
+            const bC = Math.round(72 + j * 0.35);
+            mCtx.fillStyle = `rgba(${rC}, ${gC}, ${bC}, 0.94)`;
+          } else {
+            const v = Math.round(22 + j * 0.32);
+            mCtx.fillStyle = `rgba(${v}, ${v + 1}, ${v + 2}, 0.95)`;
+          }
+          mCtx.fillRect(cx, cy, cellW, cellH);
+        }
+      }
+    }
+
     map.needsUpdate = true;
-    emissiveMap.needsUpdate = true;
-    glowMap.needsUpdate = true;
   };
 
-  function setLevel(levelNum: number, title: string, cleared = false) {
-    const key = `${levelNum}|${title}|${cleared ? 1 : 0}`;
+  function setLevel(levelNum: number, title: string, titleJa: string, cleared = false) {
+    const key = `${levelNum}|${title}|${titleJa}|${cleared ? 1 : 0}`;
     if (key === currentKey) return;
     currentKey = key;
+    curLevelNum = levelNum;
+    curTitle = title;
+    curTitleJa = titleJa;
     isClearedColor = cleared;
-    levelCols = buildCenteredColumns(`LEVEL ${levelNum}`);
-    titleCols = buildCenteredColumns(title);
-    clearCols = buildCenteredColumns(`LEVEL ${levelNum} · CLEAR`);
-    seqStartTime = -1;
+    rebuildBitmaps();
+    if (cleared) {
+      mode = 'cleared';
+      modeStartTime = -1;
+    }
     lastRenderKey = '';
   }
 
   function restartIntro() {
-    seqStartTime = -1;
+    isClearedColor = false;
+    mode = 'intro';
+    modeStartTime = -1;
     lastRenderKey = '';
   }
 
-  function update(time: number) {
-    if (seqStartTime < 0) seqStartTime = time;
-    const elapsed = Math.max(0, time - seqStartTime);
-    const pilotOn = Math.floor(time * 2) % 2 === 0;
+  function clearToBlank() {
+    if (mode === 'blank' || mode === 'clearing') return;
+    clearSourceCols.set(frameCols);
+    mode = 'clearing';
+    modeStartTime = -1;
+    lastRenderKey = '';
+  }
 
-    // Cleared celebration: brief double-blink + dissolve into mint "LEVEL N · CLEAR"
-    if (isClearedColor) {
-      const q = Math.min(20, Math.floor(elapsed * 28));
-      const key = `clr:${q}:${pilotOn ? 1 : 0}`;
-      if (key === lastRenderKey) return;
-      lastRenderKey = key;
-
-      const blinkOff = (elapsed > 0.08 && elapsed < 0.14) || (elapsed > 0.21 && elapsed < 0.27);
-      const prog = Math.min(1, elapsed / 0.45);
-      for (let col = 0; col < COLS; col++) {
+  const blendScan = (from: Uint16Array, to: Uint16Array, u: number): number => {
+    const scanPos = u * (COLS + 12) - 6;
+    const scanCol = Math.round(scanPos);
+    for (let col = 0; col < COLS; col++) {
+      const dist = scanPos - col;
+      if (dist >= 6) {
+        frameCols[col] = to[col];
+      } else if (dist <= -6) {
+        frameCols[col] = from[col];
+      } else {
+        const blend = (dist + 6) / 12;
         let bits = 0;
-        if (!blinkOff) {
-          const src = clearCols[col];
-          if (src !== 0) {
-            for (let row = 0; row < ROWS; row++) {
-              if ((src & (1 << row)) !== 0 && pixelThresh[col * ROWS + row] <= prog) {
-                bits |= 1 << row;
-              }
-            }
-          }
-        }
-        frameCols[col] = bits;
-      }
-      drawDisplay(frameCols, -1, pilotOn);
-      return;
-    }
-
-    // Active level sequence (first cycle synced to level intro, then gently loops during gameplay):
-    // 0.00 - 0.56s : Blink + pixel dissolve in "LEVEL N"
-    // 0.56 - 1.50s : Steady luminous hold "LEVEL N"
-    // 1.50 - 2.15s : Left-to-right optical scan + pixel dissolve into "[TITLE]"
-    // 2.15 - 5.45s : Steady luminous hold "[TITLE]"
-    // 5.45 - 6.00s : Gentle pixel dissolve back to "LEVEL N"
-    const LOOP = 6.0;
-    const phaseT = elapsed < LOOP ? elapsed : 0.56 + ((elapsed - LOOP) % (LOOP - 0.56));
-    let scanCol = -1;
-    let quantKey: string;
-
-    if (phaseT < 0.56) {
-      const q = Math.floor(phaseT * 32);
-      quantKey = `in:${q}:${pilotOn ? 1 : 0}`;
-      if (quantKey === lastRenderKey) return;
-      lastRenderKey = quantKey;
-
-      // Crisp micro-LED boot double-blink + organic pixel dissolve
-      const blinkOff = (phaseT > 0.07 && phaseT < 0.13) || (phaseT > 0.2 && phaseT < 0.26);
-      const prog = Math.min(1, phaseT / 0.48);
-      for (let col = 0; col < COLS; col++) {
-        let bits = 0;
-        if (!blinkOff) {
-          const src = levelCols[col];
-          if (src !== 0) {
-            for (let row = 0; row < ROWS; row++) {
-              if ((src & (1 << row)) !== 0 && pixelThresh[col * ROWS + row] <= prog) {
-                bits |= 1 << row;
-              }
-            }
-          }
-        }
-        frameCols[col] = bits;
-      }
-    } else if (phaseT < 1.5) {
-      quantKey = `lvl:${pilotOn ? 1 : 0}`;
-      if (quantKey === lastRenderKey) return;
-      lastRenderKey = quantKey;
-      frameCols.set(levelCols);
-    } else if (phaseT < 2.15) {
-      const u = (phaseT - 1.5) / 0.65;
-      const scanPos = u * (COLS + 8) - 4;
-      scanCol = Math.round(scanPos);
-      quantKey = `scan:${scanCol}:${pilotOn ? 1 : 0}`;
-      if (quantKey === lastRenderKey) return;
-      lastRenderKey = quantKey;
-
-      for (let col = 0; col < COLS; col++) {
-        const dist = scanPos - col; // > 0 means scan has already passed this column
-        if (dist >= 4) {
-          frameCols[col] = titleCols[col];
-        } else if (dist <= -4) {
-          frameCols[col] = levelCols[col];
-        } else {
-          // Dissolve zone right around the sweeping scanline
-          const blend = (dist + 4) / 8;
-          let bits = 0;
-          const a = levelCols[col];
-          const b = titleCols[col];
-          for (let row = 0; row < ROWS; row++) {
-            const bit = 1 << row;
-            const takeB = pixelThresh[col * ROWS + row] <= blend;
-            if (takeB ? (b & bit) !== 0 : (a & bit) !== 0) bits |= bit;
-          }
-          frameCols[col] = bits;
-        }
-      }
-    } else if (phaseT < 5.45) {
-      quantKey = `ttl:${pilotOn ? 1 : 0}`;
-      if (quantKey === lastRenderKey) return;
-      lastRenderKey = quantKey;
-      frameCols.set(titleCols);
-    } else {
-      const u = (phaseT - 5.45) / 0.55;
-      const q = Math.floor(u * 20);
-      quantKey = `rev:${q}:${pilotOn ? 1 : 0}`;
-      if (quantKey === lastRenderKey) return;
-      lastRenderKey = quantKey;
-
-      for (let col = 0; col < COLS; col++) {
-        let bits = 0;
-        const a = titleCols[col];
-        const b = levelCols[col];
+        const a = from[col];
+        const b = to[col];
         for (let row = 0; row < ROWS; row++) {
           const bit = 1 << row;
-          const takeB = pixelThresh[col * ROWS + row] <= u;
+          const takeB = pixelThresh[col * ROWS + row] <= blend;
           if (takeB ? (b & bit) !== 0 : (a & bit) !== 0) bits |= bit;
         }
         frameCols[col] = bits;
       }
     }
+    return scanCol;
+  };
 
-    drawDisplay(frameCols, scanCol >= 0 && scanCol < COLS ? scanCol : -1, pilotOn);
+  function update(time: number) {
+    if (modeStartTime < 0) modeStartTime = time;
+    const elapsed = Math.max(0, time - modeStartTime);
+
+    // 1. Clean blank translucent E-Ink film during gameplay (zero text clutter!)
+    if (mode === 'blank') {
+      if (lastRenderKey === 'blank') return;
+      lastRenderKey = 'blank';
+      frameCols.fill(0);
+      drawDisplay(emptyCols, null, 0, 'none', -1, false);
+      return;
+    }
+
+    // 2. Crisp E-Ink dissolve-to-blank wipe once tapped / transitioning to North Pole ("then disappear")
+    if (mode === 'clearing') {
+      if (elapsed < 0.06) {
+        if (lastRenderKey === 'clr:light') return;
+        lastRenderKey = 'clr:light';
+        drawDisplay(frameCols, null, 0, 'light', -1, true);
+        return;
+      }
+      const prog = Math.min(1, (elapsed - 0.06) / 0.34);
+      if (prog >= 1) {
+        mode = 'blank';
+        lastRenderKey = '';
+        frameCols.fill(0);
+        drawDisplay(emptyCols, null, 0, 'none', -1, false);
+        return;
+      }
+      const q = Math.floor(prog * 14);
+      const key = `clearing:${q}`;
+      if (key === lastRenderKey) return;
+      lastRenderKey = key;
+
+      for (let col = 0; col < COLS; col++) {
+        let bits = 0;
+        const src = clearSourceCols[col];
+        if (src !== 0) {
+          for (let row = 0; row < ROWS; row++) {
+            const bit = 1 << row;
+            if ((src & bit) !== 0 && pixelThresh[col * ROWS + row] > prog) bits |= bit;
+          }
+        }
+        frameCols[col] = bits;
+      }
+      drawDisplay(frameCols, null, 0, 'none', -1, true);
+      return;
+    }
+
+    // 3. Level cleared flash -> emerald "LEVEL N CLEAR 完了"
+    if (mode === 'cleared') {
+      if (elapsed < 0.08) {
+        if (lastRenderKey === 'done:dark') return;
+        lastRenderKey = 'done:dark';
+        drawDisplay(frameCols, null, 0, 'dark', -1, true);
+        return;
+      }
+      if (elapsed < 0.15) {
+        if (lastRenderKey === 'done:light') return;
+        lastRenderKey = 'done:light';
+        drawDisplay(frameCols, null, 0, 'light', -1, true);
+        return;
+      }
+      const prog = Math.min(1, (elapsed - 0.15) / 0.34);
+      const q = Math.min(16, Math.floor(prog * 16));
+      const key = `done:${q}`;
+      if (key === lastRenderKey) return;
+      lastRenderKey = key;
+
+      for (let col = 0; col < COLS; col++) {
+        let bits = 0;
+        const src = clearCols[col];
+        if (src !== 0) {
+          for (let row = 0; row < ROWS; row++) {
+            const bit = 1 << row;
+            if ((src & bit) !== 0 && pixelThresh[col * ROWS + row] <= prog) bits |= bit;
+          }
+        }
+        frameCols[col] = bits;
+      }
+      drawDisplay(frameCols, null, 0, 'none', -1, prog < 1);
+      return;
+    }
+
+    // 4. Intro sequence on the translucent E-Ink tape:
+    //    0.00 - 0.08s : Dark full-panel polarity clear flash
+    //    0.08 - 0.15s : Milky translucent clear pulse
+    //    0.15 - 0.48s : Electrophoretic dissolve into "LEVEL N"
+    //    0.48 - 1.45s : Crisp daylight hold "LEVEL N"
+    //    1.45 - 2.02s : Left-to-right E-Ink polarity scan into "[TITLE]  [日本語]"
+    //    2.02 - 3.65s : Crisp daylight hold "[TITLE]  [日本語]" (with faint fading ghosting!)
+    //    3.65 - 4.20s : Left-to-right E-Ink polarity scan into "TAP TO START"
+    //    4.20s+       : Crisp daylight hold "TAP TO START" until user taps or auto-starts -> clears!
+    if (elapsed < 0.08) {
+      if (lastRenderKey === 'in:dark') return;
+      lastRenderKey = 'in:dark';
+      drawDisplay(frameCols, null, 0, 'dark', -1, true);
+      return;
+    }
+    if (elapsed < 0.15) {
+      if (lastRenderKey === 'in:light') return;
+      lastRenderKey = 'in:light';
+      drawDisplay(frameCols, null, 0, 'light', -1, true);
+      return;
+    }
+    if (elapsed < 0.48) {
+      const prog = Math.min(1, (elapsed - 0.15) / 0.33);
+      const q = Math.floor(prog * 14);
+      const key = `in:lvl:${q}`;
+      if (key === lastRenderKey) return;
+      lastRenderKey = key;
+
+      for (let col = 0; col < COLS; col++) {
+        let bits = 0;
+        const src = levelCols[col];
+        if (src !== 0) {
+          for (let row = 0; row < ROWS; row++) {
+            const bit = 1 << row;
+            if ((src & bit) !== 0 && pixelThresh[col * ROWS + row] <= prog) bits |= bit;
+          }
+        }
+        frameCols[col] = bits;
+      }
+      drawDisplay(frameCols, null, 0, 'none', -1, true);
+      return;
+    }
+    if (elapsed < 1.45) {
+      if (lastRenderKey === 'hold:lvl') return;
+      lastRenderKey = 'hold:lvl';
+      frameCols.set(levelCols);
+      drawDisplay(frameCols, null, 0, 'none', -1, false);
+      return;
+    }
+    if (elapsed < 2.02) {
+      const u = (elapsed - 1.45) / 0.57;
+      const scanCol = blendScan(levelCols, titleCols, u);
+      const key = `scan:ttl:${scanCol}`;
+      if (key === lastRenderKey) return;
+      lastRenderKey = key;
+      drawDisplay(frameCols, null, 0, 'none', scanCol >= 0 && scanCol < COLS ? scanCol : -1, true);
+      return;
+    }
+    if (elapsed < 3.65) {
+      const since = elapsed - 2.02;
+      const gStep = since < 0.4 ? Math.floor(since * 12) : 99;
+      const key = `hold:ttl:${gStep}`;
+      if (key === lastRenderKey) return;
+      lastRenderKey = key;
+      frameCols.set(titleCols);
+      const gAlpha = since < 0.4 ? 0.08 * (1 - since / 0.4) : 0;
+      drawDisplay(frameCols, gAlpha > 0 ? levelCols : null, gAlpha, 'none', -1, false);
+      return;
+    }
+    if (elapsed < 4.2) {
+      const u = (elapsed - 3.65) / 0.55;
+      const scanCol = blendScan(titleCols, tapCols, u);
+      const key = `scan:tap:${scanCol}`;
+      if (key === lastRenderKey) return;
+      lastRenderKey = key;
+      drawDisplay(frameCols, null, 0, 'none', scanCol >= 0 && scanCol < COLS ? scanCol : -1, true);
+      return;
+    }
+
+    const sinceTap = elapsed - 4.2;
+    const gStep = sinceTap < 0.4 ? Math.floor(sinceTap * 12) : 99;
+    const waitPip = Math.floor(time * 1.6) % 2 === 0;
+    const key = `hold:tap:${gStep}:${waitPip ? 1 : 0}`;
+    if (key === lastRenderKey) return;
+    lastRenderKey = key;
+    frameCols.set(tapCols);
+    const gAlpha = sinceTap < 0.4 ? 0.08 * (1 - sinceTap / 0.4) : 0;
+    drawDisplay(frameCols, gAlpha > 0 ? titleCols : null, gAlpha, 'none', -1, waitPip);
   }
 
-  setLevel(1, 'FIRST ROLL', false);
-  drawDisplay(levelCols, -1, true);
+  rebuildBitmaps();
+  drawDisplay(levelCols, null, 0, 'none', -1, false);
+
+  if (typeof document !== 'undefined' && 'fonts' in document) {
+    document.fonts.ready.then(() => {
+      rebuildBitmaps();
+    });
+  }
 
   return {
     map,
-    emissiveMap,
-    glowMap,
     roughnessMap,
     isCleared: () => isClearedColor,
-    getLightFactor: () => lightFactor,
     setLevel,
     restartIntro,
+    clearToBlank,
     update,
     dispose: () => {
       map.dispose();
-      emissiveMap.dispose();
-      glowMap.dispose();
       roughnessMap.dispose();
     },
   };
