@@ -3,6 +3,7 @@ import {
   buildHouseNet,
   generateHouseSpec,
   polygonsOverlap,
+  type BuildingLevels,
   type GableProfile,
   type HouseMixOptions,
   type HouseNetSpec,
@@ -10,186 +11,99 @@ import {
   type V2,
 } from './origamiHouseNet';
 
-export const CITY_CHUNK_SIZE = 44;
+export const ISLAND_WORLD_EXTENT = 50;
 
-export type CityStreetStyle = 'mix' | 'organic' | 'grid' | 'radial';
-export type ConcreteStreetStyle = 'organic' | 'grid' | 'radial';
-
-export const ALL_CITY_STREET_STYLES: readonly CityStreetStyle[] = ['mix', 'organic', 'grid', 'radial'];
-
-/**
- * Analytic seeded coastal harmonics shared 1:1 between CPU terrain/chunk generation
- * and the GPU paper sea shader for exact shoreline ripples and cove depth tinting.
- */
-export interface CoastHarmonics {
-  a1: number;
-  f1: number;
-  p1: number;
+export interface IslandCoastHarmonics {
+  orientAng: number;
+  bayAngle: number;
   a2: number;
-  f2: number;
   p2: number;
   a3: number;
-  f3: number;
   p3: number;
   a4: number;
-  f4: number;
   p4: number;
+  a5: number;
+  p5: number;
 }
 
-export interface CityTerrainField {
+export interface IslandTerrainField {
   seed: number;
-  /** Normalized relief amplitude (`0` = flat coastal quay, `1` = dramatic terraced cliffs) */
+  /** Normalized topological relief (`0` = gentle island terrace, `1` = soaring Amalfi/Capri cliffs & peaks) */
   hills: number;
-  coastHarmonics: CoastHarmonics;
-  /** Deterministic shoreline X coordinate at world Z (`x < coastX(z)` is sea, `x > coastX(z)` is city) */
-  coastX(z: number): number;
-  /** Analytical derivative `d(coastX)/dz` for aligning promenades, piers, and seawalls */
-  coastSlopeZ(z: number): number;
-  /** Signed inland distance (`> 0` land, `< 0` sea) */
+  coastHarmonics: IslandCoastHarmonics;
+  /** Base island radius at world polar angle `angleRad = atan2(z, x)` */
+  coastRadiusAt(angleRad: number): number;
+  /** Signed inland distance (`> 0` on island land, `< 0` in Mediterranean sea) */
   signedInland(x: number, z: number): number;
-  /** Evaluate continuous infinite elevation (`< 0` seafloor, `0` shoreline, `> 0` coastal city & hills) */
+  /** Continuous island topography elevation (`< 0` seabed, `> 0` cliffs, amphitheater & rocky peaks) */
   heightAt(x: number, z: number): number;
-  /** Resolve deterministic district topology at world `(x, z)` */
-  districtStyleAt(x: number, z: number, styleOverride: CityStreetStyle): ConcreteStreetStyle;
 }
 
-export interface CityContourSegment {
+export interface IslandContourSegment {
   a: [number, number];
   b: [number, number];
   y: number;
   isMajor: boolean;
 }
 
-export interface CityStreet {
+export interface IslandRoadPoint {
+  x: number;
+  z: number;
+  y: number;
+  /** Normalized progress along this road (`0..1`) */
+  t: number;
+}
+
+export interface IslandRoad {
   id: string;
-  kind: 'promenade' | 'avenue' | 'street' | 'lane';
+  kind: 'serpentine' | 'corniche' | 'terrace' | 'alley';
   width: number;
-  /** Ordered 2D world `(x, z)` polyline vertices */
-  points: V2[];
-}
-
-export interface CityPlaza {
-  x: number;
-  z: number;
-  radius: number;
-}
-
-export interface CityPier {
-  x: number;
-  z: number;
-  yaw: number;
-  length: number;
-  width: number;
-  deckY: number;
-}
-
-export interface CityBoat {
-  x: number;
-  z: number;
-  yaw: number;
-  scale: number;
-  phase: number;
-}
-
-/**
- * Lightweight local-space architectural wing summary used by LOD1 & LOD2 merged chunk builders
- * so distant buildings match LOD0 origami silhouettes (gable, stepped, mansard, spire, composite wings)
- * without running `buildHouseNet` or creating per-building meshes.
- */
-export interface CityWingMassing {
-  /** Center offset in building-local world units `(x, z)` */
-  cx: number;
-  cz: number;
-  /** Footprint extents in world units */
-  W: number;
-  D: number;
-  /** Wall eave height in world units */
-  H: number;
-  roofType: RoofType;
-  gableProfile: GableProfile;
-  pitch: number;
-  mansardRatio: number;
-  /** Palette slot offset (0..3) for multi-colored wall-to-wall composites */
-  colorSlot: number;
+  /** True if the road closes into a full 360° contour loop */
+  closed: boolean;
+  points: IslandRoadPoint[];
 }
 
 export interface CityBuildingPlot {
   id: string;
-  chunkKey: string;
-  /** Local index inside chunk (`0..27`) for GPU LOD0/LOD1 visibility handoff */
   index: number;
   x: number;
   z: number;
-  /** World Y where the house base rests level (top of its architectural retaining plinth) */
+  /** World Y where the house base rests level atop its hillside retaining wall */
   baseY: number;
-  /** Lowest terrain elevation under the footprint (plinth extends cleanly below this) */
+  /** Lowest terrain elevation under footprint corners */
   groundMinY: number;
-  /** Rotation around +Y so the building's street/sea-facing front (`+Z`) faces the curb */
+  /** Rotation around +Y so the facade faces the street or Mediterranean sea vista */
   yaw: number;
   /** Exact 2D world `(x, z)` footprint polygon (4 corners, CCW) */
   footprint: V2[];
-  /** Unrotated local `(W, D)` footprint extents in world units */
   footprintW: number;
   footprintD: number;
-  /** Uniform architectural miniature scale applied to footprint, LOD massing, and LOD0 origami rig */
+  /** Miniature architectural diorama scale */
   scale: number;
-  /** Simplified architectural massing wings for GPU LOD1/LOD2 rendering */
-  wings: CityWingMassing[];
-  /** Deterministic paper palette index (`0..7`) */
+  /** Deterministic architectural paper palette index (`0..7`) */
   colorIndex: number;
-  /** Deterministic wave phase jitter (world units) for organic cascading fold motion */
-  foldJitter: number;
-  /** Exact generation + mix options so clicking any house loads it 1:1 in Fold View! */
+  /** Normalized elevation order (`0` = harbor/coast -> `1` = summit) for cascade choreography */
+  elevOrder: number;
+  /** Whether this plot crowns the hilltop summit piazza */
+  isSummit: boolean;
+  /** Exact generation + mix options */
   generation: number;
   mixOpts: HouseMixOptions;
   spec: HouseNetSpec;
-  /** Normalized coastal proximity order (`0..1`) */
-  foldOrder: number;
 }
 
-export interface CityTree {
+export interface IslandTree {
   x: number;
   z: number;
   y: number;
   scale: number;
   rotY: number;
+  /** `0` = slender Italian cypress, `1` = coastal pine, `2` = Mediterranean umbrella stone pine */
   variant: 0 | 1 | 2;
 }
 
-export interface CityChunkData {
-  cx: number;
-  cz: number;
-  key: string;
-  centerX: number;
-  centerZ: number;
-  districtStyle: ConcreteStreetStyle;
-  hasLand: boolean;
-  hasSea: boolean;
-  hasCoast: boolean;
-  streets: CityStreet[];
-  plazas: CityPlaza[];
-  plots: CityBuildingPlot[];
-  trees: CityTree[];
-  piers: CityPier[];
-  boats: CityBoat[];
-  rooftopCount: number;
-}
-
-export interface FlightSample {
-  pos: [number, number, number];
-  lookAt: [number, number, number];
-  /** Normalized horizontal flight forward vector `(fx, fz)` */
-  forward: [number, number];
-  /** Glider bank roll in radians (`+` right bank, `-` left bank) */
-  bankRoll: number;
-  /** Sweeping fold-wave anchor slightly ahead of the lens */
-  focusX: number;
-  focusZ: number;
-}
-
-export interface CoastalWorldOptions {
+export interface IslandWorldOptions {
   seed: number;
-  style: CityStreetStyle;
   hills: number;
   consistency?: number | null;
   windowStyle?: HouseMixOptions['windowStyle'];
@@ -197,19 +111,22 @@ export interface CoastalWorldOptions {
   windowDetail?: HouseMixOptions['windowDetail'];
 }
 
-export interface CoastalWorld {
+export interface IslandWorld {
   seed: number;
-  style: CityStreetStyle;
   hills: number;
-  options: CoastalWorldOptions;
-  terrain: CityTerrainField;
-  generateChunk(cx: number, cz: number): CityChunkData;
-  extractChunkContours(cx: number, cz: number, gridRes?: number, stepY?: number): CityContourSegment[];
-  sampleFlight(s: number): FlightSample;
+  options: IslandWorldOptions;
+  terrain: IslandTerrainField;
+  harborPos: [number, number, number];
+  summitPos: [number, number, number];
+  roads: IslandRoad[];
+  plots: CityBuildingPlot[];
+  trees: IslandTree[];
+  contours: IslandContourSegment[];
+  rooftopCount: number;
 }
 
 // ---------------------------------------------------------------------------
-// Deterministic Seeded PRNG & Smooth Noise Primitives
+// Deterministic Seeded PRNG & Smooth / Ridged Noise
 // ---------------------------------------------------------------------------
 
 function makeRng(seed: number) {
@@ -227,12 +144,6 @@ function makeRng(seed: number) {
     pick: <T,>(arr: readonly T[]): T => arr[Math.floor(next() * arr.length)],
     chance: (p: number) => next() < p,
   };
-}
-
-function hash1i(i: number, seed: number): number {
-  let h = (Math.imul(i | 0, 374761393) + Math.imul(seed | 1, 668265263)) | 0;
-  h = Math.imul(h ^ (h >>> 13), 1274126177);
-  return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
 }
 
 function hash2i(ix: number, iz: number, seed: number): number {
@@ -261,169 +172,238 @@ function valueNoise2D(x: number, z: number, seed: number): number {
   return (a * (1 - ux) + b * ux) * (1 - uz) + (c * (1 - ux) + d * ux) * uz;
 }
 
+function ridgedNoise2D(x: number, z: number, seed: number): number {
+  const v = valueNoise2D(x, z, seed);
+  const r = 1 - Math.abs(v * 2 - 1);
+  return r * r;
+}
+
 function smoothstep(edge0: number, edge1: number, x: number): number {
   const t = Math.max(0, Math.min(1, (x - edge0) / (edge1 - edge0)));
   return t * t * (3 - 2 * t);
 }
 
+function wrapAngleDiff(a: number, b: number): number {
+  let d = a - b;
+  while (d > Math.PI) d -= Math.PI * 2;
+  while (d < -Math.PI) d += Math.PI * 2;
+  return d;
+}
+
 // ---------------------------------------------------------------------------
-// Infinite Deterministic Coastal Terrain & Coastline Field
+// Sculpted Italian Mountain Island Topography (Capri / Ischia / Positano)
 // ---------------------------------------------------------------------------
 
-/**
- * Create a continuous, infinite, deterministic coastal paper topography:
- *  - `x < coastX(z)` is the folded paper sea (with occasional sculptural offshore islets),
- *  - `x ≈ coastX(z)` rises via a crisp architectural seawall quay shelf above `y = 0`,
- *  - `x > coastX(z)` climbs into tiered rolling hills, valleys, and coastal headlands.
- */
-export function createTerrainField(seed: number, hills01: number): CityTerrainField {
+export function createIslandTerrain(seed: number, hills01: number): {
+  terrain: IslandTerrainField;
+  orientAng: number;
+  mainPeakLocal: V2;
+  harborLocal: V2;
+  summitLocal: V2;
+  localCoastRadius: (localAng: number) => number;
+} {
   const s = Math.max(0, Math.round(seed));
   const hills = Math.max(0, Math.min(1, hills01));
   const rng = makeRng((s * 7919 + 4129) >>> 0);
 
-  // 4 incommensurate seeded coastal harmonics — identical on CPU and GPU sea shader!
-  const coastHarmonics: CoastHarmonics = {
-    a1: rng.range(18.0, 25.0),
-    f1: 0.0041,
-    p1: rng.range(0, Math.PI * 2),
-    a2: rng.range(10.5, 16.0),
-    f2: 0.0097,
+  const orientAng = rng.range(-0.36, 0.36);
+  const cosO = Math.cos(orientAng);
+  const sinO = Math.sin(orientAng);
+  const toLocal = (wx: number, wz: number): V2 => [wx * cosO + wz * sinO, -wx * sinO + wz * cosO];
+
+  const coastHarmonics: IslandCoastHarmonics = {
+    orientAng,
+    bayAngle: Math.PI * 0.5,
+    a2: rng.range(1.7, 2.9),
     p2: rng.range(0, Math.PI * 2),
-    a3: rng.range(5.2, 8.8),
-    f3: 0.0183,
+    a3: rng.range(1.2, 2.2),
     p3: rng.range(0, Math.PI * 2),
-    a4: rng.range(2.0, 3.8),
-    f4: 0.0317,
+    a4: rng.range(0.6, 1.4),
     p4: rng.range(0, Math.PI * 2),
+    a5: rng.range(0.3, 0.8),
+    p5: rng.range(0, Math.PI * 2),
   };
+
+  // Sculpted asymmetric Italian island peaks & coastal headlands (in local coords)
+  const mainOx = rng.range(-4.5, 4.5);
+  const mainOz = rng.range(-10.5, -7.5);
+  const mainPeakLocal: V2 = [mainOx, mainOz];
+
+  const flankSide = rng.chance(0.5) ? 1 : -1;
+  const shoulderLocal: V2 = [flankSide * rng.range(14.0, 18.0), rng.range(-4.5, 0.5)];
+  const headlandLocal: V2 = [-flankSide * rng.range(14.5, 18.5), rng.range(2.0, 7.5)];
+  const backCragLocal: V2 = [-flankSide * rng.range(7.5, 13.0), rng.range(-16.5, -13.0)];
+
+  // 2 iconic Capri-style Faraglioni limestone sea stacks just off one rocky headland!
+  const stackAngle = Math.PI * 0.5 + flankSide * rng.range(0.95, 1.42);
+  const stackDist1 = rng.range(39.0, 42.5);
+  const stack1Local: V2 = [Math.cos(stackAngle) * stackDist1, Math.sin(stackAngle) * stackDist1];
+  const stack2Local: V2 = [
+    Math.cos(stackAngle + flankSide * 0.14) * (stackDist1 + 3.6),
+    Math.sin(stackAngle + flankSide * 0.14) * (stackDist1 + 3.6),
+  ];
 
   const nSeed1 = (s * 131 + 17) >>> 0;
   const nSeed2 = (s * 521 + 97) >>> 0;
   const nSeed3 = (s * 997 + 211) >>> 0;
-  const isletSeed = (s * 1613 + 389) >>> 0;
 
-  const coastX = (z: number): number =>
-    coastHarmonics.a1 * Math.sin(z * coastHarmonics.f1 + coastHarmonics.p1) +
-    coastHarmonics.a2 * Math.sin(z * coastHarmonics.f2 + coastHarmonics.p2) +
-    coastHarmonics.a3 * Math.cos(z * coastHarmonics.f3 + coastHarmonics.p3) +
-    coastHarmonics.a4 * Math.sin(z * coastHarmonics.f4 + coastHarmonics.p4);
+  const localCoastRadius = (localAng: number): number => {
+    const baseR = 33.4 + 2.6 * Math.cos(2 * localAng);
+    const dBay = wrapAngleDiff(localAng, Math.PI * 0.5);
+    const bayNotch = -6.6 * Math.exp(-(dBay * dBay) / (0.40 * 0.40));
+    const leftCape = 4.0 * Math.exp(-Math.pow(wrapAngleDiff(localAng, Math.PI * 0.5 - 0.72) / 0.34, 2));
+    const rightCape = 3.6 * Math.exp(-Math.pow(wrapAngleDiff(localAng, Math.PI * 0.5 + 0.76) / 0.36, 2));
+    const backSpur = 2.8 * Math.exp(-Math.pow(wrapAngleDiff(localAng, -Math.PI * 0.5 + flankSide * 0.35) / 0.45, 2));
+    const organic =
+      coastHarmonics.a2 * Math.sin(2 * localAng + coastHarmonics.p2) +
+      coastHarmonics.a3 * Math.cos(3 * localAng + coastHarmonics.p3) +
+      coastHarmonics.a4 * Math.sin(4 * localAng + coastHarmonics.p4) +
+      coastHarmonics.a5 * Math.cos(5 * localAng + coastHarmonics.p5);
+    return Math.max(21.5, baseR + bayNotch + leftCape + rightCape + backSpur + organic);
+  };
 
-  const coastSlopeZ = (z: number): number =>
-    coastHarmonics.a1 * coastHarmonics.f1 * Math.cos(z * coastHarmonics.f1 + coastHarmonics.p1) +
-    coastHarmonics.a2 * coastHarmonics.f2 * Math.cos(z * coastHarmonics.f2 + coastHarmonics.p2) -
-    coastHarmonics.a3 * coastHarmonics.f3 * Math.sin(z * coastHarmonics.f3 + coastHarmonics.p3) +
-    coastHarmonics.a4 * coastHarmonics.f4 * Math.cos(z * coastHarmonics.f4 + coastHarmonics.p4);
+  const coastRadiusAt = (worldAng: number): number => localCoastRadius(worldAng - orientAng);
 
-  const signedInland = (x: number, z: number): number => x - coastX(z);
+  const signedInland = (x: number, z: number): number => {
+    const [lx, lz] = toLocal(x, z);
+    const r = Math.hypot(lx, lz);
+    const a = Math.atan2(lz, lx);
+    return localCoastRadius(a) - r;
+  };
 
   const heightAt = (x: number, z: number): number => {
-    const cx = coastX(z);
-    const d = x - cx;
+    const [lx, lz] = toLocal(x, z);
+    const r = Math.hypot(lx, lz);
+    const a = Math.atan2(lz, lx);
+    const cR = localCoastRadius(a);
+    const shoreDist = cR - r;
 
-    if (d <= 0) {
-      // Gentle sloping seabed + occasional sculptural coastal paper islets offshore!
-      const seaDepth = -smoothstep(0, 14, -d) * 2.2 - 0.06;
-      if (d < -16 && d > -95) {
-        const isl = valueNoise2D(x * 0.026 + 4.2, z * 0.026 - 9.1, isletSeed);
-        if (isl > 0.77) {
-          const mound = smoothstep(0.77, 0.94, isl) * (2.6 + hills * 4.4);
-          return seaDepth + mound;
-        }
+    if (shoreDist <= 0) {
+      let seaY = -smoothstep(0, 7.2, -shoreDist) * 3.4 - 0.08;
+      const ds1 = Math.hypot(lx - stack1Local[0], lz - stack1Local[1]);
+      if (ds1 < 3.8) {
+        const h1 = Math.pow(1 - ds1 / 3.8, 1.15) * (3.5 + hills * 3.8);
+        seaY = Math.max(seaY, -0.5 + h1);
       }
-      return seaDepth;
+      const ds2 = Math.hypot(lx - stack2Local[0], lz - stack2Local[1]);
+      if (ds2 < 2.8) {
+        const h2 = Math.pow(1 - ds2 / 2.8, 1.18) * (2.5 + hills * 2.6);
+        seaY = Math.max(seaY, -0.5 + h2);
+      }
+      return seaY;
     }
 
-    // Gently sloping sandy paper beach rising cleanly from the water's edge to the waterfront promenade!
-    const quayRise = smoothstep(0, 6.2, d) * 0.84;
+    // Smooth Cartesian crescent-bay mask (100% C-infinity smooth everywhere including r=0!)
+    const bayCalm = Math.exp(-(lx * lx) / (16.5 * 16.5)) * smoothstep(2.0, 19.0, lz);
+    const harborApron = smoothstep(0, 4.4, shoreDist) * 0.92;
+    const cliffWall = smoothstep(0, 4.8, shoreDist) * (1 - bayCalm * 0.86) * (1.3 + hills * 4.4);
+
     if (hills <= 1e-4) {
-      return quayRise;
+      return harborApron;
     }
 
-    // Headland factor: promontories jutting seaward (lower coastX) rise slightly bolder into cliffs
-    const headlandBoost = smoothstep(14, -22, cx) * 0.36;
+    const amp = 0.25 + hills * 0.95;
 
-    // Multi-octave smooth coastal hills & amphitheater rising gently inland
-    const n1 = valueNoise2D(x * 0.0135 + 11.3, z * 0.0135 - 7.1, nSeed1);
-    const n2 = valueNoise2D(x * 0.030 - 3.7, z * 0.030 + 19.2, nSeed2);
-    const n3 = valueNoise2D(x * 0.064 + 23.5, z * 0.064 - 14.8, nSeed3);
+    // 1. Primary sculpted Italian limestone mountain peak behind the amphitheater bay
+    const d1x = lx - mainPeakLocal[0];
+    const d1z = lz - mainPeakLocal[1];
+    const r1Raw = Math.hypot(d1x, d1z);
+    const ang1 = Math.atan2(d1z, d1x);
+    const areteBlend = smoothstep(0.0, 5.5, r1Raw);
+    const arete1 =
+      1.0 +
+      areteBlend *
+        (0.18 * Math.cos(3.0 * ang1 + coastHarmonics.p2) + 0.12 * Math.sin(2.0 * ang1 + coastHarmonics.p3));
+    const r1 = r1Raw / arete1;
+    const peak1 = 18.2 * Math.pow(Math.max(0, 1 - r1 / 35.5), 1.22);
 
-    const fbm = n1 * 0.62 + n2 * 0.27 + n3 * 0.11;
-    // Keep the sandy beach, waterfront promenade & first row of harbor houses gently sloped before rolling up into hills!
-    const coastalTerrace = smoothstep(7.5, 29, d) * (0.36 + headlandBoost * 0.85);
-    const inlandRamp = smoothstep(14, 108, d);
-    const relief =
-      (coastalTerrace * (0.48 + fbm * 0.72) + inlandRamp * (0.44 + fbm * 1.28 + headlandBoost * 0.45)) *
-      (hills * 10.6);
+    // 2. Dramatic secondary headland ridges & rocky Mediterranean promontories
+    const r2 = Math.hypot(lx - shoulderLocal[0], lz - shoulderLocal[1]);
+    const peak2 = 11.8 * Math.pow(Math.max(0, 1 - r2 / 22.5), 1.30);
 
-    return quayRise + relief;
+    const r3 = Math.hypot(lx - headlandLocal[0], lz - headlandLocal[1]);
+    const peak3 = 8.4 * Math.pow(Math.max(0, 1 - r3 / 19.5), 1.36);
+
+    const r4 = Math.hypot(lx - backCragLocal[0], lz - backCragLocal[1]);
+    const peak4 = 12.6 * Math.pow(Math.max(0, 1 - r4 / 21.0), 1.26);
+
+    const mainMass = Math.max(peak1, peak2, peak4) + Math.min(peak1, Math.max(peak2, peak4)) * 0.22 + peak3 * 0.58;
+
+    // 3. Gentle amphitheater cove facing the front harbor bay
+    const bowlDist = Math.hypot(lx * 0.80, lz - 14.0);
+    const bowlCarve = 2.4 * Math.exp(-(bowlDist * bowlDist) / (11.5 * 11.5));
+
+    // 4. Multi-octave ridged limestone geology & organic gullies
+    const rn1 = ridgedNoise2D(lx * 0.045 + 4.3, lz * 0.045 - 7.1, nSeed1);
+    const rn2 = ridgedNoise2D(lx * 0.10 - 9.2, lz * 0.10 + 11.4, nSeed2);
+    const vn3 = valueNoise2D(lx * 0.18 + 15.1, lz * 0.18 - 6.7, nSeed3);
+    const rockDetail = (rn1 * 0.52 + rn2 * 0.34 + vn3 * 0.14) * 2.5;
+
+    const inlandRamp = smoothstep(0, 7.2, shoreDist);
+    const total = harborApron + cliffWall + Math.max(0, (mainMass + rockDetail - bowlCarve) * amp * inlandRamp);
+    return Math.max(0.06, total);
   };
 
-  const districtStyleAt = (_x: number, z: number, styleOverride: CityStreetStyle): ConcreteStreetStyle => {
-    if (styleOverride !== 'mix') return styleOverride;
-    // Deterministic coastal districts every ~132 world units (3 chunks) along the coastline!
-    const distIdx = Math.floor(z / (CITY_CHUNK_SIZE * 3));
-    const r = hash1i(distIdx, s * 313 + 71);
-    if (r < 0.44) return 'organic';
-    if (r < 0.74) return 'grid';
-    return 'radial';
-  };
+  const harborR = localCoastRadius(Math.PI * 0.5) - 3.8;
+  const harborLocal: V2 = [0, harborR];
+  const summitLocal: V2 = [mainPeakLocal[0] * 0.72, mainPeakLocal[1] + 2.2];
 
   return {
-    seed: s,
-    hills,
-    coastHarmonics,
-    coastX,
-    coastSlopeZ,
-    signedInland,
-    heightAt,
-    districtStyleAt,
+    terrain: {
+      seed: s,
+      hills,
+      coastHarmonics,
+      coastRadiusAt,
+      signedInland,
+      heightAt,
+    },
+    orientAng,
+    mainPeakLocal,
+    harborLocal,
+    summitLocal,
+    localCoastRadius,
   };
 }
 
 // ---------------------------------------------------------------------------
-// Marching Squares Chunk Contour Extractor (Seam-Free Across Chunks!)
+// Marching Squares Topographic Contour Extractor (Whole Island)
 // ---------------------------------------------------------------------------
 
-export function extractChunkContours(
-  terrain: CityTerrainField,
-  cx: number,
-  cz: number,
-  gridRes = 24,
-  stepY = 0.65,
-): CityContourSegment[] {
-  const xStart = cx * CITY_CHUNK_SIZE;
-  const zStart = cz * CITY_CHUNK_SIZE;
-  const step = CITY_CHUNK_SIZE / gridRes;
+export function extractIslandContours(
+  terrain: IslandTerrainField,
+  extent = 46,
+  gridRes = 76,
+  stepY = 0.78,
+): IslandContourSegment[] {
+  const minC = -extent;
+  const step = (extent * 2) / gridRes;
   const stride = gridRes + 1;
   const heights = new Float32Array(stride * stride);
 
   let maxH = -Infinity;
-  let minH = Infinity;
   for (let j = 0; j <= gridRes; j++) {
-    const z = zStart + j * step;
+    const z = minC + j * step;
     for (let i = 0; i <= gridRes; i++) {
-      const x = xStart + i * step;
+      const x = minC + i * step;
       const h = terrain.heightAt(x, z);
       heights[j * stride + i] = h;
       if (h > maxH) maxH = h;
-      if (h < minH) minH = h;
     }
   }
-  if (maxH < 0.35) return [];
+  if (maxH < 0.6) return [];
 
-  const minLv = Math.max(1, Math.floor(Math.max(0.45, minH) / stepY));
   const maxLv = Math.floor(maxH / stepY);
-  const segs: CityContourSegment[] = [];
+  const segs: IslandContourSegment[] = [];
 
-  for (let lv = minLv; lv <= maxLv; lv++) {
+  for (let lv = 1; lv <= maxLv; lv++) {
     const iso = lv * stepY;
-    if (iso < 0.65) continue;
+    if (iso < 0.55) continue;
     const isMajor = lv % 4 === 0;
     for (let j = 0; j < gridRes; j++) {
-      const z0 = zStart + j * step;
+      const z0 = minC + j * step;
       const z1 = z0 + step;
       for (let i = 0; i < gridRes; i++) {
-        const x0 = xStart + i * step;
+        const x0 = minC + i * step;
         const x1 = x0 + step;
         const h00 = heights[j * stride + i];
         const h10 = heights[j * stride + (i + 1)];
@@ -490,7 +470,7 @@ export function extractChunkContours(
 }
 
 // ---------------------------------------------------------------------------
-// 2D Geometry & Street Helpers
+// 2D Geometry & Full-Island Serpentine + Terraced Road Network
 // ---------------------------------------------------------------------------
 
 function distPointToSeg(px: number, pz: number, a: V2, b: V2): number {
@@ -500,22 +480,6 @@ function distPointToSeg(px: number, pz: number, a: V2, b: V2): number {
   if (l2 < 1e-8) return Math.hypot(px - a[0], pz - a[1]);
   const t = Math.max(0, Math.min(1, ((px - a[0]) * dx + (pz - a[1]) * dz) / l2));
   return Math.hypot(px - (a[0] + t * dx), pz - (a[1] + t * dz));
-}
-
-function subdividePolyline(pts: V2[], maxSegLen = 2.4): V2[] {
-  if (pts.length < 2) return pts;
-  const out: V2[] = [pts[0]];
-  for (let i = 0; i < pts.length - 1; i++) {
-    const a = pts[i];
-    const b = pts[i + 1];
-    const dist = Math.hypot(b[0] - a[0], b[1] - a[1]);
-    const steps = Math.max(1, Math.ceil(dist / maxSegLen));
-    for (let k = 1; k <= steps; k++) {
-      const t = k / steps;
-      out.push([a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t]);
-    }
-  }
-  return out;
 }
 
 function buildStreetRect(a: V2, b: V2, halfW: number, padEnd = 0): V2[] {
@@ -545,1037 +509,906 @@ function makeBuildingOBB(cx: number, cz: number, yaw: number, halfW: number, hal
   return [pt(-halfW, -halfD), pt(halfW, -halfD), pt(halfW, halfD), pt(-halfW, halfD)];
 }
 
-/** Clip an arbitrary polyline to inland terrain (`signedInland >= minInland`) and chunk bounds */
-function clipPolylineToLandAndBox(
-  pts: V2[],
-  terrain: CityTerrainField,
-  minInland: number,
-  minX: number,
-  maxX: number,
-  minZ: number,
-  maxZ: number,
-): V2[][] {
-  const sub = subdividePolyline(pts, 2.2);
-  const runs: V2[][] = [];
-  let cur: V2[] = [];
-
-  for (let i = 0; i < sub.length; i++) {
-    const p = sub[i];
-    const inLand = terrain.signedInland(p[0], p[1]) >= minInland;
-    const inBox = p[0] >= minX && p[0] <= maxX && p[1] >= minZ && p[1] <= maxZ;
-    if (inLand && inBox) {
-      cur.push(p);
-    } else {
-      if (cur.length >= 2) runs.push(cur);
-      cur = [];
-    }
-  }
-  if (cur.length >= 2) runs.push(cur);
-  return runs;
-}
-
-interface RawSegment {
-  a: V2;
-  b: V2;
-  width: number;
-  kind: CityStreet['kind'];
-}
-
-/**
- * Generate seamless, infinite, cross-chunk deterministic street networks for chunk `(cx, cz)`
- * according to the resolved district topology (`organic`, `grid`, or `radial`), plus the continuous
- * waterfront corniche promenade, coastal piers, and bay sailboats!
- */
-function generateChunkStreets(
-  cx: number,
-  cz: number,
-  districtStyle: ConcreteStreetStyle,
-  terrain: CityTerrainField,
-): {
-  streets: CityStreet[];
-  plazas: CityPlaza[];
-  rawSegments: RawSegment[];
-  piers: CityPier[];
-  boats: CityBoat[];
-} {
-  const x0 = cx * CITY_CHUNK_SIZE;
-  const x1 = x0 + CITY_CHUNK_SIZE;
-  const z0 = cz * CITY_CHUNK_SIZE;
-  const z1 = z0 + CITY_CHUNK_SIZE;
-  const pad = 2.6;
-  const seed = terrain.seed;
-
-  const streets: CityStreet[] = [];
-  const plazas: CityPlaza[] = [];
-  const rawSegments: RawSegment[] = [];
-  const piers: CityPier[] = [];
-  const boats: CityBoat[] = [];
-  let sid = 0;
-
-  const commitRun = (kind: CityStreet['kind'], width: number, pts: V2[]) => {
-    if (pts.length < 2) return;
-    const id = `s_${cx}_${cz}_${sid++}`;
-    for (let i = 0; i < pts.length - 1; i++) {
-      if (Math.hypot(pts[i + 1][0] - pts[i][0], pts[i + 1][1] - pts[i][1]) > 0.25) {
-        rawSegments.push({ a: pts[i], b: pts[i + 1], width, kind });
-      }
-    }
-    streets.push({ id, kind, width, points: pts });
-  };
-
-  // 1. Intimate Waterfront Corniche + Parallel Terraced Coastal Back-Alleys behind the warm sand beach!
-  const emitCoastalRibbon = (offsetInland: number, kind: CityStreet['kind'], width: number) => {
-    const ribbonPts: V2[] = [];
-    const zSteps = 18;
-    for (let i = 0; i <= zSteps; i++) {
-      const z = z0 - 2 + (i / zSteps) * (CITY_CHUNK_SIZE + 4);
-      const px = terrain.coastX(z) + offsetInland;
-      if (px >= x0 - pad && px <= x1 + pad) {
-        ribbonPts.push([px, z]);
-      } else if (ribbonPts.length >= 2) {
-        commitRun(kind, width, ribbonPts.slice());
-        ribbonPts.length = 0;
-      } else {
-        ribbonPts.length = 0;
-      }
-    }
-    if (ribbonPts.length >= 2) {
-      commitRun(kind, width, ribbonPts);
-    }
-  };
-  emitCoastalRibbon(6.4, 'promenade', 1.7);
-  emitCoastalRibbon(13.4, 'lane', 1.0);
-  emitCoastalRibbon(21.0, 'street', 1.18);
-
-  // 2. Deterministic Coastal Piers & Folded Paper Sailboats in sheltered coves!
-  const coastRng = makeRng(hash2u32(cx, cz, seed * 29 + 503));
-  for (let pTry = 0; pTry < 2; pTry++) {
-    const pz = z0 + 9 + pTry * 22 + coastRng.range(-4, 4);
-    const edgeX = terrain.coastX(pz);
-    if (edgeX >= x0 + 3 && edgeX <= x1 - 3 && Math.abs(terrain.coastSlopeZ(pz)) < 0.72) {
-      if (coastRng.chance(0.58)) {
-        const slope = terrain.coastSlopeZ(pz);
-        // Seaward normal of `x = coastX(z)` points roughly `-X`: `(-1, slope)` normalized
-        const nx = -1 / Math.hypot(1, slope);
-        const nz = slope / Math.hypot(1, slope);
-        const yaw = Math.atan2(nx, nz);
-        const length = coastRng.range(10.5, 16.5);
-        piers.push({
-          x: edgeX + 5.1,
-          z: pz,
-          yaw,
-          length,
-          width: coastRng.range(1.45, 1.95),
-          deckY: 0.80,
-        });
-      }
-    }
-  }
-
-  // Deterministic folded origami sailboats anchored offshore in the bay
-  for (let bTry = 0; bTry < 5; bTry++) {
-    const bx = x0 + coastRng.range(4, CITY_CHUNK_SIZE - 4);
-    const bz = z0 + coastRng.range(4, CITY_CHUNK_SIZE - 4);
-    const inland = terrain.signedInland(bx, bz);
-    if (inland < -7 && inland > -96 && terrain.heightAt(bx, bz) < -0.25 && coastRng.chance(0.55)) {
-      boats.push({
-        x: bx,
-        z: bz,
-        yaw: coastRng.range(0, Math.PI * 2),
-        scale: coastRng.range(0.95, 1.65),
-        phase: coastRng.range(0, Math.PI * 2),
-      });
-    }
-  }
-
-  // Early exit if the entire chunk is deep open sea (no land streets needed)
-  let anyLand = false;
-  for (let gz = z0; gz <= z1; gz += CITY_CHUNK_SIZE * 0.5) {
-    if (x1 > terrain.coastX(gz) + 2) {
-      anyLand = true;
-      break;
-    }
-  }
-  if (!anyLand) {
-    return { streets, plazas, rawSegments, piers, boats };
-  }
-
-  // 3. District-specific deterministic infinite street topology (narrow intimate European/Japanese coastal blocks!)
-  if (districtStyle === 'organic') {
-    // Tight warped lattice (cell = 13.5) -> intimate curved coastal lanes & pocket plazas, ZERO seams!
-    const CELL = 13.5;
-    const nodePos = (ix: number, iz: number): V2 => {
-      const jx = (hash2i(ix, iz, seed * 17 + 31) - 0.5) * 4.4;
-      const jz = (hash2i(ix, iz, seed * 17 + 97) - 0.5) * 4.4;
-      return [ix * CELL + jx, iz * CELL + jz];
-    };
-
-    const ix0 = Math.floor((x0 - 10) / CELL);
-    const ix1 = Math.ceil((x1 + 10) / CELL);
-    const iz0 = Math.floor((z0 - 10) / CELL);
-    const iz1 = Math.ceil((z1 + 10) / CELL);
-
-    const emitCurvedEdge = (a: V2, b: V2, edgeHash: number, isAve: boolean) => {
-      const midX = (a[0] + b[0]) * 0.5;
-      const midZ = (a[1] + b[1]) * 0.5;
-      const dx = b[0] - a[0];
-      const dz = b[1] - a[1];
-      const len = Math.hypot(dx, dz) || 1;
-      const bow = (edgeHash - 0.5) * Math.min(3.4, len * 0.22);
-      const ctrl: V2 = [midX + (-dz / len) * bow, midZ + (dx / len) * bow];
-      const curvePts: V2[] = [];
-      const steps = 5;
-      for (let k = 0; k <= steps; k++) {
-        const t = k / steps;
-        const inv = 1 - t;
-        curvePts.push([
-          inv * inv * a[0] + 2 * inv * t * ctrl[0] + t * t * b[0],
-          inv * inv * a[1] + 2 * inv * t * ctrl[1] + t * t * b[1],
-        ]);
-      }
-      const clipped = clipPolylineToLandAndBox(curvePts, terrain, 6.2, x0 - pad, x1 + pad, z0 - pad, z1 + pad);
-      const kind: CityStreet['kind'] = isAve ? 'avenue' : edgeHash > 0.72 ? 'lane' : 'street';
-      const width = kind === 'avenue' ? 1.62 : kind === 'street' ? 1.18 : 0.86;
-      for (const run of clipped) commitRun(kind, width, run);
-    };
-
-    for (let ix = ix0; ix <= ix1; ix++) {
-      for (let iz = iz0; iz <= iz1; iz++) {
-        const p = nodePos(ix, iz);
-        // Occasional intimate hilltop / neighborhood plazas at inland intersections
-        if (
-          p[0] >= x0 + 3 &&
-          p[0] <= x1 - 3 &&
-          p[1] >= z0 + 3 &&
-          p[1] <= z1 - 3 &&
-          terrain.signedInland(p[0], p[1]) > 14 &&
-          hash2i(ix, iz, seed * 53 + 19) > 0.88
-        ) {
-          plazas.push({ x: p[0], z: p[1], radius: 2.0 + hash2i(ix, iz, seed + 7) * 0.8 });
-        }
-
-        const hE = hash2i(ix, iz, seed * 101 + 11);
-        if (hE > 0.14) {
-          emitCurvedEdge(p, nodePos(ix + 1, iz), hE, iz % 3 === 0);
-        }
-        const hN = hash2i(ix, iz, seed * 101 + 43);
-        if (hN > 0.14) {
-          emitCurvedEdge(p, nodePos(ix, iz + 1), hN, ix % 3 === 0);
-        }
-      }
-    }
-  } else if (districtStyle === 'grid') {
-    // Tight deterministic rotated coastal townhouse grid with narrow alleys!
-    const rot = (hash1i(7, seed + 41) - 0.5) * 0.42;
-    const c = Math.cos(rot);
-    const s = Math.sin(rot);
-    const U_STEP = 12.0;
-    const V_STEP = 13.0;
-
-    const toUV = (wx: number, wz: number): V2 => [wx * c + wz * s, -wx * s + wz * c];
-    const toWorld = (u: number, v: number): V2 => [u * c - v * s, u * s + v * c];
-
-    const corners: V2[] = [
-      toUV(x0 - 8, z0 - 8),
-      toUV(x1 + 8, z0 - 8),
-      toUV(x1 + 8, z1 + 8),
-      toUV(x0 - 8, z1 + 8),
-    ];
-    const uMin = Math.floor(Math.min(...corners.map((p) => p[0])) / U_STEP) - 1;
-    const uMax = Math.ceil(Math.max(...corners.map((p) => p[0])) / U_STEP) + 1;
-    const vMin = Math.floor(Math.min(...corners.map((p) => p[1])) / V_STEP) - 1;
-    const vMax = Math.ceil(Math.max(...corners.map((p) => p[1])) / V_STEP) + 1;
-
-    const gNode = (iu: number, iv: number): V2 => {
-      const ju = (hash2i(iu, iv, seed * 31 + 5) - 0.5) * 0.85;
-      const jv = (hash2i(iu, iv, seed * 31 + 19) - 0.5) * 0.85;
-      return toWorld(iu * U_STEP + ju, iv * V_STEP + jv);
-    };
-
-    for (let iu = uMin; iu <= uMax; iu++) {
-      for (let iv = vMin; iv <= vMax; iv++) {
-        const a = gNode(iu, iv);
-        if (
-          a[0] >= x0 + 4 &&
-          a[0] <= x1 - 4 &&
-          a[1] >= z0 + 4 &&
-          a[1] <= z1 - 4 &&
-          terrain.signedInland(a[0], a[1]) > 14 &&
-          iu % 4 === 0 &&
-          iv % 4 === 0
-        ) {
-          plazas.push({ x: a[0], z: a[1], radius: 2.3 });
-        }
-
-        const bU = gNode(iu + 1, iv);
-        const isAveU = ((iv % 3) + 3) % 3 === 0;
-        for (const run of clipPolylineToLandAndBox([a, bU], terrain, 6.2, x0 - pad, x1 + pad, z0 - pad, z1 + pad)) {
-          commitRun(isAveU ? 'avenue' : 'street', isAveU ? 1.62 : 1.18, run);
-        }
-
-        const bV = gNode(iu, iv + 1);
-        const isAveV = ((iu % 3) + 3) % 3 === 0;
-        for (const run of clipPolylineToLandAndBox([a, bV], terrain, 6.2, x0 - pad, x1 + pad, z0 - pad, z1 + pad)) {
-          commitRun(isAveV ? 'avenue' : 'street', isAveV ? 1.62 : 1.18, run);
-        }
-      }
-    }
-  } else {
-    // Tight radial chain of deterministic star-ring hilltop acropolis hubs (`HUB_STEP = 64`)!
-    const HUB_STEP = 64;
-    const hx0 = Math.floor((x0 - 44) / HUB_STEP);
-    const hx1 = Math.ceil((x1 + 44) / HUB_STEP);
-    const hz0 = Math.floor((z0 - 44) / HUB_STEP);
-    const hz1 = Math.ceil((z1 + 44) / HUB_STEP);
-
-    for (let hx = hx0; hx <= hx1; hx++) {
-      for (let hz = hz0; hz <= hz1; hz++) {
-        const hubRng = makeRng(hash2u32(hx, hz, seed * 73 + 29));
-        let px = (hx + 0.5) * HUB_STEP + hubRng.range(-10, 10);
-        const pz = (hz + 0.5) * HUB_STEP + hubRng.range(-10, 10);
-        const minLandX = terrain.coastX(pz) + 18;
-        if (px < minLandX - 24) continue; // deep-sea macro cell has no inland hub
-        if (px < minLandX) px = minLandX + hubRng.range(0, 10);
-
-        const pRad = hubRng.range(2.3, 3.1);
-        if (px >= x0 - 4 && px <= x1 + 4 && pz >= z0 - 4 && pz <= z1 + 4) {
-          plazas.push({ x: px, z: pz, radius: pRad });
-        }
-
-        const spokes = 8;
-        const baseAng = hubRng.range(0, Math.PI * 2);
-        const ellip = hubRng.range(0.88, 1.12);
-        const ringRadii = [11.5, 22.0, 32.5];
-
-        for (let rIdx = 0; rIdx < ringRadii.length; rIdx++) {
-          const rad = ringRadii[rIdx];
-          const ringPts: V2[] = [];
-          const steps = 28;
-          for (let k = 0; k <= steps; k++) {
-            const ang = (k / steps) * Math.PI * 2;
-            ringPts.push([px + Math.cos(ang) * rad, pz + Math.sin(ang) * rad * ellip]);
-          }
-          for (const run of clipPolylineToLandAndBox(ringPts, terrain, 6.4, x0 - pad, x1 + pad, z0 - pad, z1 + pad)) {
-            commitRun(rIdx === 0 ? 'avenue' : 'street', rIdx === 0 ? 1.60 : 1.16, run);
-          }
-        }
-
-        for (let k = 0; k < spokes; k++) {
-          const ang = baseAng + (k / spokes) * Math.PI * 2 + hubRng.range(-0.1, 0.1);
-          const spokePts: V2[] = [
-            [px + Math.cos(ang) * (pRad - 0.3), pz + Math.sin(ang) * (pRad - 0.3)],
-            [px + Math.cos(ang) * 38, pz + Math.sin(ang) * 38],
-          ];
-          for (const run of clipPolylineToLandAndBox(spokePts, terrain, 6.2, x0 - pad, x1 + pad, z0 - pad, z1 + pad)) {
-            commitRun(k % 2 === 0 ? 'avenue' : 'street', k % 2 === 0 ? 1.60 : 1.16, run);
-          }
-        }
-      }
-    }
-  }
-
-  return { streets, plazas, rawSegments, piers, boats };
-}
-
-// ---------------------------------------------------------------------------
-// Fast Deterministic Footprint & Multi-Wing Massing Extraction
-// ---------------------------------------------------------------------------
-
-function extractFootprintAndWings(
-  spec: HouseNetSpec,
-  scale = 1,
-): {
-  fpW: number;
-  fpD: number;
-  wings: CityWingMassing[];
-} {
-  // For multi-house flush composites (`village`), extract exact base-panel sub-footprints so
-  // LOD1/LOD2 massing matches LOD0 wall-to-wall rowhouses cleanly!
+function extractFootprintSize(spec: HouseNetSpec, scale: number): { fpW: number; fpD: number } {
   if (spec.topology === 'village') {
     const net = buildHouseNet(spec);
     let minBx = Infinity;
     let maxBx = -Infinity;
     let minBz = Infinity;
     let maxBz = -Infinity;
-    const basePanels = net.panels.filter((p) => p.stage === 'base');
-    const wings: CityWingMassing[] = [];
-    const roofCycle: RoofType[] = ['gable', 'mansard', 'gable', 'spire'];
-    const profileCycle: GableProfile[] = ['classic', 'stepped', 'gambrel', 'classic'];
-
-    basePanels.forEach((p, idx) => {
-      let x0 = Infinity;
-      let x1 = -Infinity;
-      let z0 = Infinity;
-      let z1 = -Infinity;
+    for (const p of net.panels) {
+      if (p.stage !== 'base') continue;
       for (const [px, py] of p.poly) {
         const wx = px * MM * scale;
         const wz = -py * MM * scale;
-        if (wx < x0) x0 = wx;
-        if (wx > x1) x1 = wx;
-        if (wz < z0) z0 = wz;
-        if (wz > z1) z1 = wz;
+        if (wx < minBx) minBx = wx;
+        if (wx > maxBx) maxBx = wx;
+        if (wz < minBz) minBz = wz;
+        if (wz > maxBz) maxBz = wz;
       }
-      if (x0 < minBx) minBx = x0;
-      if (x1 > maxBx) maxBx = x1;
-      if (z0 < minBz) minBz = z0;
-      if (z1 > maxBz) maxBz = z1;
-      const wW = Math.max(0.75, x1 - x0);
-      const wD = Math.max(0.75, z1 - z0);
-      const hScale = idx === 0 ? 1.0 : idx === 1 ? 1.12 : idx === 2 ? 0.92 : 1.06;
-      wings.push({
-        cx: (x0 + x1) * 0.5,
-        cz: (z0 + z1) * 0.5,
-        W: wW,
-        D: wD,
-        H: Math.max(1.1, spec.H * MM * scale * hScale),
-        roofType: idx === 0 ? spec.roofType : roofCycle[(idx + (spec.village?.seed ?? 0)) % roofCycle.length],
-        gableProfile: idx === 0 ? (spec.gableProfile ?? 'classic') : profileCycle[idx % profileCycle.length],
-        pitch: spec.pitch,
-        mansardRatio: spec.mansardRatio || 0.34,
-        colorSlot: idx % 4,
-      });
-    });
-
-    if (Number.isFinite(minBx) && wings.length > 0) {
-      return { fpW: maxBx - minBx, fpD: maxBz - minBz, wings };
+    }
+    if (Number.isFinite(minBx)) {
+      return { fpW: maxBx - minBx, fpD: maxBz - minBz };
     }
   }
-
-  // O(1) exact footprints for single-house topologies (zero `buildHouseNet` overhead during far chunk streaming!)
   const W = spec.W * MM * scale;
   const D = spec.D * MM * scale;
-  const H = spec.H * MM * scale;
-
-  if (spec.topology === 'lwing') {
-    const Ww = W * 0.62;
-    const Dw = D * 0.52;
-    const ox = Ww * 0.22;
-    return {
-      fpW: W + Ww,
-      fpD: D,
-      wings: [
-        {
-          cx: -ox,
-          cz: 0,
-          W,
-          D,
-          H,
-          roofType: 'gable',
-          gableProfile: spec.gableProfile ?? 'classic',
-          pitch: spec.pitch,
-          mansardRatio: 0,
-          colorSlot: 0,
-        },
-        {
-          cx: W * 0.5 + Ww * 0.5 - ox,
-          cz: D * 0.5 - Dw * 0.5,
-          W: Ww,
-          D: Dw,
-          H: H * 0.68,
-          roofType: 'shed',
-          gableProfile: 'classic',
-          pitch: 0.38,
-          mansardRatio: 0,
-          colorSlot: 0,
-        },
-      ],
-    };
-  }
-
-  if (spec.topology === 'setback') {
-    return {
-      fpW: W,
-      fpD: W,
-      wings: [
-        {
-          cx: 0,
-          cz: 0,
-          W,
-          D: W,
-          H: H * 0.52,
-          roofType: 'flat',
-          gableProfile: 'classic',
-          pitch: 0,
-          mansardRatio: 0,
-          colorSlot: 0,
-        },
-        {
-          cx: 0,
-          cz: 0,
-          W: W * 0.58,
-          D: W * 0.58,
-          H,
-          roofType: spec.roofType === 'mansard' ? 'mansard' : 'spire',
-          gableProfile: 'classic',
-          pitch: spec.pitch,
-          mansardRatio: spec.mansardRatio || 0.35,
-          colorSlot: 0,
-        },
-      ],
-    };
-  }
-
+  if (spec.topology === 'lwing') return { fpW: W * 1.62, fpD: D };
+  if (spec.topology === 'setback') return { fpW: W, fpD: W };
   if (spec.topology === 'hex' || spec.topology === 'oct') {
     const dia = Math.max(W, D) * 0.96;
-    return {
-      fpW: dia,
-      fpD: dia,
-      wings: [
-        {
-          cx: 0,
-          cz: 0,
-          W: dia * 0.88,
-          D: dia * 0.88,
-          H,
-          roofType: spec.roofType === 'flat' ? 'flat' : 'spire',
-          gableProfile: 'classic',
-          pitch: Math.max(0.55, spec.pitch),
-          mansardRatio: spec.mansardRatio,
-          colorSlot: 0,
-        },
-      ],
-    };
+    return { fpW: dia, fpD: dia };
+  }
+  return { fpW: W, fpD: D };
+}
+
+/**
+ * Build the island's hidden-until-built Italian road network covering all 360° of the mountain:
+ *  1. Iconic serpentine switchback road winding from harbor cove up to the summit campanile,
+ *  2. Perimeter coastal cliff corniche hugging the capes, harbor & rear cliffs,
+ *  3. Mid-mountain terraced contour loop wrapping around the flanks & back mountain ridge,
+ *  4. Short stepped cliffside alleys linking the coastal corniche to the upper terraces!
+ */
+function buildIslandRoads(
+  terrain: IslandTerrainField,
+  orientAng: number,
+  harborLocal: V2,
+  summitLocal: V2,
+  localCoastRadius: (localAng: number) => number,
+  seed: number,
+): IslandRoad[] {
+  const rng = makeRng((seed * 19937 + 311) >>> 0);
+  const cosO = Math.cos(orientAng);
+  const sinO = Math.sin(orientAng);
+  const toWorld = (lx: number, lz: number): V2 => [lx * cosO - lz * sinO, lx * sinO + lz * cosO];
+
+  const roads: IslandRoad[] = [];
+
+  // 1. Primary Serpentine Switchback Road (harbor bay -> summit campanile)
+  {
+    const dirSign = rng.chance(0.5) ? 1 : -1;
+    const halfWaves = 4.0;
+    const SAMPLES = 176;
+    const rawLocal: V2[] = [];
+
+    for (let i = 0; i <= SAMPLES; i++) {
+      const t = i / SAMPLES;
+      const baseLx = harborLocal[0] + (summitLocal[0] - harborLocal[0]) * t;
+      const baseLz = harborLocal[1] + (summitLocal[1] - harborLocal[1]) * t;
+      const env = Math.pow(Math.sin(Math.PI * t), 0.62);
+      const sway = Math.sin(t * Math.PI * halfWaves) * dirSign * (15.5 * env);
+      const organic = Math.sin(t * Math.PI * 2.0 + 0.6) * 1.3 * env;
+
+      let lx = baseLx + sway + organic;
+      let lz = baseLz;
+      const [wx0, wz0] = toWorld(lx, lz);
+      const inland = terrain.signedInland(wx0, wz0);
+      if (inland < 4.4) {
+        const r = Math.hypot(lx, lz) || 1;
+        const pull = Math.min(r * 0.55, 4.4 - inland + 0.6);
+        lx *= (r - pull) / r;
+        lz *= (r - pull) / r;
+      }
+      rawLocal.push([lx, lz]);
+    }
+
+    for (let pass = 0; pass < 6; pass++) {
+      const next: V2[] = [rawLocal[0]];
+      for (let i = 1; i < rawLocal.length - 1; i++) {
+        next.push([
+          rawLocal[i - 1][0] * 0.24 + rawLocal[i][0] * 0.52 + rawLocal[i + 1][0] * 0.24,
+          rawLocal[i - 1][1] * 0.24 + rawLocal[i][1] * 0.52 + rawLocal[i + 1][1] * 0.24,
+        ]);
+      }
+      next.push(rawLocal[rawLocal.length - 1]);
+      for (let i = 0; i < rawLocal.length; i++) rawLocal[i] = next[i];
+    }
+
+    const cumLen = new Float64Array(rawLocal.length);
+    for (let i = 1; i < rawLocal.length; i++) {
+      cumLen[i] = cumLen[i - 1] + Math.hypot(rawLocal[i][0] - rawLocal[i - 1][0], rawLocal[i][1] - rawLocal[i - 1][1]);
+    }
+    const totalLen = Math.max(1e-4, cumLen[cumLen.length - 1]);
+
+    roads.push({
+      id: 'main',
+      kind: 'serpentine',
+      width: 0.88,
+      closed: false,
+      points: rawLocal.map(([lx, lz], i) => {
+        const [wx, wz] = toWorld(lx, lz);
+        return { x: wx, z: wz, y: terrain.heightAt(wx, wz), t: cumLen[i] / totalLen };
+      }),
+    });
   }
 
-  return {
-    fpW: W,
-    fpD: D,
-    wings: [
-      {
-        cx: 0,
-        cz: 0,
-        W,
-        D,
-        H,
-        roofType: spec.roofType,
-        gableProfile: spec.gableProfile ?? 'classic',
-        pitch: spec.pitch,
-        mansardRatio: spec.mansardRatio,
-        colorSlot: 0,
-      },
-    ],
-  };
+  // 2. Coastal Cliffside Corniche looping all 360° around the island perimeter (`inland ≈ 5.2`)
+  {
+    const N = 128;
+    const pts: IslandRoadPoint[] = [];
+    for (let i = 0; i <= N; i++) {
+      const ang = (i / N) * Math.PI * 2;
+      const rad = Math.max(14, localCoastRadius(ang) - 5.2);
+      const [wx, wz] = toWorld(Math.cos(ang) * rad, Math.sin(ang) * rad);
+      pts.push({ x: wx, z: wz, y: terrain.heightAt(wx, wz), t: i / N });
+    }
+    roads.push({
+      id: 'corniche',
+      kind: 'corniche',
+      width: 0.78,
+      closed: true,
+      points: pts,
+    });
+  }
+
+  // 3. Mid-Mountain Contour Terrace Loop wrapping around the flanks & rear ridge (`0.62 * coastR`)
+  {
+    const N = 104;
+    const pts: IslandRoadPoint[] = [];
+    for (let i = 0; i <= N; i++) {
+      const ang = (i / N) * Math.PI * 2;
+      const rad = Math.max(11, localCoastRadius(ang) * 0.62);
+      const [wx, wz] = toWorld(Math.cos(ang) * rad, Math.sin(ang) * rad);
+      pts.push({ x: wx, z: wz, y: terrain.heightAt(wx, wz), t: i / N });
+    }
+    roads.push({
+      id: 'mid_ring',
+      kind: 'terrace',
+      width: 0.72,
+      closed: true,
+      points: pts,
+    });
+  }
+
+  // 4. Stepped Cliffside Alleys connecting the coastal corniche flush to the mid-mountain loop (zero overshoot stub!)
+  const alleyAngles = [
+    Math.PI * 0.5 - 0.82,
+    Math.PI * 0.5 + 0.86,
+    -Math.PI * 0.5 - 0.52,
+    -Math.PI * 0.5 + 0.48,
+    0.08,
+    Math.PI - 0.12,
+  ];
+  alleyAngles.forEach((baseAng, aIdx) => {
+    const rOuter = Math.max(14, localCoastRadius(baseAng) - 5.2);
+    const rInner = Math.max(11, localCoastRadius(baseAng) * 0.62);
+    const steps = 14;
+    const pts: IslandRoadPoint[] = [];
+    const wiggle = (aIdx % 2 === 0 ? 1 : -1) * 0.07;
+    for (let k = 0; k <= steps; k++) {
+      const u = k / steps;
+      const rad = rOuter + (rInner - rOuter) * u;
+      const ang = baseAng + Math.sin(u * Math.PI) * wiggle;
+      const [wx, wz] = toWorld(Math.cos(ang) * rad, Math.sin(ang) * rad);
+      pts.push({ x: wx, z: wz, y: terrain.heightAt(wx, wz), t: u });
+    }
+    roads.push({
+      id: `alley_${aIdx}`,
+      kind: 'alley',
+      width: 0.62,
+      closed: false,
+      points: pts,
+    });
+  });
+
+  return roads;
+}
+
+interface AABB2D {
+  minX: number;
+  maxX: number;
+  minZ: number;
+  maxZ: number;
+}
+
+function polyAABB(poly: V2[]): AABB2D {
+  let minX = Infinity;
+  let maxX = -Infinity;
+  let minZ = Infinity;
+  let maxZ = -Infinity;
+  for (let i = 0; i < poly.length; i++) {
+    const x = poly[i][0];
+    const z = poly[i][1];
+    if (x < minX) minX = x;
+    if (x > maxX) maxX = x;
+    if (z < minZ) minZ = z;
+    if (z > maxZ) maxZ = z;
+  }
+  return { minX, maxX, minZ, maxZ };
+}
+
+function aabbIntersects(a: AABB2D, b: AABB2D): boolean {
+  return !(a.maxX < b.minX || a.minX > b.maxX || a.maxZ < b.minZ || a.minZ > b.maxZ);
 }
 
 // ---------------------------------------------------------------------------
-// Deterministic Infinite Chunk Generator
+// Complete Deterministic Italian Mountain Island World (Ultra-Dense Stacked Village!)
 // ---------------------------------------------------------------------------
 
-/**
- * Generate a 100% deterministic, zero-overlap chunk `(cx, cz)` of the infinite coastal paper city.
- * Building footprints are strictly contained inside `[x0+0.35, x1-0.35] x [z0+0.35, z1-0.35]`,
- * mathematically guaranteeing zero overlaps both within and across adjacent chunks in any visit order.
- */
-export function generateCityChunk(
-  cx: number,
-  cz: number,
-  terrain: CityTerrainField,
-  opts: CoastalWorldOptions,
-): CityChunkData {
-  const x0 = cx * CITY_CHUNK_SIZE;
-  const x1 = x0 + CITY_CHUNK_SIZE;
-  const z0 = cz * CITY_CHUNK_SIZE;
-  const z1 = z0 + CITY_CHUNK_SIZE;
-  const centerX = x0 + CITY_CHUNK_SIZE * 0.5;
-  const centerZ = z0 + CITY_CHUNK_SIZE * 0.5;
-  const key = `${cx},${cz}`;
-  const districtStyle = terrain.districtStyleAt(centerX, centerZ, opts.style);
+export function createIslandWorld(opts: IslandWorldOptions): IslandWorld {
+  const seed = Math.max(0, Math.round(opts.seed));
+  const hills = Math.max(0, Math.min(1, opts.hills));
+  const normalizedOpts: IslandWorldOptions = { ...opts, seed, hills };
 
-  // Sample land/sea presence across the chunk
-  let hasLand = false;
-  let hasSea = false;
-  for (let j = 0; j <= 4; j++) {
-    const z = z0 + (j / 4) * CITY_CHUNK_SIZE;
-    const cX = terrain.coastX(z);
-    if (x1 > cX - 1) hasLand = true;
-    if (x0 < cX + 1) hasSea = true;
+  const { terrain, orientAng, harborLocal, summitLocal, localCoastRadius } = createIslandTerrain(seed, hills);
+  const cosO = Math.cos(orientAng);
+  const sinO = Math.sin(orientAng);
+  const toWorld = (lx: number, lz: number): V2 => [lx * cosO - lz * sinO, lx * sinO + lz * cosO];
+
+  const [hx, hz] = toWorld(harborLocal[0], harborLocal[1]);
+  const [sx, sz] = toWorld(summitLocal[0], summitLocal[1]);
+  const harborPos: [number, number, number] = [hx, terrain.heightAt(hx, hz), hz];
+  const summitPos: [number, number, number] = [sx, terrain.heightAt(sx, sz), sz];
+  const maxElev = Math.max(4, summitPos[1]);
+
+  const roads = buildIslandRoads(terrain, orientAng, harborLocal, summitLocal, localCoastRadius, seed);
+  const contours = extractIslandContours(terrain, 44, 76, 0.78);
+
+  interface RoadSeg {
+    a: V2;
+    b: V2;
+    width: number;
   }
-  const hasCoast = hasLand && hasSea;
+  const roadSegs: RoadSeg[] = [];
+  for (const r of roads) {
+    for (let i = 0; i < r.points.length - 1; i++) {
+      const a: V2 = [r.points[i].x, r.points[i].z];
+      const b: V2 = [r.points[i + 1].x, r.points[i + 1].z];
+      if (Math.hypot(b[0] - a[0], b[1] - a[1]) > 0.14) {
+        roadSegs.push({ a, b, width: r.width });
+      }
+    }
+  }
 
-  const { streets, plazas, rawSegments, piers, boats } = generateChunkStreets(cx, cz, districtStyle, terrain);
-  const chunkSeed = hash2u32(cx, cz, terrain.seed * 613 + (districtStyle === 'organic' ? 11 : districtStyle === 'grid' ? 37 : 73));
-  const rng = makeRng(chunkSeed);
+  // Fast 2D spatial hash grids for road segments & placed buildings -> <25ms even at 950+ houses!
+  const CELL = 3.2;
+  const invCell = 1 / CELL;
+  const cellKey = (cx: number, cz: number) => ((cx + 512) << 10) | (cz + 512);
 
+  const roadBoxes: V2[][] = [];
+  const roadAABBs: AABB2D[] = [];
+  const roadGrid = new Map<number, number[]>();
+  for (let i = 0; i < roadSegs.length; i++) {
+    const seg = roadSegs[i];
+    const box = buildStreetRect(seg.a, seg.b, seg.width * 0.5 + 0.02, 0.04);
+    const aabb = polyAABB(box);
+    roadBoxes.push(box);
+    roadAABBs.push(aabb);
+    const x0 = Math.floor(aabb.minX * invCell);
+    const x1 = Math.floor(aabb.maxX * invCell);
+    const z0 = Math.floor(aabb.minZ * invCell);
+    const z1 = Math.floor(aabb.maxZ * invCell);
+    for (let cx = x0; cx <= x1; cx++) {
+      for (let cz = z0; cz <= z1; cz++) {
+        const k = cellKey(cx, cz);
+        let bucket = roadGrid.get(k);
+        if (!bucket) {
+          bucket = [];
+          roadGrid.set(k, bucket);
+        }
+        bucket.push(i);
+      }
+    }
+  }
+
+  const rng = makeRng((seed * 6133 + 1091) >>> 0);
   const plots: CityBuildingPlot[] = [];
   const placedPaddedOBBs: V2[][] = [];
+  const placedAABBs: AABB2D[] = [];
+  const placedGrid = new Map<number, number[]>();
+  const roadStamps = new Uint32Array(Math.max(1, roadBoxes.length));
+  let plotStamps = new Uint32Array(1280);
+  let stampCounter = 1;
   let rooftopCount = 0;
 
-  // Dense Mediterranean/Japanese coastal packing: 3–4× richer density packed right against the coastline!
-  const avgInland = terrain.signedInland(centerX, centerZ);
-  const maxPlotsInChunk =
-    !hasLand || avgInland > 185
-      ? 0
-      : avgInland < 32
-        ? 56
-        : avgInland < 85
-          ? 38
-          : 20;
+  const italianWinDetails = ['six', 'cross', 'transom', 'clean', 'six', 'triple'] as const;
+  const italianWinStyles = ['arched', 'tall', 'pair', 'rect', 'arched', 'tall'] as const;
+  const italianWinOpenings = ['shutters', 'awning', 'casement', 'shutters', 'louver'] as const;
 
-  if (maxPlotsInChunk > 0 && streets.length > 0) {
-    const roadBoxes: V2[][] = rawSegments.map((seg) => buildStreetRect(seg.a, seg.b, seg.width * 0.5 + 0.14, 0.12));
-
-    interface FrontageCandidate {
-      px: number;
-      pz: number;
-      nx: number;
-      nz: number;
-      roadHalfW: number;
-      roadKind: CityStreet['kind'];
-      inlandDist: number;
-    }
-
-    const candidates: FrontageCandidate[] = [];
-    for (const st of streets) {
-      let accum = rng.range(0.7, 1.5);
-      for (let i = 0; i < st.points.length - 1; i++) {
-        const a = st.points[i];
-        const b = st.points[i + 1];
-        const dx = b[0] - a[0];
-        const dz = b[1] - a[1];
-        const len = Math.hypot(dx, dz);
-        if (len < 1e-4) continue;
-        const tx = dx / len;
-        const tz = dz / len;
-        let cursor = accum;
-        while (cursor < len) {
-          const px = a[0] + tx * cursor;
-          const pz = a[1] + tz * cursor;
-          const inlandDist = terrain.signedInland(px, pz);
-          if (px >= x0 + 1.2 && px <= x1 - 1.2 && pz >= z0 + 1.2 && pz <= z1 - 1.2) {
-            // On the coastal promenade, only place houses on the INLAND side facing the sea (`nx > 0`)!
-            const sides = st.kind === 'promenade' ? [1, -1] : [-1, 1];
-            for (const side of sides) {
-              const nx = -tz * side;
-              const nz = tx * side;
-              if (st.kind === 'promenade' && nx < 0.1) continue;
-              candidates.push({
-                px,
-                pz,
-                nx,
-                nz,
-                roadHalfW: st.width * 0.5,
-                roadKind: st.kind,
-                inlandDist,
-              });
-            }
-          }
-          cursor += inlandDist < 34 ? rng.range(1.5, 2.3) : rng.range(2.3, 3.4);
+  const overlapsAnyRoad = (poly: V2[], aabb: AABB2D): boolean => {
+    const stamp = ++stampCounter;
+    const x0 = Math.floor(aabb.minX * invCell);
+    const x1 = Math.floor(aabb.maxX * invCell);
+    const z0 = Math.floor(aabb.minZ * invCell);
+    const z1 = Math.floor(aabb.maxZ * invCell);
+    for (let cx = x0; cx <= x1; cx++) {
+      for (let cz = z0; cz <= z1; cz++) {
+        const bucket = roadGrid.get(cellKey(cx, cz));
+        if (!bucket) continue;
+        for (let bi = 0; bi < bucket.length; bi++) {
+          const idx = bucket[bi];
+          if (roadStamps[idx] === stamp) continue;
+          roadStamps[idx] = stamp;
+          if (!aabbIntersects(aabb, roadAABBs[idx])) continue;
+          if (polygonsOverlap(poly, roadBoxes[idx])) return true;
         }
-        accum = cursor - len;
       }
     }
+    return false;
+  };
 
-    // Prioritize dense coastal frontage & narrow waterfront lanes first!
-    candidates.sort((a, b) => {
-      const coastA = a.inlandDist < 28 ? 0 : 1;
-      const coastB = b.inlandDist < 28 ? 0 : 1;
-      if (coastA !== coastB) return coastA - coastB;
-      const rank = (k: CityStreet['kind']) => (k === 'promenade' ? 0 : k === 'lane' ? 1 : k === 'avenue' ? 2 : 3);
-      const rk = rank(a.roadKind) - rank(b.roadKind);
-      if (rk !== 0) return rk;
-      return a.inlandDist - b.inlandDist;
+  const overlapsAnyPlaced = (poly: V2[], aabb: AABB2D): boolean => {
+    const stamp = ++stampCounter;
+    const x0 = Math.floor(aabb.minX * invCell);
+    const x1 = Math.floor(aabb.maxX * invCell);
+    const z0 = Math.floor(aabb.minZ * invCell);
+    const z1 = Math.floor(aabb.maxZ * invCell);
+    for (let cx = x0; cx <= x1; cx++) {
+      for (let cz = z0; cz <= z1; cz++) {
+        const bucket = placedGrid.get(cellKey(cx, cz));
+        if (!bucket) continue;
+        for (let bi = 0; bi < bucket.length; bi++) {
+          const idx = bucket[bi];
+          if (plotStamps[idx] === stamp) continue;
+          plotStamps[idx] = stamp;
+          if (!aabbIntersects(aabb, placedAABBs[idx])) continue;
+          if (polygonsOverlap(poly, placedPaddedOBBs[idx])) return true;
+        }
+      }
+    }
+    return false;
+  };
+
+  /**
+   * Measure how dramatically the mountain rises BEHIND a house at `(bx, bz)` facing `yaw`.
+   * High elevation behind -> towering 4, 5, and 6-level stacked Italian cliffside palazzi!
+   */
+  const computeBackElevationScore = (bx: number, bz: number, yaw: number): number => {
+    const backX = -Math.sin(yaw);
+    const backZ = -Math.cos(yaw);
+    const hHere = terrain.heightAt(bx, bz);
+    const hB1 = terrain.heightAt(bx + backX * 2.5, bz + backZ * 2.5);
+    const hB2 = terrain.heightAt(bx + backX * 5.8, bz + backZ * 5.8);
+    const hB3 = terrain.heightAt(bx + backX * 11.0, bz + backZ * 11.0);
+
+    // Also sample diagonal-back (±35°) so flanking mountain walls looming behind count cleanly!
+    const cos35 = 0.819;
+    const sin35 = 0.574;
+    const bLx = backX * cos35 - backZ * sin35;
+    const bLz = backX * sin35 + backZ * cos35;
+    const bRx = backX * cos35 + backZ * sin35;
+    const bRz = -backX * sin35 + backZ * cos35;
+    const hBL = terrain.heightAt(bx + bLx * 5.5, bz + bLz * 5.5);
+    const hBR = terrain.heightAt(bx + bRx * 5.5, bz + bRz * 5.5);
+
+    const riseNear = Math.max(0, hB1 - hHere);
+    const riseMid = Math.max(0, Math.max(hB2, hBL * 0.92, hBR * 0.92) - hHere);
+    const riseFar = Math.max(0, hB3 - hHere);
+    return riseNear * 0.55 + riseMid * 0.36 + riseFar * 0.22;
+  };
+
+  /** Pick authentic story count (`1..6`) strongly driven by mountain elevation behind the house! */
+  const pickItalianLevels = (backScore: number): BuildingLevels => {
+    const r = rng.next();
+    if (backScore >= 2.85) {
+      // Steep mountain / cliff rising sharply right behind -> towering 4-5-6 level palazzi!
+      if (r < 0.44) return 6;
+      if (r < 0.82) return 5;
+      return 4;
+    }
+    if (backScore >= 1.80) {
+      // Strong amphitheater / hillside backdrop behind -> dense 4-5-6 level cliff townhouses!
+      if (r < 0.18) return 6;
+      if (r < 0.58) return 5;
+      if (r < 0.94) return 4;
+      return 3;
+    }
+    if (backScore >= 0.95) {
+      // Moderate slope rising behind -> mostly 3-4-5 level stacked hillside houses!
+      if (r < 0.20) return 5;
+      if (r < 0.66) return 4;
+      if (r < 0.94) return 3;
+      return 2;
+    }
+    if (backScore >= 0.40) {
+      // Gentle rise behind -> mixed 2-3-4 level village houses
+      if (r < 0.30) return 4;
+      if (r < 0.72) return 3;
+      if (r < 0.95) return 2;
+      return 1;
+    }
+    // Summit crest / open promontory -> balanced 2-3 level cottages & occasional 4F accent tower
+    if (r < 0.14) return 4;
+    if (r < 0.54) return 3;
+    if (r < 0.94) return 2;
+    return 1;
+  };
+
+  const tryPlaceHouse = (
+    bx: number,
+    bz: number,
+    yaw: number,
+    isSummit: boolean,
+    gen: number,
+    mixOpts: HouseMixOptions,
+    rawSpec: HouseNetSpec,
+    plotScale: number,
+    skipRoadCheck = false,
+  ): boolean => {
+    const spec: HouseNetSpec = { ...rawSpec, yawOffset: 0 };
+    const { fpW, fpD } = extractFootprintSize(spec, plotScale);
+    const halfW = fpW * 0.5;
+    const halfD = fpD * 0.5;
+    const footprint = makeBuildingOBB(bx, bz, yaw, halfW, halfD);
+
+    // Every corner must sit cleanly atop the island cliff rim (never dangling down outer rock!)
+    for (const [fx, fz] of footprint) {
+      if (terrain.signedInland(fx, fz) < 3.15) return false;
+    }
+
+    // Tight shoulder-to-shoulder Mediterranean village spacing (still strictly zero overlap!)
+    const padGap = 0.032;
+    const paddedCheck = makeBuildingOBB(bx, bz, yaw, halfW + padGap, halfD + padGap);
+    const paddedAABB = polyAABB(paddedCheck);
+
+    if (!skipRoadCheck) {
+      const roadCheck = makeBuildingOBB(bx, bz, yaw, halfW + 0.018, halfD + 0.018);
+      if (overlapsAnyRoad(roadCheck, polyAABB(roadCheck))) return false;
+    }
+    if (overlapsAnyPlaced(paddedCheck, paddedAABB)) return false;
+
+    const ys = [terrain.heightAt(bx, bz), ...footprint.map(([fx, fz]) => terrain.heightAt(fx, fz))];
+    const groundMinY = Math.min(...ys);
+    const groundMaxY = Math.max(...ys);
+    const slopeDrop = groundMaxY - groundMinY;
+    if (groundMinY < 0.36 || slopeDrop > 4.1) return false;
+
+    // Ground the facade near the downhill / front street edge so tall 4-6 story windowed facades
+    // cascade down the cliff while the uphill rear tucks cleanly into the rising hillside (no giant blank plinth!)
+    const frontX = Math.sin(yaw);
+    const frontZ = Math.cos(yaw);
+    const frontEdgeY = terrain.heightAt(bx + frontX * halfD, bz + frontZ * halfD);
+    const frontAnchor = Math.min(frontEdgeY, groundMinY + slopeDrop * 0.44);
+    const baseY = Math.max(groundMinY + 0.04, Math.min(groundMaxY - 0.02, frontAnchor + 0.06));
+
+    const idx = plots.length;
+    if (idx >= plotStamps.length) {
+      const grown = new Uint32Array(plotStamps.length * 2);
+      plotStamps = grown;
+    }
+    const colorIndex = Math.floor(hash2i(idx * 17 + 3, Math.round(bz * 4), seed + 83) * 8) % 8;
+    const elevOrder = Math.max(0, Math.min(1, (baseY - 0.8) / Math.max(1, maxElev - 0.8)));
+
+    plots.push({
+      id: `isl_p${idx}`,
+      index: idx,
+      x: bx,
+      z: bz,
+      baseY,
+      groundMinY,
+      yaw,
+      footprint,
+      footprintW: fpW,
+      footprintD: fpD,
+      scale: plotScale,
+      colorIndex,
+      elevOrder,
+      isSummit,
+      generation: gen,
+      mixOpts,
+      spec,
     });
-
-    const richWinDetails = ['six', 'cross', 'transom', 'triple', 'six', 'twelve', 'clean'] as const;
-
-    const chooseMixForSite = (cand: FrontageCandidate, slotIdx: number): { gen: number; mixOpts: HouseMixOptions } => {
-      const hSeed = ((hash2u32(cx * 31 + slotIdx, cz * 37 + Math.round(cand.px * 2), terrain.seed + 19) % 99989) + 1);
-      const gen = ((Math.abs(cx * 7 + cz * 13) + slotIdx) % 14) + 1;
-      const pickedDetail = opts.windowDetail ?? rng.pick(richWinDetails);
-      const baseGrammar: HouseMixOptions = {
-        seed: hSeed,
-        consistency: opts.consistency ?? null,
-        windowStyle: opts.windowStyle ?? null,
-        windowOpening: opts.windowOpening ?? null,
-        windowDetail: pickedDetail,
-      };
-      const r = rng.next();
-      const isWaterfront = cand.roadKind === 'promenade' || cand.inlandDist < 26;
-      const isHilltop = terrain.heightAt(cand.px, cand.pz) > 4.0;
-
-      // Dense waterfront strip: tightly packed wall-to-wall coastal rowhouses, stepped gables, mansards & towers!
-      if (isWaterfront) {
-        if (r < 0.34) {
-          return { gen, mixOpts: { ...baseGrammar, topology: 'village', houses: rng.chance(0.45) ? 3 : 2 } };
+    placedPaddedOBBs.push(paddedCheck);
+    placedAABBs.push(paddedAABB);
+    const x0 = Math.floor(paddedAABB.minX * invCell);
+    const x1 = Math.floor(paddedAABB.maxX * invCell);
+    const z0 = Math.floor(paddedAABB.minZ * invCell);
+    const z1 = Math.floor(paddedAABB.maxZ * invCell);
+    for (let cx = x0; cx <= x1; cx++) {
+      for (let cz = z0; cz <= z1; cz++) {
+        const k = cellKey(cx, cz);
+        let bucket = placedGrid.get(k);
+        if (!bucket) {
+          bucket = [];
+          placedGrid.set(k, bucket);
         }
-        if (r < 0.50) {
-          return { gen: 1, mixOpts: { ...baseGrammar, topology: 'ribbon', roofType: 'gable', gableProfile: 'stepped' } };
-        }
-        if (r < 0.60) {
-          return { gen: 1, mixOpts: { ...baseGrammar, topology: 'ribbon', roofType: 'spire' } };
-        }
-        if (r < 0.76) {
-          return { gen: 2, mixOpts: { ...baseGrammar, topology: 'ribbon', roofType: 'mansard' } };
-        }
+        bucket.push(idx);
       }
+    }
+    rooftopCount += spec.topology === 'village' && spec.village ? spec.village.count : 1;
+    return true;
+  };
 
-      // Coastal ridges & headlands: belvederes, setback towers, octagonal pavilions & spires!
-      if (isHilltop && r < 0.42) {
-        const pick = rng.pick(['spire', 'setback', 'oct', 'hex', 'mansard', 'stepped'] as const);
-        if (pick === 'setback') return { gen: 4, mixOpts: { ...baseGrammar, topology: 'setback' } };
-        if (pick === 'oct') return { gen: 3, mixOpts: { ...baseGrammar, topology: 'oct' } };
-        if (pick === 'hex') return { gen: 7, mixOpts: { ...baseGrammar, topology: 'hex' } };
-        if (pick === 'spire') return { gen: 1, mixOpts: { ...baseGrammar, topology: 'ribbon', roofType: 'spire' } };
-        if (pick === 'stepped') {
-          return { gen: 1, mixOpts: { ...baseGrammar, topology: 'ribbon', roofType: 'gable', gableProfile: 'stepped' } };
-        }
-        return { gen: 2, mixOpts: { ...baseGrammar, topology: 'ribbon', roofType: 'mansard' } };
-      }
+  const chooseItalianMix = (
+    bx: number,
+    bz: number,
+    yaw: number,
+    elev01: number,
+    slotIdx: number,
+    mode: 'full' | 'compact' | 'narrow' = 'full',
+  ): { gen: number; mixOpts: HouseMixOptions; levels: BuildingLevels } => {
+    const hSeed = ((hash2u32(slotIdx * 31 + 7, Math.round(bx * 5) ^ Math.round(bz * 7), seed + 29) % 99989) + 1);
+    const gen = (slotIdx % 14) + 1;
+    const backScore = computeBackElevationScore(bx, bz, yaw);
+    const levels = pickItalianLevels(backScore);
+    const heightScale = rng.range(0.88, 1.14);
 
-      if (cand.roadKind === 'avenue' && r < 0.24) {
-        return { gen, mixOpts: { ...baseGrammar, topology: 'village', houses: 2 } };
-      }
-      if (r < 0.28) {
-        return { gen: 5, mixOpts: { ...baseGrammar, topology: 'lwing' } };
-      }
+    const baseGrammar: HouseMixOptions = {
+      seed: hSeed,
+      consistency: opts.consistency ?? 0.76,
+      windowStyle: opts.windowStyle ?? rng.pick(italianWinStyles),
+      windowOpening: opts.windowOpening ?? rng.pick(italianWinOpenings),
+      windowDetail: opts.windowDetail ?? rng.pick(italianWinDetails),
+      levels,
+      heightScale,
+    };
 
-      const roofPool: RoofType[] = ['gable', 'gable', 'mansard', 'hip', 'shed', 'flat', 'butterfly', 'sawtooth'];
-      const roofType = rng.pick(roofPool);
-      const gableProfile =
-        roofType === 'gable' ? rng.pick(['classic', 'gambrel', 'stepped', 'barrel', 'saltbox'] as const) : null;
+    // Tall 4-6 story cliffside palazzi & compact/narrow packed gap houses ALWAYS use crisp single-volume nets
+    if (mode !== 'full' || levels >= 4) {
+      const tallRoofPool: RoofType[] =
+        levels >= 5
+          ? ['gable', 'hip', 'flat', 'mansard', 'shed', 'gable', 'hip']
+          : ['gable', 'gable', 'hip', 'mansard', 'flat', 'shed', 'spire'];
+      const roofType = rng.pick(tallRoofPool);
+      const gableProfile: GableProfile | null =
+        roofType === 'gable' ? rng.pick(['classic', 'classic', 'stepped', 'saltbox', 'gambrel'] as const) : null;
+      const topo =
+        mode === 'full' && levels === 4 && elev01 > 0.65 && rng.chance(0.08)
+          ? 'oct'
+          : rng.chance(0.86)
+            ? 'ribbon'
+            : 'cross';
       return {
-        gen,
+        gen: topo === 'oct' ? 3 : 1,
+        levels,
         mixOpts: {
           ...baseGrammar,
-          topology: rng.chance(0.66) ? 'ribbon' : 'cross',
+          topology: topo,
           roofType,
           gableProfile,
         },
       };
-    };
-
-    const tryPlaceSpecAt = (
-      cand: FrontageCandidate,
-      gen: number,
-      mixOpts: HouseMixOptions,
-      rawSpec: HouseNetSpec,
-    ): boolean => {
-      const spec: HouseNetSpec = { ...rawSpec, yawOffset: 0 };
-      const isCoastal = cand.inlandDist < 34;
-      // Finer miniature architectural scale (~0.52–0.64× along coast) packs 3–4× more houses with FULL window detail!
-      const plotScale = isCoastal ? rng.range(0.52, 0.63) : rng.range(0.56, 0.72);
-      const { fpW, fpD, wings } = extractFootprintAndWings(spec, plotScale);
-      const halfW = fpW * 0.5;
-      const halfD = fpD * 0.5;
-
-      const sidewalk = isCoastal ? rng.range(0.10, 0.24) : rng.range(0.20, 0.42);
-      const bx = cand.px + cand.nx * (cand.roadHalfW + sidewalk + halfD);
-      const bz = cand.pz + cand.nz * (cand.roadHalfW + sidewalk + halfD);
-      const yaw = Math.atan2(-cand.nx, -cand.nz);
-
-      const footprint = makeBuildingOBB(bx, bz, yaw, halfW, halfD);
-
-      // Strict chunk containment + beach clearance => mathematically ZERO cross-chunk overlaps & ZERO wet buildings!
-      for (const [fx, fz] of footprint) {
-        if (fx < x0 + 0.22 || fx > x1 - 0.22 || fz < z0 + 0.22 || fz > z1 - 0.22) return false;
-        if (terrain.signedInland(fx, fz) < 7.2) return false;
-      }
-
-      const padGap = isCoastal ? 0.12 : 0.22;
-      const paddedCheck = makeBuildingOBB(bx, bz, yaw, halfW + padGap, halfD + padGap);
-      const roadCheck = makeBuildingOBB(bx, bz, yaw, halfW + 0.06, halfD + 0.06);
-
-      for (const pl of plazas) {
-        if (Math.hypot(bx - pl.x, bz - pl.z) < pl.radius + Math.max(halfW, halfD) * 0.58) return false;
-      }
-      for (const rBox of roadBoxes) {
-        if (polygonsOverlap(roadCheck, rBox)) return false;
-      }
-      for (const other of placedPaddedOBBs) {
-        if (polygonsOverlap(paddedCheck, other)) return false;
-      }
-
-      const ys = [terrain.heightAt(bx, bz), ...footprint.map(([fx, fz]) => terrain.heightAt(fx, fz))];
-      const groundMinY = Math.min(...ys);
-      const groundMaxY = Math.max(...ys);
-      if (groundMinY < 0.25 || groundMaxY - groundMinY > 2.8) return false;
-      const baseY = groundMaxY + 0.04;
-
-      const localIdx = plots.length;
-      const colorIndex = Math.floor(hash2i(cx * 17 + localIdx, cz * 29 + Math.round(bz), terrain.seed + 83) * 8) % 8;
-      // Rich organic per-house fold-wave randomization: wide per-plot scatter + soft hillside cluster swells
-      // so houses blossom organically across the coast instead of rising along a rigid straight line!
-      const plotScatter = (hash2i(cx * 41 + localIdx * 7, cz * 19 + Math.round(bx), terrain.seed + 211) - 0.5) * 44;
-      const clusterSwell =
-        Math.sin(bx * 0.044 + terrain.seed * 1.13) * 6.5 +
-        Math.cos(bz * 0.036 - bx * 0.024 + terrain.seed * 0.71) * 6.5;
-      const foldJitter = Math.max(-26, Math.min(24, plotScatter + clusterSwell));
-
-      plots.push({
-        id: `c${cx}_${cz}_p${localIdx}`,
-        chunkKey: key,
-        index: localIdx,
-        x: bx,
-        z: bz,
-        baseY,
-        groundMinY,
-        yaw,
-        footprint,
-        footprintW: fpW,
-        footprintD: fpD,
-        scale: plotScale,
-        wings,
-        colorIndex,
-        foldJitter,
-        generation: gen,
-        mixOpts,
-        spec,
-        foldOrder: Math.max(0, Math.min(1, terrain.signedInland(bx, bz) / 90)),
-      });
-      placedPaddedOBBs.push(paddedCheck);
-      rooftopCount += spec.topology === 'village' && spec.village ? spec.village.count : 1;
-      return true;
-    };
-
-    let attemptIdx = 0;
-    for (const cand of candidates) {
-      if (plots.length >= maxPlotsInChunk) break;
-      attemptIdx++;
-      const { gen, mixOpts } = chooseMixForSite(cand, attemptIdx);
-      const primarySpec = generateHouseSpec(gen, mixOpts);
-      if (tryPlaceSpecAt(cand, gen, mixOpts, primarySpec)) continue;
-
-      // Compact coastal townhouse fallback for tight alley pockets (keeps rich window muntins!)
-      const compactMix: HouseMixOptions = {
-        seed: mixOpts.seed,
-        topology: 'ribbon',
-        roofType: rng.pick(['gable', 'gable', 'mansard', 'hip', 'flat', 'shed'] as const),
-        gableProfile: rng.pick(['classic', 'gambrel', 'stepped', 'barrel', 'saltbox'] as const),
-        consistency: opts.consistency ?? null,
-        windowStyle: opts.windowStyle ?? null,
-        windowOpening: opts.windowOpening ?? null,
-        windowDetail: mixOpts.windowDetail ?? null,
-      };
-      const compactRaw = generateHouseSpec(1, compactMix);
-      const compactSpec: HouseNetSpec =
-        compactRaw.roofType === 'spire'
-          ? { ...compactRaw, W: 28, D: 28 }
-          : { ...compactRaw, W: Math.min(compactRaw.W, 30), D: Math.min(compactRaw.D, 34) };
-      tryPlaceSpecAt(cand, 1, compactMix, compactSpec);
     }
-  }
 
-  // 4. Occasional solitary folded coastal lighthouse/pavilion on offshore paper islets!
-  if (hasSea && plots.length < 60) {
-    const isletX = x0 + rng.range(10, CITY_CHUNK_SIZE - 10);
-    const isletZ = z0 + rng.range(10, CITY_CHUNK_SIZE - 10);
-    if (terrain.signedInland(isletX, isletZ) < -20 && terrain.heightAt(isletX, isletZ) > 0.9) {
-      const hSeed = ((chunkSeed % 99989) + 1);
-      const mixOpts: HouseMixOptions = {
-        seed: hSeed,
-        topology: rng.chance(0.55) ? 'oct' : 'ribbon',
-        roofType: 'spire',
-      };
-      const spec: HouseNetSpec = { ...generateHouseSpec(1, mixOpts), W: 28, D: 28, yawOffset: 0 };
-      const isletScale = 0.68;
-      const { fpW, fpD, wings } = extractFootprintAndWings(spec, isletScale);
-      const yaw = rng.range(0, Math.PI * 2);
-      const footprint = makeBuildingOBB(isletX, isletZ, yaw, fpW * 0.5, fpD * 0.5);
-      const ys = [terrain.heightAt(isletX, isletZ), ...footprint.map(([fx, fz]) => terrain.heightAt(fx, fz))];
-      if (Math.min(...ys) > 0.2) {
-        const localIdx = plots.length;
-        plots.push({
-          id: `c${cx}_${cz}_islet`,
-          chunkKey: key,
-          index: localIdx,
-          x: isletX,
-          z: isletZ,
-          baseY: Math.max(...ys) + 0.05,
-          groundMinY: Math.min(...ys),
-          yaw,
-          footprint,
-          footprintW: fpW,
-          footprintD: fpD,
-          scale: isletScale,
-          wings,
-          colorIndex: localIdx % 8,
-          foldJitter: -22 + hash2i(cx * 13, cz * 29, terrain.seed + 409) * 20,
-          generation: 1,
-          mixOpts,
-          spec,
-          foldOrder: 0,
-        });
-        placedPaddedOBBs.push(makeBuildingOBB(isletX, isletZ, yaw, fpW * 0.5 + 0.35, fpD * 0.5 + 0.35));
-        rooftopCount += 1;
-      }
+    const r = rng.next();
+    if (elev01 < 0.25 && r < 0.26) {
+      return { gen, levels, mixOpts: { ...baseGrammar, topology: 'village', houses: 2 } };
     }
-  }
-
-  // 5. Grounded Minimalist Folded Origami Trees tucked into hillside clearings, pocket courtyards & offshore islets!
-  const trees: CityTree[] = [];
-  if (hasLand || hasSea) {
-    const treeRng = makeRng(hash2u32(cx, cz, terrain.seed * 48271 + 911));
-    const maxTrees = avgInland > 65 ? 26 : 16;
-    for (let attempt = 0; attempt < 84 && trees.length < maxTrees; attempt++) {
-      const tx = x0 + treeRng.range(1.6, CITY_CHUNK_SIZE - 1.6);
-      const tz = z0 + treeRng.range(1.6, CITY_CHUNK_SIZE - 1.6);
-      const ty = terrain.heightAt(tx, tz);
-      if (ty < 0.45) continue;
-      // Keep the sandy beige beach open & uncluttered (trees grow behind the promenade or on offshore islets!)
-      const tInland = terrain.signedInland(tx, tz);
-      if (tInland > -10 && tInland < 6.8) continue;
-
-      let ok = true;
-      for (const seg of rawSegments) {
-        if (distPointToSeg(tx, tz, seg.a, seg.b) < seg.width * 0.5 + 0.55) {
-          ok = false;
-          break;
-        }
+    if (elev01 > 0.72 && r < 0.28) {
+      const pick = rng.pick(['spire', 'mansard', 'stepped', 'oct'] as const);
+      if (pick === 'spire') return { gen: 1, levels, mixOpts: { ...baseGrammar, topology: 'ribbon', roofType: 'spire' } };
+      if (pick === 'oct') return { gen: 3, levels, mixOpts: { ...baseGrammar, topology: 'oct' } };
+      if (pick === 'stepped') {
+        return {
+          gen: 1,
+          levels,
+          mixOpts: { ...baseGrammar, topology: 'ribbon', roofType: 'gable', gableProfile: 'stepped' },
+        };
       }
-      if (!ok) continue;
-
-      const treeBox: V2[] = [
-        [tx - 0.48, tz - 0.48],
-        [tx + 0.48, tz - 0.48],
-        [tx + 0.48, tz + 0.48],
-        [tx - 0.48, tz + 0.48],
-      ];
-      for (const b of placedPaddedOBBs) {
-        if (polygonsOverlap(treeBox, b)) {
-          ok = false;
-          break;
-        }
-      }
-      if (!ok) continue;
-
-      for (const other of trees) {
-        if (Math.hypot(tx - other.x, tz - other.z) < 1.55) {
-          ok = false;
-          break;
-        }
-      }
-      if (!ok) continue;
-
-      trees.push({
-        x: tx,
-        z: tz,
-        y: ty,
-        scale: treeRng.range(0.56, 1.04),
-        rotY: treeRng.range(0, Math.PI * 2),
-        variant: (attempt % 3) as 0 | 1 | 2,
-      });
+      return { gen: 2, levels, mixOpts: { ...baseGrammar, topology: 'ribbon', roofType: 'mansard' } };
     }
-  }
-
-  return {
-    cx,
-    cz,
-    key,
-    centerX,
-    centerZ,
-    districtStyle,
-    hasLand,
-    hasSea,
-    hasCoast,
-    streets,
-    plazas,
-    plots,
-    trees,
-    piers,
-    boats,
-    rooftopCount,
-  };
-}
-
-// ---------------------------------------------------------------------------
-// Deterministic Infinite Coastal World + Sweeping Curved Flight Spline
-// ---------------------------------------------------------------------------
-
-/**
- * Create an infinite deterministic coastal paper world:
- *  - Deterministic shoreline, multi-octave hills, and district topologies from `seed`,
- *  - On-demand deterministic chunk generation (`generateChunk(cx, cz)`),
- *  - Smooth curved glider flight trajectory (`sampleFlight(s)`) weaving gracefully between sea and hills!
- */
-export function createCoastalWorld(opts: CoastalWorldOptions): CoastalWorld {
-  const seed = Math.max(0, Math.round(opts.seed));
-  const style = opts.style;
-  const hills = Math.max(0, Math.min(1, opts.hills));
-  const normalizedOpts: CoastalWorldOptions = { ...opts, seed, style, hills };
-  const terrain = createTerrainField(seed, hills);
-
-  // Deterministic flight curve phase offsets — starts framing the shoreline & harbor cinematically at s = 0!
-  const fRng = makeRng((seed * 1299709 + 773) >>> 0);
-  const fp1 = fRng.range(-0.35, 0.35);
-  const fp2 = fRng.range(-0.45, 0.45);
-  const fp3 = fRng.range(0, Math.PI * 2);
-
-  // Smoothly averaged coastline center so the curved glider anticipates sweeping headlands and coves
-  const smoothCoastX = (z: number): number =>
-    (terrain.coastX(z - 42) +
-      terrain.coastX(z - 21) * 1.6 +
-      terrain.coastX(z) * 2.2 +
-      terrain.coastX(z + 21) * 1.6 +
-      terrain.coastX(z + 42)) /
-    7.4;
-
-  // Intimate coastline-hugging S-curves gliding right along the paper-blue water & beige sand beach!
-  const flightXAt = (s: number): number => {
-    const z = -s;
-    const base = smoothCoastX(z);
-    const curve1 = Math.sin(s * 0.017 + fp1 - 0.45) * 7.2;
-    const curve2 = Math.cos(s * 0.0085 + fp2 + 1.0) * 3.5;
-    return base + curve1 + curve2 - 8.5;
-  };
-
-  const sampleFlight = (s: number): FlightSample => {
-    const z = -s;
-    const camX = flightXAt(s);
-
-    // Intimate low coastal glider vista showcasing the densely packed waterfront facades, narrow alleys & rolling hills!
-    const g0 = Math.max(0, terrain.heightAt(camX, z));
-    const g1 = Math.max(0, terrain.heightAt(camX, z - 14));
-    const g2 = Math.max(0, terrain.heightAt(camX + 8, z - 8));
-    const groundClear = Math.max(g0, g1, g2);
-    const camY = Math.max(16.2, groundClear + 12.4) + Math.sin(s * 0.013 + fp3) * 1.8;
-
-    // Look ahead along the densely packed coastal ribbon framing blue sea + beige beach on left, terraced town right!
-    const lookLead = 54;
-    const zLook = -(s + lookLead);
-    const lookX =
-      smoothCoastX(zLook) +
-      16.5 +
-      Math.sin((s + lookLead) * 0.012 + fp1) * 5.0 +
-      (camX - smoothCoastX(z)) * 0.12;
-    const lookY = Math.max(1.8, terrain.heightAt(lookX, zLook) * 0.48 + 1.8);
-
-    // Normalized horizontal forward direction (along flight tangent)
-    const ds = 2.0;
-    const xPrev = flightXAt(s - ds);
-    const xNext = flightXAt(s + ds);
-    const dx = xNext - xPrev;
-    const dz = -2 * ds;
-    const fLen = Math.hypot(dx, dz) || 1;
-    const fx = dx / fLen;
-    const fz = dz / fLen;
-
-    // Subtle aircraft banking into horizontal turns (`±5.8°`)
-    const d2x = (xNext - 2 * camX + xPrev) / (ds * ds);
-    const bankRoll = Math.max(-0.105, Math.min(0.105, -d2x * 16.0));
-
-    // Focus point for the origami fold wave — anchored right on the dense coastal strip ahead!
-    const focusX = smoothCoastX(z - 26) + 17.0;
-    const focusZ = z - 26;
-
+    if (r < 0.16) {
+      return { gen, levels, mixOpts: { ...baseGrammar, topology: 'village', houses: 2 } };
+    }
+    if (r < 0.24) {
+      return { gen: 5, levels, mixOpts: { ...baseGrammar, topology: 'lwing' } };
+    }
+    const roofPool: RoofType[] = ['gable', 'gable', 'hip', 'mansard', 'flat', 'shed', 'spire'];
+    const roofType = rng.pick(roofPool);
+    const gableProfile: GableProfile | null =
+      roofType === 'gable' ? rng.pick(['classic', 'classic', 'stepped', 'gambrel', 'saltbox'] as const) : null;
     return {
-      pos: [camX, camY, z],
-      lookAt: [lookX, lookY, zLook],
-      forward: [fx, fz],
-      bankRoll,
-      focusX,
-      focusZ,
+      gen,
+      levels,
+      mixOpts: {
+        ...baseGrammar,
+        topology: rng.chance(0.78) ? 'ribbon' : 'cross',
+        roofType,
+        gableProfile,
+      },
     };
   };
+
+  /** Clamp footprint cleanly into authentic slender Italian hillside palazzo proportions */
+  const fitPalazzoSpec = (raw: HouseNetSpec, maxW: number, maxD: number, minW = 19): HouseNetSpec => {
+    if (raw.topology === 'village' || raw.topology === 'lwing' || raw.topology === 'setback') return raw;
+    const W = Math.max(minW, Math.min(raw.W, maxW));
+    const D = Math.max(minW, Math.min(raw.D, maxD));
+    return { ...raw, W, D };
+  };
+
+  // 1. Hero Summit Campanile / Hilltop Chapel crowning the top of the serpentine climb!
+  {
+    const summitSeed = ((seed * 37 + 101) % 99989) + 1;
+    const summitMix: HouseMixOptions = {
+      seed: summitSeed,
+      topology: rng.chance(0.55) ? 'oct' : 'ribbon',
+      roofType: 'spire',
+      levels: 4,
+      consistency: opts.consistency ?? 0.78,
+      windowStyle: opts.windowStyle ?? 'arched',
+      windowOpening: opts.windowOpening ?? 'shutters',
+      windowDetail: opts.windowDetail ?? 'six',
+    };
+    const summitSpec: HouseNetSpec = { ...generateHouseSpec(1, summitMix), W: 30, D: 30 };
+    const bayYaw = Math.atan2(hx - sx, hz - sz);
+    const topDirX = Math.sin(bayYaw);
+    const topDirZ = Math.cos(bayYaw);
+    tryPlaceHouse(
+      sx - topDirX * 1.9,
+      sz - topDirZ * 1.9,
+      bayYaw,
+      true,
+      1,
+      summitMix,
+      summitSpec,
+      0.46,
+      true,
+    );
+  }
+
+  // 2. Pass 1: Shoulder-to-shoulder Italian street frontage along ALL island roads!
+  interface FrontageCand {
+    px: number;
+    pz: number;
+    nx: number;
+    nz: number;
+    roadHalfW: number;
+    prio: number;
+  }
+  const candidates: FrontageCand[] = [];
+  for (const r of roads) {
+    const prioBase = r.kind === 'serpentine' ? 0 : r.kind === 'corniche' ? 1 : r.kind === 'terrace' ? 2 : 3;
+    let accum = 0.45;
+    for (let i = 0; i < r.points.length - 1; i++) {
+      const a = r.points[i];
+      const b = r.points[i + 1];
+      const dx = b.x - a.x;
+      const dz = b.z - a.z;
+      const len = Math.hypot(dx, dz);
+      if (len < 1e-4) continue;
+      const tx = dx / len;
+      const tz = dz / len;
+      let cursor = accum;
+      while (cursor < len) {
+        const px = a.x + tx * cursor;
+        const pz = a.z + tz * cursor;
+        for (const side of [-1, 1]) {
+          candidates.push({
+            px,
+            pz,
+            nx: -tz * side,
+            nz: tx * side,
+            roadHalfW: r.width * 0.5,
+            prio: prioBase + rng.next() * 0.45,
+          });
+        }
+        cursor += rng.range(0.76, 1.18);
+      }
+      accum = cursor - len;
+    }
+  }
+  candidates.sort((a, b) => a.prio - b.prio);
+
+  const PASS1_MAX_PLOTS = 460;
+  const PASS2_MAX_PLOTS = 920;
+  const MAX_ISLAND_PLOTS = 1320;
+  let attemptIdx = 0;
+
+  for (const cand of candidates) {
+    if (plots.length >= PASS1_MAX_PLOTS) break;
+    attemptIdx++;
+
+    // Keep house parallel to road, but orient front downhill toward the sea whenever there's a clear
+    // hillside slope so tall 4-6F windowed facades always face outward with the mountain rising behind!
+    const probeX = cand.px + cand.nx * (cand.roadHalfW + 0.9);
+    const probeZ = cand.pz + cand.nz * (cand.roadHalfW + 0.9);
+    const hOut = terrain.heightAt(probeX + cand.nx * 1.4, probeZ + cand.nz * 1.4);
+    const hRoad = terrain.heightAt(cand.px, cand.pz);
+    const faceDownhillSea = hOut < hRoad - 0.28;
+    const yaw = faceDownhillSea ? Math.atan2(cand.nx, cand.nz) : Math.atan2(-cand.nx, -cand.nz);
+
+    const estElev = Math.max(0, Math.min(1, hRoad / maxElev));
+    const { gen, mixOpts, levels } = chooseItalianMix(probeX, probeZ, yaw, estElev, attemptIdx, 'full');
+    const plotScale = rng.range(0.33, 0.42);
+    const maxSpan = levels >= 4 ? 33 : 40;
+    const primarySpec = fitPalazzoSpec(generateHouseSpec(gen, mixOpts), maxSpan, maxSpan + 4, 22);
+    const { fpD } = extractFootprintSize(primarySpec, plotScale);
+    const sidewalk = rng.range(0.04, 0.10);
+    const bx = cand.px + cand.nx * (cand.roadHalfW + sidewalk + fpD * 0.5);
+    const bz = cand.pz + cand.nz * (cand.roadHalfW + sidewalk + fpD * 0.5);
+
+    if (tryPlaceHouse(bx, bz, yaw, false, gen, mixOpts, primarySpec, plotScale)) {
+      continue;
+    }
+
+    // Compact slender Italian townhouse fallback
+    const { mixOpts: cMix } = chooseItalianMix(probeX, probeZ, yaw, estElev, attemptIdx + 1000, 'compact');
+    const cSpec = fitPalazzoSpec(generateHouseSpec(1, cMix), 25, 27, 19);
+    const cScale = rng.range(0.31, 0.38);
+    const { fpD: cFpD } = extractFootprintSize(cSpec, cScale);
+    const cBx = cand.px + cand.nx * (cand.roadHalfW + 0.06 + cFpD * 0.5);
+    const cBz = cand.pz + cand.nz * (cand.roadHalfW + 0.06 + cFpD * 0.5);
+    if (tryPlaceHouse(cBx, cBz, yaw, false, 1, cMix, cSpec, cScale)) {
+      continue;
+    }
+
+    // Ultra-narrow alley townhouse fallback to squeeze tight between street neighbors!
+    const { mixOpts: nMix } = chooseItalianMix(probeX, probeZ, yaw, estElev, attemptIdx + 2000, 'narrow');
+    const nSpec = fitPalazzoSpec(generateHouseSpec(1, nMix), 21, 22, 17);
+    const nScale = rng.range(0.29, 0.35);
+    const { fpD: nFpD } = extractFootprintSize(nSpec, nScale);
+    const nBx = cand.px + cand.nx * (cand.roadHalfW + 0.05 + nFpD * 0.5);
+    const nBz = cand.pz + cand.nz * (cand.roadHalfW + 0.05 + nFpD * 0.5);
+    tryPlaceHouse(nBx, nBz, yaw, false, 1, nMix, nSpec, nScale);
+  }
+
+  // Helper to compute downhill sea-facing yaw at any hillside coordinate
+  const epsG = 0.6;
+  const downhillYawAt = (x: number, z: number, jitter: number): number => {
+    const hL = terrain.heightAt(x - epsG, z);
+    const hR = terrain.heightAt(x + epsG, z);
+    const hD = terrain.heightAt(x, z - epsG);
+    const hU = terrain.heightAt(x, z + epsG);
+    const downX = hL - hR;
+    const downZ = hD - hU;
+    return Math.hypot(downX, downZ) > 0.08
+      ? Math.atan2(downX, downZ) + jitter
+      : Math.atan2(x, z) + jitter;
+  };
+
+  // 3. Pass 2: Dense Stacked Hillside Terraces across every amphitheater tier, headland & back slope!
+  const infillSites: Array<{ x: number; z: number; sortKey: number }> = [];
+  const LATTICE = 1.44;
+  const gridN = 26;
+  for (let gx = -gridN; gx <= gridN; gx++) {
+    for (let gz = -gridN; gz <= gridN; gz++) {
+      const ix = gx * LATTICE + (gz % 2 === 0 ? 0 : LATTICE * 0.5) + (hash2i(gx, gz, seed + 503) - 0.5) * 0.62;
+      const iz = gz * LATTICE + (hash2i(gx, gz, seed + 709) - 0.5) * 0.62;
+      if (terrain.signedInland(ix, iz) < 3.35) continue;
+      infillSites.push({ x: ix, z: iz, sortKey: hash2i(gx, gz, seed + 919) });
+    }
+  }
+  infillSites.sort((a, b) => a.sortKey - b.sortKey);
+
+  const nudgeOffsets: ReadonlyArray<V2> = [
+    [0, 0],
+    [0.38, 0],
+    [-0.38, 0],
+    [0, 0.38],
+    [0, -0.38],
+  ];
+
+  for (const site of infillSites) {
+    if (plots.length >= PASS2_MAX_PLOTS) break;
+    attemptIdx++;
+    const yaw = downhillYawAt(site.x, site.z, (rng.next() - 0.5) * 0.20);
+    const estElev = Math.max(0, Math.min(1, terrain.heightAt(site.x, site.z) / maxElev));
+    const { gen, mixOpts, levels } = chooseItalianMix(site.x, site.z, yaw, estElev, attemptIdx, 'full');
+    const plotScale = rng.range(0.32, 0.41);
+    const maxSpan = levels >= 4 ? 32 : 38;
+    const spec = fitPalazzoSpec(generateHouseSpec(gen, mixOpts), maxSpan, maxSpan + 3, 21);
+
+    let placed = false;
+    for (const [ox, oz] of nudgeOffsets) {
+      if (tryPlaceHouse(site.x + ox, site.z + oz, yaw, false, gen, mixOpts, spec, plotScale)) {
+        placed = true;
+        break;
+      }
+    }
+    if (placed) continue;
+
+    const { mixOpts: cMix } = chooseItalianMix(site.x, site.z, yaw, estElev, attemptIdx + 3000, 'compact');
+    const cSpec = fitPalazzoSpec(generateHouseSpec(1, cMix), 24, 26, 19);
+    const cScale = rng.range(0.30, 0.37);
+    for (const [ox, oz] of nudgeOffsets) {
+      if (tryPlaceHouse(site.x + ox, site.z + oz, yaw, false, 1, cMix, cSpec, cScale)) {
+        break;
+      }
+    }
+  }
+
+  // 4. Pass 3: Ultra-Tight Between-House Gap Packer!
+  //    Packs slender vertical townhouses & 4-6F cliff towers directly into EVERY leftover pocket
+  //    between existing houses so the village reads as one continuous cascading Positano cluster!
+  const gapSites: Array<{ x: number; z: number; sortKey: number }> = [];
+  const GAP_LATTICE = 1.02;
+  const gapN = 36;
+  for (let gx = -gapN; gx <= gapN; gx++) {
+    for (let gz = -gapN; gz <= gapN; gz++) {
+      const ix = gx * GAP_LATTICE + (gz % 2 === 0 ? 0 : GAP_LATTICE * 0.5) + (hash2i(gx, gz, seed + 1237) - 0.5) * 0.36;
+      const iz = gz * GAP_LATTICE + (hash2i(gx, gz, seed + 1613) - 0.5) * 0.36;
+      if (terrain.signedInland(ix, iz) < 3.45) continue;
+      gapSites.push({ x: ix, z: iz, sortKey: hash2i(gx, gz, seed + 2089) });
+    }
+  }
+  gapSites.sort((a, b) => a.sortKey - b.sortKey);
+
+  const microNudges: ReadonlyArray<V2> = [
+    [0, 0],
+    [0.28, 0.14],
+    [-0.28, -0.14],
+    [-0.14, 0.28],
+    [0.14, -0.28],
+  ];
+
+  for (const site of gapSites) {
+    if (plots.length >= MAX_ISLAND_PLOTS) break;
+    attemptIdx++;
+    const yaw = downhillYawAt(site.x, site.z, (rng.next() - 0.5) * 0.16);
+    const estElev = Math.max(0, Math.min(1, terrain.heightAt(site.x, site.z) / maxElev));
+    const { mixOpts: nMix } = chooseItalianMix(site.x, site.z, yaw, estElev, attemptIdx + 5000, 'narrow');
+    const nSpec = fitPalazzoSpec(generateHouseSpec(1, nMix), rng.range(20, 25), rng.range(21, 26), 17);
+    const nScale = rng.range(0.28, 0.36);
+
+    let placed = false;
+    for (const [ox, oz] of microNudges) {
+      if (tryPlaceHouse(site.x + ox, site.z + oz, yaw, false, 1, nMix, nSpec, nScale)) {
+        placed = true;
+        break;
+      }
+    }
+    if (placed) continue;
+
+    // Try a tiny vertical cliff tower (or rotated 90° to slide cleanly into a narrow side-alley slot!)
+    const tinySpec = fitPalazzoSpec(generateHouseSpec(1, nMix), 19, 20, 16);
+    const tinyScale = rng.range(0.27, 0.33);
+    if (!tryPlaceHouse(site.x, site.z, yaw, false, 1, nMix, tinySpec, tinyScale)) {
+      tryPlaceHouse(site.x, site.z, yaw + Math.PI * 0.5, false, 1, nMix, tinySpec, tinyScale);
+    }
+  }
+
+  // 5. Mediterranean Cypresses & Umbrella Stone Pines tucked into cliff rims, ridges & garden pockets!
+  const trees: IslandTree[] = [];
+  const treeRng = makeRng((seed * 48271 + 911) >>> 0);
+  const MAX_TREES = 96;
+
+  for (let attempt = 0; attempt < 1200 && trees.length < MAX_TREES; attempt++) {
+    const tx = treeRng.range(-39, 39);
+    const tz = treeRng.range(-39, 39);
+    const inland = terrain.signedInland(tx, tz);
+    if (inland < 1.7) continue;
+    const ty = terrain.heightAt(tx, tz);
+    if (ty < 0.70) continue;
+
+    let ok = true;
+    for (const seg of roadSegs) {
+      if (distPointToSeg(tx, tz, seg.a, seg.b) < seg.width * 0.5 + 0.38) {
+        ok = false;
+        break;
+      }
+    }
+    if (!ok) continue;
+
+    const treeBox: V2[] = [
+      [tx - 0.34, tz - 0.34],
+      [tx + 0.34, tz - 0.34],
+      [tx + 0.34, tz + 0.34],
+      [tx - 0.34, tz + 0.34],
+    ];
+    if (overlapsAnyPlaced(treeBox, polyAABB(treeBox))) continue;
+
+    for (const other of trees) {
+      if (Math.hypot(tx - other.x, tz - other.z) < 1.20) {
+        ok = false;
+        break;
+      }
+    }
+    if (!ok) continue;
+
+    const rV = treeRng.next();
+    const variant: 0 | 1 | 2 = rV < 0.62 ? 0 : rV < 0.84 ? 2 : 1;
+    trees.push({
+      x: tx,
+      z: tz,
+      y: ty,
+      scale: treeRng.range(0.48, 0.92),
+      rotY: treeRng.range(0, Math.PI * 2),
+      variant,
+    });
+  }
 
   return {
     seed,
-    style,
     hills,
     options: normalizedOpts,
     terrain,
-    generateChunk: (cx: number, cz: number) => generateCityChunk(cx, cz, terrain, normalizedOpts),
-    extractChunkContours: (cx: number, cz: number, gridRes = 24, stepY = 0.65) =>
-      extractChunkContours(terrain, cx, cz, gridRes, stepY),
-    sampleFlight,
+    harborPos,
+    summitPos,
+    roads,
+    plots,
+    trees,
+    contours,
+    rooftopCount,
   };
 }

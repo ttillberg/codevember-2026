@@ -12,6 +12,7 @@ import {
   MODEL_PRESETS,
   buildHouseNet,
   generateHouseSpec,
+  type BuildingLevels,
   type BuiltHouseNet,
   type DoorStyle,
   type FoldablePanelId,
@@ -33,11 +34,10 @@ import {
   type OrigamiMaterials,
 } from './origamiPaperMesh';
 import type { CatalogThumbRenderer, CatalogViewMode } from './catalogThumbRenderer';
-import type { CityBuildingPlot, CityStreetStyle } from './cityGenerator';
-import type { CityView, CityViewStats, CityWaveMode } from './cityView';
+import type { CityBuildingPlot } from './cityGenerator';
+import type { CityView, CityViewStats } from './cityView';
 
 const THUMB_SIZE = 240;
-const ALL_CITY_STREET_STYLES: readonly CityStreetStyle[] = ['mix', 'organic', 'grid', 'radial'];
 
 // URL query parameters
 const params = new URLSearchParams(window.location.search);
@@ -91,20 +91,16 @@ const dbgOpenCatalog = document.getElementById('dbg-open-catalog') as HTMLButton
 const dbgOpenCity = document.getElementById('dbg-open-city') as HTMLButtonElement;
 const dbgResetFactory = document.getElementById('dbg-reset-factory') as HTMLButtonElement;
 
-// Architectural Paper City View DOM references
+// Interactive Mountain Island Diorama DOM references
 const cityBar = document.getElementById('city-bar') as HTMLElement;
 const citySubtitle = document.getElementById('city-subtitle') as HTMLSpanElement;
 const citySeedPrev = document.getElementById('city-seed-prev') as HTMLButtonElement;
 const citySeedInput = document.getElementById('city-seed-input') as HTMLInputElement;
 const citySeedNext = document.getElementById('city-seed-next') as HTMLButtonElement;
 const citySeedRoll = document.getElementById('city-seed-roll') as HTMLButtonElement;
-const cityStyleSeg = document.getElementById('city-style-seg') as HTMLDivElement;
-const cityStyleBtns = Array.from(cityStyleSeg.querySelectorAll<HTMLButtonElement>('.cat-seg-btn'));
 const cityHillsInput = document.getElementById('city-hills') as HTMLInputElement;
 const cityHillsVal = document.getElementById('city-hills-val') as HTMLSpanElement;
-const cityFlyBtn = document.getElementById('city-fly-btn') as HTMLButtonElement;
 const cityFoldBtn = document.getElementById('city-fold-btn') as HTMLButtonElement;
-const citySmokeBtn = document.getElementById('city-smoke-btn') as HTMLButtonElement;
 const cityColorBtn = document.getElementById('city-color-btn') as HTMLButtonElement;
 const cityClose = document.getElementById('city-close') as HTMLButtonElement;
 const cityStatus = document.getElementById('city-status') as HTMLDivElement;
@@ -167,7 +163,7 @@ interface DebugSettings {
   windowOpen: number;
   windowCount: number | null;
   doorStyle: DoorStyle | null;
-  levels: 1 | 2 | 3 | null;
+  levels: BuildingLevels | null;
   heightScale: number | null;
   consistency: number | null;
   seed: number;
@@ -177,7 +173,6 @@ interface DebugSettings {
   glideOnFold: boolean;
   fadeProjOnFold: boolean;
   autoFold: boolean;
-  citySmoke: boolean;
 }
 
 const FACTORY_SETTINGS: DebugSettings = {
@@ -203,7 +198,6 @@ const FACTORY_SETTINGS: DebugSettings = {
   glideOnFold: false,
   fadeProjOnFold: true,
   autoFold: false,
-  citySmoke: false,
 };
 
 function loadSavedSettings(): DebugSettings {
@@ -252,7 +246,15 @@ function loadSavedSettings(): DebugSettings {
       if (parsed.doorStyle === null || (typeof parsed.doorStyle === 'string' && ALL_DOOR_STYLES.includes(parsed.doorStyle as DoorStyle))) {
         s.doorStyle = parsed.doorStyle as DoorStyle | null;
       }
-      if (parsed.levels === null || parsed.levels === 1 || parsed.levels === 2 || parsed.levels === 3) {
+      if (
+        parsed.levels === null ||
+        parsed.levels === 1 ||
+        parsed.levels === 2 ||
+        parsed.levels === 3 ||
+        parsed.levels === 4 ||
+        parsed.levels === 5 ||
+        parsed.levels === 6
+      ) {
         s.levels = parsed.levels;
       }
       if (parsed.heightScale === null) {
@@ -276,7 +278,6 @@ function loadSavedSettings(): DebugSettings {
       if (typeof parsed.glideOnFold === 'boolean') s.glideOnFold = parsed.glideOnFold;
       if (typeof parsed.fadeProjOnFold === 'boolean') s.fadeProjOnFold = parsed.fadeProjOnFold;
       if (typeof parsed.autoFold === 'boolean') s.autoFold = parsed.autoFold;
-      if (typeof parsed.citySmoke === 'boolean') s.citySmoke = parsed.citySmoke;
     }
   } catch {
     // Ignore storage access errors (private mode, restricted iframe, etc.)
@@ -348,9 +349,9 @@ const pDoor = params.get('door');
 let mixDoor: DoorStyle | null =
   pDoor !== null && ALL_DOOR_STYLES.includes(pDoor as DoorStyle) ? (pDoor as DoorStyle) : initialSettings.doorStyle;
 const pLevels = params.get('levels');
-let mixLevels: 1 | 2 | 3 | null =
-  pLevels !== null && ['1', '2', '3'].includes(pLevels)
-    ? (Number(pLevels) as 1 | 2 | 3)
+let mixLevels: BuildingLevels | null =
+  pLevels !== null && ['1', '2', '3', '4', '5', '6'].includes(pLevels)
+    ? (Number(pLevels) as BuildingLevels)
     : initialSettings.levels;
 const pHeight = params.get('height');
 let mixHeightScale: number | null =
@@ -499,7 +500,6 @@ function saveDebugSettings(): void {
       glideOnFold: debugGlideOnFoldEnabled,
       fadeProjOnFold: debugFadeProjEnabled,
       autoFold: autoFoldEnabled,
-      citySmoke: citySmokeEnabled,
     };
     window.localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(payload));
   } catch {
@@ -2475,70 +2475,44 @@ const setCatalogOpen = (open: boolean) => {
 };
 
 // ----------------------------------------------------------------------------
-// Infinite Coastal Paper City View (Curved Flight, 3-Tier LOD & Folding Wave)
+// 3/4-Top Interactive Italian Mountain Island Diorama (Touch-to-Fold + Serpentine)
 // ----------------------------------------------------------------------------
 let cityView: CityView | null = null;
 let cityViewLoadPromise: Promise<CityView> | null = null;
 let cityActive = false;
 let citySeed = mixSeed;
-const pCityStyle = params.get('cityStyle');
-let cityStreetStyle: CityStreetStyle =
-  pCityStyle !== null && ALL_CITY_STREET_STYLES.includes(pCityStyle as CityStreetStyle)
-    ? (pCityStyle as CityStreetStyle)
-    : 'mix';
 const pHills = params.get('hills');
 let cityHills =
   pHills !== null && Number.isFinite(Number(pHills))
     ? Math.max(0, Math.min(1, Number(pHills) > 1 ? Number(pHills) / 100 : Number(pHills)))
-    : 0.55;
-const pCityFly = params.get('cityFly');
-let cityFlyInitial = pCityFly !== null ? pCityFly !== '0' : true;
-const pCitySmoke = params.get('citySmoke');
-let citySmokeEnabled = pCitySmoke !== null ? pCitySmoke !== '0' && pCitySmoke !== 'false' : initialSettings.citySmoke;
-const pCityWave = params.get('cityWave');
-const cityWaveInitial: CityWaveMode =
-  pCityWave === 'folded' || pCityWave === 'flat' || pCityWave === 'wave' ? pCityWave : 'wave';
+    : 0.72;
 let cityBuiltKey = '';
 let cityRebuildDebounce: number | null = null;
-const CITY_FLY_STATUS = 'Flying along the coast · Drag to look · Space to pause · Click any house to fold';
-const CITY_ORBIT_STATUS = 'Drag to orbit · Shift-drag to pan infinitely · Space to resume flight';
-
-function getCityDefaultStatus(): string {
-  return cityView?.isFlying() ? CITY_FLY_STATUS : CITY_ORBIT_STATUS;
-}
+const CITY_DEFAULT_STATUS = 'Click or drag to fold houses · Cmd-drag or two fingers to rotate · Pinch to zoom';
+const CITY_COMPLETE_STATUS = 'Island village complete · Cmd-drag or two fingers to rotate · Clear or Roll a new island';
 
 function getCityBuildKey(): string {
-  return `${citySeed}|${cityStreetStyle}|${Math.round(cityHills * 100)}|${mixConsistency === null ? 'd' : Math.round(mixConsistency * 100)}|${mixWindow ?? 'a'}|${mixWinOpening ?? 'a'}|${mixWinDetail ?? 'a'}`;
+  return `${citySeed}|${Math.round(cityHills * 100)}|${mixConsistency === null ? 'd' : Math.round(mixConsistency * 100)}|${mixWindow ?? 'a'}|${mixWinOpening ?? 'a'}|${mixWinDetail ?? 'a'}`;
 }
 
 function updateCityHud(stats?: CityViewStats | null): void {
   const st = stats ?? cityView?.getStats() ?? null;
   citySeedInput.value = String(citySeed);
-  for (const btn of cityStyleBtns) {
-    btn.classList.toggle('active', btn.dataset.cityStyle === cityStreetStyle);
-  }
   const hPct = Math.round(cityHills * 100);
   cityHillsInput.value = String(hPct);
   cityHillsVal.textContent = `${hPct}%`;
-  const flying = st ? st.flying : cityFlyInitial;
-  cityFlyBtn.setAttribute('aria-pressed', flying ? 'true' : 'false');
-  citySmokeBtn.setAttribute('aria-pressed', (st ? st.smokeEnabled : citySmokeEnabled) ? 'true' : 'false');
   cityColorBtn.setAttribute('aria-pressed', debugColorEnabled ? 'true' : 'false');
-  const waveMode: CityWaveMode = st ? st.waveMode : cityWaveInitial;
-  cityFoldBtn.textContent = waveMode === 'wave' ? 'Wave' : waveMode === 'folded' ? 'Folded' : 'Flat';
-  const styleLabel =
-    cityStreetStyle === 'mix'
-      ? 'Coastal Mix'
-      : cityStreetStyle === 'organic'
-        ? 'Organic'
-        : cityStreetStyle === 'grid'
-          ? 'Grid'
-          : 'Radial';
+  const folded = st ? st.foldedCount : 0;
+  const total = st ? st.totalPlots : 0;
+  const allFolded = total > 0 && folded >= total;
+  cityFoldBtn.textContent = allFolded ? 'Clear' : 'Fold all';
   if (st) {
-    const distant = st.lod1Buildings + st.lod2Buildings;
-    citySubtitle.textContent = `Seed ${citySeed} · ${st.lod0Buildings} near / ${distant} LOD · ${styleLabel}`;
+    citySubtitle.textContent = allFolded
+      ? `Seed ${citySeed} · ${total} / ${total} · Complete`
+      : `Seed ${citySeed} · ${folded} / ${total} folded`;
+    cityStatus.textContent = allFolded ? CITY_COMPLETE_STATUS : CITY_DEFAULT_STATUS;
   } else {
-    citySubtitle.textContent = `Seed ${citySeed} · ${styleLabel}`;
+    citySubtitle.textContent = `Seed ${citySeed}`;
   }
 }
 
@@ -2554,22 +2528,6 @@ function loadCityView(): Promise<CityView> {
             onWorldStats: (stats) => {
               if (cityActive) updateCityHud(stats);
             },
-            onFlyChange: () => {
-              if (cityActive) {
-                cityStatus.textContent = getCityDefaultStatus();
-                updateCityHud();
-              }
-            },
-            onHoverPlot: (plot: CityBuildingPlot | null) => {
-              if (!plot) {
-                cityStatus.textContent = getCityDefaultStatus();
-                return;
-              }
-              const s = plot.spec;
-              const wingSuffix =
-                s.topology === 'village' && s.village ? ` · ${s.village.count} houses` : ` · ${s.roofType}`;
-              cityStatus.textContent = `${s.label}${wingSuffix} · Click to fold`;
-            },
             onSelectPlot: (plot: CityBuildingPlot) => {
               setCityOpen(false);
               selectCatalogSpecimen(`city_${plot.id}`, plot.generation, plot.mixOpts);
@@ -2580,10 +2538,7 @@ function loadCityView(): Promise<CityView> {
         const rect = canvas.getBoundingClientRect();
         cityView.resize(Math.max(1, rect.width), Math.max(1, rect.height));
         cityView.setColorEnabled(debugColorEnabled);
-        cityView.setSmokeEnabled(citySmokeEnabled);
         cityView.setWindowOpen(mixWinOpenMode, mixWinOpen);
-        cityView.setFlying(cityFlyInitial);
-        cityView.setWaveMode(cityWaveInitial);
       }
       return cityView;
     });
@@ -2599,24 +2554,22 @@ function withCityView(fn: (cv: CityView) => void): void {
   void loadCityView().then(fn);
 }
 
-function rebuildCity(resetFlight = true): void {
+function rebuildCity(resetCamera = true): void {
   withCityView((cv) => {
     cv.setColorEnabled(debugColorEnabled);
     cv.setWindowOpen(mixWinOpenMode, mixWinOpen);
     cv.rebuild(
       {
         seed: citySeed,
-        style: cityStreetStyle,
         hills: cityHills,
         consistency: mixConsistency,
         windowStyle: mixWindow,
         windowOpening: mixWinOpening,
         windowDetail: mixWinDetail,
       },
-      resetFlight,
+      resetCamera,
     );
     cityBuiltKey = getCityBuildKey();
-    cityStatus.textContent = getCityDefaultStatus();
     updateCityHud(cv.getStats());
   });
 }
@@ -2629,7 +2582,7 @@ function scheduleCityRebuild(delayMs = 90): void {
   }, delayMs);
 }
 
-function setCityOpen(open: boolean, resetFlight = false): void {
+function setCityOpen(open: boolean, resetCamera = false): void {
   if (open === cityActive) return;
   cityActive = open;
   document.documentElement.classList.toggle('city-mode', open);
@@ -2646,10 +2599,9 @@ function setCityOpen(open: boolean, resetFlight = false): void {
       cv.setColorEnabled(debugColorEnabled);
       cv.setWindowOpen(mixWinOpenMode, mixWinOpen);
       const nextKey = getCityBuildKey();
-      if (!cv.world || cityBuiltKey !== nextKey || resetFlight) {
+      if (!cv.world || cityBuiltKey !== nextKey || resetCamera) {
         rebuildCity(true);
       } else {
-        cityStatus.textContent = getCityDefaultStatus();
         updateCityHud(cv.getStats());
       }
     });
@@ -2687,40 +2639,17 @@ citySeedRoll.addEventListener('click', () => {
   citySeed = rollRandomSeed();
   rebuildCity(true);
 });
-for (const btn of cityStyleBtns) {
-  btn.addEventListener('click', () => {
-    const raw = btn.dataset.cityStyle;
-    if (!raw || !ALL_CITY_STREET_STYLES.includes(raw as CityStreetStyle) || raw === cityStreetStyle) return;
-    cityStreetStyle = raw as CityStreetStyle;
-    rebuildCity(false);
-  });
-}
 cityHillsInput.addEventListener('input', () => {
   const pct = Math.max(0, Math.min(100, Number(cityHillsInput.value) || 0));
   cityHills = pct / 100;
   cityHillsVal.textContent = `${pct}%`;
   scheduleCityRebuild(80);
 });
-cityFlyBtn.addEventListener('click', () => {
-  withCityView((cv) => {
-    cv.setFlying(!cv.isFlying());
-    cityFlyInitial = cv.isFlying();
-    updateCityHud(cv.getStats());
-  });
-});
 cityFoldBtn.addEventListener('click', () => {
   withCityView((cv) => {
-    const cur = cv.getWaveMode();
-    const next: CityWaveMode = cur === 'wave' ? 'folded' : cur === 'folded' ? 'flat' : 'wave';
-    cv.setWaveMode(next);
-    updateCityHud(cv.getStats());
-  });
-});
-citySmokeBtn.addEventListener('click', () => {
-  citySmokeEnabled = !citySmokeEnabled;
-  saveDebugSettings();
-  withCityView((cv) => {
-    cv.setSmokeEnabled(citySmokeEnabled);
+    const st = cv.getStats();
+    const allFolded = st.totalPlots > 0 && st.foldedCount >= st.totalPlots;
+    cv.setCityFold(allFolded ? 0 : 1, false);
     updateCityHud(cv.getStats());
   });
 });
@@ -2898,7 +2827,7 @@ dbgDoor.addEventListener('change', () => {
 dbgLevels.addEventListener('change', () => {
   const raw = dbgLevels.value;
   forcedModelSlot = null;
-  mixLevels = raw === 'auto' ? null : (Math.max(1, Math.min(3, Number(raw) || 1)) as 1 | 2 | 3);
+  mixLevels = raw === 'auto' ? null : (Math.max(1, Math.min(6, Number(raw) || 1)) as BuildingLevels);
   remountWithCurrentMix(true);
 });
 dbgConsistency.addEventListener('input', () => {
@@ -3004,25 +2933,18 @@ window.addEventListener('keydown', (e) => {
     return;
   }
   if (cityActive && helpModal.hidden && catalogModal.hidden) {
-    if (e.key === ' ') {
+    if (e.key === ' ' || e.key === 'f' || e.key === 'F') {
       e.preventDefault();
       withCityView((cv) => {
-        cv.setFlying(!cv.isFlying());
+        const st = cv.getStats();
+        const allFolded = st.totalPlots > 0 && st.foldedCount >= st.totalPlots;
+        cv.setCityFold(allFolded ? 0 : 1, false);
         updateCityHud(cv.getStats());
       });
-    } else if (e.key === 'w' || e.key === 'W') {
+    } else if (e.key === 'r' || e.key === 'R') {
       e.preventDefault();
       withCityView((cv) => {
-        const cur = cv.getWaveMode();
-        cv.setWaveMode(cur === 'wave' ? 'folded' : cur === 'folded' ? 'flat' : 'wave');
-        updateCityHud(cv.getStats());
-      });
-    } else if (e.key === 's' || e.key === 'S') {
-      e.preventDefault();
-      citySmokeEnabled = !citySmokeEnabled;
-      saveDebugSettings();
-      withCityView((cv) => {
-        cv.setSmokeEnabled(citySmokeEnabled);
+        cv.setCityFold(0, false);
         updateCityHud(cv.getStats());
       });
     }
@@ -3110,13 +3032,10 @@ if (isDebugMode && params.has('city')) {
       setConsistency: (consistency: number | null) => void;
       setWindowOpen: (mode: WindowOpenMode, ratio?: number) => void;
       openCatalog: (open?: boolean) => void;
-      openCity: (open?: boolean, opts?: { seed?: number; style?: CityStreetStyle; hills?: number; instant?: boolean }) => void;
+      openCity: (open?: boolean, opts?: { seed?: number; hills?: number; instant?: boolean }) => void;
       cityView: (yaw: number, pitch: number, dist: number, tx?: number, ty?: number, tz?: number) => void;
       cityFold: (target: 0 | 1, instant?: boolean) => void;
-      cityFly: (flying: boolean) => void;
-      cityAdvance: (deltaS: number) => void;
-      citySetWaveMode: (mode: CityWaveMode) => void;
-      citySetSmoke: (enabled: boolean) => void;
+      cityTouch: (wx: number, wz: number, radius?: number, isClick?: boolean) => number;
       cityInfo: () => CityViewStats | null;
       setSpin: (enabled: boolean) => void;
       setCameraTrick: (mode: CameraTrickMode) => void;
@@ -3251,17 +3170,16 @@ if (isDebugMode && params.has('city')) {
   openCatalog(open = true) {
     setCatalogOpen(open);
   },
-  openCity(open = true, opts?: { seed?: number; style?: CityStreetStyle; hills?: number; instant?: boolean }) {
+  openCity(open = true, opts?: { seed?: number; hills?: number; instant?: boolean }) {
     if (opts?.seed !== undefined) citySeed = Math.max(0, Math.min(99999, Math.round(opts.seed)));
-    if (opts?.style !== undefined && ALL_CITY_STREET_STYLES.includes(opts.style)) cityStreetStyle = opts.style;
     if (opts?.hills !== undefined) cityHills = Math.max(0, Math.min(1, opts.hills));
-    setCityOpen(open, !opts?.instant);
+    setCityOpen(open, true);
     if (open && opts?.instant) {
-      rebuildCity(false);
+      rebuildCity(true);
       withCityView((cv) => cv.setCityFold(1, true));
     }
   },
-  cityView(yaw: number, pitch: number, dist: number, tx = 0, ty = 2.2, tz = 0) {
+  cityView(yaw: number, pitch: number, dist: number, tx = 0, ty = 5.4, tz = 1.5) {
     withCityView((cv) => cv.setCameraView(yaw, pitch, dist, tx, ty, tz));
   },
   cityFold(target: 0 | 1, instant = false) {
@@ -3270,31 +3188,11 @@ if (isDebugMode && params.has('city')) {
       updateCityHud();
     });
   },
-  cityFly(flying: boolean) {
-    withCityView((cv) => {
-      cv.setFlying(flying);
-      updateCityHud();
-    });
-  },
-  cityAdvance(deltaS: number) {
-    withCityView((cv) => {
-      cv.advanceFlight(deltaS);
-      updateCityHud();
-    });
-  },
-  citySetWaveMode(mode: CityWaveMode) {
-    withCityView((cv) => {
-      cv.setWaveMode(mode);
-      updateCityHud();
-    });
-  },
-  citySetSmoke(enabled: boolean) {
-    citySmokeEnabled = Boolean(enabled);
-    saveDebugSettings();
-    withCityView((cv) => {
-      cv.setSmokeEnabled(citySmokeEnabled);
-      updateCityHud();
-    });
+  cityTouch(wx: number, wz: number, radius?: number, isClick = true) {
+    if (!cityView) return 0;
+    const count = cityView.touchAt(wx, wz, radius, isClick);
+    updateCityHud();
+    return count;
   },
   cityInfo() {
     return cityView ? cityView.getStats() : null;
@@ -3392,8 +3290,16 @@ function animate(now: number): void {
 
   if (cityActive && cityView) {
     cityView.update(dt);
+    renderer.shadowMap.autoUpdate = false;
+    if (cityView.consumeShadowDirty()) {
+      renderer.shadowMap.needsUpdate = true;
+    }
     renderer.render(cityView.scene, cityView.camera);
     return;
+  }
+  if (!renderer.shadowMap.autoUpdate) {
+    renderer.shadowMap.autoUpdate = true;
+    renderer.shadowMap.needsUpdate = true;
   }
 
   // 1. Update panel folds (slower cubic-bezier curved stagger wave + gentle scrub follow!)

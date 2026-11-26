@@ -24,6 +24,7 @@ import {
   computeDoorCenterU,
   resolveFacadeForPanel,
   type BuildingArchitecture,
+  type BuildingLevels,
   type DoorPosition,
   type DoorParams,
   type DoorStyle,
@@ -57,6 +58,7 @@ export {
   computeDoorCenterU,
   resolveFacadeForPanel,
   type BuildingArchitecture,
+  type BuildingLevels,
   type DoorPosition,
   type DoorParams,
   type DoorStyle,
@@ -96,7 +98,7 @@ export interface WallLocalFrame {
   widthMm: number;
   heightMm: number;
   /** Optional story-count override for multi-tier setback or lower side-wing walls */
-  wallLevels?: 1 | 2 | 3;
+  wallLevels?: BuildingLevels;
 }
 
 export interface RoofLocalFrame {
@@ -152,8 +154,8 @@ export interface HouseNetSpec {
   D: number;
   /** Wall height at low eave (mm) */
   H: number;
-  /** Number of window stories (1..3) */
-  levels: 1 | 2 | 3;
+  /** Number of window stories (1..6) */
+  levels: BuildingLevels;
   /** Roof architecture */
   roofType: RoofType;
   /** Ceiling cross-section profile for gable roofs (`classic`, `gambrel` 2×, `stepped` 3× ladder, `barrel` 3×, `saltbox`) */
@@ -413,12 +415,21 @@ export function generateHouseSpec(
   }
 
   // Apply explicit compositional overrides cleanly to single buildings
+  const levels: BuildingLevels = opts.levels ?? raw.levels;
   const heightMult =
     opts.heightScale !== undefined && opts.heightScale !== null
-      ? Math.max(0.72, Math.min(1.35, opts.heightScale))
+      ? Math.max(0.72, Math.min(2.6, opts.heightScale))
       : 1.0;
-  const H = raw.H * heightMult;
-  const levels: 1 | 2 | 3 = opts.levels ?? raw.levels;
+  let H = raw.H * heightMult;
+  if (levels >= 4) {
+    // Tall 4-6 level cliffside palazzi & towers scale wall height proportionally so every story
+    // maintains crisp, well-proportioned punched Italian windows (~12.4..15.2 mm/floor).
+    const floorScale =
+      opts.heightScale !== undefined && opts.heightScale !== null
+        ? Math.max(0.84, Math.min(1.18, opts.heightScale))
+        : 1.0;
+    H = Math.max(H, levels * 13.0 * floorScale);
+  }
   const windowGround: WindowStyle = opts.windowStyle ?? raw.windowGround;
   const windowUpper: WindowStyle = opts.windowStyle ?? raw.windowUpper;
   const door: DoorStyle = opts.doorStyle ?? raw.door;
@@ -3602,7 +3613,9 @@ function buildVillageNet(
         ? Math.max(0.75, Math.min(1.25, vGrammar.heightScale))
         : 1.0;
     const H = sub.H * heightMult;
-    const levels: 1 | 2 | 3 = vGrammar.levels ?? sub.levels;
+    const levels: BuildingLevels = vGrammar.levels
+      ? (Math.min(3, vGrammar.levels) as BuildingLevels)
+      : sub.levels;
     const windowGround: WindowStyle = vGrammar.windowStyle ?? sharedWin ?? sub.windowGround;
     const windowUpper: WindowStyle = vGrammar.windowStyle ?? sharedWin ?? sub.windowUpper;
     const door: DoorStyle = vGrammar.doorStyle ?? sharedDoor ?? sub.door;

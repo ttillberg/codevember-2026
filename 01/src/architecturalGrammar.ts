@@ -26,6 +26,7 @@
  */
 
 export type NetTopology = 'cross' | 'ribbon' | 'hex' | 'oct' | 'lwing' | 'setback' | 'village';
+export type BuildingLevels = 1 | 2 | 3 | 4 | 5 | 6;
 export type RoofType = 'gable' | 'hip' | 'mansard' | 'shed' | 'flat' | 'spire' | 'butterfly' | 'sawtooth';
 export type GableProfile = 'classic' | 'gambrel' | 'stepped' | 'barrel' | 'saltbox';
 export type WindowStyle = 'rect' | 'tall' | 'arched' | 'pair' | 'ribbon' | 'round' | 'lancet' | 'slit';
@@ -170,7 +171,7 @@ export interface ShapeParams {
   widthMm: number;
   depthMm: number;
   heightMm: number;
-  levels: 1 | 2 | 3;
+  levels: BuildingLevels;
   yawOffset: number;
 }
 
@@ -210,9 +211,9 @@ export interface GrammarOverrides {
   windowCount?: number | null;
   /** Explicit door style override */
   doorStyle?: DoorStyle | null;
-  /** Explicit story-count override (`1..3`) */
-  levels?: 1 | 2 | 3 | null;
-  /** Relative building height multiplier (`0.72..1.35`) */
+  /** Explicit story-count override (`1..6`) */
+  levels?: BuildingLevels | null;
+  /** Relative building height multiplier (`0.72..2.6`) */
   heightScale?: number | null;
 }
 
@@ -490,7 +491,7 @@ function composeWindowRow(
 
 function composeFacade(
   role: FacadeRole,
-  levelsCount: 1 | 2 | 3,
+  levelsCount: BuildingLevels,
   groundStyle: WindowStyle,
   upperStyle: WindowStyle,
   doorStyle: DoorStyle,
@@ -552,7 +553,7 @@ function composeFacade(
 
     const levelStyle: WindowStyle = isGround
       ? groundStyle
-      : li === 2 && c < 0.48 && rng.chance((0.48 - c) * 0.85)
+      : li >= 2 && c < 0.48 && rng.chance((0.48 - c) * 0.65)
         ? rng.pick(WINDOW_COMPANIONS[baseUpperStyle])
         : baseUpperStyle;
 
@@ -595,7 +596,7 @@ export interface BuildingGrammarInput {
   widthMm: number;
   depthMm: number;
   heightMm: number;
-  levels: 1 | 2 | 3;
+  levels: BuildingLevels;
   yawOffset: number;
   roofType: RoofType;
   gableProfile?: GableProfile;

@@ -194,6 +194,9 @@
               <option value="1">1</option>
               <option value="2">2</option>
               <option value="3">3</option>
+              <option value="4">4</option>
+              <option value="5">5</option>
+              <option value="6">6</option>
             </select>
           </label>
         </div>
@@ -250,38 +253,30 @@
       </div>
     </aside>
 
-    <header id="city-bar" class="city-bar" aria-label="City view controls" hidden>
+    <header id="city-bar" class="city-bar" aria-label="Island diorama controls" hidden>
       <div class="catalog-title-wrap">
-        <h2>City</h2>
-        <span id="city-subtitle" class="catalog-sub">Seed 0 · Coastal</span>
+        <h2>Island</h2>
+        <span id="city-subtitle" class="catalog-sub">Seed 0 · 0 folded</span>
       </div>
       <div class="catalog-controls">
-        <div class="cat-seed-group" aria-label="City seed controls">
+        <div class="cat-seed-group" aria-label="Island seed controls">
           <span class="cat-ctrl-label">Seed</span>
-          <button id="city-seed-prev" class="cat-step-btn" type="button" aria-label="Previous city seed">−</button>
-          <input id="city-seed-input" class="cat-seed-input" type="number" min="0" max="99999" value="0" aria-label="City seed" />
-          <button id="city-seed-next" class="cat-step-btn" type="button" aria-label="Next city seed">+</button>
-          <button id="city-seed-roll" class="cat-pill-btn" type="button" title="Roll a random coastal city">Roll</button>
+          <button id="city-seed-prev" class="cat-step-btn" type="button" aria-label="Previous island seed">−</button>
+          <input id="city-seed-input" class="cat-seed-input" type="number" min="0" max="99999" value="0" aria-label="Island seed" />
+          <button id="city-seed-next" class="cat-step-btn" type="button" aria-label="Next island seed">+</button>
+          <button id="city-seed-roll" class="cat-pill-btn" type="button" title="Roll a new Italian mountain island">Roll</button>
         </div>
-        <div id="city-style-seg" class="cat-seg" role="group" aria-label="Street topology">
-          <button type="button" class="cat-seg-btn active" data-city-style="mix" title="Seeded deterministic district topologies">Mix</button>
-          <button type="button" class="cat-seg-btn" data-city-style="organic">Organic</button>
-          <button type="button" class="cat-seg-btn" data-city-style="grid">Grid</button>
-          <button type="button" class="cat-seg-btn" data-city-style="radial">Radial</button>
-        </div>
-        <label class="cat-consist-group" for="city-hills" title="Coastal cliff & hillside elevation relief">
-          <span class="cat-ctrl-label">Hills</span>
-          <input id="city-hills" class="cat-range" type="range" min="0" max="100" step="5" value="55" />
-          <span id="city-hills-val" class="cat-range-val">55%</span>
+        <label class="cat-consist-group" for="city-hills" title="Island cliff & mountain topography relief">
+          <span class="cat-ctrl-label">Relief</span>
+          <input id="city-hills" class="cat-range" type="range" min="0" max="100" step="5" value="72" />
+          <span id="city-hills-val" class="cat-range-val">72%</span>
         </label>
-        <button id="city-fly-btn" class="cat-pill-btn" type="button" aria-pressed="true" title="Curved coastal flyover (Space)">Fly</button>
-        <button id="city-fold-btn" class="cat-pill-btn" type="button" title="Cycle fold mode: Wave / Folded / Flat (W)">Wave</button>
-        <button id="city-smoke-btn" class="cat-pill-btn" type="button" aria-pressed="false" title="Toggle folding dust smoke (S)">Smoke</button>
+        <button id="city-fold-btn" class="cat-pill-btn" type="button" title="Cascade all houses up the serpentine road or clear the island (Space)">Fold all</button>
         <button id="city-color-btn" class="cat-pill-btn" type="button" aria-pressed="false">Color</button>
-        <button id="city-close" class="help-close" type="button" aria-label="Close city view">×</button>
+        <button id="city-close" class="help-close" type="button" aria-label="Close island view">×</button>
       </div>
     </header>
-    <div id="city-status" class="city-status" aria-live="polite" hidden>Flying along the coast · Drag to look · Space to pause · Click any house to fold</div>
+    <div id="city-status" class="city-status" aria-live="polite" hidden>Click or drag to fold houses · Cmd-drag or two fingers to rotate · Pinch to zoom</div>
 
     <div class="catalog-wall" id="catalog-modal" role="dialog" aria-modal="true" aria-label="Generations catalog" hidden>
       <header class="catalog-head">
@@ -329,7 +324,7 @@
           <div><dt><span class="key">F</span></dt><dd>Toggle staggered fold / unfold</dd></div>
           <div><dt><span class="key">A</span></dt><dd>Toggle automatic continuous folding loop</dd></div>
           <div><dt><span class="key">G</span></dt><dd>Browse seeded generations grid and click any tile to fold</dd></div>
-          <div><dt><span class="key">C</span></dt><dd>Fly infinitely along a deterministic paper city by the sea; houses fold as you pass</dd></div>
+          <div><dt><span class="key">C</span></dt><dd>Explore an interactive Mediterranean paper mountain island; touch to fold houses & unveil roads</dd></div>
           <div><dt><span class="key">R</span></dt><dd>Reset to Layer 1 and default camera</dd></div>
           <div><dt>Drag sheet</dt><dd>Orbit 360° around the paper; scroll or pinch to zoom</dd></div>
         </dl>

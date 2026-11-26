@@ -1,126 +1,121 @@
 import { describe, expect, it } from 'vitest';
 import { buildHouseNet, polygonsOverlap } from '../src/origamiHouseNet';
-import {
-  ALL_CITY_STREET_STYLES,
-  createCoastalWorld,
-  createTerrainField,
-} from '../src/cityGenerator';
-import { evaluateFoldWave } from '../src/cityView';
+import { createIslandTerrain, createIslandWorld } from '../src/cityGenerator';
 
-describe('Infinite Coastal Paper City generator (deterministic chunks, sea, topologies, LOD & curved flight)', () => {
-  it('generates a continuous infinite coastal elevation field with sea (<0), quay (>0), hills, and seed diversity', () => {
-    const flat = createTerrainField(7, 0);
-    const coast0 = flat.coastX(0);
-    expect(flat.heightAt(coast0 - 15, 0)).toBeLessThan(0);
-    expect(flat.heightAt(coast0 + 8, 0)).toBeGreaterThan(0.5);
-    expect(flat.heightAt(coast0 + 8, 0)).toBeLessThan(1.0);
+describe('Italian Mountain Island diorama generator (topography, serpentine & hillside roads, dense zero-overlap plots)', () => {
+  it('generates a bounded high-topology Italian mountain island with sea (<0), steep cliffs, summit peak, and seed diversity', () => {
+    const flat = createIslandTerrain(7, 0);
+    expect(flat.terrain.heightAt(0, 0)).toBeGreaterThan(0.5);
+    expect(flat.terrain.heightAt(48, 0)).toBeLessThan(0);
 
-    const hillyA = createTerrainField(7, 0.75);
-    const hillyB = createTerrainField(7, 0.75);
-    const hillyOther = createTerrainField(42, 0.75);
+    const a = createIslandTerrain(7, 0.72);
+    const b = createIslandTerrain(7, 0.72);
+    const other = createIslandTerrain(42, 0.72);
 
-    // Deterministic & continuous far down the infinite coastline
-    for (const z of [0, -120, -480, 260]) {
-      const cA = hillyA.coastX(z);
-      expect(cA).toBeCloseTo(hillyB.coastX(z), 6);
-      expect(hillyA.heightAt(cA - 6, z)).toBeLessThan(0);
-      expect(hillyA.heightAt(cA + 35, z)).toBeGreaterThan(1.5);
-      expect(hillyA.heightAt(cA + 35, z)).toBeCloseTo(hillyB.heightAt(cA + 35, z), 6);
+    for (const ang of [0, 1.2, 2.5, 3.8, 5.1]) {
+      expect(a.terrain.heightAt(Math.cos(ang) * 49, Math.sin(ang) * 49)).toBeLessThan(0);
     }
-    expect(hillyA.coastX(-120)).not.toBeCloseTo(hillyOther.coastX(-120), 2);
+
+    const summitW = a.terrain.heightAt(0, -8);
+    expect(summitW).toBeGreaterThan(9);
+    expect(a.terrain.heightAt(5, -6)).toBeCloseTo(b.terrain.heightAt(5, -6), 6);
+    expect(a.terrain.heightAt(5, -6)).not.toBeCloseTo(other.terrain.heightAt(5, -6), 2);
   });
 
-  it('generates deterministic, zero-overlap building plots across chunks and street topologies with zero wet buildings', () => {
-    for (const style of ALL_CITY_STREET_STYLES) {
-      const worldA = createCoastalWorld({ seed: 12, style, hills: 0.6 });
-      const worldB = createCoastalWorld({ seed: 12, style, hills: 0.6 });
-      const worldOther = createCoastalWorld({ seed: 99, style, hills: 0.6 });
+  it('builds a serpentine switchback road plus surrounding hillside contour roads staying strictly on island land', () => {
+    for (const seed of [0, 7, 19, 42]) {
+      const world = createIslandWorld({ seed, hills: 0.72 });
+      const mainRoad = world.roads.find((r) => r.kind === 'serpentine');
+      expect(mainRoad).toBeDefined();
+      expect(mainRoad!.points.length).toBeGreaterThan(100);
+      expect(world.roads.length).toBeGreaterThanOrEqual(5);
 
-      // Generate a 2x2 coastal block of chunks around the shoreline at z = -88..0
-      const coastMidX = worldA.terrain.coastX(-44);
-      const cxBase = Math.floor((coastMidX + 12) / 44);
-      const chunksA = [
-        worldA.generateChunk(cxBase, -2),
-        worldA.generateChunk(cxBase + 1, -2),
-        worldA.generateChunk(cxBase, -1),
-        worldA.generateChunk(cxBase + 1, -1),
-      ];
-      const chunksB = [
-        worldB.generateChunk(cxBase, -2),
-        worldB.generateChunk(cxBase + 1, -2),
-        worldB.generateChunk(cxBase, -1),
-        worldB.generateChunk(cxBase + 1, -1),
-      ];
-      const otherChunk = worldOther.generateChunk(cxBase, -1);
+      const start = mainRoad!.points[0];
+      const end = mainRoad!.points[mainRoad!.points.length - 1];
+      expect(start.t).toBeCloseTo(0, 4);
+      expect(end.t).toBeCloseTo(1, 4);
+      expect(end.y).toBeGreaterThan(start.y + 8);
 
-      const allPlotsA = chunksA.flatMap((c) => c.plots);
-      const allPlotsB = chunksB.flatMap((c) => c.plots);
-
-      expect(allPlotsA.length).toBe(allPlotsB.length);
-      expect(allPlotsA.length).toBeGreaterThanOrEqual(18);
-      expect(allPlotsA[0].x).toBeCloseTo(allPlotsB[0].x, 5);
-      expect(allPlotsA[0].spec.roofType).toBe(allPlotsB[0].spec.roofType);
-      if (otherChunk.plots.length > 0 && chunksA[2].plots.length > 0) {
-        expect(chunksA[2].plots[0].x).not.toBeCloseTo(otherChunk.plots[0].x, 2);
-      }
-
-      // Zero overlapping footprints BOTH intra-chunk AND across adjacent chunk borders!
-      for (let i = 0; i < allPlotsA.length; i++) {
-        const p = allPlotsA[i];
-        expect(p.groundMinY).toBeGreaterThan(0.15);
-        expect(p.baseY).toBeGreaterThanOrEqual(p.groundMinY);
-        expect(p.wings.length).toBeGreaterThanOrEqual(1);
-        for (let j = i + 1; j < allPlotsA.length; j++) {
-          expect(polygonsOverlap(p.footprint, allPlotsA[j].footprint)).toBe(false);
+      for (const r of world.roads) {
+        for (const p of r.points) {
+          expect(world.terrain.signedInland(p.x, p.z)).toBeGreaterThan(1.5);
+          expect(p.y).toBeGreaterThan(0.3);
         }
       }
 
-      // Spot-check that LOD0 origami nets fold with zero flat-net self-overlap
-      for (const plot of allPlotsA.slice(0, 6)) {
-        const net = buildHouseNet(plot.spec);
-        for (let a = 0; a < net.panels.length; a++) {
-          for (let b = a + 1; b < net.panels.length; b++) {
-            expect(polygonsOverlap(net.panels[a].poly, net.panels[b].poly)).toBe(false);
-          }
-        }
-      }
+      const xs = mainRoad!.points.map((p) => p.x);
+      expect(Math.max(...xs) - Math.min(...xs)).toBeGreaterThan(14);
     }
   });
 
-  it('produces a deterministic curved coastal flight spline and monotonic flyover fold wave', () => {
-    const worldA = createCoastalWorld({ seed: 5, style: 'mix', hills: 0.55 });
-    const worldB = createCoastalWorld({ seed: 5, style: 'mix', hills: 0.55 });
+  it('populates ultra-dense stacked hillside houses with 4-6 level palazzi on steep backdrops and valid origami nets', () => {
+    const worldA = createIslandWorld({ seed: 7, hills: 0.72 });
+    const worldB = createIslandWorld({ seed: 7, hills: 0.72 });
+    const worldOther = createIslandWorld({ seed: 99, hills: 0.72 });
 
-    const s0 = worldA.sampleFlight(0);
-    const s1 = worldA.sampleFlight(90);
-    const s2 = worldA.sampleFlight(240);
-    const s1Repeat = worldB.sampleFlight(90);
+    expect(worldA.plots.length).toBe(worldB.plots.length);
+    // Ultra-dense stacked village packed between houses across the entire island!
+    expect(worldA.plots.length).toBeGreaterThanOrEqual(550);
+    expect(worldA.plots[0].x).toBeCloseTo(worldB.plots[0].x, 5);
+    expect(worldA.plots[0].x).not.toBeCloseTo(worldOther.plots[0].x, 2);
 
-    expect(s1.pos[0]).toBeCloseTo(s1Repeat.pos[0], 5);
-    expect(s1.bankRoll).toBeCloseTo(s1Repeat.bankRoll, 5);
+    // Houses densely packed across all 4 quadrants (front harbor, left cape, right headland, rear ridge!)
+    const q1 = worldA.plots.filter((p) => p.x > 4 && p.z > 4).length;
+    const q2 = worldA.plots.filter((p) => p.x < -4 && p.z > 4).length;
+    const q3 = worldA.plots.filter((p) => p.x < -4 && p.z < -4).length;
+    const q4 = worldA.plots.filter((p) => p.x > 4 && p.z < -4).length;
+    expect(q1).toBeGreaterThan(60);
+    expect(q2).toBeGreaterThan(60);
+    expect(q3).toBeGreaterThan(60);
+    expect(q4).toBeGreaterThan(60);
 
-    // Advances along -Z and genuinely curves in X with non-zero banking!
-    expect(s1.pos[2]).toBeLessThan(s0.pos[2]);
-    expect(s2.pos[2]).toBeLessThan(s1.pos[2]);
-    const xs = [0, 30, 60, 90, 120, 150, 180, 210].map((s) => worldA.sampleFlight(s).pos[0]);
-    const xSpan = Math.max(...xs) - Math.min(...xs);
-    expect(xSpan).toBeGreaterThan(18);
-    // Safely above terrain & sea everywhere
-    for (let s = 0; s <= 400; s += 25) {
-      const f = worldA.sampleFlight(s);
-      const ground = Math.max(0, worldA.terrain.heightAt(f.pos[0], f.pos[2]));
-      expect(f.pos[1]).toBeGreaterThan(ground + 10);
+    // Abundant 4, 5, and 6-story cliffside palazzi wherever mountain elevation rises behind!
+    const l4 = worldA.plots.filter((p) => p.spec.levels === 4).length;
+    const l5 = worldA.plots.filter((p) => p.spec.levels === 5).length;
+    const l6 = worldA.plots.filter((p) => p.spec.levels === 6).length;
+    expect(l4).toBeGreaterThan(50);
+    expect(l5).toBeGreaterThan(40);
+    expect(l6).toBeGreaterThan(20);
+
+    // Houses backed by steep upslope elevation average substantially more stories than flat-backdrop houses!
+    const steepLevels: number[] = [];
+    const gentleLevels: number[] = [];
+    for (const p of worldA.plots) {
+      const bx = p.x - Math.sin(p.yaw) * 5.5;
+      const bz = p.z - Math.cos(p.yaw) * 5.5;
+      const backRise = worldA.terrain.heightAt(bx, bz) - worldA.terrain.heightAt(p.x, p.z);
+      if (backRise > 3.2) steepLevels.push(p.spec.levels);
+      else if (backRise < 0.4) gentleLevels.push(p.spec.levels);
+    }
+    const avgSteep = steepLevels.reduce((a, b) => a + b, 0) / Math.max(1, steepLevels.length);
+    const avgGentle = gentleLevels.reduce((a, b) => a + b, 0) / Math.max(1, gentleLevels.length);
+    expect(avgSteep).toBeGreaterThan(avgGentle + 0.9);
+
+    // Zero overlapping footprints & every plot grounded on dry cliffs
+    for (let i = 0; i < worldA.plots.length; i++) {
+      const p = worldA.plots[i];
+      expect(p.groundMinY).toBeGreaterThan(0.35);
+      expect(p.baseY).toBeGreaterThanOrEqual(p.groundMinY);
+      for (let j = i + 1; j < worldA.plots.length; j++) {
+        expect(polygonsOverlap(p.footprint, worldA.plots[j].footprint)).toBe(false);
+      }
     }
 
-    // Fold wave monotonically sweeps from 1 (behind/near) -> mid-fold -> 0 (far ahead)
-    const fBehind = evaluateFoldWave(0, 10, 0, 0, -40, 'wave');
-    const fMid = evaluateFoldWave(0, -90, 0, 0, -40, 'wave');
-    const fFar = evaluateFoldWave(0, -180, 0, 0, -40, 'wave');
-    expect(fBehind).toBe(1);
-    expect(fMid).toBeGreaterThan(0.05);
-    expect(fMid).toBeLessThan(0.95);
-    expect(fFar).toBe(0);
-    expect(evaluateFoldWave(0, -180, 0, 0, -40, 'folded')).toBe(1);
-    expect(evaluateFoldWave(0, 10, 0, 0, -40, 'flat')).toBe(0);
+    // Spot-check that 1-3F AND tall 4-6F origami nets have zero flat-net self-overlap
+    const samplePlots = [
+      ...worldA.plots.slice(0, 8),
+      ...worldA.plots.filter((p) => p.spec.levels === 4).slice(0, 4),
+      ...worldA.plots.filter((p) => p.spec.levels === 5).slice(0, 4),
+      ...worldA.plots.filter((p) => p.spec.levels === 6).slice(0, 4),
+    ];
+    for (const plot of samplePlots) {
+      const net = buildHouseNet(plot.spec);
+      expect(plot.spec.architecture?.facades.front.levels.length).toBe(plot.spec.levels);
+      for (let a = 0; a < net.panels.length; a++) {
+        for (let b = a + 1; b < net.panels.length; b++) {
+          expect(polygonsOverlap(net.panels[a].poly, net.panels[b].poly)).toBe(false);
+        }
+      }
+    }
   });
 });
