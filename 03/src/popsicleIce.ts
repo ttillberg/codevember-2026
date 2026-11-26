@@ -76,7 +76,8 @@ function createCameraDepthMaterial(tag: number, side: THREE.Side): THREE.ShaderM
       varying float vCamDepth;
       void main() {
         vec4 mvPos = viewMatrix * modelMatrix * vec4(position, 1.0);
-        vCamDepth = -mvPos.z;
+        // Signed depth relative to world origin (centered at 0 -> ~32-64x finer fp16 precision, zero contour banding!)
+        vCamDepth = viewMatrix[3].z - mvPos.z;
         gl_Position = projectionMatrix * mvPos;
       }
     `,
@@ -157,7 +158,7 @@ function createOpticalIceMaterial(initialRecipe: PopsicleRecipe): { material: TH
         vec4 mvPos = viewMatrix * wp;
         vWorldPos = wp.xyz;
         vWorldNormal = normalize(mat3(modelMatrix) * normal);
-        vCamDepth = -mvPos.z;
+        vCamDepth = viewMatrix[3].z - mvPos.z;
         gl_Position = projectionMatrix * mvPos;
       }
     `,

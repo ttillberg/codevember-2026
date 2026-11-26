@@ -50,6 +50,8 @@ export interface FruitItem {
   wetContact: number;
   /** Accumulated knock-loose impact from upper falling berries hitting a nearly-free lower berry */
   knockAccum: number;
+  /** Initial frozen seat offset so shallow milk-mode inlays stay firmly embedded until actually melted loose */
+  seatOffset: number;
   /** Damped micro-recoil offset & velocity when an embedded fruit gets bumped by a falling berry */
   jostlePos: THREE.Vector3;
   jostleVel: THREE.Vector3;
@@ -1930,9 +1932,13 @@ function buildFruitLayout(seed: number, recipe: PopsicleRecipe): FruitSpec[] {
                   : radius * 0.92;
 
       const isFineInlay = kind === 'shaved-lemon' || kind === 'kaksmulor' || (kind === 'chocolate' && radius < 0.068);
+      // Account for the recessed vertical flute valleys & dome taper so shallow milk inlays never spawn outside the ice!
+      const fluteIndent = 0.032 * Math.exp(-Math.pow((Math.abs(x) - POPSICLE.fluteX) / 0.085, 2));
+      const domeIndent = smoothstep(0.66, 1.0, hNorm) * 0.055;
+      const localHalfDepth = POPSICLE.halfDepth - fluteIndent - domeIndent;
       const maxSafeZ = Math.max(
         -0.02,
-        POPSICLE.halfDepth - halfThickZ - (isCoconut ? (isFineInlay ? 0.002 : 0.012) : 0.028),
+        localHalfDepth - halfThickZ - (isCoconut ? (isFineInlay ? 0.006 : 0.014) : 0.028),
       );
       let z: number;
       if (isCoconut) {
@@ -2499,6 +2505,7 @@ export function createFruitAssembly(seed: number, recipe: PopsicleRecipe = DEFAU
       exposure: 0,
       wetContact: 0,
       knockAccum: 0,
+      seatOffset: 0,
       jostlePos: new THREE.Vector3(),
       jostleVel: new THREE.Vector3(),
       bendAmt: bb.x,
@@ -2825,19 +2832,44 @@ export function createFruitAssembly(seed: number, recipe: PopsicleRecipe = DEFAU
    * false-loosening fresh or shallow coconut-base fruits while the popsicle is still thick & frozen),
    * bottom-lip undercut support, and domino knock-loose impulses from falling upper berries.
    */
-  function evaluateFruitGrip(f: FruitItem, meltState: MeltFieldState, slideY = 0): number {
+  function evaluateRawFruitGrip(f: FruitItem, meltState: MeltFieldState, slideY = 0): number {
     const info = sampleIceContainment(f.basePos.x, f.basePos.y + slideY, f.basePos.z, meltState, physContInfo);
     const endgameBoost = smoothstep(0.60, 0.84, meltState.melt) * 0.06;
     const rZ = fruitCollisionRadius(f);
     const halfD = info.dz + Math.abs(f.basePos.z);
-    const rawGrip = Math.min(
+    return Math.min(
       info.depth - (f.radius * 0.20 + endgameBoost),
       info.dx - (f.radius * 0.54 + endgameBoost * 0.8),
       halfD - (rZ * 0.74 + endgameBoost * 0.7),
       info.dz - (rZ * 0.32 + endgameBoost * 0.5),
       info.dyBot - (f.radius * 0.36 + endgameBoost * 0.5),
     );
-    return rawGrip - f.knockAccum;
+  }
+
+  // Calibrate each topping's initial frozen seat at melt=0: deeply buried water-mode fruits keep seatOffset=0,
+  // while shallow milk-mode inlays pressed near the mold wall start firmly frozen until real melting releases them!
+  const frozenBaselineState: MeltFieldState = {
+    melt: 0,
+    time: 0,
+    seedOffset: seed * 13.7,
+    heatSpots: [],
+    pointerHeat: 0,
+    pointerX: 0,
+    pointerY: 0,
+    bottomPool: 0.4,
+    bottomLobes: [1, 1, 1, 1],
+    pendantPull: [0, 0, 0, 0],
+  };
+  for (const f of fruits) {
+    const rawGrip0 = evaluateRawFruitGrip(f, frozenBaselineState, 0);
+    const minFrozenSeat = 0.044 + f.radius * 0.36;
+    f.seatOffset = Math.max(0, minFrozenSeat - rawGrip0);
+  }
+
+  function evaluateFruitGrip(f: FruitItem, meltState: MeltFieldState, slideY = 0): number {
+    const rawGrip = evaluateRawFruitGrip(f, meltState, slideY);
+    const seatHold = f.seatOffset * (1.0 - smoothstep(0.56, 0.88, meltState.melt));
+    return rawGrip + seatHold - f.knockAccum;
   }
 
   function applyPreReleasePose(f: FruitItem, grip: number, slideY = 0) {
