@@ -75,16 +75,19 @@ export function createMatteGrainTextures(): { roughnessMap: THREE.CanvasTexture;
 }
 
 /**
- * Very light scratches & micro-buffing marks for the thin clear plastic outer shell.
- * Designed to stay nearly invisible straight-on and subtly catch grazing studio softbox light.
+ * Ultra-fine polycarbonate micro-scratches & barely-perceptible handling smudges for the clear outer shell.
+ * Designed to stay almost invisible straight-on and subtly catch grazing studio softbox reflections
+ * through both roughnessMap and clearcoatRoughnessMap as the sphere rotates.
  */
 export function createPlasticScratchTextures(): {
   roughnessMap: THREE.CanvasTexture;
   bumpMap: THREE.CanvasTexture;
+  scratchMap: THREE.CanvasTexture;
   scratchAlphaMap: THREE.CanvasTexture;
 } {
-  const w = 2048;
-  const h = 1024;
+  // 4096x2048 high-definition map so razor-thin hairline scratches stay surgically sharp even up close!
+  const w = 4096;
+  const h = 2048;
 
   const rCanvas = document.createElement('canvas');
   rCanvas.width = w;
@@ -96,114 +99,221 @@ export function createPlasticScratchTextures(): {
   bCanvas.height = h;
   const bCtx = bCanvas.getContext('2d')!;
 
+  const cCanvas = document.createElement('canvas');
+  cCanvas.width = w;
+  cCanvas.height = h;
+  const cCtx = cCanvas.getContext('2d')!;
+
   const aCanvas = document.createElement('canvas');
   aCanvas.width = w;
   aCanvas.height = h;
   const aCtx = aCanvas.getContext('2d')!;
 
-  // Base ultra-smooth glossy polycarbonate (roughness ~0.045)
-  rCtx.fillStyle = 'rgb(12, 12, 12)';
+  // Base crystal-clear glossy polycarbonate
+  rCtx.fillStyle = 'rgb(34, 34, 34)';
   rCtx.fillRect(0, 0, w, h);
 
-  // Neutral mid-gray bump
   bCtx.fillStyle = 'rgb(128, 128, 128)';
   bCtx.fillRect(0, 0, w, h);
 
-  // Nearly transparent scratch gleam overlay
+  cCtx.fillStyle = 'rgb(245, 244, 240)';
+  cCtx.fillRect(0, 0, w, h);
+
   aCtx.fillStyle = 'rgb(0, 0, 0)';
   aCtx.fillRect(0, 0, w, h);
 
   const rng = mulberry32(1388);
 
-  // 1. Ultra-faint circular handling/polishing micro-swirls
-  for (let i = 0; i < 65; i++) {
+  // 1. Silky, barely-perceptible organic handling smudges (soft oil haze only, zero harsh lines)
+  for (let i = 0; i < 10; i++) {
     const cx = rng() * w;
-    const cy = h * (0.12 + rng() * 0.76);
-    const rad = 28 + rng() * 95;
-    const start = rng() * Math.PI * 2;
-    const span = 0.35 + rng() * 1.1;
-    const intensity = 0.04 + rng() * 0.08;
+    const cy = h * (0.14 + rng() * 0.72);
+    const rx = 110 + rng() * 200;
+    const ry = 68 + rng() * 125;
+    const rot = rng() * Math.PI;
+    const smudgeStrength = 0.36 + rng() * 0.26;
 
-    rCtx.strokeStyle = `rgba(120, 120, 120, ${intensity * 1.4})`;
-    rCtx.lineWidth = 0.7 + rng() * 0.7;
-    rCtx.beginPath();
-    rCtx.arc(cx, cy, rad, start, start + span);
-    rCtx.stroke();
+    const drawSmudgeCloud = (ctx: CanvasRenderingContext2D, col: string, alphaScale: number) => {
+      ctx.save();
+      ctx.translate(cx, cy);
+      ctx.rotate(rot);
+      for (let lobe = 0; lobe < 3; lobe++) {
+        const ox = (lobe - 1) * rx * 0.28;
+        const oy = ((lobe % 2) - 0.5) * ry * 0.24;
+        const lrx = rx * (0.68 + lobe * 0.14);
+        const lry = ry * (0.72 + (2 - lobe) * 0.12);
+        ctx.save();
+        ctx.translate(ox, oy);
+        ctx.scale(1, lry / lrx);
+        const g = ctx.createRadialGradient(0, 0, lrx * 0.05, 0, 0, lrx);
+        g.addColorStop(0.0, `rgba(${col}, ${Math.min(1, smudgeStrength * alphaScale).toFixed(4)})`);
+        g.addColorStop(0.45, `rgba(${col}, ${Math.min(1, smudgeStrength * alphaScale * 0.48).toFixed(4)})`);
+        g.addColorStop(1.0, `rgba(${col}, 0)`);
+        ctx.fillStyle = g;
+        ctx.beginPath();
+        ctx.arc(0, 0, lrx, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+      }
+      ctx.restore();
+    };
 
-    bCtx.strokeStyle = `rgba(148, 148, 148, ${intensity * 0.9})`;
-    bCtx.lineWidth = 0.7;
-    bCtx.beginPath();
-    bCtx.arc(cx, cy, rad, start, start + span);
-    bCtx.stroke();
-
-    aCtx.strokeStyle = `rgba(255, 255, 255, ${intensity * 0.55})`;
-    aCtx.lineWidth = 0.65;
-    aCtx.beginPath();
-    aCtx.arc(cx, cy, rad, start, start + span);
-    aCtx.stroke();
+    drawSmudgeCloud(rCtx, '232, 232, 232', 1.15);
+    drawSmudgeCloud(cCtx, '204, 207, 210', 0.72);
+    drawSmudgeCloud(aCtx, '255, 255, 255', 0.22);
   }
 
-  // 2. Handful of delicate hairline scratches (very subtle, realistic studio-handled prototype)
-  for (let i = 0; i < 48; i++) {
-    const x0 = rng() * w;
-    const y0 = h * (0.1 + rng() * 0.8);
-    const len = 22 + rng() * 110;
-    const ang = rng() * Math.PI * 2;
-    const bend = (rng() - 0.5) * 0.38;
-    const mx = x0 + Math.cos(ang + bend) * len * 0.5;
-    const my = y0 + Math.sin(ang + bend) * len * 0.5;
-    const x1 = x0 + Math.cos(ang) * len;
-    const y1 = y0 + Math.sin(ang) * len;
-    const strength = 0.06 + rng() * 0.16;
-    const lw = 0.55 + rng() * 0.85;
+  // Helper to stroke a razor-sharp tapered hairline (fades cleanly to 0 at both needle tips!)
+  const strokeRazorLine = (
+    x0: number,
+    y0: number,
+    mx: number,
+    my: number,
+    x1: number,
+    y1: number,
+    lw: number,
+    strength: number,
+  ) => {
+    const grad = (ctx: CanvasRenderingContext2D, rgb: string, peakAlpha: number, ox = 0, oy = 0) => {
+      const g = ctx.createLinearGradient(x0 + ox, y0 + oy, x1 + ox, y1 + oy);
+      const a = Math.min(1, peakAlpha);
+      g.addColorStop(0.0, `rgba(${rgb}, 0)`);
+      g.addColorStop(0.18, `rgba(${rgb}, ${(a * 0.85).toFixed(3)})`);
+      g.addColorStop(0.5, `rgba(${rgb}, ${a.toFixed(3)})`);
+      g.addColorStop(0.82, `rgba(${rgb}, ${(a * 0.85).toFixed(3)})`);
+      g.addColorStop(1.0, `rgba(${rgb}, 0)`);
+      return g;
+    };
 
-    rCtx.strokeStyle = `rgba(185, 185, 185, ${strength * 1.6})`;
-    rCtx.lineWidth = lw;
+    // Roughness hairline
+    rCtx.strokeStyle = grad(rCtx, '240, 240, 240', strength * 1.4);
+    rCtx.lineWidth = lw * 1.15;
     rCtx.beginPath();
     rCtx.moveTo(x0, y0);
     rCtx.quadraticCurveTo(mx, my, x1, y1);
     rCtx.stroke();
 
-    bCtx.strokeStyle = `rgba(92, 92, 92, ${strength * 1.2})`;
+    // Fine incised bump cut
+    bCtx.strokeStyle = grad(bCtx, '72, 72, 72', strength * 1.1);
     bCtx.lineWidth = lw;
     bCtx.beginPath();
     bCtx.moveTo(x0, y0);
     bCtx.quadraticCurveTo(mx, my, x1, y1);
     bCtx.stroke();
 
-    aCtx.strokeStyle = `rgba(255, 253, 248, ${strength * 0.9})`;
-    aCtx.lineWidth = lw * 0.85;
+    // Surgical dark refraction edge + crisp razor specular highlight offset by 0.8px
+    cCtx.strokeStyle = grad(cCtx, '106, 102, 96', strength * 1.15, 0.85, 0.85);
+    cCtx.lineWidth = lw;
+    cCtx.beginPath();
+    cCtx.moveTo(x0 + 0.85, y0 + 0.85);
+    cCtx.quadraticCurveTo(mx + 0.85, my + 0.85, x1 + 0.85, y1 + 0.85);
+    cCtx.stroke();
+
+    cCtx.strokeStyle = grad(cCtx, '255, 255, 255', strength * 1.65);
+    cCtx.lineWidth = lw;
+    cCtx.beginPath();
+    cCtx.moveTo(x0, y0);
+    cCtx.quadraticCurveTo(mx, my, x1, y1);
+    cCtx.stroke();
+
+    aCtx.strokeStyle = grad(aCtx, '255, 255, 255', strength * 1.35);
+    aCtx.lineWidth = lw * 1.05;
     aCtx.beginPath();
     aCtx.moveTo(x0, y0);
     aCtx.quadraticCurveTo(mx, my, x1, y1);
     aCtx.stroke();
+  };
+
+  // 2. Crisp razor-fine micro-scratches (needle-thin 0.7-1.0px on 4K -> surgical hairline on screen)
+  for (let i = 0; i < 165; i++) {
+    const x0 = rng() * w;
+    const y0 = h * (0.08 + rng() * 0.84);
+    const len = 32 + rng() * 190;
+    const ang = rng() * Math.PI * 2;
+    const bend = (rng() - 0.5) * 0.24;
+    const mx = x0 + Math.cos(ang + bend) * len * 0.5;
+    const my = y0 + Math.sin(ang + bend) * len * 0.5;
+    const x1 = x0 + Math.cos(ang) * len;
+    const y1 = y0 + Math.sin(ang) * len;
+    const strength = 0.2 + rng() * 0.36;
+    const lw = 0.65 + rng() * 0.42;
+    strokeRazorLine(x0, y0, mx, my, x1, y1, lw, strength);
   }
 
-  // 3. Subtle microscopic dust flecks (barely visible up close)
-  for (let i = 0; i < 110; i++) {
+  // 3. Delicate curved microfiber polishing hairlines (thin, sparse, razor-crisp)
+  for (let i = 0; i < 65; i++) {
+    const cx = rng() * w;
+    const cy = h * (0.1 + rng() * 0.8);
+    const rad = 60 + rng() * 210;
+    const start = rng() * Math.PI * 2;
+    const span = 0.2 + rng() * 0.65;
+    const x0 = cx + Math.cos(start) * rad;
+    const y0 = cy + Math.sin(start) * rad;
+    const mid = start + span * 0.5;
+    const mx = cx + Math.cos(mid) * rad * 1.04;
+    const my = cy + Math.sin(mid) * rad * 1.04;
+    const x1 = cx + Math.cos(start + span) * rad;
+    const y1 = cy + Math.sin(start + span) * rad;
+    strokeRazorLine(x0, y0, mx, my, x1, y1, 0.65 + rng() * 0.3, 0.14 + rng() * 0.22);
+  }
+
+  // 4. Tiny localized micro-nick / pocket-key scuff clusters (3-5 ultra-fine parallel hairlines)
+  for (let c = 0; c < 12; c++) {
+    const bx = rng() * w;
+    const by = h * (0.14 + rng() * 0.72);
+    const baseAng = rng() * Math.PI * 2;
+    const count = 3 + Math.floor(rng() * 3);
+    for (let k = 0; k < count; k++) {
+      const ox = (rng() - 0.5) * 48;
+      const oy = (rng() - 0.5) * 48;
+      const len = 24 + rng() * 68;
+      const ang = baseAng + (rng() - 0.5) * 0.16;
+      const x0 = bx + ox;
+      const y0 = by + oy;
+      const x1 = x0 + Math.cos(ang) * len;
+      const y1 = y0 + Math.sin(ang) * len;
+      strokeRazorLine(x0, y0, (x0 + x1) * 0.5, (y0 + y1) * 0.5, x1, y1, 0.68, 0.22 + rng() * 0.26);
+    }
+  }
+
+  // 5. Microscopic dust specks
+  for (let i = 0; i < 180; i++) {
     const x = rng() * w;
     const y = h * (0.08 + rng() * 0.84);
-    const rad = 0.4 + rng() * 0.8;
-    const s = 0.05 + rng() * 0.1;
-    rCtx.fillStyle = `rgba(150,150,150,${s})`;
+    const rad = 0.65 + rng() * 0.9;
+    const s = 0.08 + rng() * 0.14;
+    rCtx.fillStyle = `rgba(190,190,190,${s})`;
     rCtx.beginPath();
     rCtx.arc(x, y, rad, 0, Math.PI * 2);
     rCtx.fill();
+    aCtx.fillStyle = `rgba(255,255,255,${s * 0.95})`;
+    aCtx.beginPath();
+    aCtx.arc(x, y, rad, 0, Math.PI * 2);
+    aCtx.fill();
   }
 
   const roughnessMap = new THREE.CanvasTexture(rCanvas);
   roughnessMap.wrapS = THREE.RepeatWrapping;
   roughnessMap.wrapT = THREE.ClampToEdgeWrapping;
+  roughnessMap.anisotropy = 8;
 
   const bumpMap = new THREE.CanvasTexture(bCanvas);
   bumpMap.wrapS = THREE.RepeatWrapping;
   bumpMap.wrapT = THREE.ClampToEdgeWrapping;
+  bumpMap.anisotropy = 8;
+
+  const scratchMap = new THREE.CanvasTexture(cCanvas);
+  scratchMap.colorSpace = THREE.SRGBColorSpace;
+  scratchMap.wrapS = THREE.RepeatWrapping;
+  scratchMap.wrapT = THREE.ClampToEdgeWrapping;
+  scratchMap.anisotropy = 8;
 
   const scratchAlphaMap = new THREE.CanvasTexture(aCanvas);
   scratchAlphaMap.wrapS = THREE.RepeatWrapping;
   scratchAlphaMap.wrapT = THREE.ClampToEdgeWrapping;
+  scratchAlphaMap.anisotropy = 8;
 
-  return { roughnessMap, bumpMap, scratchAlphaMap };
+  return { roughnessMap, bumpMap, scratchMap, scratchAlphaMap };
 }
 
 /**
