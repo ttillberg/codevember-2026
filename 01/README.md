@@ -2,19 +2,19 @@
 
 2026-11-01
 
-Endless recursive duplex origami architecture: fold a white-on-white pre-cut sheet into a matte black 3D house, project it 1:1 from your camera angle onto a brand-new different house underneath with zero transition, and repeat.
+Endless recursive duplex origami architecture: fold a white-on-white pre-cut sheet into a 3D paper house, project it live 1:1 from your camera angle onto a brand-new different house underneath with zero transition, and keep folding through an infinite chain of houses.
 
 ## Geometry & Projection
 
-- **6 watertight flat-net archetypes**: `gable`, `mansard` (with hinged skylight deck + French cornice lip), `spire` (4-petal needle bell tower with belfry louvers), `hip`, `shed`, and `flat` (recessed modernist parapet), each varying size, story count, punched windows/doors, rotation, and flat-folded kirigami details (awnings, 3D L-corner chimneys, dormers).
-- **Dynamic sheet & final-stage zoom-out**: larger houses automatically expand the underlying paper sheet & noon shadow frustum, holding the camera locked on swap (zero transition) and smoothly zooming out as the new house approaches its final folded stage.
-- **Zero-transition 1:1 camera projection**: live `HalfFloatType` MSAA capture projected strictly onto the new flat sheet at `fold = 0`, dissolving cleanly off the surrounding ground paper the moment you fold or orbit so the projection stays strictly on the paper house.
+- **Multi-archetype flat-net grammar**: `cross`, `ribbon`, `hex`, `oct`, `lwing`, `setback`, and multi-house wall-to-wall `village` composites with `gable` (classic, gambrel, stepped ladder, barrel vault, saltbox), `mansard`, `spire`, `hip`, `shed`, `flat`, `butterfly`, and `sawtooth` roofs, multi-story punched windows/mullions, and flat-folded kirigami awnings, chimneys, and roof dormers.
+- **Live dual-pass 115 BPM overlapping projection**: captures the outgoing house live into a `HalfFloatType` MSAA ring-buffer target during the overlap window so the next flat house starts folding up while carrying a live-moving projection of the previous house finishing its roof.
+- **Drastic above-ground perspective cuts**: seamlessly shifts between overhead plan, low horizon, inverted, and rolled viewpoints strictly above ground while staying 1:1 pixel-locked on the swap frame.
 
 ## Interaction
 
-- **Single-wave staggered fold**: press `Space` / click **Fold** to fold walls and roof together in one continuous staggered wave, or scrub the progress slider / click and drag individual flaps by hand.
-- **Keys**: `Space` / `Enter` fold wave, `F` toggle fold/unfold, `R` reset to Layer 1, `?` help.
-- **Query params**: `?clean`, `?fold=0..1`.
+- **Production view (`/`)**: shows the Fold experience only — click **Fold** (or press `Space`) to fold and project onto the next sheet, toggle **Auto** (`A`) for a continuous overlapping chain, or drag directly on flaps and orbit the camera.
+- **Debug workbench (`?debug`)**: unlocks all settings & knobs (`D`), the **Generations Catalog Grid** (`G` / `?debug&grid`), the infinite **Coastal Paper City** flyover (`C` / `?debug&city`), and controls help (`?`).
+- **Query params**: `?clean`, `?auto=1`, `?fold=0..1`, `?debug`.
 
 ```sh
 pnpm -C 01 test

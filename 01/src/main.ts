@@ -104,6 +104,7 @@ const cityHillsInput = document.getElementById('city-hills') as HTMLInputElement
 const cityHillsVal = document.getElementById('city-hills-val') as HTMLSpanElement;
 const cityFlyBtn = document.getElementById('city-fly-btn') as HTMLButtonElement;
 const cityFoldBtn = document.getElementById('city-fold-btn') as HTMLButtonElement;
+const citySmokeBtn = document.getElementById('city-smoke-btn') as HTMLButtonElement;
 const cityColorBtn = document.getElementById('city-color-btn') as HTMLButtonElement;
 const cityClose = document.getElementById('city-close') as HTMLButtonElement;
 const cityStatus = document.getElementById('city-status') as HTMLDivElement;
@@ -176,6 +177,7 @@ interface DebugSettings {
   glideOnFold: boolean;
   fadeProjOnFold: boolean;
   autoFold: boolean;
+  citySmoke: boolean;
 }
 
 const FACTORY_SETTINGS: DebugSettings = {
@@ -201,6 +203,7 @@ const FACTORY_SETTINGS: DebugSettings = {
   glideOnFold: false,
   fadeProjOnFold: true,
   autoFold: false,
+  citySmoke: false,
 };
 
 function loadSavedSettings(): DebugSettings {
@@ -273,6 +276,7 @@ function loadSavedSettings(): DebugSettings {
       if (typeof parsed.glideOnFold === 'boolean') s.glideOnFold = parsed.glideOnFold;
       if (typeof parsed.fadeProjOnFold === 'boolean') s.fadeProjOnFold = parsed.fadeProjOnFold;
       if (typeof parsed.autoFold === 'boolean') s.autoFold = parsed.autoFold;
+      if (typeof parsed.citySmoke === 'boolean') s.citySmoke = parsed.citySmoke;
     }
   } catch {
     // Ignore storage access errors (private mode, restricted iframe, etc.)
@@ -280,9 +284,13 @@ function loadSavedSettings(): DebugSettings {
   return s;
 }
 
-const initialSettings = loadSavedSettings();
-const showDebugTrigger = import.meta.env.DEV || params.has('settings') || params.has('debug');
-btnDebug.hidden = !showDebugTrigger;
+const isDebugMode = params.has('debug');
+const initialSettings = isDebugMode ? loadSavedSettings() : { ...FACTORY_SETTINGS };
+const topActionsEl = document.querySelector<HTMLDivElement>('.top-actions');
+const bottomRightEl = document.querySelector<HTMLDivElement>('.bottom-right');
+if (topActionsEl) topActionsEl.hidden = !isDebugMode;
+if (bottomRightEl) bottomRightEl.hidden = !isDebugMode;
+btnDebug.hidden = !isDebugMode;
 
 // URL query parameters override stored settings for clean captures / links without mutating storage
 let forcedModelSlot: number | null =
@@ -466,6 +474,7 @@ function syncDebugControls(): void {
 }
 
 function saveDebugSettings(): void {
+  if (!isDebugMode) return;
   try {
     const payload: DebugSettings = {
       model: forcedModelSlot,
@@ -490,6 +499,7 @@ function saveDebugSettings(): void {
       glideOnFold: debugGlideOnFoldEnabled,
       fadeProjOnFold: debugFadeProjEnabled,
       autoFold: autoFoldEnabled,
+      citySmoke: citySmokeEnabled,
     };
     window.localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(payload));
   } catch {
@@ -2483,6 +2493,8 @@ let cityHills =
     : 0.55;
 const pCityFly = params.get('cityFly');
 let cityFlyInitial = pCityFly !== null ? pCityFly !== '0' : true;
+const pCitySmoke = params.get('citySmoke');
+let citySmokeEnabled = pCitySmoke !== null ? pCitySmoke !== '0' && pCitySmoke !== 'false' : initialSettings.citySmoke;
 const pCityWave = params.get('cityWave');
 const cityWaveInitial: CityWaveMode =
   pCityWave === 'folded' || pCityWave === 'flat' || pCityWave === 'wave' ? pCityWave : 'wave';
@@ -2510,6 +2522,7 @@ function updateCityHud(stats?: CityViewStats | null): void {
   cityHillsVal.textContent = `${hPct}%`;
   const flying = st ? st.flying : cityFlyInitial;
   cityFlyBtn.setAttribute('aria-pressed', flying ? 'true' : 'false');
+  citySmokeBtn.setAttribute('aria-pressed', (st ? st.smokeEnabled : citySmokeEnabled) ? 'true' : 'false');
   cityColorBtn.setAttribute('aria-pressed', debugColorEnabled ? 'true' : 'false');
   const waveMode: CityWaveMode = st ? st.waveMode : cityWaveInitial;
   cityFoldBtn.textContent = waveMode === 'wave' ? 'Wave' : waveMode === 'folded' ? 'Folded' : 'Flat';
@@ -2567,6 +2580,7 @@ function loadCityView(): Promise<CityView> {
         const rect = canvas.getBoundingClientRect();
         cityView.resize(Math.max(1, rect.width), Math.max(1, rect.height));
         cityView.setColorEnabled(debugColorEnabled);
+        cityView.setSmokeEnabled(citySmokeEnabled);
         cityView.setWindowOpen(mixWinOpenMode, mixWinOpen);
         cityView.setFlying(cityFlyInitial);
         cityView.setWaveMode(cityWaveInitial);
@@ -2699,6 +2713,14 @@ cityFoldBtn.addEventListener('click', () => {
     const cur = cv.getWaveMode();
     const next: CityWaveMode = cur === 'wave' ? 'folded' : cur === 'folded' ? 'flat' : 'wave';
     cv.setWaveMode(next);
+    updateCityHud(cv.getStats());
+  });
+});
+citySmokeBtn.addEventListener('click', () => {
+  citySmokeEnabled = !citySmokeEnabled;
+  saveDebugSettings();
+  withCityView((cv) => {
+    cv.setSmokeEnabled(citySmokeEnabled);
     updateCityHud(cv.getStats());
   });
 });
@@ -2966,17 +2988,17 @@ window.addEventListener('keydown', (e) => {
   }
   if (isTyping) return;
 
-  if (e.key === '?' || (e.key === '/' && e.shiftKey)) {
+  if (isDebugMode && (e.key === '?' || (e.key === '/' && e.shiftKey))) {
     e.preventDefault();
     setHelpOpen(helpModal.hidden);
     return;
   }
-  if (e.key === 'g' || e.key === 'G') {
+  if (isDebugMode && (e.key === 'g' || e.key === 'G')) {
     e.preventDefault();
     setCatalogOpen(catalogModal.hidden);
     return;
   }
-  if (e.key === 'c' || e.key === 'C') {
+  if (isDebugMode && (e.key === 'c' || e.key === 'C')) {
     e.preventDefault();
     setCityOpen(!cityActive);
     return;
@@ -2993,6 +3015,14 @@ window.addEventListener('keydown', (e) => {
       withCityView((cv) => {
         const cur = cv.getWaveMode();
         cv.setWaveMode(cur === 'wave' ? 'folded' : cur === 'folded' ? 'flat' : 'wave');
+        updateCityHud(cv.getStats());
+      });
+    } else if (e.key === 's' || e.key === 'S') {
+      e.preventDefault();
+      citySmokeEnabled = !citySmokeEnabled;
+      saveDebugSettings();
+      withCityView((cv) => {
+        cv.setSmokeEnabled(citySmokeEnabled);
         updateCityHud(cv.getStats());
       });
     }
@@ -3014,7 +3044,7 @@ window.addEventListener('keydown', (e) => {
     }
   } else if (e.key === 'r' || e.key === 'R') {
     resetAll();
-  } else if ((e.key === 'd' || e.key === 'D') && showDebugTrigger) {
+  } else if ((e.key === 'd' || e.key === 'D') && isDebugMode) {
     setDebugOpen(debugPanel.hidden);
   }
 });
@@ -3056,12 +3086,12 @@ if (params.has('fold')) {
 syncCameraFromOrbit();
 warmupCutoutPipeline();
 syncUI();
-if (params.has('city')) {
+if (isDebugMode && params.has('city')) {
   setCityOpen(true, !params.has('instant'));
   if (params.has('instant')) {
     withCityView((cv) => cv.setCityFold(1, true));
   }
-} else if (params.has('grid') && !params.has('clean')) {
+} else if (isDebugMode && params.has('grid') && !params.has('clean')) {
   setCatalogOpen(true);
 }
 
@@ -3086,6 +3116,7 @@ if (params.has('city')) {
       cityFly: (flying: boolean) => void;
       cityAdvance: (deltaS: number) => void;
       citySetWaveMode: (mode: CityWaveMode) => void;
+      citySetSmoke: (enabled: boolean) => void;
       cityInfo: () => CityViewStats | null;
       setSpin: (enabled: boolean) => void;
       setCameraTrick: (mode: CameraTrickMode) => void;
@@ -3254,6 +3285,14 @@ if (params.has('city')) {
   citySetWaveMode(mode: CityWaveMode) {
     withCityView((cv) => {
       cv.setWaveMode(mode);
+      updateCityHud();
+    });
+  },
+  citySetSmoke(enabled: boolean) {
+    citySmokeEnabled = Boolean(enabled);
+    saveDebugSettings();
+    withCityView((cv) => {
+      cv.setSmokeEnabled(citySmokeEnabled);
       updateCityHud();
     });
   },

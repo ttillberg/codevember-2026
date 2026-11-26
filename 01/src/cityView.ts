@@ -33,17 +33,17 @@ const BACKDROP = '#f5f4f0';
 const SUN_DIR_WHITE = new THREE.Vector3(24, 42, 19).normalize();
 const SUN_DIR_COLOR = new THREE.Vector3(16, 46, 14).normalize();
 
-const MAX_LOD_PLOTS_PER_CHUNK = 28;
-const TIER0_ENTER = 132;
-const TIER0_EXIT = 148;
-const TIER1_ENTER = 185;
-const TIER1_EXIT = 202;
-const CHUNK_LOAD_RADIUS = 320;
-const CHUNK_UNLOAD_RADIUS = 355;
-const LOD0_ENTER_DIST = 98;
-const LOD0_EXIT_DIST = 114;
-const WAVE_NEAR = 8.0;
-const WAVE_FAR = 62.0;
+const MAX_LOD_PLOTS_PER_CHUNK = 64;
+const TIER0_ENTER = 136;
+const TIER0_EXIT = 152;
+const TIER1_ENTER = 195;
+const TIER1_EXIT = 212;
+const CHUNK_LOAD_RADIUS = 325;
+const CHUNK_UNLOAD_RADIUS = 360;
+const LOD0_ENTER_DIST = 84;
+const LOD0_EXIT_DIST = 98;
+const WAVE_NEAR = 18.0;
+const WAVE_FAR = 78.0;
 const MAX_SMOKE_PUFFS = 420;
 const CITY_FOG_DENSITY = 0.0052;
 
@@ -727,6 +727,7 @@ export interface CityViewStats {
   hills: number;
   flying: boolean;
   waveMode: CityWaveMode;
+  smokeEnabled: boolean;
   flightS: number;
   camPos: [number, number, number];
   activeChunks: number;
@@ -829,6 +830,10 @@ export class CityView {
     uCoastF: { value: new THREE.Vector4(0.0041, 0.0097, 0.0183, 0.0317) },
     uCoastP: { value: new THREE.Vector4(0, 0, 0, 0) },
   };
+  private readonly terrainUniforms = {
+    uBeachColor: { value: new THREE.Color('#e6d6b8') },
+    uWetSandColor: { value: new THREE.Color('#d2be98') },
+  };
 
   // Shared GPU fold-wave uniforms synced across every LOD1/LOD2 chunk material!
   private readonly sharedLodUniforms = {
@@ -844,6 +849,7 @@ export class CityView {
   private pickablesDirty = false;
 
   private colorEnabled = false;
+  private smokeEnabled = false;
   private winOpenMode: WindowOpenMode = 'random';
   private winOpenRatio = 0.35;
   private waveMode: CityWaveMode = 'wave';
@@ -933,11 +939,7 @@ export class CityView {
 
     this.scene.add(this.cityRoot);
 
-    this.terrainMat = new THREE.MeshStandardMaterial({
-      color: '#f5f4f0',
-      roughness: 0.95,
-      metalness: 0.0,
-    });
+    this.terrainMat = this.createCoastalTerrainMaterial();
 
     // Build shared OrigamiMaterials pool across ALL 8 architectural paper tones sharing ONE washi texture pair
     // with projection shaders disabled & single-pass duplex shaders (flat edges suppressed, 3× fewer draw calls!)
@@ -1373,11 +1375,11 @@ if (shadowVis < 0.999 && shadowVis < bayer4x4Shadow(gl_FragCoord.xy)) discard;`,
     const camY = this.curCamPos.y;
     const camZ = this.curCamPos.z;
 
-    // 1. Emit billowing REAL volumetric smoke wisps right where houses are folding up off the ground!
-    if (this.waveMode === 'wave') {
+    // 1. Emit billowing pure-white ground dust where houses fold up (only when Smoke setting is enabled!)
+    if (this.smokeEnabled && this.waveMode === 'wave') {
       for (const ch of this.chunks.values()) {
         if (ch.tier > 1) continue;
-        if (Math.hypot(ch.data.centerX - camX, ch.data.centerZ - camZ) > 165) continue;
+        if (Math.hypot(ch.data.centerX - camX, ch.data.centerZ - camZ) > 215) continue;
         for (const plot of ch.data.plots) {
           const f = evaluateFoldWave(plot.x, plot.z, plot.foldJitter, fx, fz, this.waveMode);
           if (f <= 0.03 || f >= 0.95) continue;
@@ -1512,6 +1514,76 @@ if (shadowVis < 0.999 && shadowVis < bayer4x4Shadow(gl_FragCoord.xy)) discard;`,
     }
   }
 
+  /**
+   * Sculpted coastal paper terrain with a warm sand-beige beach ribbon hugging the curving shoreline,
+   * subtle damp shoreline sand kissing the waves, and sandy beaches around offshore islets!
+   */
+  private createCoastalTerrainMaterial(): THREE.MeshStandardMaterial {
+    const mat = new THREE.MeshStandardMaterial({
+      color: '#f5f4f0',
+      roughness: 0.95,
+      metalness: 0.0,
+    });
+    mat.customProgramCacheKey = () => 'coastal-paper-terrain-beach-v1';
+    mat.onBeforeCompile = (shader) => {
+      shader.uniforms.uCoastA = this.seaUniforms.uCoastA;
+      shader.uniforms.uCoastF = this.seaUniforms.uCoastF;
+      shader.uniforms.uCoastP = this.seaUniforms.uCoastP;
+      shader.uniforms.uBeachColor = this.terrainUniforms.uBeachColor;
+      shader.uniforms.uWetSandColor = this.terrainUniforms.uWetSandColor;
+
+      shader.vertexShader = shader.vertexShader
+        .replace(
+          '#include <common>',
+          `#include <common>
+varying vec3 vTerrainWorldPos;`,
+        )
+        .replace(
+          '#include <begin_vertex>',
+          `#include <begin_vertex>
+vTerrainWorldPos = (modelMatrix * vec4(transformed, 1.0)).xyz;`,
+        );
+
+      shader.fragmentShader = shader.fragmentShader
+        .replace(
+          '#include <common>',
+          `#include <common>
+uniform vec4 uCoastA;
+uniform vec4 uCoastF;
+uniform vec4 uCoastP;
+uniform vec3 uBeachColor;
+uniform vec3 uWetSandColor;
+varying vec3 vTerrainWorldPos;
+float evalTerrainCoastX(float z) {
+  return uCoastA.x * sin(z * uCoastF.x + uCoastP.x)
+       + uCoastA.y * sin(z * uCoastF.y + uCoastP.y)
+       + uCoastA.z * cos(z * uCoastF.z + uCoastP.z)
+       + uCoastA.w * sin(z * uCoastF.w + uCoastP.w);
+}`,
+        )
+        .replace(
+          '#include <color_fragment>',
+          `#include <color_fragment>
+float tCoastX = evalTerrainCoastX(vTerrainWorldPos.z);
+float tInland = vTerrainWorldPos.x - tCoastX;
+// Warm beige paper beach extending cleanly from water edge to coastal promenade (slightly wider in sheltered coves!)
+float coveWiden = smoothstep(-6.0, 22.0, tCoastX) * 1.8 + sin(vTerrainWorldPos.z * 0.055) * 0.55;
+float mainBeach = (1.0 - smoothstep(5.4 + coveWiden * 0.35, 7.6 + coveWiden, tInland))
+                * smoothstep(-4.5, -0.2, tInland);
+// Sandy beige shore around offshore paper islets too!
+float isletBeach = step(tInland, -6.0) * (1.0 - smoothstep(0.45, 2.2, vTerrainWorldPos.y));
+float beachMask = clamp(max(mainBeach, isletBeach), 0.0, 1.0);
+// Damp darker sand kiss right where the blue paper sea laps the beach
+float wetMask = (1.0 - smoothstep(0.02, 0.34, vTerrainWorldPos.y))
+              * smoothstep(-1.4, 0.04, vTerrainWorldPos.y)
+              * beachMask;
+vec3 sandRgb = mix(uBeachColor, uWetSandColor, wetMask * 0.72);
+diffuseColor.rgb = mix(diffuseColor.rgb, sandRgb, beachMask);`,
+        );
+    };
+    return mat;
+  }
+
   private createPaperSeaMaterial(): THREE.MeshStandardMaterial {
     const mat = new THREE.MeshStandardMaterial({
       color: '#ffffff',
@@ -1578,17 +1650,17 @@ if (shadowVis < 0.999 && shadowVis < bayer4x4Shadow(gl_FragCoord.xy)) discard;`,
           float foamLine = smoothstep(0.76, 0.95, rippleWave) * exp(-offshore * 0.052) * smoothstep(0.0, 1.1, offshore);
           float shoreEdge = exp(-offshore * 0.45) * smoothstep(-0.6, 0.3, vSeaDistCoast);
 
-          // White-on-white museum paper sea: sculptural cool silver-parchment facets with crisp white shoreline rings
-          vec3 whiteDeep = vec3(0.565, 0.602, 0.618);
-          vec3 whiteShallow = vec3(0.695, 0.722, 0.720);
-          vec3 whiteFoam = vec3(0.955, 0.950, 0.928);
+          // Tactile Japanese origami paper-blue sea in White Mode: serene matte sky/cerulean paper with crisp white wave rings!
+          vec3 whiteDeep = vec3(0.275, 0.485, 0.665);
+          vec3 whiteShallow = vec3(0.445, 0.655, 0.775);
+          vec3 whiteFoam = vec3(0.960, 0.955, 0.938);
           vec3 whiteSea = mix(whiteDeep, whiteShallow, shallow);
           whiteSea = mix(whiteSea, whiteFoam, clamp(foamLine * 0.80 + shoreEdge * 0.88, 0.0, 1.0));
 
-          // Architectural Coastal Color Mode: serene Nordic/Mediterranean slate-cerulean paper sea
-          vec3 colDeep = vec3(0.245, 0.405, 0.495);
-          vec3 colShallow = vec3(0.415, 0.585, 0.625);
-          vec3 colFoam = vec3(0.930, 0.924, 0.895);
+          // Architectural Coastal Color Mode: richer Nordic/Mediterranean cobalt-cerulean paper sea
+          vec3 colDeep = vec3(0.185, 0.390, 0.575);
+          vec3 colShallow = vec3(0.355, 0.575, 0.695);
+          vec3 colFoam = vec3(0.945, 0.938, 0.912);
           vec3 colorSea = mix(colDeep, colShallow, shallow);
           colorSea = mix(colorSea, colFoam, clamp(foamLine * 0.84 + shoreEdge * 0.92, 0.0, 1.0));
 
@@ -1756,6 +1828,26 @@ if (shadowVis < 0.999 && shadowVis < bayer4x4Shadow(gl_FragCoord.xy)) discard;`,
     this.applyLightingAndColors();
   }
 
+  public isSmokeEnabled(): boolean {
+    return this.smokeEnabled;
+  }
+
+  public setSmokeEnabled(enabled: boolean): void {
+    const next = Boolean(enabled);
+    if (this.smokeEnabled === next) return;
+    this.smokeEnabled = next;
+    if (!next) {
+      // Immediately clear folding dust puffs while preserving subtle horizon coastal mist
+      for (let i = 0; i < MAX_SMOKE_PUFFS; i++) {
+        if (!this.smokePuffs[i].isFog) this.smokePuffs[i].active = false;
+      }
+      this.updateSmoke(0);
+    } else if (this.waveMode === 'wave') {
+      this.prewarmWaveSmoke();
+    }
+    this.emitStats();
+  }
+
   public setSpinEnabled(_enabled: boolean): void {
     // Retained for API symmetry; coastal flight replaces stationary turntable spin
   }
@@ -1868,11 +1960,13 @@ if (shadowVis < 0.999 && shadowVis < bayer4x4Shadow(gl_FragCoord.xy)) discard;`,
       this.sun.intensity = 1.24;
       this.fill.intensity = 0.24;
       this.terrainMat.color.set('#f3f0e8');
+      this.terrainUniforms.uBeachColor.value.set('#e5d2ae');
+      this.terrainUniforms.uWetSandColor.value.set('#cbb286');
       this.streetMat.color.set('#e5e1d7');
-      this.promenadeMat.color.set('#dfdace');
+      this.promenadeMat.color.set('#e2d6bf');
       this.plazaMat.color.set('#e9e6dd');
       this.plinthMat.color.set('#ece8df');
-      this.pierMat.color.set('#dfd6c5');
+      this.pierMat.color.set('#e2d5bc');
       this.treeMat.color.set('#a2b59c');
       this.boatMat.color.set('#fcfbf7');
       const len = ARCHITECTURAL_PAPER_PALETTE.length;
@@ -1895,11 +1989,13 @@ if (shadowVis < 0.999 && shadowVis < bayer4x4Shadow(gl_FragCoord.xy)) discard;`,
       this.sun.intensity = 2.02;
       this.fill.intensity = 0.28;
       this.terrainMat.color.set('#f5f4f0');
+      this.terrainUniforms.uBeachColor.value.set('#e7d8bc');
+      this.terrainUniforms.uWetSandColor.value.set('#d2be99');
       this.streetMat.color.set('#e7e4dc');
-      this.promenadeMat.color.set('#e2dfd7');
+      this.promenadeMat.color.set('#e5dac5');
       this.plazaMat.color.set('#eae7df');
       this.plinthMat.color.set('#efede6');
-      this.pierMat.color.set('#eae7df');
+      this.pierMat.color.set('#e6dcc9');
       this.treeMat.color.set('#ebe9e2');
       this.boatMat.color.set('#fbfaf6');
       for (const m of this.matPool) {
@@ -2265,6 +2361,8 @@ if (shadowVis < 0.999 && shadowVis < bayer4x4Shadow(gl_FragCoord.xy)) discard;`,
 
     const pickables: THREE.Object3D[] = [plinth];
     rig.root.rotation.y = 0;
+    rig.root.scale.setScalar(plot.scale);
+    rig.root.position.y *= plot.scale;
     rig.root.traverse((obj) => {
       if (obj instanceof THREE.Mesh) {
         obj.userData.cityPlotId = plot.id;
@@ -2397,10 +2495,10 @@ if (shadowVis < 0.999 && shadowVis < bayer4x4Shadow(gl_FragCoord.xy)) discard;`,
     const czCenter = Math.floor(anchorZ / CITY_CHUNK_SIZE);
     const cRad = Math.ceil(CHUNK_LOAD_RADIUS / CITY_CHUNK_SIZE);
 
-    // Forward-biased view anchor so Tier 0 chunks & LOD0 rigs upgrade far ahead in the mist,
-    // strictly BEFORE the fold wave reaches any house (`fold === 0`), eliminating mid-fold pop-in!
-    const viewAnchorX = this.flying ? camX * 0.35 + this.curLookAt.x * 0.65 : this.curTarget.x;
-    const viewAnchorZ = this.flying ? camZ - 58 : this.curTarget.z;
+    // Forward-biased view anchor hugging the coastal corridor so Tier 0 & LOD0 focus full ×4 detail
+    // right along the coastline ahead of the camera strictly BEFORE each house begins folding!
+    const viewAnchorX = this.flying ? camX * 0.30 + this.curLookAt.x * 0.70 : this.curTarget.x;
+    const viewAnchorZ = this.flying ? camZ - 64 : this.curTarget.z;
 
     const missing: Array<{ cx: number; cz: number; dist: number; tier: 0 | 1 | 2 }> = [];
     for (let dz = -cRad; dz <= cRad; dz++) {
@@ -2482,7 +2580,8 @@ if (shadowVis < 0.999 && shadowVis < bayer4x4Shadow(gl_FragCoord.xy)) discard;`,
       builtCount++;
     }
 
-    // 3. Wave-ahead LOD0 OrigamiHouseRig upgrades: mount every building BEFORE `fold > 0` while still flat!
+    // 3. Wave-ahead coastal LOD0 upgrades: mount every visible coastal house strictly BEFORE `fold > 0`
+    //    while keeping far-inland offscreen hillside plots in lightweight 1-draw-call GPU LOD1!
     const fx = this.waveFocus.x;
     const fz = this.waveFocus.y;
     const isWave = this.waveMode === 'wave';
@@ -2491,25 +2590,27 @@ if (shadowVis < 0.999 && shadowVis < bayer4x4Shadow(gl_FragCoord.xy)) discard;`,
       if (ch.tier !== 0) continue;
       for (const plot of ch.data.plots) {
         const d = Math.hypot(plot.x - viewAnchorX, plot.z - viewAnchorZ);
-        const behindCam = this.flying && plot.z > camZ + 12;
+        const behindCam = this.flying && plot.z > camZ + 10;
+        const tooFarInland = this.flying && plot.x > viewAnchorX + 74;
         const wMetric = isWave ? fz - plot.z + 0.24 * Math.abs(plot.x - fx) + plot.foldJitter : d;
-        const nearWave = isWave && wMetric < WAVE_FAR + 18;
+        const wantLod0 = isWave ? wMetric < WAVE_FAR + 16 && d < 114 && !tooFarInland : d < LOD0_ENTER_DIST && !tooFarInland;
+        const keepLod0 = isWave ? wMetric < WAVE_FAR + 28 && d < 128 && (!this.flying || plot.x <= viewAnchorX + 86) : d < LOD0_EXIT_DIST;
         const mounted = ch.lod0Map.has(plot.index);
-        if (mounted && (behindCam || (d > LOD0_EXIT_DIST && !nearWave))) {
+        if (mounted && (behindCam || !keepLod0)) {
           this.unmountLod0Building(ch, plot.index);
-        } else if (!mounted && !behindCam && (d < LOD0_ENTER_DIST || nearWave)) {
+        } else if (!mounted && !behindCam && wantLod0) {
           lod0Candidates.push({
             ch,
             plot,
             prio: isWave ? wMetric : d,
-            urgent: isWave && wMetric < WAVE_FAR + 14,
+            urgent: isWave && wMetric < WAVE_FAR + 12,
           });
         }
       }
     }
 
     lod0Candidates.sort((a, b) => a.prio - b.prio);
-    const maxRigBuilds = syncBurst ? 140 : 10;
+    const maxRigBuilds = syncBurst ? 220 : 12;
     let rigsBuilt = 0;
     for (const item of lod0Candidates) {
       if (!item.urgent) {
@@ -2693,6 +2794,7 @@ if (shadowVis < 0.999 && shadowVis < bayer4x4Shadow(gl_FragCoord.xy)) discard;`,
       hills: this.world?.hills ?? 0.55,
       flying: this.flying,
       waveMode: this.waveMode,
+      smokeEnabled: this.smokeEnabled,
       flightS: Math.round(this.flightS * 10) / 10,
       camPos: [
         Math.round(this.curCamPos.x * 10) / 10,

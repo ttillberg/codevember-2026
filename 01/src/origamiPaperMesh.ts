@@ -810,6 +810,7 @@ function punchWallOpenings(
   def: PanelNetDef,
   fallbackSpec: HouseNetSpec,
   fallbackRoofRise: number,
+  embedMuntinsInWall = false,
 ): PunchedWallResult {
   const features: WallHingedFeature[] = [];
   const hingedHoleIndices = new Set<number>();
@@ -1041,7 +1042,8 @@ function punchWallOpenings(
       if (clampedW < 2.4 || clampedH < 2.8) continue;
 
       // 1. Hinged kirigami windows (`awning` top-hung from above, `shutters`, `casement`, `louver`)!
-      const canHinge = openingMode !== 'punched' && clampedW >= 2.8 && clampedH >= 3.2;
+      // In City mode (`embedMuntinsInWall`), punch multi-pane muntin grids directly into the wall mesh (0 extra draw calls!)
+      const canHinge = !embedMuntinsInWall && openingMode !== 'punched' && clampedW >= 2.8 && clampedH >= 3.2;
       if (canHinge) {
         if ((openingMode === 'awning' || openingMode === 'louver') && (style === 'arched' || style === 'lancet') && clampedH >= 5.2) {
           // Authentic arched/lancet top-hung window: open curved fanlight above a horizontal paper transom bar,
@@ -1244,7 +1246,7 @@ export interface PanelVisual {
   isMountain: boolean;
   pivot: THREE.Group;
   mesh: THREE.Mesh;
-  foldLine: THREE.Line;
+  foldLine?: THREE.Line;
   hingeAxis3D: THREE.Vector3;
   targetAngle: number;
 }
@@ -1290,7 +1292,7 @@ export function buildOrigamiHouseRig(
 ): OrigamiHouseRig {
   const isCityDetail = detailLevel === 'city';
   const useSingleGroup = isCityDetail && Boolean(mats.duplexSlots);
-  const curveSegs = isCityDetail ? 5 : 14;
+  const curveSegs = isCityDetail ? 9 : 14;
   const { spec, roofRise } = net;
   const root = new THREE.Group();
   root.position.y = PAPER_THICK;
@@ -1345,7 +1347,7 @@ export function buildOrigamiHouseRig(
   const wallHingedByPanel = new Map<PanelId, WallHingedFeature[]>();
   for (const def of net.panels) {
     const shape = makeLocalShape(def.poly, def.hingeOrigin[0], def.hingeOrigin[1]);
-    const punched = punchWallOpenings(shape, def, spec, roofRise);
+    const punched = punchWallOpenings(shape, def, spec, roofRise, isCityDetail);
     if (punched.features.length > 0) {
       wallHingedByPanel.set(def.id, punched.features);
     }
@@ -1494,18 +1496,20 @@ export function buildOrigamiHouseRig(
     pivot.add(mesh);
 
     const isMountain = Boolean(def.isMountain);
-    let foldLine: THREE.Line;
-    if (def.crease) {
-      const [ca, cb] = def.crease;
-      foldLine = makeFoldLine(
-        [(ca[0] - def.hingeOrigin[0]) * MM, 0.004, -(ca[1] - def.hingeOrigin[1]) * MM],
-        [(cb[0] - def.hingeOrigin[0]) * MM, 0.004, -(cb[1] - def.hingeOrigin[1]) * MM],
-        isMountain,
-      );
-    } else {
-      foldLine = makeFoldLine([0, 0.004, 0], [0, 0.004, 0], isMountain);
+    let foldLine: THREE.Line | undefined;
+    if (!isCityDetail) {
+      if (def.crease) {
+        const [ca, cb] = def.crease;
+        foldLine = makeFoldLine(
+          [(ca[0] - def.hingeOrigin[0]) * MM, 0.004, -(ca[1] - def.hingeOrigin[1]) * MM],
+          [(cb[0] - def.hingeOrigin[0]) * MM, 0.004, -(cb[1] - def.hingeOrigin[1]) * MM],
+          isMountain,
+        );
+      } else {
+        foldLine = makeFoldLine([0, 0.004, 0], [0, 0.004, 0], isMountain);
+      }
+      pivot.add(foldLine);
     }
-    pivot.add(foldLine);
 
     groupByPanel.set(def.id, pivot);
     const hingeAxis3D = new THREE.Vector3(def.hingeAxis[0], 0, -def.hingeAxis[1]).normalize();
@@ -2382,14 +2386,16 @@ export function buildOrigamiHouseRig(
     const effective = Math.max(0, Math.min(pv.targetAngle + 0.04, baseAngle + peekRad));
     pv.pivot.quaternion.setFromAxisAngle(pv.hingeAxis3D, effective);
 
-    pv.foldLine.material = hovered
-      ? mats.foldLineActive
-      : pv.isMountain
-        ? mats.foldLineMountain
-        : mats.foldLine;
-    // Keep fold lines hidden on untouched flat projected sheets until this panel actually begins raising!
-    const lineActive = curRelief > 0.38 ? fold01 < 0.96 : fold01 > 0.018 && fold01 < 0.96;
-    pv.foldLine.visible = linesAllowed && (lineActive || hovered);
+    if (pv.foldLine) {
+      pv.foldLine.material = hovered
+        ? mats.foldLineActive
+        : pv.isMountain
+          ? mats.foldLineMountain
+          : mats.foldLine;
+      // Keep fold lines hidden on untouched flat projected sheets until this panel actually begins raising!
+      const lineActive = curRelief > 0.38 ? fold01 < 0.96 : fold01 > 0.018 && fold01 < 0.96;
+      pv.foldLine.visible = linesAllowed && (lineActive || hovered);
+    }
 
     // Shadows ONLY appear on a panel once it genuinely starts lifting off the flat plane!
     const raised = fold01 > 0.065;
@@ -2417,7 +2423,7 @@ export function buildOrigamiHouseRig(
   const setFoldLinesVisible = (visible: boolean) => {
     linesAllowed = visible;
     panels.forEach((pv) => {
-      if (!visible) pv.foldLine.visible = false;
+      if (pv.foldLine && !visible) pv.foldLine.visible = false;
     });
   };
 

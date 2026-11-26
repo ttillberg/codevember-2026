@@ -30,7 +30,7 @@
       </div>
     </div>
 
-    <div class="top-actions" aria-label="Sheet actions">
+    <div class="top-actions" aria-label="Sheet actions" hidden>
       <button id="btn-next" class="icon-btn" title="Fold house (Space)" aria-label="Fold house"></button>
       <button id="btn-reset" class="icon-btn" title="Reset to Layer 1 (R)" aria-label="Reset to Layer 1"></button>
       <button id="btn-catalog" class="icon-btn" title="Generations grid (G)" aria-label="Generations grid" aria-expanded="false"></button>
@@ -49,7 +49,7 @@
       </label>
     </div>
 
-    <div class="bottom-right">
+    <div class="bottom-right" hidden>
       <span id="status-label" class="status-label" aria-live="polite">Click Fold or drag any flap</span>
       <button id="btn-debug" class="icon-btn debug-trigger" type="button" title="Debug panel (D)" aria-label="Debug panel" aria-expanded="false" hidden></button>
     </div>
@@ -276,6 +276,7 @@
         </label>
         <button id="city-fly-btn" class="cat-pill-btn" type="button" aria-pressed="true" title="Curved coastal flyover (Space)">Fly</button>
         <button id="city-fold-btn" class="cat-pill-btn" type="button" title="Cycle fold mode: Wave / Folded / Flat (W)">Wave</button>
+        <button id="city-smoke-btn" class="cat-pill-btn" type="button" aria-pressed="false" title="Toggle folding dust smoke (S)">Smoke</button>
         <button id="city-color-btn" class="cat-pill-btn" type="button" aria-pressed="false">Color</button>
         <button id="city-close" class="help-close" type="button" aria-label="Close city view">×</button>
       </div>

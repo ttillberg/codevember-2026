@@ -131,6 +131,8 @@ export interface CityBuildingPlot {
   /** Unrotated local `(W, D)` footprint extents in world units */
   footprintW: number;
   footprintD: number;
+  /** Uniform architectural miniature scale applied to footprint, LOD massing, and LOD0 origami rig */
+  scale: number;
   /** Simplified architectural massing wings for GPU LOD1/LOD2 rendering */
   wings: CityWingMassing[];
   /** Deterministic paper palette index (`0..7`) */
@@ -331,8 +333,8 @@ export function createTerrainField(seed: number, hills01: number): CityTerrainFi
       return seaDepth;
     }
 
-    // Crisp architectural paper quay / seawall step right at the water's edge
-    const quayRise = smoothstep(0, 2.2, d) * 0.82;
+    // Gently sloping sandy paper beach rising cleanly from the water's edge to the waterfront promenade!
+    const quayRise = smoothstep(0, 6.2, d) * 0.84;
     if (hills <= 1e-4) {
       return quayRise;
     }
@@ -346,8 +348,8 @@ export function createTerrainField(seed: number, hills01: number): CityTerrainFi
     const n3 = valueNoise2D(x * 0.064 + 23.5, z * 0.064 - 14.8, nSeed3);
 
     const fbm = n1 * 0.62 + n2 * 0.27 + n3 * 0.11;
-    // Keep the waterfront promenade & first row of harbor houses gently sloped before rolling up into coastal hills!
-    const coastalTerrace = smoothstep(4.5, 26, d) * (0.36 + headlandBoost * 0.85);
+    // Keep the sandy beach, waterfront promenade & first row of harbor houses gently sloped before rolling up into hills!
+    const coastalTerrace = smoothstep(7.5, 29, d) * (0.36 + headlandBoost * 0.85);
     const inlandRamp = smoothstep(14, 108, d);
     const relief =
       (coastalTerrace * (0.48 + fbm * 0.72) + inlandRamp * (0.44 + fbm * 1.28 + headlandBoost * 0.45)) *
@@ -621,24 +623,29 @@ function generateChunkStreets(
     streets.push({ id, kind, width, points: pts });
   };
 
-  // 1. Continuous Waterfront Corniche / Coastal Promenade running seamlessly along `coastX(z) + 3.8`!
-  const promPts: V2[] = [];
-  const zSteps = 18;
-  for (let i = 0; i <= zSteps; i++) {
-    const z = z0 - 2 + (i / zSteps) * (CITY_CHUNK_SIZE + 4);
-    const px = terrain.coastX(z) + 3.8;
-    if (px >= x0 - pad && px <= x1 + pad) {
-      promPts.push([px, z]);
-    } else if (promPts.length >= 2) {
-      commitRun('promenade', 2.85, promPts.slice());
-      promPts.length = 0;
-    } else {
-      promPts.length = 0;
+  // 1. Intimate Waterfront Corniche + Parallel Terraced Coastal Back-Alleys behind the warm sand beach!
+  const emitCoastalRibbon = (offsetInland: number, kind: CityStreet['kind'], width: number) => {
+    const ribbonPts: V2[] = [];
+    const zSteps = 18;
+    for (let i = 0; i <= zSteps; i++) {
+      const z = z0 - 2 + (i / zSteps) * (CITY_CHUNK_SIZE + 4);
+      const px = terrain.coastX(z) + offsetInland;
+      if (px >= x0 - pad && px <= x1 + pad) {
+        ribbonPts.push([px, z]);
+      } else if (ribbonPts.length >= 2) {
+        commitRun(kind, width, ribbonPts.slice());
+        ribbonPts.length = 0;
+      } else {
+        ribbonPts.length = 0;
+      }
     }
-  }
-  if (promPts.length >= 2) {
-    commitRun('promenade', 2.85, promPts);
-  }
+    if (ribbonPts.length >= 2) {
+      commitRun(kind, width, ribbonPts);
+    }
+  };
+  emitCoastalRibbon(6.4, 'promenade', 1.7);
+  emitCoastalRibbon(13.4, 'lane', 1.0);
+  emitCoastalRibbon(21.0, 'street', 1.18);
 
   // 2. Deterministic Coastal Piers & Folded Paper Sailboats in sheltered coves!
   const coastRng = makeRng(hash2u32(cx, cz, seed * 29 + 503));
@@ -652,14 +659,14 @@ function generateChunkStreets(
         const nx = -1 / Math.hypot(1, slope);
         const nz = slope / Math.hypot(1, slope);
         const yaw = Math.atan2(nx, nz);
-        const length = coastRng.range(8.5, 14.5);
+        const length = coastRng.range(10.5, 16.5);
         piers.push({
-          x: edgeX + 2.2,
+          x: edgeX + 5.1,
           z: pz,
           yaw,
           length,
-          width: coastRng.range(1.75, 2.35),
-          deckY: 0.78,
+          width: coastRng.range(1.45, 1.95),
+          deckY: 0.80,
         });
       }
     }
@@ -693,20 +700,20 @@ function generateChunkStreets(
     return { streets, plazas, rawSegments, piers, boats };
   }
 
-  // 3. District-specific deterministic infinite street topology!
+  // 3. District-specific deterministic infinite street topology (narrow intimate European/Japanese coastal blocks!)
   if (districtStyle === 'organic') {
-    // Warped jittered lattice (cell = 22) -> organically curved hillside streets & hilltop plazas, ZERO seams!
-    const CELL = 22;
+    // Tight warped lattice (cell = 13.5) -> intimate curved coastal lanes & pocket plazas, ZERO seams!
+    const CELL = 13.5;
     const nodePos = (ix: number, iz: number): V2 => {
-      const jx = (hash2i(ix, iz, seed * 17 + 31) - 0.5) * 7.8;
-      const jz = (hash2i(ix, iz, seed * 17 + 97) - 0.5) * 7.8;
+      const jx = (hash2i(ix, iz, seed * 17 + 31) - 0.5) * 4.4;
+      const jz = (hash2i(ix, iz, seed * 17 + 97) - 0.5) * 4.4;
       return [ix * CELL + jx, iz * CELL + jz];
     };
 
-    const ix0 = Math.floor((x0 - 12) / CELL);
-    const ix1 = Math.ceil((x1 + 12) / CELL);
-    const iz0 = Math.floor((z0 - 12) / CELL);
-    const iz1 = Math.ceil((z1 + 12) / CELL);
+    const ix0 = Math.floor((x0 - 10) / CELL);
+    const ix1 = Math.ceil((x1 + 10) / CELL);
+    const iz0 = Math.floor((z0 - 10) / CELL);
+    const iz1 = Math.ceil((z1 + 10) / CELL);
 
     const emitCurvedEdge = (a: V2, b: V2, edgeHash: number, isAve: boolean) => {
       const midX = (a[0] + b[0]) * 0.5;
@@ -714,10 +721,10 @@ function generateChunkStreets(
       const dx = b[0] - a[0];
       const dz = b[1] - a[1];
       const len = Math.hypot(dx, dz) || 1;
-      const bow = (edgeHash - 0.5) * Math.min(5.2, len * 0.24);
+      const bow = (edgeHash - 0.5) * Math.min(3.4, len * 0.22);
       const ctrl: V2 = [midX + (-dz / len) * bow, midZ + (dx / len) * bow];
       const curvePts: V2[] = [];
-      const steps = 6;
+      const steps = 5;
       for (let k = 0; k <= steps; k++) {
         const t = k / steps;
         const inv = 1 - t;
@@ -726,44 +733,44 @@ function generateChunkStreets(
           inv * inv * a[1] + 2 * inv * t * ctrl[1] + t * t * b[1],
         ]);
       }
-      const clipped = clipPolylineToLandAndBox(curvePts, terrain, 3.6, x0 - pad, x1 + pad, z0 - pad, z1 + pad);
-      const kind: CityStreet['kind'] = isAve ? 'avenue' : edgeHash > 0.78 ? 'lane' : 'street';
-      const width = kind === 'avenue' ? 2.75 : kind === 'street' ? 2.15 : 1.65;
+      const clipped = clipPolylineToLandAndBox(curvePts, terrain, 6.2, x0 - pad, x1 + pad, z0 - pad, z1 + pad);
+      const kind: CityStreet['kind'] = isAve ? 'avenue' : edgeHash > 0.72 ? 'lane' : 'street';
+      const width = kind === 'avenue' ? 1.62 : kind === 'street' ? 1.18 : 0.86;
       for (const run of clipped) commitRun(kind, width, run);
     };
 
     for (let ix = ix0; ix <= ix1; ix++) {
       for (let iz = iz0; iz <= iz1; iz++) {
         const p = nodePos(ix, iz);
-        // Occasional hilltop / neighborhood plazas at inland intersections
+        // Occasional intimate hilltop / neighborhood plazas at inland intersections
         if (
           p[0] >= x0 + 3 &&
           p[0] <= x1 - 3 &&
           p[1] >= z0 + 3 &&
           p[1] <= z1 - 3 &&
           terrain.signedInland(p[0], p[1]) > 14 &&
-          hash2i(ix, iz, seed * 53 + 19) > 0.84
+          hash2i(ix, iz, seed * 53 + 19) > 0.88
         ) {
-          plazas.push({ x: p[0], z: p[1], radius: 3.3 + hash2i(ix, iz, seed + 7) * 1.3 });
+          plazas.push({ x: p[0], z: p[1], radius: 2.0 + hash2i(ix, iz, seed + 7) * 0.8 });
         }
 
         const hE = hash2i(ix, iz, seed * 101 + 11);
-        if (hE > 0.16) {
+        if (hE > 0.14) {
           emitCurvedEdge(p, nodePos(ix + 1, iz), hE, iz % 3 === 0);
         }
         const hN = hash2i(ix, iz, seed * 101 + 43);
-        if (hN > 0.16) {
+        if (hN > 0.14) {
           emitCurvedEdge(p, nodePos(ix, iz + 1), hN, ix % 3 === 0);
         }
       }
     }
   } else if (districtStyle === 'grid') {
-    // Deterministic rotated coastal grid with historic corner jitter & periodic diagonal boulevards!
+    // Tight deterministic rotated coastal townhouse grid with narrow alleys!
     const rot = (hash1i(7, seed + 41) - 0.5) * 0.42;
     const c = Math.cos(rot);
     const s = Math.sin(rot);
-    const U_STEP = 19.5;
-    const V_STEP = 21.0;
+    const U_STEP = 12.0;
+    const V_STEP = 13.0;
 
     const toUV = (wx: number, wz: number): V2 => [wx * c + wz * s, -wx * s + wz * c];
     const toWorld = (u: number, v: number): V2 => [u * c - v * s, u * s + v * c];
@@ -780,8 +787,8 @@ function generateChunkStreets(
     const vMax = Math.ceil(Math.max(...corners.map((p) => p[1])) / V_STEP) + 1;
 
     const gNode = (iu: number, iv: number): V2 => {
-      const ju = (hash2i(iu, iv, seed * 31 + 5) - 0.5) * 1.4;
-      const jv = (hash2i(iu, iv, seed * 31 + 19) - 0.5) * 1.4;
+      const ju = (hash2i(iu, iv, seed * 31 + 5) - 0.5) * 0.85;
+      const jv = (hash2i(iu, iv, seed * 31 + 19) - 0.5) * 0.85;
       return toWorld(iu * U_STEP + ju, iv * V_STEP + jv);
     };
 
@@ -794,51 +801,51 @@ function generateChunkStreets(
           a[1] >= z0 + 4 &&
           a[1] <= z1 - 4 &&
           terrain.signedInland(a[0], a[1]) > 14 &&
-          iu % 3 === 0 &&
-          iv % 3 === 0
+          iu % 4 === 0 &&
+          iv % 4 === 0
         ) {
-          plazas.push({ x: a[0], z: a[1], radius: 3.7 });
+          plazas.push({ x: a[0], z: a[1], radius: 2.3 });
         }
 
         const bU = gNode(iu + 1, iv);
         const isAveU = ((iv % 3) + 3) % 3 === 0;
-        for (const run of clipPolylineToLandAndBox([a, bU], terrain, 3.6, x0 - pad, x1 + pad, z0 - pad, z1 + pad)) {
-          commitRun(isAveU ? 'avenue' : 'street', isAveU ? 2.8 : 2.15, run);
+        for (const run of clipPolylineToLandAndBox([a, bU], terrain, 6.2, x0 - pad, x1 + pad, z0 - pad, z1 + pad)) {
+          commitRun(isAveU ? 'avenue' : 'street', isAveU ? 1.62 : 1.18, run);
         }
 
         const bV = gNode(iu, iv + 1);
         const isAveV = ((iu % 3) + 3) % 3 === 0;
-        for (const run of clipPolylineToLandAndBox([a, bV], terrain, 3.6, x0 - pad, x1 + pad, z0 - pad, z1 + pad)) {
-          commitRun(isAveV ? 'avenue' : 'street', isAveV ? 2.8 : 2.15, run);
+        for (const run of clipPolylineToLandAndBox([a, bV], terrain, 6.2, x0 - pad, x1 + pad, z0 - pad, z1 + pad)) {
+          commitRun(isAveV ? 'avenue' : 'street', isAveV ? 1.62 : 1.18, run);
         }
       }
     }
   } else {
-    // Radial chain of deterministic star-ring hilltop acropolis hubs (`HUB_STEP = 84`)!
-    const HUB_STEP = 84;
-    const hx0 = Math.floor((x0 - 52) / HUB_STEP);
-    const hx1 = Math.ceil((x1 + 52) / HUB_STEP);
-    const hz0 = Math.floor((z0 - 52) / HUB_STEP);
-    const hz1 = Math.ceil((z1 + 52) / HUB_STEP);
+    // Tight radial chain of deterministic star-ring hilltop acropolis hubs (`HUB_STEP = 64`)!
+    const HUB_STEP = 64;
+    const hx0 = Math.floor((x0 - 44) / HUB_STEP);
+    const hx1 = Math.ceil((x1 + 44) / HUB_STEP);
+    const hz0 = Math.floor((z0 - 44) / HUB_STEP);
+    const hz1 = Math.ceil((z1 + 44) / HUB_STEP);
 
     for (let hx = hx0; hx <= hx1; hx++) {
       for (let hz = hz0; hz <= hz1; hz++) {
         const hubRng = makeRng(hash2u32(hx, hz, seed * 73 + 29));
-        let px = (hx + 0.5) * HUB_STEP + hubRng.range(-14, 14);
-        const pz = (hz + 0.5) * HUB_STEP + hubRng.range(-14, 14);
+        let px = (hx + 0.5) * HUB_STEP + hubRng.range(-10, 10);
+        const pz = (hz + 0.5) * HUB_STEP + hubRng.range(-10, 10);
         const minLandX = terrain.coastX(pz) + 18;
         if (px < minLandX - 24) continue; // deep-sea macro cell has no inland hub
-        if (px < minLandX) px = minLandX + hubRng.range(0, 12);
+        if (px < minLandX) px = minLandX + hubRng.range(0, 10);
 
-        const pRad = hubRng.range(3.8, 4.8);
+        const pRad = hubRng.range(2.3, 3.1);
         if (px >= x0 - 4 && px <= x1 + 4 && pz >= z0 - 4 && pz <= z1 + 4) {
           plazas.push({ x: px, z: pz, radius: pRad });
         }
 
-        const spokes = 6;
+        const spokes = 8;
         const baseAng = hubRng.range(0, Math.PI * 2);
         const ellip = hubRng.range(0.88, 1.12);
-        const ringRadii = [17.5, 34.0];
+        const ringRadii = [11.5, 22.0, 32.5];
 
         for (let rIdx = 0; rIdx < ringRadii.length; rIdx++) {
           const rad = ringRadii[rIdx];
@@ -848,19 +855,19 @@ function generateChunkStreets(
             const ang = (k / steps) * Math.PI * 2;
             ringPts.push([px + Math.cos(ang) * rad, pz + Math.sin(ang) * rad * ellip]);
           }
-          for (const run of clipPolylineToLandAndBox(ringPts, terrain, 3.8, x0 - pad, x1 + pad, z0 - pad, z1 + pad)) {
-            commitRun(rIdx === 0 ? 'avenue' : 'street', rIdx === 0 ? 2.65 : 2.1, run);
+          for (const run of clipPolylineToLandAndBox(ringPts, terrain, 6.4, x0 - pad, x1 + pad, z0 - pad, z1 + pad)) {
+            commitRun(rIdx === 0 ? 'avenue' : 'street', rIdx === 0 ? 1.60 : 1.16, run);
           }
         }
 
         for (let k = 0; k < spokes; k++) {
-          const ang = baseAng + (k / spokes) * Math.PI * 2 + hubRng.range(-0.12, 0.12);
+          const ang = baseAng + (k / spokes) * Math.PI * 2 + hubRng.range(-0.1, 0.1);
           const spokePts: V2[] = [
-            [px + Math.cos(ang) * (pRad - 0.4), pz + Math.sin(ang) * (pRad - 0.4)],
-            [px + Math.cos(ang) * 46, pz + Math.sin(ang) * 46],
+            [px + Math.cos(ang) * (pRad - 0.3), pz + Math.sin(ang) * (pRad - 0.3)],
+            [px + Math.cos(ang) * 38, pz + Math.sin(ang) * 38],
           ];
-          for (const run of clipPolylineToLandAndBox(spokePts, terrain, 3.6, x0 - pad, x1 + pad, z0 - pad, z1 + pad)) {
-            commitRun(k % 2 === 0 ? 'avenue' : 'street', k % 2 === 0 ? 2.7 : 2.1, run);
+          for (const run of clipPolylineToLandAndBox(spokePts, terrain, 6.2, x0 - pad, x1 + pad, z0 - pad, z1 + pad)) {
+            commitRun(k % 2 === 0 ? 'avenue' : 'street', k % 2 === 0 ? 1.60 : 1.16, run);
           }
         }
       }
@@ -874,7 +881,10 @@ function generateChunkStreets(
 // Fast Deterministic Footprint & Multi-Wing Massing Extraction
 // ---------------------------------------------------------------------------
 
-function extractFootprintAndWings(spec: HouseNetSpec): {
+function extractFootprintAndWings(
+  spec: HouseNetSpec,
+  scale = 1,
+): {
   fpW: number;
   fpD: number;
   wings: CityWingMassing[];
@@ -898,8 +908,8 @@ function extractFootprintAndWings(spec: HouseNetSpec): {
       let z0 = Infinity;
       let z1 = -Infinity;
       for (const [px, py] of p.poly) {
-        const wx = px * MM;
-        const wz = -py * MM;
+        const wx = px * MM * scale;
+        const wz = -py * MM * scale;
         if (wx < x0) x0 = wx;
         if (wx > x1) x1 = wx;
         if (wz < z0) z0 = wz;
@@ -909,15 +919,15 @@ function extractFootprintAndWings(spec: HouseNetSpec): {
       if (x1 > maxBx) maxBx = x1;
       if (z0 < minBz) minBz = z0;
       if (z1 > maxBz) maxBz = z1;
-      const wW = Math.max(1.2, x1 - x0);
-      const wD = Math.max(1.2, z1 - z0);
+      const wW = Math.max(0.75, x1 - x0);
+      const wD = Math.max(0.75, z1 - z0);
       const hScale = idx === 0 ? 1.0 : idx === 1 ? 1.12 : idx === 2 ? 0.92 : 1.06;
       wings.push({
         cx: (x0 + x1) * 0.5,
         cz: (z0 + z1) * 0.5,
         W: wW,
         D: wD,
-        H: Math.max(1.8, spec.H * MM * hScale),
+        H: Math.max(1.1, spec.H * MM * scale * hScale),
         roofType: idx === 0 ? spec.roofType : roofCycle[(idx + (spec.village?.seed ?? 0)) % roofCycle.length],
         gableProfile: idx === 0 ? (spec.gableProfile ?? 'classic') : profileCycle[idx % profileCycle.length],
         pitch: spec.pitch,
@@ -932,9 +942,9 @@ function extractFootprintAndWings(spec: HouseNetSpec): {
   }
 
   // O(1) exact footprints for single-house topologies (zero `buildHouseNet` overhead during far chunk streaming!)
-  const W = spec.W * MM;
-  const D = spec.D * MM;
-  const H = spec.H * MM;
+  const W = spec.W * MM * scale;
+  const D = spec.D * MM * scale;
+  const H = spec.H * MM * scale;
 
   if (spec.topology === 'lwing') {
     const Ww = W * 0.62;
@@ -1090,19 +1100,19 @@ export function generateCityChunk(
   const placedPaddedOBBs: V2[][] = [];
   let rooftopCount = 0;
 
-  // Compute urban density dropoff far inland so the city grades naturally from vibrant coastal town into hillside groves
+  // Dense Mediterranean/Japanese coastal packing: 3–4× richer density packed right against the coastline!
   const avgInland = terrain.signedInland(centerX, centerZ);
   const maxPlotsInChunk =
     !hasLand || avgInland > 185
       ? 0
-      : avgInland < 26
-        ? 18
-        : avgInland < 95
-          ? 15
-          : 9;
+      : avgInland < 32
+        ? 56
+        : avgInland < 85
+          ? 38
+          : 20;
 
   if (maxPlotsInChunk > 0 && streets.length > 0) {
-    const roadBoxes: V2[][] = rawSegments.map((seg) => buildStreetRect(seg.a, seg.b, seg.width * 0.5 + 0.34, 0.2));
+    const roadBoxes: V2[][] = rawSegments.map((seg) => buildStreetRect(seg.a, seg.b, seg.width * 0.5 + 0.14, 0.12));
 
     interface FrontageCandidate {
       px: number;
@@ -1116,7 +1126,7 @@ export function generateCityChunk(
 
     const candidates: FrontageCandidate[] = [];
     for (const st of streets) {
-      let accum = rng.range(1.4, 2.8);
+      let accum = rng.range(0.7, 1.5);
       for (let i = 0; i < st.points.length - 1; i++) {
         const a = st.points[i];
         const b = st.points[i + 1];
@@ -1130,8 +1140,8 @@ export function generateCityChunk(
         while (cursor < len) {
           const px = a[0] + tx * cursor;
           const pz = a[1] + tz * cursor;
-          if (px >= x0 + 2 && px <= x1 - 2 && pz >= z0 + 2 && pz <= z1 - 2) {
-            const inlandDist = terrain.signedInland(px, pz);
+          const inlandDist = terrain.signedInland(px, pz);
+          if (px >= x0 + 1.2 && px <= x1 - 1.2 && pz >= z0 + 1.2 && pz <= z1 - 1.2) {
             // On the coastal promenade, only place houses on the INLAND side facing the sea (`nx > 0`)!
             const sides = st.kind === 'promenade' ? [1, -1] : [-1, 1];
             for (const side of sides) {
@@ -1149,46 +1159,52 @@ export function generateCityChunk(
               });
             }
           }
-          cursor += rng.range(4.2, 5.8);
+          cursor += inlandDist < 34 ? rng.range(1.5, 2.3) : rng.range(2.3, 3.4);
         }
         accum = cursor - len;
       }
     }
 
-    // Prioritize scenic coastal promenade & avenues first!
+    // Prioritize dense coastal frontage & narrow waterfront lanes first!
     candidates.sort((a, b) => {
-      const rank = (k: CityStreet['kind']) => (k === 'promenade' ? 0 : k === 'avenue' ? 1 : k === 'street' ? 2 : 3);
+      const coastA = a.inlandDist < 28 ? 0 : 1;
+      const coastB = b.inlandDist < 28 ? 0 : 1;
+      if (coastA !== coastB) return coastA - coastB;
+      const rank = (k: CityStreet['kind']) => (k === 'promenade' ? 0 : k === 'lane' ? 1 : k === 'avenue' ? 2 : 3);
       const rk = rank(a.roadKind) - rank(b.roadKind);
       if (rk !== 0) return rk;
       return a.inlandDist - b.inlandDist;
     });
 
+    const richWinDetails = ['six', 'cross', 'transom', 'triple', 'six', 'twelve', 'clean'] as const;
+
     const chooseMixForSite = (cand: FrontageCandidate, slotIdx: number): { gen: number; mixOpts: HouseMixOptions } => {
-      const hSeed = ((hash2u32(cx * 31 + slotIdx, cz * 37 + Math.round(cand.px), terrain.seed + 19) % 99989) + 1);
+      const hSeed = ((hash2u32(cx * 31 + slotIdx, cz * 37 + Math.round(cand.px * 2), terrain.seed + 19) % 99989) + 1);
       const gen = ((Math.abs(cx * 7 + cz * 13) + slotIdx) % 14) + 1;
+      const pickedDetail = opts.windowDetail ?? rng.pick(richWinDetails);
       const baseGrammar: HouseMixOptions = {
         seed: hSeed,
         consistency: opts.consistency ?? null,
         windowStyle: opts.windowStyle ?? null,
         windowOpening: opts.windowOpening ?? null,
-        windowDetail: opts.windowDetail ?? null,
+        windowDetail: pickedDetail,
       };
       const r = rng.next();
-      const isWaterfront = cand.roadKind === 'promenade' || cand.inlandDist < 18;
-      const isHilltop = terrain.heightAt(cand.px, cand.pz) > 4.2;
+      const isWaterfront = cand.roadKind === 'promenade' || cand.inlandDist < 26;
+      const isHilltop = terrain.heightAt(cand.px, cand.pz) > 4.0;
 
-      // Waterfront promenade: charming 2- & 3-house wall-to-wall coastal rowhouses, stepped harbor gables & lighthouses!
+      // Dense waterfront strip: tightly packed wall-to-wall coastal rowhouses, stepped gables, mansards & towers!
       if (isWaterfront) {
-        if (r < 0.30) {
+        if (r < 0.34) {
           return { gen, mixOpts: { ...baseGrammar, topology: 'village', houses: rng.chance(0.45) ? 3 : 2 } };
         }
-        if (r < 0.44) {
+        if (r < 0.50) {
           return { gen: 1, mixOpts: { ...baseGrammar, topology: 'ribbon', roofType: 'gable', gableProfile: 'stepped' } };
         }
-        if (r < 0.54) {
+        if (r < 0.60) {
           return { gen: 1, mixOpts: { ...baseGrammar, topology: 'ribbon', roofType: 'spire' } };
         }
-        if (r < 0.68) {
+        if (r < 0.76) {
           return { gen: 2, mixOpts: { ...baseGrammar, topology: 'ribbon', roofType: 'mansard' } };
         }
       }
@@ -1206,7 +1222,7 @@ export function generateCityChunk(
         return { gen: 2, mixOpts: { ...baseGrammar, topology: 'ribbon', roofType: 'mansard' } };
       }
 
-      if (cand.roadKind === 'avenue' && r < 0.22) {
+      if (cand.roadKind === 'avenue' && r < 0.24) {
         return { gen, mixOpts: { ...baseGrammar, topology: 'village', houses: 2 } };
       }
       if (r < 0.28) {
@@ -1221,7 +1237,7 @@ export function generateCityChunk(
         gen,
         mixOpts: {
           ...baseGrammar,
-          topology: rng.chance(0.62) ? 'ribbon' : 'cross',
+          topology: rng.chance(0.66) ? 'ribbon' : 'cross',
           roofType,
           gableProfile,
         },
@@ -1235,28 +1251,32 @@ export function generateCityChunk(
       rawSpec: HouseNetSpec,
     ): boolean => {
       const spec: HouseNetSpec = { ...rawSpec, yawOffset: 0 };
-      const { fpW, fpD, wings } = extractFootprintAndWings(spec);
+      const isCoastal = cand.inlandDist < 34;
+      // Finer miniature architectural scale (~0.52–0.64× along coast) packs 3–4× more houses with FULL window detail!
+      const plotScale = isCoastal ? rng.range(0.52, 0.63) : rng.range(0.56, 0.72);
+      const { fpW, fpD, wings } = extractFootprintAndWings(spec, plotScale);
       const halfW = fpW * 0.5;
       const halfD = fpD * 0.5;
 
-      const sidewalk = rng.range(0.45, 0.85);
+      const sidewalk = isCoastal ? rng.range(0.10, 0.24) : rng.range(0.20, 0.42);
       const bx = cand.px + cand.nx * (cand.roadHalfW + sidewalk + halfD);
       const bz = cand.pz + cand.nz * (cand.roadHalfW + sidewalk + halfD);
       const yaw = Math.atan2(-cand.nx, -cand.nz);
 
       const footprint = makeBuildingOBB(bx, bz, yaw, halfW, halfD);
 
-      // Strict chunk containment + coastline clearance => mathematically ZERO cross-chunk overlaps & ZERO wet buildings!
+      // Strict chunk containment + beach clearance => mathematically ZERO cross-chunk overlaps & ZERO wet buildings!
       for (const [fx, fz] of footprint) {
-        if (fx < x0 + 0.42 || fx > x1 - 0.42 || fz < z0 + 0.42 || fz > z1 - 0.42) return false;
-        if (terrain.signedInland(fx, fz) < 4.6) return false;
+        if (fx < x0 + 0.22 || fx > x1 - 0.22 || fz < z0 + 0.22 || fz > z1 - 0.22) return false;
+        if (terrain.signedInland(fx, fz) < 7.2) return false;
       }
 
-      const paddedCheck = makeBuildingOBB(bx, bz, yaw, halfW + 0.42, halfD + 0.42);
-      const roadCheck = makeBuildingOBB(bx, bz, yaw, halfW + 0.16, halfD + 0.16);
+      const padGap = isCoastal ? 0.12 : 0.22;
+      const paddedCheck = makeBuildingOBB(bx, bz, yaw, halfW + padGap, halfD + padGap);
+      const roadCheck = makeBuildingOBB(bx, bz, yaw, halfW + 0.06, halfD + 0.06);
 
       for (const pl of plazas) {
-        if (Math.hypot(bx - pl.x, bz - pl.z) < pl.radius + Math.max(halfW, halfD) * 0.65) return false;
+        if (Math.hypot(bx - pl.x, bz - pl.z) < pl.radius + Math.max(halfW, halfD) * 0.58) return false;
       }
       for (const rBox of roadBoxes) {
         if (polygonsOverlap(roadCheck, rBox)) return false;
@@ -1273,7 +1293,13 @@ export function generateCityChunk(
 
       const localIdx = plots.length;
       const colorIndex = Math.floor(hash2i(cx * 17 + localIdx, cz * 29 + Math.round(bz), terrain.seed + 83) * 8) % 8;
-      const foldJitter = (hash2i(cx * 41 + localIdx, cz * 19, terrain.seed + 211) - 0.5) * 26;
+      // Rich organic per-house fold-wave randomization: wide per-plot scatter + soft hillside cluster swells
+      // so houses blossom organically across the coast instead of rising along a rigid straight line!
+      const plotScatter = (hash2i(cx * 41 + localIdx * 7, cz * 19 + Math.round(bx), terrain.seed + 211) - 0.5) * 44;
+      const clusterSwell =
+        Math.sin(bx * 0.044 + terrain.seed * 1.13) * 6.5 +
+        Math.cos(bz * 0.036 - bx * 0.024 + terrain.seed * 0.71) * 6.5;
+      const foldJitter = Math.max(-26, Math.min(24, plotScatter + clusterSwell));
 
       plots.push({
         id: `c${cx}_${cz}_p${localIdx}`,
@@ -1287,6 +1313,7 @@ export function generateCityChunk(
         footprint,
         footprintW: fpW,
         footprintD: fpD,
+        scale: plotScale,
         wings,
         colorIndex,
         foldJitter,
@@ -1308,7 +1335,7 @@ export function generateCityChunk(
       const primarySpec = generateHouseSpec(gen, mixOpts);
       if (tryPlaceSpecAt(cand, gen, mixOpts, primarySpec)) continue;
 
-      // Compact coastal townhouse fallback for tighter lots
+      // Compact coastal townhouse fallback for tight alley pockets (keeps rich window muntins!)
       const compactMix: HouseMixOptions = {
         seed: mixOpts.seed,
         topology: 'ribbon',
@@ -1317,19 +1344,19 @@ export function generateCityChunk(
         consistency: opts.consistency ?? null,
         windowStyle: opts.windowStyle ?? null,
         windowOpening: opts.windowOpening ?? null,
-        windowDetail: opts.windowDetail ?? null,
+        windowDetail: mixOpts.windowDetail ?? null,
       };
       const compactRaw = generateHouseSpec(1, compactMix);
       const compactSpec: HouseNetSpec =
         compactRaw.roofType === 'spire'
           ? { ...compactRaw, W: 28, D: 28 }
-          : { ...compactRaw, W: Math.min(compactRaw.W, 32), D: Math.min(compactRaw.D, 36) };
+          : { ...compactRaw, W: Math.min(compactRaw.W, 30), D: Math.min(compactRaw.D, 34) };
       tryPlaceSpecAt(cand, 1, compactMix, compactSpec);
     }
   }
 
   // 4. Occasional solitary folded coastal lighthouse/pavilion on offshore paper islets!
-  if (hasSea && plots.length < 24) {
+  if (hasSea && plots.length < 60) {
     const isletX = x0 + rng.range(10, CITY_CHUNK_SIZE - 10);
     const isletZ = z0 + rng.range(10, CITY_CHUNK_SIZE - 10);
     if (terrain.signedInland(isletX, isletZ) < -20 && terrain.heightAt(isletX, isletZ) > 0.9) {
@@ -1340,7 +1367,8 @@ export function generateCityChunk(
         roofType: 'spire',
       };
       const spec: HouseNetSpec = { ...generateHouseSpec(1, mixOpts), W: 28, D: 28, yawOffset: 0 };
-      const { fpW, fpD, wings } = extractFootprintAndWings(spec);
+      const isletScale = 0.68;
+      const { fpW, fpD, wings } = extractFootprintAndWings(spec, isletScale);
       const yaw = rng.range(0, Math.PI * 2);
       const footprint = makeBuildingOBB(isletX, isletZ, yaw, fpW * 0.5, fpD * 0.5);
       const ys = [terrain.heightAt(isletX, isletZ), ...footprint.map(([fx, fz]) => terrain.heightAt(fx, fz))];
@@ -1358,34 +1386,38 @@ export function generateCityChunk(
           footprint,
           footprintW: fpW,
           footprintD: fpD,
+          scale: isletScale,
           wings,
           colorIndex: localIdx % 8,
-          foldJitter: -8,
+          foldJitter: -22 + hash2i(cx * 13, cz * 29, terrain.seed + 409) * 20,
           generation: 1,
           mixOpts,
           spec,
           foldOrder: 0,
         });
-        placedPaddedOBBs.push(makeBuildingOBB(isletX, isletZ, yaw, fpW * 0.5 + 0.5, fpD * 0.5 + 0.5));
+        placedPaddedOBBs.push(makeBuildingOBB(isletX, isletZ, yaw, fpW * 0.5 + 0.35, fpD * 0.5 + 0.35));
         rooftopCount += 1;
       }
     }
   }
 
-  // 5. Grounded Minimalist Folded Origami Trees tucked into hillside clearings, coves & upper ridges!
+  // 5. Grounded Minimalist Folded Origami Trees tucked into hillside clearings, pocket courtyards & offshore islets!
   const trees: CityTree[] = [];
   if (hasLand || hasSea) {
     const treeRng = makeRng(hash2u32(cx, cz, terrain.seed * 48271 + 911));
-    const maxTrees = avgInland > 65 ? 24 : 18;
-    for (let attempt = 0; attempt < 72 && trees.length < maxTrees; attempt++) {
-      const tx = x0 + treeRng.range(1.8, CITY_CHUNK_SIZE - 1.8);
-      const tz = z0 + treeRng.range(1.8, CITY_CHUNK_SIZE - 1.8);
+    const maxTrees = avgInland > 65 ? 26 : 16;
+    for (let attempt = 0; attempt < 84 && trees.length < maxTrees; attempt++) {
+      const tx = x0 + treeRng.range(1.6, CITY_CHUNK_SIZE - 1.6);
+      const tz = z0 + treeRng.range(1.6, CITY_CHUNK_SIZE - 1.6);
       const ty = terrain.heightAt(tx, tz);
       if (ty < 0.45) continue;
+      // Keep the sandy beige beach open & uncluttered (trees grow behind the promenade or on offshore islets!)
+      const tInland = terrain.signedInland(tx, tz);
+      if (tInland > -10 && tInland < 6.8) continue;
 
       let ok = true;
       for (const seg of rawSegments) {
-        if (distPointToSeg(tx, tz, seg.a, seg.b) < seg.width * 0.5 + 0.85) {
+        if (distPointToSeg(tx, tz, seg.a, seg.b) < seg.width * 0.5 + 0.55) {
           ok = false;
           break;
         }
@@ -1393,10 +1425,10 @@ export function generateCityChunk(
       if (!ok) continue;
 
       const treeBox: V2[] = [
-        [tx - 0.7, tz - 0.7],
-        [tx + 0.7, tz - 0.7],
-        [tx + 0.7, tz + 0.7],
-        [tx - 0.7, tz + 0.7],
+        [tx - 0.48, tz - 0.48],
+        [tx + 0.48, tz - 0.48],
+        [tx + 0.48, tz + 0.48],
+        [tx - 0.48, tz + 0.48],
       ];
       for (const b of placedPaddedOBBs) {
         if (polygonsOverlap(treeBox, b)) {
@@ -1407,7 +1439,7 @@ export function generateCityChunk(
       if (!ok) continue;
 
       for (const other of trees) {
-        if (Math.hypot(tx - other.x, tz - other.z) < 2.2) {
+        if (Math.hypot(tx - other.x, tz - other.z) < 1.55) {
           ok = false;
           break;
         }
@@ -1418,7 +1450,7 @@ export function generateCityChunk(
         x: tx,
         z: tz,
         y: ty,
-        scale: treeRng.range(0.74, 1.38),
+        scale: treeRng.range(0.56, 1.04),
         rotY: treeRng.range(0, Math.PI * 2),
         variant: (attempt % 3) as 0 | 1 | 2,
       });
@@ -1477,35 +1509,35 @@ export function createCoastalWorld(opts: CoastalWorldOptions): CoastalWorld {
       terrain.coastX(z + 42)) /
     7.4;
 
-  // Sweeping S-curves weaving from out over the folded paper sea (`-28`) to over coastal hillsides (`+22`)
+  // Intimate coastline-hugging S-curves gliding right along the paper-blue water & beige sand beach!
   const flightXAt = (s: number): number => {
     const z = -s;
     const base = smoothCoastX(z);
-    const curve1 = Math.sin(s * 0.0155 + fp1 - 0.55) * 24.0;
-    const curve2 = Math.cos(s * 0.0074 + fp2 + 1.1) * 12.5;
-    return base + curve1 + curve2 - 4.5;
+    const curve1 = Math.sin(s * 0.017 + fp1 - 0.45) * 7.2;
+    const curve2 = Math.cos(s * 0.0085 + fp2 + 1.0) * 3.5;
+    return base + curve1 + curve2 - 8.5;
   };
 
   const sampleFlight = (s: number): FlightSample => {
     const z = -s;
     const camX = flightXAt(s);
 
-    // Terrain-hugging elevated coastal glider vista showing foreground detail, active fold wave & far headlands!
+    // Intimate low coastal glider vista showcasing the densely packed waterfront facades, narrow alleys & rolling hills!
     const g0 = Math.max(0, terrain.heightAt(camX, z));
-    const g1 = Math.max(0, terrain.heightAt(camX, z - 16));
-    const g2 = Math.max(0, terrain.heightAt(camX + 10, z - 10));
+    const g1 = Math.max(0, terrain.heightAt(camX, z - 14));
+    const g2 = Math.max(0, terrain.heightAt(camX + 8, z - 8));
     const groundClear = Math.max(g0, g1, g2);
-    const camY = Math.max(24.5, groundClear + 18.5) + Math.sin(s * 0.012 + fp3) * 3.4;
+    const camY = Math.max(16.2, groundClear + 12.4) + Math.sin(s * 0.013 + fp3) * 1.8;
 
-    // Look ahead along a smooth coastal ribbon framing sea + sailboats on left, folding hillside city ahead-right!
-    const lookLead = 72;
+    // Look ahead along the densely packed coastal ribbon framing blue sea + beige beach on left, terraced town right!
+    const lookLead = 54;
     const zLook = -(s + lookLead);
     const lookX =
       smoothCoastX(zLook) +
-      14.5 +
-      Math.sin((s + lookLead) * 0.011 + fp1) * 10.5 +
-      (camX - smoothCoastX(z)) * 0.16;
-    const lookY = Math.max(2.2, terrain.heightAt(lookX, zLook) * 0.52 + 2.4);
+      16.5 +
+      Math.sin((s + lookLead) * 0.012 + fp1) * 5.0 +
+      (camX - smoothCoastX(z)) * 0.12;
+    const lookY = Math.max(1.8, terrain.heightAt(lookX, zLook) * 0.48 + 1.8);
 
     // Normalized horizontal forward direction (along flight tangent)
     const ds = 2.0;
@@ -1521,9 +1553,9 @@ export function createCoastalWorld(opts: CoastalWorldOptions): CoastalWorld {
     const d2x = (xNext - 2 * camX + xPrev) / (ds * ds);
     const bankRoll = Math.max(-0.105, Math.min(0.105, -d2x * 16.0));
 
-    // Focus point for the origami fold wave — sits directly ahead in the hero foreground/midground!
-    const focusX = camX * 0.45 + lookX * 0.55;
-    const focusZ = z - 34;
+    // Focus point for the origami fold wave — anchored right on the dense coastal strip ahead!
+    const focusX = smoothCoastX(z - 26) + 17.0;
+    const focusZ = z - 26;
 
     return {
       pos: [camX, camY, z],
