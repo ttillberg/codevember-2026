@@ -2820,21 +2820,22 @@ export function buildLabyrinthRig(grid: SphereGrid): LabyrinthRig {
   root.add(ballMesh);
   disposables.push(ballGeo, frostRoughTex, ballMat, dotCapGeo, dotMat);
 
-  const { roughnessMap: scratchRough, bumpMap: scratchBump, scratchAlphaMap } = createPlasticScratchTextures();
-  disposables.push(scratchRough, scratchBump, scratchAlphaMap);
+  const { roughnessMap: scratchRough, bumpMap: scratchBump, scratchMap, scratchAlphaMap } = createPlasticScratchTextures();
+  disposables.push(scratchRough, scratchBump, scratchMap, scratchAlphaMap);
 
   const shellGeo = new THREE.SphereGeometry(R_SHELL, 64, 48);
   const plasticOpacityUniform = { value: 1.0 };
 
   const plasticMat = new THREE.MeshPhysicalMaterial({
     color: 0xfdfcf9,
-    roughness: 0.055,
+    roughness: 0.34, // base rgb 34 -> ~0.045 glossy; smudges -> ~0.28 hazy clearcoat scatter
     roughnessMap: scratchRough,
     bumpMap: scratchBump,
-    bumpScale: 0.0032,
+    bumpScale: 0.0026,
     metalness: 0.0,
     clearcoat: 1.0,
-    clearcoatRoughness: 0.048,
+    clearcoatRoughness: 0.28,
+    clearcoatRoughnessMap: scratchRough,
     reflectivity: 0.92,
     ior: 1.49,
     envMapIntensity: 2.35,
@@ -2855,7 +2856,8 @@ export function buildLabyrinthRig(grid: SphereGrid): LabyrinthRig {
         float fresnel = pow(1.0 - ndotv, 2.55);
         float specEnergy = max(max(reflectedLight.directSpecular.r, reflectedLight.directSpecular.g), reflectedLight.directSpecular.b)
                          + max(max(reflectedLight.indirectSpecular.r, reflectedLight.indirectSpecular.g), reflectedLight.indirectSpecular.b) * 0.65;
-        float shellAlpha = clamp((0.022 + fresnel * 0.44 + specEnergy * 0.36) * uPlasticScale, 0.0, 0.8);
+        float smudgeLift = smoothstep(0.08, 0.28, roughnessFactor) * 0.22;
+        float shellAlpha = clamp((0.022 + fresnel * 0.44 + specEnergy * 0.36 + smudgeLift) * uPlasticScale, 0.0, 0.84);
         gl_FragColor.a = shellAlpha;
         #include <dithering_fragment>
         `,
@@ -2870,11 +2872,13 @@ export function buildLabyrinthRig(grid: SphereGrid): LabyrinthRig {
 
   const scratchOverlayMat = new THREE.MeshStandardMaterial({
     color: 0xffffff,
+    map: scratchMap,
     alphaMap: scratchAlphaMap,
     transparent: true,
-    opacity: 0.56,
-    roughness: 0.22,
-    metalness: 0.14,
+    opacity: 0.62,
+    roughness: 0.2,
+    metalness: 0.08,
+    envMapIntensity: 1.6,
     depthWrite: false,
   });
   const scratchOverlayMesh = new THREE.Mesh(shellGeo, scratchOverlayMat);
@@ -3248,8 +3252,10 @@ export function buildLabyrinthRig(grid: SphereGrid): LabyrinthRig {
   }
 
   function setScratchStrength(scale: number) {
-    scratchOverlayMat.opacity = 0.56 * scale;
-    plasticMat.bumpScale = 0.0032 * scale;
+    scratchOverlayMat.opacity = 0.62 * scale;
+    plasticMat.bumpScale = 0.0022 * scale;
+    plasticMat.roughness = 0.045 + 0.28 * scale;
+    plasticMat.clearcoatRoughness = 0.04 + 0.24 * scale;
   }
 
   function dispose() {
