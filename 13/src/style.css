@@ -32,6 +32,9 @@ canvas.dragging {
 canvas.aiming {
   cursor: crosshair;
 }
+canvas.tap-ready {
+  cursor: pointer;
+}
 .telemetry-canvas {
   position: fixed;
   inset: 0;
@@ -83,39 +86,51 @@ canvas.aiming {
   letter-spacing: 0.06em;
 }
 
-/* Level caption anchored dynamically to hug the lower-left orbital contour of the globe */
+/* Bottom-left level caption and subtle reset arrow */
 .level-hud {
   position: fixed;
   z-index: 3;
-  top: calc(100dvh - 68px);
+  bottom: max(22px, env(safe-area-inset-bottom));
   left: max(24px, env(safe-area-inset-left));
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: 1px;
+  gap: 3px;
   pointer-events: none;
   color: #1c1c1c;
-}
-.level-hud.beside-globe {
-  align-items: flex-end;
-  transform: translate(-100%, -50%);
-}
-.level-hud.beside-globe .level-top {
-  flex-direction: row-reverse;
-}
-.level-hud.beside-globe .level-picker {
-  left: auto;
-  right: 0;
 }
 .level-top {
   display: inline-flex;
   align-items: center;
-  gap: 10px;
+  gap: 6px;
 }
-.reset-btn {
-  width: 26px;
-  height: 26px;
+.reset-arrow-btn {
+  appearance: none;
+  border: 0;
+  background: none;
+  width: 15px;
+  height: 15px;
+  padding: 0;
+  margin: 0;
+  color: #1c1c1c;
+  opacity: 0.38;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   pointer-events: auto;
+  cursor: pointer;
+  transform: translateY(-0.5px);
+  transition: opacity 0.16s ease, transform 0.2s ease;
+}
+.reset-arrow-btn svg {
+  display: block;
+}
+.reset-arrow-btn:hover {
+  opacity: 0.9;
+  transform: translateY(-0.5px) rotate(-28deg);
+}
+.reset-arrow-btn:active {
+  transform: translateY(-0.5px) rotate(-65deg) scale(0.92);
 }
 .level-num {
   appearance: none;
@@ -124,8 +139,8 @@ canvas.aiming {
   padding: 0;
   margin: 0;
   color: inherit;
-  font: 700 24px/0.94 "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-  letter-spacing: -0.015em;
+  font: 600 14px/1.15 Inter, "Helvetica Neue", Helvetica, Arial, sans-serif;
+  letter-spacing: 0.12em;
   text-transform: uppercase;
   white-space: nowrap;
   display: inline-flex;
@@ -142,11 +157,15 @@ canvas.aiming {
   opacity: 0.72;
 }
 .level-title {
-  font: 600 9.5px/1.1 Inter, "Helvetica Neue", Helvetica, Arial, sans-serif;
-  letter-spacing: 0.14em;
+  font: 600 14px/1.15 Inter, "Helvetica Neue", Helvetica, Arial, sans-serif;
+  letter-spacing: 0.12em;
   text-transform: uppercase;
-  opacity: 0.68;
   white-space: nowrap;
+}
+.level-title span[lang="ja"] {
+  font-family: "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Noto Sans JP", "Yu Gothic", sans-serif;
+  letter-spacing: 0.06em;
+  margin-left: 3px;
 }
 
 /* Dev-only compact level picker popover above LEVEL N */
@@ -369,11 +388,21 @@ canvas.aiming {
     top: calc(max(14px, env(safe-area-inset-top)) + 42px);
     right: max(14px, env(safe-area-inset-right));
   }
-  .level-num {
-    font-size: 19px;
+  .level-hud {
+    bottom: max(16px, env(safe-area-inset-bottom));
+    left: max(16px, env(safe-area-inset-left));
   }
+  .level-num,
   .level-title {
-    font-size: 9px;
+    font-size: 9.5px;
+  }
+  .reset-arrow-btn {
+    width: 11px;
+    height: 11px;
+  }
+  .reset-arrow-btn svg {
+    width: 11px;
+    height: 11px;
   }
   .tap-cue {
     bottom: calc(max(18px, env(safe-area-inset-bottom)) + 52px);

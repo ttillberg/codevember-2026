@@ -145,6 +145,7 @@ export interface LevelSolutionStats {
 export interface LevelConfig {
   level: number; // 1..10
   name: string;
+  nameJa: string;
   difficulty: string;
   seed: number;
   /** Base wall state when toggleMask === 0 (true = raised, false = retracted) */
@@ -492,6 +493,7 @@ function findPathWallBetween(
 interface LevelBlueprint {
   level: number;
   name: string;
+  nameJa: string;
   difficulty: string;
   seed: number;
   lonBias: number;
@@ -792,6 +794,7 @@ export function createSphereGrid(): SphereGrid {
     {
       level: 1,
       name: 'FIRST ROLL',
+      nameJa: '初転',
       difficulty: 'EASY · TURN',
       seed: 1019,
       lonBias: 0.28,
@@ -809,6 +812,7 @@ export function createSphereGrid(): SphereGrid {
     {
       level: 2,
       name: 'IRIS PORTAL',
+      nameJa: '虹彩門',
       difficulty: 'EASY · PORTAL',
       seed: 2029,
       lonBias: 0.32,
@@ -826,6 +830,7 @@ export function createSphereGrid(): SphereGrid {
     {
       level: 3,
       name: 'FIRST SWITCH',
+      nameJa: '初切換',
       difficulty: 'PLAN · SWITCH',
       seed: 3041,
       lonBias: 0.26,
@@ -852,6 +857,7 @@ export function createSphereGrid(): SphereGrid {
     {
       level: 4,
       name: 'UNDERPASS',
+      nameJa: '地下道',
       difficulty: 'PLAN · SPLIT',
       seed: 4057,
       lonBias: 0.32,
@@ -870,6 +876,7 @@ export function createSphereGrid(): SphereGrid {
     {
       level: 5,
       name: 'SHUTTER LOCK',
+      nameJa: '閉門鍵',
       difficulty: 'PLAN · IRIS',
       seed: 5077,
       lonBias: 0.36,
@@ -897,6 +904,7 @@ export function createSphereGrid(): SphereGrid {
     {
       level: 6,
       name: 'COUNTERWEIGHT',
+      nameJa: '均衡',
       difficulty: 'TRICKY',
       seed: 6089,
       lonBias: 0.4,
@@ -926,6 +934,7 @@ export function createSphereGrid(): SphereGrid {
     {
       level: 7,
       name: 'DUAL CIRCUIT',
+      nameJa: '二重回路',
       difficulty: 'HARD',
       seed: 7109,
       lonBias: 0.48,
@@ -962,6 +971,7 @@ export function createSphereGrid(): SphereGrid {
     {
       level: 8,
       name: 'WINDING VAULT',
+      nameJa: '迷廊',
       difficulty: 'HARD',
       seed: 8123,
       lonBias: 0.52,
@@ -998,6 +1008,7 @@ export function createSphereGrid(): SphereGrid {
     {
       level: 9,
       name: 'PARADOX',
+      nameJa: '逆説',
       difficulty: 'VERY HARD',
       seed: 9137,
       lonBias: 0.48,
@@ -1035,6 +1046,7 @@ export function createSphereGrid(): SphereGrid {
     {
       level: 10,
       name: 'MASTER SPHERE',
+      nameJa: '極球',
       difficulty: 'SUPER HARD',
       seed: 10177,
       lonBias: 0.56,
@@ -1184,6 +1196,7 @@ export function createSphereGrid(): SphereGrid {
     const partial: Omit<LevelConfig, 'stats'> = {
       level: bp.level,
       name: bp.name,
+      nameJa: bp.nameJa,
       difficulty: bp.difficulty,
       seed: bp.seed,
       raisedWalls,

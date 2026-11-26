@@ -872,19 +872,6 @@ export class TelemetryOverlay {
       }
     }
 
-    // 4. Subtle companion micro-arc tick hugging the lower-left limb beside LEVEL N / title (landscape/square only)
-    const leftAnchorAng = (138 * Math.PI) / 180;
-    const leftX = cx + Math.cos(leftAnchorAng) * arcR;
-    if (leftX > 185 && !isCompact) {
-      ctx.strokeStyle = COLOR_INK;
-      ctx.lineWidth = 1;
-      ctx.globalAlpha = 0.2;
-      ctx.beginPath();
-      ctx.arc(cx, cy, arcR, leftAnchorAng - 0.14, leftAnchorAng + 0.14);
-      ctx.stroke();
-      drawRadialTick(leftAnchorAng, 4, 7, 0.34);
-    }
-
     ctx.restore();
   }
 

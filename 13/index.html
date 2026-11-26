@@ -17,7 +17,7 @@
     <link rel="icon" href="data:," />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@500;600&family=IBM+Plex+Sans:wght@700&family=Inter:wght@400;600&display=swap" />
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DotGothic16&family=IBM+Plex+Mono:wght@500;600&family=IBM+Plex+Sans:wght@700&family=Inter:wght@400;600&display=swap" />
     <link rel="stylesheet" href="./src/style.css" />
   </head>
   <body>
@@ -55,7 +55,7 @@
       </button>
     </div>
 
-    <!-- Bottom-left level caption + reset button (click LEVEL N to select only in dev / ?settings) -->
+    <!-- Bottom-left level caption and subtle reset arrow -->
     <div class="level-hud" id="level-hud">
       <div class="level-picker" id="level-picker" role="menu" aria-label="Select level" hidden>
         <button class="lvl-btn active" type="button" data-level="1">01</button>
@@ -71,14 +71,14 @@
       </div>
       <div class="level-top">
         <button class="level-num" id="level-num" type="button" disabled aria-expanded="false">LEVEL 1</button>
-        <button class="icon-btn reset-btn" id="btn-reset" type="button" title="Reset level (R)" aria-label="Reset level">
+        <button class="reset-arrow-btn" id="btn-reset" type="button" title="Reset level (R)" aria-label="Reset level">
           <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round">
             <path d="M3 12a9 9 0 1 0 3-6.7L3 8" />
             <path d="M3 3v5h5" />
           </svg>
         </button>
       </div>
-      <div class="level-title" id="level-title">FIRST ROLL</div>
+      <div class="level-title" id="level-title">FIRST ROLL <span lang="ja">初転</span></div>
     </div>
 
     <!-- Subtle bottom-center tap prompt shown only while seated on/under an open hole -->
