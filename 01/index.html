@@ -33,6 +33,8 @@
     <div class="top-actions" aria-label="Sheet actions">
       <button id="btn-next" class="icon-btn" title="Fold house (Space)" aria-label="Fold house"></button>
       <button id="btn-reset" class="icon-btn" title="Reset to Layer 1 (R)" aria-label="Reset to Layer 1"></button>
+      <button id="btn-catalog" class="icon-btn" title="Generations grid (G)" aria-label="Generations grid" aria-expanded="false"></button>
+      <button id="btn-city" class="icon-btn" title="City view (C)" aria-label="City view" aria-expanded="false"></button>
       <button id="btn-help" class="icon-btn" title="Controls (?)" aria-label="Controls">?</button>
     </div>
 
@@ -53,14 +55,163 @@
       </div>
       <div class="debug-rows">
         <label class="debug-row debug-row-stack" for="dbg-model">
-          <span>Model</span>
+          <span>Preset</span>
           <select id="dbg-model" class="debug-select" aria-label="House model">
             <option value="auto">Auto (cycle)</option>
           </select>
         </label>
+        <div class="debug-row debug-row-stack">
+          <span>Houses</span>
+          <div id="dbg-houses" class="debug-seg" role="group" aria-label="Number of houses">
+            <button type="button" class="debug-seg-btn active" data-houses="auto">Auto</button>
+            <button type="button" class="debug-seg-btn" data-houses="1">1</button>
+            <button type="button" class="debug-seg-btn" data-houses="2">2</button>
+            <button type="button" class="debug-seg-btn" data-houses="3">3</button>
+            <button type="button" class="debug-seg-btn" data-houses="4">4</button>
+          </div>
+        </div>
+        <div class="debug-grid-2">
+          <label class="debug-row debug-row-stack" for="dbg-topology">
+            <span>Net</span>
+            <select id="dbg-topology" class="debug-select" aria-label="Net topology">
+              <option value="auto">Auto</option>
+              <option value="cross">Cross</option>
+              <option value="ribbon">Ribbon</option>
+              <option value="hex">Hexagonal</option>
+              <option value="oct">Octagonal</option>
+              <option value="lwing">L-wing</option>
+              <option value="setback">Setback</option>
+              <option value="village">Composite</option>
+            </select>
+          </label>
+          <label class="debug-row debug-row-stack" for="dbg-roof">
+            <span>Roof</span>
+            <select id="dbg-roof" class="debug-select" aria-label="Roof type">
+              <option value="auto">Auto</option>
+              <option value="gable">Gable</option>
+              <option value="gable:classic">Gable 1×</option>
+              <option value="gable:gambrel">Gambrel 2×</option>
+              <option value="gable:stepped">Ladder 3×</option>
+              <option value="gable:barrel">Barrel 3×</option>
+              <option value="gable:saltbox">Saltbox</option>
+              <option value="mansard">Mansard</option>
+              <option value="spire">Spire</option>
+              <option value="hip">Hip</option>
+              <option value="shed">Shed</option>
+              <option value="flat">Flat</option>
+              <option value="butterfly">Butterfly</option>
+              <option value="sawtooth">Sawtooth</option>
+            </select>
+          </label>
+        </div>
+        <div class="debug-grid-2">
+          <label class="debug-row debug-row-stack" for="dbg-window">
+            <span>Windows</span>
+            <select id="dbg-window" class="debug-select" aria-label="Window type">
+              <option value="auto">Auto</option>
+              <option value="rect">Rect</option>
+              <option value="tall">Tall</option>
+              <option value="arched">Arched</option>
+              <option value="pair">Paired</option>
+              <option value="ribbon">Ribbon</option>
+              <option value="round">Round</option>
+              <option value="lancet">Lancet</option>
+              <option value="slit">Slit</option>
+            </select>
+          </label>
+          <label class="debug-row debug-row-stack" for="dbg-bays">
+            <span>Bays</span>
+            <select id="dbg-bays" class="debug-select" aria-label="Window bays per row">
+              <option value="auto">Auto</option>
+              <option value="1">1</option>
+              <option value="2">2</option>
+              <option value="3">3</option>
+              <option value="4">4</option>
+              <option value="5">5</option>
+            </select>
+          </label>
+        </div>
+        <div class="debug-grid-2">
+          <label class="debug-row debug-row-stack" for="dbg-win-opening">
+            <span>Hinge</span>
+            <select id="dbg-win-opening" class="debug-select" aria-label="Window opening hinge">
+              <option value="auto">Auto</option>
+              <option value="awning">Top-hung</option>
+              <option value="louver">Louver (2×)</option>
+              <option value="shutters">Shutters</option>
+              <option value="casement">Casement</option>
+              <option value="punched">Punched</option>
+            </select>
+          </label>
+          <label class="debug-row debug-row-stack" for="dbg-win-detail">
+            <span>Detail</span>
+            <select id="dbg-win-detail" class="debug-select" aria-label="Window detail">
+              <option value="auto">Auto</option>
+              <option value="clean">Frame (1)</option>
+              <option value="six">6-pane</option>
+              <option value="twelve">12-pane</option>
+              <option value="cross">Cross (4)</option>
+              <option value="transom">Transom</option>
+              <option value="triple">Triple</option>
+              <option value="sill">Sill</option>
+            </select>
+          </label>
+        </div>
+        <div class="debug-row debug-row-stack">
+          <span>Open</span>
+          <div id="dbg-win-open-mode" class="debug-seg debug-seg-3" role="group" aria-label="Window opening state">
+            <button type="button" class="debug-seg-btn" data-open-mode="closed">Closed</button>
+            <button type="button" class="debug-seg-btn active" data-open-mode="random">Random</button>
+            <button type="button" class="debug-seg-btn" data-open-mode="open">Open</button>
+          </div>
+        </div>
+        <label id="dbg-win-open-row" class="debug-row debug-row-stack" for="dbg-win-open">
+          <span class="debug-slider-head"><span>Open share</span><em id="dbg-win-open-val">35%</em></span>
+          <input id="dbg-win-open" class="debug-range" type="range" min="0" max="100" step="5" value="35" aria-label="Random open windows percentage" />
+        </label>
+        <div class="debug-grid-2">
+          <label class="debug-row debug-row-stack" for="dbg-door">
+            <span>Door</span>
+            <select id="dbg-door" class="debug-select" aria-label="Door style">
+              <option value="auto">Auto</option>
+              <option value="arched">Arched</option>
+              <option value="rect">Rect</option>
+              <option value="double">Double</option>
+              <option value="arcade">Arcade</option>
+              <option value="none">None</option>
+            </select>
+          </label>
+          <label class="debug-row debug-row-stack" for="dbg-levels">
+            <span>Levels</span>
+            <select id="dbg-levels" class="debug-select" aria-label="Floor levels">
+              <option value="auto">Auto</option>
+              <option value="1">1</option>
+              <option value="2">2</option>
+              <option value="3">3</option>
+            </select>
+          </label>
+        </div>
+        <div class="debug-grid-2">
+          <label class="debug-row debug-row-stack" for="dbg-consistency">
+            <span class="debug-slider-head"><span>Consistency</span><em id="dbg-consistency-val">72%</em></span>
+            <input id="dbg-consistency" class="debug-range" type="range" min="0" max="100" step="5" value="72" aria-label="Architectural consistency" />
+          </label>
+          <label class="debug-row debug-row-stack" for="dbg-height">
+            <span class="debug-slider-head"><span>Height</span><em id="dbg-height-val">100%</em></span>
+            <input id="dbg-height" class="debug-range" type="range" min="75" max="130" step="5" value="100" aria-label="Building height scale" />
+          </label>
+        </div>
+        <div class="debug-row">
+          <span>Seed</span>
+          <div class="debug-seed-ctrl">
+            <input id="dbg-seed" class="debug-seed-input" type="number" min="0" max="99999" value="0" aria-label="Generation seed" />
+            <button id="dbg-shuffle" class="debug-mini-btn" type="button" title="Roll a random seed">Roll</button>
+          </div>
+        </div>
+        <div class="debug-divider"></div>
         <label class="debug-row" for="dbg-color">
           <span>Color</span>
-          <input id="dbg-color" class="debug-switch" type="checkbox" checked />
+          <input id="dbg-color" class="debug-switch" type="checkbox" />
         </label>
         <label class="debug-row" for="dbg-spin">
           <span>Rotate</span>
@@ -68,17 +219,83 @@
         </label>
         <label class="debug-row" for="dbg-persp-cut" title="Jump camera directly to above 3/4 at the exact moment of projection">
           <span>Jump view</span>
-          <input id="dbg-persp-cut" class="debug-switch" type="checkbox" checked />
+          <input id="dbg-persp-cut" class="debug-switch" type="checkbox" />
         </label>
         <label class="debug-row" for="dbg-glide-fold" title="Smoothly re-transition camera perspective while the house folds">
           <span>Glide on fold</span>
-          <input id="dbg-glide-fold" class="debug-switch" type="checkbox" checked />
+          <input id="dbg-glide-fold" class="debug-switch" type="checkbox" />
         </label>
       </div>
-      <div class="debug-footer">
-        <button id="dbg-reset-factory" class="debug-reset-btn" type="button">Reset to factory</button>
+      <div class="debug-footer debug-footer-row debug-footer-3">
+        <button id="dbg-open-catalog" class="debug-reset-btn" type="button">Grid</button>
+        <button id="dbg-open-city" class="debug-reset-btn" type="button">City</button>
+        <button id="dbg-reset-factory" class="debug-reset-btn" type="button">Factory</button>
       </div>
     </aside>
+
+    <header id="city-bar" class="city-bar" aria-label="City view controls" hidden>
+      <div class="catalog-title-wrap">
+        <h2>City</h2>
+        <span id="city-subtitle" class="catalog-sub">Seed 0 · Organic</span>
+      </div>
+      <div class="catalog-controls">
+        <div class="cat-seed-group" aria-label="City seed controls">
+          <span class="cat-ctrl-label">Seed</span>
+          <button id="city-seed-prev" class="cat-step-btn" type="button" aria-label="Previous city seed">−</button>
+          <input id="city-seed-input" class="cat-seed-input" type="number" min="0" max="99999" value="0" aria-label="City seed" />
+          <button id="city-seed-next" class="cat-step-btn" type="button" aria-label="Next city seed">+</button>
+          <button id="city-seed-roll" class="cat-pill-btn" type="button" title="Roll a random city">Roll</button>
+        </div>
+        <div id="city-style-seg" class="cat-seg" role="group" aria-label="Street topology">
+          <button type="button" class="cat-seg-btn active" data-city-style="organic">Organic</button>
+          <button type="button" class="cat-seg-btn" data-city-style="grid">Grid</button>
+          <button type="button" class="cat-seg-btn" data-city-style="radial">Radial</button>
+        </div>
+        <label class="cat-consist-group" for="city-hills" title="Topography elevation relief">
+          <span class="cat-ctrl-label">Hills</span>
+          <input id="city-hills" class="cat-range" type="range" min="0" max="100" step="5" value="55" />
+          <span id="city-hills-val" class="cat-range-val">55%</span>
+        </label>
+        <button id="city-fold-btn" class="cat-pill-btn" type="button" title="Toggle fold wave across the whole city">Unfold</button>
+        <button id="city-color-btn" class="cat-pill-btn" type="button" aria-pressed="false">Color</button>
+        <button id="city-close" class="help-close" type="button" aria-label="Close city view">×</button>
+      </div>
+    </header>
+    <div id="city-status" class="city-status" aria-live="polite" hidden>Drag to orbit · Shift-drag to pan · Click any house to fold</div>
+
+    <div class="catalog-wall" id="catalog-modal" role="dialog" aria-modal="true" aria-label="Generations catalog" hidden>
+      <header class="catalog-head">
+        <div class="catalog-title-wrap">
+          <h2>Generations</h2>
+          <span id="cat-subtitle" class="catalog-sub">Seed 0 · Curated</span>
+        </div>
+        <div class="catalog-controls">
+          <div class="cat-seed-group" aria-label="Seed controls">
+            <span class="cat-ctrl-label">Seed</span>
+            <button id="cat-seed-prev" class="cat-step-btn" type="button" aria-label="Previous seed">−</button>
+            <input id="cat-seed-input" class="cat-seed-input" type="number" min="0" max="99999" value="0" aria-label="Generation seed" />
+            <button id="cat-seed-next" class="cat-step-btn" type="button" aria-label="Next seed">+</button>
+            <button id="cat-seed-roll" class="cat-pill-btn" type="button" title="Roll a random seed">Roll</button>
+            <button id="cat-seed-curated" class="cat-pill-btn" type="button" title="Reset to curated Seed 0" hidden>Curated</button>
+          </div>
+          <label class="cat-consist-group" for="cat-consistency" title="Architectural consistency (eclectic to strict)">
+            <span class="cat-ctrl-label">Consistency</span>
+            <input id="cat-consistency" class="cat-range" type="range" min="0" max="100" step="5" value="72" />
+            <span id="cat-consistency-val" class="cat-range-val">72%</span>
+          </label>
+          <div class="cat-seg" role="group" aria-label="Preview view">
+            <button id="cat-view-3d" class="cat-seg-btn active" type="button" data-view="3d">3D</button>
+            <button id="cat-view-flat" class="cat-seg-btn" type="button" data-view="flat">Flat</button>
+          </div>
+          <button id="cat-color-btn" class="cat-pill-btn" type="button" aria-pressed="false">Color</button>
+          <button id="catalog-close" class="help-close" type="button" aria-label="Close generations grid">×</button>
+        </div>
+      </header>
+      <div class="catalog-body" id="catalog-body">
+        <div id="catalog-grid" class="catalog-rows"></div>
+        <div id="cat-sentinel" class="cat-sentinel" aria-hidden="true"></div>
+      </div>
+    </div>
 
     <div class="help-backdrop" id="help-modal" hidden>
       <div class="help-card" role="dialog" aria-modal="true" aria-label="Controls">
@@ -90,6 +307,8 @@
           <div><dt>Fold by hand</dt><dd>Click or drag any wall or roof flap directly up into place</dd></div>
           <div><dt><span class="key">Space</span></dt><dd>Fold the whole house in one staggered wave and project onto the next sheet</dd></div>
           <div><dt><span class="key">F</span></dt><dd>Toggle staggered fold / unfold</dd></div>
+          <div><dt><span class="key">G</span></dt><dd>Browse seeded generations grid and click any tile to fold</dd></div>
+          <div><dt><span class="key">C</span></dt><dd>Explore 3D paper city with hills &amp; randomized streets; click any house to inspect</dd></div>
           <div><dt><span class="key">R</span></dt><dd>Reset to Layer 1 and default camera</dd></div>
           <div><dt>Drag sheet</dt><dd>Orbit 360° around the paper; scroll or pinch to zoom</dd></div>
         </dl>

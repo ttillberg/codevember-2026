@@ -13,14 +13,75 @@
  *   - Universal wall/roof local frames (`wallFrame`, `roofFrame`) for punched openings & kirigami pop-up details
  */
 
+import {
+  ALL_DOOR_STYLES,
+  ALL_GABLE_PROFILES,
+  ALL_WINDOW_DETAILS,
+  ALL_WINDOW_OPEN_MODES,
+  ALL_WINDOW_OPENINGS,
+  ALL_WINDOW_STYLES,
+  buildBuildingArchitecture,
+  computeDoorCenterU,
+  resolveFacadeForPanel,
+  type BuildingArchitecture,
+  type DoorPosition,
+  type DoorParams,
+  type DoorStyle,
+  type FacadeParams,
+  type FacadeRole,
+  type FacadeSetParams,
+  type GableProfile,
+  type GrammarOverrides,
+  type LevelParams,
+  type NetTopology,
+  type RoofParams,
+  type RoofType,
+  type ShapeParams,
+  type WindowDetail,
+  type WindowOpenMode,
+  type WindowOpeningMode,
+  type WindowParams,
+  type WindowRowParams,
+  type WindowRowRhythm,
+  type WindowStyle,
+} from './architecturalGrammar';
+
+export {
+  ALL_DOOR_STYLES,
+  ALL_GABLE_PROFILES,
+  ALL_WINDOW_DETAILS,
+  ALL_WINDOW_OPEN_MODES,
+  ALL_WINDOW_OPENINGS,
+  ALL_WINDOW_STYLES,
+  buildBuildingArchitecture,
+  computeDoorCenterU,
+  resolveFacadeForPanel,
+  type BuildingArchitecture,
+  type DoorPosition,
+  type DoorParams,
+  type DoorStyle,
+  type FacadeParams,
+  type FacadeRole,
+  type FacadeSetParams,
+  type GableProfile,
+  type GrammarOverrides,
+  type LevelParams,
+  type NetTopology,
+  type RoofParams,
+  type RoofType,
+  type ShapeParams,
+  type WindowDetail,
+  type WindowOpenMode,
+  type WindowOpeningMode,
+  type WindowParams,
+  type WindowRowParams,
+  type WindowRowRhythm,
+  type WindowStyle,
+};
+
 export type V2 = [number, number];
 
 export const MM = 0.1; // 1 mm = 0.1 Three.js world units
-
-export type NetTopology = 'cross' | 'ribbon' | 'hex' | 'oct' | 'lwing' | 'setback';
-export type RoofType = 'gable' | 'hip' | 'mansard' | 'shed' | 'flat' | 'spire' | 'butterfly' | 'sawtooth';
-export type WindowStyle = 'rect' | 'tall' | 'arched' | 'pair' | 'ribbon';
-export type DoorStyle = 'arched' | 'rect' | 'double' | 'arcade' | 'none';
 
 export type PanelId = string;
 export type FoldablePanelId = string;
@@ -49,11 +110,43 @@ export interface RoofLocalFrame {
   slantMm: number;
 }
 
+export interface VillageConfig {
+  /** Number of buildings in the single-cutout compound (2, 3, or 4) */
+  count: 2 | 3 | 4;
+  /** Deterministic seed driving building roofs, sizes, details & bridges (`0` = curated default preset) */
+  seed: number;
+  /** Optional explicit roof override for the main house (`b0`) */
+  mainRoof?: RoofType;
+  /** Compound-level architectural consistency (`0..1`) controlling how tightly buildings match */
+  consistency?: number;
+  /** Shared recursive grammar overrides propagated to every building in the compound */
+  grammar?: GrammarOverrides;
+}
+
+export interface HouseMixOptions extends GrammarOverrides {
+  /** Force a curated preset slot (`1..14`) */
+  slot?: number | null;
+  /** Force exact building count (`1` single building, or `2`/`3`/`4` single-cutout village!) */
+  houses?: 1 | 2 | 3 | 4 | null;
+  /** Force a specific unfolding net topology */
+  topology?: NetTopology | null;
+  /** Force a specific roof archetype */
+  roofType?: RoofType | null;
+  /** Extra remix seed offset (0 = curated sequence, >0 = deterministic seeded sequence!) */
+  seed?: number;
+}
+
 export interface HouseNetSpec {
   generation: number;
   label: string;
-  /** Unfolding net topology (`cross` star net vs `ribbon` wrap-around horizontal strip) */
+  /** Unfolding net topology */
   topology: NetTopology;
+  /** Optional parametric multi-house village configuration (for `topology === 'village'`) */
+  village?: VillageConfig;
+  /** Architectural consistency dial (`0..1`) driving facade, level, window-row & village coherence */
+  consistency?: number;
+  /** Full recursive compositional architectural grammar tree owned by this building */
+  architecture?: BuildingArchitecture;
   /** Footprint width (X, mm) and depth (Y/Z, mm) */
   W: number;
   D: number;
@@ -63,6 +156,8 @@ export interface HouseNetSpec {
   levels: 1 | 2 | 3;
   /** Roof architecture */
   roofType: RoofType;
+  /** Ceiling cross-section profile for gable roofs (`classic`, `gambrel` 2×, `stepped` 3× ladder, `barrel` 3×, `saltbox`) */
+  gableProfile?: GableProfile;
   /** Roof slope angle above horizontal (radians) */
   pitch: number;
   /** Mansard top deck ratio (0 for non-mansard) */
@@ -87,6 +182,8 @@ export interface HouseNetSpec {
   yawOffset: number;
   /** Curated matte architectural duplex-paper exterior color (hex) for walls, roof & details */
   outsideColor: string;
+  /** Internal flag: mirror a `ribbon` net across X (`front <- left <- back -> right`) for flush wall-to-wall packing */
+  mirrorRibbon?: boolean;
 }
 
 /**
@@ -134,6 +231,17 @@ export interface PanelNetDef {
   isFront?: boolean;
   /** Marks a triangular gable-end wall (eligible for attic circular oculus) */
   isGableEnd?: boolean;
+  /** Suppresses window/door/awning cutouts on shared interior walls pressed flush against a neighboring volume */
+  skipOpenings?: boolean;
+  /** Building index within a multi-house `village` compound (`0 = main house`, `1..3 = annexes/towers`) */
+  islandIndex?: number;
+  /** Exterior pastel swatch slot (`0..3`) so multi-house villages harmonize across complementary tones */
+  colorSlot?: 0 | 1 | 2 | 3;
+  /** Optional per-building spec & roof rise for compound villages so each house gets its own windows/details */
+  panelSpec?: HouseNetSpec;
+  panelRoofRise?: number;
+  /** Original local panel id before village prefixing (`front`, `back`, `left`, `right`, `roofL`, `roofR`, `roofCap`, ...) */
+  localId?: string;
   label: string;
 }
 
@@ -203,25 +311,196 @@ export const MODEL_PRESETS: readonly ModelPresetInfo[] = [
   { slot: 7, label: 'Hexagonal pavilion' },
   { slot: 8, label: 'Butterfly pavilion' },
   { slot: 9, label: 'Stepped pagoda' },
-  { slot: 10, label: 'Grand hip hall' },
-  { slot: 11, label: 'Modernist tower' },
-  { slot: 12, label: 'Studio loft' },
+  { slot: 10, label: 'Composite manor' },
+  { slot: 11, label: 'Grand hip hall' },
+  { slot: 12, label: 'Modernist tower' },
+  { slot: 13, label: 'Studio loft' },
+  { slot: 14, label: 'Composite estate' },
 ];
 
 /**
- * Generate a distinct architectural duplex-paper house spec for each recursive layer!
- * Pass an optional `forcedSlot` (`1..12`) from the debug model picker to preview any archetype directly.
+ * Deterministic Fisher-Yates permutation of slots `1..count` for a given seed & cycle index.
+ * Seed `0` preserves the curated canonical sequence `[1, 2, ..., count]`.
  */
-export function generateHouseSpec(generation: number, forcedSlot?: number | null): HouseNetSpec {
-  const effectiveSlot = forcedSlot && forcedSlot >= 1 && forcedSlot <= 12 ? forcedSlot : null;
-  const mod12 = effectiveSlot ?? (((Math.max(1, generation) - 1) % 12) + 1);
+function resolveArchetypeSlot(generation: number, seed: number, presetCount: number): number {
+  const g = Math.max(1, Math.floor(generation));
+  const idx = (g - 1) % presetCount;
+  if (seed <= 0) return idx + 1;
+  const cycle = Math.floor((g - 1) / presetCount);
+  const deck = Array.from({ length: presetCount }, (_, i) => i + 1);
+  const deckRng = makeRng(((seed >>> 0) * 2654435761 + (cycle + 1) * 1013904223) >>> 0);
+  for (let i = deck.length - 1; i > 0; i--) {
+    const j = Math.floor(deckRng.next() * (i + 1));
+    const tmp = deck[i];
+    deck[i] = deck[j];
+    deck[j] = tmp;
+  }
+  return deck[idx];
+}
+
+/**
+ * Generate a distinct architectural duplex-paper house spec for each recursive layer!
+ * Accepts either a numeric `forcedSlot` (`1..14`) or a full `HouseMixOptions` object for live mix-and-match.
+ * When `seed > 0` (and no explicit `slot` lock is active), the entire generational sequence is
+ * deterministically re-seeded with a permuted archetype deck and fresh architectural proportions.
+ */
+export function generateHouseSpec(
+  generation: number,
+  optOrSlot?: number | null | HouseMixOptions,
+): HouseNetSpec {
+  const opts: HouseMixOptions =
+    typeof optOrSlot === 'number'
+      ? { slot: optOrSlot }
+      : optOrSlot && typeof optOrSlot === 'object'
+        ? optOrSlot
+        : {};
+
+  const raw = generateRawHouseSpec(generation, opts);
+  const extraSeed = Math.max(0, Math.floor(opts.seed ?? 0));
+  const hasGrammarOverride = Boolean(
+    opts.gableProfile ||
+      opts.windowStyle ||
+      opts.windowOpening ||
+      opts.windowDetail ||
+      opts.windowCount ||
+      opts.doorStyle ||
+      opts.levels ||
+      (opts.heightScale !== undefined && opts.heightScale !== null) ||
+      (opts.consistency !== undefined && opts.consistency !== null),
+  );
+
+  // Layer 1 curated cottage stays strictly classical unless consistency or overrides are active
+  const isPureCuratedLayer1 =
+    !hasGrammarOverride &&
+    extraSeed === 0 &&
+    !opts.houses &&
+    !opts.topology &&
+    !opts.roofType &&
+    ((generation <= 1 && !opts.slot) || opts.slot === 1);
+
+  const consistency =
+    opts.consistency !== undefined && opts.consistency !== null
+      ? Math.max(0, Math.min(1, opts.consistency))
+      : isPureCuratedLayer1
+        ? 1.0
+        : 0.72;
+
+  const grammar: GrammarOverrides = {
+    consistency,
+    gableProfile: opts.gableProfile ?? null,
+    windowStyle: opts.windowStyle ?? null,
+    windowOpening: opts.windowOpening ?? null,
+    windowDetail: opts.windowDetail ?? null,
+    windowCount: opts.windowCount ?? null,
+    doorStyle: opts.doorStyle ?? null,
+    levels: opts.levels ?? null,
+    heightScale: opts.heightScale ?? null,
+  };
+
+  if (raw.topology === 'village') {
+    const villageSpec: HouseNetSpec = {
+      ...raw,
+      consistency,
+      village: {
+        count: raw.village?.count ?? 3,
+        seed: raw.village?.seed ?? 0,
+        mainRoof: raw.village?.mainRoof,
+        consistency,
+        grammar,
+      },
+    };
+    return villageSpec;
+  }
+
+  // Apply explicit compositional overrides cleanly to single buildings
+  const heightMult =
+    opts.heightScale !== undefined && opts.heightScale !== null
+      ? Math.max(0.72, Math.min(1.35, opts.heightScale))
+      : 1.0;
+  const H = raw.H * heightMult;
+  const levels: 1 | 2 | 3 = opts.levels ?? raw.levels;
+  const windowGround: WindowStyle = opts.windowStyle ?? raw.windowGround;
+  const windowUpper: WindowStyle = opts.windowStyle ?? raw.windowUpper;
+  const door: DoorStyle = opts.doorStyle ?? raw.door;
+  const hasAwning = door === 'none' || door === 'arcade' ? false : raw.hasAwning;
+
+  const grammarSeed = (generation * 7919 + extraSeed * 104729 + Math.round(raw.W * 31) + Math.round(H * 17)) >>> 0;
+  const gableProfile: GableProfile =
+    raw.roofType === 'gable' ? (opts.gableProfile ?? raw.gableProfile ?? 'classic') : 'classic';
+  const architecture = buildBuildingArchitecture({
+    topology: raw.topology,
+    widthMm: raw.W,
+    depthMm: raw.D,
+    heightMm: H,
+    levels,
+    yawOffset: raw.yawOffset,
+    roofType: raw.roofType,
+    gableProfile,
+    pitch: raw.pitch,
+    mansardRatio: raw.mansardRatio,
+    parapetH: raw.parapetH,
+    windowGround,
+    windowUpper,
+    door,
+    hasOculus: raw.hasOculus,
+    hasBelfry: raw.hasBelfry,
+    hasAwning,
+    hasChimney: gableProfile === 'stepped' ? false : raw.hasChimney,
+    dormerCount: gableProfile === 'stepped' || gableProfile === 'barrel' ? 0 : raw.dormerCount,
+    seed: grammarSeed,
+    consistency,
+    windowCount: opts.windowCount ?? 'auto',
+    windowOpening: opts.windowOpening ?? null,
+    windowDetail: opts.windowDetail ?? null,
+    keepMinimalDetails: isPureCuratedLayer1,
+  });
+
+  return {
+    ...raw,
+    H,
+    levels,
+    gableProfile,
+    windowGround,
+    windowUpper,
+    door,
+    hasAwning,
+    hasChimney: gableProfile === 'stepped' ? false : raw.hasChimney,
+    dormerCount: gableProfile === 'stepped' || gableProfile === 'barrel' ? 0 : raw.dormerCount,
+    consistency,
+    architecture,
+  };
+}
+
+function generateRawHouseSpec(
+  generation: number,
+  opts: HouseMixOptions,
+): HouseNetSpec {
+  const presetCount = MODEL_PRESETS.length;
+  const effectiveSlot = opts.slot && opts.slot >= 1 && opts.slot <= presetCount ? opts.slot : null;
+  const extraSeed = Math.max(0, Math.floor(opts.seed ?? 0));
+  const hasExplicitMix = Boolean(
+    opts.houses ||
+      opts.topology ||
+      opts.roofType ||
+      opts.gableProfile ||
+      opts.windowStyle ||
+      opts.windowOpening ||
+      opts.windowDetail ||
+      opts.windowCount ||
+      opts.doorStyle ||
+      opts.levels ||
+      (opts.heightScale !== undefined && opts.heightScale !== null) ||
+      (opts.consistency !== undefined && opts.consistency !== null),
+  );
+  const hasCustomMix = hasExplicitMix || extraSeed > 0;
+  const mod14 = effectiveSlot ?? resolveArchetypeSlot(generation, extraSeed, presetCount);
   const colorIdx = effectiveSlot
-    ? (effectiveSlot - 1 + Math.max(0, generation - 1)) % ARCHITECTURAL_PAPER_PALETTE.length
-    : (Math.max(1, generation) - 1) % ARCHITECTURAL_PAPER_PALETTE.length;
+    ? (effectiveSlot - 1 + Math.max(0, generation - 1) + extraSeed) % ARCHITECTURAL_PAPER_PALETTE.length
+    : (Math.max(1, generation) - 1 + extraSeed * 3 + (extraSeed > 0 ? mod14 : 0)) % ARCHITECTURAL_PAPER_PALETTE.length;
   const outsideColor = ARCHITECTURAL_PAPER_PALETTE[colorIdx];
 
-  // Layer 1 (or forced slot 1): iconic balanced silver-ratio gabled house on classic cross net!
-  if ((generation <= 1 && !effectiveSlot) || effectiveSlot === 1) {
+  // Layer 1 (or forced slot 1 with no mix/seed overrides): iconic balanced silver-ratio gabled house on classic cross net!
+  if (!hasCustomMix && ((generation <= 1 && !effectiveSlot) || effectiveSlot === 1)) {
     const W = 42;
     const D = W * Math.SQRT2;
     const H = 24.301515;
@@ -250,100 +529,113 @@ export function generateHouseSpec(generation: number, forcedSlot?: number | null
     };
   }
 
-  // Rotate cleanly through varied silhouettes & unfolding mechanics right from the first layers:
-  //   1: Gable cottage (cross)          2: Grand mansard (ribbon)
-  //   3: Octagonal lighthouse (oct)     4: Stepped tower (setback · mountain+valley!)
-  //   5: L-wing villa (lwing · mountain corner!)
-  //   6: Sawtooth atelier (cross · pleated concertina!)
-  //   7: Hexagonal pavilion (hex)       8: Butterfly pavilion (ribbon · inward V-roof!)
-  //   9: Stepped pagoda (setback · 5 hinges deep!)
-  //  10: Grand hip hall (ribbon)       11: Modernist tower (cross)       12: Studio loft (ribbon)
-  const seedGen = effectiveSlot ? effectiveSlot + (generation - 1) * 12 : generation;
-  const rng = makeRng(seedGen * 7919 + 202611);
+  const seedGen = (effectiveSlot ? effectiveSlot + (generation - 1) * presetCount : generation) + extraSeed * 997;
+  const rng = makeRng((seedGen * 7919 + extraSeed * 104729 + 202611) >>> 0);
   const yawChoices = [-0.42, 0.24, Math.PI * 0.5, -0.22, 0.44, -0.18, 0.52, -Math.PI * 0.5, 0.32];
   const yawOffset =
-    effectiveSlot && generation <= 1
+    (effectiveSlot || hasExplicitMix) && generation <= 1
       ? 0
       : yawChoices[Math.abs(seedGen - 2) % yawChoices.length] + rng.range(-0.08, 0.08);
 
   const scalePreset =
-    mod12 === 2
-      ? 1.38
-      : mod12 === 3
-        ? 1.26
-        : mod12 === 4
-          ? 1.24
-          : mod12 === 5
-            ? 1.18
-            : mod12 === 6
-              ? 1.26
-              : mod12 === 7
-                ? 1.24
-                : mod12 === 8
-                  ? 1.22
-                  : mod12 === 9
-                    ? 1.20
-                    : mod12 === 10
-                      ? 1.36
-                      : mod12 === 11
-                        ? 1.32
-                        : mod12 === 12
-                          ? 1.12
-                          : rng.pick([0.98, 1.18, 1.34, 1.46]);
+    hasCustomMix
+      ? rng.range(1.04, 1.32)
+      : mod14 === 2
+        ? 1.38
+        : mod14 === 3
+          ? 1.26
+          : mod14 === 4
+            ? 1.24
+            : mod14 === 5
+              ? 1.18
+              : mod14 === 6
+                ? 1.26
+                : mod14 === 7
+                  ? 1.24
+                  : mod14 === 8
+                    ? 1.22
+                    : mod14 === 9
+                      ? 1.20
+                      : mod14 === 10
+                        ? 1.08
+                        : mod14 === 11
+                          ? 1.36
+                          : mod14 === 12
+                            ? 1.32
+                            : mod14 === 13
+                              ? 1.12
+                              : mod14 === 14
+                                ? 1.05
+                                : rng.pick([0.98, 1.18, 1.34, 1.46]);
 
-  // Dedicated sculptural topologies: `oct`, `setback`, `lwing`, `hex`
-  const isOctLayer = mod12 === 3;
-  const isSetbackLayer = mod12 === 4 || mod12 === 9;
-  const isLWingLayer = mod12 === 5;
-  const isHexLayer = mod12 === 7;
+  // Resolve target topology cleanly from mix overrides OR natural/seeded layer cycle
+  const wantMultiHouse =
+    (opts.houses !== undefined && opts.houses !== null && opts.houses >= 2) ||
+    opts.topology === 'village';
 
-  if (isSetbackLayer) {
-    const isCrownedPagoda = mod12 === 9;
-    const span = rng.range(42, 48) * Math.min(1.26, scalePreset);
-    const H = (isCrownedPagoda ? rng.range(40, 46) : rng.range(46, 54)) * Math.min(1.24, scalePreset);
+  const isVillageLayer =
+    wantMultiHouse ||
+    (!opts.topology && opts.houses !== 1 && (mod14 === 10 || mod14 === 14));
+  const isSetbackLayer =
+    !isVillageLayer &&
+    (opts.topology === 'setback' || (!opts.topology && (mod14 === 4 || mod14 === 9)));
+  const isLWingLayer =
+    !isVillageLayer &&
+    (opts.topology === 'lwing' || (!opts.topology && mod14 === 5));
+  const isOctLayer =
+    !isVillageLayer &&
+    (opts.topology === 'oct' || (!opts.topology && mod14 === 3));
+  const isHexLayer =
+    !isVillageLayer &&
+    (opts.topology === 'hex' || (!opts.topology && mod14 === 7));
+
+  if (isVillageLayer) {
+    const isCuratedArchipelago = !wantMultiHouse && extraSeed === 0 && generation <= presetCount && mod14 === 14;
+    const isCuratedEstate = !wantMultiHouse && extraSeed === 0 && generation <= presetCount && mod14 === 10;
+    const count: 2 | 3 | 4 =
+      opts.houses && opts.houses >= 2
+        ? (opts.houses as 2 | 3 | 4)
+        : isCuratedArchipelago
+          ? 4
+          : isCuratedEstate
+            ? 3
+            : rng.pick([2, 3, 4] as const);
+    const villageSeed =
+      isCuratedEstate || isCuratedArchipelago
+        ? 0
+        : Math.max(1, ((seedGen * 97 + extraSeed * 313 + count * 13) & 0x7fffffff));
+    const villageMainRoofs: RoofType[] = ['gable', 'mansard', 'spire', 'hip', 'shed', 'flat', 'butterfly', 'sawtooth'];
+    const mainRoof =
+      opts.roofType ??
+      (isCuratedArchipelago
+        ? 'gable'
+        : isCuratedEstate
+          ? 'mansard'
+          : rng.pick(villageMainRoofs));
+    const label = isCuratedArchipelago
+      ? 'Composite estate'
+      : isCuratedEstate
+        ? 'Composite manor'
+        : count === 2
+          ? 'Twin composite house'
+          : count === 3
+            ? 'Composite row house'
+            : 'Composite estate';
     return {
       generation,
-      label: isCrownedPagoda ? 'Stepped pagoda' : 'Stepped tower',
-      topology: 'setback',
-      W: span,
-      D: span,
-      H,
+      label,
+      topology: 'village',
+      village: { count, seed: villageSeed, mainRoof },
+      W: 32,
+      D: 34,
+      H: 22,
       levels: 2,
-      roofType: isCrownedPagoda ? 'mansard' : 'spire',
-      pitch: isCrownedPagoda ? rng.range(0.84, 1.02) : rng.range(1.10, 1.22),
-      mansardRatio: isCrownedPagoda ? 0.44 : 0,
+      roofType: mainRoof ?? 'gable',
+      pitch: 0.78,
+      mansardRatio: mainRoof === 'mansard' ? 0.48 : 0,
       parapetH: 0,
       windowGround: 'arched',
-      windowUpper: 'tall',
-      door: 'arched',
-      hasOculus: false,
-      hasBelfry: !isCrownedPagoda,
-      hasAwning: false,
-      hasChimney: false,
-      dormerCount: 0,
-      yawOffset,
-      outsideColor,
-    };
-  }
-
-  if (isLWingLayer) {
-    const W = rng.range(38, 44) * Math.min(1.24, scalePreset);
-    const D = rng.range(52, 58) * Math.min(1.24, scalePreset);
-    const H = rng.range(26, 32) * Math.min(1.24, scalePreset);
-    return {
-      generation,
-      label: 'L-wing villa',
-      topology: 'lwing',
-      W,
-      D,
-      H,
-      levels: H >= 34 ? 2 : 1,
-      roofType: 'gable',
-      pitch: rng.range(0.68, 0.86),
-      mansardRatio: 0,
-      parapetH: 0,
-      windowGround: rng.pick(['arched', 'rect']),
-      windowUpper: rng.pick(['rect', 'pair']),
+      windowUpper: 'rect',
       door: 'arched',
       hasOculus: true,
       hasBelfry: false,
@@ -355,10 +647,98 @@ export function generateHouseSpec(generation: number, forcedSlot?: number | null
     };
   }
 
+  const preferCrowned = (r?: RoofType | null): boolean | null => {
+    if (!r) return null;
+    if (r === 'spire' || r === 'gable' || r === 'hip') return false;
+    return true;
+  };
+
+  const seededWinPool: WindowStyle[] =
+    extraSeed > 0 || (opts.consistency !== undefined && opts.consistency !== null && opts.consistency < 0.7)
+      ? ['rect', 'tall', 'arched', 'pair', 'ribbon', 'round', 'lancet', 'slit']
+      : ['rect', 'tall', 'arched', 'pair', 'ribbon'];
+  const seededDoorPool: DoorStyle[] = ['arched', 'rect', 'double', 'arcade'];
+
+  if (isSetbackLayer) {
+    const crownedOverride = preferCrowned(opts.roofType);
+    const isCrownedPagoda = crownedOverride !== null ? crownedOverride : mod14 === 9;
+    const span = (extraSeed > 0 ? rng.range(38, 52) : rng.range(42, 48)) * Math.min(1.26, scalePreset);
+    const H =
+      (extraSeed > 0
+        ? isCrownedPagoda
+          ? rng.range(34, 52)
+          : rng.range(40, 60)
+        : isCrownedPagoda
+          ? rng.range(40, 46)
+          : rng.range(46, 54)) * Math.min(1.24, scalePreset);
+    const levels: 1 | 2 | 3 = extraSeed > 0 && H >= 56 ? 3 : 2;
+    return {
+      generation,
+      label: isCrownedPagoda ? 'Stepped pagoda' : 'Stepped tower',
+      topology: 'setback',
+      W: span,
+      D: span,
+      H,
+      levels,
+      roofType: isCrownedPagoda ? 'mansard' : 'spire',
+      pitch: isCrownedPagoda ? rng.range(0.76, 1.08) : rng.range(0.98, 1.26),
+      mansardRatio: isCrownedPagoda ? (extraSeed > 0 ? rng.range(0.34, 0.54) : 0.44) : 0,
+      parapetH: 0,
+      windowGround: extraSeed > 0 ? rng.pick(seededWinPool) : 'arched',
+      windowUpper: extraSeed > 0 ? rng.pick(seededWinPool) : 'tall',
+      door: extraSeed > 0 ? rng.pick(seededDoorPool) : 'arched',
+      hasOculus: false,
+      hasBelfry: extraSeed > 0 ? !isCrownedPagoda && rng.chance(0.7) : !isCrownedPagoda,
+      hasAwning: extraSeed > 0 ? rng.chance(0.4) : false,
+      hasChimney: false,
+      dormerCount: 0,
+      yawOffset,
+      outsideColor,
+    };
+  }
+
+  if (isLWingLayer) {
+    const W = (extraSeed > 0 ? rng.range(34, 48) : rng.range(38, 44)) * Math.min(1.24, scalePreset);
+    const D = (extraSeed > 0 ? rng.range(46, 62) : rng.range(52, 58)) * Math.min(1.24, scalePreset);
+    const H = (extraSeed > 0 ? rng.range(22, 38) : rng.range(26, 32)) * Math.min(1.24, scalePreset);
+    return {
+      generation,
+      label: 'L-wing villa',
+      topology: 'lwing',
+      W,
+      D,
+      H,
+      levels: H >= 34 ? 2 : 1,
+      roofType: 'gable',
+      pitch: extraSeed > 0 ? rng.range(0.56, 0.96) : rng.range(0.68, 0.86),
+      mansardRatio: 0,
+      parapetH: 0,
+      windowGround: extraSeed > 0 ? rng.pick(seededWinPool) : rng.pick(['arched', 'rect']),
+      windowUpper: extraSeed > 0 ? rng.pick(seededWinPool) : rng.pick(['rect', 'pair']),
+      door: extraSeed > 0 ? rng.pick(seededDoorPool) : 'arched',
+      hasOculus: extraSeed > 0 ? rng.chance(0.75) : true,
+      hasBelfry: false,
+      hasAwning: extraSeed > 0 ? rng.chance(0.65) : true,
+      hasChimney: extraSeed > 0 ? rng.chance(0.75) : true,
+      dormerCount: 0,
+      yawOffset,
+      outsideColor,
+    };
+  }
+
   if (isOctLayer) {
-    const isCrownedRotunda = generation > 3 && rng.chance(0.45);
-    const span = rng.range(36, 42) * Math.min(1.3, scalePreset);
-    const H = (isCrownedRotunda ? rng.range(28, 34) : rng.range(44, 52)) * Math.min(1.26, scalePreset);
+    const crownedOverride = preferCrowned(opts.roofType);
+    const isCrownedRotunda =
+      crownedOverride !== null ? crownedOverride : (extraSeed > 0 || generation > 3) && rng.chance(0.45);
+    const span = (extraSeed > 0 ? rng.range(32, 46) : rng.range(36, 42)) * Math.min(1.3, scalePreset);
+    const H =
+      (extraSeed > 0
+        ? isCrownedRotunda
+          ? rng.range(24, 40)
+          : rng.range(36, 56)
+        : isCrownedRotunda
+          ? rng.range(28, 34)
+          : rng.range(44, 52)) * Math.min(1.26, scalePreset);
     return {
       generation,
       label: isCrownedRotunda ? 'Octagonal rotunda' : 'Octagonal lighthouse',
@@ -366,17 +746,17 @@ export function generateHouseSpec(generation: number, forcedSlot?: number | null
       W: span,
       D: span,
       H,
-      levels: isCrownedRotunda ? 2 : 3,
+      levels: H >= 44 ? 3 : H >= 28 ? 2 : 1,
       roofType: isCrownedRotunda ? 'mansard' : 'spire',
-      pitch: isCrownedRotunda ? rng.range(0.76, 0.96) : rng.range(1.06, 1.20),
-      mansardRatio: isCrownedRotunda ? 0.42 : 0,
+      pitch: isCrownedRotunda ? rng.range(0.68, 1.02) : rng.range(0.96, 1.24),
+      mansardRatio: isCrownedRotunda ? (extraSeed > 0 ? rng.range(0.32, 0.50) : 0.42) : 0,
       parapetH: 0,
-      windowGround: 'arched',
-      windowUpper: 'tall',
-      door: 'arched',
+      windowGround: extraSeed > 0 ? rng.pick(seededWinPool) : 'arched',
+      windowUpper: extraSeed > 0 ? rng.pick(seededWinPool) : 'tall',
+      door: extraSeed > 0 ? rng.pick(['arched', 'rect', 'double'] as const) : 'arched',
       hasOculus: false,
-      hasBelfry: !isCrownedRotunda,
-      hasAwning: false,
+      hasBelfry: extraSeed > 0 ? !isCrownedRotunda && rng.chance(0.65) : !isCrownedRotunda,
+      hasAwning: extraSeed > 0 ? rng.chance(0.35) : false,
       hasChimney: false,
       dormerCount: 0,
       yawOffset,
@@ -385,9 +765,11 @@ export function generateHouseSpec(generation: number, forcedSlot?: number | null
   }
 
   if (isHexLayer) {
-    const isPointedPagoda = generation > 7 && rng.chance(0.45);
-    const span = rng.range(42, 48) * Math.min(1.32, scalePreset);
-    const H = rng.range(24, 30) * Math.min(1.28, scalePreset);
+    const crownedOverride = preferCrowned(opts.roofType);
+    const isPointedPagoda =
+      crownedOverride !== null ? !crownedOverride : (extraSeed > 0 || generation > 7) && rng.chance(0.45);
+    const span = (extraSeed > 0 ? rng.range(36, 50) : rng.range(42, 48)) * Math.min(1.32, scalePreset);
+    const H = (extraSeed > 0 ? rng.range(20, 42) : rng.range(24, 30)) * Math.min(1.28, scalePreset);
     return {
       generation,
       label: isPointedPagoda ? 'Hexagonal spire' : 'Hexagonal pavilion',
@@ -395,17 +777,17 @@ export function generateHouseSpec(generation: number, forcedSlot?: number | null
       W: span,
       D: span,
       H,
-      levels: H >= 33 ? 2 : 1,
+      levels: H >= 44 ? 3 : H >= 31 ? 2 : 1,
       roofType: isPointedPagoda ? 'spire' : 'mansard',
-      pitch: isPointedPagoda ? rng.range(0.88, 1.05) : rng.range(0.68, 0.88),
-      mansardRatio: isPointedPagoda ? 0 : 0.40,
+      pitch: isPointedPagoda ? rng.range(0.84, 1.16) : rng.range(0.62, 0.96),
+      mansardRatio: isPointedPagoda ? 0 : extraSeed > 0 ? rng.range(0.32, 0.50) : 0.40,
       parapetH: 0,
-      windowGround: rng.pick(['arched', 'tall']),
-      windowUpper: 'rect',
-      door: 'arched',
+      windowGround: extraSeed > 0 ? rng.pick(seededWinPool) : rng.pick(['arched', 'tall']),
+      windowUpper: extraSeed > 0 ? rng.pick(seededWinPool) : 'rect',
+      door: extraSeed > 0 ? rng.pick(['arched', 'rect', 'double'] as const) : 'arched',
       hasOculus: false,
-      hasBelfry: false,
-      hasAwning: !isPointedPagoda,
+      hasBelfry: extraSeed > 0 ? isPointedPagoda && H >= 36 && rng.chance(0.5) : false,
+      hasAwning: extraSeed > 0 ? rng.chance(0.55) : !isPointedPagoda,
       hasChimney: false,
       dormerCount: 0,
       yawOffset,
@@ -414,28 +796,39 @@ export function generateHouseSpec(generation: number, forcedSlot?: number | null
   }
 
   // Rectangular layers cycle cleanly across all 8 roof archetypes & mix `ribbon` + `cross` nets!
-  const rectByMod12: Record<number, RoofType> = {
+  const rectByMod14: Record<number, RoofType> = {
     1: 'gable',
     2: 'mansard',
     6: 'sawtooth',
     8: 'butterfly',
-    10: 'hip',
-    11: 'flat',
-    12: 'shed',
+    11: 'hip',
+    12: 'flat',
+    13: 'shed',
   };
+  const allRoofs: RoofType[] = ['gable', 'mansard', 'spire', 'hip', 'shed', 'flat', 'butterfly', 'sawtooth'];
   const roofType: RoofType =
-    generation > 12 && mod12 === 1 ? 'spire' : (rectByMod12[mod12] ?? 'gable');
+    opts.roofType ??
+    (hasCustomMix && !effectiveSlot
+      ? rng.pick(allRoofs)
+      : generation > presetCount && mod14 === 1
+        ? 'spire'
+        : (rectByMod14[mod14] ?? 'gable'));
 
   const topology: NetTopology =
-    mod12 === 2 || mod12 === 8 || mod12 === 10 || mod12 === 12
-      ? 'ribbon'
-      : mod12 === 6 || mod12 === 11
-        ? 'cross'
-        : rng.chance(0.55)
-          ? 'ribbon'
-          : 'cross';
+    opts.topology === 'cross' || opts.topology === 'ribbon'
+      ? opts.topology
+      : mod14 === 2 || mod14 === 8 || mod14 === 11 || mod14 === 13
+        ? 'ribbon'
+        : mod14 === 6 || mod14 === 12
+          ? 'cross'
+          : rng.chance(0.55)
+            ? 'ribbon'
+            : 'cross';
 
-  const winPool: WindowStyle[] = ['rect', 'tall', 'arched', 'pair', 'ribbon'];
+  const winPool: WindowStyle[] =
+    extraSeed > 0 || (opts.consistency !== undefined && opts.consistency !== null && opts.consistency < 0.7)
+      ? ['rect', 'tall', 'arched', 'pair', 'ribbon', 'round', 'lancet', 'slit']
+      : ['rect', 'tall', 'arched', 'pair', 'ribbon'];
   const doorPool: DoorStyle[] = ['arched', 'rect', 'double', 'arcade'];
 
   if (roofType === 'spire') {
@@ -646,21 +1039,41 @@ export function generateHouseSpec(generation: number, forcedSlot?: number | null
     };
   }
 
-  // Varied gable townhouse / grand hall
+  // Varied gable townhouse / grand hall / gambrel barn / 3x stepped trappgavel / barrel vault / saltbox!
+  const gableProfile: GableProfile =
+    opts.gableProfile ??
+    (extraSeed > 0 || generation > presetCount
+      ? rng.pick(ALL_GABLE_PROFILES)
+      : 'classic');
   const tallTownhouse = rng.chance(0.55);
-  const W = (tallTownhouse ? rng.range(32, 38) : rng.range(42, 48)) * scalePreset;
+  const W = (tallTownhouse ? rng.range(34, 42) : rng.range(42, 48)) * scalePreset;
   const D = (tallTownhouse ? rng.range(44, 52) : rng.range(54, 62)) * scalePreset;
-  const H = (tallTownhouse ? rng.range(32, 38) : rng.range(22, 27)) * scalePreset;
+  const H = (tallTownhouse ? rng.range(30, 37) : rng.range(22, 27)) * scalePreset;
   const levels: 1 | 2 | 3 = H >= 44 ? 3 : H >= 30 ? 2 : 1;
+  const gableLabel =
+    gableProfile === 'gambrel'
+      ? 'Gambrel barn'
+      : gableProfile === 'stepped'
+        ? 'Stepped gable'
+        : gableProfile === 'barrel'
+          ? 'Barrel gable'
+          : gableProfile === 'saltbox'
+            ? 'Saltbox house'
+            : scalePreset >= 1.3
+              ? 'Grand gable hall'
+              : tallTownhouse
+                ? 'Gable townhouse'
+                : 'Long gable house';
   return {
     generation,
-    label: scalePreset >= 1.3 ? 'Grand gable hall' : tallTownhouse ? 'Gable townhouse' : 'Long gable house',
+    label: gableLabel,
     topology,
     W,
     D,
     H,
     levels,
     roofType: 'gable',
+    gableProfile,
     pitch: rng.range(0.64, 0.92),
     mansardRatio: 0,
     parapetH: 0,
@@ -670,11 +1083,142 @@ export function generateHouseSpec(generation: number, forcedSlot?: number | null
     hasOculus: rng.chance(0.85),
     hasBelfry: false,
     hasAwning: rng.chance(0.55),
-    hasChimney: rng.chance(0.85),
-    dormerCount: D >= 48 ? (rng.chance(0.55) ? 2 : 1) : 1,
+    hasChimney: gableProfile === 'stepped' ? false : rng.chance(0.85),
+    dormerCount: gableProfile === 'stepped' || gableProfile === 'barrel' ? 0 : D >= 48 ? (rng.chance(0.55) ? 2 : 1) : 1,
     yawOffset,
     outsideColor,
   };
+}
+
+// ----------------------------------------------------------------------------
+// Universal Piecewise Gable Ceiling Profile Geometry (`classic`, `gambrel` 2×, `stepped` 3× ladder, `barrel` 3×, `saltbox`)
+// ----------------------------------------------------------------------------
+interface GableRoofSeg {
+  /** Exact flat paper width of this roof strip (mm) */
+  length: number;
+  /** Magnitude of relative fold angle at hinge crease (radians >= 0) */
+  targetAngle: number;
+  /** True for outward mountain creases (e.g. vertical ladder risers in `stepped` 3× trappgavel!) */
+  isMountain: boolean;
+  label: string;
+}
+
+interface BuiltGableProfile {
+  leftSegs: GableRoofSeg[];
+  rightSegs: GableRoofSeg[];
+  /** Ordered `(worldX, riseAboveH)` crown points from `(-hw, 0)` across roof profile to `(+hw, 0)` */
+  wallCrown: V2[];
+  roofRise: number;
+  roofSlant: number;
+  ridgeX: number;
+}
+
+function buildGableProfileGeometry(hw: number, pitch: number, profile: GableProfile): BuiltGableProfile {
+  const toSegs = (pts: V2[], sideLabel: string): GableRoofSeg[] => {
+    const segs: GableRoofSeg[] = [];
+    let prevTheta = 0; // vertical wall pointing straight UP (+Y)
+    for (let i = 1; i < pts.length; i++) {
+      const dx = pts[i][0] - pts[i - 1][0];
+      const dy = pts[i][1] - pts[i - 1][1];
+      const length = Math.hypot(dx, dy);
+      const theta = Math.atan2(dx, dy);
+      const delta = theta - prevTheta;
+      segs.push({
+        length,
+        targetAngle: Math.abs(delta),
+        isMountain: delta < 0,
+        label: i === 1 ? `${sideLabel} roof` : `${sideLabel} roof ${i}`,
+      });
+      prevTheta = theta;
+    }
+    return segs;
+  };
+
+  let leftPts: V2[];
+  let rightPts: V2[];
+  let ridgeX = 0;
+
+  if (profile === 'gambrel') {
+    // Cut twice: steep lower skirt (~62°) + gentler upper pitch (~24°)
+    const lowerRun = hw * 0.42;
+    const lowerPitch = Math.max(1.02, Math.min(1.22, pitch + 0.34));
+    const rise1 = lowerRun * Math.tan(lowerPitch);
+    const upperRun = hw - lowerRun;
+    const upperPitch = Math.max(0.32, Math.min(0.52, pitch * 0.50));
+    const rise2 = rise1 + upperRun * Math.tan(upperPitch);
+    leftPts = [
+      [0, 0],
+      [lowerRun, rise1],
+      [hw, rise2],
+    ];
+    rightPts = leftPts;
+  } else if (profile === 'barrel') {
+    // 3-cut arched faceted barrel vault along a smooth quarter-ellipse
+    const R = hw * Math.max(0.72, Math.min(1.05, Math.tan(pitch) * 0.92));
+    leftPts = [
+      [0, 0],
+      [hw * (1 - Math.cos(Math.PI / 6)), R * Math.sin(Math.PI / 6)],
+      [hw * (1 - Math.cos(Math.PI / 3)), R * Math.sin(Math.PI / 3)],
+      [hw, R],
+    ];
+    rightPts = leftPts;
+  } else if (profile === 'stepped') {
+    // 3× ladder crow-stepped gable (*trappgavel*): 3 alternating tread (valley) + riser (mountain) steps + crown half!
+    const stepW = hw * 0.25;
+    const stepH = Math.max(4.5, Math.min(9.2, hw * 0.28));
+    leftPts = [
+      [0, 0],
+      [stepW, 0],
+      [stepW, stepH],
+      [stepW * 2, stepH],
+      [stepW * 2, stepH * 2],
+      [stepW * 3, stepH * 2],
+      [stepW * 3, stepH * 3],
+      [hw, stepH * 3],
+    ];
+    rightPts = leftPts;
+  } else if (profile === 'saltbox') {
+    // Asymmetric offset-ridge gable: long sweeping left slope + steeper shorter right slope
+    ridgeX = hw * 0.30;
+    const R = hw * Math.tan(pitch) * 0.92;
+    leftPts = [
+      [0, 0],
+      [hw + ridgeX, R],
+    ];
+    rightPts = [
+      [0, 0],
+      [hw - ridgeX, R],
+    ];
+  } else {
+    // Classic single-cut pitched gable
+    const R = hw * Math.tan(pitch);
+    leftPts = [
+      [0, 0],
+      [hw, R],
+    ];
+    rightPts = leftPts;
+  }
+
+  // Combine leftPts (-hw + run, rise) + reversed interior rightPts (+hw - run, rise) into one clean crown polyline
+  const wallCrown: V2[] = [];
+  for (let i = 0; i < leftPts.length; i++) {
+    wallCrown.push([-hw + leftPts[i][0], leftPts[i][1]]);
+  }
+  for (let i = rightPts.length - 2; i >= 0; i--) {
+    const wx = hw - rightPts[i][0];
+    const wy = rightPts[i][1];
+    const prev = wallCrown[wallCrown.length - 1];
+    if (Math.hypot(wx - prev[0], wy - prev[1]) > 1e-4) {
+      wallCrown.push([wx, wy]);
+    }
+  }
+
+  const leftSegs = toSegs(leftPts, 'Left');
+  const rightSegs = toSegs(rightPts, 'Right');
+  const roofRise = leftPts[leftPts.length - 1][1];
+  const roofSlant = leftSegs[0]?.length ?? hw;
+
+  return { leftSegs, rightSegs, wallCrown, roofRise, roofSlant, ridgeX };
 }
 
 // ----------------------------------------------------------------------------
@@ -719,20 +1263,22 @@ function buildCrossPanels(
   });
 
   if (roofType === 'gable') {
-    const R = hw * Math.tan(pitch);
-    const L = Math.hypot(hw, R);
-    const roofFold = Math.PI * 0.5 - pitch;
+    const profile: GableProfile = spec.gableProfile ?? spec.architecture?.roof.gableProfile ?? 'classic';
+    const gp = buildGableProfileGeometry(hw, pitch, profile);
+    const R = gp.roofRise;
+    const L = gp.roofSlant;
+
+    // Front gable wall (`y <= -hd`): world `(wx, H + ry)` -> sheet `(wx, -(hd + H + ry))`
+    const frontPoly: V2[] = [
+      [-hw, -hd],
+      ...gp.wallCrown.map(([wx, ry]): V2 => [wx, -(hd + H + ry)]),
+      [hw, -hd],
+    ];
 
     add({
       id: 'front',
       parent: 'base',
-      poly: [
-        [-hw, -hd],
-        [-hw, -(hd + H)],
-        [0, -(hd + H + R)],
-        [hw, -(hd + H)],
-        [hw, -hd],
-      ],
+      poly: frontPoly,
       hingeOrigin: [0, -hd],
       crease: [[-hw, -hd], [hw, -hd]],
       hingeAxis: [-1, 0],
@@ -744,16 +1290,17 @@ function buildCrossPanels(
       label: 'Front gable',
     });
 
+    // Back gable wall (`y >= +hd`): world `(wx, H + ry)` -> sheet `(wx, +(hd + H + ry))`
+    const backPoly: V2[] = [
+      [-hw, hd],
+      [hw, hd],
+      ...gp.wallCrown.slice().reverse().map(([wx, ry]): V2 => [wx, hd + H + ry]),
+    ];
+
     add({
       id: 'back',
       parent: 'base',
-      poly: [
-        [-hw, hd],
-        [hw, hd],
-        [hw, hd + H],
-        [0, hd + H + R],
-        [-hw, hd + H],
-      ],
+      poly: backPoly,
       hingeOrigin: [0, hd],
       crease: [[-hw, hd], [hw, hd]],
       hingeAxis: [1, 0],
@@ -800,40 +1347,60 @@ function buildCrossPanels(
       label: 'Right wall',
     });
 
-    add({
-      id: 'roofL',
-      parent: 'left',
-      poly: [
-        [-(hw + H + L), -hd],
-        [-(hw + H), -hd],
-        [-(hw + H), hd],
-        [-(hw + H + L), hd],
-      ],
-      hingeOrigin: [-(hw + H), 0],
-      crease: [[-(hw + H), -hd], [-(hw + H), hd]],
-      hingeAxis: [0, 1],
-      targetAngle: roofFold,
-      stage: 'roof',
-      roofFrame: { origin: [-(hw + H), 0], ridgeAxis: [0, 1], slopeAxis: [-1, 0], widthMm: D, slantMm: L },
-      label: 'Left roof',
+    // Chain left ceiling segments outward along `-X` from `left` wall top edge
+    let xCurL = -(hw + H);
+    let parentL: PanelId = 'left';
+    gp.leftSegs.forEach((seg, idx) => {
+      const id = idx === 0 ? 'roofL' : `roofL${idx + 1}`;
+      const xNext = xCurL - seg.length;
+      add({
+        id,
+        parent: parentL,
+        poly: [
+          [xNext, -hd],
+          [xCurL, -hd],
+          [xCurL, hd],
+          [xNext, hd],
+        ],
+        hingeOrigin: [xCurL, 0],
+        crease: [[xCurL, -hd], [xCurL, hd]],
+        hingeAxis: seg.isMountain ? [0, -1] : [0, 1],
+        targetAngle: seg.targetAngle,
+        stage: 'roof',
+        isMountain: seg.isMountain || undefined,
+        roofFrame: { origin: [xCurL, 0], ridgeAxis: [0, 1], slopeAxis: [-1, 0], widthMm: D, slantMm: seg.length },
+        label: seg.label,
+      });
+      parentL = id;
+      xCurL = xNext;
     });
 
-    add({
-      id: 'roofR',
-      parent: 'right',
-      poly: [
-        [hw + H, -hd],
-        [hw + H + L, -hd],
-        [hw + H + L, hd],
-        [hw + H, hd],
-      ],
-      hingeOrigin: [hw + H, 0],
-      crease: [[hw + H, -hd], [hw + H, hd]],
-      hingeAxis: [0, -1],
-      targetAngle: roofFold,
-      stage: 'roof',
-      roofFrame: { origin: [hw + H, 0], ridgeAxis: [0, -1], slopeAxis: [1, 0], widthMm: D, slantMm: L },
-      label: 'Right roof',
+    // Chain right ceiling segments outward along `+X` from `right` wall top edge
+    let xCurR = hw + H;
+    let parentR: PanelId = 'right';
+    gp.rightSegs.forEach((seg, idx) => {
+      const id = idx === 0 ? 'roofR' : `roofR${idx + 1}`;
+      const xNext = xCurR + seg.length;
+      add({
+        id,
+        parent: parentR,
+        poly: [
+          [xCurR, -hd],
+          [xNext, -hd],
+          [xNext, hd],
+          [xCurR, hd],
+        ],
+        hingeOrigin: [xCurR, 0],
+        crease: [[xCurR, -hd], [xCurR, hd]],
+        hingeAxis: seg.isMountain ? [0, 1] : [0, -1],
+        targetAngle: seg.targetAngle,
+        stage: 'roof',
+        isMountain: seg.isMountain || undefined,
+        roofFrame: { origin: [xCurR, 0], ridgeAxis: [0, -1], slopeAxis: [1, 0], widthMm: D, slantMm: seg.length },
+        label: seg.label,
+      });
+      parentR = id;
+      xCurR = xNext;
     });
 
     return { roofRise: R, roofSlant: L };
@@ -1571,20 +2138,22 @@ function buildRibbonPanels(
   });
 
   if (roofType === 'gable') {
-    const R = hw * Math.tan(pitch);
-    const L = Math.hypot(hw, R);
-    const roofFold = Math.PI * 0.5 - pitch;
+    const profile: GableProfile = spec.gableProfile ?? spec.architecture?.roof.gableProfile ?? 'classic';
+    const gp = buildGableProfileGeometry(hw, pitch, profile);
+    const R = gp.roofRise;
+    const L = gp.roofSlant;
+
+    // Back wall (`x ∈ [xB0, xB1]`): worldX maps directly to sheetX (`wx`)
+    const backPoly: V2[] = [
+      [xB0, hd],
+      [xB1, hd],
+      ...gp.wallCrown.slice().reverse().map(([wx, ry]): V2 => [wx, hd + H + ry]),
+    ];
 
     add({
       id: 'back',
       parent: 'base',
-      poly: [
-        [xB0, hd],
-        [xB1, hd],
-        [xB1, hd + H],
-        [cxB, hd + H + R],
-        [xB0, hd + H],
-      ],
+      poly: backPoly,
       hingeOrigin: [0, hd],
       crease: [[xB0, hd], [xB1, hd]],
       hingeAxis: [1, 0],
@@ -1631,16 +2200,17 @@ function buildRibbonPanels(
       label: 'Right wall',
     });
 
+    // Front wall (`xF0 -> +hw`, `xF1 -> -hw`): worldX maps to `cxF - wx`
+    const frontPoly: V2[] = [
+      [xF0, hd],
+      [xF1, hd],
+      ...gp.wallCrown.map(([wx, ry]): V2 => [cxF - wx, hd + H + ry]),
+    ];
+
     add({
       id: 'front',
       parent: 'right',
-      poly: [
-        [xF0, hd],
-        [xF1, hd],
-        [xF1, hd + H],
-        [cxF, hd + H + R],
-        [xF0, hd + H],
-      ],
+      poly: frontPoly,
       hingeOrigin: [xF0, hd + H * 0.5],
       crease: [[xF0, hd], [xF0, hd + H]],
       hingeAxis: [0, -1],
@@ -1652,40 +2222,60 @@ function buildRibbonPanels(
       label: 'Front gable',
     });
 
-    add({
-      id: 'roofL',
-      parent: 'left',
-      poly: [
-        [xL0, hd + H],
-        [xL1, hd + H],
-        [xL1, hd + H + L],
-        [xL0, hd + H + L],
-      ],
-      hingeOrigin: [cxL, hd + H],
-      crease: [[xL0, hd + H], [xL1, hd + H]],
-      hingeAxis: [1, 0],
-      targetAngle: roofFold,
-      stage: 'roof',
-      roofFrame: { origin: [cxL, hd + H], ridgeAxis: [1, 0], slopeAxis: [0, 1], widthMm: D, slantMm: L },
-      label: 'Left roof',
+    // Chain left ceiling segments upward along `+Y` from `left` wall top edge
+    let yCurL = hd + H;
+    let parentL: PanelId = 'left';
+    gp.leftSegs.forEach((seg, idx) => {
+      const id = idx === 0 ? 'roofL' : `roofL${idx + 1}`;
+      const yNext = yCurL + seg.length;
+      add({
+        id,
+        parent: parentL,
+        poly: [
+          [xL0, yCurL],
+          [xL1, yCurL],
+          [xL1, yNext],
+          [xL0, yNext],
+        ],
+        hingeOrigin: [cxL, yCurL],
+        crease: [[xL0, yCurL], [xL1, yCurL]],
+        hingeAxis: seg.isMountain ? [-1, 0] : [1, 0],
+        targetAngle: seg.targetAngle,
+        stage: 'roof',
+        isMountain: seg.isMountain || undefined,
+        roofFrame: { origin: [cxL, yCurL], ridgeAxis: [1, 0], slopeAxis: [0, 1], widthMm: D, slantMm: seg.length },
+        label: seg.label,
+      });
+      parentL = id;
+      yCurL = yNext;
     });
 
-    add({
-      id: 'roofR',
-      parent: 'right',
-      poly: [
-        [xR0, hd + H],
-        [xR1, hd + H],
-        [xR1, hd + H + L],
-        [xR0, hd + H + L],
-      ],
-      hingeOrigin: [cxR, hd + H],
-      crease: [[xR0, hd + H], [xR1, hd + H]],
-      hingeAxis: [1, 0],
-      targetAngle: roofFold,
-      stage: 'roof',
-      roofFrame: { origin: [cxR, hd + H], ridgeAxis: [1, 0], slopeAxis: [0, 1], widthMm: D, slantMm: L },
-      label: 'Right roof',
+    // Chain right ceiling segments upward along `+Y` from `right` wall top edge
+    let yCurR = hd + H;
+    let parentR: PanelId = 'right';
+    gp.rightSegs.forEach((seg, idx) => {
+      const id = idx === 0 ? 'roofR' : `roofR${idx + 1}`;
+      const yNext = yCurR + seg.length;
+      add({
+        id,
+        parent: parentR,
+        poly: [
+          [xR0, yCurR],
+          [xR1, yCurR],
+          [xR1, yNext],
+          [xR0, yNext],
+        ],
+        hingeOrigin: [cxR, yCurR],
+        crease: [[xR0, yCurR], [xR1, yCurR]],
+        hingeAxis: seg.isMountain ? [-1, 0] : [1, 0],
+        targetAngle: seg.targetAngle,
+        stage: 'roof',
+        isMountain: seg.isMountain || undefined,
+        roofFrame: { origin: [cxR, yCurR], ridgeAxis: [1, 0], slopeAxis: [0, 1], widthMm: D, slantMm: seg.length },
+        label: seg.label,
+      });
+      parentR = id;
+      yCurR = yNext;
     });
 
     return { roofRise: R, roofSlant: L };
@@ -2967,9 +3557,713 @@ function buildLWingNet(
   return { roofRise: R, roofSlant: L, baseRadiusMm: maxR };
 }
 
+// ----------------------------------------------------------------------------
+// Parametric Single-Cutout Wall-to-Wall Composite House Builder (`topology: 'village'`)
+// Presses ANY 2, 3, or 4 watertight ribbon buildings FLUSH WALL-TO-WALL (no courtyard, no bridges!)
+// into ONE monumental composite house cut from ONE SINGLE UNBROKEN FLAT SHEET:
+//   - `b2` (Left, +90° -> unfolds WEST), `b0` (Center-Left, 0° -> unfolds NORTH),
+//     `b1` (Center-Right, 180° -> unfolds SOUTH), `b3` (Right, -90° -> unfolds EAST).
+//   - Guaranteed >= 4.5 mm flat-sheet clearance across ALL 8 roof types & 5 gable ceilings!
+//   - Automatically suppresses openings on shared interior walls & aligns front doors to street (+Z).
+// ----------------------------------------------------------------------------
+function buildVillageNet(
+  spec: HouseNetSpec,
+  add: (p: Omit<PanelNetDef, 'poly'> & { poly: V2[] }) => void,
+): { roofRise: number; roofSlant: number; baseRadiusMm: number; foldedHeightMm: number } {
+  const vcfg = spec.village ?? {
+    count: spec.label === 'Composite estate' || spec.label === 'Coastal village' ? 4 : 3,
+    seed: 0,
+    mainRoof: spec.roofType,
+  };
+  const count = vcfg.count;
+  const isCurated = vcfg.seed === 0;
+  const isEstate4 = isCurated && count === 4;
+
+  const baseCommon = {
+    generation: spec.generation,
+    topology: 'ribbon' as const,
+    mansardRatio: 0,
+    parapetH: 0,
+    hasOculus: false,
+    hasBelfry: false,
+    hasAwning: false,
+    hasChimney: false,
+    dormerCount: 0 as const,
+    yawOffset: 0,
+    outsideColor: spec.outsideColor,
+  };
+
+  const villageConsistency = Math.max(0, Math.min(1, vcfg.consistency ?? spec.consistency ?? 0.72));
+  const vGrammar = vcfg.grammar ?? {};
+
+  const attachSubArchitecture = (sub: HouseNetSpec, subSeed: number, sharedWin?: WindowStyle, sharedDoor?: DoorStyle): HouseNetSpec => {
+    const heightMult =
+      vGrammar.heightScale !== undefined && vGrammar.heightScale !== null
+        ? Math.max(0.75, Math.min(1.25, vGrammar.heightScale))
+        : 1.0;
+    const H = sub.H * heightMult;
+    const levels: 1 | 2 | 3 = vGrammar.levels ?? sub.levels;
+    const windowGround: WindowStyle = vGrammar.windowStyle ?? sharedWin ?? sub.windowGround;
+    const windowUpper: WindowStyle = vGrammar.windowStyle ?? sharedWin ?? sub.windowUpper;
+    const door: DoorStyle = vGrammar.doorStyle ?? sharedDoor ?? sub.door;
+    const hasAwning = door === 'none' || door === 'arcade' ? false : sub.hasAwning;
+    const gableProfile: GableProfile =
+      sub.roofType === 'gable' ? (vGrammar.gableProfile ?? sub.gableProfile ?? 'classic') : 'classic';
+    const hasChimney = gableProfile === 'stepped' ? false : sub.hasChimney;
+    const dormerCount = gableProfile === 'stepped' || gableProfile === 'barrel' ? 0 : sub.dormerCount;
+    const arch = buildBuildingArchitecture({
+      topology: 'ribbon',
+      widthMm: sub.W,
+      depthMm: sub.D,
+      heightMm: H,
+      levels,
+      yawOffset: 0,
+      roofType: sub.roofType,
+      gableProfile,
+      pitch: sub.pitch,
+      mansardRatio: sub.mansardRatio,
+      parapetH: sub.parapetH,
+      windowGround,
+      windowUpper,
+      door,
+      hasOculus: sub.hasOculus,
+      hasBelfry: sub.hasBelfry,
+      hasAwning,
+      hasChimney,
+      dormerCount,
+      seed: subSeed,
+      consistency: villageConsistency,
+      windowCount: vGrammar.windowCount ?? 'auto',
+      windowOpening: vGrammar.windowOpening ?? null,
+      windowDetail: vGrammar.windowDetail ?? null,
+    });
+    return {
+      ...sub,
+      H,
+      levels,
+      gableProfile,
+      windowGround,
+      windowUpper,
+      door,
+      hasAwning,
+      hasChimney,
+      dormerCount,
+      consistency: villageConsistency,
+      architecture: arch,
+    };
+  };
+
+  const makeCompositeSubSpec = (
+    rng: ReturnType<typeof makeRng>,
+    role: 'centerL' | 'centerR' | 'wingL' | 'wingR',
+    roofType: RoofType,
+    W: number,
+    D: number,
+    sharedWin?: WindowStyle,
+    sharedDoor?: DoorStyle,
+  ): HouseNetSpec => {
+    const winPool: WindowStyle[] =
+      villageConsistency < 0.65
+        ? ['rect', 'arched', 'tall', 'ribbon', 'round', 'lancet', 'slit', 'pair']
+        : ['rect', 'arched', 'tall', 'ribbon'];
+    const doorPool: DoorStyle[] = ['arched', 'rect', 'double'];
+    const isTower = roofType === 'spire';
+    const isMain = role === 'centerL';
+
+    const H = isTower
+      ? rng.range(28, 35)
+      : isMain
+        ? rng.range(24, 30)
+        : role === 'centerR'
+          ? rng.range(18, 25)
+          : rng.range(16, 23);
+
+    const levels: 1 | 2 | 3 = H >= 29 ? 3 : H >= 20 ? 2 : 1;
+    const pitch =
+      roofType === 'spire'
+        ? rng.range(1.08, 1.20)
+        : roofType === 'mansard'
+          ? rng.range(1.02, 1.14)
+          : roofType === 'sawtooth'
+            ? rng.range(0.42, 0.52)
+            : roofType === 'butterfly'
+              ? rng.range(0.28, 0.36)
+              : roofType === 'shed'
+                ? rng.range(0.30, 0.38)
+                : roofType === 'hip'
+                  ? rng.range(0.58, 0.72)
+                  : roofType === 'flat'
+                    ? 0
+                    : rng.range(0.70, 0.86);
+
+    const useSharedStyle = sharedWin !== undefined && rng.chance(villageConsistency * 0.92);
+    const wGround = useSharedStyle ? sharedWin : rng.pick(winPool);
+    const wUpper = useSharedStyle ? sharedWin : rng.pick(['rect', 'tall', 'ribbon', 'round', 'lancet'] as const);
+    const dStyle = sharedDoor !== undefined && rng.chance(villageConsistency * 0.88) ? sharedDoor : rng.pick(doorPool);
+    const subGableProfile: GableProfile =
+      roofType === 'gable' ? (vGrammar.gableProfile ?? rng.pick(ALL_GABLE_PROFILES)) : 'classic';
+
+    return {
+      ...baseCommon,
+      label:
+        role === 'centerL'
+          ? 'Main hall'
+          : role === 'centerR'
+            ? 'Center annex'
+            : role === 'wingL'
+              ? 'West wing'
+              : 'East tower',
+      W,
+      D,
+      H,
+      levels,
+      roofType,
+      gableProfile: subGableProfile,
+      pitch,
+      mansardRatio: roofType === 'mansard' ? 0.48 : 0,
+      parapetH: roofType === 'flat' ? 2.8 : 0,
+      windowGround: wGround,
+      windowUpper: wUpper,
+      door: dStyle,
+      hasOculus: roofType === 'gable' && rng.chance(0.8),
+      hasBelfry: roofType === 'spire' && H >= 28,
+      hasAwning: roofType !== 'spire' && rng.chance(0.75),
+      hasChimney:
+        subGableProfile !== 'stepped' &&
+        (roofType === 'gable' || roofType === 'mansard' || roofType === 'hip' || roofType === 'flat') &&
+        rng.chance(0.75),
+      dormerCount:
+        (roofType === 'mansard' || (roofType === 'gable' && subGableProfile !== 'stepped' && subGableProfile !== 'barrel')) &&
+        isMain
+          ? 1
+          : 0,
+    };
+  };
+
+  interface CompositeVolume {
+    prefix: string;
+    islandIdx: number;
+    colorSlot: 0 | 1 | 2 | 3;
+    rot: number;
+    tx: number;
+    ty: number;
+    worldW: number;
+    worldD: number;
+    subSpec: HouseNetSpec;
+  }
+
+  // Tight flush wall-to-wall seam (`0.72 mm`): adjacent folded walls kiss with zero Z-fighting
+  // while keeping the floor weld strip area strictly `> 10 mm²` (`>= 14.5 mm` overlap) as ONE single cutout!
+  const SEAM = 0.72;
+  const GAP = 2.0;
+  const vrng = makeRng((isCurated ? (isEstate4 ? 404 : 303) : vcfg.seed * 6151) + 104729);
+
+  // Pick companion roof types FIRST so any `spire` wing can lock `W === D` for exact 0.0000 mm apex closure
+  // and the 4-compass floor-edge invariants hold mathematically across every seed and roof mix!
+  const mainPool: RoofType[] = ['mansard', 'gable', 'hip', 'sawtooth', 'butterfly', 'flat', 'shed'];
+  const annexPool: RoofType[] = ['shed', 'butterfly', 'gable', 'flat', 'hip', 'sawtooth', 'mansard'];
+  const towerPool: RoofType[] = ['spire', 'mansard', 'gable', 'flat', 'hip'];
+
+  let roof0: RoofType;
+  let roof1: RoofType;
+  let roof2: RoofType;
+  let roof3: RoofType;
+  let sharedWin: WindowStyle | undefined;
+  let sharedDoor: DoorStyle | undefined;
+
+  if (isCurated) {
+    roof0 = isEstate4 ? 'gable' : 'mansard';
+    roof1 = 'gable';
+    roof2 = 'shed';
+    roof3 = isEstate4 ? 'spire' : 'shed';
+  } else {
+    roof0 = vcfg.mainRoof ?? vrng.pick(mainPool);
+    const pickCompanionRoof = (pool: RoofType[], used: RoofType[]): RoofType => {
+      if (villageConsistency >= 0.88 && vrng.chance((villageConsistency - 0.80) * 4.5)) {
+        return roof0;
+      }
+      const fresh = pool.filter((r) => !used.includes(r));
+      return vrng.pick(fresh.length > 0 ? fresh : pool);
+    };
+    const usedRoofs: RoofType[] = [roof0];
+    roof1 = pickCompanionRoof(annexPool, usedRoofs);
+    usedRoofs.push(roof1);
+    roof2 = pickCompanionRoof(annexPool, usedRoofs);
+    usedRoofs.push(roof2);
+    roof3 = villageConsistency >= 0.94 ? roof0 : pickCompanionRoof(towerPool, usedRoofs);
+
+    const sharedWinPool: WindowStyle[] =
+      villageConsistency < 0.65
+        ? ['rect', 'arched', 'tall', 'ribbon', 'round', 'lancet', 'slit', 'pair']
+        : ['rect', 'arched', 'tall', 'ribbon'];
+    sharedWin = vGrammar.windowStyle ?? vrng.pick(sharedWinPool);
+    sharedDoor = vGrammar.doorStyle ?? vrng.pick(['arched', 'rect', 'double'] as const);
+  }
+
+  let W0: number, D0: number, W1: number, D1: number, W2: number, D2: number, W3: number, D3: number;
+  let ty0 = 0;
+  let ty1 = 0;
+  let ty2 = 0;
+  let ty3 = 0;
+
+  if (isCurated) {
+    if (isEstate4) {
+      // 4-wing flush composite estate (`[shed] | [stepped 3x] | [gambrel 2x] | [square spire]`)
+      W0 = 24;
+      D0 = 22;
+      W1 = 24;
+      D1 = 22;
+      W2 = 22;
+      D2 = 25;
+      W3 = 25;
+      D3 = 25; // strictly square for 0.0000 mm spire apex!
+      ty0 = 2.5;
+      ty1 = -2.5;
+      ty2 = 1.0;
+      ty3 = 0.0;
+    } else {
+      // 3-wing flush composite manor (`[shed] | [mansard] | [gambrel 2x]`)
+      W0 = 26;
+      D0 = 22;
+      W1 = 24;
+      D1 = 22;
+      W2 = 23;
+      D2 = 25;
+      W3 = 23;
+      D3 = 25;
+      ty0 = 2.5;
+      ty1 = -2.5;
+      ty2 = 1.0;
+      ty3 = 0.0;
+    }
+  } else {
+    D0 = Math.round(vrng.range(22, 23));
+    D1 = Math.round(vrng.range(22, 23));
+    W0 = roof0 === 'spire' ? D0 : Math.round(vrng.range(count >= 3 ? 22 : 24, count >= 3 ? 25 : 30));
+    W1 = roof1 === 'spire' ? D1 : Math.round(vrng.range(count >= 3 ? 22 : 22, count >= 3 ? 25 : 28));
+    if (count >= 3 && Math.abs(W0 - W1) > 2) {
+      if (roof0 !== 'spire') {
+        W0 = Math.max(W1 - 2, Math.min(W1 + 2, W0));
+      } else if (roof1 !== 'spire') {
+        W1 = Math.max(W0 - 2, Math.min(W0 + 2, W1));
+      }
+    }
+
+    // Exact X-clearance bounds so b2_ribbon (-X) and b3_ribbon (+X) strictly clear b0_ribbon & b1_ribbon
+    const minD2 = Math.ceil(Math.max(D0 - SEAM, W1 + D1 - W0 - 2 * SEAM) + GAP);
+    const minD3 = Math.ceil(Math.max(D0 + W0 - W1 - 2 * SEAM, D1 - SEAM) + GAP);
+    D2 = roof2 === 'spire' ? minD2 : Math.round(Math.max(minD2, vrng.range(minD2, minD2 + 3)));
+    D3 = roof3 === 'spire' ? minD3 : Math.round(Math.max(minD3, vrng.range(minD3, minD3 + 3)));
+    W2 = roof2 === 'spire' ? D2 : Math.round(vrng.range(20, 24));
+    W3 = roof3 === 'spire' ? D3 : Math.round(vrng.range(20, 24));
+
+    // Exact Floor-Edge Invariant:
+    //   yTop0 >= max(yTop1, yTop2, yTop3) + 0.5   (every floor clears b0's North ribbon)
+    //   yBot1 <= min(yBot0, yBot2, yBot3) - 0.5   (every floor clears b1's South ribbon)
+    //   shared wall Y-overlaps >= 14.5 mm         (seam area >= 0.72 * 14.1 > 10 mm²)
+    const avgD01 = (D0 + D1) * 0.5;
+    const reqWingW = Math.max(count >= 3 ? W2 : 0, count >= 4 ? W3 : 0);
+    const minS = Math.max(Math.abs(D0 - D1) * 0.5 + 1.0, reqWingW > 0 ? reqWingW + 1.2 - avgD01 : 1.0);
+    const maxS = Math.max(minS, avgD01 - 14.5);
+    const desiredS =
+      count === 2
+        ? vrng.range(1.6, Math.min(4.8, maxS))
+        : minS + (1 - villageConsistency * 0.55) * (maxS - minS) * vrng.next();
+    const S = Math.max(minS, Math.min(maxS, desiredS));
+    ty0 = S * 0.5;
+    ty1 = -S * 0.5;
+
+    const yTop0 = ty0 + D0 * 0.5;
+    const yBot0 = ty0 - D0 * 0.5;
+    const yTop1 = ty1 + D1 * 0.5;
+    const yBot1 = ty1 - D1 * 0.5;
+
+    let lo2 = Math.max(yBot1 + 0.5 + W2 * 0.5, yBot0 + 14.5 - W2 * 0.5);
+    const hi2 = yTop0 - 0.5 - W2 * 0.5;
+    lo2 = Math.min(lo2, hi2);
+    ty2 = lo2 + (hi2 - lo2) * vrng.range(0.25, 0.85);
+
+    const lo3 = yBot1 + 0.5 + W3 * 0.5;
+    let hi3 = Math.min(yTop0 - 0.5 - W3 * 0.5, yTop1 - 14.5 + W3 * 0.5);
+    hi3 = Math.max(lo3, hi3);
+    ty3 = lo3 + (hi3 - lo3) * vrng.range(0.15, 0.75);
+  }
+
+  let sub0: HouseNetSpec;
+  let sub1: HouseNetSpec;
+  let sub2: HouseNetSpec;
+  let sub3: HouseNetSpec;
+
+  if (isCurated) {
+    if (isEstate4) {
+      sub0 = attachSubArchitecture(
+        {
+          ...baseCommon,
+          label: 'Stepped manor',
+          W: W0,
+          D: D0,
+          H: 26,
+          levels: 2,
+          roofType: 'gable',
+          gableProfile: 'stepped',
+          pitch: 0.78,
+          windowGround: 'arched',
+          windowUpper: 'rect',
+          door: 'arched',
+          hasOculus: true,
+          hasAwning: true,
+        },
+        (spec.generation * 3137 + 17) >>> 0,
+      );
+      sub1 = attachSubArchitecture(
+        {
+          ...baseCommon,
+          label: 'Gambrel wing',
+          W: W1,
+          D: D1,
+          H: 20,
+          levels: 2,
+          roofType: 'gable',
+          gableProfile: 'gambrel',
+          pitch: 0.74,
+          windowGround: 'rect',
+          windowUpper: 'rect',
+          door: 'double',
+          hasOculus: true,
+          hasAwning: true,
+          hasChimney: true,
+        },
+        (spec.generation * 3137 + 1008) >>> 0,
+      );
+      sub2 = attachSubArchitecture(
+        {
+          ...baseCommon,
+          label: 'Studio loft wing',
+          W: W2,
+          D: D2,
+          H: 18,
+          levels: 1,
+          roofType: 'shed',
+          pitch: 0.34,
+          windowGround: 'ribbon',
+          windowUpper: 'rect',
+          door: 'rect',
+          hasAwning: true,
+        },
+        (spec.generation * 3137 + 1999) >>> 0,
+      );
+      sub3 = attachSubArchitecture(
+        {
+          ...baseCommon,
+          label: 'Corner tower',
+          W: W3,
+          D: D3,
+          H: 30,
+          levels: 2,
+          roofType: 'spire',
+          pitch: 1.12,
+          windowGround: 'arched',
+          windowUpper: 'tall',
+          door: 'arched',
+          hasBelfry: true,
+        },
+        (spec.generation * 3137 + 2990) >>> 0,
+      );
+    } else {
+      sub0 = attachSubArchitecture(
+        {
+          ...baseCommon,
+          label: 'Central mansard',
+          W: W0,
+          D: D0,
+          H: 26,
+          levels: 2,
+          roofType: 'mansard',
+          pitch: 1.08,
+          mansardRatio: 0.48,
+          windowGround: 'arched',
+          windowUpper: 'tall',
+          door: 'arched',
+          hasAwning: true,
+          hasChimney: true,
+          dormerCount: 1,
+        },
+        (spec.generation * 3137 + 17) >>> 0,
+      );
+      sub1 = attachSubArchitecture(
+        {
+          ...baseCommon,
+          label: 'East gable wing',
+          W: W1,
+          D: D1,
+          H: 20,
+          levels: 2,
+          roofType: 'gable',
+          gableProfile: 'gambrel',
+          pitch: 0.76,
+          windowGround: 'rect',
+          windowUpper: 'rect',
+          door: 'double',
+          hasOculus: true,
+          hasChimney: true,
+        },
+        (spec.generation * 3137 + 1008) >>> 0,
+      );
+      sub2 = attachSubArchitecture(
+        {
+          ...baseCommon,
+          label: 'West shed atelier',
+          W: W2,
+          D: D2,
+          H: 17,
+          levels: 1,
+          roofType: 'shed',
+          pitch: 0.34,
+          windowGround: 'ribbon',
+          windowUpper: 'rect',
+          door: 'rect',
+          hasAwning: true,
+        },
+        (spec.generation * 3137 + 1999) >>> 0,
+      );
+      sub3 = sub2;
+    }
+  } else {
+    sub0 = attachSubArchitecture(
+      makeCompositeSubSpec(vrng, 'centerL', roof0, W0, D0, sharedWin, sharedDoor),
+      (vcfg.seed * 733 + 11) >>> 0,
+    );
+    sub1 = attachSubArchitecture(
+      makeCompositeSubSpec(vrng, 'centerR', roof1, W1, D1, sharedWin, sharedDoor),
+      (vcfg.seed * 733 + 29) >>> 0,
+    );
+    sub2 = attachSubArchitecture(
+      makeCompositeSubSpec(vrng, 'wingL', roof2, W2, D2, sharedWin, sharedDoor),
+      (vcfg.seed * 733 + 47) >>> 0,
+    );
+    sub3 = attachSubArchitecture(
+      makeCompositeSubSpec(vrng, 'wingR', roof3, W3, D3, sharedWin, sharedDoor),
+      (vcfg.seed * 733 + 71) >>> 0,
+    );
+  }
+
+  // Lay out flush wall-to-wall volumes along X: [b2] | [b0] | [b1] | [b3]
+  const hw0 = W0 * 0.5;
+  const hw1 = W1 * 0.5;
+  const vol0: CompositeVolume = {
+    prefix: 'b0',
+    islandIdx: 0,
+    colorSlot: 0,
+    rot: 0,
+    tx: 0,
+    ty: ty0,
+    worldW: W0,
+    worldD: D0,
+    subSpec: sub0,
+  };
+  const vol1: CompositeVolume = {
+    prefix: 'b1',
+    islandIdx: 1,
+    colorSlot: 1,
+    rot: Math.PI,
+    tx: hw0 + SEAM + hw1,
+    ty: ty1,
+    worldW: W1,
+    worldD: D1,
+    subSpec: sub1,
+  };
+  const vol2: CompositeVolume = {
+    prefix: 'b2',
+    islandIdx: 2,
+    colorSlot: 2,
+    rot: Math.PI * 0.5,
+    tx: -(hw0 + SEAM + D2 * 0.5),
+    ty: ty2,
+    worldW: D2,
+    worldD: W2,
+    subSpec: sub2,
+  };
+  const vol3: CompositeVolume = {
+    prefix: 'b3',
+    islandIdx: 3,
+    colorSlot: 3,
+    rot: -Math.PI * 0.5,
+    tx: hw0 + SEAM + W1 + SEAM + D3 * 0.5,
+    ty: ty3,
+    worldW: D3,
+    worldD: W3,
+    subSpec: sub3,
+  };
+
+  const rawVolumes: CompositeVolume[] =
+    count === 2 ? [vol0, vol1] : count === 3 ? [vol0, vol1, vol2] : [vol0, vol1, vol2, vol3];
+
+  // Center the entire composite house horizontally around `(0, 0)` so camera orbit stays balanced!
+  let minFX = Infinity;
+  let maxFX = -Infinity;
+  let minFY = Infinity;
+  let maxFY = -Infinity;
+  for (const v of rawVolumes) {
+    minFX = Math.min(minFX, v.tx - v.worldW * 0.5);
+    maxFX = Math.max(maxFX, v.tx + v.worldW * 0.5);
+    minFY = Math.min(minFY, v.ty - v.worldD * 0.5);
+    maxFY = Math.max(maxFY, v.ty + v.worldD * 0.5);
+  }
+  const shiftX = (minFX + maxFX) * 0.5;
+  const shiftY = (minFY + maxFY) * 0.5;
+  const volumes = rawVolumes.map((v) => ({ ...v, tx: v.tx - shiftX, ty: v.ty - shiftY }));
+
+  const addFloorWeld = (id: string, a: CompositeVolume, b: CompositeVolume, islandIdx: number) => {
+    const aMinX = a.tx - a.worldW * 0.5;
+    const aMaxX = a.tx + a.worldW * 0.5;
+    const bMinX = b.tx - b.worldW * 0.5;
+    const bMaxX = b.tx + b.worldW * 0.5;
+    const x0 = Math.min(aMaxX, bMaxX);
+    const x1 = Math.max(aMinX, bMinX);
+    const y0 = Math.max(a.ty - a.worldD * 0.5, b.ty - b.worldD * 0.5) + 0.2;
+    const y1 = Math.min(a.ty + a.worldD * 0.5, b.ty + b.worldD * 0.5) - 0.2;
+    if (x1 - x0 <= 1e-3 || y1 - y0 <= 1.0) return;
+    add({
+      id,
+      parent: null,
+      poly: [
+        [x0, y0],
+        [x1, y0],
+        [x1, y1],
+        [x0, y1],
+      ],
+      hingeOrigin: [(x0 + x1) * 0.5, (y0 + y1) * 0.5],
+      crease: null,
+      hingeAxis: [1, 0],
+      targetAngle: 0,
+      stage: 'base',
+      islandIndex: islandIdx,
+      colorSlot: 0,
+      label: 'Shared wall seam',
+    });
+  };
+
+  addFloorWeld('seam_b0_b1', volumes[0], volumes[1], 0);
+  if (count >= 3) addFloorWeld('seam_b2_b0', volumes[2], volumes[0], 2);
+  if (count >= 4) addFloorWeld('seam_b1_b3', volumes[1], volumes[3], 3);
+
+  let maxHeightMm = 0;
+  let maxRoofRise = 0;
+  let maxRoofSlant = 0;
+  let maxFoldedR = 0;
+
+  for (const vol of volumes) {
+    const sub = buildHouseNet(vol.subSpec);
+    if (sub.foldedHeightMm > maxHeightMm) maxHeightMm = sub.foldedHeightMm;
+    if (sub.roofRise > maxRoofRise) maxRoofRise = sub.roofRise;
+    if (sub.roofSlant > maxRoofSlant) maxRoofSlant = sub.roofSlant;
+
+    const c = Math.cos(vol.rot);
+    const s = Math.sin(vol.rot);
+    const xformPt = ([x, y]: V2): V2 => [vol.tx + x * c - y * s, vol.ty + x * s + y * c];
+    const xformDir = ([dx, dy]: V2): V2 => [dx * c - dy * s, dx * s + dy * c];
+
+    // Automatically suppress openings on shared interior walls & orient front entrance doors to street (+Z)!
+    const wallMeta = new Map<string, { skipOpenings: boolean; streetScore: number }>();
+    let bestFrontWallId: string | null = null;
+    let bestStreetScore = -Infinity;
+
+    for (const p of sub.panels) {
+      if (p.stage !== 'wall' || !p.wallFrame) continue;
+      const wf = p.wallFrame;
+      const localMidPt: V2 = [
+        wf.origin[0] + wf.vAxis[0] * (wf.heightMm * 0.5),
+        wf.origin[1] + wf.vAxis[1] * (wf.heightMm * 0.5),
+      ];
+      const [fx, , fz] = evaluateFoldedPoint(sub, p.id, localMidPt, 1);
+      const [wx, wy] = xformPt([fx, -fz]);
+      const nx = wx - vol.tx;
+      const ny = wy - vol.ty;
+
+      let kissing = false;
+      for (const other of volumes) {
+        if (other === vol) continue;
+        const oMinX = other.tx - other.worldW * 0.5;
+        const oMaxX = other.tx + other.worldW * 0.5;
+        const oMinY = other.ty - other.worldD * 0.5;
+        const oMaxY = other.ty + other.worldD * 0.5;
+        if (wx >= oMinX - 1.2 && wx <= oMaxX + 1.2 && wy >= oMinY - 1.2 && wy <= oMaxY + 1.2) {
+          const toOtherX = other.tx - vol.tx;
+          const toOtherY = other.ty - vol.ty;
+          if (nx * toOtherX + ny * toOtherY > 0) {
+            kissing = true;
+            break;
+          }
+        }
+      }
+
+      const nLen = Math.hypot(nx, ny) || 1;
+      const streetScore = -ny / nLen;
+      wallMeta.set(p.id, { skipOpenings: kissing, streetScore });
+      if (!kissing && streetScore > bestStreetScore) {
+        bestStreetScore = streetScore;
+        bestFrontWallId = p.id;
+      }
+    }
+
+    for (const p of sub.panels) {
+      const poly = p.poly.map(xformPt);
+      if (p.stage === 'base') {
+        for (const [bx, by] of poly) {
+          const r = Math.hypot(bx, by);
+          if (r > maxFoldedR) maxFoldedR = r;
+        }
+      }
+
+      const wm = wallMeta.get(p.id);
+      const isFrontWall = p.stage === 'wall' ? p.id === bestFrontWallId : Boolean(p.isFront);
+
+      add({
+        ...p,
+        id: `${vol.prefix}_${p.id}`,
+        parent: p.parent ? `${vol.prefix}_${p.parent}` : null,
+        poly,
+        hingeOrigin: xformPt(p.hingeOrigin),
+        crease: p.crease ? [xformPt(p.crease[0]), xformPt(p.crease[1])] : null,
+        hingeAxis: xformDir(p.hingeAxis),
+        wallFrame: p.wallFrame
+          ? {
+              ...p.wallFrame,
+              origin: xformPt(p.wallFrame.origin),
+              uAxis: xformDir(p.wallFrame.uAxis),
+              vAxis: xformDir(p.wallFrame.vAxis),
+            }
+          : undefined,
+        roofFrame: p.roofFrame
+          ? {
+              ...p.roofFrame,
+              origin: xformPt(p.roofFrame.origin),
+              ridgeAxis: xformDir(p.roofFrame.ridgeAxis),
+              slopeAxis: xformDir(p.roofFrame.slopeAxis),
+            }
+          : undefined,
+        isFront: isFrontWall,
+        skipOpenings: wm?.skipOpenings || undefined,
+        islandIndex: vol.islandIdx,
+        colorSlot: vol.colorSlot,
+        panelSpec: vol.subSpec,
+        panelRoofRise: sub.roofRise,
+        localId: p.id,
+      });
+    }
+  }
+
+  return {
+    roofRise: maxRoofRise,
+    roofSlant: maxRoofSlant,
+    baseRadiusMm: maxFoldedR,
+    foldedHeightMm: maxHeightMm,
+  };
+}
+
 /**
  * Construct the exact flat pre-cut paper net for ANY `HouseNetSpec`
- * (`cross`, `ribbon`, `hex`, `oct`, `lwing`, `setback`).
+ * (`cross`, `ribbon`, `hex`, `oct`, `lwing`, `setback`, `village`).
  */
 export function buildHouseNet(spec: HouseNetSpec): BuiltHouseNet {
   const { W, D, H } = spec;
@@ -2984,6 +4278,7 @@ export function buildHouseNet(spec: HouseNetSpec): BuiltHouseNet {
   let roofRise = 0;
   let roofSlant = 0;
   let foldedRadiusMm = Math.hypot(W, D) * 0.5;
+  let customFoldedHeightMm: number | null = null;
 
   if (spec.topology === 'hex' || spec.topology === 'oct') {
     const res = buildPolygonPetalNet(spec, spec.topology === 'hex' ? 6 : 8, add);
@@ -3000,6 +4295,12 @@ export function buildHouseNet(spec: HouseNetSpec): BuiltHouseNet {
     roofRise = res.roofRise;
     roofSlant = res.roofSlant;
     foldedRadiusMm = res.baseRadiusMm;
+  } else if (spec.topology === 'village') {
+    const res = buildVillageNet(spec, add);
+    roofRise = res.roofRise;
+    roofSlant = res.roofSlant;
+    foldedRadiusMm = res.baseRadiusMm;
+    customFoldedHeightMm = res.foldedHeightMm;
   } else {
     // 1. Central rectangular floor (`base`)
     add({
@@ -3022,6 +4323,37 @@ export function buildHouseNet(spec: HouseNetSpec): BuiltHouseNet {
     const res = spec.topology === 'ribbon' ? buildRibbonPanels(spec, add) : buildCrossPanels(spec, add);
     roofRise = res.roofRise;
     roofSlant = res.roofSlant;
+
+    // Optional horizontal mirror across X (`front <- left <- back -> right`) for flush wall-to-wall composite packing!
+    if (spec.topology === 'ribbon' && spec.mirrorRibbon) {
+      for (const p of panels) {
+        p.poly = ensureCCW(p.poly.map(([px, py]): V2 => [-px, py]));
+        p.hingeOrigin = [-p.hingeOrigin[0], p.hingeOrigin[1]];
+        if (p.crease) {
+          p.crease = [
+            [-p.crease[0][0], p.crease[0][1]],
+            [-p.crease[1][0], p.crease[1][1]],
+          ];
+        }
+        p.hingeAxis = [p.hingeAxis[0], -p.hingeAxis[1]];
+        if (p.wallFrame) {
+          p.wallFrame = {
+            ...p.wallFrame,
+            origin: [-p.wallFrame.origin[0], p.wallFrame.origin[1]],
+            uAxis: [-p.wallFrame.uAxis[0], p.wallFrame.uAxis[1]],
+            vAxis: [-p.wallFrame.vAxis[0], p.wallFrame.vAxis[1]],
+          };
+        }
+        if (p.roofFrame) {
+          p.roofFrame = {
+            ...p.roofFrame,
+            origin: [-p.roofFrame.origin[0], p.roofFrame.origin[1]],
+            ridgeAxis: [-p.roofFrame.ridgeAxis[0], p.roofFrame.ridgeAxis[1]],
+            slopeAxis: [-p.roofFrame.slopeAxis[0], p.roofFrame.slopeAxis[1]],
+          };
+        }
+      }
+    }
   }
 
   const panelMap = new Map<PanelId, PanelNetDef>();
@@ -3032,7 +4364,7 @@ export function buildHouseNet(spec: HouseNetSpec): BuiltHouseNet {
   let maxY = -Infinity;
   for (const p of panels) {
     panelMap.set(p.id, p);
-    if (p.id !== 'base') foldableIds.push(p.id);
+    if (p.parent !== null) foldableIds.push(p.id);
     for (const [px, py] of p.poly) {
       if (px < minX) minX = px;
       if (px > maxX) maxX = px;
@@ -3043,7 +4375,7 @@ export function buildHouseNet(spec: HouseNetSpec): BuiltHouseNet {
 
   const maxAbs = Math.max(Math.abs(minX), Math.abs(maxX), Math.abs(minY), Math.abs(maxY));
   const sheetHalfMm = Math.max(75, Math.ceil(maxAbs));
-  const foldedHeightMm = H + roofRise;
+  const foldedHeightMm = customFoldedHeightMm ?? H + roofRise;
 
   return {
     spec,

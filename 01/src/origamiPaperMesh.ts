@@ -1,13 +1,20 @@
 import * as THREE from 'three';
 import {
   MM,
+  computeDoorCenterU,
   computeNetOuterPerimeter,
+  resolveFacadeForPanel,
   type BuiltHouseNet,
   type FoldablePanelId,
   type HouseNetSpec,
+  type LevelParams,
   type PanelId,
   type PanelNetDef,
   type V2,
+  type WindowDetail,
+  type WindowOpenMode,
+  type WindowOpeningMode,
+  type WindowParams,
   type WindowStyle,
 } from './origamiHouseNet';
 
@@ -34,6 +41,12 @@ export interface ProjectionUniforms {
 export interface OrigamiMaterials {
   inside: THREE.MeshStandardMaterial;
   outside: THREE.MeshStandardMaterial;
+  outsideSlots: [
+    THREE.MeshStandardMaterial,
+    THREE.MeshStandardMaterial,
+    THREE.MeshStandardMaterial,
+    THREE.MeshStandardMaterial,
+  ];
   edge: THREE.MeshStandardMaterial;
   cutoutInside: THREE.MeshStandardMaterial;
   cutoutOutside: THREE.MeshStandardMaterial;
@@ -48,6 +61,7 @@ export interface OrigamiMaterials {
   setProjection(tex: THREE.Texture | null, viewProjMatrix?: THREE.Matrix4): void;
   setCutoutOpacity(opacity: number): void;
   setOutsideColor(hex: string): void;
+  setOutsideColors(hexes: readonly string[]): void;
   dispose(): void;
 }
 
@@ -239,6 +253,13 @@ export function createOrigamiMaterials(maxAniso = 8): OrigamiMaterials {
     metalness: 0.0,
   });
 
+  const outsideSlots: [
+    THREE.MeshStandardMaterial,
+    THREE.MeshStandardMaterial,
+    THREE.MeshStandardMaterial,
+    THREE.MeshStandardMaterial,
+  ] = [outside, outside.clone(), outside.clone(), outside.clone()];
+
   const edge = new THREE.MeshStandardMaterial({
     color: new THREE.Color('#fbfaf7'),
     roughness: 0.95,
@@ -307,6 +328,7 @@ export function createOrigamiMaterials(maxAniso = 8): OrigamiMaterials {
   return {
     inside,
     outside,
+    outsideSlots,
     edge,
     cutoutInside,
     cutoutOutside,
@@ -330,15 +352,23 @@ export function createOrigamiMaterials(maxAniso = 8): OrigamiMaterials {
     },
     setCutoutOpacity,
     setOutsideColor(hex: string) {
-      outside.color.set(hex);
+      for (const m of outsideSlots) m.color.set(hex);
       cutoutOutside.color.set(hex);
       chadOutside.color.set(hex);
+    },
+    setOutsideColors(hexes: readonly string[]) {
+      const primary = hexes[0] ?? '#9bb7cc';
+      for (let i = 0; i < outsideSlots.length; i++) {
+        outsideSlots[i].color.set(hexes[i] ?? primary);
+      }
+      cutoutOutside.color.set(primary);
+      chadOutside.color.set(primary);
     },
     dispose() {
       tex.map.dispose();
       tex.bumpMap.dispose();
       inside.dispose();
-      outside.dispose();
+      for (const m of outsideSlots) m.dispose();
       edge.dispose();
       for (const m of fadeGroup) m.dispose();
       foldLine.dispose();
@@ -526,39 +556,149 @@ function addFramedCircleHole(
   shape.holes.push(p);
 }
 
+function addFramedLancetHole(
+  shape: THREE.Shape,
+  toShape: FrameMapper,
+  uCenter: number,
+  vBase: number,
+  wMm: number,
+  hMm: number,
+): void {
+  const hw = wMm * 0.5;
+  const springV = vBase + hMm * 0.56;
+  const topV = vBase + hMm;
+  const archH = Math.max(0.5, topV - springV);
+  const p = new THREE.Path();
+  const [x0, y0] = toShape(uCenter - hw, vBase);
+  const [x1, y1] = toShape(uCenter + hw, vBase);
+  const [x2, y2] = toShape(uCenter + hw, springV);
+  p.moveTo(x0, y0);
+  p.lineTo(x1, y1);
+  p.lineTo(x2, y2);
+  const segs = 6;
+  for (let i = 1; i <= segs; i++) {
+    const t = i / segs;
+    const u = uCenter + hw * Math.cos(t * Math.PI * 0.5);
+    const v = springV + archH * Math.pow(Math.sin(t * Math.PI * 0.5), 0.72);
+    const [ax, ay] = toShape(u, v);
+    p.lineTo(ax, ay);
+  }
+  for (let i = 1; i <= segs; i++) {
+    const t = i / segs;
+    const u = uCenter - hw * Math.sin(t * Math.PI * 0.5);
+    const v = springV + archH * Math.pow(Math.cos(t * Math.PI * 0.5), 0.72);
+    const [ax, ay] = toShape(u, v);
+    p.lineTo(ax, ay);
+  }
+  p.lineTo(x0, y0);
+  p.closePath();
+  shape.holes.push(p);
+}
+
+function addFramedGridHoles(
+  shape: THREE.Shape,
+  toShape: FrameMapper,
+  uCenter: number,
+  vCenter: number,
+  wMm: number,
+  hMm: number,
+  reqCols: number,
+  reqRows: number,
+  barMm: number,
+): boolean {
+  let cols = Math.max(1, reqCols);
+  let rows = Math.max(1, reqRows);
+  const minPane = 0.62;
+  while (cols > 1 && (wMm - barMm * (cols - 1)) / cols < minPane) cols--;
+  while (rows > 1 && (hMm - barMm * (rows - 1)) / rows < minPane) rows--;
+  const paneW = (wMm - barMm * (cols - 1)) / cols;
+  const paneH = (hMm - barMm * (rows - 1)) / rows;
+  if (paneW < 0.55 || paneH < 0.55) return false;
+  const uStart = uCenter - wMm * 0.5 + paneW * 0.5;
+  const vStart = vCenter - hMm * 0.5 + paneH * 0.5;
+  for (let c = 0; c < cols; c++) {
+    for (let r = 0; r < rows; r++) {
+      addFramedRectHole(shape, toShape, uStart + c * (paneW + barMm), vStart + r * (paneH + barMm), paneW, paneH);
+    }
+  }
+  return true;
+}
+
+interface WallHingedFeature {
+  mode: WindowOpeningMode | 'sill' | 'door-single' | 'door-double';
+  style: WindowStyle | 'arched' | 'rect';
+  /** Frame glass cutout pattern (`clean` = 1 cut, `six` = 6 panes, `twelve` = 12 panes, etc.) */
+  detail: WindowDetail;
+  /** Center horizontal coordinate along wall `uAxis` (mm) */
+  u: number;
+  /** Center vertical coordinate along wall `vAxis` (mm) */
+  vCenter: number;
+  /** Opening width (mm) */
+  w: number;
+  /** Opening height (mm) */
+  h: number;
+}
+
+interface PunchedWallResult {
+  features: WallHingedFeature[];
+  /** Hole indices in `shape.holes` covered by hinged paper flaps (not dropped as loose chads!) */
+  hingedHoleIndices: Set<number>;
+}
+
 /**
- * Punch crisp multi-story architectural windows, doorways, arcades, attic oculi & belfry louvers
- * directly into ANY wall panel using its sheet-space `wallFrame` (works across cross, ribbon, and polygonal nets!).
+ * Punch crisp multi-story architectural windows (including `+` cross-mullions, transoms, triple bays),
+ * doorways, arcades, attic oculi & belfry louvers directly into ANY wall panel using its `wallFrame`
+ * and recursive `BuildingArchitecture` tree, returning any attached hinged kirigami window/door leaves!
  */
 function punchWallOpenings(
   shape: THREE.Shape,
   def: PanelNetDef,
-  spec: HouseNetSpec,
-  roofRise: number,
-): void {
+  fallbackSpec: HouseNetSpec,
+  fallbackRoofRise: number,
+): PunchedWallResult {
+  const features: WallHingedFeature[] = [];
+  const hingedHoleIndices = new Set<number>();
   const wf = def.wallFrame;
-  if (!wf) return;
+  if (!wf || def.skipOpenings) return { features, hingedHoleIndices };
 
-  const isFront = Boolean(def.isFront || def.id === 'front');
-  const isGableEnd = Boolean(def.isGableEnd || def.id === 'front' || def.id === 'back');
+  const spec = def.panelSpec ?? fallbackSpec;
+  const roofRise = def.panelRoofRise ?? fallbackRoofRise;
+  const localId = def.localId ?? def.id;
+  const isFront = Boolean(def.isFront || localId === 'front');
+  const isGableEnd = Boolean(def.isGableEnd || localId === 'front' || localId === 'back');
   const wallLenMm = wf.widthMm;
   const wallH = wf.heightMm;
-  const levels = wf.wallLevels ?? spec.levels;
-  const storyH = wallH / levels;
+
+  const arch = spec.architecture;
+  const facade = arch ? resolveFacadeForPanel(arch, localId, def.stage, isFront) : null;
+  const levelCount = wf.wallLevels ?? (facade ? facade.levels.length : spec.levels);
+
+  const levelList: (LevelParams | null)[] = Array.from({ length: levelCount }, (_, li) =>
+    facade ? (facade.levels[Math.min(li, facade.levels.length - 1)] ?? null) : null,
+  );
+  const weightSum = levelList.reduce((acc, lv) => acc + (lv ? lv.heightWeight : 1), 0) || levelCount;
 
   const toShape: FrameMapper = (uMm, vMm) => [
     (wf.origin[0] + uMm * wf.uAxis[0] + vMm * wf.vAxis[0] - def.hingeOrigin[0]) * MM,
     (wf.origin[1] + uMm * wf.uAxis[1] + vMm * wf.vAxis[1] - def.hingeOrigin[1]) * MM,
   ];
 
-  for (let li = 0; li < levels; li++) {
-    const baseH = li * storyH;
-    const isGround = li === 0;
-    const isTop = li === levels - 1;
+  const markNextHoleHinged = () => {
+    hingedHoleIndices.add(shape.holes.length);
+  };
 
-    // On tall spire bell towers, octagonal lighthouses, and setback upper towers, punch crisp horizontal belfry louver slots!
-    const allowBelfry = spec.topology === 'setback' ? def.stage === 'upperWall' : wallH >= 36;
-    if (isTop && spec.hasBelfry && allowBelfry) {
+  let curBaseH = 0;
+  for (let li = 0; li < levelCount; li++) {
+    const lv = levelList[li];
+    const storyH = wallH * ((lv ? lv.heightWeight : 1) / weightSum);
+    const baseH = curBaseH;
+    curBaseH += storyH;
+    const isGround = li === 0;
+    const isTop = li === levelCount - 1;
+
+    const allowBelfry = spec.topology === 'setback' ? def.stage === 'upperWall' : wallH >= 28;
+    const wantBelfry = lv ? lv.belfry : isTop && spec.hasBelfry;
+    if (isTop && wantBelfry && allowBelfry) {
       const slotW = Math.max(6.5, wallLenMm - Math.min(10, wallLenMm * 0.34));
       const slotH = Math.min(3.2, storyH * 0.22);
       const y1 = baseH + storyH * 0.36;
@@ -568,8 +708,22 @@ function punchWallOpenings(
       continue;
     }
 
-    // Ground-floor arched arcade on wide front facade
-    if (isGround && isFront && spec.door === 'arcade' && wallLenMm >= 38) {
+    const doorParam =
+      isGround && isFront
+        ? lv
+          ? lv.door
+          : spec.door !== 'none'
+            ? {
+                style: spec.door,
+                position: 'center' as const,
+                widthRatio: 1,
+                heightRatio: 0.66,
+                awning: spec.hasAwning,
+              }
+            : null
+        : null;
+
+    if (isGround && isFront && doorParam?.style === 'arcade' && wallLenMm >= 38) {
       const count = Math.max(3, Math.min(5, Math.floor((wallLenMm - 8) / 10)));
       const margin = 4.5;
       const pitch = (wallLenMm - margin * 2) / count;
@@ -582,29 +736,61 @@ function punchWallOpenings(
       continue;
     }
 
-    const style: WindowStyle = isGround ? spec.windowGround : spec.windowUpper;
-    const baySpacing = style === 'ribbon' ? 15.5 : style === 'pair' ? 14.5 : 12.2;
-    // Allow single centered architectural bay on narrower hexagonal/octagonal facets (`wallLenMm < 26`)!
+    const row = lv?.windowRow;
+    const baseStyle: WindowStyle = row ? row.baseWindow.shape : isGround ? spec.windowGround : spec.windowUpper;
+    const baySpacing = baseStyle === 'ribbon' ? 15.5 : baseStyle === 'pair' ? 14.5 : 12.2;
     let bays =
-      wallLenMm < 26
-        ? 1
-        : Math.max(2, Math.min(5, Math.floor((wallLenMm - 6) / baySpacing)));
-    if (isFront && isGround && spec.door !== 'none' && bays % 2 === 0) {
-      // Keep doorway strictly centered (`u = 0`, aligned beneath front awning!)
-      bays = wallLenMm >= 28 ? Math.min(5, bays + 1) : 1;
+      row && typeof row.count === 'number'
+        ? Math.max(1, Math.min(5, row.count))
+        : wallLenMm < 26
+          ? 1
+          : Math.max(2, Math.min(5, Math.floor((wallLenMm - 6) / baySpacing)));
+
+    const maxSafeBays = Math.max(1, Math.floor((wallLenMm - 4) / 7.5));
+    bays = Math.min(bays, maxSafeBays);
+
+    if (doorParam && doorParam.style !== 'none' && doorParam.position === 'center' && bays % 2 === 0) {
+      bays = wallLenMm >= 28 ? Math.min(Math.min(5, maxSafeBays), bays + 1) : 1;
     }
-    const margin = wallLenMm < 26 ? Math.max(3.2, wallLenMm * 0.16) : Math.max(4.5, Math.min(7.5, wallLenMm * 0.13));
+
+    const marginRatio = row ? row.marginRatio : 0.13;
+    const margin =
+      wallLenMm < 26
+        ? Math.max(3.2, wallLenMm * 0.16)
+        : Math.max(4.2, Math.min(7.5, wallLenMm * marginRatio));
     const usable = Math.max(8, wallLenMm - margin * 2);
     const cellW = usable / bays;
-    const doorIdx = isFront && isGround && spec.door !== 'none' ? Math.floor(bays / 2) : -1;
+    const doorIdx =
+      doorParam && doorParam.style !== 'none'
+        ? doorParam.position === 'left'
+          ? 0
+          : doorParam.position === 'right'
+            ? bays - 1
+            : Math.floor(bays / 2)
+        : -1;
+
+    // Only mount hinged doors on non-minimal buildings (keeps Layer 1 pure cottage iconic & crisp)
+    const allowHingedDoor = Boolean(row && (row.baseWindow.openingMode !== 'punched' || row.baseWindow.detail !== 'clean'));
 
     for (let b = 0; b < bays; b++) {
       const u = -wallLenMm * 0.5 + margin + cellW * (b + 0.5);
 
-      if (b === doorIdx) {
-        const dw = Math.min(cellW * 0.66, spec.door === 'double' ? 9.6 : 7.8);
-        const dh = Math.min(storyH * 0.66, 13.8);
-        if (spec.door === 'arched') {
+      if (b === doorIdx && doorParam) {
+        const dw = Math.min(cellW * 0.68, (doorParam.style === 'double' ? 9.6 : 7.8) * doorParam.widthRatio);
+        const dh = Math.min(storyH * doorParam.heightRatio, 13.8);
+        if (allowHingedDoor) {
+          markNextHoleHinged();
+          features.push({
+            mode: doorParam.style === 'double' ? 'door-double' : 'door-single',
+            style: doorParam.style === 'arched' ? 'arched' : 'rect',
+            detail: row?.baseWindow.detail ?? 'clean',
+            u,
+            vCenter: 0.6 + dh * 0.5,
+            w: dw,
+            h: dh,
+          });
+        }
+        if (doorParam.style === 'arched') {
           addFramedArchHole(shape, toShape, u, 0.6, dw, dh);
         } else {
           addFramedRectHole(shape, toShape, u, 0.6 + dh * 0.5, dw, dh);
@@ -612,48 +798,277 @@ function punchWallOpenings(
         continue;
       }
 
-      if (style === 'pair' && cellW >= 11) {
-        const pw = Math.min(cellW * 0.30, 3.8);
-        const ph = Math.min(storyH * 0.48, 8.2);
-        const gap = Math.max(1.4, pw * 0.32);
-        const vh = baseH + storyH * 0.52;
-        for (const sgn of [-1, 1]) {
-          addFramedRectHole(shape, toShape, u + sgn * (pw * 0.5 + gap * 0.5), vh, pw, ph);
+      const slot: WindowParams = row
+        ? (row.slots[b % row.slots.length] ?? row.baseWindow)
+        : {
+            shape: baseStyle,
+            widthScale: 1,
+            heightScale: 1,
+            mullions: baseStyle === 'pair' ? 1 : 0,
+            openingMode: 'punched',
+            detail: 'clean',
+          };
+
+      if (slot.blank) continue;
+
+      const style = slot.shape;
+      const openingMode: WindowOpeningMode = slot.openingMode ?? 'punched';
+      const detail: WindowDetail = slot.detail ?? 'clean';
+      const sillRatio = row ? row.sillRatio : style === 'tall' ? 0.50 : 0.52;
+      const vh = baseH + storyH * sillRatio;
+
+      if ((style === 'pair' || slot.mullions >= 1) && cellW >= 10.5 && style !== 'round' && style !== 'ribbon') {
+        const pw = Math.min(cellW * 0.30 * slot.widthScale, 3.9);
+        const ph = Math.min(storyH * 0.48 * slot.heightScale, 8.6);
+        const gap = Math.max(1.3, pw * 0.30);
+        if (pw >= 1.8 && ph >= 2.8) {
+          for (const sgn of [-1, 1]) {
+            const pu = u + sgn * (pw * 0.5 + gap * 0.5);
+            if (openingMode === 'awning' || openingMode === 'casement') {
+              markNextHoleHinged();
+              features.push({
+                mode: openingMode,
+                style: style === 'arched' || style === 'lancet' ? 'rect' : style,
+                detail,
+                u: pu,
+                vCenter: vh,
+                w: pw,
+                h: ph,
+              });
+            }
+            if (style === 'arched') {
+              addFramedArchHole(shape, toShape, pu, vh - ph * 0.5, pw, ph);
+            } else if (style === 'lancet') {
+              addFramedLancetHole(shape, toShape, pu, vh - ph * 0.5, pw, ph);
+            } else {
+              addFramedRectHole(shape, toShape, pu, vh, pw, ph);
+            }
+          }
+          if (detail === 'sill') {
+            features.push({ mode: 'sill', style: 'rect', detail: 'clean', u, vCenter: vh, w: pw * 2 + gap + 0.8, h: ph });
+          }
+          continue;
+        }
+      }
+
+      if (style === 'round') {
+        const r = Math.min(cellW * 0.30, storyH * 0.24, 3.8) * Math.min(slot.widthScale, slot.heightScale);
+        if (r >= 1.55) {
+          addFramedCircleHole(shape, toShape, u, vh, r);
+        }
+        continue;
+      }
+
+      if (style === 'slit') {
+        const ww = Math.max(2.1, Math.min(cellW * 0.24 * slot.widthScale, 3.0));
+        const wh = Math.min(storyH * 0.64 * slot.heightScale, 11.4);
+        if (wh >= 3.2) {
+          addFramedRectHole(shape, toShape, u, vh, ww, wh);
         }
         continue;
       }
 
       const ww =
-        style === 'ribbon'
+        (style === 'ribbon'
           ? Math.min(cellW * 0.78, 12.5)
-          : style === 'tall'
+          : style === 'tall' || style === 'lancet'
             ? Math.min(cellW * 0.48, 5.4)
-            : Math.min(cellW * 0.52, 6.8);
+            : Math.min(cellW * 0.52, 6.8)) * slot.widthScale;
       const wh =
-        style === 'tall'
+        (style === 'tall' || style === 'lancet'
           ? Math.min(storyH * 0.60, 10.6)
           : style === 'ribbon'
             ? Math.min(storyH * 0.36, 5.6)
-            : Math.min(storyH * 0.46, 8.2);
+            : Math.min(storyH * 0.46, 8.2)) * slot.heightScale;
 
-      if (ww < 2.6 || wh < 3.0) continue;
-      const vh = baseH + storyH * (style === 'tall' ? 0.50 : 0.52);
+      const clampedW = Math.min(ww, cellW * 0.84);
+      const clampedH = Math.min(wh, storyH * 0.72);
+      if (clampedW < 2.4 || clampedH < 2.8) continue;
+
+      // 1. Hinged kirigami windows (`awning` top-hung from above, `shutters`, `casement`, `louver`)!
+      const canHinge = openingMode !== 'punched' && clampedW >= 2.8 && clampedH >= 3.2;
+      if (canHinge) {
+        if ((openingMode === 'awning' || openingMode === 'louver') && (style === 'arched' || style === 'lancet') && clampedH >= 5.2) {
+          // Authentic arched/lancet top-hung window: open curved fanlight above a horizontal paper transom bar,
+          // and a rectangular top-hung sash / louver hinged cleanly from the transom bar below!
+          const bar = 0.85;
+          const archR = Math.min(clampedW * 0.5, clampedH * 0.34);
+          const lowerH = Math.max(2.4, clampedH - archR - bar);
+          const vBase = vh - clampedH * 0.5;
+          const lowerCenter = vBase + lowerH * 0.5;
+          const fanBase = vBase + lowerH + bar;
+          const fanH = Math.max(1.8, clampedH - lowerH - bar);
+
+          markNextHoleHinged();
+          addFramedRectHole(shape, toShape, u, lowerCenter, clampedW, lowerH);
+          features.push({
+            mode: openingMode,
+            style: 'rect',
+            detail,
+            u,
+            vCenter: lowerCenter,
+            w: clampedW,
+            h: lowerH,
+          });
+          if (style === 'arched') {
+            addFramedArchHole(shape, toShape, u, fanBase, clampedW, fanH);
+          } else {
+            addFramedLancetHole(shape, toShape, u, fanBase, clampedW, fanH);
+          }
+        } else {
+          markNextHoleHinged();
+          if (style === 'arched') {
+            addFramedArchHole(shape, toShape, u, vh - clampedH * 0.5, clampedW, clampedH);
+          } else if (style === 'lancet') {
+            addFramedLancetHole(shape, toShape, u, vh - clampedH * 0.5, clampedW, clampedH);
+          } else {
+            addFramedRectHole(shape, toShape, u, vh, clampedW, clampedH);
+          }
+          features.push({
+            mode: openingMode,
+            style,
+            detail,
+            u,
+            vCenter: vh,
+            w: clampedW,
+            h: clampedH,
+          });
+        }
+
+        if (detail === 'sill') {
+          features.push({ mode: 'sill', style: 'rect', detail: 'clean', u, vCenter: vh, w: clampedW + 1.0, h: clampedH });
+        }
+        continue;
+      }
+
+      // 2. Detailed punched architectural openings (`six` 6-pane, `twelve` 12-pane, `cross` 4-pane, `transom`, `triple`, `sill`, `clean`)!
+      const bar = 0.85;
+      if ((detail === 'six' || detail === 'twelve') && clampedW >= 3.6 && clampedH >= 4.0) {
+        const isTwelve = detail === 'twelve';
+        const fineBar = isTwelve ? 0.42 : 0.50;
+        const landscape = clampedW > clampedH * 1.15;
+        const reqCols = isTwelve ? (landscape ? 4 : 3) : landscape ? 3 : 2;
+        const reqRows = isTwelve ? (landscape ? 3 : 4) : landscape ? 2 : 3;
+        if (style === 'arched' || style === 'lancet') {
+          const vBase = vh - clampedH * 0.5;
+          const topH = Math.min(clampedH * 0.34, Math.max(1.8, clampedW * 0.42));
+          const botH = clampedH - topH - fineBar;
+          if (botH >= 2.2 && topH >= 1.5) {
+            addFramedGridHoles(
+              shape,
+              toShape,
+              u,
+              vBase + botH * 0.5,
+              clampedW,
+              botH,
+              reqCols,
+              Math.max(1, reqRows - 1),
+              fineBar,
+            );
+            if (style === 'arched') {
+              addFramedArchHole(shape, toShape, u, vBase + botH + fineBar, clampedW, topH);
+            } else {
+              addFramedLancetHole(shape, toShape, u, vBase + botH + fineBar, clampedW, topH);
+            }
+            continue;
+          }
+        } else if (addFramedGridHoles(shape, toShape, u, vh, clampedW, clampedH, reqCols, reqRows, fineBar)) {
+          continue;
+        }
+      }
+      if (detail === 'cross' && clampedW >= 4.4 && clampedH >= 4.8) {
+        const subW = (clampedW - bar) * 0.5;
+        const vBase = vh - clampedH * 0.5;
+        if (style === 'arched' || style === 'lancet') {
+          // Palladian / Georgian arched cross-window: twin lower panes + open curved fanlight above!
+          const topH = Math.min(clampedH * 0.36, Math.max(2.0, clampedW * 0.45));
+          const botH = clampedH - topH - bar;
+          if (subW >= 1.5 && botH >= 2.0 && topH >= 1.7) {
+            for (const sgn of [-1, 1]) {
+              addFramedRectHole(shape, toShape, u + sgn * (subW * 0.5 + bar * 0.5), vBase + botH * 0.5, subW, botH);
+            }
+            if (style === 'arched') {
+              addFramedArchHole(shape, toShape, u, vBase + botH + bar, clampedW, topH);
+            } else {
+              addFramedLancetHole(shape, toShape, u, vBase + botH + bar, clampedW, topH);
+            }
+            continue;
+          }
+        } else {
+          // Crisp 2×2 four-pane window leaving a real paper `+` muntin cross!
+          const subH = (clampedH - bar) * 0.5;
+          if (subW >= 1.5 && subH >= 1.6) {
+            for (const sx of [-1, 1]) {
+              for (const sy of [-1, 1]) {
+                addFramedRectHole(
+                  shape,
+                  toShape,
+                  u + sx * (subW * 0.5 + bar * 0.5),
+                  vh + sy * (subH * 0.5 + bar * 0.5),
+                  subW,
+                  subH,
+                );
+              }
+            }
+            continue;
+          }
+        }
+      }
+
+      if (detail === 'transom' && clampedH >= 5.0) {
+        const vBase = vh - clampedH * 0.5;
+        const botH = (clampedH - bar) * 0.64;
+        const topH = clampedH - bar - botH;
+        if (botH >= 2.2 && topH >= 1.5) {
+          addFramedRectHole(shape, toShape, u, vBase + botH * 0.5, clampedW, botH);
+          if (style === 'arched') {
+            addFramedArchHole(shape, toShape, u, vBase + botH + bar, clampedW, topH);
+          } else if (style === 'lancet') {
+            addFramedLancetHole(shape, toShape, u, vBase + botH + bar, clampedW, topH);
+          } else {
+            addFramedRectHole(shape, toShape, u, vBase + botH + bar + topH * 0.5, clampedW, topH);
+          }
+          continue;
+        }
+      }
+
+      if (detail === 'triple' && clampedW >= 6.4 && style !== 'arched' && style !== 'lancet') {
+        const st = 0.78;
+        const subW = (clampedW - st * 2) / 3;
+        if (subW >= 1.5) {
+          for (const idx of [-1, 0, 1]) {
+            addFramedRectHole(shape, toShape, u + idx * (subW + st), vh, subW, clampedH);
+          }
+          continue;
+        }
+      }
 
       if (style === 'arched') {
-        addFramedArchHole(shape, toShape, u, vh - wh * 0.5, ww, wh);
+        addFramedArchHole(shape, toShape, u, vh - clampedH * 0.5, clampedW, clampedH);
+      } else if (style === 'lancet') {
+        addFramedLancetHole(shape, toShape, u, vh - clampedH * 0.5, clampedW, clampedH);
       } else {
-        addFramedRectHole(shape, toShape, u, vh, ww, wh);
+        addFramedRectHole(shape, toShape, u, vh, clampedW, clampedH);
+      }
+
+      if (detail === 'sill') {
+        features.push({ mode: 'sill', style: 'rect', detail: 'clean', u, vCenter: vh, w: clampedW + 1.0, h: clampedH });
       }
     }
   }
 
-  // Crisp attic circular oculus in front & back gable triangles!
-  if (spec.roofType === 'gable' && isGableEnd && spec.hasOculus && roofRise >= 11) {
+  // Crisp attic circular oculus in front & back gable crowns (centered, or ridge-aligned on saltbox)!
+  const allowOculus = facade ? facade.hasOculus : spec.hasOculus;
+  if (spec.roofType === 'gable' && isGableEnd && allowOculus && roofRise >= 11) {
+    const profile = spec.gableProfile ?? spec.architecture?.roof.gableProfile ?? 'classic';
     const r = Math.min(roofRise * 0.17, spec.W * 0.085, 3.8);
     if (r >= 2.0) {
-      addFramedCircleHole(shape, toShape, 0, spec.H + roofRise * 0.43, r);
+      const uOculus = profile === 'saltbox' ? (wf.uAxis[0] < 0 ? -spec.W * 0.08 : spec.W * 0.08) : 0;
+      addFramedCircleHole(shape, toShape, uOculus, spec.H + roofRise * 0.43, r);
     }
   }
+
+  return { features, hingedHoleIndices };
 }
 
 function makeLocalShape(polyMm: V2[], oxMm: number, oyMm: number): THREE.Shape {
@@ -686,6 +1101,12 @@ export interface KirigamiDetailRig {
   targetAngle: number;
   /** Which parent panel fold drives this detail popping upright */
   driverPanel: FoldablePanelId;
+  /** `'fixed'` = architectural pop-ups (awnings, chimneys, dormers, sills); `'window'` = live-adjustable hinged leaves! */
+  kind?: 'fixed' | 'window';
+  /** Stratified deterministic rank `[0, 1)` deciding which windows crack open in `'random'` ventilation mode */
+  openRank?: number;
+  /** Classification for window kinematics (`top-hung` capped to 20-30%, `side-hung`, or `door`) */
+  windowType?: 'top-hung' | 'side-hung' | 'door';
 }
 
 export interface OrigamiHouseRig {
@@ -697,6 +1118,7 @@ export interface OrigamiHouseRig {
   details: KirigamiDetailRig[];
   hasCutout: boolean;
   updatePanelVisual(id: FoldablePanelId, fold01: number, peekRad: number, hovered: boolean): void;
+  setWindowOpen(mode: WindowOpenMode, ratio?: number): void;
   updateCutoutDrop(elapsedSec: number): boolean;
   setFoldLinesVisible(visible: boolean): void;
   setPaperRelief(relief01: number): void;
@@ -713,10 +1135,14 @@ export function buildOrigamiHouseRig(
   root.position.y = PAPER_THICK;
   root.rotation.y = spec.yawOffset;
 
-  const triMats = [mats.inside, mats.edge, mats.outside];
   const cutoutMats = [mats.cutoutInside, mats.cutoutEdge, mats.cutoutOutside];
   const chadMats = [mats.chadInside, mats.chadEdge, mats.chadOutside];
-  const exteriorDetailMats = [mats.outside, mats.edge, mats.outside];
+  const triMatsForSlot = (slot: 0 | 1 | 2 | 3 = 0) => [mats.inside, mats.edge, mats.outsideSlots[slot]];
+  const detailMatsForSlot = (slot: 0 | 1 | 2 | 3 = 0) => [
+    mats.outsideSlots[slot],
+    mats.edge,
+    mats.outsideSlots[slot],
+  ];
   const groupByPanel = new Map<PanelId, THREE.Group>();
   const panels = new Map<FoldablePanelId, PanelVisual>();
   const details: KirigamiDetailRig[] = [];
@@ -756,9 +1182,13 @@ export function buildOrigamiHouseRig(
 
   // Build every panel in parent -> child order
   const allMeshes: THREE.Mesh[] = [];
+  const wallHingedByPanel = new Map<PanelId, WallHingedFeature[]>();
   for (const def of net.panels) {
     const shape = makeLocalShape(def.poly, def.hingeOrigin[0], def.hingeOrigin[1]);
-    punchWallOpenings(shape, def, spec, roofRise);
+    const punched = punchWallOpenings(shape, def, spec, roofRise);
+    if (punched.features.length > 0) {
+      wallHingedByPanel.set(def.id, punched.features);
+    }
 
     // Crisp industrial north-light skylight bays punched into steep sawtooth roof clerestories!
     if (def.hasRoofSkylights && def.roofFrame) {
@@ -782,7 +1212,7 @@ export function buildOrigamiHouseRig(
 
     // Crisp architectural skylight in mansard / polygonal pavilion top deck:
     // circular Pantheon oculus for hexagonal/octagonal caps, rectangular skylight for mansards!
-    if (def.id === 'roofCap') {
+    if ((def.localId ?? def.id) === 'roofCap') {
       let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
       let sumX = 0, sumY = 0;
       for (const [px, py] of def.poly) {
@@ -814,9 +1244,11 @@ export function buildOrigamiHouseRig(
     const flatOriginX = def.hingeOrigin[0] * MM;
     const flatOriginZ = -def.hingeOrigin[1] * MM;
 
-    // Collect every punched window/door/oculus/skylight opening as a real falling paper chad!
+    // Collect every genuinely punched window/door/oculus/skylight opening (skipping hinged flaps!) as a real falling chad!
     if (cutoutRoot && shape.holes.length > 0) {
-      for (const holePath of shape.holes) {
+      for (let hi = 0; hi < shape.holes.length; hi++) {
+        if (punched.hingedHoleIndices.has(hi)) continue;
+        const holePath = shape.holes[hi];
         const pts = holePath.getPoints(10);
         if (pts.length < 3) continue;
         let cx = 0;
@@ -864,16 +1296,19 @@ export function buildOrigamiHouseRig(
     }
 
     const geo = buildDualSidedPaperGeometry(shape, flatOriginX, flatOriginZ, spec.yawOffset);
-    const mesh = new THREE.Mesh(geo, triMats);
+    const mesh = new THREE.Mesh(geo, triMatsForSlot(def.colorSlot ?? 0));
     mesh.castShadow = true;
     mesh.receiveShadow = true;
     mesh.userData = { kind: 'panel', id: def.id };
     allMeshes.push(mesh);
 
-    if (def.id === 'base') {
-      baseMesh = mesh;
-      root.add(baseMesh);
-      groupByPanel.set('base', root);
+    if (def.parent === null) {
+      const baseGroup = new THREE.Group();
+      baseGroup.position.set(flatOriginX, 0, flatOriginZ);
+      baseGroup.add(mesh);
+      root.add(baseGroup);
+      groupByPanel.set(def.id, baseGroup);
+      if (!baseMesh || def.id === 'base') baseMesh = mesh;
       continue;
     }
 
@@ -948,28 +1383,554 @@ export function buildOrigamiHouseRig(
     cutoutRoot.add(outerCutoutMesh);
   }
 
+  // ---- Flat-Folded Kirigami Window Flaps, Shutters, Top-Hung Awnings, Louvers, Sills & Hinged Doors! ----
+  const makeLeafShape = (
+    x0: number,
+    x1: number,
+    yTop: number,
+    yBot: number,
+    archKind: 'rect' | 'arched-full' | 'arched-left' | 'arched-right' | 'lancet-full' | 'lancet-left' | 'lancet-right',
+  ): THREE.Shape => {
+    // Remember in buildDualSidedPaperGeometry: local Z = -shapeY, so top (+Z) is yTop (smaller Y), bottom (-Z) is yBot (larger Y)!
+    const s = new THREE.Shape();
+    const w = x1 - x0;
+    const h = yBot - yTop;
+    if (archKind === 'rect' || h < 0.1 || w < 0.05) {
+      s.moveTo(x0, yTop);
+      s.lineTo(x1, yTop);
+      s.lineTo(x1, yBot);
+      s.lineTo(x0, yBot);
+      s.closePath();
+      return s;
+    }
+    if (archKind === 'arched-full') {
+      const r = Math.min(w * 0.5, h * 0.42);
+      const springY = yTop + r;
+      const cx = (x0 + x1) * 0.5;
+      s.moveTo(x0, yBot);
+      s.lineTo(x1, yBot);
+      s.lineTo(x1, springY);
+      const segs = 10;
+      for (let i = 1; i <= segs; i++) {
+        const a = (i / segs) * Math.PI;
+        s.lineTo(cx + Math.cos(a) * r, springY - Math.sin(a) * r);
+      }
+      s.lineTo(x0, yBot);
+      s.closePath();
+      return s;
+    }
+    if (archKind === 'arched-left') {
+      const r = Math.min(w, h * 0.42);
+      const springY = yTop + r;
+      s.moveTo(x0, yBot);
+      s.lineTo(x1, yBot);
+      s.lineTo(x1, yTop);
+      const segs = 6;
+      for (let i = 1; i <= segs; i++) {
+        const a = Math.PI * 0.5 + (i / segs) * Math.PI * 0.5;
+        s.lineTo(x1 + Math.cos(a) * r, springY - Math.sin(a) * r);
+      }
+      s.lineTo(x0, yBot);
+      s.closePath();
+      return s;
+    }
+    if (archKind === 'arched-right') {
+      const r = Math.min(w, h * 0.42);
+      const springY = yTop + r;
+      s.moveTo(x0, yBot);
+      s.lineTo(x1, yBot);
+      s.lineTo(x1, springY);
+      const segs = 6;
+      for (let i = 1; i <= segs; i++) {
+        const a = (i / segs) * Math.PI * 0.5;
+        s.lineTo(x0 + Math.cos(a) * r, springY - Math.sin(a) * r);
+      }
+      s.lineTo(x0, yBot);
+      s.closePath();
+      return s;
+    }
+    // Lancet full / left / right
+    const springY = yBot - h * 0.56;
+    const archH = Math.max(0.05, springY - yTop);
+    const segs = 5;
+    if (archKind === 'lancet-full') {
+      const cx = (x0 + x1) * 0.5;
+      const hw = w * 0.5;
+      s.moveTo(x0, yBot);
+      s.lineTo(x1, yBot);
+      s.lineTo(x1, springY);
+      for (let i = 1; i <= segs; i++) {
+        const t = i / segs;
+        s.lineTo(cx + hw * Math.cos(t * Math.PI * 0.5), springY - archH * Math.pow(Math.sin(t * Math.PI * 0.5), 0.72));
+      }
+      for (let i = 1; i <= segs; i++) {
+        const t = i / segs;
+        s.lineTo(cx - hw * Math.sin(t * Math.PI * 0.5), springY - archH * Math.pow(Math.cos(t * Math.PI * 0.5), 0.72));
+      }
+      s.lineTo(x0, yBot);
+      s.closePath();
+      return s;
+    }
+    if (archKind === 'lancet-left') {
+      s.moveTo(x0, yBot);
+      s.lineTo(x1, yBot);
+      s.lineTo(x1, yTop);
+      for (let i = 1; i <= segs; i++) {
+        const t = i / segs;
+        s.lineTo(x1 - w * Math.sin(t * Math.PI * 0.5), springY - archH * Math.pow(Math.cos(t * Math.PI * 0.5), 0.72));
+      }
+      s.lineTo(x0, yBot);
+      s.closePath();
+      return s;
+    }
+    s.moveTo(x0, yBot);
+    s.lineTo(x1, yBot);
+    s.lineTo(x1, springY);
+    for (let i = 1; i <= segs; i++) {
+      const t = i / segs;
+      s.lineTo(x0 + w * Math.cos(t * Math.PI * 0.5), springY - archH * Math.pow(Math.sin(t * Math.PI * 0.5), 0.72));
+    }
+    s.lineTo(x0, yBot);
+    s.closePath();
+    return s;
+  };
+
+  type LeafArchKind =
+    | 'rect'
+    | 'arched-full'
+    | 'arched-left'
+    | 'arched-right'
+    | 'lancet-full'
+    | 'lancet-left'
+    | 'lancet-right';
+
+  const makeInsetArchHole = (
+    x0: number,
+    x1: number,
+    yTop: number,
+    yBot: number,
+    archKind: LeafArchKind,
+    outerR: number,
+    frame: number,
+  ): THREE.Path => {
+    const p = new THREE.Path();
+    const w = x1 - x0;
+    const h = yBot - yTop;
+    if (archKind === 'rect' || w < 0.04 || h < 0.04) {
+      p.moveTo(x0, yTop);
+      p.lineTo(x0, yBot);
+      p.lineTo(x1, yBot);
+      p.lineTo(x1, yTop);
+      p.closePath();
+      return p;
+    }
+    if (archKind === 'arched-full') {
+      const r = Math.max(0.02, Math.min(w * 0.5, h * 0.44, Math.max(0.02, outerR - frame)));
+      const springY = yTop + r;
+      const cx = (x0 + x1) * 0.5;
+      p.moveTo(x0, yBot);
+      p.lineTo(x0, springY);
+      const segs = 10;
+      for (let i = 1; i <= segs; i++) {
+        const a = Math.PI - (i / segs) * Math.PI;
+        p.lineTo(cx + Math.cos(a) * r, springY - Math.sin(a) * r);
+      }
+      p.lineTo(x1, yBot);
+      p.closePath();
+      return p;
+    }
+    if (archKind === 'arched-left') {
+      const r = Math.max(0.02, Math.min(w, h * 0.44, Math.max(0.02, outerR - frame)));
+      const springY = yTop + r;
+      p.moveTo(x0, yBot);
+      p.lineTo(x0, springY);
+      const segs = 6;
+      for (let i = 1; i <= segs; i++) {
+        const a = Math.PI - (i / segs) * Math.PI * 0.5;
+        p.lineTo(x1 + Math.cos(a) * r, springY - Math.sin(a) * r);
+      }
+      p.lineTo(x1, yBot);
+      p.closePath();
+      return p;
+    }
+    if (archKind === 'arched-right') {
+      const r = Math.max(0.02, Math.min(w, h * 0.44, Math.max(0.02, outerR - frame)));
+      const springY = yTop + r;
+      p.moveTo(x0, yBot);
+      p.lineTo(x0, yTop);
+      const segs = 6;
+      for (let i = 1; i <= segs; i++) {
+        const a = Math.PI * 0.5 - (i / segs) * Math.PI * 0.5;
+        p.lineTo(x0 + Math.cos(a) * r, springY - Math.sin(a) * r);
+      }
+      p.lineTo(x1, yBot);
+      p.closePath();
+      return p;
+    }
+    const springY = yBot - h * 0.56;
+    const archH = Math.max(0.04, springY - yTop);
+    const segs = 5;
+    if (archKind === 'lancet-full') {
+      const cx = (x0 + x1) * 0.5;
+      const hw = w * 0.5;
+      p.moveTo(x0, yBot);
+      p.lineTo(x0, springY);
+      for (let i = 1; i <= segs; i++) {
+        const t = i / segs;
+        p.lineTo(cx - hw * Math.cos(t * Math.PI * 0.5), springY - archH * Math.pow(Math.sin(t * Math.PI * 0.5), 0.72));
+      }
+      for (let i = 1; i <= segs; i++) {
+        const t = i / segs;
+        p.lineTo(cx + hw * Math.sin(t * Math.PI * 0.5), springY - archH * Math.pow(Math.cos(t * Math.PI * 0.5), 0.72));
+      }
+      p.lineTo(x1, yBot);
+      p.closePath();
+      return p;
+    }
+    if (archKind === 'lancet-left') {
+      p.moveTo(x0, yBot);
+      p.lineTo(x0, springY);
+      for (let i = 1; i <= segs; i++) {
+        const t = i / segs;
+        p.lineTo(x1 - w * Math.cos(t * Math.PI * 0.5), springY - archH * Math.pow(Math.sin(t * Math.PI * 0.5), 0.72));
+      }
+      p.lineTo(x1, yBot);
+      p.closePath();
+      return p;
+    }
+    p.moveTo(x0, yBot);
+    p.lineTo(x0, yTop);
+    for (let i = 1; i <= segs; i++) {
+      const t = i / segs;
+      p.lineTo(x0 + w * Math.sin(t * Math.PI * 0.5), springY - archH * Math.pow(Math.cos(t * Math.PI * 0.5), 0.72));
+    }
+    p.lineTo(x1, yBot);
+    p.closePath();
+    return p;
+  };
+
+  /**
+   * Punch real hollow glass cutout(s) inside every hinged window leaf so every moving leaf is a true
+   * architectural frame — mostly 1 crisp glass cutout, and occasionally 6 (`2×3`) or 12 (`3×4`) muntin panes!
+   */
+  const punchLeafFrameCutouts = (
+    leafShape: THREE.Shape,
+    x0: number,
+    x1: number,
+    yTop: number,
+    yBot: number,
+    archKind: LeafArchKind,
+    detail: WindowDetail,
+    isHalfLeaf: boolean,
+    isDoor: boolean,
+    isLouverSlat = false,
+  ): void => {
+    const w = x1 - x0;
+    const h = yBot - yTop;
+    const frame = isLouverSlat
+      ? Math.min(0.042, Math.max(0.026, Math.min(w * 0.08, h * 0.20)))
+      : Math.min(0.058, Math.max(0.032, Math.min(w, h) * 0.115));
+
+    const ix0 = x0 + frame;
+    const ix1 = x1 - frame;
+    const iyTop = yTop + frame;
+    // Doors keep a solid bottom kick-panel (~34% of door height) with a framed upper glass lite!
+    const iyBot = isDoor ? yTop + Math.max(h * 0.58, frame + 0.10) : yBot - frame;
+    const gw = ix1 - ix0;
+    const gh = iyBot - iyTop;
+    if (gw < 0.055 || gh < 0.055) return;
+
+    const addBoxGrid = (bx0: number, bx1: number, by0: number, by1: number, reqCols: number, reqRows: number, isTransom = false) => {
+      const bw = bx1 - bx0;
+      const bh = by1 - by0;
+      const bar = Math.min(0.030, Math.max(0.019, Math.min(bw, bh) * 0.058));
+      let cols = Math.max(1, reqCols);
+      let rows = Math.max(1, reqRows);
+      const minPane = 0.044;
+      while (cols > 1 && (bw - bar * (cols - 1)) / cols < minPane) cols--;
+      while (rows > 1 && (bh - bar * (rows - 1)) / rows < minPane) rows--;
+      if (isTransom && cols === 1 && rows === 2 && bh >= minPane * 2 + bar) {
+        const topH = (bh - bar) * 0.34;
+        const botH = bh - bar - topH;
+        addRectHole(leafShape, (bx0 + bx1) * 0.5, by0 + topH * 0.5, bw, topH);
+        addRectHole(leafShape, (bx0 + bx1) * 0.5, by0 + topH + bar + botH * 0.5, bw, botH);
+        return;
+      }
+      const paneW = (bw - bar * (cols - 1)) / cols;
+      const paneH = (bh - bar * (rows - 1)) / rows;
+      if (paneW < 0.036 || paneH < 0.036) return;
+      for (let c = 0; c < cols; c++) {
+        for (let r = 0; r < rows; r++) {
+          const cx = bx0 + paneW * 0.5 + c * (paneW + bar);
+          const cy = by0 + paneH * 0.5 + r * (paneH + bar);
+          addRectHole(leafShape, cx, cy, paneW, paneH);
+        }
+      }
+    };
+
+    let reqCols = 1;
+    let reqRows = 1;
+    if (isLouverSlat) {
+      if (detail === 'twelve') reqCols = 4;
+      else if (detail === 'six') reqCols = 3;
+      else if (detail === 'triple') reqCols = 3;
+      else if (detail === 'cross') reqCols = 2;
+    } else if (isDoor) {
+      if (detail === 'twelve') {
+        reqCols = isHalfLeaf ? 2 : 3;
+        reqRows = 2;
+      } else if (detail === 'six') {
+        reqCols = isHalfLeaf ? 1 : 2;
+        reqRows = 2;
+      }
+    } else if (detail === 'twelve') {
+      if (isHalfLeaf) {
+        reqCols = 2;
+        reqRows = 3;
+      } else {
+        const landscape = gw > gh * 1.15;
+        reqCols = landscape ? 4 : 3;
+        reqRows = landscape ? 3 : 4;
+      }
+    } else if (detail === 'six') {
+      if (isHalfLeaf) {
+        reqCols = 1;
+        reqRows = 3;
+      } else {
+        const landscape = gw > gh * 1.15;
+        reqCols = landscape ? 3 : 2;
+        reqRows = landscape ? 2 : 3;
+      }
+    } else if (detail === 'cross') {
+      reqCols = isHalfLeaf ? 1 : 2;
+      reqRows = 2;
+    } else if (detail === 'triple') {
+      reqCols = isHalfLeaf ? 1 : 3;
+      reqRows = isHalfLeaf ? 2 : 1;
+    } else if (detail === 'transom') {
+      reqCols = 1;
+      reqRows = 2;
+    }
+
+    if (archKind === 'rect') {
+      addBoxGrid(ix0, ix1, iyTop, iyBot, reqCols, reqRows, detail === 'transom');
+      return;
+    }
+
+    const outerR = Math.min(archKind === 'arched-full' ? w * 0.5 : w, h * 0.42);
+    if (reqCols === 1 && reqRows === 1) {
+      leafShape.holes.push(makeInsetArchHole(ix0, ix1, iyTop, iyBot, archKind, outerR, frame));
+      return;
+    }
+
+    const springY = archKind.startsWith('lancet') ? yBot - h * 0.56 : yTop + outerR;
+    const bar = 0.024;
+    const fanBot = springY - bar * 0.5;
+    const lowTop = springY + bar * 0.5;
+    if (fanBot - iyTop >= 0.055 && iyBot - lowTop >= 0.065) {
+      leafShape.holes.push(makeInsetArchHole(ix0, ix1, iyTop, fanBot, archKind, outerR, frame));
+      addBoxGrid(ix0, ix1, lowTop, iyBot, reqCols, Math.max(1, reqRows - 1), false);
+    } else {
+      leafShape.holes.push(makeInsetArchHole(ix0, ix1, iyTop, iyBot, archKind, outerR, frame));
+    }
+  };
+
+  // Deterministic PRNG for organic per-window open angles & stratified ventilation subset selection
+  let winRngState =
+    ((spec.generation * 2654435761) ^
+      ((spec.village?.seed ?? 0) * 1597334677) ^
+      (Math.round(spec.W * 10) * 3812015801) ^
+      (Math.round(spec.H * 10) * 2246822519)) >>>
+    0;
+  if (winRngState === 0) winRngState = 1337;
+  const nextWinRand = () => {
+    winRngState = (winRngState + 0x6d2b79f5) >>> 0;
+    let t = Math.imul(winRngState ^ (winRngState >>> 15), 1 | winRngState);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+
+  const windowDetailGroups: KirigamiDetailRig[][] = [];
+  const doorDetailGroups: KirigamiDetailRig[][] = [];
+
+  for (const [panelId, feats] of wallHingedByPanel) {
+    const def = net.panelMap.get(panelId);
+    const pv = panels.get(panelId);
+    if (!def || !pv || !def.wallFrame) continue;
+    const wf = def.wallFrame;
+    const wallTriMats = triMatsForSlot(def.colorSlot ?? 0);
+    const wallDetailMats = detailMatsForSlot(def.colorSlot ?? 0);
+    const rotY = Math.atan2(wf.vAxis[0], -wf.vAxis[1]);
+    const kerf = 0.24; // Crisp 0.24 mm laser-cut paper clearance
+
+    for (const f of feats) {
+      const sx = wf.origin[0] + wf.uAxis[0] * f.u + wf.vAxis[0] * f.vCenter;
+      const sy = wf.origin[1] + wf.uAxis[1] * f.u + wf.vAxis[1] * f.vCenter;
+      const fg = new THREE.Group();
+      fg.position.set(
+        (sx - def.hingeOrigin[0]) * MM,
+        0,
+        -(sy - def.hingeOrigin[1]) * MM,
+      );
+      fg.rotation.y = rotY;
+      pv.pivot.add(fg);
+
+      const hw = f.w * 0.5 * MM;
+      const hh = f.h * 0.5 * MM;
+      const kw = Math.max(0.12, (f.w - kerf) * MM);
+      const kh = Math.max(0.12, (f.h - kerf) * MM);
+
+      const mountLeaf = (
+        px: number,
+        py: number,
+        pz: number,
+        leafShape: THREE.Shape,
+        axis: 'x' | 'z',
+        targetAngle: number,
+        kind: 'fixed' | 'window',
+        matsArr: THREE.Material[],
+        windowType?: 'top-hung' | 'side-hung' | 'door',
+      ): KirigamiDetailRig => {
+        const lPivot = new THREE.Group();
+        lPivot.position.set(px, py, pz);
+        fg.add(lPivot);
+        const geo = buildDualSidedPaperGeometry(leafShape, sx * MM, -sy * MM, spec.yawOffset, 0, PAPER_THICK * 0.85);
+        const m = new THREE.Mesh(geo, matsArr);
+        m.castShadow = true;
+        m.receiveShadow = true;
+        allMeshes.push(m);
+        lPivot.add(m);
+        const entry: KirigamiDetailRig = {
+          pivot: lPivot,
+          axis,
+          targetAngle,
+          driverPanel: panelId,
+          kind,
+          windowType,
+        };
+        details.push(entry);
+        return entry;
+      };
+
+      if (f.mode === 'sill') {
+        const sillD = Math.min(2.6, Math.max(1.5, f.w * 0.24)) * MM;
+        const sShape = makeLeafShape(-hw, hw, -sillD, 0, 'rect');
+        mountLeaf(0, -PAPER_THICK, -hh, sShape, 'x', 1.57, 'fixed', wallDetailMats);
+        continue;
+      }
+
+      if (f.mode === 'awning') {
+        // Top-hung kirigami window opening FROM ABOVE: strictly 20%–30% tilt (`18°–27°`)!
+        const aShape = makeLeafShape(-kw * 0.5, kw * 0.5, 0, kh, 'rect');
+        punchLeafFrameCutouts(aShape, -kw * 0.5, kw * 0.5, 0, kh, 'rect', f.detail, false, false);
+        const tiltRad = -(0.20 + nextWinRand() * 0.10) * (Math.PI * 0.5);
+        const det = mountLeaf(0, 0, hh, aShape, 'x', tiltRad, 'window', wallTriMats, 'top-hung');
+        windowDetailGroups.push([det]);
+        continue;
+      }
+
+      if (f.mode === 'louver') {
+        // Two stacked horizontal top-hung framed slats tilting outward 20%–30% (`18°–27°`) in parallel unison!
+        const slatH = Math.max(0.10, (f.h * 0.45 - 0.14) * MM);
+        const sShape1 = makeLeafShape(-kw * 0.5, kw * 0.5, 0, slatH, 'rect');
+        const sShape2 = makeLeafShape(-kw * 0.5, kw * 0.5, 0, slatH, 'rect');
+        punchLeafFrameCutouts(sShape1, -kw * 0.5, kw * 0.5, 0, slatH, 'rect', f.detail, false, false, true);
+        punchLeafFrameCutouts(sShape2, -kw * 0.5, kw * 0.5, 0, slatH, 'rect', f.detail, false, false, true);
+        const tiltRad = -(0.20 + nextWinRand() * 0.10) * (Math.PI * 0.5);
+        const d1 = mountLeaf(0, 0, hh, sShape1, 'x', tiltRad, 'window', wallTriMats, 'top-hung');
+        const d2 = mountLeaf(0, 0, 0.01 * MM, sShape2, 'x', tiltRad, 'window', wallTriMats, 'top-hung');
+        windowDetailGroups.push([d1, d2]);
+        continue;
+      }
+
+      if (f.mode === 'shutters' || f.mode === 'door-double') {
+        const isDoor = f.mode === 'door-double';
+        const leafW = Math.max(0.10, (f.w * 0.5 - kerf * 0.75) * MM);
+        const leftKind: LeafArchKind =
+          f.style === 'arched' ? 'arched-left' : f.style === 'lancet' ? 'lancet-left' : 'rect';
+        const rightKind: LeafArchKind =
+          f.style === 'arched' ? 'arched-right' : f.style === 'lancet' ? 'lancet-right' : 'rect';
+        const lShape = makeLeafShape(0, leafW, -kh * 0.5, kh * 0.5, leftKind);
+        const rShape = makeLeafShape(-leafW, 0, -kh * 0.5, kh * 0.5, rightKind);
+        punchLeafFrameCutouts(lShape, 0, leafW, -kh * 0.5, kh * 0.5, leftKind, f.detail, true, isDoor);
+        punchLeafFrameCutouts(rShape, -leafW, 0, -kh * 0.5, kh * 0.5, rightKind, f.detail, true, isDoor);
+        const maxAng = isDoor ? 0.52 + nextWinRand() * 0.34 : 1.42 + nextWinRand() * 0.42;
+        const wType = isDoor ? 'door' : 'side-hung';
+        const dL = mountLeaf(-hw, 0, 0, lShape, 'z', -maxAng, 'window', wallTriMats, wType);
+        const dR = mountLeaf(hw, 0, 0, rShape, 'z', maxAng, 'window', wallTriMats, wType);
+        if (isDoor) doorDetailGroups.push([dL, dR]);
+        else windowDetailGroups.push([dL, dR]);
+        continue;
+      }
+
+      if (f.mode === 'casement' || f.mode === 'door-single') {
+        const isDoor = f.mode === 'door-single';
+        const fullKind: LeafArchKind =
+          f.style === 'arched' ? 'arched-full' : f.style === 'lancet' ? 'lancet-full' : 'rect';
+        const cShape = makeLeafShape(0, kw, -kh * 0.5, kh * 0.5, fullKind);
+        punchLeafFrameCutouts(cShape, 0, kw, -kh * 0.5, kh * 0.5, fullKind, f.detail, false, isDoor);
+        const maxAng = isDoor ? 0.48 + nextWinRand() * 0.32 : 0.52 + nextWinRand() * 0.36;
+        const wType = isDoor ? 'door' : 'side-hung';
+        const det = mountLeaf(-hw, 0, 0, cShape, 'z', -maxAng, 'window', wallTriMats, wType);
+        if (isDoor) doorDetailGroups.push([det]);
+        else windowDetailGroups.push([det]);
+      }
+    }
+  }
+
+  // Assign stratified shuffled `openRank` across all hinged window groups so `% random` opens
+  // an exact, spatially scattered fraction of windows to air out the house!
+  for (let i = windowDetailGroups.length - 1; i > 0; i--) {
+    const j = Math.floor(nextWinRand() * (i + 1));
+    const tmp = windowDetailGroups[i];
+    windowDetailGroups[i] = windowDetailGroups[j];
+    windowDetailGroups[j] = tmp;
+  }
+  const winGroupCount = windowDetailGroups.length;
+  for (let i = 0; i < winGroupCount; i++) {
+    const rank = (i + 0.5) / winGroupCount;
+    for (const det of windowDetailGroups[i]) det.openRank = rank;
+  }
+  // Doors stay neatly closed at low/moderate ventilation ratios and crack open at high `%` or `All open`
+  const doorGroupCount = doorDetailGroups.length;
+  for (let i = 0; i < doorGroupCount; i++) {
+    const rank = 0.58 + ((i + 0.5) / Math.max(1, doorGroupCount)) * 0.38;
+    for (const det of doorDetailGroups[i]) det.openRank = rank;
+  }
+
   // ---- Flat-Folded Kirigami Architectural Details (Awning, Chimney, Roof Dormers!) ----
-  // Every detail mounts via `wallFrame` / `roofFrame`, working identically on cross, ribbon, and polygonal nets!
+  // Every detail mounts via `wallFrame` / `roofFrame`, working identically on single houses AND multi-house villages!
 
-  // A. Front entry paper canopy awning (hinged right above front doorway, sweeps 98° outward with gentle rain slope!)
-  const frontDef = net.panels.find((p) => p.isFront) ?? net.panelMap.get('front');
-  const frontPv = frontDef ? panels.get(frontDef.id) : undefined;
-  if (spec.hasAwning && frontPv && frontDef?.wallFrame && spec.door !== 'none' && spec.door !== 'arcade') {
+  // A. Front entry paper canopy awnings (works for every building in a village & tracks off-center doors!)
+  for (const frontDef of net.panels) {
+    if (!frontDef.isFront || !frontDef.wallFrame || frontDef.skipOpenings) continue;
+    const frontPv = panels.get(frontDef.id);
+    const bSpec = frontDef.panelSpec ?? spec;
+    const groundLv = bSpec.architecture?.facades.front.levels[0] ?? null;
+    const wantsAwning = groundLv ? Boolean(groundLv.door?.awning) : bSpec.hasAwning && bSpec.door !== 'none' && bSpec.door !== 'arcade';
+    if (!frontPv || !wantsAwning) continue;
+
     const wf = frontDef.wallFrame;
-    const storyH = wf.heightMm / spec.levels;
-    const awningYmm = Math.min(storyH * 0.72, 15.2);
-    const awW = Math.min(wf.widthMm * 0.42, 15.5);
-    const awD = Math.min(6.4, Math.max(4.4, wf.widthMm * 0.14));
+    const frontLevels = bSpec.architecture?.facades.front.levels;
+    const levels = wf.wallLevels ?? (frontLevels ? frontLevels.length : bSpec.levels);
+    const weightSum = frontLevels
+      ? frontLevels.slice(0, levels).reduce((acc, lv) => acc + lv.heightWeight, 0) || levels
+      : levels;
+    const groundStoryH = wf.heightMm * ((groundLv ? groundLv.heightWeight : 1) / weightSum);
+    const awningYmm = Math.min(groundStoryH * 0.72, 15.2);
+    const doorU = groundLv ? (computeDoorCenterU(wf.widthMm, groundLv) ?? 0) : 0;
+    const maxAwW = Math.max(6.5, (wf.widthMm * 0.5 - Math.abs(doorU)) * 1.75);
+    const awW = Math.min(wf.widthMm * 0.40, 14.5, maxAwW);
+    const awD = Math.min(6.4, Math.max(4.0, wf.widthMm * 0.14));
 
-    const sx = wf.origin[0] + wf.vAxis[0] * awningYmm;
-    const sy = wf.origin[1] + wf.vAxis[1] * awningYmm;
+    const sx = wf.origin[0] + wf.uAxis[0] * doorU + wf.vAxis[0] * awningYmm;
+    const sy = wf.origin[1] + wf.uAxis[1] * doorU + wf.vAxis[1] * awningYmm;
     const frameGroup = new THREE.Group();
     frameGroup.position.set(
       (sx - frontDef.hingeOrigin[0]) * MM,
       -PAPER_THICK,
       -(sy - frontDef.hingeOrigin[1]) * MM,
     );
-    // Align frameGroup local +Z with wall up-vector `v3 = (vAxis[0], 0, -vAxis[1])`!
     frameGroup.rotation.y = Math.atan2(wf.vAxis[0], -wf.vAxis[1]);
     frontPv.pivot.add(frameGroup);
 
@@ -984,7 +1945,7 @@ export function buildOrigamiHouseRig(
     aShape.closePath();
 
     const aGeo = buildDualSidedPaperGeometry(aShape, sx * MM, -sy * MM, spec.yawOffset, 0, PAPER_THICK * 0.75);
-    const aMesh = new THREE.Mesh(aGeo, exteriorDetailMats);
+    const aMesh = new THREE.Mesh(aGeo, detailMatsForSlot(frontDef.colorSlot ?? 0));
     aMesh.castShadow = true;
     aMesh.receiveShadow = true;
     allMeshes.push(aMesh);
@@ -998,164 +1959,193 @@ export function buildOrigamiHouseRig(
     });
   }
 
-  // B. Kirigami folded L-corner 3D chimney stack on roof (placed on `roofL` when `roofR` has dormers!)
-  const wantsDormersOnR =
-    spec.dormerCount > 0 && panels.has('roofR') && (spec.roofType === 'gable' || spec.roofType === 'mansard');
-  const chimneyHostId: FoldablePanelId | null =
-    spec.topology === 'lwing'
-      ? panels.has('roofL')
-        ? 'roofL'
-        : null
-      : wantsDormersOnR
-        ? panels.has('roofL')
-          ? 'roofL'
-          : 'roofR'
-        : panels.has('roofR')
-          ? 'roofR'
-          : panels.has('roofL')
-            ? 'roofL'
-            : null;
-  const chimneyHost = chimneyHostId ? panels.get(chimneyHostId) : undefined;
-  const chimneyDef = chimneyHostId ? net.panelMap.get(chimneyHostId) : undefined;
-  if (spec.hasChimney && chimneyHost && chimneyHostId && chimneyDef?.roofFrame) {
-    const rf = chimneyDef.roofFrame;
-    const chW = Math.min(6.4, Math.max(4.4, rf.widthMm * 0.085));
-    const chH =
-      spec.roofType === 'flat'
-        ? Math.min(10.5, Math.max(7.2, spec.H * 0.2))
-        : Math.min(12.5, Math.max(8.2, rf.slantMm * 0.34));
-    const offSlope = Math.min(rf.slantMm * 0.46, Math.max(10.5, rf.slantMm * 0.36));
-    const offRidge = -rf.widthMm * 0.20;
-
-    const sx = rf.origin[0] + rf.slopeAxis[0] * offSlope + rf.ridgeAxis[0] * offRidge;
-    const sy = rf.origin[1] + rf.slopeAxis[1] * offSlope + rf.ridgeAxis[1] * offRidge;
-
-    const frameGroup = new THREE.Group();
-    frameGroup.position.set(
-      (sx - chimneyDef.hingeOrigin[0]) * MM,
-      -PAPER_THICK,
-      -(sy - chimneyDef.hingeOrigin[1]) * MM,
-    );
-    // Align frameGroup local +X with roof up-slope `s3 = (slopeAxis[0], 0, -slopeAxis[1])`!
-    frameGroup.rotation.y = Math.atan2(rf.slopeAxis[1], rf.slopeAxis[0]);
-    chimneyHost.pivot.add(frameGroup);
-
-    const cPivot = new THREE.Group();
-    frameGroup.add(cPivot);
-
-    const cShape = new THREE.Shape();
-    cShape.moveTo(0, -chW * 0.5 * MM);
-    cShape.lineTo(chH * MM, -chW * 0.5 * MM);
-    cShape.lineTo(chH * MM, chW * 0.5 * MM);
-    cShape.lineTo(0, chW * 0.5 * MM);
-    cShape.closePath();
-
-    const cGeo = buildDualSidedPaperGeometry(cShape, sx * MM, -sy * MM, spec.yawOffset, 0, PAPER_THICK * 0.85);
-    const cMesh = new THREE.Mesh(cGeo, exteriorDetailMats);
-    cMesh.castShadow = true;
-    cMesh.receiveShadow = true;
-    allMeshes.push(cMesh);
-    cPivot.add(cMesh);
-
-    const cheekPivot = new THREE.Group();
-    cheekPivot.position.set(0, 0, chW * 0.5 * MM);
-    cPivot.add(cheekPivot);
-
-    const cheekShape = new THREE.Shape();
-    cheekShape.moveTo(0, 0);
-    cheekShape.lineTo(chH * MM, 0);
-    cheekShape.lineTo(chH * MM, -chW * 0.85 * MM);
-    cheekShape.lineTo(0, -chW * 0.85 * MM);
-    cheekShape.closePath();
-
-    const cheekGeo = buildDualSidedPaperGeometry(
-      cheekShape,
-      sx * MM,
-      -sy * MM + chW * 0.5 * MM,
-      spec.yawOffset,
-      0,
-      PAPER_THICK * 0.85,
-    );
-    const cheekMesh = new THREE.Mesh(cheekGeo, exteriorDetailMats);
-    cheekMesh.castShadow = true;
-    cheekMesh.receiveShadow = true;
-    allMeshes.push(cheekMesh);
-    cheekPivot.add(cheekMesh);
-
-    details.push({
-      pivot: cPivot,
-      axis: 'z',
-      targetAngle: spec.roofType === 'flat' ? -Math.PI * 0.5 : -(Math.PI * 0.5 - spec.pitch),
-      driverPanel: chimneyHostId,
-    });
-    details.push({
-      pivot: cheekPivot,
-      axis: 'x',
-      targetAngle: -Math.PI * 0.5,
-      driverPanel: chimneyHostId,
-    });
+  // Group panels by building (`islandIndex ?? 0`) so each house in a village gets its own chimney & dormers!
+  const buildingPanels = new Map<number, PanelNetDef[]>();
+  for (const def of net.panels) {
+    const idx = def.islandIndex ?? 0;
+    const list = buildingPanels.get(idx);
+    if (list) list.push(def);
+    else buildingPanels.set(idx, [def]);
   }
 
-  // C. Kirigami pop-up roof dormers on `roofR` (gable & mansard, safely clamped inside trapezoid top!)
-  const dormerHost = panels.get('roofR');
-  const dormerDef = net.panelMap.get('roofR');
-  if (wantsDormersOnR && dormerHost && dormerDef?.roofFrame) {
-    const rf = dormerDef.roofFrame;
-    const dW = Math.min(9.4, Math.max(6.8, rf.widthMm * 0.125));
-    const dH = Math.min(rf.slantMm * 0.34, Math.max(7.2, spec.H * 0.24));
-    const offSlope = Math.min(rf.slantMm * 0.26, Math.max(6.5, rf.slantMm * 0.22));
-    const topHalfD =
-      spec.roofType === 'mansard'
-        ? Math.max(0, rf.widthMm * 0.5 - Math.min(spec.W, spec.D) * 0.5 * (1 - spec.mansardRatio))
-        : rf.widthMm * 0.5;
-    const safeHalfR = topHalfD - dW * 0.72;
-    const ridgePositions =
-      spec.dormerCount === 2 && safeHalfR >= dW * 0.78
-        ? [-Math.min(rf.widthMm * 0.21, safeHalfR), Math.min(rf.widthMm * 0.21, safeHalfR)]
-        : [0];
+  for (const [, bList] of buildingPanels) {
+    const roofLDef = bList.find((p) => (p.localId ?? p.id) === 'roofL');
+    const roofRDef = bList.find((p) => (p.localId ?? p.id) === 'roofR');
+    const bSpec = roofLDef?.panelSpec ?? roofRDef?.panelSpec ?? spec;
+    const bSlot = roofLDef?.colorSlot ?? roofRDef?.colorSlot ?? 0;
+    const bDetailMats = detailMatsForSlot(bSlot);
 
-    for (const offR of ridgePositions) {
-      const sx = rf.origin[0] + rf.slopeAxis[0] * offSlope + rf.ridgeAxis[0] * offR;
-      const sy = rf.origin[1] + rf.slopeAxis[1] * offSlope + rf.ridgeAxis[1] * offR;
+    // B. Kirigami folded L-corner 3D chimney stack on roof
+    const wantsDormersOnR =
+      bSpec.dormerCount > 0 && Boolean(roofRDef) && (bSpec.roofType === 'gable' || bSpec.roofType === 'mansard');
+    const chimneyDef =
+      bSpec.topology === 'lwing'
+        ? roofLDef
+        : wantsDormersOnR
+          ? (roofLDef ?? roofRDef)
+          : (roofRDef ?? roofLDef);
+    const chimneyHost = chimneyDef ? panels.get(chimneyDef.id) : undefined;
+
+    if (bSpec.hasChimney && chimneyHost && chimneyDef?.roofFrame) {
+      const rf = chimneyDef.roofFrame;
+      const chW = Math.min(6.4, Math.max(4.0, rf.widthMm * 0.085));
+      const chH =
+        bSpec.roofType === 'flat'
+          ? Math.min(10.5, Math.max(7.2, bSpec.H * 0.2))
+          : Math.min(12.5, Math.max(7.4, rf.slantMm * 0.34));
+      const offSlope = Math.min(rf.slantMm * 0.46, Math.max(8.5, rf.slantMm * 0.36));
+      const offRidge = -rf.widthMm * 0.20;
+
+      const sx = rf.origin[0] + rf.slopeAxis[0] * offSlope + rf.ridgeAxis[0] * offRidge;
+      const sy = rf.origin[1] + rf.slopeAxis[1] * offSlope + rf.ridgeAxis[1] * offRidge;
 
       const frameGroup = new THREE.Group();
       frameGroup.position.set(
-        (sx - dormerDef.hingeOrigin[0]) * MM,
+        (sx - chimneyDef.hingeOrigin[0]) * MM,
         -PAPER_THICK,
-        -(sy - dormerDef.hingeOrigin[1]) * MM,
+        -(sy - chimneyDef.hingeOrigin[1]) * MM,
       );
       frameGroup.rotation.y = Math.atan2(rf.slopeAxis[1], rf.slopeAxis[0]);
-      dormerHost.pivot.add(frameGroup);
+      chimneyHost.pivot.add(frameGroup);
 
-      const dPivot = new THREE.Group();
-      frameGroup.add(dPivot);
+      const cPivot = new THREE.Group();
+      frameGroup.add(cPivot);
 
-      const dShape = new THREE.Shape();
-      dShape.moveTo(0, -dW * 0.5 * MM);
-      dShape.lineTo(dH * 0.72 * MM, -dW * 0.5 * MM);
-      dShape.lineTo(dH * MM, 0);
-      dShape.lineTo(dH * 0.72 * MM, dW * 0.5 * MM);
-      dShape.lineTo(0, dW * 0.5 * MM);
-      dShape.closePath();
-      addRectHole(dShape, dH * 0.38 * MM, 0, dH * 0.40 * MM, dW * 0.44 * MM);
+      const cShape = new THREE.Shape();
+      cShape.moveTo(0, -chW * 0.5 * MM);
+      cShape.lineTo(chH * MM, -chW * 0.5 * MM);
+      cShape.lineTo(chH * MM, chW * 0.5 * MM);
+      cShape.lineTo(0, chW * 0.5 * MM);
+      cShape.closePath();
 
-      const dGeo = buildDualSidedPaperGeometry(dShape, sx * MM, -sy * MM, spec.yawOffset, 0, PAPER_THICK * 0.8);
-      const dMesh = new THREE.Mesh(dGeo, exteriorDetailMats);
-      dMesh.castShadow = true;
-      dMesh.receiveShadow = true;
-      allMeshes.push(dMesh);
-      dPivot.add(dMesh);
+      const cGeo = buildDualSidedPaperGeometry(cShape, sx * MM, -sy * MM, spec.yawOffset, 0, PAPER_THICK * 0.85);
+      const cMesh = new THREE.Mesh(cGeo, bDetailMats);
+      cMesh.castShadow = true;
+      cMesh.receiveShadow = true;
+      allMeshes.push(cMesh);
+      cPivot.add(cMesh);
+
+      const cheekPivot = new THREE.Group();
+      cheekPivot.position.set(0, 0, chW * 0.5 * MM);
+      cPivot.add(cheekPivot);
+
+      const cheekShape = new THREE.Shape();
+      cheekShape.moveTo(0, 0);
+      cheekShape.lineTo(chH * MM, 0);
+      cheekShape.lineTo(chH * MM, -chW * 0.85 * MM);
+      cheekShape.lineTo(0, -chW * 0.85 * MM);
+      cheekShape.closePath();
+
+      const cheekGeo = buildDualSidedPaperGeometry(
+        cheekShape,
+        sx * MM,
+        -sy * MM + chW * 0.5 * MM,
+        spec.yawOffset,
+        0,
+        PAPER_THICK * 0.85,
+      );
+      const cheekMesh = new THREE.Mesh(cheekGeo, bDetailMats);
+      cheekMesh.castShadow = true;
+      cheekMesh.receiveShadow = true;
+      allMeshes.push(cheekMesh);
+      cheekPivot.add(cheekMesh);
 
       details.push({
-        pivot: dPivot,
+        pivot: cPivot,
         axis: 'z',
-        targetAngle: -(Math.PI * 0.5 - spec.pitch),
-        driverPanel: 'roofR',
+        targetAngle: bSpec.roofType === 'flat' ? -Math.PI * 0.5 : -(Math.PI * 0.5 - bSpec.pitch),
+        driverPanel: chimneyDef.id,
       });
+      details.push({
+        pivot: cheekPivot,
+        axis: 'x',
+        targetAngle: -Math.PI * 0.5,
+        driverPanel: chimneyDef.id,
+      });
+    }
+
+    // C. Kirigami pop-up roof dormers on `roofR`
+    const dormerHost = roofRDef ? panels.get(roofRDef.id) : undefined;
+    if (wantsDormersOnR && dormerHost && roofRDef?.roofFrame) {
+      const rf = roofRDef.roofFrame;
+      const dW = Math.min(9.4, Math.max(6.2, rf.widthMm * 0.125));
+      const dH = Math.min(rf.slantMm * 0.34, Math.max(6.4, bSpec.H * 0.24));
+      const offSlope = Math.min(rf.slantMm * 0.26, Math.max(5.5, rf.slantMm * 0.22));
+      const topHalfD =
+        bSpec.roofType === 'mansard'
+          ? Math.max(0, rf.widthMm * 0.5 - Math.min(bSpec.W, bSpec.D) * 0.5 * (1 - bSpec.mansardRatio))
+          : rf.widthMm * 0.5;
+      const safeHalfR = topHalfD - dW * 0.72;
+      const ridgePositions =
+        bSpec.dormerCount === 2 && safeHalfR >= dW * 0.78
+          ? [-Math.min(rf.widthMm * 0.21, safeHalfR), Math.min(rf.widthMm * 0.21, safeHalfR)]
+          : [0];
+
+      for (const offR of ridgePositions) {
+        const sx = rf.origin[0] + rf.slopeAxis[0] * offSlope + rf.ridgeAxis[0] * offR;
+        const sy = rf.origin[1] + rf.slopeAxis[1] * offSlope + rf.ridgeAxis[1] * offR;
+
+        const frameGroup = new THREE.Group();
+        frameGroup.position.set(
+          (sx - roofRDef.hingeOrigin[0]) * MM,
+          -PAPER_THICK,
+          -(sy - roofRDef.hingeOrigin[1]) * MM,
+        );
+        frameGroup.rotation.y = Math.atan2(rf.slopeAxis[1], rf.slopeAxis[0]);
+        dormerHost.pivot.add(frameGroup);
+
+        const dPivot = new THREE.Group();
+        frameGroup.add(dPivot);
+
+        const dShape = new THREE.Shape();
+        dShape.moveTo(0, -dW * 0.5 * MM);
+        dShape.lineTo(dH * 0.72 * MM, -dW * 0.5 * MM);
+        dShape.lineTo(dH * MM, 0);
+        dShape.lineTo(dH * 0.72 * MM, dW * 0.5 * MM);
+        dShape.lineTo(0, dW * 0.5 * MM);
+        dShape.closePath();
+        addRectHole(dShape, dH * 0.38 * MM, 0, dH * 0.40 * MM, dW * 0.44 * MM);
+
+        const dGeo = buildDualSidedPaperGeometry(dShape, sx * MM, -sy * MM, spec.yawOffset, 0, PAPER_THICK * 0.8);
+        const dMesh = new THREE.Mesh(dGeo, bDetailMats);
+        dMesh.castShadow = true;
+        dMesh.receiveShadow = true;
+        allMeshes.push(dMesh);
+        dPivot.add(dMesh);
+
+        details.push({
+          pivot: dPivot,
+          axis: 'z',
+          targetAngle: -(Math.PI * 0.5 - bSpec.pitch),
+          driverPanel: roofRDef.id,
+        });
+      }
     }
   }
 
   let linesAllowed = true;
+  let windowOpenMode: WindowOpenMode = 'random';
+  let windowOpenRatio = 0.35;
+  const lastPanelFold = new Map<FoldablePanelId, number>();
+
+  const applyDetailAngle = (det: KirigamiDetailRig, fold01: number) => {
+    const start = det.kind === 'window' ? 0.52 : 0.35;
+    const dt = Math.max(0, Math.min(1, (fold01 - start) / (1 - start)));
+    const eased = dt * dt * (3 - 2 * dt);
+    let scale = 1;
+    if (det.kind === 'window') {
+      if (windowOpenMode === 'closed') {
+        scale = 0;
+      } else if (windowOpenMode === 'open') {
+        scale = 1;
+      } else {
+        scale = (det.openRank ?? 0) < windowOpenRatio ? 1 : 0;
+      }
+    }
+    const ang = det.targetAngle * eased * scale;
+    if (det.axis === 'x') det.pivot.rotation.x = ang;
+    else det.pivot.rotation.z = ang;
+  };
 
   const updatePanelVisual = (
     id: FoldablePanelId,
@@ -1165,6 +2155,7 @@ export function buildOrigamiHouseRig(
   ) => {
     const pv = panels.get(id);
     if (!pv) return;
+    lastPanelFold.set(id, fold01);
     const baseAngle = Math.max(0, Math.min(1, fold01)) * pv.targetAngle;
     const effective = Math.max(0, Math.min(pv.targetAngle + 0.04, baseAngle + peekRad));
     pv.pivot.quaternion.setFromAxisAngle(pv.hingeAxis3D, effective);
@@ -1176,15 +2167,19 @@ export function buildOrigamiHouseRig(
         : mats.foldLine;
     pv.foldLine.visible = linesAllowed && (fold01 < 0.96 || hovered);
 
-    // Drive any attached kirigami pop-up details smoothly as their host panel folds shut!
+    // Drive any attached kirigami pop-up details & hinged window leaves smoothly as their host panel folds shut!
     for (const det of details) {
       if (det.driverPanel !== id) continue;
-      // Pop details gently during the second half of the host panel's fold (`0.35 -> 1.0`)
-      const dt = Math.max(0, Math.min(1, (fold01 - 0.35) / 0.65));
-      const eased = dt * dt * (3 - 2 * dt);
-      const ang = det.targetAngle * eased;
-      if (det.axis === 'x') det.pivot.rotation.x = ang;
-      else det.pivot.rotation.z = ang;
+      applyDetailAngle(det, fold01);
+    }
+  };
+
+  const setWindowOpen = (mode: WindowOpenMode, ratio = windowOpenRatio) => {
+    windowOpenMode = mode;
+    windowOpenRatio = Math.max(0, Math.min(1, ratio));
+    for (const det of details) {
+      if (det.kind !== 'window') continue;
+      applyDetailAngle(det, lastPanelFold.get(det.driverPanel) ?? 0);
     }
   };
 
@@ -1270,6 +2265,7 @@ export function buildOrigamiHouseRig(
     details,
     hasCutout: Boolean(cutoutRoot),
     updatePanelVisual,
+    setWindowOpen,
     updateCutoutDrop,
     setFoldLinesVisible,
     setPaperRelief,
