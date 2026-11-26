@@ -28,6 +28,7 @@ export interface ProjectionUniforms {
   uProjTex: { value: THREE.Texture | null };
   uProjMatrix: { value: THREE.Matrix4 };
   uPaperReveal: { value: number };
+  uProjGain: { value: number };
 }
 
 export interface OrigamiMaterials {
@@ -41,6 +42,7 @@ export interface OrigamiMaterials {
   chadOutside: THREE.MeshStandardMaterial;
   chadEdge: THREE.MeshStandardMaterial;
   foldLine: THREE.LineDashedMaterial;
+  foldLineMountain: THREE.LineDashedMaterial;
   foldLineActive: THREE.LineBasicMaterial;
   projUniforms: ProjectionUniforms;
   setProjection(tex: THREE.Texture | null, viewProjMatrix?: THREE.Matrix4): void;
@@ -124,12 +126,13 @@ function attachProjectiveShader(
 ): void {
   const clip = Boolean(opts.clipToSilhouette);
   const tint = opts.tintColor !== false;
-  mat.customProgramCacheKey = () => `origami-cam-proj-v6-${clip ? 'clip' : 'full'}-${tint ? 'tint' : 'mask'}`;
+  mat.customProgramCacheKey = () => `origami-cam-proj-v7-${clip ? 'clip' : 'full'}-${tint ? 'tint' : 'mask'}`;
   mat.onBeforeCompile = (shader) => {
     shader.uniforms.uHasProj = uniforms.uHasProj;
     shader.uniforms.uProjTex = uniforms.uProjTex;
     shader.uniforms.uProjMatrix = uniforms.uProjMatrix;
     shader.uniforms.uPaperReveal = uniforms.uPaperReveal;
+    shader.uniforms.uProjGain = uniforms.uProjGain;
 
     shader.vertexShader = shader.vertexShader
       .replace(
@@ -154,7 +157,7 @@ vProjWorldPos = aFlatPos;`,
     const clipOutside = clip ? ` else { discard; }` : ` else { projIsBlank = 1.0; }`;
     const tintBlock = tint
       ? `
-      vec3 projAlbedo = clamp(captured / groundRef, vec3(0.0), vec3(1.45));
+      vec3 projAlbedo = clamp((captured / groundRef) * uProjGain, vec3(0.0), vec3(1.65));
       float fx = smoothstep(0.002, 0.035, pUv.x) * smoothstep(0.002, 0.035, 1.0 - pUv.x);
       float fy = smoothstep(0.002, 0.035, pUv.y) * smoothstep(0.002, 0.035, 1.0 - pUv.y);
       diffuseColor.rgb *= mix(vec3(1.0), projAlbedo, fx * fy);`
@@ -168,6 +171,7 @@ uniform float uHasProj;
 uniform sampler2D uProjTex;
 uniform mat4 uProjMatrix;
 uniform float uPaperReveal;
+uniform float uProjGain;
 varying vec3 vProjWorldPos;`,
       )
       .replace(
@@ -212,6 +216,7 @@ export function createOrigamiMaterials(maxAniso = 8): OrigamiMaterials {
     uProjTex: { value: null },
     uProjMatrix: { value: new THREE.Matrix4() },
     uPaperReveal: { value: 1 },
+    uProjGain: { value: 1 },
   };
 
   const inside = new THREE.MeshStandardMaterial({
@@ -267,6 +272,14 @@ export function createOrigamiMaterials(maxAniso = 8): OrigamiMaterials {
     opacity: 0.14,
   });
 
+  const foldLineMountain = new THREE.LineDashedMaterial({
+    color: 0x6c6860,
+    dashSize: 0.14,
+    gapSize: 0.13,
+    transparent: true,
+    opacity: 0.22,
+  });
+
   const foldLineActive = new THREE.LineBasicMaterial({
     color: 0x3a3835,
     transparent: true,
@@ -302,6 +315,7 @@ export function createOrigamiMaterials(maxAniso = 8): OrigamiMaterials {
     chadOutside,
     chadEdge,
     foldLine,
+    foldLineMountain,
     foldLineActive,
     projUniforms,
     setProjection(nextTex: THREE.Texture | null, viewProjMatrix?: THREE.Matrix4) {
@@ -328,6 +342,7 @@ export function createOrigamiMaterials(maxAniso = 8): OrigamiMaterials {
       edge.dispose();
       for (const m of fadeGroup) m.dispose();
       foldLine.dispose();
+      foldLineMountain.dispose();
       foldLineActive.dispose();
     },
   };
@@ -528,7 +543,7 @@ function punchWallOpenings(
   const isGableEnd = Boolean(def.isGableEnd || def.id === 'front' || def.id === 'back');
   const wallLenMm = wf.widthMm;
   const wallH = wf.heightMm;
-  const levels = spec.levels;
+  const levels = wf.wallLevels ?? spec.levels;
   const storyH = wallH / levels;
 
   const toShape: FrameMapper = (uMm, vMm) => [
@@ -541,8 +556,9 @@ function punchWallOpenings(
     const isGround = li === 0;
     const isTop = li === levels - 1;
 
-    // On tall spire bell towers / octagonal lighthouses, punch crisp horizontal belfry louver slots on top level!
-    if (isTop && spec.hasBelfry && wallH >= 36) {
+    // On tall spire bell towers, octagonal lighthouses, and setback upper towers, punch crisp horizontal belfry louver slots!
+    const allowBelfry = spec.topology === 'setback' ? def.stage === 'upperWall' : wallH >= 36;
+    if (isTop && spec.hasBelfry && allowBelfry) {
       const slotW = Math.max(6.5, wallLenMm - Math.min(10, wallLenMm * 0.34));
       const slotH = Math.min(3.2, storyH * 0.22);
       const y1 = baseH + storyH * 0.36;
@@ -655,6 +671,7 @@ function makeLocalShape(polyMm: V2[], oxMm: number, oyMm: number): THREE.Shape {
 export interface PanelVisual {
   id: FoldablePanelId;
   stage: PanelNetDef['stage'];
+  isMountain: boolean;
   pivot: THREE.Group;
   mesh: THREE.Mesh;
   foldLine: THREE.Line;
@@ -725,12 +742,12 @@ export function buildOrigamiHouseRig(
     root.add(cutoutRoot);
   }
 
-  const makeFoldLine = (a: [number, number, number], b: [number, number, number]): THREE.Line => {
+  const makeFoldLine = (a: [number, number, number], b: [number, number, number], isMountain = false): THREE.Line => {
     const g = new THREE.BufferGeometry().setFromPoints([
       new THREE.Vector3(...a),
       new THREE.Vector3(...b),
     ]);
-    const line = new THREE.Line(g, mats.foldLine);
+    const line = new THREE.Line(g, isMountain ? mats.foldLineMountain : mats.foldLine);
     line.computeLineDistances();
     return line;
   };
@@ -742,6 +759,26 @@ export function buildOrigamiHouseRig(
   for (const def of net.panels) {
     const shape = makeLocalShape(def.poly, def.hingeOrigin[0], def.hingeOrigin[1]);
     punchWallOpenings(shape, def, spec, roofRise);
+
+    // Crisp industrial north-light skylight bays punched into steep sawtooth roof clerestories!
+    if (def.hasRoofSkylights && def.roofFrame) {
+      const rf = def.roofFrame;
+      const toRoofShape: FrameMapper = (uMm, vMm) => [
+        (rf.origin[0] + uMm * rf.ridgeAxis[0] + vMm * rf.slopeAxis[0] - def.hingeOrigin[0]) * MM,
+        (rf.origin[1] + uMm * rf.ridgeAxis[1] + vMm * rf.slopeAxis[1] - def.hingeOrigin[1]) * MM,
+      ];
+      const count = Math.max(2, Math.min(5, Math.floor((rf.widthMm - 8) / 13)));
+      const margin = 5.5;
+      const cellW = Math.max(6, (rf.widthMm - margin * 2) / count);
+      const sw = Math.min(cellW * 0.72, 10.5);
+      const sh = Math.min(rf.slantMm * 0.54, 6.2);
+      if (sw >= 3.0 && sh >= 2.0) {
+        for (let k = 0; k < count; k++) {
+          const u = -rf.widthMm * 0.5 + margin + cellW * (k + 0.5);
+          addFramedRectHole(shape, toRoofShape, u, rf.slantMm * 0.50, sw, sh);
+        }
+      }
+    }
 
     // Crisp architectural skylight in mansard / polygonal pavilion top deck:
     // circular Pantheon oculus for hexagonal/octagonal caps, rectangular skylight for mansards!
@@ -852,15 +889,17 @@ export function buildOrigamiHouseRig(
     parentGroup.add(pivot);
     pivot.add(mesh);
 
+    const isMountain = Boolean(def.isMountain);
     let foldLine: THREE.Line;
     if (def.crease) {
       const [ca, cb] = def.crease;
       foldLine = makeFoldLine(
         [(ca[0] - def.hingeOrigin[0]) * MM, 0.004, -(ca[1] - def.hingeOrigin[1]) * MM],
         [(cb[0] - def.hingeOrigin[0]) * MM, 0.004, -(cb[1] - def.hingeOrigin[1]) * MM],
+        isMountain,
       );
     } else {
-      foldLine = makeFoldLine([0, 0.004, 0], [0, 0.004, 0]);
+      foldLine = makeFoldLine([0, 0.004, 0], [0, 0.004, 0], isMountain);
     }
     pivot.add(foldLine);
 
@@ -869,6 +908,7 @@ export function buildOrigamiHouseRig(
     panels.set(def.id, {
       id: def.id,
       stage: def.stage,
+      isMountain,
       pivot,
       mesh,
       foldLine,
@@ -961,15 +1001,20 @@ export function buildOrigamiHouseRig(
   // B. Kirigami folded L-corner 3D chimney stack on roof (placed on `roofL` when `roofR` has dormers!)
   const wantsDormersOnR =
     spec.dormerCount > 0 && panels.has('roofR') && (spec.roofType === 'gable' || spec.roofType === 'mansard');
-  const chimneyHostId: FoldablePanelId | null = wantsDormersOnR
-    ? panels.has('roofL')
-      ? 'roofL'
-      : 'roofR'
-    : panels.has('roofR')
-      ? 'roofR'
-      : panels.has('roofL')
+  const chimneyHostId: FoldablePanelId | null =
+    spec.topology === 'lwing'
+      ? panels.has('roofL')
         ? 'roofL'
-        : null;
+        : null
+      : wantsDormersOnR
+        ? panels.has('roofL')
+          ? 'roofL'
+          : 'roofR'
+        : panels.has('roofR')
+          ? 'roofR'
+          : panels.has('roofL')
+            ? 'roofL'
+            : null;
   const chimneyHost = chimneyHostId ? panels.get(chimneyHostId) : undefined;
   const chimneyDef = chimneyHostId ? net.panelMap.get(chimneyHostId) : undefined;
   if (spec.hasChimney && chimneyHost && chimneyHostId && chimneyDef?.roofFrame) {
@@ -1124,7 +1169,11 @@ export function buildOrigamiHouseRig(
     const effective = Math.max(0, Math.min(pv.targetAngle + 0.04, baseAngle + peekRad));
     pv.pivot.quaternion.setFromAxisAngle(pv.hingeAxis3D, effective);
 
-    pv.foldLine.material = hovered ? mats.foldLineActive : mats.foldLine;
+    pv.foldLine.material = hovered
+      ? mats.foldLineActive
+      : pv.isMountain
+        ? mats.foldLineMountain
+        : mats.foldLine;
     pv.foldLine.visible = linesAllowed && (fold01 < 0.96 || hovered);
 
     // Drive any attached kirigami pop-up details smoothly as their host panel folds shut!

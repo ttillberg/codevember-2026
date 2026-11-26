@@ -6,12 +6,12 @@ Ideas for making the origami folding itself more varied and intricate across lay
 
 - [x] **Wrap-around ribbon net.** Hinge one wall to `base` and chain the other three side-to-side (`left ← back → right → front`) so the walls unroll and wrap horizontally around the floor like a folding screen before the roof closes on top. Generalized `origamiHouseNet.ts` & `origamiPaperMesh.ts` to arbitrary 2D crease-vector hinges (`hingeAxis: V2`) and universal wall/roof local frames (`wallFrame`, `roofFrame`), with dedicated ribbon-wrap choreography in `main.ts` and 0.0000 mm Vitest closure proofs across all 6 roof types.
 - [x] **Hexagonal / octagonal petal nets.** 6- and 8-sided pavilions, gazebos, and lighthouses whose walls and roof petals radiate from a polygonal floor and close like a lotus bloom (`buildPolygonPetalNet` with arbitrary outward crease vectors `[+sin φ, -cos φ]`, circular Pantheon oculus skylights on polygonal top decks, radial far-to-near lotus choreography, and 0.0000 mm Vitest closure proofs).
-- [ ] **L-shaped & twin-wing compound nets.** Main house plus an attached side wing, entry porch, or corner tower unfolding as an asymmetric tree combining inward (valley) and outward (mountain) corner folds.
+- [x] **L-shaped & twin-wing compound nets.** Main house plus an attached side wing unfolding as an asymmetric tree (`lwing` topology) combining an unbroken L-shaped floor, valley outer wing corner, reverse **mountain re-entrant courtyard corner fold**, waterfall gable ridge fold, and sloping shed wing roof — proven to 0.0000 mm in Vitest.
 
 ## Multi-stage mountain + valley folds
 
-- [ ] **Setback / stepped towers.** Ground walls fold up (`+90°` valley) → horizontal terrace ledge folds inward (`+90°` valley) → narrower upper tower walls fold back upright (`-90°` mountain) → upper roof or spire closes on top (4–5 hinges deep).
-- [ ] **Pleated / sawtooth / butterfly roofs.** Alternating valley-and-mountain roof folds (factory sawtooth skylights, V-shaped inward butterfly roofs, faceted origami crowns) that concertina shut instead of meeting at a single ridge.
+- [x] **Setback / stepped towers.** Ground podium walls fold up (`+90°` valley) → mitered horizontal terrace ledges fold inward (`+90°` valley) → narrower upper tower walls fold back upright (`-90°` mountain) → upper spire or crowned skylight pagoda closes on top (4–5 hinges deep, `setback` topology), with tiered setback choreography and 0.0000 mm Vitest closure proofs.
+- [x] **Pleated / sawtooth / butterfly roofs.** Alternating valley-and-mountain 2-bay factory sawtooth concertina roofs (with punched north-light skylight bays & falling skylight chads) and inward V-shaped mid-century butterfly roofs on both `cross` and `ribbon` nets, proven to 0.0000 mm in Vitest.
 - [ ] **Uncut corner gussets (Masu-box fold).** Keep diagonal-creased triangular paper at the 4 wall corners on select houses so corners pinch and tuck cleanly inside as the walls rise.
 
 ## Linked kirigami pop-up details

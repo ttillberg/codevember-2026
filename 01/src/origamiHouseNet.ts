@@ -17,8 +17,8 @@ export type V2 = [number, number];
 
 export const MM = 0.1; // 1 mm = 0.1 Three.js world units
 
-export type NetTopology = 'cross' | 'ribbon' | 'hex' | 'oct';
-export type RoofType = 'gable' | 'hip' | 'mansard' | 'shed' | 'flat' | 'spire';
+export type NetTopology = 'cross' | 'ribbon' | 'hex' | 'oct' | 'lwing' | 'setback';
+export type RoofType = 'gable' | 'hip' | 'mansard' | 'shed' | 'flat' | 'spire' | 'butterfly' | 'sawtooth';
 export type WindowStyle = 'rect' | 'tall' | 'arched' | 'pair' | 'ribbon';
 export type DoorStyle = 'arched' | 'rect' | 'double' | 'arcade' | 'none';
 
@@ -34,6 +34,8 @@ export interface WallLocalFrame {
   vAxis: V2;
   widthMm: number;
   heightMm: number;
+  /** Optional story-count override for multi-tier setback or lower side-wing walls */
+  wallLevels?: 1 | 2 | 3;
 }
 
 export interface RoofLocalFrame {
@@ -119,7 +121,11 @@ export interface PanelNetDef {
   /** Target fold angle in radians (positive magnitude around `hingeAxis`) */
   targetAngle: number;
   /** Stage group for choreographed wave & scrub ordering */
-  stage: 'base' | 'wall' | 'roof' | 'cap';
+  stage: 'base' | 'wall' | 'terrace' | 'upperWall' | 'roof' | 'cap';
+  /** Marks outward/reverse mountain creases (setback upper tier, L-wing inside corner, sawtooth pleats) */
+  isMountain?: boolean;
+  /** Marks steep sawtooth north-light clerestory slopes that receive punched skylight bays */
+  hasRoofSkylights?: boolean;
   /** Wall local 2D frame in sheet space for universal window/door/awning placement */
   wallFrame?: WallLocalFrame;
   /** Roof local 2D frame in sheet space for universal chimney/dormer placement */
@@ -182,19 +188,45 @@ function makeRng(seed: number) {
   };
 }
 
+export interface ModelPresetInfo {
+  slot: number;
+  label: string;
+}
+
+export const MODEL_PRESETS: readonly ModelPresetInfo[] = [
+  { slot: 1, label: 'Gable cottage' },
+  { slot: 2, label: 'Grand mansard' },
+  { slot: 3, label: 'Octagonal lighthouse' },
+  { slot: 4, label: 'Stepped tower' },
+  { slot: 5, label: 'L-wing villa' },
+  { slot: 6, label: 'Sawtooth atelier' },
+  { slot: 7, label: 'Hexagonal pavilion' },
+  { slot: 8, label: 'Butterfly pavilion' },
+  { slot: 9, label: 'Stepped pagoda' },
+  { slot: 10, label: 'Grand hip hall' },
+  { slot: 11, label: 'Modernist tower' },
+  { slot: 12, label: 'Studio loft' },
+];
+
 /**
  * Generate a distinct architectural duplex-paper house spec for each recursive layer!
- * Alternates between classic `cross` star nets and wrap-around `ribbon` folding-screen nets,
- * cycling through all 6 roof types, scales, windows, details, yaw angles, and matte paper colors.
+ * Pass an optional `forcedSlot` (`1..12`) from the debug model picker to preview any archetype directly.
  */
-export function generateHouseSpec(generation: number): HouseNetSpec {
-  // Layer 1: iconic balanced silver-ratio gabled house on classic cross net (pure serene starting point!)
-  if (generation <= 1) {
+export function generateHouseSpec(generation: number, forcedSlot?: number | null): HouseNetSpec {
+  const effectiveSlot = forcedSlot && forcedSlot >= 1 && forcedSlot <= 12 ? forcedSlot : null;
+  const mod12 = effectiveSlot ?? (((Math.max(1, generation) - 1) % 12) + 1);
+  const colorIdx = effectiveSlot
+    ? (effectiveSlot - 1 + Math.max(0, generation - 1)) % ARCHITECTURAL_PAPER_PALETTE.length
+    : (Math.max(1, generation) - 1) % ARCHITECTURAL_PAPER_PALETTE.length;
+  const outsideColor = ARCHITECTURAL_PAPER_PALETTE[colorIdx];
+
+  // Layer 1 (or forced slot 1): iconic balanced silver-ratio gabled house on classic cross net!
+  if ((generation <= 1 && !effectiveSlot) || effectiveSlot === 1) {
     const W = 42;
     const D = W * Math.SQRT2;
     const H = 24.301515;
     return {
-      generation: 1,
+      generation,
       label: 'Gable cottage',
       topology: 'cross',
       W,
@@ -214,39 +246,114 @@ export function generateHouseSpec(generation: number): HouseNetSpec {
       hasChimney: false,
       dormerCount: 0,
       yawOffset: 0,
-      outsideColor: ARCHITECTURAL_PAPER_PALETTE[0],
+      outsideColor,
     };
   }
 
   // Rotate cleanly through varied silhouettes & unfolding mechanics right from the first layers:
   //   1: Gable cottage (cross)          2: Grand mansard (ribbon)
-  //   3: Octagonal lighthouse (oct)     4: Grand hip hall (ribbon)
-  //   5: Hexagonal pavilion (hex)       6: Modernist tower (cross)
-  //   7: Grand gable hall (ribbon)      8: Studio loft (ribbon)
-  //   9+: rich mix across all 4 topologies & all 6 roof types!
-  const outsideColor = ARCHITECTURAL_PAPER_PALETTE[(generation - 1) % ARCHITECTURAL_PAPER_PALETTE.length];
-  const rng = makeRng(generation * 7919 + 202611);
-  const yawChoices = [-0.42, 0.24, Math.PI * 0.5, -0.18, 0.52, -Math.PI * 0.5, 0.32];
-  const yawOffset = yawChoices[(generation - 2) % yawChoices.length] + rng.range(-0.08, 0.08);
+  //   3: Octagonal lighthouse (oct)     4: Stepped tower (setback · mountain+valley!)
+  //   5: L-wing villa (lwing · mountain corner!)
+  //   6: Sawtooth atelier (cross · pleated concertina!)
+  //   7: Hexagonal pavilion (hex)       8: Butterfly pavilion (ribbon · inward V-roof!)
+  //   9: Stepped pagoda (setback · 5 hinges deep!)
+  //  10: Grand hip hall (ribbon)       11: Modernist tower (cross)       12: Studio loft (ribbon)
+  const seedGen = effectiveSlot ? effectiveSlot + (generation - 1) * 12 : generation;
+  const rng = makeRng(seedGen * 7919 + 202611);
+  const yawChoices = [-0.42, 0.24, Math.PI * 0.5, -0.22, 0.44, -0.18, 0.52, -Math.PI * 0.5, 0.32];
+  const yawOffset =
+    effectiveSlot && generation <= 1
+      ? 0
+      : yawChoices[Math.abs(seedGen - 2) % yawChoices.length] + rng.range(-0.08, 0.08);
 
   const scalePreset =
-    generation === 2
+    mod12 === 2
       ? 1.38
-      : generation === 3
+      : mod12 === 3
         ? 1.26
-        : generation === 4
-          ? 1.44
-          : generation === 5
-            ? 1.24
-            : generation === 6
-              ? 1.36
-              : generation === 8
-                ? 1.06
-                : rng.pick([0.96, 1.18, 1.38, 1.52]);
+        : mod12 === 4
+          ? 1.24
+          : mod12 === 5
+            ? 1.18
+            : mod12 === 6
+              ? 1.26
+              : mod12 === 7
+                ? 1.24
+                : mod12 === 8
+                  ? 1.22
+                  : mod12 === 9
+                    ? 1.20
+                    : mod12 === 10
+                      ? 1.36
+                      : mod12 === 11
+                        ? 1.32
+                        : mod12 === 12
+                          ? 1.12
+                          : rng.pick([0.98, 1.18, 1.34, 1.46]);
 
-  // Dedicated polygonal petal blooms (`oct` lighthouse/rotunda & `hex` pavilion/pagoda)
-  const isOctLayer = generation === 3 || (generation > 8 && generation % 7 === 3);
-  const isHexLayer = generation === 5 || (generation > 8 && generation % 7 === 5);
+  // Dedicated sculptural topologies: `oct`, `setback`, `lwing`, `hex`
+  const isOctLayer = mod12 === 3;
+  const isSetbackLayer = mod12 === 4 || mod12 === 9;
+  const isLWingLayer = mod12 === 5;
+  const isHexLayer = mod12 === 7;
+
+  if (isSetbackLayer) {
+    const isCrownedPagoda = mod12 === 9;
+    const span = rng.range(42, 48) * Math.min(1.26, scalePreset);
+    const H = (isCrownedPagoda ? rng.range(40, 46) : rng.range(46, 54)) * Math.min(1.24, scalePreset);
+    return {
+      generation,
+      label: isCrownedPagoda ? 'Stepped pagoda' : 'Stepped tower',
+      topology: 'setback',
+      W: span,
+      D: span,
+      H,
+      levels: 2,
+      roofType: isCrownedPagoda ? 'mansard' : 'spire',
+      pitch: isCrownedPagoda ? rng.range(0.84, 1.02) : rng.range(1.10, 1.22),
+      mansardRatio: isCrownedPagoda ? 0.44 : 0,
+      parapetH: 0,
+      windowGround: 'arched',
+      windowUpper: 'tall',
+      door: 'arched',
+      hasOculus: false,
+      hasBelfry: !isCrownedPagoda,
+      hasAwning: false,
+      hasChimney: false,
+      dormerCount: 0,
+      yawOffset,
+      outsideColor,
+    };
+  }
+
+  if (isLWingLayer) {
+    const W = rng.range(38, 44) * Math.min(1.24, scalePreset);
+    const D = rng.range(52, 58) * Math.min(1.24, scalePreset);
+    const H = rng.range(26, 32) * Math.min(1.24, scalePreset);
+    return {
+      generation,
+      label: 'L-wing villa',
+      topology: 'lwing',
+      W,
+      D,
+      H,
+      levels: H >= 34 ? 2 : 1,
+      roofType: 'gable',
+      pitch: rng.range(0.68, 0.86),
+      mansardRatio: 0,
+      parapetH: 0,
+      windowGround: rng.pick(['arched', 'rect']),
+      windowUpper: rng.pick(['rect', 'pair']),
+      door: 'arched',
+      hasOculus: true,
+      hasBelfry: false,
+      hasAwning: true,
+      hasChimney: true,
+      dormerCount: 0,
+      yawOffset,
+      outsideColor,
+    };
+  }
 
   if (isOctLayer) {
     const isCrownedRotunda = generation > 3 && rng.chance(0.45);
@@ -278,7 +385,7 @@ export function generateHouseSpec(generation: number): HouseNetSpec {
   }
 
   if (isHexLayer) {
-    const isPointedPagoda = generation > 5 && rng.chance(0.45);
+    const isPointedPagoda = generation > 7 && rng.chance(0.45);
     const span = rng.range(42, 48) * Math.min(1.32, scalePreset);
     const H = rng.range(24, 30) * Math.min(1.28, scalePreset);
     return {
@@ -306,26 +413,23 @@ export function generateHouseSpec(generation: number): HouseNetSpec {
     };
   }
 
-  // Rectangular layers cycle cleanly across the 6 roof archetypes & mix `ribbon` + `cross` nets!
-  const rectCycle: RoofType[] = ['mansard', 'hip', 'flat', 'gable', 'shed', 'spire'];
-  const rectIdx =
-    generation === 2
-      ? 0
-      : generation === 4
-        ? 1
-        : generation === 6
-          ? 2
-          : generation === 7
-            ? 3
-            : generation === 8
-              ? 4
-              : (generation - 2) % rectCycle.length;
-  const roofType = rectCycle[rectIdx];
+  // Rectangular layers cycle cleanly across all 8 roof archetypes & mix `ribbon` + `cross` nets!
+  const rectByMod12: Record<number, RoofType> = {
+    1: 'gable',
+    2: 'mansard',
+    6: 'sawtooth',
+    8: 'butterfly',
+    10: 'hip',
+    11: 'flat',
+    12: 'shed',
+  };
+  const roofType: RoofType =
+    generation > 12 && mod12 === 1 ? 'spire' : (rectByMod12[mod12] ?? 'gable');
 
   const topology: NetTopology =
-    generation === 2 || generation === 4 || generation === 7 || generation === 8
+    mod12 === 2 || mod12 === 8 || mod12 === 10 || mod12 === 12
       ? 'ribbon'
-      : generation === 6
+      : mod12 === 6 || mod12 === 11
         ? 'cross'
         : rng.chance(0.55)
           ? 'ribbon'
@@ -446,6 +550,66 @@ export function generateHouseSpec(generation: number): HouseNetSpec {
       hasBelfry: false,
       hasAwning: true,
       hasChimney: true,
+      dormerCount: 0,
+      yawOffset,
+      outsideColor,
+    };
+  }
+
+  if (roofType === 'sawtooth') {
+    const W = rng.range(46, 54) * scalePreset;
+    const D = rng.range(48, 56) * scalePreset;
+    const H = rng.range(24, 30) * scalePreset;
+    const levels: 1 | 2 | 3 = H >= 36 ? 2 : 1;
+    return {
+      generation,
+      label: scalePreset >= 1.24 ? 'Sawtooth atelier' : 'Sawtooth studio',
+      topology,
+      W,
+      D,
+      H,
+      levels,
+      roofType: 'sawtooth',
+      pitch: rng.range(0.44, 0.56),
+      mansardRatio: 0,
+      parapetH: 0,
+      windowGround: rng.pick(['ribbon', 'rect']),
+      windowUpper: 'ribbon',
+      door: rng.pick(['double', 'rect']),
+      hasOculus: false,
+      hasBelfry: false,
+      hasAwning: true,
+      hasChimney: false,
+      dormerCount: 0,
+      yawOffset,
+      outsideColor,
+    };
+  }
+
+  if (roofType === 'butterfly') {
+    const W = rng.range(44, 52) * scalePreset;
+    const D = rng.range(46, 54) * scalePreset;
+    const H = rng.range(28, 34) * scalePreset;
+    const levels: 1 | 2 | 3 = H >= 34 ? 2 : 1;
+    return {
+      generation,
+      label: scalePreset >= 1.26 ? 'Butterfly villa' : 'Butterfly pavilion',
+      topology,
+      W,
+      D,
+      H,
+      levels,
+      roofType: 'butterfly',
+      pitch: rng.range(0.28, 0.38),
+      mansardRatio: 0,
+      parapetH: 0,
+      windowGround: rng.pick(['ribbon', 'tall']),
+      windowUpper: 'ribbon',
+      door: rng.pick(['double', 'rect']),
+      hasOculus: false,
+      hasBelfry: false,
+      hasAwning: true,
+      hasChimney: false,
       dormerCount: 0,
       yawOffset,
       outsideColor,
@@ -869,6 +1033,281 @@ function buildCrossPanels(
     });
 
     return { roofRise: parapetH, roofSlant: W };
+  }
+
+  if (roofType === 'butterfly') {
+    const R = Math.min(H * 0.36, hw * Math.tan(pitch));
+    const effPitch = Math.atan2(R, hw);
+    const L = Math.hypot(hw, R);
+    const roofFold = Math.PI * 0.5 + effPitch;
+
+    add({
+      id: 'front',
+      parent: 'base',
+      poly: [
+        [-hw, -hd],
+        [-hw, -(hd + H)],
+        [0, -(hd + H - R)],
+        [hw, -(hd + H)],
+        [hw, -hd],
+      ],
+      hingeOrigin: [0, -hd],
+      crease: [[-hw, -hd], [hw, -hd]],
+      hingeAxis: [-1, 0],
+      targetAngle: Math.PI * 0.5,
+      stage: 'wall',
+      wallFrame: frontFrame(H - R),
+      isFront: true,
+      label: 'Front facade',
+    });
+
+    add({
+      id: 'back',
+      parent: 'base',
+      poly: [
+        [-hw, hd],
+        [hw, hd],
+        [hw, hd + H],
+        [0, hd + H - R],
+        [-hw, hd + H],
+      ],
+      hingeOrigin: [0, hd],
+      crease: [[-hw, hd], [hw, hd]],
+      hingeAxis: [1, 0],
+      targetAngle: Math.PI * 0.5,
+      stage: 'wall',
+      wallFrame: backFrame(H - R),
+      label: 'Back facade',
+    });
+
+    add({
+      id: 'left',
+      parent: 'base',
+      poly: [
+        [-(hw + H), -hd],
+        [-hw, -hd],
+        [-hw, hd],
+        [-(hw + H), hd],
+      ],
+      hingeOrigin: [-hw, 0],
+      crease: [[-hw, -hd], [-hw, hd]],
+      hingeAxis: [0, 1],
+      targetAngle: Math.PI * 0.5,
+      stage: 'wall',
+      wallFrame: leftFrame(H),
+      label: 'Left wing wall',
+    });
+
+    add({
+      id: 'right',
+      parent: 'base',
+      poly: [
+        [hw, -hd],
+        [hw + H, -hd],
+        [hw + H, hd],
+        [hw, hd],
+      ],
+      hingeOrigin: [hw, 0],
+      crease: [[hw, -hd], [hw, hd]],
+      hingeAxis: [0, -1],
+      targetAngle: Math.PI * 0.5,
+      stage: 'wall',
+      wallFrame: rightFrame(H),
+      label: 'Right wing wall',
+    });
+
+    add({
+      id: 'roofL',
+      parent: 'left',
+      poly: [
+        [-(hw + H + L), -hd],
+        [-(hw + H), -hd],
+        [-(hw + H), hd],
+        [-(hw + H + L), hd],
+      ],
+      hingeOrigin: [-(hw + H), 0],
+      crease: [[-(hw + H), -hd], [-(hw + H), hd]],
+      hingeAxis: [0, 1],
+      targetAngle: roofFold,
+      stage: 'roof',
+      roofFrame: { origin: [-(hw + H), 0], ridgeAxis: [0, 1], slopeAxis: [-1, 0], widthMm: D, slantMm: L },
+      label: 'Left butterfly wing',
+    });
+
+    add({
+      id: 'roofR',
+      parent: 'right',
+      poly: [
+        [hw + H, -hd],
+        [hw + H + L, -hd],
+        [hw + H + L, hd],
+        [hw + H, hd],
+      ],
+      hingeOrigin: [hw + H, 0],
+      crease: [[hw + H, -hd], [hw + H, hd]],
+      hingeAxis: [0, -1],
+      targetAngle: roofFold,
+      stage: 'roof',
+      roofFrame: { origin: [hw + H, 0], ridgeAxis: [0, -1], slopeAxis: [1, 0], widthMm: D, slantMm: L },
+      label: 'Right butterfly wing',
+    });
+
+    return { roofRise: 0, roofSlant: L };
+  }
+
+  if (roofType === 'sawtooth') {
+    const bayW = W * 0.5;
+    const wA = bayW * 0.72;
+    const wB = bayW - wA;
+    const R = wA * Math.tan(pitch);
+    const La = Math.hypot(wA, R);
+    const Lb = Math.hypot(wB, R);
+    const alpha = Math.atan2(R, wA);
+    const beta = Math.atan2(R, wB);
+    const pleatTurn = alpha + beta;
+
+    add({
+      id: 'front',
+      parent: 'base',
+      poly: [
+        [-hw, -hd],
+        [-hw, -(hd + H)],
+        [-hw + wA, -(hd + H + R)],
+        [0, -(hd + H)],
+        [wA, -(hd + H + R)],
+        [hw, -(hd + H)],
+        [hw, -hd],
+      ],
+      hingeOrigin: [0, -hd],
+      crease: [[-hw, -hd], [hw, -hd]],
+      hingeAxis: [-1, 0],
+      targetAngle: Math.PI * 0.5,
+      stage: 'wall',
+      wallFrame: frontFrame(H),
+      isFront: true,
+      label: 'Front sawtooth facade',
+    });
+
+    add({
+      id: 'back',
+      parent: 'base',
+      poly: [
+        [-hw, hd],
+        [hw, hd],
+        [hw, hd + H],
+        [wA, hd + H + R],
+        [0, hd + H],
+        [-hw + wA, hd + H + R],
+        [-hw, hd + H],
+      ],
+      hingeOrigin: [0, hd],
+      crease: [[-hw, hd], [hw, hd]],
+      hingeAxis: [1, 0],
+      targetAngle: Math.PI * 0.5,
+      stage: 'wall',
+      wallFrame: backFrame(H),
+      label: 'Back sawtooth facade',
+    });
+
+    add({
+      id: 'left',
+      parent: 'base',
+      poly: [
+        [-(hw + H), -hd],
+        [-hw, -hd],
+        [-hw, hd],
+        [-(hw + H), hd],
+      ],
+      hingeOrigin: [-hw, 0],
+      crease: [[-hw, -hd], [-hw, hd]],
+      hingeAxis: [0, 1],
+      targetAngle: Math.PI * 0.5,
+      stage: 'wall',
+      wallFrame: leftFrame(H),
+      label: 'Left wall',
+    });
+
+    add({
+      id: 'right',
+      parent: 'base',
+      poly: [
+        [hw, -hd],
+        [hw + H, -hd],
+        [hw + H, hd],
+        [hw, hd],
+      ],
+      hingeOrigin: [hw, 0],
+      crease: [[hw, -hd], [hw, hd]],
+      hingeAxis: [0, -1],
+      targetAngle: Math.PI * 0.5,
+      stage: 'wall',
+      wallFrame: rightFrame(H),
+      label: 'Right wall',
+    });
+
+    // 4-panel concertina sawtooth accordion strip: valley -> valley -> MOUNTAIN -> valley!
+    const x0 = -(hw + H);
+    const x1 = x0 - La;
+    const x2 = x1 - Lb;
+    const x3 = x2 - La;
+    const x4 = x3 - Lb;
+
+    add({
+      id: 'roofS0',
+      parent: 'left',
+      poly: [[x1, -hd], [x0, -hd], [x0, hd], [x1, hd]],
+      hingeOrigin: [x0, 0],
+      crease: [[x0, -hd], [x0, hd]],
+      hingeAxis: [0, 1],
+      targetAngle: Math.PI * 0.5 - alpha,
+      stage: 'roof',
+      roofFrame: { origin: [x0, 0], ridgeAxis: [0, 1], slopeAxis: [-1, 0], widthMm: D, slantMm: La },
+      label: 'Sawtooth slope 1',
+    });
+
+    add({
+      id: 'roofS1',
+      parent: 'roofS0',
+      poly: [[x2, -hd], [x1, -hd], [x1, hd], [x2, hd]],
+      hingeOrigin: [x1, 0],
+      crease: [[x1, -hd], [x1, hd]],
+      hingeAxis: [0, 1],
+      targetAngle: pleatTurn,
+      stage: 'roof',
+      hasRoofSkylights: true,
+      roofFrame: { origin: [x1, 0], ridgeAxis: [0, 1], slopeAxis: [-1, 0], widthMm: D, slantMm: Lb },
+      label: 'North skylight 1',
+    });
+
+    add({
+      id: 'roofS2',
+      parent: 'roofS1',
+      poly: [[x3, -hd], [x2, -hd], [x2, hd], [x3, hd]],
+      hingeOrigin: [x2, 0],
+      crease: [[x2, -hd], [x2, hd]],
+      hingeAxis: [0, -1],
+      targetAngle: pleatTurn,
+      stage: 'roof',
+      isMountain: true,
+      roofFrame: { origin: [x2, 0], ridgeAxis: [0, 1], slopeAxis: [-1, 0], widthMm: D, slantMm: La },
+      label: 'Sawtooth slope 2',
+    });
+
+    add({
+      id: 'roofS3',
+      parent: 'roofS2',
+      poly: [[x4, -hd], [x3, -hd], [x3, hd], [x4, hd]],
+      hingeOrigin: [x3, 0],
+      crease: [[x3, -hd], [x3, hd]],
+      hingeAxis: [0, 1],
+      targetAngle: pleatTurn,
+      stage: 'roof',
+      hasRoofSkylights: true,
+      roofFrame: { origin: [x3, 0], ridgeAxis: [0, 1], slopeAxis: [-1, 0], widthMm: D, slantMm: Lb },
+      label: 'North skylight 2',
+    });
+
+    return { roofRise: R, roofSlant: La };
   }
 
   // 4-sided pitched roofs on cross net: `hip`, `mansard`, `spire`
@@ -1449,6 +1888,281 @@ function buildRibbonPanels(
     return { roofRise: parapetH, roofSlant: W };
   }
 
+  if (roofType === 'butterfly') {
+    const R = Math.min(H * 0.36, hw * Math.tan(pitch));
+    const effPitch = Math.atan2(R, hw);
+    const L = Math.hypot(hw, R);
+    const roofFold = Math.PI * 0.5 + effPitch;
+
+    add({
+      id: 'back',
+      parent: 'base',
+      poly: [
+        [xB0, hd],
+        [xB1, hd],
+        [xB1, hd + H],
+        [cxB, hd + H - R],
+        [xB0, hd + H],
+      ],
+      hingeOrigin: [0, hd],
+      crease: [[xB0, hd], [xB1, hd]],
+      hingeAxis: [1, 0],
+      targetAngle: Math.PI * 0.5,
+      stage: 'wall',
+      wallFrame: ribbonWallFrame(cxB, W, H - R),
+      label: 'Back facade',
+    });
+
+    add({
+      id: 'left',
+      parent: 'back',
+      poly: [
+        [xL0, hd],
+        [xL1, hd],
+        [xL1, hd + H],
+        [xL0, hd + H],
+      ],
+      hingeOrigin: [xL1, hd + H * 0.5],
+      crease: [[xL1, hd], [xL1, hd + H]],
+      hingeAxis: [0, 1],
+      targetAngle: Math.PI * 0.5,
+      stage: 'wall',
+      wallFrame: ribbonWallFrame(cxL, D, H),
+      label: 'Left wing wall',
+    });
+
+    add({
+      id: 'right',
+      parent: 'back',
+      poly: [
+        [xR0, hd],
+        [xR1, hd],
+        [xR1, hd + H],
+        [xR0, hd + H],
+      ],
+      hingeOrigin: [xR0, hd + H * 0.5],
+      crease: [[xR0, hd], [xR0, hd + H]],
+      hingeAxis: [0, -1],
+      targetAngle: Math.PI * 0.5,
+      stage: 'wall',
+      wallFrame: ribbonWallFrame(cxR, D, H),
+      label: 'Right wing wall',
+    });
+
+    add({
+      id: 'front',
+      parent: 'right',
+      poly: [
+        [xF0, hd],
+        [xF1, hd],
+        [xF1, hd + H],
+        [cxF, hd + H - R],
+        [xF0, hd + H],
+      ],
+      hingeOrigin: [xF0, hd + H * 0.5],
+      crease: [[xF0, hd], [xF0, hd + H]],
+      hingeAxis: [0, -1],
+      targetAngle: Math.PI * 0.5,
+      stage: 'wall',
+      wallFrame: ribbonWallFrame(cxF, W, H - R, true),
+      isFront: true,
+      label: 'Front facade',
+    });
+
+    add({
+      id: 'roofL',
+      parent: 'left',
+      poly: [
+        [xL0, hd + H],
+        [xL1, hd + H],
+        [xL1, hd + H + L],
+        [xL0, hd + H + L],
+      ],
+      hingeOrigin: [cxL, hd + H],
+      crease: [[xL0, hd + H], [xL1, hd + H]],
+      hingeAxis: [1, 0],
+      targetAngle: roofFold,
+      stage: 'roof',
+      roofFrame: { origin: [cxL, hd + H], ridgeAxis: [1, 0], slopeAxis: [0, 1], widthMm: D, slantMm: L },
+      label: 'Left butterfly wing',
+    });
+
+    add({
+      id: 'roofR',
+      parent: 'right',
+      poly: [
+        [xR0, hd + H],
+        [xR1, hd + H],
+        [xR1, hd + H + L],
+        [xR0, hd + H + L],
+      ],
+      hingeOrigin: [cxR, hd + H],
+      crease: [[xR0, hd + H], [xR1, hd + H]],
+      hingeAxis: [1, 0],
+      targetAngle: roofFold,
+      stage: 'roof',
+      roofFrame: { origin: [cxR, hd + H], ridgeAxis: [1, 0], slopeAxis: [0, 1], widthMm: D, slantMm: L },
+      label: 'Right butterfly wing',
+    });
+
+    return { roofRise: 0, roofSlant: L };
+  }
+
+  if (roofType === 'sawtooth') {
+    const bayW = W * 0.5;
+    const wA = bayW * 0.72;
+    const wB = bayW - wA;
+    const R = wA * Math.tan(pitch);
+    const La = Math.hypot(wA, R);
+    const Lb = Math.hypot(wB, R);
+    const alpha = Math.atan2(R, wA);
+    const beta = Math.atan2(R, wB);
+    const pleatTurn = alpha + beta;
+
+    add({
+      id: 'back',
+      parent: 'base',
+      poly: [
+        [xB0, hd],
+        [xB1, hd],
+        [xB1, hd + H],
+        [xB0 + bayW + wA, hd + H + R],
+        [xB0 + bayW, hd + H],
+        [xB0 + wA, hd + H + R],
+        [xB0, hd + H],
+      ],
+      hingeOrigin: [0, hd],
+      crease: [[xB0, hd], [xB1, hd]],
+      hingeAxis: [1, 0],
+      targetAngle: Math.PI * 0.5,
+      stage: 'wall',
+      wallFrame: ribbonWallFrame(cxB, W, H),
+      label: 'Back sawtooth facade',
+    });
+
+    add({
+      id: 'left',
+      parent: 'back',
+      poly: [
+        [xL0, hd],
+        [xL1, hd],
+        [xL1, hd + H],
+        [xL0, hd + H],
+      ],
+      hingeOrigin: [xL1, hd + H * 0.5],
+      crease: [[xL1, hd], [xL1, hd + H]],
+      hingeAxis: [0, 1],
+      targetAngle: Math.PI * 0.5,
+      stage: 'wall',
+      wallFrame: ribbonWallFrame(cxL, D, H),
+      label: 'Left wall',
+    });
+
+    add({
+      id: 'right',
+      parent: 'back',
+      poly: [
+        [xR0, hd],
+        [xR1, hd],
+        [xR1, hd + H],
+        [xR0, hd + H],
+      ],
+      hingeOrigin: [xR0, hd + H * 0.5],
+      crease: [[xR0, hd], [xR0, hd + H]],
+      hingeAxis: [0, -1],
+      targetAngle: Math.PI * 0.5,
+      stage: 'wall',
+      wallFrame: ribbonWallFrame(cxR, D, H),
+      label: 'Right wall',
+    });
+
+    // Front wraps in reverse X (`xF0 -> +hw`, `xF1 -> -hw`) so sawtooth peaks mirror cleanly along `xF1 - s`!
+    add({
+      id: 'front',
+      parent: 'right',
+      poly: [
+        [xF0, hd],
+        [xF1, hd],
+        [xF1, hd + H],
+        [xF1 - wA, hd + H + R],
+        [xF1 - bayW, hd + H],
+        [xF1 - bayW - wA, hd + H + R],
+        [xF0, hd + H],
+      ],
+      hingeOrigin: [xF0, hd + H * 0.5],
+      crease: [[xF0, hd], [xF0, hd + H]],
+      hingeAxis: [0, -1],
+      targetAngle: Math.PI * 0.5,
+      stage: 'wall',
+      wallFrame: ribbonWallFrame(cxF, W, H, true),
+      isFront: true,
+      label: 'Front sawtooth facade',
+    });
+
+    const y0 = hd + H;
+    const y1 = y0 + La;
+    const y2 = y1 + Lb;
+    const y3 = y2 + La;
+    const y4 = y3 + Lb;
+
+    add({
+      id: 'roofS0',
+      parent: 'left',
+      poly: [[xL0, y0], [xL1, y0], [xL1, y1], [xL0, y1]],
+      hingeOrigin: [cxL, y0],
+      crease: [[xL0, y0], [xL1, y0]],
+      hingeAxis: [1, 0],
+      targetAngle: Math.PI * 0.5 - alpha,
+      stage: 'roof',
+      roofFrame: { origin: [cxL, y0], ridgeAxis: [1, 0], slopeAxis: [0, 1], widthMm: D, slantMm: La },
+      label: 'Sawtooth slope 1',
+    });
+
+    add({
+      id: 'roofS1',
+      parent: 'roofS0',
+      poly: [[xL0, y1], [xL1, y1], [xL1, y2], [xL0, y2]],
+      hingeOrigin: [cxL, y1],
+      crease: [[xL0, y1], [xL1, y1]],
+      hingeAxis: [1, 0],
+      targetAngle: pleatTurn,
+      stage: 'roof',
+      hasRoofSkylights: true,
+      roofFrame: { origin: [cxL, y1], ridgeAxis: [1, 0], slopeAxis: [0, 1], widthMm: D, slantMm: Lb },
+      label: 'North skylight 1',
+    });
+
+    add({
+      id: 'roofS2',
+      parent: 'roofS1',
+      poly: [[xL0, y2], [xL1, y2], [xL1, y3], [xL0, y3]],
+      hingeOrigin: [cxL, y2],
+      crease: [[xL0, y2], [xL1, y2]],
+      hingeAxis: [-1, 0],
+      targetAngle: pleatTurn,
+      stage: 'roof',
+      isMountain: true,
+      roofFrame: { origin: [cxL, y2], ridgeAxis: [1, 0], slopeAxis: [0, 1], widthMm: D, slantMm: La },
+      label: 'Sawtooth slope 2',
+    });
+
+    add({
+      id: 'roofS3',
+      parent: 'roofS2',
+      poly: [[xL0, y3], [xL1, y3], [xL1, y4], [xL0, y4]],
+      hingeOrigin: [cxL, y3],
+      crease: [[xL0, y3], [xL1, y3]],
+      hingeAxis: [1, 0],
+      targetAngle: pleatTurn,
+      stage: 'roof',
+      hasRoofSkylights: true,
+      roofFrame: { origin: [cxL, y3], ridgeAxis: [1, 0], slopeAxis: [0, 1], widthMm: D, slantMm: Lb },
+      label: 'North skylight 2',
+    });
+
+    return { roofRise: R, roofSlant: La };
+  }
+
   // 4-sided pitched roofs on ribbon net: `hip`, `mansard`, `spire`
   const isMansard = roofType === 'mansard';
   const isSpire = roofType === 'spire';
@@ -1789,8 +2503,473 @@ function buildPolygonPetalNet(
   return { roofRise: R, roofSlant: L, baseRadiusMm: circumR };
 }
 
+// ----------------------------------------------------------------------------
+// Setback / Stepped Tower Net Builder (`wall -> terrace -> MOUNTAIN upperWall -> roof [-> roofCap]`)
+// True 4-to-5-hinges-deep duplex origami combining valley AND reverse mountain creases!
+// ----------------------------------------------------------------------------
+function buildSetbackTowerNet(
+  spec: HouseNetSpec,
+  add: (p: Omit<PanelNetDef, 'poly'> & { poly: V2[] }) => void,
+): { roofRise: number; roofSlant: number; baseRadiusMm: number } {
+  const { W, H, roofType, pitch, mansardRatio } = spec;
+  const hw = W * 0.5;
+  const H1 = H * 0.50;
+  const H2 = H - H1;
+  const W2 = W * 0.56;
+  const hw2 = W2 * 0.5;
+  const step = hw - hw2;
+  const isCrowned = roofType === 'mansard' && mansardRatio > 0.05;
+
+  add({
+    id: 'base',
+    parent: null,
+    poly: [
+      [-hw, -hw],
+      [hw, -hw],
+      [hw, hw],
+      [-hw, hw],
+    ],
+    hingeOrigin: [0, 0],
+    crease: null,
+    hingeAxis: [1, 0],
+    targetAngle: 0,
+    stage: 'base',
+    label: 'Floor',
+  });
+
+  const run = isCrowned ? hw2 * (1 - mansardRatio) : hw2;
+  const hwTop = isCrowned ? hw2 * mansardRatio : 0;
+  const R2 = run * Math.tan(pitch);
+  const L2 = Math.hypot(run, R2);
+  const roofFold = Math.PI * 0.5 - pitch;
+  const lip = isCrowned ? 1.5 : 0;
+  const Llip = L2 + lip;
+  const hwTopLip = isCrowned ? Math.max(1.5, hwTop - (lip / Math.max(L2, 1)) * (hw2 - hwTop)) : 0;
+
+  // 4 cardinal arms: k = 0 front (-Y), k = 1 right (+X), k = 2 back (+Y), k = 3 left (-X)
+  const arms: Array<{ id: string; nx: number; ny: number; isFront?: boolean; name: string }> = [
+    { id: '0', nx: 0, ny: -1, isFront: true, name: 'Front' },
+    { id: '1', nx: 1, ny: 0, name: 'Right' },
+    { id: '2', nx: 0, ny: 1, name: 'Back' },
+    { id: '3', nx: -1, ny: 0, name: 'Left' },
+  ];
+
+  for (const arm of arms) {
+    const { nx, ny } = arm;
+    const tx = -ny;
+    const ty = nx;
+    const valleyAxis: V2 = [ny, -nx];
+    const mountainAxis: V2 = [-ny, nx];
+    const pt = (r: number, u: number): V2 => [r * nx + u * tx, r * ny + u * ty];
+
+    const r0 = hw;
+    const r1 = r0 + H1;
+    const r2 = r1 + step;
+    const r3 = r2 + H2;
+
+    const wallId = `wall${arm.id}`;
+    const terraceId = `terrace${arm.id}`;
+    const upperId = `upper${arm.id}`;
+    const roofId = `roof${arm.id}`;
+
+    // Stage 1: Ground wall (+90° valley)
+    add({
+      id: wallId,
+      parent: 'base',
+      poly: [pt(r0, -hw), pt(r0, hw), pt(r1, hw), pt(r1, -hw)],
+      hingeOrigin: pt(r0, 0),
+      crease: [pt(r0, -hw), pt(r0, hw)],
+      hingeAxis: valleyAxis,
+      targetAngle: Math.PI * 0.5,
+      stage: 'wall',
+      wallFrame: {
+        origin: pt(r0, 0),
+        uAxis: [tx, ty],
+        vAxis: [nx, ny],
+        widthMm: W,
+        heightMm: H1,
+        wallLevels: H1 >= 25 ? 2 : 1,
+      },
+      isFront: arm.isFront,
+      label: `${arm.name} podium`,
+    });
+
+    // Stage 2: Mitered horizontal setback terrace ledge (+90° valley inward)
+    add({
+      id: terraceId,
+      parent: wallId,
+      poly: [pt(r1, -hw), pt(r1, hw), pt(r2, hw2), pt(r2, -hw2)],
+      hingeOrigin: pt(r1, 0),
+      crease: [pt(r1, -hw), pt(r1, hw)],
+      hingeAxis: valleyAxis,
+      targetAngle: Math.PI * 0.5,
+      stage: 'terrace',
+      label: `${arm.name} terrace`,
+    });
+
+    // Stage 3: Narrower upper tower wall (-90° MOUNTAIN fold back straight UP!)
+    add({
+      id: upperId,
+      parent: terraceId,
+      poly: [pt(r2, -hw2), pt(r2, hw2), pt(r3, hw2), pt(r3, -hw2)],
+      hingeOrigin: pt(r2, 0),
+      crease: [pt(r2, -hw2), pt(r2, hw2)],
+      hingeAxis: mountainAxis,
+      targetAngle: Math.PI * 0.5,
+      stage: 'upperWall',
+      isMountain: true,
+      wallFrame: {
+        origin: pt(r2, 0),
+        uAxis: [tx, ty],
+        vAxis: [nx, ny],
+        widthMm: W2,
+        heightMm: H2,
+        wallLevels: H2 >= 24 ? 2 : 1,
+      },
+      label: `${arm.name} tower`,
+    });
+
+    // Stage 4: Upper spire petal or crowned mansard roof (+(90° - pitch) valley)
+    const isCapHost = isCrowned && arm.id === '2';
+    const slant = isCrowned && !isCapHost ? Llip : L2;
+    const topHalf = isCrowned ? (isCapHost ? hwTop : hwTopLip) : 0;
+
+    const roofPoly: V2[] =
+      topHalf > 1e-3
+        ? [pt(r3, -hw2), pt(r3, hw2), pt(r3 + slant, topHalf), pt(r3 + slant, -topHalf)]
+        : [pt(r3, -hw2), pt(r3, hw2), pt(r3 + L2, 0)];
+
+    add({
+      id: roofId,
+      parent: upperId,
+      poly: roofPoly,
+      hingeOrigin: pt(r3, 0),
+      crease: [pt(r3, -hw2), pt(r3, hw2)],
+      hingeAxis: valleyAxis,
+      targetAngle: roofFold,
+      stage: 'roof',
+      roofFrame: {
+        origin: pt(r3, 0),
+        ridgeAxis: [tx, ty],
+        slopeAxis: [nx, ny],
+        widthMm: W2,
+        slantMm: L2,
+      },
+      label: isCrowned ? `${arm.name} crown` : `${arm.name} spire`,
+    });
+  }
+
+  // Stage 5 (5 hinges deep!): Hinged skylight deck on back arm (`roof2`) for crowned setback pagoda!
+  if (isCrowned && hwTop > 1e-3) {
+    const capY0 = hw + H1 + step + H2 + L2;
+    const capY1 = capY0 + hwTop * 2;
+    add({
+      id: 'roofCap',
+      parent: 'roof2',
+      poly: [
+        [-hwTop, capY0],
+        [hwTop, capY0],
+        [hwTop, capY1],
+        [-hwTop, capY1],
+      ],
+      hingeOrigin: [0, capY0],
+      crease: [[-hwTop, capY0], [hwTop, capY0]],
+      hingeAxis: [1, 0],
+      targetAngle: pitch,
+      stage: 'cap',
+      label: 'Crown deck',
+    });
+  }
+
+  return { roofRise: R2, roofSlant: L2, baseRadiusMm: hw * Math.SQRT2 };
+}
+
+// ----------------------------------------------------------------------------
+// L-Shaped Compound Villa Net Builder (main gable house + sloping side wing + MOUNTAIN inside corner!)
+// ----------------------------------------------------------------------------
+function buildLWingNet(
+  spec: HouseNetSpec,
+  add: (p: Omit<PanelNetDef, 'poly'> & { poly: V2[] }) => void,
+): { roofRise: number; roofSlant: number; baseRadiusMm: number } {
+  const { W, D, H, pitch } = spec;
+  const hw = W * 0.5;
+  const hd = D * 0.5;
+  const Ww = W * 0.62;
+  const Dw = D * 0.52;
+  const Hw = H * 0.66;
+  const ySplit = -hd + Dw;
+  const remD = hd - ySplit;
+
+  // Center the asymmetric L-footprint cleanly around (0, 0) for balanced 360° orbit!
+  const ox = Ww * 0.22;
+  const x0 = -hw - ox;
+  const x1 = hw - ox;
+  const x2 = hw + Ww - ox;
+  const cxMain = -ox;
+
+  const R = hw * Math.tan(pitch);
+  const L = Math.hypot(hw, R);
+  const roofFold = Math.PI * 0.5 - pitch;
+
+  const wingRise = H - Hw;
+  const wingPitch = Math.atan2(wingRise, Ww);
+  const wingSlant = Math.hypot(Ww, wingRise);
+  const wingRoofFold = Math.PI * 0.5 - wingPitch;
+
+  // 1. Single unbroken 6-vertex L-shaped floor (`base`)
+  add({
+    id: 'base',
+    parent: null,
+    poly: [
+      [x0, -hd],
+      [x2, -hd],
+      [x2, ySplit],
+      [x1, ySplit],
+      [x1, hd],
+      [x0, hd],
+    ],
+    hingeOrigin: [0, 0],
+    crease: null,
+    hingeAxis: [1, 0],
+    targetAngle: 0,
+    stage: 'base',
+    label: 'L-floor',
+  });
+
+  // 2. Main house front gable (`-Y`) & back gable (`+Y`)
+  add({
+    id: 'front',
+    parent: 'base',
+    poly: [
+      [x0, -hd],
+      [x0, -(hd + H)],
+      [cxMain, -(hd + H + R)],
+      [x1, -(hd + H)],
+      [x1, -hd],
+    ],
+    hingeOrigin: [cxMain, -hd],
+    crease: [[x0, -hd], [x1, -hd]],
+    hingeAxis: [-1, 0],
+    targetAngle: Math.PI * 0.5,
+    stage: 'wall',
+    wallFrame: { origin: [cxMain, -hd], uAxis: [1, 0], vAxis: [0, -1], widthMm: W, heightMm: H },
+    isFront: true,
+    isGableEnd: true,
+    label: 'Main front gable',
+  });
+
+  add({
+    id: 'back',
+    parent: 'base',
+    poly: [
+      [x0, hd],
+      [x1, hd],
+      [x1, hd + H],
+      [cxMain, hd + H + R],
+      [x0, hd + H],
+    ],
+    hingeOrigin: [cxMain, hd],
+    crease: [[x0, hd], [x1, hd]],
+    hingeAxis: [1, 0],
+    targetAngle: Math.PI * 0.5,
+    stage: 'wall',
+    wallFrame: { origin: [cxMain, hd], uAxis: [1, 0], vAxis: [0, 1], widthMm: W, heightMm: H },
+    isGableEnd: true,
+    label: 'Main back gable',
+  });
+
+  // 3. Main left wall + continuous 2-panel waterfall gable roof (`roofL` -> ridge hinge `roofR`!)
+  add({
+    id: 'left',
+    parent: 'base',
+    poly: [
+      [x0 - H, -hd],
+      [x0, -hd],
+      [x0, hd],
+      [x0 - H, hd],
+    ],
+    hingeOrigin: [x0, 0],
+    crease: [[x0, -hd], [x0, hd]],
+    hingeAxis: [0, 1],
+    targetAngle: Math.PI * 0.5,
+    stage: 'wall',
+    wallFrame: { origin: [x0, 0], uAxis: [0, 1], vAxis: [-1, 0], widthMm: D, heightMm: H },
+    label: 'Left wall',
+  });
+
+  add({
+    id: 'roofL',
+    parent: 'left',
+    poly: [
+      [x0 - H - L, -hd],
+      [x0 - H, -hd],
+      [x0 - H, hd],
+      [x0 - H - L, hd],
+    ],
+    hingeOrigin: [x0 - H, 0],
+    crease: [[x0 - H, -hd], [x0 - H, hd]],
+    hingeAxis: [0, 1],
+    targetAngle: roofFold,
+    stage: 'roof',
+    roofFrame: { origin: [x0 - H, 0], ridgeAxis: [0, 1], slopeAxis: [-1, 0], widthMm: D, slantMm: L },
+    label: 'Main left roof',
+  });
+
+  // `roofR` hinges right off `roofL`'s ridge (+2*pitch valley!) to drape cleanly over the L-junction!
+  add({
+    id: 'roofR',
+    parent: 'roofL',
+    poly: [
+      [x0 - H - 2 * L, -hd],
+      [x0 - H - L, -hd],
+      [x0 - H - L, hd],
+      [x0 - H - 2 * L, hd],
+    ],
+    hingeOrigin: [x0 - H - L, 0],
+    crease: [[x0 - H - L, -hd], [x0 - H - L, hd]],
+    hingeAxis: [0, 1],
+    targetAngle: 2 * pitch,
+    stage: 'cap',
+    roofFrame: { origin: [x0 - H - L, 0], ridgeAxis: [0, 1], slopeAxis: [-1, 0], widthMm: D, slantMm: L },
+    label: 'Main right roof',
+  });
+
+  // 4. Side studio wing front wall (sloped trapezoid flush from `H` at main block down to `Hw` at wing end!)
+  add({
+    id: 'wingFront',
+    parent: 'base',
+    poly: [
+      [x1, -hd],
+      [x1, -(hd + H)],
+      [x2, -(hd + Hw)],
+      [x2, -hd],
+    ],
+    hingeOrigin: [(x1 + x2) * 0.5, -hd],
+    crease: [[x1, -hd], [x2, -hd]],
+    hingeAxis: [-1, 0],
+    targetAngle: Math.PI * 0.5,
+    stage: 'wall',
+    wallFrame: {
+      origin: [(x1 + x2) * 0.5, -hd],
+      uAxis: [1, 0],
+      vAxis: [0, -1],
+      widthMm: Ww,
+      heightMm: Hw,
+      wallLevels: 1,
+    },
+    label: 'Wing front wall',
+  });
+
+  // 5. Side wing outer end wall + shed roof sloping right up to the main block's eave at `(x1, H)`!
+  add({
+    id: 'wingEnd',
+    parent: 'base',
+    poly: [
+      [x2, -hd],
+      [x2 + Hw, -hd],
+      [x2 + Hw, ySplit],
+      [x2, ySplit],
+    ],
+    hingeOrigin: [x2, (-hd + ySplit) * 0.5],
+    crease: [[x2, -hd], [x2, ySplit]],
+    hingeAxis: [0, -1],
+    targetAngle: Math.PI * 0.5,
+    stage: 'wall',
+    wallFrame: {
+      origin: [x2, (-hd + ySplit) * 0.5],
+      uAxis: [0, 1],
+      vAxis: [1, 0],
+      widthMm: Dw,
+      heightMm: Hw,
+      wallLevels: 1,
+    },
+    label: 'Wing end wall',
+  });
+
+  add({
+    id: 'wingRoof',
+    parent: 'wingEnd',
+    poly: [
+      [x2 + Hw, -hd],
+      [x2 + Hw + wingSlant, -hd],
+      [x2 + Hw + wingSlant, ySplit],
+      [x2 + Hw, ySplit],
+    ],
+    hingeOrigin: [x2 + Hw, (-hd + ySplit) * 0.5],
+    crease: [[x2 + Hw, -hd], [x2 + Hw, ySplit]],
+    hingeAxis: [0, -1],
+    targetAngle: wingRoofFold,
+    stage: 'roof',
+    roofFrame: {
+      origin: [x2 + Hw, (-hd + ySplit) * 0.5],
+      ridgeAxis: [0, -1],
+      slopeAxis: [1, 0],
+      widthMm: Dw,
+      slantMm: wingSlant,
+    },
+    label: 'Wing roof',
+  });
+
+  // 6. Wing back wall wraps around outer wing corner (+90° valley off `wingEnd`), climbing from `Hw` to `H`
+  add({
+    id: 'wingBack',
+    parent: 'wingEnd',
+    poly: [
+      [x2, ySplit],
+      [x2 + Hw, ySplit],
+      [x2 + H, ySplit + Ww],
+      [x2, ySplit + Ww],
+    ],
+    hingeOrigin: [x2 + Hw * 0.5, ySplit],
+    crease: [[x2, ySplit], [x2 + Hw, ySplit]],
+    hingeAxis: [1, 0],
+    targetAngle: Math.PI * 0.5,
+    stage: 'wall',
+    wallFrame: {
+      origin: [x2, ySplit + Ww * 0.5],
+      uAxis: [0, 1],
+      vAxis: [1, 0],
+      widthMm: Ww,
+      heightMm: Hw,
+      wallLevels: 1,
+    },
+    label: 'Wing back wall',
+  });
+
+  // 7. Re-entrant courtyard right wall of main house: TRUE -90° MOUNTAIN FOLD off `wingBack`!
+  //    Folds outward around the concave L-corner so pastel exterior stays continuous with ZERO sheet collision!
+  add({
+    id: 'rightLower',
+    parent: 'wingBack',
+    poly: [
+      [x2, ySplit + Ww],
+      [x2 + H, ySplit + Ww],
+      [x2 + H, ySplit + Ww + remD],
+      [x2, ySplit + Ww + remD],
+    ],
+    hingeOrigin: [x2 + H * 0.5, ySplit + Ww],
+    crease: [[x2, ySplit + Ww], [x2 + H, ySplit + Ww]],
+    hingeAxis: [-1, 0],
+    targetAngle: Math.PI * 0.5,
+    stage: 'wall',
+    isMountain: true,
+    wallFrame: {
+      origin: [x2, ySplit + Ww + remD * 0.5],
+      uAxis: [0, 1],
+      vAxis: [1, 0],
+      widthMm: remD,
+      heightMm: H,
+    },
+    label: 'Courtyard wall',
+  });
+
+  const maxR = Math.max(Math.hypot(x0, hd), Math.hypot(x2, -hd), Math.hypot(x2, ySplit));
+  return { roofRise: R, roofSlant: L, baseRadiusMm: maxR };
+}
+
 /**
- * Construct the exact flat pre-cut paper net for ANY `HouseNetSpec` (`cross`, `ribbon`, `hex`, `oct`).
+ * Construct the exact flat pre-cut paper net for ANY `HouseNetSpec`
+ * (`cross`, `ribbon`, `hex`, `oct`, `lwing`, `setback`).
  */
 export function buildHouseNet(spec: HouseNetSpec): BuiltHouseNet {
   const { W, D, H } = spec;
@@ -1808,6 +2987,16 @@ export function buildHouseNet(spec: HouseNetSpec): BuiltHouseNet {
 
   if (spec.topology === 'hex' || spec.topology === 'oct') {
     const res = buildPolygonPetalNet(spec, spec.topology === 'hex' ? 6 : 8, add);
+    roofRise = res.roofRise;
+    roofSlant = res.roofSlant;
+    foldedRadiusMm = res.baseRadiusMm;
+  } else if (spec.topology === 'setback') {
+    const res = buildSetbackTowerNet(spec, add);
+    roofRise = res.roofRise;
+    roofSlant = res.roofSlant;
+    foldedRadiusMm = res.baseRadiusMm;
+  } else if (spec.topology === 'lwing') {
+    const res = buildLWingNet(spec, add);
     roofRise = res.roofRise;
     roofSlant = res.roofSlant;
     foldedRadiusMm = res.baseRadiusMm;
@@ -1878,7 +3067,7 @@ export function evaluateFoldedPoint(
   net: BuiltHouseNet,
   panelId: PanelId,
   sheetPt: V2,
-  fold01 = 1,
+  fold01: number | ((id: PanelId) => number) = 1,
 ): [number, number, number] {
   const chain: PanelNetDef[] = [];
   let cur: PanelNetDef | undefined = net.panelMap.get(panelId);
@@ -1903,7 +3092,8 @@ export function evaluateFoldedPoint(
     const len = Math.hypot(p.hingeAxis[0], p.hingeAxis[1]) || 1;
     const ux = p.hingeAxis[0] / len;
     const uz = -p.hingeAxis[1] / len;
-    const ang = p.targetAngle * fold01;
+    const f = typeof fold01 === 'function' ? fold01(p.id) : fold01;
+    const ang = p.targetAngle * f;
     const c = Math.cos(ang);
     const s = Math.sin(ang);
     const oneMinusC = 1 - c;
@@ -2039,8 +3229,7 @@ export function computeNetOuterPerimeter(net: BuiltHouseNet): V2[] {
   return ensureCCW(clean);
 }
 
-/** Check separating-axis non-overlap between two convex polygons in sheet mm */
-export function polygonsOverlap(A: V2[], B: V2[], eps = 1e-3): boolean {
+function convexPolygonsOverlap(A: V2[], B: V2[], eps = 1e-3): boolean {
   for (const P of [A, B]) {
     for (let i = 0; i < P.length; i++) {
       const a = P[i];
@@ -2067,4 +3256,72 @@ export function polygonsOverlap(A: V2[], B: V2[], eps = 1e-3): boolean {
     }
   }
   return true;
+}
+
+function isConvexCCW(poly: V2[]): boolean {
+  const n = poly.length;
+  for (let i = 0; i < n; i++) {
+    const a = poly[i];
+    const b = poly[(i + 1) % n];
+    const c = poly[(i + 2) % n];
+    if ((b[0] - a[0]) * (c[1] - b[1]) - (b[1] - a[1]) * (c[0] - b[0]) < -1e-6) return false;
+  }
+  return true;
+}
+
+function pointInTri(p: V2, a: V2, b: V2, c: V2): boolean {
+  const c1 = (b[0] - a[0]) * (p[1] - a[1]) - (b[1] - a[1]) * (p[0] - a[0]);
+  const c2 = (c[0] - b[0]) * (p[1] - b[1]) - (c[1] - b[1]) * (p[0] - b[0]);
+  const c3 = (a[0] - c[0]) * (p[1] - c[1]) - (a[1] - c[1]) * (p[0] - c[0]);
+  return c1 >= -1e-7 && c2 >= -1e-7 && c3 >= -1e-7;
+}
+
+function decomposeToConvex(poly: V2[]): V2[][] {
+  const ccw = ensureCCW(poly);
+  if (ccw.length <= 3 || isConvexCCW(ccw)) return [ccw];
+
+  const verts = [...ccw];
+  const tris: V2[][] = [];
+  let guard = 0;
+  while (verts.length > 3 && guard < 200) {
+    guard++;
+    let clipped = false;
+    const n = verts.length;
+    for (let i = 0; i < n; i++) {
+      const a = verts[(i + n - 1) % n];
+      const b = verts[i];
+      const c = verts[(i + 1) % n];
+      const cross = (b[0] - a[0]) * (c[1] - b[1]) - (b[1] - a[1]) * (c[0] - b[0]);
+      if (cross <= 1e-6) continue;
+      let containsOther = false;
+      for (let j = 0; j < n; j++) {
+        if (j === (i + n - 1) % n || j === i || j === (i + 1) % n) continue;
+        if (pointInTri(verts[j], a, b, c)) {
+          containsOther = true;
+          break;
+        }
+      }
+      if (!containsOther) {
+        tris.push([a, b, c]);
+        verts.splice(i, 1);
+        clipped = true;
+        break;
+      }
+    }
+    if (!clipped) break;
+  }
+  if (verts.length === 3) tris.push(verts);
+  return tris.length > 0 ? tris : [ccw];
+}
+
+/** Check exact non-overlap between any two simple polygons (convex OR concave, e.g. L-floors & sawtooth walls!) */
+export function polygonsOverlap(A: V2[], B: V2[], eps = 1e-3): boolean {
+  const partsA = decomposeToConvex(A);
+  const partsB = decomposeToConvex(B);
+  for (const pa of partsA) {
+    for (const pb of partsB) {
+      if (convexPolygonsOverlap(pa, pb, eps)) return true;
+    }
+  }
+  return false;
 }

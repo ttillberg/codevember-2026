@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import {
   MM,
+  MODEL_PRESETS,
   buildHouseNet,
   generateHouseSpec,
   type BuiltHouseNet,
@@ -29,12 +30,106 @@ const helpClose = document.getElementById('help-close') as HTMLButtonElement;
 const btnAction = document.getElementById('btn-action') as HTMLButtonElement;
 const progressRange = document.getElementById('progress-range') as HTMLInputElement;
 const statusEl = document.getElementById('status-label') as HTMLSpanElement;
+const btnDebug = document.getElementById('btn-debug') as HTMLButtonElement;
+const debugPanel = document.getElementById('debug-panel') as HTMLElement;
+const debugClose = document.getElementById('debug-close') as HTMLButtonElement;
+const dbgModel = document.getElementById('dbg-model') as HTMLSelectElement;
+const dbgColor = document.getElementById('dbg-color') as HTMLInputElement;
+const dbgSpin = document.getElementById('dbg-spin') as HTMLInputElement;
+const dbgShiftView = document.getElementById('dbg-shift-view') as HTMLInputElement;
+const dbgResetFactory = document.getElementById('dbg-reset-factory') as HTMLButtonElement;
 
-// Minimal line icons (top-right buttons)
+// Populate model presets in debug selector
+for (const preset of MODEL_PRESETS) {
+  const opt = document.createElement('option');
+  opt.value = String(preset.slot);
+  opt.textContent = `${preset.slot}. ${preset.label}`;
+  dbgModel.appendChild(opt);
+}
+
+// Minimal line icons (top-right buttons & bottom-right dev workbench gear)
 const ICON_PLAY = `<svg viewBox="0 0 24 24"><path d="M5 12h14"/><path d="M13 6l6 6-6 6"/></svg>`;
 const ICON_RESET = `<svg viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/></svg>`;
+const ICON_GEAR = `<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h.01a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h.01a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v.01a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>`;
 btnNext.innerHTML = ICON_PLAY;
 btnReset.innerHTML = ICON_RESET;
+btnDebug.innerHTML = ICON_GEAR;
+
+const SETTINGS_STORAGE_KEY = 'codevember-2026:01:settings:v1';
+
+interface DebugSettings {
+  model: number | null;
+  color: boolean;
+  spin: boolean;
+  shiftView: boolean;
+}
+
+const FACTORY_SETTINGS: DebugSettings = {
+  model: null,
+  color: true,
+  spin: true,
+  shiftView: false,
+};
+
+function loadSavedSettings(): DebugSettings {
+  const s: DebugSettings = { ...FACTORY_SETTINGS };
+  try {
+    const raw = window.localStorage.getItem(SETTINGS_STORAGE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw) as Partial<DebugSettings>;
+      if (parsed.model === null) {
+        s.model = null;
+      } else if (typeof parsed.model === 'number' && Number.isFinite(parsed.model)) {
+        s.model = Math.max(1, Math.min(12, Math.round(parsed.model)));
+      }
+      if (typeof parsed.color === 'boolean') s.color = parsed.color;
+      if (typeof parsed.spin === 'boolean') s.spin = parsed.spin;
+      if (typeof parsed.shiftView === 'boolean') s.shiftView = parsed.shiftView;
+    }
+  } catch {
+    // Ignore storage access errors (private mode, restricted iframe, etc.)
+  }
+  return s;
+}
+
+const initialSettings = loadSavedSettings();
+const showDebugTrigger = import.meta.env.DEV || params.has('settings') || params.has('debug');
+btnDebug.hidden = !showDebugTrigger;
+
+// URL query parameters override stored settings for clean captures / links without mutating storage
+let forcedModelSlot: number | null =
+  params.get('model') !== null
+    ? Math.max(1, Math.min(12, Number(params.get('model')) || 1))
+    : initialSettings.model;
+let debugColorEnabled =
+  params.get('color') !== null ? params.get('color') !== '0' : initialSettings.color;
+let debugSpinEnabled =
+  params.get('spin') !== null ? params.get('spin') !== '0' : initialSettings.spin;
+let debugShiftViewEnabled =
+  params.get('shiftView') !== null ? params.get('shiftView') === '1' : initialSettings.shiftView;
+
+function syncDebugControls(): void {
+  dbgModel.value = forcedModelSlot ? String(forcedModelSlot) : 'auto';
+  dbgColor.checked = debugColorEnabled;
+  dbgSpin.checked = debugSpinEnabled;
+  dbgShiftView.checked = debugShiftViewEnabled;
+}
+
+function saveDebugSettings(): void {
+  try {
+    const payload: DebugSettings = {
+      model: forcedModelSlot,
+      color: debugColorEnabled,
+      spin: debugSpinEnabled,
+      shiftView: debugShiftViewEnabled,
+    };
+    window.localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(payload));
+  } catch {
+    // Ignore storage write errors
+  }
+}
+
+syncDebugControls();
 
 // Renderer (pure white-on-white gallery daylight: paper & ground melt seamlessly, only minimal ridge shadows!)
 const renderer = new THREE.WebGLRenderer({
@@ -68,9 +163,11 @@ const camera = new THREE.PerspectiveCamera(28, 1, 0.3, 650);
 const hemi = new THREE.HemisphereLight('#fffdf8', '#e0ddd6', 1.50);
 scene.add(hemi);
 
-const SUN_DIR = new THREE.Vector3(5.8, 21.0, 3.6).normalize();
+const SUN_DIR_COLOR = new THREE.Vector3(5.8, 21.0, 3.6).normalize();
+const SUN_DIR_WHITE = new THREE.Vector3(10.5, 19.0, 8.2).normalize();
+const sunDirActive = SUN_DIR_COLOR.clone();
 const sun = new THREE.DirectionalLight('#fffdf9', 1.18);
-sun.position.copy(SUN_DIR).multiplyScalar(28);
+sun.position.copy(sunDirActive).multiplyScalar(28);
 sun.castShadow = true;
 sun.shadow.mapSize.set(2048, 2048);
 sun.shadow.camera.near = 2;
@@ -99,7 +196,7 @@ let finalShadowExtent = 14;
 function applyShadowFrustum(extent: number): void {
   const e = Math.max(14, extent);
   const sunDist = Math.max(28, e * 1.75);
-  sun.position.copy(SUN_DIR).multiplyScalar(sunDist);
+  sun.position.copy(sunDirActive).multiplyScalar(sunDist);
   sun.shadow.camera.left = -e;
   sun.shadow.camera.right = e;
   sun.shadow.camera.top = e;
@@ -135,6 +232,28 @@ let swapLookY = BASE_LOOK_Y;
 let finalDist = defaultDist;
 let finalLookY = BASE_LOOK_Y;
 let userZoomDelta = 0;
+
+// Optional per-slide camera shift (composes incrementally with gentle turntable spin & manual drag!)
+let slideYawDelta = 0;
+let slidePitchDelta = 0;
+let prevSlideEase = 0;
+const AUTO_SPIN_RAD_PER_SEC = 0.11;
+
+function computeSlideViewShift(net: BuiltHouseNet): { yawDelta: number; targetPitch: number } {
+  const { generation: g, topology, roofType } = net.spec;
+  // Alternate dramatic left/right orbital sweeps across consecutive slides
+  const yawSign = g % 2 === 0 ? 1 : -1;
+  const yawMag = 0.68 + ((g * 37) % 5) * 0.11;
+  // Lower heroic pitch for soaring spires & stepped towers; higher axonometric pitch for roofs & L-wings
+  const isTall = topology === 'setback' || topology === 'oct' || roofType === 'spire';
+  const isRoofShowcase = roofType === 'sawtooth' || roofType === 'butterfly' || topology === 'lwing';
+  const targetPitch = isTall
+    ? 0.44 + ((g * 19) % 3) * 0.04
+    : isRoofShowcase
+      ? 0.68 + ((g * 13) % 3) * 0.05
+      : 0.54 + ((g * 23) % 4) * 0.05;
+  return { yawDelta: yawSign * yawMag, targetPitch };
+}
 
 function computeIdealFraming(net: BuiltHouseNet): { dist: number; lookY: number; shadowExtent: number } {
   const sheetHalfW = net.sheetHalfMm * MM;
@@ -185,7 +304,7 @@ interface PanelState {
 
 let generation = 1;
 let rig: OrigamiHouseRig;
-let preparedNext: { generation: number; rig: OrigamiHouseRig } | null = null;
+let preparedNext: { generation: number; slot: number | null; rig: OrigamiHouseRig } | null = null;
 let prepareTimerId: number | null = null;
 const panelState = new Map<FoldablePanelId, PanelState>();
 let hoveredPanel: FoldablePanelId | null = null;
@@ -213,19 +332,19 @@ function clearPreparedNext(): void {
  * pre-building removes ALL synchronous `ExtrudeGeometry` / earcut CPU work from the JIT cut frame!
  */
 function prepareNextGenerationNow(gen: number): OrigamiHouseRig {
-  if (preparedNext && preparedNext.generation === gen) {
+  if (preparedNext && preparedNext.generation === gen && preparedNext.slot === forcedModelSlot) {
     return preparedNext.rig;
   }
   clearPreparedNext();
-  const spec = generateHouseSpec(gen);
+  const spec = generateHouseSpec(gen, forcedModelSlot);
   const net = buildHouseNet(spec);
   const nextRig = buildOrigamiHouseRig(net, materials, true);
-  preparedNext = { generation: gen, rig: nextRig };
+  preparedNext = { generation: gen, slot: forcedModelSlot, rig: nextRig };
   return nextRig;
 }
 
 function schedulePrepareNext(gen: number, delayMs = 90): void {
-  if (preparedNext && preparedNext.generation === gen) return;
+  if (preparedNext && preparedNext.generation === gen && preparedNext.slot === forcedModelSlot) return;
   if (prepareTimerId !== null) window.clearTimeout(prepareTimerId);
   prepareTimerId = window.setTimeout(() => {
     prepareTimerId = null;
@@ -237,21 +356,54 @@ function schedulePrepareNext(gen: number, delayMs = 90): void {
   }, delayMs);
 }
 
+function applyActiveOutsideColor(): void {
+  if (!rig) return;
+  if (debugColorEnabled) {
+    materials.setOutsideColor(rig.net.spec.outsideColor);
+    materials.edge.color.set('#fbfaf7');
+    materials.projUniforms.uProjGain.value = 1.0;
+    sunDirActive.copy(SUN_DIR_COLOR);
+    hemi.color.set('#fffdf8');
+    hemi.groundColor.set('#e0ddd6');
+    hemi.intensity = 1.50;
+    sun.color.set('#fffdf9');
+    sun.intensity = 1.18;
+    fill.color.set('#f8f7f2');
+    fill.intensity = 0.24;
+    renderer.toneMappingExposure = 1.02;
+  } else {
+    // Same warm ivory "white" as the #f5f4f0 studio paper backdrop: sunlit roofs match #f5f4f0
+    // seamlessly while raking 56° gallery sun carves warm ivory sculptural planes & shadows!
+    materials.setOutsideColor('#f5f4f0');
+    materials.edge.color.set('#f8f7f3');
+    materials.projUniforms.uProjGain.value = 0.86;
+    sunDirActive.copy(SUN_DIR_WHITE);
+    hemi.color.set('#fffef9');
+    hemi.groundColor.set('#dfd9ce');
+    hemi.intensity = 1.78;
+    sun.color.set('#fffdf6');
+    sun.intensity = 2.05;
+    fill.color.set('#f5f4f0');
+    fill.intensity = 0.28;
+    renderer.toneMappingExposure = 1.08;
+  }
+  applyShadowFrustum(curShadowExtent);
+}
+
 function mountHouseGeneration(gen: number, fromSwap = false): void {
   if (rig) {
     scene.remove(rig.root);
     rig.dispose();
   }
-  if (fromSwap && preparedNext && preparedNext.generation === gen) {
+  if (fromSwap && preparedNext && preparedNext.generation === gen && preparedNext.slot === forcedModelSlot) {
     rig = preparedNext.rig;
     preparedNext = null;
-    materials.setOutsideColor(rig.net.spec.outsideColor);
   } else {
-    const spec = generateHouseSpec(gen);
-    materials.setOutsideColor(spec.outsideColor);
+    const spec = generateHouseSpec(gen, forcedModelSlot);
     const net = buildHouseNet(spec);
     rig = buildOrigamiHouseRig(net, materials, fromSwap);
   }
+  applyActiveOutsideColor();
   const net = rig.net;
   scene.add(rig.root);
 
@@ -293,6 +445,11 @@ function mountHouseGeneration(gen: number, fromSwap = false): void {
 
     swapShadowExtent = curShadowExtent;
     finalShadowExtent = ideal.shadowExtent;
+
+    const shift = computeSlideViewShift(net);
+    slideYawDelta = shift.yawDelta;
+    slidePitchDelta = shift.targetPitch - targetPitch;
+    prevSlideEase = 0;
   } else {
     curPaperRelief = 1;
     targetPaperRelief = 1;
@@ -310,6 +467,10 @@ function mountHouseGeneration(gen: number, fromSwap = false): void {
 
     curShadowExtent = swapShadowExtent = finalShadowExtent = ideal.shadowExtent;
     applyShadowFrustum(curShadowExtent);
+
+    slideYawDelta = 0;
+    slidePitchDelta = 0;
+    prevSlideEase = 0;
   }
 }
 
@@ -593,13 +754,16 @@ function getStaggerOrder(referenceYaw = curYaw): Array<{
   const wallCount = Math.max(1, sortedWalls.length - 1);
   const wallCurve = (rank: number) => Math.pow(rank / wallCount, 1.28);
 
-  const hasCap = rig.panels.has('roofCap');
+  const hasCap = rig.panels.has('roofCap') || rig.panelIds.some((id) => rig.net.panelMap.get(id)?.stage === 'cap');
   const isSingleSpanRoof = rig.net.spec.roofType === 'shed' || rig.net.spec.roofType === 'flat';
+  const isSawtooth = rig.net.spec.roofType === 'sawtooth';
   const isRibbon = rig.net.spec.topology === 'ribbon';
   const isPolygon = rig.net.spec.topology === 'hex' || rig.net.spec.topology === 'oct';
+  const isSetback = rig.net.spec.topology === 'setback';
+  const isLWing = rig.net.spec.topology === 'lwing';
 
-  const wallDelay = new Map<FoldablePanelId, number>();
-  const wallScrub = new Map<FoldablePanelId, number>();
+  const panelDelay = new Map<FoldablePanelId, number>();
+  const panelScrub = new Map<FoldablePanelId, number>();
   const items: Array<{
     id: FoldablePanelId;
     delaySec: number;
@@ -607,6 +771,19 @@ function getStaggerOrder(referenceYaw = curYaw): Array<{
     scrubStart: number;
     scrubSpan: number;
   }> = [];
+
+  const pushItem = (
+    id: FoldablePanelId,
+    delaySec: number,
+    durationSec: number,
+    scrubStart: number,
+    scrubSpan: number,
+  ) => {
+    const sClamped = Math.min(scrubStart, Math.max(0.05, 1 - scrubSpan));
+    panelDelay.set(id, delaySec);
+    panelScrub.set(id, sClamped);
+    items.push({ id, delaySec, durationSec, scrubStart: sClamped, scrubSpan });
+  };
 
   if (isRibbon) {
     // Wrap-around ribbon dance: `back` lifts the entire strip off the paper first, then `left` & `right`
@@ -621,15 +798,53 @@ function getStaggerOrder(referenceYaw = curYaw): Array<{
 
     for (const id of wallIds) {
       const t = ribbonTiming[id] ?? { d: 0.3, s: 0.14, dur: 1.28 };
-      wallDelay.set(id, t.d);
-      wallScrub.set(id, t.s);
-      items.push({
-        id,
-        delaySec: t.d,
-        durationSec: t.dur,
-        scrubStart: t.s,
-        scrubSpan: hasCap ? 0.42 : 0.46,
-      });
+      pushItem(id, t.d, t.dur, t.s, isSawtooth ? 0.36 : hasCap ? 0.42 : 0.46);
+    }
+  } else if (isSetback) {
+    // Tiered setback Z-pleat rise: ground podium walls rise far-to-near, then the mountain crease (`upperWall`)
+    // leads the valley crease (`terrace`) in a real Z-pleat (`fold(upper) >= fold(terrace)` at every instant!)
+    // so the 4 upper tower walls stay strictly upright/flared in their own quadrants and NEVER intersect!
+    for (const id of sortedWalls) {
+      const rank = wallRank.get(id) ?? 0;
+      const c = wallCurve(rank);
+      pushItem(id, c * 0.44, 1.18, c * 0.16, 0.34);
+    }
+    for (const id of rig.panelIds) {
+      const def = rig.net.panelMap.get(id)!;
+      if (def.stage !== 'terrace') continue;
+      const wallId = def.parent as FoldablePanelId;
+      const wd = panelDelay.get(wallId) ?? 0.2;
+      const ws = panelScrub.get(wallId) ?? 0.1;
+      // Terrace valley fold slightly trails its mountain `upperWall` partner so `theta_U >= theta_T` always!
+      pushItem(id, wd + 0.36, 1.14, ws + 0.20, 0.36);
+    }
+    for (const id of rig.panelIds) {
+      const def = rig.net.panelMap.get(id)!;
+      if (def.stage !== 'upperWall') continue;
+      const terraceId = def.parent as FoldablePanelId;
+      const wallId = rig.net.panelMap.get(terraceId)?.parent as FoldablePanelId;
+      const wd = panelDelay.get(wallId) ?? 0.2;
+      const ws = panelScrub.get(wallId) ?? 0.1;
+      // Mountain upper wall starts 0.10s earlier and finishes faster than terrace -> zero self-intersection!
+      pushItem(id, wd + 0.24, 1.04, ws + 0.12, 0.34);
+    }
+  } else if (isLWing) {
+    // Asymmetric L-wing choreography: base-hinged walls rise far-to-near, then the mountain courtyard crease
+    // (`rightLower`) pre-bends slightly ahead of `wingBack` in a true Z-pleat so it glides cleanly into
+    // the re-entrant L-corner without sweeping through the main house!
+    const rootWalls = sortedWalls.filter((id) => rig.net.panelMap.get(id)?.parent === 'base');
+    const rootCount = Math.max(1, rootWalls.length - 1);
+    rootWalls.forEach((id, i) => {
+      const c = Math.pow(i / rootCount, 1.25);
+      pushItem(id, c * 0.48, 1.24, c * 0.20, 0.38);
+    });
+    const wingEndD = panelDelay.get('wingEnd') ?? 0.32;
+    const wingEndS = panelScrub.get('wingEnd') ?? 0.16;
+    if (rig.panels.has('wingBack')) {
+      pushItem('wingBack', wingEndD + 0.36, 1.18, wingEndS + 0.18, 0.36);
+    }
+    if (rig.panels.has('rightLower')) {
+      pushItem('rightLower', wingEndD + 0.24, 1.06, wingEndS + 0.12, 0.34);
     }
   } else if (isPolygon) {
     // Radial lotus-bloom choreography: furthest petals rise first around both flanks with a gentle shimmer,
@@ -637,72 +852,67 @@ function getStaggerOrder(referenceYaw = curYaw): Array<{
     for (const id of sortedWalls) {
       const rank = wallRank.get(id) ?? 0;
       const c = wallCurve(rank);
-      const d = c * 0.78;
-      const s = c * 0.30;
-      wallDelay.set(id, d);
-      wallScrub.set(id, s);
-      items.push({
-        id,
-        delaySec: d,
-        durationSec: 1.26,
-        scrubStart: s,
-        scrubSpan: hasCap ? 0.42 : 0.46,
-      });
+      pushItem(id, c * 0.78, 1.26, c * 0.30, hasCap ? 0.42 : 0.46);
     }
   } else {
     for (const id of sortedWalls) {
       const rank = wallRank.get(id) ?? 0;
       const c = wallCurve(rank);
-      const d = c * 0.62;
-      const s = c * 0.26;
-      wallDelay.set(id, d);
-      wallScrub.set(id, s);
-      items.push({
-        id,
-        delaySec: d,
-        durationSec: 1.28,
-        scrubStart: s,
-        scrubSpan: hasCap ? 0.44 : 0.48,
-      });
+      pushItem(id, c * 0.62, 1.28, c * 0.26, isSawtooth ? 0.38 : hasCap ? 0.44 : 0.48);
     }
   }
 
   let maxRoofDelay = 0;
-  let capParentDelay = 0;
-  const capParentId = rig.net.panelMap.get('roofCap')?.parent ?? 'roofB';
   for (const id of rig.panelIds) {
     const def = rig.net.panelMap.get(id)!;
     if (def.stage !== 'roof') continue;
     const pId = (def.parent as FoldablePanelId) ?? 'left';
-    let d = (wallDelay.get(pId) ?? 0.35) + 0.44;
-    let s = (wallScrub.get(pId) ?? 0.14) + 0.22;
-    if (isSingleSpanRoof && id === 'roofL') {
-      const oppD = wallDelay.get('right') ?? 0;
-      const oppS = wallScrub.get('right') ?? 0;
-      d = Math.max(d, oppD + 0.26);
-      s = Math.max(s, oppS + 0.18);
+    const parentIsRoof = rig.net.panelMap.get(pId)?.stage === 'roof';
+    let d: number;
+    let s: number;
+    if (isSawtooth && parentIsRoof) {
+      // Accordion pleat wave: mountain crease (`roofS2`) folds in concert with `roofS1` so the
+      // second bay concertinas cleanly above the wall line without dipping into the interior!
+      const stepD = def.isMountain ? 0.04 : 0.22;
+      const stepS = def.isMountain ? 0.02 : 0.09;
+      d = (panelDelay.get(pId) ?? 0.8) + stepD;
+      s = (panelScrub.get(pId) ?? 0.42) + stepS;
+    } else if (isSetback) {
+      // Wait for the `terrace` + `upperWall` Z-pleat to converge before closing upper spire/crown petals!
+      const terraceId = rig.net.panelMap.get(pId)?.parent as FoldablePanelId;
+      const td = panelDelay.get(terraceId) ?? panelDelay.get(pId) ?? 0.9;
+      const ts = panelScrub.get(terraceId) ?? panelScrub.get(pId) ?? 0.42;
+      d = td + 0.46;
+      s = ts + 0.24;
+    } else {
+      d = (panelDelay.get(pId) ?? 0.35) + 0.42;
+      s = (panelScrub.get(pId) ?? 0.14) + 0.20;
+    }
+    if ((isSingleSpanRoof && id === 'roofL') || (isSawtooth && id === 'roofS0')) {
+      const oppD = panelDelay.get('right') ?? 0;
+      const oppS = panelScrub.get('right') ?? 0;
+      d = Math.max(d, oppD + 0.24);
+      s = Math.max(s, oppS + 0.16);
     }
     if (d > maxRoofDelay) maxRoofDelay = d;
-    if (id === capParentId) capParentDelay = d;
-    items.push({
-      id,
-      delaySec: d,
-      durationSec: 1.24,
-      scrubStart: Math.min(s, hasCap ? 0.56 : 0.56),
-      scrubSpan: hasCap ? 0.38 : 0.44,
-    });
+    const dur = isSawtooth ? 1.08 : isSetback ? 1.10 : 1.24;
+    const span = isSawtooth ? 0.30 : isSetback ? (hasCap ? 0.26 : 0.32) : hasCap ? 0.38 : 0.44;
+    pushItem(id, d, dur, s, span);
   }
 
   for (const id of rig.panelIds) {
     const def = rig.net.panelMap.get(id)!;
     if (def.stage !== 'cap') continue;
-    items.push({
+    const pId = def.parent as FoldablePanelId;
+    const pDelay = panelDelay.get(pId) ?? maxRoofDelay;
+    const pScrub = panelScrub.get(pId) ?? 0.56;
+    pushItem(
       id,
-      delaySec: Math.max(capParentDelay + 0.44, maxRoofDelay + 0.16),
-      durationSec: 1.18,
-      scrubStart: 0.58,
-      scrubSpan: 0.42,
-    });
+      Math.max(pDelay + (isSetback ? 0.34 : 0.42), maxRoofDelay + 0.16),
+      isSetback ? 1.05 : 1.18,
+      Math.max(pScrub + 0.16, isSetback ? 0.68 : 0.58),
+      isSetback ? 0.32 : 0.42,
+    );
   }
 
   return items;
@@ -762,6 +972,21 @@ function resetAll(): void {
   syncUI();
 }
 
+function resetToFactory(): void {
+  try {
+    window.localStorage.removeItem(SETTINGS_STORAGE_KEY);
+  } catch {
+    // Ignore storage removal errors
+  }
+  forcedModelSlot = FACTORY_SETTINGS.model;
+  debugColorEnabled = FACTORY_SETTINGS.color;
+  debugSpinEnabled = FACTORY_SETTINGS.spin;
+  debugShiftViewEnabled = FACTORY_SETTINGS.shiftView;
+  syncDebugControls();
+  resetAll();
+  applyActiveOutsideColor();
+}
+
 function triggerStepAction(): void {
   // If the current 3D house is already folded & settled, run JIT projection from the live camera angle,
   // cut out & drop the surrounding waste sheet + window chads first, then fold the new house!
@@ -791,7 +1016,12 @@ function syncUI(): void {
   const allTargetFolded = allPanelsFoldedTarget();
   const settledFolded = allPanelsSettledFolded();
   const houseName = rig.net.spec.label;
-  const prefix = generation > 1 ? `Layer ${generation} · ${houseName} · ` : '';
+  const prefix =
+    generation > 1
+      ? `Layer ${generation} · ${houseName} · `
+      : forcedModelSlot
+        ? `${houseName} · `
+        : '';
 
   btnAction.textContent = 'Fold';
   if (!allTargetFolded) {
@@ -1025,6 +1255,59 @@ progressRange.addEventListener('input', () => {
   syncUI();
 });
 
+function selectModelSlot(slot: number | null, persist = true): void {
+  forcedModelSlot = slot;
+  syncDebugControls();
+  if (persist) saveDebugSettings();
+  const wasFolded = computeFoldProgress() > 0.5;
+  clearPreparedNext();
+  justProjected = false;
+  materials.setProjection(null);
+  mountHouseGeneration(generation, false);
+  if (wasFolded) {
+    applyFoldScrub(1, true);
+    const z = computeAutoZoom(1);
+    const { minDist, maxDist } = getZoomBounds();
+    targetDist = curDist = Math.max(minDist, Math.min(maxDist, z.autoDist + userZoomDelta));
+    targetLookY = curLookY = z.autoLookY;
+    curShadowExtent = z.shadowExtent;
+    applyShadowFrustum(curShadowExtent);
+  }
+  syncCameraFromOrbit();
+  schedulePrepareNext(generation + 1, 80);
+  syncUI();
+}
+
+const setDebugOpen = (open: boolean) => {
+  debugPanel.hidden = !open;
+  btnDebug.setAttribute('aria-expanded', open ? 'true' : 'false');
+};
+btnDebug.addEventListener('click', (e) => {
+  e.stopPropagation();
+  setDebugOpen(debugPanel.hidden);
+});
+debugClose.addEventListener('click', () => setDebugOpen(false));
+dbgModel.addEventListener('change', () => {
+  const val = dbgModel.value;
+  selectModelSlot(val === 'auto' ? null : Math.max(1, Math.min(12, Number(val) || 1)));
+});
+dbgColor.addEventListener('change', () => {
+  debugColorEnabled = dbgColor.checked;
+  saveDebugSettings();
+  applyActiveOutsideColor();
+});
+dbgSpin.addEventListener('change', () => {
+  debugSpinEnabled = dbgSpin.checked;
+  saveDebugSettings();
+});
+dbgShiftView.addEventListener('change', () => {
+  debugShiftViewEnabled = dbgShiftView.checked;
+  saveDebugSettings();
+});
+dbgResetFactory.addEventListener('click', () => {
+  resetToFactory();
+});
+
 const setHelpOpen = (open: boolean) => {
   helpModal.hidden = !open;
 };
@@ -1043,6 +1326,10 @@ window.addEventListener('keydown', (e) => {
     setHelpOpen(false);
     return;
   }
+  if (e.key === 'Escape' && !debugPanel.hidden) {
+    setDebugOpen(false);
+    return;
+  }
   if (e.key === '?' || (e.key === '/' && e.shiftKey)) {
     e.preventDefault();
     setHelpOpen(helpModal.hidden);
@@ -1057,6 +1344,8 @@ window.addEventListener('keydown', (e) => {
     toggleFoldAll();
   } else if (e.key === 'r' || e.key === 'R') {
     resetAll();
+  } else if ((e.key === 'd' || e.key === 'D') && showDebugTrigger) {
+    setDebugOpen(debugPanel.hidden);
   }
 });
 
@@ -1105,6 +1394,10 @@ syncUI();
       fold: (pid: FoldablePanelId, v: number) => void;
       projectNow: () => void;
       dropCutout: (atSec?: number) => void;
+      setColor: (enabled: boolean) => void;
+      setModel: (slot: number | null) => void;
+      setSpin: (enabled: boolean) => void;
+      setShiftView: (enabled: boolean) => void;
       view: (yaw: number, pitch: number, dist: number) => void;
       info: () => {
         generation: number;
@@ -1118,6 +1411,8 @@ syncUI();
         foldedHeightMm: number;
         curDist: number;
         finalDist: number;
+        yaw: number;
+        pitch: number;
       };
     };
   }
@@ -1173,6 +1468,25 @@ syncUI();
       triggerCutoutDrop();
     }
   },
+  setColor(enabled: boolean) {
+    debugColorEnabled = Boolean(enabled);
+    syncDebugControls();
+    saveDebugSettings();
+    applyActiveOutsideColor();
+  },
+  setModel(slot: number | null) {
+    selectModelSlot(slot);
+  },
+  setSpin(enabled: boolean) {
+    debugSpinEnabled = Boolean(enabled);
+    syncDebugControls();
+    saveDebugSettings();
+  },
+  setShiftView(enabled: boolean) {
+    debugShiftViewEnabled = Boolean(enabled);
+    syncDebugControls();
+    saveDebugSettings();
+  },
   view(yaw: number, pitch: number, dist: number) {
     targetYaw = curYaw = yaw;
     targetPitch = curPitch = pitch;
@@ -1194,6 +1508,8 @@ syncUI();
       foldedHeightMm: Math.round(rig.net.foldedHeightMm * 10) / 10,
       curDist: Math.round(curDist * 10) / 10,
       finalDist: Math.round(finalDist * 10) / 10,
+      yaw: Math.round(curYaw * 1000) / 1000,
+      pitch: Math.round(curPitch * 1000) / 1000,
     };
   },
 };
@@ -1257,7 +1573,20 @@ function animate(now: number): void {
     }
   }
 
-  // 3. Smooth camera orbit & unhurried final-stage zoom-out for bigger houses (locked on JIT swap!)
+  // 3. Gentle continuous turntable rotation + optional per-slide camera shift + smooth zoom-out (locked on JIT swap!)
+  if (debugSpinEnabled && drag.kind === 'none' && !justProjected && helpModal.hidden) {
+    targetYaw += dt * AUTO_SPIN_RAD_PER_SEC;
+  }
+
+  const sRaw = clamp01((foldProg - 0.12) / 0.80);
+  const slideEase = sRaw * sRaw * (3 - 2 * sRaw);
+  const dSlide = slideEase - prevSlideEase;
+  if (debugShiftViewEnabled && Math.abs(dSlide) > 1e-6) {
+    targetYaw += dSlide * slideYawDelta;
+    targetPitch = Math.max(0.18, Math.min(1.42, targetPitch + dSlide * slidePitchDelta));
+  }
+  prevSlideEase = slideEase;
+
   const { autoDist, autoLookY, shadowExtent } = computeAutoZoom(foldProg);
   const { minDist, maxDist } = getZoomBounds();
   targetDist = Math.max(minDist, Math.min(maxDist, autoDist + userZoomDelta));

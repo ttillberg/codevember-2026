@@ -41,7 +41,40 @@
       <input id="progress-range" class="progress-range" type="range" min="0" max="1" step="0.002" value="0" aria-label="Fold progress" />
     </div>
 
-    <span id="status-label" class="status-label" aria-live="polite">Click Fold or drag any flap</span>
+    <div class="bottom-right">
+      <span id="status-label" class="status-label" aria-live="polite">Click Fold or drag any flap</span>
+      <button id="btn-debug" class="icon-btn debug-trigger" type="button" title="Debug panel (D)" aria-label="Debug panel" aria-expanded="false" hidden></button>
+    </div>
+
+    <aside id="debug-panel" class="debug-panel" aria-label="Debug panel" hidden>
+      <div class="debug-head">
+        <span>Debug</span>
+        <button id="debug-close" class="debug-close" type="button" aria-label="Close debug panel">×</button>
+      </div>
+      <div class="debug-rows">
+        <label class="debug-row debug-row-stack" for="dbg-model">
+          <span>Model</span>
+          <select id="dbg-model" class="debug-select" aria-label="House model">
+            <option value="auto">Auto (cycle)</option>
+          </select>
+        </label>
+        <label class="debug-row" for="dbg-color">
+          <span>Color</span>
+          <input id="dbg-color" class="debug-switch" type="checkbox" checked />
+        </label>
+        <label class="debug-row" for="dbg-spin">
+          <span>Rotate</span>
+          <input id="dbg-spin" class="debug-switch" type="checkbox" checked />
+        </label>
+        <label class="debug-row" for="dbg-shift-view">
+          <span>Shift view</span>
+          <input id="dbg-shift-view" class="debug-switch" type="checkbox" />
+        </label>
+      </div>
+      <div class="debug-footer">
+        <button id="dbg-reset-factory" class="debug-reset-btn" type="button">Reset to factory</button>
+      </div>
+    </aside>
 
     <div class="help-backdrop" id="help-modal" hidden>
       <div class="help-card" role="dialog" aria-modal="true" aria-label="Controls">
