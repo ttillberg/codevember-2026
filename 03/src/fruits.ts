@@ -104,16 +104,32 @@ export interface FruitAssembly {
 }
 
 /**
- * Generates a watertight, beveled 3D sliced strawberry wedge/slab geometry
- * matching `strawberryBoundaryRadius(angle)` with sculpted scalloped seed edge.
+ * Smooth minimum for gently beveled organic knife-cut edges (never harsh self-intersecting corners).
  */
-function createStrawberrySliceGeometry(seed: number, thickness = 0.16): THREE.BufferGeometry {
-  const rand = mulberry32(seed);
+function smoothMin(a: number, b: number, k: number): number {
+  const h = Math.max(k - Math.abs(a - b), 0) / k;
+  return Math.min(a, b) - h * h * k * 0.25;
+}
+
+/**
+ * Generates a watertight, beveled 3D strawberry piece geometry mapped seamlessly onto the
+ * canonical procedural strawberry texture (`strawberryBoundaryRadius`):
+ * - variant 0: full classic heart cross-section slice
+ * - variant 1: cleanly halved slice (straight vertical or diagonal knife cut exposing juicy flesh)
+ * - variant 2: chunky quarter wedge (2 intersecting knife cuts, thicker bite)
+ * - variant 3: little diced strawberry piece (3–4 knife cuts, juicy bite-sized morsel)
+ */
+function createStrawberrySliceGeometry(seed: number, thickness = 0.16, variant = 0): THREE.BufferGeometry {
+  const rand = mulberry32(seed + variant * 197);
   const off = rand() * 30;
 
-  const segAng = 54;
+  const isHalf = variant === 1;
+  const isQuarter = variant === 2;
+  const isLittlePiece = variant === 3;
+
+  const segAng = isLittlePiece ? 36 : 54;
   const faceRings = [0.0, 0.22, 0.46, 0.68, 0.85, 0.955, 0.995];
-  // Outer bevel rings transitioning from front (+halfT) around curved crimson skin to back (-halfT)
+  // Outer bevel rings transitioning from front (+halfT) around curved skin/cut rim to back (-halfT)
   const bevelProfile: Array<{ rMul: number; zFrac: number; uvR: number }> = [
     { rMul: 1.012, zFrac: 0.84, uvR: 0.975 },
     { rMul: 1.028, zFrac: 0.48, uvR: 0.985 },
@@ -122,43 +138,176 @@ function createStrawberrySliceGeometry(seed: number, thickness = 0.16): THREE.Bu
     { rMul: 1.012, zFrac: -0.84, uvR: 0.975 },
   ];
 
-  const halfT = thickness * 0.5;
-  const positions: number[] = [];
-  const uvs: number[] = [];
-  const indices: number[] = [];
-
-  // Slight natural asymmetry & thickness taper (strawberry slice is slightly thicker at crown than tip)
+  // Slight natural asymmetry & thickness taper (whole/half are thin slices; quarters & diced pieces are chunkier!)
   const asymX = (rand() - 0.5) * 0.08;
   const warpPhase = rand() * Math.PI * 2;
+  const effThickness = isLittlePiece
+    ? 0.44 + rand() * 0.14
+    : isQuarter
+      ? 0.26 + rand() * 0.08
+      : isHalf
+        ? thickness * (1.06 + rand() * 0.16)
+        : thickness;
 
-  function evalRadius(angle: number): number {
+  // Define polar sweep origin (ox, oy) strictly inside the kept cut region + convex knife-cut half-planes
+  // Each plane keeps points where (x - ox)*nx + (y - oy)*ny <= dist (dist > 0)
+  let ox = 0;
+  let oy = 0;
+  const cutPlanes: Array<{ nx: number; ny: number; dist: number }> = [];
+
+  if (isHalf) {
+    // Vertical or tilted diagonal knife split right through the berry!
+    const cutAng = (rand() < 0.5 ? 0 : Math.PI) + (rand() - 0.5) * 0.95;
+    const dx = Math.cos(cutAng);
+    const dy = Math.sin(cutAng);
+    const cutShift = (rand() - 0.5) * 0.16;
+    const inward = 0.34;
+    ox = dx * (cutShift + inward);
+    oy = dy * (cutShift + inward);
+    // Outward normal of the knife plane points opposite to kept side (-dx, -dy) at distance `inward`
+    cutPlanes.push({ nx: -dx, ny: -dy, dist: inward });
+  } else if (isQuarter) {
+    // Crisp ~95–125° triangular quarter wedge with 2 straight knife edges & 1 curved seed-skin edge!
+    const midAng = rand() * Math.PI * 2;
+    const halfSpan = 0.82 + rand() * 0.24; // ~47°–61° each side -> ~94°–122° wedge
+    ox = Math.cos(midAng) * 0.36;
+    oy = Math.sin(midAng) * 0.36;
+    const a1 = midAng + halfSpan + Math.PI * 0.5;
+    const a2 = midAng - halfSpan - Math.PI * 0.5;
+    const d1 = 0.24 + rand() * 0.07;
+    const d2 = 0.24 + rand() * 0.07;
+    cutPlanes.push({ nx: Math.cos(a1), ny: Math.sin(a1), dist: d1 });
+    cutPlanes.push({ nx: Math.cos(a2), ny: Math.sin(a2), dist: d2 });
+  } else if (isLittlePiece) {
+    // Bite-sized diced strawberry morsel sampled from ruby skin rim, tip, or juicy marbled interior!
+    const sampAng = rand() * Math.PI * 2;
+    const sampR = 0.16 + rand() * 0.36;
+    ox = Math.cos(sampAng) * sampR;
+    oy = Math.sin(sampAng) * sampR;
+    const numCuts = rand() < 0.55 ? 4 : 3;
+    const baseRot = rand() * Math.PI * 2;
+    for (let c = 0; c < numCuts; c++) {
+      const ca = baseRot + (c / numCuts) * Math.PI * 2 + (rand() - 0.5) * 0.42;
+      cutPlanes.push({
+        nx: Math.cos(ca),
+        ny: Math.sin(ca),
+        dist: 0.24 + rand() * 0.14,
+      });
+    }
+  }
+
+  function evalWholeRadius(angle: number): number {
     const base = strawberryBoundaryRadius(angle);
-    // Subtle natural organic irregularity + scalloped achene dimples along perimeter
     const asym = 1.0 + asymX * Math.cos(angle);
     const organic = 1.0 + 0.025 * Math.sin(angle * 3.0 + warpPhase);
     const scallop = 1.0 + 0.012 * Math.cos(angle * 26.0);
     return base * asym * organic * scallop;
   }
 
-  function pushVertex(x: number, y: number, z: number, ux: number, uy: number) {
-    positions.push(x, y, z);
+  // Exact ray-distance from (ox, oy) along direction (ca, sa) to outer strawberry silhouette
+  function rayToBerryBoundary(ca: number, sa: number): number {
+    if (ox === 0 && oy === 0) {
+      return evalWholeRadius(Math.atan2(sa, ca));
+    }
+    let lo = 0.02;
+    let hi = 1.95;
+    for (let it = 0; it < 12; it++) {
+      const mid = 0.5 * (lo + hi);
+      const px = ox + ca * mid;
+      const py = oy + sa * mid;
+      const dist = Math.hypot(px, py);
+      const bound = evalWholeRadius(Math.atan2(py, px));
+      if (dist < bound) lo = mid;
+      else hi = mid;
+    }
+    return 0.5 * (lo + hi);
+  }
+
+  // Ray distance from (ox, oy) clipped smoothly against all knife-cut planes
+  function evalCutBoundary(ang: number): { r: number; isKnife: boolean } {
+    const ca = Math.cos(ang);
+    const sa = Math.sin(ang);
+    const rBerry = rayToBerryBoundary(ca, sa);
+    if (cutPlanes.length === 0) return { r: rBerry, isKnife: false };
+
+    let rKnife = 999;
+    for (const pl of cutPlanes) {
+      const proj = ca * pl.nx + sa * pl.ny;
+      if (proj > 1e-4) {
+        rKnife = Math.min(rKnife, pl.dist / proj);
+      }
+    }
+    const bevelK = isLittlePiece ? 0.055 : 0.048;
+    const rFinal = smoothMin(rBerry, rKnife, bevelK);
+    return { r: Math.max(0.04, rFinal), isKnife: rKnife < rBerry + 0.03 };
+  }
+
+  // Precompute boundary contour around (ox, oy) so we can center & normalize cut pieces cleanly to radius ~1!
+  const contourR = new Float32Array(segAng + 1);
+  const contourKnife = new Uint8Array(segAng + 1);
+  let sumX = 0;
+  let sumY = 0;
+  for (let ai = 0; ai < segAng; ai++) {
+    const ang = (ai / segAng) * Math.PI * 2 - Math.PI;
+    const cb = evalCutBoundary(ang);
+    contourR[ai] = cb.r;
+    contourKnife[ai] = cb.isKnife ? 1 : 0;
+    sumX += ox + Math.cos(ang) * cb.r;
+    sumY += oy + Math.sin(ang) * cb.r;
+  }
+  contourR[segAng] = contourR[0];
+  contourKnife[segAng] = contourKnife[0];
+
+  const meanX = cutPlanes.length > 0 ? sumX / segAng : 0;
+  const meanY = cutPlanes.length > 0 ? sumY / segAng : 0;
+  let maxExtent = 0.01;
+  if (cutPlanes.length > 0) {
+    for (let ai = 0; ai < segAng; ai++) {
+      const ang = (ai / segAng) * Math.PI * 2 - Math.PI;
+      const px = ox + Math.cos(ang) * contourR[ai] - meanX;
+      const py = oy + Math.sin(ang) * contourR[ai] - meanY;
+      maxExtent = Math.max(maxExtent, Math.hypot(px, py));
+    }
+  }
+  // Normalize cut pieces to ~0.96 local radius so `spec.radius` cleanly controls final world size!
+  const normScale = cutPlanes.length > 0 ? 0.96 / maxExtent : 1.0;
+  const halfT = effThickness * 0.5;
+
+  const positions: number[] = [];
+  const uvs: number[] = [];
+  const indices: number[] = [];
+
+  function pushVertex(wx: number, wy: number, z: number, ux: number, uy: number) {
+    positions.push((wx - meanX) * normScale, (wy - meanY) * normScale, z);
     uvs.push(clamp(0.5 + 0.5 * ux, 0.002, 0.998), clamp(0.5 + 0.5 * uy, 0.002, 0.998));
   }
 
   // Helper: subtle cut-face undulation
-  function faceZ(x: number, y: number, side: 1 | -1, rn: number): number {
-    const taper = 1.0 + 0.18 * y; // thicker near crown
-    const wave = (fbm3(x * 3.6 + off, y * 3.6, side * 1.7, 3) - 0.5) * 0.032;
-    const dome = 1.0 - 0.10 * rn * rn;
+  function faceZ(wx: number, wy: number, side: 1 | -1, rn: number): number {
+    const taper = 1.0 + 0.16 * clamp(wy, -1, 1);
+    const wave = (fbm3(wx * 3.6 + off, wy * 3.6, side * 1.7, 3) - 0.5) * 0.032;
+    const dome = 1.0 - (isLittlePiece ? 0.16 : 0.10) * rn * rn;
     return side * (halfT * taper * dome + wave);
   }
 
-  // Ring layout from front center -> front outer -> bevel -> back outer -> back center
+  // Map canonical strawberry coordinates (wx, wy) cleanly to procedural strawberry UV space
+  function toBerryUv(wx: number, wy: number, uvScale = 1.0): [number, number] {
+    if (cutPlanes.length === 0) {
+      const ang = Math.atan2(wy, wx);
+      const br = evalWholeRadius(ang);
+      const uvBr = strawberryBoundaryRadius(ang);
+      const ratio = br > 1e-4 ? (uvBr / br) * uvScale : uvScale;
+      return [wx * ratio, wy * ratio];
+    }
+    return [wx * uvScale, wy * uvScale];
+  }
+
   const ringOffsets: number[] = [];
 
-  // 1. Front center (1 vertex)
+  // 1. Front center
   const frontCenterIdx = 0;
-  pushVertex(0, 0, faceZ(0, 0, 1, 0), 0, 0);
+  const [cUx, cUy] = toBerryUv(ox, oy, 1.0);
+  pushVertex(ox, oy, faceZ(ox, oy, 1, 0), cUx, cUy);
 
   // 2. Front concentric rings
   for (let ri = 1; ri < faceRings.length; ri++) {
@@ -166,36 +315,31 @@ function createStrawberrySliceGeometry(seed: number, thickness = 0.16): THREE.Bu
     ringOffsets.push(positions.length / 3);
     for (let ai = 0; ai <= segAng; ai++) {
       const ang = (ai / segAng) * Math.PI * 2 - Math.PI;
-      const br = evalRadius(ang);
-      const r = br * rn;
-      const x = Math.cos(ang) * r;
-      const y = Math.sin(ang) * r;
-      // Map UV using canonical strawberryBoundaryRadius so seeds align cleanly with geometry rim
-      const uvBr = strawberryBoundaryRadius(ang);
-      const ux = Math.cos(ang) * uvBr * rn;
-      const uy = Math.sin(ang) * uvBr * rn;
-      pushVertex(x, y, faceZ(x, y, 1, rn), ux, uy);
+      const r = contourR[ai] * rn;
+      const wx = ox + Math.cos(ang) * r;
+      const wy = oy + Math.sin(ang) * r;
+      const [ux, uy] = toBerryUv(wx, wy, 1.0);
+      pushVertex(wx, wy, faceZ(wx, wy, 1, rn), ux, uy);
     }
   }
 
-  // 3. Bevel skin rings
+  // 3. Bevel rim rings (outer curved crimson skin on uncut sides, crisp juicy cut edge on knife sides!)
   for (let bi = 0; bi < bevelProfile.length; bi++) {
     const bp = bevelProfile[bi];
     ringOffsets.push(positions.length / 3);
     for (let ai = 0; ai <= segAng; ai++) {
       const ang = (ai / segAng) * Math.PI * 2 - Math.PI;
-      const br = evalRadius(ang);
-      // Extra subtle 3D dimple sculpting right along outer skin equator
-      const seedDimple = 1.0 - 0.015 * Math.pow(0.5 + 0.5 * Math.cos(ang * 26.0), 4.0) * (1 - Math.abs(bp.zFrac));
-      const r = br * bp.rMul * seedDimple;
-      const x = Math.cos(ang) * r;
-      const y = Math.sin(ang) * r;
-      const taper = 1.0 + 0.18 * y;
+      const isKnife = contourKnife[ai] === 1;
+      const seedDimple = isKnife
+        ? 1.0
+        : 1.0 - 0.015 * Math.pow(0.5 + 0.5 * Math.cos(ang * 26.0), 4.0) * (1 - Math.abs(bp.zFrac));
+      const r = contourR[ai] * (isKnife ? 1.0 + (bp.rMul - 1.0) * 0.55 : bp.rMul) * seedDimple;
+      const wx = ox + Math.cos(ang) * r;
+      const wy = oy + Math.sin(ang) * r;
+      const taper = 1.0 + 0.16 * clamp(wy, -1, 1);
       const z = halfT * taper * 0.90 * bp.zFrac;
-      const uvBr = strawberryBoundaryRadius(ang);
-      const ux = Math.cos(ang) * uvBr * bp.uvR;
-      const uy = Math.sin(ang) * uvBr * bp.uvR;
-      pushVertex(x, y, z, ux, uy);
+      const [ux, uy] = toBerryUv(wx, wy, isKnife ? 0.96 : bp.uvR);
+      pushVertex(wx, wy, z, ux, uy);
     }
   }
 
@@ -205,20 +349,17 @@ function createStrawberrySliceGeometry(seed: number, thickness = 0.16): THREE.Bu
     ringOffsets.push(positions.length / 3);
     for (let ai = 0; ai <= segAng; ai++) {
       const ang = (ai / segAng) * Math.PI * 2 - Math.PI;
-      const br = evalRadius(ang);
-      const r = br * rn;
-      const x = Math.cos(ang) * r;
-      const y = Math.sin(ang) * r;
-      const uvBr = strawberryBoundaryRadius(ang);
-      const ux = Math.cos(ang) * uvBr * rn;
-      const uy = Math.sin(ang) * uvBr * rn;
-      pushVertex(x, y, faceZ(x, y, -1, rn), ux, uy);
+      const r = contourR[ai] * rn;
+      const wx = ox + Math.cos(ang) * r;
+      const wy = oy + Math.sin(ang) * r;
+      const [ux, uy] = toBerryUv(wx, wy, 1.0);
+      pushVertex(wx, wy, faceZ(wx, wy, -1, rn), ux, uy);
     }
   }
 
   // 5. Back center
   const backCenterIdx = positions.length / 3;
-  pushVertex(0, 0, faceZ(0, 0, -1, 0), 0, 0);
+  pushVertex(ox, oy, faceZ(ox, oy, -1, 0), cUx, cUy);
 
   // Triangulate front cap fan (CCW facing +Z)
   const firstRing = ringOffsets[0];
@@ -256,13 +397,33 @@ function createStrawberrySliceGeometry(seed: number, thickness = 0.16): THREE.Bu
 
 /**
  * Generates a sculpted 3D blueberry with oblate shape, organic lumpiness,
- * and a true 3D recessed 5-pointed star calyx crown at +Y pole.
+ * a true 3D recessed 5-pointed star calyx crown at +Y pole, and natural squashed variants:
+ * - variant 0: plump whole blueberry
+ * - variant 1: gently squashed / pressed against mold wall (flat pressed cheek + wider bulge)
+ * - variant 2: heavily squashed / pinched berry (compressed disc-oval with soft crease fold)
  */
-function createBlueberryGeometry(seed: number): THREE.BufferGeometry {
-  const rand = mulberry32(seed);
+function createBlueberryGeometry(seed: number, variant = 0): THREE.BufferGeometry {
+  const rand = mulberry32(seed + variant * 151);
   const off = rand() * 40;
   const starPhase = rand() * Math.PI * 2;
-  const oblate = 0.85 + rand() * 0.06;
+  const isPressed = variant === 1;
+  const isHeavilySquashed = variant === 2;
+  const oblate = isHeavilySquashed
+    ? 0.50 + rand() * 0.12
+    : isPressed
+      ? 0.66 + rand() * 0.10
+      : 0.84 + rand() * 0.08;
+  const latSpreadX = isHeavilySquashed ? 1.18 + rand() * 0.16 : isPressed ? 1.08 + rand() * 0.12 : 0.96 + rand() * 0.08;
+  const latSpreadZ = isHeavilySquashed ? 1.12 + rand() * 0.16 : isPressed ? 1.04 + rand() * 0.12 : 0.96 + rand() * 0.08;
+
+  // Random side-press direction for organic squashed cheek & soft crease fold
+  let pressX = rand() * 2 - 1;
+  let pressY = (rand() - 0.5) * 0.8;
+  let pressZ = rand() * 2 - 1;
+  const pLen = Math.hypot(pressX, pressY, pressZ) || 1;
+  pressX /= pLen;
+  pressY /= pLen;
+  pressZ /= pLen;
 
   const segU = 32;
   const segV = 24;
@@ -277,19 +438,17 @@ function createBlueberryGeometry(seed: number): THREE.BufferGeometry {
     const phi = Math.acos(clamp(vy, -1, 1)); // 0 at +Y calyx pole, PI at -Y stem pole
     const theta = Math.atan2(vz, vx);
 
-    // Subtle organic berry lumpiness
-    const lump = 1.0 + (fbm3(vx * 2.6 + off, vy * 2.6, vz * 2.6, 3) - 0.5) * 0.085;
+    // Organic berry lumpiness (stronger soft wrinkling on squashed berries!)
+    const lumpAmp = isHeavilySquashed ? 0.16 : isPressed ? 0.12 : 0.085;
+    const lump = 1.0 + (fbm3(vx * 2.6 + off, vy * 2.6, vz * 2.6, 3) - 0.5) * lumpAmp;
 
     // 5-pointed star calyx crown at north pole (phi < 0.52)
     let rMod = lump;
     let yLift = 0;
     if (phi < 0.52) {
       const star = Math.pow(0.5 + 0.5 * Math.cos(theta * 5.0 + starPhase), 1.45);
-      // Sunken central crater
       const pit = 1.0 - smoothstep(0.0, 0.24, phi);
-      // Raised 5-point serrated sepal crest right around phi ~ 0.28
       const crest = Math.exp(-Math.pow((phi - 0.27) / 0.085, 2.0)) * (0.45 + 0.85 * star);
-      // Slight outer shoulder ring around calyx
       rMod *= 1.0 - pit * 0.20 + crest * 0.09;
       yLift += crest * 0.095 - pit * 0.14;
     }
@@ -300,7 +459,28 @@ function createBlueberryGeometry(seed: number): THREE.BufferGeometry {
       rMod *= 1.0 - dimp * 0.09;
     }
 
-    pos.setXYZ(i, vx * rMod, vy * oblate * rMod + yLift, vz * rMod);
+    let x = vx * rMod * latSpreadX;
+    let y = vy * oblate * rMod + yLift;
+    let z = vz * rMod * latSpreadZ;
+
+    // Flatten a natural pressed cheek / subtle bruised dent on squashed berries
+    if (isPressed || isHeavilySquashed) {
+      const sideDot = vx * pressX + vy * pressY + vz * pressZ;
+      if (sideDot > 0.28) {
+        const flatAmt = smoothstep(0.28, 0.92, sideDot) * (isHeavilySquashed ? 0.34 : 0.20);
+        x -= pressX * flatAmt;
+        y -= pressY * flatAmt * oblate;
+        z -= pressZ * flatAmt;
+      }
+      if (isHeavilySquashed) {
+        // Subtle soft skin crease pinch along the squished lobe
+        const crease = Math.exp(-Math.pow((sideDot - 0.15) / 0.18, 2.0)) * 0.085;
+        x *= 1.0 - crease;
+        z *= 1.0 - crease;
+      }
+    }
+
+    pos.setXYZ(i, x, y, z);
   }
 
   geo.computeVertexNormals();
@@ -557,8 +737,13 @@ function createBlueberryMaterial(textures: BlueberryTextures): {
  * Generates a realistic sculpted 3D aggregate drupelet raspberry:
  * - Properly outward-wound solid plump drupelets packed tightly around a deep ruby core (never hollow/transparent!)
  * - A tiny delicate curved botanical hair (style) emerging from each outer drupelet ball
- * - Organic form variants: 0 = whole (gently irregular/pressed), 1 = squashed/compressed, 2 = halved longitudinal cup
- * - Natural per-drupelet color variation plus occasional odd-colored drupelets (pale blush-pink, peach-coral, deep wine)
+ * - Organic form variants:
+ *   0 = whole (gently irregular/pressed)
+ *   1 = squashed/compressed
+ *   2 = halved longitudinal cup (hollow pale-rose inner wall)
+ *   3 = quarter wedge (~115° curved arc of drupelets + partial inner cup)
+ *   4 = small broken bit (torn cluster of 3–6 plump drupelets)
+ *   5 = loose drupelet ball(s) (1 single plump raspberry ball or a tiny pair of 2 balls)
  */
 function createRaspberryGeometry(seed: number, variant = 0): THREE.BufferGeometry {
   const rand = mulberry32(seed * 73 + 19 + variant * 131);
@@ -571,17 +756,20 @@ function createRaspberryGeometry(seed: number, variant = 0): THREE.BufferGeometr
 
   const isSquashed = variant === 1;
   const isHalved = variant === 2;
+  const isQuarter = variant === 3;
+  const isSmallBit = variant === 4;
+  const isLooseBall = variant === 5;
 
-  // Organic global deformation per berry (applied primarily to drupelet layout so squashed berries stay plump, never jellybean-stretched!)
+  // Organic global deformation per berry (applied primarily to drupelet layout so squashed berries stay plump!)
   const squashX = isSquashed ? 1.12 + rand() * 0.14 : 0.94 + rand() * 0.12;
   const squashY = isSquashed ? 0.90 + rand() * 0.12 : 0.96 + rand() * 0.10;
-  const squashZ = isSquashed ? 0.54 + rand() * 0.12 : isHalved ? 0.92 + rand() * 0.08 : 0.82 + rand() * 0.14;
+  const squashZ = isSquashed ? 0.54 + rand() * 0.12 : isHalved || isQuarter ? 0.92 + rand() * 0.08 : 0.86 + rand() * 0.14;
   // Local drupelet keeps plump roundness (only gently flattened by ~28% of berry squash)
   const localSqX = 1.0 + (squashX - 1.0) * 0.28;
   const localSqY = 1.0 + (squashY - 1.0) * 0.28;
   const localSqZ = 1.0 + (squashZ - 1.0) * 0.34;
-  const bendX = (rand() - 0.5) * 0.16;
-  const bendZ = (rand() - 0.5) * 0.12;
+  const bendX = isSmallBit || isLooseBall ? 0 : (rand() - 0.5) * 0.16;
+  const bendZ = isSmallBit || isLooseBall ? 0 : (rand() - 0.5) * 0.12;
 
   function srgbToLin(c: number): number {
     const v = clamp(c, 0, 1);
@@ -825,101 +1013,180 @@ function createRaspberryGeometry(seed: number, variant = 0): THREE.BufferGeometr
     }
   }
 
-  if (isHalved) {
-    // Sculpted hollow inner receptacle cup wall (the iconic velvety pale-rose arch inside a halved raspberry!)
-    const cupU = 14;
-    const cupV = 10;
-    const cupStart = vertBase;
-    for (let iv = 0; iv <= cupV; iv++) {
-      const t = iv / cupV; // 0 = top stem opening (+0.58), 1 = rounded inner cup bottom (-0.60)
-      const y = 0.58 - t * 1.18;
-      const cupR = 0.44 * Math.pow(Math.max(0.02, 1.0 - t * t * 0.94), 0.56);
-      for (let iu = 0; iu <= cupU; iu++) {
-        // Semicircle in -Z (back concave wall facing +Z viewer!)
-        const ang = Math.PI + (iu / cupU) * Math.PI; // PI..2*PI -> sin(ang) <= 0 (-Z)
-        const ca = Math.cos(ang);
-        const sa = Math.sin(ang);
-        const lx = ca * cupR;
-        const lz = sa * cupR * 0.92 + 0.05;
-        const [dx, dy, dz] = deformCenter(lx, y, lz);
-        positions.push(dx, dy, dz);
-
-        // Inward-facing cup normal pointing toward +Z open cavity
-        let nx = -ca / squashX;
-        let ny = (t * 0.55) / squashY;
-        let nz = -sa / squashZ;
-        const nLen = Math.hypot(nx, ny, nz) || 1;
-        normals.push(nx / nLen, ny / nLen, nz / nLen);
-        uvs.push(iu / cupU, t);
-
-        // Velvety pale rose-crimson hollow core wall, deeper ruby-maroon deep inside the cup!
-        const rimGlow = smoothstep(0.15, 1.0, Math.abs(ca));
-        const depthAO = 0.42 + 0.46 * rimGlow + 0.14 * (1 - t);
-        colors.push(
-          srgbToLin(clamp((0.76 + 0.12 * rimGlow) * depthAO, 0, 1)),
-          srgbToLin(clamp((0.24 + 0.20 * rimGlow) * depthAO, 0, 1)),
-          srgbToLin(clamp((0.30 + 0.18 * rimGlow) * depthAO, 0, 1)),
-        );
-        hairFlags.push(0.0);
-      }
+  if (isLooseBall) {
+    // Individual loose raspberry drupelet ball (or cozy twin pair of 2 clinging balls!)
+    const isPair = rand() < 0.36;
+    if (isPair) {
+      const colA = pickDrupeletColor(rand() < 0.14);
+      const colB = pickDrupeletColor(rand() < 0.12);
+      const rA = 0.64 + rand() * 0.08;
+      const rB = 0.56 + rand() * 0.10;
+      addDrupelet(-0.42, 0.05, 0.04, rA, 1.0, colA, true, false);
+      addDrupelet(0.44, -0.06, -0.04, rB, 1.0, colB, true, false);
+    } else {
+      const col = pickDrupeletColor(rand() < 0.18);
+      addDrupelet(0, 0, 0, 0.92, 1.0, col, true, false);
     }
-    const cupStride = cupU + 1;
-    for (let iv = 0; iv < cupV; iv++) {
-      for (let iu = 0; iu < cupU; iu++) {
-        const a = cupStart + iv * cupStride + iu;
-        const b = a + 1;
-        const c = a + cupStride;
-        const d = c + 1;
-        pushOutwardTri(a, b, c);
-        pushOutwardTri(b, d, c);
-      }
+  } else if (isSmallBit) {
+    // Torn small raspberry fragment: organic tight cluster of 3–6 plump drupelets!
+    const bitCount = 3 + Math.floor(rand() * 4); // 3..6 drupelets
+    const anchors: Array<[number, number, number]> = [
+      [0.0, 0.0, 0.06],
+      [0.54, 0.16, -0.04],
+      [-0.48, 0.24, -0.06],
+      [0.12, -0.50, -0.05],
+      [-0.42, -0.34, 0.08],
+      [0.50, -0.36, 0.12],
+    ];
+    for (let b = 0; b < bitCount; b++) {
+      const [ax, ay, az] = anchors[b];
+      const jx = (rand() - 0.5) * 0.16;
+      const jy = (rand() - 0.5) * 0.16;
+      const jz = (rand() - 0.5) * 0.14;
+      const dr = 0.40 + rand() * 0.12;
+      const col = pickDrupeletColor(b === bitCount - 1 && rand() < 0.30);
+      addDrupelet(ax + jx, ay + jy, az + jz, dr, 0.98, col, true, false);
     }
-    vertBase += (cupV + 1) * cupStride;
   } else {
-    // Solid deep burgundy-ruby core underneath drupelets so ZERO background can ever peek between packed balls!
-    addDrupelet(0, -0.04, 0, 0.62, 0.34, [0.40, 0.025, 0.095], false, false);
+    if (isHalved || isQuarter) {
+      // Sculpted hollow inner receptacle cup wall (180° for half, ~110° curved arc for quarter!)
+      const cupU = isQuarter ? 9 : 14;
+      const cupV = 10;
+      const cupStart = vertBase;
+      const cupAngStart = Math.PI;
+      const cupAngSpan = isQuarter ? Math.PI * 0.62 : Math.PI;
+      for (let iv = 0; iv <= cupV; iv++) {
+        const t = iv / cupV; // 0 = top stem opening (+0.58), 1 = rounded inner cup bottom (-0.60)
+        const y = 0.58 - t * 1.18;
+        const cupR = 0.44 * Math.pow(Math.max(0.02, 1.0 - t * t * 0.94), 0.56);
+        for (let iu = 0; iu <= cupU; iu++) {
+          const ang = cupAngStart + (iu / cupU) * cupAngSpan;
+          const ca = Math.cos(ang);
+          const sa = Math.sin(ang);
+          const lx = ca * cupR;
+          const lz = sa * cupR * 0.92 + 0.05;
+          const [dx, dy, dz] = deformCenter(lx, y, lz);
+          positions.push(dx, dy, dz);
+
+          // Inward-facing cup normal pointing toward open cavity
+          let nx = -ca / squashX;
+          let ny = (t * 0.55) / squashY;
+          let nz = -sa / squashZ;
+          const nLen = Math.hypot(nx, ny, nz) || 1;
+          normals.push(nx / nLen, ny / nLen, nz / nLen);
+          uvs.push(iu / cupU, t);
+
+          const rimGlow = smoothstep(0.15, 1.0, Math.abs(ca));
+          const depthAO = 0.42 + 0.46 * rimGlow + 0.14 * (1 - t);
+          colors.push(
+            srgbToLin(clamp((0.76 + 0.12 * rimGlow) * depthAO, 0, 1)),
+            srgbToLin(clamp((0.24 + 0.20 * rimGlow) * depthAO, 0, 1)),
+            srgbToLin(clamp((0.30 + 0.18 * rimGlow) * depthAO, 0, 1)),
+          );
+          hairFlags.push(0.0);
+        }
+      }
+      const cupStride = cupU + 1;
+      for (let iv = 0; iv < cupV; iv++) {
+        for (let iu = 0; iu < cupU; iu++) {
+          const a = cupStart + iv * cupStride + iu;
+          const b = a + 1;
+          const c = a + cupStride;
+          const d = c + 1;
+          pushOutwardTri(a, b, c);
+          pushOutwardTri(b, d, c);
+        }
+      }
+      vertBase += (cupV + 1) * cupStride;
+    } else {
+      // Solid deep burgundy-ruby core underneath drupelets so ZERO background can ever peek between packed balls!
+      addDrupelet(0, -0.04, 0, 0.62, 0.34, [0.40, 0.025, 0.095], false, false);
+    }
+
+    // Staggered organic drupelet rings forming the lush conical aggregate raspberry silhouette
+    const rings: Array<{ y: number; ringR: number; count: number; drupR: number; phase: number }> = [
+      { y: 0.56, ringR: 0.44, count: 8, drupR: 0.295, phase: rand() * 6.28 },
+      { y: 0.18, ringR: 0.61, count: 10, drupR: 0.325, phase: rand() * 6.28 },
+      { y: -0.24, ringR: 0.56, count: 9, drupR: 0.315, phase: rand() * 6.28 },
+      { y: -0.62, ringR: 0.36, count: 6, drupR: 0.290, phase: rand() * 6.28 },
+    ];
+
+    const oddTargetIdx = rand() < 0.58 ? Math.floor(rand() * 26) : -1;
+    let drupIdx = 0;
+
+    for (const ring of rings) {
+      for (let k = 0; k < ring.count; k++) {
+        const ang = ring.phase + (k / ring.count) * Math.PI * 2 + (rand() - 0.5) * 0.16;
+        const rr = ring.ringR * (0.93 + rand() * 0.13);
+        const cx = Math.cos(ang) * rr;
+        const cz = Math.sin(ang) * rr;
+        const cy = ring.y + (rand() - 0.5) * 0.08;
+        if (isHalved && cz > 0.18) {
+          drupIdx++;
+          continue;
+        }
+        if (isQuarter && (cz > 0.16 || cx > 0.20)) {
+          drupIdx++;
+          continue;
+        }
+        const dr = ring.drupR * (0.91 + rand() * 0.18);
+        const col = pickDrupeletColor(drupIdx === oddTargetIdx);
+        addDrupelet(cx, cy, cz, dr, 0.98, col, true, isHalved || isQuarter);
+        drupIdx++;
+      }
+    }
+    // Rounded apex tip drupelet
+    addDrupelet(
+      isQuarter ? -0.14 : (rand() - 0.5) * 0.06,
+      -0.82,
+      isHalved || isQuarter ? -0.12 : (rand() - 0.5) * 0.06,
+      0.29,
+      1.0,
+      pickDrupeletColor(false),
+      true,
+      isHalved || isQuarter,
+    );
   }
 
-  // Staggered organic drupelet rings forming the lush conical aggregate raspberry silhouette
-  const rings: Array<{ y: number; ringR: number; count: number; drupR: number; phase: number }> = [
-    { y: 0.56, ringR: 0.44, count: 8, drupR: 0.295, phase: rand() * 6.28 },
-    { y: 0.18, ringR: 0.61, count: 10, drupR: 0.325, phase: rand() * 6.28 },
-    { y: -0.24, ringR: 0.56, count: 9, drupR: 0.315, phase: rand() * 6.28 },
-    { y: -0.62, ringR: 0.36, count: 6, drupR: 0.290, phase: rand() * 6.28 },
-  ];
-
-  // Give ~58% of berries one intentional odd-colored drupelet (subtle & natural, never overdone!)
-  const oddTargetIdx = rand() < 0.58 ? Math.floor(rand() * 26) : -1;
-  let drupIdx = 0;
-
-  for (const ring of rings) {
-    for (let k = 0; k < ring.count; k++) {
-      const ang = ring.phase + (k / ring.count) * Math.PI * 2 + (rand() - 0.5) * 0.16;
-      const rr = ring.ringR * (0.93 + rand() * 0.13);
-      const cx = Math.cos(ang) * rr;
-      const cz = Math.sin(ang) * rr;
-      const cy = ring.y + (rand() - 0.5) * 0.08;
-      if (isHalved && cz > 0.18) {
-        drupIdx++;
-        continue;
+  // Re-center & normalize partial/cluster variants (quarter, small bit, loose ball) around (0,0,0) for clean 3D physics!
+  if (isQuarter || isSmallBit || isLooseBall) {
+    const vCount = positions.length / 3;
+    if (vCount > 0) {
+      let mx = 0, my = 0, mz = 0;
+      for (let i = 0; i < vCount; i++) {
+        mx += positions[i * 3];
+        my += positions[i * 3 + 1];
+        mz += positions[i * 3 + 2];
       }
-      const dr = ring.drupR * (0.91 + rand() * 0.18);
-      const col = pickDrupeletColor(drupIdx === oddTargetIdx);
-      addDrupelet(cx, cy, cz, dr, 0.98, col, true, isHalved);
-      drupIdx++;
+      mx /= vCount; my /= vCount; mz /= vCount;
+      let maxR = 0.01;
+      for (let i = 0; i < vCount; i++) {
+        const px = positions[i * 3] - mx;
+        const py = positions[i * 3 + 1] - my;
+        const pz = positions[i * 3 + 2] - mz;
+        positions[i * 3] = px;
+        positions[i * 3 + 1] = py;
+        positions[i * 3 + 2] = pz;
+        if (hairFlags[i] < 0.2) {
+          maxR = Math.max(maxR, Math.hypot(px, py, pz));
+        }
+      }
+      const norm = 0.96 / maxR;
+      for (let i = 0; i < positions.length; i++) {
+        positions[i] *= norm;
+      }
     }
   }
-  // Rounded apex tip drupelet
-  addDrupelet(
-    (rand() - 0.5) * 0.06,
-    -0.82,
-    isHalved ? -0.10 : (rand() - 0.5) * 0.06,
-    0.29,
-    1.0,
-    pickDrupeletColor(false),
-    true,
-    isHalved,
-  );
+
+  // Per-vertex translucency weight (aDrupThin): loose drupelet balls & torn bits glow intensely like sea glass,
+  // while outer drupelet domes on whole/halved/quartered berries glow brighter than recessed inner crevices!
+  const vCountTotal = positions.length / 3;
+  const drupThin = new Float32Array(vCountTotal);
+  const fragThinBase = isLooseBall ? 1.0 : isSmallBit ? 0.90 : isQuarter ? 0.78 : isHalved ? 0.68 : isSquashed ? 0.56 : 0.46;
+  for (let i = 0; i < vCountTotal; i++) {
+    const rad = Math.min(1.0, Math.hypot(positions[i * 3], positions[i * 3 + 1], positions[i * 3 + 2]));
+    drupThin[i] = clamp(fragThinBase * (0.48 + 0.52 * rad), 0.15, 1.0);
+  }
 
   const geo = new THREE.BufferGeometry();
   geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
@@ -927,6 +1194,7 @@ function createRaspberryGeometry(seed: number, variant = 0): THREE.BufferGeometr
   geo.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
   geo.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
   geo.setAttribute('aHair', new THREE.Float32BufferAttribute(hairFlags, 1));
+  geo.setAttribute('aDrupThin', new THREE.Float32BufferAttribute(drupThin, 1));
   geo.setIndex(indices);
   return geo;
 }
@@ -1088,7 +1356,7 @@ function createRaspberryMaterial(tex: ToppingTextureSet): {
     vertexColors: true,
     envMapIntensity: 0.18,
   });
-  material.customProgramCacheKey = () => 'raspberry-wetthaw-v4';
+  material.customProgramCacheKey = () => 'raspberry-seaglass-v5';
   material.onBeforeCompile = (shader) => {
     shader.uniforms.uThaw = uThaw;
     shader.vertexShader = shader.vertexShader
@@ -1096,16 +1364,19 @@ function createRaspberryMaterial(tex: ToppingTextureSet): {
         '#include <common>',
         `#include <common>
         attribute float aHair;
+        attribute float aDrupThin;
         varying vec3 vRaspWorldPos;
         varying vec3 vRaspWorldNormal;
-        varying float vHair;`,
+        varying float vHair;
+        varying float vDrupThin;`,
       )
       .replace(
         '#include <worldpos_vertex>',
         `#include <worldpos_vertex>
         vRaspWorldPos = (modelMatrix * vec4(transformed, 1.0)).xyz;
         vRaspWorldNormal = normalize(mat3(modelMatrix) * objectNormal);
-        vHair = aHair;`,
+        vHair = aHair;
+        vDrupThin = aDrupThin;`,
       );
     shader.fragmentShader = shader.fragmentShader
       .replace(
@@ -1114,7 +1385,8 @@ function createRaspberryMaterial(tex: ToppingTextureSet): {
         uniform float uThaw;
         varying vec3 vRaspWorldPos;
         varying vec3 vRaspWorldNormal;
-        varying float vHair;`,
+        varying float vHair;
+        varying float vDrupThin;`,
       )
       .replace(
         '#include <color_fragment>',
@@ -1123,8 +1395,8 @@ function createRaspberryMaterial(tex: ToppingTextureSet): {
           // Preserve per-drupelet color diversity (rich ruby, pale blush-pink, peach, deep plum) while deepening slightly when wet!
           float thaw = clamp(uThaw, 0.0, 1.0);
           float hairMask = clamp(vHair, 0.0, 1.0);
-          vec3 wetDeep = pow(max(diffuseColor.rgb, vec3(0.0001)), vec3(1.12));
-          diffuseColor.rgb = mix(diffuseColor.rgb, wetDeep, (0.20 + thaw * 0.48) * (1.0 - hairMask));
+          vec3 wetDeep = pow(max(diffuseColor.rgb, vec3(0.0001)), vec3(1.10));
+          diffuseColor.rgb = mix(diffuseColor.rgb, wetDeep, (0.14 + thaw * 0.42) * (1.0 - hairMask));
         }`,
       )
       .replace(
@@ -1132,7 +1404,7 @@ function createRaspberryMaterial(tex: ToppingTextureSet): {
         `#include <roughnessmap_fragment>
         {
           float hairMask = clamp(vHair, 0.0, 1.0);
-          float wetRough = mix(roughnessFactor, min(roughnessFactor, 0.22), clamp(uThaw, 0.0, 1.0) * 0.72);
+          float wetRough = mix(roughnessFactor, min(roughnessFactor, 0.20), clamp(uThaw, 0.0, 1.0) * 0.72);
           roughnessFactor = mix(wetRough, 0.86, hairMask);
         }`,
       )
@@ -1146,27 +1418,65 @@ function createRaspberryMaterial(tex: ToppingTextureSet): {
           float thaw = clamp(uThaw, 0.0, 1.0);
           float hairMask = clamp(vHair, 0.0, 1.0);
           float fleshMask = 1.0 - hairMask;
+          float dThin = clamp(vDrupThin, 0.15, 1.0);
+
+          // Camera-aligned rear studio lightbox direction so backlit sea-glass glow works 360°!
+          vec3 rCamH = normalize(vec3(cameraPosition.x, 0.0, cameraPosition.z) + vec3(0.0, 0.0, 1e-5));
+          vec3 backL = normalize(-rCamH + vec3(0.0, 0.24, 0.0));
 
           // Keep individual drupelet edges clean (no white HDR plastic rings!)
           float rimMask = smoothstep(0.08, 0.58, ndv);
           reflectedLight.indirectSpecular *= mix(0.06, 0.42, rimMask) * fleshMask;
           reflectedLight.directSpecular *= mix(0.15, 0.85, rimMask) * fleshMask;
 
-          // Slightly translucent (NOT transparent!) juicy drupelet subsurface scattering:
-          // - Subtle darker inner seed depth right at drupelet center (ndv^2)
-          // - Luminous warm backlit translucent ruby/blush glow through the thinner rounded drupelet shoulders!
-          float seedCore = pow(ndv, 2.2) * 0.20 * fleshMask;
+          // === FROSTED SEA-GLASS TRANSLUCENCY (Beer-Lambert + Henyey-Greenstein + Light-Piping + Frost Veil) ===
+          vec3 baseCol = clamp(diffuseColor.rgb, vec3(0.025), vec3(0.98));
+          // Optical path through each plump drupelet: thin & radiant along curved shoulders, deeper jewel core at center
+          float drupThick = mix(0.16, 1.02, pow(ndv, 1.32)) * mix(1.20, 0.54, dThin);
+          vec3 sigma = max(-log(max(baseCol, vec3(0.02))) * 1.75, vec3(0.28));
+          vec3 beer = exp(-sigma * drupThick);
+          vec3 volOpacity = vec3(1.0) - exp(-(sigma + vec3(0.62)) * drupThick * 0.88);
+
+          // Henyey-Greenstein forward scattering + soft backlit & wrap transmission (warm carnelian sea-glass glow!)
+          float cosL = dot(-vDir, backL);
+          float g = 0.45;
+          float hg = (1.0 - g * g) / (12.56637 * pow(max(0.08, 1.0 + g * g - 2.0 * g * cosL), 1.5));
+          float backLit = pow(clamp(dot(-nDir, backL) * 0.5 + 0.5, 0.0, 1.0), 1.45);
+          float frontWrap = pow(clamp(dot(nDir, backL) * 0.5 + 0.5, 0.0, 1.0), 1.35);
+          float colLuma = dot(baseCol, vec3(0.30, 0.59, 0.11));
+          // Prevent already-pale unripe pink drupelets from blowing out to white while boosting rich ruby backlit translucency!
+          float paleTame = mix(1.0, 0.48, smoothstep(0.28, 0.68, colLuma));
+          vec3 warmBack = vec3(1.58, 1.16, 0.94);
+          vec3 keySss = warmBack * (hg * 0.50 + backLit * 0.48 + frontWrap * 0.30) * paleTame;
+
+          // Subtle inner seed core depth at center of each drupelet so translucent glowing rims pop in 3D!
+          float seedCore = pow(ndv, 2.3) * 0.22 * (1.0 - dThin * 0.35) * fleshMask;
           reflectedLight.directDiffuse *= (1.0 - seedCore);
           reflectedLight.indirectDiffuse *= (1.0 - seedCore * 0.65);
 
-          float thinGlow = pow(1.0 - ndv, 1.65) * smoothstep(0.04, 0.44, ndv);
-          vec3 sssTint = max(diffuseColor.rgb, vec3(0.035)) * vec3(1.52, 0.54, 0.68) + diffuseColor.rgb * vec3(0.28, 0.08, 0.12);
-          reflectedLight.directDiffuse += sssTint * (0.30 + 0.84 * thinGlow) * fleshMask;
+          // Backlit transmitted jewel glow + volumetric internal scatter
+          vec3 solidAlb = baseCol * mix(vec3(0.46), vec3(1.22), beer);
+          vec3 throughGlow = warmBack * beer * (0.34 + 0.48 * dThin) * paleTame;
+          vec3 internalScatter = keySss * solidAlb * volOpacity * (0.60 + 0.28 * dThin);
 
-          // Signature microscopic peach-fuzz velvety halo on fresh raspberry skin (softens when wet/thawed!)
-          float velvetFuzz = pow(1.0 - ndv, 3.0) * (1.0 - thaw * 0.58) * fleshMask;
-          vec3 fuzzCol = mix(diffuseColor.rgb * 1.45 + vec3(0.16, 0.07, 0.10), vec3(0.94, 0.72, 0.76), 0.52);
-          reflectedLight.indirectDiffuse += fuzzCol * velvetFuzz * 0.24;
+          // Thin-edge rim glow & internal light-piping (luminous carnelian/ruby edges instead of dark silhouettes!)
+          float thinness = 1.0 - smoothstep(0.14, 0.68, drupThick);
+          vec3 rimGlow = warmBack * (0.40 + 0.48 * backLit) * baseCol * thinness * (0.66 + 0.48 * dThin) * paleTame;
+          float pipe = pow(1.0 - ndv, 2.0) * smoothstep(0.04, 0.42, ndv);
+          vec3 pipeCol = exp(-sigma * 0.32) * vec3(1.48, 1.08, 0.94) * (0.44 + 0.40 * dThin) * paleTame;
+
+          vec3 transBody = throughGlow + internalScatter + rimGlow + pipeCol * pipe * 0.68;
+
+          // Silky frosted velvet veil (softly tinted by berry hue, melting cleanly into glossy wet ruby as uThaw rises!)
+          float frostAmt = 1.0 - thaw * 0.68;
+          float veil = frostAmt * (0.10 + 0.28 * pow(1.0 - ndv, 1.55)) * fleshMask;
+          vec3 veilCol = mix(vec3(0.96, 0.88, 0.86), baseCol * 1.28 + vec3(0.16, 0.05, 0.07), 0.56) * (0.64 + 0.36 * frontWrap);
+
+          // Blend luminous sea-glass translucency cleanly into the lit drupelet surface
+          vec3 combinedDiffuse = reflectedLight.directDiffuse + reflectedLight.indirectDiffuse + transBody * fleshMask;
+          combinedDiffuse = mix(combinedDiffuse, veilCol, veil * 0.72);
+          reflectedLight.directDiffuse = combinedDiffuse;
+          reflectedLight.indirectDiffuse = vec3(0.0);
 
           // Subtle soft backlit tint on each tiny protruding botanical hair (whisper-fine dusty rose-amber, never stark white!)
           if (hairMask > 0.05) {
@@ -1175,16 +1485,17 @@ function createRaspberryMaterial(tex: ToppingTextureSet): {
           }
 
           // Soft velvety satin sheen + delicate wet pinpoint on each plump drupelet crown (never plastic marble!)
-          vec3 lA = normalize(vec3(-0.50, 0.54, 0.68));
-          vec3 lB = normalize(vec3(0.56, 0.38, 0.73));
+          vec3 rCamR = vec3(rCamH.z, 0.0, -rCamH.x);
+          vec3 lA = normalize(-0.50 * rCamR + vec3(0.0, 0.54, 0.0) + 0.68 * rCamH);
+          vec3 lB = normalize( 0.56 * rCamR + vec3(0.0, 0.38, 0.0) + 0.73 * rCamH);
           vec3 hA = lA + vDir;
           hA *= inversesqrt(max(dot(hA, hA), 1e-8));
           vec3 hB = lB + vDir;
           hB *= inversesqrt(max(dot(hB, hB), 1e-8));
-          float softVelvet = pow(max(dot(nDir, hA), 0.0), 42.0) * 0.22 + pow(max(dot(nDir, hB), 0.0), 34.0) * 0.12;
+          float softVelvet = pow(max(dot(nDir, hA), 0.0), 38.0) * 0.20 + pow(max(dot(nDir, hB), 0.0), 32.0) * 0.11;
           float spA = pow(max(dot(nDir, hA), 0.0), 115.0);
           float spB = pow(max(dot(nDir, hB), 0.0), 88.0);
-          reflectedLight.directSpecular += vec3(1.32, 1.08, 1.16) * (softVelvet + (spA * 0.48 + spB * 0.24) * (0.24 + 0.76 * thaw)) * fleshMask;
+          reflectedLight.directSpecular += vec3(1.36, 1.12, 1.18) * (softVelvet + (spA * 0.46 + spB * 0.24) * (0.24 + 0.76 * thaw)) * fleshMask;
         }`,
       );
   };
@@ -1264,155 +1575,215 @@ function buildFruitLayout(seed: number, recipe: PopsicleRecipe): FruitSpec[] {
   if (isDefaultHeroMix) {
     const j = (amt: number) => (rand() - 0.5) * amt;
     return [
-      // === STRAWBERRY SLICES (bite-sized, organic 3D pitches/curls — cleanly encased at t=0!) ===
-      // 1. Hero diagonal bite — upper right (noticeably cupped & bent along its seed rim!)
+      // === STRAWBERRY SLICES, CUT WEDGES & LITTLE PIECES (organic handmade variety!) ===
+      // 1. Hero whole slice — upper right
       {
         kind: 'strawberry',
         x: 0.19 + j(0.01),
         y: 0.45 + j(0.01),
         z: 0.010,
-        scale: [0.275, 0.325, 0.27],
+        scale: [0.265, 0.31, 0.26],
         rot: [0.36, -0.44, -0.62],
-        radius: 0.22,
-        baseBend: [0.26, 0.18, -0.18],
+        radius: 0.21,
+        baseBend: [0.24, 0.16, -0.16],
+        variant: 0,
       },
-      // 2. Hero glowing curved bite — mid left (pronounced soft arch/curl, tucked cleanly forward of stick!)
+      // 2. Halved curved strawberry slice — mid left
       {
         kind: 'strawberry',
         x: -0.24 + j(0.012),
         y: -0.09 + j(0.012),
         z: 0.042,
-        scale: [0.26, 0.295, 0.255],
-        rot: [-0.42, 0.56, 0.38],
-        radius: 0.21,
-        baseBend: [-0.34, 0.22, 0.22],
+        scale: [0.22, 0.245, 0.225],
+        rot: [-0.38, 0.52, 0.38],
+        radius: 0.195,
+        baseBend: [-0.28, 0.18, 0.18],
+        variant: 1,
       },
-      // 3. Fiery angled bite — bottom left (soft cupped curve across bottom-left corner)
+      // 3. Cut quarter wedge — bottom left
       {
         kind: 'strawberry',
         x: -0.26 + j(0.012),
         y: -0.73 + j(0.012),
         z: 0.008,
-        scale: [0.23, 0.265, 0.225],
-        rot: [0.46, 0.50, -0.98],
-        radius: 0.185,
-        baseBend: [0.28, -0.16, 0.20],
+        scale: [0.185, 0.205, 0.19],
+        rot: [0.44, 0.48, -0.92],
+        radius: 0.165,
+        baseBend: [0.12, -0.08, 0.08],
+        variant: 2,
       },
-      // 4. Warm ruby bite — mid-lower right (gentler natural bend for visual variety)
+      // 4. Whole ruby slice — mid-lower right
       {
         kind: 'strawberry',
         x: 0.21 + j(0.015),
         y: -0.44 + j(0.015),
         z: -0.022,
-        scale: [0.24, 0.275, 0.24],
-        rot: [-0.50, -0.58, 0.78],
-        radius: 0.195,
+        scale: [0.225, 0.26, 0.225],
+        rot: [-0.48, -0.56, 0.78],
+        radius: 0.185,
         baseBend: [-0.14, 0.12, -0.10],
+        variant: 0,
       },
-      // 5. Ruby berry crown fragment — very top dome
+      // 5. Little cut strawberry piece — very top dome
       {
         kind: 'strawberry',
         x: -0.01 + j(0.01),
-        y: 0.91 + j(0.01),
+        y: 0.90 + j(0.01),
         z: -0.008,
-        scale: [0.155, 0.125, 0.14],
+        scale: [0.115, 0.105, 0.11],
         rot: [0.58, 0.28, 2.82],
-        radius: 0.115,
-        baseBend: [0.22, 0.10, 0.12],
+        radius: 0.098,
+        baseBend: [0.06, 0.04, 0.04],
+        variant: 3,
       },
-      // 6. Small ruby accent wedge — upper mid-left (playful curled wedge)
+      // 6. Small strawberry quarter wedge — upper mid-left
       {
         kind: 'strawberry',
         x: -0.32 + j(0.015),
         y: 0.33 + j(0.015),
         z: -0.015,
-        scale: [0.138, 0.162, 0.145],
+        scale: [0.125, 0.14, 0.13],
         rot: [0.46, 0.62, -0.48],
-        radius: 0.12,
-        baseBend: [-0.26, -0.14, 0.16],
+        radius: 0.115,
+        baseBend: [-0.10, -0.06, 0.06],
+        variant: 2,
       },
-      // 7. Small warm wedge — bottom right corner
+      // 7. Little diced strawberry piece — bottom right corner
       {
         kind: 'strawberry',
         x: 0.33 + j(0.015),
         y: -0.81 + j(0.015),
         z: -0.010,
-        scale: [0.145, 0.165, 0.145],
+        scale: [0.095, 0.105, 0.10],
         rot: [-0.42, -0.54, 1.18],
-        radius: 0.12,
-        baseBend: [0.16, 0.12, -0.12],
+        radius: 0.088,
+        baseBend: [0.04, 0.04, -0.04],
+        variant: 3,
+      },
+      // 8. Extra tiny diced strawberry morsel — mid center-right
+      {
+        kind: 'strawberry',
+        x: 0.14 + j(0.015),
+        y: 0.08 + j(0.015),
+        z: 0.044,
+        scale: [0.082, 0.088, 0.086],
+        rot: [0.35, -0.40, 1.85],
+        radius: 0.075,
+        baseBend: [0.04, -0.03, 0.03],
+        variant: 3,
+      },
+      // 9. Extra little cut strawberry bite — lower-left shoulder
+      {
+        kind: 'strawberry',
+        x: -0.06 + j(0.015),
+        y: -0.24 + j(0.015),
+        z: 0.048,
+        scale: [0.076, 0.082, 0.08],
+        rot: [-0.30, 0.42, -1.25],
+        radius: 0.070,
+        baseBend: [0.03, 0.03, -0.02],
+        variant: 3,
       },
 
-      // === WHOLE SCULPTED BLUEBERRIES ===
-      // 1. Upper-left blueberry (deeper -> softly frosted through ice!)
+      // === SMALLER & ORGANICALLY SQUASHED BLUEBERRIES ===
+      // 1. Upper-left pressed blueberry
       {
         kind: 'blueberry',
         x: -0.17 + j(0.012),
         y: 0.65 + j(0.012),
         z: -0.034,
-        scale: [0.155, 0.155, 0.146],
+        scale: [0.132, 0.132, 0.125],
         rot: [1.15, 0.35, -0.25],
-        radius: 0.15,
+        radius: 0.128,
+        variant: 1,
       },
-      // 2. Mid-right blueberry (moderate depth -> velvety hazy contrast!)
+      // 2. Mid-right whole smaller blueberry
       {
         kind: 'blueberry',
         x: 0.36 + j(0.012),
         y: -0.07 + j(0.012),
         z: -0.022,
-        scale: [0.152, 0.152, 0.144],
+        scale: [0.118, 0.118, 0.112],
         rot: [1.28, -0.52, 0.35],
-        radius: 0.148,
+        radius: 0.114,
+        variant: 0,
       },
-      // 3. Lower center-left HERO blueberry (just under glossy front ice -> crisp calyx!)
+      // 3. Lower center-left HERO squashed blueberry (pressed against front mold!)
       {
         kind: 'blueberry',
         x: -0.155 + j(0.01),
         y: -0.45 + j(0.01),
         z: 0.028,
-        scale: [0.146, 0.146, 0.138],
+        scale: [0.122, 0.122, 0.116],
         rot: [1.18, 0.22, -0.18],
-        radius: 0.142,
+        radius: 0.118,
+        variant: 2,
       },
-      // 4. Lower center-right HERO blueberry (closest under thin front ice -> iconic 5-point star crown!)
+      // 4. Lower center-right HERO whole blueberry (crisp 5-point star calyx)
       {
         kind: 'blueberry',
         x: 0.075 + j(0.01),
         y: -0.63 + j(0.01),
         z: 0.034,
-        scale: [0.162, 0.162, 0.152],
+        scale: [0.136, 0.136, 0.128],
         rot: [1.46, -0.28, 0.38],
-        radius: 0.158,
+        radius: 0.132,
+        variant: 0,
       },
-      // 5. Bottom center-right nestled blueberry
+      // 5. Bottom center-right small baby blueberry
       {
         kind: 'blueberry',
         x: 0.21 + j(0.01),
         y: -0.84 + j(0.01),
         z: -0.004,
-        scale: [0.128, 0.128, 0.122],
+        scale: [0.094, 0.094, 0.090],
         rot: [1.35, 0.55, 0.12],
-        radius: 0.124,
+        radius: 0.092,
+        variant: 1,
       },
-      // 6. Deep left-edge berry peeking darkly at bottom-left
+      // 6. Deep left-edge squashed blueberry
       {
         kind: 'blueberry',
-        x: -0.43 + j(0.01),
+        x: -0.42 + j(0.01),
         y: -0.53 + j(0.01),
-        z: -0.032,
-        scale: [0.128, 0.128, 0.122],
+        z: -0.030,
+        scale: [0.104, 0.104, 0.098],
         rot: [1.22, 0.72, -0.4],
-        radius: 0.124,
+        radius: 0.100,
+        variant: 2,
       },
-      // 7. Lower-right edge berry
+      // 7. Lower-right edge small berry
       {
         kind: 'blueberry',
-        x: 0.42 + j(0.01),
+        x: 0.41 + j(0.01),
         y: -0.67 + j(0.01),
-        z: -0.026,
-        scale: [0.132, 0.132, 0.124],
+        z: -0.024,
+        scale: [0.098, 0.098, 0.092],
         rot: [1.10, -0.65, 0.22],
-        radius: 0.128,
+        radius: 0.095,
+        variant: 0,
+      },
+      // 8. Tiny wild blueberry tucked upper-mid right
+      {
+        kind: 'blueberry',
+        x: 0.31 + j(0.012),
+        y: 0.24 + j(0.012),
+        z: 0.022,
+        scale: [0.084, 0.084, 0.080],
+        rot: [1.38, -0.40, 0.50],
+        radius: 0.082,
+        variant: 1,
+      },
+      // 9. Tiny squashed blueberry tucked upper-left
+      {
+        kind: 'blueberry',
+        x: -0.34 + j(0.012),
+        y: -0.26 + j(0.012),
+        z: -0.018,
+        scale: [0.088, 0.088, 0.084],
+        rot: [1.24, 0.48, -0.35],
+        radius: 0.085,
+        variant: 2,
       },
     ];
   }
@@ -1431,7 +1802,12 @@ function buildFruitLayout(seed: number, recipe: PopsicleRecipe): FruitSpec[] {
     zBias: number,
     variant = 0,
   ): boolean {
-    const isSmallScatter = kind === 'shaved-lemon' || (kind === 'kaksmulor' && variant >= 2);
+    const isSmallScatter =
+      kind === 'shaved-lemon' ||
+      (kind === 'kaksmulor' && variant >= 2) ||
+      (kind === 'raspberry' && variant >= 4) ||
+      (kind === 'strawberry' && variant === 3) ||
+      (kind === 'blueberry' && radius < 0.096);
     for (let attempt = 0; attempt < 95; attempt++) {
       const y = yMin + rand() * (yMax - yMin);
       const hNorm = clamp((y - POPSICLE.yBottom) / (POPSICLE.yTop - POPSICLE.yBottom), 0, 1);
@@ -1449,14 +1825,18 @@ function buildFruitLayout(seed: number, recipe: PopsicleRecipe): FruitSpec[] {
 
       const halfThickZ =
         kind === 'strawberry'
-          ? radius * 0.44
+          ? variant >= 2
+            ? radius * 0.62
+            : radius * 0.44
           : kind === 'shaved-lemon'
             ? radius * 0.35
             : kind === 'kaksmulor' && variant < 2
               ? radius * 0.45
               : kind === 'chocolate'
                 ? radius * 0.62
-                : radius * 0.92;
+                : kind === 'blueberry' && variant >= 1
+                  ? radius * 0.68
+                  : radius * 0.92;
 
       const maxSafeZ = Math.max(-0.02, POPSICLE.halfDepth - halfThickZ - (isCoconut ? 0.018 : 0.032));
       let z: number;
@@ -1484,7 +1864,7 @@ function buildFruitLayout(seed: number, recipe: PopsicleRecipe): FruitSpec[] {
         const dx = x - p.x;
         const dy = y - p.y;
         const dz = (z - p.z) * 1.45;
-        const minDist = (radius + p.r) * (isSmallScatter ? 0.62 : 0.78);
+        const minDist = (radius + p.r) * (isSmallScatter ? 0.60 : 0.78);
         if (dx * dx + dy * dy + dz * dz < minDist * minDist) {
           ok = false;
           break;
@@ -1494,23 +1874,32 @@ function buildFruitLayout(seed: number, recipe: PopsicleRecipe): FruitSpec[] {
 
       placed.push({ x, y, z, r: radius });
       if (kind === 'strawberry') {
-        const s = radius * 1.22;
+        const isCutChunk = variant >= 2;
+        const s = isCutChunk ? radius * 1.08 : radius * 1.18;
         const signX = rand() < 0.5 ? -1 : 1;
         const signY = rand() < 0.5 ? -1 : 1;
         const bendSign = rand() < 0.5 ? -1 : 1;
-        const extraCurl = rand() < 0.55 ? 0.22 + rand() * 0.16 : 0.08 + rand() * 0.10;
-        // On coconut base, orient strawberry slices slightly flatter toward the front face like real paletas!
-        const pitch = isCoconut ? signX * (0.08 + rand() * 0.18) : signX * (0.28 + rand() * 0.36);
-        const yaw = isCoconut ? signY * (0.08 + rand() * 0.22) : signY * (0.32 + rand() * 0.42);
+        const bendAmp = isCutChunk ? 0.06 : rand() < 0.55 ? 0.22 + rand() * 0.14 : 0.08 + rand() * 0.10;
+        const pitch = isCoconut
+          ? signX * (0.08 + rand() * 0.22)
+          : isCutChunk
+            ? (rand() - 0.5) * 1.4
+            : signX * (0.28 + rand() * 0.36);
+        const yaw = isCoconut
+          ? signY * (0.08 + rand() * 0.24)
+          : isCutChunk
+            ? (rand() - 0.5) * 1.6
+            : signY * (0.32 + rand() * 0.42);
         specs.push({
           kind,
           x,
           y,
           z,
-          scale: [s * (0.94 + rand() * 0.12), s * (1.04 + rand() * 0.14), s],
-          rot: [pitch, yaw, (rand() - 0.5) * Math.PI * 1.8],
+          scale: [s * (0.94 + rand() * 0.12), s * (1.02 + rand() * 0.14), s],
+          rot: [pitch, yaw, (rand() - 0.5) * Math.PI * 1.9],
           radius,
-          baseBend: [bendSign * extraCurl, (rand() - 0.5) * 0.36, (rand() - 0.5) * 0.34],
+          baseBend: [bendSign * bendAmp, (rand() - 0.5) * (isCutChunk ? 0.08 : 0.34), (rand() - 0.5) * (isCutChunk ? 0.08 : 0.30)],
+          variant,
         });
       } else if (kind === 'blueberry') {
         specs.push({
@@ -1518,22 +1907,25 @@ function buildFruitLayout(seed: number, recipe: PopsicleRecipe): FruitSpec[] {
           x,
           y,
           z,
-          scale: [radius, radius, radius * 0.94],
-          rot: [1.0 + rand() * 0.65, (rand() - 0.5) * 1.4, (rand() - 0.5) * 1.2],
+          scale: [radius, radius, radius * (variant >= 1 ? 0.90 : 0.94)],
+          rot: [0.95 + rand() * 0.85, (rand() - 0.5) * 1.6, (rand() - 0.5) * 1.4],
           radius,
+          variant,
         });
       } else if (kind === 'raspberry') {
-        const isHalved = variant === 2;
+        const isCutCup = variant === 2 || variant === 3;
+        const isLoose = variant >= 4;
         specs.push({
           kind,
           x,
           y,
           z,
-          scale: [radius * 0.98, radius * 1.10, radius * 0.98],
-          // Halved berries angle slightly toward the viewer so their hollow cut cup peeks organically through the ice
-          rot: isHalved
+          scale: isLoose
+            ? [radius * (0.94 + rand() * 0.14), radius * (0.94 + rand() * 0.14), radius * (0.94 + rand() * 0.14)]
+            : [radius * 0.98, radius * 1.08, radius * 0.98],
+          rot: isCutCup
             ? [(rand() - 0.5) * 0.95, (rand() - 0.5) * 1.15, (rand() - 0.5) * 2.6]
-            : [(rand() - 0.5) * 2.2, (rand() - 0.5) * 2.8, (rand() - 0.5) * 2.4],
+            : [(rand() - 0.5) * 2.4, (rand() - 0.5) * 2.8, (rand() - 0.5) * 2.4],
           radius,
           variant,
         });
@@ -1598,20 +1990,65 @@ function buildFruitLayout(seed: number, recipe: PopsicleRecipe): FruitSpec[] {
       for (let n = 0; n < perKind; n++) {
         const [yMin, yMax] = zones[(n + k) % zones.length];
         if (kind === 'strawberry') {
-          const r = n < 2 ? 0.235 : n < 4 ? 0.195 : 0.15;
-          tryPlace(kind, r, yMin, yMax, n % 2 === 0 ? 0.042 : -0.015);
+          // Natural mix of whole slices (0), halved slices (1), chunky quarter wedges (2), and little pieces (3)!
+          const strawVariant = n === 0 ? 0 : n % 4 === 1 ? 1 : n % 4 === 2 ? 2 : n % 4 === 3 ? 3 : 0;
+          const r =
+            strawVariant === 0
+              ? 0.20 + rand() * 0.038
+              : strawVariant === 1
+                ? 0.165 + rand() * 0.036
+                : strawVariant === 2
+                  ? 0.13 + rand() * 0.032
+                  : 0.072 + rand() * 0.028;
+          tryPlace(kind, r, yMin, yMax, n % 2 === 0 ? 0.042 : -0.015, strawVariant);
         } else if (kind === 'blueberry') {
-          const r = 0.132 + rand() * 0.032;
-          tryPlace(kind, r, yMin, yMax, n % 3 === 0 ? 0.056 : -0.012);
+          // Smaller, varied wild-blueberry sizing + squashed/pressed organic variants!
+          const blueVariant = n % 3 === 1 ? 1 : n % 3 === 2 ? 2 : 0;
+          const r = 0.088 + rand() * 0.044;
+          tryPlace(kind, r, yMin, yMax, n % 3 === 0 ? 0.056 : -0.012, blueVariant);
         } else if (kind === 'raspberry') {
-          const r = 0.155 + rand() * 0.035;
-          // Mix whole (gently pressed), squashed, and halved raspberries for natural organic variety!
-          const raspVariant = n % 3 === 1 ? 1 : n % 3 === 2 ? 2 : 0;
+          // Mix whole (0), squashed (1), halved cup (2), and quarter wedge (3)!
+          const raspVariant = n % 4;
+          const r =
+            raspVariant === 3
+              ? 0.105 + rand() * 0.028
+              : raspVariant === 2
+                ? 0.13 + rand() * 0.03
+                : 0.14 + rand() * 0.032;
           tryPlace(kind, r, yMin, yMax, n % 2 === 0 ? 0.045 : -0.015, raspVariant);
         } else if (kind === 'chocolate') {
           const r = 0.088 + rand() * 0.038;
           tryPlace(kind, r, yMin, yMax, n % 2 === 0 ? 0.052 : -0.010);
         }
+      }
+    }
+
+    // Extra natural scatter of small broken fruit pieces, baby blueberries, and loose raspberry drupelet balls!
+    if (largePool.includes('raspberry')) {
+      const bitCount = largePool.length === 1 ? 6 : 4;
+      for (let n = 0; n < bitCount; n++) {
+        const r = 0.060 + rand() * 0.026;
+        tryPlace('raspberry', r, -0.84, 0.82, 0.048, 4); // small 3-6 drupelet broken bits
+      }
+      const ballCount = largePool.length === 1 ? 8 : 5;
+      for (let n = 0; n < ballCount; n++) {
+        const r = 0.036 + rand() * 0.018;
+        tryPlace('raspberry', r, -0.86, 0.84, 0.054, 5); // loose individual drupelet balls / pairs
+      }
+    }
+    if (largePool.includes('strawberry')) {
+      const morselCount = largePool.length === 1 ? 6 : 4;
+      for (let n = 0; n < morselCount; n++) {
+        const r = 0.058 + rand() * 0.032;
+        tryPlace('strawberry', r, -0.84, 0.82, 0.046, 3); // little diced strawberry pieces
+      }
+    }
+    if (largePool.includes('blueberry')) {
+      const babyCount = largePool.length === 1 ? 5 : 3;
+      for (let n = 0; n < babyCount; n++) {
+        const r = 0.068 + rand() * 0.024;
+        const v = rand() < 0.65 ? (rand() < 0.5 ? 1 : 2) : 0; // mostly squashed small baby blueberries
+        tryPlace('blueberry', r, -0.86, 0.80, 0.048, v);
       }
     }
   }
@@ -1867,7 +2304,7 @@ export function createFruitAssembly(seed: number, recipe: PopsicleRecipe = DEFAU
     switch (spec.kind) {
       case 'strawberry': {
         if (!strawTexA || !strawTexB) return;
-        geo = createStrawberrySliceGeometry(seed * 131 + idx * 17 + 5, 0.16 + rand() * 0.04);
+        geo = createStrawberrySliceGeometry(seed * 131 + idx * 17 + 5, 0.16 + rand() * 0.04, spec.variant ?? 0);
         const straw = createStrawberryMaterial(idx % 2 === 0 ? strawTexA : strawTexB);
         mat = straw.material;
         bendUniform = straw.uBend;
@@ -1876,7 +2313,7 @@ export function createFruitAssembly(seed: number, recipe: PopsicleRecipe = DEFAU
       }
       case 'blueberry': {
         if (!blueTexA || !blueTexB) return;
-        geo = createBlueberryGeometry(seed * 149 + idx * 23 + 11);
+        geo = createBlueberryGeometry(seed * 149 + idx * 23 + 11, spec.variant ?? 0);
         const blue = createBlueberryMaterial(idx % 2 === 0 ? blueTexA : blueTexB);
         mat = blue.material;
         thawUniform = blue.uThaw;

@@ -182,6 +182,39 @@ const BASE_TARGET = new THREE.Vector3(0, -0.09, 0);
 camera.position.copy(BASE_CAM_POS);
 camera.lookAt(BASE_TARGET);
 
+// Subtle cinematic telephoto dolly-back as the popsicle melts (+1.75 units ≈ 30% wider framing by bare stick)
+const MELT_ZOOM_OUT_MAX = 1.75;
+let appliedMeltZoom = 0;
+let initialBootDone = false;
+const _zoomOffsetVec = new THREE.Vector3();
+
+function evalMeltZoomOffset(melt: number): number {
+  const t = clamp((melt - 0.05) / 0.93, 0, 1);
+  return t * t * (3 - 2 * t) * MELT_ZOOM_OUT_MAX;
+}
+
+function applyMeltCameraZoom(dt: number, immediate = false) {
+  const targetZoom = evalMeltZoomOffset(meltState.melt);
+  const diff = targetZoom - appliedMeltZoom;
+  if (Math.abs(diff) < 1e-4) {
+    appliedMeltZoom = targetZoom;
+    return;
+  }
+  const stepZoom = immediate ? diff : diff * (1 - Math.exp(-dt * 3.8));
+  _zoomOffsetVec.copy(camera.position).sub(orbit.target);
+  const curDist = _zoomOffsetVec.length();
+  if (curDist < 1e-4) return;
+  const nextDist = clamp(curDist + stepZoom, orbit.minDistance, orbit.maxDistance);
+  const actualDelta = nextDist - curDist;
+  if (Math.abs(actualDelta) > 1e-5) {
+    _zoomOffsetVec.multiplyScalar(nextDist / curDist);
+    camera.position.copy(orbit.target).add(_zoomOffsetVec);
+    camera.updateMatrixWorld();
+    renderDirty = true;
+  }
+  appliedMeltZoom += immediate ? diff : actualDelta;
+}
+
 const orbit = new OrbitControls(camera, canvas);
 orbit.target.copy(BASE_TARGET);
 orbit.enableDamping = true;
@@ -452,6 +485,8 @@ let blurTemp1RT: THREE.WebGLRenderTarget;
 let bgBlur1RT: THREE.WebGLRenderTarget;
 let blurTemp2RT: THREE.WebGLRenderTarget;
 let bgBlur2RT: THREE.WebGLRenderTarget;
+let blurTemp3RT: THREE.WebGLRenderTarget;
+let bgBlur3RT: THREE.WebGLRenderTarget;
 let postIceRT: THREE.WebGLRenderTarget;
 let dropFieldRT: THREE.WebGLRenderTarget;
 let compositeRT: THREE.WebGLRenderTarget;
@@ -465,6 +500,8 @@ function rebuildRenderTargets() {
   const halfH = Math.max(2, rtHeight >> 1);
   const qtrW = Math.max(2, rtWidth >> 2);
   const qtrH = Math.max(2, rtHeight >> 2);
+  const eighthW = Math.max(2, rtWidth >> 3);
+  const eighthH = Math.max(2, rtHeight >> 3);
   const zW = isMobile ? Math.max(2, Math.floor(rtWidth * 0.4)) : halfW;
   const zH = isMobile ? Math.max(2, Math.floor(rtHeight * 0.4)) : halfH;
   const bubW = isMobile ? Math.max(2, Math.floor(rtWidth * 0.75)) : rtWidth;
@@ -478,6 +515,8 @@ function rebuildRenderTargets() {
   bgBlur1RT?.dispose();
   blurTemp2RT?.dispose();
   bgBlur2RT?.dispose();
+  blurTemp3RT?.dispose();
+  bgBlur3RT?.dispose();
   postIceRT?.dispose();
   dropFieldRT?.dispose();
   compositeRT?.dispose();
@@ -491,6 +530,8 @@ function rebuildRenderTargets() {
   bgBlur1RT = makeRT(halfW, halfH, false, true);
   blurTemp2RT = makeRT(qtrW, qtrH, false, true);
   bgBlur2RT = makeRT(qtrW, qtrH, false, true);
+  blurTemp3RT = makeRT(eighthW, eighthH, false, true);
+  bgBlur3RT = makeRT(eighthW, eighthH, false, true);
   postIceRT = makeRT(rtWidth, rtHeight, true, true);
   dropFieldRT = makeRT(rtWidth, rtHeight, true, true);
   compositeRT = makeRT(rtWidth, rtHeight, true, true);
@@ -654,6 +695,7 @@ function syncSystemsToMelt(targetMelt: number) {
     fruitAssembly.update(meltState, 0, liquidFilm.stickWetness);
     waterDrops.update(meltState, iceSystem, liquidFilm, 0, simParams.speed);
   }
+  applyMeltCameraZoom(0, true);
   renderDirty = true;
 }
 
@@ -719,6 +761,10 @@ function buildPopsicle(seed: number, startMelt = initialMelt) {
   iceSystem.update(meltState, simParams.bubbles, true);
   fruitAssembly.update(meltState, 0, liquidFilm.stickWetness);
   waterDrops.update(meltState, iceSystem, liquidFilm, 0, simParams.speed);
+  if (paused || !initialBootDone) {
+    applyMeltCameraZoom(0, true);
+    initialBootDone = true;
+  }
   syncWorkbenchUI();
   syncCustomizeUI();
   renderDirty = true;
@@ -1177,8 +1223,6 @@ const custFlavorsEl = document.getElementById('cust-flavors') as HTMLDivElement;
 const custToppingsEl = document.getElementById('cust-toppings') as HTMLDivElement;
 const baseBtns = Array.from(customizePanel.querySelectorAll<HTMLButtonElement>('[data-base]'));
 
-const btnReset = document.getElementById('btn-reset') as HTMLButtonElement;
-const btnSeed = document.getElementById('btn-seed') as HTMLButtonElement;
 const presetDock = document.getElementById('preset-dock') as HTMLElement;
 
 const ASSET_BASE = import.meta.env.BASE_URL ?? '/';
@@ -1295,14 +1339,6 @@ function syncWorkbenchUI() {
   }
 }
 
-btnReset.addEventListener('click', () => {
-  resetMelt();
-});
-
-btnSeed.addEventListener('click', () => {
-  buildPopsicle(currentSeed + 1, DEFAULT_INITIAL_MELT);
-});
-
 // Build Customize taste & topping chips deterministically from recipe lists
 const flavorButtons = new Map<FlavorId, HTMLButtonElement>();
 for (const flv of FLAVOR_LIST) {
@@ -1385,6 +1421,10 @@ btnCustomize.addEventListener('click', () => {
   const open = customizePanel.hidden;
   customizePanel.hidden = !open;
   btnCustomize.setAttribute('aria-expanded', String(open));
+  if (open && !settingsPanel.hidden) {
+    settingsPanel.hidden = true;
+    btnSettings.setAttribute('aria-expanded', 'false');
+  }
 });
 
 btnCustRandom.addEventListener('click', () => {
@@ -1417,6 +1457,10 @@ btnSettings.addEventListener('click', () => {
   const open = settingsPanel.hidden;
   settingsPanel.hidden = !open;
   btnSettings.setAttribute('aria-expanded', String(open));
+  if (open && !customizePanel.hidden) {
+    customizePanel.hidden = true;
+    btnCustomize.setAttribute('aria-expanded', 'false');
+  }
 });
 
 slMelt.addEventListener('input', () => {
@@ -1578,7 +1622,7 @@ window.addEventListener('keydown', (e) => {
   } else if (e.key === 'n' || e.key === 'N') {
     buildPopsicle(currentSeed + 1, DEFAULT_INITIAL_MELT);
   } else if (e.key === 'c' || e.key === 'C') {
-    btnCustomize.click();
+    if (showSettings) btnCustomize.click();
   } else if (e.key >= '1' && e.key <= '9') {
     const preset = POPSICLE_PRESETS[Number(e.key) - 1];
     if (preset) applyPreset(preset);
@@ -1707,14 +1751,16 @@ function renderFrame() {
     bubblesRtHasContent = false;
   }
 
-  // --- PASS 4: Multi-Mip Separable Optical Frost Blur ---
+  // --- PASS 4: Multi-Mip Separable Optical Frost Blur Pyramid (full -> 1/2 -> 1/4 -> 1/8) ---
   renderSeparableBlur(bgRT.texture, blurTemp1RT, bgBlur1RT, 1.45);
   renderSeparableBlur(bgBlur1RT.texture, blurTemp2RT, bgBlur2RT, 2.25);
+  renderSeparableBlur(bgBlur2RT.texture, blurTemp3RT, bgBlur3RT, 2.85);
 
   // --- PASS 5: Post-Ice Scene (Blit Lightbox + Solids color & depth from bgRT -> render Hero Optical Ice!) ---
   iceSystem.uniforms.uBgTex.value = bgRT.texture;
   iceSystem.uniforms.uBgBlur1.value = bgBlur1RT.texture;
   iceSystem.uniforms.uBgBlur2.value = bgBlur2RT.texture;
+  iceSystem.uniforms.uBgBlur3.value = bgBlur3RT.texture;
   iceSystem.uniforms.uBubblesTex.value = bubblesRT.texture;
   iceSystem.uniforms.uInteriorZ.value = interiorZRT.texture;
   iceSystem.uniforms.uBackIceZ.value = backIceZRT.texture;
@@ -1896,6 +1942,10 @@ function tick(now: number) {
     }
   }
 
+  if (dt > 0 && !userOrbiting && !orbitDragging && !twoFingerOrbiting) {
+    applyMeltCameraZoom(dt, false);
+  }
+
   // Always drive grabbed fruit spring & soft flex in real time (even during Pause or Slow-Mo!)
   if (fruitAssembly && activeGrabPointerId !== null) {
     fruitAssembly.updateGrab(rawDt, meltState);
@@ -1944,6 +1994,7 @@ buildPopsicle(currentSeed, initialMelt);
         iceSystem.update(meltState, simParams.bubbles);
         fruitAssembly.update(meltState, dt * fruitScale, liquidFilm.stickWetness);
         waterDrops.update(meltState, iceSystem, liquidFilm, dt * fluidScale, simParams.speed);
+        applyMeltCameraZoom(dt, false);
       }
     }
     renderFrame();
@@ -2027,6 +2078,7 @@ buildPopsicle(currentSeed, initialMelt);
     camera.lookAt(BASE_TARGET);
     orbit.update();
     orbit.enableDamping = prevDamp;
+    appliedMeltZoom = evalMeltZoomOffset(meltState.melt);
     renderFrame();
   },
   getCamera() {

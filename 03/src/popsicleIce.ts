@@ -19,6 +19,7 @@ export interface IceUniforms {
   uBgTex: { value: THREE.Texture | null };
   uBgBlur1: { value: THREE.Texture | null };
   uBgBlur2: { value: THREE.Texture | null };
+  uBgBlur3: { value: THREE.Texture | null };
   uBubblesTex: { value: THREE.Texture | null };
   uFilmTex: { value: THREE.Texture | null };
   uRimeTex: { value: THREE.Texture | null };
@@ -102,6 +103,7 @@ function createOpticalIceMaterial(initialRecipe: PopsicleRecipe): { material: TH
     uBgTex: { value: null },
     uBgBlur1: { value: null },
     uBgBlur2: { value: null },
+    uBgBlur3: { value: null },
     uBubblesTex: { value: null },
     uFilmTex: { value: null },
     uRimeTex: { value: null },
@@ -166,6 +168,7 @@ function createOpticalIceMaterial(initialRecipe: PopsicleRecipe): { material: TH
       uniform sampler2D uBgTex;
       uniform sampler2D uBgBlur1;
       uniform sampler2D uBgBlur2;
+      uniform sampler2D uBgBlur3;
       uniform sampler2D uBubblesTex;
       uniform sampler2D uFilmTex;
       uniform sampler2D uRimeTex;
@@ -400,10 +403,14 @@ function createOpticalIceMaterial(initialRecipe: PopsicleRecipe): { material: TH
         if (blurAmt <= 0.001) {
           return texture(uBgTex, cUv).rgb;
         }
-        if (blurAmt < 0.5) {
-          return mix(texture(uBgTex, cUv).rgb, texture(uBgBlur1, cUv).rgb, blurAmt * 2.0);
+        float lvl = clamp(blurAmt, 0.0, 1.0) * 3.0;
+        if (lvl < 1.0) {
+          return mix(texture(uBgTex, cUv).rgb, texture(uBgBlur1, cUv).rgb, lvl);
         }
-        return mix(texture(uBgBlur1, cUv).rgb, texture(uBgBlur2, cUv).rgb, (blurAmt - 0.5) * 2.0);
+        if (lvl < 2.0) {
+          return mix(texture(uBgBlur1, cUv).rgb, texture(uBgBlur2, cUv).rgb, lvl - 1.0);
+        }
+        return mix(texture(uBgBlur2, cUv).rgb, texture(uBgBlur3, cUv).rgb, lvl - 2.0);
       }
 
       // Crisp backlit macro studio reflections: dark front fill so coral-ruby ice stays deeply saturated!
@@ -621,10 +628,24 @@ function createOpticalIceMaterial(initialRecipe: PopsicleRecipe): { material: TH
         // Hanging liquid pouches & melting lower rim edges are 100% optically crystal-clear like real water drops!
         blurAmt = max(blurAmt * (1.0 - max(hangLiquid, hangClear)), rimeMask * 0.72);
 
+        // Day 19 frosted sea-glass rotated 4-tap scatter disk sampling across 4-level blur pyramid for silky frosted diffusion!
         vec3 bgCol;
-        bgCol.r = sampleFrostedBg(uvR, blurAmt).r;
-        bgCol.g = sampleFrostedBg(uvG, blurAmt).g;
-        bgCol.b = sampleFrostedBg(uvB, blurAmt).b;
+        float glassScatter = (1.0 - isMilkBase) * (1.0 - hangClear * 0.92) * (1.0 - glazeCover * 0.58) * thinIceFade;
+        float scatterRad = blurAmt * (0.0036 + 0.0068 * pow(1.0 - N0dotV, 1.6) + 0.0045 * totalThickness) * glassScatter;
+        if (scatterRad > 0.0018) {
+          float angJ = fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233))) * 43758.5453) * 6.2831853;
+          vec2 j0 = vec2(cos(angJ), sin(angJ)) * scatterRad;
+          vec2 j1 = vec2(-j0.y, j0.x);
+          vec3 s0 = vec3(sampleFrostedBg(uvR + j0, blurAmt).r, sampleFrostedBg(uvG + j0, blurAmt).g, sampleFrostedBg(uvB + j0, blurAmt).b);
+          vec3 s1 = vec3(sampleFrostedBg(uvR - j0, blurAmt).r, sampleFrostedBg(uvG - j0, blurAmt).g, sampleFrostedBg(uvB - j0, blurAmt).b);
+          vec3 s2 = vec3(sampleFrostedBg(uvR + j1, blurAmt).r, sampleFrostedBg(uvG + j1, blurAmt).g, sampleFrostedBg(uvB + j1, blurAmt).b);
+          vec3 s3 = vec3(sampleFrostedBg(uvR - j1, blurAmt).r, sampleFrostedBg(uvG - j1, blurAmt).g, sampleFrostedBg(uvB - j1, blurAmt).b);
+          bgCol = (s0 + s1 + s2 + s3) * 0.25;
+        } else {
+          bgCol.r = sampleFrostedBg(uvR, blurAmt).r;
+          bgCol.g = sampleFrostedBg(uvG, blurAmt).g;
+          bgCol.b = sampleFrostedBg(uvB, blurAmt).b;
+        }
 
         float grazingPath = 1.0 / max(0.34, N0dotV);
         float opticalDist = frontIceDist * mix(1.0, grazingPath, 0.50);
@@ -710,8 +731,38 @@ function createOpticalIceMaterial(initialRecipe: PopsicleRecipe): { material: TH
 
         vec3 iceBody = (transmitted + internalScatter) * (1.0 - creviceDark * 0.24 * thinIceFade * (1.0 - hangClear * 0.92)) + internalFreezeTex + frostTooth;
 
+        // === DAY 19 FROSTED SEA-GLASS TRANSLUCENCY FOR WATER BASE (HG forward scatter + internal light-piping + silky frost veil!) ===
+        float waterSeaGlass = (1.0 - isMilkBase) * (1.0 - uOpacity * 0.72) * (1.0 - hangClear * 0.94);
+        if (waterSeaGlass > 0.01) {
+          vec3 backSunL = normalize(-camH + vec3(0.0, 0.24, 0.0));
+          float cosL = dot(-V, backSunL);
+          float gHG = 0.45;
+          float hgPhase = (1.0 - gHG * gHG) / (12.56637 * pow(max(0.08, 1.0 + gHG * gHG - 2.0 * gHG * cosL), 1.5));
+          float backLitIce = pow(clamp(dot(-N, backSunL) * 0.5 + 0.5, 0.0, 1.0), 1.45);
+          float frontWrapIce = pow(clamp(dot(N, backSunL) * 0.5 + 0.5, 0.0, 1.0), 1.35);
+
+          // Thin-edge sunlit glow (where dome/bevel thins out) + saturated internal light-piping along curved outer rims!
+          float iceThinness = revStep(0.36, 0.06, totalThickness) * (0.45 + 0.55 * lightboxCore);
+          vec3 pipeTint = exp(-flvSigma * 0.34);
+          vec3 warmStudioBack = vec3(1.38, 1.22, 1.12);
+          vec3 seaRimGlow = warmStudioBack * (0.34 + 0.42 * backLitIce) * mix(flvCore, pipeTint * 1.35, 0.45) * iceThinness * thinIceFade;
+
+          float pipeMask = pow(1.0 - N0dotV, 2.0) * smoothstep(0.03, 0.34, N0dotV) * thinIceFade;
+          vec3 pipeGlowCol = pipeTint * warmStudioBack * (0.58 + 0.48 * lightboxCore);
+          vec3 hgBoost = mix(flvMid, flvCore, 0.55) * warmStudioBack * (hgPhase * 0.30 + backLitIce * 0.16) * (1.0 - solidTrans) * openChannel;
+
+          iceBody += (seaRimGlow * 0.52 + hgBoost * 0.48) * waterSeaGlass;
+          iceBody = mix(iceBody, max(iceBody, pipeGlowCol * 0.88), pipeMask * 0.58 * waterSeaGlass);
+
+          // Silky color-tinted frosted sea-glass surface veil (thickens softly at grazing curves, clears where wet/melted!)
+          float seaFrostWet = 1.0 - glazeCover * 0.68;
+          float seaVeil = clamp(frostFactor * seaFrostWet * (0.07 + 0.24 * pow(1.0 - N0dotV, 1.55)) * thinIceFade * waterSeaGlass, 0.0, 0.34);
+          vec3 seaVeilCol = mix(vec3(0.98, 0.94, 0.91), clamp(flvCore * 0.72 + vec3(0.26), vec3(0.0), vec3(1.25)), 0.54) * (0.72 + 0.36 * frontWrapIce + 0.18 * lightboxCore);
+          iceBody = mix(iceBody, seaVeilCol, seaVeil);
+        }
+
         float innerRubyRim = revStep(0.54, 0.16, N0dotV) * smoothstep(0.02, 0.16, N0dotV) * thinIceFade * (1.0 - uOpacity * 0.82) * (1.0 - hangClear * 0.88);
-        iceBody = mix(iceBody, iceBody * clamp(flvMid * 0.85, vec3(0.15), vec3(1.15)) + flvDeep * 0.40, innerRubyRim * 0.54);
+        iceBody = mix(iceBody, iceBody * clamp(flvMid * 0.85, vec3(0.15), vec3(1.15)) + flvDeep * 0.40, innerRubyRim * 0.36);
 
         // === OPAQUE CONDENSED-MILK PALETA BASE (and natural pulp opacity for banana/chocolate!) ===
         vec3 milkSheenTint = vec3(1.04, 1.01, 0.97);

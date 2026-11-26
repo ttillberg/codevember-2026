@@ -26,71 +26,53 @@
     <!-- the title plate (docs/DESIGN.md): put the word in Japanese in the span -->
     <div class="plate"><div class="head"><b>03 Melt</b><i><a class="home" href="https://ttillberg.github.io/codevember-2026/">Codevember 2026 <span lang="ja">融解</span></a> · <a class="home" href="https://x.com/theo_t">@theo_t</a></i></div></div>
 
-    <div class="controls" aria-label="Scene controls">
-      <button id="btn-customize" class="pill-btn" type="button" title="Customize popsicle (C)" aria-label="Customize popsicle" aria-expanded="false" aria-controls="customize-panel">
-        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <path d="M7 10a5 5 0 0 1 10 0v6a1.5 1.5 0 0 1-1.5 1.5h-7A1.5 1.5 0 0 1 7 16v-6Z"></path>
-          <path d="M12 17.5V22"></path>
-          <path d="M10.2 9.5v4.5"></path>
-          <path d="M13.8 9.5v4.5"></path>
-        </svg>
-        <span>Customize</span>
-      </button>
-      <button id="btn-reset" class="icon-btn" type="button" title="Refreeze (R)" aria-label="Refreeze popsicle">
-        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <path d="M3 12a9 9 0 1 0 3-6.7L3 8"></path>
-          <path d="M3 3v5h5"></path>
-        </svg>
-      </button>
-      <button id="btn-seed" class="icon-btn" type="button" title="New generative fruit mix (N)" aria-label="New fruit mix">
-        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <rect x="4" y="4" width="16" height="16" rx="3"></rect>
-          <circle cx="9" cy="9" r="1" fill="currentColor"></circle>
-          <circle cx="15" cy="9" r="1" fill="currentColor"></circle>
-          <circle cx="12" cy="12" r="1" fill="currentColor"></circle>
-          <circle cx="9" cy="15" r="1" fill="currentColor"></circle>
-          <circle cx="15" cy="15" r="1" fill="currentColor"></circle>
-        </svg>
-      </button>
-    </div>
-
-    <div id="customize-panel" class="customize-panel" hidden>
-      <div class="cust-head">
-        <b>Customize</b>
-        <div class="cust-actions">
-          <button id="btn-cust-random" class="mini-btn" type="button" title="Randomize combination">Surprise</button>
-          <button id="btn-cust-reset" class="mini-btn" type="button" title="Restore classic berry mix">Reset</button>
-        </div>
-      </div>
-
-      <div class="cust-section">
-        <div class="cust-label"><span>Base</span><span id="cust-base-note" class="cust-hint">Translucent ice</span></div>
-        <div class="seg-toggle" role="group" aria-label="Popsicle base">
-          <button type="button" class="seg-btn" data-base="water" aria-pressed="true">Water</button>
-          <button type="button" class="seg-btn" data-base="coconut" aria-pressed="false">Milk</button>
-        </div>
-      </div>
-
-      <div class="cust-section">
-        <div class="cust-label"><span>Taste</span><span id="cust-flavor-note" class="cust-hint">1 / 2 max</span></div>
-        <div id="cust-flavors" class="chip-grid" role="group" aria-label="Basic tastes (max 2)"></div>
-      </div>
-
-      <div class="cust-section">
-        <div class="cust-label"><span>Toppings</span><span id="cust-topping-note" class="cust-hint">2 selected</span></div>
-        <div id="cust-toppings" class="chip-grid" role="group" aria-label="Toppings"></div>
-      </div>
-    </div>
-
     <nav id="preset-dock" class="preset-dock" aria-label="Popsicle presets"></nav>
 
     <div id="dev-dock" class="dev-dock" hidden>
-      <button id="btn-settings" class="icon-btn" type="button" title="Tune parameters" aria-label="Settings" aria-expanded="false" aria-controls="settings-panel">
-        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <circle cx="12" cy="12" r="3"></circle>
-          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9c.26.6.85 1 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
-        </svg>
-      </button>
+      <div class="dev-dock-btns">
+        <button id="btn-customize" class="pill-btn" type="button" title="Customize popsicle (C)" aria-label="Customize popsicle" aria-expanded="false" aria-controls="customize-panel">
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M7 10a5 5 0 0 1 10 0v6a1.5 1.5 0 0 1-1.5 1.5h-7A1.5 1.5 0 0 1 7 16v-6Z"></path>
+            <path d="M12 17.5V22"></path>
+            <path d="M10.2 9.5v4.5"></path>
+            <path d="M13.8 9.5v4.5"></path>
+          </svg>
+          <span>Customize</span>
+        </button>
+        <button id="btn-settings" class="icon-btn" type="button" title="Tune parameters" aria-label="Settings" aria-expanded="false" aria-controls="settings-panel">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="12" cy="12" r="3"></circle>
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9c.26.6.85 1 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+          </svg>
+        </button>
+      </div>
+      <div id="customize-panel" class="customize-panel" hidden>
+        <div class="cust-head">
+          <b>Customize</b>
+          <div class="cust-actions">
+            <button id="btn-cust-random" class="mini-btn" type="button" title="Randomize combination">Surprise</button>
+            <button id="btn-cust-reset" class="mini-btn" type="button" title="Restore classic berry mix">Reset</button>
+          </div>
+        </div>
+
+        <div class="cust-section">
+          <div class="cust-label"><span>Base</span><span id="cust-base-note" class="cust-hint">Translucent ice</span></div>
+          <div class="seg-toggle" role="group" aria-label="Popsicle base">
+            <button type="button" class="seg-btn" data-base="water" aria-pressed="true">Water</button>
+            <button type="button" class="seg-btn" data-base="coconut" aria-pressed="false">Milk</button>
+          </div>
+        </div>
+
+        <div class="cust-section">
+          <div class="cust-label"><span>Taste</span><span id="cust-flavor-note" class="cust-hint">1 / 2 max</span></div>
+          <div id="cust-flavors" class="chip-grid" role="group" aria-label="Basic tastes (max 2)"></div>
+        </div>
+
+        <div class="cust-section">
+          <div class="cust-label"><span>Toppings</span><span id="cust-topping-note" class="cust-hint">2 selected</span></div>
+          <div id="cust-toppings" class="chip-grid" role="group" aria-label="Toppings"></div>
+        </div>
+      </div>
       <div id="settings-panel" class="settings-panel" hidden>
         <div class="settings-head">
           <b>Settings</b>

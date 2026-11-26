@@ -75,17 +75,7 @@ canvas {
   letter-spacing: 0.06em;
 }
 
-/* Minimal monochrome top-right icon buttons */
-.controls {
-  position: fixed;
-  z-index: 3;
-  top: max(24px, env(safe-area-inset-top));
-  right: max(24px, env(safe-area-inset-right));
-  display: flex;
-  gap: 8px;
-  align-items: center;
-}
-
+/* Minimal monochrome dev icon & pill buttons */
 .icon-btn {
   appearance: none;
   width: 36px;
@@ -152,12 +142,8 @@ canvas {
   transform: scale(0.96);
 }
 
-/* Studio-minimal Customize popsicle popover */
+/* Studio-minimal Customize popsicle popover (lives inside local-dev dock) */
 .customize-panel {
-  position: fixed;
-  z-index: 4;
-  top: calc(max(24px, env(safe-area-inset-top)) + 48px);
-  right: max(24px, env(safe-area-inset-right));
   width: 286px;
   max-height: calc(100vh - 96px);
   max-height: calc(100dvh - 96px);
@@ -307,23 +293,44 @@ canvas {
   z-index: 3;
   left: 50%;
   bottom: max(18px, env(safe-area-inset-bottom));
-  transform: translateX(-50%);
+  transform: translateX(-50%) scale(1);
+  transform-origin: center bottom;
   display: flex;
   align-items: center;
   gap: 4px;
   padding: 5px 7px;
   border-radius: 18px;
-  border: 1px solid var(--pill-border);
-  background: rgba(255, 250, 246, 0.56);
-  backdrop-filter: blur(14px);
-  -webkit-backdrop-filter: blur(14px);
-  box-shadow: 0 10px 28px rgba(28, 20, 18, 0.10);
+  border: 1px solid rgba(255, 255, 255, 0.48);
+  background: rgba(255, 255, 255, 0.22);
+  backdrop-filter: blur(20px) saturate(145%);
+  -webkit-backdrop-filter: blur(20px) saturate(145%);
+  box-shadow:
+    0 8px 28px rgba(28, 20, 18, 0.08),
+    inset 0 1px 0 rgba(255, 255, 255, 0.68),
+    0 0 0 1px rgba(28, 28, 28, 0.06);
   max-width: calc(100vw - 24px);
+  overflow: visible;
+  transition:
+    transform 240ms cubic-bezier(0.22, 1.18, 0.36, 1),
+    background 200ms ease,
+    box-shadow 200ms ease;
+}
+
+@media (hover: hover) {
+  .preset-dock:hover {
+    transform: translateX(-50%) scale(1.12);
+    background: rgba(255, 255, 255, 0.28);
+    box-shadow:
+      0 14px 36px rgba(28, 20, 18, 0.11),
+      inset 0 1px 0 rgba(255, 255, 255, 0.78),
+      0 0 0 1px rgba(28, 28, 28, 0.07);
+  }
 }
 
 .preset-btn {
   appearance: none;
   position: relative;
+  z-index: 1;
   width: 40px;
   height: 48px;
   padding: 3px 2px 2px;
@@ -335,7 +342,8 @@ canvas {
   align-items: center;
   justify-content: center;
   flex: 0 0 auto;
-  transition: background 140ms ease, border-color 140ms ease, transform 150ms cubic-bezier(0.22, 1, 0.36, 1), box-shadow 140ms ease;
+  overflow: visible;
+  transition: background 150ms ease, border-color 150ms ease, transform 140ms cubic-bezier(0.22, 1, 0.36, 1), box-shadow 150ms ease;
 }
 
 .preset-btn img {
@@ -344,49 +352,70 @@ canvas {
   height: 100%;
   object-fit: contain;
   pointer-events: none;
-  filter: drop-shadow(0 2px 4px rgba(28, 16, 12, 0.16));
-  transition: transform 160ms cubic-bezier(0.22, 1, 0.36, 1), filter 150ms ease;
+  transform-origin: center 78%;
+  filter: drop-shadow(0 2px 4px rgba(28, 16, 12, 0.18));
+  transition: transform 230ms cubic-bezier(0.22, 1.24, 0.36, 1), filter 180ms ease;
 }
 
 .preset-btn:hover {
-  background: rgba(255, 255, 255, 0.58);
+  z-index: 3;
+  background: rgba(255, 255, 255, 0.36);
 }
 
 .preset-btn:hover img {
-  transform: translateY(-3px) scale(1.12);
-  filter: drop-shadow(0 5px 8px rgba(28, 16, 12, 0.22));
+  transform: translateY(-6px) scale(1.34);
+  filter: drop-shadow(0 9px 14px rgba(28, 16, 12, 0.26));
 }
 
 .preset-btn:active {
-  transform: scale(0.94);
+  transform: scale(0.95);
 }
 
 .preset-btn[aria-pressed="true"] {
-  background: rgba(28, 28, 28, 0.10);
-  border-color: rgba(28, 28, 28, 0.38);
-  box-shadow: 0 2px 8px rgba(28, 20, 18, 0.10);
+  z-index: 2;
+  background: rgba(255, 255, 255, 0.44);
+  border-color: rgba(28, 28, 28, 0.24);
+  box-shadow:
+    0 2px 10px rgba(28, 20, 18, 0.08),
+    inset 0 1px 0 rgba(255, 255, 255, 0.78);
 }
 
 .preset-btn[aria-pressed="true"] img {
-  transform: translateY(-1px) scale(1.06);
+  transform: translateY(-2px) scale(1.08);
+}
+
+@media (hover: hover) {
+  .preset-dock:hover .preset-btn[aria-pressed="true"] img {
+    transform: translateY(-4px) scale(1.16);
+    filter: drop-shadow(0 6px 10px rgba(28, 16, 12, 0.22));
+  }
+
+  .preset-dock:hover .preset-btn[aria-pressed="true"]:hover {
+    z-index: 4;
+  }
+
+  .preset-dock:hover .preset-btn[aria-pressed="true"]:hover img {
+    transform: translateY(-8px) scale(1.40);
+    filter: drop-shadow(0 11px 16px rgba(28, 16, 12, 0.30));
+  }
 }
 
 .preset-btn::after {
   content: attr(data-label);
   position: absolute;
   left: 50%;
-  bottom: calc(100% + 9px);
+  bottom: calc(100% + 26px);
   transform: translateX(-50%) translateY(4px);
   padding: 4px 8px;
   border-radius: 999px;
   background: rgba(28, 28, 28, 0.88);
   color: #f8f4f1;
-  font: 600 10.5px/1 Inter, system-ui, sans-serif;
+  font: 600 9.5px/1 Inter, system-ui, sans-serif;
   letter-spacing: 0.03em;
   white-space: nowrap;
   pointer-events: none;
   opacity: 0;
-  transition: opacity 130ms ease, transform 140ms ease;
+  transition: opacity 150ms ease, transform 180ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 .preset-btn:hover::after,
@@ -395,16 +424,22 @@ canvas {
   transform: translateX(-50%) translateY(0);
 }
 
-/* Dev-only bottom-right tuning workbench */
+/* Dev-only bottom-right tuning & customize dock */
 .dev-dock {
   position: fixed;
-  z-index: 3;
+  z-index: 4;
   bottom: max(20px, env(safe-area-inset-bottom));
   right: max(20px, env(safe-area-inset-right));
   display: flex;
   flex-direction: column-reverse;
   align-items: flex-end;
   gap: 8px;
+}
+
+.dev-dock-btns {
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .dev-dock[hidden] {
@@ -559,13 +594,10 @@ canvas {
   .plate { top: max(16px, env(safe-area-inset-top)); left: max(16px, env(safe-area-inset-left)); }
   .plate b { font-size: clamp(22px, 6.8vw, 34px); }
   .plate .head > i { font-size: 9px; letter-spacing: 0.06em; }
-  .controls { top: max(16px, env(safe-area-inset-top)); right: max(16px, env(safe-area-inset-right)); gap: 5px; }
   .icon-btn { width: 32px; height: 32px; }
   .pill-btn { width: 32px; height: 32px; padding: 0; font-size: 10.5px; }
   .pill-btn span { display: none; }
   .customize-panel {
-    top: calc(max(16px, env(safe-area-inset-top)) + 42px);
-    right: max(16px, env(safe-area-inset-right));
     width: min(290px, calc(100vw - 32px));
   }
 }
@@ -574,12 +606,9 @@ canvas {
   .plate { top: max(12px, env(safe-area-inset-top)); left: max(12px, env(safe-area-inset-left)); }
   .plate b { font-size: 22px; }
   .plate .head > i { font-size: 8px; letter-spacing: 0.03em; margin-top: 4px; }
-  .controls { top: max(12px, env(safe-area-inset-top)); right: max(12px, env(safe-area-inset-right)); gap: 4px; }
   .icon-btn { width: 28px; height: 28px; }
   .pill-btn { width: 28px; height: 28px; padding: 0; }
   .customize-panel {
-    top: calc(max(12px, env(safe-area-inset-top)) + 38px);
-    right: max(12px, env(safe-area-inset-right));
     width: min(290px, calc(100vw - 24px));
   }
   .preset-dock {
@@ -604,7 +633,6 @@ canvas {
 
 /* ?clean: the scene alone */
 .clean .plate,
-.clean .controls,
 .clean .customize-panel,
 .clean .preset-dock,
 .clean .dev-dock {
