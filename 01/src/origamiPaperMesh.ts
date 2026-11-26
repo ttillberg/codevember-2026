@@ -385,7 +385,7 @@ function buildDualSidedPaperGeometry(
 }
 
 // ----------------------------------------------------------------------------
-// Parametric Punched Window, Door, Oculus & Belfry Louver Cutouts
+// Parametric Punched Window, Door, Oculus & Belfry Louver Cutouts (Universal 2D Wall Frame!)
 // ----------------------------------------------------------------------------
 function addRectHole(shape: THREE.Shape, cx: number, cy: number, w: number, h: number): void {
   const hw = w * 0.5;
@@ -399,98 +399,117 @@ function addRectHole(shape: THREE.Shape, cx: number, cy: number, w: number, h: n
   shape.holes.push(p);
 }
 
-function addArchHole(
+type FrameMapper = (uMm: number, vMm: number) => [number, number];
+
+function addFramedRectHole(
   shape: THREE.Shape,
-  cx: number,
-  yBase: number,
-  w: number,
-  h: number,
-  dir: 1 | -1,
-  horizontalWall: boolean,
+  toShape: FrameMapper,
+  uCenter: number,
+  vCenter: number,
+  wMm: number,
+  hMm: number,
 ): void {
-  const hw = w * 0.5;
-  const r = Math.min(hw, h * 0.42);
+  const hw = wMm * 0.5;
+  const hh = hMm * 0.5;
+  const pts: [number, number][] = [
+    toShape(uCenter - hw, vCenter - hh),
+    toShape(uCenter + hw, vCenter - hh),
+    toShape(uCenter + hw, vCenter + hh),
+    toShape(uCenter - hw, vCenter + hh),
+  ];
   const p = new THREE.Path();
-
-  if (horizontalWall) {
-    // Wall extends along +/-Y (front = -1, back = +1); width along X
-    const springY = yBase + dir * (h - r);
-    p.moveTo(cx - hw, yBase);
-    p.lineTo(cx + hw, yBase);
-    p.lineTo(cx + hw, springY);
-    if (dir < 0) {
-      p.absarc(cx, springY, r, 0, -Math.PI, true);
-    } else {
-      p.absarc(cx, springY, r, 0, Math.PI, false);
-    }
-    p.lineTo(cx - hw, yBase);
-  } else {
-    // Wall extends along +/-X (left = -1, right = +1); width along Y (cx is Y center, yBase is X base!)
-    const springX = yBase + dir * (h - r);
-    p.moveTo(yBase, cx - hw);
-    p.lineTo(yBase, cx + hw);
-    p.lineTo(springX, cx + hw);
-    if (dir < 0) {
-      p.absarc(springX, cx, r, Math.PI * 0.5, Math.PI * 1.5, false);
-    } else {
-      p.absarc(springX, cx, r, Math.PI * 0.5, -Math.PI * 0.5, true);
-    }
-    p.lineTo(yBase, cx - hw);
-  }
-
+  p.moveTo(pts[0][0], pts[0][1]);
+  for (let i = 1; i < pts.length; i++) p.lineTo(pts[i][0], pts[i][1]);
   p.closePath();
   shape.holes.push(p);
 }
 
-function addCircleHole(shape: THREE.Shape, cx: number, cy: number, r: number): void {
+function addFramedArchHole(
+  shape: THREE.Shape,
+  toShape: FrameMapper,
+  uCenter: number,
+  vBase: number,
+  wMm: number,
+  hMm: number,
+): void {
+  const hw = wMm * 0.5;
+  const r = Math.min(hw, hMm * 0.42);
+  const springV = vBase + (hMm - r);
   const p = new THREE.Path();
-  p.absarc(cx, cy, r, 0, Math.PI * 2, false);
+  const [x0, y0] = toShape(uCenter - hw, vBase);
+  const [x1, y1] = toShape(uCenter + hw, vBase);
+  const [x2, y2] = toShape(uCenter + hw, springV);
+  p.moveTo(x0, y0);
+  p.lineTo(x1, y1);
+  p.lineTo(x2, y2);
+  const segs = 12;
+  for (let i = 1; i <= segs; i++) {
+    const a = (i / segs) * Math.PI;
+    const [ax, ay] = toShape(uCenter + Math.cos(a) * r, springV + Math.sin(a) * r);
+    p.lineTo(ax, ay);
+  }
+  p.lineTo(x0, y0);
+  p.closePath();
+  shape.holes.push(p);
+}
+
+function addFramedCircleHole(
+  shape: THREE.Shape,
+  toShape: FrameMapper,
+  uCenter: number,
+  vCenter: number,
+  rMm: number,
+): void {
+  const p = new THREE.Path();
+  const segs = 20;
+  for (let i = 0; i <= segs; i++) {
+    const a = (i / segs) * Math.PI * 2;
+    const [cx, cy] = toShape(uCenter + Math.cos(a) * rMm, vCenter + Math.sin(a) * rMm);
+    if (i === 0) p.moveTo(cx, cy);
+    else p.lineTo(cx, cy);
+  }
+  p.closePath();
   shape.holes.push(p);
 }
 
 /**
  * Punch crisp multi-story architectural windows, doorways, arcades, attic oculi & belfry louvers
- * directly into a wall panel's 2D Shape (in world units = mm * MM).
+ * directly into ANY wall panel using its sheet-space `wallFrame` (works across cross, ribbon, and polygonal nets!).
  */
 function punchWallOpenings(
   shape: THREE.Shape,
-  panelId: PanelId,
+  def: PanelNetDef,
   spec: HouseNetSpec,
   roofRise: number,
 ): void {
-  const isFront = panelId === 'front';
-  const isBack = panelId === 'back';
-  const isLeft = panelId === 'left';
-  const isRight = panelId === 'right';
-  if (!isFront && !isBack && !isLeft && !isRight) return;
+  const wf = def.wallFrame;
+  if (!wf) return;
 
-  const horizontalWall = isFront || isBack;
-  const dir: 1 | -1 = isFront || isLeft ? -1 : 1;
-  const wallLenMm = horizontalWall ? spec.W : spec.D;
-  // On shed roofs, the high right wall has full height H + roofRise; front/back slope from H to H+roofRise!
-  const wallH = isRight && spec.roofType === 'shed' ? spec.H + roofRise : spec.H;
+  const isFront = Boolean(def.isFront || def.id === 'front');
+  const isGableEnd = Boolean(def.isGableEnd || def.id === 'front' || def.id === 'back');
+  const wallLenMm = wf.widthMm;
+  const wallH = wf.heightMm;
   const levels = spec.levels;
   const storyH = wallH / levels;
 
-  // Punch openings story by story (`li = 0 .. levels - 1`)
+  const toShape: FrameMapper = (uMm, vMm) => [
+    (wf.origin[0] + uMm * wf.uAxis[0] + vMm * wf.vAxis[0] - def.hingeOrigin[0]) * MM,
+    (wf.origin[1] + uMm * wf.uAxis[1] + vMm * wf.vAxis[1] - def.hingeOrigin[1]) * MM,
+  ];
+
   for (let li = 0; li < levels; li++) {
     const baseH = li * storyH;
     const isGround = li === 0;
     const isTop = li === levels - 1;
 
-    // On tall spire bell towers, punch iconic horizontal belfry louver slots on the top level!
+    // On tall spire bell towers / octagonal lighthouses, punch crisp horizontal belfry louver slots on top level!
     if (isTop && spec.hasBelfry && wallH >= 36) {
-      const slotW = Math.max(8, wallLenMm - 10);
+      const slotW = Math.max(6.5, wallLenMm - Math.min(10, wallLenMm * 0.34));
       const slotH = Math.min(3.2, storyH * 0.22);
       const y1 = baseH + storyH * 0.36;
       const y2 = baseH + storyH * 0.68;
-      if (horizontalWall) {
-        addRectHole(shape, 0, dir * y1 * MM, slotW * MM, slotH * MM);
-        addRectHole(shape, 0, dir * y2 * MM, slotW * MM, slotH * MM);
-      } else {
-        addRectHole(shape, dir * y1 * MM, 0, slotH * MM, slotW * MM);
-        addRectHole(shape, dir * y2 * MM, 0, slotH * MM, slotW * MM);
-      }
+      addFramedRectHole(shape, toShape, 0, y1, slotW, slotH);
+      addFramedRectHole(shape, toShape, 0, y2, slotW, slotH);
       continue;
     }
 
@@ -503,33 +522,37 @@ function punchWallOpenings(
       const ah = Math.min(storyH * 0.68, 13.8);
       for (let k = 0; k < count; k++) {
         const u = -wallLenMm * 0.5 + margin + pitch * (k + 0.5);
-        addArchHole(shape, u * MM, dir * 0.8 * MM, aw * MM, ah * MM, dir, true);
+        addFramedArchHole(shape, toShape, u, 0.8, aw, ah);
       }
       continue;
     }
 
     const style: WindowStyle = isGround ? spec.windowGround : spec.windowUpper;
     const baySpacing = style === 'ribbon' ? 15.5 : style === 'pair' ? 14.5 : 12.2;
-    let bays = Math.max(2, Math.min(5, Math.floor((wallLenMm - 6) / baySpacing)));
-    if (isFront && isGround && spec.door !== 'none' && bays % 2 === 0 && wallLenMm >= 34) {
-      bays = Math.min(5, bays + 1); // Center doorway symmetrically!
+    // Allow single centered architectural bay on narrower hexagonal/octagonal facets (`wallLenMm < 26`)!
+    let bays =
+      wallLenMm < 26
+        ? 1
+        : Math.max(2, Math.min(5, Math.floor((wallLenMm - 6) / baySpacing)));
+    if (isFront && isGround && spec.door !== 'none' && bays % 2 === 0) {
+      // Keep doorway strictly centered (`u = 0`, aligned beneath front awning!)
+      bays = wallLenMm >= 28 ? Math.min(5, bays + 1) : 1;
     }
-    const margin = Math.max(4.5, Math.min(7.5, wallLenMm * 0.13));
-    const usable = Math.max(10, wallLenMm - margin * 2);
+    const margin = wallLenMm < 26 ? Math.max(3.2, wallLenMm * 0.16) : Math.max(4.5, Math.min(7.5, wallLenMm * 0.13));
+    const usable = Math.max(8, wallLenMm - margin * 2);
     const cellW = usable / bays;
     const doorIdx = isFront && isGround && spec.door !== 'none' ? Math.floor(bays / 2) : -1;
 
     for (let b = 0; b < bays; b++) {
       const u = -wallLenMm * 0.5 + margin + cellW * (b + 0.5);
 
-      // Doorway bay
       if (b === doorIdx) {
         const dw = Math.min(cellW * 0.66, spec.door === 'double' ? 9.6 : 7.8);
         const dh = Math.min(storyH * 0.66, 13.8);
         if (spec.door === 'arched') {
-          addArchHole(shape, u * MM, dir * 0.6 * MM, dw * MM, dh * MM, dir, true);
+          addFramedArchHole(shape, toShape, u, 0.6, dw, dh);
         } else {
-          addRectHole(shape, u * MM, dir * (0.6 + dh * 0.5) * MM, dw * MM, dh * MM);
+          addFramedRectHole(shape, toShape, u, 0.6 + dh * 0.5, dw, dh);
         }
         continue;
       }
@@ -540,9 +563,7 @@ function punchWallOpenings(
         const gap = Math.max(1.4, pw * 0.32);
         const vh = baseH + storyH * 0.52;
         for (const sgn of [-1, 1]) {
-          const pu = u + sgn * (pw * 0.5 + gap * 0.5);
-          if (horizontalWall) addRectHole(shape, pu * MM, dir * vh * MM, pw * MM, ph * MM);
-          else addRectHole(shape, dir * vh * MM, pu * MM, ph * MM, pw * MM);
+          addFramedRectHole(shape, toShape, u + sgn * (pw * 0.5 + gap * 0.5), vh, pw, ph);
         }
         continue;
       }
@@ -564,20 +585,18 @@ function punchWallOpenings(
       const vh = baseH + storyH * (style === 'tall' ? 0.50 : 0.52);
 
       if (style === 'arched') {
-        addArchHole(shape, u * MM, dir * (vh - wh * 0.5) * MM, ww * MM, wh * MM, dir, horizontalWall);
-      } else if (horizontalWall) {
-        addRectHole(shape, u * MM, dir * vh * MM, ww * MM, wh * MM);
+        addFramedArchHole(shape, toShape, u, vh - wh * 0.5, ww, wh);
       } else {
-        addRectHole(shape, dir * vh * MM, u * MM, wh * MM, ww * MM);
+        addFramedRectHole(shape, toShape, u, vh, ww, wh);
       }
     }
   }
 
   // Crisp attic circular oculus in front & back gable triangles!
-  if (spec.roofType === 'gable' && horizontalWall && spec.hasOculus && roofRise >= 11) {
+  if (spec.roofType === 'gable' && isGableEnd && spec.hasOculus && roofRise >= 11) {
     const r = Math.min(roofRise * 0.17, spec.W * 0.085, 3.8);
     if (r >= 2.0) {
-      addCircleHole(shape, 0, dir * (spec.H + roofRise * 0.43) * MM, r * MM);
+      addFramedCircleHole(shape, toShape, 0, spec.H + roofRise * 0.43, r);
     }
   }
 }
@@ -600,8 +619,7 @@ export interface PanelVisual {
   pivot: THREE.Group;
   mesh: THREE.Mesh;
   foldLine: THREE.Line;
-  axis: 'x' | 'z';
-  sign: 1 | -1;
+  hingeAxis3D: THREE.Vector3;
   targetAngle: number;
 }
 
@@ -655,14 +673,18 @@ export function buildOrigamiHouseRig(net: BuiltHouseNet, mats: OrigamiMaterials)
   const allMeshes: THREE.Mesh[] = [];
   for (const def of net.panels) {
     const shape = makeLocalShape(def.poly, def.hingeOrigin[0], def.hingeOrigin[1]);
-    punchWallOpenings(shape, def.id, spec, roofRise);
+    punchWallOpenings(shape, def, spec, roofRise);
 
-    // Subtle crisp architectural skylight opening in the center of a mansard top deck!
+    // Crisp architectural skylight in mansard / polygonal pavilion top deck:
+    // circular Pantheon oculus for hexagonal/octagonal caps, rectangular skylight for mansards!
     if (def.id === 'roofCap') {
       let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+      let sumX = 0, sumY = 0;
       for (const [px, py] of def.poly) {
         const lx = (px - def.hingeOrigin[0]) * MM;
         const ly = (py - def.hingeOrigin[1]) * MM;
+        sumX += lx;
+        sumY += ly;
         if (lx < minX) minX = lx;
         if (lx > maxX) maxX = lx;
         if (ly < minY) minY = ly;
@@ -670,7 +692,16 @@ export function buildOrigamiHouseRig(net: BuiltHouseNet, mats: OrigamiMaterials)
       }
       const capW = maxX - minX;
       const capD = maxY - minY;
-      if (capW > 1.4 && capD > 1.4) {
+      if (def.poly.length >= 6) {
+        const cx = sumX / def.poly.length;
+        const cy = sumY / def.poly.length;
+        const r = Math.min(capW, capD) * 0.24;
+        if (r > 0.22) {
+          const p = new THREE.Path();
+          p.absarc(cx, cy, r, 0, Math.PI * 2, false);
+          shape.holes.push(p);
+        }
+      } else if (capW > 1.4 && capD > 1.4) {
         addRectHole(shape, (minX + maxX) * 0.5, (minY + maxY) * 0.5, capW * 0.42, capD * 0.42);
       }
     }
@@ -716,35 +747,46 @@ export function buildOrigamiHouseRig(net: BuiltHouseNet, mats: OrigamiMaterials)
     pivot.add(foldLine);
 
     groupByPanel.set(def.id, pivot);
+    const hingeAxis3D = new THREE.Vector3(def.hingeAxis[0], 0, -def.hingeAxis[1]).normalize();
     panels.set(def.id, {
       id: def.id,
       stage: def.stage,
       pivot,
       mesh,
       foldLine,
-      axis: def.axis,
-      sign: def.sign,
+      hingeAxis3D,
       targetAngle: def.targetAngle,
     });
   }
 
   // ---- Flat-Folded Kirigami Architectural Details (Awning, Chimney, Roof Dormers!) ----
-  // Every detail lies 100% flat on its parent sheet at `fold = 0` and folds cleanly into 3D as the house folds!
+  // Every detail mounts via `wallFrame` / `roofFrame`, working identically on cross, ribbon, and polygonal nets!
 
-  // A. Front entry paper canopy awning (hinged right above the front doorway, hidden behind solid spandrel at fold=0,
-  //    sweeps 98° outward with a crisp architectural rainwater slope as the front wall rises!)
-  const frontPv = panels.get('front');
-  if (spec.hasAwning && frontPv && spec.door !== 'none' && spec.door !== 'arcade') {
-    const storyH = spec.H / spec.levels;
+  // A. Front entry paper canopy awning (hinged right above front doorway, sweeps 98° outward with gentle rain slope!)
+  const frontDef = net.panels.find((p) => p.isFront) ?? net.panelMap.get('front');
+  const frontPv = frontDef ? panels.get(frontDef.id) : undefined;
+  if (spec.hasAwning && frontPv && frontDef?.wallFrame && spec.door !== 'none' && spec.door !== 'arcade') {
+    const wf = frontDef.wallFrame;
+    const storyH = wf.heightMm / spec.levels;
     const awningYmm = Math.min(storyH * 0.72, 15.2);
-    const awW = Math.min(spec.W * 0.34, 15.5);
-    const awD = Math.min(6.4, Math.max(4.4, spec.W * 0.11));
+    const awW = Math.min(wf.widthMm * 0.42, 15.5);
+    const awD = Math.min(6.4, Math.max(4.4, wf.widthMm * 0.14));
+
+    const sx = wf.origin[0] + wf.vAxis[0] * awningYmm;
+    const sy = wf.origin[1] + wf.vAxis[1] * awningYmm;
+    const frameGroup = new THREE.Group();
+    frameGroup.position.set(
+      (sx - frontDef.hingeOrigin[0]) * MM,
+      -PAPER_THICK,
+      -(sy - frontDef.hingeOrigin[1]) * MM,
+    );
+    // Align frameGroup local +Z with wall up-vector `v3 = (vAxis[0], 0, -vAxis[1])`!
+    frameGroup.rotation.y = Math.atan2(wf.vAxis[0], -wf.vAxis[1]);
+    frontPv.pivot.add(frameGroup);
 
     const aPivot = new THREE.Group();
-    aPivot.position.set(0, -PAPER_THICK, awningYmm * MM);
-    frontPv.pivot.add(aPivot);
+    frameGroup.add(aPivot);
 
-    // Extends in local +Z (above doorway spandrel, so never peeks into the doorway cutout at fold=0!)
     const aShape = new THREE.Shape();
     aShape.moveTo(-awW * 0.5 * MM, 0);
     aShape.lineTo(awW * 0.5 * MM, 0);
@@ -752,25 +794,22 @@ export function buildOrigamiHouseRig(net: BuiltHouseNet, mats: OrigamiMaterials)
     aShape.lineTo(-awW * 0.5 * MM, -awD * MM);
     aShape.closePath();
 
-    const flatX = 0;
-    const flatZ = (spec.D * 0.5 + awningYmm) * MM;
-    const aGeo = buildDualSidedPaperGeometry(aShape, flatX, flatZ, spec.yawOffset, 0, PAPER_THICK * 0.75);
+    const aGeo = buildDualSidedPaperGeometry(aShape, sx * MM, -sy * MM, spec.yawOffset, 0, PAPER_THICK * 0.75);
     const aMesh = new THREE.Mesh(aGeo, exteriorDetailMats);
     aMesh.castShadow = true;
     aMesh.receiveShadow = true;
     allMeshes.push(aMesh);
     aPivot.add(aMesh);
 
-    // +98.6° swings local +Z outward (+Z world) with an 8.6° downward architectural rain pitch!
     details.push({
       pivot: aPivot,
       axis: 'x',
       targetAngle: 1.72,
-      driverPanel: 'front',
+      driverPanel: frontDef.id,
     });
   }
 
-  // B. Kirigami folded L-corner 3D chimney stack on roof (placed on `roofL` when `roofR` has dormers to avoid collisions!)
+  // B. Kirigami folded L-corner 3D chimney stack on roof (placed on `roofL` when `roofR` has dormers!)
   const wantsDormersOnR =
     spec.dormerCount > 0 && panels.has('roofR') && (spec.roofType === 'gable' || spec.roofType === 'mansard');
   const chimneyHostId: FoldablePanelId | null = wantsDormersOnR
@@ -783,51 +822,62 @@ export function buildOrigamiHouseRig(net: BuiltHouseNet, mats: OrigamiMaterials)
         ? 'roofL'
         : null;
   const chimneyHost = chimneyHostId ? panels.get(chimneyHostId) : undefined;
-  if (spec.hasChimney && chimneyHost && chimneyHostId) {
-    const isRightRoof = chimneyHostId === 'roofR';
-    const hostDef = net.panelMap.get(chimneyHostId)!;
-    const chW = Math.min(6.4, Math.max(4.4, spec.D * 0.085));
-    const chH = spec.roofType === 'flat' ? Math.min(10.5, Math.max(7.2, spec.H * 0.2)) : Math.min(12.5, Math.max(8.2, net.roofSlant * 0.34));
-    const localOffX = (isRightRoof ? 1 : -1) * Math.min(net.roofSlant * 0.46, Math.max(10.5, net.roofSlant * 0.36));
-    const localOffZ = -spec.D * 0.20;
+  const chimneyDef = chimneyHostId ? net.panelMap.get(chimneyHostId) : undefined;
+  if (spec.hasChimney && chimneyHost && chimneyHostId && chimneyDef?.roofFrame) {
+    const rf = chimneyDef.roofFrame;
+    const chW = Math.min(6.4, Math.max(4.4, rf.widthMm * 0.085));
+    const chH =
+      spec.roofType === 'flat'
+        ? Math.min(10.5, Math.max(7.2, spec.H * 0.2))
+        : Math.min(12.5, Math.max(8.2, rf.slantMm * 0.34));
+    const offSlope = Math.min(rf.slantMm * 0.46, Math.max(10.5, rf.slantMm * 0.36));
+    const offRidge = -rf.widthMm * 0.20;
+
+    const sx = rf.origin[0] + rf.slopeAxis[0] * offSlope + rf.ridgeAxis[0] * offRidge;
+    const sy = rf.origin[1] + rf.slopeAxis[1] * offSlope + rf.ridgeAxis[1] * offRidge;
+
+    const frameGroup = new THREE.Group();
+    frameGroup.position.set(
+      (sx - chimneyDef.hingeOrigin[0]) * MM,
+      -PAPER_THICK,
+      -(sy - chimneyDef.hingeOrigin[1]) * MM,
+    );
+    // Align frameGroup local +X with roof up-slope `s3 = (slopeAxis[0], 0, -slopeAxis[1])`!
+    frameGroup.rotation.y = Math.atan2(rf.slopeAxis[1], rf.slopeAxis[0]);
+    chimneyHost.pivot.add(frameGroup);
 
     const cPivot = new THREE.Group();
-    cPivot.position.set(localOffX * MM, -PAPER_THICK, localOffZ * MM);
-    chimneyHost.pivot.add(cPivot);
+    frameGroup.add(cPivot);
 
-    const sgn = isRightRoof ? 1 : -1;
     const cShape = new THREE.Shape();
     cShape.moveTo(0, -chW * 0.5 * MM);
-    cShape.lineTo(sgn * chH * MM, -chW * 0.5 * MM);
-    cShape.lineTo(sgn * chH * MM, chW * 0.5 * MM);
+    cShape.lineTo(chH * MM, -chW * 0.5 * MM);
+    cShape.lineTo(chH * MM, chW * 0.5 * MM);
     cShape.lineTo(0, chW * 0.5 * MM);
     cShape.closePath();
 
-    const flatX = (hostDef.hingeOrigin[0] + localOffX) * MM;
-    const flatZ = (-hostDef.hingeOrigin[1] + localOffZ) * MM;
-    const cGeo = buildDualSidedPaperGeometry(cShape, flatX, flatZ, spec.yawOffset, 0, PAPER_THICK * 0.85);
+    const cGeo = buildDualSidedPaperGeometry(cShape, sx * MM, -sy * MM, spec.yawOffset, 0, PAPER_THICK * 0.85);
     const cMesh = new THREE.Mesh(cGeo, exteriorDetailMats);
     cMesh.castShadow = true;
     cMesh.receiveShadow = true;
     allMeshes.push(cMesh);
     cPivot.add(cMesh);
 
-    // Second perpendicular folded cheek wall turning the chimney into a crisp 3D L-corner stack from every angle!
     const cheekPivot = new THREE.Group();
     cheekPivot.position.set(0, 0, chW * 0.5 * MM);
     cPivot.add(cheekPivot);
 
     const cheekShape = new THREE.Shape();
     cheekShape.moveTo(0, 0);
-    cheekShape.lineTo(sgn * chH * MM, 0);
-    cheekShape.lineTo(sgn * chH * MM, -chW * 0.85 * MM);
+    cheekShape.lineTo(chH * MM, 0);
+    cheekShape.lineTo(chH * MM, -chW * 0.85 * MM);
     cheekShape.lineTo(0, -chW * 0.85 * MM);
     cheekShape.closePath();
 
     const cheekGeo = buildDualSidedPaperGeometry(
       cheekShape,
-      flatX,
-      flatZ + chW * 0.5 * MM,
+      sx * MM,
+      -sy * MM + chW * 0.5 * MM,
       spec.yawOffset,
       0,
       PAPER_THICK * 0.85,
@@ -838,11 +888,10 @@ export function buildOrigamiHouseRig(net: BuiltHouseNet, mats: OrigamiMaterials)
     allMeshes.push(cheekMesh);
     cheekPivot.add(cheekMesh);
 
-    const chimTarget = isRightRoof ? -(Math.PI * 0.5 - spec.pitch) : Math.PI * 0.5 - spec.pitch;
     details.push({
       pivot: cPivot,
       axis: 'z',
-      targetAngle: spec.roofType === 'flat' ? (isRightRoof ? -Math.PI * 0.5 : Math.PI * 0.5) : chimTarget,
+      targetAngle: spec.roofType === 'flat' ? -Math.PI * 0.5 : -(Math.PI * 0.5 - spec.pitch),
       driverPanel: chimneyHostId,
     });
     details.push({
@@ -853,29 +902,40 @@ export function buildOrigamiHouseRig(net: BuiltHouseNet, mats: OrigamiMaterials)
     });
   }
 
-  // C. Kirigami pop-up roof dormers on right roof slope (gable & mansard, safely clamped inside trapezoid top!)
+  // C. Kirigami pop-up roof dormers on `roofR` (gable & mansard, safely clamped inside trapezoid top!)
   const dormerHost = panels.get('roofR');
-  if (wantsDormersOnR && dormerHost) {
-    const hostDef = net.panelMap.get('roofR')!;
-    const dW = Math.min(9.4, Math.max(6.8, spec.D * 0.125));
-    const dH = Math.min(net.roofSlant * 0.34, Math.max(7.2, spec.H * 0.24));
-    const localOffX = Math.min(net.roofSlant * 0.26, Math.max(6.5, net.roofSlant * 0.22));
+  const dormerDef = net.panelMap.get('roofR');
+  if (wantsDormersOnR && dormerHost && dormerDef?.roofFrame) {
+    const rf = dormerDef.roofFrame;
+    const dW = Math.min(9.4, Math.max(6.8, rf.widthMm * 0.125));
+    const dH = Math.min(rf.slantMm * 0.34, Math.max(7.2, spec.H * 0.24));
+    const offSlope = Math.min(rf.slantMm * 0.26, Math.max(6.5, rf.slantMm * 0.22));
     const topHalfD =
       spec.roofType === 'mansard'
-        ? Math.max(0, spec.D * 0.5 - Math.min(spec.W, spec.D) * 0.5 * (1 - spec.mansardRatio))
-        : spec.D * 0.5;
-    const safeHalfZ = topHalfD - dW * 0.72;
-    const zPositions =
-      spec.dormerCount === 2 && safeHalfZ >= dW * 0.78
-        ? [-Math.min(spec.D * 0.21, safeHalfZ), Math.min(spec.D * 0.21, safeHalfZ)]
+        ? Math.max(0, rf.widthMm * 0.5 - Math.min(spec.W, spec.D) * 0.5 * (1 - spec.mansardRatio))
+        : rf.widthMm * 0.5;
+    const safeHalfR = topHalfD - dW * 0.72;
+    const ridgePositions =
+      spec.dormerCount === 2 && safeHalfR >= dW * 0.78
+        ? [-Math.min(rf.widthMm * 0.21, safeHalfR), Math.min(rf.widthMm * 0.21, safeHalfR)]
         : [0];
 
-    for (const lz of zPositions) {
-      const dPivot = new THREE.Group();
-      dPivot.position.set(localOffX * MM, -PAPER_THICK, lz * MM);
-      dormerHost.pivot.add(dPivot);
+    for (const offR of ridgePositions) {
+      const sx = rf.origin[0] + rf.slopeAxis[0] * offSlope + rf.ridgeAxis[0] * offR;
+      const sy = rf.origin[1] + rf.slopeAxis[1] * offSlope + rf.ridgeAxis[1] * offR;
 
-      // Miniature gabled dormer facade tab with punched window!
+      const frameGroup = new THREE.Group();
+      frameGroup.position.set(
+        (sx - dormerDef.hingeOrigin[0]) * MM,
+        -PAPER_THICK,
+        -(sy - dormerDef.hingeOrigin[1]) * MM,
+      );
+      frameGroup.rotation.y = Math.atan2(rf.slopeAxis[1], rf.slopeAxis[0]);
+      dormerHost.pivot.add(frameGroup);
+
+      const dPivot = new THREE.Group();
+      frameGroup.add(dPivot);
+
       const dShape = new THREE.Shape();
       dShape.moveTo(0, -dW * 0.5 * MM);
       dShape.lineTo(dH * 0.72 * MM, -dW * 0.5 * MM);
@@ -885,9 +945,7 @@ export function buildOrigamiHouseRig(net: BuiltHouseNet, mats: OrigamiMaterials)
       dShape.closePath();
       addRectHole(dShape, dH * 0.38 * MM, 0, dH * 0.40 * MM, dW * 0.44 * MM);
 
-      const flatX = (hostDef.hingeOrigin[0] + localOffX) * MM;
-      const flatZ = (-hostDef.hingeOrigin[1] + lz) * MM;
-      const dGeo = buildDualSidedPaperGeometry(dShape, flatX, flatZ, spec.yawOffset, 0, PAPER_THICK * 0.8);
+      const dGeo = buildDualSidedPaperGeometry(dShape, sx * MM, -sy * MM, spec.yawOffset, 0, PAPER_THICK * 0.8);
       const dMesh = new THREE.Mesh(dGeo, exteriorDetailMats);
       dMesh.castShadow = true;
       dMesh.receiveShadow = true;
@@ -915,9 +973,7 @@ export function buildOrigamiHouseRig(net: BuiltHouseNet, mats: OrigamiMaterials)
     if (!pv) return;
     const baseAngle = Math.max(0, Math.min(1, fold01)) * pv.targetAngle;
     const effective = Math.max(0, Math.min(pv.targetAngle + 0.04, baseAngle + peekRad));
-    const signed = effective * pv.sign;
-    if (pv.axis === 'x') pv.pivot.rotation.x = signed;
-    else pv.pivot.rotation.z = signed;
+    pv.pivot.quaternion.setFromAxisAngle(pv.hingeAxis3D, effective);
 
     pv.foldLine.material = hovered ? mats.foldLineActive : mats.foldLine;
     pv.foldLine.visible = linesAllowed && (fold01 < 0.96 || hovered);

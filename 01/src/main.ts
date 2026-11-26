@@ -453,32 +453,44 @@ function getStaggerOrder(referenceYaw = curYaw): Array<{
   const cy = Math.cos(houseYaw);
   const sy = Math.sin(houseYaw);
 
-  // Local outward unit normals in XZ for each of the 4 walls
-  const localWallNormal: Record<string, [number, number]> = {
-    front: [0, 1],
-    back: [0, -1],
-    left: [-1, 0],
-    right: [1, 0],
+  // Outward XZ normal for ANY wall (cross, ribbon, hex, or oct!)
+  const wallOutwardDot = (id: FoldablePanelId): number => {
+    const def = rig.net.panelMap.get(id);
+    let nx = 0;
+    let nz = 0;
+    if (rig.net.spec.topology === 'ribbon') {
+      const localN: Record<string, [number, number]> = {
+        front: [0, 1],
+        back: [0, -1],
+        left: [-1, 0],
+        right: [1, 0],
+      };
+      [nx, nz] = localN[id] ?? [0, 0];
+    } else if (def?.wallFrame) {
+      // Sheet vAxis (vx, vy) maps directly to flat 3D outward normal (vx, -vy)!
+      nx = def.wallFrame.vAxis[0];
+      nz = -def.wallFrame.vAxis[1];
+    }
+    const wx = nx * cy + nz * sy;
+    const wz = -nx * sy + nz * cy;
+    return wx * camX + wz * camZ;
   };
 
   const wallIds = rig.panelIds.filter((id) => rig.net.panelMap.get(id)?.stage === 'wall');
-  // Sort ascending by dot(worldNormal, camDir): most negative = furthest away from camera -> folds FIRST!
-  const sortedWalls = [...wallIds].sort((a, b) => {
-    const [ax, az] = localWallNormal[a] ?? [0, 0];
-    const [bx, bz] = localWallNormal[b] ?? [0, 0];
-    const awx = ax * cy + az * sy;
-    const awz = -ax * sy + az * cy;
-    const bwx = bx * cy + bz * sy;
-    const bwz = -bx * sy + bz * cy;
-    return (awx * camX + awz * camZ) - (bwx * camX + bwz * camZ);
-  });
+  // Sort ascending by outward dot product: most negative = furthest away from camera -> folds FIRST!
+  const sortedWalls = [...wallIds].sort((a, b) => wallOutwardDot(a) - wallOutwardDot(b));
 
   const wallRank = new Map<FoldablePanelId, number>();
   sortedWalls.forEach((id, i) => wallRank.set(id, i));
 
-  // Curved progressive spacing across the 4 walls (0.00 -> 0.25 -> 0.60 -> 1.00)
+  // Curved progressive spacing across walls (0.00 -> ... -> 1.00)
   const wallCount = Math.max(1, sortedWalls.length - 1);
   const wallCurve = (rank: number) => Math.pow(rank / wallCount, 1.28);
+
+  const hasCap = rig.panels.has('roofCap');
+  const isSingleSpanRoof = rig.net.spec.roofType === 'shed' || rig.net.spec.roofType === 'flat';
+  const isRibbon = rig.net.spec.topology === 'ribbon';
+  const isPolygon = rig.net.spec.topology === 'hex' || rig.net.spec.topology === 'oct';
 
   const wallDelay = new Map<FoldablePanelId, number>();
   const wallScrub = new Map<FoldablePanelId, number>();
@@ -489,34 +501,75 @@ function getStaggerOrder(referenceYaw = curYaw): Array<{
     scrubStart: number;
     scrubSpan: number;
   }> = [];
-  const hasCap = rig.panels.has('roofCap');
-  const isSingleSpanRoof = rig.net.spec.roofType === 'shed' || rig.net.spec.roofType === 'flat';
 
-  for (const id of sortedWalls) {
-    const rank = wallRank.get(id) ?? 0;
-    const c = wallCurve(rank);
-    const d = c * 0.62;
-    const s = c * 0.26;
-    wallDelay.set(id, d);
-    wallScrub.set(id, s);
-    items.push({
-      id,
-      delaySec: d,
-      durationSec: 1.28,
-      scrubStart: s,
-      scrubSpan: hasCap ? 0.44 : 0.48,
-    });
+  if (isRibbon) {
+    // Wrap-around ribbon dance: `back` lifts the entire strip off the paper first, then `left` & `right`
+    // curl inward like embracing arms (farther wing slightly ahead), and `front` wraps smoothly around the front!
+    const leftFurther = wallOutwardDot('left') <= wallOutwardDot('right');
+    const ribbonTiming: Record<string, { d: number; s: number; dur: number }> = {
+      back: { d: 0.0, s: 0.0, dur: 1.32 },
+      left: { d: leftFurther ? 0.22 : 0.40, s: leftFurther ? 0.10 : 0.18, dur: 1.28 },
+      right: { d: leftFurther ? 0.40 : 0.22, s: leftFurther ? 0.18 : 0.10, dur: 1.28 },
+      front: { d: (leftFurther ? 0.40 : 0.22) + 0.30, s: (leftFurther ? 0.18 : 0.10) + 0.16, dur: 1.28 },
+    };
+
+    for (const id of wallIds) {
+      const t = ribbonTiming[id] ?? { d: 0.3, s: 0.14, dur: 1.28 };
+      wallDelay.set(id, t.d);
+      wallScrub.set(id, t.s);
+      items.push({
+        id,
+        delaySec: t.d,
+        durationSec: t.dur,
+        scrubStart: t.s,
+        scrubSpan: hasCap ? 0.42 : 0.46,
+      });
+    }
+  } else if (isPolygon) {
+    // Radial lotus-bloom choreography: furthest petals rise first around both flanks with a gentle shimmer,
+    // blooming upward around the projected interior before the front entrance petal closes last!
+    for (const id of sortedWalls) {
+      const rank = wallRank.get(id) ?? 0;
+      const c = wallCurve(rank);
+      const d = c * 0.78;
+      const s = c * 0.30;
+      wallDelay.set(id, d);
+      wallScrub.set(id, s);
+      items.push({
+        id,
+        delaySec: d,
+        durationSec: 1.26,
+        scrubStart: s,
+        scrubSpan: hasCap ? 0.42 : 0.46,
+      });
+    }
+  } else {
+    for (const id of sortedWalls) {
+      const rank = wallRank.get(id) ?? 0;
+      const c = wallCurve(rank);
+      const d = c * 0.62;
+      const s = c * 0.26;
+      wallDelay.set(id, d);
+      wallScrub.set(id, s);
+      items.push({
+        id,
+        delaySec: d,
+        durationSec: 1.28,
+        scrubStart: s,
+        scrubSpan: hasCap ? 0.44 : 0.48,
+      });
+    }
   }
 
   let maxRoofDelay = 0;
-  let roofBDelay = 0;
+  let capParentDelay = 0;
+  const capParentId = rig.net.panelMap.get('roofCap')?.parent ?? 'roofB';
   for (const id of rig.panelIds) {
     const def = rig.net.panelMap.get(id)!;
     if (def.stage !== 'roof') continue;
     const pId = (def.parent as FoldablePanelId) ?? 'left';
     let d = (wallDelay.get(pId) ?? 0.35) + 0.44;
     let s = (wallScrub.get(pId) ?? 0.14) + 0.22;
-    // On single-span roofs (`shed`/`flat` hinged on `left`), ensure the wide roof deck closes over `right` wall!
     if (isSingleSpanRoof && id === 'roofL') {
       const oppD = wallDelay.get('right') ?? 0;
       const oppS = wallScrub.get('right') ?? 0;
@@ -524,7 +577,7 @@ function getStaggerOrder(referenceYaw = curYaw): Array<{
       s = Math.max(s, oppS + 0.18);
     }
     if (d > maxRoofDelay) maxRoofDelay = d;
-    if (id === 'roofB') roofBDelay = d;
+    if (id === capParentId) capParentDelay = d;
     items.push({
       id,
       delaySec: d,
@@ -537,10 +590,9 @@ function getStaggerOrder(referenceYaw = curYaw): Array<{
   for (const id of rig.panelIds) {
     const def = rig.net.panelMap.get(id)!;
     if (def.stage !== 'cap') continue;
-    // `roofCap` glides quietly down right at the wave crescendo after its parent `roofB` & slopes!
     items.push({
       id,
-      delaySec: Math.max(roofBDelay + 0.44, maxRoofDelay + 0.16),
+      delaySec: Math.max(capParentDelay + 0.44, maxRoofDelay + 0.16),
       durationSec: 1.18,
       scrubStart: 0.58,
       scrubSpan: 0.42,
@@ -930,6 +982,7 @@ syncUI();
       info: () => {
         generation: number;
         label: string;
+        topology: string;
         roofType: string;
         W: number;
         D: number;
@@ -993,6 +1046,7 @@ syncUI();
     return {
       generation,
       label: s.label,
+      topology: s.topology,
       roofType: s.roofType,
       W: Math.round(s.W * 10) / 10,
       D: Math.round(s.D * 10) / 10,
