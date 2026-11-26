@@ -1,8 +1,8 @@
 import * as THREE from 'three';
 import {
   MM,
+  computeNetOuterPerimeter,
   type BuiltHouseNet,
-  type DoorStyle,
   type FoldablePanelId,
   type HouseNetSpec,
   type PanelId,
@@ -25,21 +25,26 @@ export const PAPER_THICK = 0.056; // 0.56 mm cotton-rag paper casting crisp mini
 
 export interface ProjectionUniforms {
   uHasProj: { value: number };
-  uGroundProjAlpha: { value: number };
   uProjTex: { value: THREE.Texture | null };
   uProjMatrix: { value: THREE.Matrix4 };
+  uPaperReveal: { value: number };
 }
 
 export interface OrigamiMaterials {
   inside: THREE.MeshStandardMaterial;
   outside: THREE.MeshStandardMaterial;
   edge: THREE.MeshStandardMaterial;
-  ground: THREE.MeshStandardMaterial;
+  cutoutInside: THREE.MeshStandardMaterial;
+  cutoutOutside: THREE.MeshStandardMaterial;
+  cutoutEdge: THREE.MeshStandardMaterial;
+  chadInside: THREE.MeshStandardMaterial;
+  chadOutside: THREE.MeshStandardMaterial;
+  chadEdge: THREE.MeshStandardMaterial;
   foldLine: THREE.LineDashedMaterial;
   foldLineActive: THREE.LineBasicMaterial;
   projUniforms: ProjectionUniforms;
   setProjection(tex: THREE.Texture | null, viewProjMatrix?: THREE.Matrix4): void;
-  setGroundProjectionAlpha(alpha: number): void;
+  setCutoutOpacity(opacity: number): void;
   setOutsideColor(hex: string): void;
   dispose(): void;
 }
@@ -105,61 +110,71 @@ function createWashiFiberTextures(maxAniso: number): { map: THREE.CanvasTexture;
   return { map, bumpMap };
 }
 
+interface ProjectiveShaderOpts {
+  /** Clip fragments whose projected capture matches the empty studio background (no giant blank outer sheet!) */
+  clipToSilhouette?: boolean;
+  /** Keep the material's own pastel color (e.g. underside of falling cutout shard) while still silhouette-clipping */
+  tintColor?: boolean;
+}
+
 function attachProjectiveShader(
   mat: THREE.MeshStandardMaterial,
   uniforms: ProjectionUniforms,
-  useFlatAttr: boolean,
+  opts: ProjectiveShaderOpts = {},
 ): void {
-  mat.customProgramCacheKey = () => (useFlatAttr ? 'origami-cam-proj-house-v3' : 'origami-cam-proj-ground-v3');
+  const clip = Boolean(opts.clipToSilhouette);
+  const tint = opts.tintColor !== false;
+  mat.customProgramCacheKey = () => `origami-cam-proj-v6-${clip ? 'clip' : 'full'}-${tint ? 'tint' : 'mask'}`;
   mat.onBeforeCompile = (shader) => {
     shader.uniforms.uHasProj = uniforms.uHasProj;
-    shader.uniforms.uGroundProjAlpha = uniforms.uGroundProjAlpha;
     shader.uniforms.uProjTex = uniforms.uProjTex;
     shader.uniforms.uProjMatrix = uniforms.uProjMatrix;
+    shader.uniforms.uPaperReveal = uniforms.uPaperReveal;
 
-    if (useFlatAttr) {
-      shader.vertexShader = shader.vertexShader
-        .replace(
-          '#include <common>',
-          `#include <common>
+    shader.vertexShader = shader.vertexShader
+      .replace(
+        '#include <common>',
+        `#include <common>
 attribute vec3 aFlatPos;
 varying vec3 vProjWorldPos;`,
-        )
-        .replace(
-          '#include <begin_vertex>',
-          `#include <begin_vertex>
+      )
+      .replace(
+        '#include <begin_vertex>',
+        `#include <begin_vertex>
 vProjWorldPos = aFlatPos;`,
-        );
-    } else {
-      shader.vertexShader = shader.vertexShader
-        .replace(
-          '#include <common>',
-          `#include <common>
-varying vec3 vProjWorldPos;`,
-        )
-        .replace(
-          '#include <worldpos_vertex>',
-          `#include <worldpos_vertex>
-vProjWorldPos = (modelMatrix * vec4(transformed, 1.0)).xyz;`,
-        );
-    }
+      );
 
-    const alphaExpr = useFlatAttr ? '1.0' : 'uGroundProjAlpha';
+    const clipBlock = clip
+      ? `
+      float bgDiff = length(captured - groundRef);
+      if (bgDiff < 0.012) discard;`
+      : `
+      float bgDiff = length(captured - groundRef);
+      projIsBlank = 1.0 - smoothstep(0.008, 0.024, bgDiff);`;
+    const clipOutside = clip ? ` else { discard; }` : ` else { projIsBlank = 1.0; }`;
+    const tintBlock = tint
+      ? `
+      vec3 projAlbedo = clamp(captured / groundRef, vec3(0.0), vec3(1.45));
+      float fx = smoothstep(0.002, 0.035, pUv.x) * smoothstep(0.002, 0.035, 1.0 - pUv.x);
+      float fy = smoothstep(0.002, 0.035, pUv.y) * smoothstep(0.002, 0.035, 1.0 - pUv.y);
+      diffuseColor.rgb *= mix(vec3(1.0), projAlbedo, fx * fy);`
+      : '';
+
     shader.fragmentShader = shader.fragmentShader
       .replace(
         '#include <common>',
         `#include <common>
 uniform float uHasProj;
-uniform float uGroundProjAlpha;
 uniform sampler2D uProjTex;
 uniform mat4 uProjMatrix;
+uniform float uPaperReveal;
 varying vec3 vProjWorldPos;`,
       )
       .replace(
         '#include <map_fragment>',
         `#include <map_fragment>
-float projAlpha = ${alphaExpr};
-if (uHasProj > 0.5 && projAlpha > 0.001) {
+float projIsBlank = 0.0;
+if (uHasProj > 0.5) {
   vec4 pClip = uProjMatrix * vec4(vProjWorldPos, 1.0);
   if (pClip.w > 0.0001) {
     vec2 pUv = (pClip.xy / pClip.w) * 0.5 + 0.5;
@@ -169,15 +184,22 @@ if (uHasProj > 0.5 && projAlpha > 0.001) {
       vec3 c2 = texture2D(uProjTex, vec2(0.015, 0.985)).rgb;
       vec3 c3 = texture2D(uProjTex, vec2(0.985, 0.985)).rgb;
       vec3 groundRef = max(vec3(0.05), max(max(c0, c1), max(c2, c3)));
-      vec3 captured = texture2D(uProjTex, pUv).rgb;
-      vec3 projAlbedo = clamp(captured / groundRef, vec3(0.0), vec3(1.45));
-      float fx = smoothstep(0.002, 0.035, pUv.x) * smoothstep(0.002, 0.035, 1.0 - pUv.x);
-      float fy = smoothstep(0.002, 0.035, pUv.y) * smoothstep(0.002, 0.035, 1.0 - pUv.y);
-      diffuseColor.rgb *= mix(vec3(1.0), projAlbedo, fx * fy * projAlpha);
-    }
-  }
+      vec3 captured = texture2D(uProjTex, pUv).rgb;${clipBlock}${tintBlock}
+    }${clipOutside}
+  }${clipOutside}
+}${clip ? ' else { discard; }' : ''}`,
+      );
+
+    if (!clip) {
+      shader.fragmentShader = shader.fragmentShader.replace(
+        '#include <fog_fragment>',
+        `#include <fog_fragment>
+if (uHasProj > 0.5 && projIsBlank > 0.001 && uPaperReveal < 0.999) {
+  vec3 studioBg = vec3(0.960784, 0.956863, 0.941176);
+  gl_FragColor.rgb = mix(gl_FragColor.rgb, studioBg, projIsBlank * (1.0 - uPaperReveal));
 }`,
       );
+    }
   };
 }
 
@@ -187,9 +209,9 @@ export function createOrigamiMaterials(maxAniso = 8): OrigamiMaterials {
 
   const projUniforms: ProjectionUniforms = {
     uHasProj: { value: 0 },
-    uGroundProjAlpha: { value: 1 },
     uProjTex: { value: null },
     uProjMatrix: { value: new THREE.Matrix4() },
+    uPaperReveal: { value: 1 },
   };
 
   const inside = new THREE.MeshStandardMaterial({
@@ -202,8 +224,8 @@ export function createOrigamiMaterials(maxAniso = 8): OrigamiMaterials {
   });
 
   // Duplex Japanese origami paper:
-  // - `inside` (top face when flat): pure cotton white -> melts seamlessly into the white studio sheet & carries 1:1 projections!
-  // - `outside` (bottom face when flat -> exterior walls & roof when folded!): rich matte charcoal-black kuro-washi!
+  // - `inside` (top face when flat): pure cotton white carrying exact 1:1 camera projections
+  // - `outside` (bottom face when flat -> exterior walls & roof): curated matte pastel cotton stock
   const outside = new THREE.MeshStandardMaterial({
     color: new THREE.Color('#9bb7cc'),
     bumpMap: tex.bumpMap,
@@ -218,26 +240,24 @@ export function createOrigamiMaterials(maxAniso = 8): OrigamiMaterials {
     metalness: 0.0,
   });
 
-  const groundTex = tex.map.clone();
-  groundTex.needsUpdate = true;
-  // Matches house paper fiber scale (0.16 / 0.28 per world unit) across a generous 900x900 seamless sheet
-  groundTex.repeat.set(144, 144);
-  const groundBump = tex.bumpMap.clone();
-  groundBump.needsUpdate = true;
-  groundBump.repeat.set(252, 252);
+  // Outer falling cutout shards: silhouette-clipped strictly to the sliced-off previous house
+  // so NO blank surrounding sheet or giant outer border ever appears!
+  const cutoutInside = inside.clone();
+  const cutoutOutside = outside.clone();
+  const cutoutEdge = edge.clone();
 
-  const ground = new THREE.MeshStandardMaterial({
-    color: paperColor,
-    map: groundTex,
-    bumpMap: groundBump,
-    bumpScale: 0.004,
-    roughness: 0.93,
-    metalness: 0.0,
-  });
+  // Punched window/door/skylight chads: full real paper cutouts falling right out of the house's openings!
+  const chadInside = inside.clone();
+  const chadOutside = outside.clone();
+  const chadEdge = edge.clone();
 
-  attachProjectiveShader(inside, projUniforms, true);
-  attachProjectiveShader(edge, projUniforms, true);
-  attachProjectiveShader(ground, projUniforms, false);
+  attachProjectiveShader(inside, projUniforms);
+  attachProjectiveShader(edge, projUniforms);
+  attachProjectiveShader(cutoutInside, projUniforms, { clipToSilhouette: true, tintColor: true });
+  attachProjectiveShader(cutoutEdge, projUniforms, { clipToSilhouette: true, tintColor: true });
+  attachProjectiveShader(cutoutOutside, projUniforms, { clipToSilhouette: true, tintColor: false });
+  attachProjectiveShader(chadInside, projUniforms);
+  attachProjectiveShader(chadEdge, projUniforms);
 
   const foldLine = new THREE.LineDashedMaterial({
     color: 0x8f8c86,
@@ -253,11 +273,34 @@ export function createOrigamiMaterials(maxAniso = 8): OrigamiMaterials {
     opacity: 0.45,
   });
 
+  const fadeGroup = [cutoutInside, cutoutOutside, cutoutEdge, chadInside, chadOutside, chadEdge];
+  // Keep `transparent = true` permanently on cutout & chad materials so Three.js compiles ONE
+  // shader variant upfront (never toggling `#define OPAQUE` or setting `needsUpdate = true` mid-fall!).
+  for (const m of fadeGroup) {
+    m.transparent = true;
+    m.depthWrite = true;
+    m.opacity = 1;
+  }
+
+  const setCutoutOpacity = (opacity: number) => {
+    const o = Math.max(0, Math.min(1, opacity));
+    const writeDepth = o >= 0.995;
+    for (const m of fadeGroup) {
+      m.opacity = o;
+      m.depthWrite = writeDepth;
+    }
+  };
+
   return {
     inside,
     outside,
     edge,
-    ground,
+    cutoutInside,
+    cutoutOutside,
+    cutoutEdge,
+    chadInside,
+    chadOutside,
+    chadEdge,
     foldLine,
     foldLineActive,
     projUniforms,
@@ -266,28 +309,24 @@ export function createOrigamiMaterials(maxAniso = 8): OrigamiMaterials {
         projUniforms.uProjTex.value = nextTex;
         projUniforms.uProjMatrix.value.copy(viewProjMatrix);
         projUniforms.uHasProj.value = 1;
-        projUniforms.uGroundProjAlpha.value = 1;
       } else {
         projUniforms.uHasProj.value = 0;
-        projUniforms.uGroundProjAlpha.value = 0;
         projUniforms.uProjTex.value = null;
       }
     },
-    setGroundProjectionAlpha(alpha: number) {
-      projUniforms.uGroundProjAlpha.value = Math.max(0, Math.min(1, alpha));
-    },
+    setCutoutOpacity,
     setOutsideColor(hex: string) {
       outside.color.set(hex);
+      cutoutOutside.color.set(hex);
+      chadOutside.color.set(hex);
     },
     dispose() {
       tex.map.dispose();
       tex.bumpMap.dispose();
-      groundTex.dispose();
-      groundBump.dispose();
       inside.dispose();
       outside.dispose();
       edge.dispose();
-      ground.dispose();
+      for (const m of fadeGroup) m.dispose();
       foldLine.dispose();
       foldLineActive.dispose();
     },
@@ -639,23 +678,52 @@ export interface OrigamiHouseRig {
   panelIds: FoldablePanelId[];
   panels: Map<FoldablePanelId, PanelVisual>;
   details: KirigamiDetailRig[];
+  hasCutout: boolean;
   updatePanelVisual(id: FoldablePanelId, fold01: number, peekRad: number, hovered: boolean): void;
+  updateCutoutDrop(elapsedSec: number): boolean;
   setFoldLinesVisible(visible: boolean): void;
   setPaperRelief(relief01: number): void;
   dispose(): void;
 }
 
-export function buildOrigamiHouseRig(net: BuiltHouseNet, mats: OrigamiMaterials): OrigamiHouseRig {
+export function buildOrigamiHouseRig(
+  net: BuiltHouseNet,
+  mats: OrigamiMaterials,
+  includeCutout = false,
+): OrigamiHouseRig {
   const { spec, roofRise } = net;
   const root = new THREE.Group();
   root.position.y = PAPER_THICK;
   root.rotation.y = spec.yawOffset;
 
   const triMats = [mats.inside, mats.edge, mats.outside];
+  const cutoutMats = [mats.cutoutInside, mats.cutoutEdge, mats.cutoutOutside];
+  const chadMats = [mats.chadInside, mats.chadEdge, mats.chadOutside];
   const exteriorDetailMats = [mats.outside, mats.edge, mats.outside];
   const groupByPanel = new Map<PanelId, THREE.Group>();
   const panels = new Map<FoldablePanelId, PanelVisual>();
   const details: KirigamiDetailRig[] = [];
+
+  // Optional physical cutout group: complementary outer paper sheet + punched window/door/skylight chads!
+  // Sits 100% flush with the house net on the JIT swap frame, then breaks free and falls into the void just before folding!
+  interface FallingChad {
+    mesh: THREE.Mesh;
+    baseX: number;
+    baseZ: number;
+    delay: number;
+    grav: number;
+    driftX: number;
+    driftZ: number;
+    spinX: number;
+    spinZ: number;
+  }
+  let cutoutRoot: THREE.Group | null = null;
+  let outerCutoutMesh: THREE.Mesh | null = null;
+  const fallingChads: FallingChad[] = [];
+  if (includeCutout) {
+    cutoutRoot = new THREE.Group();
+    root.add(cutoutRoot);
+  }
 
   const makeFoldLine = (a: [number, number, number], b: [number, number, number]): THREE.Line => {
     const g = new THREE.BufferGeometry().setFromPoints([
@@ -708,6 +776,56 @@ export function buildOrigamiHouseRig(net: BuiltHouseNet, mats: OrigamiMaterials)
 
     const flatOriginX = def.hingeOrigin[0] * MM;
     const flatOriginZ = -def.hingeOrigin[1] * MM;
+
+    // Collect every punched window/door/oculus/skylight opening as a real falling paper chad!
+    if (cutoutRoot && shape.holes.length > 0) {
+      for (const holePath of shape.holes) {
+        const pts = holePath.getPoints(10);
+        if (pts.length < 3) continue;
+        let cx = 0;
+        let cy = 0;
+        for (const pt of pts) {
+          cx += pt.x;
+          cy += pt.y;
+        }
+        cx /= pts.length;
+        cy /= pts.length;
+
+        const chadShape = new THREE.Shape();
+        pts.forEach((pt, idx) => {
+          const x = pt.x - cx;
+          const y = pt.y - cy;
+          if (idx === 0) chadShape.moveTo(x, y);
+          else chadShape.lineTo(x, y);
+        });
+        chadShape.closePath();
+
+        const chadFlatX = flatOriginX + cx;
+        const chadFlatZ = flatOriginZ - cy;
+        const chadGeo = buildDualSidedPaperGeometry(chadShape, chadFlatX, chadFlatZ, spec.yawOffset);
+        const chadMesh = new THREE.Mesh(chadGeo, chadMats);
+        chadMesh.position.set(chadFlatX, 0, chadFlatZ);
+        chadMesh.castShadow = false;
+        chadMesh.receiveShadow = false;
+        cutoutRoot.add(chadMesh);
+
+        const idx = fallingChads.length;
+        const hash = Math.sin((idx + 1) * 127.1 + spec.generation * 31.7);
+        const hash2 = Math.cos((idx + 1) * 269.5 + spec.generation * 17.3);
+        fallingChads.push({
+          mesh: chadMesh,
+          baseX: chadFlatX,
+          baseZ: chadFlatZ,
+          delay: 0.02 + (idx % 7) * 0.018,
+          grav: 34 + (idx % 5) * 3.5,
+          driftX: hash * 1.1,
+          driftZ: hash2 * 1.1,
+          spinX: hash * 2.6,
+          spinZ: hash2 * 2.4,
+        });
+      }
+    }
+
     const geo = buildDualSidedPaperGeometry(shape, flatOriginX, flatOriginZ, spec.yawOffset);
     const mesh = new THREE.Mesh(geo, triMats);
     mesh.castShadow = true;
@@ -757,6 +875,37 @@ export function buildOrigamiHouseRig(net: BuiltHouseNet, mats: OrigamiMaterials)
       hingeAxis3D,
       targetAngle: def.targetAngle,
     });
+  }
+
+  // Build exact complementary outer cutout carrier (shader silhouette-clips strictly to the previous house,
+  // so ONLY the sliced-off portions of the previous house exist & fall — ZERO outer sheet borders!)
+  if (cutoutRoot) {
+    const outerPerim = computeNetOuterPerimeter(net);
+    const S = Math.max(360, net.sheetHalfMm + 160);
+    const sheetShape = new THREE.Shape();
+    sheetShape.moveTo(-S * MM, -S * MM);
+    sheetShape.lineTo(S * MM, -S * MM);
+    sheetShape.lineTo(S * MM, S * MM);
+    sheetShape.lineTo(-S * MM, S * MM);
+    sheetShape.closePath();
+
+    if (outerPerim.length >= 3) {
+      // Hole must wind CW inside CCW outer square
+      const hole = new THREE.Path();
+      for (let i = outerPerim.length - 1; i >= 0; i--) {
+        const [px, py] = outerPerim[i];
+        if (i === outerPerim.length - 1) hole.moveTo(px * MM, py * MM);
+        else hole.lineTo(px * MM, py * MM);
+      }
+      hole.closePath();
+      sheetShape.holes.push(hole);
+    }
+
+    const outerGeo = buildDualSidedPaperGeometry(sheetShape, 0, 0, spec.yawOffset);
+    outerCutoutMesh = new THREE.Mesh(outerGeo, cutoutMats);
+    outerCutoutMesh.castShadow = false;
+    outerCutoutMesh.receiveShadow = false;
+    cutoutRoot.add(outerCutoutMesh);
   }
 
   // ---- Flat-Folded Kirigami Architectural Details (Awning, Chimney, Roof Dormers!) ----
@@ -1002,6 +1151,7 @@ export function buildOrigamiHouseRig(net: BuiltHouseNet, mats: OrigamiMaterials)
   // smoothly rising to 1 the moment the user hovers, orbits, or folds!
   const setPaperRelief = (relief01: number) => {
     const r = Math.max(0, Math.min(1, relief01));
+    mats.projUniforms.uPaperReveal.value = r;
     const sy = 0.02 + 0.98 * r;
     root.scale.y = sy;
     root.position.y = PAPER_THICK * sy;
@@ -1011,6 +1161,57 @@ export function buildOrigamiHouseRig(net: BuiltHouseNet, mats: OrigamiMaterials)
     }
   };
 
+  // Animate the die-cut outer paper sheet + punched window chads falling cleanly down into the void!
+  // Returns `true` while still falling, `false` once completely faded & hidden below.
+  const updateCutoutDrop = (elapsedSec: number): boolean => {
+    if (!cutoutRoot || !outerCutoutMesh) return false;
+    if (elapsedSec <= 0) {
+      cutoutRoot.visible = true;
+      outerCutoutMesh.position.set(0, 0, 0);
+      outerCutoutMesh.rotation.set(0, 0, 0);
+      for (const ch of fallingChads) {
+        ch.mesh.position.set(ch.baseX, 0, ch.baseZ);
+        ch.mesh.rotation.set(0, 0, 0);
+      }
+      mats.setCutoutOpacity(1);
+      return true;
+    }
+
+    const fadeStart = 0.52;
+    const fadeEnd = 1.12;
+    if (elapsedSec >= fadeEnd) {
+      cutoutRoot.visible = false;
+      mats.setCutoutOpacity(0);
+      return false;
+    }
+
+    cutoutRoot.visible = true;
+    // Brief 0.05s crisp die-cut release beat, then graceful gravity drop + sculptural shard tilt!
+    const ft = Math.max(0, elapsedSec - 0.05);
+    const ft2 = ft * ft;
+    outerCutoutMesh.position.set(0.65 * ft2, -30 * ft2, 0.45 * ft2);
+    outerCutoutMesh.rotation.set(0.14 * ft2, 0, -0.10 * ft2);
+
+    for (const ch of fallingChads) {
+      const ct = Math.max(0, elapsedSec - ch.delay);
+      const ct2 = ct * ct;
+      ch.mesh.position.set(
+        ch.baseX + ch.driftX * ct2,
+        -ch.grav * ct2,
+        ch.baseZ + ch.driftZ * ct2,
+      );
+      ch.mesh.rotation.set(ch.spinX * ct, 0, ch.spinZ * ct);
+    }
+
+    if (elapsedSec > fadeStart) {
+      const u = (elapsedSec - fadeStart) / (fadeEnd - fadeStart);
+      mats.setCutoutOpacity(1 - u * u * (3 - 2 * u));
+    } else {
+      mats.setCutoutOpacity(1);
+    }
+    return true;
+  };
+
   return {
     net,
     root,
@@ -1018,7 +1219,9 @@ export function buildOrigamiHouseRig(net: BuiltHouseNet, mats: OrigamiMaterials)
     panelIds: net.foldableIds,
     panels,
     details,
+    hasCutout: Boolean(cutoutRoot),
     updatePanelVisual,
+    updateCutoutDrop,
     setFoldLinesVisible,
     setPaperRelief,
     dispose() {

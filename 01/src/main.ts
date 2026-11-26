@@ -64,8 +64,8 @@ scene.environmentIntensity = 0.08;
 const camera = new THREE.PerspectiveCamera(28, 1, 0.3, 650);
 
 // Pure luminous white-on-white gallery lighting: high-noon sun (~72° elevation) avoids long cast shadows
-// while retaining crisp sculptural contrast between sunlit roofs, walls, and minimal cut ridges!
-const hemi = new THREE.HemisphereLight('#ffffff', '#dedbd4', 1.30);
+// while matching horizontal white paper warmth 1:1 with the #f5f4f0 studio backdrop!
+const hemi = new THREE.HemisphereLight('#fffdf8', '#e0ddd6', 1.50);
 scene.add(hemi);
 
 const SUN_DIR = new THREE.Vector3(5.8, 21.0, 3.6).normalize();
@@ -84,19 +84,13 @@ sun.shadow.normalBias = 0.016;
 sun.shadow.radius = 2.8;
 scene.add(sun);
 
-const fill = new THREE.DirectionalLight('#f4f6fa', 0.24);
+const fill = new THREE.DirectionalLight('#f8f7f2', 0.24);
 fill.position.set(-14, 9, -10);
 scene.add(fill);
 
-// Build pure white matching paper materials for both endless ground sheet & dynamic pre-cut house nets!
+// Build duplex pastel/white paper materials for the floating pre-cut nets & falling cutout sheets!
+// No static ground floor — the open #f5f4f0 studio void lets each cutout sheet fall freely downward!
 const materials = createOrigamiMaterials(renderer.capabilities.getMaxAnisotropy());
-
-// Generous seamless white paper ground sheet melting identically into big nets & zoomed-out horizons!
-const deskMesh = new THREE.Mesh(new THREE.PlaneGeometry(900, 900), materials.ground);
-deskMesh.rotation.x = -Math.PI * 0.5;
-deskMesh.position.y = -0.001;
-deskMesh.receiveShadow = true;
-scene.add(deskMesh);
 
 let curShadowExtent = 14;
 let swapShadowExtent = 14;
@@ -191,24 +185,74 @@ interface PanelState {
 
 let generation = 1;
 let rig: OrigamiHouseRig;
+let preparedNext: { generation: number; rig: OrigamiHouseRig } | null = null;
+let prepareTimerId: number | null = null;
 const panelState = new Map<FoldablePanelId, PanelState>();
 let hoveredPanel: FoldablePanelId | null = null;
 let isScrubbing = false;
-let armedForProjection = !params.has('fold');
-let autoProjectEnabled = true;
 let justProjected = false;
 let curPaperRelief = 1;
 let targetPaperRelief = 1;
+let cutoutDropState: 'none' | 'waiting' | 'falling' | 'done' = 'none';
+let cutoutDropElapsed = 0;
+
+function clearPreparedNext(): void {
+  if (prepareTimerId !== null) {
+    window.clearTimeout(prepareTimerId);
+    prepareTimerId = null;
+  }
+  if (preparedNext) {
+    preparedNext.rig.dispose();
+    preparedNext = null;
+  }
+}
+
+/**
+ * Pre-build the next generation's complete flat-net + cutout + punched window chad rig ahead of time!
+ * Because `aFlatPos` depends only on the house's own flat geometry (not the live camera angle),
+ * pre-building removes ALL synchronous `ExtrudeGeometry` / earcut CPU work from the JIT cut frame!
+ */
+function prepareNextGenerationNow(gen: number): OrigamiHouseRig {
+  if (preparedNext && preparedNext.generation === gen) {
+    return preparedNext.rig;
+  }
+  clearPreparedNext();
+  const spec = generateHouseSpec(gen);
+  const net = buildHouseNet(spec);
+  const nextRig = buildOrigamiHouseRig(net, materials, true);
+  preparedNext = { generation: gen, rig: nextRig };
+  return nextRig;
+}
+
+function schedulePrepareNext(gen: number, delayMs = 90): void {
+  if (preparedNext && preparedNext.generation === gen) return;
+  if (prepareTimerId !== null) window.clearTimeout(prepareTimerId);
+  prepareTimerId = window.setTimeout(() => {
+    prepareTimerId = null;
+    if (cutoutDropState === 'falling') {
+      schedulePrepareNext(gen, 220);
+      return;
+    }
+    prepareNextGenerationNow(gen);
+  }, delayMs);
+}
 
 function mountHouseGeneration(gen: number, fromSwap = false): void {
   if (rig) {
     scene.remove(rig.root);
     rig.dispose();
   }
-  const spec = generateHouseSpec(gen);
-  materials.setOutsideColor(spec.outsideColor);
-  const net = buildHouseNet(spec);
-  rig = buildOrigamiHouseRig(net, materials);
+  if (fromSwap && preparedNext && preparedNext.generation === gen) {
+    rig = preparedNext.rig;
+    preparedNext = null;
+    materials.setOutsideColor(rig.net.spec.outsideColor);
+  } else {
+    const spec = generateHouseSpec(gen);
+    materials.setOutsideColor(spec.outsideColor);
+    const net = buildHouseNet(spec);
+    rig = buildOrigamiHouseRig(net, materials, fromSwap);
+  }
+  const net = rig.net;
   scene.add(rig.root);
 
   panelState.clear();
@@ -229,12 +273,15 @@ function mountHouseGeneration(gen: number, fromSwap = false): void {
 
   const ideal = computeIdealFraming(net);
   if (fromSwap) {
-    // Freeze exact camera, shadow anchor, and flat relief on swap so the 1:1 projection has ZERO transition!
-    // As this new (possibly bigger) house approaches its final folded stage, zoom smoothly out to `ideal`.
+    // Freeze exact camera, shadow anchor, and flat relief on JIT swap so the 1:1 projection has ZERO transition!
+    // The complementary outer sheet & punched chads sit flush until triggered to cut out & fall!
     rig.setFoldLinesVisible(false);
     curPaperRelief = 0;
     targetPaperRelief = 0;
     rig.setPaperRelief(0);
+    cutoutDropState = rig.hasCutout ? 'waiting' : 'none';
+    cutoutDropElapsed = 0;
+    if (rig.hasCutout) rig.updateCutoutDrop(0);
 
     swapDist = curDist;
     swapLookY = curLookY;
@@ -250,6 +297,8 @@ function mountHouseGeneration(gen: number, fromSwap = false): void {
     curPaperRelief = 1;
     targetPaperRelief = 1;
     rig.setPaperRelief(1);
+    cutoutDropState = 'none';
+    cutoutDropElapsed = 0;
 
     swapDist = defaultDist;
     swapLookY = BASE_LOOK_Y;
@@ -283,18 +332,84 @@ function makeProjTarget(w: number, h: number): THREE.WebGLRenderTarget {
   return rt;
 }
 
-let rtA = makeProjTarget(1280, 800);
-let rtB = makeProjTarget(1280, 800);
+let rtA = makeProjTarget(2, 2);
+let rtB = makeProjTarget(2, 2);
 let activeRTIndex: 0 | 1 = 0;
 const snapVP = new THREE.Matrix4();
-let snapYaw = defaultYaw;
-let snapPitch = defaultPitch;
-let groundProjRetention = 1;
+
+function ensureProjTargetsSized(): { tw: number; th: number } {
+  const drawSize = new THREE.Vector2();
+  renderer.getDrawingBufferSize(drawSize);
+  const tw = Math.max(2, Math.round(drawSize.x));
+  const th = Math.max(2, Math.round(drawSize.y));
+  if (rtA.width !== tw || rtA.height !== th) {
+    rtA.dispose();
+    rtA = makeProjTarget(tw, th);
+  }
+  if (rtB.width !== tw || rtB.height !== th) {
+    rtB.dispose();
+    rtB = makeProjTarget(tw, th);
+  }
+  return { tw, th };
+}
 
 /**
- * Instantly capture the EXACT live perspective camera view into the inactive ping-pong
- * HalfFloat render target and spawn a BRAND-NEW, DIFFERENT flat pre-cut house underneath
- * carrying the exact 1:1 camera projection — ZERO transition!
+ * Upfront GPU & geometry warmup run once at startup (before first composite):
+ * 1. Allocates & warms BOTH 4x-MSAA HalfFloat ping-pong FBOs at exact drawing-buffer resolution.
+ * 2. Pre-builds Gen 2 (with full silhouette-clipped cutout + punched window chads) and renders
+ *    one microscopic hidden frame to BOTH the HalfFloat FBO and the main canvas swapchain so
+ *    WebGL/Metal compiles all 9 material pipelines & uploads Gen 2 VBOs upfront — zero first-cut hitch!
+ */
+function warmupCutoutPipeline(): void {
+  ensureProjTargetsSized();
+  syncCameraFromOrbit();
+  camera.updateMatrixWorld(true);
+  rig.root.updateMatrixWorld(true);
+
+  const nextRig = prepareNextGenerationNow(generation + 1);
+  snapVP.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
+
+  const prevToneMapping = renderer.toneMapping;
+  const prevTarget = renderer.getRenderTarget();
+
+  // 1. Warm BOTH 4x-MSAA HalfFloat FBOs + resolve blit pipelines
+  renderer.toneMapping = THREE.NoToneMapping;
+  renderer.setRenderTarget(rtA);
+  renderer.render(scene, camera);
+  renderer.setRenderTarget(rtB);
+  renderer.render(scene, camera);
+  renderer.setRenderTarget(prevTarget);
+  renderer.toneMapping = prevToneMapping;
+
+  // 2. Warm ALL 9 material pipelines (cutout clip-tint, clip-mask, chads, paper reveal) on the main canvas
+  //    in both full-opacity (`depthWrite = true`) and fading (`depthWrite = false`) states using a microscopic
+  //    temporary pass (immediately overwritten by the clean Gen 1 frame before paint!)
+  nextRig.root.scale.set(0.0005, 0.0005, 0.0005);
+  nextRig.setFoldLinesVisible(false);
+  nextRig.updateCutoutDrop(0);
+  scene.add(nextRig.root);
+  materials.setProjection(rtA.texture, snapVP);
+  materials.projUniforms.uPaperReveal.value = 0;
+
+  renderer.render(scene, camera);
+  materials.setCutoutOpacity(0.5);
+  renderer.render(scene, camera);
+
+  // 3. Cleanly restore Gen 1 state while keeping `nextRig` hot & ready in `preparedNext`!
+  scene.remove(nextRig.root);
+  nextRig.root.scale.set(1, 1, 1);
+  nextRig.setPaperRelief(1);
+  materials.setProjection(null);
+  materials.setCutoutOpacity(1);
+  rig.setPaperRelief(curPaperRelief);
+  renderer.render(scene, camera);
+}
+
+/**
+ * Just-In-Time (JIT) 1:1 camera projection:
+ * Captures the EXACT current 3D view from the user's live camera angle into the inactive ping-pong
+ * HalfFloat render target and spawns the next DIFFERENT house flat underneath with its exact
+ * complementary cutout sheet & punched window chads — ZERO transition!
  */
 function projectAndSpawnUnderneath(): void {
   const drawSize = new THREE.Vector2();
@@ -325,14 +440,10 @@ function projectAndSpawnUnderneath(): void {
   renderer.toneMapping = prevToneMapping;
 
   snapVP.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
-  snapYaw = curYaw;
-  snapPitch = curPitch;
-  groundProjRetention = 1;
   activeRTIndex = nextIdx;
 
-  // INSTANT SWAP: spawn the next DIFFERENT house net flat underneath with 1:1 camera projection!
+  // INSTANT JIT SWAP: spawn the next DIFFERENT house flat + complementary cutout sheet with 1:1 projection!
   generation += 1;
-  armedForProjection = false;
   justProjected = true;
 
   mountHouseGeneration(generation, true);
@@ -340,17 +451,12 @@ function projectAndSpawnUnderneath(): void {
   syncUI();
 }
 
-function syncOutsideGroundProjection(foldProg: number): void {
-  // At fold=0 from exact capture angle: 1.0 (100% seamless zero-transition illusion!).
-  // As soon as the new house folds OR the camera orbits away, texture spilling outside the house
-  // permanently dissolves back into spotless white paper — staying strictly on the paper house!
-  const f = clamp01(foldProg / 0.22);
-  const foldFade = 1 - f * f * (3 - 2 * f);
-  const orbitDelta = Math.hypot(curYaw - snapYaw, curPitch - snapPitch);
-  const o = clamp01((orbitDelta - 0.04) / 0.22);
-  const orbitFade = 1 - o * o * (3 - 2 * o);
-  groundProjRetention = Math.min(groundProjRetention, foldFade * orbitFade);
-  materials.setGroundProjectionAlpha(groundProjRetention);
+function triggerCutoutDrop(): void {
+  revealCreasesAfterSwap();
+  if (cutoutDropState === 'waiting') {
+    cutoutDropState = 'falling';
+    cutoutDropElapsed = 0;
+  }
 }
 
 function clamp01(x: number): number {
@@ -604,7 +710,7 @@ function getStaggerOrder(referenceYaw = curYaw): Array<{
 
 let latchedScrubYaw = defaultYaw;
 
-function launchStaggeredFold(toFold: 0 | 1): void {
+function launchStaggeredFold(toFold: 0 | 1, leadDelaySec = 0): void {
   revealCreasesAfterSwap();
   latchedScrubYaw = curYaw;
   const schedule = getStaggerOrder(curYaw);
@@ -614,7 +720,8 @@ function launchStaggeredFold(toFold: 0 | 1): void {
     const ps = panelState.get(s.id);
     if (!ps) continue;
     // When unfolding, reverse the curved stagger wave so roof cap & slopes bloom open ahead of the walls!
-    const delay = toFold === 1 ? s.delaySec : Math.max(0, maxDelay - s.delaySec);
+    const delay =
+      toFold === 1 ? leadDelaySec + s.delaySec : Math.max(0, maxDelay - s.delaySec);
     startPanelCurve(ps, toFold, s.durationSec, delay);
   }
   syncUI();
@@ -623,6 +730,9 @@ function launchStaggeredFold(toFold: 0 | 1): void {
 function applyFoldScrub(t: number, snap = false): void {
   revealCreasesAfterSwap();
   const v = clamp01(t);
+  if (v > 0.01) {
+    triggerCutoutDrop();
+  }
   const schedule = getStaggerOrder(latchedScrubYaw);
 
   for (const s of schedule) {
@@ -642,26 +752,38 @@ function applyFoldScrub(t: number, snap = false): void {
 
 function resetAll(): void {
   generation = 1;
-  armedForProjection = true;
   justProjected = false;
+  clearPreparedNext();
   materials.setProjection(null);
   mountHouseGeneration(1, false);
   targetYaw = defaultYaw;
   targetPitch = defaultPitch;
+  schedulePrepareNext(2, 120);
   syncUI();
 }
 
 function triggerStepAction(): void {
-  if (!allPanelsFoldedTarget()) {
-    launchStaggeredFold(1);
-    return;
-  }
+  // If the current 3D house is already folded & settled, run JIT projection from the live camera angle,
+  // cut out & drop the surrounding waste sheet + window chads first, then fold the new house!
   if (allPanelsSettledFolded()) {
     projectAndSpawnUnderneath();
+    triggerCutoutDrop();
+    launchStaggeredFold(1, 0.44);
+    return;
+  }
+  if (!allPanelsFoldedTarget()) {
+    const lead = cutoutDropState === 'waiting' ? 0.44 : 0;
+    if (cutoutDropState === 'waiting') triggerCutoutDrop();
+    launchStaggeredFold(1, lead);
   }
 }
 
 function toggleFoldAll(): void {
+  if (!allPanelsFoldedTarget() && cutoutDropState === 'waiting') {
+    triggerCutoutDrop();
+    launchStaggeredFold(1, 0.44);
+    return;
+  }
   launchStaggeredFold(allPanelsFoldedTarget() ? 0 : 1);
 }
 
@@ -760,7 +882,7 @@ canvas.addEventListener('pointerdown', (e) => {
 
   const pHit = pickPanel3D(e.clientX, e.clientY);
   if (pHit) {
-    revealCreasesAfterSwap();
+    triggerCutoutDrop();
     hoveredPanel = pHit;
     drag = {
       kind: 'fold',
@@ -939,6 +1061,7 @@ window.addEventListener('keydown', (e) => {
 });
 
 // Resize
+let resizeTargetTimer: number | null = null;
 function resize(): void {
   const rect = canvas.getBoundingClientRect();
   const w = Math.max(1, Math.round(rect.width));
@@ -952,6 +1075,11 @@ function resize(): void {
     finalLookY = ideal.lookY;
     finalShadowExtent = ideal.shadowExtent;
   }
+  if (resizeTargetTimer !== null) window.clearTimeout(resizeTargetTimer);
+  resizeTargetTimer = window.setTimeout(() => {
+    resizeTargetTimer = null;
+    ensureProjTargetsSized();
+  }, 240);
 }
 window.addEventListener('resize', resize);
 resize();
@@ -966,6 +1094,7 @@ if (params.has('fold')) {
   applyShadowFrustum(curShadowExtent);
 }
 syncCameraFromOrbit();
+warmupCutoutPipeline();
 syncUI();
 
 // Debug hook
@@ -975,7 +1104,7 @@ syncUI();
       progress: (v: number) => void;
       fold: (pid: FoldablePanelId, v: number) => void;
       projectNow: () => void;
-      setAuto: (enabled: boolean) => void;
+      dropCutout: (atSec?: number) => void;
       view: (yaw: number, pitch: number, dist: number) => void;
       info: () => {
         generation: number;
@@ -998,6 +1127,10 @@ syncUI();
     if (v > 0.001) {
       curPaperRelief = targetPaperRelief = 1;
       rig.setPaperRelief(1);
+      if (rig.hasCutout) {
+        cutoutDropState = 'done';
+        rig.updateCutoutDrop(99);
+      }
     }
     const fp = computeFoldProgress();
     const z = computeAutoZoom(fp);
@@ -1007,11 +1140,13 @@ syncUI();
     curShadowExtent = z.shadowExtent;
     applyShadowFrustum(curShadowExtent);
     syncCameraFromOrbit();
-    syncOutsideGroundProjection(fp);
+    if (fp >= 0.999) {
+      schedulePrepareNext(generation + 1, 80);
+    }
     syncUI();
   },
   fold(pid: FoldablePanelId, v: number) {
-    revealCreasesAfterSwap();
+    triggerCutoutDrop();
     const ps = panelState.get(pid);
     if (ps) {
       ps.delay = 0;
@@ -1025,19 +1160,25 @@ syncUI();
   projectNow() {
     projectAndSpawnUnderneath();
   },
-  setAuto(enabled: boolean) {
-    autoProjectEnabled = enabled;
+  dropCutout(atSec?: number) {
+    if (atSec !== undefined) {
+      revealCreasesAfterSwap();
+      curPaperRelief = targetPaperRelief = 1;
+      rig.setPaperRelief(1);
+      cutoutDropState = 'falling';
+      cutoutDropElapsed = atSec;
+      const alive = rig.updateCutoutDrop(atSec);
+      if (!alive) cutoutDropState = 'done';
+    } else {
+      triggerCutoutDrop();
+    }
   },
   view(yaw: number, pitch: number, dist: number) {
-    revealCreasesAfterSwap();
-    curPaperRelief = targetPaperRelief = 1;
-    rig.setPaperRelief(1);
     targetYaw = curYaw = yaw;
     targetPitch = curPitch = pitch;
     swapDist = finalDist = targetDist = curDist = dist;
     userZoomDelta = 0;
     syncCameraFromOrbit();
-    syncOutsideGroundProjection(computeFoldProgress());
   },
   info() {
     const s = rig.net.spec;
@@ -1107,7 +1248,16 @@ function animate(now: number): void {
     progressRange.value = foldProg.toFixed(3);
   }
 
-  // 2. Smooth camera orbit & unhurried final-stage zoom-out for bigger houses (locked at fold=0!)
+  // 2. Animate falling outer cutout sheet + punched window chads (drops cleanly just before folding!)
+  if (cutoutDropState === 'falling') {
+    cutoutDropElapsed += dt;
+    const stillFalling = rig.updateCutoutDrop(cutoutDropElapsed);
+    if (!stillFalling) {
+      cutoutDropState = 'done';
+    }
+  }
+
+  // 3. Smooth camera orbit & unhurried final-stage zoom-out for bigger houses (locked on JIT swap!)
   const { autoDist, autoLookY, shadowExtent } = computeAutoZoom(foldProg);
   const { minDist, maxDist } = getZoomBounds();
   targetDist = Math.max(minDist, Math.min(maxDist, autoDist + userZoomDelta));
@@ -1119,10 +1269,9 @@ function animate(now: number): void {
   curDist += (targetDist - curDist) * camAlpha;
   curLookY += (targetLookY - curLookY) * camAlpha;
   syncCameraFromOrbit();
-  syncOutsideGroundProjection(foldProg);
 
   if (Math.abs(targetPaperRelief - curPaperRelief) > 0.002) {
-    curPaperRelief += (targetPaperRelief - curPaperRelief) * (1 - Math.exp(-dt * 12));
+    curPaperRelief += (targetPaperRelief - curPaperRelief) * (1 - Math.exp(-dt * 16));
     if (Math.abs(targetPaperRelief - curPaperRelief) <= 0.004) curPaperRelief = targetPaperRelief;
     rig.setPaperRelief(curPaperRelief);
   }
@@ -1132,15 +1281,10 @@ function animate(now: number): void {
     applyShadowFrustum(curShadowExtent);
   }
 
-  // 3. The exact instant the folded house locks shut AND zoom-out glides to rest (zero transition!),
-  //    capture our live camera view and silently swap to a brand-new, DIFFERENT flat house underneath!
-  if (foldProg < 0.85) {
-    armedForProjection = true;
-  }
-  const cameraSettled =
-    Math.abs(curDist - targetDist) < 0.25 && Math.abs(curLookY - targetLookY) < 0.06;
-  if (autoProjectEnabled && armedForProjection && allPanelsSettledFolded() && cameraSettled && !isScrubbing && drag.kind === 'none') {
-    projectAndSpawnUnderneath();
+  // Keep status caption updated & quietly pre-build the next house once settled into 3D!
+  if (foldChanged && allPanelsSettledFolded()) {
+    schedulePrepareNext(generation + 1, 80);
+    syncUI();
   }
 
   renderer.render(scene, camera);

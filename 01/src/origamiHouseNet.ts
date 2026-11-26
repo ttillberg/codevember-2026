@@ -1921,6 +1921,124 @@ export function evaluateFoldedPoint(
   return [x, y, z];
 }
 
+/**
+ * Compute the exact single simple CCW outer perimeter loop of the union of all panels in `net`
+ * (by subdividing panel edges at touching neighbor vertices and canceling opposite interior hinge creases).
+ * Used to punch an airtight complementary house-net hole out of the falling outer paper sheet!
+ */
+export function computeNetOuterPerimeter(net: BuiltHouseNet): V2[] {
+  const allVerts: V2[] = [];
+  for (const p of net.panels) {
+    for (const v of p.poly) allVerts.push(v);
+  }
+
+  // 1. Subdivide every panel edge at any collinear vertex from another panel
+  const subEdges: Array<[V2, V2]> = [];
+  for (const p of net.panels) {
+    const n = p.poly.length;
+    for (let i = 0; i < n; i++) {
+      const a = p.poly[i];
+      const b = p.poly[(i + 1) % n];
+      const dx = b[0] - a[0];
+      const dy = b[1] - a[1];
+      const lenSq = dx * dx + dy * dy;
+      if (lenSq < 1e-8) continue;
+      const len = Math.sqrt(lenSq);
+
+      const splits: Array<{ t: number; pt: V2 }> = [];
+      for (const q of allVerts) {
+        const t = ((q[0] - a[0]) * dx + (q[1] - a[1]) * dy) / lenSq;
+        if (t <= 1e-4 || t >= 1 - 1e-4) continue;
+        const dist = Math.abs((q[0] - a[0]) * dy - (q[1] - a[1]) * dx) / len;
+        if (dist < 1e-2) {
+          splits.push({ t, pt: q });
+        }
+      }
+
+      if (splits.length === 0) {
+        subEdges.push([a, b]);
+      } else {
+        splits.sort((u, v) => u.t - v.t);
+        const pts: V2[] = [a];
+        let prevT = 0;
+        for (const s of splits) {
+          if (s.t - prevT > 1e-4) {
+            pts.push(s.pt);
+            prevT = s.t;
+          }
+        }
+        pts.push(b);
+        for (let k = 0; k < pts.length - 1; k++) {
+          subEdges.push([pts[k], pts[k + 1]]);
+        }
+      }
+    }
+  }
+
+  // 2. Cancel every interior shared crease pair (u -> v cancels v -> u)
+  const boundary: Array<[V2, V2]> = [];
+  const near = (p: V2, q: V2) => Math.hypot(p[0] - q[0], p[1] - q[1]) < 2e-2;
+  for (const [u, v] of subEdges) {
+    const revIdx = boundary.findIndex(([p, q]) => near(p, v) && near(q, u));
+    if (revIdx >= 0) {
+      boundary.splice(revIdx, 1);
+    } else {
+      boundary.push([u, v]);
+    }
+  }
+
+  if (boundary.length < 3) return [];
+
+  // 3. Chain remaining directed boundary edges into a single closed CCW loop
+  const used = new Uint8Array(boundary.length);
+  const loop: V2[] = [boundary[0][0], boundary[0][1]];
+  used[0] = 1;
+
+  for (let step = 1; step < boundary.length; step++) {
+    const cur = loop[loop.length - 1];
+    let bestIdx = -1;
+    let bestDist = 5e-2;
+    for (let i = 0; i < boundary.length; i++) {
+      if (used[i]) continue;
+      const d = Math.hypot(boundary[i][0][0] - cur[0], boundary[i][0][1] - cur[1]);
+      if (d < bestDist) {
+        bestDist = d;
+        bestIdx = i;
+      }
+    }
+    if (bestIdx < 0) break;
+    used[bestIdx] = 1;
+    loop.push(boundary[bestIdx][1]);
+  }
+
+  // Drop closing duplicate vertex
+  if (loop.length > 2 && near(loop[0], loop[loop.length - 1])) {
+    loop.pop();
+  }
+
+  // 4. Prune redundant collinear vertices along straight exterior edges
+  const clean: V2[] = [];
+  const m = loop.length;
+  for (let i = 0; i < m; i++) {
+    const prev = loop[(i + m - 1) % m];
+    const curr = loop[i];
+    const next = loop[(i + 1) % m];
+    const ax = curr[0] - prev[0];
+    const ay = curr[1] - prev[1];
+    const bx = next[0] - curr[0];
+    const by = next[1] - curr[1];
+    const la = Math.hypot(ax, ay);
+    const lb = Math.hypot(bx, by);
+    if (la < 1e-4 || lb < 1e-4) continue;
+    const cross = Math.abs((ax * by - ay * bx) / (la * lb));
+    const dot = (ax * bx + ay * by) / (la * lb);
+    if (cross < 1e-4 && dot > 0) continue;
+    clean.push(curr);
+  }
+
+  return ensureCCW(clean);
+}
+
 /** Check separating-axis non-overlap between two convex polygons in sheet mm */
 export function polygonsOverlap(A: V2[], B: V2[], eps = 1e-3): boolean {
   for (const P of [A, B]) {

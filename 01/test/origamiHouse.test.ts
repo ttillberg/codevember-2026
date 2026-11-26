@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildHouseNet,
+  computeNetOuterPerimeter,
   evaluateFoldedPoint,
   generateHouseSpec,
   polygonsOverlap,
@@ -222,5 +223,15 @@ describe('Parametric flat-net paper houses (cross, ribbon, hex & oct petal bloom
       }
     }
     expect(sawBiggerSheet).toBe(true);
+  });
+
+  it('traces an exact single outer cutout perimeter whose area equals the sum of all panels across generations 1..18', () => {
+    for (let gen = 1; gen <= 18; gen++) {
+      const net = buildHouseNet(generateHouseSpec(gen));
+      const outer = computeNetOuterPerimeter(net);
+      const panelAreaSum = net.panels.reduce((acc, p) => acc + signedArea(p.poly), 0);
+      expect(outer.length).toBeGreaterThanOrEqual(4);
+      expect(signedArea(outer)).toBeCloseTo(panelAreaSum, 1);
+    }
   });
 });
