@@ -111,6 +111,7 @@ export interface LabyrinthRig {
   ) => void;
   setPlasticOpacity: (scale: number) => void;
   setScratchStrength: (scale: number) => void;
+  setOuterShellVisible: (visible: boolean) => void;
   dispose: () => void;
 }
 
@@ -3258,6 +3259,16 @@ export function buildLabyrinthRig(grid: SphereGrid): LabyrinthRig {
     plasticMat.clearcoatRoughness = 0.04 + 0.24 * scale;
   }
 
+  function setOuterShellVisible(visible: boolean) {
+    plasticShell.visible = visible;
+    scratchOverlayMesh.visible = visible;
+    outerSeam.visible = visible;
+    primaryTapeMesh.visible = visible;
+    secondaryTapeMesh.visible = visible;
+    northTapeMesh.visible = visible;
+    southTapeMesh.visible = visible;
+  }
+
   function dispose() {
     for (const d of levelDisposables) d.dispose();
     for (const d of disposables) d.dispose();
@@ -3281,6 +3292,7 @@ export function buildLabyrinthRig(grid: SphereGrid): LabyrinthRig {
     updateLeds,
     setPlasticOpacity,
     setScratchStrength,
+    setOuterShellVisible,
     dispose,
   };
 }

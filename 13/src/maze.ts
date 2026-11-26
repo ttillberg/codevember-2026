@@ -894,13 +894,13 @@ export function createSphereGrid(): SphereGrid {
           colorId: 0,
           label: 'A',
           padBand: 2,
-          padCol: 14,
+          padCol: 8,
           shutterIds: [1], // Pressing Red A irises South Shutter B OPEN so you can emerge in the South!
           closeCounterToCpIndex: 0,
         },
       ],
     },
-    // LEVEL 06: COUNTERWEIGHT — Flipping Coral A opens the path to 02 while closing a gate & swapping shutters!
+    // LEVEL 06: COUNTERWEIGHT — Flipping Coral A opens the path to 02 while closing a gate to 01 & swapping shutters!
     {
       level: 6,
       name: 'COUNTERWEIGHT',
@@ -922,10 +922,10 @@ export function createSphereGrid(): SphereGrid {
         {
           colorId: 0,
           label: 'A',
-          padBand: 1,
-          padCol: 3,
+          padBand: 2,
+          padCol: 9,
           gateToCpIndex: 1,
-          closeCounterToCpIndex: 3,
+          closeCounterToCpIndex: 0,
           shutterIds: [1, 2],
         },
       ],
@@ -952,8 +952,8 @@ export function createSphereGrid(): SphereGrid {
         {
           colorId: 0,
           label: 'A',
-          padBand: 1,
-          padCol: 6,
+          padBand: 2,
+          padCol: 8,
           shutterIds: [1],
           closeCounterToCpIndex: 0,
         },
@@ -990,7 +990,7 @@ export function createSphereGrid(): SphereGrid {
           colorId: 0,
           label: 'A',
           padBand: 2,
-          padCol: 7,
+          padCol: 8,
           equatorGateCol: 10,
           shutterIds: [1, 3], // Must flip Red A to open the South route & shutters!
         },
@@ -1065,8 +1065,8 @@ export function createSphereGrid(): SphereGrid {
         {
           colorId: 0,
           label: 'A',
-          padBand: 1,
-          padCol: 5,
+          padBand: 3,
+          padCol: 8,
           shutterIds: [0, 1],
           gateToCpIndex: 4,
           closeCounterToCpIndex: 0,

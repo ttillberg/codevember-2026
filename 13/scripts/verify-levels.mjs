@@ -221,6 +221,33 @@ for (const lvl of grid.levels) {
     }
   }
 
+  // 5b. Switch pads must never block the forced starting corridor to CP 1 or to initially-open North shutters
+  for (const tg of lvl.toggles) {
+    const seen = new Set([lvl.startCellId]);
+    if (tg.cellId !== lvl.startCellId) {
+      const q = [lvl.startCellId];
+      for (let i = 0; i < q.length; i++) {
+        const u = q[i];
+        for (const w of adj[u]) {
+          if (lvl.raisedWalls[w.id]) continue;
+          const v = w.cellA === u ? w.cellB : w.cellA;
+          if (v === tg.cellId || seen.has(v)) continue;
+          seen.add(v);
+          q.push(v);
+        }
+      }
+    }
+    const firstCp = lvl.checkpoints[0];
+    if (firstCp && firstCp.layer === 'upper' && !seen.has(firstCp.cellId)) {
+      issues.push(`FORCED_CORRIDOR_SW_${tg.label}_BLOCKS_CP01`);
+    }
+    for (let s = 0; s < shutters.length; s++) {
+      if (lvl.openShutters[s] && cells[shutters[s].cellId].band <= 3 && !seen.has(shutters[s].cellId)) {
+        issues.push(`FORCED_CORRIDOR_SW_${tg.label}_BLOCKS_SH_${shutters[s].label}`);
+      }
+    }
+  }
+
   // 6. Difficulty pacing sanity (Level 1 dead easy <= 12, Level 2 <= 20, Level 3 <= 35, Level 10 >= 90)
   const stepBounds = [
     [5, 14], // L1

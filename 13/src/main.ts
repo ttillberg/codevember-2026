@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { FinaleSequence, STUDIO_FLOOR_Y } from './finale';
 import { buildLabyrinthRig } from './labyrinthMesh';
 import { R_BALL_CENTER, R_FLOOR, R_SHELL, computeEffectiveShutters, computeEffectiveWalls, createSphereGrid } from './maze';
 import { SphereBallPhysics } from './physics';
@@ -47,6 +48,16 @@ scene.add(floatGroup);
 const grid = createSphereGrid();
 const rig = buildLabyrinthRig(grid);
 floatGroup.add(rig.root);
+
+// Grand Finale sequence (unsealing polycarbonate domes + freed rolling sea-glass marble + studio fireworks)
+const finale = new FinaleSequence(rig.ballMesh, rig.plasticMat);
+scene.add(finale.group);
+let finaleActive = false;
+let finaleReplayReady = false;
+let finaleOrbitYaw = 0;
+let finaleOrbitPitch = 0;
+const finaleCamPos = new THREE.Vector3();
+const finaleLookAt = new THREE.Vector3();
 
 // Curved 3D optical aiming target hugging the outer polycarbonate shell at the gravity center
 const aimReticle = createAimReticle(R_SHELL + 0.0055);
@@ -157,16 +168,22 @@ const helpCard = document.getElementById('help-card')!;
 const btnSettings = document.getElementById('btn-settings')!;
 const settingsPanel = document.getElementById('settings-panel')!;
 const levelButtons = Array.from(document.querySelectorAll<HTMLButtonElement>('.lvl-btn'));
-const isDevControls = import.meta.env.DEV || params.has('settings');
+const isDevControls =
+  import.meta.env.DEV || params.has('debug') || params.has('settings') || location.hash === '#debug';
 
 function updateStatusUI() {
   const level = grid.levels[currentLevelIdx];
 
   // Bottom-left level caption (English + Japanese Kanji matching title plate)
-  levelNumBtn.textContent = `LEVEL ${level.level}`;
-  levelTitleEl.innerHTML = physics.allCleared
-    ? `${level.name} <span lang="ja">${level.nameJa}</span> · CLEAR`
-    : `${level.name} <span lang="ja">${level.nameJa}</span>`;
+  if (finaleActive) {
+    levelNumBtn.textContent = 'ALL 10 CLEARED';
+    levelTitleEl.innerHTML = `FREEDOM <span lang="ja">解放</span>`;
+  } else {
+    levelNumBtn.textContent = `LEVEL ${level.level}`;
+    levelTitleEl.innerHTML = physics.allCleared
+      ? `${level.name} <span lang="ja">${level.nameJa}</span> · CLEAR`
+      : `${level.name} <span lang="ja">${level.nameJa}</span>`;
+  }
 
   for (const btn of levelButtons) {
     const n = Number(btn.dataset.level);
@@ -176,7 +193,59 @@ function updateStatusUI() {
 }
 
 function syncAoExclusions() {
-  post.setAoExcluded([...rig.aoExcluded, aimReticle.group, studio.backdropMesh, studio.shadowPlane]);
+  post.setAoExcluded([...rig.aoExcluded, ...finale.aoExcluded, aimReticle.group, studio.backdropMesh, studio.shadowPlane]);
+}
+
+const finaleCallbacks = {
+  onLiftStart: () => sound.playFinaleLift(),
+  onSealPop: () => sound.playFinaleSealPop(),
+  onMarbleBounce: (strength: number) => sound.playMarbleBounce(strength),
+  onShellBounce: (strength: number) => sound.playWallHit(strength * 0.78),
+  onSmokeBurst: (pan: number) => sound.playSmokePlume(pan),
+};
+
+function startFinale() {
+  transition = null;
+  finaleActive = true;
+  finaleReplayReady = false;
+  finaleOrbitYaw = 0;
+  finaleOrbitPitch = 0;
+  finaleCamPos.copy(camera.position);
+  finaleLookAt.set(0, -0.02, 0);
+  angVel.set(0, 0, 0);
+  rig.clearLedTape();
+  rig.root.visible = true;
+  rig.setOuterShellVisible(true);
+  rig.ballMesh.visible = true;
+  studio.shadowPlane.visible = true;
+  finale.start(sphereQuat, physics.dir, finaleCallbacks);
+  syncAoExclusions();
+  // Wide studio framing showing the drop, separated polycarbonate domes, intact labyrinth core, freed marble, and fireworks
+  targetCamDist = 6.55;
+  targetCamYaw = 0;
+  targetCamPitch = 0.24;
+  updateStatusUI();
+  syncTapCue();
+}
+
+function exitFinale() {
+  if (!finaleActive) return;
+  finaleActive = false;
+  finaleReplayReady = false;
+  finale.stop();
+  floatGroup.position.set(0, 0, 0);
+  studio.backdropMesh.position.set(0, 0, 0);
+  rig.root.visible = true;
+  rig.setOuterShellVisible(true);
+  rig.ballMesh.visible = true;
+  studio.shadowPlane.visible = true;
+  studio.shadowPlane.scale.setScalar(1);
+  (studio.shadowPlane.material as THREE.MeshBasicMaterial).opacity = 1;
+  targetCamDist = 4.55;
+  targetCamYaw = DEFAULT_CAM_YAW;
+  targetCamPitch = DEFAULT_CAM_PITCH;
+  updateStatusUI();
+  syncTapCue();
 }
 
 function startMorphToState(
@@ -275,6 +344,7 @@ function loadLevelNow(
 }
 
 function startLevelTransition(kind: 'intro' | 'complete' | 'switch' | 'reset', targetIndex: number) {
+  exitFinale();
   const clamped = Math.max(0, Math.min(grid.levels.length - 1, targetIndex));
   const alreadyTucked = transition !== null && (transition.phase === 'morph' || transition.phase === 'tape');
 
@@ -367,11 +437,15 @@ function advanceTapeIntro(): boolean {
 }
 
 function applyLevel(index: number, instant: boolean, _resetBall = true) {
+  const wasFinale = finaleActive;
+  exitFinale();
   if (instant) {
     transition = null;
     rig.ballMesh.visible = true;
     loadLevelNow(index, true, true);
     rig.clearLedTape();
+  } else if (wasFinale) {
+    startLevelTransition('intro', index);
   } else {
     startLevelTransition('switch', index);
   }
@@ -515,6 +589,13 @@ canvas.addEventListener('pointermove', (e) => {
     tapMoved = true;
   }
 
+  if (finaleActive) {
+    // Dragging during the finale smoothly orbits around the unsealed sphere / rolling marble
+    finaleOrbitYaw -= dx * 0.0068;
+    finaleOrbitPitch = THREE.MathUtils.clamp(finaleOrbitPitch + dy * 0.0068, -0.1, 0.72);
+    return;
+  }
+
   if (dragMode === 'camera') {
     // Cmd + drag orbits the camera around the sphere — moving the viewing angle & gravity pull center!
     targetCamYaw -= dx * 0.0068;
@@ -582,7 +663,11 @@ function endDrag(e: PointerEvent) {
   }
 
   if (wasPrimaryTap) {
-    if (!advanceTapeIntro()) {
+    if (finaleActive) {
+      const rect = canvas.getBoundingClientRect();
+      const nx = rect.width > 0 ? ((e.clientX - rect.left) / rect.width) * 2 - 1 : 0;
+      finale.celebrateTap(nx, finaleCallbacks);
+    } else if (!advanceTapeIntro()) {
       tryActivatePortal();
     }
   }
@@ -623,7 +708,11 @@ window.addEventListener('keydown', (e) => {
     sound.unlock();
     applyLevel(Math.min(grid.levels.length - 1, currentLevelIdx + 1), false, true);
   } else if (k === ' ' || k === 'enter') {
-    if (transition !== null && transition.phase === 'tape') {
+    if (finaleActive && finaleReplayReady) {
+      e.preventDefault();
+      sound.unlock();
+      applyLevel(0, false, true);
+    } else if (transition !== null && transition.phase === 'tape') {
       e.preventDefault();
       sound.unlock();
       advanceTapeIntro();
@@ -633,7 +722,12 @@ window.addEventListener('keydown', (e) => {
       tryActivatePortal();
     }
   } else if (k === 'r') {
-    resetCurrentLevel();
+    if (finaleActive) {
+      sound.unlock();
+      applyLevel(0, false, true);
+    } else {
+      resetCurrentLevel();
+    }
   } else if (k === 'm') {
     toggleSound();
   } else if (k === 't') {
@@ -706,21 +800,41 @@ const physicsEvents = {
     if (allCleared) {
       completedLevels.add(currentLevelIdx + 1);
       saveCompletedLevels();
-      const nextIdx = currentLevelIdx < grid.levels.length - 1 ? currentLevelIdx + 1 : currentLevelIdx;
-      startLevelTransition('complete', nextIdx);
+      if (currentLevelIdx >= grid.levels.length - 1) {
+        startFinale();
+      } else {
+        startLevelTransition('complete', currentLevelIdx + 1);
+      }
     }
     updateStatusUI();
   },
 };
 
 function tryActivatePortal(): boolean {
-  if (transition !== null) return false;
+  if (transition !== null || finaleActive) return false;
   return physics.activateReadyPortal(shutterOpen, physicsEvents);
 }
 
 let lastTapCueText = '';
 let lastTapCueDwell = -1;
 function syncTapCue() {
+  if (finaleActive) {
+    if (!finaleReplayReady) {
+      if (!tapCueBtn.hidden) tapCueBtn.hidden = true;
+      return;
+    }
+    const label = 'PLAY AGAIN';
+    if (label !== lastTapCueText) {
+      tapCueBtn.textContent = label;
+      lastTapCueText = label;
+    }
+    if (lastTapCueDwell !== 0) {
+      tapCueBtn.style.setProperty('--dwell', '0');
+      lastTapCueDwell = 0;
+    }
+    if (tapCueBtn.hidden) tapCueBtn.hidden = false;
+    return;
+  }
   if (transition !== null || physics.readyPortal.kind === 'none') {
     if (!tapCueBtn.hidden) tapCueBtn.hidden = true;
     if (lastTapCueDwell !== 0) {
@@ -749,13 +863,22 @@ function syncTapCue() {
   if (tapCueBtn.hidden) tapCueBtn.hidden = false;
 }
 
-btnReset.addEventListener('click', resetCurrentLevel);
+btnReset.addEventListener('click', () => {
+  if (finaleActive) {
+    sound.unlock();
+    applyLevel(0, false, true);
+  } else {
+    resetCurrentLevel();
+  }
+});
 btnSound.addEventListener('click', toggleSound);
 btnHelp.addEventListener('click', () => toggleHelp());
 tapCueBtn.addEventListener('click', (e) => {
   e.stopPropagation();
   sound.unlock();
-  if (!advanceTapeIntro()) {
+  if (finaleActive) {
+    applyLevel(0, false, true);
+  } else if (!advanceTapeIntro()) {
     tryActivatePortal();
   }
 });
@@ -784,6 +907,7 @@ const optGrade = document.getElementById('opt-grade') as HTMLInputElement;
 const optPlastic = document.getElementById('opt-plastic') as HTMLInputElement;
 const optScratches = document.getElementById('opt-scratches') as HTMLInputElement;
 const optTelemetry = document.getElementById('opt-telemetry') as HTMLInputElement;
+const btnTestFinale = document.getElementById('btn-test-finale') as HTMLButtonElement;
 const btnFactoryReset = document.getElementById('btn-factory-reset') as HTMLButtonElement;
 
 function loadStoredSettings(): StudioSettings {
@@ -901,6 +1025,11 @@ if (isDevControls) {
   optTelemetry.addEventListener('change', () => {
     applyStudioSettings({ ...studioSettings, telemetry: optTelemetry.checked }, true);
   });
+  btnTestFinale.addEventListener('click', () => {
+    sound.unlock();
+    settingsPanel.hidden = true;
+    startFinale();
+  });
   btnFactoryReset.addEventListener('click', () => {
     resetSettingsToFactory();
   });
@@ -996,15 +1125,21 @@ resize();
   triggerComplete: () => {
     completedLevels.add(currentLevelIdx + 1);
     saveCompletedLevels();
-    const nextIdx = currentLevelIdx < grid.levels.length - 1 ? currentLevelIdx + 1 : currentLevelIdx;
-    startLevelTransition('complete', nextIdx);
+    if (currentLevelIdx >= grid.levels.length - 1) {
+      startFinale();
+    } else {
+      startLevelTransition('complete', currentLevelIdx + 1);
+    }
   },
+  triggerFinale: () => startFinale(),
+  stopFinale: () => applyLevel(0, false, true),
   skipTape: () => advanceTapeIntro(),
   replayIntro: () => startLevelTransition('intro', currentLevelIdx),
   resetSettings: () => resetSettingsToFactory(),
   getState: () => ({
     level: currentLevelIdx + 1,
     name: grid.levels[currentLevelIdx].name,
+    finalePhase: finale.phase,
     transitionPhase: transition?.phase ?? null,
     layer: physics.layer,
     radius: physics.radius,
@@ -1106,8 +1241,85 @@ function frame(now: number) {
     resize();
   }
 
-  floatGroup.position.y = 0;
+  floatGroup.position.set(0, 0, 0);
   studio.shadowPlane.scale.setScalar(1);
+
+  if (finaleActive) {
+    sound.updateAmbience(false);
+    const fin = finale.step(dt, sphereQuat, camera.position, finaleCallbacks);
+    sound.updateRoll(fin.ballSpeed * 0.55);
+    floatGroup.position.copy(fin.corePos);
+    rig.root.visible = true;
+    rig.setOuterShellVisible(fin.outerShellVisible);
+    rig.ballMesh.visible = fin.intactBallVisible;
+    studio.shadowPlane.visible = fin.outerShellVisible;
+    if (fin.outerShellVisible) {
+      studio.shadowPlane.scale.setScalar(fin.shadowScale);
+      (studio.shadowPlane.material as THREE.MeshBasicMaterial).opacity = fin.shadowOpacity;
+    }
+
+    if (fin.readyForReplay && !finaleReplayReady) {
+      finaleReplayReady = true;
+      syncTapCue();
+    }
+
+    // 1. Establishing shot camera (wide frame on the unsealing sphere & two domes)
+    const wideDist = 6.55 * portraitDistScale;
+    const wideYaw = finaleOrbitYaw;
+    const widePitch = THREE.MathUtils.clamp(0.24 + finaleOrbitPitch, 0.06, 1.15);
+    const wideCamX = wideDist * Math.cos(widePitch) * Math.sin(wideYaw);
+    const wideCamY = wideDist * Math.sin(widePitch);
+    const wideCamZ = wideDist * Math.cos(widePitch) * Math.cos(wideYaw);
+
+    // 2. Low intimate tracking shot gliding smoothly behind the freed 6-dot marble as it rolls AWAY into the horizon!
+    const behindYaw = Math.atan2(-fin.ballDirXZ.x, -fin.ballDirXZ.z);
+    const followYaw = behindYaw + 0.14 + finaleOrbitYaw;
+    const followPitch = THREE.MathUtils.clamp(0.15 + finaleOrbitPitch, 0.05, 0.85);
+    const followDist = 1.48 * portraitDistScale;
+    const followFocusX = fin.ballPos.x + fin.ballDirXZ.x * 0.24;
+    const followFocusY = STUDIO_FLOOR_Y + 0.16;
+    const followFocusZ = fin.ballPos.z + fin.ballDirXZ.z * 0.24;
+    const followCamX = followFocusX + followDist * Math.cos(followPitch) * Math.sin(followYaw);
+    const followCamY = Math.max(STUDIO_FLOOR_Y + 0.2, followFocusY + followDist * Math.sin(followPitch));
+    const followCamZ = followFocusZ + followDist * Math.cos(followPitch) * Math.cos(followYaw);
+
+    const fb = fin.followBlend;
+    const desiredCamX = THREE.MathUtils.lerp(wideCamX, followCamX, fb);
+    const desiredCamY = THREE.MathUtils.lerp(wideCamY, followCamY, fb);
+    const desiredCamZ = THREE.MathUtils.lerp(wideCamZ, followCamZ, fb);
+    const desiredLookX = THREE.MathUtils.lerp(0, followFocusX, fb);
+    const desiredLookY = THREE.MathUtils.lerp(-0.28, followFocusY, fb);
+    const desiredLookZ = THREE.MathUtils.lerp(0.04, followFocusZ, fb);
+
+    const trackEase = 1 - Math.exp(-(4.2 + fb * 3.2) * dt);
+    finaleCamPos.x += (desiredCamX - finaleCamPos.x) * trackEase;
+    finaleCamPos.y += (desiredCamY - finaleCamPos.y) * trackEase;
+    finaleCamPos.z += (desiredCamZ - finaleCamPos.z) * trackEase;
+    finaleLookAt.x += (desiredLookX - finaleLookAt.x) * trackEase;
+    finaleLookAt.y += (desiredLookY - finaleLookAt.y) * trackEase;
+    finaleLookAt.z += (desiredLookZ - finaleLookAt.z) * trackEase;
+
+    camera.position.set(
+      finaleCamPos.x + fin.camShakeX,
+      finaleCamPos.y + fin.camShakeY,
+      finaleCamPos.z,
+    );
+    camera.lookAt(
+      finaleLookAt.x + fin.camShakeX * 0.35,
+      finaleLookAt.y + fin.camShakeY * 0.35,
+      finaleLookAt.z,
+    );
+    studio.backdropMesh.position.set(camera.position.x, 0, camera.position.z);
+
+    aimReticle.group.visible = false;
+    rig.setReadyHole(-1, false);
+    rig.root.quaternion.copy(fin.coreQuat);
+    rig.updateLeds(t, physics.cleared, physics.getNextCheckpointIndex(), true, physics.toggleMask, togglePulse);
+
+    post.render(t);
+    telemetry.clear();
+    return;
+  }
 
   if (transition !== null) {
     // Choreographed polar hole drop -> slow wall morph + circulating studio camera -> North Pole pop-up!

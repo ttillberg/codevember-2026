@@ -887,4 +887,206 @@ export class LabyrinthSound {
     tone.start(now + 0.028);
     tone.stop(now + 0.3);
   }
+
+  /** Brief rising tension hum as the sphere lifts before dropping in the grand finale */
+  playFinaleLift() {
+    if (!this.enabled || !this.ctx || !this.sfxBus || this.ctx.state !== 'running') return;
+    const now = this.ctx.currentTime;
+    const osc = this.ctx.createOscillator();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(146.83, now);
+    osc.frequency.exponentialRampToValueAtTime(293.66, now + 0.52);
+
+    const g = this.ctx.createGain();
+    g.gain.setValueAtTime(0.0001, now);
+    g.gain.linearRampToValueAtTime(0.055, now + 0.14);
+    g.gain.exponentialRampToValueAtTime(0.0001, now + 0.62);
+
+    osc.connect(g);
+    g.connect(this.sfxBus);
+    if (this.reverbSend) g.connect(this.reverbSend);
+    osc.start(now);
+    osc.stop(now + 0.66);
+  }
+
+  /** Tactile studio floor landing + pressurized polycarbonate equatorial seal pop + resolving D-major9 bloom */
+  playFinaleSealPop() {
+    if (!this.enabled || !this.ctx || !this.sfxBus || this.ctx.state !== 'running') return;
+    const ctx = this.ctx;
+    const now = ctx.currentTime;
+
+    // 1. Clean studio floor landing thump
+    const thump = ctx.createOscillator();
+    thump.type = 'sine';
+    thump.frequency.setValueAtTime(125, now);
+    thump.frequency.exponentialRampToValueAtTime(42, now + 0.18);
+    const thumpG = ctx.createGain();
+    thumpG.gain.setValueAtTime(0.0001, now);
+    thumpG.gain.linearRampToValueAtTime(0.22, now + 0.006);
+    thumpG.gain.exponentialRampToValueAtTime(0.0001, now + 0.24);
+    thump.connect(thumpG);
+    thumpG.connect(this.sfxBus);
+    thump.start(now);
+    thump.stop(now + 0.28);
+
+    // 2. Crisp acrylic equatorial seal snap + subtle pressurized air release!
+    const snap = ctx.createOscillator();
+    snap.type = 'triangle';
+    snap.frequency.setValueAtTime(1480, now + 0.012);
+    snap.frequency.exponentialRampToValueAtTime(520, now + 0.068);
+    const snapG = ctx.createGain();
+    snapG.gain.setValueAtTime(0.0001, now + 0.012);
+    snapG.gain.linearRampToValueAtTime(0.16, now + 0.016);
+    snapG.gain.exponentialRampToValueAtTime(0.0001, now + 0.09);
+    snap.connect(snapG);
+    snapG.connect(this.sfxBus);
+    if (this.reverbSend) snapG.connect(this.reverbSend);
+    snap.start(now + 0.012);
+    snap.stop(now + 0.1);
+
+    if (this.noiseBuf) {
+      const hiss = ctx.createBufferSource();
+      hiss.buffer = this.noiseBuf;
+      const bp = ctx.createBiquadFilter();
+      bp.type = 'bandpass';
+      bp.frequency.setValueAtTime(3100, now + 0.01);
+      bp.frequency.exponentialRampToValueAtTime(1400, now + 0.16);
+      bp.Q.value = 1.6;
+      const hg = ctx.createGain();
+      hg.gain.setValueAtTime(0.0001, now + 0.01);
+      hg.gain.linearRampToValueAtTime(0.09, now + 0.02);
+      hg.gain.exponentialRampToValueAtTime(0.0001, now + 0.18);
+      hiss.connect(bp);
+      bp.connect(hg);
+      hg.connect(this.sfxBus);
+      hiss.start(now + 0.01, Math.random() * 1.4, 0.22);
+    }
+
+    // 3. Two hollow polycarbonate dome separation clacks (left & right stereo)
+    for (let i = 0; i < 2; i++) {
+      const t0 = now + 0.055 + i * 0.045;
+      const o = ctx.createOscillator();
+      o.type = 'sine';
+      const f = i === 0 ? 740 : 620;
+      o.frequency.setValueAtTime(f, t0);
+      o.frequency.exponentialRampToValueAtTime(f * 0.72, t0 + 0.065);
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0.0001, t0);
+      g.gain.linearRampToValueAtTime(0.075, t0 + 0.004);
+      g.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.085);
+      const pan = ctx.createStereoPanner();
+      pan.pan.value = i === 0 ? 0.55 : -0.55;
+      o.connect(g);
+      g.connect(pan);
+      pan.connect(this.sfxBus);
+      o.start(t0);
+      o.stop(t0 + 0.095);
+    }
+
+    // 4. Warm uplifting D-major9 liberation chord bloom (resolving the game's D-minor tension!)
+    const fanfare = [293.66, 369.99, 440.0, 554.37, 659.25, 880.0];
+    for (let i = 0; i < fanfare.length; i++) {
+      const t0 = now + 0.14 + i * 0.095;
+      const osc = ctx.createOscillator();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(fanfare[i], t0);
+      if (this.wowDepth) this.wowDepth.connect(osc.detune);
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0.0001, t0);
+      g.gain.linearRampToValueAtTime(0.048, t0 + 0.05);
+      g.gain.exponentialRampToValueAtTime(0.0001, t0 + 2.6);
+      osc.connect(g);
+      g.connect(this.sfxBus);
+      if (this.reverbSend) g.connect(this.reverbSend);
+      osc.start(t0);
+      osc.stop(t0 + 2.7);
+    }
+  }
+
+  /** Authentic glassy sea-glass marble clink-bounce on the studio floor */
+  playMarbleBounce(strength: number) {
+    if (!this.enabled || !this.ctx || !this.sfxBus || this.ctx.state !== 'running') return;
+    const ctx = this.ctx;
+    const now = ctx.currentTime;
+    const vol = 0.025 + Math.min(1, strength) * 0.095;
+
+    const f1 = 2350 + Math.random() * 280;
+    const f2 = f1 * 2.18;
+
+    const o1 = ctx.createOscillator();
+    o1.type = 'sine';
+    o1.frequency.setValueAtTime(f1, now);
+    o1.frequency.exponentialRampToValueAtTime(f1 * 0.92, now + 0.042);
+
+    const o2 = ctx.createOscillator();
+    o2.type = 'sine';
+    o2.frequency.setValueAtTime(f2, now);
+
+    const g1 = ctx.createGain();
+    g1.gain.setValueAtTime(0.0001, now);
+    g1.gain.linearRampToValueAtTime(vol, now + 0.0015);
+    g1.gain.exponentialRampToValueAtTime(0.0001, now + 0.065);
+
+    const g2 = ctx.createGain();
+    g2.gain.setValueAtTime(0.0001, now);
+    g2.gain.linearRampToValueAtTime(vol * 0.4, now + 0.001);
+    g2.gain.exponentialRampToValueAtTime(0.0001, now + 0.032);
+
+    o1.connect(g1);
+    o2.connect(g2);
+    g1.connect(this.sfxBus);
+    g2.connect(this.sfxBus);
+    if (this.reverbSend) g1.connect(this.reverbSend);
+    o1.start(now);
+    o2.start(now);
+    o1.stop(now + 0.07);
+    o2.stop(now + 0.038);
+  }
+
+  /** Soft pressurized colored-smoke flare billow whoosh + gentle D-major crystalline shimmer */
+  playSmokePlume(panVal = 0) {
+    if (!this.enabled || !this.ctx || !this.sfxBus || this.ctx.state !== 'running') return;
+    const ctx = this.ctx;
+    const now = ctx.currentTime;
+
+    const pan = ctx.createStereoPanner();
+    pan.pan.value = Math.max(-0.9, Math.min(0.9, panVal));
+    pan.connect(this.sfxBus);
+    if (this.reverbSend) pan.connect(this.reverbSend);
+
+    // Silky filtered air-whoosh of a colored smoke canister billowing
+    if (this.noiseBuf) {
+      const src = ctx.createBufferSource();
+      src.buffer = this.noiseBuf;
+      const bp = ctx.createBiquadFilter();
+      bp.type = 'bandpass';
+      bp.frequency.setValueAtTime(520 + Math.random() * 260, now);
+      bp.frequency.exponentialRampToValueAtTime(1450 + Math.random() * 450, now + 0.24);
+      bp.frequency.exponentialRampToValueAtTime(340, now + 0.78);
+      bp.Q.value = 1.1;
+      const ng = ctx.createGain();
+      ng.gain.setValueAtTime(0.0001, now);
+      ng.gain.linearRampToValueAtTime(0.052, now + 0.1);
+      ng.gain.exponentialRampToValueAtTime(0.0001, now + 0.85);
+      src.connect(bp);
+      bp.connect(ng);
+      ng.connect(pan);
+      src.start(now, Math.random() * 1.4, 0.9);
+    }
+
+    // Delicate airy D-major harmonic shimmer
+    const notes = [587.33, 659.25, 739.99, 880.0, 1174.66];
+    const f = notes[Math.floor(Math.random() * notes.length)];
+    const o = ctx.createOscillator();
+    o.type = 'sine';
+    o.frequency.setValueAtTime(f, now + 0.04);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, now + 0.04);
+    g.gain.linearRampToValueAtTime(0.016, now + 0.12);
+    g.gain.exponentialRampToValueAtTime(0.0001, now + 1.15);
+    o.connect(g);
+    g.connect(pan);
+    o.start(now + 0.04);
+    o.stop(now + 1.2);
+  }
 }

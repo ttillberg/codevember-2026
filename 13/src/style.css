@@ -309,7 +309,7 @@ canvas.tap-ready {
   letter-spacing: 0.08em;
 }
 
-/* Dev / ?settings workbench, aligned horizontally inside .actions */
+/* Dev / ?debug workbench, aligned horizontally inside .actions */
 .settings-btn[hidden] {
   display: none;
 }

@@ -896,6 +896,11 @@ export class TelemetryOverlay {
     ctx.restore();
   }
 
+  clear() {
+    this.ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
+    this.ctx.clearRect(0, 0, this.width, this.height);
+  }
+
   render(st: TelemetryFrameState) {
     const ctx = this.ctx;
     ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
