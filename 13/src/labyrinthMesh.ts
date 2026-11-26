@@ -2498,22 +2498,79 @@ export function buildLabyrinthRig(grid: SphereGrid): LabyrinthRig {
   root.add(pipeAmbientLight);
 
   // =========================================================================
-  // 7. CHROME BEARING BALL + THIN CLEAR PLASTIC SHELL + LIGHT SCRATCHES + SWEDEN TAPE
+  // 7. FROSTED GLASS MARBLE + THIN CLEAR PLASTIC SHELL + LIGHT SCRATCHES + SWEDEN TAPE
   // =========================================================================
-  const ballGeo = new THREE.SphereGeometry(R_BALL, 36, 28);
-  const ballRoughTex = createMetalBallTexture();
-  const ballMat = new THREE.MeshStandardMaterial({
-    color: 0xd9dce2,
-    metalness: 0.99,
-    roughness: 0.09,
-    roughnessMap: ballRoughTex,
-    envMapIntensity: 2.15,
+  // Fine micro-etched sandblasted roughness & bump texture for authentic acid-etched Swedish glass
+  const frostCanvas = document.createElement('canvas');
+  frostCanvas.width = 256;
+  frostCanvas.height = 256;
+  const fCtx = frostCanvas.getContext('2d')!;
+  const fImg = fCtx.createImageData(256, 256);
+  let fSeed = 1337;
+  const fRand = () => {
+    fSeed = (fSeed * 1664525 + 1013904223) >>> 0;
+    return fSeed / 4294967296;
+  };
+  for (let i = 0; i < 256 * 256; i++) {
+    // High-frequency fine frosted glass micro-grain centered around ~0.78 roughness scale
+    const v = Math.round(182 + (fRand() - 0.5) * 44 + (fRand() - 0.5) * 26);
+    const p = i * 4;
+    fImg.data[p] = fImg.data[p + 1] = fImg.data[p + 2] = Math.max(120, Math.min(245, v));
+    fImg.data[p + 3] = 255;
+  }
+  fCtx.putImageData(fImg, 0, 0);
+  const frostRoughTex = new THREE.CanvasTexture(frostCanvas);
+  frostRoughTex.wrapS = frostRoughTex.wrapT = THREE.RepeatWrapping;
+  frostRoughTex.repeat.set(3, 3);
+
+  const ballGeo = new THREE.SphereGeometry(R_BALL, 44, 32);
+  const ballMat = new THREE.MeshPhysicalMaterial({
+    color: 0xe2eced, // cool Scandinavian frosted sea-glass / smoked quartz tint
+    metalness: 0.0,
+    roughness: 0.44,
+    roughnessMap: frostRoughTex,
+    bumpMap: frostRoughTex,
+    bumpScale: 0.001,
+    transmission: 0.9,
+    ior: 1.52,
+    thickness: R_BALL * 2.6,
+    attenuationColor: new THREE.Color(0x547882), // deep mineral smoked-teal internal absorption
+    attenuationDistance: 0.135,
+    clearcoat: 0.22,
+    clearcoatRoughness: 0.36,
+    sheen: 0.4,
+    sheenRoughness: 0.62,
+    sheenColor: new THREE.Color(0xf6fbfc), // velvety frosted-glass Fresnel rim bloom
+    envMapIntensity: 1.55,
   });
   const ballMesh = new THREE.Mesh(ballGeo, ballMat);
   ballMesh.castShadow = true;
   ballMesh.receiveShadow = true;
+
+  // 6 precision-inlaid octahedral calibration dots (±X, ±Y, ±Z) hugging the frosted marble surface
+  // Makes rolling inertia immediately readable; back-side dots softly ghost through the frosted glass!
+  const dotCapGeo = new THREE.SphereGeometry(R_BALL + 0.00055, 18, 10, 0, Math.PI * 2, 0, 0.165);
+  const dotMat = new THREE.MeshStandardMaterial({
+    color: 0x263236, // deep matte charcoal-slate inlay matching studio ink & smoked glass
+    roughness: 0.62,
+    metalness: 0.05,
+  });
+  const dotAxes: THREE.Vector3[] = [
+    new THREE.Vector3(1, 0, 0),
+    new THREE.Vector3(-1, 0, 0),
+    new THREE.Vector3(0, 1, 0),
+    new THREE.Vector3(0, -1, 0),
+    new THREE.Vector3(0, 0, 1),
+    new THREE.Vector3(0, 0, -1),
+  ];
+  for (const ax of dotAxes) {
+    const dot = new THREE.Mesh(dotCapGeo, dotMat);
+    dot.quaternion.setFromUnitVectors(upAxis, ax);
+    ballMesh.add(dot);
+  }
+
   root.add(ballMesh);
-  disposables.push(ballGeo, ballRoughTex, ballMat);
+  disposables.push(ballGeo, frostRoughTex, ballMat, dotCapGeo, dotMat);
 
   const { roughnessMap: scratchRough, bumpMap: scratchBump, scratchAlphaMap } = createPlasticScratchTextures();
   disposables.push(scratchRough, scratchBump, scratchAlphaMap);
