@@ -32,13 +32,12 @@ import {
   type OrigamiHouseRig,
   type OrigamiMaterials,
 } from './origamiPaperMesh';
-import { CatalogThumbRenderer, THUMB_SIZE, type CatalogViewMode } from './catalogThumbRenderer';
-import {
-  ALL_CITY_STREET_STYLES,
-  type CityBuildingPlot,
-  type CityStreetStyle,
-} from './cityGenerator';
-import { CityView, type CityViewStats, type CityWaveMode } from './cityView';
+import type { CatalogThumbRenderer, CatalogViewMode } from './catalogThumbRenderer';
+import type { CityBuildingPlot, CityStreetStyle } from './cityGenerator';
+import type { CityView, CityViewStats, CityWaveMode } from './cityView';
+
+const THUMB_SIZE = 240;
+const ALL_CITY_STREET_STYLES: readonly CityStreetStyle[] = ['mix', 'organic', 'grid', 'radial'];
 
 // URL query parameters
 const params = new URLSearchParams(window.location.search);
@@ -2110,7 +2109,8 @@ interface CatalogRenderJob {
   thumbCanvas: HTMLCanvasElement;
 }
 
-const catalogThumbs = new CatalogThumbRenderer();
+let catalogThumbs: CatalogThumbRenderer | null = null;
+let catalogThumbsLoadPromise: Promise<CatalogThumbRenderer> | null = null;
 let catalogViewMode: CatalogViewMode = '3d';
 let catalogRowsLoaded = 0;
 let catalogRenderToken = 0;
@@ -2121,6 +2121,23 @@ let catalogRowObserver: IntersectionObserver | null = null;
 let catalogSentinelObserver: IntersectionObserver | null = null;
 const catalogRowJobs = new WeakMap<Element, CatalogRenderJob[]>();
 let activeCatalogTileId: string | null = null;
+
+function loadCatalogThumbs(): Promise<CatalogThumbRenderer> {
+  if (catalogThumbs) return Promise.resolve(catalogThumbs);
+  if (!catalogThumbsLoadPromise) {
+    catalogThumbsLoadPromise = import('./catalogThumbRenderer').then(({ CatalogThumbRenderer: Ctor }) => {
+      if (!catalogThumbs) {
+        catalogThumbs = new Ctor({
+          renderer,
+          envTexture: sharedEnvTexture,
+          sharedWashiTextures,
+        });
+      }
+      return catalogThumbs;
+    });
+  }
+  return catalogThumbsLoadPromise;
+}
 
 function cancelCatalogRender(): void {
   catalogRenderToken++;
@@ -2148,6 +2165,15 @@ function pumpCatalogQueue(token: number): void {
     catalogRafId = null;
     return;
   }
+  if (!catalogThumbs) {
+    catalogRafId = null;
+    void loadCatalogThumbs().then(() => {
+      if (token === catalogRenderToken && !catalogModal.hidden && catalogPendingQueue.length > 0 && catalogRafId === null) {
+        catalogRafId = window.requestAnimationFrame(() => pumpCatalogQueue(token));
+      }
+    });
+    return;
+  }
   const perFrame = 4;
   for (let i = 0; i < perFrame && catalogPendingQueue.length > 0; i++) {
     const job = catalogPendingQueue.shift()!;
@@ -2164,7 +2190,7 @@ function pumpCatalogQueue(token: number): void {
 function enqueueCatalogJobs(jobs: CatalogRenderJob[], token: number): void {
   if (token !== catalogRenderToken || catalogModal.hidden || jobs.length === 0) return;
   for (const job of jobs) {
-    if (catalogThumbs.getCached(job.cacheKey)) {
+    if (catalogThumbs && catalogThumbs.getCached(job.cacheKey)) {
       catalogThumbs.renderToCanvas(job.cacheKey, job.spec, job.thumbCanvas, debugColorEnabled, catalogViewMode, mixWinOpenMode, mixWinOpen);
       job.thumbCanvas.classList.add('is-ready');
     } else {
@@ -2172,7 +2198,15 @@ function enqueueCatalogJobs(jobs: CatalogRenderJob[], token: number): void {
     }
   }
   if (catalogPendingQueue.length > 0 && catalogRafId === null) {
-    catalogRafId = window.requestAnimationFrame(() => pumpCatalogQueue(token));
+    if (catalogThumbs) {
+      catalogRafId = window.requestAnimationFrame(() => pumpCatalogQueue(token));
+    } else {
+      void loadCatalogThumbs().then(() => {
+        if (token === catalogRenderToken && !catalogModal.hidden && catalogPendingQueue.length > 0 && catalogRafId === null) {
+          catalogRafId = window.requestAnimationFrame(() => pumpCatalogQueue(token));
+        }
+      });
+    }
   }
 }
 
@@ -2341,7 +2375,7 @@ function buildCatalogRowElement(rowIndex: number, token: number): HTMLElement {
     btn.addEventListener('click', () => selectCatalogSpecimen(tileId, tileGen, tileOpts));
     gridEl.appendChild(btn);
 
-    if (catalogThumbs.getCached(cacheKey)) {
+    if (catalogThumbs && catalogThumbs.getCached(cacheKey)) {
       catalogThumbs.renderToCanvas(cacheKey, spec, thumb, debugColorEnabled, catalogViewMode, mixWinOpenMode, mixWinOpen);
       thumb.classList.add('is-ready');
     } else {
@@ -2434,6 +2468,7 @@ const setCatalogOpen = (open: boolean) => {
 // Infinite Coastal Paper City View (Curved Flight, 3-Tier LOD & Folding Wave)
 // ----------------------------------------------------------------------------
 let cityView: CityView | null = null;
+let cityViewLoadPromise: Promise<CityView> | null = null;
 let cityActive = false;
 let citySeed = mixSeed;
 const pCityStyle = params.get('cityStyle');
@@ -2494,66 +2529,82 @@ function updateCityHud(stats?: CityViewStats | null): void {
   }
 }
 
-function ensureCityView(): CityView {
-  if (cityView) return cityView;
-  cityView = new CityView(
-    renderer.capabilities.getMaxAnisotropy(),
-    sharedEnvTexture,
-    {
-      onWorldStats: (stats) => {
-        if (cityActive) updateCityHud(stats);
-      },
-      onFlyChange: () => {
-        if (cityActive) {
-          cityStatus.textContent = getCityDefaultStatus();
-          updateCityHud();
-        }
-      },
-      onHoverPlot: (plot: CityBuildingPlot | null) => {
-        if (!plot) {
-          cityStatus.textContent = getCityDefaultStatus();
-          return;
-        }
-        const s = plot.spec;
-        const wingSuffix =
-          s.topology === 'village' && s.village ? ` · ${s.village.count} houses` : ` · ${s.roofType}`;
-        cityStatus.textContent = `${s.label}${wingSuffix} · Click to fold`;
-      },
-      onSelectPlot: (plot: CityBuildingPlot) => {
-        setCityOpen(false);
-        selectCatalogSpecimen(`city_${plot.id}`, plot.generation, plot.mixOpts);
-      },
-    },
-    sharedWashiTextures,
-  );
-  const rect = canvas.getBoundingClientRect();
-  cityView.resize(Math.max(1, rect.width), Math.max(1, rect.height));
-  cityView.setColorEnabled(debugColorEnabled);
-  cityView.setWindowOpen(mixWinOpenMode, mixWinOpen);
-  cityView.setFlying(cityFlyInitial);
-  cityView.setWaveMode(cityWaveInitial);
-  return cityView;
+function loadCityView(): Promise<CityView> {
+  if (cityView) return Promise.resolve(cityView);
+  if (!cityViewLoadPromise) {
+    cityViewLoadPromise = import('./cityView').then(({ CityView: CityViewCtor }) => {
+      if (!cityView) {
+        cityView = new CityViewCtor(
+          renderer.capabilities.getMaxAnisotropy(),
+          sharedEnvTexture,
+          {
+            onWorldStats: (stats) => {
+              if (cityActive) updateCityHud(stats);
+            },
+            onFlyChange: () => {
+              if (cityActive) {
+                cityStatus.textContent = getCityDefaultStatus();
+                updateCityHud();
+              }
+            },
+            onHoverPlot: (plot: CityBuildingPlot | null) => {
+              if (!plot) {
+                cityStatus.textContent = getCityDefaultStatus();
+                return;
+              }
+              const s = plot.spec;
+              const wingSuffix =
+                s.topology === 'village' && s.village ? ` · ${s.village.count} houses` : ` · ${s.roofType}`;
+              cityStatus.textContent = `${s.label}${wingSuffix} · Click to fold`;
+            },
+            onSelectPlot: (plot: CityBuildingPlot) => {
+              setCityOpen(false);
+              selectCatalogSpecimen(`city_${plot.id}`, plot.generation, plot.mixOpts);
+            },
+          },
+          sharedWashiTextures,
+        );
+        const rect = canvas.getBoundingClientRect();
+        cityView.resize(Math.max(1, rect.width), Math.max(1, rect.height));
+        cityView.setColorEnabled(debugColorEnabled);
+        cityView.setWindowOpen(mixWinOpenMode, mixWinOpen);
+        cityView.setFlying(cityFlyInitial);
+        cityView.setWaveMode(cityWaveInitial);
+      }
+      return cityView;
+    });
+  }
+  return cityViewLoadPromise;
+}
+
+function withCityView(fn: (cv: CityView) => void): void {
+  if (cityView) {
+    fn(cityView);
+    return;
+  }
+  void loadCityView().then(fn);
 }
 
 function rebuildCity(resetFlight = true): void {
-  const cv = ensureCityView();
-  cv.setColorEnabled(debugColorEnabled);
-  cv.setWindowOpen(mixWinOpenMode, mixWinOpen);
-  cv.rebuild(
-    {
-      seed: citySeed,
-      style: cityStreetStyle,
-      hills: cityHills,
-      consistency: mixConsistency,
-      windowStyle: mixWindow,
-      windowOpening: mixWinOpening,
-      windowDetail: mixWinDetail,
-    },
-    resetFlight,
-  );
-  cityBuiltKey = getCityBuildKey();
-  cityStatus.textContent = getCityDefaultStatus();
-  updateCityHud(cv.getStats());
+  withCityView((cv) => {
+    cv.setColorEnabled(debugColorEnabled);
+    cv.setWindowOpen(mixWinOpenMode, mixWinOpen);
+    cv.rebuild(
+      {
+        seed: citySeed,
+        style: cityStreetStyle,
+        hills: cityHills,
+        consistency: mixConsistency,
+        windowStyle: mixWindow,
+        windowOpening: mixWinOpening,
+        windowDetail: mixWinDetail,
+      },
+      resetFlight,
+    );
+    cityBuiltKey = getCityBuildKey();
+    cityStatus.textContent = getCityDefaultStatus();
+    updateCityHud(cv.getStats());
+  });
 }
 
 function scheduleCityRebuild(delayMs = 90): void {
@@ -2575,18 +2626,19 @@ function setCityOpen(open: boolean, resetFlight = false): void {
     if (!catalogModal.hidden) setCatalogOpen(false);
     setHelpOpen(false);
     setDebugOpen(false);
-    const cv = ensureCityView();
-    cv.setColorEnabled(debugColorEnabled);
-    cv.setWindowOpen(mixWinOpenMode, mixWinOpen);
-    const nextKey = getCityBuildKey();
-    if (!cv.world || cityBuiltKey !== nextKey) {
-      rebuildCity(true);
-    } else if (resetFlight) {
-      rebuildCity(true);
-    } else {
-      cityStatus.textContent = getCityDefaultStatus();
-      updateCityHud(cv.getStats());
-    }
+    updateCityHud();
+    withCityView((cv) => {
+      if (!cityActive) return;
+      cv.setColorEnabled(debugColorEnabled);
+      cv.setWindowOpen(mixWinOpenMode, mixWinOpen);
+      const nextKey = getCityBuildKey();
+      if (!cv.world || cityBuiltKey !== nextKey || resetFlight) {
+        rebuildCity(true);
+      } else {
+        cityStatus.textContent = getCityDefaultStatus();
+        updateCityHud(cv.getStats());
+      }
+    });
   } else {
     canvas.style.cursor = 'grab';
   }
@@ -2636,17 +2688,19 @@ cityHillsInput.addEventListener('input', () => {
   scheduleCityRebuild(80);
 });
 cityFlyBtn.addEventListener('click', () => {
-  const cv = ensureCityView();
-  cv.setFlying(!cv.isFlying());
-  cityFlyInitial = cv.isFlying();
-  updateCityHud(cv.getStats());
+  withCityView((cv) => {
+    cv.setFlying(!cv.isFlying());
+    cityFlyInitial = cv.isFlying();
+    updateCityHud(cv.getStats());
+  });
 });
 cityFoldBtn.addEventListener('click', () => {
-  const cv = ensureCityView();
-  const cur = cv.getWaveMode();
-  const next: CityWaveMode = cur === 'wave' ? 'folded' : cur === 'folded' ? 'flat' : 'wave';
-  cv.setWaveMode(next);
-  updateCityHud(cv.getStats());
+  withCityView((cv) => {
+    const cur = cv.getWaveMode();
+    const next: CityWaveMode = cur === 'wave' ? 'folded' : cur === 'folded' ? 'flat' : 'wave';
+    cv.setWaveMode(next);
+    updateCityHud(cv.getStats());
+  });
 });
 cityColorBtn.addEventListener('click', () => {
   debugColorEnabled = !debugColorEnabled;
@@ -2930,15 +2984,17 @@ window.addEventListener('keydown', (e) => {
   if (cityActive && helpModal.hidden && catalogModal.hidden) {
     if (e.key === ' ') {
       e.preventDefault();
-      const cv = ensureCityView();
-      cv.setFlying(!cv.isFlying());
-      updateCityHud(cv.getStats());
+      withCityView((cv) => {
+        cv.setFlying(!cv.isFlying());
+        updateCityHud(cv.getStats());
+      });
     } else if (e.key === 'w' || e.key === 'W') {
       e.preventDefault();
-      const cv = ensureCityView();
-      const cur = cv.getWaveMode();
-      cv.setWaveMode(cur === 'wave' ? 'folded' : cur === 'folded' ? 'flat' : 'wave');
-      updateCityHud(cv.getStats());
+      withCityView((cv) => {
+        const cur = cv.getWaveMode();
+        cv.setWaveMode(cur === 'wave' ? 'folded' : cur === 'folded' ? 'flat' : 'wave');
+        updateCityHud(cv.getStats());
+      });
     }
     return;
   }
@@ -3003,7 +3059,7 @@ syncUI();
 if (params.has('city')) {
   setCityOpen(true, !params.has('instant'));
   if (params.has('instant')) {
-    ensureCityView().setCityFold(1, true);
+    withCityView((cv) => cv.setCityFold(1, true));
   }
 } else if (params.has('grid') && !params.has('clean')) {
   setCatalogOpen(true);
@@ -3171,27 +3227,35 @@ if (params.has('city')) {
     setCityOpen(open, !opts?.instant);
     if (open && opts?.instant) {
       rebuildCity(false);
-      ensureCityView().setCityFold(1, true);
+      withCityView((cv) => cv.setCityFold(1, true));
     }
   },
   cityView(yaw: number, pitch: number, dist: number, tx = 0, ty = 2.2, tz = 0) {
-    cityView?.setCameraView(yaw, pitch, dist, tx, ty, tz);
+    withCityView((cv) => cv.setCameraView(yaw, pitch, dist, tx, ty, tz));
   },
   cityFold(target: 0 | 1, instant = false) {
-    cityView?.setCityFold(target, instant);
-    updateCityHud();
+    withCityView((cv) => {
+      cv.setCityFold(target, instant);
+      updateCityHud();
+    });
   },
   cityFly(flying: boolean) {
-    cityView?.setFlying(flying);
-    updateCityHud();
+    withCityView((cv) => {
+      cv.setFlying(flying);
+      updateCityHud();
+    });
   },
   cityAdvance(deltaS: number) {
-    cityView?.advanceFlight(deltaS);
-    updateCityHud();
+    withCityView((cv) => {
+      cv.advanceFlight(deltaS);
+      updateCityHud();
+    });
   },
   citySetWaveMode(mode: CityWaveMode) {
-    cityView?.setWaveMode(mode);
-    updateCityHud();
+    withCityView((cv) => {
+      cv.setWaveMode(mode);
+      updateCityHud();
+    });
   },
   cityInfo() {
     return cityView ? cityView.getStats() : null;

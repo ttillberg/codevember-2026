@@ -34,16 +34,16 @@ const SUN_DIR_WHITE = new THREE.Vector3(24, 42, 19).normalize();
 const SUN_DIR_COLOR = new THREE.Vector3(16, 46, 14).normalize();
 
 const MAX_LOD_PLOTS_PER_CHUNK = 28;
-const TIER0_ENTER = 106;
-const TIER0_EXIT = 118;
-const TIER1_ENTER = 196;
-const TIER1_EXIT = 212;
+const TIER0_ENTER = 132;
+const TIER0_EXIT = 148;
+const TIER1_ENTER = 185;
+const TIER1_EXIT = 202;
 const CHUNK_LOAD_RADIUS = 320;
 const CHUNK_UNLOAD_RADIUS = 355;
-const LOD0_ENTER_DIST = 78;
-const LOD0_EXIT_DIST = 88;
+const LOD0_ENTER_DIST = 98;
+const LOD0_EXIT_DIST = 114;
 const WAVE_NEAR = 8.0;
-const WAVE_FAR = 76.0;
+const WAVE_FAR = 62.0;
 const MAX_SMOKE_PUFFS = 420;
 const CITY_FOG_DENSITY = 0.0052;
 
@@ -673,11 +673,15 @@ function createSailboatGeometry(): THREE.BufferGeometry {
 // Mounted Runtime Types
 // ---------------------------------------------------------------------------
 
+const MAX_CITY_BOATS = 160;
+
 interface MountedLod0Building {
   plot: CityBuildingPlot;
   rig: OrigamiHouseRig;
   wrapper: THREE.Group;
   plinth: THREE.Mesh;
+  plinthW: number;
+  plinthD: number;
   plinthH: number;
   curFold: number;
   pickables: THREE.Object3D[];
@@ -690,11 +694,11 @@ interface MountedChunk {
   staticGroup: THREE.Group;
   staticGeos: THREE.BufferGeometry[];
   lodMesh: THREE.Mesh | null;
+  /** Per-chunk LOD material allocated ONLY for Tier-0 chunks (Tier 1 & Tier 2 share static materials!) */
   lodMat: THREE.MeshStandardMaterial | null;
   lodGeo: THREE.BufferGeometry | null;
   lodActiveMask: Float32Array;
   lod0Map: Map<number, MountedLod0Building>;
-  boatMeshes: Array<{ mesh: THREE.Mesh; boat: CityBoat }>;
 }
 
 interface SmokePuff {
@@ -772,6 +776,17 @@ export class CityView {
   private readonly contourMajorMat: THREE.LineBasicMaterial;
   private readonly curbMat: THREE.LineBasicMaterial;
   private readonly sailboatGeo: THREE.BufferGeometry;
+  private readonly unitPlinthGeo: THREE.BoxGeometry;
+  private readonly sharedTier1LodMat: THREE.MeshStandardMaterial;
+  private readonly sharedTier2LodMat: THREE.MeshStandardMaterial;
+  /** Shared custom shadow depth material fading LOD0 shadows smoothly from 0% (flat) -> 100% (~42 deg) with zero pop! */
+  private readonly cityShadowDepthMat: THREE.MeshDepthMaterial;
+
+  // Single-draw-call instanced coastal origami sailboats across ALL active chunks!
+  private readonly boatsInstancedMesh: THREE.InstancedMesh;
+  private readonly activeBoats: CityBoat[] = [];
+  private boatsDirty = false;
+  private readonly tmpBoatDummy = new THREE.Object3D();
 
   // Infinite camera-following folded paper sea
   private readonly seaMesh: THREE.Mesh;
@@ -918,8 +933,14 @@ export class CityView {
 
     this.scene.add(this.cityRoot);
 
+    this.terrainMat = new THREE.MeshStandardMaterial({
+      color: '#f5f4f0',
+      roughness: 0.95,
+      metalness: 0.0,
+    });
+
     // Build shared OrigamiMaterials pool across ALL 8 architectural paper tones sharing ONE washi texture pair
-    // with projection shaders disabled (native fast MeshStandardMaterial!)
+    // with projection shaders disabled & single-pass duplex shaders (flat edges suppressed, 3× fewer draw calls!)
     this.ownedWashiTex = sharedWashiTextures ? null : createWashiFiberTextures(maxAnisotropy);
     const washiTex = sharedWashiTextures ?? this.ownedWashiTex!;
     const poolSize = ARCHITECTURAL_PAPER_PALETTE.length;
@@ -928,15 +949,13 @@ export class CityView {
         createOrigamiMaterials(maxAnisotropy, {
           enableProjection: false,
           sharedTextures: washiTex,
+          singlePassDuplex: true,
+          flatGroundColor: this.terrainMat.color,
         }),
       );
     }
 
-    this.terrainMat = new THREE.MeshStandardMaterial({
-      color: '#f5f4f0',
-      roughness: 0.95,
-      metalness: 0.0,
-    });
+    this.cityShadowDepthMat = this.createSmoothCityShadowDepthMaterial();
     this.streetMat = new THREE.MeshStandardMaterial({
       color: '#e7e4dc',
       roughness: 0.96,
@@ -1001,6 +1020,16 @@ export class CityView {
     });
 
     this.sailboatGeo = createSailboatGeometry();
+    this.unitPlinthGeo = new THREE.BoxGeometry(1, 1, 1);
+    this.sharedTier1LodMat = this.createChunkLodBuildingMaterial(null, 1);
+    this.sharedTier2LodMat = this.createChunkLodBuildingMaterial(null, 2);
+
+    this.boatsInstancedMesh = new THREE.InstancedMesh(this.sailboatGeo, this.boatMat, MAX_CITY_BOATS);
+    this.boatsInstancedMesh.count = 0;
+    this.boatsInstancedMesh.castShadow = true;
+    this.boatsInstancedMesh.receiveShadow = true;
+    this.boatsInstancedMesh.frustumCulled = false;
+    this.scene.add(this.boatsInstancedMesh);
 
     // Infinite camera-snapped Folded Paper Sea mesh with faceted origami waves & embossed shoreline foam contours!
     const seaGeo = new THREE.PlaneGeometry(660, 660, 128, 128);
@@ -1141,6 +1170,55 @@ export class CityView {
     tex.generateMipmaps = true;
     tex.needsUpdate = true;
     return tex;
+  }
+
+  /**
+   * Shared custom shadow depth material for City LOD0 origami panels:
+   * computes each panel's true world lift angle (`acos(panelUp.y)`) and applies a 4×4 ordered Bayer
+   * dither filtered by PCFSoftShadowMap so shadows stay 0% while flat on the floor (`0..6°`) and
+   * darken seamlessly from `0% -> 100%` over `6°..42°` with ZERO binary shadow pop!
+   */
+  private createSmoothCityShadowDepthMaterial(): THREE.MeshDepthMaterial {
+    const mat = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking });
+    mat.customProgramCacheKey = () => 'coastal-city-smooth-shadow-depth-v1';
+    mat.onBeforeCompile = (shader) => {
+      shader.vertexShader = shader.vertexShader
+        .replace(
+          '#include <common>',
+          `#include <common>
+varying float vPanelAngle;`,
+        )
+        .replace(
+          '#include <begin_vertex>',
+          `#include <begin_vertex>
+vec3 panelWorldUp = normalize((modelMatrix * vec4(0.0, 1.0, 0.0, 0.0)).xyz);
+vPanelAngle = acos(clamp(panelWorldUp.y, -1.0, 1.0));`,
+        );
+      shader.fragmentShader = shader.fragmentShader
+        .replace(
+          '#include <common>',
+          `#include <common>
+varying float vPanelAngle;
+float bayer4x4Shadow(vec2 fc) {
+  vec2 p = mod(floor(fc), 4.0);
+  float x0 = mod(p.x, 2.0);
+  float y0 = mod(p.y, 2.0);
+  float x1 = floor(p.x * 0.5);
+  float y1 = floor(p.y * 0.5);
+  float m0 = 2.0 * abs(x0 - y0) + y0;
+  float m1 = 2.0 * abs(x1 - y1) + y1;
+  return (4.0 * m0 + m1 + 0.5) / 16.0;
+}`,
+        )
+        .replace(
+          '#include <clipping_planes_fragment>',
+          `#include <clipping_planes_fragment>
+float shadowVis = smoothstep(0.11, 0.74, vPanelAngle);
+if (shadowVis <= 0.001) discard;
+if (shadowVis < 0.999 && shadowVis < bayer4x4Shadow(gl_FragCoord.xy)) discard;`,
+        );
+    };
+    return mat;
   }
 
   /**
@@ -1520,7 +1598,11 @@ export class CityView {
     return mat;
   }
 
-  private createChunkLodBuildingMaterial(lodActiveMask: Float32Array, tier: 1 | 2): THREE.MeshStandardMaterial {
+  private createChunkLodBuildingMaterial(
+    lodActiveMask: Float32Array | null,
+    tier: 1 | 2,
+  ): THREE.MeshStandardMaterial {
+    const hasLodMask = lodActiveMask !== null;
     const mat = new THREE.MeshStandardMaterial({
       color: '#ffffff',
       vertexColors: true,
@@ -1528,15 +1610,32 @@ export class CityView {
       metalness: 0.0,
       side: THREE.DoubleSide,
     });
-    mat.customProgramCacheKey = () => 'coastal-city-lod-origami-v2';
+    mat.customProgramCacheKey = () =>
+      hasLodMask ? 'coastal-city-lod-origami-v2' : 'coastal-city-lod-static-v2';
     mat.onBeforeCompile = (shader) => {
       shader.uniforms.uWaveFocus = this.sharedLodUniforms.uWaveFocus;
       shader.uniforms.uWaveMode = this.sharedLodUniforms.uWaveMode;
       shader.uniforms.uColorMix = this.sharedLodUniforms.uColorMix;
       shader.uniforms.uWhitePaperColor = this.sharedLodUniforms.uWhitePaperColor;
-      shader.uniforms.uLod0Active = { value: lodActiveMask };
+      if (hasLodMask) {
+        shader.uniforms.uLod0Active = { value: lodActiveMask };
+      }
 
-      shader.vertexShader = shader.vertexShader
+      const lodMaskUniforms = hasLodMask
+        ? `uniform float uLod0Active[${MAX_LOD_PLOTS_PER_CHUNK}];
+          varying float vLodCull;`
+        : '';
+
+      const lodMaskLookup = hasLodMask
+        ? `int bIdx = int(floor(aBuildMeta.x + 0.5));
+          float lod0Flag = 0.0;
+          if (bIdx >= 0 && bIdx < ${MAX_LOD_PLOTS_PER_CHUNK}) {
+            lod0Flag = uLod0Active[bIdx];
+          }
+          vLodCull = lod0Flag;`
+        : `float lod0Flag = 0.0;`;
+
+      let vs = shader.vertexShader
         .replace(
           '#include <common>',
           `#include <common>
@@ -1547,8 +1646,7 @@ export class CityView {
           attribute vec2 aFoldSpec;
           uniform vec2 uWaveFocus;
           uniform float uWaveMode;
-          uniform float uLod0Active[${MAX_LOD_PLOTS_PER_CHUNK}];
-          varying float vLodCull;
+          ${lodMaskUniforms}
           varying float vIsFloorOrPlinth;
 
           vec3 rotAxisOrigami(vec3 v, vec3 k, float theta) {
@@ -1582,12 +1680,7 @@ export class CityView {
         .replace(
           '#include <begin_vertex>',
           `#include <begin_vertex>
-          int bIdx = int(floor(aBuildMeta.x + 0.5));
-          float lod0Flag = 0.0;
-          if (bIdx >= 0 && bIdx < ${MAX_LOD_PLOTS_PER_CHUNK}) {
-            lod0Flag = uLod0Active[bIdx];
-          }
-          vLodCull = lod0Flag;
+          ${lodMaskLookup}
           vIsFloorOrPlinth = aFoldSpec.x <= 0.0 ? 1.0 : 0.0;
 
           float fVal = evalCityFoldWave(aBuildOrigin, aBuildMeta.y);
@@ -1604,7 +1697,7 @@ export class CityView {
               pt = eavePivot + rotAxisOrigami(pt - eavePivot, aHingeAxis, (1.0 - roofFold) * aFoldSpec.y);
             }
             pt = aHingePos + rotAxisOrigami(pt - aHingePos, aHingeAxis, (1.0 - wallFold) * 1.5707963);
-            // Tiny 0.015 ground-lift epsilon when flat so laid-out paper nets never z-fight the hillside!
+            // Tiny 0.025 ground-lift epsilon when flat so laid-out paper nets never z-fight the hillside!
             pt.y += (1.0 - wallFold) * 0.025;
             transformed = pt;
           } else if (aFoldSpec.x < -0.5) {
@@ -1615,14 +1708,18 @@ export class CityView {
             if (pRise < 0.01) rel.xz *= 0.0;
             transformed = aBuildOrigin + rel;
           }`,
-        )
-        .replace(
+        );
+
+      if (hasLodMask) {
+        vs = vs.replace(
           '#include <project_vertex>',
           `#include <project_vertex>
           if (vLodCull > 0.5) {
             gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
           }`,
         );
+      }
+      shader.vertexShader = vs;
 
       shader.fragmentShader = shader.fragmentShader
         .replace(
@@ -1668,7 +1765,7 @@ export class CityView {
     this.flying = flying;
     if (!flying) {
       // Seamless handoff into Free Orbit from the exact current glider lens!
-      const lookDir = new THREE.Vector3().subVectors(this.curCamPos, this.curLookAt);
+      const lookDir = this.tmpV1.subVectors(this.curCamPos, this.curLookAt);
       const dist = Math.max(18, Math.min(130, lookDir.length()));
       this.curTarget.copy(this.curLookAt);
       this.targetPos.copy(this.curLookAt);
@@ -1739,6 +1836,7 @@ export class CityView {
       this.syncCameraFromFlight();
       this.streamChunks(true);
       this.updateActiveLod0Folds(true);
+      this.updateBoats(this.elapsedTime);
       this.prewarmWaveSmoke();
       this.emitStats();
     }
@@ -1815,7 +1913,6 @@ export class CityView {
   private disposeChunk(ch: MountedChunk): void {
     for (const b of ch.lod0Map.values()) {
       b.rig.dispose();
-      b.plinth.geometry.dispose();
     }
     ch.lod0Map.clear();
     for (const g of ch.staticGeos) g.dispose();
@@ -1827,6 +1924,7 @@ export class CityView {
     }
     this.cityRoot.remove(ch.group);
     this.pickablesDirty = true;
+    this.boatsDirty = true;
   }
 
   private clearAllChunks(): void {
@@ -1837,6 +1935,9 @@ export class CityView {
     this.plotLookup.clear();
     this.pickableMeshes = [];
     this.pickablesDirty = false;
+    this.activeBoats.length = 0;
+    this.boatsInstancedMesh.count = 0;
+    this.boatsDirty = false;
     this.hoveredPlotId = null;
     this.hoverOutline.visible = false;
     this.callbacks.onHoverPlot?.(null);
@@ -1879,6 +1980,7 @@ export class CityView {
     // Initial synchronous burst fills the immediate coastal vista on frame 0 with zero blank sky!
     this.streamChunks(true);
     this.updateActiveLod0Folds(true);
+    this.updateBoats(this.elapsedTime);
     this.prewarmWaveSmoke();
     this.emitStats();
     return world;
@@ -1892,10 +1994,10 @@ export class CityView {
     for (const g of ch.staticGeos) g.dispose();
     ch.staticGeos.length = 0;
     ch.staticGroup.clear();
-    ch.boatMeshes.length = 0;
 
     // 1. Sculpted terrain mesh with LOD-matched resolution & downward zero-crack border skirts
-    const terrainSegs = tier === 0 ? 22 : tier === 1 ? 11 : 5;
+    // Keep Tier 0 & Tier 1 visuals 100% identical so crossing TIER0_ENTER never pops terrain, trees, curbs, or shadows!
+    const terrainSegs = tier <= 1 ? 16 : 5;
     const tGeo = buildChunkTerrainGeometry(terrain, data.cx, data.cz, terrainSegs);
     ch.staticGeos.push(tGeo);
     const tMesh = new THREE.Mesh(tGeo, this.terrainMat);
@@ -1903,14 +2005,13 @@ export class CityView {
     tMesh.castShadow = false;
     ch.staticGroup.add(tMesh);
 
-    // 2. Marching Squares topographic contour lines (Tier 0: minor+major; Tier 1: major only; Tier 2: none)
+    // 2. Marching Squares topographic contour lines (Tier 0 & Tier 1 identical; Tier 2 omitted in far fog)
     if (tier <= 1 && data.hasLand && terrain.hills > 0.02) {
-      const contours = world.extractChunkContours(data.cx, data.cz, tier === 0 ? 22 : 12, 0.65);
+      const contours = world.extractChunkContours(data.cx, data.cz, 18, 0.65);
       if (contours.length > 0) {
         const minorPts: number[] = [];
         const majorPts: number[] = [];
         for (const seg of contours) {
-          if (tier === 1 && !seg.isMajor) continue;
           const dst = seg.isMajor ? majorPts : minorPts;
           dst.push(seg.a[0], seg.y + 0.032, seg.a[1], seg.b[0], seg.y + 0.032, seg.b[1]);
         }
@@ -1936,7 +2037,6 @@ export class CityView {
 
     for (const st of data.streets) {
       if (tier === 2 && st.kind !== 'promenade') continue;
-      if (tier === 1 && st.kind === 'lane') continue;
       const pts = st.points;
       if (pts.length < 2) continue;
 
@@ -1969,7 +2069,7 @@ export class CityView {
 
         const base = i * 3;
         verts.push(lx, ly, lz, p[0], cy, p[1], rx, ry, rz);
-        if (tier === 0) {
+        if (tier <= 1) {
           leftEdge.push([lx, ly + 0.015, lz]);
           rightEdge.push([rx, ry + 0.015, rz]);
         }
@@ -1988,7 +2088,7 @@ export class CityView {
       if (st.kind === 'promenade') promGeos.push(rGeo);
       else streetGeos.push(rGeo);
 
-      if (tier === 0) {
+      if (tier <= 1) {
         for (let i = 0; i < leftEdge.length - 1; i++) {
           curbPts.push(...leftEdge[i], ...leftEdge[i + 1], ...rightEdge[i], ...rightEdge[i + 1]);
         }
@@ -2010,11 +2110,11 @@ export class CityView {
       ch.staticGroup.add(m);
     }
 
-    // 4. Terrain-draped plazas (Tier 0 & Tier 1)
+    // 4. Terrain-draped plazas (Tier 0 & Tier 1 identical)
     if (tier <= 1 && data.plazas.length > 0) {
       const plazaGeos: THREE.BufferGeometry[] = [];
       for (const pl of data.plazas) {
-        const segs = tier === 0 ? 22 : 12;
+        const segs = 18;
         const verts: number[] = [pl.x, terrain.heightAt(pl.x, pl.z) + 0.078, pl.z];
         const indices: number[] = [];
         for (let s = 0; s < segs; s++) {
@@ -2049,50 +2149,39 @@ export class CityView {
       ch.staticGroup.add(new THREE.LineSegments(cGeo, this.curbMat));
     }
 
-    // 5. Coastal piers extending into the folded paper sea (Tier 0 & Tier 1)
+    // 5. Coastal piers extending into the folded paper sea (Tier 0 & Tier 1 identical)
     if (tier <= 1 && data.piers.length > 0) {
       const pierGeo = buildMergedPiersGeometry(data.piers);
       if (pierGeo) {
         ch.staticGeos.push(pierGeo);
         const pm = new THREE.Mesh(pierGeo, this.pierMat);
-        pm.castShadow = tier === 0;
+        pm.castShadow = true;
         pm.receiveShadow = true;
         ch.staticGroup.add(pm);
       }
     }
 
-    // 6. Grounded folded origami paper trees (batched to 1–2 draw calls per chunk; skipped at Tier 2)
+    // 6. Grounded folded origami paper trees (identical full silhouettes across Tier 0 & Tier 1 -> ZERO tree pop!)
     if (tier <= 1 && data.trees.length > 0) {
-      const { trunks, foliage } = buildMergedTreesGeometries(data.trees, tier === 0);
+      const { trunks, foliage } = buildMergedTreesGeometries(data.trees, true);
       if (trunks) {
         ch.staticGeos.push(trunks);
         const tm = new THREE.Mesh(trunks, this.plinthMat);
-        tm.castShadow = tier === 0;
+        tm.castShadow = true;
         tm.receiveShadow = true;
         ch.staticGroup.add(tm);
       }
       if (foliage) {
         ch.staticGeos.push(foliage);
         const fm = new THREE.Mesh(foliage, this.treeMat);
-        fm.castShadow = tier === 0;
+        fm.castShadow = true;
         fm.receiveShadow = true;
         ch.staticGroup.add(fm);
       }
     }
 
-    // 7. Tiny folded origami sailboats bobbing in sheltered bays (Tier 0 & Tier 1)
-    if (tier <= 1 && data.boats.length > 0) {
-      for (const boat of data.boats) {
-        const bm = new THREE.Mesh(this.sailboatGeo, this.boatMat);
-        bm.position.set(boat.x, 0.04, boat.z);
-        bm.rotation.y = boat.yaw;
-        bm.scale.setScalar(boat.scale);
-        bm.castShadow = tier === 0;
-        bm.receiveShadow = true;
-        ch.staticGroup.add(bm);
-        ch.boatMeshes.push({ mesh: bm, boat });
-      }
-    }
+    // 7. Tiny folded origami sailboats are batched globally into ONE single InstancedMesh!
+    this.boatsDirty = true;
 
     // 8. Single-draw-call GPU-foldable LOD1 / LOD2 building mesh!
     const wantLodTier: 1 | 2 = tier <= 1 ? 1 : 2;
@@ -2111,19 +2200,44 @@ export class CityView {
 
     const lodGeo = buildChunkLodBuildingsGeometry(data.plots, wantLodTier);
     if (lodGeo) {
-      const lodMat = this.createChunkLodBuildingMaterial(ch.lodActiveMask, wantLodTier);
+      // Only Tier-0 chunks ever mount LOD0 rigs (and need per-chunk uLod0Active); Tier 1 & 2 share 2 static materials!
+      const lodMat =
+        tier === 0
+          ? this.createChunkLodBuildingMaterial(ch.lodActiveMask, 1)
+          : tier === 1
+            ? this.sharedTier1LodMat
+            : this.sharedTier2LodMat;
       const lodMesh = new THREE.Mesh(lodGeo, lodMat);
       // Near buildings (<116u) cast real per-panel animated shadows via LOD0 OrigamiHouseRig;
       // keeping `lodMesh.castShadow = false` avoids ghost shadows from untransformed LOD vertex positions!
       lodMesh.castShadow = false;
       lodMesh.receiveShadow = tier <= 1;
       ch.lodGeo = lodGeo;
-      ch.lodMat = lodMat;
+      ch.lodMat = tier === 0 ? lodMat : null;
       ch.lodMesh = lodMesh;
       ch.group.add(lodMesh);
     }
 
     ch.tier = tier;
+  }
+
+  /** Instant, zero-pop Tier 0 <-> Tier 1 transition (static meshes & LOD1 geometry stay untouched!). */
+  private swapChunkLodTier01(ch: MountedChunk, nextTier: 0 | 1): void {
+    if (ch.lodMesh) {
+      if (nextTier === 0) {
+        if (!ch.lodMat) {
+          ch.lodMat = this.createChunkLodBuildingMaterial(ch.lodActiveMask, 1);
+        }
+        ch.lodMesh.material = ch.lodMat;
+      } else {
+        ch.lodMesh.material = this.sharedTier1LodMat;
+        if (ch.lodMat) {
+          ch.lodMat.dispose();
+          ch.lodMat = null;
+        }
+      }
+    }
+    ch.tier = nextTier;
   }
 
   private mountLod0Building(ch: MountedChunk, plot: CityBuildingPlot): void {
@@ -2138,9 +2252,11 @@ export class CityView {
     wrapper.position.set(plot.x, plot.baseY, plot.z);
     wrapper.rotation.y = plot.yaw;
 
+    const plinthW = plot.footprintW + 0.16;
+    const plinthD = plot.footprintD + 0.16;
     const plinthH = Math.max(0.28, plot.baseY - plot.groundMinY + 0.95);
-    const plinthGeo = new THREE.BoxGeometry(plot.footprintW + 0.16, plinthH, plot.footprintD + 0.16);
-    const plinth = new THREE.Mesh(plinthGeo, this.plinthMat);
+    const plinth = new THREE.Mesh(this.unitPlinthGeo, this.plinthMat);
+    plinth.scale.set(plinthW, plinthH, plinthD);
     plinth.position.y = -plinthH * 0.5;
     plinth.castShadow = true;
     plinth.receiveShadow = true;
@@ -2152,9 +2268,13 @@ export class CityView {
     rig.root.traverse((obj) => {
       if (obj instanceof THREE.Mesh) {
         obj.userData.cityPlotId = plot.id;
+        obj.customDepthMaterial = this.cityShadowDepthMat;
         pickables.push(obj);
       }
     });
+    if (rig.baseMesh) {
+      rig.baseMesh.castShadow = false;
+    }
     wrapper.add(rig.root);
     ch.group.add(wrapper);
 
@@ -2171,6 +2291,8 @@ export class CityView {
       rig,
       wrapper,
       plinth,
+      plinthW,
+      plinthD,
       plinthH,
       curFold: -1,
       pickables,
@@ -2190,7 +2312,6 @@ export class CityView {
     if (!b) return;
     ch.group.remove(b.wrapper);
     b.rig.dispose();
-    b.plinth.geometry.dispose();
     ch.lod0Map.delete(plotIdx);
     if (plotIdx < MAX_LOD_PLOTS_PER_CHUNK) {
       ch.lodActiveMask[plotIdx] = 0.0;
@@ -2211,13 +2332,30 @@ export class CityView {
       const pFold = stage === 'cap' ? capFold : stage === 'roof' ? roofFold : wallFold;
       b.rig.updatePanelVisual(id, pFold, 0, false);
     }
-    b.rig.setFoldLinesVisible(fold < 0.52);
+    // Gate shadow pass uniformly on wall lift (0.04 ~ 3.6 deg, STILL below cityShadowDepthMat's 6.3 deg fade start!)
+    // so walls AND attached roofs enter the shadow pass at 0% opacity and darken smoothly together with ZERO pop!
+    const houseLifting = wallFold > 0.04;
+    b.rig.panels.forEach((pv) => {
+      pv.mesh.castShadow = houseLifting;
+    });
+    const showDetails = wallFold > 0.14;
+    for (const det of b.rig.details) {
+      det.pivot.visible = showDetails;
+      det.pivot.traverse((obj) => {
+        if (obj instanceof THREE.Mesh) obj.castShadow = houseLifting && showDetails;
+      });
+    }
+    if (b.rig.baseMesh) {
+      b.rig.baseMesh.castShadow = false;
+    }
+    // Keep crease lines hidden while flat on the floor so flat pre-wave sheets show zero lines/edges!
+    b.rig.setFoldLinesVisible(wallFold > 0.14 && fold < 0.48);
 
     // Smoothly emerge the retaining plinth only as walls start hinging up off the flat ground
-    const pRise = smoothstep(0.06, 0.48, wallFold);
+    const pRise = smoothstep(0.10, 0.52, wallFold);
     b.plinth.visible = pRise > 0.01;
     if (b.plinth.visible) {
-      b.plinth.scale.y = Math.max(0.01, pRise);
+      b.plinth.scale.set(b.plinthW, Math.max(0.01, b.plinthH * pRise), b.plinthD);
       b.plinth.position.y = -b.plinthH * 0.5 * pRise;
     }
   }
@@ -2259,6 +2397,11 @@ export class CityView {
     const czCenter = Math.floor(anchorZ / CITY_CHUNK_SIZE);
     const cRad = Math.ceil(CHUNK_LOAD_RADIUS / CITY_CHUNK_SIZE);
 
+    // Forward-biased view anchor so Tier 0 chunks & LOD0 rigs upgrade far ahead in the mist,
+    // strictly BEFORE the fold wave reaches any house (`fold === 0`), eliminating mid-fold pop-in!
+    const viewAnchorX = this.flying ? camX * 0.35 + this.curLookAt.x * 0.65 : this.curTarget.x;
+    const viewAnchorZ = this.flying ? camZ - 58 : this.curTarget.z;
+
     const missing: Array<{ cx: number; cz: number; dist: number; tier: 0 | 1 | 2 }> = [];
     for (let dz = -cRad; dz <= cRad; dz++) {
       for (let dx = -cRad; dx <= cRad; dx++) {
@@ -2269,22 +2412,22 @@ export class CityView {
         const dAnchor = Math.hypot(centerX - anchorX, centerZ - anchorZ);
         if (dAnchor > CHUNK_LOAD_RADIUS) continue;
 
-        const dCam = Math.hypot(centerX - camX, centerZ - camZ);
+        const dView = Math.hypot(centerX - viewAnchorX, centerZ - viewAnchorZ);
         const key = `${cx},${cz}`;
         const existing = this.chunks.get(key);
 
         if (!existing) {
-          const tier: 0 | 1 | 2 = dCam < TIER0_ENTER ? 0 : dCam < TIER1_ENTER ? 1 : 2;
-          missing.push({ cx, cz, dist: dCam, tier });
+          const tier: 0 | 1 | 2 = dView < TIER0_ENTER ? 0 : dView < TIER1_ENTER ? 1 : 2;
+          missing.push({ cx, cz, dist: dView, tier });
         } else {
           // Hysteresis LOD tier transitions so chunks right on a distance boundary never thrash
           let nextTier = existing.tier;
-          if (existing.tier === 0 && dCam > TIER0_EXIT) nextTier = dCam < TIER1_ENTER ? 1 : 2;
+          if (existing.tier === 0 && dView > TIER0_EXIT) nextTier = dView < TIER1_ENTER ? 1 : 2;
           else if (existing.tier === 1) {
-            if (dCam < TIER0_ENTER) nextTier = 0;
-            else if (dCam > TIER1_EXIT) nextTier = 2;
-          } else if (existing.tier === 2 && dCam < TIER1_EXIT - 10) {
-            nextTier = dCam < TIER0_ENTER ? 0 : 1;
+            if (dView < TIER0_ENTER) nextTier = 0;
+            else if (dView > TIER1_EXIT) nextTier = 2;
+          } else if (existing.tier === 2 && dView < TIER1_EXIT - 10) {
+            nextTier = dView < TIER0_ENTER ? 0 : 1;
           }
 
           if (nextTier !== existing.tier) {
@@ -2294,7 +2437,12 @@ export class CityView {
                 this.unmountLod0Building(existing, idx);
               }
             }
-            this.buildChunkStaticVisuals(existing, nextTier);
+            if (existing.tier <= 1 && nextTier <= 1) {
+              // Fast 0-pop Tier 0 <-> Tier 1 material swap without rebuilding static terrain/trees/streets!
+              this.swapChunkLodTier01(existing, nextTier as 0 | 1);
+            } else {
+              this.buildChunkStaticVisuals(existing, nextTier);
+            }
           }
         }
       }
@@ -2325,7 +2473,6 @@ export class CityView {
         lodGeo: null,
         lodActiveMask: new Float32Array(MAX_LOD_PLOTS_PER_CHUNK),
         lod0Map: new Map(),
-        boatMeshes: [],
       };
       for (const p of data.plots) {
         this.plotLookup.set(p.id, p);
@@ -2335,30 +2482,40 @@ export class CityView {
       builtCount++;
     }
 
-    // 3. Incremental LOD0 OrigamiHouseRig upgrades focused ahead of the lens (never wastes LOD0 rigs behind the camera!)
-    const lodAnchorX = this.flying ? camX * 0.45 + this.curLookAt.x * 0.55 : this.curTarget.x;
-    const lodAnchorZ = this.flying ? camZ * 0.45 + this.curLookAt.z * 0.55 : this.curTarget.z;
-    const lod0Candidates: Array<{ ch: MountedChunk; plot: CityBuildingPlot; dist: number }> = [];
+    // 3. Wave-ahead LOD0 OrigamiHouseRig upgrades: mount every building BEFORE `fold > 0` while still flat!
+    const fx = this.waveFocus.x;
+    const fz = this.waveFocus.y;
+    const isWave = this.waveMode === 'wave';
+    const lod0Candidates: Array<{ ch: MountedChunk; plot: CityBuildingPlot; prio: number; urgent: boolean }> = [];
     for (const ch of this.chunks.values()) {
       if (ch.tier !== 0) continue;
       for (const plot of ch.data.plots) {
-        const d = Math.hypot(plot.x - lodAnchorX, plot.z - lodAnchorZ);
+        const d = Math.hypot(plot.x - viewAnchorX, plot.z - viewAnchorZ);
         const behindCam = this.flying && plot.z > camZ + 12;
+        const wMetric = isWave ? fz - plot.z + 0.24 * Math.abs(plot.x - fx) + plot.foldJitter : d;
+        const nearWave = isWave && wMetric < WAVE_FAR + 18;
         const mounted = ch.lod0Map.has(plot.index);
-        if (mounted && (d > LOD0_EXIT_DIST || behindCam)) {
+        if (mounted && (behindCam || (d > LOD0_EXIT_DIST && !nearWave))) {
           this.unmountLod0Building(ch, plot.index);
-        } else if (!mounted && !behindCam && d < LOD0_ENTER_DIST) {
-          lod0Candidates.push({ ch, plot, dist: d });
+        } else if (!mounted && !behindCam && (d < LOD0_ENTER_DIST || nearWave)) {
+          lod0Candidates.push({
+            ch,
+            plot,
+            prio: isWave ? wMetric : d,
+            urgent: isWave && wMetric < WAVE_FAR + 14,
+          });
         }
       }
     }
 
-    lod0Candidates.sort((a, b) => a.dist - b.dist);
-    const maxRigBuilds = syncBurst ? 48 : 4;
+    lod0Candidates.sort((a, b) => a.prio - b.prio);
+    const maxRigBuilds = syncBurst ? 140 : 10;
     let rigsBuilt = 0;
     for (const item of lod0Candidates) {
-      if (rigsBuilt >= maxRigBuilds) break;
-      if (!syncBurst && rigsBuilt >= 2 && performance.now() - tStart > 6.5) break;
+      if (!item.urgent) {
+        if (rigsBuilt >= maxRigBuilds) break;
+        if (!syncBurst && rigsBuilt >= 2 && performance.now() - tStart > 8.5) break;
+      }
       this.mountLod0Building(item.ch, item.plot);
       rigsBuilt++;
     }
@@ -2469,22 +2626,47 @@ export class CityView {
     // Emit & animate billowing paper smoke puffs right where houses are folding up!
     this.updateSmoke(dt);
 
-    // Gently bob coastal origami sailboats on the paper waves
-    const t = this.elapsedTime;
-    for (const ch of this.chunks.values()) {
-      for (const item of ch.boatMeshes) {
-        const ph = item.boat.phase;
-        item.mesh.position.y = 0.04 + Math.sin(t * 1.45 + ph) * 0.14;
-        item.mesh.rotation.z = Math.sin(t * 1.15 + ph * 1.3) * 0.075;
-        item.mesh.rotation.x = Math.cos(t * 0.92 + ph * 0.7) * 0.045;
-      }
-    }
+    // Gently bob ALL coastal origami sailboats across active chunks in 1 single InstancedMesh draw call!
+    this.updateBoats(this.elapsedTime);
 
     this.hudEmitAccum += dt;
     if (this.hudEmitAccum >= 0.4) {
       this.hudEmitAccum = 0;
       this.emitStats();
     }
+  }
+
+  private updateBoats(t: number): void {
+    if (this.boatsDirty) {
+      this.boatsDirty = false;
+      this.activeBoats.length = 0;
+      for (const ch of this.chunks.values()) {
+        if (ch.tier > 1 || ch.data.boats.length === 0) continue;
+        for (const boat of ch.data.boats) {
+          if (this.activeBoats.length >= MAX_CITY_BOATS) break;
+          this.activeBoats.push(boat);
+        }
+      }
+      this.boatsInstancedMesh.count = this.activeBoats.length;
+    }
+    const count = this.activeBoats.length;
+    if (count === 0) return;
+
+    const dummy = this.tmpBoatDummy;
+    for (let i = 0; i < count; i++) {
+      const boat = this.activeBoats[i];
+      const ph = boat.phase;
+      dummy.position.set(boat.x, 0.04 + Math.sin(t * 1.45 + ph) * 0.14, boat.z);
+      dummy.rotation.set(
+        Math.cos(t * 0.92 + ph * 0.7) * 0.045,
+        boat.yaw,
+        Math.sin(t * 1.15 + ph * 1.3) * 0.075,
+      );
+      dummy.scale.setScalar(boat.scale);
+      dummy.updateMatrix();
+      this.boatsInstancedMesh.setMatrixAt(i, dummy.matrix);
+    }
+    this.boatsInstancedMesh.instanceMatrix.needsUpdate = true;
   }
 
   public getStats(): CityViewStats {
@@ -2689,6 +2871,11 @@ export class CityView {
     this.contourMajorMat.dispose();
     this.curbMat.dispose();
     this.sailboatGeo.dispose();
+    this.unitPlinthGeo.dispose();
+    this.sharedTier1LodMat.dispose();
+    this.sharedTier2LodMat.dispose();
+    this.cityShadowDepthMat.dispose();
+    this.boatsInstancedMesh.dispose();
     this.seaMesh.geometry.dispose();
     this.seaMat.dispose();
     this.smokeGeo.dispose();

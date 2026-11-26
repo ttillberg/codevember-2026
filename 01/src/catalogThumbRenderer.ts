@@ -1,5 +1,4 @@
 import * as THREE from 'three';
-import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import {
   ARCHITECTURAL_PAPER_PALETTE,
   MM,
@@ -12,6 +11,7 @@ import {
   buildOrigamiHouseRig,
   createOrigamiMaterials,
   type OrigamiMaterials,
+  type WashiFiberTextures,
 } from './origamiPaperMesh';
 
 export type CatalogViewMode = '3d' | 'flat';
@@ -27,13 +27,26 @@ const SUN_DIR_COLOR = new THREE.Vector3(5.8, 21.0, 3.6).normalize();
 const SUN_DIR_WHITE = new THREE.Vector3(10.5, 19.0, 8.2).normalize();
 const SUN_DIR_FLAT = new THREE.Vector3(11.0, 14.0, 9.5).normalize();
 
+export interface CatalogThumbRendererOptions {
+  /** Shared main WebGLRenderer (eliminates creating a second WebGL context!) */
+  renderer: THREE.WebGLRenderer;
+  /** Shared RoomEnvironment PMREM texture from the main stage */
+  envTexture: THREE.Texture | null;
+  /** Shared procedural washi fiber texture pair from the main stage */
+  sharedWashiTextures?: WashiFiberTextures;
+}
+
 /**
- * Lazy single-context offscreen WebGL thumbnail renderer for the Generations Catalog Grid.
- * Uses the exact same materials, tone mapping, and white/pastel gallery lighting as the main stage,
- * blits directly into tile `<canvas>` elements with zero base64 encoding overhead, and LRU-caches tiles.
+ * Single-WebGL-context offscreen thumbnail renderer for the Generations Catalog Grid.
+ * Reuses the main stage's WebGLRenderer, RoomEnvironment, and washi textures, rendering into a
+ * tiny 240×240 4× MSAA HalfFloat target followed by a 1-quad NeutralToneMapping + sRGB + Y-flip
+ * blit pass so thumbnails match the main stage bit-for-bit with ZERO second GPU context!
  */
 export class CatalogThumbRenderer {
-  private renderer: THREE.WebGLRenderer | null = null;
+  private readonly renderer: THREE.WebGLRenderer;
+  private readonly sharedEnvTexture: THREE.Texture | null;
+  private readonly sharedWashiTextures: WashiFiberTextures | undefined;
+
   private scene: THREE.Scene | null = null;
   private camera: THREE.PerspectiveCamera | null = null;
   private hemi: THREE.HemisphereLight | null = null;
@@ -41,38 +54,42 @@ export class CatalogThumbRenderer {
   private fill: THREE.DirectionalLight | null = null;
   private flatMatPlane: THREE.Mesh | null = null;
   private materials: OrigamiMaterials | null = null;
-  private readonly bgColor = new THREE.Color(BACKDROP_3D);
+
+  private hdrTarget: THREE.WebGLRenderTarget | null = null;
+  private readbackTarget: THREE.WebGLRenderTarget | null = null;
+  private blitScene: THREE.Scene | null = null;
+  private blitCamera: THREE.OrthographicCamera | null = null;
+  private blitMesh: THREE.Mesh | null = null;
+  private blitUniforms: {
+    uSrc: { value: THREE.Texture | null };
+    uExposure: { value: number };
+    uBackdropSrgb: { value: THREE.Vector3 };
+  } | null = null;
+
+  private pixelBuf: Uint8Array | null = null;
+  private scratchCanvas: HTMLCanvasElement | null = null;
+  private scratchCtx: CanvasRenderingContext2D | null = null;
+  private scratchImageData: ImageData | null = null;
+
+  private readonly savedClearColor = new THREE.Color();
+  private readonly tmpBackdropColor = new THREE.Color();
   private cache = new Map<string, HTMLCanvasElement>();
 
+  constructor(opts: CatalogThumbRendererOptions) {
+    this.renderer = opts.renderer;
+    this.sharedEnvTexture = opts.envTexture;
+    this.sharedWashiTextures = opts.sharedWashiTextures;
+  }
+
   private ensureInit(): void {
-    if (this.renderer) return;
-
-    const canvas = document.createElement('canvas');
-    canvas.width = THUMB_SIZE;
-    canvas.height = THUMB_SIZE;
-
-    const renderer = new THREE.WebGLRenderer({
-      canvas,
-      antialias: true,
-      alpha: false,
-      preserveDrawingBuffer: true,
-      powerPreference: 'high-performance',
-    });
-    renderer.setPixelRatio(1);
-    renderer.setSize(THUMB_SIZE, THUMB_SIZE, false);
-    renderer.toneMapping = THREE.NeutralToneMapping;
-    renderer.toneMappingExposure = 1.08;
-    renderer.outputColorSpace = THREE.SRGBColorSpace;
-    renderer.shadowMap.enabled = true;
-    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    if (this.scene) return;
 
     const scene = new THREE.Scene();
-    scene.background = this.bgColor;
-
-    const pmrem = new THREE.PMREMGenerator(renderer);
-    scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
-    scene.environmentIntensity = 0.08;
-    pmrem.dispose();
+    scene.background = null;
+    if (this.sharedEnvTexture) {
+      scene.environment = this.sharedEnvTexture;
+      scene.environmentIntensity = 0.08;
+    }
 
     const camera = new THREE.PerspectiveCamera(28, 1, 0.3, 650);
 
@@ -101,11 +118,106 @@ export class CatalogThumbRenderer {
     flatMatPlane.visible = false;
     scene.add(flatMatPlane);
 
-    const materials = createOrigamiMaterials(renderer.capabilities.getMaxAnisotropy(), {
+    const materials = createOrigamiMaterials(this.renderer.capabilities.getMaxAnisotropy(), {
       enableProjection: false,
+      sharedTextures: this.sharedWashiTextures,
     });
 
-    this.renderer = renderer;
+    // 4× MSAA Linear HalfFloat render target for crisp anti-aliased HDR specimen rendering
+    const hdrTarget = new THREE.WebGLRenderTarget(THUMB_SIZE, THUMB_SIZE, {
+      type: THREE.HalfFloatType,
+      samples: 4,
+      depthBuffer: true,
+      stencilBuffer: false,
+      minFilter: THREE.LinearFilter,
+      magFilter: THREE.LinearFilter,
+    });
+
+    // Single-sample RGBA8 target for NeutralToneMapping + sRGB + GPU Y-flip readback
+    const readbackTarget = new THREE.WebGLRenderTarget(THUMB_SIZE, THUMB_SIZE, {
+      type: THREE.UnsignedByteType,
+      samples: 0,
+      depthBuffer: false,
+      stencilBuffer: false,
+      minFilter: THREE.NearestFilter,
+      magFilter: THREE.NearestFilter,
+    });
+
+    const blitUniforms = {
+      uSrc: { value: hdrTarget.texture as THREE.Texture | null },
+      uExposure: { value: 1.08 },
+      uBackdropSrgb: { value: new THREE.Vector3(0.960784, 0.956863, 0.941176) },
+    };
+
+    const blitMat = new THREE.ShaderMaterial({
+      uniforms: blitUniforms,
+      depthTest: false,
+      depthWrite: false,
+      toneMapped: false,
+      vertexShader: /* glsl */ `
+        varying vec2 vUv;
+        void main() {
+          // Flip Y on GPU so readRenderTargetPixels returns upright top-to-bottom rows directly!
+          vUv = vec2(uv.x, 1.0 - uv.y);
+          gl_Position = vec4(position.xy, 0.0, 1.0);
+        }
+      `,
+      fragmentShader: /* glsl */ `
+        uniform sampler2D uSrc;
+        uniform float uExposure;
+        uniform vec3 uBackdropSrgb;
+        varying vec2 vUv;
+
+        // Exact Three.js NeutralToneMapping operator (modelviewer.dev)
+        vec3 neutralToneMap(vec3 color, float exposure) {
+          const float StartCompression = 0.76;
+          const float Desaturation = 0.15;
+          color *= exposure;
+          float x = min(color.r, min(color.g, color.b));
+          float offset = x < 0.08 ? x - 6.25 * x * x : 0.04;
+          color -= offset;
+          float peak = max(color.r, max(color.g, color.b));
+          if (peak < StartCompression) return color;
+          float d = 1.0 - StartCompression;
+          float newPeak = 1.0 - d * d / (peak + d - StartCompression);
+          color *= newPeak / peak;
+          float g = 1.0 - 1.0 / (Desaturation * (peak - newPeak) + 1.0);
+          return mix(color, vec3(newPeak), g);
+        }
+
+        vec3 linearToSrgb(vec3 lin) {
+          vec3 c = max(lin, vec3(0.0));
+          return mix(
+            pow(c, vec3(0.41666)) * 1.055 - vec3(0.055),
+            c * 12.92,
+            vec3(lessThanEqual(c, vec3(0.0031308)))
+          );
+        }
+
+        void main() {
+          vec4 raw = texture2D(uSrc, vUv);
+          float a = clamp(raw.a, 0.0, 1.0);
+          // Un-premultiply MSAA / shadow coverage, tone-map foreground ONLY, then composite onto exact CSS card backdrop!
+          vec3 fgLin = a > 0.0005 ? (raw.rgb / a) : vec3(0.0);
+          vec3 fgSrgb = linearToSrgb(neutralToneMap(fgLin, uExposure));
+          vec3 outRgb = mix(uBackdropSrgb, clamp(fgSrgb, 0.0, 1.0), a);
+          gl_FragColor = vec4(outRgb, 1.0);
+        }
+      `,
+    });
+
+    const blitScene = new THREE.Scene();
+    const blitCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+    const blitMesh = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), blitMat);
+    blitMesh.frustumCulled = false;
+    blitScene.add(blitMesh);
+
+    const scratchCanvas = document.createElement('canvas');
+    scratchCanvas.width = THUMB_SIZE;
+    scratchCanvas.height = THUMB_SIZE;
+    const scratchCtx = scratchCanvas.getContext('2d')!;
+    const scratchImageData = scratchCtx.createImageData(THUMB_SIZE, THUMB_SIZE);
+
     this.scene = scene;
     this.camera = camera;
     this.hemi = hemi;
@@ -113,15 +225,36 @@ export class CatalogThumbRenderer {
     this.fill = fill;
     this.flatMatPlane = flatMatPlane;
     this.materials = materials;
+    this.hdrTarget = hdrTarget;
+    this.readbackTarget = readbackTarget;
+    this.blitScene = blitScene;
+    this.blitCamera = blitCamera;
+    this.blitMesh = blitMesh;
+    this.blitUniforms = blitUniforms;
+    this.pixelBuf = new Uint8Array(THUMB_SIZE * THUMB_SIZE * 4);
+    this.scratchCanvas = scratchCanvas;
+    this.scratchCtx = scratchCtx;
+    this.scratchImageData = scratchImageData;
   }
 
-  private configureLighting(spec: HouseNetSpec, colorEnabled: boolean, viewMode: CatalogViewMode, shadowExtent: number): void {
-    const scene = this.scene!;
-    const renderer = this.renderer!;
+  private setBackdropHex(hex: string): void {
+    const u = this.blitUniforms!;
+    // Parse exact CSS sRGB channels without linearizing!
+    const v = parseInt(hex.slice(1), 16);
+    u.uBackdropSrgb.value.set(((v >> 16) & 255) / 255, ((v >> 8) & 255) / 255, (v & 255) / 255);
+  }
+
+  private configureLighting(
+    spec: HouseNetSpec,
+    colorEnabled: boolean,
+    viewMode: CatalogViewMode,
+    shadowExtent: number,
+  ): void {
     const hemi = this.hemi!;
     const sun = this.sun!;
     const fill = this.fill!;
     const materials = this.materials!;
+    const blitUniforms = this.blitUniforms!;
     if (this.flatMatPlane) {
       this.flatMatPlane.visible = viewMode === 'flat';
     }
@@ -138,8 +271,7 @@ export class CatalogThumbRenderer {
           : SUN_DIR_WHITE;
 
     if (colorEnabled) {
-      this.bgColor.set(viewMode === 'flat' ? BACKDROP_FLAT_COLOR : BACKDROP_3D);
-      scene.background = this.bgColor;
+      this.setBackdropHex(viewMode === 'flat' ? BACKDROP_FLAT_COLOR : BACKDROP_3D);
       if (spec.topology === 'village') {
         const baseIdx = Math.max(0, ARCHITECTURAL_PAPER_PALETTE.indexOf(spec.outsideColor));
         const len = ARCHITECTURAL_PAPER_PALETTE.length;
@@ -161,12 +293,11 @@ export class CatalogThumbRenderer {
       sun.intensity = 1.18;
       fill.color.set('#f8f7f2');
       fill.intensity = 0.24;
-      renderer.toneMappingExposure = 1.02;
+      blitUniforms.uExposure.value = 1.02;
     } else {
-      // In white-on-white Flat mode, set a warm stone-ivory mat (#e6e4dc) beneath bright cotton paper
+      // In white-on-white Flat mode, set a warm stone-ivory mat (#eae8e0) beneath bright cotton paper
       // so every single-cutout perimeter, punched window opening, and crease pattern reads crisply!
-      this.bgColor.set(viewMode === 'flat' ? BACKDROP_FLAT_WHITE : BACKDROP_3D);
-      scene.background = this.bgColor;
+      this.setBackdropHex(viewMode === 'flat' ? BACKDROP_FLAT_WHITE : BACKDROP_3D);
       materials.setOutsideColor(viewMode === 'flat' ? '#fdfcf8' : '#f5f4f0');
       materials.inside.color.set(viewMode === 'flat' ? '#fdfcf8' : '#fbfaf7');
       materials.edge.color.set('#f8f7f3');
@@ -177,7 +308,7 @@ export class CatalogThumbRenderer {
       sun.intensity = viewMode === 'flat' ? 1.85 : 2.05;
       fill.color.set('#f5f4f0');
       fill.intensity = 0.28;
-      renderer.toneMappingExposure = viewMode === 'flat' ? 1.08 : 1.08;
+      blitUniforms.uExposure.value = 1.08;
     }
 
     const e = Math.max(12, shadowExtent);
@@ -262,10 +393,16 @@ export class CatalogThumbRenderer {
     }
 
     this.ensureInit();
+    const renderer = this.renderer;
     const scene = this.scene!;
-    const renderer = this.renderer!;
     const camera = this.camera!;
     const materials = this.materials!;
+    const hdrTarget = this.hdrTarget!;
+    const readbackTarget = this.readbackTarget!;
+    const pixelBuf = this.pixelBuf!;
+    const scratchCanvas = this.scratchCanvas!;
+    const scratchCtx = this.scratchCtx!;
+    const scratchImageData = this.scratchImageData!;
 
     const net = buildHouseNet(spec);
     const rig = buildOrigamiHouseRig(net, materials, false);
@@ -281,18 +418,47 @@ export class CatalogThumbRenderer {
     const shadowExtent = this.frameCamera(net, viewMode);
     this.configureLighting(spec, colorEnabled, viewMode, shadowExtent);
 
+    // Save main renderer state cleanly before rendering offscreen specimen
+    const prevTarget = renderer.getRenderTarget();
+    const prevToneMapping = renderer.toneMapping;
+    const prevAutoClear = renderer.autoClear;
+    renderer.getClearColor(this.savedClearColor);
+    const prevClearAlpha = renderer.getClearAlpha();
+
     scene.add(rig.root);
+
+    // Pass 1: 4× MSAA Linear HDR render over transparent background
+    renderer.autoClear = true;
+    renderer.toneMapping = THREE.NoToneMapping;
+    renderer.setClearColor(this.tmpBackdropColor.setHex(0x000000), 0);
+    renderer.setRenderTarget(hdrTarget);
     renderer.render(scene, camera);
+
+    // Pass 2: NeutralToneMapping + sRGB + GPU Y-flip + crisp exact backdrop composite
+    renderer.setRenderTarget(readbackTarget);
+    renderer.render(this.blitScene!, this.blitCamera!);
+
+    renderer.readRenderTargetPixels(readbackTarget, 0, 0, THUMB_SIZE, THUMB_SIZE, pixelBuf);
+
+    // Restore main renderer state bit-for-bit
+    renderer.setRenderTarget(prevTarget);
+    renderer.toneMapping = prevToneMapping;
+    renderer.autoClear = prevAutoClear;
+    renderer.setClearColor(this.savedClearColor, prevClearAlpha);
+
     scene.remove(rig.root);
     rig.dispose();
 
-    // Store crisp snapshot in LRU cache
+    // Transfer upright RGBA bytes into scratch canvas -> LRU cache + target tile
+    scratchImageData.data.set(pixelBuf);
+    scratchCtx.putImageData(scratchImageData, 0, 0);
+
     const snap = document.createElement('canvas');
     snap.width = THUMB_SIZE;
     snap.height = THUMB_SIZE;
     const snapCtx = snap.getContext('2d');
     if (snapCtx) {
-      snapCtx.drawImage(renderer.domElement, 0, 0, THUMB_SIZE, THUMB_SIZE);
+      snapCtx.drawImage(scratchCanvas, 0, 0, THUMB_SIZE, THUMB_SIZE);
       if (this.cache.size >= MAX_CACHE_ENTRIES) {
         const oldestKey = this.cache.keys().next().value;
         if (oldestKey !== undefined) this.cache.delete(oldestKey);
@@ -300,7 +466,7 @@ export class CatalogThumbRenderer {
       this.cache.set(cacheKey, snap);
     }
 
-    this.blit(renderer.domElement, targetCanvas);
+    this.blit(scratchCanvas, targetCanvas);
   }
 
   private blit(source: HTMLCanvasElement, target: HTMLCanvasElement): void {
@@ -322,15 +488,24 @@ export class CatalogThumbRenderer {
       (this.flatMatPlane.material as THREE.Material).dispose();
       this.flatMatPlane = null;
     }
+    if (this.blitMesh) {
+      this.blitMesh.geometry.dispose();
+      (this.blitMesh.material as THREE.Material).dispose();
+      this.blitMesh = null;
+    }
+    this.hdrTarget?.dispose();
+    this.hdrTarget = null;
+    this.readbackTarget?.dispose();
+    this.readbackTarget = null;
     this.materials?.dispose();
     this.materials = null;
-    if (this.scene?.environment) {
-      this.scene.environment.dispose();
-      this.scene.environment = null;
-    }
-    this.renderer?.dispose();
-    this.renderer = null;
     this.scene = null;
     this.camera = null;
+    this.blitScene = null;
+    this.blitCamera = null;
+    this.pixelBuf = null;
+    this.scratchCanvas = null;
+    this.scratchCtx = null;
+    this.scratchImageData = null;
   }
 }

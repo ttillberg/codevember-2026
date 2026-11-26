@@ -50,6 +50,13 @@ export interface OrigamiMaterials {
     THREE.MeshStandardMaterial,
     THREE.MeshStandardMaterial,
   ];
+  /** Single-pass duplex paper materials (`normal.y` switches white inside / edge / colored outside in 1 draw call!) */
+  duplexSlots?: [
+    THREE.MeshStandardMaterial,
+    THREE.MeshStandardMaterial,
+    THREE.MeshStandardMaterial,
+    THREE.MeshStandardMaterial,
+  ];
   edge: THREE.MeshStandardMaterial;
   cutoutInside: THREE.MeshStandardMaterial;
   cutoutOutside: THREE.MeshStandardMaterial;
@@ -79,6 +86,10 @@ export interface CreateOrigamiMaterialsOptions {
   enableProjection?: boolean;
   /** Reuse a shared washi fiber texture pair instead of allocating duplicate 512×512 procedural canvases */
   sharedTextures?: WashiFiberTextures;
+  /** Build single-pass duplex materials so City LOD0 panels draw inside+edge+outside in 1 draw call instead of 3 */
+  singlePassDuplex?: boolean;
+  /** Live ground-terrain color reference so flat floor-lying City panels blend cleanly without hard edges */
+  flatGroundColor?: THREE.Color;
 }
 
 export function createWashiFiberTextures(maxAniso: number): WashiFiberTextures {
@@ -299,6 +310,84 @@ export function createOrigamiMaterials(
     metalness: 0.0,
   });
 
+  // Optional single-pass duplex paper material for City LOD0 rigs: switches white inside / paper edge /
+  // colored exterior directly from flat-extruded object `normal.y`, cutting panel draw calls 3×!
+  let duplexSlots:
+    | [
+        THREE.MeshStandardMaterial,
+        THREE.MeshStandardMaterial,
+        THREE.MeshStandardMaterial,
+        THREE.MeshStandardMaterial,
+      ]
+    | undefined;
+  if (opts.singlePassDuplex && !enableProjection) {
+    const duplexUniforms = {
+      uInsideColor: { value: inside.color },
+      uEdgeColor: { value: edge.color },
+      uFlatGroundColor: { value: opts.flatGroundColor ?? new THREE.Color('#f5f4f0') },
+    };
+    const makeDuplexMat = () => {
+      const m = new THREE.MeshStandardMaterial({
+        color: new THREE.Color('#9bb7cc'),
+        bumpMap: tex.bumpMap,
+        bumpScale: 0.008,
+        roughness: 0.91,
+        metalness: 0.0,
+      });
+      m.customProgramCacheKey = () => 'origami-duplex-single-pass-v2';
+      m.onBeforeCompile = (shader) => {
+        shader.uniforms.uInsideColor = duplexUniforms.uInsideColor;
+        shader.uniforms.uEdgeColor = duplexUniforms.uEdgeColor;
+        shader.uniforms.uFlatGroundColor = duplexUniforms.uFlatGroundColor;
+        shader.vertexShader = shader.vertexShader
+          .replace(
+            '#include <common>',
+            `#include <common>
+varying float vPaperFaceY;
+varying float vPanelAngle;`,
+          )
+          .replace(
+            '#include <beginnormal_vertex>',
+            `#include <beginnormal_vertex>
+vPaperFaceY = objectNormal.y;
+vec3 panelWorldUp = normalize((modelMatrix * vec4(0.0, 1.0, 0.0, 0.0)).xyz);
+vPanelAngle = acos(clamp(panelWorldUp.y, -1.0, 1.0));`,
+          )
+          .replace(
+            '#include <begin_vertex>',
+            `#include <begin_vertex>
+// Collapse extruded thickness to 0 while flat on the floor (zero perimeter or window-rim edges!),
+// then smoothly inflate back to full cotton-rag thickness as the wall lifts off the ground.
+transformed.y *= smoothstep(0.05, 0.30, vPanelAngle);`,
+          );
+        shader.fragmentShader = shader.fragmentShader
+          .replace(
+            '#include <common>',
+            `#include <common>
+uniform vec3 uInsideColor;
+uniform vec3 uEdgeColor;
+uniform vec3 uFlatGroundColor;
+varying float vPaperFaceY;
+varying float vPanelAngle;`,
+          )
+          .replace(
+            '#include <color_fragment>',
+            `#include <color_fragment>
+if (vPaperFaceY > 0.5) {
+  // Blend flat floor-lying inside faces softly to the ground tone until walls begin lifting
+  diffuseColor.rgb = mix(uFlatGroundColor, uInsideColor, smoothstep(0.04, 0.28, vPanelAngle));
+} else if (vPaperFaceY > -0.5) {
+  // Hide all extruded perimeter & punched window-rim edges while laying flat on the floor!
+  if (vPanelAngle < 0.14) discard;
+  diffuseColor.rgb = uEdgeColor;
+}`,
+          );
+      };
+      return m;
+    };
+    duplexSlots = [makeDuplexMat(), makeDuplexMat(), makeDuplexMat(), makeDuplexMat()];
+  }
+
   // Outer falling cutout shards: silhouette-clipped strictly to the sliced-off previous house
   // so NO blank surrounding sheet or giant outer border ever appears!
   const cutoutInside = inside.clone();
@@ -368,6 +457,7 @@ export function createOrigamiMaterials(
     inside,
     outside,
     outsideSlots,
+    duplexSlots,
     edge,
     cutoutInside,
     cutoutOutside,
@@ -399,13 +489,18 @@ export function createOrigamiMaterials(
     setCutoutOpacity,
     setOutsideColor(hex: string) {
       for (const m of outsideSlots) m.color.set(hex);
+      if (duplexSlots) {
+        for (const m of duplexSlots) m.color.set(hex);
+      }
       cutoutOutside.color.set(hex);
       chadOutside.color.set(hex);
     },
     setOutsideColors(hexes: readonly string[]) {
       const primary = hexes[0] ?? '#9bb7cc';
       for (let i = 0; i < outsideSlots.length; i++) {
-        outsideSlots[i].color.set(hexes[i] ?? primary);
+        const col = hexes[i] ?? primary;
+        outsideSlots[i].color.set(col);
+        if (duplexSlots) duplexSlots[i].color.set(col);
       }
       cutoutOutside.color.set(primary);
       chadOutside.color.set(primary);
@@ -417,6 +512,9 @@ export function createOrigamiMaterials(
       }
       inside.dispose();
       for (const m of outsideSlots) m.dispose();
+      if (duplexSlots) {
+        for (const m of duplexSlots) m.dispose();
+      }
       edge.dispose();
       for (const m of fadeGroup) m.dispose();
       foldLine.dispose();
@@ -438,6 +536,7 @@ function buildDualSidedPaperGeometry(
   flatOriginY = PAPER_THICK,
   thick = PAPER_THICK,
   curveSegments = 14,
+  singleGroup = false,
 ): THREE.BufferGeometry {
   const raw = new THREE.ExtrudeGeometry(shape, {
     depth: thick,
@@ -446,6 +545,13 @@ function buildDualSidedPaperGeometry(
   });
   raw.translate(0, 0, -thick);
   raw.rotateX(-Math.PI * 0.5);
+
+  // Fast single-draw-call path for City LOD0 rigs (skips 3-group bucketing & unused `aFlatPos` allocation!)
+  if (singleGroup) {
+    raw.clearGroups();
+    raw.computeVertexNormals();
+    return raw;
+  }
 
   const nonIdx = raw.index ? raw.toNonIndexed() : raw;
   nonIdx.computeVertexNormals();
@@ -1183,6 +1289,7 @@ export function buildOrigamiHouseRig(
   detailLevel: RigDetailLevel = 'full',
 ): OrigamiHouseRig {
   const isCityDetail = detailLevel === 'city';
+  const useSingleGroup = isCityDetail && Boolean(mats.duplexSlots);
   const curveSegs = isCityDetail ? 5 : 14;
   const { spec, roofRise } = net;
   const root = new THREE.Group();
@@ -1192,11 +1299,10 @@ export function buildOrigamiHouseRig(
   const cutoutMats = [mats.cutoutInside, mats.cutoutEdge, mats.cutoutOutside];
   const chadMats = [mats.chadInside, mats.chadEdge, mats.chadOutside];
   const triMatsForSlot = (slot: 0 | 1 | 2 | 3 = 0) => [mats.inside, mats.edge, mats.outsideSlots[slot]];
-  const detailMatsForSlot = (slot: 0 | 1 | 2 | 3 = 0) => [
-    mats.outsideSlots[slot],
-    mats.edge,
-    mats.outsideSlots[slot],
-  ];
+  const panelMatForSlot = (slot: 0 | 1 | 2 | 3 = 0): THREE.Material | THREE.Material[] =>
+    useSingleGroup ? mats.duplexSlots![slot] : triMatsForSlot(slot);
+  const detailMatsForSlot = (slot: 0 | 1 | 2 | 3 = 0): THREE.Material | THREE.Material[] =>
+    useSingleGroup ? mats.outsideSlots[slot] : [mats.outsideSlots[slot], mats.edge, mats.outsideSlots[slot]];
   const groupByPanel = new Map<PanelId, THREE.Group>();
   const panels = new Map<FoldablePanelId, PanelVisual>();
   const details: KirigamiDetailRig[] = [];
@@ -1349,8 +1455,17 @@ export function buildOrigamiHouseRig(
       }
     }
 
-    const geo = buildDualSidedPaperGeometry(shape, flatOriginX, flatOriginZ, spec.yawOffset, PAPER_THICK, PAPER_THICK, curveSegs);
-    const mesh = new THREE.Mesh(geo, triMatsForSlot(def.colorSlot ?? 0));
+    const geo = buildDualSidedPaperGeometry(
+      shape,
+      flatOriginX,
+      flatOriginZ,
+      spec.yawOffset,
+      PAPER_THICK,
+      PAPER_THICK,
+      curveSegs,
+      useSingleGroup,
+    );
+    const mesh = new THREE.Mesh(geo, panelMatForSlot(def.colorSlot ?? 0));
     mesh.castShadow = true;
     mesh.receiveShadow = true;
     mesh.userData = { kind: 'panel', id: def.id };
@@ -1815,7 +1930,7 @@ export function buildOrigamiHouseRig(
     if (!def || !pv || !def.wallFrame) continue;
     const wf = def.wallFrame;
     const wallTriMats = triMatsForSlot(def.colorSlot ?? 0);
-    const wallDetailMats = detailMatsForSlot(def.colorSlot ?? 0);
+    const wallDetailMats = [mats.outsideSlots[def.colorSlot ?? 0], mats.edge, mats.outsideSlots[def.colorSlot ?? 0]];
     const rotY = Math.atan2(wf.vAxis[0], -wf.vAxis[1]);
     const kerf = 0.24; // Crisp 0.24 mm laser-cut paper clearance
 
@@ -2000,7 +2115,16 @@ export function buildOrigamiHouseRig(
     aShape.lineTo(-awW * 0.5 * MM, -awD * MM);
     aShape.closePath();
 
-    const aGeo = buildDualSidedPaperGeometry(aShape, sx * MM, -sy * MM, spec.yawOffset, 0, PAPER_THICK * 0.75);
+    const aGeo = buildDualSidedPaperGeometry(
+      aShape,
+      sx * MM,
+      -sy * MM,
+      spec.yawOffset,
+      0,
+      PAPER_THICK * 0.75,
+      curveSegs,
+      useSingleGroup,
+    );
     const aMesh = new THREE.Mesh(aGeo, detailMatsForSlot(frontDef.colorSlot ?? 0));
     aMesh.castShadow = true;
     aMesh.receiveShadow = true;
@@ -2074,7 +2198,16 @@ export function buildOrigamiHouseRig(
       cShape.lineTo(0, chW * 0.5 * MM);
       cShape.closePath();
 
-      const cGeo = buildDualSidedPaperGeometry(cShape, sx * MM, -sy * MM, spec.yawOffset, 0, PAPER_THICK * 0.85);
+      const cGeo = buildDualSidedPaperGeometry(
+        cShape,
+        sx * MM,
+        -sy * MM,
+        spec.yawOffset,
+        0,
+        PAPER_THICK * 0.85,
+        curveSegs,
+        useSingleGroup,
+      );
       const cMesh = new THREE.Mesh(cGeo, bDetailMats);
       cMesh.castShadow = true;
       cMesh.receiveShadow = true;
@@ -2099,6 +2232,8 @@ export function buildOrigamiHouseRig(
         spec.yawOffset,
         0,
         PAPER_THICK * 0.85,
+        curveSegs,
+        useSingleGroup,
       );
       const cheekMesh = new THREE.Mesh(cheekGeo, bDetailMats);
       cheekMesh.castShadow = true;
@@ -2162,7 +2297,16 @@ export function buildOrigamiHouseRig(
         dShape.closePath();
         addRectHole(dShape, dH * 0.38 * MM, 0, dH * 0.40 * MM, dW * 0.44 * MM);
 
-        const dGeo = buildDualSidedPaperGeometry(dShape, sx * MM, -sy * MM, spec.yawOffset, 0, PAPER_THICK * 0.8);
+        const dGeo = buildDualSidedPaperGeometry(
+          dShape,
+          sx * MM,
+          -sy * MM,
+          spec.yawOffset,
+          0,
+          PAPER_THICK * 0.8,
+          curveSegs,
+          useSingleGroup,
+        );
         const dMesh = new THREE.Mesh(dGeo, bDetailMats);
         dMesh.castShadow = true;
         dMesh.receiveShadow = true;
