@@ -36,8 +36,8 @@ const debugClose = document.getElementById('debug-close') as HTMLButtonElement;
 const dbgModel = document.getElementById('dbg-model') as HTMLSelectElement;
 const dbgColor = document.getElementById('dbg-color') as HTMLInputElement;
 const dbgSpin = document.getElementById('dbg-spin') as HTMLInputElement;
-const dbgShiftView = document.getElementById('dbg-shift-view') as HTMLInputElement;
 const dbgPerspCut = document.getElementById('dbg-persp-cut') as HTMLInputElement;
+const dbgGlideFold = document.getElementById('dbg-glide-fold') as HTMLInputElement;
 const dbgResetFactory = document.getElementById('dbg-reset-factory') as HTMLButtonElement;
 
 // Populate model presets in debug selector
@@ -62,16 +62,16 @@ interface DebugSettings {
   model: number | null;
   color: boolean;
   spin: boolean;
-  shiftView: boolean;
   perspectiveCut: boolean;
+  glideOnFold: boolean;
 }
 
 const FACTORY_SETTINGS: DebugSettings = {
   model: null,
   color: true,
   spin: true,
-  shiftView: false,
   perspectiveCut: true,
+  glideOnFold: true,
 };
 
 function loadSavedSettings(): DebugSettings {
@@ -87,8 +87,8 @@ function loadSavedSettings(): DebugSettings {
       }
       if (typeof parsed.color === 'boolean') s.color = parsed.color;
       if (typeof parsed.spin === 'boolean') s.spin = parsed.spin;
-      if (typeof parsed.shiftView === 'boolean') s.shiftView = parsed.shiftView;
       if (typeof parsed.perspectiveCut === 'boolean') s.perspectiveCut = parsed.perspectiveCut;
+      if (typeof parsed.glideOnFold === 'boolean') s.glideOnFold = parsed.glideOnFold;
     }
   } catch {
     // Ignore storage access errors (private mode, restricted iframe, etc.)
@@ -109,17 +109,21 @@ let debugColorEnabled =
   params.get('color') !== null ? params.get('color') !== '0' : initialSettings.color;
 let debugSpinEnabled =
   params.get('spin') !== null ? params.get('spin') !== '0' : initialSettings.spin;
-let debugShiftViewEnabled =
-  params.get('shiftView') !== null ? params.get('shiftView') === '1' : initialSettings.shiftView;
 let debugPerspCutEnabled =
   params.get('perspCut') !== null ? params.get('perspCut') !== '0' : initialSettings.perspectiveCut;
+let debugGlideOnFoldEnabled =
+  params.get('glide') !== null
+    ? params.get('glide') !== '0'
+    : params.get('shiftView') !== null
+      ? params.get('shiftView') === '1'
+      : initialSettings.glideOnFold;
 
 function syncDebugControls(): void {
   dbgModel.value = forcedModelSlot ? String(forcedModelSlot) : 'auto';
   dbgColor.checked = debugColorEnabled;
   dbgSpin.checked = debugSpinEnabled;
-  dbgShiftView.checked = debugShiftViewEnabled;
   dbgPerspCut.checked = debugPerspCutEnabled;
+  dbgGlideFold.checked = debugGlideOnFoldEnabled;
 }
 
 function saveDebugSettings(): void {
@@ -128,8 +132,8 @@ function saveDebugSettings(): void {
       model: forcedModelSlot,
       color: debugColorEnabled,
       spin: debugSpinEnabled,
-      shiftView: debugShiftViewEnabled,
       perspectiveCut: debugPerspCutEnabled,
+      glideOnFold: debugGlideOnFoldEnabled,
     };
     window.localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(payload));
   } catch {
@@ -513,8 +517,8 @@ function mountHouseGeneration(gen: number, fromSwap = false): void {
     curShadowExtent = swapShadowExtent = finalShadowExtent = ideal.shadowExtent;
     applyShadowFrustum(curShadowExtent);
 
-    if (debugPerspCutEnabled && gen <= 1) {
-      // On Layer 1 initial fold with Project sweep ON, glide smoothly from 3/4 into crisp Front View!
+    if (gen <= 1) {
+      // On Layer 1 initial fold (when `Glide on fold` is enabled), glide smoothly from 3/4 into crisp Front View!
       const hero = computeHeroElevation(net);
       slideYawDelta = hero.yawOffsetFromCut;
       slidePitchDelta = hero.targetPitch - defaultPitch;
@@ -1048,8 +1052,8 @@ function resetToFactory(): void {
   forcedModelSlot = FACTORY_SETTINGS.model;
   debugColorEnabled = FACTORY_SETTINGS.color;
   debugSpinEnabled = FACTORY_SETTINGS.spin;
-  debugShiftViewEnabled = FACTORY_SETTINGS.shiftView;
   debugPerspCutEnabled = FACTORY_SETTINGS.perspectiveCut;
+  debugGlideOnFoldEnabled = FACTORY_SETTINGS.glideOnFold;
   syncDebugControls();
   resetAll();
   applyActiveOutsideColor();
@@ -1370,12 +1374,12 @@ dbgSpin.addEventListener('change', () => {
   debugSpinEnabled = dbgSpin.checked;
   saveDebugSettings();
 });
-dbgShiftView.addEventListener('change', () => {
-  debugShiftViewEnabled = dbgShiftView.checked;
-  saveDebugSettings();
-});
 dbgPerspCut.addEventListener('change', () => {
   debugPerspCutEnabled = dbgPerspCut.checked;
+  saveDebugSettings();
+});
+dbgGlideFold.addEventListener('change', () => {
+  debugGlideOnFoldEnabled = dbgGlideFold.checked;
   saveDebugSettings();
 });
 dbgResetFactory.addEventListener('click', () => {
@@ -1471,8 +1475,8 @@ syncUI();
       setColor: (enabled: boolean) => void;
       setModel: (slot: number | null) => void;
       setSpin: (enabled: boolean) => void;
-      setShiftView: (enabled: boolean) => void;
       setPerspectiveCut: (enabled: boolean) => void;
+      setGlideOnFold: (enabled: boolean) => void;
       view: (yaw: number, pitch: number, dist: number) => void;
       info: () => {
         generation: number;
@@ -1557,13 +1561,13 @@ syncUI();
     syncDebugControls();
     saveDebugSettings();
   },
-  setShiftView(enabled: boolean) {
-    debugShiftViewEnabled = Boolean(enabled);
+  setPerspectiveCut(enabled: boolean) {
+    debugPerspCutEnabled = Boolean(enabled);
     syncDebugControls();
     saveDebugSettings();
   },
-  setPerspectiveCut(enabled: boolean) {
-    debugPerspCutEnabled = Boolean(enabled);
+  setGlideOnFold(enabled: boolean) {
+    debugGlideOnFoldEnabled = Boolean(enabled);
     syncDebugControls();
     saveDebugSettings();
   },
@@ -1661,7 +1665,7 @@ function animate(now: number): void {
   const sRaw = clamp01((foldProg - 0.12) / 0.80);
   const slideEase = sRaw * sRaw * (3 - 2 * sRaw);
   const dSlide = slideEase - prevSlideEase;
-  if ((debugPerspCutEnabled || debugShiftViewEnabled) && Math.abs(dSlide) > 1e-6) {
+  if (debugGlideOnFoldEnabled && Math.abs(dSlide) > 1e-6) {
     targetYaw += dSlide * slideYawDelta;
     targetPitch = Math.max(0.18, Math.min(1.42, targetPitch + dSlide * slidePitchDelta));
   }
